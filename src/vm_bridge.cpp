@@ -1,4 +1,4 @@
-// vm_bridge.cpp — C-linkage bridge to the jdBasic VM for native executables.
+// vm_bridge.cpp - C-linkage bridge to the jdBasic VM for native executables.
 // Compiled into jdbrt.dll. Wraps VM::call_function() with a simple C API.
 
 #include "vm.h"
@@ -82,7 +82,7 @@ static void setup_parser_modules(Parser& parser) {
             lower + ".jdb"
         };
         // Exactly one level down into a sibling "modules/" subdir.
-        // Mirror main.cpp's resolver — no walk-up. The script's own dir
+        // Mirror main.cpp's resolver - no walk-up. The script's own dir
         // (or a direct `modules/` subdir) is the only place we look.
         candidates.push_back(g_base_dir + "/modules/" + module_name + ".jdb");
         candidates.push_back(g_base_dir + "/modules/" + lower + ".jdb");
@@ -162,8 +162,8 @@ struct JdRTImpl {
     VM vm;
     std::string last_error;
     std::unordered_map<int64_t, Value> value_store;
-    int64_t next_handle = 1;            // positive — frame-temp, swept
-    int64_t next_persistent = -1;       // negative — persistent, never swept
+    int64_t next_handle = 1;            // positive - frame-temp, swept
+    int64_t next_persistent = -1;       // negative - persistent, never swept
     JdrtEventDispatch user_event_dispatch = nullptr;
 
     int64_t store_value(Value v) {
@@ -174,7 +174,7 @@ struct JdRTImpl {
 
     // Promote a frame-temp value to a persistent key so it survives
     // jdrt_frame_end sweeps. Used when a VM handle is stored into a
-    // long-lived container (NATIVE_MAP, ARRAY) — without this the
+    // long-lived container (NATIVE_MAP, ARRAY) - without this the
     // sweep at the end of the enclosing DO-loop iteration would erase
     // the value, and the next iteration's read would fault.
     int64_t store_persistent(Value v) {
@@ -281,7 +281,7 @@ JDRT_API void* jdrt_call_arr(JdRT handle, const char* name,
         auto vargs = args_to_values(args, nargs);
         Value result = rt->vm.call_function(name, vargs);
         rt->last_error.clear();
-        // Borrow the ArrayObj* — owned by the VM, caller must not free.
+        // Borrow the ArrayObj* - owned by the VM, caller must not free.
         if (result.type == ValueType::ARRAY && result.as_array())
             return (void*)result.as_array();
         return nullptr;
@@ -365,7 +365,7 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
                 JdbMapFwd* m = (JdbMapFwd*)(intptr_t)u.i;
                 out->elements.push_back(m ? jdbmap_to_value(m) : Value::make_none());
             } else {
-                // F64 / I64 — numeric.
+                // F64 / I64 - numeric.
                 out->elements.push_back(Value::make_f64(d));
             }
             continue;
@@ -388,7 +388,7 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
             out->elements.push_back(Value::make_bool(d != 0.0));
         } else {
             // Either uniform f64 array, or a numeric cell inside a mixed-
-            // type literal like [1, "x", 3] — the bit pattern reveals it
+            // type literal like [1, "x", 3] - the bit pattern reveals it
             // as a real number despite the array-level has_ptr flag.
             out->elements.push_back(Value::make_f64(d));
         }
@@ -397,7 +397,7 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
 }
 
 // Decode the {args, tags} wire format into VM Values. Only the tags that
-// appear on the wire are handled here — NATIVE_MAP never crosses the
+// appear on the wire are handled here - NATIVE_MAP never crosses the
 // bridge (codegen downgrades it to I64) and RUNTIME is unpacked by the
 // caller into one of the concrete tags below.
 static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args, const int32_t* tags, int nargs) {
@@ -436,7 +436,7 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                 break;
             }
             case JdTag::NATIVE_MAP:
-                // Wire isn't supposed to carry NATIVE_MAP — codegen
+                // Wire isn't supposed to carry NATIVE_MAP - codegen
                 // downgrades it to I64 on the way out. A runtime-tagged
                 // value produced by jdrt_tagged_get off a native JdbMap*
                 // can still leak one through, so fall through to VM_HANDLE
@@ -487,7 +487,7 @@ JDRT_API double jdrt_call_typed_f64(JdRT handle, const char* name,
 
 static void register_binary_string(const char* s, size_t n) {
     if (!s || n == 0) return;
-    // Plain C strings don't need an entry — strlen already gets it right.
+    // Plain C strings don't need an entry - strlen already gets it right.
     if (strlen(s) == n) return;
     std::lock_guard<std::mutex> lk(bin_mx());
     bin_lens()[(const void*)s] = n;
@@ -586,7 +586,7 @@ JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
     auto* rt = resolve_rt(handle);
     for (auto it = rt->value_store.begin(); it != rt->value_store.end(); ) {
         // Negative keys are persistent (promoted via jdrt_promote_handle)
-        // and must survive the per-iteration sweep — they're held by
+        // and must survive the per-iteration sweep - they're held by
         // long-lived containers like vstate{...}.
         if (it->first >= watermark && it->first > 0)
             it = rt->value_store.erase(it);
@@ -596,7 +596,7 @@ JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
 }
 
 // Re-store a frame-temp handle's Value at a persistent (negative) key
-// and return the new key. The original temp key is left in place — the
+// and return the new key. The original temp key is left in place - the
 // next jdrt_frame_end will sweep it. Idempotent on already-persistent
 // handles (returns the input key unchanged).
 JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
@@ -636,7 +636,7 @@ JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
     auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
     if (!v) return 0;
-    // Store every non-missing field — including scalars — so the caller
+    // Store every non-missing field - including scalars - so the caller
     // always gets a live handle. Scalars materialise via the val_to_*
     // coerce paths; returning 0 for a string-typed scalar would break
     // patterns like `title = g{"title"}`.
@@ -653,7 +653,7 @@ JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
 }
 
 // Must stay layout-compatible with JdbArray in jdb_runtime.cpp.
-// elem_tags added 2026-05-04 — non-null when flags & 8.
+// elem_tags added 2026-05-04 - non-null when flags & 8.
 struct JdbArray {
     double* data;
     int64_t length;
@@ -700,7 +700,7 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     if (has_string) r->flags |= 2;
     // String cells mixed with anything else make flags-only decoding
     // ambiguous (a numeric cell in a string-flagged row would be
-    // dereferenced as char*) — per-element tags pin the layout for those.
+    // dereferenced as char*) - per-element tags pin the layout for those.
     // Uniform arrays keep the plain flags encoding.
     if (has_string && has_other) {
         r->elem_tags = (int8_t*)malloc((size_t)(r->length > 0 ? r->length : 1));
@@ -781,7 +781,7 @@ JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
 
 // ── ASYNC FUNC dispatch from native code ───────────────────────
 //
-// Native compile emits each user FUNC as a real LLVM Function — they
+// Native compile emits each user FUNC as a real LLVM Function - they
 // never reach the runtime VM's func_map, so the OpCode::CALL ASYNC
 // path inside vm.cpp can't help. Instead, codegen synthesises a
 // uniform funcref wrapper for the target FUNC (f64 args, f64 return,
@@ -837,7 +837,7 @@ JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
                     result = jdbarray_to_value(arr);
                     break;
                 }
-                case -1: // SUB return — discard
+                case -1: // SUB return - discard
                     result = Value::make_none();
                     break;
                 case JD_TAG_F64:
@@ -861,7 +861,7 @@ JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
 
 // Materialise a handle as a concrete scalar. Numeric values round-trip
 // exactly; Maps/Arrays fall back to to_double()==0 and to_string()'s
-// formatted dump — callers that care must check the type first.
+// formatted dump - callers that care must check the type first.
 JDRT_API double jdrt_val_to_f64(JdRT handle, int64_t h) {
     auto* rt = resolve_rt(handle);
     auto it = rt->value_store.find(h);
@@ -933,7 +933,7 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
             return jd_tag(JdTag::VM_HANDLE);
         case ValueType::INT64:
             // Preserve the integer tag so `TYPEOF(row{"id"}) = "INT64"`
-            // matches in native — vo's load_form() guards `IF TYPEOF(
+            // matches in native - vo's load_form() guards `IF TYPEOF(
             // row{"vertreter_id"}) = "INT64" THEN ...` and silently
             // falls through to the default -1 if we collapse INT to FLOAT.
             *out_val = v->to_int();
@@ -1003,7 +1003,7 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
     union { double d; int64_t i; } u;
     u.d = arr->data[idx];
     *out_val = u.i;
-    // Per-element tags (flags bit 3) win — they're set by the tagged
+    // Per-element tags (flags bit 3) win - they're set by the tagged
     // ARRAY_LITERAL path for `[m{"name"}, m{"age"}, ...]` so each cell
     // carries its real JdTag. Falls back to the all-elements-string flag
     // (bit 1) and finally to F64 for pure-numeric arrays.

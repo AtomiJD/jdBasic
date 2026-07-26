@@ -59,7 +59,7 @@ std::string file_readline(FileHandle& fh, int poll_ms) {
                 got = true;
             } else {
                 // EOF or error. For non-tail handles we stop here. For
-                // tail handles we clear EOF, wait a tick, retry — same
+                // tail handles we clear EOF, wait a tick, retry - same
                 // mechanic as `tail -f`.
                 if (!fh.tail_mode) {
                     return "";

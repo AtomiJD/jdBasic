@@ -117,7 +117,7 @@ private:
         // (script hit STOP, worker is parked in the GFX pump loop to
         // keep the SDL window's owner-thread alive on Windows). The
         // REPL prompt renders while parked, but main thread MUST NOT
-        // join the worker — joining would block until vm.resume() is
+        // join the worker - joining would block until vm.resume() is
         // signalled and the worker exits, defeating the prompt-return.
         std::atomic<bool> parked{false};
         // Main thread sets this when it has rendered a prompt in
@@ -130,7 +130,7 @@ private:
     int active_ws = 0;
     bool is_running = true;
 
-    // Ctrl+F1..F4 from a graphics SDL window arrives on a worker thread —
+    // Ctrl+F1..F4 from a graphics SDL window arrives on a worker thread -
     // we cannot touch stdout/screen state there. The graphics hook stores
     // the requested workspace here; the main run() loop drains it.
     std::atomic<int> pending_switch{-1};
@@ -154,7 +154,7 @@ private:
     // render_prompt remembers how much it drew last time so the next call
     // can back up and clear the previous render area. After a worker
     // completes (the program may have printed unrelated output below the
-    // old prompt) this becomes stale — reset it to 0 to force a fresh
+    // old prompt) this becomes stale - reset it to 0 to force a fresh
     // redraw at the current cursor position without backing up.
     int prompt_drawn_visual_len = 0;
     // Absolute buffer row where the current prompt begins (Windows render).

@@ -26,7 +26,7 @@ namespace {
 // dispatch routes these to __jdrt_call_typed_arr, and every DIM/return-type
 // inference path unions this set so a bridge array returner is array-typed
 // everywhere. Adding a name here fixes both the bridge return shape AND
-// inference at once — no more drift between the (formerly four) parallel lists.
+// inference at once - no more drift between the (formerly four) parallel lists.
 const std::unordered_set<std::string> kBridgeArrayReturners = {
     "SPLIT", "KEYS", "VALUES", "SORTBY",
     "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
@@ -123,12 +123,12 @@ LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) 
     LLVMValueRef storage;
 
     if (scopes.size() <= 1) {
-        // Global scope — use LLVM module-level global variable
+        // Global scope - use LLVM module-level global variable
         storage = LLVMAddGlobal(module, var_type, name.c_str());
         LLVMSetInitializer(storage, LLVMConstNull(var_type));
         LLVMSetLinkage(storage, LLVMInternalLinkage);
     } else {
-        // Local scope — use alloca in entry block of current function
+        // Local scope - use alloca in entry block of current function
         LLVMBasicBlockRef current_block = LLVMGetInsertBlock(builder);
         LLVMBasicBlockRef entry_block = LLVMGetEntryBasicBlock(current_fn);
 
@@ -304,7 +304,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_append_arr","__append_arr", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_array_fillv", "FILLV",       i8_ptr_type, {i8_ptr_type, f64_type}, 3);
     reg("jdb_array_copyv", "COPYV",       i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    // Tagged variants — preserve per-element JdTag so arr[i] reads return
+    // Tagged variants - preserve per-element JdTag so arr[i] reads return
     // the right RUNTIME-tag for downstream coerce_to / TYPEOF / FMT$.
     reg("jdb_array_append_tagged","__arr_append_tagged",
         i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, -1);
@@ -318,7 +318,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_unique_str","__unique_str", i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumsum","CUMSUM",      i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_cumprod","CUMPROD",    i8_ptr_type, {i8_ptr_type}, 3);
-    // TAKE / DROP — interpreter signature is (n, arr); the (arr, n) variant
+    // TAKE / DROP - interpreter signature is (n, arr); the (arr, n) variant
     // jdb_array_take / jdb_array_drop stays for any internal callers.
     reg("jdb_take_n",     "TAKE",         i8_ptr_type, {i64_type, i8_ptr_type}, 3);
     reg("jdb_drop_n",     "DROP",         i8_ptr_type, {i64_type, i8_ptr_type}, 3);
@@ -365,7 +365,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
     reg("jdb_trace",             "__trace",           void_type, {i8_ptr_type, i64_type}, -1);
 
-    // Exception state — THROW stores msg/code, CATCH reads via ERRMSG$/ERR.
+    // Exception state - THROW stores msg/code, CATCH reads via ERRMSG$/ERR.
     reg("jdb_err_set",       "__err_set",   void_type,   {i8_ptr_type, i64_type}, -1);
     reg("jdb_err_clear",     "__err_clear", void_type,   {}, -1);
     reg("jdb_err_msg",          "ERRMSG$",  i8_ptr_type, {}, 2);
@@ -378,7 +378,7 @@ void LLVMCodegen::declare_runtime_functions() {
     // works inside a catch body).
     reg("jdb_err_code_clear","__err_code_clear", void_type, {}, -1);
 
-    // Recursion guard — one enter at each user FUNC/SUB entry, one leave
+    // Recursion guard - one enter at each user FUNC/SUB entry, one leave
     // on the common exit path. __rec_depth snapshots the counter on TRY
     // entry so CATCH can restore it after an error unwinds through
     // missed leaves.
@@ -402,7 +402,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdrt_set_event_dispatcher", "__jdrt_set_evt_disp",
         void_type, {i8_ptr_type, i8_ptr_type}, -1);
 
-    // OS.FEATURE — query whether a build feature is present in this binary
+    // OS.FEATURE - query whether a build feature is present in this binary
     reg("jdb_os_feature",     "OS.FEATURE",      i64_type, {i8_ptr_type}, 0);
 
     // OS
@@ -514,7 +514,7 @@ void LLVMCodegen::declare_runtime_functions() {
     // Bit rotation (2-arg, implicit 64-bit width; 3-arg falls back to VM bridge)
     reg("jdb_rotl2",   "ROTL",     i64_type, {i64_type, i64_type}, 0);
     reg("jdb_rotr2",   "ROTR",     i64_type, {i64_type, i64_type}, 0);
-    // GCD/LCM — variadic in VM, 2-arg native form reachable via VM bridge
+    // GCD/LCM - variadic in VM, 2-arg native form reachable via VM bridge
 
     // String padding (jdb_str_repeat already declared above as __str_repeat)
     reg("jdb_str_repeat", "REPEAT$",  i8_ptr_type, {i8_ptr_type, i64_type}, 2);
@@ -576,7 +576,7 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i8_ptr_type}, 0);
     reg("jdrt_map_to_handle", "__jdrt_map_to_handle", i64_type,
         {i8_ptr_type, i8_ptr_type}, 0);
-    // ASYNC FUNC dispatch — handle, fn ptr, args ptr (f64*), nargs (i32),
+    // ASYNC FUNC dispatch - handle, fn ptr, args ptr (f64*), nargs (i32),
     // return_tag (i32). Returns task id (i64).
     reg("jdrt_async_spawn", "__jdrt_async_spawn", i64_type,
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type, i32_type}, 0);
@@ -622,7 +622,7 @@ void LLVMCodegen::declare_runtime_functions() {
     // Regex
     reg("jdb_regex_match",   "REGEX.MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     // Note: REGEX_MATCH (legacy name) returns an array in the VM, so it must
-    // go through the VM bridge — don't register it as the boolean native fn.
+    // go through the VM bridge - don't register it as the boolean native fn.
     reg("jdb_regex_replace", "REGEX.REPLACE",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_regex_replace", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_regex_findall", "REGEX.FINDALL",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -782,14 +782,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         bool returns_string = (!is_sub && !stmt->func_name.empty() &&
                                stmt->func_name.back() == '$');
         int ret_tag = is_sub ? -1 : (returns_string ? 2 : 1);
-        // Explicit `FUNC name(...) AS <type>` is authoritative — skip the
+        // Explicit `FUNC name(...) AS <type>` is authoritative - skip the
         // Phase 3 heuristic guesses entirely. Maps every VarType to its
         // JD_TAG_*. This is the supported way for FUNCs that return non-
         // numeric values to advertise their shape; without it the codegen
         // falls back to f64 and the caller bit-puns through a double.
         // INT/BOOL types reuse the f64 numeric default (jdBasic's native
         // numeric ABI is f64; the i64 promote path needs more codegen
-        // plumbing — caller's `i64_local + i64_call` ends up `add i64 +
+        // plumbing - caller's `i64_local + i64_call` ends up `add i64 +
         // f64` because the FUNC sig stays f64. Tracked separately.).
         if (!is_sub) {
             switch (stmt->return_type) {
@@ -807,7 +807,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             bool sp = (!p.name.empty() && p.name.back() == '$');
             int t = sp ? 2 : 1;
             // Honour explicit `AS <type>` annotations on params. Without this,
-            // `FUNC walk(path AS STRING)` decoded `path` as f64 garbage —
+            // `FUNC walk(path AS STRING)` decoded `path` as f64 garbage -
             // only `$`-suffixed names got the string slot. Same idea covers
             // ARRAY / OBJECT / MAP so a typed param doesn't silently down-
             // grade to a number.
@@ -872,7 +872,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             auto fit = decls.find(e.func_name);
             if (fit != decls.end()) {
                 // ASYNC FUNC native call returns the task id (i64) regardless
-                // of the user-declared return type — AWAIT yields the actual
+                // of the user-declared return type - AWAIT yields the actual
                 // value later. Without this, `DIM p = mini_prod(...)` typed
                 // the slot from mini_prod's body return tag and stored the
                 // task id's bits in the wrong slot shape.
@@ -909,11 +909,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             // s.label carries the UDT type name for `DIM x AS T` and
             // also the `__EXPORT__` marker for top-level EXPORT DIMs;
             // only treat it as a UDT when it's neither empty nor the
-            // export sentinel — otherwise `EXPORT DIM thing_count = 0`
+            // export sentinel - otherwise `EXPORT DIM thing_count = 0`
             // would be mis-tagged as JD_TAG_ARR.
             bool is_udt_label = !s.label.empty() && s.label != "__EXPORT__";
             // $-suffix on the variable name is a string-by-convention hint
-            // even without an AS clause — match how infer_expr_tag treats
+            // even without an AS clause - match how infer_expr_tag treats
             // VARIABLE references and how user-FUNC return types respect
             // the $ suffix. Without this, `DIM r$ = AWAIT p` would land
             // in the f64 fallback below and the i8* string handle would
@@ -925,7 +925,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             else if (dollar_string) t = JD_TAG_STR;
             else if (s.expr) t = infer_expr_tag(*s.expr);
             auto it = pre_var_tags.find(s.var_name);
-            // Promote only — don't downgrade from ARR to F64 via later
+            // Promote only - don't downgrade from ARR to F64 via later
             // scalar reassignment.
             if (it == pre_var_tags.end() ||
                 (it->second == JD_TAG_F64 && t != JD_TAG_F64))
@@ -947,7 +947,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     std::function<void(const Stmt&,
                       std::unordered_map<std::string,int>&)> scan_idx_assigns;
     // Helper: classify RHS expr in local scope. For a VARIABLE, only
-    // consult the local `kinds` map — never fall through to the global
+    // consult the local `kinds` map - never fall through to the global
     // pre_var_tags, since a SUB param can shadow a same-named global
     // (e.g. top-level `DIM v AS T` + `SUB Foo(v)` would otherwise leak
     // the UDT-ARR tag onto the param). For non-VARIABLE exprs, defer to
@@ -1072,7 +1072,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             VarInfo* v = lookup_var(a.str_val);
                             if (v && (v->tag == JD_TAG_ARR || v->tag == JD_TAG_NATIVE_MAP ||
                                       v->tag == JD_TAG_VM_HANDLE || v->tag == JD_TAG_RUNTIME))
-                                // Callee expects a concrete kind, not RUNTIME —
+                                // Callee expects a concrete kind, not RUNTIME -
                                 // pass tagged values as VM_HANDLE so the
                                 // callee's INDEX dispatch works uniformly.
                                 it->second.tags[i] = (v->tag == JD_TAG_RUNTIME) ? JD_TAG_VM_HANDLE : v->tag;
@@ -1153,7 +1153,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                 // (e.g. JSON.PARSE$ result) or a NATIVE
                                 // JdbArray* (e.g. map_get_tagged result). VM
                                 // dispatches via jdrt_val_arr_get, native via
-                                // jdb_array_get — promoting to RUNTIME lets
+                                // jdb_array_get - promoting to RUNTIME lets
                                 // the tag-aware ABI carry the real type per
                                 // call instead of forcing VM_HANDLE.
                                 it->second.tags[i] = JD_TAG_RUNTIME;
@@ -1175,7 +1175,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         // When entering a SUB/FUNC body, hide its parameter names from
         // pre_var_tags lookup so a top-level `DIM v AS UDT` doesn't get
         // misread as the local `v` parameter inside the function. The
-        // SUB/FUNC body has already been visited by Phase 1 — we need
+        // SUB/FUNC body has already been visited by Phase 1 - we need
         // it again here only to walk inner CALL expressions.
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
             std::vector<std::pair<std::string, int>> saved;
@@ -1269,7 +1269,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // Phase 3: infer return types from RETURN statements in the body.
     // (Function name suffix `$` already forces tag=2 in Phase 1; this catches
     // the case where the suffix was omitted but a RETURN expression is a
-    // string. Only RETURN exprs count — string locals or string-typed sub
+    // string. Only RETURN exprs count - string locals or string-typed sub
     // calls inside the body do NOT make the function string-returning.)
     std::function<bool(const Stmt&)> any_return_returns_string =
         [&](const Stmt& s) -> bool {
@@ -1318,15 +1318,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // must be typed as i8* (ptr) so callers don't truncate through f64 and
     // lose the handle type. This tracks per-FUNC assignments `var = {}` /
     // `var = []` and classifies RETURN expressions based on:
-    //   RETURN {}             — map literal, tag 4
-    //   RETURN []             — array literal, tag 3
-    //   RETURN var            — look up local's inferred kind from body
-    //   RETURN arr[i]         — inherits arr[]'s element kind (rare)
-    //   RETURN other_func()   — inherit callee's return_tag (after Phase 3)
+    //   RETURN {}             - map literal, tag 4
+    //   RETURN []             - array literal, tag 3
+    //   RETURN var            - look up local's inferred kind from body
+    //   RETURN arr[i]         - inherits arr[]'s element kind (rare)
+    //   RETURN other_func()   - inherit callee's return_tag (after Phase 3)
     std::function<int(const Stmt&, std::unordered_map<std::string,int>&)> classify_return =
         [&](const Stmt& s, std::unordered_map<std::string,int>& local_kinds) -> int {
         // Track `var = <literal>` (or DIM with init) so RETURN var resolves.
-        // DIM was missing here originally — `DIM out AS ARRAY = []` left out
+        // DIM was missing here originally - `DIM out AS ARRAY = []` left out
         // unclassified, so a FUNC building a list with rec APPENDs and
         // returning `out` came back tagged f64 and the caller's APPEND took
         // the single-cell path, dropping all but one element per call.
@@ -1376,7 +1376,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     (cit->second.return_tag == JD_TAG_ARR ||
                      cit->second.return_tag == JD_TAG_NATIVE_MAP))
                     return cit->second.return_tag;
-                // Native runtime function — pick up its declared return tag.
+                // Native runtime function - pick up its declared return tag.
                 auto rit = runtime_funcs.find(e.func_name);
                 if (rit != runtime_funcs.end() &&
                     (rit->second.return_tag == JD_TAG_ARR ||
@@ -1466,7 +1466,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             }
             if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) {
                 // BASIC convention: string + anything → string concat. Be
-                // liberal — any operand being string is enough evidence.
+                // liberal - any operand being string is enough evidence.
                 if (e.left && is_string_scalar(*e.left)) return true;
                 if (e.right && is_string_scalar(*e.right)) return true;
             }
@@ -1561,14 +1561,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 
     // Pre-Phase-4: tag-aware FUNC ABI promotion. A FUNC param that the
     // body passes to TYPEOF (and hasn't already been promoted to a more
-    // specific type via call-site analysis) becomes JD_TAG_RUNTIME — the
+    // specific type via call-site analysis) becomes JD_TAG_RUNTIME - the
     // LLVM signature then takes (i64 val, i32 tag) for that slot so the
     // body can recover the dynamic type at runtime. Without this pre-pass
     // the promotion was conditional on the call site passing an INDEX arg
     // (the only path that ran my detection earlier), which missed cases
     // like `q$("foo")` and `q$(42)` where the existing str-promotion
     // had already locked the param at JD_TAG_STR and a later int call
-    // got bit-pun'd into the str slot — TYPEOF then said "STRING".
+    // got bit-pun'd into the str slot - TYPEOF then said "STRING".
     {
         std::function<bool(const Expr&, const std::string&)> uses_typeof_param =
             [&](const Expr& x, const std::string& pname) -> bool {
@@ -1611,7 +1611,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (!decl.stmt) continue;
             for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
                 // Don't override $-suffixed params (already STRING-typed)
-                // or AS-typed declarations — those have a real declared
+                // or AS-typed declarations - those have a real declared
                 // intent that should win.
                 const auto& p = decl.stmt->params[pi];
                 if (!p.name.empty() && p.name.back() == '$') continue;
@@ -1629,7 +1629,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (int t : decl.tags) {
             if (t == JD_TAG_RUNTIME) {
                 // Tag-aware ABI: each runtime-tagged param gets two LLVM
-                // args — i64 raw bits + i32 JdTag. The body recovers the
+                // args - i64 raw bits + i32 JdTag. The body recovers the
                 // real type at runtime so TYPEOF / coerce_to / Q$ dispatch
                 // correctly. Without this a string passed as `q$(arr[i])`
                 // arrived as f64 bits and TYPEOF said "FLOAT64".
@@ -1884,7 +1884,7 @@ bool LLVMCodegen::types_compatible(const StaticType& src, const StaticType& dst)
                k == K::BOOLEAN || k == K::DATE;
     };
     if (is_num(src.kind) && is_num(dst.kind)) return true;
-    // MAP / OBJECT — jdBasic maps and UDT instances both stringify to
+    // MAP / OBJECT - jdBasic maps and UDT instances both stringify to
     // Object in user code, so a bare Object target accepts either.
     if (dst.kind == K::MAP && src.kind == K::UDT) return true;
     if (dst.kind == K::UDT && src.kind == K::MAP) return true;
@@ -1930,7 +1930,7 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     codegen_program(program);
 
     // STRICT/EXPLICIT diagnostics accumulated during codegen_program are
-    // fatal — print them all so the user sees every violation, not just
+    // fatal - print them all so the user sees every violation, not just
     // the first one to trip a codegen assertion.
     if (!diagnostics.empty()) {
         std::ostringstream oss;
@@ -2038,7 +2038,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             udt_var_names.insert(stmt->var_name);
             var_udt_type[stmt->var_name] = stmt->label;
         }
-        // Same for DIM arr[N] AS TypeName — register the element type so
+        // Same for DIM arr[N] AS TypeName - register the element type so
         // infer_tag sees `arr[i]` as UDT (tag 3) during the var-type
         // inference pass. Without this, the LET of `arr[0]` below gets
         // stamped as f64, and later map INDEX on it stores a ptr into
@@ -2180,14 +2180,14 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         auto uit_pre = user_functions.find(e->func_name);
                         if (uit_pre != user_functions.end()) {
                             // ASYNC FUNC native call returns the task id (i64),
-                            // not the body's return value — match infer_expr_tag.
+                            // not the body's return value - match infer_expr_tag.
                             if (uit_pre->second.is_async) return JD_TAG_I64;
                             return uit_pre->second.return_tag;
                         }
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                         // Type-inference blocklist: functions that return a scalar
-                        // even when given an array (SUM, LEN, …) — so infer_tag
+                        // even when given an array (SUM, LEN, …) - so infer_tag
                         // should NOT widen the return type to array for these.
                         // Distinct from the runtime auto-vec blocklist below.
                         static const std::unordered_set<std::string> no_vec_infer = {
@@ -2243,7 +2243,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         };
                         if (tui_f64_returners.count(upper)) return JD_TAG_F64;
                         // VM-Value-handle returners (sync with bridge).
-                        // TILED.OBJECTS returns an array of maps — the
+                        // TILED.OBJECTS returns an array of maps - the
                         // flat-JdbArray path can't carry OBJECT elements,
                         // so it goes through the VM-handle path instead.
                         static const std::unordered_set<std::string> obj_returners = {
@@ -2255,7 +2255,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             // can't carry the shape, so route through VM handle.
                             "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
                             "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
-                            // AI array-of-map returners — VM_HANDLE, see the
+                            // AI array-of-map returners - VM_HANDLE, see the
                             // object_returners set in the bridge dispatch.
                             "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST"
                         };
@@ -2289,7 +2289,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     }
                     if (e->kind == ExprKind::BINARY) {
                         // Comparison / logical ops return BOOL (i64 0/1)
-                        // regardless of operand types — without this branch
+                        // regardless of operand types - without this branch
                         // a `DIM x = ("a" <> "b")` infers STR (from the
                         // operand types) and codegen creates a ptr-typed
                         // global, then stores the i64 BOOL result into it
@@ -2343,8 +2343,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         // Resolve the UDT type driving this INDEX, if any,
                         // so a string-keyed access can pick the right tag
                         // from the field schema. Two shapes:
-                        //   v{"k"}       — v is a UDT instance
-                        //   arr[i]{"k"}  — arr[] has known UDT element type
+                        //   v{"k"}       - v is a UDT instance
+                        //   arr[i]{"k"}  - arr[] has known UDT element type
                         // Also catches `__TYPE__` which is always a string.
                         auto lookup_field_tag = [&](const std::string& type_name,
                                                     const Expr* key) -> int {
@@ -2363,14 +2363,14 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                                 return JD_TAG_ARR;
                             VarInfo* lv = lookup_var(e->left->str_val);
                             if (lv && lv->tag == JD_TAG_VM_HANDLE) return JD_TAG_VM_HANDLE;
-                            // UDT instance with string key — consult schema.
+                            // UDT instance with string key - consult schema.
                             auto uit = var_udt_type.find(e->left->str_val);
                             if (uit != var_udt_type.end()) {
                                 int ft = lookup_field_tag(uit->second, e->right.get());
                                 if (ft >= 0) return ft;
                             }
                         }
-                        // Nested INDEX: arr[i]{"key"} — drill into the
+                        // Nested INDEX: arr[i]{"key"} - drill into the
                         // inner INDEX and use the UDT-array's element type.
                         if (e->left && e->left->kind == ExprKind::INDEX &&
                             e->left->left && e->left->left->kind == ExprKind::VARIABLE) {
@@ -2385,7 +2385,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         // punned f64 bits; downstream MAP_ACCESS / method-dispatch code
                         // pun-decodes back to a ptr. Returning JD_TAG_RUNTIME here would
                         // force method-dispatch sites to discover the receiver's true
-                        // type from rtag, which the existing UDT call path doesn't do —
+                        // type from rtag, which the existing UDT call path doesn't do -
                         // breaking `nn.METHOD()`.
                         return JD_TAG_F64;
                     }
@@ -2402,7 +2402,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     int inferred = infer_tag(stmt->expr.get());
                     if (inferred >= 0) tag = inferred;
                     // Only skip for CALL expressions whose return type we
-                    // couldn't resolve — these are typically VM-bridged
+                    // couldn't resolve - these are typically VM-bridged
                     // scalars (GCD, LCM, …) where guessing i64 produces
                     // f64-bit-pun garbage. For other unknown RHS shapes
                     // (complex BINARY, etc.), keep the i64 default: that
@@ -2480,7 +2480,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     // string_array_vars/map_array_vars/vm_array_vars still apply locally,
     // just without the cross-FUNC guesswork.
 
-    // Pre-scan for tag-7 (runtime-tagged) assignments to globals — anywhere
+    // Pre-scan for tag-7 (runtime-tagged) assignments to globals - anywhere
     // in the program, including inside FUNC/SUB bodies. Without this,
     // codegen order matters: if SHOW() is compiled before INIT(), and INIT()
     // does `M.X = M.ARR[i]` (which stores tag-7), the global's in-memory
@@ -2509,7 +2509,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     "MAP.FROM","MAP.COPY","MAP.GET"
                 };
                 if (vm_returners.count(upper)) return true;
-                // User-defined functions: treat as unknown — be conservative
+                // User-defined functions: treat as unknown - be conservative
                 // only when the return type is tag-7.
                 auto uit = user_functions.find(e->func_name);
                 if (uit != user_functions.end() &&
@@ -2635,7 +2635,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             LLVMBasicBlockRef after_bb  = LLVMAppendBasicBlock(current_fn, "after_try");
 
             // Snapshot the current recursion depth so the catch block can
-            // restore it — the error-unwind path skips paired __rec_leave
+            // restore it - the error-unwind path skips paired __rec_leave
             // calls, and we don't want that drift to leak out of the TRY.
             LLVMValueRef saved_depth = nullptr;
             {
@@ -2661,7 +2661,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             // Soft-clear: drop err_code only, so per-stmt checks inside
             // the catch body don't re-trip, but ERRMSG$ can still see the
             // caught message. Rewind the recursion counter in the same
-            // spot — the unwind may have skipped paired __rec_leave calls.
+            // spot - the unwind may have skipped paired __rec_leave calls.
             {
                 auto& ec = runtime_funcs["__err_code_clear"];
                 LLVMBuildCall2(builder, ec.fn_type, ec.fn, nullptr, 0, "");
@@ -2674,7 +2674,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             }
             for (auto& s : stmt.catch_body) { if (s) codegen_stmt(*s); }
             if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
-                // Hard-clear g_err_msg when leaving the catch body — a
+                // Hard-clear g_err_msg when leaving the catch body - a
                 // THROW outside this TRY mustn't see the previously-caught
                 // message leaking through ERRMSG$.
                 auto& ec = runtime_funcs["__err_clear"];
@@ -2686,7 +2686,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             break;
         }
         case StmtKind::ENUM_DECL:
-            // Already registered in the pre-pass — no-op here.
+            // Already registered in the pre-pass - no-op here.
             break;
         case StmtKind::DESTRUCTURE: {
             // Indexed / mixed targets are pre-desugared by the parser into a
@@ -2695,7 +2695,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                 for (auto& sub : stmt.body) if (sub) codegen_stmt(*sub);
                 break;
             }
-            // [a, b, c] = expr — evaluate expr, then assign each element.
+            // [a, b, c] = expr - evaluate expr, then assign each element.
             if (!stmt.expr) break;
             TypedValue arr = codegen_expr(*stmt.expr);
             if (arr.tag != JD_TAG_ARR) break;  // not an array, can't destructure
@@ -2707,7 +2707,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                     get_fn.fn, args, 2, "delem");
                 // Store into variable (create if needed). Honour `$`-suffix
                 // so `[bytes_written, json$] = ffi(...)` lands json$ in a
-                // string slot — without this it would alloca a double, the
+                // string slot - without this it would alloca a double, the
                 // f64-bit-pun of the char* pointer survives the store but
                 // any subsequent string use sees garbage.
                 const std::string& vn = stmt.destruct_vars[i];
@@ -2779,7 +2779,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             }
             break;
         case StmtKind::CLS_STMT: {
-            // CLS [r, g, b] — route through the VM bridge so graphics mode
+            // CLS [r, g, b] - route through the VM bridge so graphics mode
             // clears the framebuffer (without this the back buffer keeps
             // old edge tiles between scrolls, producing flicker).
             Expr call;
@@ -2794,7 +2794,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             break;
         }
         case StmtKind::END_STMT: {
-            // END exits the program — in main that's a real exit; inside a
+            // END exits the program - in main that's a real exit; inside a
             // SUB/FUNC it returns a default value. emit_fn_return chooses
             // the common exit block (user FUNC) or a direct ret (main).
             emit_fn_return(nullptr);
@@ -2851,7 +2851,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
     }
     // After every completed statement, check whether an err was raised
     // during the statement's calls. Branches out to the enclosing TRY or
-    // propagates up the call chain — this is the native analogue of the
+    // propagates up the call chain - this is the native analogue of the
     // VM's C++ exception unwinding.
     emit_err_check();
 }
@@ -3006,7 +3006,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(ctx, current_fn, "entry");
     LLVMPositionBuilderAtEnd(builder, entry);
 
-    // Retval alloca + common exit block — every RET site writes here and
+    // Retval alloca + common exit block - every RET site writes here and
     // branches to exit_bb. The exit block is responsible for the single
     // recursion_leave + ret.
     LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
@@ -3015,10 +3015,10 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
                                        : LLVMBuildAlloca(builder, ret_ty, "retval");
     current_exit_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "fn.exit");
 
-    // Recursion guard — if over the limit, rec_enter has already set the
+    // Recursion guard - if over the limit, rec_enter has already set the
     // error state. We branch straight to exit_bb (which will NOT emit
     // leave when the error path reached it, but for simplicity always
-    // calls leave — counter reset on catch compensates for drift).
+    // calls leave - counter reset on catch compensates for drift).
     auto& re = runtime_funcs["__rec_enter"];
     LLVMValueRef rc = LLVMBuildCall2(builder, re.fn_type, re.fn, nullptr, 0, "rec_rc");
     LLVMValueRef too_deep = LLVMBuildICmp(builder, LLVMIntNE, rc,
@@ -3033,7 +3033,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         LLVMBuildStore(builder, LLVMConstNull(ret_ty), current_retval_alloca);
     }
 
-    // Create allocas for parameters — use param_tags for types.
+    // Create allocas for parameters - use param_tags for types.
     // Tag-aware ABI: a JD_TAG_RUNTIME param consumes TWO LLVM args
     // (i64 val + i32 tag) so the body can recover the dynamic type at
     // runtime via lookup_var's runtime_tag_alloca path. Track the LLVM
@@ -3137,7 +3137,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     }
 
     // Phase 4 STRICT: assignment to a declared global must have a
-    // compatible RHS. Only checked when the LHS is a known global —
+    // compatible RHS. Only checked when the LHS is a known global -
     // locals lack a StaticType table today (future phase extends).
     if (is_strict_here(stmt.source_file) && stmt.kind != StmtKind::DIM &&
         stmt.expr && stmt.var_name.find('.') == std::string::npos) {
@@ -3270,7 +3270,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
-    // Funcref via `name@` — the parser flattens it to a LITERAL_STRING
+    // Funcref via `name@` - the parser flattens it to a LITERAL_STRING
     // holding the target name. Detect the match against a known user
     // function and bind the RHS to the LLVM function pointer (tag=5)
     // so later `fn_ref(args)` lands in the indirect-call path.
@@ -3294,7 +3294,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // mark the LHS variable as string-holding so later INDEX access
     // returns tag=2 (string) instead of the default tag=1 (f64 punned).
     // If the literal mixes string and non-string elements (e.g. CSV-style
-    // [1, "Alice", 90]), tag the variable as mixed instead — INDEX on a
+    // [1, "Alice", 90]), tag the variable as mixed instead - INDEX on a
     // mixed var calls the runtime classifier per cell and returns a
     // RUNTIME-tagged value, since tagging the whole var as string would
     // pun the numeric cells into bogus pointers and crash on use.
@@ -3331,7 +3331,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             return false;
         };
         // INDEX expressions (map / VM-handle / UDT field reads) and map
-        // elements resolve to values whose real type is execution-time only —
+        // elements resolve to values whose real type is execution-time only -
         // mark the destination as mixed so arr[i] reads dispatch per cell via
         // the per-cell-tag getter instead of punning every element as a number.
         auto el_is_runtime_typed = [&](const Expr* e) -> bool {
@@ -3374,16 +3374,16 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
             u == "WORDS" || u == "CHARS")
             string_array_vars.insert(stmt.var_name);
-        // STR$(arr) returns an array of strings — mark so arr[i] reads
+        // STR$(arr) returns an array of strings - mark so arr[i] reads
         // back as STRING instead of the default-punned f64.
         if (u == "STR$" && !stmt.expr->args.empty()) {
             string_array_vars.insert(stmt.var_name);
         }
-        // OS.ARGS() returns argv as a 1D string array — without this
+        // OS.ARGS() returns argv as a 1D string array - without this
         // tracking, args[i] decoded as f64 garbage (regression 2026-05-01).
         if (u == "OS.ARGS")
             string_array_vars.insert(stmt.var_name);
-        // DIR$(wildcard$, [extended_info]) — flat form is 1D string array;
+        // DIR$(wildcard$, [extended_info]) - flat form is 1D string array;
         // extended_info=TRUE produces a 2D mixed-type matrix (filename
         // strings + size integers + type strings + dates). Without this
         // tag, names[i] decoded as f64 garbage.
@@ -3401,7 +3401,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // SELECT(fn@, arr) inherits its element type from fn's return.
         // Detect string-returning callees: $-suffix on the funcref name,
         // or a user FUNC already known to return a string array (FUNCs
-        // returning a single string also count — apply per element).
+        // returning a single string also count - apply per element).
         if (u == "SELECT" && !stmt.expr->args.empty() && stmt.expr->args[0]) {
             auto& fn_arg = *stmt.expr->args[0];
             bool fn_returns_str = false;
@@ -3418,7 +3418,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             string_array_vars.count(stmt.expr->args[0]->str_val)) {
             string_array_vars.insert(stmt.var_name);
         }
-        // APPEND(arr, val) / APPEND(arr_a, arr_b) — propagates the element
+        // APPEND(arr, val) / APPEND(arr_a, arr_b) - propagates the element
         // tag from its inputs. The runtime memcpy-merges the bits regardless,
         // but the codegen needs to know the result holds strings so subscript
         // / FOR EACH on the result var still decode correctly. Without this,
@@ -3426,7 +3426,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // produce a result that prints as zeros under -c.
         if (u == "APPEND" && stmt.expr->args.size() >= 2) {
             // Recognise scalar-string expressions inside a [scalar, scalar, ...]
-            // literal — handles VARIABLE refs to string locals, $-suffix calls,
+            // literal - handles VARIABLE refs to string locals, $-suffix calls,
             // and known $-less string-returners like JOIN. Without this, an
             // APPEND(arr, [JOIN(...)]) wouldn't tag the result as a string
             // array because the inner CALL doesn't end in $.
@@ -3481,7 +3481,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 string_array_vars.insert(stmt.var_name);
             }
         }
-        // User FUNC whose RETURN is a string-array — Phase-1 figures this out
+        // User FUNC whose RETURN is a string-array - Phase-1 figures this out
         // and populates string_array_returning_funcs. Without this, the
         // caller's `DIM files = walk(root)` would leave `files` untracked
         // and files[i] would decode as f64 garbage.
@@ -3543,7 +3543,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     VarInfo* vi = lookup_var(stmt.var_name);
     // Cross-module isolation: a bare-name assignment inside a SUB/FUNC
     // imported from one file must not write to a same-named global DIM'd
-    // in another file — a module's local `result` and main's `result` are
+    // in another file - a module's local `result` and main's `result` are
     // semantically separate. We force a fresh local in that case.
     //
     // Same-file writes DO pass through to the global though. The Assert
@@ -3567,7 +3567,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
     // Tag 7 (runtime-tagged): ALWAYS store as tag 7 with companion alloca.
-    // Never coerce to a concrete type — the runtime tag carries the truth
+    // Never coerce to a concrete type - the runtime tag carries the truth
     // about what the value IS (could be f64, string, array, VM handle).
     // Subsequent INDEX and coerce_to dispatch based on the runtime tag.
     if (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
@@ -3604,7 +3604,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             LLVMBuildStore(builder, rhs.runtime_tag, vi->runtime_tag_alloca);
             return;
         }
-        // New var — create_var already puts the val alloca in the entry block.
+        // New var - create_var already puts the val alloca in the entry block.
         // The companion rtag alloca is created right next to it.
         VarInfo& nv = create_var(stmt.var_name, JD_TAG_RUNTIME);
         LLVMBuildStore(builder, rhs.val, nv.alloca_val);
@@ -3669,7 +3669,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // tag can't decode an ordinary number as a pointer.
         vi->funcref_return_tag = fr_ret_tag;
         vi->funcref_name = fr_name;
-        // STRICT: silent slot-type changes hide bit-puns in native — `DIM x = 0`
+        // STRICT: silent slot-type changes hide bit-puns in native - `DIM x = 0`
         // gives x an i64 slot, a later `x = 3.0` SIToFP-converts the float, but
         // when the codegen path is something less innocent (a func returning a
         // ptr-typed handle stored in a numeric slot, say) the i64 slot ends up
@@ -3677,7 +3677,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // Force the user to convert explicitly with CINT / CSNG / CDBL / STR$
         // and they'll see the type clash at the source.
         // BOOL ↔ I64 is exempt: BOOL is stored as i64 0/1 and the two carry
-        // identical bit patterns — the existing codegen treats them inter-
+        // identical bit patterns - the existing codegen treats them inter-
         // changeably and STRICT-flagging them would force every test that
         // does `DIM ok = FALSE; ok = TRUE` to wrap in CBOOL/CINT for no
         // safety gain.
@@ -3697,9 +3697,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             // Pointer-typed slot can legitimately be retagged (e.g. a MAP
             // var that later gets a JSON.PARSE$ handle assigned). The bit-
             // pun-shaped mismatches are between numeric / string / number-
-            // shaped tags — STRICT-flag those. RUNTIME is the dynamic-tagged
+            // shaped tags - STRICT-flag those. RUNTIME is the dynamic-tagged
             // value the codegen produces for UDT-field reads / map_get_tagged
-            // — it carries its own runtime tag, so silently coercing into a
+            // - it carries its own runtime tag, so silently coercing into a
             // typed slot is safe (the runtime helper picks the right path).
             !(vi->tag == JD_TAG_NATIVE_MAP || vi->tag == JD_TAG_VM_HANDLE ||
               vi->tag == JD_TAG_ARR || vi->tag == JD_TAG_STR ||
@@ -3763,7 +3763,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                        (rhs.tag == JD_TAG_I64 || rhs.tag == JD_TAG_F64 ||
                         rhs.tag == JD_TAG_BOOL || rhs.tag == JD_TAG_VM_HANDLE)) {
                 // VM_HANDLE → STR materialises through __jdrt_val_to_str,
-                // not through the tag-overwrite branch below — the slot
+                // not through the tag-overwrite branch below - the slot
                 // is genuinely declared as i8* (ptr) and storing the
                 // raw i64 handle into it would segfault on the next
                 // PRINT/concat read.
@@ -3771,7 +3771,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             } else if ((rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_ARR || rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF || rhs.tag == JD_TAG_VM_HANDLE) &&
                        vi->tag != rhs.tag) {
                 // String (2), array (3), map (4), funcref (5), or VM handle
-                // (6) — replace the tag so subsequent INDEX/loads dispatch on
+                // (6) - replace the tag so subsequent INDEX/loads dispatch on
                 // the new kind. This is what makes `game = {}` (native map)
                 // + later `game = JSON.PARSE$(...)` (VM handle) Just Work,
                 // and what makes `DIM s AS STRING = arr[i]` deliver a real
@@ -3833,7 +3833,7 @@ void LLVMCodegen::codegen_static_dim(const Stmt& stmt) {
         case VarType::OBJECT:
             tag = JD_TAG_NATIVE_MAP; slot_type = i8_ptr_type; break;
         default:
-            // No declared type — peek at the init expression's literal
+            // No declared type - peek at the init expression's literal
             // shape so we pick a pointer-typed slot for collection inits.
             if (stmt.expr) {
                 if (stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
@@ -3930,10 +3930,10 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         (stmt.expr && stmt.expr->kind == ExprKind::MAP_LITERAL))
         map_scalar_vars.insert(stmt.var_name);
 
-    // Built-in constants are not assignable — `DIM PI` / `DIM VBTAB` (case-
+    // Built-in constants are not assignable - `DIM PI` / `DIM VBTAB` (case-
     // insensitive) is a compile error. The strict compiler protects the whole
     // set (PI, E, VBNEWLINE, VBCRLF, VBTAB) even though the loose interpreter
-    // only guards PI/E — shadowing any of them is a footgun.
+    // only guards PI/E - shadowing any of them is a footgun.
     {
         static const std::unordered_set<std::string> kBuiltinConsts = {
             "PI", "E", "VBNEWLINE", "VBCRLF", "VBTAB"
@@ -3947,7 +3947,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
     }
 
-    // STRICT: a DIM must commit to a type — either an explicit `AS` clause or an
+    // STRICT: a DIM must commit to a type - either an explicit `AS` clause or an
     // initializer whose type is inferable (DIM a=1 -> INTEGER, b=1.0 -> DOUBLE,
     // c="x" -> STRING, d=CVDATE(..) -> DATE). A bare `DIM x` with neither is the
     // untyped-slot footgun (silent bit-pun on a later foreign assignment), so
@@ -3962,7 +3962,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
 
     // Phase 4 STRICT: DIM with declared type + initializer must match.
     // `DIM x AS INTEGER = "hello"` is the canonical bug this catches.
-    // ARRAY and multi-dim shape inits are exempt — the initializer shape
+    // ARRAY and multi-dim shape inits are exempt - the initializer shape
     // doesn't infer cleanly as a StaticType yet, so let the legacy path
     // handle them (Phase 4 extends later).
     if (is_strict_here(stmt.source_file) && stmt.expr &&
@@ -4022,7 +4022,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
     }
 
-    // DIM x AS <type> with no initializer — create a default-valued binding
+    // DIM x AS <type> with no initializer - create a default-valued binding
     // (covers `DIM mv_y AS STRING` in multi-var DIM clauses).
     if (!stmt.expr && stmt.label.empty()) {
         int tag = JD_TAG_I64;
@@ -4049,7 +4049,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 break;
             case VarType::NONE:
                 // Bare untyped `DIM x` with no initializer. Give it a concrete
-                // INTEGER slot (numbers are not double-by-default — see STRICT)
+                // INTEGER slot (numbers are not double-by-default - see STRICT)
                 // so a later `x = <double>` goes through the normal i64<-double
                 // coercion (FPToSI) instead of bit-storing the double's raw bits
                 // into an untyped slot (the 4.6e18 silent-garbage bug). An array
@@ -4059,10 +4059,10 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 init = LLVMConstInt(i64_type, 0, 0);
                 break;
             default:
-                break;  // unknown — fall through to existing paths
+                break;  // unknown - fall through to existing paths
         }
         if (init) {
-            // DIM inside a FUNC/SUB shadows any outer binding — restrict the
+            // DIM inside a FUNC/SUB shadows any outer binding - restrict the
             // lookup to the current scope so a top-level `DIM i AS INTEGER`
             // doesn't get reused by walk()'s `DIM i AS INTEGER` (which would
             // make recursive walk()'s loop counter clobber main's loop
@@ -4118,7 +4118,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     }
 
     // DIM x AS TypeName (scalar) → call UDT constructor
-    // But NOT if stmt.expr is __MAKE_UDT_ARRAY__ — that's handled below.
+    // But NOT if stmt.expr is __MAKE_UDT_ARRAY__ - that's handled below.
     bool is_udt_array = stmt.expr && stmt.expr->kind == ExprKind::CALL &&
                         stmt.expr->func_name == "__MAKE_UDT_ARRAY__";
     if (!stmt.label.empty() && !is_udt_array) {
@@ -4173,7 +4173,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     }
 
     if (!stmt.expr) {
-        // DIM without value — create default var
+        // DIM without value - create default var
         codegen_let_or_assign(stmt);
         return;
     }
@@ -4268,7 +4268,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             if (extended) mixed_array_vars.insert(stmt.var_name);
             else          string_array_vars.insert(stmt.var_name);
         }
-        // SELECT(fn@, arr) — see codegen_let_or_assign for rationale.
+        // SELECT(fn@, arr) - see codegen_let_or_assign for rationale.
         if (u == "SELECT" && !stmt.expr->args.empty() && stmt.expr->args[0]) {
             auto& fn_arg = *stmt.expr->args[0];
             if (fn_arg.kind == ExprKind::LITERAL_STRING && fn_arg.is_funcref_lit &&
@@ -4282,11 +4282,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             string_array_vars.count(stmt.expr->args[0]->str_val)) {
             string_array_vars.insert(stmt.var_name);
         }
-        // APPEND(arr_a, arr_b) — propagate string-element tag if both args
+        // APPEND(arr_a, arr_b) - propagate string-element tag if both args
         // resolve to known string arrays. Mirror codegen_let_or_assign.
         if (u == "APPEND" && stmt.expr->args.size() >= 2) {
             // Recognise scalar-string expressions inside a [scalar, scalar, ...]
-            // literal — handles VARIABLE refs to string locals, $-suffix calls,
+            // literal - handles VARIABLE refs to string locals, $-suffix calls,
             // and known $-less string-returners like JOIN. Without this, an
             // APPEND(arr, [JOIN(...)]) wouldn't tag the result as a string
             // array because the inner CALL doesn't end in $.
@@ -4560,7 +4560,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
 
     // DIM inside a FUNC/SUB explicitly shadows any outer binding, so
     // DIM is restricted to the current scope. LET and plain ASSIGN
-    // (e.g. `PASS = PASS + 1` inside a SUB) must see outer scopes —
+    // (e.g. `PASS = PASS + 1` inside a SUB) must see outer scopes -
     // that's the only way a SUB can touch a module-level global, and
     // the VM already works this way.
     bool dim_stmt = (stmt.kind == StmtKind::DIM);
@@ -4572,7 +4572,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     } else {
         vi = lookup_var(stmt.var_name);
     }
-    // Tag 7 (runtime-tagged): mirror codegen_let_or_assign — store
+    // Tag 7 (runtime-tagged): mirror codegen_let_or_assign - store
     // the value AND a companion runtime-tag alloca so later reads can
     // dispatch on the runtime tag. Without this, `DIM c = game{"k"}`
     // keeps the i64 slot but loses the tag, and subsequent `c{"k2"}`
@@ -4607,7 +4607,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     }
     // Pre-pass may have provisionally typed vi as RUNTIME (companion rtag
     // alloca + i64 value slot) when it couldn't statically infer the rhs
-    // tag — typical for `DIM s AS STRING = arr[i]` where arr's element
+    // tag - typical for `DIM s AS STRING = arr[i]` where arr's element
     // tracking wasn't decided in time. By the time we reach this store we
     // know rhs.tag concretely; pun the value into the i64 slot, update
     // vi->tag, and bake the concrete tag into the rtag alloca so a stale
@@ -4645,10 +4645,10 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             rhs.tag = JD_TAG_STR;
         }
     }
-    // `DIM x AS FLOAT16/32/64 = <int-literal>` — the AS clause must win,
+    // `DIM x AS FLOAT16/32/64 = <int-literal>` - the AS clause must win,
     // otherwise the int RHS tag types the slot as i64. Later
     // `x = x + 0.00628` (with a CONST DOUBLE) then loads x as i64,
-    // truncates 0.00628 to int 0, and the add is a no-op — the wavi.jdb
+    // truncates 0.00628 to int 0, and the add is a no-op - the wavi.jdb
     // animation froze on exactly this. We coerce the RHS to f64 here so
     // the create_var call below sees rhs.tag == JD_TAG_F64. Mirror update
     // for an existing vi: upgrade its tag too so subsequent loads use
@@ -4753,7 +4753,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 // tagged getter can return the right type identity. For
                 // VM_HANDLE specifically we promote the handle to a
                 // persistent (negative) key first so the next DO-LOOP
-                // frame_end sweep doesn't erase it — without this, a
+                // frame_end sweep doesn't erase it - without this, a
                 // pattern like `vstate{"list"} = SQLITE.QUERY(...)` (set
                 // once during init inside the main loop) reads back
                 // garbage from frame 2 onward and indexing segfaults.
@@ -4776,7 +4776,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             } else if (val_tv.tag == JD_TAG_RUNTIME && val_tv.runtime_tag) {
                 // Runtime-tagged: pass the live runtime tag through so
                 // the stored entry carries its real type identity. The
-                // i64 bits' meaning depends on the tag — STR/ARR/VMH bits
+                // i64 bits' meaning depends on the tag - STR/ARR/VMH bits
                 // are ptrs/handles (pun-as-f64); F64 bits are an f64
                 // bit-pun (also pun back); I64/BOOL bits are a real int
                 // and need SIToFP so the f64 storage cell holds 42.0
@@ -4873,9 +4873,9 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "");
         } else if (val_tv.tag == JD_TAG_RUNTIME && val_tv.runtime_tag) {
             // RUNTIME val carries i64 bits whose meaning depends on rtag:
-            //   STR / ARR / VMH / NATIVE_MAP — pun ptr-as-i64 → f64 cell
-            //   F64 — already f64 bits (pun back)
-            //   I64 / BOOL — real int → SIToFP so map storage is a true f64
+            //   STR / ARR / VMH / NATIVE_MAP - pun ptr-as-i64 → f64 cell
+            //   F64 - already f64 bits (pun back)
+            //   I64 / BOOL - real int → SIToFP so map storage is a true f64
             //                 (read-back via coerce_to does FPToSI / SIToFP
             //                 symmetric round-trip).
             // Without the I64-aware leg, `vstate{"id"} = row{"id"}` where
@@ -4913,7 +4913,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
 
     // Track element-type for the outer array so subsequent reads can
     // pun the f64 slot back to the right tag. `arr[i] = some_matrix`
-    // is the matrix-cache-of-matrices pattern — without this hint a
+    // is the matrix-cache-of-matrices pattern - without this hint a
     // later `glyph_cache[ch]` would come back as f64 and PLOTRAW would
     // see a number where it expects an array.
     if (val_tv.tag == JD_TAG_ARR && stmt.var_name.size() &&
@@ -4923,7 +4923,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // Same trick for string elements: `names$[i] = "PLAYPAL"` punned the
     // char* through the f64 slot. Without the codegen-side string_array_vars
     // entry, later `names$[i]` reads returned the raw f64 (= integer 0 in
-    // PRINT) instead of the original char*. The runtime flag matters too —
+    // PRINT) instead of the original char*. The runtime flag matters too -
     // map/array-iteration paths consult it to know cells hold pointers.
     if (val_tv.tag == JD_TAG_STR && stmt.var_name.size() &&
         stmt.index_chain.size() == 1) {
@@ -4951,7 +4951,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildCall2(builder, pr_space.fn_type, pr_space.fn, nullptr, 0, "");
         }
 
-        // Special case: PRINT arr[idx] — use runtime-aware printer that
+        // Special case: PRINT arr[idx] - use runtime-aware printer that
         // handles ptr-encoded strings in nested arrays (e.g. SPLIT results).
         const Expr& pe = *stmt.print_exprs[i];
         // A string key (`arr{"k"}`) parses to INDEX too; routing it through the
@@ -4997,7 +4997,7 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
             LLVMValueRef args[] = { tv.val };
             LLVMBuildCall2(builder, pr_bool.fn_type, pr_bool.fn, args, 1, "");
         } else if (tv.tag == JD_TAG_NATIVE_MAP) {
-            // Format the map via jdb_map_str — feeds {"k": v, ...} into pr_str.
+            // Format the map via jdb_map_str - feeds {"k": v, ...} into pr_str.
             auto* mfn = get_runtime_func("__map_str");
             if (mfn) {
                 LLVMValueRef margs[] = { tv.val };
@@ -5148,7 +5148,7 @@ void LLVMCodegen::codegen_do_loop(const Stmt& stmt) {
     // Frame-based VM handle cleanup: save a watermark at loop-body start
     // and sweep all handles >= watermark at the end of each iteration.
     // This keeps value_store bounded without affecting long-lived handles
-    // (those allocated before the loop — e.g. JSON.PARSE results at init).
+    // (those allocated before the loop - e.g. JSON.PARSE results at init).
     auto emit_frame_begin = [&]() -> LLVMValueRef {
         auto* fb = get_runtime_func("__jdrt_frame_begin");
         if (!fb) return nullptr;
@@ -5282,7 +5282,7 @@ void LLVMCodegen::codegen_switch(const Stmt& stmt) {
     // 0=eq, 1=ge, 2=le. Returns an i1 (or sign-equivalent) comparison
     // result. Strings only support equality; range bounds with strings is
     // a hard compile-time error, surfaced as an LLVM verification fail
-    // upstream — left as a future ergonomic.
+    // upstream - left as a future ergonomic.
     auto build_cmp = [&](TypedValue sv, TypedValue cv, int op_kind) -> LLVMValueRef {
         // A string CASE label → string equality. The switch value may be STR
         // or RUNTIME-tagged (e.g. `SWITCH method$` where method$ was read from
@@ -5393,7 +5393,7 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
 
     // Determine the iter-var's element tag from Phase-2 tracking. Without
     // this, FOR EACH over a string array (e.g. SPLIT, DIR$(FALSE), OS.ARGS)
-    // would store the punned-f64 pointer as a raw double — every read of
+    // would store the punned-f64 pointer as a raw double - every read of
     // the iter-var then sees 0 instead of the string (regression 2026-05-01).
     bool source_is_string_arr = false;
     if (stmt.expr && stmt.expr->kind == ExprKind::VARIABLE &&
@@ -5413,7 +5413,7 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     VarInfo& idx_vi = create_var(idx_name, JD_TAG_I64);
     LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_vi.alloca_val);
 
-    // Loop variable — fresh local in current scope. Tag picked above based
+    // Loop variable - fresh local in current scope. Tag picked above based
     // on the source array, so the alloca is i8* for string-bearing arrays
     // and the body stores the decoded pointer rather than the raw f64.
     VarInfo& fe_var = create_var(stmt.var_name, iter_tag);
@@ -5751,7 +5751,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef args[] = { m, key, v.val };
                     LLVMBuildCall2(builder, set_str.fn_type, set_str.fn, args, 3, "");
                 } else if (v.tag == JD_TAG_ARR || v.tag == JD_TAG_NATIVE_MAP || v.tag == JD_TAG_VM_HANDLE) {
-                    // Nested ptrs — preserve tag so tagged getter
+                    // Nested ptrs - preserve tag so tagged getter
                     // returns the right type identity.
                     LLVMValueRef fv = coerce_to(v, f64_type);
                     auto& set_tg = runtime_funcs["__map_set_tagged"];
@@ -5811,7 +5811,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         }
                     }
                 }
-                // Bare-identifier constants like PI, E — call the 0-arg native fn.
+                // Bare-identifier constants like PI, E - call the 0-arg native fn.
                 std::string upper = expr.str_val;
                 std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
                 auto rit = runtime_funcs.find(upper);
@@ -5824,7 +5824,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     }
                 }
                 // Phase 3 EXPLICIT: a bare read of an undeclared name is a
-                // compile error. Dotted names (module.var) are skipped —
+                // compile error. Dotted names (module.var) are skipped -
                 // those land here when the module target isn't a known UDT
                 // and are better reported at their specific use site.
                 if (is_explicit_here(m_current_stmt_file) &&
@@ -5871,7 +5871,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             return codegen_unary(expr);
 
         case ExprKind::MEMBER_ACCESS: {
-            // obj.field — get field from UDT object
+            // obj.field - get field from UDT object
             TypedValue obj = codegen_expr(*expr.left);
             std::string field_name = expr.str_val;
             LLVMValueRef obj_ptr = obj.val;
@@ -5954,7 +5954,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     scopes.push_back(Scope{});
                     // Create temp params as array (tag=3)
                     for (int i = 0; i < arity; i++) {
-                        // Don't emit LLVM — just register in scope for type tracking
+                        // Don't emit LLVM - just register in scope for type tracking
                         scopes.back().vars[lam.lambda_params[i]] = { nullptr, JD_TAG_ARR };
                     }
                     // We can't compile the body without a proper function context,
@@ -6065,7 +6065,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 param_types.empty() ? nullptr : param_types.data(), arity, 0);
             LLVMValueRef lambda_fn = LLVMAddFunction(module, lambda_name.c_str(), fn_type);
 
-            // Save current state — including the exact insert block
+            // Save current state - including the exact insert block
             LLVMValueRef saved_fn = current_fn;
             LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
 
@@ -6095,7 +6095,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                      body.tag == JD_TAG_NATIVE_MAP)
                 // A string/array/map body is a pointer; pun its bits into the
                 // f64 return slot (the funcref calling convention is double(..))
-                // instead of letting an i8* flow into an f64 Ret — that made the
+                // instead of letting an i8* flow into an f64 Ret - that made the
                 // IR verifier abort the WHOLE compile. Consumers that handle the
                 // result (e.g. SELECT marking the result array string) recover
                 // the pointer from the f64 bits.
@@ -6105,7 +6105,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 ret_val = coerce_to(body, f64_type);
             LLVMBuildRet(builder, ret_val);
 
-            // Restore state — position builder back at the EXACT block we were in
+            // Restore state - position builder back at the EXACT block we were in
             scopes.pop_back();
             current_fn = saved_fn;
             LLVMPositionBuilderAtEnd(builder, saved_bb);
@@ -6117,11 +6117,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // Consume outer's "want ptr" hint (propagated through chains).
             bool want_ptr = m_want_ptr_result;
 
-            // arr[i] — array element access or obj{"key"} map access.
+            // arr[i] - array element access or obj{"key"} map access.
             // Propagate "want ptr" to left subexpr ONLY when the current
             // index is a string key (chained map/UDT access like
             // `m1{"a"}{"b"}`). For an integer index (`vstate{"list"}[0]`)
-            // the inner's stored value may be a VM_HANDLE — fetching it
+            // the inner's stored value may be a VM_HANDLE - fetching it
             // via the raw __map_get_obj pointer-fast-path bit-pun's the
             // handle into a JdbArray* and the outer indexing segfaults.
             // The tag-aware path (__map_get_tagged) dispatches correctly.
@@ -6145,7 +6145,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 ScopedPtrResult _pr(this, right_is_str_key);
                 arr_tv = codegen_expr(*expr.left);
             }
-            // Index expression: also no inherited hints — idx is its own
+            // Index expression: also no inherited hints - idx is its own
             // scope. (Without -1 here, an idx like `other{"i"}` would see
             // OUTER's STR hint and stringify the int it returned.)
             TypedValue idx_tv;
@@ -6188,7 +6188,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     TypedValue r; r.val = tv_val; r.tag = JD_TAG_RUNTIME; r.runtime_tag = tv_tag;
                     // Honour leaf_hint from the dest var so a $-var stays
                     // tag=2 (string) instead of being promoted to tag=7 by
-                    // assignment — a conditionally-skipped write would then
+                    // assignment - a conditionally-skipped write would then
                     // leave the runtime_tag slot at 0 and turn later reads
                     // into garbage-formatted doubles.
                     if (leaf_hint == 2) return { coerce_to(r, i8_ptr_type), JD_TAG_STR };
@@ -6265,10 +6265,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 }
 
                 // Decide UDT vs native-map access. The punned ptr could be
-                // a UDT instance or a JdbMap — same struct, different
+                // a UDT instance or a JdbMap - same struct, different
                 // registered getter names. Check both:
-                //   v{"k"}       — v is a UDT variable
-                //   arr[i]{"k"}  — arr[] has a UDT element type
+                //   v{"k"}       - v is a UDT variable
+                //   arr[i]{"k"}  - arr[] has a UDT element type
                 bool is_udt = false;
                 if (expr.left && expr.left->kind == ExprKind::VARIABLE)
                     is_udt = var_udt_type.count(expr.left->str_val) > 0;
@@ -6353,7 +6353,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "vget"), JD_TAG_VM_HANDLE };
             }
 
-            // Get array pointer — may need to convert from encoded param
+            // Get array pointer - may need to convert from encoded param
             LLVMValueRef arr_ptr = arr_tv.val;
             if (arr_tv.tag == JD_TAG_F64) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(arr_tv.val);
@@ -6365,7 +6365,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // Fancy/vector indexing: `arr[indices_array]` returns a new
             // array with arr's elements gathered at the given positions
             // (APL/Numpy-style). Without this the codegen would pass a
-            // ptr where __array_get expects an i64 — LLVM IR verifier
+            // ptr where __array_get expects an i64 - LLVM IR verifier
             // rejects the call. Dispatch to jdb_array_gather instead.
             if (idx_tv.tag == JD_TAG_ARR) {
                 auto& gather = runtime_funcs["__array_gather"];
@@ -6451,7 +6451,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
             // Element of a nested array (`arr` itself came from an inner
             // INDEX, e.g. `grid[i][j]`). The inner array's element type is
-            // statically unknown — none of the var-keyed sets above apply
+            // statically unknown - none of the var-keyed sets above apply
             // because expr.left is an INDEX, not a VARIABLE. Recover the
             // per-cell JdTag at runtime (elem_tags, else the looks-ptr
             // heuristic over the array-wide string/nested flags) and return
@@ -6574,7 +6574,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     materialise_vmh(rhs, lhs);
 
     // String concatenation: str + str, str + int, int + str, str + float, etc.
-    // But NOT if one side is an array (tag=3) — that goes to array arithmetic
+    // But NOT if one side is an array (tag=3) - that goes to array arithmetic
     if (expr.op == TokenType::PLUS && (lhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_STR) &&
         lhs.tag != JD_TAG_ARR && rhs.tag != JD_TAG_ARR) {
         // Convert non-string operand to string. Use to_string_ptr for
@@ -6724,7 +6724,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::MINUS: arith_op = 1; break;
             case TokenType::STAR:  arith_op = 2; break;
             case TokenType::SLASH: arith_op = 3; break;
-            // Bitwise / shift — match the runtime's scalar_op codes 4-8
+            // Bitwise / shift - match the runtime's scalar_op codes 4-8
             // so element-wise `Masks BAND 1`, `IOTA(N,0) SHL 1` etc.
             // dispatch through the same array runtime as `+`/`-`.
             case TokenType::BAND:  arith_op = 4; break;
@@ -6764,7 +6764,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), JD_TAG_ARR };
             }
         } else if (lhs.tag == JD_TAG_ARR) {
-            // arr OP scalar — string-array-vs-string path takes precedence
+            // arr OP scalar - string-array-vs-string path takes precedence
             // when the lhs source is a known string array (the numeric
             // path would otherwise compare punned-pointer bits or, for
             // a JD_TAG_STR rhs, hand a ptr to a function expecting f64
@@ -6791,7 +6791,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
                 return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "acmp"), JD_TAG_ARR };
             }
         } else {
-            // scalar OP arr — same string-array dispatch with sides flipped.
+            // scalar OP arr - same string-array dispatch with sides flipped.
             if (cmp_op >= 0 && lhs.tag == JD_TAG_STR && expr.right &&
                 expr.right->kind == ExprKind::VARIABLE &&
                 string_array_vars.count(expr.right->str_val)) {
@@ -6821,7 +6821,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // (String repeat is now handled below via native jdb_str_repeat)
 
     // String comparison: =, <>, and ordering <,>,<=,>= (when one side is a
-    // string). Ordering goes through __str_cmp (content compare) — without it
+    // string). Ordering goes through __str_cmp (content compare) - without it
     // the operands fell through to PtrToInt+ICmp and compared heap addresses.
     if ((lhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_STR) &&
         (expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN ||
@@ -6911,7 +6911,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     if (expr.op == TokenType::SLASH || expr.op == TokenType::CARET) {
         use_float = true;
     }
-    // Bitwise / shift ops are integer-only — coerce float operands
+    // Bitwise / shift ops are integer-only - coerce float operands
     // through an FPToSI so `1.0 SHL 2` matches the interpreter's
     // `to_int() << to_int()` semantics.
     if (expr.op == TokenType::SHL || expr.op == TokenType::SHR ||
@@ -6971,7 +6971,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::XOR:
             case TokenType::BXOR:      return { LLVMBuildXor(builder, lhs.val, rhs.val, "bxor"), JD_TAG_I64 };
             case TokenType::SHL:       return { LLVMBuildShl(builder, lhs.val, rhs.val, "shl"), JD_TAG_I64 };
-            // Arithmetic right shift (sign-preserving) — matches the
+            // Arithmetic right shift (sign-preserving) - matches the
             // interpreter, which uses C++ `int64_t >> n` (impl-defined but
             // arithmetic on every mainstream compiler).
             case TokenType::SHR:       return { LLVMBuildAShr(builder, lhs.val, rhs.val, "shr"), JD_TAG_I64 };
@@ -7238,7 +7238,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef appended = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "app");
             // A string scalar is stored bit-punned but UNTAGGED by jdb_array_append.
             // Mark the result's elements as strings so the tag survives a pass
-            // through the VM bridge — e.g. TUI.MENU doing arr->elements[i].as_string()
+            // through the VM bridge - e.g. TUI.MENU doing arr->elements[i].as_string()
             // reads blank otherwise. Mirrors the ARRAY_LITERAL string path.
             if (b.tag == JD_TAG_STR) {
                 auto* set_str = get_runtime_func("__arr_set_string_elems");
@@ -7252,7 +7252,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // ZEROS([N]) / ZEROS([N, M]) used as an *expression* (LET assignment,
-    // call argument, etc.) — codegen_dim has a special 2D path that
+    // call argument, etc.) - codegen_dim has a special 2D path that
     // builds a real nested array, but in expression context the call
     // would otherwise fall through to runtime jdb_zeros which expects a
     // flat i64 size and reads the array-literal pointer as the size,
@@ -7493,7 +7493,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         auto& fi = uit->second;
 
         // ASYNC FUNC: spawn a thread via the runtime helper. We can't
-        // emit a direct LLVMBuildCall — that runs the body inline in
+        // emit a direct LLVMBuildCall - that runs the body inline in
         // the caller's thread. Instead, build/get a uniform funcref
         // wrapper (f64 args + f64 return) and pass its pointer to
         // __jdrt_async_spawn along with a packed args array; the
@@ -7552,7 +7552,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                                                       call_args, 5, "async_id");
                 return { task_id, JD_TAG_I64 };
             }
-            // No wrapper / no helper — fall through to the synchronous
+            // No wrapper / no helper - fall through to the synchronous
             // call below as a degraded best-effort.
         }
 
@@ -7585,11 +7585,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // Scope the leaf-type hint to the param's expected type so an
             // outer assignment context (e.g. `out$ = ... + q$(params[i])`)
             // can't leak its STR hint into the inner index codegen.
-            // F64/I64 params get NO hint — propagating would force the
+            // F64/I64 params get NO hint - propagating would force the
             // map_get_f64 fast-path on map-stored strings (and break a
             // BINARY-EQ comparison passed in as the arg, since the EQ
             // result was being f64-pun'd through the string slot).
-            // RUNTIME-typed param: also no hint — we want the arg
+            // RUNTIME-typed param: also no hint - we want the arg
             // codegen to return a RUNTIME-tagged TypedValue with its
             // real per-cell tag preserved.
             int arg_leaf_hint = (expected_tag == JD_TAG_STR) ? JD_TAG_STR : -1;
@@ -7617,7 +7617,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 } else if (av.tag == JD_TAG_BOOL) {
                     val_i64 = LLVMBuildSExt(builder, av.val, i64_type, "av_b2i");
                     tag_i32 = LLVMConstInt(i32_type, JD_TAG_BOOL, 0);
-                } else {  // I64 / VM_HANDLE / unknown — pass raw bits
+                } else {  // I64 / VM_HANDLE / unknown - pass raw bits
                     val_i64 = av.val;
                     tag_i32 = LLVMConstInt(i32_type, av.tag, 0);
                 }
@@ -7691,7 +7691,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // JSON.STRINGIFY$ supports MAP and ARRAY only. A native UDT instance does
-    // not marshal across the VM bridge — it would silently stringify to "".
+    // not marshal across the VM bridge - it would silently stringify to "".
     // Fail loud at compile time instead (use a MAP, or build the JSON from the
     // fields). Detect a UDT-typed argument via var_udt_type / infer_expr_type.
     if (upper == "JSON.STRINGIFY$" && !expr.args.empty() && expr.args[0]) {
@@ -7712,7 +7712,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // STR$(arg) — tag-aware. Default `jdb_str(double)` punnes strings
+    // STR$(arg) - tag-aware. Default `jdb_str(double)` punnes strings
     // and prints booleans as 1/0; route to specific helpers when the
     // input tag is known.
     if (upper == "STR$" && expr.args.size() == 1) {
@@ -7748,9 +7748,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
         // Pre-evaluate args; route to __formatN_t when any arg's type can't
         // be reduced to a plain f64 at codegen time. Three triggers:
-        //   - JD_TAG_STR        — direct string ptr, runtime needs to know
-        //   - JD_TAG_VM_HANDLE  — pass raw key, runtime materialises per spec
-        //   - JD_TAG_RUNTIME    — value type is decided at runtime by the
+        //   - JD_TAG_STR        - direct string ptr, runtime needs to know
+        //   - JD_TAG_VM_HANDLE  - pass raw key, runtime materialises per spec
+        //   - JD_TAG_RUNTIME    - value type is decided at runtime by the
         //                         tagged map-getter; we materialise to STRING
         //                         at codegen time via coerce_to(i8_ptr_type),
         //                         which dispatches on the runtime tag.
@@ -7775,7 +7775,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (fit3 != runtime_funcs.end()) {
                 // Types buffer is now stack-allocated so RUNTIME-tagged args
                 // can write either 's' or 'd' at runtime based on their
-                // dispatching tag — a const string literal can't express
+                // dispatching tag - a const string literal can't express
                 // that. The buffer is nargs+1 bytes (+1 for NUL terminator).
                 LLVMTypeRef i8_ty = LLVMInt8TypeInContext(ctx);
                 LLVMTypeRef tbuf_ty = LLVMArrayType(i8_ty, nargs + 1);
@@ -8023,7 +8023,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // AGG(keys, values, reducer@) — group + reduce. The reducer receives each
+    // AGG(keys, values, reducer@) - group + reduce. The reducer receives each
     // group as an ARRAY, so it can't go through the f64(f64) funcref path used
     // by SELECT: its single parameter must be array-typed. Two native forms:
     //   - LAMBDA g -> SUM(g)         (compiled here with an ARR-bound param)
@@ -8131,13 +8131,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "PUSH" && expr.args.size() >= 2) {
         TypedValue arr_tv = codegen_expr(*expr.args[0]);
         TypedValue val_tv = codegen_expr(*expr.args[1]);
-        // VM-handle / runtime-tagged pushes must preserve raw i64 bits —
+        // VM-handle / runtime-tagged pushes must preserve raw i64 bits -
         // coerce_to(tag=7, f64) would CONVERT a VM handle via __jdrt_val_to_f64
         // (yielding 0 for a map object), erasing the handle. Pun directly so
         // the element round-trips through f64 storage. EXCEPT: for a
         // RUNTIME-tagged value whose real type is I64/BOOL (e.g. a JSON
         // int field accessed via tag-aware obj_get_tagged), the i64 bits
-        // are a real integer — pun would write a denormal f64 cell that
+        // are a real integer - pun would write a denormal f64 cell that
         // index_of's `=` comparison never matches, so combos lost their
         // selection on round-trip.
         LLVMValueRef fval;
@@ -8289,7 +8289,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, ev_ptr, i64_type, "ev_i"), ap0);
                 LLVMValueRef tp0 = LLVMBuildGEP2(builder, i32_type, tags_arr, idx0, 1, "tp0");
                 LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_STR, 0), tp0);
-                // Slot 1: handler name (STR) — string literal
+                // Slot 1: handler name (STR) - string literal
                 LLVMValueRef hname_lit = LLVMBuildGlobalStringPtr(builder,
                     expr.args[1]->str_val.c_str(), ".hn");
                 LLVMValueRef idx1[] = { LLVMConstInt(i32_type, 1, 0) };
@@ -8321,7 +8321,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
-    // CVDATE — dispatch by argument type (string parses ISO, number is
+    // CVDATE - dispatch by argument type (string parses ISO, number is
     // epoch seconds, array is element-wise vectorized).
     if ((upper == "CVDATE" || upper == "CDATE") && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
@@ -8354,7 +8354,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // IOTA(count, start, step) → native 3-arg form.
-    // IOTA(count, start) is the same with step=1 — without the explicit
+    // IOTA(count, start) is the same with step=1 - without the explicit
     // dispatch, the bridge fallback returned an empty array.
     if (upper == "IOTA" && (expr.args.size() == 2 || expr.args.size() == 3)) {
         TypedValue n  = codegen_expr(*expr.args[0]);
@@ -8383,7 +8383,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "random2"), JD_TAG_F64 };
     }
 
-    // POP(arr) — remove last element; return type follows the array's
+    // POP(arr) - remove last element; return type follows the array's
     // string-flag (bit 1 of JdbArray::flags). We branch at runtime.
     if (upper == "POP" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
@@ -8431,7 +8431,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Handle LENV — shape vector: [dim0, dim1, …] for nested arrays,
+    // Handle LENV - shape vector: [dim0, dim1, …] for nested arrays,
     // [n] for 1D arrays/strings. Always tag=3 (array) so callers can
     // index it.
     if (upper == "LENV" && expr.args.size() == 1) {
@@ -8467,7 +8467,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMConstPointerNull(i8_ptr_type), JD_TAG_ARR };
     }
 
-    // Handle LEN — dispatch based on argument type (string vs array)
+    // Handle LEN - dispatch based on argument type (string vs array)
     if (upper == "LEN" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
         if (av.tag == JD_TAG_STR) {
@@ -8542,14 +8542,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Fallback
     }
 
-    // Handle TYPEOF — resolve type tag at compile time
-    // ISBOOL/ISNUM/ISSTR/ISARR/ISMAP/ISNONE — compile-time type tests
+    // Handle TYPEOF - resolve type tag at compile time
+    // ISBOOL/ISNUM/ISSTR/ISARR/ISMAP/ISNONE - compile-time type tests
     if ((upper == "ISBOOL" || upper == "ISNUM" || upper == "ISSTR" ||
          upper == "ISARR" || upper == "ISMAP" || upper == "ISNONE" ||
          upper == "ISNULL") && expr.args.size() == 1) {
         const Expr& arg = *expr.args[0];
         // ISNONE/ISNULL: runtime detection. Two NONE sources are detectable:
-        //   (a) a map miss — ISNONE(m{"k"}) == NOT exists(m, k);
+        //   (a) a map miss - ISNONE(m{"k"}) == NOT exists(m, k);
         //   (b) the f64 NaN sentinel a no-RETURN function leaves behind.
         // The map value representation is unchanged (a miss still reads as 0 in
         // arithmetic); only ISNONE/ISNULL learn to spot the missing case.
@@ -8587,7 +8587,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         LLVMConstInt(i64_type, 0, 0), "isnone");
                     return { LLVMBuildZExt(builder, isn, i64_type, "ext"), JD_TAG_BOOL };
                 }
-                // RUNTIME / unknown base: can't tell — conservatively not none.
+                // RUNTIME / unknown base: can't tell - conservatively not none.
                 return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
             }
             // Any other arg: native has no NONE representation for it (a
@@ -8655,7 +8655,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), JD_TAG_STR };
         }
         TypedValue av = codegen_expr(*expr.args[0]);
-        // f64 values may be the NaN sentinel from EXITFUNC — dispatch at runtime.
+        // f64 values may be the NaN sentinel from EXITFUNC - dispatch at runtime.
         if (av.tag == JD_TAG_F64) {
             auto& fn = runtime_funcs["__typeof_f64"];
             LLVMValueRef args[] = { av.val };
@@ -8663,7 +8663,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             return { result, JD_TAG_STR };
         }
         auto& fn = runtime_funcs["__typeof_tag"];
-        // RUNTIME-tagged values carry their real JdTag in av.runtime_tag —
+        // RUNTIME-tagged values carry their real JdTag in av.runtime_tag -
         // dispatch on that so TYPEOF on an untyped FUNC param sees the
         // execution-time type instead of the static "RUNTIME" placeholder.
         LLVMValueRef tag_val;
@@ -8697,7 +8697,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // Auto-vectorization blocklist for native codegen.
     // Any function NOT listed here vectorizes element-wise when any arg is
     // an array (e.g. RIGHT$(["Alice","Bert"], 2) → ["ce","rt"]).
-    // This list is codegen-specific and does NOT mirror vm.cpp — the VM
+    // This list is codegen-specific and does NOT mirror vm.cpp - the VM
     // bridge has its own smaller list in vm.cpp (VM::call_function).
     static const std::unordered_set<std::string> no_vectorize = {
         // Array producers
@@ -8764,12 +8764,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // Graphics primitives that consume arrays as a whole (matrix arg,
         // colour-list arg). Auto-vectorising PLOTRAW with a 2D RGB cache
         // collapses to one PLOTRAW per element with a scalar in the matrix
-        // slot — every call sees args[2].type==FLOAT64 and exits early.
+        // slot - every call sees args[2].type==FLOAT64 and exits early.
         // Same shape applies to the other matrix-form drawing primitives.
         "PLOTRAW", "RECT", "CIRCLE", "LINE", "ELLIPSE", "ROUNDED_RECT",
         "CIRCLE_SECTOR", "PSET", "TEXT", "GFX.PLOT_POINTS", "DRAWCOLOR",
         "SCREEN", "SCREENFLIP", "SETFONT", "TOGGLE_FULLSCREEN",
-        // OpenGL — array args (VBO data) are payload, not broadcast targets.
+        // OpenGL - array args (VBO data) are payload, not broadcast targets.
         "GL.WINDOW", "GL.CLOSE", "GL.CLEAR", "GL.FLIP", "GL.VIEWPORT",
         "GL.ENABLE", "GL.DISABLE",
         "GL.SHADER", "GL.USE", "GL.SHADER.DELETE",
@@ -8837,7 +8837,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // Evaluate every argument exactly once, up front, with the scalar runtime
     // binding's param-type hints. Every dispatch path below (direct-array math,
     // native/generic vectorize, the per-builtin special cases, the scalar call,
-    // and the VM-bridge fallback) reuses these — so a side-effecting arg
+    // and the VM-bridge fallback) reuses these - so a side-effecting arg
     // (ABS(f()), CINT(f()), MAP.EXISTS(m, f())) is run exactly once, never 2-3x.
     std::vector<TypedValue> arg_cache;
     {
@@ -8853,7 +8853,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Direct array specializations — bypass the apply_ff function-pointer
+    // Direct array specializations - bypass the apply_ff function-pointer
     // callback for unary math that can inline + vectorise.
     {
         static const std::unordered_map<std::string, const char*> direct_array_unary = {
@@ -8880,7 +8880,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Try native vectorization first — avoids VM bridge overhead.
+    // Try native vectorization first - avoids VM bridge overhead.
     {
         auto vit = native_vec.find(upper);
         if (vit != native_vec.end() && !expr.args.empty()) {
@@ -8888,7 +8888,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (av.tag == JD_TAG_ARR) {
                 const VecSpec& spec = vit->second;
                 // Look up the scalar runtime function's LLVMValueRef (by name via runtime_funcs)
-                // We need to find it by the jdb_* C name — scan all registered runtimes.
+                // We need to find it by the jdb_* C name - scan all registered runtimes.
                 LLVMValueRef scalar_fn = nullptr;
                 for (auto& [k, rf] : runtime_funcs) {
                     // Compare via the C function name (LLVMValueRef name)
@@ -9098,7 +9098,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Handle MIN/MAX — array (1 arg)
+    // Handle MIN/MAX - array (1 arg)
     if ((upper == "MIN" || upper == "MAX") && expr.args.size() == 1) {
         // Array version
         std::string fn_name = (upper == "MIN") ? "__arr_min" : "__arr_max";
@@ -9116,11 +9116,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // MAP.EXISTS(map, key$) — intercept to call __map_has directly.
+    // MAP.EXISTS(map, key$) - intercept to call __map_has directly.
     // The bridge has no NATIVE_MAP path, so going through jdrt_call_typed_f64
     // downgrades the map to I64, the VM's MAP.EXISTS does as_object() → empty,
     // and every lookup returns false. That breaks `IF MAP.EXISTS(m, k) THEN
-    // m2{k}=m{k}` (classic JSON-to-map forwarding) — exactly the pattern
+    // m2{k}=m{k}` (classic JSON-to-map forwarding) - exactly the pattern
     // rpg_engine.jdb uses to build per-NPC data from Tiled properties.
     if (upper == "MAP.EXISTS" && expr.args.size() == 2) {
         TypedValue mtv = arg_cache[0];
@@ -9144,7 +9144,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // VM handle (JSON.PARSE$, MAP.FROM, etc.): go direct to
         // __jdrt_obj_exists. Routing through jdrt_call_typed_f64 works in
         // principle but has been observed to return 0 for handles that
-        // resolve correctly via the direct getter — likely because the
+        // resolve correctly via the direct getter - likely because the
         // f64 bridge path runs MAP.EXISTS under the autovec guard, and
         // the handle's tag mapping into the typed-args helper loses info.
         if (mtv.tag == JD_TAG_VM_HANDLE) {
@@ -9156,7 +9156,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef a[] = { rt, mtv.val, kptr };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, a, 3, "oex"), JD_TAG_I64 };
         }
-        // Runtime-tagged: branch on runtime_tag — if VM_HANDLE, use
+        // Runtime-tagged: branch on runtime_tag - if VM_HANDLE, use
         // obj_exists; else fall to __map_has on the punned pointer.
         if (mtv.tag == JD_TAG_RUNTIME && mtv.runtime_tag) {
             TypedValue ktv = arg_cache[1];
@@ -9198,7 +9198,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     if (upper == "VAL" && expr.args.size() == 1) {
         TypedValue av = arg_cache[0];
         if (av.tag == JD_TAG_F64) {
-            // f64 value — might be a pointer-encoded string from OS.ARGS
+            // f64 value - might be a pointer-encoded string from OS.ARGS
             auto& fn = runtime_funcs["__val_ptr"];
             LLVMValueRef args[] = { av.val };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "val");
@@ -9240,7 +9240,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // hint so `SCREEN SW, SH, game{"title"}` asks the runtime for
             // f64 / f64 / str instead of all-strings.
             // Only set the hint for numeric params (f64/i64). Setting it
-            // for i8_ptr is ambiguous — the LLVM type doesn't distinguish
+            // for i8_ptr is ambiguous - the LLVM type doesn't distinguish
             // a string-arg builtin (STR$, CONCAT) from an array-arg one
             // (JOIN, PUSH, SORT). For i8_ptr we let the arg codegen pick
             // the tagged path; coerce_to handles the resulting RUNTIME tag.
@@ -9284,7 +9284,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // APPEND(arr, <string scalar>) stores the string ptr bit-punned but
             // UNTAGGED via jdb_array_append. The codegen-side string_array_vars
             // flag lets arr[i] reads decode, but the element carries no runtime
-            // JdTag — so passing the array through the VM bridge into a
+            // JdTag - so passing the array through the VM bridge into a
             // register_native (TUI.MENU/TEXT doing arr->elements[i].as_string())
             // reads blank. Mark the result's elements as strings, mirroring the
             // ARRAY_LITERAL string path, so the tag travels with the array.
@@ -9327,7 +9327,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // Allocate i64[] for args and i32[] for type tags.
                 // Hoist these allocas to the function's entry block so
                 // they don't stack up when this call site sits inside a
-                // loop — a non-entry-block alloca allocates fresh stack
+                // loop - a non-entry-block alloca allocates fresh stack
                 // every loop iteration and never releases until the
                 // function returns, which overflows the stack on long
                 // render loops (observed in gfx_native_storm.jdb).
@@ -9345,7 +9345,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 LLVMPositionBuilderAtEnd(builder, cur_bb);
 
                 for (int i = 0; i < nargs; i++) {
-                    // Bridge dispatch resolves arg types at runtime — an
+                    // Bridge dispatch resolves arg types at runtime - an
                     // outer leaf-tag hint (e.g. `k_idx = GUI.COMBO(...)`
                     // with k_idx INTEGER setting leaf=I64) must NOT leak
                     // into the inner map-get for `vstate{"items"}`. Without
@@ -9478,11 +9478,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "CVDATE", "CDATE", "DATEADD", "FORMAT_DATE",
                 // GUI.INPUT returns the (possibly edited) text-field content
                 // as a string; without this it gets routed through
-                // jdrt_call_typed_f64 and the result comes back as 0.0 —
+                // jdrt_call_typed_f64 and the result comes back as 0.0 -
                 // every text field shows "0" and edits never persist. The
                 // INT/DOUBLE variants stay numeric and don't need an entry.
                 "GUI.INPUT",
-                // TUI.INPUT mirrors GUI.INPUT — string return value, would
+                // TUI.INPUT mirrors GUI.INPUT - string return value, would
                 // otherwise be dropped by the bridge's default f64 path.
                 "TUI.INPUT"
             };
@@ -9497,13 +9497,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "HTTP.REQUEST",
                 "OS.EXEC",
                 "SVD", "QR", "EIG",
-                // Channel RECV returns whatever Value the producer sent —
+                // Channel RECV returns whatever Value the producer sent -
                 // could be i64, f64, string, array, map, or the EOF marker.
                 // VM_HANDLE keeps the tag intact so CHAN.IS_EOF and the
                 // FOR EACH polymorphic dispatch can recognise it later.
                 "CHAN.RECV",
                 // AWAIT / THREAD.GETRESULT yield the awaited task's actual
-                // Value — could be any type, so route through VM_HANDLE so
+                // Value - could be any type, so route through VM_HANDLE so
                 // strings + arrays + maps survive intact. Without this,
                 // AWAIT was hitting the f64 fallback and stringifying via
                 // to_double() = 0.0, killing string-returning ASYNC funcs.
@@ -9541,7 +9541,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 return { result, JD_TAG_ARR };
             } else if (is_object_fn) {
                 // Returned i64 looks identical to a native JdbMap* but is
-                // a value_store handle — the VM_HANDLE tag routes field
+                // a value_store handle - the VM_HANDLE tag routes field
                 // access through jdrt_obj_* instead of jdb_map_*.
                 auto& fn = runtime_funcs["__jdrt_call_typed_obj"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmobj");
@@ -9596,7 +9596,7 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
 
 LLVMCodegen::TypedValue LLVMCodegen::promote_to_f64(TypedValue tv) {
     if (tv.tag == JD_TAG_F64) return tv;
-    // BOOL is bit-identical to I64 (0/1) — same conversion path.
+    // BOOL is bit-identical to I64 (0/1) - same conversion path.
     if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_BOOL)
         return { LLVMBuildSIToFP(builder, tv.val, f64_type, "itof"), JD_TAG_F64 };
     // Runtime-tagged (nested-index) cell: branch on its per-cell tag.
@@ -9648,7 +9648,7 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
     // FUNC string-returning. We must look at what the EXPRESSION
     // evaluates to, NOT what's nested inside. Recursing into CALL
     // args was wrong: ASC("!") has a string literal argument but
-    // returns int — yet recursing flagged the whole FUNC as string-
+    // returns int - yet recursing flagged the whole FUNC as string-
     // returning, so the codegen made `ret_type = ptr`. PRINT later
     // tried to %s-format an int-as-pointer and segfaulted.
     if (e.kind == ExprKind::LITERAL_STRING) return true;
@@ -9676,9 +9676,9 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     // Runtime-tagged value (tag 7): branch on runtime tag to pick the
     // right conversion. Three cases matter:
-    //   STR (2)        — pun i64 back to char* (or VAL→f64)
-    //   VM_HANDLE (6)  — i64 is a value_store key; deref via jdrt_val_*
-    //   anything else  — i64 holds f64 bits (or numeric)
+    //   STR (2)        - pun i64 back to char* (or VAL→f64)
+    //   VM_HANDLE (6)  - i64 is a value_store key; deref via jdrt_val_*
+    //   anything else  - i64 holds f64 bits (or numeric)
     if (tv.tag == JD_TAG_RUNTIME && tv.runtime_tag) {
         LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
             LLVMConstInt(i32_type, 2, 0), "dyn_isstr");
@@ -9756,7 +9756,7 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
 
-            // Array rtag: i64 holds a JdbArray* — return the raw ptr so
+            // Array rtag: i64 holds a JdbArray* - return the raw ptr so
             // builtins that take an array (JOIN, PUSH, SORT, etc.) get the
             // real array. Consumers that want a stringified rendering
             // (PRINT / string-concat) call FRMV$ themselves; routing
@@ -9867,7 +9867,7 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
         if (tv.tag == JD_TAG_STR || tv.tag == JD_TAG_ARR || tv.tag == JD_TAG_NATIVE_MAP || tv.tag == JD_TAG_FUNCREF)
             return LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
         if (tv.tag == JD_TAG_VM_HANDLE) {
-            // VM handle is *already* an i64 value-store key — pass it through
+            // VM handle is *already* an i64 value-store key - pass it through
             // unchanged. The previous "materialise as double, then FPToSI"
             // path lost the handle (the f64 form is the deref'd VALUE, not
             // the key) and was the silent cause of `RETURN handle` from
@@ -9917,7 +9917,7 @@ LLVMValueRef LLVMCodegen::to_string_ptr(TypedValue tv) {
             return LLVMBuildCall2(builder, fn->fn_type, fn->fn, args, 1, "n2s");
         }
     }
-    // Other ptr-typed values (array/map/lambda) — pass through as i8*.
+    // Other ptr-typed values (array/map/lambda) - pass through as i8*.
     return coerce_to(tv, i8_ptr_type);
 }
 
@@ -9982,7 +9982,7 @@ LLVMCodegen::RuntimeFunc* LLVMCodegen::get_runtime_func(const std::string& name)
 
 // Forward-declare the New-PassManager C entry points. They are exported
 // from LLVM-C.dll as of LLVM 17, but the bundled headers in libs/LLVM
-// don't ship llvm-c/Transforms/PassBuilder.h — without this declaration
+// don't ship llvm-c/Transforms/PassBuilder.h - without this declaration
 // we couldn't run the optimization pipeline and every DIM stayed as an
 // alloca + load/store, leaving fib.exe ~1.5x slower than it had to be.
 extern "C" {
@@ -10078,7 +10078,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                                    const std::string& res_path) {
     // Find the precompiled runtime object. Win build emits .obj, Linux .o.
     // We probe both an in-tree dev layout (`build/`) and a flat layout
-    // (next to whichever EXE invoked us — typical for redistributed bundles
+    // (next to whichever EXE invoked us - typical for redistributed bundles
     // where the user unpacks the zip and `cd`s into it before running -c).
     std::string runtime_obj;
     for (auto& candidate : {
@@ -10254,7 +10254,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         }
     }
 
-    // 3) Windows SDK fallback — pick newest version found under Lib.
+    // 3) Windows SDK fallback - pick newest version found under Lib.
     if (sdk.empty()) sdk = "C:\\Program Files (x86)\\Windows Kits\\10";
     if (sdkv.empty()) {
         std::string lib_root = sdk + "\\Lib";
@@ -10269,7 +10269,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
                         n > newest) newest = n;
                 }
             } catch (...) {
-                // Permission errors etc. — leave sdkv empty so the helpful
+                // Permission errors etc. - leave sdkv empty so the helpful
                 // error message below tells the user what to install.
             }
             sdkv = newest;
@@ -10340,7 +10340,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     return true;
 #else
     // POSIX: hand the pre-compiled runtime object plus the LLVM-generated obj
-    // to g++. We don't link libjdbrt yet — that's only needed for programs
+    // to g++. We don't link libjdbrt yet - that's only needed for programs
     // that call out to VM builtins (HTTP, GFX, etc.); pure arithmetic /
     // string / array programs are fully covered by jdb_runtime.o.
     (void)res_path;  // .res is Win-specific (VERSIONINFO resources)
@@ -10351,12 +10351,12 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         return out;
     };
     // -no-pie because LLVM emits non-PIC code by default and modern gcc
-    // defaults to PIE — the resulting .obj has R_X86_64_32 relocations
+    // defaults to PIE - the resulting .obj has R_X86_64_32 relocations
     // that the linker rejects in PIE builds.
     // libjdbrt.so provides the VM C-API (jdrt_*). Embed three rpaths:
-    //   $ORIGIN          — exe sits next to the .so (deployment case)
-    //   $ORIGIN/build    — exe sits at the project root
-    //   <abs-build-path> — absolute path of the build/ dir at compile
+    //   $ORIGIN          - exe sits next to the .so (deployment case)
+    //   $ORIGIN/build    - exe sits at the project root
+    //   <abs-build-path> - absolute path of the build/ dir at compile
     //                      time, lets the generated exe run from any cwd
     std::string abs_build = std::filesystem::absolute("build").string();
     std::string link_cmd =

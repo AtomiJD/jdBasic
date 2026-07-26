@@ -114,9 +114,9 @@ struct RagChunk {
 };
 
 struct LlmModel; // forward
-// Dense embedding via llama.cpp — implementiert weiter unten nach LlmModel-Definition
+// Dense embedding via llama.cpp - implementiert weiter unten nach LlmModel-Definition
 static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string& text);
-// Lookup eines LLM via id — implementiert nach g_llms-Deklaration
+// Lookup eines LLM via id - implementiert nach g_llms-Deklaration
 static LlmModel* rag_lookup_llm(int id);
 
 struct RagStore {
@@ -130,7 +130,7 @@ struct RagStore {
 
     // Optionaler HNSW-Index für schnelle Suche bei großen Indizes.
     // Wird via AI.RAG_BUILD_INDEX aufgebaut. Der Index wird bei add_text NICHT
-    // automatisch aktualisiert — neue Chunks erfordern einen erneuten Build.
+    // automatisch aktualisiert - neue Chunks erfordern einen erneuten Build.
     std::unique_ptr<hnsw::HnswIndex> hnsw_index;
     bool hnsw_dirty = false;  // true wenn add_text seit letztem Build aufgerufen wurde
 
@@ -157,7 +157,7 @@ struct RagStore {
         }
 
         if (dense_mode()) {
-            // Echte Embeddings via llama.cpp — pro Chunk
+            // Echte Embeddings via llama.cpp - pro Chunk
             auto* m = rag_lookup_llm(embed_llm_id);
             if (!m) throw std::runtime_error("RAG: embedding model not loaded");
             for (auto idx : new_chunk_indices) {
@@ -173,7 +173,7 @@ struct RagStore {
             for (auto& c : chunks) c.sparse = engine.embed(c.text);
         }
 
-        // HNSW-Index ist veraltet wenn vorhanden — User muss BUILD_INDEX neu aufrufen
+        // HNSW-Index ist veraltet wenn vorhanden - User muss BUILD_INDEX neu aufrufen
         if (hnsw_index) hnsw_dirty = true;
     }
 
@@ -936,7 +936,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
 //   1. m->system_prompt (per AI.SET llm_id, "system", "..." setzbar)
 //   2. Automatisch formatierter Context mit Source-Markern
 //   3. User-Frage
-// Die *inhaltliche* Instruktion kommt vollständig aus dem system_prompt —
+// Die *inhaltliche* Instruktion kommt vollständig aus dem system_prompt -
 // der C++-Code schreibt keine eigene Policy.
 
 static std::string build_rag_prompt(LlmModel* m,
@@ -954,7 +954,7 @@ static std::string build_rag_prompt(LlmModel* m,
     }
 
     // System-Prompt: wenn der User via AI.SET einen eigenen gesetzt hat, diesen
-    // verwenden. Sonst ein minimaler neutraler Fallback — keine Meinung zur
+    // verwenden. Sonst ein minimaler neutraler Fallback - keine Meinung zur
     // Quellenverwendung, keine Ablehnungs-Formulierung.
     std::string sys = m ? m->system_prompt : std::string();
     if (sys.empty()) sys = "You are a helpful assistant.";
@@ -979,7 +979,7 @@ static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string
     if ((int)tokens.size() > n_ctx) tokens.resize(n_ctx);
     if (tokens.empty()) return {};
 
-    // Cache leeren — Embeddings sind stateless, wir wollen kein Carry-Over
+    // Cache leeren - Embeddings sind stateless, wir wollen kein Carry-Over
     llama_memory_t mem = llama_get_memory(m->ctx);
     if (mem) llama_memory_clear(mem, true);
 
@@ -996,7 +996,7 @@ static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string
         // Embedding-Modell: nur decode verwenden wenn es einen echten Decoder gibt
         use_encode = !has_decoder;
     } else {
-        // Normales Generierungs-Modell — immer decode
+        // Normales Generierungs-Modell - immer decode
         use_encode = false;
     }
 
@@ -1019,7 +1019,7 @@ static std::vector<float> compute_dense_embedding(LlmModel* m, const std::string
 
     std::vector<float> out(n_embd, 0.0f);
     if (pt != LLAMA_POOLING_TYPE_NONE) {
-        // Modell macht Pooling automatisch — sequence-Embedding holen
+        // Modell macht Pooling automatisch - sequence-Embedding holen
         const float* emb = llama_get_embeddings_seq(m->ctx, 0);
         if (emb) std::copy(emb, emb + n_embd, out.begin());
     } else {
@@ -1314,7 +1314,7 @@ void register_llm_builtins(VM& vm) {
     // that pushes each cleaned token into a freshly-opened channel and
     // closes it when generation completes (or the user closes the
     // channel from outside, which cancels the run). Returns the handle
-    // immediately — caller drains the channel with the usual DO/RECV
+    // immediately - caller drains the channel with the usual DO/RECV
     // /IS_EOF idiom.
 
     vm.register_native("AI.CHAT_TOKENS", 2, 3, [](const std::vector<Value>& args) -> Value {
@@ -1379,7 +1379,7 @@ void register_llm_builtins(VM& vm) {
                 m->history.push_back({"user", user_msg});
                 m->history.push_back({"assistant", clean});
             } catch (...) {
-                // Generation threw — fall through to close so the consumer
+                // Generation threw - fall through to close so the consumer
                 // unsticks from RECV with EOF instead of hanging forever.
             }
             chan_close(*ch);
@@ -1581,7 +1581,7 @@ void register_llm_builtins(VM& vm) {
         auto* m = get_llm(id);
 
         if (m->tools.empty()) {
-            // No tools — just do regular chat
+            // No tools - just do regular chat
             std::string prompt = m->build_chat_prompt(user_msg);
             std::string raw = generate(m, prompt);
             std::string clean = LlmModel::clean_response(raw);
@@ -1601,7 +1601,7 @@ void register_llm_builtins(VM& vm) {
             // Check for tool calls
             auto calls = LlmModel::parse_tool_calls(response);
             if (calls.empty()) {
-                // No tool calls — done
+                // No tool calls - done
                 accumulated += response;
                 break;
             }
@@ -1703,7 +1703,7 @@ void register_llm_builtins(VM& vm) {
     //
     // llm_id      : Modell für die Antwort-Generierung in RAG_QUERY
     // embed_llm_id: optional dediziertes Embedding-Modell (von AI.LOAD_EMBEDDINGS)
-    //               — wenn 0/weggelassen, fällt der Store auf TF-IDF zurück.
+    //               - wenn 0/weggelassen, fällt der Store auf TF-IDF zurück.
 
     vm.register_native("AI.RAG_CREATE", 1, 4, [](const std::vector<Value>& args) -> Value {
         auto store = std::make_unique<RagStore>();

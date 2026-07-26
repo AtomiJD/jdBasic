@@ -83,7 +83,7 @@ void Console::enable_raw_mode() {
                   "original_termios buffer too small");
     // Save the original termios once, in the FIRST enable. Subsequent
     // re-enables (after a script ran with raw mode disabled) must NOT
-    // overwrite the saved state — child code may have temporarily tweaked
+    // overwrite the saved state - child code may have temporarily tweaked
     // line discipline and we want to restore the REPL-entry baseline.
     if (!original_termios_saved) {
         struct termios t;
@@ -141,7 +141,7 @@ int Console::read_raw_key() {
 
             bool ctrl = (ke.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
             bool alt = (ke.dwControlKeyState & (LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
-            // AltGr sends Ctrl+Alt — don't treat as Ctrl combo
+            // AltGr sends Ctrl+Alt - don't treat as Ctrl combo
             if (ctrl && !alt) {
                 switch (ke.wVirtualKeyCode) {
                     case 'C':      return KEY_CTRL_C;
@@ -212,7 +212,7 @@ int Console::read_raw_key() {
     // one of the abstract KEY_* codes from console.h.
 
     // While raw mode is off (e.g. between executor disable and worker join)
-    // a bare read() would block in cooked mode and stall the main loop —
+    // a bare read() would block in cooked mode and stall the main loop -
     // exactly when we need to be polling for the worker's completion.
     // Treat "not in raw mode" as "no key available".
     if (!raw_mode_active) return 0;
@@ -228,7 +228,7 @@ int Console::read_raw_key() {
         ssize_t n = ::read(STDIN_FILENO, &ch, 1);
         return (n == 1) ? (int)ch : -1;
     };
-    // Read with short timeout — used after ESC to disambiguate "lone ESC"
+    // Read with short timeout - used after ESC to disambiguate "lone ESC"
     // from start of an escape sequence.
     auto read_byte_timed = [](int ms) -> int {
         fd_set rfds; FD_ZERO(&rfds); FD_SET(STDIN_FILENO, &rfds);
@@ -306,14 +306,14 @@ int Console::read_raw_key() {
                         case 1: case 7: return KEY_HOME;
                         case 4: case 8: return KEY_END;
                         case 3:  return KEY_DELETE;
-                        case 5:  return 0;            // PageUp — unmapped
-                        case 6:  return 0;            // PageDown — unmapped
+                        case 5:  return 0;            // PageUp - unmapped
+                        case 6:  return 0;            // PageDown - unmapped
                         case 11: return KEY_F1;
                         case 12: return KEY_F2;
                         case 13: return KEY_F3;
                         case 14: return KEY_F4;
                         case 15: return KEY_F5;
-                        case 17: return 0;            // F6 — unmapped
+                        case 17: return 0;            // F6 - unmapped
                         case 18: return KEY_F7;
                         case 19: return KEY_F8;
                     }
@@ -333,7 +333,7 @@ int Console::read_raw_key() {
 
 // ── REPL workspace-switch trampoline ─────────────────────────
 // Set while Console::run() is alive. The graphics hook is invoked from a
-// VM worker thread (where SDL_PollEvent is drained) — we can't touch
+// VM worker thread (where SDL_PollEvent is drained) - we can't touch
 // stdout from there, so we just record the request and let the main run()
 // loop pick it up.
 Console* Console::s_active_repl = nullptr;
@@ -393,7 +393,7 @@ void Console::run() {
         // Check if active workspace's worker thread has finished.
         // A "parked" worker (script in STOP, GFX pump-loop holding
         // the SDL window's owner-thread alive) reports !executing
-        // too, but must NOT be joined yet — joining would block
+        // too, but must NOT be joined yet - joining would block
         // until RESUME signals it out, defeating the prompt-return
         // semantics. We render the prompt once when entering parked
         // state, then leave the worker alone until it truly exits.
@@ -436,7 +436,7 @@ void Console::run() {
             while (!input_queue.empty()) input_queue.pop();
             // Bring the terminal back to a known state. The script may have
             // left attributes set, the cursor hidden, or the cursor partway
-            // through a line — anything that hides the prompt afterwards.
+            // through a line - anything that hides the prompt afterwards.
             // Reset SGR, show cursor, force a fresh line in column 0, and
             // drop the previous prompt's drawn-length so render_prompt
             // doesn't try to back up over content that has scrolled.
@@ -450,7 +450,7 @@ void Console::run() {
         if (workspaces[active_ws].executing) {
             // Program is running in worker thread.
             if (workspaces[active_ws].vm->is_waiting_input) {
-                // VM is blocking on INPUT/std::cin — do NOT touch console buffer
+                // VM is blocking on INPUT/std::cin - do NOT touch console buffer
                 std::this_thread::sleep_for(std::chrono::milliseconds(20));
             } else {
                 // VM is running normally (INKEY$ polls non-blocking).
@@ -486,7 +486,7 @@ void Console::run() {
                             workspaces[active_ws].vm->is_halted = true;
                         } else if (!gfx_running) {
                             // Console-mode program may want this key via
-                            // INKEY$/_kbhit/_getch — leave it at the head
+                            // INKEY$/_kbhit/_getch - leave it at the head
                             // and stop draining for this tick.
                             consume = false;
                             keep_draining = false;
@@ -544,7 +544,7 @@ void Console::run() {
 void Console::switch_workspace(int target) {
     if (target == active_ws) return;
 
-    // Each workspace has its own VM — no state swap needed
+    // Each workspace has its own VM - no state swap needed
     active_ws = target;
 
     // Clear screen and replay target workspace's output buffer
@@ -552,7 +552,7 @@ void Console::switch_workspace(int target) {
     std::string replay = workspaces[active_ws].screen.replay();
 #if !defined(_WIN32)
     // Raw mode has OPOST off, so a bare \n moves the cursor down without
-    // returning to column 0 — replayed output staircases. Convert any \n
+    // returning to column 0 - replayed output staircases. Convert any \n
     // that isn't already preceded by \r into \r\n.
     std::string fixed; fixed.reserve(replay.size() + 16);
     for (size_t i = 0; i < replay.size(); ++i) {
@@ -724,7 +724,7 @@ static bool is_async_command(const std::string& upper) {
             upper.substr(0, 4) == "RUN ");
     // RESUME is now sync: the RUN-worker stays alive parked in a pump
     // loop after STOP, so RESUME just signals it (gfx_signal_resume)
-    // from the console-execute handler — no new worker needed.
+    // from the console-execute handler - no new worker needed.
 }
 
 void Console::execute_current_line() {
@@ -778,7 +778,7 @@ void Console::execute_current_line() {
 #ifdef GFX
                     // STOP inside a GFX context: keep this worker thread
                     // alive (Windows SDL window's WindowProc runs on the
-                    // thread that called CreateWindow — if we exit, the
+                    // thread that called CreateWindow - if we exit, the
                     // window goes ghost). Mark `parked=true` and
                     // `executing=false` so the REPL renders its prompt
                     // back to the user; main thread MUST NOT join us
@@ -805,7 +805,7 @@ void Console::execute_current_line() {
                     w.executing = false;
                 });
 
-                // Don't render prompt — it will be rendered when worker finishes
+                // Don't render prompt - it will be rendered when worker finishes
                 state.current_input.clear();
                 state.cursor_pos = 0;
                 state.history_idx = -1;
@@ -983,7 +983,7 @@ void Console::copy_to_clipboard(const std::string& text) {
         CloseClipboard();
     }
 #else
-    // Try wl-copy (Wayland), then xclip, then xsel — first one that's on PATH.
+    // Try wl-copy (Wayland), then xclip, then xsel - first one that's on PATH.
     const char* tools[] = {
         "wl-copy 2>/dev/null",
         "xclip -selection clipboard -in 2>/dev/null",

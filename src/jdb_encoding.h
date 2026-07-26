@@ -1,11 +1,11 @@
-// jdb_encoding.h — codepage <-> UTF-8 conversion for TXTREADER$/TXTWRITER.
+// jdb_encoding.h - codepage <-> UTF-8 conversion for TXTREADER$/TXTWRITER.
 //
 // Both vm.cpp (interpreter) and jdb_runtime.cpp (native runtime) include this
 // to share one implementation. Empty / "utf-8" passes the bytes through
 // unchanged; otherwise we round-trip via UTF-16 on Windows.
 //
 // Linux/macOS support is intentionally limited to "" / "utf-8" pass-through
-// for now — the codepage families that matter (cp1252 / cp850) are
+// for now - the codepage families that matter (cp1252 / cp850) are
 // Windows-legacy formats, and the POSIX build does not read VBA sources.
 #pragma once
 
@@ -183,7 +183,7 @@ inline std::string encode_from_utf8(const std::string& utf8, const std::string& 
     if (wlen <= 0) throw std::runtime_error("utf-8 decode failed");
     std::wstring wbuf((size_t)wlen, L'\0');
     MultiByteToWideChar(CP_UTF8, 0, utf8.data(), (int)utf8.size(), &wbuf[0], wlen);
-    // Use '?' for chars that don't fit the target codepage rather than fail —
+    // Use '?' for chars that don't fit the target codepage rather than fail -
     // matches the behaviour of Python's encode("cp1252", errors="replace")
     // and is what Excel/Access do when they emit text with no-fit chars.
     BOOL used_default = FALSE;

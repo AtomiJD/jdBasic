@@ -8,7 +8,7 @@
 #include <memory>
 #include <mutex>
 
-// jdBasic Channel — bounded MP/MC queue.
+// jdBasic Channel - bounded MP/MC queue.
 //
 // Producer and consumer typically live in different ASYNC FUNCs (each ASYNC
 // FUNC spawns a fresh std::thread + fresh VM in vm.cpp:1811). Channels live
@@ -17,9 +17,9 @@
 // the same Channel by id regardless of which VM they belong to.
 //
 // SEND blocks the calling thread when the buffer is full; RECV blocks when
-// empty. CLOSE wakes everyone — pending RECVs drain the remaining buffer
+// empty. CLOSE wakes everyone - pending RECVs drain the remaining buffer
 // and then start returning the EOF marker (a small `MAP { __chan_eof: TRUE }`
-// — chosen so we don't need a new ValueType, see CHAN.IS_EOF).
+// - chosen so we don't need a new ValueType, see CHAN.IS_EOF).
 
 struct Channel {
     std::mutex                mtx;
@@ -36,7 +36,7 @@ struct Channel {
     int                       waiting_recv = 0;
 };
 
-// Registry — i64 handle → Channel. Process-global so cross-VM lookup works.
+// Registry - i64 handle → Channel. Process-global so cross-VM lookup works.
 extern std::mutex                                       g_channels_mutex;
 extern std::map<int64_t, std::shared_ptr<Channel>>      g_channels;
 extern std::atomic<int64_t>                             g_channels_next_id;
@@ -55,6 +55,6 @@ void                     chan_unregister(int64_t handle);
 void chan_close(Channel& ch);
 
 // VM teardown: close every still-registered channel so threads that are
-// parked on SEND/RECV come unstuck. Called from VM::~VM (best effort —
+// parked on SEND/RECV come unstuck. Called from VM::~VM (best effort -
 // other VMs may still hold references via the registry).
 void chan_shutdown_all();

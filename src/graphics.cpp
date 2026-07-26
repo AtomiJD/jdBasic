@@ -70,12 +70,12 @@ static std::string exe_directory() {
 }
 
 // try_load_default_font is defined further down, after the file-scope
-// font globals (g_font, g_ttf_init, g_font_path, g_font_size) — those
+// font globals (g_font, g_ttf_init, g_font_path, g_font_size) - those
 // are `static` so we cannot extern them from up here. Forward-declare
 // just the signature so SCREEN / TEXT can call it.
 static void try_load_default_font(float size_pt = 18.0f);
 
-// Defined in main.cpp (exe) and vm_bridge.cpp (libjdbrt.so) — the
+// Defined in main.cpp (exe) and vm_bridge.cpp (libjdbrt.so) - the
 // directory of the .jdb the user invoked. Falls back to "." in the
 // runtime DLL until the entry point sets it.
 extern std::string g_base_dir;
@@ -115,7 +115,7 @@ static SDL_Texture* g_screen_tex = nullptr;
 #endif
 
 // Streaming texture used by GFX.PLOT_POINTS_TEX. File-scope so it can be
-// freed in cleanup_graphics() — otherwise the dangling pointer survives a
+// freed in cleanup_graphics() - otherwise the dangling pointer survives a
 // SCREEN→GFX.CLOSE→SCREEN cycle and crashes the second run.
 static SDL_Texture*       g_plot_tex   = nullptr;
 static int                g_plot_tex_w = 0;
@@ -123,7 +123,7 @@ static int                g_plot_tex_h = 0;
 static std::vector<uint32_t> g_plot_buf;
 
 // Reusable scratch buffer for GFX.PLOT_POINTS. SDL3's renderer backends
-// don't all copy the SDL_FPoint array on submit — a per-frame local
+// don't all copy the SDL_FPoint array on submit - a per-frame local
 // vector would be freed before the GPU consumed it. File-scope keeps the
 // pointer valid until the next call (which is fine: the renderer drains
 // its queue before the next PLOT_POINTS arrives, on RenderPresent).
@@ -181,7 +181,7 @@ static bool g_ttf_init = false;
 
 // Attempt to load the bundled default font (jdbasic_default.ttf, sits
 // next to the EXE). NO-OP if a font is already loaded or the file is
-// missing. Silent — callers that REQUIRE a font (TEXT) still throw their
+// missing. Silent - callers that REQUIRE a font (TEXT) still throw their
 // own "no font loaded" error when this falls through.
 static void try_load_default_font(float size_pt) {
     if (g_font) return;
@@ -531,7 +531,7 @@ void gfx_signal_resume() { g_resume_signal.store(true); }
 bool gfx_console_pause_wait() {
     if (!g_renderer) return false;
     g_resume_signal.store(false); // clear any stale signal on entry
-    // Do NOT call SDL_RenderPresent here — SDL3's logical-presentation
+    // Do NOT call SDL_RenderPresent here - SDL3's logical-presentation
     // back-buffer is cleared after present, so a bare re-present would
     // show a black frame and wipe out the script's overlay drawn just
     // before STOP. We rely on the OS to keep the last presented frame
@@ -681,7 +681,7 @@ void register_graphics_builtins(VM& vm) {
         // gui_init early-returns when already initialised, so without
         // this the second SCREEN keeps gui.cpp's stale g_renderer
         // pointer and gui_new_frame re-applies logical presentation
-        // to the freed renderer — the new one ends up with
+        // to the freed renderer - the new one ends up with
         // PRESENTATION_DISABLED and draws 1:1 in the top-left.
         gui_shutdown();
 #endif
@@ -779,7 +779,7 @@ void register_graphics_builtins(VM& vm) {
 
     // ── SCREENFLIP ──────────────────────────────────────────────
 
-    // ── SCREENWIDTH() / SCREENHEIGHT() — query the logical SCREEN size ──
+    // ── SCREENWIDTH() / SCREENHEIGHT() - query the logical SCREEN size ──
     // Returns 0 if SCREEN was never called, so user code can detect that.
     vm.register_native("SCREENWIDTH", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
@@ -1021,7 +1021,7 @@ void register_graphics_builtins(VM& vm) {
             ensure_screen("GFX.PLOT_POINTS_TEX");
             // Use the LOGICAL size (the SCREEN dimensions). The BASIC code
             // computes pixel coordinates in this space, so the texture must
-            // match it — SDL_SetRenderLogicalPresentation handles the upscale
+            // match it - SDL_SetRenderLogicalPresentation handles the upscale
             // to the actual window/output. Using the physical output size
             // here would put all points in a top-left sub-rectangle.
             int w = g_screen_w;
@@ -1464,7 +1464,7 @@ void register_graphics_builtins(VM& vm) {
 #ifdef IMGUI
             if (gui_process_event(&ev)) {
                 // Only swallow events when an ImGui widget is actually in
-                // use — NOT just because ImGui-Nav has implicit keyboard
+                // use - NOT just because ImGui-Nav has implicit keyboard
                 // capture (which is on as soon as the window has focus).
                 // Otherwise GFX-only programs lose every key. See
                 // project_imgui_ate_keys.md.
@@ -1828,7 +1828,7 @@ void register_graphics_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // PARTICLE.DRAW [cam_x, cam_y] — draw all particles
+    // PARTICLE.DRAW [cam_x, cam_y] - draw all particles
     vm.register_native("PARTICLE.DRAW", 0, 2, [](const std::vector<Value>& args) -> Value {
         ensure_screen("PARTICLE.DRAW");
         float cx = g_cam.x + g_cam.shake_ox;
@@ -1847,7 +1847,7 @@ void register_graphics_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // PARTICLE.CLEAR — remove all particles
+    // PARTICLE.CLEAR - remove all particles
     vm.register_native("PARTICLE.CLEAR", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args; g_particles.clear(); return Value::make_none();
     });
@@ -1982,7 +1982,7 @@ void register_graphics_builtins(VM& vm) {
 
     // ── GFX.SAVE_SCREENSHOT filename$ ──────────────────────────
 
-    // GFX.SAVE_SCREENSHOT file$, [x, y, w, h] — save full screen or a region
+    // GFX.SAVE_SCREENSHOT file$, [x, y, w, h] - save full screen or a region
     vm.register_native("GFX.SAVE_SCREENSHOT", 1, 5, [](const std::vector<Value>& args) -> Value {
         ensure_screen("GFX.SAVE_SCREENSHOT");
         std::string path = resolve_asset_path(args[0].as_string()->data);
@@ -2171,7 +2171,7 @@ void register_graphics_builtins(VM& vm) {
     });
 
     // ══════════════════════════════════════════════════════════════
-    // ── Audio (SDL3_mixer 3.4+ — track/audio model) ──────────────
+    // ── Audio (SDL3_mixer 3.4+ - track/audio model) ──────────────
     // ══════════════════════════════════════════════════════════════
 
     vm.register_native("AUDIO.INIT", 0, 0, [](const std::vector<Value>& args) -> Value {
@@ -2207,7 +2207,7 @@ void register_graphics_builtins(VM& vm) {
 
     // Sound effects: predecoded MIX_Audio + one MIX_Track per chunk id.
     // Old API supported concurrent play of the same chunk on different
-    // channels — that collapses to a single track per id that restarts
+    // channels - that collapses to a single track per id that restarts
     // on play. Add a track pool here later if real overlap is needed.
     static std::unordered_map<int, MIX_Audio*> s_chunks;
     static std::unordered_map<int, MIX_Track*> s_chunk_tracks;
@@ -2557,7 +2557,7 @@ void register_graphics_builtins(VM& vm) {
         // the post-Quit state via SDL_WasInit and start fresh.
         if (!SDL_WasInit(SDL_INIT_JOYSTICK)) {
             // Subsystem went away (or never came up): drop any stale
-            // handles WITHOUT closing — SDL_Quit already did that —
+            // handles WITHOUT closing - SDL_Quit already did that -
             // then re-init.
             s_joysticks.clear();
             SDL_InitSubSystem(SDL_INIT_JOYSTICK);
@@ -2637,13 +2637,13 @@ void register_graphics_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // TILED.UPDATE(dt) — update tile animations (dt in seconds)
+    // TILED.UPDATE(dt) - update tile animations (dt in seconds)
     vm.register_native("TILED.UPDATE", 1, 1, [](const std::vector<Value>& args) -> Value {
         g_tiled.update((float)args[0].to_double());
         return Value::make_none();
     });
 
-    // TILED.DRAW name$ [, cam_x, cam_y] — draw all layers in order
+    // TILED.DRAW name$ [, cam_x, cam_y] - draw all layers in order
     vm.register_native("TILED.DRAW", 1, 3, [](const std::vector<Value>& args) -> Value {
         ensure_screen("TILED.DRAW");
         std::string name = args[0].as_string()->data;
@@ -2653,7 +2653,7 @@ void register_graphics_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // TILED.DRAW_LAYER name$, layer$ [, cam_x, cam_y] — draw a specific layer
+    // TILED.DRAW_LAYER name$, layer$ [, cam_x, cam_y] - draw a specific layer
     vm.register_native("TILED.DRAW_LAYER", 2, 4, [](const std::vector<Value>& args) -> Value {
         ensure_screen("TILED.DRAW_LAYER");
         std::string name = args[0].as_string()->data;

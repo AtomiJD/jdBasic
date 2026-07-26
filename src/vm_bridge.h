@@ -1,5 +1,5 @@
 #pragma once
-// vm_bridge.h — C-API for the jdBasic VM runtime DLL (jdbrt.dll)
+// vm_bridge.h - C-API for the jdBasic VM runtime DLL (jdbrt.dll)
 // Native-compiled executables call through this bridge to access
 // all 230+ VM builtins (MAP.*, JSON.*, GFX, etc.)
 
@@ -14,7 +14,7 @@ extern "C" {
     #define JDRT_API __declspec(dllimport)
   #endif
 #else
-  // POSIX: default visibility is fine — symbols come from a shared library
+  // POSIX: default visibility is fine - symbols come from a shared library
   // (or static archive) without needing per-symbol annotations.
   #define JDRT_API
 #endif
@@ -67,7 +67,7 @@ JDRT_API int64_t     jdrt_obj_get_obj(JdRT rt, int64_t h, const char* key);
 JDRT_API void*       jdrt_obj_get_arr(JdRT rt, int64_t h, const char* key);
 JDRT_API int64_t     jdrt_obj_exists (JdRT rt, int64_t h, const char* key);
 
-// Dereference a VM Value handle — used when compiled code needs a
+// Dereference a VM Value handle - used when compiled code needs a
 // concrete scalar (passing to a runtime function expecting f64/str).
 JDRT_API double      jdrt_val_to_f64 (JdRT rt, int64_t h);
 JDRT_API const char* jdrt_val_to_str (JdRT rt, int64_t h);
@@ -102,13 +102,13 @@ JDRT_API char*  jdrt_call_typed_str(JdRT rt, const char* name,
 JDRT_API void   jdrt_call_typed_void(JdRT rt, const char* name,
                                       const int64_t* args, const int32_t* tags, int nargs);
 
-// Call returning an array (JdbArray*) — for SPLIT, KEYS, VALUES, etc.
+// Call returning an array (JdbArray*) - for SPLIT, KEYS, VALUES, etc.
 JDRT_API void*  jdrt_call_typed_arr(JdRT rt, const char* name,
                                      const int64_t* args, const int32_t* tags, int nargs);
 
 // Native-mode event dispatch. The bridge's VM holds the
 // event_handlers map (set up by __EVENT_ON), but in native mode the
-// handler bodies live as LLVM-IR in the .exe — the bridge VM has no
+// handler bodies live as LLVM-IR in the .exe - the bridge VM has no
 // way to call them. Instead, the .exe-side runtime registers a
 // dispatcher function once at startup; whenever the bridge would have
 // called vm.call_function(handler_name, ...) for an event, it now

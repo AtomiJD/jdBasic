@@ -1,4 +1,4 @@
-// jdb_embed_api.h — embedder C-API for jdbrt.dll.
+// jdb_embed_api.h - embedder C-API for jdbrt.dll.
 //
 // Lets a host application (Godot GDExtension, REPL, CLI, etc.) drive a
 // persistent jdBasic VM from C/C++. Inverse of vm_bridge.h: that one

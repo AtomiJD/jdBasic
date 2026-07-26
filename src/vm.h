@@ -53,11 +53,11 @@ public:
     void run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs);
 
     // Merge new function definitions into the live VM without running
-    // anything. Same merge rules as run_code's prelude — same name
+    // anything. Same merge rules as run_code's prelude - same name
     // overwrites, new name appends, func_map_generation bumps so any
     // cached lookups invalidate. Returns {added, updated} for the caller
     // to surface in a recompile summary. Safe to call while the VM is
-    // STOPped (the existing stopped_frames keep working — they dispatch
+    // STOPped (the existing stopped_frames keep working - they dispatch
     // through func_map on the next CALL opcode and pick up the new bodies).
     std::pair<size_t, size_t> merge_funcs(std::vector<FuncProto>& new_funcs);
 
@@ -93,7 +93,7 @@ public:
     // should call the bridge once, not four times per colour channel.
     std::unordered_set<std::string> extra_no_vectorize;
 
-    // Callback for EXECUTE/EVAL — set by the host to provide compilation
+    // Callback for EXECUTE/EVAL - set by the host to provide compilation
     using CompileAndRunFunc = std::function<void(VM&, const std::string&)>;
     using CompileAndEvalFunc = std::function<Value(VM&, const std::string&)>;
     using ParseCheckFunc = std::function<std::string(VM&, const std::string&)>;
@@ -104,7 +104,7 @@ public:
     // contaminating the persistent VM.
     ParseCheckFunc on_check;
 
-    // Output callback — if set, all VM output goes here instead of std::cout.
+    // Output callback - if set, all VM output goes here instead of std::cout.
     // The host (Console) sets this to route output to the workspace buffer.
     std::function<void(const std::string&)> on_output;
 
@@ -114,7 +114,7 @@ public:
         else std::cout << s;
     }
 
-    // OUTPUT.CAPTURE_BEGIN/END$/PEEK$ stack — saves the previous on_output
+    // OUTPUT.CAPTURE_BEGIN/END$/PEEK$ stack - saves the previous on_output
     // handler when a capture starts so that nested captures and Console-host
     // routing both restore correctly.
     std::vector<std::function<void(const std::string&)>> output_capture_prev;
@@ -227,7 +227,7 @@ public:
     std::unordered_map<std::string, std::string> event_handlers; // event_name -> func_name
     void event_on(const std::string& event_name, const std::string& handler);
     void event_raise(const std::string& event_name, const std::vector<Value>& data);
-    void event_poll(); // called from tick — polls SDL/keyboard events
+    void event_poll(); // called from tick - polls SDL/keyboard events
 
     bool is_native(const std::string& name) const { return natives.count(name) > 0; }
     bool function_exists(const std::string& name) const {
@@ -251,13 +251,13 @@ private:
     int subrun_depth = 0;
 
     // Set by HALT (END statement) so nested call_function() invocations
-    // — e.g. a SUB that runs `END` while it was triggered from an event
-    // handler — can short-circuit instead of trying to pop a return value
+    // - e.g. a SUB that runs `END` while it was triggered from an event
+    // handler - can short-circuit instead of trying to pop a return value
     // from the empty stack ("Stack underflow").
 public:
     bool is_halted = false;
     std::atomic<bool> is_waiting_input{false};  // true while blocking on INPUT/std::cin
-    // External STOP request — set from another thread (e.g. the MCP reader
+    // External STOP request - set from another thread (e.g. the MCP reader
     // thread when the client sends a jdb_stop tool call). The VM's dispatch
     // tick polls this every ~200 opcodes; on true, it stashes state exactly
     // like the in-script STOP statement and returns from run().

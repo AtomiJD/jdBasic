@@ -1,5 +1,5 @@
 // ============================================================
-// TUI.* — FTXUI bridge for jdBasic.
+// TUI.* - FTXUI bridge for jdBasic.
 //
 // The core loop is BEGIN / END / RENDER / WAIT_EVENT / QUIT /
 // EXIT, plus TUI.TEXT so a script can display something. Names
@@ -32,7 +32,7 @@
 #include <vector>
 
 #ifdef _WIN32
-  #include <conio.h>   // _kbhit / _getch — non-blocking key poll
+  #include <conio.h>   // _kbhit / _getch - non-blocking key poll
   #include <io.h>
   #include <windows.h>
   // windows.h leaks macros that collide with ftxui::Color factories
@@ -79,7 +79,7 @@ static void posix_enter_raw_mode() {
     raw.c_lflag &= ~(ICANON | ECHO | ISIG);
     // Disable XON/XOFF and CR translation so ESC/Ctrl bytes survive.
     raw.c_iflag &= ~(IXON | ICRNL);
-    // Keep output processing disabled too — we drive the terminal.
+    // Keep output processing disabled too - we drive the terminal.
     raw.c_oflag &= ~(OPOST);
     // VMIN=0,VTIME=0: read returns immediately with whatever is there.
     raw.c_cc[VMIN]  = 0;
@@ -121,7 +121,7 @@ void enter_alt_screen_once() {
     if (s.alt_screen_active) return;
 #ifdef _WIN32
     // Win Terminal honours ANSI; the legacy conhost needs VT mode
-    // enabled. Toggle it idempotently — no-op on systems that
+    // enabled. Toggle it idempotently - no-op on systems that
     // already had it on.
     HANDLE h = GetStdHandle(STD_OUTPUT_HANDLE);
     DWORD mode = 0;
@@ -230,7 +230,7 @@ bool poll_one_event(std::string& out) {
             if (wc == 8 || wc == 127) { out = "Backspace"; return true; }
             if (wc == 27) { out = "Esc"; return true; }
             if (wc < 32) {
-                // Other control chars — emit "C-<letter>" for the
+                // Other control chars - emit "C-<letter>" for the
                 // common ASCII range so script keymaps stay readable.
                 if (wc >= 1 && wc <= 26) {
                     char buf[4] = { 'C', '-', (char)('a' + (int)wc - 1), 0 };
@@ -302,7 +302,7 @@ bool poll_one_event(std::string& out) {
             if (c0 >= 0x20 && c0 < 0x80) {
                 out.assign(1, (char)c0); g_input_buf.erase(0, 1); return true;
             }
-            // UTF-8 multibyte — pass through as bytes once complete
+            // UTF-8 multibyte - pass through as bytes once complete
             int need = 0;
             if      ((c0 & 0xE0) == 0xC0) need = 2;
             else if ((c0 & 0xF0) == 0xE0) need = 3;
@@ -310,10 +310,10 @@ bool poll_one_event(std::string& out) {
             if (need && g_input_buf.size() >= (size_t)need) {
                 out = g_input_buf.substr(0, need); g_input_buf.erase(0, need); return true;
             }
-            return false;  // incomplete — wait for more
+            return false;  // incomplete - wait for more
         }
 
-        // ESC alone — treat as Esc (no follow-up byte buffered yet).
+        // ESC alone - treat as Esc (no follow-up byte buffered yet).
         if (g_input_buf.size() == 1) {
             out = "Esc"; g_input_buf.erase(0, 1); return true;
         }
@@ -411,12 +411,12 @@ bool poll_one_event(std::string& out) {
                 continue;
             }
 
-            // Unknown CSI byte — drop ESC[ and keep parsing
+            // Unknown CSI byte - drop ESC[ and keep parsing
             g_input_buf.erase(0, 2);
             continue;
         }
 
-        // Unknown ESC follower — drop the ESC and keep parsing
+        // Unknown ESC follower - drop the ESC and keep parsing
         g_input_buf.erase(0, 1);
     }
     return false;
@@ -569,7 +569,7 @@ void emit_element(ftxui::Element el) {
     using namespace ftxui;
     auto& s = jdb_tui::state();
     if (s.layout_stack.empty()) {
-        // Outside a frame — silently drop. Stricter mode could warn.
+        // Outside a frame - silently drop. Stricter mode could warn.
         return;
     }
     el = apply_style(std::move(el));
@@ -826,7 +826,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── TUI.TEXT — push a text Element into the current frame ─
+    // ── TUI.TEXT - push a text Element into the current frame ─
     vm.register_native("TUI.TEXT", 1, 2, [&vm](V args) -> Value {
         (void)vm;
         using namespace ftxui;
@@ -835,7 +835,7 @@ void register_tui_natives(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Diagnostics — VERSION$ lands now because it's free ──
+    // ── Diagnostics - VERSION$ lands now because it's free ──
     vm.register_native("TUI.VERSION$", 0, 0, [&vm](V) -> Value {
         (void)vm;
         return Value::make_string("TUI.* / FTXUI bridge");
@@ -965,7 +965,7 @@ void register_tui_natives(VM& vm) {
     vm.register_native("TUI.LINK", 2, 2, [&vm](V args) -> Value {
         (void)vm;
         using namespace ftxui;
-        // OSC 8 hyperlink — Win Terminal + gnome-terminal honour it.
+        // OSC 8 hyperlink - Win Terminal + gnome-terminal honour it.
         emit_element(hyperlink(args[1].as_string()->data,
                                text(args[0].as_string()->data) | underlined));
         return Value::make_none();
@@ -1153,7 +1153,7 @@ void register_tui_natives(VM& vm) {
 
     // TUI.MENU(label$, options[], selected) -> int
     // Functionally identical to RADIO but rendered without the
-    // (*) / ( ) glyphs — looks more like a side-bar menu.
+    // (*) / ( ) glyphs - looks more like a side-bar menu.
     vm.register_native("TUI.MENU", 2, 3, [&vm](V args) -> Value {
         (void)vm;
         using namespace ftxui;
@@ -1368,7 +1368,7 @@ void register_tui_natives(VM& vm) {
         std::vector<std::string> row;
         if (auto* arr = args[0].as_array()) {
             for (auto& v : arr->elements) {
-                // Cells coerce to string — numbers print via to_string.
+                // Cells coerce to string - numbers print via to_string.
                 if (v.type == ValueType::STRING) row.push_back(v.as_string()->data);
                 else                              row.push_back(std::to_string(v.to_double()));
             }
@@ -1383,7 +1383,7 @@ void register_tui_natives(VM& vm) {
             vm.emit("[TUI] TUI.TABLE_END without TUI.TABLE_BEGIN\n");
             return Value::make_none();
         }
-        // FTXUI Table wants rectangular data — pad short rows.
+        // FTXUI Table wants rectangular data - pad short rows.
         size_t ncols = 0;
         for (auto& r : s.table.rows) if (r.size() > ncols) ncols = r.size();
         for (auto& r : s.table.rows) while (r.size() < ncols) r.push_back("");
@@ -1411,7 +1411,7 @@ void register_tui_natives(VM& vm) {
         std::string id = args[0].as_string()->data;
         std::string title = (args.size() >= 2) ? args[1].as_string()->data : std::string();
         bool active = (s.modal.active_id == id);
-        // Only push a frame when active — the jdBasic idiom is
+        // Only push a frame when active - the jdBasic idiom is
         // IF TUI.MODAL_BEGIN(...) THEN ... TUI.MODAL_END ENDIF, so
         // MODAL_END is not called on the inactive branch.
         if (active) {
@@ -1436,7 +1436,7 @@ void register_tui_natives(VM& vm) {
         Element framed = frame.title.empty()
             ? (body | border)
             : window(text(" " + frame.title + " "), body);
-        // Don't attach to parent — render_once overlays it.
+        // Don't attach to parent - render_once overlays it.
         s.modal.captured_body = framed;
         return Value::make_none();
     });
@@ -1522,7 +1522,7 @@ void register_tui_natives(VM& vm) {
         using namespace ftxui;
         auto& s = jdb_tui::state();
         if (s.menu.current_submenu_idx != s.menu.open_index) {
-            // Item belongs to a non-open submenu — render nothing, never fires.
+            // Item belongs to a non-open submenu - render nothing, never fires.
             return Value::make_bool(false);
         }
         int row_idx = s.menu.items_seen_in_open++;
@@ -1560,7 +1560,7 @@ void register_tui_natives(VM& vm) {
             s.tab_bar.active_idx = (int)s.tab_bar.labels.size() - 1;
         // Render the tab strip immediately. The active tab is
         // painted with the theme's band colour so the strip moves
-        // with TUI.THEME — same logic as the title-bar tint.
+        // with TUI.THEME - same logic as the title-bar tint.
         Color band = active_theme_band();
         Color tint = active_theme_tint();
         std::vector<Element> tabs;
@@ -1591,7 +1591,7 @@ void register_tui_natives(VM& vm) {
                           && s.tab_bar.active_idx >= 0
                           && s.tab_bar.active_idx < (int)s.tab_bar.labels.size()
                           && s.tab_bar.labels[s.tab_bar.active_idx] == label);
-        // Only push when active — IF-gated idiom skips TAB_END otherwise.
+        // Only push when active - IF-gated idiom skips TAB_END otherwise.
         if (is_active) {
             jdb_tui::LayoutFrame f;
             f.kind = jdb_tui::LayoutFrame::TAB;
@@ -1699,7 +1699,7 @@ void register_tui_natives(VM& vm) {
     vm.register_native("TUI.MOUSE_WHEEL", 0, 0, [&vm](V) -> Value {
         (void)vm; return Value::make_i64(jdb_tui::state().mouse_wheel);
     });
-    // TUI.ON(event$, handler$) — register a script callback by name.
+    // TUI.ON(event$, handler$) - register a script callback by name.
     // Records the binding only. Dispatch (QUIT, KEY, MOUSE, RESIZE)
     // needs ReadConsoleInput and is not wired, so this is a no-op
     // recorder that keeps the API callable.

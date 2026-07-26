@@ -47,7 +47,7 @@ public:
     }
 
     // Phase 2: compile-time type label. Collapses the parser's width-specific
-    // VarType enum into coarse buckets — INTEGER covers all int widths,
+    // VarType enum into coarse buckets - INTEGER covers all int widths,
     // NUMBER covers all float widths. Width-strict checking can be layered
     // on later if needed; for now the pivot only cares about ptr-vs-scalar
     // mismatches (the class of bug that slipped past the LLVM verifier).
@@ -55,7 +55,7 @@ public:
     // uses it to detect uses of undeclared variables (kind == UNKNOWN).
     struct StaticType {
         enum class Kind {
-            UNKNOWN,   // not declared — under EXPLICIT, a use is an error
+            UNKNOWN,   // not declared - under EXPLICIT, a use is an error
             ANY,       // explicit opt-out (reserved for AS ANY, future)
             INTEGER, NUMBER, STRING, BOOLEAN, DATE,
             ARRAY, MAP, UDT, TENSOR, FUNCREF
@@ -90,7 +90,7 @@ public:
         return strict_mode && file.empty();
     }
 
-    // Phase 4: infer the static type of an expression. Conservative —
+    // Phase 4: infer the static type of an expression. Conservative -
     // returns UNKNOWN whenever the shape can't be determined without
     // running codegen. Callers treat UNKNOWN as "no check possible".
     StaticType infer_expr_type(const Expr& e) const;
@@ -101,7 +101,7 @@ public:
 
     // Source file of the statement currently being codegen'd. Diagnostics
     // raised from deep inside codegen_expr use this for the file: prefix
-    // (Expr itself doesn't carry source_file — only Stmt does).
+    // (Expr itself doesn't carry source_file - only Stmt does).
     std::string m_current_stmt_file;
 
     // Transient codegen state: true while evaluating an expression whose
@@ -109,7 +109,7 @@ public:
     // `a{"b"}{"c"}`). Consumers return a raw map ptr (tag=4) instead of a
     // formatted string so the outer INDEX can traverse further.
     //
-    // RAII rule: NEVER mutate directly. Use ScopedPtrResult below — a leaked
+    // RAII rule: NEVER mutate directly. Use ScopedPtrResult below - a leaked
     // hint into a recursive subexpr is the source of an entire bug class
     // (hint applies to the wrong codegen frame).
     bool m_want_ptr_result = false;
@@ -194,12 +194,12 @@ private:
     // Variables initialised from CVDATE/DATEADD/NOW are tagged DATE for TYPEOF.
     std::unordered_set<std::string> date_vars;
 
-    // SUBs registered as event handlers via `ON "X" CALL Handler` — their
+    // SUBs registered as event handlers via `ON "X" CALL Handler` - their
     // first parameter is forced to tag=3 (JdbArray*) so RAISEEVENT can
     // pass a packed args array.
     std::unordered_set<std::string> event_handler_subs;
 
-    // Functions declared via `DECLARE FUNC ... AS <ret_type>` — populated
+    // Functions declared via `DECLARE FUNC ... AS <ret_type>` - populated
     // by a pre-pass in declare_functions(). The bridge dispatch site uses
     // these to route the call through the right jdrt_call_typed_*
     // variant, since FFI names are user-supplied and so cannot live in
@@ -208,7 +208,7 @@ private:
     std::unordered_set<std::string> ffi_string_returners;
     std::unordered_set<std::string> ffi_void_returners;
 
-    // Vars whose array elements are known to be strings — INDEX returns tag=2
+    // Vars whose array elements are known to be strings - INDEX returns tag=2
     // (decoded char*) for these. Currently populated for the data param of
     // event handler SUBs.
     std::unordered_set<std::string> string_array_vars;
@@ -234,13 +234,13 @@ private:
     std::unordered_set<std::string> map_scalar_vars;
 
     // Vars holding mixed-type array literals (e.g. [1, "Alice", 90]). INDEX
-    // on these can't be tagged statically — every cell could be either a
+    // on these can't be tagged statically - every cell could be either a
     // numeric f64 or a string pointer. The runtime classifier
     // jdb_array_classify_elem inspects the bit pattern at access time and
     // we hand back a JD_TAG_RUNTIME value carrying the per-cell tag.
     std::unordered_set<std::string> mixed_array_vars;
 
-    // Vars whose array elements are known to hold map pointers — INDEX decodes
+    // Vars whose array elements are known to hold map pointers - INDEX decodes
     // the punned-f64 and returns tag=4 so `q = arr[i]; q{"k"} = v` mutates
     // the shared map instead of silently bailing in INDEX_ASSIGN.
     std::unordered_set<std::string> map_array_vars;
@@ -253,7 +253,7 @@ private:
     std::unordered_set<std::string> vm_array_vars;
 
     // Vars whose array elements are known to hold native array (matrix)
-    // pointers — `glyph_cache[ch] = ZEROS([8,7])` and similar. INDEX read
+    // pointers - `glyph_cache[ch] = ZEROS([8,7])` and similar. INDEX read
     // puns the f64 element back to an i8* and returns tag=3 so the matrix
     // survives downstream native calls (PLOTRAW, vector arithmetic, etc.)
     // that look for an ARR-tagged argument.
@@ -294,7 +294,7 @@ private:
     LLVMTypeRef i64_type;
     LLVMTypeRef f64_type;
     LLVMTypeRef i8_ptr_type;
-    LLVMTypeRef tagged_val_type;  // {i64, i32} — JdTaggedVal
+    LLVMTypeRef tagged_val_type;  // {i64, i32} - JdTaggedVal
     LLVMTypeRef i32_type;
     LLVMTypeRef void_type;
 
@@ -383,7 +383,7 @@ private:
     LLVMValueRef coerce_to(TypedValue tv, LLVMTypeRef target);
     TypedValue coerce_to_tag(TypedValue tv, int target_tag);
     // Convert any TypedValue to a real char* string ptr. For numeric tags
-    // this calls __double_to_str (formatted text), not a bitcast — use this
+    // this calls __double_to_str (formatted text), not a bitcast - use this
     // when a runtime expects an actual string, not a punned ptr.
     LLVMValueRef to_string_ptr(TypedValue tv);
     // Type-pun between i64 and f64 (avoids LLVM bitcast restrictions on newer versions)

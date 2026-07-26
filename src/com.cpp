@@ -170,13 +170,13 @@ static Value variant_to_value(const VARIANT& var) {
             if (var.pdispVal) return Value::make_com(var.pdispVal);
             return Value::make_none();
         case VT_UNKNOWN:
-            // IUnknown* — we don't wrap these as COM (need IDispatch for invoke)
+            // IUnknown* - we don't wrap these as COM (need IDispatch for invoke)
             return Value::make_none();
         case VT_ERROR:
             return Value::make_i64(var.scode);
         default: {
             // Try ChangeType to string as a last resort. Use VariantChangeType
-            // which makes a temporary copy — never modify the input variant.
+            // which makes a temporary copy - never modify the input variant.
             VARIANT conv;
             VariantInit(&conv);
             if (SUCCEEDED(VariantChangeType(&conv, const_cast<VARIANT*>(&var), 0, VT_BSTR))) {
@@ -341,10 +341,10 @@ void register_com_builtins(VM& vm) {
 // ── COM-aware field access (called from VM) ──────────────────
 
 // We must distinguish two failure modes:
-//   (a) "this isn't a COM object I know about / no such member" — the
+//   (a) "this isn't a COM object I know about / no such member" - the
 //       caller should fall through to non-COM handling.
 //   (b) "the member exists, but the COM call itself failed (bad SQL,
-//       file not found, ...)" — the error must propagate so the user
+//       file not found, ...)" - the error must propagate so the user
 //       sees a real message instead of a silent NONE / Undefined function
 //       which leaves the value stack inconsistent and crashes the VM.
 //

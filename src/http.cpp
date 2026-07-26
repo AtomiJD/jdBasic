@@ -37,7 +37,7 @@ static std::unique_ptr<httplib::Server> g_server;
 static std::thread g_server_thread;
 static std::mutex g_server_mutex;
 // Serialises every HTTP handler's access to g_server_vm. httplib spawns a
-// thread per accepted request, but the embedded VM is single-threaded —
+// thread per accepted request, but the embedded VM is single-threaded -
 // without this lock two concurrent POSTs would race on the shared bytecode
 // (Phase-3 commit message has the gory details). Held across the user
 // handler and the auto-JSON-encode call that follows.
@@ -166,7 +166,7 @@ static bool apply_rich_response(const Value& result, RespT& res) {
     return true;
 }
 
-// Compact one-line console log for an incoming request — body is clipped to
+// Compact one-line console log for an incoming request - body is clipped to
 // keep the server console scannable. Pulls Mcp-Session-Id out separately
 // because that's the header we care about most for MCP debugging.
 static void log_request(const httplib::Request& req) {
@@ -201,7 +201,7 @@ static Value request_to_map(const httplib::Request& req) {
     m.as_object()->set("METHOD", Value::make_string(req.method));
     m.as_object()->set("BODY", Value::make_string(req.body));
 
-    // Headers as map — normalised to lowercase keys. HTTP header names are
+    // Headers as map - normalised to lowercase keys. HTTP header names are
     // case-insensitive (RFC 7230), but jdBasic maps are case-sensitive, so
     // handlers should look up `req.HEADERS{"mcp-session-id"}` regardless of
     // what the client sent on the wire.
@@ -377,7 +377,7 @@ void register_http_builtins(VM& vm) {
 
     // HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> object
     // Rich response: { status, body, headers }. Never throws on HTTP-level
-    // errors (4xx/5xx) — those are surfaced via the `status` field. Transport
+    // errors (4xx/5xx) - those are surfaced via the `status` field. Transport
     // failures still throw.
     vm.register_native("HTTP.REQUEST", [](const std::vector<Value>& args) -> Value {
         std::string method = args[0].as_string()->data;
@@ -558,7 +558,7 @@ void register_http_builtins(VM& vm) {
         // Default bind: localhost only. Pass "0.0.0.0" explicitly to expose
         // the server to the LAN. The default is loopback because anything
         // less is a foot-gun for tools like the MCP server (was 0.0.0.0
-        // before — security-relevant default change).
+        // before - security-relevant default change).
         std::string host = "127.0.0.1";
         if (args.size() >= 2 && args[1].type == ValueType::STRING) {
             host = args[1].as_string()->data;
@@ -571,7 +571,7 @@ void register_http_builtins(VM& vm) {
         // Pin g_server_vm to the VM that actually started the server.
         // register_http_builtins() runs once per workspace VM and clobbers
         // g_server_vm each time, so by the time the user calls START from
-        // (say) WS1, the global still points at WS4 — and POST handlers
+        // (say) WS1, the global still points at WS4 - and POST handlers
         // would look up the user's FUNC on the wrong VM ("Undefined
         // function: MCP_POST"). Re-binding here makes ON_POST/ON_GET
         // resolve against the workspace that owns the handler functions.

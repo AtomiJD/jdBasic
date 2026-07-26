@@ -11,7 +11,7 @@ struct CompilerScope {
     std::unordered_map<std::string, uint16_t> locals;
     // Names registered as FUNC/SUB parameters. Used to reject DIM that would
     // silently alias a parameter (BASIC is case-insensitive, so `DIM v` inside
-    // FUNC F(V) overwrites the param — caught the user twice in 4d benches).
+    // FUNC F(V) overwrites the param - caught the user twice in 4d benches).
     std::unordered_set<std::string> params;
     // STATIC DIM <name> registers the name here with its persistent slot
     // index (separate namespace from `locals`). Subsequent reads/writes of
@@ -49,7 +49,7 @@ private:
     // Used to decide whether DIM emits an INIT call and whether the runtime
     // dispose hook should fire for a given object.
     std::unordered_set<std::string> type_inits;
-    // Subset of type_inits where INIT takes no user parameters — i.e. SUB INIT().
+    // Subset of type_inits where INIT takes no user parameters - i.e. SUB INIT().
     // DIM auto-calls INIT only when this entry is present (or when the user
     // passes constructor args explicitly), preserving back-compat for code
     // that DIMs and then calls obj.INIT(args) manually.
@@ -111,7 +111,7 @@ private:
     void patch_jump(size_t addr);
     void resolve_labels();
 
-    // Variable load/store dispatch — checks `statics` first so STATIC slots
+    // Variable load/store dispatch - checks `statics` first so STATIC slots
     // route through LOAD_STATIC/STORE_STATIC. Falls through to the existing
     // global-vs-local logic otherwise. Mirrors the pre-existing inline
     // pattern at the caller, just centralises the static check.

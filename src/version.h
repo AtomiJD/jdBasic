@@ -1,11 +1,11 @@
 #pragma once
 #include <string>
 
-// Version info — updated by release builds.
+// Version info - updated by release builds.
 // `/DJDBASIC_BUILD_NUM=` and `/DJDBASIC_BUILD_DATE=` are injected by
 // build.bat under the RELEASE flag; the fallbacks below kick in only
 // for non-RELEASE builds (dev builds, --lint, IDE indexers). Guarded
-// with #ifndef so the command-line define isn't redefined here — that
+// with #ifndef so the command-line define isn't redefined here - that
 // was the source of the C4005 warning seen in every TU that included
 // version.h.
 #ifndef JDBASIC_VERSION

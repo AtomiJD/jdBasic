@@ -22,7 +22,7 @@ extern int g_next_image_id;       // shared id counter across IMG.LOAD + SPRITE.
 extern int g_screen_w;
 extern int g_screen_h;
 
-// Camera state — owned by graphics.cpp, read/written by sprites.cpp
+// Camera state - owned by graphics.cpp, read/written by sprites.cpp
 // (SPRITE.UPDATE drives follow + shake decay, SPRITE.DRAW_ALL reads
 // the offset, the CAM.* builtins push values back).
 struct Camera {
@@ -37,7 +37,7 @@ struct Camera {
 };
 extern Camera g_cam;
 
-// Particle state — SPRITE.UPDATE integrates physics on every tick;
+// Particle state - SPRITE.UPDATE integrates physics on every tick;
 // PARTICLE.* builtins in graphics.cpp own emit/draw/clear/count.
 struct Particle {
     float x, y, vx, vy;
@@ -48,7 +48,7 @@ struct Particle {
 };
 extern std::vector<Particle> g_particles;
 
-// Sprite + animation state — owned by sprites.cpp, but graphics.cpp
+// Sprite + animation state - owned by sprites.cpp, but graphics.cpp
 // reads Sprite fields directly for TILEMAP.COLLIDES / TILED.COLLIDES.
 struct SpriteAnim {
     std::string name;
@@ -89,7 +89,7 @@ struct Sprite {
 extern std::map<int, Sprite> g_sprites;
 extern int g_next_sprite_id;
 
-// Defined in sprites.cpp — keep external so the tilemap collision
+// Defined in sprites.cpp - keep external so the tilemap collision
 // builtins in graphics.cpp can resolve a sprite handle the same way.
 Sprite& get_sprite(const char* fn, int id);
 

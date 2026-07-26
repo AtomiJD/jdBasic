@@ -7,7 +7,7 @@ class VM;
 
 // Run jdBasic as an MCP (Model Context Protocol) server over stdio.
 // Reads newline-delimited JSON-RPC frames (one object per line, '\n'
-// terminated — the MCP spec, NOT LSP-style Content-Length framing) from
+// terminated - the MCP spec, NOT LSP-style Content-Length framing) from
 // stdin, dispatches them on the persistent VM, writes responses to
 // stdout. Returns the process exit code.
 //

@@ -1,4 +1,4 @@
-// FTXUI-based REPL — Phase 2b (workspaces):
+// FTXUI-based REPL - Phase 2b (workspaces):
 //
 //   * Four workspaces, each with its own VM, output buffer, history,
 //     and live input draft. F1-F4 switches; the active tab is shown
@@ -107,13 +107,13 @@ struct Workspace {
     int history_idx = -1;
     std::string draft;             // saved input text on tab-switch
     std::string program_buffer;    // LOAD/SAVE/RUN target per workspace
-    // Boot-set snapshot — captured right after setup so the side-panel
+    // Boot-set snapshot - captured right after setup so the side-panel
     // can show only the vars / funcs the user added this session.
     std::unordered_set<std::string> boot_vars;
     std::unordered_set<std::string> boot_funcs;
 };
 
-// Command palette entries — what shows up in the Ctrl+P modal.
+// Command palette entries - what shows up in the Ctrl+P modal.
 // `template_` is what gets injected into the input field; for commands
 // that need an argument (load, save) we leave the trailing space so the
 // user just types the path. `desc` is a one-line description shown
@@ -230,7 +230,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
     using namespace ftxui;
 
     if (vms.size() != N_WS) {
-        // Caller should give us exactly four VMs — anything else is
+        // Caller should give us exactly four VMs - anything else is
         // a setup bug.
         return 1;
     }
@@ -262,11 +262,11 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
     auto screen = ScreenInteractive::Fullscreen();
     bool exit_requested = false;
     std::string input_text;
-    // Shared cursor position for the input row — exposed via Ref so
+    // Shared cursor position for the input row - exposed via Ref so
     // the palette can land the cursor right after the injected text.
     auto input_cursor = std::make_shared<int>(0);
 
-    // Tab-switch helper — saves the current input as the active ws's
+    // Tab-switch helper - saves the current input as the active ws's
     // draft and restores the target ws's draft so each tab feels like
     // it kept its own typing state.
     auto switch_to = [&](int target) {
@@ -315,12 +315,12 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         if (w.history.size() > 200) w.history.pop_front();
         w.outbox->push("> " + code + "\n");
 
-        // `edit` / `edit <file>` — port of the legacy console_execute
+        // `edit` / `edit <file>` - port of the legacy console_execute
         // EDIT handler. The Editor class uses raw termios (POSIX) /
         // Win32 console API directly, so it owns the terminal once
         // we suspend FTXUI via WithRestoredIO. After it exits we
         // mirror the lines back into the workspace's program_buffer
-        // and, if F5 was pressed, run it on the workspace's VM —
+        // and, if F5 was pressed, run it on the workspace's VM -
         // same UX as the legacy REPL.
         {
             std::string upper = code;
@@ -383,7 +383,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
         }
 
         // RUN runs the program_buffer. Simple scripts (PRINT loops,
-        // computation) should keep their output in the outbox — that's
+        // computation) should keep their output in the outbox - that's
         // the natural REPL view. Console-mode interactive programs
         // (Snake-style: CLS + ON "KEYDOWN" + INKEY$ + LOCATE) need the
         // raw terminal so VM event_poll's _kbhit branch can see keys
@@ -580,7 +580,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
     input_with_history->TakeFocus();
 
     auto renderer = Renderer(layout, [&] {
-        // Tab row — one segment per workspace, active in cyan-bold.
+        // Tab row - one segment per workspace, active in cyan-bold.
         Elements tabs;
         for (int i = 0; i < N_WS; i++) {
             std::string label = " F" + std::to_string(i + 1) + " " +
@@ -669,7 +669,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
     auto root = Modal(renderer, palette_with_keys, show_palette.get());
 
     auto with_keys = CatchEvent(root, [&](Event e) {
-        // Exit only via the explicit `:exit` command — no panic-keys.
+        // Exit only via the explicit `:exit` command - no panic-keys.
         // Esc closes the palette if it's open; otherwise it clears the
         // current input line (so the user can abort a half-typed
         // statement without backspace-spamming).

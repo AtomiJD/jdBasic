@@ -7,7 +7,7 @@
 #include <mutex>
 #include <string>
 
-// jdBasic FILE streaming handle — line-by-line text reader with optional
+// jdBasic FILE streaming handle - line-by-line text reader with optional
 // tail-follow mode (analog zu `tail -f`). Lives in a process-global
 // registry indexed by an i64 handle so it can be passed across ASYNC
 // FUNC boundaries (each ASYNC FUNC is a fresh VM, see vm.cpp:1811).

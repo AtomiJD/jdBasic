@@ -136,7 +136,7 @@ inline const std::unordered_map<std::string, TokenType>& keywords() {
         // DYNAMIC: tagged-mixed array (per-cell JdTag). `ANY` is taken by
         // the truthy-test builtin so we only expose `DYNAMIC` here.
         {"DYNAMIC", TokenType::TY_ANY},
-        // Classic-BASIC type aliases — friendlier than INT64/FLOAT64
+        // Classic-BASIC type aliases - friendlier than INT64/FLOAT64
         {"INTEGER", TokenType::TY_INT64},
         {"LONG",    TokenType::TY_INT64},
         {"SHORT",   TokenType::TY_INT16},

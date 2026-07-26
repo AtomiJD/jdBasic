@@ -9,7 +9,7 @@ std::atomic<int64_t>                             g_channels_next_id{1};
 
 // ── EOF marker ──────────────────────────────────────────────────────
 //
-// We deliberately don't add a new ValueType for EOF — that would ripple
+// We deliberately don't add a new ValueType for EOF - that would ripple
 // through FORMAT$, TYPEOF, the Value comparator, and the codegen tag
 // table. Instead we mint a tiny MAP with a sentinel key. Phase 2 can
 // promote this to a real type if it becomes a hotspot.
@@ -65,7 +65,7 @@ void chan_close(Channel& ch) {
         if (ch.closed.load()) return;
         ch.closed.store(true);
     }
-    // Wake everyone — RECVers drain the rest of the buffer then see EOF;
+    // Wake everyone - RECVers drain the rest of the buffer then see EOF;
     // SENDers learn the channel is dead and throw.
     ch.cv_recv.notify_all();
     ch.cv_send.notify_all();

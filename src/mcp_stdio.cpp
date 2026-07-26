@@ -1,10 +1,10 @@
-// jdBasic MCP server — stdio transport (newline-delimited JSON).
+// jdBasic MCP server - stdio transport (newline-delimited JSON).
 //
 // Per the MCP spec, each request/response is one JSON object on its
-// own line, terminated by '\n'. (NOT LSP-style Content-Length framing —
+// own line, terminated by '\n'. (NOT LSP-style Content-Length framing -
 // that's a different protocol.) JSON is parsed/serialized through the
 // VM's own JSON.PARSE$ / JSON.STRINGIFY$ natives (no extra dependency).
-// The persistent VM is the same one that would run a script — every
+// The persistent VM is the same one that would run a script - every
 // jdb_eval shares state across calls, exactly like the HTTP variant in
 // mcp/server.jdb.
 //
@@ -22,7 +22,7 @@
 #include "graphics.h"
 #endif
 
-// Defined in main.cpp / vm_bridge.cpp — directory of the currently-loaded
+// Defined in main.cpp / vm_bridge.cpp - directory of the currently-loaded
 // script. Set by tool_jdb_load so that IMPORT inside a loaded script can
 // resolve modules that live next to it.
 extern std::string g_base_dir;
@@ -72,7 +72,7 @@ extern std::string g_base_dir;
 extern void run_on_vm(VM& vm, const std::string& source);
 extern std::string recompile_on_vm(VM& vm, const std::string& source);
 
-// Workspace persistence — defined in main.cpp. SAVEWS / LOADWS are REPL
+// Workspace persistence - defined in main.cpp. SAVEWS / LOADWS are REPL
 // commands by their original UX, but the underlying logic is generic and
 // the MCP server exposes them as jdb_savews / jdb_loadws tools. The fourth
 // `extra_filter` param lets the MCP wrapper drop boot-set vars (PI, E,
@@ -86,11 +86,11 @@ extern void load_workspace(VM& vm, std::string& program_buffer,
 // Session source buffer: every successful jdb_eval call appends its source
 // here so jdb_savews can persist user FUNC/SUB definitions alongside the
 // var snapshot. Without this, only the variable values would survive a
-// save/load round-trip — load_workspace re-parses the program text to
+// save/load round-trip - load_workspace re-parses the program text to
 // rebuild function bindings.
 static std::string g_session_buffer;
 
-// Last path passed to jdb_load — jdb_recompile defaults to this so the
+// Last path passed to jdb_load - jdb_recompile defaults to this so the
 // caller doesn't have to pass it again every iteration.
 static std::string g_last_loaded_path;
 
@@ -102,7 +102,7 @@ namespace {
 
 // ── Framing ─────────────────────────────────────────────────────
 // MCP stdio: one JSON-RPC object per line, terminated by '\n'.
-// Empty lines (whitespace-only) are skipped — Claude Code occasionally
+// Empty lines (whitespace-only) are skipped - Claude Code occasionally
 // sends a heartbeat newline. EOF on stdin → return false to exit cleanly.
 //
 // stdin is read raw via ::read, NOT std::cin, to avoid any translation
@@ -130,7 +130,7 @@ bool read_frame(std::string& body) {
         if (c == '\n') {
             // Strip optional trailing \r (CRLF tolerant).
             if (!body.empty() && body.back() == '\r') body.pop_back();
-            // Skip blank lines — keep reading for the next real frame.
+            // Skip blank lines - keep reading for the next real frame.
             bool blank = true;
             for (char ch : body) { if (ch != ' ' && ch != '\t') { blank = false; break; } }
             if (blank) { body.clear(); continue; }
@@ -149,7 +149,7 @@ static std::mutex g_stdout_mutex;
 void write_frame(const std::string& body) {
     // One JSON object, then '\n'. Flush so the client sees the reply
     // before its handshake timeout fires. NDJSON forbids embedded
-    // newlines in the body — JSON.STRINGIFY$ already escapes them.
+    // newlines in the body - JSON.STRINGIFY$ already escapes them.
     std::lock_guard<std::mutex> g(g_stdout_mutex);
     std::cout << body << '\n';
     std::cout.flush();
@@ -175,7 +175,7 @@ void log_line(const std::string& s) {
 }
 
 // ── Value helpers ────────────────────────────────────────────────
-// Tiny ergonomics over ObjectObj.fields — every JSON-RPC envelope and
+// Tiny ergonomics over ObjectObj.fields - every JSON-RPC envelope and
 // every tool result is one of these. Centralising "get/set field" keeps
 // the dispatch code readable.
 
@@ -285,17 +285,17 @@ struct OutputCapture {
 //    jdb_resume calls (a fresh thread per call would break the
 //    "the thread that did SDL_Init owns the window" rule),
 //  * decouples long-running scripts from the MCP request/response
-//    cycle — jdb_load/jdb_resume post a job and return immediately,
+//    cycle - jdb_load/jdb_resume post a job and return immediately,
 //    so the MCP client never waits for the game loop to end.
 //
-// jdb_eval also posts a job, but waits on a promise — evals are
+// jdb_eval also posts a job, but waits on a promise - evals are
 // short and the caller wants the result. While the worker is
 // running a long script, eval is rejected ("VM busy") rather than
 // queued, because waiting would re-introduce the very hang the
 // async model is meant to avoid. The client must call jdb_stop first.
 //
 // jdb_vars / jdb_funcs / jdb_savews / jdb_loadws read or mutate
-// VM state and stay on the main thread — they take the worker
+// VM state and stay on the main thread - they take the worker
 // mutex briefly so they're serialised against any in-flight job.
 
 struct VmJob {
@@ -384,7 +384,7 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
         OutputCapture cap(v);
         try {
             run_on_vm(v, code + "\n");
-            // Only append on success — failed snippets shouldn't poison the
+            // Only append on success - failed snippets shouldn't poison the
             // workspace's PROGRAM section. load_workspace re-parses this text
             // to rebuild user FUNC/SUB bindings, so syntax-broken fragments
             // would prevent any later restore from succeeding.
@@ -458,7 +458,7 @@ Value tool_jdb_stop(VM& vm, const Value& /*args*/) {
     // Fallback path. Normally the reader thread fast-paths jdb_stop before
     // it ever reaches the main dispatch (so the response goes out while the
     // VM is still running). If we get here, the request arrived between
-    // tool calls — the VM is idle and stop_requested will be cleared by
+    // tool calls - the VM is idle and stop_requested will be cleared by
     // the next run_code prep, so this is mostly a no-op-with-receipt.
     vm.stop_requested.store(true);
     return make_text_result("[stop requested]", false);
@@ -526,7 +526,7 @@ Value tool_jdb_resume(VM& vm, const Value& /*args*/) {
         }
     }
     post_job([](VM& v) {
-        // Discard PRINT during the async resume — the originating tool
+        // Discard PRINT during the async resume - the originating tool
         // call is already gone. Live-tweak workflows inspect via
         // jdb_eval after the next STOP, not via load/resume stdout.
         auto prev = v.on_output;
@@ -573,14 +573,14 @@ Value tool_jdb_load(VM& vm, const Value& args) {
     g_last_loaded_path = path;  // jdb_recompile defaults to this
     // Set g_base_dir to the loaded script's directory so IMPORT resolves
     // modules that live next to the script (matches CLI behaviour in
-    // main.cpp — without this, jdb_load'd scripts with IMPORT silently
+    // main.cpp - without this, jdb_load'd scripts with IMPORT silently
     // abort because the module file can't be found via cwd alone).
     {
         auto sep = path.find_last_of("/\\");
         g_base_dir = (sep != std::string::npos) ? path.substr(0, sep) : ".";
     }
     post_job([source, path](VM& v) {
-        // Discard PRINT during async run — the load tool already returned.
+        // Discard PRINT during async run - the load tool already returned.
         // For live-tweak workflows, use jdb_eval after STOP to read state.
         auto prev = v.on_output;
         v.on_output = [](const std::string&) {};
@@ -624,7 +624,7 @@ bool is_user_func(const std::string& name) {
     return boot_set().funcs.count(name) == 0;
 }
 
-// Shape of a nested array as "[d0, d1, ...]" — outer length, then descend
+// Shape of a nested array as "[d0, d1, ...]" - outer length, then descend
 // first elements while they are arrays (same convention as the LENV builtin).
 std::string array_shape_str(const Value& v) {
     std::string s = "[";
@@ -719,7 +719,7 @@ Value tool_jdb_funcs(VM& vm, const Value&) {
 // Locate the directory containing the running jdBasic executable. Used to
 // resolve doc/languages.md relative to the binary so a redistributed bundle
 // works without the user having to set "cwd" in the MCP client config.
-// Returns "" if the platform lookup fails — caller falls back to CWD.
+// Returns "" if the platform lookup fails - caller falls back to CWD.
 
 std::string exe_dir() {
 #ifdef _WIN32
@@ -770,7 +770,7 @@ bool open_doc_languages(std::ifstream& in,
     return in.is_open();
 }
 
-// jdb_doc — fuzzy search doc/languages.md, mirroring mcp/server.jdb's
+// jdb_doc - fuzzy search doc/languages.md, mirroring mcp/server.jdb's
 // IS_DOC_ANCHOR + body-collection logic. Anchor = bullet starting with
 // "* **" or any markdown heading.
 
@@ -843,12 +843,12 @@ Value tool_jdb_doc(VM&, const Value& args) {
     return make_text_result(out, false);
 }
 
-// jdb_savews / jdb_loadws — Smalltalk-style workspace persistence over MCP.
+// jdb_savews / jdb_loadws - Smalltalk-style workspace persistence over MCP.
 // SAVEWS pickles every user-bound global (variables and FUNC/SUB definitions
 // the agent has accumulated this session) into "<name>.jdws" in the server's
 // CWD. LOADWS resets the VM and restores from that file. The original REPL
 // commands kept a source buffer too; the MCP server has no notion of a
-// linear input log so we pass an empty buffer — only state is persisted,
+// linear input log so we pass an empty buffer - only state is persisted,
 // not history. Source-text projects are better handled with jdb_load.
 
 Value tool_jdb_savews(VM& vm, const Value& args) {
@@ -865,7 +865,7 @@ Value tool_jdb_savews(VM& vm, const Value& args) {
         // this text to rebuild user function bindings. The MCP server also
         // hands save_workspace its boot-set filter so VM-internal globals
         // (created during VM bootstrap, e.g. ZEROS scratch slots) are
-        // skipped — only vars the user actually set this session land in
+        // skipped - only vars the user actually set this session land in
         // the file.
         save_workspace(vm, g_session_buffer, name,
                        [](const std::string& n) { return is_user_var(n); });
@@ -884,7 +884,7 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
     if (worker_busy_or_queued_locked()) {
         return make_text_result("VM busy — call jdb_stop first.", true);
     }
-    // load_workspace returns silently when the file is missing — without
+    // load_workspace returns silently when the file is missing - without
     // this check the tool would report success on a no-op load.
     if (!std::filesystem::exists(name + ".jsws") &&
         !std::filesystem::exists(name + ".jdws")) {
@@ -893,7 +893,7 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
     }
     OutputCapture cap(vm);
     try {
-        // load_workspace clears + repopulates the buffer — adopt it as the
+        // load_workspace clears + repopulates the buffer - adopt it as the
         // new session buffer so subsequent jdb_savews preserves the loaded
         // FUNC/SUB definitions plus anything the user adds afterwards.
         g_session_buffer.clear();
@@ -906,7 +906,7 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
     }
 }
 
-// jdb_reset — the MCP equivalent of the REPL's CLEARWS: wipe the session
+// jdb_reset - the MCP equivalent of the REPL's CLEARWS: wipe the session
 // source buffer and reset the VM (variables + functions). Workspace files
 // on disk stay untouched, so jdb_loadws can restore a saved state after.
 
@@ -925,11 +925,11 @@ Value tool_jdb_reset(VM& vm, const Value&) {
         "on disk are untouched; jdb_loadws restores one.", false);
 }
 
-// jdb_run_native — popen() the command, capture combined stdout+stderr,
+// jdb_run_native - popen() the command, capture combined stdout+stderr,
 // return banner + body. The read runs on a helper thread so a hanging
 // process cannot hang the MCP client: on timeout the reader is detached
 // and an error is returned (popen exposes no PID, so the child itself
-// cannot be killed portably — the message says it may still be running).
+// cannot be killed portably - the message says it may still be running).
 
 Value tool_jdb_run_native(VM&, const Value& args) {
     std::string cmd = obj_get_str(args, "command");
@@ -1323,7 +1323,7 @@ Value handle_rpc(VM& vm, const Value& rpc) {
 // inline), and posts other frames to a queue the main loop drains.
 //
 // The reader does NOT touch the VM's value system (no parse_json /
-// stringify_json from the reader thread) — those allocate via the VM's
+// stringify_json from the reader thread) - those allocate via the VM's
 // arena and aren't thread-safe. Detection is byte-level on the raw
 // frame body; the response is a hand-built JSON literal.
 
@@ -1368,7 +1368,7 @@ void reader_loop(VM& vm, McpInbox& inbox) {
         std::string id_lit;
         if (is_stop_request(body, id_lit)) {
             vm.stop_requested.store(true);
-            // Hand-built response — bypasses parse_json / stringify_json,
+            // Hand-built response - bypasses parse_json / stringify_json,
             // both of which mutate VM-arena state and aren't safe from a
             // non-VM thread.
             std::string resp = "{\"jsonrpc\":\"2.0\",\"id\":" + id_lit
@@ -1409,7 +1409,7 @@ int run_mcp_stdio(VM& vm, const std::string& user_tools_dir) {
         log_line("user tools loaded: " + std::to_string(g_user_tools.size()));
     }
 
-    // Persistent VM worker — owns the VM during job execution. SDL
+    // Persistent VM worker - owns the VM during job execution. SDL
     // thread-affinity requires a single thread for the entire session,
     // not a fresh thread per jdb_load/jdb_resume call.
     g_worker.t = std::thread(worker_loop, std::ref(vm));
@@ -1471,7 +1471,7 @@ int run_mcp_stdio(VM& vm, const std::string& user_tools_dir) {
     log_line("stdin closed, exiting");
     if (reader.joinable()) reader.join();
     // Drain any in-flight job, then shut the worker down. We don't try
-    // to interrupt — a long-running game loop will exit on its own
+    // to interrupt - a long-running game loop will exit on its own
     // (END or running=0) or via stop_requested if the client sent one.
     g_worker.shutdown.store(true);
     g_worker.cv.notify_one();

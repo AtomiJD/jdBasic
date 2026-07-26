@@ -40,7 +40,7 @@ enum class JdTag : int32_t {
 constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
 #endif
 
-// C-style aliases — usable from both C and C++. Keeps plain integer
+// C-style aliases - usable from both C and C++. Keeps plain integer
 // compares (`m->tags[idx] == JD_TAG_STR`) readable without having to
 // cast away enum-class scoping at every site.
 #define JD_TAG_I64        0

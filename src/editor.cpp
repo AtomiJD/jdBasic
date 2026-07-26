@@ -11,7 +11,7 @@
 #include "editor.h"
 
 // Toggled by OPTION "NOAUTOIDENT" / "AUTOIDENT" in vm.cpp. When false,
-// pressing Enter inserts a bare newline — the next line starts at col 0
+// pressing Enter inserts a bare newline - the next line starts at col 0
 // instead of mirroring the previous line's leading whitespace. Useful
 // for keyboard-driven scripts that already supply their own indentation
 // (e.g. jdb/tv/director.jdb typing pre-indented code into the editor).
@@ -61,7 +61,7 @@ enum : int {
 };
 
 // Internal clipboard fallback. xclip/wl-copy fail silently when there's no
-// DISPLAY/WAYLAND_DISPLAY (e.g. plain SSH session) — without this fallback
+// DISPLAY/WAYLAND_DISPLAY (e.g. plain SSH session) - without this fallback
 // Ctrl+C+V across the editor would round-trip through the system clipboard
 // or stale state from another app.
 static std::string g_internal_clipboard;
@@ -244,7 +244,7 @@ static std::string base64_encode(const std::string& in) {
 
 // Clipboard. Always updates in-process fallback so internal copy/paste works
 // even with no DISPLAY. Also pushes to the *terminal's* clipboard via OSC 52
-// — most modern terminals (xterm, kitty, alacritty, wezterm, foot,
+// - most modern terminals (xterm, kitty, alacritty, wezterm, foot,
 // gnome-terminal recent) support it. That makes the user's Ctrl+V work
 // consistently when their terminal intercepts it (common case on Linux/SSH).
 // Falls back to xclip/wl-copy/xsel when X/Wayland is around for the local
@@ -266,7 +266,7 @@ void clip_set(const std::string& text) {
     }
 }
 std::string clip_get() {
-    // If the user copied something inside this editor session, prefer that —
+    // If the user copied something inside this editor session, prefer that -
     // the system clipboard might be unreachable (no DISPLAY) or out of sync.
     if (g_internal_clipboard_set) return g_internal_clipboard;
     std::string r;
@@ -649,7 +649,7 @@ void EditorImpl::run() {
 
         // Movement keys clear selection on non-shift; the shift variants
         // start it. Anything not in this list (typing, save, etc.) just
-        // proceeds — typing replaces the selection.
+        // proceeds - typing replaces the selection.
         bool is_plain_move = (key == PK_LEFT || key == PK_RIGHT || key == PK_UP || key == PK_DOWN ||
                               key == PK_HOME || key == PK_END || key == PK_PAGEUP || key == PK_PAGEDOWN ||
                               key == PK_CTRL_LEFT || key == PK_CTRL_RIGHT);
@@ -658,7 +658,7 @@ void EditorImpl::run() {
         switch (key) {
             case PK_CTRL_Q:
                 // Exit unconditionally. The buffer (lines_ref) is the live
-                // in-memory program — main.cpp picks it up after we return,
+                // in-memory program - main.cpp picks it up after we return,
                 // so a "discard?" prompt would be misleading. Ctrl+S still
                 // exists for writing to disk.
                 goto done;

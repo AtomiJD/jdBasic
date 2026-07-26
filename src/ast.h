@@ -8,21 +8,21 @@
 enum class VarType {
     NONE, BOOLEAN, BYTE, CHAR, INT16, INT32, INT64,
     FLOAT16, FLOAT32, FLOAT64, STRING, OBJECT, TENSOR, ARRAY,
-    ANY  // DYNAMIC — tagged-mixed array (per-cell JdTag)
+    ANY  // DYNAMIC - tagged-mixed array (per-cell JdTag)
 };
 
 // VarType is the parser/compiler-side enum (extra CHAR slot at index 3),
 // ValueType is the runtime enum used by the VM (no CHAR). The two enums
 // have *different* numeric values for INT16+, so passing a VarType u8 to
 // the CAST opcode (which interprets it as ValueType) silently corrupts
-// the type — e.g. VarType::INT64 (6) became ValueType::FLOAT16, turning
+// the type - e.g. VarType::INT64 (6) became ValueType::FLOAT16, turning
 // `DIM A AS INTEGER = $CAFEBABE` into `inf`. Always go through this map.
 inline uint8_t vartype_to_valuetype_byte(VarType vt) {
     switch (vt) {
         case VarType::NONE:    return 0;  // ValueType::NONE
         case VarType::BOOLEAN: return 1;  // ValueType::BOOLEAN
         case VarType::BYTE:    return 2;  // ValueType::BYTE
-        case VarType::CHAR:    return 2;  // map CHAR to BYTE — VM has no CHAR
+        case VarType::CHAR:    return 2;  // map CHAR to BYTE - VM has no CHAR
         case VarType::INT16:   return 3;  // ValueType::INT16
         case VarType::INT32:   return 4;  // ValueType::INT32
         case VarType::INT64:   return 5;  // ValueType::INT64
@@ -303,8 +303,8 @@ struct Stmt {
     struct TypeMember { std::string name; VarType type; };
     std::vector<TypeMember> type_members;
 
-    // DIM x AS T(arg1, arg2)            — scalar UDT constructor args
-    // DIM arr[N] AS T(vec1, vec2)       — vectorised: vecK[i] -> arg K of slot i
+    // DIM x AS T(arg1, arg2)            - scalar UDT constructor args
+    // DIM arr[N] AS T(vec1, vec2)       - vectorised: vecK[i] -> arg K of slot i
     std::vector<ExprPtr> ctor_args;
 
     // TRY_CATCH: body=TRY block, catch_body, finally_body

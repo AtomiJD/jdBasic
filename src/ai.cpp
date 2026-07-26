@@ -272,7 +272,7 @@ void register_ai_builtins(VM& vm) {
             for (auto d : model_shape) { if (d < 0) model_shape_complete = false; }
 
             if (model_shape_complete) {
-                // Model has fully defined shape — use it directly
+                // Model has fully defined shape - use it directly
                 shape = model_shape;
             } else {
                 // Infer shape from data, fill in dynamic dims from data
@@ -426,7 +426,7 @@ void register_ai_builtins(VM& vm) {
         }
 
         // Reshape into nested array matching shape
-        // For now return flat — AI.RUN handles flat arrays fine
+        // For now return flat - AI.RUN handles flat arrays fine
         return result;
     });
 

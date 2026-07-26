@@ -1,4 +1,4 @@
-// PYTHON / PY.* builtins — an embedded CPython interpreter.
+// PYTHON / PY.* builtins - an embedded CPython interpreter.
 //
 //   PYTHON$(code$)        run a code block, return its captured stdout
 //   PY.EVAL(expr$)        evaluate one expression, return the value natively
@@ -64,7 +64,7 @@ std::wstring utf8_to_wide(const std::string& s) {
 // Boot CPython once. Resolves the interpreter home so the standard library is
 // found: JDB_PYTHON_HOME wins, otherwise the per-user pythoncore package the
 // build is wired against. Leaves the GIL released (PyGILState_Ensure reclaims
-// it per call) so any thread — including the MCP worker — can drive Python.
+// it per call) so any thread - including the MCP worker - can drive Python.
 void init_python() {
     PyConfig config;
     PyConfig_InitPythonConfig(&config);
@@ -178,7 +178,7 @@ PyObject* value_to_py(const Value& v) {
             return dict;
         }
         case ValueType::TENSOR: {
-            // Legacy internal type, not user-facing — flatten to a list.
+            // Legacy internal type, not user-facing - flatten to a list.
             auto* t = v.as_tensor();
             PyObject* list = PyList_New((Py_ssize_t)t->data.size());
             for (size_t i = 0; i < t->data.size(); i++)
@@ -230,7 +230,7 @@ Value py_to_value(PyObject* o) {
         return obj;
     }
     // numpy arrays, array.array, and anything else exposing tolist() convert
-    // through Python into native (possibly nested) jdBasic arrays — shape- and
+    // through Python into native (possibly nested) jdBasic arrays - shape- and
     // dtype-agnostic. jdBasic has no Tensor type, so a plain numeric array is
     // the right landing place.
     if (PyObject_HasAttrString(o, "tolist")) {

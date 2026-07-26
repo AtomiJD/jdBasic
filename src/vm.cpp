@@ -197,12 +197,12 @@ static void vm_heap_dispose_hook(HeapObject* o) {
     try {
         g_active_vm->call_function(dispose_name, { wrapped });
     } catch (...) {
-        // Swallow — DISPOSE failures must not corrupt the cleanup path.
+        // Swallow - DISPOSE failures must not corrupt the cleanup path.
     }
 }
 
 VM::VM() {
-    stack.resize(65536); // pre-allocate stack — avoids resize checks on hot paths
+    stack.resize(65536); // pre-allocate stack - avoids resize checks on hot paths
     frames.reserve(1024); // pre-allocate frame vector
     prev_active_vm_ = g_active_vm;
     g_active_vm = this;
@@ -263,7 +263,7 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     func_protos = &owned_funcs;
     func_map_generation++;
 
-    // Allocate global slots for user variables — preserve any existing
+    // Allocate global slots for user variables - preserve any existing
     // native registrations (PI, E, …) at their assigned slots. The
     // previous code naively did `global_names[name] = i`, which made
     // `global_names["A"]` point at slot 0 (held by PI). User code that
@@ -322,14 +322,14 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     // refer to the OUTER chunk and frame depth. If we leave the outer
     // entries visible to the inner run(), an exception thrown from the
     // EXECUTE'd code will trip the outer handler and ip-jump into the
-    // inner chunk at the outer's catch_addr — random bytes, "Unknown
+    // inner chunk at the outer's catch_addr - random bytes, "Unknown
     // opcode". Save and clear so the inner run sees a clean stack; the
     // exception will propagate up via run_code's catch block below and
     // the outer try_handlers are restored before re-throwing.
     auto saved_try_handlers = std::move(try_handlers);
     try_handlers.clear();
     frames.clear();
-    // IMPORTANT: do NOT reset sp to 0 — the existing stack may hold locals of an
+    // IMPORTANT: do NOT reset sp to 0 - the existing stack may hold locals of an
     // outer user function (e.g. EVAL called from inside Calc). Start the new
     // chunk's frame ABOVE the current sp so we don't clobber outer locals.
     size_t base = saved_sp;
@@ -340,7 +340,7 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     is_stopped = false;  // fresh sub-run; prior STOP state preserved in stopped_*
     // A previous run may have ended via END_PROGRAM, leaving is_halted=true.
     // Without this reset, run() bails at its top-of-loop guard and the
-    // sub-chunk silently never executes — wedges every MCP eval after END.
+    // sub-chunk silently never executes - wedges every MCP eval after END.
     is_halted = false;
     // Clear any pre-fired external stop signal: a sub-run inherits a clean
     // slate, so e.g. an MCP eval doesn't fire-and-forget-stop a tiny snippet
@@ -363,11 +363,11 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
         throw;
     }
     subrun_depth--;
-    // Sub-run completed cleanly — restore the outer try_handlers.
+    // Sub-run completed cleanly - restore the outer try_handlers.
     try_handlers = std::move(saved_try_handlers);
 
     if (is_stopped) {
-        // Save stopped state for RESUME — keep chunk alive by copying
+        // Save stopped state for RESUME - keep chunk alive by copying
         stopped_chunk = chunk;
         // Update frame pointers: frames pointing to &chunk must point to &stopped_chunk
         stopped_frames = std::move(frames);
@@ -378,7 +378,7 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
         stopped_sp = sp;
         // Expose locals of the stopped function frame as console globals
         inject_stopped_locals();
-        // is_stopped stays true — caller (console) will check it
+        // is_stopped stays true - caller (console) will check it
     } else {
         // Sub-run completed normally; restore prior STOP state if any
         is_stopped = saved_is_stopped;
@@ -428,7 +428,7 @@ void VM::reset() {
 void VM::inject_stopped_locals() {
     injected_locals.clear();
     if (stopped_frames.empty()) return;
-    // The deepest frame is where execution paused — usually the function with STOP
+    // The deepest frame is where execution paused - usually the function with STOP
     const CallFrame& f = stopped_frames.back();
     if (!f.chunk) return;
     for (size_t i = 0; i < f.chunk->var_names.size(); i++) {
@@ -440,7 +440,7 @@ void VM::inject_stopped_locals() {
         auto git = global_names.find(name);
         // Sub-run main chunks store top-level vars via OP_STORE_GLOBAL; the
         // frame slot is allocated but unused (stays NONE). Don't clobber the
-        // real global with a stale NONE — let the user inspect/mutate the
+        // real global with a stale NONE - let the user inspect/mutate the
         // global directly. The script's OP_LOAD_GLOBAL on resume sees the
         // user's modification, since extract_stopped_locals has no entry to
         // revert.
@@ -507,7 +507,7 @@ bool VM::resume() {
     // the new stopped state so the NEXT resume() can find it. Mirrors
     // run_code() lines 298-310. Without this, a second jdb_resume after
     // a stop/eval/resume cycle moves empty stopped_frames into frames
-    // and crashes on the first opcode fetch — silently swallowed by
+    // and crashes on the first opcode fetch - silently swallowed by
     // mcp_stdio's catch(...) and surfacing as a hung SDL window with
     // the VM mysteriously back at idle (RUNNING=1 global, but worker
     // terminated mid-loop). stopped_chunk stays valid: it's the same
@@ -596,7 +596,7 @@ void VM::propagate_reactive(const std::string& changed_var) {
                 sp = saved_sp_val;
                 min_frame_depth = saved_min;
 
-                // Set the reactive variable — check if dotted (UDT member)
+                // Set the reactive variable - check if dotted (UDT member)
                 size_t rdot = var.find('.');
                 if (rdot != std::string::npos) {
                     std::string obj_name = var.substr(0, rdot);
@@ -665,8 +665,8 @@ Value VM::call_funcref(const Value& ref, const std::vector<Value>& args) {
 }
 
 // Returns true if `name` should NOT be auto-vectorized when called with an
-// array argument — either because the function is array-aware itself
-// (consumes the array as a whole — file I/O, GFX matrix args, OS commands,
+// array argument - either because the function is array-aware itself
+// (consumes the array as a whole - file I/O, GFX matrix args, OS commands,
 // etc.), or because vectorising would clobber state (e.g. SETLOCALE).
 //
 // Used by both VM::call_function (the entry point used by the native-mode
@@ -857,7 +857,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "GUI.ITEM_RECT", "GUI.SET_CURSOR_SCREEN_POS",
         "GUI.SET_NEXT_ITEM_WIDTH", "GUI.SET_KEYBOARD_FOCUS",
         "GUI.ITEM_DEACTIVATED_AFTER_EDIT",
-        // TUI.* — every entry. None of the immediate-mode widgets
+        // TUI.* - every entry. None of the immediate-mode widgets
         // want auto-vectorization (an array passed as options[] is
         // ONE argument, not a fan-out trigger). See
         // project_matrix_gfx_novec.md for the canonical rule.
@@ -961,7 +961,7 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
     run();
     min_frame_depth = saved_min;
     // If the called function (or anything it triggered) ran END, the
-    // VM has no return value to pop — bail out cleanly. The is_halted
+    // VM has no return value to pop - bail out cleanly. The is_halted
     // flag stays set so further nested unwinds also short-circuit.
     if (is_halted) return Value::make_none();
     return pop();
@@ -1009,7 +1009,7 @@ void VM::run() {
         // RAISEEVENT call site even though the program said END.
         if (is_halted) return;
 
-        // Cache the current frame once per iteration — frames.back() requires
+        // Cache the current frame once per iteration - frames.back() requires
         // multiple loads per access and is a measurable overhead in tight
         // recursive loops. CALL/RETURN fall out of the switch via break, so
         // the next iteration refetches automatically.
@@ -1156,7 +1156,7 @@ void VM::run() {
                 int64_t handle = iter.to_int();
                 auto ch = chan_lookup(handle);
                 if (!ch) {
-                    // Bare i64 that isn't a channel handle — match the
+                    // Bare i64 that isn't a channel handle - match the
                     // pre-Phase-4 LEN=0 behaviour for non-iterables and
                     // exit with zero iterations.
                     take_exit();
@@ -1176,12 +1176,12 @@ void VM::run() {
                 Value val = std::move(ch->buffer.front());
                 ch->buffer.pop_front();
                 ch->cv_send.notify_one();
-                // State unchanged for channels — keep whatever was there.
+                // State unchanged for channels - keep whatever was there.
                 if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
                 stack[sp++] = std::move(state);
                 stack[sp++] = std::move(val);
             } else {
-                // MAP / OBJECT / NONE / ... — pre-existing FOR EACH path
+                // MAP / OBJECT / NONE / ... - pre-existing FOR EACH path
                 // returned LEN=0 for these and never entered the loop.
                 take_exit();
             }
@@ -1240,7 +1240,7 @@ void VM::run() {
                     std::string obj_name = full.substr(0, dot);
                     std::string rest = full.substr(dot + 1);
 
-                    // First, check the current function's locals — the
+                    // First, check the current function's locals - the
                     // parser greedily folds `rs.Fields.Count` into a single
                     // global name "RS.FIELDS.COUNT", so when `rs` is a local
                     // (e.g. inside a SUB/FUNC) the global lookup misses and
@@ -1296,7 +1296,7 @@ void VM::run() {
                         if (ok) { push(cur); break; }
                     }
                 }
-                // Fallback: no global by this name — try a zero-arg native
+                // Fallback: no global by this name - try a zero-arg native
                 // call. This makes constant-like natives (PI, E, TICK, NOW, ...)
                 // usable as bare identifiers: `2 * PI`.
                 {
@@ -1309,7 +1309,7 @@ void VM::run() {
                             stack[sp++] = std::move(r);
                             break;
                         } catch (...) {
-                            // native needs arguments or failed — fall through
+                            // native needs arguments or failed - fall through
                         }
                     }
                 }
@@ -1323,7 +1323,7 @@ void VM::run() {
             uint16_t name_idx = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip += 2;
             const std::string& full = cf.chunk->var_names[name_idx];
-            // Check if this is a protected constant — but allow if this is
+            // Check if this is a protected constant - but allow if this is
             // a CONST re-declaration (next opcode is MARK_CONST for same name).
             // This makes CONST idempotent across repeated module loads.
             if (const_globals.count(full) > 0) {
@@ -1628,7 +1628,7 @@ void VM::run() {
             }
             Value b = pop();
             Value a = pop();
-            // Element-wise comparison for arrays — RECURSIVE so 2-D matrices
+            // Element-wise comparison for arrays - RECURSIVE so 2-D matrices
             // (e.g. `(board = 0)` for a [10,10] board) keep their shape.
             std::function<Value(const Value&, const Value&)> rec =
                 [&](const Value& la, const Value& lb) -> Value {
@@ -1735,7 +1735,7 @@ void VM::run() {
             Value a = pop();
             if (a.type == ValueType::ARRAY) {
                 // Element-wise ~. Reuse array_arithmetic by XORing with -1
-                // (all-bits-set sign-extended) — semantically identical
+                // (all-bits-set sign-extended) - semantically identical
                 // and avoids a parallel codepath.
                 push(array_arithmetic(a, Value::make_i64(-1), OpCode::BIT_XOR));
             } else {
@@ -2034,7 +2034,7 @@ void VM::run() {
                         // current function frame. The parser greedily turns
                         // `conn.Open(arg)` into a CALL to "conn.Open", which
                         // would otherwise fail inside a SUB where `conn` is
-                        // a local — even though the same call works at the
+                        // a local - even though the same call works at the
                         // top level via the global lookup below.
                         auto ci_eq = [](const std::string& a, const std::string& b) {
                             if (a.size() != b.size()) return false;
@@ -2274,7 +2274,7 @@ void VM::run() {
         case OpCode::RETURN_VAL: {
             // Move the return value out, then release all other locals
             // (slots [base+1 .. sp-1]) before placing the return at base.
-            // Same reason as RETURN_VOID — keep refcounted locals from
+            // Same reason as RETURN_VOID - keep refcounted locals from
             // outliving the call.
             size_t base = cf.stack_base;
             Value retval = std::move(stack[sp - 1]);
@@ -2282,7 +2282,7 @@ void VM::run() {
             stack[base] = std::move(retval);
             sp = base + 1;
             frames.pop_back();
-            // cf is now dangling — break so next iteration refetches
+            // cf is now dangling - break so next iteration refetches
             if (frames.size() <= min_frame_depth) return;
             break;
         }
@@ -2378,7 +2378,7 @@ void VM::run() {
             uint16_t count = read_u16();
             Value map = Value::make_object();
             auto* o = map.as_object();
-            // Stack has key1,val1,...,keyN,valN — pop in reverse
+            // Stack has key1,val1,...,keyN,valN - pop in reverse
             std::vector<std::pair<std::string, Value>> pairs(count);
             for (int i = count - 1; i >= 0; i--) {
                 Value val = pop();
@@ -2507,7 +2507,7 @@ void VM::run() {
                     // its leaves into target's existing storage. That broadcasts
                     // a row-vector into a multi-D slot (test_slice.jdb relies
                     // on this), but it also silently mutates any alias of
-                    // arr[i] that the user captured with `LET row = arr[i]` —
+                    // arr[i] that the user captured with `LET row = arr[i]` -
                     // a real bug-source in the Mandelbrot APL bench.
                     //
                     // Compromise: when target and val are both flat 1D arrays
@@ -2679,7 +2679,7 @@ void VM::run() {
             return;
 
         case OpCode::END_PROGRAM:
-            // User `END` statement — terminate the whole program,
+            // User `END` statement - terminate the whole program,
             // unwinding any nested call_function() (e.g. an event handler
             // calling END from inside the main DO loop) and any sub-run
             // (REPL `run` command goes through run_code()).
@@ -2792,7 +2792,7 @@ void VM::run() {
 
             // Container is modified in place (arrays have reference semantics
             // via intrusive refcount). The statement does not leave a value
-            // on the stack — same convention as INDEX_SET.
+            // on the stack - same convention as INDEX_SET.
             break;
         }
 
@@ -2913,7 +2913,7 @@ void VM::run() {
                     default: cmp_op = OpCode::CMP_NE; break;
                 }
                 // Element-wise comparison, RECURSIVE so 2-D matrices keep
-                // their shape — matches the unfused CMP_EQ handler.
+                // their shape - matches the unfused CMP_EQ handler.
                 std::function<Value(const Value&, const Value&)> rec =
                     [&](const Value& la, const Value& lb) -> Value {
                     if (la.type == ValueType::ARRAY || lb.type == ValueType::ARRAY) {
@@ -3214,7 +3214,7 @@ Value VM::compare(const Value& a, const Value& b, OpCode op) {
     }
 
     // Reference-type equality. A MAP/OBJECT or TENSOR must not fall through to
-    // the to_double() path below — to_double() reads every reference type as
+    // the to_double() path below - to_double() reads every reference type as
     // 0.0, which makes `map = NULL`, `map = 0`, and `obj1 = obj2` all compare
     // equal. Resolve =/<> by heap identity (same type + same object); leave
     // ordering (LT/GT/LE/GE) on the legacy numeric path. ARRAY is intentionally
@@ -4032,7 +4032,7 @@ void VM::register_builtins() {
         return Value::make_i64(r);
     });
     register_native("ROTL", 2, 3, [](const std::vector<Value>& args) -> Value {
-        // ROTL(x, n, [bits=64]) — rotate-left on an integer width 'bits' (8/16/32/64).
+        // ROTL(x, n, [bits=64]) - rotate-left on an integer width 'bits' (8/16/32/64).
         uint64_t x = (uint64_t)args[0].to_int();
         int64_t n = args[1].to_int();
         int w = (args.size() >= 3) ? (int)args[2].to_int() : 64;
@@ -4221,7 +4221,7 @@ void VM::register_builtins() {
         return v;
     });
 
-    // ── FILLV / COPYV — bulk array mutators ─────────────────────────
+    // ── FILLV / COPYV - bulk array mutators ─────────────────────────
     // FILLV arr, value         → fills every leaf element with value
     // COPYV dst, src           → copies src into dst with cyclic broadcast
     // Both work as statement (no return needed) AND function form
@@ -4563,7 +4563,7 @@ void VM::register_builtins() {
     });
 
     // ── XSORT ────────────────────────────────────────────────
-    // SORT — simple ascending sort over a 1D array, alias for the
+    // SORT - simple ascending sort over a 1D array, alias for the
     // codegen-side jdb_sort helper. Strings sort lexicographically,
     // numerics by value. Multi-dim shape goes through XSORT.
     register_native("SORT", 1, 2, [](const std::vector<Value>& args) -> Value {
@@ -4798,7 +4798,7 @@ void VM::register_builtins() {
     });
 
     // ── MVINS ────────────────────────────────────────────────
-    // MVINS(matrix, dim, index, value) — INSERT a row (dim 0) or column
+    // MVINS(matrix, dim, index, value) - INSERT a row (dim 0) or column
     // (dim 1) into a 2D matrix at `index`. index == size appends at the end.
     // `value` is a vector (one entry per row/col) OR a scalar broadcast to
     // fill the new row/column. Returns a new matrix (the original is untouched).
@@ -4870,7 +4870,7 @@ void VM::register_builtins() {
         int idx = (int)args[2].to_int();
         auto* src = args[0].as_array();
         if (!src) throw std::runtime_error("SLICE: expected array");
-        // 4-arg form: SLICE(arr, axis, start, count) — extract sub-matrix
+        // 4-arg form: SLICE(arr, axis, start, count) - extract sub-matrix
         if (args.size() >= 4) {
             int count = (int)args[3].to_int();
             Value r = Value::make_array();
@@ -4890,7 +4890,7 @@ void VM::register_builtins() {
             }
             return r;
         }
-        // 3-arg form: SLICE(arr, axis, index) — extract single row/column
+        // 3-arg form: SLICE(arr, axis, index) - extract single row/column
         int rows, cols; get_2d(args[0], rows, cols);
         Value r = Value::make_array();
         if (dim == 0) { // extract row
@@ -5012,7 +5012,7 @@ void VM::register_builtins() {
 
     // ── SELECT (higher-order) ────────────────────────────────
     register_native("SELECT", [this](const std::vector<Value>& args) -> Value {
-        // SELECT(func, array, [row_wise])   — function first, APL/functional style
+        // SELECT(func, array, [row_wise])   - function first, APL/functional style
         Value fn = args[0];
         auto* arr = args[1].as_array();
         bool row_wise = (args.size() >= 3 && args[2].to_bool());
@@ -5029,7 +5029,7 @@ void VM::register_builtins() {
 
     // ── FILTER (higher-order) ────────────────────────────────
     register_native("FILTER", [this](const std::vector<Value>& args) -> Value {
-        // FILTER(func, array)   — function first
+        // FILTER(func, array)   - function first
         Value fn = args[0];
         auto* arr = args[1].as_array();
         Value r = Value::make_array();
@@ -5042,7 +5042,7 @@ void VM::register_builtins() {
 
     // ── TAKE_WHILE (higher-order) ────────────────────────────
     register_native("TAKE_WHILE", [this](const std::vector<Value>& args) -> Value {
-        // TAKE_WHILE(func, array) — take elements from the front while
+        // TAKE_WHILE(func, array) - take elements from the front while
         // predicate returns true; stop at first false.
         Value fn = args[0];
         auto* arr = args[1].as_array();
@@ -5056,7 +5056,7 @@ void VM::register_builtins() {
 
     // ── DROP_WHILE (higher-order) ────────────────────────────
     register_native("DROP_WHILE", [this](const std::vector<Value>& args) -> Value {
-        // DROP_WHILE(func, array) — skip elements from the front while
+        // DROP_WHILE(func, array) - skip elements from the front while
         // predicate returns true; keep everything from the first false on.
         Value fn = args[0];
         auto* arr = args[1].as_array();
@@ -5072,7 +5072,7 @@ void VM::register_builtins() {
 
     // ── CHUNK ────────────────────────────────────────────────
     register_native("CHUNK", 2, 2, [](const std::vector<Value>& args) -> Value {
-        // CHUNK(array, size) — split into sub-arrays of given size.
+        // CHUNK(array, size) - split into sub-arrays of given size.
         // Last chunk may be smaller. Size must be >= 1.
         auto* arr = args[0].as_array();
         int64_t n = args[1].to_int();
@@ -5095,7 +5095,7 @@ void VM::register_builtins() {
 
     // ── ENUMERATE ────────────────────────────────────────────
     register_native("ENUMERATE", 1, 1, [](const std::vector<Value>& args) -> Value {
-        // ENUMERATE(array) — returns [[0, elem0], [1, elem1], ...]
+        // ENUMERATE(array) - returns [[0, elem0], [1, elem1], ...]
         auto* arr = args[0].as_array();
         Value r = Value::make_array();
         auto* out = r.as_array();
@@ -5110,7 +5110,7 @@ void VM::register_builtins() {
 
     // ── GROUPBY (higher-order) ───────────────────────────────
     register_native("GROUPBY", [this](const std::vector<Value>& args) -> Value {
-        // GROUPBY(func, array) — bucket elements into a map keyed by
+        // GROUPBY(func, array) - bucket elements into a map keyed by
         // the result of calling func on each element (coerced to string).
         Value fn = args[0];
         auto* arr = args[1].as_array();
@@ -5131,7 +5131,7 @@ void VM::register_builtins() {
     });
 
     register_native("AGG", 3, 3, [this](const std::vector<Value>& args) -> Value {
-        // AGG(keys, values, fn@) — group `values` by the matching `keys` entry,
+        // AGG(keys, values, fn@) - group `values` by the matching `keys` entry,
         // apply fn to each group's value-array, and return a 2-column table
         // [[key, fn(group)], ...] in first-seen key order. O(n), one pass. This
         // is APL's dyadic Key (⌸): group + reduce + assemble in one primitive.
@@ -5165,7 +5165,7 @@ void VM::register_builtins() {
     });
 
     register_native("TALLY", 1, 1, [](const std::vector<Value>& args) -> Value {
-        // TALLY(array) — [[value, count], ...] of distinct values in first-seen
+        // TALLY(array) - [[value, count], ...] of distinct values in first-seen
         // order. The most common "verdichtung" (value_counts).
         auto* arr = args[0].as_array();
         std::unordered_map<std::string, size_t> idx;
@@ -5189,7 +5189,7 @@ void VM::register_builtins() {
 
     // ── REDUCE (higher-order) ────────────────────────────────
     register_native("REDUCE", [this](const std::vector<Value>& args) -> Value {
-        // REDUCE(func, array, [init])   — function first
+        // REDUCE(func, array, [init])   - function first
         Value fn = args[0];
         auto* arr = args[1].as_array();
         if (arr->elements.empty()) return (args.size() >= 3) ? args[2] : Value::make_none();
@@ -5368,7 +5368,7 @@ void VM::register_builtins() {
 
     // Coerce a Value to an epoch double. Accepts DATE-tagged FLOAT64 (used by
     // interpreter), ordinary numbers (treated as epoch seconds), and ISO
-    // strings like "YYYY-MM-DD[ HH:MM:SS]" — the native runtime stores dates
+    // strings like "YYYY-MM-DD[ HH:MM:SS]" - the native runtime stores dates
     // as ISO strings, so VM-bridged calls see string inputs here.
     auto value_to_epoch = [](const Value& v) -> double {
         if (v.type == ValueType::STRING) {
@@ -5452,7 +5452,7 @@ void VM::register_builtins() {
     });
 
     register_native("DATEDIFF", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
-        // DATEDIFF(part$, date1, date2, [tz]) — tz unused (epoch diff is TZ-invariant).
+        // DATEDIFF(part$, date1, date2, [tz]) - tz unused (epoch diff is TZ-invariant).
         std::string part = args[0].as_string()->data;
         double d1 = value_to_epoch(args[1]);
         double d2 = value_to_epoch(args[2]);
@@ -5465,7 +5465,7 @@ void VM::register_builtins() {
     });
 
     register_native("FORMAT_DATE", 1, 3, [value_to_epoch](const std::vector<Value>& args) -> Value {
-        // FORMAT_DATE(epoch, [fmt], [tz_hours]) — when tz given, format the
+        // FORMAT_DATE(epoch, [fmt], [tz_hours]) - when tz given, format the
         // instant in UTC+tz instead of local time.
         double epoch = value_to_epoch(args[0]);
         std::string fmt = (args.size() >= 2) ? args[1].as_string()->data : "%Y-%m-%d %H:%M:%S";
@@ -5988,7 +5988,7 @@ void VM::register_builtins() {
         std::fflush(stdout);
         // Slice the wait so events get polled while sleeping. Without this,
         // a tight `DO sleep 15 LOOP` could starve key/quit events for many
-        // seconds — the periodic on_tick fires only every 2000 VM ticks.
+        // seconds - the periodic on_tick fires only every 2000 VM ticks.
         const int slice_ms = 5;
         int remaining = ms;
         while (remaining > 0) {
@@ -6196,7 +6196,7 @@ void VM::register_builtins() {
         bool append = (args.size() >= 3) ? args[2].to_bool() : false;
         std::string encoding = (args.size() >= 4) ? args[3].as_string()->data : std::string();
         std::string out = jdb_enc::encode_from_utf8(content, encoding);
-        // Binary mode to match native jdb_txtwriter — avoids \r\n translation
+        // Binary mode to match native jdb_txtwriter - avoids \r\n translation
         // so FILE.SIZE returns the same byte count in both runtimes.
         std::ios::openmode mode = std::ios::out | std::ios::binary |
                                    (append ? std::ios::app : std::ios::trunc);
@@ -6279,7 +6279,7 @@ void VM::register_builtins() {
         tm.tm_hour = h; tm.tm_min = mi; tm.tm_sec = se; tm.tm_isdst = -1;
         std::time_t t = std::mktime(&tm);
         if (t == (std::time_t)-1) {
-            // Outside the CRT's range (pre-1970 on Windows) — UTC civil epoch.
+            // Outside the CRT's range (pre-1970 on Windows) - UTC civil epoch.
             out_epoch = (double)(jdb_days_from_civil(y, mo, d) * 86400 +
                                  h * 3600 + mi * 60 + se);
             return true;
@@ -6450,7 +6450,7 @@ void VM::register_builtins() {
     // ── String functions ($ aliases + new ones) ──────────────
 
     // $ aliases for existing functions
-    // String slicing helpers — implicitly stringify non-string inputs so
+    // String slicing helpers - implicitly stringify non-string inputs so
     // callers can pass e.g. a DATE-tagged FLOAT64 or a number directly,
     // matching classic BASIC's loose typing.
     register_native("LEFT$", [](const std::vector<Value>& args) -> Value {
@@ -6480,7 +6480,7 @@ void VM::register_builtins() {
         std::transform(s.begin(), s.end(), s.begin(), ::toupper);
         return Value::make_string(s);
     });
-    // UPPER$ / LOWER$ — aliases the native compiler already exports
+    // UPPER$ / LOWER$ - aliases the native compiler already exports
     // through its arr_apply table (jdb_upper / jdb_lower). Registered
     // in the VM so interpreter mode mirrors native and the shared
     // test suite (tests/native_test.jdb) doesn't fail on either side.
@@ -6828,7 +6828,7 @@ void VM::register_builtins() {
     });
 
     // PACK$: pack values to binary string. Format chars are CASE-INSENSITIVE
-    // (so `>Isbsd` and `>isbsd` are equivalent — matches the docs which use
+    // (so `>Isbsd` and `>isbsd` are equivalent - matches the docs which use
     // `I = Integer (4 bytes)`). Unknown chars throw a clean error so a typo
     // can't silently drop a value and produce a too-short string.
     //   < / >  little / big endian
@@ -6936,8 +6936,8 @@ void VM::register_builtins() {
         double v = args[0].to_double();
         return Value::make_i64(v > 0 ? 1 : (v < 0 ? -1 : 0));
     });
-    // Math constants — registered as protected constants, not functions
-    // Can be used as PI or PI() — both work
+    // Math constants - registered as protected constants, not functions
+    // Can be used as PI or PI() - both work
     register_const("PI", Value::make_f64(3.14159265358979323846));
     register_const("E", Value::make_f64(2.71828182845904523536));
     // Keep function versions too for PI() syntax
@@ -7284,7 +7284,7 @@ void VM::register_builtins() {
     register_native("ZEROS", [make_filled](const std::vector<Value>& args) -> Value {
         return make_filled(args[0], Value::make_i64(0));
     });
-    // __MAKE_UDT_ARRAY__(shape, "TypeName" [, vec1, vec2, ...]) — fill an
+    // __MAKE_UDT_ARRAY__(shape, "TypeName" [, vec1, vec2, ...]) - fill an
     // array of the given shape with freshly-constructed UDT instances. Used
     // by the parser to desugar `DIM A[N] AS UserType[(vec1, vec2)]`. We can't
     // use ZEROS here because each slot needs its own constructor result.
@@ -7405,7 +7405,7 @@ void VM::register_builtins() {
     // ── 8. DateTime Extraction ───────────────────────────────
 
     // localtime returns nullptr for epochs outside the CRT's range
-    // (pre-1970 on Windows) — fall back to UTC civil components then.
+    // (pre-1970 on Windows) - fall back to UTC civil components then.
     register_native("YEAR", [](const std::vector<Value>& args) -> Value {
         std::time_t t = (std::time_t)args[0].to_double();
         if (std::tm* p = std::localtime(&t)) return Value::make_i64(p->tm_year + 1900);
@@ -7675,7 +7675,7 @@ void VM::register_builtins() {
     register_native("OS.FEATURE", 1, 1, [](const std::vector<Value>& args) -> Value {
         // Reports whether the running binary advertises a given build feature.
         // Used by tests/programs that need to skip work the current backend
-        // doesn't support — e.g. `IF NOT OS.FEATURE("NATIVEC") THEN ...`.
+        // doesn't support - e.g. `IF NOT OS.FEATURE("NATIVEC") THEN ...`.
         if (args.empty() || args[0].type != ValueType::STRING)
             return Value::make_bool(false);
         std::string name = args[0].as_string()->data;
@@ -7685,7 +7685,7 @@ void VM::register_builtins() {
         if (name == "NATIVEC")     return Value::make_bool(false);
         if (name == "INTERPRETER") return Value::make_bool(true);
 
-        // Optional build flags — true iff this jdBasic.exe was built with them.
+        // Optional build flags - true iff this jdBasic.exe was built with them.
         bool on = false;
 #ifdef COM
         if (name == "COM") on = true;
@@ -7845,7 +7845,7 @@ void VM::register_builtins() {
         return Value::make_i64(id);
     });
 
-    // CHAN.SEND(ch, value) — blocks the calling thread when buffer is full.
+    // CHAN.SEND(ch, value) - blocks the calling thread when buffer is full.
     // Throws on a closed channel.
     register_native("CHAN.SEND", 2, 2, [](const std::vector<Value>& args) -> Value {
         int64_t handle = args[0].to_int();
@@ -7918,7 +7918,7 @@ void VM::register_builtins() {
         return out;
     });
 
-    // CHAN.CLOSE(ch) — wake everyone, idempotent.
+    // CHAN.CLOSE(ch) - wake everyone, idempotent.
     register_native("CHAN.CLOSE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int64_t handle = args[0].to_int();
         auto ch = chan_lookup(handle);
@@ -7963,7 +7963,7 @@ void VM::register_builtins() {
     // ── FILE streaming handles ────────────────────────────────
     //
     // Line-by-line reader plus tail-follow mode. Mirror of the channel
-    // registry — process-global, indexed by an i64 handle so producer
+    // registry - process-global, indexed by an i64 handle so producer
     // and consumer ASYNC FUNCs (separate VMs) hit the same FileHandle.
 
     // FILE.OPEN_LINES(path$) → handle. Reads UTF-8 text, line by line.
@@ -8013,7 +8013,7 @@ void VM::register_builtins() {
         return Value::make_bool(file_at_eof(*fh));
     });
 
-    // FILE.CLOSE(handle) — idempotent. Wakes any tail reader parked in
+    // FILE.CLOSE(handle) - idempotent. Wakes any tail reader parked in
     // its poll loop within ~poll_ms (default 50ms).
     register_native("FILE.CLOSE", 1, 1, [](const std::vector<Value>& args) -> Value {
         int64_t handle = args[0].to_int();
@@ -8030,7 +8030,7 @@ void VM::register_builtins() {
     // the consumer closes it from outside, which cancels the read).
     //
     // The user supplies the channel so they own its lifetime. Pass an
-    // already-open channel — capacity decides backpressure.
+    // already-open channel - capacity decides backpressure.
     auto file_pump_lines = [](int64_t ch_handle, std::string path, bool tail) {
         auto ch = chan_lookup(ch_handle);
         if (!ch) return; // gone already
@@ -8087,7 +8087,7 @@ void VM::register_builtins() {
                     }
                 }
             } catch (...) {
-                // swallow — close below
+                // swallow - close below
             }
             file_unregister(f_handle);
             chan_close(*ch);
@@ -8098,7 +8098,7 @@ void VM::register_builtins() {
         [file_pump_lines](const std::vector<Value>& args) -> Value {
             std::string path = args[0].as_string()->data;
             int64_t ch_handle = args[1].to_int();
-            // capacity arg is informational here — the channel was opened
+            // capacity arg is informational here - the channel was opened
             // by the caller with whatever capacity they chose.
             (void)args; // silence unused-warning
             file_pump_lines(ch_handle, path, /*tail=*/false);
@@ -8547,7 +8547,7 @@ void VM::register_builtins() {
         return Value::make_none();
     });
 
-    // JDB.CHECK$(code) — Lex + Parse only. Returns "" if the code is
+    // JDB.CHECK$(code) - Lex + Parse only. Returns "" if the code is
     // syntactically valid, or the error message otherwise. No execution
     // happens, no globals or functions get registered. Useful for the
     // MCP jdb_check tool: validate a snippet before EXECUTE'ing it on
@@ -8558,7 +8558,7 @@ void VM::register_builtins() {
         return Value::make_string("JDB.CHECK$ unavailable: host did not register on_check");
     });
 
-    // JDB.GLOBAL_GET(name$) — read a single global by (case-insensitive)
+    // JDB.GLOBAL_GET(name$) - read a single global by (case-insensitive)
     // name. Returns NONE if the name is unknown. Companion to set_global.
     // Used by the MCP jdb_save_state tool to capture a value-copy of each
     // user variable before an experimental snippet runs.
@@ -8571,7 +8571,7 @@ void VM::register_builtins() {
         return globals[it->second];
     });
 
-    // JDB.GLOBAL_SET(name$, value) — write a single global by name.
+    // JDB.GLOBAL_SET(name$, value) - write a single global by name.
     // Allocates the slot if the name is new. Companion to GLOBAL_GET;
     // jdb_restore_state writes saved values back into place via this.
     register_native("JDB.GLOBAL_SET", 2, 2, [this](const std::vector<Value>& args) -> Value {
@@ -8692,7 +8692,7 @@ void VM::event_poll() {
 #endif
     if (any_window) {
         // Drain the shared event queue that SCREENFLIP and gfx_pump_events
-        // already populated. We must NOT call SDL_PollEvent here — that
+        // already populated. We must NOT call SDL_PollEvent here - that
         // would race with SCREENFLIP's loop and whichever runs first eats
         // the events, starving the other. Instead, all SDL_PollEvent sites
         // push into the shared queue and we consume from it.
@@ -8709,7 +8709,7 @@ void VM::event_poll() {
                     if (it != event_handlers.end()) {
                         Value info = Value::make_object();
                         info.as_object()->set("scancode", Value::make_i64(ev.key.scancode));
-                        // keycode: SDL_Keycode — ASCII-compatible for printable keys
+                        // keycode: SDL_Keycode - ASCII-compatible for printable keys
                         // (ESC=27, Enter=13, A=97, ...). Old jdBasic had this field.
                         info.as_object()->set("keycode", Value::make_i64((int64_t)ev.key.key));
                         const char* name = SDL_GetKeyName(ev.key.key);

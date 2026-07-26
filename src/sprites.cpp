@@ -81,8 +81,8 @@ static void draw_one_sprite(const Sprite& sp) {
 }
 
 void register_sprite_builtins(VM& vm) {
-    // SPRITE.LOAD file$ — single image sprite
-    // SPRITE.LOAD file$, frame_w, frame_h — spritesheet with frame size
+    // SPRITE.LOAD file$ - single image sprite
+    // SPRITE.LOAD file$, frame_w, frame_h - spritesheet with frame size
     vm.register_native("SPRITE.LOAD", 1, 3, [](const std::vector<Value>& args) -> Value {
         ensure_screen("SPRITE.LOAD");
         std::string path = resolve_asset_path(args[0].as_string()->data);
@@ -129,7 +129,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_i64(sid);
     });
 
-    // SPRITE.CREATE(w, h) — allocate a blank streaming texture + CPU pixel
+    // SPRITE.CREATE(w, h) - allocate a blank streaming texture + CPU pixel
     // buffer. Returns the new sprite id. Fill via SPRITE.SETPIXEL/SETBUFFER
     // and persist via SPRITE.SAVE.
     vm.register_native("SPRITE.CREATE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -181,7 +181,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_i64(sid);
     });
 
-    // SPRITE.SETPIXEL(id, x, y, r, g, b, a) — write one RGBA pixel.
+    // SPRITE.SETPIXEL(id, x, y, r, g, b, a) - write one RGBA pixel.
     // Uploads the whole texture afterwards; convenient for incremental
     // edits, slow for bulk fills (use SETBUFFER for those).
     vm.register_native("SPRITE.SETPIXEL", 7, 7, [](const std::vector<Value>& args) -> Value {
@@ -211,7 +211,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // SPRITE.SETBUFFER(id, rgba_array) — bulk fill from a flat RGBA array
+    // SPRITE.SETBUFFER(id, rgba_array) - bulk fill from a flat RGBA array
     // of length width*height*4. Values clamped to 0..255.
     vm.register_native("SPRITE.SETBUFFER", 2, 2, [](const std::vector<Value>& args) -> Value {
         int sid = (int)args[0].to_int();
@@ -244,7 +244,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // SPRITE.SAVE(id, path$) — persist the CPU pixel buffer to a PNG.
+    // SPRITE.SAVE(id, path$) - persist the CPU pixel buffer to a PNG.
     // Only works on sprites originally created via SPRITE.CREATE; for
     // SPRITE.LOAD'd images use GFX.SAVE_IMAGE instead.
     vm.register_native("SPRITE.SAVE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -444,7 +444,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // SPRITE.FRAME id, frame_index — manually set frame
+    // SPRITE.FRAME id, frame_index - manually set frame
     vm.register_native("SPRITE.FRAME", 2, 2, [](const std::vector<Value>& args) -> Value {
         Sprite& sp = get_sprite("SPRITE.FRAME", (int)args[0].to_int());
         sp.current_frame = (int)args[1].to_int();
@@ -453,7 +453,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // SPRITE.UPDATE — advance all animations by elapsed time
+    // SPRITE.UPDATE - advance all animations by elapsed time
     vm.register_native("SPRITE.UPDATE", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
         Uint64 now = SDL_GetTicks();
@@ -544,7 +544,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // SPRITE.PLAYING(id) -> bool — is the animation playing?
+    // SPRITE.PLAYING(id) -> bool - is the animation playing?
     vm.register_native("SPRITE.PLAYING", 1, 1, [](const std::vector<Value>& args) -> Value {
         Sprite& sp = get_sprite("SPRITE.PLAYING", (int)args[0].to_int());
         return Value::make_bool(sp.playing);
@@ -552,7 +552,7 @@ void register_sprite_builtins(VM& vm) {
 
     // ── Velocity System ───────────────────────────────────────
 
-    // SPRITE.VELOCITY id, vx, vy — set velocity (pixels per second)
+    // SPRITE.VELOCITY id, vx, vy - set velocity (pixels per second)
     vm.register_native("SPRITE.VELOCITY", 3, 3, [](const std::vector<Value>& args) -> Value {
         Sprite& sp = get_sprite("SPRITE.VELOCITY", (int)args[0].to_int());
         sp.vx = (float)args[1].to_double();
@@ -570,7 +570,7 @@ void register_sprite_builtins(VM& vm) {
 
     // ── Collision Groups ─────────────────────────────────────
 
-    // SPRITE.GROUP id, group_name$ — assign sprite to a group
+    // SPRITE.GROUP id, group_name$ - assign sprite to a group
     vm.register_native("SPRITE.GROUP", 2, 2, [](const std::vector<Value>& args) -> Value {
         Sprite& sp = get_sprite("SPRITE.GROUP", (int)args[0].to_int());
         sp.group = args[1].as_string()->data;
@@ -647,7 +647,7 @@ void register_sprite_builtins(VM& vm) {
         return Value::make_bool(get_sprite("SPRITE.ON_GROUND", (int)args[0].to_int()).on_ground);
     });
 
-    // SPRITE.LAND id, ground_y — snap to ground and zero vertical velocity
+    // SPRITE.LAND id, ground_y - snap to ground and zero vertical velocity
     vm.register_native("SPRITE.LAND", 2, 2, [](const std::vector<Value>& args) -> Value {
         Sprite& sp = get_sprite("SPRITE.LAND", (int)args[0].to_int());
         float ground_y = (float)args[1].to_double();

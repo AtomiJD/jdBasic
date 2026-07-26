@@ -98,7 +98,7 @@ private:
     void on_goto(int line);
 };
 
-// Debug state stored in VM — these are the hooks
+// Debug state stored in VM - these are the hooks
 // Per-breakpoint metadata. An empty condition/hit_condition/log_message means
 // that facet is unused. log_message turns the breakpoint into a logpoint:
 // it emits the (interpolated) message and continues instead of pausing.

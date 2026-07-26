@@ -32,7 +32,7 @@ void gfx_signal_resume();
 
 // Pump SDL events without consuming them. Safe to call from the
 // REPL main thread while a worker-owned SDL window is in STOP
-// state — keeps the window responsive (avoids the Windows "Not
+// state - keeps the window responsive (avoids the Windows "Not
 // Responding" ghost) so the user can read the script's paused
 // overlay while typing RESUME or inspecting state in the REPL.
 // No-op when no window exists.
@@ -42,5 +42,5 @@ void gfx_pump_events();
 // `jdbasic foo.jdb`), Console::run installs a callback so Ctrl+F1..F4
 // pressed in an SDL window switches workspaces instead of being eaten by
 // ImGui or the running program. Standalone leaves the hook null and the
-// SDL loops short-circuit on the first branch — zero cost.
+// SDL loops short-circuit on the first branch - zero cost.
 void gfx_set_repl_switch_hook(bool active, void (*cb)(int));

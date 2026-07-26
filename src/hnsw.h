@@ -62,7 +62,7 @@ struct HnswIndex {
     size_t size() const { return ids.size(); }
 
     // ── Distance: 1 - cosine similarity (für L2-normalisierte Vektoren ist das 1 - dot) ──
-    // 4-fach unrolled für bessere ILP — Compiler kann das in SSE/AVX vektorisieren.
+    // 4-fach unrolled für bessere ILP - Compiler kann das in SSE/AVX vektorisieren.
     static float cos_dist(const float* a, const float* b, int d) {
         float s0 = 0, s1 = 0, s2 = 0, s3 = 0;
         int i = 0;
@@ -83,7 +83,7 @@ struct HnswIndex {
         std::uniform_real_distribution<double> dist(0.0, 1.0);
         double r = dist(rng);
         int lvl = (int)std::floor(-std::log(r) * m_L);
-        // Cap auf vernünftige Höhe — bei sehr großen Indizes wäre 32 ausreichend
+        // Cap auf vernünftige Höhe - bei sehr großen Indizes wäre 32 ausreichend
         if (lvl > 16) lvl = 16;
         return lvl;
     }
@@ -101,7 +101,7 @@ struct HnswIndex {
     };
 
     // Result: max-heap, sodass top() das schlechteste (weiteste) Element ist.
-    // Visited-Tracking via vector<bool> statt unordered_set — ~10x schneller.
+    // Visited-Tracking via vector<bool> statt unordered_set - ~10x schneller.
     std::priority_queue<DistIdx, std::vector<DistIdx>, DistIdxMaxCmp>
     search_layer(const float* q, int ep, int ef, int layer) const {
         std::priority_queue<DistIdx, std::vector<DistIdx>, DistIdxMaxCmp> top_results;
@@ -232,7 +232,7 @@ struct HnswIndex {
             // ep für nächste Layer: nimm den nächsten aus top_copy
             if (!top_copy.empty()) {
                 // top_copy ist max-heap, der "nächste" ist das letzte Element nach pop_all
-                // Wir wollen das mit kleinster Distanz — neu sortieren
+                // Wir wollen das mit kleinster Distanz - neu sortieren
                 std::vector<DistIdx> all;
                 while (!top_copy.empty()) { all.push_back(top_copy.top()); top_copy.pop(); }
                 std::sort(all.begin(), all.end(), [](auto& a, auto& b) { return a.first < b.first; });
@@ -248,7 +248,7 @@ struct HnswIndex {
 
     // ── Search ──
     // Gibt Top-k Treffer als Vektor von (similarity, id) zurück.
-    // ef ist die Suchweite — größer = genauer, langsamer.
+    // ef ist die Suchweite - größer = genauer, langsamer.
     std::vector<std::pair<float, int64_t>> search(const float* query, int k, int ef = 50) const {
         std::vector<std::pair<float, int64_t>> result;
         if (entry_point == -1) return result;

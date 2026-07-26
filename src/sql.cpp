@@ -1,4 +1,4 @@
-// SQL.* builtins — embedded SQLite, compiled under /DSQLITE.
+// SQL.* builtins - embedded SQLite, compiled under /DSQLITE.
 // The amalgamation (bridges/sqlitebridge/sqlite3.c) is linked statically,
 // so the binary carries its own database engine: no DLL, no install.
 //
@@ -11,7 +11,7 @@
 //   SQL.ERRMSG$(handle)    -> last error message
 //
 // Handles are plain integers so they cross the native bridge as i64.
-// SQL.QUERY returns maps, which cannot cross the bridge — native -c
+// SQL.QUERY returns maps, which cannot cross the bridge - native -c
 // rejects it at compile time; use SQL.TABLE + SQL.COLUMNS there.
 
 #include "vm.h"
@@ -110,7 +110,7 @@ void register_sql_builtins(VM& vm) {
         return Value::make_string(sqlite3_errmsg(db));
     });
 
-    // Row maps preserve column names per row — comfortable in the
+    // Row maps preserve column names per row - comfortable in the
     // interpreter, but maps can't cross the native bridge (codegen
     // rejects SQL.QUERY under -c; use SQL.TABLE + SQL.COLUMNS).
     vm.register_native("SQL.QUERY", 2, 2, [](const std::vector<Value>& args) -> Value {

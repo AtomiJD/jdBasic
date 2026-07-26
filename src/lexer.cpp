@@ -131,7 +131,7 @@ std::vector<Token> Lexer::tokenize() {
             if (!tokens.empty() && tokens.back().type == TokenType::IDENTIFIER &&
                 tokens.back().value == "_") {
                 tokens.pop_back(); // remove the '_' token
-                // Don't emit NEWLINE — lines are joined
+                // Don't emit NEWLINE - lines are joined
                 continue;
             }
             if (!last_was_newline) {

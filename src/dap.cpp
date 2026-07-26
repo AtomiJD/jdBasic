@@ -318,7 +318,7 @@ void DAPHandler::process_command(const std::string& command_line) {
 // ── Command handlers ────────────────────────────────────────────
 
 void DAPHandler::on_start() {
-    // Signal that the client wants to start — the main thread handles
+    // Signal that the client wants to start - the main thread handles
     // compilation and sets up the VM
     {
         std::lock_guard<std::mutex> lock(vm.debug->launch_mtx);
@@ -378,14 +378,14 @@ void DAPHandler::on_clear_breakpoints(const std::string& file) {
 }
 
 void DAPHandler::on_get_stacktrace() {
-    // Get call frames from VM — each has {line, func_name, source_file}
+    // Get call frames from VM - each has {line, func_name, source_file}
     auto frames = vm.debug_get_stack_frames();
     int total = (int)frames.size();
     for (int i = total - 1; i >= 0; i--) {
         const std::string& file = frames[i].file.empty() ? program_path : frames[i].file;
         send_stack_frame_message(i + 1, total, frames[i].line, frames[i].name, file);
     }
-    // Add global scope as last frame — use current frame's file
+    // Add global scope as last frame - use current frame's file
     std::string cur_file = vm.debug_current_file();
     send_stack_frame_message(0, total, vm.debug_current_line(), "[Global]",
         cur_file.empty() ? program_path : cur_file);

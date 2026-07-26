@@ -36,7 +36,7 @@ void Parser::expect_newline() {
             ": expected end of statement, got '" + current().value + "'");
     }
     if (check(TokenType::NEWLINE) || check(TokenType::COLON)) advance();
-    // Note: ELSE is NOT consumed here — the IF parser handles it
+    // Note: ELSE is NOT consumed here - the IF parser handles it
 }
 
 bool Parser::is_type_token(TokenType t) const {
@@ -49,7 +49,7 @@ VarType Parser::parse_type() {
         advance();
         return VarType::OBJECT;
     }
-    // DATE — runtime stores dates as strings (CVDATE returns char*).
+    // DATE - runtime stores dates as strings (CVDATE returns char*).
     // Without this branch `FUNC X() AS DATE` would fall into the UDT
     // catch-all below and silently get treated as OBJECT/VM_HANDLE.
     if (current().type == TokenType::IDENTIFIER && current().value == "DATE") {
@@ -58,7 +58,7 @@ VarType Parser::parse_type() {
     }
     // User-defined type names (any unrecognized IDENTIFIER in type context)
     if (current().type == TokenType::IDENTIFIER && !is_type_token(current().type)) {
-        // Store name in a temporary — the DIM handler will check it
+        // Store name in a temporary - the DIM handler will check it
         advance();
         return VarType::OBJECT; // UDTs are objects
     }
@@ -146,7 +146,7 @@ StmtPtr Parser::parse_statement() {
             advance(); // ASYNC
             if (check(TokenType::FUNCTION)) {
                 auto s = parse_function();
-                // Mark as async — compiler will set is_async on the FuncProto
+                // Mark as async - compiler will set is_async on the FuncProto
                 s->is_async_func = true;
                 return s;
             }
@@ -290,7 +290,7 @@ StmtPtr Parser::parse_statement() {
         }
         case TokenType::RETURN:  return parse_return();
         case TokenType::CALL: {
-            // CALL SubName(args) — parse as expression statement
+            // CALL SubName(args) - parse as expression statement
             int ln = current().line;
             advance(); // CALL
             ExprPtr expr = parse_expr();
@@ -365,7 +365,7 @@ StmtPtr Parser::parse_statement() {
             s->line = ln;
             int64_t next_val = 0;
             while (!check(TokenType::ENDENUM) && !check(TokenType::EOF_TOKEN)) {
-                // Accept any word token as member name — including BASIC
+                // Accept any word token as member name - including BASIC
                 // keywords like DEFAULT, IF, THEN, etc. ENUM members live in
                 // their own namespace (Enum.Member), so there's no clash.
                 std::string member;
@@ -479,7 +479,7 @@ StmtPtr Parser::parse_statement() {
             expect_newline(); return s;
         }
         case TokenType::HELP_KW: {
-            // HELP [topic] — topic can be any token (keyword, identifier, string)
+            // HELP [topic] - topic can be any token (keyword, identifier, string)
             int ln = current().line;
             advance(); // HELP
             ExprPtr arg;
@@ -488,7 +488,7 @@ StmtPtr Parser::parse_statement() {
                     // HELP "topic"
                     arg = make_string_lit(advance().value, ln);
                 } else {
-                    // HELP UNTIL / HELP PRINT / HELP FOR etc. — take raw token value as string
+                    // HELP UNTIL / HELP PRINT / HELP FOR etc. - take raw token value as string
                     arg = make_string_lit(advance().value, ln);
                 }
             }
@@ -575,7 +575,7 @@ StmtPtr Parser::parse_statement() {
         }
         // Module statements (inside module files)
         case TokenType::MODULE_KW: {
-            // MODULE MODNAME — declaration, skip
+            // MODULE MODNAME - declaration, skip
             int ln = current().line; advance();
             if (check(TokenType::IDENTIFIER)) advance(); // module name
             expect_newline();
@@ -583,10 +583,10 @@ StmtPtr Parser::parse_statement() {
             return make_expr_stmt(make_int_lit(0, ln), ln);
         }
         case TokenType::EXPORT_KW: {
-            // EXPORT FUNC/SUB/TYPE/DIM — parse the statement, mark as exported
+            // EXPORT FUNC/SUB/TYPE/DIM - parse the statement, mark as exported
             advance(); // EXPORT
             if (check(TokenType::MODULE_KW)) {
-                // EXPORT MODULE MODNAME — just a declaration, skip
+                // EXPORT MODULE MODNAME - just a declaration, skip
                 int ln = current().line;
                 advance(); // MODULE
                 if (check(TokenType::IDENTIFIER)) advance();
@@ -627,7 +627,7 @@ StmtPtr Parser::parse_statement() {
             auto call = make_call("__EVENT_RAISE", std::move(args), ln);
             return make_expr_stmt(std::move(call), ln);
         }
-        // Graphics statements — parse args, compile as native calls
+        // Graphics statements - parse args, compile as native calls
         case TokenType::SCREEN_KW: case TokenType::SCREENFLIP_KW:
         case TokenType::DRAWCOLOR_KW: case TokenType::SETFONT_KW:
         case TokenType::PSET_KW: case TokenType::LINE_KW:
@@ -689,7 +689,7 @@ StmtPtr Parser::parse_statement() {
             std::vector<ExprPtr> rvals;
             if (val->kind == ExprKind::ARRAY_LITERAL &&
                 val->args.size() == targets.size()) {
-                // [t..] = [e0, e1, ...] — capture each element in its OWN typed
+                // [t..] = [e0, e1, ...] - capture each element in its OWN typed
                 // temp. Keeps a string element a string (a temp array would make
                 // the element reads runtime-tagged, and `strarr[i] = <rt-str>`
                 // mis-coerces via jdb_val on the native path).
@@ -700,7 +700,7 @@ StmtPtr Parser::parse_statement() {
                     rvals.push_back(make_var(t, ln));
                 }
             } else {
-                // [t..] = <array expression> — one temp array, indexed per target.
+                // [t..] = <array expression> - one temp array, indexed per target.
                 std::string tmp = "__destr_" + std::to_string(destr_seq++);
                 s->body.push_back(make_let(tmp, VarType::NONE, std::move(val), ln));
                 for (size_t i = 0; i < targets.size(); i++)
@@ -863,7 +863,7 @@ StmtPtr Parser::parse_dim_clause(int ln) {
                     call->line = ln;
                     val = std::move(call);
                 } else {
-                    // Non-UDT typed empty array: plain `[]` literal is fine —
+                    // Non-UDT typed empty array: plain `[]` literal is fine -
                     // JdbArray* of length 0, element type tracked statically
                     // in codegen's type env (added in Phase 2).
                     auto lit = std::make_unique<Expr>();
@@ -984,9 +984,9 @@ StmtPtr Parser::parse_input() {
     s->print_newline = false; // becomes true when "," separator is used
 
     // Forms supported:
-    //   INPUT var$                — no prompt
-    //   INPUT prompt_expr ; var$  — prompt without "? " suffix
-    //   INPUT prompt_expr , var$  — prompt with "? " suffix
+    //   INPUT var$                - no prompt
+    //   INPUT prompt_expr ; var$  - prompt without "? " suffix
+    //   INPUT prompt_expr , var$  - prompt with "? " suffix
     // The prompt may be any expression (string literal, variable, call, ...).
     // We parse one expression first; if a separator follows, the expression
     // was the prompt and the next identifier is the variable. Otherwise the
@@ -1041,7 +1041,7 @@ StmtPtr Parser::parse_if() {
         while (true) {
             if (check(TokenType::ELSE) || check(TokenType::NEWLINE) || check(TokenType::EOF_TOKEN)) break;
             first.body.push_back(parse_statement());
-            // parse_statement consumed ':' via expect_newline — check if still on same line
+            // parse_statement consumed ':' via expect_newline - check if still on same line
             if (current().line != ln) break;
             if (check(TokenType::ELSE)) break;
             if (check(TokenType::NEWLINE) || check(TokenType::EOF_TOKEN)) break;
@@ -1303,7 +1303,7 @@ StmtPtr Parser::parse_ident_stmt() {
     std::string name = current().value;
 
     // ── Built-in commands callable as statements (no parens needed) ──
-    // CD, PWD, MKDIR, KILL, DIR, TRON, TROFF, DUMP — must also be usable as
+    // CD, PWD, MKDIR, KILL, DIR, TRON, TROFF, DUMP - must also be usable as
     // function calls (e.g. PRINT PWD()), so only match here when NOT followed
     // by '(', '=', '.', ':', '->'.
     {
@@ -1326,7 +1326,7 @@ StmtPtr Parser::parse_ident_stmt() {
                 }
                 expect_newline();
                 auto call = make_call(upper, std::move(args), ln);
-                // CD and PWD return the path — print it for the user
+                // CD and PWD return the path - print it for the user
                 if (upper == "CD" || upper == "PWD") {
                     auto s = std::make_unique<Stmt>();
                     s->kind = StmtKind::PRINT;
@@ -1400,7 +1400,7 @@ StmtPtr Parser::parse_ident_stmt() {
                 if (nt != TokenType::IDENTIFIER && nt != TokenType::EOF_TOKEN &&
                     nt != TokenType::NEWLINE && !current().value.empty() &&
                     std::isalpha(current().value[0])) {
-                    // It's a keyword used as a member name — accept it
+                    // It's a keyword used as a member name - accept it
                     dotted += "." + advance().value;
                 } else if (nt == TokenType::IDENTIFIER) {
                     dotted += "." + advance().value;
@@ -1413,7 +1413,7 @@ StmtPtr Parser::parse_ident_stmt() {
                 // IMMEDIATELY after the identifier (no whitespace). A
                 // space between the name and the paren means the '('
                 // is grouping the first argument of an imperative call
-                // — e.g. 'TURTLE.SETPOS (x+1), (y+1)' should parse as
+                // - e.g. 'TURTLE.SETPOS (x+1), (y+1)' should parse as
                 // SETPOS with two args, not as 'SETPOS((x+1))' followed
                 // by stray ', (y+1)'.
                 const Token& prev_name = tokens[pos - 1];
@@ -1421,7 +1421,7 @@ StmtPtr Parser::parse_ident_stmt() {
                 // Lexer stores Token.col as the column AFTER the last
                 // consumed character (i.e. where the next char will
                 // land). Adjacency therefore means lpar.col equals
-                // prev.col + lpar's own width — no whitespace between.
+                // prev.col + lpar's own width - no whitespace between.
                 bool paren_is_adjacent =
                     (lpar_tok.line == prev_name.line &&
                      lpar_tok.col  == prev_name.col + (int)lpar_tok.value.size());
@@ -1698,7 +1698,7 @@ StmtPtr Parser::parse_ident_stmt() {
         advance(); // identifier
         // First index/brace step (we know there's at least one [ or {).
         // Track whether the chain so far is a *pure* index chain (only
-        // [..]/{...} on the leading var) — that lets us still emit the
+        // [..]/{...} on the leading var) - that lets us still emit the
         // optimised make_index_assign for the simple case.
         std::vector<ExprPtr> simple_chain;
         ExprPtr chain_expr; // populated as soon as we see a `.` or another mixed step
@@ -1744,7 +1744,7 @@ StmtPtr Parser::parse_ident_stmt() {
                 member->str_val = field;
                 member->left = std::move(chain_expr);
                 member->line = ln;
-                // Method call: arr[i].method(args) — wrap the MEMBER_ACCESS in
+                // Method call: arr[i].method(args) - wrap the MEMBER_ACCESS in
                 // a __METHOD__ CALL. Mirrors parse_postfix's handling but at
                 // statement scope so `cs[1].BUMP(5)` parses as a statement.
                 if (check(TokenType::LPAREN)) {
@@ -1778,7 +1778,7 @@ StmtPtr Parser::parse_ident_stmt() {
                 return make_index_assign(name, std::move(simple_chain),
                                          std::move(val), ln);
             }
-            // Mixed chain — last node decides how to assign
+            // Mixed chain - last node decides how to assign
             if (chain_expr->kind == ExprKind::MEMBER_ACCESS) {
                 auto s = std::make_unique<Stmt>();
                 s->kind = StmtKind::INDEX_ASSIGN;
@@ -1945,7 +1945,7 @@ ExprPtr Parser::parse_comparison() {
            check(TokenType::IN) ||
            // Classic-BASIC infix NOT: `IF x NOT y` means `IF x <> y`.
            // Must peek ahead to distinguish from `NOT expr` (unary prefix)
-           // — only treat as binary when the NEXT token is a primary
+           // - only treat as binary when the NEXT token is a primary
            // (literal, identifier, LPAREN, ...), not THEN / NEWLINE / EOF.
            (check(TokenType::NOT) &&
             peek_at(1).type != TokenType::THEN &&
@@ -1964,7 +1964,7 @@ ExprPtr Parser::parse_comparison() {
     return left;
 }
 
-// SHL / SHR — C-style precedence: looser than additive, tighter than
+// SHL / SHR - C-style precedence: looser than additive, tighter than
 // comparison. So `1 + 2 SHL 3` is `(1+2) SHL 3` = 24 and
 // `5 BAND 3 SHL 1` is `5 BAND (3 SHL 1)` = 4. The function form
 // `SHL(x, n)` / `SHR(x, n)` still works (registered as natives in vm.cpp)
@@ -2141,7 +2141,7 @@ ExprPtr Parser::parse_primary() {
         return parse_postfix(std::move(expr));
     }
 
-    // SHL / SHR as function call — keeps the legacy `SHL(x, n)` syntax
+    // SHL / SHR as function call - keeps the legacy `SHL(x, n)` syntax
     // working alongside the new infix `x SHL n`. The lexer always emits
     // a keyword token; here we route to the registered native if the next
     // token is `(`.
@@ -2292,7 +2292,7 @@ std::vector<StmtPtr> Parser::parse_import() {
             // The TYPE creates a constructor function with the same name
             all_funcs.insert(s->func_name);
             if (s->label == "__EXPORT__") exported_funcs.insert(s->func_name);
-            // Also rename all methods — they're already named "TypeName.Method"
+            // Also rename all methods - they're already named "TypeName.Method"
             for (auto& member : s->body) {
                 if (member->kind == StmtKind::FUNCTION || member->kind == StmtKind::SUB) {
                     // member->func_name is already "T_ENTITY.INIT" etc.
@@ -2348,7 +2348,7 @@ std::vector<StmtPtr> Parser::parse_import() {
         if (!is_subimport) {
             module_rename_stmt(*s, func_map, var_map);
             // Tag with module source file recursively (module_rename_stmt
-            // already visits every descendant — no separate loop needed).
+            // already visits every descendant - no separate loop needed).
             module_set_source_file(*s, module_file_path);
         }
     }
@@ -2369,7 +2369,7 @@ void Parser::module_rename_expr(Expr& expr,
             break;
         }
         case ExprKind::LITERAL_STRING: {
-            // Funcref literal (`name@`) — rewrite the embedded function
+            // Funcref literal (`name@`) - rewrite the embedded function
             // name to the module-qualified slot so cross-module dispatch
             // and stored-funcref dispatch both find it via the VM's
             // global lookup. Plain string literals fall through.
@@ -2390,7 +2390,7 @@ void Parser::module_rename_expr(Expr& expr,
                 // so the VM's CALL-fallback can find the global. Without
                 // this, `cb(x)` inside the module emits CALL "CB" and the
                 // VM's `global_names.find("CB")` misses the namespaced
-                // entry — every dispatch dies with "Undefined function".
+                // entry - every dispatch dies with "Undefined function".
                 auto vit = var_map.find(expr.func_name);
                 if (vit != var_map.end()) expr.func_name = vit->second;
             }
@@ -2486,7 +2486,7 @@ void Parser::module_rename_stmt(Stmt& stmt,
         if (it != var_map.end()) stmt.var_name = it->second;
     }
 
-    // DIM x AS TypeName — when TypeName is a module-internal type name
+    // DIM x AS TypeName - when TypeName is a module-internal type name
     // referenced from within the same module's body, the rename pass
     // would otherwise leave the label unmangled and compile_dim wouldn't
     // recognise it (no entry in user_types under the bare name).

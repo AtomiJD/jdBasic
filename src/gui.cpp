@@ -24,7 +24,7 @@ static SDL_Renderer* g_renderer = nullptr;
 // ImGui crashes hard if you call TableNextRow / TableNextColumn / EndTable
 // outside an active table, or pass mismatched Begin*/End* pairs. The
 // natives below use these counters so the user's BASIC code can be sloppy
-// without taking down the interpreter — calls outside the proper scope
+// without taking down the interpreter - calls outside the proper scope
 // are silently ignored, and `End*` only fires when there's something to
 // end. Reset to 0 at the start of every new frame so a previous frame
 // that bailed out mid-loop doesn't leak counters.
@@ -51,7 +51,7 @@ static void gui_reset_begin_end_counters() {
 }
 
 // Walk back any unclosed Begin* scopes from a sloppy frame so the ImGui
-// stack ends balanced. Called right before gui_render() — without this,
+// stack ends balanced. Called right before gui_render() - without this,
 // a user who forgets `END_TABLE` would crash the next frame because ImGui
 // asserts on a non-empty Begin/End stack at NewFrame time. Order matters:
 // the most-nested scope first.
@@ -152,7 +152,7 @@ void gui_render(SDL_Renderer* renderer) {
 
 bool gui_process_event(SDL_Event* ev) {
     if (!g_imgui_init) return false;
-    // No coordinate transformation needed — ImGui works in native window coords
+    // No coordinate transformation needed - ImGui works in native window coords
     return ImGui_ImplSDL3_ProcessEvent(ev);
 }
 
@@ -333,7 +333,7 @@ void register_gui_builtins(VM& vm) {
             window_flags = (ImGuiWindowFlags)args[4].to_int();
         }
         bool r = ImGui::BeginChild(id.c_str(), ImVec2(w, h), child_flags, window_flags);
-        // Child windows: same rule as Begin/End — EndChild() must be called
+        // Child windows: same rule as Begin/End - EndChild() must be called
         // regardless of BeginChild's return value (since ImGui 1.81).
         g_child_depth++;
         return Value::make_bool(r);
@@ -587,7 +587,7 @@ void register_gui_builtins(VM& vm) {
         buf = current;
         buf.resize(INPUT_BUF_SIZE, '\0');
 
-        // `##`-prefixed labels are hidden — fill the cell so the field
+        // `##`-prefixed labels are hidden - fill the cell so the field
         // doesn't collapse to 0px. Visible labels keep ImGui's default.
         bool hidden_label = (label.size() >= 2 && label[0] == '#' && label[1] == '#');
         if (hidden_label) {

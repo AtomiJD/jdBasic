@@ -256,7 +256,7 @@ void Compiler::collect_globals_stmt(const Stmt& stmt) {
 }
 
 void Compiler::collect_globals_expr(const Expr& expr) {
-    // Not needed for now — globals are identified by assignment, not by reference
+    // Not needed for now - globals are identified by assignment, not by reference
     (void)expr;
 }
 
@@ -411,7 +411,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                     if (method->params.size() <= 1)
                         type_init_zero_arg.insert(method->func_name);
                 } else if (method->func_name == stmt.func_name + ".DISPOSE") {
-                    // DISPOSE must take only THIS — no user parameters.
+                    // DISPOSE must take only THIS - no user parameters.
                     // Parser already prepended THIS, so params.size() must be 1.
                     if (method->params.size() != 1) {
                         throw std::runtime_error("Line " + std::to_string(method->line) +
@@ -557,7 +557,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             // Evaluate the iterable once, stash in a hidden temp slot.
             // The FOREACH_NEXT opcode advances per-iteration: pops state +
             // iter from the stack, on continue pushes (new_state, value)
-            // — and dispatches based on iter type so ARRAY (index walk),
+            // - and dispatches based on iter type so ARRAY (index walk),
             // STRING (char walk), and channel handle (CHAN.RECV-until-EOF)
             // all share one loop body.
             compile_expr(*stmt.expr);
@@ -854,7 +854,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
         // Optional user-defined INIT(self, ...). Two trigger rules so we
         // stay compatible with pre-existing code that DIMs first and calls
         // obj.INIT(args) manually (type_id.jdb / RPG_ENGINE pattern):
-        //   * If the user passed ctor_args, INIT MUST exist — call it.
+        //   * If the user passed ctor_args, INIT MUST exist - call it.
         //   * If no ctor_args were passed, only auto-call INIT when it
         //     declares no user parameters (i.e. SUB INIT()). Otherwise
         //     leave the call to the user.
@@ -963,7 +963,7 @@ void Compiler::compile_index_assign(const Stmt& stmt) {
 
     // For multi-dimensional assignment (size >= 2), emit a MULTI_INDEX_SET.
     // This lets the runtime do fancy (vectorized) indexing when any index is
-    // an array — the plain nested INDEX_GET/INDEX_SET path only handles
+    // an array - the plain nested INDEX_GET/INDEX_SET path only handles
     // scalar walks through intermediate rows.
     if (stmt.index_chain.size() >= 2) {
         for (auto& idx : stmt.index_chain) compile_expr(*idx);
@@ -1110,7 +1110,7 @@ void Compiler::compile_for(const Stmt& stmt) {
 
     // 1. Initialize: var = start
     compile_expr(*stmt.expr);
-    // Inside a function, the loop variable is always local — force-register
+    // Inside a function, the loop variable is always local - force-register
     // it so the inner FOR doesn't clobber an outer global with the same name.
     if (scopes.size() > 1 && scopes.back().locals.count(stmt.var_name) == 0) {
         resolve_local(stmt.var_name);
@@ -1396,7 +1396,7 @@ void Compiler::compile_expr(const Expr& expr) {
                     current_chunk().emit_u8(2, expr.line);
                 }
             } else {
-                // value |> expr(?) — placeholder-based pipe
+                // value |> expr(?) - placeholder-based pipe
                 compile_expr(*expr.left);
                 {
                     uint16_t slot = resolve_var("__PIPE_TMP__");

@@ -445,7 +445,7 @@ void register_opengl_builtins(VM& vm) {
         require_window("GL.FLIP");
         // Drain SDL events and forward to the gfx event queue so ON-handlers
         // (ON "KEYDOWN" / ON "QUIT") fire from a GL-only loop. Avoid
-        // POLLEVENT — its ImGui filter swallows keys before they reach us.
+        // POLLEVENT - its ImGui filter swallows keys before they reach us.
         SDL_Event ev;
         while (SDL_PollEvent(&ev)) {
             gfx_push_event(ev);
@@ -543,7 +543,7 @@ void register_opengl_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // GL.VBO(data_array) — creates a vertex buffer, uploads the array as
+    // GL.VBO(data_array) - creates a vertex buffer, uploads the array as
     // floats, leaves it bound to GL_ARRAY_BUFFER. Returns the buffer id.
     // Accepts both TENSOR (typed numeric, the usual literal form) and
     // ARRAY (boxed mixed) to be forgiving.
@@ -585,7 +585,7 @@ void register_opengl_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // GL.VAO() — creates a VAO and leaves it bound.
+    // GL.VAO() - creates a VAO and leaves it bound.
     vm.register_native("GL.VAO", 0, 0, [](const std::vector<Value>&) -> Value {
         require_window("GL.VAO");
         GLuint vao = 0;
@@ -812,7 +812,7 @@ void register_opengl_builtins(VM& vm) {
         return Value::make_i64((int64_t)tex);
     });
 
-    // GL.TEX.BIND(tex, slot) — slot is 0..N, mapped to GL_TEXTURE0+slot.
+    // GL.TEX.BIND(tex, slot) - slot is 0..N, mapped to GL_TEXTURE0+slot.
     vm.register_native("GL.TEX.BIND", 2, 2, [](const std::vector<Value>& args) -> Value {
         require_window("GL.TEX.BIND");
         GLuint tex  = (GLuint)args[0].to_int();
@@ -829,7 +829,7 @@ void register_opengl_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // GL.EBO(indices) — uploads as GLuint indices, leaves bound to
+    // GL.EBO(indices) - uploads as GLuint indices, leaves bound to
     // GL_ELEMENT_ARRAY_BUFFER. The currently-bound VAO captures this binding
     // (one of the few non-attribute bits VAOs track), so subsequent
     // GL.DRAW.TRIS.IDX uses these indices when the VAO is bound.

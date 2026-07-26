@@ -2,7 +2,7 @@
 
 #include "tui_state.h"
 // Pulled in here (not in the header) so the unique_ptr<ScreenInteractive>
-// destructor can be instantiated against the complete type — keeping the
+// destructor can be instantiated against the complete type - keeping the
 // header light for callers that only need TuiState fields by pointer.
 #include <ftxui/component/screen_interactive.hpp>
 

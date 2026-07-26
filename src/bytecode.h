@@ -35,7 +35,7 @@ enum class OpCode : uint8_t {
 
     // Functions
     CALL,               // u16 func_index, u8 argc
-    CALL_NATIVE,        // u16 global native slot, u8 argc — compile-time-resolved native
+    CALL_NATIVE,        // u16 global native slot, u8 argc - compile-time-resolved native
     RETURN_VOID,
     RETURN_VAL,
 
@@ -74,21 +74,21 @@ enum class OpCode : uint8_t {
     POP_TRY,            // remove current try handler
     THROW_OP,           // pop error message, trigger handler
 
-    CALL_METHOD,        // u16 method_name_idx, u8 argc — call method on stack object
+    CALL_METHOD,        // u16 method_name_idx, u8 argc - call method on stack object
     STOP_OP,            // pause execution (resumable)
-    MULTI_INDEX_SET,    // u8 count  — container[i1][i2]...[iN] = val  with vectorization
+    MULTI_INDEX_SET,    // u8 count  - container[i1][i2]...[iN] = val  with vectorization
                         // stack layout (top → bottom): val, iN, ..., i2, i1, container
                         // When any i_k is an ARRAY, iterates in parallel
                         // (NumPy-style fancy indexing).
     HALT,               // natural end-of-chunk marker; sub-runs continue normally
-    END_PROGRAM,        // user `END` statement — always halts the whole program,
+    END_PROGRAM,        // user `END` statement - always halts the whole program,
                         // even when nested in event handlers / REPL run_code
 
     // ── Superinstructions (peephole-fused) ────────────────────
     // All fused ops keep the total byte width of the original sequence
     // so that existing jump offsets remain valid. Unused trailing bytes
     // are filled with NOP.
-    MARK_CONST,                  // u16 var_name_idx — mark global as constant
+    MARK_CONST,                  // u16 var_name_idx - mark global as constant
     NOP,                         // no-op, 1 byte, used as padding
 
     // LOAD_VAR slot + LOAD_CONST idx + ADD/SUB/MUL (7 bytes total)
@@ -113,8 +113,8 @@ enum class OpCode : uint8_t {
     // Storage hangs off Chunk::static_values/static_inited so it survives
     // across calls and is shared across recursion. Cross-module dispatch
     // resolves to the same FuncProto, so the slot is identity-stable.
-    LOAD_STATIC,                 // u16 slot — push static_values[slot]
-    STORE_STATIC,                // u16 slot — pop into static_values[slot]
+    LOAD_STATIC,                 // u16 slot - push static_values[slot]
+    STORE_STATIC,                // u16 slot - pop into static_values[slot]
     // Guard for lazy init: if static_inited[slot] is set, jump by i16
     // offset (skip past the init block). Otherwise set the guard FIRST
     // (so a recursive call during init terminates against the default
@@ -126,7 +126,7 @@ enum class OpCode : uint8_t {
     //   pushes (state+1, iter[state]).
     // - STRING iter: same shape, byte-indexed, single-char STRINGs.
     // - INT64 iter that's a registered channel handle: blocks on
-    //   CHAN.RECV, EOF → jump; else pushes (state, value) — state is
+    //   CHAN.RECV, EOF → jump; else pushes (state, value) - state is
     //   unchanged for channels.
     // - Anything else: jump immediately (zero iterations) to keep
     //   parity with the prior LEN=0 behaviour.
@@ -260,7 +260,7 @@ inline int opcode_width(OpCode op) {
 
         // u8 operand
         case OpCode::CAST:                  // u8 target ValueType
-        case OpCode::MULTI_INDEX_SET:       // u8 count — was missing → peephole
+        case OpCode::MULTI_INDEX_SET:       // u8 count - was missing → peephole
                                             // walked into the count byte and
                                             // corrupted the rest of the chunk
             return 2;

@@ -169,7 +169,7 @@ static Parser::FileReader make_module_reader() {
             candidates.push_back(g_base_dir + "\\" + upper + ".jdb");
             candidates.push_back(g_base_dir + "\\" + lower + ".jdb");
             // Exactly one level down into a sibling "modules/" subdir.
-            // No walk-up — modules must live in the script's own dir, or
+            // No walk-up - modules must live in the script's own dir, or
             // in a `modules/` subdir of it. This is unambiguous (you
             // can't accidentally pick up a module from a sibling project)
             // and matches the post-2026-05-25 layout where reusable
@@ -179,7 +179,7 @@ static Parser::FileReader make_module_reader() {
         }
         candidates.push_back(upper + ".jdb");
         candidates.push_back(lower + ".jdb");
-        // CWD-anchored execution (REPL, MCP evals) has no base_dir — give
+        // CWD-anchored execution (REPL, MCP evals) has no base_dir - give
         // it the same one-level "modules/" lookup the script dir gets.
         candidates.push_back("modules/" + upper + ".jdb");
         candidates.push_back("modules/" + lower + ".jdb");
@@ -244,7 +244,7 @@ static void run_source(const std::string& source, bool show_timing) {
     // jdb_resume; in standalone CLI mode there is no host, so we
     // pump SDL events to keep the game window alive and wait for the
     // user to press Space / Enter / F7 to resume (or Esc / close to
-    // quit). vm.resume() may STOP again — loop until it terminates
+    // quit). vm.resume() may STOP again - loop until it terminates
     // naturally (HALT) or the user quits.
     while (vm.is_paused() && gfx_is_active()) {
         if (!gfx_console_pause_wait()) break;
@@ -282,7 +282,7 @@ void run_on_vm(VM& vm, const std::string& source) {
     vm.run_code(compiler.main_chunk(), compiler.functions());
 }
 
-// Recompile source against an existing VM WITHOUT running anything —
+// Recompile source against an existing VM WITHOUT running anything -
 // just merges the new function definitions into vm.owned_funcs. Same-name
 // FUNC/SUB overwrites are how live-coding picks up edits: the next CALL
 // dispatches through func_map to the new body. The main chunk is
@@ -311,7 +311,7 @@ static void setup_dynamic_code(VM& vm) {
         run_on_vm(v, code + "\n");
     };
 
-    // JDB.CHECK$ — Lex + Parse only. No compile, no run, no VM mutation.
+    // JDB.CHECK$ - Lex + Parse only. No compile, no run, no VM mutation.
     // Returns "" on success or the error message on failure.
     vm.on_check = [](VM& /*v*/, const std::string& code) -> std::string {
         try {
@@ -326,7 +326,7 @@ static void setup_dynamic_code(VM& vm) {
         }
     };
 
-    // VARS — list global variables. Available in both console and script
+    // VARS - list global variables. Available in both console and script
     // modes (the MCP server in mcp/server.jdb relies on it). Filters out
     // names starting with __ which are language internals.
     vm.register_native("VARS", [&vm](const std::vector<Value>& args) -> Value {
@@ -342,8 +342,8 @@ static void setup_dynamic_code(VM& vm) {
         return Value::make_none();
     });
 
-    // FUNCS — list user-defined FUNC / SUB / ASYNC FUNC, one per line, with
-    // the parameter signature. Companion to VARS — the MCP server's
+    // FUNCS - list user-defined FUNC / SUB / ASYNC FUNC, one per line, with
+    // the parameter signature. Companion to VARS - the MCP server's
     // jdb_funcs tool captures this output and filters out boot-time
     // helpers, leaving just what the user has defined in this session.
     vm.register_native("FUNCS", [&vm](const std::vector<Value>& args) -> Value {
@@ -459,7 +459,7 @@ static void setup_dynamic_code(VM& vm) {
 
 static void set_os_args(VM& vm, int argc, char* argv[]) {
     // OS.ARGS exposes everything after the exe name. The exe path itself
-    // is dropped — scripts only care about flags + filename + their own
+    // is dropped - scripts only care about flags + filename + their own
     // args. This matches old jdBasic and lets cowsay.jdb's `Args[0] =
     // "--verbose"` check work as expected.
     Value args_arr = Value::make_array();
@@ -479,7 +479,7 @@ static void set_os_args(VM& vm, int argc, char* argv[]) {
 // so SHAPE survives a save/load round-trip. Scalars, strings, booleans, maps and
 // UDT instances serialize as their natural JSON counterparts.
 //
-// Old plain-text `.jdws` files are still readable as a fallback — back-compat
+// Old plain-text `.jdws` files are still readable as a fallback - back-compat
 // for workspaces saved before the JSON refactor on 2026-05-07.
 
 // Default predicate: skip dunder, dotted, well-known built-in constants and
@@ -498,7 +498,7 @@ static bool ws_default_user_filter(const std::string& name) {
 
 // In this jdBasic build, ARRAYs are nested (a 2-D array is an array of arrays)
 // rather than flat-with-shape, so JSON.STRINGIFY$ already round-trips them
-// faithfully — no `__type__`/`shape`/`data` wrapping is needed. The legacy
+// faithfully - no `__type__`/`shape`/`data` wrapping is needed. The legacy
 // jdBasic on disk had wrapping; the loader below tolerates both shapes.
 
 // Reverse-direction helper: if v is a legacy `{__type__:"array", data:[...]}`
@@ -521,7 +521,7 @@ static Value ws_unwrap_from_load(const Value& v) {
 }
 
 // Non-static so the MCP-stdio server can expose them as `jdb_savews` /
-// `jdb_loadws` tools — same persistence the REPL has, callable over MCP.
+// `jdb_loadws` tools - same persistence the REPL has, callable over MCP.
 // `extra_filter` defaults to nullptr; the MCP wrapper passes a stricter
 // boot-set filter so VM-internal globals stay out of the file.
 void save_workspace(VM& vm, const std::string& program_buffer, const std::string& name,
@@ -553,7 +553,7 @@ void save_workspace(VM& vm, const std::string& program_buffer, const std::string
         if (!ws_default_user_filter(vname)) continue;
         if (extra_filter && !extra_filter(vname)) continue;
         auto& val = globals[slot];
-        // Skip empty strings and NONE — they're either stale resets or untouched defaults.
+        // Skip empty strings and NONE - they're either stale resets or untouched defaults.
         if (val.type == ValueType::STRING && val.as_string() && val.as_string()->data.empty()) continue;
         if (val.type == ValueType::NONE) continue;
         vars_obj.as_object()->set(vname, val);
@@ -643,7 +643,7 @@ void load_workspace(VM& vm, std::string& program_buffer, const std::string& name
         // Fall back to the legacy plain-text format.
         std::string legacy = name + ".jdws";
         if (load_workspace_legacy(vm, program_buffer, legacy)) {
-            // Re-compile + emit reused at the bottom of this function — but the
+            // Re-compile + emit reused at the bottom of this function - but the
             // legacy loader has already reset and populated state, so we just
             // continue into the recompile path below.
             filename = legacy;
@@ -831,10 +831,10 @@ static void register_console_builtins(VM& vm, bool ansi_color) {
         return Value::make_none();
     });
 
-    // LIST — syntax-highlighted listing.  ANSI escapes are emitted only
+    // LIST - syntax-highlighted listing.  ANSI escapes are emitted only
     // when the output goes straight to the terminal (legacy console with
-    // VT mode on).  When vm.on_output is bound — FTXUI outbox, MCP
-    // response, OUTPUT.CAPTURE_BEGIN — we fall back to plain text so
+    // VT mode on).  When vm.on_output is bound - FTXUI outbox, MCP
+    // response, OUTPUT.CAPTURE_BEGIN - we fall back to plain text so
     // those consumers don't see raw escape bytes.
     vm.register_native("LIST", [&pbuf, &vm, ansi_color](const std::vector<Value>& args) -> Value {
         (void)args;
@@ -905,7 +905,7 @@ static void register_console_builtins(VM& vm, bool ansi_color) {
 // ── Console executor (simplified) ────────────────────────────
 
 // Exported (non-static) so the FTXUI REPL can dispatch the same way the
-// legacy Console does — gives the new path LOAD / SAVE / RUN / NEW
+// legacy Console does - gives the new path LOAD / SAVE / RUN / NEW
 // commands for free without re-implementing the table.
 void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer) {
     g_program_buffer_ptr = &program_buffer;
@@ -989,7 +989,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
         if (filename.find('.') == std::string::npos) filename += ".jdb";
         try { run_on_vm(vm, read_file(filename)); }
         catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
-        // The script may have called END — clear the halt flag so the
+        // The script may have called END - clear the halt flag so the
         // REPL accepts further commands.
         vm.is_halted = false;
         return;
@@ -1056,7 +1056,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
     // ── RESUME ───────────────────────────────────────────────
     // If a RUN-worker is currently parked in the gfx_console_pause_wait
     // loop (script hit STOP, GFX window kept alive), just signal it
-    // and let it call vm.resume() itself — that worker owns the SDL
+    // and let it call vm.resume() itself - that worker owns the SDL
     // window on Windows and resuming from a different thread would
     // race the renderer. Fall back to direct vm.resume() for the
     // non-GFX or no-worker case.
@@ -1220,7 +1220,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                     std::string word = src.substr(start, i - start);
                     std::string upper = word;
                     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-                    // REM starts a comment — pass it through cased, then dump
+                    // REM starts a comment - pass it through cased, then dump
                     // the rest of the line verbatim.
                     if (upper == "REM") {
                         out += vb_style ? std::string("Rem") : upper;
@@ -1326,7 +1326,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 check_compiler.compile(ast2);
             }
 
-            // Per-file OPTION state mirrors the LLVM codegen pre-pass —
+            // Per-file OPTION state mirrors the LLVM codegen pre-pass -
             // EXPLICIT/STRICT are file-scoped, so an imported loose module
             // stays lintable against a strict main file.
             std::set<std::string> explicit_files, strict_files;
@@ -1345,7 +1345,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             }
 
             // Pass 1: collect all declared names (globals + locals, flat scope).
-            // We do not model lexical scopes here — the LINT view is "would any
+            // We do not model lexical scopes here - the LINT view is "would any
             // name resolve somewhere?" which matches BASIC's mostly-flat
             // visibility model and keeps false positives low.
             std::set<std::string> declared;
@@ -1415,7 +1415,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
 
             auto head_name = [](const std::string& n) {
                 // Dotted lookups (enums, modules, UDTs) resolve via the head
-                // identifier — "Direction.NORTH" is OK if "Direction" is
+                // identifier - "Direction.NORTH" is OK if "Direction" is
                 // declared. We only need to prove the entry point exists.
                 auto dot = n.find('.');
                 return dot == std::string::npos ? n : n.substr(0, dot);
@@ -1571,7 +1571,7 @@ int main(int argc, char* argv[]) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
     // Enable ANSI escape interpretation up front. Console::enable_raw_mode
-    // also sets this, but that runs after main() prints the splash banner —
+    // also sets this, but that runs after main() prints the splash banner -
     // on legacy conhost (cmd.exe on a fresh Windows install) the user used
     // to see the literal "[2J[H" prefix. No-op when stdout is redirected
     // (GetConsoleMode fails) or when VT is already on.
@@ -1639,7 +1639,7 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    // Parse flags first. Stop at the FIRST non-flag argument — that's the
+    // Parse flags first. Stop at the FIRST non-flag argument - that's the
     // script filename. Anything after the filename is passed through to
     // OS.ARGS verbatim, so `jdbasic cowsay.jdb --foo bar` makes both
     // "--foo" and "bar" reachable from the script.
@@ -1770,7 +1770,7 @@ int main(int argc, char* argv[]) {
         break;
     }
 
-    // ── MCP server mode (stdio) — no filename required ──────────
+    // ── MCP server mode (stdio) - no filename required ──────────
     if (mcp_mode) {
 #ifdef MCPSERVER
         VM vm;
@@ -1782,7 +1782,7 @@ int main(int argc, char* argv[]) {
 #endif
     }
 
-    // ── FTXUI REPL — coexists with the legacy console; opt-in via --ftxui ──
+    // ── FTXUI REPL - coexists with the legacy console; opt-in via --ftxui ──
     if (ftxui_mode) {
 #ifdef FTXUI
         // Build 4 workspaces, each with its own VM pre-registered the
@@ -1836,7 +1836,7 @@ int main(int argc, char* argv[]) {
         VM vm;
         setup_dynamic_code(vm);
         // PRETTY PREVIEW writes the formatted source to vm.emit (stdout)
-        // without mutating any persistent buffer — perfect for piping.
+        // without mutating any persistent buffer - perfect for piping.
         console_execute(pretty_vb ? "PRETTY PREVIEW STYLE VB" : "PRETTY PREVIEW", vm, program_buffer);
         return 0;
     }
@@ -1939,7 +1939,7 @@ int main(int argc, char* argv[]) {
         // resolves those relative to the EXE dir, not jdbrt.dll's dir, so
         // without this the .exe exits 127 outside build/. We walk jdbrt.dll's
         // PE import closure and copy every dependency that lives beside the
-        // compiler — this is exactly SDL3*/libssl/libcrypto (~19 MB), and
+        // compiler - this is exactly SDL3*/libssl/libcrypto (~19 MB), and
         // naturally excludes LLVM-C.dll (compiler-only, not a runtime dep) and
         // the giant on-demand LLM DLLs (ggml/cuda/llama, LoadLibrary'd lazily).
         try {
@@ -1967,7 +1967,7 @@ int main(int argc, char* argv[]) {
             // BFS over jdbrt.dll's static import closure. Only DLLs that exist
             // beside the compiler are followed; system DLLs (USER32, KERNEL32,
             // …) aren't present there, so they're skipped automatically.
-            // POSIX has no PE closure to walk — the produced binary finds
+            // POSIX has no PE closure to walk - the produced binary finds
             // libjdbrt.so via rpath / LD_LIBRARY_PATH instead.
             std::unordered_set<std::string> seen;
             std::vector<std::string> queue = { "jdbrt.dll" };
@@ -1976,7 +1976,7 @@ int main(int argc, char* argv[]) {
                 std::string key = name;
                 std::transform(key.begin(), key.end(), key.begin(), ::tolower);
                 if (!seen.insert(key).second) continue;
-                if (!copy_beside(name)) continue;  // not a sibling DLL — don't recurse
+                if (!copy_beside(name)) continue;  // not a sibling DLL - don't recurse
                 for (auto& dep : pe_imported_dlls(self_dir / name))
                     queue.push_back(dep);
             }

@@ -136,7 +136,7 @@ inline float half_to_float(uint16_t h) {
 
 // ── Value ────────────────────────────────────────────────────
 
-// Optional sub-type tag — lives in padding bytes after `type`, so it costs
+// Optional sub-type tag - lives in padding bytes after `type`, so it costs
 // no extra storage. Used to mark FLOAT64 values as Unix-epoch dates so
 // `PRINT` formats them readably and TYPEOF returns "DATE" instead of
 // "FLOAT64". Arithmetic helpers (DATEADD) propagate the tag.
@@ -220,7 +220,7 @@ struct Value {
     static Value make_f16(float x)   { Value v; v.type = ValueType::FLOAT16; v.f16_bits = float_to_half(x); return v; }
     static Value make_f32(float x)   { Value v; v.type = ValueType::FLOAT32; v.f32 = x; return v; }
     static Value make_f64(double x)  { Value v; v.type = ValueType::FLOAT64; v.f64 = x; return v; }
-    // FLOAT64 tagged as Unix-epoch date — printed via strftime, TYPEOF "DATE".
+    // FLOAT64 tagged as Unix-epoch date - printed via strftime, TYPEOF "DATE".
     static Value make_date(double epoch) {
         Value v; v.type = ValueType::FLOAT64; v.subtype = ValueSubtype::DATE; v.f64 = epoch;
         return v;
@@ -327,7 +327,7 @@ struct Value {
                 // APL-style: an array is true iff every element is truthy
                 // (= ALL). An empty array is false (nothing to be true about).
                 // Without this, `IF [FALSE,FALSE,FALSE] THEN ...` would take
-                // the THEN branch because the array is non-empty — surprising
+                // the THEN branch because the array is non-empty - surprising
                 // for `IF y = 0 THEN ...` patterns when y is a vector.
                 auto* a = as_array();
                 if (!a || a->elements.empty()) return false;

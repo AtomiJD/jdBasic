@@ -1,4 +1,4 @@
-// jdb_runtime.cpp — C runtime for jdBasic native-compiled executables.
+// jdb_runtime.cpp - C runtime for jdBasic native-compiled executables.
 // These functions are called by LLVM-generated code.
 // Compiled separately into jdb_runtime.obj and linked into generated .exe files.
 
@@ -134,20 +134,20 @@ const char* jdb_err_msg() {
     return _strdup(src);
 }
 
-// Raw err_code — used by the per-stmt propagation check in codegen,
+// Raw err_code - used by the per-stmt propagation check in codegen,
 // which MUST read only the live value or it would loop forever on a
 // caught error (the shadow would keep it non-zero after soft-clear).
 int64_t jdb_err_code() {
     return g_err_code;
 }
 
-// User-visible err_code — falls back to the shadow so a catch body
+// User-visible err_code - falls back to the shadow so a catch body
 // sees the caught code even after the soft-clear has run.
 int64_t jdb_err_code_visible() {
     return g_err_code ? g_err_code : g_last_code;
 }
 
-// Called when a THROW escapes all TRY handlers — mirrors the
+// Called when a THROW escapes all TRY handlers - mirrors the
 // interpreter's unhandled exception behavior.
 void jdb_throw_uncaught() {
     fprintf(stderr, "Unhandled exception: %s\n", g_err_msg);
@@ -155,7 +155,7 @@ void jdb_throw_uncaught() {
     exit(1);
 }
 
-// Recursion guard — each user FUNC/SUB bumps a thread-local depth
+// Recursion guard - each user FUNC/SUB bumps a thread-local depth
 // counter at entry and decrements it on normal return. Hitting the
 // limit sets the error state and returns 1 so the codegen branch can
 // propagate out instead of letting the OS stack overflow kill the exe.
@@ -431,7 +431,7 @@ JdbArray* jdb_iota(int64_t n) {
     return arr;
 }
 
-// IOTA(n, start, step) — n elements starting at `start` stepping by `step`.
+// IOTA(n, start, step) - n elements starting at `start` stepping by `step`.
 JdbArray* jdb_iota3(double n, double start, double step) {
     int64_t cnt = (int64_t)n;
     if (cnt < 0) cnt = 0;
@@ -610,7 +610,7 @@ int64_t jdb_array_any(JdbArray* arr) {
     return 0;
 }
 
-// Dot product on flat double buffers — bypasses the bridge's
+// Dot product on flat double buffers - bypasses the bridge's
 // jdbarray_to_value conversion which was making native DOT 13× slower
 // than the interpreter (the conversion alone allocates 2*N Value's
 // before the loop even starts). Bench at 4M elements: 91ms → ~7ms.
@@ -691,7 +691,7 @@ JdbArray* jdb_array_sort(JdbArray* arr) {
     // Simple insertion sort. NB: when called on a string-array the sort
     // key becomes the punned-pointer bits, which is effectively random.
     // Codegen should route string sorts to a dedicated _str variant when
-    // we add one — for now we still preserve the flag so reads after the
+    // we add one - for now we still preserve the flag so reads after the
     // sort still see strings.
     for (int64_t i = 1; i < r->length; i++) {
         double key = r->data[i];
@@ -722,7 +722,7 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
 // Append a value carrying its own JdTag. Allocates the per-element tags
 // array on first tagged append and sets the JD_ARR_FLAG_TAGGED bit.
 // Used by ARRAY_LITERAL codegen when an element is RUNTIME-tagged
-// (e.g. `[m{"name"}, m{"age"}, m{"email"}]` from map-of-mixed-types) —
+// (e.g. `[m{"name"}, m{"age"}, m{"email"}]` from map-of-mixed-types) -
 // without per-cell tags the consumer can't tell strings from numbers.
 JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
     int64_t newlen = arr ? arr->length + 1 : 1;
@@ -788,7 +788,7 @@ JdbArray* jdb_array_fillv(JdbArray* arr, double val) {
     }
     return arr;
 }
-// (no fprintf — keep runtime quiet)
+// (no fprintf - keep runtime quiet)
 
 // COPYV helper: flatten src leaves into a flat double vector.
 static void copyv_flatten(JdbArray* arr, std::vector<double>& out) {
@@ -818,7 +818,7 @@ static void copyv_assign(JdbArray* arr, const std::vector<double>& src, size_t& 
 // COPYV: bulk in-place copy from src into dst with cyclic broadcast if
 // shapes differ. Memcpy fast-path when both are flat with matching lengths;
 // otherwise recursive descent into nested structures. Never throws on size
-// mismatch — broadcasts/truncates/cycles instead.
+// mismatch - broadcasts/truncates/cycles instead.
 JdbArray* jdb_array_copyv(JdbArray* dst, JdbArray* src) {
     if (!dst) return nullptr;
     if (!src) return dst;
@@ -867,13 +867,13 @@ int64_t jdb_array_has_num(JdbArray* arr, double val) {
     return 0;
 }
 
-// Forward declaration — actual definition follows below.
+// Forward declaration - actual definition follows below.
 extern "C" JdbArray* jdb_array_unique_str(JdbArray* arr);
 
 JdbArray* jdb_array_unique(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
     // Runtime fallback: if codegen didn't statically route to _str (e.g.
-    // UNIQUE(APPEND(REVERSE(arr), ...)) — args[0] is a CALL chain, not a
+    // UNIQUE(APPEND(REVERSE(arr), ...)) - args[0] is a CALL chain, not a
     // VARIABLE in string_array_vars), the array's per-cell-type flag still
     // tells us this is a string array. Delegate so dedupe uses strcmp.
     if (arr->flags & 2) return jdb_array_unique_str(arr);
@@ -911,7 +911,7 @@ JdbArray* jdb_array_unique_str(JdbArray* arr) {
         if (!found) r->data[n++] = arr->data[i];
     }
     r->length = n;
-    r->flags |= 3;  // string elements — preserve dispatch info
+    r->flags |= 3;  // string elements - preserve dispatch info
     return r;
 }
 
@@ -974,7 +974,7 @@ JdbArray* jdb_array_drop(JdbArray* arr, int64_t n) {
     return r;
 }
 
-// (n, arr) ordering for the codegen entry-point — see jdb_take_n.
+// (n, arr) ordering for the codegen entry-point - see jdb_take_n.
 JdbArray* jdb_drop_n(int64_t n, JdbArray* arr) {
     return jdb_array_drop(arr, n);
 }
@@ -1191,7 +1191,7 @@ static inline double scalar_op(double a, double b, int op) {
         case 1: return a - b;
         case 2: return a * b;
         case 3: return b != 0 ? a / b : 0;
-        // Bitwise / shift — coerce both sides through int64. Native arrays
+        // Bitwise / shift - coerce both sides through int64. Native arrays
         // store doubles, so for elementwise BAND/SHL we round-trip via
         // i64. Safe up to 2^53 magnitudes; that covers Subset-Sum-style
         // bitmask use (N up to ~50) without precision loss.
@@ -1200,7 +1200,7 @@ static inline double scalar_op(double a, double b, int op) {
         case 6: return (double)((int64_t)a ^ (int64_t)b);   // BXOR
         case 7: return (double)((int64_t)a << (int64_t)b);  // SHL
         case 8: return (double)((int64_t)a >> (int64_t)b);  // SHR (arith)
-        case 9: { // MOD — integer modulo (matches interp's MOD on doubles)
+        case 9: { // MOD - integer modulo (matches interp's MOD on doubles)
             int64_t bi = (int64_t)b;
             if (bi == 0) return 0;
             return (double)((int64_t)a % bi);
@@ -1239,7 +1239,7 @@ static JdbArray* arr_binop(JdbArray* a, JdbArray* b, int op) {
         r->flags |= 3;
         return r;
     }
-    // Genuine nested array (array of arrays) — bit0 set WITHOUT the string bit.
+    // Genuine nested array (array of arrays) - bit0 set WITHOUT the string bit.
     bool nested = ((a->flags & 1) && !(a->flags & 2)) ||
                   ((b->flags & 1) && !(b->flags & 2));
     if (nested) {
@@ -1345,7 +1345,7 @@ JdbArray* jdb_array_cmp_arr(JdbArray* a, JdbArray* b, int32_t op) {
     return arr_cmp_arr(a, b, op);
 }
 
-// Forward declaration — actual definition is jdb_array_set_bool_elems
+// Forward declaration - actual definition is jdb_array_set_bool_elems
 // further down. Used by the string-cmp helper below.
 extern "C" void jdb_array_set_bool_elems(JdbArray* arr);
 
@@ -1390,7 +1390,7 @@ void jdb_array_set_string_elems(JdbArray* arr) {
 }
 
 // Mark array as containing boolean elements so print emits TRUE/FALSE
-// instead of 1/0. The data slots stay plain f64 0/1 — only printing
+// instead of 1/0. The data slots stay plain f64 0/1 - only printing
 // changes.
 void jdb_array_set_bool_elems(JdbArray* arr) {
     if (arr) arr->flags |= 4;  // bit 2 (bool)
@@ -1417,7 +1417,7 @@ int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
     // is called via mixed_array_vars dispatch and trusts the explicit
     // per-cell tag when present, rather than the looks_ptr heuristic.
     if ((arr->flags & 8) != 0 && arr->elem_tags != nullptr) {
-        // Find this cell's index by pointer arithmetic — d here is a copy
+        // Find this cell's index by pointer arithmetic - d here is a copy
         // of arr->data[idx], but the caller doesn't pass idx. Fall through
         // to the heuristic if we can't map it.
         for (int64_t i = 0; i < arr->length; i++) {
@@ -1532,7 +1532,7 @@ void jdb_event_raise_str(const char* name, const char* arg) {
     it->second(arr);
 }
 
-// Forward decls — definitions are further down the file.
+// Forward decls - definitions are further down the file.
 JdbMap* jdb_map_new();
 void jdb_map_set_f64(JdbMap* m, const char* key, double val);
 void jdb_map_set_str(JdbMap* m, const char* key, const char* val);
@@ -1678,7 +1678,7 @@ void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
 }
 
 // Store an already-punned f64 value with an explicit tag. Used when the
-// setter knows the value is actually a map/array ptr punned as f64 — the
+// setter knows the value is actually a map/array ptr punned as f64 - the
 // default f64 setter would stomp the tag back to F64 and lose the
 // type identity needed by the tagged getter.
 //
@@ -1732,7 +1732,7 @@ int64_t jdb_map_has(JdbMap* m, const char* key) {
 }
 
 // Used by the codegen for nested-map / array-typed fields. The caller is
-// responsible for knowing the real type — the map itself doesn't expose
+// responsible for knowing the real type - the map itself doesn't expose
 // per-field tags through this entry point.
 void* jdb_map_get_obj(JdbMap* m, const char* key) {
     int64_t idx = map_find(m, key);
@@ -1741,11 +1741,11 @@ void* jdb_map_get_obj(JdbMap* m, const char* key) {
     return (void*)(intptr_t)u.i;
 }
 
-// Forward decl — the unified dispatcher that picks between this and
+// Forward decl - the unified dispatcher that picks between this and
 // jdrt_obj_get_tagged based on val_tag.
 int32_t jdb_tagged_get(int64_t val_bits, int32_t val_tag, const char* key, int64_t* out_val);
 
-// Tag-aware counterpart of jdb_map_get_* — returns (tag, bits) so the
+// Tag-aware counterpart of jdb_map_get_* - returns (tag, bits) so the
 // caller can handle numbers, strings, and pointer-punned sub-maps/arrays
 // without knowing the field's type in advance.
 int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
@@ -1764,7 +1764,7 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
     // tag. STR/ARR/MAP/VMH = ptr-or-handle bits. F64 = f64-bit-pun. I64/
     // BOOL = real int (FPToSI from the stored f64). Without the I64 leg,
     // a `vstate{"id"} = INT` round-trip lost the int because storage is
-    // f64 — codegen-side now expects val to be a real int when tag=I64.
+    // f64 - codegen-side now expects val to be a real int when tag=I64.
     if (t == JD_TAG_I64 || t == JD_TAG_BOOL) {
         *out_val = (int64_t)u.d;  // stored as f64; convert back to int
         return t;
@@ -1803,13 +1803,13 @@ char* jdb_str_sub(const char* a, const char* b) {
 // Native array_apply: apply a scalar fn to each element of an array.
 // Used for SIN(arr), ABS(arr), UCASE$(arr), LEFT$(arr, n), etc. instead
 // of dispatching via VM bridge. The fn pointer type is encoded by suffix:
-//   _ff:  double(double)                 — SIN, COS, ABS, SQR, etc.
-//   _ii:  int64(int64)                   — (rare, but e.g. BITNOT)
-//   _ss:  char*(const char*)             — UCASE$, LCASE$, TRIM$, REVERSE$
-//   _sfi: char*(const char*, int64)      — LEFT$, RIGHT$
-//   _sfii: char*(const char*, int64, int64) — MID$
-//   _ifs: int64(const char*)             — LEN$, ASC
-//   _ffi: double(double, int64)          — ROUND(x, decimals)
+//   _ff:  double(double)                 - SIN, COS, ABS, SQR, etc.
+//   _ii:  int64(int64)                   - (rare, but e.g. BITNOT)
+//   _ss:  char*(const char*)             - UCASE$, LCASE$, TRIM$, REVERSE$
+//   _sfi: char*(const char*, int64)      - LEFT$, RIGHT$
+//   _sfii: char*(const char*, int64, int64) - MID$
+//   _ifs: int64(const char*)             - LEN$, ASC
+//   _ffi: double(double, int64)          - ROUND(x, decimals)
 
 typedef double (*fn_ff)(double);
 typedef int64_t (*fn_ii)(int64_t);
@@ -1855,7 +1855,7 @@ JdbArray* jdb_array_apply_ss(JdbArray* arr, void* fnp) {
             union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)res;
             r->data[i] = ur.d;
         } else {
-            // Element is numeric, caller mistake — return empty string
+            // Element is numeric, caller mistake - return empty string
             char* empty = _strdup("");
             union { int64_t i; double d; } ur; ur.i = (int64_t)(intptr_t)empty;
             r->data[i] = ur.d;
@@ -1957,7 +1957,7 @@ int32_t jdb_array_is_nested(JdbArray* arr) {
 // Print an element of an array: uses flags bits to decide format.
 // Bit 0: ptr element. Bit 1: element is a string (vs nested array).
 // Bit 2: element is a boolean (TRUE/FALSE rendering).
-// Bit 3: per-element tags array present — dispatch on the cell's own JdTag.
+// Bit 3: per-element tags array present - dispatch on the cell's own JdTag.
 void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length) return;
     double val = arr->data[idx];
@@ -1966,7 +1966,7 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     bool has_string = (arr->flags & 2) != 0;
     bool has_bool = (arr->flags & 4) != 0;
     if (has_tagged) {
-        // Per-cell tag — dispatch on the stored JdTag.
+        // Per-cell tag - dispatch on the stored JdTag.
         int8_t t = arr->elem_tags[idx];
         if (t == 2) {  // STR
             union { double d; int64_t i; } u; u.d = val;
@@ -1995,12 +1995,12 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
         return;
     }
     if (has_string) {
-        // String-flag alone is enough — element is a ptr-encoded char*.
+        // String-flag alone is enough - element is a ptr-encoded char*.
         union { double d; int64_t i; } u; u.d = val;
         const char* s = (const char*)(intptr_t)u.i;
         if (s) printf("%s", s);
     } else if (has_ptr) {
-        // Nested array — print as [e0, e1, ...]
+        // Nested array - print as [e0, e1, ...]
         union { double d; int64_t i; } u; u.d = val;
         JdbArray* inner = (JdbArray*)(intptr_t)u.i;
         if (!inner) return;
@@ -2098,7 +2098,7 @@ void jdb_set_args(int argc, char** argv) {
     g_argv = argv;
 }
 
-// OS.ARGS() returns a "string array" — each element stores the argv pointer
+// OS.ARGS() returns a "string array" - each element stores the argv pointer
 // as a double (via memcpy). When indexed and passed to VAL/PRINT, the
 // pointer is recovered via jdb_array_get_str.
 JdbArray* jdb_os_args() {
@@ -2280,7 +2280,7 @@ char* jdb_format4(const char* fmt, double a1, double a2, double a3, double a4) {
 // __jdrt_handle, and now also pings it back here via jdb_runtime_set_handle
 // so VM_HANDLE args inside FORMAT$ can be materialised at runtime.
 extern "C" {
-    // Exported by jdbrt.dll — declared here so jdb_runtime.obj can call them
+    // Exported by jdbrt.dll - declared here so jdb_runtime.obj can call them
     // when the format spec demands either numeric or string materialisation
     // of a VM_HANDLE.
     double jdrt_val_to_f64(void* rt, int64_t handle);
@@ -2292,7 +2292,7 @@ extern "C" void jdb_runtime_set_handle(void* h) { g_jdrt_handle = h; }
 // types[i] is 'd' for an f64-bit-pun, 's' for a const char*, or 'h' for a
 // VM-handle (i64 key into the VM's value_store). 'h' lets us defer the
 // "is this number-or-string?" question to runtime, which is the only stage
-// that knows both the format spec and the underlying Value's type — useful
+// that knows both the format spec and the underlying Value's type - useful
 // for MAP indexing where p{"name"} could be a string and p{"price"} a double
 // in the same FORMAT$ call.
 static char* jdb_format_tagged_impl(const char* fmt, const char* types,
@@ -2321,7 +2321,7 @@ static char* jdb_format_tagged_impl(const char* fmt, const char* types,
                 jdb_format_one_arg(tmp, sizeof(tmp), spec, 0.0, s, true);
             } else if (tag == 'h') {
                 // VM handle. Pick number-or-string materialisation by the
-                // type letter in the spec — d/f/x/X/e/g all want a number,
+                // type letter in the spec - d/f/x/X/e/g all want a number,
                 // anything else (including bare `{}`) renders as string.
                 size_t splen = strlen(spec);
                 char ty = (splen > 0) ? spec[splen-1] : 0;
@@ -2418,7 +2418,7 @@ int64_t jdb_len_str(const char* s) {
     return (int64_t)strlen(s);
 }
 
-// Strict MID — matches VM's substr-based register_native("MID", ...).
+// Strict MID - matches VM's substr-based register_native("MID", ...).
 // start past the end is an error so TRY/CATCH can observe it (the
 // crash_test relies on this).
 char* jdb_mid(const char* s, int64_t start, int64_t length) {
@@ -2436,7 +2436,7 @@ char* jdb_mid(const char* s, int64_t start, int64_t length) {
     return r;
 }
 
-// Lenient MID$ — matches VM's register_native("MID$", ...). Out-of-range
+// Lenient MID$ - matches VM's register_native("MID$", ...). Out-of-range
 // start returns an empty string instead of erroring; lots of jdBasic
 // programs (dialog wrappers, parsers) rely on this to scan past the
 // end of a string without bounds-checking.
@@ -2576,7 +2576,7 @@ JdbArray* jdb_array_str(JdbArray* arr) {
 //   {"key1": value1, "key2": value2}
 // Strings are quoted; numbers use jdb_format_double; booleans render as
 // TRUE/FALSE; nested maps and arrays recurse.
-char* jdb_frmv(JdbArray* arr);  // forward decl — definition below
+char* jdb_frmv(JdbArray* arr);  // forward decl - definition below
 static int jdb_map_str_into(JdbMap* m, char* buf, int cap, int pos);
 static int jdb_value_str_tag(char* buf, int cap, int pos, double val, int32_t tag) {
     union { double d; int64_t i; } u; u.d = val;
@@ -2639,7 +2639,7 @@ char* jdb_str_bool(int64_t val) {
 }
 
 char* jdb_str_str(const char* s) {
-    // STR$(string) — pass-through. Returns a fresh copy because callers
+    // STR$(string) - pass-through. Returns a fresh copy because callers
     // own (and may free) the result.
     return _strdup(s ? s : "");
 }
@@ -2845,14 +2845,14 @@ void jdb_txtwriter_append(const char* path, const char* content) {
     if (f) { fputs(content, f); fclose(f); }
 }
 
-// 3-arg form used by TXTWRITER with optional append flag — bridges
+// 3-arg form used by TXTWRITER with optional append flag - bridges
 // the codegen-default of padding the 3rd i64 arg with 0 to no-append.
 void jdb_txtwriter3(const char* path, const char* content, int64_t append) {
     if (append) jdb_txtwriter_append(path, content);
     else        jdb_txtwriter(path, content);
 }
 
-// 2-arg TXTREADER$ with codepage — decodes file bytes (in `encoding`) to UTF-8
+// 2-arg TXTREADER$ with codepage - decodes file bytes (in `encoding`) to UTF-8
 // for the jdBasic string. encoding=NULL or "" means byte-pass-through (same as
 // the 1-arg jdb_txtreader). On Windows the conversion goes via UTF-16; other
 // platforms only support pass-through.
@@ -2876,7 +2876,7 @@ char* jdb_txtreader_enc(const char* path, const char* encoding) {
     }
 }
 
-// 4-arg TXTWRITER with codepage — encodes UTF-8 jdBasic string to `encoding`
+// 4-arg TXTWRITER with codepage - encodes UTF-8 jdBasic string to `encoding`
 // bytes before writing. encoding=NULL or "" means byte-pass-through.
 void jdb_txtwriter_enc(const char* path, const char* content, int64_t append,
                        const char* encoding) {
@@ -3312,7 +3312,7 @@ int64_t jdb_rotr(int64_t x, int64_t n, int64_t bits) {
 int64_t jdb_rotl2(int64_t x, int64_t n) { return jdb_rotl(x, n, 64); }
 int64_t jdb_rotr2(int64_t x, int64_t n) { return jdb_rotr(x, n, 64); }
 
-// ── Math (GCD/LCM) — binary; variadic is expanded by codegen ─
+// ── Math (GCD/LCM) - binary; variadic is expanded by codegen ─
 int64_t jdb_gcd(int64_t a, int64_t b) {
     if (a < 0) a = -a; if (b < 0) b = -b;
     while (b) { int64_t t = a % b; a = b; b = t; }
@@ -3359,7 +3359,7 @@ double jdb_iif(int64_t cond, double a, double b) {
     return cond ? a : b;
 }
 
-// ISNUM, ISSTR, ISARR — type checking (simplified for native)
+// ISNUM, ISSTR, ISARR - type checking (simplified for native)
 int64_t jdb_isnum(double val) { (void)val; return 1; }
 int64_t jdb_isstr(const char* val) { (void)val; return 1; }
 
@@ -3463,7 +3463,7 @@ char* jdb_cvdate(const char* datestr) {
     return format_iso_date(&t, true);
 }
 
-// CVDATE for numeric input — interpret as Unix epoch seconds and format
+// CVDATE for numeric input - interpret as Unix epoch seconds and format
 // as a local-time ISO string (matches the interpreter's behaviour).
 char* jdb_cvdate_num(double epoch_secs) {
     time_t t = (time_t)epoch_secs;
@@ -3476,7 +3476,7 @@ char* jdb_cvdate_num(double epoch_secs) {
     return format_iso_date(&tm, true);
 }
 
-// CVDATE on an array — element-wise. Numeric elements use jdb_cvdate_num,
+// CVDATE on an array - element-wise. Numeric elements use jdb_cvdate_num,
 // existing string elements pass through jdb_cvdate. Returns a string-flagged
 // JdbArray so existing print / index paths Just Work.
 JdbArray* jdb_cvdate_arr(JdbArray* in) {
@@ -3547,12 +3547,12 @@ JdbArray* jdb_datediff_vec(const char* part, const char* date1, JdbArray* dates)
     return r;
 }
 
-} // end extern "C" — regex functions need C++ linkage internally
+} // end extern "C" - regex functions need C++ linkage internally
 
 // ── Regex (C++ internally, extern "C" interface) ────────────
 
 // VM convention is REGEX.MATCH(pattern, text) / REPLACE(pattern, text, repl)
-// — see vm.cpp's register_native impls and doc/languages.md. Native must
+// - see vm.cpp's register_native impls and doc/languages.md. Native must
 // match that order or the same script picks one branch in interp and the
 // opposite in native (e.g. native_test.jdb's REGEX section flipping
 // PASS/FAIL between modes).
@@ -3655,7 +3655,7 @@ char* jdb_typeof_f64(double v) {
     return _strdup("FLOAT64");
 }
 
-// Both NATIVE_MAP and VM_HANDLE surface as "OBJECT" — user-facing type
+// Both NATIVE_MAP and VM_HANDLE surface as "OBJECT" - user-facing type
 // language doesn't distinguish native-runtime maps from VM Values.
 char* jdb_typeof_tag(int64_t tag) {
     switch ((JdTag)tag) {
@@ -3785,7 +3785,7 @@ double jdb_tonum(const char* s) { return s ? atof(s) : 0.0; }
 int64_t jdb_byteat(const char* s, int64_t idx) {
     if (!s || idx < 0) return 0;
     // Honour binary strings (BINREADER$, PACK$) by consulting the
-    // jdrt_strlen registry first — strlen alone truncates at the
+    // jdrt_strlen registry first - strlen alone truncates at the
     // first NUL, which makes binary file contents look truncated to
     // BYTEAT after the first zero byte.
     int64_t blen = jdrt_strlen(s);
@@ -3795,7 +3795,7 @@ int64_t jdb_byteat(const char* s, int64_t idx) {
 }
 
 // OS info
-// Match the VM's getos_fn in vm.cpp — uppercase platform tags so
+// Match the VM's getos_fn in vm.cpp - uppercase platform tags so
 // `IF OS.GETOS$() = "WINDOWS"` works the same way in interp + native.
 char* jdb_os_getos() {
 #ifdef _WIN32
@@ -3889,7 +3889,7 @@ JdbArray* jdb_select_fn(JdbMapFn fn, JdbArray* arr) {
     return r;
 }
 
-// AGG(keys, values, reducer) — group `values` by the matching `keys` entry
+// AGG(keys, values, reducer) - group `values` by the matching `keys` entry
 // (first-seen order), call reducer(group) per group, return [[key, reduced],
 // ...]. `reducer` is the funcref wrapper (double(double)); it receives the
 // group as a punned array ptr and returns a numeric result. Key cells keep

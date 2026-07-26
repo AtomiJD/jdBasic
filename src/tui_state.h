@@ -1,6 +1,6 @@
 #pragma once
 //
-// TUI.* runtime state — Phase A scaffolding.
+// TUI.* runtime state - Phase A scaffolding.
 //
 // Compiled only when /DTUI is set. The struct holds the per-script
 // state that survives across native calls within one frame:
@@ -10,7 +10,7 @@
 //   - theme handle (drives jdb_theme slots and FTXUI palette)
 //   - quit flag drained by TUI.QUIT()
 //
-// Phase A keeps the surface minimal — Phases B+ flesh out the
+// Phase A keeps the surface minimal - Phases B+ flesh out the
 // collectors and event cache as widgets land.
 
 #ifdef TUI
@@ -27,14 +27,14 @@ namespace ftxui { class ScreenInteractive; }
 
 namespace jdb_tui {
 
-// One frame in the layout stack — a collector for child elements
+// One frame in the layout stack - a collector for child elements
 // plus the parameters needed to fold them into an Element on close.
 struct LayoutFrame {
     enum Kind { ROOT, HBOX, VBOX, BORDER, GRID, MODAL, TAB };
     Kind kind = ROOT;
     std::vector<ftxui::Element> children;
-    std::string title;   // BORDER (becomes window title) — empty → border()
-    int cols = 1;        // GRID — number of columns
+    std::string title;   // BORDER (becomes window title) - empty → border()
+    int cols = 1;        // GRID - number of columns
     // When true, fold_frame returns an empty element and pop_and_attach
     // drops the result. Used for inactive tabs and inactive modal blocks
     // so the script can keep its IF TUI.TAB_BEGIN(...) THEN ... ENDIF idiom.
@@ -45,7 +45,7 @@ struct TuiState {
     bool in_frame = false;       // between TUI.BEGIN and TUI.END
     bool quit_requested = false; // toggled by TUI.EXIT / Ctrl+Q
     bool alt_screen_active = false; // true once we swapped to the alt buffer
-    bool pending_same_line = false; // SAME_LINE marker — joins next emit hbox-style
+    bool pending_same_line = false; // SAME_LINE marker - joins next emit hbox-style
     std::string frame_title;
 
     // Layout stack. Always size >= 1 between BEGIN/END; layout_stack[0]
@@ -83,7 +83,7 @@ struct TuiState {
         std::vector<std::vector<std::string>> rows;
     } table;
 
-    // Last drained event — fed by the FTXUI CatchEvent in TUI.RENDER.
+    // Last drained event - fed by the FTXUI CatchEvent in TUI.RENDER.
     std::string last_key;
     int mouse_x = 0, mouse_y = 0;
     int mouse_buttons = 0;
@@ -95,7 +95,7 @@ struct TuiState {
 
     // Colour/style stacks (Phase G). Each entry decorates the NEXT
     // emit_element until popped. The top-of-stack effect is applied
-    // when emitting; emitting does NOT pop — POP_COLOR/STYLE_POP do.
+    // when emitting; emitting does NOT pop - POP_COLOR/STYLE_POP do.
     struct StyleEntry {
         bool has_fg = false;
         bool has_bg = false;
@@ -107,7 +107,7 @@ struct TuiState {
 
     // Owned screen when running outside the FTXUI REPL.
     std::unique_ptr<ftxui::ScreenInteractive> screen_owned;
-    // Borrowed pointer to the REPL's screen when running embedded —
+    // Borrowed pointer to the REPL's screen when running embedded -
     // set via tui_set_host_screen() by repl_ftxui.cpp.
     ftxui::ScreenInteractive* host_screen = nullptr;
 
@@ -152,7 +152,7 @@ struct TuiState {
 
 TuiState& state();
 
-// Hook for repl_ftxui.cpp — call when the REPL enters/leaves its
+// Hook for repl_ftxui.cpp - call when the REPL enters/leaves its
 // main loop so TUI.BEGIN can suspend it via WithRestoredIO instead
 // of constructing its own ScreenInteractive.
 void set_host_screen(ftxui::ScreenInteractive* screen);

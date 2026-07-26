@@ -1019,7 +1019,7 @@ void register_sound_builtins(VM& vm) {
 
         SDL_ResumeAudioStreamDevice(g_sound.stream);
 
-        // PCM push-stream — opened on the same default device. SDL3 mixes
+        // PCM push-stream - opened on the same default device. SDL3 mixes
         // multiple device-streams together, so the synth and the raw
         // sample buffer coexist without us writing a second mixer.
         SDL_AudioSpec pcm_spec;
@@ -1176,7 +1176,7 @@ void register_sound_builtins(VM& vm) {
 #endif
     });
 
-    // ── SOUND.QUEUED() — bytes still pending in PCM stream ──────
+    // ── SOUND.QUEUED() - bytes still pending in PCM stream ──────
     //
     // Useful for keeping the buffer between min/max water-marks without
     // overflowing or underrunning. Returns 0 if PCM stream is closed.
@@ -1510,7 +1510,7 @@ void register_sound_builtins(VM& vm) {
         g_sound.distortion_amount = (float)args[0].to_double(); return Value::make_none();
     });
 
-    // ── SOUND.RENDER(frames) — pull interleaved stereo samples ──
+    // ── SOUND.RENDER(frames) - pull interleaved stereo samples ──
     //
     // Renders the next `frames` stereo frames of the live sequencer and
     // returns them as a flat array [L0, R0, L1, R1, ...]. For embed hosts
