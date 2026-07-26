@@ -1985,7 +1985,7 @@ int main(int argc, char* argv[]) {
             // Bundled default font (used by SCREEN auto-load so demos don't
             // need SETFONT boilerplate).
             copy_beside("jdbasic_default.ttf");
-        } catch (...) { /* best-effort — do not fail the compile */ }
+        } catch (...) { /* best-effort - do not fail the compile */ }
         std::cout << "Compiled: " << compile_output << std::endl;
         return 0;
 #else
