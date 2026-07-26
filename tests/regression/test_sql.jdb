@@ -1,4 +1,4 @@
-' SQL.* regression — interpreter run only (SQL.QUERY returns row maps,
+' SQL.* regression - interpreter run only (SQL.QUERY returns row maps,
 ' which native -c rejects at compile time). Needs the SQLITE build flag.
 IF NOT OS.FEATURE("SQLITE") THEN
     PRINT "SKIP: built without SQLITE"

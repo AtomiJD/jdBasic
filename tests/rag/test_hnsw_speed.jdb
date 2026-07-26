@@ -1,5 +1,5 @@
 ' Reiner Search-Speedtest: gleiche Query oft, damit Embedding-Cache greift?
-' (Embedding wird zwar nicht gecached, aber wir messen die TOTALEN Kosten —
+' (Embedding wird zwar nicht gecached, aber wir messen die TOTALEN Kosten -
 ' der Unterschied wird mit groesserem Index sichtbar)
 
 PRINT "Loading embedding model..."

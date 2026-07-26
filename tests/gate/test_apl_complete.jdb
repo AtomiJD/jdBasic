@@ -39,7 +39,7 @@ SUB SEC(label$)
 ENDSUB
 
 ' ============================================================
-SEC("CONSTRUCTORS — IOTA / RANGE / LINSPACE / ZEROS / ONES")
+SEC("CONSTRUCTORS: IOTA / RANGE / LINSPACE / ZEROS / ONES")
 ' ============================================================
 DIM v1 = IOTA(5)
 CHECK_EQ "IOTA(5) len",   5, LEN(v1)
@@ -96,7 +96,7 @@ CHECK_EQ "RESHAPE 2D->1D len", 12, LEN(r1d)
 CHECK_EQ "RESHAPE 2D->1D[5]",  6, r1d[5]
 
 ' ============================================================
-SEC("TAKE / DROP — 1D")
+SEC("TAKE / DROP: 1D")
 ' ============================================================
 DIM tk1 = TAKE(3, IOTA(5))
 CHECK_EQ "TAKE(3,1D) len",  3, LEN(tk1)
@@ -121,7 +121,7 @@ IF LEN(dr2) = 3 THEN
 ENDIF
 
 ' ============================================================
-SEC("TAKE / DROP — 2D (the wireframe killer)")
+SEC("TAKE / DROP: 2D (the wireframe killer)")
 ' ============================================================
 DIM m23 = RESHAPE(IOTA(6), [2, 3])
 DIM m33 = RESHAPE(IOTA(9), [3, 3])
@@ -140,7 +140,7 @@ CHECK_EQ "DROP(1,3x3) rows",  2, LEN(dr2d)
 CHECK_EQ "DROP(1,3x3)[0,0]",  4, dr2d[0, 0]
 CHECK_EQ "DROP(1,3x3)[1,2]",  9, dr2d[1, 2]
 
-' DROP negative — KNOWN BROKEN in native (returns input unchanged)
+' DROP negative - KNOWN BROKEN in native (returns input unchanged)
 DIM dn2d = DROP(-1, m33)
 CHECK_EQ "DROP(-1,3x3) rows", 2, LEN(dn2d)
 IF LEN(dn2d) = 2 THEN
@@ -183,13 +183,13 @@ DIM tr3 = TRANSPOSE(TRANSPOSE(m23))
 CHECK_EQ "TRANSPOSE^2 rows",    2, LEN(tr3)
 CHECK_EQ "TRANSPOSE^2[1,1]",    5, tr3[1, 1]
 
-' Combined TRANSPOSE+DROP+TRANSPOSE — drop a column
+' Combined TRANSPOSE+DROP+TRANSPOSE - drop a column
 DIM tdt = TRANSPOSE(DROP(1, TRANSPOSE(m33)))
 CHECK_EQ "T(DROP(1,T)) rows",    3, LEN(tdt)
 CHECK_EQ "T(DROP(1,T)) cols",    2, LEN(tdt[0])
 CHECK_EQ "T(DROP(1,T))[0,0]",    2, tdt[0, 0]
 
-' Same with TAKE — drop the LAST column
+' Same with TAKE - drop the LAST column
 DIM tta = TRANSPOSE(TAKE(2, TRANSPOSE(m33)))
 CHECK_EQ "T(TAKE(2,T)) rows",    3, LEN(tta)
 CHECK_EQ "T(TAKE(2,T)) cols",    2, LEN(tta[0])
@@ -272,7 +272,7 @@ DIM ro = ROTATE([1, 2, 3, 4, 5], 2)
 CHECK_EQ "ROTATE len",      5, LEN(ro)
 
 ' ============================================================
-SEC("REDUCTIONS — SUM / PRODUCT / MIN / MAX / MEAN")
+SEC("REDUCTIONS: SUM / PRODUCT / MIN / MAX / MEAN")
 ' ============================================================
 CHECK_EQ "SUM 1D",          15, SUM(IOTA(5))
 CHECK_EQ "PRODUCT 1D",      120, PRODUCT(IOTA(5))
@@ -353,7 +353,7 @@ CHECK_EQ "CLAMP[4]",        15, cl[4]
 ' ============================================================
 SEC("STR$ on arrays")
 ' ============================================================
-' STR$ on 1D array — should yield "[1, 2, 3]" or similar
+' STR$ on 1D array - should yield "[1, 2, 3]" or similar
 DIM s1$ = STR$([1, 2, 3])
 CHECK_EQ "STR$ 1D nonempty", 1, LEN(s1$) > 0
 DIM s2$ = STR$(m23)
@@ -376,7 +376,7 @@ DIM uq = UNIQUE([1, 2, 2, 3, 3, 3, 4])
 CHECK_EQ "UNIQUE len",      4, LEN(uq)
 
 ' ============================================================
-SEC("HIGHER-ORDER — SCAN / SELECT / FILTER / REDUCE")
+SEC("HIGHER-ORDER: SCAN / SELECT / FILTER / REDUCE")
 ' ============================================================
 DIM sel = SELECT(LAMBDA i -> i * 2, IOTA(5))
 CHECK_EQ "SELECT len",      5, LEN(sel)

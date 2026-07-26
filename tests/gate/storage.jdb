@@ -9,12 +9,12 @@ EXPORT FUNC GET_CB()
     RETURN cb
 ENDFUNC
 
-' Apply a *parameter* funcref — known-good pattern from doc/languages.md.
+' Apply a *parameter* funcref - known-good pattern from doc/languages.md.
 EXPORT FUNC APPLY_PARAM(fn, x)
     RETURN fn(x)
 ENDFUNC
 
-' Apply the *stored* funcref — tests if module-state survives.
+' Apply the *stored* funcref - tests if module-state survives.
 EXPORT FUNC APPLY_STORED(x)
     RETURN cb(x)
 ENDFUNC

@@ -6,7 +6,7 @@ PRINT "Starting TUI Phase B demo. Press Ctrl+Q to quit."
 DIM frame AS INTEGER = 0
 
 DO
-    TUI.BEGIN "jdBasic — Phase B Smoke"
+    TUI.BEGIN "jdBasic: Phase B Smoke"
     TUI.TEXT "Hello from the terminal!"
     TUI.TEXT ""
     TUI.TEXT "TUI.* is alive."

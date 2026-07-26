@@ -11,7 +11,7 @@
 ' jdb_eval and resumes. After 5 cycles, counter should equal 50
 ' (driver adds 10 per cycle).
 '
-' Pure interpreter, no SDL — keeps the test self-contained and fast.
+' Pure interpreter, no SDL - keeps the test self-contained and fast.
 ' ──────────────────────────────────────────────────────────────────
 DIM counter AS INTEGER = 0
 

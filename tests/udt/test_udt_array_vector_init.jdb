@@ -1,4 +1,4 @@
-' DIM arr[N] AS T(vec1, vec2) — Vektor-Args werden element-weise verteilt
+' DIM arr[N] AS T(vec1, vec2) - Vektor-Args werden element-weise verteilt
 TYPE T_NPC
     Name AS STRING
     Health AS INTEGER

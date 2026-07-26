@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-'  FILE.OPEN_LINES / READLINE$ / AT_EOF / CLOSE — single-thread.
+'  FILE.OPEN_LINES / READLINE$ / AT_EOF / CLOSE - single-thread.
 '  Tail-mode tests live in test_file_tail.jdb.
 ' ══════════════════════════════════════════════════════════════════
 OPTION "EXPLICIT"
@@ -53,7 +53,7 @@ CATCH
 ENDTRY
 Assert(threw1,                    "OPEN_LINES on missing file throws")
 
-' ── File without trailing newline — last line still reachable ─────
+' ── File without trailing newline - last line still reachable ─────
 Header("Last line without trailing newline")
 TXTWRITER "fs_notrail.txt", "alpha" + CHR$(10) + "beta", FALSE
 DIM h3 = FILE.OPEN_LINES("fs_notrail.txt")

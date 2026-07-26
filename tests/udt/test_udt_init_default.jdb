@@ -1,4 +1,4 @@
-' Kein INIT deklariert — Verhalten wie bisher (Defaults aus __NEW__)
+' Kein INIT deklariert - Verhalten wie bisher (Defaults aus __NEW__)
 TYPE Box
     Width AS INTEGER
     Height AS INTEGER

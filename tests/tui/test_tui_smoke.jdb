@@ -1,10 +1,10 @@
 ' ===========================================================
-' test_tui_smoke.jdb — TUI.* compile-only smoke for the gate.
+' test_tui_smoke.jdb - TUI.* compile-only smoke for the gate.
 '
 ' Phase H designed this as a TUI.RENDER_HEADLESS-driven assertion
 ' suite, but RENDER_HEADLESS is parked (no FTXUI buffer-grab path
 ' wired yet). For the gate we settle for "every native is callable
-' and returns without crashing" — that catches symbol regressions
+' and returns without crashing" - that catches symbol regressions
 ' and most arg-arity drift.
 '
 ' Run via: ./build/jdBasic.exe tests/test_tui_smoke.jdb
@@ -25,13 +25,13 @@ SUB expect(name$, cond)
     ENDIF
 ENDSUB
 
-' 1. Diagnostics — version + dimensions before any frame
+' 1. Diagnostics - version + dimensions before any frame
 expect "VERSION$ non-empty", LEN(TUI.VERSION$()) > 0
 expect "WIDTH > 0",  TUI.WIDTH() > 0
 expect "HEIGHT > 0", TUI.HEIGHT() > 0
 
 ' 2. Build a frame using every layout primitive, then DROP it
-'    (no TUI.RENDER — the gate runs piped, no real terminal).
+'    (no TUI.RENDER - the gate runs piped, no real terminal).
 TUI.BEGIN "smoke"
 TUI.HEADING "header", 1
 TUI.PARAGRAPH "lorem ipsum"
@@ -65,7 +65,7 @@ TUI.END
 
 expect "frame built without crash", TRUE
 
-' 3. Input widgets — value-in / value-out contract
+' 3. Input widgets - value-in / value-out contract
 DIM name$    AS STRING  = "atomi"
 DIM count    AS INTEGER = 7
 DIM volume   AS DOUBLE  = 0.5

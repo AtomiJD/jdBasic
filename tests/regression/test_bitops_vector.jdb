@@ -1,5 +1,5 @@
 ' Element-wise / broadcasting test for BAND BOR BXOR SHL SHR.
-' Phase 0 of Subset-Sum APL pipeline — verifies that bitops route
+' Phase 0 of Subset-Sum APL pipeline - verifies that bitops route
 ' through the same array_arithmetic helper as +/-/*.
 
 PRINT "── 1D vector / scalar ──"
@@ -20,7 +20,7 @@ PRINT
 PRINT "── 2D matrix / scalar (Subset-Sum-Kerntrick) ──"
 LET rows = IOTA(4) - 1                          ' [0,1,2,3]
 LET cols = IOTA(3) - 1                          ' [0,1,2]
-LET Masks = OUTER(rows, cols, "SHR")            ' 4x3 — row r, col c = r >> c
+LET Masks = OUTER(rows, cols, "SHR")            ' 4x3: row r, col c = r >> c
 PRINT "Masks row 0: "; Masks[0]                 ' [0,0,0]
 PRINT "Masks row 3: "; Masks[3]                 ' [3,1,0]
 LET Bits = Masks BAND 1

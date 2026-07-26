@@ -38,7 +38,7 @@ ENDFUNC
 f$ = TIMES_TWO(21)
 Assert("FUNC ret via concat", "v=" + f$ = "v=42")
 
-' ── REDUCE with $-suffix LHS — the Apple-II repro ────────────
+' ── REDUCE with $-suffix LHS - the Apple-II repro ────────────
 FUNC PLUS_ONE(x)
     RETURN x + 1
 ENDFUNC

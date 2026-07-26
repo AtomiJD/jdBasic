@@ -1,4 +1,4 @@
-' INIT ohne Argumente — wird auch bei "DIM x AS T" (ohne Klammern) gerufen
+' INIT ohne Argumente - wird auch bei "DIM x AS T" (ohne Klammern) gerufen
 TYPE Counter
     Value AS INTEGER
 

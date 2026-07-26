@@ -28,7 +28,7 @@ EXPORT SUB UPDATE_POSITIONS()
         IF v < 0 THEN
             PRINT "  [UPD] skip (negative)"
         ELSE
-            ' Simulate SPRITE.GET_X(v) — must not be 0
+            ' Simulate SPRITE.GET_X(v) - must not be 0
             IF v = 0 THEN PRINT "FAIL: follow_sprites["; fi; "] is 0, would crash SPRITE.GET_X"
         ENDIF
     NEXT fi

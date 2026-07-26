@@ -10,17 +10,17 @@ DECLARE FUNC GetTickCount LIB "kernel32.dll" ALIAS "GetTickCount" () AS INTEGER
 ticks = GetTickCount()
 PRINT "GetTickCount() = " + STR$(ticks)
 IF ticks = 0 THEN
-    PRINT "  → FAILED: returned 0 — FFI call probably never reached the DLL"
+    PRINT "  → FAILED: returned 0: FFI call probably never reached the DLL"
 ELSE
     PRINT "  → OK: FFI call propagates correctly"
 ENDIF
 
-' user32.GetSystemMetrics(0) — primary screen width
+' user32.GetSystemMetrics(0) - primary screen width
 DECLARE FUNC GetSystemMetrics LIB "user32.dll" ALIAS "GetSystemMetrics" (n AS INTEGER) AS INTEGER
 w = GetSystemMetrics(0)
 PRINT "GetSystemMetrics(0) = " + STR$(w)
 
-' kernel32.GetCurrentProcessId() — always > 0
+' kernel32.GetCurrentProcessId() - always > 0
 DECLARE FUNC GetCurrentProcessId LIB "kernel32.dll" ALIAS "GetCurrentProcessId" () AS INTEGER
 pid = GetCurrentProcessId()
 PRINT "GetCurrentProcessId() = " + STR$(pid)

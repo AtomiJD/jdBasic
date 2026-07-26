@@ -1,4 +1,4 @@
-' INIT mit Argumenten — Felder muessen vom User-Konstruktor gesetzt werden
+' INIT mit Argumenten - Felder muessen vom User-Konstruktor gesetzt werden
 TYPE Player
     Name AS STRING
     Health AS INTEGER

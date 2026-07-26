@@ -48,7 +48,7 @@ Assert(FAC(21) > 5.1E19 AND FAC(21) < 5.11E19, "FAC(21) promoted to double")
 Assert(FAC(170) > 7.25E306, "FAC(170) reaches double range")
 Assert(2000000000 * 5 = 1.0E10, "int*int overflow promotes to double")
 Assert(2000000000 + 9000000000 = 1.1E10, "int+int overflow promotes to double")
-' Lotto regression: 49!/(6!*43!) = 13983816 — needs intermediate doubles
+' Lotto regression: 49!/(6!*43!) = 13983816 - needs intermediate doubles
 Assert(FAC(49) / (FAC(6) * FAC(43)) = 13983816, "Lotto 6 aus 49 combinations")
 
 ' 2-D matrix arithmetic + boolean masks must keep their shape recursively
@@ -139,7 +139,7 @@ DIM bool_val AS BOOLEAN = TRUE
 Assert(bool_val, "dim boolean true")
 Assert(TYPEOF(bool_val) = "BOOLEAN", "typeof boolean")
 
-' DIM without value — may or may not be NONE depending on scope
+' DIM without value - may or may not be NONE depending on scope
 ' (bare untyped `DIM none_val` is a STRICT compile error under -c, so the
 ' loose "dim default" behaviour can't be exercised in this -c-compiled suite;
 ' it is interp-only and covered by ad-hoc probes.)
@@ -236,7 +236,7 @@ Assert(br_e[1] = 20, "DIM A[3] = literal overrides")
 ' Regression: MULTI_INDEX_SET (`A[i,j] = v`) was missing from
 ' opcode_width(), so the peephole optimiser walked into the middle of
 ' subsequent instructions and corrupted the bytecode chunk. The exact
-' threshold is 9 multi-index assigns followed by a normal INDEX_SET —
+' threshold is 9 multi-index assigns followed by a normal INDEX_SET -
 ' that's enough drift for the corruption to break b[1] = -11.
 DIM br_M[3, 3]
 br_M[0,0] = 2 : br_M[0,1] = 1 : br_M[0,2] = -1
@@ -252,16 +252,16 @@ Assert(br_v[0] = 8, "scalar idx assign after multi-idx [0]")
 Assert(br_v[1] = -11, "scalar idx assign after multi-idx [1]")
 Assert(br_v[2] = -3, "scalar idx assign after multi-idx [2]")
 
-' Multi-variable DIM (comma-separated) — classic BASIC convenience.
+' Multi-variable DIM (comma-separated) - classic BASIC convenience.
 ' Each clause has its own type and optional initialiser.
-' (bare multi-var `DIM a, b, c` is interp-only — untyped DIM is a STRICT
+' (bare multi-var `DIM a, b, c` is interp-only - untyped DIM is a STRICT
 ' compile error under -c. The typed multi-var form below is the native one.)
 
 DIM mv_x AS INTEGER, mv_y AS STRING
 mv_x = 42
 mv_y = "hello"
-Assert(mv_x = 42, "DIM a AS INT, b AS STR — int")
-Assert(mv_y = "hello", "DIM a AS INT, b AS STR — str")
+Assert(mv_x = 42, "DIM a AS INT, b AS STR: int")
+Assert(mv_y = "hello", "DIM a AS INT, b AS STR: str")
 
 DIM mv_p = 10, mv_q = 20, mv_r = 30
 Assert(mv_p + mv_q + mv_r = 60, "DIM with inits")
@@ -272,10 +272,10 @@ Assert(mv_n = 3.5, "DIM AS T = expr (double)")
 
 DIM mv_arr[4] AS INTEGER, mv_str AS STRING
 mv_str = "ok"
-Assert(LEN(mv_arr) = 4, "DIM A[N], B AS T — array")
-Assert(mv_str = "ok", "DIM A[N], B AS T — string")
+Assert(LEN(mv_arr) = 4, "DIM A[N], B AS T: array")
+Assert(mv_str = "ok", "DIM A[N], B AS T: string")
 
-' DIM A[N] AS UDT — array of constructed UDT instances + arr[i].field assign
+' DIM A[N] AS UDT - array of constructed UDT instances + arr[i].field assign
 TYPE _BrItem
     Name AS STRING
     Score AS INTEGER
@@ -494,7 +494,7 @@ PRINT "  udt brace-field via PRINT: "; v{"X"}
 ' Regression: the parser turns `obj.method(args)` into a CALL "OBJ.METHOD",
 ' and the VM's fallback only looked at GLOBALS for the receiver. Inside a
 ' SUB, `lv` is a local, so the fallback used to throw "Undefined function:
-' LV.LENGTH" — even though the same call worked at the top level.
+' LV.LENGTH" - even though the same call worked at the top level.
 DIM SUB_LEN_OK = FALSE
 DIM SUB_SCALE_X AS DOUBLE = 0.0
 SUB UseLocalVec()
@@ -512,7 +512,7 @@ Assert(SUB_SCALE_X = 3.0, "udt mutating method on local in SUB")
 ' Dotted property chain on a LOCAL inside a SUB.
 ' Regression: the parser greedily folds `lo.X` into a single global name
 ' "LO.X" and emits LOAD_GLOBAL. The fallback that walks the chain only
-' looked at globals — inside a SUB the receiver was missed and the value
+' looked at globals - inside a SUB the receiver was missed and the value
 ' came back NONE, even though `lo{"X"}` worked fine.
 DIM SUB_X = 0.0
 DIM SUB_Y = 0.0
@@ -822,7 +822,7 @@ ENDFUNC
 LET total_r = MyReduce([1,2,3,4,5], LAMBDA a, b -> a + b, 0)
 Assert(total_r = 15, "custom reduce sum")
 
-' Pipe operator (known issue with global var fix — skipped for now)
+' Pipe operator (known issue with global var fix - skipped for now)
 ' LET pipe_result = 5 |> LAMBDA x -> x * 3
 ' Assert(pipe_result = 15, "pipe basic")
 
@@ -911,7 +911,7 @@ IF OS.FEATURE("INTERPRETER") THEN
 ENDIF
 
 ' ══════════════════════════════════════════════════════════════════
-' 14a. CONVERSION FUNCTIONS — classic BASIC cast family, scalar + vector
+' 14a. CONVERSION FUNCTIONS - classic BASIC cast family, scalar + vector
 ' ══════════════════════════════════════════════════════════════════
 Header("Conversion functions")
 
@@ -959,7 +959,7 @@ Assert(YEAR(dt_a) = 2025, "cdate year")
 Assert(MONTH(dt_a) = 1, "cdate month")
 Assert(DAY(dt_a) = 15, "cdate day")
 
-' ── Vectorized forms — all cast functions fan over arrays ──
+' ── Vectorized forms - all cast functions fan over arrays ──
 Assert(CINT([1.5, 2.7, -3.9])[0] = 1, "cint arr [0]")
 Assert(CINT([1.5, 2.7, -3.9])[2] = -3, "cint arr [2]")
 Assert(CLNG([10.1, 20.9])[1] = 20, "clng arr")
@@ -1147,7 +1147,7 @@ Assert((fcf > 4.0)  = FALSE, "fused float cmp gt")
 Assert((fcf <= 3.14) = TRUE, "fused float cmp le")
 
 ' --- Comparison fusion with array vs scalar (regression for `IF y = 0`
-'     inside a SUB returning the wrong type — the fused CMP slow path
+'     inside a SUB returning the wrong type - the fused CMP slow path
 '     used to call compare() directly which doesn't know arrays).
 DIM fca_in_sub_ok = FALSE
 SUB FusedArrCmpInSub()
@@ -1182,9 +1182,9 @@ Assert(if_arr_ok2 = "then", "IF [T,T,T] takes THEN")
 ' execution. REPL RUN, EXECUTE, EVAL, COMPILE and friends had no
 ' file_reader hooked up, so IMPORT crashed with "IMPORT not available
 ' (no file reader)". The live sequencer (SQ.jdb) drives everything via
-' EXECUTE inside the REPL — without this fix, no module loading at all.
+' EXECUTE inside the REPL - without this fix, no module loading at all.
 ' EXECUTE / EVAL run BASIC source at runtime, which would require
-' the full parser+interpreter inside jdbrt.dll — out of scope for
+' the full parser+interpreter inside jdbrt.dll - out of scope for
 ' the native compiler. Skip when running compiled.
 IF NOT OS.FEATURE("NATIVEC") THEN
     Header("IMPORT in EXECUTE/EVAL")
@@ -1298,7 +1298,7 @@ Assert(INSTR(CAPTURED_MSG$, "zero") > 0, "ERRMSG$ contains real text")
 Assert(CAPTURED_ERR = 1, "ERR visible in SUB CATCH")
 
 ' ══════════════════════════════════════════════════════════════════
-' TYPE method calls — all syntax variations
+' TYPE method calls - all syntax variations
 ' ══════════════════════════════════════════════════════════════════
 Header("TYPE method calls")
 
@@ -1350,7 +1350,7 @@ Assert(mc_obj.name$ = "world", "TYPE multi-arg no parens (name$)")
 mc_obj.val = 123
 Assert(mc_obj.val = 123, "TYPE direct field write")
 
-' TYPE in array — reference semantics
+' TYPE in array - reference semantics
 DIM mc_arr[3]
 DIM mc_a AS T_TestObj : mc_a.SET_VAL(10)
 DIM mc_b AS T_TestObj : mc_b.SET_VAL(20)
@@ -1406,7 +1406,7 @@ DIM mc_noarg AS T_TestObj
 mc_noarg.val = 0
 
 ' ══════════════════════════════════════════════════════════════════
-' EXPORT/IMPORT module system — nested modules, TYPEs, private vars
+' EXPORT/IMPORT module system - nested modules, TYPEs, private vars
 ' ══════════════════════════════════════════════════════════════════
 Header("Module EXPORT/IMPORT")
 
@@ -1636,22 +1636,22 @@ FUNC LIST_ALL()
 ENDFUNC
 
 LET r1 = LOOKUP_REC("alpha")
-Assert(r1{"name"} = "alpha", "FUNC returning map — string field")
-Assert(r1{"val"} = 7, "FUNC returning map — numeric field")
+Assert(r1{"name"} = "alpha", "FUNC returning map: string field")
+Assert(r1{"val"} = 7, "FUNC returning map: numeric field")
 Assert(TYPEOF(r1) = "OBJECT", "FUNC map return typed as OBJECT")
 
 LET r2 = LOOKUP_REC("beta")
-Assert(r2{"name"} = "beta", "FUNC returning map — second lookup")
-Assert(r2{"val"} = 42, "FUNC returning map — second numeric")
+Assert(r2{"name"} = "beta", "FUNC returning map: second lookup")
+Assert(r2{"val"} = 42, "FUNC returning map: second numeric")
 
 LET all_rows = LIST_ALL()
-Assert(LEN(all_rows) = 2, "FUNC returning array of maps — length")
+Assert(LEN(all_rows) = 2, "FUNC returning array of maps: length")
 Assert(TYPEOF(all_rows) = "ARRAY", "FUNC array return typed as ARRAY")
 LET itm0 = all_rows[0]
-Assert(itm0{"name"} = "alpha", "FUNC returning array of maps — [0].name")
-Assert(itm0{"val"} = 7, "FUNC returning array of maps — [0].val")
+Assert(itm0{"name"} = "alpha", "FUNC returning array of maps: [0].name")
+Assert(itm0{"val"} = 7, "FUNC returning array of maps: [0].val")
 LET itm1 = all_rows[1]
-Assert(itm1{"name"} = "beta", "FUNC returning array of maps — [1].name")
+Assert(itm1{"name"} = "beta", "FUNC returning array of maps: [1].name")
 
 ' UDT field access on array element inside FUNC (needs UDT type propagation
 ' pre-pass so FUNC body's `t = list[i]` resolves t.n$ and t.v).
@@ -1669,7 +1669,7 @@ Assert(SUM_VALS() = 49, "UDT field sum inside FUNC (7 + 42)")
 ' ══════════════════════════════════════════════════════════════════
 ' MODULE WRITE-BACKS
 ' (cross-module mutation: caller reads back module state after a SUB
-'  mutates its own array/map members — matches the RPG inventory +
+'  mutates its own array/map members - matches the RPG inventory +
 '  party recruit flow that was silently dropping writes in native)
 ' ══════════════════════════════════════════════════════════════════
 Header("Module write-backs")
@@ -1707,7 +1707,7 @@ LET m_dir = TEST_MOD_WRITEBACK_MOD.maps[1]
 Assert(m_dir{"v"} = 88, "MUTATE_MAP_DIRECT maps[idx]{v}=newv")
 
 ' ══════════════════════════════════════════════════════════════════
-' GROUP A — String padding, number theory, bit rotation,
+' GROUP A - String padding, number theory, bit rotation,
 '           env vars, temp files, RMDIR
 ' ══════════════════════════════════════════════════════════════════
 Header("Group A: String pad / REPEAT$")
@@ -1760,7 +1760,7 @@ RMDIR "jdb_comp_rmdir"
 Assert(FILE.EXISTS("jdb_comp_rmdir") = 0, "RMDIR removes empty dir")
 
 ' ══════════════════════════════════════════════════════════════════
-' GROUP B — FILE.*, PATH.*, TXTWRITER append, DIR$ detailed
+' GROUP B - FILE.*, PATH.*, TXTWRITER append, DIR$ detailed
 ' ══════════════════════════════════════════════════════════════════
 Header("Group B: FILE.EXISTS/SIZE/ISDIR/STAT")
 
@@ -1838,7 +1838,7 @@ Assert(YEAR(csv_t[0][3]) = 1815 AND YEAR(csv_t[1][3]) = 1990, "types DATE iso + 
 Assert(csv_t[0][4] = TRUE AND csv_t[1][4] = FALSE, "types BOOLEAN")
 KILL csv_p
 
-' SQLite (SQLITE build flag) — typed cells, native-safe TABLE/COLUMNS twins.
+' SQLite (SQLITE build flag) - typed cells, native-safe TABLE/COLUMNS twins.
 ' SQL.QUERY is compile-rejected under -c, so it lives in
 ' tests/regression/test_sql.jdb instead of this dual-backend suite.
 IF OS.FEATURE("SQLITE") THEN
@@ -1857,7 +1857,7 @@ IF OS.FEATURE("SQLITE") THEN
 ENDIF
 
 ' ══════════════════════════════════════════════════════════════════
-' GROUP C — Timezone-aware dates, DATE.UTC, DATE.PARTS
+' GROUP C - Timezone-aware dates, DATE.UTC, DATE.PARTS
 ' ══════════════════════════════════════════════════════════════════
 Header("Group C: Timezone-aware CVDATE/FORMAT_DATE")
 
@@ -1873,7 +1873,7 @@ Assert(d_utc_fmt = "12:00", "FORMAT_DATE tz=0 shows UTC wall-clock")
 DIM d_p3_fmt = FORMAT_DATE(d_at2, "%H:%M", 3)
 Assert(d_p3_fmt = "15:00", "FORMAT_DATE tz=3 shows UTC+3 wall-clock")
 
-' DATEADD tz-arg accepted (no effect on arithmetic — symmetry).
+' DATEADD tz-arg accepted (no effect on arithmetic - symmetry).
 DIM d_plus = DATEADD("D", 1, d_at2, 2)
 Assert(DATEDIFF("D", d_at2, d_plus) = 1, "DATEADD with tz returns +1 day")
 
@@ -1900,7 +1900,7 @@ Assert(dp{"second"} = 45,   "DATE.PARTS second")
 Assert(dp{"weekday"} = 0,   "DATE.PARTS weekday (Sunday)")
 
 ' ══════════════════════════════════════════════════════════════════
-' GROUP D — HTTP client-state APIs (no network round-trip)
+' GROUP D - HTTP client-state APIs (no network round-trip)
 '   Full round-trip coverage lives in tests/test_http_gd.jdb.
 ' ══════════════════════════════════════════════════════════════════
 IF OS.FEATURE("HTTP") THEN
@@ -1948,7 +1948,7 @@ Assert((32 SHR vbit_v)[2] = 8,  "scalar SHR vec")
 Assert(([12,13,14,15] BAND [10,10,10,10])[2] = 10, "vec BAND vec")
 Assert(([1,2,3] SHL [0,1,2])[2] = 12,              "vec SHL vec (3<<2=12)")
 
-' 2D matrix / scalar — Subset-Sum bitmask kernel
+' 2D matrix / scalar - Subset-Sum bitmask kernel
 LET vbit_M = OUTER(IOTA(4) - 1, IOTA(3) - 1, "SHR")  ' 4x3 matrix
 LET vbit_B = vbit_M BAND 1
 Assert(vbit_B[3][0] = 1, "2D BAND: row 3 col 0 = 1")
@@ -1982,7 +1982,7 @@ Assert(LEN(ng_i) = 5,  "IOTA(5,10) length")
 Assert(ng_i[0] = 10,   "IOTA(5,10)[0]")
 Assert(ng_i[4] = 14,   "IOTA(5,10)[4]")
 
-' TAKE / DROP — interp signature is (n, arr); native used to swap.
+' TAKE / DROP - interp signature is (n, arr); native used to swap.
 LET ng_full = [10, 20, 30, 40, 50, 60]
 LET ng_t = TAKE(4, ng_full)
 Assert(LEN(ng_t) = 4,   "TAKE(4, arr) length")
@@ -2001,7 +2001,7 @@ Assert(ng_s2[2] = 1,    "SHIFT slides values")
 LET ng_s3 = SHIFT(ng_sv, 1, 9)
 Assert(ng_s3[0] = 9,    "SHIFT custom fill")
 
-' OUTER with a string operator — the call goes through the VM bridge.
+' OUTER with a string operator - the call goes through the VM bridge.
 LET ng_M = OUTER([1,2,3,4], [10,20,30], "*")
 Assert(ng_M[0][1] = 20, "OUTER row 0 col 1")
 Assert(ng_M[2][2] = 90, "OUTER row 2 col 2")
@@ -2012,7 +2012,7 @@ Assert(LEN(ng_F) = 6,   "FLATTEN 2D length")
 Assert(ng_F[0] = 1,     "FLATTEN 2D first")
 Assert(ng_F[5] = 6,     "FLATTEN 2D last")
 
-' XSORT over strings — the numeric-only comparator left string arrays
+' XSORT over strings - the numeric-only comparator left string arrays
 ' silently unsorted, 1D and 2D-by-string-column alike.
 LET ng_xs = XSORT(["delta", "alpha", "charlie"])
 Assert(ng_xs[0] = "alpha" AND ng_xs[2] = "delta", "XSORT 1D strings asc")
@@ -2026,7 +2026,7 @@ LET ng_xm = XSORT([3, 1, 2])
 Assert(ng_xm[0] = 1 AND ng_xm[2] = 3, "XSORT 1D numeric unchanged")
 
 ' ══════════════════════════════════════════════════════════════════
-' UDT lifecycle — SUB INIT(args), SUB DISPOSE(), DIM x AS T(args)
+' UDT lifecycle - SUB INIT(args), SUB DISPOSE(), DIM x AS T(args)
 ' and DIM arr[N] AS T(vec1, vec2, ...). Regression guards.
 ' ══════════════════════════════════════════════════════════════════
 Header("UDT INIT / DISPOSE")
@@ -2047,12 +2047,12 @@ ENDTYPE
 DIM lc_p AS T_LifecyclePoint(3, 4)
 Assert(lc_p.SUM() = 7, "INIT scalar args (3+4)")
 
-' Array form with vector-args — one INIT call per slot
+' Array form with vector-args - one INIT call per slot
 DIM lc_pts[3] AS T_LifecyclePoint([10, 20, 30], [1, 2, 3])
 LET lc_p0 = lc_pts[0] : Assert(lc_p0.SUM() = 11, "vec INIT slot 0 (10+1)")
 LET lc_p2 = lc_pts[2] : Assert(lc_p2.SUM() = 33, "vec INIT slot 2 (30+3)")
 
-' DISPOSE on scope exit increments a global counter — proves it ran.
+' DISPOSE on scope exit increments a global counter - proves it ran.
 DIM lc_disp_count = 0
 TYPE T_LifecycleResource
     Tag
@@ -2071,7 +2071,7 @@ lc_use
 Assert(lc_disp_count = 2, "DISPOSE fires for both locals on SUB return")
 
 ' ══════════════════════════════════════════════════════════════════
-' FUNC array parameter pipelines — RESHAPE/MATMUL/SHIFT inside a FUNC
+' FUNC array parameter pipelines - RESHAPE/MATMUL/SHIFT inside a FUNC
 ' that receives an array via a top-level variable. Regression guard
 ' for the tag-inference pre-pass that promotes the parameter to ARR.
 ' ══════════════════════════════════════════════════════════════════
@@ -2095,7 +2095,7 @@ Assert(LEN(fap_shifted) = 5,        "FUNC returning SHIFT keeps shape")
 Assert(fap_shifted[0] = 0,          "FUNC returning SHIFT zero-pad")
 Assert(fap_shifted[3] = 4,          "FUNC returning SHIFT slid value")
 
-' Subset-Sum APL pipeline — full circle: OUTER + BAND + MATMUL + ANY,
+' Subset-Sum APL pipeline - full circle: OUTER + BAND + MATMUL + ANY,
 ' all inside a FUNC, on an array parameter.
 FUNC fap_subset_sum(xs, t)
     LET nn = LEN(xs)
@@ -2108,27 +2108,27 @@ Assert(fap_subset_sum(fap_demo, 9) = TRUE,   "APL subset-sum target=9 (4+5)")
 Assert(fap_subset_sum(fap_demo, 11) = TRUE,  "APL subset-sum target=11 (4+5+2)")
 Assert(fap_subset_sum(fap_demo, 13) = FALSE, "APL subset-sum target=13 (none)")
 
-' ── MVINS — insert a row/column into a matrix (begin / middle / end) ──
+' ── MVINS - insert a row/column into a matrix (begin / middle / end) ──
 DIM mvi = [[1, 2, 3], [4, 5, 6]]                ' 2 rows x 3 cols
 
-' COLUMN (dim 1) — append (idx = col count) with a computed vector
+' COLUMN (dim 1) - append (idx = col count) with a computed vector
 DIM mvi_ce = MVINS(mvi, 1, 3, [7, 8])
 Assert(LEN(mvi_ce[0]) = 4, "MVINS col append: width grew to 4")
 Assert(mvi_ce[0][3] = 7, "MVINS col append: row0 new cell")
 Assert(mvi_ce[1][3] = 8, "MVINS col append: row1 new cell")
 Assert(mvi_ce[0][2] = 3, "MVINS col append: old cells intact")
-' COLUMN at the beginning (idx 0) — scalar broadcast
+' COLUMN at the beginning (idx 0) - scalar broadcast
 DIM mvi_cb = MVINS(mvi, 1, 0, 0)
 Assert(mvi_cb[0][0] = 0, "MVINS col@0 scalar: row0 leading 0")
 Assert(mvi_cb[1][0] = 0, "MVINS col@0 scalar: row1 leading 0")
 Assert(mvi_cb[0][1] = 1, "MVINS col@0: original shifted right")
-' COLUMN in the middle (idx 1) — computed vector
+' COLUMN in the middle (idx 1) - computed vector
 DIM mvi_cm = MVINS(mvi, 1, 1, [9, 99])
 Assert(mvi_cm[0][1] = 9, "MVINS col@1 middle: row0")
 Assert(mvi_cm[1][1] = 99, "MVINS col@1 middle: row1")
 Assert(mvi_cm[0][2] = 2, "MVINS col@1: element after insert")
 
-' ROW (dim 0) — append, beginning, middle
+' ROW (dim 0) - append, beginning, middle
 DIM mvi_re = MVINS(mvi, 0, 2, [7, 8, 9])
 Assert(LEN(mvi_re) = 3, "MVINS row append: 3 rows")
 Assert(mvi_re[2][0] = 7, "MVINS row append: new row [0]")
@@ -2153,7 +2153,7 @@ Assert(LEN(mvi) = 2, "MVINS non-mutating: source still 2 rows")
 Assert(LEN(mvi[0]) = 3, "MVINS non-mutating: source still 3 cols")
 Assert(mvi[0][0] = 1, "MVINS non-mutating: source values intact")
 
-' string-cell matrices (interp only — the native VM bridge marshals nested
+' string-cell matrices (interp only - the native VM bridge marshals nested
 ' string cells back as 0; numeric matrices above cover the native path)
 IF NOT OS.FEATURE("NATIVEC") THEN
     DIM mvs = [["a", "b"], ["c", "d"]]
@@ -2167,14 +2167,14 @@ IF NOT OS.FEATURE("NATIVEC") THEN
     Assert(mvs3_0 = "Z", "MVINS scalar-string broadcast")
 ENDIF
 
-' ── EOMONTH — last day of month (Excel-style), vectorized ──
+' ── EOMONTH - last day of month (Excel-style), vectorized ──
 Assert(DAY(EOMONTH(CVDATE("2016-02-10"))) = 29, "EOMONTH Feb 2016 leap = 29")
 Assert(DAY(EOMONTH(CVDATE("2015-02-10"))) = 28, "EOMONTH Feb 2015 = 28")
 Assert(DAY(EOMONTH(CVDATE("2016-04-01"))) = 30, "EOMONTH Apr = 30")
 Assert(DAY(EOMONTH(CVDATE("2016-07-15"), 1)) = 31, "EOMONTH offset +1 month day")
 Assert(MONTH(EOMONTH(CVDATE("2016-07-15"), 1)) = 8, "EOMONTH offset +1 month")
 
-' ── DATERANGE — inclusive date vector by unit/step ──
+' ── DATERANGE - inclusive date vector by unit/step ──
 DIM dr_d AS ARRAY = DATERANGE(CVDATE("2016-07-01"), CVDATE("2016-07-05"))
 Assert(LEN(dr_d) = 5, "DATERANGE daily inclusive len")
 Assert(DAY(dr_d[0]) = 1, "DATERANGE daily first")
@@ -2188,7 +2188,7 @@ DIM dr_n AS ARRAY = DATERANGE(CVDATE("2016-07-05"), CVDATE("2016-07-01"), "D", -
 Assert(LEN(dr_n) = 5, "DATERANGE negative-step len")
 Assert(DAY(dr_n[0]) = 5, "DATERANGE negative-step first")
 
-' ── TALLY — distinct values + counts (numeric path is native-safe) ──
+' ── TALLY - distinct values + counts (numeric path is native-safe) ──
 DIM tly AS ARRAY = TALLY([1, 2, 2, 3, 3, 3])
 Assert(LEN(tly) = 3, "TALLY distinct rows")
 Assert(tly[0][0] = 1, "TALLY value 0")
@@ -2205,7 +2205,7 @@ bd_x = bd_arr[1]
 Assert(bd_x = 20, "typed scalar <- array element coerces (no bit-pun)")
 
 ' A side-effecting arg inside a scalar builtin must be evaluated exactly once.
-' (Native used to codegen the arg twice — CINT(f()) ran f twice.)
+' (Native used to codegen the arg twice - CINT(f()) ran f twice.)
 EXPORT DIM ce_calls = 0
 FUNC ce_bump(ce_n AS INTEGER)
     ce_calls = ce_calls + 1
@@ -2285,7 +2285,7 @@ DIM tly_s_v AS STRING = tly_s[0][0]
 Assert(tly_s_v = "a", "TALLY string value")
 Assert(tly_s[0][1] = 3, "TALLY string count")
 
-' SCAN (cumulative reduce, string operator) returns an array native — it was
+' SCAN (cumulative reduce, string operator) returns an array native - it was
 ' classified as f64 by the VM bridge and came back as 0.
 DIM scn AS ARRAY = SCAN("+", [1.0, 2.0, 3.0, 4.0])
 Assert(LEN(scn) = 4, "SCAN length")
@@ -2487,7 +2487,7 @@ ENDSUB
 fap_shadow_set 99, 1
 Assert(fap_nums[0] = 100, "param shadows top-level array global")
 
-' (Skipped: case-sensitivity test removed — interp treats `V` and `v`
+' (Skipped: case-sensitivity test removed - interp treats `V` and `v`
 '  as the same identifier (param/local share a slot), native treats
 '  them as distinct. Exposing that divergence belongs in its own
 '  fix session, not a regression guard. Lesson learned: never reuse
@@ -2504,7 +2504,7 @@ Assert(fap_nums[0] = 100, "param shadows top-level array global")
 ' ══════════════════════════════════════════════════════════════════
 Header("Native string-array element extraction")
 
-' Already-tracked: literal string array — sanity guard.
+' Already-tracked: literal string array - sanity guard.
 DIM nsa_lits AS ARRAY = ["alpha", "beta", "gamma"]
 Assert(nsa_lits[0] = "alpha", "literal string array subscript [0]")
 Assert(nsa_lits[2] = "gamma", "literal string array subscript [2]")
@@ -2530,7 +2530,7 @@ FOR nsa_i = 0 TO LEN(nsa_names) - 1
 NEXT nsa_i
 Assert(nsa_saw = 1, "DIR$(FALSE) [i] in FOR loop sees real strings")
 
-' FOR EACH over a string array — iter var was 0 in native.
+' FOR EACH over a string array - iter var was 0 in native.
 DIM nsa_concat AS STRING = ""
 DIM nsa_s AS STRING
 FOR EACH nsa_s IN nsa_parts
@@ -2551,14 +2551,14 @@ KILL "_nsa_tmp/bravo.txt"
 KILL "_nsa_tmp/charlie.txt"
 RMDIR "_nsa_tmp"
 
-' OS.ARGS — element extraction. The runner can't easily pass args here,
+' OS.ARGS - element extraction. The runner can't easily pass args here,
 ' so we only smoke-test that it returns a value-shaped array. The real
 ' element-subscript test lives in tests/test_native_os_args.jdb which
 ' the build invokes with `-c` plus a known argv.
 DIM nsa_args = OS.ARGS()
 Assert(LEN(nsa_args) >= 0, "OS.ARGS callable, returns array")
 
-' APPEND(string_arr_a, string_arr_b) — result var must be tagged as
+' APPEND(string_arr_a, string_arr_b) - result var must be tagged as
 ' a string array so subscript reads decode the punned-f64 cells.
 ' Use DIM = subscript form (forces the INDEX path); PRINT'ing the
 ' whole array goes through a different stringifier today.
@@ -2571,7 +2571,7 @@ DIM nsa_xy3 AS STRING = nsa_xy[3]
 Assert(nsa_xy0 = "aa", "APPEND result [0] decodes as string")
 Assert(nsa_xy3 = "dd", "APPEND result [3] decodes as string")
 
-' User FUNC returning a string-array — caller must see the strings.
+' User FUNC returning a string-array - caller must see the strings.
 ' Without Phase 1 returns_string_array tracking this came back as f64.
 FUNC nsa_make_list()
   DIM out AS ARRAY = []
@@ -2690,7 +2690,7 @@ ENDFUNC
 shd_recurse_str(3)
 Assert(shd_msg = "outer", "outer string survives recursive shadow")
 
-' --- 5. SUB calls SUB that DIMs same-named local — middle-frame untouched. ---
+' --- 5. SUB calls SUB that DIMs same-named local - middle-frame untouched. ---
 DIM shd_chain AS INTEGER = 100
 
 SUB shd_inner()
@@ -2715,7 +2715,7 @@ Assert(shd_chain = 100, "top-level DIM survives both nested SUB DIMs")
 ' Regression: `(string_arr = scalar_str)` used to compare punned-
 ' pointer bits in native (every cell got a different ptr from the
 ' allocator, so all-FALSE), and `UNIQUE(string_arr)` deduped by
-' identity — two SHA256$ results with the same text but separate
+' identity - two SHA256$ results with the same text but separate
 ' allocations both survived. Both broke any downstream group-by-key
 ' pattern (dupfinder being the canonical example).
 ' ══════════════════════════════════════════════════════════════════
@@ -2767,7 +2767,7 @@ Assert(tfp_x0 = "alpha", "SPLIT [0] decodes as string")
 Assert(tfp_x2 = "gamma", "SPLIT [2] decodes as string")
 
 ' REVERSE preserves string elements. Also verifies the runtime flag
-' rather than just the codegen tracking — we read tfp_rev[0] back as
+' rather than just the codegen tracking - we read tfp_rev[0] back as
 ' a STRING and check the literal value.
 DIM tfp_rev = REVERSE(tfp_xs)
 DIM tfp_r0 AS STRING = tfp_rev[0]
@@ -2781,7 +2781,7 @@ DIM tfp_dr = DROP(1, tfp_xs)
 DIM tfp_dr0 AS STRING = tfp_dr[0]
 Assert(tfp_dr0 = "beta", "DROP preserves string elements")
 
-' APPEND(string_arr, [scalar_string]) — single-value path. Must keep
+' APPEND(string_arr, [scalar_string]) - single-value path. Must keep
 ' the existing string-array tag on the LHS.
 DIM tfp_ext = APPEND(tfp_xs, ["delta"])
 Assert(LEN(tfp_ext) = 4, "APPEND single string to string-array length")
@@ -2790,7 +2790,7 @@ Assert(tfp_e3 = "delta", "APPEND single string [last] decodes correctly")
 DIM tfp_e0 AS STRING = tfp_ext[0]
 Assert(tfp_e0 = "alpha", "APPEND single string preserves head")
 
-' Cross-transformer: REVERSE then APPEND then UNIQUE — the result
+' Cross-transformer: REVERSE then APPEND then UNIQUE - the result
 ' must still decode as strings end-to-end.
 DIM tfp_chain = UNIQUE(APPEND(REVERSE(tfp_xs), ["alpha"]))
 Assert(LEN(tfp_chain) = 3, "REVERSE + APPEND + UNIQUE chain dedupes correctly")
@@ -2799,7 +2799,7 @@ DIM tfp_c2 AS STRING = tfp_chain[2]
 Assert(tfp_c0 = "gamma", "transform chain preserves first element")
 Assert(tfp_c2 = "alpha", "transform chain preserves last element")
 
-' STR$(numeric_arr) produces a string-array — read elements back and
+' STR$(numeric_arr) produces a string-array - read elements back and
 ' verify they're strings, not the f64 cells.
 DIM tfp_nums = [10, 20, 30]
 DIM tfp_strs = STR$(tfp_nums)
@@ -2811,7 +2811,7 @@ Assert(tfp_s0 = "10", "STR$(arr) [0] = '10'")
 ' ══════════════════════════════════════════════════════════════════
 ' FORMAT$ across all argument tag types
 ' (regression for native codegen bug where MAP-indexed VM_HANDLE args
-'  were passed as raw i64 to jdb_format1 — declared (i8*, double) —
+'  were passed as raw i64 to jdb_format1 - declared (i8*, double) -
 '  tripping LLVM IR verification with "Call parameter type does not
 '  match function signature". Fix routes non-I64/F64 tags through
 '  coerce_to(f64) so VM handles hit __jdrt_val_to_f64 first.)
@@ -2821,7 +2821,7 @@ Header("FORMAT$ across argument tag types")
 ' Anchor the locale so number formatting is deterministic across runs.
 SETLOCALE "C"
 
-' --- Literal scalars (the easy case — direct codegen tag) -----------
+' --- Literal scalars (the easy case - direct codegen tag) -----------
 Assert(FORMAT$("{:.2f}", 12.5) = "12.50",   "FORMAT$ literal f64 with :.2f")
 Assert(FORMAT$("{:.2f}", 7)    = "7.00",    "FORMAT$ literal i64 promoted to f64 via :.2f")
 Assert(FORMAT$("{}", 7)        = "7",       "FORMAT$ literal i64 via {}")
@@ -2854,10 +2854,10 @@ Assert(FORMAT$("{:.2f} x {:.2f}", fmt_p{"f"}, fmt_p{"i"}) = "12.50 x 7.00", _
 ' --- Known native codegen gaps (pre-existing). Left commented so
 '  they're discoverable. Uncomment once the corresponding native-
 '  format-codegen issue lands. (string-from-VM_HANDLE was fixed in
-'  the FORMAT$ 'h' tag follow-up — see asserts above.)
-' Assert(FORMAT$("{}", TRUE)             = "TRUE",     "FORMAT$ BOOL — native says '1'")
-' Assert(FORMAT$("{:>8.2f}", 3.14)       = "    3.14", "FORMAT$ width >8 — native ignores width")
-' Assert(FORMAT$("{:0>4}", 7)            = "0007",     "FORMAT$ zero-pad 0>4 — native ignores fill")
+'  the FORMAT$ 'h' tag follow-up - see asserts above.)
+' Assert(FORMAT$("{}", TRUE)             = "TRUE",     "FORMAT$ BOOL - native says '1'")
+' Assert(FORMAT$("{:>8.2f}", 3.14)       = "    3.14", "FORMAT$ width >8 - native ignores width")
+' Assert(FORMAT$("{:0>4}", 7)            = "0007",     "FORMAT$ zero-pad 0>4 - native ignores fill")
 
 SETLOCALE "C"
 
@@ -2883,7 +2883,7 @@ Assert(st_counter() = 1, "STATIC int: first call returns 1")
 Assert(st_counter() = 2, "STATIC int: second call returns 2")
 Assert(st_counter() = 3, "STATIC int: third call returns 3")
 
-' --- Init runs exactly once — observable via global side-effect ----
+' --- Init runs exactly once - observable via global side-effect ----
 DIM st_init_runs = 0
 
 FUNC st_bump_init() AS INTEGER
@@ -2984,7 +2984,7 @@ ENDFUNC
 
 ' First call with depth 4 -> 5 invocations total (4,3,2,1,0); the
 ' returned value is the value AFTER the deepest tail bumps it, then
-' unwinds back to the top frame's RETURN — i.e. the final hit count.
+' unwinds back to the top frame's RETURN - i.e. the final hit count.
 DIM st_rec_first = st_rec(4)
 Assert(st_rec_first = 5, "STATIC + recursion: 5 invocations bump shared slot")
 DIM st_rec_second = st_rec(0)
@@ -3024,7 +3024,7 @@ Assert(st_cond_init(1) = 44, "STATIC inside IF: branch again, slot persisted")
 Assert(STATIC_TEST_MOD.mod_counter() = 1, "Cross-module STATIC: mod first call")
 Assert(STATIC_TEST_MOD.mod_counter() = 2, "Cross-module STATIC: mod second call")
 
-' Wrapper FUNC in the main file calling the module function — the
+' Wrapper FUNC in the main file calling the module function - the
 ' module's static must be the SAME slot regardless of caller.
 FUNC st_call_module() AS INTEGER
     RETURN STATIC_TEST_MOD.mod_counter()
@@ -3078,7 +3078,7 @@ LET ref_counter = st_counter@
 Assert(LEN(STR$(ref_counter)) > 0, "STATIC FUNC@ binding compiles")
 
 ' ══════════════════════════════════════════════════════════════════
-' AS DYNAMIC — tagged-mixed array params
+' AS DYNAMIC - tagged-mixed array params
 ' Arrays built from `[map{"k1"}, map{"k2"}, ...]` carry per-cell tags;
 ' FUNC params declared `AS DYNAMIC` route reads through the tagged
 ' path so each cell's type survives the call boundary.
@@ -3136,7 +3136,7 @@ Assert(dyn_sql$ = "INSERT t(n,a,e) VALUES ('Anna',42,'anna@example.com')", _
     "AS DYNAMIC chained FUNC -> dyn_q$: string columns keep quotes, int stays bare")
 
 ' ══════════════════════════════════════════════════════════════════
-' DIM AS MAP / ARRAY inside SUB — fresh instance per call
+' DIM AS MAP / ARRAY inside SUB - fresh instance per call
 ' Each invocation must allocate its own backing buffer so PUSHing into
 ' a shared array doesn't store N references to the same map.
 ' ══════════════════════════════════════════════════════════════════
@@ -3216,7 +3216,7 @@ Assert(rt_check{"pos"}  = 99,       "RUNTIME map-set: int field persists")
 Assert(rt_check{"name"} = "edited", "RUNTIME map-set: string field persists")
 Assert(rt_check{"prc"}  = 12.5,     "RUNTIME map-set: double field persists")
 
-' Side-effect on RHS must run — confirms the assignment isn't elided.
+' Side-effect on RHS must run - confirms the assignment isn't elided.
 DIM rt_call_count AS INTEGER = 0
 SUB rt_inc_count()
     rt_call_count = rt_call_count + 1
@@ -3253,7 +3253,7 @@ Assert(pmf_str{"names"}[0] = "alice", "PUSH map{key} string: first preserved")
 Assert(pmf_str{"names"}[1] = "bob",   "PUSH map{key} string: second preserved")
 
 ' ══════════════════════════════════════════════════════════════════
-' FORMAT$ — full Python-style spec parity (interp ↔ native)
+' FORMAT$ - full Python-style spec parity (interp ↔ native)
 ' [fill][align][width][.prec][#][type] all honoured.
 ' ══════════════════════════════════════════════════════════════════
 Header("FORMAT$ Python-style spec parity")
@@ -3269,7 +3269,7 @@ Assert(FORMAT$("{:#x}",  255)       = "0xff",     "FORMAT$ hex with hash flag")
 
 ' ══════════════════════════════════════════════════════════════════
 ' Nested string arrays, string operators, AS ARRAY / AS MAP slots
-' (native parity — see feedback_native_nested_string_arrays)
+' (native parity - see feedback_native_nested_string_arrays)
 ' ══════════════════════════════════════════════════════════════════
 Header("Nested strings + string ops + AS ARRAY/MAP")
 

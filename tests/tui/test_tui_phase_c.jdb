@@ -2,9 +2,9 @@
 
 DIM frame AS INTEGER = 0
 DO
-    TUI.BEGIN "jdBasic — Phase C Layout Smoke"
+    TUI.BEGIN "jdBasic: Phase C Layout Smoke"
 
-    TUI.BORDER_BEGIN "Top — HBOX inside border"
+    TUI.BORDER_BEGIN "Top: HBOX inside border"
         TUI.HBOX_BEGIN
             TUI.TEXT "left"
             TUI.SEPARATOR

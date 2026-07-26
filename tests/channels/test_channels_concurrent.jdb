@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-'  Channel Phase 1 — multi-thread asserts.
+'  Channel Phase 1 - multi-thread asserts.
 '  ASYNC FUNC = real OS thread (vm.cpp spawns std::thread per call,
 '  each task gets its own VM with copies of globals/funcs). The
 '  channel handle is a plain i64, so worker tasks can look up the
@@ -122,7 +122,7 @@ DIM w2 = sq_worker(jobs, results)
 DIM w3 = sq_worker(jobs, results)
 DIM w4 = sq_worker(jobs, results)
 
-' Feed 20 jobs synchronously from the main thread — channel buffers
+' Feed 20 jobs synchronously from the main thread - channel buffers
 ' the burst, workers drain in parallel.
 FOR i = 1 TO 20
     CHAN.SEND jobs, i

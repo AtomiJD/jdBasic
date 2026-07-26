@@ -1,5 +1,5 @@
 ' Test der AI.CLASSIFIER_* API mit einem kleinen Mini-Datensatz.
-' Drei Klassen: Hardware, Software, Netzwerk — 12 Trainingsbeispiele.
+' Drei Klassen: Hardware, Software, Netzwerk - 12 Trainingsbeispiele.
 ' Danach werden 5 neue Tickets klassifiziert.
 
 PRINT "Loading embedding model (bge-m3 für deutsche Texte)..."

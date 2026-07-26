@@ -1,4 +1,4 @@
-' Smoke test for SOUND.PLAYBUFFER — generate a 440Hz square wave for
+' Smoke test for SOUND.PLAYBUFFER - generate a 440Hz square wave for
 ' 0.5 seconds and play it. Listen to confirm it works.
 
 SOUND.INIT

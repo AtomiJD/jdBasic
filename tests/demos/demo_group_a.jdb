@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-' Group A demo — String padding, number theory, bit rotations, env
+' Group A demo - String padding, number theory, bit rotations, env
 ' ══════════════════════════════════════════════════════════════════
 ' Showcases LPAD$/RPAD$/REPEAT$/GCD/LCM/ROTL/ROTR/SETENV/MKTEMP$/RMDIR
 
@@ -36,11 +36,11 @@ PRINT "│ " + RPAD$("GRAND TOTAL", 40) + LPAD$(FORMAT$("{:.2f}", grand), 12) + 
 PRINT REPEAT$("═", 56)
 PRINT ""
 
-' ── 2. Number theory — reduce a fraction ──────────────────────────
+' ── 2. Number theory - reduce a fraction ──────────────────────────
 PRINT "Reduce 84/126 by GCD = "; GCD(84, 126); " → "; (84 / GCD(84, 126)); "/"; (126 / GCD(84, 126))
 
 ' LCM helps with periodic events lining up
-PRINT "Event A every 8 days, event B every 12 days — align every "; LCM(8, 12); " days"
+PRINT "Event A every 8 days, event B every 12 days: align every "; LCM(8, 12); " days"
 
 ' Variadic GCD of a shopping list
 PRINT "Common packaging unit for [24, 36, 60, 84]: "; GCD(24, 36, 60, 84)
@@ -60,7 +60,7 @@ PRINT ""
 ' ── 4. Scratch workspace with SETENV/MKTEMP$/RMDIR ────────────────
 DIM work = MKTEMP$("demo-a")
 ' MKTEMP$ returns a path without creating the file, so the filename
-' is a usable unique token — we'll turn it into a directory.
+' is a usable unique token - we'll turn it into a directory.
 DIM workdir = work + "-dir"
 MKDIR workdir
 SETENV "DEMO_A_WORK", workdir

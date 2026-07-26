@@ -6,28 +6,28 @@
 ' the call site).
 EXPORT MODULE STATIC_TEST_MOD
 
-' Scalar i64 counter — pillar test for "init once + persists".
+' Scalar i64 counter - pillar test for "init once + persists".
 EXPORT FUNC mod_counter() AS INTEGER
     STATIC DIM n AS INTEGER = 0
     n = n + 1
     RETURN n
 ENDFUNC
 
-' STRING static — exercises the refcounted-value path.
+' STRING static - exercises the refcounted-value path.
 EXPORT FUNC mod_concat(s$ AS STRING) AS STRING
     STATIC DIM acc AS STRING = ""
     acc = acc + s$
     RETURN acc
 ENDFUNC
 
-' DOUBLE static — separate tag from the i64 counter.
+' DOUBLE static - separate tag from the i64 counter.
 EXPORT FUNC mod_sum_d(x AS DOUBLE) AS DOUBLE
     STATIC DIM total AS DOUBLE = 0.0
     total = total + x
     RETURN total
 ENDFUNC
 
-' MAP static — memoization use case.
+' MAP static - memoization use case.
 ' Returns 1 if the key has been seen before, 0 on first sight.
 EXPORT FUNC mod_seen(k$ AS STRING) AS INTEGER
     STATIC DIM memo AS MAP = {}
@@ -38,7 +38,7 @@ EXPORT FUNC mod_seen(k$ AS STRING) AS INTEGER
     RETURN 0
 ENDFUNC
 
-' ARRAY static — accumulator. Returns LEN after appending.
+' ARRAY static - accumulator. Returns LEN after appending.
 EXPORT FUNC mod_log(s$ AS STRING) AS INTEGER
     STATIC DIM events AS ARRAY = []
     events = APPEND(events, s$)
@@ -51,7 +51,7 @@ EXPORT SUB mod_bump()
     bumps = bumps + 1
 ENDSUB
 
-' Reader that pairs with mod_bump — proves the SUB's static is observable
+' Reader that pairs with mod_bump - proves the SUB's static is observable
 ' to a same-module FUNC that shares no source-level scope but the same
 ' logical (M, fn, slot) tuple lives at FuncProto level.
 EXPORT FUNC mod_bumps_via_recall() AS INTEGER
@@ -60,7 +60,7 @@ EXPORT FUNC mod_bumps_via_recall() AS INTEGER
     RETURN cached
 ENDFUNC
 
-' Recursive — every depth shares the static (intentional behaviour).
+' Recursive - every depth shares the static (intentional behaviour).
 EXPORT FUNC mod_rec(depth AS INTEGER) AS INTEGER
     STATIC DIM hits AS INTEGER = 0
     hits = hits + 1

@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-'  jdBasic Gruppe D — HTTP Robustness Test Suite
+'  jdBasic Gruppe D - HTTP Robustness Test Suite
 '  Covers: SETTIMEOUT, FOLLOWREDIRECTS, SETPARAM/CLEARPARAMS,
 '          SETCOOKIE/CLEARCOOKIES/GETCOOKIE$, REQUEST (rich map),
 '          DELETE$

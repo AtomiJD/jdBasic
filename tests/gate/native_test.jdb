@@ -373,7 +373,7 @@ Assert(129,cs[3] = 10)
 
 ' ── 34. REGEX ────────────────────────────────────────────────
 PRINT "── Regex ──"
-' REGEX.MATCH(pattern$, text$) — entire-text match. Patterns must
+' REGEX.MATCH(pattern$, text$) - entire-text match. Patterns must
 ' anchor or cover the whole string; the legacy underscore form
 ' REGEX_MATCH(text$, pattern$) does substring search instead.
 Assert(130,REGEX.MATCH("[a-z0-9]+", "abc123"))
@@ -548,7 +548,7 @@ sa_parts = SPLIT("a,b,c,d", ",")
 Assert(181, sa_parts[0] = "a")
 Assert(182, sa_parts[3] = "d")
 
-' DIR$(*, FALSE) — was broken.
+' DIR$(*, FALSE) - was broken.
 MKDIR "_sa_tmp"
 TXTWRITER "_sa_tmp/alpha.txt", "a"
 TXTWRITER "_sa_tmp/bravo.txt", "b"
@@ -563,7 +563,7 @@ FOR sa_i = 0 TO LEN(sa_names) - 1
 NEXT sa_i
 Assert(185, sa_saw = 1)
 
-' FOR EACH over string array — iter-var was 0 in native.
+' FOR EACH over string array - iter-var was 0 in native.
 sa_concat = ""
 sa_s = ""
 FOR EACH sa_s IN sa_parts
@@ -583,14 +583,14 @@ KILL "_sa_tmp/bravo.txt"
 KILL "_sa_tmp/charlie.txt"
 RMDIR "_sa_tmp"
 
-' OS.ARGS — runtime-test of element type. When this script is invoked
+' OS.ARGS - runtime-test of element type. When this script is invoked
 ' as `jdBasic.exe -c native_test.jdb` (no extra args), OS.ARGS is
 ' empty; the dedicated tests/test_native_os_args.jdb is the runner
 ' that asserts non-empty OS.ARGS()[0] is a real string.
 sa_args = OS.ARGS()
 Assert(188, LEN(sa_args) >= 0)
 
-' APPEND(string_arr_a, string_arr_b) — result must keep its strings.
+' APPEND(string_arr_a, string_arr_b) - result must keep its strings.
 sa_x = ["aa", "bb"]
 sa_y = ["cc", "dd"]
 sa_xy = APPEND(sa_x, sa_y)
@@ -735,7 +735,7 @@ PRINT "── FUNC AS TYPE ──"
 
 IMPORT NATIVE_TEST_MODX
 
-' AS STRING — single FUNC, $-suffix harmless
+' AS STRING - single FUNC, $-suffix harmless
 FUNC ft_str$() AS STRING
     RETURN "abc"
 ENDFUNC
@@ -743,7 +743,7 @@ DIM ftS$ = ft_str$()
 Assert(214, ftS$ = "abc")
 Assert(215, LEN(ft_str$()) = 3)
 
-' AS STRING — nested FUNC chain
+' AS STRING - nested FUNC chain
 FUNC ft_str_inner$() AS STRING
     RETURN "deep"
 ENDFUNC
@@ -753,7 +753,7 @@ ENDFUNC
 DIM ftSW$ = ft_str_outer$()
 Assert(216, ftSW$ = "deep_W")
 
-' AS ARRAY — direct
+' AS ARRAY - direct
 FUNC ft_arr() AS ARRAY
     RETURN [1, 2, 3, 4]
 ENDFUNC
@@ -762,7 +762,7 @@ Assert(217, LEN(ftA) = 4)
 Assert(218, ftA[0] = 1)
 Assert(219, ftA[3] = 4)
 
-' AS ARRAY — nested wrapper
+' AS ARRAY - nested wrapper
 FUNC ft_arr_wrap() AS ARRAY
     RETURN ft_arr()
 ENDFUNC
@@ -770,7 +770,7 @@ DIM ftAW = ft_arr_wrap()
 Assert(220, LEN(ftAW) = 4)
 Assert(221, ftAW[2] = 3)
 
-' AS OBJECT — JSON handle direct
+' AS OBJECT - JSON handle direct
 FUNC ft_obj(s$) AS OBJECT
     RETURN JSON.PARSE$(s$)
 ENDFUNC
@@ -779,10 +779,10 @@ Assert(222, LEN(ftO) = 3)
 ' VM_HANDLE-element equality: stringify then compare so the test
 ' doesn't depend on the (separately-tracked) runtime-tagged-equals
 ' codegen path. The element value itself is materialised correctly,
-' as PRINT confirms — only `=` on a raw RUNTIME tag is unfinished.
+' as PRINT confirms - only `=` on a raw RUNTIME tag is unfinished.
 Assert(223, STR$(ftO[1]) = "200")
 
-' AS OBJECT — nested chain
+' AS OBJECT - nested chain
 FUNC ft_obj_outer(s$) AS OBJECT
     RETURN ft_obj(s$)
 ENDFUNC
@@ -790,7 +790,7 @@ DIM ftOO = ft_obj_outer("[1,2,3,4,5]")
 Assert(224, LEN(ftOO) = 5)
 Assert(225, STR$(ftOO[4]) = "5")
 
-' AS DOUBLE — direct
+' AS DOUBLE - direct
 FUNC ft_dbl(x AS DOUBLE) AS DOUBLE
     RETURN x * 1.5
 ENDFUNC
@@ -821,7 +821,7 @@ DIM mxD = NATIVE_TEST_MODX.mx_dbl(4.0)
 Assert(234, mxD = 10.0)
 
 ' OBJECT handle stored into a MAP slot (the vstate{"list"} = QROWS()
-' pattern — caused vstate{"list"} to read back garbage when map_set
+' pattern - caused vstate{"list"} to read back garbage when map_set
 ' coerce'd the handle through __jdrt_val_to_f64 instead of pun-storing
 ' the raw key bits).
 DIM ftMap AS MAP
@@ -863,7 +863,7 @@ DIM mxArr2 = [mxMap{"name"}, mxMap{"email"}]
 Assert(239, mxArr2[0] = "Anna")
 Assert(240, mxArr2[1] = "anna@example.com")
 
-' Mixed string + number map values — per-cell tags must distinguish
+' Mixed string + number map values - per-cell tags must distinguish
 DIM mxArr3 = [mxMap{"name"}, mxMap{"age"}, mxMap{"score"}, mxMap{"email"}]
 Assert(241, mxArr3[0] = "Anna")
 Assert(242, STR$(mxArr3[1]) = "42")
@@ -888,10 +888,10 @@ FUNC mxQuoteForSql$(v)
     RETURN STR$(v)
 ENDFUNC
 
-' Direct: scalar string literal — tag survives through the param.
+' Direct: scalar string literal - tag survives through the param.
 Assert(247, mxQuoteForSql$("foo") = "'foo'")
 
-' Direct: scalar number — tag survives, no quotes.
+' Direct: scalar number - tag survives, no quotes.
 Assert(248, mxQuoteForSql$(42) = "42")
 
 ' Cross-FUNC: param value read from map-of-mixed-tagged-array.
@@ -899,11 +899,11 @@ Assert(249, mxQuoteForSql$(mxArr3[0]) = "'Anna'")
 Assert(250, mxQuoteForSql$(mxArr3[1]) = "42")
 Assert(251, mxQuoteForSql$(mxArr3[3]) = "'anna@example.com'")
 
-' Cross-FUNC: param value read from a map directly — also RUNTIME-tagged.
+' Cross-FUNC: param value read from a map directly - also RUNTIME-tagged.
 Assert(252, mxQuoteForSql$(mxMap{"name"}) = "'Anna'")
 Assert(253, mxQuoteForSql$(mxMap{"score"}) = "99.5")
 
-' Cross-FUNC via INNER FUNC — tagged value flows through two FUNC
+' Cross-FUNC via INNER FUNC - tagged value flows through two FUNC
 ' calls (caller -> fmt$ -> q$).
 FUNC mxFmt$(template$, params AS DYNAMIC)
     DIM out$ = ""
@@ -938,7 +938,7 @@ Assert(257, mxBool3 = TRUE)
 DIM mxBool4 = (3.14 >= 3.0)
 Assert(258, mxBool4 = TRUE)
 
-' Comparison binding to BOOLEAN slot — the BOOL tag must thread through
+' Comparison binding to BOOLEAN slot - the BOOL tag must thread through
 ' to make STRICT mode accept the assignment.
 DIM mxBool5 AS BOOLEAN = ("foo" = "foo")
 Assert(259, mxBool5 = TRUE)
@@ -974,7 +974,7 @@ ENDFUNC
 DIM mxId$ = mxIdent$(mxMap{"name"})
 Assert(263, mxId$ = "Anna")
 
-' SUB call (no return) — same path. Side-effect via map mutation.
+' SUB call (no return) - same path. Side-effect via map mutation.
 SUB mxStashName(target AS MAP, val$)
     target{"stash"} = val$
 ENDSUB
@@ -1022,7 +1022,7 @@ FOR dasd_i = 1 TO 10
 NEXT dasd_i
 Assert(268, CINT(dasd_TD * 1000) >= 0 AND CINT(dasd_TD * 1000) < 2000)
 
-' AS SINGLE (FLOAT32) — same code path through codegen_dim.
+' AS SINGLE (FLOAT32) - same code path through codegen_dim.
 DIM dasd_TE AS SINGLE = 0
 FOR dasd_i = 1 TO 3
     dasd_TE = dasd_TE + 0.5
@@ -1034,7 +1034,7 @@ Assert(269, CINT(dasd_TE * 1000) = 1500)
 '   integer-keyed array silently coerced the char* through f64 and
 '   never set the string-array flag. Reading back returned 0 instead
 '   of the original string. Production trigger was the DOOM port's
-'   wad_name$[] directory (lump names) — every name read back as 0
+'   wad_name$[] directory (lump names) - every name read back as 0
 '   so wad_find never matched anything.
 PRINT "── String-Array Element Assign ──"
 DIM sea_arr$[5]
@@ -1046,7 +1046,7 @@ Assert(270, sea_arr$[0] = "lump0")
 Assert(271, sea_arr$[3] = "lump3")
 Assert(272, LEN(sea_arr$[2]) = 5)
 
-' Mixed-typed string array (DIM arr$[N] AS STRING) — same bug class.
+' Mixed-typed string array (DIM arr$[N] AS STRING) - same bug class.
 DIM sea_typed$[3] AS STRING
 sea_typed$[0] = "alpha"
 sea_typed$[1] = "beta"
@@ -1054,7 +1054,7 @@ sea_typed$[2] = "gamma"
 Assert(273, sea_typed$[1] = "beta")
 Assert(274, sea_typed$[0] + sea_typed$[2] = "alphagamma")
 
-' Re-assign after first write — must not stay stuck on first value.
+' Re-assign after first write - must not stay stuck on first value.
 sea_typed$[1] = "delta"
 Assert(275, sea_typed$[1] = "delta")
 
@@ -1203,7 +1203,7 @@ DIM fv2_ref = FILLV(fv2, 7)
 Assert(310, fv2[0] = 7)
 Assert(311, fv2_ref[3] = 7)
 fv2_ref[0] = 99
-Assert(312, fv2[0] = 99)   ' aliasing — fv2_ref is fv2
+Assert(312, fv2[0] = 99)   ' aliasing: fv2_ref is fv2
 
 ' FILLV 2D
 DIM fv3[3, 3] AS INTEGER

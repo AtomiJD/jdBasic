@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-'  FILE.OPEN_TAIL — tail -f semantics, concurrent.
+'  FILE.OPEN_TAIL - tail -f semantics, concurrent.
 '  Producer ASYNC FUNC writes to the file in chunks; reader ASYNC
 '  opens it in tail mode and pulls lines as they arrive. CLOSE from
 '  the main thread wakes the reader.
@@ -30,7 +30,7 @@ TXTWRITER "tail_existing.txt", "alpha" + CHR$(10) + "beta" + CHR$(10), FALSE
 DIM ht = FILE.OPEN_TAIL("tail_existing.txt")
 Assert(FILE.READLINE$(ht) = "alpha", "tail: first existing line")
 Assert(FILE.READLINE$(ht) = "beta",  "tail: second existing line")
-' Tail handle does NOT report EOF — there might be more later.
+' Tail handle does NOT report EOF - there might be more later.
 Assert(NOT FILE.AT_EOF(ht),          "tail: not AT_EOF after exhausting initial content")
 FILE.CLOSE ht
 Assert(FILE.AT_EOF(ht),              "tail: AT_EOF after CLOSE")
@@ -93,11 +93,11 @@ ASYNC FUNC tail_blocked(path$)
     RETURN "GOT:" + line$
 ENDFUNC
 
-' Use the existing OPEN_TAIL handle from outside? No — each ASYNC FUNC
+' Use the existing OPEN_TAIL handle from outside? No - each ASYNC FUNC
 ' is its own VM with its own handle space. The main-thread close needs
 ' a different mechanism. Instead, we just rely on the reader closing
 ' itself after a timeout via a short SLEEP and re-checking. Skip this
-' specific case for Phase 2a — Phase 2 follow-up can add a wake hook.
+' specific case for Phase 2a - Phase 2 follow-up can add a wake hook.
 ' For now, assert the tail reader at least starts cleanly.
 TXTWRITER "tail_block.txt", "preroll" + CHR$(10), FALSE
 DIM hb = FILE.OPEN_TAIL("tail_block.txt")
@@ -120,7 +120,7 @@ LOOP
 Assert(acc$ = "x|yy|zzz|",         "FILE.STREAM_LINES drains all lines via channel")
 KILL "stream_src.txt"
 
-' ── FILE.STREAM_TAIL sugar — tail mode into a channel ─────────────
+' ── FILE.STREAM_TAIL sugar - tail mode into a channel ─────────────
 Header("FILE.STREAM_TAIL → channel (live append)")
 TXTWRITER "stream_tail.txt", "", FALSE
 

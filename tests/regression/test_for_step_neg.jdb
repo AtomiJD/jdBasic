@@ -1,4 +1,4 @@
-' Test FOR STEP -1 with EXITFOR and MID$ inside — same pattern as SAY wrap.
+' Test FOR STEP -1 with EXITFOR and MID$ inside - same pattern as SAY wrap.
 text$ = "Spiel wird beendet. Ungespeicherter Fortschritt geht verloren!"
 PRINT "len="; LEN(text$)
 

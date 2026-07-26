@@ -59,7 +59,7 @@ PRINT "  Top result: "; h_hnsw[0]{"source"}; " (score="; h_hnsw[0]{"score"}; ")"
 PRINT ""
 PRINT "=== Recall check (Top-5 ueberlappung) ==="
 DIM hits_l = AI.RAG_SEARCH(rag, q, 5)
-' Tatsaechlich nochmal mit linear vergleichen — dazu HNSW abwerfen
+' Tatsaechlich nochmal mit linear vergleichen - dazu HNSW abwerfen
 ' (kann ich nicht direkt, also vergleiche ich Sources)
 PRINT "Linear top-5:"
 FOR i = 0 TO LEN(h_lin) - 1

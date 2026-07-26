@@ -1,6 +1,6 @@
 IMPORT TEST_GOLD_MOD
 
-' Just map-value caller — isolated
+' Just map-value caller - isolated
 q = {}
 q{"reward_gold"} = 20
 TEST_GOLD_MOD.ADD_GOLD q{"reward_gold"}

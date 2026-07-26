@@ -17,7 +17,7 @@ DIM x2 = IOTA(N) * 0.0 + 400.0    ' converge to 400, 100
 DIM y2 = IOTA(N) * 0.0 + 100.0
 DIM lines_m = STACK(1, xs, ys, x2, y2)
 
-' Smaller path through a 2D matrix flattened via RESHAPE — the
+' Smaller path through a 2D matrix flattened via RESHAPE - the
 ' wireframe demo does this.
 DIM gx = OUTER([1.0, 2.0, 3.0], [10.0, 20.0, 30.0, 40.0], "+")
 DIM flat = RESHAPE(gx, [12])

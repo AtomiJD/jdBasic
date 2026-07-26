@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-' Group C demo — Timezone-aware dates, DATE.UTC, DATE.PARTS
+' Group C demo - Timezone-aware dates, DATE.UTC, DATE.PARTS
 ' ══════════════════════════════════════════════════════════════════
 ' Showcases CVDATE/FORMAT_DATE with tz, DATE.UTC, DATE.PARTS, DATEDIFF
 
@@ -17,7 +17,7 @@ zones[3, 0] = "Mumbai"           : zones[3, 1] = 5.5
 zones[4, 0] = "New York"         : zones[4, 1] = -4
 zones[5, 0] = "Tokyo"            : zones[5, 1] = 9
 
-PRINT "Global team meeting — one instant, many wall-clocks"
+PRINT "Global team meeting: one instant, many wall-clocks"
 PRINT REPEAT$("═", 48)
 PRINT RPAD$("Zone", 16) + RPAD$("Offset", 12) + "Local time"
 PRINT REPEAT$("─", 48)
@@ -33,7 +33,7 @@ FOR z = 0 TO 5
 NEXT z
 PRINT ""
 
-' ── 2. DATE.PARTS — decomposing an instant ───────────────────────
+' ── 2. DATE.PARTS - decomposing an instant ───────────────────────
 DIM dp = DATE.PARTS(instant, 0)
 PRINT "DATE.PARTS of the UTC instant:"
 PRINT "  year    = "; dp{"year"}
@@ -55,7 +55,7 @@ PRINT "  Days:    "; days_to_eoy
 PRINT "  Seconds: "; secs_to_eoy
 PRINT ""
 
-' ── 4. Countdown preview — add 7, 30, 90 days ────────────────────
+' ── 4. Countdown preview - add 7, 30, 90 days ────────────────────
 PRINT "Follow-up milestones:"
 DIM milestones[3]
 milestones[0] = 7

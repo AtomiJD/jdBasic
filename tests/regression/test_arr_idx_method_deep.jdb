@@ -1,4 +1,4 @@
-' Simpler — verify the parser fix handles common patterns.
+' Simpler - verify the parser fix handles common patterns.
 
 TYPE Counter
     n AS INTEGER

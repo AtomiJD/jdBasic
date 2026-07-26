@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-'  FOR EACH v IN ch — Phase 4. Iterate a channel until its EOF.
+'  FOR EACH v IN ch - Phase 4. Iterate a channel until its EOF.
 '  Same loop syntax as `FOR EACH x IN [1,2,3]` so the existing
 '  array/map paths must keep working (regression).
 ' ══════════════════════════════════════════════════════════════════
@@ -86,7 +86,7 @@ NEXT
 CHAN.CLOSE ch4
 
 ' Channel-recv'd values arrive via VM_HANDLE in native compile, which
-' materialises to DOUBLE — STRICT-mode native therefore needs DOUBLE
+' materialises to DOUBLE - STRICT-mode native therefore needs DOUBLE
 ' accumulators here (interp accepts either).
 DIM exit_sum AS DOUBLE = 0.0
 DIM exit_n = 0

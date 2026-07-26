@@ -6,7 +6,7 @@
 '  1. VM::call_function (the entry point used by the native bridge)
 '     had its own "no_vec" set that omitted CSVWRITER and most other
 '     file/OS functions. A 2D array passed to CSVWRITER was therefore
-'     auto-vectorized per cell — CSVWRITER received scalar f64 calls
+'     auto-vectorized per cell - CSVWRITER received scalar f64 calls
 '     and produced an empty file.
 '  2. CSVREADER was not in array_returners, so the codegen routed it
 '     through jdrt_call_typed_f64; the array result collapsed to 0.0.
@@ -14,7 +14,7 @@
 '     JdbArray's per-array has_string flag treated every cell as a
 '     char* and dereferenced the integer cells.
 '  4. Direct INDEX access on a mixed-type array variable also crashed
-'     in native — the codegen tagged the variable as a string-array
+'     in native - the codegen tagged the variable as a string-array
 '     and applied the int-to-pointer pun on every index, including the
 '     numeric cells.
 '

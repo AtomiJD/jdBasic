@@ -23,29 +23,29 @@ SUB CHECK_S(name$, got$, want$)
     ENDIF
 ENDSUB
 
-' CINT — 32-bit truncating integer cast.
+' CINT - 32-bit truncating integer cast.
 CHECK "CINT(3.7)",     CINT(3.7),      3
 CHECK "CINT(-3.7)",    CINT(-3.7),    -3
 CHECK "CINT(42)",      CINT(42),      42
 
-' CLNG — 64-bit integer cast.
+' CLNG - 64-bit integer cast.
 CHECK "CLNG(99.9)",    CLNG(99.9),    99
 CHECK "CLNG(-100.5)",  CLNG(-100.5), -100
 
-' CSNG — roundtrip through float32 (loses precision on large doubles).
+' CSNG - roundtrip through float32 (loses precision on large doubles).
 CHECK "CSNG(1.5)",     CSNG(1.5),      1.5
 CHECK "CSNG(0.0)",     CSNG(0.0),      0.0
 
-' CBOOL — zero → 0, non-zero → 1.
+' CBOOL - zero → 0, non-zero → 1.
 CHECK "CBOOL(0)",      CBOOL(0),       0
 CHECK "CBOOL(1)",      CBOOL(1),       1
 CHECK "CBOOL(-5)",     CBOOL(-5),      1
 CHECK "CBOOL(0.0)",    CBOOL(0.0),     0
 
-' CDBL — already existed, sanity.
+' CDBL - already existed, sanity.
 CHECK "CDBL(7)",       CDBL(7),        7.0
 
-' CSTR — universal to-string (alias for TOSTR).
+' CSTR - universal to-string (alias for TOSTR).
 CHECK_S "CSTR(42)",    CSTR(42),      "42"
 CHECK_S "CSTR(3.14)",  CSTR(3.14),    "3.14"
 

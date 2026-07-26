@@ -1,4 +1,4 @@
-' test_ffi_smoke.jdb — quick check that the new FFI path still works.
+' test_ffi_smoke.jdb - quick check that the new FFI path still works.
 ' Exercises: INTEGER/STRING/RETURN params, ARRAY destructuring,
 ' scalable RETURN buffer.
 
@@ -19,7 +19,7 @@ DECLARE FUNC GetEnvironmentVariable LIB "kernel32.dll" ALIAS "GetEnvironmentVari
 
 ' Default-size buffer (caller passes 0 → 64 KB default)
 [len_default, val_default] = GetEnvironmentVariable("PATH", 0, 0)
-PRINT "PATH (default buf) length=" + STR$(len_default) + " — first 60 chars: " + LEFT$(val_default, 60)
+PRINT "PATH (default buf) length=" + STR$(len_default) + ": first 60 chars: " + LEFT$(val_default, 60)
 
 ' Explicit larger buffer (256 KB)
 [len_big, val_big] = GetEnvironmentVariable("PATH", 256*1024, 256*1024)

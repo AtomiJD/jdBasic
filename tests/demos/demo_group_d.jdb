@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-' Group D demo — HTTP client state: cookies, params, timeouts
+' Group D demo - HTTP client state: cookies, params, timeouts
 ' ══════════════════════════════════════════════════════════════════
 ' Showcases HTTP.SETTIMEOUT, FOLLOWREDIRECTS, SETPARAM/CLEARPARAMS,
 '           SETCOOKIE/CLEARCOOKIES/GETCOOKIE$, HTTP.REQUEST, HTTP.DELETE$
@@ -11,7 +11,7 @@
 OPTION "EXPLICIT"
 
 IF NOT OS.FEATURE("HTTP") THEN
-    PRINT "HTTP feature not available in this build — demo skipped."
+    PRINT "HTTP feature not available in this build: demo skipped."
     END
 ENDIF
 
@@ -68,7 +68,7 @@ HTTP.CLEARPARAMS
 PRINT "Params cleared"
 
 HTTP.CLEARCOOKIES
-PRINT "Cookies cleared — client_id now ["; HTTP.GETCOOKIE$("client_id"); "]"
+PRINT "Cookies cleared: client_id now ["; HTTP.GETCOOKIE$("client_id"); "]"
 
 HTTP.FOLLOWREDIRECTS FALSE
 PRINT "Redirects disabled"

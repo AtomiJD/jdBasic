@@ -4,7 +4,7 @@ DECLARE FUNC GetEnvironmentVariable LIB "kernel32.dll" _
     ALIAS "GetEnvironmentVariableA" _
     (name AS STRING, outBuf AS RETURN, size AS INTEGER) AS ARRAY
 
-' Explicit nonzero buffer + explicit nonzero size — leaves no Win32 ambiguity.
+' Explicit nonzero buffer + explicit nonzero size - leaves no Win32 ambiguity.
 [len, val] = GetEnvironmentVariable("PATH", 32768, 32768)
 PRINT "len=" + STR$(len)
 PRINT "val first 80 = " + LEFT$(val, 80)

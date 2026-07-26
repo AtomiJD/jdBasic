@@ -1,6 +1,6 @@
 ' Test der Embedding API mit dem vorhandenen Phi-3 Modell
 ' (Phi-3 ist ein Generation-Modell, also sind die Embeddings nicht
-' so gut wie z.B. nomic-embed-text — die API soll aber funktionieren)
+' so gut wie z.B. nomic-embed-text - die API soll aber funktionieren)
 PRINT "Loading embedding model (Phi-3 im Embedding-Modus)..."
 emb = AI.LOAD_EMBEDDINGS("models\Phi-3-mini-4k-instruct-q4.gguf", 512, 99)
 PRINT "Loaded: id="; emb

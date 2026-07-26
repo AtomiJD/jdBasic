@@ -1,4 +1,4 @@
-' dupfinder.jdb — find duplicate files by SHA256, group, sort by recoverable size.
+' dupfinder.jdb - find duplicate files by SHA256, group, sort by recoverable size.
 ' Usage:  dupfinder.exe <path>     (defaults to "." when no argument given)
 '
 ' Storage shape: three parallel 1D arrays, one entry per group. Pipe-joined
@@ -61,7 +61,7 @@ ENDIF
 DIM hashes = SELECT(hash_file$@, files)
 DIM uniq = UNIQUE(hashes)
 
-' Three parallel 1D arrays — one row per duplicate group.
+' Three parallel 1D arrays - one row per duplicate group.
 DIM g_saved AS ARRAY = []
 DIM g_count AS ARRAY = []
 DIM g_paths AS ARRAY = []

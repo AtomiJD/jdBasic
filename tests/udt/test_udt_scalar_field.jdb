@@ -7,7 +7,7 @@ TYPE Point
 ENDTYPE
 
 DIM p AS Point
-PRINT "Fresh DIM Point — fields should be 0.0"
+PRINT "Fresh DIM Point: fields should be 0.0"
 PRINT "p.x = "; p.x
 PRINT "p.y = "; p.y
 PRINT

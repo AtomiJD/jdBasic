@@ -23,7 +23,7 @@ IF MAP.EXISTS(p2, "direction") THEN direction$ = p2{"direction"}
 PRINT "case2 direction$='"; direction$; "'"
 IF direction$ <> "up" THEN PRINT "FAIL case2" : END
 
-' Case 3: the classic crash — concat after conditionally-skipped assign.
+' Case 3: the classic crash - concat after conditionally-skipped assign.
 anim$ = "idle_" + direction$
 PRINT "case3 anim$='"; anim$; "'"
 IF anim$ <> "idle_up" THEN PRINT "FAIL case3" : END

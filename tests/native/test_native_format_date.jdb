@@ -1,7 +1,7 @@
 ' Regression: FORMAT_DATE(t) without an explicit format string returned
 ' "" in native mode. Cause: codegen passed a null fmt pointer when the
 ' source called FORMAT_DATE with one arg, and the runtime used the null
-' as the strftime format — strftime then produced an empty string. Fix
+' as the strftime format - strftime then produced an empty string. Fix
 ' was a default in jdb_format_date matching the interpreter
 ' ("%Y-%m-%d %H:%M:%S").
 '

@@ -1,4 +1,4 @@
-' test_format_vmh.jdb — regression test for FORMAT$ on VM_HANDLE args
+' test_format_vmh.jdb - regression test for FORMAT$ on VM_HANDLE args
 ' (the codegen used to pass i64 raw bits where double was expected).
 
 OPTION "EXPLICIT"
@@ -16,7 +16,7 @@ PRINT "menge   =", s1$
 PRINT "vk_preis=", s2$
 PRINT "rabatt  =", s3$
 
-' Explicit double coercion path — must still work
+' Explicit double coercion path - must still work
 DIM v AS DOUBLE = 42.42
 PRINT "v   =", FORMAT$("{:.2f}", v)
 

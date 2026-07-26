@@ -35,7 +35,7 @@ DIM cyaw AS DOUBLE = 1.0 : DIM syaw AS DOUBLE = 0.0
 DIM cpit AS DOUBLE = 1.0 : DIM spit AS DOUBLE = 0.0
 DIM crol AS DOUBLE = 1.0 : DIM srol AS DOUBLE = 0.0
 
-PRINT "Step 0 — after pre-DIMs:"
+PRINT "Step 0: after pre-DIMs:"
 PRINT "  SX[0,0]=";    SX[0,0]
 PRINT "  GX[0,0]=";    GX[0,0]
 PRINT "  GX[0,5]=";    GX[0,5]
@@ -55,7 +55,7 @@ Z3 = Z2 * crol - X1 * srol
 SX = X3 * SCALE_X + CX
 SY = Y2 * SCALE_Y - Z3 * SCALE_Z + CY
 
-PRINT "Step 1 — after rotation chain:"
+PRINT "Step 1: after rotation chain:"
 PRINT "  cyaw=";    cyaw, "syaw=";    syaw
 PRINT "  X1[0,0]="; X1[0,0], "X1[0,5]="; X1[0,5]
 PRINT "  X3[0,0]="; X3[0,0], "X3[0,5]="; X3[0,5]

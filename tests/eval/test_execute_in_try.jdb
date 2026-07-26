@@ -5,4 +5,4 @@ TRY
 CATCH
     PRINT "caught: code="; ERR; " msg="; ERRMSG$
 ENDTRY
-PRINT "after ENDTRY — alive"
+PRINT "after ENDTRY: alive"

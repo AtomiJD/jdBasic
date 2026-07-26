@@ -1,4 +1,4 @@
-' PYTHON / PY.* regression — interpreter only (the embedded CPython C-API
+' PYTHON / PY.* regression - interpreter only (the embedded CPython C-API
 ' isn't linked into compiled binaries; native -c rejects these at compile
 ' time). Needs the PYTHON build flag.
 IF NOT OS.FEATURE("PYTHON") THEN

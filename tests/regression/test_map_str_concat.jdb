@@ -1,4 +1,4 @@
-' Repro: NPC sprite path — asset_path$ + data{"sprite"}
+' Repro: NPC sprite path - asset_path$ + data{"sprite"}
 ' Native must concat the dynamic-tagged string correctly.
 
 DIM data = {}
@@ -12,13 +12,13 @@ asset_path$ = "sprites/"
 s1$ = data{"sprite"}
 PRINT "s1$='"; s1$; "'"
 
-' Concat map value with string literal — no $-hint
+' Concat map value with string literal - no $-hint
 full$ = asset_path$ + data{"sprite"}
 PRINT "full$='"; full$; "'"
 
 IF full$ <> "sprites/moehrchen.png" THEN PRINT "FAIL concat" : END
 
-' Dimension check: IF img_w >= fw * 3 — does a bare map lookup cast to int?
+' Dimension check: IF img_w >= fw * 3 - does a bare map lookup cast to int?
 data{"frame_w"} = 64
 fw = INT(data{"frame_w"})
 PRINT "fw="; fw

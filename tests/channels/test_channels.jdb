@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-'  Channel Phase 1 — single-thread asserts.
+'  Channel Phase 1 - single-thread asserts.
 '  Buffered channels with capacity > 0 don't block in single-thread
 '  use; covers the data-structure, capacity tracking, close-and-drain
 '  semantics, and the EOF marker.

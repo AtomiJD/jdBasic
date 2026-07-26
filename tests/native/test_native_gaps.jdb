@@ -1,4 +1,4 @@
-' Native gap fixes — verify each previously-broken function returns
+' Native gap fixes - verify each previously-broken function returns
 ' the same result interp ↔ native.
 
 PRINT "── IOTA(N, start) ──"

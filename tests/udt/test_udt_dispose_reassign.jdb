@@ -1,5 +1,5 @@
 ' Wenn eine UDT-Variable neu zugewiesen wird, soll der alte Wert DISPOSE bekommen
-' (Interpreter only — native hat kein Refcount, dort wird nur am Funktionsende
+' (Interpreter only - native hat kein Refcount, dort wird nur am Funktionsende
 '  disposed; Reassign-DISPOSE ist eine dokumentierte native Limitation.)
 TYPE Tagged
     Id AS INTEGER

@@ -1,5 +1,5 @@
 ' ══════════════════════════════════════════════════════════════════
-' Group B demo — Filesystem inspection and log building
+' Group B demo - Filesystem inspection and log building
 ' ══════════════════════════════════════════════════════════════════
 ' Showcases FILE.EXISTS/SIZE/ISDIR/STAT, PATH.NORMALIZE$/DIRNAME$,
 '           TXTWRITER append, DIR$ detailed
@@ -9,7 +9,7 @@ OPTION "EXPLICIT"
 ' ── 1. Build a scratch workspace ─────────────────────────────────
 DIM work = "jdb_demo_b"
 IF FILE.EXISTS(work) = 1 THEN
-    ' Previous run left leftovers — skip setup.
+    ' Previous run left leftovers - skip setup.
     PRINT "Workspace "; work; " already exists, skipping create"
 ELSE
     MKDIR work
@@ -66,10 +66,10 @@ PRINT ""
 DIM logfile = work + "/session.log"
 DIM stamp$ = FORMAT_DATE(NOW(), "%H:%M:%S")
 
-' First session — overwrite
+' First session - overwrite
 TXTWRITER logfile, "[" + stamp$ + "] session-1 start" + CHR$(10)
 
-' Subsequent entries — append
+' Subsequent entries - append
 TXTWRITER logfile, "[" + stamp$ + "] session-1 event A" + CHR$(10), TRUE
 TXTWRITER logfile, "[" + stamp$ + "] session-1 event B" + CHR$(10), TRUE
 TXTWRITER logfile, "[" + stamp$ + "] session-1 end" + CHR$(10), TRUE

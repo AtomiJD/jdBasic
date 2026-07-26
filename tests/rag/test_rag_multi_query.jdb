@@ -16,7 +16,7 @@ AI.RAG_ADD rag, "Tokyo ist die Hauptstadt von Japan und hat etwa 14 Millionen Ei
 AI.RAG_ADD rag, "Wien ist die Hauptstadt von Oesterreich und hat etwa 1.9 Millionen Einwohner.", "wiki_wien"
 
 PRINT ""
-PRINT "=== 5 queries in a row — testing KV cache handling ==="
+PRINT "=== 5 queries in a row: testing KV cache handling ==="
 
 DIM questions = ["Wie viele Einwohner hat Berlin?", "Nenne mir die Hauptstadt von Frankreich.", "Wo liegt Tokyo und wie gross ist die Stadt?", "Vergleiche Berlin und Wien.", "Welche Stadt ist die kleinste der vier?"]
 
@@ -30,4 +30,4 @@ NEXT i
 AI.FREE_LLM llm
 AI.FREE_LLM emb
 PRINT ""
-PRINT "Done — 5/5 queries succeeded."
+PRINT "Done: 5/5 queries succeeded."

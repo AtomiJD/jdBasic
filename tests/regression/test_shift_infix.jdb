@@ -1,6 +1,6 @@
-' Infix SHL / SHR — both function form and operator form must work.
+' Infix SHL / SHR - both function form and operator form must work.
 ' Precedence: shift binds tighter than comparison, looser than addition
-' (C-style). So `1 + 2 SHL 3` is `1 SHL (2+3)`-no wait — addition is
+' (C-style). So `1 + 2 SHL 3` is `1 SHL (2+3)`-no wait - addition is
 ' tighter than shift, so `1 + 2 SHL 3` = `(1 + 2) SHL 3` ... actually
 ' both interpretations are wrong; correct precedence parse: addition is
 ' TIGHTER, so the addition completes first inside the shift's RHS:

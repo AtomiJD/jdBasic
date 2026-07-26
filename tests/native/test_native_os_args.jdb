@@ -1,4 +1,4 @@
-' Native OS.ARGS regression — must be invoked WITH args:
+' Native OS.ARGS regression - must be invoked WITH args:
 '
 '   jdBasic.exe -c tests/test_native_os_args.jdb
 '   tests/test_native_os_args.exe ALPHA BRAVO CHARLIE
@@ -38,7 +38,7 @@ Assert(4, a1 = "ALPHA")
 Assert(5, a2 = "BRAVO")
 Assert(6, a3 = "CHARLIE")
 
-' FOR EACH over OS.ARGS — iter var must carry the string.
+' FOR EACH over OS.ARGS - iter var must carry the string.
 DIM joined AS STRING = ""
 DIM s AS STRING
 FOR EACH s IN args

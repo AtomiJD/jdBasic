@@ -1,5 +1,5 @@
 ' RAG: Verzeichnis indizieren + Suche (ohne LLM-Generierung,
-' nur die TF-IDF-Engine — kein .gguf Modell nötig)
+' nur die TF-IDF-Engine - kein .gguf Modell nötig)
 
 PRINT "Lade Mini-LLM-Stub für Embeddings..."
 ' AI.RAG_CREATE braucht eine LLM-ID, aber für reine Suche

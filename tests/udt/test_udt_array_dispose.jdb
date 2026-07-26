@@ -20,7 +20,7 @@ ENDSUB
 build()
 PRINT "done"
 
-' Erwartet (DISPOSE-Reihenfolge ist nicht festgelegt — wir prueffen Praesenz):
+' Erwartet (DISPOSE-Reihenfolge ist nicht festgelegt - wir prueffen Praesenz):
 ' init A
 ' init B
 ' init C
