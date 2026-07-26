@@ -1,8 +1,19 @@
 #!/usr/bin/env bash
 # Interpreter vs native-codegen parity matrix.
-# Runs every tracked tests/**/*.jdb through both backends and classifies the pair.
 #
-#   parity.sh [-t SECONDS] [-j JOBS] [-o OUTFILE] [pattern]
+# Scope matters more than coverage here. The pre-commit gate is four curated
+# suites under tests/gate (see .claude/skills/jdbgate); the rest of tests/ is,
+# in its own README, "part regression bank, part scratch-pad". Sweeping all of
+# it reports IMPORT helpers, model-dependent RAG tests and TUI tests from a
+# build without the TUI flag as parity failures, which they are not.
+#
+# So the default is the set that can actually carry a parity signal, and every
+# excluded file is counted in the summary rather than silently dropped.
+#
+#   parity.sh [-t SECONDS] [-j JOBS] [-o OUTFILE] [--all] [pattern]
+#
+#   --all   include the excluded directories too (needs models, network, a TTY
+#           and a TUI-enabled build; expect reds that say nothing about parity)
 #
 # Result columns: TEST | INTERP | NATIVE | VERDICT
 #   INTERP/NATIVE: PASS (assert marker) OK (exit 0) FAIL FAIL:<code> TIMEOUT CFAIL
@@ -18,15 +29,22 @@ TIMEOUT=20
 JOBS=1
 OUT=""
 PATTERN=""
+ALL=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -t) TIMEOUT="$2"; shift 2 ;;
         -j) JOBS="$2"; shift 2 ;;
         -o) OUT="$2"; shift 2 ;;
+        --all) ALL=1; shift ;;
         *)  PATTERN="$1"; shift ;;
     esac
 done
+
+# Directories whose reds report the environment, not the backends: RAG/AI need
+# local models, http needs the network, tui needs a TTY and a TUI-enabled
+# build (without the flag there are no TUI.* symbols at all).
+EXCLUDE_DIRS='^tests/(rag|ai|http|tui)/'
 
 WORK="${PARITY_WORK:-${TMPDIR:-/tmp}/jdb_parity}"
 mkdir -p "$WORK/exe" "$WORK/log"
@@ -37,7 +55,10 @@ classify() {
     if [ "$code" = "124" ] || [ "$code" = "137" ]; then echo "TIMEOUT"; return; fi
     # The pass marker wins: a suite may print "Error #" while exercising TRY/CATCH
     # and still be green.
-    if grep -qE 'ALL TESTS PASSED|0 failed' "$log" 2>/dev/null; then echo "PASS"; return; fi
+    # Suites name themselves in the marker ("ALL BNOT TESTS PASSED"), so the
+    # pattern has to allow that middle word - matching only the bare form
+    # scored seven passing tests as failures.
+    if grep -qE 'ALL [A-Z0-9 _-]*TESTS PASSED|0 failed' "$log" 2>/dev/null; then echo "PASS"; return; fi
     if grep -qE '(^|[[:space:]])FAIL:|[1-9][0-9]* failed' "$log" 2>/dev/null; then echo "FAIL"; return; fi
     if [ "$code" = "0" ]; then echo "OK"; return; fi
     echo "FAIL:$code"
@@ -94,7 +115,28 @@ export -f run_one classify green
 export REPO JDB WORK TIMEOUT
 
 cd "$REPO" || exit 1
-LIST=$(git ls-files -- tests | grep '\.jdb$')
+FOUND=$(git ls-files -- tests | grep '\.jdb$')
+
+# A module exists to be IMPORTed. Running one standalone proves nothing about
+# either backend, so drop those before anything else.
+HELPERS=""
+LIST=""
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    if head -40 "$f" 2>/dev/null | grep -qiE '^[[:space:]]*(EXPORT[[:space:]]+)?MODULE[[:space:]]'; then
+        HELPERS="$HELPERS$f"$'\n'
+    else
+        LIST="$LIST$f"$'\n'
+    fi
+done <<< "$FOUND"
+N_HELPERS=$(printf '%s' "$HELPERS" | grep -c . || true)
+
+N_ENV=0
+if [ "$ALL" -eq 0 ]; then
+    N_ENV=$(printf '%s' "$LIST" | grep -cE "$EXCLUDE_DIRS" || true)
+    LIST=$(printf '%s' "$LIST" | grep -vE "$EXCLUDE_DIRS" || true)
+fi
+
 [ -n "$PATTERN" ] && LIST=$(printf '%s\n' "$LIST" | grep -- "$PATTERN")
 
 TOTAL=$(printf '%s\n' "$LIST" | grep -c .)
@@ -119,10 +161,20 @@ sort -o "$RESULTS" "$RESULTS"
 [ -n "$OUT" ] && cp "$RESULTS" "$OUT"
 
 echo
+echo "=== SCOPE ==="
+printf '%-34s %d\n' "run" "$TOTAL"
+printf '%-34s %d\n' "skipped: IMPORT helpers" "$N_HELPERS"
+if [ "$ALL" -eq 0 ]; then
+    printf '%-34s %d   (rag/ai/http/tui - rerun with --all)\n' \
+        "skipped: needs environment" "$N_ENV"
+fi
+echo
 echo "=== SUMMARY ==="
 awk -F'\t' '{v[$4]++} END {for (k in v) printf "%-12s %d\n", k, v[k]}' "$RESULTS" | sort
 echo
 echo "=== PARITY GAPS (interp green, native red) ==="
+echo "note: a loose test rejected by the STRICT native compiler is expected -"
+echo "      the interpreter is deliberately loose. Look for runtime divergence."
 awk -F'\t' '$4=="GAP" {printf "%-52s interp=%-6s native=%s\n", $1, $2, $3}' "$RESULTS"
 echo
 echo "results: $RESULTS"
