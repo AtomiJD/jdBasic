@@ -50,6 +50,17 @@ Check(STR$(ALL([1, 1])), "TRUE", "ALL all nonzero")
 PRINT "=== booleans inside arrays ==="
 Check(JOIN([TRUE, FALSE], ","), "TRUE,FALSE", "array of booleans")
 
+
+PRINT "=== booleans stored in a MAP ==="
+DIM bm AS MAP
+bm{"yes"} = TRUE
+bm{"no"} = FALSE
+bm{"num"} = 42
+Check(STR$(bm{"yes"}), "TRUE", "TRUE survives a MAP round-trip")
+Check(STR$(bm{"no"}), "FALSE", "FALSE survives a MAP round-trip")
+Check(STR$(bm{"num"}), "42", "a number in the same MAP stays a number")
+Check(TYPEOF(bm{"yes"}), "BOOLEAN", "TYPEOF of a stored boolean")
+
 PRINT ""
 PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
 IF N_FAIL = 0 THEN PRINT "ALL TESTS PASSED!"

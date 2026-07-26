@@ -4797,6 +4797,14 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
                 auto& set_fn = runtime_funcs["__map_set_tagged"];
                 LLVMValueRef args[] = { obj_ptr, field_str, fval, val_tv.runtime_tag };
                 LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
+            } else if (val_tv.tag == JD_TAG_BOOL) {
+                // Store the truth-ness with the value; the untagged setter
+                // leaves a bare number and the read renders it as 1/0.
+                auto& set_fn = runtime_funcs["__map_set_tagged"];
+                LLVMValueRef args[] = { obj_ptr, field_str,
+                    LLVMBuildSIToFP(builder, val_tv.val, f64_type, "b2f"),
+                    LLVMConstInt(i32_type, JD_TAG_BOOL, 0) };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
             } else {
                 LLVMValueRef fval = coerce_to(val_tv, f64_type);
                 auto& set_fn = runtime_funcs["__map_set_f64"];
@@ -5048,7 +5056,22 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, parr, 1, "");
                 LLVMBuildBr(builder, bb_join);
 
+                // A cell carrying a truth value renders TRUE/FALSE. Per the
+                // tagged-getter convention its val is already a real i64.
                 LLVMPositionBuilderAtEnd(builder, bb_else);
+                LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, tv.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "pr_isbool");
+                LLVMBasicBlockRef bb_bool = LLVMAppendBasicBlock(current_fn, "pr.bool");
+                LLVMBasicBlockRef bb_rest = LLVMAppendBasicBlock(current_fn, "pr.rest");
+                LLVMBuildCondBr(builder, is_bool, bb_bool, bb_rest);
+
+                LLVMPositionBuilderAtEnd(builder, bb_bool);
+                auto& pr_bool_dyn = runtime_funcs["__print_bool"];
+                LLVMValueRef args_b[] = { tv.val };
+                LLVMBuildCall2(builder, pr_bool_dyn.fn_type, pr_bool_dyn.fn, args_b, 1, "");
+                LLVMBuildBr(builder, bb_join);
+
+                LLVMPositionBuilderAtEnd(builder, bb_rest);
                 LLVMValueRef args_e[] = { coerce_to(tv, i8_ptr_type) };
                 LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, args_e, 1, "");
                 LLVMBuildBr(builder, bb_join);
@@ -7717,6 +7740,35 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // input tag is known.
     if (upper == "STR$" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
+        // A cell read out of a MAP carries its type at runtime; branch on it
+        // so a stored truth value stringifies as TRUE/FALSE, not 1/0.
+        if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
+            auto& sb = runtime_funcs["__str_bool"];
+            LLVMValueRef is_b = LLVMBuildICmp(builder, LLVMIntEQ, av.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "str_isbool");
+            LLVMBasicBlockRef bb_b = LLVMAppendBasicBlock(current_fn, "str.bool");
+            LLVMBasicBlockRef bb_o = LLVMAppendBasicBlock(current_fn, "str.other");
+            LLVMBasicBlockRef bb_j = LLVMAppendBasicBlock(current_fn, "str.join");
+            LLVMBuildCondBr(builder, is_b, bb_b, bb_o);
+
+            LLVMPositionBuilderAtEnd(builder, bb_b);
+            LLVMValueRef ba[] = { av.val };
+            LLVMValueRef sv_b = LLVMBuildCall2(builder, sb.fn_type, sb.fn, ba, 1, "sb_dyn");
+            LLVMBasicBlockRef bb_b_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_j);
+
+            LLVMPositionBuilderAtEnd(builder, bb_o);
+            LLVMValueRef sv_o = coerce_to(av, i8_ptr_type);
+            LLVMBasicBlockRef bb_o_end = LLVMGetInsertBlock(builder);
+            LLVMBuildBr(builder, bb_j);
+
+            LLVMPositionBuilderAtEnd(builder, bb_j);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "str_dyn");
+            LLVMValueRef iv[] = { sv_b, sv_o };
+            LLVMBasicBlockRef ib[] = { bb_b_end, bb_o_end };
+            LLVMAddIncoming(phi, iv, ib, 2);
+            return { phi, JD_TAG_STR };
+        }
         if (av.tag == JD_TAG_BOOL) {
             auto& fn = runtime_funcs["__str_bool"];
             LLVMValueRef args[] = { av.val };
@@ -8654,6 +8706,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (fn_or_var == "CVDATE" || fn_or_var == "CDATE" || fn_or_var == "DATEADD" || fn_or_var == "NOW")
                 return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), JD_TAG_STR };
         }
+        // TYPEOF inspects the value rather than consuming it, so an outer leaf
+        // hint must not reach the argument: with one in force a MAP read takes
+        // a typed fast path and reports that type instead of the cell's own.
+        ScopedLeafTag _tof_lt(this, -1);
         TypedValue av = codegen_expr(*expr.args[0]);
         // f64 values may be the NaN sentinel from EXITFUNC - dispatch at runtime.
         if (av.tag == JD_TAG_F64) {

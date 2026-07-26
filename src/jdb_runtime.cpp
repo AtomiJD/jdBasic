@@ -1722,6 +1722,9 @@ char* jdb_map_get_str(JdbMap* m, const char* key) {
         const char* s = (const char*)(intptr_t)u.i;
         return _strdup(s ? s : "");
     }
+    // A truth value reads back as TRUE/FALSE, matching how it prints.
+    if (m->tags[idx] == JD_TAG_BOOL)
+        return _strdup(m->values[idx] != 0.0 ? "TRUE" : "FALSE");
     char buf[64];
     snprintf(buf, sizeof(buf), "%g", m->values[idx]);
     return _strdup(buf);
@@ -3666,6 +3669,7 @@ char* jdb_typeof_tag(int64_t tag) {
         case JdTag::NATIVE_MAP: return _strdup("OBJECT");
         case JdTag::FUNCREF:    return _strdup("FUNCREF");
         case JdTag::VM_HANDLE:  return _strdup("OBJECT");
+        case JdTag::BOOL:       return _strdup("BOOLEAN");
         case JdTag::RUNTIME:
         default:                return _strdup("UNKNOWN");
     }
