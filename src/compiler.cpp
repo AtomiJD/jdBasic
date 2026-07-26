@@ -865,7 +865,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
             if (!init_known) {
                 throw std::runtime_error("Line " + std::to_string(stmt.line) +
                     ": type '" + stmt.label +
-                    "' has no SUB INIT — cannot pass constructor arguments");
+                    "' has no SUB INIT, cannot pass constructor arguments");
             }
             emit_init = true;
         } else if (init_known && type_init_zero_arg.count(init_name)) {
@@ -914,7 +914,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
             throw std::runtime_error("Line " + std::to_string(stmt.line) +
                 ": DIM '" + stmt.var_name + "' shadows function parameter '" +
                 stmt.var_name + "' (BASIC identifiers are case-insensitive). " +
-                "Rename the local — assigning to it would silently overwrite the parameter.");
+                "Rename the local; assigning to it would silently overwrite the parameter.");
         }
         uint16_t slot = resolve_local(stmt.var_name);
         current_chunk().emit(OpCode::STORE_VAR, stmt.line);

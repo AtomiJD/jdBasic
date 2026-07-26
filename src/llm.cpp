@@ -181,7 +181,7 @@ struct RagStore {
     // nur im dense_mode (TF-IDF ist sparse, HNSW braucht dichte Vektoren).
     void build_hnsw(int M = 16, int ef_construction = 200) {
         if (!dense_mode())
-            throw std::runtime_error("HNSW braucht dense embeddings — RAG_CREATE mit embed_llm_id aufrufen");
+            throw std::runtime_error("HNSW needs dense embeddings: call RAG_CREATE with embed_llm_id");
         if (chunks.empty())
             throw std::runtime_error("HNSW: keine Chunks vorhanden");
         if (embed_dim == 0) embed_dim = (int)chunks[0].dense.size();
@@ -949,7 +949,7 @@ static std::string build_rag_prompt(LlmModel* m,
     for (auto& [score, idx] : results) {
         if (score < 0.01) continue;
         n++;
-        context += "[Document " + std::to_string(n) + " — " + chunks[idx].source + "]\n";
+        context += "[Document " + std::to_string(n) + " - " + chunks[idx].source + "]\n";
         context += chunks[idx].text + "\n\n";
     }
 

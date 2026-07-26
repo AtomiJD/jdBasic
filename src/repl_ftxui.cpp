@@ -362,7 +362,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
                     if (li + 1 < lines.size()) new_buf += "\n";
                 }
                 w.program_buffer = new_buf;
-                w.outbox->push("[edit done — " + std::to_string(lines.size()) + " line(s)"
+                w.outbox->push("[edit done, " + std::to_string(lines.size()) + " line(s)"
                                + (wants_run ? ", running...]" : "]") + "\n");
                 if (wants_run) {
                     // F5 in editor → compile + run the buffer (no save).
@@ -613,7 +613,7 @@ int run_repl_ftxui(std::vector<std::unique_ptr<VM>> vms) {
             }
         }
         if (rows.empty()) {
-            rows.push_back(text("(no output yet — try `PRINT 1+1`)") | dim);
+            rows.push_back(text("(no output yet, try `PRINT 1+1`)") | dim);
         }
 
         int last = (int)rows.size() - 1;

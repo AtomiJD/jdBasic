@@ -3720,13 +3720,13 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             };
             std::string hint;
             if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_F64)
-                hint = " — wrap with CINT() to assign explicitly";
+                hint = "; wrap with CINT() to assign explicitly";
             else if (vi->tag == JD_TAG_F64 && rhs.tag == JD_TAG_I64)
-                hint = " — wrap with CDBL() to assign explicitly";
+                hint = "; wrap with CDBL() to assign explicitly";
             else if (rhs.tag == JD_TAG_STR)
-                hint = " — wrap with VAL() to parse the string";
+                hint = "; wrap with VAL() to parse the string";
             else if (vi->tag == JD_TAG_STR)
-                hint = " — wrap with STR$() to stringify";
+                hint = "; wrap with STR$() to stringify";
             report_error(stmt.source_file, stmt.line,
                 "STRICT: cannot assign " + std::string(tag_name(rhs.tag)) +
                 " to " + std::string(tag_name(vi->tag)) + " '" +
@@ -3943,7 +3943,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (kBuiltinConsts.count(cup)) {
             report_error(stmt.source_file, stmt.line,
                 "Cannot DIM built-in constant '" + stmt.var_name +
-                "' — choose another name");
+                "', choose another name");
         }
     }
 
@@ -3957,7 +3957,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         (stmt.label.empty() || stmt.label == "__EXPORT__")) {
         report_error(stmt.source_file, stmt.line,
             "STRICT: untyped DIM '" + stmt.var_name +
-            "' has no type and no initializer — add `AS <type>` or initialise it");
+            "' has no type and no initializer; add `AS <type>` or initialise it");
     }
 
     // Phase 4 STRICT: DIM with declared type + initializer must match.
@@ -4156,7 +4156,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             } else if (!stmt.ctor_args.empty()) {
                 report_error(stmt.source_file, stmt.line,
                     "Type '" + stmt.label +
-                    "' has no SUB INIT — cannot pass constructor arguments");
+                    "' has no SUB INIT, cannot pass constructor arguments");
             }
             VarInfo* vi = lookup_var(stmt.var_name);
             if (vi) {
@@ -4370,7 +4370,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 if (init_it == user_functions.end()) {
                     report_error(stmt.source_file, stmt.line,
                         "Type '" + type_name +
-                        "' has no SUB INIT — cannot pass constructor argument vectors");
+                        "' has no SUB INIT, cannot pass constructor argument vectors");
                     break;
                 }
                 TypedValue v = codegen_expr(*stmt.expr->args[k]);
@@ -7708,7 +7708,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         if (!udt_name.empty()) {
             report_error(m_current_stmt_file, expr.line,
                 "JSON.STRINGIFY$ does not support a UDT instance (type '" + udt_name +
-                "') under -c — pass a MAP/ARRAY, or build the JSON from its fields");
+                "') under -c: pass a MAP/ARRAY, or build the JSON from its fields");
         }
     }
 
@@ -10297,7 +10297,7 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     std::string link_exe = msvc + "\\bin\\Hostx64\\x64\\link.exe";
     if (!std::filesystem::exists(link_exe)) {
         error_msg = "MSVC link.exe not found at " + link_exe +
-                    ". Discovered MSVC dir may be incomplete — reinstall VS "
+                    ". Discovered MSVC dir may be incomplete, reinstall VS "
                     "C++ tools. Discovery trace:\n" + discovery_log;
         return false;
     }
@@ -10501,7 +10501,7 @@ std::string LLVMCodegen::generate_version_resource(const std::string& source_pat
     std::remove(rc_path.c_str());
     if (ret != 0 || !std::filesystem::exists(res_path)) {
         std::cerr << "Warning: rc.exe failed for " << props_path
-                  << " (exit " << ret << ") — linking without version info." << std::endl;
+                  << " (exit " << ret << "), linking without version info." << std::endl;
         return "";
     }
     return res_path;

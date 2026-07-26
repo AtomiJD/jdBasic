@@ -7309,7 +7309,7 @@ void VM::register_builtins() {
         }
         if (!ctor_vecs.empty() && !has_init) {
             throw std::runtime_error("Type '" + type_name +
-                "' has no SUB INIT — cannot pass constructor argument vectors");
+                "' has no SUB INIT, cannot pass constructor argument vectors");
         }
         // First build a zeros-array of the right shape, then walk it and
         // replace every leaf scalar with a fresh constructor result.

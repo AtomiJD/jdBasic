@@ -632,7 +632,7 @@ void pop_and_attach(jdb_tui::LayoutFrame::Kind expected, VM& vm, const char* who
         return;
     }
     if (s.layout_stack.back().kind != expected) {
-        vm.emit(std::string("[TUI] ") + who + " — layout stack mismatch\n");
+        vm.emit(std::string("[TUI] ") + who + ": layout stack mismatch\n");
     }
     auto frame = std::move(s.layout_stack.back());
     s.layout_stack.pop_back();
@@ -741,7 +741,7 @@ void register_tui_natives(VM& vm) {
     vm.register_native("TUI.BEGIN", 0, 1, [&vm](V args) -> Value {
         auto& s = jdb_tui::state();
         if (s.in_frame) {
-            vm.emit("[TUI] TUI.BEGIN already active — missing TUI.END?\n");
+            vm.emit("[TUI] TUI.BEGIN already active, missing TUI.END?\n");
             return Value::make_none();
         }
         s.in_frame = true;
@@ -768,7 +768,7 @@ void register_tui_natives(VM& vm) {
             return Value::make_none();
         }
         if (s.layout_stack.size() > 1) {
-            vm.emit("[TUI] TUI.END — " + std::to_string(s.layout_stack.size() - 1)
+            vm.emit("[TUI] TUI.END: " + std::to_string(s.layout_stack.size() - 1)
                     + " layout frame(s) left open; auto-closing\n");
             while (s.layout_stack.size() > 1) {
                 auto frame = std::move(s.layout_stack.back());
@@ -789,7 +789,7 @@ void register_tui_natives(VM& vm) {
             // Refuse politely instead of fighting the REPL for the terminal.
             static bool warned = false;
             if (!warned) {
-                vm.emit("[TUI] TUI.RENDER not yet supported from inside the FTXUI REPL — run the script standalone.\n");
+                vm.emit("[TUI] TUI.RENDER not yet supported from inside the FTXUI REPL, run the script standalone.\n");
                 warned = true;
             }
             return Value::make_none();
@@ -1281,7 +1281,7 @@ void register_tui_natives(VM& vm) {
     vm.register_native("TUI.CANVAS_BEGIN", 2, 2, [&vm](V args) -> Value {
         auto& s = jdb_tui::state();
         if (s.canvas.active) {
-            vm.emit("[TUI] TUI.CANVAS_BEGIN already active — missing CANVAS_END?\n");
+            vm.emit("[TUI] TUI.CANVAS_BEGIN already active, missing CANVAS_END?\n");
             return Value::make_none();
         }
         s.canvas.active = true;
@@ -1347,7 +1347,7 @@ void register_tui_natives(VM& vm) {
     vm.register_native("TUI.TABLE_BEGIN", 1, 1, [&vm](V args) -> Value {
         auto& s = jdb_tui::state();
         if (s.table.active) {
-            vm.emit("[TUI] TUI.TABLE_BEGIN already active — missing TABLE_END?\n");
+            vm.emit("[TUI] TUI.TABLE_BEGIN already active, missing TABLE_END?\n");
             return Value::make_none();
         }
         s.table.active = true;

@@ -374,7 +374,7 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
         std::lock_guard<std::mutex> lk(g_worker.m);
         if (worker_busy_or_queued_locked()) {
             return make_text_result(
-                "VM busy — call jdb_stop first (or wait for the script to STOP "
+                "VM busy, call jdb_stop first (or wait for the script to STOP "
                 "on its own).", true);
         }
     }
@@ -408,7 +408,7 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
                     promise->set_value(make_text2_result(cap.buf,
                         "Result error: JSON payload is " + std::to_string(json.size()) +
                         " chars (cap " + std::to_string(JSON_CAP) +
-                        ") — narrow the expression (TAKE / SLICE / aggregate).", true));
+                        "), narrow the expression (TAKE / SLICE / aggregate).", true));
                     return;
                 }
                 promise->set_value(make_text2_result(cap.buf, json, false));
@@ -435,13 +435,13 @@ Value tool_jdb_eval(VM& vm, const Value& args) {
         (void)fut.get();  // discard the parked chunk's output
         return make_text_result(
             "Error: eval exceeded timeout_ms=" + std::to_string(timeout_ms) +
-            " — the chunk was stopped (resumable via jdb_resume, or simply continue "
+            ": the chunk was stopped (resumable via jdb_resume, or simply continue "
             "with new evals). State changes before the stop persist.", true);
     }
     return make_text_result(
         "Error: eval exceeded timeout_ms=" + std::to_string(timeout_ms) +
         " and the VM did not acknowledge the stop within 5s (blocked in a native "
-        "call?). The worker is still busy — poll jdb_status before further calls.", true);
+        "call?). The worker is still busy, poll jdb_status before further calls.", true);
 }
 
 Value tool_jdb_check(VM& vm, const Value& args) {
@@ -469,7 +469,7 @@ Value tool_jdb_recompile(VM& vm, const Value& args) {
         std::lock_guard<std::mutex> lk(g_worker.m);
         if (worker_busy_or_queued_locked()) {
             return make_text_result(
-                "VM busy — call jdb_stop first, then recompile while STOPped.",
+                "VM busy, call jdb_stop first, then recompile while STOPped.",
                 true);
         }
     }
@@ -477,7 +477,7 @@ Value tool_jdb_recompile(VM& vm, const Value& args) {
     if (path.empty()) {
         if (g_last_loaded_path.empty()) {
             return make_text_result(
-                "No path given and no previous jdb_load — pass path=<file>.",
+                "No path given and no previous jdb_load, pass path=<file>.",
                 true);
         }
         path = g_last_loaded_path;
@@ -493,7 +493,7 @@ Value tool_jdb_recompile(VM& vm, const Value& args) {
         try {
             std::string summary = recompile_on_vm(v, source);
             promise->set_value(make_text_result(
-                "[recompiled " + path + " — " + summary + "]", false));
+                "[recompiled " + path + ": " + summary + "]", false));
         } catch (const std::exception& e) {
             promise->set_value(make_text_result(
                 "Recompile error in " + path + ": " + e.what(), true));
@@ -507,9 +507,9 @@ Value tool_jdb_status(VM& vm, const Value&) {
     if (g_worker.busy.load()) {
         s = "running (worker executing a job)";
     } else if (vm.is_paused()) {
-        s = "stopped — call jdb_resume to continue, or jdb_eval to inspect/mutate";
+        s = "stopped, call jdb_resume to continue, or jdb_eval to inspect/mutate";
     } else {
-        s = "idle — ready for jdb_load / jdb_eval";
+        s = "idle, ready for jdb_load / jdb_eval";
     }
     return make_text_result(s, false);
 }
@@ -522,7 +522,7 @@ Value tool_jdb_resume(VM& vm, const Value& /*args*/) {
         }
         if (!vm.is_paused()) {
             return make_text_result(
-                "Nothing to resume — VM is not in a STOPped state.", false);
+                "Nothing to resume, VM is not in a STOPped state.", false);
         }
     }
     post_job([](VM& v) {
@@ -541,7 +541,7 @@ Value tool_jdb_resume(VM& vm, const Value& /*args*/) {
         v.on_output = prev;
     });
     return make_text_result(
-        "[resumed in worker — script runs until next STOP or running=0]",
+        "[resumed in worker, script runs until next STOP or running=0]",
         false);
 }
 
@@ -550,7 +550,7 @@ Value tool_jdb_load(VM& vm, const Value& args) {
         std::lock_guard<std::mutex> lk(g_worker.m);
         if (worker_busy_or_queued_locked()) {
             return make_text_result(
-                "VM busy — call jdb_stop first.", true);
+                "VM busy, call jdb_stop first.", true);
         }
         if (vm.is_paused()) {
             return make_text_result(
@@ -568,7 +568,7 @@ Value tool_jdb_load(VM& vm, const Value& args) {
     std::stringstream ss; ss << in.rdbuf();
     std::string source = ss.str();
     std::string banner = "[load posted: " + path + ", "
-        + std::to_string(source.size()) + " bytes — script runs until first "
+        + std::to_string(source.size()) + " bytes, script runs until first "
         "STOP or running=0]";
     g_last_loaded_path = path;  // jdb_recompile defaults to this
     // Set g_base_dir to the loaded script's directory so IMPORT resolves
@@ -645,7 +645,7 @@ std::string array_shape_str(const Value& v) {
 Value tool_jdb_vars(VM& vm, const Value& args) {
     std::lock_guard<std::mutex> lk(g_worker.m);
     if (worker_busy_or_queued_locked()) {
-        return make_text_result("VM busy — call jdb_stop first.", true);
+        return make_text_result("VM busy, call jdb_stop first.", true);
     }
     // Per-variable value preview cap; 0 = no cap (full dump). Clients may
     // send the parameter as a JSON number or as a string.
@@ -692,7 +692,7 @@ Value tool_jdb_vars(VM& vm, const Value& args) {
 Value tool_jdb_funcs(VM& vm, const Value&) {
     std::lock_guard<std::mutex> lk(g_worker.m);
     if (worker_busy_or_queued_locked()) {
-        return make_text_result("VM busy — call jdb_stop first.", true);
+        return make_text_result("VM busy, call jdb_stop first.", true);
     }
     const auto& funcs = vm.get_funcs();
     std::vector<std::string> kept;
@@ -794,8 +794,8 @@ Value tool_jdb_doc(VM&, const Value& args) {
     std::string tried_exe, tried_cwd;
     if (!open_doc_languages(in, tried_exe, tried_cwd)) {
         std::string msg = "Cannot read doc/languages.md";
-        if (!tried_exe.empty()) msg += " — tried '" + tried_exe + "'";
-        if (!tried_cwd.empty()) msg += (tried_exe.empty() ? " — tried '" : " and '") + tried_cwd + "'";
+        if (!tried_exe.empty()) msg += ", tried '" + tried_exe + "'";
+        if (!tried_cwd.empty()) msg += (tried_exe.empty() ? ", tried '" : " and '") + tried_cwd + "'";
         return make_text_result(msg, true);
     }
     std::stringstream ss; ss << in.rdbuf();
@@ -856,7 +856,7 @@ Value tool_jdb_savews(VM& vm, const Value& args) {
     if (name.empty()) return make_text_result("name is empty", true);
     std::lock_guard<std::mutex> lk(g_worker.m);
     if (worker_busy_or_queued_locked()) {
-        return make_text_result("VM busy — call jdb_stop first.", true);
+        return make_text_result("VM busy, call jdb_stop first.", true);
     }
     OutputCapture cap(vm);
     try {
@@ -882,14 +882,14 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
     if (name.empty()) return make_text_result("name is empty", true);
     std::lock_guard<std::mutex> lk(g_worker.m);
     if (worker_busy_or_queued_locked()) {
-        return make_text_result("VM busy — call jdb_stop first.", true);
+        return make_text_result("VM busy, call jdb_stop first.", true);
     }
     // load_workspace returns silently when the file is missing - without
     // this check the tool would report success on a no-op load.
     if (!std::filesystem::exists(name + ".jsws") &&
         !std::filesystem::exists(name + ".jdws")) {
         return make_text_result("Error: workspace '" + name +
-            ".jsws' not found in the server's working directory — VM state unchanged.", true);
+            ".jsws' not found in the server's working directory, VM state unchanged.", true);
     }
     OutputCapture cap(vm);
     try {
@@ -913,7 +913,7 @@ Value tool_jdb_loadws(VM& vm, const Value& args) {
 Value tool_jdb_reset(VM& vm, const Value&) {
     std::lock_guard<std::mutex> lk(g_worker.m);
     if (worker_busy_or_queued_locked()) {
-        return make_text_result("VM busy — call jdb_stop first.", true);
+        return make_text_result("VM busy, call jdb_stop first.", true);
     }
     g_session_buffer.clear();
     vm.reset();
@@ -921,7 +921,7 @@ Value tool_jdb_reset(VM& vm, const Value&) {
     gfx_shutdown();
 #endif
     return make_text_result(
-        "VM reset — source, variables and functions cleared. Workspace files "
+        "VM reset: source, variables and functions cleared. Workspace files "
         "on disk are untouched; jdb_loadws restores one.", false);
 }
 
@@ -972,7 +972,7 @@ Value tool_jdb_run_native(VM&, const Value& args) {
     if (!done) {
         reader.detach();
         return make_text_result("Error: command exceeded timeout_ms=" +
-            std::to_string(timeout_ms) + " — output reader detached; the process "
+            std::to_string(timeout_ms) + ", output reader detached; the process "
             "may still be running: " + cmd, true);
     }
     reader.join();
@@ -1153,9 +1153,9 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_eval",
-        "Execute jdBasic statements on the persistent VM and return any captured stdout. Variables defined here persist between calls. With the optional 'result' expression, the response carries a second text block of pure JSON — use that for machine-readable values instead of parsing PRINT output.",
+        "Execute jdBasic statements on the persistent VM and return any captured stdout. Variables defined here persist between calls. With the optional 'result' expression, the response carries a second text block of pure JSON, use that for machine-readable values instead of parsing PRINT output.",
         build_input_schema({{"code", "jdBasic source to EXECUTE. Use PRINT to surface values."},
-                            {"result", "Optional expression evaluated AFTER the code chunk; its value is appended as a pure-JSON text block (capped at 100000 chars — narrow with TAKE/SLICE if exceeded)."},
+                            {"result", "Optional expression evaluated AFTER the code chunk; its value is appended as a pure-JSON text block (capped at 100000 chars, narrow with TAKE/SLICE if exceeded)."},
                             {"timeout_ms", "Watchdog in milliseconds (default 30000; 0 = no timeout). On timeout the chunk is stopped via the external-STOP path; state changes before the stop persist."}}, {"code"})));
 
     a.push_back(tool_descriptor(
@@ -1180,12 +1180,12 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_status",
-        "Report the VM's current state: 'running' (worker executing a script — most tools are busy-rejected, call jdb_stop first), 'stopped' (paused at a STOP — eval/resume work), or 'idle' (no script running, ready for jdb_load).",
+        "Report the VM's current state: 'running' (worker executing a script, most tools are busy-rejected, call jdb_stop first), 'stopped' (paused at a STOP, eval/resume work), or 'idle' (no script running, ready for jdb_load).",
         build_input_schema({}, {})));
 
     a.push_back(tool_descriptor(
         "jdb_recompile",
-        "Re-read a .jdb file from disk, parse + compile it, and merge its FUNC/SUB definitions into the live VM. Used for live-coding while a script is STOPped: after editing the file, call jdb_recompile, then jdb_resume to continue with the updated code. Same-name FUNC/SUB overwrites; new ones append. The main-chunk's top-level statements are NOT re-applied to the running script (the stopped frames hold the OLD main chunk) — keep iterable logic inside SUBs/FUNCs. If `path` is omitted, defaults to the most recent jdb_load path.",
+        "Re-read a .jdb file from disk, parse + compile it, and merge its FUNC/SUB definitions into the live VM. Used for live-coding while a script is STOPped: after editing the file, call jdb_recompile, then jdb_resume to continue with the updated code. Same-name FUNC/SUB overwrites; new ones append. The main-chunk's top-level statements are NOT re-applied to the running script (the stopped frames hold the OLD main chunk), keep iterable logic inside SUBs/FUNCs. If `path` is omitted, defaults to the most recent jdb_load path.",
         build_input_schema({{"path", "Optional .jdb file path. Defaults to the last jdb_load path."}}, {})));
 
     a.push_back(tool_descriptor(
@@ -1205,23 +1205,23 @@ Value build_tools() {
 
     a.push_back(tool_descriptor(
         "jdb_run_native",
-        "Run a command in a child process and capture combined stdout+stderr plus the exit code. Times out after timeout_ms (default 120000) — on timeout the call returns an error but the process may keep running.",
+        "Run a command in a child process and capture combined stdout+stderr plus the exit code. Times out after timeout_ms (default 120000); on timeout the call returns an error but the process may keep running.",
         build_input_schema({{"command", "Shell command line to execute."},
                             {"timeout_ms", "Max wait in milliseconds (default 120000; 0 = wait forever)."}}, {"command"})));
 
     a.push_back(tool_descriptor(
         "jdb_savews",
-        "Persist user-set globals (filtered to skip VM-builtin constants and empty values) plus FUNC/SUB definitions to '<name>.jsws' in the server's working directory. JSON format with shape-preserving array wrapping. Mirrors the REPL's SAVEWS. Useful for project-scoped DSL toolkits — call once per stable milestone, then restore with jdb_loadws at the start of the next session.",
+        "Persist user-set globals (filtered to skip VM-builtin constants and empty values) plus FUNC/SUB definitions to '<name>.jsws' in the server's working directory. JSON format with shape-preserving array wrapping. Mirrors the REPL's SAVEWS. Useful for project-scoped DSL toolkits: call once per stable milestone, then restore with jdb_loadws at the start of the next session.",
         build_input_schema({{"name", "Workspace name (file '<name>.jsws' is created)."}}, {"name"})));
 
     a.push_back(tool_descriptor(
         "jdb_loadws",
-        "Reset the VM and restore variables + functions from '<name>.jsws'. Falls back to legacy '<name>.jdws' if no .jsws exists; errors if neither file exists (VM state stays untouched). Replaces the current state — anything defined this session is lost unless you saved it first. Mirrors the REPL's LOADWS command.",
+        "Reset the VM and restore variables + functions from '<name>.jsws'. Falls back to legacy '<name>.jdws' if no .jsws exists; errors if neither file exists (VM state stays untouched). Replaces the current state, anything defined this session is lost unless you saved it first. Mirrors the REPL's LOADWS command.",
         build_input_schema({{"name", "Workspace name (file '<name>.jsws' is read; .jdws as fallback)."}}, {"name"})));
 
     a.push_back(tool_descriptor(
         "jdb_reset",
-        "Reset the persistent VM to a clean slate: session source, variables and functions are cleared (the MCP equivalent of the REPL's CLEARWS). Workspace files on disk are untouched — jdb_loadws restores one afterwards.",
+        "Reset the persistent VM to a clean slate: session source, variables and functions are cleared (the MCP equivalent of the REPL's CLEARWS). Workspace files on disk are untouched, jdb_loadws restores one afterwards.",
         build_input_schema({}, {})));
 
     a.push_back(tool_descriptor(

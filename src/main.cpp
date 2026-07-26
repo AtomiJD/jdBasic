@@ -1693,13 +1693,13 @@ int main(int argc, char* argv[]) {
               "  jdbasic -c my_script.jdb               # → my_script.exe + jdbrt.dll runtime\n"
               "  jdbasic -c -o build/app.exe app.jdb    # named output\n"
               "  jdbasic --lint module.jdb              # CI-friendly syntax check\n"
-              "  jdbasic --ftxui                        # FTXUI REPL — opt-in\n"
+              "  jdbasic --ftxui                        # FTXUI REPL, opt-in\n"
               "  jdbasic -d 5678 my_script.jdb          # wait for DAP attach on :5678\n"
               "\n"
               "NOTES\n"
               "  -c copies the runtime DLL closure (jdbrt.dll + SDL3*/openssl) next to the\n"
               "  produced .exe, so it runs from any directory. LLM features (llama/ggml/cuda)\n"
-              "  load on demand — keep build/ on PATH or copy those DLLs for AI .exes.\n"
+              "  load on demand: keep build/ on PATH or copy those DLLs for AI .exes.\n"
               "  Everything after the script filename is passed through to the script via OS.ARGS.\n"
               "  Run without arguments to drop into the interactive workspace (see HELP inside).\n";
             return 0;
@@ -1928,7 +1928,7 @@ int main(int argc, char* argv[]) {
         } catch (...) {
             std::cerr << "Codegen error: unknown exception "
                          "(likely an LLVM-C.dll load failure or VC++ "
-                         "runtime mismatch — check that vcruntime140.dll, "
+                         "runtime mismatch, check that vcruntime140.dll, "
                          "msvcp140.dll, and LLVM-C.dll are next to "
                          "jdBasic.exe)." << std::endl;
             return 1;
