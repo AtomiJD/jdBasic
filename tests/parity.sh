@@ -11,9 +11,15 @@
 # excluded file is counted in the summary rather than silently dropped.
 #
 #   parity.sh [-t SECONDS] [-j JOBS] [-o OUTFILE] [--all] [pattern]
+#              [--update-baseline]
 #
 #   --all   include the excluded directories too (needs models, network, a TTY
 #           and a TUI-enabled build; expect reds that say nothing about parity)
+#
+# The run is compared per test against tests/parity_baseline.tsv and exits 1
+# if any test got worse. A summary count cannot do that: one test regressing
+# while another is fixed leaves the totals unchanged. Re-record the baseline
+# with --update-baseline once a change is understood and intended.
 #
 # Result columns: TEST | INTERP | NATIVE | VERDICT
 #   INTERP/NATIVE: PASS (assert marker) OK (exit 0) FAIL FAIL:<code> TIMEOUT CFAIL
@@ -30,6 +36,7 @@ JOBS=1
 OUT=""
 PATTERN=""
 ALL=0
+UPDATE_BASELINE=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -37,6 +44,7 @@ while [ $# -gt 0 ]; do
         -j) JOBS="$2"; shift 2 ;;
         -o) OUT="$2"; shift 2 ;;
         --all) ALL=1; shift ;;
+        --update-baseline) UPDATE_BASELINE=1; shift ;;
         *)  PATTERN="$1"; shift ;;
     esac
 done
@@ -182,4 +190,39 @@ echo "note: a loose test rejected by the STRICT native compiler is expected -"
 echo "      the interpreter is deliberately loose. Look for runtime divergence."
 awk -F'\t' '$4=="GAP" {printf "%-52s interp=%-6s native=%s\n", $1, $2, $3}' "$RESULTS"
 echo
+
+# Compare against the recorded baseline. A summary count alone hides the case
+# where one test regresses while another is fixed, so compare per test.
+BASELINE="$REPO/tests/parity_baseline.tsv"
+rank() { case "$1" in OK) echo 0 ;; XFAIL) echo 0 ;; NATIVE_ONLY) echo 1 ;; GAP) echo 2 ;; BOTH_RED) echo 3 ;; *) echo 3 ;; esac; }
+
+if [ "$UPDATE_BASELINE" -eq 1 ]; then
+    cp "$RESULTS" "$BASELINE"
+    echo "baseline updated: $BASELINE"
+elif [ -f "$BASELINE" ] && [ -z "$PATTERN" ] && [ "$ALL" -eq 0 ]; then
+    echo "=== VS BASELINE ==="
+    worse=0; better=0; gone=0; added=0
+    while IFS=$'\t' read -r rel istat nstat verdict; do
+        [ -n "$rel" ] || continue
+        old=$(awk -F'\t' -v r="$rel" '$1==r {print $4}' "$BASELINE")
+        if [ -z "$old" ]; then
+            added=$((added+1))
+            [ "$verdict" != "OK" ] && [ "$verdict" != "XFAIL" ] && \
+                printf '  NEW+RED   %-46s %s\n' "$rel" "$verdict"
+        elif [ "$(rank "$verdict")" -gt "$(rank "$old")" ]; then
+            worse=$((worse+1)); printf '  REGRESSED %-46s %s -> %s\n' "$rel" "$old" "$verdict"
+        elif [ "$(rank "$verdict")" -lt "$(rank "$old")" ]; then
+            better=$((better+1)); printf '  FIXED     %-46s %s -> %s\n' "$rel" "$old" "$verdict"
+        fi
+    done < "$RESULTS"
+    gone=$(comm -23 <(cut -f1 "$BASELINE" | sort) <(cut -f1 "$RESULTS" | sort) | grep -c . || true)
+    printf '  regressed %d, fixed %d, new %d, removed %d\n' "$worse" "$better" "$added" "$gone"
+    [ "$worse" -eq 0 ] && echo "  no regression against the baseline"
+else
+    echo "=== VS BASELINE ==="
+    echo "  skipped (no baseline, or a pattern/--all narrowed the run)"
+fi
+echo
 echo "results: $RESULTS"
+[ "${worse:-0}" -gt 0 ] && exit 1
+exit 0
