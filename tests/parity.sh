@@ -69,7 +69,7 @@ green() { case "$1" in PASS|OK) return 0 ;; *) return 1 ;; esac; }
 run_one() {
     local rel="$1"
     local id="${rel//\//_}"; id="${id%.jdb}"
-    local dir="$REPO/$(dirname "$rel")"
+
     local abs="$REPO/$rel"
     local ilog="$WORK/log/$id.interp.txt"
     local clog="$WORK/log/$id.compile.txt"
@@ -79,7 +79,10 @@ run_one() {
     # declaration is itself a command and would overwrite $? before it is read.
     local istat nstat verdict irc crc nrc
 
-    ( cd "$dir" && timeout -k 2 "$TIMEOUT" "$JDB" "$abs" ) >"$ilog" 2>&1 </dev/null
+    # Run from the repo root, the way the gate does - tests reference their
+    # fixtures repo-relative ("tests/foo.json"), so a per-test cwd breaks
+    # working tests and makes them look like parity failures.
+    ( cd "$REPO" && timeout -k 2 "$TIMEOUT" "$JDB" "$rel" ) >"$ilog" 2>&1 </dev/null
     irc=$?
     istat=$(classify "$irc" "$ilog")
 
@@ -89,7 +92,7 @@ run_one() {
         nstat="CFAIL"
         : >"$nlog"
     else
-        ( cd "$dir" && timeout -k 2 "$TIMEOUT" "$WORK/exe/$id.exe" ) >"$nlog" 2>&1 </dev/null
+        ( cd "$REPO" && timeout -k 2 "$TIMEOUT" "$WORK/exe/$id.exe" ) >"$nlog" 2>&1 </dev/null
         nrc=$?
         nstat=$(classify "$nrc" "$nlog")
     fi
@@ -115,7 +118,9 @@ export -f run_one classify green
 export REPO JDB WORK TIMEOUT
 
 cd "$REPO" || exit 1
-FOUND=$(git ls-files -- tests | grep '\.jdb$')
+# tests/_scratch holds retired files that run in neither backend (see the
+# README there). They are kept for reference, never swept.
+FOUND=$(git ls-files -- tests | grep '\.jdb$' | grep -v '^tests/_scratch/')
 
 # A module exists to be IMPORTed. Running one standalone proves nothing about
 # either backend, so drop those before anything else.
