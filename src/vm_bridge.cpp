@@ -18,6 +18,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <memory>
 
 // MSVC's _strdup is POSIX strdup with an underscore prefix. Map them so
 // the call sites stay portable.
@@ -194,9 +195,53 @@ static std::vector<Value> args_to_values(const double* args, int nargs) {
 
 extern "C" {
 
+// A compiled program calls jdrt_init() once and stores the handle in a
+// module global, so every ASYNC task would reach the bridge through the
+// same JdRTImpl - one VM, one value_store and a non-atomic next_handle
+// touched from several OS threads at once. The interpreter avoids this by
+// giving each async task its own VM; do the same here.
+//
+// The bridge VM carries builtins only (no user functions, no globals), so
+// a per-thread instance is equivalent, and handles never have to cross a
+// thread boundary: whichever thread stores a Value is the one that reads
+// it back. Serialising the bridge instead would deadlock - AWAIT and the
+// CHAN.* natives block inside a bridge call while waiting on another task.
+static JdRTImpl* g_primary_rt = nullptr;
+static std::thread::id g_primary_thread;
+
+// Deliberately leaked: a thread_local with a non-trivial destructor is torn
+// down inside DLL unload, where the VM's own statics may already be gone.
+// A worker's bridge state lives as long as its thread and the process ends
+// shortly after, so the leak is bounded by the number of ASYNC tasks.
+static JdRTImpl* thread_rt() {
+    static thread_local JdRTImpl* tls = nullptr;
+    if (!tls) {
+        tls = new JdRTImpl();
+        setup_all_builtins(tls->vm);
+        // Events raised on a worker still reach the program's handlers.
+        if (g_primary_rt && g_primary_rt->user_event_dispatch)
+            tls->vm.user_event_dispatch = g_primary_rt->vm.user_event_dispatch;
+    }
+    return tls;
+}
+
+// Entry points take the handle the compiled code holds; on the thread that
+// created it that IS the right state, on any other thread it is shared
+// mutable state and gets replaced by the caller's own.
+static inline JdRTImpl* resolve_rt(JdRT handle) {
+    auto* rt = (JdRTImpl*)handle;
+    if (rt == g_primary_rt && std::this_thread::get_id() != g_primary_thread)
+        return thread_rt();
+    return rt;
+}
+
 JDRT_API JdRT jdrt_init(void) {
     auto* rt = new JdRTImpl();
     setup_all_builtins(rt->vm);
+    if (!g_primary_rt) {
+        g_primary_rt = rt;
+        g_primary_thread = std::this_thread::get_id();
+    }
     return (JdRT)rt;
 }
 
@@ -206,7 +251,7 @@ JDRT_API void jdrt_shutdown(JdRT handle) {
 
 JDRT_API double jdrt_call_f64(JdRT handle, const char* name,
                                const double* args, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = args_to_values(args, nargs);
         Value result = rt->vm.call_function(name, vargs);
@@ -220,7 +265,7 @@ JDRT_API double jdrt_call_f64(JdRT handle, const char* name,
 
 JDRT_API char* jdrt_call_str(JdRT handle, const char* name,
                               const double* args, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = args_to_values(args, nargs);
         Value result = rt->vm.call_function(name, vargs);
@@ -234,7 +279,7 @@ JDRT_API char* jdrt_call_str(JdRT handle, const char* name,
 
 JDRT_API void* jdrt_call_arr(JdRT handle, const char* name,
                               const double* args, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = args_to_values(args, nargs);
         Value result = rt->vm.call_function(name, vargs);
@@ -251,7 +296,7 @@ JDRT_API void* jdrt_call_arr(JdRT handle, const char* name,
 
 JDRT_API void jdrt_call_void(JdRT handle, const char* name,
                               const double* args, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = args_to_values(args, nargs);
         rt->vm.call_function(name, vargs);
@@ -430,7 +475,7 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
 
 JDRT_API double jdrt_call_typed_f64(JdRT handle, const char* name,
                                      const int64_t* args, const int32_t* tags, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
@@ -476,7 +521,7 @@ JDRT_API void jdrt_register_binary(const char* s, int64_t n) {
 
 JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
                                     const int64_t* args, const int32_t* tags, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
@@ -502,7 +547,7 @@ JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
 
 JDRT_API void jdrt_call_typed_void(JdRT handle, const char* name,
                                     const int64_t* args, const int32_t* tags, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         rt->vm.call_function(name, vargs);
@@ -515,7 +560,7 @@ JDRT_API void jdrt_call_typed_void(JdRT handle, const char* name,
 
 JDRT_API int64_t jdrt_call_typed_obj(JdRT handle, const char* name,
                                      const int64_t* args, const int32_t* tags, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
@@ -528,7 +573,7 @@ JDRT_API int64_t jdrt_call_typed_obj(JdRT handle, const char* name,
 }
 
 JDRT_API void jdrt_release_value(JdRT handle, int64_t val_handle) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     rt->value_store.erase(val_handle);
 }
 
@@ -536,12 +581,12 @@ JDRT_API void jdrt_release_value(JdRT handle, int64_t val_handle) {
 // and end is a frame-local temporary and gets swept at end so
 // value_store doesn't grow unbounded across frames.
 JDRT_API int64_t jdrt_frame_begin(JdRT handle) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     return rt->next_handle;
 }
 
 JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     for (auto it = rt->value_store.begin(); it != rt->value_store.end(); ) {
         // Negative keys are persistent (promoted via jdrt_promote_handle)
         // and must survive the per-iteration sweep — they're held by
@@ -558,7 +603,7 @@ JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
 // next jdrt_frame_end will sweep it. Idempotent on already-persistent
 // handles (returns the input key unchanged).
 JDRT_API int64_t jdrt_promote_handle(JdRT handle, int64_t h) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     if (h <= 0) return h;
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end()) return h;
@@ -577,13 +622,13 @@ static const Value* obj_field(JdRTImpl* rt, int64_t h, const char* key) {
 }
 
 JDRT_API double jdrt_obj_get_f64(JdRT handle, int64_t h, const char* key) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
     return v ? v->to_double() : 0.0;
 }
 
 JDRT_API const char* jdrt_obj_get_str(JdRT handle, int64_t h, const char* key) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
     if (!v) return _strdup("");
     if (v->type == ValueType::STRING) return _strdup(v->as_string()->data.c_str());
@@ -591,7 +636,7 @@ JDRT_API const char* jdrt_obj_get_str(JdRT handle, int64_t h, const char* key) {
 }
 
 JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
     if (!v) return 0;
     // Store every non-missing field — including scalars — so the caller
@@ -602,7 +647,7 @@ JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
 }
 
 JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
         return 0;
@@ -732,7 +777,7 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
 // Box a native JdbMap* into a Value::OBJECT, store it in value_store,
 // return the new handle. Caller retains ownership of the JdbMap.
 JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     Value v = jdbmap_to_value(m_ptr ? (JdbMapFwd*)m_ptr : nullptr);
     return rt->store_value(std::move(v));
 }
@@ -821,13 +866,13 @@ JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
 // exactly; Maps/Arrays fall back to to_double()==0 and to_string()'s
 // formatted dump — callers that care must check the type first.
 JDRT_API double jdrt_val_to_f64(JdRT handle, int64_t h) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     auto it = rt->value_store.find(h);
     return (it != rt->value_store.end()) ? it->second.to_double() : 0.0;
 }
 
 JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end()) return _strdup("");
     if (it->second.type == ValueType::STRING)
@@ -838,7 +883,7 @@ JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
 // Returns a fresh handle for the element so the caller sees the real
 // element type on subsequent ops (needed for arrays of mixed types).
 JDRT_API int64_t jdrt_val_arr_get(JdRT handle, int64_t h, int64_t idx) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return 0;
     auto* arr = it->second.as_array();
@@ -847,7 +892,7 @@ JDRT_API int64_t jdrt_val_arr_get(JdRT handle, int64_t h, int64_t idx) {
 }
 
 JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end()) return 0;
     if (it->second.type == ValueType::ARRAY) return (int64_t)it->second.as_array()->elements.size();
@@ -860,7 +905,7 @@ JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
 // (tag, bits) pair. Used by the tag-7 dispatch path in compiled code.
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, int64_t* out_val) {
     *out_val = 0;
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
     if (!v) return 0;
     union { double d; int64_t i; } u;
@@ -975,7 +1020,7 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
 // Deferred from the obj_get_* block because value_to_jdbarray and the
 // JdbArray layout aren't in scope up there.
 JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
     if (!v) {
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
@@ -988,7 +1033,7 @@ JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
 // Returns a JdbArray* for functions that return arrays (SPLIT, KEYS, etc.)
 JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
                                     const int64_t* args, const int32_t* tags, int nargs) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     try {
         auto vargs = typed_args_to_values(rt, args, tags, nargs);
         Value result = rt->vm.call_function(name, vargs);
@@ -1003,7 +1048,7 @@ JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
 }
 
 JDRT_API const char* jdrt_last_error(JdRT handle) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     return rt->last_error.empty() ? nullptr : rt->last_error.c_str();
 }
 
@@ -1072,7 +1117,7 @@ JDRT_API void jdrt_set_event_dispatcher(JdRT handle, JdrtEventDispatch fn) {
 }
 
 JDRT_API void jdrt_clear_last_error(JdRT handle) {
-    auto* rt = (JdRTImpl*)handle;
+    auto* rt = resolve_rt(handle);
     rt->last_error.clear();
 }
 
