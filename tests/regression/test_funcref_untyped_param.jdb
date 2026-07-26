@@ -1,0 +1,57 @@
+' A FUNC whose parameter carries no type annotation still has to receive a
+' string when it is reached through a function reference. The uniform
+' double(double...) funcref ABI has no type channel, so the parameter type
+' is inferred from the call site - which for a funcref is either the
+' variable it was assigned to or the higher-order call it was handed to.
+'
+' Still open (jdTrakr #155): a funcref passed as a FUNC *parameter*, e.g.
+' `FUNC ap(fn, x) ... fn(x)` called as `ap(h@, "zz")`. That needs
+' interprocedural inference; annotate the parameter as a workaround.
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(got AS STRING, want AS STRING, label AS STRING)
+    IF got = want THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label; " got "; got; " want "; want
+    ENDIF
+ENDSUB
+
+FUNC Echo(s)
+    RETURN s
+ENDFUNC
+
+FUNC Shout(s)
+    RETURN UCASE$(s)
+ENDFUNC
+
+FUNC NotB(s)
+    RETURN s <> "b"
+ENDFUNC
+
+FUNC Twice(n)
+    RETURN n * 2
+ENDFUNC
+
+PRINT "=== through a funcref variable ==="
+LET fecho = Echo@
+Check(fecho("hello"), "hello", "untyped param receives a string")
+LET fshout = Shout@
+Check(fshout("hi"), "HI", "untyped param used as a string")
+
+PRINT "=== through a higher-order call ==="
+Check(JOIN(SELECT(Echo@, ["a", "b"]), ","), "a,b", "SELECT over a string array")
+Check(JOIN(FILTER(NotB@, ["a", "b"]), ","), "a", "FILTER over a string array")
+
+PRINT "=== numeric funcrefs are unaffected ==="
+LET ftw = Twice@
+Check(STR$(ftw(21)), "42", "untyped numeric param")
+Check(JOIN(SELECT(Twice@, [1, 2, 3]), ","), "2,4,6", "SELECT over numbers")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL TESTS PASSED!"

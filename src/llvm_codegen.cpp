@@ -970,9 +970,56 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (auto& stmt : program) if (stmt) scan_idx_assigns(*stmt, top_kinds);
     }
 
+    // `LET fr = h@` then `fr("hello")` is a call to h, but the name at the
+    // call site is the variable. Without the alias the parameter promotion
+    // below never sees that call, h keeps its default f64 param, and the
+    // funcref wrapper hands a punned string pointer to a numeric slot.
+    std::unordered_map<std::string, std::string> funcref_alias;
+    {
+        std::function<void(const Stmt&)> scan_alias = [&](const Stmt& s) {
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                 s.kind == StmtKind::DIM) &&
+                !s.var_name.empty() && s.expr &&
+                s.expr->kind == ExprKind::LITERAL_STRING && s.expr->is_funcref_lit &&
+                decls.count(s.expr->str_val)) {
+                funcref_alias[s.var_name] = s.expr->str_val;
+            }
+            for (auto& b : s.body)         if (b) scan_alias(*b);
+            for (auto& c : s.catch_body)   if (c) scan_alias(*c);
+            for (auto& f : s.finally_body) if (f) scan_alias(*f);
+            for (auto& br : s.branches)
+                for (auto& b : br.body) if (b) scan_alias(*b);
+        };
+        for (auto& stmt : program) if (stmt) scan_alias(*stmt);
+    }
+
     std::function<void(const Expr&)> scan_expr = [&](const Expr& e) {
         if (e.kind == ExprKind::CALL) {
+            // SELECT(f@, ["a","b"]) never mentions f at a call site either.
+            // The element type at the higher-order call is what the callback
+            // will actually receive, so promote its parameter from there.
+            if (e.args.size() >= 2 && e.args[0] && e.args[1] &&
+                e.args[0]->kind == ExprKind::LITERAL_STRING &&
+                e.args[0]->is_funcref_lit) {
+                std::string hof = e.func_name;
+                for (auto& c : hof) c = (char)toupper((unsigned char)c);
+                if (hof == "SELECT" || hof == "FILTER") {
+                    auto tgt = decls.find(e.args[0]->str_val);
+                    const Expr& src = *e.args[1];
+                    bool str_elems = src.kind == ExprKind::ARRAY_LITERAL &&
+                                     !src.args.empty();
+                    for (auto& el : src.args)
+                        if (!el || !is_str_expr(*el)) { str_elems = false; break; }
+                    if (tgt != decls.end() && str_elems && !tgt->second.tags.empty() &&
+                        tgt->second.tags[0] == JD_TAG_F64)
+                        tgt->second.tags[0] = JD_TAG_STR;
+                }
+            }
             auto it = decls.find(e.func_name);
+            if (it == decls.end()) {
+                auto ait = funcref_alias.find(e.func_name);
+                if (ait != funcref_alias.end()) it = decls.find(ait->second);
+            }
             if (it != decls.end()) {
                 for (size_t i = 0; i < e.args.size() && i < it->second.tags.size(); i++) {
                     // Funcref-literal arg (`name@`) → callee receives a
@@ -1213,6 +1260,32 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (decl.return_tag == JD_TAG_F64 && decl.stmt &&
             any_return_returns_string(*decl.stmt))
             decl.return_tag = JD_TAG_STR;
+    }
+    // `FUNC h(s) RETURN s` handed a string-tagged parameter returns a string,
+    // even though the name carries no $ and the body has no literal. Without
+    // this a higher-order caller flags its result array as numeric and the
+    // strings read back as 0.
+    std::function<bool(const Stmt&, const std::string&)> returns_param =
+        [&](const Stmt& s, const std::string& pname) -> bool {
+        if (s.kind == StmtKind::RETURN && s.expr &&
+            s.expr->kind == ExprKind::VARIABLE && s.expr->str_val == pname)
+            return true;
+        for (auto& b : s.body)         if (b && returns_param(*b, pname)) return true;
+        for (auto& c : s.catch_body)   if (c && returns_param(*c, pname)) return true;
+        for (auto& f : s.finally_body) if (f && returns_param(*f, pname)) return true;
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b && returns_param(*b, pname)) return true;
+        return false;
+    };
+    for (auto& [name, decl] : decls) {
+        if (decl.return_tag != JD_TAG_F64 || !decl.stmt) continue;
+        for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
+            if (decl.tags[pi] == JD_TAG_STR &&
+                returns_param(*decl.stmt, decl.stmt->params[pi].name)) {
+                decl.return_tag = JD_TAG_STR;
+                break;
+            }
+        }
     }
 
     // Phase 3b: infer map/array returns. FUNC's returning maps or arrays
