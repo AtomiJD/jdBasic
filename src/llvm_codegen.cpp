@@ -1213,6 +1213,93 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (stmt) scan_stmt(*stmt);
     }
 
+    // A funcref handed to a FUNC is invoked through that FUNC's parameter, so
+    // its target is never named at any call site and the promotion above
+    // cannot reach it. `ap(h@, "zz")` with `FUNC ap(fn, x) ... fn(x)` means h
+    // receives whatever ap's x is, which the pass above already resolved from
+    // the outer call. Follow that one hop.
+    // Call sites that hand a funcref literal to a known FUNC:
+    // (wrapper name, parameter index, target name).
+    struct FRefArg { std::string wrapper; size_t idx; std::string target; };
+    std::vector<FRefArg> handoffs;
+    {
+        std::function<void(const Expr&)> find_handoffs = [&](const Expr& e) {
+            if (e.kind == ExprKind::CALL && decls.count(e.func_name)) {
+                for (size_t i = 0; i < e.args.size(); i++) {
+                    if (!e.args[i]) continue;
+                    if (e.args[i]->kind == ExprKind::LITERAL_STRING &&
+                        e.args[i]->is_funcref_lit &&
+                        decls.count(e.args[i]->str_val))
+                        handoffs.push_back({e.func_name, i, e.args[i]->str_val});
+                }
+            }
+            if (e.left)  find_handoffs(*e.left);
+            if (e.right) find_handoffs(*e.right);
+            for (auto& a : e.args) if (a) find_handoffs(*a);
+        };
+        std::function<void(const Stmt&)> walk_handoffs = [&](const Stmt& s) {
+            if (s.expr)      find_handoffs(*s.expr);
+            if (s.loop_cond) find_handoffs(*s.loop_cond);
+            for (auto& pe : s.print_exprs) if (pe) find_handoffs(*pe);
+            for (auto& b : s.body)         if (b) walk_handoffs(*b);
+            for (auto& c : s.catch_body)   if (c) walk_handoffs(*c);
+            for (auto& f : s.finally_body) if (f) walk_handoffs(*f);
+            for (auto& br : s.branches) {
+                if (br.condition) find_handoffs(*br.condition);
+                for (auto& b : br.body) if (b) walk_handoffs(*b);
+            }
+        };
+        for (auto& stmt : program) if (stmt) walk_handoffs(*stmt);
+
+        // Inside the wrapper, every call through that parameter tells us what
+        // the target actually receives.
+        for (auto& h : handoffs) {
+            auto wit = decls.find(h.wrapper);
+            auto tit = decls.find(h.target);
+            if (wit == decls.end() || tit == decls.end()) continue;
+            const Stmt* wbody = wit->second.stmt;
+            if (!wbody || h.idx >= wbody->params.size()) continue;
+            const std::string fn_param = wbody->params[h.idx].name;
+
+            std::function<void(const Expr&)> find_inner = [&](const Expr& e) {
+                if (e.kind == ExprKind::CALL)
+                if (e.kind == ExprKind::CALL && e.func_name == fn_param) {
+                    for (size_t a = 0; a < e.args.size() &&
+                                       a < tit->second.tags.size(); a++) {
+                        if (!e.args[a]) continue;
+                        int tag = -1;
+                        if (e.args[a]->kind == ExprKind::VARIABLE) {
+                            for (size_t p = 0; p < wbody->params.size() &&
+                                               p < wit->second.tags.size(); p++)
+                                if (wbody->params[p].name == e.args[a]->str_val)
+                                    tag = wit->second.tags[p];
+                        } else if (is_str_expr(*e.args[a])) {
+                            tag = JD_TAG_STR;
+                        }
+                        if (tag > 0 && tit->second.tags[a] == JD_TAG_F64)
+                            tit->second.tags[a] = tag;
+                    }
+                }
+                if (e.left)  find_inner(*e.left);
+                if (e.right) find_inner(*e.right);
+                for (auto& x : e.args) if (x) find_inner(*x);
+            };
+            std::function<void(const Stmt&)> walk_inner = [&](const Stmt& s) {
+                if (s.expr)      find_inner(*s.expr);
+                if (s.loop_cond) find_inner(*s.loop_cond);
+                for (auto& pe : s.print_exprs) if (pe) find_inner(*pe);
+                for (auto& b : s.body)         if (b) walk_inner(*b);
+                for (auto& c : s.catch_body)   if (c) walk_inner(*c);
+                for (auto& f : s.finally_body) if (f) walk_inner(*f);
+                for (auto& br : s.branches) {
+                    if (br.condition) find_inner(*br.condition);
+                    for (auto& b : br.body) if (b) walk_inner(*b);
+                }
+            };
+            for (auto& b : wbody->body) if (b) walk_inner(*b);
+        }
+    }
+
     // Phase 2.5: warn when a mixed-element array literal is passed to a
     // non-DYNAMIC FUNC param.
     std::function<bool(const Expr&)> arg_is_mixed_literal = [&](const Expr& e) -> bool {
@@ -1312,6 +1399,50 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 break;
             }
         }
+    }
+
+    // `FUNC ap(fn, x) RETURN fn(x)` hands back whatever the referenced
+    // function returns, which is only known once the loop above has typed
+    // the target. Without this the wrapper is declared f64 and a string
+    // result arrives at the caller as punned bits.
+    for (auto& h : handoffs) {
+        auto wit = decls.find(h.wrapper);
+        auto tit = decls.find(h.target);
+        if (wit == decls.end() || tit == decls.end()) continue;
+        if (wit->second.return_tag != JD_TAG_F64) continue;
+        // One wrapper, one signature. If the same wrapper is handed funcrefs
+        // whose results differ, no single return type is right and typing it
+        // from one of them reinterprets the other's bits.
+        bool ambiguous = false;
+        for (auto& o : handoffs) {
+            if (o.wrapper != h.wrapper || o.idx != h.idx) continue;
+            auto oit = decls.find(o.target);
+            if (oit != decls.end() &&
+                oit->second.return_tag != tit->second.return_tag)
+                ambiguous = true;
+        }
+        if (ambiguous) continue;
+        const Stmt* wbody = wit->second.stmt;
+        if (!wbody || h.idx >= wbody->params.size()) continue;
+        const std::string fn_param = wbody->params[h.idx].name;
+
+        std::function<bool(const Stmt&)> returns_call_through =
+            [&](const Stmt& s) -> bool {
+            if (s.kind == StmtKind::RETURN && s.expr &&
+                s.expr->kind == ExprKind::CALL && s.expr->func_name == fn_param)
+                return true;
+            for (auto& b : s.body)         if (b && returns_call_through(*b)) return true;
+            for (auto& c : s.catch_body)   if (c && returns_call_through(*c)) return true;
+            for (auto& f : s.finally_body) if (f && returns_call_through(*f)) return true;
+            for (auto& br : s.branches)
+                for (auto& b : br.body) if (b && returns_call_through(*b)) return true;
+            return false;
+        };
+        for (auto& b : wbody->body)
+            if (b && returns_call_through(*b)) {
+                wit->second.return_tag = tit->second.return_tag;
+                break;
+            }
     }
 
     // Phase 3b: infer map/array returns. FUNC's returning maps or arrays

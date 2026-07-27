@@ -3,9 +3,7 @@
 ' double(double...) funcref ABI has no type channel, so the parameter type
 ' is inferred from the call site - which for a funcref is either the
 ' variable it was assigned to or the higher-order call it was handed to.
-'
-' Not covered: a funcref passed as a FUNC *parameter*, e.g.
-' `FUNC ap(fn, x) ... fn(x)` called as `ap(h@, "zz")`. That needs
+' Also covered: a funcref passed as a FUNC parameter, e.g.' `FUNC ap(fn, x) ... fn(x)` called as `ap(h@, "zz")`, where the type has' to travel two hops: to h's parameter, and back out as ap's return.
 ' interprocedural inference; annotate the parameter instead.
 OPTION "EXPLICIT"
 
@@ -33,6 +31,14 @@ FUNC NotB(s)
     RETURN s <> "b"
 ENDFUNC
 
+FUNC ApplyNum(fn, v)
+    RETURN fn(v)
+ENDFUNC
+
+FUNC Apply(fn, v)
+    RETURN fn(v)
+ENDFUNC
+
 FUNC Twice(n)
     RETURN n * 2
 ENDFUNC
@@ -51,6 +57,10 @@ PRINT "=== numeric funcrefs are unaffected ==="
 LET ftw = Twice@
 Check(STR$(ftw(21)), "42", "untyped numeric param")
 Check(JOIN(SELECT(Twice@, [1, 2, 3]), ","), "2,4,6", "SELECT over numbers")
+
+PRINT "=== through a FUNC parameter ==="
+Check(Apply(Echo@, "zz"), "zz", "funcref as a parameter, string")
+Check(STR$(ApplyNum(Twice@, 21)), "42", "funcref as a parameter, numeric")
 
 PRINT ""
 PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
