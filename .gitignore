@@ -278,7 +278,15 @@ jderg/*.db-wal
 jderg/smoke_xrechnung.xml
 
 # Files the file-I/O tests write when the suite runs (tests/parity.sh runs
-# every test, so these reappear after each sweep)
+# every test, so these reappear after each sweep). The sweep runs from the
+# repo root like the gate does, so they land here rather than beside the test.
+/test_np*.bin
+/test_np*.csv
+/test_np*.txt
+/test_out*.bin
+/test_out*.csv
+/test_out*.txt
+/pipe
 tests/regression/test_np*.bin
 tests/regression/test_np*.csv
 tests/regression/test_np*.txt
