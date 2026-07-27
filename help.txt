@@ -3683,3 +3683,15 @@ Description: Instantiate a .jdform file (JSON layout) and auto-bind every SUB na
 [FORM.FIND]
 Syntax: FORM.FIND(frm, name$) -> handle
 Description: Look up a control of a form by name (case-insensitive); 0 if absent. Companion to FORM.LOAD for code-behind property access.
+
+[FORM.MENU]
+Syntax: FORM.MENU(frm, spec)
+Description: Build or replace the form's menu bar. Spec = array of maps: text (& = Alt key, "-" = separator), items (submenu), name (clickable -> NAME_CLICK), key ("Ctrl+O", "F5" - real accelerator). Items support FORM.SET ENABLED/CHECKED/TEXT/VALUE.
+
+[FORM.MDI]
+Syntax: FORM.MDI(title$, width, height, [name$]) -> handle
+Description: Create an MDI frame window (multi-document parent). Combine with FORM.MENU and FORM.CHILD; run with FORM.RUN.
+
+[FORM.CHILD]
+Syntax: FORM.CHILD(frame, title$, width, height, [name$]) -> handle
+Description: Create an MDI child document inside a frame. Hosts controls like a form; closing children never ends the program, closing the frame does.

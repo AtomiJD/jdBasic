@@ -1,0 +1,95 @@
+' Menus + MDI self-test. A timer drives everything: programmatic menu
+' clicks, checked/enabled round-trips, child lifetime rules (closing all
+' children keeps the frame alive), then closes the frame.
+
+N_PASS = 0
+N_FAIL = 0
+
+SUB Check(cond, label$)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+frame = 0
+child1 = 0
+child2 = 0
+opens = 0
+checks = 0
+ticks = 0
+
+SUB MNUOPEN_CLICK(e)
+    opens = opens + 1
+ENDSUB
+
+SUB MNUWRAP_CLICK(e)
+    checks = checks + 1
+ENDSUB
+
+frame = FORM.MDI("MDI Selftest", 640, 420, "FRAME")
+FORM.MENU(frame, [ _
+    { "text": "&File", "items": [ _
+        { "name": "mnuOpen", "text": "&Open", "key": "Ctrl+O" }, _
+        "-", _
+        { "name": "mnuExit", "text": "E&xit" } _
+    ]}, _
+    { "text": "&View", "items": [ _
+        { "name": "mnuWrap", "text": "&Word Wrap" } _
+    ]} _
+])
+
+mnuOpen = FORM.FIND(frame, "mnuOpen")
+mnuWrap = FORM.FIND(frame, "mnuWrap")
+Check(mnuOpen > 0, "FIND locates a menu item")
+Check(FORM.GET(mnuOpen, "KIND") = "MENU", "menu item KIND")
+
+Check(FORM.GET(mnuWrap, "CHECKED") = FALSE, "menu item starts unchecked")
+FORM.SET(mnuWrap, "CHECKED", TRUE)
+Check(FORM.GET(mnuWrap, "CHECKED"), "menu CHECKED after SET")
+
+FORM.SET(mnuOpen, "ENABLED", FALSE)
+Check(FORM.GET(mnuOpen, "ENABLED") = FALSE, "menu ENABLED FALSE")
+FORM.SET(mnuOpen, "ENABLED", TRUE)
+Check(FORM.GET(mnuOpen, "ENABLED"), "menu ENABLED TRUE")
+
+child1 = FORM.CHILD(frame, "Doc 1", 300, 200, "DOC1")
+child2 = FORM.CHILD(frame, "Doc 2", 300, 200, "DOC2")
+lbl = FORM.LABEL(child1, "lblDoc", "content", 10, 10, 100, 18)
+Check(FORM.GET(child1, "KIND") = "MDICHILD", "child KIND")
+Check(FORM.GET(lbl, "TEXT") = "content", "control on a child works")
+
+SUB TMRMAIN_TICK(e)
+    ticks = ticks + 1
+    IF ticks = 1 THEN FORM.SET(mnuOpen, "VALUE", TRUE)
+    IF ticks = 2 THEN FORM.SET(mnuWrap, "VALUE", TRUE)
+    IF ticks = 3 THEN
+        FORM.CLOSE(child1)
+        FORM.CLOSE(child2)
+    ENDIF
+    IF ticks = 4 THEN
+        ' both children are gone, the frame must still be running
+        Check(FORM.FIND(frame, "DOC1") = 0, "closed child is gone from the registry")
+        Check(opens = 1, "menu click dispatched MNUOPEN_CLICK")
+        Check(checks = 1, "second menu click dispatched MNUWRAP_CLICK")
+    ENDIF
+    IF ticks >= 5 THEN FORM.CLOSE(frame)
+ENDSUB
+ON "TMRMAIN_TICK" CALL TMRMAIN_TICK
+
+tmr = FORM.TIMER(frame, "tmrMain", 100)
+FORM.RUN(frame)
+
+Check(ticks >= 5, "frame survived the children closing")
+
+' The frame cascade must not leave child controls behind: a fresh form
+' with recycled names still works.
+frm2 = FORM.CREATE("after mdi", 200, 120, "FRAME")
+Check(FORM.FIND(frm2, "lblDoc") = 0, "no stale entries after the cascade")
+FORM.CLOSE(frm2)
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL MDI MENU TESTS PASSED!"

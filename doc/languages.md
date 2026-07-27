@@ -2126,8 +2126,11 @@ Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radi
 * **`FORM.TIMER(frm, name$, interval_ms) -> handle`**: Fires `NAME_TICK` every `interval_ms` (0 = created disabled; retune via the `INTERVAL` property).
 * **`FORM.SET(handle, prop$, value)`**: Properties: `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `ITEMS`, `ADDITEM`, `CLEAR`, `SELINDEX`, `FOCUS`, `X`/`Y`/`WIDTH`/`HEIGHT`, `INTERVAL` (timer), `VALUE` (TRUE clicks a button programmatically, VB6-style).
 * **`FORM.GET(handle, prop$) -> value`**: Reads `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `SELINDEX`, `SELTEXT`, `COUNT`, `NAME`, `KIND`, `HWND`, `X`/`Y`/`WIDTH`/`HEIGHT`.
-* **`FORM.LOAD(path$) -> handle`**: Instantiates a **`.jdform` file** (see below) and returns the form handle. Relative paths resolve against the script's directory. Every `SUB` named `<CONTROL>_<EVENT>` that exists in the program is bound automatically - a `.jdform`-based program needs no `ON` statements at all.
+* **`FORM.LOAD(path$, [mdi_frame]) -> handle`**: Instantiates a **`.jdform` file** (see below) and returns the form handle; with a frame handle as second argument the form becomes an MDI child of it. Relative paths resolve against the script's directory. Every `SUB` named `<CONTROL>_<EVENT>` that exists in the program is bound automatically - a `.jdform`-based program needs no `ON` statements at all.
 * **`FORM.FIND(frm, name$) -> handle`**: Looks up a control of a form by name (case-insensitive); returns `0` if absent. The code-behind companion to `FORM.LOAD`.
+* **`FORM.MENU(frm, spec)`**: Builds (or replaces) the form's **menu bar**. `spec` is an array of maps: `text` (required; `&` marks the Alt key, `"-"` is a separator), `items` (submenu array), `name` (makes the item clickable: it becomes a forms handle dispatching `NAME_CLICK`, findable via `FORM.FIND`), `key` (a real keyboard accelerator like `"Ctrl+O"` or `"F5"`, shown right-aligned in the item). Menu items support `FORM.SET` `ENABLED`/`CHECKED`/`TEXT`/`VALUE` (TRUE clicks) and `FORM.GET` `CHECKED`/`ENABLED`.
+* **`FORM.MDI(title$, width, height, [name$]) -> handle`**: Creates an **MDI frame** (the classic multi-document parent window). Behaves like a form: menu, `FORM.RUN`, `LOAD`/`UNLOAD`/`RESIZE` events.
+* **`FORM.CHILD(frame, title$, width, height, [name$]) -> handle`**: Creates an MDI **child document window** inside a frame. Children host controls like any form and fire `LOAD`/`UNLOAD`/`RESIZE`, but do **not** count toward the program lifetime: closing the last child keeps `FORM.RUN` alive, closing the frame ends it. `Ctrl+F4`/`Ctrl+F6` close/cycle children as usual.
 * **`FORM.RUN(frm)`**: Shows the form, fires `NAME_LOAD`, then blocks in the message loop until **all** forms are closed.
 * **`FORM.SHOW(frm)`**: Shows a secondary form (non-blocking) and fires its `NAME_LOAD`.
 * **`FORM.DOEVENTS() -> bool`**: Pumps pending messages once; `TRUE` while any form is open. The cooperative alternative to `FORM.RUN` for `DO ... LOOP` programs.
@@ -2154,7 +2157,7 @@ A `.jdform` file is the declarative layout a form designer edits; `FORM.LOAD` in
 ```
 
 * **`version`** (required): format version, currently `1`. A newer number is rejected with a clear error.
-* **`form`**: `name` (event prefix), `title`, `width`/`height` (client area).
+* **`form`**: `name` (event prefix), `title`, `width`/`height` (client area). Optional: `"mdi": true` makes it an MDI frame; `"menu": [...]` is a `FORM.MENU` spec built at load time (menu handlers auto-bind like everything else).
 * **`controls`**: created in file order. `type` is one of `BUTTON`, `LABEL`, `TEXTBOX`, `CHECKBOX`, `RADIO`, `FRAME`, `LISTBOX`, `COMBO`, `TIMER`. Visible controls need `x`/`y`/`w`/`h`; `text` where it applies; `TEXTBOX` takes `multiline`, `RADIO` takes `new_group`, `TIMER` takes `interval` instead of a geometry.
 * **`properties`** (optional, per control): applied through the `FORM.SET` path after creation - anything `FORM.SET` accepts (`ITEMS`, `CHECKED`, `SELINDEX`, `ENABLED`, ...).
 * Errors name the culprit: `FORM.LOAD: controls[3] (lstTasks): unknown type "GRID"`. A failed load tears the half-built form down again.

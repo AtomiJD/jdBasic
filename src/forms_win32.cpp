@@ -18,6 +18,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #pragma comment(lib, "comctl32.lib")
@@ -35,8 +36,10 @@ namespace {
 struct FormsItem {
     HWND        hwnd = nullptr;
     std::string name;           // uppercase, used to build event names
-    std::string kind;           // FORM, BUTTON, LABEL, TEXTBOX, ...
-    int         form = 0;       // owning form handle (0 for a form itself)
+    std::string kind;           // FORM, MDIFRAME, MDICHILD, BUTTON, MENU, ...
+    int         form = 0;       // owning form handle (0 for a top-level form)
+    HWND        mdi_client = nullptr;   // MDIFRAME only
+    HACCEL      haccel = nullptr;       // forms with menu accelerators
 };
 
 std::map<int, FormsItem>  g_items;
@@ -118,9 +121,13 @@ FormsItem& item_of(int handle, const char* who) {
     return it->second;
 }
 
+bool is_form_kind(const std::string& kind) {
+    return kind == "FORM" || kind == "MDIFRAME" || kind == "MDICHILD";
+}
+
 FormsItem& form_of(int handle, const char* who) {
     FormsItem& f = item_of(handle, who);
-    if (f.kind != "FORM")
+    if (!is_form_kind(f.kind))
         throw std::runtime_error(std::string(who) + ": handle " + std::to_string(handle) + " is not a form");
     return f;
 }
@@ -159,7 +166,13 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     switch (msg) {
         case WM_COMMAND: {
             HWND ctl = (HWND)lParam;
-            if (!ctl) break;
+            if (!ctl) {
+                // menu item or accelerator: the command id is the handle
+                auto mit = g_items.find((int)LOWORD(wParam));
+                if (mit != g_items.end() && mit->second.kind == "MENU")
+                    queue_event(mit->second.name, "CLICK", info_map(mit->second));
+                return 0;
+            }
             auto hit = g_byhwnd.find(ctl);
             if (hit == g_byhwnd.end()) break;
             FormsItem& it = g_items[hit->second];
@@ -220,7 +233,9 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 m.as_object()->set("height", Value::make_i64(lg(HIWORD(lParam))));
                 queue_event(it.name, "RESIZE", m);
             }
-            return 0;
+            // fall through to the default proc: DefFrameProc resizes the
+            // MDICLIENT, DefMDIChildProc maintains the maximized state
+            break;
         }
 
         case WM_CTLCOLORSTATIC: {
@@ -241,9 +256,24 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             auto hit = g_byhwnd.find(hwnd);
             if (hit != g_byhwnd.end()) {
                 int form_handle = hit->second;
+                bool counts = g_items[form_handle].kind != "MDICHILD";
+                // Transitive cascade: a dying MDI frame takes its children,
+                // and each child takes its own controls and menu items.
+                std::unordered_set<int> dying = { form_handle };
+                bool grew = true;
+                while (grew) {
+                    grew = false;
+                    for (auto& [h2, it2] : g_items)
+                        if (!dying.count(h2) && dying.count(it2.form) && is_form_kind(it2.kind)) {
+                            dying.insert(h2);
+                            grew = true;
+                        }
+                }
                 for (auto it = g_items.begin(); it != g_items.end();) {
-                    if (it->first == form_handle || it->second.form == form_handle) {
-                        g_byhwnd.erase(it->second.hwnd);
+                    if (dying.count(it->first) || dying.count(it->second.form)) {
+                        if (is_form_kind(it->second.kind) && it->second.haccel)
+                            DestroyAcceleratorTable(it->second.haccel);
+                        if (it->second.hwnd) g_byhwnd.erase(it->second.hwnd);
                         it = g_items.erase(it);
                     } else {
                         ++it;
@@ -251,10 +281,21 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 }
                 // No PostQuitMessage: FORM.RUN and FORM.DOEVENTS re-check
                 // g_open_forms after every dispatch, and a queued WM_QUIT
-                // would leak into whichever message loop runs next.
-                if (--g_open_forms < 0) g_open_forms = 0;
+                // would leak into whichever message loop runs next. MDI
+                // children never count toward the open-form total.
+                if (counts && --g_open_forms < 0) g_open_forms = 0;
             }
             return 0;
+        }
+    }
+    {
+        auto hit = g_byhwnd.find(hwnd);
+        if (hit != g_byhwnd.end()) {
+            FormsItem& it = g_items[hit->second];
+            if (it.kind == "MDIFRAME")
+                return DefFrameProcW(hwnd, it.mdi_client, msg, wParam, lParam);
+            if (it.kind == "MDICHILD")
+                return DefMDIChildProcW(hwnd, msg, wParam, lParam);
         }
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -283,6 +324,10 @@ void ensure_class() {
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     wc.lpszClassName = FORM_CLASS;
     RegisterClassW(&wc);
+
+    WNDCLASSW cc = wc;
+    cc.lpszClassName = L"JDBMDIChild";
+    RegisterClassW(&cc);
 
     NONCLIENTMETRICSW ncm = { sizeof(ncm) };
     if (SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0))
@@ -315,7 +360,8 @@ int create_control(int frm, const std::string& name, const wchar_t* cls,
     return store_item(ctl, name, kind, frm);
 }
 
-int do_create_form(const std::string& title, int cw, int ch, const std::string& name) {
+int do_create_form(const std::string& title, int cw, int ch, const std::string& name,
+                   bool mdi_frame = false) {
     ensure_class();
     int dcw = px(cw), dch = px(ch);
     RECT rc = { 0, 0, dcw, dch };
@@ -344,7 +390,35 @@ int do_create_form(const std::string& title, int cw, int ch, const std::string& 
 
     g_open_forms++;
     g_last_form = hwnd;
-    return store_item(hwnd, name, "FORM", 0);
+    int handle = store_item(hwnd, name, mdi_frame ? "MDIFRAME" : "FORM", 0);
+    if (mdi_frame) {
+        CLIENTCREATESTRUCT ccs = { nullptr, 50000 };
+        g_items[handle].mdi_client = CreateWindowExW(
+            0, L"MDICLIENT", nullptr,
+            WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | MDIS_ALLCHILDSTYLES,
+            0, 0, 0, 0, hwnd, (HMENU)(INT_PTR)1,
+            GetModuleHandleW(nullptr), &ccs);
+        RECT cr2;
+        GetClientRect(hwnd, &cr2);
+        MoveWindow(g_items[handle].mdi_client, 0, 0, cr2.right, cr2.bottom, TRUE);
+    }
+    return handle;
+}
+
+int do_create_child(int frame, const std::string& title, int cw, int ch,
+                    const std::string& name) {
+    FormsItem& f = item_of(frame, "FORM.CHILD");
+    if (f.kind != "MDIFRAME" || !f.mdi_client)
+        throw std::runtime_error("FORM.CHILD: handle " + std::to_string(frame) +
+                                 " is not an MDI frame (use FORM.MDI)");
+    HWND hwnd = CreateWindowExW(WS_EX_MDICHILD, L"JDBMDIChild", widen(title).c_str(),
+                                WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                                CW_USEDEFAULT, CW_USEDEFAULT, px(cw), px(ch),
+                                f.mdi_client, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!hwnd) throw std::runtime_error("FORM.CHILD: CreateWindow failed");
+    int handle = store_item(hwnd, name, "MDICHILD", frame);
+    queue_event(g_items[handle].name, "LOAD", info_map(g_items[handle]));
+    return handle;
 }
 
 int arg_int(const std::vector<Value>& args, size_t i) { return (int)args[i].to_int(); }
@@ -357,11 +431,30 @@ std::string arg_str(const std::vector<Value>& args, size_t i, const char* who) {
 
 // ── Message pumping ─────────────────────────────────────────────
 
-// Pump one message, returns FALSE on WM_QUIT. Tab/arrow navigation goes
-// through IsDialogMessage against the message's own top-level window.
+// Pump one message, returns FALSE on WM_QUIT. Menu accelerators and the
+// MDI system keys (Ctrl+F4/F6) go first; Tab/arrow navigation then runs
+// through IsDialogMessage against the active MDI child or the top-level
+// window the message belongs to.
 bool pump_one(MSG& msg) {
     if (msg.message == WM_QUIT) return false;
     HWND root = GetAncestor(msg.hwnd, GA_ROOT);
+    auto rit = root ? g_byhwnd.find(root) : g_byhwnd.end();
+    if (rit != g_byhwnd.end()) {
+        FormsItem& rf = g_items[rit->second];
+        if (rf.kind == "MDIFRAME" && rf.mdi_client &&
+            TranslateMDISysAccel(rf.mdi_client, &msg)) return true;
+        if (rf.haccel && TranslateAcceleratorW(root, rf.haccel, &msg)) return true;
+        HWND dlg = root;
+        if (rf.kind == "MDIFRAME" && rf.mdi_client) {
+            HWND active = (HWND)SendMessageW(rf.mdi_client, WM_MDIGETACTIVE, 0, 0);
+            if (active) dlg = active;
+        }
+        if (!IsDialogMessageW(dlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+        return true;
+    }
     if (!root || !IsDialogMessageW(root, &msg)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
@@ -473,6 +566,27 @@ void reset_items(HWND h, const std::string& kind, const Value& arr) {
 }
 
 void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v, const char* who) {
+    if (it.kind == "MENU") {
+        FormsItem& f = form_of(it.form, who);
+        HMENU bar = GetMenu(f.hwnd);
+        if (prop == "ENABLED") {
+            EnableMenuItem(bar, handle, MF_BYCOMMAND | (v.to_bool() ? MF_ENABLED : MF_GRAYED));
+        } else if (prop == "CHECKED") {
+            CheckMenuItem(bar, handle, MF_BYCOMMAND | (v.to_bool() ? MF_CHECKED : MF_UNCHECKED));
+        } else if (prop == "TEXT") {
+            ModifyMenuW(bar, handle, MF_BYCOMMAND | MF_STRING, handle,
+                        widen(value_text(v)).c_str());
+            DrawMenuBar(f.hwnd);
+        } else if (prop == "VALUE") {
+            if (v.to_bool())
+                SendMessageW(f.hwnd, WM_COMMAND, MAKEWPARAM(handle, 0), 0);
+        } else {
+            throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
+                                     "' for MENU");
+        }
+        return;
+    }
+
     bool is_list = it.kind == "LISTBOX" || it.kind == "COMBO";
     HWND h = it.hwnd;
 
@@ -520,7 +634,18 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
     }
 }
 
-Value get_prop(FormsItem& it, const std::string& prop, const char* who) {
+Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* who) {
+    if (it.kind == "MENU") {
+        if (prop == "NAME") return Value::make_string(it.name);
+        if (prop == "KIND") return Value::make_string(it.kind);
+        FormsItem& f = form_of(it.form, who);
+        UINT state = GetMenuState(GetMenu(f.hwnd), handle, MF_BYCOMMAND);
+        if (prop == "CHECKED") return Value::make_bool((state & MF_CHECKED) != 0);
+        if (prop == "ENABLED") return Value::make_bool((state & (MF_GRAYED | MF_DISABLED)) == 0);
+        throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
+                                 "' for MENU");
+    }
+
     bool is_list = it.kind == "LISTBOX" || it.kind == "COMBO";
     HWND h = it.hwnd;
 
@@ -598,6 +723,133 @@ int jf_int(const Value& obj, const std::string& key, const std::string& where,
     return (int)v->to_int();
 }
 
+// ── Menu bar builder ────────────────────────────────────────────
+// Spec: array of maps. Keys: "text" (required, "-" = separator, "&" marks
+// the Alt accelerator), "name" (makes the item clickable -> NAME_CLICK),
+// "key" ("Ctrl+O", "F5", ... - real accelerator + right-aligned hint),
+// "items" (submenu array).
+
+bool parse_accel_key(const std::string& spec, WORD& fVirt, WORD& vk) {
+    fVirt = FVIRTKEY;
+    vk = 0;
+    std::string token;
+    std::vector<std::string> parts;
+    for (char ch : spec + "+") {
+        if (ch == '+') {
+            if (!token.empty()) parts.push_back(upname(token));
+            token.clear();
+        } else {
+            token += ch;
+        }
+    }
+    if (parts.empty()) return false;
+    for (size_t i = 0; i + 1 < parts.size(); i++) {
+        if (parts[i] == "CTRL" || parts[i] == "CONTROL") fVirt |= FCONTROL;
+        else if (parts[i] == "SHIFT") fVirt |= FSHIFT;
+        else if (parts[i] == "ALT") fVirt |= FALT;
+        else return false;
+    }
+    const std::string& k = parts.back();
+    static const std::map<std::string, WORD> named = {
+        {"DEL", VK_DELETE}, {"DELETE", VK_DELETE}, {"INS", VK_INSERT},
+        {"INSERT", VK_INSERT}, {"HOME", VK_HOME}, {"END", VK_END},
+        {"PGUP", VK_PRIOR}, {"PGDN", VK_NEXT}, {"LEFT", VK_LEFT},
+        {"RIGHT", VK_RIGHT}, {"UP", VK_UP}, {"DOWN", VK_DOWN},
+        {"ESC", VK_ESCAPE}, {"TAB", VK_TAB}, {"ENTER", VK_RETURN},
+        {"RETURN", VK_RETURN}, {"SPACE", VK_SPACE}, {"BACK", VK_BACK}
+    };
+    auto nit = named.find(k);
+    if (nit != named.end()) { vk = nit->second; return true; }
+    if (k.size() == 1 && ((k[0] >= 'A' && k[0] <= 'Z') || (k[0] >= '0' && k[0] <= '9'))) {
+        vk = (WORD)k[0];
+        return true;
+    }
+    if (k.size() >= 2 && k[0] == 'F') {
+        int fn = atoi(k.c_str() + 1);
+        if (fn >= 1 && fn <= 12) { vk = (WORD)(VK_F1 + fn - 1); return true; }
+    }
+    return false;
+}
+
+void build_menu_level(HMENU parent, const Value& arr, int frm,
+                      std::vector<ACCEL>& accels, const char* who);
+
+void build_menu_entry(HMENU parent, const Value& entry, int frm,
+                      std::vector<ACCEL>& accels, const char* who) {
+    if (entry.type == ValueType::STRING && entry.as_string()->data == "-") {
+        AppendMenuW(parent, MF_SEPARATOR, 0, nullptr);
+        return;
+    }
+    if (entry.type != ValueType::OBJECT)
+        throw std::runtime_error(std::string(who) + ": each menu entry must be a map or \"-\"");
+    const Value* tv = jf_get(entry, "text");
+    if (!tv || tv->type != ValueType::STRING)
+        throw std::runtime_error(std::string(who) + ": a menu entry needs a \"text\" string");
+    std::string text = tv->as_string()->data;
+    if (text == "-") {
+        AppendMenuW(parent, MF_SEPARATOR, 0, nullptr);
+        return;
+    }
+    const Value* items = jf_get(entry, "items");
+    if (items) {
+        if (items->type != ValueType::ARRAY)
+            throw std::runtime_error(std::string(who) + ": menu \"items\" must be an array");
+        HMENU sub = CreatePopupMenu();
+        build_menu_level(sub, *items, frm, accels, who);
+        AppendMenuW(parent, MF_POPUP | MF_STRING, (UINT_PTR)sub, widen(text).c_str());
+        return;
+    }
+    UINT_PTR id = 0;
+    const Value* name = jf_get(entry, "name");
+    if (name && name->type == ValueType::STRING) {
+        id = (UINT_PTR)store_item(nullptr, name->as_string()->data, "MENU", frm);
+    }
+    const Value* kv = jf_get(entry, "key");
+    std::string key = kv && kv->type == ValueType::STRING ? kv->as_string()->data : "";
+    if (!key.empty()) {
+        WORD fVirt, vk;
+        if (!parse_accel_key(key, fVirt, vk))
+            throw std::runtime_error(std::string(who) + ": bad accelerator \"" + key + "\"");
+        if (id) accels.push_back({ (BYTE)fVirt, vk, (WORD)id });
+        text += "\t" + key;
+    }
+    AppendMenuW(parent, MF_STRING, id, widen(text).c_str());
+}
+
+void build_menu_level(HMENU parent, const Value& arr, int frm,
+                      std::vector<ACCEL>& accels, const char* who) {
+    for (auto& entry : arr.as_array()->elements)
+        build_menu_entry(parent, entry, frm, accels, who);
+}
+
+void set_form_menu(int frm, const Value& spec, const char* who) {
+    FormsItem& f = form_of(frm, who);
+    if (spec.type != ValueType::ARRAY)
+        throw std::runtime_error(std::string(who) + ": the menu spec must be an array");
+
+    // rebuild from scratch: drop this form's previous menu items + table
+    for (auto it = g_items.begin(); it != g_items.end();) {
+        if (it->second.kind == "MENU" && it->second.form == frm) it = g_items.erase(it);
+        else ++it;
+    }
+    if (f.haccel) { DestroyAcceleratorTable(f.haccel); f.haccel = nullptr; }
+
+    std::vector<ACCEL> accels;
+    HMENU bar = CreateMenu();
+    try {
+        build_menu_level(bar, spec, frm, accels, who);
+    } catch (...) {
+        DestroyMenu(bar);
+        throw;
+    }
+    HMENU old = GetMenu(f.hwnd);
+    SetMenu(f.hwnd, bar);
+    if (old) DestroyMenu(old);
+    DrawMenuBar(f.hwnd);
+    if (!accels.empty())
+        f.haccel = CreateAcceleratorTableW(accels.data(), (int)accels.size());
+}
+
 // Event names a control kind can fire; used for automatic handler binding.
 const std::vector<const char*>& events_of(const std::string& kind) {
     static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE" };
@@ -606,8 +858,8 @@ const std::vector<const char*>& events_of(const std::string& kind) {
     static const std::vector<const char*> list_ev  = { "CLICK", "DBLCLICK" };
     static const std::vector<const char*> tick_ev  = { "TICK" };
     static const std::vector<const char*> none_ev  = {};
-    if (kind == "FORM")     return form_ev;
-    if (kind == "BUTTON" || kind == "CHECKBOX" || kind == "RADIO") return click_ev;
+    if (is_form_kind(kind)) return form_ev;
+    if (kind == "BUTTON" || kind == "CHECKBOX" || kind == "RADIO" || kind == "MENU") return click_ev;
     if (kind == "TEXTBOX" || kind == "COMBO")  return text_ev;
     if (kind == "LISTBOX")  return list_ev;
     if (kind == "TIMER")    return tick_ev;
@@ -704,7 +956,7 @@ void load_controls(int frm, const Value& doc, const std::string& path) {
     }
 }
 
-int load_jdform(const std::string& path) {
+int load_jdform(const std::string& path, int mdi_parent) {
     // Resolve like the graphics loaders: as given first, then against the
     // script's own directory.
     std::string resolved = path;
@@ -730,13 +982,29 @@ int load_jdform(const std::string& path) {
         throw std::runtime_error("FORM.LOAD: " + path + ": missing \"form\" object");
 
     std::string fname = upname(jf_str(*fdef, "name", "form"));
-    int frm = do_create_form(jf_str(*fdef, "title", "form", ""),
+    const Value* mv = jf_get(*fdef, "mdi");
+    int frm;
+    if (mdi_parent != 0) {
+        frm = do_create_child(mdi_parent, jf_str(*fdef, "title", "form", ""),
+                              jf_int(*fdef, "width", "form"),
+                              jf_int(*fdef, "height", "form"), fname);
+    } else {
+        frm = do_create_form(jf_str(*fdef, "title", "form", ""),
                              jf_int(*fdef, "width", "form"),
-                             jf_int(*fdef, "height", "form"), fname);
+                             jf_int(*fdef, "height", "form"), fname,
+                             mv && mv->to_bool());
+    }
     // A bad control entry must not leave the half-built (still invisible)
     // form behind - it would count as open forever.
     try {
-        bind_handlers(fname, "FORM");
+        bind_handlers(fname, g_items[frm].kind);
+        const Value* menu = jf_get(*fdef, "menu");
+        if (menu) {
+            set_form_menu(frm, *menu, "FORM.LOAD");
+            for (auto& [h, it] : g_items)
+                if (it.kind == "MENU" && it.form == frm)
+                    bind_handlers(it.name, "MENU");
+        }
         load_controls(frm, doc, path);
     } catch (...) {
         DestroyWindow(g_items[frm].hwnd);
@@ -758,6 +1026,7 @@ void register_forms_builtins(VM& vm) {
     for (const char* n : { "FORM.CREATE", "FORM.BUTTON", "FORM.LABEL", "FORM.TEXTBOX",
                            "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME", "FORM.LISTBOX",
                            "FORM.COMBO", "FORM.TIMER", "FORM.LOAD", "FORM.FIND",
+                           "FORM.MDI", "FORM.CHILD", "FORM.MENU",
                            "FORM.SET", "FORM.GET",
                            "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
                            "MSGBOX", "INPUTBOX$" })
@@ -852,10 +1121,41 @@ void register_forms_builtins(VM& vm) {
         return Value::make_i64(handle);
     });
 
-    // FORM.LOAD(path$) -> handle  instantiate a .jdform file and bind
-    // every <NAME>_<EVENT> handler that exists in the program
-    vm.register_native("FORM.LOAD", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_i64(load_jdform(arg_str(args, 0, "FORM.LOAD")));
+    // FORM.MDI(title$, width, height, [name$]) -> handle  MDI frame window
+    vm.register_native("FORM.MDI", 3, 4, [](const std::vector<Value>& args) -> Value {
+        std::string name = args.size() > 3 ? arg_str(args, 3, "FORM.MDI")
+                                           : "MDI" + std::to_string(g_next_handle);
+        return Value::make_i64(do_create_form(arg_str(args, 0, "FORM.MDI"),
+                                              arg_int(args, 1), arg_int(args, 2),
+                                              name, true));
+    });
+
+    // FORM.CHILD(frame, title$, width, height, [name$]) -> handle
+    vm.register_native("FORM.CHILD", 4, 5, [](const std::vector<Value>& args) -> Value {
+        std::string name = args.size() > 4 ? arg_str(args, 4, "FORM.CHILD")
+                                           : "CHILD" + std::to_string(g_next_handle);
+        return Value::make_i64(do_create_child(arg_int(args, 0),
+                                               arg_str(args, 1, "FORM.CHILD"),
+                                               arg_int(args, 2), arg_int(args, 3), name));
+    });
+
+    // FORM.MENU(frm, spec)  build/replace the form's menu bar; every item
+    // with a name dispatches NAME_CLICK, handlers are bound automatically
+    vm.register_native("FORM.MENU", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int frm = arg_int(args, 0);
+        set_form_menu(frm, args[1], "FORM.MENU");
+        for (auto& [h, it] : g_items)
+            if (it.kind == "MENU" && it.form == frm)
+                bind_handlers(it.name, "MENU");
+        return Value::make_none();
+    });
+
+    // FORM.LOAD(path$, [mdi_frame]) -> handle  instantiate a .jdform file
+    // (as an MDI child of mdi_frame if given) and bind every
+    // <NAME>_<EVENT> handler that exists in the program
+    vm.register_native("FORM.LOAD", 1, 2, [](const std::vector<Value>& args) -> Value {
+        int parent = args.size() > 1 ? arg_int(args, 1) : 0;
+        return Value::make_i64(load_jdform(arg_str(args, 0, "FORM.LOAD"), parent));
     });
 
     // FORM.FIND(frm, name$) -> handle  look up a control by name (0 if absent)
@@ -879,8 +1179,9 @@ void register_forms_builtins(VM& vm) {
 
     // FORM.GET(handle, prop$) -> value
     vm.register_native("FORM.GET", 2, 2, [](const std::vector<Value>& args) -> Value {
-        FormsItem& it = item_of(arg_int(args, 0), "FORM.GET");
-        return get_prop(it, upname(arg_str(args, 1, "FORM.GET")), "FORM.GET");
+        int handle = arg_int(args, 0);
+        FormsItem& it = item_of(handle, "FORM.GET");
+        return get_prop(handle, it, upname(arg_str(args, 1, "FORM.GET")), "FORM.GET");
     });
 
     // FORM.SHOW(frm)  show a (secondary) form and fire its LOAD event

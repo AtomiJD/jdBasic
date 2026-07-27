@@ -1,0 +1,35 @@
+' MDI demo: a frame with a menu bar; File > New (Ctrl+N) opens document
+' children, each hosting its own controls. Closing every document keeps
+' the frame alive - closing the frame ends the program.
+
+frame = 0
+doc_count = 0
+
+SUB MNUNEW_CLICK(e)
+    doc_count = doc_count + 1
+    child = FORM.CHILD(frame, "Document " + STR$(doc_count), 340, 240)
+    lbl = FORM.LABEL(child, "lbl" + STR$(doc_count), "Document " + STR$(doc_count), 12, 10, 200, 18)
+    txt = FORM.TEXTBOX(child, "txt" + STR$(doc_count), "", 12, 34, 300, 160, TRUE)
+ENDSUB
+
+SUB MNUABOUT_CLICK(e)
+    MSGBOX("jdBasic MDI demo" + CHR$(10) + "Real Win32 MDI: frame, children, menus.", 64, "About")
+ENDSUB
+
+SUB MNUEXIT_CLICK(e)
+    FORM.CLOSE(frame)
+ENDSUB
+
+frame = FORM.MDI("jdBasic MDI Demo", 720, 480, "FRAME")
+FORM.MENU(frame, [ _
+    { "text": "&File", "items": [ _
+        { "name": "mnuNew", "text": "&New Document", "key": "Ctrl+N" }, _
+        "-", _
+        { "name": "mnuExit", "text": "E&xit" } _
+    ]}, _
+    { "text": "&Help", "items": [ _
+        { "name": "mnuAbout", "text": "&About..." } _
+    ]} _
+])
+
+FORM.RUN(frame)
