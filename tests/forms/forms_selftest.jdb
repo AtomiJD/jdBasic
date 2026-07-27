@@ -1,0 +1,102 @@
+' Native Win32 forms self-test. Needs a FORMS build on Windows - this
+' directory is environment-dependent and outside the parity sweep.
+' A 100ms timer drives the checks and closes the form after five ticks,
+' so the test runs unattended.
+
+N_PASS = 0
+N_FAIL = 0
+
+SUB Check(cond, label$)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+frm = FORM.CREATE("Forms Selftest", 420, 300, "MAIN")
+lbl = FORM.LABEL(frm, "lblStatus", "tick 0", 10, 10, 260, 20)
+txt = FORM.TEXTBOX(frm, "txtName", "hello", 10, 40, 200, 24)
+chk = FORM.CHECKBOX(frm, "chkFlag", "Flag", 220, 40, 80, 24)
+lst = FORM.LISTBOX(frm, "lstItems", 10, 74, 200, 120)
+cmb = FORM.COMBO(frm, "cmbPick", 220, 74, 120, 24)
+btn = FORM.BUTTON(frm, "btnAdd", "Add", 220, 110, 80, 26)
+tmr = FORM.TIMER(frm, "tmrMain", 100)
+
+' Property round-trips before the loop starts
+Check(FORM.GET(txt, "TEXT") = "hello", "textbox initial TEXT")
+FORM.SET(txt, "TEXT", "world")
+Check(FORM.GET(txt, "TEXT") = "world", "textbox TEXT after SET")
+
+FORM.SET(chk, "CHECKED", TRUE)
+Check(FORM.GET(chk, "CHECKED"), "checkbox CHECKED after SET")
+
+FORM.SET(lst, "ITEMS", ["alpha", "beta", "gamma"])
+Check(FORM.GET(lst, "COUNT") = 3, "listbox COUNT after ITEMS")
+FORM.SET(lst, "SELINDEX", 1)
+Check(FORM.GET(lst, "SELINDEX") = 1, "listbox SELINDEX")
+Check(FORM.GET(lst, "SELTEXT") = "beta", "listbox SELTEXT")
+FORM.SET(lst, "ADDITEM", "delta")
+Check(FORM.GET(lst, "COUNT") = 4, "listbox COUNT after ADDITEM")
+
+FORM.SET(cmb, "ITEMS", ["one", "two"])
+FORM.SET(cmb, "SELINDEX", 0)
+Check(FORM.GET(cmb, "SELTEXT") = "one", "combo SELTEXT")
+
+FORM.SET(btn, "ENABLED", FALSE)
+Check(FORM.GET(btn, "ENABLED") = FALSE, "button ENABLED FALSE")
+FORM.SET(btn, "ENABLED", TRUE)
+Check(FORM.GET(btn, "ENABLED"), "button ENABLED TRUE")
+
+Check(FORM.GET(lbl, "NAME") = "LBLSTATUS", "control NAME is uppercase")
+Check(FORM.GET(frm, "KIND") = "FORM", "form KIND")
+
+FORM.SET(lbl, "X", 20)
+Check(FORM.GET(lbl, "X") = 20, "label X after move")
+
+' Events: LOAD fires from FORM.RUN, the timer drives a programmatic
+' button click (VALUE=TRUE like VB6) and a text change, then closes.
+loaded = FALSE
+ticks = 0
+clicks = 0
+changes = 0
+click_name$ = ""
+
+SUB MAIN_LOAD(e)
+    loaded = TRUE
+ENDSUB
+ON "MAIN_LOAD" CALL MAIN_LOAD
+
+SUB BTNADD_CLICK(e)
+    clicks = clicks + 1
+    click_name$ = e[0]{"name"}
+ENDSUB
+ON "BTNADD_CLICK" CALL BTNADD_CLICK
+
+SUB TXTNAME_CHANGE(e)
+    changes = changes + 1
+ENDSUB
+ON "TXTNAME_CHANGE" CALL TXTNAME_CHANGE
+
+SUB TMRMAIN_TICK(e)
+    ticks = ticks + 1
+    FORM.SET(lbl, "TEXT", "tick " + STR$(ticks))
+    IF ticks = 2 THEN FORM.SET(btn, "VALUE", TRUE)
+    IF ticks = 3 THEN FORM.SET(txt, "TEXT", "changed")
+    IF ticks = 4 THEN Check(FORM.GET(txt, "TEXT") = "changed", "textbox TEXT after event-driven SET")
+    IF ticks >= 5 THEN FORM.CLOSE(frm)
+ENDSUB
+ON "TMRMAIN_TICK" CALL TMRMAIN_TICK
+
+FORM.RUN(frm)
+
+Check(loaded, "LOAD event fired")
+Check(ticks >= 5, "timer ticked five times")
+Check(clicks = 1, "programmatic click fired CLICK once")
+Check(click_name$ = "BTNADD", "CLICK event carries the control name")
+Check(changes >= 1, "TEXT set fired CHANGE")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL FORMS TESTS PASSED!"

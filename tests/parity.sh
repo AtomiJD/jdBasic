@@ -51,8 +51,9 @@ done
 
 # Directories whose reds report the environment, not the backends: RAG/AI need
 # local models, http needs the network, tui needs a TTY and a TUI-enabled
-# build (without the flag there are no TUI.* symbols at all).
-EXCLUDE_DIRS='^tests/(rag|ai|http|tui)/'
+# build (without the flag there are no TUI.* symbols at all), forms needs a
+# Windows FORMS build and opens real windows.
+EXCLUDE_DIRS='^tests/(rag|ai|http|tui|forms)/'
 
 WORK="${PARITY_WORK:-${TMPDIR:-/tmp}/jdb_parity}"
 mkdir -p "$WORK/exe" "$WORK/log"

@@ -103,6 +103,9 @@ static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& fi
 #ifdef TUI
 #include "tui.h"
 #endif
+#ifdef FORMS
+#include "forms.h"
+#endif
 #include "sound.h"
 #include "audio_fx.h"
 #include "midi.h"
@@ -404,6 +407,9 @@ static void setup_dynamic_code(VM& vm) {
 #endif
 #ifdef TUI
     register_tui_natives(vm);
+#endif
+#ifdef FORMS
+    register_forms_builtins(vm);
 #endif
     register_sound_builtins(vm);
     register_audiofx_builtins(vm);

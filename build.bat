@@ -69,6 +69,12 @@ for %%A in (%*) do (
         set EXTRA_INC=!EXTRA_INC! /Ilibs\miniaudio
         echo [+] MINIAUDIO - realtime audio device engine
     )
+    if /I "%%A"=="FORMS" (
+        set DEFS=!DEFS! /DFORMS
+        set EXTRA_SRC=!EXTRA_SRC! src\forms_win32.cpp
+        set EXTRA_LIB=!EXTRA_LIB! comctl32.lib
+        echo [+] Forms - native Win32 windows and controls
+    )
     if /I "%%A"=="IMGUI" (
         set DEFS=!DEFS! /DIMGUI
         set EXTRA_SRC=!EXTRA_SRC! libs\imgui\imgui.cpp libs\imgui\imgui_draw.cpp libs\imgui\imgui_tables.cpp libs\imgui\imgui_widgets.cpp libs\imgui\backends\imgui_impl_sdl3.cpp libs\imgui\backends\imgui_impl_sdlrenderer3.cpp

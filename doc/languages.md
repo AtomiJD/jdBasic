@@ -2098,6 +2098,43 @@ GUI.END
 * **`MUSIC.PLAY id, [loop_bool]`**: Plays a loaded WAV file as background music. Defaults to looping.
 * **`MUSIC.STOP`**: Immediately stops the background music.
 
+### Native Windows Forms (FORM.*)
+
+The `FORM.*` namespace creates **real Win32 windows and common controls** - push buttons, edit fields, list boxes - in the retained, event-driven style of classic Visual Basic. It is separate from both the ImGui immediate-mode layer and the SDL `SCREEN` renderer. Available only in Windows builds compiled with the `FORMS` flag.
+
+**Event model.** Every control has a *name*; events dispatch through the standard `ON` handler mechanism as **`NAME_EVENT`** (always uppercase). A handler is a `SUB` taking one argument, an array whose first element is an info map (`e[0]{"name"}`, plus event-specific keys like `text`, `index`, `checked`).
+
+```basic
+frm = FORM.CREATE("Hello", 320, 200, "MAIN")
+btn = FORM.BUTTON(frm, "btnOK", "OK", 110, 80, 100, 28)
+
+SUB BTNOK_CLICK(e)
+    MSGBOX("Clicked!", 64, "Hello")
+ENDSUB
+ON "BTNOK_CLICK" CALL BTNOK_CLICK
+
+FORM.RUN(frm)    ' message loop; returns when every form is closed
+```
+
+Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radio `_CLICK`; textbox `_CHANGE`; listbox `_CLICK` / `_DBLCLICK`; combo `_CHANGE`; timer `_TICK`. Handlers run on the main thread between window messages - never from a background thread.
+
+* **`FORM.CREATE(title$, width, height, [name$]) -> handle`**: Creates a form (client-area size). Default name is `FORM<n>`.
+* **`FORM.BUTTON(frm, name$, caption$, x, y, w, h) -> handle`** / **`FORM.LABEL(...)`** / **`FORM.CHECKBOX(...)`** / **`FORM.FRAME(...)`**: Standard controls; `&` in a caption underlines the Alt accelerator like VB6.
+* **`FORM.RADIO(frm, name$, caption$, x, y, w, h, [new_group])`**: Radio button; `new_group=TRUE` starts a new exclusive group.
+* **`FORM.TEXTBOX(frm, name$, text$, x, y, w, h, [multiline]) -> handle`**: Edit control.
+* **`FORM.LISTBOX(frm, name$, x, y, w, h)`** / **`FORM.COMBO(frm, name$, x, y, w, h)`**: Item lists; fill with `FORM.SET(h, "ITEMS", array)`.
+* **`FORM.TIMER(frm, name$, interval_ms) -> handle`**: Fires `NAME_TICK` every `interval_ms` (0 = created disabled; retune via the `INTERVAL` property).
+* **`FORM.SET(handle, prop$, value)`**: Properties: `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `ITEMS`, `ADDITEM`, `CLEAR`, `SELINDEX`, `FOCUS`, `X`/`Y`/`WIDTH`/`HEIGHT`, `INTERVAL` (timer), `VALUE` (TRUE clicks a button programmatically, VB6-style).
+* **`FORM.GET(handle, prop$) -> value`**: Reads `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `SELINDEX`, `SELTEXT`, `COUNT`, `NAME`, `KIND`, `HWND`, `X`/`Y`/`WIDTH`/`HEIGHT`.
+* **`FORM.RUN(frm)`**: Shows the form, fires `NAME_LOAD`, then blocks in the message loop until **all** forms are closed.
+* **`FORM.SHOW(frm)`**: Shows a secondary form (non-blocking) and fires its `NAME_LOAD`.
+* **`FORM.DOEVENTS() -> bool`**: Pumps pending messages once; `TRUE` while any form is open. The cooperative alternative to `FORM.RUN` for `DO ... LOOP` programs.
+* **`FORM.CLOSE(frm)`**: Closes a form.
+* **`MSGBOX(text$, [flags], [title$]) -> button`**: Message box. Flags are the VB6/Win32 values (`1`=OKCancel, `4`=YesNo, `16`=Critical, `32`=Question, `48`=Exclamation, `64`=Information); returns `1`=OK, `2`=Cancel, `6`=Yes, `7`=No.
+* **`INPUTBOX$(prompt$, [title$], [default$]) -> string`**: Modal input dialog; returns `""` on Cancel.
+
+Demo: `jdb/demos/forms/forms_demo.jdb` (task list). Self-test: `tests/forms/forms_selftest.jdb` (timer-driven, closes itself). **Interpreter-only for now** - the natives are not yet routed through the VM bridge, so `-c` rejects them.
+
 ### Terminal UI (TUI.*)
 
 The `TUI.*` namespace mirrors `GUI.*` against the **FTXUI** library, rendering jdBasic apps into the terminal. The control flow matches ImGui: rebuild the frame every loop, call `TUI.RENDER`, repeat. Available only in builds compiled with the `TUI` flag (which implies `FTXUI`). See `doc/ftxui_plan.md` for the architectural sketch and `tests/test_tui_smoke.jdb` for a runnable reference.

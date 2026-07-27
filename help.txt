@@ -3603,3 +3603,75 @@ Description: Stop recording and save a 16-bit mono 48k WAV; returns seconds writ
 [MON.RECLEN]
 Syntax: MON.RECLEN() -> seconds
 Description: Seconds captured so far (for a recording indicator).
+
+[FORM.CREATE]
+Syntax: FORM.CREATE(title$, width, height, [name$]) -> handle
+Description: Create a native Windows form (Win32 window). Events fire as NAME_LOAD, NAME_UNLOAD, NAME_RESIZE. Needs the FORMS build flag.
+
+[FORM.BUTTON]
+Syntax: FORM.BUTTON(frm, name$, caption$, x, y, w, h) -> handle
+Description: Add a push button. Fires NAME_CLICK.
+
+[FORM.LABEL]
+Syntax: FORM.LABEL(frm, name$, caption$, x, y, w, h) -> handle
+Description: Add a static text label.
+
+[FORM.TEXTBOX]
+Syntax: FORM.TEXTBOX(frm, name$, text$, x, y, w, h, [multiline]) -> handle
+Description: Add an edit control. Fires NAME_CHANGE on every text change.
+
+[FORM.CHECKBOX]
+Syntax: FORM.CHECKBOX(frm, name$, caption$, x, y, w, h) -> handle
+Description: Add a checkbox. Fires NAME_CLICK; read the state with FORM.GET(h, "CHECKED").
+
+[FORM.RADIO]
+Syntax: FORM.RADIO(frm, name$, caption$, x, y, w, h, [new_group]) -> handle
+Description: Add a radio button; new_group=TRUE starts a new exclusive group. Fires NAME_CLICK.
+
+[FORM.FRAME]
+Syntax: FORM.FRAME(frm, name$, caption$, x, y, w, h) -> handle
+Description: Add a group box frame.
+
+[FORM.LISTBOX]
+Syntax: FORM.LISTBOX(frm, name$, x, y, w, h) -> handle
+Description: Add a list box. Fires NAME_CLICK on selection and NAME_DBLCLICK on double click.
+
+[FORM.COMBO]
+Syntax: FORM.COMBO(frm, name$, x, y, w, h) -> handle
+Description: Add a drop-down combo box. Fires NAME_CHANGE on selection.
+
+[FORM.TIMER]
+Syntax: FORM.TIMER(frm, name$, interval_ms) -> handle
+Description: Add a timer that fires NAME_TICK every interval_ms; 0 creates it disabled. Change with FORM.SET(h, "INTERVAL", ms).
+
+[FORM.SET]
+Syntax: FORM.SET(handle, prop$, value)
+Description: Set a property: TEXT, ENABLED, VISIBLE, CHECKED, ITEMS (array), ADDITEM, CLEAR, SELINDEX, FOCUS, X, Y, WIDTH, HEIGHT, INTERVAL (timer), VALUE (TRUE clicks a button).
+
+[FORM.GET]
+Syntax: FORM.GET(handle, prop$) -> value
+Description: Read a property: TEXT, ENABLED, VISIBLE, CHECKED, SELINDEX, SELTEXT, COUNT, NAME, KIND, HWND, X, Y, WIDTH, HEIGHT.
+
+[FORM.RUN]
+Syntax: FORM.RUN(frm)
+Description: Show the form and run the message loop until every form is closed. Fires NAME_LOAD first; handlers run on the main thread.
+
+[FORM.SHOW]
+Syntax: FORM.SHOW(frm)
+Description: Show a (secondary) form without blocking and fire its NAME_LOAD event.
+
+[FORM.DOEVENTS]
+Syntax: FORM.DOEVENTS() -> bool
+Description: Pump pending window messages once; TRUE while any form is open. For DO...LOOP style programs instead of FORM.RUN.
+
+[FORM.CLOSE]
+Syntax: FORM.CLOSE(frm)
+Description: Close a form. When the last form closes, FORM.RUN returns.
+
+[MSGBOX]
+Syntax: MSGBOX(text$, [flags], [title$]) -> button
+Description: Show a message box. Flags follow VB6/Win32: 1=OKCancel 4=YesNo 16=Critical 32=Question 48=Exclamation 64=Information. Returns 1=OK 2=Cancel 6=Yes 7=No.
+
+[INPUTBOX$]
+Syntax: INPUTBOX$(prompt$, [title$], [default$]) -> string
+Description: Modal text input dialog. Returns the entered text, or "" on Cancel.
