@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "form": { "name": "DOC", "title": "Document", "width": 360, "height": 260 },
+  "controls": [
+    { "type": "LABEL",   "name": "lblInfo", "text": "Loaded from mdi_doc.jdform", "x": 12, "y": 10, "w": 220, "h": 18 },
+    { "type": "TEXTBOX", "name": "txtBody", "text": "", "x": 12, "y": 34, "w": 320, "h": 180, "multiline": 1 }
+  ]
+}

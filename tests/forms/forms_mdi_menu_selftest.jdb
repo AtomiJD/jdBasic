@@ -55,6 +55,29 @@ Check(FORM.GET(mnuOpen, "ENABLED") = FALSE, "menu ENABLED FALSE")
 FORM.SET(mnuOpen, "ENABLED", TRUE)
 Check(FORM.GET(mnuOpen, "ENABLED"), "menu ENABLED TRUE")
 
+tbclicks = 0
+
+SUB TBNEW_CLICK(e)
+    tbclicks = tbclicks + 1
+ENDSUB
+
+tbar = FORM.TOOLBAR(frame, "tbMain", [ _
+    { "name": "tbNew", "text": "New document", "icon": "NEW" }, _
+    { "name": "tbOpen", "text": "Open", "icon": "OPEN" }, _
+    "-", _
+    { "name": "tbBold", "text": "Bold", "icon": "PROPERTIES", "check": TRUE } _
+])
+tbNew = FORM.FIND(frame, "tbNew")
+tbBold = FORM.FIND(frame, "tbBold")
+Check(tbNew > 0, "FIND locates a toolbar button")
+Check(FORM.GET(tbNew, "KIND") = "TOOLBTN", "toolbar button KIND")
+Check(FORM.GET(tbNew, "ENABLED"), "toolbar button starts enabled")
+FORM.SET(tbNew, "ENABLED", FALSE)
+Check(FORM.GET(tbNew, "ENABLED") = FALSE, "toolbar ENABLED FALSE")
+FORM.SET(tbNew, "ENABLED", TRUE)
+FORM.SET(tbBold, "CHECKED", TRUE)
+Check(FORM.GET(tbBold, "CHECKED"), "toolbar check button CHECKED")
+
 child1 = FORM.CHILD(frame, "Doc 1", 300, 200, "DOC1")
 child2 = FORM.CHILD(frame, "Doc 2", 300, 200, "DOC2")
 lbl = FORM.LABEL(child1, "lblDoc", "content", 10, 10, 100, 18)
@@ -64,8 +87,18 @@ Check(FORM.GET(lbl, "TEXT") = "content", "control on a child works")
 SUB TMRMAIN_TICK(e)
     ticks = ticks + 1
     IF ticks = 1 THEN FORM.SET(mnuOpen, "VALUE", TRUE)
-    IF ticks = 2 THEN FORM.SET(mnuWrap, "VALUE", TRUE)
+    IF ticks = 2 THEN
+        FORM.SET(mnuWrap, "VALUE", TRUE)
+        FORM.SET(tbNew, "VALUE", TRUE)
+    ENDIF
     IF ticks = 3 THEN
+        ' maximize a child, restore it, then close both while one was
+        ' maximized moments before - the frame must survive all of it
+        FORM.SET(child1, "MAXIMIZED", TRUE)
+        Check(FORM.GET(child1, "MAXIMIZED"), "child MAXIMIZED after SET")
+        FORM.SET(child1, "MAXIMIZED", FALSE)
+        Check(FORM.GET(child1, "MAXIMIZED") = FALSE, "child restored")
+        FORM.SET(child2, "MAXIMIZED", TRUE)
         FORM.CLOSE(child1)
         FORM.CLOSE(child2)
     ENDIF
@@ -74,6 +107,7 @@ SUB TMRMAIN_TICK(e)
         Check(FORM.FIND(frame, "DOC1") = 0, "closed child is gone from the registry")
         Check(opens = 1, "menu click dispatched MNUOPEN_CLICK")
         Check(checks = 1, "second menu click dispatched MNUWRAP_CLICK")
+        Check(tbclicks = 1, "toolbar click dispatched TBNEW_CLICK")
     ENDIF
     IF ticks >= 5 THEN FORM.CLOSE(frame)
 ENDSUB

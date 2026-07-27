@@ -3695,3 +3695,7 @@ Description: Create an MDI frame window (multi-document parent). Combine with FO
 [FORM.CHILD]
 Syntax: FORM.CHILD(frame, title$, width, height, [name$]) -> handle
 Description: Create an MDI child document inside a frame. Hosts controls like a form; closing children never ends the program, closing the frame does.
+
+[FORM.TOOLBAR]
+Syntax: FORM.TOOLBAR(frm, name$, spec) -> handle
+Description: Flat icon toolbar along the top (one per form). Spec = array of maps: name (-> NAME_CLICK), text (tooltip), icon (NEW/OPEN/SAVE/CUT/COPY/PASTE/UNDO/REDO/DELETE/PRINT/FIND/REPLACE/PROPERTIES/HELP), check (toggle); "-" = separator. Buttons take FORM.SET ENABLED/CHECKED/VALUE.

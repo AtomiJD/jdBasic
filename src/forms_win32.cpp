@@ -160,6 +160,34 @@ void drain_events() {
     }
 }
 
+// Tooltip text per toolbar-button handle (TTN_GETDISPINFO lookup).
+std::map<int, std::string> g_tooltips;
+
+HWND toolbar_of(int form_handle) {
+    for (auto& [h, it] : g_items)
+        if (it.kind == "TOOLBAR" && it.form == form_handle) return it.hwnd;
+    return nullptr;
+}
+
+// Re-flow a form after a resize or a toolbar change: the toolbar sizes
+// itself along the top, and an MDI frame's client area starts below it.
+void layout_form(int handle) {
+    FormsItem& f = g_items[handle];
+    HWND tb = toolbar_of(handle);
+    if (tb) SendMessageW(tb, TB_AUTOSIZE, 0, 0);
+    if (f.kind == "MDIFRAME" && f.mdi_client) {
+        int top = 0;
+        if (tb) {
+            RECT tr;
+            GetWindowRect(tb, &tr);
+            top = tr.bottom - tr.top;
+        }
+        RECT cr;
+        GetClientRect(f.hwnd, &cr);
+        MoveWindow(f.mdi_client, 0, top, cr.right, cr.bottom - top, TRUE);
+    }
+}
+
 // ── Window class / WndProc ──────────────────────────────────────
 
 LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -169,14 +197,29 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (!ctl) {
                 // menu item or accelerator: the command id is the handle
                 auto mit = g_items.find((int)LOWORD(wParam));
-                if (mit != g_items.end() && mit->second.kind == "MENU")
+                if (mit != g_items.end() && mit->second.kind == "MENU") {
                     queue_event(mit->second.name, "CLICK", info_map(mit->second));
-                return 0;
+                    return 0;
+                }
+                // not ours: a maximized MDI child's caption buttons arrive
+                // here as system command ids - DefFrameProc must see them
+                break;
             }
             auto hit = g_byhwnd.find(ctl);
             if (hit == g_byhwnd.end()) break;
             FormsItem& it = g_items[hit->second];
             int code = HIWORD(wParam);
+
+            if (it.kind == "TOOLBAR") {
+                auto bit = g_items.find((int)LOWORD(wParam));
+                if (bit != g_items.end() && bit->second.kind == "TOOLBTN") {
+                    Value m = info_map(bit->second);
+                    if (SendMessageW(ctl, TB_ISBUTTONCHECKED, LOWORD(wParam), 0))
+                        m.as_object()->set("checked", Value::make_bool(true));
+                    queue_event(bit->second.name, "CLICK", m);
+                }
+                return 0;
+            }
 
             if (it.kind == "BUTTON" && code == BN_CLICKED) {
                 queue_event(it.name, "CLICK", info_map(it));
@@ -232,9 +275,30 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 m.as_object()->set("width", Value::make_i64(lg(LOWORD(lParam))));
                 m.as_object()->set("height", Value::make_i64(lg(HIWORD(lParam))));
                 queue_event(it.name, "RESIZE", m);
+                if (it.kind == "MDIFRAME") {
+                    // own layout (toolbar strip + client below it) - skip
+                    // DefFrameProc, which would size the client full-height
+                    layout_form(hit->second);
+                    return 0;
+                }
+                if (toolbar_of(hit->second)) layout_form(hit->second);
             }
-            // fall through to the default proc: DefFrameProc resizes the
-            // MDICLIENT, DefMDIChildProc maintains the maximized state
+            // fall through: DefMDIChildProc maintains the maximized state
+            break;
+        }
+
+        case WM_NOTIFY: {
+            NMHDR* nm = (NMHDR*)lParam;
+            if (nm && nm->code == TTN_GETDISPINFOW) {
+                NMTTDISPINFOW* di = (NMTTDISPINFOW*)lParam;
+                auto tit = g_tooltips.find((int)di->hdr.idFrom);
+                if (tit != g_tooltips.end()) {
+                    std::wstring w = widen(tit->second);
+                    wcsncpy(di->szText, w.c_str(), 79);
+                    di->szText[79] = 0;
+                }
+                return 0;
+            }
             break;
         }
 
@@ -273,7 +337,9 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     if (dying.count(it->first) || dying.count(it->second.form)) {
                         if (is_form_kind(it->second.kind) && it->second.haccel)
                             DestroyAcceleratorTable(it->second.haccel);
-                        if (it->second.hwnd) g_byhwnd.erase(it->second.hwnd);
+                        g_tooltips.erase(it->first);
+                        if (it->second.hwnd && it->second.kind != "TOOLBTN")
+                            g_byhwnd.erase(it->second.hwnd);
                         it = g_items.erase(it);
                     } else {
                         ++it;
@@ -587,8 +653,35 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         return;
     }
 
+    if (it.kind == "TOOLBTN") {
+        if (prop == "ENABLED") {
+            SendMessageW(it.hwnd, TB_ENABLEBUTTON, handle, MAKELPARAM(v.to_bool() ? 1 : 0, 0));
+        } else if (prop == "CHECKED") {
+            SendMessageW(it.hwnd, TB_CHECKBUTTON, handle, MAKELPARAM(v.to_bool() ? 1 : 0, 0));
+        } else if (prop == "VALUE") {
+            if (v.to_bool())
+                SendMessageW(GetParent(it.hwnd), WM_COMMAND, MAKEWPARAM(handle, 0),
+                             (LPARAM)it.hwnd);
+        } else {
+            throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
+                                     "' for TOOLBTN");
+        }
+        return;
+    }
+
     bool is_list = it.kind == "LISTBOX" || it.kind == "COMBO";
     HWND h = it.hwnd;
+
+    if (prop == "MAXIMIZED" && is_form_kind(it.kind)) {
+        if (it.kind == "MDICHILD") {
+            FormsItem& frame = item_of(it.form, who);
+            SendMessageW(frame.mdi_client, v.to_bool() ? WM_MDIMAXIMIZE : WM_MDIRESTORE,
+                         (WPARAM)h, 0);
+        } else {
+            ShowWindow(h, v.to_bool() ? SW_MAXIMIZE : SW_RESTORE);
+        }
+        return;
+    }
 
     if (prop == "TEXT") {
         SetWindowTextW(h, widen(value_text(v)).c_str());
@@ -646,9 +739,22 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
                                  "' for MENU");
     }
 
+    if (it.kind == "TOOLBTN") {
+        if (prop == "NAME") return Value::make_string(it.name);
+        if (prop == "KIND") return Value::make_string(it.kind);
+        if (prop == "ENABLED")
+            return Value::make_bool(SendMessageW(it.hwnd, TB_ISBUTTONENABLED, handle, 0) != 0);
+        if (prop == "CHECKED")
+            return Value::make_bool(SendMessageW(it.hwnd, TB_ISBUTTONCHECKED, handle, 0) != 0);
+        throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
+                                 "' for TOOLBTN");
+    }
+
     bool is_list = it.kind == "LISTBOX" || it.kind == "COMBO";
     HWND h = it.hwnd;
 
+    if (prop == "MAXIMIZED" && is_form_kind(it.kind))
+        return Value::make_bool(IsZoomed(h) != 0);
     if (prop == "TEXT")    return Value::make_string(get_hwnd_text(h));
     if (prop == "ENABLED") return Value::make_bool(IsWindowEnabled(h) != 0);
     if (prop == "VISIBLE") return Value::make_bool(IsWindowVisible(h) != 0);
@@ -850,6 +956,82 @@ void set_form_menu(int frm, const Value& spec, const char* who) {
         f.haccel = CreateAcceleratorTableW(accels.data(), (int)accels.size());
 }
 
+// ── Toolbar builder ─────────────────────────────────────────────
+// Spec: array of maps ("-" = separator). Keys: "name" (required ->
+// NAME_CLICK), "text" (tooltip), "icon" (stock icon name), "check"
+// (toggle button). Icons come from the common-control standard bitmap.
+
+int stock_icon_index(const std::string& icon) {
+    static const std::map<std::string, int> stock = {
+        {"CUT", STD_CUT}, {"COPY", STD_COPY}, {"PASTE", STD_PASTE},
+        {"UNDO", STD_UNDO}, {"REDO", STD_REDOW}, {"DELETE", STD_DELETE},
+        {"NEW", STD_FILENEW}, {"OPEN", STD_FILEOPEN}, {"SAVE", STD_FILESAVE},
+        {"PRINTPRE", STD_PRINTPRE}, {"PROPERTIES", STD_PROPERTIES},
+        {"HELP", STD_HELP}, {"FIND", STD_FIND}, {"REPLACE", STD_REPLACE},
+        {"PRINT", STD_PRINT}
+    };
+    auto it = stock.find(upname(icon));
+    return it == stock.end() ? -1 : it->second;
+}
+
+int do_create_toolbar(int frm, const std::string& name, const Value& spec,
+                      const char* who) {
+    FormsItem& f = form_of(frm, who);
+    if (spec.type != ValueType::ARRAY)
+        throw std::runtime_error(std::string(who) + ": the toolbar spec must be an array");
+    if (toolbar_of(frm))
+        throw std::runtime_error(std::string(who) + ": the form already has a toolbar");
+
+    HWND tb = CreateWindowExW(0, TOOLBARCLASSNAMEW, nullptr,
+                              WS_CHILD | WS_VISIBLE | TBSTYLE_FLAT | TBSTYLE_TOOLTIPS | CCS_TOP,
+                              0, 0, 0, 0, f.hwnd, nullptr,
+                              GetModuleHandleW(nullptr), nullptr);
+    if (!tb) throw std::runtime_error(std::string(who) + ": toolbar creation failed");
+    SendMessageW(tb, TB_BUTTONSTRUCTSIZE, sizeof(TBBUTTON), 0);
+    TBADDBITMAP ab = { HINST_COMMCTRL, IDB_STD_SMALL_COLOR };
+    SendMessageW(tb, TB_ADDBITMAP, 0, (LPARAM)&ab);
+
+    std::vector<TBBUTTON> btns;
+    for (auto& entry : spec.as_array()->elements) {
+        TBBUTTON b = {};
+        if (entry.type == ValueType::STRING && entry.as_string()->data == "-") {
+            b.fsStyle = BTNS_SEP;
+            btns.push_back(b);
+            continue;
+        }
+        if (entry.type != ValueType::OBJECT)
+            throw std::runtime_error(std::string(who) + ": each toolbar entry must be a map or \"-\"");
+        const Value* nv = jf_get(entry, "name");
+        if (!nv || nv->type != ValueType::STRING)
+            throw std::runtime_error(std::string(who) + ": a toolbar button needs a \"name\"");
+        int id = store_item(nullptr, nv->as_string()->data, "TOOLBTN", frm);
+        g_items[id].hwnd = tb;   // buttons act through their toolbar window
+
+        const Value* tv = jf_get(entry, "text");
+        if (tv && tv->type == ValueType::STRING)
+            g_tooltips[id] = tv->as_string()->data;
+
+        int icon = STD_PROPERTIES;
+        const Value* iv = jf_get(entry, "icon");
+        if (iv && iv->type == ValueType::STRING) {
+            icon = stock_icon_index(iv->as_string()->data);
+            if (icon < 0)
+                throw std::runtime_error(std::string(who) + ": unknown icon \"" +
+                                         iv->as_string()->data + "\"");
+        }
+        const Value* cv = jf_get(entry, "check");
+        b.iBitmap = icon;
+        b.idCommand = id;
+        b.fsState = TBSTATE_ENABLED;
+        b.fsStyle = (BYTE)(cv && cv->to_bool() ? BTNS_CHECK : BTNS_BUTTON);
+        btns.push_back(b);
+    }
+    SendMessageW(tb, TB_ADDBUTTONS, btns.size(), (LPARAM)btns.data());
+    int handle = store_item(tb, name, "TOOLBAR", frm);
+    layout_form(frm);
+    return handle;
+}
+
 // Event names a control kind can fire; used for automatic handler binding.
 const std::vector<const char*>& events_of(const std::string& kind) {
     static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE" };
@@ -859,7 +1041,8 @@ const std::vector<const char*>& events_of(const std::string& kind) {
     static const std::vector<const char*> tick_ev  = { "TICK" };
     static const std::vector<const char*> none_ev  = {};
     if (is_form_kind(kind)) return form_ev;
-    if (kind == "BUTTON" || kind == "CHECKBOX" || kind == "RADIO" || kind == "MENU") return click_ev;
+    if (kind == "BUTTON" || kind == "CHECKBOX" || kind == "RADIO" ||
+        kind == "MENU" || kind == "TOOLBTN") return click_ev;
     if (kind == "TEXTBOX" || kind == "COMBO")  return text_ev;
     if (kind == "LISTBOX")  return list_ev;
     if (kind == "TIMER")    return tick_ev;
@@ -1005,6 +1188,13 @@ int load_jdform(const std::string& path, int mdi_parent) {
                 if (it.kind == "MENU" && it.form == frm)
                     bind_handlers(it.name, "MENU");
         }
+        const Value* toolbar = jf_get(*fdef, "toolbar");
+        if (toolbar) {
+            do_create_toolbar(frm, fname + "_TB", *toolbar, "FORM.LOAD");
+            for (auto& [h, it] : g_items)
+                if (it.kind == "TOOLBTN" && it.form == frm)
+                    bind_handlers(it.name, "TOOLBTN");
+        }
         load_controls(frm, doc, path);
     } catch (...) {
         DestroyWindow(g_items[frm].hwnd);
@@ -1026,7 +1216,7 @@ void register_forms_builtins(VM& vm) {
     for (const char* n : { "FORM.CREATE", "FORM.BUTTON", "FORM.LABEL", "FORM.TEXTBOX",
                            "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME", "FORM.LISTBOX",
                            "FORM.COMBO", "FORM.TIMER", "FORM.LOAD", "FORM.FIND",
-                           "FORM.MDI", "FORM.CHILD", "FORM.MENU",
+                           "FORM.MDI", "FORM.CHILD", "FORM.MENU", "FORM.TOOLBAR",
                            "FORM.SET", "FORM.GET",
                            "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
                            "MSGBOX", "INPUTBOX$" })
@@ -1148,6 +1338,18 @@ void register_forms_builtins(VM& vm) {
             if (it.kind == "MENU" && it.form == frm)
                 bind_handlers(it.name, "MENU");
         return Value::make_none();
+    });
+
+    // FORM.TOOLBAR(frm, name$, spec) -> handle  flat icon toolbar along the
+    // top; buttons dispatch NAME_CLICK, handlers are bound automatically
+    vm.register_native("FORM.TOOLBAR", 3, 3, [](const std::vector<Value>& args) -> Value {
+        int frm = arg_int(args, 0);
+        int handle = do_create_toolbar(frm, arg_str(args, 1, "FORM.TOOLBAR"),
+                                       args[2], "FORM.TOOLBAR");
+        for (auto& [h, it] : g_items)
+            if (it.kind == "TOOLBTN" && it.form == frm)
+                bind_handlers(it.name, "TOOLBTN");
+        return Value::make_i64(handle);
     });
 
     // FORM.LOAD(path$, [mdi_frame]) -> handle  instantiate a .jdform file
