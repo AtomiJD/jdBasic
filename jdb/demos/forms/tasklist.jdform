@@ -1,17 +1,95 @@
 {
   "version": 1,
-  "form": { "name": "MAIN", "title": "jdBasic Task List (.jdform)", "width": 480, "height": 340 },
+  "form": {
+    "name": "MAIN",
+    "title": "jdBasic Task List (.jdform)",
+    "width": 480,
+    "height": 340
+  },
   "controls": [
-    { "type": "LABEL",    "name": "lblTitle", "text": "What needs doing?", "x": 12, "y": 12, "w": 200, "h": 18 },
-    { "type": "TEXTBOX",  "name": "txtTask",  "text": "", "x": 12, "y": 34, "w": 330, "h": 24 },
-    { "type": "BUTTON",   "name": "btnAdd",   "text": "&Add", "x": 352, "y": 33, "w": 108, "h": 26 },
-    { "type": "LISTBOX",  "name": "lstTasks", "x": 12, "y": 70, "w": 330, "h": 200,
-      "properties": { "ITEMS": ["Buy milk", "Port VB6 forms", "Ship P2"] } },
-    { "type": "BUTTON",   "name": "btnEdit",  "text": "&Edit...", "x": 352, "y": 70, "w": 108, "h": 26 },
-    { "type": "BUTTON",   "name": "btnDone",  "text": "&Remove", "x": 352, "y": 102, "w": 108, "h": 26 },
-    { "type": "CHECKBOX", "name": "chkBeep",  "text": "Confirm removal", "x": 352, "y": 140, "w": 120, "h": 22,
-      "properties": { "CHECKED": true } },
-    { "type": "LABEL",    "name": "lblClock", "text": "", "x": 12, "y": 282, "w": 200, "h": 18 },
-    { "type": "TIMER",    "name": "tmrClock", "interval": 1000 }
+    {
+      "type": "LABEL",
+      "name": "lblTitle",
+      "text": "What needs doing?",
+      "x": 12,
+      "y": 12,
+      "w": 200,
+      "h": 18
+    },
+    {
+      "type": "TEXTBOX",
+      "name": "txtTask",
+      "x": 12,
+      "y": 34,
+      "w": 330,
+      "h": 24
+    },
+    {
+      "type": "BUTTON",
+      "name": "btnAdd",
+      "text": "&Add",
+      "x": 352,
+      "y": 33,
+      "w": 108,
+      "h": 26
+    },
+    {
+      "type": "LISTBOX",
+      "name": "lstTasks",
+      "x": 12,
+      "y": 70,
+      "w": 330,
+      "h": 200,
+      "properties": {
+        "ITEMS": [
+          "Buy milk",
+          "Port VB6 forms",
+          "Ship P2"
+        ]
+      }
+    },
+    {
+      "type": "BUTTON",
+      "name": "btnEdit",
+      "text": "&Edit...",
+      "x": 352,
+      "y": 70,
+      "w": 108,
+      "h": 26
+    },
+    {
+      "type": "BUTTON",
+      "name": "btnDone",
+      "text": "&Remove",
+      "x": 352,
+      "y": 102,
+      "w": 108,
+      "h": 26
+    },
+    {
+      "type": "CHECKBOX",
+      "name": "chkBeep",
+      "text": "Confirm removal",
+      "x": 352,
+      "y": 140,
+      "w": 120,
+      "h": 22,
+      "properties": {
+        "CHECKED": true
+      }
+    },
+    {
+      "type": "LABEL",
+      "name": "lblClock",
+      "x": 12,
+      "y": 282,
+      "w": 200,
+      "h": 18
+    },
+    {
+      "type": "TIMER",
+      "name": "tmrClock",
+      "interval": 1000
+    }
   ]
 }
