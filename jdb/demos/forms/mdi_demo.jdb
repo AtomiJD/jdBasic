@@ -4,12 +4,14 @@
 ' frame ends the program.
 
 frame = 0
+sbar = 0
 doc_count = 0
 
 SUB NewDoc()
     doc_count = doc_count + 1
     child = FORM.LOAD("mdi_doc.jdform", frame)
     FORM.SET(child, "TEXT", "Document " + STR$(doc_count))
+    FORM.SET(sbar, "TEXT", ["Ready", STR$(doc_count) + " document(s)"])
 ENDSUB
 
 SUB MNUNEW_CLICK(e)
@@ -49,5 +51,8 @@ FORM.TOOLBAR(frame, "tbMain", [ _
 SUB TBABOUT_CLICK(e)
     MNUABOUT_CLICK(e)
 ENDSUB
+
+sbar = FORM.STATUSBAR(frame, "sbMain", [300, -1])
+FORM.SET(sbar, "TEXT", ["Ready", "0 document(s)"])
 
 FORM.RUN(frame)

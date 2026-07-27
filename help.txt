@@ -3699,3 +3699,7 @@ Description: Create an MDI child document inside a frame. Hosts controls like a 
 [FORM.TOOLBAR]
 Syntax: FORM.TOOLBAR(frm, name$, spec) -> handle
 Description: Flat icon toolbar along the top (one per form). Spec = array of maps: name (-> NAME_CLICK), text (tooltip), icon (NEW/OPEN/SAVE/CUT/COPY/PASTE/UNDO/REDO/DELETE/PRINT/FIND/REPLACE/PROPERTIES/HELP), check (toggle); "-" = separator. Buttons take FORM.SET ENABLED/CHECKED/VALUE.
+
+[FORM.STATUSBAR]
+Syntax: FORM.STATUSBAR(frm, name$, [part_widths]) -> handle
+Description: Status bar along the bottom (one per form). part_widths = array of logical widths, -1 stretches the last part; omitted = one part. SET TEXT takes a string (part 0) or an array (all parts).

@@ -169,22 +169,29 @@ HWND toolbar_of(int form_handle) {
     return nullptr;
 }
 
-// Re-flow a form after a resize or a toolbar change: the toolbar sizes
-// itself along the top, and an MDI frame's client area starts below it.
+HWND statusbar_of(int form_handle) {
+    for (auto& [h, it] : g_items)
+        if (it.kind == "STATUSBAR" && it.form == form_handle) return it.hwnd;
+    return nullptr;
+}
+
+// Re-flow a form after a resize or a bar change: the toolbar sizes itself
+// along the top, the status bar along the bottom, and an MDI frame's
+// client area fills what is left between them.
 void layout_form(int handle) {
     FormsItem& f = g_items[handle];
     HWND tb = toolbar_of(handle);
+    HWND sb = statusbar_of(handle);
     if (tb) SendMessageW(tb, TB_AUTOSIZE, 0, 0);
+    if (sb) SendMessageW(sb, WM_SIZE, 0, 0);
     if (f.kind == "MDIFRAME" && f.mdi_client) {
-        int top = 0;
-        if (tb) {
-            RECT tr;
-            GetWindowRect(tb, &tr);
-            top = tr.bottom - tr.top;
-        }
+        int top = 0, bottom = 0;
+        RECT r;
+        if (tb) { GetWindowRect(tb, &r); top = r.bottom - r.top; }
+        if (sb) { GetWindowRect(sb, &r); bottom = r.bottom - r.top; }
         RECT cr;
         GetClientRect(f.hwnd, &cr);
-        MoveWindow(f.mdi_client, 0, top, cr.right, cr.bottom - top, TRUE);
+        MoveWindow(f.mdi_client, 0, top, cr.right, cr.bottom - top - bottom, TRUE);
     }
 }
 
@@ -281,7 +288,8 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     layout_form(hit->second);
                     return 0;
                 }
-                if (toolbar_of(hit->second)) layout_form(hit->second);
+                if (toolbar_of(hit->second) || statusbar_of(hit->second))
+                    layout_form(hit->second);
             }
             // fall through: DefMDIChildProc maintains the maximized state
             break;
@@ -669,6 +677,28 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         return;
     }
 
+    if (it.kind == "STATUSBAR") {
+        if (prop == "TEXT") {
+            if (v.type == ValueType::ARRAY) {
+                auto& els = v.as_array()->elements;
+                for (size_t i = 0; i < els.size(); i++)
+                    SendMessageW(it.hwnd, SB_SETTEXTW, i,
+                                 (LPARAM)widen(value_text(els[i])).c_str());
+            } else {
+                SendMessageW(it.hwnd, SB_SETTEXTW, 0,
+                             (LPARAM)widen(value_text(v)).c_str());
+            }
+            return;
+        }
+        if (prop == "VISIBLE") {
+            ShowWindow(it.hwnd, v.to_bool() ? SW_SHOW : SW_HIDE);
+            layout_form(it.form);
+            return;
+        }
+        throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
+                                 "' for STATUSBAR");
+    }
+
     bool is_list = it.kind == "LISTBOX" || it.kind == "COMBO";
     HWND h = it.hwnd;
 
@@ -748,6 +778,14 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
             return Value::make_bool(SendMessageW(it.hwnd, TB_ISBUTTONCHECKED, handle, 0) != 0);
         throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
                                  "' for TOOLBTN");
+    }
+
+    if (it.kind == "STATUSBAR" && prop == "TEXT") {
+        int len = (int)LOWORD(SendMessageW(it.hwnd, SB_GETTEXTLENGTHW, 0, 0));
+        std::wstring w(len + 1, 0);
+        SendMessageW(it.hwnd, SB_GETTEXTW, 0, (LPARAM)&w[0]);
+        w.resize(len);
+        return Value::make_string(narrow(w));
     }
 
     bool is_list = it.kind == "LISTBOX" || it.kind == "COMBO";
@@ -1032,6 +1070,42 @@ int do_create_toolbar(int frm, const std::string& name, const Value& spec,
     return handle;
 }
 
+// ── Status bar builder ──────────────────────────────────────────
+// Parts: an array of widths in logical units (-1 = stretch to the right
+// edge); anything else creates a single full-width part.
+
+int do_create_statusbar(int frm, const std::string& name, const Value& parts,
+                        const char* who) {
+    FormsItem& f = form_of(frm, who);
+    if (statusbar_of(frm))
+        throw std::runtime_error(std::string(who) + ": the form already has a status bar");
+
+    HWND sb = CreateWindowExW(0, STATUSCLASSNAMEW, nullptr,
+                              WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP | CCS_BOTTOM,
+                              0, 0, 0, 0, f.hwnd, nullptr,
+                              GetModuleHandleW(nullptr), nullptr);
+    if (!sb) throw std::runtime_error(std::string(who) + ": status bar creation failed");
+    if (g_font) SendMessageW(sb, WM_SETFONT, (WPARAM)g_font, TRUE);
+
+    std::vector<int> edges;
+    if (parts.type == ValueType::ARRAY && !parts.as_array()->elements.empty()) {
+        int x = 0;
+        for (auto& el : parts.as_array()->elements) {
+            int w = (int)el.to_int();
+            if (w < 0) { edges.push_back(-1); break; }
+            x += px(w);
+            edges.push_back(x);
+        }
+    } else {
+        edges.push_back(-1);
+    }
+    SendMessageW(sb, SB_SETPARTS, edges.size(), (LPARAM)edges.data());
+
+    int handle = store_item(sb, name, "STATUSBAR", frm);
+    layout_form(frm);
+    return handle;
+}
+
 // Event names a control kind can fire; used for automatic handler binding.
 const std::vector<const char*>& events_of(const std::string& kind) {
     static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE" };
@@ -1195,6 +1269,9 @@ int load_jdform(const std::string& path, int mdi_parent) {
                 if (it.kind == "TOOLBTN" && it.form == frm)
                     bind_handlers(it.name, "TOOLBTN");
         }
+        const Value* statusbar = jf_get(*fdef, "statusbar");
+        if (statusbar && statusbar->to_bool())
+            do_create_statusbar(frm, fname + "_SB", *statusbar, "FORM.LOAD");
         load_controls(frm, doc, path);
     } catch (...) {
         DestroyWindow(g_items[frm].hwnd);
@@ -1217,6 +1294,7 @@ void register_forms_builtins(VM& vm) {
                            "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME", "FORM.LISTBOX",
                            "FORM.COMBO", "FORM.TIMER", "FORM.LOAD", "FORM.FIND",
                            "FORM.MDI", "FORM.CHILD", "FORM.MENU", "FORM.TOOLBAR",
+                           "FORM.STATUSBAR",
                            "FORM.SET", "FORM.GET",
                            "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
                            "MSGBOX", "INPUTBOX$" })
@@ -1350,6 +1428,14 @@ void register_forms_builtins(VM& vm) {
             if (it.kind == "TOOLBTN" && it.form == frm)
                 bind_handlers(it.name, "TOOLBTN");
         return Value::make_i64(handle);
+    });
+
+    // FORM.STATUSBAR(frm, name$, [part_widths]) -> handle  status bar along
+    // the bottom; TEXT takes a string (part 0) or an array (all parts)
+    vm.register_native("FORM.STATUSBAR", 2, 3, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(do_create_statusbar(
+            arg_int(args, 0), arg_str(args, 1, "FORM.STATUSBAR"),
+            args.size() > 2 ? args[2] : Value::make_none(), "FORM.STATUSBAR"));
     });
 
     // FORM.LOAD(path$, [mdi_frame]) -> handle  instantiate a .jdform file
