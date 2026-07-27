@@ -8593,6 +8593,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
+    // TIME$() / DATE$() without an argument mean "now". The runtime
+    // binding takes an epoch and the default zero-fill would format
+    // epoch 0 - a clock frozen at 01:00:00 in any CET-ish timezone.
+    if ((upper == "TIME$" || upper == "DATE$") && expr.args.empty()) {
+        auto now_it = runtime_funcs.find("NOW_EPOCH");
+        auto fmt_it = runtime_funcs.find(upper);
+        if (now_it != runtime_funcs.end() && fmt_it != runtime_funcs.end()) {
+            LLVMValueRef now = LLVMBuildCall2(builder, now_it->second.fn_type,
+                                              now_it->second.fn, nullptr, 0, "now_ep");
+            LLVMValueRef fargs[] = { now };
+            LLVMValueRef s = LLVMBuildCall2(builder, fmt_it->second.fn_type,
+                                            fmt_it->second.fn, fargs, 1, "nowstr");
+            return { s, JD_TAG_STR };
+        }
+    }
+
     // CVDATE - dispatch by argument type (string parses ISO, number is
     // epoch seconds, array is element-wise vectorized).
     if ((upper == "CVDATE" || upper == "CDATE") && expr.args.size() == 1) {
