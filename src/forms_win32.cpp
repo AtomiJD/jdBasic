@@ -46,6 +46,13 @@ int                       g_open_forms  = 0;
 HFONT                     g_font        = nullptr;
 VM*                       g_vm          = nullptr;
 HWND                      g_last_form   = nullptr;
+int                       g_dpi         = 96;
+
+// Script-facing coordinates are logical 96-DPI units; the system message
+// font comes back scaled to the system DPI, so the layout has to scale
+// with it or every control clips on a >100% display.
+int px(int logical) { return MulDiv(logical, g_dpi, 96); }
+int lg(int device)  { return MulDiv(device, 96, g_dpi); }
 
 struct PendingEvent {
     std::string name;
@@ -209,8 +216,8 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             if (hit != g_byhwnd.end()) {
                 FormsItem& it = g_items[hit->second];
                 Value m = info_map(it);
-                m.as_object()->set("width", Value::make_i64(LOWORD(lParam)));
-                m.as_object()->set("height", Value::make_i64(HIWORD(lParam)));
+                m.as_object()->set("width", Value::make_i64(lg(LOWORD(lParam))));
+                m.as_object()->set("height", Value::make_i64(lg(HIWORD(lParam))));
                 queue_event(it.name, "RESIZE", m);
             }
             return 0;
@@ -261,6 +268,13 @@ void ensure_class() {
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES };
     InitCommonControlsEx(&icc);
 
+    HDC screen = GetDC(nullptr);
+    if (screen) {
+        g_dpi = GetDeviceCaps(screen, LOGPIXELSX);
+        if (g_dpi <= 0) g_dpi = 96;
+        ReleaseDC(nullptr, screen);
+    }
+
     WNDCLASSW wc = {};
     wc.lpfnWndProc   = form_wndproc;
     wc.hInstance     = GetModuleHandleW(nullptr);
@@ -292,7 +306,7 @@ int create_control(int frm, const std::string& name, const wchar_t* cls,
     int handle = g_next_handle;   // reserved below by store_item
     HWND ctl = CreateWindowExW(exstyle, cls, widen(text).c_str(),
                                WS_CHILD | WS_VISIBLE | style,
-                               x, y, w, h, f.hwnd,
+                               px(x), px(y), px(w), px(h), f.hwnd,
                                (HMENU)(INT_PTR)handle,
                                GetModuleHandleW(nullptr), nullptr);
     if (!ctl)
@@ -303,7 +317,8 @@ int create_control(int frm, const std::string& name, const wchar_t* cls,
 
 int do_create_form(const std::string& title, int cw, int ch, const std::string& name) {
     ensure_class();
-    RECT rc = { 0, 0, cw, ch };
+    int dcw = px(cw), dch = px(ch);
+    RECT rc = { 0, 0, dcw, dch };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     int ww = rc.right - rc.left, wh = rc.bottom - rc.top;
@@ -313,6 +328,20 @@ int do_create_form(const std::string& title, int cw, int ch, const std::string& 
                                 (sw - ww) / 2, (sh - wh) / 2, ww, wh,
                                 nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!hwnd) throw std::runtime_error("FORM.CREATE: CreateWindow failed");
+
+    // AdjustWindowRect assumes 96-DPI frame metrics, which undersizes the
+    // client area on a scaled display - measure and correct exactly.
+    RECT cr;
+    GetClientRect(hwnd, &cr);
+    int dw = dcw - (cr.right - cr.left), dh = dch - (cr.bottom - cr.top);
+    if (dw != 0 || dh != 0) {
+        RECT wr;
+        GetWindowRect(hwnd, &wr);
+        SetWindowPos(hwnd, nullptr, 0, 0,
+                     wr.right - wr.left + dw, wr.bottom - wr.top + dh,
+                     SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+
     g_open_forms++;
     g_last_form = hwnd;
     return store_item(hwnd, name, "FORM", 0);
@@ -376,7 +405,7 @@ std::string run_inputbox(const std::string& prompt, const std::string& title,
 
     HWND owner = g_last_form && IsWindow(g_last_form) ? g_last_form : nullptr;
     const int W = 380, H = 150;
-    RECT rc = { 0, 0, W, H };
+    RECT rc = { 0, 0, px(W), px(H) };
     AdjustWindowRectEx(&rc, WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
     int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
     int ww = rc.right - rc.left, wh = rc.bottom - rc.top;
@@ -388,17 +417,21 @@ std::string run_inputbox(const std::string& prompt, const std::string& title,
 
     HINSTANCE inst = GetModuleHandleW(nullptr);
     HWND lbl  = CreateWindowExW(0, L"STATIC", widen(prompt).c_str(),
-                                WS_CHILD | WS_VISIBLE, 12, 12, W - 24, 40,
+                                WS_CHILD | WS_VISIBLE,
+                                px(12), px(12), px(W - 24), px(40),
                                 dlg, nullptr, inst, nullptr);
     HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", widen(deflt).c_str(),
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
-                                12, 60, W - 24, 24, dlg, nullptr, inst, nullptr);
+                                px(12), px(60), px(W - 24), px(24),
+                                dlg, nullptr, inst, nullptr);
     HWND okb  = CreateWindowExW(0, L"BUTTON", L"OK",
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                                W - 180, 100, 80, 26, dlg, (HMENU)IDOK, inst, nullptr);
+                                px(W - 180), px(100), px(80), px(26),
+                                dlg, (HMENU)IDOK, inst, nullptr);
     HWND cnb  = CreateWindowExW(0, L"BUTTON", L"Cancel",
                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                                W - 92, 100, 80, 26, dlg, (HMENU)IDCANCEL, inst, nullptr);
+                                px(W - 92), px(100), px(80), px(26),
+                                dlg, (HMENU)IDCANCEL, inst, nullptr);
     if (g_font)
         for (HWND h : { lbl, edit, okb, cnb })
             SendMessageW(h, WM_SETFONT, (WPARAM)g_font, TRUE);
@@ -477,7 +510,7 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         HWND parent = GetParent(h);
         if (parent) ScreenToClient(parent, &tl);
         int x = tl.x, y = tl.y, w = rc.right - rc.left, hh = rc.bottom - rc.top;
-        int n = (int)v.to_int();
+        int n = px((int)v.to_int());
         if (prop == "X") x = n; else if (prop == "Y") y = n;
         else if (prop == "WIDTH") w = n; else hh = n;
         MoveWindow(h, x, y, w, hh, TRUE);
@@ -518,12 +551,12 @@ Value get_prop(FormsItem& it, const std::string& prop, const char* who) {
     if (prop == "X" || prop == "Y" || prop == "WIDTH" || prop == "HEIGHT") {
         RECT rc;
         GetWindowRect(h, &rc);
-        if (prop == "WIDTH")  return Value::make_i64(rc.right - rc.left);
-        if (prop == "HEIGHT") return Value::make_i64(rc.bottom - rc.top);
+        if (prop == "WIDTH")  return Value::make_i64(lg(rc.right - rc.left));
+        if (prop == "HEIGHT") return Value::make_i64(lg(rc.bottom - rc.top));
         POINT tl = { rc.left, rc.top };
         HWND parent = GetParent(h);
         if (parent) ScreenToClient(parent, &tl);
-        return Value::make_i64(prop == "X" ? tl.x : tl.y);
+        return Value::make_i64(lg(prop == "X" ? tl.x : tl.y));
     }
     throw std::runtime_error(std::string(who) + ": unknown property '" + prop +
                              "' for " + it.kind);
