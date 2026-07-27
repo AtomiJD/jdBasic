@@ -20,19 +20,23 @@ FUNC envval$(cfg$, key$)
     RETURN ""
 ENDFUNC
 
+' Pull the public https URL out of the ngrok agent API. The full JSON carries a
+' metrics block with subnormal floats (2.9e-314) that trips JSON.PARSE$, and the
+' body can be large - so extract the first public_url by string, not by parse.
 FUNC ngrokBase$()
+    DIM tj$ = ""
     TRY
-        DIM tj$ = HTTP.GET$("http://127.0.0.1:4040/api/tunnels")
-        DIM tobj = JSON.PARSE$(tj$)
-        DIM tuns = tobj{"tunnels"}
-        DIM ti
-        FOR ti = 0 TO LEN(tuns) - 1
-            IF tuns[ti]{"proto"} = "https" THEN RETURN tuns[ti]{"public_url"}
-        NEXT ti
+        tj$ = HTTP.GET$("http://127.0.0.1:4040/api/tunnels")
     CATCH
         RETURN ""
     ENDTRY
-    RETURN ""
+    DIM key$ = CHR$(34) + "public_url" + CHR$(34) + ":" + CHR$(34)
+    DIM p = INSTR(tj$, key$)
+    IF p < 0 THEN RETURN ""
+    DIM rest$ = MID$(tj$, p + LEN(key$))
+    DIM endPos = INSTR(rest$, CHR$(34))
+    IF endPos < 0 THEN RETURN ""
+    RETURN LEFT$(rest$, endPos)
 ENDFUNC
 
 DIM home$ = GETENV$("HOME")
