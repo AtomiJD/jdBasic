@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "form": { "name": "JMAIN", "title": "Native Load", "width": 300, "height": 200 },
+  "controls": [
+    { "type": "LABEL",   "name": "lblInfo", "text": "from jdform", "x": 10, "y": 10, "w": 200, "h": 18 },
+    { "type": "TEXTBOX", "name": "txtName", "text": "hello", "x": 10, "y": 40, "w": 200, "h": 24 }
+  ]
+}

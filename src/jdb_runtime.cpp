@@ -1564,6 +1564,11 @@ static JdbEventFn g_h_mousedown = nullptr;
 static JdbEventFn g_h_mouseup   = nullptr;
 static JdbEventFn g_h_mousemove = nullptr;
 
+// Handlers for every other event name (forms controls, custom events).
+// These arrive on a keyed wire format - see the generic branch in
+// jdrt_dispatch_event.
+static std::unordered_map<std::string, JdbEventFn> g_h_custom;
+
 void jdrt_register_event_handler(const char* name, void* fn) {
     if (!name || !fn) return;
     if (strcmp(name, "KEYDOWN") == 0)        g_h_keydown   = (JdbEventFn)fn;
@@ -1572,6 +1577,7 @@ void jdrt_register_event_handler(const char* name, void* fn) {
     else if (strcmp(name, "MOUSEDOWN") == 0) g_h_mousedown = (JdbEventFn)fn;
     else if (strcmp(name, "MOUSEUP") == 0)   g_h_mouseup   = (JdbEventFn)fn;
     else if (strcmp(name, "MOUSEMOVE") == 0) g_h_mousemove = (JdbEventFn)fn;
+    else                                     g_h_custom[name] = (JdbEventFn)fn;
 }
 
 static const char* event_arg_str(const int64_t* args, int i, int nargs) {
@@ -1593,7 +1599,8 @@ static JdbArray* wrap_map_in_array(JdbMap* m) {
 
 void jdrt_dispatch_event(const char* event_name,
                          const int64_t* args, const int32_t* tags, int nargs) {
-    (void)tags;  // schema is fixed per event name
+    // The six SDL events have fixed positional schemas and ignore tags;
+    // the generic branch at the bottom reads the keyed format via tags.
     if (!event_name) return;
 
     if (strcmp(event_name, "QUIT") == 0) {
@@ -1634,6 +1641,29 @@ void jdrt_dispatch_event(const char* event_name,
         g_h_mousemove(wrap_map_in_array(m));
         return;
     }
+
+    // Every other event arrives keyed: (key STR, value) pairs, built by
+    // the bridge for any name outside the six SDL schemas. Rebuild the
+    // info map generically and hand it to the registered handler; no
+    // handler means the event was bound speculatively - drop it.
+    auto cit = g_h_custom.find(event_name);
+    if (cit == g_h_custom.end() || !cit->second) return;
+    JdbMap* m = jdb_map_new();
+    for (int i = 0; i + 1 < nargs; i += 2) {
+        const char* key = event_arg_str(args, i, nargs);
+        if (!key || !key[0]) continue;
+        int32_t vtag = tags ? tags[i + 1] : JD_TAG_I64;
+        if (vtag == JD_TAG_STR) {
+            jdb_map_set_str(m, key, event_arg_str(args, i + 1, nargs));
+        } else if (vtag == JD_TAG_F64) {
+            double d;
+            memcpy(&d, &args[i + 1], sizeof(double));
+            jdb_map_set_f64(m, key, d);
+        } else {  // I64 / BOOL wire as integer
+            jdb_map_set_f64(m, key, (double)args[i + 1]);
+        }
+    }
+    cit->second(wrap_map_in_array(m));
 }
 
 static void map_grow(JdbMap* m) {

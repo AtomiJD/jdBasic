@@ -71,6 +71,16 @@ for %%A in (%*) do (
             echo [+] ImGui
         )
     )
+    if /I "%%A"=="FORMS" (
+        if defined HEADLESS (
+            echo [skip] FORMS ignored in HEADLESS build
+        ) else (
+            set DEFS=!DEFS! /DFORMS
+            set EXTRA_SRC=!EXTRA_SRC! src\forms_win32.cpp
+            set EXTRA_LIB=!EXTRA_LIB! comctl32.lib
+            echo [+] Forms - native Win32 windows and controls
+        )
+    )
     if /I "%%A"=="OPENGL" (
         if defined HEADLESS (
             echo [skip] OPENGL ignored in HEADLESS build

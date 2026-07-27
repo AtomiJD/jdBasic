@@ -702,6 +702,20 @@ void LLVMCodegen::create_main_function() {
 
 // ── Pre-pass: declare all FUNC/SUB signatures ───────────────
 
+// A one-parameter SUB named <NAME>_<EVENT> is a forms event handler even
+// without an ON statement: FORM.LOAD / FORM.MENU bind it at runtime by
+// name and main init registers it in the dispatch trampoline.
+static bool is_forms_event_handler_name(const std::string& name) {
+    static const char* suffixes[] = { "_CLICK", "_DBLCLICK", "_CHANGE",
+                                      "_TICK", "_LOAD", "_UNLOAD", "_RESIZE" };
+    for (const char* s : suffixes) {
+        size_t sl = strlen(s);
+        if (name.size() > sl && name.compare(name.size() - sl, sl, s) == 0)
+            return true;
+    }
+    return false;
+}
+
 void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // Phase 1: collect function signatures with initial param types from name convention
     struct FuncDecl {
@@ -800,6 +814,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 default: break;  // numeric / BOOLEAN / NONE → keep heuristic
             }
         }
+        if (is_sub && stmt->params.size() == 1 &&
+            is_forms_event_handler_name(stmt->func_name))
+            event_handler_subs.insert(stmt->func_name);
         std::vector<int> tags;
         bool is_event_handler = is_sub && event_handler_subs.count(stmt->func_name);
         for (size_t pi = 0; pi < stmt->params.size(); pi++) {
@@ -2069,6 +2086,28 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
             }
         }
     }
+    // Register every event-handler SUB in the dispatch trampoline before
+    // the program body runs. ON statements register their handler again
+    // (harmless); the point is the suffix-named SUBs that have no ON at
+    // all - FORM.LOAD binds them by name and the trampoline must be able
+    // to find the compiled body.
+    {
+        auto reg_it = runtime_funcs.find("__jdrt_reg_evh");
+        if (reg_it != runtime_funcs.end()) {
+            for (const auto& hname : event_handler_subs) {
+                auto fit = user_functions.find(hname);
+                if (fit == user_functions.end()) continue;
+                LLVMValueRef name_lit =
+                    LLVMBuildGlobalStringPtr(builder, hname.c_str(), ".evh");
+                LLVMValueRef handler = LLVMBuildBitCast(builder, fit->second.fn,
+                                                        i8_ptr_type, "evh_ptr");
+                LLVMValueRef args[] = { name_lit, handler };
+                LLVMBuildCall2(builder, reg_it->second.fn_type, reg_it->second.fn,
+                               args, 2, "");
+            }
+        }
+    }
+
     codegen_program(program);
 
     // STRICT/EXPLICIT diagnostics accumulated during codegen_program are
@@ -2392,6 +2431,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                             "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
                             "HTTP.REQUEST",
+                            // FORM.GET's result type depends on the property
+                            // (TEXT is a string, CHECKED a bool, SELINDEX a
+                            // number) - only the VM-handle path keeps the tag.
+                            "FORM.GET",
                             "SVD", "QR", "EIG",
                             // MAT4.* returns a TENSOR Value; flat-array path
                             // can't carry the shape, so route through VM handle.
@@ -2540,7 +2583,23 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     tag = JD_TAG_ARR;   // UDT object (ptr)
                 else if (stmt->kind == StmtKind::DIM && stmt->var_type == VarType::OBJECT)
                     tag = JD_TAG_NATIVE_MAP;
-                else if (stmt->expr) {
+                else if (stmt->kind == StmtKind::DIM &&
+                         (stmt->var_type == VarType::FLOAT64 ||
+                          stmt->var_type == VarType::FLOAT32 ||
+                          stmt->var_type == VarType::FLOAT16)) {
+                    // An explicit floating declaration wins over the
+                    // initializer: `DIM g AS DOUBLE = 0` used to create an
+                    // i64 slot from the integer literal, and every SUB
+                    // compiled with that tag read the f64 bits stored by a
+                    // later assignment as integer garbage.
+                    tag = JD_TAG_F64;
+                } else if (stmt->kind == StmtKind::DIM &&
+                           (stmt->var_type == VarType::INT16 ||
+                            stmt->var_type == VarType::INT32 ||
+                            stmt->var_type == VarType::INT64 ||
+                            stmt->var_type == VarType::BYTE)) {
+                    tag = JD_TAG_I64;
+                } else if (stmt->expr) {
                     int inferred = infer_tag(stmt->expr.get());
                     if (inferred >= 0) tag = inferred;
                     // Only skip for CALL expressions whose return type we
@@ -8960,6 +9019,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "CSVREADER", "CSVWRITER", "CSVHEADER",
         "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
         "SQL.TABLE", "SQL.COLUMNS",
+        // Native Windows forms: creation calls take coordinate scalars, the
+        // SET/MENU/TOOLBAR/STATUSBAR calls carry whole-array payloads.
+        "FORM.CREATE", "FORM.MDI", "FORM.CHILD", "FORM.BUTTON", "FORM.LABEL",
+        "FORM.TEXTBOX", "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME",
+        "FORM.LISTBOX", "FORM.COMBO", "FORM.TIMER", "FORM.MENU", "FORM.TOOLBAR",
+        "FORM.STATUSBAR", "FORM.LOAD", "FORM.FIND", "FORM.SET", "FORM.GET",
+        "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
+        "MSGBOX", "INPUTBOX$",
         // System/console
         "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
         "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",
@@ -9713,6 +9780,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "FILE.STAT", "DATE.PARTS",
                 "HTTP.REQUEST",
                 "OS.EXEC",
+                // FORM.GET returns whatever type the property has (string,
+                // bool, number) - VM_HANDLE keeps the tag intact.
+                "FORM.GET",
                 "SVD", "QR", "EIG",
                 // Channel RECV returns whatever Value the producer sent -
                 // could be i64, f64, string, array, map, or the EOF marker.

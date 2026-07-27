@@ -1,0 +1,113 @@
+' Native forms smoke: compiles under STRICT+EXPLICIT and runs in both
+' backends. A timer drives programmatic clicks through menu, toolbar and
+' button, checks the property round-trips, then closes - so the same file
+' verifies the whole event chain unattended, interpreted or compiled.
+OPTION "EXPLICIT"
+
+DIM N_PASS AS INTEGER = 0
+DIM N_FAIL AS INTEGER = 0
+
+SUB Check(cond AS BOOLEAN, label AS STRING)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label
+    ENDIF
+ENDSUB
+
+DIM frm AS DOUBLE = 0
+DIM lbl AS DOUBLE = 0
+DIM txt AS DOUBLE = 0
+DIM lst AS DOUBLE = 0
+DIM btn AS DOUBLE = 0
+DIM sbar AS DOUBLE = 0
+DIM tmr AS DOUBLE = 0
+DIM mnuPing AS DOUBLE = 0
+DIM tbGo AS DOUBLE = 0
+DIM ticks AS INTEGER = 0
+DIM clicks AS INTEGER = 0
+DIM menu_clicks AS INTEGER = 0
+DIM tb_clicks AS INTEGER = 0
+DIM loaded AS BOOLEAN = FALSE
+DIM jfrm AS DOUBLE = 0
+
+SUB MAIN_LOAD(e)
+    loaded = TRUE
+ENDSUB
+
+SUB BTNGO_CLICK(e)
+    clicks = clicks + 1
+ENDSUB
+
+SUB MNUPING_CLICK(e)
+    menu_clicks = menu_clicks + 1
+ENDSUB
+
+SUB TBGO_CLICK(e)
+    tb_clicks = tb_clicks + 1
+ENDSUB
+
+SUB TMRMAIN_TICK(e)
+    ticks = ticks + 1
+    IF ticks = 1 THEN
+        FORM.SET(btn, "VALUE", TRUE)
+        FORM.SET(mnuPing, "VALUE", TRUE)
+        FORM.SET(tbGo, "VALUE", TRUE)
+    ENDIF
+    IF ticks >= 3 THEN FORM.CLOSE(frm)
+ENDSUB
+
+frm = FORM.CREATE("Native Smoke", 420, 300, "MAIN")
+lbl = FORM.LABEL(frm, "lblInfo", "native forms", 10, 10, 200, 18)
+txt = FORM.TEXTBOX(frm, "txtName", "hello", 10, 40, 200, 24)
+lst = FORM.LISTBOX(frm, "lstItems", 10, 74, 200, 100)
+btn = FORM.BUTTON(frm, "btnGo", "Go", 220, 74, 80, 26)
+tmr = FORM.TIMER(frm, "tmrMain", 100)
+
+FORM.MENU(frm, [ _
+    { "text": "&Test", "items": [ _
+        { "name": "mnuPing", "text": "&Ping", "key": "Ctrl+P" } _
+    ]} _
+])
+FORM.TOOLBAR(frm, "tbMain", [ _
+    { "name": "tbGo", "text": "Go", "icon": "NEW" } _
+])
+sbar = FORM.STATUSBAR(frm, "sbMain", [200, -1])
+FORM.SET(sbar, "TEXT", "Ready")
+
+mnuPing = FORM.FIND(frm, "mnuPing")
+tbGo = FORM.FIND(frm, "tbGo")
+Check(mnuPing > 0, "menu item found")
+Check(tbGo > 0, "toolbar button found")
+
+Check(FORM.GET(txt, "TEXT") = "hello", "textbox TEXT string round-trip")
+FORM.SET(txt, "TEXT", "world")
+Check(FORM.GET(txt, "TEXT") = "world", "textbox TEXT after SET")
+
+FORM.SET(lst, "ITEMS", ["alpha", "beta", "gamma"])
+Check(FORM.GET(lst, "COUNT") = 3, "listbox ITEMS array payload")
+FORM.SET(lst, "SELINDEX", 1)
+Check(FORM.GET(lst, "SELTEXT") = "beta", "listbox SELTEXT string")
+
+Check(FORM.GET(btn, "ENABLED"), "button ENABLED bool")
+Check(FORM.GET(sbar, "TEXT") = "Ready", "statusbar TEXT")
+
+FORM.RUN(frm)
+
+Check(loaded, "LOAD handler auto-bound")
+Check(ticks >= 3, "timer ticked")
+Check(clicks = 1, "button CLICK dispatched")
+Check(menu_clicks = 1, "menu CLICK dispatched")
+Check(tb_clicks = 1, "toolbar CLICK dispatched")
+
+' .jdform path: the file is parsed inside the runtime, handlers bind by
+' name - the whole declarative chain in one native binary.
+jfrm = FORM.LOAD("tests/forms/loadtest_native.jdform")
+Check(jfrm > 0, "FORM.LOAD returns a handle")
+Check(FORM.GET(FORM.FIND(jfrm, "txtName"), "TEXT") = "hello", "jdform control text")
+FORM.CLOSE(jfrm)
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL NATIVE FORMS TESTS PASSED!"

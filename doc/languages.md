@@ -2164,7 +2164,9 @@ A `.jdform` file is the declarative layout a form designer edits; `FORM.LOAD` in
 * **`properties`** (optional, per control): applied through the `FORM.SET` path after creation - anything `FORM.SET` accepts (`ITEMS`, `CHECKED`, `SELINDEX`, `ENABLED`, ...).
 * Errors name the culprit: `FORM.LOAD: controls[3] (lstTasks): unknown type "GRID"`. A failed load tears the half-built form down again.
 
-Demos: `jdb/demos/forms/forms_demo.jdb` (task list, hand-built) and `jdb/demos/forms/tasklist.jdb` + `tasklist.jdform` (the same app as `.jdform` + code-behind). Self-tests: `tests/forms/forms_selftest.jdb`, `tests/forms/forms_load_selftest.jdb` (timer-driven, close themselves). **Interpreter-only for now** - the natives are not yet routed through the VM bridge, so `-c` rejects them.
+Demos: `jdb/demos/forms/forms_demo.jdb` (task list, hand-built), `jdb/demos/forms/tasklist.jdb` + `tasklist.jdform` (the same app as `.jdform` + code-behind), `jdb/demos/forms/mdi_demo.jdb` (MDI + menu + toolbar + statusbar). Self-tests: `tests/forms/forms_selftest.jdb`, `forms_load_selftest.jdb`, `forms_mdi_menu_selftest.jdb` (timer-driven, close themselves); `forms_native_smoke.jdb` is the STRICT twin that also compiles.
+
+**Native `-c` support**: forms programs compile when both the compiler exe and `jdbrt.dll` were built with the `FORMS` flag (`build.bat ... FORMS` + `build_rt.bat ... FORMS`). The `FORM.*` calls route through the VM bridge; events reach the compiled handlers through the event trampoline, and **handlers bind by name convention alone** - a one-parameter `SUB <NAME>_<EVENT>` is bound automatically at control creation, no `ON` statement needed (in both backends). Compiled exes activate common-controls v6 at runtime, so the visual style matches the interpreter.
 
 ### Terminal UI (TUI.*)
 

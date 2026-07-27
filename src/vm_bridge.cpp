@@ -65,6 +65,9 @@ extern void register_gui_builtins(VM& vm);
 #ifdef TUI
 extern void register_tui_natives(VM& vm);
 #endif
+#ifdef FORMS
+extern void register_forms_builtins(VM& vm);
+#endif
 
 // DLL-local base directory for module imports. Non-static so graphics.cpp
 // can extern-link it for asset-path resolution.
@@ -144,6 +147,9 @@ static void setup_all_builtins(VM& vm) {
 #endif
 #ifdef TUI
     register_tui_natives(vm);
+#endif
+#ifdef FORMS
+    register_forms_builtins(vm);
 #endif
     register_sound_builtins(vm);
     register_ffi_builtins(vm);
@@ -1100,12 +1106,31 @@ JDRT_API void jdrt_set_event_dispatcher(JdRT handle, JdrtEventDispatch fn) {
                 }
             };
 
+            // The six SDL events keep their positional wire format - the
+            // trampoline reads their slots by fixed schema. Every other
+            // event (forms controls, custom names) is keyed: OBJECT fields
+            // go out as (key STR, value) pairs so the trampoline can
+            // rebuild the info map without knowing the event's schema.
+            static const std::unordered_set<std::string> positional_events = {
+                "KEYDOWN", "KEYUP", "QUIT", "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE"
+            };
+            bool keyed = !positional_events.count(name);
+            static const char* kValueKey = "value";
+
             for (const Value& v : data) {
                 if (v.type == ValueType::OBJECT && v.as_object()) {
                     for (auto& field : v.as_object()->fields) {
+                        if (keyed) {
+                            args.push_back((int64_t)(intptr_t)field.first.c_str());
+                            tags.push_back(JD_TAG_STR);
+                        }
                         push_value(field.second);
                     }
                 } else {
+                    if (keyed) {
+                        args.push_back((int64_t)(intptr_t)kValueKey);
+                        tags.push_back(JD_TAG_STR);
+                    }
                     push_value(v);
                 }
             }

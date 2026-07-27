@@ -380,6 +380,26 @@ const wchar_t* FORM_CLASS = L"JDBForm";
 void ensure_class() {
     static bool done = false;
     if (done) return;
+
+    // Compiled .exes carry no application manifest, so common-controls v6
+    // (visual styles) would never activate. shell32 ships a v6 manifest
+    // as resource 124 - activate it for this thread and leave it active.
+    // Redundant but harmless when the host exe is already manifested.
+    ACTCTXW ac = { sizeof(ac) };
+    wchar_t sysdir[MAX_PATH];
+    std::wstring shell;
+    if (GetSystemDirectoryW(sysdir, MAX_PATH)) {
+        shell = std::wstring(sysdir) + L"\\shell32.dll";
+        ac.lpSource = shell.c_str();
+        ac.lpResourceName = MAKEINTRESOURCEW(124);
+        ac.dwFlags = ACTCTX_FLAG_RESOURCE_NAME_VALID;
+        HANDLE actx = CreateActCtxW(&ac);
+        if (actx != INVALID_HANDLE_VALUE) {
+            ULONG_PTR cookie = 0;
+            ActivateActCtx(actx, &cookie);
+        }
+    }
+
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES | ICC_WIN95_CLASSES };
     InitCommonControlsEx(&icc);
 
@@ -411,6 +431,10 @@ void ensure_class() {
 
 // ── Creation helpers ────────────────────────────────────────────
 
+// Defined in the loader section below; every creation path binds the
+// <NAME>_<EVENT> handlers that exist in the program, VB6-style.
+void bind_handlers(const std::string& ctl_name, const std::string& kind);
+
 int store_item(HWND hwnd, const std::string& name, const std::string& kind, int form) {
     int h = g_next_handle++;
     g_items[h] = { hwnd, upname(name), kind, form };
@@ -431,7 +455,9 @@ int create_control(int frm, const std::string& name, const wchar_t* cls,
     if (!ctl)
         throw std::runtime_error("FORM." + kind + ": CreateWindow failed for '" + name + "'");
     if (g_font) SendMessageW(ctl, WM_SETFONT, (WPARAM)g_font, TRUE);
-    return store_item(ctl, name, kind, frm);
+    int stored = store_item(ctl, name, kind, frm);
+    bind_handlers(g_items[stored].name, kind);
+    return stored;
 }
 
 int do_create_form(const std::string& title, int cw, int ch, const std::string& name,
@@ -465,6 +491,7 @@ int do_create_form(const std::string& title, int cw, int ch, const std::string& 
     g_open_forms++;
     g_last_form = hwnd;
     int handle = store_item(hwnd, name, mdi_frame ? "MDIFRAME" : "FORM", 0);
+    bind_handlers(g_items[handle].name, g_items[handle].kind);
     if (mdi_frame) {
         CLIENTCREATESTRUCT ccs = { nullptr, 50000 };
         g_items[handle].mdi_client = CreateWindowExW(
@@ -491,6 +518,7 @@ int do_create_child(int frame, const std::string& title, int cw, int ch,
                                 f.mdi_client, nullptr, GetModuleHandleW(nullptr), nullptr);
     if (!hwnd) throw std::runtime_error("FORM.CHILD: CreateWindow failed");
     int handle = store_item(hwnd, name, "MDICHILD", frame);
+    bind_handlers(g_items[handle].name, "MDICHILD");
     queue_event(g_items[handle].name, "LOAD", info_map(g_items[handle]));
     return handle;
 }
@@ -1126,6 +1154,14 @@ const std::vector<const char*>& events_of(const std::string& kind) {
 void bind_handlers(const std::string& ctl_name, const std::string& kind) {
     for (const char* ev : events_of(kind)) {
         std::string handler = ctl_name + "_" + ev;
+        // Native mode (a user_event_dispatch is installed): the compiled
+        // handler bodies are invisible to this bridge VM, so bind every
+        // candidate - the exe-side trampoline drops events for which no
+        // SUB was registered.
+        if (g_vm->user_event_dispatch) {
+            g_vm->event_on(handler, handler);
+            continue;
+        }
         if (!g_vm->is_native(handler) && g_vm->function_exists(handler))
             g_vm->event_on(handler, handler);
     }
@@ -1385,6 +1421,7 @@ void register_forms_builtins(VM& vm) {
         std::string name = arg_str(args, 1, "FORM.TIMER");
         int ms = arg_int(args, 2);
         int handle = store_item(nullptr, name, "TIMER", arg_int(args, 0));
+        bind_handlers(g_items[handle].name, "TIMER");
         if (ms > 0) SetTimer(f.hwnd, handle, ms, nullptr);
         return Value::make_i64(handle);
     });
