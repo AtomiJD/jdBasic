@@ -1,0 +1,88 @@
+' Code-behind for tasklist.jdform - the declarative twin of forms_demo.jdb.
+' The layout lives in the .jdform file; FORM.LOAD instantiates it and binds
+' every SUB named <CONTROL>_<EVENT> below automatically. No ON statements.
+
+frm = 0
+txtTask = 0
+lstTasks = 0
+chkBeep = 0
+lblClock = 0
+tasks_added = 0
+
+SUB MAIN_LOAD(e)
+    FORM.SET(txtTask, "FOCUS")
+ENDSUB
+
+SUB BTNADD_CLICK(e)
+    task$ = FORM.GET(txtTask, "TEXT")
+    IF task$ = "" THEN
+        MSGBOX("Type a task first.", 48, "Task List")
+        RETURN
+    ENDIF
+    FORM.SET(lstTasks, "ADDITEM", task$)
+    FORM.SET(txtTask, "TEXT", "")
+    FORM.SET(txtTask, "FOCUS")
+    tasks_added = tasks_added + 1
+ENDSUB
+
+SUB BTNEDIT_CLICK(e)
+    idx = FORM.GET(lstTasks, "SELINDEX")
+    IF idx < 0 THEN
+        MSGBOX("Select a task to edit.", 48, "Task List")
+        RETURN
+    ENDIF
+    current$ = FORM.GET(lstTasks, "SELTEXT")
+    edited$ = INPUTBOX$("Edit the task:", "Task List", current$)
+    IF edited$ <> "" THEN
+        items = []
+        FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
+            FORM.SET(lstTasks, "SELINDEX", i)
+            IF i = idx THEN
+                items = APPEND(items, edited$)
+            ELSE
+                items = APPEND(items, FORM.GET(lstTasks, "SELTEXT"))
+            ENDIF
+        NEXT
+        FORM.SET(lstTasks, "ITEMS", items)
+        FORM.SET(lstTasks, "SELINDEX", idx)
+    ENDIF
+ENDSUB
+
+SUB BTNDONE_CLICK(e)
+    idx = FORM.GET(lstTasks, "SELINDEX")
+    IF idx < 0 THEN
+        MSGBOX("Select a task to remove.", 48, "Task List")
+        RETURN
+    ENDIF
+    IF FORM.GET(chkBeep, "CHECKED") THEN
+        IF MSGBOX("Remove '" + FORM.GET(lstTasks, "SELTEXT") + "'?", 36, "Task List") <> 6 THEN RETURN
+    ENDIF
+    items = []
+    FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
+        IF i <> idx THEN
+            FORM.SET(lstTasks, "SELINDEX", i)
+            items = APPEND(items, FORM.GET(lstTasks, "SELTEXT"))
+        ENDIF
+    NEXT
+    FORM.SET(lstTasks, "ITEMS", items)
+ENDSUB
+
+SUB LSTTASKS_DBLCLICK(e)
+    MSGBOX("Task: " + e[0]{"text"}, 64, "Task List")
+ENDSUB
+
+SUB TMRCLOCK_TICK(e)
+    FORM.SET(lblClock, "TEXT", TIME$())
+ENDSUB
+
+SUB MAIN_UNLOAD(e)
+    PRINT "Session over - "; tasks_added; " task(s) added."
+ENDSUB
+
+frm = FORM.LOAD("tasklist.jdform")
+txtTask  = FORM.FIND(frm, "txtTask")
+lstTasks = FORM.FIND(frm, "lstTasks")
+chkBeep  = FORM.FIND(frm, "chkBeep")
+lblClock = FORM.FIND(frm, "lblClock")
+
+FORM.RUN(frm)

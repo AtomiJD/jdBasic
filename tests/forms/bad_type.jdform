@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "form": { "name": "X", "title": "x", "width": 100, "height": 100 },
+  "controls": [
+    { "type": "GRID", "name": "grd", "x": 0, "y": 0, "w": 10, "h": 10 }
+  ]
+}

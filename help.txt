@@ -3675,3 +3675,11 @@ Description: Show a message box. Flags follow VB6/Win32: 1=OKCancel 4=YesNo 16=C
 [INPUTBOX$]
 Syntax: INPUTBOX$(prompt$, [title$], [default$]) -> string
 Description: Modal text input dialog. Returns the entered text, or "" on Cancel.
+
+[FORM.LOAD]
+Syntax: FORM.LOAD(path$) -> handle
+Description: Instantiate a .jdform file (JSON layout) and auto-bind every SUB named CONTROL_EVENT in the program. Relative paths resolve against the script directory.
+
+[FORM.FIND]
+Syntax: FORM.FIND(frm, name$) -> handle
+Description: Look up a control of a form by name (case-insensitive); 0 if absent. Companion to FORM.LOAD for code-behind property access.

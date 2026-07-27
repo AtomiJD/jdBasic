@@ -22,6 +22,10 @@
 
 #pragma comment(lib, "comctl32.lib")
 
+// Main-script directory, defined in main.cpp; relative .jdform paths
+// resolve against it like the graphics asset loaders do.
+extern std::string g_base_dir;
+
 namespace {
 
 // ── Handle registry ─────────────────────────────────────────────
@@ -238,10 +242,10 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         ++it;
                     }
                 }
-                if (--g_open_forms <= 0) {
-                    g_open_forms = 0;
-                    PostQuitMessage(0);
-                }
+                // No PostQuitMessage: FORM.RUN and FORM.DOEVENTS re-check
+                // g_open_forms after every dispatch, and a queued WM_QUIT
+                // would leak into whichever message loop runs next.
+                if (--g_open_forms < 0) g_open_forms = 0;
             }
             return 0;
         }
@@ -295,6 +299,23 @@ int create_control(int frm, const std::string& name, const wchar_t* cls,
         throw std::runtime_error("FORM." + kind + ": CreateWindow failed for '" + name + "'");
     if (g_font) SendMessageW(ctl, WM_SETFONT, (WPARAM)g_font, TRUE);
     return store_item(ctl, name, kind, frm);
+}
+
+int do_create_form(const std::string& title, int cw, int ch, const std::string& name) {
+    ensure_class();
+    RECT rc = { 0, 0, cw, ch };
+    AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
+    int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
+    int ww = rc.right - rc.left, wh = rc.bottom - rc.top;
+
+    HWND hwnd = CreateWindowExW(0, FORM_CLASS, widen(title).c_str(),
+                                WS_OVERLAPPEDWINDOW,
+                                (sw - ww) / 2, (sh - wh) / 2, ww, wh,
+                                nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    if (!hwnd) throw std::runtime_error("FORM.CREATE: CreateWindow failed");
+    g_open_forms++;
+    g_last_form = hwnd;
+    return store_item(hwnd, name, "FORM", 0);
 }
 
 int arg_int(const std::vector<Value>& args, size_t i) { return (int)args[i].to_int(); }
@@ -508,6 +529,189 @@ Value get_prop(FormsItem& it, const std::string& prop, const char* who) {
                              "' for " + it.kind);
 }
 
+// ── .jdform loader ──────────────────────────────────────────────
+// The file is JSON: { "version": 1, "form": {...}, "controls": [...] }.
+// Controls are created in file order; a "properties" map on an entry is
+// applied through the same FORM.SET path afterwards. Handlers named
+// <NAME>_<EVENT> that exist in the program are bound automatically.
+
+const Value* jf_get(const Value& obj, const std::string& key) {
+    if (obj.type != ValueType::OBJECT) return nullptr;
+    return obj.as_object()->get(key);
+}
+
+std::string jf_str(const Value& obj, const std::string& key, const std::string& where,
+                   const char* deflt = nullptr) {
+    const Value* v = jf_get(obj, key);
+    if (!v || v->type == ValueType::NONE) {
+        if (deflt) return deflt;
+        throw std::runtime_error("FORM.LOAD: " + where + ": missing key \"" + key + "\"");
+    }
+    if (v->type != ValueType::STRING)
+        throw std::runtime_error("FORM.LOAD: " + where + ": key \"" + key + "\" must be a string");
+    return v->as_string()->data;
+}
+
+int jf_int(const Value& obj, const std::string& key, const std::string& where,
+           bool required = true, int deflt = 0) {
+    const Value* v = jf_get(obj, key);
+    if (!v || v->type == ValueType::NONE) {
+        if (!required) return deflt;
+        throw std::runtime_error("FORM.LOAD: " + where + ": missing key \"" + key + "\"");
+    }
+    if (v->type == ValueType::STRING || v->type == ValueType::ARRAY ||
+        v->type == ValueType::OBJECT)
+        throw std::runtime_error("FORM.LOAD: " + where + ": key \"" + key + "\" must be a number");
+    return (int)v->to_int();
+}
+
+// Event names a control kind can fire; used for automatic handler binding.
+const std::vector<const char*>& events_of(const std::string& kind) {
+    static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE" };
+    static const std::vector<const char*> click_ev = { "CLICK" };
+    static const std::vector<const char*> text_ev  = { "CHANGE" };
+    static const std::vector<const char*> list_ev  = { "CLICK", "DBLCLICK" };
+    static const std::vector<const char*> tick_ev  = { "TICK" };
+    static const std::vector<const char*> none_ev  = {};
+    if (kind == "FORM")     return form_ev;
+    if (kind == "BUTTON" || kind == "CHECKBOX" || kind == "RADIO") return click_ev;
+    if (kind == "TEXTBOX" || kind == "COMBO")  return text_ev;
+    if (kind == "LISTBOX")  return list_ev;
+    if (kind == "TIMER")    return tick_ev;
+    return none_ev;
+}
+
+void bind_handlers(const std::string& ctl_name, const std::string& kind) {
+    for (const char* ev : events_of(kind)) {
+        std::string handler = ctl_name + "_" + ev;
+        if (!g_vm->is_native(handler) && g_vm->function_exists(handler))
+            g_vm->event_on(handler, handler);
+    }
+}
+
+void load_controls(int frm, const Value& doc, const std::string& path) {
+    const Value* controls = jf_get(doc, "controls");
+    if (controls && controls->type != ValueType::ARRAY)
+        throw std::runtime_error("FORM.LOAD: " + path + ": \"controls\" must be an array");
+    if (!controls) return;
+
+    auto& elems = controls->as_array()->elements;
+    for (size_t i = 0; i < elems.size(); i++) {
+        std::string where = "controls[" + std::to_string(i) + "]";
+        const Value& c = elems[i];
+        if (c.type != ValueType::OBJECT)
+            throw std::runtime_error("FORM.LOAD: " + where + ": must be an object");
+
+        std::string type = upname(jf_str(c, "type", where));
+        std::string name = jf_str(c, "name", where);
+        where += " (" + name + ")";
+        std::string text = jf_str(c, "text", where, "");
+        int x = jf_int(c, "x", where, type != "TIMER");
+        int y = jf_int(c, "y", where, type != "TIMER");
+        int w = jf_int(c, "w", where, type != "TIMER");
+        int h = jf_int(c, "h", where, type != "TIMER");
+
+        int handle;
+        if (type == "BUTTON") {
+            handle = create_control(frm, name, L"BUTTON", text,
+                                    BS_PUSHBUTTON | WS_TABSTOP, 0, x, y, w, h, "BUTTON");
+        } else if (type == "LABEL") {
+            handle = create_control(frm, name, L"STATIC", text, SS_LEFT, 0,
+                                    x, y, w, h, "LABEL");
+        } else if (type == "TEXTBOX") {
+            bool multi = jf_int(c, "multiline", where, false) != 0;
+            DWORD style = multi
+                ? ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_TABSTOP
+                : ES_AUTOHSCROLL | WS_TABSTOP;
+            handle = create_control(frm, name, L"EDIT", text, style, WS_EX_CLIENTEDGE,
+                                    x, y, w, h, "TEXTBOX");
+        } else if (type == "CHECKBOX") {
+            handle = create_control(frm, name, L"BUTTON", text,
+                                    BS_AUTOCHECKBOX | WS_TABSTOP, 0, x, y, w, h, "CHECKBOX");
+        } else if (type == "RADIO") {
+            DWORD style = BS_AUTORADIOBUTTON | WS_TABSTOP;
+            if (jf_int(c, "new_group", where, false) != 0) style |= WS_GROUP;
+            handle = create_control(frm, name, L"BUTTON", text, style, 0,
+                                    x, y, w, h, "RADIO");
+        } else if (type == "FRAME") {
+            handle = create_control(frm, name, L"BUTTON", text, BS_GROUPBOX, 0,
+                                    x, y, w, h, "FRAME");
+        } else if (type == "LISTBOX") {
+            handle = create_control(frm, name, L"LISTBOX", "",
+                                    LBS_NOTIFY | WS_VSCROLL | WS_TABSTOP, WS_EX_CLIENTEDGE,
+                                    x, y, w, h, "LISTBOX");
+        } else if (type == "COMBO") {
+            handle = create_control(frm, name, L"COMBOBOX", "",
+                                    CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 0,
+                                    x, y, w, h + 240, "COMBO");
+        } else if (type == "TIMER") {
+            FormsItem& f = form_of(frm, "FORM.LOAD");
+            handle = store_item(nullptr, name, "TIMER", frm);
+            int ms = jf_int(c, "interval", where, false);
+            if (ms > 0) SetTimer(f.hwnd, handle, ms, nullptr);
+        } else {
+            throw std::runtime_error("FORM.LOAD: " + where + ": unknown type \"" + type + "\"");
+        }
+
+        const Value* props = jf_get(c, "properties");
+        if (props) {
+            if (props->type != ValueType::OBJECT)
+                throw std::runtime_error("FORM.LOAD: " + where + ": \"properties\" must be an object");
+            for (auto& [pkey, pval] : props->as_object()->fields) {
+                try {
+                    set_prop(handle, g_items[handle], upname(pkey), pval, "FORM.LOAD");
+                } catch (const std::exception& e) {
+                    throw std::runtime_error("FORM.LOAD: " + where + ": property \"" +
+                                             pkey + "\": " + e.what());
+                }
+            }
+        }
+
+        bind_handlers(g_items[handle].name, g_items[handle].kind);
+    }
+}
+
+int load_jdform(const std::string& path) {
+    // Resolve like the graphics loaders: as given first, then against the
+    // script's own directory.
+    std::string resolved = path;
+    DWORD attr = GetFileAttributesW(widen(resolved).c_str());
+    if (attr == INVALID_FILE_ATTRIBUTES && !g_base_dir.empty()) {
+        std::string alt = g_base_dir + "/" + path;
+        if (GetFileAttributesW(widen(alt).c_str()) != INVALID_FILE_ATTRIBUTES)
+            resolved = alt;
+    }
+
+    Value text = g_vm->call_function("TXTREADER$", { Value::make_string(resolved) });
+    Value doc  = g_vm->call_function("JSON.PARSE$", { text });
+    if (doc.type != ValueType::OBJECT)
+        throw std::runtime_error("FORM.LOAD: " + path + ": top level must be a JSON object");
+
+    int version = jf_int(doc, "version", "top level");
+    if (version != 1)
+        throw std::runtime_error("FORM.LOAD: " + path + ": unsupported version " +
+                                 std::to_string(version) + " (this runtime reads version 1)");
+
+    const Value* fdef = jf_get(doc, "form");
+    if (!fdef || fdef->type != ValueType::OBJECT)
+        throw std::runtime_error("FORM.LOAD: " + path + ": missing \"form\" object");
+
+    std::string fname = upname(jf_str(*fdef, "name", "form"));
+    int frm = do_create_form(jf_str(*fdef, "title", "form", ""),
+                             jf_int(*fdef, "width", "form"),
+                             jf_int(*fdef, "height", "form"), fname);
+    // A bad control entry must not leave the half-built (still invisible)
+    // form behind - it would count as open forever.
+    try {
+        bind_handlers(fname, "FORM");
+        load_controls(frm, doc, path);
+    } catch (...) {
+        DestroyWindow(g_items[frm].hwnd);
+        throw;
+    }
+    return frm;
+}
+
 } // namespace
 
 // ── Registration ────────────────────────────────────────────────
@@ -520,32 +724,18 @@ void register_forms_builtins(VM& vm) {
     // of them may be auto-vectorized into per-element calls.
     for (const char* n : { "FORM.CREATE", "FORM.BUTTON", "FORM.LABEL", "FORM.TEXTBOX",
                            "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME", "FORM.LISTBOX",
-                           "FORM.COMBO", "FORM.TIMER", "FORM.SET", "FORM.GET",
+                           "FORM.COMBO", "FORM.TIMER", "FORM.LOAD", "FORM.FIND",
+                           "FORM.SET", "FORM.GET",
                            "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
                            "MSGBOX", "INPUTBOX$" })
         vm.extra_no_vectorize.insert(n);
 
     // FORM.CREATE(title$, width, height, [name$]) -> handle
     vm.register_native("FORM.CREATE", 3, 4, [](const std::vector<Value>& args) -> Value {
-        ensure_class();
-        std::string title = arg_str(args, 0, "FORM.CREATE");
-        int cw = arg_int(args, 1), ch = arg_int(args, 2);
         std::string name = args.size() > 3 ? arg_str(args, 3, "FORM.CREATE")
                                            : "FORM" + std::to_string(g_next_handle);
-
-        RECT rc = { 0, 0, cw, ch };
-        AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
-        int sw = GetSystemMetrics(SM_CXSCREEN), sh = GetSystemMetrics(SM_CYSCREEN);
-        int ww = rc.right - rc.left, wh = rc.bottom - rc.top;
-
-        HWND hwnd = CreateWindowExW(0, FORM_CLASS, widen(title).c_str(),
-                                    WS_OVERLAPPEDWINDOW,
-                                    (sw - ww) / 2, (sh - wh) / 2, ww, wh,
-                                    nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
-        if (!hwnd) throw std::runtime_error("FORM.CREATE: CreateWindow failed");
-        g_open_forms++;
-        g_last_form = hwnd;
-        return Value::make_i64(store_item(hwnd, name, "FORM", 0));
+        return Value::make_i64(do_create_form(arg_str(args, 0, "FORM.CREATE"),
+                                              arg_int(args, 1), arg_int(args, 2), name));
     });
 
     // FORM.BUTTON(frm, name$, caption$, x, y, w, h) -> handle
@@ -627,6 +817,22 @@ void register_forms_builtins(VM& vm) {
         int handle = store_item(nullptr, name, "TIMER", arg_int(args, 0));
         if (ms > 0) SetTimer(f.hwnd, handle, ms, nullptr);
         return Value::make_i64(handle);
+    });
+
+    // FORM.LOAD(path$) -> handle  instantiate a .jdform file and bind
+    // every <NAME>_<EVENT> handler that exists in the program
+    vm.register_native("FORM.LOAD", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(load_jdform(arg_str(args, 0, "FORM.LOAD")));
+    });
+
+    // FORM.FIND(frm, name$) -> handle  look up a control by name (0 if absent)
+    vm.register_native("FORM.FIND", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int frm = arg_int(args, 0);
+        form_of(frm, "FORM.FIND");
+        std::string name = upname(arg_str(args, 1, "FORM.FIND"));
+        for (auto& [h, it] : g_items)
+            if (it.form == frm && it.name == name) return Value::make_i64(h);
+        return Value::make_i64(0);
     });
 
     // FORM.SET(handle, prop$, [value])

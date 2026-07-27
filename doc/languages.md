@@ -2126,6 +2126,8 @@ Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radi
 * **`FORM.TIMER(frm, name$, interval_ms) -> handle`**: Fires `NAME_TICK` every `interval_ms` (0 = created disabled; retune via the `INTERVAL` property).
 * **`FORM.SET(handle, prop$, value)`**: Properties: `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `ITEMS`, `ADDITEM`, `CLEAR`, `SELINDEX`, `FOCUS`, `X`/`Y`/`WIDTH`/`HEIGHT`, `INTERVAL` (timer), `VALUE` (TRUE clicks a button programmatically, VB6-style).
 * **`FORM.GET(handle, prop$) -> value`**: Reads `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `SELINDEX`, `SELTEXT`, `COUNT`, `NAME`, `KIND`, `HWND`, `X`/`Y`/`WIDTH`/`HEIGHT`.
+* **`FORM.LOAD(path$) -> handle`**: Instantiates a **`.jdform` file** (see below) and returns the form handle. Relative paths resolve against the script's directory. Every `SUB` named `<CONTROL>_<EVENT>` that exists in the program is bound automatically - a `.jdform`-based program needs no `ON` statements at all.
+* **`FORM.FIND(frm, name$) -> handle`**: Looks up a control of a form by name (case-insensitive); returns `0` if absent. The code-behind companion to `FORM.LOAD`.
 * **`FORM.RUN(frm)`**: Shows the form, fires `NAME_LOAD`, then blocks in the message loop until **all** forms are closed.
 * **`FORM.SHOW(frm)`**: Shows a secondary form (non-blocking) and fires its `NAME_LOAD`.
 * **`FORM.DOEVENTS() -> bool`**: Pumps pending messages once; `TRUE` while any form is open. The cooperative alternative to `FORM.RUN` for `DO ... LOOP` programs.
@@ -2133,7 +2135,31 @@ Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radi
 * **`MSGBOX(text$, [flags], [title$]) -> button`**: Message box. Flags are the VB6/Win32 values (`1`=OKCancel, `4`=YesNo, `16`=Critical, `32`=Question, `48`=Exclamation, `64`=Information); returns `1`=OK, `2`=Cancel, `6`=Yes, `7`=No.
 * **`INPUTBOX$(prompt$, [title$], [default$]) -> string`**: Modal input dialog; returns `""` on Cancel.
 
-Demo: `jdb/demos/forms/forms_demo.jdb` (task list). Self-test: `tests/forms/forms_selftest.jdb` (timer-driven, closes itself). **Interpreter-only for now** - the natives are not yet routed through the VM bridge, so `-c` rejects them.
+#### The `.jdform` file format
+
+A `.jdform` file is the declarative layout a form designer edits; `FORM.LOAD` instantiates it. JSON, one form per file:
+
+```json
+{
+  "version": 1,
+  "form": { "name": "MAIN", "title": "Task List", "width": 480, "height": 340 },
+  "controls": [
+    { "type": "TEXTBOX", "name": "txtTask", "text": "", "x": 12, "y": 34, "w": 330, "h": 24 },
+    { "type": "BUTTON",  "name": "btnAdd",  "text": "&Add", "x": 352, "y": 33, "w": 108, "h": 26 },
+    { "type": "LISTBOX", "name": "lstTasks", "x": 12, "y": 70, "w": 330, "h": 200,
+      "properties": { "ITEMS": ["Buy milk"], "SELINDEX": 0 } },
+    { "type": "TIMER",   "name": "tmrClock", "interval": 1000 }
+  ]
+}
+```
+
+* **`version`** (required): format version, currently `1`. A newer number is rejected with a clear error.
+* **`form`**: `name` (event prefix), `title`, `width`/`height` (client area).
+* **`controls`**: created in file order. `type` is one of `BUTTON`, `LABEL`, `TEXTBOX`, `CHECKBOX`, `RADIO`, `FRAME`, `LISTBOX`, `COMBO`, `TIMER`. Visible controls need `x`/`y`/`w`/`h`; `text` where it applies; `TEXTBOX` takes `multiline`, `RADIO` takes `new_group`, `TIMER` takes `interval` instead of a geometry.
+* **`properties`** (optional, per control): applied through the `FORM.SET` path after creation - anything `FORM.SET` accepts (`ITEMS`, `CHECKED`, `SELINDEX`, `ENABLED`, ...).
+* Errors name the culprit: `FORM.LOAD: controls[3] (lstTasks): unknown type "GRID"`. A failed load tears the half-built form down again.
+
+Demos: `jdb/demos/forms/forms_demo.jdb` (task list, hand-built) and `jdb/demos/forms/tasklist.jdb` + `tasklist.jdform` (the same app as `.jdform` + code-behind). Self-tests: `tests/forms/forms_selftest.jdb`, `tests/forms/forms_load_selftest.jdb` (timer-driven, close themselves). **Interpreter-only for now** - the natives are not yet routed through the VM bridge, so `-c` rejects them.
 
 ### Terminal UI (TUI.*)
 

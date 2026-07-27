@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "form": { "name": "MAIN", "title": "Load Test", "width": 420, "height": 300 },
+  "controls": [
+    { "type": "LABEL",    "name": "lblStatus", "text": "tick 0", "x": 10, "y": 10, "w": 260, "h": 20 },
+    { "type": "TEXTBOX",  "name": "txtName",   "text": "hello",  "x": 10, "y": 40, "w": 200, "h": 24 },
+    { "type": "CHECKBOX", "name": "chkFlag",   "text": "Flag",   "x": 220, "y": 40, "w": 80, "h": 24,
+      "properties": { "CHECKED": true } },
+    { "type": "LISTBOX",  "name": "lstItems",  "x": 10, "y": 74, "w": 200, "h": 120,
+      "properties": { "ITEMS": ["alpha", "beta", "gamma"], "SELINDEX": 1 } },
+    { "type": "COMBO",    "name": "cmbPick",   "x": 220, "y": 74, "w": 120, "h": 24,
+      "properties": { "ITEMS": ["one", "two"], "SELINDEX": 0 } },
+    { "type": "BUTTON",   "name": "btnGo",     "text": "Go", "x": 220, "y": 110, "w": 80, "h": 26 },
+    { "type": "TIMER",    "name": "tmrMain",   "interval": 100 }
+  ]
+}

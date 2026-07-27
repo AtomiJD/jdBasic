@@ -1,0 +1,103 @@
+' FORM.LOAD self-test: instantiates loadtest.jdform (resolved relative to
+' this script), checks the created controls and the automatic handler
+' binding - no ON statement appears anywhere in this file. A timer closes
+' the form so the test runs unattended.
+
+N_PASS = 0
+N_FAIL = 0
+
+SUB Check(cond, label$)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+' Handlers first - FORM.LOAD binds anything named <CONTROL>_<EVENT>.
+loaded = FALSE
+ticks = 0
+clicks = 0
+btn = 0
+frm = 0
+
+SUB MAIN_LOAD(e)
+    loaded = TRUE
+ENDSUB
+
+SUB BTNGO_CLICK(e)
+    clicks = clicks + 1
+ENDSUB
+
+SUB TMRMAIN_TICK(e)
+    ticks = ticks + 1
+    IF ticks = 2 THEN FORM.SET(btn, "VALUE", TRUE)
+    IF ticks >= 5 THEN FORM.CLOSE(frm)
+ENDSUB
+
+frm = FORM.LOAD("loadtest.jdform")
+Check(frm > 0, "FORM.LOAD returns a handle")
+
+lbl = FORM.FIND(frm, "lblStatus")
+txt = FORM.FIND(frm, "txtName")
+chk = FORM.FIND(frm, "chkFlag")
+lst = FORM.FIND(frm, "lstItems")
+cmb = FORM.FIND(frm, "cmbPick")
+btn = FORM.FIND(frm, "btnGo")
+
+Check(lbl > 0, "FIND label")
+Check(FORM.FIND(frm, "nosuch") = 0, "FIND unknown name returns 0")
+
+Check(FORM.GET(lbl, "TEXT") = "tick 0", "label text from file")
+Check(FORM.GET(txt, "TEXT") = "hello", "textbox text from file")
+Check(FORM.GET(chk, "CHECKED"), "CHECKED from properties")
+Check(FORM.GET(lst, "COUNT") = 3, "listbox ITEMS from properties")
+Check(FORM.GET(lst, "SELINDEX") = 1, "listbox SELINDEX from properties")
+Check(FORM.GET(lst, "SELTEXT") = "beta", "listbox SELTEXT")
+Check(FORM.GET(cmb, "SELTEXT") = "one", "combo ITEMS + SELINDEX")
+Check(FORM.GET(frm, "NAME") = "MAIN", "form name from file")
+
+FORM.RUN(frm)
+
+Check(loaded, "MAIN_LOAD bound automatically")
+Check(ticks >= 5, "TMRMAIN_TICK bound automatically")
+Check(clicks = 1, "BTNGO_CLICK bound automatically")
+
+' Error cases: precise complaints, no half-built forms left behind
+msg$ = ""
+TRY
+    FORM.LOAD("bad_version.jdform")
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(INSTR(msg$, "version") >= 0, "version mismatch is reported")
+
+msg$ = ""
+TRY
+    FORM.LOAD("bad_type.jdform")
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+Check(INSTR(msg$, "unknown type") >= 0, "unknown control type is reported")
+Check(INSTR(msg$, "grd") >= 0, "error names the control")
+
+' A failed load must not leave a ghost form or a stray WM_QUIT behind:
+' a fresh form after the two failures still runs and terminates cleanly.
+ticks2 = 0
+frm2 = 0
+
+SUB T2_TICK(e)
+    ticks2 = ticks2 + 1
+    IF ticks2 >= 2 THEN FORM.CLOSE(frm2)
+ENDSUB
+ON "T2_TICK" CALL T2_TICK
+
+frm2 = FORM.CREATE("after errors", 200, 120)
+t2 = FORM.TIMER(frm2, "T2", 50)
+FORM.RUN(frm2)
+Check(ticks2 >= 2, "message loop clean after failed loads")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL FORMS LOAD TESTS PASSED!"
