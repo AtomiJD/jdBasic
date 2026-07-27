@@ -107,7 +107,7 @@ FUNC ScSideEffect()
   sc_called = TRUE
   RETURN TRUE
 ENDFUNC
-DIM sc_result AS INTEGER = 0
+DIM sc_result AS BOOLEAN = FALSE
 sc_result = FALSE ANDALSO ScSideEffect()
 Assert(NOT sc_called, "andalso short-circuit")
 sc_result = TRUE ORELSE ScSideEffect()

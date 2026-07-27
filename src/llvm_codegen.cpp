@@ -1728,6 +1728,17 @@ void LLVMCodegen::populate_type_env(const std::vector<StmtPtr>& program) {
     }
     for (auto& stmt : program) {
         if (!stmt) continue;
+        // Record truth-valued declarations before any FUNC body is compiled:
+        // a SUB may assign to a global declared further down the file, and
+        // the assignment's type check has to know the slot holds a boolean.
+        if (stmt->kind == StmtKind::DIM && !stmt->var_name.empty() &&
+            (stmt->var_type == VarType::BOOLEAN ||
+             (stmt->var_type == VarType::NONE && stmt->expr &&
+              stmt->expr->kind == ExprKind::LITERAL_BOOL))) {
+            std::string up = stmt->var_name;
+            std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+            bool_vars.insert(up);
+        }
         if (stmt->kind == StmtKind::DIM) {
             type_env[stmt->var_name] = StaticType::from_vartype(
                 stmt->var_type, stmt->elem_type, stmt->label);
@@ -3681,9 +3692,20 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // changeably and STRICT-flagging them would force every test that
         // does `DIM ok = FALSE; ok = TRUE` to wrap in CBOOL/CINT for no
         // safety gain.
+        // An integer into a BOOLEAN slot is the classic `DIM b AS BOOLEAN = 1`
+        // and stays allowed. The reverse is not: a truth value in an INTEGER
+        // slot prints as a number, which contradicts what the value is, so the
+        // slot should be declared AS BOOLEAN.
+        //
+        // `DIM flag = FALSE` counts as declaring a truth value even though the
+        // slot is integer-shaped, and FUNC bodies compile before the top-level
+        // DIM has retagged it, so consult the declaration record.
+        std::string vn_up = stmt.var_name;
+        std::transform(vn_up.begin(), vn_up.end(), vn_up.begin(), ::toupper);
+        bool declared_bool = bool_vars.count(vn_up) != 0;
         bool bool_int_pair =
             (vi->tag == JD_TAG_BOOL && rhs.tag == JD_TAG_I64) ||
-            (vi->tag == JD_TAG_I64  && rhs.tag == JD_TAG_BOOL);
+            (declared_bool && rhs.tag == JD_TAG_BOOL);
         // INTEGER → DOUBLE is a lossless widening conversion that classic
         // BASIC always performed implicitly (e.g. `dim x as double : x = 1`).
         // STRICT-flagging it would force CDBL() everywhere a literal int meets
@@ -3719,7 +3741,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 }
             };
             std::string hint;
-            if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_F64)
+            if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_BOOL)
+                hint = "; declare it AS BOOLEAN, or wrap with CINT() to store 0/1";
+            else if (vi->tag == JD_TAG_I64 && rhs.tag == JD_TAG_F64)
                 hint = "; wrap with CINT() to assign explicitly";
             else if (vi->tag == JD_TAG_F64 && rhs.tag == JD_TAG_I64)
                 hint = "; wrap with CDBL() to assign explicitly";
@@ -4660,8 +4684,14 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         rhs.val = LLVMBuildSIToFP(builder, rhs.val, f64_type, "dim_as_dbl");
         rhs.tag = JD_TAG_F64;
     }
+    // `DIM flag = FALSE` declares a truth value, not an integer that happens
+    // to be 0. Without this the slot is typed INTEGER and a later `flag = TRUE`
+    // is a BOOLEAN-into-INTEGER assignment.
+    bool untyped_bool_init = stmt.var_type == VarType::NONE &&
+                             rhs.tag == JD_TAG_BOOL;
     if (vi) {
         if (rhs.tag == JD_TAG_F64 && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
+        if (untyped_bool_init && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_BOOL;
         vi->funcref_name = dim_funcref_name(rhs);
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
