@@ -1,6 +1,93 @@
 ' Native Windows Forms demo (FORMS build). A small VB6-style task list:
 ' real Win32 controls, event handlers named <control>_<event>, a timer
 ' driving a clock label, MSGBOX and INPUTBOX$ for the dialogs.
+' Declared throughout, so the same file runs interpreted and compiles
+' with -c. Handlers bind by name - no ON statements needed.
+OPTION "EXPLICIT"
+
+DIM frm AS DOUBLE = 0
+DIM lblTitle AS DOUBLE = 0
+DIM txtTask AS DOUBLE = 0
+DIM btnAdd AS DOUBLE = 0
+DIM lstTasks AS DOUBLE = 0
+DIM btnEdit AS DOUBLE = 0
+DIM btnDone AS DOUBLE = 0
+DIM chkBeep AS DOUBLE = 0
+DIM lblClock AS DOUBLE = 0
+DIM tmrClock AS DOUBLE = 0
+DIM tasks_added AS INTEGER = 0
+
+SUB MAIN_LOAD(e)
+    FORM.SET(txtTask, "FOCUS")
+ENDSUB
+
+SUB BTNADD_CLICK(e)
+    DIM task AS STRING = FORM.GET(txtTask, "TEXT")
+    IF task = "" THEN
+        MSGBOX("Type a task first.", 48, "Task List")
+        RETURN
+    ENDIF
+    FORM.SET(lstTasks, "ADDITEM", task)
+    FORM.SET(txtTask, "TEXT", "")
+    FORM.SET(txtTask, "FOCUS")
+    tasks_added = tasks_added + 1
+ENDSUB
+
+SUB BTNEDIT_CLICK(e)
+    DIM idx AS INTEGER = FORM.GET(lstTasks, "SELINDEX")
+    IF idx < 0 THEN
+        MSGBOX("Select a task to edit.", 48, "Task List")
+        RETURN
+    ENDIF
+    DIM current AS STRING = FORM.GET(lstTasks, "SELTEXT")
+    DIM edited AS STRING = INPUTBOX$("Edit the task:", "Task List", current)
+    IF edited <> "" THEN
+        DIM items AS ARRAY = []
+        DIM i AS INTEGER = 0
+        FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
+            FORM.SET(lstTasks, "SELINDEX", i)
+            IF i = idx THEN
+                items = APPEND(items, edited)
+            ELSE
+                items = APPEND(items, FORM.GET(lstTasks, "SELTEXT"))
+            ENDIF
+        NEXT
+        FORM.SET(lstTasks, "ITEMS", items)
+        FORM.SET(lstTasks, "SELINDEX", idx)
+    ENDIF
+ENDSUB
+
+SUB BTNDONE_CLICK(e)
+    DIM idx AS INTEGER = FORM.GET(lstTasks, "SELINDEX")
+    IF idx < 0 THEN
+        MSGBOX("Select a task to remove.", 48, "Task List")
+        RETURN
+    ENDIF
+    IF FORM.GET(chkBeep, "CHECKED") THEN
+        IF MSGBOX("Remove '" + FORM.GET(lstTasks, "SELTEXT") + "'?", 36, "Task List") <> 6 THEN RETURN
+    ENDIF
+    DIM items AS ARRAY = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
+        IF i <> idx THEN
+            FORM.SET(lstTasks, "SELINDEX", i)
+            items = APPEND(items, FORM.GET(lstTasks, "SELTEXT"))
+        ENDIF
+    NEXT
+    FORM.SET(lstTasks, "ITEMS", items)
+ENDSUB
+
+SUB LSTTASKS_DBLCLICK(e)
+    MSGBOX("Task: " + e[0]{"text"}, 64, "Task List")
+ENDSUB
+
+SUB TMRCLOCK_TICK(e)
+    FORM.SET(lblClock, "TEXT", TIME$())
+ENDSUB
+
+SUB MAIN_UNLOAD(e)
+    PRINT "Session over - "; tasks_added; " task(s) added."
+ENDSUB
 
 frm = FORM.CREATE("jdBasic Task List", 480, 340, "MAIN")
 
@@ -16,86 +103,5 @@ tmrClock = FORM.TIMER(frm, "tmrClock", 1000)
 
 FORM.SET(chkBeep, "CHECKED", TRUE)
 FORM.SET(lstTasks, "ITEMS", ["Buy milk", "Port VB6 forms", "Ship P1"])
-
-tasks_added = 0
-
-SUB MAIN_LOAD(e)
-    FORM.SET(txtTask, "FOCUS")
-ENDSUB
-ON "MAIN_LOAD" CALL MAIN_LOAD
-
-SUB BTNADD_CLICK(e)
-    task$ = FORM.GET(txtTask, "TEXT")
-    IF task$ = "" THEN
-        MSGBOX("Type a task first.", 48, "Task List")
-        RETURN
-    ENDIF
-    FORM.SET(lstTasks, "ADDITEM", task$)
-    FORM.SET(txtTask, "TEXT", "")
-    FORM.SET(txtTask, "FOCUS")
-    tasks_added = tasks_added + 1
-ENDSUB
-ON "BTNADD_CLICK" CALL BTNADD_CLICK
-
-SUB BTNEDIT_CLICK(e)
-    idx = FORM.GET(lstTasks, "SELINDEX")
-    IF idx < 0 THEN
-        MSGBOX("Select a task to edit.", 48, "Task List")
-        RETURN
-    ENDIF
-    current$ = FORM.GET(lstTasks, "SELTEXT")
-    edited$ = INPUTBOX$("Edit the task:", "Task List", current$)
-    IF edited$ <> "" THEN
-        ' the listbox has no in-place edit, so replace = remove + insert
-        items = []
-        FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
-            FORM.SET(lstTasks, "SELINDEX", i)
-            IF i = idx THEN
-                items = APPEND(items, edited$)
-            ELSE
-                items = APPEND(items, FORM.GET(lstTasks, "SELTEXT"))
-            ENDIF
-        NEXT
-        FORM.SET(lstTasks, "ITEMS", items)
-        FORM.SET(lstTasks, "SELINDEX", idx)
-    ENDIF
-ENDSUB
-ON "BTNEDIT_CLICK" CALL BTNEDIT_CLICK
-
-SUB BTNDONE_CLICK(e)
-    idx = FORM.GET(lstTasks, "SELINDEX")
-    IF idx < 0 THEN
-        MSGBOX("Select a task to remove.", 48, "Task List")
-        RETURN
-    ENDIF
-    IF FORM.GET(chkBeep, "CHECKED") THEN
-        ' 4 = Yes/No, 32 = question icon; 6 = Yes
-        IF MSGBOX("Remove '" + FORM.GET(lstTasks, "SELTEXT") + "'?", 36, "Task List") <> 6 THEN RETURN
-    ENDIF
-    items = []
-    FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
-        IF i <> idx THEN
-            FORM.SET(lstTasks, "SELINDEX", i)
-            items = APPEND(items, FORM.GET(lstTasks, "SELTEXT"))
-        ENDIF
-    NEXT
-    FORM.SET(lstTasks, "ITEMS", items)
-ENDSUB
-ON "BTNDONE_CLICK" CALL BTNDONE_CLICK
-
-SUB LSTTASKS_DBLCLICK(e)
-    MSGBOX("Task: " + e[0]{"text"}, 64, "Task List")
-ENDSUB
-ON "LSTTASKS_DBLCLICK" CALL LSTTASKS_DBLCLICK
-
-SUB TMRCLOCK_TICK(e)
-    FORM.SET(lblClock, "TEXT", TIME$())
-ENDSUB
-ON "TMRCLOCK_TICK" CALL TMRCLOCK_TICK
-
-SUB MAIN_UNLOAD(e)
-    PRINT "Session over - "; tasks_added; " task(s) added."
-ENDSUB
-ON "MAIN_UNLOAD" CALL MAIN_UNLOAD
 
 FORM.RUN(frm)

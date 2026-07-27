@@ -1,15 +1,17 @@
 ' MDI demo: a frame with a menu bar and a toolbar; File > New (Ctrl+N)
 ' loads mdi_doc.jdform as a document child - each hosting its own
 ' controls. Closing every document keeps the frame alive - closing the
-' frame ends the program.
+' frame ends the program. Declared throughout, so the same file runs
+' interpreted and compiles with -c.
+OPTION "EXPLICIT"
 
-frame = 0
-sbar = 0
-doc_count = 0
+DIM frame AS DOUBLE = 0
+DIM sbar AS DOUBLE = 0
+DIM doc_count AS INTEGER = 0
 
 SUB NewDoc()
     doc_count = doc_count + 1
-    child = FORM.LOAD("mdi_doc.jdform", frame)
+    DIM child AS DOUBLE = FORM.LOAD("mdi_doc.jdform", frame)
     FORM.SET(child, "TEXT", "Document " + STR$(doc_count))
     FORM.SET(sbar, "TEXT", ["Ready", STR$(doc_count) + " document(s)"])
 ENDSUB

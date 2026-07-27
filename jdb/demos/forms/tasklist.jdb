@@ -1,44 +1,47 @@
 ' Code-behind for tasklist.jdform - the declarative twin of forms_demo.jdb.
 ' The layout lives in the .jdform file; FORM.LOAD instantiates it and binds
 ' every SUB named <CONTROL>_<EVENT> below automatically. No ON statements.
+' Declared throughout, so the same file runs interpreted and compiles with -c.
+OPTION "EXPLICIT"
 
-frm = 0
-txtTask = 0
-lstTasks = 0
-chkBeep = 0
-lblClock = 0
-tasks_added = 0
+DIM frm AS DOUBLE = 0
+DIM txtTask AS DOUBLE = 0
+DIM lstTasks AS DOUBLE = 0
+DIM chkBeep AS DOUBLE = 0
+DIM lblClock AS DOUBLE = 0
+DIM tasks_added AS INTEGER = 0
 
 SUB MAIN_LOAD(e)
     FORM.SET(txtTask, "FOCUS")
 ENDSUB
 
 SUB BTNADD_CLICK(e)
-    task$ = FORM.GET(txtTask, "TEXT")
-    IF task$ = "" THEN
+    DIM task AS STRING = FORM.GET(txtTask, "TEXT")
+    IF task = "" THEN
         MSGBOX("Type a task first.", 48, "Task List")
         RETURN
     ENDIF
-    FORM.SET(lstTasks, "ADDITEM", task$)
+    FORM.SET(lstTasks, "ADDITEM", task)
     FORM.SET(txtTask, "TEXT", "")
     FORM.SET(txtTask, "FOCUS")
     tasks_added = tasks_added + 1
 ENDSUB
 
 SUB BTNEDIT_CLICK(e)
-    idx = FORM.GET(lstTasks, "SELINDEX")
+    DIM idx AS INTEGER = FORM.GET(lstTasks, "SELINDEX")
     IF idx < 0 THEN
         MSGBOX("Select a task to edit.", 48, "Task List")
         RETURN
     ENDIF
-    current$ = FORM.GET(lstTasks, "SELTEXT")
-    edited$ = INPUTBOX$("Edit the task:", "Task List", current$)
-    IF edited$ <> "" THEN
-        items = []
+    DIM current AS STRING = FORM.GET(lstTasks, "SELTEXT")
+    DIM edited AS STRING = INPUTBOX$("Edit the task:", "Task List", current)
+    IF edited <> "" THEN
+        DIM items AS ARRAY = []
+        DIM i AS INTEGER = 0
         FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
             FORM.SET(lstTasks, "SELINDEX", i)
             IF i = idx THEN
-                items = APPEND(items, edited$)
+                items = APPEND(items, edited)
             ELSE
                 items = APPEND(items, FORM.GET(lstTasks, "SELTEXT"))
             ENDIF
@@ -49,7 +52,7 @@ SUB BTNEDIT_CLICK(e)
 ENDSUB
 
 SUB BTNDONE_CLICK(e)
-    idx = FORM.GET(lstTasks, "SELINDEX")
+    DIM idx AS INTEGER = FORM.GET(lstTasks, "SELINDEX")
     IF idx < 0 THEN
         MSGBOX("Select a task to remove.", 48, "Task List")
         RETURN
@@ -57,7 +60,8 @@ SUB BTNDONE_CLICK(e)
     IF FORM.GET(chkBeep, "CHECKED") THEN
         IF MSGBOX("Remove '" + FORM.GET(lstTasks, "SELTEXT") + "'?", 36, "Task List") <> 6 THEN RETURN
     ENDIF
-    items = []
+    DIM items AS ARRAY = []
+    DIM i AS INTEGER = 0
     FOR i = 0 TO FORM.GET(lstTasks, "COUNT") - 1
         IF i <> idx THEN
             FORM.SET(lstTasks, "SELINDEX", i)
