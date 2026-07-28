@@ -90,6 +90,15 @@
       "type": "TIMER",
       "name": "tmrClock",
       "interval": 1000
+    },
+    {
+      "type": "BUTTON",
+      "name": "btn1",
+      "text": "btn1",
+      "x": 352,
+      "y": 192,
+      "w": 96,
+      "h": 26
     }
   ]
 }

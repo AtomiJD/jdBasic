@@ -10,6 +10,7 @@ DIM lstTasks AS DOUBLE = 0
 DIM chkBeep AS DOUBLE = 0
 DIM lblClock AS DOUBLE = 0
 DIM tasks_added AS INTEGER = 0
+DIM btn1 AS INTEGER = 0
 
 SUB MAIN_LOAD(e)
     FORM.SET(txtTask, "FOCUS")
@@ -83,10 +84,15 @@ SUB MAIN_UNLOAD(e)
     PRINT "Session over - "; tasks_added; " task(s) added."
 ENDSUB
 
+SUB BTN1_CLICK(e)
+    FORM.SET(btn1, "ENABLED", FALSE)
+ENDSUB
+
 frm = FORM.LOAD("tasklist.jdform")
 txtTask  = FORM.FIND(frm, "txtTask")
 lstTasks = FORM.FIND(frm, "lstTasks")
 chkBeep  = FORM.FIND(frm, "chkBeep")
 lblClock = FORM.FIND(frm, "lblClock")
+btn1 = FORM.FIND(frm, "btn1")
 
 FORM.RUN(frm)
