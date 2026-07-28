@@ -2145,7 +2145,7 @@ Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radi
 * **`FORM.DATETIME(frm, name$, x, y, w, h) -> handle`**: Date picker; `VALUE` is an epoch (pairs with `CVDATE`/`YEAR`/`MONTH`/`DAY`), `TEXT` reads the display; fires `NAME_CHANGE`.
 * **`FORM.RICHTEXT(frm, name$, x, y, w, h) -> handle`**: Rich-edit box (Msftedit); `TEXT` get/set, fires `NAME_CHANGE`.
 * **Common dialogs**: **`FILEOPEN$([filter$], [title$], [initial_dir$])`** and **`FILESAVE$([filter$], [title$], [default_name$])`** (filter format `"Text files|*.txt|All files|*.*"`, `""` = cancelled), **`COLORDIALOG([initial_rgb])`** (returns 0xRRGGBB or -1), **`FONTDIALOG$([face$], [size])`** (returns `"face,size,bold,italic"` or `""`).
-* **`FORM.RUN(frm)`**: Shows the form, fires `NAME_LOAD`, then blocks in the message loop until **all** forms are closed.
+* **`FORM.RUN(frm)`**: Shows the form, fires `NAME_LOAD`, then blocks in the message loop until **all** forms are closed. The form is brought **in front of the launching editor/terminal** on show. Position it beforehand with `FORM.SET(frm, "X", 0)` / `"Y"` (screen coordinates, logical units) or fix it in the `.jdform` via `"x"`/`"y"` on the form object; `FORM.SET(frm, "TOPMOST", TRUE)` keeps it above all normal windows.
 * **`FORM.SHOW(frm)`**: Shows a secondary form (non-blocking) and fires its `NAME_LOAD`.
 * **`FORM.DOEVENTS() -> bool`**: Pumps pending messages once; `TRUE` while any form is open. The cooperative alternative to `FORM.RUN` for `DO ... LOOP` programs.
 * **`FORM.CLOSE(frm)`**: Closes a form.
