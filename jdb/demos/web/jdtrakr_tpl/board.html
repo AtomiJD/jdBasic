@@ -11,6 +11,7 @@
 .col-blocked h2{color:#e88;}.col-review h2{color:#dd7;}.col-parked h2{color:#9ab;}
 .mdprev{background:#0b1410;border:1px solid #1c3a24;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;min-height:20px;}
 .mdprev pre{background:#000;padding:8px;overflow-x:auto;border-radius:4px;}.mdprev ul{margin:4px 0 4px 18px;}.mdprev code{background:#000;padding:1px 4px;border-radius:3px;}
+.hl-k{color:#569cd6;font-weight:600;}.hl-s{color:#ce9178;}.hl-c{color:#6a9955;font-style:italic;}.hl-n{color:#b5cea8;}.hl-f{color:#dcdcaa;}
 .deprow{display:flex;align-items:center;gap:8px;margin:4px 0;}.depid{max-width:150px;}
 .collink{cursor:pointer;}.collink:hover{color:#9fe;text-decoration:underline;}
 .listpanel{margin-top:2px;}.listhd{display:flex;align-items:center;gap:14px;margin-bottom:10px;}.listhd h2{margin:0;}
@@ -52,8 +53,20 @@ function btn(label,cls,fn){const b=document.createElement('button');b.textConten
 function fieldEl(label,el){const w=document.createElement('div');const l=document.createElement('label');l.textContent=label;w.appendChild(l);w.appendChild(el);return w;}
 function selEl(options,val){const s=document.createElement('select');for(const o of options){const op=document.createElement('option');op.value=o[0];op.textContent=o[1];if(o[0]===val)op.selected=true;s.appendChild(op);}return s;}
 function esc(s){return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function hlJdb(src){
+  return src.replace(/('[^\n]*)|("[^"\n]*"?)|(\b(?:0x[0-9A-Fa-f]+|\d+(?:\.\d+)?)\b)|((?:[A-Za-z_][A-Za-z0-9_]*\$?(?:\.[A-Za-z0-9_]+\$?)+)|(?:[A-Za-z_][A-Za-z0-9_]*\$))|(\b(?:IF|THEN|ELSE|ELSEIF|ENDIF|FOR|TO|STEP|NEXT|EACH|IN|DO|LOOP|WHILE|UNTIL|WEND|EXITDO|EXITFOR|EXITFUNC|CONTINUEDO|CONTINUEFOR|FUNC|ENDFUNC|SUB|ENDSUB|RETURN|DIM|LET|CONST|AS|TYPE|ENDTYPE|THIS|SELECT|FILTER|REDUCE|TRY|CATCH|FINALLY|ENDTRY|THROW|PRINT|INPUT|OPTION|IMPORT|EXPORT|MODULE|ON|CALL|ASYNC|AWAIT|AND|OR|NOT|XOR|ANDALSO|ORELSE|MOD|TRUE|FALSE|NONE|INTEGER|DOUBLE|STRING|BOOLEAN|ARRAY|MAP|DATE|SCREEN|CLS|END)\b)/gi,
+    function(m,com,str,num,dotted,kw){
+      if(com)return '<span class="hl-c">'+com+'</span>';
+      if(str)return '<span class="hl-s">'+str+'</span>';
+      if(num)return '<span class="hl-n">'+num+'</span>';
+      if(dotted)return '<span class="hl-f">'+dotted+'</span>';
+      return '<span class="hl-k">'+kw+'</span>';});
+}
 function mdToHtml(src){let s=esc(src);
-  s=s.replace(/```([\s\S]*?)```/g,function(m,c){return '<pre>'+c.replace(/^\n/,'').replace(/\n/g,'@@NL@@')+'</pre>';});
+  s=s.replace(/```(\w*)[ \t]*\n?([\s\S]*?)```/g,function(m,lang,c){
+    let body=c.replace(/^\n/,'');
+    if(/^(jdbasic|jdb|basic|vb)$/i.test(lang||''))body=hlJdb(body);
+    return '<pre>'+body.replace(/\n/g,'@@NL@@')+'</pre>';});
   s=s.replace(/`([^`]+)`/g,'<code>$1</code>');
   s=s.replace(/^###\s+(.*)$/gm,'<h5>$1</h5>').replace(/^##\s+(.*)$/gm,'<h4>$1</h4>').replace(/^#\s+(.*)$/gm,'<h3>$1</h3>');
   s=s.replace(/\*\*([^*]+)\*\*/g,'<b>$1</b>');
