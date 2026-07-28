@@ -136,7 +136,24 @@ DO
 LOOP UNTIL INKEY$() = "q"
 ```
 
-### 4. High-performance graphics
+### 4. Native Windows forms (VB6 style)
+
+On Windows, the `FORMS` build flag adds a full retained-mode toolbox of **real Win32 controls**: buttons, text boxes, list/tree/list-view, tabs, sliders, date pickers, menus with accelerators, toolbars, status bars, MDI child windows and the classic common dialogs. Events bind by name convention - a one-parameter `SUB <control>_<event>` is wired automatically, no registration needed:
+
+```basic
+frm = FORM.CREATE("Hello", 320, 200, "MAIN")
+btn = FORM.BUTTON(frm, "btnGo", "&Go", 110, 80, 100, 28)
+
+SUB BTNGO_CLICK(e)
+    MSGBOX("It really is that simple.", 64, "Hello")
+ENDSUB
+
+FORM.RUN(frm)
+```
+
+Layouts can live in declarative **`.jdform`** JSON files (`FORM.LOAD` instantiates and binds them), and the VS Code extension ships a **visual form designer** with drag/resize, property grid and double-click-to-handler. Coordinates are DPI-independent logical units, and the same source compiles to a standalone `.exe` with `jdbasic -c`. See `jdb/demos/forms/gallery.jdb` (every control on three tab pages) and `jdb/demos/forms/mdi_demo.jdb`.
+
+### 5. High-performance graphics
 
 The [`jdb/universe.jdb`](jdb/universe.jdb) demo plots **70 000 coloured pixels per frame at 30+ FPS** from pure BASIC, by combining vectorized inner loops with a single GPU upload via `GFX.PLOT_POINTS_TEX`.
 
@@ -144,7 +161,7 @@ The [`jdb/universe.jdb`](jdb/universe.jdb) demo plots **70 000 coloured pixels p
 build\jdBasic.exe jdb\universe.jdb
 ```
 
-### 5. APL-style pipelines
+### 6. APL-style pipelines
 
 Vectorized arithmetic + bitops let you push real workloads - physics, cellular automata, SAT, DSP - through whole-array operations instead of per-cell loops. See **[doc/APL_pipeline.md](doc/APL_pipeline.md)** for a tutorial walking from "tight FOR loops" to "one line per update step" using the demos under `jdb/bench/` and `jdb/`. Highlights:
 
