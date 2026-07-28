@@ -125,18 +125,31 @@ FUNC API_KEY$(request)
     RETURN s$
 ENDFUNC
 
-FUNC API_OK(request)
+' Machine identities. JDTRAKR_API is the primary key and acts as "Kaiku";
+' JDTRAKR_KEYS adds named agents as "Name1:key1;Name2:key2" pairs, so each
+' remote Claude writes history under its own name.
+FUNC API_ACTOR$(request)
+    k$ = API_KEY$(request)
+    IF LEN(k$) = 0 THEN RETURN ""
     expected$ = TRIM$(GETENV$("JDTRAKR_API"))
-    IF LEN(expected$) = 0 THEN RETURN FALSE
-    RETURN API_KEY$(request) = expected$
+    IF LEN(expected$) > 0 ANDALSO k$ = expected$ THEN RETURN "Kaiku"
+    multi$ = TRIM$(GETENV$("JDTRAKR_KEYS"))
+    IF LEN(multi$) = 0 THEN RETURN ""
+    pairs = SPLIT(multi$, ";")
+    FOR EACH p$ IN pairs
+        i = INSTR(p$, ":")
+        IF i > 0 THEN
+            IF TRIM$(MID$(p$, i + 1, LEN(p$))) = k$ THEN RETURN TRIM$(LEFT$(p$, i))
+        ENDIF
+    NEXT
+    RETURN ""
 ENDFUNC
 
-' acting identity: a logged-in human, else "Kaiku" for a valid API key, else ""
+' acting identity: a logged-in human, else the API key's named agent, else ""
 FUNC ACTOR$(request)
     u$ = JDWEB.AUTH_USER$(gDb, request)
     IF LEN(u$) > 0 THEN RETURN u$
-    IF API_OK(request) THEN RETURN "Kaiku"
-    RETURN ""
+    RETURN API_ACTOR$(request)
 ENDFUNC
 
 ' resolve a project ref (numeric id or key slug) to an id; -1 if unknown, 0 if blank
