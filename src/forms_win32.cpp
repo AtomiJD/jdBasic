@@ -352,6 +352,17 @@ HWND statusbar_of(int form_handle) {
     return nullptr;
 }
 
+// Bring a freshly shown form in front of the launching editor/terminal.
+// SetForegroundWindow alone is refused when another process holds the
+// foreground, so ride the topmost toggle to the top of the z-order first.
+void bring_to_front(HWND hwnd) {
+    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    SetForegroundWindow(hwnd);
+}
+
 // Re-flow a form after a resize or a bar change: the toolbar sizes itself
 // along the top, the status bar along the bottom, and an MDI frame's
 // client area fills what is left between them.
@@ -1032,6 +1043,12 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         return;
     }
 
+    if (prop == "TOPMOST" && is_form_kind(it.kind)) {
+        SetWindowPos(h, v.to_bool() ? HWND_TOPMOST : HWND_NOTOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE);
+        return;
+    }
+
     if (prop == "TEXT") {
         SetWindowTextW(h, widen(value_text(v)).c_str());
     } else if (prop == "ENABLED") {
@@ -1209,6 +1226,8 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
 
     if (prop == "MAXIMIZED" && is_form_kind(it.kind))
         return Value::make_bool(IsZoomed(h) != 0);
+    if (prop == "TOPMOST" && is_form_kind(it.kind))
+        return Value::make_bool((GetWindowLongW(h, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0);
     if (prop == "VALUE" && it.kind == "PROGRESS")
         return Value::make_i64((int)SendMessageW(h, PBM_GETPOS, 0, 0));
     if (prop == "VALUE" && it.kind == "SLIDER")
@@ -1815,6 +1834,14 @@ int load_jdform(const std::string& path, int mdi_parent) {
                              jf_int(*fdef, "height", "form"), fname,
                              mv && mv->to_bool());
     }
+    // Optional fixed position for a top-level form; centered otherwise.
+    if (mdi_parent == 0 && (jf_get(*fdef, "x") || jf_get(*fdef, "y"))) {
+        SetWindowPos(g_items[frm].hwnd, nullptr,
+                     px(jf_int(*fdef, "x", "form", false, 0)),
+                     px(jf_int(*fdef, "y", "form", false, 0)),
+                     0, 0, SWP_NOZORDER | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
+
     // A bad control entry must not leave the half-built (still invisible)
     // form behind - it would count as open forever.
     try {
@@ -2338,6 +2365,7 @@ void register_forms_builtins(VM& vm) {
         FormsItem& f = form_of(arg_int(args, 0), "FORM.SHOW");
         ShowWindow(f.hwnd, SW_SHOW);
         UpdateWindow(f.hwnd);
+        bring_to_front(f.hwnd);
         g_last_form = f.hwnd;
         queue_event(f.name, "LOAD", info_map(f));
         drain_events();
@@ -2350,6 +2378,7 @@ void register_forms_builtins(VM& vm) {
         FormsItem& f = form_of(arg_int(args, 0), "FORM.RUN");
         ShowWindow(f.hwnd, SW_SHOW);
         UpdateWindow(f.hwnd);
+        bring_to_front(f.hwnd);
         g_last_form = f.hwnd;
         queue_event(f.name, "LOAD", info_map(f));
         drain_events();

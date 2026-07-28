@@ -3771,3 +3771,7 @@ Description: Color picker; returns 0xRRGGBB, or -1 on cancel.
 [FONTDIALOG$]
 Syntax: FONTDIALOG$([face$], [size]) -> "face,size,bold,italic"
 Description: Font picker; returns "" on cancel.
+
+[FORM.TOPMOST]
+Syntax: FORM.SET(frm, "TOPMOST", bool)
+Description: Keep a form above all normal windows (always on top); FALSE releases it. FORM.GET reads the state.

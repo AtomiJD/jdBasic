@@ -23,6 +23,15 @@ GFX.CLOSE
 
 frm = FORM.CREATE("Controls Selftest", 520, 420, "MAIN")
 
+FORM.SET(frm, "X", 0)
+FORM.SET(frm, "Y", 0)
+Check(FORM.GET(frm, "X") = 0, "form X moved to 0")
+Check(FORM.GET(frm, "Y") = 0, "form Y moved to 0")
+Check(FORM.GET(frm, "TOPMOST") = FALSE, "form starts non-topmost")
+FORM.SET(frm, "TOPMOST", TRUE)
+Check(FORM.GET(frm, "TOPMOST"), "TOPMOST after SET")
+FORM.SET(frm, "TOPMOST", FALSE)
+
 lin = FORM.LINE(frm, "linTop", 10, 10, 200)
 Check(FORM.GET(lin, "KIND") = "LINE", "line KIND")
 
