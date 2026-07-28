@@ -212,6 +212,8 @@ FUNC HandleLogout(request)
 ENDFUNC
 
 FUNC HandleMe(request)
+    a$ = API_ACTOR$(request)
+    IF LEN(a$) > 0 THEN RETURN { "name": a$, "via": "api-key" }
     RETURN JDWEB.AUTH_ME(gDb, request)
 ENDFUNC
 
