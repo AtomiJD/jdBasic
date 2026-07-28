@@ -12,6 +12,10 @@
 #endif
 #include <windows.h>
 #include <commctrl.h>
+#include <commdlg.h>
+#include <objbase.h>
+#include <richedit.h>
+#include <wincodec.h>
 
 #include <algorithm>
 #include <deque>
@@ -22,6 +26,8 @@
 #include <vector>
 
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "comdlg32.lib")
+#pragma comment(lib, "windowscodecs.lib")
 
 // Main-script directory, defined in main.cpp; relative .jdform paths
 // resolve against it like the graphics asset loaders do.
@@ -40,6 +46,7 @@ struct FormsItem {
     int         form = 0;       // owning form handle (0 for a top-level form)
     HWND        mdi_client = nullptr;   // MDIFRAME only
     HACCEL      haccel = nullptr;       // forms with menu accelerators
+    HWND        buddy = nullptr;        // UPDOWN's edit companion
 };
 
 std::map<int, FormsItem>  g_items;
@@ -103,6 +110,16 @@ std::string value_text(const Value& v) {
     }
 }
 
+// Resolve a data-file path: as given first, then against the script dir.
+std::string resolve_data_path(const std::string& path) {
+    if (GetFileAttributesW(widen(path).c_str()) != INVALID_FILE_ATTRIBUTES) return path;
+    if (!g_base_dir.empty()) {
+        std::string alt = g_base_dir + "/" + path;
+        if (GetFileAttributesW(widen(alt).c_str()) != INVALID_FILE_ATTRIBUTES) return alt;
+    }
+    return path;
+}
+
 std::string get_hwnd_text(HWND h) {
     int len = GetWindowTextLengthW(h);
     if (len <= 0) return std::string();
@@ -162,6 +179,166 @@ void drain_events() {
 
 // Tooltip text per toolbar-button handle (TTN_GETDISPINFO lookup).
 std::map<int, std::string> g_tooltips;
+
+// Per-control GDI resources, freed in the destroy cascade.
+std::map<int, HBRUSH>  g_shape_brushes;   // SHAPE fill
+std::map<int, int>     g_shape_colors;    // SHAPE fill as 0xRRGGBB
+std::map<int, HBITMAP> g_pictures;        // PICTURE bitmaps
+
+COLORREF rgb_to_colorref(int rgb) {
+    return RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+}
+
+// Tree nodes live outside the FormsItem registry: ids share the handle
+// space, the maps tie them to their HTREEITEM and owning tree control.
+struct TreeNode { HTREEITEM hitem; int tree; };
+std::map<int, TreeNode>   g_tree_nodes;
+std::map<HTREEITEM, int>  g_nodes_by_item;
+
+// Tab-page membership: tab handle -> page index -> control handles.
+std::map<int, std::map<int, std::vector<int>>> g_tab_pages;
+
+// Append one row to a report listview: an array fills the subitems,
+// a scalar becomes column 0.
+void lv_add_row(HWND lv, const Value& row) {
+    int idx = (int)SendMessageW(lv, LVM_GETITEMCOUNT, 0, 0);
+    LVITEMW item = {};
+    item.mask = LVIF_TEXT;
+    item.iItem = idx;
+    if (row.type == ValueType::ARRAY) {
+        auto& cells = row.as_array()->elements;
+        std::wstring c0 = widen(cells.empty() ? std::string() : value_text(cells[0]));
+        item.pszText = (LPWSTR)c0.c_str();
+        SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&item);
+        for (size_t i = 1; i < cells.size(); i++) {
+            std::wstring ci = widen(value_text(cells[i]));
+            LVITEMW sub = {};
+            sub.iSubItem = (int)i;
+            sub.pszText = (LPWSTR)ci.c_str();
+            SendMessageW(lv, LVM_SETITEMTEXTW, idx, (LPARAM)&sub);
+        }
+    } else {
+        std::wstring c0 = widen(value_text(row));
+        item.pszText = (LPWSTR)c0.c_str();
+        SendMessageW(lv, LVM_INSERTITEMW, 0, (LPARAM)&item);
+    }
+}
+
+std::string lv_cell_text(HWND lv, int row, int col) {
+    wchar_t buf[512] = L"";
+    LVITEMW item = {};
+    item.iSubItem = col;
+    item.pszText = buf;
+    item.cchTextMax = 511;
+    SendMessageW(lv, LVM_GETITEMTEXTW, row, (LPARAM)&item);
+    return narrow(buf);
+}
+
+std::string tv_item_text(HWND tv, HTREEITEM hitem) {
+    wchar_t buf[512] = L"";
+    TVITEMW item = {};
+    item.mask = TVIF_TEXT;
+    item.hItem = hitem;
+    item.pszText = buf;
+    item.cchTextMax = 511;
+    SendMessageW(tv, TVM_GETITEMW, 0, (LPARAM)&item);
+    return narrow(buf);
+}
+
+// Show the current page's controls, hide every other page's.
+void apply_tab_visibility(int tab_handle) {
+    auto pit = g_tab_pages.find(tab_handle);
+    if (pit == g_tab_pages.end()) return;
+    auto tit = g_items.find(tab_handle);
+    if (tit == g_items.end()) return;
+    int cur = (int)SendMessageW(tit->second.hwnd, TCM_GETCURSEL, 0, 0);
+    for (auto& [page, ctls] : pit->second)
+        for (int ch : ctls) {
+            auto cit = g_items.find(ch);
+            if (cit != g_items.end() && cit->second.hwnd) {
+                ShowWindow(cit->second.hwnd, page == cur ? SW_SHOW : SW_HIDE);
+                if (cit->second.buddy)
+                    ShowWindow(cit->second.buddy, page == cur ? SW_SHOW : SW_HIDE);
+            }
+        }
+}
+
+double systime_to_epoch(const SYSTEMTIME& st) {
+    struct tm t = {};
+    t.tm_year = st.wYear - 1900;
+    t.tm_mon = st.wMonth - 1;
+    t.tm_mday = st.wDay;
+    t.tm_hour = st.wHour;
+    t.tm_min = st.wMinute;
+    t.tm_sec = st.wSecond;
+    t.tm_isdst = -1;
+    return (double)mktime(&t);
+}
+
+SYSTEMTIME epoch_to_systime(double epoch) {
+    time_t tt = (time_t)epoch;
+    struct tm local = {};
+    localtime_s(&local, &tt);
+    SYSTEMTIME st = {};
+    st.wYear = (WORD)(local.tm_year + 1900);
+    st.wMonth = (WORD)(local.tm_mon + 1);
+    st.wDay = (WORD)local.tm_mday;
+    st.wHour = (WORD)local.tm_hour;
+    st.wMinute = (WORD)local.tm_min;
+    st.wSecond = (WORD)local.tm_sec;
+    return st;
+}
+
+// Decode any WIC-supported image (PNG/JPG/BMP/GIF/ICO) into a 32-bit
+// DIB scaled to the requested device-pixel size.
+HBITMAP load_image_file(const std::wstring& path, int dw, int dh) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IWICImagingFactory* fac = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&fac))))
+        return nullptr;
+    HBITMAP hbmp = nullptr;
+    IWICBitmapDecoder* dec = nullptr;
+    IWICBitmapFrameDecode* frame = nullptr;
+    IWICBitmapScaler* scaler = nullptr;
+    IWICFormatConverter* conv = nullptr;
+    do {
+        if (FAILED(fac->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+                                                  WICDecodeMetadataCacheOnDemand, &dec))) break;
+        if (FAILED(dec->GetFrame(0, &frame))) break;
+        if (dw <= 0 || dh <= 0) {
+            UINT iw = 0, ih = 0;
+            frame->GetSize(&iw, &ih);
+            dw = (int)iw; dh = (int)ih;
+        }
+        if (FAILED(fac->CreateBitmapScaler(&scaler))) break;
+        if (FAILED(scaler->Initialize(frame, dw, dh, WICBitmapInterpolationModeFant))) break;
+        if (FAILED(fac->CreateFormatConverter(&conv))) break;
+        if (FAILED(conv->Initialize(scaler, GUID_WICPixelFormat32bppPBGRA,
+                                    WICBitmapDitherTypeNone, nullptr, 0.0,
+                                    WICBitmapPaletteTypeCustom))) break;
+        BITMAPINFO bi = {};
+        bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+        bi.bmiHeader.biWidth = dw;
+        bi.bmiHeader.biHeight = -dh;
+        bi.bmiHeader.biPlanes = 1;
+        bi.bmiHeader.biBitCount = 32;
+        bi.bmiHeader.biCompression = BI_RGB;
+        void* bits = nullptr;
+        hbmp = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (!hbmp || !bits) { if (hbmp) { DeleteObject(hbmp); hbmp = nullptr; } break; }
+        if (FAILED(conv->CopyPixels(nullptr, dw * 4, dw * dh * 4, (BYTE*)bits))) {
+            DeleteObject(hbmp);
+            hbmp = nullptr;
+        }
+    } while (false);
+    if (conv) conv->Release();
+    if (scaler) scaler->Release();
+    if (frame) frame->Release();
+    if (dec) dec->Release();
+    fac->Release();
+    return hbmp;
+}
 
 HWND toolbar_of(int form_handle) {
     for (auto& [h, it] : g_items)
@@ -235,7 +412,7 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 m.as_object()->set("checked",
                     Value::make_bool(SendMessageW(ctl, BM_GETCHECK, 0, 0) == BST_CHECKED));
                 queue_event(it.name, "CLICK", m);
-            } else if (it.kind == "TEXTBOX" && code == EN_CHANGE) {
+            } else if ((it.kind == "TEXTBOX" || it.kind == "RICHTEXT") && code == EN_CHANGE) {
                 Value m = info_map(it);
                 m.as_object()->set("text", Value::make_string(get_hwnd_text(ctl)));
                 queue_event(it.name, "CHANGE", m);
@@ -251,6 +428,11 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                     m.as_object()->set("text", Value::make_string(narrow(w)));
                 }
                 queue_event(it.name, code == LBN_DBLCLK ? "DBLCLICK" : "CLICK", m);
+            } else if (it.kind == "UPDOWN" && code == EN_CHANGE) {
+                Value m = info_map(it);
+                m.as_object()->set("value",
+                    Value::make_i64((int)SendMessageW(it.hwnd, UDM_GETPOS32, 0, 0)));
+                queue_event(it.name, "CHANGE", m);
             } else if (it.kind == "COMBO" && code == CBN_SELCHANGE) {
                 int idx = (int)SendMessageW(ctl, CB_GETCURSEL, 0, 0);
                 Value m = info_map(it);
@@ -297,7 +479,8 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         case WM_NOTIFY: {
             NMHDR* nm = (NMHDR*)lParam;
-            if (nm && nm->code == TTN_GETDISPINFOW) {
+            if (!nm) break;
+            if (nm->code == TTN_GETDISPINFOW) {
                 NMTTDISPINFOW* di = (NMTTDISPINFOW*)lParam;
                 auto tit = g_tooltips.find((int)di->hdr.idFrom);
                 if (tit != g_tooltips.end()) {
@@ -307,13 +490,101 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 }
                 return 0;
             }
+            auto hit = g_byhwnd.find(nm->hwndFrom);
+            if (hit == g_byhwnd.end()) break;
+            FormsItem& it = g_items[hit->second];
+
+            if (it.kind == "LISTVIEW") {
+                if (nm->code == LVN_ITEMCHANGED) {
+                    NMLISTVIEW* lv = (NMLISTVIEW*)lParam;
+                    if ((lv->uNewState & LVIS_SELECTED) && !(lv->uOldState & LVIS_SELECTED)) {
+                        Value m = info_map(it);
+                        m.as_object()->set("index", Value::make_i64(lv->iItem));
+                        m.as_object()->set("text",
+                            Value::make_string(lv_cell_text(nm->hwndFrom, lv->iItem, 0)));
+                        queue_event(it.name, "CLICK", m);
+                    }
+                } else if (nm->code == NM_DBLCLK) {
+                    NMITEMACTIVATE* ia = (NMITEMACTIVATE*)lParam;
+                    if (ia->iItem >= 0) {
+                        Value m = info_map(it);
+                        m.as_object()->set("index", Value::make_i64(ia->iItem));
+                        m.as_object()->set("text",
+                            Value::make_string(lv_cell_text(nm->hwndFrom, ia->iItem, 0)));
+                        queue_event(it.name, "DBLCLICK", m);
+                    }
+                }
+                return 0;
+            }
+            if (it.kind == "TREEVIEW") {
+                if (nm->code == TVN_SELCHANGEDW) {
+                    NMTREEVIEWW* tv = (NMTREEVIEWW*)lParam;
+                    auto nit = g_nodes_by_item.find(tv->itemNew.hItem);
+                    Value m = info_map(it);
+                    m.as_object()->set("node",
+                        Value::make_i64(nit != g_nodes_by_item.end() ? nit->second : 0));
+                    m.as_object()->set("text",
+                        Value::make_string(tv_item_text(nm->hwndFrom, tv->itemNew.hItem)));
+                    queue_event(it.name, "CLICK", m);
+                } else if (nm->code == NM_DBLCLK) {
+                    HTREEITEM sel = (HTREEITEM)SendMessageW(nm->hwndFrom, TVM_GETNEXTITEM,
+                                                            TVGN_CARET, 0);
+                    if (sel) {
+                        auto nit = g_nodes_by_item.find(sel);
+                        Value m = info_map(it);
+                        m.as_object()->set("node",
+                            Value::make_i64(nit != g_nodes_by_item.end() ? nit->second : 0));
+                        m.as_object()->set("text",
+                            Value::make_string(tv_item_text(nm->hwndFrom, sel)));
+                        queue_event(it.name, "DBLCLICK", m);
+                    }
+                }
+                return 0;
+            }
+            if (it.kind == "TABS" && nm->code == TCN_SELCHANGE) {
+                apply_tab_visibility(hit->second);
+                Value m = info_map(it);
+                m.as_object()->set("index",
+                    Value::make_i64((int)SendMessageW(nm->hwndFrom, TCM_GETCURSEL, 0, 0)));
+                queue_event(it.name, "CHANGE", m);
+                return 0;
+            }
+            if (it.kind == "DATETIME" && nm->code == DTN_DATETIMECHANGE) {
+                NMDATETIMECHANGE* dc = (NMDATETIMECHANGE*)lParam;
+                Value m = info_map(it);
+                if (dc->dwFlags == GDT_VALID)
+                    m.as_object()->set("value",
+                        Value::make_f64(systime_to_epoch(dc->st)));
+                queue_event(it.name, "CHANGE", m);
+                return 0;
+            }
             break;
         }
 
         case WM_CTLCOLORSTATIC: {
             HDC hdc = (HDC)wParam;
+            auto sit = g_byhwnd.find((HWND)lParam);
+            if (sit != g_byhwnd.end() && g_items[sit->second].kind == "SHAPE") {
+                auto bit = g_shape_brushes.find(sit->second);
+                if (bit != g_shape_brushes.end()) return (LRESULT)bit->second;
+            }
             SetBkMode(hdc, TRANSPARENT);
             return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
+        }
+
+        case WM_HSCROLL:
+        case WM_VSCROLL: {
+            HWND ctl = (HWND)lParam;
+            if (!ctl) break;
+            auto sit = g_byhwnd.find(ctl);
+            if (sit != g_byhwnd.end() && g_items[sit->second].kind == "SLIDER") {
+                FormsItem& it = g_items[sit->second];
+                Value m = info_map(it);
+                m.as_object()->set("value",
+                    Value::make_i64((int)SendMessageW(ctl, TBM_GETPOS, 0, 0)));
+                queue_event(it.name, "CHANGE", m);
+            }
+            return 0;
         }
 
         case WM_CLOSE: {
@@ -346,8 +617,28 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         if (is_form_kind(it->second.kind) && it->second.haccel)
                             DestroyAcceleratorTable(it->second.haccel);
                         g_tooltips.erase(it->first);
+                        auto bru = g_shape_brushes.find(it->first);
+                        if (bru != g_shape_brushes.end()) {
+                            DeleteObject(bru->second);
+                            g_shape_brushes.erase(bru);
+                        }
+                        auto pic = g_pictures.find(it->first);
+                        if (pic != g_pictures.end()) {
+                            DeleteObject(pic->second);
+                            g_pictures.erase(pic);
+                        }
+                        if (it->second.buddy) g_byhwnd.erase(it->second.buddy);
                         if (it->second.hwnd && it->second.kind != "TOOLBTN")
                             g_byhwnd.erase(it->second.hwnd);
+                        g_tab_pages.erase(it->first);
+                        for (auto nit = g_tree_nodes.begin(); nit != g_tree_nodes.end();) {
+                            if (nit->second.tree == it->first) {
+                                g_nodes_by_item.erase(nit->second.hitem);
+                                nit = g_tree_nodes.erase(nit);
+                            } else {
+                                ++nit;
+                            }
+                        }
                         it = g_items.erase(it);
                     } else {
                         ++it;
@@ -761,6 +1052,103 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
                      (WPARAM)v.to_int(), 0);
     } else if (prop == "VALUE" && it.kind == "BUTTON") {
         if (v.to_bool()) SendMessageW(h, BM_CLICK, 0, 0);
+    } else if (prop == "VALUE" && it.kind == "PROGRESS") {
+        SendMessageW(h, PBM_SETPOS, (WPARAM)v.to_int(), 0);
+    } else if (prop == "VALUE" && it.kind == "SLIDER") {
+        SendMessageW(h, TBM_SETPOS, TRUE, (LPARAM)v.to_int());
+    } else if (prop == "VALUE" && it.kind == "UPDOWN") {
+        SendMessageW(h, UDM_SETPOS32, 0, (LPARAM)v.to_int());
+    } else if (prop == "MAX" && it.kind == "PROGRESS") {
+        SendMessageW(h, PBM_SETRANGE32, 0, (LPARAM)v.to_int());
+    } else if (prop == "MAX" && it.kind == "SLIDER") {
+        SendMessageW(h, TBM_SETRANGEMAX, TRUE, (LPARAM)v.to_int());
+    } else if (prop == "MIN" && it.kind == "SLIDER") {
+        SendMessageW(h, TBM_SETRANGEMIN, TRUE, (LPARAM)v.to_int());
+    } else if ((prop == "MIN" || prop == "MAX") && it.kind == "UPDOWN") {
+        int lo = 0, hi = 0;
+        SendMessageW(h, UDM_GETRANGE32, (WPARAM)&lo, (LPARAM)&hi);
+        if (prop == "MIN") lo = (int)v.to_int(); else hi = (int)v.to_int();
+        SendMessageW(h, UDM_SETRANGE32, lo, hi);
+    } else if (prop == "COLOR" && it.kind == "SHAPE") {
+        int rgb = (int)v.to_int();
+        auto old = g_shape_brushes.find(handle);
+        if (old != g_shape_brushes.end()) DeleteObject(old->second);
+        g_shape_colors[handle] = rgb;
+        g_shape_brushes[handle] = CreateSolidBrush(rgb_to_colorref(rgb));
+        InvalidateRect(h, nullptr, TRUE);
+    } else if (prop == "PICTURE" && it.kind == "PICTURE") {
+        RECT rc;
+        GetClientRect(h, &rc);
+        std::string path = resolve_data_path(value_text(v));
+        HBITMAP bmp = load_image_file(widen(path), rc.right, rc.bottom);
+        if (!bmp)
+            throw std::runtime_error(std::string(who) + ": cannot load image '" + path + "'");
+        auto old = g_pictures.find(handle);
+        if (old != g_pictures.end()) DeleteObject(old->second);
+        g_pictures[handle] = bmp;
+        SendMessageW(h, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
+    } else if (prop == "TEXT" && it.kind == "UPDOWN") {
+        SetWindowTextW(it.buddy, widen(value_text(v)).c_str());
+    } else if (prop == "COLUMNS" && it.kind == "LISTVIEW") {
+        while (SendMessageW(h, LVM_DELETECOLUMN, 0, 0)) {}
+        if (v.type == ValueType::ARRAY) {
+            auto& cols = v.as_array()->elements;
+            for (size_t i = 0; i < cols.size(); i++) {
+                std::string text;
+                int width = 100;
+                if (cols[i].type == ValueType::OBJECT) {
+                    const Value* tv2 = cols[i].as_object()->get("text");
+                    const Value* wv = cols[i].as_object()->get("width");
+                    if (tv2) text = value_text(*tv2);
+                    if (wv) width = (int)wv->to_int();
+                } else {
+                    text = value_text(cols[i]);
+                }
+                std::wstring wt = widen(text);
+                LVCOLUMNW col = {};
+                col.mask = LVCF_TEXT | LVCF_WIDTH;
+                col.pszText = (LPWSTR)wt.c_str();
+                col.cx = px(width);
+                SendMessageW(h, LVM_INSERTCOLUMNW, i, (LPARAM)&col);
+            }
+        }
+    } else if (prop == "ITEMS" && it.kind == "LISTVIEW") {
+        SendMessageW(h, LVM_DELETEALLITEMS, 0, 0);
+        if (v.type == ValueType::ARRAY)
+            for (auto& row : v.as_array()->elements) lv_add_row(h, row);
+    } else if (prop == "ADDITEM" && it.kind == "LISTVIEW") {
+        lv_add_row(h, v);
+    } else if (prop == "CLEAR" && it.kind == "LISTVIEW") {
+        SendMessageW(h, LVM_DELETEALLITEMS, 0, 0);
+    } else if (prop == "SELINDEX" && it.kind == "LISTVIEW") {
+        LVITEMW item = {};
+        item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+        item.state = LVIS_SELECTED | LVIS_FOCUSED;
+        SendMessageW(h, LVM_SETITEMSTATE, (WPARAM)v.to_int(), (LPARAM)&item);
+    } else if (prop == "CLEAR" && it.kind == "TREEVIEW") {
+        SendMessageW(h, TVM_DELETEITEM, 0, (LPARAM)TVI_ROOT);
+        for (auto nit = g_tree_nodes.begin(); nit != g_tree_nodes.end();) {
+            if (nit->second.tree == handle) {
+                g_nodes_by_item.erase(nit->second.hitem);
+                nit = g_tree_nodes.erase(nit);
+            } else {
+                ++nit;
+            }
+        }
+    } else if (prop == "SELNODE" && it.kind == "TREEVIEW") {
+        auto nit = g_tree_nodes.find((int)v.to_int());
+        if (nit != g_tree_nodes.end())
+            SendMessageW(h, TVM_SELECTITEM, TVGN_CARET, (LPARAM)nit->second.hitem);
+    } else if (prop == "EXPAND" && it.kind == "TREEVIEW") {
+        auto nit = g_tree_nodes.find((int)v.to_int());
+        if (nit != g_tree_nodes.end())
+            SendMessageW(h, TVM_EXPAND, TVE_EXPAND, (LPARAM)nit->second.hitem);
+    } else if (prop == "SELINDEX" && it.kind == "TABS") {
+        SendMessageW(h, TCM_SETCURSEL, (WPARAM)v.to_int(), 0);
+        apply_tab_visibility(handle);
+    } else if (prop == "VALUE" && it.kind == "DATETIME") {
+        SYSTEMTIME st = epoch_to_systime(v.to_double());
+        SendMessageW(h, DTM_SETSYSTEMTIME, GDT_VALID, (LPARAM)&st);
     } else if (prop == "FOCUS") {
         SetFocus(h);
     } else if (prop == "INTERVAL" && it.kind == "TIMER") {
@@ -821,6 +1209,54 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
 
     if (prop == "MAXIMIZED" && is_form_kind(it.kind))
         return Value::make_bool(IsZoomed(h) != 0);
+    if (prop == "VALUE" && it.kind == "PROGRESS")
+        return Value::make_i64((int)SendMessageW(h, PBM_GETPOS, 0, 0));
+    if (prop == "VALUE" && it.kind == "SLIDER")
+        return Value::make_i64((int)SendMessageW(h, TBM_GETPOS, 0, 0));
+    if (prop == "VALUE" && it.kind == "UPDOWN")
+        return Value::make_i64((int)SendMessageW(h, UDM_GETPOS32, 0, 0));
+    if (prop == "COLOR" && it.kind == "SHAPE") {
+        auto cit = g_shape_colors.find(handle);
+        return Value::make_i64(cit != g_shape_colors.end() ? cit->second : 0);
+    }
+    if (prop == "TEXT" && it.kind == "UPDOWN")
+        return Value::make_string(get_hwnd_text(it.buddy));
+    if (it.kind == "LISTVIEW") {
+        if (prop == "COUNT")
+            return Value::make_i64((int)SendMessageW(h, LVM_GETITEMCOUNT, 0, 0));
+        if (prop == "SELINDEX")
+            return Value::make_i64((int)SendMessageW(h, LVM_GETNEXTITEM, (WPARAM)-1,
+                                                     LVNI_SELECTED));
+        if (prop == "SELTEXT") {
+            int sel = (int)SendMessageW(h, LVM_GETNEXTITEM, (WPARAM)-1, LVNI_SELECTED);
+            return Value::make_string(sel >= 0 ? lv_cell_text(h, sel, 0) : "");
+        }
+    }
+    if (it.kind == "TREEVIEW") {
+        if (prop == "COUNT")
+            return Value::make_i64((int)SendMessageW(h, TVM_GETCOUNT, 0, 0));
+        if (prop == "SELNODE") {
+            HTREEITEM sel = (HTREEITEM)SendMessageW(h, TVM_GETNEXTITEM, TVGN_CARET, 0);
+            auto nit = sel ? g_nodes_by_item.find(sel) : g_nodes_by_item.end();
+            return Value::make_i64(nit != g_nodes_by_item.end() ? nit->second : 0);
+        }
+        if (prop == "SELTEXT") {
+            HTREEITEM sel = (HTREEITEM)SendMessageW(h, TVM_GETNEXTITEM, TVGN_CARET, 0);
+            return Value::make_string(sel ? tv_item_text(h, sel) : "");
+        }
+    }
+    if (it.kind == "TABS") {
+        if (prop == "SELINDEX")
+            return Value::make_i64((int)SendMessageW(h, TCM_GETCURSEL, 0, 0));
+        if (prop == "COUNT")
+            return Value::make_i64((int)SendMessageW(h, TCM_GETITEMCOUNT, 0, 0));
+    }
+    if (prop == "VALUE" && it.kind == "DATETIME") {
+        SYSTEMTIME st = {};
+        if (SendMessageW(h, DTM_GETSYSTEMTIME, 0, (LPARAM)&st) == GDT_VALID)
+            return Value::make_f64(systime_to_epoch(st));
+        return Value::make_f64(0);
+    }
     if (prop == "TEXT")    return Value::make_string(get_hwnd_text(h));
     if (prop == "ENABLED") return Value::make_bool(IsWindowEnabled(h) != 0);
     if (prop == "VISIBLE") return Value::make_bool(IsWindowVisible(h) != 0);
@@ -1145,8 +1581,10 @@ const std::vector<const char*>& events_of(const std::string& kind) {
     if (is_form_kind(kind)) return form_ev;
     if (kind == "BUTTON" || kind == "CHECKBOX" || kind == "RADIO" ||
         kind == "MENU" || kind == "TOOLBTN") return click_ev;
-    if (kind == "TEXTBOX" || kind == "COMBO")  return text_ev;
-    if (kind == "LISTBOX")  return list_ev;
+    if (kind == "TEXTBOX" || kind == "COMBO" || kind == "SLIDER" ||
+        kind == "UPDOWN" || kind == "TABS" || kind == "DATETIME" ||
+        kind == "RICHTEXT")  return text_ev;
+    if (kind == "LISTBOX" || kind == "LISTVIEW" || kind == "TREEVIEW") return list_ev;
     if (kind == "TIMER")    return tick_ev;
     return none_ev;
 }
@@ -1227,6 +1665,78 @@ void load_controls(int frm, const Value& doc, const std::string& path) {
             handle = store_item(nullptr, name, "TIMER", frm);
             int ms = jf_int(c, "interval", where, false);
             if (ms > 0) SetTimer(f.hwnd, handle, ms, nullptr);
+        } else if (type == "LINE") {
+            bool vert = jf_int(c, "vertical", where, false) != 0;
+            handle = create_control(frm, name, L"STATIC", "",
+                                    vert ? SS_ETCHEDVERT : SS_ETCHEDHORZ, 0,
+                                    x, y, vert ? 2 : w, vert ? h : 2, "LINE");
+        } else if (type == "SHAPE") {
+            handle = create_control(frm, name, L"STATIC", "", SS_NOTIFY, 0,
+                                    x, y, w, h, "SHAPE");
+            int rgb = jf_int(c, "color", where, false, 0x808080);
+            g_shape_colors[handle] = rgb;
+            g_shape_brushes[handle] = CreateSolidBrush(rgb_to_colorref(rgb));
+        } else if (type == "PICTURE") {
+            handle = create_control(frm, name, L"STATIC", "",
+                                    SS_BITMAP | SS_CENTERIMAGE, 0, x, y, w, h, "PICTURE");
+            std::string ppath = resolve_data_path(jf_str(c, "picture", where, ""));
+            if (!ppath.empty()) {
+                HBITMAP bmp = load_image_file(widen(ppath), px(w), px(h));
+                if (!bmp)
+                    throw std::runtime_error("FORM.LOAD: " + where +
+                                             ": cannot load image \"" + ppath + "\"");
+                g_pictures[handle] = bmp;
+                SendMessageW(g_items[handle].hwnd, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
+            }
+        } else if (type == "PROGRESS") {
+            handle = create_control(frm, name, PROGRESS_CLASSW, "", 0, 0,
+                                    x, y, w, h, "PROGRESS");
+            SendMessageW(g_items[handle].hwnd, PBM_SETRANGE32, 0,
+                         jf_int(c, "max", where, false, 100));
+        } else if (type == "SLIDER") {
+            bool vert = jf_int(c, "vertical", where, false) != 0;
+            handle = create_control(frm, name, TRACKBAR_CLASSW, "",
+                                    TBS_AUTOTICKS | WS_TABSTOP | (vert ? TBS_VERT : TBS_HORZ),
+                                    0, x, y, w, h, "SLIDER");
+            SendMessageW(g_items[handle].hwnd, TBM_SETRANGEMAX, TRUE,
+                         jf_int(c, "max", where, false, 100));
+        } else if (type == "UPDOWN") {
+            handle = (int)g_vm->call_function("FORM.UPDOWN", {
+                Value::make_i64(frm), Value::make_string(name),
+                Value::make_i64(x), Value::make_i64(y),
+                Value::make_i64(w), Value::make_i64(h),
+                Value::make_i64(jf_int(c, "min", where, false, 0)),
+                Value::make_i64(jf_int(c, "max", where, false, 100)) }).to_int();
+        } else if (type == "LISTVIEW") {
+            handle = (int)g_vm->call_function("FORM.LISTVIEW", {
+                Value::make_i64(frm), Value::make_string(name),
+                Value::make_i64(x), Value::make_i64(y),
+                Value::make_i64(w), Value::make_i64(h) }).to_int();
+        } else if (type == "TREEVIEW") {
+            handle = (int)g_vm->call_function("FORM.TREEVIEW", {
+                Value::make_i64(frm), Value::make_string(name),
+                Value::make_i64(x), Value::make_i64(y),
+                Value::make_i64(w), Value::make_i64(h) }).to_int();
+        } else if (type == "TABS") {
+            const Value* titles = jf_get(c, "titles");
+            handle = (int)g_vm->call_function("FORM.TABS", {
+                Value::make_i64(frm), Value::make_string(name),
+                Value::make_i64(x), Value::make_i64(y),
+                Value::make_i64(w), Value::make_i64(h),
+                titles ? *titles : Value::make_array() }).to_int();
+        } else if (type == "DATETIME") {
+            handle = (int)g_vm->call_function("FORM.DATETIME", {
+                Value::make_i64(frm), Value::make_string(name),
+                Value::make_i64(x), Value::make_i64(y),
+                Value::make_i64(w), Value::make_i64(h) }).to_int();
+        } else if (type == "RICHTEXT") {
+            handle = (int)g_vm->call_function("FORM.RICHTEXT", {
+                Value::make_i64(frm), Value::make_string(name),
+                Value::make_i64(x), Value::make_i64(y),
+                Value::make_i64(w), Value::make_i64(h) }).to_int();
+            std::string text0 = jf_str(c, "text", where, "");
+            if (!text0.empty())
+                SetWindowTextW(g_items[handle].hwnd, widen(text0).c_str());
         } else {
             throw std::runtime_error("FORM.LOAD: " + where + ": unknown type \"" + type + "\"");
         }
@@ -1243,6 +1753,24 @@ void load_controls(int frm, const Value& doc, const std::string& path) {
                                              pkey + "\": " + e.what());
                 }
             }
+        }
+
+        // "tab": "<tabs name>", "page": n puts the control on a tab page
+        const Value* tabref = jf_get(c, "tab");
+        if (tabref && tabref->type == ValueType::STRING) {
+            std::string tname = upname(tabref->as_string()->data);
+            int page = jf_int(c, "page", where, false, 0);
+            int tabh = 0;
+            for (auto& [h2, it2] : g_items)
+                if (it2.kind == "TABS" && it2.form == frm && it2.name == tname) {
+                    tabh = h2;
+                    break;
+                }
+            if (!tabh)
+                throw std::runtime_error("FORM.LOAD: " + where + ": unknown tab \"" +
+                                         tabref->as_string()->data + "\"");
+            g_tab_pages[tabh][page].push_back(handle);
+            apply_tab_visibility(tabh);
         }
 
         bind_handlers(g_items[handle].name, g_items[handle].kind);
@@ -1331,6 +1859,11 @@ void register_forms_builtins(VM& vm) {
                            "FORM.COMBO", "FORM.TIMER", "FORM.LOAD", "FORM.FIND",
                            "FORM.MDI", "FORM.CHILD", "FORM.MENU", "FORM.TOOLBAR",
                            "FORM.STATUSBAR",
+                           "FORM.LINE", "FORM.SHAPE", "FORM.PICTURE", "FORM.PROGRESS",
+                           "FORM.SLIDER", "FORM.UPDOWN",
+                           "FORM.LISTVIEW", "FORM.TREEVIEW", "FORM.NODE",
+                           "FORM.TABS", "FORM.TABPAGE", "FORM.DATETIME", "FORM.RICHTEXT",
+                           "FILEOPEN$", "FILESAVE$", "COLORDIALOG", "FONTDIALOG$",
                            "FORM.SET", "FORM.GET",
                            "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
                            "MSGBOX", "INPUTBOX$" })
@@ -1493,6 +2026,292 @@ void register_forms_builtins(VM& vm) {
         return Value::make_i64(0);
     });
 
+    // FORM.LINE(frm, name$, x, y, length, [vertical]) -> handle
+    // The classic etched divider.
+    vm.register_native("FORM.LINE", 5, 6, [](const std::vector<Value>& args) -> Value {
+        bool vert = args.size() > 5 && args[5].to_bool();
+        int len = arg_int(args, 4);
+        return Value::make_i64(create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.LINE"), L"STATIC", "",
+            vert ? SS_ETCHEDVERT : SS_ETCHEDHORZ, 0,
+            arg_int(args, 2), arg_int(args, 3),
+            vert ? 2 : len, vert ? len : 2, "LINE"));
+    });
+
+    // FORM.SHAPE(frm, name$, x, y, w, h, [rgb]) -> handle  filled rectangle
+    vm.register_native("FORM.SHAPE", 6, 7, [](const std::vector<Value>& args) -> Value {
+        int handle = create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.SHAPE"), L"STATIC", "",
+            SS_NOTIFY, 0,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "SHAPE");
+        int rgb = args.size() > 6 ? (int)args[6].to_int() : 0x808080;
+        g_shape_colors[handle] = rgb;
+        g_shape_brushes[handle] = CreateSolidBrush(rgb_to_colorref(rgb));
+        InvalidateRect(g_items[handle].hwnd, nullptr, TRUE);
+        return Value::make_i64(handle);
+    });
+
+    // FORM.PICTURE(frm, name$, path$, x, y, w, h) -> handle
+    // PNG/JPG/BMP via WIC, scaled to the control size.
+    vm.register_native("FORM.PICTURE", 7, 7, [](const std::vector<Value>& args) -> Value {
+        int handle = create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.PICTURE"), L"STATIC", "",
+            SS_BITMAP | SS_CENTERIMAGE, 0,
+            arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), arg_int(args, 6), "PICTURE");
+        std::string path = resolve_data_path(arg_str(args, 2, "FORM.PICTURE"));
+        HBITMAP bmp = load_image_file(widen(path),
+                                      px(arg_int(args, 5)), px(arg_int(args, 6)));
+        if (!bmp)
+            throw std::runtime_error("FORM.PICTURE: cannot load image '" + path + "'");
+        g_pictures[handle] = bmp;
+        SendMessageW(g_items[handle].hwnd, STM_SETIMAGE, IMAGE_BITMAP, (LPARAM)bmp);
+        return Value::make_i64(handle);
+    });
+
+    // FORM.PROGRESS(frm, name$, x, y, w, h) -> handle  (range 0..100)
+    vm.register_native("FORM.PROGRESS", 6, 6, [](const std::vector<Value>& args) -> Value {
+        int handle = create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.PROGRESS"), PROGRESS_CLASSW, "",
+            0, 0,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "PROGRESS");
+        SendMessageW(g_items[handle].hwnd, PBM_SETRANGE32, 0, 100);
+        return Value::make_i64(handle);
+    });
+
+    // FORM.SLIDER(frm, name$, x, y, w, h, [max=100], [vertical]) -> handle
+    vm.register_native("FORM.SLIDER", 6, 8, [](const std::vector<Value>& args) -> Value {
+        bool vert = args.size() > 7 && args[7].to_bool();
+        int handle = create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.SLIDER"), TRACKBAR_CLASSW, "",
+            TBS_AUTOTICKS | WS_TABSTOP | (vert ? TBS_VERT : TBS_HORZ), 0,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "SLIDER");
+        int maxv = args.size() > 6 ? (int)args[6].to_int() : 100;
+        SendMessageW(g_items[handle].hwnd, TBM_SETRANGEMAX, TRUE, maxv);
+        return Value::make_i64(handle);
+    });
+
+    // FORM.UPDOWN(frm, name$, x, y, w, h, [min=0], [max=100]) -> handle
+    // A numeric edit with spin arrows.
+    vm.register_native("FORM.UPDOWN", 6, 8, [](const std::vector<Value>& args) -> Value {
+        int frm = arg_int(args, 0);
+        FormsItem& f = form_of(frm, "FORM.UPDOWN");
+        std::string name = arg_str(args, 1, "FORM.UPDOWN");
+        HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"0",
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
+                                    px(arg_int(args, 2)), px(arg_int(args, 3)),
+                                    px(arg_int(args, 4)), px(arg_int(args, 5)),
+                                    f.hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (!edit) throw std::runtime_error("FORM.UPDOWN: edit creation failed");
+        if (g_font) SendMessageW(edit, WM_SETFONT, (WPARAM)g_font, TRUE);
+        HWND ud = CreateWindowExW(0, UPDOWN_CLASSW, nullptr,
+                                  WS_CHILD | WS_VISIBLE | UDS_SETBUDDYINT |
+                                  UDS_ALIGNRIGHT | UDS_ARROWKEYS | UDS_NOTHOUSANDS,
+                                  0, 0, 0, 0, f.hwnd, nullptr,
+                                  GetModuleHandleW(nullptr), nullptr);
+        if (!ud) { DestroyWindow(edit); throw std::runtime_error("FORM.UPDOWN: creation failed"); }
+        SendMessageW(ud, UDM_SETBUDDY, (WPARAM)edit, 0);
+        int lo = args.size() > 6 ? (int)args[6].to_int() : 0;
+        int hi = args.size() > 7 ? (int)args[7].to_int() : 100;
+        SendMessageW(ud, UDM_SETRANGE32, lo, hi);
+        SendMessageW(ud, UDM_SETPOS32, 0, lo);
+        int handle = store_item(ud, name, "UPDOWN", frm);
+        g_items[handle].buddy = edit;
+        g_byhwnd[edit] = handle;   // EN_CHANGE arrives with the buddy hwnd
+        bind_handlers(g_items[handle].name, "UPDOWN");
+        return Value::make_i64(handle);
+    });
+
+    // FORM.LISTVIEW(frm, name$, x, y, w, h) -> handle  report-mode list
+    // with full-row select and grid lines; fill via COLUMNS + ITEMS.
+    vm.register_native("FORM.LISTVIEW", 6, 6, [](const std::vector<Value>& args) -> Value {
+        int handle = create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.LISTVIEW"), WC_LISTVIEWW, "",
+            LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_TABSTOP, WS_EX_CLIENTEDGE,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "LISTVIEW");
+        SendMessageW(g_items[handle].hwnd, LVM_SETEXTENDEDLISTVIEWSTYLE,
+                     LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES,
+                     LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+        return Value::make_i64(handle);
+    });
+
+    // FORM.TREEVIEW(frm, name$, x, y, w, h) -> handle
+    vm.register_native("FORM.TREEVIEW", 6, 6, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.TREEVIEW"), WC_TREEVIEWW, "",
+            TVS_HASLINES | TVS_LINESATROOT | TVS_HASBUTTONS | TVS_SHOWSELALWAYS | WS_TABSTOP,
+            WS_EX_CLIENTEDGE,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "TREEVIEW"));
+    });
+
+    // FORM.NODE(tree, parent_node, text$) -> node id  (parent 0 = root)
+    vm.register_native("FORM.NODE", 3, 3, [](const std::vector<Value>& args) -> Value {
+        FormsItem& it = item_of(arg_int(args, 0), "FORM.NODE");
+        if (it.kind != "TREEVIEW")
+            throw std::runtime_error("FORM.NODE: handle is not a treeview");
+        HTREEITEM parent = TVI_ROOT;
+        int pid = arg_int(args, 1);
+        if (pid != 0) {
+            auto pit = g_tree_nodes.find(pid);
+            if (pit == g_tree_nodes.end())
+                throw std::runtime_error("FORM.NODE: unknown parent node " + std::to_string(pid));
+            parent = pit->second.hitem;
+        }
+        std::wstring text = widen(arg_str(args, 2, "FORM.NODE"));
+        TVINSERTSTRUCTW ins = {};
+        ins.hParent = parent;
+        ins.hInsertAfter = TVI_LAST;
+        ins.item.mask = TVIF_TEXT;
+        ins.item.pszText = (LPWSTR)text.c_str();
+        HTREEITEM hitem = (HTREEITEM)SendMessageW(it.hwnd, TVM_INSERTITEMW, 0, (LPARAM)&ins);
+        if (!hitem) throw std::runtime_error("FORM.NODE: insert failed");
+        int id = g_next_handle++;
+        g_tree_nodes[id] = { hitem, arg_int(args, 0) };
+        g_nodes_by_item[hitem] = id;
+        return Value::make_i64(id);
+    });
+
+    // FORM.TABS(frm, name$, x, y, w, h, titles) -> handle
+    vm.register_native("FORM.TABS", 7, 7, [](const std::vector<Value>& args) -> Value {
+        int handle = create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.TABS"), WC_TABCONTROLW, "",
+            WS_TABSTOP | WS_CLIPSIBLINGS, 0,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "TABS");
+        if (args[6].type == ValueType::ARRAY) {
+            auto& els = args[6].as_array()->elements;
+            for (size_t i = 0; i < els.size(); i++) {
+                std::wstring t = widen(value_text(els[i]));
+                TCITEMW item = {};
+                item.mask = TCIF_TEXT;
+                item.pszText = (LPWSTR)t.c_str();
+                SendMessageW(g_items[handle].hwnd, TCM_INSERTITEMW, i, (LPARAM)&item);
+            }
+        }
+        return Value::make_i64(handle);
+    });
+
+    // FORM.TABPAGE(tab, page, ctl)  assign a control to a tab page;
+    // visibility follows the selected tab from then on
+    vm.register_native("FORM.TABPAGE", 3, 3, [](const std::vector<Value>& args) -> Value {
+        int tab = arg_int(args, 0);
+        FormsItem& it = item_of(tab, "FORM.TABPAGE");
+        if (it.kind != "TABS")
+            throw std::runtime_error("FORM.TABPAGE: handle is not a tab control");
+        item_of(arg_int(args, 2), "FORM.TABPAGE");
+        g_tab_pages[tab][arg_int(args, 1)].push_back(arg_int(args, 2));
+        apply_tab_visibility(tab);
+        return Value::make_none();
+    });
+
+    // FORM.DATETIME(frm, name$, x, y, w, h) -> handle  date picker
+    vm.register_native("FORM.DATETIME", 6, 6, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.DATETIME"), DATETIMEPICK_CLASSW, "",
+            DTS_SHORTDATEFORMAT | WS_TABSTOP, 0,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "DATETIME"));
+    });
+
+    // FORM.RICHTEXT(frm, name$, x, y, w, h) -> handle  rich edit
+    vm.register_native("FORM.RICHTEXT", 6, 6, [](const std::vector<Value>& args) -> Value {
+        static bool loaded = false;
+        if (!loaded) {
+            LoadLibraryW(L"Msftedit.dll");
+            loaded = true;
+        }
+        int handle = create_control(
+            arg_int(args, 0), arg_str(args, 1, "FORM.RICHTEXT"), L"RICHEDIT50W", "",
+            ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL | WS_TABSTOP,
+            WS_EX_CLIENTEDGE,
+            arg_int(args, 2), arg_int(args, 3), arg_int(args, 4), arg_int(args, 5), "RICHTEXT");
+        SendMessageW(g_items[handle].hwnd, EM_SETEVENTMASK, 0, ENM_CHANGE);
+        return Value::make_i64(handle);
+    });
+
+    // FILEOPEN$([filter$], [title$], [initial_dir$]) -> path ("" = cancel)
+    // Filter format: "Text files|*.txt|All files|*.*"
+    vm.register_native("FILEOPEN$", 0, 3, [](const std::vector<Value>& args) -> Value {
+        std::wstring filter = widen(args.size() > 0 && args[0].type == ValueType::STRING &&
+                                    !args[0].as_string()->data.empty()
+                                    ? args[0].as_string()->data : "All files|*.*");
+        for (auto& c : filter) if (c == L'|') c = L'\0';
+        filter.push_back(L'\0');
+        std::wstring title = args.size() > 1 ? widen(value_text(args[1])) : L"";
+        std::wstring dir   = args.size() > 2 ? widen(value_text(args[2])) : L"";
+        wchar_t buf[4096] = L"";
+        OPENFILENAMEW ofn = { sizeof(ofn) };
+        ofn.hwndOwner = g_last_form && IsWindow(g_last_form) ? g_last_form : nullptr;
+        ofn.lpstrFilter = filter.c_str();
+        ofn.lpstrFile = buf;
+        ofn.nMaxFile = 4096;
+        if (!title.empty()) ofn.lpstrTitle = title.c_str();
+        if (!dir.empty())   ofn.lpstrInitialDir = dir.c_str();
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY | OFN_NOCHANGEDIR;
+        if (!GetOpenFileNameW(&ofn)) return Value::make_string("");
+        return Value::make_string(narrow(buf));
+    });
+
+    // FILESAVE$([filter$], [title$], [default_name$]) -> path ("" = cancel)
+    vm.register_native("FILESAVE$", 0, 3, [](const std::vector<Value>& args) -> Value {
+        std::wstring filter = widen(args.size() > 0 && args[0].type == ValueType::STRING &&
+                                    !args[0].as_string()->data.empty()
+                                    ? args[0].as_string()->data : "All files|*.*");
+        for (auto& c : filter) if (c == L'|') c = L'\0';
+        filter.push_back(L'\0');
+        std::wstring title = args.size() > 1 ? widen(value_text(args[1])) : L"";
+        wchar_t buf[4096] = L"";
+        if (args.size() > 2) {
+            std::wstring def = widen(value_text(args[2]));
+            wcsncpy(buf, def.c_str(), 4095);
+        }
+        OPENFILENAMEW ofn = { sizeof(ofn) };
+        ofn.hwndOwner = g_last_form && IsWindow(g_last_form) ? g_last_form : nullptr;
+        ofn.lpstrFilter = filter.c_str();
+        ofn.lpstrFile = buf;
+        ofn.nMaxFile = 4096;
+        if (!title.empty()) ofn.lpstrTitle = title.c_str();
+        ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+        if (!GetSaveFileNameW(&ofn)) return Value::make_string("");
+        return Value::make_string(narrow(buf));
+    });
+
+    // COLORDIALOG([initial_rgb]) -> 0xRRGGBB, or -1 on cancel
+    vm.register_native("COLORDIALOG", 0, 1, [](const std::vector<Value>& args) -> Value {
+        static COLORREF custom[16] = {};
+        CHOOSECOLORW cc = { sizeof(cc) };
+        cc.hwndOwner = g_last_form && IsWindow(g_last_form) ? g_last_form : nullptr;
+        cc.lpCustColors = custom;
+        cc.Flags = CC_FULLOPEN | CC_ANYCOLOR;
+        if (!args.empty()) {
+            cc.rgbResult = rgb_to_colorref((int)args[0].to_int());
+            cc.Flags |= CC_RGBINIT;
+        }
+        if (!ChooseColorW(&cc)) return Value::make_i64(-1);
+        int rgb = (GetRValue(cc.rgbResult) << 16) |
+                  (GetGValue(cc.rgbResult) << 8) | GetBValue(cc.rgbResult);
+        return Value::make_i64(rgb);
+    });
+
+    // FONTDIALOG$([face$], [size]) -> "face,size,bold,italic" ("" = cancel)
+    vm.register_native("FONTDIALOG$", 0, 2, [](const std::vector<Value>& args) -> Value {
+        LOGFONTW lf = {};
+        HDC dc = GetDC(nullptr);
+        int logy = dc ? GetDeviceCaps(dc, LOGPIXELSY) : 96;
+        if (dc) ReleaseDC(nullptr, dc);
+        std::wstring face = args.size() > 0 ? widen(value_text(args[0])) : L"Segoe UI";
+        int size = args.size() > 1 ? (int)args[1].to_int() : 9;
+        wcsncpy(lf.lfFaceName, face.c_str(), LF_FACESIZE - 1);
+        lf.lfHeight = -MulDiv(size, logy, 72);
+        CHOOSEFONTW cf = { sizeof(cf) };
+        cf.hwndOwner = g_last_form && IsWindow(g_last_form) ? g_last_form : nullptr;
+        cf.lpLogFont = &lf;
+        cf.Flags = CF_SCREENFONTS | CF_INITTOLOGFONTSTRUCT | CF_NOSCRIPTSEL;
+        if (!ChooseFontW(&cf)) return Value::make_string("");
+        int pt = MulDiv(-lf.lfHeight, 72, logy);
+        std::string out = narrow(lf.lfFaceName) + "," + std::to_string(pt) + "," +
+                          (lf.lfWeight >= FW_BOLD ? "1" : "0") + "," +
+                          (lf.lfItalic ? "1" : "0");
+        return Value::make_string(out);
+    });
+
     // FORM.SET(handle, prop$, [value])
     vm.register_native("FORM.SET", 2, 3, [](const std::vector<Value>& args) -> Value {
         int handle = arg_int(args, 0);
@@ -1502,11 +2321,16 @@ void register_forms_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // FORM.GET(handle, prop$) -> value
-    vm.register_native("FORM.GET", 2, 2, [](const std::vector<Value>& args) -> Value {
+    // FORM.GET(handle, prop$, [a], [b]) -> value
+    // The extra arguments serve cell addressing: FORM.GET(lv, "CELL", row, col)
+    vm.register_native("FORM.GET", 2, 4, [](const std::vector<Value>& args) -> Value {
         int handle = arg_int(args, 0);
         FormsItem& it = item_of(handle, "FORM.GET");
-        return get_prop(handle, it, upname(arg_str(args, 1, "FORM.GET")), "FORM.GET");
+        std::string prop = upname(arg_str(args, 1, "FORM.GET"));
+        if (prop == "CELL" && it.kind == "LISTVIEW" && args.size() >= 4)
+            return Value::make_string(
+                lv_cell_text(it.hwnd, arg_int(args, 2), arg_int(args, 3)));
+        return get_prop(handle, it, prop, "FORM.GET");
     });
 
     // FORM.SHOW(frm)  show a (secondary) form and fire its LOAD event

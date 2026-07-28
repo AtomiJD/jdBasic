@@ -3703,3 +3703,71 @@ Description: Flat icon toolbar along the top (one per form). Spec = array of map
 [FORM.STATUSBAR]
 Syntax: FORM.STATUSBAR(frm, name$, [part_widths]) -> handle
 Description: Status bar along the bottom (one per form). part_widths = array of logical widths, -1 stretches the last part; omitted = one part. SET TEXT takes a string (part 0) or an array (all parts).
+
+[FORM.LINE]
+Syntax: FORM.LINE(frm, name$, x, y, length, [vertical]) -> handle
+Description: Etched divider line, horizontal by default.
+
+[FORM.SHAPE]
+Syntax: FORM.SHAPE(frm, name$, x, y, w, h, [rgb]) -> handle
+Description: Filled rectangle. COLOR property (0xRRGGBB) via FORM.SET/GET.
+
+[FORM.PICTURE]
+Syntax: FORM.PICTURE(frm, name$, path$, x, y, w, h) -> handle
+Description: Image control (PNG/JPG/BMP/GIF), scaled to the control. Swap via FORM.SET PICTURE.
+
+[FORM.PROGRESS]
+Syntax: FORM.PROGRESS(frm, name$, x, y, w, h) -> handle
+Description: Progress bar; VALUE and MAX properties (default 0..100).
+
+[FORM.SLIDER]
+Syntax: FORM.SLIDER(frm, name$, x, y, w, h, [max], [vertical]) -> handle
+Description: Trackbar; VALUE/MIN/MAX; fires NAME_CHANGE with value while dragging.
+
+[FORM.UPDOWN]
+Syntax: FORM.UPDOWN(frm, name$, x, y, w, h, [min], [max]) -> handle
+Description: Numeric edit with spin arrows; VALUE/MIN/MAX/TEXT; fires NAME_CHANGE.
+
+[FORM.LISTVIEW]
+Syntax: FORM.LISTVIEW(frm, name$, x, y, w, h) -> handle
+Description: Report list with columns and grid lines. COLUMNS (array of maps or strings), ITEMS (array of row-arrays), ADDITEM, CLEAR, SELINDEX, SELTEXT, COUNT; cells via FORM.GET(h, "CELL", row, col). Fires NAME_CLICK/NAME_DBLCLICK.
+
+[FORM.TREEVIEW]
+Syntax: FORM.TREEVIEW(frm, name$, x, y, w, h) -> handle
+Description: Hierarchy control; add nodes with FORM.NODE. SELNODE/SELTEXT/COUNT/EXPAND/CLEAR; fires NAME_CLICK on selection change.
+
+[FORM.NODE]
+Syntax: FORM.NODE(tree, parent, text$) -> node
+Description: Insert a tree node under parent (0 = root level); returns the node id.
+
+[FORM.TABS]
+Syntax: FORM.TABS(frm, name$, x, y, w, h, titles) -> handle
+Description: Tab strip from an array of titles. Assign controls to pages with FORM.TABPAGE; SELINDEX/COUNT; fires NAME_CHANGE.
+
+[FORM.TABPAGE]
+Syntax: FORM.TABPAGE(tab, page, ctl)
+Description: Put a control on a tab page - its visibility follows the selected tab.
+
+[FORM.DATETIME]
+Syntax: FORM.DATETIME(frm, name$, x, y, w, h) -> handle
+Description: Date picker. VALUE is an epoch (use CVDATE/YEAR/MONTH/DAY); fires NAME_CHANGE.
+
+[FORM.RICHTEXT]
+Syntax: FORM.RICHTEXT(frm, name$, x, y, w, h) -> handle
+Description: Rich-edit box; TEXT get/set; fires NAME_CHANGE.
+
+[FILEOPEN$]
+Syntax: FILEOPEN$([filter$], [title$], [initial_dir$]) -> path
+Description: Open-file dialog. Filter "Text files|*.txt|All files|*.*"; returns "" on cancel.
+
+[FILESAVE$]
+Syntax: FILESAVE$([filter$], [title$], [default_name$]) -> path
+Description: Save-file dialog with overwrite prompt; returns "" on cancel.
+
+[COLORDIALOG]
+Syntax: COLORDIALOG([initial_rgb]) -> rgb
+Description: Color picker; returns 0xRRGGBB, or -1 on cancel.
+
+[FONTDIALOG$]
+Syntax: FONTDIALOG$([face$], [size]) -> "face,size,bold,italic"
+Description: Font picker; returns "" on cancel.

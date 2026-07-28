@@ -1,0 +1,126 @@
+' Batch A+B controls self-test: property round-trips for the small
+' controls and the data controls, timer-driven and self-closing. The
+' picture control gets a PNG rendered on the fly via the GFX screen.
+
+N_PASS = 0
+N_FAIL = 0
+
+SUB Check(cond, label$)
+    IF cond THEN
+        N_PASS = N_PASS + 1
+    ELSE
+        N_FAIL = N_FAIL + 1
+        PRINT "FAIL: "; label$
+    ENDIF
+ENDSUB
+
+' Render a small test image for FORM.PICTURE
+SCREEN 64, 48, "pic", 1
+DRAWCOLOR 200, 60, 60
+RECT 0, 0, 64, 48, TRUE
+GFX.SAVE_SCREENSHOT("tmp/forms_test_pic.png")
+GFX.CLOSE
+
+frm = FORM.CREATE("Controls Selftest", 520, 420, "MAIN")
+
+lin = FORM.LINE(frm, "linTop", 10, 10, 200)
+Check(FORM.GET(lin, "KIND") = "LINE", "line KIND")
+
+shp = FORM.SHAPE(frm, "shpBox", 10, 20, 60, 30, 2088960)
+Check(FORM.GET(shp, "COLOR") = 2088960, "shape COLOR from creation")
+FORM.SET(shp, "COLOR", 255)
+Check(FORM.GET(shp, "COLOR") = 255, "shape COLOR after SET")
+
+pic = FORM.PICTURE(frm, "picLogo", "tmp/forms_test_pic.png", 90, 20, 64, 48)
+Check(FORM.GET(pic, "KIND") = "PICTURE", "picture loads and registers")
+
+prg = FORM.PROGRESS(frm, "prgLoad", 10, 70, 200, 18)
+FORM.SET(prg, "MAX", 200)
+FORM.SET(prg, "VALUE", 150)
+Check(FORM.GET(prg, "VALUE") = 150, "progress VALUE round-trip")
+
+sld = FORM.SLIDER(frm, "sldVol", 10, 100, 200, 30)
+FORM.SET(sld, "MAX", 50)
+FORM.SET(sld, "VALUE", 25)
+Check(FORM.GET(sld, "VALUE") = 25, "slider VALUE round-trip")
+
+ud = FORM.UPDOWN(frm, "udQty", 220, 100, 80, 24, 1, 99)
+FORM.SET(ud, "VALUE", 42)
+Check(FORM.GET(ud, "VALUE") = 42, "updown VALUE round-trip")
+Check(FORM.GET(ud, "TEXT") = "42", "updown buddy TEXT follows")
+
+' ── Batch B: data controls ─────────────────────────────────────
+
+lv_clicks = 0
+
+SUB LVDATA_CLICK(e)
+    lv_clicks = lv_clicks + 1
+ENDSUB
+
+lv = FORM.LISTVIEW(frm, "lvData", 10, 140, 300, 100)
+FORM.SET(lv, "COLUMNS", [{"text": "Name", "width": 120}, {"text": "Qty", "width": 60}])
+FORM.SET(lv, "ITEMS", [["Apples", "3"], ["Pears", "7"]])
+Check(FORM.GET(lv, "COUNT") = 2, "listview ITEMS rows")
+FORM.SET(lv, "ADDITEM", ["Plums", "11"])
+Check(FORM.GET(lv, "COUNT") = 3, "listview ADDITEM")
+Check(FORM.GET(lv, "CELL", 1, 1) = "7", "listview CELL row 1 col 1")
+FORM.SET(lv, "SELINDEX", 2)
+Check(FORM.GET(lv, "SELINDEX") = 2, "listview SELINDEX")
+Check(FORM.GET(lv, "SELTEXT") = "Plums", "listview SELTEXT")
+
+tv = FORM.TREEVIEW(frm, "tvNav", 320, 140, 180, 100)
+root1 = FORM.NODE(tv, 0, "Fruits")
+kid1 = FORM.NODE(tv, root1, "Apple")
+kid2 = FORM.NODE(tv, root1, "Pear")
+root2 = FORM.NODE(tv, 0, "Veggies")
+Check(FORM.GET(tv, "COUNT") = 4, "treeview node count")
+FORM.SET(tv, "EXPAND", root1)
+FORM.SET(tv, "SELNODE", kid2)
+Check(FORM.GET(tv, "SELNODE") = kid2, "treeview SELNODE round-trip")
+Check(FORM.GET(tv, "SELTEXT") = "Pear", "treeview SELTEXT")
+
+FORM.CLOSE(frm)
+frm2 = FORM.CREATE("Controls Selftest B", 520, 420, "MAIN2")
+tab = FORM.TABS(frm2, "tabMain", 10, 10, 300, 150, ["One", "Two"])
+pg0 = FORM.LABEL(frm2, "lblPg0", "page zero", 20, 40, 100, 18)
+pg1 = FORM.LABEL(frm2, "lblPg1", "page one", 20, 40, 100, 18)
+FORM.TABPAGE(tab, 0, pg0)
+FORM.TABPAGE(tab, 1, pg1)
+Check(FORM.GET(tab, "COUNT") = 2, "tabs COUNT")
+Check(FORM.GET(tab, "SELINDEX") = 0, "tabs start on page 0")
+
+dtp = FORM.DATETIME(frm2, "dtpWhen", 10, 180, 140, 24)
+FORM.SET(dtp, "VALUE", CVDATE("2026-07-28"))
+Check(YEAR(FORM.GET(dtp, "VALUE")) = 2026, "datetime VALUE year round-trip")
+Check(MONTH(FORM.GET(dtp, "VALUE")) = 7, "datetime VALUE month round-trip")
+
+rt = FORM.RICHTEXT(frm2, "rtfBody", 10, 220, 300, 100)
+FORM.SET(rt, "TEXT", "rich text content")
+Check(FORM.GET(rt, "TEXT") = "rich text content", "richtext TEXT round-trip")
+
+frm = frm2
+
+ticks = 0
+
+SUB TMRMAIN_TICK(e)
+    ticks = ticks + 1
+    IF ticks = 1 THEN
+        ' visibility is only meaningful while the form is shown
+        Check(FORM.GET(pg0, "VISIBLE"), "page-0 control visible")
+        Check(FORM.GET(pg1, "VISIBLE") = FALSE, "page-1 control hidden")
+        FORM.SET(tab, "SELINDEX", 1)
+        Check(FORM.GET(pg1, "VISIBLE"), "page-1 control visible after switch")
+        Check(FORM.GET(pg0, "VISIBLE") = FALSE, "page-0 control hidden after switch")
+    ENDIF
+    IF ticks >= 3 THEN FORM.CLOSE(frm)
+ENDSUB
+
+tmr = FORM.TIMER(frm, "tmrMain", 100)
+FORM.RUN(frm)
+
+Check(ticks >= 2, "timer ran")
+Check(lv_clicks >= 1, "listview selection dispatched CLICK")
+
+PRINT ""
+PRINT "RESULTS: "; N_PASS; " passed, "; N_FAIL; " failed"
+IF N_FAIL = 0 THEN PRINT "ALL CONTROLS TESTS PASSED!"

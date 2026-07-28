@@ -1,0 +1,113 @@
+' Control gallery: every forms control on one window, spread over three
+' tabctl pages. Declared throughout - runs interpreted and compiles with -c.
+OPTION "EXPLICIT"
+
+DIM frm AS DOUBLE = 0
+DIM tabctl AS DOUBLE = 0
+DIM sbar AS DOUBLE = 0
+
+' page 0: basics
+DIM lblA AS DOUBLE = 0
+DIM txtA AS DOUBLE = 0
+DIM btnA AS DOUBLE = 0
+DIM chkA AS DOUBLE = 0
+DIM optA AS DOUBLE = 0
+DIM optB AS DOUBLE = 0
+DIM fraA AS DOUBLE = 0
+DIM lstA AS DOUBLE = 0
+DIM cmbA AS DOUBLE = 0
+
+' page 1: batch A
+DIM linA AS DOUBLE = 0
+DIM shpA AS DOUBLE = 0
+DIM prgA AS DOUBLE = 0
+DIM sldA AS DOUBLE = 0
+DIM udA AS DOUBLE = 0
+DIM lblSld AS DOUBLE = 0
+
+' page 2: data controls
+DIM lvA AS DOUBLE = 0
+DIM tvA AS DOUBLE = 0
+DIM dtpA AS DOUBLE = 0
+DIM rtfA AS DOUBLE = 0
+DIM nRoot AS DOUBLE = 0
+DIM nKid AS DOUBLE = 0
+
+SUB SLDGAIN_CHANGE(e)
+    FORM.SET(prgA, "VALUE", e[0]{"value"})
+    FORM.SET(lblSld, "TEXT", "Slider: " + STR$(e[0]{"value"}))
+ENDSUB
+
+SUB BTNHELLO_CLICK(e)
+    FORM.SET(sbar, "TEXT", "Button clicked at " + TIME$())
+ENDSUB
+
+SUB LVGRID_CLICK(e)
+    FORM.SET(sbar, "TEXT", "Row " + STR$(e[0]{"index"}) + ": " + e[0]{"text"})
+ENDSUB
+
+SUB TABMAIN_CHANGE(e)
+    FORM.SET(sbar, "TEXT", "Page " + STR$(e[0]{"index"}))
+ENDSUB
+
+frm = FORM.CREATE("jdBasic Control Gallery", 560, 430, "MAIN")
+tabctl = FORM.TABS(frm, "tabMain", 8, 8, 544, 360, ["Basics", "Widgets", "Data"])
+sbar = FORM.STATUSBAR(frm, "sbMain", [400, -1])
+FORM.SET(sbar, "TEXT", ["Ready", "gallery"])
+
+' ── page 0 ──
+lblA = FORM.LABEL(frm, "lblHello", "A label", 24, 44, 100, 18)
+txtA = FORM.TEXTBOX(frm, "txtHello", "edit me", 24, 68, 160, 24)
+btnA = FORM.BUTTON(frm, "btnHello", "&Click me", 200, 67, 100, 26)
+chkA = FORM.CHECKBOX(frm, "chkHello", "Check me", 24, 100, 110, 22)
+fraA = FORM.FRAME(frm, "fraOpt", "Options", 24, 130, 160, 80)
+optA = FORM.RADIO(frm, "optOne", "One", 36, 152, 80, 20, TRUE)
+optB = FORM.RADIO(frm, "optTwo", "Two", 36, 176, 80, 20)
+lstA = FORM.LISTBOX(frm, "lstHello", 220, 100, 140, 110)
+cmbA = FORM.COMBO(frm, "cmbHello", 380, 100, 140, 24)
+FORM.SET(lstA, "ITEMS", ["alpha", "beta", "gamma"])
+FORM.SET(cmbA, "ITEMS", ["red", "green", "blue"])
+FORM.SET(cmbA, "SELINDEX", 0)
+FORM.TABPAGE(tabctl, 0, lblA)
+FORM.TABPAGE(tabctl, 0, txtA)
+FORM.TABPAGE(tabctl, 0, btnA)
+FORM.TABPAGE(tabctl, 0, chkA)
+FORM.TABPAGE(tabctl, 0, fraA)
+FORM.TABPAGE(tabctl, 0, optA)
+FORM.TABPAGE(tabctl, 0, optB)
+FORM.TABPAGE(tabctl, 0, lstA)
+FORM.TABPAGE(tabctl, 0, cmbA)
+
+' ── page 1 ──
+linA = FORM.LINE(frm, "linTop", 24, 50, 500)
+shpA = FORM.SHAPE(frm, "shpBox", 24, 66, 80, 40, 2278600)
+prgA = FORM.PROGRESS(frm, "prgGain", 24, 120, 300, 18)
+sldA = FORM.SLIDER(frm, "sldGain", 24, 150, 300, 32)
+lblSld = FORM.LABEL(frm, "lblSld", "Slider: 0", 340, 155, 120, 18)
+udA = FORM.UPDOWN(frm, "udQty", 24, 195, 90, 24, 0, 42)
+FORM.TABPAGE(tabctl, 1, linA)
+FORM.TABPAGE(tabctl, 1, shpA)
+FORM.TABPAGE(tabctl, 1, prgA)
+FORM.TABPAGE(tabctl, 1, sldA)
+FORM.TABPAGE(tabctl, 1, lblSld)
+FORM.TABPAGE(tabctl, 1, udA)
+
+' ── page 2 ──
+lvA = FORM.LISTVIEW(frm, "lvGrid", 24, 44, 300, 140)
+FORM.SET(lvA, "COLUMNS", [{"text": "Article", "width": 140}, {"text": "Qty", "width": 50}, {"text": "Price", "width": 70}])
+FORM.SET(lvA, "ITEMS", [["Apples", "3", "2.40"], ["Pears", "7", "4.90"], ["Plums", "11", "3.85"]])
+tvA = FORM.TREEVIEW(frm, "tvNav", 340, 44, 180, 140)
+nRoot = FORM.NODE(tvA, 0, "Fruits")
+nKid = FORM.NODE(tvA, nRoot, "Apple")
+nKid = FORM.NODE(tvA, nRoot, "Pear")
+nKid = FORM.NODE(tvA, 0, "Veggies")
+FORM.SET(tvA, "EXPAND", nRoot)
+dtpA = FORM.DATETIME(frm, "dtpWhen", 24, 200, 140, 24)
+rtfA = FORM.RICHTEXT(frm, "rtfNotes", 24, 236, 496, 100)
+FORM.SET(rtfA, "TEXT", "Rich text notes...")
+FORM.TABPAGE(tabctl, 2, lvA)
+FORM.TABPAGE(tabctl, 2, tvA)
+FORM.TABPAGE(tabctl, 2, dtpA)
+FORM.TABPAGE(tabctl, 2, rtfA)
+
+FORM.RUN(frm)
