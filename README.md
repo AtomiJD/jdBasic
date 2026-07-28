@@ -138,7 +138,7 @@ LOOP UNTIL INKEY$() = "q"
 
 ### 4. Native Windows forms (VB6 style)
 
-On Windows, the `FORMS` build flag adds a full retained-mode toolbox of **real Win32 controls**: buttons, text boxes, list/tree/list-view, tabs, sliders, date pickers, menus with accelerators, toolbars, status bars, MDI child windows and the classic common dialogs. Events bind by name convention - a one-parameter `SUB <control>_<event>` is wired automatically, no registration needed:
+On Windows, the `FORMS` build flag adds a full retained-mode toolbox of **real Win32 controls**: buttons, text boxes, list/tree/list-view, tabs, sliders, date pickers, menus with accelerators, toolbars, status bars, MDI child windows and the classic common dialogs. Events bind by name convention, a one-parameter `SUB <control>_<event>` is wired automatically, no registration needed:
 
 ```basic
 frm = FORM.CREATE("Hello", 320, 200, "MAIN")
