@@ -69,9 +69,10 @@ What to notice:
   response body (HTML by default).
 - `HTTP.SERVER.ON_GET "/path", "HANDLER"` registers it. The second argument is the
   handler's name as a **string** - it must match the function name.
-- `HTTP.SERVER.START(port[, host$])` returns true on success. Omit the host to
-  bind all interfaces (`0.0.0.0`); use `"127.0.0.1"` to stay local-only (the
-  norm when nginx sits in front).
+- `HTTP.SERVER.START(port[, host$])` returns true on success. The default bind
+  is **`127.0.0.1` (loopback only)** - pass `"0.0.0.0"` explicitly to expose the
+  server to the LAN. (This default changed for security reasons; older examples
+  that omit the host and expect LAN visibility are wrong.)
 - **`HTTP.SERVER.WAIT` blocks the main thread** and runs the server. Use it - do
   **not** write a `DO ... SLEEP ... LOOP`: that runs jdBasic bytecode on the main
   thread at the same time as the handler pool and crashes the shared VM.
@@ -186,6 +187,8 @@ application/json`). The `request` map gives you the input:
 
 | Field | Type | What |
 |---|---|---|
+| `request{"PATH"}` | string | the request path, e.g. `"/api/hello"` - lets one handler serve several routes |
+| `request{"METHOD"}` | string | `"GET"`, `"POST"`, ... |
 | `request{"PARAMS"}` | map | query-string params: `?name=Kat` -> `{"name"}` = `"Kat"` |
 | `request{"BODY"}` | string | the raw request body; `JSON.PARSE$` it for JSON posts |
 | `request{"HEADERS"}` | map | request headers, **lowercase** keys: `{"cookie"}`, `{"x-api-key"}` |
@@ -282,8 +285,89 @@ gCfg = JSON.PARSE$(TXTREADER$(PATH.JOIN$(gAppDir$, "myapp.json")))
 ```json
 { "app": "MyApp", "sub": "a jdBasic web app", "db": "myapp.db",
   "host": "127.0.0.1", "port": 8080, "secure": false, "cookies": true,
+  "meta_desc": "One-line site description for search engines.",
   "nav": [ {"path":"/","label":"Home"}, {"path":"/about","label":"About"} ] }
 ```
+
+**SEO:** when `cfg{"meta_desc"}` is set, `PAGE$` emits a `<meta name='description'>`
+plus OpenGraph tags (`og:title`, `og:description`, `og:site_name`). For a
+page-specific description, hand `PAGE$` a shallow copy of the config with
+`meta_desc` overridden - see `cfg_with_desc` in jdeRG for the 6-line helper.
+
+---
+
+## Level 3.5 - Static pages from disk: one handler, N pages
+
+Once an app grows a handful of mostly-static pages (imprint, privacy, help,
+articles), a `FUNC` per page stops scaling. The pattern below - proven in
+production by jdeRG (profi-rg.de) - discovers pages on disk at startup and
+serves them all through **one** shared handler.
+
+Each page file is a body fragment whose first line is a front-matter comment
+of `key="value"` pairs:
+
+```html
+<!-- page route="/impressum" nav="" title="MyApp - Imprint" -->
+<div class="page">
+  <h1>Imprint</h1>
+  ...
+</div>
+```
+
+At startup: scan the folder with `DIR$`, parse the front-matter, cache the
+body **eagerly**, and register every discovered route on the same handler:
+
+```basic
+DIM gPages AS MAP    ' route -> { title, nav, content, ... }
+
+' front-matter parser: SPLIT on the quote char pairs key= / value
+FUNC page_meta(src$) AS OBJECT
+    DIM meta AS MAP
+    IF NOT STARTSWITH(src$, "<!-- page") THEN RETURN meta
+    close_at = INSTR(src$, "-->")
+    IF close_at < 0 THEN RETURN meta
+    parts = SPLIT(MID$(src$, 9, close_at - 9), CHR$(34))
+    FOR i = 0 TO LEN(parts) - 2 STEP 2
+        k$ = TRIM$(parts[i])
+        IF ENDSWITH(k$, "=") THEN meta{LEFT$(k$, LEN(k$) - 1)} = parts[i + 1]
+    NEXT i
+    meta{"__body"} = TRIM$(MID$(src$, close_at + 3))
+    RETURN meta
+ENDFUNC
+
+SUB pages_scan(dir$)
+    FOR EACH f$ IN DIR$(PATH.JOIN$(dir$, "*.html"))
+        meta = page_meta(TXTREADER$(PATH.JOIN$(dir$, f$)))
+        IF TYPEOF(meta{"route"}) <> "NONE" THEN gPages{"" + meta{"route"}} = meta
+    NEXT f$
+ENDSUB
+
+FUNC HandleStaticPage(request)
+    p = gPages{"" + request{"PATH"}}
+    IF TYPEOF(p) = "NONE" THEN RETURN JDWEB.NOT_FOUND$(gCfg)
+    RETURN JDWEB.PAGE$(gCfg, "" + p{"title"}, JDWEB.NAV_HTML$(gCfg, "" + p{"nav"}), "" + p{"__body"})
+ENDFUNC
+
+pages_scan(PATH.JOIN$(gAppDir$, "pages"))
+FOR EACH page_route$ IN MAP.KEYS(gPages)
+    HTTP.SERVER.ON_GET page_route$, "HANDLESTATICPAGE"
+NEXT page_route$
+```
+
+Adding a page is now: drop a file in `pages/`, restart. No wildcard routes are
+needed (and none exist) - every discovered route is registered explicitly, so
+unknown paths still hit the themed 404 and there is no path-traversal surface.
+
+Why **eager** (everything read and cached before `HTTP.SERVER.START`): after
+`START` the main thread must sit in `HTTP.SERVER.WAIT` and the maps should be
+read-only shared state. Loading up front keeps every handler a pure read - no
+disk I/O, no cache-fill writes, no surprises under load.
+
+The worked production version of this pattern (per-page meta descriptions, a
+guest-only flag, sitemap + article index derived from the discovered pages,
+and a `page_cache: false` dev flag that re-reads files per request) lives in
+jdeRG: <https://github.com/AtomiJD/jderg> (`jderg.jdb`, section
+"static pages", plus `tpl/pages/`).
 
 ---
 
@@ -409,9 +493,14 @@ returns the logged-in name or `""` - guard every protected handler with it.
   whole `jdweb_tpl/` folder next to your app script (JDWEB resolves them via
   `PATH.DIRNAME$(OS.ARGS()[0])`). Miss them and every page 500s with
   "file not found".
-- **Warm the cache** with one `JDWEB.THEME$()` (or one render) *before*
-  `HTTP.SERVER.START`. jdBasic serialises handler execution, so once templates
-  are cached the shared module state is safe under concurrent requests.
+- **Know the threading model.** httplib spawns a thread per accepted request,
+  but every handler runs under one VM mutex - handlers are **serialised** on the
+  shared VM, so handler-vs-handler races cannot happen. What CAN race is the
+  **main thread**: after `HTTP.SERVER.START` it must not execute bytecode
+  concurrently, which is exactly why it parks in `HTTP.SERVER.WAIT`. Practical
+  rule: do all loading (templates, static pages, config) *before* `START` -
+  e.g. one `JDWEB.THEME$()` warms the theme cache - and treat globals as
+  read-only afterwards.
 - **Bind local, proxy for TLS.** Run the app on `127.0.0.1:<port>` and put nginx
   in front for HTTPS, security headers, a Content-Security-Policy and login rate
   limiting. (See the jdTrakr deploy notes for a worked example.)
@@ -427,13 +516,20 @@ returns the logged-in name or `""` - guard every protected handler with it.
 - **`HTTP.SERVER.WAIT`, never a `SLEEP` loop** (see Level 0).
 - **Escape user input in SQL** with `ESC$` (doubles `'`; complete for SQLite),
   and cast numbers with `STR$(INT(...))`. Never concatenate raw user strings.
+  `SQL.QUERY`/`SQL.EXEC` have no bind parameters; for more than a couple of
+  statements, write a tiny `?`-placeholder formatter that quotes each value
+  (see `FMT$`/`Q$` in jdeRG's `ergdb.jdb` - about 30 lines).
 - **`{{ }}` escapes, `{{{ }}}` does not.** Use the triple braces only for HTML you
   trust (it is the XSS escape hatch).
 - **Inline `<script>` under a strict CSP must be hashed.** If you deploy behind a
   hash-based Content-Security-Policy, changing a served inline script means you
   must update its `sha256` in the CSP, or the browser silently blocks it.
 - **Header keys are lowercase** in `request{"HEADERS"}` (`"cookie"`,
-  `"x-api-key"`); the request has no `path` key - you route by registration.
+  `"x-api-key"`). The request path is `request{"PATH"}` (uppercase key, like
+  `METHOD`/`BODY`/`PARAMS`).
+- **No wildcard routes.** Registration is exact-match only. To serve a family
+  of URLs, register each path explicitly (a `FOR EACH` over discovered routes,
+  see Level 3.5) and dispatch inside the handler on `request{"PATH"}`.
 - **Reserved names** still apply in handlers: don't name variables `LINE`, `VAL`,
   `LEN`, `MAP`, `E`, `PI`, etc.
 
@@ -445,3 +541,7 @@ returns the logged-in name or `""` - guard every protected handler with it.
 - `jdb/demos/web/jdweb.jdb` - the framework module
 - `jdb/demos/web/jdtrakr.jdb` - a full app (kanban board) built on both
 - `jdb/demos/web/tmpl_demo.jdb`, `tmpl_server.jdb` - smaller worked examples
+- <https://github.com/AtomiJD/jderg> - jdeRG "E-Rechnung Studio"
+  (profi-rg.de): the largest production app on this stack - accounts + tiers,
+  CSRF double-submit, Stripe billing, transactional mail, static-page
+  discovery (Level 3.5), all in jdBasic

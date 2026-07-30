@@ -73,6 +73,8 @@ EXPORT FUNC PAGE$(cfg, title$, navHtml$, content$)
     model{"nav"} = navHtml$
     model{"content"} = content$
     model{"cookiebar"} = bar$
+    IF TYPEOF(cfg{"meta_desc"}) <> "NONE" THEN model{"meta_desc"} = "" + cfg{"meta_desc"}
+    model{"site_name"} = "" + cfg{"app"}
     RETURN TMPL.RENDER$(PATH.JOIN$(gTplDir$, "layout.html"), model)
 ENDFUNC
 
