@@ -305,7 +305,7 @@ Reference numbers from a real run on an RTX 4070 Ti SUPER:
 
 ## 4. macOS build
 
-The macOS build is in active porting; the build script and lib-layout converge with the Linux side via brew-installed dependencies (`llvm@18`, `sdl3`, `sdl3_image`, `sdl3_ttf`, `sdl3_mixer`, `cmake`, `ninja`). Status is tracked in the project memory under `project_render_nvidia_build.md` / sister entries.
+The macOS build works on Apple Silicon (tested on an M1 mini): `./build.sh` with brew-installed dependencies (`llvm@18`, `sdl3`, `sdl3_image`, `sdl3_ttf`, `sdl3_mixer`, `cmake`, `ninja`), same lib-layout as the Linux side. All gate suites pass on arm64. There are no prebuilt macOS binaries yet - build from source.
 
 ---
 
@@ -314,29 +314,27 @@ The macOS build is in active porting; the build script and lib-layout converge w
 After every build, run the pre-commit gate:
 
 ```bash
-# Interpreter pass
-./build/jdBasic.exe tests/comprehensive_test.jdb     # Windows
-./build/jdbasic     tests/comprehensive_test.jdb     # Linux
-./build/jdBasic.exe tests/native_test.jdb
-./build/jdBasic.exe tests/test_apl_complete.jdb
-./build/jdBasic.exe tests/test_apl_pipelines.jdb
+# Interpreter pass (4 gate suites)
+./build/jdBasic.exe tests/gate/comprehensive_test.jdb     # Windows
+./build/jdbasic     tests/gate/comprehensive_test.jdb     # Linux/macOS
+./build/jdBasic.exe tests/gate/native_test.jdb
+./build/jdBasic.exe tests/gate/test_apl_complete.jdb
+./build/jdBasic.exe tests/gate/test_apl_pipelines.jdb
 
-# Native pass (compile + run each)
-./build/jdBasic.exe -c tests/comprehensive_test.jdb && ./tests/comprehensive_test.exe
-./build/jdBasic.exe -c tests/native_test.jdb        && ./tests/native_test.exe
-./build/jdBasic.exe -c tests/test_apl_complete.jdb  && ./tests/test_apl_complete.exe
-./build/jdBasic.exe -c tests/test_apl_pipelines.jdb && ./tests/test_apl_pipelines.exe
-
-# TUI smoke (only when built with FTXUI=1 TUI=1)
-./build/jdBasic.exe tests/test_tui_smoke.jdb
-./build/jdBasic.exe -c tests/test_tui_smoke.jdb && ./tests/test_tui_smoke.exe
+# Native pass (compile + run each; note the STRICT twin of native_test)
+./build/jdBasic.exe -c tests/gate/comprehensive_test.jdb  && ./tests/gate/comprehensive_test.exe
+./build/jdBasic.exe -c tests/gate/native_test.strict.jdb  && ./tests/gate/native_test.strict.exe
+./build/jdBasic.exe -c tests/gate/test_apl_complete.jdb   && ./tests/gate/test_apl_complete.exe
+./build/jdBasic.exe -c tests/gate/test_apl_pipelines.jdb  && ./tests/gate/test_apl_pipelines.exe
 
 # GUI smoke (Windows pre-commit gate)
-./build/jdBasic.exe -c fluppi/rpg_demo.jdb       && ( cd fluppi && timeout 5 ./rpg_demo.exe )
-./build/jdBasic.exe -c jdb/emu_run.jdb           && ( cd jdb    && timeout 5 ./emu_run.exe )
+./build/jdBasic.exe -c fluppi/rpg_demo.jdb    && ( cd fluppi  && timeout 5 ./rpg_demo.exe )
+./build/jdBasic.exe -c jdb/emu/emu_run.jdb    && ( cd jdb/emu && timeout 5 ./emu_run.exe )
 ```
 
-Every native suite must end with `ALL TESTS PASSED!` or `0 failed`. `timeout 124` from a GUI smoke is the **good** signal (process killed at the deadline). `exit 139` = segfault. `exit 127` on Windows = missing `jdbrt.dll` next to the EXE.
+The native compiler enforces STRICT + EXPLICIT, so the loose `native_test.jdb` is interpreter-only; its strict twin `native_test.strict.jdb` carries the native pass. Delete stale `.exe`s before a `-c` run - a compile error leaves the previous binary in place and it would report a stale green. TUI suites live under `tests/tui/` (need a TUI-enabled build).
+
+Every native suite must end with `ALL TESTS PASSED!` or `0 failed`. `timeout 124` from a GUI smoke is the **good** signal (process killed at the deadline). `exit 139` = segfault. `exit 127` on Windows = missing `jdbrt.dll` next to the EXE. The full test-bank layout is described in [tests/README.md](../tests/README.md).
 
 ---
 

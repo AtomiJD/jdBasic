@@ -81,5 +81,5 @@ Ziel: **SPOT** - Single Point of Truth. Der Code erklärt WAS er tut; Kommentare
 
 ## Tests
 - Jede neue Sprach-Feature → Regression-Test VOR dem Fix schreiben
-- Neue Keywords → eintragen in `doc/languages.md`, `doc/help.txt`, `jdbasic.tmLanguage.json`
+- Neue Keywords → eintragen in `doc/languages.md`, `help.txt` (Repo-Root), `jdbasic.tmLanguage.json`
 - 5-Point-Matrix nach jeder Compiler-Änderung: comprehensive (interp+native), crash (interp+native), rpg_demo native

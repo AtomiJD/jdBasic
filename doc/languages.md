@@ -45,8 +45,8 @@ jdBasic has two scalar numeric types:
 
 These are special keywords that hold predefined, constant values.
 
-* **`PI`**: A high-precision value of Pi ($\\pi \\approx 3.141592653589793$).
-* **`E`**: Euler's number ($e \\approx 2.718281828459045$).
+* **`PI`**: A high-precision value of Pi (approx. 3.141592653589793).
+* **`E`**: Euler's number (approx. 2.718281828459045).
 * **`VBNEWLINE`**: A string representing the carriage return and line feed characters (`CHR$(13) + CHR$(10)`), commonly used for creating multi-line strings for Windows systems.
 
 ```basic
@@ -1156,7 +1156,7 @@ n  = sqlb_exec(db, "CREATE TABLE t(id INTEGER, name TEXT)")
 ```
 
 Wrap your bridge in an `EXPORT MODULE` file so callers see a clean namespace:
-see `jdb/sqlite.jdb` and `jdb/sqlite_demo.jdb` for the full pattern.
+see `jdb/demos/bridges/sqlite.jdb` and `jdb/demos/bridges/sqlite_demo.jdb` for the full pattern.
 
 **Platform notes**
 
@@ -1404,7 +1404,7 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 * **`JOIN(array, delimiter$) -> string$`**: Inverse of `SPLIT` - concatenates the elements of an array into a single string, joined by `delimiter$`.
 * **`FRMV$(array, [format_string$]) -> string$`**: Formats a 1D or 2D array into a string. If format_string$ is provided, it's used to format each row. Otherwise, it creates a right-aligned string matrix.
 * **`FORMAT$(format_string$, arg1, arg2, ...) -> string$`**: Formats a string using C++20-style format specifiers.
-* **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array)`**: Returs a string where all found find_string$ are preplaced with replace_with_string$.
+* **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array`**: Returns a string where all found find_string$ are replaced with replace_with_string$.
 * **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
 * **`BYTEAT(str$, index) -> Integer`**: Returns the numeric byte value (0-255) at the specified 0-based index in a string. This provides fast O(1) access to raw string data, which is essential when processing binary data loaded via `BINREADER$`.
 * **`PACK$(format$, v1, v2, ...) -> string$`**: Packs numbers into a binary string based on a format.
@@ -1527,7 +1527,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
     m4 = MVINS(m, 0, ROWS, [1, 2, 3])
     ```
 * **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum. Interpreter only - native `-c` rejects it at compile time (the integrand funcref can't be resolved by name through the bridge).
-* **`SOLVE(matrix A, vextor b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
+* **`SOLVE(matrix A, vector b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
 * **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
 * **`DET(matrix) -> number`**: Determinant of a square matrix (Eigen).
 * **`SVD(matrix) -> map`**: Singular Value Decomposition. Returns a map `{ "U", "S", "V" }` where `S` is the vector of singular values and `U`/`V` are the (thin) factor matrices (Eigen JacobiSVD).
@@ -1543,7 +1543,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix.
 * **`LERP(start, end, alpha) -> number or array`**: Performs linear interpolation.
 * **`GRADE(vector)`**: Returns the indices that would sort the vector.
-* **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, \*, /, MOD, \>, \<, =, ^) or a reference to a function (srq@).
+* **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, *, /, MOD, >, <, =, ^) or a reference to a function (sqr@).
 * **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array.
 * **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Non-cyclically shifts an N-dimensional array.
 * **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix. Sorts numbers and strings (lexicographic); in a mixed array numbers order before strings. For a 2D matrix, `dimension` selects the column whose values order the rows - string key columns work (`XSORT(rows, 0)` sorts `[["bob",30],["alice",25]]` by name).
@@ -1836,9 +1836,9 @@ ENDIF
 * **`LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]`**: Draws a line between two points. Can also take a matrix of lines.
 * **`RECT x, y, w, h, [fill], [r, g, b] OR RECT matrix, [fill], [colors]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
 * **`CIRCLE x, y, r, [fill], [r, g, b] OR CIRCLE matrix, [fill], [colors]`**: Draws a circle. Can also take a matrix of circles.
-* **`ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]`**: Draws a ellipse. Can also take a matrix of circles.
-* **`ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b] OR ROUNDED_RECT matrix, [fill], [colors]`**: Draws a rounded rect. Can also take a matrix of circles.
-* **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of circles.
+* **`ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]`**: Draws an ellipse. Can also take a matrix of ellipses.
+* **`ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b] OR ROUNDED_RECT matrix, [fill], [colors]`**: Draws a rounded rect. Can also take a matrix of rounded rects.
+* **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of sectors.
 * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
 * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
 * **`TOGGLE_FULLSCREEN`**: Toggles the graphics window between fullscreen and windowed mode.
@@ -2182,7 +2182,7 @@ Demos: `jdb/demos/forms/forms_demo.jdb` (task list, hand-built), `jdb/demos/form
 
 ### Terminal UI (TUI.*)
 
-The `TUI.*` namespace mirrors `GUI.*` against the **FTXUI** library, rendering jdBasic apps into the terminal. The control flow matches ImGui: rebuild the frame every loop, call `TUI.RENDER`, repeat. Available only in builds compiled with the `TUI` flag (which implies `FTXUI`). See `doc/ftxui_plan.md` for the architectural sketch and `tests/test_tui_smoke.jdb` for a runnable reference.
+The `TUI.*` namespace mirrors `GUI.*` against the **FTXUI** library, rendering jdBasic apps into the terminal. The control flow matches ImGui: rebuild the frame every loop, call `TUI.RENDER`, repeat. Available only in builds compiled with the `TUI` flag (which implies `FTXUI`). See the suites under `tests/tui/` (`test_tui_phase_a.jdb` and friends) for runnable references.
 
 The script-facing surface is value-in / value-out (no byref) - widgets receive the current state, return the (possibly mutated) state, and the script reassigns:
 
@@ -3330,9 +3330,10 @@ AI.CLASSIFIER_SAVE clf, "tickets.clf"
 ### Tensor & Auto-Diff (experimental)
 
 jdBasic also ships a small in-process autograd engine for experimentation
-with neural networks written directly in BASIC. See the source in
-`src/tensor.cpp` / `src/autograd.cpp` for the currently supported ops - this
-subsystem is considered experimental and may change.
+with neural networks written directly in BASIC. See the demos under
+`jdb/demos/tensor/` (`tensor_train.jdb`, the `nl_*.jdb` series) for the
+supported ops in action - this subsystem is considered experimental and
+may change.
 
 ## The Integrated Editor
 
@@ -3345,8 +3346,8 @@ The `EDIT` command launches a simple, built-in text editor.
 * **`Ctrl+S`**: Save the current file. If the file is unnamed, you will be prompted for a name.
 * **`Ctrl+F`**: Find text. You will be prompted for a search query.
 * **`Ctrl+P`**: Fast paste clipboard text (preserves formatting!)
-* **`Ctrl+C`**: Copy selected test
-* **`Ctrl+X`**: Cut selected test
-* **`Ctrl+V`**: Paste selected test
+* **`Ctrl+C`**: Copy selected text
+* **`Ctrl+X`**: Cut selected text
+* **`Ctrl+V`**: Paste selected text
 * **`F3`**: Find the next occurrence of the last search query.
 * **`Ctrl+G`**: Go to a specific line number.
