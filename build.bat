@@ -1,10 +1,12 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set MSVC=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207
-set SDK=C:\Program Files (x86)\Windows Kits\10
-set SDKV=10.0.26100.0
-set OPENSSL=C:\Program Files\OpenSSL-Win64
+REM Toolchain locations - preset for the dev box, overridable via environment
+REM (CI sets these from the VS installation on the runner).
+if not defined MSVC set MSVC=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC\14.44.35207
+if not defined SDK set SDK=C:\Program Files (x86)\Windows Kits\10
+if not defined SDKV set SDKV=10.0.26100.0
+if not defined OPENSSL set OPENSSL=C:\Program Files\OpenSSL-Win64
 set "CC=%MSVC%\bin\Hostx64\x64\cl.exe"
 
 if not exist build mkdir build

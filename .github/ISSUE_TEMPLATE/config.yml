@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Questions & ideas
+    url: https://github.com/AtomiJD/jdBasic/discussions
+    about: Not sure it's a bug? Want to show something you built? Start a discussion.
+  - name: Try jdBasic in the browser
+    url: https://jdbasic.org/live/index.html
+    about: The live REPL - no installation required.

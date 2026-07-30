@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows-core:
+    name: Core build + gate (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Eigen
+        id: cache-eigen
+        uses: actions/cache@v4
+        with:
+          path: libs/eigen
+          key: eigen-3.4.0
+
+      - name: Fetch Eigen
+        if: steps.cache-eigen.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://gitlab.com/libeigen/eigen/-/archive/3.4.0/eigen-3.4.0.zip -OutFile eigen.zip
+          Expand-Archive eigen.zip -DestinationPath tmp_eigen
+          New-Item -ItemType Directory -Force libs | Out-Null
+          Move-Item tmp_eigen/eigen-3.4.0 libs/eigen
+
+      - name: MSVC developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Build (core, no feature flags)
+        shell: cmd
+        run: |
+          set "MSVC=%VCToolsInstallDir:~0,-1%"
+          set "SDK=%WindowsSdkDir:~0,-1%"
+          set "SDKV=%WindowsSDKVersion:~0,-1%"
+          call build.bat
+
+      - name: Gate suites (interpreter)
+        shell: pwsh
+        run: |
+          $suites = "comprehensive_test","native_test","test_apl_complete","test_apl_pipelines"
+          foreach ($s in $suites) {
+            Write-Host "=== $s"
+            $out = & build/jdBasic.exe "tests/gate/$s.jdb" 2>&1 | Out-String
+            Write-Host $out
+            if ($out -notmatch "ALL TESTS PASSED!|,\s*0 failed") { throw "$s FAILED" }
+          }

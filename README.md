@@ -1,5 +1,6 @@
 # jdBasic - A Persistent Experimental BASIC Environment
 
+[![CI](https://github.com/AtomiJD/jdBasic/actions/workflows/ci.yml/badge.svg)](https://github.com/AtomiJD/jdBasic/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
 [![Latest release](https://img.shields.io/github/v/release/AtomiJD/jdBasic?label=release)](https://github.com/AtomiJD/jdBasic/releases/latest)
 [![Try it online](https://img.shields.io/badge/try_it-in_your_browser-brightgreen)](https://jdbasic.org/live/index.html)
@@ -332,7 +333,7 @@ build/      - compile output (not in git)
 
 ## Contributing
 
-Contributions, bug reports, and feedback are welcome! Please make sure that the regression suite still passes after your changes - four gate suites cover the language, the native compiler, and the APL pipeline:
+Contributions, bug reports, and feedback are welcome - **[CONTRIBUTING.md](CONTRIBUTING.md)** has the full guide (build, commit conventions, code style). The core rule: the regression gate stays green. Four gate suites cover the language, the native compiler, and the APL pipeline:
 
 ```bash
 ./build/jdBasic.exe tests/gate/comprehensive_test.jdb
