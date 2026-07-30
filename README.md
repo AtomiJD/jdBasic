@@ -225,7 +225,7 @@ See [`embed/godot/README.md`](embed/godot/README.md) for the embed architecture 
 
 ## Sample gallery
 
-The [`jdb/` sample gallery](jdb/readme.md) holds 250+ ready-to-run programs, organised by domain: complete games (a chess engine, a raytracer, Tetris, TILT, PRISMA), a **6502 CPU + Apple II emulator**, a music sequencer with FX racks, web apps with sessions and templates, TUI dashboards, AI/RAG demos, and the APL teaching set.
+The [`jdb/` sample gallery](jdb/README.md) holds 250+ ready-to-run programs, organised by domain: complete games (a chess engine, a raytracer, Tetris, TILT, PRISMA), a **6502 CPU + Apple II emulator**, a music sequencer with FX racks, web apps with sessions and templates, TUI dashboards, AI/RAG demos, and the APL teaching set.
 
 <p align="center">
   <img src="doc/img/tilt.png" width="30%" alt="TILT, a Tetris variant where the playfield tips sideways"/>
@@ -284,7 +284,7 @@ Cloned the repo and built from source instead? Try the pixel-storm:
 
 ### Learn the language
 - **Video tutorials**: [Train jdBasic playlist on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) - 14 episodes, beginner to native compile
-- **Examples**: the [sample gallery](jdb/readme.md) - 250+ programs under [`jdb/`](jdb/)
+- **Examples**: the [sample gallery](jdb/README.md) - 250+ programs under [`jdb/`](jdb/)
 
 ### Documentation
 
@@ -314,7 +314,7 @@ src/        - interpreter source (lexer, parser, compiler, VM, runtime modules)
 bridges/    - optional native bridges (SQLite, Python, ...)
 embed/      - Godot GDExtension (jdb_godot) that embeds the VM in Godot 4
 godot/      - Godot projects: rpg-native (LLM RPG), audioviz, livecoder, jd-one
-jdb/        - example .jdb programs - start at the sample gallery, jdb/readme.md
+jdb/        - example .jdb programs - start at the sample gallery, jdb/README.md
 fluppi/     - "Vallys Reise", a complete top-down RPG written in jdBasic
 doc/        - documentation (see the table above) and doc/img/ screenshots
 tests/      - regression suite; tests/gate/ holds the pre-commit gate suites
