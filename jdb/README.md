@@ -22,22 +22,26 @@ The `-c` flag compiles a script to a native EXE; the runtime `jdbrt.dll` is auto
 ```
 jdb/
 ├── demos/       polished showcase samples, by domain
-│   ├── games/   space shooter, snake, tetris, chess, mines, raytracer, ...
+│   ├── games/   TILT, PRISMA, chess engine, space shooter, snake, tetris, raytracer, ...
 │   ├── graphics/ fractals, sine fields, N-body, plots, raytracer
 │   ├── gl/      OpenGL P1-P4 (raw GL, shaders, VBO, textures)
 │   ├── ai/      LLM, RAG, ONNX, classifier, GPT clients
 │   ├── gui/     Dear ImGui apps + spreadsheet + sequencer studio
+│   ├── forms/   native Win32 forms - control gallery, designer-built apps, MDI
 │   ├── sound/   SOUND.* synth, sequencer parts, APL additive synth
+│   ├── audio/   FX.* effect chains - FX rack, live guitar FX, tone designer
 │   ├── apl/     vectorised idioms - Game of Life, primes, OUTER, one-liners
 │   ├── data/    vectors / matrices / dates - AGG, TALLY, EOMONTH, DATERANGE, MVINS
 │   ├── tui/     terminal UI, FTXUI, markdown browser, cowsay
-│   ├── web/     HTTP client + server + weather/ticker/wflib
+│   ├── web/     HTTP server + client - jdTrakr kanban, JDWEB framework, dashboards
 │   ├── bridges/ FFI, COM (Excel/Word/Access/Outlook), SQLite, serial
 │   ├── async/   ASYNC / AWAIT, threads, task queue
 │   ├── turtle/  classic turtle graphics (dragon, Koch, fib, tree)
 │   ├── sprites/ sprite engine + tilemap + Invaders variants
 │   ├── workflow/ regex, eval, event bus, n8n-style runners
-│   └── tensor/  TF-style tensor + neural-net step-by-step series
+│   ├── tensor/  TF-style tensor + neural-net step-by-step series
+│   ├── mcp_server/ an MCP server written in jdBasic itself
+│   └── showcase/ scripted feature self-tests (harness, not eye candy)
 ├── tutorials/   bite-size language exercises (DIM, MAP, IF, lambda, TRY, ...)
 ├── tools/       small utilities you might use day-to-day
 ├── analytic/    end-to-end data-analysis pipelines (occupancy, ...)
@@ -48,7 +52,6 @@ jdb/
 ├── tv/          jdBasic-TV pipeline (lesson scripts + director)
 ├── parallax_game/ multi-file game project
 ├── udt_full_demo/ multi-file UDT demo (INIT/DISPOSE lifecycle)
-├── doom/        DOOM port (frozen, see release/ notes)
 ├── art/         shared image / sprite assets used by the demos
 └── _scratch/    development-time scratch - not curated, not for newcomers
 ```
@@ -85,10 +88,19 @@ A short curated list - the demos most likely to make a "wait, that's nice" impre
 
 ### Games
 
+* **`demos/games/tilt.jdb`** - *TILT / Schlagseite*: Tetris meets ship physics - stack cargo one-sided and the whole deck tips over. Run with a `shot` argument for an automatic screenshot.
+* **`demos/games/prisma.jdb`** - *PRISMA - Color Alchemy*: match-3 where three primaries fuse into a secondary instead of vanishing.
 * **`demos/games/space_shooter/space_shooter.jdb`** - *Stellar Drift*, 80s-style vector shooter. Also the canonical test bed for live-coding via MCP (`/jdvibe` skill).
 * **`demos/games/snake_game.jdb`** - console snake with `ON "KEYDOWN"` (the POSIX `KEYDOWN` raw-mode bridge lives here).
 * **`demos/games/chess_engine.jdb`** - a chess engine in one file.
 * **`demos/games/raytracer.jdb`** - software raytracer rendered pixel by pixel.
+* **`demos/games/hanoi.jdb`** - Towers of Hanoi, animating the minimal 2^n - 1 solution.
+
+### Forms (Windows)
+
+* **`demos/forms/gallery.jdb`** - every Win32 control on three tab pages.
+* **`demos/forms/tasklist.jdb`** + **`tasklist.jdform`** - a small app whose layout comes from the VS Code visual form designer.
+* **`demos/forms/mdi_demo.jdb`** - MDI frame with menus, toolbar and a grid, in ~40 lines.
 
 ### Graphics
 
@@ -120,6 +132,22 @@ A short curated list - the demos most likely to make a "wait, that's nice" impre
 * **`demos/sound/sq_core.jdb`** - synth + sequencer foundations.
 * **`demos/sound/sq_fluent.jdb`** - fluent-interface DSL showcase.
 * **`demos/sound/synth_apl.jdb`** - APL-style additive synthesis + waveform visualisation.
+
+### Audio FX (FX-flag builds)
+
+* **`demos/audio/fx_rack.jdb`** - JSON-driven ImGui FX rack with oscilloscope, FFT spectrum, chromatic tuner, MIDI mapping and an AI tone designer.
+* **`demos/audio/live_fx.jdb`** - live guitar/mic effect chain with record-while-monitoring.
+* **`demos/audio/fx_chain_demo.jdb`** - build and render an effect chain in plain code.
+
+### Web
+
+* **`demos/web/jdtrakr.jdb`** - a complete kanban board (sessions, login, SQLite, templates) - the deployed reference app; see [`doc/WebDev.md`](../doc/WebDev.md) and `demos/web/deploy/DEPLOY.md` for putting it on a real server.
+* **`demos/web/wm_dashboard.jdb`** - live sports dashboard pulling real data.
+* **`demos/web/weather.jdb`** - tiny HTTP-client starter.
+
+### MCP
+
+* **`demos/mcp_server/server.jdb`** - an MCP server implemented in jdBasic itself (the C++ `--mcp` server's little sibling); see its `README.md`.
 
 ### APL idioms
 
