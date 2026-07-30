@@ -14,11 +14,11 @@
 '
 EXPORT MODULE TRAKR
 
-' base URL, no trailing slash
+' base URL, no trailing slash - point JDTRAKR_URL at your own instance
 FUNC Base$()
     DIM u$
     u$ = GETENV$("JDTRAKR_URL")
-    IF LEN(u$) = 0 THEN u$ = "https://trakr.jdbasic.tech"
+    IF LEN(u$) = 0 THEN u$ = "https://trakr.example.com"
     RETURN u$
 ENDFUNC
 
