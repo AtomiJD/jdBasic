@@ -4,7 +4,8 @@
 ' "shot" mode plays a scripted demo, saves screenshots, exits.
 ' F fullscreen, ESC quit, R rematch.
 
-BASE$ = "D:/usr/dev/cc/jdb/demos/games/invictus/"
+BASE$ = PATH.DIRNAME$(OS.ARGS()[0])
+IF LEN(BASE$) > 0 THEN BASE$ = BASE$ + "/"
 NAME1$ = "DAD"
 NAME2$ = "SON"
 
@@ -1559,7 +1560,7 @@ DO WHILE running = 1
         CLS 7, 8, 16
         DRAW_TITLE(dt_s)
         IF title_shot THEN
-            IF frame_no = 60 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_title.png"
+            IF frame_no = 60 THEN GFX.SAVE_SCREENSHOT "tmp/invictus_title.png"
             IF frame_no >= 80 THEN running = 0
         ENDIF
         SCREENFLIP
@@ -1658,10 +1659,10 @@ DO WHILE running = 1
 
     ' back-buffer capture: must happen before SCREENFLIP
     IF shot_mode THEN
-        IF frame_no = 100 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot1.png"
+        IF frame_no = 100 THEN GFX.SAVE_SCREENSHOT "tmp/invictus_shot1.png"
         IF frame_no = 150 THEN PRINT "F150 crate12_7="; tile_grid[7][12]; " (5=intact 6=cracked 1-3=gone)"
-        IF frame_no = 500 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot2.png"
-        IF frame_no = 1240 THEN GFX.SAVE_SCREENSHOT "D:/usr/dev/cc/tmp/invictus_shot3.png"
+        IF frame_no = 500 THEN GFX.SAVE_SCREENSHOT "tmp/invictus_shot2.png"
+        IF frame_no = 1240 THEN GFX.SAVE_SCREENSHOT "tmp/invictus_shot3.png"
         IF frame_no >= 1260 THEN
             PRINT "SHOT STATS p1 kills="; plr1{"kills"}; " p1 crowns="; plr1{"crowns"}; " arena="; arena_idx; " crate12_7="; tile_grid[7][12]
             running = 0

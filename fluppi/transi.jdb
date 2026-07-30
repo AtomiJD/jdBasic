@@ -12,7 +12,7 @@
 ' --- Configuration ---
 SPRITE_SIZE = 64                    ' 32 or 64
 ' Use absolute path based on script location
-OUTPUT_DIR$ = "D:/usr/dev/cc/fluppi/generated_sprites"
+OUTPUT_DIR$ = "generated_sprites"
 
 PRINT "=== Building Spritesheet ==="
 

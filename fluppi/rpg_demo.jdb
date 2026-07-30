@@ -5,10 +5,15 @@
 OPTION "EXPLICIT"
 OPTION "STRICT"
 
+' All game data resolves relative to this folder, so hop there first.
+DIM boot_dir$ = PATH.DIRNAME$(OS.ARGS()[0])
+IF LEN(boot_dir$) > 0 THEN
+    CD boot_dir$
+ENDIF
+
 IMPORT RPG_ENGINE
 IMPORT RPG_DIALOG
-CD "D:\usr\dev\cc\fluppi"
-LET config$ = "D:/usr/dev/cc/fluppi/rpg_data/game.json"
+LET config$ = "rpg_data/game.json"
 
 ' ── Input wiring ──────────────────────────────────────────────
 ' ON-handlers bypass the ImGui POLLEVENT filter that swallows keys;

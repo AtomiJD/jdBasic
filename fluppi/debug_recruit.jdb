@@ -4,7 +4,7 @@ TILED.LOAD "world", "tiled/pirat/TiledMap Editor/vally_home.tmx"
 IMPORT RPG_TYPES
 IMPORT RPG_DIALOG
 
-game = JSON.PARSE$(TXTREADER$("D:/usr/dev/cc/fluppi/rpg_data/game.json"))
+game = JSON.PARSE$(TXTREADER$("rpg_data/game.json"))
 OUT$ = game{"asset_path"}
 
 npc_list = game{"npcs"}

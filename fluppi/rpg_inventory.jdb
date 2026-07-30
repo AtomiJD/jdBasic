@@ -13,7 +13,7 @@ IMPORT RPG_DIALOG
 EXPORT DIM items = []
 EXPORT DIM item_count = 0
 EXPORT DIM gold = 0
-EXPORT DIM asset_path$ = "D:/usr/dev/cc/fluppi/generated_sprites/"
+EXPORT DIM asset_path$ = "generated_sprites/"
 
 ' ── Item Database (loaded from items.json) ───────────────────
 EXPORT DIM item_db = {}

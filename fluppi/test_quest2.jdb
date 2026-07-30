@@ -1,7 +1,7 @@
 IMPORT RPG_QUEST
 SCREEN 400, 300, "Test"
 SETFONT "C:/Windows/Fonts/arial.ttf", 14
-RPG_QUEST.LOAD_QUESTS "D:/usr/dev/cc/fluppi/rpg_data/quests.json"
+RPG_QUEST.LOAD_QUESTS "rpg_data/quests.json"
 PRINT "Loaded: "; RPG_QUEST.quest_count; " quests"
 PRINT "State before: "; RPG_QUEST.GET_STATE$("lost_key")
 

@@ -9,7 +9,7 @@ EXPORT MODULE RPG_MUSIC
 
 EXPORT DIM current_theme$ = ""
 EXPORT DIM themes = {}
-EXPORT DIM music_path$ = "D:/usr/dev/cc/fluppi/rpg_data/music.json"
+EXPORT DIM music_path$ = "rpg_data/music.json"
 
 EXPORT SUB SETUP()
     SOUND.INIT

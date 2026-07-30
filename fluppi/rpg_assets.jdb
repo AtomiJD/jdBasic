@@ -6,7 +6,7 @@
 ' ===================================================================
 
 T = 32
-OUT$ = "D:/usr/dev/cc/fluppi/generated_sprites/"
+OUT$ = "generated_sprites/"
 SCREEN 640, 480, "RPG Asset Generator v2"
 SETFONT "C:/Windows/Fonts/arial.ttf", 14
 PRINT "Generating RPG assets..."
