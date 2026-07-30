@@ -37,7 +37,8 @@ $targets = @(
     "release\jdbasic-core-windows-x64\jdBasic.exe",
     "release\jdbasic-mcp-native-windows-x64\jdBasic.exe",
     "release\jdbasic-mcp-native-windows-x64\jdbrt.dll",
-    "release\jdbasic-vibe-game-pack-windows-x64\jdBasic.exe"
+    "release\jdbasic-vibe-game-pack-windows-x64\jdBasic.exe",
+    "release\jdbasic-vb6-windows-x64\jdBasic.exe"
 )
 
 # 4. Sign.
@@ -63,7 +64,8 @@ foreach ($rel in $targets) {
 $bundles = @(
     "jdbasic-core-windows-x64",
     "jdbasic-mcp-native-windows-x64",
-    "jdbasic-vibe-game-pack-windows-x64"
+    "jdbasic-vibe-game-pack-windows-x64",
+    "jdbasic-vb6-windows-x64"
 )
 Write-Host "`n-- repackage --"
 foreach ($b in $bundles) {
@@ -75,4 +77,4 @@ foreach ($b in $bundles) {
     Set-Content -Path "$zip.sha256" -Value $hash -Encoding ascii
     Write-Host "OK  $b.zip  sha256=$hash"
 }
-Write-Host "`nDone. Re-upload the three zips + .sha256 to the GitHub release."
+Write-Host "`nDone. Re-upload the four zips + .sha256 to the GitHub release."

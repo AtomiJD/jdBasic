@@ -43,6 +43,8 @@ copy /Y build\SDL3.dll             "%OUT%\" >nul 2>&1
 copy /Y build\SDL3_ttf.dll         "%OUT%\" >nul 2>&1
 copy /Y build\SDL3_image.dll       "%OUT%\" >nul 2>&1
 copy /Y build\SDL3_mixer.dll       "%OUT%\" >nul 2>&1
+REM Default font for GFX TEXT - looked up next to the EXE at runtime.
+copy /Y build\jdbasic_default.ttf  "%OUT%\" >nul 2>&1
 copy /Y build\libssl-3-x64.dll     "%OUT%\" >nul 2>&1
 copy /Y build\libcrypto-3-x64.dll  "%OUT%\" >nul 2>&1
 copy /Y LICENSE.txt                "%OUT%\"     >nul
