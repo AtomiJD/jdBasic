@@ -1,0 +1,141 @@
+' ============================================================
+' Towers of Hanoi - animated minimal solution.
+' The classic recursion yields the provably shortest sequence
+' of 2^n - 1 moves; each move is animated: lift, glide, drop.
+' ESC quits at any time, any key closes the final screen.
+' ============================================================
+
+CONST N_DISKS = 6
+CONST SCR_W = 960
+CONST SCR_H = 540
+CONST BASE_Y = 470
+CONST DISK_H = 28
+CONST DISK_MIN_W = 56
+CONST DISK_GROW = 30
+CONST FLY_Y = 130
+CONST SPD = 14
+
+DIM PegX = [170, 480, 790]
+DIM PegLabel$ = ["A", "B", "C"]
+DIM PegH = N_DISKS * DISK_H + 50
+
+' palette, index 0 = smallest disk
+DIM DiskCol = [[255, 90, 90], [255, 160, 60], [255, 220, 70], [110, 210, 110], [90, 170, 255], [190, 120, 255], [255, 120, 200], [140, 230, 220]]
+
+' peg stacks: pegStack[p, i] holds a disk size, i = 0 is the bottom
+DIM pegStack = RESHAPE(0, [3, N_DISKS])
+DIM pegTop = [0, 0, 0]
+DIM i
+FOR i = 0 TO N_DISKS - 1
+    pegStack[0, i] = N_DISKS - i
+NEXT i
+pegTop[0] = N_DISKS
+
+DIM totalMoves = 2 ^ N_DISKS - 1
+DIM mvFrom = RESHAPE(0, [totalMoves])
+DIM mvTo = RESHAPE(0, [totalMoves])
+DIM nMoves = 0
+
+' minimal move sequence: move n-1 aside, biggest across, n-1 on top
+SUB PlanMoves(n, src, dst, aux)
+    IF n > 1 THEN PlanMoves(n - 1, src, aux, dst)
+    mvFrom[nMoves] = src
+    mvTo[nMoves] = dst
+    nMoves = nMoves + 1
+    IF n > 1 THEN PlanMoves(n - 1, aux, dst, src)
+ENDSUB
+
+FUNC DiskW(dsize)
+    RETURN DISK_MIN_W + (dsize - 1) * DISK_GROW
+ENDFUNC
+
+SUB DrawDisk(dsize, cx, topY)
+    DIM w = DiskW(dsize)
+    ROUNDED_RECT cx - w / 2, topY, w, DISK_H - 4, 8, TRUE, DiskCol[dsize - 1][0], DiskCol[dsize - 1][1], DiskCol[dsize - 1][2]
+    ROUNDED_RECT cx - w / 2, topY, w, DISK_H - 4, 8, FALSE, 30, 30, 40
+ENDSUB
+
+SUB DrawScene(moveNum, flySize, flyX, flyY, msg$)
+    CLS 24, 26, 38
+    TEXT SCR_W / 2 - 130, 20, "T O W E R S   O F   H A N O I", 255, 220, 120
+    TEXT SCR_W / 2 - 150, 46, "Move " + STR$(moveNum) + " / " + STR$(totalMoves) + "   (minimum possible: 2^" + STR$(N_DISKS) + " - 1)", 170, 180, 200
+    RECT 60, BASE_Y, SCR_W - 120, 18, TRUE, 95, 72, 50
+    DIM p
+    FOR p = 0 TO 2
+        RECT PegX[p] - 5, BASE_Y - PegH, 10, PegH, TRUE, 135, 102, 70
+        TEXT PegX[p] - 4, BASE_Y + 26, PegLabel$[p], 200, 200, 210
+    NEXT p
+    DIM lvl
+    FOR p = 0 TO 2
+        FOR lvl = 0 TO pegTop[p] - 1
+            DrawDisk(pegStack[p, lvl], PegX[p], BASE_Y - (lvl + 1) * DISK_H)
+        NEXT lvl
+    NEXT p
+    IF flySize > 0 THEN DrawDisk(flySize, flyX, flyY)
+    IF LEN(msg$) > 0 THEN TEXT SCR_W / 2 - 170, 78, msg$, 140, 255, 160
+ENDSUB
+
+SUB Frame(moveNum, flySize, flyX, flyY)
+    DrawScene(moveNum, flySize, flyX, flyY, "")
+    SCREENFLIP
+    SLEEP 10
+    DIM k$ = INKEY$()
+    IF k$ = CHR$(27) THEN
+        END
+    ENDIF
+ENDSUB
+
+SUB AnimMove(moveNum, src, dst)
+    DIM dsize = pegStack[src, pegTop[src] - 1]
+    pegTop[src] = pegTop[src] - 1
+    DIM x = PegX[src]
+    DIM y = BASE_Y - (pegTop[src] + 1) * DISK_H
+    DIM targetX = PegX[dst]
+    DIM targetY = BASE_Y - (pegTop[dst] + 1) * DISK_H
+    DO WHILE y > FLY_Y
+        y = y - SPD
+        IF y < FLY_Y THEN
+            y = FLY_Y
+        ENDIF
+        Frame(moveNum, dsize, x, y)
+    LOOP
+    DIM dirX = 1
+    IF targetX < x THEN
+        dirX = -1
+    ENDIF
+    DO WHILE x <> targetX
+        x = x + dirX * SPD
+        IF dirX * (targetX - x) < 0 THEN
+            x = targetX
+        ENDIF
+        Frame(moveNum, dsize, x, y)
+    LOOP
+    DO WHILE y < targetY
+        y = y + SPD
+        IF y > targetY THEN
+            y = targetY
+        ENDIF
+        Frame(moveNum, dsize, x, y)
+    LOOP
+    pegStack[dst, pegTop[dst]] = dsize
+    pegTop[dst] = pegTop[dst] + 1
+ENDSUB
+
+SCREEN SCR_W, SCR_H, "Towers of Hanoi - minimal solution"
+PlanMoves(N_DISKS, 0, 2, 1)
+
+DIM m
+FOR m = 0 TO totalMoves - 1
+    AnimMove(m + 1, mvFrom[m], mvTo[m])
+NEXT m
+
+DIM k$
+DO
+    DrawScene(totalMoves, 0, 0, 0, "Solved in " + STR$(totalMoves) + " moves - the proven minimum!")
+    SCREENFLIP
+    SLEEP 30
+    k$ = INKEY$()
+    IF LEN(k$) > 0 THEN
+        EXITDO
+    ENDIF
+LOOP
