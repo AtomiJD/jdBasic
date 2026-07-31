@@ -392,6 +392,8 @@ static void setup_dynamic_code(VM& vm) {
 #endif
 #ifdef HTTP
     register_http_builtins(vm);
+#elif defined(__EMSCRIPTEN__)
+    register_wasm_net(vm);
 #endif
 #ifdef USE_SERIAL
     register_serial_builtins(vm);

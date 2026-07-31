@@ -28,7 +28,7 @@ CORE="src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
       src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
       src/audio_fx.cpp src/audio_io.cpp src/midi.cpp \
       src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-      src/numerics.cpp src/screencap.cpp src/pybridge.cpp"
+      src/numerics.cpp src/screencap.cpp src/pybridge.cpp src/wasm_net.cpp"
 GFX="src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
 IMGUI="libs/imgui/imgui.cpp libs/imgui/imgui_draw.cpp \
        libs/imgui/imgui_tables.cpp libs/imgui/imgui_widgets.cpp \
@@ -86,6 +86,7 @@ EMFLAGS="-sWASM=1 -sALLOW_MEMORY_GROWTH=1 -sASYNCIFY=1 -sASYNCIFY_STACK_SIZE=104
          -sENVIRONMENT=web,node \
          -sMODULARIZE=1 -sEXPORT_NAME=createJdBasic \
          -sEXPORTED_RUNTIME_METHODS=['ccall','cwrap','FS','stringToUTF8','lengthBytesUTF8'] \
+         -sEXPORTED_FUNCTIONS=_main,_malloc,_free \
          $EMBED ${LINKEXTRA:-}"
 
 # Stamp the build number (from build_number.txt, same source as build.bat) and
