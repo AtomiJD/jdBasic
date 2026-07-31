@@ -3,10 +3,10 @@ FUNC Calc(expression)
   RETURN STR(r)
 ENDFUNC
 
-FUNC Outer(x)
-  PRINT "Outer entered, x="; x
+FUNC OuterEval(x)
+  PRINT "OuterEval entered, x="; x
   DIM y AS STRING = EVAL("100 + " + STR(x))
-  PRINT "Outer y="; y
+  PRINT "OuterEval y="; y
   RETURN y
 ENDFUNC
 
@@ -14,4 +14,4 @@ PRINT "first call:"
 PRINT Calc("42 * 17")
 
 PRINT "second call:"
-PRINT Outer(5)
+PRINT OuterEval(5)

@@ -247,11 +247,19 @@ int16_t VM::read_i16() {
     return static_cast<int16_t>(read_u16());
 }
 
+void VM::reject_builtin_collision(const FuncProto& f) const {
+    if (natives.find(f.name) == natives.end()) return;
+    throw jdError(ErrCode::SYNTAX_ERROR,
+        std::string(f.is_sub ? "SUB " : "FUNC ") + f.name +
+        " collides with the builtin function " + f.name + " - choose another name");
+}
+
 void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     is_halted = false; // fresh program
     // Move compiled functions into owned storage so func_protos stays valid even
     // across nested run_code() calls (EXECUTE/EVAL/REPL).
     for (auto& f : funcs) {
+        reject_builtin_collision(f);
         auto it = func_map.find(f.name);
         if (it != func_map.end()) {
             owned_funcs[it->second] = std::move(f);
@@ -282,6 +290,7 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
 std::pair<size_t, size_t> VM::merge_funcs(std::vector<FuncProto>& new_funcs) {
     size_t added = 0, updated = 0;
     for (auto& f : new_funcs) {
+        reject_builtin_collision(f);
         auto it = func_map.find(f.name);
         if (it != func_map.end()) {
             owned_funcs[it->second] = std::move(f);
@@ -301,6 +310,7 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     // Merge new functions into owned storage
     bool funcs_changed = false;
     for (auto& f : new_funcs) {
+        reject_builtin_collision(f);
         auto it = func_map.find(f.name);
         if (it != func_map.end()) {
             owned_funcs[it->second] = std::move(f);
@@ -5011,7 +5021,7 @@ void VM::register_builtins() {
     });
 
     // ── SELECT (higher-order) ────────────────────────────────
-    register_native("SELECT", [this](const std::vector<Value>& args) -> Value {
+    register_native("SELECT", 2, 3, [this](const std::vector<Value>& args) -> Value {
         // SELECT(func, array, [row_wise])   - function first, APL/functional style
         Value fn = args[0];
         auto* arr = args[1].as_array();
@@ -5028,7 +5038,7 @@ void VM::register_builtins() {
     });
 
     // ── FILTER (higher-order) ────────────────────────────────
-    register_native("FILTER", [this](const std::vector<Value>& args) -> Value {
+    register_native("FILTER", 2, 2, [this](const std::vector<Value>& args) -> Value {
         // FILTER(func, array)   - function first
         Value fn = args[0];
         auto* arr = args[1].as_array();
@@ -5041,7 +5051,7 @@ void VM::register_builtins() {
     });
 
     // ── TAKE_WHILE (higher-order) ────────────────────────────
-    register_native("TAKE_WHILE", [this](const std::vector<Value>& args) -> Value {
+    register_native("TAKE_WHILE", 2, 2, [this](const std::vector<Value>& args) -> Value {
         // TAKE_WHILE(func, array) - take elements from the front while
         // predicate returns true; stop at first false.
         Value fn = args[0];
@@ -5055,7 +5065,7 @@ void VM::register_builtins() {
     });
 
     // ── DROP_WHILE (higher-order) ────────────────────────────
-    register_native("DROP_WHILE", [this](const std::vector<Value>& args) -> Value {
+    register_native("DROP_WHILE", 2, 2, [this](const std::vector<Value>& args) -> Value {
         // DROP_WHILE(func, array) - skip elements from the front while
         // predicate returns true; keep everything from the first false on.
         Value fn = args[0];
@@ -5109,7 +5119,7 @@ void VM::register_builtins() {
     });
 
     // ── GROUPBY (higher-order) ───────────────────────────────
-    register_native("GROUPBY", [this](const std::vector<Value>& args) -> Value {
+    register_native("GROUPBY", 2, 2, [this](const std::vector<Value>& args) -> Value {
         // GROUPBY(func, array) - bucket elements into a map keyed by
         // the result of calling func on each element (coerced to string).
         Value fn = args[0];
@@ -5188,7 +5198,7 @@ void VM::register_builtins() {
     });
 
     // ── REDUCE (higher-order) ────────────────────────────────
-    register_native("REDUCE", [this](const std::vector<Value>& args) -> Value {
+    register_native("REDUCE", 2, 3, [this](const std::vector<Value>& args) -> Value {
         // REDUCE(func, array, [init])   - function first
         Value fn = args[0];
         auto* arr = args[1].as_array();
@@ -5201,7 +5211,7 @@ void VM::register_builtins() {
     });
 
     // ── OUTER ────────────────────────────────────────────────
-    register_native("OUTER", [this](const std::vector<Value>& args) -> Value {
+    register_native("OUTER", 3, 3, [this](const std::vector<Value>& args) -> Value {
         auto* a = args[0].as_array();
         auto* b = args[1].as_array();
         std::string op = args[2].as_string()->data;
@@ -5216,7 +5226,7 @@ void VM::register_builtins() {
     });
 
     // ── INTEGRATE (Gauss-Legendre) ───────────────────────────
-    register_native("INTEGRATE", [this](const std::vector<Value>& args) -> Value {
+    register_native("INTEGRATE", 2, 3, [this](const std::vector<Value>& args) -> Value {
         Value fn = args[0];
         auto* lim = args[1].as_array();
         int n = (args.size() >= 3) ? (int)args[2].to_int() : 5;

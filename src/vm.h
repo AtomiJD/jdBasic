@@ -61,6 +61,10 @@ public:
     // through func_map on the next CALL opcode and pick up the new bodies).
     std::pair<size_t, size_t> merge_funcs(std::vector<FuncProto>& new_funcs);
 
+    // Builtins always win at call dispatch, so a user FUNC/SUB carrying a
+    // builtin's name could never be reached - reject it at load/merge time.
+    void reject_builtin_collision(const FuncProto& f) const;
+
     // State management for workspaces
     VMState save_state() const;
     void restore_state(const VMState& state);

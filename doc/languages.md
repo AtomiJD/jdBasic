@@ -1191,6 +1191,8 @@ ENDIF
 
 ## Functions
 
+**Reserved names:** every built-in function name is reserved. Defining a `FUNC` or `SUB` whose name matches a builtin (e.g. `SUB Outer()` vs the APL builtin `OUTER`) is rejected at load time with `collides with the builtin function ... - choose another name`, because call dispatch always resolves builtins first and the user definition could never be reached.
+
 ### Map Functions
 
 This suite of functions provides powerful tools for manipulating `Map` data structures.

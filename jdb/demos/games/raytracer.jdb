@@ -18,10 +18,6 @@
 ' 1. VECTOR MATH HELPERS (USING ARRAYS)
 ' ===================================================================
 
-FUNC Dot(vecA, vecB)
-    RETURN SUM(vecA * vecB)
-ENDFUNC
-
 FUNC LengthSquared(vec)
     RETURN SUM(vec * vec)
 ENDFUNC

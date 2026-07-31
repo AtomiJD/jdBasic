@@ -253,7 +253,7 @@ FUNC Minimax_AlphaBetaO(b, depth, player, alpha, beta)
     ENDIF
 
     LegalMoves = GenerateLegalMoves(b, player)
-    IF depth <= 0 LEN(LegalMoves)[0] = 0 THEN
+    IF depth <= 0 OR LEN(LegalMoves)[0] = 0 THEN
         RETURN EvaluateBoard(b)
     ENDIF
 
@@ -967,20 +967,6 @@ SUB InitData()
     EnPassantTargetSquare = [-1, -1]
 
 ENDSUB
-
-FUNC Sign(n)
-    IF n > 0 THEN RETURN 1
-    IF n < 0 THEN RETURN -1
-    RETURN 0
-ENDFUNC
-
-FUNC IIF(condition, true_val, false_val)
-    IF condition THEN
-        RETURN true_val
-    ELSE
-        RETURN false_val
-    ENDIF
-ENDFUNC
 
 SUB GameLoop()
     DIM GameOver AS BOOLEAN

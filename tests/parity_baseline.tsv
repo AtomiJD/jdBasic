@@ -6,6 +6,7 @@ tests/channels/test_file_streaming.jdb	PASS	PASS	OK
 tests/channels/test_file_tail.jdb	PASS	PASS	OK
 tests/channels/test_foreach_chan.jdb	PASS	CFAIL	GAP
 tests/cmp_ref_equality.jdb	OK	CFAIL	GAP
+tests/crash/builtin_shadow_190.jdb	PASS	CFAIL	GAP
 tests/crash/crash_test.jdb	PASS	PASS	OK
 tests/demos/demo_group_a.jdb	OK	OK	OK
 tests/demos/demo_group_b.jdb	OK	OK	OK

@@ -1189,6 +1189,12 @@ void Compiler::compile_return(const Stmt& stmt) {
 }
 
 void Compiler::compile_sub(const Stmt& stmt) {
+    // Builtins always win at call dispatch, so a SUB with a builtin's name
+    // could never be reached - reject the definition instead.
+    if (jdb_native_slot(stmt.func_name) >= 0)
+        throw std::runtime_error("Line " + std::to_string(stmt.line) +
+            ": SUB " + stmt.func_name + " collides with the builtin function " +
+            stmt.func_name + " - choose another name");
     FuncProto proto;
     proto.name = stmt.func_name;
     proto.arity = static_cast<int>(stmt.params.size());
@@ -1221,6 +1227,12 @@ void Compiler::compile_sub(const Stmt& stmt) {
 }
 
 void Compiler::compile_function(const Stmt& stmt) {
+    // Builtins always win at call dispatch, so a FUNC with a builtin's name
+    // could never be reached - reject the definition instead.
+    if (jdb_native_slot(stmt.func_name) >= 0)
+        throw std::runtime_error("Line " + std::to_string(stmt.line) +
+            ": FUNC " + stmt.func_name + " collides with the builtin function " +
+            stmt.func_name + " - choose another name");
     FuncProto proto;
     proto.name = stmt.func_name;
     proto.arity = static_cast<int>(stmt.params.size());

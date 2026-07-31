@@ -1,0 +1,55 @@
+' Regression for trakr #190: a SUB/FUNC named after a builtin (OUTER) used
+' to be silently shadowed at call dispatch; calling it hit the builtin and
+' an argument-count mismatch crashed the VM with an access violation.
+' Now the definition itself is rejected, and builtins report a clean
+' wrong-argument-count error instead of crashing.
+
+DIM n_pass
+n_pass = 0
+
+' Defining a SUB with a builtin name is rejected
+TRY
+    EXECUTE "SUB Outer()" + CHR$(10) + "PRINT 1" + CHR$(10) + "ENDSUB"
+    PRINT "FAIL: SUB with builtin name was accepted"
+CATCH
+    IF INSTR(ERRMSG$, "collides with the builtin") >= 0 THEN
+        n_pass = n_pass + 1
+    ELSE
+        PRINT "FAIL: unexpected error: " + ERRMSG$
+    ENDIF
+ENDTRY
+
+' Defining a FUNC with a builtin name is rejected
+TRY
+    EXECUTE "FUNC Reduce(x)" + CHR$(10) + "RETURN x" + CHR$(10) + "ENDFUNC"
+    PRINT "FAIL: FUNC with builtin name was accepted"
+CATCH
+    IF INSTR(ERRMSG$, "collides with the builtin") >= 0 THEN
+        n_pass = n_pass + 1
+    ELSE
+        PRINT "FAIL: unexpected error: " + ERRMSG$
+    ENDIF
+ENDTRY
+
+' Builtin called with too few arguments errors instead of crashing
+TRY
+    PRINT OUTER()
+    PRINT "FAIL: OUTER() with no args did not error"
+CATCH
+    IF INSTR(ERRMSG$, "argument") >= 0 THEN
+        n_pass = n_pass + 1
+    ELSE
+        PRINT "FAIL: unexpected error: " + ERRMSG$
+    ENDIF
+ENDTRY
+
+' The builtin itself still works
+DIM tbl
+tbl = OUTER([1,2], [10,20], "*")
+IF tbl[1][1] = 40 THEN n_pass = n_pass + 1 ELSE PRINT "FAIL: OUTER result wrong"
+
+IF n_pass = 4 THEN
+    PRINT "ALL TESTS PASSED! (4/4)"
+ELSE
+    PRINT "RESULTS: " + STR$(n_pass) + "/4 passed"
+ENDIF
