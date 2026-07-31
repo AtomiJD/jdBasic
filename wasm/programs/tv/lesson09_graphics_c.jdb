@@ -2,6 +2,12 @@
 ' Chapter: Drawing in a loop
 ' Source: jdb/tv/scripts/script_09_graphics.txt
 
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
 SCREEN 600, 400, "Loop"
 DRAWCOLOR 0, 0, 0
 RECT 0, 0, 600, 400, TRUE
@@ -9,10 +15,9 @@ FOR i = 0 TO 9
     DRAWCOLOR 255 - i * 25, 100, i * 25
     CIRCLE 60 + i * 55, 200, 25, TRUE
 NEXT i
-SCREENFLIP
-DIM ev
 FOR f = 0 TO 220
-    ev = GFX.POLLEVENT()
+    IF running = 0 THEN EXITFOR
+    SCREENFLIP
     SLEEP 16
 NEXT f
 GFX.CLOSE

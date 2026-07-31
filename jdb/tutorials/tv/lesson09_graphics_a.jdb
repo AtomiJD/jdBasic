@@ -2,13 +2,18 @@
 ' Chapter: First circle
 ' Source: jdb/tv/scripts/script_09_graphics.txt
 
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
 SCREEN 600, 400, "Lesson 09"
 DRAWCOLOR 255, 220, 0
 CIRCLE 300, 200, 80, TRUE
-SCREENFLIP
-DIM ev
 FOR f = 0 TO 220
-    ev = GFX.POLLEVENT()
+    IF running = 0 THEN EXITFOR
+    SCREENFLIP
     SLEEP 16
 NEXT f
 GFX.CLOSE

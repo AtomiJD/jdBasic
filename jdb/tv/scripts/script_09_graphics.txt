@@ -1,8 +1,8 @@
 ' ──────────────────────────────────────────────────────────────────
 '  Lesson 09 - Graphics
 '  Topic: SCREEN to open a window, DRAWCOLOR, RECT, CIRCLE, LINE,
-'         SCREENFLIP to display, classic render-loop (POLLEVENT +
-'         SLEEP) so SDL keeps pumping window messages.
+'         SCREENFLIP to display, render loop (SCREENFLIP + SLEEP)
+'         with an ON "QUIT" handler so the close button works.
 '
 '  Recording note: this lesson uses OBS scene switching.  The script
 '  flips to a "Desktop" scene (cropped 0,0,1920x1080 of the display)
@@ -14,10 +14,10 @@
 '
 '  Why a render loop instead of SLEEP 3500: a flat SLEEP blocks the
 '  whole VM, so the SDL window never gets its WM_WINDOWPOSCHANGING
-'  serviced and Windows refuses to move it.  A loop calling
-'  GFX.POLLEVENT() every 16 ms keeps the SDL message pump alive,
-'  WINMOVE settles into the new position, and the visual content
-'  stays painted because we already flipped once before the loop.
+'  serviced and Windows refuses to move it.  SCREENFLIP polls SDL
+'  events itself, so flipping every 16 ms keeps the message pump
+'  alive, WINMOVE settles into the new position, and the canvas
+'  accumulates, so re-flipping the same content does not flicker.
 '
 '  Target runtime: ~6 minutes
 ' ──────────────────────────────────────────────────────────────────
@@ -41,13 +41,18 @@ WAIT: 0.3
 CMD: EDIT
 WAIT: 0.2
 
+TYPE: DIM running = 1
+TYPE: SUB OnQuit()
+TYPE:     running = 0
+TYPE: ENDSUB
+TYPE: ON "QUIT" CALL OnQuit
+TYPE:
 TYPE: SCREEN 600, 400, "Lesson 09"
 TYPE: DRAWCOLOR 255, 220, 0
 TYPE: CIRCLE 300, 200, 80, TRUE
-TYPE: SCREENFLIP
-TYPE: DIM ev
 TYPE: FOR f = 0 TO 220
-TYPE:     ev = GFX.POLLEVENT()
+TYPE:     IF running = 0 THEN EXITFOR
+TYPE:     SCREENFLIP
 TYPE:     SLEEP 16
 TYPE: NEXT f
 TYPE: GFX.CLOSE
@@ -65,7 +70,7 @@ WAIT: 4.5
 SCENE: IDE
 FOCUS: jdBasic
 
-SAY: A yellow circle in the middle of a six-hundred by four-hundred window. The "circle" command takes a centre point, a radius, and a boolean. True means filled, false would draw only the outline. The render loop at the end keeps the window responsive for about three and a half seconds, then closes it.
+SAY: A yellow circle in the middle of a six-hundred by four-hundred window. The "circle" command takes a centre point, a radius, and a boolean. True means filled, false would draw only the outline. The render loop flips the screen every sixteen milliseconds for about three and a half seconds, and the on-quit handler lets the close button end the program early.
 
 CHAPTER: Layered shapes
 SAY: Colours are three numbers from 0 to 255, the standard "rgb" format. Let us combine a few shapes and colours.
@@ -75,6 +80,12 @@ WAIT: 0.3
 CMD: EDIT
 WAIT: 0.2
 
+TYPE: DIM running = 1
+TYPE: SUB OnQuit()
+TYPE:     running = 0
+TYPE: ENDSUB
+TYPE: ON "QUIT" CALL OnQuit
+TYPE:
 TYPE: SCREEN 600, 400, "Shapes"
 TYPE: DRAWCOLOR 30, 30, 50
 TYPE: RECT 0, 0, 600, 400, TRUE
@@ -85,10 +96,9 @@ TYPE: CIRCLE 300, 200, 60, TRUE
 TYPE: DRAWCOLOR 255, 255, 255
 TYPE: LINE 0, 0, 600, 400
 TYPE: LINE 600, 0, 0, 400
-TYPE: SCREENFLIP
-TYPE: DIM ev
 TYPE: FOR f = 0 TO 220
-TYPE:     ev = GFX.POLLEVENT()
+TYPE:     IF running = 0 THEN EXITFOR
+TYPE:     SCREENFLIP
 TYPE:     SLEEP 16
 TYPE: NEXT f
 TYPE: GFX.CLOSE
@@ -116,6 +126,12 @@ WAIT: 0.3
 CMD: EDIT
 WAIT: 0.2
 
+TYPE: DIM running = 1
+TYPE: SUB OnQuit()
+TYPE:     running = 0
+TYPE: ENDSUB
+TYPE: ON "QUIT" CALL OnQuit
+TYPE:
 TYPE: SCREEN 600, 400, "Loop"
 TYPE: DRAWCOLOR 0, 0, 0
 TYPE: RECT 0, 0, 600, 400, TRUE
@@ -123,10 +139,9 @@ TYPE: FOR i = 0 TO 9
 TYPE:     DRAWCOLOR 255 - i * 25, 100, i * 25
 TYPE:     CIRCLE 60 + i * 55, 200, 25, TRUE
 TYPE: NEXT i
-TYPE: SCREENFLIP
-TYPE: DIM ev
 TYPE: FOR f = 0 TO 220
-TYPE:     ev = GFX.POLLEVENT()
+TYPE:     IF running = 0 THEN EXITFOR
+TYPE:     SCREENFLIP
 TYPE:     SLEEP 16
 TYPE: NEXT f
 TYPE: GFX.CLOSE
@@ -147,7 +162,7 @@ FOCUS: jdBasic
 SAY: Ten circles in a row, each a different colour, drawn by a single "for" loop. The colour shifts smoothly from red toward purple as the index grows.
 
 CHAPTER: Recap + Outro
-SAY: That is lesson nine. "screen" opens a window, "draw-color" picks a colour, and "rect", "circle", and "line" paint shapes. Wrap them in loops for patterns. A small render loop at the end keeps the window alive long enough for us to look at it.
+SAY: That is lesson nine. "screen" opens a window, "draw-color" picks a colour, and "rect", "circle", and "line" paint shapes. Wrap them in loops for patterns. A small render loop of screen-flip and sleep keeps the window alive, and an on-quit handler makes the close button work.
 
 SAY: In lesson ten, our final episode, we will put it all together. We will write our first module, import it, and finish with a small project.
 

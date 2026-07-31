@@ -2,6 +2,12 @@
 ' Chapter: Layered shapes
 ' Source: jdb/tv/scripts/script_09_graphics.txt
 
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
 SCREEN 600, 400, "Shapes"
 DRAWCOLOR 30, 30, 50
 RECT 0, 0, 600, 400, TRUE
@@ -12,10 +18,9 @@ CIRCLE 300, 200, 60, TRUE
 DRAWCOLOR 255, 255, 255
 LINE 0, 0, 600, 400
 LINE 600, 0, 0, 400
-SCREENFLIP
-DIM ev
 FOR f = 0 TO 220
-    ev = GFX.POLLEVENT()
+    IF running = 0 THEN EXITFOR
+    SCREENFLIP
     SLEEP 16
 NEXT f
 GFX.CLOSE
