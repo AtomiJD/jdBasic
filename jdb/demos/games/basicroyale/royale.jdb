@@ -17,6 +17,19 @@ SUB OnQuit()
 ENDSUB
 ON "QUIT" CALL OnQuit
 
+' Taps arrive as buffered MOUSEDOWN events - a finger tap is shorter than
+' one frame, so polling the button state misses it. The queue also survives
+' the blocking /state fetch.
+DIM tap_new = 0
+DIM tap_x = 0
+DIM tap_y = 0
+SUB OnTap(info)
+    tap_x = info{"x"}
+    tap_y = info{"y"}
+    tap_new = 1
+ENDSUB
+ON "MOUSEDOWN" CALL OnTap
+
 DIM kindcolor AS MAP = {}
 kindcolor{"KNIGHT"} = [230, 180, 60]
 kindcolor{"ARCHER"} = [120, 220, 120]
@@ -381,19 +394,16 @@ IF shotmode = 1 THEN
     PRINT "pid: "; mypid; "  waiting: "; waiting; "  msg: "; msg$
     GFX.CLOSE
 ELSE
-    DIM was_down = 0
     DO
         IF running = 0 THEN EXITDO
         frame = frame + 1
         IF mypid < 0 ANDALSO frame MOD 30 = 0 THEN JOINMATCH()
         IF mypid >= 0 ANDALSO frame MOD 6 = 0 THEN POLLSTATE()
         SYNCFX(frame)
-        DIM mdown = GFX.MOUSEBUTTON(1)
-        IF mdown = TRUE ANDALSO was_down = 0 THEN
-            HandleClick(GFX.MOUSEX(), GFX.MOUSEY())
+        IF tap_new = 1 THEN
+            tap_new = 0
+            HandleClick(tap_x, tap_y)
         ENDIF
-        was_down = 0
-        IF mdown = TRUE THEN was_down = 1
         DrawFrame(frame)
         SCREENFLIP
         SLEEP 33

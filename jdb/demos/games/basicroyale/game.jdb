@@ -15,6 +15,18 @@ SUB OnQuit()
 ENDSUB
 ON "QUIT" CALL OnQuit
 
+' Taps arrive as buffered MOUSEDOWN events - a finger tap is shorter than
+' one frame, so polling the button state misses it.
+DIM tap_new = 0
+DIM tap_x = 0
+DIM tap_y = 0
+SUB OnTap(info)
+    tap_x = info{"x"}
+    tap_y = info{"y"}
+    tap_new = 1
+ENDSUB
+ON "MOUSEDOWN" CALL OnTap
+
 DIM st = ARENA.NEWGAME()
 DIM cardinfo = ARENA.CARDS()
 DIM layout = ARENA.BOARD()
@@ -339,18 +351,15 @@ IF shotmode = 1 THEN
     SCREENFLIP
     GFX.CLOSE
 ELSE
-    DIM was_down = 0
     DO
         IF running = 0 THEN EXITDO
         frame = frame + 1
         IF frame MOD 3 = 0 THEN st = ARENA.SIMSTEP(st)
         SYNCFX(st, frame)
-        DIM mdown = GFX.MOUSEBUTTON(1)
-        IF mdown = TRUE ANDALSO was_down = 0 THEN
-            HandleClick(GFX.MOUSEX(), GFX.MOUSEY())
+        IF tap_new = 1 THEN
+            tap_new = 0
+            HandleClick(tap_x, tap_y)
         ENDIF
-        was_down = 0
-        IF mdown = TRUE THEN was_down = 1
         DrawFrame(st, frame)
         SCREENFLIP
         SLEEP 33

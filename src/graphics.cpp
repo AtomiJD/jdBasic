@@ -139,7 +139,20 @@ static bool g_key_available = false;
 // race where SCREENFLIP's SDL_PollEvent eats events before event_poll sees them.
 static std::vector<SDL_Event> g_pending_sdl_events;
 
-void gfx_push_event(const SDL_Event& ev) { g_pending_sdl_events.push_back(ev); }
+// Mouse coordinates are converted to the renderer's logical space here, at
+// the single queue entry, so ON MOUSEDOWN/... handlers see the same
+// coordinates on a scaled, letterboxed canvas as on a desktop window.
+void gfx_push_event(const SDL_Event& ev) {
+    SDL_Event copy = ev;
+    if (g_renderer &&
+        (copy.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+         copy.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+         copy.type == SDL_EVENT_MOUSE_MOTION ||
+         copy.type == SDL_EVENT_MOUSE_WHEEL)) {
+        SDL_ConvertEventToRenderCoordinates(g_renderer, &copy);
+    }
+    g_pending_sdl_events.push_back(copy);
+}
 bool gfx_has_pending_events() { return !g_pending_sdl_events.empty(); }
 std::vector<SDL_Event> gfx_drain_pending_events() {
     std::vector<SDL_Event> out;
