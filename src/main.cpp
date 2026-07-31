@@ -85,9 +85,7 @@ static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& fi
 #include "com.h"
 #include <objbase.h>
 #endif
-#ifdef HTTP
 #include "http.h"
-#endif
 #ifdef USE_SERIAL
 #include "serial.h"
 #endif
