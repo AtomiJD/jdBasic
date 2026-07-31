@@ -799,16 +799,22 @@ void register_graphics_builtins(VM& vm) {
 #endif
 #ifdef __EMSCRIPTEN__
         // Blit the persistent target texture to the window, then restore it as
-        // the draw target so the next frame keeps accumulating on it.
+        // the draw target so the next frame keeps accumulating on it. Clear
+        // with black, not the program's current draw color - the clear color
+        // shows in the logical-presentation letterbox bars on a scaled canvas.
         if (g_screen_tex) {
             SDL_SetRenderTarget(g_renderer, nullptr);
+            SDL_SetRenderDrawColor(g_renderer, 0, 0, 0, 255);
             SDL_RenderClear(g_renderer);
             SDL_RenderTexture(g_renderer, g_screen_tex, nullptr, nullptr);
         }
 #endif
         SDL_RenderPresent(g_renderer);
 #ifdef __EMSCRIPTEN__
-        if (g_screen_tex) SDL_SetRenderTarget(g_renderer, g_screen_tex);
+        if (g_screen_tex) {
+            SDL_SetRenderTarget(g_renderer, g_screen_tex);
+            apply_draw_color();
+        }
         // Hand a turn to the browser so it composites the freshly presented
         // frame to the canvas. A tight draw/SCREENFLIP loop with no SLEEP would
         // otherwise never let the page paint or deliver input.
@@ -1512,10 +1518,19 @@ void register_graphics_builtins(VM& vm) {
         return Value::make_bool(state[sc]);
     });
 
+    // Mouse coordinates come from SDL in window space; convert to the
+    // renderer's logical space so a CSS-scaled, letterboxed canvas (the
+    // browser build on a phone) reports the same coordinates as a desktop
+    // window that matches the logical size exactly.
     vm.register_native("GFX.MOUSEX", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
         float x, y;
         SDL_GetMouseState(&x, &y);
+        if (g_renderer) {
+            float lx, ly;
+            SDL_RenderCoordinatesFromWindow(g_renderer, x, y, &lx, &ly);
+            return Value::make_i64((int64_t)lx);
+        }
         return Value::make_i64((int64_t)x);
     });
 
@@ -1523,6 +1538,11 @@ void register_graphics_builtins(VM& vm) {
         (void)args;
         float x, y;
         SDL_GetMouseState(&x, &y);
+        if (g_renderer) {
+            float lx, ly;
+            SDL_RenderCoordinatesFromWindow(g_renderer, x, y, &lx, &ly);
+            return Value::make_i64((int64_t)ly);
+        }
         return Value::make_i64((int64_t)y);
     });
 
