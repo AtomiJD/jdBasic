@@ -1,0 +1,13 @@
+' Train jdBasic - lesson 13: 13 | HTTP and JSON | Talk to the Web
+' Chapter: JSON.PARSE$ - structured data
+' Source: jdb/tv/scripts/script_13_http_json.txt
+
+DIM url$ = "https://api.open-meteo.com/v1/forecast?latitude=49.40&longitude=8.69&current_weather=true"
+PRINT "Fetching..."
+DIM body$ = HTTP.GET$(url$)
+DIM data = JSON.PARSE$(body$)
+DIM w = data["current_weather"]
+PRINT
+PRINT "Temperature : "; w["temperature"]; " degC"
+PRINT "Windspeed   : "; w["windspeed"]; " km/h"
+PRINT "Wind heading: "; w["winddirection"]; " deg"

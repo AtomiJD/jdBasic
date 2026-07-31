@@ -1,0 +1,6 @@
+' Train jdBasic - lesson 12: 12 | Higher-Order Functions | Functions as Data
+' Chapter: FILTER
+' Source: jdb/tv/scripts/script_12_higher_order.txt
+
+DIM xs = [12, 7, 19, 3, 25, 8]
+PRINT FILTER(LAMBDA x -> x > 10, xs)

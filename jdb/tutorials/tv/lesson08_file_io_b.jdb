@@ -1,0 +1,6 @@
+' Train jdBasic - lesson 08: 08 | File I/O | Saving Your Work
+' Chapter: TXTREADER$ - read a file
+' Source: jdb/tv/scripts/script_08_file_io.txt
+
+DIM content$ = TXTREADER$("hello.txt")
+PRINT "File says: "; content$

@@ -1,0 +1,10 @@
+' Train jdBasic - lesson 02: 02 | If and For | Decisions and Loops
+' Chapter: IF / ELSE
+' Source: jdb/tv/scripts/script_02_if_for.txt
+
+DIM hour = 22
+IF hour < 12 THEN
+    PRINT "Good morning"
+ELSE
+    PRINT "Good evening"
+ENDIF

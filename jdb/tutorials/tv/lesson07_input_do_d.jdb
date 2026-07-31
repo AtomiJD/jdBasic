@@ -1,0 +1,11 @@
+' Train jdBasic - lesson 07: 07 | Input and Do Loops | Talking Back
+' Chapter: INPUT + DO together
+' Source: jdb/tv/scripts/script_07_input_do.txt
+
+DIM total = 0
+DIM n = 1
+DO
+    INPUT "Number (0 to quit): ", n
+    total = total + n
+LOOP UNTIL n = 0
+PRINT "Sum: "; total

@@ -1,0 +1,12 @@
+' Train jdBasic - lesson 12: 12 | Higher-Order Functions | Functions as Data
+' Chapter: Closures - MakeAdder
+' Source: jdb/tv/scripts/script_12_higher_order.txt
+
+FUNC MakeAdder(n)
+    RETURN LAMBDA USE(n) x -> x + n
+ENDFUNC
+
+DIM add10 = MakeAdder(10)
+DIM add100 = MakeAdder(100)
+PRINT add10(5)
+PRINT add100(5)

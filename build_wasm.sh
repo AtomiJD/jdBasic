@@ -67,8 +67,10 @@ done
 # "help.txt" relative to the MEMFS cwd, which is /).
 [ -f help.txt ] && EMBED="$EMBED --embed-file help.txt@/help.txt"
 # Web-specific programs (e.g. graphics tuned with YIELD) live under wasm/programs.
+# Subfolders (wasm/programs/tv = Train jdBasic lesson samples) are embedded
+# flat at the FS root so LIST/LOAD in the playground can see them.
 if [ -d wasm/programs ]; then
-    for d in wasm/programs/*.jdb; do
+    for d in wasm/programs/*.jdb wasm/programs/*/*.jdb; do
         [ -f "$d" ] && EMBED="$EMBED --embed-file $d@/$(basename "$d")"
     done
 fi

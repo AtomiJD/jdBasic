@@ -1,0 +1,9 @@
+' Train jdBasic - lesson 07: 07 | Input and Do Loops | Talking Back
+' Chapter: DO ... LOOP UNTIL
+' Source: jdb/tv/scripts/script_07_input_do.txt
+
+DIM i = 1
+DO
+    PRINT "Step "; i
+    i = i + 1
+LOOP UNTIL i > 5

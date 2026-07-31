@@ -1,0 +1,10 @@
+' Train jdBasic - lesson 10: 10 | Modules | Code Worth Reusing
+' Chapter: IMPORT + dotted calls
+' Source: jdb/tv/scripts/script_10_modules.txt
+
+IMPORT MATHX
+
+PRINT MATHX.CLAMP(15, 0, 10)
+PRINT MATHX.CLAMP(-5, 0, 10)
+PRINT MATHX.CLAMP(7, 0, 10)
+PRINT MATHX.PERCENT(75, 200)

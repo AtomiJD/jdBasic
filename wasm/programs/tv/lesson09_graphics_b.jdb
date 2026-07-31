@@ -1,0 +1,21 @@
+' Train jdBasic - lesson 09: 09 | Graphics | Pixels on Screen
+' Chapter: Layered shapes
+' Source: jdb/tv/scripts/script_09_graphics.txt
+
+SCREEN 600, 400, "Shapes"
+DRAWCOLOR 30, 30, 50
+RECT 0, 0, 600, 400, TRUE
+DRAWCOLOR 80, 200, 255
+RECT 100, 100, 400, 200, TRUE
+DRAWCOLOR 255, 100, 100
+CIRCLE 300, 200, 60, TRUE
+DRAWCOLOR 255, 255, 255
+LINE 0, 0, 600, 400
+LINE 600, 0, 0, 400
+SCREENFLIP
+DIM ev
+FOR f = 0 TO 220
+    ev = GFX.POLLEVENT()
+    SLEEP 16
+NEXT f
+GFX.CLOSE

@@ -1,0 +1,149 @@
+' Extracts the code samples from the Train jdBasic lesson scripts.
+' Every editor/REPL code segment in scripts/script_NN_topic.txt becomes one
+' standalone sample file: TYPE: lines carry the code, TYPE: NEW starts a new
+' segment, and REPL housekeeping commands (CLS, LIST, RUN, ...) are dropped
+' when typed outside an EDIT session. A segment that opens with
+' EXPORT MODULE X is written as x.jdb so IMPORT finds it next to the samples.
+' Run from jdb/tv:  jdbasic extract_samples.jdb
+
+DIM lesson_files = ["script_01_hello.txt", "script_02_if_for.txt", "script_03_arrays.txt", "script_04_strings.txt", "script_05_func_sub.txt", "script_06_maps.txt", "script_07_input_do.txt", "script_08_file_io.txt", "script_09_graphics.txt", "script_10_modules.txt", "script_11_repl_workflow.txt", "script_12_higher_order.txt", "script_13_http_json.txt", "script_14_native_compile.txt"]
+
+' Target directories with lesson numbers to skip there (wasm build has no
+' HTTP flag and no OS.EXEC, so lessons 13/14 stay desktop-only).
+DIM targets = [["../tutorials/tv", ""], ["../../wasm/programs/tv", "13,14"]]
+
+DIM hk AS MAP = {"NEW": 1, "CLS": 1, "LIST": 1, "RUN": 1, "PRETTY": 1, "LINT": 1, "TRON": 1, "TROFF": 1, "SAVE": 1, "LOAD": 1, "SAVEWS": 1, "LOADWS": 1, "CLEARWS": 1, "VARS": 1, "FUNCS": 1, "HELP": 1, "EDIT": 1, "DIR": 1}
+
+FUNC FirstWord$(code$)
+    DIM t$ = UCASE$(TRIM$(code$))
+    DIM sp = INSTR(t$, " ")
+    IF sp >= 0 THEN RETURN MID$(t$, 0, sp)
+    RETURN t$
+ENDFUNC
+
+' Builds one segment file; returns [override_name$, content$] where
+' override_name$ is "" unless the segment is a module, or 0 when the
+' segment holds no code.
+FUNC FlushSeg(nn$, topic$, ttl$, chap$, body)
+    DIM n_code = 0
+    DIM i
+    FOR i = 0 TO LEN(body) - 1
+        IF TRIM$(body[i]) <> "" THEN n_code = n_code + 1
+    NEXT i
+    IF n_code = 0 THEN RETURN 0
+
+    DIM name$ = ""
+    DIM head$ = UCASE$(TRIM$(body[0]))
+    IF STARTSWITH(head$, "EXPORT MODULE ") THEN
+        name$ = LCASE$(TRIM$(MID$(head$, 14, 9999))) + ".jdb"
+    ENDIF
+
+    DIM hdr$ = "' Train jdBasic - lesson " + nn$ + ": " + ttl$ + CHR$(10)
+    IF chap$ <> "" THEN hdr$ = hdr$ + "' Chapter: " + chap$ + CHR$(10)
+    hdr$ = hdr$ + "' Source: jdb/tv/scripts/script_" + nn$ + "_" + topic$ + ".txt" + CHR$(10) + CHR$(10)
+
+    RETURN [name$, hdr$ + JOIN(body, CHR$(10)) + CHR$(10)]
+ENDFUNC
+
+DIM t_i, f_i, r_i
+FOR t_i = 0 TO LEN(targets) - 1
+    DIM out_dir$ = targets[t_i][0]
+    DIM excl$ = targets[t_i][1]
+    TRY
+        MKDIR out_dir$
+    CATCH
+    ENDTRY
+
+    FOR f_i = 0 TO LEN(lesson_files) - 1
+        DIM f$ = lesson_files[f_i]
+        DIM rest$ = MID$(f$, 7, 9999)
+        DIM nn$ = MID$(rest$, 0, 2)
+        DIM topic$ = MID$(rest$, 3, LEN(rest$) - 7)
+        IF excl$ <> "" ANDALSO INSTR(excl$, nn$) >= 0 THEN CONTINUEFOR
+
+        DIM src$ = TXTREADER$("scripts/" + f$)
+        DIM rows = SPLIT(src$, CHR$(10))
+
+        DIM ttl$ = ""
+        DIM chap$ = ""
+        DIM seg_chap$ = ""
+        DIM in_ed = FALSE
+        DIM in_stdin = FALSE
+        DIM body = []
+        DIM n_seg = 0
+
+        FOR r_i = 0 TO LEN(rows) - 1
+            DIM row$ = rows[r_i]
+            IF ENDSWITH(row$, CHR$(13)) THEN row$ = MID$(row$, 0, LEN(row$) - 1)
+
+            IF STARTSWITH(row$, "TITLE:") THEN
+                ttl$ = TRIM$(MID$(row$, 6, 9999))
+                CONTINUEFOR
+            ENDIF
+            IF STARTSWITH(row$, "CHAPTER:") THEN
+                chap$ = TRIM$(MID$(row$, 8, 9999))
+                in_stdin = FALSE
+                CONTINUEFOR
+            ENDIF
+            IF STARTSWITH(row$, "CMD:") THEN
+                DIM c$ = UCASE$(TRIM$(MID$(row$, 4, 9999)))
+                IF c$ = "EDIT" THEN
+                    in_ed = TRUE
+                    in_stdin = FALSE
+                ENDIF
+                IF c$ = "CTRL-Q" THEN
+                    in_ed = FALSE
+                    in_stdin = FALSE
+                ENDIF
+                ' Everything typed after RUN is the running program's stdin,
+                ' not source - drop it until the next chapter or buffer reset.
+                IF c$ = "RUN" THEN in_stdin = TRUE
+                CONTINUEFOR
+            ENDIF
+            IF NOT STARTSWITH(row$, "TYPE:") THEN CONTINUEFOR
+
+            DIM code$ = MID$(row$, 5, 9999)
+            IF STARTSWITH(code$, " ") THEN code$ = MID$(code$, 1, 9999)
+
+            IF NOT in_ed THEN
+                DIM w$ = FirstWord$(code$)
+                IF w$ = "RUN" THEN
+                    in_stdin = TRUE
+                    CONTINUEFOR
+                ENDIF
+                IF w$ = "NEW" THEN
+                    in_stdin = FALSE
+                ENDIF
+                IF in_stdin THEN CONTINUEFOR
+                IF w$ = "NEW" THEN
+                    DIM r = FlushSeg(nn$, topic$, ttl$, seg_chap$, body)
+                    IF TYPEOF(r) = "ARRAY" THEN
+                        DIM name$ = r[0]
+                        IF name$ = "" THEN name$ = "lesson" + nn$ + "_" + topic$ + "_" + CHR$(97 + n_seg) + ".jdb"
+                        TXTWRITER out_dir$ + "/" + name$, r[1]
+                        n_seg = n_seg + 1
+                    ENDIF
+                    body = []
+                    seg_chap$ = ""
+                    CONTINUEFOR
+                ENDIF
+                IF MAP.EXISTS(hk, w$) THEN CONTINUEFOR
+            ENDIF
+
+            IF LEN(body) = 0 THEN seg_chap$ = chap$
+            body = APPEND(body, code$)
+        NEXT r_i
+
+        DIM r2 = FlushSeg(nn$, topic$, ttl$, seg_chap$, body)
+        IF TYPEOF(r2) = "ARRAY" THEN
+            DIM name2$ = r2[0]
+            IF name2$ = "" THEN name2$ = "lesson" + nn$ + "_" + topic$ + "_" + CHR$(97 + n_seg) + ".jdb"
+            TXTWRITER out_dir$ + "/" + name2$, r2[1]
+            n_seg = n_seg + 1
+        ENDIF
+
+        PRINT out_dir$; "  lesson "; nn$; " ("; topic$; "): "; n_seg; " sample(s)"
+    NEXT f_i
+NEXT t_i
+
+PRINT "Done."

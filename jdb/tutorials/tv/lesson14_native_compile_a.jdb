@@ -1,0 +1,22 @@
+' Train jdBasic - lesson 14: 14 | Native Compilation | One EXE, Ten Times Faster
+' Chapter: The benchmark + type annotations
+' Source: jdb/tv/scripts/script_14_native_compile.txt
+
+FUNC SumSquares(n AS INTEGER) AS DOUBLE
+    DIM total AS DOUBLE = 0.0
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        total = total + i * i
+    NEXT i
+    RETURN total
+ENDFUNC
+
+DIM t0 AS INTEGER = TICK()
+DIM s AS DOUBLE = SumSquares(1000000)
+DIM t1 AS INTEGER = TICK()
+PRINT "Result : "; s
+PRINT "Elapsed: "; (t1 - t0); " ms"
+DIM r = OS.EXEC("..\\..\\build\jdbasic -c bench.jdb")
+PRINT r["OUTPUT"]
+DIM r2 = OS.EXEC("bench.exe")
+PRINT r2["OUTPUT"]

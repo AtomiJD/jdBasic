@@ -1,0 +1,6 @@
+' Train jdBasic - lesson 07: 07 | Input and Do Loops | Talking Back
+' Chapter: INPUT - reading a string
+' Source: jdb/tv/scripts/script_07_input_do.txt
+
+INPUT "What is your name? ", name$
+PRINT "Hello, "; name$; "!"

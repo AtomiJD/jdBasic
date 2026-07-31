@@ -1,0 +1,10 @@
+' Train jdBasic - lesson 05: 05 | Functions and SUBs | Code You Can Name
+' Chapter: FUNC + RETURN
+' Source: jdb/tv/scripts/script_05_func_sub.txt
+
+FUNC Twice(x)
+    RETURN x * 2
+ENDFUNC
+PRINT Twice(5)
+PRINT Twice(7)
+PRINT Twice(100)

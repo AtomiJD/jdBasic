@@ -1,0 +1,16 @@
+' Train jdBasic - lesson 06: 06 | Maps | Key-Value Storage
+' Chapter: Map literal + indexing
+' Source: jdb/tv/scripts/script_06_maps.txt
+
+DIM person = {"name": "Atomi", "age": 38, "city": "Heidelberg"}
+PRINT person
+PRINT person["name"]
+PRINT person["age"]
+person["age"] = 39
+PRINT person["age"]
+person["email"] = "atomi@example.com"
+PRINT person
+PRINT MAP.SIZE(person)
+PRINT MAP.EXISTS(person, "city")
+PRINT MAP.EXISTS(person, "phone")
+PRINT MAP.KEYS(person)

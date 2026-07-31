@@ -1,0 +1,9 @@
+' Train jdBasic - lesson 05: 05 | Functions and SUBs | Code You Can Name
+' Chapter: Multiple parameters
+' Source: jdb/tv/scripts/script_05_func_sub.txt
+
+FUNC Add(a, b)
+    RETURN a + b
+ENDFUNC
+PRINT Add(3, 4)
+PRINT Add(10, -2)

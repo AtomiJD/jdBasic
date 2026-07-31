@@ -1,0 +1,12 @@
+' Train jdBasic - lesson 03: 03 | Arrays | The "for"-less Loop
+' Chapter: Putting it together
+' Source: jdb/tv/scripts/script_03_arrays.txt
+
+DIM temps = [20, 25, 18, 22, 28, 30, 19]
+DIM avg = MEAN(temps)
+DIM diff = temps - avg
+PRINT "Week:     "; temps
+PRINT "Average:  "; avg
+PRINT "Diff:     "; diff
+PRINT "Hottest:  "; MAX(temps); " degrees"
+PRINT "Coolest:  "; MIN(temps); " degrees"

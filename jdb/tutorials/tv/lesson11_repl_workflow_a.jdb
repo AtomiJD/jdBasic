@@ -1,0 +1,9 @@
+' Train jdBasic - lesson 11: 11 | REPL Workflow | Tools That Make You Fast
+' Chapter: Intro
+' Source: jdb/tv/scripts/script_11_repl_workflow.txt
+
+dim names = ["Atomi", "Jaydee", "World"]
+for each n in names
+    print "Hello, "; n
+next n
+xyz = 99

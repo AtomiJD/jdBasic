@@ -1,0 +1,15 @@
+' Train jdBasic - lesson 02: 02 | If and For | Decisions and Loops
+' Chapter: FizzBuzz finale
+' Source: jdb/tv/scripts/script_02_if_for.txt
+
+FOR i = 1 TO 15
+    IF i MOD 15 = 0 THEN
+        PRINT "FizzBuzz"
+    ELSEIF i MOD 3 = 0 THEN
+        PRINT "Fizz"
+    ELSEIF i MOD 5 = 0 THEN
+        PRINT "Buzz"
+    ELSE
+        PRINT i
+    ENDIF
+NEXT i

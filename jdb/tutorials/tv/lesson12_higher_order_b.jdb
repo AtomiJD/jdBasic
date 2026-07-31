@@ -1,0 +1,6 @@
+' Train jdBasic - lesson 12: 12 | Higher-Order Functions | Functions as Data
+' Chapter: Lambdas
+' Source: jdb/tv/scripts/script_12_higher_order.txt
+
+DIM nums = [1, 2, 3, 4, 5]
+PRINT SELECT(LAMBDA x -> x * x, nums)

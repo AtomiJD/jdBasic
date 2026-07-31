@@ -1,0 +1,10 @@
+' Train jdBasic - lesson 13: 13 | HTTP and JSON | Talk to the Web
+' Chapter: GitHub user demo
+' Source: jdb/tv/scripts/script_13_http_json.txt
+
+DIM body$ = HTTP.GET$("https://api.github.com/users/AtomiJD")
+DIM user = JSON.PARSE$(body$)
+PRINT "Name        : "; user["name"]
+PRINT "Public repos: "; user["public_repos"]
+PRINT "Followers   : "; user["followers"]
+PRINT "Joined      : "; user["created_at"]

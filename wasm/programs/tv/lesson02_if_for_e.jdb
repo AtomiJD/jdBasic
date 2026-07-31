@@ -1,0 +1,7 @@
+' Train jdBasic - lesson 02: 02 | If and For | Decisions and Loops
+' Chapter: FOR loops
+' Source: jdb/tv/scripts/script_02_if_for.txt
+
+FOR i = 1 TO 5
+    PRINT "Hello "; i
+NEXT i

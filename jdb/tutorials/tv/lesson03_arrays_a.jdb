@@ -1,0 +1,17 @@
+' Train jdBasic - lesson 03: 03 | Arrays | The "for"-less Loop
+' Chapter: Array literals + indexing
+' Source: jdb/tv/scripts/script_03_arrays.txt
+
+DIM scores = [10, 20, 30, 40, 50]
+PRINT scores
+PRINT scores[0]
+PRINT scores[4]
+PRINT LEN(scores)
+PRINT scores * 2
+PRINT scores + 100
+PRINT scores + scores
+PRINT scores > 25
+PRINT SUM(scores)
+PRINT MEAN(scores)
+PRINT MIN(scores), MAX(scores)
+PRINT IOTA(10)

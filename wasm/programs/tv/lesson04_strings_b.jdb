@@ -1,0 +1,11 @@
+' Train jdBasic - lesson 04: 04 | Strings | Text the Right Way
+' Chapter: CSV mini-parser
+' Source: jdb/tv/scripts/script_04_strings.txt
+
+DIM line$ = "Atomi,38,Heidelberg"
+DIM parts = SPLIT(line$, ",")
+PRINT "Name:  "; parts[0]
+PRINT "Age:   "; parts[1]
+PRINT "City:  "; parts[2]
+PRINT
+PRINT UCASE$(parts[0]); " lives in "; parts[2]
