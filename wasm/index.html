@@ -44,6 +44,9 @@
 
   #gfx-overlay{position:fixed;inset:0;display:none;flex-direction:column;background:#000;z-index:40;}
   #gfx-overlay.open{display:flex;}
+  /* ?fs=1 - chromeless mode for shared game links: no menubar, no gfx header */
+  body.fs .menubar{display:none;}
+  body.fs #gfx-overlay .ebar{display:none;}
   .gfxwrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
   #canvas{background:#000;max-width:100%;max-height:100%;outline:none;image-rendering:pixelated;touch-action:none;}
 </style>
@@ -371,6 +374,10 @@
       const c=document.getElementById('canvas'); setTimeout(()=>{ try{c.focus();}catch(e){} },20); }
     function hideGfx(){ document.getElementById('gfx-overlay').classList.remove('open');
       try{ term.focus(); }catch(e){} }
+
+    // ?fs=1 hides the page chrome so the canvas gets the whole viewport
+    if (new URLSearchParams(location.search).get('fs'))
+      document.body.classList.add('fs');
 
     // ---- URL auto-start: ?prog=<name-or-url>[&mode=run|load] ----
     // Lets a shared link open the playground with a program preloaded and

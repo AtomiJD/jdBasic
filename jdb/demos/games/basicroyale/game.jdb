@@ -73,6 +73,49 @@ SUB DrawBoard(gs, fnow)
     RECT PX(13.5), PY(14), TILE * 2, TILE * 2, TRUE
 ENDSUB
 
+' Retro synth SFX on the built-in sequencer. Track 1 = UI blips, track 2 =
+' shots, track 3 = noise booms. Sustain 0 lets every note fade out on its
+' own, so no release bookkeeping is needed in the render loop.
+DIM snd_on = 0
+SUB SNDINIT()
+    TRY
+        SOUND.INIT
+        SOUND.VOICE 1, "SQUARE", 0.005, 0.08, 0.0, 0.05
+        SOUND.VOICE 2, "SQUARE", 0.002, 0.05, 0.0, 0.03
+        SOUND.VOICE 3, "NOISE", 0.005, 0.25, 0.0, 0.2
+        SOUND.GAIN 1, 0.5
+        SOUND.GAIN 2, 0.3
+        SOUND.GAIN 3, 0.6
+        snd_on = 1
+    CATCH
+        snd_on = 0
+    ENDTRY
+ENDSUB
+
+SUB PLAYFX(t$)
+    IF snd_on = 1 THEN
+        TRY
+            IF t$ = "SPAWN" THEN
+                SOUND.PLAY 1, 330
+            ELSEIF t$ = "SHOT" THEN
+                SOUND.PLAY 2, 880
+            ELSEIF t$ = "HIT" THEN
+                SOUND.PLAY 2, 220
+            ELSEIF t$ = "CAST" THEN
+                SOUND.PLAY 1, 550
+            ELSEIF t$ = "BOOM" THEN
+                SOUND.PLAY 3, 80
+            ELSEIF t$ = "DIE" THEN
+                SOUND.PLAY 3, 200
+            ELSEIF t$ = "FALL" THEN
+                SOUND.PLAY 3, 50
+            ENDIF
+        CATCH
+            snd_on = 0
+        ENDTRY
+    ENDIF
+ENDSUB
+
 ' HP bar with a health gradient: green, then yellow, then red.
 SUB DrawBar(x, y, w, frac)
     DRAWCOLOR 20, 20, 20
@@ -194,13 +237,21 @@ SUB DrawHud(gs)
     ENDIF
 ENDSUB
 
-' Collect unseen sim events into the local FX list (dedup by EID).
+' Collect unseen sim events into the local FX list (dedup by EID) and give
+' each fresh event its sound - shots capped at 2 per batch to avoid spam.
 SUB SYNCFX(gs, fnow)
+    DIM n_shots = 0
     FOR EACH evt IN gs{"EVENTS"}
         DIM k$ = STR$(evt{"EID"})
         IF NOT MAP.EXISTS(fxseen, k$) THEN
             fxseen{k$} = 1
             fxact = APPEND(fxact, { "EV": evt, "T0": fnow })
+            IF evt{"T"} = "SHOT" THEN
+                n_shots = n_shots + 1
+                IF n_shots <= 2 THEN PLAYFX("SHOT")
+            ELSE
+                PLAYFX(evt{"T"})
+            ENDIF
         ENDIF
     NEXT evt
 ENDSUB
@@ -322,6 +373,7 @@ FOR ai = 0 TO LEN(cliargs) - 1
 NEXT ai
 
 SCREEN SCR_W, SCR_H, "BASIC Royale"
+IF shotmode = 0 THEN SNDINIT()
 
 IF shotmode = 1 THEN
     DIM r1 = ARENA.PLAYCARD(st, 0, "KNIGHT", 4.0, 18.0)
