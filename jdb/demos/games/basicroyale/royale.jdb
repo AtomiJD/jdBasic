@@ -24,8 +24,8 @@ DIM tap_new = 0
 DIM tap_x = 0
 DIM tap_y = 0
 SUB OnTap(info)
-    tap_x = info{"x"}
-    tap_y = info{"y"}
+    tap_x = info[0]{"x"}
+    tap_y = info[0]{"y"}
     tap_new = 1
 ENDSUB
 ON "MOUSEDOWN" CALL OnTap
