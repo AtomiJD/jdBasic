@@ -197,8 +197,17 @@
     }, true);
     function prompt(){ term.write('\r\n' + PROMPT); }
 
+    // Phone keyboards autocorrect straight quotes into smart quotes and
+    // spaces into NBSP - normalize them back so typed code lexes the same
+    // as desktop input.
+    function normalizeInput(s){
+      return s.replace(/[“”„‟«»]/g, '"')
+              .replace(/[‘’‚‛]/g, "'")
+              .replace(/ /g, ' ');
+    }
+
     async function processLine(line){
-      const t = line.trim();
+      const t = normalizeInput(line).trim();
       if (t === ''){ prompt(); return; }
       if (history[history.length-1] !== t) history.push(t);
       hpos = history.length;
@@ -220,6 +229,7 @@
     // including after the Asyncify suspends of a SLEEP/graphics loop. running
     // gates terminal input while a program (e.g. a game) owns the canvas.
     async function runCode(code){
+      code = normalizeInput(code);
       if (!ready){ term.write('\r\nruntime not ready'); return; }
       keyQueue.length = 0;   // drop keys left over from the previous run
       running = true;
