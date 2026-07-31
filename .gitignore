@@ -296,3 +296,4 @@ tests/regression/test_out*.txt
 tests/gate/pipe
 jdb/_privat/
 jdb/tutorials/tv/*.txt
+wasm/royale.jdb

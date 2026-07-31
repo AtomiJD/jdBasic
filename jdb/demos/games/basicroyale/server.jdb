@@ -1,0 +1,104 @@
+' BASIC Royale match server - one match, two players, server-authoritative.
+' The sim catches up lazily on every request: elapsed wall time is replayed
+' as 0.1 s SIMSTEPs, so no background thread is needed and the match simply
+' pauses while nobody polls. Clients POST JSON with Content-Type text/plain
+' (a CORS simple request - no OPTIONS preflight, which the server has no
+' route for) and every response carries Access-Control-Allow-Origin: *.
+IMPORT ARENA
+
+DIM st = ARENA.NEWGAME()
+DIM players = []
+DIM last_ms = TICK()
+
+FUNC JJ(m)
+    RETURN { "__http_status": 200, "__http_body": JSON.STRINGIFY$(m), "__http_content_type": "application/json", "__http_headers": { "Access-Control-Allow-Origin": "*" } }
+ENDFUNC
+
+FUNC PIDBYTOK(tok$)
+    DIM i
+    FOR i = 0 TO LEN(players) - 1
+        IF players[i]{"TOK"} = tok$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+SUB SYNCSIM()
+    DIM now = TICK()
+    IF LEN(players) < 2 THEN
+        last_ms = now
+    ELSE
+        DIM n_steps = INT((now - last_ms) / 100)
+        IF n_steps > 100 THEN
+            n_steps = 100
+            last_ms = now - 10000
+        ENDIF
+        DIM i
+        FOR i = 1 TO n_steps
+            st = ARENA.SIMSTEP(st)
+        NEXT i
+        last_ms = last_ms + n_steps * 100
+    ENDIF
+ENDSUB
+
+FUNC HJOIN(req)
+    DIM name$ = "P" + STR$(LEN(players))
+    TRY
+        DIM b = JSON.PARSE$(req{"BODY"})
+        IF MAP.EXISTS(b, "NAME") THEN name$ = b{"NAME"}
+    CATCH
+    ENDTRY
+    IF LEN(players) >= 2 THEN RETURN JJ({ "OK": 0, "MSG": "match full - POST /reset for a rematch" })
+    DIM tok$ = CODEC.UUID$()
+    players = APPEND(players, { "NAME": name$, "TOK": tok$ })
+    IF LEN(players) = 2 THEN last_ms = TICK()
+    PRINT "join: "; name$; " -> pid "; LEN(players) - 1
+    RETURN JJ({ "OK": 1, "PID": LEN(players) - 1, "TOK": tok$ })
+ENDFUNC
+
+FUNC HSTATE(req)
+    SYNCSIM()
+    DIM pid = -1
+    IF MAP.EXISTS(req{"PARAMS"}, "tok") THEN pid = PIDBYTOK(req{"PARAMS"}{"tok"})
+    DIM names = []
+    DIM i
+    FOR i = 0 TO LEN(players) - 1
+        names = APPEND(names, players[i]{"NAME"})
+    NEXT i
+    RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "ST": st })
+ENDFUNC
+
+FUNC HPLAY(req)
+    SYNCSIM()
+    DIM b = JSON.PARSE$(req{"BODY"})
+    DIM pid = PIDBYTOK(b{"TOK"})
+    IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "bad token" })
+    DIM res$ = ARENA.PLAYCARD(st, pid, b{"KIND"}, b{"X"}, b{"Y"})
+    RETURN JJ({ "OK": IIF(res$ = "", 1, 0), "MSG": res$ })
+ENDFUNC
+
+FUNC HRESET(req)
+    st = ARENA.NEWGAME()
+    last_ms = TICK()
+    PRINT "match reset"
+    RETURN JJ({ "OK": 1 })
+ENDFUNC
+
+FUNC HROOT(req)
+    RETURN "BASIC Royale match server. POST /join, GET /state?tok=, POST /play, POST /reset."
+ENDFUNC
+
+HTTP.SERVER.ON_GET "/", "HROOT"
+HTTP.SERVER.ON_GET "/state", "HSTATE"
+HTTP.SERVER.ON_POST "/join", "HJOIN"
+HTTP.SERVER.ON_POST "/play", "HPLAY"
+HTTP.SERVER.ON_POST "/reset", "HRESET"
+
+DIM srv_port = 8081
+IF HTTP.SERVER.START(srv_port, "0.0.0.0") THEN
+    PRINT "BASIC Royale server on 0.0.0.0:"; srv_port
+    DO
+        SLEEP 200
+    LOOP
+ELSE
+    PRINT "cannot bind port "; srv_port
+ENDIF

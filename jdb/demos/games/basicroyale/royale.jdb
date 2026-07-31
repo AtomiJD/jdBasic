@@ -1,0 +1,312 @@
+' BASIC Royale - phone/desktop client. Self-contained (no IMPORT) so a single
+' file can be shared as a playground link. Renders the server state and sends
+' taps; the arena rules live on the server. Each player sees their own side
+' at the bottom - player 1's view is mirrored.
+' Shot mode for headless checks:  jdbasic royale.jdb shot -> tmp/client.png
+
+CONST SRV$ = "http://192.168.0.37:8081"
+
+CONST TILE = 26
+CONST BOARD_Y0 = 60
+CONST SCR_W = 468
+CONST SCR_H = 900
+
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
+DIM kindcolor AS MAP = {}
+kindcolor{"KNIGHT"} = [230, 180, 60]
+kindcolor{"ARCHER"} = [120, 220, 120]
+kindcolor{"GIANT"} = [200, 120, 40]
+kindcolor{"MINIONS"} = [110, 170, 255]
+kindcolor{"SKELETONS"} = [220, 220, 220]
+kindcolor{"FIREBALL"} = [255, 90, 30]
+DIM cardcost AS MAP = {}
+cardcost{"KNIGHT"} = 3
+cardcost{"ARCHER"} = 3
+cardcost{"GIANT"} = 5
+cardcost{"MINIONS"} = 3
+cardcost{"SKELETONS"} = 2
+cardcost{"FIREBALL"} = 4
+
+DIM mypid = -1
+DIM tok$ = ""
+DIM world AS MAP = {}
+DIM have_state = 0
+DIM waiting = 1
+DIM foename$ = ""
+DIM sel$ = ""
+DIM msg$ = ""
+
+' Player 1 sees the board mirrored so their own side is at the bottom.
+FUNC WY(y)
+    IF mypid = 1 THEN RETURN 29.0 - y
+    RETURN y
+ENDFUNC
+
+FUNC PX(tx)
+    RETURN INT(tx * TILE)
+ENDFUNC
+
+FUNC PY(ty)
+    RETURN INT(BOARD_Y0 + ty * TILE)
+ENDFUNC
+
+FUNC MINE(owner)
+    RETURN IIF(owner = mypid, 1, 0)
+ENDFUNC
+
+SUB JOINMATCH()
+    TRY
+        DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "NAME": "Spieler" }), "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} = 1 THEN
+            mypid = m{"PID"}
+            tok$ = m{"TOK"}
+            msg$ = ""
+        ELSE
+            msg$ = m{"MSG"}
+        ENDIF
+    CATCH
+        msg$ = "server? " + SRV$
+    ENDTRY
+ENDSUB
+
+SUB POLLSTATE()
+    TRY
+        DIM r$ = HTTP.GET$(SRV$ + "/state?tok=" + tok$)
+        DIM m = JSON.PARSE$(r$)
+        world = m{"ST"}
+        waiting = m{"WAITING"}
+        have_state = 1
+        DIM names = m{"NAMES"}
+        IF LEN(names) = 2 THEN foename$ = names[1 - mypid]
+    CATCH
+        msg$ = "poll failed"
+    ENDTRY
+ENDSUB
+
+SUB SENDPLAY(kind$, wx, wyv)
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "KIND": kind$, "X": wx, "Y": wyv })
+        DIM r$ = HTTP.POST$(SRV$ + "/play", body$, "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} = 1 THEN
+            sel$ = ""
+            msg$ = ""
+        ELSE
+            msg$ = m{"MSG"}
+        ENDIF
+    CATCH
+        msg$ = "play failed"
+    ENDTRY
+ENDSUB
+
+SUB DrawBar(x, y, w, frac, cr, cg, cb)
+    DRAWCOLOR 20, 20, 20
+    RECT x, y, w, 5, TRUE
+    IF frac > 0 THEN
+        DRAWCOLOR cr, cg, cb
+        RECT x, y, INT(w * frac), 5, TRUE
+    ENDIF
+ENDSUB
+
+SUB DrawBoard()
+    DIM r
+    DIM c
+    FOR r = 0 TO 29
+        FOR c = 0 TO 17
+            IF r = 14 ORELSE r = 15 THEN
+                DRAWCOLOR 40, 90, 170
+            ELSEIF (r + c) MOD 2 = 0 THEN
+                DRAWCOLOR 60, 130, 70
+            ELSE
+                DRAWCOLOR 54, 120, 64
+            ENDIF
+            RECT c * TILE, BOARD_Y0 + r * TILE, TILE, TILE, TRUE
+        NEXT c
+    NEXT r
+    DRAWCOLOR 150, 110, 60
+    RECT PX(2.5), PY(14), TILE * 2, TILE * 2, TRUE
+    RECT PX(13.5), PY(14), TILE * 2, TILE * 2, TRUE
+ENDSUB
+
+SUB DrawTowers()
+    FOR EACH tw IN world{"TOWERS"}
+        IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        IF MINE(tw{"OWNER"}) = 1 THEN
+            DRAWCOLOR 70, 110, 230
+        ELSE
+            DRAWCOLOR 230, 80, 80
+        ENDIF
+        DIM sz = TILE * 2
+        IF tw{"KIND"} = "KING" THEN sz = INT(TILE * 2.4)
+        DIM x0 = PX(tw{"X"}) - sz / 2
+        DIM y0 = PY(WY(tw{"Y"})) - sz / 2
+        RECT x0, y0, sz, sz, TRUE
+        DRAWCOLOR 0, 0, 0
+        RECT x0, y0, sz, sz, FALSE
+        DrawBar(x0, y0 - 8, sz, tw{"HP"} / tw{"MAXHP"}, 90, 240, 90)
+    NEXT tw
+ENDSUB
+
+SUB DrawUnits()
+    FOR EACH u IN world{"UNITS"}
+        DIM col = kindcolor{u{"KIND"}}
+        IF MINE(u{"OWNER"}) = 1 THEN
+            DRAWCOLOR 70, 110, 230
+        ELSE
+            DRAWCOLOR 230, 80, 80
+        ENDIF
+        DIM ux = PX(u{"X"})
+        DIM uy = PY(WY(u{"Y"}))
+        CIRCLE ux, uy, 11, TRUE
+        DRAWCOLOR col[0], col[1], col[2]
+        CIRCLE ux, uy, 8, TRUE
+        DrawBar(ux - 10, uy - 18, 20, u{"HP"} / u{"MAXHP"}, 90, 240, 90)
+        DRAWCOLOR 0, 0, 0
+        TEXT ux - 4, uy - 6, MID$(u{"KIND"}, 0, 1)
+    NEXT u
+ENDSUB
+
+SUB DrawHand()
+    DIM q = world{"QUEUES"}[mypid]
+    DIM i
+    FOR i = 0 TO 3
+        DIM kind$ = q[i]
+        DIM col = kindcolor{kind$}
+        DIM x0 = i * 117
+        DRAWCOLOR col[0], col[1], col[2]
+        RECT x0 + 3, 843, 111, 54, TRUE
+        IF sel$ = kind$ THEN
+            DRAWCOLOR 255, 255, 0
+            RECT x0 + 3, 843, 111, 54, FALSE
+            RECT x0 + 4, 844, 109, 52, FALSE
+        ENDIF
+        DRAWCOLOR 0, 0, 0
+        TEXT x0 + 10, 852, MID$(kind$, 0, 6)
+        TEXT x0 + 10, 872, STR$(cardcost{kind$}) + " elx"
+    NEXT i
+    DIM exl = world{"ELIXIR"}[mypid]
+    DRAWCOLOR 30, 10, 40
+    RECT 0, 832, SCR_W, 8, TRUE
+    IF exl > 0 THEN
+        DRAWCOLOR 210, 60, 240
+        RECT 0, 832, INT(SCR_W * exl / 10.0), 8, TRUE
+    ENDIF
+    DRAWCOLOR 255, 255, 255
+    TEXT SCR_W - 60, 812, "elx " + STR$(INT(exl))
+ENDSUB
+
+SUB DrawHud()
+    DRAWCOLOR 255, 255, 255
+    DIM t = world{"T_LEFT"}
+    DIM label$ = ""
+    IF t < 0 THEN
+        label$ = "OT "
+        t = 60 + t
+    ENDIF
+    TEXT 200, 6, label$ + STR$(INT(t / 60)) + ":" + RIGHT$("0" + STR$(INT(t) MOD 60), 2)
+    DIM cr = world{"CROWNS"}
+    TEXT 6, 6, "DU " + STR$(cr[mypid])
+    TEXT 6, 26, foename$ + " " + STR$(cr[1 - mypid])
+    IF msg$ <> "" THEN
+        DRAWCOLOR 255, 220, 0
+        TEXT 6, 46, msg$
+    ENDIF
+    IF world{"PHASE"} = "over" THEN
+        DRAWCOLOR 255, 255, 255
+        RECT 84, 380, 300, 90, TRUE
+        DIM w = world{"WINNER"}
+        DRAWCOLOR 200, 30, 30
+        IF w = 2 THEN
+            TEXT 150, 415, "UNENTSCHIEDEN!"
+        ELSEIF w = mypid THEN
+            TEXT 150, 415, "DU GEWINNST!"
+        ELSE
+            TEXT 150, 415, foename$ + " GEWINNT!"
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB DrawFrame()
+    DRAWCOLOR 15, 15, 20
+    RECT 0, 0, SCR_W, SCR_H, TRUE
+    IF have_state = 0 ORELSE mypid < 0 THEN
+        DRAWCOLOR 255, 255, 255
+        TEXT 120, 430, "BASIC ROYALE"
+        TEXT 120, 460, "verbinde... " + msg$
+    ELSE
+        DrawBoard()
+        DrawTowers()
+        DrawUnits()
+        DrawHand()
+        DrawHud()
+        IF waiting = 1 THEN
+            DRAWCOLOR 255, 255, 255
+            RECT 84, 380, 300, 60, TRUE
+            DRAWCOLOR 30, 30, 200
+            TEXT 120, 402, "Warte auf Gegner..."
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB HandleClick(mx, my)
+    IF have_state = 0 ORELSE mypid < 0 THEN
+        msg$ = ""
+    ELSEIF my >= 840 THEN
+        DIM slot = INT(mx / 117)
+        IF slot > 3 THEN slot = 3
+        sel$ = world{"QUEUES"}[mypid][slot]
+        msg$ = ""
+    ELSEIF my >= BOARD_Y0 THEN
+        IF sel$ = "" THEN
+            msg$ = "erst Karte antippen"
+        ELSE
+            DIM tx = mx / (TILE * 1.0)
+            DIM tyv = (my - BOARD_Y0) / (TILE * 1.0)
+            SENDPLAY(sel$, tx, WY(tyv))
+        ENDIF
+    ENDIF
+ENDSUB
+
+DIM shotmode = 0
+DIM cliargs = OS.ARGS()
+DIM ai
+FOR ai = 0 TO LEN(cliargs) - 1
+    IF LCASE$(cliargs[ai]) = "shot" THEN shotmode = 1
+NEXT ai
+
+SCREEN SCR_W, SCR_H, "BASIC Royale"
+JOINMATCH()
+
+IF shotmode = 1 THEN
+    POLLSTATE()
+    DrawFrame()
+    GFX.SAVE_SCREENSHOT("tmp/client.png")
+    SCREENFLIP
+    PRINT "pid: "; mypid; "  waiting: "; waiting; "  msg: "; msg$
+    GFX.CLOSE
+ELSE
+    DIM was_down = 0
+    DIM frame = 0
+    DO
+        IF running = 0 THEN EXITDO
+        frame = frame + 1
+        IF mypid < 0 ANDALSO frame MOD 30 = 0 THEN JOINMATCH()
+        IF mypid >= 0 ANDALSO frame MOD 6 = 0 THEN POLLSTATE()
+        DIM mdown = GFX.MOUSEBUTTON(1)
+        IF mdown = TRUE ANDALSO was_down = 0 THEN
+            HandleClick(GFX.MOUSEX(), GFX.MOUSEY())
+        ENDIF
+        was_down = 0
+        IF mdown = TRUE THEN was_down = 1
+        DrawFrame()
+        SCREENFLIP
+        SLEEP 33
+    LOOP
+    GFX.CLOSE
+ENDIF
