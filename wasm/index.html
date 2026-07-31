@@ -372,6 +372,33 @@
     function hideGfx(){ document.getElementById('gfx-overlay').classList.remove('open');
       try{ term.focus(); }catch(e){} }
 
+    // ---- URL auto-start: ?prog=<name-or-url>[&mode=run|load] ----
+    // Lets a shared link open the playground with a program preloaded and
+    // (default) already running - no typing needed on a phone.
+    let autoDone=false;
+    async function autoStart(){
+      const qp = new URLSearchParams(location.search);
+      let prog = qp.get('prog'); if(!prog) return;
+      const mode = (qp.get('mode')||'run').toLowerCase();
+      let src = null;
+      if (/^https?:\/\//i.test(prog)) {
+        try { const r = await fetch(prog); if (r.ok) src = await r.text(); } catch(e){}
+      } else {
+        if (!/\.\w+$/.test(prog)) prog += '.jdb';
+        src = readMaybe('/'+prog);
+        if (src === null) {
+          try { const r = await fetch(prog); if (r.ok) src = await r.text(); } catch(e){}
+        }
+      }
+      if (src === null) { term.write('\r\n\x1b[31mcannot load '+prog+'\x1b[0m'); prompt(); return; }
+      src = normalizeInput(src);
+      program = src; if(editor) editor.setValue(program);
+      term.write('\r\n\x1b[32mloaded '+prog+' ('+src.split('\n').length+' lines)\x1b[0m');
+      if (mode === 'run') { term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); await runCode(program); }
+      prompt();
+    }
+    function maybeAutoStart(){ if(ready && Mod && !autoDone){ autoDone=true; autoStart(); } }
+
     // ---- wasm runtime ----
     createJdBasic({
       canvas: document.getElementById('canvas'),
@@ -382,8 +409,8 @@
       onScreenClose: ()=>{ hideGfx(); },
       onJdbReady: ()=>{ ready=true; setStatus('runtime ready','var(--green)');
         term.write('\r\n\x1b[2mDIR . LOAD name . RUN . NEW . EDIT . SAVE name . LIST . CLS\x1b[0m');
-        prompt(); focusTerm(); }
-    }).then(M=>{ Mod=M; }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
+        prompt(); focusTerm(); maybeAutoStart(); }
+    }).then(M=>{ Mod=M; maybeAutoStart(); }).catch(e=>{ setStatus('runtime failed','var(--red)'); term.write('\r\nload error: '+e); });
 
     const api = {
       openEditor,

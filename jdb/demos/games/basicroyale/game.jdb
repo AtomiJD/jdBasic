@@ -121,8 +121,26 @@ SUB DrawHand(gs, pid, y0)
         TEXT x0 + 10, y0 + 12, MID$(kind$, 0, 6)
         TEXT x0 + 10, y0 + 32, STR$(cardinfo{kind$}{"COST"}) + " elx"
     NEXT i
-    DIM exl = gs{"ELIXIR"}[pid]
-    DrawBar(0, y0 + 58 - 58 * pid, 468, exl / 10.0, 200, 80, 220)
+ENDSUB
+
+' Fat elixir bars on the board edges, one per player, with the number.
+SUB DrawElixir(gs)
+    DIM p
+    FOR p = 0 TO 1
+        DIM exl = gs{"ELIXIR"}[p]
+        DIM y0 = 832
+        IF p = 1 THEN y0 = BOARD_Y0
+        DRAWCOLOR 30, 10, 40
+        RECT 0, y0, SCR_W, 8, TRUE
+        IF exl > 0 THEN
+            DRAWCOLOR 210, 60, 240
+            RECT 0, y0, INT(SCR_W * exl / 10.0), 8, TRUE
+        ENDIF
+        DRAWCOLOR 255, 255, 255
+        DIM ty = y0 + 10
+        IF p = 0 THEN ty = y0 - 20
+        TEXT SCR_W - 60, ty, "elx " + STR$(INT(exl))
+    NEXT p
 ENDSUB
 
 SUB DrawHud(gs)
@@ -158,6 +176,7 @@ SUB DrawFrame(gs)
     DrawUnits(gs)
     DrawHand(gs, 1, 0)
     DrawHand(gs, 0, 840)
+    DrawElixir(gs)
     DrawHud(gs)
 ENDSUB
 
