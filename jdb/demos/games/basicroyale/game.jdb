@@ -1,0 +1,241 @@
+' BASIC Royale - offline harness: full match on one screen, both sides played
+' with the mouse. Click a card in a hand strip, then click that player's half
+' to deploy. P0 owns the bottom strip and half, P1 the top.
+' Shot mode for headless verification:  jdbasic game.jdb shot -> tmp/royale.png
+IMPORT ARENA
+
+CONST TILE = 26
+CONST BOARD_Y0 = 60
+CONST SCR_W = 468
+CONST SCR_H = 900
+
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
+DIM st = ARENA.NEWGAME()
+DIM cardinfo = ARENA.CARDS()
+DIM layout = ARENA.BOARD()
+
+DIM kindcolor AS MAP = {}
+kindcolor{"KNIGHT"} = [230, 180, 60]
+kindcolor{"ARCHER"} = [120, 220, 120]
+kindcolor{"GIANT"} = [200, 120, 40]
+kindcolor{"MINIONS"} = [110, 170, 255]
+kindcolor{"SKELETONS"} = [220, 220, 220]
+kindcolor{"FIREBALL"} = [255, 90, 30]
+
+DIM sel = ["", ""]
+DIM lastmsg = ""
+
+FUNC PX(tx)
+    RETURN INT(tx * TILE)
+ENDFUNC
+
+FUNC PY(ty)
+    RETURN INT(BOARD_Y0 + ty * TILE)
+ENDFUNC
+
+SUB DrawBoard(gs)
+    DIM r
+    DIM c
+    FOR r = 0 TO 29
+        FOR c = 0 TO 17
+            IF r = 14 ORELSE r = 15 THEN
+                DRAWCOLOR 40, 90, 170
+            ELSEIF (r + c) MOD 2 = 0 THEN
+                DRAWCOLOR 60, 130, 70
+            ELSE
+                DRAWCOLOR 54, 120, 64
+            ENDIF
+            RECT c * TILE, BOARD_Y0 + r * TILE, TILE, TILE, TRUE
+        NEXT c
+    NEXT r
+    DRAWCOLOR 150, 110, 60
+    RECT PX(2.5), PY(14), TILE * 2, TILE * 2, TRUE
+    RECT PX(13.5), PY(14), TILE * 2, TILE * 2, TRUE
+ENDSUB
+
+SUB DrawBar(x, y, w, frac, cr, cg, cb)
+    DRAWCOLOR 20, 20, 20
+    RECT x, y, w, 5, TRUE
+    IF frac > 0 THEN
+        DRAWCOLOR cr, cg, cb
+        RECT x, y, INT(w * frac), 5, TRUE
+    ENDIF
+ENDSUB
+
+SUB DrawTowers(gs)
+    FOR EACH tw IN gs{"TOWERS"}
+        IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        IF tw{"OWNER"} = 0 THEN
+            DRAWCOLOR 70, 110, 230
+        ELSE
+            DRAWCOLOR 230, 80, 80
+        ENDIF
+        DIM sz = TILE * 2
+        IF tw{"KIND"} = "KING" THEN sz = INT(TILE * 2.4)
+        DIM x0 = PX(tw{"X"}) - sz / 2
+        DIM y0 = PY(tw{"Y"}) - sz / 2
+        RECT x0, y0, sz, sz, TRUE
+        DRAWCOLOR 0, 0, 0
+        RECT x0, y0, sz, sz, FALSE
+        DrawBar(x0, y0 - 8, sz, tw{"HP"} / tw{"MAXHP"}, 90, 240, 90)
+    NEXT tw
+ENDSUB
+
+SUB DrawUnits(gs)
+    FOR EACH u IN gs{"UNITS"}
+        DIM col = kindcolor{u{"KIND"}}
+        IF u{"OWNER"} = 0 THEN
+            DRAWCOLOR 70, 110, 230
+        ELSE
+            DRAWCOLOR 230, 80, 80
+        ENDIF
+        CIRCLE PX(u{"X"}), PY(u{"Y"}), 11, TRUE
+        DRAWCOLOR col[0], col[1], col[2]
+        CIRCLE PX(u{"X"}), PY(u{"Y"}), 8, TRUE
+        DrawBar(PX(u{"X"}) - 10, PY(u{"Y"}) - 18, 20, u{"HP"} / u{"MAXHP"}, 90, 240, 90)
+        DRAWCOLOR 0, 0, 0
+        TEXT PX(u{"X"}) - 4, PY(u{"Y"}) - 6, MID$(u{"KIND"}, 0, 1)
+    NEXT u
+ENDSUB
+
+SUB DrawHand(gs, pid, y0)
+    DIM q = gs{"QUEUES"}[pid]
+    DIM i
+    FOR i = 0 TO 3
+        DIM kind$ = q[i]
+        DIM col = kindcolor{kind$}
+        DIM x0 = i * 117
+        DRAWCOLOR col[0], col[1], col[2]
+        RECT x0 + 3, y0 + 3, 111, 54, TRUE
+        IF sel[pid] = kind$ THEN
+            DRAWCOLOR 255, 255, 0
+            RECT x0 + 3, y0 + 3, 111, 54, FALSE
+            RECT x0 + 4, y0 + 4, 109, 52, FALSE
+        ENDIF
+        DRAWCOLOR 0, 0, 0
+        TEXT x0 + 10, y0 + 12, MID$(kind$, 0, 6)
+        TEXT x0 + 10, y0 + 32, STR$(cardinfo{kind$}{"COST"}) + " elx"
+    NEXT i
+    DIM exl = gs{"ELIXIR"}[pid]
+    DrawBar(0, y0 + 58 - 58 * pid, 468, exl / 10.0, 200, 80, 220)
+ENDSUB
+
+SUB DrawHud(gs)
+    DRAWCOLOR 255, 255, 255
+    DIM t = gs{"T_LEFT"}
+    DIM label$ = "OT "
+    IF t >= 0 THEN label$ = ""
+    IF t < 0 THEN t = 60 + t
+    TEXT 200, BOARD_Y0 + 6, label$ + STR$(INT(t / 60)) + ":" + RIGHT$("0" + STR$(INT(t) MOD 60), 2)
+    TEXT 6, BOARD_Y0 + 6, "P1 " + STR$(gs{"CROWNS"}[1])
+    TEXT 6, SCR_H - 78, "P0 " + STR$(gs{"CROWNS"}[0])
+    IF lastmsg <> "" THEN
+        DRAWCOLOR 255, 220, 0
+        TEXT 6, BOARD_Y0 + 24, lastmsg
+    ENDIF
+    IF gs{"PHASE"} = "over" THEN
+        DRAWCOLOR 255, 255, 255
+        RECT 84, 380, 300, 90, TRUE
+        DRAWCOLOR 200, 30, 30
+        IF gs{"WINNER"} = 2 THEN
+            TEXT 150, 415, "DRAW!"
+        ELSE
+            TEXT 150, 415, "PLAYER " + STR$(gs{"WINNER"}) + " WINS!"
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB DrawFrame(gs)
+    DRAWCOLOR 15, 15, 20
+    RECT 0, 0, SCR_W, SCR_H, TRUE
+    DrawBoard(gs)
+    DrawTowers(gs)
+    DrawUnits(gs)
+    DrawHand(gs, 1, 0)
+    DrawHand(gs, 0, 840)
+    DrawHud(gs)
+ENDSUB
+
+SUB HandleClick(mx, my)
+    IF my < 60 THEN
+        DIM slot1 = INT(mx / 117)
+        IF slot1 > 3 THEN slot1 = 3
+        sel[1] = st{"QUEUES"}[1][slot1]
+        lastmsg = ""
+    ELSEIF my >= 840 THEN
+        DIM slot0 = INT(mx / 117)
+        IF slot0 > 3 THEN slot0 = 3
+        sel[0] = st{"QUEUES"}[0][slot0]
+        lastmsg = ""
+    ELSE
+        DIM tx = mx / (TILE * 1.0)
+        DIM ty = (my - BOARD_Y0) / (TILE * 1.0)
+        DIM pid = 0
+        IF ty < 15 THEN pid = 1
+        IF sel[pid] = "" THEN
+            lastmsg = "P" + STR$(pid) + ": pick a card first"
+        ELSE
+            DIM res$ = ARENA.PLAYCARD(st, pid, sel[pid], tx, ty)
+            IF res$ = "" THEN
+                sel[pid] = ""
+                lastmsg = ""
+            ELSE
+                lastmsg = "P" + STR$(pid) + ": " + res$
+            ENDIF
+        ENDIF
+    ENDIF
+ENDSUB
+
+' Shot mode: scripted opening, 12 s of simulation, one rendered frame to PNG.
+DIM shotmode = 0
+DIM cliargs = OS.ARGS()
+DIM ai
+FOR ai = 0 TO LEN(cliargs) - 1
+    IF LCASE$(cliargs[ai]) = "shot" THEN shotmode = 1
+NEXT ai
+
+SCREEN SCR_W, SCR_H, "BASIC Royale"
+
+IF shotmode = 1 THEN
+    DIM r1 = ARENA.PLAYCARD(st, 0, "KNIGHT", 4.0, 18.0)
+    DIM r2 = ARENA.PLAYCARD(st, 1, "GIANT", 14.0, 10.0)
+    DIM si
+    FOR si = 1 TO 60
+        st = ARENA.SIMSTEP(st)
+    NEXT si
+    DIM r3 = ARENA.PLAYCARD(st, 0, "ARCHER", 14.0, 20.0)
+    DIM r4 = ARENA.PLAYCARD(st, 1, "SKELETONS", 4.0, 8.0)
+    FOR si = 1 TO 60
+        st = ARENA.SIMSTEP(st)
+    NEXT si
+    PRINT "plays: [" + r1 + "][" + r2 + "][" + r3 + "][" + r4 + "]"
+    PRINT "units alive: "; LEN(st{"UNITS"})
+    PRINT "state json bytes: "; LEN(JSON.STRINGIFY$(st))
+    DrawFrame(st)
+    GFX.SAVE_SCREENSHOT("tmp/royale.png")
+    SCREENFLIP
+    GFX.CLOSE
+ELSE
+    DIM was_down = 0
+    DIM frame = 0
+    DO
+        IF running = 0 THEN EXITDO
+        frame = frame + 1
+        IF frame MOD 3 = 0 THEN st = ARENA.SIMSTEP(st)
+        DIM mdown = GFX.MOUSEBUTTON(1)
+        IF mdown = TRUE ANDALSO was_down = 0 THEN
+            HandleClick(GFX.MOUSEX(), GFX.MOUSEY())
+        ENDIF
+        was_down = 0
+        IF mdown = TRUE THEN was_down = 1
+        DrawFrame(st)
+        SCREENFLIP
+        SLEEP 33
+    LOOP
+    GFX.CLOSE
+ENDIF

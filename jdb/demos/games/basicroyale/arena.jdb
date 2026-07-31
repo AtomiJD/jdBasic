@@ -1,0 +1,286 @@
+' BASIC Royale - server-authoritative arena simulation.
+' The whole match lives in one JSON-serializable state map; SIMSTEP advances
+' it by 0.1 s. Shared by the offline harness (game.jdb), the match server and
+' the phone client - only this module knows the rules.
+EXPORT MODULE ARENA
+
+' Board in tile units, portrait. The river splits the halves; ground units
+' cross at the two bridges.
+EXPORT FUNC BOARD()
+    RETURN { "COLS": 18, "ROWS": 30, "RIVER_Y": 14.5, "BRIDGES": [3.5, 14.5] }
+ENDFUNC
+
+' Card stats. HITS: "G" = ground only, "A" = ground and air.
+' FLY = ignores the river. ONLYTOWERS = walks past enemy units (Giant).
+EXPORT FUNC CARDS()
+    DIM cs AS MAP = {}
+    cs{"KNIGHT"} = { "COST": 3, "HP": 660, "DMG": 75, "HITSPEED": 1.1, "REACH": 1.2, "AGGRO": 5.5, "SPD": 1.8, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
+    cs{"ARCHER"} = { "COST": 3, "HP": 250, "DMG": 40, "HITSPEED": 0.9, "REACH": 5.0, "AGGRO": 6.5, "SPD": 1.8, "N": 2, "FLY": 0, "HITS": "A", "ONLYTOWERS": 0 }
+    cs{"GIANT"} = { "COST": 5, "HP": 1800, "DMG": 120, "HITSPEED": 1.5, "REACH": 1.2, "AGGRO": 9.0, "SPD": 1.2, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 1 }
+    cs{"MINIONS"} = { "COST": 3, "HP": 90, "DMG": 40, "HITSPEED": 1.0, "REACH": 1.6, "AGGRO": 5.5, "SPD": 2.6, "N": 3, "FLY": 1, "HITS": "A", "ONLYTOWERS": 0 }
+    cs{"SKELETONS"} = { "COST": 2, "HP": 45, "DMG": 40, "HITSPEED": 1.0, "REACH": 1.0, "AGGRO": 5.5, "SPD": 2.2, "N": 4, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
+    cs{"FIREBALL"} = { "COST": 4, "SPELL": 1, "DMG": 325, "RADIUS": 2.5 }
+    RETURN cs
+ENDFUNC
+
+EXPORT FUNC DIST(ax, ay, bx, by)
+    RETURN SQR((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
+ENDFUNC
+
+EXPORT FUNC NEWGAME()
+    DIM st AS MAP = {}
+    st{"TICKNO"} = 0
+    st{"T_LEFT"} = 180.0
+    st{"PHASE"} = "play"
+    st{"WINNER"} = -1
+    st{"NEXTID"} = 1
+    st{"UNITS"} = []
+    st{"EVENTS"} = []
+    st{"ELIXIR"} = [5.0, 5.0]
+    st{"CROWNS"} = [0, 0]
+    st{"QUEUES"} = [["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"], ["GIANT", "SKELETONS", "ARCHER", "FIREBALL", "KNIGHT", "MINIONS"]]
+    DIM tws = []
+    tws = APPEND(tws, { "OWNER": 0, "KIND": "PRINCESS", "X": 3.5,  "Y": 23.5, "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
+    tws = APPEND(tws, { "OWNER": 0, "KIND": "PRINCESS", "X": 14.5, "Y": 23.5, "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
+    tws = APPEND(tws, { "OWNER": 0, "KIND": "KING",     "X": 9.0,  "Y": 27.5, "HP": 2600, "MAXHP": 2600, "CD": 0.0 })
+    tws = APPEND(tws, { "OWNER": 1, "KIND": "PRINCESS", "X": 3.5,  "Y": 6.5,  "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
+    tws = APPEND(tws, { "OWNER": 1, "KIND": "PRINCESS", "X": 14.5, "Y": 6.5,  "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
+    tws = APPEND(tws, { "OWNER": 1, "KIND": "KING",     "X": 9.0,  "Y": 2.5,  "HP": 2600, "MAXHP": 2600, "CD": 0.0 })
+    st{"TOWERS"} = tws
+    RETURN st
+ENDFUNC
+
+' Play a card for player pid at tile (x, y).
+' Returns "" on success, else a reason string.
+EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
+    IF st{"PHASE"} <> "play" THEN RETURN "game over"
+    DIM cs = CARDS()
+    IF NOT MAP.EXISTS(cs, kind$) THEN RETURN "unknown card"
+    DIM q = st{"QUEUES"}[pid]
+    DIM slot = -1
+    DIM i
+    FOR i = 0 TO 3
+        IF q[i] = kind$ THEN
+            slot = i
+            EXITFOR
+        ENDIF
+    NEXT i
+    IF slot < 0 THEN RETURN "not in hand"
+    DIM c = cs{kind$}
+    IF st{"ELIXIR"}[pid] < c{"COST"} THEN RETURN "not enough elixir"
+
+    DIM is_spell = MAP.EXISTS(c, "SPELL")
+    IF x < 0.5 THEN x = 0.5
+    IF x > 17.5 THEN x = 17.5
+    IF NOT is_spell THEN
+        IF pid = 0 ANDALSO y < 16 THEN RETURN "own half only"
+        IF pid = 1 ANDALSO y > 13 THEN RETURN "own half only"
+    ENDIF
+
+    st{"ELIXIR"}[pid] = st{"ELIXIR"}[pid] - c{"COST"}
+
+    DIM nq = []
+    FOR i = 0 TO LEN(q) - 1
+        IF i <> slot THEN nq = APPEND(nq, q[i])
+    NEXT i
+    nq = APPEND(nq, kind$)
+    st{"QUEUES"}[pid] = nq
+
+    IF is_spell THEN
+        FOR EACH u IN st{"UNITS"}
+            IF u{"OWNER"} <> pid ANDALSO DIST(x, y, u{"X"}, u{"Y"}) <= c{"RADIUS"} THEN
+                u{"HP"} = u{"HP"} - c{"DMG"}
+            ENDIF
+        NEXT u
+        FOR EACH tw IN st{"TOWERS"}
+            IF tw{"OWNER"} <> pid ANDALSO tw{"HP"} > 0 ANDALSO DIST(x, y, tw{"X"}, tw{"Y"}) <= c{"RADIUS"} THEN
+                tw{"HP"} = tw{"HP"} - c{"DMG"}
+            ENDIF
+        NEXT tw
+        st{"EVENTS"} = APPEND(st{"EVENTS"}, { "T": "BOOM", "X": x, "Y": y, "TICKNO": st{"TICKNO"} })
+    ELSE
+        DIM offs = [[0.0, 0.0], [-0.8, 0.0], [0.8, 0.0], [0.0, -0.8], [0.0, 0.8]]
+        FOR i = 0 TO c{"N"} - 1
+            DIM u2 AS MAP = {}
+            u2{"ID"} = st{"NEXTID"}
+            u2{"OWNER"} = pid
+            u2{"KIND"} = kind$
+            u2{"X"} = x + offs[i][0]
+            u2{"Y"} = y + offs[i][1]
+            u2{"HP"} = c{"HP"}
+            u2{"MAXHP"} = c{"HP"}
+            u2{"CD"} = 0.3
+            st{"NEXTID"} = st{"NEXTID"} + 1
+            st{"UNITS"} = APPEND(st{"UNITS"}, u2)
+        NEXT i
+    ENDIF
+
+    ' keep only recent events for client FX
+    DIM ev = st{"EVENTS"}
+    IF LEN(ev) > 10 THEN
+        DIM ne = []
+        FOR i = LEN(ev) - 10 TO LEN(ev) - 1
+            ne = APPEND(ne, ev[i])
+        NEXT i
+        st{"EVENTS"} = ne
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' Best target for unit u: enemy unit within aggro range, else nearest enemy
+' tower. Giants scan towers only; ground-hitters skip flying units.
+EXPORT FUNC FINDTARGET(st, u, c, cs)
+    DIM best_d = 99999.0
+    DIM bt AS MAP = { "OK": 0 }
+    DIM i
+    DIM units = st{"UNITS"}
+    IF c{"ONLYTOWERS"} = 0 THEN
+        FOR i = 0 TO LEN(units) - 1
+            DIM v = units[i]
+            IF v{"OWNER"} = u{"OWNER"} ORELSE v{"HP"} <= 0 THEN CONTINUEFOR
+            IF c{"HITS"} = "G" ANDALSO cs{v{"KIND"}}{"FLY"} = 1 THEN CONTINUEFOR
+            DIM d = DIST(u{"X"}, u{"Y"}, v{"X"}, v{"Y"})
+            IF d <= c{"AGGRO"} ANDALSO d < best_d THEN
+                best_d = d
+                bt = { "OK": 1, "T": "U", "I": i, "X": v{"X"}, "Y": v{"Y"}, "D": d }
+            ENDIF
+        NEXT i
+    ENDIF
+    IF bt{"OK"} = 0 THEN
+        DIM tws = st{"TOWERS"}
+        FOR i = 0 TO LEN(tws) - 1
+            DIM tw = tws[i]
+            IF tw{"OWNER"} = u{"OWNER"} ORELSE tw{"HP"} <= 0 THEN CONTINUEFOR
+            DIM d2 = DIST(u{"X"}, u{"Y"}, tw{"X"}, tw{"Y"})
+            IF d2 < best_d THEN
+                best_d = d2
+                bt = { "OK": 1, "T": "W", "I": i, "X": tw{"X"}, "Y": tw{"Y"}, "D": d2 }
+            ENDIF
+        NEXT i
+    ENDIF
+    RETURN bt
+ENDFUNC
+
+' One 0.1 s simulation step: elixir, unit AI, tower fire, deaths, win check.
+EXPORT FUNC SIMSTEP(st)
+    IF st{"PHASE"} <> "play" THEN RETURN st
+    DIM dt = 0.1
+    st{"TICKNO"} = st{"TICKNO"} + 1
+    st{"T_LEFT"} = st{"T_LEFT"} - dt
+
+    DIM p
+    FOR p = 0 TO 1
+        DIM ex = st{"ELIXIR"}[p] + dt / 2.8
+        IF ex > 10 THEN ex = 10
+        st{"ELIXIR"}[p] = ex
+    NEXT p
+
+    DIM cs = CARDS()
+    DIM bd = BOARD()
+
+    FOR EACH u IN st{"UNITS"}
+        IF u{"HP"} <= 0 THEN CONTINUEFOR
+        DIM c = cs{u{"KIND"}}
+        DIM tgt = FINDTARGET(st, u, c, cs)
+        IF tgt{"OK"} = 0 THEN CONTINUEFOR
+        u{"CD"} = u{"CD"} - dt
+        IF tgt{"D"} <= c{"REACH"} THEN
+            IF u{"CD"} <= 0 THEN
+                u{"CD"} = c{"HITSPEED"}
+                IF tgt{"T"} = "U" THEN
+                    DIM v2 = st{"UNITS"}[tgt{"I"}]
+                    v2{"HP"} = v2{"HP"} - c{"DMG"}
+                ELSE
+                    DIM tw2 = st{"TOWERS"}[tgt{"I"}]
+                    tw2{"HP"} = tw2{"HP"} - c{"DMG"}
+                ENDIF
+            ENDIF
+        ELSE
+            DIM wx = tgt{"X"}
+            DIM wy = tgt{"Y"}
+            IF c{"FLY"} = 0 THEN
+                DIM ry = bd{"RIVER_Y"}
+                IF (u{"Y"} < ry ANDALSO tgt{"Y"} > ry) ORELSE (u{"Y"} > ry ANDALSO tgt{"Y"} < ry) THEN
+                    DIM b0 = bd{"BRIDGES"}[0]
+                    DIM b1 = bd{"BRIDGES"}[1]
+                    DIM bx = b0
+                    IF ABS(u{"X"} - b1) < ABS(u{"X"} - b0) THEN bx = b1
+                    wx = bx
+                    wy = ry
+                ENDIF
+            ENDIF
+            DIM ddx = wx - u{"X"}
+            DIM ddy = wy - u{"Y"}
+            DIM dd = SQR(ddx * ddx + ddy * ddy)
+            IF dd > 0.001 THEN
+                u{"X"} = u{"X"} + ddx / dd * c{"SPD"} * dt
+                u{"Y"} = u{"Y"} + ddy / dd * c{"SPD"} * dt
+            ENDIF
+        ENDIF
+    NEXT u
+
+    FOR EACH tw IN st{"TOWERS"}
+        IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        tw{"CD"} = tw{"CD"} - dt
+        DIM best_i = -1
+        DIM best_d = 7.0
+        DIM units2 = st{"UNITS"}
+        DIM ii
+        FOR ii = 0 TO LEN(units2) - 1
+            DIM uu = units2[ii]
+            IF uu{"OWNER"} = tw{"OWNER"} ORELSE uu{"HP"} <= 0 THEN CONTINUEFOR
+            DIM d3 = DIST(tw{"X"}, tw{"Y"}, uu{"X"}, uu{"Y"})
+            IF d3 < best_d THEN
+                best_d = d3
+                best_i = ii
+            ENDIF
+        NEXT ii
+        IF best_i >= 0 ANDALSO tw{"CD"} <= 0 THEN
+            tw{"CD"} = 0.8
+            DIM uu2 = units2[best_i]
+            uu2{"HP"} = uu2{"HP"} - 90
+        ENDIF
+    NEXT tw
+
+    DIM alive = []
+    FOR EACH u3 IN st{"UNITS"}
+        IF u3{"HP"} > 0 THEN alive = APPEND(alive, u3)
+    NEXT u3
+    st{"UNITS"} = alive
+
+    DIM cr = [0, 0]
+    FOR EACH tw3 IN st{"TOWERS"}
+        IF tw3{"HP"} <= 0 THEN
+            DIM scorer = 1 - tw3{"OWNER"}
+            IF tw3{"KIND"} = "KING" THEN
+                st{"PHASE"} = "over"
+                st{"WINNER"} = scorer
+                cr[scorer] = 3
+            ELSE
+                cr[scorer] = cr[scorer] + 1
+            ENDIF
+        ENDIF
+    NEXT tw3
+    st{"CROWNS"} = cr
+
+    IF st{"PHASE"} = "play" THEN
+        IF st{"T_LEFT"} <= -60 THEN
+            st{"PHASE"} = "over"
+            IF cr[0] > cr[1] THEN
+                st{"WINNER"} = 0
+            ELSEIF cr[1] > cr[0] THEN
+                st{"WINNER"} = 1
+            ELSE
+                st{"WINNER"} = 2
+            ENDIF
+        ELSEIF st{"T_LEFT"} <= 0 ANDALSO cr[0] <> cr[1] THEN
+            st{"PHASE"} = "over"
+            IF cr[0] > cr[1] THEN
+                st{"WINNER"} = 0
+            ELSE
+                st{"WINNER"} = 1
+            ENDIF
+        ENDIF
+    ENDIF
+    RETURN st
+ENDFUNC
