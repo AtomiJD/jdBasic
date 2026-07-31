@@ -96,9 +96,10 @@ HTTP.SERVER.ON_POST "/reset", "HRESET"
 DIM srv_port = 8081
 IF HTTP.SERVER.START(srv_port, "0.0.0.0") THEN
     PRINT "BASIC Royale server on 0.0.0.0:"; srv_port
-    DO
-        SLEEP 200
-    LOOP
+    ' Park the main thread inside the native - a DO/SLEEP loop here would
+    ' execute bytecode on the same VM the handler threads call into, and
+    ' the rare overlap crashes the server mid-match.
+    HTTP.SERVER.WAIT
 ELSE
     PRINT "cannot bind port "; srv_port
 ENDIF
