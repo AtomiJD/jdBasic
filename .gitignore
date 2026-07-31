@@ -294,3 +294,4 @@ tests/regression/test_out*.bin
 tests/regression/test_out*.csv
 tests/regression/test_out*.txt
 tests/gate/pipe
+jdb/_privat/
