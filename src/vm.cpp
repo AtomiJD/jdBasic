@@ -248,6 +248,7 @@ int16_t VM::read_i16() {
 }
 
 void VM::reject_builtin_collision(const FuncProto& f) const {
+    if (f.is_exported) return; // module exports are namespaced on IMPORT
     if (natives.find(f.name) == natives.end()) return;
     throw jdError(ErrCode::SYNTAX_ERROR,
         std::string(f.is_sub ? "SUB " : "FUNC ") + f.name +

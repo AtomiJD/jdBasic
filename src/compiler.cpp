@@ -1190,8 +1190,10 @@ void Compiler::compile_return(const Stmt& stmt) {
 
 void Compiler::compile_sub(const Stmt& stmt) {
     // Builtins always win at call dispatch, so a SUB with a builtin's name
-    // could never be reached - reject the definition instead.
-    if (jdb_native_slot(stmt.func_name) >= 0)
+    // could never be reached - reject the definition instead. Module exports
+    // are exempt: IMPORT prefixes them with the module name.
+    bool exported = (stmt.label == "__EXPORT__");
+    if (!exported && jdb_native_slot(stmt.func_name) >= 0)
         throw std::runtime_error("Line " + std::to_string(stmt.line) +
             ": SUB " + stmt.func_name + " collides with the builtin function " +
             stmt.func_name + " - choose another name");
@@ -1199,6 +1201,7 @@ void Compiler::compile_sub(const Stmt& stmt) {
     proto.name = stmt.func_name;
     proto.arity = static_cast<int>(stmt.params.size());
     proto.is_sub = true;
+    proto.is_exported = exported;
     for (auto& p : stmt.params) proto.param_names.push_back(p.name);
 
     // Push a new scope for the function body
@@ -1228,8 +1231,10 @@ void Compiler::compile_sub(const Stmt& stmt) {
 
 void Compiler::compile_function(const Stmt& stmt) {
     // Builtins always win at call dispatch, so a FUNC with a builtin's name
-    // could never be reached - reject the definition instead.
-    if (jdb_native_slot(stmt.func_name) >= 0)
+    // could never be reached - reject the definition instead. Module exports
+    // are exempt: IMPORT prefixes them with the module name.
+    bool exported = (stmt.label == "__EXPORT__");
+    if (!exported && jdb_native_slot(stmt.func_name) >= 0)
         throw std::runtime_error("Line " + std::to_string(stmt.line) +
             ": FUNC " + stmt.func_name + " collides with the builtin function " +
             stmt.func_name + " - choose another name");
@@ -1237,6 +1242,7 @@ void Compiler::compile_function(const Stmt& stmt) {
     proto.name = stmt.func_name;
     proto.arity = static_cast<int>(stmt.params.size());
     proto.is_sub = false;
+    proto.is_exported = exported;
     proto.is_async = stmt.is_async_func;
     for (auto& p : stmt.params) proto.param_names.push_back(p.name);
 

@@ -406,6 +406,7 @@ struct FuncProto {
     int arity = 0;
     std::vector<std::string> param_names;
     Chunk chunk;
-    bool is_sub = false;   // SUB vs FUNCTION
-    bool is_async = false; // ASYNC FUNC
+    bool is_sub = false;      // SUB vs FUNCTION
+    bool is_async = false;    // ASYNC FUNC
+    bool is_exported = false; // EXPORT FUNC/SUB - namespaced on IMPORT
 };
