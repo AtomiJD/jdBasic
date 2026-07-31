@@ -1,0 +1,8 @@
+{
+  "KNIGHT":    { "COST": 3, "HP": 660,  "DMG": 75,  "HITSPEED": 1.1, "REACH": 1.2, "AGGRO": 5.5, "SPD": 1.8, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, "COLOR": [230, 180, 60] },
+  "ARCHER":    { "COST": 3, "HP": 250,  "DMG": 40,  "HITSPEED": 0.9, "REACH": 5.0, "AGGRO": 6.5, "SPD": 1.8, "N": 2, "FLY": 0, "HITS": "A", "ONLYTOWERS": 0, "COLOR": [120, 220, 120] },
+  "GIANT":     { "COST": 5, "HP": 1800, "DMG": 120, "HITSPEED": 1.5, "REACH": 1.2, "AGGRO": 9.0, "SPD": 1.2, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 1, "COLOR": [200, 120, 40] },
+  "MINIONS":   { "COST": 3, "HP": 90,   "DMG": 40,  "HITSPEED": 1.0, "REACH": 1.6, "AGGRO": 5.5, "SPD": 2.6, "N": 3, "FLY": 1, "HITS": "A", "ONLYTOWERS": 0, "COLOR": [110, 170, 255] },
+  "SKELETONS": { "COST": 2, "HP": 45,   "DMG": 40,  "HITSPEED": 1.0, "REACH": 1.0, "AGGRO": 5.5, "SPD": 2.2, "N": 4, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, "COLOR": [220, 220, 220] },
+  "FIREBALL":  { "COST": 4, "SPELL": 1, "DMG": 325, "RADIUS": 2.5, "COLOR": [255, 90, 30] }
+}

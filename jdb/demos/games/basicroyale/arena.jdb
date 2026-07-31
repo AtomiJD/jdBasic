@@ -10,9 +10,18 @@ EXPORT FUNC BOARD()
     RETURN { "COLS": 18, "ROWS": 30, "RIVER_Y": 14.5, "BRIDGES": [3.5, 14.5] }
 ENDFUNC
 
+' The host can load card stats from cards.json and install them here -
+' CARDS() then serves that set to the whole sim.
+DIM loaded_cards = 0
+EXPORT SUB SETCARDS(m)
+    loaded_cards = m
+ENDSUB
+
 ' Card stats. HITS: "G" = ground only, "A" = ground and air.
 ' FLY = ignores the river. ONLYTOWERS = walks past enemy units (Giant).
+' Built-in set is the fallback when no cards.json was installed.
 EXPORT FUNC CARDS()
+    IF TYPEOF(loaded_cards) = "OBJECT" THEN RETURN loaded_cards
     DIM cs AS MAP = {}
     cs{"KNIGHT"} = { "COST": 3, "HP": 660, "DMG": 75, "HITSPEED": 1.1, "REACH": 1.2, "AGGRO": 5.5, "SPD": 1.8, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
     cs{"ARCHER"} = { "COST": 3, "HP": 250, "DMG": 40, "HITSPEED": 0.9, "REACH": 5.0, "AGGRO": 6.5, "SPD": 1.8, "N": 2, "FLY": 0, "HITS": "A", "ONLYTOWERS": 0 }
@@ -61,12 +70,13 @@ EXPORT FUNC NEWGAME()
     st{"CROWNS"} = [0, 0]
     st{"QUEUES"} = [["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"], ["GIANT", "SKELETONS", "ARCHER", "FIREBALL", "KNIGHT", "MINIONS"]]
     DIM tws = []
-    tws = APPEND(tws, { "OWNER": 0, "KIND": "PRINCESS", "X": 3.5,  "Y": 23.5, "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
-    tws = APPEND(tws, { "OWNER": 0, "KIND": "PRINCESS", "X": 14.5, "Y": 23.5, "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
-    tws = APPEND(tws, { "OWNER": 0, "KIND": "KING",     "X": 9.0,  "Y": 27.5, "HP": 2600, "MAXHP": 2600, "CD": 0.0 })
-    tws = APPEND(tws, { "OWNER": 1, "KIND": "PRINCESS", "X": 3.5,  "Y": 6.5,  "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
-    tws = APPEND(tws, { "OWNER": 1, "KIND": "PRINCESS", "X": 14.5, "Y": 6.5,  "HP": 1400, "MAXHP": 1400, "CD": 0.0 })
-    tws = APPEND(tws, { "OWNER": 1, "KIND": "KING",     "X": 9.0,  "Y": 2.5,  "HP": 2600, "MAXHP": 2600, "CD": 0.0 })
+    ' kings sleep (AWAKE 0) until hit or until one of their princesses falls
+    tws = APPEND(tws, { "OWNER": 0, "KIND": "PRINCESS", "X": 3.5,  "Y": 23.5, "HP": 1400, "MAXHP": 1400, "CD": 0.0, "AWAKE": 1 })
+    tws = APPEND(tws, { "OWNER": 0, "KIND": "PRINCESS", "X": 14.5, "Y": 23.5, "HP": 1400, "MAXHP": 1400, "CD": 0.0, "AWAKE": 1 })
+    tws = APPEND(tws, { "OWNER": 0, "KIND": "KING",     "X": 9.0,  "Y": 27.5, "HP": 2600, "MAXHP": 2600, "CD": 0.0, "AWAKE": 0 })
+    tws = APPEND(tws, { "OWNER": 1, "KIND": "PRINCESS", "X": 3.5,  "Y": 6.5,  "HP": 1400, "MAXHP": 1400, "CD": 0.0, "AWAKE": 1 })
+    tws = APPEND(tws, { "OWNER": 1, "KIND": "PRINCESS", "X": 14.5, "Y": 6.5,  "HP": 1400, "MAXHP": 1400, "CD": 0.0, "AWAKE": 1 })
+    tws = APPEND(tws, { "OWNER": 1, "KIND": "KING",     "X": 9.0,  "Y": 2.5,  "HP": 2600, "MAXHP": 2600, "CD": 0.0, "AWAKE": 0 })
     st{"TOWERS"} = tws
     RETURN st
 ENDFUNC
@@ -198,9 +208,10 @@ EXPORT FUNC SIMSTEP(st)
                 FOR EACH tw0 IN st{"TOWERS"}
                     IF tw0{"OWNER"} <> sp{"OWNER"} ANDALSO tw0{"HP"} > 0 ANDALSO DIST(sp{"X"}, sp{"Y"}, tw0{"X"}, tw0{"Y"}) <= sp{"RADIUS"} THEN
                         tw0{"HP"} = tw0{"HP"} - sp{"DMG"}
+                        IF tw0{"KIND"} = "KING" THEN tw0{"AWAKE"} = 1
                     ENDIF
                 NEXT tw0
-                ADDEVENT(st, { "T": "BOOM", "X": sp{"X"}, "Y": sp{"Y"}, "RADIUS": sp{"RADIUS"} })
+                ADDEVENT(st, { "T": "BOOM", "X": sp{"X"}, "Y": sp{"Y"}, "RADIUS": sp{"RADIUS"}, "D": sp{"DMG"} })
             ELSE
                 keep = APPEND(keep, sp)
             ENDIF
@@ -223,11 +234,20 @@ EXPORT FUNC SIMSTEP(st)
                 ELSE
                     DIM tw2 = st{"TOWERS"}[tgt{"I"}]
                     tw2{"HP"} = tw2{"HP"} - c{"DMG"}
+                    IF tw2{"KIND"} = "KING" THEN tw2{"AWAKE"} = 1
+                ENDIF
+                DIM adx = tgt{"X"} - u{"X"}
+                DIM ady = tgt{"Y"} - u{"Y"}
+                DIM ad = SQR(adx * adx + ady * ady)
+                IF ad > 0.001 THEN
+                    u{"ADX"} = adx / ad
+                    u{"ADY"} = ady / ad
+                    u{"AT"} = st{"TICKNO"}
                 ENDIF
                 IF c{"REACH"} > 2 THEN
-                    ADDEVENT(st, { "T": "SHOT", "FX": u{"X"}, "FY": u{"Y"}, "X": tgt{"X"}, "Y": tgt{"Y"} })
+                    ADDEVENT(st, { "T": "SHOT", "FX": u{"X"}, "FY": u{"Y"}, "X": tgt{"X"}, "Y": tgt{"Y"}, "D": c{"DMG"} })
                 ELSE
-                    ADDEVENT(st, { "T": "HIT", "X": tgt{"X"}, "Y": tgt{"Y"} })
+                    ADDEVENT(st, { "T": "HIT", "X": tgt{"X"}, "Y": tgt{"Y"}, "D": c{"DMG"} })
                 ENDIF
             ENDIF
         ELSE
@@ -255,7 +275,7 @@ EXPORT FUNC SIMSTEP(st)
     NEXT u
 
     FOR EACH tw IN st{"TOWERS"}
-        IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        IF tw{"HP"} <= 0 ORELSE tw{"AWAKE"} = 0 THEN CONTINUEFOR
         tw{"CD"} = tw{"CD"} - dt
         DIM best_i = -1
         DIM best_d = 7.0
@@ -274,7 +294,7 @@ EXPORT FUNC SIMSTEP(st)
             tw{"CD"} = 0.8
             DIM uu2 = units2[best_i]
             uu2{"HP"} = uu2{"HP"} - 90
-            ADDEVENT(st, { "T": "SHOT", "FX": tw{"X"}, "FY": tw{"Y"}, "X": uu2{"X"}, "Y": uu2{"Y"} })
+            ADDEVENT(st, { "T": "SHOT", "FX": tw{"X"}, "FY": tw{"Y"}, "X": uu2{"X"}, "Y": uu2{"Y"}, "D": 90 })
         ENDIF
     NEXT tw
 
@@ -294,6 +314,11 @@ EXPORT FUNC SIMSTEP(st)
             IF NOT MAP.EXISTS(tw3, "FALLEN") THEN
                 tw3{"FALLEN"} = 1
                 ADDEVENT(st, { "T": "FALL", "X": tw3{"X"}, "Y": tw3{"Y"} })
+                IF tw3{"KIND"} = "PRINCESS" THEN
+                    FOR EACH tw4 IN st{"TOWERS"}
+                        IF tw4{"OWNER"} = tw3{"OWNER"} ANDALSO tw4{"KIND"} = "KING" THEN tw4{"AWAKE"} = 1
+                    NEXT tw4
+                ENDIF
             ENDIF
             DIM scorer = 1 - tw3{"OWNER"}
             IF tw3{"KIND"} = "KING" THEN

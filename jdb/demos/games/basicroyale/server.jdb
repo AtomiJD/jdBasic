@@ -6,6 +6,17 @@
 ' route for) and every response carries Access-Control-Allow-Origin: *.
 IMPORT ARENA
 
+' cards.json is the single source of truth for card stats and colors -
+' the sim uses it via ARENA.SETCARDS, clients fetch it as GET /cards.
+DIM cards_json$ = ""
+TRY
+    cards_json$ = TXTREADER$("cards.json")
+    ARENA.SETCARDS(JSON.PARSE$(cards_json$))
+    PRINT "cards.json loaded"
+CATCH
+    PRINT "cards.json missing - built-in card set"
+ENDTRY
+
 DIM st = ARENA.NEWGAME()
 DIM players = []
 DIM last_ms = TICK()
@@ -97,8 +108,20 @@ FUNC HRESET(req)
     RETURN JJ({ "OK": 1, "MSG": "fresh match, 0 players" })
 ENDFUNC
 
+' New match, same two players - the in-game rematch button.
+FUNC HREMATCH(req)
+    st = ARENA.NEWGAME()
+    last_ms = TICK()
+    PRINT "rematch"
+    RETURN JJ({ "OK": 1 })
+ENDFUNC
+
 FUNC HROOT(req)
-    RETURN "BASIC Royale match server. POST /join, GET /state?tok=, POST /play, POST /reset."
+    RETURN "BASIC Royale match server. POST /join, GET /state?tok=, POST /play, POST /rematch, GET /reset, GET /cards."
+ENDFUNC
+
+FUNC HCARDS(req)
+    RETURN JJ({ "OK": 1, "CARDS": ARENA.CARDS() })
 ENDFUNC
 
 HTTP.SERVER.ON_GET "/", "HROOT"
@@ -108,6 +131,8 @@ HTTP.SERVER.ON_POST "/play", "HPLAY"
 HTTP.SERVER.ON_POST "/reset", "HRESET"
 ' browser-friendly reset - just open the URL
 HTTP.SERVER.ON_GET "/reset", "HRESET"
+HTTP.SERVER.ON_POST "/rematch", "HREMATCH"
+HTTP.SERVER.ON_GET "/cards", "HCARDS"
 
 DIM srv_port = 8081
 IF HTTP.SERVER.START(srv_port, "0.0.0.0") THEN

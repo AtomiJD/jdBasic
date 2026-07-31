@@ -27,6 +27,12 @@ SUB OnTap(info)
 ENDSUB
 ON "MOUSEDOWN" CALL OnTap
 
+' cards.json overrides the built-in card set when present
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+
 DIM st = ARENA.NEWGAME()
 DIM cardinfo = ARENA.CARDS()
 DIM layout = ARENA.BOARD()
@@ -38,6 +44,10 @@ kindcolor{"GIANT"} = [200, 120, 40]
 kindcolor{"MINIONS"} = [110, 170, 255]
 kindcolor{"SKELETONS"} = [220, 220, 220]
 kindcolor{"FIREBALL"} = [255, 90, 30]
+DIM colorkeys = MAP.KEYS(cardinfo)
+FOR EACH ckey$ IN colorkeys
+    IF MAP.EXISTS(cardinfo{ckey$}, "COLOR") THEN kindcolor{ckey$} = cardinfo{ckey$}{"COLOR"}
+NEXT ckey$
 
 DIM sel = ["", ""]
 DIM lastmsg = ""
@@ -135,10 +145,20 @@ ENDSUB
 SUB DrawTowers(gs)
     FOR EACH tw IN gs{"TOWERS"}
         IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        DIM asleep = 0
+        IF tw{"KIND"} = "KING" ANDALSO tw{"AWAKE"} = 0 THEN asleep = 1
         IF tw{"OWNER"} = 0 THEN
-            DRAWCOLOR 70, 110, 230
+            IF asleep = 1 THEN
+                DRAWCOLOR 40, 60, 130
+            ELSE
+                DRAWCOLOR 70, 110, 230
+            ENDIF
         ELSE
-            DRAWCOLOR 230, 80, 80
+            IF asleep = 1 THEN
+                DRAWCOLOR 130, 45, 45
+            ELSE
+                DRAWCOLOR 230, 80, 80
+            ENDIF
         ENDIF
         DIM sz = TILE * 2
         IF tw{"KIND"} = "KING" THEN sz = INT(TILE * 2.4)
@@ -147,6 +167,10 @@ SUB DrawTowers(gs)
         RECT x0, y0, sz, sz, TRUE
         DRAWCOLOR 0, 0, 0
         RECT x0, y0, sz, sz, FALSE
+        IF asleep = 1 THEN
+            DRAWCOLOR 220, 220, 240
+            TEXT x0 + sz - 20, y0 + 4, "Zz"
+        ENDIF
         DrawBar(x0, y0 - 8, sz, tw{"HP"} / tw{"MAXHP"})
     NEXT tw
 ENDSUB
@@ -159,12 +183,20 @@ SUB DrawUnits(gs)
         ELSE
             DRAWCOLOR 230, 80, 80
         ENDIF
-        CIRCLE PX(u{"X"}), PY(u{"Y"}), 11, TRUE
+        DIM ux = PX(u{"X"})
+        DIM uy = PY(u{"Y"})
+        IF MAP.EXISTS(u, "AT") THEN
+            IF gs{"TICKNO"} - u{"AT"} <= 2 THEN
+                ux = ux + INT(u{"ADX"} * 5)
+                uy = uy + INT(u{"ADY"} * 5)
+            ENDIF
+        ENDIF
+        CIRCLE ux, uy, 11, TRUE
         DRAWCOLOR col[0], col[1], col[2]
-        CIRCLE PX(u{"X"}), PY(u{"Y"}), 8, TRUE
-        DrawBar(PX(u{"X"}) - 10, PY(u{"Y"}) - 18, 20, u{"HP"} / u{"MAXHP"})
+        CIRCLE ux, uy, 8, TRUE
+        DrawBar(ux - 10, uy - 18, 20, u{"HP"} / u{"MAXHP"})
         DRAWCOLOR 0, 0, 0
-        TEXT PX(u{"X"}) - 4, PY(u{"Y"}) - 6, MID$(u{"KIND"}, 0, 1)
+        TEXT ux - 4, uy - 6, MID$(u{"KIND"}, 0, 1)
     NEXT u
 ENDSUB
 
@@ -234,6 +266,11 @@ SUB DrawHud(gs)
         ELSE
             TEXT 150, 415, "PLAYER " + STR$(gs{"WINNER"}) + " WINS!"
         ENDIF
+        DRAWCOLOR 60, 180, 60
+        RECT 154, 490, 160, 46, TRUE
+        DRAWCOLOR 255, 255, 255
+        RECT 154, 490, 160, 46, FALSE
+        TEXT 190, 506, "NOCHMAL!"
     ENDIF
 ENDSUB
 
@@ -277,6 +314,10 @@ SUB DrawFX(fnow)
                 DIM y1 = PY(evt{"FY"}) + INT((ey - PY(evt{"FY"})) * p)
                 DRAWCOLOR 255, 255, 160
                 CIRCLE x1, y1, 3, TRUE
+                IF p > 0.7 THEN
+                    DRAWCOLOR 255, 255, 255
+                    TEXT ex + 8, ey - 14 - INT(p * 10), STR$(evt{"D"})
+                ENDIF
             ELSEIF t$ = "CAST" THEN
                 DIM x2 = PX(evt{"FX"}) + INT((ex - PX(evt{"FX"})) * p)
                 DIM y2 = PY(evt{"FY"}) + INT((ey - PY(evt{"FY"})) * p)
@@ -289,12 +330,16 @@ SUB DrawFX(fnow)
                 CIRCLE ex, ey, INT(6 + p * evt{"RADIUS"} * TILE), FALSE
                 DRAWCOLOR 255, 200, 60
                 CIRCLE ex, ey, INT(3 + p * evt{"RADIUS"} * TILE * 0.7), FALSE
+                DRAWCOLOR 255, 255, 255
+                TEXT ex - 12, ey - 24 - INT(p * 14), STR$(evt{"D"})
             ELSEIF t$ = "HIT" THEN
                 DIM s = 4 + INT(p * 6)
                 DRAWCOLOR 255, 240, 120
                 LINE ex - s, ey - s, ex + s, ey + s
                 LINE ex - s, ey + s, ex + s, ey - s
                 LINE ex - s, ey, ex + s, ey
+                DRAWCOLOR 255, 255, 255
+                TEXT ex + 8, ey - 14 - INT(p * 12), STR$(evt{"D"})
             ELSEIF t$ = "DIE" THEN
                 DRAWCOLOR 200, 200, 200
                 CIRCLE ex, ey, INT(4 + p * 14), FALSE
@@ -335,7 +380,15 @@ SUB DrawFrame(gs, fnow)
 ENDSUB
 
 SUB HandleClick(mx, my)
-    IF my < 60 THEN
+    IF st{"PHASE"} = "over" THEN
+        IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 490 ANDALSO my <= 536 THEN
+            st = ARENA.NEWGAME()
+            fxseen = {}
+            fxact = []
+            sel = ["", ""]
+            lastmsg = ""
+        ENDIF
+    ELSEIF my < 60 THEN
         DIM slot1 = INT(mx / 117)
         IF slot1 > 3 THEN slot1 = 3
         sel[1] = st{"QUEUES"}[1][slot1]

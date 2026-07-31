@@ -75,6 +75,22 @@ FUNC MINE(owner)
     RETURN IIF(owner = mypid, 1, 0)
 ENDFUNC
 
+' Costs and colors come from the server's cards.json; the hardcoded maps
+' above stay as fallback when the fetch fails.
+SUB LOADCARDS()
+    TRY
+        DIM r$ = HTTP.GET$(SRV$ + "/cards")
+        DIM m = JSON.PARSE$(r$)
+        DIM cs = m{"CARDS"}
+        DIM ks = MAP.KEYS(cs)
+        FOR EACH k$ IN ks
+            cardcost{k$} = cs{k$}{"COST"}
+            IF MAP.EXISTS(cs{k$}, "COLOR") THEN kindcolor{k$} = cs{k$}{"COLOR"}
+        NEXT k$
+    CATCH
+    ENDTRY
+ENDSUB
+
 SUB JOINMATCH()
     TRY
         DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "NAME": "Spieler" }), "text/plain")
@@ -91,6 +107,7 @@ SUB JOINMATCH()
     ENDTRY
 ENDSUB
 
+DIM prev_tick = -1
 SUB POLLSTATE()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/state?tok=" + tok$)
@@ -100,8 +117,24 @@ SUB POLLSTATE()
         have_state = 1
         DIM names = m{"NAMES"}
         IF LEN(names) = 2 THEN foename$ = names[1 - mypid]
+        ' a rematch restarts event ids - drop stale FX bookkeeping
+        IF world{"TICKNO"} < prev_tick THEN
+            fxseen = {}
+            fxact = []
+            sel$ = ""
+        ENDIF
+        prev_tick = world{"TICKNO"}
     CATCH
         msg$ = "poll failed"
+    ENDTRY
+ENDSUB
+
+SUB SENDREMATCH()
+    TRY
+        DIM r$ = HTTP.POST$(SRV$ + "/rematch", "{}", "text/plain")
+        msg$ = ""
+    CATCH
+        msg$ = "rematch failed"
     ENDTRY
 ENDSUB
 
@@ -222,6 +255,10 @@ SUB DrawFX(fnow)
                 DIM y1 = PY(WY(evt{"FY"})) + INT((ey - PY(WY(evt{"FY"}))) * p)
                 DRAWCOLOR 255, 255, 160
                 CIRCLE x1, y1, 3, TRUE
+                IF p > 0.7 THEN
+                    DRAWCOLOR 255, 255, 255
+                    TEXT ex + 8, ey - 14 - INT(p * 10), STR$(evt{"D"})
+                ENDIF
             ELSEIF t$ = "CAST" THEN
                 DIM x2 = PX(evt{"FX"}) + INT((ex - PX(evt{"FX"})) * p)
                 DIM y2 = PY(WY(evt{"FY"})) + INT((ey - PY(WY(evt{"FY"}))) * p)
@@ -234,12 +271,16 @@ SUB DrawFX(fnow)
                 CIRCLE ex, ey, INT(6 + p * evt{"RADIUS"} * TILE), FALSE
                 DRAWCOLOR 255, 200, 60
                 CIRCLE ex, ey, INT(3 + p * evt{"RADIUS"} * TILE * 0.7), FALSE
+                DRAWCOLOR 255, 255, 255
+                TEXT ex - 12, ey - 24 - INT(p * 14), STR$(evt{"D"})
             ELSEIF t$ = "HIT" THEN
                 DIM s = 4 + INT(p * 6)
                 DRAWCOLOR 255, 240, 120
                 LINE ex - s, ey - s, ex + s, ey + s
                 LINE ex - s, ey + s, ex + s, ey - s
                 LINE ex - s, ey, ex + s, ey
+                DRAWCOLOR 255, 255, 255
+                TEXT ex + 8, ey - 14 - INT(p * 12), STR$(evt{"D"})
             ELSEIF t$ = "DIE" THEN
                 DRAWCOLOR 200, 200, 200
                 CIRCLE ex, ey, INT(4 + p * 14), FALSE
@@ -281,10 +322,20 @@ ENDSUB
 SUB DrawTowers()
     FOR EACH tw IN world{"TOWERS"}
         IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        DIM asleep = 0
+        IF tw{"KIND"} = "KING" ANDALSO tw{"AWAKE"} = 0 THEN asleep = 1
         IF MINE(tw{"OWNER"}) = 1 THEN
-            DRAWCOLOR 70, 110, 230
+            IF asleep = 1 THEN
+                DRAWCOLOR 40, 60, 130
+            ELSE
+                DRAWCOLOR 70, 110, 230
+            ENDIF
         ELSE
-            DRAWCOLOR 230, 80, 80
+            IF asleep = 1 THEN
+                DRAWCOLOR 130, 45, 45
+            ELSE
+                DRAWCOLOR 230, 80, 80
+            ENDIF
         ENDIF
         DIM sz = TILE * 2
         IF tw{"KIND"} = "KING" THEN sz = INT(TILE * 2.4)
@@ -293,6 +344,10 @@ SUB DrawTowers()
         RECT x0, y0, sz, sz, TRUE
         DRAWCOLOR 0, 0, 0
         RECT x0, y0, sz, sz, FALSE
+        IF asleep = 1 THEN
+            DRAWCOLOR 220, 220, 240
+            TEXT x0 + sz - 20, y0 + 4, "Zz"
+        ENDIF
         DrawBar(x0, y0 - 8, sz, tw{"HP"} / tw{"MAXHP"})
     NEXT tw
 ENDSUB
@@ -307,6 +362,14 @@ SUB DrawUnits()
         ENDIF
         DIM ux = PX(u{"X"})
         DIM uy = PY(WY(u{"Y"}))
+        IF MAP.EXISTS(u, "AT") THEN
+            IF world{"TICKNO"} - u{"AT"} <= 2 THEN
+                DIM lgy = u{"ADY"}
+                IF mypid = 1 THEN lgy = -lgy
+                ux = ux + INT(u{"ADX"} * 5)
+                uy = uy + INT(lgy * 5)
+            ENDIF
+        ENDIF
         CIRCLE ux, uy, 11, TRUE
         DRAWCOLOR col[0], col[1], col[2]
         CIRCLE ux, uy, 8, TRUE
@@ -377,6 +440,11 @@ SUB DrawHud()
         ELSE
             TEXT 150, 415, foename$ + " GEWINNT!"
         ENDIF
+        DRAWCOLOR 60, 180, 60
+        RECT 154, 490, 160, 46, TRUE
+        DRAWCOLOR 255, 255, 255
+        RECT 154, 490, 160, 46, FALSE
+        TEXT 190, 506, "NOCHMAL!"
     ENDIF
 ENDSUB
 
@@ -410,6 +478,8 @@ ENDSUB
 SUB HandleClick(mx, my)
     IF have_state = 0 ORELSE mypid < 0 THEN
         msg$ = ""
+    ELSEIF world{"PHASE"} = "over" THEN
+        IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 490 ANDALSO my <= 536 THEN SENDREMATCH()
     ELSEIF my >= 840 THEN
         DIM slot = INT(mx / 117)
         IF slot > 3 THEN slot = 3
@@ -435,6 +505,7 @@ NEXT ai
 
 SCREEN SCR_W, SCR_H, "BASIC Royale"
 SNDINIT()
+LOADCARDS()
 JOINMATCH()
 
 IF shotmode = 1 THEN
