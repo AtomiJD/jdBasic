@@ -27,6 +27,25 @@ EXPORT FUNC DIST(ax, ay, bx, by)
     RETURN SQR((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
 ENDFUNC
 
+' Append a client-FX event (SHOT/HIT/BOOM/CAST/DIE/SPAWN/FALL) and prune
+' the log to the newest 40 - clients dedupe by EID.
+EXPORT FUNC ADDEVENT(st, ev)
+    ev{"EID"} = st{"NEXTEID"}
+    ev{"TICKNO"} = st{"TICKNO"}
+    st{"NEXTEID"} = st{"NEXTEID"} + 1
+    st{"EVENTS"} = APPEND(st{"EVENTS"}, ev)
+    DIM evs = st{"EVENTS"}
+    IF LEN(evs) > 40 THEN
+        DIM ne = []
+        DIM i
+        FOR i = LEN(evs) - 40 TO LEN(evs) - 1
+            ne = APPEND(ne, evs[i])
+        NEXT i
+        st{"EVENTS"} = ne
+    ENDIF
+    RETURN 0
+ENDFUNC
+
 EXPORT FUNC NEWGAME()
     DIM st AS MAP = {}
     st{"TICKNO"} = 0
@@ -34,8 +53,10 @@ EXPORT FUNC NEWGAME()
     st{"PHASE"} = "play"
     st{"WINNER"} = -1
     st{"NEXTID"} = 1
+    st{"NEXTEID"} = 1
     st{"UNITS"} = []
     st{"EVENTS"} = []
+    st{"SPELLS"} = []
     st{"ELIXIR"} = [5.0, 5.0]
     st{"CROWNS"} = [0, 0]
     st{"QUEUES"} = [["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"], ["GIANT", "SKELETONS", "ARCHER", "FIREBALL", "KNIGHT", "MINIONS"]]
@@ -87,17 +108,12 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
     st{"QUEUES"}[pid] = nq
 
     IF is_spell THEN
-        FOR EACH u IN st{"UNITS"}
-            IF u{"OWNER"} <> pid ANDALSO DIST(x, y, u{"X"}, u{"Y"}) <= c{"RADIUS"} THEN
-                u{"HP"} = u{"HP"} - c{"DMG"}
-            ENDIF
-        NEXT u
-        FOR EACH tw IN st{"TOWERS"}
-            IF tw{"OWNER"} <> pid ANDALSO tw{"HP"} > 0 ANDALSO DIST(x, y, tw{"X"}, tw{"Y"}) <= c{"RADIUS"} THEN
-                tw{"HP"} = tw{"HP"} - c{"DMG"}
-            ENDIF
-        NEXT tw
-        st{"EVENTS"} = APPEND(st{"EVENTS"}, { "T": "BOOM", "X": x, "Y": y, "TICKNO": st{"TICKNO"} })
+        ' the fireball launches from the caster's king tower and lands 5
+        ' ticks later - damage applies on impact in SIMSTEP
+        DIM ky = 27.5
+        IF pid = 1 THEN ky = 2.5
+        st{"SPELLS"} = APPEND(st{"SPELLS"}, { "OWNER": pid, "X": x, "Y": y, "DMG": c{"DMG"}, "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 })
+        ADDEVENT(st, { "T": "CAST", "FX": 9.0, "FY": ky, "X": x, "Y": y })
     ELSE
         DIM offs = [[0.0, 0.0], [-0.8, 0.0], [0.8, 0.0], [0.0, -0.8], [0.0, 0.8]]
         FOR i = 0 TO c{"N"} - 1
@@ -113,16 +129,7 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
             st{"NEXTID"} = st{"NEXTID"} + 1
             st{"UNITS"} = APPEND(st{"UNITS"}, u2)
         NEXT i
-    ENDIF
-
-    ' keep only recent events for client FX
-    DIM ev = st{"EVENTS"}
-    IF LEN(ev) > 10 THEN
-        DIM ne = []
-        FOR i = LEN(ev) - 10 TO LEN(ev) - 1
-            ne = APPEND(ne, ev[i])
-        NEXT i
-        st{"EVENTS"} = ne
+        ADDEVENT(st, { "T": "SPAWN", "X": x, "Y": y })
     ENDIF
     RETURN ""
 ENDFUNC
@@ -178,6 +185,29 @@ EXPORT FUNC SIMSTEP(st)
     DIM cs = CARDS()
     DIM bd = BOARD()
 
+    ' pending spells land
+    IF LEN(st{"SPELLS"}) > 0 THEN
+        DIM keep = []
+        FOR EACH sp IN st{"SPELLS"}
+            IF sp{"LAND"} <= st{"TICKNO"} THEN
+                FOR EACH u0 IN st{"UNITS"}
+                    IF u0{"OWNER"} <> sp{"OWNER"} ANDALSO DIST(sp{"X"}, sp{"Y"}, u0{"X"}, u0{"Y"}) <= sp{"RADIUS"} THEN
+                        u0{"HP"} = u0{"HP"} - sp{"DMG"}
+                    ENDIF
+                NEXT u0
+                FOR EACH tw0 IN st{"TOWERS"}
+                    IF tw0{"OWNER"} <> sp{"OWNER"} ANDALSO tw0{"HP"} > 0 ANDALSO DIST(sp{"X"}, sp{"Y"}, tw0{"X"}, tw0{"Y"}) <= sp{"RADIUS"} THEN
+                        tw0{"HP"} = tw0{"HP"} - sp{"DMG"}
+                    ENDIF
+                NEXT tw0
+                ADDEVENT(st, { "T": "BOOM", "X": sp{"X"}, "Y": sp{"Y"}, "RADIUS": sp{"RADIUS"} })
+            ELSE
+                keep = APPEND(keep, sp)
+            ENDIF
+        NEXT sp
+        st{"SPELLS"} = keep
+    ENDIF
+
     FOR EACH u IN st{"UNITS"}
         IF u{"HP"} <= 0 THEN CONTINUEFOR
         DIM c = cs{u{"KIND"}}
@@ -193,6 +223,11 @@ EXPORT FUNC SIMSTEP(st)
                 ELSE
                     DIM tw2 = st{"TOWERS"}[tgt{"I"}]
                     tw2{"HP"} = tw2{"HP"} - c{"DMG"}
+                ENDIF
+                IF c{"REACH"} > 2 THEN
+                    ADDEVENT(st, { "T": "SHOT", "FX": u{"X"}, "FY": u{"Y"}, "X": tgt{"X"}, "Y": tgt{"Y"} })
+                ELSE
+                    ADDEVENT(st, { "T": "HIT", "X": tgt{"X"}, "Y": tgt{"Y"} })
                 ENDIF
             ENDIF
         ELSE
@@ -239,18 +274,27 @@ EXPORT FUNC SIMSTEP(st)
             tw{"CD"} = 0.8
             DIM uu2 = units2[best_i]
             uu2{"HP"} = uu2{"HP"} - 90
+            ADDEVENT(st, { "T": "SHOT", "FX": tw{"X"}, "FY": tw{"Y"}, "X": uu2{"X"}, "Y": uu2{"Y"} })
         ENDIF
     NEXT tw
 
     DIM alive = []
     FOR EACH u3 IN st{"UNITS"}
-        IF u3{"HP"} > 0 THEN alive = APPEND(alive, u3)
+        IF u3{"HP"} > 0 THEN
+            alive = APPEND(alive, u3)
+        ELSE
+            ADDEVENT(st, { "T": "DIE", "X": u3{"X"}, "Y": u3{"Y"} })
+        ENDIF
     NEXT u3
     st{"UNITS"} = alive
 
     DIM cr = [0, 0]
     FOR EACH tw3 IN st{"TOWERS"}
         IF tw3{"HP"} <= 0 THEN
+            IF NOT MAP.EXISTS(tw3, "FALLEN") THEN
+                tw3{"FALLEN"} = 1
+                ADDEVENT(st, { "T": "FALL", "X": tw3{"X"}, "Y": tw3{"Y"} })
+            ENDIF
             DIM scorer = 1 - tw3{"OWNER"}
             IF tw3{"KIND"} = "KING" THEN
                 st{"PHASE"} = "over"

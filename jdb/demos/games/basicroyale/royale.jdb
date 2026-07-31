@@ -40,6 +40,9 @@ DIM waiting = 1
 DIM foename$ = ""
 DIM sel$ = ""
 DIM msg$ = ""
+DIM fxseen AS MAP = {}
+DIM fxact = []
+DIM frame = 0
 
 ' Player 1 sees the board mirrored so their own side is at the bottom.
 FUNC WY(y)
@@ -105,22 +108,99 @@ SUB SENDPLAY(kind$, wx, wyv)
     ENDTRY
 ENDSUB
 
-SUB DrawBar(x, y, w, frac, cr, cg, cb)
+' HP bar with a health gradient: green, then yellow, then red.
+SUB DrawBar(x, y, w, frac)
     DRAWCOLOR 20, 20, 20
     RECT x, y, w, 5, TRUE
     IF frac > 0 THEN
-        DRAWCOLOR cr, cg, cb
+        IF frac > 0.5 THEN
+            DRAWCOLOR 90, 240, 90
+        ELSEIF frac > 0.2 THEN
+            DRAWCOLOR 240, 210, 60
+        ELSE
+            DRAWCOLOR 240, 70, 50
+        ENDIF
         RECT x, y, INT(w * frac), 5, TRUE
     ENDIF
 ENDSUB
 
-SUB DrawBoard()
+' Collect unseen sim events into the local FX list (dedup by EID).
+SUB SYNCFX(fnow)
+    IF have_state = 1 THEN
+        FOR EACH evt IN world{"EVENTS"}
+            DIM k$ = STR$(evt{"EID"})
+            IF NOT MAP.EXISTS(fxseen, k$) THEN
+                fxseen{k$} = 1
+                fxact = APPEND(fxact, { "EV": evt, "T0": fnow })
+            ENDIF
+        NEXT evt
+    ENDIF
+ENDSUB
+
+SUB DrawFX(fnow)
+    DIM keep = []
+    FOR EACH fx IN fxact
+        DIM evt = fx{"EV"}
+        DIM t$ = evt{"T"}
+        DIM age = fnow - fx{"T0"}
+        DIM dur = 8
+        IF t$ = "BOOM" THEN dur = 14
+        IF t$ = "CAST" THEN dur = 15
+        IF t$ = "FALL" THEN dur = 22
+        IF t$ = "HIT" THEN dur = 6
+        IF t$ = "DIE" THEN dur = 10
+        IF age <= dur THEN
+            DIM p = age / (dur * 1.0)
+            DIM ex = PX(evt{"X"})
+            DIM ey = PY(WY(evt{"Y"}))
+            IF t$ = "SHOT" THEN
+                DIM x1 = PX(evt{"FX"}) + INT((ex - PX(evt{"FX"})) * p)
+                DIM y1 = PY(WY(evt{"FY"})) + INT((ey - PY(WY(evt{"FY"}))) * p)
+                DRAWCOLOR 255, 255, 160
+                CIRCLE x1, y1, 3, TRUE
+            ELSEIF t$ = "CAST" THEN
+                DIM x2 = PX(evt{"FX"}) + INT((ex - PX(evt{"FX"})) * p)
+                DIM y2 = PY(WY(evt{"FY"})) + INT((ey - PY(WY(evt{"FY"}))) * p)
+                DRAWCOLOR 255, 140, 30
+                CIRCLE x2, y2, 7, TRUE
+                DRAWCOLOR 255, 220, 90
+                CIRCLE x2, y2, 4, TRUE
+            ELSEIF t$ = "BOOM" THEN
+                DRAWCOLOR 255, 120, 30
+                CIRCLE ex, ey, INT(6 + p * evt{"RADIUS"} * TILE), FALSE
+                DRAWCOLOR 255, 200, 60
+                CIRCLE ex, ey, INT(3 + p * evt{"RADIUS"} * TILE * 0.7), FALSE
+            ELSEIF t$ = "HIT" THEN
+                DIM s = 4 + INT(p * 6)
+                DRAWCOLOR 255, 240, 120
+                LINE ex - s, ey - s, ex + s, ey + s
+                LINE ex - s, ey + s, ex + s, ey - s
+                LINE ex - s, ey, ex + s, ey
+            ELSEIF t$ = "DIE" THEN
+                DRAWCOLOR 200, 200, 200
+                CIRCLE ex, ey, INT(4 + p * 14), FALSE
+            ELSEIF t$ = "SPAWN" THEN
+                DRAWCOLOR 255, 255, 255
+                CIRCLE ex, ey, INT(16 - p * 12), FALSE
+            ELSEIF t$ = "FALL" THEN
+                DRAWCOLOR 255, 160, 40
+                CIRCLE ex, ey, INT(8 + p * 40), FALSE
+                DRAWCOLOR 120, 120, 120
+                CIRCLE ex, ey, INT(4 + p * 26), FALSE
+            ENDIF
+            keep = APPEND(keep, fx)
+        ENDIF
+    NEXT fx
+    fxact = keep
+ENDSUB
+
+SUB DrawBoard(fnow)
     DIM r
     DIM c
     FOR r = 0 TO 29
         FOR c = 0 TO 17
             IF r = 14 ORELSE r = 15 THEN
-                DRAWCOLOR 40, 90, 170
+                DRAWCOLOR 40, 90 + INT(20 * SIN(fnow * 0.15 + c * 0.7)), 170
             ELSEIF (r + c) MOD 2 = 0 THEN
                 DRAWCOLOR 60, 130, 70
             ELSE
@@ -149,7 +229,7 @@ SUB DrawTowers()
         RECT x0, y0, sz, sz, TRUE
         DRAWCOLOR 0, 0, 0
         RECT x0, y0, sz, sz, FALSE
-        DrawBar(x0, y0 - 8, sz, tw{"HP"} / tw{"MAXHP"}, 90, 240, 90)
+        DrawBar(x0, y0 - 8, sz, tw{"HP"} / tw{"MAXHP"})
     NEXT tw
 ENDSUB
 
@@ -166,7 +246,7 @@ SUB DrawUnits()
         CIRCLE ux, uy, 11, TRUE
         DRAWCOLOR col[0], col[1], col[2]
         CIRCLE ux, uy, 8, TRUE
-        DrawBar(ux - 10, uy - 18, 20, u{"HP"} / u{"MAXHP"}, 90, 240, 90)
+        DrawBar(ux - 10, uy - 18, 20, u{"HP"} / u{"MAXHP"})
         DRAWCOLOR 0, 0, 0
         TEXT ux - 4, uy - 6, MID$(u{"KIND"}, 0, 1)
     NEXT u
@@ -179,7 +259,11 @@ SUB DrawHand()
         DIM kind$ = q[i]
         DIM col = kindcolor{kind$}
         DIM x0 = i * 117
-        DRAWCOLOR col[0], col[1], col[2]
+        IF world{"ELIXIR"}[mypid] < cardcost{kind$} THEN
+            DRAWCOLOR INT(col[0] * 0.35), INT(col[1] * 0.35), INT(col[2] * 0.35)
+        ELSE
+            DRAWCOLOR col[0], col[1], col[2]
+        ENDIF
         RECT x0 + 3, 843, 111, 54, TRUE
         IF sel$ = kind$ THEN
             DRAWCOLOR 255, 255, 0
@@ -232,7 +316,7 @@ SUB DrawHud()
     ENDIF
 ENDSUB
 
-SUB DrawFrame()
+SUB DrawFrame(fnow)
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
     IF have_state = 0 ORELSE mypid < 0 THEN
@@ -240,9 +324,14 @@ SUB DrawFrame()
         TEXT 120, 430, "BASIC ROYALE"
         TEXT 120, 460, "verbinde... " + msg$
     ELSE
-        DrawBoard()
+        DrawBoard(fnow)
+        IF sel$ <> "" THEN
+            DRAWCOLOR 255, 255, 0
+            RECT 0, PY(16), SCR_W, TILE * 14, FALSE
+        ENDIF
         DrawTowers()
         DrawUnits()
+        DrawFX(fnow)
         DrawHand()
         DrawHud()
         IF waiting = 1 THEN
@@ -285,26 +374,27 @@ JOINMATCH()
 
 IF shotmode = 1 THEN
     POLLSTATE()
-    DrawFrame()
+    SYNCFX(0)
+    DrawFrame(6)
     GFX.SAVE_SCREENSHOT("tmp/client.png")
     SCREENFLIP
     PRINT "pid: "; mypid; "  waiting: "; waiting; "  msg: "; msg$
     GFX.CLOSE
 ELSE
     DIM was_down = 0
-    DIM frame = 0
     DO
         IF running = 0 THEN EXITDO
         frame = frame + 1
         IF mypid < 0 ANDALSO frame MOD 30 = 0 THEN JOINMATCH()
         IF mypid >= 0 ANDALSO frame MOD 6 = 0 THEN POLLSTATE()
+        SYNCFX(frame)
         DIM mdown = GFX.MOUSEBUTTON(1)
         IF mdown = TRUE ANDALSO was_down = 0 THEN
             HandleClick(GFX.MOUSEX(), GFX.MOUSEY())
         ENDIF
         was_down = 0
         IF mdown = TRUE THEN was_down = 1
-        DrawFrame()
+        DrawFrame(frame)
         SCREENFLIP
         SLEEP 33
     LOOP
