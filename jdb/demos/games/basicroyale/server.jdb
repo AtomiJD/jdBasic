@@ -47,9 +47,21 @@ FUNC HJOIN(req)
         IF MAP.EXISTS(b, "NAME") THEN name$ = b{"NAME"}
     CATCH
     ENDTRY
-    IF LEN(players) >= 2 THEN RETURN JJ({ "OK": 0, "MSG": "match full - POST /reset for a rematch" })
     DIM tok$ = CODEC.UUID$()
-    players = APPEND(players, { "NAME": name$, "TOK": tok$ })
+    IF LEN(players) >= 2 THEN
+        ' reclaim the slot of a client that stopped polling (closed tab)
+        DIM now = TICK()
+        DIM i
+        FOR i = 0 TO LEN(players) - 1
+            IF now - players[i]{"LAST"} > 5000 THEN
+                players[i] = { "NAME": name$, "TOK": tok$, "LAST": now }
+                PRINT "rejoin: "; name$; " takes stale pid "; i
+                RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$ })
+            ENDIF
+        NEXT i
+        RETURN JJ({ "OK": 0, "MSG": "match full - open /reset for a rematch" })
+    ENDIF
+    players = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK() })
     IF LEN(players) = 2 THEN last_ms = TICK()
     PRINT "join: "; name$; " -> pid "; LEN(players) - 1
     RETURN JJ({ "OK": 1, "PID": LEN(players) - 1, "TOK": tok$ })
@@ -59,6 +71,7 @@ FUNC HSTATE(req)
     SYNCSIM()
     DIM pid = -1
     IF MAP.EXISTS(req{"PARAMS"}, "tok") THEN pid = PIDBYTOK(req{"PARAMS"}{"tok"})
+    IF pid >= 0 THEN players[pid]{"LAST"} = TICK()
     DIM names = []
     DIM i
     FOR i = 0 TO LEN(players) - 1
@@ -78,9 +91,10 @@ ENDFUNC
 
 FUNC HRESET(req)
     st = ARENA.NEWGAME()
+    players = []
     last_ms = TICK()
-    PRINT "match reset"
-    RETURN JJ({ "OK": 1 })
+    PRINT "match reset - all slots free"
+    RETURN JJ({ "OK": 1, "MSG": "fresh match, 0 players" })
 ENDFUNC
 
 FUNC HROOT(req)
@@ -92,6 +106,8 @@ HTTP.SERVER.ON_GET "/state", "HSTATE"
 HTTP.SERVER.ON_POST "/join", "HJOIN"
 HTTP.SERVER.ON_POST "/play", "HPLAY"
 HTTP.SERVER.ON_POST "/reset", "HRESET"
+' browser-friendly reset - just open the URL
+HTTP.SERVER.ON_GET "/reset", "HRESET"
 
 DIM srv_port = 8081
 IF HTTP.SERVER.START(srv_port, "0.0.0.0") THEN
