@@ -373,7 +373,7 @@ SUB POLLSTATE()
         ENDIF
         prev_tick = world{"TICKNO"}
     CATCH
-        msg$ = "poll failed"
+        msg$ = "msg_pollfail"
     ENDTRY
 ENDSUB
 
@@ -382,7 +382,7 @@ SUB SENDREMATCH()
         DIM r$ = HTTP.POST$(SRV$ + "/rematch", JSON.STRINGIFY$({ "ROOM": room$ }), "text/plain")
         msg$ = ""
     CATCH
-        msg$ = "rematch failed"
+        msg$ = "msg_rematchfail"
     ENDTRY
 ENDSUB
 
@@ -398,7 +398,7 @@ SUB SENDPLAY(kind$, wx, wyv)
             msg$ = m{"MSG"}
         ENDIF
     CATCH
-        msg$ = "play failed"
+        msg$ = "msg_playfail"
     ENDTRY
 ENDSUB
 
@@ -1138,7 +1138,7 @@ SUB DrawHud()
     ENDIF
     IF msg$ <> "" THEN
         DRAWCOLOR 255, 220, 0
-        TEXT 6, 46, msg$
+        TEXT 6, 46, T$(msg$)
     ENDIF
     IF ISOVER() = 1 THEN
         DIM w = world{"WINNER"}
@@ -1196,7 +1196,7 @@ SUB DrawFrame(fnow)
     IF have_state = 0 ORELSE mypid < 0 THEN
         DRAWCOLOR 255, 255, 255
         TEXT 150, 420, "jdVOID"
-        TEXT 120, 456, T$("connecting") + " " + msg$
+        TEXT 120, 456, T$("connecting") + " " + T$(msg$)
     ELSE
         DrawBoard(fnow)
         IF sel$ <> "" ORELSE drag_kind$ <> "" THEN DrawDeployZone()
@@ -1323,7 +1323,7 @@ SUB HandleClick(mx, my)
         msg$ = ""
     ELSEIF my >= BOARD_Y0 THEN
         IF sel$ = "" THEN
-            msg$ = T$("pick_card")
+            msg$ = "pick_card"
         ELSE
             DIM tx = mx / (TILE * 1.0)
             DIM tyv = (my - BOARD_Y0) / (TILE * 1.0)
