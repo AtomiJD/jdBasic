@@ -1,0 +1,54 @@
+' Derives the web assets from the key art: a page-sized hero and a square
+' app icon cropped from the logo. Desktop only - the browser build has no
+' image decoder, which is why these are baked here and shipped as files.
+'   jdbasic makeart.jdb
+
+CONST SRC$ = "keyart.png"
+CONST IMG_W = 1696
+CONST IMG_H = 2528
+
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
+' Draws the source so that the region (sx, sy, sw, sh) fills the viewport.
+SUB CROPTO(img, sx, sy, sw, vw, vh)
+    DIM sc = vw / (sw * 1.0)
+    GFX.DRAWIMAGE(img, INT(0 - sx * sc), INT(0 - sy * sc), INT(IMG_W * sc), INT(IMG_H * sc))
+ENDSUB
+
+SCREEN 640, 954, "jdVOID art"
+DIM img = GFX.LOADIMAGE(SRC$)
+
+' hero: the whole poster at web size
+DRAWCOLOR 8, 8, 20
+RECT 0, 0, 640, 954, TRUE
+GFX.DRAWIMAGE(img, 0, 0, 640, 954)
+GFX.SAVE_SCREENSHOT("web/hero.png", 0, 0, 640, 954)
+PRINT "hero.png 640x954"
+
+' icon: the flagship over the vortex reads better than cropped letters
+DRAWCOLOR 8, 8, 20
+RECT 0, 0, 640, 954, TRUE
+CROPTO(img, 610, 780, 460, 300, 300)
+GFX.SAVE_SCREENSHOT("web/icon.png", 0, 0, 300, 300)
+PRINT "icon.png 300x300"
+
+' alternative: the whole word mark, letterboxed on a square
+DRAWCOLOR 8, 8, 20
+RECT 0, 0, 640, 954, TRUE
+CROPTO(img, 170, 60, 1420, 300, 300)
+GFX.SAVE_SCREENSHOT("web/icon_word.png", 0, 0, 300, 300)
+PRINT "icon_word.png 300x300"
+
+' wide banner for link previews (og:image likes 1.91:1)
+DRAWCOLOR 8, 8, 20
+RECT 0, 0, 640, 954, TRUE
+CROPTO(img, 60, 60, 1580, 628, 954)
+GFX.SAVE_SCREENSHOT("web/social.png", 0, 0, 628, 329)
+PRINT "social.png 628x329"
+
+SCREENFLIP
+GFX.CLOSE

@@ -17,15 +17,20 @@ SCP="scp -q -o BatchMode=yes -i $KEY"
 echo "== server =="
 $SCP server.jdb arena.jdb cards.json "$HOST:~/royale/"
 
+echo "== landing page =="
+# the site root is the poster page; the playground lives under /play
+$SSH 'mkdir -p ~/royale/web/play'
+$SCP web/index.html web/hero.png web/icon.png web/social.png "$HOST:~/royale/web/"
+
 echo "== client =="
-$SCP royale.jdb art.jdb ../../../../wasm/index.html "$HOST:~/royale/web/"
+$SCP royale.jdb art.jdb ../../../../wasm/index.html "$HOST:~/royale/web/play/"
 
 if [ "$1" = "--wasm" ]; then
     echo "== runtime + vendor (large) =="
-    $SCP ../../../../wasm/jdbasic.js ../../../../wasm/jdbasic.wasm "$HOST:~/royale/web/"
+    $SCP ../../../../wasm/jdbasic.js ../../../../wasm/jdbasic.wasm "$HOST:~/royale/web/play/"
     tar -czf /tmp/vvss_vendor.tgz -C ../../../../wasm vendor
     $SCP /tmp/vvss_vendor.tgz "$HOST:/tmp/"
-    $SSH 'cd ~/royale/web && tar -xzf /tmp/vvss_vendor.tgz && rm /tmp/vvss_vendor.tgz'
+    $SSH 'cd ~/royale/web/play && tar -xzf /tmp/vvss_vendor.tgz && rm /tmp/vvss_vendor.tgz'
     rm -f /tmp/vvss_vendor.tgz
 fi
 

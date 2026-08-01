@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>jdVOID - Galactic Clash</title>
+<meta name="description" content="Orbitales Duell in jdBasic. Zwei Basen, ein Raum, ein Gegner.">
+<meta property="og:type" content="website">
+<meta property="og:title" content="jdVOID - Galactic Clash">
+<meta property="og:description" content="Orbitales Duell in jdBasic. Namen eintippen, Raum waehlen, losfliegen.">
+<meta property="og:image" content="https://vvss.jdbasic.tech/social.png">
+<meta property="og:url" content="https://vvss.jdbasic.tech/">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#07070f">
+<style>
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:#07070f;
+    color:#e8ecff;
+    font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;
+    display:flex;flex-direction:column;align-items:center;
+    min-height:100dvh;padding:0 16px 32px;
+  }
+  .hero{width:100%;max-width:460px;margin-top:8px;}
+  .hero img{width:100%;height:auto;display:block;border-radius:18px;
+    box-shadow:0 0 40px rgba(90,200,255,.18);}
+  form{width:100%;max-width:460px;margin-top:20px;display:flex;flex-direction:column;gap:12px;}
+  label{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#7f8bbd;margin-bottom:-6px;}
+  input,select{
+    width:100%;padding:14px 16px;font-size:17px;font-family:inherit;
+    color:#eaf2ff;background:#12142c;border:1px solid #2c3160;border-radius:12px;
+  }
+  input:focus,select:focus{outline:none;border-color:#38e0ff;box-shadow:0 0 0 3px rgba(56,224,255,.15);}
+  .row{display:flex;gap:12px;}
+  .row>div{flex:1;}
+  button{
+    margin-top:6px;padding:18px;font-size:20px;font-weight:700;letter-spacing:.12em;
+    font-family:inherit;color:#04121a;cursor:pointer;
+    background:linear-gradient(180deg,#5df0d0,#22c39b);
+    border:none;border-radius:14px;box-shadow:0 6px 0 #13795f;
+  }
+  button:active{transform:translateY(3px);box-shadow:0 3px 0 #13795f;}
+  .hint{font-size:13px;color:#6f79a8;text-align:center;margin-top:14px;line-height:1.6;}
+  .hint b{color:#9fb0e8;font-weight:600;}
+</style>
+</head>
+<body>
+  <div class="hero"><img src="hero.png" alt="jdVOID - Galactic Clash"></div>
+
+  <form id="f">
+    <div>
+      <label for="name" id="l_name">Dein Name</label>
+      <input id="name" name="name" maxlength="14" autocomplete="nickname" placeholder="Atomi" required>
+    </div>
+    <div class="row">
+      <div>
+        <label for="room" id="l_room">Raum</label>
+        <input id="room" name="room" maxlength="16" value="main">
+      </div>
+      <div>
+        <label for="lang" id="l_lang">Sprache</label>
+        <select id="lang" name="lang">
+          <option value="de">Deutsch</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </div>
+    <button type="submit" id="go">STARTEN</button>
+  </form>
+
+  <p class="hint" id="hint">
+    Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>
+    Dein Name traegt deine Sammlung - nimm immer denselben.
+  </p>
+
+<script>
+  const TXT = {
+    de:{name:"Dein Name",room:"Raum",lang:"Sprache",go:"STARTEN",
+        hint:"Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>Dein Name traegt deine Sammlung - nimm immer denselben."},
+    en:{name:"Your name",room:"Room",lang:"Language",go:"LAUNCH",
+        hint:"Whoever picks the same <b>room</b> plays against you.<br>Your name carries your collection - always use the same one."}
+  };
+  const $ = id => document.getElementById(id);
+  const qp = new URLSearchParams(location.search);
+
+  // A link that still carries the old query goes straight into the game.
+  if (qp.get('prog')) { location.replace('play/' + location.search); }
+
+  // Remember what was entered last time, so a phone only types it once.
+  const saved = JSON.parse(localStorage.getItem('jdvoid') || '{}');
+  $('name').value = qp.get('name') || saved.name || '';
+  $('room').value = qp.get('room') || saved.room || 'main';
+  $('lang').value = qp.get('lang') || saved.lang || (navigator.language || 'de').slice(0,2);
+  if (!TXT[$('lang').value]) $('lang').value = 'de';
+
+  function applyLang(){
+    const t = TXT[$('lang').value] || TXT.de;
+    $('l_name').textContent = t.name;
+    $('l_room').textContent = t.room;
+    $('l_lang').textContent = t.lang;
+    $('go').textContent = t.go;
+    $('hint').innerHTML = t.hint;
+    document.documentElement.lang = $('lang').value;
+  }
+  $('lang').addEventListener('change', applyLang);
+  applyLang();
+
+  $('f').addEventListener('submit', ev => {
+    ev.preventDefault();
+    const name = $('name').value.trim() || 'Spieler';
+    const room = ($('room').value.trim() || 'main').toLowerCase();
+    const lang = $('lang').value;
+    localStorage.setItem('jdvoid', JSON.stringify({name, room, lang}));
+    const q = new URLSearchParams({prog:'royale', fs:'1', name, room, lang});
+    location.href = 'play/?' + q.toString();
+  });
+</script>
+</body>
+</html>
