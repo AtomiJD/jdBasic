@@ -68,7 +68,10 @@ EXPORT FUNC NEWGAME()
     st{"SPELLS"} = []
     st{"ELIXIR"} = [5.0, 5.0]
     st{"CROWNS"} = [0, 0]
-    st{"LEVELS"} = [1, 1]
+    DIM cl = []
+    cl = APPEND(cl, {})
+    cl = APPEND(cl, {})
+    st{"CARDLVL"} = cl
     st{"QUEUES"} = [["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"], ["GIANT", "SKELETONS", "ARCHER", "FIREBALL", "KNIGHT", "MINIONS"]]
     DIM tws = []
     ' kings sleep (AWAKE 0) until hit or until one of their princesses falls
@@ -125,7 +128,9 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
     IF NOT is_spell THEN
         IF CANDEPLOY(st, pid, x, y) = 0 THEN RETURN "nicht dein Gebiet"
     ENDIF
-    DIM lvl = st{"LEVELS"}[pid]
+    DIM lvl = 1
+    DIM clmap = st{"CARDLVL"}[pid]
+    IF MAP.EXISTS(clmap, kind$) THEN lvl = clmap{kind$}
     DIM mult = 1.0 + (lvl - 1) * 0.08
 
     st{"ELIXIR"}[pid] = st{"ELIXIR"}[pid] - c{"COST"}

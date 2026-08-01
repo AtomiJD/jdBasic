@@ -52,6 +52,8 @@ DIM have_state = 0
 DIM waiting = 1
 DIM foename$ = ""
 DIM profiles = []
+DIM myprofile AS MAP = {}
+DIM chest_shown = 0
 DIM sel$ = ""
 DIM msg$ = ""
 DIM fxseen AS MAP = {}
@@ -120,6 +122,41 @@ FUNC CCOLOR(kind$)
     RETURN [180, 180, 180]
 ENDFUNC
 
+SUB LOADPROFILE()
+    TRY
+        DIM r$ = HTTP.GET$(SRV$ + "/profile?name=" + myname$)
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} = 1 THEN myprofile = m{"PROFILE"}
+    CATCH
+    ENDTRY
+ENDSUB
+
+' Collection entry {LVL, HAVE} for a card, defaulting to fresh.
+FUNC MYCARD(kind$)
+    IF MAP.EXISTS(myprofile, "CARDS") THEN
+        IF MAP.EXISTS(myprofile{"CARDS"}, kind$) THEN RETURN myprofile{"CARDS"}{kind$}
+    ENDIF
+    RETURN { "LVL": 1, "HAVE": 0 }
+ENDFUNC
+
+FUNC MYWILD()
+    IF MAP.EXISTS(myprofile, "WILD") THEN RETURN myprofile{"WILD"}
+    RETURN 0
+ENDFUNC
+
+SUB SENDUPGRADE(kind$)
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "NAME": myname$, "KIND": kind$ })
+        DIM r$ = HTTP.POST$(SRV$ + "/upgrade", body$, "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} = 1 THEN
+            PLAYFX("SPAWN")
+        ENDIF
+        LOADPROFILE()
+    CATCH
+    ENDTRY
+ENDSUB
+
 FUNC DECKHAS(kind$)
     FOR EACH d$ IN mydeck
         IF d$ = kind$ THEN RETURN 1
@@ -166,11 +203,17 @@ SUB POLLSTATE()
         DIM names = m{"NAMES"}
         IF LEN(names) = 2 THEN foename$ = names[1 - mypid]
         IF MAP.EXISTS(m, "PROFILES") THEN profiles = m{"PROFILES"}
+        ' fetch the fresh chest once when the match ends
+        IF world{"PHASE"} = "over" ANDALSO chest_shown = 0 THEN
+            chest_shown = 1
+            LOADPROFILE()
+        ENDIF
         ' a rematch restarts event ids - drop stale FX bookkeeping
         IF world{"TICKNO"} < prev_tick THEN
             fxseen = {}
             fxact = []
             sel$ = ""
+            chest_shown = 0
         ENDIF
         prev_tick = world{"TICKNO"}
     CATCH
@@ -458,7 +501,7 @@ SUB DrawDeckEd()
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
     DRAWCOLOR 255, 220, 60
-    TEXT 150, 30, "DECK  " + STR$(LEN(mydeck)) + " / 6"
+    TEXT 130, 30, "DECK " + STR$(LEN(mydeck)) + "/6   * x" + STR$(MYWILD())
     IF LEN(cardorder) = 0 THEN
         DRAWCOLOR 255, 255, 255
         TEXT 100, 300, "Karten laden fehlgeschlagen..."
@@ -482,8 +525,18 @@ SUB DrawDeckEd()
             ENDIF
             DRAWCOLOR 0, 0, 0
             TEXT x0 + 12, y0 + 16, ICON$(kind$)
-            TEXT x0 + 12, y0 + 60, MID$(kind$, 0, 8)
-            TEXT x0 + 12, y0 + 100, STR$(cardcost{kind$}) + " elx"
+            TEXT x0 + 12, y0 + 48, MID$(kind$, 0, 8)
+            TEXT x0 + 12, y0 + 76, STR$(cardcost{kind$}) + " elx"
+            DIM mc = MYCARD(kind$)
+            DIM upcost = INT(2 ^ mc{"LVL"})
+            TEXT x0 + 12, y0 + 108, "Lv" + STR$(mc{"LVL"}) + "  " + STR$(mc{"HAVE"}) + "/" + STR$(upcost)
+            IF mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
+                DRAWCOLOR 60, 200, 60
+                RECT x0 + 108, y0 + 98, 38, 38, TRUE
+                DRAWCOLOR 255, 255, 255
+                RECT x0 + 108, y0 + 98, 38, 38, FALSE
+                TEXT x0 + 121, y0 + 110, "+"
+            ENDIF
         NEXT i
     ENDIF
     IF LEN(mydeck) = 6 THEN
@@ -518,6 +571,13 @@ SUB DrawHand()
         DRAWCOLOR 0, 0, 0
         TEXT x0 + 10, 852, ICON$(kind$) + " " + MID$(kind$, 0, 5)
         TEXT x0 + 10, 872, STR$(cardcost{kind$}) + " elx"
+        DIM hl = world{"CARDLVL"}[mypid]
+        IF MAP.EXISTS(hl, kind$) THEN
+            IF hl{kind$} > 1 THEN
+                DRAWCOLOR 255, 255, 255
+                TEXT x0 + 88, 852, "L" + STR$(hl{kind$})
+            ENDIF
+        ENDIF
     NEXT i
     DIM exl = world{"ELIXIR"}[mypid]
     DRAWCOLOR 30, 10, 40
@@ -540,9 +600,8 @@ SUB DrawHud()
     ENDIF
     TEXT 200, 6, label$ + STR$(INT(t / 60)) + ":" + RIGHT$("0" + STR$(INT(t) MOD 60), 2)
     DIM cr = world{"CROWNS"}
-    DIM lv = world{"LEVELS"}
-    TEXT 6, 6, "DU Lv" + STR$(lv[mypid]) + "  " + STR$(cr[mypid])
-    TEXT 6, 26, foename$ + " Lv" + STR$(lv[1 - mypid]) + "  " + STR$(cr[1 - mypid])
+    TEXT 6, 6, "DU " + STR$(cr[mypid])
+    TEXT 6, 26, foename$ + " " + STR$(cr[1 - mypid])
     IF LEN(profiles) = 2 THEN
         TEXT 300, 26, "Siege " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"})
     ENDIF
@@ -565,6 +624,21 @@ SUB DrawHud()
         IF LEN(profiles) = 2 THEN
             DRAWCOLOR 40, 40, 40
             TEXT 150, 442, "Serie " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"}) + "  Kronen " + STR$(profiles[mypid]{"CROWNS"}) + ":" + STR$(profiles[1 - mypid]{"CROWNS"})
+        ENDIF
+        IF chest_shown = 1 ANDALSO MAP.EXISTS(myprofile, "LASTCHEST") THEN
+            DIM chestline$ = ""
+            FOR EACH cc$ IN myprofile{"LASTCHEST"}
+                IF cc$ = "*" THEN
+                    chestline$ = chestline$ + "* "
+                ELSE
+                    chestline$ = chestline$ + ICON$(cc$) + " "
+                ENDIF
+            NEXT cc$
+            DRAWCOLOR 255, 220, 60
+            RECT 34, 600, 400, 54, TRUE
+            DRAWCOLOR 0, 0, 0
+            TEXT 44, 608, "KISTE:"
+            TEXT 44, 630, chestline$
         ENDIF
         DRAWCOLOR 60, 180, 60
         RECT 154, 490, 160, 46, TRUE
@@ -616,11 +690,13 @@ SUB MenuClick(mx, my)
             fxseen = {}
             fxact = []
             prev_tick = -1
+            chest_shown = 0
             msg$ = ""
             JOINMATCH()
         ELSEIF my >= 450 ANDALSO my <= 510 THEN
             uimode$ = "decks"
             IF LEN(cardorder) = 0 THEN LOADCARDS()
+            LOADPROFILE()
         ELSEIF my >= 540 ANDALSO my <= 600 THEN
             IF snd_on = 1 THEN
                 snd_on = 0
@@ -639,7 +715,18 @@ SUB DeckClick(mx, my)
         DIM ri = INT((my - 80) / 150)
         IF ci >= 0 ANDALSO ci <= 2 ANDALSO ri >= 0 THEN
             DIM idx = ri * 3 + ci
-            IF idx < LEN(cardorder) THEN TOGGLECARD(cardorder[idx])
+            IF idx < LEN(cardorder) THEN
+                DIM kind$ = cardorder[idx]
+                DIM cellx = mx - 6 - ci * 154
+                DIM celly = my - 80 - ri * 150
+                DIM mc = MYCARD(kind$)
+                DIM upcost = INT(2 ^ mc{"LVL"})
+                IF cellx >= 108 ANDALSO celly >= 98 ANDALSO celly <= 136 ANDALSO mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
+                    SENDUPGRADE(kind$)
+                ELSE
+                    TOGGLECARD(kind$)
+                ENDIF
+            ENDIF
         ENDIF
     ENDIF
 ENDSUB

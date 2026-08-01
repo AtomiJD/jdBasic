@@ -21,8 +21,8 @@ DIM st = ARENA.NEWGAME()
 DIM players = []
 DIM last_ms = TICK()
 
-' Lifetime stats per player name, persisted across server restarts.
-' Wins feed the card level: +1 level per 3 wins, capped at 5.
+' Lifetime stats per player name, persisted across server restarts:
+' record, crowns, collected card copies, wildcards and the last chest.
 DIM stats AS MAP = {}
 TRY
     stats = JSON.PARSE$(TXTREADER$("stats.json"))
@@ -40,17 +40,68 @@ FUNC STATOF(name$)
     IF NOT MAP.EXISTS(stats, name$) THEN
         stats{name$} = { "WINS": 0, "LOSSES": 0, "DRAWS": 0, "CROWNS": 0 }
     ENDIF
-    RETURN stats{name$}
+    DIM s = stats{name$}
+    IF NOT MAP.EXISTS(s, "CARDS") THEN s{"CARDS"} = {}
+    IF NOT MAP.EXISTS(s, "WILD") THEN s{"WILD"} = 0
+    IF NOT MAP.EXISTS(s, "LASTCHEST") THEN s{"LASTCHEST"} = []
+    RETURN s
 ENDFUNC
 
-FUNC PLEVEL(name$)
+FUNC CARDENTRY(s, kind$)
+    DIM cc = s{"CARDS"}
+    IF NOT MAP.EXISTS(cc, kind$) THEN
+        cc{kind$} = { "LVL": 1, "HAVE": 0 }
+    ENDIF
+    RETURN cc{kind$}
+ENDFUNC
+
+' Per-card level map for the sim state.
+FUNC CARDLVLMAP(name$)
     DIM s = STATOF(name$)
-    DIM lvl = 1 + INT(s{"WINS"} / 3)
-    IF lvl > 5 THEN lvl = 5
-    RETURN lvl
+    DIM m AS MAP = {}
+    DIM ks = MAP.KEYS(s{"CARDS"})
+    FOR EACH k$ IN ks
+        m{k$} = s{"CARDS"}{k$}{"LVL"}
+    NEXT k$
+    RETURN m
 ENDFUNC
 
-' Book the finished match into the lifetime stats, exactly once.
+' End-of-match chest, same for winner and loser: 5 common cards, 2 strong
+' ones and a wildcard that levels any card.
+SUB GIVECHEST(name$)
+    DIM s = STATOF(name$)
+    DIM cs = ARENA.CARDS()
+    DIM commons = []
+    DIM strongs = []
+    DIM ks = MAP.KEYS(cs)
+    FOR EACH k$ IN ks
+        IF cs{k$}{"RARITY"} = "S" THEN
+            strongs = APPEND(strongs, k$)
+        ELSE
+            commons = APPEND(commons, k$)
+        ENDIF
+    NEXT k$
+    DIM chest = []
+    DIM i
+    FOR i = 1 TO 5
+        DIM ck$ = commons[INT(RND() * LEN(commons)) MOD LEN(commons)]
+        DIM ce = CARDENTRY(s, ck$)
+        ce{"HAVE"} = ce{"HAVE"} + 1
+        chest = APPEND(chest, ck$)
+    NEXT i
+    FOR i = 1 TO 2
+        DIM sk$ = strongs[INT(RND() * LEN(strongs)) MOD LEN(strongs)]
+        DIM se = CARDENTRY(s, sk$)
+        se{"HAVE"} = se{"HAVE"} + 1
+        chest = APPEND(chest, sk$)
+    NEXT i
+    s{"WILD"} = s{"WILD"} + 1
+    chest = APPEND(chest, "*")
+    s{"LASTCHEST"} = chest
+ENDSUB
+
+' Book the finished match into the lifetime stats, exactly once, and hand
+' both players their chest.
 SUB RECORDMATCH()
     IF st{"PHASE"} = "over" ANDALSO NOT MAP.EXISTS(st, "RECORDED") ANDALSO LEN(players) = 2 THEN
         st{"RECORDED"} = 1
@@ -66,9 +117,10 @@ SUB RECORDMATCH()
             ELSE
                 s{"LOSSES"} = s{"LOSSES"} + 1
             ENDIF
+            GIVECHEST(players[i]{"NAME"})
         NEXT i
         SAVESTATS()
-        PRINT "match recorded: winner "; w
+        PRINT "match recorded: winner "; w; " - chests handed out"
     ENDIF
 ENDSUB
 
@@ -147,7 +199,7 @@ FUNC HJOIN(req)
             IF now - players[i]{"LAST"} > 5000 THEN
                 players[i] = { "NAME": name$, "TOK": tok$, "LAST": now, "DECK": deck }
                 st{"QUEUES"}[i] = DECKQ(deck)
-                st{"LEVELS"}[i] = PLEVEL(name$)
+                st{"CARDLVL"}[i] = CARDLVLMAP(name$)
                 PRINT "rejoin: "; name$; " takes stale pid "; i
                 RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$ })
             ENDIF
@@ -156,7 +208,7 @@ FUNC HJOIN(req)
     ENDIF
     players = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK(), "DECK": deck })
     st{"QUEUES"}[LEN(players) - 1] = DECKQ(deck)
-    st{"LEVELS"}[LEN(players) - 1] = PLEVEL(name$)
+    st{"CARDLVL"}[LEN(players) - 1] = CARDLVLMAP(name$)
     IF LEN(players) = 2 THEN last_ms = TICK()
     PRINT "join: "; name$; " -> pid "; LEN(players) - 1
     RETURN JJ({ "OK": 1, "PID": LEN(players) - 1, "TOK": tok$ })
@@ -174,7 +226,7 @@ FUNC HSTATE(req)
         DIM pn$ = players[i]{"NAME"}
         names = APPEND(names, pn$)
         DIM s = STATOF(pn$)
-        profiles = APPEND(profiles, { "NAME": pn$, "LVL": PLEVEL(pn$), "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"} })
+        profiles = APPEND(profiles, { "NAME": pn$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"} })
     NEXT i
     RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "PROFILES": profiles, "ST": st })
 ENDFUNC
@@ -202,7 +254,7 @@ FUNC HREMATCH(req)
     DIM i
     FOR i = 0 TO LEN(players) - 1
         st{"QUEUES"}[i] = DECKQ(players[i]{"DECK"})
-        st{"LEVELS"}[i] = PLEVEL(players[i]{"NAME"})
+        st{"CARDLVL"}[i] = CARDLVLMAP(players[i]{"NAME"})
     NEXT i
     last_ms = TICK()
     PRINT "rematch"
@@ -210,11 +262,52 @@ FUNC HREMATCH(req)
 ENDFUNC
 
 FUNC HROOT(req)
-    RETURN "BASIC Royale match server. POST /join, GET /state?tok=, POST /play, POST /rematch, GET /reset, GET /cards."
+    RETURN "BASIC Royale match server. POST /join, GET /state?tok=, POST /play, POST /rematch, GET /reset, GET /cards, GET /profile?name=, POST /upgrade."
+ENDFUNC
+
+' Debug lever: end the running match immediately (P1 wins).
+FUNC HFORCEEND(req)
+    st{"TOWERS"}[2]{"HP"} = 0
+    RETURN JJ({ "OK": 1 })
 ENDFUNC
 
 FUNC HCARDS(req)
     RETURN JJ({ "OK": 1, "CARDS": ARENA.CARDS() })
+ENDFUNC
+
+FUNC HPROFILE(req)
+    DIM name$ = ""
+    IF MAP.EXISTS(req{"PARAMS"}, "name") THEN name$ = req{"PARAMS"}{"name"}
+    IF name$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "name fehlt" })
+    RETURN JJ({ "OK": 1, "PROFILE": STATOF(name$) })
+ENDFUNC
+
+' Level a card: costs 2^level copies (2, 4, 8, 16); wildcards fill any
+' shortage. Applies live to a seated player's next deploys.
+FUNC HUPGRADE(req)
+    DIM b = JSON.PARSE$(req{"BODY"})
+    DIM name$ = b{"NAME"}
+    DIM kind$ = b{"KIND"}
+    IF NOT MAP.EXISTS(ARENA.CARDS(), kind$) THEN RETURN JJ({ "OK": 0, "MSG": "unbekannte Karte" })
+    DIM s = STATOF(name$)
+    DIM ce = CARDENTRY(s, kind$)
+    DIM lvl = ce{"LVL"}
+    IF lvl >= 5 THEN RETURN JJ({ "OK": 0, "MSG": "Maximallevel" })
+    DIM cost = INT(2 ^ lvl)
+    DIM have = ce{"HAVE"}
+    IF have + s{"WILD"} < cost THEN RETURN JJ({ "OK": 0, "MSG": "zu wenig Karten" })
+    DIM used = have
+    IF used > cost THEN used = cost
+    ce{"HAVE"} = have - used
+    s{"WILD"} = s{"WILD"} - (cost - used)
+    ce{"LVL"} = lvl + 1
+    DIM i
+    FOR i = 0 TO LEN(players) - 1
+        IF players[i]{"NAME"} = name$ THEN st{"CARDLVL"}[i] = CARDLVLMAP(name$)
+    NEXT i
+    SAVESTATS()
+    PRINT "upgrade: "; name$; " "; kind$; " -> Lv"; lvl + 1
+    RETURN JJ({ "OK": 1, "LVL": lvl + 1 })
 ENDFUNC
 
 HTTP.SERVER.ON_GET "/", "HROOT"
@@ -226,6 +319,9 @@ HTTP.SERVER.ON_POST "/reset", "HRESET"
 HTTP.SERVER.ON_GET "/reset", "HRESET"
 HTTP.SERVER.ON_POST "/rematch", "HREMATCH"
 HTTP.SERVER.ON_GET "/cards", "HCARDS"
+HTTP.SERVER.ON_GET "/profile", "HPROFILE"
+HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
+HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
 
 DIM srv_port = 8081
 IF HTTP.SERVER.START(srv_port, "0.0.0.0") THEN
