@@ -27,12 +27,35 @@ ON "QUIT" CALL OnQuit
 DIM tap_new = 0
 DIM tap_x = 0
 DIM tap_y = 0
+DIM up_new = 0
+DIM up_x = 0
+DIM up_y = 0
+DIM ptr_x = 0
+DIM ptr_y = 0
 SUB OnTap(info)
     tap_x = info[0]{"x"}
     tap_y = info[0]{"y"}
+    ptr_x = tap_x
+    ptr_y = tap_y
     tap_new = 1
 ENDSUB
 ON "MOUSEDOWN" CALL OnTap
+
+SUB OnRelease(info)
+    up_x = info[0]{"x"}
+    up_y = info[0]{"y"}
+    up_new = 1
+ENDSUB
+ON "MOUSEUP" CALL OnRelease
+
+SUB OnDrag(info)
+    ptr_x = info[0]{"x"}
+    ptr_y = info[0]{"y"}
+ENDSUB
+ON "MOUSEMOVE" CALL OnDrag
+
+' Card held down and dragged onto the board - released there it deploys.
+DIM drag_kind$ = ""
 
 ' Fallbacks until GET /cards answers; the server's cards.json wins.
 DIM kindcolor AS MAP = {}
@@ -100,16 +123,30 @@ FUNC WY(y)
     RETURN y
 ENDFUNC
 
+' Camera shake, fed by falling stations and decaying per frame.
+DIM shake = 0.0
+DIM shake_x = 0
+DIM shake_y = 0
+
 FUNC PX(tx)
-    RETURN INT(tx * TILE)
+    RETURN INT(tx * TILE) + shake_x
 ENDFUNC
 
 FUNC PY(ty)
-    RETURN INT(BOARD_Y0 + ty * TILE)
+    RETURN INT(BOARD_Y0 + ty * TILE) + shake_y
 ENDFUNC
 
 FUNC MINE(owner)
     RETURN IIF(owner = mypid, 1, 0)
+ENDFUNC
+
+' A missing key yields NONE, and comparing NONE to a string reports TRUE -
+' so check the type before trusting the phase.
+FUNC ISOVER()
+    IF have_state = 0 THEN RETURN 0
+    IF TYPEOF(world{"PHASE"}) <> "STRING" THEN RETURN 0
+    IF world{"PHASE"} = "over" THEN RETURN 1
+    RETURN 0
 ENDFUNC
 
 ' The server's cards.json is the source for stats, colors and icons; the
@@ -255,6 +292,37 @@ SUB JOINMATCH()
     ENDTRY
 ENDSUB
 
+' id -> heading in degrees, tracked from the position deltas between
+' polls so ships point where they fly. Figures are drawn facing up, so
+' the sprite angle is the travel angle plus a quarter turn.
+DIM heads AS MAP = {}
+DIM lastpos AS MAP = {}
+
+SUB TRACKHEADING()
+    FOR EACH u IN world{"UNITS"}
+        DIM k$ = STR$(u{"ID"})
+        DIM wx = u{"X"}
+        DIM wy = WY(u{"Y"})
+        IF MAP.EXISTS(lastpos, k$) THEN
+            DIM dx = wx - lastpos{k$}[0]
+            DIM dy = wy - lastpos{k$}[1]
+            IF dx * dx + dy * dy > 0.0004 THEN
+                heads{k$} = ATAN2(dy, dx) * 180.0 / 3.14159265 + 90.0
+            ENDIF
+        ELSE
+            ' fresh unit: face the enemy side
+            heads{k$} = IIF(MINE(u{"OWNER"}) = 1, 0.0, 180.0)
+        ENDIF
+        lastpos{k$} = [wx, wy]
+    NEXT u
+ENDSUB
+
+FUNC HEADOF(u)
+    DIM k$ = STR$(u{"ID"})
+    IF MAP.EXISTS(heads, k$) THEN RETURN heads{k$}
+    RETURN IIF(MINE(u{"OWNER"}) = 1, 0.0, 180.0)
+ENDFUNC
+
 DIM prev_tick = -1
 SUB POLLSTATE()
     TRY
@@ -266,8 +334,9 @@ SUB POLLSTATE()
         DIM names = m{"NAMES"}
         IF LEN(names) = 2 THEN foename$ = names[1 - mypid]
         IF MAP.EXISTS(m, "PROFILES") THEN profiles = m{"PROFILES"}
+        TRACKHEADING()
         ' fetch the fresh chest once when the match ends
-        IF world{"PHASE"} = "over" ANDALSO chest_shown = 0 THEN
+        IF ISOVER() = 1 ANDALSO chest_shown = 0 THEN
             chest_shown = 1
             LOADPROFILE()
         ENDIF
@@ -328,6 +397,45 @@ SUB SNDINIT()
     ENDTRY
 ENDSUB
 
+' Music: a two-bar bass riff with an arpeggio on top, stepped from the
+' render loop. Overtime switches to the tense pattern.
+DIM mus_step = 0
+DIM mus_bass = ["A1", "A1", "C2", "A1", "F1", "F1", "G1", "G1"]
+DIM mus_arp = ["A3", "E4", "A4", "C5", "E4", "A4", "G4", "E4"]
+DIM mus_arp_ot = ["A3", "C5", "E5", "C5", "A4", "C5", "F5", "E5"]
+
+SUB MUSICINIT()
+    IF snd_on = 1 THEN
+        TRY
+            SOUND.VOICE 4, "TRIANGLE", 0.01, 0.30, 0.35, 0.20
+            SOUND.VOICE 5, "SQUARE", 0.005, 0.10, 0.0, 0.10
+            SOUND.GAIN 4, 0.22
+            SOUND.GAIN 5, 0.10
+        CATCH
+        ENDTRY
+    ENDIF
+ENDSUB
+
+SUB MUSICSTEP(fnow)
+    IF snd_on = 1 ANDALSO have_state = 1 ANDALSO waiting = 0 ANDALSO ISOVER() = 0 THEN
+        ' one step per ~0.27 s at 30 fps
+        IF fnow MOD 8 = 0 THEN
+            DIM sidx = mus_step MOD 8
+            TRY
+                IF sidx MOD 2 = 0 THEN SOUND.PLAY 4, mus_bass[sidx]
+                IF world{"T_LEFT"} < 0 THEN
+                    SOUND.PLAY 5, mus_arp_ot[sidx]
+                ELSE
+                    SOUND.PLAY 5, mus_arp[sidx]
+                ENDIF
+            CATCH
+                snd_on = 0
+            ENDTRY
+            mus_step = mus_step + 1
+        ENDIF
+    ENDIF
+ENDSUB
+
 SUB PLAYFX(t$)
     IF snd_on = 1 THEN
         TRY
@@ -384,6 +492,8 @@ SUB SYNCFX(fnow)
                 ELSE
                     PLAYFX(evt{"T"})
                 ENDIF
+                IF evt{"T"} = "FALL" THEN shake = 14.0
+                IF evt{"T"} = "BOOM" THEN shake = 6.0
             ENDIF
         NEXT evt
     ENDIF
@@ -406,8 +516,17 @@ SUB DrawFX(fnow)
             DIM ex = PX(evt{"X"})
             DIM ey = PY(WY(evt{"Y"}))
             IF t$ = "SHOT" THEN
-                DIM x1 = PX(evt{"FX"}) + INT((ex - PX(evt{"FX"})) * p)
-                DIM y1 = PY(WY(evt{"FY"})) + INT((ey - PY(WY(evt{"FY"}))) * p)
+                DIM sx0 = PX(evt{"FX"})
+                DIM sy0 = PY(WY(evt{"FY"}))
+                DIM x1 = sx0 + INT((ex - sx0) * p)
+                DIM y1 = sy0 + INT((ey - sy0) * p)
+                ' muzzle flash at the shooter, then a bolt with a trail
+                IF p < 0.35 THEN
+                    DRAWCOLOR 255, 240, 190
+                    CIRCLE sx0, sy0, INT(9 - p * 20), TRUE
+                ENDIF
+                DRAWCOLOR 190, 160, 90
+                LINE sx0 + INT((ex - sx0) * (p - 0.25)), sy0 + INT((ey - sy0) * (p - 0.25)), x1, y1
                 DRAWCOLOR 255, 255, 160
                 CIRCLE x1, y1, 3, TRUE
                 IF p > 0.7 THEN
@@ -500,6 +619,10 @@ SUB DrawBoard(fnow)
     NEXT gx
 ENDSUB
 
+' station key -> last seen hull and remaining flash frames
+DIM twhp AS MAP = {}
+DIM twflash AS MAP = {}
+
 ' Stations: the baked sprite, mirrored so an enemy base faces the player.
 ' A sleeping mothership is dimmed and keeps its Zz.
 SUB DrawTowers()
@@ -513,8 +636,23 @@ SUB DrawTowers()
         DIM cx = PX(tw{"X"})
         DIM cy = PY(WY(tw{"Y"}))
         SPRITE.FLIP(sid, FALSE, mine = 0)
+        SPRITE.ROTATE(sid, 0)
         SPRITE.ALPHA(sid, IIF(asleep = 1, 130, 255))
         SPRAT(sid, cx, cy)
+        ' white shield flash while this station is losing hull
+        DIM tk$ = STR$(tw{"OWNER"}) + tw{"KIND"} + STR$(INT(tw{"X"}))
+        IF MAP.EXISTS(twhp, tk$) THEN
+            IF tw{"HP"} < twhp{tk$} THEN twflash{tk$} = 4
+        ENDIF
+        twhp{tk$} = tw{"HP"}
+        IF MAP.EXISTS(twflash, tk$) THEN
+            IF twflash{tk$} > 0 THEN
+                twflash{tk$} = twflash{tk$} - 1
+                DRAWCOLOR 255, 255, 255
+                CIRCLE cx, cy, 24 + twflash{tk$} * 3, FALSE
+                CIRCLE cx, cy, 23 + twflash{tk$} * 3, FALSE
+            ENDIF
+        ENDIF
         IF asleep = 1 THEN
             DRAWCOLOR 220, 220, 240
             TEXT cx + 14, cy - 30, "Zz"
@@ -546,8 +684,10 @@ SUB DrawUnits()
         IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
             DIM sid = art_foe{kind$}
             IF mine = 1 THEN sid = art_own{kind$}
-            SPRITE.FLIP(sid, FALSE, mine = 0)
+            SPRITE.FLIP(sid, FALSE, FALSE)
+            SPRITE.ROTATE(sid, HEADOF(u))
             SPRAT(sid, ux, uy)
+            SPRITE.ROTATE(sid, 0)
         ELSE
             DIM col = kindcolor{kind$}
             DRAWCOLOR col[0], col[1], col[2]
@@ -594,6 +734,43 @@ SUB DrawDeployZone()
         RECT zx, PY(6), PX(9), TILE * 10, FALSE
         RECT zx + 1, PY(6) + 1, PX(9) - 2, TILE * 10 - 2, FALSE
     NEXT tw
+ENDSUB
+
+' Ghost of the dragged ship under the finger, green where it may land,
+' red where the drop would be refused.
+SUB DrawGhost(fnow)
+    IF drag_kind$ <> "" ANDALSO ptr_y < 840 ANDALSO ptr_y >= BOARD_Y0 THEN
+        ' mirroring puts the own half at the bottom for both players, so the
+        ' test runs on screen rows - same space the zone outline uses
+        DIM srow = (ptr_y - BOARD_Y0) / (TILE * 1.0)
+        DIM okdrop = 0
+        IF srow >= 16 THEN okdrop = 1
+        FOR EACH tw IN world{"TOWERS"}
+            IF tw{"OWNER"} = mypid ORELSE tw{"KIND"} <> "PRINCESS" ORELSE tw{"HP"} > 0 THEN CONTINUEFOR
+            DIM sameside = 0
+            IF tw{"X"} < 9 ANDALSO ptr_x < PX(9) THEN sameside = 1
+            IF tw{"X"} >= 9 ANDALSO ptr_x >= PX(9) THEN sameside = 1
+            IF sameside = 1 ANDALSO srow >= 6 THEN okdrop = 1
+        NEXT tw
+        IF MAP.EXISTS(cardcost, drag_kind$) THEN
+            IF world{"ELIXIR"}[mypid] < cardcost{drag_kind$} THEN okdrop = 0
+        ENDIF
+        IF okdrop = 1 THEN
+            DRAWCOLOR 90, 250, 140
+        ELSE
+            DRAWCOLOR 255, 80, 90
+        ENDIF
+        DIM pulse = 20 + INT(4 * SIN(fnow * 0.3))
+        CIRCLE ptr_x, ptr_y, pulse, FALSE
+        CIRCLE ptr_x, ptr_y, pulse - 1, FALSE
+        IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, drag_kind$) THEN
+            DIM gid = art_own{drag_kind$}
+            SPRITE.ALPHA(gid, 165)
+            SPRITE.ROTATE(gid, 0)
+            SPRAT(gid, ptr_x, ptr_y)
+            SPRITE.ALPHA(gid, 255)
+        ENDIF
+    ENDIF
 ENDSUB
 
 SUB DrawMenu()
@@ -760,7 +937,7 @@ SUB DrawHud()
         DRAWCOLOR 255, 220, 0
         TEXT 6, 46, msg$
     ENDIF
-    IF world{"PHASE"} = "over" THEN
+    IF ISOVER() = 1 THEN
         DRAWCOLOR 255, 255, 255
         RECT 84, 380, 300, 90, TRUE
         DIM w = world{"WINNER"}
@@ -799,10 +976,11 @@ SUB DrawFrame(fnow)
         TEXT 120, 460, "verbinde... " + msg$
     ELSE
         DrawBoard(fnow)
-        IF sel$ <> "" THEN DrawDeployZone()
+        IF sel$ <> "" ORELSE drag_kind$ <> "" THEN DrawDeployZone()
         DrawTowers()
         DrawUnits()
         DrawFX(fnow)
+        DrawGhost(fnow)
         DrawHand()
         DrawHud()
         IF waiting = 1 THEN
@@ -875,13 +1053,14 @@ SUB HandleClick(mx, my)
         DeckClick(mx, my)
     ELSEIF have_state = 0 ORELSE mypid < 0 THEN
         msg$ = ""
-    ELSEIF world{"PHASE"} = "over" THEN
+    ELSEIF ISOVER() = 1 THEN
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 490 ANDALSO my <= 536 THEN SENDREMATCH()
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 548 ANDALSO my <= 588 THEN uimode$ = "menu"
     ELSEIF my >= 840 THEN
         DIM slot = INT(mx / 117)
         IF slot > 3 THEN slot = 3
         sel$ = world{"QUEUES"}[mypid][slot]
+        drag_kind$ = sel$
         msg$ = ""
     ELSEIF my >= BOARD_Y0 THEN
         IF sel$ = "" THEN
@@ -908,6 +1087,7 @@ DRAWCOLOR 190, 220, 255
 TEXT 120, 430, "BAUE DIE FLOTTE..."
 SCREENFLIP
 SNDINIT()
+MUSICINIT()
 LOADCARDS()
 BAKEART()
 MAKESTARS()
@@ -931,10 +1111,30 @@ ELSE
             IF mypid < 0 ANDALSO frame MOD 30 = 0 THEN JOINMATCH()
             IF mypid >= 0 ANDALSO frame MOD 6 = 0 THEN POLLSTATE()
             SYNCFX(frame)
+            MUSICSTEP(frame)
+            IF shake > 0.2 THEN
+                shake = shake * 0.82
+                shake_x = INT(shake * (RND() * 2 - 1))
+                shake_y = INT(shake * (RND() * 2 - 1))
+            ELSE
+                shake = 0.0
+                shake_x = 0
+                shake_y = 0
+            ENDIF
         ENDIF
         IF tap_new = 1 THEN
             tap_new = 0
             HandleClick(tap_x, tap_y)
+        ENDIF
+        IF up_new = 1 THEN
+            up_new = 0
+            ' released over the board while holding a card - deploy there
+            IF uimode$ = "battle" ANDALSO drag_kind$ <> "" ANDALSO up_y < 840 ANDALSO up_y >= BOARD_Y0 THEN
+                IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 THEN
+                    SENDPLAY(drag_kind$, up_x / (TILE * 1.0), WY((up_y - BOARD_Y0) / (TILE * 1.0)))
+                ENDIF
+            ENDIF
+            drag_kind$ = ""
         ENDIF
         IF uimode$ = "menu" THEN
             DrawMenu()
