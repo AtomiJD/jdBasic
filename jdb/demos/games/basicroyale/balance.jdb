@@ -1,0 +1,144 @@
+' Headless balance harness: every troop card fights every other one for
+' equal elixir in open space, and the survivors decide the matchup. Runs
+' the real ARENA simulation, so the numbers describe the shipped rules.
+'   jdbasic balance.jdb
+IMPORT ARENA
+
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+
+CONST BUDGET = 12.0
+
+DIM cs = ARENA.CARDS()
+DIM troops = []
+DIM rushers = []
+FOR EACH k$ IN SORT(MAP.KEYS(cs))
+    IF MAP.EXISTS(cs{k$}, "SPELL") THEN CONTINUEFOR
+    ' cards that ignore troops walk away from an open-field duel, so they
+    ' are measured against a station instead
+    IF cs{k$}{"ONLYTOWERS"} = 1 THEN
+        rushers = APPEND(rushers, k$)
+    ELSE
+        troops = APPEND(troops, k$)
+    ENDIF
+NEXT k$
+
+' Drops n copies of a card centred on (x, y) without the hand and elixir
+' rules - this measures raw combat value, not deck flow.
+SUB SPAWN(st, pid, kind$, x, y, n)
+    DIM c = cs{kind$}
+    DIM i
+    FOR i = 0 TO n - 1
+        DIM u AS MAP = {}
+        u{"ID"} = st{"NEXTID"}
+        u{"OWNER"} = pid
+        u{"KIND"} = kind$
+        u{"X"} = x + (i MOD 3) * 0.9 - 0.9
+        u{"Y"} = y + INT(i / 3) * 0.9
+        u{"HP"} = c{"HP"}
+        u{"MAXHP"} = c{"HP"}
+        u{"DMG"} = c{"DMG"}
+        u{"CD"} = 0.3
+        st{"NEXTID"} = st{"NEXTID"} + 1
+        st{"UNITS"} = APPEND(st{"UNITS"}, u)
+    NEXT i
+ENDSUB
+
+' Remaining hit points of one side, as a share of what it started with.
+FUNC SIDEHP(st, pid)
+    DIM hp = 0.0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"OWNER"} = pid THEN hp = hp + u{"HP"}
+    NEXT u
+    RETURN hp
+ENDFUNC
+
+' One duel: equal elixir of A against B, returns +1 if A wins the field.
+FUNC DUEL(a$, b$)
+    DIM st = ARENA.NEWGAME()
+    DIM na = INT(BUDGET / cs{a$}{"COST"}) * cs{a$}{"N"}
+    DIM nb = INT(BUDGET / cs{b$}{"COST"}) * cs{b$}{"N"}
+    IF na < 1 THEN na = 1
+    IF nb < 1 THEN nb = 1
+    SPAWN(st, 0, a$, 9.0, 16.5, na)
+    SPAWN(st, 1, b$, 9.0, 13.0, nb)
+    DIM hp0 = SIDEHP(st, 0)
+    DIM hp1 = SIDEHP(st, 1)
+    DIM t
+    FOR t = 1 TO 400
+        st = ARENA.SIMSTEP(st)
+        IF SIDEHP(st, 0) <= 0 ORELSE SIDEHP(st, 1) <= 0 THEN EXITFOR
+    NEXT t
+    DIM left0 = SIDEHP(st, 0) / hp0
+    DIM left1 = SIDEHP(st, 1) / hp1
+    IF left0 > left1 + 0.05 THEN RETURN 1
+    IF left1 > left0 + 0.05 THEN RETURN -1
+    RETURN 0
+ENDFUNC
+
+PRINT "BASIC Royale - Balance"
+PRINT "equal elixir ("; INT(BUDGET); "), open field, "; LEN(troops); " troop cards"
+PRINT ""
+
+DIM score AS MAP = {}
+DIM detail AS MAP = {}
+FOR EACH k$ IN troops
+    score{k$} = 0
+    detail{k$} = ""
+NEXT k$
+
+DIM ai
+DIM bi
+FOR ai = 0 TO LEN(troops) - 1
+    FOR bi = ai + 1 TO LEN(troops) - 1
+        DIM a$ = troops[ai]
+        DIM b$ = troops[bi]
+        DIM r = DUEL(a$, b$)
+        IF r > 0 THEN
+            score{a$} = score{a$} + 1
+            detail{b$} = detail{b$} + " <" + a$
+        ELSEIF r < 0 THEN
+            score{b$} = score{b$} + 1
+            detail{a$} = detail{a$} + " <" + b$
+        ENDIF
+    NEXT bi
+NEXT ai
+
+' rank by wins
+DIM names = []
+DIM wins = []
+FOR EACH k$ IN troops
+    names = APPEND(names, k$)
+    wins = APPEND(wins, score{k$})
+NEXT k$
+DIM order = GRADE(wins)
+DIM oi
+PRINT "Rang  Karte        elx  Siege  verliert gegen"
+FOR oi = LEN(order) - 1 TO 0 STEP -1
+    DIM k2$ = names[order[oi]]
+    DIM pad$ = MID$(k2$ + "            ", 0, 12)
+    PRINT LEN(order) - oi; "     "; pad$; " "; cs{k2$}{"COST"}; "    "; score{k2$}; "     "; MID$(detail{k2$}, 0, 40)
+NEXT oi
+
+' Rushers ignore troops, so their yardstick is damage on a defended
+' station: drop them in front of an awake princess and count her losses.
+PRINT ""
+PRINT "Sturmkarten gegen eine wache Prinzessin (Schaden je Elixier)"
+FOR EACH rk$ IN rushers
+    DIM st2 = ARENA.NEWGAME()
+    DIM nr = INT(BUDGET / cs{rk$}{"COST"})
+    IF nr < 1 THEN nr = 1
+    SPAWN(st2, 0, rk$, 14.5, 12.0, nr)
+    DIM tw = st2{"TOWERS"}[4]
+    DIM hp_before = tw{"HP"}
+    DIM t2
+    FOR t2 = 1 TO 400
+        st2 = ARENA.SIMSTEP(st2)
+        IF SIDEHP(st2, 0) <= 0 THEN EXITFOR
+    NEXT t2
+    DIM dealt = hp_before - st2{"TOWERS"}[4]{"HP"}
+    DIM spent = nr * cs{rk$}{"COST"}
+    PRINT "  "; MID$(rk$ + "            ", 0, 12); " "; cs{rk$}{"COST"}; " elx  Schaden "; INT(dealt); "  je elx "; INT(dealt / spent)
+NEXT rk$

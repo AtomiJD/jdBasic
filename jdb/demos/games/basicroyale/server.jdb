@@ -267,16 +267,33 @@ FUNC HJOIN(req)
     DIM deck = PICKDECK(b)
     DIM starter = ENSURESTARTER(name$)
     DIM tok$ = CODEC.UUID$()
+    DIM now = TICK()
+    DIM i
+    ' Your own seat is always yours: a phone that locked or a reloaded tab
+    ' gets its place back under the same name, keeping the running match.
+    FOR i = 0 TO LEN(players) - 1
+        IF players[i]{"NAME"} = name$ THEN
+            players[i]{"TOK"} = tok$
+            players[i]{"LAST"} = now
+            players[i]{"DECK"} = deck
+            st{"QUEUES"}[i] = DECKQ(deck)
+            st{"CARDLVL"}[i] = CARDLVLMAP(name$)
+            PRINT "reconnect: "; name$; " -> pid "; i; " in "; rm{"KEY"}
+            RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$, "ROOM": rm{"KEY"} })
+        ENDIF
+    NEXT i
     IF LEN(players) >= 2 THEN
-        ' reclaim the slot of a client that stopped polling (closed tab)
-        DIM now = TICK()
-        DIM i
+        ' A stranger may only take over a seat that has been silent for a
+        ' while, and never while the match is being played - locking your
+        ' screen mid-battle must not hand your base to a bystander.
+        DIM idle_ok = 60000
+        IF rm{"ST"}{"PHASE"} <> "play" ORELSE rm{"ST"}{"TICKNO"} = 0 THEN idle_ok = 8000
         FOR i = 0 TO LEN(players) - 1
-            IF now - players[i]{"LAST"} > 5000 THEN
+            IF now - players[i]{"LAST"} > idle_ok THEN
                 players[i] = { "NAME": name$, "TOK": tok$, "LAST": now, "DECK": deck }
                 st{"QUEUES"}[i] = DECKQ(deck)
                 st{"CARDLVL"}[i] = CARDLVLMAP(name$)
-                PRINT "rejoin: "; name$; " takes stale pid "; i; " in "; rm{"KEY"}
+                PRINT "takeover: "; name$; " claims idle pid "; i; " in "; rm{"KEY"}
                 RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$, "ROOM": rm{"KEY"} })
             ENDIF
         NEXT i
