@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jdVOID - Leitstand</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="icon.png">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:#07070f;color:#e8ecff;
+       font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;}
+  h1{font-size:20px;margin:0 0 4px;color:#38e0ff;letter-spacing:.1em;}
+  .sub{color:#6f79a8;font-size:13px;margin-bottom:16px;}
+  .bar{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
+  input{padding:10px 12px;font-size:15px;font-family:inherit;color:#eaf2ff;
+        background:#12142c;border:1px solid #2c3160;border-radius:9px;min-width:210px;}
+  button{padding:10px 14px;font-size:14px;font-weight:600;font-family:inherit;
+         color:#04121a;background:#5df0d0;border:none;border-radius:9px;cursor:pointer;}
+  button.warn{background:#ffb35c;}
+  button.bad{background:#ff7a90;}
+  button.ghost{background:#2a2f5c;color:#cfd8ff;}
+  section{background:#0e1024;border:1px solid #262b55;border-radius:14px;
+          padding:14px;margin-bottom:16px;}
+  h2{font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:#7f8bbd;margin:0 0 10px;}
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th{text-align:left;color:#6f79a8;font-weight:600;padding:6px 8px;font-size:12px;}
+  td{padding:8px;border-top:1px solid #1e2246;vertical-align:middle;}
+  .k{color:#9fe8ff;font-weight:600;}
+  .muted{color:#6f79a8;}
+  .live{color:#7cf0a8;}
+  .idle{color:#ffb35c;}
+  .acts{display:flex;gap:6px;flex-wrap:wrap;}
+  #msg{margin:10px 0;font-size:14px;color:#ffd479;min-height:20px;}
+</style>
+</head>
+<body>
+  <h1>jdVOID LEITSTAND</h1>
+  <div class="sub">Räume, Spieler und Sammlungen</div>
+
+  <div class="bar">
+    <input id="key" type="password" placeholder="Admin-Schlüssel" autocomplete="off">
+    <button onclick="save()">Merken</button>
+    <button class="ghost" onclick="loadAll()">Aktualisieren</button>
+    <button class="ghost" onclick="location.href='./'">Zum Spiel</button>
+  </div>
+  <div id="msg"></div>
+
+  <section>
+    <h2>Räume</h2>
+    <table id="rooms"><thead><tr>
+      <th>Raum</th><th>Spieler</th><th>Status</th><th>Aktionen</th>
+    </tr></thead><tbody></tbody></table>
+  </section>
+
+  <section>
+    <h2>Spieler</h2>
+    <table id="players"><thead><tr>
+      <th>Name</th><th>S/N/U</th><th>Kronen</th><th>Level</th><th>Joker</th><th></th>
+    </tr></thead><tbody></tbody></table>
+  </section>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const API = 'api/';
+  $('key').value = localStorage.getItem('jdvoid_admin') || '';
+
+  function save(){ localStorage.setItem('jdvoid_admin', $('key').value); say('Schlüssel gemerkt'); loadAll(); }
+  function say(t){ $('msg').textContent = t; }
+  function key(){ return $('key').value.trim(); }
+
+  async function get(path){
+    const r = await fetch(API + path + (path.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(key()));
+    if (r.status === 403) throw new Error('Schlüssel falsch oder Admin nicht aktiv');
+    return r.json();
+  }
+  async function post(path, body){
+    const r = await fetch(API + path, {method:'POST', headers:{'Content-Type':'text/plain'},
+      body: JSON.stringify(Object.assign({KEY:key()}, body||{}))});
+    if (r.status === 403) throw new Error('Schlüssel falsch oder Admin nicht aktiv');
+    return r.json();
+  }
+
+  async function act(fn, ok){
+    try { const r = await fn(); say(r.OK ? ok : ('Abgelehnt: ' + (r.MSG||''))); loadAll(); }
+    catch(e){ say(e.message); }
+  }
+
+  const resetRoom = k => act(() => post('reset?room=' + encodeURIComponent(k), {ROOM:k}), 'Raum ' + k + ' geleert');
+  const endRoom   = k => act(() => post('forceend?room=' + encodeURIComponent(k), {ROOM:k}), 'Match in ' + k + ' beendet');
+  const dropRoom  = k => act(() => post('drop?room=' + encodeURIComponent(k), {ROOM:k}), 'Raum ' + k + ' entfernt');
+  const wipe = n => { if (confirm('Sammlung und Bilanz von ' + n + ' loeschen?'))
+                        act(() => post('wipe', {NAME:n}), n + ' zurueckgesetzt'); };
+
+  function btn(label, cls, handler){
+    const b = document.createElement('button');
+    b.textContent = label; if (cls) b.className = cls;
+    b.onclick = handler; return b;
+  }
+
+  async function loadAll(){
+    if (!key()) { say('Bitte Admin-Schlüssel eintragen'); return; }
+    try {
+      const rooms = (await get('rooms')).ROOMS || [];
+      const tb = $('rooms').tBodies[0]; tb.innerHTML = '';
+      rooms.forEach(r => {
+        const tr = tb.insertRow();
+        tr.insertCell().innerHTML = '<span class="k">' + r.KEY + '</span>';
+        tr.insertCell().textContent = r.N + '/2' + (r.NAMES.length ? ' - ' + r.NAMES.join(' vs ') : '');
+        const running = r.PHASE === 'play' && r.TICKNO > 0;
+        tr.insertCell().innerHTML = '<span class="' + (running ? 'live' : 'idle') + '">'
+          + (r.PHASE || '?') + '</span> <span class="muted">' + Math.floor((r.TICKNO||0)/10)
+          + 's, still ' + (r.IDLE||0) + 's</span>';
+        const c = tr.insertCell(); c.className = 'acts';
+        c.appendChild(btn('Leeren', 'warn', () => resetRoom(r.KEY)));
+        c.appendChild(btn('Match beenden', 'ghost', () => endRoom(r.KEY)));
+        c.appendChild(btn('Entfernen', 'bad', () => dropRoom(r.KEY)));
+      });
+      if (!rooms.length) tb.insertRow().insertCell().textContent = 'keine Räume';
+
+      const ps = (await get('leaderboard')).PLAYERS || [];
+      ps.sort((a,b) => b.WINS - a.WINS || b.CROWNS - a.CROWNS);
+      const pb = $('players').tBodies[0]; pb.innerHTML = '';
+      ps.forEach(p => {
+        const tr = pb.insertRow();
+        tr.insertCell().innerHTML = '<span class="k">' + p.NAME + '</span>';
+        tr.insertCell().textContent = p.WINS + ' / ' + p.LOSSES + ' / ' + p.DRAWS;
+        tr.insertCell().textContent = p.CROWNS;
+        tr.insertCell().textContent = '+' + p.UPGRADES;
+        tr.insertCell().textContent = p.WILD;
+        tr.insertCell().appendChild(btn('Zuruecksetzen', 'bad', () => wipe(p.NAME)));
+      });
+      if (!ps.length) pb.insertRow().insertCell().textContent = 'noch keine Spieler';
+      say('Stand: ' + new Date().toLocaleTimeString());
+    } catch(e){ say(e.message); }
+  }
+
+  if (key()) loadAll();
+  setInterval(() => { if (key() && !document.hidden) loadAll(); }, 15000);
+</script>
+</body>
+</html>

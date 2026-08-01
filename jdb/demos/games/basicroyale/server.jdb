@@ -78,6 +78,34 @@ FUNC ROOMOF(req, b)
     RETURN ROOM("main")
 ENDFUNC
 
+' Admin key from admin.txt next to the server. Without the file every
+' destructive endpoint stays shut - failing closed beats a default key.
+DIM admin_key$ = ""
+TRY
+    admin_key$ = TRIM$(TXTREADER$("admin.txt"))
+CATCH
+ENDTRY
+IF admin_key$ = "" THEN
+    PRINT "admin.txt missing - admin endpoints disabled"
+ELSE
+    PRINT "admin endpoints armed"
+ENDIF
+
+FUNC ISADMIN(req, b)
+    IF admin_key$ = "" THEN RETURN 0
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "KEY") THEN
+        IF b{"KEY"} = admin_key$ THEN RETURN 1
+    ENDIF
+    IF MAP.EXISTS(req{"PARAMS"}, "key") THEN
+        IF req{"PARAMS"}{"key"} = admin_key$ THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+FUNC DENY()
+    RETURN { "__http_status": 403, "__http_body": "{""OK"":0,""MSG"":""admin key required""}", "__http_content_type": "application/json", "__http_headers": { "Access-Control-Allow-Origin": "*" } }
+ENDFUNC
+
 ' Lifetime stats per player name, persisted across server restarts:
 ' record, crowns, collected card copies, wildcards and the last chest.
 DIM stats AS MAP = {}
@@ -338,12 +366,74 @@ FUNC HPLAY(req)
 ENDFUNC
 
 FUNC HRESET(req)
-    DIM rm = ROOMOF(req, 0)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF ISADMIN(req, b) = 0 THEN RETURN DENY()
+    DIM rm = ROOMOF(req, b)
     rm{"ST"} = ARENA.NEWGAME()
     rm{"PLAYERS"} = []
     rm{"LAST"} = TICK()
     PRINT "reset room "; rm{"KEY"}
     RETURN JJ({ "OK": 1, "MSG": "Raum " + rm{"KEY"} + " frei, 0 Spieler" })
+ENDFUNC
+
+' Drops a room entirely; it reappears when someone joins it again.
+FUNC HDROP(req)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF ISADMIN(req, b) = 0 THEN RETURN DENY()
+    DIM key$ = ROOMKEY$(IIF(MAP.EXISTS(req{"PARAMS"}, "room"), req{"PARAMS"}{"room"}, "main"))
+    IF MAP.EXISTS(rooms, key$) THEN
+        DIM keep AS MAP = {}
+        FOR EACH k$ IN MAP.KEYS(rooms)
+            IF k$ <> key$ THEN keep{k$} = rooms{k$}
+        NEXT k$
+        rooms = keep
+        PRINT "dropped room "; key$
+    ENDIF
+    RETURN JJ({ "OK": 1, "MSG": key$ })
+ENDFUNC
+
+' Lifetime table, strongest record first.
+FUNC HLEADER(req)
+    IF ISADMIN(req, 0) = 0 THEN RETURN DENY()
+    DIM out = []
+    FOR EACH n$ IN MAP.KEYS(stats)
+        DIM s = STATOF(n$)
+        DIM ncards = 0
+        FOR EACH ck$ IN MAP.KEYS(s{"CARDS"})
+            ncards = ncards + s{"CARDS"}{ck$}{"LVL"} - 1
+        NEXT ck$
+        out = APPEND(out, [{ "NAME": n$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"}, "WILD": s{"WILD"}, "UPGRADES": ncards }])
+    NEXT n$
+    RETURN JJ({ "OK": 1, "PLAYERS": out })
+ENDFUNC
+
+' Wipes one player's record and collection - a fresh start on request.
+FUNC HWIPE(req)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF ISADMIN(req, b) = 0 THEN RETURN DENY()
+    DIM n$ = ""
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "NAME") THEN n$ = b{"NAME"}
+    IF n$ = "" ORELSE NOT MAP.EXISTS(stats, n$) THEN RETURN JJ({ "OK": 0, "MSG": "unbekannter Spieler" })
+    DIM keep AS MAP = {}
+    FOR EACH k$ IN MAP.KEYS(stats)
+        IF k$ <> n$ THEN keep{k$} = stats{k$}
+    NEXT k$
+    stats = keep
+    SAVESTATS()
+    PRINT "wiped player "; n$
+    RETURN JJ({ "OK": 1, "MSG": n$ })
 ENDFUNC
 
 ' New match, same two players and their decks - the in-game rematch button.
@@ -376,13 +466,14 @@ FUNC HROOT(req)
     RETURN lines$ + "| POST /join, GET /state?tok=&room=, POST /play, POST /rematch, GET /reset?room=, GET /cards, GET /profile?name=, POST /upgrade."
 ENDFUNC
 
-' Debug lever: end the running match immediately (P1 wins).
+' Ends the running match immediately (player 1 takes it).
 FUNC HFORCEEND(req)
     DIM b = 0
     TRY
         b = JSON.PARSE$(req{"BODY"})
     CATCH
     ENDTRY
+    IF ISADMIN(req, b) = 0 THEN RETURN DENY()
     DIM rm = ROOMOF(req, b)
     rm{"ST"}{"TOWERS"}[2]{"HP"} = 0
     RETURN JJ({ "OK": 1 })
@@ -404,17 +495,35 @@ FUNC HLANG(req)
 ENDFUNC
 
 ' Room directory for the lobby: who is in, and is there a seat left.
+' Empty rooms that nobody has touched for half an hour are swept away so
+' the list keeps showing what is actually being played.
 FUNC HROOMS(req)
+    DIM now = TICK()
+    DIM keep AS MAP = {}
+    FOR EACH sk$ IN MAP.KEYS(rooms)
+        DIM sr = rooms{sk$}
+        IF LEN(sr{"PLAYERS"}) > 0 ORELSE now - sr{"LAST"} < 1800000 ORELSE sk$ = "main" THEN keep{sk$} = sr
+    NEXT sk$
+    rooms = keep
+
+    DIM admin = ISADMIN(req, 0)
     DIM out = []
-    DIM ks = MAP.KEYS(rooms)
-    FOR EACH k$ IN ks
-        DIM rp = rooms{k$}{"PLAYERS"}
+    FOR EACH k$ IN MAP.KEYS(rooms)
+        DIM rr = rooms{k$}
+        DIM rp = rr{"PLAYERS"}
         DIM names = []
         DIM i
         FOR i = 0 TO LEN(rp) - 1
             names = APPEND(names, rp[i]{"NAME"})
         NEXT i
-        out = APPEND(out, [{ "KEY": k$, "N": LEN(rp), "NAMES": names }])
+        DIM row AS MAP = { "KEY": k$, "N": LEN(rp), "NAMES": names }
+        IF admin = 1 THEN
+            row{"PHASE"} = rr{"ST"}{"PHASE"}
+            row{"TICKNO"} = rr{"ST"}{"TICKNO"}
+            row{"CROWNS"} = rr{"ST"}{"CROWNS"}
+            row{"IDLE"} = INT((now - rr{"LAST"}) / 1000)
+        ENDIF
+        out = APPEND(out, [row])
     NEXT k$
     RETURN JJ({ "OK": 1, "ROOMS": out })
 ENDFUNC
@@ -471,6 +580,10 @@ HTTP.SERVER.ON_GET "/cards", "HCARDS"
 HTTP.SERVER.ON_GET "/profile", "HPROFILE"
 HTTP.SERVER.ON_GET "/lang", "HLANG"
 HTTP.SERVER.ON_GET "/rooms", "HROOMS"
+HTTP.SERVER.ON_GET "/leaderboard", "HLEADER"
+HTTP.SERVER.ON_POST "/drop", "HDROP"
+HTTP.SERVER.ON_GET "/drop", "HDROP"
+HTTP.SERVER.ON_POST "/wipe", "HWIPE"
 HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
 HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
 
