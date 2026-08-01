@@ -21,8 +21,25 @@ ENDTRY
 ' state on Windows, so seeding on the main thread leaves the HTTP handler
 ' threads - where chests are dealt - on the identical default sequence.
 ' This one lives in VM state and is shared by every handler.
-DIM rng_state = NOW_EPOCH() MOD 2147483647
-IF rng_state < 1 THEN rng_state = 1
+' Seed from the wallclock where available, always folding in a fresh UUID
+' so the sequence differs per run even on runtimes without NOW_EPOCH.
+FUNC SEEDVAL()
+    DIM s = 0
+    TRY
+        s = NOW_EPOCH()
+    CATCH
+    ENDTRY
+    DIM u$ = LCASE$(CODEC.UUID$())
+    DIM i
+    FOR i = 0 TO LEN(u$) - 1
+        DIM p = INSTR("0123456789abcdef", MID$(u$, i, 1))
+        IF p >= 0 THEN s = (s * 31 + p) MOD 2147483647
+    NEXT i
+    IF s < 1 THEN s = 1
+    RETURN s
+ENDFUNC
+
+DIM rng_state = SEEDVAL()
 
 FUNC NEXTRAND()
     rng_state = (rng_state * 16807) MOD 2147483647
@@ -411,9 +428,21 @@ HTTP.SERVER.ON_GET "/profile", "HPROFILE"
 HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
 HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
 
+' Bind host and port from the command line: behind a reverse proxy pass
+' 127.0.0.1 so only the proxy can reach the match server. Defaults stay
+' open for LAN play at home.
 DIM srv_port = 8081
-IF HTTP.SERVER.START(srv_port, "0.0.0.0") THEN
-    PRINT "BASIC Royale server on 0.0.0.0:"; srv_port
+DIM srv_host$ = "0.0.0.0"
+DIM sargs = OS.ARGS()
+DIM si
+FOR si = 0 TO LEN(sargs) - 1
+    DIM a$ = sargs[si]
+    IF INSTR(a$, ".") >= 0 ANDALSO INSTR(a$, ".jdb") < 0 THEN srv_host$ = a$
+    IF VAL(a$) > 0 ANDALSO INSTR(a$, ".") < 0 THEN srv_port = INT(VAL(a$))
+NEXT si
+
+IF HTTP.SERVER.START(srv_port, srv_host$) THEN
+    PRINT "BASIC Royale server on "; srv_host$; ":"; srv_port
     ' Park the main thread inside the native - a DO/SLEEP loop here would
     ' execute bytecode on the same VM the handler threads call into, and
     ' the rare overlap crashes the server mid-match.
