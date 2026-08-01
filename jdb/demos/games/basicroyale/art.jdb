@@ -28,16 +28,18 @@ ENDFUNC
 EXPORT FUNC PALETTE(team)
     DIM p AS MAP = {}
     IF team = 0 THEN
-        p{"TEAM"} = [90, 200, 255]
-        p{"ACCENT"} = [180, 250, 255]
+        ' electric cyan hull lights with a violet neon accent
+        p{"TEAM"} = [50, 240, 255]
+        p{"ACCENT"} = [190, 110, 255]
     ELSE
-        p{"TEAM"} = [255, 90, 140]
-        p{"ACCENT"} = [255, 200, 120]
+        ' hot magenta with a neon amber accent
+        p{"TEAM"} = [255, 45, 175]
+        p{"ACCENT"} = [255, 190, 60]
     ENDIF
-    p{"HULL"} = [175, 188, 215]
-    ' still the darkest slot, but bright enough to read against the void
-    p{"DARK"} = [96, 108, 148]
-    p{"LIGHT"} = [240, 248, 255]
+    p{"HULL"} = [186, 190, 230]
+    ' darkest slot - a violet tint keeps it glowing against the void
+    p{"DARK"} = [122, 96, 180]
+    p{"LIGHT"} = [255, 252, 255]
     RETURN p
 ENDFUNC
 
@@ -130,10 +132,10 @@ EXPORT FUNC FIGURE(kind$)
     DIM s = []
     IF kind$ = "DROID" THEN
         s = APPEND(s, [BOXR(20, 23, 9, 8, 3, 0, "HULL", 0)])
-        s = APPEND(s, [BOXR(20, 12, 6, 4, 2, 0, "TEAM", 0.3)])
-        s = APPEND(s, [DISC(20, 12, 2.5, "LIGHT", 0.6)])
-        s = APPEND(s, [BAR(11, 20, 8, 28, 2.5, "DARK", 0)])
-        s = APPEND(s, [BAR(29, 20, 32, 28, 2.5, "DARK", 0)])
+        s = APPEND(s, [BAR(13, 25, 27, 25, 1.6, "ACCENT", 0.9)])
+        s = APPEND(s, [BOXR(20, 12, 6, 4, 2, 0, "TEAM", 0.5)])
+        s = APPEND(s, [DISC(20, 12, 2.5, "LIGHT", 0.8)])
+        s = APPEND(s, [BAR(11, 20, 8, 28, 2.5, "DARK", 0.2)])
     ELSEIF kind$ = "LASER" THEN
         s = APPEND(s, [DISC(18, 22, 7, "HULL", 0)])
         s = APPEND(s, [BAR(20, 20, 34, 13, 2, "DARK", 0)])
@@ -141,10 +143,10 @@ EXPORT FUNC FIGURE(kind$)
         s = APPEND(s, [DISC(18, 22, 3, "TEAM", 0.4)])
     ELSEIF kind$ = "KOLOSS" THEN
         s = APPEND(s, [BOXR(20, 20, 13, 11, 5, 0, "HULL", 0)])
-        s = APPEND(s, [DISC(20, 17, 6, "TEAM", 0.5)])
-        s = APPEND(s, [DISC(20, 17, 2.5, "LIGHT", 0.9)])
-        s = APPEND(s, [BAR(12, 30, 9, 37, 3.5, "DARK", 0)])
-        s = APPEND(s, [BAR(28, 30, 31, 37, 3.5, "DARK", 0)])
+        s = APPEND(s, [BAR(9, 27, 31, 27, 2, "ACCENT", 1.0)])
+        s = APPEND(s, [DISC(20, 17, 6, "TEAM", 0.7)])
+        s = APPEND(s, [DISC(20, 17, 2.5, "LIGHT", 1.0)])
+        s = APPEND(s, [BAR(12, 31, 9, 37, 3.5, "DARK", 0.3)])
     ELSEIF kind$ = "WESPEN" THEN
         s = APPEND(s, [BAR(6, 20, 34, 20, 2, "DARK", 0)])
         s = APPEND(s, [DISC(20, 20, 7, "HULL", 0)])
@@ -168,15 +170,15 @@ EXPORT FUNC FIGURE(kind$)
     ELSEIF kind$ = "GLEITER" THEN
         s = APPEND(s, [BAR(8, 30, 20, 14, 2.5, "HULL", 0)])
         s = APPEND(s, [BAR(32, 30, 20, 14, 2.5, "HULL", 0)])
-        s = APPEND(s, [BOXR(20, 22, 4, 10, 4, 0, "DARK", 0)])
-        s = APPEND(s, [DISC(20, 16, 4, "TEAM", 0.7)])
-        s = APPEND(s, [DISC(20, 16, 1.8, "LIGHT", 1.0)])
+        s = APPEND(s, [BAR(10, 29, 30, 29, 1.4, "ACCENT", 1.0)])
+        s = APPEND(s, [DISC(20, 18, 4.5, "TEAM", 0.9)])
+        s = APPEND(s, [DISC(20, 18, 1.8, "LIGHT", 1.0)])
     ELSEIF kind$ = "TITAN" THEN
         s = APPEND(s, [BOXR(20, 21, 11, 13, 4, 0, "HULL", 0)])
-        s = APPEND(s, [BOXR(7, 15, 4, 6, 2, 0, "DARK", 0)])
-        s = APPEND(s, [BOXR(33, 15, 4, 6, 2, 0, "DARK", 0)])
-        s = APPEND(s, [DISC(20, 20, 5, "TEAM", 0.9)])
-        s = APPEND(s, [DISC(20, 20, 2, "LIGHT", 1.0)])
+        s = APPEND(s, [BOXR(7, 15, 4, 6, 2, 0, "ACCENT", 0.8)])
+        s = APPEND(s, [BOXR(33, 15, 4, 6, 2, 0, "ACCENT", 0.8)])
+        s = APPEND(s, [DISC(20, 20, 6, "TEAM", 1.0)])
+        s = APPEND(s, [DISC(20, 20, 2.5, "LIGHT", 1.0)])
     ELSEIF kind$ = "RAMME" THEN
         s = APPEND(s, [BOXR(21, 22, 6, 12, 3, 0, "HULL", 0)])
         s = APPEND(s, [BAR(21, 8, 21, 16, 3.5, "ACCENT", 0.8)])

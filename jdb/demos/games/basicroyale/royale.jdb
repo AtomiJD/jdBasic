@@ -553,18 +553,29 @@ SUB DrawUnits()
     NEXT u
 ENDSUB
 
-' One line of chest icons, e.g. "SK AR GO MI DR PK * ".
-FUNC CHESTLINE$(chest)
-    DIM out$ = ""
-    FOR EACH cc$ IN chest
+' Chest contents as a row of rounded chips, wildcards in gold.
+SUB CHESTROW(chest, x, y)
+    DIM i
+    FOR i = 0 TO LEN(chest) - 1
+        DIM cc$ = chest[i]
+        DIM cx = x + i * 48
         IF cc$ = "*" THEN
-            out$ = out$ + "* "
+            DRAWCOLOR 150, 115, 20
+            ROUNDED_RECT cx, y, 42, 40, 9, TRUE
+            DRAWCOLOR 255, 220, 90
+            ROUNDED_RECT cx, y, 42, 40, 9, FALSE
+            TEXT cx + 16, y + 11, "*"
         ELSE
-            out$ = out$ + ICON$(cc$) + " "
+            DIM col = CCOLOR(cc$)
+            DRAWCOLOR INT(col[0] * 0.4), INT(col[1] * 0.4), INT(col[2] * 0.4)
+            ROUNDED_RECT cx, y, 42, 40, 9, TRUE
+            DRAWCOLOR col[0], col[1], col[2]
+            ROUNDED_RECT cx, y, 42, 40, 9, FALSE
+            DRAWCOLOR 245, 250, 255
+            TEXT cx + 8, y + 11, ICON$(cc$)
         ENDIF
-    NEXT cc$
-    RETURN out$
-ENDFUNC
+    NEXT i
+ENDSUB
 
 ' Own half plus the quadrant a fallen enemy princess opened up. Mirroring
 ' puts the own half at the bottom for both players, so the unlocked strip
@@ -590,13 +601,15 @@ SUB DrawMenu()
     TEXT 150, 230, "Spieler: " + myname$
     IF MAP.EXISTS(myprofile, "LASTCHEST") THEN
         DIM played = myprofile{"WINS"} + myprofile{"LOSSES"} + myprofile{"DRAWS"}
-        DIM head$ = "Letzte Kiste:"
+        DIM head$ = "Letzte Kiste"
         IF played = 0 THEN head$ = "Startkiste!"
-        DRAWCOLOR 255, 220, 60
-        RECT 34, 268, 400, 60, TRUE
-        DRAWCOLOR 0, 0, 0
-        TEXT 44, 276, head$ + "   * x" + STR$(MYWILD())
-        TEXT 44, 302, CHESTLINE$(myprofile{"LASTCHEST"})
+        DRAWCOLOR 22, 24, 48
+        ROUNDED_RECT 14, 262, 440, 92, 14, TRUE
+        DRAWCOLOR 120, 110, 200
+        ROUNDED_RECT 14, 262, 440, 92, 14, FALSE
+        DRAWCOLOR 255, 220, 90
+        TEXT 26, 270, head$ + "   Joker x" + STR$(MYWILD())
+        CHESTROW(myprofile{"LASTCHEST"}, 26, 300)
     ENDIF
     BUTTON(134, 360, 200, 60, "BATTLE", 80, 210, 120)
     BUTTON(134, 450, 200, 60, "DECK", 90, 160, 240)
@@ -623,32 +636,38 @@ SUB DrawDeckEd()
             DIM x0 = 6 + (i MOD 3) * 154
             DIM y0 = 80 + INT(i / 3) * 150
             IF DECKHAS(kind$) = 1 THEN
-                DRAWCOLOR col[0], col[1], col[2]
+                DRAWCOLOR INT(col[0] * 0.5), INT(col[1] * 0.5), INT(col[2] * 0.5)
             ELSE
-                DRAWCOLOR INT(col[0] * 0.35), INT(col[1] * 0.35), INT(col[2] * 0.35)
+                DRAWCOLOR INT(col[0] * 0.22), INT(col[1] * 0.22), INT(col[2] * 0.22)
             ENDIF
-            RECT x0, y0, 150, 140, TRUE
+            ROUNDED_RECT x0, y0, 150, 140, 12, TRUE
+            DRAWCOLOR col[0], col[1], col[2]
+            ROUNDED_RECT x0, y0, 150, 140, 12, FALSE
             IF DECKHAS(kind$) = 1 THEN
                 DRAWCOLOR 255, 255, 0
-                RECT x0, y0, 150, 140, FALSE
-                RECT x0 + 1, y0 + 1, 148, 138, FALSE
+                ROUNDED_RECT x0, y0, 150, 140, 12, FALSE
+                ROUNDED_RECT x0 + 1, y0 + 1, 148, 138, 11, FALSE
             ENDIF
             IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
-                SPRAT(art_own{kind$}, x0 + 118, y0 + 34)
+                SPRAT(art_own{kind$}, x0 + 108, y0 + 44)
             ENDIF
-            DRAWCOLOR 0, 0, 0
-            TEXT x0 + 12, y0 + 16, ICON$(kind$)
-            TEXT x0 + 12, y0 + 48, MID$(kind$, 0, 8)
-            TEXT x0 + 12, y0 + 76, STR$(cardcost{kind$}) + " elx"
+            DRAWCOLOR 245, 250, 255
+            TEXT x0 + 12, y0 + 14, ICON$(kind$)
+            TEXT x0 + 12, y0 + 44, MID$(kind$, 0, 8)
+            ' bottom row: cost coin, level and collection progress
             DIM mc = MYCARD(kind$)
             DIM upcost = INT(2 ^ mc{"LVL"})
-            TEXT x0 + 12, y0 + 108, "Lv" + STR$(mc{"LVL"}) + "  " + STR$(mc{"HAVE"}) + "/" + STR$(upcost)
+            ELIXCOIN(x0 + 22, y0 + 112, 14, STR$(cardcost{kind$}))
+            DRAWCOLOR 245, 250, 255
+            TEXT x0 + 42, y0 + 92, "Lv" + STR$(mc{"LVL"})
+            TEXT x0 + 42, y0 + 116, STR$(mc{"HAVE"}) + "/" + STR$(upcost)
             IF mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
-                DRAWCOLOR 60, 200, 60
-                RECT x0 + 108, y0 + 98, 38, 38, TRUE
+                DRAWCOLOR 40, 150, 60
+                ROUNDED_RECT x0 + 106, y0 + 96, 38, 38, 9, TRUE
+                DRAWCOLOR 120, 255, 150
+                ROUNDED_RECT x0 + 106, y0 + 96, 38, 38, 9, FALSE
                 DRAWCOLOR 255, 255, 255
-                RECT x0 + 108, y0 + 98, 38, 38, FALSE
-                TEXT x0 + 121, y0 + 110, "+"
+                TEXT x0 + 120, y0 + 106, "+"
             ENDIF
         NEXT i
     ENDIF
@@ -659,6 +678,18 @@ SUB DrawDeckEd()
     ENDIF
 ENDSUB
 
+' Elixir cost as a bare number on an elixir-purple coin.
+SUB ELIXCOIN(cx, cy, r, n$)
+    DRAWCOLOR 120, 30, 160
+    CIRCLE cx, cy, r + 1, TRUE
+    DRAWCOLOR 210, 60, 240
+    CIRCLE cx, cy, r, TRUE
+    DRAWCOLOR 245, 170, 255
+    CIRCLE cx, cy, r, FALSE
+    DRAWCOLOR 255, 255, 255
+    TEXT cx - LEN(n$) * 5, cy - 9, n$
+ENDSUB
+
 SUB DrawHand()
     DIM q = world{"QUEUES"}[mypid]
     DIM i
@@ -666,27 +697,35 @@ SUB DrawHand()
         DIM kind$ = q[i]
         DIM col = kindcolor{kind$}
         DIM x0 = i * 117
-        IF world{"ELIXIR"}[mypid] < cardcost{kind$} THEN
-            DRAWCOLOR INT(col[0] * 0.35), INT(col[1] * 0.35), INT(col[2] * 0.35)
+        DIM afford = 1
+        IF world{"ELIXIR"}[mypid] < cardcost{kind$} THEN afford = 0
+        IF afford = 0 THEN
+            DRAWCOLOR INT(col[0] * 0.3), INT(col[1] * 0.3), INT(col[2] * 0.3)
         ELSE
-            DRAWCOLOR col[0], col[1], col[2]
+            DRAWCOLOR INT(col[0] * 0.55), INT(col[1] * 0.55), INT(col[2] * 0.55)
         ENDIF
-        RECT x0 + 3, 843, 111, 54, TRUE
+        ROUNDED_RECT x0 + 3, 843, 111, 54, 9, TRUE
+        DRAWCOLOR col[0], col[1], col[2]
+        ROUNDED_RECT x0 + 3, 843, 111, 54, 9, FALSE
         IF sel$ = kind$ THEN
             DRAWCOLOR 255, 255, 0
-            RECT x0 + 3, 843, 111, 54, FALSE
-            RECT x0 + 4, 844, 109, 52, FALSE
+            ROUNDED_RECT x0 + 3, 843, 111, 54, 9, FALSE
+            ROUNDED_RECT x0 + 4, 844, 109, 52, 8, FALSE
         ENDIF
-        DRAWCOLOR 0, 0, 0
-        TEXT x0 + 10, 852, ICON$(kind$) + " " + MID$(kind$, 0, 5)
-        TEXT x0 + 10, 872, STR$(cardcost{kind$}) + " elx"
+        ' ship portrait on the right, tag top-left, cost and level below
+        IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
+            SPRAT(art_own{kind$}, x0 + 84, 868)
+        ENDIF
+        DRAWCOLOR 245, 250, 255
+        TEXT x0 + 10, 848, ICON$(kind$)
+        DIM lvl = 1
         DIM hl = world{"CARDLVL"}[mypid]
-        IF MAP.EXISTS(hl, kind$) THEN
-            IF hl{kind$} > 1 THEN
-                DRAWCOLOR 255, 255, 255
-                TEXT x0 + 88, 852, "L" + STR$(hl{kind$})
-            ENDIF
+        IF MAP.EXISTS(hl, kind$) THEN lvl = hl{kind$}
+        IF lvl > 1 THEN
+            DRAWCOLOR 255, 235, 120
+            TEXT x0 + 36, 876, "L" + STR$(lvl)
         ENDIF
+        ELIXCOIN(x0 + 20, 878, 12, STR$(cardcost{kind$}))
     NEXT i
     DIM exl = world{"ELIXIR"}[mypid]
     DRAWCOLOR 30, 10, 40
@@ -695,8 +734,7 @@ SUB DrawHand()
         DRAWCOLOR 210, 60, 240
         RECT 0, 832, INT(SCR_W * exl / 10.0), 8, TRUE
     ENDIF
-    DRAWCOLOR 255, 255, 255
-    TEXT SCR_W - 60, 812, "elx " + STR$(INT(exl))
+    ELIXCOIN(SCR_W - 26, 812, 15, STR$(INT(exl)))
 ENDSUB
 
 SUB DrawHud()
@@ -735,11 +773,13 @@ SUB DrawHud()
             TEXT 150, 442, "Serie " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"}) + "  Kronen " + STR$(profiles[mypid]{"CROWNS"}) + ":" + STR$(profiles[1 - mypid]{"CROWNS"})
         ENDIF
         IF chest_shown = 1 ANDALSO MAP.EXISTS(myprofile, "LASTCHEST") THEN
-            DRAWCOLOR 255, 220, 60
-            RECT 34, 600, 400, 54, TRUE
-            DRAWCOLOR 0, 0, 0
-            TEXT 44, 608, "KISTE:"
-            TEXT 44, 630, CHESTLINE$(myprofile{"LASTCHEST"})
+            DRAWCOLOR 22, 24, 48
+            ROUNDED_RECT 14, 600, 440, 86, 14, TRUE
+            DRAWCOLOR 120, 110, 200
+            ROUNDED_RECT 14, 600, 440, 86, 14, FALSE
+            DRAWCOLOR 255, 220, 90
+            TEXT 26, 608, "KISTE   Joker x" + STR$(MYWILD())
+            CHESTROW(myprofile{"LASTCHEST"}, 26, 638)
         ENDIF
         BUTTON(154, 490, 160, 46, "NOCHMAL!", 80, 210, 120)
         BUTTON(154, 548, 160, 40, "MENU", 150, 150, 180)
