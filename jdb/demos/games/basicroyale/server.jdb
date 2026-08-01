@@ -51,13 +51,41 @@ SUB SYNCSIM()
     ENDIF
 ENDSUB
 
+' Validated 6-card deck from the join body, or the classic default.
+FUNC PICKDECK(b)
+    DIM def = ["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"]
+    IF TYPEOF(b) <> "OBJECT" ORELSE NOT MAP.EXISTS(b, "DECK") THEN RETURN def
+    DIM d = b{"DECK"}
+    IF TYPEOF(d) <> "ARRAY" ORELSE LEN(d) <> 6 THEN RETURN def
+    DIM cs = ARENA.CARDS()
+    DIM seen AS MAP = {}
+    DIM i
+    FOR i = 0 TO 5
+        IF NOT MAP.EXISTS(cs, d[i]) ORELSE MAP.EXISTS(seen, d[i]) THEN RETURN def
+        seen{d[i]} = 1
+    NEXT i
+    RETURN d
+ENDFUNC
+
+' Fresh copy so the cycling queue never shares storage with the deck.
+FUNC DECKQ(d)
+    DIM q = []
+    DIM i
+    FOR i = 0 TO LEN(d) - 1
+        q = APPEND(q, d[i])
+    NEXT i
+    RETURN q
+ENDFUNC
+
 FUNC HJOIN(req)
     DIM name$ = "P" + STR$(LEN(players))
+    DIM b = 0
     TRY
-        DIM b = JSON.PARSE$(req{"BODY"})
+        b = JSON.PARSE$(req{"BODY"})
         IF MAP.EXISTS(b, "NAME") THEN name$ = b{"NAME"}
     CATCH
     ENDTRY
+    DIM deck = PICKDECK(b)
     DIM tok$ = CODEC.UUID$()
     IF LEN(players) >= 2 THEN
         ' reclaim the slot of a client that stopped polling (closed tab)
@@ -65,14 +93,16 @@ FUNC HJOIN(req)
         DIM i
         FOR i = 0 TO LEN(players) - 1
             IF now - players[i]{"LAST"} > 5000 THEN
-                players[i] = { "NAME": name$, "TOK": tok$, "LAST": now }
+                players[i] = { "NAME": name$, "TOK": tok$, "LAST": now, "DECK": deck }
+                st{"QUEUES"}[i] = DECKQ(deck)
                 PRINT "rejoin: "; name$; " takes stale pid "; i
                 RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$ })
             ENDIF
         NEXT i
         RETURN JJ({ "OK": 0, "MSG": "match full - open /reset for a rematch" })
     ENDIF
-    players = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK() })
+    players = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK(), "DECK": deck })
+    st{"QUEUES"}[LEN(players) - 1] = DECKQ(deck)
     IF LEN(players) = 2 THEN last_ms = TICK()
     PRINT "join: "; name$; " -> pid "; LEN(players) - 1
     RETURN JJ({ "OK": 1, "PID": LEN(players) - 1, "TOK": tok$ })
@@ -108,9 +138,13 @@ FUNC HRESET(req)
     RETURN JJ({ "OK": 1, "MSG": "fresh match, 0 players" })
 ENDFUNC
 
-' New match, same two players - the in-game rematch button.
+' New match, same two players and their decks - the in-game rematch button.
 FUNC HREMATCH(req)
     st = ARENA.NEWGAME()
+    DIM i
+    FOR i = 0 TO LEN(players) - 1
+        st{"QUEUES"}[i] = DECKQ(players[i]{"DECK"})
+    NEXT i
     last_ms = TICK()
     PRINT "rematch"
     RETURN JJ({ "OK": 1 })

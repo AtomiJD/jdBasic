@@ -57,6 +57,20 @@ DIM fxseen AS MAP = {}
 DIM fxact = []
 DIM frame = 0
 
+' Screens: menu -> battle / decks. Battle joins on demand, not at load.
+DIM uimode$ = "menu"
+DIM mydeck = ["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"]
+DIM myname$ = "Spieler"
+DIM allcards AS MAP = {}
+DIM cardorder = []
+
+' A shared link can personalize the player: ?name=... lands in MEMFS.
+TRY
+    DIM up = JSON.PARSE$(TXTREADER$("/url_params.json"))
+    IF MAP.EXISTS(up, "name") THEN myname$ = up{"name"}
+CATCH
+ENDTRY
+
 ' Player 1 sees the board mirrored so their own side is at the bottom.
 FUNC WY(y)
     IF mypid = 1 THEN RETURN 29.0 - y
@@ -75,13 +89,15 @@ FUNC MINE(owner)
     RETURN IIF(owner = mypid, 1, 0)
 ENDFUNC
 
-' Costs and colors come from the server's cards.json; the hardcoded maps
-' above stay as fallback when the fetch fails.
+' The server's cards.json is the source for stats, colors and icons; the
+' hardcoded maps above stay as fallback when the fetch fails.
 SUB LOADCARDS()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/cards")
         DIM m = JSON.PARSE$(r$)
         DIM cs = m{"CARDS"}
+        allcards = cs
+        cardorder = SORT(MAP.KEYS(cs))
         DIM ks = MAP.KEYS(cs)
         FOR EACH k$ IN ks
             cardcost{k$} = cs{k$}{"COST"}
@@ -91,9 +107,40 @@ SUB LOADCARDS()
     ENDTRY
 ENDSUB
 
+FUNC ICON$(kind$)
+    IF MAP.EXISTS(allcards, kind$) THEN
+        IF MAP.EXISTS(allcards{kind$}, "ICON") THEN RETURN allcards{kind$}{"ICON"}
+    ENDIF
+    RETURN MID$(kind$, 0, 2)
+ENDFUNC
+
+FUNC CCOLOR(kind$)
+    IF MAP.EXISTS(kindcolor, kind$) THEN RETURN kindcolor{kind$}
+    RETURN [180, 180, 180]
+ENDFUNC
+
+FUNC DECKHAS(kind$)
+    FOR EACH d$ IN mydeck
+        IF d$ = kind$ THEN RETURN 1
+    NEXT d$
+    RETURN 0
+ENDFUNC
+
+SUB TOGGLECARD(kind$)
+    IF DECKHAS(kind$) = 1 THEN
+        DIM nd = []
+        FOR EACH d$ IN mydeck
+            IF d$ <> kind$ THEN nd = APPEND(nd, d$)
+        NEXT d$
+        mydeck = nd
+    ELSEIF LEN(mydeck) < 6 THEN
+        mydeck = APPEND(mydeck, kind$)
+    ENDIF
+ENDSUB
+
 SUB JOINMATCH()
     TRY
-        DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "NAME": "Spieler" }), "text/plain")
+        DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "NAME": myname$, "DECK": mydeck }), "text/plain")
         DIM m = JSON.PARSE$(r$)
         IF m{"OK"} = 1 THEN
             mypid = m{"PID"}
@@ -375,8 +422,77 @@ SUB DrawUnits()
         CIRCLE ux, uy, 8, TRUE
         DrawBar(ux - 10, uy - 18, 20, u{"HP"} / u{"MAXHP"})
         DRAWCOLOR 0, 0, 0
-        TEXT ux - 4, uy - 6, MID$(u{"KIND"}, 0, 1)
+        TEXT ux - 8, uy - 6, ICON$(u{"KIND"})
     NEXT u
+ENDSUB
+
+SUB DrawMenu()
+    DRAWCOLOR 15, 15, 20
+    RECT 0, 0, SCR_W, SCR_H, TRUE
+    DRAWCOLOR 255, 220, 60
+    TEXT 150, 190, "BASIC ROYALE"
+    DRAWCOLOR 200, 200, 210
+    TEXT 150, 230, "Spieler: " + myname$
+    DRAWCOLOR 60, 180, 60
+    RECT 134, 360, 200, 60, TRUE
+    DRAWCOLOR 255, 255, 255
+    RECT 134, 360, 200, 60, FALSE
+    TEXT 200, 382, "BATTLE"
+    DRAWCOLOR 70, 110, 230
+    RECT 134, 450, 200, 60, TRUE
+    DRAWCOLOR 255, 255, 255
+    RECT 134, 450, 200, 60, FALSE
+    TEXT 205, 472, "DECK"
+    DIM ton$ = "TON: AUS"
+    IF snd_on = 1 THEN ton$ = "TON: AN"
+    DRAWCOLOR 110, 110, 130
+    RECT 134, 540, 200, 60, TRUE
+    DRAWCOLOR 255, 255, 255
+    RECT 134, 540, 200, 60, FALSE
+    TEXT 185, 562, ton$
+ENDSUB
+
+SUB DrawDeckEd()
+    DRAWCOLOR 15, 15, 20
+    RECT 0, 0, SCR_W, SCR_H, TRUE
+    DRAWCOLOR 255, 220, 60
+    TEXT 150, 30, "DECK  " + STR$(LEN(mydeck)) + " / 6"
+    IF LEN(cardorder) = 0 THEN
+        DRAWCOLOR 255, 255, 255
+        TEXT 100, 300, "Karten laden fehlgeschlagen..."
+    ELSE
+        DIM i
+        FOR i = 0 TO LEN(cardorder) - 1
+            DIM kind$ = cardorder[i]
+            DIM col = CCOLOR(kind$)
+            DIM x0 = 6 + (i MOD 3) * 154
+            DIM y0 = 80 + INT(i / 3) * 150
+            IF DECKHAS(kind$) = 1 THEN
+                DRAWCOLOR col[0], col[1], col[2]
+            ELSE
+                DRAWCOLOR INT(col[0] * 0.35), INT(col[1] * 0.35), INT(col[2] * 0.35)
+            ENDIF
+            RECT x0, y0, 150, 140, TRUE
+            IF DECKHAS(kind$) = 1 THEN
+                DRAWCOLOR 255, 255, 0
+                RECT x0, y0, 150, 140, FALSE
+                RECT x0 + 1, y0 + 1, 148, 138, FALSE
+            ENDIF
+            DRAWCOLOR 0, 0, 0
+            TEXT x0 + 12, y0 + 16, ICON$(kind$)
+            TEXT x0 + 12, y0 + 60, MID$(kind$, 0, 8)
+            TEXT x0 + 12, y0 + 100, STR$(cardcost{kind$}) + " elx"
+        NEXT i
+    ENDIF
+    IF LEN(mydeck) = 6 THEN
+        DRAWCOLOR 60, 180, 60
+    ELSE
+        DRAWCOLOR 70, 70, 80
+    ENDIF
+    RECT 134, 700, 200, 50, TRUE
+    DRAWCOLOR 255, 255, 255
+    RECT 134, 700, 200, 50, FALSE
+    TEXT 195, 718, "FERTIG"
 ENDSUB
 
 SUB DrawHand()
@@ -398,7 +514,7 @@ SUB DrawHand()
             RECT x0 + 4, 844, 109, 52, FALSE
         ENDIF
         DRAWCOLOR 0, 0, 0
-        TEXT x0 + 10, 852, MID$(kind$, 0, 6)
+        TEXT x0 + 10, 852, ICON$(kind$) + " " + MID$(kind$, 0, 5)
         TEXT x0 + 10, 872, STR$(cardcost{kind$}) + " elx"
     NEXT i
     DIM exl = world{"ELIXIR"}[mypid]
@@ -445,6 +561,11 @@ SUB DrawHud()
         DRAWCOLOR 255, 255, 255
         RECT 154, 490, 160, 46, FALSE
         TEXT 190, 506, "NOCHMAL!"
+        DRAWCOLOR 110, 110, 130
+        RECT 154, 548, 160, 40, TRUE
+        DRAWCOLOR 255, 255, 255
+        RECT 154, 548, 160, 40, FALSE
+        TEXT 200, 562, "MENU"
     ENDIF
 ENDSUB
 
@@ -475,11 +596,54 @@ SUB DrawFrame(fnow)
     ENDIF
 ENDSUB
 
+SUB MenuClick(mx, my)
+    IF mx >= 134 ANDALSO mx <= 334 THEN
+        IF my >= 360 ANDALSO my <= 420 THEN
+            uimode$ = "battle"
+            mypid = -1
+            tok$ = ""
+            have_state = 0
+            fxseen = {}
+            fxact = []
+            prev_tick = -1
+            msg$ = ""
+            JOINMATCH()
+        ELSEIF my >= 450 ANDALSO my <= 510 THEN
+            uimode$ = "decks"
+            IF LEN(cardorder) = 0 THEN LOADCARDS()
+        ELSEIF my >= 540 ANDALSO my <= 600 THEN
+            IF snd_on = 1 THEN
+                snd_on = 0
+            ELSE
+                SNDINIT()
+            ENDIF
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB DeckClick(mx, my)
+    IF my >= 700 ANDALSO my <= 750 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
+        IF LEN(mydeck) = 6 THEN uimode$ = "menu"
+    ELSEIF my >= 80 ANDALSO my < 680 THEN
+        DIM ci = INT((mx - 6) / 154)
+        DIM ri = INT((my - 80) / 150)
+        IF ci >= 0 ANDALSO ci <= 2 ANDALSO ri >= 0 THEN
+            DIM idx = ri * 3 + ci
+            IF idx < LEN(cardorder) THEN TOGGLECARD(cardorder[idx])
+        ENDIF
+    ENDIF
+ENDSUB
+
 SUB HandleClick(mx, my)
-    IF have_state = 0 ORELSE mypid < 0 THEN
+    IF uimode$ = "menu" THEN
+        MenuClick(mx, my)
+    ELSEIF uimode$ = "decks" THEN
+        DeckClick(mx, my)
+    ELSEIF have_state = 0 ORELSE mypid < 0 THEN
         msg$ = ""
     ELSEIF world{"PHASE"} = "over" THEN
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 490 ANDALSO my <= 536 THEN SENDREMATCH()
+        IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 548 ANDALSO my <= 588 THEN uimode$ = "menu"
     ELSEIF my >= 840 THEN
         DIM slot = INT(mx / 117)
         IF slot > 3 THEN slot = 3
@@ -506,9 +670,10 @@ NEXT ai
 SCREEN SCR_W, SCR_H, "BASIC Royale"
 SNDINIT()
 LOADCARDS()
-JOINMATCH()
 
 IF shotmode = 1 THEN
+    uimode$ = "battle"
+    JOINMATCH()
     POLLSTATE()
     SYNCFX(0)
     DrawFrame(6)
@@ -520,14 +685,22 @@ ELSE
     DO
         IF running = 0 THEN EXITDO
         frame = frame + 1
-        IF mypid < 0 ANDALSO frame MOD 30 = 0 THEN JOINMATCH()
-        IF mypid >= 0 ANDALSO frame MOD 6 = 0 THEN POLLSTATE()
-        SYNCFX(frame)
+        IF uimode$ = "battle" THEN
+            IF mypid < 0 ANDALSO frame MOD 30 = 0 THEN JOINMATCH()
+            IF mypid >= 0 ANDALSO frame MOD 6 = 0 THEN POLLSTATE()
+            SYNCFX(frame)
+        ENDIF
         IF tap_new = 1 THEN
             tap_new = 0
             HandleClick(tap_x, tap_y)
         ENDIF
-        DrawFrame(frame)
+        IF uimode$ = "menu" THEN
+            DrawMenu()
+        ELSEIF uimode$ = "decks" THEN
+            DrawDeckEd()
+        ELSE
+            DrawFrame(frame)
+        ENDIF
         SCREENFLIP
         SLEEP 33
     LOOP

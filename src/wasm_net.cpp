@@ -17,6 +17,23 @@ EM_ASYNC_JS(char*, jdb_fetch_run,
             (const char* url, const char* method, const char* body,
              const char* ctype), {
     try {
+        // Network policy: only http(s), and private addresses (localhost,
+        // RFC1918, link-local, .local) are allowed ONLY when they are the
+        // host the page itself came from. A shared ?prog= link must not be
+        // able to probe the visitor's machine or LAN. (Node test harness
+        // has no `location` and skips the check.)
+        if (typeof location !== 'undefined') {
+            const u = new URL(UTF8ToString(url), location.href);
+            if (u.protocol !== 'http:' && u.protocol !== 'https:')
+                throw new Error('blocked scheme ' + u.protocol);
+            const h = u.hostname;
+            const priv = h === 'localhost' || h === '[::1]' || h === '0.0.0.0'
+                || /^127\./.test(h) || /^10\./.test(h) || /^192\.168\./.test(h)
+                || /^172\.(1[6-9]|2[0-9]|3[01])\./.test(h)
+                || /^169\.254\./.test(h) || h.endsWith('.local');
+            if (priv && h !== location.hostname)
+                throw new Error('blocked private address ' + h);
+        }
         const opts = { method: UTF8ToString(method) };
         if (opts.method !== 'GET') {
             opts.body = UTF8ToString(body);
