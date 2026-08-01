@@ -392,12 +392,12 @@
       const mode = (qp.get('mode')||'run').toLowerCase();
       let src = null;
       if (/^https?:\/\//i.test(prog)) {
-        try { const r = await fetch(prog); if (r.ok) src = await r.text(); } catch(e){}
+        try { const r = await fetch(prog, {cache:'no-store'}); if (r.ok) src = await r.text(); } catch(e){}
       } else {
         if (!/\.\w+$/.test(prog)) prog += '.jdb';
         src = readMaybe('/'+prog);
         if (src === null) {
-          try { const r = await fetch(prog); if (r.ok) src = await r.text(); } catch(e){}
+          try { const r = await fetch(prog, {cache:'no-store'}); if (r.ok) src = await r.text(); } catch(e){}
         }
       }
       if (src === null) { term.write('\r\n\x1b[31mcannot load '+prog+'\x1b[0m'); prompt(); return; }
