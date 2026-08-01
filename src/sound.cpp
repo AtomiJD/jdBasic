@@ -406,6 +406,18 @@ static struct SoundSystem {
                 best = i; best_level = voices[i].env.level;
             }
         }
+        // Nothing is releasing: steal the quietest held note instead of
+        // returning -1. A program that never calls SOUND.RELEASE would
+        // otherwise fill the pool with sustaining voices and go silent
+        // for good - including its sound effects.
+        if (best < 0) {
+            best_level = 999.0f;
+            for (int i = 0; i < MAX_VOICES; i++) {
+                if (voices[i].env.state == EnvState::SUSTAIN && voices[i].env.level < best_level) {
+                    best = i; best_level = voices[i].env.level;
+                }
+            }
+        }
         if (best >= 0) { voices[best] = Voice{}; voices[best].track = track; }
         return best;
     }

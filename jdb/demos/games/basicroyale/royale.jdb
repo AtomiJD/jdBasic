@@ -444,7 +444,12 @@ DIM mus_arp_ot = ["A3", "C5", "E5", "C5", "A4", "C5", "F5", "E5"]
 SUB MUSICINIT()
     IF snd_on = 1 ANDALSO sfx_on = 1 THEN
         TRY
-            SOUND.VOICE 4, "TRIANGLE", 0.01, 0.30, 0.35, 0.20
+            ' Every voice is percussive (sustain 0) on purpose: a held note
+            ' occupies its slot until something releases it, and nothing
+            ' here ever does - a sustaining bass would fill the pool in
+            ' half a minute and silence the whole mix. A long decay gives
+            ' the bass its body instead.
+            SOUND.VOICE 4, "TRIANGLE", 0.01, 0.55, 0.0, 0.20
             SOUND.VOICE 5, "SQUARE", 0.005, 0.10, 0.0, 0.10
             SOUND.GAIN 4, 0.22
             SOUND.GAIN 5, 0.10
