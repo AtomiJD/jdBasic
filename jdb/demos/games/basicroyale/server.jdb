@@ -21,6 +21,57 @@ DIM st = ARENA.NEWGAME()
 DIM players = []
 DIM last_ms = TICK()
 
+' Lifetime stats per player name, persisted across server restarts.
+' Wins feed the card level: +1 level per 3 wins, capped at 5.
+DIM stats AS MAP = {}
+TRY
+    stats = JSON.PARSE$(TXTREADER$("stats.json"))
+CATCH
+ENDTRY
+
+SUB SAVESTATS()
+    TRY
+        TXTWRITER "stats.json", JSON.STRINGIFY$(stats)
+    CATCH
+    ENDTRY
+ENDSUB
+
+FUNC STATOF(name$)
+    IF NOT MAP.EXISTS(stats, name$) THEN
+        stats{name$} = { "WINS": 0, "LOSSES": 0, "DRAWS": 0, "CROWNS": 0 }
+    ENDIF
+    RETURN stats{name$}
+ENDFUNC
+
+FUNC PLEVEL(name$)
+    DIM s = STATOF(name$)
+    DIM lvl = 1 + INT(s{"WINS"} / 3)
+    IF lvl > 5 THEN lvl = 5
+    RETURN lvl
+ENDFUNC
+
+' Book the finished match into the lifetime stats, exactly once.
+SUB RECORDMATCH()
+    IF st{"PHASE"} = "over" ANDALSO NOT MAP.EXISTS(st, "RECORDED") ANDALSO LEN(players) = 2 THEN
+        st{"RECORDED"} = 1
+        DIM w = st{"WINNER"}
+        DIM i
+        FOR i = 0 TO 1
+            DIM s = STATOF(players[i]{"NAME"})
+            s{"CROWNS"} = s{"CROWNS"} + st{"CROWNS"}[i]
+            IF w = 2 THEN
+                s{"DRAWS"} = s{"DRAWS"} + 1
+            ELSEIF w = i THEN
+                s{"WINS"} = s{"WINS"} + 1
+            ELSE
+                s{"LOSSES"} = s{"LOSSES"} + 1
+            ENDIF
+        NEXT i
+        SAVESTATS()
+        PRINT "match recorded: winner "; w
+    ENDIF
+ENDSUB
+
 FUNC JJ(m)
     RETURN { "__http_status": 200, "__http_body": JSON.STRINGIFY$(m), "__http_content_type": "application/json", "__http_headers": { "Access-Control-Allow-Origin": "*" } }
 ENDFUNC
@@ -48,6 +99,7 @@ SUB SYNCSIM()
             st = ARENA.SIMSTEP(st)
         NEXT i
         last_ms = last_ms + n_steps * 100
+        RECORDMATCH()
     ENDIF
 ENDSUB
 
@@ -95,6 +147,7 @@ FUNC HJOIN(req)
             IF now - players[i]{"LAST"} > 5000 THEN
                 players[i] = { "NAME": name$, "TOK": tok$, "LAST": now, "DECK": deck }
                 st{"QUEUES"}[i] = DECKQ(deck)
+                st{"LEVELS"}[i] = PLEVEL(name$)
                 PRINT "rejoin: "; name$; " takes stale pid "; i
                 RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$ })
             ENDIF
@@ -103,6 +156,7 @@ FUNC HJOIN(req)
     ENDIF
     players = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK(), "DECK": deck })
     st{"QUEUES"}[LEN(players) - 1] = DECKQ(deck)
+    st{"LEVELS"}[LEN(players) - 1] = PLEVEL(name$)
     IF LEN(players) = 2 THEN last_ms = TICK()
     PRINT "join: "; name$; " -> pid "; LEN(players) - 1
     RETURN JJ({ "OK": 1, "PID": LEN(players) - 1, "TOK": tok$ })
@@ -114,11 +168,15 @@ FUNC HSTATE(req)
     IF MAP.EXISTS(req{"PARAMS"}, "tok") THEN pid = PIDBYTOK(req{"PARAMS"}{"tok"})
     IF pid >= 0 THEN players[pid]{"LAST"} = TICK()
     DIM names = []
+    DIM profiles = []
     DIM i
     FOR i = 0 TO LEN(players) - 1
-        names = APPEND(names, players[i]{"NAME"})
+        DIM pn$ = players[i]{"NAME"}
+        names = APPEND(names, pn$)
+        DIM s = STATOF(pn$)
+        profiles = APPEND(profiles, { "NAME": pn$, "LVL": PLEVEL(pn$), "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"} })
     NEXT i
-    RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "ST": st })
+    RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "PROFILES": profiles, "ST": st })
 ENDFUNC
 
 FUNC HPLAY(req)
@@ -144,6 +202,7 @@ FUNC HREMATCH(req)
     DIM i
     FOR i = 0 TO LEN(players) - 1
         st{"QUEUES"}[i] = DECKQ(players[i]{"DECK"})
+        st{"LEVELS"}[i] = PLEVEL(players[i]{"NAME"})
     NEXT i
     last_ms = TICK()
     PRINT "rematch"

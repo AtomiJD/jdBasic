@@ -51,6 +51,7 @@ DIM world AS MAP = {}
 DIM have_state = 0
 DIM waiting = 1
 DIM foename$ = ""
+DIM profiles = []
 DIM sel$ = ""
 DIM msg$ = ""
 DIM fxseen AS MAP = {}
@@ -164,6 +165,7 @@ SUB POLLSTATE()
         have_state = 1
         DIM names = m{"NAMES"}
         IF LEN(names) = 2 THEN foename$ = names[1 - mypid]
+        IF MAP.EXISTS(m, "PROFILES") THEN profiles = m{"PROFILES"}
         ' a rematch restarts event ids - drop stale FX bookkeeping
         IF world{"TICKNO"} < prev_tick THEN
             fxseen = {}
@@ -538,8 +540,12 @@ SUB DrawHud()
     ENDIF
     TEXT 200, 6, label$ + STR$(INT(t / 60)) + ":" + RIGHT$("0" + STR$(INT(t) MOD 60), 2)
     DIM cr = world{"CROWNS"}
-    TEXT 6, 6, "DU " + STR$(cr[mypid])
-    TEXT 6, 26, foename$ + " " + STR$(cr[1 - mypid])
+    DIM lv = world{"LEVELS"}
+    TEXT 6, 6, "DU Lv" + STR$(lv[mypid]) + "  " + STR$(cr[mypid])
+    TEXT 6, 26, foename$ + " Lv" + STR$(lv[1 - mypid]) + "  " + STR$(cr[1 - mypid])
+    IF LEN(profiles) = 2 THEN
+        TEXT 300, 26, "Siege " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"})
+    ENDIF
     IF msg$ <> "" THEN
         DRAWCOLOR 255, 220, 0
         TEXT 6, 46, msg$
@@ -555,6 +561,10 @@ SUB DrawHud()
             TEXT 150, 415, "DU GEWINNST!"
         ELSE
             TEXT 150, 415, foename$ + " GEWINNT!"
+        ENDIF
+        IF LEN(profiles) = 2 THEN
+            DRAWCOLOR 40, 40, 40
+            TEXT 150, 442, "Serie " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"}) + "  Kronen " + STR$(profiles[mypid]{"CROWNS"}) + ":" + STR$(profiles[1 - mypid]{"CROWNS"})
         ENDIF
         DRAWCOLOR 60, 180, 60
         RECT 154, 490, 160, 46, TRUE

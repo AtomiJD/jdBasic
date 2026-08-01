@@ -68,6 +68,7 @@ EXPORT FUNC NEWGAME()
     st{"SPELLS"} = []
     st{"ELIXIR"} = [5.0, 5.0]
     st{"CROWNS"} = [0, 0]
+    st{"LEVELS"} = [1, 1]
     st{"QUEUES"} = [["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"], ["GIANT", "SKELETONS", "ARCHER", "FIREBALL", "KNIGHT", "MINIONS"]]
     DIM tws = []
     ' kings sleep (AWAKE 0) until hit or until one of their princesses falls
@@ -79,6 +80,24 @@ EXPORT FUNC NEWGAME()
     tws = APPEND(tws, { "OWNER": 1, "KIND": "KING",     "X": 9.0,  "Y": 2.5,  "HP": 2600, "MAXHP": 2600, "CD": 0.0, "AWAKE": 0 })
     st{"TOWERS"} = tws
     RETURN st
+ENDFUNC
+
+' Deploy zone: own half, plus the quadrant of a fallen enemy princess
+' (up to her row) - the classic tower-down territory gain.
+EXPORT FUNC CANDEPLOY(st, pid, x, y)
+    IF pid = 0 ANDALSO y >= 16 THEN RETURN 1
+    IF pid = 1 ANDALSO y <= 13 THEN RETURN 1
+    FOR EACH tw IN st{"TOWERS"}
+        IF tw{"OWNER"} = pid ORELSE tw{"KIND"} <> "PRINCESS" ORELSE tw{"HP"} > 0 THEN CONTINUEFOR
+        DIM sameside = 0
+        IF tw{"X"} < 9 ANDALSO x < 9 THEN sameside = 1
+        IF tw{"X"} >= 9 ANDALSO x >= 9 THEN sameside = 1
+        IF sameside = 1 THEN
+            IF pid = 0 ANDALSO y >= 6 THEN RETURN 1
+            IF pid = 1 ANDALSO y <= 23 THEN RETURN 1
+        ENDIF
+    NEXT tw
+    RETURN 0
 ENDFUNC
 
 ' Play a card for player pid at tile (x, y).
@@ -104,9 +123,10 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
     IF x < 0.5 THEN x = 0.5
     IF x > 17.5 THEN x = 17.5
     IF NOT is_spell THEN
-        IF pid = 0 ANDALSO y < 16 THEN RETURN "own half only"
-        IF pid = 1 ANDALSO y > 13 THEN RETURN "own half only"
+        IF CANDEPLOY(st, pid, x, y) = 0 THEN RETURN "nicht dein Gebiet"
     ENDIF
+    DIM lvl = st{"LEVELS"}[pid]
+    DIM mult = 1.0 + (lvl - 1) * 0.08
 
     st{"ELIXIR"}[pid] = st{"ELIXIR"}[pid] - c{"COST"}
 
@@ -122,7 +142,7 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         ' ticks later - damage applies on impact in SIMSTEP
         DIM ky = 27.5
         IF pid = 1 THEN ky = 2.5
-        st{"SPELLS"} = APPEND(st{"SPELLS"}, { "OWNER": pid, "X": x, "Y": y, "DMG": c{"DMG"}, "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 })
+        st{"SPELLS"} = APPEND(st{"SPELLS"}, { "OWNER": pid, "X": x, "Y": y, "DMG": INT(c{"DMG"} * mult), "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 })
         ADDEVENT(st, { "T": "CAST", "FX": 9.0, "FY": ky, "X": x, "Y": y })
     ELSE
         DIM offs = [[0.0, 0.0], [-0.8, 0.0], [0.8, 0.0], [0.0, -0.8], [0.0, 0.8]]
@@ -133,8 +153,9 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
             u2{"KIND"} = kind$
             u2{"X"} = x + offs[i][0]
             u2{"Y"} = y + offs[i][1]
-            u2{"HP"} = c{"HP"}
-            u2{"MAXHP"} = c{"HP"}
+            u2{"HP"} = INT(c{"HP"} * mult)
+            u2{"MAXHP"} = INT(c{"HP"} * mult)
+            u2{"DMG"} = INT(c{"DMG"} * mult)
             u2{"CD"} = 0.3
             st{"NEXTID"} = st{"NEXTID"} + 1
             st{"UNITS"} = APPEND(st{"UNITS"}, u2)
@@ -181,6 +202,17 @@ EXPORT FUNC FINDTARGET(st, u, c, cs)
         NEXT i
     ENDIF
     RETURN bt
+ENDFUNC
+
+' TRUE when (x, y) is inside any alive tower footprint plus unit radius.
+EXPORT FUNC TOWERBLOCK(st, x, y)
+    FOR EACH tw IN st{"TOWERS"}
+        IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        DIM half = 1.4
+        IF tw{"KIND"} = "KING" THEN half = 1.6
+        IF ABS(x - tw{"X"}) < half ANDALSO ABS(y - tw{"Y"}) < half THEN RETURN 1
+    NEXT tw
+    RETURN 0
 ENDFUNC
 
 ' Push overlapping ground units apart and keep them out of tower
@@ -266,9 +298,11 @@ EXPORT FUNC SIMSTEP(st)
     st{"TICKNO"} = st{"TICKNO"} + 1
     st{"T_LEFT"} = st{"T_LEFT"} - dt
 
+    DIM erate = dt / 2.8
+    IF st{"T_LEFT"} < 0 THEN erate = erate * 2
     DIM p
     FOR p = 0 TO 1
-        DIM ex = st{"ELIXIR"}[p] + dt / 2.8
+        DIM ex = st{"ELIXIR"}[p] + erate
         IF ex > 10 THEN ex = 10
         st{"ELIXIR"}[p] = ex
     NEXT p
@@ -309,12 +343,14 @@ EXPORT FUNC SIMSTEP(st)
         IF tgt{"D"} <= c{"REACH"} THEN
             IF u{"CD"} <= 0 THEN
                 u{"CD"} = c{"HITSPEED"}
+                DIM hitdmg = c{"DMG"}
+                IF MAP.EXISTS(u, "DMG") THEN hitdmg = u{"DMG"}
                 IF tgt{"T"} = "U" THEN
                     DIM v2 = st{"UNITS"}[tgt{"I"}]
-                    v2{"HP"} = v2{"HP"} - c{"DMG"}
+                    v2{"HP"} = v2{"HP"} - hitdmg
                 ELSE
                     DIM tw2 = st{"TOWERS"}[tgt{"I"}]
-                    tw2{"HP"} = tw2{"HP"} - c{"DMG"}
+                    tw2{"HP"} = tw2{"HP"} - hitdmg
                     IF tw2{"KIND"} = "KING" THEN tw2{"AWAKE"} = 1
                 ENDIF
                 DIM adx = tgt{"X"} - u{"X"}
@@ -326,9 +362,9 @@ EXPORT FUNC SIMSTEP(st)
                     u{"AT"} = st{"TICKNO"}
                 ENDIF
                 IF c{"REACH"} > 2 THEN
-                    ADDEVENT(st, { "T": "SHOT", "FX": u{"X"}, "FY": u{"Y"}, "X": tgt{"X"}, "Y": tgt{"Y"}, "D": c{"DMG"} })
+                    ADDEVENT(st, { "T": "SHOT", "FX": u{"X"}, "FY": u{"Y"}, "X": tgt{"X"}, "Y": tgt{"Y"}, "D": hitdmg })
                 ELSE
-                    ADDEVENT(st, { "T": "HIT", "X": tgt{"X"}, "Y": tgt{"Y"}, "D": c{"DMG"} })
+                    ADDEVENT(st, { "T": "HIT", "X": tgt{"X"}, "Y": tgt{"Y"}, "D": hitdmg })
                 ENDIF
             ENDIF
         ELSE
@@ -356,8 +392,41 @@ EXPORT FUNC SIMSTEP(st)
             DIM ddy = wy - u{"Y"}
             DIM dd = SQR(ddx * ddx + ddy * ddy)
             IF dd > 0.001 THEN
-                u{"X"} = u{"X"} + ddx / dd * c{"SPD"} * dt
-                u{"Y"} = u{"Y"} + ddy / dd * c{"SPD"} * dt
+                DIM nxp = u{"X"} + ddx / dd * c{"SPD"} * dt
+                DIM nyp = u{"Y"} + ddy / dd * c{"SPD"} * dt
+                ' route around tower footprints: slide along the dominant
+                ' axis, and when walking head-on into a face (no tangent
+                ' component), side-step perpendicular until the corner clears
+                IF c{"FLY"} = 0 ANDALSO TOWERBLOCK(st, nxp, nyp) = 1 THEN
+                    DIM stepx = ddx / dd * c{"SPD"} * dt
+                    DIM stepy = ddy / dd * c{"SPD"} * dt
+                    IF ABS(ddx) >= ABS(ddy) ANDALSO TOWERBLOCK(st, u{"X"} + stepx, u{"Y"}) = 0 THEN
+                        nxp = u{"X"} + stepx
+                        nyp = u{"Y"}
+                    ELSEIF ABS(ddy) > ABS(ddx) ANDALSO TOWERBLOCK(st, u{"X"}, u{"Y"} + stepy) = 0 THEN
+                        nxp = u{"X"}
+                        nyp = u{"Y"} + stepy
+                    ELSE
+                        DIM pxd = stepy
+                        DIM pyd = 0 - stepx
+                        IF u{"ID"} MOD 2 = 1 THEN
+                            pxd = 0 - pxd
+                            pyd = 0 - pyd
+                        ENDIF
+                        IF TOWERBLOCK(st, u{"X"} + pxd, u{"Y"} + pyd) = 0 THEN
+                            nxp = u{"X"} + pxd
+                            nyp = u{"Y"} + pyd
+                        ELSEIF TOWERBLOCK(st, u{"X"} - pxd, u{"Y"} - pyd) = 0 THEN
+                            nxp = u{"X"} - pxd
+                            nyp = u{"Y"} - pyd
+                        ELSE
+                            nxp = u{"X"}
+                            nyp = u{"Y"}
+                        ENDIF
+                    ENDIF
+                ENDIF
+                u{"X"} = nxp
+                u{"Y"} = nyp
             ENDIF
         ENDIF
     NEXT u
@@ -430,7 +499,25 @@ EXPORT FUNC SIMSTEP(st)
             ELSEIF cr[1] > cr[0] THEN
                 st{"WINNER"} = 1
             ELSE
-                st{"WINNER"} = 2
+                ' tiebreak: more remaining tower health wins
+                DIM hp0 = 0
+                DIM hp1 = 0
+                FOR EACH twh IN st{"TOWERS"}
+                    IF twh{"HP"} > 0 THEN
+                        IF twh{"OWNER"} = 0 THEN
+                            hp0 = hp0 + twh{"HP"}
+                        ELSE
+                            hp1 = hp1 + twh{"HP"}
+                        ENDIF
+                    ENDIF
+                NEXT twh
+                IF hp0 > hp1 THEN
+                    st{"WINNER"} = 0
+                ELSEIF hp1 > hp0 THEN
+                    st{"WINNER"} = 1
+                ELSE
+                    st{"WINNER"} = 2
+                ENDIF
             ENDIF
         ELSEIF st{"T_LEFT"} <= 0 ANDALSO cr[0] <> cr[1] THEN
             st{"PHASE"} = "over"
