@@ -1,12 +1,312 @@
-# BASIC Royale
+# jdVOID
 
-Two-player Clash-style arena duel. The whole match state is one
-JSON-serializable map owned by the ARENA module (arena.jdb) - the offline
-harness, the match server and the phone client all share it.
+A two-player arena duel in the Clash Royale tradition, written entirely in
+jdBasic. It runs in a phone browser through the WebAssembly build, against a
+jdBasic match server that owns the simulation.
 
-- `arena.jdb` - rules: board, cards, PLAYCARD validation, 0.1 s SIMSTEP.
-- `game.jdb`  - offline harness, both sides via mouse on one screen.
-  `jdbasic game.jdb` to play, `jdbasic game.jdb shot` renders 12 s of a
-  scripted opening to `tmp/royale.png`.
+Live at <https://vvss.jdbasic.tech>.
 
-Balance lives in ARENA.CARDS() - tweak per jdb_eval while a match runs.
+```
+  phone browser                      Hostinger box
+  +----------------------+           +---------------------------+
+  | index.html (landing) |           | nginx  vvss.jdbasic.tech  |
+  |   name / room / lang |  https    |   /        -> /var/www    |
+  +----------+-----------+ --------> |   /api/    -> 127.0.0.1   |
+             |                       +-------------+-------------+
+             v                                     |
+  +----------------------+                         v
+  | play/index.html      |           +---------------------------+
+  |  jdbasic.wasm        |  /api/*   | server.jdb (systemd)      |
+  |  royale.jdb (client) | <-------> |   IMPORT ARENA            |
+  |  art.jdb             |   JSON    |   rooms, chests, profiles |
+  +----------------------+           +---------------------------+
+```
+
+The whole match state is one JSON-serializable map owned by `arena.jdb`. The
+offline harness, the server and the client all share that module, so there is
+exactly one set of rules in the codebase.
+
+## The files
+
+| File | What it is |
+|---|---|
+| `arena.jdb` | The rules. Board, deploy zones, targeting, collision, the 0.1 s `SIMSTEP`. No I/O, no graphics. |
+| `cards.json` | Every card stat. The single source of truth for balance, loaded into `ARENA.SETCARDS`. |
+| `server.jdb` | Match server. Rooms, seats, chest economy, card levels, profiles, admin endpoints. |
+| `royale.jdb` | The client. Menu, deck editor, battle view, sound, drag deploy, i18n. |
+| `art.jdb` | Procedural sprites. Signed-distance-field shapes rasterized into RGBA buffers at startup. |
+| `lang.json` | UI strings and card descriptions per language. Served by the server, so a new language needs no client change. |
+| `balance.jdb` | Headless duel harness. Every troop card fights every other one for equal elixir. |
+| `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
+| `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
+| `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
+| `deploy.sh` | Ships everything to the Hostinger box and restarts the service. |
+| `web/` | Landing page, admin console and the key art derivatives. |
+
+## The game
+
+The board is 18 by 30 tiles with a river at row 14.5 and bridges at columns 3.5
+and 14.5. Each side has two princess stations and a king. The king sleeps until
+he is hit or until one of his princesses falls.
+
+A match runs 180 seconds. Elixir fills at one per 2.8 seconds up to a cap of 10,
+and doubles once the clock passes zero. Overtime lasts 60 seconds. Whoever has
+more crowns wins; if the crowns are level after overtime, the side with more
+remaining station health takes it, and only a perfect tie is a draw.
+
+Each player brings six cards, four of which are in hand at any moment. Cards
+carry traits rather than special cases in the code:
+
+- `FLY` ignores the river and can only be hit by `HITS: "A"` cards.
+- `ONLYTOWERS` walks past enemy troops and only stops for stations.
+- `BUILD` never moves and holds the tile it was placed on.
+- `TTL` decays the unit over time, which is what makes buildings temporary.
+- `SPAWNS` / `SPAWNRATE` / `SPAWNN` hatch a brood on the unit's own clock.
+- `SPELL` with `RADIUS` and either `DMG` or `STUN`.
+
+Fifteen cards ship in `cards.json`. Level 1 to 5, each level adds eight percent
+to hit points and damage.
+
+## The economy
+
+Every finished match hands both players the same chest: five common cards, two
+strong ones and one wildcard. The loser is not punished, which matters when the
+opponent is your own son. A player's first contact with the server also hands
+out a starter chest, so a new name can level a card before the first battle.
+
+Levelling a card costs `2^level` copies, so 2, 4, 8 and 16. Wildcards fill any
+gap. All of it lives in `stats.json` next to the server, keyed by player name.
+
+## Running it locally
+
+You need a jdBasic build with `HTTP` and `GFX`. From this directory:
+
+```bash
+# terminal 1 - the match server on all interfaces, port 8081
+jdbasic server.jdb 0.0.0.0 8081
+
+# terminal 2 - a client
+jdbasic royale.jdb
+
+# terminal 3 - the second client
+jdbasic royale.jdb
+```
+
+Both clients join room `main` and the match starts as soon as the second seat is
+taken. Phones on the same network can play against the desktop as long as the
+client's `SRV$` points at the machine's LAN address.
+
+Other entry points:
+
+```bash
+jdbasic game.jdb            # offline, both sides on one screen
+jdbasic game.jdb shot       # renders a scripted opening to tmp/royale.png
+jdbasic balance.jdb         # the duel matrix, takes a few minutes
+jdbasic artsheet.jdb        # all sprites on one sheet
+jdbasic royale.jdb shot     # one frame of the client to tmp/client.png
+```
+
+`balance.jdb` gives every card the same elixir budget and lets the survivors
+decide the matchup. Read its output with the harness in mind: a stationary
+building never walks into fire, so it scores better there than in a real match,
+and a spawner's value accrues over a longer game than the harness simulates.
+
+## Running it in a browser
+
+The client is the same `royale.jdb`. The WebAssembly runtime in `wasm/` loads it
+over HTTP into its virtual filesystem, along with the `art.jdb` it imports.
+
+```
+play/?prog=royale&fs=1&name=Atomi&room=main&lang=de
+```
+
+- `prog` names the program to fetch and run.
+- `fs=1` hides the editor chrome and gives the canvas the whole page.
+- `name` and `room` are read by the client from `/url_params.json`.
+- `lang` picks the language, falling back to the browser's.
+
+The page also passes `__origin`, and the client turns that into its API base, so
+the same file works on localhost and in production without a rebuild. Private
+addresses are ignored there on purpose.
+
+The landing page at the site root collects name, room and language, remembers
+them in localStorage and forwards to the URL above. That is the link to share.
+
+To rebuild the runtime:
+
+```bash
+./build_wasm.sh            # in the repo root, produces wasm/jdbasic.{js,wasm}
+```
+
+## The server
+
+`server.jdb` binds host and port from the command line. Behind a reverse proxy
+pass `127.0.0.1` so only the proxy can reach it:
+
+```bash
+jdbasic server.jdb 127.0.0.1 8081
+```
+
+It keeps every room in memory and only writes `stats.json` to disk. Rooms are
+created on demand by name, which is how two pairs play at the same time without
+seeing each other.
+
+The simulation is lazy. Nothing runs on a timer; `/state` catches the room up to
+wall-clock time before answering. A room nobody polls costs nothing.
+
+### Seats
+
+A seat belongs to a name. Reconnecting under the same name always gets the seat
+back with the match intact, which is what a locked phone or a reloaded tab needs.
+A stranger may only take a seat that has been silent for 60 seconds, and never
+while a match is being played.
+
+### Endpoints
+
+Everything answers JSON. `room` selects the room and defaults to `main`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/` | Plain-text banner with the room list. |
+| POST | `/join` | `{NAME, ROOM, DECK}` takes a seat, returns `PID` and a token. |
+| GET | `/state?room=&tok=` | The full match state, after catching the sim up. |
+| POST | `/play` | `{TOK, KIND, X, Y}` deploys a card. |
+| POST | `/rematch` | Same two players, new match. |
+| GET | `/cards` | The card sheet. |
+| GET | `/lang` | All languages from `lang.json`. |
+| GET | `/profile?name=` | Record, card levels, wildcards, last chest. |
+| POST | `/upgrade` | `{NAME, KIND}` levels a card and applies it to a running seat. |
+| GET | `/rooms` | Open rooms with their occupants. |
+
+Five endpoints are sensitive and fail closed without the admin key:
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST/GET | `/reset` | Empties a room. |
+| POST/GET | `/drop` | Removes a room entirely. |
+| POST | `/forceend` | Ends a stuck match. |
+| POST | `/wipe` | `{NAME}` deletes a player profile. |
+| GET | `/leaderboard` | Every profile with record and crowns. |
+
+The key is read from `admin.txt` next to the server at startup and is never
+committed. Without that file the five endpoints stay closed for everybody. Pass
+the key as `?key=` or as `KEY` in the JSON body:
+
+```bash
+curl -s "https://vvss.jdbasic.tech/api/rooms"
+curl -s -X POST -d '{"KEY":"...","ROOM":"main"}' https://vvss.jdbasic.tech/api/reset
+curl -s "https://vvss.jdbasic.tech/api/drop?room=test&key=..."
+```
+
+`web/admin.html` is the same thing with buttons. It keeps the key in
+localStorage and talks to `/api/` relative to itself.
+
+## Deploying
+
+`deploy.sh` does the whole round trip. It expects an ssh key at
+`~/.ssh/jdtrakr_deploy` and a `deploy` user on the box.
+
+```bash
+./deploy.sh          # game files, client and landing page, restart the service
+./deploy.sh --wasm   # also ship the 10 MB runtime and the editor vendor bundle
+```
+
+The runtime only needs shipping when jdBasic itself changed. Day-to-day work on
+the game is the plain form, which moves a few hundred kilobytes.
+
+### The box
+
+```
+~/royale/                 server.jdb, arena.jdb, cards.json, lang.json
+                          admin.txt (chmod 600), stats.json
+~/royale/web/             landing page, admin console, key art
+~/royale/web/play/        client, wasm runtime, vendor bundle
+/var/www/vvss/            what nginx serves, copied from ~/royale/web
+```
+
+`royale.service` is a plain systemd unit:
+
+```ini
+[Unit]
+Description=jdVOID match server
+After=network.target
+
+[Service]
+Type=simple
+User=deploy
+WorkingDirectory=/home/deploy/royale
+ExecStart=/home/deploy/jdBasic/build/jdbasic /home/deploy/royale/server.jdb 127.0.0.1 8081
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+nginx terminates TLS, serves the static files and proxies `/api/` to the match
+server. Three details are load-bearing:
+
+```nginx
+location /api/ {
+    proxy_pass http://127.0.0.1:8081/;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+}
+
+location ~* \.(wasm)$ {
+    types { application/wasm wasm; }
+    default_type application/wasm;
+}
+
+location ~* \.jdb$ {
+    default_type text/plain;
+    add_header Cache-Control "no-store";
+}
+```
+
+`.jdb` must not be cached, or a deploy leaves players on yesterday's client. The
+`wasm` MIME type is what lets the browser stream-compile the runtime.
+
+The Content-Security-Policy needs `wasm-unsafe-eval` for the runtime and `blob:`
+for the editor's workers:
+
+```
+script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src 'self' blob:
+```
+
+Certificates come from certbot in the usual way:
+
+```bash
+sudo certbot --nginx -d vvss.jdbasic.tech
+```
+
+### First-time setup
+
+```bash
+ssh deploy@<box>
+mkdir -p ~/royale/web/play
+head -c 24 /dev/urandom | base64 > ~/royale/admin.txt && chmod 600 ~/royale/admin.txt
+sudo install -d -o www-data -g www-data /var/www/vvss
+sudo systemctl enable --now royale
+```
+
+Then run `./deploy.sh --wasm` once from the repo. The service needs a jdBasic
+build with `HTTP` on the box; `GFX` is not required for the server.
+
+## Balance work
+
+Card stats live in `cards.json` only. The server loads it at startup, serves it
+to the client over `/cards`, and the client draws its sprites and card sheets
+from the same numbers. A balance change is an edit plus a restart.
+
+The offline loop is:
+
+```bash
+jdbasic balance.jdb     # where does the new card sit
+# edit cards.json
+jdbasic balance.jdb     # did it move
+./deploy.sh             # ship it
+```
+
+`ARENA.CARDS()` is also reachable from the jdBasic MCP workshop, so stats can be
+poked while a match runs.
