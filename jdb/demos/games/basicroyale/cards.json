@@ -1,14 +1,286 @@
 {
-  "DROID":    { "COST": 3, "HP": 660,  "DMG": 75,  "HITSPEED": 1.1, "REACH": 1.2, "AGGRO": 5.5, "SPD": 1.8, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, "COLOR": [175, 188, 215], "ICON": "DR", "RARITY": "C" },
-  "LASER":    { "COST": 3, "HP": 250,  "DMG": 40,  "HITSPEED": 0.9, "REACH": 5.0, "AGGRO": 6.5, "SPD": 1.8, "N": 2, "FLY": 0, "HITS": "A", "ONLYTOWERS": 0, "COLOR": [140, 235, 200], "ICON": "LA", "RARITY": "C" },
-  "KOLOSS":   { "COST": 5, "HP": 1800, "DMG": 120, "HITSPEED": 1.5, "REACH": 1.2, "AGGRO": 9.0, "SPD": 1.2, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 1, "COLOR": [200, 150, 90],  "ICON": "KO", "RARITY": "S" },
-  "WESPEN":   { "COST": 3, "HP": 90,   "DMG": 40,  "HITSPEED": 1.0, "REACH": 1.6, "AGGRO": 5.5, "SPD": 2.6, "N": 3, "FLY": 1, "HITS": "A", "ONLYTOWERS": 0, "COLOR": [120, 180, 255], "ICON": "WE", "RARITY": "C" },
-  "SPLITTER": { "COST": 2, "HP": 45,   "DMG": 40,  "HITSPEED": 1.0, "REACH": 1.0, "AGGRO": 5.5, "SPD": 2.2, "N": 4, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, "COLOR": [225, 230, 245], "ICON": "SP", "RARITY": "C" },
-  "RAILGUN":  { "COST": 4, "HP": 340,  "DMG": 135, "HITSPEED": 1.1, "REACH": 6.0, "AGGRO": 7.0, "SPD": 1.6, "N": 1, "FLY": 0, "HITS": "A", "ONLYTOWERS": 0, "COLOR": [190, 130, 240], "ICON": "RG", "RARITY": "S" },
-  "NANOS":    { "COST": 2, "HP": 80,   "DMG": 50,  "HITSPEED": 0.9, "REACH": 1.0, "AGGRO": 5.5, "SPD": 2.8, "N": 3, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, "COLOR": [120, 230, 140], "ICON": "NA", "RARITY": "C" },
-  "GLEITER":  { "COST": 4, "HP": 520,  "DMG": 85,  "HITSPEED": 1.3, "REACH": 3.0, "AGGRO": 6.0, "SPD": 2.0, "N": 1, "FLY": 1, "HITS": "A", "ONLYTOWERS": 0, "COLOR": [140, 240, 235], "ICON": "GL", "RARITY": "S" },
-  "TITAN":    { "COST": 7, "HP": 2300, "DMG": 380, "HITSPEED": 1.8, "REACH": 1.2, "AGGRO": 5.0, "SPD": 1.0, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, "COLOR": [110, 120, 175], "ICON": "TI", "RARITY": "S" },
-  "RAMME":    { "COST": 4, "HP": 900,  "DMG": 150, "HITSPEED": 1.6, "REACH": 1.2, "AGGRO": 9.0, "SPD": 3.0, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 1, "COLOR": [255, 170, 110], "ICON": "RA", "RARITY": "S" },
-  "PLASMA":   { "COST": 4, "SPELL": 1, "DMG": 325, "RADIUS": 2.5, "COLOR": [255, 130, 60],  "ICON": "PL", "RARITY": "S" },
-  "SALVE":    { "COST": 3, "SPELL": 1, "DMG": 120, "RADIUS": 4.0, "COLOR": [255, 225, 120], "ICON": "SA", "RARITY": "C" }
+  "DROID": {
+    "COST": 3,
+    "HP": 660,
+    "DMG": 75,
+    "HITSPEED": 1.1,
+    "REACH": 1.2,
+    "AGGRO": 5.5,
+    "SPD": 1.8,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      175,
+      188,
+      215
+    ],
+    "ICON": "DR",
+    "RARITY": "C"
+  },
+  "LASER": {
+    "COST": 3,
+    "HP": 250,
+    "DMG": 40,
+    "HITSPEED": 0.9,
+    "REACH": 5.0,
+    "AGGRO": 6.5,
+    "SPD": 1.8,
+    "N": 2,
+    "FLY": 0,
+    "HITS": "A",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      140,
+      235,
+      200
+    ],
+    "ICON": "LA",
+    "RARITY": "C"
+  },
+  "KOLOSS": {
+    "COST": 5,
+    "HP": 1800,
+    "DMG": 120,
+    "HITSPEED": 1.5,
+    "REACH": 1.2,
+    "AGGRO": 9.0,
+    "SPD": 1.2,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 1,
+    "COLOR": [
+      200,
+      150,
+      90
+    ],
+    "ICON": "KO",
+    "RARITY": "S"
+  },
+  "WESPEN": {
+    "COST": 3,
+    "HP": 90,
+    "DMG": 40,
+    "HITSPEED": 1.0,
+    "REACH": 1.6,
+    "AGGRO": 5.5,
+    "SPD": 2.6,
+    "N": 3,
+    "FLY": 1,
+    "HITS": "A",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      120,
+      180,
+      255
+    ],
+    "ICON": "WE",
+    "RARITY": "C"
+  },
+  "SPLITTER": {
+    "COST": 2,
+    "HP": 45,
+    "DMG": 40,
+    "HITSPEED": 1.0,
+    "REACH": 1.0,
+    "AGGRO": 5.5,
+    "SPD": 2.2,
+    "N": 4,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      225,
+      230,
+      245
+    ],
+    "ICON": "SP",
+    "RARITY": "C"
+  },
+  "RAILGUN": {
+    "COST": 4,
+    "HP": 340,
+    "DMG": 135,
+    "HITSPEED": 1.1,
+    "REACH": 6.0,
+    "AGGRO": 7.0,
+    "SPD": 1.6,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "A",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      190,
+      130,
+      240
+    ],
+    "ICON": "RG",
+    "RARITY": "S"
+  },
+  "NANOS": {
+    "COST": 2,
+    "HP": 80,
+    "DMG": 50,
+    "HITSPEED": 0.9,
+    "REACH": 1.0,
+    "AGGRO": 5.5,
+    "SPD": 2.8,
+    "N": 3,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      120,
+      230,
+      140
+    ],
+    "ICON": "NA",
+    "RARITY": "C"
+  },
+  "GLEITER": {
+    "COST": 4,
+    "HP": 520,
+    "DMG": 85,
+    "HITSPEED": 1.3,
+    "REACH": 3.0,
+    "AGGRO": 6.0,
+    "SPD": 2.0,
+    "N": 1,
+    "FLY": 1,
+    "HITS": "A",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      140,
+      240,
+      235
+    ],
+    "ICON": "GL",
+    "RARITY": "S"
+  },
+  "TITAN": {
+    "COST": 7,
+    "HP": 2300,
+    "DMG": 380,
+    "HITSPEED": 1.8,
+    "REACH": 1.2,
+    "AGGRO": 5.0,
+    "SPD": 1.0,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 0,
+    "COLOR": [
+      110,
+      120,
+      175
+    ],
+    "ICON": "TI",
+    "RARITY": "S"
+  },
+  "RAMME": {
+    "COST": 4,
+    "HP": 900,
+    "DMG": 150,
+    "HITSPEED": 1.6,
+    "REACH": 1.2,
+    "AGGRO": 9.0,
+    "SPD": 3.0,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 1,
+    "COLOR": [
+      255,
+      170,
+      110
+    ],
+    "ICON": "RA",
+    "RARITY": "S"
+  },
+  "PLASMA": {
+    "COST": 4,
+    "SPELL": 1,
+    "DMG": 325,
+    "RADIUS": 2.5,
+    "COLOR": [
+      255,
+      130,
+      60
+    ],
+    "ICON": "PL",
+    "RARITY": "S"
+  },
+  "SALVE": {
+    "COST": 3,
+    "SPELL": 1,
+    "DMG": 120,
+    "RADIUS": 4.0,
+    "COLOR": [
+      255,
+      225,
+      120
+    ],
+    "ICON": "SA",
+    "RARITY": "C"
+  },
+  "BRUTSCHIFF": {
+    "COST": 5,
+    "HP": 900,
+    "DMG": 55,
+    "HITSPEED": 1.4,
+    "REACH": 4.0,
+    "AGGRO": 6.0,
+    "SPD": 1.1,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "A",
+    "ONLYTOWERS": 0,
+    "SPAWNS": "NANOS",
+    "SPAWNRATE": 3.0,
+    "COLOR": [
+      190,
+      120,
+      255
+    ],
+    "ICON": "BR",
+    "RARITY": "S"
+  },
+  "BRENNLANZE": {
+    "COST": 5,
+    "HP": 950,
+    "DMG": 170,
+    "HITSPEED": 0.8,
+    "REACH": 4.5,
+    "AGGRO": 5.0,
+    "SPD": 0.0,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "A",
+    "ONLYTOWERS": 0,
+    "BUILD": 1,
+    "TTL": 32.0,
+    "COLOR": [
+      255,
+      120,
+      90
+    ],
+    "ICON": "BL",
+    "RARITY": "S"
+  },
+  "STASE": {
+    "COST": 1,
+    "SPELL": 1,
+    "DMG": 0,
+    "STUN": 1.8,
+    "RADIUS": 3.0,
+    "COLOR": [
+      120,
+      255,
+      240
+    ],
+    "ICON": "ST",
+    "RARITY": "C"
+  }
 }

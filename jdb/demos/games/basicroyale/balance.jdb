@@ -41,6 +41,11 @@ SUB SPAWN(st, pid, kind$, x, y, n)
         u{"MAXHP"} = c{"HP"}
         u{"DMG"} = c{"DMG"}
         u{"CD"} = 0.3
+        ' carry the traits the sim keys off, or a turret would wander and
+        ' a carrier would never launch
+        IF MAP.EXISTS(c, "BUILD") THEN u{"BUILD"} = 1
+        IF MAP.EXISTS(c, "TTL") THEN u{"TTL"} = c{"TTL"}
+        IF MAP.EXISTS(c, "SPAWNS") THEN u{"SPAWNCD"} = c{"SPAWNRATE"}
         st{"NEXTID"} = st{"NEXTID"} + 1
         st{"UNITS"} = APPEND(st{"UNITS"}, u)
     NEXT i

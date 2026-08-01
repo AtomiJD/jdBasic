@@ -15,7 +15,7 @@ SSH="ssh -o BatchMode=yes -i $KEY $HOST"
 SCP="scp -q -o BatchMode=yes -i $KEY"
 
 echo "== server =="
-$SCP server.jdb arena.jdb cards.json "$HOST:~/royale/"
+$SCP server.jdb arena.jdb cards.json lang.json "$HOST:~/royale/"
 
 echo "== landing page =="
 # the site root is the poster page; the playground lives under /play

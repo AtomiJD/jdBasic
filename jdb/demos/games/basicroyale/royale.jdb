@@ -727,9 +727,24 @@ SUB DrawUnits()
             DIM sid = art_foe{kind$}
             IF mine = 1 THEN sid = art_own{kind$}
             SPRITE.FLIP(sid, FALSE, FALSE)
-            SPRITE.ROTATE(sid, HEADOF(u))
+            ' anchored defences keep their bearing, ships bank into theirs
+            IF MAP.EXISTS(u, "BUILD") THEN
+                SPRITE.ROTATE(sid, IIF(mine = 1, 0, 180))
+            ELSE
+                SPRITE.ROTATE(sid, HEADOF(u))
+            ENDIF
             SPRAT(sid, ux, uy)
             SPRITE.ROTATE(sid, 0)
+            ' a stasis lock reads as a pulsing cyan cage
+            IF MAP.EXISTS(u, "STUN") THEN
+                IF u{"STUN"} > 0 THEN
+                    DRAWCOLOR 120, 255, 245
+                    CIRCLE ux, uy, 15 + INT(2 * SIN(frame * 0.4)), FALSE
+                    CIRCLE ux, uy, 14 + INT(2 * SIN(frame * 0.4)), FALSE
+                    LINE ux - 15, uy, ux + 15, uy
+                    LINE ux, uy - 15, ux, uy + 15
+                ENDIF
+            ENDIF
         ELSE
             DIM col = kindcolor{kind$}
             DRAWCOLOR col[0], col[1], col[2]
@@ -936,8 +951,13 @@ SUB DrawCardInfo()
 
     y = y + 28
     IF MAP.EXISTS(c, "SPELL") THEN
-        STATLINE(y, T$("stat_dmg"), STR$(INT(c{"DMG"} * mult)))
-        STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
+        IF MAP.EXISTS(c, "STUN") THEN
+            STATLINE(y, T$("stat_stun"), STR$(c{"STUN"}) + " " + T$("sec"))
+            STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
+        ELSE
+            STATLINE(y, T$("stat_dmg"), STR$(INT(c{"DMG"} * mult)))
+            STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
+        ENDIF
     ELSE
         STATLINE(y, T$("stat_hp"), STR$(INT(c{"HP"} * mult)))
         STATLINE(y + 38, T$("stat_dmg"), STR$(INT(c{"DMG"} * mult)))
@@ -949,9 +969,20 @@ SUB DrawCardInfo()
         IF c{"HITS"} = "A" THEN tgt$ = T$("air_both")
         IF c{"ONLYTOWERS"} = 1 THEN tgt$ = T$("only_towers")
         STATLINE(y + 228, T$("stat_air"), tgt$)
+        DIM yy = y + 266
+        IF MAP.EXISTS(c, "SPAWNS") THEN
+            STATLINE(yy, T$("stat_spawn"), STR$(c{"SPAWNRATE"}) + " " + T$("sec"))
+            yy = yy + 38
+        ENDIF
+        IF MAP.EXISTS(c, "TTL") THEN
+            STATLINE(yy, T$("stat_life"), STR$(INT(c{"TTL"})) + " " + T$("sec"))
+            yy = yy + 38
+        ENDIF
+        DRAWCOLOR 120, 240, 255
         IF c{"FLY"} = 1 THEN
-            DRAWCOLOR 120, 240, 255
-            TEXT 48, y + 268, "* " + T$("flying")
+            TEXT 48, yy, "* " + T$("flying")
+        ELSEIF MAP.EXISTS(c, "BUILD") THEN
+            TEXT 48, yy, "* " + T$("building")
         ENDIF
     ENDIF
 
@@ -981,53 +1012,53 @@ SUB DrawDeckEd()
             DIM kind$ = cardorder[i]
             DIM col = CCOLOR(kind$)
             DIM x0 = 6 + (i MOD 3) * 154
-            DIM y0 = 80 + INT(i / 3) * 150
+            DIM y0 = 72 + INT(i / 3) * 126
             IF DECKHAS(kind$) = 1 THEN
                 DRAWCOLOR INT(col[0] * 0.5), INT(col[1] * 0.5), INT(col[2] * 0.5)
             ELSE
                 DRAWCOLOR INT(col[0] * 0.22), INT(col[1] * 0.22), INT(col[2] * 0.22)
             ENDIF
-            ROUNDED_RECT x0, y0, 150, 140, 12, TRUE
+            ROUNDED_RECT x0, y0, 150, 118, 12, TRUE
             DRAWCOLOR col[0], col[1], col[2]
-            ROUNDED_RECT x0, y0, 150, 140, 12, FALSE
+            ROUNDED_RECT x0, y0, 150, 118, 12, FALSE
             IF DECKHAS(kind$) = 1 THEN
                 DRAWCOLOR 255, 255, 0
-                ROUNDED_RECT x0, y0, 150, 140, 12, FALSE
-                ROUNDED_RECT x0 + 1, y0 + 1, 148, 138, 11, FALSE
+                ROUNDED_RECT x0, y0, 150, 118, 12, FALSE
+                ROUNDED_RECT x0 + 1, y0 + 1, 148, 116, 11, FALSE
             ENDIF
             IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
-                SPRAT(art_own{kind$}, x0 + 108, y0 + 44)
+                SPRAT(art_own{kind$}, x0 + 110, y0 + 38)
             ENDIF
             DRAWCOLOR 245, 250, 255
-            TEXT x0 + 12, y0 + 14, ICON$(kind$)
-            TEXT x0 + 12, y0 + 44, MID$(kind$, 0, 8)
+            TEXT x0 + 12, y0 + 10, ICON$(kind$)
+            TEXT x0 + 12, y0 + 36, MID$(kind$, 0, 8)
             ' bottom row: cost coin, level and collection progress
             DIM mc = MYCARD(kind$)
             DIM upcost = INT(2 ^ mc{"LVL"})
-            ELIXCOIN(x0 + 22, y0 + 112, 14, STR$(cardcost{kind$}))
+            ELIXCOIN(x0 + 20, y0 + 92, 13, STR$(cardcost{kind$}))
             DRAWCOLOR 245, 250, 255
-            TEXT x0 + 42, y0 + 92, "Lv" + STR$(mc{"LVL"})
-            TEXT x0 + 42, y0 + 116, STR$(mc{"HAVE"}) + "/" + STR$(upcost)
+            TEXT x0 + 40, y0 + 62, "Lv" + STR$(mc{"LVL"})
+            TEXT x0 + 40, y0 + 86, STR$(mc{"HAVE"}) + "/" + STR$(upcost)
             IF mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
                 DRAWCOLOR 40, 150, 60
-                ROUNDED_RECT x0 + 106, y0 + 96, 38, 38, 9, TRUE
+                ROUNDED_RECT x0 + 108, y0 + 76, 34, 34, 9, TRUE
                 DRAWCOLOR 120, 255, 150
-                ROUNDED_RECT x0 + 106, y0 + 96, 38, 38, 9, FALSE
+                ROUNDED_RECT x0 + 108, y0 + 76, 34, 34, 9, FALSE
                 DRAWCOLOR 255, 255, 255
-                TEXT x0 + 120, y0 + 106, "+"
+                TEXT x0 + 120, y0 + 84, "+"
             ENDIF
             ' info badge - opens the full card sheet
             DRAWCOLOR 30, 40, 80
-            CIRCLE x0 + 130, y0 + 18, 13, TRUE
+            CIRCLE x0 + 132, y0 + 14, 12, TRUE
             DRAWCOLOR 150, 200, 255
-            CIRCLE x0 + 130, y0 + 18, 13, FALSE
-            TEXT x0 + 126, y0 + 9, "i"
+            CIRCLE x0 + 132, y0 + 14, 12, FALSE
+            TEXT x0 + 128, y0 + 6, "i"
         NEXT i
     ENDIF
     IF LEN(mydeck) = 6 THEN
-        BUTTON(134, 700, 200, 50, T$("done"), 80, 210, 120)
+        BUTTON(134, 726, 200, 50, T$("done"), 80, 210, 120)
     ELSE
-        BUTTON(134, 700, 200, 50, T$("done"), 95, 95, 115)
+        BUTTON(134, 726, 200, 50, T$("done"), 95, 95, 115)
     ENDIF
 ENDSUB
 
@@ -1249,22 +1280,22 @@ SUB DeckClick(mx, my)
         IF my >= 756 ANDALSO my <= 806 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN info_kind$ = ""
         RETURN
     ENDIF
-    IF my >= 700 ANDALSO my <= 750 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
+    IF my >= 726 ANDALSO my <= 776 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
         IF LEN(mydeck) = 6 THEN uimode$ = "menu"
-    ELSEIF my >= 80 ANDALSO my < 680 THEN
+    ELSEIF my >= 72 ANDALSO my < 706 THEN
         DIM ci = INT((mx - 6) / 154)
-        DIM ri = INT((my - 80) / 150)
+        DIM ri = INT((my - 72) / 126)
         IF ci >= 0 ANDALSO ci <= 2 ANDALSO ri >= 0 THEN
             DIM idx = ri * 3 + ci
             IF idx < LEN(cardorder) THEN
                 DIM kind$ = cardorder[idx]
                 DIM cellx = mx - 6 - ci * 154
-                DIM celly = my - 80 - ri * 150
+                DIM celly = my - 72 - ri * 126
                 DIM mc = MYCARD(kind$)
                 DIM upcost = INT(2 ^ mc{"LVL"})
-                IF cellx >= 114 ANDALSO celly <= 36 THEN
+                IF cellx >= 116 ANDALSO celly <= 30 THEN
                     info_kind$ = kind$
-                ELSEIF cellx >= 108 ANDALSO celly >= 98 ANDALSO celly <= 136 ANDALSO mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
+                ELSEIF cellx >= 106 ANDALSO celly >= 74 ANDALSO celly <= 112 ANDALSO mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
                     SENDUPGRADE(kind$)
                 ELSE
                     TOGGLECARD(kind$)

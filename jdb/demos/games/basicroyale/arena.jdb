@@ -143,11 +143,13 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
     st{"QUEUES"}[pid] = nq
 
     IF is_spell THEN
-        ' the fireball launches from the caster's king tower and lands 5
-        ' ticks later - damage applies on impact in SIMSTEP
+        ' the strike launches from the caster's king tower and lands 5
+        ' ticks later - the effect applies on impact in SIMSTEP
         DIM ky = 27.5
         IF pid = 1 THEN ky = 2.5
-        st{"SPELLS"} = APPEND(st{"SPELLS"}, { "OWNER": pid, "X": x, "Y": y, "DMG": INT(c{"DMG"} * mult), "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 })
+        DIM sp AS MAP = { "OWNER": pid, "X": x, "Y": y, "DMG": INT(c{"DMG"} * mult), "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 }
+        IF MAP.EXISTS(c, "STUN") THEN sp{"STUN"} = c{"STUN"}
+        st{"SPELLS"} = APPEND(st{"SPELLS"}, sp)
         ADDEVENT(st, { "T": "CAST", "FX": 9.0, "FY": ky, "X": x, "Y": y })
     ELSE
         DIM offs = [[0.0, 0.0], [-0.8, 0.0], [0.8, 0.0], [0.0, -0.8], [0.0, 0.8]]
@@ -162,6 +164,14 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
             u2{"MAXHP"} = INT(c{"HP"} * mult)
             u2{"DMG"} = INT(c{"DMG"} * mult)
             u2{"CD"} = 0.3
+            ' stationary defences hold their spot and expire on their own
+            IF MAP.EXISTS(c, "BUILD") THEN
+                u2{"BUILD"} = 1
+                u2{"X"} = x
+                u2{"Y"} = y
+            ENDIF
+            IF MAP.EXISTS(c, "TTL") THEN u2{"TTL"} = c{"TTL"}
+            IF MAP.EXISTS(c, "SPAWNS") THEN u2{"SPAWNCD"} = c{"SPAWNRATE"}
             st{"NEXTID"} = st{"NEXTID"} + 1
             st{"UNITS"} = APPEND(st{"UNITS"}, u2)
         NEXT i
@@ -177,18 +187,19 @@ EXPORT FUNC FINDTARGET(st, u, c, cs)
     DIM bt AS MAP = { "OK": 0 }
     DIM i
     DIM units = st{"UNITS"}
-    IF c{"ONLYTOWERS"} = 0 THEN
-        FOR i = 0 TO LEN(units) - 1
-            DIM v = units[i]
-            IF v{"OWNER"} = u{"OWNER"} ORELSE v{"HP"} <= 0 THEN CONTINUEFOR
-            IF c{"HITS"} = "G" ANDALSO cs{v{"KIND"}}{"FLY"} = 1 THEN CONTINUEFOR
-            DIM d = DIST(u{"X"}, u{"Y"}, v{"X"}, v{"Y"})
-            IF d <= c{"AGGRO"} ANDALSO d < best_d THEN
-                best_d = d
-                bt = { "OK": 1, "T": "U", "I": i, "X": v{"X"}, "Y": v{"Y"}, "D": d }
-            ENDIF
-        NEXT i
-    ENDIF
+    FOR i = 0 TO LEN(units) - 1
+        DIM v = units[i]
+        IF v{"OWNER"} = u{"OWNER"} ORELSE v{"HP"} <= 0 THEN CONTINUEFOR
+        ' station rushers walk past troops, but a defensive building
+        ' blocks their path and has to be dealt with
+        IF c{"ONLYTOWERS"} = 1 ANDALSO NOT MAP.EXISTS(v, "BUILD") THEN CONTINUEFOR
+        IF c{"HITS"} = "G" ANDALSO cs{v{"KIND"}}{"FLY"} = 1 THEN CONTINUEFOR
+        DIM d = DIST(u{"X"}, u{"Y"}, v{"X"}, v{"Y"})
+        IF d <= c{"AGGRO"} ANDALSO d < best_d THEN
+            best_d = d
+            bt = { "OK": 1, "T": "U", "I": i, "X": v{"X"}, "Y": v{"Y"}, "D": d }
+        ENDIF
+    NEXT i
     IF bt{"OK"} = 0 THEN
         DIM tws = st{"TOWERS"}
         FOR i = 0 TO LEN(tws) - 1
@@ -245,11 +256,23 @@ EXPORT FUNC RESOLVEBUMP(st, cs)
                     dy = 0.05 * ((a{"ID"} MOD 3) - 1)
                     d = 0.1
                 ENDIF
+                ' anchored buildings shove, they do not budge
+                DIM a_fix = MAP.EXISTS(a, "BUILD")
+                DIM b_fix = MAP.EXISTS(b, "BUILD")
                 DIM push = (0.7 - d) / 2
-                a{"X"} = a{"X"} - dx / d * push
-                a{"Y"} = a{"Y"} - dy / d * push
-                b{"X"} = b{"X"} + dx / d * push
-                b{"Y"} = b{"Y"} + dy / d * push
+                IF a_fix ANDALSO b_fix THEN CONTINUEFOR
+                IF a_fix THEN
+                    b{"X"} = b{"X"} + dx / d * push * 2
+                    b{"Y"} = b{"Y"} + dy / d * push * 2
+                ELSEIF b_fix THEN
+                    a{"X"} = a{"X"} - dx / d * push * 2
+                    a{"Y"} = a{"Y"} - dy / d * push * 2
+                ELSE
+                    a{"X"} = a{"X"} - dx / d * push
+                    a{"Y"} = a{"Y"} - dy / d * push
+                    b{"X"} = b{"X"} + dx / d * push
+                    b{"Y"} = b{"Y"} + dy / d * push
+                ENDIF
             ENDIF
         NEXT j
         IF afly = 0 THEN
@@ -323,6 +346,8 @@ EXPORT FUNC SIMSTEP(st)
                 FOR EACH u0 IN st{"UNITS"}
                     IF u0{"OWNER"} <> sp{"OWNER"} ANDALSO DIST(sp{"X"}, sp{"Y"}, u0{"X"}, u0{"Y"}) <= sp{"RADIUS"} THEN
                         u0{"HP"} = u0{"HP"} - sp{"DMG"}
+                        ' a stasis field holds everything it catches
+                        IF MAP.EXISTS(sp, "STUN") THEN u0{"STUN"} = sp{"STUN"}
                     ENDIF
                 NEXT u0
                 FOR EACH tw0 IN st{"TOWERS"}
@@ -339,9 +364,37 @@ EXPORT FUNC SIMSTEP(st)
         st{"SPELLS"} = keep
     ENDIF
 
+    DIM hatched = []
     FOR EACH u IN st{"UNITS"}
         IF u{"HP"} <= 0 THEN CONTINUEFOR
         DIM c = cs{u{"KIND"}}
+
+        ' held in stasis: no move, no shot, just the clock running down
+        IF MAP.EXISTS(u, "STUN") THEN
+            IF u{"STUN"} > 0 THEN
+                u{"STUN"} = u{"STUN"} - dt
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+
+        ' timed defences wear out
+        IF MAP.EXISTS(u, "TTL") THEN
+            u{"TTL"} = u{"TTL"} - dt
+            IF u{"TTL"} <= 0 THEN
+                u{"HP"} = 0
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+
+        ' carriers release a drone on their own cadence
+        IF MAP.EXISTS(u, "SPAWNCD") THEN
+            u{"SPAWNCD"} = u{"SPAWNCD"} - dt
+            IF u{"SPAWNCD"} <= 0 THEN
+                u{"SPAWNCD"} = c{"SPAWNRATE"}
+                hatched = APPEND(hatched, [{ "OWNER": u{"OWNER"}, "KIND": c{"SPAWNS"}, "X": u{"X"}, "Y": u{"Y"} }])
+            ENDIF
+        ENDIF
+
         DIM tgt = FINDTARGET(st, u, c, cs)
         IF tgt{"OK"} = 0 THEN CONTINUEFOR
         u{"CD"} = u{"CD"} - dt
@@ -372,6 +425,9 @@ EXPORT FUNC SIMSTEP(st)
                     ADDEVENT(st, { "T": "HIT", "X": tgt{"X"}, "Y": tgt{"Y"}, "D": hitdmg })
                 ENDIF
             ENDIF
+        ELSEIF MAP.EXISTS(u, "BUILD") THEN
+            ' a building never closes the distance - it waits
+            u{"CD"} = u{"CD"}
         ELSE
             DIM wx = tgt{"X"}
             DIM wy = tgt{"Y"}
@@ -435,6 +491,24 @@ EXPORT FUNC SIMSTEP(st)
             ENDIF
         ENDIF
     NEXT u
+
+    ' drones join after the pass, so the loop never walks a growing list
+    FOR EACH hb IN hatched
+        DIM hc = cs{hb{"KIND"}}
+        DIM hu AS MAP = {}
+        hu{"ID"} = st{"NEXTID"}
+        hu{"OWNER"} = hb{"OWNER"}
+        hu{"KIND"} = hb{"KIND"}
+        hu{"X"} = hb{"X"} + 0.7
+        hu{"Y"} = hb{"Y"}
+        hu{"HP"} = hc{"HP"}
+        hu{"MAXHP"} = hc{"HP"}
+        hu{"DMG"} = hc{"DMG"}
+        hu{"CD"} = 0.3
+        st{"NEXTID"} = st{"NEXTID"} + 1
+        st{"UNITS"} = APPEND(st{"UNITS"}, hu)
+        ADDEVENT(st, { "T": "SPAWN", "X": hb{"X"}, "Y": hb{"Y"} })
+    NEXT hb
 
     RESOLVEBUMP(st, cs)
 

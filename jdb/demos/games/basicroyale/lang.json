@@ -31,7 +31,7 @@
     "waiting": "Warte auf Gegner...",
     "share_hint": "Link mit Raum teilen",
     "connecting": "verbinde...",
-    "building": "BAUE DIE FLOTTE...",
+    "building": "fest verankert",
     "no_cards_ui": "Karten laden fehlgeschlagen...",
     "msg_full": "Raum voll - anderen Raum wählen",
     "msg_zone": "nicht dein Gebiet",
@@ -68,7 +68,14 @@
     "only_towers": "nur Basen",
     "close": "SCHLIESSEN",
     "upgrade": "AUFWERTEN",
-    "tiles": "Felder"
+    "tiles": "Felder",
+    "desc_BRUTSCHIFF": "Traegerschiff. Setzt laufend Nano-Schwaerme aus.",
+    "desc_BRENNLANZE": "Feste Geschuetzstellung. Frisst grosse Einzelziele.",
+    "desc_STASE": "Stasisfeld. Haelt alles darin kurz bewegungslos.",
+    "stat_life": "Standzeit",
+    "stat_spawn": "Drohnen alle",
+    "stat_stun": "Laehmung",
+    "sec": "s"
   },
   "en": {
     "tagline": "ORBITAL DUEL",
@@ -102,7 +109,7 @@
     "waiting": "Waiting for opponent...",
     "share_hint": "share the link with the room",
     "connecting": "connecting...",
-    "building": "BUILDING THE FLEET...",
+    "building": "anchored",
     "no_cards_ui": "could not load cards...",
     "msg_full": "room is full - pick another",
     "msg_zone": "not your territory",
@@ -139,6 +146,13 @@
     "only_towers": "bases only",
     "close": "CLOSE",
     "upgrade": "UPGRADE",
-    "tiles": "tiles"
+    "tiles": "tiles",
+    "desc_BRUTSCHIFF": "Carrier. Keeps releasing nano swarms.",
+    "desc_BRENNLANZE": "Fixed emplacement. Melts big single targets.",
+    "desc_STASE": "Stasis field. Holds everything inside for a moment.",
+    "stat_life": "Lifetime",
+    "stat_spawn": "Drone every",
+    "stat_stun": "Stun",
+    "sec": "s"
   }
 }
