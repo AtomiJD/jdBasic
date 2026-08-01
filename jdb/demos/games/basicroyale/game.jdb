@@ -274,6 +274,23 @@ SUB DrawHud(gs)
     ENDIF
 ENDSUB
 
+' Own half plus the quadrant a fallen enemy princess opened up.
+SUB DrawDeployZone(gs, pid)
+    DRAWCOLOR 255, 255, 0
+    DIM owny = PY(16)
+    IF pid = 1 THEN owny = BOARD_Y0
+    RECT 0, owny, SCR_W, TILE * 14, FALSE
+    FOR EACH tw IN gs{"TOWERS"}
+        IF tw{"OWNER"} = pid ORELSE tw{"KIND"} <> "PRINCESS" ORELSE tw{"HP"} > 0 THEN CONTINUEFOR
+        DIM zx = 0
+        IF tw{"X"} >= 9 THEN zx = PX(9)
+        DIM zy = PY(6)
+        IF pid = 1 THEN zy = PY(13)
+        RECT zx, zy, PX(9), TILE * 10, FALSE
+        RECT zx + 1, zy + 1, PX(9) - 2, TILE * 10 - 2, FALSE
+    NEXT tw
+ENDSUB
+
 ' Collect unseen sim events into the local FX list (dedup by EID) and give
 ' each fresh event its sound - shots capped at 2 per batch to avoid spam.
 SUB SYNCFX(gs, fnow)
@@ -362,14 +379,8 @@ SUB DrawFrame(gs, fnow)
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
     DrawBoard(gs, fnow)
-    IF sel[0] <> "" THEN
-        DRAWCOLOR 255, 255, 0
-        RECT 0, PY(16), SCR_W, TILE * 14, FALSE
-    ENDIF
-    IF sel[1] <> "" THEN
-        DRAWCOLOR 255, 255, 0
-        RECT 0, BOARD_Y0, SCR_W, TILE * 14, FALSE
-    ENDIF
+    IF sel[0] <> "" THEN DrawDeployZone(gs, 0)
+    IF sel[1] <> "" THEN DrawDeployZone(gs, 1)
     DrawTowers(gs)
     DrawUnits(gs)
     DrawFX(fnow)
@@ -448,6 +459,12 @@ IF shotmode = 1 THEN
     FOR EACH pu IN st{"UNITS"}
         PRINT "  "; pu{"KIND"}; " P"; pu{"OWNER"}; " at "; INT(pu{"X"} * 10) / 10.0; ","; INT(pu{"Y"} * 10) / 10.0
     NEXT pu
+    ' fell one princess per side and arm both hands, so the shot documents
+    ' the deploy zone extension for either player
+    st{"TOWERS"}[4]{"HP"} = 0
+    st{"TOWERS"}[0]{"HP"} = 0
+    sel[0] = st{"QUEUES"}[0][0]
+    sel[1] = st{"QUEUES"}[1][0]
     SYNCFX(st, 0)
     DrawFrame(st, 6)
     GFX.SAVE_SCREENSHOT("tmp/royale.png")

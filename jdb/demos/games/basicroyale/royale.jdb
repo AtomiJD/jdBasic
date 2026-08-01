@@ -484,6 +484,21 @@ FUNC CHESTLINE$(chest)
     RETURN out$
 ENDFUNC
 
+' Own half plus the quadrant a fallen enemy princess opened up. Mirroring
+' puts the own half at the bottom for both players, so the unlocked strip
+' is always the ten rows above it - only its side follows the dead tower.
+SUB DrawDeployZone()
+    DRAWCOLOR 255, 255, 0
+    RECT 0, PY(16), SCR_W, TILE * 14, FALSE
+    FOR EACH tw IN world{"TOWERS"}
+        IF tw{"OWNER"} = mypid ORELSE tw{"KIND"} <> "PRINCESS" ORELSE tw{"HP"} > 0 THEN CONTINUEFOR
+        DIM zx = 0
+        IF tw{"X"} >= 9 THEN zx = PX(9)
+        RECT zx, PY(6), PX(9), TILE * 10, FALSE
+        RECT zx + 1, PY(6) + 1, PX(9) - 2, TILE * 10 - 2, FALSE
+    NEXT tw
+ENDSUB
+
 SUB DrawMenu()
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
@@ -677,10 +692,7 @@ SUB DrawFrame(fnow)
         TEXT 120, 460, "verbinde... " + msg$
     ELSE
         DrawBoard(fnow)
-        IF sel$ <> "" THEN
-            DRAWCOLOR 255, 255, 0
-            RECT 0, PY(16), SCR_W, TILE * 14, FALSE
-        ENDIF
+        IF sel$ <> "" THEN DrawDeployZone()
         DrawTowers()
         DrawUnits()
         DrawFX(fnow)
