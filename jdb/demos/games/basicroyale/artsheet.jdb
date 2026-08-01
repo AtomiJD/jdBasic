@@ -1,0 +1,59 @@
+' Contact sheet for the procedural art: bakes every figure for both teams
+' and renders them on the space background.  jdbasic artsheet.jdb
+IMPORT ART
+
+CONST SCR_W = 468
+CONST SCR_H = 620
+
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
+DIM kinds = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "RAILGUN", "NANOS", "GLEITER", "TITAN", "RAMME", "PLASMA", "SALVE"]
+
+SCREEN SCR_W, SCR_H, "BASIC Royale - Art"
+
+DIM t0 = TICK()
+DIM own = ART.BAKEALL(kinds, 0)
+DIM foe = ART.BAKEALL(kinds, 1)
+PRINT "bake time: "; TICK() - t0; " ms for "; (LEN(kinds) + 2) * 2; " sprites"
+
+DRAWCOLOR 6, 8, 22
+RECT 0, 0, SCR_W, SCR_H, TRUE
+DIM i
+FOR i = 0 TO 200
+    DIM sx = INT(RND() * SCR_W)
+    DIM sy = INT(RND() * SCR_H)
+    DIM sb = 90 + INT(RND() * 140)
+    DRAWCOLOR sb, sb, sb + 20
+    PSET sx, sy
+NEXT i
+
+FOR i = 0 TO LEN(kinds) - 1
+    DIM kx = 40 + (i MOD 4) * 110
+    DIM ky = 60 + INT(i / 4) * 90
+    SPRITE.POS(own{kinds[i]}, kx, ky)
+    SPRITE.DRAW(own{kinds[i]})
+    SPRITE.POS(foe{kinds[i]}, kx + 46, ky)
+    SPRITE.DRAW(foe{kinds[i]})
+    DRAWCOLOR 200, 210, 235
+    TEXT kx - 18, ky + 26, MID$(kinds[i], 0, 8)
+NEXT i
+
+SPRITE.POS(own{"PRINCESS"}, 70, 400)
+SPRITE.DRAW(own{"PRINCESS"})
+SPRITE.POS(foe{"PRINCESS"}, 170, 400)
+SPRITE.DRAW(foe{"PRINCESS"})
+SPRITE.POS(own{"KING"}, 290, 400)
+SPRITE.DRAW(own{"KING"})
+SPRITE.POS(foe{"KING"}, 390, 400)
+SPRITE.DRAW(foe{"KING"})
+DRAWCOLOR 200, 210, 235
+TEXT 40, 460, "PRINZESSIN"
+TEXT 280, 460, "MUTTERSCHIFF"
+
+GFX.SAVE_SCREENSHOT("tmp/artsheet.png")
+SCREENFLIP
+GFX.CLOSE

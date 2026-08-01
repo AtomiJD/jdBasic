@@ -298,3 +298,4 @@ jdb/_privat/
 jdb/tutorials/tv/*.txt
 wasm/royale.jdb
 jdb/demos/games/basicroyale/stats.json
+wasm/art.jdb

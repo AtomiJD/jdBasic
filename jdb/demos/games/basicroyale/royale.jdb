@@ -1,8 +1,9 @@
-' BASIC Royale - phone/desktop client. Self-contained (no IMPORT) so a single
-' file can be shared as a playground link. Renders the server state and sends
+' BASIC Royale - phone/desktop client. Renders the server state and sends
 ' taps; the arena rules live on the server. Each player sees their own side
-' at the bottom - player 1's view is mirrored.
+' at the bottom - player 1's view is mirrored. Ships and stations come from
+' the ART module, baked into sprites once at startup.
 ' Shot mode for headless checks:  jdbasic royale.jdb shot -> tmp/client.png
+IMPORT ART
 
 CONST SRV$ = "http://192.168.0.37:8081"
 
@@ -30,20 +31,27 @@ SUB OnTap(info)
 ENDSUB
 ON "MOUSEDOWN" CALL OnTap
 
+' Fallbacks until GET /cards answers; the server's cards.json wins.
 DIM kindcolor AS MAP = {}
-kindcolor{"KNIGHT"} = [230, 180, 60]
-kindcolor{"ARCHER"} = [120, 220, 120]
-kindcolor{"GIANT"} = [200, 120, 40]
-kindcolor{"MINIONS"} = [110, 170, 255]
-kindcolor{"SKELETONS"} = [220, 220, 220]
-kindcolor{"FIREBALL"} = [255, 90, 30]
+kindcolor{"DROID"} = [175, 188, 215]
+kindcolor{"LASER"} = [140, 235, 200]
+kindcolor{"KOLOSS"} = [200, 150, 90]
+kindcolor{"WESPEN"} = [120, 180, 255]
+kindcolor{"SPLITTER"} = [225, 230, 245]
+kindcolor{"PLASMA"} = [255, 130, 60]
 DIM cardcost AS MAP = {}
-cardcost{"KNIGHT"} = 3
-cardcost{"ARCHER"} = 3
-cardcost{"GIANT"} = 5
-cardcost{"MINIONS"} = 3
-cardcost{"SKELETONS"} = 2
-cardcost{"FIREBALL"} = 4
+cardcost{"DROID"} = 3
+cardcost{"LASER"} = 3
+cardcost{"KOLOSS"} = 5
+cardcost{"WESPEN"} = 3
+cardcost{"SPLITTER"} = 2
+cardcost{"PLASMA"} = 4
+
+' kind -> sprite id, one set per team, filled by BAKEART
+DIM art_own AS MAP = {}
+DIM art_foe AS MAP = {}
+DIM art_ready = 0
+DIM stars = []
 
 DIM mypid = -1
 DIM tok$ = ""
@@ -62,7 +70,7 @@ DIM frame = 0
 
 ' Screens: menu -> battle / decks. Battle joins on demand, not at load.
 DIM uimode$ = "menu"
-DIM mydeck = ["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"]
+DIM mydeck = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"]
 DIM myname$ = "Spieler"
 DIM allcards AS MAP = {}
 DIM cardorder = []
@@ -108,6 +116,29 @@ SUB LOADCARDS()
         NEXT k$
     CATCH
     ENDTRY
+ENDSUB
+
+' Bake one sprite per card kind for both teams, plus the two station
+' classes. Runs once - a few hundred milliseconds of array math.
+SUB BAKEART()
+    IF LEN(cardorder) > 0 THEN
+        art_own = ART.BAKEALL(cardorder, 0)
+        art_foe = ART.BAKEALL(cardorder, 1)
+        art_ready = 1
+    ENDIF
+ENDSUB
+
+' Star field: x, y, brightness, drift speed per star.
+SUB MAKESTARS()
+    stars = []
+    DIM i
+    FOR i = 1 TO 90
+        DIM sx = RND() * SCR_W
+        DIM sy = RND() * (SCR_H - BOARD_Y0)
+        DIM sb = 70 + RND() * 150
+        DIM sv = 0.15 + RND() * 0.5
+        stars = APPEND(stars, [[sx, sy, sb, sv]])
+    NEXT i
 ENDSUB
 
 FUNC ICON$(kind$)
@@ -391,67 +422,81 @@ SUB DrawFX(fnow)
     fxact = keep
 ENDSUB
 
+' Deep space: near-black field, drifting stars, a nebula belt where the
+' river used to be and two lit gates standing in for the bridges.
 SUB DrawBoard(fnow)
+    DRAWCOLOR 6, 8, 22
+    RECT 0, BOARD_Y0, SCR_W, SCR_H - BOARD_Y0, TRUE
+
+    FOR EACH st2 IN stars
+        DIM sy = st2[1] + fnow * st2[3]
+        sy = sy MOD (SCR_H - BOARD_Y0)
+        DIM sb = st2[2]
+        DRAWCOLOR sb, sb, INT(sb * 0.8) + 40
+        PSET INT(st2[0]), BOARD_Y0 + INT(sy)
+    NEXT st2
+
+    ' nebula belt, brightest in its middle rows
     DIM r
-    DIM c
-    FOR r = 0 TO 29
-        FOR c = 0 TO 17
-            IF r = 14 ORELSE r = 15 THEN
-                DRAWCOLOR 40, 90 + INT(20 * SIN(fnow * 0.15 + c * 0.7)), 170
-            ELSEIF (r + c) MOD 2 = 0 THEN
-                DRAWCOLOR 60, 130, 70
-            ELSE
-                DRAWCOLOR 54, 120, 64
-            ENDIF
-            RECT c * TILE, BOARD_Y0 + r * TILE, TILE, TILE, TRUE
-        NEXT c
+    FOR r = 13 TO 16
+        DIM fade = 1.0 - ABS(r - 14.5) / 2.4
+        DIM pulse = 0.75 + 0.25 * SIN(fnow * 0.06 + r)
+        DRAWCOLOR INT(30 + 45 * fade * pulse), INT(20 + 30 * fade * pulse), INT(70 + 90 * fade * pulse)
+        RECT 0, PY(r), SCR_W, TILE, TRUE
     NEXT r
-    DRAWCOLOR 150, 110, 60
-    RECT PX(2.5), PY(14), TILE * 2, TILE * 2, TRUE
-    RECT PX(13.5), PY(14), TILE * 2, TILE * 2, TRUE
+
+    ' warp gates on the old bridge lanes: two lit pillars with an energy
+    ' curtain drifting between them
+    DIM gh = INT(TILE * 2.8)
+    DIM gy = PY(13.6)
+    DIM gx
+    FOR EACH gx IN [2.5, 13.5]
+        DIM gl = PX(gx)
+        DIM gr = gl + TILE * 2
+        DIM curt
+        FOR curt = 0 TO 4
+            DIM cy2 = gy + ((curt * 15 + INT(fnow * 1.6)) MOD (gh - 6))
+            DRAWCOLOR 60, 150, 210
+            LINE gl + 7, cy2, gr - 7, cy2
+        NEXT curt
+        DRAWCOLOR 120, 235, 255
+        ROUNDED_RECT gl - 1, gy, 7, gh, 3, TRUE
+        ROUNDED_RECT gr - 6, gy, 7, gh, 3, TRUE
+        DRAWCOLOR 210, 250, 255
+        ROUNDED_RECT gl + 1, gy + 3, 3, gh - 6, 1, TRUE
+        ROUNDED_RECT gr - 4, gy + 3, 3, gh - 6, 1, TRUE
+    NEXT gx
 ENDSUB
 
+' Stations: the baked sprite, mirrored so an enemy base faces the player.
+' A sleeping mothership is dimmed and keeps its Zz.
 SUB DrawTowers()
     FOR EACH tw IN world{"TOWERS"}
         IF tw{"HP"} <= 0 THEN CONTINUEFOR
         DIM asleep = 0
         IF tw{"KIND"} = "KING" ANDALSO tw{"AWAKE"} = 0 THEN asleep = 1
-        IF MINE(tw{"OWNER"}) = 1 THEN
-            IF asleep = 1 THEN
-                DRAWCOLOR 40, 60, 130
-            ELSE
-                DRAWCOLOR 70, 110, 230
-            ENDIF
-        ELSE
-            IF asleep = 1 THEN
-                DRAWCOLOR 130, 45, 45
-            ELSE
-                DRAWCOLOR 230, 80, 80
-            ENDIF
-        ENDIF
-        DIM sz = TILE * 2
-        IF tw{"KIND"} = "KING" THEN sz = INT(TILE * 2.4)
-        DIM x0 = PX(tw{"X"}) - sz / 2
-        DIM y0 = PY(WY(tw{"Y"})) - sz / 2
-        RECT x0, y0, sz, sz, TRUE
-        DRAWCOLOR 0, 0, 0
-        RECT x0, y0, sz, sz, FALSE
+        DIM mine = MINE(tw{"OWNER"})
+        DIM sid = art_foe{tw{"KIND"}}
+        IF mine = 1 THEN sid = art_own{tw{"KIND"}}
+        DIM cx = PX(tw{"X"})
+        DIM cy = PY(WY(tw{"Y"}))
+        SPRITE.FLIP(sid, FALSE, mine = 0)
+        SPRITE.ALPHA(sid, IIF(asleep = 1, 130, 255))
+        SPRITE.POS(sid, cx, cy)
+        SPRITE.DRAW(sid)
         IF asleep = 1 THEN
             DRAWCOLOR 220, 220, 240
-            TEXT x0 + sz - 20, y0 + 4, "Zz"
+            TEXT cx + 14, cy - 30, "Zz"
         ENDIF
-        DrawBar(x0, y0 - 8, sz, tw{"HP"} / tw{"MAXHP"})
+        DrawBar(cx - TILE, cy - 30, TILE * 2, tw{"HP"} / tw{"MAXHP"})
     NEXT tw
 ENDSUB
 
+' Ships: baked sprite per kind and team, flipped to face the enemy side,
+' nudged toward the target for two ticks after a strike.
 SUB DrawUnits()
     FOR EACH u IN world{"UNITS"}
-        DIM col = kindcolor{u{"KIND"}}
-        IF MINE(u{"OWNER"}) = 1 THEN
-            DRAWCOLOR 70, 110, 230
-        ELSE
-            DRAWCOLOR 230, 80, 80
-        ENDIF
+        DIM mine = MINE(u{"OWNER"})
         DIM ux = PX(u{"X"})
         DIM uy = PY(WY(u{"Y"}))
         IF MAP.EXISTS(u, "AT") THEN
@@ -462,12 +507,19 @@ SUB DrawUnits()
                 uy = uy + INT(lgy * 5)
             ENDIF
         ENDIF
-        CIRCLE ux, uy, 11, TRUE
-        DRAWCOLOR col[0], col[1], col[2]
-        CIRCLE ux, uy, 8, TRUE
-        DrawBar(ux - 10, uy - 18, 20, u{"HP"} / u{"MAXHP"})
-        DRAWCOLOR 0, 0, 0
-        TEXT ux - 8, uy - 6, ICON$(u{"KIND"})
+        DIM kind$ = u{"KIND"}
+        IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
+            DIM sid = art_foe{kind$}
+            IF mine = 1 THEN sid = art_own{kind$}
+            SPRITE.FLIP(sid, FALSE, mine = 0)
+            SPRITE.POS(sid, ux, uy)
+            SPRITE.DRAW(sid)
+        ELSE
+            DIM col = kindcolor{kind$}
+            DRAWCOLOR col[0], col[1], col[2]
+            CIRCLE ux, uy, 9, TRUE
+        ENDIF
+        DrawBar(ux - 10, uy - 20, 20, u{"HP"} / u{"MAXHP"})
     NEXT u
 ENDSUB
 
@@ -560,6 +612,10 @@ SUB DrawDeckEd()
                 DRAWCOLOR 255, 255, 0
                 RECT x0, y0, 150, 140, FALSE
                 RECT x0 + 1, y0 + 1, 148, 138, FALSE
+            ENDIF
+            IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
+                SPRITE.POS(art_own{kind$}, x0 + 118, y0 + 32)
+                SPRITE.DRAW(art_own{kind$})
             ENDIF
             DRAWCOLOR 0, 0, 0
             TEXT x0 + 12, y0 + 16, ICON$(kind$)
@@ -722,7 +778,10 @@ SUB MenuClick(mx, my)
             JOINMATCH()
         ELSEIF my >= 450 ANDALSO my <= 510 THEN
             uimode$ = "decks"
-            IF LEN(cardorder) = 0 THEN LOADCARDS()
+            IF LEN(cardorder) = 0 THEN
+                LOADCARDS()
+                BAKEART()
+            ENDIF
             LOADPROFILE()
         ELSEIF my >= 540 ANDALSO my <= 600 THEN
             IF snd_on = 1 THEN
@@ -792,8 +851,15 @@ FOR ai = 0 TO LEN(cliargs) - 1
 NEXT ai
 
 SCREEN SCR_W, SCR_H, "BASIC Royale"
+DRAWCOLOR 6, 8, 22
+RECT 0, 0, SCR_W, SCR_H, TRUE
+DRAWCOLOR 190, 220, 255
+TEXT 120, 430, "BAUE DIE FLOTTE..."
+SCREENFLIP
 SNDINIT()
 LOADCARDS()
+BAKEART()
+MAKESTARS()
 LOADPROFILE()
 
 IF shotmode = 1 THEN

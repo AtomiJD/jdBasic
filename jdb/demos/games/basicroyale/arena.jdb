@@ -23,12 +23,12 @@ ENDSUB
 EXPORT FUNC CARDS()
     IF TYPEOF(loaded_cards) = "OBJECT" THEN RETURN loaded_cards
     DIM cs AS MAP = {}
-    cs{"KNIGHT"} = { "COST": 3, "HP": 660, "DMG": 75, "HITSPEED": 1.1, "REACH": 1.2, "AGGRO": 5.5, "SPD": 1.8, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
-    cs{"ARCHER"} = { "COST": 3, "HP": 250, "DMG": 40, "HITSPEED": 0.9, "REACH": 5.0, "AGGRO": 6.5, "SPD": 1.8, "N": 2, "FLY": 0, "HITS": "A", "ONLYTOWERS": 0 }
-    cs{"GIANT"} = { "COST": 5, "HP": 1800, "DMG": 120, "HITSPEED": 1.5, "REACH": 1.2, "AGGRO": 9.0, "SPD": 1.2, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 1 }
-    cs{"MINIONS"} = { "COST": 3, "HP": 90, "DMG": 40, "HITSPEED": 1.0, "REACH": 1.6, "AGGRO": 5.5, "SPD": 2.6, "N": 3, "FLY": 1, "HITS": "A", "ONLYTOWERS": 0 }
-    cs{"SKELETONS"} = { "COST": 2, "HP": 45, "DMG": 40, "HITSPEED": 1.0, "REACH": 1.0, "AGGRO": 5.5, "SPD": 2.2, "N": 4, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
-    cs{"FIREBALL"} = { "COST": 4, "SPELL": 1, "DMG": 325, "RADIUS": 2.5 }
+    cs{"DROID"} = { "COST": 3, "HP": 660, "DMG": 75, "HITSPEED": 1.1, "REACH": 1.2, "AGGRO": 5.5, "SPD": 1.8, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
+    cs{"LASER"} = { "COST": 3, "HP": 250, "DMG": 40, "HITSPEED": 0.9, "REACH": 5.0, "AGGRO": 6.5, "SPD": 1.8, "N": 2, "FLY": 0, "HITS": "A", "ONLYTOWERS": 0 }
+    cs{"KOLOSS"} = { "COST": 5, "HP": 1800, "DMG": 120, "HITSPEED": 1.5, "REACH": 1.2, "AGGRO": 9.0, "SPD": 1.2, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 1 }
+    cs{"WESPEN"} = { "COST": 3, "HP": 90, "DMG": 40, "HITSPEED": 1.0, "REACH": 1.6, "AGGRO": 5.5, "SPD": 2.6, "N": 3, "FLY": 1, "HITS": "A", "ONLYTOWERS": 0 }
+    cs{"SPLITTER"} = { "COST": 2, "HP": 45, "DMG": 40, "HITSPEED": 1.0, "REACH": 1.0, "AGGRO": 5.5, "SPD": 2.2, "N": 4, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
+    cs{"PLASMA"} = { "COST": 4, "SPELL": 1, "DMG": 325, "RADIUS": 2.5 }
     RETURN cs
 ENDFUNC
 
@@ -72,7 +72,7 @@ EXPORT FUNC NEWGAME()
     cl = APPEND(cl, {})
     cl = APPEND(cl, {})
     st{"CARDLVL"} = cl
-    st{"QUEUES"} = [["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"], ["GIANT", "SKELETONS", "ARCHER", "FIREBALL", "KNIGHT", "MINIONS"]]
+    st{"QUEUES"} = [["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"], ["KOLOSS", "SPLITTER", "LASER", "PLASMA", "DROID", "WESPEN"]]
     DIM tws = []
     ' kings sleep (AWAKE 0) until hit or until one of their princesses falls
     tws = APPEND(tws, { "OWNER": 0, "KIND": "PRINCESS", "X": 3.5,  "Y": 23.5, "HP": 1400, "MAXHP": 1400, "CD": 0.0, "AWAKE": 1 })

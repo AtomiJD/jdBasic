@@ -383,6 +383,26 @@
     // Lets a shared link open the playground with a program preloaded and
     // (default) already running - no typing needed on a phone.
     let autoDone=false;
+    // A shared program may IMPORT modules. They are not in MEMFS unless the
+    // build embedded them, so pull each one over HTTP next to the program
+    // and drop it at the FS root where IMPORT resolves. Follows the
+    // imports of imports, two levels deep.
+    async function fetchImports(src, depth){
+      if (depth > 2) return;
+      const names = [...src.matchAll(/^\s*IMPORT\s+([A-Za-z_]\w*)/gmi)].map(m=>m[1]);
+      for (const n of names) {
+        const file = n.toLowerCase() + '.jdb';
+        if (readMaybe('/'+file) !== null) continue;
+        try {
+          const r = await fetch(file, {cache:'no-store'});
+          if (!r.ok) continue;
+          const mod = normalizeInput(await r.text());
+          Mod.FS.writeFile('/'+file, mod);
+          term.write('\r\n\x1b[2mmodule '+file+'\x1b[0m');
+          await fetchImports(mod, depth + 1);
+        } catch(e){}
+      }
+    }
     async function autoStart(){
       const qp = new URLSearchParams(location.search);
       // Expose all query params to the program as /url_params.json in MEMFS
@@ -402,6 +422,7 @@
       }
       if (src === null) { term.write('\r\n\x1b[31mcannot load '+prog+'\x1b[0m'); prompt(); return; }
       src = normalizeInput(src);
+      await fetchImports(src, 0);
       program = src; if(editor) editor.setValue(program);
       term.write('\r\n\x1b[32mloaded '+prog+' ('+src.split('\n').length+' lines)\x1b[0m');
       if (mode === 'run') { term.write('\r\n\x1b[90m--- run ---\x1b[0m\r\n'); await runCode(program); }

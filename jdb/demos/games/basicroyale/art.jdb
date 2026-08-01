@@ -1,0 +1,217 @@
+' BASIC Royale - procedural sprite art.
+' Every figure is a handful of signed-distance shapes (disc, rounded box,
+' capsule) that a vectorised rasteriser turns into an RGBA sprite once at
+' startup. Whole-array math does the work: one pass per shape over the
+' pixel grid, so a 40x40 figure costs a few dozen array ops instead of
+' 1600 interpreted pixel steps. Glow is a quadratic falloff outside the
+' shape, edges get one pixel of coverage antialiasing.
+EXPORT MODULE ART
+
+' ── shape constructors ────────────────────────────────────────
+' col$ picks the palette slot: "TEAM" (player colour), "HULL", "DARK",
+' "LIGHT" or "ACCENT". glow 0..1 adds a halo in the same colour.
+
+EXPORT FUNC DISC(x, y, r, col$, glow)
+    RETURN { "T": "CIRC", "X": x, "Y": y, "R": r, "COL": col$, "GLOW": glow }
+ENDFUNC
+
+EXPORT FUNC BOXR(x, y, hx, hy, rr, rot, col$, glow)
+    RETURN { "T": "BOX", "X": x, "Y": y, "HX": hx, "HY": hy, "RR": rr, "ROT": rot, "COL": col$, "GLOW": glow }
+ENDFUNC
+
+EXPORT FUNC BAR(x1, y1, x2, y2, r, col$, glow)
+    RETURN { "T": "SEG", "X1": x1, "Y1": y1, "X2": x2, "Y2": y2, "R": r, "COL": col$, "GLOW": glow }
+ENDFUNC
+
+' ── palette ───────────────────────────────────────────────────
+' Two team looks: cyan for the local player, magenta-red for the foe.
+EXPORT FUNC PALETTE(team)
+    DIM p AS MAP = {}
+    IF team = 0 THEN
+        p{"TEAM"} = [90, 200, 255]
+        p{"ACCENT"} = [180, 250, 255]
+    ELSE
+        p{"TEAM"} = [255, 90, 140]
+        p{"ACCENT"} = [255, 200, 120]
+    ENDIF
+    p{"HULL"} = [175, 188, 215]
+    ' still the darkest slot, but bright enough to read against the void
+    p{"DARK"} = [96, 108, 148]
+    p{"LIGHT"} = [240, 248, 255]
+    RETURN p
+ENDFUNC
+
+' ── the rasteriser ────────────────────────────────────────────
+' Returns a flat RGBA buffer (w*h*4) for the shape list.
+' zoom > 1 enlarges the figure inside the same canvas - the grid shrinks
+' toward the centre instead of every shape carrying scaled numbers.
+EXPORT FUNC RASTER(shapes, w, h, pal, zoom)
+    DIM n = w * h
+    DIM idx = IOTA(n, 0)
+    DIM xs = ((idx MOD w) + 0.5 - w / 2.0) / zoom + w / 2.0
+    DIM ys = (INT(idx / w) + 0.5 - h / 2.0) / zoom + h / 2.0
+
+    DIM outr = idx * 0.0
+    DIM outg = outr + 0
+    DIM outb = outr + 0
+    DIM outa = outr + 0
+
+    FOR EACH sh IN shapes
+        DIM t$ = sh{"T"}
+        DIM d = outr + 0
+        IF t$ = "CIRC" THEN
+            DIM dx = xs - sh{"X"}
+            DIM dy = ys - sh{"Y"}
+            d = SQR(dx * dx + dy * dy) - sh{"R"}
+        ELSEIF t$ = "BOX" THEN
+            DIM bx = xs - sh{"X"}
+            DIM by = ys - sh{"Y"}
+            DIM ang = sh{"ROT"} * 3.14159265 / 180.0
+            DIM ca = COS(ang)
+            DIM sa = SIN(ang)
+            DIM rx = bx * ca + by * sa
+            DIM ry = by * ca - bx * sa
+            DIM qx = ABS(rx) - sh{"HX"} + sh{"RR"}
+            DIM qy = ABS(ry) - sh{"HY"} + sh{"RR"}
+            DIM px = qx * (qx > 0)
+            DIM py = qy * (qy > 0)
+            DIM inside = qx * (qx > qy) + qy * (qy >= qx)
+            d = SQR(px * px + py * py) + inside * (inside < 0) - sh{"RR"}
+        ELSE
+            DIM ax = sh{"X1"}
+            DIM ay = sh{"Y1"}
+            DIM ex = sh{"X2"} - ax
+            DIM ey = sh{"Y2"} - ay
+            DIM elen = ex * ex + ey * ey
+            IF elen < 0.0001 THEN elen = 0.0001
+            DIM px2 = xs - ax
+            DIM py2 = ys - ay
+            DIM tt = (px2 * ex + py2 * ey) / elen
+            DIM tc = tt * (tt > 0) * (tt < 1) + (tt >= 1)
+            DIM cx2 = px2 - ex * tc
+            DIM cy2 = py2 - ey * tc
+            d = SQR(cx2 * cx2 + cy2 * cy2) - sh{"R"}
+        ENDIF
+
+        DIM col = pal{sh{"COL"}}
+        ' body coverage with one pixel of antialiasing
+        DIM cov = 0.5 - d
+        cov = cov * (cov > 0) * (cov < 1) + (cov >= 1)
+        ' halo: quadratic falloff over four pixels outside the edge
+        DIM gl = sh{"GLOW"}
+        IF gl > 0 THEN
+            DIM gd = 1.0 - d / 4.5
+            gd = gd * (gd > 0) * (gd < 1) + (gd >= 1)
+            cov = cov + gd * gd * gl * (cov < 0.999)
+        ENDIF
+        DIM keep = 1.0 - cov
+        outr = outr * keep + col[0] * cov
+        outg = outg * keep + col[1] * cov
+        outb = outb * keep + col[2] * cov
+        outa = outa * keep + 255.0 * cov
+    NEXT sh
+
+    DIM stacked = STACK(0, outr, outg, outb, outa)
+    RETURN RESHAPE(TRANSPOSE(stacked), [n * 4])
+ENDFUNC
+
+' Bakes a shape list into a ready sprite and returns its id.
+EXPORT FUNC BAKE(shapes, w, h, team, zoom)
+    DIM sid = SPRITE.CREATE(w, h)
+    SPRITE.SETBUFFER(sid, RASTER(shapes, w, h, PALETTE(team), zoom))
+    SPRITE.SET_ORIGIN(sid, w / 2, h / 2)
+    RETURN sid
+ENDFUNC
+
+' ── the roster ────────────────────────────────────────────────
+' Twelve space units plus the two station classes. Each is one to five
+' shapes on a 40x40 (units) or 72x72 (stations) canvas.
+EXPORT FUNC FIGURE(kind$)
+    DIM s = []
+    IF kind$ = "DROID" THEN
+        s = APPEND(s, [BOXR(20, 23, 9, 8, 3, 0, "HULL", 0)])
+        s = APPEND(s, [BOXR(20, 12, 6, 4, 2, 0, "TEAM", 0.3)])
+        s = APPEND(s, [DISC(20, 12, 2.5, "LIGHT", 0.6)])
+        s = APPEND(s, [BAR(11, 20, 8, 28, 2.5, "DARK", 0)])
+        s = APPEND(s, [BAR(29, 20, 32, 28, 2.5, "DARK", 0)])
+    ELSEIF kind$ = "LASER" THEN
+        s = APPEND(s, [DISC(18, 22, 7, "HULL", 0)])
+        s = APPEND(s, [BAR(20, 20, 34, 13, 2, "DARK", 0)])
+        s = APPEND(s, [DISC(34, 13, 3, "ACCENT", 1.0)])
+        s = APPEND(s, [DISC(18, 22, 3, "TEAM", 0.4)])
+    ELSEIF kind$ = "KOLOSS" THEN
+        s = APPEND(s, [BOXR(20, 20, 13, 11, 5, 0, "HULL", 0)])
+        s = APPEND(s, [DISC(20, 17, 6, "TEAM", 0.5)])
+        s = APPEND(s, [DISC(20, 17, 2.5, "LIGHT", 0.9)])
+        s = APPEND(s, [BAR(12, 30, 9, 37, 3.5, "DARK", 0)])
+        s = APPEND(s, [BAR(28, 30, 31, 37, 3.5, "DARK", 0)])
+    ELSEIF kind$ = "WESPEN" THEN
+        s = APPEND(s, [BAR(6, 20, 34, 20, 2, "DARK", 0)])
+        s = APPEND(s, [DISC(20, 20, 7, "HULL", 0)])
+        s = APPEND(s, [DISC(20, 20, 3.5, "TEAM", 0.8)])
+        s = APPEND(s, [DISC(7, 20, 2, "ACCENT", 0.7)])
+        s = APPEND(s, [DISC(33, 20, 2, "ACCENT", 0.7)])
+    ELSEIF kind$ = "SPLITTER" THEN
+        s = APPEND(s, [BOXR(20, 20, 7, 7, 2, 45, "HULL", 0)])
+        s = APPEND(s, [DISC(20, 20, 3, "TEAM", 0.9)])
+        s = APPEND(s, [DISC(20, 20, 1.5, "LIGHT", 1.0)])
+    ELSEIF kind$ = "RAILGUN" THEN
+        s = APPEND(s, [BOXR(15, 22, 7, 9, 3, 0, "HULL", 0)])
+        s = APPEND(s, [BAR(18, 18, 37, 18, 1.8, "DARK", 0)])
+        s = APPEND(s, [DISC(37, 18, 2.5, "ACCENT", 1.0)])
+        s = APPEND(s, [BAR(11, 30, 19, 30, 2, "DARK", 0)])
+    ELSEIF kind$ = "NANOS" THEN
+        s = APPEND(s, [DISC(14, 16, 4.5, "TEAM", 0.8)])
+        s = APPEND(s, [DISC(27, 19, 4.5, "TEAM", 0.8)])
+        s = APPEND(s, [DISC(19, 28, 4.5, "TEAM", 0.8)])
+        s = APPEND(s, [DISC(20, 21, 2, "LIGHT", 1.0)])
+    ELSEIF kind$ = "GLEITER" THEN
+        s = APPEND(s, [BAR(8, 30, 20, 14, 2.5, "HULL", 0)])
+        s = APPEND(s, [BAR(32, 30, 20, 14, 2.5, "HULL", 0)])
+        s = APPEND(s, [BOXR(20, 22, 4, 10, 4, 0, "DARK", 0)])
+        s = APPEND(s, [DISC(20, 16, 4, "TEAM", 0.7)])
+        s = APPEND(s, [DISC(20, 16, 1.8, "LIGHT", 1.0)])
+    ELSEIF kind$ = "TITAN" THEN
+        s = APPEND(s, [BOXR(20, 21, 11, 13, 4, 0, "HULL", 0)])
+        s = APPEND(s, [BOXR(7, 15, 4, 6, 2, 0, "DARK", 0)])
+        s = APPEND(s, [BOXR(33, 15, 4, 6, 2, 0, "DARK", 0)])
+        s = APPEND(s, [DISC(20, 20, 5, "TEAM", 0.9)])
+        s = APPEND(s, [DISC(20, 20, 2, "LIGHT", 1.0)])
+    ELSEIF kind$ = "RAMME" THEN
+        s = APPEND(s, [BOXR(21, 22, 6, 12, 3, 0, "HULL", 0)])
+        s = APPEND(s, [BAR(21, 8, 21, 16, 3.5, "ACCENT", 0.8)])
+        s = APPEND(s, [BAR(13, 32, 13, 27, 2.5, "TEAM", 1.0)])
+        s = APPEND(s, [BAR(29, 32, 29, 27, 2.5, "TEAM", 1.0)])
+    ELSEIF kind$ = "PLASMA" THEN
+        s = APPEND(s, [DISC(20, 20, 11, "ACCENT", 0.5)])
+        s = APPEND(s, [DISC(20, 20, 6, "LIGHT", 1.0)])
+    ELSEIF kind$ = "SALVE" THEN
+        s = APPEND(s, [DISC(20, 20, 12, "TEAM", 0.4)])
+        s = APPEND(s, [DISC(20, 20, 8.5, "DARK", 0)])
+        s = APPEND(s, [DISC(20, 20, 3.5, "ACCENT", 1.0)])
+    ELSEIF kind$ = "PRINCESS" THEN
+        s = APPEND(s, [BOXR(36, 44, 26, 5, 5, 0, "HULL", 0)])
+        s = APPEND(s, [DISC(36, 34, 14, "HULL", 0)])
+        s = APPEND(s, [DISC(36, 32, 9, "TEAM", 0.6)])
+        s = APPEND(s, [BAR(36, 22, 36, 12, 2, "ACCENT", 1.0)])
+        s = APPEND(s, [DISC(36, 12, 3.5, "LIGHT", 1.0)])
+    ELSE
+        s = APPEND(s, [BOXR(36, 46, 30, 6, 6, 0, "HULL", 0)])
+        s = APPEND(s, [DISC(36, 36, 19, "HULL", 0)])
+        s = APPEND(s, [DISC(36, 34, 13, "TEAM", 0.7)])
+        s = APPEND(s, [DISC(36, 34, 6, "LIGHT", 1.0)])
+        s = APPEND(s, [BAR(12, 48, 60, 48, 2.5, "ACCENT", 0.9)])
+    ENDIF
+    RETURN s
+ENDFUNC
+
+' Bakes every unit and station for one team; returns kind -> sprite id.
+EXPORT FUNC BAKEALL(kinds, team)
+    DIM out AS MAP = {}
+    FOR EACH k$ IN kinds
+        out{k$} = BAKE(FIGURE(k$), 40, 40, team, 1.18)
+    NEXT k$
+    out{"PRINCESS"} = BAKE(FIGURE("PRINCESS"), 72, 72, team, 1.05)
+    out{"KING"} = BAKE(FIGURE("KING"), 72, 72, team, 1.0)
+    RETURN out
+ENDFUNC

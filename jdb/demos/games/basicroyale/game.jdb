@@ -38,12 +38,12 @@ DIM cardinfo = ARENA.CARDS()
 DIM layout = ARENA.BOARD()
 
 DIM kindcolor AS MAP = {}
-kindcolor{"KNIGHT"} = [230, 180, 60]
-kindcolor{"ARCHER"} = [120, 220, 120]
-kindcolor{"GIANT"} = [200, 120, 40]
-kindcolor{"MINIONS"} = [110, 170, 255]
-kindcolor{"SKELETONS"} = [220, 220, 220]
-kindcolor{"FIREBALL"} = [255, 90, 30]
+kindcolor{"DROID"} = [175, 188, 215]
+kindcolor{"LASER"} = [140, 235, 200]
+kindcolor{"KOLOSS"} = [200, 150, 90]
+kindcolor{"WESPEN"} = [120, 180, 255]
+kindcolor{"SPLITTER"} = [225, 230, 245]
+kindcolor{"PLASMA"} = [255, 130, 60]
 DIM colorkeys = MAP.KEYS(cardinfo)
 FOR EACH ckey$ IN colorkeys
     IF MAP.EXISTS(cardinfo{ckey$}, "COLOR") THEN kindcolor{ckey$} = cardinfo{ckey$}{"COLOR"}
@@ -442,15 +442,15 @@ IF shotmode = 0 THEN SNDINIT()
 IF shotmode = 1 THEN
     ' worst case for bridge pathing: the hog starts equidistant from both
     ' bridges and approaches sideways - it must still cross the river
-    st{"QUEUES"}[0] = ["HOG_RIDER", "KNIGHT", "ARCHER", "MINIONS", "SKELETONS", "FIREBALL"]
-    DIM r1 = ARENA.PLAYCARD(st, 0, "HOG_RIDER", 9.0, 20.0)
-    DIM r2 = ARENA.PLAYCARD(st, 1, "GIANT", 14.0, 10.0)
+    st{"QUEUES"}[0] = ["RAMME", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+    DIM r1 = ARENA.PLAYCARD(st, 0, "RAMME", 9.0, 20.0)
+    DIM r2 = ARENA.PLAYCARD(st, 1, "KOLOSS", 14.0, 10.0)
     DIM si
     FOR si = 1 TO 60
         st = ARENA.SIMSTEP(st)
     NEXT si
-    DIM r3 = ARENA.PLAYCARD(st, 0, "SKELETONS", 14.0, 20.0)
-    DIM r4 = ARENA.PLAYCARD(st, 1, "SKELETONS", 14.0, 8.0)
+    DIM r3 = ARENA.PLAYCARD(st, 0, "SPLITTER", 14.0, 20.0)
+    DIM r4 = ARENA.PLAYCARD(st, 1, "SPLITTER", 14.0, 8.0)
     FOR si = 1 TO 90
         st = ARENA.SIMSTEP(st)
     NEXT si

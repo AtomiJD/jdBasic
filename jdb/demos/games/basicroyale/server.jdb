@@ -182,7 +182,7 @@ ENDSUB
 
 ' Validated 6-card deck from the join body, or the classic default.
 FUNC PICKDECK(b)
-    DIM def = ["KNIGHT", "ARCHER", "GIANT", "MINIONS", "SKELETONS", "FIREBALL"]
+    DIM def = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"]
     IF TYPEOF(b) <> "OBJECT" ORELSE NOT MAP.EXISTS(b, "DECK") THEN RETURN def
     DIM d = b{"DECK"}
     IF TYPEOF(d) <> "ARRAY" ORELSE LEN(d) <> 6 THEN RETURN def
