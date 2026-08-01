@@ -386,12 +386,17 @@ EXPORT FUNC SIMSTEP(st)
             ENDIF
         ENDIF
 
-        ' carriers release a drone on their own cadence
+        ' carriers release a batch of drones on their own cadence
         IF MAP.EXISTS(u, "SPAWNCD") THEN
             u{"SPAWNCD"} = u{"SPAWNCD"} - dt
             IF u{"SPAWNCD"} <= 0 THEN
                 u{"SPAWNCD"} = c{"SPAWNRATE"}
-                hatched = APPEND(hatched, [{ "OWNER": u{"OWNER"}, "KIND": c{"SPAWNS"}, "X": u{"X"}, "Y": u{"Y"} }])
+                DIM n_brood = 1
+                IF MAP.EXISTS(c, "SPAWNN") THEN n_brood = c{"SPAWNN"}
+                DIM bi
+                FOR bi = 0 TO n_brood - 1
+                    hatched = APPEND(hatched, [{ "OWNER": u{"OWNER"}, "KIND": c{"SPAWNS"}, "X": u{"X"}, "Y": u{"Y"}, "SLOT": bi }])
+                NEXT bi
             ENDIF
         ENDIF
 
@@ -500,7 +505,7 @@ EXPORT FUNC SIMSTEP(st)
         hu{"OWNER"} = hb{"OWNER"}
         hu{"KIND"} = hb{"KIND"}
         hu{"X"} = hb{"X"} + 0.7
-        hu{"Y"} = hb{"Y"}
+        hu{"Y"} = hb{"Y"} + hb{"SLOT"} * 0.6 - 0.3
         hu{"HP"} = hc{"HP"}
         hu{"MAXHP"} = hc{"HP"}
         hu{"DMG"} = hc{"DMG"}

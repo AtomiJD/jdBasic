@@ -239,6 +239,7 @@
     "ONLYTOWERS": 0,
     "SPAWNS": "NANOS",
     "SPAWNRATE": 3.0,
+    "SPAWNN": 2,
     "COLOR": [
       190,
       120,
@@ -249,10 +250,10 @@
   },
   "BRENNLANZE": {
     "COST": 5,
-    "HP": 950,
+    "HP": 820,
     "DMG": 170,
     "HITSPEED": 0.8,
-    "REACH": 4.5,
+    "REACH": 3.6,
     "AGGRO": 5.0,
     "SPD": 0.0,
     "N": 1,
