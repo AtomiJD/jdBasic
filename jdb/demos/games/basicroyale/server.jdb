@@ -280,7 +280,7 @@ FUNC HJOIN(req)
                 RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$, "ROOM": rm{"KEY"} })
             ENDIF
         NEXT i
-        RETURN JJ({ "OK": 0, "MSG": "Raum voll - anderen Raum waehlen" })
+        RETURN JJ({ "OK": 0, "MSG": "msg_full" })
     ENDIF
     rm{"PLAYERS"} = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK(), "DECK": deck })
     DIM slot = LEN(rm{"PLAYERS"}) - 1
@@ -315,7 +315,7 @@ FUNC HPLAY(req)
     DIM rm = ROOMOF(req, b)
     SYNCSIM(rm)
     DIM pid = PIDBYTOK(rm{"PLAYERS"}, b{"TOK"})
-    IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "bad token" })
+    IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
     DIM res$ = ARENA.PLAYCARD(rm{"ST"}, pid, b{"KIND"}, b{"X"}, b{"Y"})
     RETURN JJ({ "OK": IIF(res$ = "", 1, 0), "MSG": res$ })
 ENDFUNC
@@ -375,6 +375,33 @@ FUNC HCARDS(req)
     RETURN JJ({ "OK": 1, "CARDS": ARENA.CARDS() })
 ENDFUNC
 
+' UI translations - clients look their strings up by key.
+DIM lang_json$ = "{}"
+TRY
+    lang_json$ = TXTREADER$("lang.json")
+CATCH
+ENDTRY
+
+FUNC HLANG(req)
+    RETURN { "__http_status": 200, "__http_body": lang_json$, "__http_content_type": "application/json", "__http_headers": { "Access-Control-Allow-Origin": "*" } }
+ENDFUNC
+
+' Room directory for the lobby: who is in, and is there a seat left.
+FUNC HROOMS(req)
+    DIM out = []
+    DIM ks = MAP.KEYS(rooms)
+    FOR EACH k$ IN ks
+        DIM rp = rooms{k$}{"PLAYERS"}
+        DIM names = []
+        DIM i
+        FOR i = 0 TO LEN(rp) - 1
+            names = APPEND(names, rp[i]{"NAME"})
+        NEXT i
+        out = APPEND(out, [{ "KEY": k$, "N": LEN(rp), "NAMES": names }])
+    NEXT k$
+    RETURN JJ({ "OK": 1, "ROOMS": out })
+ENDFUNC
+
 FUNC HPROFILE(req)
     DIM name$ = ""
     IF MAP.EXISTS(req{"PARAMS"}, "name") THEN name$ = req{"PARAMS"}{"name"}
@@ -388,14 +415,14 @@ FUNC HUPGRADE(req)
     DIM b = JSON.PARSE$(req{"BODY"})
     DIM name$ = b{"NAME"}
     DIM kind$ = b{"KIND"}
-    IF NOT MAP.EXISTS(ARENA.CARDS(), kind$) THEN RETURN JJ({ "OK": 0, "MSG": "unbekannte Karte" })
+    IF NOT MAP.EXISTS(ARENA.CARDS(), kind$) THEN RETURN JJ({ "OK": 0, "MSG": "msg_unknown" })
     DIM s = STATOF(name$)
     DIM ce = CARDENTRY(s, kind$)
     DIM lvl = ce{"LVL"}
-    IF lvl >= 5 THEN RETURN JJ({ "OK": 0, "MSG": "Maximallevel" })
+    IF lvl >= 5 THEN RETURN JJ({ "OK": 0, "MSG": "msg_maxlvl" })
     DIM cost = INT(2 ^ lvl)
     DIM have = ce{"HAVE"}
-    IF have + s{"WILD"} < cost THEN RETURN JJ({ "OK": 0, "MSG": "zu wenig Karten" })
+    IF have + s{"WILD"} < cost THEN RETURN JJ({ "OK": 0, "MSG": "msg_nocards" })
     DIM used = have
     IF used > cost THEN used = cost
     ce{"HAVE"} = have - used
@@ -425,6 +452,8 @@ HTTP.SERVER.ON_GET "/reset", "HRESET"
 HTTP.SERVER.ON_POST "/rematch", "HREMATCH"
 HTTP.SERVER.ON_GET "/cards", "HCARDS"
 HTTP.SERVER.ON_GET "/profile", "HPROFILE"
+HTTP.SERVER.ON_GET "/lang", "HLANG"
+HTTP.SERVER.ON_GET "/rooms", "HROOMS"
 HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
 HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
 

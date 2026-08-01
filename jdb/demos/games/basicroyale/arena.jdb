@@ -106,9 +106,9 @@ ENDFUNC
 ' Play a card for player pid at tile (x, y).
 ' Returns "" on success, else a reason string.
 EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
-    IF st{"PHASE"} <> "play" THEN RETURN "game over"
+    IF st{"PHASE"} <> "play" THEN RETURN "msg_over"
     DIM cs = CARDS()
-    IF NOT MAP.EXISTS(cs, kind$) THEN RETURN "unknown card"
+    IF NOT MAP.EXISTS(cs, kind$) THEN RETURN "msg_unknown"
     DIM q = st{"QUEUES"}[pid]
     DIM slot = -1
     DIM i
@@ -118,15 +118,15 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
             EXITFOR
         ENDIF
     NEXT i
-    IF slot < 0 THEN RETURN "not in hand"
+    IF slot < 0 THEN RETURN "msg_nohand"
     DIM c = cs{kind$}
-    IF st{"ELIXIR"}[pid] < c{"COST"} THEN RETURN "not enough elixir"
+    IF st{"ELIXIR"}[pid] < c{"COST"} THEN RETURN "msg_elixir"
 
     DIM is_spell = MAP.EXISTS(c, "SPELL")
     IF x < 0.5 THEN x = 0.5
     IF x > 17.5 THEN x = 17.5
     IF NOT is_spell THEN
-        IF CANDEPLOY(st, pid, x, y) = 0 THEN RETURN "nicht dein Gebiet"
+        IF CANDEPLOY(st, pid, x, y) = 0 THEN RETURN "msg_zone"
     ENDIF
     DIM lvl = 1
     DIM clmap = st{"CARDLVL"}[pid]

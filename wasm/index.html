@@ -410,6 +410,7 @@
       try {
         const params = Object.fromEntries(qp.entries());
         params.__origin = location.origin;   // lets a program talk back to its own host
+        params.__lang = (navigator.language || 'de');
         Mod.FS.writeFile('/url_params.json', JSON.stringify(params));
       } catch(e){}
       let prog = qp.get('prog'); if(!prog) return;
