@@ -471,6 +471,19 @@ SUB DrawUnits()
     NEXT u
 ENDSUB
 
+' One line of chest icons, e.g. "SK AR GO MI DR PK * ".
+FUNC CHESTLINE$(chest)
+    DIM out$ = ""
+    FOR EACH cc$ IN chest
+        IF cc$ = "*" THEN
+            out$ = out$ + "* "
+        ELSE
+            out$ = out$ + ICON$(cc$) + " "
+        ENDIF
+    NEXT cc$
+    RETURN out$
+ENDFUNC
+
 SUB DrawMenu()
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
@@ -478,6 +491,16 @@ SUB DrawMenu()
     TEXT 150, 190, "BASIC ROYALE"
     DRAWCOLOR 200, 200, 210
     TEXT 150, 230, "Spieler: " + myname$
+    IF MAP.EXISTS(myprofile, "LASTCHEST") THEN
+        DIM played = myprofile{"WINS"} + myprofile{"LOSSES"} + myprofile{"DRAWS"}
+        DIM head$ = "Letzte Kiste:"
+        IF played = 0 THEN head$ = "Startkiste!"
+        DRAWCOLOR 255, 220, 60
+        RECT 34, 268, 400, 60, TRUE
+        DRAWCOLOR 0, 0, 0
+        TEXT 44, 276, head$ + "   * x" + STR$(MYWILD())
+        TEXT 44, 302, CHESTLINE$(myprofile{"LASTCHEST"})
+    ENDIF
     DRAWCOLOR 60, 180, 60
     RECT 134, 360, 200, 60, TRUE
     DRAWCOLOR 255, 255, 255
@@ -626,19 +649,11 @@ SUB DrawHud()
             TEXT 150, 442, "Serie " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"}) + "  Kronen " + STR$(profiles[mypid]{"CROWNS"}) + ":" + STR$(profiles[1 - mypid]{"CROWNS"})
         ENDIF
         IF chest_shown = 1 ANDALSO MAP.EXISTS(myprofile, "LASTCHEST") THEN
-            DIM chestline$ = ""
-            FOR EACH cc$ IN myprofile{"LASTCHEST"}
-                IF cc$ = "*" THEN
-                    chestline$ = chestline$ + "* "
-                ELSE
-                    chestline$ = chestline$ + ICON$(cc$) + " "
-                ENDIF
-            NEXT cc$
             DRAWCOLOR 255, 220, 60
             RECT 34, 600, 400, 54, TRUE
             DRAWCOLOR 0, 0, 0
             TEXT 44, 608, "KISTE:"
-            TEXT 44, 630, chestline$
+            TEXT 44, 630, CHESTLINE$(myprofile{"LASTCHEST"})
         ENDIF
         DRAWCOLOR 60, 180, 60
         RECT 154, 490, 160, 46, TRUE
@@ -767,6 +782,7 @@ NEXT ai
 SCREEN SCR_W, SCR_H, "BASIC Royale"
 SNDINIT()
 LOADCARDS()
+LOADPROFILE()
 
 IF shotmode = 1 THEN
     uimode$ = "battle"

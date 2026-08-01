@@ -17,6 +17,18 @@ CATCH
     PRINT "cards.json missing - built-in card set"
 ENDTRY
 
+' Own MINSTD generator instead of RND: the CRT's rand() keeps per-thread
+' state on Windows, so seeding on the main thread leaves the HTTP handler
+' threads - where chests are dealt - on the identical default sequence.
+' This one lives in VM state and is shared by every handler.
+DIM rng_state = NOW_EPOCH() MOD 2147483647
+IF rng_state < 1 THEN rng_state = 1
+
+FUNC NEXTRAND()
+    rng_state = (rng_state * 16807) MOD 2147483647
+    RETURN rng_state / 2147483647.0
+ENDFUNC
+
 DIM st = ARENA.NEWGAME()
 DIM players = []
 DIM last_ms = TICK()
@@ -84,13 +96,13 @@ SUB GIVECHEST(name$)
     DIM chest = []
     DIM i
     FOR i = 1 TO 5
-        DIM ck$ = commons[INT(RND() * LEN(commons)) MOD LEN(commons)]
+        DIM ck$ = commons[INT(NEXTRAND() * LEN(commons)) MOD LEN(commons)]
         DIM ce = CARDENTRY(s, ck$)
         ce{"HAVE"} = ce{"HAVE"} + 1
         chest = APPEND(chest, ck$)
     NEXT i
     FOR i = 1 TO 2
-        DIM sk$ = strongs[INT(RND() * LEN(strongs)) MOD LEN(strongs)]
+        DIM sk$ = strongs[INT(NEXTRAND() * LEN(strongs)) MOD LEN(strongs)]
         DIM se = CARDENTRY(s, sk$)
         se{"HAVE"} = se{"HAVE"} + 1
         chest = APPEND(chest, sk$)
@@ -99,6 +111,19 @@ SUB GIVECHEST(name$)
     chest = APPEND(chest, "*")
     s{"LASTCHEST"} = chest
 ENDSUB
+
+' First contact with a name hands out a starter chest, so a new player
+' can level a card before ever entering a battle.
+FUNC ENSURESTARTER(name$)
+    DIM s = STATOF(name$)
+    IF NOT MAP.EXISTS(s, "STARTED") THEN
+        s{"STARTED"} = 1
+        GIVECHEST(name$)
+        SAVESTATS()
+        PRINT "starter chest: "; name$
+    ENDIF
+    RETURN s
+ENDFUNC
 
 ' Book the finished match into the lifetime stats, exactly once, and hand
 ' both players their chest.
@@ -190,6 +215,7 @@ FUNC HJOIN(req)
     CATCH
     ENDTRY
     DIM deck = PICKDECK(b)
+    DIM starter = ENSURESTARTER(name$)
     DIM tok$ = CODEC.UUID$()
     IF LEN(players) >= 2 THEN
         ' reclaim the slot of a client that stopped polling (closed tab)
@@ -279,7 +305,7 @@ FUNC HPROFILE(req)
     DIM name$ = ""
     IF MAP.EXISTS(req{"PARAMS"}, "name") THEN name$ = req{"PARAMS"}{"name"}
     IF name$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "name fehlt" })
-    RETURN JJ({ "OK": 1, "PROFILE": STATOF(name$) })
+    RETURN JJ({ "OK": 1, "PROFILE": ENSURESTARTER(name$) })
 ENDFUNC
 
 ' Level a card: costs 2^level copies (2, 4, 8, 16); wildcards fill any
