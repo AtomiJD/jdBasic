@@ -33,4 +33,7 @@ echo "== publish + restart =="
 $SSH 'sudo -n cp -r ~/royale/web/. /var/www/vvss/ && sudo -n chown -R www-data:www-data /var/www/vvss && sudo -n systemctl restart royale && sleep 2 && systemctl is-active royale'
 
 echo "== check =="
-$SSH 'curl -s -m 5 -o /dev/null -w "page %{http_code}  " -H "Host: vvss.jdbasic.tech" http://127.0.0.1/ ; curl -s -m 5 -H "Host: vvss.jdbasic.tech" http://127.0.0.1/api/ | head -c 50; echo'
+# nginx redirects port 80 to https since certbot ran, so check the real URL
+curl -s -m 15 -o /dev/null -w "page %{http_code}  client %{time_total}s\n" https://vvss.jdbasic.tech/
+curl -s -m 15 -o /dev/null -w "royale.jdb %{http_code}  " https://vvss.jdbasic.tech/royale.jdb
+curl -s -m 15 https://vvss.jdbasic.tech/api/ | head -c 60; echo
