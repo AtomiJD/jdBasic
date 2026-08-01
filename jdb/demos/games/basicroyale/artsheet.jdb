@@ -34,9 +34,9 @@ NEXT i
 FOR i = 0 TO LEN(kinds) - 1
     DIM kx = 40 + (i MOD 4) * 110
     DIM ky = 60 + INT(i / 4) * 90
-    SPRITE.POS(own{kinds[i]}, kx, ky)
+    SPRITE.POS(own{kinds[i]}, kx - 20, ky - 20)
     SPRITE.DRAW(own{kinds[i]})
-    SPRITE.POS(foe{kinds[i]}, kx + 46, ky)
+    SPRITE.POS(foe{kinds[i]}, kx + 26, ky - 20)
     SPRITE.DRAW(foe{kinds[i]})
     DRAWCOLOR 200, 210, 235
     TEXT kx - 18, ky + 26, MID$(kinds[i], 0, 8)

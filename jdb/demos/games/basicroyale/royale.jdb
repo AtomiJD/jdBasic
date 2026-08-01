@@ -128,6 +128,13 @@ SUB BAKEART()
     ENDIF
 ENDSUB
 
+' SPRITE.POS anchors the top-left corner, so blit through here to land a
+' sprite on a centre point.
+SUB SPRAT(sid, cx, cy)
+    SPRITE.POS(sid, cx - SPRITE.WIDTH(sid) / 2, cy - SPRITE.HEIGHT(sid) / 2)
+    SPRITE.DRAW(sid)
+ENDSUB
+
 ' Star field: x, y, brightness, drift speed per star.
 SUB MAKESTARS()
     stars = []
@@ -482,8 +489,7 @@ SUB DrawTowers()
         DIM cy = PY(WY(tw{"Y"}))
         SPRITE.FLIP(sid, FALSE, mine = 0)
         SPRITE.ALPHA(sid, IIF(asleep = 1, 130, 255))
-        SPRITE.POS(sid, cx, cy)
-        SPRITE.DRAW(sid)
+        SPRAT(sid, cx, cy)
         IF asleep = 1 THEN
             DRAWCOLOR 220, 220, 240
             TEXT cx + 14, cy - 30, "Zz"
@@ -512,8 +518,7 @@ SUB DrawUnits()
             DIM sid = art_foe{kind$}
             IF mine = 1 THEN sid = art_own{kind$}
             SPRITE.FLIP(sid, FALSE, mine = 0)
-            SPRITE.POS(sid, ux, uy)
-            SPRITE.DRAW(sid)
+            SPRAT(sid, ux, uy)
         ELSE
             DIM col = kindcolor{kind$}
             DRAWCOLOR col[0], col[1], col[2]
@@ -614,8 +619,7 @@ SUB DrawDeckEd()
                 RECT x0 + 1, y0 + 1, 148, 138, FALSE
             ENDIF
             IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
-                SPRITE.POS(art_own{kind$}, x0 + 118, y0 + 32)
-                SPRITE.DRAW(art_own{kind$})
+                SPRAT(art_own{kind$}, x0 + 118, y0 + 34)
             ENDIF
             DRAWCOLOR 0, 0, 0
             TEXT x0 + 12, y0 + 16, ICON$(kind$)
