@@ -519,7 +519,11 @@ SUB DrawTowers()
             DRAWCOLOR 220, 220, 240
             TEXT cx + 14, cy - 30, "Zz"
         ENDIF
-        DrawBar(cx - TILE, cy - 30, TILE * 2, tw{"HP"} / tw{"MAXHP"})
+        ' own stations carry their bar below the hull, enemy ones above -
+        ' each sits on the side facing its owner
+        DIM bary = cy - 30
+        IF mine = 1 THEN bary = cy + 26
+        DrawBar(cx - TILE, bary, TILE * 2, tw{"HP"} / tw{"MAXHP"})
     NEXT tw
 ENDSUB
 
@@ -725,7 +729,7 @@ SUB DrawHand()
             DRAWCOLOR 255, 235, 120
             TEXT x0 + 36, 876, "L" + STR$(lvl)
         ENDIF
-        ELIXCOIN(x0 + 20, 878, 12, STR$(cardcost{kind$}))
+        ELIXCOIN(x0 + 20, 883, 12, STR$(cardcost{kind$}))
     NEXT i
     DIM exl = world{"ELIXIR"}[mypid]
     DRAWCOLOR 30, 10, 40
