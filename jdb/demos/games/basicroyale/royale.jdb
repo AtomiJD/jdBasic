@@ -877,6 +877,96 @@ SUB DrawMenu()
     NEXT li
 ENDSUB
 
+' Card sheet: everything the sim knows about a card, at its own level.
+DIM info_kind$ = ""
+
+SUB DrawCardInfo()
+    IF info_kind$ = "" THEN RETURN
+    DIM k$ = info_kind$
+    DIM c = allcards{k$}
+    DIM mc = MYCARD(k$)
+    DIM mult = 1.0 + (mc{"LVL"} - 1) * 0.08
+    DIM col = CCOLOR(k$)
+
+    DRAWCOLOR 4, 5, 14
+    RECT 0, 0, SCR_W, SCR_H, TRUE
+    FOR EACH st4 IN stars
+        DIM ib = st4[2]
+        DRAWCOLOR ib, ib, INT(ib * 0.8) + 40
+        PSET INT(st4[0]), INT(st4[1])
+    NEXT st4
+
+    DRAWCOLOR 16, 18, 40
+    ROUNDED_RECT 24, 120, 420, 620, 18, TRUE
+    DRAWCOLOR col[0], col[1], col[2]
+    ROUNDED_RECT 24, 120, 420, 620, 18, FALSE
+    ROUNDED_RECT 26, 122, 416, 616, 16, FALSE
+
+    IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, k$) THEN
+        SPRITE.ROTATE(art_own{k$}, 0)
+        SPRAT(art_own{k$}, 380, 190)
+    ENDIF
+    DRAWCOLOR col[0], col[1], col[2]
+    TEXT 48, 148, k$
+    DRAWCOLOR 190, 200, 235
+    TEXT 48, 182, "Lv" + STR$(mc{"LVL"}) + "   " + ICON$(k$)
+    ELIXCOIN(300, 160, 16, STR$(c{"COST"}))
+
+    DIM y = 236
+    DRAWCOLOR 150, 160, 200
+    DIM words = SPLIT(T$("desc_" + k$), " ")
+    DIM row$ = ""
+    FOR EACH w$ IN words
+        IF LEN(row$) + LEN(w$) + 1 > 36 THEN
+            TEXT 48, y, row$
+            y = y + 26
+            row$ = w$
+        ELSE
+            IF row$ = "" THEN
+                row$ = w$
+            ELSE
+                row$ = row$ + " " + w$
+            ENDIF
+        ENDIF
+    NEXT w$
+    IF row$ <> "" THEN
+        TEXT 48, y, row$
+        y = y + 26
+    ENDIF
+
+    y = y + 28
+    IF MAP.EXISTS(c, "SPELL") THEN
+        STATLINE(y, T$("stat_dmg"), STR$(INT(c{"DMG"} * mult)))
+        STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
+    ELSE
+        STATLINE(y, T$("stat_hp"), STR$(INT(c{"HP"} * mult)))
+        STATLINE(y + 38, T$("stat_dmg"), STR$(INT(c{"DMG"} * mult)))
+        STATLINE(y + 76, T$("stat_dps"), STR$(INT(c{"DMG"} * mult / c{"HITSPEED"})))
+        STATLINE(y + 114, T$("stat_range"), STR$(c{"REACH"}) + " " + T$("tiles"))
+        STATLINE(y + 152, T$("stat_speed"), STR$(c{"SPD"}))
+        STATLINE(y + 190, T$("stat_count"), STR$(c{"N"}))
+        DIM tgt$ = T$("air_ground")
+        IF c{"HITS"} = "A" THEN tgt$ = T$("air_both")
+        IF c{"ONLYTOWERS"} = 1 THEN tgt$ = T$("only_towers")
+        STATLINE(y + 228, T$("stat_air"), tgt$)
+        IF c{"FLY"} = 1 THEN
+            DRAWCOLOR 120, 240, 255
+            TEXT 48, y + 268, "* " + T$("flying")
+        ENDIF
+    ENDIF
+
+    DRAWCOLOR 190, 200, 235
+    TEXT 48, 690, STR$(mc{"HAVE"}) + "/" + STR$(INT(2 ^ mc{"LVL"})) + "   " + T$("joker") + " x" + STR$(MYWILD())
+    BUTTON(134, 756, 200, 50, T$("close"), 150, 150, 180)
+ENDSUB
+
+SUB STATLINE(y, label$, val$)
+    DRAWCOLOR 120, 130, 175
+    TEXT 48, y, label$
+    DRAWCOLOR 235, 242, 255
+    TEXT 250, y, val$
+ENDSUB
+
 SUB DrawDeckEd()
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
@@ -926,6 +1016,12 @@ SUB DrawDeckEd()
                 DRAWCOLOR 255, 255, 255
                 TEXT x0 + 120, y0 + 106, "+"
             ENDIF
+            ' info badge - opens the full card sheet
+            DRAWCOLOR 30, 40, 80
+            CIRCLE x0 + 130, y0 + 18, 13, TRUE
+            DRAWCOLOR 150, 200, 255
+            CIRCLE x0 + 130, y0 + 18, 13, FALSE
+            TEXT x0 + 126, y0 + 9, "i"
         NEXT i
     ENDIF
     IF LEN(mydeck) = 6 THEN
@@ -1148,6 +1244,11 @@ SUB MenuClick(mx, my)
 ENDSUB
 
 SUB DeckClick(mx, my)
+    ' the open card sheet swallows the screen until it is closed
+    IF info_kind$ <> "" THEN
+        IF my >= 756 ANDALSO my <= 806 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN info_kind$ = ""
+        RETURN
+    ENDIF
     IF my >= 700 ANDALSO my <= 750 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
         IF LEN(mydeck) = 6 THEN uimode$ = "menu"
     ELSEIF my >= 80 ANDALSO my < 680 THEN
@@ -1161,7 +1262,9 @@ SUB DeckClick(mx, my)
                 DIM celly = my - 80 - ri * 150
                 DIM mc = MYCARD(kind$)
                 DIM upcost = INT(2 ^ mc{"LVL"})
-                IF cellx >= 108 ANDALSO celly >= 98 ANDALSO celly <= 136 ANDALSO mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
+                IF cellx >= 114 ANDALSO celly <= 36 THEN
+                    info_kind$ = kind$
+                ELSEIF cellx >= 108 ANDALSO celly >= 98 ANDALSO celly <= 136 ANDALSO mc{"LVL"} < 5 ANDALSO mc{"HAVE"} + MYWILD() >= upcost THEN
                     SENDUPGRADE(kind$)
                 ELSE
                     TOGGLECARD(kind$)
@@ -1267,6 +1370,7 @@ ELSE
             DrawMenu()
         ELSEIF uimode$ = "decks" THEN
             DrawDeckEd()
+            DrawCardInfo()
         ELSE
             DrawFrame(frame)
         ENDIF
