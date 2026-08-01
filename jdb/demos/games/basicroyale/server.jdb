@@ -29,9 +29,37 @@ FUNC NEXTRAND()
     RETURN rng_state / 2147483647.0
 ENDFUNC
 
-DIM st = ARENA.NEWGAME()
-DIM players = []
-DIM last_ms = TICK()
+' One match per room, so any number of pairs can play at once. A room is
+' created on first contact and holds its own sim, seats and clock.
+DIM rooms AS MAP = {}
+
+FUNC ROOMKEY$(raw$)
+    DIM out$ = ""
+    DIM i
+    FOR i = 0 TO LEN(raw$) - 1
+        DIM ch$ = LCASE$(MID$(raw$, i, 1))
+        IF INSTR("abcdefghijklmnopqrstuvwxyz0123456789-_", ch$) >= 0 THEN out$ = out$ + ch$
+        IF LEN(out$) >= 24 THEN EXITFOR
+    NEXT i
+    IF out$ = "" THEN out$ = "main"
+    RETURN out$
+ENDFUNC
+
+FUNC ROOM(name$)
+    DIM key$ = ROOMKEY$(name$)
+    IF NOT MAP.EXISTS(rooms, key$) THEN
+        rooms{key$} = { "ST": ARENA.NEWGAME(), "PLAYERS": [], "LAST": TICK(), "KEY": key$ }
+        PRINT "room opened: "; key$
+    ENDIF
+    RETURN rooms{key$}
+ENDFUNC
+
+' Room named in a query parameter (GET) or a parsed body (POST).
+FUNC ROOMOF(req, b)
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "ROOM") THEN RETURN ROOM(b{"ROOM"})
+    IF MAP.EXISTS(req{"PARAMS"}, "room") THEN RETURN ROOM(req{"PARAMS"}{"room"})
+    RETURN ROOM("main")
+ENDFUNC
 
 ' Lifetime stats per player name, persisted across server restarts:
 ' record, crowns, collected card copies, wildcards and the last chest.
@@ -127,7 +155,9 @@ ENDFUNC
 
 ' Book the finished match into the lifetime stats, exactly once, and hand
 ' both players their chest.
-SUB RECORDMATCH()
+SUB RECORDMATCH(rm)
+    DIM st = rm{"ST"}
+    DIM players = rm{"PLAYERS"}
     IF st{"PHASE"} = "over" ANDALSO NOT MAP.EXISTS(st, "RECORDED") ANDALSO LEN(players) = 2 THEN
         st{"RECORDED"} = 1
         DIM w = st{"WINNER"}
@@ -153,7 +183,7 @@ FUNC JJ(m)
     RETURN { "__http_status": 200, "__http_body": JSON.STRINGIFY$(m), "__http_content_type": "application/json", "__http_headers": { "Access-Control-Allow-Origin": "*" } }
 ENDFUNC
 
-FUNC PIDBYTOK(tok$)
+FUNC PIDBYTOK(players, tok$)
     DIM i
     FOR i = 0 TO LEN(players) - 1
         IF players[i]{"TOK"} = tok$ THEN RETURN i
@@ -161,22 +191,22 @@ FUNC PIDBYTOK(tok$)
     RETURN -1
 ENDFUNC
 
-SUB SYNCSIM()
+SUB SYNCSIM(rm)
     DIM now = TICK()
-    IF LEN(players) < 2 THEN
-        last_ms = now
+    IF LEN(rm{"PLAYERS"}) < 2 THEN
+        rm{"LAST"} = now
     ELSE
-        DIM n_steps = INT((now - last_ms) / 100)
+        DIM n_steps = INT((now - rm{"LAST"}) / 100)
         IF n_steps > 100 THEN
             n_steps = 100
-            last_ms = now - 10000
+            rm{"LAST"} = now - 10000
         ENDIF
         DIM i
         FOR i = 1 TO n_steps
-            st = ARENA.SIMSTEP(st)
+            rm{"ST"} = ARENA.SIMSTEP(rm{"ST"})
         NEXT i
-        last_ms = last_ms + n_steps * 100
-        RECORDMATCH()
+        rm{"LAST"} = rm{"LAST"} + n_steps * 100
+        RECORDMATCH(rm)
     ENDIF
 ENDSUB
 
@@ -207,13 +237,16 @@ FUNC DECKQ(d)
 ENDFUNC
 
 FUNC HJOIN(req)
-    DIM name$ = "P" + STR$(LEN(players))
     DIM b = 0
     TRY
         b = JSON.PARSE$(req{"BODY"})
-        IF MAP.EXISTS(b, "NAME") THEN name$ = b{"NAME"}
     CATCH
     ENDTRY
+    DIM rm = ROOMOF(req, b)
+    DIM players = rm{"PLAYERS"}
+    DIM st = rm{"ST"}
+    DIM name$ = "P" + STR$(LEN(players))
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "NAME") THEN name$ = b{"NAME"}
     DIM deck = PICKDECK(b)
     DIM starter = ENSURESTARTER(name$)
     DIM tok$ = CODEC.UUID$()
@@ -226,24 +259,27 @@ FUNC HJOIN(req)
                 players[i] = { "NAME": name$, "TOK": tok$, "LAST": now, "DECK": deck }
                 st{"QUEUES"}[i] = DECKQ(deck)
                 st{"CARDLVL"}[i] = CARDLVLMAP(name$)
-                PRINT "rejoin: "; name$; " takes stale pid "; i
-                RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$ })
+                PRINT "rejoin: "; name$; " takes stale pid "; i; " in "; rm{"KEY"}
+                RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$, "ROOM": rm{"KEY"} })
             ENDIF
         NEXT i
-        RETURN JJ({ "OK": 0, "MSG": "match full - open /reset for a rematch" })
+        RETURN JJ({ "OK": 0, "MSG": "Raum voll - anderen Raum waehlen" })
     ENDIF
-    players = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK(), "DECK": deck })
-    st{"QUEUES"}[LEN(players) - 1] = DECKQ(deck)
-    st{"CARDLVL"}[LEN(players) - 1] = CARDLVLMAP(name$)
-    IF LEN(players) = 2 THEN last_ms = TICK()
-    PRINT "join: "; name$; " -> pid "; LEN(players) - 1
-    RETURN JJ({ "OK": 1, "PID": LEN(players) - 1, "TOK": tok$ })
+    rm{"PLAYERS"} = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK(), "DECK": deck })
+    DIM slot = LEN(rm{"PLAYERS"}) - 1
+    st{"QUEUES"}[slot] = DECKQ(deck)
+    st{"CARDLVL"}[slot] = CARDLVLMAP(name$)
+    IF slot = 1 THEN rm{"LAST"} = TICK()
+    PRINT "join: "; name$; " -> pid "; slot; " in "; rm{"KEY"}
+    RETURN JJ({ "OK": 1, "PID": slot, "TOK": tok$, "ROOM": rm{"KEY"} })
 ENDFUNC
 
 FUNC HSTATE(req)
-    SYNCSIM()
+    DIM rm = ROOMOF(req, 0)
+    SYNCSIM(rm)
+    DIM players = rm{"PLAYERS"}
     DIM pid = -1
-    IF MAP.EXISTS(req{"PARAMS"}, "tok") THEN pid = PIDBYTOK(req{"PARAMS"}{"tok"})
+    IF MAP.EXISTS(req{"PARAMS"}, "tok") THEN pid = PIDBYTOK(players, req{"PARAMS"}{"tok"})
     IF pid >= 0 THEN players[pid]{"LAST"} = TICK()
     DIM names = []
     DIM profiles = []
@@ -254,46 +290,67 @@ FUNC HSTATE(req)
         DIM s = STATOF(pn$)
         profiles = APPEND(profiles, { "NAME": pn$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"} })
     NEXT i
-    RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "PROFILES": profiles, "ST": st })
+    RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "PROFILES": profiles, "ST": rm{"ST"} })
 ENDFUNC
 
 FUNC HPLAY(req)
-    SYNCSIM()
     DIM b = JSON.PARSE$(req{"BODY"})
-    DIM pid = PIDBYTOK(b{"TOK"})
+    DIM rm = ROOMOF(req, b)
+    SYNCSIM(rm)
+    DIM pid = PIDBYTOK(rm{"PLAYERS"}, b{"TOK"})
     IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "bad token" })
-    DIM res$ = ARENA.PLAYCARD(st, pid, b{"KIND"}, b{"X"}, b{"Y"})
+    DIM res$ = ARENA.PLAYCARD(rm{"ST"}, pid, b{"KIND"}, b{"X"}, b{"Y"})
     RETURN JJ({ "OK": IIF(res$ = "", 1, 0), "MSG": res$ })
 ENDFUNC
 
 FUNC HRESET(req)
-    st = ARENA.NEWGAME()
-    players = []
-    last_ms = TICK()
-    PRINT "match reset - all slots free"
-    RETURN JJ({ "OK": 1, "MSG": "fresh match, 0 players" })
+    DIM rm = ROOMOF(req, 0)
+    rm{"ST"} = ARENA.NEWGAME()
+    rm{"PLAYERS"} = []
+    rm{"LAST"} = TICK()
+    PRINT "reset room "; rm{"KEY"}
+    RETURN JJ({ "OK": 1, "MSG": "Raum " + rm{"KEY"} + " frei, 0 Spieler" })
 ENDFUNC
 
 ' New match, same two players and their decks - the in-game rematch button.
 FUNC HREMATCH(req)
-    st = ARENA.NEWGAME()
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    DIM rm = ROOMOF(req, b)
+    DIM players = rm{"PLAYERS"}
+    rm{"ST"} = ARENA.NEWGAME()
+    DIM st = rm{"ST"}
     DIM i
     FOR i = 0 TO LEN(players) - 1
         st{"QUEUES"}[i] = DECKQ(players[i]{"DECK"})
         st{"CARDLVL"}[i] = CARDLVLMAP(players[i]{"NAME"})
     NEXT i
-    last_ms = TICK()
-    PRINT "rematch"
+    rm{"LAST"} = TICK()
+    PRINT "rematch in "; rm{"KEY"}
     RETURN JJ({ "OK": 1 })
 ENDFUNC
 
 FUNC HROOT(req)
-    RETURN "BASIC Royale match server. POST /join, GET /state?tok=, POST /play, POST /rematch, GET /reset, GET /cards, GET /profile?name=, POST /upgrade."
+    DIM lines$ = "BASIC Royale match server. Rooms: "
+    DIM ks = MAP.KEYS(rooms)
+    FOR EACH k$ IN ks
+        lines$ = lines$ + k$ + "(" + STR$(LEN(rooms{k$}{"PLAYERS"})) + ") "
+    NEXT k$
+    RETURN lines$ + "| POST /join, GET /state?tok=&room=, POST /play, POST /rematch, GET /reset?room=, GET /cards, GET /profile?name=, POST /upgrade."
 ENDFUNC
 
 ' Debug lever: end the running match immediately (P1 wins).
 FUNC HFORCEEND(req)
-    st{"TOWERS"}[2]{"HP"} = 0
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    DIM rm = ROOMOF(req, b)
+    rm{"ST"}{"TOWERS"}[2]{"HP"} = 0
     RETURN JJ({ "OK": 1 })
 ENDFUNC
 
@@ -327,10 +384,15 @@ FUNC HUPGRADE(req)
     ce{"HAVE"} = have - used
     s{"WILD"} = s{"WILD"} - (cost - used)
     ce{"LVL"} = lvl + 1
-    DIM i
-    FOR i = 0 TO LEN(players) - 1
-        IF players[i]{"NAME"} = name$ THEN st{"CARDLVL"}[i] = CARDLVLMAP(name$)
-    NEXT i
+    ' apply live wherever this player is currently seated
+    DIM ks = MAP.KEYS(rooms)
+    FOR EACH rk$ IN ks
+        DIM rp = rooms{rk$}{"PLAYERS"}
+        DIM i
+        FOR i = 0 TO LEN(rp) - 1
+            IF rp[i]{"NAME"} = name$ THEN rooms{rk$}{"ST"}{"CARDLVL"}[i] = CARDLVLMAP(name$)
+        NEXT i
+    NEXT rk$
     SAVESTATS()
     PRINT "upgrade: "; name$; " "; kind$; " -> Lv"; lvl + 1
     RETURN JJ({ "OK": 1, "LVL": lvl + 1 })

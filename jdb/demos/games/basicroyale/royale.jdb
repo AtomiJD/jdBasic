@@ -5,7 +5,10 @@
 ' Shot mode for headless checks:  jdbasic royale.jdb shot -> tmp/client.png
 IMPORT ART
 
-CONST SRV$ = "http://192.168.0.37:8081"
+' Where the match server lives. Served from a host (the deployed site),
+' the page tells us its own origin and the API sits behind /api - on the
+' LAN we fall back to the dev box.
+DIM SRV$ = "http://192.168.0.37:8081"
 
 CONST TILE = 26
 CONST BOARD_Y0 = 60
@@ -75,10 +78,19 @@ DIM myname$ = "Spieler"
 DIM allcards AS MAP = {}
 DIM cardorder = []
 
-' A shared link can personalize the player: ?name=... lands in MEMFS.
+' A shared link personalises the session: ?name= names the player and
+' ?room= picks the match, so several pairs can play at once.
+DIM room$ = "main"
 TRY
     DIM up = JSON.PARSE$(TXTREADER$("/url_params.json"))
     IF MAP.EXISTS(up, "name") THEN myname$ = up{"name"}
+    IF MAP.EXISTS(up, "room") THEN room$ = up{"room"}
+    IF MAP.EXISTS(up, "__origin") THEN
+        DIM org$ = up{"__origin"}
+        IF INSTR(org$, "://192.168.") < 0 ANDALSO INSTR(org$, "://localhost") < 0 ANDALSO INSTR(org$, "://127.") < 0 THEN
+            SRV$ = org$ + "/api"
+        ENDIF
+    ENDIF
 CATCH
 ENDTRY
 
@@ -126,6 +138,19 @@ SUB BAKEART()
         art_foe = ART.BAKEALL(cardorder, 1)
         art_ready = 1
     ENDIF
+ENDSUB
+
+' Menu button: rounded plate with a lighter top edge and a bright rim.
+SUB BUTTON(x, y, w, h, label$, cr, cg, cb)
+    DRAWCOLOR INT(cr * 0.45), INT(cg * 0.45), INT(cb * 0.45)
+    ROUNDED_RECT x, y + 3, w, h, 12, TRUE
+    DRAWCOLOR cr, cg, cb
+    ROUNDED_RECT x, y, w, h, 12, TRUE
+    DRAWCOLOR INT(cr * 0.35) + 160, INT(cg * 0.35) + 160, INT(cb * 0.35) + 160
+    ROUNDED_RECT x, y, w, h, 12, FALSE
+    ROUNDED_RECT x + 1, y + 1, w - 2, h - 2, 11, FALSE
+    DRAWCOLOR 12, 14, 30
+    TEXT x + w / 2 - LEN(label$) * 5, y + h / 2 - 9, label$
 ENDSUB
 
 ' SPRITE.POS anchors the top-left corner, so blit through here to land a
@@ -216,7 +241,7 @@ ENDSUB
 
 SUB JOINMATCH()
     TRY
-        DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "NAME": myname$, "DECK": mydeck }), "text/plain")
+        DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "NAME": myname$, "DECK": mydeck, "ROOM": room$ }), "text/plain")
         DIM m = JSON.PARSE$(r$)
         IF m{"OK"} = 1 THEN
             mypid = m{"PID"}
@@ -233,7 +258,7 @@ ENDSUB
 DIM prev_tick = -1
 SUB POLLSTATE()
     TRY
-        DIM r$ = HTTP.GET$(SRV$ + "/state?tok=" + tok$)
+        DIM r$ = HTTP.GET$(SRV$ + "/state?room=" + room$ + "&tok=" + tok$)
         DIM m = JSON.PARSE$(r$)
         world = m{"ST"}
         waiting = m{"WAITING"}
@@ -261,7 +286,7 @@ ENDSUB
 
 SUB SENDREMATCH()
     TRY
-        DIM r$ = HTTP.POST$(SRV$ + "/rematch", "{}", "text/plain")
+        DIM r$ = HTTP.POST$(SRV$ + "/rematch", JSON.STRINGIFY$({ "ROOM": room$ }), "text/plain")
         msg$ = ""
     CATCH
         msg$ = "rematch failed"
@@ -270,7 +295,7 @@ ENDSUB
 
 SUB SENDPLAY(kind$, wx, wyv)
     TRY
-        DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "KIND": kind$, "X": wx, "Y": wyv })
+        DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "KIND": kind$, "X": wx, "Y": wyv, "ROOM": room$ })
         DIM r$ = HTTP.POST$(SRV$ + "/play", body$, "text/plain")
         DIM m = JSON.PARSE$(r$)
         IF m{"OK"} = 1 THEN
@@ -573,23 +598,13 @@ SUB DrawMenu()
         TEXT 44, 276, head$ + "   * x" + STR$(MYWILD())
         TEXT 44, 302, CHESTLINE$(myprofile{"LASTCHEST"})
     ENDIF
-    DRAWCOLOR 60, 180, 60
-    RECT 134, 360, 200, 60, TRUE
-    DRAWCOLOR 255, 255, 255
-    RECT 134, 360, 200, 60, FALSE
-    TEXT 200, 382, "BATTLE"
-    DRAWCOLOR 70, 110, 230
-    RECT 134, 450, 200, 60, TRUE
-    DRAWCOLOR 255, 255, 255
-    RECT 134, 450, 200, 60, FALSE
-    TEXT 205, 472, "DECK"
+    BUTTON(134, 360, 200, 60, "BATTLE", 80, 210, 120)
+    BUTTON(134, 450, 200, 60, "DECK", 90, 160, 240)
     DIM ton$ = "TON: AUS"
     IF snd_on = 1 THEN ton$ = "TON: AN"
-    DRAWCOLOR 110, 110, 130
-    RECT 134, 540, 200, 60, TRUE
-    DRAWCOLOR 255, 255, 255
-    RECT 134, 540, 200, 60, FALSE
-    TEXT 185, 562, ton$
+    BUTTON(134, 540, 200, 60, ton$, 150, 150, 180)
+    DRAWCOLOR 90, 100, 130
+    TEXT 150, 640, "Raum: " + room$
 ENDSUB
 
 SUB DrawDeckEd()
@@ -638,14 +653,10 @@ SUB DrawDeckEd()
         NEXT i
     ENDIF
     IF LEN(mydeck) = 6 THEN
-        DRAWCOLOR 60, 180, 60
+        BUTTON(134, 700, 200, 50, "FERTIG", 80, 210, 120)
     ELSE
-        DRAWCOLOR 70, 70, 80
+        BUTTON(134, 700, 200, 50, "FERTIG", 95, 95, 115)
     ENDIF
-    RECT 134, 700, 200, 50, TRUE
-    DRAWCOLOR 255, 255, 255
-    RECT 134, 700, 200, 50, FALSE
-    TEXT 195, 718, "FERTIG"
 ENDSUB
 
 SUB DrawHand()
@@ -730,16 +741,8 @@ SUB DrawHud()
             TEXT 44, 608, "KISTE:"
             TEXT 44, 630, CHESTLINE$(myprofile{"LASTCHEST"})
         ENDIF
-        DRAWCOLOR 60, 180, 60
-        RECT 154, 490, 160, 46, TRUE
-        DRAWCOLOR 255, 255, 255
-        RECT 154, 490, 160, 46, FALSE
-        TEXT 190, 506, "NOCHMAL!"
-        DRAWCOLOR 110, 110, 130
-        RECT 154, 548, 160, 40, TRUE
-        DRAWCOLOR 255, 255, 255
-        RECT 154, 548, 160, 40, FALSE
-        TEXT 200, 562, "MENU"
+        BUTTON(154, 490, 160, 46, "NOCHMAL!", 80, 210, 120)
+        BUTTON(154, 548, 160, 40, "MENU", 150, 150, 180)
     ENDIF
 ENDSUB
 

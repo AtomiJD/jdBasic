@@ -407,7 +407,11 @@
       const qp = new URLSearchParams(location.search);
       // Expose all query params to the program as /url_params.json in MEMFS
       // (e.g. ?name=... personalizes a shared game link).
-      try { Mod.FS.writeFile('/url_params.json', JSON.stringify(Object.fromEntries(qp.entries()))); } catch(e){}
+      try {
+        const params = Object.fromEntries(qp.entries());
+        params.__origin = location.origin;   // lets a program talk back to its own host
+        Mod.FS.writeFile('/url_params.json', JSON.stringify(params));
+      } catch(e){}
       let prog = qp.get('prog'); if(!prog) return;
       const mode = (qp.get('mode')||'run').toLowerCase();
       let src = null;
