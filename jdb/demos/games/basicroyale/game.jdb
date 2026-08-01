@@ -429,27 +429,25 @@ SCREEN SCR_W, SCR_H, "BASIC Royale"
 IF shotmode = 0 THEN SNDINIT()
 
 IF shotmode = 1 THEN
-    DIM r1 = ARENA.PLAYCARD(st, 0, "KNIGHT", 4.0, 18.0)
+    ' worst case for bridge pathing: the hog starts equidistant from both
+    ' bridges and approaches sideways - it must still cross the river
+    st{"QUEUES"}[0] = ["HOG_RIDER", "KNIGHT", "ARCHER", "MINIONS", "SKELETONS", "FIREBALL"]
+    DIM r1 = ARENA.PLAYCARD(st, 0, "HOG_RIDER", 9.0, 20.0)
     DIM r2 = ARENA.PLAYCARD(st, 1, "GIANT", 14.0, 10.0)
     DIM si
     FOR si = 1 TO 60
         st = ARENA.SIMSTEP(st)
     NEXT si
-    DIM r3 = ARENA.PLAYCARD(st, 0, "ARCHER", 14.0, 20.0)
-    DIM r4 = ARENA.PLAYCARD(st, 1, "SKELETONS", 4.0, 8.0)
-    FOR si = 1 TO 60
+    DIM r3 = ARENA.PLAYCARD(st, 0, "SKELETONS", 14.0, 20.0)
+    DIM r4 = ARENA.PLAYCARD(st, 1, "SKELETONS", 14.0, 8.0)
+    FOR si = 1 TO 90
         st = ARENA.SIMSTEP(st)
     NEXT si
-    FOR si = 1 TO 30
-        st = ARENA.SIMSTEP(st)
-    NEXT si
-    DIM r5 = ARENA.PLAYCARD(st, 0, "FIREBALL", 14.0, 7.0)
-    FOR si = 1 TO 3
-        st = ARENA.SIMSTEP(st)
-    NEXT si
-    PRINT "plays: [" + r1 + "][" + r2 + "][" + r3 + "][" + r4 + "][" + r5 + "]"
+    PRINT "plays: [" + r1 + "][" + r2 + "][" + r3 + "][" + r4 + "]"
     PRINT "units alive: "; LEN(st{"UNITS"})
-    PRINT "state json bytes: "; LEN(JSON.STRINGIFY$(st))
+    FOR EACH pu IN st{"UNITS"}
+        PRINT "  "; pu{"KIND"}; " P"; pu{"OWNER"}; " at "; INT(pu{"X"} * 10) / 10.0; ","; INT(pu{"Y"} * 10) / 10.0
+    NEXT pu
     SYNCFX(st, 0)
     DrawFrame(st, 6)
     GFX.SAVE_SCREENSHOT("tmp/royale.png")

@@ -168,7 +168,12 @@ EXPORT FUNC FINDTARGET(st, u, c, cs)
         FOR i = 0 TO LEN(tws) - 1
             DIM tw = tws[i]
             IF tw{"OWNER"} = u{"OWNER"} ORELSE tw{"HP"} <= 0 THEN CONTINUEFOR
-            DIM d2 = DIST(u{"X"}, u{"Y"}, tw{"X"}, tw{"Y"})
+            ' towers are big - range counts to the edge, not the center,
+            ' otherwise melee can never out-reach the collision footprint
+            DIM half = 1.0
+            IF tw{"KIND"} = "KING" THEN half = 1.2
+            DIM d2 = DIST(u{"X"}, u{"Y"}, tw{"X"}, tw{"Y"}) - half
+            IF d2 < 0 THEN d2 = 0
             IF d2 < best_d THEN
                 best_d = d2
                 bt = { "OK": 1, "T": "W", "I": i, "X": tw{"X"}, "Y": tw{"Y"}, "D": d2 }
@@ -176,6 +181,82 @@ EXPORT FUNC FINDTARGET(st, u, c, cs)
         NEXT i
     ENDIF
     RETURN bt
+ENDFUNC
+
+' Push overlapping ground units apart and keep them out of tower
+' footprints; flyers pass over everything. Runs once per SIMSTEP after
+' movement, so a single relaxation pass per tick is enough.
+EXPORT FUNC RESOLVEBUMP(st, cs)
+    DIM units = st{"UNITS"}
+    DIM n = LEN(units)
+    DIM i
+    DIM j
+    FOR i = 0 TO n - 1
+        DIM a = units[i]
+        IF a{"HP"} <= 0 THEN CONTINUEFOR
+        DIM afly = cs{a{"KIND"}}{"FLY"}
+        FOR j = i + 1 TO n - 1
+            DIM b = units[j]
+            IF b{"HP"} <= 0 THEN CONTINUEFOR
+            IF cs{b{"KIND"}}{"FLY"} <> afly THEN CONTINUEFOR
+            DIM dx = b{"X"} - a{"X"}
+            DIM dy = b{"Y"} - a{"Y"}
+            DIM d = SQR(dx * dx + dy * dy)
+            IF d < 0.7 THEN
+                IF d < 0.001 THEN
+                    dx = 0.1
+                    dy = 0.05 * ((a{"ID"} MOD 3) - 1)
+                    d = 0.1
+                ENDIF
+                DIM push = (0.7 - d) / 2
+                a{"X"} = a{"X"} - dx / d * push
+                a{"Y"} = a{"Y"} - dy / d * push
+                b{"X"} = b{"X"} + dx / d * push
+                b{"Y"} = b{"Y"} + dy / d * push
+            ENDIF
+        NEXT j
+        IF afly = 0 THEN
+            FOR EACH tw IN st{"TOWERS"}
+                IF tw{"HP"} <= 0 THEN CONTINUEFOR
+                DIM half = 1.0
+                IF tw{"KIND"} = "KING" THEN half = 1.2
+                DIM cxp = a{"X"}
+                IF cxp < tw{"X"} - half THEN cxp = tw{"X"} - half
+                IF cxp > tw{"X"} + half THEN cxp = tw{"X"} + half
+                DIM cyp = a{"Y"}
+                IF cyp < tw{"Y"} - half THEN cyp = tw{"Y"} - half
+                IF cyp > tw{"Y"} + half THEN cyp = tw{"Y"} + half
+                DIM tdx = a{"X"} - cxp
+                DIM tdy = a{"Y"} - cyp
+                DIM td = SQR(tdx * tdx + tdy * tdy)
+                IF td < 0.45 THEN
+                    IF td < 0.001 THEN
+                        ' center inside the box: eject along the shorter axis
+                        IF ABS(a{"X"} - tw{"X"}) > ABS(a{"Y"} - tw{"Y"}) THEN
+                            tdx = a{"X"} - tw{"X"}
+                            tdy = 0.0
+                        ELSE
+                            tdx = 0.0
+                            tdy = a{"Y"} - tw{"Y"}
+                        ENDIF
+                        td = SQR(tdx * tdx + tdy * tdy)
+                        IF td < 0.001 THEN
+                            tdx = 0.0
+                            tdy = 1.0
+                            td = 1.0
+                        ENDIF
+                    ENDIF
+                    a{"X"} = a{"X"} + tdx / td * (0.45 - td)
+                    a{"Y"} = a{"Y"} + tdy / td * (0.45 - td)
+                ENDIF
+            NEXT tw
+        ENDIF
+        IF a{"X"} < 0.3 THEN a{"X"} = 0.3
+        IF a{"X"} > 17.7 THEN a{"X"} = 17.7
+        IF a{"Y"} < 0.3 THEN a{"Y"} = 0.3
+        IF a{"Y"} > 29.7 THEN a{"Y"} = 29.7
+    NEXT i
+    RETURN 0
 ENDFUNC
 
 ' One 0.1 s simulation step: elixir, unit AI, tower fire, deaths, win check.
@@ -261,7 +342,14 @@ EXPORT FUNC SIMSTEP(st)
                     DIM bx = b0
                     IF ABS(u{"X"} - b1) < ABS(u{"X"} - b0) THEN bx = b1
                     wx = bx
-                    wy = ry
+                    ' aim past the far bank, not at the river line - a unit
+                    ' arriving sideways would overshoot along the bank and
+                    ' oscillate on the bridge forever
+                    IF tgt{"Y"} > ry THEN
+                        wy = ry + 1.2
+                    ELSE
+                        wy = ry - 1.2
+                    ENDIF
                 ENDIF
             ENDIF
             DIM ddx = wx - u{"X"}
@@ -273,6 +361,8 @@ EXPORT FUNC SIMSTEP(st)
             ENDIF
         ENDIF
     NEXT u
+
+    RESOLVEBUMP(st, cs)
 
     FOR EACH tw IN st{"TOWERS"}
         IF tw{"HP"} <= 0 ORELSE tw{"AWAKE"} = 0 THEN CONTINUEFOR
