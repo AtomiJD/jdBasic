@@ -394,12 +394,15 @@ ENDFUNC
 
 SUB LOAD_PRESET(pname$)
     DIM entry = presetsDoc{"presets"}{pname$}
-    IF TYPEOF(entry{"rack"}) <> "NONE" THEN
-        APPLY_DOC(entry{"rack"}, entry)
-    ELSE
+    ' Ask what the entry is, not whether a key is missing: a string key on
+    ' an ARRAY yields INT64 0 rather than NONE, so probing entry{"rack"}
+    ' answers yes for a bare list too.
+    IF TYPEOF(entry) = "ARRAY" THEN
         ' a bare node list: the preset predates the routing section
         DIM plain AS MAP = {}
         APPLY_DOC(entry, plain)
+    ELSE
+        APPLY_DOC(entry{"rack"}, entry)
     ENDIF
     status$ = "loaded preset: " + pname$
 ENDSUB
