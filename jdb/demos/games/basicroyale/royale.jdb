@@ -451,6 +451,56 @@ SUB SENDBOT()
     ENDTRY
 ENDSUB
 
+' A room key the server will accept unchanged: lower case, letters,
+' digits, dash and underscore only.
+FUNC ROOMKEY$(raw$)
+    DIM out$ = ""
+    DIM i
+    FOR i = 0 TO LEN(raw$) - 1
+        DIM ch$ = LCASE$(MID$(raw$, i, 1))
+        IF INSTR("abcdefghijklmnopqrstuvwxyz0123456789-_", ch$) >= 0 THEN out$ = out$ + ch$
+        IF LEN(out$) >= 10 THEN EXITFOR
+    NEXT i
+    IF out$ = "" THEN out$ = "raum"
+    RETURN out$
+ENDFUNC
+
+FUNC ROOMTAKEN(key$)
+    FOR EACH rr IN lobby
+        IF rr{"KEY"} = key$ ANDALSO rr{"N"} > 0 THEN RETURN 1
+    NEXT rr
+    RETURN 0
+ENDFUNC
+
+' Open a room named after you, so the others recognise it in their lobby
+' without anybody having to type it. A digit is added while it is busy.
+SUB NEWROOM()
+    LOADLOBBY()
+    DIM base$ = ROOMKEY$(myname$)
+    DIM key$ = base$
+    DIM n = 2
+    DO
+        IF ROOMTAKEN(key$) = 0 THEN EXITDO
+        key$ = base$ + STR$(n)
+        n = n + 1
+    LOOP UNTIL n > 9
+    room$ = key$
+    watching = 0
+    prev_room$ = ""
+    uimode$ = "battle"
+    mypid = -1
+    tok$ = ""
+    have_state = 0
+    fxseen = {}
+    fxact = []
+    prev_tick = -1
+    chest_shown = 0
+    h2h$ = ""
+    msg$ = ""
+    JOINMATCH()
+    LOADLOBBY()
+ENDSUB
+
 SUB WATCHROOM(key$)
     ' remember the room only on the way in, so a second call cannot
     ' overwrite it with one that is only being watched
@@ -1141,6 +1191,13 @@ SUB DrawMenu()
     ROUNDED_RECT 14, 522, 440, 250, 14, FALSE
     DRAWCOLOR 190, 200, 235
     TEXT 26, 530, T$("rooms_open") + "   [ " + room$ + " ]"
+    ' open a fresh room without going back to the front page
+    DRAWCOLOR 40, 70, 120
+    ROUNDED_RECT 336, 524, 108, 28, 8, TRUE
+    DRAWCOLOR 130, 190, 255
+    ROUNDED_RECT 336, 524, 108, 28, 8, FALSE
+    DRAWCOLOR 235, 242, 255
+    TEXT 348, 530, T$("new_room")
     DIM li
     FOR li = 0 TO LEN(lobby) - 1
         IF li > 4 THEN EXITFOR
@@ -1583,6 +1640,10 @@ SUB MenuClick(mx, my)
             sfx_on = 1 - sfx_on
             IF sfx_on = 1 ANDALSO snd_on = 0 THEN SNDINIT()
         ENDIF
+        RETURN
+    ENDIF
+    IF my >= 524 ANDALSO my <= 552 ANDALSO mx >= 336 ANDALSO mx <= 444 THEN
+        NEWROOM()
         RETURN
     ENDIF
     IF my >= 562 ANDALSO my <= 762 ANDALSO mx >= 24 ANDALSO mx <= 444 THEN
