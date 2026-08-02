@@ -286,17 +286,34 @@ SUB LOADPROFILE()
                 mydecks = myprofile{"DECKS"}
                 deckidx = myprofile{"ACTIVE"}
                 IF deckidx < 0 ORELSE deckidx >= LEN(mydecks) THEN deckidx = 0
-                mydeck = mydecks[deckidx]{"CARDS"} + 0
+                mydeck = COPYCARDS(mydecks[deckidx]{"CARDS"})
             ENDIF
         ENDIF
     CATCH
     ENDTRY
 ENDSUB
 
-' Push the whole set back, so the server holds what the editor shows.
+' A fresh array, element by element. The + 0 copy trick is numbers only:
+' on strings the addition is element-wise too and appends a "0" to every
+' card name.
+FUNC COPYCARDS(src)
+    DIM out = []
+    DIM z
+    FOR z = 0 TO LEN(src) - 1
+        out = APPEND(out, src[z])
+    NEXT z
+    RETURN out
+ENDFUNC
+
+' Keep the edit in its slot either way, but only send the set once every
+' deck holds its six cards - the server rejects anything shorter.
 SUB SAVEDECKS()
     IF LEN(mydecks) = 0 THEN RETURN
-    mydecks[deckidx]{"CARDS"} = mydeck
+    mydecks[deckidx]{"CARDS"} = COPYCARDS(mydeck)
+    DIM z
+    FOR z = 0 TO LEN(mydecks) - 1
+        IF LEN(mydecks[z]{"CARDS"}) <> 6 THEN RETURN
+    NEXT z
     TRY
         DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "DECKS": mydecks, "ACTIVE": deckidx })
         DIM r$ = HTTP.POST$(SRV$ + "/decks", body$, "text/plain")
@@ -309,16 +326,16 @@ ENDSUB
 ' Switch slots, creating an empty one on first use.
 SUB PICKDECKSLOT(i)
     IF i = deckidx THEN RETURN
-    IF LEN(mydeck) = 6 ANDALSO LEN(mydecks) > 0 THEN SAVEDECKS()
+    IF LEN(mydecks) > 0 THEN SAVEDECKS()
     IF i >= LEN(mydecks) THEN
         DIM fresh AS MAP = {}
         fresh{"NAME"} = "Deck " + STR$(i + 1)
-        fresh{"CARDS"} = mydeck + 0
+        fresh{"CARDS"} = COPYCARDS(mydeck)
         mydecks = APPEND(mydecks, [fresh])
         deckidx = LEN(mydecks) - 1
     ELSE
         deckidx = i
-        mydeck = mydecks[deckidx]{"CARDS"} + 0
+        mydeck = COPYCARDS(mydecks[deckidx]{"CARDS"})
     ENDIF
     SAVEDECKS()
 ENDSUB
