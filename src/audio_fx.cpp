@@ -158,7 +158,32 @@ static void process_node(FxNode& n, float* buf, unsigned cnt, double rate) {
         for (unsigned i = 0; i < cnt; i++) buf[i] = (float)(buf[i] * g);
     } else if (t == "drive") {
         double g = 1.0 + n.param("amount", 5.0), lvl = n.param("level", 0.7);
-        for (unsigned i = 0; i < cnt; i++) buf[i] = (float)(std::tanh(buf[i] * g) * lvl);
+        // A valve stage clips its two halves differently and shifts its
+        // operating point while it is being hit, coming back slowly. Both
+        // ride into the same nonlinearity as an offset, so with asym and
+        // bloom at zero this is exactly the plain symmetric shaper.
+        double asym = n.param("asym", 0.0);
+        double bloom = n.param("bloom", 0.0);
+        if (asym == 0.0 && bloom == 0.0) {
+            for (unsigned i = 0; i < cnt; i++) buf[i] = (float)(std::tanh(buf[i] * g) * lvl);
+        } else {
+            double rec = n.param("recover", 0.25);          // seconds back to rest
+            double a = std::exp(-1.0 / (std::max(0.01, rec) * rate));
+            // the coupling capacitor after a valve stage: an offset shifts
+            // the waveform while it is driven, but none of it reaches the
+            // next stage
+            const double R = 1.0 - 12.0 / rate;
+            for (unsigned i = 0; i < cnt; i++) {
+                double x = buf[i];
+                n.lfo = a * n.lfo + (1.0 - a) * std::fabs(x);   // envelope of how hard it is driven
+                double b = asym + bloom * n.lfo;
+                double y = (std::tanh(x * g + b) - std::tanh(b)) * lvl;
+                double out = y - n.z1 + R * n.z2;
+                n.z1 = y;
+                n.z2 = out;
+                buf[i] = (float)out;
+            }
+        }
     } else if (t == "lowpass" || t == "highpass") {
         double b0, b1, b2, a1, a2;
         biquad_coeffs(t, n.param("cutoff", 2000.0), n.param("q", 0.707), rate, b0, b1, b2, a1, a2);
@@ -183,10 +208,22 @@ static void process_node(FxNode& n, float* buf, unsigned cnt, double rate) {
         }
     } else if (t == "compressor") {
         double thr = n.param("threshold", 0.5), ratio = n.param("ratio", 4.0), makeup = n.param("makeup", 1.0);
-        double att = std::exp(-1.0 / (0.005 * rate)), rel = std::exp(-1.0 / (0.1 * rate));
+        double att_s = std::max(0.0001, n.param("attack", 0.005));
+        double rel_s = std::max(0.001, n.param("release", 0.1));
+        // sag stretches the recovery with how hard the stage was hit, which
+        // is what a power supply sinking under a chord does. 0 = plain.
+        double sag = n.param("sag", 0.0);
+        double att = std::exp(-1.0 / (att_s * rate));
+        double rel = std::exp(-1.0 / (rel_s * rate));
         for (unsigned i = 0; i < cnt; i++) {
             double a = std::fabs((double)buf[i]);
-            n.env = (a > n.env) ? (att * n.env + (1 - att) * a) : (rel * n.env + (1 - rel) * a);
+            if (a > n.env) {
+                n.env = att * n.env + (1 - att) * a;
+            } else {
+                double r = rel;
+                if (sag > 0.0) r = std::exp(-1.0 / (rel_s * (1.0 + sag * 6.0 * n.env) * rate));
+                n.env = r * n.env + (1 - r) * a;
+            }
             double red = 1.0;
             if (n.env > thr && n.env > 1e-9) red = (thr + (n.env - thr) / ratio) / n.env;
             buf[i] = (float)(buf[i] * red * makeup);
@@ -360,10 +397,10 @@ static void ensure_defaults(FxNode& n) {
     auto def = [&](const char* k, double v) { if (n.p.find(k) == n.p.end()) n.p[k] = v; };
     const std::string& t = n.type;
     if      (t == "gain")       { def("gain", 1.0); }
-    else if (t == "drive")      { def("amount", 5.0); def("level", 0.7); }
+    else if (t == "drive")      { def("amount", 5.0); def("level", 0.7); def("asym", 0.0); def("bloom", 0.0); def("recover", 0.25); }
     else if (t == "lowpass" || t == "highpass") { def("cutoff", 2000.0); def("q", 0.707); }
     else if (t == "delay")      { def("time_ms", 300.0); def("feedback", 0.35); def("mix", 0.3); def("dry", 1.0); }
-    else if (t == "compressor") { def("threshold", 0.5); def("ratio", 4.0); def("makeup", 1.0); }
+    else if (t == "compressor") { def("threshold", 0.5); def("ratio", 4.0); def("makeup", 1.0); def("attack", 0.005); def("release", 0.1); def("sag", 0.0); }
     else if (t == "cabinet")    { def("level", 0.7); def("mix", 1.0); }
     else if (t == "chorus")     { def("rate", 0.8); def("depth", 3.0); def("delay", 14.0); def("mix", 0.5); }
     else if (t == "flanger")    { def("rate", 0.3); def("depth", 2.0); def("delay", 1.0); def("mix", 0.5); def("feedback", 0.5); }

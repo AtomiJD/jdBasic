@@ -11,7 +11,10 @@
     "compressor": { "label": "Compressor",  "params": [
       { "key": "threshold", "label": "Threshold", "min": 0, "max": 1, "def": 0.5 },
       { "key": "ratio",     "label": "Ratio",     "min": 1, "max": 20, "def": 4 },
-      { "key": "makeup",    "label": "Makeup",    "min": 0, "max": 4, "def": 1 } ] },
+      { "key": "makeup",    "label": "Makeup",    "min": 0, "max": 4, "def": 1 },
+      { "key": "attack",    "label": "Attack s",  "min": 0.0005, "max": 0.1, "def": 0.005 },
+      { "key": "release",   "label": "Release s", "min": 0.01, "max": 1, "def": 0.1 },
+      { "key": "sag",       "label": "Sag",       "min": 0, "max": 1, "def": 0 } ] },
     "noisegate":  { "label": "Noise Gate",  "params": [
       { "key": "threshold", "label": "Threshold", "min": 0, "max": 0.3, "def": 0.02 } ] },
     "eq":         { "label": "EQ (peak)",   "params": [
@@ -25,8 +28,11 @@
       { "key": "cutoff", "label": "Cutoff Hz", "min": 200, "max": 18000, "def": 2000 },
       { "key": "q",      "label": "Q",         "min": 0.1, "max": 8, "def": 0.707 } ] },
     "drive":      { "label": "Drive",       "params": [
-      { "key": "amount", "label": "Amount", "min": 0, "max": 40, "def": 5 },
-      { "key": "level",  "label": "Level",  "min": 0, "max": 1, "def": 0.7 } ] },
+      { "key": "amount",  "label": "Amount",  "min": 0, "max": 40, "def": 5 },
+      { "key": "level",   "label": "Level",   "min": 0, "max": 1, "def": 0.7 },
+      { "key": "asym",    "label": "Asym",    "min": 0, "max": 1, "def": 0 },
+      { "key": "bloom",   "label": "Bloom",   "min": 0, "max": 2, "def": 0 },
+      { "key": "recover", "label": "Recover", "min": 0.02, "max": 1, "def": 0.25 } ] },
     "fuzz":       { "label": "Fuzz",        "params": [
       { "key": "amount", "label": "Amount", "min": 0, "max": 40, "def": 10 },
       { "key": "level",  "label": "Level",  "min": 0, "max": 1, "def": 0.6 } ] },

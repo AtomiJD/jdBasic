@@ -2631,6 +2631,14 @@ ok = FX.MIX(ch, 1, 1.0, -1.0)
 ok = FX.MIX(ch, 2, 0.85, 1.0)
 ```
 
+`drive` models a valve stage when asked to: `asym` offsets the two halves
+against each other for even harmonics, `bloom` lets the operating point drift
+with how hard the stage is driven and `recover` says how fast it settles back,
+with a coupling filter after it so no offset reaches the next node. All three
+default to the plain symmetric shaper. `compressor` gained `attack`, `release`
+and `sag`, where sag stretches the recovery with the level that hit it, the way
+a power supply sinks under a chord.
+
 Node `type$` values (see `doc/AudioFX.md` for params + ranges): `gain`, `drive`,
 `lowpass`, `highpass`, `delay`, `compressor`, `cabinet` (offline-only),
 `chorus`, `flanger`, `vibrato`, `phaser`, `tremolo`, `fuzz`, `bitcrush`,

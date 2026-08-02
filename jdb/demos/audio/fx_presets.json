@@ -1,5 +1,5 @@
 {
-  "names": ["Brian May", "Brian May Split", "Clean Chime", "Lush Clean", "Metal Rhythm", "Funk Wah", "Lo-Fi Crunch"],
+  "names": ["Brian May", "Brian May Mono", "Brian May Split", "Clean Chime", "Lush Clean", "Metal Rhythm", "Funk Wah", "Lo-Fi Crunch"],
   "presets": {
     "Brian May": [
       { "type": "compressor", "params": { "threshold": 0.18, "ratio": 3, "makeup": 1.3 } },
@@ -9,6 +9,16 @@
       { "type": "lowpass",    "params": { "cutoff": 3900, "q": 1.0 } },
       { "type": "compressor", "params": { "threshold": 0.12, "ratio": 5, "makeup": 2.3 } },
       { "type": "delay",      "params": { "time_ms": 150, "feedback": 0.26, "mix": 0.18 } }
+    ],
+    "Brian May Mono": [
+      { "type": "compressor", "params": { "threshold": 0.18, "ratio": 3, "makeup": 1.3 } },
+      { "type": "gain",       "params": { "gain": 7 } },
+      { "type": "highpass",   "params": { "cutoff": 450, "q": 0.7 } },
+      { "type": "eq",         "params": { "freq": 1900, "q": 0.9, "gain": 5 } },
+      { "type": "drive",      "params": { "amount": 22, "level": 0.72, "asym": 0.22, "bloom": 0.7, "recover": 0.25 } },
+      { "type": "lowpass",    "params": { "cutoff": 6500, "q": 0.7 } },
+      { "type": "compressor", "params": { "threshold": 0.12, "ratio": 5, "makeup": 2.2, "release": 0.3, "sag": 0.5 } },
+      { "type": "delay",      "params": { "time_ms": 800, "feedback": 0.32, "mix": 0.3, "dry": 1 } }
     ],
     "Brian May Split": {
       "rack": [
