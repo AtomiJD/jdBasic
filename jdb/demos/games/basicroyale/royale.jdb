@@ -97,6 +97,8 @@ DIM frame = 0
 ' Screens: menu -> battle / decks. Battle joins on demand, not at load.
 DIM uimode$ = "menu"
 DIM mydeck = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"]
+DIM mydecks = []          ' all saved decks, the active one feeds mydeck
+DIM deckidx = 0
 DIM myname$ = "Spieler"
 DIM auth$ = ""            ' session token, stands in for the PIN
 DIM emote_open = 0
@@ -278,9 +280,47 @@ SUB LOADPROFILE()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/profile?auth=" + auth$)
         DIM m = JSON.PARSE$(r$)
-        IF m{"OK"} = 1 THEN myprofile = m{"PROFILE"}
+        IF m{"OK"} = 1 THEN
+            myprofile = m{"PROFILE"}
+            IF TYPEOF(myprofile{"DECKS"}) = "ARRAY" ANDALSO LEN(myprofile{"DECKS"}) > 0 THEN
+                mydecks = myprofile{"DECKS"}
+                deckidx = myprofile{"ACTIVE"}
+                IF deckidx < 0 ORELSE deckidx >= LEN(mydecks) THEN deckidx = 0
+                mydeck = mydecks[deckidx]{"CARDS"} + 0
+            ENDIF
+        ENDIF
     CATCH
     ENDTRY
+ENDSUB
+
+' Push the whole set back, so the server holds what the editor shows.
+SUB SAVEDECKS()
+    IF LEN(mydecks) = 0 THEN RETURN
+    mydecks[deckidx]{"CARDS"} = mydeck
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "DECKS": mydecks, "ACTIVE": deckidx })
+        DIM r$ = HTTP.POST$(SRV$ + "/decks", body$, "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} <> 1 THEN msg$ = m{"MSG"}
+    CATCH
+    ENDTRY
+ENDSUB
+
+' Switch slots, creating an empty one on first use.
+SUB PICKDECKSLOT(i)
+    IF i = deckidx THEN RETURN
+    IF LEN(mydeck) = 6 ANDALSO LEN(mydecks) > 0 THEN SAVEDECKS()
+    IF i >= LEN(mydecks) THEN
+        DIM fresh AS MAP = {}
+        fresh{"NAME"} = "Deck " + STR$(i + 1)
+        fresh{"CARDS"} = mydeck + 0
+        mydecks = APPEND(mydecks, [fresh])
+        deckidx = LEN(mydecks) - 1
+    ELSE
+        deckidx = i
+        mydeck = mydecks[deckidx]{"CARDS"} + 0
+    ENDIF
+    SAVEDECKS()
 ENDSUB
 
 ' Collection entry {LVL, HAVE} for a card, defaulting to fresh.
@@ -1112,7 +1152,24 @@ SUB DrawDeckEd()
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
     DRAWCOLOR 255, 220, 60
-    TEXT 120, 30, T$("deck") + " " + STR$(LEN(mydeck)) + "/6   " + T$("joker") + " x" + STR$(MYWILD())
+    TEXT 120, 12, T$("deck") + " " + STR$(LEN(mydeck)) + "/6   " + T$("joker") + " x" + STR$(MYWILD())
+    ' one tab per deck slot, the empty ones ready to be filled
+    DIM ds
+    FOR ds = 0 TO 2
+        DIM tabx = 8 + ds * 152
+        IF ds = deckidx THEN
+            DRAWCOLOR 60, 90, 160
+        ELSE
+            DRAWCOLOR 24, 26, 52
+        ENDIF
+        ROUNDED_RECT tabx, 40, 146, 26, 8, TRUE
+        DRAWCOLOR 120, 160, 240
+        ROUNDED_RECT tabx, 40, 146, 26, 8, FALSE
+        DIM dn$ = "+ Deck " + STR$(ds + 1)
+        IF ds < LEN(mydecks) THEN dn$ = mydecks[ds]{"NAME"}
+        DRAWCOLOR 235, 242, 255
+        TEXT tabx + 14, 46, MID$(dn$, 0, 12)
+    NEXT ds
     IF LEN(cardorder) = 0 THEN
         DRAWCOLOR 255, 255, 255
         TEXT 100, 300, T$("no_cards_ui")
@@ -1122,7 +1179,7 @@ SUB DrawDeckEd()
             DIM kind$ = cardorder[i]
             DIM col = CCOLOR(kind$)
             DIM x0 = 6 + (i MOD 3) * 154
-            DIM y0 = 72 + INT(i / 3) * 126
+            DIM y0 = 78 + INT(i / 3) * 126
             IF DECKHAS(kind$) = 1 THEN
                 DRAWCOLOR INT(col[0] * 0.5), INT(col[1] * 0.5), INT(col[2] * 0.5)
             ELSE
@@ -1402,17 +1459,23 @@ SUB DeckClick(mx, my)
         IF my >= 756 ANDALSO my <= 806 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN info_kind$ = ""
         RETURN
     ENDIF
-    IF my >= 726 ANDALSO my <= 776 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
-        IF LEN(mydeck) = 6 THEN uimode$ = "menu"
-    ELSEIF my >= 72 ANDALSO my < 706 THEN
+    IF my >= 40 ANDALSO my <= 66 THEN
+        DIM tslot = INT((mx - 8) / 152)
+        IF tslot >= 0 ANDALSO tslot <= 2 THEN PICKDECKSLOT(tslot)
+    ELSEIF my >= 726 ANDALSO my <= 776 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
+        IF LEN(mydeck) = 6 THEN
+            SAVEDECKS()
+            uimode$ = "menu"
+        ENDIF
+    ELSEIF my >= 78 ANDALSO my < 712 THEN
         DIM ci = INT((mx - 6) / 154)
-        DIM ri = INT((my - 72) / 126)
+        DIM ri = INT((my - 78) / 126)
         IF ci >= 0 ANDALSO ci <= 2 ANDALSO ri >= 0 THEN
             DIM idx = ri * 3 + ci
             IF idx < LEN(cardorder) THEN
                 DIM kind$ = cardorder[idx]
                 DIM cellx = mx - 6 - ci * 154
-                DIM celly = my - 72 - ri * 126
+                DIM celly = my - 78 - ri * 126
                 DIM mc = MYCARD(kind$)
                 DIM upcost = INT(2 ^ mc{"LVL"})
                 IF cellx >= 116 ANDALSO celly <= 30 THEN

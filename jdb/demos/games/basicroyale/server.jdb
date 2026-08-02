@@ -133,6 +133,8 @@ FUNC STATOF(name$)
     IF NOT MAP.EXISTS(s, "PINHASH") THEN s{"PINHASH"} = ""
     IF NOT MAP.EXISTS(s, "TRIES") THEN s{"TRIES"} = 0
     IF NOT MAP.EXISTS(s, "LOCKED") THEN s{"LOCKED"} = 0
+    IF NOT MAP.EXISTS(s, "DECKS") THEN s{"DECKS"} = []
+    IF NOT MAP.EXISTS(s, "ACTIVE") THEN s{"ACTIVE"} = 0
     RETURN s
 ENDFUNC
 
@@ -370,19 +372,28 @@ SUB SYNCSIM(rm)
     ENDIF
 ENDSUB
 
-' Validated 6-card deck from the join body, or the classic default.
-FUNC PICKDECK(b)
-    DIM def = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"]
-    IF TYPEOF(b) <> "OBJECT" ORELSE NOT MAP.EXISTS(b, "DECK") THEN RETURN def
-    DIM d = b{"DECK"}
-    IF TYPEOF(d) <> "ARRAY" ORELSE LEN(d) <> 6 THEN RETURN def
+FUNC DEFAULTDECK()
+    RETURN ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"]
+ENDFUNC
+
+' Six distinct cards that all exist, or nothing.
+FUNC DECKOK(d)
+    IF TYPEOF(d) <> "ARRAY" ORELSE LEN(d) <> 6 THEN RETURN 0
     DIM cs = ARENA.CARDS()
     DIM seen AS MAP = {}
     DIM i
     FOR i = 0 TO 5
-        IF NOT MAP.EXISTS(cs, d[i]) ORELSE MAP.EXISTS(seen, d[i]) THEN RETURN def
+        IF NOT MAP.EXISTS(cs, d[i]) ORELSE MAP.EXISTS(seen, d[i]) THEN RETURN 0
         seen{d[i]} = 1
     NEXT i
+    RETURN 1
+ENDFUNC
+
+' Validated 6-card deck from the join body, or the classic default.
+FUNC PICKDECK(b)
+    IF TYPEOF(b) <> "OBJECT" ORELSE NOT MAP.EXISTS(b, "DECK") THEN RETURN DEFAULTDECK()
+    DIM d = b{"DECK"}
+    IF DECKOK(d) = 0 THEN RETURN DEFAULTDECK()
     RETURN d
 ENDFUNC
 
@@ -807,9 +818,51 @@ ENDFUNC
 ' What a client is allowed to see of a profile. The credential fields never
 ' leave the server, not even to the account they belong to.
 FUNC PUBPROFILE(s)
+    ENSUREDECKS(s)
     RETURN { "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, _
              "CROWNS": s{"CROWNS"}, "CARDS": s{"CARDS"}, "WILD": s{"WILD"}, _
-             "LASTCHEST": s{"LASTCHEST"} }
+             "LASTCHEST": s{"LASTCHEST"}, "DECKS": s{"DECKS"}, "ACTIVE": s{"ACTIVE"} }
+ENDFUNC
+
+' Up to three named decks per player, stored with the profile so they
+' survive a reload and follow the name to another device.
+CONST DECK_SLOTS = 3
+
+SUB ENSUREDECKS(s)
+    IF LEN(s{"DECKS"}) = 0 THEN
+        s{"DECKS"} = [{ "NAME": "Deck 1", "CARDS": DEFAULTDECK() }]
+        s{"ACTIVE"} = 0
+    ENDIF
+    IF s{"ACTIVE"} < 0 ORELSE s{"ACTIVE"} >= LEN(s{"DECKS"}) THEN s{"ACTIVE"} = 0
+ENDSUB
+
+FUNC HDECKS(req)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    DIM name$ = WHOIS$(req, b)
+    IF name$ = "" THEN RETURN NEEDAUTH()
+    IF TYPEOF(b{"DECKS"}) <> "ARRAY" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
+    DIM incoming = b{"DECKS"}
+    IF LEN(incoming) < 1 ORELSE LEN(incoming) > DECK_SLOTS THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
+    DIM out = []
+    DIM i
+    FOR i = 0 TO LEN(incoming) - 1
+        DIM d = incoming[i]
+        IF TYPEOF(d) <> "OBJECT" ORELSE DECKOK(d{"CARDS"}) = 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_baddeck" })
+        DIM dn$ = "Deck " + STR$(i + 1)
+        IF TYPEOF(d{"NAME"}) = "STRING" ANDALSO LEN(d{"NAME"}) > 0 THEN dn$ = MID$(d{"NAME"}, 0, 14)
+        out = APPEND(out, [{ "NAME": dn$, "CARDS": d{"CARDS"} }])
+    NEXT i
+    DIM s = STATOF(name$)
+    s{"DECKS"} = out
+    s{"ACTIVE"} = 0
+    IF TYPEOF(b{"ACTIVE"}) <> "NONE" THEN s{"ACTIVE"} = INT(b{"ACTIVE"})
+    ENSUREDECKS(s)
+    SAVESTATS()
+    RETURN JJ({ "OK": 1, "DECKS": s{"DECKS"}, "ACTIVE": s{"ACTIVE"} })
 ENDFUNC
 
 FUNC HPROFILE(req)
@@ -875,6 +928,7 @@ HTTP.SERVER.ON_GET "/drop", "HDROP"
 HTTP.SERVER.ON_POST "/wipe", "HWIPE"
 HTTP.SERVER.ON_POST "/resetpin", "HRESETPIN"
 HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
+HTTP.SERVER.ON_POST "/decks", "HDECKS"
 HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
 
 ' Bind host and port from the command line: behind a reverse proxy pass
