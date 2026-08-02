@@ -35,39 +35,55 @@ float              g_scope_in[SCOPE_N] = {0};   // dry input (pitch detection)
 std::atomic<unsigned> g_scope_pos{0};
 std::atomic<unsigned> g_scope_in_pos{0};
 
-const unsigned     REC_CAP = 48000u * 180u;   // 3 min mono record buffer
+const unsigned     OUT_CH  = 2;               // the monitor plays back in stereo
+const unsigned     REC_CAP = 48000u * 180u * OUT_CH;   // 3 min stereo record buffer
 std::vector<float> g_rec;                      // pre-sized once; callback never reallocs
 std::atomic<unsigned> g_rec_pos{0};
 std::atomic<bool>  g_recording{false};
 
+float              g_dry[FX_RT_MAX_BLOCK];    // mono input block handed to the chain
+
 // realtime: input -> gain -> FX chain -> output. NO allocation, NO locks, NO VM.
 void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
-    unsigned n = frames * dev->playback.channels;
+    unsigned outCh = dev->playback.channels;
     const float* in = (const float*)pIn;
     float* out = (float*)pOut;
+    if (frames > FX_RT_MAX_BLOCK) frames = FX_RT_MAX_BLOCK;
+    unsigned n = frames * outCh;
     float g = g_mon_gain.load(std::memory_order_relaxed);
-    for (unsigned i = 0; i < n; i++) out[i] = in[i] * g;
+    for (unsigned i = 0; i < frames; i++) g_dry[i] = in[i] * g;
     int chain = g_rt_chain.load(std::memory_order_relaxed);
-    if (chain > 0) fx_process_chain_rt(chain, out, n, 48000.0);
-    float ip = 0.0f, op = 0.0f;
-    for (unsigned i = 0; i < n; i++) {
-        float a = in[i];  if (a < 0) a = -a;  if (a > ip) ip = a;
-        float b = out[i]; if (b < 0) b = -b;  if (b > op) op = b;
+    if (chain > 0) {
+        fx_process_chain_rt(chain, g_dry, out, frames, outCh, 48000.0);
+    } else {
+        for (unsigned i = 0; i < frames; i++)
+            for (unsigned c = 0; c < outCh; c++) out[i * outCh + c] = g_dry[i];
     }
+    float ip = 0.0f, op = 0.0f;
+    for (unsigned i = 0; i < frames; i++) { float a = in[i]; if (a < 0) a = -a; if (a > ip) ip = a; }
+    for (unsigned i = 0; i < n; i++)      { float b = out[i]; if (b < 0) b = -b; if (b > op) op = b; }
     float pin = g_in_peak.load(std::memory_order_relaxed) * 0.92f;  if (ip > pin) pin = ip;
     float pout = g_out_peak.load(std::memory_order_relaxed) * 0.92f; if (op > pout) pout = op;
     g_in_peak.store(pin, std::memory_order_relaxed);
     g_out_peak.store(pout, std::memory_order_relaxed);
+    // the scope shows what you actually hear, so a split chain is summed down
     unsigned sp = g_scope_pos.load(std::memory_order_relaxed);
-    for (unsigned i = 0; i < n; i++) g_scope[(sp + i) & (SCOPE_N - 1)] = out[i];
-    g_scope_pos.store(sp + n, std::memory_order_relaxed);
+    for (unsigned i = 0; i < frames; i++) {
+        float s = 0.0f;
+        for (unsigned c = 0; c < outCh; c++) s += out[i * outCh + c];
+        g_scope[(sp + i) & (SCOPE_N - 1)] = s / (float)outCh;
+    }
+    g_scope_pos.store(sp + frames, std::memory_order_relaxed);
     unsigned sip = g_scope_in_pos.load(std::memory_order_relaxed);
-    for (unsigned i = 0; i < n; i++) g_scope_in[(sip + i) & (SCOPE_N - 1)] = in[i];
-    g_scope_in_pos.store(sip + n, std::memory_order_relaxed);
+    for (unsigned i = 0; i < frames; i++) g_scope_in[(sip + i) & (SCOPE_N - 1)] = in[i];
+    g_scope_in_pos.store(sip + frames, std::memory_order_relaxed);
     if (g_recording.load(std::memory_order_relaxed)) {
         unsigned rp = g_rec_pos.load(std::memory_order_relaxed);
         unsigned cap = (unsigned)g_rec.size();
-        for (unsigned i = 0; i < n && rp < cap; i++) g_rec[rp++] = out[i];
+        for (unsigned i = 0; i < frames && rp + OUT_CH <= cap; i++) {
+            g_rec[rp++] = out[i * outCh];
+            g_rec[rp++] = out[i * outCh + (outCh > 1 ? 1 : 0)];
+        }
         g_rec_pos.store(rp, std::memory_order_relaxed);
     }
 }
@@ -131,7 +147,7 @@ void register_audioio_builtins(VM& vm) {
         }
         ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
         cfg.capture.format   = ma_format_f32; cfg.capture.channels  = 1;
-        cfg.playback.format  = ma_format_f32; cfg.playback.channels = 1;
+        cfg.playback.format  = ma_format_f32; cfg.playback.channels = OUT_CH;
         cfg.sampleRate        = 48000;
         cfg.periodSizeInFrames = 256;          // low-ish latency
         cfg.dataCallback      = mon_callback;
@@ -235,28 +251,29 @@ void register_audioio_builtins(VM& vm) {
 
     // MON.RECLEN() -> seconds captured so far (for the GUI)
     vm.register_native("MON.RECLEN", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_f64(g_rec_pos.load(std::memory_order_relaxed) / 48000.0);
+        return Value::make_f64(g_rec_pos.load(std::memory_order_relaxed) / (48000.0 * OUT_CH));
     });
 
-    // MON.RECSTOP(path$) -> seconds written   stop and save a 16-bit mono 48k WAV
+    // MON.RECSTOP(path$) -> seconds written   stop and save a 16-bit stereo 48k WAV
     vm.register_native("MON.RECSTOP", 1, 1, [](const std::vector<Value>& args) -> Value {
         g_recording.store(false, std::memory_order_relaxed);
         unsigned cnt = g_rec_pos.load(std::memory_order_relaxed);
         if (cnt > (unsigned)g_rec.size()) cnt = (unsigned)g_rec.size();
         std::ofstream f(args[0].to_string(), std::ios::binary);
         if (!f) return Value::make_f64(0.0);
-        uint32_t rate = 48000, dataBytes = cnt * 2, byteRate = rate * 2;
+        uint16_t blockAlign = (uint16_t)(OUT_CH * 2);
+        uint32_t rate = 48000, dataBytes = cnt * 2, byteRate = rate * blockAlign;
         auto w32 = [&](uint32_t v) { f.put((char)(v & 0xff)); f.put((char)((v >> 8) & 0xff)); f.put((char)((v >> 16) & 0xff)); f.put((char)((v >> 24) & 0xff)); };
         auto w16 = [&](uint16_t v) { f.put((char)(v & 0xff)); f.put((char)((v >> 8) & 0xff)); };
         f.write("RIFF", 4); w32(36 + dataBytes); f.write("WAVE", 4);
-        f.write("fmt ", 4); w32(16); w16(1); w16(1); w32(rate); w32(byteRate); w16(2); w16(16);
+        f.write("fmt ", 4); w32(16); w16(1); w16((uint16_t)OUT_CH); w32(rate); w32(byteRate); w16(blockAlign); w16(16);
         f.write("data", 4); w32(dataBytes);
         for (unsigned i = 0; i < cnt; i++) {
             float s = g_rec[i];
             if (s > 1.0f) s = 1.0f; else if (s < -1.0f) s = -1.0f;
             w16((uint16_t)(int16_t)(s * 32767.0f));
         }
-        return Value::make_f64(cnt / 48000.0);
+        return Value::make_f64(cnt / (48000.0 * OUT_CH));
     });
 
     // MON.GAIN(g)  monitor level, applied lock-free in the audio callback
@@ -277,8 +294,9 @@ void register_audioio_builtins(VM& vm) {
     vm.register_native("MON.FX", 1, 1, [](const std::vector<Value>& args) -> Value {
         int chain = (int)args[0].to_int();
         if (chain > 0) {
-            float warm[512] = { 0.0f };          // pre-size delay lines off the audio thread
-            fx_process_chain_rt(chain, warm, 256, 48000.0);
+            float dry[256] = { 0.0f };           // pre-size delay lines off the audio thread
+            float warm[256 * OUT_CH] = { 0.0f };
+            fx_process_chain_rt(chain, dry, warm, 256, OUT_CH, 48000.0);
         }
         g_rt_chain.store(chain, std::memory_order_relaxed);
         return Value::make_none();

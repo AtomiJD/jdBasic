@@ -16,6 +16,10 @@ DIM chan = 0
 DIM inIdx = 0, outIdx = 0
 DIM mgain = 0.7
 DIM addSel = 0
+DIM splitOn = FALSE          ' feed two branches instead of one signal
+DIM levelA = 1.0, panA = -1.0
+DIM levelB = 1.0, panB = 1.0
+DIM busNames = ["main", "A", "B"]
 DIM saveName$ = "My Tone"
 DIM status$ = "press Start to monitor"
 DIM appRunning = TRUE
@@ -55,6 +59,7 @@ FUNC NEW_NODE(ptype$)
     DIM nd AS MAP
     nd{"type"} = ptype$
     nd{"on"} = TRUE
+    nd{"bus"} = 0
     DIM pm AS MAP
     DIM defs = EFFECT_DEFS(ptype$)
     DIM k
@@ -74,6 +79,19 @@ FUNC NODE_FROM(ptype$, given)
         IF TYPEOF(given{pk$}) <> "NONE" THEN nd{"params"}{pk$} = given{pk$}
     NEXT k
     RETURN nd
+ENDFUNC
+
+' A rack entry written before the split existed carries no bus, so it belongs
+' to the common section.
+FUNC BUS_OF(nd)
+    IF TYPEOF(nd{"bus"}) = "NONE" THEN RETURN 0
+    RETURN nd{"bus"}
+ENDFUNC
+
+FUNC BUS_NAME$(b)
+    IF b = 1 THEN RETURN "A"
+    IF b = 2 THEN RETURN "B"
+    RETURN "main"
 ENDFUNC
 
 FUNC SPECTRUM(samples, bins)
@@ -207,6 +225,7 @@ SUB AI_GENERATE()
         EXITSUB
     ENDIF
     rack = nr
+    splitOn = FALSE
     REBUILD()
     status$ = "AI loaded " + LEN(rack) + " nodes from " + pkey$
 ENDSUB
@@ -217,12 +236,18 @@ SUB REBUILD()
     DIM oldchan = chan
     chan = FX.NEW()
     eng = []
-    DIM z, ePos = 0, ok
+    DIM ok = FX.SPLIT(chan, splitOn)
+    ok = FX.MIX(chan, 1, levelA, panA)
+    ok = FX.MIX(chan, 2, levelB, panB)
+    ' the engine indexes nodes per bus, so each bus counts on its own
+    DIM ePos = [0, 0, 0]
+    DIM z, bz
     FOR z = 0 TO LEN(rack) - 1
         IF rack[z]{"on"} THEN
-            ok = FX.ADD(chan, rack[z]{"type"}, rack[z]{"params"})
-            eng = APPEND(eng, ePos)
-            ePos = ePos + 1
+            bz = BUS_OF(rack[z])
+            ok = FX.ADD(chan, rack[z]{"type"}, rack[z]{"params"}, bz)
+            eng = APPEND(eng, ePos[bz])
+            ePos[bz] = ePos[bz] + 1
         ELSE
             eng = APPEND(eng, -1)
         ENDIF
@@ -234,7 +259,20 @@ ENDSUB
 
 SUB SET_PARAM(i, pkey$, pval)
     rack[i]{"params"}{pkey$} = pval
-    IF rack[i]{"on"} ANDALSO eng[i] >= 0 THEN DIM ok = FX.SET(chan, eng[i], pkey$, pval)
+    IF rack[i]{"on"} ANDALSO eng[i] >= 0 THEN DIM ok = FX.SET(chan, eng[i], pkey$, pval, BUS_OF(rack[i]))
+ENDSUB
+
+SUB SET_BUS(i, b)
+    rack[i]{"bus"} = b
+    REBUILD()
+ENDSUB
+
+' Level and pan reach the engine without a rebuild, so a slider stays smooth.
+SUB SET_MIX()
+    IF chan > 0 THEN
+        DIM ok = FX.MIX(chan, 1, levelA, panA)
+        ok = FX.MIX(chan, 2, levelB, panB)
+    ENDIF
 ENDSUB
 
 SUB MOVE_NODE(i, delta)
@@ -303,27 +341,71 @@ ENDSUB
 
 SUB RESET_RACK()
     rack = []
+    splitOn = FALSE
     REBUILD()
     status$ = "reset"
 ENDSUB
 
 ' ---- presets + persistence ----
 
-SUB LOAD_PRESET(pname$)
-    DIM lst = presetsDoc{"presets"}{pname$}
+' Rebuild the rack from a stored node list. A document without routing keys is
+' an older rack, and loads as a single unsplit signal path.
+SUB APPLY_DOC(lst, doc)
     rack = []
-    DIM k
+    DIM k, nd
     FOR k = 0 TO LEN(lst) - 1
-        rack = APPEND(rack, NODE_FROM(lst[k]{"type"}, lst[k]{"params"}))
+        nd = NODE_FROM(lst[k]{"type"}, lst[k]{"params"})
+        IF TYPEOF(lst[k]{"bus"}) <> "NONE" THEN nd{"bus"} = lst[k]{"bus"}
+        rack = APPEND(rack, nd)
     NEXT k
+    splitOn = FALSE
+    levelA = 1.0 : panA = -1.0
+    levelB = 1.0 : panB = 1.0
+    IF TYPEOF(doc) <> "NONE" THEN
+        IF TYPEOF(doc{"split"}) <> "NONE" THEN splitOn = doc{"split"}
+        IF TYPEOF(doc{"levelA"}) <> "NONE" THEN levelA = doc{"levelA"}
+        IF TYPEOF(doc{"panA"}) <> "NONE" THEN panA = doc{"panA"}
+        IF TYPEOF(doc{"levelB"}) <> "NONE" THEN levelB = doc{"levelB"}
+        IF TYPEOF(doc{"panB"}) <> "NONE" THEN panB = doc{"panB"}
+    ENDIF
     REBUILD()
+ENDSUB
+
+' Node list plus routing, the shape both the preset file and the saved rack use.
+FUNC RACK_DOC()
+    DIM doc AS MAP
+    DIM lst = []
+    DIM k
+    FOR k = 0 TO LEN(rack) - 1
+        DIM nd AS MAP
+        nd{"type"} = rack[k]{"type"}
+        nd{"params"} = rack[k]{"params"}
+        nd{"bus"} = BUS_OF(rack[k])
+        lst = APPEND(lst, nd)
+    NEXT k
+    doc{"rack"} = lst
+    doc{"split"} = splitOn
+    doc{"levelA"} = levelA
+    doc{"panA"} = panA
+    doc{"levelB"} = levelB
+    doc{"panB"} = panB
+    RETURN doc
+ENDFUNC
+
+SUB LOAD_PRESET(pname$)
+    DIM entry = presetsDoc{"presets"}{pname$}
+    IF TYPEOF(entry{"rack"}) <> "NONE" THEN
+        APPLY_DOC(entry{"rack"}, entry)
+    ELSE
+        ' a bare node list: the preset predates the routing section
+        DIM plain AS MAP = {}
+        APPLY_DOC(entry, plain)
+    ENDIF
     status$ = "loaded preset: " + pname$
 ENDSUB
 
 SUB SAVE_RACK()
-    DIM doc AS MAP
-    doc{"rack"} = rack
-    DIM ok = TXTWRITER(cfgRack$, JSON.STRINGIFY$(doc))
+    DIM ok = TXTWRITER(cfgRack$, JSON.STRINGIFY$(RACK_DOC()))
     status$ = "saved: " + cfgRack$
 ENDSUB
 
@@ -333,27 +415,13 @@ SUB LOAD_RACK()
         status$ = "no saved rack yet"
     ELSE
         DIM doc = JSON.PARSE$(raw$)
-        DIM lst = doc{"rack"}
-        rack = []
-        DIM k
-        FOR k = 0 TO LEN(lst) - 1
-            rack = APPEND(rack, NODE_FROM(lst[k]{"type"}, lst[k]{"params"}))
-        NEXT k
-        REBUILD()
+        APPLY_DOC(doc{"rack"}, doc)
         status$ = "loaded: " + cfgRack$
     ENDIF
 ENDSUB
 
 SUB SAVE_PRESET(pname$)
-    DIM lst = []
-    DIM k
-    FOR k = 0 TO LEN(rack) - 1
-        DIM nd AS MAP
-        nd{"type"} = rack[k]{"type"}
-        nd{"params"} = rack[k]{"params"}
-        lst = APPEND(lst, nd)
-    NEXT k
-    presetsDoc{"presets"}{pname$} = lst
+    presetsDoc{"presets"}{pname$} = RACK_DOC()
     DIM found = FALSE
     FOR k = 0 TO LEN(pnames) - 1
         IF pnames[k] = pname$ THEN found = TRUE
@@ -611,17 +679,44 @@ DO
             GUI.PROGRESS 0.5, "---"
         ENDIF
 
+        GUI.SEPARATOR_TEXT("Routing")
+        DIM spNew = GUI.CHECKBOX("Split into two amps", splitOn)
+        IF spNew <> splitOn THEN
+            splitOn = spNew
+            REBUILD()
+        ENDIF
+        IF splitOn THEN
+            GUI.TEXT "main feeds branch A and B; both land in the stereo mix"
+            DIM la = GUI.SLIDER("A level", levelA, 0, 2)
+            DIM pa = GUI.SLIDER("A pan", panA, -1, 1)
+            DIM lb = GUI.SLIDER("B level", levelB, 0, 2)
+            DIM pb = GUI.SLIDER("B pan", panB, -1, 1)
+            IF la <> levelA ORELSE pa <> panA ORELSE lb <> levelB ORELSE pb <> panB THEN
+                levelA = la : panA = pa
+                levelB = lb : panB = pb
+                SET_MIX()
+            ENDIF
+        ELSE
+            GUI.TEXT "one signal path, the same on both outputs"
+        ENDIF
+
         GUI.SEPARATOR_TEXT("Pedalboard")
         DIM pendAct$ = ""
         DIM pendIdx = -1
+        DIM pendBus = 0
         DIM i
         FOR i = 0 TO LEN(rack) - 1
             GUI.PUSH_ID(i)
             DIM hdr$ = "" + i + "   " + schema{"effects"}{rack[i]{"type"}}{"label"}
+            IF splitOn THEN hdr$ = hdr$ + "   [" + BUS_NAME$(BUS_OF(rack[i])) + "]"
             IF NOT rack[i]{"on"} THEN hdr$ = hdr$ + "   (bypassed)"
             IF GUI.COLLAPSING_HEADER(hdr$) THEN
                 DIM onNew = GUI.CHECKBOX("Enabled", rack[i]{"on"})
                 IF onNew <> rack[i]{"on"} THEN pendAct$ = "bypass" : pendIdx = i
+                IF splitOn THEN
+                    DIM bNew = GUI.COMBO("Bus", BUS_OF(rack[i]), busNames)
+                    IF bNew <> BUS_OF(rack[i]) THEN pendAct$ = "bus" : pendIdx = i : pendBus = bNew
+                ENDIF
                 DIM defs = EFFECT_DEFS(rack[i]{"type"})
                 DIM k, pk$, cur, nv
                 FOR k = 0 TO LEN(defs) - 1
@@ -645,6 +740,7 @@ DO
         IF pendAct$ = "down"   THEN MOVE_NODE(pendIdx, 1)
         IF pendAct$ = "remove" THEN REMOVE_NODE(pendIdx)
         IF pendAct$ = "bypass" THEN TOGGLE_BYPASS(pendIdx)
+        IF pendAct$ = "bus"    THEN SET_BUS(pendIdx, pendBus)
 
         GUI.SEPARATOR_TEXT("Add effect")
         addSel = GUI.COMBO("##addsel", addSel, typeNames)

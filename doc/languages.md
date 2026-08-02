@@ -2608,11 +2608,28 @@ monitor. `WAV.WRITE`, `FX.PROCESS` are non-vectorizing (they take whole arrays).
 | Function | Description |
 |---|---|
 | `FX.NEW()` -> chain | New empty chain handle. |
-| `FX.ADD(chain, type$, params{})` -> bool | Append an effect node (params optional; defaults fill in). |
-| `FX.PROCESS(chain, samples[], [rate=44100])` -> samples[] | Run a mono buffer through the chain (offline). |
-| `FX.SET(chain, nodeIndex, param$, value)` -> bool | Live-tweak one existing param; race-safe while monitoring. |
-| `FX.DUMP$(chain)` -> string | Readable nodeIndex / type / params listing (for the REPL). |
+| `FX.ADD(chain, type$, params{}, [bus=0])` -> bool | Append an effect node (params optional; defaults fill in). |
+| `FX.PROCESS(chain, samples[], [rate=44100], [channels=1])` -> samples[] | Run a mono buffer through the chain (offline); `channels` 2 returns interleaved stereo. |
+| `FX.SET(chain, nodeIndex, param$, value, [bus=0])` -> bool | Live-tweak one existing param; race-safe while monitoring. `nodeIndex` counts within its bus. |
+| `FX.SPLIT(chain, on)` -> bool | Feed two branches from the common section instead of one signal path. |
+| `FX.MIX(chain, bus, level, pan)` -> bool | Where a branch lands in the stereo mix. `pan` -1 is hard left, +1 hard right. |
+| `FX.DUMP$(chain)` -> string | Readable nodeIndex / type / params listing per section (for the REPL). |
 | `FX.FREE(chain)` | Free the chain. Use the **paren form** `FX.FREE(ch)`. |
+
+A chain has three sections. Bus 0 is the common path every signal takes; with
+`FX.SPLIT` on, its output feeds bus 1 and bus 2 separately, and `FX.MIX` places
+each of them in the stereo image. That is how one guitar reaches two amps: keep
+bus 1 dry at pan -1 and put the echo on bus 2 at pan +1. With the split off, or
+into a single output channel, the branches are simply summed.
+
+```basic
+ch = FX.NEW()
+ok = FX.ADD(ch, "drive", { "amount": 22 })              ' both amps hear this
+ok = FX.SPLIT(ch, TRUE)
+ok = FX.ADD(ch, "delay", { "time_ms": 800, "dry": 0 }, 2)  ' echo-only amp
+ok = FX.MIX(ch, 1, 1.0, -1.0)
+ok = FX.MIX(ch, 2, 0.85, 1.0)
+```
 
 Node `type$` values (see `doc/AudioFX.md` for params + ranges): `gain`, `drive`,
 `lowpass`, `highpass`, `delay`, `compressor`, `cabinet` (offline-only),

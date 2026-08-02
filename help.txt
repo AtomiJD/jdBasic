@@ -3497,16 +3497,24 @@ Syntax: FX.NEW() -> chain
 Description: Create an empty FX chain and return its handle.
 
 [FX.ADD]
-Syntax: FX.ADD(chain, type$, params{}) -> bool
-Description: Append an effect node. Types: gain, drive, lowpass, highpass, delay, compressor, cabinet, chorus, flanger, vibrato, phaser, tremolo, fuzz, bitcrush, octave, autowah, noisegate, eq, reverb.
+Syntax: FX.ADD(chain, type$, params{}, [bus=0]) -> bool
+Description: Append an effect node to a bus (0 = common section, 1 and 2 = the split branches). Types: gain, drive, lowpass, highpass, delay, compressor, cabinet, chorus, flanger, vibrato, phaser, tremolo, fuzz, bitcrush, octave, autowah, noisegate, eq, reverb.
 
 [FX.PROCESS]
-Syntax: FX.PROCESS(chain, samples[], [rate=44100]) -> samples[]
-Description: Run a mono float buffer through the chain offline; returns the processed buffer.
+Syntax: FX.PROCESS(chain, samples[], [rate=44100], [channels=1]) -> samples[]
+Description: Run a mono float buffer through the chain offline; returns the processed buffer. With channels 2 the result is interleaved stereo and a split chain renders both branches into it.
 
 [FX.SET]
-Syntax: FX.SET(chain, nodeIndex, param$, value) -> bool
-Description: Live-tweak one existing parameter of a node; race-safe while the chain is monitoring.
+Syntax: FX.SET(chain, nodeIndex, param$, value, [bus=0]) -> bool
+Description: Live-tweak one existing parameter of a node; race-safe while the chain is monitoring. nodeIndex counts within its own bus.
+
+[FX.SPLIT]
+Syntax: FX.SPLIT(chain, on) -> bool
+Description: Feed the two branch buses from the common section instead of a single signal path, so one input can drive two separate amps.
+
+[FX.MIX]
+Syntax: FX.MIX(chain, bus, level, pan) -> bool
+Description: Set level and stereo position of a split branch (bus 1 or 2). pan -1 is hard left, +1 hard right.
 
 [FX.DUMP$]
 Syntax: FX.DUMP$(chain) -> string

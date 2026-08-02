@@ -104,7 +104,22 @@ struct FxNode {
         auto it = p.find(k); return it == p.end() ? def : it->second;
     }
 };
-struct FxChain { std::vector<FxNode> nodes; };
+// One leg of a split chain: its own effects, plus where it lands in the stereo
+// image. pan -1 is hard left, +1 hard right.
+struct FxBranch {
+    std::vector<FxNode> nodes;
+    double level = 1.0;
+    double pan   = 0.0;
+};
+
+// nodes is the section every signal passes; with split set, its output feeds
+// branch a and b, which are mixed back together at the output.
+struct FxChain {
+    std::vector<FxNode> nodes;
+    bool     split = false;
+    FxBranch a, b;
+    std::vector<float> sa, sb;      // realtime scratch, never sized on the audio thread
+};
 
 std::map<int, FxChain> g_chains;
 int        g_chain_next = 1;
@@ -156,13 +171,15 @@ static void process_node(FxNode& n, float* buf, unsigned cnt, double rate) {
         }
     } else if (t == "delay") {
         double ms = n.param("time_ms", 300.0), fb = n.param("feedback", 0.35), mix = n.param("mix", 0.3);
+        // dry 0 leaves the repeats alone, which is what an echo-only amp wants
+        double dry = n.param("dry", 1.0);
         size_t len = (size_t)std::max(1.0, ms / 1000.0 * rate);
         if (n.dl.size() != len) { n.dl.assign(len, 0.0f); n.dpos = 0; }
         for (unsigned i = 0; i < cnt; i++) {
             double in = buf[i], wet = n.dl[n.dpos];
             n.dl[n.dpos] = (float)(in + wet * fb);
             n.dpos = (n.dpos + 1) % len;
-            buf[i] = (float)(in + wet * mix);
+            buf[i] = (float)(in * dry + wet * mix);
         }
     } else if (t == "compressor") {
         double thr = n.param("threshold", 0.5), ratio = n.param("ratio", 4.0), makeup = n.param("makeup", 1.0);
@@ -345,7 +362,7 @@ static void ensure_defaults(FxNode& n) {
     if      (t == "gain")       { def("gain", 1.0); }
     else if (t == "drive")      { def("amount", 5.0); def("level", 0.7); }
     else if (t == "lowpass" || t == "highpass") { def("cutoff", 2000.0); def("q", 0.707); }
-    else if (t == "delay")      { def("time_ms", 300.0); def("feedback", 0.35); def("mix", 0.3); }
+    else if (t == "delay")      { def("time_ms", 300.0); def("feedback", 0.35); def("mix", 0.3); def("dry", 1.0); }
     else if (t == "compressor") { def("threshold", 0.5); def("ratio", 4.0); def("makeup", 1.0); }
     else if (t == "cabinet")    { def("level", 0.7); def("mix", 1.0); }
     else if (t == "chorus")     { def("rate", 0.8); def("depth", 3.0); def("delay", 14.0); def("mix", 0.5); }
@@ -360,6 +377,34 @@ static void ensure_defaults(FxNode& n) {
     else if (t == "noisegate")  { def("threshold", 0.02); }
     else if (t == "eq")         { def("freq", 800.0); def("q", 1.0); def("gain", 6.0); }
     else if (t == "reverb")     { def("roomsize", 0.7); def("damp", 0.5); def("mix", 0.3); }
+}
+
+// bus 1 and 2 are the split legs, everything else is the common section
+static std::vector<FxNode>* bus_nodes(FxChain& c, int bus) {
+    if (bus == 1) return &c.a.nodes;
+    if (bus == 2) return &c.b.nodes;
+    return &c.nodes;
+}
+
+static FxBranch* bus_branch(FxChain& c, int bus) {
+    if (bus == 1) return &c.a;
+    if (bus == 2) return &c.b;
+    return nullptr;
+}
+
+// constant-power pan: a centred branch keeps its loudness when panned out
+static void pan_gains(double pan, double& gl, double& gr) {
+    if (pan < -1.0) pan = -1.0; else if (pan > 1.0) pan = 1.0;
+    double a = (pan + 1.0) * (FX_PI / 4.0);
+    gl = std::cos(a);
+    gr = std::sin(a);
+}
+
+// run one section over a block, skipping the nodes a caller cannot afford
+static void run_section(std::vector<FxNode>& nodes, float* buf, unsigned cnt,
+                        double rate, bool skip_cabinet) {
+    for (auto& n : nodes)
+        if (!skip_cabinet || n.type != "cabinet") process_node(n, buf, cnt, rate);
 }
 
 } // namespace
@@ -483,15 +528,20 @@ void register_audiofx_builtins(VM& vm) {
     vm.register_native("FX.NEW", 0, 0, [](const std::vector<Value>&) -> Value {
         std::lock_guard<std::mutex> lk(g_chain_mtx);
         int h = g_chain_next++;
-        g_chains[h] = FxChain{};
+        FxChain c;
+        c.sa.assign(FX_RT_MAX_BLOCK, 0.0f);
+        c.sb.assign(FX_RT_MAX_BLOCK, 0.0f);
+        g_chains[h] = std::move(c);
         return Value::make_i64(h);
     });
 
-    // FX.ADD(chain, type$, [params{}]) -> bool
+    // FX.ADD(chain, type$, [params{}], [bus=0]) -> bool
     // types: gain{gain} drive{amount,level} lowpass/highpass{cutoff,q}
     //        delay{time_ms,feedback,mix} compressor{threshold,ratio,makeup}
-    vm.register_native("FX.ADD", 2, 3, [](const std::vector<Value>& args) -> Value {
+    // bus 0 is the common section, 1 and 2 are the split legs.
+    vm.register_native("FX.ADD", 2, 4, [](const std::vector<Value>& args) -> Value {
         int h = (int)args[0].to_int();
+        int bus = args.size() >= 4 ? (int)args[3].to_int() : 0;
         std::lock_guard<std::mutex> lk(g_chain_mtx);
         auto it = g_chains.find(h);
         if (it == g_chains.end()) return Value::make_bool(false);
@@ -517,26 +567,86 @@ void register_audiofx_builtins(VM& vm) {
             }
         }
         ensure_defaults(node);
-        it->second.nodes.push_back(std::move(node));
+        bus_nodes(it->second, bus)->push_back(std::move(node));
         return Value::make_bool(true);
     });
 
-    // FX.PROCESS(chain, samples[], [rate=44100]) -> samples[]  (offline, mono)
-    vm.register_native("FX.PROCESS", 2, 3, [](const std::vector<Value>& args) -> Value {
+    // FX.SPLIT(chain, on) -> bool   feed the two branches instead of one signal
+    vm.register_native("FX.SPLIT", 2, 2, [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lk(g_chain_mtx);
+        auto it = g_chains.find((int)args[0].to_int());
+        if (it == g_chains.end()) return Value::make_bool(false);
+        it->second.split = args[1].to_bool();
+        return Value::make_bool(true);
+    });
+
+    // FX.MIX(chain, bus, level, pan) -> bool   where a branch lands in the mix.
+    // pan -1 is hard left, +1 hard right, so two amps are pan -1 and +1.
+    vm.register_native("FX.MIX", 4, 4, [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lk(g_chain_mtx);
+        auto it = g_chains.find((int)args[0].to_int());
+        if (it == g_chains.end()) return Value::make_bool(false);
+        FxBranch* br = bus_branch(it->second, (int)args[1].to_int());
+        if (!br) return Value::make_bool(false);
+        br->level = args[2].to_double();
+        br->pan   = args[3].to_double();
+        return Value::make_bool(true);
+    });
+
+    // FX.PROCESS(chain, samples[], [rate=44100], [channels=1]) -> samples[]
+    // Offline. With channels 2 the result is interleaved stereo, and a chain
+    // with the split section on renders its two branches into it.
+    vm.register_native("FX.PROCESS", 2, 4, [](const std::vector<Value>& args) -> Value {
         int h = (int)args[0].to_int();
         std::vector<float> buf;
         if (!collect_floats(args[1], buf)) return Value::make_array();
         double rate = args.size() >= 3 ? args[2].to_double() : 44100.0;
         if (rate <= 0) rate = 44100.0;
+        int ch = args.size() >= 4 ? (int)args[3].to_int() : 1;
+        if (ch < 1) ch = 1;
+
+        std::vector<float> outbuf;
         {
             std::lock_guard<std::mutex> lk(g_chain_mtx);
             auto it = g_chains.find(h);
-            if (it != g_chains.end())
-                for (auto& n : it->second.nodes) process_node(n, buf.data(), (unsigned)buf.size(), rate);
+            unsigned cnt = (unsigned)buf.size();
+            if (it == g_chains.end()) {
+                outbuf.assign((size_t)cnt * ch, 0.0f);
+                for (unsigned i = 0; i < cnt; i++)
+                    for (int c = 0; c < ch; c++) outbuf[(size_t)i * ch + c] = buf[i];
+            } else {
+                FxChain& fc = it->second;
+                run_section(fc.nodes, buf.data(), cnt, rate, false);
+                outbuf.assign((size_t)cnt * ch, 0.0f);
+                if (!fc.split) {
+                    for (unsigned i = 0; i < cnt; i++)
+                        for (int c = 0; c < ch; c++) outbuf[(size_t)i * ch + c] = buf[i];
+                } else {
+                    std::vector<float> bbuf(buf);
+                    run_section(fc.a.nodes, buf.data(), cnt, rate, false);
+                    run_section(fc.b.nodes, bbuf.data(), cnt, rate, false);
+                    double alv = fc.a.level, blv = fc.b.level;
+                    if (ch < 2) {
+                        for (unsigned i = 0; i < cnt; i++)
+                            outbuf[i] = (float)(buf[i] * alv + bbuf[i] * blv);
+                    } else {
+                        double al, ar, bl, br;
+                        pan_gains(fc.a.pan, al, ar);
+                        pan_gains(fc.b.pan, bl, br);
+                        for (unsigned i = 0; i < cnt; i++) {
+                            float l = (float)(buf[i] * alv * al + bbuf[i] * blv * bl);
+                            float r = (float)(buf[i] * alv * ar + bbuf[i] * blv * br);
+                            outbuf[(size_t)i * ch]     = l;
+                            outbuf[(size_t)i * ch + 1] = r;
+                            for (int c = 2; c < ch; c++) outbuf[(size_t)i * ch + c] = 0.5f * (l + r);
+                        }
+                    }
+                }
+            }
         }
         Value out = Value::make_array();
-        out.as_array()->elements.reserve(buf.size());
-        for (float f : buf) out.as_array()->elements.push_back(Value::make_f64(f));
+        out.as_array()->elements.reserve(outbuf.size());
+        for (float f : outbuf) out.as_array()->elements.push_back(Value::make_f64(f));
         return out;
     });
 
@@ -547,17 +657,20 @@ void register_audiofx_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // FX.SET(chain, nodeIndex, param$, value) -> bool   tweak a node param LIVE.
+    // FX.SET(chain, nodeIndex, param$, value, [bus=0]) -> bool   tweak LIVE.
     // Only updates an existing param (RT-safe: no map insertion while monitoring).
-    vm.register_native("FX.SET", 4, 4, [](const std::vector<Value>& args) -> Value {
+    // nodeIndex counts within its own bus.
+    vm.register_native("FX.SET", 4, 5, [](const std::vector<Value>& args) -> Value {
         int h = (int)args[0].to_int(), idx = (int)args[1].to_int();
+        int bus = args.size() >= 5 ? (int)args[4].to_int() : 0;
         std::string key = args[2].to_string();
         double val = args[3].to_double();
         std::lock_guard<std::mutex> lk(g_chain_mtx);
         auto it = g_chains.find(h);
-        if (it == g_chains.end() || idx < 0 || idx >= (int)it->second.nodes.size())
-            return Value::make_bool(false);
-        auto& p = it->second.nodes[idx].p;
+        if (it == g_chains.end()) return Value::make_bool(false);
+        auto* nodes = bus_nodes(it->second, bus);
+        if (idx < 0 || idx >= (int)nodes->size()) return Value::make_bool(false);
+        auto& p = (*nodes)[idx].p;
         auto pit = p.find(key);
         if (pit == p.end()) return Value::make_bool(false);
         pit->second = val;
@@ -570,17 +683,28 @@ void register_audiofx_builtins(VM& vm) {
         std::lock_guard<std::mutex> lk(g_chain_mtx);
         auto it = g_chains.find(h);
         if (it == g_chains.end()) return Value::make_string("(no such chain)");
+        FxChain& fc = it->second;
         std::string s;
         char buf[80];
-        for (size_t i = 0; i < it->second.nodes.size(); i++) {
-            auto& n = it->second.nodes[i];
-            snprintf(buf, sizeof(buf), "%u: %-10s", (unsigned)i, n.type.c_str());
-            s += buf;
-            for (auto& kv : n.p) {
-                snprintf(buf, sizeof(buf), " %s=%g", kv.first.c_str(), kv.second);
-                s += buf;
-            }
+        auto dump = [&](const char* title, std::vector<FxNode>& nodes) {
+            s += title;
             s += "\n";
+            for (size_t i = 0; i < nodes.size(); i++) {
+                snprintf(buf, sizeof(buf), "  %u: %-10s", (unsigned)i, nodes[i].type.c_str());
+                s += buf;
+                for (auto& kv : nodes[i].p) {
+                    snprintf(buf, sizeof(buf), " %s=%g", kv.first.c_str(), kv.second);
+                    s += buf;
+                }
+                s += "\n";
+            }
+        };
+        dump(fc.split ? "main (before the split)" : "main", fc.nodes);
+        if (fc.split) {
+            snprintf(buf, sizeof(buf), "branch A  level=%g pan=%g", fc.a.level, fc.a.pan);
+            dump(buf, fc.a.nodes);
+            snprintf(buf, sizeof(buf), "branch B  level=%g pan=%g", fc.b.level, fc.b.pan);
+            dump(buf, fc.b.nodes);
         }
         return Value::make_string(s);
     });
@@ -591,17 +715,61 @@ void register_audiofx_builtins(VM& vm) {
 }
 
 // realtime block processing (called from the audio callback). No lock: the chain
-// must not be mutated while monitoring. Cabinet is skipped (it allocates).
-void fx_process_chain_rt(int handle, float* buf, unsigned frames, double rate) {
+// must not be mutated while monitoring. Cabinet is skipped (it allocates), and
+// so is any block larger than the scratch buffers, which are sized on FX.NEW.
+void fx_process_chain_rt(int handle, const float* in, float* out,
+                         unsigned frames, unsigned outCh, double rate) {
+    auto spread_dry = [&]() {
+        for (unsigned i = 0; i < frames; i++)
+            for (unsigned c = 0; c < outCh; c++) out[(size_t)i * outCh + c] = in[i];
+    };
     auto it = g_chains.find(handle);
-    if (it == g_chains.end()) return;
-    for (auto& n : it->second.nodes)
-        if (n.type != "cabinet") process_node(n, buf, frames, rate);
+    if (it == g_chains.end()) { spread_dry(); return; }
+    FxChain& fc = it->second;
+    if (frames > fc.sa.size() || frames > fc.sb.size()) { spread_dry(); return; }
+
+    float* am = fc.sa.data();
+    for (unsigned i = 0; i < frames; i++) am[i] = in[i];
+    run_section(fc.nodes, am, frames, rate, true);
+
+    if (!fc.split) {
+        for (unsigned i = 0; i < frames; i++)
+            for (unsigned c = 0; c < outCh; c++) out[(size_t)i * outCh + c] = am[i];
+        return;
+    }
+
+    float* bm = fc.sb.data();
+    for (unsigned i = 0; i < frames; i++) bm[i] = am[i];
+    run_section(fc.a.nodes, am, frames, rate, true);
+    run_section(fc.b.nodes, bm, frames, rate, true);
+
+    double alv = fc.a.level, blv = fc.b.level;
+    // a single output channel still hears both branches, just without the image
+    if (outCh < 2) {
+        for (unsigned i = 0; i < frames; i++)
+            out[i] = (float)(am[i] * alv + bm[i] * blv);
+        return;
+    }
+    double al, ar, bl, br;
+    pan_gains(fc.a.pan, al, ar);
+    pan_gains(fc.b.pan, bl, br);
+    for (unsigned i = 0; i < frames; i++) {
+        float l = (float)(am[i] * alv * al + bm[i] * blv * bl);
+        float r = (float)(am[i] * alv * ar + bm[i] * blv * br);
+        float* o = out + (size_t)i * outCh;
+        o[0] = l;
+        o[1] = r;
+        for (unsigned c = 2; c < outCh; c++) o[c] = 0.5f * (l + r);
+    }
 }
 
 #else  // !FX
 
 void register_audiofx_builtins(VM&) {}
-void fx_process_chain_rt(int, float*, unsigned, double) {}
+void fx_process_chain_rt(int, const float* in, float* out,
+                         unsigned frames, unsigned outCh, double) {
+    for (unsigned i = 0; i < frames; i++)
+        for (unsigned c = 0; c < outCh; c++) out[(size_t)i * outCh + c] = in ? in[i] : 0.0f;
+}
 
 #endif
