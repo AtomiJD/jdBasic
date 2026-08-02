@@ -83,15 +83,16 @@
     Dein Name traegt deine Sammlung - nimm immer denselben.
   </p>
   <p class="hint" id="err"></p>
+  <p class="hint"><a href="players.html" id="l_players" style="color:#5df0d0">Rangliste und Sammlungen</a></p>
 
 <script>
   const TXT = {
-    de:{name:"Dein Name",pin:"PIN",room:"Raum",lang:"Sprache",go:"STARTEN",pinph:"4 Ziffern",
+    de:{name:"Dein Name",pin:"PIN",room:"Raum",lang:"Sprache",go:"STARTEN",pinph:"4 Ziffern",players:"Rangliste und Sammlungen",
         hint:"Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>Dein Name plus PIN gehoert ab dem ersten Start dir - sie schuetzt deine Sammlung.",
         msg:{msg_badpin:"PIN: 4 bis 8 Ziffern",msg_wrongpin:"Falsche PIN fuer diesen Namen.",
              msg_locked:"Zu viele Versuche. Eine Minute warten.",msg_badname:"Name fehlt oder ist zu lang.",
              msg_badreq:"Anfrage unverstaendlich.",net:"Server nicht erreichbar."}},
-    en:{name:"Your name",pin:"PIN",room:"Room",lang:"Language",go:"LAUNCH",pinph:"4 digits",
+    en:{name:"Your name",pin:"PIN",room:"Room",lang:"Language",go:"LAUNCH",pinph:"4 digits",players:"Standings and collections",
         hint:"Whoever picks the same <b>room</b> plays against you.<br>Your name plus PIN is yours from the first launch - it protects your collection.",
         msg:{msg_badpin:"PIN: 4 to 8 digits",msg_wrongpin:"Wrong PIN for that name.",
              msg_locked:"Too many tries. Wait a minute.",msg_badname:"Name missing or too long.",
@@ -115,6 +116,7 @@
     $('l_name').textContent = t.name;
     $('l_pin').textContent = t.pin;
     $('pin').placeholder = t.pinph;
+    $('l_players').textContent = t.players;
     $('l_room').textContent = t.room;
     $('l_lang').textContent = t.lang;
     $('go').textContent = t.go;

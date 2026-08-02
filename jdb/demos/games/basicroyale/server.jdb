@@ -277,8 +277,66 @@ SUB RECORDMATCH(rm)
             GIVECHEST(players[i]{"NAME"})
         NEXT i
         SAVESTATS()
+        ADDMATCH(rm, w)
         PRINT "match recorded: winner "; w; " - chests handed out"
     ENDIF
+ENDSUB
+
+' ---- match log ----
+'
+' The per-player totals cannot answer "how do the two of us stand against
+' each other", so every finished match is written down as its own row.
+
+CONST MATCH_KEEP = 300
+
+DIM matches = []
+TRY
+    matches = JSON.PARSE$(TXTREADER$("matches.json"))
+CATCH
+ENDTRY
+IF TYPEOF(matches) <> "ARRAY" THEN matches = []
+
+' The server binary predates NOW_EPOCH, but DATE$ and TIME$ are there and
+' sort correctly as text. Both need their parens: read bare inside a FUNC,
+' a zero-argument native resolves as an undeclared local and yields NONE.
+FUNC STAMP$()
+    DIM t$ = ""
+    TRY
+        t$ = DATE$() + " " + TIME$()
+    CATCH
+    ENDTRY
+    RETURN t$
+ENDFUNC
+
+SUB SAVEMATCHES()
+    TRY
+        TXTWRITER "matches.json", JSON.STRINGIFY$(matches)
+    CATCH
+    ENDTRY
+ENDSUB
+
+SUB ADDMATCH(rm, w)
+    DIM st = rm{"ST"}
+    DIM players = rm{"PLAYERS"}
+    DIM row AS MAP = {}
+    row{"AT"} = STAMP$()
+    row{"ROOM"} = rm{"KEY"}
+    row{"A"} = players[0]{"NAME"}
+    row{"B"} = players[1]{"NAME"}
+    row{"CA"} = st{"CROWNS"}[0]
+    row{"CB"} = st{"CROWNS"}[1]
+    row{"WINNER"} = w
+    row{"SECS"} = INT(st{"TICKNO"} / 10)
+    matches = APPEND(matches, row)
+    IF LEN(matches) > MATCH_KEEP THEN
+        DIM keep = []
+        DIM k
+        FOR k = LEN(matches) - MATCH_KEEP TO LEN(matches) - 1
+            keep = APPEND(keep, matches[k])
+        NEXT k
+        matches = keep
+    ENDIF
+    SAVEMATCHES()
 ENDSUB
 
 FUNC JJ(m)
@@ -506,6 +564,58 @@ FUNC HLEADER(req)
         out = APPEND(out, [{ "NAME": n$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"}, "WILD": s{"WILD"}, "UPGRADES": ncards, "CLAIMED": claimed }])
     NEXT n$
     RETURN JJ({ "OK": 1, "PLAYERS": out })
+ENDFUNC
+
+' ---- the public board ----
+'
+' Everything here is readable without a login: it is what the players want
+' to compare after a match. Credentials and wildcards stay out of it.
+
+FUNC HPLAYERS(req)
+    DIM out = []
+    FOR EACH n$ IN MAP.KEYS(stats)
+        DIM s = STATOF(n$)
+        DIM lifted = 0
+        DIM cards = 0
+        FOR EACH ck$ IN MAP.KEYS(s{"CARDS"})
+            cards = cards + 1
+            lifted = lifted + s{"CARDS"}{ck$}{"LVL"} - 1
+        NEXT ck$
+        DIM played = s{"WINS"} + s{"LOSSES"} + s{"DRAWS"}
+        out = APPEND(out, [{ "NAME": n$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, _
+                             "DRAWS": s{"DRAWS"}, "PLAYED": played, "CROWNS": s{"CROWNS"}, _
+                             "CARDS": cards, "UPGRADES": lifted }])
+    NEXT n$
+    RETURN JJ({ "OK": 1, "PLAYERS": out })
+ENDFUNC
+
+' One player's collection, so two of them can be held side by side.
+FUNC HPLAYER(req)
+    DIM name$ = ""
+    IF MAP.EXISTS(req{"PARAMS"}, "name") THEN name$ = req{"PARAMS"}{"name"}
+    IF name$ = "" ORELSE NOT MAP.EXISTS(stats, name$) THEN RETURN JJ({ "OK": 0, "MSG": "unbekannter Spieler" })
+    DIM s = STATOF(name$)
+    DIM cl = []
+    FOR EACH ck$ IN SORT(MAP.KEYS(s{"CARDS"}))
+        cl = APPEND(cl, [{ "KIND": ck$, "LVL": s{"CARDS"}{ck$}{"LVL"}, "HAVE": s{"CARDS"}{ck$}{"HAVE"} }])
+    NEXT ck$
+    RETURN JJ({ "OK": 1, "NAME": name$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, _
+                "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"}, "CARDS": cl })
+ENDFUNC
+
+' Recent matches, newest first. The head-to-head tally falls out of this.
+FUNC HMATCHES(req)
+    DIM lim = 40
+    IF MAP.EXISTS(req{"PARAMS"}, "limit") THEN lim = INT(VAL(req{"PARAMS"}{"limit"}))
+    IF lim < 1 THEN lim = 1
+    IF lim > MATCH_KEEP THEN lim = MATCH_KEEP
+    DIM out = []
+    DIM i
+    FOR i = LEN(matches) - 1 TO 0 STEP -1
+        IF LEN(out) >= lim THEN EXITFOR
+        out = APPEND(out, [matches[i]])
+    NEXT i
+    RETURN JJ({ "OK": 1, "MATCHES": out, "TOTAL": LEN(matches) })
 ENDFUNC
 
 ' Free a name's PIN so its owner can set a new one. The record and the
@@ -756,6 +866,9 @@ HTTP.SERVER.ON_GET "/cards", "HCARDS"
 HTTP.SERVER.ON_GET "/profile", "HPROFILE"
 HTTP.SERVER.ON_GET "/lang", "HLANG"
 HTTP.SERVER.ON_GET "/rooms", "HROOMS"
+HTTP.SERVER.ON_GET "/players", "HPLAYERS"
+HTTP.SERVER.ON_GET "/player", "HPLAYER"
+HTTP.SERVER.ON_GET "/matches", "HMATCHES"
 HTTP.SERVER.ON_GET "/leaderboard", "HLEADER"
 HTTP.SERVER.ON_POST "/drop", "HDROP"
 HTTP.SERVER.ON_GET "/drop", "HDROP"

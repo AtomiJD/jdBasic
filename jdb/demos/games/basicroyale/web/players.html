@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jdVOID - Spieler</title>
+<link rel="icon" href="icon.png">
+<meta property="og:title" content="jdVOID - Spieler">
+<meta property="og:description" content="Rangliste, Sammlungen und die direkte Bilanz.">
+<meta property="og:image" content="social.png">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:#07070f;color:#e8ecff;
+       font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;
+       max-width:760px;margin-inline:auto;}
+  h1{font-size:20px;margin:0 0 4px;color:#38e0ff;letter-spacing:.1em;}
+  .sub{color:#6f79a8;font-size:13px;margin-bottom:16px;}
+  section{background:#0e1024;border:1px solid #262b55;border-radius:14px;
+          padding:14px;margin-bottom:16px;}
+  h2{font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:#7f8bbd;margin:0 0 10px;}
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th{text-align:left;color:#6f79a8;font-weight:600;padding:6px 8px;font-size:12px;}
+  td{padding:8px;border-top:1px solid #1e2246;vertical-align:middle;}
+  tr.pick{cursor:pointer;}
+  tr.pick:hover td{background:#141838;}
+  tr.on td{background:#16214a;}
+  .k{color:#9fe8ff;font-weight:600;}
+  .muted{color:#6f79a8;}
+  .win{color:#7cf0a8;}
+  .loss{color:#ff9aad;}
+  .draw{color:#ffd479;}
+  .bar{height:10px;border-radius:5px;background:#1b1f42;overflow:hidden;display:flex;}
+  .bar i{display:block;height:100%;}
+  .bar .a{background:#5df0d0;}
+  .bar .d{background:#6b7099;}
+  .bar .b{background:#ff7a90;}
+  .h2h{display:flex;align-items:center;gap:12px;margin:6px 0 12px;font-size:22px;font-weight:700;}
+  .h2h .n{font-size:14px;font-weight:600;}
+  .cards{display:flex;flex-wrap:wrap;gap:6px;}
+  .chip{background:#141838;border:1px solid #2c3160;border-radius:9px;
+        padding:5px 8px;font-size:12px;}
+  .chip b{color:#9fe8ff;}
+  .lv{color:#ffd479;}
+  a{color:#5df0d0;}
+  .foot{font-size:12px;color:#6f79a8;text-align:center;margin-top:20px;}
+</style>
+</head>
+<body>
+  <h1>jdVOID SPIELER</h1>
+  <div class="sub">Rangliste, Sammlungen und die direkte Bilanz</div>
+
+  <section>
+    <h2>Rangliste</h2>
+    <table id="players"><thead><tr>
+      <th>Spieler</th><th>S/N/U</th><th>Partien</th><th>Kronen</th><th>Karten</th><th>Aufwertungen</th>
+    </tr></thead><tbody></tbody></table>
+    <p class="muted" style="font-size:12px;margin:10px 0 0">
+      Zwei Namen antippen fuer das Direktduell.
+    </p>
+  </section>
+
+  <section id="duel" hidden>
+    <h2>Direktduell</h2>
+    <div id="duelbody"></div>
+  </section>
+
+  <section id="coll" hidden>
+    <h2>Sammlung</h2>
+    <div id="collbody"></div>
+  </section>
+
+  <section>
+    <h2>Letzte Partien</h2>
+    <table id="matches"><thead><tr>
+      <th>Wann</th><th>Partie</th><th>Kronen</th><th>Raum</th>
+    </tr></thead><tbody></tbody></table>
+  </section>
+
+  <p class="foot"><a href="./">Zum Spiel</a></p>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const API = 'api/';
+  let players = [], matches = [], picked = [];
+
+  // ?a=&b= deep-links a duel, so a head-to-head can be shared as a link
+  const qp = new URLSearchParams(location.search);
+  ['a', 'b'].forEach(k => { const v = qp.get(k); if (v) picked.push(v); });
+
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  async function get(path){ return (await fetch(API + path)).json(); }
+
+  // The server stores one row per match, so the tally between any two
+  // players is a filter over that list.
+  function headToHead(a, b){
+    let wa = 0, wb = 0, dr = 0, rows = [];
+    matches.forEach(m => {
+      const pair = (m.A === a && m.B === b) || (m.A === b && m.B === a);
+      if (!pair) return;
+      rows.push(m);
+      const winner = m.WINNER === 2 ? null : (m.WINNER === 0 ? m.A : m.B);
+      if (winner === null) dr++; else if (winner === a) wa++; else wb++;
+    });
+    return {wa, wb, dr, rows};
+  }
+
+  function showDuel(){
+    if (picked.length !== 2) { $('duel').hidden = true; return; }
+    const [a, b] = picked;
+    const h = headToHead(a, b);
+    const total = h.wa + h.wb + h.dr;
+    const pc = n => total ? (n / total * 100) + '%' : '0%';
+    $('duelbody').innerHTML =
+      '<div class="h2h"><span class="win">' + h.wa + '</span>'
+      + '<span class="n">' + esc(a) + '</span>'
+      + '<span class="muted" style="flex:1;text-align:center;font-size:13px">'
+      + (total ? total + ' Partien' : 'noch nie gegeneinander') + '</span>'
+      + '<span class="n">' + esc(b) + '</span>'
+      + '<span class="loss">' + h.wb + '</span></div>'
+      + '<div class="bar"><i class="a" style="width:' + pc(h.wa) + '"></i>'
+      + '<i class="d" style="width:' + pc(h.dr) + '"></i>'
+      + '<i class="b" style="width:' + pc(h.wb) + '"></i></div>'
+      + (h.dr ? '<p class="muted" style="font-size:12px">' + h.dr + ' unentschieden</p>' : '');
+    $('duel').hidden = false;
+  }
+
+  async function showCollection(name){
+    const r = await get('player?name=' + encodeURIComponent(name));
+    if (!r || r.OK !== 1) { $('coll').hidden = true; return; }
+    const chips = r.CARDS.map(c =>
+      '<span class="chip"><b>' + esc(c.KIND) + '</b> <span class="lv">Lv' + c.LVL + '</span>'
+      + ' <span class="muted">' + c.HAVE + '</span></span>').join('');
+    $('collbody').innerHTML = '<p class="k">' + esc(r.NAME) + '</p>'
+      + '<div class="cards">' + (chips || '<span class="muted">keine Karten</span>') + '</div>';
+    $('coll').hidden = false;
+  }
+
+  function pick(name){
+    const i = picked.indexOf(name);
+    if (i >= 0) picked.splice(i, 1);
+    else { picked.push(name); if (picked.length > 2) picked.shift(); }
+    renderPlayers();
+    showDuel();
+    showCollection(picked[picked.length - 1] || name);
+  }
+
+  function renderPlayers(){
+    const tb = $('players').tBodies[0];
+    tb.innerHTML = '';
+    players.slice().sort((a, b) => b.WINS - a.WINS || b.CROWNS - a.CROWNS)
+      .forEach(p => {
+        const tr = tb.insertRow();
+        tr.className = 'pick' + (picked.includes(p.NAME) ? ' on' : '');
+        tr.onclick = () => pick(p.NAME);
+        tr.insertCell().innerHTML = '<span class="k">' + esc(p.NAME) + '</span>';
+        tr.insertCell().innerHTML = '<span class="win">' + p.WINS + '</span> / '
+          + '<span class="loss">' + p.LOSSES + '</span> / '
+          + '<span class="draw">' + p.DRAWS + '</span>';
+        tr.insertCell().textContent = p.PLAYED;
+        tr.insertCell().textContent = p.CROWNS;
+        tr.insertCell().textContent = p.CARDS;
+        tr.insertCell().textContent = '+' + p.UPGRADES;
+      });
+    if (!players.length) tb.insertRow().insertCell().textContent = 'noch keine Spieler';
+  }
+
+  function renderMatches(){
+    const tb = $('matches').tBodies[0];
+    tb.innerHTML = '';
+    matches.slice(0, 20).forEach(m => {
+      const tr = tb.insertRow();
+      tr.insertCell().innerHTML = '<span class="muted">' + esc(m.AT || '?') + '</span>';
+      const win = m.WINNER === 2 ? null : (m.WINNER === 0 ? m.A : m.B);
+      const nm = n => n === win ? '<span class="win">' + esc(n) + '</span>' : esc(n);
+      tr.insertCell().innerHTML = nm(m.A) + ' <span class="muted">vs</span> ' + nm(m.B)
+        + (win === null ? ' <span class="draw">(unentschieden)</span>' : '');
+      tr.insertCell().textContent = m.CA + ':' + m.CB;
+      tr.insertCell().innerHTML = '<span class="muted">' + esc(m.ROOM) + '</span>';
+    });
+    if (!matches.length) tb.insertRow().insertCell().textContent = 'noch keine Partien';
+  }
+
+  async function loadAll(){
+    try {
+      players = (await get('players')).PLAYERS || [];
+      matches = (await get('matches?limit=100')).MATCHES || [];
+      renderPlayers();
+      renderMatches();
+      showDuel();
+      if (picked.length && !$('coll').dataset.shown) {
+        $('coll').dataset.shown = '1';
+        showCollection(picked[picked.length - 1]);
+      }
+    } catch (e) {
+      $('players').tBodies[0].innerHTML = '<tr><td>Server nicht erreichbar</td></tr>';
+    }
+  }
+
+  loadAll();
+  setInterval(() => { if (!document.hidden) loadAll(); }, 20000);
+</script>
+</body>
+</html>
