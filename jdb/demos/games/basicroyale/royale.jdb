@@ -99,6 +99,8 @@ DIM uimode$ = "menu"
 DIM mydeck = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"]
 DIM myname$ = "Spieler"
 DIM auth$ = ""            ' session token, stands in for the PIN
+DIM emote_open = 0
+DIM emote_col = [[120, 240, 160], [255, 220, 90], [120, 200, 255], [255, 110, 110], [180, 170, 220], [255, 150, 220]]
 DIM allcards AS MAP = {}
 DIM cardorder = []
 
@@ -504,6 +506,68 @@ SUB MUSICSTEP(fnow)
     ENDIF
 ENDSUB
 
+' Six faces drawn from discs and strokes, so they need no emoji font and
+' match the geometric look of the ships.
+SUB DrawEmoteFace(cx, cy, r, id)
+    DIM col = emote_col[id]
+    DRAWCOLOR INT(col[0] * 0.35), INT(col[1] * 0.35), INT(col[2] * 0.35)
+    CIRCLE cx, cy, r, TRUE
+    DRAWCOLOR col[0], col[1], col[2]
+    CIRCLE cx, cy, r, FALSE
+    DIM ex = INT(r * 0.38)
+    DIM ey = cy - INT(r * 0.25)
+    DIM m = cy + INT(r * 0.34)
+    IF id = 4 THEN
+        ' asleep: two closed lids and a drifting z
+        LINE cx - ex - 3, ey, cx - ex + 3, ey
+        LINE cx + ex - 3, ey, cx + ex + 3, ey
+        TEXT cx + INT(r * 0.45), cy - r - 4, "z"
+    ELSE
+        CIRCLE cx - ex, ey, 2, TRUE
+        CIRCLE cx + ex, ey, 2, TRUE
+    ENDIF
+    IF id = 3 THEN
+        ' angry: brows down toward the nose
+        LINE cx - ex - 4, ey - 7, cx - ex + 4, ey - 3
+        LINE cx + ex + 4, ey - 7, cx + ex - 4, ey - 3
+    ENDIF
+    IF id = 0 THEN
+        LINE cx - ex, m - 2, cx - 2, m + 3
+        LINE cx - 2, m + 3, cx + 2, m + 3
+        LINE cx + 2, m + 3, cx + ex, m - 2
+    ELSEIF id = 1 THEN
+        ' laughing: an open mouth filled in
+        DIM w
+        FOR w = 0 TO 3
+            LINE cx - ex + w, m - 1 + w, cx + ex - w, m - 1 + w
+        NEXT w
+    ELSEIF id = 2 THEN
+        CIRCLE cx, m, INT(r * 0.28), FALSE
+    ELSEIF id = 3 THEN
+        LINE cx - ex, m + 3, cx - 2, m - 2
+        LINE cx - 2, m - 2, cx + 2, m - 2
+        LINE cx + 2, m - 2, cx + ex, m + 3
+    ELSEIF id = 4 THEN
+        LINE cx - 4, m, cx + 4, m
+    ELSE
+        ' cheeky: a grin with the tongue out
+        LINE cx - ex, m - 2, cx + ex, m - 2
+        DRAWCOLOR 255, 120, 170
+        ROUNDED_RECT cx - 4, m - 1, 8, 7, 3, TRUE
+    ENDIF
+ENDSUB
+
+SUB SENDEMOTE(id)
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "ID": id, "ROOM": room$ })
+        DIM r$ = HTTP.POST$(SRV$ + "/emote", body$, "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} <> 1 THEN msg$ = m{"MSG"}
+    CATCH
+    ENDTRY
+    emote_open = 0
+ENDSUB
+
 SUB PLAYFX(t$)
     IF snd_on = 1 ANDALSO sfx_on = 1 THEN
         TRY
@@ -521,6 +585,8 @@ SUB PLAYFX(t$)
                 SOUND.PLAY 3, 200
             ELSEIF t$ = "FALL" THEN
                 SOUND.PLAY 3, 50
+            ELSEIF t$ = "EMOTE" THEN
+                SOUND.PLAY 1, 660
             ENDIF
         CATCH
             snd_on = 0
@@ -579,11 +645,24 @@ SUB DrawFX(fnow)
         IF t$ = "FALL" THEN dur = 22
         IF t$ = "HIT" THEN dur = 6
         IF t$ = "DIE" THEN dur = 10
+        IF t$ = "EMOTE" THEN dur = 70
         IF age <= dur THEN
             DIM p = age / (dur * 1.0)
             DIM ex = PX(evt{"X"})
             DIM ey = PY(WY(evt{"Y"}))
-            IF t$ = "SHOT" THEN
+            IF t$ = "EMOTE" THEN
+                ' a bubble over the sender's base, rising and fading out
+                DIM lift = INT(p * 14)
+                DIM by = ey - 26 - lift
+                DRAWCOLOR 18, 20, 44
+                ROUNDED_RECT ex - 26, by - 24, 52, 48, 14, TRUE
+                DIM ec = emote_col[evt{"ID"}]
+                DRAWCOLOR ec[0], ec[1], ec[2]
+                ROUNDED_RECT ex - 26, by - 24, 52, 48, 14, FALSE
+                LINE ex - 6, by + 24, ex, by + 32
+                LINE ex, by + 32, ex + 6, by + 24
+                DrawEmoteFace(ex, by, 17, evt{"ID"})
+            ELSEIF t$ = "SHOT" THEN
                 DIM sx0 = PX(evt{"FX"})
                 DIM sy0 = PY(WY(evt{"FY"}))
                 DIM x1 = sx0 + INT((ex - sx0) * p)
@@ -1167,6 +1246,18 @@ SUB DrawHud()
     IF LEN(profiles) = 2 THEN
         TEXT 290, 26, T$("wins_short") + " " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"})
     ENDIF
+    ' emote button, and the picker it opens across the top of the board
+    DrawEmoteFace(438, 26, 18, 0)
+    IF emote_open = 1 THEN
+        DRAWCOLOR 14, 16, 36
+        ROUNDED_RECT 10, BOARD_Y0 + 8, 448, 60, 16, TRUE
+        DRAWCOLOR 90, 110, 190
+        ROUNDED_RECT 10, BOARD_Y0 + 8, 448, 60, 16, FALSE
+        DIM eb
+        FOR eb = 0 TO 5
+            DrawEmoteFace(46 + eb * 75, BOARD_Y0 + 38, 22, eb)
+        NEXT eb
+    ENDIF
     IF msg$ <> "" THEN
         DRAWCOLOR 255, 220, 0
         TEXT 6, 46, T$(msg$)
@@ -1346,6 +1437,15 @@ SUB HandleClick(mx, my)
     ELSEIF ISOVER() = 1 THEN
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 496 ANDALSO my <= 542 THEN SENDREMATCH()
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 552 ANDALSO my <= 592 THEN uimode$ = "menu"
+    ELSEIF mx >= 414 ANDALSO my <= 50 THEN
+        emote_open = 1 - emote_open
+    ELSEIF emote_open = 1 ANDALSO my >= BOARD_Y0 + 8 ANDALSO my <= BOARD_Y0 + 68 THEN
+        DIM eslot = INT((mx - 10) / 75)
+        IF eslot >= 0 ANDALSO eslot <= 5 THEN
+            SENDEMOTE(eslot)
+        ELSE
+            emote_open = 0
+        ENDIF
     ELSEIF my >= 840 THEN
         DIM slot = INT(mx / 117)
         IF slot > 3 THEN slot = 3

@@ -424,6 +424,38 @@ FUNC HPLAY(req)
     RETURN JJ({ "OK": IIF(res$ = "", 1, 0), "MSG": res$ })
 ENDFUNC
 
+' Six fixed emotes, no free text: nothing to type on a phone mid-match and
+' nothing to moderate. The bubble rides the normal event list, so clients
+' pick it up with the next /state like any explosion.
+CONST EMOTE_GAP_MS = 1500
+CONST EMOTE_COUNT = 6
+
+FUNC HEMOTE(req)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
+    DIM rm = ROOMOF(req, b)
+    SYNCSIM(rm)
+    DIM pid = PIDBYTOK(rm{"PLAYERS"}, b{"TOK"})
+    IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
+    DIM id = INT(b{"ID"})
+    IF id < 0 ORELSE id >= EMOTE_COUNT THEN RETURN JJ({ "OK": 0, "MSG": "msg_unknown" })
+    DIM p = rm{"PLAYERS"}[pid]
+    DIM now = TICK()
+    IF MAP.EXISTS(p, "EMOTED") ANDALSO now - p{"EMOTED"} < EMOTE_GAP_MS THEN
+        RETURN JJ({ "OK": 0, "MSG": "msg_slowdown" })
+    ENDIF
+    p{"EMOTED"} = now
+    ' place it over the sender's own base, which WY mirrors for player 1
+    DIM ey = 26.0
+    IF pid = 1 THEN ey = 4.0
+    DIM r = ARENA.ADDEVENT(rm{"ST"}, { "T": "EMOTE", "PID": pid, "ID": id, "X": 9.0, "Y": ey })
+    RETURN JJ({ "OK": 1 })
+ENDFUNC
+
 FUNC HRESET(req)
     DIM b = 0
     TRY
@@ -469,9 +501,39 @@ FUNC HLEADER(req)
         FOR EACH ck$ IN MAP.KEYS(s{"CARDS"})
             ncards = ncards + s{"CARDS"}{ck$}{"LVL"} - 1
         NEXT ck$
-        out = APPEND(out, [{ "NAME": n$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"}, "WILD": s{"WILD"}, "UPGRADES": ncards }])
+        DIM claimed = 0
+        IF s{"PINHASH"} <> "" THEN claimed = 1
+        out = APPEND(out, [{ "NAME": n$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"}, "WILD": s{"WILD"}, "UPGRADES": ncards, "CLAIMED": claimed }])
     NEXT n$
     RETURN JJ({ "OK": 1, "PLAYERS": out })
+ENDFUNC
+
+' Free a name's PIN so its owner can set a new one. The record and the
+' collection stay; only the credential goes, along with any session still
+' running under that name.
+FUNC HRESETPIN(req)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF ISADMIN(req, b) = 0 THEN RETURN DENY()
+    DIM n$ = ""
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "NAME") THEN n$ = b{"NAME"}
+    IF n$ = "" ORELSE NOT MAP.EXISTS(stats, n$) THEN RETURN JJ({ "OK": 0, "MSG": "unbekannter Spieler" })
+    DIM s = STATOF(n$)
+    s{"PINHASH"} = ""
+    s{"SALT"} = ""
+    s{"TRIES"} = 0
+    s{"LOCKED"} = 0
+    DIM keep AS MAP = {}
+    FOR EACH t$ IN MAP.KEYS(sessions)
+        IF sessions{t$}{"NAME"} <> n$ THEN keep{t$} = sessions{t$}
+    NEXT t$
+    sessions = keep
+    SAVESTATS()
+    PRINT "pin reset: "; n$
+    RETURN JJ({ "OK": 1, "MSG": n$ })
 ENDFUNC
 
 ' Wipes one player's record and collection - a fresh start on request.
@@ -685,6 +747,7 @@ HTTP.SERVER.ON_GET "/state", "HSTATE"
 HTTP.SERVER.ON_POST "/login", "HLOGIN"
 HTTP.SERVER.ON_POST "/join", "HJOIN"
 HTTP.SERVER.ON_POST "/play", "HPLAY"
+HTTP.SERVER.ON_POST "/emote", "HEMOTE"
 HTTP.SERVER.ON_POST "/reset", "HRESET"
 ' browser-friendly reset - just open the URL
 HTTP.SERVER.ON_GET "/reset", "HRESET"
@@ -697,6 +760,7 @@ HTTP.SERVER.ON_GET "/leaderboard", "HLEADER"
 HTTP.SERVER.ON_POST "/drop", "HDROP"
 HTTP.SERVER.ON_GET "/drop", "HDROP"
 HTTP.SERVER.ON_POST "/wipe", "HWIPE"
+HTTP.SERVER.ON_POST "/resetpin", "HRESETPIN"
 HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
 HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
 

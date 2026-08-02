@@ -56,7 +56,7 @@
   <section>
     <h2>Spieler</h2>
     <table id="players"><thead><tr>
-      <th>Name</th><th>S/N/U</th><th>Kronen</th><th>Level</th><th>Joker</th><th></th>
+      <th>Name</th><th>S/N/U</th><th>Kronen</th><th>Level</th><th>Joker</th><th>Konto</th><th></th>
     </tr></thead><tbody></tbody></table>
   </section>
 
@@ -98,6 +98,11 @@
     b.onclick = handler; return b;
   }
 
+  async function resetPin(name){
+    if (!confirm('PIN von ' + name + ' loeschen? Sammlung und Bilanz bleiben.')) return;
+    await act(() => post('resetpin', {NAME: name}), 'PIN von ' + name + ' geloescht - der naechste Login setzt eine neue');
+  }
+
   async function loadAll(){
     if (!key()) { say('Bitte Admin-Schlüssel eintragen'); return; }
     try {
@@ -128,7 +133,12 @@
         tr.insertCell().textContent = p.CROWNS;
         tr.insertCell().textContent = '+' + p.UPGRADES;
         tr.insertCell().textContent = p.WILD;
-        tr.insertCell().appendChild(btn('Zuruecksetzen', 'bad', () => wipe(p.NAME)));
+        tr.insertCell().innerHTML = p.CLAIMED
+          ? '<span class="live">PIN</span>'
+          : '<span class="idle">frei</span>';
+        const ac = tr.insertCell(); ac.className = 'acts';
+        if (p.CLAIMED) ac.appendChild(btn('PIN loeschen', 'warn', () => resetPin(p.NAME)));
+        ac.appendChild(btn('Zuruecksetzen', 'bad', () => wipe(p.NAME)));
       });
       if (!ps.length) pb.insertRow().insertCell().textContent = 'noch keine Spieler';
       say('Stand: ' + new Date().toLocaleTimeString());
