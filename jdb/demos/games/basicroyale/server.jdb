@@ -129,7 +129,64 @@ FUNC STATOF(name$)
     IF NOT MAP.EXISTS(s, "CARDS") THEN s{"CARDS"} = {}
     IF NOT MAP.EXISTS(s, "WILD") THEN s{"WILD"} = 0
     IF NOT MAP.EXISTS(s, "LASTCHEST") THEN s{"LASTCHEST"} = []
+    IF NOT MAP.EXISTS(s, "SALT") THEN s{"SALT"} = ""
+    IF NOT MAP.EXISTS(s, "PINHASH") THEN s{"PINHASH"} = ""
+    IF NOT MAP.EXISTS(s, "TRIES") THEN s{"TRIES"} = 0
+    IF NOT MAP.EXISTS(s, "LOCKED") THEN s{"LOCKED"} = 0
     RETURN s
+ENDFUNC
+
+' ---- identity ----
+'
+' A name belongs to whoever claimed it first. The PIN itself is never
+' stored, only its salted hash, and a session token stands in for it on
+' every later request so the PIN travels exactly once.
+
+CONST PIN_TRIES = 5
+CONST PIN_LOCK_MS = 60000
+CONST SESSION_MS = 43200000        ' 12 h of idle before a token goes stale
+
+DIM sessions AS MAP = {}
+
+FUNC PINHASH$(salt$, pin$)
+    RETURN CODEC.SHA256$(salt$ + ":" + pin$)
+ENDFUNC
+
+' A PIN is 4 to 8 digits - long enough to matter, short enough to type on a
+' phone between rounds.
+FUNC PINOK(pin$)
+    IF LEN(pin$) < 4 ORELSE LEN(pin$) > 8 THEN RETURN 0
+    DIM i
+    FOR i = 0 TO LEN(pin$) - 1
+        DIM c$ = MID$(pin$, i, 1)
+        IF c$ < "0" ORELSE c$ > "9" THEN RETURN 0
+    NEXT i
+    RETURN 1
+ENDFUNC
+
+FUNC NEWSESSION$(name$)
+    DIM tok$ = CODEC.UUID$()
+    sessions{tok$} = { "NAME": name$, "LAST": TICK() }
+    RETURN tok$
+ENDFUNC
+
+' Resolve a session token to its player name, or "" if it is absent or
+' stale. Every authenticated endpoint goes through here, so a caller can
+' never name someone else.
+FUNC WHOIS$(req, b)
+    DIM tok$ = ""
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "AUTH") THEN tok$ = b{"AUTH"}
+    IF tok$ = "" ANDALSO MAP.EXISTS(req{"PARAMS"}, "auth") THEN tok$ = req{"PARAMS"}{"auth"}
+    IF tok$ = "" ORELSE NOT MAP.EXISTS(sessions, tok$) THEN RETURN ""
+    DIM se = sessions{tok$}
+    DIM now = TICK()
+    IF now - se{"LAST"} > SESSION_MS THEN RETURN ""
+    se{"LAST"} = now
+    RETURN se{"NAME"}
+ENDFUNC
+
+FUNC NEEDAUTH()
+    RETURN JJ({ "OK": 0, "MSG": "msg_login" })
 ENDFUNC
 
 FUNC CARDENTRY(s, kind$)
@@ -287,11 +344,13 @@ FUNC HJOIN(req)
         b = JSON.PARSE$(req{"BODY"})
     CATCH
     ENDTRY
+    ' the seat is taken under the name on the session, never under the one
+    ' the caller typed into the request
+    DIM name$ = WHOIS$(req, b)
+    IF name$ = "" THEN RETURN NEEDAUTH()
     DIM rm = ROOMOF(req, b)
     DIM players = rm{"PLAYERS"}
     DIM st = rm{"ST"}
-    DIM name$ = "P" + STR$(LEN(players))
-    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "NAME") THEN name$ = b{"NAME"}
     DIM deck = PICKDECK(b)
     DIM starter = ENSURESTARTER(name$)
     DIM tok$ = CODEC.UUID$()
@@ -528,18 +587,71 @@ FUNC HROOMS(req)
     RETURN JJ({ "OK": 1, "ROOMS": out })
 ENDFUNC
 
+' Claim a name or prove you already own it. The first login under a free
+' name sets its PIN; every later one has to match it.
+FUNC HLOGIN(req)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
+    DIM name$ = TRIM$("" + b{"NAME"})
+    DIM pin$ = TRIM$("" + b{"PIN"})
+    IF name$ = "" ORELSE LEN(name$) > 16 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badname" })
+    IF PINOK(pin$) = 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badpin" })
+
+    DIM s = STATOF(name$)
+    DIM now = TICK()
+    IF s{"LOCKED"} > now THEN RETURN JJ({ "OK": 0, "MSG": "msg_locked" })
+
+    IF s{"PINHASH"} = "" THEN
+        s{"SALT"} = CODEC.UUID$()
+        s{"PINHASH"} = PINHASH$(s{"SALT"}, pin$)
+        s{"TRIES"} = 0
+        DIM starter = ENSURESTARTER(name$)
+        SAVESTATS()
+        PRINT "claimed: "; name$
+        RETURN JJ({ "OK": 1, "AUTH": NEWSESSION$(name$), "NAME": name$, "CLAIMED": 1 })
+    ENDIF
+
+    IF PINHASH$(s{"SALT"}, pin$) <> s{"PINHASH"} THEN
+        s{"TRIES"} = s{"TRIES"} + 1
+        ' a four digit PIN only holds up if guessing is slow
+        IF s{"TRIES"} >= PIN_TRIES THEN
+            s{"LOCKED"} = now + PIN_LOCK_MS
+            s{"TRIES"} = 0
+            PRINT "locked: "; name$
+        ENDIF
+        SAVESTATS()
+        RETURN JJ({ "OK": 0, "MSG": "msg_wrongpin" })
+    ENDIF
+
+    s{"TRIES"} = 0
+    DIM st2 = ENSURESTARTER(name$)
+    RETURN JJ({ "OK": 1, "AUTH": NEWSESSION$(name$), "NAME": name$, "CLAIMED": 0 })
+ENDFUNC
+
+' What a client is allowed to see of a profile. The credential fields never
+' leave the server, not even to the account they belong to.
+FUNC PUBPROFILE(s)
+    RETURN { "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, _
+             "CROWNS": s{"CROWNS"}, "CARDS": s{"CARDS"}, "WILD": s{"WILD"}, _
+             "LASTCHEST": s{"LASTCHEST"} }
+ENDFUNC
+
 FUNC HPROFILE(req)
-    DIM name$ = ""
-    IF MAP.EXISTS(req{"PARAMS"}, "name") THEN name$ = req{"PARAMS"}{"name"}
-    IF name$ = "" THEN RETURN JJ({ "OK": 0, "MSG": "name fehlt" })
-    RETURN JJ({ "OK": 1, "PROFILE": ENSURESTARTER(name$) })
+    DIM name$ = WHOIS$(req, 0)
+    IF name$ = "" THEN RETURN NEEDAUTH()
+    RETURN JJ({ "OK": 1, "PROFILE": PUBPROFILE(ENSURESTARTER(name$)) })
 ENDFUNC
 
 ' Level a card: costs 2^level copies (2, 4, 8, 16); wildcards fill any
 ' shortage. Applies live to a seated player's next deploys.
 FUNC HUPGRADE(req)
     DIM b = JSON.PARSE$(req{"BODY"})
-    DIM name$ = b{"NAME"}
+    DIM name$ = WHOIS$(req, b)
+    IF name$ = "" THEN RETURN NEEDAUTH()
     DIM kind$ = b{"KIND"}
     IF NOT MAP.EXISTS(ARENA.CARDS(), kind$) THEN RETURN JJ({ "OK": 0, "MSG": "msg_unknown" })
     DIM s = STATOF(name$)
@@ -570,6 +682,7 @@ ENDFUNC
 
 HTTP.SERVER.ON_GET "/", "HROOT"
 HTTP.SERVER.ON_GET "/state", "HSTATE"
+HTTP.SERVER.ON_POST "/login", "HLOGIN"
 HTTP.SERVER.ON_POST "/join", "HJOIN"
 HTTP.SERVER.ON_POST "/play", "HPLAY"
 HTTP.SERVER.ON_POST "/reset", "HRESET"

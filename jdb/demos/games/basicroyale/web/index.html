@@ -57,6 +57,11 @@
       <label for="name" id="l_name">Dein Name</label>
       <input id="name" name="name" maxlength="14" autocomplete="nickname" placeholder="Atomi" required>
     </div>
+    <div>
+      <label for="pin" id="l_pin">PIN</label>
+      <input id="pin" name="pin" inputmode="numeric" pattern="[0-9]*" minlength="4" maxlength="8"
+             autocomplete="current-password" placeholder="4 Ziffern" required>
+    </div>
     <div class="row">
       <div>
         <label for="room" id="l_room">Raum</label>
@@ -77,13 +82,20 @@
     Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>
     Dein Name traegt deine Sammlung - nimm immer denselben.
   </p>
+  <p class="hint" id="err"></p>
 
 <script>
   const TXT = {
-    de:{name:"Dein Name",room:"Raum",lang:"Sprache",go:"STARTEN",
-        hint:"Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>Dein Name traegt deine Sammlung - nimm immer denselben."},
-    en:{name:"Your name",room:"Room",lang:"Language",go:"LAUNCH",
-        hint:"Whoever picks the same <b>room</b> plays against you.<br>Your name carries your collection - always use the same one."}
+    de:{name:"Dein Name",pin:"PIN",room:"Raum",lang:"Sprache",go:"STARTEN",pinph:"4 Ziffern",
+        hint:"Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>Dein Name plus PIN gehoert ab dem ersten Start dir - sie schuetzt deine Sammlung.",
+        msg:{msg_badpin:"PIN: 4 bis 8 Ziffern",msg_wrongpin:"Falsche PIN fuer diesen Namen.",
+             msg_locked:"Zu viele Versuche. Eine Minute warten.",msg_badname:"Name fehlt oder ist zu lang.",
+             msg_badreq:"Anfrage unverstaendlich.",net:"Server nicht erreichbar."}},
+    en:{name:"Your name",pin:"PIN",room:"Room",lang:"Language",go:"LAUNCH",pinph:"4 digits",
+        hint:"Whoever picks the same <b>room</b> plays against you.<br>Your name plus PIN is yours from the first launch - it protects your collection.",
+        msg:{msg_badpin:"PIN: 4 to 8 digits",msg_wrongpin:"Wrong PIN for that name.",
+             msg_locked:"Too many tries. Wait a minute.",msg_badname:"Name missing or too long.",
+             msg_badreq:"Could not read the request.",net:"Server unreachable."}}
   };
   const $ = id => document.getElementById(id);
   const qp = new URLSearchParams(location.search);
@@ -101,6 +113,8 @@
   function applyLang(){
     const t = TXT[$('lang').value] || TXT.de;
     $('l_name').textContent = t.name;
+    $('l_pin').textContent = t.pin;
+    $('pin').placeholder = t.pinph;
     $('l_room').textContent = t.room;
     $('l_lang').textContent = t.lang;
     $('go').textContent = t.go;
@@ -110,13 +124,34 @@
   $('lang').addEventListener('change', applyLang);
   applyLang();
 
-  $('f').addEventListener('submit', ev => {
+  // The PIN is traded for a session token here, so it never reaches the
+  // game URL and never lands in a server log.
+  $('f').addEventListener('submit', async ev => {
     ev.preventDefault();
     const name = $('name').value.trim() || 'Spieler';
+    const pin  = $('pin').value.trim();
     const room = ($('room').value.trim() || 'main').toLowerCase();
     const lang = $('lang').value;
+    const t = TXT[lang] || TXT.de;
+    $('err').textContent = '';
+    $('go').disabled = true;
+    let r;
+    try {
+      const resp = await fetch('api/login', {
+        method: 'POST', headers: {'Content-Type': 'text/plain'},
+        body: JSON.stringify({NAME: name, PIN: pin})
+      });
+      r = await resp.json();
+    } catch (e) {
+      r = {OK: 0, MSG: 'net'};
+    }
+    $('go').disabled = false;
+    if (!r || r.OK !== 1) {
+      $('err').textContent = (t.msg[r && r.MSG] || t.msg.net);
+      return;
+    }
     localStorage.setItem('jdvoid', JSON.stringify({name, room, lang}));
-    const q = new URLSearchParams({prog:'royale', fs:'1', name, room, lang});
+    const q = new URLSearchParams({prog:'royale', fs:'1', name, room, lang, auth:r.AUTH});
     location.href = 'play/?' + q.toString();
   });
 </script>

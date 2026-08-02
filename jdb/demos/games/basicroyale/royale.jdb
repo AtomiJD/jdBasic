@@ -98,6 +98,7 @@ DIM frame = 0
 DIM uimode$ = "menu"
 DIM mydeck = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "PLASMA"]
 DIM myname$ = "Spieler"
+DIM auth$ = ""            ' session token, stands in for the PIN
 DIM allcards AS MAP = {}
 DIM cardorder = []
 
@@ -123,12 +124,16 @@ SUB LOADLANG()
     ENDTRY
 ENDSUB
 
-' A shared link personalises the session: ?name= names the player and
-' ?room= picks the match, so several pairs can play at once.
+' A shared link personalises the session: ?room= picks the match and ?auth=
+' carries the session token the landing page got from the login. ?pin= is
+' the way in without that page, for a client started by hand.
 DIM room$ = "main"
+DIM mypin$ = ""
 TRY
     DIM up = JSON.PARSE$(TXTREADER$("/url_params.json"))
     IF MAP.EXISTS(up, "name") THEN myname$ = up{"name"}
+    IF MAP.EXISTS(up, "auth") THEN auth$ = up{"auth"}
+    IF MAP.EXISTS(up, "pin") THEN mypin$ = up{"pin"}
     IF MAP.EXISTS(up, "room") THEN room$ = up{"room"}
     IF MAP.EXISTS(up, "__lang") THEN lang$ = LCASE$(MID$(up{"__lang"}, 0, 2))
     IF MAP.EXISTS(up, "lang") THEN lang$ = LCASE$(MID$(up{"lang"}, 0, 2))
@@ -246,9 +251,30 @@ FUNC CCOLOR(kind$)
     RETURN [180, 180, 180]
 ENDFUNC
 
+' Trade name and PIN for a session token. Only needed when the client was
+' started without one, which is the hand-started case.
+SUB LOGIN()
+    IF auth$ <> "" ORELSE mypin$ = "" THEN RETURN
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "NAME": myname$, "PIN": mypin$ })
+        DIM r$ = HTTP.POST$(SRV$ + "/login", body$, "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} = 1 THEN
+            auth$ = m{"AUTH"}
+            myname$ = m{"NAME"}
+            msg$ = ""
+        ELSE
+            msg$ = m{"MSG"}
+        ENDIF
+    CATCH
+        msg$ = "msg_login"
+    ENDTRY
+    mypin$ = ""
+ENDSUB
+
 SUB LOADPROFILE()
     TRY
-        DIM r$ = HTTP.GET$(SRV$ + "/profile?name=" + myname$)
+        DIM r$ = HTTP.GET$(SRV$ + "/profile?auth=" + auth$)
         DIM m = JSON.PARSE$(r$)
         IF m{"OK"} = 1 THEN myprofile = m{"PROFILE"}
     CATCH
@@ -270,7 +296,7 @@ ENDFUNC
 
 SUB SENDUPGRADE(kind$)
     TRY
-        DIM body$ = JSON.STRINGIFY$({ "NAME": myname$, "KIND": kind$ })
+        DIM body$ = JSON.STRINGIFY$({ "AUTH": auth$, "KIND": kind$ })
         DIM r$ = HTTP.POST$(SRV$ + "/upgrade", body$, "text/plain")
         DIM m = JSON.PARSE$(r$)
         IF m{"OK"} = 1 THEN
@@ -302,7 +328,7 @@ ENDSUB
 
 SUB JOINMATCH()
     TRY
-        DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "NAME": myname$, "DECK": mydeck, "ROOM": room$ }), "text/plain")
+        DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "AUTH": auth$, "DECK": mydeck, "ROOM": room$ }), "text/plain")
         DIM m = JSON.PARSE$(r$)
         IF m{"OK"} = 1 THEN
             mypid = m{"PID"}
@@ -843,7 +869,12 @@ SUB DrawMenu()
     DRAWCOLOR 190, 110, 255
     TEXT 122, 156, T$("tagline")
     DRAWCOLOR 200, 200, 210
-    TEXT 130, 196, T$("player") + ": " + myname$
+    IF auth$ = "" THEN
+        DRAWCOLOR 255, 120, 120
+        TEXT 60, 196, T$("not_signed_in")
+    ELSE
+        TEXT 130, 196, T$("player") + ": " + myname$
+    ENDIF
     IF MAP.EXISTS(myprofile, "LASTCHEST") THEN
         DIM played = myprofile{"WINS"} + myprofile{"LOSSES"} + myprofile{"DRAWS"}
         DIM head$ = T$("chest_last")
@@ -1335,9 +1366,20 @@ ENDSUB
 DIM shotmode = 0
 DIM cliargs = OS.ARGS()
 DIM ai
-FOR ai = 0 TO LEN(cliargs) - 1
-    IF LCASE$(cliargs[ai]) = "shot" THEN shotmode = 1
+' started by hand: jdbasic royale.jdb <name> <pin> [room] [shot]
+DIM plain = []
+FOR ai = 1 TO LEN(cliargs) - 1
+    IF LCASE$(cliargs[ai]) = "shot" THEN
+        shotmode = 1
+    ELSE
+        plain = APPEND(plain, cliargs[ai])
+    ENDIF
 NEXT ai
+IF LEN(plain) >= 2 THEN
+    myname$ = plain[0]
+    mypin$ = plain[1]
+ENDIF
+IF LEN(plain) >= 3 THEN room$ = plain[2]
 
 SCREEN SCR_W, SCR_H, "jdVOID"
 DRAWCOLOR 6, 8, 22
@@ -1347,6 +1389,7 @@ TEXT 120, 430, "jdVOID"
 SCREENFLIP
 SNDINIT()
 LOADLANG()
+LOGIN()
 MUSICINIT()
 LOADCARDS()
 BAKEART()
