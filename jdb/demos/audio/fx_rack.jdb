@@ -174,7 +174,7 @@ SUB AI_GENERATE()
     IF LEN("" + prov{"key_env"}) > 0 THEN key$ = GETENV$(prov{"key_env"})
     IF LEN("" + prov{"key_env"}) > 0 ANDALSO key$ = "" THEN
         status$ = "set " + prov{"key_env"} + " in the environment"
-        EXITSUB
+        RETURN
     ENDIF
     DIM prompt$ = "You design guitar pedalboard FX chains. Effect types with params and ranges: " + _
         AI_VOCAB$() + " Build a chain for: " + aiPrompt$ + ". Order matters as signal flow. " + _
@@ -202,18 +202,18 @@ SUB AI_GENERATE()
     DIM code = HTTP.STATUSCODE()
     IF code < 200 ORELSE code >= 300 THEN
         status$ = pkey$ + " HTTP " + code + ": " + LEFT$(resp$, 100)
-        EXITSUB
+        RETURN
     ENDIF
     DIM txt$ = AI_EXTRACT$(resp$, kind$)
     DIM arr$ = AI_ARRAY$(txt$)
     IF LEN(arr$) = 0 THEN
         status$ = "AI gave no JSON chain"
-        EXITSUB
+        RETURN
     ENDIF
     DIM nodes = JSON.PARSE$(arr$)
     IF TYPEOF(nodes) = "NONE" THEN
         status$ = "AI chain did not parse"
-        EXITSUB
+        RETURN
     ENDIF
     DIM nr = [], k
     FOR k = 0 TO LEN(nodes) - 1
@@ -222,7 +222,7 @@ SUB AI_GENERATE()
     NEXT k
     IF LEN(nr) = 0 THEN
         status$ = "AI chain had no valid effect types"
-        EXITSUB
+        RETURN
     ENDIF
     rack = nr
     splitOn = FALSE

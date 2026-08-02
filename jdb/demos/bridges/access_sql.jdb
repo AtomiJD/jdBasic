@@ -101,7 +101,7 @@ SUB ExecuteSQL(sql_query$)
             IF rs.EOF THEN
                 ' Valid query, but no results
                 data = []
-                EXITSUB
+                RETURN
             ENDIF
             fields = []
             ' Get field names (headers) from the recordset

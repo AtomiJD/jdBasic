@@ -23,7 +23,7 @@ SUB MY_SAY(text$)
                     IF iter <= 3 THEN PRINT "frame="; frame; " j="; j
                     IF iter > 200 THEN
                         PRINT "INFINITE j="; j; " iter="; iter
-                        EXITSUB
+                        RETURN
                     ENDIF
                     c$ = MID$(text$, j, 1)
                     IF c$ = " " THEN

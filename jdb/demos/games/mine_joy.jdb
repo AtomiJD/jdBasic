@@ -196,8 +196,8 @@ SUB PlaceMines(safeX, safeY)
 ENDSUB
 
 SUB Reveal(r, c)
-    IF r < 0 OR r >= ROWS OR c < 0 OR c >= COLS THEN EXITSUB
-    IF State[r, c] <> STATE_HIDDEN THEN EXITSUB
+    IF r < 0 OR r >= ROWS OR c < 0 OR c >= COLS THEN RETURN
+    IF State[r, c] <> STATE_HIDDEN THEN RETURN
     
     State[r, c] = STATE_REVEALED
     BoardDirty = TRUE

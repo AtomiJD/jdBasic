@@ -56,7 +56,7 @@ FUNC loadHistory(callSid$)
 ENDFUNC
 
 SUB saveTurn(callSid$, seq, role$, content$)
-    IF gDb = 0 OR callSid$ = "" THEN EXITSUB
+    IF gDb = 0 OR callSid$ = "" THEN RETURN
     DIM ts$ = DATE$() + " " + TIME$()
     SQL.EXEC(gDb, "INSERT INTO turns(call_sid, seq, role, content, ts) VALUES ('" + sqlEsc$(callSid$) + "', " + STR$(seq) + ", '" + sqlEsc$(role$) + "', '" + sqlEsc$(content$) + "', '" + sqlEsc$(ts$) + "')")
 ENDSUB
