@@ -101,6 +101,8 @@ DIM mydecks = []          ' all saved decks, the active one feeds mydeck
 DIM deckidx = 0
 DIM myname$ = "Spieler"
 DIM auth$ = ""            ' session token, stands in for the PIN
+DIM watching = 0          ' following a match without a seat
+DIM h2h$ = ""             ' record against this opponent, filled when a match ends
 DIM emote_open = 0
 DIM emote_col = [[120, 240, 160], [255, 220, 90], [120, 200, 255], [255, 110, 110], [180, 170, 220], [255, 150, 220]]
 DIM allcards AS MAP = {}
@@ -393,6 +395,71 @@ SUB TOGGLECARD(kind$)
     ENDIF
 ENDSUB
 
+' Tally against exactly this opponent, straight off the match log.
+SUB LOADH2H()
+    h2h$ = ""
+    IF foename$ = "" THEN RETURN
+    TRY
+        DIM m = JSON.PARSE$(HTTP.GET$(SRV$ + "/matches?limit=300"))
+        IF m{"OK"} <> 1 THEN RETURN
+        DIM mine = 0
+        DIM theirs = 0
+        DIM even = 0
+        FOR EACH row IN m{"MATCHES"}
+            DIM a$ = row{"A"}
+            DIM b$ = row{"B"}
+            DIM pair = 0
+            IF a$ = myname$ ANDALSO b$ = foename$ THEN pair = 1
+            IF a$ = foename$ ANDALSO b$ = myname$ THEN pair = 1
+            IF pair = 1 THEN
+                DIM w = row{"WINNER"}
+                IF w = 2 THEN
+                    even = even + 1
+                ELSE
+                    DIM won$ = b$
+                    IF w = 0 THEN won$ = a$
+                    IF won$ = myname$ THEN
+                        mine = mine + 1
+                    ELSE
+                        theirs = theirs + 1
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT row
+        IF mine + theirs + even > 0 THEN
+            h2h$ = T$("vs_record") + " " + MID$(foename$, 0, 9) + "  " + STR$(mine) + ":" + STR$(theirs)
+            IF even > 0 THEN h2h$ = h2h$ + " (" + STR$(even) + ")"
+        ENDIF
+    CATCH
+    ENDTRY
+ENDSUB
+
+SUB WATCHROOM(key$)
+    room$ = key$
+    watching = 1
+    uimode$ = "battle"
+    mypid = 0
+    tok$ = ""
+    have_state = 0
+    fxseen = {}
+    fxact = []
+    prev_tick = -1
+    sel$ = ""
+    drag_kind$ = ""
+    emote_open = 0
+    msg$ = ""
+    POLLSTATE()
+ENDSUB
+
+SUB LEAVEWATCH()
+    watching = 0
+    mypid = -1
+    have_state = 0
+    uimode$ = "menu"
+    LOADPROFILE()
+    LOADLOBBY()
+ENDSUB
+
 SUB JOINMATCH()
     TRY
         DIM r$ = HTTP.POST$(SRV$ + "/join", JSON.STRINGIFY$({ "AUTH": auth$, "DECK": mydeck, "ROOM": room$ }), "text/plain")
@@ -449,13 +516,20 @@ SUB POLLSTATE()
         waiting = m{"WAITING"}
         have_state = 1
         DIM names = m{"NAMES"}
-        IF LEN(names) = 2 THEN foename$ = names[1 - mypid]
+        IF LEN(names) = 2 THEN
+            foename$ = names[1 - mypid]
+            IF watching = 1 THEN
+                myname$ = names[0]
+                foename$ = names[1]
+            ENDIF
+        ENDIF
         IF MAP.EXISTS(m, "PROFILES") THEN profiles = m{"PROFILES"}
         TRACKHEADING()
         ' fetch the fresh chest once when the match ends
-        IF ISOVER() = 1 ANDALSO chest_shown = 0 THEN
+        IF ISOVER() = 1 ANDALSO chest_shown = 0 ANDALSO watching = 0 THEN
             chest_shown = 1
             LOADPROFILE()
+            LOADH2H()
         ENDIF
         ' a rematch restarts event ids - drop stale FX bookkeeping
         IF world{"TICKNO"} < prev_tick THEN
@@ -463,6 +537,7 @@ SUB POLLSTATE()
             fxact = []
             sel$ = ""
             chest_shown = 0
+            h2h$ = ""
         ENDIF
         prev_tick = world{"TICKNO"}
     CATCH
@@ -1063,7 +1138,15 @@ SUB DrawMenu()
         TEXT 36, ry + 8, MID$(rr{"KEY"}, 0, 14)
         DRAWCOLOR 150, 220, 160
         IF rr{"N"} >= 2 THEN DRAWCOLOR 240, 150, 150
-        TEXT 300, ry + 8, STR$(rr{"N"}) + "/2 " + st$
+        TEXT 230, ry + 8, STR$(rr{"N"}) + "/2 " + st$
+        ' a running match can be followed without taking a seat
+        IF rr{"LIVE"} = 1 THEN
+            DRAWCOLOR 40, 90, 70
+            ROUNDED_RECT 344, ry + 4, 94, 26, 8, TRUE
+            DRAWCOLOR 120, 240, 190
+            ROUNDED_RECT 344, ry + 4, 94, 26, 8, FALSE
+            TEXT 356, ry + 9, T$("watch")
+        ENDIF
     NEXT li
 ENDSUB
 
@@ -1271,6 +1354,17 @@ SUB ELIXCOIN(cx, cy, r, n$)
     TEXT cx - LEN(n$) * 5, cy - 9, n$
 ENDSUB
 
+' In place of the hand: who is playing, and the way out.
+SUB DrawWatchBar()
+    DRAWCOLOR 16, 18, 40
+    RECT 0, 840, SCR_W, 60, TRUE
+    DRAWCOLOR 90, 110, 190
+    LINE 0, 840, SCR_W, 840
+    DRAWCOLOR 150, 220, 255
+    TEXT 12, 852, T$("watching") + ": " + MID$(myname$, 0, 9) + " vs " + MID$(foename$, 0, 9)
+    BUTTON(334, 848, 124, 44, T$("menu"), 95, 95, 115)
+ENDSUB
+
 SUB DrawHand()
     DIM q = world{"QUEUES"}[mypid]
     DIM i
@@ -1328,13 +1422,15 @@ SUB DrawHud()
     ENDIF
     TEXT 200, 6, label$ + STR$(INT(t / 60)) + ":" + RIGHT$("0" + STR$(INT(t) MOD 60), 2)
     DIM cr = world{"CROWNS"}
-    TEXT 6, 6, T$("you") + " " + STR$(cr[mypid])
+    DIM me$ = T$("you")
+    IF watching = 1 THEN me$ = MID$(myname$, 0, 9)
+    TEXT 6, 6, me$ + " " + STR$(cr[mypid])
     TEXT 6, 26, foename$ + " " + STR$(cr[1 - mypid])
     IF LEN(profiles) = 2 THEN
         TEXT 290, 26, T$("wins_short") + " " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"})
     ENDIF
     ' emote button, and the picker it opens across the top of the board
-    DrawEmoteFace(438, 26, 18, 0)
+    IF watching = 0 THEN DrawEmoteFace(438, 26, 18, 0)
     IF emote_open = 1 THEN
         DRAWCOLOR 14, 16, 36
         ROUNDED_RECT 10, BOARD_Y0 + 8, 448, 60, 16, TRUE
@@ -1377,13 +1473,22 @@ SUB DrawHud()
         ROUNDED_RECT 54, 372, 360, 108, 18, FALSE
         ROUNDED_RECT 56, 374, 356, 104, 16, FALSE
         DIM ttl$ = T$("draw")
-        IF w = mypid THEN ttl$ = T$("you_win")
-        IF w <> mypid ANDALSO w <> 2 THEN ttl$ = foename$ + " " + T$("foe_wins")
-        TEXT 234 - LEN(ttl$) * 5, 396, ttl$
+        IF watching = 1 THEN
+            IF w = 0 THEN ttl$ = myname$ + " " + T$("foe_wins")
+            IF w = 1 THEN ttl$ = foename$ + " " + T$("foe_wins")
+        ELSE
+            IF w = mypid THEN ttl$ = T$("you_win")
+            IF w <> mypid ANDALSO w <> 2 THEN ttl$ = foename$ + " " + T$("foe_wins")
+        ENDIF
+        TEXT 234 - LEN(ttl$) * 5, 390, ttl$
         IF LEN(profiles) = 2 THEN
             DRAWCOLOR 190, 200, 235
             DIM sline$ = T$("series") + " " + STR$(profiles[mypid]{"WINS"}) + ":" + STR$(profiles[1 - mypid]{"WINS"}) + "   " + T$("crowns") + " " + STR$(profiles[mypid]{"CROWNS"}) + ":" + STR$(profiles[1 - mypid]{"CROWNS"})
-            TEXT 234 - LEN(sline$) * 5, 438, sline$
+            TEXT 234 - LEN(sline$) * 5, 424, sline$
+        ENDIF
+        IF h2h$ <> "" THEN
+            DRAWCOLOR 120, 240, 190
+            TEXT 234 - LEN(h2h$) * 5, 450, h2h$
         ENDIF
         IF chest_shown = 1 ANDALSO MAP.EXISTS(myprofile, "LASTCHEST") THEN
             DRAWCOLOR 22, 24, 48
@@ -1413,7 +1518,11 @@ SUB DrawFrame(fnow)
         DrawUnits()
         DrawFX(fnow)
         DrawGhost(fnow)
-        DrawHand()
+        IF watching = 1 THEN
+            DrawWatchBar()
+        ELSE
+            DrawHand()
+        ENDIF
         DrawHud()
         IF waiting = 1 THEN
             DRAWCOLOR 18, 20, 44
@@ -1455,14 +1564,19 @@ SUB MenuClick(mx, my)
     IF my >= 562 ANDALSO my <= 762 ANDALSO mx >= 24 ANDALSO mx <= 444 THEN
         DIM idx = INT((my - 562) / 40)
         IF idx >= 0 ANDALSO idx < LEN(lobby) THEN
-            room$ = lobby[idx]{"KEY"}
-            LOADLOBBY()
+            IF mx >= 344 ANDALSO lobby[idx]{"LIVE"} = 1 THEN
+                WATCHROOM(lobby[idx]{"KEY"})
+            ELSE
+                room$ = lobby[idx]{"KEY"}
+                LOADLOBBY()
+            ENDIF
         ENDIF
         RETURN
     ENDIF
     IF mx >= 134 ANDALSO mx <= 334 THEN
         IF my >= 330 ANDALSO my <= 386 THEN
             uimode$ = "battle"
+            watching = 0
             mypid = -1
             tok$ = ""
             have_state = 0
@@ -1527,6 +1641,8 @@ SUB HandleClick(mx, my)
         DeckClick(mx, my)
     ELSEIF have_state = 0 ORELSE mypid < 0 THEN
         msg$ = ""
+    ELSEIF watching = 1 THEN
+        IF my >= 848 ANDALSO mx >= 334 THEN LEAVEWATCH()
     ELSEIF ISOVER() = 1 THEN
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 496 ANDALSO my <= 542 THEN SENDREMATCH()
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 552 ANDALSO my <= 592 THEN uimode$ = "menu"

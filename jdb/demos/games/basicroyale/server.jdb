@@ -766,7 +766,11 @@ FUNC HROOMS(req)
         FOR i = 0 TO LEN(rp) - 1
             names = APPEND(names, rp[i]{"NAME"})
         NEXT i
-        DIM row AS MAP = { "KEY": k$, "N": LEN(rp), "NAMES": names }
+        ' a running match is public knowledge - that is what a spectator
+        ' picks from
+        DIM live = 0
+        IF LEN(rp) = 2 ANDALSO rr{"ST"}{"PHASE"} = "play" ANDALSO rr{"ST"}{"TICKNO"} > 0 THEN live = 1
+        DIM row AS MAP = { "KEY": k$, "N": LEN(rp), "NAMES": names, "LIVE": live }
         IF admin = 1 THEN
             row{"PHASE"} = rr{"ST"}{"PHASE"}
             row{"TICKNO"} = rr{"ST"}{"TICKNO"}

@@ -33,7 +33,7 @@ exactly one set of rules in the codebase.
 | `arena.jdb` | The rules. Board, deploy zones, targeting, collision, the 0.1 s `SIMSTEP`. No I/O, no graphics. |
 | `cards.json` | Every card stat. The single source of truth for balance, loaded into `ARENA.SETCARDS`. |
 | `server.jdb` | Match server. Rooms, seats, chest economy, card levels, profiles, admin endpoints. |
-| `royale.jdb` | The client. Menu, deck editor, battle view, sound, drag deploy, i18n. |
+| `royale.jdb` | The client. Menu, deck editor, battle view, spectator mode, emotes, sound, drag deploy, i18n. |
 | `art.jdb` | Procedural sprites. Signed-distance-field shapes rasterized into RGBA buffers at startup. |
 | `lang.json` | UI strings and card descriptions per language. Served by the server, so a new language needs no client change. |
 | `balance.jdb` | Headless duel harness. Every troop card fights every other one for equal elixir. |
@@ -41,13 +41,21 @@ exactly one set of rules in the codebase.
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
 | `deploy.sh` | Ships everything to the Hostinger box and restarts the service. |
-| `web/` | Landing page, admin console and the key art derivatives. |
+| `web/` | Landing page, player page, admin console and the key art derivatives. |
+
+Server-side state next to `server.jdb`: `stats.json` (profiles, collections,
+decks, PIN hashes), `matches.json` (the match log), `sessions.json` (live
+tokens) and `admin.txt` (the admin key, never committed).
 
 ## The game
 
 The board is 18 by 30 tiles with a river at row 14.5 and bridges at columns 3.5
 and 14.5. Each side has two princess stations and a king. The king sleeps until
 he is hit or until one of his princesses falls.
+
+During a match either side can send one of six emotes, drawn from discs and
+strokes so they need no emoji font, at most one per seat every 1.5 seconds. A
+third person can follow a running match from the lobby without taking a seat.
 
 A match runs 180 seconds. Elixir fills at one per 2.8 seconds up to a cap of 10,
 and doubles once the clock passes zero. Overtime lasts 60 seconds. Whoever has
@@ -86,15 +94,17 @@ You need a jdBasic build with `HTTP` and `GFX`. From this directory:
 jdbasic server.jdb 0.0.0.0 8081
 
 # terminal 2 - a client
-jdbasic royale.jdb
+jdbasic royale.jdb Atomi 1234
 
 # terminal 3 - the second client
-jdbasic royale.jdb
+jdbasic royale.jdb Airxzi 4321
 ```
 
-Both clients join room `main` and the match starts as soon as the second seat is
-taken. Phones on the same network can play against the desktop as long as the
-client's `SRV$` points at the machine's LAN address.
+Name and PIN are the arguments a hand-started client takes; the form is
+`jdbasic royale.jdb <name> <pin> [room]`, and the first launch under a name
+claims it. Both clients join room `main` and the match starts as soon as the
+second seat is taken. Phones on the same network can play against the desktop
+as long as the client's `SRV$` points at the machine's LAN address.
 
 Other entry points:
 
@@ -129,8 +139,13 @@ The page also passes `__origin`, and the client turns that into its API base, so
 the same file works on localhost and in production without a rebuild. Private
 addresses are ignored there on purpose.
 
-The landing page at the site root collects name, room and language, remembers
-them in localStorage and forwards to the URL above. That is the link to share.
+The landing page at the site root collects name, PIN, room and language. It
+trades the PIN for a session token itself and forwards only `auth=`, so the PIN
+never reaches the game URL or a server log. That is the link to share.
+
+`players.html` is the public board: standings, one player's collection, the
+match log, and the direct tally between any two names. `?a=&b=` deep-links a
+head-to-head.
 
 To rebuild the runtime:
 
@@ -154,6 +169,20 @@ seeing each other.
 The simulation is lazy. Nothing runs on a timer; `/state` catches the room up to
 wall-clock time before answering. A room nobody polls costs nothing.
 
+### Identity
+
+A name belongs to whoever claimed it first, with a 4 to 8 digit PIN. Only the
+salted SHA-256 of the PIN is stored; five wrong tries lock the name for a
+minute. `/login` trades name and PIN for a session token, and that token stands
+in for the PIN on every later request, so the PIN travels exactly once. Tokens
+live in `sessions.json` and survive a restart, which matters because a deploy
+restarts the service.
+
+`/join`, `/profile`, `/upgrade` and `/decks` resolve the player from the token
+and ignore any name in the request body, so a seat cannot be taken under
+someone else's name. A client whose token the server rejects clears it and says
+so, rather than silently falling back to an empty profile.
+
 ### Seats
 
 A seat belongs to a name. Reconnecting under the same name always gets the seat
@@ -161,24 +190,43 @@ back with the match intact, which is what a locked phone or a reloaded tab needs
 A stranger may only take a seat that has been silent for 60 seconds, and never
 while a match is being played.
 
+### Decks
+
+Every profile carries three named deck slots plus the active one, validated
+server-side as six distinct cards that exist. They live with the profile, so
+they survive a reload and follow the name to another device. The client sends
+the active deck when it takes a seat.
+
 ### Endpoints
 
 Everything answers JSON. `room` selects the room and defaults to `main`.
+`AUTH` is the session token, in the body for POST or as `?auth=` for GET.
 
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/` | Plain-text banner with the room list. |
-| POST | `/join` | `{NAME, ROOM, DECK}` takes a seat, returns `PID` and a token. |
-| GET | `/state?room=&tok=` | The full match state, after catching the sim up. |
+| POST | `/login` | `{NAME, PIN}` claims a name or proves ownership, returns `AUTH`. |
+| POST | `/join` | `{AUTH, ROOM, DECK}` takes a seat, returns `PID` and a seat token. |
+| GET | `/state?room=&tok=` | The full match state, after catching the sim up. Works without a token, which is what a spectator uses. |
 | POST | `/play` | `{TOK, KIND, X, Y}` deploys a card. |
+| POST | `/emote` | `{TOK, ID}` sends one of six emotes, one per seat every 1.5 s. |
 | POST | `/rematch` | Same two players, new match. |
 | GET | `/cards` | The card sheet. |
 | GET | `/lang` | All languages from `lang.json`. |
-| GET | `/profile?name=` | Record, card levels, wildcards, last chest. |
-| POST | `/upgrade` | `{NAME, KIND}` levels a card and applies it to a running seat. |
-| GET | `/rooms` | Open rooms with their occupants. |
+| GET | `/profile?auth=` | Own record, collection, wildcards, last chest and decks. |
+| POST | `/decks` | `{AUTH, DECKS, ACTIVE}` stores the deck slots. |
+| POST | `/upgrade` | `{AUTH, KIND}` levels a card and applies it to a running seat. |
+| GET | `/rooms` | Open rooms with their occupants and a `LIVE` flag. |
 
-Five endpoints are sensitive and fail closed without the admin key:
+Three more are public, and are what `players.html` reads:
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/players` | Standings: record, crowns, collection size, upgrades. |
+| GET | `/player?name=` | One player's collection with levels. |
+| GET | `/matches?limit=` | The match log, newest first. |
+
+Six endpoints are sensitive and fail closed without the admin key:
 
 | Method | Path | Purpose |
 |---|---|---|
@@ -186,10 +234,11 @@ Five endpoints are sensitive and fail closed without the admin key:
 | POST/GET | `/drop` | Removes a room entirely. |
 | POST | `/forceend` | Ends a stuck match. |
 | POST | `/wipe` | `{NAME}` deletes a player profile. |
-| GET | `/leaderboard` | Every profile with record and crowns. |
+| POST | `/resetpin` | `{NAME}` frees a name's PIN so its owner can set a new one. |
+| GET | `/leaderboard` | Every profile with record, crowns and whether the name is claimed. |
 
 The key is read from `admin.txt` next to the server at startup and is never
-committed. Without that file the five endpoints stay closed for everybody. Pass
+committed. Without that file the six endpoints stay closed for everybody. Pass
 the key as `?key=` or as `KEY` in the JSON body:
 
 ```bash
