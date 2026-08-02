@@ -542,21 +542,33 @@ FUNC HJOIN(req)
         ENDIF
     NEXT i
     IF LEN(players) >= 2 THEN
-        ' A stranger may only take over a seat that has been silent for a
-        ' while, and never while the match is being played - locking your
-        ' screen mid-battle must not hand your base to a bystander.
-        DIM idle_ok = 60000
-        IF rm{"ST"}{"PHASE"} <> "play" ORELSE rm{"ST"}{"TICKNO"} = 0 THEN idle_ok = 8000
-        FOR i = 0 TO LEN(players) - 1
-            IF now - players[i]{"LAST"} > idle_ok THEN
-                players[i] = { "NAME": name$, "TOK": tok$, "LAST": now, "DECK": deck }
-                st{"QUEUES"}[i] = DECKQ(deck)
-                st{"CARDLVL"}[i] = CARDLVLMAP(name$)
-                PRINT "takeover: "; name$; " claims idle pid "; i; " in "; rm{"KEY"}
-                RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$, "ROOM": rm{"KEY"} })
-            ENDIF
-        NEXT i
-        RETURN JJ({ "OK": 0, "MSG": "msg_full" })
+        IF st{"PHASE"} <> "play" THEN
+            ' A finished match belongs to the two who played it. Somebody
+            ' new does not inherit the result, the crowns or a seat in it -
+            ' the room starts over. This also frees a room whose second
+            ' seat was held by the machine.
+            rm{"ST"} = ARENA.NEWGAME()
+            rm{"PLAYERS"} = []
+            players = rm{"PLAYERS"}
+            st = rm{"ST"}
+            PRINT "room "; rm{"KEY"}; " reopened for "; name$
+        ELSE
+            ' A stranger may only take over a seat that has been silent for
+            ' a while - locking your screen mid-battle must not hand your
+            ' base to a bystander.
+            DIM idle_ok = 60000
+            IF st{"TICKNO"} = 0 THEN idle_ok = 8000
+            FOR i = 0 TO LEN(players) - 1
+                IF now - players[i]{"LAST"} > idle_ok THEN
+                    players[i] = { "NAME": name$, "TOK": tok$, "LAST": now, "DECK": deck }
+                    st{"QUEUES"}[i] = DECKQ(deck)
+                    st{"CARDLVL"}[i] = CARDLVLMAP(name$)
+                    PRINT "takeover: "; name$; " claims idle pid "; i; " in "; rm{"KEY"}
+                    RETURN JJ({ "OK": 1, "PID": i, "TOK": tok$, "ROOM": rm{"KEY"} })
+                ENDIF
+            NEXT i
+            RETURN JJ({ "OK": 0, "MSG": "msg_full" })
+        ENDIF
     ENDIF
     rm{"PLAYERS"} = APPEND(players, { "NAME": name$, "TOK": tok$, "LAST": TICK(), "DECK": deck })
     DIM slot = LEN(rm{"PLAYERS"}) - 1

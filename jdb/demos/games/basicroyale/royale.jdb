@@ -102,6 +102,7 @@ DIM deckidx = 0
 DIM myname$ = "Spieler"
 DIM auth$ = ""            ' session token, stands in for the PIN
 DIM watching = 0          ' following a match without a seat
+DIM prev_room$ = ""       ' the room to return to after watching
 DIM h2h$ = ""             ' record against this opponent, filled when a match ends
 DIM emote_open = 0
 DIM emote_col = [[120, 240, 160], [255, 220, 90], [120, 200, 255], [255, 110, 110], [180, 170, 220], [255, 150, 220]]
@@ -451,6 +452,9 @@ SUB SENDBOT()
 ENDSUB
 
 SUB WATCHROOM(key$)
+    ' remember the room only on the way in, so a second call cannot
+    ' overwrite it with one that is only being watched
+    IF watching = 0 THEN prev_room$ = room$
     room$ = key$
     watching = 1
     uimode$ = "battle"
@@ -468,6 +472,9 @@ SUB WATCHROOM(key$)
 ENDSUB
 
 SUB LEAVEWATCH()
+    ' back to your own room, or GEFECHT would drop you into the one you
+    ' were only watching
+    IF prev_room$ <> "" THEN room$ = prev_room$
     watching = 0
     mypid = -1
     have_state = 0
