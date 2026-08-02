@@ -434,6 +434,22 @@ SUB LOADH2H()
     ENDTRY
 ENDSUB
 
+' Nobody there? Let the server take the free seat.
+SUB SENDBOT()
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "ROOM": room$ })
+        DIM r$ = HTTP.POST$(SRV$ + "/bot", body$, "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} = 1 THEN
+            msg$ = ""
+            POLLSTATE()
+        ELSE
+            msg$ = m{"MSG"}
+        ENDIF
+    CATCH
+    ENDTRY
+ENDSUB
+
 SUB WATCHROOM(key$)
     room$ = key$
     watching = 1
@@ -1538,6 +1554,7 @@ SUB DrawFrame(fnow)
             DRAWCOLOR 130, 140, 180
             DIM wh$ = T$("share_hint")
             TEXT 234 - LEN(wh$) * 5, 452, wh$
+            BUTTON(134, 500, 200, 50, T$("vs_bot"), 80, 120, 200)
             ' a pulsing beacon so the screen does not look frozen
             DIM bp = 6 + INT(5 * SIN(fnow * 0.12))
             DRAWCOLOR 90, 250, 160
@@ -1643,6 +1660,8 @@ SUB HandleClick(mx, my)
         msg$ = ""
     ELSEIF watching = 1 THEN
         IF my >= 848 ANDALSO mx >= 334 THEN LEAVEWATCH()
+    ELSEIF waiting = 1 ANDALSO my >= 500 ANDALSO my <= 550 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
+        SENDBOT()
     ELSEIF ISOVER() = 1 THEN
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 496 ANDALSO my <= 542 THEN SENDREMATCH()
         IF mx >= 154 ANDALSO mx <= 314 ANDALSO my >= 552 ANDALSO my <= 592 THEN uimode$ = "menu"

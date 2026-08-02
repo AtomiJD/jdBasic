@@ -272,6 +272,12 @@ SUB RECORDMATCH(rm)
     DIM players = rm{"PLAYERS"}
     IF st{"PHASE"} = "over" ANDALSO NOT MAP.EXISTS(st, "RECORDED") ANDALSO LEN(players) = 2 THEN
         st{"RECORDED"} = 1
+        ' practice against the machine stays out of the record and the
+        ' chests, so nobody can farm cards while the other one sleeps
+        IF ISBOTROOM(rm) = 1 THEN
+            PRINT "bot match finished - not recorded"
+            RETURN
+        ENDIF
         DIM w = st{"WINNER"}
         DIM i
         FOR i = 0 TO 1
@@ -361,6 +367,93 @@ FUNC PIDBYTOK(players, tok$)
     RETURN -1
 ENDFUNC
 
+' ---- the machine opponent ----
+'
+' Seat 1 can be held by the server itself, so a match is possible when
+' nobody else is around. It decides on the sim clock, not on how often a
+' client polls, and it plays out of the same hand and elixir as a person.
+
+CONST BOT_NAME = "Computer"
+CONST BOT_EVERY = 12               ' sim ticks between two decisions
+
+FUNC BOTDECK()
+    RETURN ["DROID", "LASER", "NANOS", "WESPEN", "SALVE", "KOLOSS"]
+ENDFUNC
+
+' Nearest enemy unit on the bot's half, or -1.
+FUNC BOTTHREAT(st)
+    DIM best = -1
+    DIM bestd = 99.0
+    DIM i
+    DIM us = st{"UNITS"}
+    FOR i = 0 TO LEN(us) - 1
+        IF us[i]{"OWNER"} = 1 THEN CONTINUEFOR
+        IF us[i]{"Y"} > 15.0 THEN CONTINUEFOR
+        IF us[i]{"Y"} < bestd THEN
+            bestd = us[i]{"Y"}
+            best = i
+        ENDIF
+    NEXT i
+    RETURN best
+ENDFUNC
+
+SUB BOTTURN(rm)
+    DIM st = rm{"ST"}
+    IF st{"PHASE"} <> "play" THEN RETURN
+    IF st{"TICKNO"} MOD BOT_EVERY <> 0 THEN RETURN
+    DIM cs = ARENA.CARDS()
+    DIM q = st{"QUEUES"}[1]
+    DIM elix = st{"ELIXIR"}[1]
+
+    ' pick the dearest card in hand that is affordable
+    DIM pick$ = ""
+    DIM pickcost = -1
+    DIM i
+    FOR i = 0 TO 3
+        DIM k$ = q[i]
+        DIM c = cs{k$}
+        IF c{"COST"} <= elix ANDALSO c{"COST"} > pickcost THEN
+            pick$ = k$
+            pickcost = c{"COST"}
+        ENDIF
+    NEXT i
+    IF pick$ = "" THEN RETURN
+
+    ' hold something back early so it is not broke when a push lands
+    DIM threat = BOTTHREAT(st)
+    IF threat < 0 ANDALSO elix < 7 THEN RETURN
+
+    DIM px = 4.5
+    DIM py = 11.0
+    IF threat >= 0 THEN
+        ' meet the attacker a little ahead of it, on its lane
+        DIM u = st{"UNITS"}[threat]
+        px = u{"X"}
+        py = u{"Y"} - 2.0
+        IF py > 13.0 THEN py = 13.0
+        IF py < 2.0 THEN py = 2.0
+    ELSE
+        ' otherwise start a push behind whichever bridge is safer
+        px = 3.5
+        IF NEXTRAND() > 0.5 THEN px = 14.5
+        py = 11.0
+    ENDIF
+    IF MAP.EXISTS(cs{pick$}, "SPELL") ANDALSO threat >= 0 THEN
+        px = st{"UNITS"}[threat]{"X"}
+        py = st{"UNITS"}[threat]{"Y"}
+    ENDIF
+    DIM res$ = ARENA.PLAYCARD(st, 1, pick$, px, py)
+ENDSUB
+
+FUNC ISBOTROOM(rm)
+    DIM ps = rm{"PLAYERS"}
+    DIM i
+    FOR i = 0 TO LEN(ps) - 1
+        IF MAP.EXISTS(ps[i], "BOT") THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
 SUB SYNCSIM(rm)
     DIM now = TICK()
     IF LEN(rm{"PLAYERS"}) < 2 THEN
@@ -372,8 +465,10 @@ SUB SYNCSIM(rm)
             rm{"LAST"} = now - 10000
         ENDIF
         DIM i
+        DIM has_bot = ISBOTROOM(rm)
         FOR i = 1 TO n_steps
             rm{"ST"} = ARENA.SIMSTEP(rm{"ST"})
+            IF has_bot = 1 THEN BOTTURN(rm)
         NEXT i
         rm{"LAST"} = rm{"LAST"} + n_steps * 100
         RECORDMATCH(rm)
@@ -485,8 +580,12 @@ FUNC HSTATE(req)
     FOR i = 0 TO LEN(players) - 1
         DIM pn$ = players[i]{"NAME"}
         names = APPEND(names, pn$)
-        DIM s = STATOF(pn$)
-        profiles = APPEND(profiles, { "NAME": pn$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"} })
+        IF pn$ = BOT_NAME THEN
+            profiles = APPEND(profiles, { "NAME": pn$, "WINS": 0, "LOSSES": 0, "DRAWS": 0, "CROWNS": 0 })
+        ELSE
+            DIM s = STATOF(pn$)
+            profiles = APPEND(profiles, { "NAME": pn$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"} })
+        ENDIF
     NEXT i
     RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "PROFILES": profiles, "ST": rm{"ST"} })
 ENDFUNC
@@ -533,6 +632,28 @@ FUNC HEMOTE(req)
     RETURN JJ({ "OK": 1 })
 ENDFUNC
 
+' Fill the free seat with the machine. Only the player already sitting in
+' the room may ask, and only while the seat is still empty.
+FUNC HBOT(req)
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
+    DIM rm = ROOMOF(req, b)
+    DIM ps = rm{"PLAYERS"}
+    IF LEN(ps) <> 1 THEN RETURN JJ({ "OK": 0, "MSG": "msg_full" })
+    IF PIDBYTOK(ps, b{"TOK"}) <> 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
+    DIM deck = BOTDECK()
+    rm{"PLAYERS"} = APPEND(ps, [{ "NAME": BOT_NAME, "TOK": CODEC.UUID$(), "LAST": TICK(), "DECK": deck, "BOT": 1 }])
+    rm{"ST"}{"QUEUES"}[1] = DECKQ(deck)
+    rm{"ST"}{"CARDLVL"}[1] = {}
+    rm{"LAST"} = TICK()
+    PRINT "bot joined "; rm{"KEY"}
+    RETURN JJ({ "OK": 1 })
+ENDFUNC
+
 FUNC HRESET(req)
     DIM b = 0
     TRY
@@ -573,6 +694,7 @@ FUNC HLEADER(req)
     IF ISADMIN(req, 0) = 0 THEN RETURN DENY()
     DIM out = []
     FOR EACH n$ IN MAP.KEYS(stats)
+        IF n$ = BOT_NAME THEN CONTINUEFOR
         DIM s = STATOF(n$)
         DIM ncards = 0
         FOR EACH ck$ IN MAP.KEYS(s{"CARDS"})
@@ -593,6 +715,7 @@ ENDFUNC
 FUNC HPLAYERS(req)
     DIM out = []
     FOR EACH n$ IN MAP.KEYS(stats)
+        IF n$ = BOT_NAME THEN CONTINUEFOR
         DIM s = STATOF(n$)
         DIM lifted = 0
         DIM cards = 0
@@ -925,6 +1048,7 @@ HTTP.SERVER.ON_POST "/login", "HLOGIN"
 HTTP.SERVER.ON_POST "/join", "HJOIN"
 HTTP.SERVER.ON_POST "/play", "HPLAY"
 HTTP.SERVER.ON_POST "/emote", "HEMOTE"
+HTTP.SERVER.ON_POST "/bot", "HBOT"
 HTTP.SERVER.ON_POST "/reset", "HRESET"
 ' browser-friendly reset - just open the URL
 HTTP.SERVER.ON_GET "/reset", "HRESET"
