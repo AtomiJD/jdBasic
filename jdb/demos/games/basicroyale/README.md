@@ -176,6 +176,13 @@ seeing each other.
 The simulation is lazy. Nothing runs on a timer; `/state` catches the room up to
 wall-clock time before answering. A room nobody polls costs nothing.
 
+`/rooms` catches every room it reports up for the same reason, or a match that
+ran out of time would keep claiming it is being played, and it reports what
+each room is doing: free, waiting, ready, play or over. A decided room whose
+seats have been quiet for a minute goes back to free, so the lobby does not
+fill up with matches nobody is in any more. The client refreshes the list every
+few seconds while the menu is on screen.
+
 ### Identity
 
 A name belongs to whoever claimed it first, with a 4 to 8 digit PIN. Only the

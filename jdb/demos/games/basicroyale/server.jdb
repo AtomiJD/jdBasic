@@ -895,6 +895,23 @@ FUNC HROOMS(req)
     DIM out = []
     FOR EACH k$ IN MAP.KEYS(rooms)
         DIM rr = rooms{k$}
+        ' the sim only moves when somebody asks, so catch each room up
+        ' before reporting it - otherwise a match that ran out of time
+        ' keeps claiming it is being played
+        SYNCSIM(rr)
+        ' and a decided room whose seats went quiet returns to free, so the
+        ' list does not fill up with matches nobody is in any more
+        IF rr{"ST"}{"PHASE"} <> "play" ANDALSO LEN(rr{"PLAYERS"}) > 0 THEN
+            DIM quiet = 1
+            FOR EACH pq IN rr{"PLAYERS"}
+                IF now - pq{"LAST"} < 60000 THEN quiet = 0
+            NEXT pq
+            IF quiet = 1 THEN
+                rr{"ST"} = ARENA.NEWGAME()
+                rr{"PLAYERS"} = []
+                PRINT "room "; k$; " went quiet - free again"
+            ENDIF
+        ENDIF
         DIM rp = rr{"PLAYERS"}
         DIM names = []
         DIM i
@@ -905,7 +922,15 @@ FUNC HROOMS(req)
         ' picks from
         DIM live = 0
         IF LEN(rp) = 2 ANDALSO rr{"ST"}{"PHASE"} = "play" ANDALSO rr{"ST"}{"TICKNO"} > 0 THEN live = 1
-        DIM row AS MAP = { "KEY": k$, "N": LEN(rp), "NAMES": names, "LIVE": live }
+        ' what the room is actually doing, so the lobby can say so
+        DIM state$ = "free"
+        IF LEN(rp) = 1 THEN state$ = "waiting"
+        IF LEN(rp) >= 2 THEN
+            state$ = "ready"
+            IF live = 1 THEN state$ = "play"
+            IF rr{"ST"}{"PHASE"} <> "play" THEN state$ = "over"
+        ENDIF
+        DIM row AS MAP = { "KEY": k$, "N": LEN(rp), "NAMES": names, "LIVE": live, "STATE": state$ }
         IF admin = 1 THEN
             row{"PHASE"} = rr{"ST"}{"PHASE"}
             row{"TICKNO"} = rr{"ST"}{"TICKNO"}

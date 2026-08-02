@@ -1203,9 +1203,19 @@ SUB DrawMenu()
         IF li > 4 THEN EXITFOR
         DIM rr = lobby[li]
         DIM ry = 562 + li * 40
+        ' the server says what the room is doing; older servers only sent
+        ' the head count
+        DIM rs$ = "" + rr{"STATE"}
         DIM st$ = T$("room_free")
-        IF rr{"N"} = 1 THEN st$ = T$("room_waiting")
-        IF rr{"N"} >= 2 THEN st$ = T$("room_full")
+        IF rs$ = "waiting" THEN st$ = T$("room_waiting")
+        IF rs$ = "ready" THEN st$ = T$("room_full")
+        IF rs$ = "play" THEN st$ = T$("room_full")
+        IF rs$ = "over" THEN st$ = T$("room_over")
+        IF rs$ = "NONE" THEN
+            st$ = T$("room_free")
+            IF rr{"N"} = 1 THEN st$ = T$("room_waiting")
+            IF rr{"N"} >= 2 THEN st$ = T$("room_full")
+        ENDIF
         IF rr{"KEY"} = room$ THEN
             DRAWCOLOR 45, 60, 110
         ELSE
@@ -1837,6 +1847,8 @@ ELSE
             drag_kind$ = ""
         ENDIF
         IF uimode$ = "menu" THEN
+            ' the lobby is a live list, so refresh it while it is on screen
+            IF frame MOD 90 = 0 THEN LOADLOBBY()
             DrawMenu()
         ELSEIF uimode$ = "decks" THEN
             DrawDeckEd()
