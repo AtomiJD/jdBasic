@@ -2631,6 +2631,11 @@ ok = FX.MIX(ch, 1, 1.0, -1.0)
 ok = FX.MIX(ch, 2, 0.85, 1.0)
 ```
 
+`chorus` and `flanger` take a negative `mix`, which subtracts the delayed copy
+instead of adding it. With `depth` at zero that is a fixed comb filter, and the
+two polarities notch where the other one peaks - the sound of an out-of-phase
+pickup pair.
+
 `drive` models a valve stage when asked to: `asym` offsets the two halves
 against each other for even harmonics, `bloom` lets the operating point drift
 with how hard the stage is driven and `recover` says how fast it settles back,

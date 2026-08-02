@@ -261,7 +261,10 @@ static void process_node(FxNode& n, float* buf, unsigned cnt, double rate) {
             double in = buf[i];
             n.dl[n.dpos] = (float)(in + wet * fb);
             n.dpos = (n.dpos + 1) % len;
-            buf[i] = (float)(in * (1.0 - mix) + wet * mix);
+            // a negative mix subtracts the delayed copy instead of adding
+            // it, which is the comb an out-of-phase pickup pair makes. The
+            // dry side follows the amount, so both polarities stay level.
+            buf[i] = (float)(in * (1.0 - std::fabs(mix)) + wet * mix);
         }
     } else if (t == "phaser") {
         double rt = n.param("rate", 0.5), oct = n.param("depth", 2.0);
