@@ -57,6 +57,13 @@ During a match either side can send one of six emotes, drawn from discs and
 strokes so they need no emoji font, at most one per seat every 1.5 seconds. A
 third person can follow a running match from the lobby without taking a seat.
 
+If nobody turns up at all, the waiting screen offers the free seat to the
+server itself. The machine plays out of the same hand and elixir as a person
+and decides on the sim clock, not on how often a client polls. A match against
+it hands out no chest and touches neither record nor match log, so practising
+alone cannot farm cards, and it gets no profile either, so it stays out of the
+standings.
+
 A match runs 180 seconds. Elixir fills at one per 2.8 seconds up to a cap of 10,
 and doubles once the clock passes zero. Overtime lasts 60 seconds. Whoever has
 more crowns wins; if the crowns are level after overtime, the side with more
@@ -210,6 +217,7 @@ Everything answers JSON. `room` selects the room and defaults to `main`.
 | GET | `/state?room=&tok=` | The full match state, after catching the sim up. Works without a token, which is what a spectator uses. |
 | POST | `/play` | `{TOK, KIND, X, Y}` deploys a card. |
 | POST | `/emote` | `{TOK, ID}` sends one of six emotes, one per seat every 1.5 s. |
+| POST | `/bot` | `{TOK}` gives the free seat to the machine, if you are the one sitting there. |
 | POST | `/rematch` | Same two players, new match. |
 | GET | `/cards` | The card sheet. |
 | GET | `/lang` | All languages from `lang.json`. |
