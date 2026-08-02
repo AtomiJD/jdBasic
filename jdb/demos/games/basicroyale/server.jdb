@@ -146,9 +146,20 @@ ENDFUNC
 
 CONST PIN_TRIES = 5
 CONST PIN_LOCK_MS = 60000
-CONST SESSION_MS = 43200000        ' 12 h of idle before a token goes stale
 
 DIM sessions AS MAP = {}
+TRY
+    sessions = JSON.PARSE$(TXTREADER$("sessions.json"))
+CATCH
+ENDTRY
+IF TYPEOF(sessions) <> "OBJECT" THEN sessions = {}
+
+SUB SAVESESSIONS()
+    TRY
+        TXTWRITER "sessions.json", JSON.STRINGIFY$(sessions)
+    CATCH
+    ENDTRY
+ENDSUB
 
 FUNC PINHASH$(salt$, pin$)
     RETURN CODEC.SHA256$(salt$ + ":" + pin$)
@@ -168,7 +179,8 @@ ENDFUNC
 
 FUNC NEWSESSION$(name$)
     DIM tok$ = CODEC.UUID$()
-    sessions{tok$} = { "NAME": name$, "LAST": TICK() }
+    sessions{tok$} = { "NAME": name$, "DAY": STAMP$() }
+    SAVESESSIONS()
     RETURN tok$
 ENDFUNC
 
@@ -180,11 +192,7 @@ FUNC WHOIS$(req, b)
     IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "AUTH") THEN tok$ = b{"AUTH"}
     IF tok$ = "" ANDALSO MAP.EXISTS(req{"PARAMS"}, "auth") THEN tok$ = req{"PARAMS"}{"auth"}
     IF tok$ = "" ORELSE NOT MAP.EXISTS(sessions, tok$) THEN RETURN ""
-    DIM se = sessions{tok$}
-    DIM now = TICK()
-    IF now - se{"LAST"} > SESSION_MS THEN RETURN ""
-    se{"LAST"} = now
-    RETURN se{"NAME"}
+    RETURN sessions{tok$}{"NAME"}
 ENDFUNC
 
 FUNC NEEDAUTH()
@@ -829,11 +837,13 @@ ENDFUNC
 CONST DECK_SLOTS = 3
 
 SUB ENSUREDECKS(s)
-    IF LEN(s{"DECKS"}) = 0 THEN
-        s{"DECKS"} = [{ "NAME": "Deck 1", "CARDS": DEFAULTDECK() }]
-        s{"ACTIVE"} = 0
-    ENDIF
-    IF s{"ACTIVE"} < 0 ORELSE s{"ACTIVE"} >= LEN(s{"DECKS"}) THEN s{"ACTIVE"} = 0
+    DIM out = s{"DECKS"}
+    DIM i
+    FOR i = LEN(out) TO DECK_SLOTS - 1
+        out = APPEND(out, [{ "NAME": "Deck " + STR$(i + 1), "CARDS": DEFAULTDECK() }])
+    NEXT i
+    s{"DECKS"} = out
+    IF s{"ACTIVE"} < 0 ORELSE s{"ACTIVE"} >= DECK_SLOTS THEN s{"ACTIVE"} = 0
 ENDSUB
 
 FUNC HDECKS(req)

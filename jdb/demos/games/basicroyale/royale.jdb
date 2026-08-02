@@ -280,6 +280,9 @@ SUB LOADPROFILE()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/profile?auth=" + auth$)
         DIM m = JSON.PARSE$(r$)
+        ' a token the server no longer knows is worse than none: without
+        ' this the menu keeps claiming you are signed in
+        IF m{"OK"} <> 1 ANDALSO m{"MSG"} = "msg_login" THEN auth$ = ""
         IF m{"OK"} = 1 THEN
             myprofile = m{"PROFILE"}
             IF TYPEOF(myprofile{"DECKS"}) = "ARRAY" ANDALSO LEN(myprofile{"DECKS"}) > 0 THEN
@@ -323,20 +326,25 @@ SUB SAVEDECKS()
     ENDTRY
 ENDSUB
 
-' Switch slots, creating an empty one on first use.
-SUB PICKDECKSLOT(i)
-    IF i = deckidx THEN RETURN
-    IF LEN(mydecks) > 0 THEN SAVEDECKS()
-    IF i >= LEN(mydecks) THEN
+' Every player has the same three slots, so the tab number is the index.
+' Without a profile the slots are built locally and the editor still works.
+SUB FILLSLOTS()
+    DIM i
+    FOR i = LEN(mydecks) TO 2
         DIM fresh AS MAP = {}
         fresh{"NAME"} = "Deck " + STR$(i + 1)
         fresh{"CARDS"} = COPYCARDS(mydeck)
         mydecks = APPEND(mydecks, [fresh])
-        deckidx = LEN(mydecks) - 1
-    ELSE
-        deckidx = i
-        mydeck = COPYCARDS(mydecks[deckidx]{"CARDS"})
-    ENDIF
+    NEXT i
+ENDSUB
+
+SUB PICKDECKSLOT(i)
+    IF i < 0 ORELSE i > 2 THEN RETURN
+    FILLSLOTS()
+    IF i = deckidx THEN RETURN
+    SAVEDECKS()
+    deckidx = i
+    mydeck = COPYCARDS(mydecks[deckidx]{"CARDS"})
     SAVEDECKS()
 ENDSUB
 
@@ -1169,7 +1177,12 @@ SUB DrawDeckEd()
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
     DRAWCOLOR 255, 220, 60
-    TEXT 120, 12, T$("deck") + " " + STR$(LEN(mydeck)) + "/6   " + T$("joker") + " x" + STR$(MYWILD())
+    IF auth$ = "" THEN
+        DRAWCOLOR 255, 120, 120
+        TEXT 40, 12, T$("not_signed_in")
+        DRAWCOLOR 255, 220, 60
+    ENDIF
+    IF auth$ <> "" THEN TEXT 120, 12, T$("deck") + " " + STR$(LEN(mydeck)) + "/6   " + T$("joker") + " x" + STR$(MYWILD())
     ' one tab per deck slot, the empty ones ready to be filled
     DIM ds
     FOR ds = 0 TO 2
@@ -1182,7 +1195,7 @@ SUB DrawDeckEd()
         ROUNDED_RECT tabx, 40, 146, 26, 8, TRUE
         DRAWCOLOR 120, 160, 240
         ROUNDED_RECT tabx, 40, 146, 26, 8, FALSE
-        DIM dn$ = "+ Deck " + STR$(ds + 1)
+        DIM dn$ = "Deck " + STR$(ds + 1)
         IF ds < LEN(mydecks) THEN dn$ = mydecks[ds]{"NAME"}
         DRAWCOLOR 235, 242, 255
         TEXT tabx + 14, 46, MID$(dn$, 0, 12)
