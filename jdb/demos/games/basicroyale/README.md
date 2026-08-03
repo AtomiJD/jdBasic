@@ -51,7 +51,9 @@ tokens) and `admin.txt` (the admin key, never committed).
 
 The board is 18 by 30 tiles with a river at row 14.5 and bridges at columns 3.5
 and 14.5. Each side has two princess stations and a king. The king sleeps until
-he is hit or until one of his princesses falls.
+he is hit or until one of his princesses falls. A station holds its own tile:
+ships cannot be dropped onto a footprint, on either side of the river. Spells
+reach it, ships have to walk around it.
 
 During a match either side can send one of six emotes, drawn from discs and
 strokes so they need no emoji font, at most one per seat every 1.5 seconds. A

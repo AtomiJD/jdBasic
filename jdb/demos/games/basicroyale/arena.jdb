@@ -127,6 +127,9 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
     IF x > 17.5 THEN x = 17.5
     IF NOT is_spell THEN
         IF CANDEPLOY(st, pid, x, y) = 0 THEN RETURN "msg_zone"
+        ' a station occupies its tile: dropping on one parks the unit inside
+        ' a footprint it can never walk out of
+        IF TOWERBLOCK(st, x, y) = 1 THEN RETURN "msg_tower"
     ENDIF
     DIM lvl = 1
     DIM clmap = st{"CARDLVL"}[pid]
@@ -289,23 +292,21 @@ EXPORT FUNC RESOLVEBUMP(st, cs)
                 DIM tdx = a{"X"} - cxp
                 DIM tdy = a{"Y"} - cyp
                 DIM td = SQR(tdx * tdx + tdy * tdy)
-                IF td < 0.45 THEN
-                    IF td < 0.001 THEN
-                        ' center inside the box: eject along the shorter axis
-                        IF ABS(a{"X"} - tw{"X"}) > ABS(a{"Y"} - tw{"Y"}) THEN
-                            tdx = a{"X"} - tw{"X"}
-                            tdy = 0.0
-                        ELSE
-                            tdx = 0.0
-                            tdy = a{"Y"} - tw{"Y"}
-                        ENDIF
-                        td = SQR(tdx * tdx + tdy * tdy)
-                        IF td < 0.001 THEN
-                            tdx = 0.0
-                            tdy = 1.0
-                            td = 1.0
-                        ENDIF
+                IF td < 0.001 THEN
+                    ' center inside the box: exit along the shallowest axis,
+                    ' all the way clear of the footprint in one step
+                    DIM ox = a{"X"} - tw{"X"}
+                    DIM oy = a{"Y"} - tw{"Y"}
+                    DIM outx = half + 0.45 - ABS(ox)
+                    DIM outy = half + 0.45 - ABS(oy)
+                    IF outx <= outy THEN
+                        IF ox < 0 THEN outx = 0 - outx
+                        a{"X"} = a{"X"} + outx
+                    ELSE
+                        IF oy < 0 THEN outy = 0 - outy
+                        a{"Y"} = a{"Y"} + outy
                     ENDIF
+                ELSEIF td < 0.45 THEN
                     a{"X"} = a{"X"} + tdx / td * (0.45 - td)
                     a{"Y"} = a{"Y"} + tdy / td * (0.45 - td)
                 ENDIF

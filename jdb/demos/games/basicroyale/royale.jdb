@@ -1127,6 +1127,22 @@ SUB DrawGhost(fnow)
             IF tw{"X"} >= 9 ANDALSO ptr_x >= PX(9) THEN sameside = 1
             IF sameside = 1 ANDALSO srow >= 6 THEN okdrop = 1
         NEXT tw
+        ' the server refuses a ship dropped onto a station footprint; spells
+        ' land anywhere
+        DIM is_spell = 0
+        IF MAP.EXISTS(allcards, drag_kind$) THEN
+            IF MAP.EXISTS(allcards{drag_kind$}, "SPELL") THEN is_spell = 1
+        ENDIF
+        IF is_spell = 0 THEN
+            DIM wxp = ptr_x / (TILE * 1.0)
+            DIM wyp = WY(srow)
+            FOR EACH tw2 IN world{"TOWERS"}
+                IF tw2{"HP"} <= 0 THEN CONTINUEFOR
+                DIM ghalf = 1.4
+                IF tw2{"KIND"} = "KING" THEN ghalf = 1.6
+                IF ABS(wxp - tw2{"X"}) < ghalf ANDALSO ABS(wyp - tw2{"Y"}) < ghalf THEN okdrop = 0
+            NEXT tw2
+        ENDIF
         IF MAP.EXISTS(cardcost, drag_kind$) THEN
             IF world{"ELIXIR"}[mypid] < cardcost{drag_kind$} THEN okdrop = 0
         ENDIF

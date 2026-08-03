@@ -441,6 +441,10 @@ SUB BOTTURN(rm)
     IF MAP.EXISTS(cs{pick$}, "SPELL") ANDALSO threat >= 0 THEN
         px = st{"UNITS"}[threat]{"X"}
         py = st{"UNITS"}[threat]{"Y"}
+    ELSEIF ARENA.TOWERBLOCK(st, px, py) = 1 THEN
+        ' a station holds its own tile - step out in front of it
+        py = py + 2.0
+        IF py > 13.0 THEN py = 13.0
     ENDIF
     DIM res$ = ARENA.PLAYCARD(st, 1, pick$, px, py)
 ENDSUB
