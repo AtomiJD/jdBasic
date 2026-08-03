@@ -40,5 +40,5 @@ $SSH 'sudo -n cp -r ~/royale/web/. /var/www/vvss/ && sudo -n chown -R www-data:w
 echo "== check =="
 # nginx redirects port 80 to https since certbot ran, so check the real URL
 curl -s -m 15 -o /dev/null -w "page %{http_code}  client %{time_total}s\n" https://vvss.jdbasic.tech/
-curl -s -m 15 -o /dev/null -w "royale.jdb %{http_code}  " https://vvss.jdbasic.tech/royale.jdb
+curl -s -m 15 -o /dev/null -w "royale.jdb %{http_code}  " https://vvss.jdbasic.tech/play/royale.jdb
 curl -s -m 15 https://vvss.jdbasic.tech/api/ | head -c 60; echo
