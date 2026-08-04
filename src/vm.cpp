@@ -3,6 +3,8 @@
 #include "errors.h"
 #include "channels.h"
 #include "file_streams.h"
+#include <clocale>
+#include <locale>
 #ifdef COM
 #include "com.h"
 #endif
