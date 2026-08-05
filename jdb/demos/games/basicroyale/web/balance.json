@@ -2,6 +2,22 @@
   "entries": [
     {
       "date": "2026-08-05",
+      "build": "",
+      "title": {
+        "de": "Der Titan schlaegt nicht mehr alles tot, und es gibt einen Rueckruf",
+        "en": "The titan stops one-shotting the roster, and there is a recall"
+      },
+      "note": {
+        "de": "380 Schaden haben elf der fuenfzehn Karten mit einem Treffer getoetet: der Titan war Panzer und Henker zugleich, mit dem hoechsten Schaden je Elixier im Spiel. Im Messstand (push.jdb, Antwort faellt auf den Angreifer in Turmdeckung) hat er fuer sieben Elixier jede gleich teure Antwort ausser Fliegern und Schwaermen geschlagen. Die Huelle bleibt bei 2300, er bleibt der Panzer - Droide, Laser, Brennlanze und Koloss halten die Station jetzt wieder. Neu dazu der TELEPORTER: Schiffe einkreisen, Ziel antippen, bis zu drei kommen heim. Gebaeude bleiben stehen.",
+        "en": "380 damage killed eleven of the fifteen cards in a single hit: the titan was tank and executioner at once, with the best damage per elixir in the game. In the push harness (push.jdb, the answer lands on the attacker inside tower cover) it beat every equally priced answer except flyers and swarms. The hull stays at 2300, so it stays the tank - droid, laser, lance and colossus hold the station again. New alongside it, the TELEPORTER: circle your ships, tap the spot, up to three jump home. Buildings stay where they are."
+      },
+      "changes": [
+        { "card": "TITAN", "kind": "nerf", "stat": { "de": "Schaden", "en": "damage" }, "from": "380", "to": "250" },
+        { "card": "TELEPORTER", "kind": "new", "stat": { "de": "Schiffe je Sprung", "en": "ships per jump" }, "from": "-", "to": "3" }
+      ]
+    },
+    {
+      "date": "2026-08-05",
       "build": "509dba5",
       "title": {
         "de": "Die Brennlanze antwortet",

@@ -412,6 +412,9 @@ SUB BOTTURN(rm)
     FOR i = 0 TO 3
         DIM k$ = q[i]
         DIM c = cs{k$}
+        ' a recall needs ships to pick up and a loop drawn around them, which
+        ' is a decision the machine does not make
+        IF MAP.EXISTS(c, "WARP") THEN CONTINUEFOR
         IF c{"COST"} <= elix ANDALSO c{"COST"} > pickcost THEN
             pick$ = k$
             pickcost = c{"COST"}
@@ -607,12 +610,23 @@ FUNC HSTATE(req)
 ENDFUNC
 
 FUNC HPLAY(req)
-    DIM b = JSON.PARSE$(req{"BODY"})
+    DIM b = 0
+    TRY
+        b = JSON.PARSE$(req{"BODY"})
+    CATCH
+    ENDTRY
+    IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
     DIM rm = ROOMOF(req, b)
     SYNCSIM(rm)
     DIM pid = PIDBYTOK(rm{"PLAYERS"}, b{"TOK"})
     IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
-    DIM res$ = ARENA.PLAYCARD(rm{"ST"}, pid, b{"KIND"}, b{"X"}, b{"Y"})
+    ' a recall carries the loop the player drew: middle and radius in tiles
+    DIM res$ = ""
+    IF MAP.EXISTS(b, "CX") THEN
+        res$ = ARENA.PLAYWARP(rm{"ST"}, pid, b{"KIND"}, b{"X"}, b{"Y"}, b{"CX"}, b{"CY"}, b{"R"})
+    ELSE
+        res$ = ARENA.PLAYCARD(rm{"ST"}, pid, b{"KIND"}, b{"X"}, b{"Y"})
+    ENDIF
     RETURN JJ({ "OK": IIF(res$ = "", 1, 0), "MSG": res$ })
 ENDFUNC
 

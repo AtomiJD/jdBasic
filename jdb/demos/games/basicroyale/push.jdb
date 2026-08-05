@@ -1,0 +1,117 @@
+' Headless push harness: one attacker walks a lane at a defended station and
+' every candidate answer gets dropped in its way. Where balance.jdb measures
+' an open-field duel and standoff.jdb measures reach, this measures the thing
+' a match is actually decided by - what a big card costs the defender, and
+' what it takes off the station before it dies.
+'   jdbasic push.jdb
+IMPORT ARENA
+
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+
+DIM cs = ARENA.CARDS()
+
+' Attacker starts on its own side of the right bridge, the answer lands in
+' front of the station it is walking at.
+CONST LANE_X = 14.5
+CONST ATK_Y = 16.0
+CONST DEF_Y = 9.5
+CONST TOWER_I = 4
+
+SUB SPAWN_AT(st, pid, kind$, x, y, n)
+    DIM c = cs{kind$}
+    DIM i
+    FOR i = 0 TO n - 1
+        DIM u AS MAP = {}
+        u{"ID"} = st{"NEXTID"}
+        u{"OWNER"} = pid
+        u{"KIND"} = kind$
+        u{"X"} = x + (i MOD 3) * 0.8 - 0.8
+        u{"Y"} = y + INT(i / 3) * 0.8
+        u{"HP"} = c{"HP"}
+        u{"MAXHP"} = c{"HP"}
+        u{"DMG"} = c{"DMG"}
+        u{"CD"} = 0.3
+        IF MAP.EXISTS(c, "BUILD") THEN u{"BUILD"} = 1
+        IF MAP.EXISTS(c, "TTL") THEN u{"TTL"} = c{"TTL"}
+        IF MAP.EXISTS(c, "SPAWNS") THEN u{"SPAWNCD"} = c{"SPAWNRATE"}
+        st{"NEXTID"} = st{"NEXTID"} + 1
+        st{"UNITS"} = APPEND(st{"UNITS"}, u)
+    NEXT i
+ENDSUB
+
+FUNC ALIVE(st, pid, kind$)
+    DIM n = 0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"OWNER"} = pid ANDALSO u{"KIND"} = kind$ ANDALSO u{"HP"} > 0 THEN n = n + 1
+    NEXT u
+    RETURN n
+ENDFUNC
+
+' One run: attacker (n_atk copies) against def_budget elixir of the answer.
+' Returns station damage, whether the attacker survived, and the seconds it
+' took to put it down.
+FUNC RUN_PUSH(atk$, n_atk, def$, def_budget)
+    DIM st = ARENA.NEWGAME()
+    DIM n_def = 1
+    IF LEN(def$) > 0 THEN
+        n_def = INT(def_budget / cs{def$}{"COST"}) * cs{def$}{"N"}
+        IF n_def < 1 THEN n_def = 1
+    ENDIF
+    SPAWN_AT(st, 0, atk$, LANE_X, ATK_Y, n_atk)
+    DIM hp0 = st{"TOWERS"}[TOWER_I]{"HP"}
+    DIM killed_at = -1.0
+    DIM dropped = 0
+    DIM t
+    FOR t = 1 TO 700
+        ' a player does not pre-place a block half the board away - the answer
+        ' goes down on the pusher once it is inside the station's cover
+        IF dropped = 0 ANDALSO LEN(def$) > 0 THEN
+            FOR EACH ua IN st{"UNITS"}
+                IF ua{"OWNER"} = 0 ANDALSO ua{"HP"} > 0 ANDALSO ua{"Y"} <= DEF_Y THEN
+                    SPAWN_AT(st, 1, def$, ua{"X"}, ua{"Y"} - 1.0, n_def)
+                    dropped = 1
+                    EXITFOR
+                ENDIF
+            NEXT ua
+        ENDIF
+        st = ARENA.SIMSTEP(st)
+        IF killed_at < 0 ANDALSO ALIVE(st, 0, atk$) = 0 THEN killed_at = t / 10.0
+        IF killed_at >= 0 THEN EXITFOR
+        IF st{"TOWERS"}[TOWER_I]{"HP"} <= 0 THEN EXITFOR
+    NEXT t
+    DIM dealt = hp0 - st{"TOWERS"}[TOWER_I]{"HP"}
+    IF dealt < 0 THEN dealt = 0
+    DIM left = 0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"OWNER"} = 1 ANDALSO u{"HP"} > 0 THEN left = left + u{"HP"}
+    NEXT u
+    RETURN { "DEALT": dealt, "KILLED": killed_at, "DEFLEFT": left, "NDEF": n_def }
+ENDFUNC
+
+SUB REPORT(atk$, n_atk, def$, def_budget)
+    DIM r = RUN_PUSH(atk$, n_atk, def$, def_budget)
+    DIM name$ = "(nothing)"
+    IF LEN(def$) > 0 THEN name$ = def$ + " x" + STR$(r{"NDEF"}) + " (" + STR$(INT(def_budget)) + " elx)"
+    DIM ks$ = "SURVIVED"
+    IF r{"KILLED"} >= 0 THEN ks$ = "down after " + STR$(r{"KILLED"}) + " s"
+    PRINT "  "; MID$(name$ + "                        ", 0, 24); " station -"; INT(r{"DEALT"}); "   "; ks$
+ENDSUB
+
+PRINT "jdVOID - push harness"
+PRINT "one TITAN (7 elx) walks the right lane at an awake princess"
+PRINT ""
+REPORT("TITAN", 1, "", 0)
+DIM answers = ["WESPEN", "GLEITER", "NANOS", "SPLITTER", "DROID", "LASER", "RAILGUN", "KOLOSS", "BRENNLANZE", "BRUTSCHIFF"]
+FOR EACH a$ IN answers
+    REPORT("TITAN", 1, a$, 7.0)
+NEXT a$
+
+PRINT ""
+PRINT "the same answers for 3 elixir only, against the same 7-elixir titan"
+FOR EACH a2$ IN answers
+    REPORT("TITAN", 1, a2$, 3.0)
+NEXT a2$
+

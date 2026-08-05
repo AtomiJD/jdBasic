@@ -234,6 +234,15 @@ EXPORT FUNC FIGURE(kind$)
         s = APPEND(s, [BAR(11, 20, 29, 20, 1.6, "ACCENT", 1.0)])
         s = APPEND(s, [BAR(20, 11, 20, 29, 1.6, "ACCENT", 1.0)])
         s = APPEND(s, [DISC(20, 20, 3.2, "LIGHT", 1.0)])
+    ELSEIF kind$ = "TELEPORTER" THEN
+        ' recall gate: a ring standing open, a ship going in at the bottom
+        ' and coming out at the top, dimmer on the way in
+        s = APPEND(s, [DISC(20, 19, 13, "ACCENT", 0.9)])
+        s = APPEND(s, [DISC(20, 19, 9.5, "DARK", 0)])
+        s = APPEND(s, [BOXR(20, 33, 4, 4, 2, 0, "HULL", 0)])
+        s = APPEND(s, [BAR(20, 30, 20, 26, 1.6, "TEAM", 0.4)])
+        s = APPEND(s, [BOXR(20, 12, 5, 5, 2, 0, "TEAM", 0.9)])
+        s = APPEND(s, [DISC(20, 12, 2, "LIGHT", 1.0)])
     ELSEIF kind$ = "PRINCESS" THEN
         s = APPEND(s, [BOXR(36, 44, 26, 5, 5, 0, "HULL", 0)])
         s = APPEND(s, [DISC(36, 34, 14, "HULL", 0)])

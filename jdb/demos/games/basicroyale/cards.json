@@ -162,7 +162,7 @@
   "TITAN": {
     "COST": 7,
     "HP": 2300,
-    "DMG": 380,
+    "DMG": 250,
     "HITSPEED": 1.8,
     "REACH": 1.2,
     "AGGRO": 5.0,
@@ -283,5 +283,19 @@
     ],
     "ICON": "ST",
     "RARITY": "C"
+  },
+  "TELEPORTER": {
+    "COST": 3,
+    "SPELL": 1,
+    "WARP": 3,
+    "RADIUS": 3.0,
+    "SETTLE": 0.8,
+    "COLOR": [
+      160,
+      255,
+      210
+    ],
+    "ICON": "TE",
+    "RARITY": "S"
   }
 }

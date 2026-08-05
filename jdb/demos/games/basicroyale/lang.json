@@ -36,6 +36,8 @@
     "no_cards_ui": "Karten laden fehlgeschlagen...",
     "msg_full": "Raum voll - anderen Raum wählen",
     "msg_zone": "nicht dein Gebiet",
+    "msg_nosel": "erst die Truppen einkreisen",
+    "msg_nocatch": "nichts in der Schlaufe",
     "msg_tower": "kein Platz auf der Station",
     "msg_elixir": "zu wenig Elixier",
     "msg_nohand": "nicht auf der Hand",
@@ -91,9 +93,13 @@
     "desc_BRUTSCHIFF": "Traegerschiff. Setzt laufend Nano-Schwaerme aus.",
     "desc_BRENNLANZE": "Feste Geschuetzstellung. Frisst grosse Einzelziele.",
     "desc_STASE": "Stasisfeld. Haelt alles darin kurz bewegungslos.",
+    "desc_TELEPORTER": "Ruecksprung. Kreise deine Schiffe ein, tippe das Ziel: bis zu drei kommen heim.",
     "stat_life": "Standzeit",
     "stat_spawn": "Drohnen alle",
     "stat_stun": "Laehmung",
+    "stat_warp": "Schiffe je Sprung",
+    "warp_pick": "Schiffe einkreisen",
+    "warp_dest": "Ziel antippen",
     "sec": "s"
   },
   "en": {
@@ -133,6 +139,8 @@
     "no_cards_ui": "could not load cards...",
     "msg_full": "room is full - pick another",
     "msg_zone": "not your territory",
+    "msg_nosel": "circle your ships first",
+    "msg_nocatch": "the loop caught nothing",
     "msg_tower": "no room on the station",
     "msg_elixir": "not enough elixir",
     "msg_nohand": "not in hand",
@@ -188,9 +196,13 @@
     "desc_BRUTSCHIFF": "Carrier. Keeps releasing nano swarms.",
     "desc_BRENNLANZE": "Fixed emplacement. Melts big single targets.",
     "desc_STASE": "Stasis field. Holds everything inside for a moment.",
+    "desc_TELEPORTER": "Recall. Circle your ships, tap the spot: up to three jump home.",
     "stat_life": "Lifetime",
     "stat_spawn": "Drone every",
     "stat_stun": "Stun",
+    "stat_warp": "ships per jump",
+    "warp_pick": "circle your ships",
+    "warp_dest": "tap the target",
     "sec": "s"
   }
 }

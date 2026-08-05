@@ -38,6 +38,8 @@ exactly one set of rules in the codebase.
 | `lang.json` | UI strings and card descriptions per language. Served by the server, so a new language needs no client change. |
 | `balance.jdb` | Headless duel harness. Every troop card fights every other one for equal elixir. |
 | `standoff.jdb` | Headless too, but the attackers walk in from across the board - which is where reach decides. |
+| `push.jdb` | One attacker walks a lane at a defended station and the answer lands on it when it arrives - what a big card costs the defender. |
+| `warp_test.jdb` | Assertions for the recall card: what the loop catches, what it refuses, what it charges. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -95,8 +97,11 @@ carry traits rather than special cases in the code:
 - `TTL` decays the unit over time, which is what makes buildings temporary.
 - `SPAWNS` / `SPAWNRATE` / `SPAWNN` hatch a brood on the unit's own clock.
 - `SPELL` with `RADIUS` and either `DMG` or `STUN`.
+- `WARP` is played by circling your own ships and tapping where they land -
+  the loop the finger draws travels with the request as a middle and a radius,
+  and `SETTLE` is the swing the arrivals owe before they fight again.
 
-Fifteen cards ship in `cards.json`. Level 1 to 5, each level adds eight percent
+Sixteen cards ship in `cards.json`. Level 1 to 5, each level adds eight percent
 to hit points and damage.
 
 ## The economy

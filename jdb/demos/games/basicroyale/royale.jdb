@@ -32,12 +32,14 @@ DIM up_x = 0
 DIM up_y = 0
 DIM ptr_x = 0
 DIM ptr_y = 0
+DIM ptr_down = 0
 SUB OnTap(info)
     tap_x = info[0]{"x"}
     tap_y = info[0]{"y"}
     ptr_x = tap_x
     ptr_y = tap_y
     tap_new = 1
+    ptr_down = 1
 ENDSUB
 ON "MOUSEDOWN" CALL OnTap
 
@@ -45,6 +47,7 @@ SUB OnRelease(info)
     up_x = info[0]{"x"}
     up_y = info[0]{"y"}
     up_new = 1
+    ptr_down = 0
 ENDSUB
 ON "MOUSEUP" CALL OnRelease
 
@@ -56,6 +59,16 @@ ON "MOUSEMOVE" CALL OnDrag
 
 ' Card held down and dragged onto the board - released there it deploys.
 DIM drag_kind$ = ""
+
+' A recall is played in two gestures instead of one drop: draw a loop around
+' your own ships, then tap where they should come out. 0 = off, 1 = drawing
+' the loop, 2 = waiting for the destination.
+DIM warp_mode = 0
+DIM warp_path = []
+DIM warp_cx = 0.0
+DIM warp_cy = 0.0
+DIM warp_r = 0.0
+DIM warp_n = 0
 
 ' Fallbacks until GET /cards answers; the server's cards.json wins.
 DIM kindcolor AS MAP = {}
@@ -688,6 +701,92 @@ SUB SENDREMATCH()
     ENDTRY
 ENDSUB
 
+' True for a card that is played by circling ships instead of dropping one.
+FUNC ISWARP(kind$)
+    IF NOT MAP.EXISTS(allcards, kind$) THEN RETURN 0
+    IF MAP.EXISTS(allcards{kind$}, "WARP") THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' How many of my own ships the drawn loop holds, capped by the card. The
+' rule is the server's: distance to the middle of the loop, buildings stay.
+FUNC WARPCOUNT(cxw, cyw, rw)
+    DIM cap = 3
+    IF MAP.EXISTS(allcards, "TELEPORTER") THEN cap = allcards{"TELEPORTER"}{"WARP"}
+    DIM n = 0
+    FOR EACH u IN world{"UNITS"}
+        IF u{"OWNER"} <> mypid ORELSE u{"HP"} <= 0 THEN CONTINUEFOR
+        IF MAP.EXISTS(u, "BUILD") THEN CONTINUEFOR
+        DIM dx = u{"X"} - cxw
+        DIM dy = u{"Y"} - cyw
+        IF SQR(dx * dx + dy * dy) <= rw THEN n = n + 1
+    NEXT u
+    IF n > cap THEN n = cap
+    RETURN n
+ENDFUNC
+
+SUB WARPRESET()
+    warp_mode = 0
+    warp_path = []
+    warp_n = 0
+    warp_r = 0.0
+ENDSUB
+
+' The drawn loop as the server understands it: its middle, and how far the
+' finger ran from that middle on average.
+SUB WARPCLOSE()
+    IF LEN(warp_path) < 4 THEN
+        WARPRESET()
+        msg$ = "msg_nocatch"
+        RETURN
+    ENDIF
+    DIM sx = 0.0
+    DIM sy = 0.0
+    FOR EACH p IN warp_path
+        sx = sx + p[0]
+        sy = sy + p[1]
+    NEXT p
+    warp_cx = sx / LEN(warp_path)
+    warp_cy = sy / LEN(warp_path)
+    DIM sr = 0.0
+    FOR EACH p2 IN warp_path
+        DIM dx = p2[0] - warp_cx
+        DIM dy = p2[1] - warp_cy
+        sr = sr + SQR(dx * dx + dy * dy)
+    NEXT p2
+    warp_r = sr / LEN(warp_path)
+    DIM cap = 3.0
+    IF MAP.EXISTS(allcards, "TELEPORTER") THEN cap = allcards{"TELEPORTER"}{"RADIUS"}
+    IF warp_r > cap THEN warp_r = cap
+    IF warp_r < 0.5 THEN warp_r = 0.5
+    warp_n = WARPCOUNT(warp_cx, warp_cy, warp_r)
+    IF warp_n = 0 THEN
+        msg$ = "msg_nocatch"
+        warp_path = []
+    ELSE
+        warp_mode = 2
+        msg$ = ""
+    ENDIF
+ENDSUB
+
+SUB SENDWARP(kind$, wx, wyv)
+    TRY
+        DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "KIND": kind$, "X": wx, "Y": wyv, _
+                                      "CX": warp_cx, "CY": warp_cy, "R": warp_r, "ROOM": room$ })
+        DIM r$ = HTTP.POST$(SRV$ + "/play", body$, "text/plain")
+        DIM m = JSON.PARSE$(r$)
+        IF m{"OK"} = 1 THEN
+            sel$ = ""
+            msg$ = ""
+            WARPRESET()
+        ELSE
+            msg$ = m{"MSG"}
+        ENDIF
+    CATCH
+        msg$ = "msg_playfail"
+    ENDTRY
+ENDSUB
+
 SUB SENDPLAY(kind$, wx, wyv)
     TRY
         DIM body$ = JSON.STRINGIFY$({ "TOK": tok$, "KIND": kind$, "X": wx, "Y": wyv, "ROOM": room$ })
@@ -1173,6 +1272,37 @@ SUB DrawDeployZone()
     NEXT tw
 ENDSUB
 
+' The recall in progress: the line the finger drew, the loop it stands for,
+' a ring around every ship it holds, and one line of instruction.
+SUB DrawWarp(fnow)
+    DIM i
+    IF LEN(warp_path) > 1 THEN
+        DRAWCOLOR 160, 255, 210
+        FOR i = 1 TO LEN(warp_path) - 1
+            LINE PX(warp_path[i - 1][0]), PY(WY(warp_path[i - 1][1])), _
+                 PX(warp_path[i][0]), PY(WY(warp_path[i][1]))
+        NEXT i
+    ENDIF
+    IF warp_mode = 2 THEN
+        DIM pulse = INT(3 * SIN(fnow * 0.25))
+        DRAWCOLOR 120, 235, 190
+        CIRCLE PX(warp_cx), PY(WY(warp_cy)), INT(warp_r * TILE) + pulse, FALSE
+        FOR EACH u IN world{"UNITS"}
+            IF u{"OWNER"} <> mypid ORELSE u{"HP"} <= 0 THEN CONTINUEFOR
+            IF MAP.EXISTS(u, "BUILD") THEN CONTINUEFOR
+            DIM dx = u{"X"} - warp_cx
+            DIM dy = u{"Y"} - warp_cy
+            IF SQR(dx * dx + dy * dy) > warp_r THEN CONTINUEFOR
+            DRAWCOLOR 190, 255, 230
+            CIRCLE PX(u{"X"}), PY(WY(u{"Y"})), 15 + pulse, FALSE
+        NEXT u
+    ENDIF
+    DIM hint$ = T$("warp_pick")
+    IF warp_mode = 2 THEN hint$ = T$("warp_dest") + "   " + STR$(warp_n)
+    DRAWCOLOR 160, 255, 210
+    TEXT 234 - LEN(hint$) * 5, BOARD_Y0 + 10, hint$
+ENDSUB
+
 ' Ghost of the dragged ship under the finger, green where it may land,
 ' red where the drop would be refused.
 SUB DrawGhost(fnow)
@@ -1377,7 +1507,10 @@ SUB DrawCardInfo()
 
     y = y + 28
     IF MAP.EXISTS(c, "SPELL") THEN
-        IF MAP.EXISTS(c, "STUN") THEN
+        IF MAP.EXISTS(c, "WARP") THEN
+            STATLINE(y, T$("stat_warp"), STR$(c{"WARP"}))
+            STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
+        ELSEIF MAP.EXISTS(c, "STUN") THEN
             STATLINE(y, T$("stat_stun"), STR$(c{"STUN"}) + " " + T$("sec"))
             STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
         ELSE
@@ -1686,6 +1819,7 @@ SUB DrawFrame(fnow)
         DrawUnits()
         DrawFX(fnow)
         DrawGhost(fnow)
+        IF warp_mode > 0 THEN DrawWarp(fnow)
         IF watching = 1 THEN
             DrawWatchBar()
         ELSE
@@ -1834,11 +1968,24 @@ SUB HandleClick(mx, my)
         DIM slot = INT(mx / 117)
         IF slot > 3 THEN slot = 3
         sel$ = world{"QUEUES"}[mypid][slot]
-        drag_kind$ = sel$
+        WARPRESET()
+        IF ISWARP(sel$) = 1 THEN
+            ' a recall is drawn, not dragged
+            drag_kind$ = ""
+            warp_mode = 1
+        ELSE
+            drag_kind$ = sel$
+        ENDIF
         msg$ = ""
     ELSEIF my >= BOARD_Y0 THEN
         IF sel$ = "" THEN
             msg$ = "pick_card"
+        ELSEIF warp_mode = 2 THEN
+            DIM wtx = mx / (TILE * 1.0)
+            DIM wty = (my - BOARD_Y0) / (TILE * 1.0)
+            SENDWARP(sel$, wtx, WY(wty))
+        ELSEIF warp_mode = 1 THEN
+            msg$ = ""
         ELSE
             DIM tx = mx / (TILE * 1.0)
             DIM tyv = (my - BOARD_Y0) / (TILE * 1.0)
@@ -1901,6 +2048,11 @@ ELSE
             IF mypid >= 0 ANDALSO frame MOD 6 = 0 THEN POLLSTATE()
             SYNCFX(frame)
             MUSICSTEP(frame)
+            ' the loop is sampled per frame while the finger is down; the
+            ' pointer events alone are too coarse to draw with
+            IF warp_mode = 1 ANDALSO ptr_down = 1 ANDALSO ptr_y >= BOARD_Y0 ANDALSO ptr_y < 840 THEN
+                warp_path = APPEND(warp_path, [[ptr_x / (TILE * 1.0), WY((ptr_y - BOARD_Y0) / (TILE * 1.0))]])
+            ENDIF
             IF shake > 0.2 THEN
                 shake = shake * 0.82
                 shake_x = INT(shake * (RND() * 2 - 1))
@@ -1917,6 +2069,8 @@ ELSE
         ENDIF
         IF up_new = 1 THEN
             up_new = 0
+            ' the finger came off: a drawn loop closes here
+            IF uimode$ = "battle" ANDALSO warp_mode = 1 THEN WARPCLOSE()
             ' released over the board while holding a card - deploy there
             IF uimode$ = "battle" ANDALSO drag_kind$ <> "" ANDALSO up_y < 840 ANDALSO up_y >= BOARD_Y0 THEN
                 IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 THEN

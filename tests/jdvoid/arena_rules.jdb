@@ -1,0 +1,27 @@
+' Regression gate for the jdVOID arena rules.
+'
+' The assertions live next to the module they cover, in the game folder:
+' IMPORT resolves beside the script and cards.json is read from the working
+' directory, so a copy here would drift away from the file the match server
+' actually runs. This starts that check where it lives and fails on its
+' verdict.
+'   jdbasic arena_rules.jdb
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+IF here$ = "" THEN here$ = "."
+DIM game$ = PATH.JOIN$(here$, "..", "..", "jdb", "demos", "games", "basicroyale")
+DIM win_exe$ = PATH.JOIN$(here$, "..", "..", "build", "jdBasic.exe")
+
+DIM q$ = CHR$(34)
+DIM cmd$ = "sh -c " + q$ + "cd " + game$ + " && ../../../../build/jdbasic warp_test.jdb" + q$
+IF FILE.EXISTS(win_exe$) THEN
+    cmd$ = "cmd /c " + q$ + "cd /d " + game$ + " && ..\..\..\..\build\jdBasic.exe warp_test.jdb" + q$
+ENDIF
+
+DIM r = OS.EXEC(cmd$)
+DIM out$ = "" + r{"OUTPUT"}
+PRINT out$
+IF INSTR(out$, "failed 0") >= 0 THEN
+    PRINT "arena_rules: ALL OK"
+ELSE
+    PRINT "arena_rules: FAILED"
+ENDIF

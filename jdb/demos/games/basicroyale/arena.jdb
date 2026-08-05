@@ -103,24 +103,42 @@ EXPORT FUNC CANDEPLOY(st, pid, x, y)
     RETURN 0
 ENDFUNC
 
+' Slot of a card in a player's hand, -1 when it is not on hand.
+EXPORT FUNC HANDSLOT(st, pid, kind$)
+    DIM q = st{"QUEUES"}[pid]
+    DIM i
+    FOR i = 0 TO 3
+        IF q[i] = kind$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' The played card goes to the back of the queue, everything behind it moves up.
+EXPORT FUNC CYCLEHAND(st, pid, slot, kind$)
+    DIM q = st{"QUEUES"}[pid]
+    DIM nq = []
+    DIM i
+    FOR i = 0 TO LEN(q) - 1
+        IF i <> slot THEN nq = APPEND(nq, q[i])
+    NEXT i
+    nq = APPEND(nq, kind$)
+    st{"QUEUES"}[pid] = nq
+    RETURN 0
+ENDFUNC
+
 ' Play a card for player pid at tile (x, y).
 ' Returns "" on success, else a reason string.
 EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
     IF st{"PHASE"} <> "play" THEN RETURN "msg_over"
     DIM cs = CARDS()
     IF NOT MAP.EXISTS(cs, kind$) THEN RETURN "msg_unknown"
-    DIM q = st{"QUEUES"}[pid]
-    DIM slot = -1
-    DIM i
-    FOR i = 0 TO 3
-        IF q[i] = kind$ THEN
-            slot = i
-            EXITFOR
-        ENDIF
-    NEXT i
+    DIM slot = HANDSLOT(st, pid, kind$)
     IF slot < 0 THEN RETURN "msg_nohand"
     DIM c = cs{kind$}
+    ' a recall carries a selection and comes in through PLAYWARP
+    IF MAP.EXISTS(c, "WARP") THEN RETURN "msg_nosel"
     IF st{"ELIXIR"}[pid] < c{"COST"} THEN RETURN "msg_elixir"
+    DIM i
 
     DIM is_spell = MAP.EXISTS(c, "SPELL")
     IF x < 0.5 THEN x = 0.5
@@ -137,13 +155,7 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
     DIM mult = 1.0 + (lvl - 1) * 0.08
 
     st{"ELIXIR"}[pid] = st{"ELIXIR"}[pid] - c{"COST"}
-
-    DIM nq = []
-    FOR i = 0 TO LEN(q) - 1
-        IF i <> slot THEN nq = APPEND(nq, q[i])
-    NEXT i
-    nq = APPEND(nq, kind$)
-    st{"QUEUES"}[pid] = nq
+    DIM cyc = CYCLEHAND(st, pid, slot, kind$)
 
     IF is_spell THEN
         ' the strike launches from the caster's king tower and lands 5
@@ -180,6 +192,70 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         NEXT i
         ADDEVENT(st, { "T": "SPAWN", "X": x, "Y": y })
     ENDIF
+    RETURN ""
+ENDFUNC
+
+' Recall: up to WARP of the player's own ships inside the loop drawn around
+' (cx, cy) jump to (x, y) in the player's own territory. The nearest to the
+' middle of the loop go first, so a drawn circle takes what it encircles.
+' Anchored buildings stay - a station that could be moved is not a station.
+EXPORT FUNC PLAYWARP(st, pid, kind$, x, y, cx, cy, r)
+    IF st{"PHASE"} <> "play" THEN RETURN "msg_over"
+    DIM cs = CARDS()
+    IF NOT MAP.EXISTS(cs, kind$) THEN RETURN "msg_unknown"
+    DIM c = cs{kind$}
+    IF NOT MAP.EXISTS(c, "WARP") THEN RETURN "msg_unknown"
+    DIM slot = HANDSLOT(st, pid, kind$)
+    IF slot < 0 THEN RETURN "msg_nohand"
+    IF st{"ELIXIR"}[pid] < c{"COST"} THEN RETURN "msg_elixir"
+    IF x < 0.5 THEN x = 0.5
+    IF x > 17.5 THEN x = 17.5
+    IF CANDEPLOY(st, pid, x, y) = 0 THEN RETURN "msg_zone"
+    IF TOWERBLOCK(st, x, y) = 1 THEN RETURN "msg_tower"
+    ' the client draws the loop, the card decides how wide it may be
+    IF r > c{"RADIUS"} THEN r = c{"RADIUS"}
+    IF r < 0.5 THEN r = 0.5
+
+    DIM units = st{"UNITS"}
+    DIM picked = []
+    DIM taken AS MAP = {}
+    DIM n_max = c{"WARP"}
+    DIM k
+    FOR k = 1 TO n_max
+        DIM best_i = -1
+        DIM best_d = 99999.0
+        DIM i
+        FOR i = 0 TO LEN(units) - 1
+            IF MAP.EXISTS(taken, "" + i) THEN CONTINUEFOR
+            DIM u = units[i]
+            IF u{"OWNER"} <> pid ORELSE u{"HP"} <= 0 THEN CONTINUEFOR
+            IF MAP.EXISTS(u, "BUILD") THEN CONTINUEFOR
+            DIM d = DIST(cx, cy, u{"X"}, u{"Y"})
+            IF d <= r ANDALSO d < best_d THEN
+                best_d = d
+                best_i = i
+            ENDIF
+        NEXT i
+        IF best_i < 0 THEN EXITFOR
+        taken{"" + best_i} = 1
+        picked = APPEND(picked, best_i)
+    NEXT k
+    IF LEN(picked) = 0 THEN RETURN "msg_nocatch"
+
+    st{"ELIXIR"}[pid] = st{"ELIXIR"}[pid] - c{"COST"}
+    DIM cyc = CYCLEHAND(st, pid, slot, kind$)
+
+    DIM offs = [[0.0, 0.0], [-0.8, 0.0], [0.8, 0.0], [0.0, -0.8], [0.0, 0.8]]
+    DIM j
+    FOR j = 0 TO LEN(picked) - 1
+        DIM uw = units[picked[j]]
+        ADDEVENT(st, { "T": "CAST", "FX": uw{"X"}, "FY": uw{"Y"}, "X": x, "Y": y })
+        uw{"X"} = x + offs[j MOD 5][0]
+        uw{"Y"} = y + offs[j MOD 5][1]
+        ' arriving is not attacking: the jump costs the next swing
+        uw{"CD"} = c{"SETTLE"}
+    NEXT j
+    ADDEVENT(st, { "T": "SPAWN", "X": x, "Y": y })
     RETURN ""
 ENDFUNC
 

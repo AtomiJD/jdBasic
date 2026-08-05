@@ -1,0 +1,91 @@
+' Rule check for the recall card and the cards it must not disturb.
+IMPORT ARENA
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+DIM cs = ARENA.CARDS()
+
+DIM pass = 0
+DIM fail = 0
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+        PRINT "  ok   "; what$
+    ELSE
+        fail = fail + 1
+        PRINT "  FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+FUNC FRESH()
+    DIM st = ARENA.NEWGAME()
+    st{"ELIXIR"}[0] = 10.0
+    st{"QUEUES"}[0] = ["TELEPORTER", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+    RETURN st
+ENDFUNC
+
+' three droids deep in enemy territory, one far away from the loop
+SUB PUTDROIDS(st)
+    DIM spots = [[4.0, 8.0], [4.6, 8.4], [3.6, 8.6], [14.0, 8.0]]
+    DIM i
+    FOR i = 0 TO LEN(spots) - 1
+        DIM u AS MAP = { "ID": 100 + i, "OWNER": 0, "KIND": "DROID", "X": spots[i][0], "Y": spots[i][1], _
+                         "HP": 660, "MAXHP": 660, "DMG": 75, "CD": 0.3 }
+        st{"UNITS"} = APPEND(st{"UNITS"}, u)
+    NEXT i
+ENDSUB
+
+FUNC AT(st, id)
+    FOR EACH u IN st{"UNITS"}
+        IF u{"ID"} = id THEN RETURN STR$(INT(u{"X"} * 10) / 10.0) + "," + STR$(INT(u{"Y"} * 10) / 10.0)
+    NEXT u
+    RETURN "gone"
+ENDFUNC
+
+PRINT "recall rules"
+DIM st = FRESH()
+PUTDROIDS(st)
+CHECK("three of four droids come home", ARENA.PLAYWARP(st, 0, "TELEPORTER", 9.0, 20.0, 4.0, 8.3, 2.0), "")
+CHECK("  near droid moved", AT(st, 100), "9,20")
+' order is by distance to the middle of the loop: 100 (0.3), 102 (0.5), 101 (0.6)
+CHECK("  second one lands beside it", AT(st, 102), "8.2,20")
+CHECK("  third one on the other side", AT(st, 101), "9.8,20")
+CHECK("  the far one stays put", AT(st, 103), "14,8")
+CHECK("  elixir charged", STR$(st{"ELIXIR"}[0]), "7")
+CHECK("  card went to the back of the hand", st{"QUEUES"}[0][5], "TELEPORTER")
+
+st = FRESH()
+PUTDROIDS(st)
+CHECK("an empty loop costs nothing", ARENA.PLAYWARP(st, 0, "TELEPORTER", 9.0, 20.0, 9.0, 2.0, 2.0), "msg_nocatch")
+CHECK("  elixir untouched", STR$(st{"ELIXIR"}[0]), "10")
+
+st = FRESH()
+PUTDROIDS(st)
+CHECK("no landing in enemy territory", ARENA.PLAYWARP(st, 0, "TELEPORTER", 9.0, 6.0, 4.0, 8.3, 2.0), "msg_zone")
+CHECK("no landing on a station", ARENA.PLAYWARP(st, 0, "TELEPORTER", 9.0, 27.5, 4.0, 8.3, 2.0), "msg_tower")
+
+st = FRESH()
+DIM lance AS MAP = { "ID": 200, "OWNER": 0, "KIND": "BRENNLANZE", "X": 4.0, "Y": 8.0, _
+                     "HP": 720, "MAXHP": 720, "DMG": 170, "CD": 0.3, "BUILD": 1, "TTL": 32.0 }
+st{"UNITS"} = APPEND(st{"UNITS"}, lance)
+CHECK("a building does not travel", ARENA.PLAYWARP(st, 0, "TELEPORTER", 9.0, 20.0, 4.0, 8.0, 2.0), "msg_nocatch")
+
+st = FRESH()
+PUTDROIDS(st)
+' a loop drawn around half the board is cut back to the card's radius
+CHECK("an oversized loop still plays", ARENA.PLAYWARP(st, 0, "TELEPORTER", 9.0, 20.0, 6.5, 8.0, 40.0), "")
+CHECK("  what is inside the capped radius comes", AT(st, 100), "8.2,20")
+CHECK("  what is outside it does not", AT(st, 103), "14,8")
+
+st = FRESH()
+CHECK("the plain path refuses a recall card", ARENA.PLAYCARD(st, 0, "TELEPORTER", 9.0, 20.0), "msg_nosel")
+CHECK("a normal card still plays", ARENA.PLAYCARD(st, 0, "DROID", 9.0, 20.0), "")
+
+PRINT ""
+PRINT "titan after the nerf"
+CHECK("damage", STR$(cs{"TITAN"}{"DMG"}), "250")
+CHECK("hull untouched", STR$(cs{"TITAN"}{"HP"}), "2300")
+
+PRINT ""
+PRINT "passed "; pass; ", failed "; fail
