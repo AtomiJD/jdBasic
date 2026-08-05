@@ -26,6 +26,12 @@ $SCP web/index.html web/admin.html web/players.html web/cards.html web/balance.h
 $SSH 'mkdir -p ~/royale/web/cards'
 $SCP web/cards/*.png "$HOST:~/royale/web/cards/"
 
+echo "== card figures =="
+# makecards.jdb renders one PNG per card; a new card is invisible on the
+# sheet until its figure travels with the page
+$SSH 'mkdir -p ~/royale/web/cards'
+$SCP web/cards/*.png "$HOST:~/royale/web/cards/"
+
 echo "== client =="
 $SCP royale.jdb art.jdb ../../../../wasm/index.html "$HOST:~/royale/web/play/"
 
