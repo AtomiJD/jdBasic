@@ -723,13 +723,18 @@ void register_graphics_builtins(VM& vm) {
         int win_w = (int)(w * scale);
         int win_h = (int)(h * scale);
 
-        // Clamp to display size to avoid unintended fullscreen
+#ifndef __EMSCRIPTEN__
+        // Clamp to display size to avoid unintended fullscreen. Desktop only:
+        // in the browser the canvas carries no window chrome to make room for,
+        // and shrinking it by the desktop margins breaks its aspect ratio -
+        // the page then scales a letterboxed picture instead of the picture.
         SDL_DisplayID display = SDL_GetPrimaryDisplay();
         const SDL_DisplayMode* dm = SDL_GetCurrentDisplayMode(display);
         if (dm) {
             if (win_w > dm->w) win_w = dm->w - 40;
             if (win_h > dm->h) win_h = dm->h - 80;
         }
+#endif
 
 #ifdef __EMSCRIPTEN__
         // Reveal + size the page canvas BEFORE the window/GL context is created,
