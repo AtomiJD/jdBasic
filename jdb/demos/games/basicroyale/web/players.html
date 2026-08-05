@@ -42,6 +42,13 @@
   .chip b{color:#9fe8ff;}
   .lv{color:#ffd479;}
   a{color:#5df0d0;}
+  nav{display:flex;gap:10px;margin:22px 0 8px;}
+  nav a{flex:1;text-align:center;text-decoration:none;padding:13px 6px;
+        font-size:13px;letter-spacing:.06em;color:#9fe8ff;
+        background:#12142c;border:1px solid #2c3160;border-radius:12px;}
+  nav a.go{color:#04121a;background:linear-gradient(180deg,#5df0d0,#22c39b);
+           border-color:#22c39b;font-weight:700;}
+  nav a:active{transform:translateY(2px);}
   .foot{font-size:12px;color:#6f79a8;text-align:center;margin-top:20px;}
 </style>
 </head>
@@ -76,9 +83,11 @@
     </tr></thead><tbody></tbody></table>
   </section>
 
-  <p class="foot">
-    <a href="./">Zum Spiel</a> <a href="cards.html">Karten</a> <a href="balance.html">Balance-Historie</a>
-  </p>
+  <nav>
+    <a class="go" href="./">Zum Spiel</a>
+    <a href="cards.html">Karten</a>
+    <a href="balance.html">Balance</a>
+  </nav>
 
 <script>
   const $ = id => document.getElementById(id);

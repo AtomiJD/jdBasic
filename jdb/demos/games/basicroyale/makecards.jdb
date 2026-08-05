@@ -1,0 +1,65 @@
+' Renders every card's ship as a transparent PNG for web/cards.html.
+' The figures are authored on a 40x40 grid, so a fourfold canvas needs the
+' shape coordinates multiplied by four - same rasteriser, same accents from
+' cards.json, four times the pixels.
+'   jdbasic makecards.jdb        -> web/cards/<KIND>.png
+IMPORT ART
+
+CONST K = 4
+CONST CELL = 40 * K
+
+DIM cards AS MAP = {}
+TRY
+    cards = JSON.PARSE$(TXTREADER$("cards.json"))
+CATCH
+    PRINT "cards.json not readable"
+ENDTRY
+
+DIM accents AS MAP = {}
+FOR EACH k$ IN MAP.KEYS(cards)
+    IF MAP.EXISTS(cards{k$}, "COLOR") THEN accents{k$} = cards{k$}{"COLOR"}
+NEXT k$
+ART.SETACCENTS(accents)
+
+' Same shape, K times as big. Every geometric field scales; ROT and the
+' colour slot do not.
+FUNC BLOWUP(shapes)
+    DIM out = []
+    FOR EACH sh IN shapes
+        DIM s AS MAP = {}
+        FOR EACH f$ IN MAP.KEYS(sh)
+            s{f$} = sh{f$}
+        NEXT f$
+        IF sh{"T"} = "SEG" THEN
+            s{"X1"} = sh{"X1"} * K
+            s{"Y1"} = sh{"Y1"} * K
+            s{"X2"} = sh{"X2"} * K
+            s{"Y2"} = sh{"Y2"} * K
+            s{"R"} = sh{"R"} * K
+        ELSE
+            s{"X"} = sh{"X"} * K
+            s{"Y"} = sh{"Y"} * K
+            IF sh{"T"} = "CIRC" THEN
+                s{"R"} = sh{"R"} * K
+            ELSE
+                s{"HX"} = sh{"HX"} * K
+                s{"HY"} = sh{"HY"} * K
+                s{"RR"} = sh{"RR"} * K
+            ENDIF
+        ENDIF
+        out = APPEND(out, [s])
+    NEXT sh
+    RETURN out
+ENDFUNC
+
+SCREEN 320, 200, "jdVOID card art"
+
+DIM n_done = 0
+FOR EACH kind$ IN SORT(MAP.KEYS(cards))
+    DIM sid = ART.BAKECARD(kind$, BLOWUP(ART.FIGURE(kind$)), CELL, CELL, 0, 1.18)
+    SPRITE.SAVE(sid, "web/cards/" + kind$ + ".png")
+    n_done = n_done + 1
+NEXT kind$
+
+PRINT n_done; " card images written to web/cards/ at "; CELL; "x"; CELL
+GFX.CLOSE

@@ -19,7 +19,11 @@
   .bar select{padding:8px 10px;font-size:14px;font-family:inherit;color:#eaf2ff;
     background:#12142c;border:1px solid #2c3160;border-radius:10px;}
   .card{background:#0e1024;border:1px solid #262b55;border-left-width:6px;
-        border-radius:14px;padding:12px 14px;margin-bottom:12px;}
+        border-radius:14px;padding:12px 14px;margin-bottom:12px;
+        display:flex;gap:14px;align-items:flex-start;}
+  .art{width:76px;height:76px;flex:none;border-radius:12px;background:#141838;
+       padding:4px;image-rendering:auto;}
+  .body{flex:1;min-width:0;}
   .head{display:flex;align-items:center;gap:10px;}
   .cost{width:30px;height:30px;flex:none;border-radius:50%;background:#d23cf0;
         border:1px solid #f5aaff;color:#fff;font-weight:700;font-size:15px;
@@ -42,8 +46,13 @@
   section.note p{color:#8b96c6;font-size:13px;margin:0 0 8px;line-height:1.6;}
   section.note b{color:#9fe8ff;}
   a{color:#5df0d0;}
-  .foot{font-size:12px;color:#6f79a8;text-align:center;margin-top:20px;}
-  .foot a{margin:0 8px;}
+  nav{display:flex;gap:10px;margin:22px 0 8px;}
+  nav a{flex:1;text-align:center;text-decoration:none;padding:13px 6px;
+        font-size:13px;letter-spacing:.06em;color:#9fe8ff;
+        background:#12142c;border:1px solid #2c3160;border-radius:12px;}
+  nav a.go{color:#04121a;background:linear-gradient(180deg,#5df0d0,#22c39b);
+           border-color:#22c39b;font-weight:700;}
+  nav a:active{transform:translateY(2px);}
 </style>
 </head>
 <body>
@@ -69,9 +78,11 @@
     <div id="rules"></div>
   </section>
 
-  <p class="foot">
-    <a href="./">Zum Spiel</a><a href="players.html">Rangliste</a><a href="balance.html">Balance-Historie</a>
-  </p>
+  <nav>
+    <a class="go" href="./" id="n_play">Zum Spiel</a>
+    <a href="players.html" id="n_players">Rangliste</a>
+    <a href="balance.html" id="n_balance">Balance</a>
+  </nav>
 
 <script>
   const $ = id => document.getElementById(id);
@@ -84,6 +95,7 @@
   const UI = {
     de:{sub:"Alle Karten mit ihren Werten, direkt aus dem laufenden Server",
         rules:"Was die Werte bedeuten",cost:"Elixier",role:"Rolle",
+        play:"Zum Spiel",players:"Rangliste",balance:"Balance",
         troop:"Truppe",spell:"Zauber",build:"Gebaeude",common:"haeufig",rare:"stark",
         sortcost:"nach Elixier",sortname:"nach Name",sortrole:"nach Rolle",
         note:["<b>Schaden/s</b> ist Schaden geteilt durch Schlagtempo - der ehrliche Vergleich zwischen zwei Karten.",
@@ -94,6 +106,7 @@
         empty:"Server nicht erreichbar"},
     en:{sub:"Every card with its numbers, straight from the running server",
         rules:"What the numbers mean",cost:"Elixir",role:"Role",
+        play:"Play",players:"Standings",balance:"Balance",
         troop:"Troop",spell:"Spell",build:"Building",common:"common",rare:"strong",
         sortcost:"by elixir",sortname:"by name",sortrole:"by role",
         note:["<b>Damage/s</b> is damage divided by hit speed - the honest way to compare two cards.",
@@ -147,7 +160,8 @@
       stats += statRow(T('stat_dmg'), c.DMG);
       stats += statRow(T('stat_dps'), Math.round(c.DMG / c.HITSPEED));
       stats += statRow(T('stat_range'), c.REACH + ' ' + T('tiles'));
-      stats += statRow(T('stat_speed'), c.SPD);
+      // a building has no speed, and printing a zero there only puzzles people
+      if (!c.BUILD) stats += statRow(T('stat_speed'), c.SPD);
       stats += statRow(T('stat_count'), c.N);
       stats += statRow(T('stat_air'), c.HITS === 'A' ? T('air_both') : T('air_ground'));
       if (c.SPAWNS) stats += statRow(T('stat_spawn'), c.SPAWNRATE + ' ' + T('sec'));
@@ -155,11 +169,13 @@
     }
 
     return '<div class="card" style="border-left-color:' + rgb + '">'
+      + '<img class="art" src="cards/' + encodeURIComponent(kind) + '.png" alt="" loading="lazy">'
+      + '<div class="body">'
       + '<div class="head"><div class="cost">' + c.COST + '</div>'
       + '<div class="name" style="color:' + rgb + '">' + esc(kind) + '</div>'
       + '<div class="tags">' + tags + '</div></div>'
       + '<div class="desc">' + esc(T('desc_' + kind)) + '</div>'
-      + '<div class="stats">' + stats + '</div></div>';
+      + '<div class="stats">' + stats + '</div></div></div>';
   }
 
   function render(){
@@ -171,6 +187,10 @@
     $('sort').options[0].textContent = t.sortcost;
     $('sort').options[1].textContent = t.sortname;
     $('sort').options[2].textContent = t.sortrole;
+    $('n_play').textContent = t.play;
+    $('n_players').textContent = t.players;
+    $('n_balance').textContent = t.balance;
+    $('n_balance').href = 'balance.html?lang=' + lang;
 
     const keys = Object.keys(cards);
     if (!keys.length) { $('list').innerHTML = '<p class="sub">' + t.empty + '</p>'; return; }

@@ -22,6 +22,9 @@ echo "== landing page =="
 $SSH 'mkdir -p ~/royale/web/play'
 $SCP web/index.html web/admin.html web/players.html web/cards.html web/balance.html \
      web/balance.json web/hero.png web/icon.png web/social.png "$HOST:~/royale/web/"
+# card art, rendered by makecards.jdb from the same figures the game draws
+$SSH 'mkdir -p ~/royale/web/cards'
+$SCP web/cards/*.png "$HOST:~/royale/web/cards/"
 
 echo "== client =="
 $SCP royale.jdb art.jdb ../../../../wasm/index.html "$HOST:~/royale/web/play/"

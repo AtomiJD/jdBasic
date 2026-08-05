@@ -41,6 +41,7 @@ exactly one set of rules in the codebase.
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
+| `makecards.jdb` | Renders every card's ship into `web/cards/` as a transparent PNG at four times the in-game size. |
 | `deploy.sh` | Ships everything to the Hostinger box and restarts the service. |
 | `web/` | Landing page, player page, card sheet, balance history, admin console and the key art derivatives. |
 
@@ -178,7 +179,10 @@ head-to-head.
 
 `cards.html` is the card sheet for people who are not in a match: it reads
 `/cards` and `/lang`, so it says exactly what the running server plays with and
-speaks whatever languages `lang.json` carries. `balance.html` is the history of
+speaks whatever languages `lang.json` carries. The ship on each card comes from
+`web/cards/`, which `makecards.jdb` renders from the same figures the game
+draws - so a change to `art.jdb` or to a card colour needs that one command
+before the next deploy, or the page shows yesterday's ships. `balance.html` is the history of
 buffs and nerfs, rendered from `balance.json` next to it - one entry per change,
 newest first, each with the reason. Both are linked from the landing page.
 
@@ -317,6 +321,7 @@ the game is the plain form, which moves a few hundred kilobytes.
 ~/royale/                 server.jdb, arena.jdb, cards.json, lang.json
                           admin.txt (chmod 600), stats.json
 ~/royale/web/             landing page, admin console, key art
+~/royale/web/cards/       one PNG per card, from makecards.jdb
 ~/royale/web/play/        client, wasm runtime, vendor bundle
 /var/www/vvss/            what nginx serves, copied from ~/royale/web
 ```

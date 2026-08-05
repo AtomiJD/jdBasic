@@ -43,8 +43,13 @@
   .nerf .mark{color:#ff9aad;border-color:#6b2c3a;}
   .new .mark{color:#ffd479;border-color:#5a4a1e;}
   a{color:#5df0d0;}
-  .foot{font-size:12px;color:#6f79a8;text-align:center;margin-top:20px;}
-  .foot a{margin:0 8px;}
+  nav{display:flex;gap:10px;margin:22px 0 8px;}
+  nav a{flex:1;text-align:center;text-decoration:none;padding:13px 6px;
+        font-size:13px;letter-spacing:.06em;color:#9fe8ff;
+        background:#12142c;border:1px solid #2c3160;border-radius:12px;}
+  nav a.go{color:#04121a;background:linear-gradient(180deg,#5df0d0,#22c39b);
+           border-color:#22c39b;font-weight:700;}
+  nav a:active{transform:translateY(2px);}
 </style>
 </head>
 <body>
@@ -60,9 +65,11 @@
 
   <div id="list"></div>
 
-  <p class="foot">
-    <a href="./">Zum Spiel</a><a href="cards.html">Karten</a><a href="players.html">Rangliste</a>
-  </p>
+  <nav>
+    <a class="go" href="./" id="n_play">Zum Spiel</a>
+    <a href="cards.html" id="n_cards">Karten</a>
+    <a href="players.html" id="n_players">Rangliste</a>
+  </nav>
 
 <script>
   const $ = id => document.getElementById(id);
@@ -71,9 +78,11 @@
   const UI = {
     de:{sub:"Jeder Buff und jeder Nerf, mit dem Grund dahinter",
         now:"aktuell", buff:"Buff", nerf:"Nerf", new:"neu",
+        play:"Zum Spiel", cards:"Karten", players:"Rangliste",
         empty:"Noch keine Eintraege."},
     en:{sub:"Every buff and every nerf, with the reason behind it",
         now:"current", buff:"buff", nerf:"nerf", new:"new",
+        play:"Play", cards:"Cards", players:"Standings",
         empty:"No entries yet."}
   };
 
@@ -101,6 +110,10 @@
     const t = UI[lang];
     document.documentElement.lang = lang;
     $('sub').textContent = t.sub;
+    $('n_play').textContent = t.play;
+    $('n_cards').textContent = t.cards;
+    $('n_players').textContent = t.players;
+    $('n_cards').href = 'cards.html?lang=' + lang;
     if (!entries.length) { $('list').innerHTML = '<p class="sub">' + t.empty + '</p>'; return; }
     $('list').innerHTML = entries.map((e, i) =>
       '<div class="entry' + (i === 0 ? ' latest' : '') + '">'
