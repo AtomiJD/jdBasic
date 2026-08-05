@@ -22,7 +22,7 @@ ENDSUB
 FUNC FRESH()
     DIM st = ARENA.NEWGAME()
     st{"ELIXIR"}[0] = 10.0
-    st{"QUEUES"}[0] = ["TRAKTOR", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+    st{"QUEUES"}[0] = ["SOG", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
     RETURN st
 ENDFUNC
 
@@ -64,13 +64,13 @@ FUNC CDOF(st, id)
     RETURN -1
 ENDFUNC
 
-CHECK("the card exists", STR$(MAP.EXISTS(cs, "TRAKTOR")), "TRUE")
-CHECK("  it is a spell", STR$(MAP.EXISTS(cs{"TRAKTOR"}, "SPELL")), "TRUE")
-CHECK("  it deals no damage", STR$(cs{"TRAKTOR"}{"DMG"}), "0")
+CHECK("the card exists", STR$(MAP.EXISTS(cs, "SOG")), "TRUE")
+CHECK("  it is a spell", STR$(MAP.EXISTS(cs{"SOG"}, "SPELL")), "TRUE")
+CHECK("  it deals no damage", STR$(cs{"SOG"}{"DMG"}), "0")
 
 DIM st = FRESH()
 PUTFOES(st)
-CHECK("cast lands", ARENA.PLAYCARD(st, 0, "TRAKTOR", 9.0, 14.0), "")
+CHECK("cast lands", ARENA.PLAYCARD(st, 0, "SOG", 9.0, 14.0), "")
 ' the strike travels five ticks before it bites
 DIM t
 FOR t = 1 TO 6

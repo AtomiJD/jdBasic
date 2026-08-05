@@ -8,11 +8,11 @@
         "en": "A tower that hatches, and a thrower against swarms"
       },
       "note": {
-        "de": "Zwei neue Karten, beide reine Kartendaten. Der SCHWARMTURM steht fest, verfaellt nach 30 s und schickt alle 3 s einen Nano los. Unbeantwortet richtet er null Schaden an der Station an - seine Nanos kommen einzeln an und werden einzeln abgeschossen -, also ist er als Angriffskarte wertlos und wurde entsprechend auf 3 Elixier gepreist. Verteidigend traegt er: zwei Tuerme halten einen Titan komplett auf. GLUTREGEN schliesst die Luecke, die die Titan-Messung aufgedeckt hat: es gab keine Einheit im Spiel, die einen Schwarm raeumt, nur zwei Zauber. Er trifft eine Gruppe auf einmal und verliert gegen Flieger, die er nicht erreicht.",
-        "en": "Two new cards, both pure card data. SCHWARMTURM holds its tile, wears out after 30 s and sends out a nano every 3 s. Unanswered it does zero station damage - its nanos arrive one at a time and are shot one at a time - so it is worthless as an attacking card and priced at three elixir accordingly. On defence it carries: two towers stop a titan outright. GLUTREGEN closes the hole the titan measurement exposed: no unit in the game could clear a swarm, only two spells. It hits a group at once and loses to the flyers it cannot reach."
+        "de": "Zwei neue Karten, beide reine Kartendaten. Der KOKON steht fest, verfaellt nach 30 s und schickt alle 3 s einen Nano los. Unbeantwortet richtet er null Schaden an der Station an - seine Nanos kommen einzeln an und werden einzeln abgeschossen -, also ist er als Angriffskarte wertlos und wurde entsprechend auf 3 Elixier gepreist. Verteidigend traegt er: zwei Tuerme halten einen Titan komplett auf. GLUTREGEN schliesst die Luecke, die die Titan-Messung aufgedeckt hat: es gab keine Einheit im Spiel, die einen Schwarm raeumt, nur zwei Zauber. Er trifft eine Gruppe auf einmal und verliert gegen Flieger, die er nicht erreicht.",
+        "en": "Two new cards, both pure card data. KOKON holds its tile, wears out after 30 s and sends out a nano every 3 s. Unanswered it does zero station damage - its nanos arrive one at a time and are shot one at a time - so it is worthless as an attacking card and priced at three elixir accordingly. On defence it carries: two towers stop a titan outright. GLUTREGEN closes the hole the titan measurement exposed: no unit in the game could clear a swarm, only two spells. It hits a group at once and loses to the flyers it cannot reach."
       },
       "changes": [
-        { "card": "SCHWARMTURM", "kind": "new", "stat": { "de": "Nano alle", "en": "nano every" }, "from": "-", "to": "3.0 s" },
+        { "card": "KOKON", "kind": "new", "stat": { "de": "Nano alle", "en": "nano every" }, "from": "-", "to": "3.0 s" },
         { "card": "GLUTREGEN", "kind": "new", "stat": { "de": "Streuradius", "en": "blast radius" }, "from": "-", "to": "1.8" }
       ]
     },

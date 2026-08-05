@@ -380,7 +380,7 @@
     "ICON": "ST",
     "RARITY": "C"
   },
-  "SCHWARMTURM": {
+  "KOKON": {
     "SHAPE": [
       ["BOXR", 20, 26, 11, 10, 4, 0, "HULL", 0],
       ["BOXR", 20, 14, 7, 5, 3, 0, "DARK", 0],
@@ -442,7 +442,7 @@
     "ICON": "GR",
     "RARITY": "S"
   },
-  "TRAKTOR": {
+  "SOG": {
     "SHAPE": [
       ["DISC", 20, 10, 7, "HULL", 0],
       ["DISC", 20, 10, 3.2, "ACCENT", 1.0],
