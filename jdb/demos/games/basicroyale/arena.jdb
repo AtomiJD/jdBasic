@@ -164,6 +164,8 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         IF pid = 1 THEN ky = 2.5
         DIM sp AS MAP = { "OWNER": pid, "X": x, "Y": y, "DMG": INT(c{"DMG"} * mult), "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 }
         IF MAP.EXISTS(c, "STUN") THEN sp{"STUN"} = c{"STUN"}
+        IF MAP.EXISTS(c, "PULL") THEN sp{"PULL"} = c{"PULL"}
+        IF MAP.EXISTS(c, "SETTLE") THEN sp{"SETTLE"} = c{"SETTLE"}
         st{"SPELLS"} = APPEND(st{"SPELLS"}, sp)
         ADDEVENT(st, { "T": "CAST", "FX": 9.0, "FY": ky, "X": x, "Y": y })
     ELSE
@@ -425,6 +427,22 @@ EXPORT FUNC SIMSTEP(st)
                         u0{"HP"} = u0{"HP"} - sp{"DMG"}
                         ' a stasis field holds everything it catches
                         IF MAP.EXISTS(sp, "STUN") THEN u0{"STUN"} = sp{"STUN"}
+                        ' a beam drags what it catches toward the middle. It
+                        ' never drags it past - a ship yanked through the
+                        ' centre would come out the far side of the fight.
+                        IF MAP.EXISTS(sp, "PULL") ANDALSO NOT MAP.EXISTS(u0, "BUILD") THEN
+                            DIM pdx = sp{"X"} - u0{"X"}
+                            DIM pdy = sp{"Y"} - u0{"Y"}
+                            DIM pd = SQR(pdx * pdx + pdy * pdy)
+                            IF pd > 0.001 THEN
+                                DIM haul = sp{"PULL"}
+                                IF haul > pd THEN haul = pd
+                                u0{"X"} = u0{"X"} + pdx / pd * haul
+                                u0{"Y"} = u0{"Y"} + pdy / pd * haul
+                                ' being hauled costs the next swing
+                                IF MAP.EXISTS(sp, "SETTLE") THEN u0{"CD"} = sp{"SETTLE"}
+                            ENDIF
+                        ENDIF
                     ENDIF
                 NEXT u0
                 FOR EACH tw0 IN st{"TOWERS"}
@@ -463,16 +481,21 @@ EXPORT FUNC SIMSTEP(st)
             ENDIF
         ENDIF
 
-        ' carriers release a batch of drones on their own cadence
+        ' Carriers and hatcheries release a batch on their own cadence. SPAWNS
+        ' is one card or a list of them; a list is dealt out round robin, so
+        ' SPAWNN 2 over ["NANOS", "WESPEN"] hatches one of each.
         IF MAP.EXISTS(u, "SPAWNCD") THEN
             u{"SPAWNCD"} = u{"SPAWNCD"} - dt
             IF u{"SPAWNCD"} <= 0 THEN
                 u{"SPAWNCD"} = c{"SPAWNRATE"}
                 DIM n_brood = 1
                 IF MAP.EXISTS(c, "SPAWNN") THEN n_brood = c{"SPAWNN"}
+                DIM brood_kinds = c{"SPAWNS"}
+                IF TYPEOF(brood_kinds) <> "ARRAY" THEN brood_kinds = [c{"SPAWNS"}]
                 DIM bi
                 FOR bi = 0 TO n_brood - 1
-                    hatched = APPEND(hatched, [{ "OWNER": u{"OWNER"}, "KIND": c{"SPAWNS"}, "X": u{"X"}, "Y": u{"Y"}, "SLOT": bi }])
+                    DIM bk$ = "" + brood_kinds[bi MOD LEN(brood_kinds)]
+                    hatched = APPEND(hatched, [{ "OWNER": u{"OWNER"}, "KIND": bk$, "X": u{"X"}, "Y": u{"Y"}, "SLOT": bi }])
                 NEXT bi
             ENDIF
         ENDIF

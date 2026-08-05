@@ -1521,6 +1521,9 @@ SUB DrawCardInfo()
         IF MAP.EXISTS(c, "WARP") THEN
             STATLINE(y, T$("stat_warp"), STR$(c{"WARP"}))
             STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
+        ELSEIF MAP.EXISTS(c, "PULL") THEN
+            STATLINE(y, T$("stat_pull"), STR$(c{"PULL"}) + " " + T$("tiles"))
+            STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
         ELSEIF MAP.EXISTS(c, "STUN") THEN
             STATLINE(y, T$("stat_stun"), STR$(c{"STUN"}) + " " + T$("sec"))
             STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))

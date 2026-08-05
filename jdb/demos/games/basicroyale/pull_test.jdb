@@ -1,0 +1,90 @@
+' Assertions for the tractor beam: what it hauls, how far, and what it must
+' leave alone.
+'   jdbasic pull_test.jdb
+IMPORT ARENA
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+DIM cs = ARENA.CARDS()
+
+DIM pass = 0
+DIM fail = 0
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+FUNC FRESH()
+    DIM st = ARENA.NEWGAME()
+    st{"ELIXIR"}[0] = 10.0
+    st{"QUEUES"}[0] = ["TRAKTOR", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+    RETURN st
+ENDFUNC
+
+' Foe ships strung out along a lane, plus one of the caster's own beside them.
+' They are held in stasis so the only thing that moves them is the beam.
+' Spaced so that nothing ends up close enough to shove anything else: what
+' moves here moved because of the beam, not because of the collision pass.
+SUB PUTFOES(st)
+    DIM spots = [[9.0, 11.0], [9.0, 17.0], [9.0, 18.0]]
+    DIM i
+    FOR i = 0 TO LEN(spots) - 1
+        st{"UNITS"} = APPEND(st{"UNITS"}, { "ID": 300 + i, "OWNER": 1, "KIND": "DROID", _
+            "X": spots[i][0], "Y": spots[i][1], "HP": 660, "MAXHP": 660, "DMG": 75, "CD": 0.0, "STUN": 5.0 })
+    NEXT i
+    st{"UNITS"} = APPEND(st{"UNITS"}, { "ID": 310, "OWNER": 0, "KIND": "DROID", _
+        "X": 9.5, "Y": 12.5, "HP": 660, "MAXHP": 660, "DMG": 75, "CD": 0.0, "STUN": 5.0 })
+    st{"UNITS"} = APPEND(st{"UNITS"}, { "ID": 320, "OWNER": 1, "KIND": "BRENNLANZE", _
+        "X": 7.5, "Y": 14.0, "HP": 720, "MAXHP": 720, "DMG": 170, "CD": 0.0, "BUILD": 1, "TTL": 32.0, "STUN": 5.0 })
+ENDSUB
+
+FUNC WHERE$(st, id)
+    FOR EACH u IN st{"UNITS"}
+        IF u{"ID"} = id THEN RETURN STR$(INT(u{"X"} * 10) / 10.0) + "," + STR$(INT(u{"Y"} * 10) / 10.0)
+    NEXT u
+    RETURN "gone"
+ENDFUNC
+
+FUNC HPOF(st, id)
+    FOR EACH u IN st{"UNITS"}
+        IF u{"ID"} = id THEN RETURN u{"HP"}
+    NEXT u
+    RETURN -1
+ENDFUNC
+
+FUNC CDOF(st, id)
+    FOR EACH u IN st{"UNITS"}
+        IF u{"ID"} = id THEN RETURN u{"CD"}
+    NEXT u
+    RETURN -1
+ENDFUNC
+
+CHECK("the card exists", STR$(MAP.EXISTS(cs, "TRAKTOR")), "TRUE")
+CHECK("  it is a spell", STR$(MAP.EXISTS(cs{"TRAKTOR"}, "SPELL")), "TRUE")
+CHECK("  it deals no damage", STR$(cs{"TRAKTOR"}{"DMG"}), "0")
+
+DIM st = FRESH()
+PUTFOES(st)
+CHECK("cast lands", ARENA.PLAYCARD(st, 0, "TRAKTOR", 9.0, 14.0), "")
+' the strike travels five ticks before it bites
+DIM t
+FOR t = 1 TO 6
+    st = ARENA.SIMSTEP(st)
+NEXT t
+
+' three tiles out, hauled two and a half: both land half a tile short of the
+' middle, from opposite sides
+CHECK("foe from above hauled in", WHERE$(st, 300), "9,13.5")
+CHECK("foe from below hauled in", WHERE$(st, 301), "9,14.5")
+CHECK("beyond the rim, nothing", WHERE$(st, 302), "9,18")
+CHECK("own ship untouched", WHERE$(st, 310), "9.5,12.5")
+CHECK("a building is not hauled", WHERE$(st, 320), "7.5,14")
+CHECK("nobody took damage", STR$(HPOF(st, 300)), "660")
+CHECK("the haul costs a swing", STR$(CDOF(st, 300) > 0.5), "TRUE")
+
+PRINT "pull_test: passed "; pass; ", failed "; fail

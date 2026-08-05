@@ -41,6 +41,8 @@ exactly one set of rules in the codebase.
 | `push.jdb` | One attacker walks a lane at a defended station and the answer lands on it when it arrives - what a big card costs the defender. |
 | `warp_test.jdb` | Assertions for the recall card: what the loop catches, what it refuses, what it charges. |
 | `art_test.jdb` | Assertions for the card figures: every card has one, and a row still means what its constructor meant. |
+| `pull_test.jdb` | Assertions for the tractor beam: what it hauls, how far, and what it leaves alone. |
+| `spawn_test.jdb` | Assertions for hatcheries: a building that spawns, and a brood of more than one card. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -97,12 +99,17 @@ carry traits rather than special cases in the code:
 - `BUILD` never moves and holds the tile it was placed on.
 - `TTL` decays the unit over time, which is what makes buildings temporary.
 - `SPAWNS` / `SPAWNRATE` / `SPAWNN` hatch a brood on the unit's own clock.
-- `SPELL` with `RADIUS` and either `DMG` or `STUN`.
+  `SPAWNS` is one card or a list of them, dealt out round robin, and it
+  combines with `BUILD` and `TTL` into a hatchery that holds its tile and
+  wears out.
+- `SPELL` with `RADIUS` and any of `DMG`, `STUN` or `PULL` - `PULL` hauls
+  what it catches that many tiles toward the middle, never past it, and
+  `SETTLE` is the swing the hauled ships owe afterwards. Buildings hold.
 - `WARP` is played by circling your own ships and tapping where they land -
   the loop the finger draws travels with the request as a middle and a radius,
   and `SETTLE` is the swing the arrivals owe before they fight again.
 
-Sixteen cards ship in `cards.json`. Level 1 to 5, each level adds eight percent
+Seventeen cards ship in `cards.json`. Level 1 to 5, each level adds eight percent
 to hit points and damage.
 
 ## Adding a card

@@ -26,6 +26,17 @@ $SCP web/index.html web/admin.html web/players.html web/cards.html web/balance.h
 $SSH 'mkdir -p ~/royale/web/cards'
 $SCP web/cards/*.png "$HOST:~/royale/web/cards/"
 
+echo "== render card figures =="
+# a card edited in cards.json must not reach the sheet with yesterday's
+# picture, so the PNGs are rendered from the file that is about to ship
+JDB=../../../../build/jdBasic.exe
+[ -x "$JDB" ] || JDB=../../../../build/jdbasic
+if [ -x "$JDB" ]; then
+    "$JDB" makecards.jdb | tail -1
+else
+    echo "no local jdbasic - shipping web/cards as it stands"
+fi
+
 echo "== card figures =="
 # makecards.jdb renders one PNG per card; a new card is invisible on the
 # sheet until its figure travels with the page
