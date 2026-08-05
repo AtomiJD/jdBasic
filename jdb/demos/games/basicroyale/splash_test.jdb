@@ -1,0 +1,77 @@
+' Assertions for splash damage on a unit: who it catches around the target,
+' and who it must not.
+IMPORT ARENA
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+DIM cs = ARENA.CARDS()
+
+DIM pass = 0
+DIM fail = 0
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+' a mortar defined purely in data: ground gunner with a blast radius
+cs{"MOERSER"} = { "COST": 4, "HP": 420, "DMG": 100, "HITSPEED": 1.4, "REACH": 5.0, _
+                  "AGGRO": 6.0, "SPD": 1.4, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, _
+                  "SPLASH": 1.8 }
+ARENA.SETCARDS(cs)
+
+FUNC HPOF(st, id)
+    FOR EACH u IN st{"UNITS"}
+        IF u{"ID"} = id THEN RETURN u{"HP"}
+    NEXT u
+    RETURN 0
+ENDFUNC
+
+DIM st = ARENA.NEWGAME()
+' the gunner, and a clump of foes with one straggler and one flyer
+st{"UNITS"} = APPEND(st{"UNITS"}, { "ID": 1, "OWNER": 0, "KIND": "MOERSER", "X": 9.0, "Y": 20.0, _
+    "HP": 420, "MAXHP": 420, "DMG": 100, "CD": 0.0 })
+DIM foes = [[9.0, 16.0, 400], [9.8, 16.4, 401], [10.6, 16.0, 402], [13.0, 16.0, 403]]
+FOR EACH f IN foes
+    st{"UNITS"} = APPEND(st{"UNITS"}, { "ID": f[2], "OWNER": 1, "KIND": "SPLITTER", "X": f[0], "Y": f[1], _
+        "HP": 200, "MAXHP": 200, "DMG": 40, "CD": 9.0, "STUN": 9.0 })
+NEXT f
+st{"UNITS"} = APPEND(st{"UNITS"}, { "ID": 500, "OWNER": 1, "KIND": "WESPEN", "X": 9.4, "Y": 16.2, _
+    "HP": 200, "MAXHP": 200, "DMG": 40, "CD": 9.0, "STUN": 9.0 })
+
+DIM t
+FOR t = 1 TO 5
+    st = ARENA.SIMSTEP(st)
+NEXT t
+
+' the gun shoots the nearest ground ship, which is 401, and the blast takes
+' its two neighbours with it - exact numbers, so an untouched hull cannot
+' pass for a damaged one
+CHECK("the target took the hit", STR$(HPOF(st, 401)), "100")
+CHECK("its neighbour took it too", STR$(HPOF(st, 400)), "100")
+CHECK("the one just inside as well", STR$(HPOF(st, 402)), "100")
+CHECK("the straggler stayed whole", STR$(HPOF(st, 403)), "200")
+CHECK("a ground gun does not splash a flyer", STR$(HPOF(st, 500)), "200")
+
+' without the trait nothing spreads
+cs{"MOERSER"} = { "COST": 4, "HP": 420, "DMG": 100, "HITSPEED": 1.4, "REACH": 5.0, _
+                  "AGGRO": 6.0, "SPD": 1.4, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0 }
+ARENA.SETCARDS(cs)
+DIM st2 = ARENA.NEWGAME()
+st2{"UNITS"} = APPEND(st2{"UNITS"}, { "ID": 1, "OWNER": 0, "KIND": "MOERSER", "X": 9.0, "Y": 20.0, _
+    "HP": 420, "MAXHP": 420, "DMG": 100, "CD": 0.0 })
+st2{"UNITS"} = APPEND(st2{"UNITS"}, { "ID": 400, "OWNER": 1, "KIND": "SPLITTER", "X": 9.0, "Y": 16.0, _
+    "HP": 200, "MAXHP": 200, "DMG": 40, "CD": 9.0, "STUN": 9.0 })
+st2{"UNITS"} = APPEND(st2{"UNITS"}, { "ID": 401, "OWNER": 1, "KIND": "SPLITTER", "X": 9.8, "Y": 16.4, _
+    "HP": 200, "MAXHP": 200, "DMG": 40, "CD": 9.0, "STUN": 9.0 })
+FOR t = 1 TO 5
+    st2 = ARENA.SIMSTEP(st2)
+NEXT t
+CHECK("plain gun hits its target", STR$(HPOF(st2, 401)), "100")
+CHECK("and nobody else", STR$(HPOF(st2, 400)), "200")
+
+PRINT "splash_test: passed "; pass; ", failed "; fail

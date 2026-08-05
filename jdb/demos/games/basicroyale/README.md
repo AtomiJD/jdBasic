@@ -43,6 +43,7 @@ exactly one set of rules in the codebase.
 | `art_test.jdb` | Assertions for the card figures: every card has one, and a row still means what its constructor meant. |
 | `pull_test.jdb` | Assertions for the tractor beam: what it hauls, how far, and what it leaves alone. |
 | `spawn_test.jdb` | Assertions for hatcheries: a building that spawns, and a brood of more than one card. |
+| `splash_test.jdb` | Assertions for splash: who a blast catches around its target, and who it leaves alone. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -102,6 +103,9 @@ carry traits rather than special cases in the code:
   `SPAWNS` is one card or a list of them, dealt out round robin, and it
   combines with `BUILD` and `TTL` into a hatchery that holds its tile and
   wears out.
+- `SPLASH` is a blast radius on a hitter: everything hostile it could target
+  on its own takes the same damage around whatever it hits. Stations are too
+  big to be caught by a neighbour's blast.
 - `SPELL` with `RADIUS` and any of `DMG`, `STUN` or `PULL` - `PULL` hauls
   what it catches that many tiles toward the middle, never past it, and
   `SETTLE` is the swing the hauled ships owe afterwards. Buildings hold.

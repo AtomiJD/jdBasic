@@ -516,6 +516,25 @@ EXPORT FUNC SIMSTEP(st)
                     tw2{"HP"} = tw2{"HP"} - hitdmg
                     IF tw2{"KIND"} = "KING" THEN tw2{"AWAKE"} = 1
                 ENDIF
+                ' SPLASH catches the ships standing around whatever was hit -
+                ' stations are too big to be caught by a neighbour's blast, so
+                ' only the target itself takes the hit if it is one. What a
+                ' hitter cannot reach on its own it cannot splash either: a
+                ' ground gun does not throw its blast at flyers.
+                IF MAP.EXISTS(c, "SPLASH") THEN
+                    DIM si
+                    DIM sunits = st{"UNITS"}
+                    FOR si = 0 TO LEN(sunits) - 1
+                        IF tgt{"T"} = "U" ANDALSO si = tgt{"I"} THEN CONTINUEFOR
+                        DIM sv = sunits[si]
+                        IF sv{"OWNER"} = u{"OWNER"} ORELSE sv{"HP"} <= 0 THEN CONTINUEFOR
+                        IF c{"HITS"} = "G" ANDALSO cs{sv{"KIND"}}{"FLY"} = 1 THEN CONTINUEFOR
+                        IF DIST(tgt{"X"}, tgt{"Y"}, sv{"X"}, sv{"Y"}) <= c{"SPLASH"} THEN
+                            sv{"HP"} = sv{"HP"} - hitdmg
+                        ENDIF
+                    NEXT si
+                    ADDEVENT(st, { "T": "BOOM", "X": tgt{"X"}, "Y": tgt{"Y"}, "RADIUS": c{"SPLASH"}, "D": hitdmg })
+                ENDIF
                 DIM adx = tgt{"X"} - u{"X"}
                 DIM ady = tgt{"Y"} - u{"Y"}
                 DIM ad = SQR(adx * adx + ady * ady)

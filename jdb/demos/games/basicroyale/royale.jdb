@@ -60,6 +60,18 @@ ON "MOUSEMOVE" CALL OnDrag
 ' Card held down and dragged onto the board - released there it deploys.
 DIM drag_kind$ = ""
 
+' The collection scrolls under the finger. A press remembers where it began;
+' past a few pixels of travel it is a scroll, so a card only reacts when the
+' finger stayed where it landed.
+CONST DECK_TOP = 78
+CONST DECK_ROW_H = 126
+DIM deck_scroll = 0
+DIM deck_press_x = 0
+DIM deck_press_y = 0
+DIM deck_scroll0 = 0
+DIM deck_pressing = 0
+DIM deck_dragged = 0
+
 ' A recall is played in two gestures instead of one drop: draw a loop around
 ' your own ships, then tap where they should come out. 0 = off, 1 = drawing
 ' the loop, 2 = waiting for the destination.
@@ -1574,6 +1586,12 @@ ENDSUB
 SUB DrawDeckEd()
     DRAWCOLOR 15, 15, 20
     RECT 0, 0, SCR_W, SCR_H, TRUE
+    ' the grid goes down first and the header is painted over it: without a
+    ' clip rectangle that is what keeps a scrolled row off the tabs
+    DrawDeckGrid()
+
+    DRAWCOLOR 15, 15, 20
+    RECT 0, 0, SCR_W, DECK_TOP - 2, TRUE
     DRAWCOLOR 255, 220, 60
     IF auth$ = "" THEN
         DRAWCOLOR 255, 120, 120
@@ -1598,6 +1616,27 @@ SUB DrawDeckEd()
         DRAWCOLOR 235, 242, 255
         TEXT tabx + 14, 46, MID$(dn$, 0, 12)
     NEXT ds
+
+    ' the strip the button sits on, and a hint that there is more below
+    DRAWCOLOR 15, 15, 20
+    RECT 0, DONEY() - 8, SCR_W, SCR_H - DONEY() + 8, TRUE
+    IF DECKMAXSCROLL() > 0 THEN
+        DIM barh = INT((DONEY() - DECK_TOP) * (DONEY() - DECK_TOP) / ((DONEY() - DECK_TOP) + DECKMAXSCROLL()))
+        DIM bary = DECK_TOP + INT(deck_scroll * (DONEY() - DECK_TOP - barh) / DECKMAXSCROLL())
+        DRAWCOLOR 60, 70, 110
+        ROUNDED_RECT SCR_W - 6, bary, 4, barh, 2, TRUE
+    ENDIF
+    IF LEN(mydeck) = 6 THEN
+        BUTTON(134, DONEY(), 200, 50, T$("done"), 80, 210, 120)
+    ELSE
+        BUTTON(134, DONEY(), 200, 50, T$("done"), 95, 95, 115)
+    ENDIF
+ENDSUB
+
+' The collection itself, offset by the scroll. Rows fully outside the window
+' are skipped - with a roster that keeps growing that is the difference
+' between drawing seventeen cards and drawing a hundred.
+SUB DrawDeckGrid()
     IF LEN(cardorder) = 0 THEN
         DRAWCOLOR 255, 255, 255
         TEXT 100, 300, T$("no_cards_ui")
@@ -1607,7 +1646,8 @@ SUB DrawDeckEd()
             DIM kind$ = cardorder[i]
             DIM col = CCOLOR(kind$)
             DIM x0 = 6 + (i MOD 3) * 154
-            DIM y0 = 78 + INT(i / 3) * 126
+            DIM y0 = DECK_TOP + INT(i / 3) * DECK_ROW_H - deck_scroll
+            IF y0 > DONEY() - 10 ORELSE y0 + 118 < DECK_TOP - 40 THEN CONTINUEFOR
             IF DECKHAS(kind$) = 1 THEN
                 DRAWCOLOR INT(col[0] * 0.5), INT(col[1] * 0.5), INT(col[2] * 0.5)
             ELSE
@@ -1650,21 +1690,21 @@ SUB DrawDeckEd()
             TEXT x0 + 128, y0 + 6, "i"
         NEXT i
     ENDIF
-    IF LEN(mydeck) = 6 THEN
-        BUTTON(134, DONEY(), 200, 50, T$("done"), 80, 210, 120)
-    ELSE
-        BUTTON(134, DONEY(), 200, 50, T$("done"), 95, 95, 115)
-    ENDIF
 ENDSUB
 
-' The grid grows a row per three cards, so the button sits under the last one
-' instead of on top of it. It stops at the bottom edge - past that the grid
-' needs scrolling, not a button pushed off screen.
+' The button is nailed to the bottom edge; the collection scrolls behind it.
 FUNC DONEY()
+    RETURN SCR_H - 58
+ENDFUNC
+
+' How far the grid can travel: everything below the window, nothing when it
+' already fits.
+FUNC DECKMAXSCROLL()
     DIM rows = INT((LEN(cardorder) + 2) / 3)
-    DIM y = 78 + rows * 126 + 6
-    IF y > SCR_H - 58 THEN y = SCR_H - 58
-    RETURN y
+    DIM h = rows * DECK_ROW_H
+    DIM view = DONEY() - DECK_TOP - 8
+    IF h <= view THEN RETURN 0
+    RETURN h - view
 ENDFUNC
 
 ' Elixir cost as a bare number on an elixir-purple coin.
@@ -1928,6 +1968,34 @@ SUB MenuClick(mx, my)
     ENDIF
 ENDSUB
 
+SUB DECKPRESS(mx, my)
+    deck_press_x = mx
+    deck_press_y = my
+    deck_scroll0 = deck_scroll
+    deck_pressing = 1
+    deck_dragged = 0
+ENDSUB
+
+' Runs per frame while the finger is down on the collection.
+SUB DECKDRAG()
+    IF deck_pressing = 0 THEN RETURN
+    IF info_kind$ <> "" THEN RETURN
+    IF deck_press_y < DECK_TOP ORELSE deck_press_y > DONEY() THEN RETURN
+    DIM dy = ptr_y - deck_press_y
+    IF ABS(dy) > 8 THEN deck_dragged = 1
+    IF deck_dragged = 1 THEN
+        DIM s = deck_scroll0 - dy
+        IF s < 0 THEN s = 0
+        IF s > DECKMAXSCROLL() THEN s = DECKMAXSCROLL()
+        deck_scroll = s
+    ENDIF
+ENDSUB
+
+SUB DECKRELEASE()
+    IF deck_pressing = 1 ANDALSO deck_dragged = 0 THEN DeckClick(deck_press_x, deck_press_y)
+    deck_pressing = 0
+ENDSUB
+
 SUB DeckClick(mx, my)
     ' the open card sheet swallows the screen until it is closed
     IF info_kind$ <> "" THEN
@@ -1942,15 +2010,16 @@ SUB DeckClick(mx, my)
             SAVEDECKS()
             uimode$ = "menu"
         ENDIF
-    ELSEIF my >= 78 ANDALSO my < DONEY() THEN
+    ELSEIF my >= DECK_TOP ANDALSO my < DONEY() THEN
         DIM ci = INT((mx - 6) / 154)
-        DIM ri = INT((my - 78) / 126)
+        DIM gy = my - DECK_TOP + deck_scroll
+        DIM ri = INT(gy / DECK_ROW_H)
         IF ci >= 0 ANDALSO ci <= 2 ANDALSO ri >= 0 THEN
             DIM idx = ri * 3 + ci
             IF idx < LEN(cardorder) THEN
                 DIM kind$ = cardorder[idx]
                 DIM cellx = mx - 6 - ci * 154
-                DIM celly = my - 78 - ri * 126
+                DIM celly = gy - ri * DECK_ROW_H
                 DIM mc = MYCARD(kind$)
                 DIM upcost = INT(2 ^ mc{"LVL"})
                 IF cellx >= 116 ANDALSO celly <= 30 THEN
@@ -2089,10 +2158,18 @@ ELSE
         ENDIF
         IF tap_new = 1 THEN
             tap_new = 0
-            HandleClick(tap_x, tap_y)
+            ' in the collection the press only opens the gesture: whether it
+            ' was a tap on a card or a scroll is decided when the finger lifts
+            IF uimode$ = "decks" THEN
+                DECKPRESS(tap_x, tap_y)
+            ELSE
+                HandleClick(tap_x, tap_y)
+            ENDIF
         ENDIF
+        IF uimode$ = "decks" ANDALSO ptr_down = 1 THEN DECKDRAG()
         IF up_new = 1 THEN
             up_new = 0
+            IF uimode$ = "decks" THEN DECKRELEASE()
             ' the finger came off: a loop closes here, but only if one was
             ' actually drawn - the release that ends the card tap must not
             ' count as an empty loop and cancel the mode
