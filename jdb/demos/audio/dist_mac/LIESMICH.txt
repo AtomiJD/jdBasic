@@ -1,0 +1,88 @@
+jdBasic Pedalboard fuer den Mac
+===============================
+
+Ein Gitarren-Effektgeraet. Du spielst rein, es kommt bearbeitet wieder raus:
+Verzerrer, Kompressor, Hall, Echo, dazu ein Stimmgeraet und ein Recorder.
+
+Es laeuft komplett auf deinem Mac. Kein Internet, kein Konto, keine Installation.
+
+
+WAS DU BRAUCHST
+---------------
+
+- einen Mac mit macOS 10.15 oder neuer
+- KOPFHOERER. Ohne Kopfhoerer pfeift es, weil das Mikrofon den Lautsprecher hoert.
+- die Gitarre am Rechner: entweder ueber ein Audio-Interface (iRig, Focusrite
+  und aehnliche) oder ueber den Line-Eingang, falls dein Mac einen hat.
+
+
+SO STARTEST DU
+--------------
+
+1. Den ganzen Ordner aus dem ZIP herausziehen, zum Beispiel auf den
+   Schreibtisch. Aus dem ZIP heraus starten geht nicht.
+
+2. WICHTIG beim allerersten Mal:
+   Rechtsklick (oder Ctrl gedrueckt halten und klicken) auf
+
+       Pedalboard starten.command
+
+   und im Menue "Oeffnen" waehlen. Es kommt eine Warnung, dass der Entwickler
+   nicht bekannt ist. Dort noch einmal auf "Oeffnen" klicken.
+
+   Das ist nur beim ersten Mal noetig. Danach reicht ein Doppelklick.
+
+3. macOS fragt einmal, ob das Programm das Mikrofon benutzen darf.
+   Auf "OK" klicken. Ohne diese Erlaubnis bleibt es still.
+
+4. Es geht ein schwarzes Terminal-Fenster auf und danach das Pedalboard.
+   Das Terminal-Fenster einfach stehen lassen, es gehoert dazu.
+
+
+IM PROGRAMM
+-----------
+
+Oben waehlst du bei "In device" deinen Eingang und bei "Out device" deinen
+Ausgang, dann drueckst du "Start". Der Balken bei "In" muss ausschlagen, wenn
+du spielst. Tut er das nicht, ist der falsche Eingang gewaehlt.
+
+- "Master Gain" ist die Gesamtlautstaerke. Leise anfangen.
+- Links stehen fertige Sounds (Presets). Anklicken und spielen.
+- Jeder Effekt hat Regler. Nichts kann kaputtgehen, probier aus.
+- "Record" nimmt auf, "Stop rec" legt die Aufnahme als WAV-Datei in den Ordner.
+- "Stop" beendet das Durchhoeren, das Fenster zumachen beendet das Programm.
+
+
+WENN MACOS ES NICHT STARTEN LAESST
+----------------------------------
+
+Manchmal blockiert macOS heruntergeladene Programme haerter, dann hilft
+Schritt 2 oben nicht. Dann einmal Folgendes machen:
+
+1. Terminal oeffnen: Command-Taste und Leertaste gleichzeitig druecken,
+   "Terminal" tippen, Eingabetaste.
+
+2. Diese eine Zeile hineinkopieren und Eingabetaste druecken:
+
+       xattr -dr com.apple.quarantine ~/Desktop/jdPedal
+
+   Liegt der Ordner woanders als auf dem Schreibtisch, ziehst du ihn statt
+   dessen einfach ins Terminal-Fenster: dann schreibt der Mac den Pfad selbst
+   hin. Also "xattr -dr com.apple.quarantine " tippen, Leerzeichen, Ordner
+   hineinziehen, Eingabetaste.
+
+3. Terminal wieder schliessen und normal per Doppelklick starten.
+
+Diese Zeile sagt dem Mac nur: "Dieser Ordner kommt aus dem Netz, ich kenne ihn,
+lass ihn laufen." Sie aendert sonst nichts.
+
+
+ES IST STILL
+------------
+
+- Kopfhoerer wirklich eingesteckt und laut genug?
+- richtiges Geraet bei "In device"? Der Pegelbalken verraet es.
+- Mikrofon-Erlaubnis erteilt? Nachsehen unter
+  Systemeinstellungen, Sicherheit, Datenschutz, Mikrofon: dort muss
+  "Terminal" einen Haken haben.
+- "Start" gedrueckt? Ohne Start geht nichts durch.
