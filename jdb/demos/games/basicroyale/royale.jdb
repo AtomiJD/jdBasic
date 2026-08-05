@@ -1639,11 +1639,21 @@ SUB DrawDeckEd()
         NEXT i
     ENDIF
     IF LEN(mydeck) = 6 THEN
-        BUTTON(134, 726, 200, 50, T$("done"), 80, 210, 120)
+        BUTTON(134, DONEY(), 200, 50, T$("done"), 80, 210, 120)
     ELSE
-        BUTTON(134, 726, 200, 50, T$("done"), 95, 95, 115)
+        BUTTON(134, DONEY(), 200, 50, T$("done"), 95, 95, 115)
     ENDIF
 ENDSUB
+
+' The grid grows a row per three cards, so the button sits under the last one
+' instead of on top of it. It stops at the bottom edge - past that the grid
+' needs scrolling, not a button pushed off screen.
+FUNC DONEY()
+    DIM rows = INT((LEN(cardorder) + 2) / 3)
+    DIM y = 78 + rows * 126 + 6
+    IF y > SCR_H - 58 THEN y = SCR_H - 58
+    RETURN y
+ENDFUNC
 
 ' Elixir cost as a bare number on an elixir-purple coin.
 SUB ELIXCOIN(cx, cy, r, n$)
@@ -1915,12 +1925,12 @@ SUB DeckClick(mx, my)
     IF my >= 40 ANDALSO my <= 66 THEN
         DIM tslot = INT((mx - 8) / 152)
         IF tslot >= 0 ANDALSO tslot <= 2 THEN PICKDECKSLOT(tslot)
-    ELSEIF my >= 726 ANDALSO my <= 776 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
+    ELSEIF my >= DONEY() ANDALSO my <= DONEY() + 50 ANDALSO mx >= 134 ANDALSO mx <= 334 THEN
         IF LEN(mydeck) = 6 THEN
             SAVEDECKS()
             uimode$ = "menu"
         ENDIF
-    ELSEIF my >= 78 ANDALSO my < 712 THEN
+    ELSEIF my >= 78 ANDALSO my < DONEY() THEN
         DIM ci = INT((mx - 6) / 154)
         DIM ri = INT((my - 78) / 126)
         IF ci >= 0 ANDALSO ci <= 2 ANDALSO ri >= 0 THEN
