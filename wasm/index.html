@@ -54,6 +54,13 @@
   body.fs .menubar{display:none;}
   body.fs #gfx-overlay .ebar{display:none;}
   .gfxwrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
+  /* Started from the home screen there is no browser chrome keeping the game
+     off the notch and the home indicator, so it keeps itself off them. In a
+     browser tab the toolbars already do that and the game keeps the pixels. */
+  @media (display-mode: standalone){
+    body.fs .gfxwrap{padding:env(safe-area-inset-top) env(safe-area-inset-right)
+                             env(safe-area-inset-bottom) env(safe-area-inset-left);}
+  }
   #canvas{background:#000;max-width:100%;max-height:100%;outline:none;image-rendering:pixelated;touch-action:none;}
   /* A portrait program in a landscape viewport can only pillarbox - it keeps
      a quarter of the screen and loses the rest to black. Say so instead. */
@@ -412,10 +419,27 @@
       setTimeout(()=>{ try{c.focus();}catch(e){} fitCanvas(); },20); }
     function hideGfx(){ document.getElementById('gfx-overlay').classList.remove('open');
       try{ term.focus(); }catch(e){} }
-    // The phone's address bar collapsing counts as a resize, so this also
-    // reclaims the strip it frees.
+    // The box this fits into keeps moving on a phone: the address bar slides
+    // away, the keyboard comes and goes, the device turns. A window resize
+    // event covers none of that reliably on iOS - the box simply changes size
+    // without one, and the canvas keeps a size measured against a viewport
+    // that no longer exists (which leaves a margin on all four sides instead
+    // of one). Watching the box itself is the only account that cannot go
+    // stale; the events below are the fallback where that is missing.
+    // A ResizeObserver runs after layout and before paint, so the fit is
+    // corrected in the same frame the box changes and nothing stale is ever
+    // shown. The rest is fallback: a size left over from a bigger box does
+    // not merely sit wrong, it gets clamped per axis by the max-width and
+    // max-height above, and that stretches the picture.
+    if (window.ResizeObserver)
+      new ResizeObserver(fitCanvas).observe(document.querySelector('.gfxwrap'));
     window.addEventListener('resize', fitCanvas);
     window.addEventListener('orientationchange', ()=> setTimeout(fitCanvas, 200));
+    if (window.visualViewport){
+      visualViewport.addEventListener('resize', fitCanvas);
+      visualViewport.addEventListener('scroll', fitCanvas);
+    }
+    setInterval(()=>{ if (document.getElementById('gfx-overlay').classList.contains('open')) fitCanvas(); }, 1000);
 
     // ?fs=1 hides the page chrome so the canvas gets the whole viewport
     if (new URLSearchParams(location.search).get('fs'))
