@@ -14,6 +14,8 @@ DIM rack = []
 DIM eng = []                 ' engine node index per rack entry (-1 = bypassed)
 DIM chan = 0
 DIM inIdx = 0, outIdx = 0
+DIM capNames = []
+DIM pbNames = []
 DIM mgain = 0.7
 DIM addSel = 0
 DIM splitOn = FALSE          ' feed two branches instead of one signal
@@ -413,7 +415,11 @@ SUB SAVE_RACK()
 ENDSUB
 
 SUB LOAD_RACK()
-    DIM raw$ = TXTREADER$(cfgRack$)
+    DIM raw$ = ""
+    TRY
+        raw$ = TXTREADER$(cfgRack$)
+    CATCH
+    ENDTRY
     IF raw$ = "" THEN
         status$ = "no saved rack yet"
     ELSE
@@ -440,23 +446,11 @@ ENDSUB
 ' ---- monitor + midi ----
 
 SUB START_MON()
-    DIM d = MON.DEVICES()
-    DIM caps = d{"capture"}
-    DIM pbs = d{"playback"}
-    inIdx = 0
-    outIdx = 0
-    DIM z
-    FOR z = 0 TO LEN(caps) - 1
-        IF INSTR(caps[z], "iRig") >= 0 THEN inIdx = z
-    NEXT z
-    FOR z = 0 TO LEN(pbs) - 1
-        IF INSTR(pbs[z], "iRig") >= 0 THEN outIdx = z
-    NEXT z
     DIM m = MON.START(inIdx, outIdx)
     IF m THEN
         DIM g = MON.GAIN(mgain)
         DIM rr = MON.FX(chan)
-        status$ = "monitoring: " + caps[inIdx]
+        status$ = "monitoring: " + capNames[inIdx]
     ELSE
         status$ = "could not open audio device"
     ENDIF
@@ -571,17 +565,54 @@ schema = JSON.PARSE$(TXTREADER$(cfgEffects$))
 typeNames = schema{"types"}
 presetsDoc = JSON.PARSE$(TXTREADER$(cfgPresets$))
 pnames = presetsDoc{"names"}
-DIM mp = MIDI.PORTS()
-midiInNames = mp{"in"}
+TRY
+    DIM mp = MIDI.PORTS()
+    midiInNames = mp{"in"}
+CATCH
+ENDTRY
 
-aiCfg = JSON.PARSE$(TXTREADER$(cfgAi$))
-IF TYPEOF(aiCfg) <> "NONE" THEN
+' a runtime without the monitor has no MON.* - the rack still opens, the
+' device lists just stay empty and Start says so
+TRY
+    DIM devs = MON.DEVICES()
+    capNames = devs{"capture"}
+    pbNames = devs{"playback"}
+CATCH
+ENDTRY
+DIM dz
+FOR dz = 0 TO LEN(capNames) - 1
+    IF INSTR(capNames[dz], "iRig") >= 0 THEN inIdx = dz
+NEXT dz
+FOR dz = 0 TO LEN(pbNames) - 1
+    IF INSTR(pbNames[dz], "iRig") >= 0 THEN outIdx = dz
+NEXT dz
+
+' the tone designer reaches a provider over HTTP; a runtime built without
+' that feature has no HTTP.* at all, so the panel stays off
+DIM httpOk = 1
+TRY
+    HTTP.CLEARHEADERS()
+CATCH
+    httpOk = 0
+ENDTRY
+
+DIM aiOk = 0
+IF httpOk = 1 THEN
+    TRY
+        aiCfg = JSON.PARSE$(TXTREADER$(cfgAi$))
+        aiOk = 1
+    CATCH
+    ENDTRY
+ENDIF
+DIM aiReady = 0
+IF aiOk = 1 ANDALSO TYPEOF(aiCfg) = "OBJECT" THEN
     aiOrder = aiCfg{"order"}
     aiProviders = aiCfg{"providers"}
     DIM ai
     FOR ai = 0 TO LEN(aiOrder) - 1
         IF aiOrder[ai] = ("" + aiCfg{"provider"}) THEN aiProvSel = ai
     NEXT ai
+    aiReady = 1
 ENDIF
 
 LOAD_PRESET("Brian May")
@@ -624,6 +655,10 @@ DO
         IF MON.RUNNING() THEN
             IF GUI.BUTTON("Stop") THEN DIM st = MON.STOP()
         ELSE
+            DIM nin = GUI.COMBO("In device", inIdx, capNames)
+            IF nin <> inIdx THEN inIdx = nin
+            DIM nout = GUI.COMBO("Out device", outIdx, pbNames)
+            IF nout <> outIdx THEN outIdx = nout
             IF GUI.BUTTON("Start") THEN START_MON()
         ENDIF
         GUI.SAME_LINE
@@ -763,7 +798,7 @@ DO
             GUI.TEXT INT(tapBpm) + " BPM"
         ENDIF
 
-        IF TYPEOF(aiCfg) <> "NONE" THEN
+        IF aiReady = 1 THEN
             GUI.SEPARATOR_TEXT("AI tone")
             aiPrompt$ = GUI.INPUT("Describe", aiPrompt$)
             DIM apv = GUI.COMBO("##aiprov", aiProvSel, aiOrder)
