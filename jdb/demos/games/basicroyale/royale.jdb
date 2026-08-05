@@ -207,6 +207,7 @@ ENDSUB
 ' classes. Runs once - a few hundred milliseconds of array math.
 SUB BAKEART()
     IF LEN(cardorder) > 0 THEN
+        ART.SETACCENTS(kindcolor)
         art_own = ART.BAKEALL(cardorder, 0)
         art_foe = ART.BAKEALL(cardorder, 1)
         art_ready = 1
@@ -580,6 +581,65 @@ FUNC HEADOF(u)
     RETURN IIF(MINE(u{"OWNER"}) = 1, 0.0, 180.0)
 ENDFUNC
 
+' Snapshots land about five times a second, the screen draws thirty. Every
+' unit remembers where it was drawn and where the newest snapshot puts it,
+' and DrawUnits walks from one to the other over the measured gap between
+' two polls - so ships glide at screen rate over a sim that ticks at 10 Hz.
+DIM ipos_from AS MAP = {}
+DIM ipos_to AS MAP = {}
+DIM ipos_t0 = 0
+DIM ipos_span = 200.0
+
+' How far into the current gap we are, 0 at the snapshot, 1 when the next
+' one is due. Capped, so a late answer parks the units instead of drifting
+' them past their target.
+FUNC LERPA()
+    DIM a = (TICK() - ipos_t0) / ipos_span
+    IF a < 0 THEN RETURN 0.0
+    IF a > 1 THEN RETURN 1.0
+    RETURN a
+ENDFUNC
+
+' Board position to draw a unit at, in tile units.
+FUNC UPOS(u)
+    DIM k$ = STR$(u{"ID"})
+    IF NOT MAP.EXISTS(ipos_to, k$) THEN RETURN [u{"X"}, u{"Y"}]
+    DIM p0 = ipos_from{k$}
+    DIM p1 = ipos_to{k$}
+    DIM a = LERPA()
+    RETURN [p0[0] + (p1[0] - p0[0]) * a, p0[1] + (p1[1] - p0[1]) * a]
+ENDFUNC
+
+' Rebuilt on every snapshot: the leg that just ran becomes the starting
+' point, the fresh server position the goal. Building both maps from the
+' live unit list drops the dead ones on the way.
+SUB TRACKPOS()
+    DIM a = LERPA()
+    DIM nf AS MAP = {}
+    DIM nt AS MAP = {}
+    FOR EACH u IN world{"UNITS"}
+        DIM k$ = STR$(u{"ID"})
+        DIM fx = u{"X"}
+        DIM fy = u{"Y"}
+        IF MAP.EXISTS(ipos_to, k$) THEN
+            DIM p0 = ipos_from{k$}
+            DIM p1 = ipos_to{k$}
+            fx = p0[0] + (p1[0] - p0[0]) * a
+            fy = p0[1] + (p1[1] - p0[1]) * a
+        ENDIF
+        nf{k$} = [fx, fy]
+        nt{k$} = [u{"X"}, u{"Y"}]
+    NEXT u
+    ipos_from = nf
+    ipos_to = nt
+    DIM now = TICK()
+    DIM span = now - ipos_t0
+    IF span < 60 THEN span = 60
+    IF span > 400 THEN span = 400
+    ipos_span = span
+    ipos_t0 = now
+ENDSUB
+
 DIM prev_tick = -1
 SUB POLLSTATE()
     TRY
@@ -598,6 +658,7 @@ SUB POLLSTATE()
         ENDIF
         IF MAP.EXISTS(m, "PROFILES") THEN profiles = m{"PROFILES"}
         TRACKHEADING()
+        TRACKPOS()
         ' fetch the fresh chest once when the match ends
         IF ISOVER() = 1 ANDALSO chest_shown = 0 ANDALSO watching = 0 THEN
             chest_shown = 1
@@ -807,17 +868,17 @@ SUB PLAYFX(t$)
     ENDIF
 ENDSUB
 
-' HP bar with a health gradient: green, then yellow, then red.
-SUB DrawBar(x, y, w, frac)
+' Health bar in the owner's colour: the length carries the hull, the colour
+' carries the side. Cards paint their own accent onto the sprites, so the
+' bar is what keeps friend and foe one glance apart.
+SUB DrawBar(x, y, w, frac, mine)
     DRAWCOLOR 20, 20, 20
     RECT x, y, w, 5, TRUE
     IF frac > 0 THEN
-        IF frac > 0.5 THEN
-            DRAWCOLOR 90, 240, 90
-        ELSEIF frac > 0.2 THEN
-            DRAWCOLOR 240, 210, 60
+        IF mine = 1 THEN
+            DRAWCOLOR 60, 235, 255
         ELSE
-            DRAWCOLOR 240, 70, 50
+            DRAWCOLOR 255, 60, 150
         ENDIF
         RECT x, y, INT(w * frac), 5, TRUE
     ENDIF
@@ -1021,7 +1082,7 @@ SUB DrawTowers()
         ' each sits on the side facing its owner
         DIM bary = cy - 30
         IF mine = 1 THEN bary = cy + 26
-        DrawBar(cx - TILE, bary, TILE * 2, tw{"HP"} / tw{"MAXHP"})
+        DrawBar(cx - TILE, bary, TILE * 2, tw{"HP"} / tw{"MAXHP"}, mine)
     NEXT tw
 ENDSUB
 
@@ -1030,8 +1091,9 @@ ENDSUB
 SUB DrawUnits()
     FOR EACH u IN world{"UNITS"}
         DIM mine = MINE(u{"OWNER"})
-        DIM ux = PX(u{"X"})
-        DIM uy = PY(WY(u{"Y"}))
+        DIM pos = UPOS(u)
+        DIM ux = PX(pos[0])
+        DIM uy = PY(WY(pos[1]))
         IF MAP.EXISTS(u, "AT") THEN
             IF world{"TICKNO"} - u{"AT"} <= 2 THEN
                 DIM lgy = u{"ADY"}
@@ -1068,7 +1130,7 @@ SUB DrawUnits()
             DRAWCOLOR col[0], col[1], col[2]
             CIRCLE ux, uy, 9, TRUE
         ENDIF
-        DrawBar(ux - 10, uy - 20, 20, u{"HP"} / u{"MAXHP"})
+        DrawBar(ux - 10, uy - 20, 20, u{"HP"} / u{"MAXHP"}, mine)
     NEXT u
 ENDSUB
 
@@ -1412,12 +1474,12 @@ SUB DrawDeckEd()
                 ROUNDED_RECT x0, y0, 150, 118, 12, FALSE
                 ROUNDED_RECT x0 + 1, y0 + 1, 148, 116, 11, FALSE
             ENDIF
+            ' name on the top row, portrait clear of it on the right flank
             IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
-                SPRAT(art_own{kind$}, x0 + 110, y0 + 38)
+                SPRAT(art_own{kind$}, x0 + 110, y0 + 48)
             ENDIF
             DRAWCOLOR 245, 250, 255
-            TEXT x0 + 12, y0 + 10, ICON$(kind$)
-            TEXT x0 + 12, y0 + 36, MID$(kind$, 0, 8)
+            TEXT x0 + 12, y0 + 10, MID$(kind$, 0, 10)
             ' bottom row: cost coin, level and collection progress
             DIM mc = MYCARD(kind$)
             DIM upcost = INT(2 ^ mc{"LVL"})
@@ -1493,20 +1555,20 @@ SUB DrawHand()
             ROUNDED_RECT x0 + 3, 843, 111, 54, 9, FALSE
             ROUNDED_RECT x0 + 4, 844, 109, 52, 8, FALSE
         ENDIF
-        ' ship portrait on the right, tag top-left, cost and level below
+        ' name across the top, portrait below it, cost and level on the left
         IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, kind$) THEN
-            SPRAT(art_own{kind$}, x0 + 84, 868)
+            SPRAT(art_own{kind$}, x0 + 84, 878)
         ENDIF
         DRAWCOLOR 245, 250, 255
-        TEXT x0 + 10, 848, ICON$(kind$)
+        TEXT x0 + 8, 846, MID$(kind$, 0, 10)
         DIM lvl = 1
         DIM hl = world{"CARDLVL"}[mypid]
         IF MAP.EXISTS(hl, kind$) THEN lvl = hl{kind$}
         IF lvl > 1 THEN
             DRAWCOLOR 255, 235, 120
-            TEXT x0 + 36, 876, "L" + STR$(lvl)
+            TEXT x0 + 38, 874, "L" + STR$(lvl)
         ENDIF
-        ELIXCOIN(x0 + 20, 883, 12, STR$(cardcost{kind$}))
+        ELIXCOIN(x0 + 20, 880, 12, STR$(cardcost{kind$}))
     NEXT i
     DIM exl = world{"ELIXIR"}[mypid]
     DRAWCOLOR 30, 10, 40
@@ -1832,6 +1894,7 @@ IF shotmode = 1 THEN
 ELSE
     DO
         IF running = 0 THEN EXITDO
+        DIM frame_t0 = TICK()
         frame = frame + 1
         IF uimode$ = "battle" THEN
             IF mypid < 0 ANDALSO frame MOD 30 = 0 THEN JOINMATCH()
@@ -1873,7 +1936,11 @@ ELSE
             DrawFrame(frame)
         ENDIF
         SCREENFLIP
-        SLEEP 33
+        ' pace the loop on the clock: the frame that fetches the state costs
+        ' a round trip, and a flat sleep would put that on top of the budget
+        DIM rest = 33 - (TICK() - frame_t0)
+        IF rest < 1 THEN rest = 1
+        SLEEP rest
     LOOP
     GFX.CLOSE
 ENDIF

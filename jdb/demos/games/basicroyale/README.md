@@ -37,6 +37,7 @@ exactly one set of rules in the codebase.
 | `art.jdb` | Procedural sprites. Signed-distance-field shapes rasterized into RGBA buffers at startup. |
 | `lang.json` | UI strings and card descriptions per language. Served by the server, so a new language needs no client change. |
 | `balance.jdb` | Headless duel harness. Every troop card fights every other one for equal elixir. |
+| `standoff.jdb` | Headless too, but the attackers walk in from across the board - which is where reach decides. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -54,6 +55,19 @@ and 14.5. Each side has two princess stations and a king. The king sleeps until
 he is hit or until one of his princesses falls. A station holds its own tile:
 ships cannot be dropped onto a footprint, on either side of the river. Spells
 reach it, ships have to walk around it.
+
+The simulation ticks ten times a second and the client asks for a snapshot
+about five times a second, but it draws thirty frames. Every ship keeps the
+position it was last drawn at and the one the newest snapshot puts it on, and
+the frames in between walk from one to the other over the measured gap between
+two answers - so movement is smooth without the server having to tick faster or
+the phone having to poll harder. A late answer parks the ships instead of
+sliding them past their target.
+
+Each card carries a colour in `cards.json`, and the sprite baker paints it into
+the accent slot of that card's figure. The team colour stays in the hull lights
+and the health bar takes the owner's colour outright, so a glance still says
+whose ship it is while the accent says which card.
 
 During a match either side can send one of six emotes, drawn from discs and
 strokes so they need no emoji font, at most one per seat every 1.5 seconds. A
@@ -129,6 +143,12 @@ jdbasic royale.jdb shot     # one frame of the client to tmp/client.png
 decide the matchup. Read its output with the harness in mind: a stationary
 building never walks into fire, so it scores better there than in a real match,
 and a spawner's value accrues over a longer game than the harness simulates.
+
+It has one blind spot that matters for anything with `BUILD`: both sides start
+3.5 tiles apart, so nobody is ever out of anybody's reach. `standoff.jdb` closes
+it by dropping the attackers eleven tiles away and letting them walk in, which
+is when a gunner that out-reaches a turret gets to shoot it for free. Run both
+after a reach change.
 
 ## Running it in a browser
 

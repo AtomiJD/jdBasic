@@ -15,6 +15,17 @@ DIM kinds = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "RAILGUN", "NANOS
 
 SCREEN SCR_W, SCR_H, "BASIC Royale - Art"
 
+' the sheet shows what the client shows: card accents from cards.json
+DIM accents AS MAP = {}
+TRY
+    DIM cs = JSON.PARSE$(TXTREADER$("cards.json"))
+    FOR EACH k$ IN MAP.KEYS(cs)
+        IF MAP.EXISTS(cs{k$}, "COLOR") THEN accents{k$} = cs{k$}{"COLOR"}
+    NEXT k$
+CATCH
+ENDTRY
+ART.SETACCENTS(accents)
+
 DIM t0 = TICK()
 DIM own = ART.BAKEALL(kinds, 0)
 DIM foe = ART.BAKEALL(kinds, 1)

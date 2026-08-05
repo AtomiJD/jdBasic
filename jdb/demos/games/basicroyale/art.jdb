@@ -24,6 +24,14 @@ EXPORT FUNC BAR(x1, y1, x2, y2, r, col$, glow)
 ENDFUNC
 
 ' ── palette ───────────────────────────────────────────────────
+' Per-card accent colours, installed by the host from cards.json. The team
+' keeps the hull lights, so friend and foe stay one glance apart while the
+' accent says which card is on the tile.
+DIM card_accent = 0
+EXPORT SUB SETACCENTS(m)
+    card_accent = m
+ENDSUB
+
 ' Two team looks: cyan for the local player, magenta-red for the foe.
 EXPORT FUNC PALETTE(team)
     DIM p AS MAP = {}
@@ -125,6 +133,18 @@ EXPORT FUNC BAKE(shapes, w, h, team, zoom)
     RETURN sid
 ENDFUNC
 
+' Same, with the card's own accent in place of the team accent.
+EXPORT FUNC BAKECARD(kind$, shapes, w, h, team, zoom)
+    DIM pal = PALETTE(team)
+    IF TYPEOF(card_accent) = "OBJECT" THEN
+        IF MAP.EXISTS(card_accent, kind$) THEN pal{"ACCENT"} = card_accent{kind$}
+    ENDIF
+    DIM sid = SPRITE.CREATE(w, h)
+    SPRITE.SETBUFFER(sid, RASTER(shapes, w, h, pal, zoom))
+    SPRITE.SET_ORIGIN(sid, w / 2, h / 2)
+    RETURN sid
+ENDFUNC
+
 ' ── the roster ────────────────────────────────────────────────
 ' Twelve space units plus the two station classes. Each is one to five
 ' shapes on a 40x40 (units) or 72x72 (stations) canvas.
@@ -155,6 +175,7 @@ EXPORT FUNC FIGURE(kind$)
         s = APPEND(s, [DISC(33, 20, 2, "ACCENT", 0.7)])
     ELSEIF kind$ = "SPLITTER" THEN
         s = APPEND(s, [BOXR(20, 20, 7, 7, 2, 45, "HULL", 0)])
+        s = APPEND(s, [BAR(12, 12, 28, 28, 1.4, "ACCENT", 0.7)])
         s = APPEND(s, [DISC(20, 20, 3, "TEAM", 0.9)])
         s = APPEND(s, [DISC(20, 20, 1.5, "LIGHT", 1.0)])
     ELSEIF kind$ = "RAILGUN" THEN
@@ -162,10 +183,11 @@ EXPORT FUNC FIGURE(kind$)
         s = APPEND(s, [BAR(18, 18, 37, 18, 1.8, "DARK", 0)])
         s = APPEND(s, [DISC(37, 18, 2.5, "ACCENT", 1.0)])
         s = APPEND(s, [BAR(11, 30, 19, 30, 2, "DARK", 0)])
+        s = APPEND(s, [DISC(15, 24, 3.2, "TEAM", 0.8)])
     ELSEIF kind$ = "NANOS" THEN
         s = APPEND(s, [DISC(14, 16, 4.5, "TEAM", 0.8)])
-        s = APPEND(s, [DISC(27, 19, 4.5, "TEAM", 0.8)])
-        s = APPEND(s, [DISC(19, 28, 4.5, "TEAM", 0.8)])
+        s = APPEND(s, [DISC(27, 19, 4.5, "ACCENT", 0.8)])
+        s = APPEND(s, [DISC(19, 28, 4.5, "ACCENT", 0.8)])
         s = APPEND(s, [DISC(20, 21, 2, "LIGHT", 1.0)])
     ELSEIF kind$ = "GLEITER" THEN
         s = APPEND(s, [BAR(8, 30, 20, 14, 2.5, "HULL", 0)])
@@ -232,7 +254,7 @@ ENDFUNC
 EXPORT FUNC BAKEALL(kinds, team)
     DIM out AS MAP = {}
     FOR EACH k$ IN kinds
-        out{k$} = BAKE(FIGURE(k$), 40, 40, team, 1.18)
+        out{k$} = BAKECARD(k$, FIGURE(k$), 40, 40, team, 1.18)
     NEXT k$
     out{"PRINCESS"} = BAKE(FIGURE("PRINCESS"), 72, 72, team, 1.05)
     out{"KING"} = BAKE(FIGURE("KING"), 72, 72, team, 1.0)

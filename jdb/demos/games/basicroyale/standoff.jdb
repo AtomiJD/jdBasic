@@ -1,0 +1,69 @@
+' A defence against attackers that walk in from across the board, which is
+' the case balance.jdb cannot see: it starts both sides 3.5 tiles apart, so
+' every card is inside every reach and nothing is ever out-ranged.
+'   jdbasic standoff.jdb
+IMPORT ARENA
+
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+
+DIM cs = ARENA.CARDS()
+
+SUB SPAWN(st, pid, kind$, x, y, n)
+    DIM c = cs{kind$}
+    DIM i
+    FOR i = 0 TO n - 1
+        DIM u AS MAP = {}
+        u{"ID"} = st{"NEXTID"}
+        u{"OWNER"} = pid
+        u{"KIND"} = kind$
+        u{"X"} = x + i * 1.2 - 0.6
+        u{"Y"} = y
+        u{"HP"} = c{"HP"}
+        u{"MAXHP"} = c{"HP"}
+        u{"DMG"} = c{"DMG"}
+        u{"CD"} = 0.3
+        IF MAP.EXISTS(c, "BUILD") THEN u{"BUILD"} = 1
+        IF MAP.EXISTS(c, "TTL") THEN u{"TTL"} = c{"TTL"}
+        st{"NEXTID"} = st{"NEXTID"} + 1
+        st{"UNITS"} = APPEND(st{"UNITS"}, u)
+    NEXT i
+ENDSUB
+
+FUNC SIDEHP(st, pid)
+    DIM hp = 0.0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"OWNER"} = pid THEN hp = hp + u{"HP"}
+    NEXT u
+    RETURN hp
+ENDFUNC
+
+SUB DUEL(atk$, n_atk)
+    DIM st = ARENA.NEWGAME()
+    SPAWN(st, 0, "BRENNLANZE", 9.0, 20.0, 1)
+    SPAWN(st, 1, atk$, 9.0, 9.0, n_atk)
+    DIM hp_t0 = SIDEHP(st, 0)
+    DIM hp_a0 = SIDEHP(st, 1)
+    DIM t
+    DIM t_dead = 0
+    FOR t = 1 TO 400
+        st = ARENA.SIMSTEP(st)
+        IF SIDEHP(st, 0) <= 0 ANDALSO t_dead = 0 THEN t_dead = t
+        IF SIDEHP(st, 0) <= 0 ORELSE SIDEHP(st, 1) <= 0 THEN EXITFOR
+    NEXT t
+    DIM row$ = MID$(atk$ + " x" + STR$(n_atk) + "          ", 0, 14)
+    row$ = row$ + " turret " + STR$(INT(SIDEHP(st, 0) * 100 / hp_t0)) + "%"
+    row$ = row$ + "  attacker " + STR$(INT(SIDEHP(st, 1) * 100 / hp_a0)) + "%"
+    row$ = row$ + "  turret down at " + STR$(t_dead / 10.0) + " s"
+    PRINT row$
+ENDSUB
+
+PRINT "BRENNLANZE reach "; cs{"BRENNLANZE"}{"REACH"}; "  hp "; cs{"BRENNLANZE"}{"HP"}
+PRINT "LASER reach "; cs{"LASER"}{"REACH"}; "   RAILGUN reach "; cs{"RAILGUN"}{"REACH"}
+PRINT ""
+DUEL("LASER", 2)
+DUEL("RAILGUN", 1)
+DUEL("DROID", 1)
+DUEL("KOLOSS", 1)
