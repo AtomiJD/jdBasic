@@ -47,6 +47,13 @@
   button:active{transform:translateY(3px);box-shadow:0 3px 0 #13795f;}
   .hint{font-size:13px;color:#6f79a8;text-align:center;margin-top:14px;line-height:1.6;}
   .hint b{color:#9fb0e8;font-weight:600;}
+  nav{width:100%;max-width:460px;margin-top:18px;display:flex;gap:10px;}
+  nav a{
+    flex:1;text-align:center;text-decoration:none;padding:12px 6px;
+    font-size:13px;letter-spacing:.06em;color:#9fe8ff;
+    background:#12142c;border:1px solid #2c3160;border-radius:12px;
+  }
+  nav a:active{background:#1a1d3d;}
 </style>
 </head>
 <body>
@@ -83,16 +90,23 @@
     Dein Name traegt deine Sammlung - nimm immer denselben.
   </p>
   <p class="hint" id="err"></p>
-  <p class="hint"><a href="players.html" id="l_players" style="color:#5df0d0">Rangliste und Sammlungen</a></p>
+
+  <nav>
+    <a href="players.html" id="l_players">Rangliste</a>
+    <a href="cards.html" id="l_cards">Karten</a>
+    <a href="balance.html" id="l_balance">Balance</a>
+  </nav>
 
 <script>
   const TXT = {
-    de:{name:"Dein Name",pin:"PIN",room:"Raum",lang:"Sprache",go:"STARTEN",pinph:"4 Ziffern",players:"Rangliste und Sammlungen",
+    de:{name:"Dein Name",pin:"PIN",room:"Raum",lang:"Sprache",go:"STARTEN",pinph:"4 Ziffern",
+        players:"Rangliste",cards:"Karten",balance:"Balance",
         hint:"Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>Dein Name plus PIN gehoert ab dem ersten Start dir - sie schuetzt deine Sammlung.",
         msg:{msg_badpin:"PIN: 4 bis 8 Ziffern",msg_wrongpin:"Falsche PIN fuer diesen Namen.",
              msg_locked:"Zu viele Versuche. Eine Minute warten.",msg_badname:"Name fehlt oder ist zu lang.",
              msg_badreq:"Anfrage unverstaendlich.",net:"Server nicht erreichbar."}},
-    en:{name:"Your name",pin:"PIN",room:"Room",lang:"Language",go:"LAUNCH",pinph:"4 digits",players:"Standings and collections",
+    en:{name:"Your name",pin:"PIN",room:"Room",lang:"Language",go:"LAUNCH",pinph:"4 digits",
+        players:"Standings",cards:"Cards",balance:"Balance",
         hint:"Whoever picks the same <b>room</b> plays against you.<br>Your name plus PIN is yours from the first launch - it protects your collection.",
         msg:{msg_badpin:"PIN: 4 to 8 digits",msg_wrongpin:"Wrong PIN for that name.",
              msg_locked:"Too many tries. Wait a minute.",msg_badname:"Name missing or too long.",
@@ -117,6 +131,11 @@
     $('l_pin').textContent = t.pin;
     $('pin').placeholder = t.pinph;
     $('l_players').textContent = t.players;
+    $('l_cards').textContent = t.cards;
+    $('l_balance').textContent = t.balance;
+    document.querySelectorAll('nav a').forEach(a => {
+      a.href = a.getAttribute('href').split('?')[0] + '?lang=' + $('lang').value;
+    });
     $('l_room').textContent = t.room;
     $('l_lang').textContent = t.lang;
     $('go').textContent = t.go;

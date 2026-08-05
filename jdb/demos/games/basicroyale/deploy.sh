@@ -20,7 +20,8 @@ $SCP server.jdb arena.jdb cards.json lang.json "$HOST:~/royale/"
 echo "== landing page =="
 # the site root is the poster page; the playground lives under /play
 $SSH 'mkdir -p ~/royale/web/play'
-$SCP web/index.html web/admin.html web/players.html web/hero.png web/icon.png web/social.png "$HOST:~/royale/web/"
+$SCP web/index.html web/admin.html web/players.html web/cards.html web/balance.html \
+     web/balance.json web/hero.png web/icon.png web/social.png "$HOST:~/royale/web/"
 
 echo "== client =="
 $SCP royale.jdb art.jdb ../../../../wasm/index.html "$HOST:~/royale/web/play/"

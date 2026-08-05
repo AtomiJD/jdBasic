@@ -1,0 +1,71 @@
+{
+  "entries": [
+    {
+      "date": "2026-08-05",
+      "build": "509dba5",
+      "title": {
+        "de": "Die Brennlanze antwortet",
+        "en": "The lance answers back"
+      },
+      "note": {
+        "de": "Ein Gebaeude fuer fuenf Elixier stand mit 3.6 Feldern Reichweite da, waehrend LASER (5.0) und RAILGUN (6.0) es von ausserhalb abgeraeumt haben, ohne selbst getroffen zu werden. Es reicht jetzt weiter als der Laser und bezahlt das mit Huelle. RAILGUN bleibt der saubere Konter.",
+        "en": "A five-elixir building sat there with 3.6 tiles of reach while LASER (5.0) and RAILGUN (6.0) shot it down from outside, untouched. It now reaches further than the laser and pays for it in hull. RAILGUN stays its clean counter."
+      },
+      "changes": [
+        { "card": "BRENNLANZE", "kind": "buff", "stat": { "de": "Reichweite", "en": "range" }, "from": "3.6", "to": "5.2" },
+        { "card": "BRENNLANZE", "kind": "nerf", "stat": { "de": "Huelle", "en": "hull" }, "from": "820", "to": "720" }
+      ]
+    },
+    {
+      "date": "2026-08-01",
+      "build": "0574f07",
+      "title": {
+        "de": "Traegerschiff bruetet ein Paar, Lanze tauscht Reichweite",
+        "en": "Carrier hatches a pair, lance trades reach"
+      },
+      "note": {
+        "de": "Das Traegerschiff hat eine einzelne Drohne je Zyklus ausgesetzt, was nie Druck ergeben hat - es bruetet jetzt ein Paar. Die Lanze war in der Duellmatrix ungeschlagen; weniger Reichweite und Huelle liessen Schwaerme herankommen. Der zweite Teil ging zu weit, siehe oben.",
+        "en": "The carrier released a single drone per cycle, which never amounted to pressure - it hatches a pair now. The lance was undefeated across the duel matrix; less reach and hull let swarms close the gap. The second half went too far, see above."
+      },
+      "changes": [
+        { "card": "BRUTSCHIFF", "kind": "buff", "stat": { "de": "Drohnen je Zyklus", "en": "drones per cycle" }, "from": "1", "to": "2" },
+        { "card": "BRENNLANZE", "kind": "nerf", "stat": { "de": "Reichweite", "en": "range" }, "from": "4.5", "to": "3.6" },
+        { "card": "BRENNLANZE", "kind": "nerf", "stat": { "de": "Huelle", "en": "hull" }, "from": "950", "to": "820" }
+      ]
+    },
+    {
+      "date": "2026-08-01",
+      "build": "5b8a399",
+      "title": {
+        "de": "Drei neue Karten",
+        "en": "Three new cards"
+      },
+      "note": {
+        "de": "BRUTSCHIFF setzt laufend Nano-Schwaerme aus und zahlt sich aus, je laenger es lebt. BRENNLANZE ist eine feste Stellung mit einem harten Schuss und 32 Sekunden Standzeit, die Antwort auf KOLOSS und TITAN. STASE kostet ein Elixier und haelt alles in drei Feldern Radius fuer 1.8 Sekunden fest, ohne Schaden zu machen.",
+        "en": "BRUTSCHIFF keeps hatching nano swarms and pays off the longer it lives. BRENNLANZE is a fixed emplacement with one hard shot and a 32 second lifetime, the answer to KOLOSS and TITAN. STASE costs one elixir and holds everything in a three tile radius for 1.8 seconds without dealing damage."
+      },
+      "changes": [
+        { "card": "BRUTSCHIFF", "kind": "new", "stat": { "de": "neu", "en": "new" }, "from": "", "to": { "de": "5 Elixier", "en": "5 elixir" } },
+        { "card": "BRENNLANZE", "kind": "new", "stat": { "de": "neu", "en": "new" }, "from": "", "to": { "de": "5 Elixier", "en": "5 elixir" } },
+        { "card": "STASE", "kind": "new", "stat": { "de": "neu", "en": "new" }, "from": "", "to": { "de": "1 Elixier", "en": "1 elixir" } }
+      ]
+    },
+    {
+      "date": "2026-08-01",
+      "build": "96d7042",
+      "title": {
+        "de": "Der Gleiter war ungeschlagen",
+        "en": "The glider was undefeated"
+      },
+      "note": {
+        "de": "Die erste Duellmatrix hat einen zaehen Flieger gefunden, den die halbe Auswahl strukturell nicht treffen kann - der verliert Huelle und Schaden. Die Railgun stand als Letzte im Feld und bekommt den Schlag, den ihre Reichweite verspricht. Danach war keine Karte mehr ungeschlagen.",
+        "en": "The first duel matrix found a tanky flyer that half the roster structurally cannot hit - it loses hull and damage. The railgun stood last in the field and gets the punch its range implies. After that no card was undefeated."
+      },
+      "changes": [
+        { "card": "GLEITER", "kind": "nerf", "stat": { "de": "Huelle", "en": "hull" }, "from": "800", "to": "520" },
+        { "card": "GLEITER", "kind": "nerf", "stat": { "de": "Schaden", "en": "damage" }, "from": "90", "to": "85" },
+        { "card": "RAILGUN", "kind": "buff", "stat": { "de": "Schaden", "en": "damage" }, "from": "100", "to": "135" }
+      ]
+    }
+  ]
+}

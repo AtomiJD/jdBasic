@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jdVOID - Karten</title>
+<link rel="icon" href="icon.png">
+<meta property="og:title" content="jdVOID - Karten">
+<meta property="og:description" content="Alle Karten mit Werten, Rollen und Kontern.">
+<meta property="og:image" content="social.png">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:#07070f;color:#e8ecff;
+       font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;
+       max-width:760px;margin-inline:auto;}
+  h1{font-size:20px;margin:0 0 4px;color:#38e0ff;letter-spacing:.1em;}
+  .sub{color:#6f79a8;font-size:13px;margin-bottom:14px;}
+  .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:16px;}
+  .bar select{padding:8px 10px;font-size:14px;font-family:inherit;color:#eaf2ff;
+    background:#12142c;border:1px solid #2c3160;border-radius:10px;}
+  .card{background:#0e1024;border:1px solid #262b55;border-left-width:6px;
+        border-radius:14px;padding:12px 14px;margin-bottom:12px;}
+  .head{display:flex;align-items:center;gap:10px;}
+  .cost{width:30px;height:30px;flex:none;border-radius:50%;background:#d23cf0;
+        border:1px solid #f5aaff;color:#fff;font-weight:700;font-size:15px;
+        display:flex;align-items:center;justify-content:center;}
+  .name{font-size:17px;font-weight:700;letter-spacing:.04em;}
+  .tags{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+  .tag{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+       border:1px solid #2c3160;border-radius:7px;padding:3px 7px;color:#9fb0e8;}
+  .tag.s{color:#ffd479;border-color:#5a4a1e;}
+  .desc{color:#aab4dd;font-size:14px;margin:10px 0 12px;line-height:1.5;}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px 14px;}
+  .stat{display:flex;justify-content:space-between;font-size:13px;
+        border-top:1px solid #1e2246;padding:5px 0;}
+  .stat span:first-child{color:#6f79a8;}
+  .stat b{font-weight:600;}
+  section.note{background:#0e1024;border:1px solid #262b55;border-radius:14px;
+               padding:14px;margin:18px 0;}
+  section.note h2{font-size:14px;letter-spacing:.1em;text-transform:uppercase;
+                  color:#7f8bbd;margin:0 0 10px;}
+  section.note p{color:#8b96c6;font-size:13px;margin:0 0 8px;line-height:1.6;}
+  section.note b{color:#9fe8ff;}
+  a{color:#5df0d0;}
+  .foot{font-size:12px;color:#6f79a8;text-align:center;margin-top:20px;}
+  .foot a{margin:0 8px;}
+</style>
+</head>
+<body>
+  <h1>jdVOID KARTEN</h1>
+  <div class="sub" id="sub">Alle Karten mit ihren Werten, direkt aus dem laufenden Server</div>
+
+  <div class="bar">
+    <select id="lang">
+      <option value="de">Deutsch</option>
+      <option value="en">English</option>
+    </select>
+    <select id="sort">
+      <option value="cost">nach Elixier</option>
+      <option value="name">nach Name</option>
+      <option value="role">nach Rolle</option>
+    </select>
+  </div>
+
+  <div id="list"></div>
+
+  <section class="note">
+    <h2 id="l_rules">Was die Werte bedeuten</h2>
+    <div id="rules"></div>
+  </section>
+
+  <p class="foot">
+    <a href="./">Zum Spiel</a><a href="players.html">Rangliste</a><a href="balance.html">Balance-Historie</a>
+  </p>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const API = 'api/';
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  // Page furniture only. Everything about a card - its name, description and
+  // the labels of its stats - comes from the server's lang.json, so a new
+  // language there needs no change here.
+  const UI = {
+    de:{sub:"Alle Karten mit ihren Werten, direkt aus dem laufenden Server",
+        rules:"Was die Werte bedeuten",cost:"Elixier",role:"Rolle",
+        troop:"Truppe",spell:"Zauber",build:"Gebaeude",common:"haeufig",rare:"stark",
+        sortcost:"nach Elixier",sortname:"nach Name",sortrole:"nach Rolle",
+        note:["<b>Schaden/s</b> ist Schaden geteilt durch Schlagtempo - der ehrliche Vergleich zwischen zwei Karten.",
+              "<b>Reichweite</b> entscheidet Duelle: wer weiter schiesst, trifft zuerst und oft ungestraft. Ein Geschuetz mit 5.2 Feldern kann eine Karte mit 5.0 beantworten, gegen 6.0 verliert es.",
+              "<b>Anzahl</b> ist, wie viele Schiffe ein Antippen aufs Feld bringt. Vier billige Stoerer halten ein Einzelziel laenger auf als ein teurer Brocken.",
+              "<b>Ziele</b> sagt, was die Karte treffen kann. Flieger sind nur fuer <i>Luft + Boden</i> angreifbar.",
+              "Jede Stufe gibt <b>acht Prozent</b> mehr Huelle und Schaden. Die Zahlen hier sind Stufe 1."],
+        empty:"Server nicht erreichbar"},
+    en:{sub:"Every card with its numbers, straight from the running server",
+        rules:"What the numbers mean",cost:"Elixir",role:"Role",
+        troop:"Troop",spell:"Spell",build:"Building",common:"common",rare:"strong",
+        sortcost:"by elixir",sortname:"by name",sortrole:"by role",
+        note:["<b>Damage/s</b> is damage divided by hit speed - the honest way to compare two cards.",
+              "<b>Range</b> decides duels: whoever reaches further shoots first, often unpunished. A turret with 5.2 tiles can answer a card with 5.0, against 6.0 it loses.",
+              "<b>Count</b> is how many ships one tap puts on the board. Four cheap blockers hold a single target longer than one expensive brute.",
+              "<b>Targets</b> says what a card can hit. Flyers can only be touched by <i>air + ground</i> cards.",
+              "Every level adds <b>eight percent</b> hull and damage. The numbers here are level 1."],
+        empty:"Server unreachable"}
+  };
+
+  const qp = new URLSearchParams(location.search);
+  let cards = {}, langs = {}, lang = qp.get('lang') || (navigator.language || 'de').slice(0,2);
+  if (!UI[lang]) lang = 'de';
+  $('lang').value = lang;
+
+  // A key from lang.json, falling back to German and then to the key itself,
+  // so a string the server does not know yet still shows something readable.
+  function T(k){
+    const l = langs[lang] || langs.de || {};
+    if (l[k] !== undefined) return l[k];
+    const d = langs.de || {};
+    return d[k] !== undefined ? d[k] : k;
+  }
+
+  function role(c){
+    if (c.SPELL) return 'spell';
+    if (c.BUILD) return 'build';
+    return 'troop';
+  }
+
+  function statRow(label, value){
+    return '<div class="stat"><span>' + esc(label) + '</span><b>' + esc(value) + '</b></div>';
+  }
+
+  function cardHtml(kind, c){
+    const t = UI[lang], col = c.COLOR || [140,150,200], r = role(c);
+    const rgb = 'rgb(' + col[0] + ',' + col[1] + ',' + col[2] + ')';
+    let tags = '<span class="tag">' + esc(t[r]) + '</span>';
+    if (c.RARITY === 'S') tags += '<span class="tag s">' + esc(t.rare) + '</span>';
+    else tags += '<span class="tag">' + esc(t.common) + '</span>';
+    if (c.FLY) tags += '<span class="tag">' + esc(T('flying')) + '</span>';
+    if (c.ONLYTOWERS) tags += '<span class="tag">' + esc(T('only_towers')) + '</span>';
+
+    let stats = '';
+    if (c.SPELL) {
+      if (c.STUN) stats += statRow(T('stat_stun'), c.STUN + ' ' + T('sec'));
+      else stats += statRow(T('stat_dmg'), c.DMG);
+      stats += statRow(T('stat_radius'), c.RADIUS + ' ' + T('tiles'));
+    } else {
+      stats += statRow(T('stat_hp'), c.HP);
+      stats += statRow(T('stat_dmg'), c.DMG);
+      stats += statRow(T('stat_dps'), Math.round(c.DMG / c.HITSPEED));
+      stats += statRow(T('stat_range'), c.REACH + ' ' + T('tiles'));
+      stats += statRow(T('stat_speed'), c.SPD);
+      stats += statRow(T('stat_count'), c.N);
+      stats += statRow(T('stat_air'), c.HITS === 'A' ? T('air_both') : T('air_ground'));
+      if (c.SPAWNS) stats += statRow(T('stat_spawn'), c.SPAWNRATE + ' ' + T('sec'));
+      if (c.TTL) stats += statRow(T('stat_life'), Math.round(c.TTL) + ' ' + T('sec'));
+    }
+
+    return '<div class="card" style="border-left-color:' + rgb + '">'
+      + '<div class="head"><div class="cost">' + c.COST + '</div>'
+      + '<div class="name" style="color:' + rgb + '">' + esc(kind) + '</div>'
+      + '<div class="tags">' + tags + '</div></div>'
+      + '<div class="desc">' + esc(T('desc_' + kind)) + '</div>'
+      + '<div class="stats">' + stats + '</div></div>';
+  }
+
+  function render(){
+    const t = UI[lang];
+    document.documentElement.lang = lang;
+    $('sub').textContent = t.sub;
+    $('l_rules').textContent = t.rules;
+    $('rules').innerHTML = t.note.map(p => '<p>' + p + '</p>').join('');
+    $('sort').options[0].textContent = t.sortcost;
+    $('sort').options[1].textContent = t.sortname;
+    $('sort').options[2].textContent = t.sortrole;
+
+    const keys = Object.keys(cards);
+    if (!keys.length) { $('list').innerHTML = '<p class="sub">' + t.empty + '</p>'; return; }
+    const order = {troop:0, build:1, spell:2};
+    const mode = $('sort').value;
+    keys.sort((a, b) => {
+      if (mode === 'name') return a.localeCompare(b);
+      if (mode === 'role') return order[role(cards[a])] - order[role(cards[b])]
+        || cards[a].COST - cards[b].COST || a.localeCompare(b);
+      return cards[a].COST - cards[b].COST || a.localeCompare(b);
+    });
+    $('list').innerHTML = keys.map(k => cardHtml(k, cards[k])).join('');
+  }
+
+  $('lang').addEventListener('change', () => { lang = $('lang').value; render(); });
+  $('sort').addEventListener('change', render);
+
+  (async function load(){
+    try {
+      const [c, l] = await Promise.all([
+        fetch(API + 'cards').then(r => r.json()),
+        fetch(API + 'lang').then(r => r.json())
+      ]);
+      cards = (c && c.CARDS) || {};
+      langs = l || {};
+    } catch (e) {}
+    render();
+  })();
+</script>
+</body>
+</html>

@@ -42,7 +42,7 @@ exactly one set of rules in the codebase.
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
 | `deploy.sh` | Ships everything to the Hostinger box and restarts the service. |
-| `web/` | Landing page, player page, admin console and the key art derivatives. |
+| `web/` | Landing page, player page, card sheet, balance history, admin console and the key art derivatives. |
 
 Server-side state next to `server.jdb`: `stats.json` (profiles, collections,
 decks, PIN hashes), `matches.json` (the match log), `sessions.json` (live
@@ -175,6 +175,17 @@ never reaches the game URL or a server log. That is the link to share.
 `players.html` is the public board: standings, one player's collection, the
 match log, and the direct tally between any two names. `?a=&b=` deep-links a
 head-to-head.
+
+`cards.html` is the card sheet for people who are not in a match: it reads
+`/cards` and `/lang`, so it says exactly what the running server plays with and
+speaks whatever languages `lang.json` carries. `balance.html` is the history of
+buffs and nerfs, rendered from `balance.json` next to it - one entry per change,
+newest first, each with the reason. Both are linked from the landing page.
+
+Adding a balance entry is a block in `balance.json`: `date`, the commit in
+`build`, `title` and `note` per language, and one `changes` row per number that
+moved (`kind` is `buff`, `nerf` or `new`). Write it in the same commit that
+changes `cards.json`, or the page and the game drift apart.
 
 To rebuild the runtime:
 

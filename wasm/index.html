@@ -2,8 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>jdBasic - Web</title>
+<!-- Added to the home screen, the page runs without browser chrome, which is
+     the only way iOS gives a web game the whole display. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
 <link rel="stylesheet" href="vendor/xterm/xterm.css">
 <link rel="stylesheet" href="vendor/fonts/fira-code.css">
 <style>
@@ -43,12 +49,21 @@
   #editor{flex:1;min-height:0;}
 
   #gfx-overlay{position:fixed;inset:0;display:none;flex-direction:column;background:#000;z-index:40;}
-  #gfx-overlay.open{display:flex;}
+  #gfx-overlay.open{display:flex;height:100dvh;}
   /* ?fs=1 - chromeless mode for shared game links: no menubar, no gfx header */
   body.fs .menubar{display:none;}
   body.fs #gfx-overlay .ebar{display:none;}
   .gfxwrap{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:hidden;}
   #canvas{background:#000;max-width:100%;max-height:100%;outline:none;image-rendering:pixelated;touch-action:none;}
+  /* A portrait program in a landscape viewport can only pillarbox - it keeps
+     a quarter of the screen and loses the rest to black. Say so instead. */
+  #turn{position:fixed;inset:0;z-index:45;display:none;flex-direction:column;
+        align-items:center;justify-content:center;gap:14px;background:#000;
+        color:#9fe8ff;font-size:15px;letter-spacing:.08em;text-align:center;padding:24px;}
+  #turn.show{display:flex;}
+  #turn .ph{width:54px;height:88px;border:3px solid #38e0ff;border-radius:10px;
+            transform:rotate(90deg);transition:transform .8s ease-in-out;}
+  #turn.show .ph{transform:rotate(0deg);}
 </style>
 </head>
 <body>
@@ -81,6 +96,7 @@
       <span class="hint">running... use the program's quit key (often Esc) to return to the REPL</span>
     </div>
     <div class="gfxwrap"><canvas id="canvas" tabindex="0"></canvas></div>
+    <div id="turn"><div class="ph"></div><div id="turntext">Bitte das Geraet hochkant halten</div></div>
   </div>
   <input type="file" id="fileopen" accept=".jdb,.bas,.txt" hidden>
 
@@ -370,14 +386,45 @@
     function latin1(u8){ let s=''; for(let i=0;i<u8.length;i++) s+=String.fromCharCode(u8[i]); return s; }
 
     // ---- graphics canvas (revealed when the program calls SCREEN) ----
+    // A shared game link should fill the phone, but CSS alone cannot: max-width
+    // /max-height never scale a canvas UP past its own pixel size, and a
+    // percentage width stops preserving the aspect ratio (the picture stretches).
+    // So the fit is computed here, where the SCREEN size is known. The element
+    // box stays exactly the scaled picture - the runtime maps pointer events
+    // through that box, and any letterbox inside it would offset every tap.
+    function fitCanvas(){
+      const c = document.getElementById('canvas');
+      if (!document.body.classList.contains('fs')) { c.style.width=''; c.style.height=''; return; }
+      const box = c.parentElement;
+      if (!c.width || !c.height || !box.clientWidth) return;
+      const s = Math.min(box.clientWidth / c.width, box.clientHeight / c.height);
+      c.style.width  = Math.floor(c.width  * s) + 'px';
+      c.style.height = Math.floor(c.height * s) + 'px';
+      // a portrait picture that ends up under half the viewport width is a
+      // phone held the wrong way round, not a layout to live with
+      const turn = document.getElementById('turn');
+      const wrong = c.height > c.width && (c.width * s) < box.clientWidth * 0.55;
+      turn.classList.toggle('show', wrong);
+    }
     function showGfx(){ document.getElementById('gfx-overlay').classList.add('open');
-      const c=document.getElementById('canvas'); setTimeout(()=>{ try{c.focus();}catch(e){} },20); }
+      const c=document.getElementById('canvas');
+      requestAnimationFrame(fitCanvas);
+      setTimeout(()=>{ try{c.focus();}catch(e){} fitCanvas(); },20); }
     function hideGfx(){ document.getElementById('gfx-overlay').classList.remove('open');
       try{ term.focus(); }catch(e){} }
+    // The phone's address bar collapsing counts as a resize, so this also
+    // reclaims the strip it frees.
+    window.addEventListener('resize', fitCanvas);
+    window.addEventListener('orientationchange', ()=> setTimeout(fitCanvas, 200));
 
     // ?fs=1 hides the page chrome so the canvas gets the whole viewport
     if (new URLSearchParams(location.search).get('fs'))
       document.body.classList.add('fs');
+    {
+      const l = new URLSearchParams(location.search).get('lang') || navigator.language || 'de';
+      document.getElementById('turntext').textContent =
+        l.slice(0,2) === 'de' ? 'Bitte das Geraet hochkant halten' : 'Please hold the device upright';
+    }
 
     // ---- URL auto-start: ?prog=<name-or-url>[&mode=run|load] ----
     // Lets a shared link open the playground with a program preloaded and

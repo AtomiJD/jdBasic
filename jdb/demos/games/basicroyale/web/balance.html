@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jdVOID - Balance</title>
+<link rel="icon" href="icon.png">
+<meta property="og:title" content="jdVOID - Balance">
+<meta property="og:description" content="Jeder Buff und jeder Nerf, mit dem Grund dahinter.">
+<meta property="og:image" content="social.png">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:#07070f;color:#e8ecff;
+       font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;
+       max-width:760px;margin-inline:auto;}
+  h1{font-size:20px;margin:0 0 4px;color:#38e0ff;letter-spacing:.1em;}
+  .sub{color:#6f79a8;font-size:13px;margin-bottom:14px;}
+  .bar{display:flex;gap:8px;align-items:center;margin-bottom:16px;}
+  .bar select{padding:8px 10px;font-size:14px;font-family:inherit;color:#eaf2ff;
+    background:#12142c;border:1px solid #2c3160;border-radius:10px;}
+  .entry{background:#0e1024;border:1px solid #262b55;border-radius:14px;
+         padding:14px;margin-bottom:14px;}
+  .entry.latest{border-color:#38e0ff;box-shadow:0 0 24px rgba(56,224,255,.12);}
+  .when{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;}
+  .date{font-size:12px;letter-spacing:.08em;color:#6f79a8;}
+  .now{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:#04121a;
+       background:#5df0d0;border-radius:6px;padding:2px 7px;font-weight:700;}
+  h2{font-size:16px;margin:6px 0 10px;color:#cdd8ff;}
+  .note{color:#8b96c6;font-size:13px;line-height:1.6;margin:0 0 12px;}
+  .chg{display:flex;align-items:center;gap:10px;font-size:14px;
+       border-top:1px solid #1e2246;padding:8px 0;flex-wrap:wrap;}
+  .card{font-weight:700;min-width:118px;}
+  .what{color:#6f79a8;flex:1;min-width:110px;}
+  .from{color:#6f79a8;text-decoration:line-through;}
+  .to{font-weight:700;}
+  .arrow{color:#4a5288;}
+  .buff .to{color:#7cf0a8;}
+  .nerf .to{color:#ff9aad;}
+  .new .to{color:#ffd479;}
+  .mark{font-size:11px;letter-spacing:.06em;text-transform:uppercase;
+        border-radius:6px;padding:2px 7px;border:1px solid;}
+  .buff .mark{color:#7cf0a8;border-color:#2c6b4a;}
+  .nerf .mark{color:#ff9aad;border-color:#6b2c3a;}
+  .new .mark{color:#ffd479;border-color:#5a4a1e;}
+  a{color:#5df0d0;}
+  .foot{font-size:12px;color:#6f79a8;text-align:center;margin-top:20px;}
+  .foot a{margin:0 8px;}
+</style>
+</head>
+<body>
+  <h1>jdVOID BALANCE</h1>
+  <div class="sub" id="sub">Jeder Buff und jeder Nerf, mit dem Grund dahinter</div>
+
+  <div class="bar">
+    <select id="lang">
+      <option value="de">Deutsch</option>
+      <option value="en">English</option>
+    </select>
+  </div>
+
+  <div id="list"></div>
+
+  <p class="foot">
+    <a href="./">Zum Spiel</a><a href="cards.html">Karten</a><a href="players.html">Rangliste</a>
+  </p>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+  const UI = {
+    de:{sub:"Jeder Buff und jeder Nerf, mit dem Grund dahinter",
+        now:"aktuell", buff:"Buff", nerf:"Nerf", new:"neu",
+        empty:"Noch keine Eintraege."},
+    en:{sub:"Every buff and every nerf, with the reason behind it",
+        now:"current", buff:"buff", nerf:"nerf", new:"new",
+        empty:"No entries yet."}
+  };
+
+  const qp = new URLSearchParams(location.search);
+  let entries = [], lang = qp.get('lang') || (navigator.language || 'de').slice(0,2);
+  if (!UI[lang]) lang = 'de';
+  $('lang').value = lang;
+
+  // Every entry carries both languages; fall back to German for a field that
+  // has not been translated yet.
+  const pick = v => (v && typeof v === 'object') ? (v[lang] !== undefined ? v[lang] : v.de) : v;
+
+  function changeHtml(c){
+    const t = UI[lang], kind = c.kind || 'change';
+    const from = pick(c.from), to = pick(c.to);
+    return '<div class="chg ' + esc(kind) + '">'
+      + '<span class="card">' + esc(c.card) + '</span>'
+      + '<span class="what">' + esc(pick(c.stat)) + '</span>'
+      + (from ? '<span class="from">' + esc(from) + '</span><span class="arrow">&rarr;</span>' : '')
+      + '<span class="to">' + esc(to) + '</span>'
+      + '<span class="mark">' + esc(t[kind] || kind) + '</span></div>';
+  }
+
+  function render(){
+    const t = UI[lang];
+    document.documentElement.lang = lang;
+    $('sub').textContent = t.sub;
+    if (!entries.length) { $('list').innerHTML = '<p class="sub">' + t.empty + '</p>'; return; }
+    $('list').innerHTML = entries.map((e, i) =>
+      '<div class="entry' + (i === 0 ? ' latest' : '') + '">'
+      + '<div class="when"><span class="date">' + esc(e.date || '') + '</span>'
+      + (i === 0 ? '<span class="now">' + esc(t.now) + '</span>' : '') + '</div>'
+      + '<h2>' + esc(pick(e.title)) + '</h2>'
+      + '<p class="note">' + esc(pick(e.note)) + '</p>'
+      + (e.changes || []).map(changeHtml).join('')
+      + '</div>').join('');
+  }
+
+  $('lang').addEventListener('change', () => { lang = $('lang').value; render(); });
+
+  (async function load(){
+    try {
+      const r = await fetch('balance.json', {cache:'no-store'});
+      entries = (await r.json()).entries || [];
+    } catch (e) {}
+    render();
+  })();
+</script>
+</body>
+</html>
