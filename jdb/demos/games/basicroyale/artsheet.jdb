@@ -11,20 +11,24 @@ SUB OnQuit()
 ENDSUB
 ON "QUIT" CALL OnQuit
 
-DIM kinds = ["DROID", "LASER", "KOLOSS", "WESPEN", "SPLITTER", "RAILGUN", "NANOS", "GLEITER", "TITAN", "RAMME", "PLASMA", "SALVE", "BRUTSCHIFF", "BRENNLANZE", "STASE", "TELEPORTER"]
+SCREEN SCR_W, SCR_H, "jdVOID - Art"
 
-SCREEN SCR_W, SCR_H, "BASIC Royale - Art"
-
-' the sheet shows what the client shows: card accents from cards.json
+' the sheet shows what the client shows, and it learns the roster the same
+' way: whatever cards.json carries, figures and accents included
+DIM kinds = []
 DIM accents AS MAP = {}
+DIM shapes AS MAP = {}
 TRY
     DIM cs = JSON.PARSE$(TXTREADER$("cards.json"))
-    FOR EACH k$ IN MAP.KEYS(cs)
+    FOR EACH k$ IN SORT(MAP.KEYS(cs))
+        kinds = APPEND(kinds, k$)
         IF MAP.EXISTS(cs{k$}, "COLOR") THEN accents{k$} = cs{k$}{"COLOR"}
+        IF MAP.EXISTS(cs{k$}, "SHAPE") THEN shapes{k$} = cs{k$}{"SHAPE"}
     NEXT k$
 CATCH
 ENDTRY
 ART.SETACCENTS(accents)
+ART.SETSHAPES(shapes)
 
 DIM t0 = TICK()
 DIM own = ART.BAKEALL(kinds, 0)

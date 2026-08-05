@@ -12,15 +12,20 @@ DIM game$ = PATH.JOIN$(here$, "..", "..", "jdb", "demos", "games", "basicroyale"
 DIM win_exe$ = PATH.JOIN$(here$, "..", "..", "build", "jdBasic.exe")
 
 DIM q$ = CHR$(34)
-DIM cmd$ = "sh -c " + q$ + "cd " + game$ + " && ../../../../build/jdbasic warp_test.jdb" + q$
-IF FILE.EXISTS(win_exe$) THEN
-    cmd$ = "cmd /c " + q$ + "cd /d " + game$ + " && ..\..\..\..\build\jdBasic.exe warp_test.jdb" + q$
-ENDIF
+DIM checks = ["warp_test.jdb", "art_test.jdb"]
+DIM bad = 0
+FOR EACH c$ IN checks
+    DIM cmd$ = "sh -c " + q$ + "cd " + game$ + " && ../../../../build/jdbasic " + c$ + q$
+    IF FILE.EXISTS(win_exe$) THEN
+        cmd$ = "cmd /c " + q$ + "cd /d " + game$ + " && ..\..\..\..\build\jdBasic.exe " + c$ + q$
+    ENDIF
+    DIM r = OS.EXEC(cmd$)
+    DIM out$ = "" + r{"OUTPUT"}
+    PRINT out$
+    IF INSTR(out$, "failed 0") < 0 THEN bad = bad + 1
+NEXT c$
 
-DIM r = OS.EXEC(cmd$)
-DIM out$ = "" + r{"OUTPUT"}
-PRINT out$
-IF INSTR(out$, "failed 0") >= 0 THEN
+IF bad = 0 THEN
     PRINT "arena_rules: ALL OK"
 ELSE
     PRINT "arena_rules: FAILED"

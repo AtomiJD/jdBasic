@@ -221,6 +221,15 @@ ENDSUB
 SUB BAKEART()
     IF LEN(cardorder) > 0 THEN
         ART.SETACCENTS(kindcolor)
+        ' the figures ride along in /cards, so a card added on the server
+        ' shows up here without shipping a new client
+        DIM shapes AS MAP = {}
+        FOR EACH k$ IN cardorder
+            IF MAP.EXISTS(allcards, k$) THEN
+                IF MAP.EXISTS(allcards{k$}, "SHAPE") THEN shapes{k$} = allcards{k$}{"SHAPE"}
+            ENDIF
+        NEXT k$
+        ART.SETSHAPES(shapes)
         art_own = ART.BAKEALL(cardorder, 0)
         art_foe = ART.BAKEALL(cardorder, 1)
         art_ready = 1

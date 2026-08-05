@@ -32,6 +32,27 @@ EXPORT SUB SETACCENTS(m)
     card_accent = m
 ENDSUB
 
+' Figures authored in cards.json, keyed by card. A card that brings its own
+' shape list needs no branch in FIGURE below - which is what makes a new card
+' a data change rather than a code change, on the server and in the client
+' alike (the client is handed the same table over /cards).
+DIM card_shape = 0
+EXPORT SUB SETSHAPES(m)
+    card_shape = m
+ENDSUB
+
+' One authored row -> the map the rasteriser wants. A row reads like the
+' constructor call it replaces: ["DISC", x, y, r, col$, glow].
+EXPORT FUNC SHAPEOF(row)
+    DIM t$ = UCASE$("" + row[0])
+    IF t$ = "DISC" THEN RETURN DISC(row[1], row[2], row[3], "" + row[4], row[5])
+    IF t$ = "BOXR" THEN RETURN BOXR(row[1], row[2], row[3], row[4], row[5], row[6], "" + row[7], row[8])
+    IF t$ = "BAR" THEN RETURN BAR(row[1], row[2], row[3], row[4], row[5], "" + row[6], row[7])
+    ' an unreadable row draws a plain hull disc: a wrong figure is easier to
+    ' spot on screen than a crash in the middle of baking
+    RETURN DISC(20, 20, 7, "HULL", 0)
+ENDFUNC
+
 ' Two team looks: cyan for the local player, magenta-red for the foe.
 EXPORT FUNC PALETTE(team)
     DIM p AS MAP = {}
@@ -146,104 +167,17 @@ EXPORT FUNC BAKECARD(kind$, shapes, w, h, team, zoom)
 ENDFUNC
 
 ' ── the roster ────────────────────────────────────────────────
-' Twelve space units plus the two station classes. Each is one to five
-' shapes on a 40x40 (units) or 72x72 (stations) canvas.
+' Card figures come from cards.json through SETSHAPES; a card is data. The
+' two station classes are not cards and stay here, on a 72x72 canvas.
 EXPORT FUNC FIGURE(kind$)
     DIM s = []
-    IF kind$ = "DROID" THEN
-        s = APPEND(s, [BOXR(20, 23, 9, 8, 3, 0, "HULL", 0)])
-        s = APPEND(s, [BAR(13, 25, 27, 25, 1.6, "ACCENT", 0.9)])
-        s = APPEND(s, [BOXR(20, 12, 6, 4, 2, 0, "TEAM", 0.5)])
-        s = APPEND(s, [DISC(20, 12, 2.5, "LIGHT", 0.8)])
-        s = APPEND(s, [BAR(11, 20, 8, 28, 2.5, "DARK", 0.2)])
-    ELSEIF kind$ = "LASER" THEN
-        s = APPEND(s, [DISC(18, 22, 7, "HULL", 0)])
-        s = APPEND(s, [BAR(20, 20, 34, 13, 2, "DARK", 0)])
-        s = APPEND(s, [DISC(34, 13, 3, "ACCENT", 1.0)])
-        s = APPEND(s, [DISC(18, 22, 3, "TEAM", 0.4)])
-    ELSEIF kind$ = "KOLOSS" THEN
-        s = APPEND(s, [BOXR(20, 20, 13, 11, 5, 0, "HULL", 0)])
-        s = APPEND(s, [BAR(9, 27, 31, 27, 2, "ACCENT", 1.0)])
-        s = APPEND(s, [DISC(20, 17, 6, "TEAM", 0.7)])
-        s = APPEND(s, [DISC(20, 17, 2.5, "LIGHT", 1.0)])
-        s = APPEND(s, [BAR(12, 31, 9, 37, 3.5, "DARK", 0.3)])
-    ELSEIF kind$ = "WESPEN" THEN
-        s = APPEND(s, [BAR(6, 20, 34, 20, 2, "DARK", 0)])
-        s = APPEND(s, [DISC(20, 20, 7, "HULL", 0)])
-        s = APPEND(s, [DISC(20, 20, 3.5, "TEAM", 0.8)])
-        s = APPEND(s, [DISC(7, 20, 2, "ACCENT", 0.7)])
-        s = APPEND(s, [DISC(33, 20, 2, "ACCENT", 0.7)])
-    ELSEIF kind$ = "SPLITTER" THEN
-        s = APPEND(s, [BOXR(20, 20, 7, 7, 2, 45, "HULL", 0)])
-        s = APPEND(s, [BAR(12, 12, 28, 28, 1.4, "ACCENT", 0.7)])
-        s = APPEND(s, [DISC(20, 20, 3, "TEAM", 0.9)])
-        s = APPEND(s, [DISC(20, 20, 1.5, "LIGHT", 1.0)])
-    ELSEIF kind$ = "RAILGUN" THEN
-        s = APPEND(s, [BOXR(15, 22, 7, 9, 3, 0, "HULL", 0)])
-        s = APPEND(s, [BAR(18, 18, 37, 18, 1.8, "DARK", 0)])
-        s = APPEND(s, [DISC(37, 18, 2.5, "ACCENT", 1.0)])
-        s = APPEND(s, [BAR(11, 30, 19, 30, 2, "DARK", 0)])
-        s = APPEND(s, [DISC(15, 24, 3.2, "TEAM", 0.8)])
-    ELSEIF kind$ = "NANOS" THEN
-        s = APPEND(s, [DISC(14, 16, 4.5, "TEAM", 0.8)])
-        s = APPEND(s, [DISC(27, 19, 4.5, "ACCENT", 0.8)])
-        s = APPEND(s, [DISC(19, 28, 4.5, "ACCENT", 0.8)])
-        s = APPEND(s, [DISC(20, 21, 2, "LIGHT", 1.0)])
-    ELSEIF kind$ = "GLEITER" THEN
-        s = APPEND(s, [BAR(8, 30, 20, 14, 2.5, "HULL", 0)])
-        s = APPEND(s, [BAR(32, 30, 20, 14, 2.5, "HULL", 0)])
-        s = APPEND(s, [BAR(10, 29, 30, 29, 1.4, "ACCENT", 1.0)])
-        s = APPEND(s, [DISC(20, 18, 4.5, "TEAM", 0.9)])
-        s = APPEND(s, [DISC(20, 18, 1.8, "LIGHT", 1.0)])
-    ELSEIF kind$ = "TITAN" THEN
-        s = APPEND(s, [BOXR(20, 21, 11, 13, 4, 0, "HULL", 0)])
-        s = APPEND(s, [BOXR(7, 15, 4, 6, 2, 0, "ACCENT", 0.8)])
-        s = APPEND(s, [BOXR(33, 15, 4, 6, 2, 0, "ACCENT", 0.8)])
-        s = APPEND(s, [DISC(20, 20, 6, "TEAM", 1.0)])
-        s = APPEND(s, [DISC(20, 20, 2.5, "LIGHT", 1.0)])
-    ELSEIF kind$ = "RAMME" THEN
-        s = APPEND(s, [BOXR(21, 22, 6, 12, 3, 0, "HULL", 0)])
-        s = APPEND(s, [BAR(21, 8, 21, 16, 3.5, "ACCENT", 0.8)])
-        s = APPEND(s, [BAR(13, 32, 13, 27, 2.5, "TEAM", 1.0)])
-        s = APPEND(s, [BAR(29, 32, 29, 27, 2.5, "TEAM", 1.0)])
-    ELSEIF kind$ = "PLASMA" THEN
-        s = APPEND(s, [DISC(20, 20, 11, "ACCENT", 0.5)])
-        s = APPEND(s, [DISC(20, 20, 6, "LIGHT", 1.0)])
-    ELSEIF kind$ = "SALVE" THEN
-        s = APPEND(s, [DISC(20, 20, 12, "TEAM", 0.4)])
-        s = APPEND(s, [DISC(20, 20, 8.5, "DARK", 0)])
-        s = APPEND(s, [DISC(20, 20, 3.5, "ACCENT", 1.0)])
-    ELSEIF kind$ = "BRUTSCHIFF" THEN
-        ' carrier: a wide hull with an open bay and two drones leaving it
-        s = APPEND(s, [BOXR(20, 21, 13, 7, 5, 0, "HULL", 0)])
-        s = APPEND(s, [BOXR(20, 25, 5, 3, 2, 0, "DARK", 0.4)])
-        s = APPEND(s, [DISC(20, 18, 5, "TEAM", 0.9)])
-        s = APPEND(s, [DISC(10, 31, 2.6, "ACCENT", 1.0)])
-        s = APPEND(s, [DISC(30, 31, 2.6, "ACCENT", 1.0)])
-    ELSEIF kind$ = "BRENNLANZE" THEN
-        ' turret: a braced base under a focusing barrel with a hot tip
-        s = APPEND(s, [BOXR(20, 31, 12, 5, 3, 0, "HULL", 0)])
-        s = APPEND(s, [BAR(14, 30, 26, 30, 2, "DARK", 0)])
-        s = APPEND(s, [BOXR(20, 20, 5, 9, 3, 0, "HULL", 0)])
-        s = APPEND(s, [BAR(20, 16, 20, 6, 2.6, "ACCENT", 1.0)])
-        s = APPEND(s, [DISC(20, 6, 3.6, "TEAM", 1.0)])
-    ELSEIF kind$ = "STASE" THEN
-        ' stasis field: a ring holding a frozen core
-        s = APPEND(s, [DISC(20, 20, 13, "TEAM", 0.6)])
-        s = APPEND(s, [DISC(20, 20, 9.5, "DARK", 0)])
-        s = APPEND(s, [BAR(11, 20, 29, 20, 1.6, "ACCENT", 1.0)])
-        s = APPEND(s, [BAR(20, 11, 20, 29, 1.6, "ACCENT", 1.0)])
-        s = APPEND(s, [DISC(20, 20, 3.2, "LIGHT", 1.0)])
-    ELSEIF kind$ = "TELEPORTER" THEN
-        ' recall gate: a ring standing open, a ship going in at the bottom
-        ' and coming out at the top, dimmer on the way in
-        s = APPEND(s, [DISC(20, 19, 13, "ACCENT", 0.9)])
-        s = APPEND(s, [DISC(20, 19, 9.5, "DARK", 0)])
-        s = APPEND(s, [BOXR(20, 33, 4, 4, 2, 0, "HULL", 0)])
-        s = APPEND(s, [BAR(20, 30, 20, 26, 1.6, "TEAM", 0.4)])
-        s = APPEND(s, [BOXR(20, 12, 5, 5, 2, 0, "TEAM", 0.9)])
-        s = APPEND(s, [DISC(20, 12, 2, "LIGHT", 1.0)])
-    ELSEIF kind$ = "PRINCESS" THEN
+    IF TYPEOF(card_shape) = "OBJECT" ANDALSO MAP.EXISTS(card_shape, kind$) THEN
+        FOR EACH row IN card_shape{kind$}
+            s = APPEND(s, [SHAPEOF(row)])
+        NEXT row
+        RETURN s
+    ENDIF
+    IF kind$ = "PRINCESS" THEN
         s = APPEND(s, [BOXR(36, 44, 26, 5, 5, 0, "HULL", 0)])
         s = APPEND(s, [DISC(36, 34, 14, "HULL", 0)])
         s = APPEND(s, [DISC(36, 32, 9, "TEAM", 0.6)])

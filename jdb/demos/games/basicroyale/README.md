@@ -34,12 +34,13 @@ exactly one set of rules in the codebase.
 | `cards.json` | Every card stat. The single source of truth for balance, loaded into `ARENA.SETCARDS`. |
 | `server.jdb` | Match server. Rooms, seats, chest economy, card levels, profiles, admin endpoints. |
 | `royale.jdb` | The client. Menu, deck editor, battle view, spectator mode, emotes, sound, drag deploy, i18n. |
-| `art.jdb` | Procedural sprites. Signed-distance-field shapes rasterized into RGBA buffers at startup. |
+| `art.jdb` | The rasteriser. Signed-distance shapes into RGBA buffers at startup; the card figures come from `cards.json`, only the two station classes live here. |
 | `lang.json` | UI strings and card descriptions per language. Served by the server, so a new language needs no client change. |
 | `balance.jdb` | Headless duel harness. Every troop card fights every other one for equal elixir. |
 | `standoff.jdb` | Headless too, but the attackers walk in from across the board - which is where reach decides. |
 | `push.jdb` | One attacker walks a lane at a defended station and the answer lands on it when it arrives - what a big card costs the defender. |
 | `warp_test.jdb` | Assertions for the recall card: what the loop catches, what it refuses, what it charges. |
+| `art_test.jdb` | Assertions for the card figures: every card has one, and a row still means what its constructor meant. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -103,6 +104,35 @@ carry traits rather than special cases in the code:
 
 Sixteen cards ship in `cards.json`. Level 1 to 5, each level adds eight percent
 to hit points and damage.
+
+## Adding a card
+
+A card is data. `cards.json` carries its stats, its accent colour **and its
+figure**, `lang.json` carries the two description strings, and that is the whole
+list - no code, and no new client, because the client is handed the same table
+over `/cards` at startup.
+
+```json
+"TELEPORTER": {
+  "SHAPE": [
+    ["DISC", 20, 19, 13, "ACCENT", 0.9],
+    ["DISC", 20, 19, 9.5, "DARK", 0],
+    ["BOXR", 20, 12, 5, 5, 2, 0, "TEAM", 0.9]
+  ],
+  "COST": 3, "...": "..."
+}
+```
+
+A row is the shape constructor it replaces: `["DISC", x, y, r, slot, glow]`,
+`["BOXR", x, y, halfw, halfh, corner, rot, slot, glow]`, `["BAR", x1, y1, x2,
+y2, r, slot, glow]`. Figures are authored on a 40x40 grid. The colour slot is
+one of `TEAM` (the owner's colour), `HULL`, `DARK`, `LIGHT` or `ACCENT` (the
+card's own `COLOR`). An unreadable row draws a plain disc rather than stopping
+the bake, so a typo costs a wrong figure, not a dead client.
+
+After adding one, run `jdbasic makecards.jdb` for the card sheet's PNG and
+`jdbasic art_test.jdb` to check the figure parses. `jdbasic artsheet.jdb` shows
+the whole roster on one screen; it reads the roster from `cards.json` too.
 
 ## The economy
 

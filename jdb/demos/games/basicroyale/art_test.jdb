@@ -1,0 +1,71 @@
+' Assertions for the card figures now that they are data: every card carries
+' one, and an authored row still means what the constructor it replaced meant.
+'   jdbasic art_test.jdb
+IMPORT ART
+
+DIM pass = 0
+DIM fail = 0
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+DIM cards = JSON.PARSE$(TXTREADER$("cards.json"))
+DIM shapes AS MAP = {}
+DIM n_cards = 0
+DIM n_rows = 0
+FOR EACH k$ IN MAP.KEYS(cards)
+    n_cards = n_cards + 1
+    IF NOT MAP.EXISTS(cards{k$}, "SHAPE") THEN
+        fail = fail + 1
+        PRINT "FAIL card without a figure: "; k$
+        CONTINUEFOR
+    ENDIF
+    DIM rows = cards{k$}{"SHAPE"}
+    IF LEN(rows) < 1 THEN
+        fail = fail + 1
+        PRINT "FAIL empty figure: "; k$
+        CONTINUEFOR
+    ENDIF
+    n_rows = n_rows + LEN(rows)
+    shapes{k$} = rows
+    pass = pass + 1
+NEXT k$
+PRINT "cards: "; n_cards; ", shape rows: "; n_rows
+
+' a row means exactly what the constructor call it replaced meant
+DIM d = ART.SHAPEOF(["DISC", 20, 19, 13, "ACCENT", 0.9])
+CHECK("disc type", "" + d{"T"}, "CIRC")
+CHECK("disc radius", STR$(d{"R"}), "13")
+CHECK("disc slot", "" + d{"COL"}, "ACCENT")
+CHECK("disc glow", STR$(d{"GLOW"}), "0.9")
+
+DIM b = ART.SHAPEOF(["BOXR", 20, 21, 11, 13, 4, 0, "HULL", 0])
+CHECK("box type", "" + b{"T"}, "BOX")
+CHECK("box half width", STR$(b{"HX"}), "11")
+CHECK("box corner", STR$(b{"RR"}), "4")
+
+DIM s = ART.SHAPEOF(["BAR", 13, 25, 27, 25, 1.6, "ACCENT", 0.9])
+CHECK("bar type", "" + s{"T"}, "SEG")
+CHECK("bar end", STR$(s{"X2"}), "27")
+CHECK("bar radius", STR$(s{"R"}), "1.6")
+
+' an unreadable row draws something instead of stopping the bake
+DIM junk = ART.SHAPEOF(["WOBBLE", 1, 2])
+CHECK("unknown row falls back", "" + junk{"T"}, "CIRC")
+
+' with the table installed a card is drawn from data; the stations are not
+' cards and keep their built-in figure
+ART.SETSHAPES(shapes)
+DIM fig = ART.FIGURE("TITAN")
+CHECK("titan from data", STR$(LEN(fig)), STR$(LEN(cards{"TITAN"}{"SHAPE"})))
+DIM king = ART.FIGURE("KING")
+CHECK("king still built in", STR$(LEN(king) > 0), "TRUE")
+DIM unknown = ART.FIGURE("NOT_A_CARD")
+CHECK("unknown kind draws a station", STR$(LEN(unknown) > 0), "TRUE")
+
+PRINT "art_test: passed "; pass; ", failed "; fail

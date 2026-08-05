@@ -16,10 +16,13 @@ CATCH
 ENDTRY
 
 DIM accents AS MAP = {}
+DIM shapes AS MAP = {}
 FOR EACH k$ IN MAP.KEYS(cards)
     IF MAP.EXISTS(cards{k$}, "COLOR") THEN accents{k$} = cards{k$}{"COLOR"}
+    IF MAP.EXISTS(cards{k$}, "SHAPE") THEN shapes{k$} = cards{k$}{"SHAPE"}
 NEXT k$
 ART.SETACCENTS(accents)
+ART.SETSHAPES(shapes)
 
 ' Same shape, K times as big. Every geometric field scales; ROT and the
 ' colour slot do not.
