@@ -735,8 +735,10 @@ ENDSUB
 ' The drawn loop as the server understands it: its middle, and how far the
 ' finger ran from that middle on average.
 SUB WARPCLOSE()
+    ' a stroke too short to be a loop leaves the card selected, so the next
+    ' try needs no tap on the card again
     IF LEN(warp_path) < 4 THEN
-        WARPRESET()
+        warp_path = []
         msg$ = "msg_nocatch"
         RETURN
     ENDIF
@@ -2069,8 +2071,10 @@ ELSE
         ENDIF
         IF up_new = 1 THEN
             up_new = 0
-            ' the finger came off: a drawn loop closes here
-            IF uimode$ = "battle" ANDALSO warp_mode = 1 THEN WARPCLOSE()
+            ' the finger came off: a loop closes here, but only if one was
+            ' actually drawn - the release that ends the card tap must not
+            ' count as an empty loop and cancel the mode
+            IF uimode$ = "battle" ANDALSO warp_mode = 1 ANDALSO LEN(warp_path) > 0 THEN WARPCLOSE()
             ' released over the board while holding a card - deploy there
             IF uimode$ = "battle" ANDALSO drag_kind$ <> "" ANDALSO up_y < 840 ANDALSO up_y >= BOARD_Y0 THEN
                 IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 THEN
