@@ -380,6 +380,68 @@
     "ICON": "ST",
     "RARITY": "C"
   },
+  "SCHWARMTURM": {
+    "SHAPE": [
+      ["BOXR", 20, 26, 11, 10, 4, 0, "HULL", 0],
+      ["BOXR", 20, 14, 7, 5, 3, 0, "DARK", 0],
+      ["DISC", 20, 14, 4, "ACCENT", 0.9],
+      ["BAR", 11, 34, 29, 34, 2, "TEAM", 0.6],
+      ["DISC", 14, 24, 2.4, "LIGHT", 0.8],
+      ["DISC", 26, 24, 2.4, "LIGHT", 0.8]
+    ],
+    "COST": 3,
+    "HP": 640,
+    "DMG": 0,
+    "HITSPEED": 1.0,
+    "REACH": 0.5,
+    "AGGRO": 0.5,
+    "SPD": 0.0,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 0,
+    "BUILD": 1,
+    "TTL": 30.0,
+    "SPAWNS": "NANOS",
+    "SPAWNRATE": 3.0,
+    "SPAWNN": 1,
+    "COLOR": [
+      140,
+      230,
+      150
+    ],
+    "ICON": "SW",
+    "RARITY": "C"
+  },
+  "GLUTREGEN": {
+    "SHAPE": [
+      ["BOXR", 20, 27, 10, 8, 4, 0, "HULL", 0],
+      ["BAR", 20, 22, 20, 9, 3, "DARK", 0],
+      ["DISC", 20, 9, 4.5, "ACCENT", 1.0],
+      ["DISC", 12, 13, 2, "ACCENT", 0.7],
+      ["DISC", 28, 13, 2, "ACCENT", 0.7],
+      ["BAR", 12, 33, 28, 33, 2, "TEAM", 0.7]
+    ],
+    "COST": 4,
+    "HP": 420,
+    "DMG": 95,
+    "HITSPEED": 1.5,
+    "REACH": 5.2,
+    "AGGRO": 6.0,
+    "SPD": 1.3,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 0,
+    "SPLASH": 1.8,
+    "COLOR": [
+      255,
+      140,
+      70
+    ],
+    "ICON": "GR",
+    "RARITY": "S"
+  },
   "TRAKTOR": {
     "SHAPE": [
       ["DISC", 20, 10, 7, "HULL", 0],

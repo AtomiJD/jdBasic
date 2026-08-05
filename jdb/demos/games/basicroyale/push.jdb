@@ -104,7 +104,7 @@ PRINT "jdVOID - push harness"
 PRINT "one TITAN (7 elx) walks the right lane at an awake princess"
 PRINT ""
 REPORT("TITAN", 1, "", 0)
-DIM answers = ["WESPEN", "GLEITER", "NANOS", "SPLITTER", "DROID", "LASER", "RAILGUN", "KOLOSS", "BRENNLANZE", "BRUTSCHIFF"]
+DIM answers = ["WESPEN", "GLEITER", "NANOS", "SPLITTER", "DROID", "LASER", "RAILGUN", "KOLOSS", "BRENNLANZE", "BRUTSCHIFF", "GLUTREGEN", "SCHWARMTURM"]
 FOR EACH a$ IN answers
     REPORT("TITAN", 1, a$, 7.0)
 NEXT a$
