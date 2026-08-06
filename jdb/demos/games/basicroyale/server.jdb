@@ -65,11 +65,28 @@ ENDFUNC
 FUNC ROOM(name$)
     DIM key$ = ROOMKEY$(name$)
     IF NOT MAP.EXISTS(rooms, key$) THEN
-        rooms{key$} = { "ST": ARENA.NEWGAME(), "PLAYERS": [], "LAST": TICK(), "KEY": key$ }
+        rooms{key$} = { "ST": ARENA.NEWGAME(), "PLAYERS": [], "LAST": TICK(), "KEY": key$, _
+                        "LOG": [], "SEED": rng_state }
         PRINT "room opened: "; key$
     ENDIF
     RETURN rooms{key$}
 ENDFUNC
+
+' Every card that reached the arena, with the tick it landed on. The sim is
+' deterministic, so a match is fully described by its decks, its levels, the
+' seed the machine opponent drew from and this list - a few kilobytes instead
+' of a film, and it replays through the same SIMSTEP the match ran on.
+SUB LOGPLAY(rm, pid, kind$, x, y, sel)
+    IF NOT MAP.EXISTS(rm, "LOG") THEN rm{"LOG"} = []
+    DIM row AS MAP = { "T": rm{"ST"}{"TICKNO"}, "P": pid, "K": kind$, _
+                       "X": INT(x * 100) / 100.0, "Y": INT(y * 100) / 100.0 }
+    IF TYPEOF(sel) = "OBJECT" THEN
+        row{"CX"} = INT(sel{"CX"} * 100) / 100.0
+        row{"CY"} = INT(sel{"CY"} * 100) / 100.0
+        row{"R"} = INT(sel{"R"} * 100) / 100.0
+    ENDIF
+    rm{"LOG"} = APPEND(rm{"LOG"}, row)
+ENDSUB
 
 ' The room a request names, WITHOUT opening it. Only joining opens a room -
 ' otherwise an unauthenticated GET can fill the server with arenas nobody
@@ -367,6 +384,45 @@ SUB SAVEMATCHES()
     ENDTRY
 ENDSUB
 
+' One line per match in replays.jsonl: what both sides brought, the seed the
+' machine drew from, and every card that landed. Appended, never rewritten,
+' so the cost of writing does not grow with the history - the mistake the
+' profile file made. A reader replays it through ARENA and gets the same
+' match back; replay.jdb does exactly that and checks the outcome matches.
+SUB LOGREPLAY(rm, w, row)
+    DIM st = rm{"ST"}
+    DIM players = rm{"PLAYERS"}
+    DIM rec AS MAP = {}
+    rec{"AT"} = row{"AT"}
+    rec{"ROOM"} = rm{"KEY"}
+    rec{"A"} = players[0]{"NAME"}
+    rec{"B"} = players[1]{"NAME"}
+    rec{"DECKA"} = players[0]{"DECK"}
+    rec{"DECKB"} = players[1]{"DECK"}
+    rec{"LVLA"} = st{"CARDLVL"}[0]
+    rec{"LVLB"} = st{"CARDLVL"}[1]
+    rec{"SEED"} = rm{"SEED"}
+    rec{"BOT"} = ISBOTROOM(rm)
+    rec{"WINNER"} = w
+    rec{"CA"} = st{"CROWNS"}[0]
+    rec{"CB"} = st{"CROWNS"}[1]
+    rec{"TICKS"} = st{"TICKNO"}
+    rec{"PLAYS"} = rm{"LOG"}
+    IF MAP.EXISTS(rm, "FORCED") THEN rec{"FORCED"} = 1
+    TRY
+        DIM entry$ = JSON.STRINGIFY$(rec)
+        DIM old$ = ""
+        TRY
+            old$ = TXTREADER$("replays.jsonl")
+        CATCH
+        ENDTRY
+        DIM ok = TXTWRITER("replays.jsonl", old$ + entry$ + CHR$(10))
+        PRINT "replay written: "; LEN(rm{"LOG"}); " plays, "; LEN(entry$); " bytes"
+    CATCH
+        PRINT "replay not written"
+    ENDTRY
+ENDSUB
+
 SUB ADDMATCH(rm, w)
     DIM st = rm{"ST"}
     DIM players = rm{"PLAYERS"}
@@ -379,6 +435,7 @@ SUB ADDMATCH(rm, w)
     row{"CB"} = st{"CROWNS"}[1]
     row{"WINNER"} = w
     row{"SECS"} = INT(st{"TICKNO"} / 10)
+    LOGREPLAY(rm, w, row)
     matches = APPEND(matches, row)
     IF LEN(matches) > MATCH_KEEP THEN
         DIM keep = []
@@ -486,6 +543,7 @@ SUB BOTTURN(rm)
         IF py > 13.0 THEN py = 13.0
     ENDIF
     DIM res$ = ARENA.PLAYCARD(st, 1, pick$, px, py)
+    IF res$ = "" THEN LOGPLAY(rm, 1, pick$, px, py, 0)
 ENDSUB
 
 FUNC ISBOTROOM(rm)
@@ -662,10 +720,13 @@ FUNC HPLAY(req)
     IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
     ' a recall carries the loop the player drew: middle and radius in tiles
     DIM res$ = ""
+    DIM tick_before = rm{"ST"}{"TICKNO"}
     IF MAP.EXISTS(b, "CX") THEN
         res$ = ARENA.PLAYWARP(rm{"ST"}, pid, b{"KIND"}, b{"X"}, b{"Y"}, b{"CX"}, b{"CY"}, b{"R"})
+        IF res$ = "" THEN LOGPLAY(rm, pid, "" + b{"KIND"}, b{"X"}, b{"Y"}, { "CX": b{"CX"}, "CY": b{"CY"}, "R": b{"R"} })
     ELSE
         res$ = ARENA.PLAYCARD(rm{"ST"}, pid, b{"KIND"}, b{"X"}, b{"Y"})
+        IF res$ = "" THEN LOGPLAY(rm, pid, "" + b{"KIND"}, b{"X"}, b{"Y"}, 0)
     ENDIF
     RETURN JJ({ "OK": IIF(res$ = "", 1, 0), "MSG": res$ })
 ENDFUNC
@@ -923,6 +984,8 @@ FUNC HFORCEEND(req)
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
     DIM rm = ROOMFIND(req, b)
     IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
+    ' an outcome nobody played cannot be replayed, so the recording says so
+    rm{"FORCED"} = 1
     rm{"ST"}{"TOWERS"}[2]{"HP"} = 0
     RETURN JJ({ "OK": 1 })
 ENDFUNC

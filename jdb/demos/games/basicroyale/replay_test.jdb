@@ -1,0 +1,105 @@
+' Proof that a recorded match replays into the same match: play one out with
+' a fixed schedule while writing the log the server would write, then run the
+' log back through a fresh arena and compare the outcome down to the tower
+' hit points. If these two ever drift apart, either the recording is missing
+' something or a rule stopped being deterministic.
+'   jdbasic replay_test.jdb
+IMPORT ARENA
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+
+DIM pass = 0
+DIM fail = 0
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+CONST DECK_A = 0
+DIM decka = ["DROID", "LASER", "WESPEN", "SPLITTER", "NANOS", "PLASMA"]
+DIM deckb = ["LASER", "NANOS", "DROID", "SPLITTER", "WESPEN", "SALVE"]
+
+FUNC FRESHGAME()
+    DIM st = ARENA.NEWGAME()
+    st{"QUEUES"}[0] = decka + ""
+    st{"QUEUES"}[1] = deckb + ""
+    RETURN st
+ENDFUNC
+
+' What a player does, decided only by the tick - the same decision in both
+' runs, which is what makes the comparison mean anything.
+FUNC WANTED(t)
+    IF t MOD 90 <> 0 THEN RETURN 0
+    DIM slot = INT(t / 90) MOD 4
+    DIM pid = INT(t / 90) MOD 2
+    DIM ycoord = 17.0
+    IF pid = 1 THEN ycoord = 12.0
+    RETURN { "P": pid, "S": slot, "X": 4.0 + (INT(t / 90) MOD 5) * 2.5, "Y": ycoord }
+ENDFUNC
+
+FUNC OUTCOME$(st)
+    DIM hp$ = ""
+    FOR EACH tw IN st{"TOWERS"}
+        hp$ = hp$ + STR$(INT(tw{"HP"})) + "/"
+    NEXT tw
+    RETURN "W" + STR$(st{"WINNER"}) + " K" + STR$(st{"CROWNS"}[0]) + ":" + STR$(st{"CROWNS"}[1]) + _
+           " T" + STR$(st{"TICKNO"}) + " " + hp$
+ENDFUNC
+
+' ---- the live run: play and record ----
+DIM st1 = FRESHGAME()
+DIM plays = []
+DIM t
+FOR t = 1 TO 2600
+    DIM want = WANTED(st1{"TICKNO"})
+    IF TYPEOF(want) = "OBJECT" THEN
+        DIM q = st1{"QUEUES"}[want{"P"}]
+        DIM kind$ = "" + q[want{"S"}]
+        DIM res$ = ARENA.PLAYCARD(st1, want{"P"}, kind$, want{"X"}, want{"Y"})
+        IF res$ = "" THEN
+            plays = APPEND(plays, [{ "T": st1{"TICKNO"}, "P": want{"P"}, "K": kind$, _
+                                     "X": want{"X"}, "Y": want{"Y"} }])
+        ENDIF
+    ENDIF
+    st1 = ARENA.SIMSTEP(st1)
+    IF st1{"PHASE"} <> "play" THEN EXITFOR
+NEXT t
+PRINT "gespielt: "; LEN(plays); " Karten, Ausgang "; OUTCOME$(st1)
+
+' ---- the replay: only the log, nothing else ----
+DIM st2 = FRESHGAME()
+DIM next_play = 0
+FOR t = 1 TO st1{"TICKNO"}
+    DO
+        IF next_play >= LEN(plays) THEN EXITDO
+        DIM p = plays[next_play]
+        IF p{"T"} > st2{"TICKNO"} THEN EXITDO
+        DIM r2$ = ARENA.PLAYCARD(st2, p{"P"}, "" + p{"K"}, p{"X"}, p{"Y"})
+        IF r2$ <> "" THEN
+            fail = fail + 1
+            PRINT "FAIL replay refused a recorded card: "; p{"K"}; " -> "; r2$
+        ENDIF
+        next_play = next_play + 1
+    LOOP
+    st2 = ARENA.SIMSTEP(st2)
+    IF st2{"PHASE"} <> "play" THEN EXITFOR
+NEXT t
+PRINT "nachgespielt:            Ausgang "; OUTCOME$(st2)
+
+CHECK("every recorded card was accepted again", STR$(next_play), STR$(LEN(plays)))
+CHECK("the match ends the same way", OUTCOME$(st2), OUTCOME$(st1))
+
+' a log with a card nobody could afford must be refused, not silently kept
+DIM st3 = FRESHGAME()
+DIM bad$ = ARENA.PLAYCARD(st3, 0, "DROID", 9.0, 20.0)
+DIM bad2$ = ARENA.PLAYCARD(st3, 0, "DROID", 9.0, 20.0)
+CHECK("the same card twice on one elixir pool is refused", bad2$, "msg_nohand")
+
+PRINT ""
+PRINT "replay_test: passed "; pass; ", failed "; fail

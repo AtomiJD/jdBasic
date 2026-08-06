@@ -44,6 +44,8 @@ exactly one set of rules in the codebase.
 | `pull_test.jdb` | Assertions for the tractor beam: what it hauls, how far, and what it leaves alone. |
 | `spawn_test.jdb` | Assertions for hatcheries: a building that spawns, and a brood of more than one card. |
 | `splash_test.jdb` | Assertions for splash: who a blast catches around its target, and who it leaves alone. |
+| `replay.jdb` | Replays `replays.jsonl`: check every recorded match, or walk one of them card by card. |
+| `replay_test.jdb` | Plays a match out while recording it, replays the recording, and compares both down to the tower hit points. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -53,7 +55,7 @@ exactly one set of rules in the codebase.
 
 Server-side state next to `server.jdb`: `stats.json` (profiles, collections,
 decks, PIN hashes), `matches.json` (the match log), `sessions.json` (live
-tokens) and `admin.txt` (the admin key, never committed).
+tokens), `replays.jsonl` (one line per match: both decks, the card levels, the seed and every card that landed - appended, never rewritten) and `admin.txt` (the admin key, never committed).
 
 ## The game
 

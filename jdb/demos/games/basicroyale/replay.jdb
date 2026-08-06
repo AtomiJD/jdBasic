@@ -1,0 +1,120 @@
+' Replays the matches in replays.jsonl through the arena they were played in.
+' A recorded match is only its decks, its card levels and the cards that
+' landed, so replaying it has to end the way it ended - if it does not, the
+' recording is incomplete or the rules moved since. Either is worth knowing.
+'   jdbasic replay.jdb              check every recorded match
+'   jdbasic replay.jdb 3            replay one of them and print its course
+IMPORT ARENA
+
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+
+DIM raw$ = ""
+TRY
+    raw$ = TXTREADER$("replays.jsonl")
+CATCH
+ENDTRY
+IF raw$ = "" THEN
+    PRINT "replays.jsonl is empty - nothing recorded yet"
+ELSE
+
+DIM lines_all = SPLIT(raw$, CHR$(10))
+DIM recs = []
+FOR EACH ln$ IN lines_all
+    IF LEN(TRIM$(ln$)) > 2 THEN
+        TRY
+            recs = APPEND(recs, [JSON.PARSE$(ln$)])
+        CATCH
+        ENDTRY
+    ENDIF
+NEXT ln$
+PRINT LEN(recs); " recorded matches"
+
+' Rebuild a match from its recording and hand back what the sim made of it.
+FUNC REPLAY(rec, chatty)
+    DIM st = ARENA.NEWGAME()
+    st{"QUEUES"}[0] = rec{"DECKA"} + ""
+    st{"QUEUES"}[1] = rec{"DECKB"} + ""
+    st{"CARDLVL"}[0] = rec{"LVLA"}
+    st{"CARDLVL"}[1] = rec{"LVLB"}
+    DIM plays = rec{"PLAYS"}
+    DIM next_play = 0
+    DIM t
+    FOR t = 1 TO rec{"TICKS"}
+        ' every card that landed on this tick goes in before the tick runs,
+        ' which is the order the live server had
+        DO
+            IF next_play >= LEN(plays) THEN EXITDO
+            DIM p = plays[next_play]
+            IF p{"T"} > st{"TICKNO"} THEN EXITDO
+            DIM res$ = ""
+            IF MAP.EXISTS(p, "CX") THEN
+                res$ = ARENA.PLAYWARP(st, p{"P"}, "" + p{"K"}, p{"X"}, p{"Y"}, p{"CX"}, p{"CY"}, p{"R"})
+            ELSE
+                res$ = ARENA.PLAYCARD(st, p{"P"}, "" + p{"K"}, p{"X"}, p{"Y"})
+            ENDIF
+            IF chatty = 1 THEN
+                DIM who$ = "" + rec{"A"}
+                IF p{"P"} = 1 THEN who$ = "" + rec{"B"}
+                DIM note$ = ""
+                IF res$ <> "" THEN note$ = "   REFUSED: " + res$
+                PRINT "  "; INT(p{"T"}) / 10.0; " s  "; MID$(who$ + "          ", 0, 10); " "; p{"K"}; note$
+            ENDIF
+            next_play = next_play + 1
+        LOOP
+        st = ARENA.SIMSTEP(st)
+        IF st{"PHASE"} <> "play" THEN EXITFOR
+    NEXT t
+    RETURN st
+ENDFUNC
+
+DIM args = OS.ARGS()
+DIM pick = -1
+IF LEN(args) > 1 THEN pick = INT(VAL(args[1]))
+
+IF pick >= 0 THEN
+    IF pick >= LEN(recs) THEN
+        PRINT "no match number "; pick
+    ELSE
+        DIM rec = recs[pick]
+        PRINT ""
+        PRINT rec{"A"}; " gegen "; rec{"B"}; "   "; rec{"AT"}; "   Raum "; rec{"ROOM"}
+        PRINT LEN(rec{"PLAYS"}); " Zuege in "; INT(rec{"TICKS"}) / 10.0; " Sekunden"
+        PRINT ""
+        DIM st = REPLAY(rec, 1)
+        PRINT ""
+        PRINT "aufgezeichnet: Kronen "; rec{"CA"}; ":"; rec{"CB"}; ", Sieger "; rec{"WINNER"}
+        PRINT "nachgespielt:  Kronen "; st{"CROWNS"}[0]; ":"; st{"CROWNS"}[1]; ", Sieger "; st{"WINNER"}
+    ENDIF
+ELSE
+    DIM same = 0
+    DIM diff = 0
+    DIM skipped = 0
+    DIM i
+    FOR i = 0 TO LEN(recs) - 1
+        DIM r2 = recs[i]
+        ' a match an admin cut short ended on something nobody played
+        IF MAP.EXISTS(r2, "FORCED") THEN
+            skipped = skipped + 1
+            CONTINUEFOR
+        ENDIF
+        DIM s2 = REPLAY(r2, 0)
+        DIM ok = 1
+        IF s2{"WINNER"} <> r2{"WINNER"} THEN ok = 0
+        IF s2{"CROWNS"}[0] <> r2{"CA"} ORELSE s2{"CROWNS"}[1] <> r2{"CB"} THEN ok = 0
+        IF ok = 1 THEN
+            same = same + 1
+        ELSE
+            diff = diff + 1
+            PRINT "  weicht ab: "; r2{"A"}; " vs "; r2{"B"}; " "; r2{"AT"}; _
+                  "  aufgezeichnet "; r2{"CA"}; ":"; r2{"CB"}; "/"; r2{"WINNER"}; _
+                  "  nachgespielt "; s2{"CROWNS"}[0]; ":"; s2{"CROWNS"}[1]; "/"; s2{"WINNER"}
+        ENDIF
+    NEXT i
+    PRINT ""
+    PRINT "identisch nachgespielt: "; same; ", abweichend: "; diff; ", abgebrochen (uebersprungen): "; skipped
+ENDIF
+
+ENDIF
