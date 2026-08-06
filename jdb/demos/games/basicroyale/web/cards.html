@@ -34,6 +34,8 @@
        border:1px solid #2c3160;border-radius:7px;padding:3px 7px;color:#9fb0e8;}
   .tag.s{color:#ffd479;border-color:#5a4a1e;}
   .desc{color:#aab4dd;font-size:14px;margin:10px 0 12px;line-height:1.5;}
+  .stats.live{margin-top:8px;border-top:1px solid #2c3160;padding-top:6px;}
+  .stats.live .stat span:first-child{color:#5df0d0;}
   .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:6px 14px;}
   .stat{display:flex;justify-content:space-between;font-size:13px;
         border-top:1px solid #1e2246;padding:5px 0;}
@@ -72,6 +74,11 @@
   </div>
 
   <div id="list"></div>
+
+  <section class="note" id="statsbox" style="display:none">
+    <h2 id="l_stats">Aus echten Partien</h2>
+    <p id="statsnote"></p>
+  </section>
 
   <section class="note">
     <h2 id="l_world">Boden und Luft im Weltall</h2>
@@ -113,6 +120,9 @@
                "Daher die <b>Stege</b>: wer laeuft, braucht sie. Wer fliegt, nimmt den kuerzesten Weg.",
                "Und daher trifft eine Bodenwaffe nichts ueber sich. Ihre Geschuetze sind gegen den Rueckstoss ins Deck verschraubt und schiessen flach ueber die Platten. Nach oben zu zielen hiesse, sich selbst vom Deck zu schiessen.",
                "Fliegen hat seinen Preis: wer schwebt, kann nichts <b>halten</b>. Keine Kachel besetzen, keinen Weg versperren, keine Station belagern - nur zustossen und wieder weg. Gebaeude koennen es, weil sie sich im Deck verankern. Deshalb bleibt ein KOKON, wo er steht, und deshalb zieht ihn auch kein SOG weg."],
+        picked:"im Deck",played:"gespielt",winrate:"Siegquote",toofew:"zu wenig Partien",
+        statsh:"Aus echten Partien",
+        statsnote:"Gezaehlt aus den aufgezeichneten Partien: wie oft eine Karte im Deck sass, wie oft sie tatsaechlich gelegt wurde und wie oft ihre Seite gewonnen hat. Eine Quote wird erst ab acht Partien angezeigt - darunter ist sie Zufall, nicht Balance. Partien gegen den Computer zaehlen nicht mit.",
         empty:"Server nicht erreichbar"},
     en:{sub:"Every card with its numbers, straight from the running server",
         rules:"What the numbers mean",cost:"Elixir",role:"Role",
@@ -129,11 +139,14 @@
                "Hence the <b>gantries</b>: whoever walks needs them. Whoever flies takes the short way.",
                "And hence a ground weapon hits nothing above it. Its guns are bolted into the deck against the recoil and fire flat across the plating. Aiming up would mean shooting yourself off the deck.",
                "Flying has its price: whatever hovers cannot <b>hold</b> anything. No tile taken, no path blocked, no station besieged - only a strike and away again. Buildings can, because they anchor into the deck. That is why a KOKON stays where it is, and why no SOG drags it off."],
+        picked:"in a deck",played:"played",winrate:"win rate",toofew:"too few matches",
+        statsh:"From real matches",
+        statsnote:"Counted from the recorded matches: how often a card sat in a deck, how often it was actually played, and how often the side carrying it won. A rate appears from eight matches on - below that it is chance, not balance. Matches against the machine do not count.",
         empty:"Server unreachable"}
   };
 
   const qp = new URLSearchParams(location.search);
-  let cards = {}, langs = {}, lang = qp.get('lang') || (navigator.language || 'de').slice(0,2);
+  let cards = {}, langs = {}, stats_cards = {}, stats_matches = 0, lang = qp.get('lang') || (navigator.language || 'de').slice(0,2);
   if (!UI[lang]) lang = 'de';
   $('lang').value = lang;
 
@@ -183,6 +196,19 @@
       if (c.TTL) stats += statRow(T('stat_life'), Math.round(c.TTL) + ' ' + T('sec'));
     }
 
+    // What the card does in real matches, counted from the recordings. A rate
+    // out of three matches is noise, so below a floor the sample is shown and
+    // the rate is not - a number nobody can lean on is worse than none.
+    let live = '';
+    const s = stats_cards[kind];
+    if (s && (s.DECKS || s.PLAYS)) {
+      live += statRow(t.picked, s.DECKS + 'x');
+      live += statRow(t.played, s.PLAYS + 'x');
+      if (s.DECKS >= 8) live += statRow(t.winrate, Math.round(100 * s.WINS / s.DECKS) + '%');
+      else live += statRow(t.winrate, t.toofew);
+      live = '<div class="stats live">' + live + '</div>';
+    }
+
     return '<div class="card" style="border-left-color:' + rgb + '">'
       + '<img class="art" src="cards/' + encodeURIComponent(kind) + '.png" alt="" loading="lazy">'
       + '<div class="body">'
@@ -190,7 +216,7 @@
       + '<div class="name" style="color:' + rgb + '">' + esc(kind) + '</div>'
       + '<div class="tags">' + tags + '</div></div>'
       + '<div class="desc">' + esc(T('desc_' + kind)) + '</div>'
-      + '<div class="stats">' + stats + '</div></div></div>';
+      + '<div class="stats">' + stats + '</div>' + live + '</div></div>';
   }
 
   function render(){
@@ -201,6 +227,10 @@
     $('rules').innerHTML = t.note.map(p => '<p>' + p + '</p>').join('');
     $('l_world').textContent = t.worldh;
     $('world').innerHTML = t.world.map(p => '<p>' + p + '</p>').join('');
+    // the box only appears once there is a history worth talking about
+    $('l_stats').textContent = t.statsh;
+    $('statsnote').innerHTML = esc(t.statsnote) + ' <b>' + stats_matches + '</b>';
+    $('statsbox').style.display = stats_matches > 0 ? '' : 'none';
     $('sort').options[0].textContent = t.sortcost;
     $('sort').options[1].textContent = t.sortname;
     $('sort').options[2].textContent = t.sortrole;
@@ -227,12 +257,16 @@
 
   (async function load(){
     try {
-      const [c, l] = await Promise.all([
+      const [c, l, s] = await Promise.all([
         fetch(API + 'cards').then(r => r.json()),
-        fetch(API + 'lang').then(r => r.json())
+        fetch(API + 'lang').then(r => r.json()),
+        // an older server has no such route, and the page still works without it
+        fetch(API + 'cardstats').then(r => r.json()).catch(() => null)
       ]);
       cards = (c && c.CARDS) || {};
       langs = l || {};
+      stats_cards = (s && s.CARDS) || {};
+      stats_matches = (s && s.MATCHES) || 0;
     } catch (e) {}
     render();
   })();

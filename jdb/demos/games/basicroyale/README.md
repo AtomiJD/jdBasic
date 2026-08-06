@@ -321,6 +321,7 @@ Everything answers JSON. `room` selects the room and defaults to `main`.
 | POST | `/bot` | `{TOK}` gives the free seat to the machine, if you are the one sitting there. |
 | POST | `/rematch` | Same two players, new match. |
 | GET | `/cards` | The card sheet. |
+| GET | `/cardstats` | Per card, counted from the recordings: times in a deck, times played, times its side won. Kept in memory, not read off disk per request. |
 | GET | `/lang` | All languages from `lang.json`. |
 | GET | `/profile?auth=` | Own record, collection, wildcards, last chest and decks. |
 | POST | `/decks` | `{AUTH, DECKS, ACTIVE}` stores the deck slots. |

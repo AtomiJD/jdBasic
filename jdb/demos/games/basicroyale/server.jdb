@@ -417,6 +417,7 @@ SUB LOGREPLAY(rm, w, row)
         CATCH
         ENDTRY
         DIM ok = TXTWRITER("replays.jsonl", old$ + entry$ + CHR$(10))
+        COUNTMATCH(rec)
         PRINT "replay written: "; LEN(rm{"LOG"}); " plays, "; LEN(entry$); " bytes"
     CATCH
         PRINT "replay not written"
@@ -994,6 +995,67 @@ FUNC HCARDS(req)
     RETURN JJ({ "OK": 1, "CARDS": ARENA.CARDS() })
 ENDFUNC
 
+' ---- what the cards actually do in matches ----
+'
+' Counted from the recordings, once at startup and then per finished match,
+' because reading the whole history on every request would get slower with
+' every match played - the mistake stats.json made and this file must not.
+' Per card: how often it sat in a deck, how often it was actually played, and
+' how often the side carrying it won. Bot matches stay out; they are not
+' evidence about players.
+DIM cardstat AS MAP = {}
+DIM cardstat_matches = 0
+
+SUB COUNTMATCH(rec)
+    IF MAP.EXISTS(rec, "BOT") ANDALSO rec{"BOT"} = 1 THEN RETURN
+    cardstat_matches = cardstat_matches + 1
+    DIM w = -1
+    IF MAP.EXISTS(rec, "WINNER") THEN w = INT(rec{"WINNER"})
+    DIM side
+    FOR side = 0 TO 1
+        DIM deck = rec{"DECKA"}
+        IF side = 1 THEN deck = rec{"DECKB"}
+        IF TYPEOF(deck) <> "ARRAY" THEN CONTINUEFOR
+        FOR EACH k$ IN deck
+            IF NOT MAP.EXISTS(cardstat, "" + k$) THEN cardstat{"" + k$} = { "DECKS": 0, "PLAYS": 0, "WINS": 0 }
+            DIM ent = cardstat{"" + k$}
+            ent{"DECKS"} = ent{"DECKS"} + 1
+            IF w = side THEN ent{"WINS"} = ent{"WINS"} + 1
+        NEXT k$
+    NEXT side
+    IF TYPEOF(rec{"PLAYS"}) = "ARRAY" THEN
+        FOR EACH p IN rec{"PLAYS"}
+            DIM pk$ = "" + p{"K"}
+            IF NOT MAP.EXISTS(cardstat, pk$) THEN cardstat{pk$} = { "DECKS": 0, "PLAYS": 0, "WINS": 0 }
+            cardstat{pk$}{"PLAYS"} = cardstat{pk$}{"PLAYS"} + 1
+        NEXT p
+    ENDIF
+ENDSUB
+
+' Read the history once at startup. A line that will not parse is skipped
+' rather than taking the server down with it.
+SUB LOADCARDSTATS()
+    DIM raw$ = ""
+    TRY
+        raw$ = TXTREADER$("replays.jsonl")
+    CATCH
+    ENDTRY
+    IF raw$ = "" THEN RETURN
+    FOR EACH ln$ IN SPLIT(raw$, CHR$(10))
+        IF LEN(TRIM$(ln$)) > 2 THEN
+            TRY
+                COUNTMATCH(JSON.PARSE$(ln$))
+            CATCH
+            ENDTRY
+        ENDIF
+    NEXT ln$
+    PRINT "card stats from "; cardstat_matches; " recorded matches"
+ENDSUB
+
+FUNC HCARDSTATS(req)
+    RETURN JJ({ "OK": 1, "MATCHES": cardstat_matches, "CARDS": cardstat })
+ENDFUNC
+
 ' UI translations - clients look their strings up by key.
 DIM lang_json$ = "{}"
 TRY
@@ -1217,6 +1279,7 @@ HTTP.SERVER.ON_POST "/reset", "HRESET"
 HTTP.SERVER.ON_GET "/reset", "HRESET"
 HTTP.SERVER.ON_POST "/rematch", "HREMATCH"
 HTTP.SERVER.ON_GET "/cards", "HCARDS"
+HTTP.SERVER.ON_GET "/cardstats", "HCARDSTATS"
 HTTP.SERVER.ON_GET "/profile", "HPROFILE"
 HTTP.SERVER.ON_GET "/lang", "HLANG"
 HTTP.SERVER.ON_GET "/rooms", "HROOMS"
@@ -1231,6 +1294,8 @@ HTTP.SERVER.ON_POST "/resetpin", "HRESETPIN"
 HTTP.SERVER.ON_POST "/upgrade", "HUPGRADE"
 HTTP.SERVER.ON_POST "/decks", "HDECKS"
 HTTP.SERVER.ON_POST "/forceend", "HFORCEEND"
+
+LOADCARDSTATS()
 
 ' Bind host and port from the command line: behind a reverse proxy pass
 ' 127.0.0.1 so only the proxy can reach the match server. Defaults stay
