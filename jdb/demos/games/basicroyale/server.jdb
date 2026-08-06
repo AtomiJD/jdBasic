@@ -17,6 +17,17 @@ CATCH
     PRINT "cards.json missing - built-in card set"
 ENDTRY
 
+' A recording is only replayable against the rules it was made under. Card
+' numbers move (that is the point of a balance history), so every recording
+' carries a fingerprint of the card table it was played on; a replay that
+' finds a different one says so instead of reporting a false drift.
+DIM cards_fp$ = "?"
+TRY
+    cards_fp$ = MID$(CODEC.SHA256$(cards_json$), 0, 12)
+CATCH
+ENDTRY
+PRINT "card table "; cards_fp$
+
 ' Own MINSTD generator instead of RND: the CRT's rand() keeps per-thread
 ' state on Windows, so seeding on the main thread leaves the HTTP handler
 ' threads - where chests are dealt - on the identical default sequence.
@@ -66,7 +77,7 @@ FUNC ROOM(name$)
     DIM key$ = ROOMKEY$(name$)
     IF NOT MAP.EXISTS(rooms, key$) THEN
         rooms{key$} = { "ST": ARENA.NEWGAME(), "PLAYERS": [], "LAST": TICK(), "KEY": key$, _
-                        "LOG": [], "SEED": rng_state }
+                        "LOG": [], "MARKS": [], "SEED": rng_state }
         PRINT "room opened: "; key$
     ENDIF
     RETURN rooms{key$}
@@ -408,7 +419,9 @@ SUB LOGREPLAY(rm, w, row)
     rec{"CB"} = st{"CROWNS"}[1]
     rec{"TICKS"} = st{"TICKNO"}
     rec{"PLAYS"} = rm{"LOG"}
-    IF MAP.EXISTS(rm, "FORCED") THEN rec{"FORCED"} = 1
+    rec{"CARDS_FP"} = cards_fp$
+    IF MAP.EXISTS(rm, "MARKS") THEN rec{"MARKS"} = rm{"MARKS"}
+    IF MAP.EXISTS(rm, "FORCED") ANDALSO rm{"FORCED"} = 1 THEN rec{"FORCED"} = 1
     TRY
         DIM entry$ = JSON.STRINGIFY$(rec)
         DIM old$ = ""
@@ -556,6 +569,23 @@ FUNC ISBOTROOM(rm)
     RETURN 0
 ENDFUNC
 
+' A checkpoint every thirty seconds: the six stations and how many ships were
+' on the board. Detecting that a replay came out differently is easy; without
+' these there is no way to say WHERE it started to differ, and a divergence
+' you cannot localise is a divergence you cannot fix.
+CONST MARK_EVERY = 300
+
+SUB MARKSIM(rm)
+    DIM st = rm{"ST"}
+    IF st{"TICKNO"} MOD MARK_EVERY <> 0 THEN RETURN
+    IF NOT MAP.EXISTS(rm, "MARKS") THEN rm{"MARKS"} = []
+    DIM hp = []
+    FOR EACH tw IN st{"TOWERS"}
+        hp = APPEND(hp, INT(tw{"HP"}))
+    NEXT tw
+    rm{"MARKS"} = APPEND(rm{"MARKS"}, [{ "T": st{"TICKNO"}, "HP": hp, "N": LEN(st{"UNITS"}) }])
+ENDSUB
+
 SUB SYNCSIM(rm)
     DIM now = TICK()
     IF LEN(rm{"PLAYERS"}) < 2 THEN
@@ -571,6 +601,7 @@ SUB SYNCSIM(rm)
         FOR i = 1 TO n_steps
             rm{"ST"} = ARENA.SIMSTEP(rm{"ST"})
             IF has_bot = 1 THEN BOTTURN(rm)
+            MARKSIM(rm)
         NEXT i
         rm{"LAST"} = rm{"LAST"} + n_steps * 100
         RECORDMATCH(rm)
@@ -955,6 +986,11 @@ FUNC HREMATCH(req)
     IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     DIM players = rm{"PLAYERS"}
     rm{"ST"} = ARENA.NEWGAME()
+    ' a fresh match starts a fresh log - without this the next recording
+    ' carries the previous match's cards with it and replays as nonsense
+    rm{"LOG"} = []
+    rm{"MARKS"} = []
+    IF MAP.EXISTS(rm, "FORCED") THEN rm{"FORCED"} = 0
     DIM st = rm{"ST"}
     DIM i
     FOR i = 0 TO LEN(players) - 1

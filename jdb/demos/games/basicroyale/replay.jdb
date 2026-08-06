@@ -11,6 +11,16 @@ TRY
 CATCH
 ENDTRY
 
+' The fingerprint of the card table this replay runs on. A recording made
+' under different numbers cannot be expected to come out the same, and saying
+' so is more useful than calling it a drift.
+DIM cards_fp$ = "?"
+TRY
+    cards_fp$ = MID$(CODEC.SHA256$(TXTREADER$("cards.json")), 0, 12)
+CATCH
+ENDTRY
+PRINT "Kartenstand hier: "; cards_fp$
+
 DIM raw$ = ""
 TRY
     raw$ = TXTREADER$("replays.jsonl")
@@ -32,8 +42,30 @@ FOR EACH ln$ IN lines_all
 NEXT ln$
 PRINT LEN(recs); " recorded matches"
 
+' First checkpoint where the replay stops matching the recording, or -1 when
+' it followed the whole way. Ticks, so it reads as seconds times ten.
+FUNC FIRSTDRIFT(rec, marks)
+    IF NOT MAP.EXISTS(rec, "MARKS") THEN RETURN -1
+    DIM want = rec{"MARKS"}
+    DIM i
+    FOR i = 0 TO LEN(want) - 1
+        IF i >= LEN(marks) THEN RETURN want[i]{"T"}
+        DIM a = want[i]
+        DIM b = marks[i]
+        IF a{"N"} <> b{"N"} THEN RETURN a{"T"}
+        DIM j
+        FOR j = 0 TO 5
+            IF a{"HP"}[j] <> b{"HP"}[j] THEN RETURN a{"T"}
+        NEXT j
+    NEXT i
+    RETURN -1
+ENDFUNC
+
 ' Rebuild a match from its recording and hand back what the sim made of it.
+DIM replay_marks = []
+
 FUNC REPLAY(rec, chatty)
+    replay_marks = []
     DIM st = ARENA.NEWGAME()
     st{"QUEUES"}[0] = rec{"DECKA"} + ""
     st{"QUEUES"}[1] = rec{"DECKB"} + ""
@@ -65,6 +97,14 @@ FUNC REPLAY(rec, chatty)
             next_play = next_play + 1
         LOOP
         st = ARENA.SIMSTEP(st)
+        ' the same checkpoints the server wrote, taken at the same ticks
+        IF st{"TICKNO"} MOD 300 = 0 THEN
+            DIM hp = []
+            FOR EACH tw IN st{"TOWERS"}
+                hp = APPEND(hp, INT(tw{"HP"}))
+            NEXT tw
+            replay_marks = APPEND(replay_marks, [{ "T": st{"TICKNO"}, "HP": hp, "N": LEN(st{"UNITS"}) }])
+        ENDIF
         IF st{"PHASE"} <> "play" THEN EXITFOR
     NEXT t
     RETURN st
@@ -108,9 +148,17 @@ ELSE
             same = same + 1
         ELSE
             diff = diff + 1
+            DIM why$ = ""
+            IF MAP.EXISTS(r2, "CARDS_FP") THEN
+                IF ("" + r2{"CARDS_FP"}) <> cards_fp$ THEN why$ = "  (anderer Kartenstand: " + r2{"CARDS_FP"} + ")"
+            ELSE
+                why$ = "  (ohne Kartenstand aufgezeichnet)"
+            ENDIF
+            DIM at_tick = FIRSTDRIFT(r2, replay_marks)
+            IF at_tick >= 0 THEN why$ = why$ + "  laeuft ab " + STR$(at_tick / 10.0) + " s auseinander"
             PRINT "  weicht ab: "; r2{"A"}; " vs "; r2{"B"}; " "; r2{"AT"}; _
                   "  aufgezeichnet "; r2{"CA"}; ":"; r2{"CB"}; "/"; r2{"WINNER"}; _
-                  "  nachgespielt "; s2{"CROWNS"}[0]; ":"; s2{"CROWNS"}[1]; "/"; s2{"WINNER"}
+                  "  nachgespielt "; s2{"CROWNS"}[0]; ":"; s2{"CROWNS"}[1]; "/"; s2{"WINNER"}; why$
         ENDIF
     NEXT i
     PRINT ""
