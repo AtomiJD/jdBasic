@@ -59,6 +59,18 @@
   .vals input[type=text]{width:100%;margin-bottom:8px;}
   .swatch{width:100%;height:34px;border:1px solid #2c3160;border-radius:9px;
        background:#12142c;padding:3px;cursor:pointer;}
+  .help{flex:1 1 320px;min-width:290px;max-width:430px;font-size:13px;line-height:1.65;}
+  .help h2{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#9fe8ff;
+       margin:0 0 8px;font-weight:600;}
+  .help h2.later{margin-top:20px;}
+  .help ul{margin:0;padding-left:17px;color:#aab5dd;}
+  .help li{margin-bottom:5px;}
+  .help dl{margin:0;color:#aab5dd;}
+  .help dt{color:#e8ecff;font-weight:600;letter-spacing:.04em;margin-top:7px;}
+  .help dt:first-child{margin-top:0;}
+  .help dd{margin:0;}
+  .help b{color:#5df0d0;font-weight:600;}
+  .help .rule{border-top:1px solid #232a52;margin-top:16px;padding-top:12px;color:#7d88b8;font-size:12px;}
   .duel{display:flex;gap:8px;align-items:center;margin-bottom:10px;}
   .duel span{font-size:11px;color:#6f79a8;letter-spacing:.06em;text-transform:uppercase;
        white-space:nowrap;}
@@ -135,6 +147,87 @@
     <label class="grp">Beschreibung fuer die Kartenseite</label>
     <input type="text" id="desc_de" placeholder="deutsch">
     <input type="text" id="desc_en" placeholder="english">
+  </section>
+
+  <section class="help">
+    <h2>So geht das hier</h2>
+    <ul>
+      <li>Eine Form antippen waehlt sie aus, ziehen verschiebt sie. Die runden
+          Griffe aendern Radius, Ecken und Balkenenden.</li>
+      <li>Pfeiltasten schieben um 0,5, mit Umschalt um 0,1. Entf loescht die
+          gewaehlte Form.</li>
+      <li><b>Weiter unten in der Liste heisst weiter vorne im Bild.</b> Die
+          Pfeile in der Liste sortieren um.</li>
+      <li>Der gestrichelte Rahmen ist der Beschnitt. Was ausserhalb liegt,
+          fehlt auf der fertigen Karte.</li>
+      <li>Die zwei Vorschauen sehen absichtlich verschieden aus: die
+          Kartenseite rendert vierfach, das Spielfeld 40 Pixel.</li>
+      <li><b>Sandkasten</b> laesst die Karte gegen die gewaehlte antreten,
+          unter den echten Spielregeln.</li>
+      <li>Entwuerfe liegen nur in diesem Browser. Auf einem anderen Geraet
+          sind sie nicht da.</li>
+    </ul>
+
+    <h2 class="later">Was die Werte tun</h2>
+    <dl>
+      <dt>kosten</dt><dd>Elixier. Nachschub 1 alle 2,8 s, hoechstens 10 auf
+        einmal, in der Verlaengerung doppelt so schnell.</dd>
+      <dt>huelle</dt><dd>Trefferpunkte.</dd>
+      <dt>schaden / takt</dt><dd>Schaden je Schlag, Takt die Sekunden
+        dazwischen. Schaden geteilt durch Takt ist der Schaden je Sekunde.</dd>
+      <dt>reichweite</dt><dd>Felder. <b>Ueber 2 fliegt ein Schuss, bis 2 ist
+        es ein Nahkampfschlag</b> - das entscheidet auch, wie der Angriff
+        aussieht.</dd>
+      <dt>sicht</dt><dd>Felder, in denen ein Gegner gesucht wird. Findet das
+        Schiff keinen, laeuft es zum naechsten Turm.</dd>
+      <dt>tempo</dt><dd>Felder je Sekunde.</dd>
+      <dt>anzahl</dt><dd>Schiffe je Karte. Sie teilen sich die Kosten.</dd>
+      <dt>flieger / trifft</dt><dd>Ein Flieger kann nur von Karten getroffen
+        werden, die <b>alles</b> treffen. "Nur Boden" kommt an ihn gar nicht
+        heran.</dd>
+      <dt>nur Stationen</dt><dd>Ignoriert Truppen vollstaendig und laeuft an
+        ihnen vorbei. Die staerkste einzelne Eigenschaft im Spiel - eine Mauer
+        haelt so etwas nicht auf.</dd>
+      <dt>kuerzel</dt><dd>Zwei Buchstaben, mehr passt nicht ins Kaestchen.</dd>
+    </dl>
+
+    <h2 class="later">Die Eigenschaften</h2>
+    <dl>
+      <dt>Station</dt><dd>Bleibt stehen und verschwindet nach ttl Sekunden.</dd>
+      <dt>erzeugt</dt><dd>Alle spawnrate Sekunden spawnn Schiffe der Sorte
+        spawns.</dd>
+      <dt>Flaeche</dt><dd>Radius um das getroffene Ziel, der denselben Schaden
+        abbekommt.</dd>
+      <dt>Schild</dt><dd>Vorrat, der vor der Huelle aufgebraucht wird.</dd>
+      <dt>Anlauf</dt><dd>Nach charge <b>Feldern</b> ununterbrochenem Lauf zaehlt
+        der naechste Treffer mal chargemul. Jeder Schlag setzt den Anlauf auf
+        null - es sind Felder, keine Sekunden.</dd>
+      <dt>explodiert / hinterlaesst</dt><dd>Beim Sterben Schaden im Radius,
+        oder deathn Schiffe der Sorte deathspawn.</dd>
+      <dt>betaeubt, Sog, repariert, bremst</dt><dd>Wirken nur als Zauber.</dd>
+      <dt>Rueckruf</dt><dd>Braucht eine im Spiel gezogene Auswahl. Im Sandkasten
+        laesst sich so eine Karte nicht pruefen.</dd>
+      <dt>Strahl</dt><dd>Braucht Reichweite ueber 2, sonst zeichnen die Regeln
+        weiterhin einen Nahkampfschlag. Der Strahl nimmt die Kartenfarbe.</dd>
+    </dl>
+
+    <h2 class="later">Faustregeln aus dem Bestand</h2>
+    <ul>
+      <li><b>Panzer je Elixier</b> (Huelle plus Schild, geteilt durch Kosten):
+          DROID 220, TITAN 329, KOLOSS 360. Deutlich ueber 400 ist viel.</li>
+      <li><b>Schaden je Sekunde je Elixier</b>: 16 bis 43 bei einzelnen
+          Schiffen. Schwaerme wie NANOS und SPLITTER liegen bei 80, kippen
+          aber gegen Flaechenschaden sofort um.</li>
+      <li>Jede Kartenstufe gibt <b>+8 %</b> auf Huelle, Schaden und Heilung.</li>
+      <li>Wenn eine Karte etwas <b>Teureres</b> schlaegt, ist das der Punkt
+          zum Nachrechnen. Nicht automatisch falsch, aber immer eine Frage
+          wert.</li>
+    </ul>
+
+    <p class="rule">Ein Duell im Sandkasten ist der Zweikampf in der Mitte,
+    sonst nichts. Rudelverhalten, Zauber zur Unterstuetzung und der
+    Elixierfluss stehen da nicht drin - gerade bei teuren Karten ist der
+    Fluss die halbe Wahrheit.</p>
   </section>
 </main>
 
