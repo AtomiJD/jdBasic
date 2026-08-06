@@ -679,6 +679,11 @@ SUB POLLSTATE()
     TRY
         DIM r$ = HTTP.GET$(SRV$ + "/state?room=" + room$ + "&tok=" + tok$)
         DIM m = JSON.PARSE$(r$)
+        ' a room that was swept away answers without a state
+        IF m{"OK"} = 0 THEN
+            msg$ = "" + m{"MSG"}
+            RETURN
+        ENDIF
         world = m{"ST"}
         waiting = m{"WAITING"}
         have_state = 1

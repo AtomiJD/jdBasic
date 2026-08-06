@@ -71,6 +71,20 @@ FUNC ROOM(name$)
     RETURN rooms{key$}
 ENDFUNC
 
+' The room a request names, WITHOUT opening it. Only joining opens a room -
+' otherwise an unauthenticated GET can fill the server with arenas nobody
+' plays in, which measured at about six kilobytes a piece.
+FUNC ROOMFIND(req, b)
+    DIM key$ = "main"
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "ROOM") THEN
+        key$ = ROOMKEY$("" + b{"ROOM"})
+    ELSEIF MAP.EXISTS(req{"PARAMS"}, "room") THEN
+        key$ = ROOMKEY$("" + req{"PARAMS"}{"room"})
+    ENDIF
+    IF NOT MAP.EXISTS(rooms, key$) THEN RETURN 0
+    RETURN rooms{key$}
+ENDFUNC
+
 ' Room named in a query parameter (GET) or a parsed body (POST).
 FUNC ROOMOF(req, b)
     IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "ROOM") THEN RETURN ROOM(b{"ROOM"})
@@ -114,11 +128,33 @@ TRY
 CATCH
 ENDTRY
 
+' The whole file is rewritten on every save, so the cost of a save grows
+' with the number of profiles that ever existed - a burst of unknown names
+' would make every login slower than the last (measured: 2 ms at zero
+' profiles, 10 ms at four hundred). Anything that must not be lost still
+' saves at once; the cheap bookkeeping marks the file and rides out with the
+' next flush window, so a name flood costs one write every few seconds
+' instead of one per name.
+CONST STATS_GAP_MS = 4000
+DIM stats_dirty = 0
+DIM stats_written = 0
+
 SUB SAVESTATS()
     TRY
         TXTWRITER "stats.json", JSON.STRINGIFY$(stats)
     CATCH
     ENDTRY
+    stats_dirty = 0
+    stats_written = TICK()
+ENDSUB
+
+SUB TOUCHSTATS()
+    stats_dirty = 1
+    FLUSHSTATS()
+ENDSUB
+
+SUB FLUSHSTATS()
+    IF stats_dirty = 1 ANDALSO TICK() - stats_written >= STATS_GAP_MS THEN SAVESTATS()
 ENDSUB
 
 FUNC STATOF(name$)
@@ -259,7 +295,7 @@ FUNC ENSURESTARTER(name$)
     IF NOT MAP.EXISTS(s, "STARTED") THEN
         s{"STARTED"} = 1
         GIVECHEST(name$)
-        SAVESTATS()
+        TOUCHSTATS()
         PRINT "starter chest: "; name$
     ENDIF
     RETURN s
@@ -587,7 +623,10 @@ FUNC HJOIN(req)
 ENDFUNC
 
 FUNC HSTATE(req)
-    DIM rm = ROOMOF(req, 0)
+    ' a pending stats write rides out on the busiest endpoint there is
+    FLUSHSTATS()
+    DIM rm = ROOMFIND(req, 0)
+    IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     SYNCSIM(rm)
     DIM players = rm{"PLAYERS"}
     DIM pid = -1
@@ -616,7 +655,8 @@ FUNC HPLAY(req)
     CATCH
     ENDTRY
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
-    DIM rm = ROOMOF(req, b)
+    DIM rm = ROOMFIND(req, b)
+    IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     SYNCSIM(rm)
     DIM pid = PIDBYTOK(rm{"PLAYERS"}, b{"TOK"})
     IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
@@ -643,7 +683,8 @@ FUNC HEMOTE(req)
     CATCH
     ENDTRY
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
-    DIM rm = ROOMOF(req, b)
+    DIM rm = ROOMFIND(req, b)
+    IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     SYNCSIM(rm)
     DIM pid = PIDBYTOK(rm{"PLAYERS"}, b{"TOK"})
     IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
@@ -671,7 +712,8 @@ FUNC HBOT(req)
     CATCH
     ENDTRY
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
-    DIM rm = ROOMOF(req, b)
+    DIM rm = ROOMFIND(req, b)
+    IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     DIM ps = rm{"PLAYERS"}
     IF LEN(ps) <> 1 THEN RETURN JJ({ "OK": 0, "MSG": "msg_full" })
     IF PIDBYTOK(ps, b{"TOK"}) <> 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
@@ -691,7 +733,8 @@ FUNC HRESET(req)
     CATCH
     ENDTRY
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
-    DIM rm = ROOMOF(req, b)
+    DIM rm = ROOMFIND(req, b)
+    IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     rm{"ST"} = ARENA.NEWGAME()
     rm{"PLAYERS"} = []
     rm{"LAST"} = TICK()
@@ -846,7 +889,8 @@ FUNC HREMATCH(req)
         b = JSON.PARSE$(req{"BODY"})
     CATCH
     ENDTRY
-    DIM rm = ROOMOF(req, b)
+    DIM rm = ROOMFIND(req, b)
+    IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     DIM players = rm{"PLAYERS"}
     rm{"ST"} = ARENA.NEWGAME()
     DIM st = rm{"ST"}
@@ -877,7 +921,8 @@ FUNC HFORCEEND(req)
     CATCH
     ENDTRY
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
-    DIM rm = ROOMOF(req, b)
+    DIM rm = ROOMFIND(req, b)
+    IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     rm{"ST"}{"TOWERS"}[2]{"HP"} = 0
     RETURN JJ({ "OK": 1 })
 ENDFUNC
@@ -983,7 +1028,7 @@ FUNC HLOGIN(req)
         s{"PINHASH"} = PINHASH$(s{"SALT"}, pin$)
         s{"TRIES"} = 0
         DIM starter = ENSURESTARTER(name$)
-        SAVESTATS()
+        TOUCHSTATS()
         PRINT "claimed: "; name$
         RETURN JJ({ "OK": 1, "AUTH": NEWSESSION$(name$), "NAME": name$, "CLAIMED": 1 })
     ENDIF
@@ -996,7 +1041,7 @@ FUNC HLOGIN(req)
             s{"TRIES"} = 0
             PRINT "locked: "; name$
         ENDIF
-        SAVESTATS()
+        TOUCHSTATS()
         RETURN JJ({ "OK": 0, "MSG": "msg_wrongpin" })
     ENDIF
 
