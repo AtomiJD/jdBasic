@@ -50,6 +50,15 @@
   #pgame{width:160px;height:160px;image-rendering:pixelated;}
   textarea{width:100%;height:130px;font-family:'Cascadia Code',Consolas,monospace;
        font-size:12px;line-height:1.5;resize:vertical;white-space:pre;}
+  .vals{flex:1 1 300px;min-width:280px;max-width:380px;}
+  .grp{display:block;font-size:11px;color:#5b6491;letter-spacing:.1em;
+       text-transform:uppercase;margin:14px 0 8px;}
+  .traits{display:flex;flex-wrap:wrap;gap:6px;}
+  .traits button{padding:6px 9px;font-size:12px;font-weight:400;color:#7d88b8;}
+  .traits button.on{background:#1d2450;border-color:#38e0ff;color:#cdf3ff;font-weight:600;}
+  .vals input[type=text]{width:100%;margin-bottom:8px;}
+  .swatch{width:100%;height:34px;border:1px solid #2c3160;border-radius:9px;
+       background:#12142c;padding:3px;cursor:pointer;}
   .duel{display:flex;gap:8px;align-items:center;margin-bottom:10px;}
   .duel span{font-size:11px;color:#6f79a8;letter-spacing:.06em;text-transform:uppercase;
        white-space:nowrap;}
@@ -108,6 +117,22 @@
     </div>
     <p class="say" id="say"></p>
   </section>
+
+  <section class="vals">
+    <div class="bar">
+      <button id="newcard" type="button">+ Neue Karte</button>
+      <button id="mode" type="button">Zauber</button>
+    </div>
+    <div class="fields" id="core"></div>
+    <label class="grp">Farbe der Karte</label>
+    <input type="color" id="accent" class="swatch">
+    <label class="grp">Eigenschaften</label>
+    <div class="traits" id="traits"></div>
+    <div class="fields" id="extra"></div>
+    <label class="grp">Beschreibung fuer die Kartenseite</label>
+    <input type="text" id="desc_de" placeholder="deutsch">
+    <input type="text" id="desc_en" placeholder="english">
+  </section>
 </main>
 
 <script src="sdf.js"></script>
@@ -133,15 +158,18 @@
     BAR:  () => ['BAR', 14, 20, 26, 20, 2, 'ACCENT', 0.6]
   };
 
-  let cards = {}, kind = '', rows = [], sel = -1, team = 0;
+  let cards = {}, kind = '', rows = [], stats = {}, sel = -1, team = 0;
+  let texts = { de: {}, en: {} };
   let drafts = JSON.parse(localStorage.getItem('jdvoid_designer') || '{}');
   let drag = null, pending = false;
 
   const say = t => { $('say').textContent = t; };
   const round = v => Math.round(v * 4) / 4;
   const num = v => Math.round(v * 100) / 100;
-  const accent = () => (cards[kind] && cards[kind].COLOR) || null;
-  const pal = () => palette(team, accent());
+  const pal = () => palette(team, stats.COLOR);
+  const isSpell = () => stats.SPELL === 1;
+  // SHAPE first, the way the file has it, so an untouched card compares equal
+  const work = () => Object.assign({ SHAPE: rows }, stats);
 
   // ── loading ───────────────────────────────────────────────────
   async function load() {
@@ -154,14 +182,32 @@
     if (!table) { try { table = await (await fetch('../cards.json')).json(); } catch (e) {} }
     if (!table) { say('Kartentabelle nicht erreichbar'); return; }
     cards = table;
+    try {
+      const l = await (await fetch('api/lang')).json();
+      if (l && l.de) texts = l;
+    } catch (e) {}
+    if (!texts.de || !Object.keys(texts.de).length) {
+      try { texts = await (await fetch('../lang.json')).json(); } catch (e) {}
+    }
+    texts.de = texts.de || {};
+    texts.en = texts.en || {};
+    const own = JSON.parse(localStorage.getItem('jdvoid_designer_desc') || '{}');
+    for (const k of Object.keys(own)) {
+      texts.de['desc_' + k] = own[k].de;
+      texts.en['desc_' + k] = own[k].en;
+    }
     fillPicker();
     pick(Object.keys(cards)[0]);
   }
 
+  // a card that exists only as a draft belongs in the list too, otherwise a
+  // new one disappears the moment the page reloads
+  const allKinds = () => [...new Set([...Object.keys(cards), ...Object.keys(drafts)])].sort();
+
   function fillPicker() {
     $('card').innerHTML = '';
     $('foe').innerHTML = '';
-    for (const k of Object.keys(cards).sort()) {
+    for (const k of allKinds()) {
       const o = document.createElement('option');
       o.value = k;
       o.textContent = k + (drafts[k] ? '  (geaendert)' : '');
@@ -175,18 +221,27 @@
   function pick(k) {
     kind = k;
     $('card').value = k;
-    rows = JSON.parse(JSON.stringify(drafts[k] || cards[k].SHAPE || []));
+    const draft = drafts[k];
+    // a draft written before the values were editable holds only the figure
+    const base = Array.isArray(draft) ? Object.assign({}, cards[k], { SHAPE: draft })
+                                      : (draft || cards[k]);
+    if (!base) return;
+    const copy = JSON.parse(JSON.stringify(base));
+    rows = copy.SHAPE || [];
+    delete copy.SHAPE;
+    stats = copy;
     sel = rows.length ? rows.length - 1 : -1;
     if (!$('foe').value || $('foe').value === k) {
       $('foe').value = Object.keys(cards).sort().find(x => x !== k) || k;
     }
+    $('desc_de').value = (texts.de || {})['desc_' + k] || '';
+    $('desc_en').value = (texts.en || {})['desc_' + k] || '';
     redraw();
   }
 
   function store() {
-    const orig = JSON.stringify(cards[kind].SHAPE || []);
-    if (JSON.stringify(rows) === orig) delete drafts[kind];
-    else drafts[kind] = JSON.parse(JSON.stringify(rows));
+    if (JSON.stringify(work()) === JSON.stringify(cards[kind])) delete drafts[kind];
+    else drafts[kind] = JSON.parse(JSON.stringify(work()));
     localStorage.setItem('jdvoid_designer', JSON.stringify(drafts));
     const o = [...$('card').options].find(x => x.value === kind);
     if (o) o.textContent = kind + (drafts[kind] ? '  (geaendert)' : '');
@@ -283,6 +338,7 @@
       paint($('pgame'), rows, GRID, GRID, 1, ZOOM);
       renderList();
       renderFields();
+      renderVals();
       renderJson();
     });
   }
@@ -320,46 +376,199 @@
   }
 
   // ── the number fields ─────────────────────────────────────────
+  // Rebuilding an input while someone types in it takes the caret away, so a
+  // panel is only rebuilt when its make-up changes and otherwise refreshed.
+  function panel(box, sig, build, sync) {
+    if (box.dataset.sig !== sig) {
+      box.innerHTML = '';
+      box.dataset.sig = sig;
+      build(box);
+    } else {
+      sync(box);
+    }
+  }
+
+  function field(box, label, node, wide) {
+    const d = document.createElement('div');
+    const l = document.createElement('label');
+    l.textContent = label;
+    d.appendChild(l); d.appendChild(node);
+    if (wide) d.className = 'wide';
+    box.appendChild(d);
+  }
+
+  function numBox(key, step, get, set, tip) {
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.step = step; inp.dataset.k = key;
+    if (tip) inp.title = tip;
+    inp.value = num(get());
+    inp.oninput = () => { set(Number(inp.value) || 0); store(); redraw(); };
+    return inp;
+  }
+
+  function pickBox(key, opts, get, set) {
+    const s = document.createElement('select');
+    s.dataset.k = key;
+    for (const [v, t] of opts) {
+      const o = document.createElement('option');
+      o.value = String(v); o.textContent = t;
+      s.appendChild(o);
+    }
+    s.value = String(get());
+    s.onchange = () => {
+      set(/^-?\d+(\.\d+)?$/.test(s.value) ? Number(s.value) : s.value);
+      store(); redraw();
+    };
+    return s;
+  }
+
+  function textBox(key, get, set) {
+    const inp = document.createElement('input');
+    inp.type = 'number'; inp.dataset.k = key;
+    inp.type = 'text'; inp.maxLength = 14;
+    inp.value = get() === undefined ? '' : String(get());
+    inp.oninput = () => { set(inp.value.toUpperCase()); store(); redraw(); };
+    return inp;
+  }
+
   function renderFields() {
     const box = $('fields');
-    box.innerHTML = '';
-    if (sel < 0 || sel >= rows.length) return;
-    const row = rows[sel];
-    const add = (label, node) => {
-      const d = document.createElement('div');
-      const l = document.createElement('label');
-      l.textContent = label;
-      d.appendChild(l); d.appendChild(node);
-      box.appendChild(d);
-      return d;
-    };
-    for (const [name, idx] of GEOM[row[0]]) {
-      const inp = document.createElement('input');
-      inp.type = 'number'; inp.step = '0.5'; inp.value = num(row[idx]);
-      inp.oninput = () => { row[idx] = Number(inp.value) || 0; store(); redraw(); };
-      add(name, inp);
-    }
-    const csel = document.createElement('select');
-    for (const s of SLOTS) {
-      const o = document.createElement('option');
-      o.value = s; o.textContent = s;
-      csel.appendChild(o);
-    }
-    csel.value = row[COL[row[0]]];
-    csel.onchange = () => { row[COL[row[0]]] = csel.value; store(); redraw(); };
-    add('farbe', csel).className = 'wide';
+    if (sel < 0 || sel >= rows.length) { box.innerHTML = ''; box.dataset.sig = ''; return; }
+    panel(box, sel + ':' + rows[sel][0], buildShape, syncShape);
+  }
 
-    const g = document.createElement('input');
-    g.type = 'number'; g.step = '0.1'; g.min = '0'; g.max = '1';
-    g.value = num(row[GLOW[row[0]]]);
-    g.oninput = () => { row[GLOW[row[0]]] = Number(g.value) || 0; store(); redraw(); };
-    add('glut', g).className = 'wide';
+  function buildShape(box) {
+    const row = rows[sel];
+    for (const [name, idx] of GEOM[row[0]]) {
+      field(box, name, numBox('g' + idx, '0.5', () => rows[sel][idx],
+                              v => { rows[sel][idx] = v; }));
+    }
+    field(box, 'farbe', pickBox('col', SLOTS.map(s => [s, s]),
+      () => rows[sel][COL[rows[sel][0]]],
+      v => { rows[sel][COL[rows[sel][0]]] = v; }), true);
+    field(box, 'glut', numBox('glow', '0.1',
+      () => rows[sel][GLOW[rows[sel][0]]],
+      v => { rows[sel][GLOW[rows[sel][0]]] = v; }), true);
+  }
+
+  function syncShape(box) {
+    const row = rows[sel];
+    box.querySelectorAll('[data-k]').forEach(el => {
+      if (el === document.activeElement) return;
+      const k = el.dataset.k;
+      if (k === 'col') el.value = row[COL[row[0]]];
+      else if (k === 'glow') el.value = num(row[GLOW[row[0]]]);
+      else el.value = num(row[Number(k.slice(1))]);
+    });
+  }
+
+  // ── the card values ───────────────────────────────────────────
+  const CORE_UNIT = [
+    ['COST', 'kosten', '1', 'Elixier, das die Karte kostet'],
+    ['HP', 'huelle', '10', 'Trefferpunkte'],
+    ['DMG', 'schaden', '5', 'Schaden je Schlag'],
+    ['HITSPEED', 'takt s', '0.1', 'Sekunden zwischen zwei Schlaegen'],
+    ['REACH', 'reichweite', '0.1', 'Felder, ueber die geschossen wird'],
+    ['AGGRO', 'sicht', '0.5', 'Felder, in denen ein Ziel gesucht wird'],
+    ['SPD', 'tempo', '0.1', 'Felder je Sekunde'],
+    ['N', 'anzahl', '1', 'Schiffe, die die Karte auf einmal legt']
+  ];
+  const CORE_SPELL = [
+    ['COST', 'kosten', '1', 'Elixier, das die Karte kostet'],
+    ['DMG', 'schaden', '5', 'Schaden im Radius'],
+    ['RADIUS', 'radius', '0.1', 'Felder um den Einschlag']
+  ];
+  // every one of these is read by arena.jdb - none is decoration
+  const TRAITS = [
+    { k:'BUILD',      label:'Station',      add:{ BUILD:1, TTL:30 } },
+    { k:'SPAWNS',     label:'erzeugt',      add:{ SPAWNS:'NANOS', SPAWNRATE:3, SPAWNN:1 } },
+    { k:'SPLASH',     label:'Flaeche',      add:{ SPLASH:1.5 } },
+    { k:'SHIELD',     label:'Schild',       add:{ SHIELD:200 } },
+    { k:'CHARGE',     label:'Anlauf',       add:{ CHARGE:2, CHARGEMUL:2 } },
+    { k:'DEATHDMG',   label:'explodiert',   add:{ DEATHDMG:100, DEATHRADIUS:2 } },
+    { k:'DEATHSPAWN', label:'hinterlaesst', add:{ DEATHSPAWN:'NANOS', DEATHN:2 } },
+    { k:'STUN',       label:'betaeubt',     add:{ STUN:1.5 } },
+    { k:'PULL',       label:'Sog',          add:{ PULL:3, SETTLE:1.4 } },
+    { k:'HEAL',       label:'repariert',    add:{ HEAL:200 } },
+    { k:'SLOW',       label:'bremst',       add:{ SLOW:3, SLOWMUL:0.5 } },
+    { k:'WARP',       label:'Rueckruf',     add:{ WARP:3, SETTLE:1 } }
+  ];
+
+  const getS = k => stats[k];
+  const setS = k => v => { stats[k] = v; };
+
+  function buildCore(box) {
+    for (const [key, label, step, tip] of (isSpell() ? CORE_SPELL : CORE_UNIT)) {
+      field(box, label, numBox(key, step, () => getS(key), setS(key), tip));
+    }
+    if (!isSpell()) {
+      field(box, 'flieger', pickBox('FLY', [[0,'nein'],[1,'ja']], () => getS('FLY'), setS('FLY')), true);
+      field(box, 'trifft', pickBox('HITS', [['G','nur Boden'],['A','alles']], () => getS('HITS'), setS('HITS')), true);
+      field(box, 'nur Stationen', pickBox('ONLYTOWERS', [[0,'nein'],[1,'ja']],
+            () => getS('ONLYTOWERS'), setS('ONLYTOWERS')), true);
+    }
+    field(box, 'seltenheit', pickBox('RARITY', [['C','gewoehnlich'],['S','selten']],
+          () => getS('RARITY'), setS('RARITY')), true);
+    field(box, 'kuerzel', textBox('ICON', () => getS('ICON'), setS('ICON')), true);
+  }
+
+  function syncStats(box) {
+    box.querySelectorAll('[data-k]').forEach(el => {
+      if (el === document.activeElement) return;
+      const v = stats[el.dataset.k];
+      el.value = (typeof v === 'number') ? num(v) : (v === undefined ? '' : String(v));
+    });
+  }
+
+  function buildExtra(box) {
+    for (const t of TRAITS) {
+      if (stats[t.k] === undefined) continue;
+      for (const f of Object.keys(t.add)) {
+        const node = (typeof t.add[f] === 'string')
+          ? textBox(f, () => getS(f), setS(f))
+          : numBox(f, '0.1', () => getS(f), setS(f));
+        field(box, f.toLowerCase(), node, typeof t.add[f] === 'string');
+      }
+    }
+  }
+
+  function renderVals() {
+    panel($('core'), kind + ':' + (isSpell() ? 's' : 'u'), buildCore, syncStats);
+    const on = $('traits');
+    on.innerHTML = '';
+    for (const t of TRAITS) {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = t.label;
+      if (stats[t.k] !== undefined) b.className = 'on';
+      b.onclick = () => {
+        if (stats[t.k] === undefined) Object.assign(stats, t.add);
+        else for (const f of Object.keys(t.add)) delete stats[f];
+        store(); redraw();
+      };
+      on.appendChild(b);
+    }
+    panel($('extra'), Object.keys(stats).join(','), buildExtra, syncStats);
+    $('mode').textContent = isSpell() ? 'Einheit' : 'Zauber';
+    $('mode').classList.toggle('on', isSpell());
+    const c = stats.COLOR || [180, 180, 180];
+    if ($('accent') !== document.activeElement) {
+      $('accent').value = '#' + c.map(v => Math.max(0, Math.min(255, v | 0))
+                                           .toString(16).padStart(2, '0')).join('');
+    }
   }
 
   function renderJson() {
     const body = rows.map(r => '    ' + JSON.stringify(r.map(v => typeof v === 'number' ? num(v) : v)))
                      .join(',\n');
-    $('json').value = '"SHAPE": [\n' + body + '\n  ]';
+    const rest = Object.keys(stats).map(k => '  ' + JSON.stringify(k) + ': ' +
+      JSON.stringify(typeof stats[k] === 'number' ? num(stats[k]) : stats[k])).join(',\n');
+    let out = JSON.stringify(kind) + ': {\n  "SHAPE": [\n' + body + '\n  ],\n' + rest + '\n}';
+    const dde = $('desc_de').value, den = $('desc_en').value;
+    if (dde || den) {
+      out += '\n\nlang.json:\n  de  "desc_' + kind + '": ' + JSON.stringify(dde) +
+             '\n  en  "desc_' + kind + '": ' + JSON.stringify(den);
+    }
+    $('json').value = out;
   }
 
   // ── pointer ───────────────────────────────────────────────────
@@ -467,11 +676,71 @@
     redraw();
   };
   $('reset').onclick = () => {
+    const gone = !cards[kind];
     delete drafts[kind];
     localStorage.setItem('jdvoid_designer', JSON.stringify(drafts));
-    pick(kind);
-    say(kind + ' steht wieder wie in der Tabelle');
+    fillPicker();
+    if (gone) {
+      pick(allKinds()[0]);
+      say('verworfen');
+    } else {
+      pick(kind);
+      say(kind + ' steht wieder wie in der Tabelle');
+    }
   };
+
+  $('newcard').onclick = () => {
+    const raw = prompt('Wie soll die Karte heissen?');
+    if (!raw) return;
+    const name = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!name) { say('der Name braucht Buchstaben'); return; }
+    if (cards[name] || drafts[name]) { say(name + ' gibt es schon'); return; }
+    drafts[name] = {
+      SHAPE: [['BOXR', 20, 22, 7, 6, 3, 0, 'HULL', 0], ['DISC', 20, 14, 4, 'TEAM', 0.6]],
+      COST: 3, HP: 600, DMG: 80, HITSPEED: 1.1, REACH: 1.2, AGGRO: 5.5, SPD: 1.6,
+      N: 1, FLY: 0, HITS: 'G', ONLYTOWERS: 0,
+      COLOR: [150, 200, 255], ICON: name.slice(0, 2), RARITY: 'C'
+    };
+    localStorage.setItem('jdvoid_designer', JSON.stringify(drafts));
+    fillPicker();
+    pick(name);
+    say(name + ' angelegt, liegt nur in diesem Browser');
+  };
+
+  // A spell has no hull and no legs, so switching throws the fields that no
+  // longer mean anything away instead of carrying them along unseen.
+  $('mode').onclick = () => {
+    if (isSpell()) {
+      delete stats.SPELL;
+      Object.assign(stats, { HP: 600, HITSPEED: 1.1, REACH: 1.2, AGGRO: 5.5, SPD: 1.6,
+                             N: 1, FLY: 0, HITS: 'G', ONLYTOWERS: 0 });
+      delete stats.RADIUS;
+    } else {
+      for (const f of ['HP','HITSPEED','REACH','AGGRO','SPD','N','FLY','HITS','ONLYTOWERS']) delete stats[f];
+      stats.SPELL = 1;
+      if (stats.RADIUS === undefined) stats.RADIUS = 2.5;
+    }
+    store(); redraw();
+  };
+
+  $('accent').oninput = () => {
+    const h = $('accent').value;
+    stats.COLOR = [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)];
+    store(); redraw();
+  };
+
+  // The descriptions belong to lang.json, not to the card, so they are kept
+  // beside the drafts rather than inside them.
+  function saveTexts() {
+    texts.de['desc_' + kind] = $('desc_de').value;
+    texts.en['desc_' + kind] = $('desc_en').value;
+    const own = JSON.parse(localStorage.getItem('jdvoid_designer_desc') || '{}');
+    own[kind] = { de: $('desc_de').value, en: $('desc_en').value };
+    localStorage.setItem('jdvoid_designer_desc', JSON.stringify(own));
+    renderJson();
+  }
+  $('desc_de').oninput = saveTexts;
+  $('desc_en').oninput = saveTexts;
   $('clear').onclick = () => {
     if (!confirm('Alle Entwuerfe verwerfen?')) return;
     drafts = {};
@@ -490,7 +759,9 @@
   // draft rather than what the server still has.
   $('try').onclick = () => {
     const one = {};
-    one[kind] = Object.assign({}, cards[kind], { SHAPE: rows });
+    one[kind] = work();
+    const foe = $('foe').value;
+    if (drafts[foe] && !Array.isArray(drafts[foe])) one[foe] = drafts[foe];
     const q = new URLSearchParams({
       prog: 'sandbox', fs: '1', a: kind, b: $('foe').value,
       draft: JSON.stringify(one)
