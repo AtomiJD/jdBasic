@@ -1,0 +1,162 @@
+' Tries a balance change against the matches that were actually played:
+' every usable recording in replays.jsonl runs twice, once with the card as it
+' is and once with one number changed, and the two outcomes are compared.
+'
+'   jdbasic whatif.jdb                          what is in the log
+'   jdbasic whatif.jdb GLUTREGEN SPLASH 0.9     one value, over every match
+'   jdbasic whatif.jdb TITAN DMG 200 250 300    several values at once
+'
+' Only matches that replay exactly as recorded are used. A recording that
+' already comes out differently cannot say anything about a change, and one
+' that was cut short by an admin never had a played ending to begin with.
+IMPORT ARENA
+
+DIM cards = JSON.PARSE$(TXTREADER$("cards.json"))
+DIM cards_fp$ = "?"
+TRY
+    cards_fp$ = MID$(CODEC.SHA256$(TXTREADER$("cards.json")), 0, 12)
+CATCH
+ENDTRY
+
+DIM raw$ = ""
+TRY
+    raw$ = TXTREADER$("replays.jsonl")
+CATCH
+ENDTRY
+
+DIM recs = []
+FOR EACH ln$ IN SPLIT(raw$, CHR$(10))
+    IF LEN(TRIM$(ln$)) > 2 THEN
+        TRY
+            recs = APPEND(recs, [JSON.PARSE$(ln$)])
+        CATCH
+        ENDTRY
+    ENDIF
+NEXT ln$
+
+' Replay one recording under whatever card table is installed right now.
+FUNC RUN(rec)
+    DIM st = ARENA.NEWGAME()
+    st{"QUEUES"}[0] = rec{"DECKA"} + ""
+    st{"QUEUES"}[1] = rec{"DECKB"} + ""
+    st{"CARDLVL"}[0] = rec{"LVLA"}
+    st{"CARDLVL"}[1] = rec{"LVLB"}
+    DIM plays = rec{"PLAYS"}
+    DIM np = 0
+    DIM t
+    FOR t = 1 TO rec{"TICKS"}
+        DO
+            IF np >= LEN(plays) THEN EXITDO
+            DIM p = plays[np]
+            IF p{"T"} > st{"TICKNO"} THEN EXITDO
+            DIM res$ = ""
+            IF MAP.EXISTS(p, "CX") THEN
+                res$ = ARENA.PLAYWARP(st, p{"P"}, "" + p{"K"}, p{"X"}, p{"Y"}, p{"CX"}, p{"CY"}, p{"R"})
+            ELSE
+                res$ = ARENA.PLAYCARD(st, p{"P"}, "" + p{"K"}, p{"X"}, p{"Y"})
+            ENDIF
+            np = np + 1
+        LOOP
+        st = ARENA.SIMSTEP(st)
+        IF st{"PHASE"} <> "play" THEN EXITFOR
+    NEXT t
+    RETURN st
+ENDFUNC
+
+' Standing hull across both sides: a finer measure than crowns, because most
+' changes move the damage without moving the result.
+FUNC HULLS(st)
+    DIM hp = 0
+    DIM j
+    FOR j = 0 TO 5
+        IF st{"TOWERS"}[j]{"HP"} > 0 THEN hp = hp + INT(st{"TOWERS"}[j]{"HP"})
+    NEXT j
+    RETURN hp
+ENDFUNC
+
+' A recording is usable when it was played to an end, under these card
+' numbers, and comes back out the way it went in.
+FUNC USABLE(rec)
+    IF MAP.EXISTS(rec, "FORCED") THEN RETURN 0
+    IF NOT MAP.EXISTS(rec, "CARDS_FP") THEN RETURN 0
+    IF ("" + rec{"CARDS_FP"}) <> cards_fp$ THEN RETURN 0
+    DIM st = RUN(rec)
+    IF st{"WINNER"} <> rec{"WINNER"} THEN RETURN 0
+    IF st{"CROWNS"}[0] <> rec{"CA"} ORELSE st{"CROWNS"}[1] <> rec{"CB"} THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+ARENA.SETCARDS(cards)
+DIM usable = []
+DIM base_hull = []
+DIM skipped_forced = 0
+DIM skipped_other = 0
+DIM skipped_drift = 0
+FOR EACH r IN recs
+    IF MAP.EXISTS(r, "FORCED") THEN
+        skipped_forced = skipped_forced + 1
+    ELSEIF NOT MAP.EXISTS(r, "CARDS_FP") ORELSE ("" + r{"CARDS_FP"}) <> cards_fp$ THEN
+        skipped_other = skipped_other + 1
+    ELSEIF USABLE(r) = 0 THEN
+        skipped_drift = skipped_drift + 1
+    ELSE
+        usable = APPEND(usable, [r])
+        base_hull = APPEND(base_hull, HULLS(RUN(r)))
+    ENDIF
+NEXT r
+
+PRINT "Aufzeichnungen: "; LEN(recs)
+PRINT "  brauchbar:                 "; LEN(usable)
+PRINT "  abgebrochen:               "; skipped_forced
+PRINT "  anderer Kartenstand:       "; skipped_other
+PRINT "  spielt sich nicht nach:    "; skipped_drift
+PRINT ""
+
+DIM args = OS.ARGS()
+IF LEN(args) < 4 THEN
+    PRINT "Aufruf: jdbasic whatif.jdb <KARTE> <WERT> <zahl> [zahl ...]"
+    PRINT "Beispiel: jdbasic whatif.jdb GLUTREGEN SPLASH 0.9 1.8 3.0"
+ELSEIF LEN(usable) = 0 THEN
+    PRINT "keine brauchbare Partie - erst spielen, dann fragen"
+ELSE
+    DIM kind$ = UCASE$(args[1])
+    DIM field$ = UCASE$(args[2])
+    IF NOT MAP.EXISTS(cards, kind$) THEN
+        PRINT "unbekannte Karte: "; kind$
+    ELSE
+        DIM was = cards{kind$}{field$}
+        PRINT kind$; " "; field$; " steht auf "; was; ", "; LEN(usable); " Partien"
+        PRINT ""
+        PRINT "Wert     andere Sieger   andere Kronen   Huellen gesamt   Unterschied"
+        DIM ai
+        FOR ai = 3 TO LEN(args) - 1
+            DIM setting = VAL(args[ai])
+            cards{kind$}{field$} = setting
+            ARENA.SETCARDS(cards)
+            DIM flips = 0
+            DIM crownchg = 0
+            DIM hull_sum = 0
+            DIM base_sum = 0
+            DIM i
+            FOR i = 0 TO LEN(usable) - 1
+                DIM st2 = RUN(usable[i])
+                IF st2{"WINNER"} <> usable[i]{"WINNER"} THEN flips = flips + 1
+                ' the winner is a coarse signal - most changes move the crowns
+                ' long before they move the result
+                IF st2{"CROWNS"}[0] <> usable[i]{"CA"} ORELSE st2{"CROWNS"}[1] <> usable[i]{"CB"} THEN crownchg = crownchg + 1
+                hull_sum = hull_sum + HULLS(st2)
+                base_sum = base_sum + base_hull[i]
+            NEXT i
+            DIM sign$ = "+"
+            IF hull_sum < base_sum THEN sign$ = ""
+            PRINT MID$(STR$(setting) + "        ", 0, 8); " "; _
+                  MID$(STR$(flips) + " von " + STR$(LEN(usable)) + "        ", 0, 15); " "; _
+                  MID$(STR$(crownchg) + " von " + STR$(LEN(usable)) + "        ", 0, 15); " "; _
+                  MID$(STR$(hull_sum) + "         ", 0, 16); " "; sign$; hull_sum - base_sum
+        NEXT ai
+        cards{kind$}{field$} = was
+        PRINT ""
+        PRINT "Mehr stehende Huelle heisst: es wurde insgesamt weniger zerstoert."
+        IF LEN(usable) < 20 THEN PRINT "Achtung: unter zwanzig Partien ist das eine Anekdote, keine Aussage."
+    ENDIF
+ENDIF

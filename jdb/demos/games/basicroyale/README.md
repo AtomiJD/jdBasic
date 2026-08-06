@@ -45,6 +45,7 @@ exactly one set of rules in the codebase.
 | `spawn_test.jdb` | Assertions for hatcheries: a building that spawns, and a brood of more than one card. |
 | `splash_test.jdb` | Assertions for splash: who a blast catches around its target, and who it leaves alone. |
 | `replay.jdb` | Replays `replays.jsonl`: check every recorded match, or walk one of them card by card. |
+| `whatif.jdb` | Runs a balance change against the matches that were really played, over every recording that replays exactly. |
 | `replay_test.jdb` | Plays a match out while recording it, replays the recording, and compares both down to the tower hit points. |
 | `traits_test.jdb` | Assertions for shield, death effects, charge, heal and slow - each defined at runtime, so it doubles as the worked example. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
