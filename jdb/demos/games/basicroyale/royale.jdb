@@ -60,6 +60,12 @@ ON "MOUSEMOVE" CALL OnDrag
 ' Card held down and dragged onto the board - released there it deploys.
 DIM drag_kind$ = ""
 
+' A card that works over an area is aimed, not dropped: pressing the board
+' shows its circle under the finger and lifting sends it. That way the area
+' is visible in both ways of playing a card - dragging it out of the hand,
+' and the tap-tap that most people actually use on a phone.
+DIM aim_kind$ = ""
+
 ' The collection scrolls under the finger. A press remembers where it began;
 ' past a few pixels of travel it is a scroll, so a card only reacts when the
 ' finger stayed where it landed.
@@ -727,6 +733,29 @@ SUB SENDREMATCH()
     ENDTRY
 ENDSUB
 
+' True for a card that works over an area, so it is aimed rather than dropped.
+FUNC HASRADIUS(kind$)
+    IF NOT MAP.EXISTS(allcards, kind$) THEN RETURN 0
+    IF MAP.EXISTS(allcards{kind$}, "WARP") THEN RETURN 0
+    IF MAP.EXISTS(allcards{kind$}, "RADIUS") THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' The circle a card covers, drawn where it would land.
+SUB DrawRadius(cx, cy, kind$, fnow)
+    IF HASRADIUS(kind$) = 0 THEN RETURN
+    DIM rpix = INT(allcards{kind$}{"RADIUS"} * TILE)
+    DIM col = CCOLOR(kind$)
+    DRAWCOLOR col[0], col[1], col[2]
+    CIRCLE cx, cy, rpix, FALSE
+    CIRCLE cx, cy, rpix - 1, FALSE
+    DIM mark = 0
+    FOR mark = 0 TO 11
+        DIM ang = mark * PI / 6.0 + fnow * 0.02
+        PSET INT(cx + COS(ang) * (rpix - 5)), INT(cy + SIN(ang) * (rpix - 5))
+    NEXT mark
+ENDSUB
+
 ' True for a card that is played by circling ships instead of dropping one.
 FUNC ISWARP(kind$)
     IF NOT MAP.EXISTS(allcards, kind$) THEN RETURN 0
@@ -1374,22 +1403,7 @@ SUB DrawGhost(fnow)
         DIM pulse = 20 + INT(4 * SIN(fnow * 0.3))
         CIRCLE ptr_x, ptr_y, pulse, FALSE
         CIRCLE ptr_x, ptr_y, pulse - 1, FALSE
-        ' a card that works over an area draws that area under the finger:
-        ' guessing where a beam or a blast ends is not a skill worth having
-        IF MAP.EXISTS(allcards, drag_kind$) THEN
-            IF MAP.EXISTS(allcards{drag_kind$}, "RADIUS") THEN
-                DIM rpix = INT(allcards{drag_kind$}{"RADIUS"} * TILE)
-                DIM col = CCOLOR(drag_kind$)
-                DRAWCOLOR col[0], col[1], col[2]
-                CIRCLE ptr_x, ptr_y, rpix, FALSE
-                CIRCLE ptr_x, ptr_y, rpix - 1, FALSE
-                DIM mark = 0
-                FOR mark = 0 TO 11
-                    DIM ang = mark * PI / 6.0 + fnow * 0.02
-                    PSET INT(ptr_x + COS(ang) * (rpix - 5)), INT(ptr_y + SIN(ang) * (rpix - 5))
-                NEXT mark
-            ENDIF
-        ENDIF
+        DrawRadius(ptr_x, ptr_y, drag_kind$, fnow)
         IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, drag_kind$) THEN
             DIM gid = art_own{drag_kind$}
             SPRITE.ALPHA(gid, 165)
@@ -1905,6 +1919,8 @@ SUB DrawFrame(fnow)
         DrawUnits()
         DrawFX(fnow)
         DrawGhost(fnow)
+        ' aiming: the circle sits under the finger until it lifts
+        IF aim_kind$ <> "" ANDALSO ptr_down = 1 THEN DrawRadius(ptr_x, ptr_y, aim_kind$, fnow)
         IF warp_mode > 0 THEN DrawWarp(fnow)
         IF watching = 1 THEN
             DrawWatchBar()
@@ -2101,6 +2117,10 @@ SUB HandleClick(mx, my)
             SENDWARP(sel$, wtx, WY(wty))
         ELSEIF warp_mode = 1 THEN
             msg$ = ""
+        ELSEIF HASRADIUS(sel$) = 1 THEN
+            ' aim first, send on release
+            aim_kind$ = sel$
+            msg$ = ""
         ELSE
             DIM tx = mx / (TILE * 1.0)
             DIM tyv = (my - BOARD_Y0) / (TILE * 1.0)
@@ -2192,6 +2212,15 @@ ELSE
         IF up_new = 1 THEN
             up_new = 0
             IF uimode$ = "decks" THEN DECKRELEASE()
+            ' an aimed card goes off where the finger left the board
+            IF aim_kind$ <> "" THEN
+                IF uimode$ = "battle" ANDALSO up_y < 840 ANDALSO up_y >= BOARD_Y0 THEN
+                    IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 THEN
+                        SENDPLAY(aim_kind$, up_x / (TILE * 1.0), WY((up_y - BOARD_Y0) / (TILE * 1.0)))
+                    ENDIF
+                ENDIF
+                aim_kind$ = ""
+            ENDIF
             ' the finger came off: a loop closes here, but only if one was
             ' actually drawn - the release that ends the card tap must not
             ' count as an empty loop and cancel the mode

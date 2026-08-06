@@ -478,6 +478,9 @@ EXPORT FUNC SIMSTEP(st)
                             IF pd > 0.001 THEN
                                 DIM haul = sp{"PULL"}
                                 IF haul > pd THEN haul = pd
+                                ' a beam that drags has to be seen dragging,
+                                ' so every catch draws its own line inward
+                                ADDEVENT(st, { "T": "CAST", "FX": u0{"X"}, "FY": u0{"Y"}, "X": sp{"X"}, "Y": sp{"Y"} })
                                 u0{"X"} = u0{"X"} + pdx / pd * haul
                                 u0{"Y"} = u0{"Y"} + pdy / pd * haul
                                 ' being hauled costs the next swing
