@@ -110,9 +110,12 @@
       <button id="try" type="button">Sandkasten</button>
     </div>
 
-    <textarea id="json" readonly spellcheck="false"></textarea>
+    <textarea id="json" spellcheck="false"></textarea>
     <div class="foot">
       <button id="copy" type="button">In die Zwischenablage</button>
+      <button id="imp" type="button">Hier hinein einlesen</button>
+    </div>
+    <div class="foot">
       <button id="clear" type="button">Alle Entwuerfe verwerfen</button>
     </div>
     <p class="say" id="say"></p>
@@ -560,6 +563,9 @@
   }
 
   function renderJson() {
+    // the box is also where a card is pasted in, so what is being typed into
+    // it must not be overwritten underneath
+    if ($('json') === document.activeElement) return;
     const body = rows.map(r => '    ' + JSON.stringify(r.map(v => typeof v === 'number' ? num(v) : v)))
                      .join(',\n');
     const rest = Object.keys(stats).map(k => '  ' + JSON.stringify(k) + ': ' +
@@ -757,6 +763,90 @@
       store(); redraw();
     };
   });
+  // ── reading a card back in ────────────────────────────────────
+  const ROWLEN = { DISC: 6, BOXR: 9, BAR: 8 };
+
+  // A figure that the rasteriser cannot read would blank the page, so a row
+  // has to name a shape it knows and bring the right number of slots.
+  function cleanRows(raw) {
+    if (!Array.isArray(raw)) return { rows: [], dropped: 0 };
+    const good = [], out = [];
+    for (const r of raw) {
+      if (Array.isArray(r) && ROWLEN[String(r[0]).toUpperCase()] === r.length) good.push(r);
+      else out.push(r);
+    }
+    return { rows: good, dropped: out.length };
+  }
+
+  // Takes what the copy button writes, a bare card, or a whole table. The copy
+  // block is not valid JSON on its own: it opens with a name and ends with the
+  // lang lines, and both have to survive the trip back.
+  function readCard(text) {
+    let src = String(text || '').trim();
+    const desc = {};
+    const cut = src.indexOf('lang.json:');
+    if (cut >= 0) {
+      const tail = src.slice(cut);
+      src = src.slice(0, cut).trim();
+      const re = /(de|en)\s+"desc_([A-Za-z0-9_]+)"\s*:\s*("(?:[^"\\]|\\.)*")/g;
+      let m;
+      while ((m = re.exec(tail)) !== null) {
+        desc[m[2]] = desc[m[2]] || {};
+        try { desc[m[2]][m[1]] = JSON.parse(m[3]); } catch (e) {}
+      }
+    }
+    src = src.replace(/,\s*$/, '');
+    let data = null;
+    try { data = JSON.parse(src); } catch (e) {}
+    if (!data) { try { data = JSON.parse('{' + src + '}'); } catch (e) {} }
+    if (!data || typeof data !== 'object') return null;
+    // a bare card carries the fields itself, a table carries the names
+    if (data.SHAPE !== undefined || data.COST !== undefined) {
+      const raw = prompt('Wie soll die Karte heissen?');
+      if (!raw) return null;
+      const name = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!name) return null;
+      const one = {}; one[name] = data;
+      return { cards: one, desc: desc };
+    }
+    return { cards: data, desc: desc };
+  }
+
+  $('imp').onclick = () => {
+    const got = readCard($('json').value);
+    if (!got || !Object.keys(got.cards).length) {
+      say('daraus werde ich nicht schlau - der ganze Block aus dem Kopieren-Knopf passt');
+      return;
+    }
+    let dropped = 0, taken = [], over = [];
+    for (const name of Object.keys(got.cards)) {
+      const c = got.cards[name];
+      if (!c || typeof c !== 'object') continue;
+      const fig = cleanRows(c.SHAPE);
+      dropped += fig.dropped;
+      const card = Object.assign({}, c);
+      card.SHAPE = fig.rows;
+      if (cards[name]) over.push(name);
+      drafts[name] = card;
+      taken.push(name);
+    }
+    if (!taken.length) { say('keine brauchbare Karte darin'); return; }
+    localStorage.setItem('jdvoid_designer', JSON.stringify(drafts));
+    const own = JSON.parse(localStorage.getItem('jdvoid_designer_desc') || '{}');
+    for (const name of Object.keys(got.desc)) {
+      own[name] = { de: got.desc[name].de || '', en: got.desc[name].en || '' };
+      texts.de['desc_' + name] = own[name].de;
+      texts.en['desc_' + name] = own[name].en;
+    }
+    localStorage.setItem('jdvoid_designer_desc', JSON.stringify(own));
+    fillPicker();
+    pick(taken[0]);
+    let note = taken.join(', ') + ' eingelesen';
+    if (over.length) note += ', liegt als Entwurf ueber ' + over.join(', ');
+    if (dropped) note += ' - ' + dropped + ' unlesbare Form(en) verworfen';
+    say(note);
+  };
+
   // The card as it stands rides along in the query, so the bench runs the
   // draft rather than what the server still has.
   $('try').onclick = () => {
