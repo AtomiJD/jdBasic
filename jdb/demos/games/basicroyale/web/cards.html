@@ -74,6 +74,11 @@
   <div id="list"></div>
 
   <section class="note">
+    <h2 id="l_world">Boden und Luft im Weltall</h2>
+    <div id="world"></div>
+  </section>
+
+  <section class="note">
     <h2 id="l_rules">Was die Werte bedeuten</h2>
     <div id="rules"></div>
   </section>
@@ -103,6 +108,11 @@
               "<b>Anzahl</b> ist, wie viele Schiffe ein Antippen aufs Feld bringt. Vier billige Stoerer halten ein Einzelziel laenger auf als ein teurer Brocken.",
               "<b>Ziele</b> sagt, was die Karte treffen kann. Flieger sind nur fuer <i>Luft + Boden</i> angreifbar.",
               "Jede Stufe gibt <b>acht Prozent</b> mehr Huelle und Schaden. Die Zahlen hier sind Stufe 1."],
+        worldh:"Boden und Luft im Weltall",
+        world:["<b>Das Feld ist keine leere Weite, sondern ein Deck</b> - eine Plattform aus Panzerplatten im Orbit, mit einem Spalt quer durch die Mitte. Die schweren Schiffe stehen magnetisch darauf. Die leichten schweben darueber und beruehren es nie.",
+               "Daher die <b>Stege</b>: wer laeuft, braucht sie. Wer fliegt, nimmt den kuerzesten Weg.",
+               "Und daher trifft eine Bodenwaffe nichts ueber sich. Ihre Geschuetze sind gegen den Rueckstoss ins Deck verschraubt und schiessen flach ueber die Platten. Nach oben zu zielen hiesse, sich selbst vom Deck zu schiessen.",
+               "Fliegen hat seinen Preis: wer schwebt, kann nichts <b>halten</b>. Keine Kachel besetzen, keinen Weg versperren, keine Station belagern - nur zustossen und wieder weg. Gebaeude koennen es, weil sie sich im Deck verankern. Deshalb bleibt ein KOKON, wo er steht, und deshalb zieht ihn auch kein SOG weg."],
         empty:"Server nicht erreichbar"},
     en:{sub:"Every card with its numbers, straight from the running server",
         rules:"What the numbers mean",cost:"Elixir",role:"Role",
@@ -114,6 +124,11 @@
               "<b>Count</b> is how many ships one tap puts on the board. Four cheap blockers hold a single target longer than one expensive brute.",
               "<b>Targets</b> says what a card can hit. Flyers can only be touched by <i>air + ground</i> cards.",
               "Every level adds <b>eight percent</b> hull and damage. The numbers here are level 1."],
+        worldh:"Ground and air in space",
+        world:["<b>The field is not open space, it is a deck</b> - an armoured platform in orbit with a gap running across the middle. The heavy ships stand on it magnetically. The light ones hover above and never touch it.",
+               "Hence the <b>gantries</b>: whoever walks needs them. Whoever flies takes the short way.",
+               "And hence a ground weapon hits nothing above it. Its guns are bolted into the deck against the recoil and fire flat across the plating. Aiming up would mean shooting yourself off the deck.",
+               "Flying has its price: whatever hovers cannot <b>hold</b> anything. No tile taken, no path blocked, no station besieged - only a strike and away again. Buildings can, because they anchor into the deck. That is why a KOKON stays where it is, and why no SOG drags it off."],
         empty:"Server unreachable"}
   };
 
@@ -184,6 +199,8 @@
     $('sub').textContent = t.sub;
     $('l_rules').textContent = t.rules;
     $('rules').innerHTML = t.note.map(p => '<p>' + p + '</p>').join('');
+    $('l_world').textContent = t.worldh;
+    $('world').innerHTML = t.world.map(p => '<p>' + p + '</p>').join('');
     $('sort').options[0].textContent = t.sortcost;
     $('sort').options[1].textContent = t.sortname;
     $('sort').options[2].textContent = t.sortrole;

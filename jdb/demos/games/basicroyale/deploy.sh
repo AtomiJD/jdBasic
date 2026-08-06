@@ -22,9 +22,6 @@ echo "== landing page =="
 $SSH 'mkdir -p ~/royale/web/play'
 $SCP web/index.html web/admin.html web/players.html web/cards.html web/balance.html \
      web/balance.json web/hero.png web/icon.png web/social.png "$HOST:~/royale/web/"
-# card art, rendered by makecards.jdb from the same figures the game draws
-$SSH 'mkdir -p ~/royale/web/cards'
-$SCP web/cards/*.png "$HOST:~/royale/web/cards/"
 
 echo "== render card figures =="
 # a card edited in cards.json must not reach the sheet with yesterday's
@@ -39,9 +36,11 @@ fi
 
 echo "== card figures =="
 # makecards.jdb renders one PNG per card; a new card is invisible on the
-# sheet until its figure travels with the page
-$SSH 'mkdir -p ~/royale/web/cards'
+# sheet until its figure travels with the page. The set is replaced, not added
+# to: a renamed card would otherwise leave its old picture there forever.
+$SSH 'mkdir -p ~/royale/web/cards && rm -f ~/royale/web/cards/*.png'
 $SCP web/cards/*.png "$HOST:~/royale/web/cards/"
+$SSH 'sudo -n rm -f /var/www/vvss/cards/*.png'
 
 echo "== client =="
 $SCP royale.jdb art.jdb ../../../../wasm/index.html "$HOST:~/royale/web/play/"
