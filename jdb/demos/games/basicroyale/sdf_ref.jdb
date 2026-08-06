@@ -1,0 +1,65 @@
+' Dumps the rasteriser's own output so the browser port in web/sdf.js can be
+' held against it. The designer draws with that port, so the two have to agree.
+'   jdbasic sdf_ref.jdb [KIND]   -> tmp/sdf_ref_<KIND>.txt
+IMPORT ART
+
+DIM cards = JSON.PARSE$(TXTREADER$("cards.json"))
+DIM shapes AS MAP = {}
+DIM accents AS MAP = {}
+FOR EACH k$ IN MAP.KEYS(cards)
+    IF MAP.EXISTS(cards{k$}, "SHAPE") THEN shapes{k$} = cards{k$}{"SHAPE"}
+    IF MAP.EXISTS(cards{k$}, "COLOR") THEN accents{k$} = cards{k$}{"COLOR"}
+NEXT k$
+ART.SETSHAPES(shapes)
+ART.SETACCENTS(accents)
+
+DIM args = OS.ARGS()
+DIM kind$ = "DROID"
+IF LEN(args) > 1 THEN kind$ = UCASE$(args[1])
+DIM k = 1
+IF LEN(args) > 2 THEN k = INT(VAL(args[2]))
+
+' The card sheet renders on a fourfold canvas by multiplying every geometric
+' field, which is the same picture at four samples per grid unit.
+FUNC BLOWUP(shapes, k)
+    DIM out = []
+    FOR EACH sh IN shapes
+        DIM s AS MAP = {}
+        FOR EACH f$ IN MAP.KEYS(sh)
+            s{f$} = sh{f$}
+        NEXT f$
+        IF sh{"T"} = "SEG" THEN
+            s{"X1"} = sh{"X1"} * k
+            s{"Y1"} = sh{"Y1"} * k
+            s{"X2"} = sh{"X2"} * k
+            s{"Y2"} = sh{"Y2"} * k
+            s{"R"} = sh{"R"} * k
+        ELSE
+            s{"X"} = sh{"X"} * k
+            s{"Y"} = sh{"Y"} * k
+            IF sh{"T"} = "CIRC" THEN
+                s{"R"} = sh{"R"} * k
+            ELSE
+                s{"HX"} = sh{"HX"} * k
+                s{"HY"} = sh{"HY"} * k
+                s{"RR"} = sh{"RR"} * k
+            ENDIF
+        ENDIF
+        out = APPEND(out, [s])
+    NEXT sh
+    RETURN out
+ENDFUNC
+
+DIM pal = ART.PALETTE(0)
+IF MAP.EXISTS(accents, kind$) THEN pal{"ACCENT"} = accents{kind$}
+DIM buf = ART.RASTER(BLOWUP(ART.FIGURE(kind$), k), 40 * k, 40 * k, pal, 1.18)
+
+DIM parts = []
+FOR i = 0 TO LEN(buf) - 1
+    DIM v = buf[i]
+    IF v < 0 THEN v = 0
+    IF v > 255 THEN v = 255
+    parts = APPEND(parts, [STR$(INT(v + 0.5))])
+NEXT i
+TXTWRITER "tmp/sdf_ref_" + kind$ + "_" + STR$(k) + ".txt", JOIN(parts, " ")
+PRINT kind$; ": "; LEN(buf); " values written"

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jdVOID - Kartenbauer</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="icon.png">
+<style>
+  *{box-sizing:border-box;}
+  body{margin:0;padding:16px;background:#07070f;color:#e8ecff;
+       font-family:'Trebuchet MS','Segoe UI',system-ui,sans-serif;}
+  h1{font-size:17px;letter-spacing:.14em;margin:0 0 14px;color:#9fe8ff;text-transform:uppercase;}
+  h1 small{color:#5b6491;letter-spacing:.04em;text-transform:none;font-size:13px;margin-left:10px;}
+  main{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start;}
+  section{background:#0d1024;border:1px solid #232a52;border-radius:14px;padding:14px;}
+  .edit{flex:0 0 auto;}
+  .side{flex:1 1 320px;min-width:300px;max-width:440px;}
+  .bar{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;}
+  select,input,textarea{font-family:inherit;color:#eaf2ff;background:#12142c;
+       border:1px solid #2c3160;border-radius:9px;padding:9px 11px;font-size:14px;}
+  select{flex:1;min-width:150px;}
+  button{font-family:inherit;font-size:13px;font-weight:600;letter-spacing:.05em;
+       color:#9fe8ff;background:#12142c;border:1px solid #2c3160;border-radius:9px;
+       padding:9px 12px;cursor:pointer;}
+  button:hover{border-color:#38e0ff;}
+  button.on{background:#1d2450;border-color:#38e0ff;color:#cdf3ff;}
+  canvas#stage{display:block;background:#0b0d18;border-radius:10px;touch-action:none;
+       width:480px;height:480px;cursor:crosshair;}
+  .hint{font-size:12px;color:#6f79a8;line-height:1.7;margin:10px 0 0;}
+  .add{display:flex;gap:8px;margin-bottom:10px;}
+  .add button{flex:1;}
+  ol{list-style:none;margin:0 0 12px;padding:0;max-height:190px;overflow-y:auto;}
+  ol li{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;
+       font-size:13px;cursor:pointer;border:1px solid transparent;}
+  ol li:hover{background:#141838;}
+  ol li.sel{background:#1a2049;border-color:#38e0ff;}
+  ol li .sw{width:13px;height:13px;border-radius:3px;flex:0 0 auto;border:1px solid #00000060;}
+  ol li .nm{flex:1;color:#c3cdf5;}
+  ol li .no{color:#5b6491;width:16px;}
+  ol li button{padding:2px 7px;font-size:12px;background:transparent;border-color:#2c3160;}
+  .fields{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px;}
+  .fields label{font-size:11px;color:#6f79a8;letter-spacing:.06em;text-transform:uppercase;}
+  .fields input,.fields select{width:100%;padding:7px 8px;font-size:13px;}
+  .fields .wide{grid-column:span 2;}
+  .prev{display:flex;gap:14px;align-items:flex-end;margin-bottom:12px;}
+  figure{margin:0;text-align:center;}
+  figure canvas{background:#0b0d18;border-radius:8px;display:block;}
+  figcaption{font-size:11px;color:#6f79a8;margin-top:5px;letter-spacing:.06em;}
+  #pgame{width:160px;height:160px;image-rendering:pixelated;}
+  textarea{width:100%;height:130px;font-family:'Cascadia Code',Consolas,monospace;
+       font-size:12px;line-height:1.5;resize:vertical;white-space:pre;}
+  .foot{display:flex;gap:8px;margin-top:10px;}
+  .foot button{flex:1;}
+  .say{font-size:12px;color:#5df0d0;min-height:18px;margin-top:8px;}
+  @media (max-width:900px){
+    canvas#stage{width:min(480px,86vw);height:min(480px,86vw);}
+  }
+</style>
+</head>
+<body>
+
+<h1>Kartenbauer <small>Figuren auf dem 40er Gitter</small></h1>
+
+<main>
+  <section class="edit">
+    <div class="bar">
+      <select id="card"></select>
+      <button id="team" type="button">Gegnerfarbe</button>
+      <button id="reset" type="button">Zurück</button>
+    </div>
+    <canvas id="stage" width="480" height="480"></canvas>
+    <p class="hint">
+      Auf eine Form tippen waehlt sie. Ziehen verschiebt, die Griffe aendern Groesse und Enden.<br>
+      Pfeiltasten schieben um 0,5, mit Umschalt um 0,1. Entf loescht die gewaehlte Form.<br>
+      Weiter unten in der Liste heisst weiter vorne im Bild.
+    </p>
+  </section>
+
+  <section class="side">
+    <div class="add">
+      <button type="button" data-add="DISC">+ Scheibe</button>
+      <button type="button" data-add="BOXR">+ Kasten</button>
+      <button type="button" data-add="BAR">+ Balken</button>
+    </div>
+    <ol id="list"></ol>
+    <div class="fields" id="fields"></div>
+
+    <div class="prev">
+      <figure><canvas id="pcard" width="160" height="160"></canvas><figcaption>Kartenbild</figcaption></figure>
+      <figure><canvas id="pgame" width="40" height="40"></canvas><figcaption>im Spiel</figcaption></figure>
+    </div>
+
+    <textarea id="json" readonly spellcheck="false"></textarea>
+    <div class="foot">
+      <button id="copy" type="button">In die Zwischenablage</button>
+      <button id="clear" type="button">Alle Entwuerfe verwerfen</button>
+    </div>
+    <p class="say" id="say"></p>
+  </section>
+</main>
+
+<script src="sdf.js"></script>
+<script>
+  const $ = id => document.getElementById(id);
+  const GRID = 40;              // the figures are authored on a 40 x 40 field
+  const ZOOM = 1.18;            // what BAKECARD gives a card figure
+  const DPR = Math.min(2, window.devicePixelRatio || 1);
+  const S = 12 * DPR;           // canvas pixels per grid unit
+
+  // Which slot of a row carries what, per shape kind.
+  const GEOM = {
+    DISC: [['x',1],['y',2],['r',3]],
+    BOXR: [['x',1],['y',2],['hx',3],['hy',4],['rr',5],['rot',6]],
+    BAR:  [['x1',1],['y1',2],['x2',3],['y2',4],['r',5]]
+  };
+  const COL  = { DISC:4, BOXR:7, BAR:6 };
+  const GLOW = { DISC:5, BOXR:8, BAR:7 };
+  const SLOTS = ['HULL','TEAM','ACCENT','DARK','LIGHT'];
+  const NEW = {
+    DISC: () => ['DISC', 20, 20, 5, 'HULL', 0],
+    BOXR: () => ['BOXR', 20, 20, 6, 4, 2, 0, 'HULL', 0],
+    BAR:  () => ['BAR', 14, 20, 26, 20, 2, 'ACCENT', 0.6]
+  };
+
+  let cards = {}, kind = '', rows = [], sel = -1, team = 0;
+  let drafts = JSON.parse(localStorage.getItem('jdvoid_designer') || '{}');
+  let drag = null, pending = false;
+
+  const say = t => { $('say').textContent = t; };
+  const round = v => Math.round(v * 4) / 4;
+  const num = v => Math.round(v * 100) / 100;
+  const accent = () => (cards[kind] && cards[kind].COLOR) || null;
+  const pal = () => palette(team, accent());
+
+  // ── loading ───────────────────────────────────────────────────
+  async function load() {
+    let table = null;
+    try {
+      const j = await (await fetch('api/cards')).json();
+      if (j && j.OK === 1) table = j.CARDS;
+    } catch (e) {}
+    // served straight out of the repo there is no match server, only the file
+    if (!table) { try { table = await (await fetch('../cards.json')).json(); } catch (e) {} }
+    if (!table) { say('Kartentabelle nicht erreichbar'); return; }
+    cards = table;
+    fillPicker();
+    pick(Object.keys(cards)[0]);
+  }
+
+  function fillPicker() {
+    $('card').innerHTML = '';
+    for (const k of Object.keys(cards).sort()) {
+      const o = document.createElement('option');
+      o.value = k;
+      o.textContent = k + (drafts[k] ? '  (geaendert)' : '');
+      $('card').appendChild(o);
+    }
+  }
+
+  function pick(k) {
+    kind = k;
+    $('card').value = k;
+    rows = JSON.parse(JSON.stringify(drafts[k] || cards[k].SHAPE || []));
+    sel = rows.length ? rows.length - 1 : -1;
+    redraw();
+  }
+
+  function store() {
+    const orig = JSON.stringify(cards[kind].SHAPE || []);
+    if (JSON.stringify(rows) === orig) delete drafts[kind];
+    else drafts[kind] = JSON.parse(JSON.stringify(rows));
+    localStorage.setItem('jdvoid_designer', JSON.stringify(drafts));
+    const o = [...$('card').options].find(x => x.value === kind);
+    if (o) o.textContent = kind + (drafts[kind] ? '  (geaendert)' : '');
+  }
+
+  // ── drawing ───────────────────────────────────────────────────
+  function paint(canvas, use, w, h, scale, zoom) {
+    const img = raster(use, w, h, scale, pal(), zoom);
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.putImageData(new ImageData(img.data, img.w, img.h), 0, 0);
+    return ctx;
+  }
+
+  function drawStage() {
+    const ctx = paint($('stage'), rows, GRID, GRID, S, 1);
+    // the grid last, so a figure never hides where it sits
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    for (let g = 0; g <= GRID; g += 5) {
+      ctx.strokeStyle = (g % 10 === 0) ? 'rgba(90,110,190,.30)' : 'rgba(70,85,150,.16)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(g * S + .5, 0); ctx.lineTo(g * S + .5, GRID * S);
+      ctx.moveTo(0, g * S + .5); ctx.lineTo(GRID * S, g * S + .5);
+      ctx.stroke();
+    }
+    ctx.restore();
+    // the card zoom crops the outer three units away, so anything drawn out
+    // there is invisible on the finished card
+    const m = (GRID - GRID / ZOOM) / 2;
+    ctx.strokeStyle = 'rgba(255,176,0,.45)';
+    ctx.setLineDash([6, 5]);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(m * S, m * S, (GRID - 2 * m) * S, (GRID - 2 * m) * S);
+    ctx.setLineDash([]);
+    if (sel >= 0 && sel < rows.length) drawHandles(ctx, rows[sel]);
+  }
+
+  function dot(ctx, x, y, fill) {
+    ctx.beginPath();
+    ctx.arc(x * S, y * S, 6 * DPR, 0, 6.2832);
+    ctx.fillStyle = fill; ctx.fill();
+    ctx.strokeStyle = '#07070f'; ctx.lineWidth = 2 * DPR; ctx.stroke();
+  }
+
+  // Every draggable point of the selected shape, in grid units.
+  function handles(row) {
+    const t = row[0], h = [];
+    if (t === 'DISC') {
+      h.push({ id:'move', x:row[1], y:row[2] });
+      h.push({ id:'r', x:row[1] + row[3], y:row[2] });
+    } else if (t === 'BOXR') {
+      const a = row[6] * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+      h.push({ id:'move', x:row[1], y:row[2] });
+      h.push({ id:'size', x:row[1] + row[3] * ca - row[4] * sa, y:row[2] + row[3] * sa + row[4] * ca });
+      h.push({ id:'rot',  x:row[1] - (row[4] + 4) * sa, y:row[2] + (row[4] + 4) * ca });
+    } else {
+      h.push({ id:'a', x:row[1], y:row[2] });
+      h.push({ id:'b', x:row[3], y:row[4] });
+      const mx = (row[1] + row[3]) / 2, my = (row[2] + row[4]) / 2;
+      const dx = row[3] - row[1], dy = row[4] - row[2];
+      const len = Math.hypot(dx, dy) || 1;
+      h.push({ id:'r', x:mx - dy / len * row[5], y:my + dx / len * row[5] });
+    }
+    return h;
+  }
+
+  function drawHandles(ctx, row) {
+    ctx.save();
+    ctx.strokeStyle = 'rgba(56,224,255,.55)';
+    ctx.setLineDash([4, 4]);
+    ctx.lineWidth = 1;
+    if (row[0] === 'BAR') {
+      ctx.beginPath();
+      ctx.moveTo(row[1] * S, row[2] * S); ctx.lineTo(row[3] * S, row[4] * S);
+      ctx.stroke();
+    }
+    ctx.restore();
+    for (const h of handles(row)) {
+      dot(ctx, h.x, h.y, h.id === 'move' ? '#38e0ff' : (h.id === 'rot' ? '#ffb000' : '#5df0d0'));
+    }
+  }
+
+  function redraw() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      drawStage();
+      // the sheet renders a fourfold figure, the board a 40 pixel sprite, and
+      // the two do not look alike: only the blown up path matches the PNG
+      paint($('pcard'), blowup(rows, 4), GRID * 4, GRID * 4, 1, ZOOM);
+      paint($('pgame'), rows, GRID, GRID, 1, ZOOM);
+      renderList();
+      renderFields();
+      renderJson();
+    });
+  }
+
+  // ── the shape list ────────────────────────────────────────────
+  function renderList() {
+    const ol = $('list');
+    ol.innerHTML = '';
+    rows.forEach((row, i) => {
+      const li = document.createElement('li');
+      if (i === sel) li.className = 'sel';
+      const c = pal()[row[COL[row[0]]]] || [180, 180, 180];
+      li.innerHTML = '<span class="no">' + (i + 1) + '</span>' +
+        '<span class="sw" style="background:rgb(' + c.join(',') + ')"></span>' +
+        '<span class="nm">' + row[0] + '  <em style="color:#5b6491;font-style:normal">' +
+        row[COL[row[0]]] + '</em></span>';
+      const mk = (txt, fn) => {
+        const b = document.createElement('button');
+        b.type = 'button'; b.textContent = txt;
+        b.onclick = ev => { ev.stopPropagation(); fn(); };
+        return b;
+      };
+      li.appendChild(mk('↑', () => swap(i, i - 1)));
+      li.appendChild(mk('↓', () => swap(i, i + 1)));
+      li.appendChild(mk('×', () => { rows.splice(i, 1); sel = Math.min(sel, rows.length - 1); store(); redraw(); }));
+      li.onclick = () => { sel = i; redraw(); };
+      ol.appendChild(li);
+    });
+  }
+
+  function swap(i, j) {
+    if (j < 0 || j >= rows.length) return;
+    [rows[i], rows[j]] = [rows[j], rows[i]];
+    sel = j; store(); redraw();
+  }
+
+  // ── the number fields ─────────────────────────────────────────
+  function renderFields() {
+    const box = $('fields');
+    box.innerHTML = '';
+    if (sel < 0 || sel >= rows.length) return;
+    const row = rows[sel];
+    const add = (label, node) => {
+      const d = document.createElement('div');
+      const l = document.createElement('label');
+      l.textContent = label;
+      d.appendChild(l); d.appendChild(node);
+      box.appendChild(d);
+      return d;
+    };
+    for (const [name, idx] of GEOM[row[0]]) {
+      const inp = document.createElement('input');
+      inp.type = 'number'; inp.step = '0.5'; inp.value = num(row[idx]);
+      inp.oninput = () => { row[idx] = Number(inp.value) || 0; store(); redraw(); };
+      add(name, inp);
+    }
+    const csel = document.createElement('select');
+    for (const s of SLOTS) {
+      const o = document.createElement('option');
+      o.value = s; o.textContent = s;
+      csel.appendChild(o);
+    }
+    csel.value = row[COL[row[0]]];
+    csel.onchange = () => { row[COL[row[0]]] = csel.value; store(); redraw(); };
+    add('farbe', csel).className = 'wide';
+
+    const g = document.createElement('input');
+    g.type = 'number'; g.step = '0.1'; g.min = '0'; g.max = '1';
+    g.value = num(row[GLOW[row[0]]]);
+    g.oninput = () => { row[GLOW[row[0]]] = Number(g.value) || 0; store(); redraw(); };
+    add('glut', g).className = 'wide';
+  }
+
+  function renderJson() {
+    const body = rows.map(r => '    ' + JSON.stringify(r.map(v => typeof v === 'number' ? num(v) : v)))
+                     .join(',\n');
+    $('json').value = '"SHAPE": [\n' + body + '\n  ]';
+  }
+
+  // ── pointer ───────────────────────────────────────────────────
+  function at(ev) {
+    const r = $('stage').getBoundingClientRect();
+    return {
+      x: (ev.clientX - r.left) / r.width * GRID,
+      y: (ev.clientY - r.top) / r.height * GRID,
+      px: r.width / GRID
+    };
+  }
+
+  $('stage').addEventListener('pointerdown', ev => {
+    const p = at(ev);
+    if (sel >= 0 && sel < rows.length) {
+      for (const h of handles(rows[sel])) {
+        if (Math.hypot(h.x - p.x, h.y - p.y) * p.px < 11) {
+          drag = { mode: h.id, ox: p.x - rows[sel][1], oy: p.y - rows[sel][2] };
+          if (h.id === 'a') { drag.ox = p.x - rows[sel][1]; drag.oy = p.y - rows[sel][2]; }
+          if (h.id === 'b') { drag.ox = p.x - rows[sel][3]; drag.oy = p.y - rows[sel][4]; }
+          $('stage').setPointerCapture(ev.pointerId);
+          return;
+        }
+      }
+    }
+    // topmost shape under the finger wins, the way the eye reads the picture
+    for (let i = rows.length - 1; i >= 0; i--) {
+      if (dist(expand(rows[i]), p.x, p.y) <= 0.5) {
+        sel = i;
+        const row = rows[i];
+        drag = row[0] === 'BAR'
+          ? { mode:'moveseg', ox:p.x - row[1], oy:p.y - row[2] }
+          : { mode:'move', ox:p.x - row[1], oy:p.y - row[2] };
+        $('stage').setPointerCapture(ev.pointerId);
+        redraw();
+        return;
+      }
+    }
+    sel = -1;
+    redraw();
+  });
+
+  $('stage').addEventListener('pointermove', ev => {
+    if (!drag || sel < 0) return;
+    const p = at(ev), row = rows[sel];
+    if (drag.mode === 'move') {
+      row[1] = round(p.x - drag.ox); row[2] = round(p.y - drag.oy);
+    } else if (drag.mode === 'moveseg') {
+      const nx = round(p.x - drag.ox), ny = round(p.y - drag.oy);
+      row[3] += nx - row[1]; row[4] += ny - row[2];
+      row[3] = num(row[3]); row[4] = num(row[4]);
+      row[1] = nx; row[2] = ny;
+    } else if (drag.mode === 'a') {
+      row[1] = round(p.x - drag.ox); row[2] = round(p.y - drag.oy);
+    } else if (drag.mode === 'b') {
+      row[3] = round(p.x - drag.ox); row[4] = round(p.y - drag.oy);
+    } else if (drag.mode === 'r') {
+      if (row[0] === 'DISC') row[3] = Math.max(0.5, round(Math.hypot(p.x - row[1], p.y - row[2])));
+      else {
+        const mx = (row[1] + row[3]) / 2, my = (row[2] + row[4]) / 2;
+        row[5] = Math.max(0.3, round(Math.hypot(p.x - mx, p.y - my)));
+      }
+    } else if (drag.mode === 'size') {
+      const a = row[6] * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a);
+      const dx = p.x - row[1], dy = p.y - row[2];
+      row[3] = Math.max(0.5, round(Math.abs(dx * ca + dy * sa)));
+      row[4] = Math.max(0.5, round(Math.abs(dy * ca - dx * sa)));
+      row[5] = Math.min(row[5], Math.min(row[3], row[4]));
+    } else if (drag.mode === 'rot') {
+      const ang = Math.atan2(p.x - row[1], p.y - row[2]) * 180 / Math.PI;
+      row[6] = Math.round(-ang / 5) * 5;
+    }
+    store(); redraw();
+  });
+
+  const endDrag = () => { drag = null; };
+  $('stage').addEventListener('pointerup', endDrag);
+  $('stage').addEventListener('pointercancel', endDrag);
+
+  window.addEventListener('keydown', ev => {
+    if (sel < 0 || /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName)) return;
+    const row = rows[sel];
+    const step = ev.shiftKey ? 0.1 : 0.5;
+    const nudge = (dx, dy) => {
+      row[1] = num(row[1] + dx); row[2] = num(row[2] + dy);
+      if (row[0] === 'BAR') { row[3] = num(row[3] + dx); row[4] = num(row[4] + dy); }
+    };
+    if (ev.key === 'ArrowLeft') nudge(-step, 0);
+    else if (ev.key === 'ArrowRight') nudge(step, 0);
+    else if (ev.key === 'ArrowUp') nudge(0, -step);
+    else if (ev.key === 'ArrowDown') nudge(0, step);
+    else if (ev.key === 'Delete' || ev.key === 'Backspace') {
+      rows.splice(sel, 1); sel = Math.min(sel, rows.length - 1);
+    } else return;
+    ev.preventDefault();
+    store(); redraw();
+  });
+
+  // ── buttons ───────────────────────────────────────────────────
+  $('card').onchange = () => pick($('card').value);
+  $('team').onclick = () => {
+    team = team ? 0 : 1;
+    $('team').classList.toggle('on', team === 1);
+    $('team').textContent = team ? 'Eigene Farbe' : 'Gegnerfarbe';
+    redraw();
+  };
+  $('reset').onclick = () => {
+    delete drafts[kind];
+    localStorage.setItem('jdvoid_designer', JSON.stringify(drafts));
+    pick(kind);
+    say(kind + ' steht wieder wie in der Tabelle');
+  };
+  $('clear').onclick = () => {
+    if (!confirm('Alle Entwuerfe verwerfen?')) return;
+    drafts = {};
+    localStorage.removeItem('jdvoid_designer');
+    fillPicker(); pick(kind);
+    say('Entwuerfe verworfen');
+  };
+  document.querySelectorAll('[data-add]').forEach(b => {
+    b.onclick = () => {
+      rows.push(NEW[b.dataset.add]());
+      sel = rows.length - 1;
+      store(); redraw();
+    };
+  });
+  $('copy').onclick = async () => {
+    try { await navigator.clipboard.writeText($('json').value); say('kopiert'); }
+    catch (e) { $('json').select(); say('mit Strg+C kopieren'); }
+  };
+
+  $('stage').width = GRID * S;
+  $('stage').height = GRID * S;
+  load();
+</script>
+</body>
+</html>
