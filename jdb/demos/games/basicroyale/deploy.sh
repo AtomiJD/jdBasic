@@ -23,6 +23,7 @@ $SSH 'mkdir -p ~/royale/web/play'
 # manifest and worker sit at the site root on purpose: the worker only gets to
 # speak for /play if it is served from above it
 $SCP web/index.html web/admin.html web/players.html web/cards.html web/balance.html \
+     web/designer.html web/sdf.js \
      web/balance.json web/manifest.json web/sw.js \
      web/hero.png web/icon.png web/icon-192.png web/icon-512.png web/icon-mask.png \
      web/social.png "$HOST:~/royale/web/"
