@@ -1579,18 +1579,30 @@ SUB DrawCardInfo()
             STATLINE(y + 38, T$("stat_radius"), STR$(c{"RADIUS"}) + " " + T$("tiles"))
         ENDIF
     ELSE
-        STATLINE(y, T$("stat_hp"), STR$(INT(c{"HP"} * mult)))
-        STATLINE(y + 38, T$("stat_dmg"), STR$(INT(c{"DMG"} * mult)))
-        STATLINE(y + 76, T$("stat_dps"), STR$(INT(c{"DMG"} * mult / c{"HITSPEED"})))
-        STATLINE(y + 114, T$("stat_range"), STR$(c{"REACH"}) + " " + T$("tiles"))
-        STATLINE(y + 152, T$("stat_speed"), STR$(c{"SPD"}))
-        STATLINE(y + 190, T$("stat_count"), STR$(c{"N"}))
-        IF MAP.EXISTS(c, "SPLASH") THEN STATLINE(y + 228, T$("stat_splash"), STR$(c{"SPLASH"}) + " " + T$("tiles"))
+        ' one running cursor instead of fixed offsets: a card that carries an
+        ' extra trait pushes the rest down instead of writing over it
+        DIM yy = y
+        STATLINE(yy, T$("stat_hp"), STR$(INT(c{"HP"} * mult)))
+        yy = yy + 38
+        STATLINE(yy, T$("stat_dmg"), STR$(INT(c{"DMG"} * mult)))
+        yy = yy + 38
+        STATLINE(yy, T$("stat_dps"), STR$(INT(c{"DMG"} * mult / c{"HITSPEED"})))
+        yy = yy + 38
+        STATLINE(yy, T$("stat_range"), STR$(c{"REACH"}) + " " + T$("tiles"))
+        yy = yy + 38
+        STATLINE(yy, T$("stat_speed"), STR$(c{"SPD"}))
+        yy = yy + 38
+        STATLINE(yy, T$("stat_count"), STR$(c{"N"}))
+        yy = yy + 38
+        IF MAP.EXISTS(c, "SPLASH") THEN
+            STATLINE(yy, T$("stat_splash"), STR$(c{"SPLASH"}) + " " + T$("tiles"))
+            yy = yy + 38
+        ENDIF
         DIM tgt$ = T$("air_ground")
         IF c{"HITS"} = "A" THEN tgt$ = T$("air_both")
         IF c{"ONLYTOWERS"} = 1 THEN tgt$ = T$("only_towers")
-        STATLINE(y + 228, T$("stat_air"), tgt$)
-        DIM yy = y + 266
+        STATLINE(yy, T$("stat_air"), tgt$)
+        yy = yy + 38
         IF MAP.EXISTS(c, "SPAWNS") THEN
             STATLINE(yy, T$("stat_spawn"), STR$(c{"SPAWNRATE"}) + " " + T$("sec"))
             yy = yy + 38
