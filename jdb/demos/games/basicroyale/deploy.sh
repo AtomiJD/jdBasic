@@ -20,8 +20,12 @@ $SCP server.jdb arena.jdb cards.json lang.json "$HOST:~/royale/"
 echo "== landing page =="
 # the site root is the poster page; the playground lives under /play
 $SSH 'mkdir -p ~/royale/web/play'
+# manifest and worker sit at the site root on purpose: the worker only gets to
+# speak for /play if it is served from above it
 $SCP web/index.html web/admin.html web/players.html web/cards.html web/balance.html \
-     web/balance.json web/hero.png web/icon.png web/social.png "$HOST:~/royale/web/"
+     web/balance.json web/manifest.json web/sw.js \
+     web/hero.png web/icon.png web/icon-192.png web/icon-512.png web/icon-mask.png \
+     web/social.png "$HOST:~/royale/web/"
 
 echo "== render card figures =="
 # a card edited in cards.json must not reach the sheet with yesterday's

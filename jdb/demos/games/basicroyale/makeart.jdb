@@ -43,6 +43,29 @@ CROPTO(img, 170, 60, 1420, 300, 300)
 GFX.SAVE_SCREENSHOT("web/icon_word.png", 0, 0, 300, 300)
 PRINT "icon_word.png 300x300"
 
+' app icons: the same flagship crop at the sizes a web manifest asks for
+DRAWCOLOR 8, 8, 20
+RECT 0, 0, 640, 954, TRUE
+CROPTO(img, 610, 780, 460, 192, 192)
+GFX.SAVE_SCREENSHOT("web/icon-192.png", 0, 0, 192, 192)
+PRINT "icon-192.png 192x192"
+
+DRAWCOLOR 8, 8, 20
+RECT 0, 0, 640, 954, TRUE
+CROPTO(img, 610, 780, 460, 512, 512)
+GFX.SAVE_SCREENSHOT("web/icon-512.png", 0, 0, 512, 512)
+PRINT "icon-512.png 512x512"
+
+' maskable: the launcher cuts the icon to its own silhouette, so the picture
+' has to sit inside the middle seventy percent and the rest has to be backdrop
+DIM sq = GFX.LOADIMAGE("web/icon-512.png")
+DRAWCOLOR 8, 8, 20
+RECT 0, 0, 640, 954, TRUE
+GFX.DRAWIMAGE(sq, 77, 77, 358, 358)
+GFX.SAVE_SCREENSHOT("web/icon-mask.png", 0, 0, 512, 512)
+GFX.FREEIMAGE(sq)
+PRINT "icon-mask.png 512x512 maskable"
+
 ' wide banner for link previews (og:image likes 1.91:1)
 DRAWCOLOR 8, 8, 20
 RECT 0, 0, 640, 954, TRUE

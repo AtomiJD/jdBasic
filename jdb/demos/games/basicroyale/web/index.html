@@ -13,6 +13,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <link rel="icon" href="icon.png">
 <link rel="apple-touch-icon" href="icon.png">
+<link rel="manifest" href="manifest.json">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#07070f">
@@ -54,6 +55,14 @@
     background:#12142c;border:1px solid #2c3160;border-radius:12px;
   }
   nav a:active{background:#1a1d3d;}
+  #install{width:100%;max-width:460px;margin-top:12px;}
+  #install button{
+    width:100%;margin:0;padding:14px;font-size:14px;font-weight:600;
+    letter-spacing:.08em;color:#9fe8ff;background:#12142c;
+    border:1px solid #2c3160;border-radius:12px;box-shadow:none;
+  }
+  #install button:active{transform:none;background:#1a1d3d;}
+  #ios{max-width:460px;}
 </style>
 </head>
 <body>
@@ -97,23 +106,36 @@
     <a href="balance.html" id="l_balance">Balance</a>
   </nav>
 
+  <div id="install" hidden><button type="button" id="add"></button></div>
+  <p class="hint" id="ios"></p>
+
 <script>
   const TXT = {
     de:{name:"Dein Name",pin:"PIN",room:"Raum",lang:"Sprache",go:"STARTEN",pinph:"4 Ziffern",
         players:"Rangliste",cards:"Karten",balance:"Balance",
         hint:"Wer denselben <b>Raum</b> waehlt, spielt gegeneinander.<br>Dein Name plus PIN gehoert ab dem ersten Start dir - sie schuetzt deine Sammlung.",
+        add:"AUF DEN STARTBILDSCHIRM",
+        ios:"iPhone: unten auf <b>Teilen</b> tippen, dann <b>Zum Home-Bildschirm</b>.<br>Danach startet jdVOID ohne Browserleiste.",
         msg:{msg_badpin:"PIN: 4 bis 8 Ziffern",msg_wrongpin:"Falsche PIN fuer diesen Namen.",
              msg_locked:"Zu viele Versuche. Eine Minute warten.",msg_badname:"Name fehlt oder ist zu lang.",
              msg_badreq:"Anfrage unverstaendlich.",net:"Server nicht erreichbar."}},
     en:{name:"Your name",pin:"PIN",room:"Room",lang:"Language",go:"LAUNCH",pinph:"4 digits",
         players:"Standings",cards:"Cards",balance:"Balance",
         hint:"Whoever picks the same <b>room</b> plays against you.<br>Your name plus PIN is yours from the first launch - it protects your collection.",
+        add:"ADD TO HOME SCREEN",
+        ios:"iPhone: tap <b>Share</b> below, then <b>Add to Home Screen</b>.<br>jdVOID then starts without the browser bar.",
         msg:{msg_badpin:"PIN: 4 to 8 digits",msg_wrongpin:"Wrong PIN for that name.",
              msg_locked:"Too many tries. Wait a minute.",msg_badname:"Name missing or too long.",
              msg_badreq:"Could not read the request.",net:"Server unreachable."}}
   };
   const $ = id => document.getElementById(id);
   const qp = new URLSearchParams(location.search);
+
+  // Started from the home screen there is no share sheet and no address bar,
+  // so neither way in belongs on the page any more.
+  const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 
   // A link that still carries the old query goes straight into the game.
   if (qp.get('prog')) { location.replace('play/' + location.search); }
@@ -140,6 +162,8 @@
     $('l_lang').textContent = t.lang;
     $('go').textContent = t.go;
     $('hint').innerHTML = t.hint;
+    $('add').textContent = t.add;
+    $('ios').innerHTML = (isIOS && !standalone) ? t.ios : '';
     document.documentElement.lang = $('lang').value;
   }
   $('lang').addEventListener('change', applyLang);
@@ -175,6 +199,25 @@
     const q = new URLSearchParams({prog:'royale', fs:'1', name, room, lang, auth:r.AUTH});
     location.href = 'play/?' + q.toString();
   });
+
+  // Chrome hands its install prompt over instead of showing one itself, and
+  // only fires this at all once the manifest and the worker are in place.
+  let installer = null;
+  window.addEventListener('beforeinstallprompt', ev => {
+    ev.preventDefault();
+    installer = ev;
+    $('install').hidden = false;
+  });
+  $('add').addEventListener('click', async () => {
+    if (!installer) return;
+    $('install').hidden = true;
+    installer.prompt();
+    await installer.userChoice;
+    installer = null;
+  });
+  window.addEventListener('appinstalled', () => { $('install').hidden = true; });
+
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
 </script>
 </body>
 </html>
