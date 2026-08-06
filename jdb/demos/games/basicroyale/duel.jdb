@@ -1,0 +1,143 @@
+' What a duel is: two cards facing each other at the closest tiles the deploy
+' zones allow, under the rules of a real match. The bench and the table both
+' come through here, so they can never disagree about what they measured.
+EXPORT MODULE DUEL
+IMPORT ARENA
+
+CONST DROP_A = 16.0
+CONST DROP_B = 13.0
+
+' Fills both hands, hands out the elixir and drops the pair. A spell has
+' nothing of its own to fight, so it is aimed at what the other side put down,
+' which means the other side goes first.
+EXPORT FUNC START(ka$, kb$)
+    DIM st = ARENA.NEWGAME()
+    st{"QUEUES"}[0] = [ka$, "DROID", "LASER", "KOLOSS"]
+    st{"QUEUES"}[1] = [kb$, "DROID", "LASER", "KOLOSS"]
+    st{"ELIXIR"}[0] = 10.0
+    st{"ELIXIR"}[1] = 10.0
+    st{"REFUSED"} = ""
+    DIM cs = ARENA.CARDS()
+    DIM a_spell = 0
+    DIM b_spell = 0
+    IF MAP.EXISTS(cs{ka$}, "SPELL") THEN a_spell = 1
+    IF MAP.EXISTS(cs{kb$}, "SPELL") THEN b_spell = 1
+    DIM why$ = ""
+    IF b_spell = 0 THEN
+        why$ = ARENA.PLAYCARD(st, 1, kb$, 9.0, DROP_B)
+        IF why$ <> "" THEN st{"REFUSED"} = kb$ + ": " + why$
+    ENDIF
+    IF a_spell = 0 THEN
+        why$ = ARENA.PLAYCARD(st, 0, ka$, 9.0, DROP_A)
+    ELSE
+        why$ = ARENA.PLAYCARD(st, 0, ka$, 9.0, DROP_B)
+    ENDIF
+    IF why$ <> "" THEN st{"REFUSED"} = ka$ + ": " + why$
+    IF b_spell = 1 THEN
+        why$ = ARENA.PLAYCARD(st, 1, kb$, 9.0, DROP_A)
+        IF why$ <> "" THEN st{"REFUSED"} = kb$ + ": " + why$
+    ENDIF
+    RETURN st
+ENDFUNC
+
+EXPORT FUNC ALIVE(st, pid)
+    DIM n_alive = 0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"OWNER"} = pid ANDALSO u{"HP"} > 0 THEN n_alive = n_alive + 1
+    NEXT u
+    RETURN n_alive
+ENDFUNC
+
+EXPORT FUNC HULL(st, pid)
+    DIM hp = 0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"OWNER"} = pid ANDALSO u{"HP"} > 0 THEN hp = hp + INT(u{"HP"})
+    NEXT u
+    RETURN hp
+ENDFUNC
+
+' Hull plus whatever shield still stands in front of it. A spell that only ate
+' the shield did not do nothing, and counting hull alone says it did.
+EXPORT FUNC ARMOUR(st, pid)
+    DIM hp = 0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"OWNER"} = pid ANDALSO u{"HP"} > 0 THEN
+            hp = hp + INT(u{"HP"})
+            IF MAP.EXISTS(u, "SH") THEN hp = hp + INT(u{"SH"})
+        ENDIF
+    NEXT u
+    RETURN hp
+ENDFUNC
+
+' WIN: 0 the first card, 1 the second, 2 nothing left of either, 3 no decision.
+' A duel is over when one side has nothing standing - or when someone stops
+' fighting and starts hitting a station, which decides the exchange just as
+' clearly while both are still afloat.
+EXPORT FUNC VERDICT(st, ka$, kb$, cap)
+    DIM r AS MAP = { "DONE": 0, "WIN": -1, "TEXT": "", "DETAIL": "" }
+    IF LEN(st{"SPELLS"}) > 0 THEN RETURN r
+    DIM na = ALIVE(st, 0)
+    DIM nb = ALIVE(st, 1)
+    DIM secs = INT(st{"TICKNO"}) / 10.0
+    IF na = 0 ANDALSO nb = 0 THEN
+        r{"DONE"} = 1
+        r{"WIN"} = 2
+        r{"TEXT"} = "beide weg"
+        r{"DETAIL"} = "nach " + STR$(secs) + " s"
+        RETURN r
+    ENDIF
+    IF nb = 0 THEN
+        r{"DONE"} = 1
+        r{"WIN"} = 0
+        r{"TEXT"} = ka$ + " gewinnt"
+        r{"DETAIL"} = STR$(HULL(st, 0)) + " Huelle uebrig, " + STR$(secs) + " s"
+        RETURN r
+    ENDIF
+    IF na = 0 THEN
+        r{"DONE"} = 1
+        r{"WIN"} = 1
+        r{"TEXT"} = kb$ + " gewinnt"
+        r{"DETAIL"} = STR$(HULL(st, 1)) + " Huelle uebrig, " + STR$(secs) + " s"
+        RETURN r
+    ENDIF
+    FOR EACH tw IN st{"TOWERS"}
+        IF tw{"HP"} < tw{"MAXHP"} THEN
+            r{"DONE"} = 1
+            r{"WIN"} = 1
+            DIM who$ = kb$
+            IF tw{"OWNER"} = 1 THEN
+                who$ = ka$
+                r{"WIN"} = 0
+            ENDIF
+            r{"TEXT"} = who$ + " kommt durch"
+            r{"DETAIL"} = STR$(HULL(st, 0)) + " gegen " + STR$(HULL(st, 1)) + " nach " + STR$(secs) + " s"
+            RETURN r
+        ENDIF
+    NEXT tw
+    IF st{"TICKNO"} > cap THEN
+        r{"DONE"} = 1
+        r{"WIN"} = 3
+        r{"TEXT"} = "keine Entscheidung"
+        r{"DETAIL"} = STR$(HULL(st, 0)) + " gegen " + STR$(HULL(st, 1))
+    ENDIF
+    RETURN r
+ENDFUNC
+
+' One duel, played out with no one watching.
+EXPORT FUNC RUN(ka$, kb$, cap)
+    DIM st = DUEL.START(ka$, kb$)
+    DIM v = DUEL.VERDICT(st, ka$, kb$, cap)
+    DIM t
+    FOR t = 1 TO cap + 2
+        IF v{"DONE"} = 1 THEN EXITFOR
+        st = ARENA.SIMSTEP(st)
+        v = DUEL.VERDICT(st, ka$, kb$, cap)
+    NEXT t
+    v{"TICKS"} = st{"TICKNO"}
+    v{"HULLA"} = DUEL.HULL(st, 0)
+    v{"HULLB"} = DUEL.HULL(st, 1)
+    v{"ARMA"} = DUEL.ARMOUR(st, 0)
+    v{"ARMB"} = DUEL.ARMOUR(st, 1)
+    v{"REFUSED"} = st{"REFUSED"}
+    RETURN v
+ENDFUNC

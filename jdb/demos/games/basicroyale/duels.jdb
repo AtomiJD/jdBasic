@@ -1,0 +1,141 @@
+' One card against every other, played out with no one watching. The question
+' a new card raises is not whether it beats the DROID - it is what it is too
+' strong against, and that only a full sweep answers.
+'   jdbasic duels.jdb IRON                  against the live table
+'   jdbasic duels.jdb IRON tmp/iron.json    with the card laid over it first
+IMPORT ARENA
+IMPORT DUEL
+
+CONST CAP = 600
+
+DIM cards AS MAP = {}
+TRY
+    cards = JSON.PARSE$(TXTREADER$("cards.json"))
+CATCH
+    PRINT "cards.json not readable"
+ENDTRY
+
+DIM args = OS.ARGS()
+IF LEN(args) > 2 THEN
+    TRY
+        DIM over = JSON.PARSE$(TXTREADER$(args[2]))
+        FOR EACH ok$ IN MAP.KEYS(over)
+            cards{ok$} = over{ok$}
+        NEXT ok$
+    CATCH
+        PRINT "cannot read "; args[2]
+    ENDTRY
+ENDIF
+
+ARENA.SETCARDS(cards)
+DIM kinds = SORT(MAP.KEYS(cards))
+
+IF LEN(args) < 2 THEN
+    PRINT "Aufruf: jdbasic duels.jdb <KARTE> [entwurf.json]"
+    PRINT "Karten: "; JOIN(kinds, " ")
+    END
+ENDIF
+
+DIM me$ = UCASE$(args[1])
+IF NOT MAP.EXISTS(cards, me$) THEN
+    PRINT "unbekannte Karte: "; me$
+    END
+ENDIF
+
+DIM mycost = cards{me$}{"COST"}
+PRINT me$; " (" + STR$(mycost) + " Elixier) gegen alle anderen"
+PRINT ""
+PRINT "Gegner        Elix  Ausgang                Rest    Zeit"
+
+DIM n_win = 0
+DIM n_loss = 0
+DIM n_open = 0
+DIM fair_win = 0
+DIM fair_all = 0
+DIM worry = []
+
+' What a card puts on the board at level one, shield included: a spell that
+' only gets through the shield still spent its elixir on something.
+FUNC STARTHULL(kind$)
+    IF NOT MAP.EXISTS(cards{kind$}, "HP") THEN RETURN 0
+    DIM per_ship = INT(cards{kind$}{"HP"})
+    IF MAP.EXISTS(cards{kind$}, "SHIELD") THEN per_ship = per_ship + INT(cards{kind$}{"SHIELD"})
+    RETURN per_ship * INT(cards{kind$}{"N"})
+ENDFUNC
+
+DIM me_spell = 0
+IF MAP.EXISTS(cards{me$}, "SPELL") THEN me_spell = 1
+
+FOR EACH foe$ IN kinds
+    IF foe$ = me$ THEN CONTINUEFOR
+    ' a recall needs a drawn selection, so it can never take the field here
+    IF MAP.EXISTS(cards{foe$}, "WARP") ORELSE MAP.EXISTS(cards{me$}, "WARP") THEN
+        PRINT MID$(foe$ + "              ", 0, 14); _
+              MID$(STR$(cards{foe$}{"COST"}) + "     ", 0, 6); _
+              "braucht eine Auswahl, kein Duell"
+        CONTINUEFOR
+    ENDIF
+    DIM v = DUEL.RUN(me$, foe$, CAP)
+    DIM fcost = cards{foe$}{"COST"}
+    DIM foe_spell = 0
+    IF MAP.EXISTS(cards{foe$}, "SPELL") THEN foe_spell = 1
+
+    ' A spell has nothing standing on the board, so surviving is not the
+    ' question - how much hull it took off is. Calling that a win would put
+    ' nonsense in the column.
+    IF me_spell = 1 ORELSE foe_spell = 1 THEN
+        DIM gone = 0
+        DIM hit$ = ""
+        IF foe_spell = 1 THEN
+            gone = STARTHULL(me$) - v{"ARMA"}
+            hit$ = "nimmt " + STR$(INT(gone)) + " von " + me$
+        ELSE
+            gone = STARTHULL(foe$) - v{"ARMB"}
+            hit$ = "nimmt " + STR$(INT(gone)) + " von " + foe$
+        ENDIF
+        PRINT MID$(foe$ + "              ", 0, 14); _
+              MID$(STR$(fcost) + "     ", 0, 6); _
+              MID$("Zauber                 ", 0, 23); _
+              MID$(STR$(INT(gone)) + "        ", 0, 8); hit$
+        CONTINUEFOR
+    ENDIF
+
+    ' the module's own words: "gewinnt" and "kommt durch" are not the same
+    ' thing, and flattening them hides why a card is strong
+    DIM outcome$ = v{"TEXT"}
+    IF v{"WIN"} = 0 THEN
+        n_win = n_win + 1
+    ELSEIF v{"WIN"} = 1 THEN
+        n_loss = n_loss + 1
+    ELSEIF v{"WIN"} = 3 THEN
+        n_open = n_open + 1
+    ENDIF
+    ' beating something that costs the same or more is where a card stops
+    ' being a fair trade and starts being a problem
+    IF fcost >= mycost THEN
+        fair_all = fair_all + 1
+        IF v{"WIN"} = 0 THEN
+            fair_win = fair_win + 1
+            worry = APPEND(worry, [foe$ + " (" + STR$(fcost) + ")"])
+        ENDIF
+    ENDIF
+    DIM rest = v{"HULLA"}
+    IF v{"WIN"} = 1 THEN rest = v{"HULLB"}
+    DIM note$ = ""
+    IF ("" + v{"REFUSED"}) <> "" THEN note$ = "   ABGELEHNT " + v{"REFUSED"}
+    PRINT MID$(foe$ + "              ", 0, 14); _
+          MID$(STR$(fcost) + "     ", 0, 6); _
+          MID$(outcome$ + "                       ", 0, 23); _
+          MID$(STR$(INT(rest)) + "        ", 0, 8); _
+          STR$(INT(v{"TICKS"}) / 10.0); " s"; note$
+NEXT foe$
+
+PRINT ""
+PRINT "Bilanz: "; n_win; " gewonnen, "; n_loss; " verloren, "; n_open; " ohne Entscheidung"
+IF fair_all > 0 THEN
+    PRINT "gegen gleich teure oder teurere: "; fair_win; " von "; fair_all; " gewonnen"
+    IF LEN(worry) > 0 THEN PRINT "  schlaegt: "; JOIN(worry, ", ")
+ENDIF
+PRINT ""
+PRINT "Ein Duell ist nur der Zweikampf in der Mitte - Rudel, Zauber und"
+PRINT "Elixierfluss stehen hier nicht drin."

@@ -5,14 +5,12 @@
 '   /play/?prog=sandbox&fs=1&a=TITAN&b=KOLOSS[&draft=<one card as json>]
 IMPORT ARENA
 IMPORT ART
+IMPORT DUEL
 
 CONST TILE = 26
 CONST BOARD_Y0 = 60
 CONST SCR_W = 468
 CONST SCR_H = 900
-' the closest pair the deploy zones allow, so the two meet at once
-CONST DROP_A = 16.0
-CONST DROP_B = 13.0
 CONST BAR_Y = 846
 CONST CHW = 11
 
@@ -108,93 +106,20 @@ DIM detail$ = ""
 DIM refused$ = ""
 DIM start_tick = 0
 
-' Fills both hands, hands out the elixir and drops the pair facing each other.
-' A spell has nothing of its own to fight, so it is aimed at what the other
-' side just put down - which means the other side goes first.
 SUB SETUP()
-    world = ARENA.NEWGAME()
-    world{"QUEUES"}[0] = [ka$, "DROID", "LASER", "KOLOSS"]
-    world{"QUEUES"}[1] = [kb$, "DROID", "LASER", "KOLOSS"]
-    world{"ELIXIR"}[0] = 10.0
-    world{"ELIXIR"}[1] = 10.0
+    world = DUEL.START(ka$, kb$)
     verdict$ = ""
     detail$ = ""
-    refused$ = ""
-    DIM cs = ARENA.CARDS()
-    DIM a_spell = 0
-    DIM b_spell = 0
-    IF MAP.EXISTS(cs{ka$}, "SPELL") THEN a_spell = 1
-    IF MAP.EXISTS(cs{kb$}, "SPELL") THEN b_spell = 1
-    DIM why$ = ""
-    IF b_spell = 0 THEN
-        why$ = ARENA.PLAYCARD(world, 1, kb$, 9.0, DROP_B)
-        IF why$ <> "" THEN refused$ = kb$ + ": " + why$
-    ENDIF
-    IF a_spell = 0 THEN
-        why$ = ARENA.PLAYCARD(world, 0, ka$, 9.0, DROP_A)
-    ELSE
-        why$ = ARENA.PLAYCARD(world, 0, ka$, 9.0, DROP_B)
-    ENDIF
-    IF why$ <> "" THEN refused$ = ka$ + ": " + why$
-    IF b_spell = 1 THEN
-        why$ = ARENA.PLAYCARD(world, 1, kb$, 9.0, DROP_A)
-        IF why$ <> "" THEN refused$ = kb$ + ": " + why$
-    ENDIF
+    refused$ = "" + world{"REFUSED"}
     start_tick = TICK()
 ENDSUB
 
-FUNC ALIVE(pid)
-    DIM n_alive = 0
-    FOR EACH u IN world{"UNITS"}
-        IF u{"OWNER"} = pid ANDALSO u{"HP"} > 0 THEN n_alive = n_alive + 1
-    NEXT u
-    RETURN n_alive
-ENDFUNC
-
-FUNC HULL(pid)
-    DIM hp = 0
-    FOR EACH u IN world{"UNITS"}
-        IF u{"OWNER"} = pid ANDALSO u{"HP"} > 0 THEN hp = hp + INT(u{"HP"})
-    NEXT u
-    RETURN hp
-ENDFUNC
-
-' The duel is over the moment one side has nothing left standing - or the
-' moment one of them stops caring and starts hitting a station, which decides
-' the exchange just as clearly while both are still afloat.
 SUB JUDGE()
     IF verdict$ <> "" THEN RETURN
-    IF LEN(world{"SPELLS"}) > 0 THEN RETURN
-    DIM na = ALIVE(0)
-    DIM nb = ALIVE(1)
-    DIM secs = INT(world{"TICKNO"}) / 10.0
-    IF na = 0 ANDALSO nb = 0 THEN
-        verdict$ = "beide weg"
-        detail$ = "nach " + STR$(secs) + " s"
-        RETURN
-    ENDIF
-    IF nb = 0 THEN
-        verdict$ = ka$ + " gewinnt"
-        detail$ = STR$(HULL(0)) + " Huelle uebrig, " + STR$(secs) + " s"
-        RETURN
-    ENDIF
-    IF na = 0 THEN
-        verdict$ = kb$ + " gewinnt"
-        detail$ = STR$(HULL(1)) + " Huelle uebrig, " + STR$(secs) + " s"
-        RETURN
-    ENDIF
-    FOR EACH tw IN world{"TOWERS"}
-        IF tw{"HP"} < tw{"MAXHP"} THEN
-            DIM who$ = kb$
-            IF tw{"OWNER"} = 1 THEN who$ = ka$
-            verdict$ = who$ + " kommt durch"
-            detail$ = STR$(HULL(0)) + " gegen " + STR$(HULL(1)) + " nach " + STR$(secs) + " s"
-            RETURN
-        ENDIF
-    NEXT tw
-    IF world{"TICKNO"} > 600 THEN
-        verdict$ = "keine Entscheidung"
-        detail$ = STR$(HULL(0)) + " gegen " + STR$(HULL(1))
+    DIM v = DUEL.VERDICT(world, ka$, kb$, 600)
+    IF v{"DONE"} = 1 THEN
+        verdict$ = v{"TEXT"}
+        detail$ = v{"DETAIL"}
     ENDIF
 ENDSUB
 
