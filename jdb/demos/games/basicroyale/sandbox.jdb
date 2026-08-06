@@ -1,0 +1,342 @@
+' A duel bench: two cards, mirrored drops, and the rules the real match runs
+' on. Nothing here reimplements the sim - it plays cards into ARENA and
+' watches, so what happens on this board is what happens in a game.
+'   jdbasic sandbox.jdb TITAN KOLOSS
+'   /play/?prog=sandbox&fs=1&a=TITAN&b=KOLOSS[&draft=<one card as json>]
+IMPORT ARENA
+IMPORT ART
+
+CONST TILE = 26
+CONST BOARD_Y0 = 60
+CONST SCR_W = 468
+CONST SCR_H = 900
+' the closest pair the deploy zones allow, so the two meet at once
+CONST DROP_A = 16.0
+CONST DROP_B = 13.0
+CONST BAR_Y = 846
+CONST CHW = 11
+
+DIM SRV$ = "http://192.168.0.37:8081"
+
+DIM params AS MAP = {}
+TRY
+    params = JSON.PARSE$(TXTREADER$("/url_params.json"))
+CATCH
+ENDTRY
+IF MAP.EXISTS(params, "__origin") THEN
+    DIM org$ = params{"__origin"}
+    IF INSTR(org$, "://192.168.") < 0 ANDALSO INSTR(org$, "://localhost") < 0 ANDALSO INSTR(org$, "://127.") < 0 THEN
+        SRV$ = org$ + "/api"
+    ENDIF
+ENDIF
+
+' The file when this runs out of the repo, the match server when it runs from
+' the site - the same table either way.
+FUNC LOADTABLE()
+    DIM t AS MAP = {}
+    TRY
+        t = JSON.PARSE$(TXTREADER$("cards.json"))
+    CATCH
+    ENDTRY
+    IF LEN(MAP.KEYS(t)) > 0 THEN RETURN t
+    TRY
+        DIM r = JSON.PARSE$(HTTP.GET$(SRV$ + "/cards"))
+        IF MAP.EXISTS(r, "CARDS") THEN RETURN r{"CARDS"}
+    CATCH
+    ENDTRY
+    RETURN t
+ENDFUNC
+
+DIM cards = LOADTABLE()
+' a card straight out of the designer, tried before it is anywhere else
+IF MAP.EXISTS(params, "draft") THEN
+    TRY
+        DIM draft = JSON.PARSE$(params{"draft"})
+        FOR EACH dk$ IN MAP.KEYS(draft)
+            cards{dk$} = draft{dk$}
+        NEXT dk$
+    CATCH
+    ENDTRY
+ENDIF
+
+DIM kinds = SORT(MAP.KEYS(cards))
+IF LEN(kinds) < 2 THEN
+    PRINT "no card table - run this next to cards.json or against the server"
+    END
+ENDIF
+
+ARENA.SETCARDS(cards)
+
+DIM accents AS MAP = {}
+DIM shapes AS MAP = {}
+FOR EACH ck$ IN kinds
+    IF MAP.EXISTS(cards{ck$}, "COLOR") THEN accents{ck$} = cards{ck$}{"COLOR"}
+    IF MAP.EXISTS(cards{ck$}, "SHAPE") THEN shapes{ck$} = cards{ck$}{"SHAPE"}
+NEXT ck$
+ART.SETACCENTS(accents)
+ART.SETSHAPES(shapes)
+
+' Which card fights which, from the query when the designer sent us, from the
+' command line when a person did.
+DIM ka$ = kinds[0]
+DIM kb$ = kinds[1]
+IF MAP.EXISTS(params, "a") THEN ka$ = UCASE$(params{"a"})
+IF MAP.EXISTS(params, "b") THEN kb$ = UCASE$(params{"b"})
+DIM cliargs = OS.ARGS()
+IF LEN(cliargs) > 1 THEN ka$ = UCASE$(cliargs[1])
+IF LEN(cliargs) > 2 THEN kb$ = UCASE$(cliargs[2])
+IF NOT MAP.EXISTS(cards, ka$) THEN ka$ = kinds[0]
+IF NOT MAP.EXISTS(cards, kb$) THEN kb$ = kinds[1]
+
+DIM world AS MAP = {}
+DIM verdict$ = ""
+DIM detail$ = ""
+DIM refused$ = ""
+DIM start_tick = 0
+
+' Fills both hands, hands out the elixir and drops the pair facing each other.
+' A spell has nothing of its own to fight, so it is aimed at what the other
+' side just put down - which means the other side goes first.
+SUB SETUP()
+    world = ARENA.NEWGAME()
+    world{"QUEUES"}[0] = [ka$, "DROID", "LASER", "KOLOSS"]
+    world{"QUEUES"}[1] = [kb$, "DROID", "LASER", "KOLOSS"]
+    world{"ELIXIR"}[0] = 10.0
+    world{"ELIXIR"}[1] = 10.0
+    verdict$ = ""
+    detail$ = ""
+    refused$ = ""
+    DIM cs = ARENA.CARDS()
+    DIM a_spell = 0
+    DIM b_spell = 0
+    IF MAP.EXISTS(cs{ka$}, "SPELL") THEN a_spell = 1
+    IF MAP.EXISTS(cs{kb$}, "SPELL") THEN b_spell = 1
+    DIM why$ = ""
+    IF b_spell = 0 THEN
+        why$ = ARENA.PLAYCARD(world, 1, kb$, 9.0, DROP_B)
+        IF why$ <> "" THEN refused$ = kb$ + ": " + why$
+    ENDIF
+    IF a_spell = 0 THEN
+        why$ = ARENA.PLAYCARD(world, 0, ka$, 9.0, DROP_A)
+    ELSE
+        why$ = ARENA.PLAYCARD(world, 0, ka$, 9.0, DROP_B)
+    ENDIF
+    IF why$ <> "" THEN refused$ = ka$ + ": " + why$
+    IF b_spell = 1 THEN
+        why$ = ARENA.PLAYCARD(world, 1, kb$, 9.0, DROP_A)
+        IF why$ <> "" THEN refused$ = kb$ + ": " + why$
+    ENDIF
+    start_tick = TICK()
+ENDSUB
+
+FUNC ALIVE(pid)
+    DIM n_alive = 0
+    FOR EACH u IN world{"UNITS"}
+        IF u{"OWNER"} = pid ANDALSO u{"HP"} > 0 THEN n_alive = n_alive + 1
+    NEXT u
+    RETURN n_alive
+ENDFUNC
+
+FUNC HULL(pid)
+    DIM hp = 0
+    FOR EACH u IN world{"UNITS"}
+        IF u{"OWNER"} = pid ANDALSO u{"HP"} > 0 THEN hp = hp + INT(u{"HP"})
+    NEXT u
+    RETURN hp
+ENDFUNC
+
+' The duel is over the moment one side has nothing left standing - or the
+' moment one of them stops caring and starts hitting a station, which decides
+' the exchange just as clearly while both are still afloat.
+SUB JUDGE()
+    IF verdict$ <> "" THEN RETURN
+    IF LEN(world{"SPELLS"}) > 0 THEN RETURN
+    DIM na = ALIVE(0)
+    DIM nb = ALIVE(1)
+    DIM secs = INT(world{"TICKNO"}) / 10.0
+    IF na = 0 ANDALSO nb = 0 THEN
+        verdict$ = "beide weg"
+        detail$ = "nach " + STR$(secs) + " s"
+        RETURN
+    ENDIF
+    IF nb = 0 THEN
+        verdict$ = ka$ + " gewinnt"
+        detail$ = STR$(HULL(0)) + " Huelle uebrig, " + STR$(secs) + " s"
+        RETURN
+    ENDIF
+    IF na = 0 THEN
+        verdict$ = kb$ + " gewinnt"
+        detail$ = STR$(HULL(1)) + " Huelle uebrig, " + STR$(secs) + " s"
+        RETURN
+    ENDIF
+    FOR EACH tw IN world{"TOWERS"}
+        IF tw{"HP"} < tw{"MAXHP"} THEN
+            DIM who$ = kb$
+            IF tw{"OWNER"} = 1 THEN who$ = ka$
+            verdict$ = who$ + " kommt durch"
+            detail$ = STR$(HULL(0)) + " gegen " + STR$(HULL(1)) + " nach " + STR$(secs) + " s"
+            RETURN
+        ENDIF
+    NEXT tw
+    IF world{"TICKNO"} > 600 THEN
+        verdict$ = "keine Entscheidung"
+        detail$ = STR$(HULL(0)) + " gegen " + STR$(HULL(1))
+    ENDIF
+ENDSUB
+
+DIM running = 1
+SUB OnQuit()
+    running = 0
+ENDSUB
+ON "QUIT" CALL OnQuit
+
+DIM tap_new = 0
+DIM tap_x = 0
+DIM tap_y = 0
+SUB OnTap(info)
+    tap_x = info[0]{"x"}
+    tap_y = info[0]{"y"}
+    tap_new = 1
+ENDSUB
+ON "MOUSEDOWN" CALL OnTap
+
+FUNC PX(tx)
+    RETURN INT(tx * TILE)
+ENDFUNC
+
+FUNC PY(ty)
+    RETURN INT(BOARD_Y0 + ty * TILE)
+ENDFUNC
+
+SUB SPRAT(sid, cx, cy)
+    SPRITE.POS(sid, cx - SPRITE.WIDTH(sid) / 2, cy - SPRITE.HEIGHT(sid) / 2)
+    SPRITE.DRAW(sid)
+ENDSUB
+
+SUB HPBAR(cx, cy, wide, hp, maxhp, owner)
+    IF maxhp <= 0 THEN RETURN
+    DIM frac = hp / (maxhp * 1.0)
+    IF frac < 0 THEN frac = 0
+    DRAWCOLOR 8, 10, 24
+    RECT cx - wide / 2, cy, wide, 4, TRUE
+    IF owner = 0 THEN
+        DRAWCOLOR 60, 230, 200
+    ELSE
+        DRAWCOLOR 255, 90, 150
+    ENDIF
+    RECT cx - wide / 2, cy, INT(wide * frac), 4, TRUE
+ENDSUB
+
+SUB CENTRE(cy, s$)
+    TEXT SCR_W / 2 - LEN(s$) * CHW / 2, cy, s$
+ENDSUB
+
+DIM sheet0 AS MAP = {}
+DIM sheet1 AS MAP = {}
+
+SUB DRAWALL()
+    DRAWCOLOR 6, 8, 22
+    RECT 0, 0, SCR_W, SCR_H, TRUE
+    DRAWCOLOR 13, 17, 40
+    RECT 0, BOARD_Y0, SCR_W, 15 * TILE, TRUE
+    DRAWCOLOR 10, 13, 32
+    RECT 0, BOARD_Y0 + 15 * TILE, SCR_W, 15 * TILE, TRUE
+    DRAWCOLOR 44, 62, 124
+    LINE 0, BOARD_Y0 + 15 * TILE, SCR_W, BOARD_Y0 + 15 * TILE
+
+    FOR EACH tw IN world{"TOWERS"}
+        IF tw{"HP"} <= 0 THEN CONTINUEFOR
+        DIM tsid = sheet0{tw{"KIND"}}
+        IF tw{"OWNER"} = 1 THEN tsid = sheet1{tw{"KIND"}}
+        SPRAT(tsid, PX(tw{"X"}), PY(tw{"Y"}))
+        HPBAR(PX(tw{"X"}), PY(tw{"Y"}) - 30, 40, tw{"HP"}, tw{"MAXHP"}, tw{"OWNER"})
+    NEXT tw
+
+    FOR EACH u IN world{"UNITS"}
+        IF u{"HP"} <= 0 THEN CONTINUEFOR
+        DIM usid = sheet0{u{"KIND"}}
+        IF u{"OWNER"} = 1 THEN usid = sheet1{u{"KIND"}}
+        SPRAT(usid, PX(u{"X"}), PY(u{"Y"}))
+        HPBAR(PX(u{"X"}), PY(u{"Y"}) - 18, 24, u{"HP"}, u{"MAXHP"}, u{"OWNER"})
+    NEXT u
+
+    ' a spell on its way in, so a strike is not just a sudden hole
+    FOR EACH sp IN world{"SPELLS"}
+        DRAWCOLOR 255, 190, 60
+        CIRCLE PX(sp{"X"}), PY(sp{"Y"}), INT(sp{"RADIUS"} * TILE), FALSE
+    NEXT sp
+
+    DRAWCOLOR 8, 10, 26
+    RECT 0, 0, SCR_W, BOARD_Y0, TRUE
+    DRAWCOLOR 90, 240, 210
+    TEXT 10, 10, ka$
+    DRAWCOLOR 255, 90, 150
+    TEXT SCR_W - 10 - LEN(kb$) * CHW, 10, kb$
+    DRAWCOLOR 110, 122, 175
+    CENTRE(12, "gegen")
+    CENTRE(34, STR$(INT(world{"TICKNO"}) / 10.0) + " s")
+
+    DRAWCOLOR 8, 10, 26
+    RECT 0, BAR_Y - 6, SCR_W, SCR_H - BAR_Y + 6, TRUE
+    IF verdict$ <> "" THEN
+        DRAWCOLOR 245, 230, 140
+        CENTRE(BAR_Y, verdict$)
+        DRAWCOLOR 150, 160, 200
+        CENTRE(BAR_Y + 22, detail$)
+    ELSEIF refused$ <> "" THEN
+        DRAWCOLOR 255, 120, 120
+        CENTRE(BAR_Y, refused$)
+        DRAWCOLOR 60, 70, 110
+        CENTRE(BAR_Y + 22, "auf das Feld tippen startet neu")
+    ELSE
+        DRAWCOLOR 95, 106, 160
+        CENTRE(BAR_Y, "unten links/rechts wechselt die Karte")
+        DRAWCOLOR 60, 70, 110
+        CENTRE(BAR_Y + 22, "auf das Feld tippen startet neu")
+    ENDIF
+ENDSUB
+
+' A tap in a bottom corner steps that side to the next card, anywhere else
+' runs the pair again.
+SUB HANDLETAP()
+    IF tap_y >= BAR_Y - 6 THEN
+        DIM at = 0
+        IF tap_x >= SCR_W / 2 THEN at = 1
+        DIM i
+        FOR i = 0 TO LEN(kinds) - 1
+            IF at = 0 ANDALSO kinds[i] = ka$ THEN
+                ka$ = kinds[(i + 1) MOD LEN(kinds)]
+                EXITFOR
+            ENDIF
+            IF at = 1 ANDALSO kinds[i] = kb$ THEN
+                kb$ = kinds[(i + 1) MOD LEN(kinds)]
+                EXITFOR
+            ENDIF
+        NEXT i
+    ENDIF
+    SETUP()
+ENDSUB
+
+SCREEN SCR_W, SCR_H, "jdVOID - Sandkasten"
+sheet0 = ART.BAKEALL(kinds, 0)
+sheet1 = ART.BAKEALL(kinds, 1)
+SETUP()
+
+DIM last_step = TICK()
+DO
+    IF tap_new = 1 THEN
+        tap_new = 0
+        HANDLETAP()
+    ENDIF
+    DIM now = TICK()
+    IF now - last_step >= 100 THEN
+        last_step = now
+        IF verdict$ = "" THEN
+            world = ARENA.SIMSTEP(world)
+            JUDGE()
+        ENDIF
+    ENDIF
+    DRAWALL()
+    SCREENFLIP
+LOOP WHILE running = 1
+GFX.CLOSE

@@ -50,6 +50,10 @@
   #pgame{width:160px;height:160px;image-rendering:pixelated;}
   textarea{width:100%;height:130px;font-family:'Cascadia Code',Consolas,monospace;
        font-size:12px;line-height:1.5;resize:vertical;white-space:pre;}
+  .duel{display:flex;gap:8px;align-items:center;margin-bottom:10px;}
+  .duel span{font-size:11px;color:#6f79a8;letter-spacing:.06em;text-transform:uppercase;
+       white-space:nowrap;}
+  .duel select{flex:1;min-width:0;}
   .foot{display:flex;gap:8px;margin-top:10px;}
   .foot button{flex:1;}
   .say{font-size:12px;color:#5df0d0;min-height:18px;margin-top:8px;}
@@ -89,6 +93,12 @@
     <div class="prev">
       <figure><canvas id="pcard" width="160" height="160"></canvas><figcaption>Kartenbild</figcaption></figure>
       <figure><canvas id="pgame" width="40" height="40"></canvas><figcaption>im Spiel</figcaption></figure>
+    </div>
+
+    <div class="duel">
+      <span>antreten gegen</span>
+      <select id="foe"></select>
+      <button id="try" type="button">Sandkasten</button>
     </div>
 
     <textarea id="json" readonly spellcheck="false"></textarea>
@@ -150,11 +160,15 @@
 
   function fillPicker() {
     $('card').innerHTML = '';
+    $('foe').innerHTML = '';
     for (const k of Object.keys(cards).sort()) {
       const o = document.createElement('option');
       o.value = k;
       o.textContent = k + (drafts[k] ? '  (geaendert)' : '');
       $('card').appendChild(o);
+      const f = document.createElement('option');
+      f.value = k; f.textContent = k;
+      $('foe').appendChild(f);
     }
   }
 
@@ -163,6 +177,9 @@
     $('card').value = k;
     rows = JSON.parse(JSON.stringify(drafts[k] || cards[k].SHAPE || []));
     sel = rows.length ? rows.length - 1 : -1;
+    if (!$('foe').value || $('foe').value === k) {
+      $('foe').value = Object.keys(cards).sort().find(x => x !== k) || k;
+    }
     redraw();
   }
 
@@ -469,6 +486,17 @@
       store(); redraw();
     };
   });
+  // The card as it stands rides along in the query, so the bench runs the
+  // draft rather than what the server still has.
+  $('try').onclick = () => {
+    const one = {};
+    one[kind] = Object.assign({}, cards[kind], { SHAPE: rows });
+    const q = new URLSearchParams({
+      prog: 'sandbox', fs: '1', a: kind, b: $('foe').value,
+      draft: JSON.stringify(one)
+    });
+    window.open('play/?' + q.toString(), '_blank');
+  };
   $('copy').onclick = async () => {
     try { await navigator.clipboard.writeText($('json').value); say('kopiert'); }
     catch (e) { $('json').select(); say('mit Strg+C kopieren'); }

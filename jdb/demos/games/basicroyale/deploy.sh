@@ -48,7 +48,9 @@ $SCP web/cards/*.png "$HOST:~/royale/web/cards/"
 $SSH 'sudo -n rm -f /var/www/vvss/cards/*.png'
 
 echo "== client =="
-$SCP royale.jdb art.jdb ../../../../wasm/index.html "$HOST:~/royale/web/play/"
+# arena.jdb travels twice: the server runs the rules, and the sandbox on the
+# page plays cards into the same file instead of guessing what they do
+$SCP royale.jdb art.jdb sandbox.jdb arena.jdb ../../../../wasm/index.html "$HOST:~/royale/web/play/"
 
 if [ "$1" = "--wasm" ]; then
     echo "== runtime + vendor (large) =="
