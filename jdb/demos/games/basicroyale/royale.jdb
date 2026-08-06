@@ -1074,6 +1074,8 @@ SUB DrawFX(fnow)
         IF t$ = "CAST" THEN dur = 15
         IF t$ = "FALL" THEN dur = 22
         IF t$ = "HIT" THEN dur = 6
+        ' a beam needs long enough on screen to read as a beam
+        IF t$ = "SHOT" ANDALSO MAP.EXISTS(evt, "S") THEN dur = 13
         IF t$ = "DIE" THEN dur = 10
         IF t$ = "EMOTE" THEN dur = 70
         IF age <= dur THEN
@@ -1095,17 +1097,51 @@ SUB DrawFX(fnow)
             ELSEIF t$ = "SHOT" THEN
                 DIM sx0 = PX(evt{"FX"})
                 DIM sy0 = PY(WY(evt{"FY"}))
-                DIM x1 = sx0 + INT((ex - sx0) * p)
-                DIM y1 = sy0 + INT((ey - sy0) * p)
-                ' muzzle flash at the shooter, then a bolt with a trail
-                IF p < 0.35 THEN
-                    DRAWCOLOR 255, 240, 190
-                    CIRCLE sx0, sy0, INT(9 - p * 20), TRUE
+                DIM isbeam = 0
+                IF MAP.EXISTS(evt, "S") THEN
+                    IF evt{"S"} = "BEAM" THEN isbeam = 1
                 ENDIF
-                DRAWCOLOR 190, 160, 90
-                LINE sx0 + INT((ex - sx0) * (p - 0.25)), sy0 + INT((ey - sy0) * (p - 0.25)), x1, y1
-                DRAWCOLOR 255, 255, 160
-                CIRCLE x1, y1, 3, TRUE
+                IF isbeam = 1 THEN
+                    ' a beam does not travel: it stands between the two for the
+                    ' whole shot and fades, a wide halo under a white core
+                    DIM bc = [255, 240, 160]
+                    IF MAP.EXISTS(evt, "K") THEN
+                        IF MAP.EXISTS(kindcolor, evt{"K"}) THEN bc = kindcolor{evt{"K"}}
+                    ENDIF
+                    ' bright almost all its life, then gone: a linear fade
+                    ' spends most of the beam being too dark to read
+                    DIM fade = 1.0 - p * p
+                    DIM bdx = ex - sx0
+                    DIM bdy = ey - sy0
+                    DIM blen = SQR(bdx * bdx + bdy * bdy)
+                    IF blen < 1 THEN blen = 1
+                    ' offsets along the normal, not along the axes, or a
+                    ' diagonal beam comes out as a staircase
+                    DIM bnx = 0 - bdy / blen
+                    DIM bny = bdx / blen
+                    DIM boff
+                    FOR boff = -3 TO 3
+                        DIM lw = fade * (1.0 - ABS(boff) / 4.0) * 0.7
+                        DRAWCOLOR INT(bc[0] * lw), INT(bc[1] * lw), INT(bc[2] * lw)
+                        LINE sx0 + INT(bnx * boff), sy0 + INT(bny * boff), ex + INT(bnx * boff), ey + INT(bny * boff)
+                    NEXT boff
+                    DRAWCOLOR INT(255 * fade), INT(255 * fade), INT(255 * fade)
+                    LINE sx0, sy0, ex, ey
+                    DRAWCOLOR bc[0], bc[1], bc[2]
+                    CIRCLE ex, ey, INT(3 + p * 8), FALSE
+                ELSE
+                    DIM x1 = sx0 + INT((ex - sx0) * p)
+                    DIM y1 = sy0 + INT((ey - sy0) * p)
+                    ' muzzle flash at the shooter, then a bolt with a trail
+                    IF p < 0.35 THEN
+                        DRAWCOLOR 255, 240, 190
+                        CIRCLE sx0, sy0, INT(9 - p * 20), TRUE
+                    ENDIF
+                    DRAWCOLOR 190, 160, 90
+                    LINE sx0 + INT((ex - sx0) * (p - 0.25)), sy0 + INT((ey - sy0) * (p - 0.25)), x1, y1
+                    DRAWCOLOR 255, 255, 160
+                    CIRCLE x1, y1, 3, TRUE
+                ENDIF
                 IF p > 0.7 THEN
                     DRAWCOLOR 255, 255, 255
                     TEXT ex + 8, ey - 14 - INT(p * 10), STR$(evt{"D"})

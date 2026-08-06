@@ -598,7 +598,14 @@ EXPORT FUNC SIMSTEP(st)
                     u{"AT"} = st{"TICKNO"}
                 ENDIF
                 IF c{"REACH"} > 2 THEN
-                    ADDEVENT(st, { "T": "SHOT", "FX": u{"X"}, "FY": u{"Y"}, "X": tgt{"X"}, "Y": tgt{"Y"}, "D": hitdmg })
+                    DIM shev AS MAP = { "T": "SHOT", "FX": u{"X"}, "FY": u{"Y"}, "X": tgt{"X"}, "Y": tgt{"Y"}, "D": hitdmg }
+                    ' a beam is drawn as one standing line in the card's own
+                    ' colour, so the event has to say which card fired it
+                    IF MAP.EXISTS(c, "SHOTFX") THEN
+                        shev{"S"} = c{"SHOTFX"}
+                        shev{"K"} = u{"KIND"}
+                    ENDIF
+                    ADDEVENT(st, shev)
                 ELSE
                     ADDEVENT(st, { "T": "HIT", "X": tgt{"X"}, "Y": tgt{"Y"}, "D": hitdmg })
                 ENDIF

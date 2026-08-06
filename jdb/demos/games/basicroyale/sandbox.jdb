@@ -59,6 +59,20 @@ IF MAP.EXISTS(params, "draft") THEN
     ENDTRY
 ENDIF
 
+' a third argument is a file of cards laid over the table, which is how a
+' draft reaches the bench without a browser
+DIM preargs = OS.ARGS()
+IF LEN(preargs) > 3 THEN
+    TRY
+        DIM fromfile = JSON.PARSE$(TXTREADER$(preargs[3]))
+        FOR EACH fk$ IN MAP.KEYS(fromfile)
+            cards{fk$} = fromfile{fk$}
+        NEXT fk$
+    CATCH
+        PRINT "cannot read "; preargs[3]
+    ENDTRY
+ENDIF
+
 DIM kinds = SORT(MAP.KEYS(cards))
 IF LEN(kinds) < 2 THEN
     PRINT "no card table - run this next to cards.json or against the server"
@@ -259,6 +273,57 @@ SUB DRAWALL()
         SPRAT(usid, PX(u{"X"}), PY(u{"Y"}))
         HPBAR(PX(u{"X"}), PY(u{"Y"}) - 18, 24, u{"HP"}, u{"MAXHP"}, u{"OWNER"})
     NEXT u
+
+    ' the shots the rules just fired, so a beam reads as a beam here too
+    IF verdict$ = "" THEN
+        FOR EACH evt IN world{"EVENTS"}
+            DIM age = world{"TICKNO"} - evt{"TICKNO"}
+            IF age < 0 ORELSE age > 6 THEN CONTINUEFOR
+            DIM p = age / 6.0
+            DIM et$ = evt{"T"}
+            DIM tx = PX(evt{"X"})
+            DIM ty = PY(evt{"Y"})
+            IF et$ = "SHOT" THEN
+                DIM sx0 = PX(evt{"FX"})
+                DIM sy0 = PY(evt{"FY"})
+                DIM beam = 0
+                IF MAP.EXISTS(evt, "S") THEN
+                    IF evt{"S"} = "BEAM" THEN beam = 1
+                ENDIF
+                IF beam = 1 THEN
+                    DIM bc = [255, 240, 160]
+                    IF MAP.EXISTS(evt, "K") THEN
+                        IF MAP.EXISTS(accents, evt{"K"}) THEN bc = accents{evt{"K"}}
+                    ENDIF
+                    DIM fade = 1.0 - p * p
+                    DIM bdx = tx - sx0
+                    DIM bdy = ty - sy0
+                    DIM blen = SQR(bdx * bdx + bdy * bdy)
+                    IF blen < 1 THEN blen = 1
+                    DIM bnx = 0 - bdy / blen
+                    DIM bny = bdx / blen
+                    DIM boff
+                    FOR boff = -3 TO 3
+                        DIM lw = fade * (1.0 - ABS(boff) / 4.0) * 0.7
+                        DRAWCOLOR INT(bc[0] * lw), INT(bc[1] * lw), INT(bc[2] * lw)
+                        LINE sx0 + INT(bnx * boff), sy0 + INT(bny * boff), tx + INT(bnx * boff), ty + INT(bny * boff)
+                    NEXT boff
+                    DRAWCOLOR INT(255 * fade), INT(255 * fade), INT(255 * fade)
+                    LINE sx0, sy0, tx, ty
+                    DRAWCOLOR bc[0], bc[1], bc[2]
+                    CIRCLE tx, ty, INT(3 + p * 8), FALSE
+                ELSE
+                    DRAWCOLOR 255, 255, 160
+                    CIRCLE sx0 + INT((tx - sx0) * p), sy0 + INT((ty - sy0) * p), 3, TRUE
+                ENDIF
+            ELSEIF et$ = "HIT" THEN
+                DIM sz = 4 + INT(p * 6)
+                DRAWCOLOR 255, 240, 120
+                LINE tx - sz, ty - sz, tx + sz, ty + sz
+                LINE tx - sz, ty + sz, tx + sz, ty - sz
+            ENDIF
+        NEXT evt
+    ENDIF
 
     ' a spell on its way in, so a strike is not just a sudden hole
     FOR EACH sp IN world{"SPELLS"}

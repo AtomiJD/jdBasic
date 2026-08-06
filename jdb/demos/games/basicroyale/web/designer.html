@@ -491,7 +491,9 @@
     { k:'PULL',       label:'Sog',          add:{ PULL:3, SETTLE:1.4 } },
     { k:'HEAL',       label:'repariert',    add:{ HEAL:200 } },
     { k:'SLOW',       label:'bremst',       add:{ SLOW:3, SLOWMUL:0.5 } },
-    { k:'WARP',       label:'Rueckruf',     add:{ WARP:3, SETTLE:1 } }
+    { k:'WARP',       label:'Rueckruf',     add:{ WARP:3, SETTLE:1 } },
+    // only visible above reach 2 - below that the rules draw a melee hit
+    { k:'SHOTFX',     label:'Strahl',       add:{ SHOTFX:'BEAM' } }
   ];
 
   const getS = k => stats[k];
