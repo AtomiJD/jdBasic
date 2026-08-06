@@ -36,6 +36,27 @@ EXPORT FUNC DIST(ax, ay, bx, by)
     RETURN SQR((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
 ENDFUNC
 
+' All damage to a ship goes through here, because a shield has to be able to
+' stand in front of it. SHIELD is a pool that soaks before the hull does and
+' never comes back - one hard hit spends it whole, which is what makes it an
+' answer to a single big swing rather than to a swarm.
+EXPORT FUNC HURT(v, dmg)
+    IF dmg <= 0 THEN RETURN 0
+    IF MAP.EXISTS(v, "SH") THEN
+        IF v{"SH"} > 0 THEN
+            DIM left = v{"SH"} - dmg
+            IF left >= 0 THEN
+                v{"SH"} = left
+                RETURN 0
+            ENDIF
+            v{"SH"} = 0
+            dmg = 0 - left
+        ENDIF
+    ENDIF
+    v{"HP"} = v{"HP"} - dmg
+    RETURN 0
+ENDFUNC
+
 ' Append a client-FX event (SHOT/HIT/BOOM/CAST/DIE/SPAWN/FALL) and prune
 ' the log to the newest 40 - clients dedupe by EID.
 EXPORT FUNC ADDEVENT(st, ev)
@@ -166,6 +187,12 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         IF MAP.EXISTS(c, "STUN") THEN sp{"STUN"} = c{"STUN"}
         IF MAP.EXISTS(c, "PULL") THEN sp{"PULL"} = c{"PULL"}
         IF MAP.EXISTS(c, "SETTLE") THEN sp{"SETTLE"} = c{"SETTLE"}
+        IF MAP.EXISTS(c, "HEAL") THEN sp{"HEAL"} = INT(c{"HEAL"} * mult)
+        IF MAP.EXISTS(c, "SLOW") THEN
+            sp{"SLOW"} = c{"SLOW"}
+            sp{"SLOWMUL"} = 0.5
+            IF MAP.EXISTS(c, "SLOWMUL") THEN sp{"SLOWMUL"} = c{"SLOWMUL"}
+        ENDIF
         st{"SPELLS"} = APPEND(st{"SPELLS"}, sp)
         ADDEVENT(st, { "T": "CAST", "FX": 9.0, "FY": ky, "X": x, "Y": y })
     ELSE
@@ -189,6 +216,7 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
             ENDIF
             IF MAP.EXISTS(c, "TTL") THEN u2{"TTL"} = c{"TTL"}
             IF MAP.EXISTS(c, "SPAWNS") THEN u2{"SPAWNCD"} = c{"SPAWNRATE"}
+            IF MAP.EXISTS(c, "SHIELD") THEN u2{"SH"} = INT(c{"SHIELD"} * mult)
             st{"NEXTID"} = st{"NEXTID"} + 1
             st{"UNITS"} = APPEND(st{"UNITS"}, u2)
         NEXT i
@@ -423,8 +451,21 @@ EXPORT FUNC SIMSTEP(st)
         FOR EACH sp IN st{"SPELLS"}
             IF sp{"LAND"} <= st{"TICKNO"} THEN
                 FOR EACH u0 IN st{"UNITS"}
+                    ' a repair burst is the only thing a spell does to its own
+                    ' side, and it never lifts a hull above what it was built with
+                    IF MAP.EXISTS(sp, "HEAL") ANDALSO u0{"OWNER"} = sp{"OWNER"} ANDALSO u0{"HP"} > 0 THEN
+                        IF DIST(sp{"X"}, sp{"Y"}, u0{"X"}, u0{"Y"}) <= sp{"RADIUS"} THEN
+                            u0{"HP"} = u0{"HP"} + sp{"HEAL"}
+                            IF u0{"HP"} > u0{"MAXHP"} THEN u0{"HP"} = u0{"MAXHP"}
+                        ENDIF
+                    ENDIF
                     IF u0{"OWNER"} <> sp{"OWNER"} ANDALSO DIST(sp{"X"}, sp{"Y"}, u0{"X"}, u0{"Y"}) <= sp{"RADIUS"} THEN
-                        u0{"HP"} = u0{"HP"} - sp{"DMG"}
+                        DIM hu = HURT(u0, sp{"DMG"})
+                        ' a drag field leaves them walking, only slower
+                        IF MAP.EXISTS(sp, "SLOW") THEN
+                            u0{"SLOW"} = sp{"SLOW"}
+                            u0{"SLOWMUL"} = sp{"SLOWMUL"}
+                        ENDIF
                         ' a stasis field holds everything it catches
                         IF MAP.EXISTS(sp, "STUN") THEN u0{"STUN"} = sp{"STUN"}
                         ' a beam drags what it catches toward the middle. It
@@ -508,9 +549,19 @@ EXPORT FUNC SIMSTEP(st)
                 u{"CD"} = c{"HITSPEED"}
                 DIM hitdmg = c{"DMG"}
                 IF MAP.EXISTS(u, "DMG") THEN hitdmg = u{"DMG"}
+                ' a charger that got its run up hits once for the run and
+                ' then fights like anything else until it can build up again
+                IF MAP.EXISTS(c, "CHARGE") ANDALSO MAP.EXISTS(u, "RUN") THEN
+                    IF u{"RUN"} >= c{"CHARGE"} THEN
+                        DIM chmul = 2.0
+                        IF MAP.EXISTS(c, "CHARGEMUL") THEN chmul = c{"CHARGEMUL"}
+                        hitdmg = INT(hitdmg * chmul)
+                    ENDIF
+                    u{"RUN"} = 0.0
+                ENDIF
                 IF tgt{"T"} = "U" THEN
                     DIM v2 = st{"UNITS"}[tgt{"I"}]
-                    v2{"HP"} = v2{"HP"} - hitdmg
+                    DIM hv = HURT(v2, hitdmg)
                 ELSE
                     DIM tw2 = st{"TOWERS"}[tgt{"I"}]
                     tw2{"HP"} = tw2{"HP"} - hitdmg
@@ -530,7 +581,7 @@ EXPORT FUNC SIMSTEP(st)
                         IF sv{"OWNER"} = u{"OWNER"} ORELSE sv{"HP"} <= 0 THEN CONTINUEFOR
                         IF c{"HITS"} = "G" ANDALSO cs{sv{"KIND"}}{"FLY"} = 1 THEN CONTINUEFOR
                         IF DIST(tgt{"X"}, tgt{"Y"}, sv{"X"}, sv{"Y"}) <= c{"SPLASH"} THEN
-                            sv{"HP"} = sv{"HP"} - hitdmg
+                            DIM hs = HURT(sv, hitdmg)
                         ENDIF
                     NEXT si
                     ADDEVENT(st, { "T": "BOOM", "X": tgt{"X"}, "Y": tgt{"Y"}, "RADIUS": c{"SPLASH"}, "D": hitdmg })
@@ -577,14 +628,29 @@ EXPORT FUNC SIMSTEP(st)
             DIM ddy = wy - u{"Y"}
             DIM dd = SQR(ddx * ddx + ddy * ddy)
             IF dd > 0.001 THEN
-                DIM nxp = u{"X"} + ddx / dd * c{"SPD"} * dt
-                DIM nyp = u{"Y"} + ddy / dd * c{"SPD"} * dt
+                ' a drag field costs pace, not the ability to walk
+                DIM pace = c{"SPD"}
+                IF MAP.EXISTS(u, "SLOW") THEN
+                    IF u{"SLOW"} > 0 THEN
+                        u{"SLOW"} = u{"SLOW"} - dt
+                        pace = pace * u{"SLOWMUL"}
+                    ENDIF
+                ENDIF
+                ' a charger builds up over open ground and spends it on the
+                ' first thing it reaches
+                IF MAP.EXISTS(c, "CHARGE") THEN
+                    DIM ran = 0.0
+                    IF MAP.EXISTS(u, "RUN") THEN ran = u{"RUN"}
+                    u{"RUN"} = ran + pace * dt
+                ENDIF
+                DIM nxp = u{"X"} + ddx / dd * pace * dt
+                DIM nyp = u{"Y"} + ddy / dd * pace * dt
                 ' route around tower footprints: slide along the dominant
                 ' axis, and when walking head-on into a face (no tangent
                 ' component), side-step perpendicular until the corner clears
                 IF c{"FLY"} = 0 ANDALSO TOWERBLOCK(st, nxp, nyp) = 1 THEN
-                    DIM stepx = ddx / dd * c{"SPD"} * dt
-                    DIM stepy = ddy / dd * c{"SPD"} * dt
+                    DIM stepx = ddx / dd * pace * dt
+                    DIM stepy = ddy / dd * pace * dt
                     IF ABS(ddx) >= ABS(ddy) ANDALSO TOWERBLOCK(st, u{"X"} + stepx, u{"Y"}) = 0 THEN
                         nxp = u{"X"} + stepx
                         nyp = u{"Y"}
@@ -655,20 +721,71 @@ EXPORT FUNC SIMSTEP(st)
         IF best_i >= 0 ANDALSO tw{"CD"} <= 0 THEN
             tw{"CD"} = 0.8
             DIM uu2 = units2[best_i]
-            uu2{"HP"} = uu2{"HP"} - 90
+            DIM ht = HURT(uu2, 90)
             ADDEVENT(st, { "T": "SHOT", "FX": tw{"X"}, "FY": tw{"Y"}, "X": uu2{"X"}, "Y": uu2{"Y"}, "D": 90 })
         ENDIF
     NEXT tw
 
     DIM alive = []
+    DIM deathborn = []
     FOR EACH u3 IN st{"UNITS"}
         IF u3{"HP"} > 0 THEN
             alive = APPEND(alive, u3)
         ELSE
             ADDEVENT(st, { "T": "DIE", "X": u3{"X"}, "Y": u3{"Y"} })
+            ' what a ship leaves behind: a blast, a brood, or both
+            DIM dc = cs{u3{"KIND"}}
+            IF MAP.EXISTS(dc, "DEATHDMG") THEN
+                DIM drad = 2.0
+                IF MAP.EXISTS(dc, "DEATHRADIUS") THEN drad = dc{"DEATHRADIUS"}
+                FOR EACH dv IN st{"UNITS"}
+                    IF dv{"OWNER"} <> u3{"OWNER"} ANDALSO dv{"HP"} > 0 THEN
+                        IF DIST(u3{"X"}, u3{"Y"}, dv{"X"}, dv{"Y"}) <= drad THEN
+                            DIM dh = HURT(dv, dc{"DEATHDMG"})
+                        ENDIF
+                    ENDIF
+                NEXT dv
+                FOR EACH dw IN st{"TOWERS"}
+                    IF dw{"OWNER"} <> u3{"OWNER"} ANDALSO dw{"HP"} > 0 THEN
+                        IF DIST(u3{"X"}, u3{"Y"}, dw{"X"}, dw{"Y"}) <= drad THEN
+                            dw{"HP"} = dw{"HP"} - dc{"DEATHDMG"}
+                            IF dw{"KIND"} = "KING" THEN dw{"AWAKE"} = 1
+                        ENDIF
+                    ENDIF
+                NEXT dw
+                ADDEVENT(st, { "T": "BOOM", "X": u3{"X"}, "Y": u3{"Y"}, "RADIUS": drad, "D": dc{"DEATHDMG"} })
+            ENDIF
+            IF MAP.EXISTS(dc, "DEATHSPAWN") THEN
+                DIM dn = 2
+                IF MAP.EXISTS(dc, "DEATHN") THEN dn = dc{"DEATHN"}
+                DIM dkinds = dc{"DEATHSPAWN"}
+                IF TYPEOF(dkinds) <> "ARRAY" THEN dkinds = [dc{"DEATHSPAWN"}]
+                DIM di
+                FOR di = 0 TO dn - 1
+                    deathborn = APPEND(deathborn, [{ "OWNER": u3{"OWNER"}, "KIND": "" + dkinds[di MOD LEN(dkinds)], _
+                                                     "X": u3{"X"}, "Y": u3{"Y"}, "SLOT": di }])
+                NEXT di
+            ENDIF
         ENDIF
     NEXT u3
     st{"UNITS"} = alive
+
+    FOR EACH db IN deathborn
+        DIM dbc = cs{db{"KIND"}}
+        DIM dbu AS MAP = {}
+        dbu{"ID"} = st{"NEXTID"}
+        dbu{"OWNER"} = db{"OWNER"}
+        dbu{"KIND"} = db{"KIND"}
+        dbu{"X"} = db{"X"} + (db{"SLOT"} MOD 3) * 0.6 - 0.6
+        dbu{"Y"} = db{"Y"} + INT(db{"SLOT"} / 3) * 0.6 - 0.3
+        dbu{"HP"} = dbc{"HP"}
+        dbu{"MAXHP"} = dbc{"HP"}
+        dbu{"DMG"} = dbc{"DMG"}
+        dbu{"CD"} = 0.3
+        st{"NEXTID"} = st{"NEXTID"} + 1
+        st{"UNITS"} = APPEND(st{"UNITS"}, dbu)
+        ADDEVENT(st, { "T": "SPAWN", "X": dbu{"X"}, "Y": dbu{"Y"} })
+    NEXT db
 
     DIM cr = [0, 0]
     FOR EACH tw3 IN st{"TOWERS"}

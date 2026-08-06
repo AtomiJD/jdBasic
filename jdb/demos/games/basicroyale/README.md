@@ -46,6 +46,7 @@ exactly one set of rules in the codebase.
 | `splash_test.jdb` | Assertions for splash: who a blast catches around its target, and who it leaves alone. |
 | `replay.jdb` | Replays `replays.jsonl`: check every recorded match, or walk one of them card by card. |
 | `replay_test.jdb` | Plays a match out while recording it, replays the recording, and compares both down to the tower hit points. |
+| `traits_test.jdb` | Assertions for shield, death effects, charge, heal and slow - each defined at runtime, so it doubles as the worked example. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -105,6 +106,14 @@ carry traits rather than special cases in the code:
   `SPAWNS` is one card or a list of them, dealt out round robin, and it
   combines with `BUILD` and `TTL` into a hatchery that holds its tile and
   wears out.
+- `SHIELD` is a pool in front of the hull that never comes back: one big swing
+  spends it whole, a swarm chips through it.
+- `DEATHDMG` / `DEATHRADIUS` blow up on death, `DEATHSPAWN` / `DEATHN` leave a
+  brood behind - a card can do both.
+- `CHARGE` / `CHARGEMUL` build a run-up over open ground and spend it on the
+  first thing reached, then fight normally until the next run.
+- `HEAL` on a spell patches the caster's own ships, never past their hull.
+- `SLOW` / `SLOWMUL` cost pace for a while instead of stopping a ship dead.
 - `SPLASH` is a blast radius on a hitter: everything hostile it could target
   on its own takes the same damage around whatever it hits. Stations are too
   big to be caught by a neighbour's blast.

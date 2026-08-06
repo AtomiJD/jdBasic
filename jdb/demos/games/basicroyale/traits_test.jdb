@@ -1,0 +1,156 @@
+' Assertions for the five traits a card can now carry without a line of code:
+' SHIELD, DEATHDMG/DEATHSPAWN, CHARGE, HEAL and SLOW. Each is defined here at
+' runtime, so the test doubles as the worked example of how to author one.
+'   jdbasic traits_test.jdb
+IMPORT ARENA
+TRY
+    ARENA.SETCARDS(JSON.PARSE$(TXTREADER$("cards.json")))
+CATCH
+ENDTRY
+DIM cs = ARENA.CARDS()
+
+DIM pass = 0
+DIM fail = 0
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+FUNC HPOF(st, id)
+    FOR EACH u IN st{"UNITS"}
+        IF u{"ID"} = id THEN RETURN u{"HP"}
+    NEXT u
+    RETURN -1
+ENDFUNC
+
+FUNC COUNTOF(st, kind$)
+    DIM n = 0
+    FOR EACH u IN st{"UNITS"}
+        IF u{"KIND"} = kind$ ANDALSO u{"HP"} > 0 THEN n = n + 1
+    NEXT u
+    RETURN n
+ENDFUNC
+
+FUNC YOF(st, id)
+    FOR EACH u IN st{"UNITS"}
+        IF u{"ID"} = id THEN RETURN INT(u{"Y"} * 100) / 100.0
+    NEXT u
+    RETURN -1
+ENDFUNC
+
+PRINT "--- SHIELD: a pool in front of the hull"
+CHECK("full hit is soaked", STR$(ARENA.HURT({ "HP": 100, "MAXHP": 100, "SH": 80 }, 50)), "0")
+DIM v1 AS MAP = { "HP": 100, "MAXHP": 100, "SH": 80 }
+DIM h1 = ARENA.HURT(v1, 50)
+CHECK("  hull untouched", STR$(v1{"HP"}), "100")
+CHECK("  shield spent down", STR$(v1{"SH"}), "30")
+DIM h2 = ARENA.HURT(v1, 50)
+CHECK("  the overflow reaches the hull", STR$(v1{"HP"}), "80")
+CHECK("  and the shield is gone", STR$(v1{"SH"}), "0")
+DIM v2 AS MAP = { "HP": 100, "MAXHP": 100, "SH": 80 }
+DIM h3 = ARENA.HURT(v2, 500)
+CHECK("one big swing spends it whole", STR$(v2{"HP"}), "-320")
+
+PRINT "--- a shielded card is card data"
+cs{"PANZER"} = { "COST": 4, "HP": 300, "DMG": 60, "HITSPEED": 1.0, "REACH": 1.2, "AGGRO": 5.0, _
+                 "SPD": 1.5, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, "SHIELD": 200 }
+ARENA.SETCARDS(cs)
+DIM st = ARENA.NEWGAME()
+st{"ELIXIR"}[0] = 10.0
+st{"QUEUES"}[0] = ["PANZER", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+CHECK("it deploys", ARENA.PLAYCARD(st, 0, "PANZER", 9.0, 20.0), "")
+DIM shield_on = 0
+FOR EACH u IN st{"UNITS"}
+    IF u{"KIND"} = "PANZER" ANDALSO MAP.EXISTS(u, "SH") THEN shield_on = u{"SH"}
+NEXT u
+CHECK("  and carries its shield", STR$(shield_on), "200")
+
+PRINT "--- DEATH: what a ship leaves behind"
+cs{"MINE"} = { "COST": 3, "HP": 100, "DMG": 10, "HITSPEED": 1.0, "REACH": 1.0, "AGGRO": 5.0, _
+               "SPD": 1.0, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, _
+               "DEATHDMG": 150, "DEATHRADIUS": 2.0 }
+cs{"MUTTER"} = { "COST": 4, "HP": 100, "DMG": 10, "HITSPEED": 1.0, "REACH": 1.0, "AGGRO": 5.0, _
+                 "SPD": 1.0, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, _
+                 "DEATHSPAWN": "NANOS", "DEATHN": 3 }
+ARENA.SETCARDS(cs)
+
+DIM st2 = ARENA.NEWGAME()
+st2{"UNITS"} = APPEND(st2{"UNITS"}, { "ID": 1, "OWNER": 0, "KIND": "MINE", "X": 9.0, "Y": 16.5, _
+    "HP": 1, "MAXHP": 100, "DMG": 10, "CD": 9.0, "STUN": 9.0 })
+st2{"UNITS"} = APPEND(st2{"UNITS"}, { "ID": 2, "OWNER": 1, "KIND": "DROID", "X": 10.0, "Y": 16.5, _
+    "HP": 660, "MAXHP": 660, "DMG": 75, "CD": 9.0, "STUN": 9.0 })
+st2{"UNITS"} = APPEND(st2{"UNITS"}, { "ID": 3, "OWNER": 1, "KIND": "DROID", "X": 13.0, "Y": 16.5, _
+    "HP": 660, "MAXHP": 660, "DMG": 75, "CD": 9.0, "STUN": 9.0 })
+' kill the mine and let the sweep run
+FOR EACH u IN st2{"UNITS"}
+    IF u{"ID"} = 1 THEN u{"HP"} = 0
+NEXT u
+st2 = ARENA.SIMSTEP(st2)
+CHECK("the blast catches what stood next to it", STR$(HPOF(st2, 2)), "510")
+CHECK("and not what stood away from it", STR$(HPOF(st2, 3)), "660")
+
+DIM st3 = ARENA.NEWGAME()
+st3{"UNITS"} = APPEND(st3{"UNITS"}, { "ID": 1, "OWNER": 0, "KIND": "MUTTER", "X": 9.0, "Y": 20.0, _
+    "HP": 0, "MAXHP": 100, "DMG": 10, "CD": 9.0, "STUN": 9.0 })
+st3 = ARENA.SIMSTEP(st3)
+CHECK("a brood comes out of the wreck", STR$(COUNTOF(st3, "NANOS")), "3")
+CHECK("  and the wreck is gone", STR$(COUNTOF(st3, "MUTTER")), "0")
+
+PRINT "--- CHARGE: a run-up spent on the first thing reached"
+cs{"STURM"} = { "COST": 4, "HP": 600, "DMG": 100, "HITSPEED": 1.5, "REACH": 1.2, "AGGRO": 5.0, _
+                "SPD": 2.0, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, _
+                "CHARGE": 4.0, "CHARGEMUL": 3.0 }
+ARENA.SETCARDS(cs)
+DIM st4 = ARENA.NEWGAME()
+st4{"UNITS"} = APPEND(st4{"UNITS"}, { "ID": 1, "OWNER": 0, "KIND": "STURM", "X": 9.0, "Y": 20.0, _
+    "HP": 600, "MAXHP": 600, "DMG": 100, "CD": 0.0 })
+st4{"UNITS"} = APPEND(st4{"UNITS"}, { "ID": 2, "OWNER": 1, "KIND": "KOLOSS", "X": 9.0, "Y": 13.0, _
+    "HP": 1800, "MAXHP": 1800, "DMG": 120, "CD": 99.0, "STUN": 99.0 })
+DIM t
+FOR t = 1 TO 60
+    st4 = ARENA.SIMSTEP(st4)
+    IF HPOF(st4, 2) < 1800 THEN EXITFOR
+NEXT t
+CHECK("the first hit lands at triple", STR$(1800 - HPOF(st4, 2)), "300")
+
+PRINT "--- HEAL and SLOW as spells"
+cs{"REPARATUR"} = { "COST": 3, "SPELL": 1, "DMG": 0, "HEAL": 200, "RADIUS": 3.0 }
+cs{"TEER"} = { "COST": 2, "SPELL": 1, "DMG": 0, "SLOW": 3.0, "SLOWMUL": 0.4, "RADIUS": 3.0 }
+ARENA.SETCARDS(cs)
+
+DIM st5 = ARENA.NEWGAME()
+st5{"ELIXIR"}[0] = 10.0
+st5{"QUEUES"}[0] = ["REPARATUR", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+st5{"UNITS"} = APPEND(st5{"UNITS"}, { "ID": 1, "OWNER": 0, "KIND": "DROID", "X": 9.0, "Y": 16.5, _
+    "HP": 200, "MAXHP": 660, "DMG": 75, "CD": 9.0, "STUN": 9.0 })
+st5{"UNITS"} = APPEND(st5{"UNITS"}, { "ID": 2, "OWNER": 1, "KIND": "DROID", "X": 9.5, "Y": 16.5, _
+    "HP": 200, "MAXHP": 660, "DMG": 75, "CD": 9.0, "STUN": 9.0 })
+CHECK("the repair casts", ARENA.PLAYCARD(st5, 0, "REPARATUR", 9.0, 16.5), "")
+FOR t = 1 TO 6
+    st5 = ARENA.SIMSTEP(st5)
+NEXT t
+CHECK("own ship patched up", STR$(HPOF(st5, 1)), "400")
+CHECK("the foe is not", STR$(HPOF(st5, 2)), "200")
+
+DIM st6 = ARENA.NEWGAME()
+st6{"ELIXIR"}[1] = 10.0
+st6{"QUEUES"}[1] = ["TEER", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+st6{"UNITS"} = APPEND(st6{"UNITS"}, { "ID": 1, "OWNER": 0, "KIND": "DROID", "X": 9.0, "Y": 20.0, _
+    "HP": 660, "MAXHP": 660, "DMG": 75, "CD": 9.0 })
+st6{"UNITS"} = APPEND(st6{"UNITS"}, { "ID": 2, "OWNER": 0, "KIND": "DROID", "X": 14.0, "Y": 20.0, _
+    "HP": 660, "MAXHP": 660, "DMG": 75, "CD": 9.0 })
+CHECK("the tar casts", ARENA.PLAYCARD(st6, 1, "TEER", 9.0, 20.0), "")
+FOR t = 1 TO 30
+    st6 = ARENA.SIMSTEP(st6)
+NEXT t
+DIM slowed = 20.0 - YOF(st6, 1)
+DIM plain = 20.0 - YOF(st6, 2)
+CHECK("the tarred one falls behind", STR$(slowed < plain * 0.7), "TRUE")
+CHECK("  but is still walking", STR$(slowed > 0.5), "TRUE")
+
+PRINT ""
+PRINT "traits_test: passed "; pass; ", failed "; fail

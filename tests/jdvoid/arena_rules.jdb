@@ -12,7 +12,7 @@ DIM game$ = PATH.JOIN$(here$, "..", "..", "jdb", "demos", "games", "basicroyale"
 DIM win_exe$ = PATH.JOIN$(here$, "..", "..", "build", "jdBasic.exe")
 
 DIM q$ = CHR$(34)
-DIM checks = ["warp_test.jdb", "art_test.jdb", "pull_test.jdb", "spawn_test.jdb", "splash_test.jdb", "replay_test.jdb"]
+DIM checks = ["warp_test.jdb", "art_test.jdb", "pull_test.jdb", "spawn_test.jdb", "splash_test.jdb", "replay_test.jdb", "traits_test.jdb"]
 DIM bad = 0
 FOR EACH c$ IN checks
     DIM cmd$ = "sh -c " + q$ + "cd " + game$ + " && ../../../../build/jdbasic " + c$ + q$
