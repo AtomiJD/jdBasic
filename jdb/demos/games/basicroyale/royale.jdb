@@ -12,6 +12,8 @@ DIM SRV$ = "http://192.168.0.37:8081"
 
 CONST TILE = 26
 CONST BOARD_Y0 = 60
+' the blank line under the player name, and how far everything below it moved
+CONST MENU_DROP = 30
 CONST SCR_W = 468
 CONST SCR_H = 900
 
@@ -272,6 +274,13 @@ ENDSUB
 SUB SPRAT(sid, cx, cy)
     SPRITE.POS(sid, cx - SPRITE.WIDTH(sid) / 2, cy - SPRITE.HEIGHT(sid) / 2)
     SPRITE.DRAW(sid)
+ENDSUB
+
+' The one bitmap font is eleven pixels wide, so a line sits in the middle when
+' half its length lies either side of it. A fixed x only looks centred for the
+' one string it was measured against - a longer name walks straight out of it.
+SUB CTEXT(y, s$)
+    TEXT SCR_W / 2 - LEN(s$) * 11 / 2, y, s$
 ENDSUB
 
 ' Star field: x, y, brightness, drift speed per star.
@@ -1459,52 +1468,52 @@ SUB DrawMenu()
         PSET INT(st3[0]), INT(st3[1])
     NEXT st3
     DRAWCOLOR 60, 240, 255
-    TEXT 150, 120, "jdVOID"
+    CTEXT(120, "jdVOID")
     DRAWCOLOR 190, 110, 255
-    TEXT 122, 156, T$("tagline")
+    CTEXT(156, T$("tagline"))
     DRAWCOLOR 200, 200, 210
     IF auth$ = "" THEN
         DRAWCOLOR 255, 120, 120
-        TEXT 60, 196, T$("not_signed_in")
+        CTEXT(196, T$("not_signed_in"))
     ELSE
-        TEXT 130, 196, T$("player") + ": " + myname$
+        CTEXT(196, T$("player") + ": " + myname$)
     ENDIF
     IF MAP.EXISTS(myprofile, "LASTCHEST") THEN
         DIM played = myprofile{"WINS"} + myprofile{"LOSSES"} + myprofile{"DRAWS"}
         DIM head$ = T$("chest_last")
         IF played = 0 THEN head$ = T$("chest_start")
         DRAWCOLOR 22, 24, 48
-        ROUNDED_RECT 14, 222, 440, 92, 14, TRUE
+        ROUNDED_RECT 14, 222 + MENU_DROP, 440, 92, 14, TRUE
         DRAWCOLOR 120, 110, 200
-        ROUNDED_RECT 14, 222, 440, 92, 14, FALSE
+        ROUNDED_RECT 14, 222 + MENU_DROP, 440, 92, 14, FALSE
         DRAWCOLOR 255, 220, 90
-        TEXT 26, 230, head$ + "   " + T$("joker") + " x" + STR$(MYWILD())
-        CHESTROW(myprofile{"LASTCHEST"}, 26, 260)
+        TEXT 26, 230 + MENU_DROP, head$ + "   " + T$("joker") + " x" + STR$(MYWILD())
+        CHESTROW(myprofile{"LASTCHEST"}, 26, 260 + MENU_DROP)
     ENDIF
-    BUTTON(134, 330, 200, 56, T$("battle"), 80, 210, 120)
-    BUTTON(134, 396, 200, 56, T$("deck"), 90, 160, 240)
-    BUTTON(24, 462, 200, 44, IIF(mus_on = 1, T$("music_on"), T$("music_off")), 150, 150, 180)
-    BUTTON(244, 462, 200, 44, IIF(sfx_on = 1, T$("sfx_on"), T$("sfx_off")), 150, 150, 180)
+    BUTTON(134, 330 + MENU_DROP, 200, 56, T$("battle"), 80, 210, 120)
+    BUTTON(134, 396 + MENU_DROP, 200, 56, T$("deck"), 90, 160, 240)
+    BUTTON(24, 462 + MENU_DROP, 200, 44, IIF(mus_on = 1, T$("music_on"), T$("music_off")), 150, 150, 180)
+    BUTTON(244, 462 + MENU_DROP, 200, 44, IIF(sfx_on = 1, T$("sfx_on"), T$("sfx_off")), 150, 150, 180)
 
     ' lobby: the open rooms with their occupancy, tap to switch
     DRAWCOLOR 22, 24, 48
-    ROUNDED_RECT 14, 522, 440, 250, 14, TRUE
+    ROUNDED_RECT 14, 522 + MENU_DROP, 440, 250, 14, TRUE
     DRAWCOLOR 120, 110, 200
-    ROUNDED_RECT 14, 522, 440, 250, 14, FALSE
+    ROUNDED_RECT 14, 522 + MENU_DROP, 440, 250, 14, FALSE
     DRAWCOLOR 190, 200, 235
-    TEXT 26, 530, T$("rooms_open") + "   [ " + room$ + " ]"
+    TEXT 26, 530 + MENU_DROP, T$("rooms_open") + "   [ " + room$ + " ]"
     ' open a fresh room without going back to the front page
     DRAWCOLOR 40, 70, 120
-    ROUNDED_RECT 336, 524, 108, 28, 8, TRUE
+    ROUNDED_RECT 336, 524 + MENU_DROP, 108, 28, 8, TRUE
     DRAWCOLOR 130, 190, 255
-    ROUNDED_RECT 336, 524, 108, 28, 8, FALSE
+    ROUNDED_RECT 336, 524 + MENU_DROP, 108, 28, 8, FALSE
     DRAWCOLOR 235, 242, 255
-    TEXT 348, 530, T$("new_room")
+    TEXT 348, 530 + MENU_DROP, T$("new_room")
     DIM li
     FOR li = 0 TO LEN(lobby) - 1
         IF li > 4 THEN EXITFOR
         DIM rr = lobby[li]
-        DIM ry = 562 + li * 40
+        DIM ry = 562 + MENU_DROP + li * 40
         ' the server says what the room is doing; older servers only sent
         ' the head count
         DIM rs$ = "" + rr{"STATE"}
@@ -2000,8 +2009,9 @@ SUB DrawFrame(fnow)
 ENDSUB
 
 SUB MenuClick(mx, my)
-    ' sound toggles and the lobby list
-    IF my >= 462 ANDALSO my <= 506 THEN
+    ' every box below the player line was moved down by the blank line, so
+    ' every hit test has to move with it or the buttons stop answering
+    IF my >= 462 + MENU_DROP ANDALSO my <= 506 + MENU_DROP THEN
         IF mx >= 24 ANDALSO mx <= 224 THEN
             mus_on = 1 - mus_on
             IF mus_on = 1 ANDALSO snd_on = 0 THEN
@@ -2014,12 +2024,12 @@ SUB MenuClick(mx, my)
         ENDIF
         RETURN
     ENDIF
-    IF my >= 524 ANDALSO my <= 552 ANDALSO mx >= 336 ANDALSO mx <= 444 THEN
+    IF my >= 524 + MENU_DROP ANDALSO my <= 552 + MENU_DROP ANDALSO mx >= 336 ANDALSO mx <= 444 THEN
         NEWROOM()
         RETURN
     ENDIF
-    IF my >= 562 ANDALSO my <= 762 ANDALSO mx >= 24 ANDALSO mx <= 444 THEN
-        DIM idx = INT((my - 562) / 40)
+    IF my >= 562 + MENU_DROP ANDALSO my <= 762 + MENU_DROP ANDALSO mx >= 24 ANDALSO mx <= 444 THEN
+        DIM idx = INT((my - 562 - MENU_DROP) / 40)
         IF idx >= 0 ANDALSO idx < LEN(lobby) THEN
             IF mx >= 344 ANDALSO lobby[idx]{"LIVE"} = 1 THEN
                 WATCHROOM(lobby[idx]{"KEY"})
@@ -2031,7 +2041,7 @@ SUB MenuClick(mx, my)
         RETURN
     ENDIF
     IF mx >= 134 ANDALSO mx <= 334 THEN
-        IF my >= 330 ANDALSO my <= 386 THEN
+        IF my >= 330 + MENU_DROP ANDALSO my <= 386 + MENU_DROP THEN
             uimode$ = "battle"
             watching = 0
             mypid = -1
@@ -2043,7 +2053,7 @@ SUB MenuClick(mx, my)
             chest_shown = 0
             msg$ = ""
             JOINMATCH()
-        ELSEIF my >= 396 ANDALSO my <= 452 THEN
+        ELSEIF my >= 396 + MENU_DROP ANDALSO my <= 452 + MENU_DROP THEN
             uimode$ = "decks"
             IF LEN(cardorder) = 0 THEN
                 LOADCARDS()

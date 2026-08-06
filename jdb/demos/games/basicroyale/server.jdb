@@ -1167,6 +1167,23 @@ FUNC HROOMS(req)
 ENDFUNC
 
 ' Claim a name or prove you already own it. The first login under a free
+' The same name lands in the lobby, the standings and the log, so it is held
+' to what the game's font can draw. The font does carry the German letters,
+' which was worth checking rather than assuming.
+CONST NAME_CHARS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 _.-äöüÄÖÜß"
+
+' Sixteen characters, not sixteen bytes: LEN counts bytes, so an umlaut would
+' otherwise cost a name two of its letters.
+FUNC NAMEOK(nm$)
+    IF nm$ = "" THEN RETURN 0
+    DIM chars = -nm$
+    IF LEN(chars) > 16 THEN RETURN 0
+    FOR EACH ch$ IN chars
+        IF INSTR(NAME_CHARS, ch$) < 0 THEN RETURN 0
+    NEXT ch$
+    RETURN 1
+ENDFUNC
+
 ' name sets its PIN; every later one has to match it.
 FUNC HLOGIN(req)
     DIM b = 0
@@ -1177,7 +1194,7 @@ FUNC HLOGIN(req)
     IF TYPEOF(b) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_badreq" })
     DIM name$ = TRIM$("" + b{"NAME"})
     DIM pin$ = TRIM$("" + b{"PIN"})
-    IF name$ = "" ORELSE LEN(name$) > 16 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badname" })
+    IF NAMEOK(name$) = 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badname" })
     IF PINOK(pin$) = 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badpin" })
 
     DIM s = STATOF(name$)
