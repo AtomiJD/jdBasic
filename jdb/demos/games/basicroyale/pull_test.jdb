@@ -31,7 +31,9 @@ ENDFUNC
 ' Spaced so that nothing ends up close enough to shove anything else: what
 ' moves here moved because of the beam, not because of the collision pass.
 SUB PUTFOES(st)
-    DIM spots = [[9.0, 11.0], [9.0, 17.0], [9.0, 18.0]]
+    ' 3.4 tiles out on both sides: inside the 3.5 radius, and after a 3.0
+    ' haul they still stand far enough apart not to shove each other
+    DIM spots = [[9.0, 10.6], [9.0, 17.4], [9.0, 18.2]]
     DIM i
     FOR i = 0 TO LEN(spots) - 1
         st{"UNITS"} = APPEND(st{"UNITS"}, { "ID": 300 + i, "OWNER": 1, "KIND": "DROID", _
@@ -66,7 +68,9 @@ ENDFUNC
 
 CHECK("the card exists", STR$(MAP.EXISTS(cs, "SOG")), "TRUE")
 CHECK("  it is a spell", STR$(MAP.EXISTS(cs{"SOG"}, "SPELL")), "TRUE")
-CHECK("  it deals no damage", STR$(cs{"SOG"}{"DMG"}), "0")
+CHECK("  it bites as well as drags", STR$(cs{"SOG"}{"DMG"} > 0), "TRUE")
+CHECK("  but stays under the salvo", STR$(cs{"SOG"}{"DMG"} < cs{"SALVE"}{"DMG"}), "TRUE")
+CHECK("  and reaches less far than it", STR$(cs{"SOG"}{"RADIUS"} < cs{"SALVE"}{"RADIUS"}), "TRUE")
 
 DIM st = FRESH()
 PUTFOES(st)
@@ -77,14 +81,16 @@ FOR t = 1 TO 6
     st = ARENA.SIMSTEP(st)
 NEXT t
 
-' three tiles out, hauled two and a half: both land half a tile short of the
+' 3.4 tiles out, hauled 3.0: both end up a fifth of a tile short of the
 ' middle, from opposite sides
-CHECK("foe from above hauled in", WHERE$(st, 300), "9,13.5")
-CHECK("foe from below hauled in", WHERE$(st, 301), "9,14.5")
-CHECK("beyond the rim, nothing", WHERE$(st, 302), "9,18")
+CHECK("foe from above hauled in", WHERE$(st, 300), "9,13.6")
+CHECK("foe from below hauled in", WHERE$(st, 301), "9,14.4")
+CHECK("beyond the rim, nothing", WHERE$(st, 302), "9,18.2")
 CHECK("own ship untouched", WHERE$(st, 310), "9.5,12.5")
 CHECK("a building is not hauled", WHERE$(st, 320), "7.5,14")
-CHECK("nobody took damage", STR$(HPOF(st, 300)), "660")
+CHECK("the beam bites what it drags", STR$(HPOF(st, 300)), "600")
+CHECK("  and the one out of reach keeps its hull", STR$(HPOF(st, 302)), "660")
+CHECK("  own ships take nothing", STR$(HPOF(st, 310)), "660")
 CHECK("the haul costs a swing", STR$(CDOF(st, 300) > 0.5), "TRUE")
 
 PRINT "pull_test: passed "; pass; ", failed "; fail

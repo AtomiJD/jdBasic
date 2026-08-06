@@ -4,6 +4,24 @@
       "date": "2026-08-06",
       "build": "",
       "title": {
+        "de": "Der Sog war seine drei Elixier nicht wert",
+        "en": "The beam was not worth its three elixir"
+      },
+      "note": {
+        "de": "Aus dem Wohnzimmer gemeldet und nachgemessen: die STASE kostet ein Elixier und haelt einen Titan 1.8 s von der Station, der SOG kostete drei und hat nur gezogen. Er reicht jetzt weiter (3.5 statt 3.0), zieht drei Felder statt zweieinhalb, kostet dem Getroffenen 1.4 s statt 0.8 - gemessen 2.9 s Verzoegerung an der Station - und verbrennt 60 Huelle. Bewusst nicht mehr: mit 60 raeumt er 2 von 7 Schiffen eines Schwarms, die SALVE raeumt alle 7. Er weicht auf und verzoegert, er raeumt nicht ab, sonst waere die Salve ueberfluessig. Dazu zeigt der Client jetzt bei jeder Karte mit Radius den Wirkungskreis unter dem Finger.",
+        "en": "Reported from the living room and then measured: STASE costs one elixir and keeps a titan off the station for 1.8 s, while SOG cost three and only dragged. It now reaches further (3.5 instead of 3.0), hauls three tiles instead of two and a half, costs whatever it catches 1.4 s instead of 0.8 - measured as 2.9 s of delay at the station - and burns 60 hull. Deliberately no more: at 60 it clears 2 of 7 ships out of a swarm where SALVE clears all 7. It softens and delays, it does not clear, or the salvo would have no job left. The client now draws the area under the finger for every card that has a radius."
+      },
+      "changes": [
+        { "card": "SOG", "kind": "buff", "stat": { "de": "Schaden", "en": "damage" }, "from": "0", "to": "60" },
+        { "card": "SOG", "kind": "buff", "stat": { "de": "Radius", "en": "radius" }, "from": "3.0", "to": "3.5" },
+        { "card": "SOG", "kind": "buff", "stat": { "de": "Zug", "en": "haul" }, "from": "2.5", "to": "3.0" },
+        { "card": "SOG", "kind": "buff", "stat": { "de": "Pause danach", "en": "settle" }, "from": "0.8 s", "to": "1.4 s" }
+      ]
+    },
+    {
+      "date": "2026-08-06",
+      "build": "",
+      "title": {
         "de": "Ein Turm, der bruetet, und ein Werfer gegen Schwaerme",
         "en": "A tower that hatches, and a thrower against swarms"
       },

@@ -1374,6 +1374,22 @@ SUB DrawGhost(fnow)
         DIM pulse = 20 + INT(4 * SIN(fnow * 0.3))
         CIRCLE ptr_x, ptr_y, pulse, FALSE
         CIRCLE ptr_x, ptr_y, pulse - 1, FALSE
+        ' a card that works over an area draws that area under the finger:
+        ' guessing where a beam or a blast ends is not a skill worth having
+        IF MAP.EXISTS(allcards, drag_kind$) THEN
+            IF MAP.EXISTS(allcards{drag_kind$}, "RADIUS") THEN
+                DIM rpix = INT(allcards{drag_kind$}{"RADIUS"} * TILE)
+                DIM col = CCOLOR(drag_kind$)
+                DRAWCOLOR col[0], col[1], col[2]
+                CIRCLE ptr_x, ptr_y, rpix, FALSE
+                CIRCLE ptr_x, ptr_y, rpix - 1, FALSE
+                DIM mark = 0
+                FOR mark = 0 TO 11
+                    DIM ang = mark * PI / 6.0 + fnow * 0.02
+                    PSET INT(ptr_x + COS(ang) * (rpix - 5)), INT(ptr_y + SIN(ang) * (rpix - 5))
+                NEXT mark
+            ENDIF
+        ENDIF
         IF art_ready = 1 ANDALSO MAP.EXISTS(art_own, drag_kind$) THEN
             DIM gid = art_own{drag_kind$}
             SPRITE.ALPHA(gid, 165)
