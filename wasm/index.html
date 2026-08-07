@@ -408,9 +408,12 @@
       c.style.width  = Math.floor(c.width  * s) + 'px';
       c.style.height = Math.floor(c.height * s) + 'px';
       // a portrait picture that ends up under half the viewport width is a
-      // phone held the wrong way round, not a layout to live with
+      // phone held the wrong way round, not a layout to live with. On a
+      // desktop it is neither: a window is resized, not turned, so the
+      // message would be an instruction nobody there can follow.
       const turn = document.getElementById('turn');
-      const wrong = c.height > c.width && (c.width * s) < box.clientWidth * 0.55;
+      const handheld = matchMedia('(pointer: coarse)').matches;
+      const wrong = handheld && c.height > c.width && (c.width * s) < box.clientWidth * 0.55;
       turn.classList.toggle('show', wrong);
     }
     function showGfx(){ document.getElementById('gfx-overlay').classList.add('open');
