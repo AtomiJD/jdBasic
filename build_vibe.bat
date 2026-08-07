@@ -60,7 +60,7 @@ copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
 copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
 copy /Y "%SystemRoot%\System32\msvcp140.dll"       "%OUT%\" >nul
 
-REM ── BUILD_INFO.txt: stamp the current build number + date ──
+REM --- BUILD_INFO.txt: stamp the current build number + date ---
 set /p BNUM=<build_number.txt
 set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%
 > "%OUT%\BUILD_INFO.txt" echo jdBasic Vibe-Game Pack - Build !BNUM! - !BDATE!

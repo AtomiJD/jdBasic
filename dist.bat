@@ -1,7 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
 
-REM ──────────────────────────────────────────────────────────────────
+REM ---
 REM dist.bat: build jdBasic with a chosen feature set and assemble
 REM            a clean redistributable directory in dist\jdBasic\.
 REM
@@ -15,7 +15,7 @@ REM   NOBUILD  - skip the compile step (just repackage build\)
 REM   CLEAN    - delete dist\jdBasic before assembling
 REM
 REM Example: dist.bat GFX IMGUI HTTP NOCUDA
-REM ──────────────────────────────────────────────────────────────────
+REM ---
 
 set OPENSSL=C:\Program Files\OpenSSL-Win64
 set DIST=dist\jdBasic
@@ -48,7 +48,7 @@ if "%BUILD_FLAGS%"=="" (
     exit /b 1
 )
 
-REM ── 1) Build ────────────────────────────────────────────────────
+REM --- 1) Build ---
 if not defined NOBUILD (
     echo === Building jdBasic with:%BUILD_FLAGS% ===
     call build.bat%BUILD_FLAGS%
@@ -63,18 +63,18 @@ if not exist build\jdBasic.exe (
     exit /b 1
 )
 
-REM ── 2) Prepare dist directory ───────────────────────────────────
+REM --- 2) Prepare dist directory ---
 if defined CLEAN (
     if exist %DIST% rmdir /s /q %DIST%
 )
 if not exist dist mkdir dist
 if not exist %DIST% mkdir %DIST%
 
-REM ── 3) Copy EXE ─────────────────────────────────────────────────
+REM --- 3) Copy EXE ---
 echo === Assembling %DIST% ===
 copy /Y build\jdBasic.exe %DIST%\ >nul
 
-REM ── 4) Copy feature-specific DLLs ───────────────────────────────
+REM --- 4) Copy feature-specific DLLs ---
 if defined WANT_GFX (
     copy /Y build\SDL3.dll        %DIST%\ >nul
     copy /Y build\SDL3_ttf.dll    %DIST%\ >nul
@@ -123,7 +123,7 @@ if defined WANT_LLM (
     )
 )
 
-REM ── 5) Summary ──────────────────────────────────────────────────
+REM --- 5) Summary ---
 echo.
 echo === DIST OK: %DIST% ===
 for /f %%S in ('dir /a-d /s /-c %DIST% ^| findstr /C:"File(s)"') do echo %%S
