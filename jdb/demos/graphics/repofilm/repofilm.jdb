@@ -1,0 +1,544 @@
+' repofilm - the history of a git repository as an animated galaxy.
+'
+' Every file is a body orbiting its directory, placed by phyllotaxis so the
+' layout is stable across runs. A commit lights up the files it touched.
+'
+'   jdBasic repofilm.jdb [repo_path] [--frames dir] [--speed days_per_sec]
+'
+' With --frames the clock is fixed at 30 fps and every frame is written as a
+' PNG, ready for ffmpeg. Without it the film plays in real time.
+
+CONST SCR_W = 1280
+CONST SCR_H = 720
+CONST CX = 640
+CONST CY = 352
+CONST GOLDEN = 2.39996323
+CONST FRAME_DT = 0.0333333
+CONST HOLD_TITLE = 2.5
+CONST HOLD_END = 6.0
+CONST FINALE_RAMP = 2.5
+CONST SPARK_LIFE = 0.55
+CONST HEAT_HALF = 1.3
+CONST N_SPARK = 800
+
+'=============================================================================
+' helpers
+'=============================================================================
+
+FUNC PAD2$(v)
+    IF v < 10 THEN RETURN "0" + STR$(INT(v))
+    RETURN STR$(INT(v))
+ENDFUNC
+
+FUNC PAD5$(v)
+    DIM s$ = STR$(INT(v))
+    DO WHILE LEN(s$) < 5
+        s$ = "0" + s$
+    LOOP
+    RETURN s$
+ENDFUNC
+
+' Civil date from a unix timestamp, days-from-epoch algorithm.
+FUNC DATESTR$(t)
+    DIM z = INT(t / 86400) + 719468
+    DIM era = INT(z / 146097)
+    DIM doe = z - era * 146097
+    DIM yoe = INT((doe - INT(doe / 1460) + INT(doe / 36524) - INT(doe / 146096)) / 365)
+    DIM yy = yoe + era * 400
+    DIM doy = doe - (365 * yoe + INT(yoe / 4) - INT(yoe / 100))
+    DIM mp = INT((5 * doy + 2) / 153)
+    DIM dd = doy - INT((153 * mp + 2) / 5) + 1
+    DIM mm = mp + 3
+    IF mm > 12 THEN
+        mm = mm - 12
+        yy = yy + 1
+    ENDIF
+    RETURN STR$(INT(yy)) + "-" + PAD2$(mm) + "-" + PAD2$(dd)
+ENDFUNC
+
+FUNC EXTOF$(p$)
+    DIM cut = -1
+    DIM i = LEN(p$) - 1
+    DO WHILE i >= 0
+        DIM ch$ = MID$(p$, i, 1)
+        IF ch$ = "/" THEN
+            i = -1
+        ELSE
+            IF ch$ = "." ANDALSO cut < 0 THEN
+                cut = i
+                i = -1
+            ELSE
+                i = i - 1
+            ENDIF
+        ENDIF
+    LOOP
+    IF cut < 0 THEN RETURN ""
+    RETURN LCASE$(MID$(p$, cut + 1))
+ENDFUNC
+
+' Colour families: the language, the runtime, the docs, the data, the web.
+FUNC EXTCOL(e$)
+    IF e$ = "jdb" THEN RETURN [90, 245, 130]
+    IF e$ = "cpp" ORELSE e$ = "h" ORELSE e$ = "hpp" ORELSE e$ = "c" THEN RETURN [95, 165, 255]
+    IF e$ = "md" ORELSE e$ = "txt" THEN RETURN [155, 155, 170]
+    IF e$ = "json" ORELSE e$ = "xml" ORELSE e$ = "yml" ORELSE e$ = "cfg" THEN RETURN [255, 175, 65]
+    IF e$ = "html" ORELSE e$ = "css" ORELSE e$ = "js" THEN RETURN [200, 115, 255]
+    IF e$ = "png" ORELSE e$ = "jpg" ORELSE e$ = "wav" ORELSE e$ = "ttf" ORELSE e$ = "ico" THEN RETURN [255, 95, 145]
+    IF e$ = "bat" ORELSE e$ = "sh" ORELSE e$ = "ps1" THEN RETURN [230, 220, 120]
+    RETURN [110, 115, 130]
+ENDFUNC
+
+' The HUD font is monospace, so a character is worth a fixed nine pixels.
+SUB CENTERTEXT(y, s$, r, g, b)
+    TEXT CX - INT(LEN(s$) * 4.5), y, s$, r, g, b
+ENDSUB
+
+FUNC CLUSTER(dep)
+    IF dep = 0 THEN RETURN 305
+    IF dep = 1 THEN RETURN 108
+    IF dep = 2 THEN RETURN 52
+    IF dep = 3 THEN RETURN 28
+    RETURN 16
+ENDFUNC
+
+FUNC CUT$(s$, n)
+    IF LEN(s$) <= n THEN RETURN s$
+    RETURN LEFT$(s$, n - 1) + "~"
+ENDFUNC
+
+' Rename entries arrive as "old => new" or "dir/{old => new}/file".
+FUNC UNRENAME$(p$)
+    DIM pos = INSTR(p$, " => ")
+    IF pos < 0 THEN RETURN p$
+    DIM head$ = LEFT$(p$, pos)
+    DIM tail$ = MID$(p$, pos + 4)
+    DIM brace = INSTR(tail$, "}")
+    IF brace >= 0 THEN
+        tail$ = LEFT$(tail$, brace) + MID$(tail$, brace + 1)
+    ENDIF
+    DIM opn = INSTR(head$, "{")
+    IF opn >= 0 THEN RETURN LEFT$(head$, opn) + tail$
+    RETURN tail$
+ENDFUNC
+
+'=============================================================================
+' arguments
+'=============================================================================
+
+DIM argv$ = OS.ARGS()
+DIM repo$ = "."
+DIM framedir$ = ""
+DIM frames_on = 0
+DIM speed = 1.35
+DIM ai = 1
+DIM arg$ = ""
+
+DO WHILE ai < LEN(argv$)
+    arg$ = argv$[ai]
+    IF arg$ = "--frames" THEN
+        frames_on = 1
+        framedir$ = "tmp/frames"
+        IF ai + 1 < LEN(argv$) THEN
+            IF LEFT$(argv$[ai + 1], 2) <> "--" THEN
+                ai = ai + 1
+                framedir$ = argv$[ai]
+            ENDIF
+        ENDIF
+    ELSE
+        IF arg$ = "--speed" THEN
+            ai = ai + 1
+            speed = VAL(argv$[ai])
+        ELSE
+            repo$ = arg$
+        ENDIF
+    ENDIF
+    ai = ai + 1
+LOOP
+
+'=============================================================================
+' history
+'=============================================================================
+
+PRINT "reading history of "; repo$
+DIM git$ = "git -C " + CHR$(34) + repo$ + CHR$(34) + " log --reverse --pretty=format:%x01%at%x09%s --numstat"
+DIM res = OS.EXEC(git$)
+IF res{"EXIT_CODE"} <> 0 THEN
+    PRINT "git failed: "; res{"OUTPUT"}
+    END
+ENDIF
+
+DIM rows$ = SPLIT(res{"OUTPUT"}, CHR$(10))
+DIM n_rows = LEN(rows$)
+DIM TAB$ = CHR$(9)
+DIM MARK$ = CHR$(1)
+
+DIM row$ = ""
+DIM cells$ = [""]
+DIM i = 0
+DIM n_com = 0
+DIM n_ev = 0
+
+FOR i = 0 TO n_rows - 1
+    row$ = rows$[i]
+    IF LEN(row$) > 1 THEN
+        IF LEFT$(row$, 1) = MARK$ THEN
+            n_com = n_com + 1
+        ELSE
+            cells$ = SPLIT(row$, TAB$)
+            IF LEN(cells$) = 3 THEN n_ev = n_ev + 1
+        ENDIF
+    ENDIF
+NEXT i
+
+IF n_com = 0 THEN
+    PRINT "no commits found"
+    END
+ENDIF
+
+PRINT "commits: "; n_com; "  file touches: "; n_ev
+
+DIM ctime[n_com]
+DIM csubj$[n_com]
+DIM cev0[n_com]
+DIM cevn[n_com]
+DIM evf[n_ev]
+DIM evl[n_ev]
+DIM pname$[n_ev]
+DIM pidx AS MAP
+
+DIM ci = -1
+DIM ei = 0
+DIM n_path = 0
+DIM pth$ = ""
+DIM slot = 0
+
+FOR i = 0 TO n_rows - 1
+    row$ = rows$[i]
+    IF LEN(row$) > 1 THEN
+        IF RIGHT$(row$, 1) = CHR$(13) THEN row$ = LEFT$(row$, LEN(row$) - 1)
+    ENDIF
+    IF LEN(row$) > 1 THEN
+        IF LEFT$(row$, 1) = MARK$ THEN
+            cells$ = SPLIT(MID$(row$, 1), TAB$)
+            ci = ci + 1
+            ctime[ci] = VAL(cells$[0])
+            IF LEN(cells$) > 1 THEN
+                csubj$[ci] = cells$[1]
+            ELSE
+                csubj$[ci] = ""
+            ENDIF
+            cev0[ci] = ei
+            cevn[ci] = 0
+        ELSE
+            cells$ = SPLIT(row$, TAB$)
+            IF LEN(cells$) = 3 ANDALSO ci >= 0 THEN
+                pth$ = UNRENAME$(cells$[2])
+                IF MAP.EXISTS(pidx, pth$) THEN
+                    slot = pidx{pth$}
+                ELSE
+                    slot = n_path
+                    pidx{pth$} = slot
+                    pname$[slot] = pth$
+                    n_path = n_path + 1
+                ENDIF
+                evf[ei] = slot
+                IF cells$[0] = "-" THEN
+                    evl[ei] = 12
+                ELSE
+                    evl[ei] = VAL(cells$[0])
+                ENDIF
+                cevn[ci] = cevn[ci] + 1
+                ei = ei + 1
+            ENDIF
+        ENDIF
+    ENDIF
+NEXT i
+
+PRINT "files ever touched: "; n_path
+
+'=============================================================================
+' the tree, and a fixed place for every body in it
+'=============================================================================
+
+DIM dpar[n_path + 1]
+DIM ddep[n_path + 1]
+DIM dnch[n_path + 1]
+DIM dfill[n_path + 1]
+DIM dsprd[n_path + 1]
+DIM dx[n_path + 1]
+DIM dy[n_path + 1]
+DIM dalive[n_path + 1]
+DIM didx AS MAP
+DIM n_dir = 0
+
+DIM pdir[n_path]
+DIM px[n_path]
+DIM py[n_path]
+DIM pcr[n_path]
+DIM pcg[n_path]
+DIM pcb[n_path]
+DIM prad[n_path]
+DIM pheat[n_path]
+DIM psize[n_path]
+DIM pborn[n_path]
+DIM blist[n_path]
+
+DIM comps$ = [""]
+DIM prefix$ = ""
+DIM cur = 0
+DIM k = 0
+DIM c = 0
+DIM col = [0, 0, 0]
+
+FOR k = 0 TO n_path - 1
+    comps$ = SPLIT(pname$[k], "/")
+    cur = 0
+    prefix$ = ""
+    FOR c = 0 TO LEN(comps$) - 2
+        prefix$ = prefix$ + comps$[c] + "/"
+        IF MAP.EXISTS(didx, prefix$) THEN
+            cur = didx{prefix$}
+        ELSE
+            n_dir = n_dir + 1
+            didx{prefix$} = n_dir
+            dpar[n_dir] = cur
+            ddep[n_dir] = ddep[cur] + 1
+            cur = n_dir
+        ENDIF
+    NEXT c
+    pdir[k] = cur
+    col = EXTCOL(EXTOF$(pname$[k]))
+    pcr[k] = col[0]
+    pcg[k] = col[1]
+    pcb[k] = col[2]
+    pborn[k] = -1
+    prad[k] = 1.2
+NEXT k
+
+PRINT "directories: "; n_dir
+
+DIM d = 0
+FOR d = 1 TO n_dir
+    dnch[dpar[d]] = dnch[dpar[d]] + 1
+NEXT d
+FOR k = 0 TO n_path - 1
+    dnch[pdir[k]] = dnch[pdir[k]] + 1
+NEXT k
+FOR d = 0 TO n_dir
+    dsprd[d] = CLUSTER(ddep[d]) / SQR(dnch[d] + 1)
+NEXT d
+
+DIM ang = 0.0
+DIM rad = 0.0
+DIM par = 0
+
+FOR d = 1 TO n_dir
+    par = dpar[d]
+    slot = dfill[par]
+    dfill[par] = slot + 1
+    ang = slot * GOLDEN
+    rad = dsprd[par] * SQR(slot + 1)
+    dx[d] = dx[par] + rad * COS(ang)
+    dy[d] = dy[par] + rad * SIN(ang)
+NEXT d
+
+FOR k = 0 TO n_path - 1
+    d = pdir[k]
+    slot = dfill[d]
+    dfill[d] = slot + 1
+    ang = slot * GOLDEN
+    rad = dsprd[d] * SQR(slot + 1)
+    px[k] = CX + dx[d] + rad * COS(ang)
+    py[k] = CY + dy[d] + rad * SIN(ang)
+NEXT k
+
+'=============================================================================
+' the film
+'=============================================================================
+
+DIM toproot = OS.EXEC("git -C " + CHR$(34) + repo$ + CHR$(34) + " rev-parse --show-toplevel")
+DIM reponame$ = SPLIT(toproot{"OUTPUT"}, CHR$(10))[0]
+DIM cutpos = 0
+DO WHILE INSTR(reponame$, "/") >= 0
+    cutpos = INSTR(reponame$, "/")
+    reponame$ = MID$(reponame$, cutpos + 1)
+LOOP
+IF RIGHT$(reponame$, 1) = CHR$(13) THEN reponame$ = LEFT$(reponame$, LEN(reponame$) - 1)
+IF reponame$ = "" THEN reponame$ = "repository"
+
+SCREEN SCR_W, SCR_H, "repofilm - " + reponame$
+SETFONT "fonts/JetBrainsMono-Regular.ttf", 15
+
+DIM t_first = ctime[0]
+DIM t_last = ctime[n_com - 1]
+DIM now_t = t_first - 3600
+DIM ci_next = 0
+DIM n_born = 0
+DIM total_add = 0
+DIM subj$ = ""
+DIM film_t = 0.0
+DIM dt = 0.0
+DIM last_ms = TICK()
+DIM ms = 0
+DIM n_frame = 0
+DIM running = 1
+DIM key$ = ""
+
+DIM sp_f[N_SPARK]
+DIM sp_t[N_SPARK]
+DIM sp_i = 0
+DIM s = 0
+DIM b = 0
+DIM heatk = 0.0
+DIM shade = 0.0
+DIM heat = 0.0
+DIM lum = 0.0
+DIM finale = 0.0
+DIM age = 0.0
+DIM fade = 0.0
+DIM ev = 0
+DIM anc = 0
+DIM done_t = 0.0
+DIM barw = 0
+DIM legend$ = ["jdb", "cpp/h", "json", "web", "docs", "assets"]
+DIM legcol = [0, 0, 0]
+DIM lx = 0
+
+PRINT "rolling..."
+
+DO WHILE running = 1
+    IF frames_on = 1 THEN
+        dt = FRAME_DT
+    ELSE
+        ms = TICK()
+        dt = (ms - last_ms) / 1000.0
+        last_ms = ms
+        IF dt > 0.25 THEN dt = 0.25
+    ENDIF
+    film_t = film_t + dt
+
+    CLS
+
+    IF film_t < HOLD_TITLE THEN
+        CENTERTEXT CY - 46, "a repository, from the first commit", 120, 200, 255
+        CENTERTEXT CY - 12, reponame$, 255, 255, 255
+        CENTERTEXT CY + 26, DATESTR$(t_first) + "  to  " + DATESTR$(t_last), 150, 150, 165
+        CENTERTEXT CY + 50, STR$(n_com) + " commits, " + STR$(n_path) + " files", 150, 150, 165
+    ELSE
+        IF ci_next < n_com THEN now_t = now_t + dt * speed * 86400.0
+
+        DO WHILE ci_next < n_com ANDALSO ctime[ci_next] <= now_t
+            subj$ = csubj$[ci_next]
+            FOR ev = cev0[ci_next] TO cev0[ci_next] + cevn[ci_next] - 1
+                k = evf[ev]
+                IF pborn[k] < 0 THEN
+                    pborn[k] = film_t
+                    blist[n_born] = k
+                    n_born = n_born + 1
+                    anc = pdir[k]
+                    DO WHILE anc > 0 ANDALSO dalive[anc] = 0
+                        dalive[anc] = 1
+                        anc = dpar[anc]
+                    LOOP
+                ENDIF
+                psize[k] = psize[k] + evl[ev]
+                total_add = total_add + evl[ev]
+                prad[k] = 1.2 + 1.35 * LOG(1 + psize[k] / 55.0)
+                IF prad[k] > 6.5 THEN prad[k] = 6.5
+                pheat[k] = 1.0
+                sp_f[sp_i] = k
+                sp_t[sp_i] = film_t
+                sp_i = (sp_i + 1) MOD N_SPARK
+            NEXT ev
+            ci_next = ci_next + 1
+        LOOP
+
+        heatk = 0.5 ^ (dt / HEAT_HALF)
+        pheat = pheat * heatk
+
+        IF ci_next >= n_com THEN
+            IF done_t = 0 THEN done_t = film_t
+            finale = (film_t - done_t) / FINALE_RAMP
+            IF finale > 1.0 THEN finale = 1.0
+        ENDIF
+
+        FOR d = 1 TO n_dir
+            IF dalive[d] = 1 THEN
+                par = dpar[d]
+                DRAWCOLOR 24, 30, 42
+                LINE INT(CX + dx[d]), INT(CY + dy[d]), INT(CX + dx[par]), INT(CY + dy[par])
+            ENDIF
+        NEXT d
+
+        FOR s = 0 TO N_SPARK - 1
+            IF sp_t[s] > 0 THEN
+                age = film_t - sp_t[s]
+                IF age < SPARK_LIFE THEN
+                    k = sp_f[s]
+                    d = pdir[k]
+                    fade = 1.0 - age / SPARK_LIFE
+                    fade = fade * fade
+                    DRAWCOLOR INT(40 + 190 * fade), INT(50 + 175 * fade), INT(70 + 150 * fade)
+                    LINE INT(CX + dx[d]), INT(CY + dy[d]), INT(px[k]), INT(py[k])
+                ELSE
+                    sp_t[s] = 0
+                ENDIF
+            ENDIF
+        NEXT s
+
+        FOR b = 0 TO n_born - 1
+            k = blist[b]
+            heat = pheat[k]
+            lum = heat
+            IF finale > lum THEN lum = finale
+            shade = 0.32 + 0.68 * lum
+            CIRCLE INT(px[k]), INT(py[k]), prad[k] + heat * 2.4, 1, INT(pcr[k] * shade), INT(pcg[k] * shade), INT(pcb[k] * shade)
+            IF heat > 0.62 THEN
+                CIRCLE INT(px[k]), INT(py[k]), prad[k] + 3.5 + heat * 2.5, 0, INT(pcr[k] * 0.62 * heat), INT(pcg[k] * 0.62 * heat), INT(pcb[k] * 0.62 * heat)
+            ENDIF
+        NEXT b
+
+        TEXT 24, 24, DATESTR$(now_t), 255, 255, 255
+        TEXT 24, 46, "commit " + STR$(ci_next) + " / " + STR$(n_com), 120, 200, 255
+        IF finale > 0.35 THEN
+            CENTERTEXT SCR_H - 58, reponame$ + "   " + STR$(n_com) + " commits   " + STR$(n_born) + " files   " + STR$(INT(total_add / 1000)) + "k lines", 190, 195, 210
+        ELSE
+            TEXT 24, SCR_H - 58, CUT$(subj$, 92), 190, 195, 210
+        ENDIF
+        TEXT SCR_W - 300, 24, "files  " + STR$(n_born), 150, 155, 170
+        TEXT SCR_W - 300, 46, "lines  " + STR$(INT(total_add / 1000)) + "k added", 150, 155, 170
+
+        FOR lx = 0 TO 5
+            IF lx = 0 THEN legcol = EXTCOL("jdb")
+            IF lx = 1 THEN legcol = EXTCOL("cpp")
+            IF lx = 2 THEN legcol = EXTCOL("json")
+            IF lx = 3 THEN legcol = EXTCOL("html")
+            IF lx = 4 THEN legcol = EXTCOL("md")
+            IF lx = 5 THEN legcol = EXTCOL("png")
+            CIRCLE SCR_W - 292, SCR_H - 150 + lx * 20, 4, 1, legcol[0], legcol[1], legcol[2]
+            TEXT SCR_W - 278, SCR_H - 157 + lx * 20, legend$[lx], 130, 135, 150
+        NEXT lx
+
+        barw = INT(SCR_W * ci_next / n_com)
+        RECT 0, SCR_H - 4, SCR_W, 4, 1, 22, 26, 36
+        RECT 0, SCR_H - 4, barw, 4, 1, 80, 200, 255
+
+        IF ci_next >= n_com THEN
+            IF done_t = 0 THEN done_t = film_t
+            IF film_t - done_t > HOLD_END THEN running = 0
+        ENDIF
+    ENDIF
+
+    IF frames_on = 1 THEN
+        GFX.SAVE_SCREENSHOT(framedir$ + "/f" + PAD5$(n_frame) + ".png")
+        n_frame = n_frame + 1
+        IF n_frame MOD 60 = 0 THEN PRINT "frame "; n_frame; "  "; DATESTR$(now_t)
+    ENDIF
+
+    SCREENFLIP
+
+    key$ = INKEY$()
+    IF key$ = CHR$(27) ORELSE key$ = "q" THEN running = 0
+LOOP
+
+PRINT "done. frames written: "; n_frame
