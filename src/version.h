@@ -49,6 +49,22 @@ inline std::string jdbasic_features() {
     if (!f.empty()) f += ", ";
     f += "GL3.3";
 #endif
+#ifdef SOUND_DSP
+    if (!f.empty()) f += ", ";
+    f += "Sound";
+#endif
+#ifdef MINIAUDIO
+    if (!f.empty()) f += ", ";
+    f += "MiniAudio";
+#endif
+#ifdef FX
+    if (!f.empty()) f += ", ";
+    f += "FX";
+#endif
+#ifdef MIDI
+    if (!f.empty()) f += ", ";
+    f += "MIDI";
+#endif
 #ifdef ONNX
     if (!f.empty()) f += ", ";
     f += "ONNX";
@@ -68,6 +84,18 @@ inline std::string jdbasic_features() {
 #ifdef PYTHON
     if (!f.empty()) f += ", ";
     f += "Python";
+#endif
+#ifdef LLVM_CODEGEN
+    if (!f.empty()) f += ", ";
+    f += "NativeC";
+#endif
+#ifdef FTXUI
+    if (!f.empty()) f += ", ";
+    f += "FTXUI";
+#endif
+#ifdef TUI
+    if (!f.empty()) f += ", ";
+    f += "TUI";
 #endif
     if (f.empty()) f = "Core";
     return f;

@@ -518,6 +518,20 @@ IF wav$ <> "" THEN
     NEXT c
     DIM gain = 0.92 / peak
 
+    ' WAV.WRITE needs the FX build flag. Where it is missing the file is
+    ' written by hand, which is the same bytes for four seconds more work.
+    DIM native_wav = 0
+    TRY
+        native_wav = WAV.WRITE(wav$, RESHAPE(mix, [n_blk * BLK]) * gain, RATE, 1)
+    CATCH
+        native_wav = 0
+    ENDTRY
+
+    IF native_wav <> 0 THEN
+        PRINT "wrote "; wav$; " via WAV.WRITE"
+        END
+    ENDIF
+
     DIM tbl$[256]
     FOR i = 0 TO 255
         tbl$[i] = CHR$(i)

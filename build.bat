@@ -230,7 +230,7 @@ REM Compile resources (icon, manifest, version info)
 set "RC=%SDK%\bin\%SDKV%\x64\rc.exe"
 "%RC%" /fo build\version.res resources\version.rc >nul 2>&1
 
-REM /MP32 → cl spawns up to 32 worker processes for the compile phase
+REM /MP32 -> cl spawns up to 32 worker processes for the compile phase
 REM (machine has 32 logical threads + 64 GB RAM, so memory headroom is fine).
 REM /MP without a number uses min(NUMBER_OF_PROCESSORS, 8); explicit 32 wins.
 REM /MD: link the DLL CRT. ftxui.lib (and OpenSSL's MD libs) expect this;
