@@ -150,6 +150,78 @@ Each phase leaves the game playable and the suites green.
 Phase 1 carries the only real risk. The recording format changes, and the
 reader has to take both shapes or the balance history is gone.
 
+## What this design is for
+
+Measured on 2026-08-07 against the interpreter, by filling a match with
+NANOS and timing 50 steps at each size.
+
+| Units | State KB | ms per tick | ms per tick per unit |
+|---:|---:|---:|---:|
+| 1 | 1.9 | 0.19 | 0.195 |
+| 7 | 4.9 | 1.63 | 0.234 |
+| 18 | 10.8 | 7.70 | 0.428 |
+| 38 | 19.9 | 26.66 | 0.701 |
+| 80 | 36.8 | 98.32 | 1.229 |
+
+The last column is the one that matters. Cost per unit rises sixfold from 1
+to 80 units, so the simulation is **O(n squared)**: `FINDTARGET` scans every
+other unit for every unit, and so does `RESOLVEBUMP`.
+
+That sets a hard wall. A tick has to finish inside 100 ms or the match runs
+slower than the clock, and at 80 units it takes 98. With room for several
+matches on one box the working limit is **25 to 30 units**.
+
+**This ceiling belongs to `arena.jdb`, not to the kit.** A rules module that
+buckets units into a grid instead of scanning linearly goes far past it. The
+architecture limits nothing here.
+
+### The three numbers
+
+A genre fits when its state stays under roughly 50 KB, its tick rate at or
+below 10 Hz, and its input rate at a few actions per second. Below those,
+everything below works. Above them, none of it does.
+
+| Genre | Fits | Why |
+|---|---|---|
+| Lane pusher, card battler | yes | this is the blueprint |
+| Auto battler | yes, better | fewer inputs still |
+| Tower defence | yes, carefully | a wave of 50 creeps hits the O(n squared) wall |
+| Turn based, board game | yes, better | `SIMSTEP` becomes a no-op, only clocks need time |
+| Asynchronous, correspondence | yes, ideal | an unwatched room costs nothing for days |
+| Party, quiz | yes | needs only the seat generalisation from phase 3 |
+| Co-op roguelike, turn based | yes | small state, few inputs |
+| RTS with hundreds of units | no | simulation and wire both break |
+| Shooter, fighter, racing | no | needs 30 to 60 Hz and client prediction |
+| MMO, persistent world | no | a room is a match, not a slice of a world |
+
+The shooter case is not a tuning problem. Polling at 100 ms without
+prediction means 100 to 200 ms before your own move is visible. No setting
+changes that.
+
+### Two strengths that were not designed in
+
+**Turn based fits better than real time.** The lazy catch-up was written so
+an unwatched room costs nothing. That makes a thousand idle correspondence
+matches free, which is a use case nobody had in mind when `SYNCSIM` was
+written.
+
+**The determinism chain carries across genres.** Recording inputs, replaying
+exactly, and `whatif.jdb` against real matches come free to any genre whose
+outcome depends on inputs rather than on frame timing. In a shooter the same
+chain would be worthless, because there time itself is part of the state.
+
+### Compression
+
+The API is served uncompressed. JSON with repeated keys and an array of
+near-identical unit maps compresses hard:
+
+```
+/api/cards            6048 -> 1541 bytes   (4x)
+state, 80 units                 12x
+```
+
+One line of nginx config, no code. Belongs in phase 2.
+
 ## Open questions
 
 - **Does a second game want the chest economy?** It is currently welded to
