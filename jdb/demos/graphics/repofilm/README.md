@@ -21,19 +21,47 @@ build/jdBasic.exe jdb/demos/graphics/repofilm/repofilm.jdb D:/usr/dev/jderg --sp
 | first bare argument | path to the repository, default `.` |
 | `--speed n` | repository days per second of film, default 1.35 |
 | `--frames dir` | write every frame as a PNG at a fixed 30 fps instead of playing live |
+| `--4k` | render at 3840x2160 |
+| `--size WxH` | any other canvas |
+| `--fullscreen` | go fullscreen after opening |
+| `--wav file` | write the soundtrack and exit, drawing nothing |
 
-`ESC` or `q` ends it.
+`ESC` or `q` ends it. Everything on the canvas is measured in units of a
+1280 wide window and multiplied by the actual width, so 4K is the same
+picture with more pixels rather than the same picture with smaller dots.
 
 ## Make a video
 
 ```
 mkdir -p tmp/frames
-build/jdBasic.exe jdb/demos/graphics/repofilm/repofilm.jdb . --frames tmp/frames
-jdb/demos/graphics/repofilm/render.sh tmp/frames tmp/repofilm.mp4
+build/jdBasic.exe jdb/demos/graphics/repofilm/repofilm.jdb . --wav tmp/repofilm.wav
+build/jdBasic.exe jdb/demos/graphics/repofilm/repofilm.jdb . --frames tmp/frames --4k
+PRESET=medium jdb/demos/graphics/repofilm/render.sh tmp/frames tmp/repofilm.mp4 tmp/repofilm.wav
 ```
 
 The frame directory has to exist. Frames are written before the flip, so what
 lands in the PNG is exactly what the window shows.
+
+## The soundtrack
+
+One plucked note per commit, on exactly the clock the film runs on, so the
+audio can be rendered without drawing a single frame and still lands in sync.
+
+The directory a commit touched picks the degree of an A minor pentatonic, so a
+stretch of work in one corner of the tree is audibly one pitch, and the size of
+the commit picks the octave: the big ones land low. Under it sits a drone at
+three cycles per grid step, which is the one frequency that tiles a step
+without a discontinuity at the seam.
+
+Notes are mixed into a matrix of `[steps, 2756]` and added a row at a time.
+A row is one vector add; the same work as a sample loop would be four million
+interpreted iterations.
+
+`WAV.WRITE` needs the FX build flag, which this binary does not carry, so the
+file is written by hand: a 44 byte RIFF header and 16-bit PCM built through a
+256 entry `CHR$` table. Bytes are assembled per step and joined at the end,
+because appending to one growing string is quadratic. Measured: 500k bytes in
+11.5 seconds appended, 0.28 seconds chunked.
 
 ## How the layout is built
 

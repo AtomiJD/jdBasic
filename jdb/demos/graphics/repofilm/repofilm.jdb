@@ -4,14 +4,19 @@
 ' layout is stable across runs. A commit lights up the files it touched.
 '
 '   jdBasic repofilm.jdb [repo_path] [--frames dir] [--speed days_per_sec]
+'                        [--size WxH] [--4k] [--fullscreen] [--wav file]
 '
 ' With --frames the clock is fixed at 30 fps and every frame is written as a
 ' PNG, ready for ffmpeg. Without it the film plays in real time.
+'
+' --wav writes the soundtrack instead of drawing anything: one plucked note
+' per commit, on the same clock the film runs on.
 
-CONST SCR_W = 1280
-CONST SCR_H = 720
-CONST CX = 640
-CONST CY = 352
+DIM SCR_W = 1280
+DIM SCR_H = 720
+DIM CX = 640
+DIM CY = 352
+DIM SC = 1.0
 CONST GOLDEN = 2.39996323
 CONST FRAME_DT = 0.0333333
 CONST HOLD_TITLE = 2.5
@@ -90,15 +95,23 @@ ENDFUNC
 
 ' The HUD font is monospace, so a character is worth a fixed nine pixels.
 SUB CENTERTEXT(y, s$, r, g, b)
-    TEXT CX - INT(LEN(s$) * 4.5), y, s$, r, g, b
+    TEXT CX - INT(LEN(s$) * 4.5 * SC), y, s$, r, g, b
 ENDSUB
 
 FUNC CLUSTER(dep)
-    IF dep = 0 THEN RETURN 305
-    IF dep = 1 THEN RETURN 108
-    IF dep = 2 THEN RETURN 52
-    IF dep = 3 THEN RETURN 28
-    RETURN 16
+    IF dep = 0 THEN RETURN 305 * SC
+    IF dep = 1 THEN RETURN 108 * SC
+    IF dep = 2 THEN RETURN 52 * SC
+    IF dep = 3 THEN RETURN 28 * SC
+    RETURN 16 * SC
+ENDFUNC
+
+FUNC LE16$(v)
+    RETURN CHR$(v MOD 256) + CHR$(INT(v / 256) MOD 256)
+ENDFUNC
+
+FUNC LE32$(v)
+    RETURN LE16$(v MOD 65536) + LE16$(INT(v / 65536) MOD 65536)
 ENDFUNC
 
 FUNC CUT$(s$, n)
@@ -132,10 +145,29 @@ DIM frames_on = 0
 DIM speed = 1.35
 DIM ai = 1
 DIM arg$ = ""
+DIM wav$ = ""
+DIM want_fs = 0
+DIM xpos = 0
 
 DO WHILE ai < LEN(argv$)
     arg$ = argv$[ai]
-    IF arg$ = "--frames" THEN
+    IF arg$ = "--4k" THEN
+        SCR_W = 3840
+        SCR_H = 2160
+    ELSEIF arg$ = "--fullscreen" THEN
+        want_fs = 1
+    ELSEIF arg$ = "--size" THEN
+        ai = ai + 1
+        xpos = INSTR(argv$[ai], "x")
+        SCR_W = VAL(LEFT$(argv$[ai], xpos))
+        SCR_H = VAL(MID$(argv$[ai], xpos + 1))
+    ELSEIF arg$ = "--wav" THEN
+        ai = ai + 1
+        wav$ = argv$[ai]
+    ELSEIF arg$ = "--speed" THEN
+        ai = ai + 1
+        speed = VAL(argv$[ai])
+    ELSEIF arg$ = "--frames" THEN
         frames_on = 1
         framedir$ = "tmp/frames"
         IF ai + 1 < LEN(argv$) THEN
@@ -145,15 +177,14 @@ DO WHILE ai < LEN(argv$)
             ENDIF
         ENDIF
     ELSE
-        IF arg$ = "--speed" THEN
-            ai = ai + 1
-            speed = VAL(argv$[ai])
-        ELSE
-            repo$ = arg$
-        ENDIF
+        repo$ = arg$
     ENDIF
     ai = ai + 1
 LOOP
+
+SC = SCR_W / 1280.0
+CX = INT(SCR_W / 2)
+CY = INT(SCR_H * 0.489)
 
 '=============================================================================
 ' history
@@ -352,6 +383,170 @@ FOR k = 0 TO n_path - 1
     py[k] = CY + dy[d] + rad * SIN(ang)
 NEXT k
 
+' A tree hangs where its big directories happen to fall, which is rarely the
+' middle of the canvas. Measure what was built and move it into frame.
+DIM minx = px[0]
+DIM maxx = px[0]
+DIM miny = py[0]
+DIM maxy = py[0]
+FOR k = 1 TO n_path - 1
+    IF px[k] < minx THEN minx = px[k]
+    IF px[k] > maxx THEN maxx = px[k]
+    IF py[k] < miny THEN miny = py[k]
+    IF py[k] > maxy THEN maxy = py[k]
+NEXT k
+
+DIM ccx = (minx + maxx) / 2
+DIM ccy = (miny + maxy) / 2
+DIM halfw = (maxx - minx) / 2
+DIM halfh = (maxy - miny) / 2
+DIM fit = 1.0
+IF halfw > 1 ANDALSO halfh > 1 THEN
+    fit = SCR_W * 0.40 / halfw
+    IF SCR_H * 0.40 / halfh < fit THEN fit = SCR_H * 0.40 / halfh
+ENDIF
+
+FOR k = 0 TO n_path - 1
+    px[k] = CX + (px[k] - ccx) * fit
+    py[k] = CY + (py[k] - ccy) * fit
+NEXT k
+FOR d = 0 TO n_dir
+    dx[d] = (CX + dx[d] - ccx) * fit
+    dy[d] = (CY + dy[d] - ccy) * fit
+NEXT d
+
+'=============================================================================
+' the soundtrack
+'
+' A commit is one plucked note. The directory it touched picks the degree of a
+' minor pentatonic, so a stretch of work in one corner of the tree becomes a
+' recognisable pitch, and the size of the commit picks the octave: the big ones
+' land low. Notes are mixed on a grid of BLK samples, one matrix row per step,
+' because a row is a single vector add where a sample loop would be a million.
+'=============================================================================
+
+CONST RATE = 44100
+CONST BLK = 2756
+CONST NOTE_BLK = 12
+CONST N_PITCH = 15
+
+DIM t_first = ctime[0]
+DIM t_last = ctime[n_com - 1]
+DIM t_zero = t_first - 3600
+
+IF wav$ <> "" THEN
+    PRINT "writing soundtrack to "; wav$
+
+    DIM dtop[n_path + 1]
+    FOR d = 1 TO n_dir
+        IF ddep[d] = 1 THEN
+            dtop[d] = d
+        ELSE
+            dtop[d] = dtop[dpar[d]]
+        ENDIF
+    NEXT d
+
+    DIM total_s = HOLD_TITLE + (t_last - t_zero) / (speed * 86400.0) + HOLD_END
+    DIM n_blk = INT(total_s * RATE / BLK) + NOTE_BLK + 2
+    DIM mix = ZEROS([n_blk, BLK])
+    PRINT "length: "; INT(total_s); " s"
+
+    DIM PENTA = [0, 3, 5, 7, 10]
+    DIM tt = IOTA(BLK * NOTE_BLK, 0) / RATE
+    DIM tmax = BLK * NOTE_BLK / RATE
+    DIM notes[N_PITCH, NOTE_BLK, BLK]
+    DIM wv = tt
+    DIM semi = 0
+    DIM freq = 0.0
+    DIM p = 0
+
+    FOR p = 0 TO N_PITCH - 1
+        semi = PENTA[p MOD 5] + 12 * INT(p / 5)
+        freq = 110.0 * 2 ^ (semi / 12.0)
+        wv = SIN(tt * (2 * PI * freq)) + 0.34 * SIN(tt * (4 * PI * freq)) + 0.11 * SIN(tt * (6 * PI * freq))
+        ' The tail has to reach exactly zero: a note that is merely quiet when
+        ' the block runs out ends in a step, and a step is a click.
+        wv = wv * EXP(0 - tt * 5.0) * (1 - EXP(0 - tt * 320)) * (1 - tt / tmax)
+        notes[p] = RESHAPE(wv, [NOTE_BLK, BLK])
+    NEXT p
+
+    DIM dfreq = 3 * RATE / BLK
+    DIM dtt = IOTA(BLK, 0) / RATE
+    DIM drone = SIN(dtt * (2 * PI * dfreq)) * 0.6 + SIN(dtt * (4 * PI * dfreq)) * 0.22
+
+    DIM ftime = 0.0
+    DIM blkpos = 0
+    DIM sz = 0
+    DIM amp = 0.0
+    DIM oct = 0
+    DIM topd = 0
+    DIM j = 0
+
+    FOR ci = 0 TO n_com - 1
+        IF cevn[ci] > 0 THEN
+            ftime = HOLD_TITLE + (ctime[ci] - t_zero) / (speed * 86400.0)
+            blkpos = INT(ftime * RATE / BLK)
+            sz = 0
+            FOR ev = cev0[ci] TO cev0[ci] + cevn[ci] - 1
+                sz = sz + evl[ev]
+            NEXT ev
+            topd = dtop[pdir[evf[cev0[ci]]]]
+            IF sz < 25 THEN
+                oct = 2
+            ELSEIF sz < 250 THEN
+                oct = 1
+            ELSE
+                oct = 0
+            ENDIF
+            p = (topd MOD 5) + 5 * oct
+            amp = 0.05 + 0.20 * LOG(1 + sz) / LOG(3000)
+            IF amp > 0.26 THEN amp = 0.26
+            FOR j = 0 TO NOTE_BLK - 1
+                IF blkpos + j < n_blk THEN
+                    mix[blkpos + j] = mix[blkpos + j] + notes[p][j] * amp
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT ci
+
+    DIM peak = 0.0
+    DIM rowpeak = 0.0
+    FOR c = 0 TO n_blk - 1
+        mix[c] = mix[c] + drone * (0.012 + 0.045 * c / n_blk)
+        rowpeak = MAX(ABS(mix[c]))
+        IF rowpeak > peak THEN peak = rowpeak
+    NEXT c
+    DIM gain = 0.92 / peak
+
+    DIM tbl$[256]
+    FOR i = 0 TO 255
+        tbl$[i] = CHR$(i)
+    NEXT i
+
+    DIM parts$[n_blk]
+    DIM chunk$ = ""
+    DIM smp = drone
+    DIM iv = 0
+    FOR c = 0 TO n_blk - 1
+        smp = mix[c] * gain
+        chunk$ = ""
+        FOR j = 0 TO BLK - 1
+            iv = INT(smp[j] * 32000)
+            IF iv < 0 THEN iv = iv + 65536
+            chunk$ = chunk$ + tbl$[iv MOD 256] + tbl$[INT(iv / 256) MOD 256]
+        NEXT j
+        parts$[c] = chunk$
+        IF c MOD 300 = 0 THEN PRINT "block "; c; " / "; n_blk
+    NEXT c
+
+    DIM datalen = n_blk * BLK * 2
+    DIM hdr$ = "RIFF" + LE32$(36 + datalen) + "WAVEfmt " + LE32$(16) + LE16$(1) + LE16$(1)
+    hdr$ = hdr$ + LE32$(RATE) + LE32$(RATE * 2) + LE16$(2) + LE16$(16) + "data" + LE32$(datalen)
+    BINWRITER wav$, hdr$ + JOIN(parts$, "")
+    PRINT "wrote "; wav$; "  "; INT(datalen / 1024); " KB of audio"
+    END
+ENDIF
+
 '=============================================================================
 ' the film
 '=============================================================================
@@ -367,11 +562,10 @@ IF RIGHT$(reponame$, 1) = CHR$(13) THEN reponame$ = LEFT$(reponame$, LEN(reponam
 IF reponame$ = "" THEN reponame$ = "repository"
 
 SCREEN SCR_W, SCR_H, "repofilm - " + reponame$
-SETFONT "fonts/JetBrainsMono-Regular.ttf", 15
+SETFONT "fonts/JetBrainsMono-Regular.ttf", INT(15 * SC)
+IF want_fs = 1 THEN TOGGLE_FULLSCREEN
 
-DIM t_first = ctime[0]
-DIM t_last = ctime[n_com - 1]
-DIM now_t = t_first - 3600
+DIM now_t = t_zero
 DIM ci_next = 0
 DIM n_born = 0
 DIM total_add = 0
@@ -389,6 +583,7 @@ DIM sp_t[N_SPARK]
 DIM sp_i = 0
 DIM s = 0
 DIM b = 0
+DIM w = 0
 DIM heatk = 0.0
 DIM shade = 0.0
 DIM heat = 0.0
@@ -420,10 +615,10 @@ DO WHILE running = 1
     CLS
 
     IF film_t < HOLD_TITLE THEN
-        CENTERTEXT CY - 46, "a repository, from the first commit", 120, 200, 255
-        CENTERTEXT CY - 12, reponame$, 255, 255, 255
-        CENTERTEXT CY + 26, DATESTR$(t_first) + "  to  " + DATESTR$(t_last), 150, 150, 165
-        CENTERTEXT CY + 50, STR$(n_com) + " commits, " + STR$(n_path) + " files", 150, 150, 165
+        CENTERTEXT CY - INT(46 * SC), "a repository, from the first commit", 120, 200, 255
+        CENTERTEXT CY - INT(12 * SC), reponame$, 255, 255, 255
+        CENTERTEXT CY + INT(26 * SC), DATESTR$(t_first) + "  to  " + DATESTR$(t_last), 150, 150, 165
+        CENTERTEXT CY + INT(50 * SC), STR$(n_com) + " commits, " + STR$(n_path) + " files", 150, 150, 165
     ELSE
         IF ci_next < n_com THEN now_t = now_t + dt * speed * 86400.0
 
@@ -443,8 +638,8 @@ DO WHILE running = 1
                 ENDIF
                 psize[k] = psize[k] + evl[ev]
                 total_add = total_add + evl[ev]
-                prad[k] = 1.2 + 1.35 * LOG(1 + psize[k] / 55.0)
-                IF prad[k] > 6.5 THEN prad[k] = 6.5
+                prad[k] = (1.2 + 1.35 * LOG(1 + psize[k] / 55.0)) * SC
+                IF prad[k] > 6.5 * SC THEN prad[k] = 6.5 * SC
                 pheat[k] = 1.0
                 sp_f[sp_i] = k
                 sp_t[sp_i] = film_t
@@ -479,7 +674,11 @@ DO WHILE running = 1
                     fade = 1.0 - age / SPARK_LIFE
                     fade = fade * fade
                     DRAWCOLOR INT(40 + 190 * fade), INT(50 + 175 * fade), INT(70 + 150 * fade)
-                    LINE INT(CX + dx[d]), INT(CY + dy[d]), INT(px[k]), INT(py[k])
+                    ' A beam is one pixel wide whatever the canvas, so on a big
+                    ' one it is redrawn a few times side by side to stay visible.
+                    FOR w = 0 TO INT(SC) - 1
+                        LINE INT(CX + dx[d]) + w, INT(CY + dy[d]), INT(px[k]) + w, INT(py[k])
+                    NEXT w
                 ELSE
                     sp_t[s] = 0
                 ENDIF
@@ -492,21 +691,21 @@ DO WHILE running = 1
             lum = heat
             IF finale > lum THEN lum = finale
             shade = 0.32 + 0.68 * lum
-            CIRCLE INT(px[k]), INT(py[k]), prad[k] + heat * 2.4, 1, INT(pcr[k] * shade), INT(pcg[k] * shade), INT(pcb[k] * shade)
+            CIRCLE INT(px[k]), INT(py[k]), prad[k] + heat * 2.4 * SC, 1, INT(pcr[k] * shade), INT(pcg[k] * shade), INT(pcb[k] * shade)
             IF heat > 0.62 THEN
-                CIRCLE INT(px[k]), INT(py[k]), prad[k] + 3.5 + heat * 2.5, 0, INT(pcr[k] * 0.62 * heat), INT(pcg[k] * 0.62 * heat), INT(pcb[k] * 0.62 * heat)
+                CIRCLE INT(px[k]), INT(py[k]), prad[k] + (3.5 + heat * 2.5) * SC, 0, INT(pcr[k] * 0.62 * heat), INT(pcg[k] * 0.62 * heat), INT(pcb[k] * 0.62 * heat)
             ENDIF
         NEXT b
 
-        TEXT 24, 24, DATESTR$(now_t), 255, 255, 255
-        TEXT 24, 46, "commit " + STR$(ci_next) + " / " + STR$(n_com), 120, 200, 255
+        TEXT INT(24 * SC), INT(24 * SC), DATESTR$(now_t), 255, 255, 255
+        TEXT INT(24 * SC), INT(46 * SC), "commit " + STR$(ci_next) + " / " + STR$(n_com), 120, 200, 255
         IF finale > 0.35 THEN
-            CENTERTEXT SCR_H - 58, reponame$ + "   " + STR$(n_com) + " commits   " + STR$(n_born) + " files   " + STR$(INT(total_add / 1000)) + "k lines", 190, 195, 210
+            CENTERTEXT SCR_H - INT(58 * SC), reponame$ + "   " + STR$(n_com) + " commits   " + STR$(n_born) + " files   " + STR$(INT(total_add / 1000)) + "k lines", 190, 195, 210
         ELSE
-            TEXT 24, SCR_H - 58, CUT$(subj$, 92), 190, 195, 210
+            TEXT INT(24 * SC), SCR_H - INT(58 * SC), CUT$(subj$, 92), 190, 195, 210
         ENDIF
-        TEXT SCR_W - 300, 24, "files  " + STR$(n_born), 150, 155, 170
-        TEXT SCR_W - 300, 46, "lines  " + STR$(INT(total_add / 1000)) + "k added", 150, 155, 170
+        TEXT SCR_W - INT(300 * SC), INT(24 * SC), "files  " + STR$(n_born), 150, 155, 170
+        TEXT SCR_W - INT(300 * SC), INT(46 * SC), "lines  " + STR$(INT(total_add / 1000)) + "k added", 150, 155, 170
 
         FOR lx = 0 TO 5
             IF lx = 0 THEN legcol = EXTCOL("jdb")
@@ -515,13 +714,13 @@ DO WHILE running = 1
             IF lx = 3 THEN legcol = EXTCOL("html")
             IF lx = 4 THEN legcol = EXTCOL("md")
             IF lx = 5 THEN legcol = EXTCOL("png")
-            CIRCLE SCR_W - 292, SCR_H - 150 + lx * 20, 4, 1, legcol[0], legcol[1], legcol[2]
-            TEXT SCR_W - 278, SCR_H - 157 + lx * 20, legend$[lx], 130, 135, 150
+            CIRCLE SCR_W - INT(292 * SC), SCR_H - INT((150 - lx * 20) * SC), 4 * SC, 1, legcol[0], legcol[1], legcol[2]
+            TEXT SCR_W - INT(278 * SC), SCR_H - INT((157 - lx * 20) * SC), legend$[lx], 130, 135, 150
         NEXT lx
 
         barw = INT(SCR_W * ci_next / n_com)
-        RECT 0, SCR_H - 4, SCR_W, 4, 1, 22, 26, 36
-        RECT 0, SCR_H - 4, barw, 4, 1, 80, 200, 255
+        RECT 0, SCR_H - INT(4 * SC), SCR_W, INT(4 * SC), 1, 22, 26, 36
+        RECT 0, SCR_H - INT(4 * SC), barw, INT(4 * SC), 1, 80, 200, 255
 
         IF ci_next >= n_com THEN
             IF done_t = 0 THEN done_t = film_t
