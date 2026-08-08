@@ -1241,11 +1241,45 @@ ENDFUNC
 ' survive a reload and follow the name to another device.
 CONST DECK_SLOTS = 3
 
+' A stored deck goes stale when a card is renamed or dropped from the table:
+' the name stays in the profile, the client cannot show it, and the slot looks
+' like it only holds five. Decks are checked when they are saved but were
+' never checked when they are read, so repair here. Everything that still
+' exists is kept in place and the gap is filled from the default deck.
+FUNC REPAIRDECK(d)
+    IF DECKOK(d) = 1 THEN RETURN d
+    DIM cs = ARENA.CARDS()
+    DIM out = []
+    DIM seen AS MAP = {}
+    DIM i
+    IF TYPEOF(d) = "ARRAY" THEN
+        FOR i = 0 TO LEN(d) - 1
+            DIM k$ = "" + d[i]
+            IF MAP.EXISTS(cs, k$) ANDALSO NOT MAP.EXISTS(seen, k$) THEN
+                out = APPEND(out, [k$])
+                seen{k$} = 1
+            ENDIF
+        NEXT i
+    ENDIF
+    DIM fill = DEFAULTDECK()
+    FOR i = 0 TO LEN(fill) - 1
+        IF LEN(out) >= 6 THEN EXITFOR
+        IF NOT MAP.EXISTS(seen, fill[i]) THEN
+            out = APPEND(out, [fill[i]])
+            seen{fill[i]} = 1
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
 SUB ENSUREDECKS(s)
     DIM out = s{"DECKS"}
     DIM i
     FOR i = LEN(out) TO DECK_SLOTS - 1
         out = APPEND(out, [{ "NAME": "Deck " + STR$(i + 1), "CARDS": DEFAULTDECK() }])
+    NEXT i
+    FOR i = 0 TO LEN(out) - 1
+        out[i]{"CARDS"} = REPAIRDECK(out[i]{"CARDS"})
     NEXT i
     s{"DECKS"} = out
     IF s{"ACTIVE"} < 0 ORELSE s{"ACTIVE"} >= DECK_SLOTS THEN s{"ACTIVE"} = 0
