@@ -33,7 +33,7 @@ ENDFUNC
 FUNC LAYOUTOF(n)
     DIM all = VEIN.LAYOUTS()
     DIM spec AS MAP = { "N": n, "GEN": { "KIND": "SERPENTINE", "LANE": 8, _
-        "MACHSTEP": 12, "MACH": "OFEN", "SRCSTEP": 48, "GOOD": "ROHERZ", "PLAYER": 1 } }
+        "MACHSTEP": 12, "MACH": "SCHMELZE", "SRCSTEP": 48, "GOOD": "REGOLITH", "PLAYER": 1 } }
     all{"MESS"} = spec
     VEIN.SETLAYOUTS(all)
     RETURN VEIN.NEWGAME("MESS")
@@ -59,14 +59,19 @@ FOR si = 0 TO LEN(sizes) - 1
     NEXT warm
     plain{"ITEM"} = (plain{"DIR"} > 0) * 1
 
-    ' the reference: one elementwise operation over the whole grid
+    ' The reference: one elementwise operation over the whole grid. Every
+    ' number in the row is quoted against it, so it is measured twice and the
+    ' first run thrown away - a short reference makes the whole table wobble.
     DIM probe = full{"ITEM"} + 0
-    DIM t0 = TICK()
     DIM k
     FOR k = 1 TO 200
+        DIM warmone = probe * 2
+    NEXT k
+    DIM t0 = TICK()
+    FOR k = 1 TO 800
         DIM one = probe * 2
     NEXT k
-    DIM ms_pass = (TICK() - t0) / 200.0
+    DIM ms_pass = (TICK() - t0) / 800.0
 
     t0 = TICK()
     FOR k = 1 TO REPS
@@ -103,12 +108,16 @@ DIM budget_ms = 1000.0 / HZ
 PRINT "Bei "; HZ; " Hz hat ein Tick "; budget_ms; " ms."
 DIM ref = LAYOUTOF(128)
 DIM p128 = ref{"ITEM"} + 0
+DIM warmj
+FOR warmj = 1 TO 200
+    DIM warm2 = p128 * 2
+NEXT warmj
 DIM t1 = TICK()
 DIM j
-FOR j = 1 TO 200
+FOR j = 1 TO 800
     DIM one2 = p128 * 2
 NEXT j
-DIM pass128 = (TICK() - t1) / 200.0
+DIM pass128 = (TICK() - t1) / 800.0
 PRINT "Auf 128x128 kostet ein Durchlauf "; INT(pass128 * 1000) / 1000.0; " ms,"
 PRINT "das Budget sind also rund "; INT(budget_ms / pass128); " Durchlaeufe je Tick."
 PRINT ""

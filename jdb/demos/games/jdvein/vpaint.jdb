@@ -20,17 +20,24 @@ EXPORT FUNC BASE(st)
     DIM isgnd = 1 - isbelt - ismach
 
     DIM cg = PACK(p{"ground"}{"COLOR"})
-    DIM cb = PACK(p{"belts"}{"BAND"}{"COLOR"})
+    DIM cb = PACK(p{"belts"}{VEIN.BELTNAME()}{"COLOR"})
     DIM out = isgnd * cg + isbelt * cb
 
-    ' every machine kind paints itself, which is one pass per kind and only
-    ' ever paid at layout time
+    ' Every machine kind paints itself. A cell carries no kind after it is
+    ' built - only its recipe - so the kind is recovered from the recipe, and
+    ' that costs one pass per kind at layout time and nothing per frame.
     DIM ms = p{"machines"}
-    DIM firstmach = 0
     FOR EACH k$ IN MAP.KEYS(ms)
-        IF firstmach = 0 THEN firstmach = PACK(ms{k$}{"COLOR"})
+        DIM mk = ms{k$}
+        DIM sel = ismach * (st{"MACHCD0"} = mk{"DWELL"})
+        IF VEIN.ISMINER(mk) = 1 THEN
+            sel = sel * (st{"NEED1"} = 0) * (st{"MACHOUT"} = VEIN.GOODID("" + mk{"MINES"}))
+        ELSE
+            sel = sel * (st{"MACHOUT"} = VEIN.GOODID("" + mk{"OUT"}))
+        ENDIF
+        out = out * (1 - sel) + sel * PACK(mk{"COLOR"})
     NEXT k$
-    RETURN out + ismach * firstmach
+    RETURN out
 ENDFUNC
 
 ' The moving half. Two passes per good kind, which is the price of having no

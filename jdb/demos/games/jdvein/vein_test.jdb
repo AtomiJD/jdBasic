@@ -90,7 +90,7 @@ st3 = VEIN.REBUILD(st3)
 DIM i3 = st3{"ITEM"}
 DIM ci
 FOR ci = 3 TO 6
-    i3[10][ci] = VEIN.GOODID("ROHERZ")
+    i3[10][ci] = VEIN.GOODID("REGOLITH")
 NEXT ci
 st3{"ITEM"} = i3
 FOR t = 1 TO 200
@@ -113,11 +113,11 @@ NEXT t
 DIM n_del = st4{"DELIVERED"}[1]
 CHECK("the port keeps receiving", STR$(n_del > 3), "TRUE")
 CHECK("ingots arrive", STR$(VEIN.GOTBY(st4, 1, "BARREN") > 0), "TRUE")
-CHECK("raw ore rides past a busy furnace", STR$(VEIN.GOTBY(st4, 1, "ROHERZ") > 0), "TRUE")
+CHECK("raw ore rides past a busy furnace", STR$(VEIN.GOTBY(st4, 1, "REGOLITH") > 0), "TRUE")
 CHECK("and the two add up to the crate count", _
-    STR$(VEIN.GOTBY(st4, 1, "BARREN") + VEIN.GOTBY(st4, 1, "ROHERZ")), STR$(n_del))
+    STR$(VEIN.GOTBY(st4, 1, "BARREN") + VEIN.GOTBY(st4, 1, "REGOLITH")), STR$(n_del))
 CHECK("the score is what the books say", STR$(st4{"SCORE"}[1]), _
-    STR$(VEIN.GOTBY(st4, 1, "BARREN") * 5 + VEIN.GOTBY(st4, 1, "ROHERZ")))
+    STR$(VEIN.GOTBY(st4, 1, "BARREN") * 5 + VEIN.GOTBY(st4, 1, "REGOLITH")))
 
 PRINT "--- a seam is finite"
 
@@ -155,7 +155,7 @@ DIM st11 = VEIN.NEWGAME("WERK")
 FOR t = 1 TO 600
     st11 = VEIN.ADVANCE(st11)
 NEXT t
-CHECK("the works make finished parts", STR$(VEIN.GOTBY(st11, 1, "BAUTEIL") > 3), "TRUE")
+CHECK("the works make finished parts", STR$(VEIN.GOTBY(st11, 1, "ZUENDKERN") > 3), "TRUE")
 CHECK("which needed both seams", STR$(st11{"MINED"} > 0), "TRUE")
 
 ' The same works with the crystal branch missing. This is the 2v2 rule in a
@@ -165,16 +165,16 @@ DIM st12 = VEIN.NEWGAME("WERKHALB")
 FOR t = 1 TO 600
     st12 = VEIN.ADVANCE(st12)
 NEXT t
-CHECK("half a chain makes no finished part", STR$(VEIN.GOTBY(st12, 1, "BAUTEIL")), "0")
+CHECK("half a chain makes no finished part", STR$(VEIN.GOTBY(st12, 1, "ZUENDKERN")), "0")
 CHECK("  and the press is left holding stock", STR$(VEIN.INBUFFERS(st12) > 0), "TRUE")
 
 PRINT "--- building and unbuilding"
 
 DIM st5 = VEIN.NEWGAME("KETTE")
-CHECK("a belt goes down", VEIN.PLACE(st5, 20, 20, "BAND", 2), "")
-CHECK("off the grid is refused", VEIN.PLACE(st5, -1, 20, "BAND", 2), "msg_offgrid")
-CHECK("an unknown part is refused", VEIN.PLACE(st5, 20, 21, "SCHWEBEBAHN", 2), "msg_unknown")
-CHECK("a part without a direction is refused", VEIN.PLACE(st5, 20, 21, "BAND", 0), "msg_nodir")
+CHECK("a belt goes down", VEIN.PLACE(st5, 20, 20, "BAHN", 2), "")
+CHECK("off the grid is refused", VEIN.PLACE(st5, -1, 20, "BAHN", 2), "msg_offgrid")
+CHECK("an unknown part is refused", VEIN.PLACE(st5, 20, 21, "GLEITKISSEN", 2), "msg_unknown")
+CHECK("a part without a direction is refused", VEIN.PLACE(st5, 20, 21, "BAHN", 0), "msg_nodir")
 DIM built = VEIN.COUNTBUILT(st5)
 DIM w5$ = VEIN.UNBUILD(st5, 20, 20)
 CHECK("and comes up again", STR$(VEIN.COUNTBUILT(st5)), STR$(built - 1))
@@ -185,8 +185,7 @@ PRINT "--- the data drives the rules"
 ' four ticks faster has to deliver sooner. Nothing in vein.jdb knows this.
 DIM p = VEIN.PARTS()
 DIM quick = JSON.PARSE$(JSON.STRINGIFY$(p))
-quick{"machines"}{"OFEN"}{"DWELL"} = 2
-quick{"machines"}{"PRESSE"}{"DWELL"} = 2
+quick{"machines"}{"SCHMELZE"}{"DWELL"} = 2
 
 ' Refined output is what has to grow, not crate count: a slow furnace lets
 ' more raw ore ride past, which would flatter the crate count.
@@ -220,6 +219,73 @@ NEXT t
 CHECK("written out and read back, it runs the same", _
     STR$(copy{"DELIVERED"}[1]) + "/" + STR$(VEIN.COUNTGOODS(copy)), _
     STR$(st8{"DELIVERED"}[1]) + "/" + STR$(VEIN.COUNTGOODS(st8)))
+
+PRINT "--- a drag lays a run and turns the corner"
+
+DIM st13 = VEIN.NEWGAME("REVIER40")
+DIM base13 = VEIN.COUNTBUILT(st13)
+DIM w13$ = VEIN.APPLY(st13, { "T": "DRAG", "R": 6, "C": 6, "R2": 6, "C2": 34 })
+CHECK("a straight drag is accepted", w13$, "")
+CHECK("and lays every cell it crossed", STR$(VEIN.COUNTBUILT(st13) - base13), "29")
+
+DIM st14 = VEIN.NEWGAME("REVIER40")
+DIM base14 = VEIN.COUNTBUILT(st14)
+DIM w14$ = VEIN.APPLY(st14, { "T": "DRAG", "R": 6, "C": 6, "R2": 16, "C2": 16 })
+DIM d14 = st14{"DIR"}
+CHECK("a corner drag runs east first", STR$(d14[6][10]), "2")
+CHECK("  turns at the corner", STR$(d14[6][16]), "3")
+CHECK("  and carries on south", STR$(d14[12][16]), "3")
+CHECK("  for the right number of cells", STR$(VEIN.COUNTBUILT(st14) - base14), "21")
+
+DIM w15$ = VEIN.APPLY(st14, { "T": "SPRENGEN", "R": 1, "C": 1 })
+CHECK("an unknown command is refused", w15$, "msg_badcmd")
+
+PRINT "--- a whole factory, built by command only"
+
+' Nothing below reaches into a state. This is the gate for the phase: the log
+' is the match, and replaying it has to land on the same numbers.
+DIM plan = [ _
+    { "T": "DRAG", "R": 6, "C": 6, "R2": 6, "C2": 34 }, _
+    { "T": "DRAG", "R": 6, "C": 34, "R2": 18, "C2": 34 }, _
+    { "T": "DRAG", "R": 30, "C": 8, "R2": 7, "C2": 20 }, _
+    { "T": "PLACE", "R": 6, "C": 6, "K": "SCHUERFER", "D": "E" }, _
+    { "T": "PLACE", "R": 30, "C": 8, "K": "RESONATOR", "D": "E" }, _
+    { "T": "PLACE", "R": 6, "C": 12, "K": "SCHMELZE", "D": "E" }, _
+    { "T": "PLACE", "R": 14, "C": 20, "K": "RAFFINERIE", "D": "N" }, _
+    { "T": "PLACE", "R": 6, "C": 26, "K": "KOPPLER", "D": "E" }, _
+    { "T": "TICK", "N": 800 } ]
+
+DIM live = VEIN.NEWGAME("REVIER40")
+DIM log = VEIN.NEWLOG("REVIER40")
+DIM refused = 0
+DIM cmdi
+FOR cmdi = 0 TO LEN(plan) - 1
+    IF VEIN.ACT(live, log, plan[cmdi]) <> "" THEN refused = refused + 1
+NEXT cmdi
+CHECK("every command went through", STR$(refused), "0")
+CHECK("and every one was written down", STR$(LEN(log{"CMDS"})), STR$(LEN(plan)))
+CHECK("the works reach the top tier", STR$(VEIN.GOTBY(live, 1, "ZUENDKERN") > 0), "TRUE")
+CHECK("both seams were worked", STR$(live{"MINED"} > 20), "TRUE")
+
+DIM again = VEIN.REPLAY(log)
+CHECK("the log replays to the same match", VEIN.FINGER(again), VEIN.FINGER(live))
+CHECK("the parts table it was played on is the current one", VEIN.LOGDRIFT(log), "")
+
+' A fingerprint that cannot tell two different matches apart would make the
+' check above meaningless, so one command is dropped and it has to differ.
+DIM shortlog = VEIN.NEWLOG("REVIER40")
+DIM sc = log{"CMDS"}
+DIM si2
+FOR si2 = 0 TO LEN(sc) - 2
+    shortlog{"CMDS"} = APPEND(shortlog{"CMDS"}, [sc[si2]])
+NEXT si2
+DIM cutrun = VEIN.REPLAY(shortlog)
+CHECK("a log missing its last move lands elsewhere", _
+    STR$(VEIN.FINGER(cutrun) <> VEIN.FINGER(live)), "TRUE")
+
+VEIN.SETPARTS(quick)
+CHECK("and a log from other rules says so", VEIN.LOGDRIFT(log), "msg_otherparts")
+VEIN.SETPARTS(p)
 
 PRINT ""
 PRINT "vein_test: passed "; pass; ", failed "; fail

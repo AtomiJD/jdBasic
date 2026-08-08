@@ -1,0 +1,15 @@
+{
+  "LAYOUT": "REVIER40",
+  "FP": "",
+  "CMDS": [
+    { "T": "DRAG", "R": 6, "C": 6, "R2": 6, "C2": 34 },
+    { "T": "DRAG", "R": 6, "C": 34, "R2": 18, "C2": 34 },
+    { "T": "DRAG", "R": 30, "C": 8, "R2": 7, "C2": 20 },
+    { "T": "PLACE", "R": 6, "C": 6, "K": "SCHUERFER", "D": "E" },
+    { "T": "PLACE", "R": 30, "C": 8, "K": "RESONATOR", "D": "E" },
+    { "T": "PLACE", "R": 6, "C": 12, "K": "SCHMELZE", "D": "E" },
+    { "T": "PLACE", "R": 14, "C": 20, "K": "RAFFINERIE", "D": "N" },
+    { "T": "PLACE", "R": 6, "C": 26, "K": "KOPPLER", "D": "E" },
+    { "T": "TICK", "N": 400 }
+  ]
+}

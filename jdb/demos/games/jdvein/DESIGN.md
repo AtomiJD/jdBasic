@@ -15,20 +15,22 @@ tick spends 80. Roughly 120 passes are left to buy mechanics with.
 
 | what | passes | where the number comes from |
 |---|---|---|
-| belts, the mover | 55 | measured, `passcost.jdb` |
-| machines, recipes, mining, ports | 67 | measured, same |
+| belts, the mover | 53 | measured, `passcost.jdb` |
+| machines, recipes, mining, ports | 68 | measured, same |
 | ownership flood | 12 | estimate, a dilate along own build |
 | pressure diffusion | 24 | estimate, two CONVOLVE passes plus masking |
 | decay on flipped cells | 10 | estimate |
-| **sum** | **168** | 45 left of 213 |
+| **sum** | **167** | 32 left of 199 |
 
-Painting is charged per **frame**, not per tick, and measures 24 passes. At 60
+Painting is charged per **frame**, not per tick, and measures 27 passes. At 60
 frames against 20 ticks that is the larger bill, and still not the problem.
 
-The machine row doubled between P0 and P1, from 32 to 67, and that is the
+The machine row doubled between P0 and P1, from 32 to 68, and that is the
 useful part of keeping this table: buffers, a second input and the mining gate
 cost what they cost, it was visible the day they landed, and there is still
-room for the front.
+room for the front. **32 passes is not much room.** The front is the last
+thing that fits at this grid size, and anything after it has to be paid for by
+making something else cheaper.
 
 That table is the design document. A mechanic that does not fit does not go
 in, and nobody has to argue about it. `passcost.jdb` regenerates the measured

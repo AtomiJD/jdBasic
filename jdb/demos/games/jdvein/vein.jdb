@@ -56,16 +56,25 @@ ENDSUB
 EXPORT FUNC PARTS()
     IF TYPEOF(loaded_parts) = "OBJECT" THEN RETURN loaded_parts
     DIM p AS MAP = {}
-    p{"goods"} = { "ROHERZ": { "ID": 1, "COLOR": [90, 170, 255], "SCORE": 1 }, _
+    p{"goods"} = { "REGOLITH": { "ID": 1, "COLOR": [130, 150, 175], "SCORE": 1 }, _
                    "BARREN": { "ID": 3, "COLOR": [255, 205, 90], "SCORE": 5 } }
-    p{"belts"} = { "BAND": { "COLOR": [46, 54, 88], "COST": 1 } }
+    p{"belts"} = { "BAHN": { "COLOR": [46, 54, 88], "COST": 1 } }
     p{"machines"} = { _
-        "BOHRER": { "MINES": "ROHERZ", "DWELL": 3, "COLOR": [108, 132, 150], "COST": 4 }, _
-        "OFEN": { "IN": "ROHERZ", "NEED": 2, "OUT": "BARREN", "DWELL": 6, _
-                  "COLOR": [150, 112, 44], "COST": 5 } }
+        "SCHUERFER": { "MINES": "REGOLITH", "DWELL": 3, "COLOR": [108, 132, 150], "COST": 4 }, _
+        "SCHMELZE": { "IN": "REGOLITH", "NEED": 2, "OUT": "BARREN", "DWELL": 6, _
+                      "COLOR": [168, 104, 52], "COST": 5 } }
     p{"ore"} = { "COLOR": [34, 52, 74] }
     p{"ground"} = { "COLOR": [10, 14, 26] }
     RETURN p
+ENDFUNC
+
+' The one belt kind, whatever the data calls it. A layout stroke and a drag
+' both need it and neither should have the name written into them.
+EXPORT FUNC BELTNAME()
+    FOR EACH k$ IN MAP.KEYS(PARTS(){"belts"})
+        RETURN k$
+    NEXT k$
+    RETURN ""
 ENDFUNC
 
 DIM loaded_layouts = 0
@@ -76,7 +85,7 @@ ENDSUB
 EXPORT FUNC LAYOUTS()
     IF TYPEOF(loaded_layouts) = "OBJECT" THEN RETURN loaded_layouts
     RETURN { "SCHLANGE40": { "N": 40, "GEN": { "KIND": "SERPENTINE", "LANE": 8, _
-        "MACHSTEP": 12, "MACH": "OFEN", "SRCSTEP": 48, "GOOD": "ROHERZ", "PLAYER": 1 } } }
+        "MACHSTEP": 12, "MACH": "SCHMELZE", "SRCSTEP": 48, "GOOD": "REGOLITH", "PLAYER": 1 } } }
 ENDFUNC
 
 EXPORT FUNC GOODID(name$)
@@ -286,7 +295,7 @@ FUNC APPLYSTROKES(st, strokes)
             DIM dc = DCOF(d)
             DIM k
             FOR k = 0 TO s{"LEN"} - 1
-                DIM w0$ = PLACE(st, r + dr * k, c + dc * k, "BAND", d)
+                DIM w0$ = PLACE(st, r + dr * k, c + dc * k, BELTNAME(), d)
             NEXT k
         ELSEIF op$ = "CELL" THEN
             DIM w1$ = PLACE(st, r, c, "" + s{"KIND"}, DIRNO("" + s{"DIR"}))
@@ -301,6 +310,11 @@ FUNC APPLYSTROKES(st, strokes)
         ELSEIF op$ = "SRC" THEN
             st = PUTSOURCE(st, r, c, "" + s{"GOOD"})
         ELSEIF op$ = "SINK" THEN
+            ' a port has to be reachable, so a stroke may lay the cell it
+            ' stands on rather than relying on a run happening to end there
+            IF MAP.EXISTS(s, "DIR") THEN
+                DIM w5$ = PLACE(st, r, c, BELTNAME(), DIRNO("" + s{"DIR"}))
+            ENDIF
             st = PUTSINK(st, r, c, s{"PLAYER"})
         ENDIF
     NEXT si
@@ -493,6 +507,132 @@ ENDFUNC
 EXPORT FUNC INBUFFERS(st)
     DIM n = st{"N"}
     RETURN SUM(RESHAPE(st{"BUF1"} + st{"BUF2"}, [n * n]))
+ENDFUNC
+
+' ------------------------------------------------------------ the commands ---
+'
+' Nothing outside this module may reach into a state. Everything a player does
+' arrives as a command, which is what makes a match a seed plus a list instead
+' of a grid nobody can ship:
+'
+'   { "T": "PLACE", "P": 1, "R": 10, "C": 5, "K": "SCHMELZE", "D": "E" }
+'   { "T": "DRAG",  "P": 1, "R": 10, "C": 5, "R2": 10, "C2": 30 }
+'   { "T": "CLEAR", "P": 1, "R": 10, "C": 5 }
+'   { "T": "TICK",  "N": 40 }
+'
+' A drag lays a run from one cell to the other and turns the corner where it
+' has to, because placing a belt one cell at a time is not a game.
+
+FUNC LEG(st, r, c, d, steps, kind$)
+    DIM dr = DROF(d)
+    DIM dc = DCOF(d)
+    DIM k
+    FOR k = 0 TO steps
+        DIM why$ = PLACE(st, r + dr * k, c + dc * k, kind$, d)
+        IF why$ <> "" THEN RETURN why$
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' Column leg first, then row leg. The corner cell ends up carrying the second
+' direction because the second leg starts on it and overwrites it.
+FUNC DRAGRUN(st, r1, c1, r2, c2)
+    DIM belt$ = BELTNAME()
+    DIM why$ = ""
+    IF c2 <> c1 THEN
+        DIM dh = 2
+        IF c2 < c1 THEN dh = 4
+        why$ = LEG(st, r1, c1, dh, ABS(c2 - c1), belt$)
+        IF why$ <> "" THEN RETURN why$
+    ENDIF
+    IF r2 <> r1 THEN
+        DIM dv = 3
+        IF r2 < r1 THEN dv = 1
+        why$ = LEG(st, r1, c2, dv, ABS(r2 - r1), belt$)
+    ENDIF
+    IF c2 = c1 ANDALSO r2 = r1 THEN why$ = PLACE(st, r1, c1, belt$, 2)
+    RETURN why$
+ENDFUNC
+
+' A direction arrives as "E" from a recording and as 2 from a caller that
+' already knows. Both are accepted so a log stays readable.
+FUNC ASDIR(v)
+    IF TYPEOF(v) = "STRING" THEN RETURN DIRNO("" + v)
+    RETURN v
+ENDFUNC
+
+EXPORT FUNC APPLY(st, cmd)
+    DIM t$ = UCASE$("" + cmd{"T"})
+    DIM why$ = "msg_badcmd"
+    DIM built = 0
+    IF t$ = "PLACE" THEN
+        why$ = PLACE(st, cmd{"R"}, cmd{"C"}, "" + cmd{"K"}, ASDIR(cmd{"D"}))
+        built = 1
+    ELSEIF t$ = "DRAG" THEN
+        why$ = DRAGRUN(st, cmd{"R"}, cmd{"C"}, cmd{"R2"}, cmd{"C2"})
+        built = 1
+    ELSEIF t$ = "CLEAR" THEN
+        why$ = UNBUILD(st, cmd{"R"}, cmd{"C"})
+        built = 1
+    ELSEIF t$ = "TICK" THEN
+        DIM k
+        FOR k = 1 TO cmd{"N"}
+            st = ADVANCE(st)
+        NEXT k
+        why$ = ""
+    ENDIF
+    IF built = 1 ANDALSO why$ = "" THEN st = REBUILD(st)
+    RETURN why$
+ENDFUNC
+
+' A recording is only replayable against the rules it was made under, so it
+' carries a fingerprint of the parts table it was played on. A replay that
+' finds a different one says so instead of reporting a false result.
+EXPORT FUNC PARTSFP()
+    DIM fp$ = "?"
+    TRY
+        fp$ = MID$(CODEC.SHA256$(JSON.STRINGIFY$(PARTS())), 0, 12)
+    CATCH
+    ENDTRY
+    RETURN fp$
+ENDFUNC
+
+EXPORT FUNC NEWLOG(layout$)
+    RETURN { "LAYOUT": layout$, "FP": PARTSFP(), "CMDS": [] }
+ENDFUNC
+
+' Do it and write it down in one move, so a log cannot fall out of step with
+' the state it describes.
+EXPORT FUNC ACT(st, log, cmd)
+    DIM why$ = APPLY(st, cmd)
+    IF why$ = "" THEN log{"CMDS"} = APPEND(log{"CMDS"}, [cmd])
+    RETURN why$
+ENDFUNC
+
+EXPORT FUNC REPLAY(log)
+    DIM st = NEWGAME("" + log{"LAYOUT"})
+    DIM cmds = log{"CMDS"}
+    DIM i
+    FOR i = 0 TO LEN(cmds) - 1
+        DIM why$ = APPLY(st, cmds[i])
+    NEXT i
+    RETURN st
+ENDFUNC
+
+EXPORT FUNC LOGDRIFT(log)
+    IF ("" + log{"FP"}) <> PARTSFP() THEN RETURN "msg_otherparts"
+    RETURN ""
+ENDFUNC
+
+' Everything a replay has to reproduce, in one comparable string.
+EXPORT FUNC FINGER(st)
+    DIM n = st{"N"}
+    RETURN STR$(st{"TICK"}) + "/" + STR$(COUNTBUILT(st)) + "/" + STR$(COUNTGOODS(st)) _
+        + "/" + STR$(ORELEFT(st)) + "/" + STR$(INBUFFERS(st)) _
+        + "/" + STR$(st{"MINED"}) + "/" + STR$(st{"DELIVERED"}[1]) _
+        + "/" + STR$(st{"SCORE"}[1]) _
+        + "/" + STR$(SUM(RESHAPE(st{"DIR"} * 1, [n * n]))) _
+        + "/" + STR$(SUM(RESHAPE(st{"ITEM"} * 1, [n * n])))
 ENDFUNC
 
 ' Where a single good sits. Only for tests and tools - it walks the grid.

@@ -17,23 +17,35 @@ ENDTRY
 
 DIM args = OS.ARGS()
 DIM layout$ = "SCHLANGE"
+DIM logfile$ = ""
 DIM shot = 0
 DIM ai
 FOR ai = 1 TO LEN(args) - 1
     IF args[ai] = "--shot" THEN
         shot = 1
-    ELSE
+    ELSEIF args[ai] = "--log" ANDALSO ai + 1 < LEN(args) THEN
+        logfile$ = args[ai + 1]
+        ai = ai + 1
+    ELSEIF LEFT$(args[ai], 2) <> "--" THEN
         layout$ = UCASE$(args[ai])
     ENDIF
 NEXT ai
 
-DIM all = VEIN.LAYOUTS()
-IF NOT MAP.EXISTS(all, layout$) THEN
-    PRINT layout$; " gibt es nicht"
-    END
+DIM st = 0
+IF logfile$ <> "" THEN
+    ' a recording is the match: the factory below was never placed by hand
+    DIM log = JSON.PARSE$(TXTREADER$(logfile$))
+    layout$ = "" + log{"LAYOUT"}
+    st = VEIN.REPLAY(log)
+    PRINT "nachgespielt: "; LEN(log{"CMDS"}); " Befehle auf "; layout$
+ELSE
+    DIM all = VEIN.LAYOUTS()
+    IF NOT MAP.EXISTS(all, layout$) THEN
+        PRINT layout$; " gibt es nicht"
+        END
+    ENDIF
+    st = VEIN.NEWGAME(layout$)
 ENDIF
-
-DIM st = VEIN.NEWGAME(layout$)
 DIM n = st{"N"}
 CONST WIN = 1024
 DIM zoom = INT(WIN / n)
