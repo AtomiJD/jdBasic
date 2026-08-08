@@ -196,6 +196,10 @@
       <dt>Station</dt><dd>Bleibt stehen und verschwindet nach ttl Sekunden.</dd>
       <dt>erzeugt</dt><dd>Alle spawnrate Sekunden spawnn Schiffe der Sorte
         spawns.</dd>
+      <dt>macht Elixier</dt><dd>Alle elixrate Sekunden ein Elixier fuer den
+        Besitzer. Der Deckel von 10 gilt weiter, ein Tropfen in einen vollen
+        Balken ist weg. Was die Karte einbringt, steht in ttl geteilt durch
+        elixrate, minus den kosten.</dd>
       <dt>Flaeche</dt><dd>Radius um das getroffene Ziel, der Schaden abbekommt.
         <b>splashmin</b> ist der Anteil, der am Rand noch ankommt: 1 heisst
         ueberall voll, 0.4 heisst im Zentrum voll und am Rand noch 40 Prozent.
@@ -596,6 +600,7 @@
   const TRAITS = [
     { k:'BUILD',      label:'Station',      add:{ BUILD:1, TTL:30 } },
     { k:'SPAWNS',     label:'erzeugt',      add:{ SPAWNS:'NANOS', SPAWNRATE:3, SPAWNN:1 } },
+    { k:'ELIXRATE',   label:'macht Elixier', add:{ ELIXRATE:6 } },
     { k:'SPLASH',     label:'Flaeche',      add:{ SPLASH:1.5, SPLASHMIN:1 } },
     { k:'TOWERMUL',   label:'gegen Stationen', add:{ TOWERMUL:0.35 } },
     { k:'BUILDMUL',   label:'gegen Gebaeude', add:{ BUILDMUL:1.5 } },

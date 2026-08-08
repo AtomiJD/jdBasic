@@ -415,6 +415,37 @@
     "ICON": "SW",
     "RARITY": "C"
   },
+  "RAFFINERIE": {
+    "SHAPE": [
+      ["BOXR", 20, 31, 15, 5, 2, 0, "DARK", 0],
+      ["BOXR", 20, 21, 11, 10, 5, 0, "HULL", 0],
+      ["DISC", 20, 21, 4.5, "ACCENT", 0.9],
+      ["BAR", 27, 22, 31, 12, 2, "HULL", 0],
+      ["DISC", 31, 10, 2.6, "ACCENT", 0.8],
+      ["BAR", 11, 34, 29, 34, 2, "TEAM", 0.6]
+    ],
+    "COST": 4,
+    "HP": 320,
+    "DMG": 0,
+    "HITSPEED": 1.0,
+    "REACH": 0.5,
+    "AGGRO": 0.5,
+    "SPD": 0.0,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 0,
+    "BUILD": 1,
+    "TTL": 38.0,
+    "ELIXRATE": 6.0,
+    "COLOR": [
+      120,
+      210,
+      255
+    ],
+    "ICON": "RF",
+    "RARITY": "S"
+  },
   "GLUTREGEN": {
     "SHAPE": [
       ["BOXR", 20, 27, 10, 8, 4, 0, "HULL", 0],

@@ -262,6 +262,7 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
             ENDIF
             IF MAP.EXISTS(c, "TTL") THEN u2{"TTL"} = c{"TTL"}
             IF MAP.EXISTS(c, "SPAWNS") THEN u2{"SPAWNCD"} = c{"SPAWNRATE"}
+            IF MAP.EXISTS(c, "ELIXRATE") THEN u2{"ELIXCD"} = c{"ELIXRATE"}
             IF MAP.EXISTS(c, "SHIELD") THEN u2{"SH"} = INT(c{"SHIELD"} * mult)
             st{"NEXTID"} = st{"NEXTID"} + 1
             st{"UNITS"} = APPEND(st{"UNITS"}, u2)
@@ -591,6 +592,21 @@ EXPORT FUNC SIMSTEP(st)
                     DIM bk$ = "" + brood_kinds[bi MOD LEN(brood_kinds)]
                     hatched = APPEND(hatched, [{ "OWNER": u{"OWNER"}, "KIND": bk$, "X": u{"X"}, "Y": u{"Y"}, "SLOT": bi }])
                 NEXT bi
+            ENDIF
+        ENDIF
+
+        ' A refinery pays its owner one elixir per cadence. The pool keeps its
+        ' ceiling, so a drop into a full bar is lost and the card only pays a
+        ' player who keeps spending.
+        IF MAP.EXISTS(u, "ELIXCD") THEN
+            u{"ELIXCD"} = u{"ELIXCD"} - dt
+            IF u{"ELIXCD"} <= 0 THEN
+                u{"ELIXCD"} = c{"ELIXRATE"}
+                DIM eown = u{"OWNER"}
+                DIM epool = st{"ELIXIR"}[eown] + 1.0
+                IF epool > 10 THEN epool = 10
+                st{"ELIXIR"}[eown] = epool
+                ADDEVENT(st, { "T": "SPAWN", "X": u{"X"}, "Y": u{"Y"} })
             ENDIF
         ENDIF
 

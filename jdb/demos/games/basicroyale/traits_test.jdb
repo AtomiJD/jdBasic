@@ -1,6 +1,6 @@
-' Assertions for the five traits a card can now carry without a line of code:
-' SHIELD, DEATHDMG/DEATHSPAWN, CHARGE, HEAL and SLOW. Each is defined here at
-' runtime, so the test doubles as the worked example of how to author one.
+' Assertions for the traits a card can carry without a line of code: SHIELD,
+' DEATHDMG/DEATHSPAWN, CHARGE, HEAL, SLOW and ELIXRATE. Each is defined here
+' at runtime, so the test doubles as the worked example of how to author one.
 '   jdbasic traits_test.jdb
 IMPORT ARENA
 TRY
@@ -151,6 +151,42 @@ DIM slowed = 20.0 - YOF(st6, 1)
 DIM plain = 20.0 - YOF(st6, 2)
 CHECK("the tarred one falls behind", STR$(slowed < plain * 0.7), "TRUE")
 CHECK("  but is still walking", STR$(slowed > 0.5), "TRUE")
+
+PRINT ""
+PRINT "--- ELIXRATE: a building that pays its owner"
+cs{"WERK"} = { "COST": 2, "HP": 300, "DMG": 0, "HITSPEED": 1.0, "REACH": 0.5, _
+    "AGGRO": 0.5, "SPD": 0.0, "N": 1, "FLY": 0, "HITS": "G", "ONLYTOWERS": 0, _
+    "BUILD": 1, "TTL": 14.0, "ELIXRATE": 4.0 }
+ARENA.SETCARDS(cs)
+
+DIM st7 = ARENA.NEWGAME()
+st7{"ELIXIR"}[0] = 10.0
+st7{"QUEUES"}[0] = ["WERK", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+CHECK("the works go up", ARENA.PLAYCARD(st7, 0, "WERK", 5.0, 20.0), "")
+st7{"ELIXIR"} = [0.0, 0.0]
+DIM drops = 0
+DIM held = 0.0
+FOR t = 1 TO 140
+    held = st7{"ELIXIR"}[0]
+    st7 = ARENA.SIMSTEP(st7)
+    ' a whole elixir on top of the trickle is a payout, not the regular drip
+    IF st7{"ELIXIR"}[0] - held > 0.5 THEN drops = drops + 1
+    st7{"ELIXIR"} = [0.0, st7{"ELIXIR"}[1]]
+NEXT t
+CHECK("three payouts before it expires", STR$(drops), "3")
+
+DIM st8 = ARENA.NEWGAME()
+st8{"ELIXIR"}[0] = 10.0
+st8{"QUEUES"}[0] = ["WERK", "DROID", "LASER", "WESPEN", "SPLITTER", "PLASMA"]
+CHECK("a second works go up", ARENA.PLAYCARD(st8, 0, "WERK", 5.0, 20.0), "")
+st8{"ELIXIR"} = [10.0, 10.0]
+DIM over = 0
+FOR t = 1 TO 100
+    st8 = ARENA.SIMSTEP(st8)
+    IF st8{"ELIXIR"}[0] > 10 THEN over = 1
+    st8{"ELIXIR"} = [10.0, st8{"ELIXIR"}[1]]
+NEXT t
+CHECK("a drop into a full pool is lost", STR$(over), "0")
 
 PRINT ""
 PRINT "traits_test: passed "; pass; ", failed "; fail

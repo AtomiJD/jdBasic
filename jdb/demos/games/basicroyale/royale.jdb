@@ -1652,6 +1652,10 @@ SUB DrawCardInfo()
             STATLINE(yy, T$("stat_spawn"), STR$(c{"SPAWNRATE"}) + " " + T$("sec"))
             yy = yy + 38
         ENDIF
+        IF MAP.EXISTS(c, "ELIXRATE") THEN
+            STATLINE(yy, T$("stat_elix"), STR$(c{"ELIXRATE"}) + " " + T$("sec"))
+            yy = yy + 38
+        ENDIF
         IF MAP.EXISTS(c, "TTL") THEN
             STATLINE(yy, T$("stat_life"), STR$(INT(c{"TTL"})) + " " + T$("sec"))
             yy = yy + 38

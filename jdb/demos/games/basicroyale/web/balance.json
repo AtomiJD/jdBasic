@@ -4,6 +4,18 @@
       "date": "2026-08-08",
       "build": "",
       "title": {
+        "de": "RAFFINERIE, die erste Karte die Elixier macht",
+        "en": "RAFFINERIE, the first card that makes elixir"
+      },
+      "note": {
+        "de": "Ein neues Kartenfeld, ELIXRATE: ein Gebaeude zahlt seinem Besitzer alle paar Sekunden ein Elixier. Die RAFFINERIE kostet 4, steht 38 Sekunden und schuettet alle 6 Sekunden aus, macht 6 Stueck. Gemessen ueber 50 Sekunden gegen einen Leerlauf ohne Karte: 23.8 statt 17.8 Elixier, also 6 produziert und unterm Strich 2 mehr als sie gekostet hat. Das sind rund 14 Prozent mehr Einkommen fuer die Dauer. Das Vorbild aus dem Genre liegt bei 8 Prozent, wir gehen bewusst hoeher, weil unsere Karte viel duenner ist. Der Deckel von 10 gilt weiter: ein Tropfen in einen vollen Balken ist verloren, die Karte zahlt nur dem, der auch ausgibt. Abraeumen: PLASMA kostet 4 und toetet sie in einem Schlag, 320 Huelle gegen 325 Schaden, SALVE laesst 200 stehen, SOG 260. Der Tausch ist damit sauber. Wer sie setzt, waehrend der Gegner 4 Elixier und den schweren Zauber auf der Hand hat, macht ein schlechtes Geschaeft.",
+        "en": "A new card field, ELIXRATE: a building pays its owner one elixir every few seconds. RAFFINERIE costs 4, holds its tile for 38 seconds and drops every 6, which makes 6 of them. Measured over 50 seconds against an idle run with no card played: 23.8 elixir instead of 17.8, so 6 produced and 2 more than it cost. That is roughly 14 percent extra income for as long as it stands. The genre reference sits at 8 percent, we go higher on purpose because our card is far thinner. The ceiling of 10 still holds: a drop into a full bar is gone, so the card only pays a player who keeps spending. Removing it: PLASMA costs 4 and kills it in one hit, 320 hull against 325 damage, SALVE leaves 200 standing, SOG 260. That makes the trade clean. Playing it while the opponent holds 4 elixir and the heavy spell is a bad deal."
+      }
+    },
+    {
+      "date": "2026-08-08",
+      "build": "",
+      "title": {
         "de": "IRON, gebaut von Airxzi, zwei Zahlen leichter",
         "en": "IRON, built by Airxzi, two numbers lighter"
       },

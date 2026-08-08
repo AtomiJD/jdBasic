@@ -1,0 +1,119 @@
+' What a refinery actually pays out, and what it takes to remove one.
+'
+'   jdbasic refinery_test.jdb [KARTE]
+'
+' The pool is drained to zero every tick, so the ceiling never swallows a
+' drop and the number reported is gross production. Run against a control
+' with no card played, the difference is what the card is worth.
+
+IMPORT ARENA
+
+DIM raw$ = ""
+TRY
+    raw$ = TXTREADER$("cards.json")
+CATCH
+    PRINT "cards.json not readable"
+    END
+ENDTRY
+ARENA.SETCARDS(JSON.PARSE$(raw$))
+DIM cs = ARENA.CARDS()
+
+DIM args = OS.ARGS()
+DIM kind$ = "RAFFINERIE"
+IF LEN(args) > 1 THEN kind$ = UCASE$(args[1])
+IF NOT MAP.EXISTS(cs, kind$) THEN
+    PRINT kind$; " gibt es nicht"
+    END
+ENDIF
+DIM c = cs{kind$}
+
+CONST OWN_X = 5.0
+CONST OWN_Y = 20.0
+CONST TICKS = 500
+
+' A run with the pool emptied every tick: whatever arrives is counted, so
+' neither the cap nor the double rate in overtime hides anything.
+FUNC INCOME(play_kind$, n_ticks)
+    DIM st = ARENA.NEWGAME()
+    st{"PHASE"} = "play"
+    st{"ELIXIR"} = [10.0, 10.0]
+    DIM paid = 0.0
+    IF play_kind$ <> "" THEN
+        st{"QUEUES"}[0] = [play_kind$, "DROID", "LASER", "KOLOSS"]
+        DIM why$ = ARENA.PLAYCARD(st, 0, play_kind$, OWN_X, OWN_Y)
+        IF why$ <> "" THEN
+            PRINT play_kind$; " nicht spielbar: "; why$
+            RETURN { "GOT": 0.0, "LIFE": 0.0 }
+        ENDIF
+        DIM allc = ARENA.CARDS()
+        paid = allc{play_kind$}{"COST"}
+    ENDIF
+    st{"ELIXIR"} = [0.0, 0.0]
+    DIM got = 0.0
+    DIM life = 0.0
+    DIM t
+    FOR t = 1 TO n_ticks
+        st = ARENA.SIMSTEP(st)
+        got = got + st{"ELIXIR"}[0]
+        st{"ELIXIR"} = [0.0, st{"ELIXIR"}[1]]
+        DIM standing = 0
+        FOR EACH u IN st{"UNITS"}
+            IF u{"OWNER"} = 0 ANDALSO u{"HP"} > 0 THEN standing = 1
+        NEXT u
+        IF standing = 1 THEN life = t / 10.0
+    NEXT t
+    RETURN { "GOT": got, "LIFE": life, "PAID": paid }
+ENDFUNC
+
+PRINT ""
+PRINT "Ertrag ueber "; TICKS / 10; " s, Becken jede Runde geleert"
+PRINT ""
+DIM ctrl = INCOME("", TICKS)
+DIM withc = INCOME(kind$, TICKS)
+PRINT "ohne Karte      "; INT(ctrl{"GOT"} * 10) / 10.0; " Elixier"
+PRINT "mit "; kind$; "  "; INT(withc{"GOT"} * 10) / 10.0; " Elixier   Standzeit "; withc{"LIFE"}; " s"
+DIM gross = withc{"GOT"} - ctrl{"GOT"}
+PRINT ""
+PRINT "produziert      "; INT(gross * 10) / 10.0
+PRINT "gekostet        "; withc{"PAID"}
+PRINT "unterm Strich   "; INT((gross - withc{"PAID"}) * 10) / 10.0
+PRINT ""
+
+' What removes it. A spell is aimed straight at the tile it stands on.
+PRINT "Abraeumen (Huelle "; c{"HP"}; ")"
+PRINT ""
+PRINT "Zauber        Elix   Rest"
+DIM spells$ = ["PLASMA", "SALVE", "SOG"]
+DIM si
+FOR si = 0 TO LEN(spells$) - 1
+    DIM sp$ = spells$[si]
+    IF NOT MAP.EXISTS(cs, sp$) THEN CONTINUEFOR
+    DIM st2 = ARENA.NEWGAME()
+    st2{"PHASE"} = "play"
+    st2{"ELIXIR"} = [10.0, 10.0]
+    st2{"QUEUES"}[0] = [kind$, "DROID", "LASER", "KOLOSS"]
+    st2{"QUEUES"}[1] = [sp$, "DROID", "LASER", "KOLOSS"]
+    DIM w1$ = ARENA.PLAYCARD(st2, 0, kind$, OWN_X, OWN_Y)
+    IF w1$ <> "" THEN
+        PRINT kind$; " nicht spielbar: "; w1$
+        EXITFOR
+    ENDIF
+    DIM w2$ = ARENA.PLAYCARD(st2, 1, sp$, OWN_X, OWN_Y)
+    IF w2$ <> "" THEN
+        PRINT sp$; " nicht spielbar: "; w2$
+        CONTINUEFOR
+    ENDIF
+    DIM t2
+    FOR t2 = 1 TO 20
+        st2 = ARENA.SIMSTEP(st2)
+    NEXT t2
+    DIM rest = 0
+    FOR EACH u2 IN st2{"UNITS"}
+        IF u2{"OWNER"} = 0 THEN rest = u2{"HP"}
+    NEXT u2
+    IF rest < 0 THEN rest = 0
+    DIM pad$ = sp$ + "            "
+    PRINT LEFT$(pad$, 14); cs{sp$}{"COST"}; "     "; rest
+NEXT si
+
+PRINT ""
