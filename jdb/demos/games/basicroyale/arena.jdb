@@ -36,15 +36,17 @@ EXPORT FUNC DIST(ax, ay, bx, by)
     RETURN SQR((ax - bx) * (ax - bx) + (ay - by) * (ay - by))
 ENDFUNC
 
-' All damage to a ship goes through here, because a shield has to be able to
-' stand in front of it. SHIELD is a pool that soaks before the hull does and
-' never comes back - one hard hit spends it whole, which is what makes it an
-' answer to a single big swing rather than to a swarm.
-' What a card does to anything that cannot move. One multiplier covers both
-' the towers and the deployed buildings, so a card is tuned once instead of
-' twice. Without the field nothing changes.
+' What a card does to a deployed building, and what it does to a station.
+' Two fields rather than one, because they are not the same job: a spell has
+' to stay able to clear a KOKON while it must not be allowed to melt a
+' station from across the river. Without the field nothing changes.
 EXPORT FUNC BUILDHIT(c, dmg)
     IF MAP.EXISTS(c, "BUILDMUL") THEN RETURN INT(dmg * c{"BUILDMUL"})
+    RETURN dmg
+ENDFUNC
+
+EXPORT FUNC TOWERHIT(c, dmg)
+    IF MAP.EXISTS(c, "TOWERMUL") THEN RETURN INT(dmg * c{"TOWERMUL"})
     RETURN dmg
 ENDFUNC
 
@@ -59,6 +61,10 @@ EXPORT FUNC FALLOFF(c, dmg, d, rad)
     RETURN INT(dmg * f)
 ENDFUNC
 
+' All damage to a ship goes through here, because a shield has to be able to
+' stand in front of it. SHIELD is a pool that soaks before the hull does and
+' never comes back - one hard hit spends it whole, which is what makes it an
+' answer to a single big swing rather than to a swarm.
 EXPORT FUNC HURT(v, dmg)
     IF dmg <= 0 THEN RETURN 0
     IF MAP.EXISTS(v, "SH") THEN
@@ -204,6 +210,7 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         IF pid = 1 THEN ky = 2.5
         DIM sp AS MAP = { "OWNER": pid, "X": x, "Y": y, "DMG": INT(c{"DMG"} * mult), "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 }
         IF MAP.EXISTS(c, "BUILDMUL") THEN sp{"BUILDMUL"} = c{"BUILDMUL"}
+        IF MAP.EXISTS(c, "TOWERMUL") THEN sp{"TOWERMUL"} = c{"TOWERMUL"}
         IF MAP.EXISTS(c, "SPLASHMIN") THEN sp{"SPLASHMIN"} = c{"SPLASHMIN"}
         IF MAP.EXISTS(c, "STUN") THEN sp{"STUN"} = c{"STUN"}
         IF MAP.EXISTS(c, "PULL") THEN sp{"PULL"} = c{"PULL"}
@@ -218,6 +225,15 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         ADDEVENT(st, { "T": "CAST", "FX": 9.0, "FY": ky, "X": x, "Y": y })
     ELSE
         DIM offs = [[0.0, 0.0], [-0.8, 0.0], [0.8, 0.0], [0.0, -0.8], [0.0, 0.8]]
+        ' A splitting card does not stack its bodies next to each other. It
+        ' puts one on each bridge, so the halves walk separate lanes and end
+        ' up in front of separate stations. The lanes come from the board, so
+        ' the card says what it does and not where the bridges happen to be.
+        DIM lanes = 0
+        IF MAP.EXISTS(c, "LANESPLIT") THEN
+            DIM bd0 = BOARD()
+            lanes = bd0{"BRIDGES"}
+        ENDIF
         FOR i = 0 TO c{"N"} - 1
             DIM u2 AS MAP = {}
             u2{"ID"} = st{"NEXTID"}
@@ -225,6 +241,10 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
             u2{"KIND"} = kind$
             u2{"X"} = x + offs[i][0]
             u2{"Y"} = y + offs[i][1]
+            IF TYPEOF(lanes) = "ARRAY" THEN
+                u2{"X"} = lanes[i MOD LEN(lanes)]
+                u2{"Y"} = y
+            ENDIF
             u2{"HP"} = INT(c{"HP"} * mult)
             u2{"MAXHP"} = INT(c{"HP"} * mult)
             u2{"DMG"} = INT(c{"DMG"} * mult)
@@ -516,7 +536,7 @@ EXPORT FUNC SIMSTEP(st)
                 FOR EACH tw0 IN st{"TOWERS"}
                     DIM twd = DIST(sp{"X"}, sp{"Y"}, tw0{"X"}, tw0{"Y"})
                     IF tw0{"OWNER"} <> sp{"OWNER"} ANDALSO tw0{"HP"} > 0 ANDALSO twd <= sp{"RADIUS"} THEN
-                        tw0{"HP"} = tw0{"HP"} - BUILDHIT(sp, FALLOFF(sp, sp{"DMG"}, twd, sp{"RADIUS"}))
+                        tw0{"HP"} = tw0{"HP"} - TOWERHIT(sp, FALLOFF(sp, sp{"DMG"}, twd, sp{"RADIUS"}))
                         IF tw0{"KIND"} = "KING" THEN tw0{"AWAKE"} = 1
                     ENDIF
                 NEXT tw0
@@ -594,7 +614,7 @@ EXPORT FUNC SIMSTEP(st)
                     DIM hv = HURT(v2, vdmg)
                 ELSE
                     DIM tw2 = st{"TOWERS"}[tgt{"I"}]
-                    tw2{"HP"} = tw2{"HP"} - BUILDHIT(c, hitdmg)
+                    tw2{"HP"} = tw2{"HP"} - TOWERHIT(c, hitdmg)
                     IF tw2{"KIND"} = "KING" THEN tw2{"AWAKE"} = 1
                 ENDIF
                 ' SPLASH catches the ships standing around whatever was hit -
@@ -792,7 +812,7 @@ EXPORT FUNC SIMSTEP(st)
                     IF dw{"OWNER"} <> u3{"OWNER"} ANDALSO dw{"HP"} > 0 THEN
                         DIM dwd = DIST(u3{"X"}, u3{"Y"}, dw{"X"}, dw{"Y"})
                         IF dwd <= drad THEN
-                            dw{"HP"} = dw{"HP"} - BUILDHIT(dc, FALLOFF(dc, dc{"DEATHDMG"}, dwd, drad))
+                            dw{"HP"} = dw{"HP"} - TOWERHIT(dc, FALLOFF(dc, dc{"DEATHDMG"}, dwd, drad))
                             IF dw{"KIND"} = "KING" THEN dw{"AWAKE"} = 1
                         ENDIF
                     ENDIF

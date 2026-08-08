@@ -20,12 +20,19 @@ ARENA.SETCARDS(JSON.PARSE$(raw$))
 DIM cs = ARENA.CARDS()
 DIM args = OS.ARGS()
 DIM list$ = ["PLASMA", "SALVE", "SOG", "SPRENGKOPF", "GLUTREGEN", "DROID"]
+DIM guard$ = ""
 IF LEN(args) > 1 THEN
     list$ = []
-    DIM ai
-    FOR ai = 1 TO LEN(args) - 1
-        list$ = APPEND(list$, [UCASE$(args[ai])])
-    NEXT ai
+    DIM ai = 1
+    DO WHILE ai < LEN(args)
+        IF args[ai] = "-d" THEN
+            ai = ai + 1
+            guard$ = UCASE$(args[ai])
+        ELSE
+            list$ = APPEND(list$, [UCASE$(args[ai])])
+        ENDIF
+        ai = ai + 1
+    LOOP
 ENDIF
 
 ' The defender's left station. A spell is aimed straight at it, a ship has to
@@ -33,13 +40,14 @@ ENDIF
 ' arrives.
 CONST TW_X = 3.5
 CONST TW_Y = 6.5
+CONST MID_X = 9.0
 CONST WALK_Y = 16.0
 CONST MAX_TICKS = 900
 
 PRINT ""
 PRINT "Schaden an der Station (1400 Huelle), Angreifer von Spieler 0"
 PRINT ""
-PRINT "Karte          Elix  Turm ab   Rest   Zeit    Ende"
+PRINT "Karte          Elix  links + rechts = gesamt   Zeit    Ende"
 
 DIM ci
 FOR ci = 0 TO LEN(list$) - 1
@@ -54,10 +62,22 @@ FOR ci = 0 TO LEN(list$) - 1
     st{"QUEUES"}[0] = [kind$, "DROID", "LASER", "KOLOSS"]
     st{"ELIXIR"} = [10.0, 10.0]
 
+    ' One defender, and deliberately only in the left lane: whatever the
+    ' right station still loses is what the attacker does unanswered, in the
+    ' same run.
+    IF guard$ <> "" THEN
+        st{"QUEUES"}[1] = [guard$, "DROID", "LASER", "KOLOSS"]
+        DIM gwhy$ = ARENA.PLAYCARD(st, 1, guard$, TW_X, 10.0)
+        IF gwhy$ <> "" THEN PRINT "Verteidiger abgelehnt: "; gwhy$
+    ENDIF
+
     DIM c = cs{kind$}
     DIM dy = WALK_Y
+    DIM dx = TW_X
     IF MAP.EXISTS(c, "SPELL") THEN dy = TW_Y
-    DIM msg$ = ARENA.PLAYCARD(st, 0, kind$, TW_X, dy)
+    ' a card that splits is dropped where it is meant to be dropped
+    IF MAP.EXISTS(c, "LANESPLIT") THEN dx = MID_X
+    DIM msg$ = ARENA.PLAYCARD(st, 0, kind$, dx, dy)
     IF msg$ <> "" THEN
         PRINT kind$; " nicht spielbar: "; msg$
         CONTINUEFOR
@@ -84,18 +104,22 @@ FOR ci = 0 TO LEN(list$) - 1
             ended$ = "Angreifer tot"
             EXITFOR
         ENDIF
-        DIM twnow = st{"TOWERS"}[3]
-        IF twnow{"HP"} <= 0 THEN
+        DIM twl = st{"TOWERS"}[3]
+        DIM twr = st{"TOWERS"}[4]
+        IF twl{"HP"} <= 0 ORELSE twr{"HP"} <= 0 THEN
             ended$ = "Station gefallen"
             EXITFOR
         ENDIF
     NEXT t
 
-    DIM tw = st{"TOWERS"}[3]
-    DIM lost = 1400 - tw{"HP"}
-    IF lost < 0 THEN lost = 0
+    DIM tl = st{"TOWERS"}[3]
+    DIM tr = st{"TOWERS"}[4]
+    DIM lostl = 1400 - tl{"HP"}
+    DIM lostr = 1400 - tr{"HP"}
+    IF lostl < 0 THEN lostl = 0
+    IF lostr < 0 THEN lostr = 0
     DIM pad$ = kind$ + "               "
-    PRINT LEFT$(pad$, 15); c{"COST"}; "     "; lost; "      "; tw{"HP"}; "    "; INT(ticks) / 10; " s   "; ended$
+    PRINT LEFT$(pad$, 15); c{"COST"}; "     "; lostl; " + "; lostr; " = "; lostl + lostr; "    "; INT(ticks) / 10; " s   "; ended$
 NEXT ci
 
 PRINT ""

@@ -201,11 +201,20 @@
         ueberall voll, 0.4 heisst im Zentrum voll und am Rand noch 40 Prozent.
         Der Wert gilt auch fuer die Explosion beim Sterben und fuer den
         Radius eines Zaubers - eine Karte hat einen Abfall, nicht drei.</dd>
-      <dt>gegen Gebaeude</dt><dd><b>buildmul</b> multipliziert alles, was diese
-        Karte an Stationen und abgestellten Gebaeuden anrichtet. 1 ist normal,
-        0.35 tragen die Schadenszauber, damit sich eine Station nicht aus der
-        Ferne wegzaubern laesst. Ueber 1 macht eine Belagerungskarte, die gegen
-        Schiffe schwach bleibt.</dd>
+      <dt>gegen Stationen / gegen Gebaeude</dt><dd>Zwei getrennte Faktoren,
+        weil es zwei verschiedene Aufgaben sind. <b>towermul</b> gilt nur fuer
+        die Stationen: die drei Schadenszauber tragen 0.35, damit sich eine
+        Station nicht aus der Ferne wegzaubern laesst. <b>buildmul</b> gilt nur
+        fuer abgestellte Gebaeude wie KOKON oder BRENNLANZE - die Zauber lassen
+        das bewusst leer, sonst waeren sie keine Antwort mehr auf ein Gebaeude.
+        Ueber 1 macht aus beiden eine Belagerungskarte, die gegen Schiffe
+        schwach bleibt.</dd>
+      <dt>teilt sich</dt><dd>Die Schiffe landen nicht nebeneinander, sondern
+        eines je Bruecke - egal wohin getippt wurde, das x ist damit vorgegeben
+        und nur die Tiefe zaehlt. Mit <b>anzahl</b> 2 nimmt jede Haelfte eine
+        andere Station ins Visier. Der Gegner weiss dafuer immer genau, wo sie
+        herauskommen, und eine einzige billige Karte je Spur reicht als
+        Antwort.</dd>
       <dt>Schild</dt><dd>Vorrat, der vor der Huelle aufgebraucht wird.</dd>
       <dt>Anlauf</dt><dd>Nach charge <b>Feldern</b> ununterbrochenem Lauf zaehlt
         der naechste Treffer mal chargemul. Jeder Schlag setzt den Anlauf auf
@@ -587,7 +596,9 @@
     { k:'BUILD',      label:'Station',      add:{ BUILD:1, TTL:30 } },
     { k:'SPAWNS',     label:'erzeugt',      add:{ SPAWNS:'NANOS', SPAWNRATE:3, SPAWNN:1 } },
     { k:'SPLASH',     label:'Flaeche',      add:{ SPLASH:1.5, SPLASHMIN:1 } },
+    { k:'TOWERMUL',   label:'gegen Stationen', add:{ TOWERMUL:0.35 } },
     { k:'BUILDMUL',   label:'gegen Gebaeude', add:{ BUILDMUL:1.5 } },
+    { k:'LANESPLIT',  label:'teilt sich',   add:{ LANESPLIT:1 } },
     { k:'SHIELD',     label:'Schild',       add:{ SHIELD:200 } },
     { k:'CHARGE',     label:'Anlauf',       add:{ CHARGE:2, CHARGEMUL:2 } },
     { k:'DEATHDMG',   label:'explodiert',   add:{ DEATHDMG:100, DEATHRADIUS:2 } },
