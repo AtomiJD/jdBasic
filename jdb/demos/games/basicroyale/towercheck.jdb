@@ -15,10 +15,26 @@ CATCH
     PRINT "cards.json not readable"
     END
 ENDTRY
-ARENA.SETCARDS(JSON.PARSE$(raw$))
-
-DIM cs = ARENA.CARDS()
+DIM cards = JSON.PARSE$(raw$)
 DIM args = OS.ARGS()
+
+' A draft card is measured before it is in the table, same as in duels.jdb.
+DIM oi
+FOR oi = 1 TO LEN(args) - 1
+    IF args[oi] = "-c" ANDALSO oi + 1 < LEN(args) THEN
+        TRY
+            DIM over = JSON.PARSE$(TXTREADER$(args[oi + 1]))
+            FOR EACH ok$ IN MAP.KEYS(over)
+                cards{ok$} = over{ok$}
+            NEXT ok$
+        CATCH
+            PRINT "cannot read "; args[oi + 1]
+        ENDTRY
+    ENDIF
+NEXT oi
+
+ARENA.SETCARDS(cards)
+DIM cs = ARENA.CARDS()
 DIM list$ = ["PLASMA", "SALVE", "SOG", "TRABANT", "GLUTREGEN", "DROID"]
 DIM guard$ = ""
 DIM sidedrop = 0
@@ -29,6 +45,8 @@ IF LEN(args) > 1 THEN
         IF args[ai] = "-d" THEN
             ai = ai + 1
             guard$ = UCASE$(args[ai])
+        ELSEIF args[ai] = "-c" THEN
+            ai = ai + 1
         ELSEIF args[ai] = "-l" THEN
             sidedrop = 1
         ELSE

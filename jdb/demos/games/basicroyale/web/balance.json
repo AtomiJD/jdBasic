@@ -4,6 +4,23 @@
       "date": "2026-08-08",
       "build": "",
       "title": {
+        "de": "IRON, gebaut von Airxzi, zwei Zahlen leichter",
+        "en": "IRON, built by Airxzi, two numbers lighter"
+      },
+      "note": {
+        "de": "Die Karte kam als 6-Elixier-Panzer mit 2400 Huelle und 1000 Schild, zusammen 567 Panzer je Elixier. Der bisher hoechste Wert im Spiel war der KOLOSS mit 360. Gemessen hat sie 12 von 15 Duellen gewonnen, sieben davon ohne einen einzigen Kratzer, und den TITAN geschlagen, der ein Elixier mehr kostet. Geaendert wurden genau zwei Zahlen: die Huelle faellt von 2400 auf 1400, der Schild bleibt wie gebaut bei 1000, macht 400 Panzer je Elixier und damit weiter der zaeheste Koerper im Spiel. Der Schaden faellt von 210 auf 180, also von 140 auf 120 je Sekunde - ein Panzer soll etwas aushalten und nicht zugleich am haertesten zuschlagen. Danach: 11 Siege, verliert gegen TITAN und BRUTSCHIFF, gegen die BRENNLANZE bleiben ihm 20 Huelle. Flieger erreicht er nicht, WESPEN nagen ihn auf 400 herunter, waehrend er vorbeilaeuft. Unbeantwortet faellt eine Station nach 20 Sekunden, der TITAN braucht dafuer 16.5.",
+        "en": "The card arrived as a 6 elixir tank with 2400 hull and a 1000 shield, 567 armour per elixir together. The highest in the game so far was KOLOSS at 360. Measured, it won 12 of 15 duels, seven of them without a scratch, and beat TITAN, which costs one elixir more. Exactly two numbers changed: hull drops from 2400 to 1400, the shield stays as built at 1000, which makes 400 armour per elixir and still the toughest body in the game. Damage drops from 210 to 180, from 140 to 120 per second - a tank should soak, not also hit hardest. After that: 11 wins, it loses to TITAN and BRUTSCHIFF, and against BRENNLANZE it survives on 20 hull. Flyers it cannot reach, WESPEN chew it down to 400 while it walks by. Unanswered it fells a station in 20 seconds where TITAN needs 16.5."
+      },
+      "changes": [
+        { "card": "IRON", "kind": "new", "stat": { "de": "neue Karte", "en": "new card" }, "from": "", "to": "6 Elixier" },
+        { "card": "IRON", "kind": "nerf", "stat": { "de": "Huelle", "en": "hull" }, "from": "2400", "to": "1400" },
+        { "card": "IRON", "kind": "nerf", "stat": { "de": "Schaden", "en": "damage" }, "from": "210", "to": "180" }
+      ]
+    },
+    {
+      "date": "2026-08-08",
+      "build": "",
+      "title": {
         "de": "Eine Station ist kein Schiff mehr",
         "en": "A station is no longer just a big ship"
       },
