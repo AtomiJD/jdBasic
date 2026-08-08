@@ -1,0 +1,75 @@
+' A window on a running layout. The rules tick at their own rate and the
+' picture is drawn from whatever the state happens to be, which is the split
+' the whole design rests on.
+'
+'   jdbasic view.jdb                 SCHLANGE, live
+'   jdbasic view.jdb KETTE           another layout
+'   jdbasic view.jdb KETTE --shot    one picture to tmp/jdvein.png
+IMPORT VEIN
+IMPORT VPAINT
+
+TRY
+    VEIN.SETPARTS(JSON.PARSE$(TXTREADER$("parts.json")))
+    VEIN.SETLAYOUTS(JSON.PARSE$(TXTREADER$("maps.json")))
+CATCH
+    PRINT "parts.json or maps.json not readable - using the built-in set"
+ENDTRY
+
+DIM args = OS.ARGS()
+DIM layout$ = "SCHLANGE"
+DIM shot = 0
+DIM ai
+FOR ai = 1 TO LEN(args) - 1
+    IF args[ai] = "--shot" THEN
+        shot = 1
+    ELSE
+        layout$ = UCASE$(args[ai])
+    ENDIF
+NEXT ai
+
+DIM all = VEIN.LAYOUTS()
+IF NOT MAP.EXISTS(all, layout$) THEN
+    PRINT layout$; " gibt es nicht"
+    END
+ENDIF
+
+DIM st = VEIN.NEWGAME(layout$)
+DIM n = st{"N"}
+CONST WIN = 1024
+DIM zoom = INT(WIN / n)
+IF zoom < 1 THEN zoom = 1
+
+SCREEN WIN, WIN, "jdVEIN - " + layout$
+CLS 0, 0, 0
+DIM base = VPAINT.BASE(st)
+
+DIM running = 1
+SUB STOPIT()
+    running = 0
+ENDSUB
+
+IF shot = 1 THEN
+    DIM k
+    FOR k = 1 TO 400
+        st = VEIN.ADVANCE(st)
+    NEXT k
+    PLOTRAW 0, 0, VPAINT.FRAME(base, st), zoom, zoom
+    GFX.SAVE_SCREENSHOT("../../../../tmp/jdvein.png")
+    SCREENFLIP
+    PRINT "wrote tmp/jdvein.png  "; VEIN.COUNTGOODS(st); " Waren, geliefert "; st{"DELIVERED"}[1]
+ELSE
+    ON "QUIT" CALL STOPIT
+    ON "KEYDOWN" CALL STOPIT
+    DIM frames = 0
+    DIM t_start = TICK()
+    DO WHILE running = 1
+        st = VEIN.ADVANCE(st)
+        PLOTRAW 0, 0, VPAINT.FRAME(base, st), zoom, zoom
+        SCREENFLIP
+        frames = frames + 1
+        IF frames >= 6000 THEN running = 0
+    LOOP
+    DIM secs = (TICK() - t_start) / 1000.0
+    PRINT frames; " Bilder in "; INT(secs * 10) / 10.0; " s = "; INT(frames / secs); " fps"
+    PRINT "geliefert "; st{"DELIVERED"}[1]; ", Punkte "; st{"SCORE"}[1]
+ENDIF

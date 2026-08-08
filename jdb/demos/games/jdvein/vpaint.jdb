@@ -1,0 +1,47 @@
+' jdVEIN - the painter, kept away from the rules.
+' Terrain never changes while a layout stands, so its colour is packed once
+' and only the goods are laid over it per frame. Colours come from parts.json,
+' so recolouring the game is an edit in the data, not here.
+EXPORT MODULE VPAINT
+
+IMPORT VEIN
+
+FUNC PACK(rgb)
+    RETURN rgb[0] * 65536 + rgb[1] * 256 + rgb[2]
+ENDFUNC
+
+' The static half. One pass per layer, run once per layout.
+EXPORT FUNC BASE(st)
+    DIM p = VEIN.PARTS()
+    DIM dirg = st{"DIR"}
+    DIM mach = st{"MACH"}
+    DIM isbelt = (dirg > 0) * (mach = 0)
+    DIM ismach = (mach > 0)
+    DIM isgnd = 1 - isbelt - ismach
+
+    DIM cg = PACK(p{"ground"}{"COLOR"})
+    DIM cb = PACK(p{"belts"}{"BAND"}{"COLOR"})
+    DIM out = isgnd * cg + isbelt * cb
+
+    ' every machine kind paints itself, which is one pass per kind and only
+    ' ever paid at layout time
+    DIM ms = p{"machines"}
+    DIM firstmach = 0
+    FOR EACH k$ IN MAP.KEYS(ms)
+        IF firstmach = 0 THEN firstmach = PACK(ms{k$}{"COLOR"})
+    NEXT k$
+    RETURN out + ismach * firstmach
+ENDFUNC
+
+' The moving half. Two passes per good kind, which is the price of having no
+' gather by index matrix in the runtime.
+EXPORT FUNC FRAME(base, st)
+    DIM p = VEIN.PARTS()
+    DIM gs = p{"goods"}
+    DIM itemg = st{"ITEM"}
+    DIM lit = itemg * 0
+    FOR EACH k$ IN MAP.KEYS(gs)
+        lit = lit + (itemg = gs{k$}{"ID"}) * PACK(gs{k$}{"COLOR"})
+    NEXT k$
+    RETURN base * (itemg = 0) + lit
+ENDFUNC

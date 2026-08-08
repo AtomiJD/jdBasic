@@ -1,0 +1,15 @@
+{
+  "goods": {
+    "ROHERZ": { "ID": 1, "COLOR": [ 90, 170, 255 ], "SCORE": 1 },
+    "BARREN": { "ID": 2, "COLOR": [ 255, 205, 90 ], "SCORE": 3 },
+    "BAUTEIL": { "ID": 3, "COLOR": [ 255, 110, 95 ], "SCORE": 9 }
+  },
+  "belts": {
+    "BAND": { "COLOR": [ 46, 54, 88 ], "COST": 1 }
+  },
+  "machines": {
+    "OFEN": { "IN": "ROHERZ", "OUT": "BARREN", "DWELL": 6, "COLOR": [ 150, 112, 44 ], "COST": 5 },
+    "PRESSE": { "IN": "BARREN", "OUT": "BAUTEIL", "DWELL": 10, "COLOR": [ 122, 84, 158 ], "COST": 9 }
+  },
+  "ground": { "COLOR": [ 10, 14, 26 ] }
+}

@@ -1,0 +1,164 @@
+' Assertions for the jdVEIN rules. Every claim the module makes is checked
+' here against something independent: the mover against a plain scalar walk,
+' conservation against a count, the recipe chain against a hand-computed
+' delivery, and the data drive against an edited parts table.
+'   jdbasic vein_test.jdb
+IMPORT VEIN
+
+TRY
+    VEIN.SETPARTS(JSON.PARSE$(TXTREADER$("parts.json")))
+    VEIN.SETLAYOUTS(JSON.PARSE$(TXTREADER$("maps.json")))
+CATCH
+    PRINT "parts.json or maps.json not readable - using the built-in set"
+ENDTRY
+
+DIM pass = 0
+DIM fail = 0
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+' The independent reference: one cell at a time, no arrays involved.
+FUNC WALKONE(dirg, r, c, steps)
+    DIM i
+    FOR i = 1 TO steps
+        DIM d = dirg[r][c]
+        IF d = 0 THEN RETURN [r, c]
+        DIM nr = r + VEIN.DROF(d)
+        DIM nc = c + VEIN.DCOF(d)
+        IF dirg[nr][nc] = 0 THEN RETURN [r, c]
+        r = nr
+        c = nc
+    NEXT i
+    RETURN [r, c]
+ENDFUNC
+
+' Belts and nothing else: a scalar walk knows about direction, not about
+' furnaces, so the reference only holds on a bare line.
+FUNC BARE(st)
+    DIM keys$ = ["SRC", "SINK", "MACH", "MACHIN", "MACHOUT", "MACHCD0", "CD"]
+    DIM i
+    FOR i = 0 TO LEN(keys$) - 1
+        st{keys$[i]} = st{keys$[i]} * 0
+    NEXT i
+    RETURN VEIN.REBUILD(st)
+ENDFUNC
+
+PRINT "--- the mover against a scalar walk"
+
+DIM st = BARE(VEIN.NEWGAME("SCHLANGE40"))
+DIM itemg = st{"ITEM"}
+itemg[8][2] = 1
+st{"ITEM"} = itemg
+
+DIM steps_n = 60
+DIM t
+FOR t = 1 TO steps_n
+    st = VEIN.ADVANCE(st)
+NEXT t
+
+DIM ref = VEIN.NEWGAME("SCHLANGE40")
+DIM want = WALKONE(ref{"DIR"}, 8, 2, steps_n)
+DIM got = VEIN.FINDGOOD(st)
+CHECK("the good lands where a scalar walk lands", _
+    STR$(got[0]) + "," + STR$(got[1]), STR$(want[0]) + "," + STR$(want[1]))
+CHECK("and there is still exactly one", STR$(VEIN.COUNTGOODS(st)), "1")
+
+PRINT "--- a packed belt loses and duplicates nothing"
+
+DIM st2 = BARE(VEIN.NEWGAME("SCHLANGE40"))
+st2{"ITEM"} = (st2{"DIR"} > 0) * 1
+DIM before = VEIN.COUNTGOODS(st2)
+FOR t = 1 TO 30
+    st2 = VEIN.ADVANCE(st2)
+NEXT t
+CHECK("every cell loaded, thirty ticks", STR$(VEIN.COUNTGOODS(st2)), STR$(before))
+CHECK("  and the belt was not empty to begin with", STR$(before > 100), "TRUE")
+
+PRINT "--- the recipe chain end to end"
+
+' One good on the KETTE line: ore, furnace, ingot, press, part, port. The tier
+' it arrives as is the whole point, so the score is what is asserted.
+DIM st3 = VEIN.NEWGAME("KETTE")
+st3{"SRC"} = st3{"SRC"} * 0
+st3 = VEIN.REBUILD(st3)
+DIM i3 = st3{"ITEM"}
+i3[10][3] = VEIN.GOODID("ROHERZ")
+st3{"ITEM"} = i3
+FOR t = 1 TO 120
+    st3 = VEIN.ADVANCE(st3)
+NEXT t
+CHECK("one good delivered", STR$(st3{"DELIVERED"}[1]), "1")
+CHECK("booked as the top tier", STR$(st3{"SCORE"}[1]), "9")
+CHECK("and the board is empty again", STR$(VEIN.COUNTGOODS(st3)), "0")
+
+PRINT "--- the line under load"
+
+DIM st4 = VEIN.NEWGAME("KETTE")
+FOR t = 1 TO 400
+    st4 = VEIN.ADVANCE(st4)
+NEXT t
+DIM n_del = st4{"DELIVERED"}[1]
+CHECK("the port keeps receiving", STR$(n_del > 3), "TRUE")
+CHECK("nothing but top tier arrives", STR$(st4{"SCORE"}[1]), STR$(n_del * 9))
+
+PRINT "--- building and unbuilding"
+
+DIM st5 = VEIN.NEWGAME("KETTE")
+CHECK("a belt goes down", VEIN.PLACE(st5, 20, 20, "BAND", 2), "")
+CHECK("off the grid is refused", VEIN.PLACE(st5, -1, 20, "BAND", 2), "msg_offgrid")
+CHECK("an unknown part is refused", VEIN.PLACE(st5, 20, 21, "SCHWEBEBAHN", 2), "msg_unknown")
+CHECK("a part without a direction is refused", VEIN.PLACE(st5, 20, 21, "BAND", 0), "msg_nodir")
+DIM built = VEIN.COUNTBUILT(st5)
+DIM w5$ = VEIN.UNBUILD(st5, 20, 20)
+CHECK("and comes up again", STR$(VEIN.COUNTBUILT(st5)), STR$(built - 1))
+
+PRINT "--- the data drives the rules"
+
+' Same layout, one number changed in the parts table: a furnace that works
+' four ticks faster has to deliver sooner. Nothing in vein.jdb knows this.
+DIM p = VEIN.PARTS()
+DIM quick = JSON.PARSE$(JSON.STRINGIFY$(p))
+quick{"machines"}{"OFEN"}{"DWELL"} = 2
+quick{"machines"}{"PRESSE"}{"DWELL"} = 2
+
+DIM slow_del = 0
+DIM fast_del = 0
+DIM st6 = VEIN.NEWGAME("KETTE")
+FOR t = 1 TO 60
+    st6 = VEIN.ADVANCE(st6)
+NEXT t
+slow_del = st6{"DELIVERED"}[1]
+
+VEIN.SETPARTS(quick)
+DIM st7 = VEIN.NEWGAME("KETTE")
+FOR t = 1 TO 60
+    st7 = VEIN.ADVANCE(st7)
+NEXT t
+fast_del = st7{"DELIVERED"}[1]
+VEIN.SETPARTS(p)
+CHECK("a faster furnace delivers sooner", STR$(fast_del > slow_del), "TRUE")
+
+PRINT "--- a state survives the round trip"
+
+DIM st8 = VEIN.NEWGAME("KETTE")
+FOR t = 1 TO 50
+    st8 = VEIN.ADVANCE(st8)
+NEXT t
+DIM copy = JSON.PARSE$(JSON.STRINGIFY$(st8))
+copy = VEIN.REBUILD(copy)
+FOR t = 1 TO 50
+    st8 = VEIN.ADVANCE(st8)
+    copy = VEIN.ADVANCE(copy)
+NEXT t
+CHECK("written out and read back, it runs the same", _
+    STR$(copy{"DELIVERED"}[1]) + "/" + STR$(VEIN.COUNTGOODS(copy)), _
+    STR$(st8{"DELIVERED"}[1]) + "/" + STR$(VEIN.COUNTGOODS(st8)))
+
+PRINT ""
+PRINT "vein_test: passed "; pass; ", failed "; fail

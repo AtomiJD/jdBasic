@@ -13,18 +13,23 @@ Sim rate and frame rate are decoupled: the rules run at **20 Hz**, the picture
 at 60. That gives the tick **50 ms**, which is **about 200 passes**. The probe
 tick spends 80. Roughly 120 passes are left to buy mechanics with.
 
-| what | passes | why |
+| what | passes | where the number comes from |
 |---|---|---|
-| belts and machines (probe) | 80 | measured |
-| mining and depletion | 8 | |
-| recipes on machines | 20 | one compare pair per recipe slot |
-| ownership flood | 12 | dilate along own build, masked |
-| pressure diffusion | 24 | two CONVOLVE passes plus masking |
-| decay on flipped cells | 10 | |
-| **sum** | **154** | 46 left |
+| belts, the mover | 56 | measured, `passcost.jdb` |
+| machines and ports | 32 | measured, same |
+| mining and depletion | 8 | estimate |
+| ownership flood | 12 | estimate, a dilate along own build |
+| pressure diffusion | 24 | estimate, two CONVOLVE passes plus masking |
+| decay on flipped cells | 10 | estimate |
+| **sum** | **142** | 63 left of 205 |
+
+Painting is charged per **frame**, not per tick, and measures 14 passes. At 60
+frames against 20 ticks that is the larger bill, and still not the problem.
 
 That table is the design document. A mechanic that does not fit does not go
-in, and nobody has to argue about it.
+in, and nobody has to argue about it. `passcost.jdb` regenerates the measured
+rows against a reference pass it times itself, so the table cannot quietly go
+stale as the rules grow.
 
 ## The core
 

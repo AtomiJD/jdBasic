@@ -1,0 +1,36 @@
+{
+  "SCHLANGE": {
+    "N": 128,
+    "GEN": {
+      "KIND": "SERPENTINE",
+      "LANE": 8,
+      "MACHSTEP": 12,
+      "MACH": "OFEN",
+      "SRCSTEP": 48,
+      "GOOD": "ROHERZ",
+      "PLAYER": 1
+    }
+  },
+  "SCHLANGE40": {
+    "N": 40,
+    "GEN": {
+      "KIND": "SERPENTINE",
+      "LANE": 8,
+      "MACHSTEP": 12,
+      "MACH": "OFEN",
+      "SRCSTEP": 48,
+      "GOOD": "ROHERZ",
+      "PLAYER": 1
+    }
+  },
+  "KETTE": {
+    "N": 40,
+    "STROKES": [
+      { "OP": "RUN", "R": 10, "C": 3, "LEN": 30, "DIR": "E" },
+      { "OP": "SRC", "R": 10, "C": 3, "GOOD": "ROHERZ" },
+      { "OP": "MACH", "R": 10, "C": 12, "KIND": "OFEN" },
+      { "OP": "MACH", "R": 10, "C": 24, "KIND": "PRESSE" },
+      { "OP": "SINK", "R": 10, "C": 32, "PLAYER": 1 }
+    ]
+  }
+}
