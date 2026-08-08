@@ -1,0 +1,318 @@
+' jdVEIN - building it with a hand instead of a script.
+'
+'   jdbasic bau.jdb                REVIER40
+'   jdbasic bau.jdb WERK           another layout
+'   jdbasic bau.jdb --out mein.json
+'
+' Left button drags a run of BAHN and drops a machine. Right button clears a
+' cell. Number keys pick from the shelf, S writes the recording out, Q quits.
+'
+' The factory keeps running while you build, because that is the whole feel of
+' the thing: 20 ticks a second, whatever the frame rate does. Every move goes
+' through the same commands a recording is made of, so what is built here can
+' be replayed by view.jdb without a word of extra code.
+IMPORT VEIN
+IMPORT VPAINT
+
+CONST HZ = 20
+CONST BOARD = 1000
+CONST PAL_W = 240
+CONST STRIP = 66
+CONST ROW_H = 44
+
+DIM why$ = VEIN.LOADDATA()
+IF why$ <> "" THEN
+    PRINT why$
+    END
+ENDIF
+
+DIM args = OS.ARGS()
+DIM layout$ = "REVIER40"
+DIM outfile$ = ""
+DIM stopafter = 0
+DIM shot = 0
+DIM ai
+FOR ai = 1 TO LEN(args) - 1
+    IF args[ai] = "--out" ANDALSO ai + 1 < LEN(args) THEN
+        outfile$ = args[ai + 1]
+        ai = ai + 1
+    ELSEIF args[ai] = "--secs" ANDALSO ai + 1 < LEN(args) THEN
+        stopafter = VAL(args[ai + 1])
+        ai = ai + 1
+    ELSEIF args[ai] = "--shot" THEN
+        shot = 1
+    ELSEIF LEFT$(args[ai], 2) <> "--" THEN
+        layout$ = UCASE$(args[ai])
+    ENDIF
+NEXT ai
+IF outfile$ = "" THEN outfile$ = VEIN.HERE$() + "bau_letzter.json"
+
+DIM all = VEIN.LAYOUTS()
+IF NOT MAP.EXISTS(all, layout$) THEN
+    PRINT layout$; " gibt es nicht"
+    END
+ENDIF
+
+DIM st = VEIN.NEWGAME(layout$)
+DIM log = VEIN.NEWLOG(layout$)
+DIM logged_tick = 0
+DIM n = st{"N"}
+DIM zoom = INT(BOARD / n)
+IF zoom < 1 THEN zoom = 1
+DIM span = n * zoom
+DIM pal_x = span + 16
+DIM win_w = pal_x + PAL_W
+DIM win_h = span + STRIP
+
+' The shelf is whatever the parts table holds, in its order. Adding a machine
+' to parts.json puts it here and nowhere else has to know.
+DIM shelf$ = [VEIN.BELTNAME()]
+DIM p = VEIN.PARTS()
+FOR EACH mk$ IN MAP.KEYS(p{"machines"})
+    shelf$ = APPEND(shelf$, [mk$])
+NEXT mk$
+DIM goods$ = VEIN.GOODLIST()
+
+DIM picked = 0
+DIM running = 1
+DIM note$ = ""
+DIM note_until = 0
+DIM drag_on = 0
+DIM drag_r = 0
+DIM drag_c = 0
+DIM hover_r = -1
+DIM hover_c = -1
+
+FUNC SHELFCOLOR(name$)
+    DIM pp = VEIN.PARTS()
+    IF MAP.EXISTS(pp{"belts"}, name$) THEN RETURN pp{"belts"}{name$}{"COLOR"}
+    RETURN pp{"machines"}{name$}{"COLOR"}
+ENDFUNC
+
+FUNC SHELFCOST(name$)
+    DIM pp = VEIN.PARTS()
+    IF MAP.EXISTS(pp{"belts"}, name$) THEN RETURN pp{"belts"}{name$}{"COST"}
+    RETURN pp{"machines"}{name$}{"COST"}
+ENDFUNC
+
+SUB SAY(m$)
+    note$ = m$
+    note_until = TICK() + 2500
+ENDSUB
+
+' Ticks that already ran belong in the recording too, or a replay lands on a
+' factory that was never given time to work.
+SUB SYNCLOG()
+    DIM d = st{"TICK"} - logged_tick
+    IF d > 0 THEN
+        VEIN.NOTE(log, { "T": "TICK", "N": d })
+        logged_tick = st{"TICK"}
+    ENDIF
+ENDSUB
+
+SUB SENDCMD(cmd)
+    SYNCLOG()
+    DIM w$ = VEIN.ACT(st, log, cmd)
+    IF w$ <> "" THEN SAY(w$)
+ENDSUB
+
+SUB SAVELOG()
+    SYNCLOG()
+    TRY
+        TXTWRITER outfile$, JSON.STRINGIFY$(log)
+        SAY("gespeichert: " + outfile$)
+    CATCH
+        SAY("konnte nicht schreiben: " + outfile$)
+    ENDTRY
+ENDSUB
+
+' ------------------------------------------------------------------ input ---
+
+SUB ONQUIT()
+    running = 0
+ENDSUB
+ON "QUIT" CALL ONQUIT
+
+SUB ONKEY(info)
+    DIM k$ = UCASE$("" + info[0]{"key"})
+    IF k$ = "Q" ORELSE k$ = "ESCAPE" THEN
+        running = 0
+    ELSEIF k$ = "S" THEN
+        SAVELOG()
+    ELSE
+        DIM idx = VAL(k$) - 1
+        IF k$ >= "1" ANDALSO k$ <= "9" ANDALSO idx < LEN(shelf$) THEN
+            picked = idx
+            SAY("" + shelf$[idx])
+        ENDIF
+    ENDIF
+ENDSUB
+ON "KEYDOWN" CALL ONKEY
+
+SUB ONDOWN(info)
+    DIM mx = info[0]{"x"}
+    DIM my = info[0]{"y"}
+    DIM btn = info[0]{"button"}
+    IF mx >= pal_x THEN
+        DIM row = INT((my - 20) / ROW_H)
+        IF row >= 0 ANDALSO row < LEN(shelf$) THEN
+            picked = row
+            SAY("" + shelf$[row])
+        ENDIF
+    ELSEIF mx < span ANDALSO my < span THEN
+        DIM cc = INT(mx / zoom)
+        DIM rr = INT(my / zoom)
+        IF btn = 3 THEN
+            SENDCMD({ "T": "CLEAR", "P": 1, "R": rr, "C": cc })
+        ELSE
+            drag_on = 1
+            drag_r = rr
+            drag_c = cc
+        ENDIF
+    ENDIF
+ENDSUB
+ON "MOUSEDOWN" CALL ONDOWN
+
+SUB ONMOVE(info)
+    DIM mx = info[0]{"x"}
+    DIM my = info[0]{"y"}
+    IF mx < span ANDALSO my < span THEN
+        hover_c = INT(mx / zoom)
+        hover_r = INT(my / zoom)
+    ELSE
+        hover_r = -1
+        hover_c = -1
+    ENDIF
+ENDSUB
+ON "MOUSEMOVE" CALL ONMOVE
+
+SUB ONUP(info)
+    IF drag_on = 0 THEN RETURN
+    drag_on = 0
+    DIM mx = info[0]{"x"}
+    DIM my = info[0]{"y"}
+    DIM cc = INT(mx / zoom)
+    DIM rr = INT(my / zoom)
+    IF cc < 0 THEN cc = 0
+    IF rr < 0 THEN rr = 0
+    IF cc > n - 1 THEN cc = n - 1
+    IF rr > n - 1 THEN rr = n - 1
+    DIM kind$ = "" + shelf$[picked]
+    IF kind$ = VEIN.BELTNAME() THEN
+        SENDCMD({ "T": "DRAG", "P": 1, "R": drag_r, "C": drag_c, "R2": rr, "C2": cc })
+    ELSE
+        ' a machine goes where the button went down, so a wobbling hand does
+        ' not drop it a cell further along than it was aimed
+        SENDCMD({ "T": "PLACE", "P": 1, "R": drag_r, "C": drag_c, "K": kind$ })
+    ENDIF
+ENDSUB
+ON "MOUSEUP" CALL ONUP
+
+' ----------------------------------------------------------------- drawing ---
+
+SUB CELLBOX(r, c, cr, cg, cb)
+    RECT c * zoom, r * zoom, zoom, zoom, TRUE, cr, cg, cb
+ENDSUB
+
+' The same L a drag lays, drawn before it is laid, so the run is aimed rather
+' than guessed.
+SUB PREVIEW(r1, c1, r2, c2)
+    DIM step_c = 1
+    IF c2 < c1 THEN step_c = -1
+    DIM k = c1
+    DO WHILE k <> c2 + step_c
+        CELLBOX(r1, k, 90, 190, 130)
+        k = k + step_c
+    LOOP
+    DIM step_r = 1
+    IF r2 < r1 THEN step_r = -1
+    DIM j = r1
+    DO WHILE j <> r2 + step_r
+        CELLBOX(j, c2, 90, 190, 130)
+        j = j + step_r
+    LOOP
+ENDSUB
+
+SUB SHELFDRAW()
+    RECT pal_x - 8, 0, PAL_W + 8, win_h, TRUE, 16, 20, 34
+    DIM i
+    FOR i = 0 TO LEN(shelf$) - 1
+        DIM y = 20 + i * ROW_H
+        DIM name$ = "" + shelf$[i]
+        IF i = picked THEN RECT pal_x - 4, y - 6, PAL_W - 4, ROW_H - 4, TRUE, 40, 54, 84
+        DIM c = SHELFCOLOR(name$)
+        RECT pal_x + 4, y, 24, 24, TRUE, c[0], c[1], c[2]
+        TEXT pal_x + 36, y + 4, STR$(i + 1) + " " + name$, 220, 228, 245
+        TEXT pal_x + 36, y + 22, "kostet " + STR$(SHELFCOST(name$)), 120, 132, 160
+    NEXT i
+    DIM yh = 20 + LEN(shelf$) * ROW_H + 12
+    TEXT pal_x + 4, yh, "links ziehen: bauen", 140, 155, 185
+    TEXT pal_x + 4, yh + 20, "rechts: abreissen", 140, 155, 185
+    TEXT pal_x + 4, yh + 40, "S: speichern", 140, 155, 185
+    TEXT pal_x + 4, yh + 60, "Q: Schluss", 140, 155, 185
+ENDSUB
+
+SUB HUD()
+    RECT 0, span + 2, span, STRIP, TRUE, 10, 14, 26
+    DIM x = 12
+    DIM gi
+    FOR gi = 0 TO LEN(goods$) - 1
+        DIM g$ = "" + goods$[gi]
+        DIM c = VEIN.GOODCOLOR(g$)
+        DIM txt$ = g$ + " " + STR$(VEIN.GOTBY(st, 1, g$))
+        TEXT x, span + 12, txt$, c[0], c[1], c[2]
+        x = x + 26 + LEN(txt$) * 11
+    NEXT gi
+    DIM status$ = "Punkte " + STR$(st{"SCORE"}[1]) _
+        + "    Floez " + STR$(VEIN.ORELEFT(st)) _
+        + "    unterwegs " + STR$(VEIN.COUNTGOODS(st)) _
+        + "    gebaut " + STR$(VEIN.COUNTBUILT(st)) _
+        + "    Befehle " + STR$(LEN(log{"CMDS"}))
+    IF note$ <> "" ANDALSO TICK() < note_until THEN status$ = status$ + "    " + note$
+    TEXT 12, span + 38, status$, 170, 180, 210
+ENDSUB
+
+' -------------------------------------------------------------------- run ---
+
+SCREEN win_w, win_h, "jdVEIN - " + layout$
+CLS 0, 0, 0
+DIM base = VPAINT.BASE(st)
+DIM dirty = 0
+
+DIM per_tick = 1000.0 / HZ
+DIM t_start = TICK()
+DIM t_last = t_start
+DIM carry = 0.0
+DO WHILE running = 1
+    DIM now = TICK()
+    carry = carry + (now - t_last)
+    t_last = now
+    DO WHILE carry >= per_tick
+        st = VEIN.ADVANCE(st)
+        carry = carry - per_tick
+    LOOP
+
+    ' the terrain only changes when something was built, so the static half is
+    ' repacked on a move and not on a frame
+    IF VEIN.COUNTBUILT(st) <> dirty THEN
+        base = VPAINT.BASE(st)
+        dirty = VEIN.COUNTBUILT(st)
+    ENDIF
+
+    PLOTRAW 0, 0, VPAINT.FRAME(base, st), zoom, zoom
+    IF drag_on = 1 ANDALSO hover_r >= 0 THEN PREVIEW(drag_r, drag_c, hover_r, hover_c)
+    IF hover_r >= 0 ANDALSO drag_on = 0 THEN CELLBOX(hover_r, hover_c, 70, 100, 150)
+    SHELFDRAW()
+    HUD()
+    IF shot = 1 THEN
+        GFX.SAVE_SCREENSHOT(VEIN.HERE$() + "../../../../tmp/jdvein_bau.png")
+        shot = 0
+    ENDIF
+    SCREENFLIP
+    IF stopafter > 0 ANDALSO (now - t_start) / 1000.0 >= stopafter THEN running = 0
+LOOP
+
+SAVELOG()
+PRINT "Aufzeichnung: "; outfile$
+PRINT LEN(log{"CMDS"}); " Befehle, "; st{"TICK"}; " Ticks"
+PRINT "geliefert "; st{"DELIVERED"}[1]; ", Punkte "; st{"SCORE"}[1]

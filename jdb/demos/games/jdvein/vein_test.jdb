@@ -286,6 +286,41 @@ VEIN.SETPARTS(quick)
 CHECK("and a log from other rules says so", VEIN.LOGDRIFT(log), "msg_otherparts")
 VEIN.SETPARTS(p)
 
+PRINT "--- what a hand on a mouse sends"
+
+' A machine dropped on a belt takes the belt's direction, because that is what
+' clicking on it means. On bare ground there is nothing to take.
+DIM st15 = VEIN.NEWGAME("REVIER40")
+DIM w16$ = VEIN.APPLY(st15, { "T": "DRAG", "R": 6, "C": 6, "R2": 6, "C2": 20 })
+CHECK("the run goes down", w16$, "")
+CHECK("a machine on the run needs no direction", _
+    VEIN.APPLY(st15, { "T": "PLACE", "R": 6, "C": 12, "K": "SCHMELZE" }), "")
+DIM d15 = st15{"DIR"}
+CHECK("  and it faces the way the belt runs", STR$(d15[6][12]), "2")
+CHECK("on bare ground it is refused", _
+    VEIN.APPLY(st15, { "T": "PLACE", "R": 25, "C": 25, "K": "SCHMELZE" }), "msg_nodir")
+
+' The builder ticks between moves, so its recording interleaves them. It has
+' to replay to the same match or what you built cannot be sent to anyone.
+DIM handlog = VEIN.NEWLOG("REVIER40")
+DIM handst = VEIN.NEWGAME("REVIER40")
+DIM hand = [ _
+    { "T": "TICK", "N": 15 }, _
+    { "T": "DRAG", "R": 6, "C": 6, "R2": 6, "C2": 34 }, _
+    { "T": "TICK", "N": 9 }, _
+    { "T": "DRAG", "R": 6, "C": 34, "R2": 18, "C2": 34 }, _
+    { "T": "PLACE", "R": 6, "C": 6, "K": "SCHUERFER" }, _
+    { "T": "TICK", "N": 40 }, _
+    { "T": "PLACE", "R": 6, "C": 14, "K": "SCHMELZE" }, _
+    { "T": "TICK", "N": 300 } ]
+DIM hi
+FOR hi = 0 TO LEN(hand) - 1
+    DIM whand$ = VEIN.ACT(handst, handlog, hand[hi])
+NEXT hi
+CHECK("a hand-built line delivers", STR$(handst{"DELIVERED"}[1] > 0), "TRUE")
+CHECK("and its recording replays to the same match", _
+    VEIN.FINGER(VEIN.REPLAY(handlog)), VEIN.FINGER(handst))
+
 PRINT "--- a tool cannot half-load the game"
 
 ' Starting a tool from another directory used to leave it running on the

@@ -615,7 +615,18 @@ EXPORT FUNC APPLY(st, cmd)
     DIM why$ = "msg_badcmd"
     DIM built = 0
     IF t$ = "PLACE" THEN
-        why$ = PLACE(st, cmd{"R"}, cmd{"C"}, "" + cmd{"K"}, ASDIR(cmd{"D"}))
+        DIM pr = cmd{"R"}
+        DIM pc = cmd{"C"}
+        DIM d = 0
+        IF MAP.EXISTS(cmd, "D") THEN d = ASDIR(cmd{"D"})
+        ' A machine dropped without a direction takes the one of the belt it
+        ' lands on, which is what a hand on a mouse means by it. On bare ground
+        ' there is nothing to inherit and PLACE says so.
+        IF d = 0 ANDALSO pr >= 0 ANDALSO pc >= 0 ANDALSO pr < st{"N"} ANDALSO pc < st{"N"} THEN
+            DIM dg = st{"DIR"}
+            d = dg[pr][pc]
+        ENDIF
+        why$ = PLACE(st, pr, pc, "" + cmd{"K"}, d)
         built = 1
     ELSEIF t$ = "DRAG" THEN
         why$ = DRAGRUN(st, cmd{"R"}, cmd{"C"}, cmd{"R2"}, cmd{"C2"})
@@ -657,6 +668,13 @@ EXPORT FUNC ACT(st, log, cmd)
     IF why$ = "" THEN log{"CMDS"} = APPEND(log{"CMDS"}, [cmd])
     RETURN why$
 ENDFUNC
+
+' Write a command down that already happened. A live client ticks between
+' moves, so the ticks have to go into the log too or the replay lands on a
+' factory that never ran.
+EXPORT SUB NOTE(log, cmd)
+    log{"CMDS"} = APPEND(log{"CMDS"}, [cmd])
+ENDSUB
 
 EXPORT FUNC REPLAY(log)
     DIM st = NEWGAME("" + log{"LAYOUT"})
