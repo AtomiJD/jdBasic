@@ -1,0 +1,364 @@
+' A factory grid simulated as whole-grid array operations instead of one
+' object per item. The question this answers is whether a full picture of
+' belts, junctions and machines still fits in a 30 fps budget when it also
+' has to be drawn.
+'
+'   jdbasic gridfactory.jdb              live view on a 256 grid
+'   jdbasic gridfactory.jdb --size 128   live view on another grid
+'   jdbasic gridfactory.jdb --bench      timing sweep, no interaction
+'   jdbasic gridfactory.jdb --check      the mover against a scalar walk
+'
+' Directions are 1 north, 2 east, 3 south, 4 west. The grid keeps a wide
+' empty border, so the cyclic wrap of ROTATE is never reached.
+
+CONST LANE = 8
+CONST MSTEP = 12
+CONST DWELL = 6
+CONST N_TIER = 3
+CONST BUDGET = 33.3
+
+' ROTATE turns the row axis only, so a column turn goes through a transpose.
+' Both are cheap next to one elementwise pass over the grid.
+FUNC LOOKAT(g, dr, dc)
+    DIM out = g
+    IF dr <> 0 THEN out = ROTATE(out, [dr, 0])
+    IF dc <> 0 THEN out = TRANSPOSE(ROTATE(TRANSPOSE(out), [dc, 0]))
+    RETURN out
+ENDFUNC
+
+' The value at (r, c) lands at (r + dr, c + dc).
+FUNC CARRYTO(g, dr, dc)
+    RETURN LOOKAT(g, 0 - dr, 0 - dc)
+ENDFUNC
+
+FUNC DROF(d)
+    IF d = 1 THEN RETURN -1
+    IF d = 3 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC DCOF(d)
+    IF d = 2 THEN RETURN 1
+    IF d = 4 THEN RETURN -1
+    RETURN 0
+ENDFUNC
+
+' A serpentine: belt rows every LANE rows running in alternating directions,
+' joined at the ends by a riser. One connected path over the whole grid, which
+' is the densest thing a belt layout can be.
+FUNC BUILDGRID(n, want_src, want_mach)
+    DIM flat = IOTA(n * n, 0)
+    DIM rowi = RESHAPE(INT(flat / n), [n, n])
+    DIM coli = RESHAPE(flat MOD n, [n, n])
+
+    DIM lastrow = n - 1 - LANE
+    lastrow = lastrow - (lastrow MOD LANE)
+    DIM laneno = INT(rowi / LANE)
+    DIM goeast = ((laneno MOD 2) = 0)
+    DIM onlane = ((rowi MOD LANE) = 0) * (rowi >= LANE) * (rowi <= lastrow)
+    DIM inrun = (coli >= 2) * (coli <= n - 3)
+    DIM turncol = goeast * (n - 3) + (1 - goeast) * 2
+    DIM atturn = (coli = turncol)
+
+    DIM dirg = onlane * inrun * (goeast * 2 + (1 - goeast) * 4)
+    DIM turncell = onlane * inrun * atturn
+    dirg = dirg * (1 - turncell) + turncell * 3
+
+    DIM ingap = ((rowi MOD LANE) <> 0) * (rowi >= LANE) * (rowi < lastrow)
+    dirg = dirg + ingap * atturn * 3
+
+    ' the far end of the snake swallows what reaches it, so the belt keeps
+    ' flowing instead of backing up into a static picture
+    DIM sink = onlane * atturn * (rowi = lastrow)
+
+    DIM mach = RESHAPE([0], [n, n])
+    IF want_mach = 1 THEN
+        mach = onlane * inrun * ((coli MOD MSTEP) = 5) * (1 - atturn)
+    ENDIF
+    DIM src = RESHAPE([0], [n, n])
+    IF want_src = 1 THEN
+        src = onlane * inrun * ((coli MOD (MSTEP * 4)) = 7)
+    ENDIF
+
+    ' Which cells point where, and which of their neighbours can take a good,
+    ' never changes while the layout stands. Lifting both out of the tick is
+    ' worth eight passes over the grid per frame.
+    DIM accept = (dirg > 0)
+    DIM masks = []
+    DIM aheads = []
+    DIM d
+    FOR d = 1 TO 4
+        masks = APPEND(masks, [(dirg = d) * 1])
+        aheads = APPEND(aheads, [LOOKAT(accept, DROF(d), DCOF(d))])
+    NEXT d
+
+    DIM st AS MAP = {}
+    st{"N"} = n
+    st{"DIR"} = dirg
+    st{"MACH"} = mach
+    st{"SRC"} = src
+    st{"SINK"} = sink
+    st{"MASK"} = masks
+    st{"AHEAD"} = aheads
+    st{"HASMACH"} = SUM(RESHAPE(mach, [n * n])) > 0
+    st{"ITEM"} = RESHAPE([0], [n, n])
+    st{"CD"} = mach * DWELL
+    RETURN st
+ENDFUNC
+
+' One tick. Every line here touches the whole grid at once; nothing in this
+' function knows how many items are in flight.
+FUNC SIMSTEP(st)
+    DIM itemg = st{"ITEM"}
+    DIM masks = st{"MASK"}
+    DIM aheads = st{"AHEAD"}
+    DIM free0 = (itemg = 0)
+    DIM ready = 1 - free0
+
+    ' a machine keeps what arrives for DWELL ticks and hands back one tier up
+    IF st{"HASMACH"} THEN
+        DIM mach = st{"MACH"}
+        DIM cd = st{"CD"}
+        DIM busy = (mach > 0) * ready
+        cd = cd - busy
+        itemg = itemg + busy * (cd = 0) * (itemg < N_TIER)
+        ready = ready * (1 - busy * (cd > 0))
+        st{"CD"} = cd * (itemg > 0) + (mach > 0) * (itemg = 0) * DWELL
+    ENDIF
+
+    ' All four directions are read against one snapshot of the grid, so a good
+    ' that turns a corner cannot be picked up a second time in the same tick by
+    ' a later direction. Claims keep two goods off one cell at a junction.
+    DIM claimed = free0 * 0
+    DIM d
+    FOR d = 1 TO 4
+        DIM dr = DROF(d)
+        DIM dc = DCOF(d)
+        DIM go = masks[d - 1] * ready * aheads[d - 1] * LOOKAT(free0, dr, dc) * (1 - LOOKAT(claimed, dr, dc))
+        DIM carry = go * itemg
+        itemg = itemg - carry + CARRYTO(carry, dr, dc)
+        claimed = claimed + CARRYTO(go, dr, dc)
+    NEXT d
+
+    itemg = itemg * (1 - st{"SINK"})
+    itemg = itemg + st{"SRC"} * (itemg = 0)
+    st{"ITEM"} = itemg
+    RETURN st
+ENDFUNC
+
+' Terrain never changes, so its colour is packed once and only the items are
+' laid over it per frame.
+FUNC BASECOLOR(st)
+    DIM dirg = st{"DIR"}
+    DIM mach = st{"MACH"}
+    DIM isbelt = (dirg > 0) * (mach = 0)
+    DIM ismach = (mach > 0)
+    DIM isgnd = 1 - isbelt - ismach
+    DIM r = isgnd * 10 + isbelt * 46 + ismach * 150
+    DIM g = isgnd * 14 + isbelt * 54 + ismach * 112
+    DIM b = isgnd * 26 + isbelt * 88 + ismach * 44
+    RETURN r * 65536 + g * 256 + b
+ENDFUNC
+
+' No gather by index matrix in the runtime, so a tier costs one compare and
+' one multiply. Three tiers is what the picture needs.
+FUNC PAINT(base, itemg)
+    DIM lit = (itemg = 1) * 4234303 + (itemg = 2) * 16759380 + (itemg = 3) * 16733525
+    RETURN base * (itemg = 0) + lit
+ENDFUNC
+
+FUNC COUNTITEMS(st)
+    DIM n = st{"N"}
+    RETURN SUM(RESHAPE((st{"ITEM"} > 0) * 1, [n * n]))
+ENDFUNC
+
+' ---------------------------------------------------------------- check ----
+
+FUNC WALKONE(dirg, n, r, c, steps)
+    DIM i
+    FOR i = 1 TO steps
+        DIM d = dirg[r][c]
+        IF d = 0 THEN RETURN [r, c]
+        DIM nr = r + DROF(d)
+        DIM nc = c + DCOF(d)
+        IF dirg[nr][nc] = 0 THEN RETURN [r, c]
+        r = nr
+        c = nc
+    NEXT i
+    RETURN [r, c]
+ENDFUNC
+
+SUB RUNCHECK()
+    DIM n = 40
+    DIM st = BUILDGRID(n, 0, 0)
+    DIM dirg = st{"DIR"}
+
+    ' the first cell of the first belt run
+    DIM r0 = LANE
+    DIM c0 = 2
+    IF dirg[r0][c0] = 0 THEN
+        PRINT "no belt at the expected start"
+        RETURN
+    ENDIF
+
+    DIM itemg = st{"ITEM"}
+    itemg[r0][c0] = 1
+    st{"ITEM"} = itemg
+
+    DIM steps_n = 60
+    DIM t
+    FOR t = 1 TO steps_n
+        st = SIMSTEP(st)
+    NEXT t
+
+    DIM want = WALKONE(dirg, n, r0, c0, steps_n)
+    DIM got = [-1, -1]
+    DIM ri
+    DIM ci
+    DIM held = st{"ITEM"}
+    FOR ri = 0 TO n - 1
+        FOR ci = 0 TO n - 1
+            IF held[ri][ci] > 0 THEN got = [ri, ci]
+        NEXT ci
+    NEXT ri
+
+    PRINT "one item, "; steps_n; " ticks"
+    PRINT "  scalar walk  row "; want[0]; " col "; want[1]
+    PRINT "  grid mover   row "; got[0]; " col "; got[1]
+    IF got[0] = want[0] ANDALSO got[1] = want[1] THEN
+        PRINT "  MATCH"
+    ELSE
+        PRINT "  MISMATCH"
+    ENDIF
+    PRINT "  items on the grid "; COUNTITEMS(st); " (want 1)"
+
+    ' every belt cell loaded, with the far end plugged: a mover that drops or
+    ' doubles a good on a junction shows up here and nowhere else
+    DIM st2 = BUILDGRID(n, 0, 0)
+    st2{"SINK"} = RESHAPE([0], [n, n])
+    DIM full = (st2{"DIR"} > 0) * 1
+    st2{"ITEM"} = full
+    DIM before = COUNTITEMS(st2)
+    FOR t = 1 TO 30
+        st2 = SIMSTEP(st2)
+    NEXT t
+    DIM after = COUNTITEMS(st2)
+    PRINT ""
+    PRINT "packed belt, 30 ticks"
+    PRINT "  before "; before; "  after "; after
+    IF after = before THEN
+        PRINT "  nothing lost, nothing duplicated"
+    ELSE
+        PRINT "  LOST OR DUPLICATED "; after - before
+    ENDIF
+ENDSUB
+
+' ---------------------------------------------------------------- bench ----
+
+SUB RUNBENCH()
+    DIM sizes = [64, 128, 256, 512]
+    PRINT ""
+    PRINT "Whole-grid factory, 100 ticks and 100 frames per size"
+    PRINT ""
+    PRINT "Gitter    Zellen    Waren   sim ms  malen ms  PLOTRAW ms  gesamt   fps"
+    DIM si
+    FOR si = 0 TO LEN(sizes) - 1
+        DIM n = sizes[si]
+        DIM st = BUILDGRID(n, 1, 1)
+        DIM warm
+        FOR warm = 1 TO 250
+            st = SIMSTEP(st)
+        NEXT warm
+        DIM base = BASECOLOR(st)
+        DIM zoom = 1024 / n
+
+        DIM t0 = TICK()
+        DIM k
+        FOR k = 1 TO 100
+            st = SIMSTEP(st)
+        NEXT k
+        DIM sim_ms = (TICK() - t0) / 100.0
+
+        DIM itemg = st{"ITEM"}
+        t0 = TICK()
+        FOR k = 1 TO 100
+            DIM pix = PAINT(base, itemg)
+        NEXT k
+        DIM paint_ms = (TICK() - t0) / 100.0
+
+        DIM shown = PAINT(base, itemg)
+        t0 = TICK()
+        FOR k = 1 TO 100
+            PLOTRAW 0, 0, shown, zoom, zoom
+            SCREENFLIP
+        NEXT k
+        DIM blit_ms = (TICK() - t0) / 100.0
+
+        DIM total = sim_ms + paint_ms + blit_ms
+        DIM pad$ = STR$(n) + "x" + STR$(n) + "          "
+        PRINT LEFT$(pad$, 10); n * n; "    "; COUNTITEMS(st); "    "; _
+            INT(sim_ms * 100) / 100.0; "    "; INT(paint_ms * 100) / 100.0; "     "; _
+            INT(blit_ms * 100) / 100.0; "      "; INT(total * 100) / 100.0; "   "; _
+            INT(1000.0 / total)
+    NEXT si
+    PRINT ""
+    PRINT "Budget fuer 30 fps ist "; BUDGET; " ms je Bild."
+ENDSUB
+
+' ----------------------------------------------------------------- main ----
+
+DIM args = OS.ARGS()
+DIM mode$ = "live"
+DIM size = 256
+DIM ai
+FOR ai = 1 TO LEN(args) - 1
+    IF args[ai] = "--bench" THEN mode$ = "bench"
+    IF args[ai] = "--check" THEN mode$ = "check"
+    IF args[ai] = "--shot" THEN mode$ = "shot"
+    IF args[ai] = "--size" ANDALSO ai + 1 < LEN(args) THEN size = VAL(args[ai + 1])
+NEXT ai
+
+IF mode$ = "check" THEN
+    RUNCHECK()
+ELSE
+    SCREEN 1024, 1024, "gridfactory"
+    CLS 0, 0, 0
+    IF mode$ = "bench" THEN
+        RUNBENCH()
+    ELSEIF mode$ = "shot" THEN
+        DIM sst = BUILDGRID(size, 1, 1)
+        DIM sbase = BASECOLOR(sst)
+        DIM szoom = 1024 / size
+        DIM sk
+        FOR sk = 1 TO 400
+            sst = SIMSTEP(sst)
+        NEXT sk
+        PLOTRAW 0, 0, PAINT(sbase, sst{"ITEM"}), szoom, szoom
+        GFX.SAVE_SCREENSHOT("../../../../tmp/gridfactory.png")
+        SCREENFLIP
+        PRINT "wrote tmp/gridfactory.png  "; COUNTITEMS(sst); " Waren auf "; size; "x"; size
+    ELSE
+        DIM st = BUILDGRID(size, 1, 1)
+        DIM base = BASECOLOR(st)
+        DIM zoom = 1024 / size
+        DIM running = 1
+        ON "QUIT" CALL STOPIT
+        ON "KEYDOWN" CALL STOPIT
+        DIM frames = 0
+        DIM t_start = TICK()
+        DO WHILE running = 1
+            st = SIMSTEP(st)
+            PLOTRAW 0, 0, PAINT(base, st{"ITEM"}), zoom, zoom
+            SCREENFLIP
+            frames = frames + 1
+            IF frames >= 6000 THEN running = 0
+        LOOP
+        DIM secs = (TICK() - t_start) / 1000.0
+        PRINT frames; " Bilder in "; INT(secs * 10) / 10.0; " s = "; _
+            INT(frames / secs); " fps bei "; size; "x"; size
+    ENDIF
+ENDIF
+
+SUB STOPIT()
+    running = 0
+ENDSUB
