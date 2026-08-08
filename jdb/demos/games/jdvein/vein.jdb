@@ -147,6 +147,12 @@ EXPORT FUNC GOODLIST()
     RETURN out
 ENDFUNC
 
+EXPORT FUNC GOODCOLOR(name$)
+    DIM gs = PARTS(){"goods"}
+    IF NOT MAP.EXISTS(gs, name$) THEN RETURN [200, 200, 200]
+    RETURN gs{name$}{"COLOR"}
+ENDFUNC
+
 EXPORT FUNC TOPGOOD()
     DIM gs = PARTS(){"goods"}
     DIM top = 0

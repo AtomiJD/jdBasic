@@ -17,5 +17,6 @@
     "KOPPLER": { "IN": "BARREN", "NEED": 1, "IN2": "LINSE", "NEED2": 1, "OUT": "ZUENDKERN", "DWELL": 10, "COLOR": [ 190, 90, 120 ], "COST": 11 }
   },
   "ore": { "COLOR": [ 34, 52, 74 ] },
+  "port": { "COLOR": [ 240, 250, 255 ] },
   "ground": { "COLOR": [ 10, 14, 26 ] }
 }

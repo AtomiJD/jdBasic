@@ -74,12 +74,34 @@ ENDIF
 
 DIM n = st{"N"}
 CONST WIN = 1024
+CONST STRIP = 52
 DIM zoom = INT(WIN / n)
 IF zoom < 1 THEN zoom = 1
 
-SCREEN WIN, WIN, "jdVEIN - " + layout$
+SCREEN WIN, WIN + STRIP, "jdVEIN - " + layout$
 CLS 0, 0, 0
 DIM base = VPAINT.BASE(st)
+DIM goods$ = VEIN.GOODLIST()
+
+' What the port received and what is still in the ground. Without it the board
+' is squares moving: the whole point of a run is the two numbers at the bottom.
+SUB HUD(s, y0)
+    RECT 0, y0, WIN, STRIP, TRUE, 10, 14, 26
+    DIM x = 12
+    DIM gi
+    FOR gi = 0 TO LEN(goods$) - 1
+        DIM g$ = "" + goods$[gi]
+        DIM c = VEIN.GOODCOLOR(g$)
+        DIM txt$ = g$ + " " + STR$(VEIN.GOTBY(s, 1, g$))
+        TEXT x, y0 + 8, txt$, c[0], c[1], c[2]
+        x = x + 26 + LEN(txt$) * 11
+    NEXT gi
+    TEXT 12, y0 + 30, "Punkte " + STR$(s{"SCORE"}[1]) _
+        + "    Floez " + STR$(VEIN.ORELEFT(s)) _
+        + "    in Maschinen " + STR$(VEIN.INBUFFERS(s)) _
+        + "    unterwegs " + STR$(VEIN.COUNTGOODS(s)) _
+        + "    Tick " + STR$(s{"TICK"}), 170, 180, 210
+ENDSUB
 
 DIM running = 1
 SUB STOPIT()
@@ -92,6 +114,7 @@ IF shot = 1 THEN
         st = VEIN.ADVANCE(st)
     NEXT k
     PLOTRAW 0, 0, VPAINT.FRAME(base, st), zoom, zoom
+    HUD(st, n * zoom + 2)
     GFX.SAVE_SCREENSHOT(VEIN.HERE$() + "../../../../tmp/jdvein.png")
     SCREENFLIP
     PRINT "wrote tmp/jdvein.png  "; VEIN.COUNTGOODS(st); " Waren, geliefert "; st{"DELIVERED"}[1]
@@ -114,6 +137,7 @@ ELSE
             carry = carry - per_tick
         LOOP
         PLOTRAW 0, 0, VPAINT.FRAME(base, st), zoom, zoom
+        HUD(st, n * zoom + 2)
         SCREENFLIP
         frames = frames + 1
         IF (now - t_start) / 1000.0 >= stopafter THEN running = 0

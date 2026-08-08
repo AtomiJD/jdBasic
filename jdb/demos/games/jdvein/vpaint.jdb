@@ -37,7 +37,13 @@ EXPORT FUNC BASE(st)
         ENDIF
         out = out * (1 - sel) + sel * PACK(mk{"COLOR"})
     NEXT k$
-    RETURN out
+
+    ' A port swallows what reaches it, so without a mark of its own the goods
+    ' look like they walk off the end of the belt into nothing.
+    DIM isport = (st{"SINK"} > 0)
+    DIM cport = PACK(p{"ground"}{"COLOR"})
+    IF MAP.EXISTS(p, "port") THEN cport = PACK(p{"port"}{"COLOR"})
+    RETURN out * (1 - isport) + isport * cport
 ENDFUNC
 
 ' The moving half. Two passes per good kind, which is the price of having no
