@@ -68,6 +68,41 @@ EXPORT FUNC PARTS()
     RETURN p
 ENDFUNC
 
+' The directory the running script sits in. Data files live next to it, and a
+' tool must not care whether it was started from here or from the repo root.
+EXPORT FUNC HERE$()
+    DIM a = OS.ARGS()
+    IF LEN(a) < 1 THEN RETURN ""
+    DIM p$ = "" + a[0]
+    DIM cut = -1
+    DIM i
+    FOR i = 0 TO LEN(p$) - 1
+        DIM ch$ = MID$(p$, i, 1)
+        IF ch$ = "/" ORELSE ch$ = CHR$(92) THEN cut = i
+    NEXT i
+    IF cut < 0 THEN RETURN ""
+    RETURN LEFT$(p$, cut + 1)
+ENDFUNC
+
+' One line for every tool, so no tool can half-load the game. It returns a
+' message instead of falling back quietly: a missing table used to leave a
+' host running on the built-in set, which looks like a working program and is
+' a different game.
+EXPORT FUNC LOADDATA()
+    DIM dir$ = HERE$()
+    TRY
+        SETPARTS(JSON.PARSE$(TXTREADER$(dir$ + "parts.json")))
+    CATCH
+        RETURN "parts.json nicht lesbar in [" + dir$ + "]"
+    ENDTRY
+    TRY
+        SETLAYOUTS(JSON.PARSE$(TXTREADER$(dir$ + "maps.json")))
+    CATCH
+        RETURN "maps.json nicht lesbar in [" + dir$ + "]"
+    ENDTRY
+    RETURN ""
+ENDFUNC
+
 ' The one belt kind, whatever the data calls it. A layout stroke and a drag
 ' both need it and neither should have the name written into them.
 EXPORT FUNC BELTNAME()
@@ -365,10 +400,18 @@ ENDFUNC
 
 EXPORT FUNC NEWGAME(layout$)
     DIM all = LAYOUTS()
-    IF NOT MAP.EXISTS(all, layout$) THEN RETURN BLANK(8)
+    ' A layout that is not there used to come back as a tiny empty board, which
+    ' every caller then happily built on. It says so now.
+    IF NOT MAP.EXISTS(all, layout$) THEN
+        DIM bad = BLANK(8)
+        bad{"ERR"} = "msg_nolayout"
+        bad{"LAYOUT"} = layout$
+        RETURN REBUILD(bad)
+    ENDIF
     DIM spec = all{layout$}
     DIM st = BLANK(spec{"N"})
     st{"LAYOUT"} = layout$
+    st{"ERR"} = ""
     IF MAP.EXISTS(spec, "GEN") THEN st = APPLYGEN(st, spec{"GEN"})
     IF MAP.EXISTS(spec, "STROKES") THEN st = APPLYSTROKES(st, spec{"STROKES"})
     RETURN REBUILD(st)
@@ -611,11 +654,17 @@ ENDFUNC
 
 EXPORT FUNC REPLAY(log)
     DIM st = NEWGAME("" + log{"LAYOUT"})
+    IF ("" + st{"ERR"}) <> "" THEN RETURN st
     DIM cmds = log{"CMDS"}
+    DIM refused = 0
     DIM i
     FOR i = 0 TO LEN(cmds) - 1
-        DIM why$ = APPLY(st, cmds[i])
+        IF APPLY(st, cmds[i]) <> "" THEN refused = refused + 1
     NEXT i
+    ' A recording whose commands do not all land is not the match it recorded,
+    ' and a viewer that draws it anyway is showing a different game.
+    IF refused > 0 THEN st{"ERR"} = "msg_logrefused"
+    st{"REFUSED"} = refused
     RETURN st
 ENDFUNC
 

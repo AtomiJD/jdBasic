@@ -5,12 +5,11 @@
 '   jdbasic vein_test.jdb
 IMPORT VEIN
 
-TRY
-    VEIN.SETPARTS(JSON.PARSE$(TXTREADER$("parts.json")))
-    VEIN.SETLAYOUTS(JSON.PARSE$(TXTREADER$("maps.json")))
-CATCH
-    PRINT "parts.json or maps.json not readable - using the built-in set"
-ENDTRY
+DIM load_why$ = VEIN.LOADDATA()
+IF load_why$ <> "" THEN
+    PRINT load_why$
+    END
+ENDIF
 
 DIM pass = 0
 DIM fail = 0
@@ -286,6 +285,21 @@ CHECK("a log missing its last move lands elsewhere", _
 VEIN.SETPARTS(quick)
 CHECK("and a log from other rules says so", VEIN.LOGDRIFT(log), "msg_otherparts")
 VEIN.SETPARTS(p)
+
+PRINT "--- a tool cannot half-load the game"
+
+' Starting a tool from another directory used to leave it running on the
+' built-in set, on a layout that does not exist there, drawing a board nobody
+' asked for. Both halves of that now say so.
+DIM ghost = VEIN.NEWGAME("GIBTESNICHT")
+CHECK("an unknown layout is refused", "" + ghost{"ERR"}, "msg_nolayout")
+CHECK("  and a real one is not", "" + VEIN.NEWGAME("KETTE"){"ERR"}, "")
+
+DIM offgrid = { "LAYOUT": "REVIER40", "FP": "", "CMDS": [ _
+    { "T": "DRAG", "R": 6, "C": 6, "R2": 6, "C2": 200 } ] }
+DIM ghost2 = VEIN.REPLAY(offgrid)
+CHECK("a recording that does not fit its layout is refused", _
+    "" + ghost2{"ERR"}, "msg_logrefused")
 
 PRINT ""
 PRINT "vein_test: passed "; pass; ", failed "; fail

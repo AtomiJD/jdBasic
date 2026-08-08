@@ -1,19 +1,22 @@
 ' A window on a running layout. The rules tick at their own rate and the
 ' picture is drawn from whatever the state happens to be, which is the split
-' the whole design rests on.
+' the whole design rests on: 20 ticks a second, as many frames as fit.
 '
-'   jdbasic view.jdb                 SCHLANGE, live
-'   jdbasic view.jdb KETTE           another layout
-'   jdbasic view.jdb KETTE --shot    one picture to tmp/jdvein.png
+'   jdbasic view.jdb                     SCHLANGE, live
+'   jdbasic view.jdb WERK                another layout
+'   jdbasic view.jdb --log bauplan.json  replay a recording and watch it
+'   jdbasic view.jdb WERK --shot         one picture to tmp/jdvein.png
 IMPORT VEIN
 IMPORT VPAINT
 
-TRY
-    VEIN.SETPARTS(JSON.PARSE$(TXTREADER$("parts.json")))
-    VEIN.SETLAYOUTS(JSON.PARSE$(TXTREADER$("maps.json")))
-CATCH
-    PRINT "parts.json or maps.json not readable - using the built-in set"
-ENDTRY
+CONST HZ = 20
+DIM stopafter = 600
+
+DIM why$ = VEIN.LOADDATA()
+IF why$ <> "" THEN
+    PRINT why$
+    END
+ENDIF
 
 DIM args = OS.ARGS()
 DIM layout$ = "SCHLANGE"
@@ -26,6 +29,9 @@ FOR ai = 1 TO LEN(args) - 1
     ELSEIF args[ai] = "--log" ANDALSO ai + 1 < LEN(args) THEN
         logfile$ = args[ai + 1]
         ai = ai + 1
+    ELSEIF args[ai] = "--secs" ANDALSO ai + 1 < LEN(args) THEN
+        stopafter = VAL(args[ai + 1])
+        ai = ai + 1
     ELSEIF LEFT$(args[ai], 2) <> "--" THEN
         layout$ = UCASE$(args[ai])
     ENDIF
@@ -34,7 +40,18 @@ NEXT ai
 DIM st = 0
 IF logfile$ <> "" THEN
     ' a recording is the match: the factory below was never placed by hand
-    DIM log = JSON.PARSE$(TXTREADER$(logfile$))
+    DIM raw$ = ""
+    TRY
+        raw$ = TXTREADER$(logfile$)
+    CATCH
+        TRY
+            raw$ = TXTREADER$(VEIN.HERE$() + logfile$)
+        CATCH
+            PRINT "Aufzeichnung nicht lesbar: "; logfile$
+            END
+        ENDTRY
+    ENDTRY
+    DIM log = JSON.PARSE$(raw$)
     layout$ = "" + log{"LAYOUT"}
     st = VEIN.REPLAY(log)
     PRINT "nachgespielt: "; LEN(log{"CMDS"}); " Befehle auf "; layout$
@@ -46,6 +63,15 @@ ELSE
     ENDIF
     st = VEIN.NEWGAME(layout$)
 ENDIF
+
+IF ("" + st{"ERR"}) <> "" THEN
+    PRINT "Abbruch: "; st{"ERR"}
+    IF ("" + st{"ERR"}) = "msg_logrefused" THEN
+        PRINT st{"REFUSED"}; " von "; LEN(log{"CMDS"}); " Befehlen wurden abgelehnt."
+    ENDIF
+    END
+ENDIF
+
 DIM n = st{"N"}
 CONST WIN = 1024
 DIM zoom = INT(WIN / n)
@@ -66,22 +92,34 @@ IF shot = 1 THEN
         st = VEIN.ADVANCE(st)
     NEXT k
     PLOTRAW 0, 0, VPAINT.FRAME(base, st), zoom, zoom
-    GFX.SAVE_SCREENSHOT("../../../../tmp/jdvein.png")
+    GFX.SAVE_SCREENSHOT(VEIN.HERE$() + "../../../../tmp/jdvein.png")
     SCREENFLIP
     PRINT "wrote tmp/jdvein.png  "; VEIN.COUNTGOODS(st); " Waren, geliefert "; st{"DELIVERED"}[1]
 ELSE
     ON "QUIT" CALL STOPIT
     ON "KEYDOWN" CALL STOPIT
+    DIM per_tick = 1000.0 / HZ
     DIM frames = 0
     DIM t_start = TICK()
+    DIM t_last = t_start
+    DIM tick0 = st{"TICK"}
+    DIM carry = 0.0
     DO WHILE running = 1
-        st = VEIN.ADVANCE(st)
+        DIM now = TICK()
+        carry = carry + (now - t_last)
+        t_last = now
+        ' the rules do not speed up just because the picture is cheap to draw
+        DO WHILE carry >= per_tick
+            st = VEIN.ADVANCE(st)
+            carry = carry - per_tick
+        LOOP
         PLOTRAW 0, 0, VPAINT.FRAME(base, st), zoom, zoom
         SCREENFLIP
         frames = frames + 1
-        IF frames >= 6000 THEN running = 0
+        IF (now - t_start) / 1000.0 >= stopafter THEN running = 0
     LOOP
     DIM secs = (TICK() - t_start) / 1000.0
     PRINT frames; " Bilder in "; INT(secs * 10) / 10.0; " s = "; INT(frames / secs); " fps"
+    PRINT st{"TICK"} - tick0; " Ticks in dieser Sitzung = "; INT((st{"TICK"} - tick0) / secs); " je Sekunde"
     PRINT "geliefert "; st{"DELIVERED"}[1]; ", Punkte "; st{"SCORE"}[1]
 ENDIF

@@ -9,11 +9,16 @@ is a number a tool prints, the economy runs from the seam to the port, and a
 match is a command log that replays to the same numbers.
 
 ```
-jdbasic vein_test.jdb                 the assertions
-jdbasic passcost.jdb                  what a tick costs, in grid passes
-jdbasic view.jdb --log bauplan.json   replay a recorded factory and watch it
-jdbasic view.jdb WERK --shot          one picture to tmp/jdvein.png
+jdbasic vein_test.jdb                    the assertions
+jdbasic passcost.jdb                     what a tick costs, in grid passes
+jdbasic view.jdb --log bauplan.json      replay a recorded factory and watch it
+jdbasic view.jdb WERK --secs 30          run a layout for half a minute
+jdbasic view.jdb WERK --shot             one picture to tmp/jdvein.png
 ```
+
+Every tool finds its data next to its own source, so it does not matter which
+directory it was started from. The rules run at **20 ticks a second** whatever
+the frame rate is, which is the split the design rests on.
 
 ## The parts, in jdVOID's register
 
@@ -109,7 +114,7 @@ is better to know now.
 
 ## What is checked
 
-`vein_test.jdb`, 47 assertions across twelve sections. The load-bearing ones:
+`vein_test.jdb`, 50 assertions across thirteen sections. The load-bearing ones:
 
 * the mover lands a good on exactly the cell a plain scalar walk reaches after
   60 ticks over three corners
@@ -125,6 +130,21 @@ is better to know now.
   else, and the log replays to the same fingerprint. A log missing its last
   move has to land somewhere different, or the check would prove nothing.
 * a state written out as JSON and read back runs on identically
+
+## Two silent failures, now loud
+
+Both were found by starting a tool from the repo root instead of from here,
+and both drew a plausible window rather than saying anything.
+
+* Data files were read by plain name, so from another directory they were not
+  found and the module fell back to its **built-in set**. That set has two
+  machines and one layout. `LOADDATA` now resolves next to the running script
+  and returns a message rather than falling back.
+* `NEWGAME` on a layout that does not exist returned an empty 8 by 8 board
+  instead of complaining, and the build commands then ran off the edge of it.
+  Two cells fit. That is what the two squares were. It sets `ERR` now, and a
+  `REPLAY` whose commands do not all land sets `ERR` too, because a recording
+  that only half applies is not the match it recorded.
 
 ## Traps found while building this
 
