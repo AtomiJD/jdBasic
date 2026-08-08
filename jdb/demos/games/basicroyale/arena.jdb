@@ -225,14 +225,19 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         ADDEVENT(st, { "T": "CAST", "FX": 9.0, "FY": ky, "X": x, "Y": y })
     ELSE
         DIM offs = [[0.0, 0.0], [-0.8, 0.0], [0.8, 0.0], [0.0, -0.8], [0.0, 0.8]]
-        ' A splitting card does not stack its bodies next to each other. It
-        ' puts one on each bridge, so the halves walk separate lanes and end
-        ' up in front of separate stations. The lanes come from the board, so
-        ' the card says what it does and not where the bridges happen to be.
+        ' Splitting is a decision made when the card is put down. Dropped in
+        ' the middle the bodies take a bridge each and walk separate lanes;
+        ' dropped over a lane they all go there, side by side like any other
+        ' card. The middle is where the drop sits nearer the centre than a
+        ' bridge, which the board answers on its own - no magic number, and it
+        ' still holds if the board ever changes.
         DIM lanes = 0
         IF MAP.EXISTS(c, "LANESPLIT") THEN
             DIM bd0 = BOARD()
-            lanes = bd0{"BRIDGES"}
+            DIM br = bd0{"BRIDGES"}
+            DIM midx = bd0{"COLS"} / 2.0
+            DIM midband = (midx - br[0]) / 2.0
+            IF ABS(x - midx) <= midband THEN lanes = br
         ENDIF
         FOR i = 0 TO c{"N"} - 1
             DIM u2 AS MAP = {}

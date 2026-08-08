@@ -19,8 +19,9 @@ ARENA.SETCARDS(JSON.PARSE$(raw$))
 
 DIM cs = ARENA.CARDS()
 DIM args = OS.ARGS()
-DIM list$ = ["PLASMA", "SALVE", "SOG", "SPRENGKOPF", "GLUTREGEN", "DROID"]
+DIM list$ = ["PLASMA", "SALVE", "SOG", "TRABANT", "GLUTREGEN", "DROID"]
 DIM guard$ = ""
+DIM sidedrop = 0
 IF LEN(args) > 1 THEN
     list$ = []
     DIM ai = 1
@@ -28,6 +29,8 @@ IF LEN(args) > 1 THEN
         IF args[ai] = "-d" THEN
             ai = ai + 1
             guard$ = UCASE$(args[ai])
+        ELSEIF args[ai] = "-l" THEN
+            sidedrop = 1
         ELSE
             list$ = APPEND(list$, [UCASE$(args[ai])])
         ENDIF
@@ -75,8 +78,9 @@ FOR ci = 0 TO LEN(list$) - 1
     DIM dy = WALK_Y
     DIM dx = TW_X
     IF MAP.EXISTS(c, "SPELL") THEN dy = TW_Y
-    ' a card that splits is dropped where it is meant to be dropped
-    IF MAP.EXISTS(c, "LANESPLIT") THEN dx = MID_X
+    ' a card that splits belongs in the middle, which is the whole point of
+    ' it; -l drops it over the left lane instead, to see the other case
+    IF MAP.EXISTS(c, "LANESPLIT") ANDALSO sidedrop = 0 THEN dx = MID_X
     DIM msg$ = ARENA.PLAYCARD(st, 0, kind$, dx, dy)
     IF msg$ <> "" THEN
         PRINT kind$; " nicht spielbar: "; msg$

@@ -489,7 +489,7 @@
     "ICON": "TE",
     "RARITY": "S"
   },
-  "SPRENGKOPF": {
+  "TRABANT": {
     "SHAPE": [
       ["BOXR", 20, 25, 7, 9, 3, 0, "HULL", 0],
       ["DISC", 20, 12, 6.5, "ACCENT", 1.0],
@@ -521,7 +521,7 @@
       120,
       40
     ],
-    "ICON": "SK",
+    "ICON": "TB",
     "RARITY": "S"
   }
 }
