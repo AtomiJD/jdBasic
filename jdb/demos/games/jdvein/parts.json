@@ -1,15 +1,19 @@
 {
   "goods": {
     "ROHERZ": { "ID": 1, "COLOR": [ 90, 170, 255 ], "SCORE": 1 },
-    "BARREN": { "ID": 2, "COLOR": [ 255, 205, 90 ], "SCORE": 3 },
-    "BAUTEIL": { "ID": 3, "COLOR": [ 255, 110, 95 ], "SCORE": 9 }
+    "KRISTALL": { "ID": 2, "COLOR": [ 190, 120, 255 ], "SCORE": 2 },
+    "BARREN": { "ID": 3, "COLOR": [ 255, 205, 90 ], "SCORE": 5 },
+    "BAUTEIL": { "ID": 4, "COLOR": [ 255, 110, 95 ], "SCORE": 14 }
   },
   "belts": {
     "BAND": { "COLOR": [ 46, 54, 88 ], "COST": 1 }
   },
   "machines": {
-    "OFEN": { "IN": "ROHERZ", "OUT": "BARREN", "DWELL": 6, "COLOR": [ 150, 112, 44 ], "COST": 5 },
-    "PRESSE": { "IN": "BARREN", "OUT": "BAUTEIL", "DWELL": 10, "COLOR": [ 122, 84, 158 ], "COST": 9 }
+    "BOHRER": { "MINES": "ROHERZ", "DWELL": 3, "COLOR": [ 108, 132, 150 ], "COST": 4 },
+    "SCHACHT": { "MINES": "KRISTALL", "DWELL": 5, "COLOR": [ 132, 108, 164 ], "COST": 6 },
+    "OFEN": { "IN": "ROHERZ", "NEED": 2, "OUT": "BARREN", "DWELL": 6, "COLOR": [ 150, 112, 44 ], "COST": 5 },
+    "PRESSE": { "IN": "BARREN", "NEED": 1, "IN2": "KRISTALL", "NEED2": 1, "OUT": "BAUTEIL", "DWELL": 10, "COLOR": [ 122, 84, 158 ], "COST": 9 }
   },
+  "ore": { "COLOR": [ 34, 52, 74 ] },
   "ground": { "COLOR": [ 10, 14, 26 ] }
 }

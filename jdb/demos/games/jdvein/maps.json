@@ -29,8 +29,52 @@
       { "OP": "RUN", "R": 10, "C": 3, "LEN": 30, "DIR": "E" },
       { "OP": "SRC", "R": 10, "C": 3, "GOOD": "ROHERZ" },
       { "OP": "MACH", "R": 10, "C": 12, "KIND": "OFEN" },
-      { "OP": "MACH", "R": 10, "C": 24, "KIND": "PRESSE" },
       { "OP": "SINK", "R": 10, "C": 32, "PLAYER": 1 }
+    ]
+  },
+  "GRUBE": {
+    "N": 40,
+    "STROKES": [
+      { "OP": "RUN", "R": 10, "C": 3, "LEN": 20, "DIR": "E" },
+      { "OP": "ORE", "R": 10, "C": 3, "RADIUS": 0, "AMOUNT": 12, "GOOD": "ROHERZ" },
+      { "OP": "MACH", "R": 10, "C": 3, "KIND": "BOHRER" },
+      { "OP": "SINK", "R": 10, "C": 22, "PLAYER": 1 }
+    ]
+  },
+  "FALSCHERBOHRER": {
+    "N": 40,
+    "STROKES": [
+      { "OP": "RUN", "R": 10, "C": 3, "LEN": 20, "DIR": "E" },
+      { "OP": "ORE", "R": 10, "C": 3, "RADIUS": 0, "AMOUNT": 12, "GOOD": "KRISTALL" },
+      { "OP": "MACH", "R": 10, "C": 3, "KIND": "BOHRER" },
+      { "OP": "SINK", "R": 10, "C": 22, "PLAYER": 1 }
+    ]
+  },
+  "WERK": {
+    "N": 40,
+    "STROKES": [
+      { "OP": "RUN", "R": 11, "C": 16, "LEN": 20, "DIR": "E" },
+      { "OP": "RUN", "R": 6, "C": 16, "LEN": 5, "DIR": "S" },
+      { "OP": "RUN", "R": 16, "C": 24, "LEN": 5, "DIR": "N" },
+      { "OP": "ORE", "R": 6, "C": 16, "RADIUS": 1, "AMOUNT": 200, "GOOD": "ROHERZ" },
+      { "OP": "ORE", "R": 16, "C": 24, "RADIUS": 1, "AMOUNT": 200, "GOOD": "KRISTALL" },
+      { "OP": "MACH", "R": 6, "C": 16, "KIND": "BOHRER" },
+      { "OP": "MACH", "R": 16, "C": 24, "KIND": "SCHACHT" },
+      { "OP": "MACH", "R": 11, "C": 20, "KIND": "OFEN" },
+      { "OP": "MACH", "R": 11, "C": 28, "KIND": "PRESSE" },
+      { "OP": "SINK", "R": 11, "C": 35, "PLAYER": 1 }
+    ]
+  },
+  "WERKHALB": {
+    "N": 40,
+    "STROKES": [
+      { "OP": "RUN", "R": 11, "C": 16, "LEN": 20, "DIR": "E" },
+      { "OP": "RUN", "R": 6, "C": 16, "LEN": 5, "DIR": "S" },
+      { "OP": "ORE", "R": 6, "C": 16, "RADIUS": 1, "AMOUNT": 200, "GOOD": "ROHERZ" },
+      { "OP": "MACH", "R": 6, "C": 16, "KIND": "BOHRER" },
+      { "OP": "MACH", "R": 11, "C": 20, "KIND": "OFEN" },
+      { "OP": "MACH", "R": 11, "C": 28, "KIND": "PRESSE" },
+      { "OP": "SINK", "R": 11, "C": 35, "PLAYER": 1 }
     ]
   }
 }

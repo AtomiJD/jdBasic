@@ -3,9 +3,9 @@
 ' moves it on by a tick and touches every grid as a whole; nothing in here
 ' knows how many goods are in flight, which is the point of the engine.
 '
-' Parts and layouts are data. Nothing about a belt, a machine or a map is
-' written into this file, so an editor that emits parts.json and maps.json
-' is the only tool needed to change the game.
+' Parts and layouts are data. Nothing about a belt, a machine, a recipe or a
+' map is written into this file, so an editor that emits parts.json and
+' maps.json is the only tool needed to change the game.
 EXPORT MODULE VEIN
 
 ' Directions: 1 north, 2 east, 3 south, 4 west. Zero is bare ground.
@@ -51,15 +51,19 @@ EXPORT SUB SETPARTS(m)
 ENDSUB
 
 ' The built-in set is the fallback when no parts.json was installed. It is
-' deliberately the smallest thing that still exercises every field.
+' deliberately the smallest thing that still exercises every field: a miner,
+' a one-input recipe and a good worth more than what went into it.
 EXPORT FUNC PARTS()
     IF TYPEOF(loaded_parts) = "OBJECT" THEN RETURN loaded_parts
     DIM p AS MAP = {}
     p{"goods"} = { "ROHERZ": { "ID": 1, "COLOR": [90, 170, 255], "SCORE": 1 }, _
-                   "BARREN": { "ID": 2, "COLOR": [255, 205, 90], "SCORE": 3 } }
+                   "BARREN": { "ID": 3, "COLOR": [255, 205, 90], "SCORE": 5 } }
     p{"belts"} = { "BAND": { "COLOR": [46, 54, 88], "COST": 1 } }
-    p{"machines"} = { "OFEN": { "IN": "ROHERZ", "OUT": "BARREN", "DWELL": 6, _
-                                "COLOR": [150, 112, 44], "COST": 5 } }
+    p{"machines"} = { _
+        "BOHRER": { "MINES": "ROHERZ", "DWELL": 3, "COLOR": [108, 132, 150], "COST": 4 }, _
+        "OFEN": { "IN": "ROHERZ", "NEED": 2, "OUT": "BARREN", "DWELL": 6, _
+                  "COLOR": [150, 112, 44], "COST": 5 } }
+    p{"ore"} = { "COLOR": [34, 52, 74] }
     p{"ground"} = { "COLOR": [10, 14, 26] }
     RETURN p
 ENDFUNC
@@ -81,7 +85,7 @@ EXPORT FUNC GOODID(name$)
     RETURN gs{name$}{"ID"}
 ENDFUNC
 
-' Goods ordered by id, so a painter or a score pass can walk them without
+' Goods ordered by id, so a painter or an editor can walk them without
 ' guessing which ids exist.
 EXPORT FUNC GOODLIST()
     DIM gs = PARTS(){"goods"}
@@ -99,33 +103,62 @@ EXPORT FUNC GOODLIST()
     RETURN out
 ENDFUNC
 
+EXPORT FUNC TOPGOOD()
+    DIM gs = PARTS(){"goods"}
+    DIM top = 0
+    FOR EACH k$ IN MAP.KEYS(gs)
+        IF gs{k$}{"ID"} > top THEN top = gs{k$}{"ID"}
+    NEXT k$
+    RETURN top
+ENDFUNC
+
+' A machine with no inputs is a miner. Nothing else distinguishes the two.
+EXPORT FUNC ISMINER(mk)
+    IF MAP.EXISTS(mk, "MINES") THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
 ' ------------------------------------------------------------- the state ---
 
-' Everything a match is. All grids are n by n and all of it survives
-' JSON.STRINGIFY, so a state can be written out and read back unchanged.
+' All grids are n by n and all of it survives JSON.STRINGIFY, so a state can
+' be written out and read back unchanged.
 FUNC BLANK(n)
     DIM z = RESHAPE([0], [n, n])
+    DIM keys$ = ["DIR", "ITEM", "MACH", "CD", "MACHIN", "MACHIN2", "MACHOUT", _
+                 "MACHCD0", "NEED1", "NEED2", "CAP1", "CAP2", "BUF1", "BUF2", _
+                 "ORE", "ORETYPE", "SRC", "SINK", "OWNER"]
     DIM st AS MAP = {}
     st{"N"} = n
     st{"TICK"} = 0
-    st{"DIR"} = z
-    st{"ITEM"} = z + 0
-    st{"MACH"} = z + 0
-    st{"CD"} = z + 0
-    st{"MACHIN"} = z + 0
-    st{"MACHOUT"} = z + 0
-    st{"MACHCD0"} = z + 0
-    st{"SRC"} = z + 0
-    st{"SINK"} = z + 0
-    st{"OWNER"} = z + 0
+    DIM i
+    FOR i = 0 TO LEN(keys$) - 1
+        st{keys$[i]} = z + 0
+    NEXT i
     st{"DELIVERED"} = [0, 0, 0, 0, 0]
     st{"SCORE"} = [0, 0, 0, 0, 0]
+    ' what each port received, by good: a port that only counts crates cannot
+    ' tell a finished part from the ore that walked past a busy machine
+    st{"BOOKED"} = RESHAPE([0], [5, TOPGOOD() + 1])
+    st{"MINED"} = 0
     RETURN st
 ENDFUNC
 
-' Which cells point where, and which of their neighbours can take a good,
-' only changes when something is built. Lifting both out of the tick is worth
-' eight passes over the grid per tick, so every edit calls this once.
+EXPORT FUNC GOTBY(st, player, good$)
+    DIM b = st{"BOOKED"}
+    RETURN b[player][GOODID(good$)]
+ENDFUNC
+
+FUNC SETCELL(st, key$, r, c, v)
+    DIM g = st{key$}
+    g[r][c] = v
+    st{key$} = g
+    RETURN st
+ENDFUNC
+
+' What never changes while a layout stands: which cells point where, which of
+' their neighbours can take a good, which cells dig and whether they sit on
+' the seam they were built for. Lifting all of it out of the tick is worth
+' more than a dozen passes over the grid per tick, so every edit calls this.
 EXPORT FUNC REBUILD(st)
     DIM dirg = st{"DIR"}
     DIM accept = (dirg > 0)
@@ -138,6 +171,13 @@ EXPORT FUNC REBUILD(st)
     NEXT d
     st{"MASK"} = masks
     st{"AHEAD"} = aheads
+
+    DIM digs = st{"MACH"} * (st{"NEED1"} = 0) * (st{"NEED2"} = 0)
+    st{"DIGS"} = digs
+    st{"DIGOK"} = digs * (st{"ORETYPE"} = st{"MACHOUT"})
+    ' cells nothing was built on, which is where a seam is still visible
+    st{"BARE"} = (dirg = 0) * 1
+
     DIM n = st{"N"}
     st{"HASMACH"} = SUM(RESHAPE(st{"MACH"}, [n * n])) > 0
     st{"HASSINK"} = SUM(RESHAPE(st{"SINK"}, [n * n])) > 0
@@ -146,8 +186,8 @@ ENDFUNC
 
 ' ------------------------------------------------------------ the builder ---
 
-' One cell. kind$ is a belt name for a plain conveyor, a machine name for a
-' machine. A machine keeps a direction, so a good leaves it the way it came.
+' One cell. kind$ is a belt name for a plain conveyor or a machine name. A
+' machine keeps a direction, so what it makes leaves the way the belt runs.
 EXPORT FUNC PLACE(st, r, c, kind$, d)
     DIM n = st{"N"}
     IF r < 0 ORELSE c < 0 ORELSE r >= n ORELSE c >= n THEN RETURN "msg_offgrid"
@@ -157,69 +197,82 @@ EXPORT FUNC PLACE(st, r, c, kind$, d)
     IF isbelt = 0 ANDALSO ismach = 0 THEN RETURN "msg_unknown"
     IF d < 1 ORELSE d > 4 THEN RETURN "msg_nodir"
 
-    DIM dirg = st{"DIR"}
-    dirg[r][c] = d
-    st{"DIR"} = dirg
+    st = SETCELL(st, "DIR", r, c, d)
+    DIM blank$ = ["MACH", "MACHIN", "MACHIN2", "MACHOUT", "MACHCD0", _
+                  "NEED1", "NEED2", "CAP1", "CAP2", "BUF1", "BUF2", "CD"]
+    DIM i
+    FOR i = 0 TO LEN(blank$) - 1
+        st = SETCELL(st, blank$[i], r, c, 0)
+    NEXT i
+    IF ismach = 0 THEN RETURN ""
 
-    DIM mach = st{"MACH"}
-    DIM min_g = st{"MACHIN"}
-    DIM mout = st{"MACHOUT"}
-    DIM mcd = st{"MACHCD0"}
-    DIM cdg = st{"CD"}
-    IF ismach = 1 THEN
-        DIM mk = p{"machines"}{kind$}
-        mach[r][c] = 1
-        min_g[r][c] = GOODID("" + mk{"IN"})
-        mout[r][c] = GOODID("" + mk{"OUT"})
-        mcd[r][c] = mk{"DWELL"}
-        cdg[r][c] = mk{"DWELL"}
-    ELSE
-        mach[r][c] = 0
-        min_g[r][c] = 0
-        mout[r][c] = 0
-        mcd[r][c] = 0
-        cdg[r][c] = 0
+    DIM mk = p{"machines"}{kind$}
+    st = SETCELL(st, "MACH", r, c, 1)
+    st = SETCELL(st, "MACHCD0", r, c, mk{"DWELL"})
+    st = SETCELL(st, "CD", r, c, mk{"DWELL"})
+    IF ISMINER(mk) = 1 THEN
+        st = SETCELL(st, "MACHOUT", r, c, GOODID("" + mk{"MINES"}))
+        RETURN ""
     ENDIF
-    st{"MACH"} = mach
-    st{"MACHIN"} = min_g
-    st{"MACHOUT"} = mout
-    st{"MACHCD0"} = mcd
-    st{"CD"} = cdg
+
+    st = SETCELL(st, "MACHOUT", r, c, GOODID("" + mk{"OUT"}))
+    DIM n1 = 1
+    IF MAP.EXISTS(mk, "NEED") THEN n1 = mk{"NEED"}
+    st = SETCELL(st, "MACHIN", r, c, GOODID("" + mk{"IN"}))
+    st = SETCELL(st, "NEED1", r, c, n1)
+    st = SETCELL(st, "CAP1", r, c, n1 * 2)
+    IF MAP.EXISTS(mk, "IN2") THEN
+        DIM n2 = 1
+        IF MAP.EXISTS(mk, "NEED2") THEN n2 = mk{"NEED2"}
+        st = SETCELL(st, "MACHIN2", r, c, GOODID("" + mk{"IN2"}))
+        st = SETCELL(st, "NEED2", r, c, n2)
+        st = SETCELL(st, "CAP2", r, c, n2 * 2)
+    ENDIF
     RETURN ""
 ENDFUNC
 
 EXPORT FUNC UNBUILD(st, r, c)
     DIM n = st{"N"}
     IF r < 0 ORELSE c < 0 ORELSE r >= n ORELSE c >= n THEN RETURN "msg_offgrid"
-    DIM keys$ = ["DIR", "ITEM", "MACH", "CD", "MACHIN", "MACHOUT", "MACHCD0", "SRC", "SINK"]
+    DIM keys$ = ["DIR", "ITEM", "MACH", "CD", "MACHIN", "MACHIN2", "MACHOUT", _
+                 "MACHCD0", "NEED1", "NEED2", "CAP1", "CAP2", "BUF1", "BUF2", _
+                 "SRC", "SINK"]
     DIM i
     FOR i = 0 TO LEN(keys$) - 1
-        DIM g = st{keys$[i]}
-        g[r][c] = 0
-        st{keys$[i]} = g
+        st = SETCELL(st, keys$[i], r, c, 0)
     NEXT i
     RETURN ""
 ENDFUNC
 
 EXPORT FUNC PUTSOURCE(st, r, c, good$)
-    DIM g = st{"SRC"}
-    g[r][c] = GOODID(good$)
-    st{"SRC"} = g
-    RETURN ""
+    RETURN SETCELL(st, "SRC", r, c, GOODID(good$))
 ENDFUNC
 
 EXPORT FUNC PUTSINK(st, r, c, player)
-    DIM g = st{"SINK"}
-    g[r][c] = player
-    st{"SINK"} = g
-    RETURN ""
+    RETURN SETCELL(st, "SINK", r, c, player)
+ENDFUNC
+
+' A deposit is a disc of richness with a type. A miner only works on the seam
+' it was built for, so putting the wrong drill on a patch is a real mistake
+' and not a silent success.
+EXPORT FUNC PUTORE(st, r, c, radius, amount, good$)
+    DIM n = st{"N"}
+    DIM flat = IOTA(n * n, 0)
+    DIM rowi = RESHAPE(INT(flat / n), [n, n])
+    DIM coli = RESHAPE(flat MOD n, [n, n])
+    DIM dr = rowi - r
+    DIM dc = coli - c
+    DIM inside = ((dr * dr + dc * dc) <= radius * radius) * 1
+    st{"ORE"} = st{"ORE"} * (1 - inside) + inside * amount
+    st{"ORETYPE"} = st{"ORETYPE"} * (1 - inside) + inside * GOODID(good$)
+    RETURN st
 ENDFUNC
 
 ' ------------------------------------------------------------- the layout ---
 
-' A stroke is what an editor draws: a straight run, a single cell, a source,
-' a sink, a machine. Everything a map can be made of goes through PLACE, so
-' hand-authored and generated layouts cannot drift apart.
+' A stroke is what an editor draws: a straight run, a single cell, a machine,
+' a deposit, a source, a port. Everything a map can be made of goes through
+' PLACE, so hand-authored and generated layouts cannot drift apart.
 FUNC APPLYSTROKES(st, strokes)
     DIM si
     FOR si = 0 TO LEN(strokes) - 1
@@ -233,7 +286,7 @@ FUNC APPLYSTROKES(st, strokes)
             DIM dc = DCOF(d)
             DIM k
             FOR k = 0 TO s{"LEN"} - 1
-                DIM why$ = PLACE(st, r + dr * k, c + dc * k, "BAND", d)
+                DIM w0$ = PLACE(st, r + dr * k, c + dc * k, "BAND", d)
             NEXT k
         ELSEIF op$ = "CELL" THEN
             DIM w1$ = PLACE(st, r, c, "" + s{"KIND"}, DIRNO("" + s{"DIR"}))
@@ -241,10 +294,14 @@ FUNC APPLYSTROKES(st, strokes)
             ' a machine inherits the direction of the belt it is dropped on
             DIM dirg = st{"DIR"}
             DIM w2$ = PLACE(st, r, c, "" + s{"KIND"}, dirg[r][c])
+        ELSEIF op$ = "ORE" THEN
+            DIM rad = 0
+            IF MAP.EXISTS(s, "RADIUS") THEN rad = s{"RADIUS"}
+            st = PUTORE(st, r, c, rad, s{"AMOUNT"}, "" + s{"GOOD"})
         ELSEIF op$ = "SRC" THEN
-            DIM w3$ = PUTSOURCE(st, r, c, "" + s{"GOOD"})
+            st = PUTSOURCE(st, r, c, "" + s{"GOOD"})
         ELSEIF op$ = "SINK" THEN
-            DIM w4$ = PUTSINK(st, r, c, s{"PLAYER"})
+            st = PUTSINK(st, r, c, s{"PLAYER"})
         ENDIF
     NEXT si
     RETURN st
@@ -275,17 +332,19 @@ FUNC APPLYGEN(st, gen)
     DIM ingap = ((rowi MOD lane) <> 0) * (rowi >= lane) * (rowi < lastrow)
     st{"DIR"} = dirg + ingap * atturn * 3
 
-    DIM mstep = gen{"MACHSTEP"}
-    DIM machcell = onlane * inrun * ((coli MOD mstep) = 5) * (1 - atturn)
     DIM mk = PARTS(){"machines"}{"" + gen{"MACH"}}
+    DIM machcell = onlane * inrun * ((coli MOD gen{"MACHSTEP"}) = 5) * (1 - atturn)
+    DIM n1 = 1
+    IF MAP.EXISTS(mk, "NEED") THEN n1 = mk{"NEED"}
     st{"MACH"} = machcell
     st{"MACHIN"} = machcell * GOODID("" + mk{"IN"})
     st{"MACHOUT"} = machcell * GOODID("" + mk{"OUT"})
     st{"MACHCD0"} = machcell * mk{"DWELL"}
     st{"CD"} = machcell * mk{"DWELL"}
+    st{"NEED1"} = machcell * n1
+    st{"CAP1"} = machcell * n1 * 2
 
-    DIM sstep = gen{"SRCSTEP"}
-    st{"SRC"} = onlane * inrun * ((coli MOD sstep) = 7) * GOODID("" + gen{"GOOD"})
+    st{"SRC"} = onlane * inrun * ((coli MOD gen{"SRCSTEP"}) = 7) * GOODID("" + gen{"GOOD"})
     st{"SINK"} = onlane * atturn * (rowi = lastrow) * gen{"PLAYER"}
     RETURN st
 ENDFUNC
@@ -305,28 +364,55 @@ ENDFUNC
 
 EXPORT FUNC ADVANCE(st)
     DIM itemg = st{"ITEM"}
-    DIM masks = st{"MASK"}
-    DIM aheads = st{"AHEAD"}
-    DIM free0 = (itemg = 0)
-    DIM ready = 1 - free0
 
-    ' A machine keeps the good it is built for until its dwell is up and hands
-    ' back what its recipe says. Both sit in the cell as numbers, so the cost
-    ' of this block does not grow when the game gains machine kinds.
     IF st{"HASMACH"} THEN
         DIM mach = st{"MACH"}
         DIM cdg = st{"CD"}
-        DIM busy = mach * (itemg = st{"MACHIN"})
-        cdg = cdg - busy
-        DIM ripe = busy * (cdg = 0)
-        itemg = itemg * (1 - ripe) + ripe * st{"MACHOUT"}
-        ready = ready * (1 - busy * (cdg > 0))
-        st{"CD"} = cdg * (itemg > 0) + mach * (itemg = 0) * st{"MACHCD0"}
+        DIM buf1 = st{"BUF1"}
+        DIM buf2 = st{"BUF2"}
+        DIM ore = st{"ORE"}
+
+        ' A machine takes what its recipe wants off the belt and holds it, so
+        ' it never blocks the line the way a cell that just sits on a good
+        ' would. The buffer is capped at twice the recipe, which stops one
+        ' machine from hoovering up a whole run.
+        DIM take1 = mach * (st{"MACHIN"} > 0) * (itemg = st{"MACHIN"}) * (buf1 < st{"CAP1"})
+        DIM take2 = mach * (st{"MACHIN2"} > 0) * (itemg = st{"MACHIN2"}) * (buf2 < st{"CAP2"})
+        buf1 = buf1 + take1
+        buf2 = buf2 + take2
+        itemg = itemg * (1 - take1) * (1 - take2)
+
+        ' It works while the recipe is covered and the cell is free to put the
+        ' result down. A miner has no recipe to cover and is gated on the seam
+        ' instead: right type, and something left in it.
+        DIM fed = (buf1 >= st{"NEED1"}) * (buf2 >= st{"NEED2"}) * (itemg = 0)
+        DIM gate = 1 - st{"DIGS"} + st{"DIGOK"} * (ore > 0)
+        DIM working = mach * fed * gate
+        cdg = cdg - working
+        DIM ripe = working * (cdg <= 0)
+
+        buf1 = buf1 - ripe * st{"NEED1"}
+        buf2 = buf2 - ripe * st{"NEED2"}
+        DIM dug = ripe * st{"DIGS"}
+        ore = ore - dug
+        itemg = itemg + ripe * st{"MACHOUT"}
+        cdg = cdg * (1 - ripe) + ripe * st{"MACHCD0"}
+
+        st{"BUF1"} = buf1
+        st{"BUF2"} = buf2
+        st{"CD"} = cdg
+        st{"ORE"} = ore
+        DIM n_dug = SUM(RESHAPE(dug, [st{"N"} * st{"N"}]))
+        IF n_dug > 0 THEN st{"MINED"} = st{"MINED"} + n_dug
     ENDIF
 
     ' All four directions read one snapshot of the grid, so a good that turns a
     ' corner cannot be picked up a second time in the same tick by a later
     ' direction. Claims keep two goods off one cell where belts merge.
+    DIM masks = st{"MASK"}
+    DIM aheads = st{"AHEAD"}
+    DIM free0 = (itemg = 0)
+    DIM ready = 1 - free0
     DIM claimed = free0 * 0
     DIM d
     FOR d = 1 TO 4
@@ -338,7 +424,7 @@ EXPORT FUNC ADVANCE(st)
         claimed = claimed + CARRYTO(go, dr, dc)
     NEXT d
 
-    ' What reaches a sink is booked to that sink's player and leaves the board.
+    ' What reaches a port is booked to that port's player and leaves the board.
     IF st{"HASSINK"} THEN
         DIM sink = st{"SINK"}
         DIM landed = (sink > 0) * (itemg > 0)
@@ -354,28 +440,34 @@ EXPORT FUNC ADVANCE(st)
     RETURN st
 ENDFUNC
 
-' Counting per player costs one pass per player and one per good kind. It only
-' runs on a tick where something actually arrived.
+' Counting costs a pass per player, and a pass per good kind for the players
+' that actually received something. It only runs on a tick where a port was
+' hit at all, so an idle port is free.
 FUNC BOOK(st, sink, landed, itemg)
     DIM n = st{"N"}
     DIM gs = PARTS(){"goods"}
-    DIM worth = landed * 0
-    FOR EACH k$ IN MAP.KEYS(gs)
-        worth = worth + (itemg = gs{k$}{"ID"}) * gs{k$}{"SCORE"}
-    NEXT k$
     DIM delivered = st{"DELIVERED"}
     DIM score = st{"SCORE"}
+    DIM booked = st{"BOOKED"}
     DIM pl
     FOR pl = 1 TO 4
         DIM mine = landed * (sink = pl)
         DIM cnt = SUM(RESHAPE(mine, [n * n]))
         IF cnt > 0 THEN
             delivered[pl] = delivered[pl] + cnt
-            score[pl] = score[pl] + SUM(RESHAPE(mine * worth, [n * n]))
+            FOR EACH k$ IN MAP.KEYS(gs)
+                DIM gid = gs{k$}{"ID"}
+                DIM got = SUM(RESHAPE(mine * (itemg = gid), [n * n]))
+                IF got > 0 THEN
+                    booked[pl][gid] = booked[pl][gid] + got
+                    score[pl] = score[pl] + got * gs{k$}{"SCORE"}
+                ENDIF
+            NEXT k$
         ENDIF
     NEXT pl
     st{"DELIVERED"} = delivered
     st{"SCORE"} = score
+    st{"BOOKED"} = booked
     RETURN st
 ENDFUNC
 
@@ -389,6 +481,18 @@ ENDFUNC
 EXPORT FUNC COUNTBUILT(st)
     DIM n = st{"N"}
     RETURN SUM(RESHAPE((st{"DIR"} > 0) * 1, [n * n]))
+ENDFUNC
+
+EXPORT FUNC ORELEFT(st)
+    DIM n = st{"N"}
+    RETURN SUM(RESHAPE(st{"ORE"}, [n * n]))
+ENDFUNC
+
+' Everything held in a machine buffer, which is where goods hide when the
+' board looks emptier than the books say.
+EXPORT FUNC INBUFFERS(st)
+    DIM n = st{"N"}
+    RETURN SUM(RESHAPE(st{"BUF1"} + st{"BUF2"}, [n * n]))
 ENDFUNC
 
 ' Where a single good sits. Only for tests and tools - it walks the grid.

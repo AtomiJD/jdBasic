@@ -34,7 +34,9 @@ EXPORT FUNC BASE(st)
 ENDFUNC
 
 ' The moving half. Two passes per good kind, which is the price of having no
-' gather by index matrix in the runtime.
+' gather by index matrix in the runtime, plus three for the seams: a deposit
+' only shows where nothing has been built over it, so it disappears under the
+' factory the way it should.
 EXPORT FUNC FRAME(base, st)
     DIM p = VEIN.PARTS()
     DIM gs = p{"goods"}
@@ -43,5 +45,7 @@ EXPORT FUNC FRAME(base, st)
     FOR EACH k$ IN MAP.KEYS(gs)
         lit = lit + (itemg = gs{k$}{"ID"}) * PACK(gs{k$}{"COLOR"})
     NEXT k$
-    RETURN base * (itemg = 0) + lit
+    DIM seam = st{"BARE"} * (st{"ORE"} > 0)
+    DIM under = base * (1 - seam) + seam * PACK(p{"ore"}{"COLOR"})
+    RETURN under * (itemg = 0) + lit
 ENDFUNC
