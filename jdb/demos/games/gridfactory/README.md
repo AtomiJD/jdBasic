@@ -35,9 +35,12 @@ one fifth. The simulation is the whole cost.
 
 ### The cost law
 
-About **30 ns per cell per whole-grid pass**, and a tick is about **40
-passes**. That is the only number needed to size a layout: cells times 40
-times 30 ns.
+About **15 ns per cell per whole-grid pass**. The tick in this probe is about
+**80 passes**, counted from the source, and the same figure falls out of both
+the 128 and the 256 row, which is what makes it usable for sizing.
+
+At 128x128 one pass is 0.25 ms. That is the price tag every further mechanic
+has to be quoted in.
 
 ## What the mover does
 
