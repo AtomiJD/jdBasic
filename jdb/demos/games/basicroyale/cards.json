@@ -274,6 +274,7 @@
     "SPELL": 1,
     "DMG": 325,
     "RADIUS": 2.5,
+    "BUILDMUL": 0.35,
     "COLOR": [
       255,
       70,
@@ -292,6 +293,7 @@
     "SPELL": 1,
     "DMG": 120,
     "RADIUS": 4.0,
+    "BUILDMUL": 0.35,
     "COLOR": [
       255,
       245,
@@ -456,6 +458,7 @@
     "PULL": 3.0,
     "SETTLE": 1.4,
     "RADIUS": 3.5,
+    "BUILDMUL": 0.35,
     "COLOR": [
       120,
       255,
@@ -484,6 +487,39 @@
       210
     ],
     "ICON": "TE",
+    "RARITY": "S"
+  },
+  "SPRENGKOPF": {
+    "SHAPE": [
+      ["BOXR", 20, 25, 7, 9, 3, 0, "HULL", 0],
+      ["DISC", 20, 12, 6.5, "ACCENT", 1.0],
+      ["DISC", 20, 12, 3, "LIGHT", 1.0],
+      ["BAR", 11, 30, 29, 30, 2.4, "DARK", 0],
+      ["DISC", 11, 22, 2.6, "TEAM", 0.6],
+      ["DISC", 29, 22, 2.6, "TEAM", 0.6],
+      ["BAR", 20, 32, 20, 35, 2, "ACCENT", 0.8]
+    ],
+    "COST": 4,
+    "HP": 500,
+    "DMG": 40,
+    "HITSPEED": 1.4,
+    "REACH": 1.0,
+    "AGGRO": 5.5,
+    "SPD": 2.0,
+    "N": 1,
+    "FLY": 0,
+    "HITS": "G",
+    "ONLYTOWERS": 1,
+    "DEATHDMG": 380,
+    "DEATHRADIUS": 2.8,
+    "SPLASHMIN": 0.4,
+    "BUILDMUL": 1.5,
+    "COLOR": [
+      255,
+      120,
+      40
+    ],
+    "ICON": "SK",
     "RARITY": "S"
   }
 }

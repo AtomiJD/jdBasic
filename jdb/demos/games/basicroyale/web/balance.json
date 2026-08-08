@@ -1,6 +1,24 @@
 {
   "entries": [
     {
+      "date": "2026-08-08",
+      "build": "",
+      "title": {
+        "de": "Eine Station ist kein Schiff mehr",
+        "en": "A station is no longer just a big ship"
+      },
+      "note": {
+        "de": "Bisher traf jeder Schlag eine 1400er Station genau so hart wie ein 90er Wespenschiff, und das PLASMA nahm ihr fuer 4 Elixier 325 Huelle ab, also 23 Prozent pro Wurf, ohne je die Bruecke zu ueberqueren. Karten haben jetzt buildmul, einen eigenen Faktor gegen alles Unbewegliche, Stationen wie abgestellte Gebaeude. Die drei Schadenszauber tragen 0.35: gemessen nimmt PLASMA der Station noch 113 statt 325, die SALVE 42 statt 120, der SOG 21 statt 60. Gegen Schiffe aendert sich kein einziger Punkt. Dazu bekommt der Flaechenschaden mit splashmin einen Abfall zum Rand, damit der Radius ein Regler wird statt eines Schalters. Ohne den Wert bleibt alles wie es war, GLUTREGEN streut also unveraendert.",
+        "en": "Until now every blow hit a 1400 station exactly as hard as a 90 hull wasp, and PLASMA took 325 off it for 4 elixir, 23 percent per cast without ever crossing the bridge. Cards now carry buildmul, a factor of their own against anything that cannot move, stations and deployed buildings alike. The three damage spells carry 0.35: measured, PLASMA now takes 113 off a station instead of 325, SALVE 42 instead of 120, SOG 21 instead of 60. Against ships not a single point changes. Area damage also gained splashmin, a falloff towards the rim, so the radius becomes a dial instead of a switch. Without the value nothing changes, so GLUTREGEN scatters exactly as before."
+      },
+      "changes": [
+        { "card": "PLASMA", "kind": "nerf", "stat": { "de": "Schaden an Stationen", "en": "damage to stations" }, "from": "325", "to": "113" },
+        { "card": "SALVE", "kind": "nerf", "stat": { "de": "Schaden an Stationen", "en": "damage to stations" }, "from": "120", "to": "42" },
+        { "card": "SOG", "kind": "nerf", "stat": { "de": "Schaden an Stationen", "en": "damage to stations" }, "from": "60", "to": "21" },
+        { "card": "SPRENGKOPF", "kind": "new", "stat": { "de": "neue Karte", "en": "new card" }, "from": "", "to": "4 Elixier" }
+      ]
+    },
+    {
       "date": "2026-08-06",
       "build": "",
       "title": {

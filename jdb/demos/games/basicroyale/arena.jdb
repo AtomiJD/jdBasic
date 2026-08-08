@@ -40,6 +40,25 @@ ENDFUNC
 ' stand in front of it. SHIELD is a pool that soaks before the hull does and
 ' never comes back - one hard hit spends it whole, which is what makes it an
 ' answer to a single big swing rather than to a swarm.
+' What a card does to anything that cannot move. One multiplier covers both
+' the towers and the deployed buildings, so a card is tuned once instead of
+' twice. Without the field nothing changes.
+EXPORT FUNC BUILDHIT(c, dmg)
+    IF MAP.EXISTS(c, "BUILDMUL") THEN RETURN INT(dmg * c{"BUILDMUL"})
+    RETURN dmg
+ENDFUNC
+
+' Blast damage by distance from the centre. SPLASHMIN is what is left at the
+' rim; without it the whole radius takes the full hit, which is how every
+' card written before this behaved.
+EXPORT FUNC FALLOFF(c, dmg, d, rad)
+    IF NOT MAP.EXISTS(c, "SPLASHMIN") THEN RETURN dmg
+    IF rad <= 0 THEN RETURN dmg
+    DIM f = 1.0 - (1.0 - c{"SPLASHMIN"}) * (d / rad)
+    IF f < 0 THEN f = 0
+    RETURN INT(dmg * f)
+ENDFUNC
+
 EXPORT FUNC HURT(v, dmg)
     IF dmg <= 0 THEN RETURN 0
     IF MAP.EXISTS(v, "SH") THEN
@@ -184,6 +203,8 @@ EXPORT FUNC PLAYCARD(st, pid, kind$, x, y)
         DIM ky = 27.5
         IF pid = 1 THEN ky = 2.5
         DIM sp AS MAP = { "OWNER": pid, "X": x, "Y": y, "DMG": INT(c{"DMG"} * mult), "RADIUS": c{"RADIUS"}, "LAND": st{"TICKNO"} + 5 }
+        IF MAP.EXISTS(c, "BUILDMUL") THEN sp{"BUILDMUL"} = c{"BUILDMUL"}
+        IF MAP.EXISTS(c, "SPLASHMIN") THEN sp{"SPLASHMIN"} = c{"SPLASHMIN"}
         IF MAP.EXISTS(c, "STUN") THEN sp{"STUN"} = c{"STUN"}
         IF MAP.EXISTS(c, "PULL") THEN sp{"PULL"} = c{"PULL"}
         IF MAP.EXISTS(c, "SETTLE") THEN sp{"SETTLE"} = c{"SETTLE"}
@@ -459,8 +480,11 @@ EXPORT FUNC SIMSTEP(st)
                             IF u0{"HP"} > u0{"MAXHP"} THEN u0{"HP"} = u0{"MAXHP"}
                         ENDIF
                     ENDIF
-                    IF u0{"OWNER"} <> sp{"OWNER"} ANDALSO DIST(sp{"X"}, sp{"Y"}, u0{"X"}, u0{"Y"}) <= sp{"RADIUS"} THEN
-                        DIM hu = HURT(u0, sp{"DMG"})
+                    DIM ud = DIST(sp{"X"}, sp{"Y"}, u0{"X"}, u0{"Y"})
+                    IF u0{"OWNER"} <> sp{"OWNER"} ANDALSO ud <= sp{"RADIUS"} THEN
+                        DIM updmg = FALLOFF(sp, sp{"DMG"}, ud, sp{"RADIUS"})
+                        IF MAP.EXISTS(u0, "BUILD") THEN updmg = BUILDHIT(sp, updmg)
+                        DIM hu = HURT(u0, updmg)
                         ' a drag field leaves them walking, only slower
                         IF MAP.EXISTS(sp, "SLOW") THEN
                             u0{"SLOW"} = sp{"SLOW"}
@@ -490,8 +514,9 @@ EXPORT FUNC SIMSTEP(st)
                     ENDIF
                 NEXT u0
                 FOR EACH tw0 IN st{"TOWERS"}
-                    IF tw0{"OWNER"} <> sp{"OWNER"} ANDALSO tw0{"HP"} > 0 ANDALSO DIST(sp{"X"}, sp{"Y"}, tw0{"X"}, tw0{"Y"}) <= sp{"RADIUS"} THEN
-                        tw0{"HP"} = tw0{"HP"} - sp{"DMG"}
+                    DIM twd = DIST(sp{"X"}, sp{"Y"}, tw0{"X"}, tw0{"Y"})
+                    IF tw0{"OWNER"} <> sp{"OWNER"} ANDALSO tw0{"HP"} > 0 ANDALSO twd <= sp{"RADIUS"} THEN
+                        tw0{"HP"} = tw0{"HP"} - BUILDHIT(sp, FALLOFF(sp, sp{"DMG"}, twd, sp{"RADIUS"}))
                         IF tw0{"KIND"} = "KING" THEN tw0{"AWAKE"} = 1
                     ENDIF
                 NEXT tw0
@@ -564,10 +589,12 @@ EXPORT FUNC SIMSTEP(st)
                 ENDIF
                 IF tgt{"T"} = "U" THEN
                     DIM v2 = st{"UNITS"}[tgt{"I"}]
-                    DIM hv = HURT(v2, hitdmg)
+                    DIM vdmg = hitdmg
+                    IF MAP.EXISTS(v2, "BUILD") THEN vdmg = BUILDHIT(c, hitdmg)
+                    DIM hv = HURT(v2, vdmg)
                 ELSE
                     DIM tw2 = st{"TOWERS"}[tgt{"I"}]
-                    tw2{"HP"} = tw2{"HP"} - hitdmg
+                    tw2{"HP"} = tw2{"HP"} - BUILDHIT(c, hitdmg)
                     IF tw2{"KIND"} = "KING" THEN tw2{"AWAKE"} = 1
                 ENDIF
                 ' SPLASH catches the ships standing around whatever was hit -
@@ -583,8 +610,11 @@ EXPORT FUNC SIMSTEP(st)
                         DIM sv = sunits[si]
                         IF sv{"OWNER"} = u{"OWNER"} ORELSE sv{"HP"} <= 0 THEN CONTINUEFOR
                         IF c{"HITS"} = "G" ANDALSO cs{sv{"KIND"}}{"FLY"} = 1 THEN CONTINUEFOR
-                        IF DIST(tgt{"X"}, tgt{"Y"}, sv{"X"}, sv{"Y"}) <= c{"SPLASH"} THEN
-                            DIM hs = HURT(sv, hitdmg)
+                        DIM sd = DIST(tgt{"X"}, tgt{"Y"}, sv{"X"}, sv{"Y"})
+                        IF sd <= c{"SPLASH"} THEN
+                            DIM sdmg = FALLOFF(c, hitdmg, sd, c{"SPLASH"})
+                            IF MAP.EXISTS(sv, "BUILD") THEN sdmg = BUILDHIT(c, sdmg)
+                            DIM hs = HURT(sv, sdmg)
                         ENDIF
                     NEXT si
                     ADDEVENT(st, { "T": "BOOM", "X": tgt{"X"}, "Y": tgt{"Y"}, "RADIUS": c{"SPLASH"}, "D": hitdmg })
@@ -750,15 +780,19 @@ EXPORT FUNC SIMSTEP(st)
                 IF MAP.EXISTS(dc, "DEATHRADIUS") THEN drad = dc{"DEATHRADIUS"}
                 FOR EACH dv IN st{"UNITS"}
                     IF dv{"OWNER"} <> u3{"OWNER"} ANDALSO dv{"HP"} > 0 THEN
-                        IF DIST(u3{"X"}, u3{"Y"}, dv{"X"}, dv{"Y"}) <= drad THEN
-                            DIM dh = HURT(dv, dc{"DEATHDMG"})
+                        DIM dvd = DIST(u3{"X"}, u3{"Y"}, dv{"X"}, dv{"Y"})
+                        IF dvd <= drad THEN
+                            DIM ddmg = FALLOFF(dc, dc{"DEATHDMG"}, dvd, drad)
+                            IF MAP.EXISTS(dv, "BUILD") THEN ddmg = BUILDHIT(dc, ddmg)
+                            DIM dh = HURT(dv, ddmg)
                         ENDIF
                     ENDIF
                 NEXT dv
                 FOR EACH dw IN st{"TOWERS"}
                     IF dw{"OWNER"} <> u3{"OWNER"} ANDALSO dw{"HP"} > 0 THEN
-                        IF DIST(u3{"X"}, u3{"Y"}, dw{"X"}, dw{"Y"}) <= drad THEN
-                            dw{"HP"} = dw{"HP"} - dc{"DEATHDMG"}
+                        DIM dwd = DIST(u3{"X"}, u3{"Y"}, dw{"X"}, dw{"Y"})
+                        IF dwd <= drad THEN
+                            dw{"HP"} = dw{"HP"} - BUILDHIT(dc, FALLOFF(dc, dc{"DEATHDMG"}, dwd, drad))
                             IF dw{"KIND"} = "KING" THEN dw{"AWAKE"} = 1
                         ENDIF
                     ENDIF

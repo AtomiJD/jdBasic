@@ -1,0 +1,102 @@
+' What a card actually takes off a station, measured instead of reasoned.
+'
+'   jdbasic towercheck.jdb [KARTE ...]
+'
+' Each card is dropped in front of the enemy left tower and the match is run
+' until the attacker is gone or nothing has changed for a while. Reported is
+' what the tower lost, which is the number BUILDMUL exists to control.
+
+IMPORT ARENA
+
+DIM raw$ = ""
+TRY
+    raw$ = TXTREADER$("cards.json")
+CATCH
+    PRINT "cards.json not readable"
+    END
+ENDTRY
+ARENA.SETCARDS(JSON.PARSE$(raw$))
+
+DIM cs = ARENA.CARDS()
+DIM args = OS.ARGS()
+DIM list$ = ["PLASMA", "SALVE", "SOG", "SPRENGKOPF", "GLUTREGEN", "DROID"]
+IF LEN(args) > 1 THEN
+    list$ = []
+    DIM ai
+    FOR ai = 1 TO LEN(args) - 1
+        list$ = APPEND(list$, [UCASE$(args[ai])])
+    NEXT ai
+ENDIF
+
+' The defender's left station. A spell is aimed straight at it, a ship has to
+' start in its owner's half and walk, which is the only honest way to see what
+' arrives.
+CONST TW_X = 3.5
+CONST TW_Y = 6.5
+CONST WALK_Y = 16.0
+CONST MAX_TICKS = 900
+
+PRINT ""
+PRINT "Schaden an der Station (1400 Huelle), Angreifer von Spieler 0"
+PRINT ""
+PRINT "Karte          Elix  Turm ab   Rest   Zeit    Ende"
+
+DIM ci
+FOR ci = 0 TO LEN(list$) - 1
+    DIM kind$ = list$[ci]
+    IF NOT MAP.EXISTS(cs, kind$) THEN
+        PRINT kind$; " gibt es nicht"
+        CONTINUEFOR
+    ENDIF
+
+    DIM st = ARENA.NEWGAME()
+    st{"PHASE"} = "play"
+    st{"QUEUES"}[0] = [kind$, "DROID", "LASER", "KOLOSS"]
+    st{"ELIXIR"} = [10.0, 10.0]
+
+    DIM c = cs{kind$}
+    DIM dy = WALK_Y
+    IF MAP.EXISTS(c, "SPELL") THEN dy = TW_Y
+    DIM msg$ = ARENA.PLAYCARD(st, 0, kind$, TW_X, dy)
+    IF msg$ <> "" THEN
+        PRINT kind$; " nicht spielbar: "; msg$
+        CONTINUEFOR
+    ENDIF
+
+    DIM t
+    DIM ended$ = "Zeit abgelaufen"
+    DIM ticks = 0
+    FOR t = 1 TO MAX_TICKS
+        st = ARENA.SIMSTEP(st)
+        ticks = t
+        ' the run is over once the attacker is gone: for a spell that is the
+        ' tick after it lands, for a ship the tick it dies or kills the tower
+        DIM alive = 0
+        FOR EACH u IN st{"UNITS"}
+            IF u{"OWNER"} = 0 ANDALSO u{"HP"} > 0 THEN alive = 1
+        NEXT u
+        IF MAP.EXISTS(c, "SPELL") THEN
+            IF LEN(st{"SPELLS"}) = 0 THEN
+                ended$ = "Zauber verpufft"
+                EXITFOR
+            ENDIF
+        ELSEIF alive = 0 THEN
+            ended$ = "Angreifer tot"
+            EXITFOR
+        ENDIF
+        DIM twnow = st{"TOWERS"}[3]
+        IF twnow{"HP"} <= 0 THEN
+            ended$ = "Station gefallen"
+            EXITFOR
+        ENDIF
+    NEXT t
+
+    DIM tw = st{"TOWERS"}[3]
+    DIM lost = 1400 - tw{"HP"}
+    IF lost < 0 THEN lost = 0
+    DIM pad$ = kind$ + "               "
+    PRINT LEFT$(pad$, 15); c{"COST"}; "     "; lost; "      "; tw{"HP"}; "    "; INT(ticks) / 10; " s   "; ended$
+NEXT ci
+
+PRINT ""
+PRINT "Ein Treffer aus dem Stand, ohne Verteidigung und ohne Rudel."

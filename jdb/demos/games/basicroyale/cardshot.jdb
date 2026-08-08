@@ -1,0 +1,48 @@
+' Draws the figures of the named cards side by side and saves a PNG, so a
+' new ship can be looked at without starting a match.
+'
+'   jdbasic cardshot.jdb KARTE [KARTE ...]
+
+IMPORT ART
+
+DIM cards = JSON.PARSE$(TXTREADER$("cards.json"))
+DIM shapemap AS MAP = {}
+FOR EACH k$ IN MAP.KEYS(cards)
+    shapemap{k$} = cards{k$}{"SHAPE"}
+NEXT k$
+ART.SETSHAPES(shapemap)
+
+DIM args = OS.ARGS()
+IF LEN(args) < 2 THEN
+    PRINT "Aufruf: jdbasic cardshot.jdb KARTE [KARTE ...]"
+    END
+ENDIF
+
+' Figures are authored on a 40 unit grid, so the raster is 40 wide and
+' PLOTRAW does the enlarging.
+CONST GRID = 40
+CONST BLOW = 4
+CONST CELL = GRID * BLOW
+CONST ZOOM = 1.18
+
+DIM n = LEN(args) - 1
+SCREEN CELL * n, CELL + 30, "cardshot"
+CLS
+
+DIM i
+FOR i = 1 TO n
+    DIM kind$ = UCASE$(args[i])
+    IF NOT MAP.EXISTS(cards, kind$) THEN
+        PRINT kind$; " gibt es nicht"
+        CONTINUEFOR
+    ENDIF
+    DIM sid = ART.BAKE(ART.FIGURE(kind$), GRID, GRID, 0, ZOOM)
+    SPRITE.SCALE(sid, BLOW, BLOW)
+    SPRITE.POS(sid, (i - 1) * CELL, 0)
+    SPRITE.DRAW(sid)
+    TEXT (i - 1) * CELL + 8, CELL + 8, kind$, 200, 210, 230
+NEXT i
+
+GFX.SAVE_SCREENSHOT("../../../../tmp/cardshot.png")
+SCREENFLIP
+PRINT "wrote tmp/cardshot.png"

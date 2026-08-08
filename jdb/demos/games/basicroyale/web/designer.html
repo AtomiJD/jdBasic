@@ -196,8 +196,16 @@
       <dt>Station</dt><dd>Bleibt stehen und verschwindet nach ttl Sekunden.</dd>
       <dt>erzeugt</dt><dd>Alle spawnrate Sekunden spawnn Schiffe der Sorte
         spawns.</dd>
-      <dt>Flaeche</dt><dd>Radius um das getroffene Ziel, der denselben Schaden
-        abbekommt.</dd>
+      <dt>Flaeche</dt><dd>Radius um das getroffene Ziel, der Schaden abbekommt.
+        <b>splashmin</b> ist der Anteil, der am Rand noch ankommt: 1 heisst
+        ueberall voll, 0.4 heisst im Zentrum voll und am Rand noch 40 Prozent.
+        Der Wert gilt auch fuer die Explosion beim Sterben und fuer den
+        Radius eines Zaubers - eine Karte hat einen Abfall, nicht drei.</dd>
+      <dt>gegen Gebaeude</dt><dd><b>buildmul</b> multipliziert alles, was diese
+        Karte an Stationen und abgestellten Gebaeuden anrichtet. 1 ist normal,
+        0.35 tragen die Schadenszauber, damit sich eine Station nicht aus der
+        Ferne wegzaubern laesst. Ueber 1 macht eine Belagerungskarte, die gegen
+        Schiffe schwach bleibt.</dd>
       <dt>Schild</dt><dd>Vorrat, der vor der Huelle aufgebraucht wird.</dd>
       <dt>Anlauf</dt><dd>Nach charge <b>Feldern</b> ununterbrochenem Lauf zaehlt
         der naechste Treffer mal chargemul. Jeder Schlag setzt den Anlauf auf
@@ -578,7 +586,8 @@
   const TRAITS = [
     { k:'BUILD',      label:'Station',      add:{ BUILD:1, TTL:30 } },
     { k:'SPAWNS',     label:'erzeugt',      add:{ SPAWNS:'NANOS', SPAWNRATE:3, SPAWNN:1 } },
-    { k:'SPLASH',     label:'Flaeche',      add:{ SPLASH:1.5 } },
+    { k:'SPLASH',     label:'Flaeche',      add:{ SPLASH:1.5, SPLASHMIN:1 } },
+    { k:'BUILDMUL',   label:'gegen Gebaeude', add:{ BUILDMUL:1.5 } },
     { k:'SHIELD',     label:'Schild',       add:{ SHIELD:200 } },
     { k:'CHARGE',     label:'Anlauf',       add:{ CHARGE:2, CHARGEMUL:2 } },
     { k:'DEATHDMG',   label:'explodiert',   add:{ DEATHDMG:100, DEATHRADIUS:2 } },
