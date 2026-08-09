@@ -1,0 +1,60 @@
+' The same properties, this time written in a .jdform instead of in code.
+'
+'   jdbasic tests/forms_jdform_test.jdb        (needs a FORMS build)
+'
+' A designer only ever writes the file, so what the file can carry is what a
+' designer can offer. Everything below is read back through FORM.GET and
+' photographed to tmp/forms_jdform.png.
+
+DIM pass = 0
+DIM fail = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+    ENDIF
+ENDSUB
+
+DIM frm = FORM.LOAD("tests/forms_jdform.jdform")
+DIM got AS MAP = {}
+DIM shot = 0
+
+SUB JF_LOAD(e)
+    shot = 1
+ENDSUB
+
+DIM tmr = FORM.TIMER(frm, "TT", 400)
+
+SUB TT_TICK(e)
+    IF shot = 1 THEN
+        shot = 2
+        DIM r = OS.SCREENSHOT("tmp/forms_jdform.png", "window", "jdform Eigenschaften")
+        PRINT "Screenshot: "; r; " (0 = geschrieben)"
+        got{"formback"} = FORM.GET(frm, "BACKCOLOR")
+        got{"fore"} = FORM.GET(FORM.FIND(frm, "L1"), "FORECOLOR")
+        got{"maxlen"} = FORM.GET(FORM.FIND(frm, "PW"), "MAXLENGTH")
+        got{"locked"} = FORM.GET(FORM.FIND(frm, "RO"), "LOCKED")
+        got{"roback"} = FORM.GET(FORM.FIND(frm, "RO"), "BACKCOLOR")
+        got{"tip"} = FORM.GET(FORM.FIND(frm, "B1"), "TOOLTIP")
+        got{"tag"} = FORM.GET(FORM.FIND(frm, "B1"), "TAG")
+        FORM.CLOSE(frm)
+    ENDIF
+ENDSUB
+
+FORM.RUN(frm)
+
+PRINT ""
+CHECK("die Form traegt ihre Farbe aus der Datei", STR$(got{"formback"}), "16775906")
+CHECK("FORECOLOR aus der Datei", STR$(got{"fore"}), "13369344")
+CHECK("MAXLENGTH aus der Datei", STR$(got{"maxlen"}), "8")
+CHECK("LOCKED aus der Datei", STR$(got{"locked"}), "TRUE")
+CHECK("BACKCOLOR auf demselben Feld", STR$(got{"roback"}), "15132390")
+CHECK("TOOLTIP aus der Datei", "" + got{"tip"}, "Kommt auch aus der Datei")
+CHECK("TAG traegt die Map aus der Datei", STR$(got{"tag"}{"n"}), "7")
+CHECK("  und ihren Text", "" + got{"tag"}{"kind"}, "aus-datei")
+
+PRINT ""
+PRINT "forms_jdform_test: bestanden "; pass; ", gefallen "; fail

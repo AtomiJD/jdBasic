@@ -2222,6 +2222,21 @@ int load_jdform(const std::string& path, int mdi_parent) {
     // form behind - it would count as open forever.
     try {
         bind_handlers(fname, g_items[frm].kind);
+        // The form takes the same "properties" object its controls do, so a
+        // background colour or a cursor is written where everything else is.
+        const Value* fprops = jf_get(*fdef, "properties");
+        if (fprops) {
+            if (fprops->type != ValueType::OBJECT)
+                throw std::runtime_error("FORM.LOAD: form: \"properties\" must be an object");
+            for (auto& [pkey, pval] : fprops->as_object()->fields) {
+                try {
+                    set_prop(frm, g_items[frm], upname(pkey), pval, "FORM.LOAD");
+                } catch (const std::exception& e) {
+                    throw std::runtime_error(std::string("FORM.LOAD: form: property \"") +
+                                             pkey + "\": " + e.what());
+                }
+            }
+        }
         const Value* menu = jf_get(*fdef, "menu");
         if (menu) {
             set_form_menu(frm, *menu, "FORM.LOAD");
