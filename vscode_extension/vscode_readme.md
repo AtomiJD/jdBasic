@@ -1,4 +1,4 @@
-# jdBasic for Visual Studio Code (v1.0.21)
+# jdBasic for Visual Studio Code (v1.0.27)
 
 The `jdbasic-debug` extension turns VS Code into a small IDE for jdBasic: a
 full debugger plus editor language features (linting, autocomplete, hover
@@ -16,7 +16,7 @@ talk to the jdBasic runtime itself, so they never drift from the real build.
 ## 2. Installation
 
 1. Extensions view (`Ctrl+Shift+X`) -> `...` menu -> **Install from VSIX...**.
-2. Pick `jdbasic-debug-1.0.21.vsix`.
+2. Pick `jdbasic-debug-1.0.27.vsix`.
 3. **Reload Window** when prompted.
 
 ## 3. Settings
@@ -155,7 +155,25 @@ You can also right-click a `.jdb` file or use the editor title icons to
 - **jdBasic: Lint Current File** forces a lint and opens the `jdBasic Lint`
   output channel (handy for troubleshooting the runtime path).
 
-## 8. Troubleshooting
+
+## 8. Form designer
+
+A `.jdform` opens in a visual designer: drag controls out of the toolbox,
+move and resize them on the canvas, and edit their properties on the right.
+The object list above the property grid works the way VB6's did.
+
+The **Aussehen** section covers what a control looks like: foreground and
+background as a colour picker (with a clear button beside it, so "no colour"
+stays different from black), font by name, size, bold, italic and underline,
+alignment, tooltip and mouse cursor. Text fields add a length limit, a
+password flag and a lock. The form itself takes a background colour. The
+canvas paints all of it, so what you design is what the window shows.
+
+Everything lands in the `properties` object of the file, which is the same
+place the **Alles als JSON** box at the bottom edits - use whichever suits.
+Properties the designer has no field for are carried through untouched.
+
+## 9. Troubleshooting
 
 - **No squiggles / empty autocomplete / empty hovers**: `jdbasic.runtime`
   points at a build too old for `--lint` / `--dump-symbols` / `--dump-help`.
