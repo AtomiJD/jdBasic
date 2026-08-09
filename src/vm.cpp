@@ -3984,6 +3984,84 @@ bool VM::debug_eval_value(const std::string& expr, Value& result_out) {
     return true;
 }
 
+// ── ROTATE / SHIFT: one axis per entry of the shift vector ───────────────
+// Both used to read only the first entry and move the outer vector, which on
+// a matrix meant rows worked and columns were silently dropped. SHIFT also
+// wrote its scalar fill into row slots, so the result was a ragged array whose
+// LEN no longer matched its contents.
+//
+// The two keep the sign conventions they have always had on a vector, because
+// programs depend on them and they differ on purpose:
+//   ROTATE  out[i] = in[i + k]   (positive k pulls from ahead, APL's rotate)
+//   SHIFT   out[i] = in[i - k]   (positive k pushes along, a shift register)
+
+// A value shaped like proto but filled with fill, so a row that shifts off the
+// edge comes back as a row of fill and not as a bare scalar.
+static Value shaped_fill(const Value& proto, const Value& fill) {
+    if (proto.type != ValueType::ARRAY) return fill;
+    auto* pa = proto.as_array();
+    Value r = Value::make_array();
+    auto* out = r.as_array();
+    out->elements.reserve(pa->elements.size());
+    for (size_t i = 0; i < pa->elements.size(); i++)
+        out->elements.push_back(shaped_fill(pa->elements[i], fill));
+    return r;
+}
+
+static Value axis_move(const Value& v, const std::vector<int64_t>& shifts,
+                       size_t depth, bool cyclic, const Value& fill) {
+    if (depth >= shifts.size() || v.type != ValueType::ARRAY) return v;
+    auto* arr = v.as_array();
+    const size_t n = arr->elements.size();
+    if (n == 0) return v;
+
+    // deeper axes first, so this level only has to move whole elements
+    std::vector<Value> kids;
+    kids.reserve(n);
+    for (size_t i = 0; i < n; i++)
+        kids.push_back(axis_move(arr->elements[i], shifts, depth + 1, cyclic, fill));
+
+    const int64_t k = shifts[depth];
+    Value r = Value::make_array();
+    auto* out = r.as_array();
+    out->elements.reserve(n);
+    if (cyclic) {
+        const int64_t m = ((k % (int64_t)n) + (int64_t)n) % (int64_t)n;
+        for (size_t i = 0; i < n; i++)
+            out->elements.push_back(kids[(i + (size_t)m) % n]);
+    } else {
+        const Value blank = shaped_fill(kids[0], fill);
+        for (size_t i = 0; i < n; i++) {
+            const int64_t src = (int64_t)i - k;
+            if (src >= 0 && src < (int64_t)n) out->elements.push_back(kids[(size_t)src]);
+            else out->elements.push_back(blank);
+        }
+    }
+    return r;
+}
+
+// A scalar, or one entry per axis. A longer vector than the array has axes is
+// a mistake worth saying out loud rather than half-applying.
+static std::vector<int64_t> shift_vector(const Value& v) {
+    std::vector<int64_t> out;
+    if (v.type == ValueType::ARRAY) {
+        for (auto& e : v.as_array()->elements) out.push_back(e.to_int());
+    } else {
+        out.push_back(v.to_int());
+    }
+    return out;
+}
+
+static int array_rank(const Value& v) {
+    int rank = 0;
+    const Value* cur = &v;
+    while (cur->type == ValueType::ARRAY && !cur->as_array()->elements.empty()) {
+        rank++;
+        cur = &cur->as_array()->elements[0];
+    }
+    return rank;
+}
+
 void VM::register_builtins() {
     // ── Math ─────────────────────────────────────────────────
     register_native("ABS", 1, 1, [](const std::vector<Value>& args) -> Value {
@@ -4632,45 +4710,23 @@ void VM::register_builtins() {
 
     // ── ROTATE ───────────────────────────────────────────────
     register_native("ROTATE", [](const std::vector<Value>& args) -> Value {
-        auto* arr = args[0].as_array();
-        int64_t shift = 0;
-        if (args[1].type == ValueType::ARRAY) {
-            auto& sv = args[1].as_array()->elements;
-            if (!sv.empty()) shift = sv[0].to_int();
-        } else {
-            shift = args[1].to_int();
-        }
-        int n = (int)arr->elements.size();
-        if (n == 0) return args[0];
-        shift = ((shift % n) + n) % n;
-        Value r = Value::make_array();
-        auto* out = r.as_array();
-        out->elements.reserve(n);
-        for (int i = 0; i < n; i++) out->elements.push_back(arr->elements[(i + shift) % n]);
-        return r;
+        auto shifts = shift_vector(args[1]);
+        if (shifts.empty()) return args[0];
+        if ((int)shifts.size() > array_rank(args[0]))
+            throw std::runtime_error("ROTATE got " + std::to_string(shifts.size()) +
+                " shifts for an array of rank " + std::to_string(array_rank(args[0])));
+        return axis_move(args[0], shifts, 0, true, Value::make_i64(0));
     });
 
     // ── SHIFT ────────────────────────────────────────────────
     register_native("SHIFT", [](const std::vector<Value>& args) -> Value {
-        auto* arr = args[0].as_array();
-        // shift may be a scalar or a 1-element shift-vector ([-1] etc.)
-        int64_t shift = 0;
-        if (args[1].type == ValueType::ARRAY) {
-            auto& sv = args[1].as_array()->elements;
-            if (!sv.empty()) shift = sv[0].to_int();
-        } else {
-            shift = args[1].to_int();
-        }
+        auto shifts = shift_vector(args[1]);
+        if (shifts.empty()) return args[0];
+        if ((int)shifts.size() > array_rank(args[0]))
+            throw std::runtime_error("SHIFT got " + std::to_string(shifts.size()) +
+                " shifts for an array of rank " + std::to_string(array_rank(args[0])));
         Value fill = (args.size() >= 3) ? args[2] : Value::make_i64(0);
-        int n = (int)arr->elements.size();
-        Value r = Value::make_array();
-        auto* out = r.as_array();
-        out->elements.resize(n, fill);
-        for (int i = 0; i < n; i++) {
-            int src = i - (int)shift;
-            if (src >= 0 && src < n) out->elements[i] = arr->elements[src];
-        }
-        return r;
+        return axis_move(args[0], shifts, 0, false, fill);
     });
 
     // ── Reductions: SUM, PRODUCT, MIN, MAX, ANY, ALL ─────────

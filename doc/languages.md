@@ -1546,8 +1546,8 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`LERP(start, end, alpha) -> number or array`**: Performs linear interpolation.
 * **`GRADE(vector)`**: Returns the indices that would sort the vector.
 * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, *, /, MOD, >, <, =, ^) or a reference to a function (sqr@).
-* **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array.
-* **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Non-cyclically shifts an N-dimensional array.
+* **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array. One entry of `shift_vector` per axis, outermost first; more entries than the array has axes is an error. `ROTATE(m, [1, 0])` turns the rows, `ROTATE(m, [0, 1])` the columns, `ROTATE(m, [1, 1])` both. A positive shift **pulls from ahead**: `out[i] = in[i + k]`, so `ROTATE([1,2,3,4,5], [1])` is `2 3 4 5 1`.
+* **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Like `ROTATE` but without the wraparound: what moves in from outside is `fill_value` (default `0`), and a whole row shifted off the edge comes back as a row of `fill_value`. Same per-axis rule as `ROTATE`, but note the **opposite sign convention**: a positive shift **pushes along** like a shift register, `out[i] = in[i - k]`, so `SHIFT([1,2,3,4,5], [1], 0)` is `0 1 2 3 4`. A shift at least as large as the axis leaves nothing but the fill.
 * **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix. Sorts numbers and strings (lexicographic); in a mixed array numbers order before strings. For a 2D matrix, `dimension` selects the column whose values order the rows - string key columns work (`XSORT(rows, 0)` sorts `[["bob",30],["alice",25]]` by name).
 * **`CONVOLVE(array, kernel, wrap_mode) -> array`**: Performs a 2D convolution of an array with a kernel.
 * **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.
