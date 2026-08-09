@@ -2408,22 +2408,28 @@ void VM::run() {
             Value container = pop();
             if (container.type == ValueType::ARRAY) {
                 auto* arr = container.as_array();
-                // Vectorised gather: idx is an array of indices → return gathered array
+                // Vectorised gather: idx is an array of indices → return gathered
+                // array. The result keeps the shape of the index set, so a
+                // matrix of indices gives a matrix. Coercing a nested index to
+                // a number used to yield the same element for every row.
                 if (idx.type == ValueType::ARRAY) {
-                    auto& idxs = idx.as_array()->elements;
-                    auto result = std::make_shared<ArrayObj>();
-                    result->elements.reserve(idxs.size());
-                    for (auto& ix : idxs) {
-                        int64_t i = ix.to_int();
+                    std::function<Value(const Value&)> gather = [&](const Value& iv) -> Value {
+                        if (iv.type == ValueType::ARRAY) {
+                            Value out = Value::make_array();
+                            auto& dst = out.as_array()->elements;
+                            auto& src = iv.as_array()->elements;
+                            dst.reserve(src.size());
+                            for (auto& e : src) dst.push_back(gather(e));
+                            return out;
+                        }
+                        int64_t i = iv.to_int();
                         if (i < 0 || i >= (int64_t)arr->elements.size()) {
                             int eln = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0;
                             throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "Array index out of bounds: " + std::to_string(i), eln);
                         }
-                        result->elements.push_back(arr->elements[i]);
-                    }
-                    Value rv = Value::make_array();
-                    rv.as_array()->elements = std::move(result->elements);
-                    push(std::move(rv));
+                        return arr->elements[i];
+                    };
+                    push(gather(idx));
                 } else {
                     int64_t i = idx.to_int();
                     if (i < 0 || i >= (int64_t)arr->elements.size()) {

@@ -337,6 +337,21 @@ CATCH
 ENDTRY
 CHECK("Vektor mit Index-Vektor: sammelt oder wirft", gotgv$, wantgv$)
 
+' A gather out of range has to say so rather than fold to something plausible.
+DIM oob$ = "kein Fehler"
+TRY
+    DIM bad3 = pal[RESHAPE([0, 1, 9, 2], [2, 2])]
+CATCH
+    oob$ = "wirft"
+ENDTRY
+CHECK("Index ausserhalb des Bereichs wirft", oob$, "wirft")
+
+' Gathering whole rows out of a matrix: the elements collected are arrays, so
+' this is the case where a shape-preserving gather could go wrong the other way.
+DIM rowsrc = GRID(4, 3)
+CHECK("Zeilen aus einer Matrix sammeln", FLAT$(rowsrc[[3, 0]], 2, 3), _
+    "10 11 12 | 1 2 3 ")
+
 PRINT ""
 PRINT "=== TRANSPOSE, weil der Umweg darauf steht ==="
 PRINT ""
