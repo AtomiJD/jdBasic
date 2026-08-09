@@ -169,6 +169,11 @@ Value info_map(const FormsItem& it) {
     return m;
 }
 
+// Defined further down with the control subclass they mostly serve; the form
+// WndProc needs them too.
+void queue_key(const FormsItem& it, const char* ev, int code);
+void queue_mouse(const FormsItem& it, const char* ev, int button, LPARAM lp);
+
 void drain_events() {
     while (!g_evq.empty()) {
         PendingEvent ev = std::move(g_evq.front());
@@ -598,10 +603,41 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             return 0;
         }
 
-        case WM_CLOSE: {
+        case WM_LBUTTONDOWN:
+        case WM_LBUTTONUP:
+        case WM_RBUTTONDOWN:
+        case WM_RBUTTONUP:
+        case WM_MOUSEMOVE: {
             auto hit = g_byhwnd.find(hwnd);
-            if (hit != g_byhwnd.end())
-                queue_event(g_items[hit->second].name, "UNLOAD", info_map(g_items[hit->second]));
+            if (hit != g_byhwnd.end()) {
+                FormsItem& it = g_items[hit->second];
+                int btn = (msg == WM_RBUTTONDOWN || msg == WM_RBUTTONUP) ? 2
+                        : (msg == WM_MOUSEMOVE) ? 0 : 1;
+                const char* ev = (msg == WM_MOUSEMOVE) ? "MOUSEMOVE"
+                    : (msg == WM_LBUTTONUP || msg == WM_RBUTTONUP) ? "MOUSEUP" : "MOUSEDOWN";
+                queue_mouse(it, ev, btn, lParam);
+            }
+            break;
+        }
+
+        case WM_CLOSE: {
+            // The one event that cannot be queued. A handler has to run while
+            // the window is still there: it may want to read its own fields
+            // before saving them, and it may want to refuse outright. Setting
+            // e[0]{"cancel"} keeps the form open, which is what VB6 spelled
+            // Form_QueryUnload(Cancel).
+            auto hit = g_byhwnd.find(hwnd);
+            if (hit != g_byhwnd.end()) {
+                FormsItem& f = g_items[hit->second];
+                std::string handler = f.name + "_UNLOAD";
+                if (g_vm && g_vm->event_handlers.count(handler)) {
+                    Value info = info_map(f);
+                    info.as_object()->set("cancel", Value::make_bool(false));
+                    g_vm->event_raise(handler, { info });
+                    Value* c = info.as_object()->get("cancel");
+                    if (c && c->to_bool()) return 0;
+                }
+            }
             DestroyWindow(hwnd);
             return 0;
         }
@@ -737,6 +773,57 @@ void ensure_class() {
 // <NAME>_<EVENT> handlers that exist in the program, VB6-style.
 void bind_handlers(const std::string& ctl_name, const std::string& kind);
 
+// ── Control subclass: focus, keyboard, mouse ────────────────────
+// A Win32 control keeps these messages to itself - WM_SETFOCUS, WM_CHAR and
+// the mouse buttons never reach the parent - so without a subclass none of
+// this vocabulary can be offered at all. queue_event drops anything nobody
+// has a handler for, so an unused control costs one map lookup per message.
+
+void queue_mods(Value& m) {
+    m.as_object()->set("shift", Value::make_bool((GetKeyState(VK_SHIFT)   & 0x8000) != 0));
+    m.as_object()->set("ctrl",  Value::make_bool((GetKeyState(VK_CONTROL) & 0x8000) != 0));
+    m.as_object()->set("alt",   Value::make_bool((GetKeyState(VK_MENU)    & 0x8000) != 0));
+}
+
+void queue_key(const FormsItem& it, const char* ev, int code) {
+    Value m = info_map(it);
+    m.as_object()->set("key", Value::make_i64(code));
+    queue_mods(m);
+    queue_event(it.name, ev, std::move(m));
+}
+
+void queue_mouse(const FormsItem& it, const char* ev, int button, LPARAM lp) {
+    Value m = info_map(it);
+    m.as_object()->set("button", Value::make_i64(button));
+    // logical units, like every other coordinate the FORM API takes
+    m.as_object()->set("x", Value::make_i64(lg((int)(short)LOWORD(lp))));
+    m.as_object()->set("y", Value::make_i64(lg((int)(short)HIWORD(lp))));
+    queue_mods(m);
+    queue_event(it.name, ev, std::move(m));
+}
+
+LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
+                              UINT_PTR, DWORD_PTR) {
+    auto hit = g_byhwnd.find(hwnd);
+    if (hit != g_byhwnd.end()) {
+        FormsItem& it = g_items[hit->second];
+        switch (msg) {
+            case WM_SETFOCUS:    queue_event(it.name, "GOTFOCUS", info_map(it)); break;
+            case WM_KILLFOCUS:   queue_event(it.name, "LOSTFOCUS", info_map(it)); break;
+            case WM_KEYDOWN:     queue_key(it, "KEYDOWN", (int)wp); break;
+            case WM_KEYUP:       queue_key(it, "KEYUP", (int)wp); break;
+            case WM_CHAR:        queue_key(it, "KEYPRESS", (int)wp); break;
+            case WM_LBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 1, lp); break;
+            case WM_LBUTTONUP:   queue_mouse(it, "MOUSEUP", 1, lp); break;
+            case WM_RBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 2, lp); break;
+            case WM_RBUTTONUP:   queue_mouse(it, "MOUSEUP", 2, lp); break;
+            case WM_MOUSEMOVE:   queue_mouse(it, "MOUSEMOVE", 0, lp); break;
+            default: break;
+        }
+    }
+    return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
 int store_item(HWND hwnd, const std::string& name, const std::string& kind, int form) {
     int h = g_next_handle++;
     g_items[h] = { hwnd, upname(name), kind, form };
@@ -758,6 +845,7 @@ int create_control(int frm, const std::string& name, const wchar_t* cls,
         throw std::runtime_error("FORM." + kind + ": CreateWindow failed for '" + name + "'");
     if (g_font) SendMessageW(ctl, WM_SETFONT, (WPARAM)g_font, TRUE);
     int stored = store_item(ctl, name, kind, frm);
+    SetWindowSubclass(ctl, ctl_sub_proc, 1, 0);
     bind_handlers(g_items[stored].name, kind);
     return stored;
 }
@@ -1477,6 +1565,50 @@ void set_form_menu(int frm, const Value& spec, const char* who) {
         f.haccel = CreateAcceleratorTableW(accels.data(), (int)accels.size());
 }
 
+// ── Popup (context) menu ────────────────────────────────────────
+// Same spec as the menu bar, so a context menu is written the way a menu is.
+// The items register as ordinary MENU handles, which means WM_COMMAND already
+// knows how to dispatch them; the handles from the previous popup on this form
+// are dropped first so repeatedly opening one does not accumulate them.
+std::map<int, std::vector<int>> g_popup_items;
+
+void show_popup_menu(int frm, const Value& spec, bool at_point, int lx, int ly,
+                     const char* who) {
+    FormsItem& f = form_of(frm, who);
+    if (spec.type != ValueType::ARRAY)
+        throw std::runtime_error(std::string(who) + ": the menu spec must be an array");
+
+    for (int h : g_popup_items[frm]) g_items.erase(h);
+    g_popup_items[frm].clear();
+
+    std::vector<ACCEL> accels;              // a popup has no accelerator table
+    HMENU pop = CreatePopupMenu();
+    int first = g_next_handle;
+    try {
+        build_menu_level(pop, spec, frm, accels, who);
+    } catch (...) {
+        DestroyMenu(pop);
+        throw;
+    }
+    for (int h = first; h < g_next_handle; h++)
+        if (g_items.count(h)) g_popup_items[frm].push_back(h);
+    for (int h : g_popup_items[frm]) bind_handlers(g_items[h].name, "MENU");
+
+    POINT pt;
+    if (at_point) {
+        pt.x = px(lx);
+        pt.y = px(ly);
+        ClientToScreen(f.hwnd, &pt);
+    } else {
+        GetCursorPos(&pt);
+    }
+    // Without TPM_RETURNCMD Windows posts WM_COMMAND to the form, which is the
+    // path a menu-bar click already takes.
+    SetForegroundWindow(f.hwnd);
+    TrackPopupMenu(pop, TPM_LEFTALIGN | TPM_RIGHTBUTTON, pt.x, pt.y, 0, f.hwnd, nullptr);
+    DestroyMenu(pop);
+}
+
 // ── Toolbar builder ─────────────────────────────────────────────
 // Spec: array of maps ("-" = separator). Keys: "name" (required ->
 // NAME_CLICK), "text" (tooltip), "icon" (stock icon name), "check"
@@ -1591,12 +1723,18 @@ int do_create_statusbar(int frm, const std::string& name, const Value& parts,
 
 // Event names a control kind can fire; used for automatic handler binding.
 const std::vector<const char*>& events_of(const std::string& kind) {
-    static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE" };
-    static const std::vector<const char*> click_ev = { "CLICK" };
-    static const std::vector<const char*> text_ev  = { "CHANGE" };
-    static const std::vector<const char*> list_ev  = { "CLICK", "DBLCLICK" };
+    // Focus, keyboard and mouse ride on every control that can take input, so
+    // a .jdform binds them without an ON the way the rest already works.
+#define JDF_INPUT_EV "GOTFOCUS", "LOSTFOCUS", "KEYDOWN", "KEYUP", "KEYPRESS", \
+                     "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE"
+    static const std::vector<const char*> form_ev  = { "LOAD", "UNLOAD", "RESIZE",
+                                                       "MOUSEDOWN", "MOUSEUP", "MOUSEMOVE" };
+    static const std::vector<const char*> click_ev = { "CLICK", JDF_INPUT_EV };
+    static const std::vector<const char*> text_ev  = { "CHANGE", JDF_INPUT_EV };
+    static const std::vector<const char*> list_ev  = { "CLICK", "DBLCLICK", JDF_INPUT_EV };
     static const std::vector<const char*> tick_ev  = { "TICK" };
     static const std::vector<const char*> none_ev  = {};
+#undef JDF_INPUT_EV
     if (is_form_kind(kind)) return form_ev;
     if (kind == "BUTTON" || kind == "CHECKBOX" || kind == "RADIO" ||
         kind == "MENU" || kind == "TOOLBTN") return click_ev;
@@ -1884,7 +2022,7 @@ void register_forms_builtins(VM& vm) {
     for (const char* n : { "FORM.CREATE", "FORM.BUTTON", "FORM.LABEL", "FORM.TEXTBOX",
                            "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME", "FORM.LISTBOX",
                            "FORM.COMBO", "FORM.TIMER", "FORM.LOAD", "FORM.FIND",
-                           "FORM.MDI", "FORM.CHILD", "FORM.MENU", "FORM.TOOLBAR",
+                           "FORM.MDI", "FORM.CHILD", "FORM.MENU", "FORM.POPUP", "FORM.TOOLBAR",
                            "FORM.STATUSBAR",
                            "FORM.LINE", "FORM.SHAPE", "FORM.PICTURE", "FORM.PROGRESS",
                            "FORM.SLIDER", "FORM.UPDOWN",
@@ -2012,6 +2150,17 @@ void register_forms_builtins(VM& vm) {
         for (auto& [h, it] : g_items)
             if (it.kind == "MENU" && it.form == frm)
                 bind_handlers(it.name, "MENU");
+        return Value::make_none();
+    });
+
+    // FORM.POPUP(frm, spec, [x], [y])  context menu; without coordinates it
+    // opens where the mouse is, which is what a right-click handler wants
+    vm.register_native("FORM.POPUP", 2, 4, [](const std::vector<Value>& args) -> Value {
+        int frm = arg_int(args, 0);
+        bool at_point = args.size() >= 4;
+        int x = at_point ? arg_int(args, 2) : 0;
+        int y = at_point ? arg_int(args, 3) : 0;
+        show_popup_menu(frm, args[1], at_point, x, y, "FORM.POPUP");
         return Value::make_none();
     });
 
@@ -2407,7 +2556,10 @@ void register_forms_builtins(VM& vm) {
     // FORM.CLOSE(frm)
     vm.register_native("FORM.CLOSE", 1, 1, [](const std::vector<Value>& args) -> Value {
         FormsItem& f = form_of(arg_int(args, 0), "FORM.CLOSE");
-        DestroyWindow(f.hwnd);
+        // Through WM_CLOSE, not straight to DestroyWindow: closing from code
+        // has to run the same UNLOAD - and be refusable by it - as the window
+        // cross does. Before this it fired no UNLOAD at all.
+        SendMessageW(f.hwnd, WM_CLOSE, 0, 0);
         return Value::make_none();
     });
 

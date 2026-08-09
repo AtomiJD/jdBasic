@@ -1,0 +1,51 @@
+' A context menu on a list, and a window that will not let you leave without
+' answering. Two things a Windows program is expected to do and jdForms could
+' not do before.
+'
+'   jdbasic context_demo.jdb
+
+DIM frm = FORM.CREATE("Kontextmenue und Rueckfrage", 420, 300, "MAIN")
+DIM lst = FORM.LISTVIEW(frm, "LV", 12, 12, 396, 200)
+DIM lbl = FORM.LABEL(frm, "INFO", "Rechtsklick auf die Liste.", 12, 224, 396, 20)
+
+FORM.SET(lst, "COLUMNS", [{ "text": "Posten", "width": 200 }, { "text": "Menge", "width": 80 }])
+FORM.SET(lst, "ITEMS", [["Schrauben", "120"], ["Muttern", "80"], ["Scheiben", "240"]])
+
+DIM dirty = 0
+
+SUB LV_MOUSEDOWN(e)
+    IF e[0]{"button"} = 2 THEN
+        FORM.POPUP(frm, [{ "text": "&Verdoppeln", "name": "PMDOUBLE" }, _
+                         "-", _
+                         { "text": "&Loeschen", "name": "PMDEL" }])
+    ENDIF
+ENDSUB
+
+SUB PMDOUBLE_CLICK(e)
+    DIM row = FORM.GET(lst, "SELINDEX")
+    IF row < 0 THEN
+        FORM.SET(lbl, "TEXT", "Erst eine Zeile waehlen.")
+    ELSE
+        DIM n = VAL(FORM.GET(lst, "CELL", row, 1)) * 2
+        FORM.SET(lbl, "TEXT", FORM.GET(lst, "CELL", row, 0) + " waeren jetzt " + STR$(n) + ".")
+        dirty = 1
+    ENDIF
+ENDSUB
+
+SUB PMDEL_CLICK(e)
+    FORM.SET(lbl, "TEXT", "Geloescht haette ich Zeile " + STR$(FORM.GET(lst, "SELINDEX")) + ".")
+    dirty = 1
+ENDSUB
+
+' The handler runs while the window is still standing, so the list can still
+' be asked what it holds, and the close can be called off.
+SUB MAIN_UNLOAD(e)
+    IF dirty = 1 THEN
+        IF MSGBOX("Es gibt ungespeicherte Aenderungen. Trotzdem schliessen?", 4 + 32, "Moment") = 7 THEN
+            e[0]{"cancel"} = TRUE
+            FORM.SET(lbl, "TEXT", "Geblieben. " + STR$(FORM.GET(lst, "COUNT")) + " Posten sind noch da.")
+        ENDIF
+    ENDIF
+ENDSUB
+
+FORM.RUN(frm)

@@ -2106,6 +2106,20 @@ The `FORM.*` namespace creates **real Win32 windows and common controls** - push
 
 **Event model.** Every control has a *name*; events dispatch through the standard `ON` handler mechanism as **`NAME_EVENT`** (always uppercase). A handler is a `SUB` taking one argument, an array whose first element is an info map (`e[0]{"name"}`, plus event-specific keys like `text`, `index`, `checked`).
 
+**The event vocabulary.** Forms fire `LOAD`, `UNLOAD`, `RESIZE` and the mouse events; every control that takes input fires `GOTFOCUS`, `LOSTFOCUS`, `KEYDOWN`, `KEYUP`, `KEYPRESS`, `MOUSEDOWN`, `MOUSEUP` and `MOUSEMOVE` on top of its own (`CLICK`, `CHANGE`, `DBLCLICK`, `TICK`). Keyboard events carry `key` (the virtual key, or the character for `KEYPRESS`), mouse events `button` (1 left, 2 right, 0 for a move) and `x`/`y` in logical units; both carry `shift`, `ctrl` and `alt`. All of them bind by name without an `ON`.
+
+**Refusing to close.** `NAME_UNLOAD` runs **synchronously while the window still exists**, so a handler can read its own controls one last time and can call the close off by setting `e[0]{"cancel"} = TRUE` - the VB6 `Form_QueryUnload(Cancel)` pattern, for the window cross, `Alt+F4` and `FORM.CLOSE` alike.
+
+```basic
+SUB MAIN_UNLOAD(e)
+    IF FORM.GET(FORM.FIND(frm, "TXT"), "TEXT") <> saved$ THEN
+        IF MSGBOX("Ungespeicherte Aenderungen. Trotzdem schliessen?", 4 + 32) = 7 THEN
+            e[0]{"cancel"} = TRUE
+        ENDIF
+    ENDIF
+ENDSUB
+```
+
 ```basic
 frm = FORM.CREATE("Hello", 320, 200, "MAIN")
 btn = FORM.BUTTON(frm, "btnOK", "OK", 110, 80, 100, 28)
@@ -2131,6 +2145,7 @@ Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radi
 * **`FORM.LOAD(path$, [mdi_frame]) -> handle`**: Instantiates a **`.jdform` file** (see below) and returns the form handle; with a frame handle as second argument the form becomes an MDI child of it. Relative paths resolve against the script's directory. Every `SUB` named `<CONTROL>_<EVENT>` that exists in the program is bound automatically - a `.jdform`-based program needs no `ON` statements at all.
 * **`FORM.FIND(frm, name$) -> handle`**: Looks up a control of a form by name (case-insensitive); returns `0` if absent. The code-behind companion to `FORM.LOAD`.
 * **`FORM.MENU(frm, spec)`**: Builds (or replaces) the form's **menu bar**. `spec` is an array of maps: `text` (required; `&` marks the Alt key, `"-"` is a separator), `items` (submenu array), `name` (makes the item clickable: it becomes a forms handle dispatching `NAME_CLICK`, findable via `FORM.FIND`), `key` (a real keyboard accelerator like `"Ctrl+O"` or `"F5"`, shown right-aligned in the item). Menu items support `FORM.SET` `ENABLED`/`CHECKED`/`TEXT`/`VALUE` (TRUE clicks) and `FORM.GET` `CHECKED`/`ENABLED`.
+* **`FORM.POPUP(frm, spec, [x], [y])`**: Shows a **context menu** at the mouse (or at logical form coordinates when `x`/`y` are given) and returns when it closes. `spec` is the same shape as `FORM.MENU`, and a chosen item dispatches its `NAME_CLICK` exactly like a menu-bar item. The handles from the form's previous popup are dropped on each call, so reopening one does not pile them up. Pairs with `NAME_MOUSEDOWN` and `button = 2`.
 * **`FORM.MDI(title$, width, height, [name$]) -> handle`**: Creates an **MDI frame** (the classic multi-document parent window). Behaves like a form: menu, `FORM.RUN`, `LOAD`/`UNLOAD`/`RESIZE` events.
 * **`FORM.CHILD(frame, title$, width, height, [name$]) -> handle`**: Creates an MDI **child document window** inside a frame. Children host controls like any form and fire `LOAD`/`UNLOAD`/`RESIZE`, but do **not** count toward the program lifetime: closing the last child keeps `FORM.RUN` alive, closing the frame ends it. `Ctrl+F4`/`Ctrl+F6` close/cycle children as usual.
 * **`FORM.TOOLBAR(frm, name$, spec) -> handle`**: Builds a flat icon **toolbar** along the top of the form (one per form). `spec` is an array of maps: `name` (required; the button dispatches `NAME_CLICK`), `text` (tooltip), `icon` (a stock name: `NEW`, `OPEN`, `SAVE`, `CUT`, `COPY`, `PASTE`, `UNDO`, `REDO`, `DELETE`, `PRINT`, `PRINTPRE`, `FIND`, `REPLACE`, `PROPERTIES`, `HELP`), `check` (TRUE = toggle button); `"-"` is a separator. Buttons support `FORM.SET`/`GET` `ENABLED`/`CHECKED` and `VALUE` (TRUE clicks). On an MDI frame the client area starts below the toolbar automatically.

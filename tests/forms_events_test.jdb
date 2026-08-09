@@ -1,0 +1,125 @@
+' Focus, keyboard, mouse and a form that refuses to close.
+'
+'   jdbasic tests/forms_events_test.jdb        (needs a FORMS build)
+'
+' No hand on the mouse: the window is driven by posting the very messages
+' Windows would post, so the run is deterministic and does not steal the
+' cursor or the keyboard from whoever is sitting in front of it.
+DECLARE FUNC PostMessageW LIB "user32" ALIAS "PostMessageW" (h AS INTEGER, m AS INTEGER, w AS INTEGER, l AS INTEGER) AS INTEGER
+
+CONST WM_CHAR = 258
+CONST WM_KEYDOWN = 256
+CONST WM_RBUTTONDOWN = 516
+
+DIM pass = 0
+DIM fail = 0
+DIM seen AS MAP = {}
+DIM refuse_once = 1
+DIM phase = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+    ENDIF
+ENDSUB
+
+SUB NOTE(key$, v)
+    seen{key$} = v
+ENDSUB
+
+FUNC GOT(key$)
+    IF TYPEOF(seen{key$}) = "NONE" THEN RETURN "-"
+    RETURN "" + seen{key$}
+ENDFUNC
+
+DIM frm = FORM.CREATE("events", 320, 200, "TF")
+DIM box = FORM.TEXTBOX(frm, "TB", "", 20, 20, 260, 24)
+DIM tmr = FORM.TIMER(frm, "TT", 250)
+
+SUB TB_GOTFOCUS(e)
+    NOTE("gotfocus", 1)
+ENDSUB
+
+SUB TB_LOSTFOCUS(e)
+    NOTE("lostfocus", 1)
+ENDSUB
+
+SUB TB_KEYPRESS(e)
+    NOTE("keypress", e[0]{"key"})
+ENDSUB
+
+SUB TB_KEYDOWN(e)
+    NOTE("keydown", e[0]{"key"})
+ENDSUB
+
+SUB TF_MOUSEDOWN(e)
+    NOTE("mousebutton", e[0]{"button"})
+    NOTE("mousex", e[0]{"x"})
+ENDSUB
+
+' The point of the whole exercise: refuse once, and while refusing still be
+' able to read the form's own controls.
+SUB TF_UNLOAD(e)
+    NOTE("unloads", VAL(GOT("unloads")) + 1)
+    NOTE("text_at_unload", FORM.GET(FORM.FIND(frm, "TB"), "TEXT"))
+    IF refuse_once = 1 THEN
+        refuse_once = 0
+        e[0]{"cancel"} = TRUE
+    ENDIF
+ENDSUB
+
+' One step per tick, so every stage is observed before the next begins.
+SUB TT_TICK(e)
+    phase = phase + 1
+    IF phase = 1 THEN
+        FORM.SET(box, "TEXT", "hallo")
+        FORM.SET(box, "FOCUS", TRUE)
+    ELSEIF phase = 2 THEN
+        DIM hb = FORM.GET(box, "HWND")
+        DIM r1 = PostMessageW(hb, WM_KEYDOWN, 65, 0)
+        DIM r2 = PostMessageW(hb, WM_CHAR, 65, 0)
+    ELSEIF phase = 3 THEN
+        DIM hf = FORM.GET(frm, "HWND")
+        ' x=40 y=30 in device pixels, packed low/high word
+        DIM r3 = PostMessageW(hf, WM_RBUTTONDOWN, 0, 30 * 65536 + 40)
+    ELSEIF phase = 4 THEN
+        ' The popup runs its own message loop, so the Escape that closes it
+        ' again is queued before it opens.
+        DIM hp = FORM.GET(frm, "HWND")
+        DIM r4 = PostMessageW(hp, WM_KEYDOWN, 27, 0)
+        FORM.POPUP(frm, [{ "text": "&Kopieren", "name": "PMCOPY" }, "-", _
+                          { "text": "&Loeschen", "name": "PMDEL" }])
+        NOTE("popup_returned", 1)
+    ELSEIF phase = 5 THEN
+        FORM.CLOSE(frm)
+    ELSEIF phase = 6 THEN
+        ' if the refusal worked the form is still here and still usable
+        NOTE("alive_after_refusal", FORM.GET(box, "TEXT"))
+        FORM.CLOSE(frm)
+    ENDIF
+ENDSUB
+
+FORM.RUN(frm)
+
+PRINT ""
+PRINT "--- was angekommen ist ---"
+CHECK("GOTFOCUS feuert", GOT("gotfocus"), "1")
+CHECK("KEYDOWN feuert mit Tastencode", GOT("keydown"), "65")
+' TranslateMessage turns the KEYDOWN into a WM_CHAR carrying the lower-case
+' letter, which arrives after the one posted by hand. The last one wins, and
+' that is exactly what somebody typing would see.
+CHECK("KEYPRESS feuert mit dem Zeichen", GOT("keypress"), "97")
+CHECK("MOUSEDOWN meldet die rechte Taste", GOT("mousebutton"), "2")
+CHECK("und eine Koordinate", STR$(VAL(GOT("mousex")) > 0), "TRUE")
+CHECK("FORM.POPUP oeffnet und kehrt zurueck", GOT("popup_returned"), "1")
+CHECK("UNLOAD lief zweimal", GOT("unloads"), "2")
+' The A and the a of the two keystrokes really are in the field. That they
+' show up here proves on the side that the keyboard reaches the control.
+CHECK("und konnte dabei die eigenen Felder lesen", GOT("text_at_unload"), "Aahallo")
+CHECK("die abgelehnte Form lebte weiter", GOT("alive_after_refusal"), "Aahallo")
+
+PRINT ""
+PRINT "forms_events_test: bestanden "; pass; ", gefallen "; fail
