@@ -1,0 +1,103 @@
+' The property surface: colours, fonts, tag, tooltip, mask and tab order.
+'
+'   jdbasic tests/forms_props_test.jdb        (needs a FORMS build)
+'
+' Values are asserted through FORM.GET, and the window is photographed so the
+' half only an eye can judge - does the red label actually come out red - can
+' be looked at afterwards in tmp/forms_props.png.
+
+DIM pass = 0
+DIM fail = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+    ENDIF
+ENDSUB
+
+CONST RED = 13369344
+CONST CREAM = 16775906
+CONST NAVY = 2050956
+
+DIM frm = FORM.CREATE("Eigenschaften", 460, 300, "PF")
+FORM.SET(frm, "BACKCOLOR", CREAM)
+
+DIM lb1 = FORM.LABEL(frm, "L1", "Rot, fett und rechts", 20, 20, 300, 22)
+FORM.SET(lb1, "FORECOLOR", RED)
+FORM.SET(lb1, "FONT", { "bold": TRUE, "size": 12 })
+FORM.SET(lb1, "ALIGN", "RIGHT")
+
+DIM lb2 = FORM.LABEL(frm, "L2", "Weiss auf Marine, kursiv", 20, 50, 300, 22)
+FORM.SET(lb2, "FORECOLOR", 16777215)
+FORM.SET(lb2, "BACKCOLOR", NAVY)
+FORM.SET(lb2, "FONT", { "italic": TRUE })
+
+DIM pw = FORM.TEXTBOX(frm, "PW", "geheim", 20, 84, 200, 24)
+FORM.SET(pw, "PASSWORD", TRUE)
+FORM.SET(pw, "MAXLENGTH", 8)
+
+DIM ro = FORM.TEXTBOX(frm, "RO", "nur lesen", 20, 116, 200, 24)
+FORM.SET(ro, "LOCKED", TRUE)
+FORM.SET(ro, "BACKCOLOR", 15132390)
+
+DIM btn = FORM.BUTTON(frm, "B1", "&Warten", 20, 152, 120, 28)
+FORM.SET(btn, "TOOLTIP", "Zeigt die Sanduhr")
+FORM.SET(btn, "CURSOR", "WAIT")
+FORM.SET(btn, "TAG", { "kind": "demo", "n": 7 })
+
+DIM t1 = FORM.TEXTBOX(frm, "T1", "erst", 240, 84, 180, 24)
+DIM t2 = FORM.TEXTBOX(frm, "T2", "zweit", 240, 116, 180, 24)
+FORM.SET(t2, "TABSTOP", FALSE)
+
+' A handle is gone once its window is, so everything is read while the form
+' still stands and only judged afterwards.
+DIM got AS MAP = {}
+DIM shot = 0
+
+SUB PF_LOAD(e)
+    shot = 1
+ENDSUB
+
+DIM tmr = FORM.TIMER(frm, "TT", 400)
+
+SUB TT_TICK(e)
+    IF shot = 1 THEN
+        shot = 2
+        DIM r = OS.SCREENSHOT("tmp/forms_props.png", "window", "Eigenschaften")
+        PRINT "Screenshot: "; r; " (0 = geschrieben)"
+        got{"fore"} = FORM.GET(lb1, "FORECOLOR")
+        got{"back"} = FORM.GET(lb2, "BACKCOLOR")
+        got{"formback"} = FORM.GET(frm, "BACKCOLOR")
+        got{"nofore"} = FORM.GET(t1, "FORECOLOR")
+        got{"maxlen"} = FORM.GET(pw, "MAXLENGTH")
+        got{"locked"} = FORM.GET(ro, "LOCKED")
+        got{"unlocked"} = FORM.GET(t1, "LOCKED")
+        got{"notab"} = FORM.GET(t2, "TABSTOP")
+        got{"tab"} = FORM.GET(t1, "TABSTOP")
+        got{"tip"} = FORM.GET(btn, "TOOLTIP")
+        got{"tag"} = FORM.GET(btn, "TAG")
+        FORM.CLOSE(frm)
+    ENDIF
+ENDSUB
+
+FORM.RUN(frm)
+
+PRINT ""
+CHECK("FORECOLOR kommt zurueck", STR$(got{"fore"}), STR$(RED))
+CHECK("BACKCOLOR kommt zurueck", STR$(got{"back"}), STR$(NAVY))
+CHECK("die Form traegt ihre eigene", STR$(got{"formback"}), STR$(CREAM))
+CHECK("ohne gesetzte Farbe kommt -1", STR$(got{"nofore"}), "-1")
+CHECK("MAXLENGTH kommt zurueck", STR$(got{"maxlen"}), "8")
+CHECK("LOCKED kommt zurueck", STR$(got{"locked"}), "TRUE")
+CHECK("  und ein anderes Feld ist es nicht", STR$(got{"unlocked"}), "FALSE")
+CHECK("TABSTOP laesst sich abschalten", STR$(got{"notab"}), "FALSE")
+CHECK("  und bleibt sonst gesetzt", STR$(got{"tab"}), "TRUE")
+CHECK("TOOLTIP kommt zurueck", "" + got{"tip"}, "Zeigt die Sanduhr")
+CHECK("TAG haelt eine ganze Map", STR$(got{"tag"}{"n"}), "7")
+CHECK("  und den Text darin", "" + got{"tag"}{"kind"}, "demo")
+
+PRINT ""
+PRINT "forms_props_test: bestanden "; pass; ", gefallen "; fail

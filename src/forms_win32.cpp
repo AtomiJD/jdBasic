@@ -190,8 +190,67 @@ std::map<int, HBRUSH>  g_shape_brushes;   // SHAPE fill
 std::map<int, int>     g_shape_colors;    // SHAPE fill as 0xRRGGBB
 std::map<int, HBITMAP> g_pictures;        // PICTURE bitmaps
 
+// Appearance a control carries beyond its text. Windows asks the *parent*
+// for a child's colours (WM_CTLCOLOR*), which is why these live here and not
+// in the control: the form's WndProc answers out of these maps.
+std::map<int, int>     g_fore;        // FORECOLOR as 0xRRGGBB
+std::map<int, int>     g_back;        // BACKCOLOR as 0xRRGGBB
+std::map<int, HBRUSH>  g_back_brush;  // the brush WM_CTLCOLOR* hands back
+std::map<int, HFONT>   g_fonts;       // per-control FONT
+std::map<int, Value>   g_tags;        // TAG, whatever the program puts there
+std::map<int, std::string> g_ctl_tips;  // TOOLTIP text
+std::map<int, HWND>    g_tip_wnd;     // one tooltip window per form
+std::map<int, HCURSOR> g_cursors;     // CURSOR
+
 COLORREF rgb_to_colorref(int rgb) {
     return RGB((rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
+}
+
+// A font from { "name", "size", "bold", "italic", "underline", "strike" };
+// anything absent stays at the system UI font, so setting only "bold" works.
+HFONT make_font(const Value& spec) {
+    NONCLIENTMETRICSW ncm = { sizeof(ncm) };
+    SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(ncm), &ncm, 0);
+    LOGFONTW lf = ncm.lfMessageFont;
+    if (spec.type == ValueType::OBJECT) {
+        auto* o = spec.as_object();
+        if (Value* v = o->get("name")) {
+            std::wstring w = widen(v->to_string());
+            wcsncpy_s(lf.lfFaceName, LF_FACESIZE, w.c_str(), _TRUNCATE);
+        }
+        if (Value* v = o->get("size"))      lf.lfHeight = -MulDiv((int)v->to_int(), g_dpi, 72);
+        if (Value* v = o->get("bold"))      lf.lfWeight = v->to_bool() ? FW_BOLD : FW_NORMAL;
+        if (Value* v = o->get("italic"))    lf.lfItalic = v->to_bool() ? 1 : 0;
+        if (Value* v = o->get("underline")) lf.lfUnderline = v->to_bool() ? 1 : 0;
+        if (Value* v = o->get("strike"))    lf.lfStrikeOut = v->to_bool() ? 1 : 0;
+    }
+    return CreateFontIndirectW(&lf);
+}
+
+// Answers a WM_CTLCOLOR* out of the maps above. False means the control has
+// no colours of its own and the caller should carry on as before.
+bool ctl_color(HDC hdc, HWND ctl, LRESULT& out);
+
+// Swap one style bit group on a live control and make it repaint.
+void restyle(HWND h, DWORD clear, DWORD set) {
+    LONG_PTR s = GetWindowLongPtrW(h, GWL_STYLE);
+    s = (s & ~(LONG_PTR)clear) | (LONG_PTR)set;
+    SetWindowLongPtrW(h, GWL_STYLE, s);
+    SetWindowPos(h, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    InvalidateRect(h, nullptr, TRUE);
+}
+
+// One tooltip window per form, created the first time a control wants one.
+HWND tip_window(int frm, HWND form_hwnd) {
+    auto it = g_tip_wnd.find(frm);
+    if (it != g_tip_wnd.end() && IsWindow(it->second)) return it->second;
+    HWND tip = CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
+                               WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX,
+                               CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                               form_hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+    g_tip_wnd[frm] = tip;
+    return tip;
 }
 
 // Tree nodes live outside the FormsItem registry: ids share the handle
@@ -579,6 +638,8 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
         case WM_CTLCOLORSTATIC: {
             HDC hdc = (HDC)wParam;
+            LRESULT own;
+            if (ctl_color(hdc, (HWND)lParam, own)) return own;
             auto sit = g_byhwnd.find((HWND)lParam);
             if (sit != g_byhwnd.end() && g_items[sit->second].kind == "SHAPE") {
                 auto bit = g_shape_brushes.find(sit->second);
@@ -601,6 +662,32 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 queue_event(it.name, "CHANGE", m);
             }
             return 0;
+        }
+
+        // Windows asks the parent for a child's colours, so this is where a
+        // control's FORECOLOR and BACKCOLOR are answered. A themed push button
+        // draws itself and ignores the answer - same as VB6, where a button
+        // needed Style = Graphical before BackColor did anything.
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORBTN:
+        case WM_CTLCOLORLISTBOX: {
+            LRESULT own;
+            if (ctl_color((HDC)wParam, (HWND)lParam, own)) return own;
+            break;
+        }
+
+        case WM_ERASEBKGND: {
+            auto hit2 = g_byhwnd.find(hwnd);
+            if (hit2 != g_byhwnd.end()) {
+                auto bb = g_back_brush.find(hit2->second);
+                if (bb != g_back_brush.end()) {
+                    RECT rc;
+                    GetClientRect(hwnd, &rc);
+                    FillRect((HDC)wParam, &rc, bb->second);
+                    return 1;
+                }
+            }
+            break;
         }
 
         case WM_LBUTTONDOWN:
@@ -673,6 +760,26 @@ LRESULT CALLBACK form_wndproc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                         if (pic != g_pictures.end()) {
                             DeleteObject(pic->second);
                             g_pictures.erase(pic);
+                        }
+                        auto bb2 = g_back_brush.find(it->first);
+                        if (bb2 != g_back_brush.end()) {
+                            DeleteObject(bb2->second);
+                            g_back_brush.erase(bb2);
+                        }
+                        auto fnt = g_fonts.find(it->first);
+                        if (fnt != g_fonts.end()) {
+                            DeleteObject(fnt->second);
+                            g_fonts.erase(fnt);
+                        }
+                        g_fore.erase(it->first);
+                        g_back.erase(it->first);
+                        g_tags.erase(it->first);
+                        g_ctl_tips.erase(it->first);
+                        g_cursors.erase(it->first);
+                        auto tw = g_tip_wnd.find(it->first);
+                        if (tw != g_tip_wnd.end()) {
+                            if (IsWindow(tw->second)) DestroyWindow(tw->second);
+                            g_tip_wnd.erase(tw);
                         }
                         if (it->second.buddy) g_byhwnd.erase(it->second.buddy);
                         if (it->second.hwnd && it->second.kind != "TOOLBTN")
@@ -818,10 +925,38 @@ LRESULT CALLBACK ctl_sub_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp,
             case WM_RBUTTONDOWN: queue_mouse(it, "MOUSEDOWN", 2, lp); break;
             case WM_RBUTTONUP:   queue_mouse(it, "MOUSEUP", 2, lp); break;
             case WM_MOUSEMOVE:   queue_mouse(it, "MOUSEMOVE", 0, lp); break;
+            case WM_SETCURSOR: {
+                auto cur = g_cursors.find(hit->second);
+                if (cur != g_cursors.end()) {
+                    SetCursor(cur->second);
+                    return TRUE;
+                }
+                break;
+            }
             default: break;
         }
     }
     return DefSubclassProc(hwnd, msg, wp, lp);
+}
+
+bool ctl_color(HDC hdc, HWND ctl, LRESULT& out) {
+    auto cit = g_byhwnd.find(ctl);
+    if (cit == g_byhwnd.end()) return false;
+    int ch = cit->second;
+    auto f = g_fore.find(ch);
+    auto b = g_back.find(ch);
+    if (f == g_fore.end() && b == g_back.end()) return false;
+    if (f != g_fore.end()) SetTextColor(hdc, rgb_to_colorref(f->second));
+    if (b != g_back.end()) {
+        SetBkColor(hdc, rgb_to_colorref(b->second));
+        out = (LRESULT)g_back_brush[ch];
+        return true;
+    }
+    // colour on the text only: let whatever is behind the control show through
+    SetBkMode(hdc, TRANSPARENT);
+    auto fb = g_back_brush.find(g_items[ch].form);
+    out = (LRESULT)(fb != g_back_brush.end() ? fb->second : GetSysColorBrush(COLOR_BTNFACE));
+    return true;
 }
 
 int store_item(HWND hwnd, const std::string& name, const std::string& kind, int form) {
@@ -1174,6 +1309,87 @@ void set_prop(int handle, FormsItem& it, const std::string& prop, const Value& v
         SendMessageW(h, UDM_GETRANGE32, (WPARAM)&lo, (LPARAM)&hi);
         if (prop == "MIN") lo = (int)v.to_int(); else hi = (int)v.to_int();
         SendMessageW(h, UDM_SETRANGE32, lo, hi);
+    } else if (prop == "FORECOLOR") {
+        g_fore[handle] = (int)v.to_int();
+        InvalidateRect(h, nullptr, TRUE);
+    } else if (prop == "BACKCOLOR") {
+        auto old = g_back_brush.find(handle);
+        if (old != g_back_brush.end()) DeleteObject(old->second);
+        int rgb = (int)v.to_int();
+        g_back[handle] = rgb;
+        g_back_brush[handle] = CreateSolidBrush(rgb_to_colorref(rgb));
+        InvalidateRect(h, nullptr, TRUE);
+    } else if (prop == "FONT") {
+        auto old = g_fonts.find(handle);
+        if (old != g_fonts.end()) DeleteObject(old->second);
+        HFONT hf = make_font(v);
+        g_fonts[handle] = hf;
+        SendMessageW(h, WM_SETFONT, (WPARAM)hf, TRUE);
+        if (it.buddy) SendMessageW(it.buddy, WM_SETFONT, (WPARAM)hf, TRUE);
+        InvalidateRect(h, nullptr, TRUE);
+    } else if (prop == "TAG") {
+        g_tags[handle] = v;
+    } else if (prop == "TOOLTIP") {
+        std::string text = v.to_string();
+        g_ctl_tips[handle] = text;
+        HWND fh = g_items.count(it.form) ? g_items[it.form].hwnd : h;
+        HWND tip = tip_window(it.form ? it.form : handle, fh);
+        if (tip) {
+            std::wstring w = widen(text);
+            TTTOOLINFOW ti = { sizeof(ti) };
+            ti.uFlags = TTF_IDISHWND | TTF_SUBCLASS;
+            ti.hwnd = fh;
+            ti.uId = (UINT_PTR)h;
+            ti.lpszText = (LPWSTR)w.c_str();
+            SendMessageW(tip, TTM_DELTOOLW, 0, (LPARAM)&ti);
+            SendMessageW(tip, TTM_ADDTOOLW, 0, (LPARAM)&ti);
+        }
+    } else if (prop == "ALIGN") {
+        std::string a = upname(v.to_string());
+        bool edit = (it.kind == "TEXTBOX" || it.kind == "RICHTEXT");
+        DWORD all = edit ? (ES_LEFT | ES_CENTER | ES_RIGHT) : (SS_LEFT | SS_CENTER | SS_RIGHT);
+        DWORD want = edit ? ES_LEFT : SS_LEFT;
+        if (a == "CENTER") want = edit ? ES_CENTER : SS_CENTER;
+        else if (a == "RIGHT") want = edit ? ES_RIGHT : SS_RIGHT;
+        restyle(h, all, want);
+    } else if (prop == "MAXLENGTH") {
+        SendMessageW(h, EM_SETLIMITTEXT, (WPARAM)v.to_int(), 0);
+    } else if (prop == "PASSWORD") {
+        // an empty string or FALSE turns it back into a plain field
+        std::string s = (v.type == ValueType::STRING) ? v.as_string()->data : "";
+        wchar_t ch = 0;
+        if (!s.empty()) ch = widen(s)[0];
+        else if (v.type != ValueType::STRING && v.to_bool()) ch = L'*';
+        SendMessageW(h, EM_SETPASSWORDCHAR, (WPARAM)ch, 0);
+        InvalidateRect(h, nullptr, TRUE);
+    } else if (prop == "LOCKED") {
+        SendMessageW(h, EM_SETREADONLY, (WPARAM)(v.to_bool() ? TRUE : FALSE), 0);
+    } else if (prop == "TABSTOP") {
+        restyle(h, WS_TABSTOP, v.to_bool() ? WS_TABSTOP : 0);
+    } else if (prop == "TABINDEX") {
+        // Tab order in Win32 is the sibling z-order. Position 0 means first.
+        int want = (int)v.to_int();
+        std::vector<HWND> sibs;
+        for (HWND s = GetWindow(GetParent(h), GW_CHILD); s; s = GetWindow(s, GW_HWNDNEXT))
+            if (s != h) sibs.push_back(s);
+        if (want <= 0) {
+            SetWindowPos(h, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        } else {
+            size_t after = (size_t)want - 1;
+            if (after >= sibs.size()) after = sibs.empty() ? 0 : sibs.size() - 1;
+            if (!sibs.empty())
+                SetWindowPos(h, sibs[after], 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    } else if (prop == "CURSOR") {
+        std::string c = upname(v.to_string());
+        LPCWSTR id = (LPCWSTR)IDC_ARROW;
+        if (c == "WAIT" || c == "HOURGLASS") id = (LPCWSTR)IDC_WAIT;
+        else if (c == "HAND") id = (LPCWSTR)IDC_HAND;
+        else if (c == "IBEAM" || c == "TEXT") id = (LPCWSTR)IDC_IBEAM;
+        else if (c == "CROSS") id = (LPCWSTR)IDC_CROSS;
+        else if (c == "SIZEALL") id = (LPCWSTR)IDC_SIZEALL;
+        else if (c == "NO") id = (LPCWSTR)IDC_NO;
+        g_cursors[handle] = LoadCursorW(nullptr, id);
     } else if (prop == "COLOR" && it.kind == "SHAPE") {
         int rgb = (int)v.to_int();
         auto old = g_shape_brushes.find(handle);
@@ -1322,6 +1538,28 @@ Value get_prop(int handle, FormsItem& it, const std::string& prop, const char* w
         return Value::make_i64((int)SendMessageW(h, TBM_GETPOS, 0, 0));
     if (prop == "VALUE" && it.kind == "UPDOWN")
         return Value::make_i64((int)SendMessageW(h, UDM_GETPOS32, 0, 0));
+    if (prop == "FORECOLOR") {
+        auto f = g_fore.find(handle);
+        return Value::make_i64(f == g_fore.end() ? -1 : f->second);
+    }
+    if (prop == "BACKCOLOR") {
+        auto b = g_back.find(handle);
+        return Value::make_i64(b == g_back.end() ? -1 : b->second);
+    }
+    if (prop == "TAG") {
+        auto t = g_tags.find(handle);
+        return t == g_tags.end() ? Value::make_none() : t->second;
+    }
+    if (prop == "TOOLTIP") {
+        auto t = g_ctl_tips.find(handle);
+        return Value::make_string(t == g_ctl_tips.end() ? "" : t->second);
+    }
+    if (prop == "MAXLENGTH")
+        return Value::make_i64((int64_t)SendMessageW(h, EM_GETLIMITTEXT, 0, 0));
+    if (prop == "LOCKED")
+        return Value::make_bool((GetWindowLongPtrW(h, GWL_STYLE) & ES_READONLY) != 0);
+    if (prop == "TABSTOP")
+        return Value::make_bool((GetWindowLongPtrW(h, GWL_STYLE) & WS_TABSTOP) != 0);
     if (prop == "COLOR" && it.kind == "SHAPE") {
         auto cit = g_shape_colors.find(handle);
         return Value::make_i64(cit != g_shape_colors.end() ? cit->second : 0);
