@@ -17,9 +17,12 @@
 #include <vector>
 #include <atomic>
 #include <cstring>
+#include <cctype>
 #include <fstream>
 #include <cstdint>
 #include <cmath>
+#include <thread>
+#include <chrono>
 
 namespace {
 ma_device          g_mon_device;
@@ -86,6 +89,159 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
         }
         g_rec_pos.store(rp, std::memory_order_relaxed);
     }
+}
+
+// ---- WAV.RECORD: raw capture on its own device, independent of the monitor ----
+
+ma_device           g_cap_device;
+std::atomic<bool>   g_cap_active{false};
+std::vector<float>  g_cap_buf;                 // interleaved, sized before start
+std::atomic<size_t> g_cap_pos{0};
+unsigned            g_cap_ch   = 1;
+unsigned            g_cap_rate = 48000;
+std::vector<float>  g_play_buf;                // played while capturing (duplex)
+std::atomic<size_t> g_play_pos{0};
+
+// realtime: raw input into the buffer, optional pre-rendered output. Stops
+// filling at the end of the buffer instead of wrapping - a measurement wants
+// the first N seconds, not the last.
+void cap_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames) {
+    if (pIn) {
+        const float* in = (const float*)pIn;
+        size_t n = (size_t)frames * dev->capture.channels;
+        size_t p = g_cap_pos.load(std::memory_order_relaxed);
+        size_t cap = g_cap_buf.size();
+        if (p < cap) {
+            if (n > cap - p) n = cap - p;
+            std::memcpy(g_cap_buf.data() + p, in, n * sizeof(float));
+            g_cap_pos.store(p + n, std::memory_order_relaxed);
+        }
+    }
+    if (pOut) {
+        float* out = (float*)pOut;
+        size_t n = (size_t)frames * dev->playback.channels;
+        size_t p = g_play_pos.load(std::memory_order_relaxed);
+        size_t have = (p < g_play_buf.size()) ? g_play_buf.size() - p : 0;
+        if (have > n) have = n;
+        if (have) std::memcpy(out, g_play_buf.data() + p, have * sizeof(float));
+        if (have < n) std::memset(out + have, 0, (n - have) * sizeof(float));
+        g_play_pos.store(p + n, std::memory_order_relaxed);
+    }
+}
+
+struct RecOpts {
+    unsigned channels = 1;
+    unsigned rate     = 48000;
+    double   seconds  = 60.0;
+    int      device      = -1;
+    int      playdevice  = -1;
+    unsigned playchannels = 1;
+    std::vector<float> play;
+};
+
+const Value* opt_get(const Value& m, const char* key) {
+    if (m.type != ValueType::OBJECT) return nullptr;
+    size_t klen = std::strlen(key);
+    for (auto& kv : m.as_object()->fields) {
+        if (kv.first.size() != klen) continue;
+        size_t i = 0;
+        while (i < klen && std::tolower((unsigned char)kv.first[i]) ==
+                           std::tolower((unsigned char)key[i])) i++;
+        if (i == klen) return &kv.second;
+    }
+    return nullptr;
+}
+
+RecOpts parse_opts(const std::vector<Value>& args, size_t idx) {
+    RecOpts o;
+    if (args.size() <= idx || args[idx].type != ValueType::OBJECT) return o;
+    const Value& m = args[idx];
+    if (const Value* v = opt_get(m, "channels"))     o.channels = (unsigned)v->to_int();
+    if (const Value* v = opt_get(m, "rate"))         o.rate = (unsigned)v->to_int();
+    if (const Value* v = opt_get(m, "seconds"))      o.seconds = v->to_double();
+    if (const Value* v = opt_get(m, "device"))       o.device = (int)v->to_int();
+    if (const Value* v = opt_get(m, "playdevice"))   o.playdevice = (int)v->to_int();
+    if (const Value* v = opt_get(m, "playchannels")) o.playchannels = (unsigned)v->to_int();
+    if (const Value* v = opt_get(m, "play")) {
+        if (v->type == ValueType::ARRAY)
+            for (auto& e : v->as_array()->elements) o.play.push_back((float)e.to_double());
+    }
+    if (o.channels < 1) o.channels = 1;
+    if (o.playchannels < 1) o.playchannels = 1;
+    if (o.rate < 1000) o.rate = 48000;
+    return o;
+}
+
+bool find_device_id(bool capture, int idx, ma_device_id& out) {
+    ma_context ctx;
+    bool found = false;
+    if (ma_context_init(NULL, 0, NULL, &ctx) == MA_SUCCESS) {
+        ma_device_info* p = nullptr; ma_uint32 pc = 0;
+        ma_device_info* c = nullptr; ma_uint32 cc = 0;
+        if (ma_context_get_devices(&ctx, &p, &pc, &c, &cc) == MA_SUCCESS) {
+            ma_device_info* list = capture ? c : p;
+            ma_uint32 n = capture ? cc : pc;
+            if (idx >= 0 && (ma_uint32)idx < n) { out = list[idx].id; found = true; }
+        }
+        ma_context_uninit(&ctx);
+    }
+    return found;
+}
+
+bool rec_start(const RecOpts& o) {
+    if (g_cap_active.load()) return false;
+    bool duplex = !o.play.empty();
+    ma_device_config cfg = ma_device_config_init(
+        duplex ? ma_device_type_duplex : ma_device_type_capture);
+    cfg.capture.format   = ma_format_f32;
+    cfg.capture.channels  = o.channels;
+    cfg.sampleRate        = o.rate;
+    cfg.dataCallback      = cap_callback;
+    ma_device_id inId, outId;
+    if (o.device >= 0 && find_device_id(true, o.device, inId)) cfg.capture.pDeviceID = &inId;
+    if (duplex) {
+        cfg.playback.format   = ma_format_f32;
+        cfg.playback.channels = o.playchannels;
+        if (o.playdevice >= 0 && find_device_id(false, o.playdevice, outId))
+            cfg.playback.pDeviceID = &outId;
+    }
+    if (ma_device_init(NULL, &cfg, &g_cap_device) != MA_SUCCESS) return false;
+    // the device may not grant what was asked for; the buffer follows what it gave
+    g_cap_ch   = g_cap_device.capture.channels;
+    g_cap_rate = g_cap_device.sampleRate;
+    double secs = o.seconds > 0.0 ? o.seconds : 60.0;
+    size_t cap = (size_t)(secs * g_cap_rate) * g_cap_ch;
+    if (cap == 0) { ma_device_uninit(&g_cap_device); return false; }
+    g_cap_buf.assign(cap, 0.0f);
+    g_cap_pos.store(0, std::memory_order_relaxed);
+    g_play_buf = o.play;
+    g_play_pos.store(0, std::memory_order_relaxed);
+    if (ma_device_start(&g_cap_device) != MA_SUCCESS) {
+        ma_device_uninit(&g_cap_device);
+        return false;
+    }
+    g_cap_active.store(true);
+    return true;
+}
+
+void rec_stop() {
+    if (g_cap_active.exchange(false)) ma_device_uninit(&g_cap_device);
+    g_play_buf.clear();
+}
+
+// the same map shape WAV.READ returns, so both feed WAV.WRITE and FFT alike
+Value rec_result() {
+    size_t n = g_cap_pos.load(std::memory_order_relaxed);
+    if (n > g_cap_buf.size()) n = g_cap_buf.size();
+    Value arr = Value::make_array();
+    arr.as_array()->elements.reserve(n);
+    for (size_t i = 0; i < n; i++) arr.as_array()->elements.push_back(Value::make_f64(g_cap_buf[i]));
+    Value m = Value::make_object();
+    m.as_object()->set("samples", std::move(arr));
+    m.as_object()->set("rate", Value::make_i64(g_cap_rate));
+    m.as_object()->set("channels", Value::make_i64(g_cap_ch));
+    m.as_object()->set("frames", Value::make_i64((int64_t)(n / g_cap_ch)));
+    return m;
 }
 } // namespace
 
@@ -300,6 +456,46 @@ void register_audioio_builtins(VM& vm) {
         }
         g_rt_chain.store(chain, std::memory_order_relaxed);
         return Value::make_none();
+    });
+
+    // WAV.RECORD(seconds, [opts{}]) -> { samples, rate, channels, frames } or NONE
+    // Blocks until the buffer is full. opts: channels, rate, device (index into
+    // MON.DEVICES().capture), play (samples output while capturing - one duplex
+    // device, so the two stay in step), playchannels, playdevice.
+    vm.register_native("WAV.RECORD", 1, 2, [](const std::vector<Value>& args) -> Value {
+        RecOpts o = parse_opts(args, 1);
+        o.seconds = args[0].to_double();
+        if (o.seconds <= 0.0 || o.seconds > 3600.0) return Value::make_none();
+        if (!rec_start(o)) return Value::make_none();
+        size_t want = g_cap_buf.size();
+        // wall clock, not sample count: a device that stalls must not hang the VM
+        auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds((long long)(o.seconds * 1000.0) + 2000);
+        while (g_cap_pos.load(std::memory_order_relaxed) < want &&
+               std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        Value m = rec_result();
+        rec_stop();
+        return m;
+    });
+
+    // WAV.RECSTART([opts{}]) -> bool   same options, plus seconds as the buffer cap
+    vm.register_native("WAV.RECSTART", 0, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_bool(rec_start(parse_opts(args, 0)));
+    });
+
+    // WAV.RECLEN() -> seconds captured so far
+    vm.register_native("WAV.RECLEN", 0, 0, [](const std::vector<Value>&) -> Value {
+        size_t n = g_cap_pos.load(std::memory_order_relaxed);
+        return Value::make_f64((double)n / ((double)g_cap_rate * g_cap_ch));
+    });
+
+    // WAV.RECSTOP() -> { samples, rate, channels, frames } or NONE
+    vm.register_native("WAV.RECSTOP", 0, 0, [](const std::vector<Value>&) -> Value {
+        if (!g_cap_active.load() && g_cap_buf.empty()) return Value::make_none();
+        Value m = rec_result();
+        rec_stop();
+        return m;
     });
 }
 

@@ -2610,8 +2610,14 @@ vocabulary + tone cookbook is in `doc/AudioFX.md`.
 | Function | Description |
 |---|---|
 | `WAV.WRITE(path$, samples[], [rate=44100], [channels=1])` -> bool | Write interleaved floats in [-1,1] as a 16-bit PCM WAV. |
-| `WAV.READ(path$)` -> `{ samples, rate, channels, frames }` or NONE | Read a WAV (PCM 8/16-bit or float32) into a mono float array. |
-| `WAV.INFO(path$)` -> `{ rate, channels, frames }` or NONE | Read the header without loading the audio. |
+| `WAV.READ(path$)` -> `{ samples, rate, channels, frames }` or NONE | Read a WAV into interleaved floats in [-1,1]. |
+| `WAV.INFO(path$)` -> `{ rate, channels, bits, frames }` or NONE | Read the header without loading the audio. |
+
+`WAV.READ` accepts PCM 8/16/24/32-bit, IEEE float 32/64 and `WAVE_FORMAT_EXTENSIBLE`
+(what WASAPI recorders and ffmpeg write by default), and skips over metadata chunks
+that sit before `fmt `. The samples come back **interleaved**: frame `f` channel `c`
+is `samples[f * channels + c]`, so a two-microphone recording de-interleaves with a
+stride of 2. Unsupported encodings (ADPCM, mu-law) return NONE rather than noise.
 
 `SOUND.RENDER(frames)` returns interleaved-stereo floats that drop straight into
 `WAV.WRITE` (take the left channel for the mono FX chain).
@@ -2700,6 +2706,45 @@ Use headphones with a line/instrument input (mic -> speakers howls).
 | `MON.RECSTART()` -> bool / `MON.RECSTOP(path$)` -> seconds / `MON.RECLEN()` -> seconds | Record the wet output to a WAV while monitoring. |
 
 The full ImGui pedalboard built on these is `jdb/demos/audio/fx_rack.jdb`.
+
+### Capture (`MINIAUDIO` flag)
+
+`MON.REC*` taps the monitor's **wet output**. `WAV.RECORD` is the other side: a
+capture device of its own, raw input, any channel count, independent of the
+monitor. It returns the same map `WAV.READ` does, so a recording feeds `WAV.WRITE`
+and `FFT` without conversion.
+
+| Function | Description |
+|---|---|
+| `WAV.RECORD(seconds, [opts{}])` -> `{ samples, rate, channels, frames }` or NONE | Record, blocking until the buffer is full. |
+| `WAV.RECSTART([opts{}])` -> bool | Start recording without blocking. |
+| `WAV.RECLEN()` -> seconds | How much has been captured so far. |
+| `WAV.RECSTOP()` -> `{ samples, rate, channels, frames }` or NONE | Stop and hand back the recording. |
+
+`opts` keys, all optional: `channels` (default 1), `rate` (48000), `device` (index
+into `MON.DEVICES().capture`, default the system device), `seconds` (buffer cap for
+`WAV.RECSTART`, default 60), `play` (samples to output while capturing),
+`playchannels`, `playdevice`.
+
+A `play` array switches the device to duplex, so playback and capture run off one
+clock and stay in step. That is what a measurement needs: send a sweep, record the
+answer, and the offset between them is the hardware round trip alone - constant, and
+measurable once with a loopback cable.
+
+```basic
+' send a sweep through amp and speaker, record what the microphone hears
+DIM cap = WAV.RECORD(3.0, { "rate": 48000, "play": sweep, "channels": 2 })
+WAV.WRITE "response.wav", cap{"samples"}, cap{"rate"}, cap{"channels"}
+```
+
+The impulse response follows from dividing the recorded spectrum by the sweep's,
+which is a complex division and has to be written out per bin: `FFT` returns
+`[N][2]` pairs, so an elementwise `/` would divide the real and imaginary parts
+separately and give something that is not a quotient.
+
+The device may hand back a different rate or channel count than asked for; the
+returned map reports what was actually captured, so read `rate` and `channels`
+from it rather than assuming.
 
 ### Mouse / Joystick / Gamepad Input
 

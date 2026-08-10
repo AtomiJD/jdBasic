@@ -40,44 +40,104 @@ static bool collect_floats(const Value& v, std::vector<float>& out) {
     return true;
 }
 
-// read a WAV file into a mono float buffer (left channel), for cabinet IRs
-static bool read_wav_mono(const std::string& path, std::vector<float>& out) {
+// ---- WAV parsing, shared by WAV.READ, WAV.INFO and the cabinet IR loader ----
+
+struct WavFmt {
+    uint16_t tag      = 1;       // 1 = PCM, 3 = IEEE float (EXTENSIBLE resolved)
+    uint16_t channels = 1;
+    uint16_t bits     = 16;
+    uint32_t rate     = 44100;
+    size_t   data_off = 0;       // file offset of the data payload
+    uint32_t data_len = 0;       // length the header declares
+    bool     ok       = false;   // fmt chunk understood
+};
+
+// Walk the RIFF chunk list. buf may hold only the head of the file; data_off
+// and data_len then still describe the payload and the caller clamps them.
+static WavFmt scan_wav(const unsigned char* buf, size_t n) {
+    WavFmt w;
+    if (n < 12 || std::memcmp(buf, "RIFF", 4) != 0 || std::memcmp(buf + 8, "WAVE", 4) != 0)
+        return w;
+    bool have_fmt = false;
+    size_t pos = 12;
+    while (pos + 8 <= n) {
+        const unsigned char* c = buf + pos;
+        uint32_t sz = r32(c + 4);
+        if (std::memcmp(c, "fmt ", 4) == 0 && pos + 24 <= n) {
+            w.tag = r16(c + 8); w.channels = r16(c + 10);
+            w.rate = r32(c + 12); w.bits = r16(c + 22);
+            // WAVE_FORMAT_EXTENSIBLE keeps the real tag in the first two bytes
+            // of the SubFormat GUID.
+            if (w.tag == 0xFFFE && sz >= 40 && pos + 34 <= n) w.tag = r16(c + 32);
+            have_fmt = true;
+        } else if (std::memcmp(c, "data", 4) == 0) {
+            w.data_off = pos + 8;
+            w.data_len = sz;
+        }
+        pos += 8 + (size_t)sz + (sz & 1);
+    }
+    w.ok = have_fmt && w.channels >= 1 && w.bits >= 8 && (w.bits % 8) == 0;
+    return w;
+}
+
+// decode the data payload into interleaved floats in [-1, 1]
+static bool wav_samples(const unsigned char* data, size_t len, const WavFmt& w,
+                        std::vector<float>& out) {
+    size_t bytes = (size_t)w.bits / 8;
+    size_t n = len / bytes;
+    out.clear();
+    out.reserve(n);
+    if (w.tag == 1 && w.bits == 8) {
+        for (size_t i = 0; i < n; i++) out.push_back((data[i] - 128) / 128.0f);
+    } else if (w.tag == 1 && w.bits == 16) {
+        for (size_t i = 0; i < n; i++)
+            out.push_back((int16_t)r16(data + i * 2) / 32768.0f);
+    } else if (w.tag == 1 && w.bits == 24) {
+        // assembled into the top three bytes of an int32, which sign-extends it
+        for (size_t i = 0; i < n; i++) {
+            const unsigned char* p = data + i * 3;
+            int32_t v = (int32_t)(((uint32_t)p[0] << 8) | ((uint32_t)p[1] << 16) |
+                                  ((uint32_t)p[2] << 24));
+            out.push_back((float)(v / 2147483648.0));
+        }
+    } else if (w.tag == 1 && w.bits == 32) {
+        for (size_t i = 0; i < n; i++)
+            out.push_back((float)((int32_t)r32(data + i * 4) / 2147483648.0));
+    } else if (w.tag == 3 && w.bits == 32) {
+        for (size_t i = 0; i < n; i++) {
+            float s; std::memcpy(&s, data + i * 4, 4); out.push_back(s);
+        }
+    } else if (w.tag == 3 && w.bits == 64) {
+        for (size_t i = 0; i < n; i++) {
+            double s; std::memcpy(&s, data + i * 8, 8); out.push_back((float)s);
+        }
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// whole file -> interleaved floats
+static bool load_wav(const std::string& path, WavFmt& w, std::vector<float>& out) {
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
     std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
                                     std::istreambuf_iterator<char>());
-    if (buf.size() < 44 || std::memcmp(&buf[0], "RIFF", 4) != 0 ||
-        std::memcmp(&buf[8], "WAVE", 4) != 0) return false;
-    uint16_t fmt = 1, ch = 1, bits = 16;
-    const unsigned char* data = nullptr;
-    uint32_t dataLen = 0;
-    size_t pos = 12;
-    while (pos + 8 <= buf.size()) {
-        const unsigned char* c = &buf[pos];
-        uint32_t sz = r32(c + 4);
-        if (std::memcmp(c, "fmt ", 4) == 0 && pos + 24 <= buf.size()) {
-            fmt = r16(c + 8); ch = r16(c + 10); bits = r16(c + 22);
-        } else if (std::memcmp(c, "data", 4) == 0) {
-            data = c + 8; dataLen = sz;
-            if (pos + 8 + (size_t)dataLen > buf.size())
-                dataLen = (uint32_t)(buf.size() - (pos + 8));
-        }
-        pos += 8 + sz + (sz & 1);
-    }
-    if (!data || ch < 1) return false;
+    w = scan_wav(buf.data(), buf.size());
+    if (!w.ok || w.data_off == 0 || w.data_off >= buf.size()) return false;
+    size_t len = w.data_len;
+    if (w.data_off + len > buf.size()) len = buf.size() - w.data_off;
+    return wav_samples(buf.data() + w.data_off, len, w, out);
+}
+
+// left channel of a WAV, for cabinet IRs
+static bool read_wav_mono(const std::string& path, std::vector<float>& out) {
+    WavFmt w;
     std::vector<float> all;
-    if (fmt == 3 && bits == 32) {
-        uint32_t n = dataLen / 4; all.resize(n);
-        for (uint32_t i = 0; i < n; i++) std::memcpy(&all[i], data + i * 4, 4);
-    } else if (fmt == 1 && bits == 16) {
-        uint32_t n = dataLen / 2; all.resize(n);
-        for (uint32_t i = 0; i < n; i++) all[i] = (int16_t)r16(data + i * 2) / 32768.0f;
-    } else if (fmt == 1 && bits == 8) {
-        all.resize(dataLen);
-        for (uint32_t i = 0; i < dataLen; i++) all[i] = (data[i] - 128) / 128.0f;
-    } else return false;
+    if (!load_wav(path, w, all)) return false;
     out.clear();
-    for (size_t i = 0; i < all.size(); i += ch) out.push_back(all[i]);  // left channel
+    out.reserve(all.size() / w.channels + 1);
+    for (size_t i = 0; i < all.size(); i += w.channels) out.push_back(all[i]);
     return true;
 }
 
@@ -485,80 +545,46 @@ void register_audiofx_builtins(VM& vm) {
     });
 
     // WAV.READ(path$) -> { samples:[float -1..1], rate, channels, frames } or NONE
+    // samples are interleaved: frame f channel c is samples[f * channels + c].
     vm.register_native("WAV.READ", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string path = args[0].to_string();
-        std::ifstream f(path, std::ios::binary);
-        if (!f) return Value::make_none();
-        std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
-                                        std::istreambuf_iterator<char>());
-        if (buf.size() < 44 || std::memcmp(&buf[0], "RIFF", 4) != 0 ||
-            std::memcmp(&buf[8], "WAVE", 4) != 0)
-            return Value::make_none();
-
-        uint16_t fmt = 1, ch = 1, bits = 16;
-        uint32_t rate = 44100;
-        const unsigned char* data = nullptr;
-        uint32_t dataLen = 0;
-        size_t pos = 12;
-        while (pos + 8 <= buf.size()) {
-            const unsigned char* c = &buf[pos];
-            uint32_t sz = r32(c + 4);
-            if (std::memcmp(c, "fmt ", 4) == 0 && pos + 24 <= buf.size()) {
-                fmt = r16(c + 8); ch = r16(c + 10); rate = r32(c + 12); bits = r16(c + 22);
-            } else if (std::memcmp(c, "data", 4) == 0) {
-                data = c + 8; dataLen = sz;
-                if (pos + 8 + (size_t)dataLen > buf.size())
-                    dataLen = (uint32_t)(buf.size() - (pos + 8));
-            }
-            pos += 8 + sz + (sz & 1);
-        }
-        if (!data || ch < 1) return Value::make_none();
-
+        WavFmt w;
+        std::vector<float> samples;
+        if (!load_wav(args[0].to_string(), w, samples)) return Value::make_none();
         Value arr = Value::make_array();
         auto* el = arr.as_array();
-        if (fmt == 3 && bits == 32) {
-            uint32_t n = dataLen / 4;
-            el->elements.reserve(n);
-            for (uint32_t i = 0; i < n; i++) {
-                float s; std::memcpy(&s, data + i * 4, 4);
-                el->elements.push_back(Value::make_f64(s));
-            }
-        } else if (fmt == 1 && bits == 16) {
-            uint32_t n = dataLen / 2;
-            el->elements.reserve(n);
-            for (uint32_t i = 0; i < n; i++)
-                el->elements.push_back(Value::make_f64((int16_t)r16(data + i * 2) / 32768.0));
-        } else if (fmt == 1 && bits == 8) {
-            el->elements.reserve(dataLen);
-            for (uint32_t i = 0; i < dataLen; i++)
-                el->elements.push_back(Value::make_f64((data[i] - 128) / 128.0));
-        } else {
-            return Value::make_none();
-        }
-
+        el->elements.reserve(samples.size());
+        for (float s : samples) el->elements.push_back(Value::make_f64(s));
         Value m = Value::make_object();
-        uint32_t frames = (uint32_t)el->elements.size() / ch;
         m.as_object()->set("samples", std::move(arr));
-        m.as_object()->set("rate", Value::make_i64(rate));
-        m.as_object()->set("channels", Value::make_i64(ch));
-        m.as_object()->set("frames", Value::make_i64(frames));
+        m.as_object()->set("rate", Value::make_i64(w.rate));
+        m.as_object()->set("channels", Value::make_i64(w.channels));
+        m.as_object()->set("frames", Value::make_i64((int64_t)(samples.size() / w.channels)));
         return m;
     });
 
-    // WAV.INFO(path$) -> { rate, channels, bits } (canonical header only) or NONE
+    // WAV.INFO(path$) -> { rate, channels, bits, frames } or NONE
+    // Header only, so it stays cheap on long files.
     vm.register_native("WAV.INFO", 1, 1, [](const std::vector<Value>& args) -> Value {
-        std::string path = args[0].to_string();
-        std::ifstream f(path, std::ios::binary);
+        std::ifstream f(args[0].to_string(), std::ios::binary);
         if (!f) return Value::make_none();
-        unsigned char h[64];
-        f.read((char*)h, 64);
-        if (f.gcount() < 36 || std::memcmp(h, "RIFF", 4) != 0 ||
-            std::memcmp(h + 8, "WAVE", 4) != 0 || std::memcmp(h + 12, "fmt ", 4) != 0)
-            return Value::make_none();
+        f.seekg(0, std::ios::end);
+        std::streamoff total = f.tellg();
+        f.seekg(0, std::ios::beg);
+        unsigned char head[4096];
+        f.read((char*)head, sizeof(head));
+        WavFmt w = scan_wav(head, (size_t)f.gcount());
+        if (!w.ok) return Value::make_none();
+        size_t len = 0;
+        if (w.data_off > 0 && total > 0 && (std::streamoff)w.data_off < total) {
+            len = w.data_len;
+            if (w.data_off + len > (size_t)total) len = (size_t)total - w.data_off;
+        }
         Value m = Value::make_object();
-        m.as_object()->set("channels", Value::make_i64(r16(h + 22)));
-        m.as_object()->set("rate", Value::make_i64(r32(h + 24)));
-        m.as_object()->set("bits", Value::make_i64(r16(h + 34)));
+        m.as_object()->set("rate", Value::make_i64(w.rate));
+        m.as_object()->set("channels", Value::make_i64(w.channels));
+        m.as_object()->set("bits", Value::make_i64(w.bits));
+        m.as_object()->set("frames",
+            Value::make_i64((int64_t)(len / ((size_t)w.bits / 8 * w.channels))));
         return m;
     });
 

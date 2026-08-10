@@ -3486,11 +3486,27 @@ Description: Write interleaved float samples in [-1,1] to a 16-bit PCM WAV file.
 
 [WAV.READ]
 Syntax: WAV.READ(path$) -> { samples, rate, channels, frames } or NONE
-Description: Read a WAV (PCM 8/16-bit or float32) into a mono float array.
+Description: Read a WAV into interleaved floats in [-1,1]: frame f channel c is samples[f * channels + c]. Accepts PCM 8/16/24/32-bit, IEEE float 32/64 and WAVE_FORMAT_EXTENSIBLE; unsupported encodings return NONE. Needs the FX build flag.
 
 [WAV.INFO]
-Syntax: WAV.INFO(path$) -> { rate, channels, frames } or NONE
+Syntax: WAV.INFO(path$) -> { rate, channels, bits, frames } or NONE
 Description: Read a WAV header without loading the audio data.
+
+[WAV.RECORD]
+Syntax: WAV.RECORD(seconds, [opts{}]) -> { samples, rate, channels, frames } or NONE
+Description: Record from a capture device, blocking until the buffer is full. Returns the same map WAV.READ does. opts: channels, rate, device (index into MON.DEVICES().capture), play (samples output while capturing, which switches the device to duplex so both run off one clock), playchannels, playdevice. Needs the MINIAUDIO build flag.
+
+[WAV.RECSTART]
+Syntax: WAV.RECSTART([opts{}]) -> bool
+Description: Start recording without blocking. Same options as WAV.RECORD, with seconds as the buffer cap (default 60). Needs the MINIAUDIO build flag.
+
+[WAV.RECLEN]
+Syntax: WAV.RECLEN() -> seconds
+Description: Seconds captured so far by WAV.RECSTART. Needs the MINIAUDIO build flag.
+
+[WAV.RECSTOP]
+Syntax: WAV.RECSTOP() -> { samples, rate, channels, frames } or NONE
+Description: Stop a recording started with WAV.RECSTART and return it. Needs the MINIAUDIO build flag.
 
 [FX.NEW]
 Syntax: FX.NEW() -> chain

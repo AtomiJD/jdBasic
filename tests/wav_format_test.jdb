@@ -1,0 +1,258 @@
+' WAV.READ has to understand what real recorders actually write: 8/16/24/32-bit
+' PCM, IEEE float, and WAVE_FORMAT_EXTENSIBLE (the default of WASAPI and ffmpeg).
+' Every case is a hand-built file, so the test needs no recorder installed.
+'
+'   jdbasic tests/wav_format_test.jdb        (needs an FX build)
+'
+' The capture block at the end needs MINIAUDIO and a capture device; it reports
+' itself as skipped when there is none.
+
+DIM pass = 0
+DIM fail = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+    ENDIF
+ENDSUB
+
+SUB CHECKF(what$, got, want)
+    IF ABS(got - want) <= 0.0001 THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  ist ["; got; "] soll ["; want; "]"
+    ENDIF
+ENDSUB
+
+' ---- little-endian byte builders ----
+
+FUNC LE16$(v)
+    DIM x = v
+    IF x < 0 THEN x = x + 65536
+    RETURN CHR$(x MOD 256) + CHR$(INT(x / 256) MOD 256)
+ENDFUNC
+
+FUNC LE24$(v)
+    DIM x = v
+    IF x < 0 THEN x = x + 16777216
+    RETURN CHR$(x MOD 256) + CHR$(INT(x / 256) MOD 256) + CHR$(INT(x / 65536) MOD 256)
+ENDFUNC
+
+FUNC LE32$(v)
+    DIM x = v
+    IF x < 0 THEN x = x + 4294967296
+    RETURN CHR$(x MOD 256) + CHR$(INT(x / 256) MOD 256) + _
+           CHR$(INT(x / 65536) MOD 256) + CHR$(INT(x / 16777216) MOD 256)
+ENDFUNC
+
+' fmt chunk body for a canonical (non-extensible) header
+FUNC MKFMT$(tag, bits, nch, rate)
+    DIM align = nch * INT(bits / 8)
+    RETURN LE16$(tag) + LE16$(nch) + LE32$(rate) + LE32$(rate * align) + _
+           LE16$(align) + LE16$(bits)
+ENDFUNC
+
+' WAVE_FORMAT_EXTENSIBLE: tag 0xFFFE, real format in the SubFormat GUID
+FUNC MKFMTEXT$(realtag, bits, nch, rate)
+    DIM guid$ = LE16$(realtag) + CHR$(0) + CHR$(0) + _
+                CHR$(0) + CHR$(0) + CHR$(16) + CHR$(0) + _
+                CHR$(128) + CHR$(0) + CHR$(0) + CHR$(170) + _
+                CHR$(0) + CHR$(56) + CHR$(155) + CHR$(113)
+    RETURN MKFMT$(65534, bits, nch, rate) + LE16$(22) + LE16$(bits) + LE32$(3) + guid$
+ENDFUNC
+
+FUNC MKCHUNK$(id$, body$)
+    DIM pad$ = ""
+    IF (LEN(body$) MOD 2) = 1 THEN pad$ = CHR$(0)
+    RETURN id$ + LE32$(LEN(body$)) + body$ + pad$
+ENDFUNC
+
+FUNC MKWAV$(chunks$)
+    RETURN "RIFF" + LE32$(4 + LEN(chunks$)) + "WAVE" + chunks$
+ENDFUNC
+
+' write a file and read it straight back
+FUNC READBACK(path$, chunks$) AS OBJECT
+    BINWRITER path$, MKWAV$(chunks$)
+    RETURN WAV.READ(path$)
+ENDFUNC
+
+DIM tmp$ = "tests" + CHR$(92) + "tmp_wavfmt.wav"
+
+PRINT "--- 16-bit PCM, the format WAV.WRITE produces"
+
+DIM body16$ = LE16$(0) + LE16$(16384) + LE16$(-16384) + LE16$(32767) + LE16$(-32768)
+DIM w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 16, 1, 44100)) + MKCHUNK$("data", body16$))
+CHECK("16-bit wird gelesen", TYPEOF(w), "OBJECT")
+CHECK("  Rate", STR$(w{"rate"}), "44100")
+CHECK("  Kanaele", STR$(w{"channels"}), "1")
+CHECK("  Frames", STR$(w{"frames"}), "5")
+DIM s = w{"samples"}
+CHECKF("  Sample 0", s[0], 0.0)
+CHECKF("  Sample 1", s[1], 0.5)
+CHECKF("  Sample 2", s[2], -0.5)
+CHECKF("  Sample 4", s[4], -1.0)
+
+PRINT "--- 24-bit PCM, was jedes Audiointerface liefert"
+
+DIM body24$ = LE24$(0) + LE24$(4194304) + LE24$(-4194304) + LE24$(-8388608)
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 24, 1, 48000)) + MKCHUNK$("data", body24$))
+CHECK("24-bit wird gelesen", TYPEOF(w), "OBJECT")
+CHECK("  Rate", STR$(w{"rate"}), "48000")
+CHECK("  Frames", STR$(w{"frames"}), "4")
+s = w{"samples"}
+CHECKF("  Sample 0", s[0], 0.0)
+CHECKF("  Sample 1", s[1], 0.5)
+CHECKF("  negativ korrekt vorzeichenerweitert", s[2], -0.5)
+CHECKF("  Vollausschlag negativ", s[3], -1.0)
+
+PRINT "--- 32-bit PCM"
+
+DIM body32$ = LE32$(0) + LE32$(1073741824) + LE32$(-1073741824)
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 32, 1, 48000)) + MKCHUNK$("data", body32$))
+CHECK("32-bit wird gelesen", TYPEOF(w), "OBJECT")
+s = w{"samples"}
+CHECKF("  Sample 1", s[1], 0.5)
+CHECKF("  Sample 2", s[2], -0.5)
+
+PRINT "--- 8-bit PCM ist vorzeichenlos"
+
+DIM body8$ = CHR$(128) + CHR$(192) + CHR$(64) + CHR$(0)
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 8, 1, 22050)) + MKCHUNK$("data", body8$))
+s = w{"samples"}
+CHECKF("  Mitte ist Null", s[0], 0.0)
+CHECKF("  Sample 1", s[1], 0.5)
+CHECKF("  Sample 3", s[3], -1.0)
+
+PRINT "--- IEEE float32 und float64"
+
+DIM f32$ = CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0) + _
+           CHR$(0)+CHR$(0)+CHR$(0)+CHR$(63) + _
+           CHR$(0)+CHR$(0)+CHR$(128)+CHR$(191)
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(3, 32, 1, 48000)) + MKCHUNK$("data", f32$))
+CHECK("float32 wird gelesen", TYPEOF(w), "OBJECT")
+s = w{"samples"}
+CHECKF("  0.5", s[1], 0.5)
+CHECKF("  -1.0", s[2], -1.0)
+
+DIM f64$ = CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(224)+CHR$(63) + _
+           CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(0)+CHR$(240)+CHR$(191)
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(3, 64, 1, 48000)) + MKCHUNK$("data", f64$))
+CHECK("float64 wird gelesen", TYPEOF(w), "OBJECT")
+s = w{"samples"}
+CHECKF("  0.5", s[0], 0.5)
+CHECKF("  -1.0", s[1], -1.0)
+
+PRINT "--- WAVE_FORMAT_EXTENSIBLE loest auf den echten Typ auf"
+
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMTEXT$(1, 16, 1, 48000)) + MKCHUNK$("data", body16$))
+CHECK("EXTENSIBLE/PCM wird gelesen", TYPEOF(w), "OBJECT")
+CHECK("  Frames", STR$(w{"frames"}), "5")
+s = w{"samples"}
+CHECKF("  Sample 1", s[1], 0.5)
+
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMTEXT$(3, 32, 1, 48000)) + MKCHUNK$("data", f32$))
+CHECK("EXTENSIBLE/float wird gelesen", TYPEOF(w), "OBJECT")
+s = w{"samples"}
+CHECKF("  0.5", s[1], 0.5)
+
+PRINT "--- Chunks vor fmt, auch mit ungerader Laenge"
+
+DIM pre$ = MKCHUNK$("JUNK", CHR$(1) + CHR$(2) + CHR$(3))
+w = READBACK(tmp$, pre$ + MKCHUNK$("fmt ", MKFMT$(1, 16, 1, 44100)) + MKCHUNK$("data", body16$))
+CHECK("JUNK vor fmt stoert nicht", TYPEOF(w), "OBJECT")
+CHECK("  Frames", STR$(w{"frames"}), "5")
+
+PRINT "--- Stereo liegt interleaved"
+
+DIM st$ = LE16$(16384) + LE16$(-16384) + LE16$(32767) + LE16$(-32768)
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(1, 16, 2, 48000)) + MKCHUNK$("data", st$))
+CHECK("  Kanaele", STR$(w{"channels"}), "2")
+CHECK("  Frames sind halb so viele wie Samples", STR$(w{"frames"}), "2")
+s = w{"samples"}
+CHECKF("  Frame 0 links", s[0], 0.5)
+CHECKF("  Frame 0 rechts", s[1], -0.5)
+CHECKF("  Frame 1 rechts", s[3], -1.0)
+
+PRINT "--- WAV.INFO liest nur den Kopf"
+
+BINWRITER tmp$, MKWAV$(pre$ + MKCHUNK$("fmt ", MKFMT$(1, 24, 2, 96000)) + MKCHUNK$("data", LE24$(0) + LE24$(0) + LE24$(0) + LE24$(0)))
+DIM inf = WAV.INFO(tmp$)
+CHECK("INFO liefert eine Map", TYPEOF(inf), "OBJECT")
+CHECK("  Rate", STR$(inf{"rate"}), "96000")
+CHECK("  Kanaele", STR$(inf{"channels"}), "2")
+CHECK("  Bits", STR$(inf{"bits"}), "24")
+CHECK("  Frames", STR$(inf{"frames"}), "2")
+
+PRINT "--- unbekannte Formate geben NONE"
+
+w = READBACK(tmp$, MKCHUNK$("fmt ", MKFMT$(2, 4, 1, 8000)) + MKCHUNK$("data", body8$))
+CHECK("ADPCM wird abgelehnt", TYPEOF(w), "NONE")
+CHECK("fehlende Datei gibt NONE", TYPEOF(WAV.READ("tests/does_not_exist.wav")), "NONE")
+
+PRINT "--- WAV.WRITE und WAV.READ sind zueinander invers"
+
+DIM src = [0.0, 0.25, -0.25, 0.75, -0.75]
+WAV.WRITE tmp$, src, 48000, 1
+w = WAV.READ(tmp$)
+CHECK("Rundlauf Rate", STR$(w{"rate"}), "48000")
+CHECK("Rundlauf Frames", STR$(w{"frames"}), "5")
+s = w{"samples"}
+FOR i = 0 TO 4
+    CHECKF("  Rundlauf Sample " + STR$(i), s[i], src[i])
+NEXT i
+
+PRINT "--- Aufnahme"
+
+DIM devs = MON.DEVICES()
+IF TYPEOF(devs) = "NONE" THEN
+    PRINT "  uebersprungen: Build ohne MINIAUDIO"
+ELSE
+    DIM caps = devs{"capture"}
+    IF LEN(caps) = 0 THEN
+        PRINT "  uebersprungen: kein Aufnahmegeraet"
+    ELSE
+        PRINT "  Geraet: "; caps[0]
+        DIM rec = WAV.RECORD(0.25, { "channels": 1, "rate": 48000 })
+        CHECK("WAV.RECORD liefert eine Map", TYPEOF(rec), "OBJECT")
+        IF TYPEOF(rec) = "OBJECT" THEN
+            CHECK("  Rate", STR$(rec{"rate"}), "48000")
+            CHECK("  Kanaele", STR$(rec{"channels"}), "1")
+            CHECK("  Frames sind 0.25 s", STR$(rec{"frames"} > 10000), "TRUE")
+            ' the same map shape as WAV.READ, so it writes back out unchanged
+            WAV.WRITE tmp$, rec{"samples"}, rec{"rate"}, rec{"channels"}
+            DIM back = WAV.READ(tmp$)
+            CHECK("  geschrieben und gelesen", STR$(back{"frames"} = rec{"frames"}), "TRUE")
+        ENDIF
+        DIM ok = WAV.RECSTART({ "seconds": 2, "rate": 48000 })
+        CHECK("WAV.RECSTART startet", STR$(ok), "TRUE")
+        SLEEP 300
+        DIM secs = WAV.RECLEN()
+        CHECK("  RECLEN laeuft mit", STR$(secs > 0.05), "TRUE")
+        DIM rec2 = WAV.RECSTOP()
+        CHECK("  RECSTOP liefert eine Map", TYPEOF(rec2), "OBJECT")
+        CHECK("  und weniger als der Puffer", STR$(rec2{"frames"} < 96000), "TRUE")
+
+        ' duplex: play and capture on one device so both stay in step. Whether
+        ' the default devices combine is a property of the machine, so a refusal
+        ' is reported rather than failed.
+        DIM tone = []
+        FOR i = 0 TO 4799
+            tone = APPEND(tone, 0.2 * SIN(2 * PI * 440 * i / 48000))
+        NEXT i
+        DIM dup = WAV.RECORD(0.2, { "channels": 1, "rate": 48000, "play": tone })
+        IF TYPEOF(dup) = "OBJECT" THEN
+            CHECK("Duplex liefert Frames", STR$(dup{"frames"} > 5000), "TRUE")
+            CHECK("  Kanaele", STR$(dup{"channels"}), "1")
+        ELSE
+            PRINT "  Duplex uebersprungen: die Standardgeraete lassen sich nicht koppeln"
+        ENDIF
+    ENDIF
+ENDIF
+
+PRINT ""
+PRINT "wav_format_test: bestanden "; pass; ", gefallen "; fail
