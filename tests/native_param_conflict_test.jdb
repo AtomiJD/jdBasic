@@ -1,0 +1,63 @@
+' An untyped FUNC parameter that different call sites pass a string and a
+' number to used to compile and then die with SIGSEGV. It has to be refused
+' with a message instead - and the supported way of writing such a helper,
+' TYPEOF in the body, has to keep working.
+'
+'   jdbasic tests/native_param_conflict_test.jdb    (needs a NATIVEC build)
+'
+' The compiler is driven as a process because a diagnostic is only observable
+' from outside: a test cannot assert about a compile that never happens.
+
+DIM pass = 0
+DIM fail = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL "; what$; "  ist ["; got$; "] soll ["; want$; "]"
+    ENDIF
+ENDSUB
+
+DIM exe$ = "build" + CHR$(92) + "jdBasic.exe"
+DIM tmp$ = "tests" + CHR$(92) + "tmp_param_conflict.jdb"
+
+FUNC COMPILE(src$) AS OBJECT
+    TXTWRITER tmp$, src$
+    RETURN OS.EXEC(exe$ + " -c " + tmp$)
+ENDFUNC
+
+DIM nl$ = CHR$(10)
+
+PRINT "--- ein Parameter mit zwei Typen wird abgelehnt"
+
+DIM bad$ = "FUNC id(v)" + nl$ + "  RETURN v" + nl$ + "ENDFUNC" + nl$ + _
+    "PRINT id(" + CHR$(34) + "a" + CHR$(34) + ")" + nl$ + "PRINT id(5)" + nl$
+DIM r1 = COMPILE(bad$)
+CHECK("die Uebersetzung schlaegt fehl", STR$(r1{"EXIT_CODE"} <> 0), "TRUE")
+CHECK("und nennt den Parameter", STR$(INSTR("" + r1{"OUTPUT"}, "parameter 'V'") >= 0), "TRUE")
+CHECK("und beide Typen", STR$(INSTR("" + r1{"OUTPUT"}, "a string and with a number") >= 0), "TRUE")
+CHECK("und den Ausweg", STR$(INSTR("" + r1{"OUTPUT"}, "TYPEOF(V)") >= 0), "TRUE")
+
+PRINT "--- mit TYPEOF im Rumpf uebersetzt derselbe Aufruf"
+
+' This is the documented way: a parameter the body asks TYPEOF about becomes
+' runtime-tagged and carries its own type through the ABI.
+DIM good$ = "FUNC show$(v)" + nl$ + _
+    "  IF TYPEOF(v) = " + CHR$(34) + "STRING" + CHR$(34) + " THEN RETURN v" + nl$ + _
+    "  RETURN STR$(v)" + nl$ + "ENDFUNC" + nl$ + _
+    "PRINT show$(" + CHR$(34) + "a" + CHR$(34) + ")" + nl$ + "PRINT show$(5)" + nl$
+DIM r2 = COMPILE(good$)
+CHECK("die Uebersetzung geht durch", STR$(r2{"EXIT_CODE"}), "0")
+CHECK("  ohne Konflikt-Meldung", STR$(INSTR("" + r2{"OUTPUT"}, "is called with") >= 0), "FALSE")
+
+PRINT "--- und ein annotierter Parameter ebenso"
+
+DIM ann$ = "FUNC twice(v AS DOUBLE)" + nl$ + "  RETURN v * 2" + nl$ + "ENDFUNC" + nl$ + _
+    "PRINT twice(5)" + nl$
+DIM r3 = COMPILE(ann$)
+CHECK("annotiert uebersetzt", STR$(r3{"EXIT_CODE"}), "0")
+
+PRINT ""
+PRINT "native_param_conflict_test: bestanden "; pass; ", gefallen "; fail

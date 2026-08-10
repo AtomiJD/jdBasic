@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <map>
 #include <algorithm>
 #include <unordered_set>
@@ -871,6 +872,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // scan, leaving FUNC(xs) parameters stuck at f64 even when xs is a
     // known array. Without this a callee's RESHAPE/MATMUL/SHIFT on the
     // param returns garbage natively.
+    // Per function, per parameter: the tags call sites unambiguously pass,
+    // and the first line each was seen on. Only used to catch a parameter
+    // that is asked to be two different shapes at once.
+    std::unordered_map<std::string, std::vector<std::set<int>>> arg_tag_seen;
+    std::unordered_map<std::string, std::vector<std::map<int, int>>> arg_tag_line;
+
     std::unordered_map<std::string, int> pre_var_tags;
     std::function<int(const Expr&)> infer_expr_tag = [&](const Expr& e) -> int {
         if (e.kind == ExprKind::ARRAY_LITERAL) return JD_TAG_ARR;
@@ -1075,6 +1082,36 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         e.args[i]->is_funcref_lit) {
                         it->second.tags[i] = JD_TAG_FUNCREF;
                         continue;
+                    }
+                    // Remember what each call site confidently passes. An
+                    // untyped parameter takes its LLVM type from whichever
+                    // site is seen first, and a later site of the other kind
+                    // used to be dropped on the floor: the callee then read a
+                    // number through an i8* and the process died with no
+                    // diagnostic. Only unambiguous arguments are recorded, so
+                    // a conflict below is a real one and not a guess.
+                    if (e.args[i]) {
+                        int seen = 0;
+                        switch (e.args[i]->kind) {
+                            case ExprKind::LITERAL_STRING:
+                                if (!e.args[i]->is_funcref_lit) seen = JD_TAG_STR;
+                                break;
+                            case ExprKind::LITERAL_INT:
+                            case ExprKind::LITERAL_FLOAT:
+                            case ExprKind::LITERAL_BOOL: seen = JD_TAG_F64; break;
+                            case ExprKind::ARRAY_LITERAL: seen = JD_TAG_ARR; break;
+                            case ExprKind::MAP_LITERAL:   seen = JD_TAG_NATIVE_MAP; break;
+                            default: break;
+                        }
+                        if (seen) {
+                            auto& slot = arg_tag_seen[e.func_name];
+                            if (slot.size() <= i) slot.resize(i + 1);
+                            slot[i].insert(seen);
+                            if (arg_tag_line[e.func_name].size() <= i)
+                                arg_tag_line[e.func_name].resize(i + 1);
+                            if (!arg_tag_line[e.func_name][i].count(seen))
+                                arg_tag_line[e.func_name][i][seen] = e.line;
+                        }
                     }
                     if (it->second.tags[i] != JD_TAG_STR && e.args[i] && is_str_expr(*e.args[i]))
                         it->second.tags[i] = JD_TAG_STR;
@@ -1755,6 +1792,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (c && body_uses_typeof_param(*c, pname)) return true;
             return false;
         };
+
         for (auto& [name, decl] : decls) {
             if (!decl.stmt) continue;
             for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
@@ -1767,6 +1805,51 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (body_uses_typeof_param(*decl.stmt, p.name)) {
                     decl.tags[pi] = JD_TAG_RUNTIME;
                 }
+            }
+        }
+        // A parameter that different call sites pass a pointer and a number
+        // to cannot have one LLVM type. The signature used to keep whichever
+        // came first and the other call passed its value through the wrong
+        // shape, which the body then dereferenced: no message, exit 139. The
+        // interpreter has no such constraint because its values carry their
+        // own type, so this is refused rather than silently mis-compiled.
+        auto tag_name = [](int t) -> const char* {
+            switch (t) {
+                case JD_TAG_STR: return "a string";
+                case JD_TAG_ARR: return "an array";
+                case JD_TAG_NATIVE_MAP: return "a map";
+                default: return "a number";
+            }
+        };
+        auto is_ptr_tag = [](int t) {
+            return t == JD_TAG_STR || t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP;
+        };
+        for (auto& [name, decl] : decls) {
+            if (!decl.stmt) continue;
+            auto sit = arg_tag_seen.find(name);
+            if (sit == arg_tag_seen.end()) continue;
+            for (size_t pi = 0; pi < decl.stmt->params.size() && pi < sit->second.size(); pi++) {
+                const auto& p = decl.stmt->params[pi];
+                if (!p.name.empty() && p.name.back() == '$') continue;
+                if (p.type != VarType::NONE) continue;
+                const auto& seen = sit->second[pi];
+                if (decl.tags[pi] == JD_TAG_RUNTIME) continue;
+                if (seen.size() < 2) continue;
+                int a_ptr = 0, a_num = 0;
+                for (int t : seen) { if (is_ptr_tag(t)) a_ptr = t; else a_num = t; }
+                if (!a_ptr || !a_num) continue;
+                int ln = 0;
+                auto lit = arg_tag_line.find(name);
+                if (lit != arg_tag_line.end() && pi < lit->second.size()) {
+                    auto& m = lit->second[pi];
+                    auto e1 = m.find(a_ptr);
+                    if (e1 != m.end()) ln = e1->second;
+                }
+                report_error(decl.stmt->source_file, ln ? ln : decl.stmt->line,
+                    "parameter '" + p.name + "' of " + name + " is called with " +
+                    tag_name(a_ptr) + " and with " + tag_name(a_num) +
+                    "; a compiled parameter has one LLVM type. Use TYPEOF(" + p.name + ") in the body "
+                    "to make it runtime-typed, annotate it, or split the function.");
             }
         }
     }
