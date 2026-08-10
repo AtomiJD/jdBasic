@@ -1,4 +1,4 @@
-# jdBasic for Visual Studio Code (v1.0.27)
+# jdBasic for Visual Studio Code (v1.0.28)
 
 The `jdbasic-debug` extension turns VS Code into a small IDE for jdBasic: a
 full debugger plus editor language features (linting, autocomplete, hover
@@ -16,7 +16,7 @@ talk to the jdBasic runtime itself, so they never drift from the real build.
 ## 2. Installation
 
 1. Extensions view (`Ctrl+Shift+X`) -> `...` menu -> **Install from VSIX...**.
-2. Pick `jdbasic-debug-1.0.27.vsix`.
+2. Pick `jdbasic-debug-1.0.28.vsix`.
 3. **Reload Window** when prompted.
 
 ## 3. Settings
