@@ -83,6 +83,17 @@ FUNC ROOM(name$)
     RETURN rooms{key$}
 ENDFUNC
 
+' The only way a room is put back to a fresh match. LOG and MARKS belong to the
+' match that just ended and its tick numbers, so a room reused without clearing
+' them writes the previous match's cards into the next recording, and the replay
+' of that recording is nonsense.
+SUB ROOMRESET(rm)
+    rm{"ST"} = ARENA.NEWGAME()
+    rm{"LOG"} = []
+    rm{"MARKS"} = []
+    IF MAP.EXISTS(rm, "FORCED") THEN rm{"FORCED"} = 0
+ENDSUB
+
 ' Every card that reached the arena, with the tick it landed on. The sim is
 ' deterministic, so a match is fully described by its decks, its levels, the
 ' seed the machine opponent drew from and this list - a few kilobytes instead
@@ -680,7 +691,7 @@ FUNC HJOIN(req)
             ' new does not inherit the result, the crowns or a seat in it -
             ' the room starts over. This also frees a room whose second
             ' seat was held by the machine.
-            rm{"ST"} = ARENA.NEWGAME()
+            ROOMRESET(rm)
             rm{"PLAYERS"} = []
             players = rm{"PLAYERS"}
             st = rm{"ST"}
@@ -828,7 +839,7 @@ FUNC HRESET(req)
     IF ISADMIN(req, b) = 0 THEN RETURN DENY()
     DIM rm = ROOMFIND(req, b)
     IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
-    rm{"ST"} = ARENA.NEWGAME()
+    ROOMRESET(rm)
     rm{"PLAYERS"} = []
     rm{"LAST"} = TICK()
     PRINT "reset room "; rm{"KEY"}
@@ -985,12 +996,7 @@ FUNC HREMATCH(req)
     DIM rm = ROOMFIND(req, b)
     IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     DIM players = rm{"PLAYERS"}
-    rm{"ST"} = ARENA.NEWGAME()
-    ' a fresh match starts a fresh log - without this the next recording
-    ' carries the previous match's cards with it and replays as nonsense
-    rm{"LOG"} = []
-    rm{"MARKS"} = []
-    IF MAP.EXISTS(rm, "FORCED") THEN rm{"FORCED"} = 0
+    ROOMRESET(rm)
     DIM st = rm{"ST"}
     DIM i
     FOR i = 0 TO LEN(players) - 1
@@ -1131,7 +1137,7 @@ FUNC HROOMS(req)
                 IF now - pq{"LAST"} < 60000 THEN quiet = 0
             NEXT pq
             IF quiet = 1 THEN
-                rr{"ST"} = ARENA.NEWGAME()
+                ROOMRESET(rr)
                 rr{"PLAYERS"} = []
                 PRINT "room "; k$; " went quiet - free again"
             ENDIF
