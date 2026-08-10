@@ -6,8 +6,8 @@
 ' --- Global Constants and Data Structures ---
 DIM Board[8, 8] AS INTEGER
 DIM MoveHistory[1] AS STRING
-DIM PieceChars AS MAP
-DIM PieceValues AS MAP
+DIM PieceChars AS ARRAY
+DIM PieceValues AS ARRAY
 
 ' Player constants
 WHITE = 1
@@ -57,7 +57,7 @@ SUB PlayerTurn(LegalMoves)
         
         ParsedMove = ParseMove(MoveInput$)
         IF len(ParsedMove) > 0 THEN
-            FOR i = 0 TO LEN(LegalMoves)[0] - 1
+            FOR i = 0 TO LEN(LegalMoves) - 1
                 current_move = SLICE(LegalMoves, 0, i)
                 IF current_move[0] = ParsedMove[0] AND current_move[1] = ParsedMove[1] AND current_move[2] = ParsedMove[2] AND current_move[3] = ParsedMove[3] THEN
                     Board = MakeMove(Board, ParsedMove)
@@ -99,7 +99,7 @@ FUNC FindBestMove_N_Ply(currentBoard, available_moves, player)
         BestScore = 99999
     ENDIF
 
-    FOR i = 0 TO LEN(available_moves)[0] - 1
+    FOR i = 0 TO LEN(available_moves) - 1
         current_move = SLICE(available_moves, 0, i)
         TempBoard = MakeMove(currentBoard, current_move)
         Score = Minimax_AlphaBeta(TempBoard, SEARCH_DEPTH - 1, -player, alpha, beta)
@@ -119,8 +119,8 @@ FUNC FindBestMove_N_Ply(currentBoard, available_moves, player)
         ENDIF
     NEXT i
     
-    IF len(BestMove)[0] = 0 AND LEN(available_moves) > 0 THEN
-        rand_index = INT(RND(1) * LEN(available_moves)[0])
+    IF LEN(BestMove) = 0 AND LEN(available_moves) > 0 THEN
+        rand_index = INT(RND(1) * LEN(available_moves))
         BestMove = SLICE(available_moves, 0, rand_index)
     ENDIF
     
@@ -134,7 +134,7 @@ FUNC GenerateCaptureMoves(b, player)
     Moves = GeneratePseudoMoves(b, player)
     LegalMoves_flat = []
 
-    FOR i = 0 TO LEN(Moves)[0] - 1
+    FOR i = 0 TO LEN(Moves) - 1
         current_move = SLICE(Moves, 0, i)
         ' Check if the destination square is occupied by an opponent
         IF b[current_move[2], current_move[3]] <> EMPTY THEN
@@ -143,7 +143,7 @@ FUNC GenerateCaptureMoves(b, player)
     NEXT i
 
     IF LEN(LegalMoves_flat) > 0 THEN
-        RETURN RESHAPE(LegalMoves_flat, [LEN(LegalMoves_flat)[0] / 4, 4])
+        RETURN RESHAPE(LegalMoves_flat, [LEN(LegalMoves_flat) / 4, 4])
     ELSE
         RETURN []
     ENDIF
@@ -163,7 +163,7 @@ FUNC QuiescenceSearch(b, alpha, beta)
     ' Generate only capture moves
     CaptureMoves = GenerateCaptureMoves(b, CurrentPlayer)
 
-    FOR i = 0 TO LEN(CaptureMoves)[0] - 1
+    FOR i = 0 TO LEN(CaptureMoves) - 1
         move = SLICE(CaptureMoves, 0, i)
         TempBoard = MakeMove(b, move)
         ' Recursively call QuiescenceSearch for the opponent
@@ -185,7 +185,7 @@ FUNC ScoreMove(b, current_move)
     capturedPieceType = ABS(b[current_move[2], current_move[3]])
 
     IF capturedPieceType <> EMPTY THEN
-        score = 10000 + (PieceValues{capturedPieceType} - PieceValues{pieceType})
+        score = 10000 + (PieceValues[capturedPieceType] - PieceValues[pieceType])
     ENDIF
     
     RETURN score
@@ -197,15 +197,15 @@ FUNC Minimax_AlphaBeta(b, depth, player, alpha, beta)
     ENDIF
 
     LegalMoves = GenerateLegalMoves(b, player)
-    IF LEN(LegalMoves)[0] = 0 THEN
+    IF LEN(LegalMoves) = 0 THEN
         IF IsInCheck(b, player) THEN RETURN -99999 ' Checkmate
         RETURN 0 ' Stalemate
     ENDIF
 
     ' --- Move Ordering Logic ---
-    DIM ScoredMoves[LEN(LegalMoves)[0], 5] ' [r1,c1,r2,c2, score]
+    DIM ScoredMoves[LEN(LegalMoves), 5] ' [r1,c1,r2,c2, score]
 
-        FOR i = 0 TO LEN(LegalMoves)[0] - 1
+        FOR i = 0 TO LEN(LegalMoves) - 1
         move = SLICE(LegalMoves, 0, i)
         ' Manually assign the 4 move coordinates
         ScoredMoves[i, 0] = move[0]
@@ -222,7 +222,7 @@ FUNC Minimax_AlphaBeta(b, depth, player, alpha, beta)
     ' --- Search the sorted moves ---
 IF player = WHITE THEN
     maxEval = -99999
-    FOR i = 0 TO LEN(ScoredMoves)[0] - 1
+    FOR i = 0 TO LEN(ScoredMoves) - 1
         move_to_make = TAKE(4, SLICE(ScoredMoves, 0, i))
         evaluation = Minimax_AlphaBeta(MakeMove(b, move_to_make), depth - 1, -player, alpha, beta)
         
@@ -233,7 +233,7 @@ IF player = WHITE THEN
     RETURN maxEval
 ELSE ' player is BLACK
     minEval = 99999
-    FOR i = 0 TO LEN(ScoredMoves)[0] - 1
+    FOR i = 0 TO LEN(ScoredMoves) - 1
         move_to_make = TAKE(4, SLICE(ScoredMoves, 0, i))
         evaluation = Minimax_AlphaBeta(MakeMove(b, move_to_make), depth - 1, -player, alpha, beta)
 
@@ -253,14 +253,14 @@ FUNC Minimax_AlphaBetaO(b, depth, player, alpha, beta)
     ENDIF
 
     LegalMoves = GenerateLegalMoves(b, player)
-    IF depth <= 0 OR LEN(LegalMoves)[0] = 0 THEN
+    IF depth <= 0 OR LEN(LegalMoves) = 0 THEN
         RETURN EvaluateBoard(b)
     ENDIF
 
     ' If it's White's turn (Maximizer)
     IF player = WHITE THEN
         maxEval = -99999
-        FOR i = 0 TO LEN(LegalMoves)[0] - 1
+        FOR i = 0 TO LEN(LegalMoves) - 1
             DIM current_move, TempBoard, evaluation
             current_move = SLICE(LegalMoves, 0, i)
             TempBoard = MakeMove(b, current_move)
@@ -277,7 +277,7 @@ FUNC Minimax_AlphaBetaO(b, depth, player, alpha, beta)
     ' If it's Black's turn (Minimizer)
     ELSE
         minEval = 99999
-        FOR i = 0 TO LEN(LegalMoves)[0] - 1
+        FOR i = 0 TO LEN(LegalMoves) - 1
             DIM current_move, TempBoard, evaluation
             current_move = SLICE(LegalMoves, 0, i)
             TempBoard = MakeMove(b, current_move)
@@ -356,10 +356,10 @@ FUNC EvaluateKingSafety(b, player)
         FOR c = 0 TO 7
             IF b[r,c] = KING * player THEN king_pos = [r, c]: EXITFOR
         NEXT
-        IF len(king_pos)[0] <> 0 THEN EXITFOR
+        IF LEN(king_pos) <> 0 THEN EXITFOR
     NEXT
 
-    IF len(king_pos)[0] = 0 THEN RETURN 0
+    IF LEN(king_pos) = 0 THEN RETURN 0
     kr = king_pos[0]: kc = king_pos[1]
 
     penalty = 0
@@ -393,7 +393,7 @@ FUNC EvaluateBoard(b)
             Piece = b[r, c]
             IF Piece <> EMPTY THEN
                 PieceType = ABS(Piece)
-                PieceVal = PieceValues{PieceType}
+                PieceVal = PieceValues[PieceType]
                 player = Sign(Piece)
                 
                 IF PieceType > PAWN AND PieceType < KING THEN
@@ -482,7 +482,7 @@ FUNC GenerateLegalMoves(b, player)
     
     IF LEN(PseudoMoves) = 0 THEN RETURN []
     
-    FOR i = 0 TO LEN(PseudoMoves)[0] - 1
+    FOR i = 0 TO LEN(PseudoMoves) - 1
         current_move = SLICE(PseudoMoves, 0, i)
         DIM TempBoard
         TempBoard = MakeMove(b, current_move)
@@ -492,7 +492,7 @@ FUNC GenerateLegalMoves(b, player)
     NEXT i
 
     IF LEN(LegalMoves_flat) > 0 THEN
-        RETURN RESHAPE(LegalMoves_flat, [LEN(LegalMoves_flat)[0] / 4, 4])
+        RETURN RESHAPE(LegalMoves_flat, [LEN(LegalMoves_flat) / 4, 4])
     ELSE
         RETURN []
     ENDIF
@@ -515,13 +515,15 @@ FUNC GeneratePseudoMoves(b, player)
                     CASE QUEEN: PieceMoves = GetSlidingMoves(b, player, r, c, [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]])
                     CASE KING: PieceMoves = GetKingMoves(b, player, r, c)
                 ENDSWITCH
-                IF LEN(PieceMoves)[0] > 0 THEN Moves_flat = APPEND(Moves_flat, PieceMoves)
+                IF LEN(PieceMoves) > 0 THEN Moves_flat = APPEND(Moves_flat, PieceMoves)
             ENDIF
         NEXT
     NEXT
     
     IF LEN(Moves_flat) > 0 THEN
-        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0] / 4, 4])
+        ' APPEND flattens one level, so appending a piece's Nx4 block leaves a
+        ' list of move rows - already the shape SLICE(x, 0, i) indexes.
+        RETURN Moves_flat
     ELSE
         RETURN []
     ENDIF
@@ -567,7 +569,7 @@ FUNC GetPawnMoves(b, player, r, c)
     ENDIF
 
     IF LEN(Moves_flat) > 0 THEN 
-        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4])     
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)/4, 4])     
     ELSE 
         RETURN []
     ENDIF
@@ -577,7 +579,7 @@ FUNC GetKnightMoves(b, player, r, c)
     DIM Moves_flat, Dirs, i
     Moves_flat = []
     Dirs = [[-2,-1],[-2,1],[-1,-2],[-1,2],[1,-2],[1,2],[2,-1],[2,1]]
-    FOR i = 0 TO LEN(Dirs)[0] - 1
+    FOR i = 0 TO LEN(Dirs) - 1
         DIM direction_vec, r1, c1
         direction_vec = SLICE(Dirs, 0, i)
         r1 = r + direction_vec[0]
@@ -589,7 +591,7 @@ FUNC GetKnightMoves(b, player, r, c)
         ENDIF
     NEXT i
     IF LEN(Moves_flat) > 0 THEN 
-        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4]) 
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)/4, 4]) 
     ELSE 
         RETURN []
     ENDIF
@@ -599,7 +601,7 @@ FUNC GetKingMoves(b, player, r, c)
     DIM Moves_flat, Dirs, i
     Moves_flat = []
     Dirs = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]]
-    FOR i = 0 TO LEN(Dirs)[0] - 1
+    FOR i = 0 TO LEN(Dirs) - 1
         DIM direction_vec, r1, c1
         direction_vec = SLICE(Dirs, 0, i)
         r1 = r + direction_vec[0]
@@ -643,7 +645,7 @@ FUNC GetKingMoves(b, player, r, c)
     ENDIF
 
     IF LEN(Moves_flat) > 0 THEN 
-        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4])
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)/4, 4])
     ELSE 
         RETURN []
     ENDIF        
@@ -652,7 +654,7 @@ ENDFUNC
 FUNC GetSlidingMoves(b, player, r, c, Dirs)
     DIM Moves_flat, i
     Moves_flat = []
-    FOR i = 0 TO LEN(Dirs)[0] - 1
+    FOR i = 0 TO LEN(Dirs) - 1
         DIM direction_vec, r1, c1
         direction_vec = SLICE(Dirs, 0, i)
         r1 = r
@@ -672,7 +674,7 @@ FUNC GetSlidingMoves(b, player, r, c, Dirs)
         LOOP
     NEXT i
     IF LEN(Moves_flat) > 0 THEN 
-        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)[0]/4, 4]) 
+        RETURN RESHAPE(Moves_flat, [LEN(Moves_flat)/4, 4]) 
     ELSE 
         RETURN []
     ENDIF
@@ -746,10 +748,10 @@ FUNC IsInCheck(b, player)
                 EXITFOR
             ENDIF
         NEXT
-        IF len(king_pos)[0] > 0 THEN EXITFOR
+        IF LEN(king_pos) > 0 THEN EXITFOR
     NEXT
     
-    IF len(king_pos)[0] = 0 THEN RETURN TRUE ' Should not happen
+    IF LEN(king_pos) = 0 THEN RETURN TRUE ' Should not happen
     
     ' Check if that square is attacked by the opponent
     RETURN IsSquareAttacked(b, king_pos[0], king_pos[1], -player)
@@ -860,7 +862,7 @@ SUB PrintBoardO()
             IF Piece = EMPTY THEN FgColor = BgColor
             
             COLOR FgColor, BgColor
-            PRINT " "; PieceChars{ABS(Piece)}; " ";
+            PRINT " "; PieceChars[ABS(Piece)]; " ";
         NEXT
         COLOR 15, 0
         PRINT " "; 8 - r
@@ -886,24 +888,24 @@ SUB PrintBoard()
             IF Piece = EMPTY THEN FgColor = BgColor
             
             COLOR FgColor, BgColor
-            PRINT " "; PieceChars{ABS(Piece)}; " ";
+            PRINT " "; PieceChars[ABS(Piece)]; " ";
         NEXT
         COLOR 15, 0
         
         ' --- Move History Display Logic ---
         T$ = "         ║ "
         last_move_count = 16 ' Display last 8 full moves
-        start_idx = MAX([0, LEN(MoveHistory)[0] - last_move_count])
+        start_idx = MAX([0, LEN(MoveHistory) - last_move_count])
 
         IF r = 0 THEN
             T$ = T$ + "MOVE HISTORY"
         ELSEIF r > 0 THEN
              move_idx = start_idx + ((r-1) * 2)
-             IF move_idx < LEN(MoveHistory)[0] THEN
+             IF move_idx < LEN(MoveHistory) THEN
                 ' --- THIS IS THE FIX ---
                 move_num = INT(move_idx / 2) + 1
                 T$ = T$ + move_num + ". " + MoveHistory[move_idx]
-                IF move_idx + 1 < LEN(MoveHistory)[0] THEN
+                IF move_idx + 1 < LEN(MoveHistory) THEN
                     T$ = T$ + "   " + MoveHistory[move_idx + 1]
                 ENDIF
              ENDIF
@@ -933,8 +935,14 @@ SUB InitBoard()
 ENDSUB
 
 SUB InitData()
-    PieceChars = {EMPTY: " ", PAWN: "P", KNIGHT: "N", BISHOP: "B", ROOK: "R", QUEEN: "Q", KING: "K"}
-    PieceValues = {PAWN: 1, KNIGHT: 3, BISHOP: 3, ROOK: 5, QUEEN: 9, KING: 1000}
+    ' Indexed by the piece constants (EMPTY=0 .. KING=6), which is what a
+    ' lookup table by piece is - and unlike a map it answers for EMPTY too.
+    ' DIM MoveHistory[1] reserves one slot; the display would print it as a
+    ' phantom first move, so the list starts genuinely empty.
+    MoveHistory = []
+
+    PieceChars = [" ", "P", "N", "B", "R", "Q", "K"]
+    PieceValues = [0, 1, 3, 3, 5, 9, 1000]
 
     ' --- MIDDLEGAME Piece-Square Tables ---
     ' Pawns are best in the center and advancing
