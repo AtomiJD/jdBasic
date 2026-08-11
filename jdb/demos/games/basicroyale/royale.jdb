@@ -117,6 +117,8 @@ DIM tok$ = ""
 DIM world AS MAP = {}
 DIM have_state = 0
 DIM waiting = 1
+' seconds left of the opening countdown, as the server counts it
+DIM countdown = 0
 DIM foename$ = ""
 DIM profiles = []
 DIM myprofile AS MAP = {}
@@ -701,6 +703,8 @@ SUB POLLSTATE()
         ENDIF
         world = m{"ST"}
         waiting = m{"WAITING"}
+        countdown = 0
+        IF MAP.EXISTS(m, "COUNT") THEN countdown = m{"COUNT"}
         have_state = 1
         DIM names = m{"NAMES"}
         IF LEN(names) = 2 THEN
@@ -733,10 +737,14 @@ SUB POLLSTATE()
     ENDTRY
 ENDSUB
 
+' Asking for a rematch is a vote, not a start: the match only begins once the
+' other side has asked too, so the answer is worth showing.
 SUB SENDREMATCH()
     TRY
-        DIM r$ = HTTP.POST$(SRV$ + "/rematch", JSON.STRINGIFY$({ "ROOM": room$ }), "text/plain")
+        DIM r$ = HTTP.POST$(SRV$ + "/rematch", JSON.STRINGIFY$({ "ROOM": room$, "TOK": tok$ }), "text/plain")
+        DIM m = JSON.PARSE$(r$)
         msg$ = ""
+        IF MAP.EXISTS(m, "MSG") THEN msg$ = "" + m{"MSG"}
     CATCH
         msg$ = "msg_rematchfail"
     ENDTRY
@@ -1376,6 +1384,27 @@ ENDSUB
 
 ' The recall in progress: the line the finger drew, the loop it stands for,
 ' a ring around every ship it holds, and one line of instruction.
+' 3-2-1 over the board while the server counts both sides in. The ring shrinks
+' inside each second, so it reads as counting even from the corner of the eye.
+SUB DrawCountdown(fnow)
+    IF countdown <= 0 THEN RETURN
+    DIM n = INT(countdown)
+    IF countdown > n THEN n = n + 1
+    DIM frac = countdown - (n - 1)
+    DIM cx = SCR_W / 2
+    DIM cy = BOARD_Y0 + 330
+    DRAWCOLOR 10, 12, 30
+    ROUNDED_RECT cx - 130, cy - 78, 260, 156, 18, TRUE
+    DRAWCOLOR 120, 110, 200
+    ROUNDED_RECT cx - 130, cy - 78, 260, 156, 18, FALSE
+    DRAWCOLOR 60, 240, 255
+    CIRCLE cx, cy - 6, 22 + INT(40 * frac), FALSE
+    DRAWCOLOR 235, 240, 255
+    CTEXT cy - 15, STR$(n)
+    DRAWCOLOR 130, 140, 180
+    CTEXT cy + 52, T$("countdown")
+ENDSUB
+
 SUB DrawWarp(fnow)
     DIM i
     IF LEN(warp_path) > 1 THEN
@@ -1989,6 +2018,7 @@ SUB DrawFrame(fnow)
             DrawHand()
         ENDIF
         DrawHud()
+        IF waiting = 0 THEN DrawCountdown(fnow)
         IF waiting = 1 THEN
             DRAWCOLOR 18, 20, 44
             ROUNDED_RECT 44, 372, 380, 116, 16, TRUE
@@ -2277,7 +2307,7 @@ ELSE
             ' an aimed card goes off where the finger left the board
             IF aim_kind$ <> "" THEN
                 IF uimode$ = "battle" ANDALSO up_y < 840 ANDALSO up_y >= BOARD_Y0 THEN
-                    IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 THEN
+                    IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 ANDALSO countdown <= 0 THEN
                         SENDPLAY(aim_kind$, up_x / (TILE * 1.0), WY((up_y - BOARD_Y0) / (TILE * 1.0)))
                     ENDIF
                 ENDIF
@@ -2289,7 +2319,7 @@ ELSE
             IF uimode$ = "battle" ANDALSO warp_mode = 1 ANDALSO LEN(warp_path) > 0 THEN WARPCLOSE()
             ' released over the board while holding a card - deploy there
             IF uimode$ = "battle" ANDALSO drag_kind$ <> "" ANDALSO up_y < 840 ANDALSO up_y >= BOARD_Y0 THEN
-                IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 THEN
+                IF have_state = 1 ANDALSO mypid >= 0 ANDALSO ISOVER() = 0 ANDALSO countdown <= 0 THEN
                     SENDPLAY(drag_kind$, up_x / (TILE * 1.0), WY((up_y - BOARD_Y0) / (TILE * 1.0)))
                 ENDIF
             ENDIF

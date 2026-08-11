@@ -73,11 +73,14 @@ FUNC ROOMKEY$(raw$)
     RETURN out$
 ENDFUNC
 
+' Seconds counted down in front of both players before a match runs.
+CONST COUNT_SECS = 3.0
+
 FUNC ROOM(name$)
     DIM key$ = ROOMKEY$(name$)
     IF NOT MAP.EXISTS(rooms, key$) THEN
         rooms{key$} = { "ST": ARENA.NEWGAME(), "PLAYERS": [], "LAST": TICK(), "KEY": key$, _
-                        "LOG": [], "MARKS": [], "SEED": rng_state }
+                        "LOG": [], "MARKS": [], "SEED": rng_state, "COUNT": COUNT_SECS }
         PRINT "room opened: "; key$
     ENDIF
     RETURN rooms{key$}
@@ -89,9 +92,16 @@ ENDFUNC
 ' of that recording is nonsense.
 SUB ROOMRESET(rm)
     rm{"ST"} = ARENA.NEWGAME()
+    rm{"COUNT"} = COUNT_SECS
     rm{"LOG"} = []
     rm{"MARKS"} = []
     IF MAP.EXISTS(rm, "FORCED") THEN rm{"FORCED"} = 0
+    ' consent belongs to the match it was given for
+    DIM ps = rm{"PLAYERS"}
+    DIM i
+    FOR i = 0 TO LEN(ps) - 1
+        ps[i]{"REMATCH"} = 0
+    NEXT i
 ENDSUB
 
 ' Every card that reached the arena, with the tick it landed on. The sim is
@@ -597,6 +607,15 @@ SUB MARKSIM(rm)
     rm{"MARKS"} = APPEND(rm{"MARKS"}, [{ "T": st{"TICKNO"}, "HP": hp, "N": LEN(st{"UNITS"}) }])
 ENDSUB
 
+' Seconds left of the opening countdown. It belongs to the room and not to the
+' state map on purpose: the arena is the rules, and how long two people are
+' given to look up from the deck editor is not a rule. The offline harnesses
+' and every test that steps SIMSTEP itself stay untouched by it.
+FUNC ROOMCOUNT(rm)
+    IF NOT MAP.EXISTS(rm, "COUNT") THEN RETURN 0
+    RETURN rm{"COUNT"}
+ENDFUNC
+
 SUB SYNCSIM(rm)
     DIM now = TICK()
     IF LEN(rm{"PLAYERS"}) < 2 THEN
@@ -607,6 +626,17 @@ SUB SYNCSIM(rm)
             n_steps = 100
             rm{"LAST"} = now - 10000
         ENDIF
+        rm{"LAST"} = rm{"LAST"} + n_steps * 100
+        ' The countdown only runs while both seats are taken - it is above
+        ' this branch that a room with one player keeps LAST at now, so a
+        ' player waiting alone does not count anybody in.
+        IF ROOMCOUNT(rm) > 0 THEN
+            rm{"COUNT"} = ROOMCOUNT(rm) - n_steps * 0.1
+            IF rm{"COUNT"} > 0 THEN RETURN
+            ' whatever is left over past zero is the match's first ticks
+            n_steps = INT(0.5 - rm{"COUNT"} * 10)
+            rm{"COUNT"} = 0
+        ENDIF
         DIM i
         DIM has_bot = ISBOTROOM(rm)
         FOR i = 1 TO n_steps
@@ -614,7 +644,6 @@ SUB SYNCSIM(rm)
             IF has_bot = 1 THEN BOTTURN(rm)
             MARKSIM(rm)
         NEXT i
-        rm{"LAST"} = rm{"LAST"} + n_steps * 100
         RECORDMATCH(rm)
     ENDIF
 ENDSUB
@@ -686,7 +715,7 @@ FUNC HJOIN(req)
         ENDIF
     NEXT i
     IF LEN(players) >= 2 THEN
-        IF st{"PHASE"} <> "play" THEN
+        IF st{"PHASE"} = "over" THEN
             ' A finished match belongs to the two who played it. Somebody
             ' new does not inherit the result, the crowns or a seat in it -
             ' the room starts over. This also frees a room whose second
@@ -746,7 +775,7 @@ FUNC HSTATE(req)
             profiles = APPEND(profiles, { "NAME": pn$, "WINS": s{"WINS"}, "LOSSES": s{"LOSSES"}, "DRAWS": s{"DRAWS"}, "CROWNS": s{"CROWNS"} })
         ENDIF
     NEXT i
-    RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "NAMES": names, "PROFILES": profiles, "ST": rm{"ST"} })
+    RETURN JJ({ "OK": 1, "PID": pid, "WAITING": IIF(LEN(players) < 2, 1, 0), "COUNT": ROOMCOUNT(rm), "NAMES": names, "PROFILES": profiles, "ST": rm{"ST"} })
 ENDFUNC
 
 FUNC HPLAY(req)
@@ -761,6 +790,7 @@ FUNC HPLAY(req)
     SYNCSIM(rm)
     DIM pid = PIDBYTOK(rm{"PLAYERS"}, b{"TOK"})
     IF pid < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_badtok" })
+    IF ROOMCOUNT(rm) > 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_count" })
     ' a recall carries the loop the player drew: middle and radius in tiles
     DIM res$ = ""
     DIM tick_before = rm{"ST"}{"TICKNO"}
@@ -987,6 +1017,12 @@ FUNC HWIPE(req)
 ENDFUNC
 
 ' New match, same two players and their decks - the in-game rematch button.
+'
+' A rematch is an agreement, not a button one side presses for both. Before
+' this, one player's press restarted the room while both seats were still
+' taken, so the sim began ticking at once and the other side lost towers from
+' the deck editor. The first ask is remembered; the match starts when the
+' other seat asks too.
 FUNC HREMATCH(req)
     DIM b = 0
     TRY
@@ -996,6 +1032,25 @@ FUNC HREMATCH(req)
     DIM rm = ROOMFIND(req, b)
     IF TYPEOF(rm) <> "OBJECT" THEN RETURN JJ({ "OK": 0, "MSG": "msg_noroom" })
     DIM players = rm{"PLAYERS"}
+    DIM tok$ = ""
+    IF TYPEOF(b) = "OBJECT" ANDALSO MAP.EXISTS(b, "TOK") THEN tok$ = "" + b{"TOK"}
+    DIM asker = PIDBYTOK(players, tok$)
+    IF asker < 0 THEN RETURN JJ({ "OK": 0, "MSG": "msg_notseated" })
+    ' a match already on its way needs no second start
+    IF rm{"ST"}{"PHASE"} <> "over" THEN RETURN JJ({ "OK": 1 })
+
+    players[asker]{"REMATCH"} = 1
+    DIM agreed = 0
+    DIM k
+    FOR k = 0 TO LEN(players) - 1
+        ' the machine never says no
+        IF MAP.EXISTS(players[k], "BOT") THEN players[k]{"REMATCH"} = 1
+        IF MAP.EXISTS(players[k], "REMATCH") ANDALSO players[k]{"REMATCH"} = 1 THEN agreed = agreed + 1
+    NEXT k
+    IF LEN(players) < 2 ORELSE agreed < 2 THEN
+        RETURN JJ({ "OK": 1, "WAITING": 1, "MSG": "msg_rematchwait" })
+    ENDIF
+
     ROOMRESET(rm)
     DIM st = rm{"ST"}
     DIM i
@@ -1158,7 +1213,7 @@ FUNC HROOMS(req)
         IF LEN(rp) >= 2 THEN
             state$ = "ready"
             IF live = 1 THEN state$ = "play"
-            IF rr{"ST"}{"PHASE"} <> "play" THEN state$ = "over"
+            IF rr{"ST"}{"PHASE"} = "over" THEN state$ = "over"
         ENDIF
         DIM row AS MAP = { "KEY": k$, "N": LEN(rp), "NAMES": names, "LIVE": live, "STATE": state$ }
         IF admin = 1 THEN

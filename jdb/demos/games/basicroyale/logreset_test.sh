@@ -59,10 +59,10 @@ echo "== Partie 1: drei Karten =="
 TOK_A=$(jval "$(join "$AUTH_A")" TOK)
 TOK_B=$(jval "$(join "$AUTH_B")" TOK)
 [ -n "$TOK_A" ] && [ -n "$TOK_B" ] || { echo "FAIL: kein Join"; exit 1; }
-sleep 3
+sleep 5
 play "$TOK_A" 20 > /dev/null
 play "$TOK_B" 9 > /dev/null
-sleep 3
+sleep 5
 play "$TOK_A" 21 > /dev/null
 
 curl -s -m 5 -H 'Content-Type: application/json' \
@@ -77,7 +77,7 @@ curl -s -m 5 "$BASE/reset?room=t&key=testkey" > /dev/null
 echo "== Partie 2: eine Karte =="
 TOK_A=$(jval "$(join "$AUTH_A")" TOK)
 TOK_B=$(jval "$(join "$AUTH_B")" TOK)
-sleep 3
+sleep 5
 play "$TOK_A" 20 > /dev/null
 
 curl -s -m 5 -H 'Content-Type: application/json' \
