@@ -4,7 +4,7 @@
 '   "demo" — load a tiny 6502 program that paints HELLO into the text
 '            page. Runs in milliseconds, proves the whole stack
 '            (CPU + bus hooks + Apple II text-page layout + render).
-'   "boot" — load Atomi's original Apple II ROMs and let the CPU run
+'   "boot" — load the original Apple II ROMs and let the CPU run
 '            until you press ESC. Slow (~760 cyc/sec on this machine),
 '            so reaching the ">" prompt takes minutes — but it does
 '            advance, and you can see the text page update live.
@@ -25,6 +25,30 @@ ENDFUNC
 SUB IO_WRITE(addr, val)
     APPLE2.IO_WRITE_DISPATCH(addr, val)
 ENDSUB
+
+' ─── Portable monospace font ───────────────────────────────────
+' SETFONT wants a real file. Return the first candidate that exists,
+' or "" so the caller can drop to the bundled default.
+FUNC FIRST_FONT$(cand)
+    FOR i = 0 TO LEN(cand) - 1
+        IF FILE.EXISTS(cand[i]) THEN RETURN cand[i]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+FUNC MONO_FONT$()
+    DIM plat$ = OS.GETOS()
+    DIM f$ = ""
+    IF plat$ = "WINDOWS" THEN
+        f$ = FIRST_FONT$([ "C:/Windows/Fonts/consola.ttf", "C:/Windows/Fonts/cour.ttf" ])
+    ELSEIF plat$ = "MACOS" THEN
+        f$ = FIRST_FONT$([ "/System/Library/Fonts/Menlo.ttc", "/System/Library/Fonts/Monaco.ttf" ])
+    ELSE
+        f$ = FIRST_FONT$([ "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf", "/usr/share/fonts/truetype/noto/NotoSansMono-Regular.ttf" ])
+    ENDIF
+    IF f$ = "" THEN f$ = "jdbasic_default.ttf"
+    RETURN f$
+ENDFUNC
 
 ' ─── Configuration ─────────────────────────────────────────────
 DIM MODE$ = "applesoft"      ' "demo" | "boot" | "applesoft"
@@ -97,7 +121,7 @@ DIM frame_count = 0
 ' Translate one SDL keycode (raw, no shift applied yet) into the ASCII
 ' byte the Apple II expects. Honours the German QWERTZ layout: SDL
 ' returns the *unshifted* symbol on the key cap, so we have to shift
-' it manually for things like  Shift-1 → "!"  or  Shift-ß → "?".
+' it manually for things like  Shift-1 → "!"  or  Shift-eszett → "?".
 FUNC german_to_appleii(kc, shift)
     ' Shifted variants on a German QWERTZ keyboard — most of the
     ' punctuation the Apple II actually cares about lives here.
@@ -119,12 +143,12 @@ FUNC german_to_appleii(kc, shift)
             CASE ASC(".") : RETURN ASC(":")
             CASE ASC("-") : RETURN ASC("_")
             CASE ASC("<") : RETURN ASC(">")          ' DE has a separate < > key left of Y
-            CASE 223      : RETURN ASC("?")          ' shift-ß (DE) → ?
+            CASE 223      : RETURN ASC("?")          ' shift-eszett (DE) → ?
             CASE ASC("'") : RETURN ASC(CHR$(34))     ' shift-' → "
         ENDSWITCH
     ENDIF
     ' Unshifted German keys we want to forward as-is.
-    IF kc = 223 THEN RETURN ASC(CHR$(39))            ' ß → '
+    IF kc = 223 THEN RETURN ASC(CHR$(39))            ' eszett key -> apostrophe
     ' Letters: Apple II is uppercase-only.
     IF kc >= ASC("a") AND kc <= ASC("z") THEN RETURN kc - 32
     RETURN kc
@@ -180,7 +204,7 @@ ON "QUIT"    CALL HandleQuit
 ' renderer to exist before TTF_OpenFont, otherwise it can crash on
 ' some drivers.
 SCREEN APPLE2.WINDOW_W, APPLE2.WINDOW_H, "jdBasic 6502 / Apple II", 2
-SETFONT "C:/Windows/Fonts/consola.ttf", 14
+SETFONT MONO_FONT$(), 14
 'TOGGLE_FULLSCREEN
 ' Speaker emulation — must come after SCREEN so SDL audio can attach
 ' to the same default device.
