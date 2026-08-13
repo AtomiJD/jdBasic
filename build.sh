@@ -133,6 +133,11 @@ if [ "$WANT_GFX" = "1" ]; then
             -framework AVFoundation -framework CoreMedia \
             -framework QuartzCore"
     fi
+    # Linux: SDL3 dlopens libX11 for its video backend, but OS.SCREENSHOT
+    # (src/screencap.cpp) calls Xlib directly, so link it explicitly.
+    if [ "$(uname -s)" = "Linux" ]; then
+        LDFLAGS="$LDFLAGS -lX11"
+    fi
     GFX_SRC="src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
 fi
 

@@ -176,7 +176,160 @@ extern "C" int jdb_screencap(const char* path_utf8, const char* mode,
     return rc;
 }
 
-#else  // non-Windows: capture not implemented
+#elif defined(__linux__) && defined(GFX)
+
+// Linux (X11 / XWayland): XGetImage capture + SDL3_image encode. Format is
+// chosen from the extension (.jpg/.jpeg -> JPEG, else PNG). XWayland is
+// rootless, so "screen" mode only sees the X root (empty on a pure-Wayland
+// desktop); capturing a window by caption or the active window is the reliable
+// path, and jdBasic's own SDL windows run under XWayland so they read cleanly.
+
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xatom.h>
+#include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
+#include <cstring>
+
+static int sc_ctz(unsigned long m) { int n = 0; if (!m) return 0; while (!(m & 1)) { m >>= 1; n++; } return n; }
+static int sc_bits(unsigned long m) { int n = 0; while (m) { n += (int)(m & 1); m >>= 1; } return n; }
+
+// True if window `w`'s title (WM_NAME or _NET_WM_NAME) contains `needle`.
+static bool sc_title_matches(Display* dpy, Window w, const char* needle) {
+    char* name = nullptr;
+    if (XFetchName(dpy, w, &name) && name) {
+        bool hit = strstr(name, needle) != nullptr;
+        XFree(name);
+        if (hit) return true;
+    }
+    Atom net_name = XInternAtom(dpy, "_NET_WM_NAME", True);
+    Atom utf8 = XInternAtom(dpy, "UTF8_STRING", True);
+    if (net_name != None && utf8 != None) {
+        Atom type; int fmt; unsigned long n, after; unsigned char* data = nullptr;
+        if (XGetWindowProperty(dpy, w, net_name, 0, 1024, False, utf8,
+                               &type, &fmt, &n, &after, &data) == Success && data) {
+            bool hit = strstr((const char*)data, needle) != nullptr;
+            XFree(data);
+            if (hit) return true;
+        }
+    }
+    return false;
+}
+
+// Depth-first search of the window tree for the first title match. This lands
+// on the WM frame (title bar + borders + shadow) because a reparenting WM
+// copies the title onto the frame, which sits above the client.
+static Window sc_find_window(Display* dpy, Window w, const char* needle) {
+    if (sc_title_matches(dpy, w, needle)) return w;
+    Window root, parent, *children = nullptr; unsigned int count = 0;
+    Window found = 0;
+    if (XQueryTree(dpy, w, &root, &parent, &children, &count)) {
+        for (unsigned int i = 0; i < count && !found; i++)
+            found = sc_find_window(dpy, children[i], needle);
+        if (children) XFree(children);
+    }
+    return found;
+}
+
+// From a matched frame, descend to the deepest descendant that still carries
+// the title - the actual client (content) window - for "client"/"content" mode.
+static Window sc_deepest_match(Display* dpy, Window w, const char* needle) {
+    Window best = w;
+    Window root, parent, *children = nullptr; unsigned int count = 0;
+    if (XQueryTree(dpy, w, &root, &parent, &children, &count)) {
+        for (unsigned int i = 0; i < count; i++) {
+            if (sc_title_matches(dpy, children[i], needle))
+                best = sc_deepest_match(dpy, children[i], needle);
+        }
+        if (children) XFree(children);
+    }
+    return best;
+}
+
+static Window sc_active_window(Display* dpy, Window root) {
+    Atom prop = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", True);
+    if (prop == None) return 0;
+    Atom type; int fmt; unsigned long n, after; unsigned char* data = nullptr;
+    Window win = 0;
+    if (XGetWindowProperty(dpy, root, prop, 0, 1, False, AnyPropertyType,
+                           &type, &fmt, &n, &after, &data) == Success) {
+        if (data && n >= 1) win = *(Window*)data;
+        if (data) XFree(data);
+    }
+    return win;
+}
+
+extern "C" int jdb_screencap(const char* path_utf8, const char* mode,
+                             const char* caption) {
+    if (!path_utf8 || !*path_utf8) return SC_E_PATH;
+    std::string m = mode ? mode : "screen";
+    for (auto& c : m) c = (char)tolower((unsigned char)c);
+    bool full = m.empty() || m == "screen" || m == "fullscreen" || m == "full";
+    bool client = (m == "client") || (m == "content") || (m == "windowcontent");
+
+    Display* dpy = XOpenDisplay(nullptr);
+    if (!dpy) return SC_E_CAPTURE;
+
+    Window root = DefaultRootWindow(dpy);
+    Window target;
+    if (full) {
+        target = root;
+    } else {
+        target = (caption && *caption) ? sc_find_window(dpy, root, caption)
+                                       : sc_active_window(dpy, root);
+        if (!target) { XCloseDisplay(dpy); return SC_E_WINDOW; }
+        // "client" trims the WM frame by dropping to the content window.
+        if (client && caption && *caption)
+            target = sc_deepest_match(dpy, target, caption);
+    }
+
+    XWindowAttributes wa;
+    if (!XGetWindowAttributes(dpy, target, &wa) || wa.width <= 0 || wa.height <= 0) {
+        XCloseDisplay(dpy); return SC_E_SIZE;
+    }
+    int w = wa.width, h = wa.height;
+
+    XImage* img = XGetImage(dpy, target, 0, 0, w, h, AllPlanes, ZPixmap);
+    if (!img) { XCloseDisplay(dpy); return SC_E_CAPTURE; }
+
+    int rc = SC_E_ENCODE;
+    SDL_Surface* surf = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    if (surf) {
+        unsigned long rmask = img->red_mask, gmask = img->green_mask, bmask = img->blue_mask;
+        int rsh = sc_ctz(rmask), gsh = sc_ctz(gmask), bsh = sc_ctz(bmask);
+        int rbits = sc_bits(rmask), gbits = sc_bits(gmask), bbits = sc_bits(bmask);
+        uint8_t* base = (uint8_t*)surf->pixels;
+        for (int py = 0; py < h; py++) {
+            uint8_t* row = base + (size_t)py * (size_t)surf->pitch;
+            for (int px = 0; px < w; px++) {
+                unsigned long p = XGetPixel(img, px, py);
+                unsigned long r = (p & rmask) >> rsh;
+                unsigned long g = (p & gmask) >> gsh;
+                unsigned long b = (p & bmask) >> bsh;
+                if (rbits && rbits != 8) r = r * 255ul / ((1ul << rbits) - 1);
+                if (gbits && gbits != 8) g = g * 255ul / ((1ul << gbits) - 1);
+                if (bbits && bbits != 8) b = b * 255ul / ((1ul << bbits) - 1);
+                uint8_t* q = row + (size_t)px * 4;   // RGBA32: bytes R,G,B,A
+                q[0] = (uint8_t)r; q[1] = (uint8_t)g; q[2] = (uint8_t)b; q[3] = 255;
+            }
+        }
+        std::string ext;
+        size_t dot = std::string(path_utf8).find_last_of('.');
+        if (dot != std::string::npos) {
+            ext = std::string(path_utf8).substr(dot + 1);
+            for (auto& c : ext) c = (char)tolower((unsigned char)c);
+        }
+        bool ok = (ext == "jpg" || ext == "jpeg") ? IMG_SaveJPG(surf, path_utf8, 90)
+                                                   : IMG_SavePNG(surf, path_utf8);
+        rc = ok ? SC_OK : SC_E_PATH;
+        SDL_DestroySurface(surf);
+    }
+    XDestroyImage(img);
+    XCloseDisplay(dpy);
+    return rc;
+}
+
+#else  // other platforms / non-GFX builds: capture not implemented
 
 extern "C" int jdb_screencap(const char*, const char*, const char*) {
     return SC_UNSUPPORTED;

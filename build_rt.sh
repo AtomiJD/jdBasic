@@ -93,6 +93,10 @@ if [ "$WANT_GFX" = "1" ]; then
             -framework AVFoundation -framework CoreMedia \
             -framework QuartzCore"
     fi
+    # Linux: OS.SCREENSHOT (src/screencap.cpp) calls Xlib directly.
+    if [ "$(uname -s)" = "Linux" ]; then
+        LDFLAGS="$LDFLAGS -lX11"
+    fi
     SRC="$SRC src/graphics.cpp src/sprites.cpp src/tiledmap.cpp"
     if [ "$WANT_IMGUI" = "1" ]; then
         IMGUI_LIB="libs/imgui"
