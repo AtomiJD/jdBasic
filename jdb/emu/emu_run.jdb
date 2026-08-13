@@ -60,6 +60,13 @@ DIM CYCLES_PER_FRAME = 1500
 IF OS.FEATURE("NATIVEC") THEN CYCLES_PER_FRAME = 50000
 OPTION "NOPAUSE"        ' Skip the per-iteration ESC/Space break check.
 
+' ─── ROM location (script-relative, boots from any CWD) ────────
+' The ROM dumps live in thingsforyou/, one level up from this
+' script, so derive the path from the script's own location rather
+' than the working directory.
+DIM ROM_DIR$ = PATH.NORMALIZE$(PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "..", "thingsforyou"))
+DIM CHAR_ROM_PATH$ = PATH.JOIN$(ROM_DIR$, "Apple II Character ROM - 341-0036.bin")
+
 ' ─── Initialise emulator + load program/ROM ────────────────────
 APPLE2.INIT()
 DIM char_rom$ = ""
@@ -82,12 +89,12 @@ IF MODE$ = "demo" THEN
     CPU6502.SET_PC($0300)
 ELSEIF MODE$ = "applesoft" THEN
     PRINT "Mode: applesoft (Apple II+ ROM set — Applesoft + AutoStart)"
-    DIM rom_n = APPLE2.LOAD_APPLE2P_ROMS("thingsforyou")
+    DIM rom_n = APPLE2.LOAD_APPLE2P_ROMS(ROM_DIR$)
     IF rom_n <= 0 THEN
         PRINT "ROM load failed — make sure the Apple II+ ROMs (341-001x, 341-0020) are in thingsforyou/."
         END
     ENDIF
-    char_rom$ = APPLE2.LOAD_CHAR_ROM$("thingsforyou/Apple II Character ROM - 341-0036.bin")
+    char_rom$ = APPLE2.LOAD_CHAR_ROM$(CHAR_ROM_PATH$)
     APPLE2.INIT_GLYPH_CACHE(char_rom$)
     APPLE2.INSTALL_TAPE_HOOKS()
     CPU6502.RESET()
@@ -95,12 +102,12 @@ ELSEIF MODE$ = "applesoft" THEN
     PRINT "Cassette LOAD/SAVE goes through: " + APPLE2.GET_TAPE_PATH$()
 ELSE
     PRINT "Mode: boot (loading Apple II ROMs from thingsforyou/)"
-    DIM rom_n = APPLE2.LOAD_APPLE2_ROMS("thingsforyou")
+    DIM rom_n = APPLE2.LOAD_APPLE2_ROMS(ROM_DIR$)
     IF rom_n <= 0 THEN
         PRINT "ROM load failed — make sure thingsforyou/ contains the dumps."
         END
     ENDIF
-    char_rom$ = APPLE2.LOAD_CHAR_ROM$("thingsforyou/Apple II Character ROM - 341-0036.bin")
+    char_rom$ = APPLE2.LOAD_CHAR_ROM$(CHAR_ROM_PATH$)
     APPLE2.INIT_GLYPH_CACHE(char_rom$)
     APPLE2.INSTALL_TAPE_HOOKS()
     CPU6502.RESET()
