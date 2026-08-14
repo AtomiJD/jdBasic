@@ -104,7 +104,14 @@ jdbasic_history.txt
 *~
 
 # ── Claude Code workspace ─────────────────────────────────────────
-.claude/
+.claude/*
+!.claude/skills/
+
+# These two carry machine-specific data and stay local-only: jdbfarm has the
+# home-LAN host table and SSH logins, jdtrakr the private board URL.
+.claude/skills/jdbfarm/
+.claude/skills/jdtrakr/
+
 CLAUDE.md
 
 # ── OS junk ───────────────────────────────────────────────────────
