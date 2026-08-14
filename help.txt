@@ -382,6 +382,10 @@ Description: A synonym for BOOLEAN. Declares a variable that holds TRUE or FALSE
 Syntax: DIM variable AS BOOLEAN
 Description: Declares a variable that holds TRUE or FALSE.
 
+[CHAR]
+Syntax: DIM variable AS CHAR
+Description: Declares a variable to hold a single character.
+
 [BOR]
 Syntax: expression BOR expression
 Description: Performs a bitwise OR operation on two numeric expressions.
@@ -743,6 +747,10 @@ Description: Creates a loop that continues until a condition is met.
 Syntax: DIM variable AS DOUBLE
 Description: Declares a variable to hold a 64-bit floating-point number.
 
+[DRAWCOLOR]
+Syntax: DRAWCOLOR(r, g, b, [a])
+Description: Set the current draw colour for the 2D primitives (PSET, LINE, RECT, CIRCLE, TEXT). Components are 0-255; alpha defaults to 255.
+
 [DROP]
 Syntax: DROP(N, array)
 Description: Returns a new array with the first N (or last N if negative) elements removed.
@@ -949,6 +957,10 @@ Description: Formats a 1D or 2D array into a display-friendly string grid.
 [FUNC]
 Syntax: FUNC name(parameters) ... ENDFUNC
 Description: Begins the definition of a user-defined function that returns a value.
+
+[FUNCTION]
+Syntax: FUNCTION name(parameters) ... END FUNCTION
+Description: VB6-style spelling of FUNC; the same keyword, closed with ENDFUNC or END FUNCTION.
 
 [GCD]
 Syntax: GCD(a, b, ...)
@@ -1942,9 +1954,45 @@ Description: Returns the 0-based starting position of a substring within a strin
 Syntax: INT(number)
 Description: Truncates a number to its integer part (classic floor behavior).
 
+[INT16]
+Syntax: DIM variable AS INT16
+Description: Declares a variable to hold a 16-bit signed integer. SHORT is the classic-BASIC alias.
+
+[INT32]
+Syntax: DIM variable AS INT32
+Description: Declares a variable to hold a 32-bit signed integer.
+
+[INT64]
+Syntax: DIM variable AS INT64
+Description: Declares a variable to hold a 64-bit signed integer. INTEGER and LONG are the classic-BASIC aliases.
+
 [INTEGER]
 Syntax: DIM variable AS INTEGER
 Description: Declares a variable to hold a 64-bit signed integer.
+
+[FLOAT16]
+Syntax: DIM variable AS FLOAT16
+Description: Declares a variable to hold a 16-bit half-precision floating-point number.
+
+[FLOAT32]
+Syntax: DIM variable AS FLOAT32
+Description: Declares a variable to hold a 32-bit floating-point number. SINGLE is the classic-BASIC alias.
+
+[FLOAT64]
+Syntax: DIM variable AS FLOAT64
+Description: Declares a variable to hold a 64-bit floating-point number. DOUBLE is the classic-BASIC alias.
+
+[LONG]
+Syntax: DIM variable AS LONG
+Description: Declares a variable to hold a 64-bit signed integer. Classic-BASIC alias of INT64.
+
+[SHORT]
+Syntax: DIM variable AS SHORT
+Description: Declares a variable to hold a 16-bit signed integer. Classic-BASIC alias of INT16.
+
+[SINGLE]
+Syntax: DIM variable AS SINGLE
+Description: Declares a variable to hold a 32-bit floating-point number. Classic-BASIC alias of FLOAT32.
 
 [INTEGRATE]
 Syntax: INTEGRATE(function@, limits_array, rule_order)
@@ -2029,6 +2077,22 @@ Description: Converts a string to lowercase.
 [LCM]
 Syntax: LCM(a, b, ...)
 Description: Least common multiple of two or more integers.
+
+[LOWER$]
+Syntax: LOWER$(string$)
+Description: Converts a string to lowercase. VB6-style alias of LCASE$.
+
+[LTRIM$]
+Syntax: LTRIM$(string$)
+Description: Removes leading whitespace from a string. Companion to RTRIM$ and TRIM$.
+
+[RTRIM$]
+Syntax: RTRIM$(string$)
+Description: Removes trailing whitespace from a string. Companion to LTRIM$ and TRIM$.
+
+[UPPER$]
+Syntax: UPPER$(string$)
+Description: Converts a string to uppercase. VB6-style alias of UCASE$.
 
 [LEFT$]
 Syntax: LEFT$(string$, length)
@@ -2466,7 +2530,7 @@ Description: Returns a random double in [0, 1], both ends inclusive. Arguments a
 
 [ROTATE]
 Syntax: ROTATE(array, shift_vector)
-Description: Cyclically shifts an N-dimensional array.
+Description: Cyclically shifts an N-dimensional array. One entry of shift_vector per axis, outermost first; more entries than the array has axes is an error. ROTATE(m, [1, 0]) turns the rows, ROTATE(m, [0, 1]) the columns, ROTATE(m, [1, 1]) both. A positive shift pulls from ahead, out[i] = in[i + k], so ROTATE([1,2,3,4,5], [1]) is 2 3 4 5 1.
 
 [ROTL]
 Syntax: ROTL(x, n [, bits])
@@ -2570,7 +2634,7 @@ Description: Plays a loaded sound effect.
 
 [SHIFT]
 Syntax: SHIFT(array, shift_vector, [fill_value])
-Description: Non-cyclically shifts an N-dimensional array, filling empty spaces.
+Description: Like ROTATE but without the wraparound: what moves in from outside is fill_value (default 0), and a whole row shifted off the edge comes back as a row of fill_value. Same per-axis rule as ROTATE, but note the opposite sign convention: a positive shift pushes along like a shift register, out[i] = in[i - k], so SHIFT([1,2,3,4,5], [1], 0) is 0 1 2 3 4. A shift at least as large as the axis leaves nothing but the fill.
 
 [SHL]
 Syntax: value SHL bits         (infix)
@@ -3390,6 +3454,10 @@ Description: Begins the definition of a user-defined data type (struct).
 May contain field declarations, methods (SUB/FUNC), an optional
 SUB INIT(params) constructor, and an optional SUB DISPOSE() destructor.
 
+[THIS]
+Syntax: THIS.field   |   THIS.Method()   (inside a TYPE method)
+Description: Refers to the object instance a method was called on. Only valid inside a SUB or FUNC declared within a TYPE.
+
 [INIT]
 Syntax: SUB INIT([params]) ... ENDSUB   (inside TYPE)
 Description: Optional constructor for a user-defined type. Runs after
@@ -3444,9 +3512,17 @@ Description: Variance (dispersion) of an array.
 Syntax: VARS() -> array
 Description: Returns the names of all currently defined global variables.
 
+[VBCRLF]
+Syntax: VBCRLF
+Description: A constant representing the carriage return and line feed characters (CRLF). VB6-style spelling of VBNEWLINE.
+
 [VBNEWLINE]
 Syntax: VBNEWLINE
 Description: A constant representing the carriage return and line feed characters (CRLF).
+
+[VBTAB]
+Syntax: VBTAB
+Description: A constant representing the tab character, CHR$(9).
 
 [WAITKEY$]
 Syntax: WAITKEY$()
@@ -3670,15 +3746,15 @@ Description: Add a timer that fires NAME_TICK every interval_ms; 0 creates it di
 
 [FORM.SET]
 Syntax: FORM.SET(handle, prop$, value)
-Description: Set a property: TEXT, ENABLED, VISIBLE, CHECKED, ITEMS (array), ADDITEM, CLEAR, SELINDEX, FOCUS, X, Y, WIDTH, HEIGHT, INTERVAL (timer), VALUE (TRUE clicks a button).
+Description: Set a property: TEXT, ENABLED, VISIBLE, CHECKED, ITEMS (array), ADDITEM, CLEAR, SELINDEX, FOCUS, X, Y, WIDTH, HEIGHT, INTERVAL (timer), VALUE (TRUE clicks a button). Appearance and behaviour: FORECOLOR, BACKCOLOR (0xRRGGBB; a form paints its own background with BACKCOLOR, a themed push button ignores both), FONT (map of name/size/bold/italic/underline/strike, absent keys stay at the system UI font), TAG (any value, the VB6 scratch slot), TOOLTIP, ALIGN (LEFT/CENTER/RIGHT, labels and edit fields), MAXLENGTH, PASSWORD (a character, TRUE for *, FALSE to undo), LOCKED, TABSTOP, TABINDEX (moves the control to that position in the tab order), CURSOR (ARROW/WAIT/HAND/IBEAM/CROSS/SIZEALL/NO). FONT, ALIGN, CURSOR, PASSWORD and TABINDEX are set-only.
 
 [FORM.GET]
 Syntax: FORM.GET(handle, prop$) -> value
-Description: Read a property: TEXT, ENABLED, VISIBLE, CHECKED, SELINDEX, SELTEXT, COUNT, NAME, KIND, HWND, X, Y, WIDTH, HEIGHT.
+Description: Read a property: TEXT, ENABLED, VISIBLE, CHECKED, SELINDEX, SELTEXT, COUNT, NAME, KIND, HWND, X, Y, WIDTH, HEIGHT, FORECOLOR, BACKCOLOR (-1 when never set), TAG (NONE when never set), TOOLTIP, MAXLENGTH, LOCKED, TABSTOP.
 
 [FORM.RUN]
 Syntax: FORM.RUN(frm)
-Description: Show the form and run the message loop until every form is closed. Fires NAME_LOAD first; handlers run on the main thread.
+Description: Show the form and run the message loop until every form is closed. Fires NAME_LOAD first; handlers run on the main thread. Forms fire LOAD, UNLOAD, RESIZE and the mouse events; every control that takes input fires GOTFOCUS, LOSTFOCUS, KEYDOWN, KEYUP, KEYPRESS, MOUSEDOWN, MOUSEUP and MOUSEMOVE on top of its own (CLICK, CHANGE, DBLCLICK, TICK). Keyboard events carry key (the virtual key, or the character for KEYPRESS), mouse events button (1 left, 2 right, 0 for a move) and x/y in logical units; both carry shift, ctrl and alt. All bind by name without an ON.
 
 [FORM.SHOW]
 Syntax: FORM.SHOW(frm)
@@ -3690,7 +3766,7 @@ Description: Pump pending window messages once; TRUE while any form is open. For
 
 [FORM.CLOSE]
 Syntax: FORM.CLOSE(frm)
-Description: Close a form. When the last form closes, FORM.RUN returns.
+Description: Close a form. When the last form closes, FORM.RUN returns. NAME_UNLOAD runs synchronously while the window still exists, so the handler can read its own controls one last time and can call the close off with e[0]{"cancel"} = TRUE - the VB6 Form_QueryUnload pattern, for the window cross, Alt+F4 and FORM.CLOSE alike.
 
 [MSGBOX]
 Syntax: MSGBOX(text$, [flags], [title$]) -> button
@@ -3711,6 +3787,10 @@ Description: Look up a control of a form by name (case-insensitive); 0 if absent
 [FORM.MENU]
 Syntax: FORM.MENU(frm, spec)
 Description: Build or replace the form's menu bar. Spec = array of maps: text (& = Alt key, "-" = separator), items (submenu), name (clickable -> NAME_CLICK), key ("Ctrl+O", "F5" - real accelerator). Items support FORM.SET ENABLED/CHECKED/TEXT/VALUE.
+
+[FORM.POPUP]
+Syntax: FORM.POPUP(frm, spec, [x], [y])
+Description: Show a context menu at the mouse, or at logical form coordinates when x/y are given, and return when it closes. Spec has the same shape as FORM.MENU, and a chosen item dispatches its NAME_CLICK exactly like a menu-bar item. The handles from the form's previous popup are dropped on each call. Pairs with NAME_MOUSEDOWN and button = 2.
 
 [FORM.MDI]
 Syntax: FORM.MDI(title$, width, height, [name$]) -> handle

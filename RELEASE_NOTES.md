@@ -4,6 +4,30 @@ Convention: one section per released version, newest at the top. Pre-release / u
 
 ---
 
+## v1.0 Build 78 - 2026-08-14
+
+Refresh of all four Windows bundles. No new bundle, no new build flag. Supersedes Build 77 from the same day, which shipped the identical binaries with a `help.txt` that still predated the Forms work.
+
+### Highlights
+
+- **Forms grew the rest of the property surface**: `FORECOLOR` / `BACKCOLOR` as `0xRRGGBB`, `FONT` as a map of `name`/`size`/`bold`/`italic`/`underline`/`strike`, plus `TAG`, `TOOLTIP`, `ALIGN`, `MAXLENGTH`, `PASSWORD`, `LOCKED`, `TABSTOP`, `TABINDEX` and `CURSOR`. A form paints its own background with `BACKCOLOR`; a themed push button ignores colours, the same rule VB6 had.
+- **The forms event vocabulary**: every control that takes input now fires `GOTFOCUS`, `LOSTFOCUS`, `KEYDOWN`, `KEYUP`, `KEYPRESS`, `MOUSEDOWN`, `MOUSEUP` and `MOUSEMOVE` on top of its own events, all binding by name without an `ON`. Keyboard events carry `key`, mouse events `button` and `x`/`y`, both carry `shift`, `ctrl` and `alt`.
+- **A form can refuse to close**: `NAME_UNLOAD` runs synchronously while the window still exists, so a handler can read its own controls one last time and cancel the close with `e[0]{"cancel"} = TRUE` - the VB6 `Form_QueryUnload` pattern, for the window cross, `Alt+F4` and `FORM.CLOSE` alike.
+- **`FORM.POPUP(frm, spec, [x], [y])`**: context menus with the same spec shape as `FORM.MENU`, dispatching `NAME_CLICK` like a menu-bar item.
+- **`.jdform` carries the appearance properties**, so what the VS Code visual designer paints is what the program shows.
+- **Array fixes** in every bundle: `ROTATE` and `SHIFT` move every axis instead of only the outer one, and a gather keeps the shape of its index set. Note the deliberate sign difference: a positive `ROTATE` pulls from ahead (`out[i] = in[i + k]`), a positive `SHIFT` pushes along (`out[i] = in[i - k]`).
+- **Native compiler**: a parameter called with two different types is refused at compile time instead of being silently mis-compiled.
+
+### Documentation
+
+`help.txt` caught up with the Forms work and now has an entry for every symbol the runtime reports except the five compiler internals: the full `FORM.SET` / `FORM.GET` property lists, `FORM.POPUP`, the event vocabulary, and the corrected `ROTATE` / `SHIFT` semantics. `doc/languages.md` gained the previously undocumented `GFX.*` batch and image calls, `GUI.PUSH_STYLE_COLOR` / `GUI.POP_STYLE_COLOR`, `HTTP.SERVER.WAIT`, `SOUND.NOTE` / `SOUND.STATS`, `SCREENWIDTH` / `SCREENHEIGHT`, `FUNCS`, the `JDB.*` state helpers, the sized numeric types and the VB6 aliases.
+
+### Distribution
+
+The same four Windows x64 bundles, all Authenticode-signed: **core**, **mcp-native**, **vibe-game-pack**, **vb6**. SHA256 hashes are on the [release page](https://github.com/AtomiJD/jdBasic/releases).
+
+---
+
 ## v1.0 Build 76 - 2026-07-30
 
 Refresh of all Windows bundles (builds 74/75 were internal) plus a brand-new fourth bundle.

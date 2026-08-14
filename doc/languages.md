@@ -13,6 +13,7 @@ jdBasic supports a variety of data types. While variables are variants and can h
 * **Array**: A multi-dimensional array of other Basic values.
 * **Map**: A key-value dictionary where keys are strings and values can be any Basic value. Used for creating complex data structures.
 * **Tensor**: An opaque data type that holds multi-dimensional floating-point data and tracks computational history for automatic differentiation (autodiff). It is the core of the AI functions and enables building and training neural networks.
+* **Sized numeric types**: `DIM` also accepts explicit widths - `INT16`, `INT32`, `INT64` for signed integers and `FLOAT16`, `FLOAT32`, `FLOAT64` for floating point - plus `CHAR` for a single character and `BYTE`. The classic-BASIC spellings are aliases of these: `INTEGER` and `LONG` are `INT64`, `SHORT` is `INT16`, `DOUBLE` is `FLOAT64`, `SINGLE` is `FLOAT32`, `BOOL` is `BOOLEAN`.
 * **JsonObject**: A special type returned by `JSON.PARSE$`, which can be accessed like a Map or Array.
 * **ComObject**: A special type returned by `CREATEOBJECT`, representing an instance of a COM Automation object.
 * **DYNAMIC**: A tagged-mixed array - opt-in storage for arrays whose elements have heterogeneous types known only at runtime (e.g. `[m{"name"}, m{"age"}, m{"email"}]`). Each cell carries its own JdTag so reads via `arr[i]` recover the actual type. Use on FUNC parameters or DIM destinations that receive such arrays:
@@ -48,6 +49,8 @@ These are special keywords that hold predefined, constant values.
 * **`PI`**: A high-precision value of Pi (approx. 3.141592653589793).
 * **`E`**: Euler's number (approx. 2.718281828459045).
 * **`VBNEWLINE`**: A string representing the carriage return and line feed characters (`CHR$(13) + CHR$(10)`), commonly used for creating multi-line strings for Windows systems.
+* **`VBCRLF`**: The VB6-style spelling of `VBNEWLINE`, the same CRLF string.
+* **`VBTAB`**: The tab character, `CHR$(9)`.
 
 ```basic
 PRINT "The value of PI is: " + PI
@@ -1391,7 +1394,7 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 * **`LEFT$(str$, n)`**, **`RIGHT$(str$, n)`**, **`MID$(str$, start, [len])`**: Extracts parts of a string. The start position is 0 - based. Also available as `LEFT`, `RIGHT`, `MID` without the `$`.
 * **`LEN(expression)`**: Returns a scalar length. For strings, the byte count; for arrays, the element count of the outermost dimension. Always returns a scalar - use `LENV` when you need the full shape of a nested array.
 * **`LENV(expression)`**: Returns a shape vector `[dim0, dim1, ...]` describing the full extent of a nested array. For a 1D array returns `[n]`; for a string returns `[byte_count]`.
-* **`LCASE$(str$)`**, **`UCASE$(str$)`**, **`TRIM$(str$)`**: Manipulates string case and whitespace. Also available as `LCASE`, `UCASE`, `TRIM`.
+* **`LCASE$(str$)`**, **`UCASE$(str$)`**, **`TRIM$(str$)`**: Manipulates string case and whitespace. Also available as `LCASE`, `UCASE`, `TRIM`, and as the VB6-style spellings **`LOWER$(str$)`** and **`UPPER$(str$)`**.
 * **`LTRIM$(str$)`** / **`RTRIM$(str$)`**: Trims whitespace from the left or right end only.
 * **`STARTSWITH(str$, prefix$) -> bool`** / **`ENDSWITH(str$, suffix$) -> bool`**: Returns `TRUE` if `str$` starts/ends with the given substring.
 * **`SPACE$(n) -> string$`**: Returns a string of `n` spaces - handy for padding.
@@ -1655,6 +1658,9 @@ SQL.CLOSE(db)
 * **`ISBOOL(v) -> bool`**: `TRUE` if `v` is a boolean.
 * **`ISNONE(v) -> bool`** / **`ISNULL(v) -> bool`**: `TRUE` if `v` is the `NONE` value.
 * **`VARS() -> array`**: Returns an array of names of all currently defined global variables - useful for live debugging and the REPL.
+* **`FUNCS`**: Prints every user-defined `FUNC`, `SUB` and `ASYNC FUNC` with its parameter signature, one per line. The companion to `VARS` for the REPL; names beginning with a double underscore stay hidden.
+* **`JDB.GLOBAL_GET(name$) -> value`** / **`JDB.GLOBAL_SET(name$, value)`**: Read or write a single global by name (case-insensitive). `GET` returns `NONE` for an unknown name; `SET` allocates the slot if the name is new. These back the MCP state-save and state-restore tools, which capture a value copy of each user variable before an experimental snippet runs.
+* **`JDB.CHECK$(code$) -> string`**: Validates a snippet without running it and returns the diagnostics. Backs the MCP `jdb_check` tool, so a generated snippet can be checked before it touches the persistent VM. Returns an "unavailable" message when the host registered no checker.
 
 #### `HELP [topic$]` and `HELP$()`
 
@@ -1705,6 +1711,8 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.SERVER.ON_POST(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
 
 * **`HTTP.SERVER.ON_NOTFOUND(function_name$)`**: Registers a `jdBasic` function to render unmatched routes (HTTP 404). The function receives the request map and may return HTML (sent as `text/html` with status 404) or a rich-response map (`{__http_status, __http_body, __http_content_type, __http_headers}`). Wired through httplib's `set_error_handler`; it fires only for 404, so handler-set statuses like 401/500 keep their own output. Call it before `HTTP.SERVER.START`.
+
+* **`HTTP.SERVER.WAIT`**: Parks the main thread in C++ until the server stops, and returns when a handler calls `HTTP.SERVER.STOP` (or the process exits). Use this instead of a `DO ... SLEEP ... LOOP` keep-alive: handlers run on httplib worker threads that share the one VM, so a jdBasic loop on the main thread would step the VM concurrently with a running handler and corrupt it. That is fatal for handlers that take seconds, an LLM query for example.
 
 ### Output capture
 
@@ -1832,7 +1840,8 @@ ENDIF
 
 * **`SCREEN width, height, [title$], scalefactor`**: Initializes a graphics window of the specified size.
 * **`SCREENFLIP`**: Updates the screen to show all drawing operations performed since the last flip.
-* **`DRAWCOLOR r, g, b`**: Sets the current drawing color using RGB values (0-255).
+* **`SCREENWIDTH() -> number`** / **`SCREENHEIGHT() -> number`**: The logical `SCREEN` size. Both return `0` when `SCREEN` was never called, so code can detect a headless run.
+* **`DRAWCOLOR r, g, b, [a]`**: Sets the current drawing color using RGB values (0-255). The optional alpha defaults to `255`.
 * **`SETFONT filename$, size`**: Sets the current font to filename$ and size.
 * **`PSET x, y, [r, g, b] OR PSET matrix, [colors]`**: Draws a single pixel at the specified coordinates. Can also take a matrix of points.
 * **`LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]`**: Draws a line between two points. Can also take a matrix of lines.
@@ -1843,6 +1852,10 @@ ENDIF
 * **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of sectors.
 * **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
 * **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
+* **`GFX.PLOT_POINTS(xs, ys, [rgb])`**: Batch pixel plot from two parallel 1-D coordinate arrays. `rgb` is either a single `[r, g, b]` for all points, or a flat stream of length `N*3`; omit it to use the current `DRAWCOLOR`. A single shared colour goes out as one draw call.
+* **`GFX.PLOT_POINTS_TEX(xs, ys, rgb_lut, [bg_rgb])`**: The fastest path for many coloured pixels: scatters into a streaming texture and uploads it in one call instead of one call per pixel. `rgb_lut` is a flat array of length `N*3`; `bg_rgb` fills the background (default black). The texture follows the logical `SCREEN` size.
+* **`GFX.HSV_RGB(h, s, v) -> [r, g, b]`**: HSV to RGB in C++, for per-pixel loops where a jdBasic helper would dominate the frame time. `h` wraps at 360, `s` and `v` clamp to 0..1, the result is three 0-255 components.
+* **`GFX.FADE(direction, duration, [r], [g], [b])`**: Fades the current frame out (`direction = 0`) or in (`direction = 1`) over `duration` seconds against a fill colour (default black). **Blocks** until the fade completes, flipping the screen itself each frame.
 * **`TOGGLE_FULLSCREEN`**: Toggles the graphics window between fullscreen and windowed mode.
 
 #### Graphics Window & Event Handling
@@ -1865,6 +1878,9 @@ In addition to the high-level drawing commands above, the `GFX.*` namespace expo
 * **`GFX.SAVE_SCREENSHOT(path$, [x, y, w, h])`**: Saves the current renderer contents to a PNG. With no rectangle it captures the whole viewport; with `x, y, w, h` it captures that region. **Call it BEFORE `SCREENFLIP`** - after the flip the back buffer is cleared and you'd capture an empty frame. Great for verifying rendered output headlessly.
 * **`GFX.SAVE_IMAGE(image_id, path$)`**: Saves a loaded (and possibly modified) image handle to a PNG.
 * **`GFX.CAPTURE() -> image_id`**: Snapshots the current renderer into a reusable image handle (e.g. for transitions). **`GFX.DRAW_CAPTURE(image_id)`** blits such a snapshot back over the whole screen.
+* **`GFX.DRAWIMAGE_REGION(image_id, sx, sy, sw, sh, dx, dy, [dw], [dh])`**: Blits the source rectangle `(sx, sy, sw, sh)` of an image to `(dx, dy)`. Without `dw`/`dh` the region keeps its source size. The sprite-sheet primitive.
+* **`GFX.DRAWIMAGE_EX(image_id, x, y, [w], [h], [angle], [flip_h])`**: Blits an image with rotation and horizontal flip. `w`/`h` default to the texture size, `angle` is in degrees (default `0`), `flip_h` mirrors the image (default `FALSE`).
+* **`GFX.COLOR_TO_ALPHA(image_id, [tolerance])` / `GFX.COLOR_TO_ALPHA(image_id, r, g, b, [tolerance])`**: Makes the background of a loaded image transparent, in place. With no colour it takes the top-left corner pixel as the background; `tolerance` defaults to `40`. It flood-fills from the four corners, so only *connected* background is removed and a similar colour inside the figure survives.
 * **`GL.SAVE_SCREENSHOT(path$)`**: OpenGL counterpart of `GFX.SAVE_SCREENSHOT` - saves the current `GL.WINDOW` back buffer to a PNG (glReadPixels, flipped to top-down). **Call it BEFORE `GL.FLIP`** (the swap leaves the back buffer undefined). Lets you verify OpenGL / 3D output to a file the same way the 2D renderer does.
 * **`GFX.TEXTSIZE(text$, [size]) -> [w, h]`**: Measures the rendered size of a string with the current font.
 
@@ -2054,6 +2070,8 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
   * Options: `"MENUBAR"`, `"NO_RESIZE"`, `"NO_TITLEBAR"`, `"NO_MOVE"`, `"NO_SCROLLBAR"`, `"NO_COLLAPSE"`, `"ALWAYS_AUTO_RESIZE"`, `"NO_SAVED_SETTINGS"`.
 * **`GUI.COL(color_name$) -> number`**: Returns the integer index for a specific ImGui interface color (ImGuiCol_ enum). This is used with style pushing functions to customize specific UI elements.
   * Options: `"TEXT"`, `"WINDOWBG"`, `"BUTTON"`, `"BUTTONHOVERED"`, `"BUTTONACTIVE"`, `"HEADER"`, `"HEADERHOVERED"`, `"HEADERACTIVE"`, `"FRAMEBG"`, `"FRAMEBGHOVERED"`, `"FRAMEBGACTIVE"`, `"TITLEBG"`, `"TITLEBGACTIVE"`, `"CHECKMARK"`, `"SLIDERGRAB"`, `"SLIDERGRABACTIVE"`.
+* **`GUI.PUSH_STYLE_COLOR(col_idx, [r, g, b, a])`**: Overrides one ImGui style colour until it is popped. `col_idx` comes from `GUI.COL`, the colour is a four-element `[r, g, b, a]` array in 0-255.
+* **`GUI.POP_STYLE_COLOR([count])`**: Pops the last `count` pushed style colours (default `1`). Every push needs its pop, or the style stack leaks into the next frame.
 * **`GUI.PUSH_ID(id)`**: Pushes an integer or string ID to the stack to prevent ID collisions in loops.
 * **`GUI.POP_ID`**: Pops the last ID from the stack.
 * **`GUI.SHOW_FONT_ATLAS`**: Opens the built-in ImGui font visualizer for debugging.
@@ -2096,6 +2114,8 @@ GUI.END
 * **`SOUND.STOP track`**: Immediately stops the note on the given track.
 * **`SOUND.PLAYBUFFER samples, [sample_rate], [channels]`**: Pushes a 1D float array (-1..1) directly onto a separate PCM stream that mixes alongside the synth tracks. Use this for hand-rolled waveforms, emulator audio (Apple II speaker), or anything that doesn't fit the ADSR/voice model. `sample_rate` defaults to 44100, `channels` to 1; if either changes between calls the underlying SDL stream is reopened so the resampler does the conversion. Calls are non-blocking - SDL queues until the device drains.
 * **`SOUND.QUEUED() -> integer`**: Returns the number of bytes still waiting in the PLAYBUFFER queue. Useful for keeping the buffer between min/max watermarks without overflowing or underrunning. Returns 0 if `SOUND.INIT` hasn't run.
+* **`SOUND.NOTE pattern$, [loop], [debug]`**: Programs a note pattern into the live-coding sequencer, in the same mini-notation `SOUND.SEQ` uses, including the parallel form `< melody , bass >`. `loop` repeats the pattern (default `FALSE`); `debug` dumps the parsed events per track to stderr.
+* **`SOUND.STATS() -> string`**: Returns `"triggers=N alloc_fail=M"` since the last call and resets both counters. `alloc_fail` counting up means the mixer ran out of voices.
 * **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file into memory slot `id`.
 * **`SFX.PLAY id`**: Plays a loaded WAV file once (fire-and-forget).
 * **`MUSIC.PLAY id, [loop_bool]`**: Plays a loaded WAV file as background music. Defaults to looping.
@@ -2114,7 +2134,7 @@ The `FORM.*` namespace creates **real Win32 windows and common controls** - push
 ```basic
 SUB MAIN_UNLOAD(e)
     IF FORM.GET(FORM.FIND(frm, "TXT"), "TEXT") <> saved$ THEN
-        IF MSGBOX("Ungespeicherte Aenderungen. Trotzdem schliessen?", 4 + 32) = 7 THEN
+        IF MSGBOX("Unsaved changes. Close anyway?", 4 + 32) = 7 THEN
             e[0]{"cancel"} = TRUE
         ENDIF
     ENDIF
@@ -2143,7 +2163,7 @@ Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radi
 * **`FORM.TIMER(frm, name$, interval_ms) -> handle`**: Fires `NAME_TICK` every `interval_ms` (0 = created disabled; retune via the `INTERVAL` property).
 * **`FORM.SET(handle, prop$, value)`**: Properties: `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `ITEMS`, `ADDITEM`, `CLEAR`, `SELINDEX`, `FOCUS`, `X`/`Y`/`WIDTH`/`HEIGHT`, `INTERVAL` (timer), `VALUE` (TRUE clicks a button programmatically, VB6-style), `MAXIMIZED` (forms and MDI children; FALSE restores).
 * **`FORM.GET(handle, prop$) -> value`**: Reads `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `SELINDEX`, `SELTEXT`, `COUNT`, `NAME`, `KIND`, `HWND`, `X`/`Y`/`WIDTH`/`HEIGHT`.
-* **Appearance and behaviour** (SET and GET unless noted): `FORECOLOR` / `BACKCOLOR` as `0xRRGGBB` (GET returns `-1` when never set); `FONT`, a map of `name`, `size`, `bold`, `italic`, `underline`, `strike`, where anything absent stays at the system UI font, so `{"bold": TRUE}` is enough (SET only); `TAG`, any value at all, the VB6 scratch slot; `TOOLTIP`; `ALIGN` (`LEFT`/`CENTER`/`RIGHT`, labels and edit fields, SET only); `MAXLENGTH`, `PASSWORD` (a character, or TRUE for `*`, or FALSE to undo), `LOCKED` for edit fields; `TABSTOP` and `TABINDEX` (SET moves the control to that position in the tab order); `CURSOR` (`ARROW`, `WAIT`, `HAND`, `IBEAM`, `CROSS`, `SIZEALL`, `NO`, SET only). A form takes `BACKCOLOR` too and paints its own background with it. A **themed push button draws itself and ignores colours** - the same rule VB6 had, where a button needed `Style = Graphical` first.
+* **Appearance and behaviour** (SET and GET unless noted): `FORECOLOR` / `BACKCOLOR` as `0xRRGGBB` (GET returns `-1` when never set); `FONT`, a map of `name`, `size`, `bold`, `italic`, `underline`, `strike`, where anything absent stays at the system UI font, so `{"bold": TRUE}` is enough (SET only); `TAG`, any value at all, the VB6 scratch slot; `TOOLTIP`; `ALIGN` (`LEFT`/`CENTER`/`RIGHT`, labels and edit fields, SET only); `MAXLENGTH`, `PASSWORD` (a character, or TRUE for `*`, or FALSE to undo, SET only), `LOCKED` for edit fields; `TABSTOP` and `TABINDEX` (SET only, moves the control to that position in the tab order); `CURSOR` (`ARROW`, `WAIT`, `HAND`, `IBEAM`, `CROSS`, `SIZEALL`, `NO`, SET only). A form takes `BACKCOLOR` too and paints its own background with it. A **themed push button draws itself and ignores colours** - the same rule VB6 had, where a button needed `Style = Graphical` first.
 * **`FORM.LOAD(path$, [mdi_frame]) -> handle`**: Instantiates a **`.jdform` file** (see below) and returns the form handle; with a frame handle as second argument the form becomes an MDI child of it. Relative paths resolve against the script's directory. Every `SUB` named `<CONTROL>_<EVENT>` that exists in the program is bound automatically - a `.jdform`-based program needs no `ON` statements at all.
 * **`FORM.FIND(frm, name$) -> handle`**: Looks up a control of a form by name (case-insensitive); returns `0` if absent. The code-behind companion to `FORM.LOAD`.
 * **`FORM.MENU(frm, spec)`**: Builds (or replaces) the form's **menu bar**. `spec` is an array of maps: `text` (required; `&` marks the Alt key, `"-"` is a separator), `items` (submenu array), `name` (makes the item clickable: it becomes a forms handle dispatching `NAME_CLICK`, findable via `FORM.FIND`), `key` (a real keyboard accelerator like `"Ctrl+O"` or `"F5"`, shown right-aligned in the item). Menu items support `FORM.SET` `ENABLED`/`CHECKED`/`TEXT`/`VALUE` (TRUE clicks) and `FORM.GET` `CHECKED`/`ENABLED`.
