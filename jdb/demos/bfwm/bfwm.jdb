@@ -161,7 +161,11 @@ ENDFUNC
 ' A game awards p1/p2/p3 points for the 1st/2nd/3rd place (default 3/2/1).
 
 
-DIM SCRIPT_DIR$ = PATH.DIRNAME$(OS.ARGS()[0])
+' OS.ARGS() is empty in the browser (WASM), so guard the index; the app then
+' runs there too, with the database at the in-memory filesystem root.
+DIM ARGV = OS.ARGS()
+DIM SCRIPT_DIR$ = ""
+IF LEN(ARGV) > 0 THEN SCRIPT_DIR$ = PATH.DIRNAME$(ARGV[0])
 DIM DB_PATH$ = PATH.JOIN$(SCRIPT_DIR$, "bfwm.db")
 DIM DB = SQL.OPEN(DB_PATH$)
 IF DB = 0 THEN
