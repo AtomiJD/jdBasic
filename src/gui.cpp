@@ -438,6 +438,21 @@ void register_gui_builtins(VM& vm) {
         return Value::make_f64(ImGui::GetWindowHeight());
     });
 
+    // Actual output size in physical pixels (io.DisplaySize) - the real
+    // drawable area regardless of SCREEN scale or desktop resolution. Size a
+    // full-screen panel to these so it fits any display, not a fixed guess.
+    vm.register_native("GUI.DISPLAY_WIDTH", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        ensure_imgui("GUI.DISPLAY_WIDTH");
+        return Value::make_f64(ImGui::GetIO().DisplaySize.x);
+    });
+
+    vm.register_native("GUI.DISPLAY_HEIGHT", 0, 0, [](const std::vector<Value>& args) -> Value {
+        (void)args;
+        ensure_imgui("GUI.DISPLAY_HEIGHT");
+        return Value::make_f64(ImGui::GetIO().DisplaySize.y);
+    });
+
     // ── Basic Widgets ───────────────────────────────────────────
 
     vm.register_native("GUI.TEXT", 1, 2, [](const std::vector<Value>& args) -> Value {

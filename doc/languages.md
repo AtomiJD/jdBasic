@@ -2069,6 +2069,7 @@ This suite of functions provides immediate-mode GUI capabilities using the Dear 
 * **`GUI.AVAIL_HEIGHT() -> number`**: Same as above but for vertical space.
 * **`GUI.WINDOW_WIDTH() -> number`**: Returns the full width of the current window (including padding, title bar etc.).
 * **`GUI.WINDOW_HEIGHT() -> number`**: Returns the full height of the current window.
+* **`GUI.DISPLAY_WIDTH() -> number`** / **`GUI.DISPLAY_HEIGHT() -> number`**: Returns the actual drawable size in physical pixels (`io.DisplaySize`) - the real output area regardless of the `SCREEN` scale factor or the desktop resolution (`SCREEN` clamps an over-large window to the display). Size a full-screen panel to these (`GUI.BEGIN "app", 0, 0, GUI.DISPLAY_WIDTH(), GUI.DISPLAY_HEIGHT()`) so it fills any screen instead of a fixed guess.
 
 ```basic
 ' Responsive input that grows with the window
