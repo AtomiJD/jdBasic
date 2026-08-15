@@ -5,6 +5,7 @@
 #include "errors.h"
 #include "sprites.h"
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "imgui_impl_sdl3.h"
 #include "imgui_impl_sdlrenderer3.h"
 #include <SDL3/SDL.h>
@@ -408,8 +409,8 @@ void register_gui_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // ── Layout-Abfragen für dynamische Größen ──────────────────
-    // Verfügbarer Platz im aktuellen Window/Child (nach bisherigen Widgets):
+    // ── Layout queries for dynamic sizing ──────────────────────
+    // Space still available in the current window/child (after prior widgets):
 
     vm.register_native("GUI.AVAIL_WIDTH", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
@@ -423,7 +424,7 @@ void register_gui_builtins(VM& vm) {
         return Value::make_f64(ImGui::GetContentRegionAvail().y);
     });
 
-    // Vollständige Größe des aktuellen Windows (inklusive Title/Padding):
+    // Full size of the current window (including title/padding):
 
     vm.register_native("GUI.WINDOW_WIDTH", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
@@ -444,8 +445,8 @@ void register_gui_builtins(VM& vm) {
         std::string text = args[0].as_string()->data;
         bool wrap = (args.size() >= 2) && args[1].to_bool();
         if (wrap) {
-            // Wrap-Position = rechter Rand des aktuellen Content-Bereichs
-            ImGui::PushTextWrapPos(0.0f); // 0 = bis zum rechten Rand des Windows/Child
+            // Wrap position = right edge of the current content region
+            ImGui::PushTextWrapPos(0.0f); // 0 = wrap at the right edge of the window/child
             ImGui::TextUnformatted(text.c_str());
             ImGui::PopTextWrapPos();
         } else {
@@ -454,7 +455,7 @@ void register_gui_builtins(VM& vm) {
         return Value::make_none();
     });
 
-    // Convenience: immer mit Zeilenumbruch
+    // Convenience: always wraps
     vm.register_native("GUI.TEXT_WRAPPED", 1, 1, [](const std::vector<Value>& args) -> Value {
         ensure_imgui("GUI.TEXT_WRAPPED");
         std::string text = args[0].as_string()->data;
@@ -590,7 +591,8 @@ void register_gui_builtins(VM& vm) {
         // `##`-prefixed labels are hidden - fill the cell so the field
         // doesn't collapse to 0px. Visible labels keep ImGui's default.
         bool hidden_label = (label.size() >= 2 && label[0] == '#' && label[1] == '#');
-        if (hidden_label) {
+        bool has_width = (ImGui::GetCurrentContext()->NextItemData.HasFlags & ImGuiNextItemDataFlags_HasWidth) != 0;
+        if (hidden_label && !has_width) {
             float avail_w = ImGui::GetContentRegionAvail().x;
             if (avail_w > 1.0f) ImGui::SetNextItemWidth(avail_w);
         }
@@ -609,9 +611,12 @@ void register_gui_builtins(VM& vm) {
         // `##` label: drop step buttons and fill the cell; visible label
         // keeps the default input + buttons + label-on-right layout.
         bool hidden_label = (label.size() >= 2 && label[0] == '#' && label[1] == '#');
+        bool has_width = (ImGui::GetCurrentContext()->NextItemData.HasFlags & ImGuiNextItemDataFlags_HasWidth) != 0;
         if (hidden_label) {
-            float avail = ImGui::GetContentRegionAvail().x;
-            if (avail > 1.0f) ImGui::SetNextItemWidth(avail);
+            if (!has_width) {
+                float avail = ImGui::GetContentRegionAvail().x;
+                if (avail > 1.0f) ImGui::SetNextItemWidth(avail);
+            }
             ImGui::InputInt(label.c_str(), &v, 0, 0);
         } else {
             ImGui::InputInt(label.c_str(), &v);
@@ -624,9 +629,12 @@ void register_gui_builtins(VM& vm) {
         std::string label = args[0].as_string()->data;
         double v = args[1].to_double();
         bool hidden_label = (label.size() >= 2 && label[0] == '#' && label[1] == '#');
+        bool has_width = (ImGui::GetCurrentContext()->NextItemData.HasFlags & ImGuiNextItemDataFlags_HasWidth) != 0;
         if (hidden_label) {
-            float avail = ImGui::GetContentRegionAvail().x;
-            if (avail > 1.0f) ImGui::SetNextItemWidth(avail);
+            if (!has_width) {
+                float avail = ImGui::GetContentRegionAvail().x;
+                if (avail > 1.0f) ImGui::SetNextItemWidth(avail);
+            }
             ImGui::InputDouble(label.c_str(), &v, 0.0, 0.0);
         } else {
             ImGui::InputDouble(label.c_str(), &v);
