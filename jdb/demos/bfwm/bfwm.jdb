@@ -1,8 +1,165 @@
+' Black Forest WM - single-file championship scoreboard (SQLite + ImGui)
+' with a built-in PDF certificate generator. Self-contained so it runs
+' from one link in the jdBasic WASM playground.
+
+' Certificate (Urkunde) PDF generator - hand-built landscape-A4 PDF.
+' URKUNDE_CREATE(path$, comp$, date$, name$, title$, place) writes one page.
+' No external library: PDF is assembled as bytes and written with TXTWRITER.
+
+DIM PLF$ = CHR$(10)
+
+' Helvetica-Bold advance widths (1/1000 em) for WinAnsi codes 32..126,
+' used to centre text. German umlauts are patched in below.
+DIM HWSTR$ = "278 333 474 556 556 889 722 238 333 333 389 584 278 333 278 278 556 556 556 556 556 556 556 556 556 556 333 333 584 584 584 611 975 722 722 722 722 667 611 778 722 278 556 722 611 833 722 778 667 778 722 667 611 722 667 944 667 667 611 333 278 333 584 556 333 556 611 556 611 556 333 611 611 278 278 556 278 889 611 611 611 611 389 556 333 611 556 778 556 556 500 389 280 389 584"
+DIM HW = IOTA(256, 0) * 0 + 556
+DIM hwi
+DIM HWPARTS = SPLIT(HWSTR$, " ")
+FOR hwi = 0 TO LEN(HWPARTS) - 1
+    HW[32 + hwi] = VAL(HWPARTS[hwi])
+NEXT hwi
+HW[196] = 722
+HW[214] = 778
+HW[220] = 722
+HW[228] = 556
+HW[246] = 611
+HW[252] = 611
+HW[223] = 611
+
+' Visible character -> WinAnsi code. ASC on a multi-byte UTF-8 char returns
+' the lead byte, so the German umlauts are matched explicitly.
+FUNC CCODE(c$)
+    IF c$ = "ä" THEN RETURN 228
+    IF c$ = "ö" THEN RETURN 246
+    IF c$ = "ü" THEN RETURN 252
+    IF c$ = "Ä" THEN RETURN 196
+    IF c$ = "Ö" THEN RETURN 214
+    IF c$ = "Ü" THEN RETURN 220
+    IF c$ = "ß" THEN RETURN 223
+    RETURN ASC(c$)
+ENDFUNC
+
+' Width of a string in points at the given font size.
+FUNC TW(txt$, size, widths)
+    DIM chars = -txt$
+    DIM total = 0
+    DIM j
+    FOR j = 0 TO LEN(chars) - 1
+        DIM code = CCODE(chars[j])
+        IF code >= 0 ANDALSO code < 256 THEN total = total + widths[code]
+    NEXT j
+    RETURN total * size / 1000.0
+ENDFUNC
+
+' Escape PDF-special chars and encode German umlauts to single WinAnsi bytes.
+FUNC ENC$(s$)
+    DIM r$ = s$
+    r$ = REPLACE$(r$, CHR$(92), CHR$(92) + CHR$(92))
+    r$ = REPLACE$(r$, "(", CHR$(92) + "(")
+    r$ = REPLACE$(r$, ")", CHR$(92) + ")")
+    r$ = REPLACE$(r$, "ä", CHR$(228))
+    r$ = REPLACE$(r$, "ö", CHR$(246))
+    r$ = REPLACE$(r$, "ü", CHR$(252))
+    r$ = REPLACE$(r$, "Ä", CHR$(196))
+    r$ = REPLACE$(r$, "Ö", CHR$(214))
+    r$ = REPLACE$(r$, "Ü", CHR$(220))
+    r$ = REPLACE$(r$, "ß", CHR$(223))
+    RETURN r$
+ENDFUNC
+
+FUNC NUM$(n)
+    RETURN LTRIM$(STR$(INT(n)))
+ENDFUNC
+
+FUNC PAD10$(n)
+    DIM s$ = LTRIM$(STR$(INT(n)))
+    DO WHILE LEN(s$) < 10
+        s$ = "0" + s$
+    LOOP
+    RETURN s$
+ENDFUNC
+
+' One centered line of text at page-centre cx, baseline y.
+FUNC CLINE$(cx, y, size, colr$, txt$, widths)
+    DIM x = cx - TW(txt$, size, widths) / 2.0
+    RETURN "BT /F1 " + NUM$(size) + " Tf " + colr$ + " rg " + NUM$(x) + " " + NUM$(y) + " Td (" + ENC$(txt$) + ") Tj ET" + PLF$
+ENDFUNC
+
+' Filled circle via four Bezier arcs (PDF has no circle primitive).
+FUNC PCIRCLE$(cx, cy, r, colr$)
+    DIM k = 0.5523 * r
+    DIM s$ = colr$ + " rg" + PLF$
+    s$ = s$ + NUM$(cx + r) + " " + NUM$(cy) + " m" + PLF$
+    s$ = s$ + NUM$(cx + r) + " " + NUM$(cy + k) + " " + NUM$(cx + k) + " " + NUM$(cy + r) + " " + NUM$(cx) + " " + NUM$(cy + r) + " c" + PLF$
+    s$ = s$ + NUM$(cx - k) + " " + NUM$(cy + r) + " " + NUM$(cx - r) + " " + NUM$(cy + k) + " " + NUM$(cx - r) + " " + NUM$(cy) + " c" + PLF$
+    s$ = s$ + NUM$(cx - r) + " " + NUM$(cy - k) + " " + NUM$(cx - k) + " " + NUM$(cy - r) + " " + NUM$(cx) + " " + NUM$(cy - r) + " c" + PLF$
+    s$ = s$ + NUM$(cx + k) + " " + NUM$(cy - r) + " " + NUM$(cx + r) + " " + NUM$(cy - k) + " " + NUM$(cx + r) + " " + NUM$(cy) + " c" + PLF$
+    s$ = s$ + "f" + PLF$
+    RETURN s$
+ENDFUNC
+
+FUNC URK_CREATE(path$, comp$, dat$, nam$, titl$, place)
+    DIM widths = HW
+    DIM cx = 421
+    DIM navy$ = "0.09 0.11 0.35"
+    DIM gray$ = "0.30 0.30 0.34"
+
+    DIM medal$ = "0.72 0.47 0.25"
+    DIM plabel$ = NUM$(place) + ". Platz"
+    IF place = 1 THEN medal$ = "0.86 0.68 0.20"
+    IF place = 2 THEN medal$ = "0.62 0.63 0.67"
+
+    DIM S$ = ""
+    ' outer + inner frame
+    S$ = S$ + "3 w " + navy$ + " RG" + PLF$
+    S$ = S$ + "28 28 786 539 re S" + PLF$
+    S$ = S$ + "1 w" + PLF$
+    S$ = S$ + "40 40 762 515 re S" + PLF$
+    ' title with an underline the exact width of the word
+    DIM titlew = TW("URKUNDE", 58, widths)
+    S$ = S$ + CLINE$(cx, 470, 58, navy$, "URKUNDE", widths)
+    S$ = S$ + "2 w " + navy$ + " RG " + NUM$(cx - titlew / 2.0) + " 455 m " + NUM$(cx + titlew / 2.0) + " 455 l S" + PLF$
+    ' competition + date
+    S$ = S$ + CLINE$(cx, 415, 24, navy$, comp$, widths)
+    S$ = S$ + CLINE$(cx, 388, 15, gray$, dat$, widths)
+    ' recipient
+    S$ = S$ + CLINE$(cx, 330, 17, gray$, "verliehen an", widths)
+    S$ = S$ + CLINE$(cx, 285, 40, navy$, nam$, widths)
+    IF LEN(titl$) > 0 THEN S$ = S$ + CLINE$(cx, 250, 18, gray$, titl$, widths)
+    ' medal + placement
+    S$ = S$ + PCIRCLE$(cx, 150, 46, medal$)
+    S$ = S$ + CLINE$(cx, 133, 44, "1 1 1", NUM$(place), widths)
+    S$ = S$ + CLINE$(cx, 78, 30, medal$, plabel$, widths)
+
+    DIM objs = []
+    objs = APPEND(objs, "<</Type /Catalog /Pages 2 0 R>>")
+    objs = APPEND(objs, "<</Type /Pages /Kids [3 0 R] /Count 1>>")
+    objs = APPEND(objs, "<</Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources <</Font <</F1 5 0 R>>>> /Contents 4 0 R>>")
+    objs = APPEND(objs, "<</Length " + NUM$(LEN(S$)) + ">>" + PLF$ + "stream" + PLF$ + S$ + "endstream")
+    objs = APPEND(objs, "<</Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding>>")
+
+    DIM pdf$ = "%PDF-1.4" + PLF$
+    DIM xref = []
+    DIM m
+    FOR m = 0 TO LEN(objs) - 1
+        xref = APPEND(xref, LEN(pdf$))
+        pdf$ = pdf$ + NUM$(m + 1) + " 0 obj" + PLF$ + objs[m] + PLF$ + "endobj" + PLF$
+    NEXT m
+    DIM sx = LEN(pdf$)
+    pdf$ = pdf$ + "xref" + PLF$ + "0 " + NUM$(LEN(objs) + 1) + PLF$
+    pdf$ = pdf$ + "0000000000 65535 f" + CHR$(13) + PLF$
+    FOR m = 0 TO LEN(objs) - 1
+        pdf$ = pdf$ + PAD10$(xref[m]) + " 00000 n" + CHR$(13) + PLF$
+    NEXT m
+    pdf$ = pdf$ + "trailer" + PLF$ + "<</Size " + NUM$(LEN(objs) + 1) + " /Root 1 0 R>>" + PLF$
+    pdf$ = pdf$ + "startxref" + PLF$ + NUM$(sx) + PLF$ + "%%EOF" + PLF$
+    TXTWRITER path$, pdf$, FALSE
+    RETURN LEN(pdf$)
+ENDFUNC
+
 ' Black Forest championship scoreboard - SQLite + ImGui.
 ' Tabs: dashboard (record a result, live standings), participants, games.
 ' A game awards p1/p2/p3 points for the 1st/2nd/3rd place (default 3/2/1).
 
-IMPORT URKUNDE
 
 DIM SCRIPT_DIR$ = PATH.DIRNAME$(OS.ARGS()[0])
 DIM DB_PATH$ = PATH.JOIN$(SCRIPT_DIR$, "bfwm.db")
@@ -204,7 +361,7 @@ DO
                         GUI.PUSH_ID(3000 + i)
                         IF GUI.BUTTON("Urkunde") THEN
                             DIM fp$ = PATH.JOIN$(SCRIPT_DIR$, "urkunde_" + LTRIM$(STR$(i + 1)) + "_" + SafeName$(sr{"name"}) + ".pdf")
-                            URKUNDE.CREATE(fp$, CompName$, EventDate$, sr{"name"}, sr{"title"}, i + 1)
+                            URK_CREATE(fp$, CompName$, EventDate$, sr{"name"}, sr{"title"}, i + 1)
                             StatusMsg$ = "Urkunde gespeichert: " + fp$
                         ENDIF
                         GUI.POP_ID

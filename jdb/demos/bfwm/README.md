@@ -11,8 +11,9 @@ so a headline event can be worth more than a side game.
 
 ## Files
 
-- `bfwm.jdb` - the app (four tabs: Dashboard, Teilnehmer, Spiele, Einstellungen)
-- `urkunde.jdb` - a hand-built PDF certificate generator (no external library)
+- `bfwm.jdb` - the whole app in one self-contained file: four tabs (Dashboard,
+  Teilnehmer, Spiele, Einstellungen) plus a built-in PDF certificate generator
+  (hand-rolled PDF, no external library)
 - `bfwm.db` - a fresh SQLite database with the event name preset; delete it to start over
 
 ## Run natively (recommended)
@@ -37,28 +38,25 @@ Data is stored in `bfwm.db` next to the script and survives restarts.
 `F11` toggles fullscreen. Certificates are written next to the script as
 `urkunde_<rank>_<name>.pdf`.
 
-## Run in the browser (jdBasic WASM)
+## Run it straight from GitHub (jdBasic WASM)
 
-The jdBasic WASM playground (`wasm/index.html`, a static site) ships with
-GFX + ImGui + SQLite, so the scoreboard runs unchanged in a browser.
-
-Open the playground with a `?prog=` link that points at the raw source URL:
+Because the app is a single self-contained file, it launches from one link in
+the hosted jdBasic playground (which ships with GFX + ImGui + SQLite). Open:
 
 ```
-<playground-url>/index.html?prog=https://raw.githubusercontent.com/AtomiJD/jdBasic/main/jdb/demos/bfwm/bfwm.jdb&mode=run
+https://jdbasic.org/live/index.html?prog=https://raw.githubusercontent.com/AtomiJD/jdBasic/main/jdb/demos/bfwm/bfwm.jdb&mode=run
 ```
 
-The loader auto-fetches `IMPORT`ed modules (here `urkunde.jdb`) from the same
-folder, so nothing else has to be uploaded.
+The playground fetches the raw source over HTTP and runs it - nothing to
+install. Swap `&mode=run` for `&mode=load` to open it in the editor first.
 
 Browser caveats (native is better for a real event):
 
-- SQLite lives in the in-memory virtual filesystem, so the database resets on
-  page reload - it is not persisted between sessions. The bundled `bfwm.db` is
-  not loaded in the browser; you start with an empty database and the default
-  event name from the code.
-- A generated PDF is written into the browser's virtual filesystem, but there
-  is no download button wired up, so print certificates from the native build.
+- SQLite lives in an in-memory filesystem, so the database resets on page
+  reload; you start empty with the default event name baked into the code (the
+  bundled `bfwm.db` is not loaded in the browser).
+- A generated certificate PDF is written to the in-memory filesystem but has no
+  download button, so print real certificates from the native build.
 
 ## Using it
 
