@@ -44,11 +44,15 @@ Because the app is a single self-contained file, it launches from one link in
 the hosted jdBasic playground (which ships with GFX + ImGui + SQLite). Open:
 
 ```
-https://jdbasic.org/live/index.html?prog=https://raw.githubusercontent.com/AtomiJD/jdBasic/main/jdb/demos/bfwm/bfwm.jdb&mode=run
+https://jdbasic.org/live/index.html?prog=https%3A%2F%2Fraw.githubusercontent.com%2FAtomiJD%2FjdBasic%2Fmain%2Fjdb%2Fdemos%2Fbfwm%2Fbfwm.jdb&mode=run
 ```
 
-The playground fetches the raw source over HTTP and runs it - nothing to
-install. Swap `&mode=run` for `&mode=load` to open it in the editor first.
+The `prog` value must be percent-encoded (the `%3A%2F%2F` is just `://`).
+Passing the inner URL raw works in a desktop browser, but phone messaging apps
+truncate the link at the nested `://` or `&`, so the program never arrives.
+The playground then fetches that source over HTTP and runs it - nothing to
+install. On iOS, WebGL needs a tap: if the canvas stays blank, use `&mode=load`
+instead of `&mode=run` and press Run once.
 
 Browser caveats (native is better for a real event):
 
