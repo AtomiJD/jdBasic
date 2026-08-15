@@ -1,15 +1,15 @@
-' Black Forest WM - single-file championship scoreboard (SQLite + ImGui)
+' Black Forest Games - single-file championship scoreboard (SQLite + ImGui)
 ' with a built-in PDF certificate generator. Self-contained so it runs
 ' from one link in the jdBasic WASM playground.
 
-' Certificate (Urkunde) PDF generator - hand-built landscape-A4 PDF.
-' URKUNDE_CREATE(path$, comp$, date$, name$, title$, place) writes one page.
+' Certificate PDF generator - hand-built landscape-A4 PDF.
+' URK_CREATE(path$, event$, date$, name$, title$, place) writes one page.
 ' No external library: PDF is assembled as bytes and written with TXTWRITER.
 
 DIM PLF$ = CHR$(10)
 
 ' Helvetica-Bold advance widths (1/1000 em) for WinAnsi codes 32..126,
-' used to centre text. German umlauts are patched in below.
+' used to centre text.
 DIM HWSTR$ = "278 333 474 556 556 889 722 238 333 333 389 584 278 333 278 278 556 556 556 556 556 556 556 556 556 556 333 333 584 584 584 611 975 722 722 722 722 667 611 778 722 278 556 722 611 833 722 778 667 778 722 667 611 722 667 944 667 667 611 333 278 333 584 556 333 556 611 556 611 556 333 611 611 278 278 556 278 889 611 611 611 611 389 556 333 611 556 778 556 556 500 389 280 389 584"
 DIM HW = IOTA(256, 0) * 0 + 556
 DIM hwi
@@ -17,24 +17,10 @@ DIM HWPARTS = SPLIT(HWSTR$, " ")
 FOR hwi = 0 TO LEN(HWPARTS) - 1
     HW[32 + hwi] = VAL(HWPARTS[hwi])
 NEXT hwi
-HW[196] = 722
-HW[214] = 778
-HW[220] = 722
-HW[228] = 556
-HW[246] = 611
-HW[252] = 611
-HW[223] = 611
 
 ' Visible character -> WinAnsi code. ASC on a multi-byte UTF-8 char returns
-' the lead byte, so the German umlauts are matched explicitly.
+' the byte value.
 FUNC CCODE(c$)
-    IF c$ = "ä" THEN RETURN 228
-    IF c$ = "ö" THEN RETURN 246
-    IF c$ = "ü" THEN RETURN 252
-    IF c$ = "Ä" THEN RETURN 196
-    IF c$ = "Ö" THEN RETURN 214
-    IF c$ = "Ü" THEN RETURN 220
-    IF c$ = "ß" THEN RETURN 223
     RETURN ASC(c$)
 ENDFUNC
 
@@ -50,19 +36,12 @@ FUNC TW(txt$, size, widths)
     RETURN total * size / 1000.0
 ENDFUNC
 
-' Escape PDF-special chars and encode German umlauts to single WinAnsi bytes.
+' Escape the PDF-special characters in a text literal.
 FUNC ENC$(s$)
     DIM r$ = s$
     r$ = REPLACE$(r$, CHR$(92), CHR$(92) + CHR$(92))
     r$ = REPLACE$(r$, "(", CHR$(92) + "(")
     r$ = REPLACE$(r$, ")", CHR$(92) + ")")
-    r$ = REPLACE$(r$, "ä", CHR$(228))
-    r$ = REPLACE$(r$, "ö", CHR$(246))
-    r$ = REPLACE$(r$, "ü", CHR$(252))
-    r$ = REPLACE$(r$, "Ä", CHR$(196))
-    r$ = REPLACE$(r$, "Ö", CHR$(214))
-    r$ = REPLACE$(r$, "Ü", CHR$(220))
-    r$ = REPLACE$(r$, "ß", CHR$(223))
     RETURN r$
 ENDFUNC
 
@@ -104,9 +83,12 @@ FUNC URK_CREATE(path$, comp$, dat$, nam$, titl$, place)
     DIM gray$ = "0.30 0.30 0.34"
 
     DIM medal$ = "0.72 0.47 0.25"
-    DIM plabel$ = NUM$(place) + ". Platz"
+    DIM plabel$ = NUM$(place) + "th Place"
     IF place = 1 THEN medal$ = "0.86 0.68 0.20"
     IF place = 2 THEN medal$ = "0.62 0.63 0.67"
+    IF place = 1 THEN plabel$ = "1st Place"
+    IF place = 2 THEN plabel$ = "2nd Place"
+    IF place = 3 THEN plabel$ = "3rd Place"
 
     DIM S$ = ""
     ' outer + inner frame
@@ -115,14 +97,14 @@ FUNC URK_CREATE(path$, comp$, dat$, nam$, titl$, place)
     S$ = S$ + "1 w" + PLF$
     S$ = S$ + "40 40 762 515 re S" + PLF$
     ' title with an underline the exact width of the word
-    DIM titlew = TW("URKUNDE", 58, widths)
-    S$ = S$ + CLINE$(cx, 470, 58, navy$, "URKUNDE", widths)
+    DIM titlew = TW("CERTIFICATE", 58, widths)
+    S$ = S$ + CLINE$(cx, 470, 58, navy$, "CERTIFICATE", widths)
     S$ = S$ + "2 w " + navy$ + " RG " + NUM$(cx - titlew / 2.0) + " 455 m " + NUM$(cx + titlew / 2.0) + " 455 l S" + PLF$
     ' competition + date
     S$ = S$ + CLINE$(cx, 415, 24, navy$, comp$, widths)
     S$ = S$ + CLINE$(cx, 388, 15, gray$, dat$, widths)
     ' recipient
-    S$ = S$ + CLINE$(cx, 330, 17, gray$, "verliehen an", widths)
+    S$ = S$ + CLINE$(cx, 330, 17, gray$, "awarded to", widths)
     S$ = S$ + CLINE$(cx, 285, 40, navy$, nam$, widths)
     IF LEN(titl$) > 0 THEN S$ = S$ + CLINE$(cx, 250, 18, gray$, titl$, widths)
     ' medal + placement
@@ -178,19 +160,12 @@ SQL.EXEC(DB, "CREATE TABLE IF NOT EXISTS games(id INTEGER PRIMARY KEY AUTOINCREM
 SQL.EXEC(DB, "CREATE TABLE IF NOT EXISTS results(id INTEGER PRIMARY KEY AUTOINCREMENT, game_id INTEGER, part_id INTEGER, place INTEGER)")
 SQL.EXEC(DB, "CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT)")
 
-DIM MonNames = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
-DIM TodayDE$ = LTRIM$(STR$(DAY(NOW()))) + ". " + MonNames[MONTH(NOW()) - 1] + " " + LTRIM$(STR$(YEAR(NOW())))
+DIM MonNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+DIM Today$ = MonNames[MONTH(NOW()) - 1] + " " + LTRIM$(STR$(DAY(NOW()))) + ", " + LTRIM$(STR$(YEAR(NOW())))
 
-' Filename-safe form of a participant name (ASCII, no spaces).
+' Filename-safe form of a participant name (no spaces).
 FUNC SafeName$(s$)
     DIM r$ = s$
-    r$ = REPLACE$(r$, "ä", "ae")
-    r$ = REPLACE$(r$, "ö", "oe")
-    r$ = REPLACE$(r$, "ü", "ue")
-    r$ = REPLACE$(r$, "Ä", "Ae")
-    r$ = REPLACE$(r$, "Ö", "Oe")
-    r$ = REPLACE$(r$, "Ü", "Ue")
-    r$ = REPLACE$(r$, "ß", "ss")
     r$ = REPLACE$(r$, " ", "_")
     RETURN r$
 ENDFUNC
@@ -230,7 +205,7 @@ ENDFUNC
 ' across the room. The ImGui coordinate space is the physical window, so the
 ' fill size below is SCALE * the logical screen size.
 DIM SCALE = 2
-SCREEN 1280, 800, "Black Forest WM 2026", SCALE
+SCREEN 1280, 800, "Black Forest Games", SCALE
 GUI.THEME "DARK"
 
 SUB HandleQuit(QuitData)
@@ -248,14 +223,14 @@ ENDSUB
 ON "KEYDOWN" CALL HandleKey
 
 DIM Running = 1
-DIM StatusMsg$ = "Bereit."
+DIM StatusMsg$ = "Ready."
 
-DIM CompName$ = "Schwarzwald-Olympiade 2026"
+DIM CompName$ = "Black Forest Games 2026"
 DIM crows = SQL.QUERY(DB, "SELECT v FROM settings WHERE k = 'comp'")
 IF LEN(crows) > 0 THEN CompName$ = crows[0]{"v"}
 DIM CompSaved$ = CompName$
 
-DIM EventDate$ = TodayDE$
+DIM EventDate$ = Today$
 DIM drows = SQL.QUERY(DB, "SELECT v FROM settings WHERE k = 'date'")
 IF LEN(drows) > 0 THEN EventDate$ = drows[0]{"v"}
 DIM DateSaved$ = EventDate$
@@ -263,7 +238,7 @@ DIM DateSaved$ = EventDate$
 DIM SelGame = 0
 DIM SelPart = 0
 DIM SelPlace = 0
-DIM PlaceLabels = ["1. Platz", "2. Platz", "3. Platz"]
+DIM PlaceLabels = ["1st place", "2nd place", "3rd place"]
 
 DIM InPartNr = 0
 DIM InPartName$ = ""
@@ -276,7 +251,7 @@ DIM InGameP1 = 3
 DIM InGameP2 = 2
 DIM InGameP3 = 1
 
-' Edit buffers for the "Aendern" modals.
+' Edit buffers for the "Edit" modals.
 DIM OpenPartEdit = FALSE
 DIM EditPartId = 0
 DIM EditPartNr = 0
@@ -308,45 +283,45 @@ DO
     IF SelGame >= LEN(Games) THEN SelGame = 0
     IF SelPart >= LEN(Parts) THEN SelPart = 0
 
-    GUI.BEGIN "Black Forest WM 2026", 0, 0, SW, SH, TRUE, WinFlags
+    GUI.BEGIN "Black Forest Games", 0, 0, SW, SH, TRUE, WinFlags
         IF GUI.BEGIN_TAB_BAR("tabs") THEN
 
             IF GUI.BEGIN_TAB_ITEM("Dashboard") THEN
-                GUI.SEPARATOR_TEXT "Ergebnis eintragen"
+                GUI.SEPARATOR_TEXT "Record a result"
                 IF LEN(Games) = 0 ORELSE LEN(Parts) = 0 THEN
-                    GUI.TEXT "Erst Spiele und Teilnehmer anlegen."
+                    GUI.TEXT "Add games and participants first."
                 ELSE
                     DIM gLabels = LabelsOf(Games)
                     DIM pLabels = LabelsOf(Parts)
-                    GUI.TEXT "Spiel:      "
+                    GUI.TEXT "Game:       "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     SelGame = GUI.COMBO("##game", SelGame, gLabels)
-                    GUI.TEXT "Teilnehmer: "
+                    GUI.TEXT "Participant:"
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     SelPart = GUI.COMBO("##part", SelPart, pLabels)
-                    GUI.TEXT "Platz:      "
+                    GUI.TEXT "Place:      "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     SelPlace = GUI.COMBO("##place", SelPlace, PlaceLabels)
-                    IF GUI.BUTTON("Eintragen", 160, 0) THEN
+                    IF GUI.BUTTON("Record", 160, 0) THEN
                         DIM g = Games[SelGame]
                         DIM p = Parts[SelPart]
                         DIM placeVal = SelPlace + 1
                         SQL.EXEC(DB, "INSERT INTO results(game_id, part_id, place) VALUES(" + STR$(g{"id"}) + ", " + STR$(p{"id"}) + ", " + STR$(placeVal) + ")")
-                        StatusMsg$ = p{"name"} + " -> " + STR$(placeVal) + ". Platz in " + g{"name"}
+                        StatusMsg$ = p{"name"} + ": place " + STR$(placeVal) + " in " + g{"name"}
                     ENDIF
                 ENDIF
 
-                GUI.SEPARATOR_TEXT "Rangliste (" + CompName$ + ", " + EventDate$ + ")"
+                GUI.SEPARATOR_TEXT "Standings (" + CompName$ + ", " + EventDate$ + ")"
                 IF GUI.BEGIN_TABLE("standings", 6, TableFlags) THEN
-                    GUI.TABLE_SETUP_COLUMN "Rang"
-                    GUI.TABLE_SETUP_COLUMN "Nr"
+                    GUI.TABLE_SETUP_COLUMN "Rank"
+                    GUI.TABLE_SETUP_COLUMN "No"
                     GUI.TABLE_SETUP_COLUMN "Name"
-                    GUI.TABLE_SETUP_COLUMN "Titel"
-                    GUI.TABLE_SETUP_COLUMN "Punkte"
-                    GUI.TABLE_SETUP_COLUMN "Urkunde"
+                    GUI.TABLE_SETUP_COLUMN "Title"
+                    GUI.TABLE_SETUP_COLUMN "Points"
+                    GUI.TABLE_SETUP_COLUMN "Certificate"
                     GUI.TABLE_HEADERS_ROW
                     FOR i = 0 TO LEN(Standings) - 1
                         DIM sr = Standings[i]
@@ -363,24 +338,24 @@ DO
                         GUI.TEXT STR$(sr{"pts"})
                         GUI.TABLE_SET_COLUMN_INDEX(5)
                         GUI.PUSH_ID(3000 + i)
-                        IF GUI.BUTTON("Urkunde") THEN
-                            DIM fp$ = PATH.JOIN$(SCRIPT_DIR$, "urkunde_" + LTRIM$(STR$(i + 1)) + "_" + SafeName$(sr{"name"}) + ".pdf")
+                        IF GUI.BUTTON("Certificate") THEN
+                            DIM fp$ = PATH.JOIN$(SCRIPT_DIR$, "certificate_" + LTRIM$(STR$(i + 1)) + "_" + SafeName$(sr{"name"}) + ".pdf")
                             URK_CREATE(fp$, CompName$, EventDate$, sr{"name"}, sr{"title"}, i + 1)
-                            StatusMsg$ = "Urkunde gespeichert: " + fp$
+                            StatusMsg$ = "Certificate saved: " + fp$
                         ENDIF
                         GUI.POP_ID
                     NEXT i
                     GUI.END_TABLE
                 ENDIF
 
-                GUI.SEPARATOR_TEXT "Letzte Ergebnisse"
+                GUI.SEPARATOR_TEXT "Recent results"
                 GUI.BEGIN_CHILD "reslist", 0, 180, TRUE
                     IF GUI.BEGIN_TABLE("results", 5, TableFlags) THEN
-                        GUI.TABLE_SETUP_COLUMN "Spiel"
-                        GUI.TABLE_SETUP_COLUMN "Teilnehmer"
-                        GUI.TABLE_SETUP_COLUMN "Platz"
-                        GUI.TABLE_SETUP_COLUMN "Punkte"
-                        GUI.TABLE_SETUP_COLUMN "Aktion"
+                        GUI.TABLE_SETUP_COLUMN "Game"
+                        GUI.TABLE_SETUP_COLUMN "Participants"
+                        GUI.TABLE_SETUP_COLUMN "Place"
+                        GUI.TABLE_SETUP_COLUMN "Points"
+                        GUI.TABLE_SETUP_COLUMN "Action"
                         GUI.TABLE_HEADERS_ROW
                         FOR i = 0 TO LEN(Results) - 1
                             DIM rr = Results[i]
@@ -395,9 +370,9 @@ DO
                             GUI.TEXT STR$(rr{"pts"})
                             GUI.TABLE_SET_COLUMN_INDEX(4)
                             GUI.PUSH_ID(i)
-                            IF GUI.BUTTON("Loeschen") THEN
+                            IF GUI.BUTTON("Delete") THEN
                                 SQL.EXEC(DB, "DELETE FROM results WHERE id = " + STR$(rr{"id"}))
-                                StatusMsg$ = "Ergebnis geloescht."
+                                StatusMsg$ = "Result deleted."
                             ENDIF
                             GUI.POP_ID
                         NEXT i
@@ -408,9 +383,9 @@ DO
                 GUI.END_TAB_ITEM
             ENDIF
 
-            IF GUI.BEGIN_TAB_ITEM("Teilnehmer") THEN
-                GUI.SEPARATOR_TEXT "Neuer Teilnehmer"
-                GUI.TEXT "Nr:       "
+            IF GUI.BEGIN_TAB_ITEM("Participants") THEN
+                GUI.SEPARATOR_TEXT "New participant"
+                GUI.TEXT "No:       "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InPartNr = GUI.INPUT_INT("##pnr", InPartNr)
@@ -418,34 +393,34 @@ DO
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InPartName$ = GUI.INPUT("##pname", InPartName$)
-                GUI.TEXT "Titel:    "
+                GUI.TEXT "Title:    "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InPartTitle$ = GUI.INPUT("##ptitle", InPartTitle$)
-                GUI.TEXT "Freifeld: "
+                GUI.TEXT "Extra:    "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InPartExtra$ = GUI.INPUT("##pextra", InPartExtra$)
-                IF GUI.BUTTON("Hinzufuegen##addpart", 160, 0) THEN
+                IF GUI.BUTTON("Add##addpart", 160, 0) THEN
                     IF LEN(InPartName$) > 0 THEN
                         SQL.EXEC(DB, "INSERT INTO participants(nr, name, title, extra) VALUES(" + STR$(InPartNr) + ", '" + Esc$(InPartName$) + "', '" + Esc$(InPartTitle$) + "', '" + Esc$(InPartExtra$) + "')")
-                        StatusMsg$ = "Teilnehmer angelegt: " + InPartName$
+                        StatusMsg$ = "Participant added: " + InPartName$
                         InPartName$ = ""
                         InPartTitle$ = ""
                         InPartExtra$ = ""
                         InPartNr = InPartNr + 1
                     ELSE
-                        StatusMsg$ = "Name darf nicht leer sein."
+                        StatusMsg$ = "Name must not be empty."
                     ENDIF
                 ENDIF
 
-                GUI.SEPARATOR_TEXT "Teilnehmer (" + STR$(LEN(Parts)) + ")"
+                GUI.SEPARATOR_TEXT "Participants (" + STR$(LEN(Parts)) + ")"
                 IF GUI.BEGIN_TABLE("parttable", 5, TableFlags) THEN
-                    GUI.TABLE_SETUP_COLUMN "Nr"
+                    GUI.TABLE_SETUP_COLUMN "No"
                     GUI.TABLE_SETUP_COLUMN "Name"
-                    GUI.TABLE_SETUP_COLUMN "Titel"
-                    GUI.TABLE_SETUP_COLUMN "Freifeld"
-                    GUI.TABLE_SETUP_COLUMN "Aktion"
+                    GUI.TABLE_SETUP_COLUMN "Title"
+                    GUI.TABLE_SETUP_COLUMN "Extra"
+                    GUI.TABLE_SETUP_COLUMN "Action"
                     GUI.TABLE_HEADERS_ROW
                     FOR i = 0 TO LEN(Parts) - 1
                         DIM pr = Parts[i]
@@ -460,7 +435,7 @@ DO
                         GUI.TEXT pr{"extra"}
                         GUI.TABLE_SET_COLUMN_INDEX(4)
                         GUI.PUSH_ID(1000 + i)
-                        IF GUI.BUTTON("Aendern") THEN
+                        IF GUI.BUTTON("Edit") THEN
                             EditPartId = pr{"id"}
                             EditPartNr = pr{"nr"}
                             EditPartName$ = pr{"name"}
@@ -469,10 +444,10 @@ DO
                             OpenPartEdit = TRUE
                         ENDIF
                         GUI.SAME_LINE
-                        IF GUI.BUTTON("Loeschen") THEN
+                        IF GUI.BUTTON("Delete") THEN
                             SQL.EXEC(DB, "DELETE FROM participants WHERE id = " + STR$(pr{"id"}))
                             SQL.EXEC(DB, "DELETE FROM results WHERE part_id = " + STR$(pr{"id"}))
-                            StatusMsg$ = "Teilnehmer geloescht."
+                            StatusMsg$ = "Participant deleted."
                         ENDIF
                         GUI.POP_ID
                     NEXT i
@@ -480,11 +455,11 @@ DO
                 ENDIF
 
                 IF OpenPartEdit THEN
-                    GUI.OPEN_POPUP("Teilnehmer aendern")
+                    GUI.OPEN_POPUP("Edit participant")
                     OpenPartEdit = FALSE
                 ENDIF
-                IF GUI.BEGIN_POPUP_MODAL("Teilnehmer aendern", TRUE) THEN
-                    GUI.TEXT "Nr:       "
+                IF GUI.BEGIN_POPUP_MODAL("Edit participant", TRUE) THEN
+                    GUI.TEXT "No:       "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditPartNr = GUI.INPUT_INT("##epnr", EditPartNr)
@@ -492,22 +467,22 @@ DO
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditPartName$ = GUI.INPUT("##epname", EditPartName$)
-                    GUI.TEXT "Titel:    "
+                    GUI.TEXT "Title:    "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditPartTitle$ = GUI.INPUT("##eptitle", EditPartTitle$)
-                    GUI.TEXT "Freifeld: "
+                    GUI.TEXT "Extra:    "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditPartExtra$ = GUI.INPUT("##epextra", EditPartExtra$)
                     GUI.SEPARATOR
-                    IF GUI.BUTTON("Speichern", 200, 0) THEN
+                    IF GUI.BUTTON("Save", 200, 0) THEN
                         SQL.EXEC(DB, "UPDATE participants SET nr = " + STR$(EditPartNr) + ", name = '" + Esc$(EditPartName$) + "', title = '" + Esc$(EditPartTitle$) + "', extra = '" + Esc$(EditPartExtra$) + "' WHERE id = " + STR$(EditPartId))
-                        StatusMsg$ = "Teilnehmer geaendert: " + EditPartName$
+                        StatusMsg$ = "Participant updated: " + EditPartName$
                         GUI.CLOSE_CURRENT_POPUP
                     ENDIF
                     GUI.SAME_LINE
-                    IF GUI.BUTTON("Abbrechen", 200, 0) THEN
+                    IF GUI.BUTTON("Cancel", 200, 0) THEN
                         GUI.CLOSE_CURRENT_POPUP
                     ENDIF
                     GUI.END_POPUP
@@ -516,9 +491,9 @@ DO
                 GUI.END_TAB_ITEM
             ENDIF
 
-            IF GUI.BEGIN_TAB_ITEM("Spiele") THEN
-                GUI.SEPARATOR_TEXT "Neues Spiel"
-                GUI.TEXT "Nr:       "
+            IF GUI.BEGIN_TAB_ITEM("Games") THEN
+                GUI.SEPARATOR_TEXT "New game"
+                GUI.TEXT "No:       "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InGameNr = GUI.INPUT_INT("##gnr", InGameNr)
@@ -526,40 +501,40 @@ DO
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InGameName$ = GUI.INPUT("##gname", InGameName$)
-                GUI.TEXT "1. Platz: "
+                GUI.TEXT "1st pts:  "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InGameP1 = GUI.INPUT_INT("##gp1", InGameP1)
-                GUI.TEXT "2. Platz: "
+                GUI.TEXT "2nd pts:  "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InGameP2 = GUI.INPUT_INT("##gp2", InGameP2)
-                GUI.TEXT "3. Platz: "
+                GUI.TEXT "3rd pts:  "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 InGameP3 = GUI.INPUT_INT("##gp3", InGameP3)
-                IF GUI.BUTTON("Hinzufuegen##addgame", 160, 0) THEN
+                IF GUI.BUTTON("Add##addgame", 160, 0) THEN
                     IF LEN(InGameName$) > 0 THEN
                         SQL.EXEC(DB, "INSERT INTO games(nr, name, p1, p2, p3) VALUES(" + STR$(InGameNr) + ", '" + Esc$(InGameName$) + "', " + STR$(InGameP1) + ", " + STR$(InGameP2) + ", " + STR$(InGameP3) + ")")
-                        StatusMsg$ = "Spiel angelegt: " + InGameName$
+                        StatusMsg$ = "Game added: " + InGameName$
                         InGameName$ = ""
                         InGameNr = InGameNr + 1
                         InGameP1 = 3
                         InGameP2 = 2
                         InGameP3 = 1
                     ELSE
-                        StatusMsg$ = "Name darf nicht leer sein."
+                        StatusMsg$ = "Name must not be empty."
                     ENDIF
                 ENDIF
 
-                GUI.SEPARATOR_TEXT "Spiele (" + STR$(LEN(Games)) + ")"
+                GUI.SEPARATOR_TEXT "Games (" + STR$(LEN(Games)) + ")"
                 IF GUI.BEGIN_TABLE("gametable", 6, TableFlags) THEN
-                    GUI.TABLE_SETUP_COLUMN "Nr"
+                    GUI.TABLE_SETUP_COLUMN "No"
                     GUI.TABLE_SETUP_COLUMN "Name"
                     GUI.TABLE_SETUP_COLUMN "1."
                     GUI.TABLE_SETUP_COLUMN "2."
                     GUI.TABLE_SETUP_COLUMN "3."
-                    GUI.TABLE_SETUP_COLUMN "Aktion"
+                    GUI.TABLE_SETUP_COLUMN "Action"
                     GUI.TABLE_HEADERS_ROW
                     FOR i = 0 TO LEN(Games) - 1
                         DIM gr = Games[i]
@@ -576,7 +551,7 @@ DO
                         GUI.TEXT STR$(gr{"p3"})
                         GUI.TABLE_SET_COLUMN_INDEX(5)
                         GUI.PUSH_ID(2000 + i)
-                        IF GUI.BUTTON("Aendern") THEN
+                        IF GUI.BUTTON("Edit") THEN
                             EditGameId = gr{"id"}
                             EditGameNr = gr{"nr"}
                             EditGameName$ = gr{"name"}
@@ -586,10 +561,10 @@ DO
                             OpenGameEdit = TRUE
                         ENDIF
                         GUI.SAME_LINE
-                        IF GUI.BUTTON("Loeschen") THEN
+                        IF GUI.BUTTON("Delete") THEN
                             SQL.EXEC(DB, "DELETE FROM games WHERE id = " + STR$(gr{"id"}))
                             SQL.EXEC(DB, "DELETE FROM results WHERE game_id = " + STR$(gr{"id"}))
-                            StatusMsg$ = "Spiel geloescht."
+                            StatusMsg$ = "Game deleted."
                         ENDIF
                         GUI.POP_ID
                     NEXT i
@@ -597,11 +572,11 @@ DO
                 ENDIF
 
                 IF OpenGameEdit THEN
-                    GUI.OPEN_POPUP("Spiel aendern")
+                    GUI.OPEN_POPUP("Edit game")
                     OpenGameEdit = FALSE
                 ENDIF
-                IF GUI.BEGIN_POPUP_MODAL("Spiel aendern", TRUE) THEN
-                    GUI.TEXT "Nr:       "
+                IF GUI.BEGIN_POPUP_MODAL("Edit game", TRUE) THEN
+                    GUI.TEXT "No:       "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditGameNr = GUI.INPUT_INT("##egnr", EditGameNr)
@@ -609,26 +584,26 @@ DO
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditGameName$ = GUI.INPUT("##egname", EditGameName$)
-                    GUI.TEXT "1. Platz: "
+                    GUI.TEXT "1st pts:  "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditGameP1 = GUI.INPUT_INT("##egp1", EditGameP1)
-                    GUI.TEXT "2. Platz: "
+                    GUI.TEXT "2nd pts:  "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditGameP2 = GUI.INPUT_INT("##egp2", EditGameP2)
-                    GUI.TEXT "3. Platz: "
+                    GUI.TEXT "3rd pts:  "
                     GUI.SAME_LINE
                     GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                     EditGameP3 = GUI.INPUT_INT("##egp3", EditGameP3)
                     GUI.SEPARATOR
-                    IF GUI.BUTTON("Speichern", 200, 0) THEN
+                    IF GUI.BUTTON("Save", 200, 0) THEN
                         SQL.EXEC(DB, "UPDATE games SET nr = " + STR$(EditGameNr) + ", name = '" + Esc$(EditGameName$) + "', p1 = " + STR$(EditGameP1) + ", p2 = " + STR$(EditGameP2) + ", p3 = " + STR$(EditGameP3) + " WHERE id = " + STR$(EditGameId))
-                        StatusMsg$ = "Spiel geaendert: " + EditGameName$
+                        StatusMsg$ = "Game updated: " + EditGameName$
                         GUI.CLOSE_CURRENT_POPUP
                     ENDIF
                     GUI.SAME_LINE
-                    IF GUI.BUTTON("Abbrechen", 200, 0) THEN
+                    IF GUI.BUTTON("Cancel", 200, 0) THEN
                         GUI.CLOSE_CURRENT_POPUP
                     ENDIF
                     GUI.END_POPUP
@@ -638,8 +613,8 @@ DO
             ENDIF
 
             IF GUI.BEGIN_TAB_ITEM("Einstellungen") THEN
-                GUI.SEPARATOR_TEXT "Veranstaltung"
-                GUI.TEXT "Diese Angaben stehen auf jeder Urkunde."
+                GUI.SEPARATOR_TEXT "Event"
+                GUI.TEXT "These fields go on every certificate."
                 GUI.DUMMY 0, 10
                 GUI.TEXT "Name:  "
                 GUI.SAME_LINE
@@ -649,7 +624,7 @@ DO
                     SQL.EXEC(DB, "INSERT OR REPLACE INTO settings(k, v) VALUES('comp', '" + Esc$(CompName$) + "')")
                     CompSaved$ = CompName$
                 ENDIF
-                GUI.TEXT "Datum: "
+                GUI.TEXT "Date:  "
                 GUI.SAME_LINE
                 GUI.SET_NEXT_ITEM_WIDTH(FieldW)
                 EventDate$ = GUI.INPUT("##date", EventDate$)
@@ -658,7 +633,7 @@ DO
                     DateSaved$ = EventDate$
                 ENDIF
                 GUI.DUMMY 0, 10
-                GUI.TEXT "F11 schaltet Vollbild um."
+                GUI.TEXT "F11 toggles fullscreen."
                 GUI.END_TAB_ITEM
             ENDIF
 

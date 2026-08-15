@@ -1,4 +1,4 @@
-# Black Forest WM - a championship scoreboard in jdBasic
+# Black Forest Games - a championship scoreboard in jdBasic
 
 A small, self-contained tournament manager written in pure jdBasic
 (SQLite + ImGui). Track participants and games, record placements,
@@ -12,7 +12,7 @@ so a headline event can be worth more than a side game.
 ## Files
 
 - `bfwm.jdb` - the whole app in one self-contained file: four tabs (Dashboard,
-  Teilnehmer, Spiele, Einstellungen) plus a built-in PDF certificate generator
+  Participants, Games, Settings) plus a built-in PDF certificate generator
   (hand-rolled PDF, no external library)
 - `bfwm.db` - a fresh SQLite database with the event name preset; delete it to start over
 
@@ -36,7 +36,7 @@ build\jdBasic.exe jdb\demos\bfwm\bfwm.jdb
 
 Data is stored in `bfwm.db` next to the script and survives restarts.
 `F11` toggles fullscreen. Certificates are written next to the script as
-`urkunde_<rank>_<name>.pdf`.
+`certificate_<rank>_<name>.pdf`.
 
 ## Run it straight from GitHub (jdBasic WASM)
 
@@ -64,14 +64,14 @@ Browser caveats (native is better for a real event):
 
 ## Using it
 
-1. **Einstellungen** - set the event name and date (both go on every certificate).
-2. **Spiele** - add each game with its 1st / 2nd / 3rd point values.
-3. **Teilnehmer** - add each participant (number, name, an optional title, a free field).
+1. **Settings** - set the event name and date (both go on every certificate).
+2. **Games** - add each game with its 1st / 2nd / 3rd point values.
+3. **Participants** - add each participant (number, name, an optional title, a free field).
 4. **Dashboard** - after each game pick game + participant + place and hit
-   *Eintragen*. The **Rangliste** re-sorts by total points instantly.
-5. Click **Urkunde** next to a participant to write their certificate PDF,
+   *Record*. The **Standings** re-sorts by total points instantly.
+5. Click **Certificate** next to a participant to write their certificate PDF,
    showing the event, date, name, title and final placement (gold / silver /
    bronze medal).
 
-Records can be edited or deleted at any time via the *Aendern* / *Loeschen*
+Records can be edited or deleted at any time via the *Edit* / *Delete*
 buttons; points recompute automatically.
