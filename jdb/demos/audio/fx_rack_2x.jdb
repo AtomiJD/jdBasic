@@ -1,0 +1,865 @@
+' fx_rack.jdb - generic, JSON-driven ImGui pedalboard for the live FX engine.
+' fx_effects.json drives the controls (one slider per schema param); the rack
+' model is the source of truth and the engine chain is rebuilt from it.
+' Build flags: GFX IMGUI SOUND FX MIDI MINIAUDIO.
+
+DIM cfgDir$    = PATH.DIRNAME$(OS.ARGS()[0])
+DIM cfgEffects$ = PATH.JOIN$(cfgDir$, "fx_effects.json")
+DIM cfgPresets$ = PATH.JOIN$(cfgDir$, "fx_presets.json")
+DIM cfgRack$    = PATH.JOIN$(cfgDir$, "fx_rack_user.json")
+DIM cfgAi$      = PATH.JOIN$(cfgDir$, "fx_ai.json")
+
+DIM schema, typeNames, presetsDoc, pnames
+DIM rack = []
+DIM eng = []                 ' engine node index per rack entry (-1 = bypassed)
+DIM chan = 0
+DIM inIdx = 0, outIdx = 0
+DIM capNames = []
+DIM pbNames = []
+DIM mgain = 0.7
+DIM addSel = 0
+DIM splitOn = FALSE          ' feed two branches instead of one signal
+DIM levelA = 1.0, panA = -1.0
+DIM levelB = 1.0, panB = 1.0
+DIM busNames = ["main", "A", "B"]
+DIM saveName$ = "My Tone"
+DIM status$ = "press Start to monitor"
+DIM appRunning = TRUE
+DIM showScope = TRUE
+DIM recArmed = FALSE
+DIM recCount = 0
+DIM lastHz = 0
+DIM lastHzTick = 0
+DIM aiCfg, aiOrder, aiProviders
+DIM aiProvSel = 0
+DIM aiPrompt$ = "warm clean with light reverb"
+DIM NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+DIM tapTimes = []
+DIM tapBpm = 0
+DIM tapSubSel = 0
+DIM tapSubs = ["1/4", "1/8", "dotted 8th", "triplet"]
+DIM tapMul  = [1.0, 0.5, 0.75, 0.3333333]
+
+DIM midiInNames = []
+DIM midiPortSel = 0
+DIM midiOpen = FALSE
+DIM midiHandle = -1
+DIM midiLearn = FALSE
+DIM learnNode = -1
+DIM learnKey$ = ""
+DIM learnLo = 0.0, learnHi = 1.0
+DIM midiMaps = []            ' each mapping: { cc, node, key, lo, hi }
+DIM midiLast$ = ""           ' last received message (port activity indicator)
+
+' ---- model helpers ----
+
+FUNC EFFECT_DEFS(ptype$)
+    RETURN schema{"effects"}{ptype$}{"params"}
+ENDFUNC
+
+FUNC NEW_NODE(ptype$)
+    DIM nd AS MAP
+    nd{"type"} = ptype$
+    nd{"on"} = TRUE
+    nd{"bus"} = 0
+    DIM pm AS MAP
+    DIM defs = EFFECT_DEFS(ptype$)
+    DIM k
+    FOR k = 0 TO LEN(defs) - 1
+        pm{defs[k]{"key"}} = defs[k]{"def"}
+    NEXT k
+    nd{"params"} = pm
+    RETURN nd
+ENDFUNC
+
+FUNC NODE_FROM(ptype$, given)
+    DIM nd = NEW_NODE(ptype$)
+    DIM defs = EFFECT_DEFS(ptype$)
+    DIM k, pk$
+    FOR k = 0 TO LEN(defs) - 1
+        pk$ = defs[k]{"key"}
+        IF TYPEOF(given{pk$}) <> "NONE" THEN nd{"params"}{pk$} = given{pk$}
+    NEXT k
+    RETURN nd
+ENDFUNC
+
+' A rack entry written before the split existed carries no bus, so it belongs
+' to the common section.
+FUNC BUS_OF(nd)
+    IF TYPEOF(nd{"bus"}) = "NONE" THEN RETURN 0
+    RETURN nd{"bus"}
+ENDFUNC
+
+FUNC BUS_NAME$(b)
+    IF b = 1 THEN RETURN "A"
+    IF b = 2 THEN RETURN "B"
+    RETURN "main"
+ENDFUNC
+
+FUNC SPECTRUM(samples, bins)
+    DIM spec = FFT(samples)
+    DIM raw = []
+    DIM i, re, im, mag, mx = 0.0001
+    FOR i = 1 TO bins
+        re = spec[i][0]
+        im = spec[i][1]
+        mag = LOG(1 + SQR(re * re + im * im))
+        raw = APPEND(raw, mag)
+        IF mag > mx THEN mx = mag
+    NEXT i
+    DIM out = []
+    FOR i = 0 TO LEN(raw) - 1
+        out = APPEND(out, raw[i] / mx)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC PITCH_INFO(hz)
+    DIM r AS MAP
+    DIM midi = 69 + 12 * (LOG(hz / 440.0) / LOG(2))
+    DIM nearest = INT(midi + 0.5)
+    DIM idx = ((nearest MOD 12) + 12) MOD 12
+    DIM oct = INT(nearest / 12) - 1
+    r{"note"} = NOTE_NAMES[idx] + STR$(oct)
+    r{"cents"} = (midi - nearest) * 100
+    RETURN r
+ENDFUNC
+
+' ---- AI tone designer ----
+
+FUNC AI_VOCAB$()
+    DIM s$ = "", i, k
+    FOR i = 0 TO LEN(typeNames) - 1
+        DIM ty$ = typeNames[i]
+        DIM defs = schema{"effects"}{ty$}{"params"}
+        s$ = s$ + ty$ + ": "
+        FOR k = 0 TO LEN(defs) - 1
+            s$ = s$ + defs[k]{"key"} + "(" + STR$(defs[k]{"min"}) + ".." + STR$(defs[k]{"max"}) + ")"
+            IF k < LEN(defs) - 1 THEN s$ = s$ + " "
+        NEXT k
+        s$ = s$ + "; "
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+' pull the model's text out of a provider response
+FUNC AI_EXTRACT$(resp$, kind$)
+    DIM j = JSON.PARSE$(resp$)
+    IF TYPEOF(j) = "NONE" THEN RETURN ""
+    IF kind$ = "claude" THEN
+        IF TYPEOF(j{"content"}) = "NONE" THEN RETURN ""
+        RETURN "" + j{"content"}[0]{"text"}
+    ENDIF
+    IF TYPEOF(j{"choices"}) = "NONE" THEN RETURN ""
+    RETURN "" + j{"choices"}[0]{"message"}{"content"}
+ENDFUNC
+
+' slice out the first JSON array (tolerates prose / code fences around it)
+FUNC AI_ARRAY$(t$)
+    DIM p = INSTR(t$, "[")
+    IF p < 0 THEN RETURN ""
+    DIM q = -1, i
+    FOR i = LEN(t$) - 1 TO 0 STEP -1
+        IF MID$(t$, i, 1) = "]" THEN
+            q = i
+            EXITFOR
+        ENDIF
+    NEXT i
+    IF q < p THEN RETURN ""
+    RETURN MID$(t$, p, q - p + 1)
+ENDFUNC
+
+SUB AI_GENERATE()
+    DIM pkey$ = aiOrder[aiProvSel]
+    DIM prov = aiProviders{pkey$}
+    DIM key$ = ""
+    IF LEN("" + prov{"key_env"}) > 0 THEN key$ = GETENV$(prov{"key_env"})
+    IF LEN("" + prov{"key_env"}) > 0 ANDALSO key$ = "" THEN
+        status$ = "set " + prov{"key_env"} + " in the environment"
+        RETURN
+    ENDIF
+    DIM prompt$ = "You design guitar pedalboard FX chains. Effect types with params and ranges: " + _
+        AI_VOCAB$() + " Build a chain for: " + aiPrompt$ + ". Order matters as signal flow. " + _
+        "Reply with ONLY a JSON array; each item has fields type (one of the listed types) and " + _
+        "params (an object mapping param name to a number within its range). No prose, no code fences."
+    DIM msg AS MAP
+    msg{"role"} = "user"
+    msg{"content"} = prompt$
+    DIM bd AS MAP
+    bd{"model"} = prov{"model"}
+    bd{"messages"} = [msg]
+    DIM kind$ = "" + prov{"kind"}
+    HTTP.CLEARHEADERS()
+    IF kind$ = "claude" THEN
+        bd{"max_tokens"} = 1024
+        HTTP.SETHEADER("x-api-key", key$)
+        HTTP.SETHEADER("anthropic-version", "2023-06-01")
+    ELSE
+        bd{"temperature"} = 0.4
+        IF LEN(key$) > 0 THEN HTTP.SETHEADER("Authorization", "Bearer " + key$)
+    ENDIF
+    HTTP.SETTIMEOUT(60)
+    status$ = "asking " + pkey$ + "..."
+    DIM resp$ = HTTP.POST$("" + prov{"url"}, JSON.STRINGIFY$(bd))
+    DIM code = HTTP.STATUSCODE()
+    IF code < 200 ORELSE code >= 300 THEN
+        status$ = pkey$ + " HTTP " + code + ": " + LEFT$(resp$, 100)
+        RETURN
+    ENDIF
+    DIM txt$ = AI_EXTRACT$(resp$, kind$)
+    DIM arr$ = AI_ARRAY$(txt$)
+    IF LEN(arr$) = 0 THEN
+        status$ = "AI gave no JSON chain"
+        RETURN
+    ENDIF
+    DIM nodes = JSON.PARSE$(arr$)
+    IF TYPEOF(nodes) = "NONE" THEN
+        status$ = "AI chain did not parse"
+        RETURN
+    ENDIF
+    DIM nr = [], k
+    FOR k = 0 TO LEN(nodes) - 1
+        DIM ty$ = "" + nodes[k]{"type"}
+        IF TYPEOF(schema{"effects"}{ty$}) <> "NONE" THEN nr = APPEND(nr, NODE_FROM(ty$, nodes[k]{"params"}))
+    NEXT k
+    IF LEN(nr) = 0 THEN
+        status$ = "AI chain had no valid effect types"
+        RETURN
+    ENDIF
+    rack = nr
+    splitOn = FALSE
+    REBUILD()
+    status$ = "AI loaded " + LEN(rack) + " nodes from " + pkey$
+ENDSUB
+
+' ---- engine sync ----
+
+SUB REBUILD()
+    DIM oldchan = chan
+    chan = FX.NEW()
+    eng = []
+    DIM ok = FX.SPLIT(chan, splitOn)
+    ok = FX.MIX(chan, 1, levelA, panA)
+    ok = FX.MIX(chan, 2, levelB, panB)
+    ' the engine indexes nodes per bus, so each bus counts on its own
+    DIM ePos = [0, 0, 0]
+    DIM z, bz
+    FOR z = 0 TO LEN(rack) - 1
+        IF rack[z]{"on"} THEN
+            bz = BUS_OF(rack[z])
+            ok = FX.ADD(chan, rack[z]{"type"}, rack[z]{"params"}, bz)
+            eng = APPEND(eng, ePos[bz])
+            ePos[bz] = ePos[bz] + 1
+        ELSE
+            eng = APPEND(eng, -1)
+        ENDIF
+    NEXT z
+    DIM rr = MON.FX(chan)        ' pre-warms + atomically swaps the live chain
+    SLEEP 30                     ' let any in-flight callback finish with oldchan
+    IF oldchan > 0 THEN DIM f = FX.FREE(oldchan)
+ENDSUB
+
+SUB SET_PARAM(i, pkey$, pval)
+    rack[i]{"params"}{pkey$} = pval
+    IF rack[i]{"on"} ANDALSO eng[i] >= 0 THEN DIM ok = FX.SET(chan, eng[i], pkey$, pval, BUS_OF(rack[i]))
+ENDSUB
+
+SUB SET_BUS(i, b)
+    rack[i]{"bus"} = b
+    REBUILD()
+ENDSUB
+
+' Level and pan reach the engine without a rebuild, so a slider stays smooth.
+SUB SET_MIX()
+    IF chan > 0 THEN
+        DIM ok = FX.MIX(chan, 1, levelA, panA)
+        ok = FX.MIX(chan, 2, levelB, panB)
+    ENDIF
+ENDSUB
+
+SUB MOVE_NODE(i, delta)
+    DIM j = i + delta
+    IF j >= 0 ANDALSO j < LEN(rack) THEN
+        DIM tmp = rack[i]
+        rack[i] = rack[j]
+        rack[j] = tmp
+        REBUILD()
+    ENDIF
+ENDSUB
+
+SUB REMOVE_NODE(i)
+    DIM nr = []
+    DIM k
+    FOR k = 0 TO LEN(rack) - 1
+        IF k <> i THEN nr = APPEND(nr, rack[k])
+    NEXT k
+    rack = nr
+    REBUILD()
+ENDSUB
+
+SUB TOGGLE_BYPASS(i)
+    rack[i]{"on"} = NOT rack[i]{"on"}
+    REBUILD()
+ENDSUB
+
+SUB APPLY_TAP()
+    DIM acc = 0, z
+    FOR z = 1 TO LEN(tapTimes) - 1
+        acc = acc + (tapTimes[z] - tapTimes[z - 1])
+    NEXT z
+    DIM ival = acc / (LEN(tapTimes) - 1)
+    IF ival < 1 THEN ival = 1
+    tapBpm = 60000.0 / ival
+    DIM ms = ival * tapMul[tapSubSel]
+    IF ms > 1000 THEN ms = 1000
+    IF ms < 1 THEN ms = 1
+    DIM di = -1
+    FOR z = 0 TO LEN(rack) - 1
+        IF rack[z]{"type"} = "delay" ANDALSO di < 0 THEN di = z
+    NEXT z
+    IF di >= 0 THEN
+        SET_PARAM(di, "time_ms", ms)
+        status$ = "delay " + INT(ms) + " ms   " + INT(tapBpm) + " BPM"
+    ELSE
+        status$ = "tap: no delay node in the rack"
+    ENDIF
+ENDSUB
+
+SUB DO_TAP()
+    DIM now = TICK()
+    IF LEN(tapTimes) > 0 THEN
+        IF now - tapTimes[LEN(tapTimes) - 1] > 2000 THEN tapTimes = []
+    ENDIF
+    tapTimes = APPEND(tapTimes, now)
+    IF LEN(tapTimes) > 4 THEN
+        DIM nt = [], z
+        FOR z = LEN(tapTimes) - 4 TO LEN(tapTimes) - 1
+            nt = APPEND(nt, tapTimes[z])
+        NEXT z
+        tapTimes = nt
+    ENDIF
+    IF LEN(tapTimes) >= 2 THEN APPLY_TAP()
+ENDSUB
+
+SUB RESET_RACK()
+    rack = []
+    splitOn = FALSE
+    REBUILD()
+    status$ = "reset"
+ENDSUB
+
+' ---- presets + persistence ----
+
+' Rebuild the rack from a stored node list. A document without routing keys is
+' an older rack, and loads as a single unsplit signal path.
+SUB APPLY_DOC(lst, doc)
+    rack = []
+    DIM k, nd
+    FOR k = 0 TO LEN(lst) - 1
+        nd = NODE_FROM(lst[k]{"type"}, lst[k]{"params"})
+        IF TYPEOF(lst[k]{"bus"}) <> "NONE" THEN nd{"bus"} = lst[k]{"bus"}
+        rack = APPEND(rack, nd)
+    NEXT k
+    splitOn = FALSE
+    levelA = 1.0 : panA = -1.0
+    levelB = 1.0 : panB = 1.0
+    IF TYPEOF(doc) <> "NONE" THEN
+        IF TYPEOF(doc{"split"}) <> "NONE" THEN splitOn = doc{"split"}
+        IF TYPEOF(doc{"levelA"}) <> "NONE" THEN levelA = doc{"levelA"}
+        IF TYPEOF(doc{"panA"}) <> "NONE" THEN panA = doc{"panA"}
+        IF TYPEOF(doc{"levelB"}) <> "NONE" THEN levelB = doc{"levelB"}
+        IF TYPEOF(doc{"panB"}) <> "NONE" THEN panB = doc{"panB"}
+    ENDIF
+    REBUILD()
+ENDSUB
+
+' Node list plus routing, the shape both the preset file and the saved rack use.
+FUNC RACK_DOC()
+    DIM doc AS MAP
+    DIM lst = []
+    DIM k
+    FOR k = 0 TO LEN(rack) - 1
+        DIM nd AS MAP
+        nd{"type"} = rack[k]{"type"}
+        nd{"params"} = rack[k]{"params"}
+        nd{"bus"} = BUS_OF(rack[k])
+        lst = APPEND(lst, nd)
+    NEXT k
+    doc{"rack"} = lst
+    doc{"split"} = splitOn
+    doc{"levelA"} = levelA
+    doc{"panA"} = panA
+    doc{"levelB"} = levelB
+    doc{"panB"} = panB
+    RETURN doc
+ENDFUNC
+
+SUB LOAD_PRESET(pname$)
+    DIM entry = presetsDoc{"presets"}{pname$}
+    ' Ask what the entry is, not whether a key is missing: a string key on
+    ' an ARRAY yields INT64 0 rather than NONE, so probing entry{"rack"}
+    ' answers yes for a bare list too.
+    IF TYPEOF(entry) = "ARRAY" THEN
+        ' a bare node list: the preset predates the routing section
+        DIM plain AS MAP = {}
+        APPLY_DOC(entry, plain)
+    ELSE
+        APPLY_DOC(entry{"rack"}, entry)
+    ENDIF
+    status$ = "loaded preset: " + pname$
+ENDSUB
+
+SUB SAVE_RACK()
+    DIM ok = TXTWRITER(cfgRack$, JSON.STRINGIFY$(RACK_DOC()))
+    status$ = "saved: " + cfgRack$
+ENDSUB
+
+SUB LOAD_RACK()
+    DIM raw$ = ""
+    TRY
+        raw$ = TXTREADER$(cfgRack$)
+    CATCH
+    ENDTRY
+    IF raw$ = "" THEN
+        status$ = "no saved rack yet"
+    ELSE
+        DIM doc = JSON.PARSE$(raw$)
+        APPLY_DOC(doc{"rack"}, doc)
+        status$ = "loaded: " + cfgRack$
+    ENDIF
+ENDSUB
+
+SUB SAVE_PRESET(pname$)
+    presetsDoc{"presets"}{pname$} = RACK_DOC()
+    DIM found = FALSE
+    FOR k = 0 TO LEN(pnames) - 1
+        IF pnames[k] = pname$ THEN found = TRUE
+    NEXT k
+    IF NOT found THEN
+        pnames = APPEND(pnames, pname$)
+        presetsDoc{"names"} = pnames
+    ENDIF
+    DIM ok = TXTWRITER(cfgPresets$, JSON.STRINGIFY$(presetsDoc))
+    status$ = "saved preset: " + pname$
+ENDSUB
+
+' ---- monitor + midi ----
+
+SUB START_MON()
+    DIM m = MON.START(inIdx, outIdx)
+    IF m THEN
+        DIM g = MON.GAIN(mgain)
+        DIM rr = MON.FX(chan)
+        status$ = "monitoring: " + capNames[inIdx]
+    ELSE
+        status$ = "could not open audio device"
+    ENDIF
+ENDSUB
+
+SUB OPEN_MIDI()
+    IF LEN(midiInNames) > 0 THEN
+        midiHandle = MIDI.OPEN_IN(midiPortSel)
+        IF midiHandle >= 1 THEN
+            midiOpen = TRUE
+            status$ = "MIDI in: " + midiInNames[midiPortSel]
+        ELSE
+            status$ = "could not open MIDI port"
+        ENDIF
+    ELSE
+        status$ = "no MIDI inputs found"
+    ENDIF
+ENDSUB
+
+SUB CLOSE_MIDI()
+    IF midiOpen THEN DIM c = MIDI.CLOSE(midiHandle)
+    midiOpen = FALSE
+    midiLast$ = ""
+    status$ = "MIDI closed"
+ENDSUB
+
+SUB SET_MIDI_DEV(idx)
+    IF idx <> midiPortSel THEN
+        midiPortSel = idx
+        midiLast$ = ""
+        IF midiOpen THEN
+            CLOSE_MIDI()
+            OPEN_MIDI()
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB START_LEARN(i, pkey$, plo, phi)
+    IF midiOpen THEN
+        midiLearn = TRUE
+        learnNode = i
+        learnKey$ = pkey$
+        learnLo = plo
+        learnHi = phi
+        status$ = "LEARN: move a knob/pedal on the MIDI device to bind it"
+    ELSE
+        status$ = "open a MIDI input first"
+    ENDIF
+ENDSUB
+
+' bind the learn target to a CC; replace any map with the same CC or same node+param
+SUB ADD_MAP(cc)
+    DIM nm = [], q
+    FOR q = 0 TO LEN(midiMaps) - 1
+        DIM m = midiMaps[q]
+        IF NOT (m{"cc"} = cc) ANDALSO NOT (m{"node"} = learnNode ANDALSO m{"key"} = learnKey$) THEN
+            nm = APPEND(nm, m)
+        ENDIF
+    NEXT q
+    DIM mm AS MAP
+    mm{"cc"} = cc
+    mm{"node"} = learnNode
+    mm{"key"} = learnKey$
+    mm{"lo"} = learnLo
+    mm{"hi"} = learnHi
+    midiMaps = APPEND(nm, mm)
+ENDSUB
+
+SUB REMOVE_MAP(idx)
+    DIM nm = [], q
+    FOR q = 0 TO LEN(midiMaps) - 1
+        IF q <> idx THEN nm = APPEND(nm, midiMaps[q])
+    NEXT q
+    midiMaps = nm
+ENDSUB
+
+SUB POLL_MIDI()
+    IF midiOpen THEN
+        DIM evs = MIDI.POLL(midiHandle)
+        DIM q
+        FOR q = 0 TO LEN(evs) - 1
+            DIM ev = evs[q]
+            IF LEN(ev) >= 3 THEN
+                midiLast$ = "last msg: " + ev[0] + " " + ev[1] + " " + ev[2]
+                DIM sb = ev[0]
+                IF sb >= 176 ANDALSO sb <= 191 THEN
+                    DIM cc = ev[1]
+                    DIM vv = ev[2]
+                    IF midiLearn THEN
+                        ADD_MAP(cc)
+                        midiLearn = FALSE
+                        status$ = "bound CC " + cc + " -> node " + learnNode + " " + learnKey$
+                    ELSE
+                        DIM r
+                        FOR r = 0 TO LEN(midiMaps) - 1
+                            DIM m = midiMaps[r]
+                            IF m{"cc"} = cc ANDALSO m{"node"} >= 0 ANDALSO m{"node"} < LEN(rack) THEN
+                                DIM pv = m{"lo"} + (m{"hi"} - m{"lo"}) * (vv / 127.0)
+                                SET_PARAM(m{"node"}, m{"key"}, pv)
+                            ENDIF
+                        NEXT r
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT q
+    ENDIF
+ENDSUB
+
+' ---- init ----
+
+schema = JSON.PARSE$(TXTREADER$(cfgEffects$))
+typeNames = schema{"types"}
+presetsDoc = JSON.PARSE$(TXTREADER$(cfgPresets$))
+pnames = presetsDoc{"names"}
+TRY
+    DIM mp = MIDI.PORTS()
+    midiInNames = mp{"in"}
+CATCH
+ENDTRY
+
+' a runtime without the monitor has no MON.* - the rack still opens, the
+' device lists just stay empty and Start says so
+TRY
+    DIM devs = MON.DEVICES()
+    capNames = devs{"capture"}
+    pbNames = devs{"playback"}
+CATCH
+ENDTRY
+DIM dz
+FOR dz = 0 TO LEN(capNames) - 1
+    IF INSTR(capNames[dz], "PCM2902") >= 0 ANDALSO INSTR(capNames[dz], "Monitor") < 0 THEN inIdx = dz
+NEXT dz
+FOR dz = 0 TO LEN(pbNames) - 1
+    IF INSTR(pbNames[dz], "HDMI") >= 0 ANDALSO outIdx = 0 THEN outIdx = dz
+NEXT dz
+
+' the tone designer reaches a provider over HTTP; a runtime built without
+' that feature has no HTTP.* at all, so the panel stays off
+DIM httpOk = 1
+TRY
+    HTTP.CLEARHEADERS()
+CATCH
+    httpOk = 0
+ENDTRY
+
+DIM aiOk = 0
+IF httpOk = 1 THEN
+    TRY
+        aiCfg = JSON.PARSE$(TXTREADER$(cfgAi$))
+        aiOk = 1
+    CATCH
+    ENDTRY
+ENDIF
+DIM aiReady = 0
+IF aiOk = 1 ANDALSO TYPEOF(aiCfg) = "OBJECT" THEN
+    aiOrder = aiCfg{"order"}
+    aiProviders = aiCfg{"providers"}
+    DIM ai
+    FOR ai = 0 TO LEN(aiOrder) - 1
+        IF aiOrder[ai] = ("" + aiCfg{"provider"}) THEN aiProvSel = ai
+    NEXT ai
+    aiReady = 1
+ENDIF
+
+LOAD_PRESET("Brian May")
+
+SCREEN 820, 1040, "jdBasic FX Rack", 2
+
+' ---- main loop ----
+DO
+    CLS
+
+    IF GUI.BEGIN_MAIN_MENU_BAR() THEN
+        IF GUI.BEGIN_MENU("File") THEN
+            IF GUI.MENU_ITEM("Save Rack") THEN SAVE_RACK()
+            IF GUI.MENU_ITEM("Load Rack") THEN LOAD_RACK()
+            IF GUI.MENU_ITEM("Reset") THEN RESET_RACK()
+            GUI.SEPARATOR
+            IF GUI.MENU_ITEM("Exit") THEN appRunning = FALSE
+            GUI.END_MENU()
+        ENDIF
+        IF GUI.BEGIN_MENU("Presets") THEN
+            DIM pj
+            FOR pj = 0 TO LEN(pnames) - 1
+                IF GUI.MENU_ITEM(pnames[pj]) THEN LOAD_PRESET(pnames[pj])
+            NEXT pj
+            GUI.END_MENU()
+        ENDIF
+        GUI.END_MAIN_MENU_BAR()
+    ENDIF
+
+    GUI.BEGIN "FX Rack", 0, 24, 820, 1010
+
+        GUI.SEPARATOR_TEXT("Monitor")
+        DIM lvl = MON.LEVEL()
+        DIM lin = lvl{"in"}   : IF lin > 1 THEN lin = 1
+        DIM lout = lvl{"out"} : IF lout > 1 THEN lout = 1
+        GUI.TEXT "In"  : GUI.SAME_LINE : GUI.PROGRESS lin, ""
+        GUI.TEXT "Out" : GUI.SAME_LINE : GUI.PROGRESS lout, ""
+        DIM ng = GUI.SLIDER("Master Gain", mgain, 0, 2)
+        IF ng <> mgain THEN mgain = ng : DIM gs = MON.GAIN(mgain)
+        IF MON.RUNNING() THEN
+            IF GUI.BUTTON("Stop") THEN DIM st = MON.STOP()
+        ELSE
+            DIM nin = GUI.COMBO("In device", inIdx, capNames)
+            IF nin <> inIdx THEN inIdx = nin
+            DIM nout = GUI.COMBO("Out device", outIdx, pbNames)
+            IF nout <> outIdx THEN outIdx = nout
+            IF GUI.BUTTON("Start") THEN START_MON()
+        ENDIF
+        GUI.SAME_LINE
+        IF recArmed THEN
+            IF GUI.BUTTON("Stop rec") THEN
+                DIM rpath$ = PATH.JOIN$(cfgDir$, "rec_" + STR$(recCount) + ".wav")
+                DIM rsecs = MON.RECSTOP(rpath$)
+                recArmed = FALSE
+                recCount = recCount + 1
+                status$ = "saved " + rpath$ + " (" + STR$(INT(rsecs)) + "s)"
+            ENDIF
+            GUI.SAME_LINE
+            GUI.TEXT "REC " + INT(MON.RECLEN()) + "s"
+        ELSE
+            IF GUI.BUTTON("Record") THEN
+                IF MON.RUNNING() THEN
+                    DIM rok = MON.RECSTART()
+                    recArmed = TRUE
+                    status$ = "recording..."
+                ELSE
+                    status$ = "press Start before recording"
+                ENDIF
+            ENDIF
+        ENDIF
+
+        GUI.SEPARATOR_TEXT("Scope")
+        showScope = GUI.CHECKBOX("Show", showScope)
+        IF showScope THEN
+            DIM wav = MON.SCOPE(512)
+            GUI.PLOT_LINES "Waveform", wav, "", -1.0, 1.0
+            DIM mags = SPECTRUM(MON.SCOPE(1024), 256)
+            GUI.PLOT_HISTOGRAM "Spectrum", mags, "", 0.0, 1.0
+        ENDIF
+
+        GUI.SEPARATOR_TEXT("Tuner")
+        DIM hz = MON.PITCH()
+        IF hz > 0 THEN
+            lastHz = hz
+            lastHzTick = TICK()
+        ENDIF
+        DIM showHz = 0
+        IF hz > 0 THEN
+            showHz = hz
+        ELSEIF lastHz > 0 ANDALSO (TICK() - lastHzTick) < 700 THEN
+            showHz = lastHz
+        ENDIF
+        IF showHz > 0 THEN
+            DIM pinf = PITCH_INFO(showHz)
+            DIM cb = (pinf{"cents"} + 50) / 100.0
+            IF cb < 0 THEN cb = 0
+            IF cb > 1 THEN cb = 1
+            GUI.TEXT "note  " + pinf{"note"} + "     " + INT(showHz) + " Hz"
+            GUI.PROGRESS cb, INT(pinf{"cents"}) + " cents"
+        ELSE
+            GUI.TEXT "play a single open string to tune"
+            GUI.PROGRESS 0.5, "---"
+        ENDIF
+
+        GUI.SEPARATOR_TEXT("Routing")
+        DIM spNew = GUI.CHECKBOX("Split into two amps", splitOn)
+        IF spNew <> splitOn THEN
+            splitOn = spNew
+            REBUILD()
+        ENDIF
+        IF splitOn THEN
+            GUI.TEXT "main feeds branch A and B; both land in the stereo mix"
+            DIM la = GUI.SLIDER("A level", levelA, 0, 2)
+            DIM pa = GUI.SLIDER("A pan", panA, -1, 1)
+            DIM lb = GUI.SLIDER("B level", levelB, 0, 2)
+            DIM pb = GUI.SLIDER("B pan", panB, -1, 1)
+            IF la <> levelA ORELSE pa <> panA ORELSE lb <> levelB ORELSE pb <> panB THEN
+                levelA = la : panA = pa
+                levelB = lb : panB = pb
+                SET_MIX()
+            ENDIF
+        ELSE
+            GUI.TEXT "one signal path, the same on both outputs"
+        ENDIF
+
+        GUI.SEPARATOR_TEXT("Pedalboard")
+        DIM pendAct$ = ""
+        DIM pendIdx = -1
+        DIM pendBus = 0
+        DIM i
+        FOR i = 0 TO LEN(rack) - 1
+            GUI.PUSH_ID(i)
+            DIM hdr$ = "" + i + "   " + schema{"effects"}{rack[i]{"type"}}{"label"}
+            IF splitOn THEN hdr$ = hdr$ + "   [" + BUS_NAME$(BUS_OF(rack[i])) + "]"
+            IF NOT rack[i]{"on"} THEN hdr$ = hdr$ + "   (bypassed)"
+            IF GUI.COLLAPSING_HEADER(hdr$) THEN
+                DIM onNew = GUI.CHECKBOX("Enabled", rack[i]{"on"})
+                IF onNew <> rack[i]{"on"} THEN pendAct$ = "bypass" : pendIdx = i
+                IF splitOn THEN
+                    DIM bNew = GUI.COMBO("Bus", BUS_OF(rack[i]), busNames)
+                    IF bNew <> BUS_OF(rack[i]) THEN pendAct$ = "bus" : pendIdx = i : pendBus = bNew
+                ENDIF
+                DIM defs = EFFECT_DEFS(rack[i]{"type"})
+                DIM k, pk$, cur, nv
+                FOR k = 0 TO LEN(defs) - 1
+                    pk$ = defs[k]{"key"}
+                    cur = rack[i]{"params"}{pk$}
+                    nv = GUI.SLIDER(defs[k]{"label"}, cur, defs[k]{"min"}, defs[k]{"max"})
+                    IF nv <> cur THEN SET_PARAM(i, pk$, nv)
+                    GUI.SAME_LINE
+                    IF GUI.BUTTON("L##" + pk$) THEN START_LEARN(i, pk$, defs[k]{"min"}, defs[k]{"max"})
+                NEXT k
+                IF GUI.BUTTON("Up")     THEN pendAct$ = "up"     : pendIdx = i
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Down")   THEN pendAct$ = "down"   : pendIdx = i
+                GUI.SAME_LINE
+                IF GUI.BUTTON("Remove") THEN pendAct$ = "remove" : pendIdx = i
+            ENDIF
+            GUI.POP_ID()
+        NEXT i
+
+        IF pendAct$ = "up"     THEN MOVE_NODE(pendIdx, -1)
+        IF pendAct$ = "down"   THEN MOVE_NODE(pendIdx, 1)
+        IF pendAct$ = "remove" THEN REMOVE_NODE(pendIdx)
+        IF pendAct$ = "bypass" THEN TOGGLE_BYPASS(pendIdx)
+        IF pendAct$ = "bus"    THEN SET_BUS(pendIdx, pendBus)
+
+        GUI.SEPARATOR_TEXT("Add effect")
+        addSel = GUI.COMBO("##addsel", addSel, typeNames)
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Add") THEN rack = APPEND(rack, NEW_NODE(typeNames[addSel])) : REBUILD()
+
+        GUI.SEPARATOR_TEXT("Tap tempo")
+        IF GUI.BUTTON("TAP") THEN DO_TAP()
+        GUI.SAME_LINE
+        DIM tns = GUI.COMBO("##tapsub", tapSubSel, tapSubs)
+        IF tns <> tapSubSel THEN
+            tapSubSel = tns
+            IF LEN(tapTimes) >= 2 THEN APPLY_TAP()
+        ENDIF
+        IF tapBpm > 0 THEN
+            GUI.SAME_LINE
+            GUI.TEXT INT(tapBpm) + " BPM"
+        ENDIF
+
+        IF aiReady = 1 THEN
+            GUI.SEPARATOR_TEXT("AI tone")
+            aiPrompt$ = GUI.INPUT("Describe", aiPrompt$)
+            DIM apv = GUI.COMBO("##aiprov", aiProvSel, aiOrder)
+            IF apv <> aiProvSel THEN aiProvSel = apv
+            GUI.SAME_LINE
+            IF GUI.BUTTON("Generate") THEN AI_GENERATE()
+        ENDIF
+
+        GUI.SEPARATOR_TEXT("Save as preset")
+        saveName$ = GUI.INPUT("Name", saveName$)
+        GUI.SAME_LINE
+        IF GUI.BUTTON("Save Preset") THEN SAVE_PRESET(saveName$)
+
+        GUI.SEPARATOR_TEXT("MIDI control")
+        IF LEN(midiInNames) > 0 THEN
+            DIM mdsel = GUI.COMBO("##mididev", midiPortSel, midiInNames)
+            IF mdsel <> midiPortSel THEN SET_MIDI_DEV(mdsel)
+            GUI.SAME_LINE
+            IF midiOpen THEN
+                IF GUI.BUTTON("Close") THEN CLOSE_MIDI()
+            ELSE
+                IF GUI.BUTTON("Open") THEN OPEN_MIDI()
+            ENDIF
+            IF midiLearn THEN
+                GUI.TEXT "LEARN active - move a knob on the device"
+            ELSEIF midiOpen THEN
+                GUI.TEXT "expand a pedal, press L by a knob, then move a CC to bind"
+            ENDIF
+            IF midiOpen THEN
+                IF LEN(midiLast$) > 0 THEN
+                    GUI.TEXT midiLast$
+                ELSE
+                    GUI.TEXT "no MIDI activity yet - wiggle a knob to find the right port"
+                ENDIF
+            ENDIF
+            DIM mpDel = -1, mr
+            FOR mr = 0 TO LEN(midiMaps) - 1
+                DIM mm = midiMaps[mr]
+                DIM tnm$ = "?"
+                IF mm{"node"} >= 0 ANDALSO mm{"node"} < LEN(rack) THEN tnm$ = rack[mm{"node"}]{"type"}
+                GUI.PUSH_ID(1000 + mr)
+                GUI.TEXT "CC " + mm{"cc"} + " -> [" + mm{"node"} + "] " + tnm$ + " " + mm{"key"}
+                GUI.SAME_LINE
+                IF GUI.BUTTON("x") THEN mpDel = mr
+                GUI.POP_ID()
+            NEXT mr
+            IF mpDel >= 0 THEN REMOVE_MAP(mpDel)
+        ELSE
+            GUI.TEXT "no MIDI inputs detected"
+        ENDIF
+
+        GUI.SEPARATOR
+        GUI.TEXT status$
+
+    GUI.END
+
+    POLL_MIDI()
+    SCREENFLIP
+    SLEEP 10
+    DIM a$ = INKEY$()
+LOOP UNTIL a$ = CHR$(27) ORELSE appRunning = FALSE
+
+IF MON.RUNNING() THEN DIM se = MON.STOP()
+IF midiOpen THEN DIM ce = MIDI.CLOSE(midiHandle)
