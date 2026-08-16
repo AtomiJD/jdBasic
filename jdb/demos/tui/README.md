@@ -40,6 +40,18 @@ TUI=1 GFX=1 IMGUI=1 SQLITE=1 ./build.sh
 
 Keys: `1` / `2` / `3` (or Left / Right) switch tabs, `q` or `Ctrl+Q` quits.
 
+It also compiles natively with the strict `-c` compiler (the whole script is
+typed for it):
+
+```
+./build/jdbasic -c jdb/demos/tui/jdtop.jdb
+./jdb/demos/tui/jdtop.exe
+```
+
+If the runtime was built with ONNX or the shared runtime lib is not alongside
+the executable, put both on the library path first, e.g.
+`LD_LIBRARY_PATH=build:libs/onnxruntime/lib`.
+
 ## Poke it
 
 To watch the graphs move and the theme change, generate some load from a

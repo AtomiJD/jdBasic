@@ -4,7 +4,10 @@
 ' process table from /proc/<pid>/statm; network and disk throughput from
 ' /proc/net/dev and /proc/diskstats, rate-scaled with a real TICK() delta.
 '
-' Run:  TUI=1 build with FTXUI, then  ./build/jdbasic jdb/demos/tui/jdtop.jdb
+' Typed for the STRICT + EXPLICIT native compiler, so it also builds with
+' -c. Run:  TUI=1 build with FTXUI, then either
+'   ./build/jdbasic jdb/demos/tui/jdtop.jdb        (interpreted)
+'   ./build/jdbasic -c jdb/demos/tui/jdtop.jdb      (native, produces jdtop.exe)
 ' Keys: [1] Overview  [2] Processes  [3] Net/Disk   q or Ctrl+Q to quit.
 
 DIM HIST_MAX AS INTEGER = 120
@@ -43,38 +46,48 @@ DIM diskWrMB AS DOUBLE = 0.0
 
 ' Numeric fields after the label token, skipping the empty tokens the
 ' aggregate "cpu" line produces with its double space.
-FUNC field_nums(ln$)
+FUNC field_nums(ln$) AS ARRAY
     DIM t = SPLIT(ln$, " ")
     DIM out = []
-    DIM i
+    DIM i AS INTEGER
     FOR i = 1 TO LEN(t) - 1
         IF LEN(t[i]) > 0 THEN out = APPEND(out, VAL(t[i]))
     NEXT i
     RETURN out
 ENDFUNC
 
-FUNC all_nums(s$)
+FUNC all_nums(s$) AS ARRAY
     DIM t = SPLIT(s$, " ")
     DIM out = []
-    DIM i
+    DIM i AS INTEGER
     FOR i = 0 TO LEN(t) - 1
         IF LEN(t[i]) > 0 THEN out = APPEND(out, VAL(t[i]))
     NEXT i
     RETURN out
 ENDFUNC
 
-FUNC cpu_pct(nowTot, nowIdle, oldTot, oldIdle)
-    DIM dt = nowTot - oldTot
-    DIM di = nowIdle - oldIdle
-    IF dt <= 0 THEN RETURN 0.0
-    DIM p = 100.0 * (dt - di) / dt
+FUNC split_ws(s$) AS ARRAY
+    DIM t = SPLIT(TRIM$(s$), " ")
+    DIM out = []
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(t) - 1
+        IF LEN(t[i]) > 0 THEN out = APPEND(out, t[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC cpu_pct(nowTot AS DOUBLE, nowIdle AS DOUBLE, oldTot AS DOUBLE, oldIdle AS DOUBLE) AS DOUBLE
+    DIM dt AS DOUBLE = nowTot - oldTot
+    DIM di AS DOUBLE = nowIdle - oldIdle
+    IF dt <= 0.0 THEN RETURN 0.0
+    DIM p AS DOUBLE = 100.0 * (dt - di) / dt
     IF p < 0.0 THEN p = 0.0
     IF p > 100.0 THEN p = 100.0
     RETURN p
 ENDFUNC
 
 ' Whole physical disks only, not their partitions.
-FUNC is_whole_disk(nm$)
+FUNC is_whole_disk(nm$) AS INTEGER
     IF LEFT$(nm$, 4) = "nvme" THEN
         IF INSTR(nm$, "p") >= 0 THEN RETURN 0
         RETURN 1
@@ -85,19 +98,9 @@ FUNC is_whole_disk(nm$)
     RETURN 0
 ENDFUNC
 
-FUNC split_ws(s$)
-    DIM t = SPLIT(TRIM$(s$), " ")
+FUNC drop_front(arr AS DYNAMIC) AS ARRAY
     DIM out = []
-    DIM i
-    FOR i = 0 TO LEN(t) - 1
-        IF LEN(t[i]) > 0 THEN out = APPEND(out, t[i])
-    NEXT i
-    RETURN out
-ENDFUNC
-
-FUNC drop_front(arr)
-    DIM out = []
-    DIM i
+    DIM i AS INTEGER
     FOR i = 1 TO LEN(arr) - 1
         out = APPEND(out, arr[i])
     NEXT i
@@ -106,20 +109,20 @@ ENDFUNC
 
 ' A scrolling filled bar graph on a fresh braille canvas. Data is scaled
 ' against maxv; bars turn yellow past half and red past 85%.
-SUB draw_graph(data, maxv, cw, ch)
+SUB draw_graph(data AS DYNAMIC, maxv AS DOUBLE, cw AS INTEGER, ch AS INTEGER)
     TUI.CANVAS_BEGIN cw, ch
-    DIM startX = 0
+    DIM startX AS INTEGER = 0
     IF LEN(data) > cw THEN startX = LEN(data) - cw
-    DIM xx
+    DIM xx AS INTEGER
     FOR xx = startX TO LEN(data) - 1
-        DIM frac = 0.0
+        DIM frac AS DOUBLE = 0.0
         IF maxv > 0.0 THEN frac = data[xx] / maxv
         IF frac > 1.0 THEN frac = 1.0
-        DIM col = 10
+        DIM col AS INTEGER = 10
         IF frac >= 0.5 THEN col = 11
         IF frac >= 0.85 THEN col = 9
-        DIM xdot = xx - startX
-        DIM topY = INT((1.0 - frac) * (ch - 1))
+        DIM xdot AS INTEGER = xx - startX
+        DIM topY AS INTEGER = CINT((1.0 - frac) * (ch - 1))
         TUI.LINE xdot, topY, xdot, ch - 1, col
     NEXT xx
     TUI.CANVAS_END
@@ -130,7 +133,7 @@ SUB refresh_procs()
     DIM ids = []
     DIM nm = []
     DIM mb = []
-    DIM i
+    DIM i AS INTEGER
     FOR i = 0 TO LEN(ents) - 1
         DIM b$ = PATH.BASENAME$(ents[i])
         DIM c$ = MID$(b$, 0, 1)
@@ -140,7 +143,7 @@ SUB refresh_procs()
                 DIM st$ = TRIM$(TXTREADER$(sp$))
                 IF LEN(st$) > 0 THEN
                     DIM sm = SPLIT(st$, " ")
-                    DIM rssMB = VAL(sm[1]) * 4096.0 / 1048576.0
+                    DIM rssMB AS DOUBLE = VAL(sm[1]) * 4096.0 / 1048576.0
                     DIM cm$ = b$
                     DIM cp$ = "/proc/" + b$ + "/comm"
                     IF FILE.EXISTS(cp$) THEN cm$ = TRIM$(TXTREADER$(cp$))
@@ -157,11 +160,11 @@ SUB refresh_procs()
     DIM outP = []
     DIM outN = []
     DIM outM = []
-    DIM k
+    DIM k AS INTEGER
     FOR k = 0 TO PROC_TOP - 1
-        DIM idx = LEN(order) - 1 - k
+        DIM idx AS INTEGER = LEN(order) - 1 - k
         IF idx >= 0 THEN
-            DIM j = order[idx]
+            DIM j AS INTEGER = CINT(order[idx])
             outP = APPEND(outP, ids[j])
             outN = APPEND(outN, nm[j])
             outM = APPEND(outM, mb[j])
@@ -180,25 +183,25 @@ DO
     DIM sl = SPLIT(stat$, CHR$(10))
 
     DIM aggN = field_nums(sl[0])
-    DIM aggTot = SUM(aggN)
-    DIM aggIdle = aggN[3] + aggN[4]
-    DIM cpuNow = cpu_pct(aggTot, aggIdle, prevTotal, prevIdle)
+    DIM aggTot AS DOUBLE = SUM(aggN)
+    DIM aggIdle AS DOUBLE = aggN[3] + aggN[4]
+    DIM cpuNow AS DOUBLE = cpu_pct(aggTot, aggIdle, prevTotal, prevIdle)
     prevTotal = aggTot
     prevIdle = aggIdle
 
     DIM coreP = []
-    DIM ci = 0
-    DIM li
+    DIM ci AS INTEGER = 0
+    DIM li AS INTEGER
     FOR li = 1 TO LEN(sl) - 1
         DIM ln$ = sl[li]
         IF LEN(ln$) >= 4 ANDALSO LEFT$(ln$, 3) = "cpu" THEN
             DIM c4$ = MID$(ln$, 3, 1)
             IF c4$ >= "0" ANDALSO c4$ <= "9" THEN
                 DIM cn = field_nums(ln$)
-                DIM ct = SUM(cn)
-                DIM cidle = cn[3] + cn[4]
-                DIM oldT = 0.0
-                DIM oldI = 0.0
+                DIM ct AS DOUBLE = SUM(cn)
+                DIM cidle AS DOUBLE = cn[3] + cn[4]
+                DIM oldT AS DOUBLE = 0.0
+                DIM oldI AS DOUBLE = 0.0
                 IF ci < LEN(prevCoreTot) THEN
                     oldT = prevCoreTot[ci]
                     oldI = prevCoreIdle[ci]
@@ -222,35 +225,35 @@ DO
     ' --- memory ---
     DIM mem$ = TXTREADER$("/proc/meminfo")
     DIM ml = SPLIT(mem$, CHR$(10))
-    DIM memTotalKB = 0.0
-    DIM memAvailKB = 0.0
-    DIM mi
+    DIM memTotalKB AS DOUBLE = 0.0
+    DIM memAvailKB AS DOUBLE = 0.0
+    DIM mi AS INTEGER
     FOR mi = 0 TO LEN(ml) - 1
         IF LEFT$(ml[mi], 9) = "MemTotal:" THEN memTotalKB = VAL(MID$(ml[mi], 9, 24))
         IF LEFT$(ml[mi], 13) = "MemAvailable:" THEN memAvailKB = VAL(MID$(ml[mi], 13, 24))
     NEXT mi
-    DIM memUsedKB = memTotalKB - memAvailKB
-    DIM memFrac = 0.0
+    DIM memUsedKB AS DOUBLE = memTotalKB - memAvailKB
+    DIM memFrac AS DOUBLE = 0.0
     IF memTotalKB > 0.0 THEN memFrac = memUsedKB / memTotalKB
 
     ' --- uptime + load ---
-    DIM upSec = VAL(TXTREADER$("/proc/uptime"))
-    DIM upH = INT(upSec / 3600.0)
-    DIM upM = INT((upSec - upH * 3600.0) / 60.0)
+    DIM upSec AS DOUBLE = VAL(TXTREADER$("/proc/uptime"))
+    DIM upH AS INTEGER = CINT(INT(upSec / 3600.0))
+    DIM upM AS INTEGER = CINT(INT((upSec - upH * 3600.0) / 60.0))
     DIM la$ = TRIM$(TXTREADER$("/proc/loadavg"))
     DIM laToks = SPLIT(la$, " ")
     DIM load3$ = laToks[0] + " " + laToks[1] + " " + laToks[2]
 
     ' --- network + disk throughput (rate-scaled with a real time delta) ---
-    DIM nowTick = TICK()
-    DIM dtSec = 0.0
+    DIM nowTick AS DOUBLE = TICK()
+    DIM dtSec AS DOUBLE = 0.0
     IF prevTick > 0.0 THEN dtSec = (nowTick - prevTick) / 1000.0
 
     DIM net$ = TXTREADER$("/proc/net/dev")
     DIM ndl = SPLIT(net$, CHR$(10))
-    DIM rxTot = 0.0
-    DIM txTot = 0.0
-    DIM ni
+    DIM rxTot AS DOUBLE = 0.0
+    DIM txTot AS DOUBLE = 0.0
+    DIM ni AS INTEGER
     FOR ni = 2 TO LEN(ndl) - 1
         IF INSTR(ndl[ni], ":") >= 0 THEN
             DIM np = SPLIT(ndl[ni], ":")
@@ -267,9 +270,9 @@ DO
 
     DIM disk$ = TXTREADER$("/proc/diskstats")
     DIM ddl = SPLIT(disk$, CHR$(10))
-    DIM rdSec = 0.0
-    DIM wrSec = 0.0
-    DIM di
+    DIM rdSec AS DOUBLE = 0.0
+    DIM wrSec AS DOUBLE = 0.0
+    DIM di AS INTEGER
     FOR di = 0 TO LEN(ddl) - 1
         DIM df = split_ws(ddl[di])
         IF LEN(df) >= 10 ANDALSO is_whole_disk(df[2]) = 1 THEN
@@ -294,8 +297,8 @@ DO
     prevWr = wrSec
     prevTick = nowTick
 
-    DIM netTot = netRxKB + netTxKB
-    DIM diskTot = diskRdMB + diskWrMB
+    DIM netTot AS DOUBLE = netRxKB + netTxKB
+    DIM diskTot AS DOUBLE = diskRdMB + diskWrMB
     netHist = APPEND(netHist, netTot)
     IF LEN(netHist) > HIST_MAX THEN netHist = drop_front(netHist)
     diskHist = APPEND(diskHist, diskTot)
@@ -336,7 +339,7 @@ DO
         TUI.GAUGE cpuNow / 100.0, "CPU " + FORMAT$("{:.1f}", cpuNow) + "%"
         TUI.SEPARATOR_TEXT "Cores"
         TUI.GRID_BEGIN 4
-            DIM cc
+            DIM cc AS INTEGER
             FOR cc = 0 TO LEN(coreP) - 1
                 TUI.PROGRESS coreP[cc] / 100.0, "c" + FORMAT$("{:.0f}", cc)
             NEXT cc
@@ -353,7 +356,7 @@ DO
         TUI.HEADING "Top " + FORMAT$("{:.0f}", PROC_TOP) + " processes by resident memory", 2
         DIM hdr = ["PID", "Command", "RSS MB"]
         TUI.TABLE_BEGIN hdr
-            DIM pr
+            DIM pr AS INTEGER
             FOR pr = 0 TO LEN(pPid) - 1
                 DIM rowc = [FORMAT$("{:.0f}", pPid[pr]), pName[pr], FORMAT$("{:.1f}", pMB[pr])]
                 TUI.TABLE_ROW rowc
