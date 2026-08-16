@@ -2852,11 +2852,12 @@ char* jdb_insert_str(const char* target, const char* insert, int64_t pos) {
 char* jdb_txtreader(const char* path) {
     FILE* f = fopen(path, "rb");
     if (!f) return _strdup("");
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    std::string raw((size_t)(len > 0 ? len : 0), '\0');
-    if (len > 0) fread(&raw[0], 1, len, f);
+    // Stream to EOF rather than sizing via ftell: /proc and /sys pseudo-files
+    // report length 0, so a size-based read would return an empty string.
+    std::string raw;
+    char buf[65536];
+    size_t got;
+    while ((got = fread(buf, 1, sizeof(buf), f)) > 0) raw.append(buf, got);
     fclose(f);
     // Auto-detect UTF-16 (BOM or NUL pattern) and decode to UTF-8 so the
     // resulting C-string isn't truncated at the first interior NUL byte.
@@ -2892,11 +2893,11 @@ void jdb_txtwriter3(const char* path, const char* content, int64_t append) {
 char* jdb_txtreader_enc(const char* path, const char* encoding) {
     FILE* f = fopen(path, "rb");
     if (!f) return _strdup("");
-    fseek(f, 0, SEEK_END);
-    long len = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    std::string raw((size_t)len, '\0');
-    if (len > 0) fread(&raw[0], 1, len, f);
+    // Stream to EOF (see jdb_txtreader) so /proc and /sys files read fully.
+    std::string raw;
+    char buf[65536];
+    size_t got;
+    while ((got = fread(buf, 1, sizeof(buf), f)) > 0) raw.append(buf, got);
     fclose(f);
     std::string enc = encoding ? encoding : "";
     try {
