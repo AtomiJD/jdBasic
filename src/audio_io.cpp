@@ -54,7 +54,15 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
     if (frames > FX_RT_MAX_BLOCK) frames = FX_RT_MAX_BLOCK;
     unsigned n = frames * outCh;
     float g = g_mon_gain.load(std::memory_order_relaxed);
-    for (unsigned i = 0; i < frames; i++) g_dry[i] = in[i] * g;
+    // Sum the capture channels down to mono so the guitar is heard on either
+    // physical input (e.g. XLR on ch1 or the instrument jack on ch2), instead
+    // of only picking channel 0.
+    unsigned inCh = dev->capture.channels;
+    for (unsigned i = 0; i < frames; i++) {
+        float smp = 0.0f;
+        for (unsigned c = 0; c < inCh; c++) smp += in[i * inCh + c];
+        g_dry[i] = smp * g;
+    }
     int chain = g_rt_chain.load(std::memory_order_relaxed);
     if (chain > 0) {
         fx_process_chain_rt(chain, g_dry, out, frames, outCh, 48000.0);
@@ -63,7 +71,7 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
             for (unsigned c = 0; c < outCh; c++) out[i * outCh + c] = g_dry[i];
     }
     float ip = 0.0f, op = 0.0f;
-    for (unsigned i = 0; i < frames; i++) { float a = in[i]; if (a < 0) a = -a; if (a > ip) ip = a; }
+    for (unsigned i = 0; i < frames; i++) { float a = g_dry[i]; if (a < 0) a = -a; if (a > ip) ip = a; }
     for (unsigned i = 0; i < n; i++)      { float b = out[i]; if (b < 0) b = -b; if (b > op) op = b; }
     float pin = g_in_peak.load(std::memory_order_relaxed) * 0.92f;  if (ip > pin) pin = ip;
     float pout = g_out_peak.load(std::memory_order_relaxed) * 0.92f; if (op > pout) pout = op;
@@ -78,7 +86,7 @@ void mon_callback(ma_device* dev, void* pOut, const void* pIn, ma_uint32 frames)
     }
     g_scope_pos.store(sp + frames, std::memory_order_relaxed);
     unsigned sip = g_scope_in_pos.load(std::memory_order_relaxed);
-    for (unsigned i = 0; i < frames; i++) g_scope_in[(sip + i) & (SCOPE_N - 1)] = in[i];
+    for (unsigned i = 0; i < frames; i++) g_scope_in[(sip + i) & (SCOPE_N - 1)] = g_dry[i];
     g_scope_in_pos.store(sip + frames, std::memory_order_relaxed);
     if (g_recording.load(std::memory_order_relaxed)) {
         unsigned rp = g_rec_pos.load(std::memory_order_relaxed);
@@ -302,10 +310,15 @@ void register_audioio_builtins(VM& vm) {
             }
         }
         ma_device_config cfg = ma_device_config_init(ma_device_type_duplex);
-        cfg.capture.format   = ma_format_f32; cfg.capture.channels  = 1;
+        cfg.capture.format   = ma_format_f32; cfg.capture.channels  = 2;
         cfg.playback.format  = ma_format_f32; cfg.playback.channels = OUT_CH;
         cfg.sampleRate        = 48000;
-        cfg.periodSizeInFrames = 256;          // low-ish latency
+        // 256 frames x 3 periods is the stable sweet spot: small enough to feel
+        // responsive, deep enough that a cross-device (interface in, HDMI out)
+        // PulseAudio duplex does not under-run and swallow pick transients.
+        cfg.periodSizeInFrames = 256;
+        cfg.periods            = 3;
+        cfg.performanceProfile = ma_performance_profile_low_latency;
         cfg.dataCallback      = mon_callback;
         if (haveIn)  cfg.capture.pDeviceID  = &inId;
         if (haveOut) cfg.playback.pDeviceID = &outId;
