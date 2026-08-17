@@ -924,6 +924,23 @@ ENDTRY
 * **`NEW`**: Empties the source code, compiled p-code, and user-defined function tables.
 * **`UNREACT(name$)`**: Remove reactive variable. name$ can be a plain var (e.g., "A"), a dotted member (e.g., "PLAYER.X") or special "ALL"/"*" to clear the entire reactive graph.
 
+#### Diagnostics: `DEBUG.PRINT` and `DEBUG.ASSERT`
+
+Both write to the diagnostic channel, never to stdout: while a debugger is attached the line appears in the VS Code debug console, otherwise on stderr. A program whose output is redirected therefore keeps its tracing visible, and the redirected file stays clean.
+
+* **`DEBUG.PRINT v, [v2, ...]`**: Stringifies each argument and joins them with a single space. An array argument prints as one value (`[1, 2, 3]`), it is not mapped over.
+* **`DEBUG.ASSERT cond, [message$]`**: A no-op while `cond` is true. Otherwise it raises a catchable runtime error reading `assertion failed: <message>`, so `TRY ... CATCH` sees it in `ERRMSG$` and an uncaught one ends the program with exit code 1.
+
+```basic
+DIM total = SUM(prices)
+DEBUG.PRINT "total after discount", total
+DEBUG.ASSERT total >= 0, "a total can never be negative"
+```
+
+Both work in the interpreter and under `-c`. The interpreter prefixes the raised message with the builtin name and the source line; the native runtime reports the bare message, as it does for every uncaught error.
+
+The names are dotted on purpose. A bare `ASSERT` would collide with the many scripts that define their own `SUB ASSERT` helper, and a user routine carrying a builtin's name is rejected at load.
+
 ### REPL Keyboard Shortcuts
 
 The interactive REPL hosts up to four parallel workspaces, each with its own VM.

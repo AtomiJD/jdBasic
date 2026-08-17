@@ -663,6 +663,14 @@ Description: Array of DateTimes from start to end inclusive, stepping by step un
 Syntax: DAY(date) -> number
 Description: Extracts the day of month (1-31) from a DateTime.
 
+[DEBUG.PRINT]
+Syntax: DEBUG.PRINT v, [v2, ...]
+Description: Writes a diagnostic line to the debug console when a debugger is attached, else to stderr - never to stdout. Arguments are stringified and joined with a space; an array prints as one value.
+
+[DEBUG.ASSERT]
+Syntax: DEBUG.ASSERT cond, [message$]
+Description: No-op while cond is true, otherwise raises a catchable runtime error "assertion failed: <message>". Uncaught it ends the program with exit code 1.
+
 [DISTANCE]
 Syntax: DISTANCE(point1, point2) -> number
 Description: Euclidean distance between two points given as coordinate arrays.

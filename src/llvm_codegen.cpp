@@ -2482,7 +2482,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "NOW","CVDATE","CDATE","DATE$","TIME$","TICK",
                             // Audio calls whose sample buffer is a payload:
                             // WAV.WRITE returns a bool, FX.PROCESS a scalar.
-                            "WAV.WRITE","FX.PROCESS"
+                            "WAV.WRITE","FX.PROCESS",
+                            "DEBUG.PRINT","DEBUG.ASSERT"
                         };
                         for (auto& a : e->args) {
                             if (a && infer_tag(a.get()) == JD_TAG_ARR && !no_vec_infer.count(upper)) {
@@ -9172,6 +9173,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "CODEC.SHA256$", "CODEC.UUID$",
         // Regex (produce arrays)
         "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
+        // Diagnostics take their arguments as a payload to render, so an
+        // array prints once instead of once per element.
+        "DEBUG.PRINT", "DEBUG.ASSERT",
         // File I/O
         "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
         "CSVREADER", "CSVWRITER", "CSVHEADER",

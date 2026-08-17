@@ -717,6 +717,9 @@ bool jdb_no_vectorize(const std::string& name) {
         "SPLIT", "FORMAT$", "FRMV$", "INSERT$",
         "REPLACE$", "REVERSE$", "PACK$", "UNPACK",
         "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
+        // Diagnostics take their arguments as a payload to render, so an
+        // array prints once instead of once per element.
+        "DEBUG.PRINT", "DEBUG.ASSERT",
         "PDF.TEXT$",
         "CSVREADER", "CSVWRITER", "CSVHEADER", "IIF",
         "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
@@ -6299,6 +6302,39 @@ void VM::register_builtins() {
         if (!f) throw std::runtime_error("Cannot write file: " + fname);
         f.write(data.c_str(), data.size());
         return Value::make_none();
+    });
+
+    // ── Diagnostics ──────────────────────────────────────────
+
+    // A diagnostic line reaches the VS Code debug console while a DAP client
+    // is attached and stderr otherwise. It never goes to stdout, so a program
+    // whose output is redirected still shows its tracing on the terminal.
+    auto emit_diagnostic = [this](const std::string& text) {
+        if (debug && debug->dap) debug->dap->send_output_message(text + "\n");
+        else                     std::cerr << text << std::endl;
+    };
+
+    // DEBUG.PRINT v, [v2, ...] - arguments are stringified and joined with a
+    // single space.
+    register_native("DEBUG.PRINT", 1, -1,
+                    [emit_diagnostic](const std::vector<Value>& args) -> Value {
+        std::string text;
+        for (size_t i = 0; i < args.size(); i++) {
+            if (i) text += " ";
+            text += args[i].to_string();
+        }
+        emit_diagnostic(text);
+        return Value::make_none();
+    });
+
+    // DEBUG.ASSERT cond, [message$] - a std::runtime_error here picks up the
+    // native's name and the source line from the CALL handler, which a
+    // jdError would bypass.
+    register_native("DEBUG.ASSERT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (args[0].to_bool()) return Value::make_none();
+        std::string msg = args.size() >= 2 ? args[1].to_string() : std::string();
+        throw std::runtime_error(msg.empty() ? "assertion failed"
+                                             : "assertion failed: " + msg);
     });
 
     // Text extraction from PDF files (uncompressed, FlateDecode, ASCIIHex/85

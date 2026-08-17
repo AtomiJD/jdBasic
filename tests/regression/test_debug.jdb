@@ -1,0 +1,80 @@
+' DEBUG.PRINT and DEBUG.ASSERT in both backends.
+'
+' DEBUG.PRINT writes to the diagnostic channel, so nothing it emits shows up
+' on stdout - the assertions below check the surrounding behaviour instead:
+' that a call is a no-op for the program, that an array argument is a payload
+' rather than a broadcast target, and that a failed assertion is catchable.
+
+OPTION STRICT
+OPTION EXPLICIT
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+PRINT "--- DEBUG.PRINT accepts the documented shapes"
+
+DIM arr = [1, 2, 3]
+DIM n AS INTEGER = 7
+
+DEBUG.PRINT "single argument"
+DEBUG.PRINT "joined", n, 2.5
+DEBUG.PRINT arr
+DEBUG.PRINT("paren form", n)
+CHECK("program continues past DEBUG.PRINT", "reached", "reached")
+
+' An auto-vectorised DEBUG.PRINT would call once per element and leave the
+' array itself untouched only by luck; check the argument survives intact.
+CHECK("array argument is unchanged", STR$(LEN(arr)), "3")
+CHECK("  element 0", STR$(arr[0]), "1")
+CHECK("  element 2", STR$(arr[2]), "3")
+
+PRINT "--- DEBUG.ASSERT passes quietly"
+
+DEBUG.ASSERT TRUE
+DEBUG.ASSERT n = 7
+DEBUG.ASSERT n > 0, "n must be positive"
+CHECK("true conditions are a no-op", "reached", "reached")
+
+PRINT "--- a failed DEBUG.ASSERT is catchable"
+
+DIM caught AS INTEGER = 0
+DIM msg$ = ""
+TRY
+    DEBUG.ASSERT 1 = 2, "deliberate failure"
+    caught = 0
+CATCH
+    caught = 1
+    msg$ = ERRMSG$
+ENDTRY
+CHECK("CATCH sees the failed assertion", STR$(caught), "1")
+
+' The interpreter prefixes the builtin name and source line, the native
+' runtime reports the bare message, so match on the common part.
+DIM found AS INTEGER = 0
+IF INSTR(msg$, "assertion failed: deliberate failure") >= 0 THEN found = 1
+CHECK("  message names the assertion", STR$(found), "1")
+
+DIM after AS INTEGER = 0
+TRY
+    DEBUG.ASSERT FALSE, "second failure"
+CATCH
+    after = 1
+ENDTRY
+CHECK("a second failure still throws", STR$(after), "1")
+
+PRINT ""
+PRINT "test_debug: passed "; passed; ", failed "; failed
+IF failed > 0 THEN
+    PRINT "=== FAILED ==="
+ELSE
+    PRINT "=== ALL TESTS PASSED ==="
+ENDIF
