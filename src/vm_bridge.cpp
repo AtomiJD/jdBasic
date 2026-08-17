@@ -37,6 +37,8 @@ static std::mutex& bin_mx() { static std::mutex m; return m; }
 
 // Forward declarations for module registrations
 extern void register_sound_builtins(VM& vm);
+extern void register_audiofx_builtins(VM& vm);
+extern void register_audioio_builtins(VM& vm);
 extern void register_ffi_builtins(VM& vm);
 extern void register_ai_builtins(VM& vm);
 extern void register_numerics_builtins(VM& vm);
@@ -152,6 +154,10 @@ static void setup_all_builtins(VM& vm) {
     register_forms_builtins(vm);
 #endif
     register_sound_builtins(vm);
+    // Both compile to empty stubs without FX / MINIAUDIO, so the calls are
+    // unconditional like register_sound_builtins above.
+    register_audiofx_builtins(vm);
+    register_audioio_builtins(vm);
     register_ffi_builtins(vm);
     register_ai_builtins(vm);
     register_numerics_builtins(vm);
@@ -881,6 +887,19 @@ JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
     if (it->second.type == ValueType::STRING)
         return _strdup(it->second.as_string()->data.c_str());
     return _strdup(it->second.to_string().c_str());
+}
+
+// TYPEOF of a stored Value. A JD_TAG_VM_HANDLE only says that a handle is in
+// play, so reporting it as OBJECT hides what the bridge actually returned -
+// NONE included, which is what an object-returner hands back for a miss. The
+// VM's own TYPEOF does the mapping, so the two runtimes cannot drift apart.
+JDRT_API const char* jdrt_val_type_str(JdRT handle, int64_t h) {
+    auto* rt = resolve_rt(handle);
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end()) return _strdup("NONE");
+    Value t = rt->vm.call_function("TYPEOF", { it->second });
+    return _strdup(t.type == ValueType::STRING ? t.as_string()->data.c_str()
+                                               : "UNKNOWN");
 }
 
 // Returns a fresh handle for the element so the caller sees the real

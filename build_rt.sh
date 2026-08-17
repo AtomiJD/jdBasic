@@ -51,12 +51,15 @@ WANT_IMGUI=${IMGUI:-0}
 WANT_LLM=${LLM:-0}
 WANT_SOUND=${SOUND:-0}
 WANT_SQLITE=${SQLITE:-0}
+WANT_FX=${FX:-0}
+WANT_MINIAUDIO=${MINIAUDIO:-0}
 
 # Base translation units - mirror build_rt.bat's always-on list. gui.cpp and
 # sound.cpp guard their device code behind #ifdef GFX / SOUND_DSP, so they
 # compile in a headless build too.
 SRC="src/vm_bridge.cpp src/vm.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
+     src/audio_fx.cpp src/audio_io.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
      src/jdb_embed_api.cpp src/numerics.cpp src/screencap.cpp"
 
@@ -69,6 +72,19 @@ fi
 if [ "$WANT_SOUND" = "1" ]; then
     # Sequencer DSP in pull mode - no audio device; the host pulls samples.
     CXXFLAGS="$CXXFLAGS -DSOUND_DSP"
+fi
+
+if [ "$WANT_FX" = "1" ]; then
+    CXXFLAGS="$CXXFLAGS -DFX"
+fi
+
+if [ "$WANT_MINIAUDIO" = "1" ]; then
+    CXXFLAGS="$CXXFLAGS -DMINIAUDIO -Ilibs/miniaudio"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        LDFLAGS="$LDFLAGS -framework CoreFoundation -framework CoreAudio -framework AudioToolbox"
+    else
+        LDFLAGS="$LDFLAGS -lpthread -lm -ldl"
+    fi
 fi
 
 if [ "$WANT_GFX" = "1" ]; then

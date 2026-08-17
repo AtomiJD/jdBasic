@@ -61,6 +61,19 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
     "SOUND.RENDER", "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
     "TILEMAP.SIZE", "GUI.ITEM_RECT",
     "AI.LIST", "AI.TOPK", "AI.EMBED", "AI.EMBED_LLM", "AI.TOKENIZE",
+    "MON.SCOPE",
+};
+
+// Bridge builtins that return a BOOLEAN. The bridge hands every non-string,
+// non-array, non-object result back through __jdrt_call_typed_f64, which
+// flattens TRUE to the double 1.0 - so without an entry here `PRINT ok`
+// prints 1 instead of TRUE and a `= TRUE` comparison against a declared
+// BOOLEAN mismatches. Same single-source-of-truth rule as the array set:
+// the dispatch and the inference paths both read this.
+const std::unordered_set<std::string> kBridgeBoolReturners = {
+    "WAV.WRITE", "WAV.RECSTART",
+    "FX.ADD", "FX.SPLIT", "FX.MIX", "FX.SET",
+    "MON.START", "MON.RECSTART", "MON.RUNNING",
 };
 } // namespace
 
@@ -584,6 +597,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdrt_val_to_f64",  "__jdrt_val_to_f64",  f64_type,
         {i8_ptr_type, i64_type}, 1);
     reg("jdrt_val_to_str",  "__jdrt_val_to_str",  i8_ptr_type,
+        {i8_ptr_type, i64_type}, 2);
+    reg("jdrt_val_type_str","__jdrt_val_type_str",i8_ptr_type,
         {i8_ptr_type, i64_type}, 2);
     reg("jdrt_val_arr_get", "__jdrt_val_arr_get", i64_type,
         {i8_ptr_type, i64_type, i64_type}, 0);
@@ -2464,7 +2479,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "ZEROS","ONES","IOTA","RANGE","LINSPACE","TENSOR","RESHAPE",
                             "SPLIT","JOIN","FORMAT$","FRMV$","PACK$","UNPACK",
                             "REGEX_MATCH","REGEX.MATCH","REGEX.FINDALL",
-                            "NOW","CVDATE","CDATE","DATE$","TIME$","TICK"
+                            "NOW","CVDATE","CDATE","DATE$","TIME$","TICK",
+                            // Audio calls whose sample buffer is a payload:
+                            // WAV.WRITE returns a bool, FX.PROCESS a scalar.
+                            "WAV.WRITE","FX.PROCESS"
                         };
                         for (auto& a : e->args) {
                             if (a && infer_tag(a.get()) == JD_TAG_ARR && !no_vec_infer.count(upper)) {
@@ -2485,6 +2503,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         };
                         if (arr_returners.count(upper) ||
                             kBridgeArrayReturners.count(upper)) return JD_TAG_ARR;
+                        if (kBridgeBoolReturners.count(upper)) return JD_TAG_BOOL;
                         static const std::unordered_set<std::string> scalar_reducers = {
                             "SUM","PRODUCT","MIN","MAX","MEAN","STDEV","MEDIAN",
                             "VARIANCE","DOT","CROSS","REDUCE"
@@ -2525,7 +2544,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
                             // AI array-of-map returners - VM_HANDLE, see the
                             // object_returners set in the bridge dispatch.
-                            "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST"
+                            "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST",
+                            // Audio: the WAV readers and the recorder hand back
+                            // { samples[], rate, channels, frames }, MON.DEVICES
+                            // { playback[], capture[] }.
+                            "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
+                            "MON.DEVICES"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -6760,6 +6784,20 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_a");
                 return { as_ptr, JD_TAG_ARR };
             }
+            // Caller wants the cell's own type rather than a decode into one
+            // it named: recover the per-element JdTag at runtime. Set by
+            // conversion builtins like STR$, whose result type says nothing
+            // about what the element actually holds.
+            if (m_want_leaf_tag == JD_TAG_RUNTIME) {
+                auto& gtg = runtime_funcs["__arr_get_tagged"];
+                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "leaf_gt_tag");
+                LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
+                LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
+                    getargs, 3, "leaf_gt");
+                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "leaf_gt_tagv");
+                LLVMValueRef as_i64 = pun_f64_to_i64(val);
+                return { as_i64, JD_TAG_RUNTIME, tag_v };
+            }
             // LHS type hint (e.g. `id$ = arr[i]` with $-suffixed target)
             // lets us decode the punned-f64 element without needing the
             // source array to be pre-tracked as string/map-bearing. Crucial
@@ -8042,6 +8080,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // and prints booleans as 1/0; route to specific helpers when the
     // input tag is known.
     if (upper == "STR$" && expr.args.size() == 1) {
+        // STR$ renders whatever it is handed, so an outer leaf hint must not
+        // reach the argument: a `want string` from the assignment target or a
+        // $-suffixed parameter would decode a numeric array cell as a char*
+        // and read the f64 bits as an address. Ask for the cell's own tag and
+        // let the RUNTIME branch below dispatch.
+        ScopedLeafTag _str_lt(this, JD_TAG_RUNTIME);
         TypedValue av = codegen_expr(*expr.args[0]);
         // A cell read out of a MAP carries its type at runtime; branch on it
         // so a stored truth value stringifies as TRUE/FALSE, not 1/0.
@@ -9037,6 +9081,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "tof_f");
             return { result, JD_TAG_STR };
         }
+        // A VM handle's static tag says only that the bridge returned a Value,
+        // so mapping it straight to "OBJECT" would report a bridge NONE (an
+        // unreadable file for WAV.READ, a missing key) as a live object and
+        // make the documented `TYPEOF(v) = "NONE"` guard unreachable. Ask the
+        // bridge what the stored Value really is.
+        if (av.tag == JD_TAG_VM_HANDLE) {
+            if (auto* vts = get_runtime_func("__jdrt_val_type_str")) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef args[] = { rt, av.val };
+                LLVMValueRef result = LLVMBuildCall2(builder, vts->fn_type, vts->fn,
+                                                     args, 2, "tof_vmh");
+                return { result, JD_TAG_STR };
+            }
+        }
         auto& fn = runtime_funcs["__typeof_tag"];
         // RUNTIME-tagged values carry their real JdTag in av.runtime_tag -
         // dispatch on that so TYPEOF on an untyped FUNC param sees the
@@ -9172,6 +9231,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // each item and returns an ARRAY, which poisons the assigned global's
         // tag (e.g. `JT_SEL = TUI.MENU(...)` then STR$(JT_SEL) reads "[]").
         "TUI.MENU", "TUI.RADIO", "TUI.DROPDOWN",
+        // Audio calls whose sample buffer is a payload, not a broadcast
+        // target - mirrors the extra_no_vectorize set audio_fx.cpp installs
+        // on the interpreter VM.
+        "WAV.WRITE", "FX.PROCESS",
         // Assert is a user SUB but if used as native:
     };
 
@@ -9908,6 +9971,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // (value_to_jdbarray) has no OBJECT-cell support and would
                 // drop every map to 0.
                 "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST",
+                // Audio map returners. The samples array lives inside the map,
+                // so the whole Value has to stay in the value_store for
+                // res{"samples"}[i] to drill through jdrt_obj_get.
+                "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
+                "MON.DEVICES",
             };
             bool is_object_fn = object_returners.count(upper);
 
@@ -9939,6 +10007,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
                 return { result, JD_TAG_STR };
+            } else if (kBridgeBoolReturners.count(upper)) {
+                // Bools ride the f64 variant; narrow the double back to the
+                // i64 0/1 that JD_TAG_BOOL is represented as.
+                auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
+                LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmbool");
+                LLVMValueRef nz = LLVMBuildFCmp(builder, LLVMRealONE, result,
+                                                LLVMConstReal(f64_type, 0.0), "vmbool_nz");
+                return { LLVMBuildZExt(builder, nz, i64_type, "vmbool_i"), JD_TAG_BOOL };
             } else {
                 auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");

@@ -71,6 +71,9 @@ JDRT_API int64_t     jdrt_obj_exists (JdRT rt, int64_t h, const char* key);
 // concrete scalar (passing to a runtime function expecting f64/str).
 JDRT_API double      jdrt_val_to_f64 (JdRT rt, int64_t h);
 JDRT_API const char* jdrt_val_to_str (JdRT rt, int64_t h);
+// The stored Value's TYPEOF name, so a handle reports NONE / ARRAY / STRING
+// rather than the blanket OBJECT its static tag implies.
+JDRT_API const char* jdrt_val_type_str(JdRT rt, int64_t h);
 JDRT_API int64_t     jdrt_val_length (JdRT rt, int64_t h);
 // Integer-indexed access on an array-typed handle; returns a fresh handle.
 JDRT_API int64_t     jdrt_val_arr_get(JdRT rt, int64_t h, int64_t idx);

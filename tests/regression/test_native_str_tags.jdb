@@ -1,0 +1,75 @@
+' Three native-backend defects that the interpreter never had. Each case
+' below segfaulted, truncated or lied under -c while running green in the
+' interpreter, so the point of this file is that both backends agree.
+
+OPTION STRICT
+OPTION EXPLICIT
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+PRINT "--- embedded NUL bytes survive concatenation"
+
+' Native concat sized both operands with strlen, so a CHR$(0) operand
+' contributed nothing and the bytes after an interior NUL were dropped.
+DIM lead$ = CHR$(0) + CHR$(0) + "RIFF" + CHR$(0) + "X"
+CHECK("leading and interior NULs counted", STR$(LEN(lead$)), "8")
+
+DIM tail$ = "RIFF" + CHR$(0) + CHR$(1)
+CHECK("trailing NUL counted", STR$(LEN(tail$)), "6")
+
+DIM joined$ = lead$ + tail$
+CHECK("concat of two binary strings", STR$(LEN(joined$)), "14")
+
+' The length has to survive the trip through disk, not just LEN.
+DIM binpath$ = "tests" + CHR$(92) + "tmp_nulconcat.bin"
+BINWRITER binpath$, joined$
+DIM back$ = BINREADER$(binpath$)
+CHECK("BINWRITER wrote every byte", STR$(LEN(back$)), "14")
+KILL binpath$
+
+PRINT "--- STR$ of an indexed read passed straight to a routine"
+
+' The wanted string type of the parameter used to reach through STR$ into
+' its argument, so a numeric cell was decoded as a char* and strlen ran
+' over the f64 bit pattern.
+DIM nums = [11, 22, 33]
+DIM words$ = ["ay", "bee", "cee"]
+
+CHECK("numeric element", STR$(nums[0]), "11")
+CHECK("  later numeric element", STR$(nums[2]), "33")
+CHECK("string element", STR$(words$[1]), "bee")
+CHECK("scalar is unaffected", STR$(LEN(nums)), "3")
+
+PRINT "--- TYPEOF reports what a bridge handle really holds"
+
+' A VM handle used to report OBJECT whatever it carried, which made the
+' documented NONE guard unreachable in compiled code.
+DIM good = JSON.PARSE$("{" + CHR$(34) + "rate" + CHR$(34) + ": 44100}")
+CHECK("a parsed map is an OBJECT", TYPEOF(good), "OBJECT")
+CHECK("  its field survives", STR$(good{"rate"}), "44100")
+
+' Input the parser cannot even start on yields NONE rather than throwing.
+DIM bad = JSON.PARSE$("not json at all")
+CHECK("a failed parse is NONE", TYPEOF(bad), "NONE")
+
+DIM guard AS INTEGER = 0
+IF TYPEOF(bad) = "NONE" THEN guard = 1
+CHECK("  so the NONE guard fires", STR$(guard), "1")
+
+PRINT ""
+PRINT "test_native_str_tags: passed "; passed; ", failed "; failed
+IF failed > 0 THEN
+    PRINT "=== FAILED ==="
+ELSE
+    PRINT "=== ALL TESTS PASSED ==="
+ENDIF

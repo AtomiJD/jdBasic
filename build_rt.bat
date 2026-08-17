@@ -112,6 +112,15 @@ for %%A in (%*) do (
         set DEFS=!DEFS! /DSOUND_DSP
         echo [+] SOUND - sequencer DSP, pull mode, no device
     )
+    if /I "%%A"=="FX" (
+        set DEFS=!DEFS! /DFX
+        echo [+] FX - WAV I/O + effects chain, self-contained no external libs
+    )
+    if /I "%%A"=="MINIAUDIO" (
+        set DEFS=!DEFS! /DMINIAUDIO
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\miniaudio
+        echo [+] MINIAUDIO - realtime audio device engine
+    )
     if /I "%%A"=="SQLITE" (
         set DEFS=!DEFS! /DSQLITE
         set EXTRA_SRC=!EXTRA_SRC! src\sql.cpp
@@ -189,7 +198,7 @@ REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\jdb_embed_api.cpp src\numerics.cpp src\screencap.cpp !EXTRA_SRC! ^
+  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\jdb_embed_api.cpp src\numerics.cpp src\screencap.cpp !EXTRA_SRC! ^
   /Fe:build\jdbrt.dll ^
   /Fo:build\ ^
   /link ^

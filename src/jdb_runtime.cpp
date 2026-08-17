@@ -243,11 +243,39 @@ int64_t jdb_os_feature(const char* name) {
 
 // ── String operations ───────────────────────────────────────
 
+// Forward decl: resolved against jdbrt.dll at link time.
+// Returns the true byte length of binary strings (with embedded nulls),
+// or -1 if the string isn't registered as binary (then use strlen).
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+int64_t jdrt_strlen(const char* s);
+
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+void jdrt_register_binary(const char* s, int64_t n);
+
+// Honours the binary-length registry so buffers carrying embedded 0x00
+// (CHR$(0), BINREADER$ / PACK$ content and anything sliced out of them)
+// report their real size instead of stopping at the first NUL.
+static inline int64_t jdb_str_blen(const char* s) {
+    if (!s) return 0;
+    int64_t blen = jdrt_strlen(s);
+    if (blen >= 0) return blen;
+    return (int64_t)strlen(s);
+}
+
 char* jdb_str_concat(const char* a, const char* b) {
-    size_t la = strlen(a), lb = strlen(b);
-    char* r = (char*)malloc(la + lb + 1);
-    memcpy(r, a, la);
-    memcpy(r + la, b, lb + 1);
+    int64_t la = jdb_str_blen(a), lb = jdb_str_blen(b);
+    char* r = (char*)malloc((size_t)(la + lb + 1));
+    if (la) memcpy(r, a, (size_t)la);
+    if (lb) memcpy(r + la, b, (size_t)lb);
+    r[la + lb] = '\0';
+    // Carry the length forward when the result holds an interior NUL, so the
+    // next concat, LEN or BINWRITER sees all of it rather than the strlen
+    // prefix. This is what lets a RIFF header be built with CHR$(0).
+    if (la + lb != (int64_t)strlen(r)) jdrt_register_binary(r, la + lb);
     return r;
 }
 
@@ -2404,29 +2432,6 @@ char* jdb_format4_t(const char* fmt, const char* types, int64_t a1, int64_t a2, 
 }
 
 // ── String Builtins ─────────────────────────────────────────
-
-// Forward decl: resolved against jdbrt.dll at link time.
-// Returns the true byte length of binary strings (with embedded nulls),
-// or -1 if the string isn't registered as binary (then use strlen).
-#ifdef _WIN32
-__declspec(dllimport)
-#endif
-int64_t jdrt_strlen(const char* s);
-
-#ifdef _WIN32
-__declspec(dllimport)
-#endif
-void jdrt_register_binary(const char* s, int64_t n);
-
-// Inline helper that mirrors jdb_len_str but is cheap to use inline in
-// the string slicers below. Honours the binary-length registry so
-// substrings of BINREADER$/PACK$ buffers survive past the first 0x00.
-static inline int64_t jdb_str_blen(const char* s) {
-    if (!s) return 0;
-    int64_t blen = jdrt_strlen(s);
-    if (blen >= 0) return blen;
-    return (int64_t)strlen(s);
-}
 
 // String slicing via `/`:  "str" / n → last n chars; n / "str" → first n.
 // Binary-safe: uses the byte length registry (embedded NULs survive) and
