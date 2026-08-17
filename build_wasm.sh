@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # WASM (Emscripten) build of jdBasic for the browser IDE.
-# Runtime: core interpreter + GFX (SDL3) + ImGui + SQLite. No HTTP/LLVM/FFI/
+# Runtime: core interpreter + GFX (SDL3) + ImGui + SQLite + FX. No LLVM/FFI/
 # threads (browser is single-threaded; blocking is handled via Asyncify).
+# HTTP.GET$/POST$ come from wasm_net.cpp over fetch, not httplib.
+# FX is WAV.READ/WRITE/INFO plus the effects chain - audio_fx.cpp is plain
+# standard C++ with no device or platform API, so it ports as-is and works
+# against MEMFS. The device-bound flags stay out: MINIAUDIO (MON.*, capture),
+# MIDI (RtMidi needs a platform backend) and FORMS (Win32).
 # Run on cortex from ~/cc_wasm/cc with emsdk sourced.
 set -e
 cd "$(dirname "$0")"
@@ -14,7 +19,7 @@ PORTS="--use-port=sdl3 --use-port=sdl3_ttf"
 INC="-Isrc -Ilibs/eigen -Ilibs/imgui -Ilibs/imgui/backends \
      -Ilibs/SDL3_image/include -Ilibs/SDL3_mixer/include/SDL3_mixer \
      -Ibridges/sqlitebridge"
-DEF="-DGFX -DIMGUI -DSQLITE"
+DEF="-DGFX -DIMGUI -DSQLITE -DFX"
 # -O2: the interpreter dispatch + APL array ops are hot; -O0 makes compute
 # demos (universe, mandelbrot, ...) crawl in the browser. -O2 is the sweet
 # spot (much faster than -O0, smaller .wasm than -O3).

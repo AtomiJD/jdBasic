@@ -15,7 +15,7 @@ Tracked in git (source):
 
 Generated / vendored, NOT in git (see `.gitignore`) - assemble before deploying:
 
-- `jdbasic.js`, `jdbasic.wasm` - the runtime (core + GFX + ImGui + SQLite), demos + default font embedded
+- `jdbasic.js`, `jdbasic.wasm` - the runtime (core + GFX + ImGui + SQLite + FX), demos + default font embedded
 - `vendor/xterm/` - `xterm.js`, `xterm.css`, `addon-fit.js`
 - `vendor/monaco/vs/` - Monaco editor 0.45.0 (`min/vs` tree, includes the worker)
 - `vendor/fonts/` - Fira Code woff2 + `fira-code.css`
