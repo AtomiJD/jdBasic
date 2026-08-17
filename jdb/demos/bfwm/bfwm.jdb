@@ -1,6 +1,5 @@
 ' Black Forest Games - single-file championship scoreboard (SQLite + ImGui)
-' with a built-in PDF certificate generator. Self-contained so it runs
-' from one link in the jdBasic WASM playground.
+' with a built-in PDF certificate generator.
 
 ' Certificate PDF generator - hand-built landscape-A4 PDF.
 ' URK_CREATE(path$, event$, date$, name$, title$, place) writes one page.
@@ -612,7 +611,7 @@ DO
                 GUI.END_TAB_ITEM
             ENDIF
 
-            IF GUI.BEGIN_TAB_ITEM("Einstellungen") THEN
+            IF GUI.BEGIN_TAB_ITEM("Settings") THEN
                 GUI.SEPARATOR_TEXT "Event"
                 GUI.TEXT "These fields go on every certificate."
                 GUI.DUMMY 0, 10
