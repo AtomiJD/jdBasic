@@ -2,12 +2,14 @@
 setlocal enabledelayedexpansion
 
 REM build_vibe.bat - Vibe-Game-Pack release bundle for Windows.
-REM Wraps build.bat GFX IMGUI HTTP MCPSERVER RELEASE, then REFRESHES the
+REM Wraps build.bat GFX IMGUI HTTP MCPSERVER SQLITE FX RELEASE, then REFRESHES the
 REM redistributable bundle in release\ in place: the binary, the SDL3 / OpenSSL
 REM DLLs, the runtime docs and BUILD_INFO.txt are regenerated, while the curated
 REM content (games\, run-*.bat, start-claude.bat, QUICKSTART.md, setup_guide.md,
 REM CLAUDE.md, README.txt) is left untouched. No NATIVEC - the games run
 REM interpreted, so there is no jdbrt.dll in this pack.
+REM SQLite and FX add no redistributable: SQLite links statically and FX is
+REM self-contained, so the bundle keeps the same DLL set.
 
 REM Make the script robust against being called from any working directory.
 pushd "%~dp0"
@@ -16,8 +18,8 @@ set BUNDLE=jdbasic-vibe-game-pack-windows-x64
 set OUT=release\%BUNDLE%
 set ZIP=release\%BUNDLE%.zip
 
-echo === build_vibe: compile (GFX IMGUI HTTP MCPSERVER RELEASE) ===
-call .\build.bat GFX IMGUI HTTP MCPSERVER RELEASE
+echo === build_vibe: compile [GFX IMGUI HTTP MCPSERVER SQLITE FX RELEASE] ===
+call .\build.bat GFX IMGUI HTTP MCPSERVER SQLITE FX RELEASE
 if errorlevel 1 (
     echo BUILD FAILED - bundle not refreshed.
     exit /b 1
@@ -66,8 +68,8 @@ set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%
 > "%OUT%\BUILD_INFO.txt" echo jdBasic Vibe-Game Pack - Build !BNUM! - !BDATE!
 >>"%OUT%\BUILD_INFO.txt" echo.
 >>"%OUT%\BUILD_INFO.txt" echo Binary: jdBasic.exe ^(Build !BNUM!, !BDATE!^)
->>"%OUT%\BUILD_INFO.txt" echo Features: HTTP, GFX, ImGui, MCP
->>"%OUT%\BUILD_INFO.txt" echo Build flags: GFX IMGUI HTTP MCPSERVER
+>>"%OUT%\BUILD_INFO.txt" echo Features: HTTP, GFX, ImGui, FX, SQLite, MCP
+>>"%OUT%\BUILD_INFO.txt" echo Build flags: GFX IMGUI HTTP MCPSERVER SQLITE FX
 >>"%OUT%\BUILD_INFO.txt" echo.
 >>"%OUT%\BUILD_INFO.txt" echo What's inside:
 >>"%OUT%\BUILD_INFO.txt" echo   games\pacman\   - vibe_game.jdb ^(Pac-clone with sprites, sound, MCP-pause^)
