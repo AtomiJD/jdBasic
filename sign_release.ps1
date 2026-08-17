@@ -8,9 +8,19 @@
 #
 # Usage:   powershell -ExecutionPolicy Bypass -File .\sign_release.ps1
 #          powershell ... -File .\sign_release.ps1 -Thumbprint <40-hex>   (override)
+#          powershell ... -File .\sign_release.ps1 -Only vibe             (one bundle)
+#          powershell ... -File .\sign_release.ps1 -Only vibe -WhatIf     (show, do nothing)
+#
+# -Only takes one or more bundle names, matched as a substring against the pack
+# list below, and restricts both the signing and the repackaging to them. Reach
+# for it when a single pack was rebuilt: signing a pack again gives it a fresh
+# timestamp, which changes its zip bytes and hash, so an already-published
+# archive would no longer match what the release notes claim.
 param(
     [string]$Thumbprint,
-    [string]$TimestampUrl = "http://time.certum.pl"
+    [string]$TimestampUrl = "http://time.certum.pl",
+    [string[]]$Only,
+    [switch]$WhatIf
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -31,15 +41,61 @@ if (-not $Thumbprint) {
     Write-Host "Cert:     $($cert.Subject)  [$Thumbprint]  expires $($cert.NotAfter)"
 }
 
-# 3. OUR binaries only - third-party DLLs (SDL3*, LLVM-C, libssl/libcrypto)
-#    are already vendor-signed and must not be re-signed.
-$targets = @(
-    "release\jdbasic-core-windows-x64\jdBasic.exe",
-    "release\jdbasic-mcp-native-windows-x64\jdBasic.exe",
-    "release\jdbasic-mcp-native-windows-x64\jdbrt.dll",
-    "release\jdbasic-vibe-game-pack-windows-x64\jdBasic.exe",
-    "release\jdbasic-vb6-windows-x64\jdBasic.exe"
-)
+# 3. Bundle -> OUR binaries inside it. Third-party DLLs (SDL3*, LLVM-C,
+#    libssl/libcrypto) are already vendor-signed and must not be re-signed.
+#    One map rather than a target list plus a bundle list, so -Only cannot
+#    filter the two out of step and sign a pack it then fails to rezip.
+$packs = [ordered]@{
+    "jdbasic-core-windows-x64"           = @("jdBasic.exe")
+    "jdbasic-mcp-native-windows-x64"     = @("jdBasic.exe", "jdbrt.dll")
+    "jdbasic-vibe-game-pack-windows-x64" = @("jdBasic.exe")
+    "jdbasic-vb6-windows-x64"            = @("jdBasic.exe")
+}
+
+$bundles = @($packs.Keys)
+if ($Only) {
+    # `powershell -File script.ps1 -Only vibe,vb6` hands the whole thing over as
+    # one string - the -File argument parser does not split on commas the way the
+    # -Command parser does - so split here and accept both invocation styles.
+    $wanted = @()
+    foreach ($o in $Only) {
+        foreach ($part in ($o -split ',')) {
+            $part = $part.Trim()
+            if ($part) { $wanted += $part }
+        }
+    }
+    $picked = @()
+    foreach ($o in $wanted) {
+        $hits = @($packs.Keys | Where-Object { $_ -eq $o -or $_ -like "*$o*" })
+        if ($hits.Count -eq 0) {
+            throw "-Only '$o' matches no bundle. Known: $($packs.Keys -join ', ')"
+        }
+        if ($hits.Count -gt 1) {
+            throw "-Only '$o' is ambiguous, it matches: $($hits -join ', ')"
+        }
+        $picked += $hits[0]
+    }
+    $bundles = @($picked | Select-Object -Unique)
+}
+
+$targets = @()
+foreach ($b in $bundles) {
+    foreach ($bin in $packs[$b]) { $targets += "release\$b\$bin" }
+}
+
+Write-Host "Bundles:  $($bundles -join ', ')"
+if ($WhatIf) {
+    Write-Host "`n-- WhatIf: would sign --"
+    foreach ($rel in $targets) {
+        $mark = "missing"
+        if (Test-Path (Join-Path $repo $rel)) { $mark = "present" }
+        Write-Host "  $rel  [$mark]"
+    }
+    Write-Host "`n-- WhatIf: would rezip --"
+    foreach ($b in $bundles) { Write-Host "  release\$b.zip  + .sha256" }
+    Write-Host "`nNothing signed, nothing written."
+    exit 0
+}
 
 # 4. Sign.
 foreach ($rel in $targets) {
@@ -61,12 +117,6 @@ foreach ($rel in $targets) {
 }
 
 # 6. Rebuild zips + sha256 (signed bytes differ from the published archives).
-$bundles = @(
-    "jdbasic-core-windows-x64",
-    "jdbasic-mcp-native-windows-x64",
-    "jdbasic-vibe-game-pack-windows-x64",
-    "jdbasic-vb6-windows-x64"
-)
 Write-Host "`n-- repackage --"
 foreach ($b in $bundles) {
     $dir = Join-Path $repo "release\$b"
@@ -77,4 +127,6 @@ foreach ($b in $bundles) {
     Set-Content -Path "$zip.sha256" -Value $hash -Encoding ascii
     Write-Host "OK  $b.zip  sha256=$hash"
 }
-Write-Host "`nDone. Re-upload the four zips + .sha256 to the GitHub release."
+Write-Host "`nDone. Re-upload these $($bundles.Count) zip(s) + .sha256 to BOTH releases:"
+Write-Host "  jdbasic-mcp (pre-release) and v1.0.0 (the Latest users see),"
+Write-Host "  then update each release body so its sha256 and build number match."

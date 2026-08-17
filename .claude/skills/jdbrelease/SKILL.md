@@ -60,6 +60,21 @@ never re-signed.
 powershell -ExecutionPolicy Bypass -File ./sign_release.ps1
 ```
 
+**Refreshing only some packs?** Pass `-Only` (substring match against the bundle
+names, comma-separated for several) so the others keep the signature and hash
+they were published with:
+
+```bash
+powershell -ExecutionPolicy Bypass -File ./sign_release.ps1 -Only vibe
+powershell -ExecutionPolicy Bypass -File ./sign_release.ps1 -Only vibe,vb6
+powershell -ExecutionPolicy Bypass -File ./sign_release.ps1 -Only vibe -WhatIf   # show, sign nothing
+```
+
+This matters because signing is not idempotent: a second run gives the binary a
+fresh timestamp, which changes the zip bytes and the sha256. Re-signing a pack
+you are not republishing silently desyncs the release notes from the asset. An
+unknown or ambiguous `-Only` value aborts instead of guessing.
+
 It prints `OK <bundle>.zip  sha256=<hash>` for each - **capture those three hashes**, they
 go in the release notes. (Override the cert with `-Thumbprint <40-hex>` if auto-pick grabs
 the wrong one.)
