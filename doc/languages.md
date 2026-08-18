@@ -12,7 +12,7 @@ jdBasic supports a variety of data types. While variables are variants and can h
 * **DateTime**: A type for storing date and time values, created with `NOW()` or `CVDATE()`.
 * **Array**: A multi-dimensional array of other Basic values.
 * **Map**: A key-value dictionary where keys are strings and values can be any Basic value. Used for creating complex data structures.
-* **Tensor**: An opaque data type that holds multi-dimensional floating-point data and tracks computational history for automatic differentiation (autodiff). It is the core of the AI functions and enables building and training neural networks.
+* **Tensor**: A multi-dimensional floating-point value used by the AI functions, built with `AI.TENSOR(data, [shape])` from nested arrays. `TYPEOF` reports it as `ARRAY`. The autodiff and layer-training operations this type once carried are no longer part of the runtime; see the note on neural networks near the end of this document.
 * **Sized numeric types**: `DIM` also accepts explicit widths - `INT16`, `INT32`, `INT64` for signed integers and `FLOAT16`, `FLOAT32`, `FLOAT64` for floating point - plus `CHAR` for a single character and `BYTE`. The classic-BASIC spellings are aliases of these: `INTEGER` and `LONG` are `INT64`, `SHORT` is `INT16`, `DOUBLE` is `FLOAT64`, `SINGLE` is `FLOAT32`, `BOOL` is `BOOLEAN`.
 * **JsonObject**: A special type returned by `JSON.PARSE$`, which can be accessed like a Map or Array.
 * **ComObject**: A special type returned by `CREATEOBJECT`, representing an instance of a COM Automation object.
@@ -3458,13 +3458,15 @@ PRINT p{"confidence"}   ' 0.71
 AI.CLASSIFIER_SAVE clf, "tickets.clf"
 ```
 
-### Tensor & Auto-Diff (experimental)
+### Neural networks in plain jdBasic
 
-jdBasic also ships a small in-process autograd engine for experimentation
-with neural networks written directly in BASIC. See the demos under
-`jdb/demos/tensor/` (`tensor_train.jdb`, the `nl_*.jdb` series) for the
-supported ops in action - this subsystem is considered experimental and
-may change.
+The runtime carries no autodiff engine and no layer/optimizer API. What it
+does have is fast whole-array arithmetic, which is enough to write a network
+by hand: the `nl_*.jdb` series under `jdb/demos/tensor/` walks from a single
+neuron to a trainable XOR network using nothing but the array operations
+documented above. For working with an existing model rather than training
+one, use the `AI.*` inference calls (`AI.LOAD_LLM`, `AI.CHAT`, `AI.EMBED`,
+the `AI.RAG_*` set).
 
 ## The Integrated Editor
 
