@@ -194,7 +194,6 @@ See [`doc/howto-vector-matrix-data.md`](../doc/howto-vector-matrix-data.md) for 
 ### Tensor / Neural-net teaching series
 
 * **`demos/tensor/nl_start.jdb`** ... `nl_part4.jdb` - build a neuron step by step, then the layer.
-* **`demos/tensor/tensor_train.jdb`** - scalar-mode training loop.
 
 ### Tools
 

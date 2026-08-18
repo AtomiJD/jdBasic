@@ -2954,10 +2954,6 @@ Description: Returns the tangent of an angle.
 Syntax: TANH(x)
 Description: Hyperbolic tangent. Vectorizes element-wise over arrays.
 
-[TENSOR]
-Syntax: DIM variable AS TENSOR
-Description: Declares a variable to hold a tensor for AI operations.
-
 [TEXT]
 Syntax: TEXT x, y, content$, [r, g, b]
 Description: Draws a string of text on the graphics screen.
