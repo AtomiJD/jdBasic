@@ -948,21 +948,8 @@ Value VM::invoke_native(const NativeFunc& fn, const std::vector<Value>& args, bo
     return vec(args);
 }
 
-Value VM::call_function(const std::string& name, const std::vector<Value>& args) {
-    // Native?
-    auto nit = natives.find(name);
-    if (nit != natives.end()) {
-        bool no_vec = jdb_no_vectorize(name)
-            || extra_no_vectorize.find(name) != extra_no_vectorize.end();
-        return invoke_native(nit->second, args, no_vec);
-    }
-
-    // User-defined?
-    auto fit = func_map.find(name);
-    if (fit == func_map.end())
-        throw jdError(ErrCode::UNDEFINED_FUNCTION, "Undefined function: " + name);
-
-    FuncProto& proto = (*func_protos)[fit->second];
+Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
+    FuncProto& proto = (*func_protos)[idx];
 
     size_t new_base = sp;
     for (auto& a : args) push(a);
@@ -982,6 +969,23 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
     // flag stays set so further nested unwinds also short-circuit.
     if (is_halted) return Value::make_none();
     return pop();
+}
+
+Value VM::call_function(const std::string& name, const std::vector<Value>& args) {
+    // Native?
+    auto nit = natives.find(name);
+    if (nit != natives.end()) {
+        bool no_vec = jdb_no_vectorize(name)
+            || extra_no_vectorize.find(name) != extra_no_vectorize.end();
+        return invoke_native(nit->second, args, no_vec);
+    }
+
+    // User-defined?
+    auto fit = func_map.find(name);
+    if (fit == func_map.end())
+        throw jdError(ErrCode::UNDEFINED_FUNCTION, "Undefined function: " + name);
+
+    return call_function_idx((int32_t)fit->second, args);
 }
 
 Value VM::apply_binary_op(const std::string& op, const Value& a, const Value& b) {
@@ -2247,10 +2251,38 @@ void VM::run() {
                 // Try UDT method call
                 Value* type_val = obj.as_object()->get("__TYPE__");
                 if (type_val && type_val->type == ValueType::STRING) {
-                    std::string type_method = type_val->as_string()->data + "." + method;
+                    const void* tobj = (const void*)type_val->as_string();
+                    auto& mcache = frame().chunk->method_cache;
+
                     std::vector<Value> call_args;
+                    call_args.reserve(args.size() + 1);
                     call_args.push_back(obj); // THIS
                     for (auto& a : args) call_args.push_back(std::move(a));
+
+                    // Hit: same receiver type at this site as last time, and the
+                    // function table has not been reloaded since. Skips building
+                    // "Type.method" and both name lookups.
+                    if (name_idx < mcache.size()) {
+                        const auto& e = mcache[name_idx];
+                        if (e.gen == func_map_generation && e.func_idx >= 0 &&
+                            e.type_obj == tobj) {
+                            push(call_function_idx(e.func_idx, call_args));
+                            break;
+                        }
+                    }
+
+                    std::string type_method = type_val->as_string()->data + "." + method;
+                    auto fit = func_map.find(type_method);
+                    if (fit != func_map.end()) {
+                        if (name_idx >= mcache.size()) mcache.resize(name_idx + 1);
+                        auto& e = mcache[name_idx];
+                        e.gen = func_map_generation;
+                        e.func_idx = (int32_t)fit->second;
+                        e.type_obj = tobj;
+                        push(call_function_idx(e.func_idx, call_args));
+                        break;
+                    }
+                    // Not a user method - a native of that name may still exist.
                     push(call_function(type_method, call_args));
                     break;
                 }

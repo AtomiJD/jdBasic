@@ -159,6 +159,19 @@ struct Chunk {
     // generation counter used for CALL caches.
     mutable std::vector<uint64_t> global_cache;
 
+    // Per-chunk inline cache for UDT method dispatch. A method name alone does
+    // not identify the target - the receiver's type does - so the entry also
+    // records the __TYPE__ string object it was resolved against and is only
+    // trusted for a receiver carrying that very object. Every instance of a
+    // type shares it, because the generated constructor loads it from one
+    // constant. Indexed by constants[] index, same generation rule as above.
+    struct MethodCacheEntry {
+        uint32_t gen = 0;
+        int32_t func_idx = -1;
+        const void* type_obj = nullptr;
+    };
+    mutable std::vector<MethodCacheEntry> method_cache;
+
     // STATIC local variables: per-FuncProto persistent storage. Sized at
     // compile time, slot indexes baked into LOAD_STATIC/STORE_STATIC bytes.
     // Init guard is mutated on first execution of MAYBE_INIT_STATIC, hence

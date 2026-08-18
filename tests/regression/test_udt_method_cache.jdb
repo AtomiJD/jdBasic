@@ -1,0 +1,72 @@
+' The CALL_METHOD inline cache keys on the receiver's type, so a call site
+' that sees more than one type must still dispatch correctly, and a method
+' redefined by live-coding must not keep resolving to the old body.
+
+OPTION EXPLICIT
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+TYPE T_A
+    V AS INTEGER
+    FUNC TAG()
+        RETURN "A" + STR$(THIS.V)
+    ENDFUNC
+ENDTYPE
+
+TYPE T_B
+    V AS INTEGER
+    FUNC TAG()
+        RETURN "B" + STR$(THIS.V)
+    ENDFUNC
+ENDTYPE
+
+DIM a AS T_A
+DIM b AS T_B
+a.V = 1
+b.V = 2
+
+PRINT "--- one call site, two receiver types"
+
+' Same site, alternating types: a cache that ignored the type would answer
+' with whichever body it saw first.
+DIM i AS INTEGER
+DIM outa$ = ""
+DIM outb$ = ""
+FOR i = 1 TO 3
+    outa$ = a.TAG()
+    outb$ = b.TAG()
+NEXT i
+CHECK("type A resolves to A", outa$, "A1")
+CHECK("type B resolves to B", outb$, "B2")
+
+PRINT "--- repeated calls stay correct"
+
+DIM acc$ = ""
+FOR i = 1 TO 4
+    acc$ = acc$ + a.TAG()
+NEXT i
+CHECK("four cached hits agree", acc$, "A1A1A1A1")
+
+' A second instance of the same type shares the type object, so it must hit
+' the same cached entry.
+DIM a2 AS T_A
+a2.V = 7
+CHECK("another instance of the type", a2.TAG(), "A7")
+
+PRINT ""
+PRINT "test_udt_method_cache: passed "; passed; ", failed "; failed
+IF failed > 0 THEN
+    PRINT "=== FAILED ==="
+ELSE
+    PRINT "=== ALL TESTS PASSED ==="
+ENDIF

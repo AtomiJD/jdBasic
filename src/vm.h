@@ -142,6 +142,9 @@ public:
 
     // Call a function by name (native or user-defined) from within native code
     Value call_function(const std::string& name, const std::vector<Value>& args);
+    // Same call, target already resolved to a user-function index. Used by the
+    // CALL_METHOD inline cache, which knows the index but not a name.
+    Value call_function_idx(int32_t idx, const std::vector<Value>& args);
     // Call a funcref value (string or lambda array)
     Value call_funcref(const Value& ref, const std::vector<Value>& args);
     // Invoke an already-resolved native: direct call, or element-wise
