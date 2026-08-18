@@ -733,9 +733,11 @@ void LLVMCodegen::create_main_function() {
 
 // ── Pre-pass: declare all FUNC/SUB signatures ───────────────
 
-// A one-parameter SUB named <NAME>_<EVENT> is a forms event handler even
-// without an ON statement: FORM.LOAD / FORM.MENU bind it at runtime by
-// name and main init registers it in the dispatch trampoline.
+// In a program that calls FORM.*, a one-parameter SUB named <NAME>_<EVENT> is
+// a forms event handler even without an ON statement: FORM.LOAD / FORM.MENU
+// bind it at runtime by name and main init registers it in the dispatch
+// trampoline. The caller checks for forms usage first; the name alone says
+// nothing outside that context.
 static bool is_forms_event_handler_name(const std::string& name) {
     static const char* suffixes[] = { "_CLICK", "_DBLCLICK", "_CHANGE",
                                       "_TICK", "_LOAD", "_UNLOAD", "_RESIZE" };
@@ -767,12 +769,19 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // as event handlers (`ON "X" CALL Handler` becomes a CALL to
     // __EVENT_ON("X", "Handler")). Their first param will be forced to
     // tag=3 (JdbArray*) so RAISEEVENT can pass packed args.
+    // A program that never calls FORM.* is not a forms program, and the
+    // suffix rule below must not fire for it: forcing the first parameter to
+    // JdbArray* on a SUB that merely ends in _LOAD makes a numeric argument
+    // arrive as a pointer, which segfaults on the first use.
+    bool uses_forms = false;
     std::function<void(const Expr&)> scan_event = [&](const Expr& e) {
         if (e.kind == ExprKind::CALL && e.func_name == "__EVENT_ON" &&
             e.args.size() >= 2 && e.args[1] &&
             e.args[1]->kind == ExprKind::LITERAL_STRING) {
             event_handler_subs.insert(e.args[1]->str_val);
         }
+        if (e.kind == ExprKind::CALL && e.func_name.rfind("FORM.", 0) == 0)
+            uses_forms = true;
         if (e.left) scan_event(*e.left);
         if (e.right) scan_event(*e.right);
         for (auto& a : e.args) if (a) scan_event(*a);
@@ -845,7 +854,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 default: break;  // numeric / BOOLEAN / NONE → keep heuristic
             }
         }
-        if (is_sub && stmt->params.size() == 1 &&
+        if (is_sub && stmt->params.size() == 1 && uses_forms &&
             is_forms_event_handler_name(stmt->func_name))
             event_handler_subs.insert(stmt->func_name);
         std::vector<int> tags;

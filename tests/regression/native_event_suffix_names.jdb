@@ -1,0 +1,116 @@
+' ============================================================
+' Regression: event-suffix SUB names outside a forms program
+' ============================================================
+' Self-checking. Each failure prints [FAIL].
+'
+' A one-parameter SUB whose name ends in a forms event suffix used to be
+' treated as an event handler regardless of what the program does, which
+' forced its first parameter to JdbArray*. An untyped numeric parameter then
+' arrived as a pointer and the compiled program segfaulted on first use, and
+' the program pulled in jdrt_register_event_handler with no ON statement and
+' no FORM call anywhere.
+'
+' This file deliberately calls no FORM.* native. The rule belongs to forms
+' programs; here these are ordinary SUB names.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+DIM seen AS DOUBLE
+DIM seenText AS STRING
+
+SUB CHECK_EQ(name$, expected, actual)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected; "  actual="; actual
+    ENDIF
+ENDSUB
+
+SUB CHECK_STR(name$, expected$, actual$)
+    IF expected$ = actual$ THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected$; "  actual="; actual$
+    ENDIF
+ENDSUB
+
+' One SUB per suffix, each taking an untyped parameter, which is the shape
+' that used to crash.
+
+SUB CFG_LOAD(n)
+    seen = n
+ENDSUB
+
+SUB CFG_UNLOAD(n)
+    seen = n
+ENDSUB
+
+SUB CFG_CLICK(n)
+    seen = n
+ENDSUB
+
+SUB CFG_DBLCLICK(n)
+    seen = n
+ENDSUB
+
+SUB CFG_CHANGE(n)
+    seen = n
+ENDSUB
+
+SUB CFG_TICK(n)
+    seen = n
+ENDSUB
+
+SUB CFG_RESIZE(n)
+    seen = n
+ENDSUB
+
+SUB TEXT_LOAD(s AS STRING)
+    seenText = s
+ENDSUB
+
+seen = 0
+CFG_LOAD(42)
+CHECK_EQ("_LOAD keeps a numeric parameter", 42, seen)
+
+seen = 0
+CFG_UNLOAD(7)
+CHECK_EQ("_UNLOAD keeps a numeric parameter", 7, seen)
+
+seen = 0
+CFG_CLICK(11)
+CHECK_EQ("_CLICK keeps a numeric parameter", 11, seen)
+
+seen = 0
+CFG_DBLCLICK(12)
+CHECK_EQ("_DBLCLICK keeps a numeric parameter", 12, seen)
+
+seen = 0
+CFG_CHANGE(13)
+CHECK_EQ("_CHANGE keeps a numeric parameter", 13, seen)
+
+seen = 0
+CFG_TICK(14)
+CHECK_EQ("_TICK keeps a numeric parameter", 14, seen)
+
+seen = 0
+CFG_RESIZE(15)
+CHECK_EQ("_RESIZE keeps a numeric parameter", 15, seen)
+
+seen = 0
+CFG_LOAD(2.5)
+CHECK_EQ("_LOAD keeps a fractional value", 2.5, seen)
+
+seenText = ""
+TEXT_LOAD("freestanding")
+CHECK_STR("_LOAD keeps a declared string parameter", "freestanding", seenText)
+CHECK_EQ("string parameter length survives", 12, LEN(seenText))
+
+PRINT "============================================="
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+PRINT "============================================="
