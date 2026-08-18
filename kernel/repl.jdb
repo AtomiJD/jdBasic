@@ -4,8 +4,8 @@ OPTION EXPLICIT
 ' interpreter, all in jdBasic. Modules route calls through the VM bridge, which
 ' ring 0 does not have, so this image is one file.
 '
-' Values are DOUBLE throughout. Anything typed INTEGER would need a CINT at
-' every assignment, because array elements and constants both arrive as DOUBLE.
+' Screen positions, scancodes and scanner offsets are INTEGER; DOUBLE carries
+' the values the interpreter computes, so 10/4 stays 2.5.
 
 CONST VGA_BASE = $B8000
 CONST SCR_COLS = 80
@@ -32,9 +32,6 @@ DIM kbAltgrDown AS INTEGER
 DIM kbExtended AS INTEGER
 
 DIM srcText AS STRING
-' LEN() on a STRING global picks the array overload inside a FUNC body and
-' returns garbage, so the length is measured at top level and carried along.
-DIM srcLen AS INTEGER
 DIM cur AS INTEGER
 DIM errCode AS INTEGER
 
@@ -356,12 +353,12 @@ ENDSUB
 ' ── Scanner ────────────────────────────────────────────────────────────────
 
 FUNC PEEKC() AS INTEGER
-    IF cur >= srcLen THEN RETURN 0
+    IF cur >= LEN(srcText) THEN RETURN 0
     RETURN BYTEAT(srcText, cur)
 ENDFUNC
 
 FUNC PEEKC2() AS INTEGER
-    IF cur + 1 >= srcLen THEN RETURN 0
+    IF cur + 1 >= LEN(srcText) THEN RETURN 0
     RETURN BYTEAT(srcText, cur + 1)
 ENDFUNC
 
@@ -422,7 +419,7 @@ FUNC SCAN_KEYWORD(lit AS STRING) AS INTEGER
     SKIPSP()
     IF MID$(srcText, cur, LEN(lit)) <> lit THEN RETURN 0
     after = cur + LEN(lit)
-    IF after < srcLen THEN
+    IF after < LEN(srcText) THEN
         IF IS_ALPHA(BYTEAT(srcText, after)) = 1 THEN RETURN 0
         IF IS_DIGIT(BYTEAT(srcText, after)) = 1 THEN RETURN 0
     ENDIF
@@ -703,8 +700,7 @@ SUB RUN_STATEMENT()
     discard = EVAL_COMPARE()
 ENDSUB
 
-' srcText is set by the caller: the native compiler cannot assign a STRING
-' global from inside a SUB, so the line is placed at top level instead.
+' The caller places the line and its length, then runs it.
 SUB RUN_LINE()
     cur = 0
     errCode = 0
@@ -754,6 +750,5 @@ DO
         EXITDO
     ENDIF
     srcText = lineText
-    srcLen = LEN(lineText)
     RUN_LINE()
 LOOP

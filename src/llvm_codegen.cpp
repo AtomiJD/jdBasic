@@ -2732,6 +2732,18 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             stmt->var_type == VarType::INT64 ||
                             stmt->var_type == VarType::BYTE)) {
                     tag = JD_TAG_I64;
+                } else if (stmt->kind == StmtKind::DIM &&
+                           stmt->var_type == VarType::STRING &&
+                           !(stmt->expr && stmt->expr->kind == ExprKind::CALL &&
+                             stmt->expr->func_name == "ZEROS")) {
+                    // Only a $-suffixed name used to reach STR here, so
+                    // `DIM s AS STRING` left an integer slot: a SUB writing to
+                    // it was rejected as a type clash, and LEN() reading it in
+                    // a FUNC picked the array overload and returned whatever
+                    // followed the text on the heap. The ZEROS guard keeps
+                    // `DIM names[N] AS STRING`, which desugars to an array,
+                    // out of the scalar-string case.
+                    tag = JD_TAG_STR;
                 } else if (stmt->expr) {
                     int inferred = infer_tag(stmt->expr.get());
                     if (inferred >= 0) tag = inferred;
@@ -5450,27 +5462,38 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
     TypedValue start_val = codegen_expr(*stmt.expr);
     TypedValue end_val = codegen_expr(*stmt.end_expr);
 
-    LLVMValueRef step_val;
-    if (stmt.step_expr) {
-        TypedValue sv = codegen_expr(*stmt.step_expr);
-        step_val = sv.tag == JD_TAG_F64
-            ? LLVMBuildFPToSI(builder, sv.val, i64_type, "ftoi") : sv.val;
-    } else {
-        step_val = LLVMConstInt(i64_type, 1, 0);
-    }
-
+    // The counter lives in the declared variable's own slot, so a DOUBLE
+    // control variable has to be driven in f64. Storing i64 counter bits into
+    // a double slot makes every read of the variable a denormal near zero, and
+    // truncating a fractional STEP to an integer gives a step of 0.
     VarInfo* vi = lookup_var(stmt.var_name);
     LLVMValueRef var_alloca;
+    bool use_f64 = false;
     if (vi) {
         var_alloca = vi->alloca_val;
+        use_f64 = (vi->tag == JD_TAG_F64);
     } else {
         VarInfo& nv = create_var(stmt.var_name, JD_TAG_I64);
         var_alloca = nv.alloca_val;
     }
+    LLVMTypeRef loop_type = use_f64 ? f64_type : i64_type;
 
-    LLVMValueRef start_i64 = start_val.tag == JD_TAG_F64
-        ? LLVMBuildFPToSI(builder, start_val.val, i64_type, "ftoi") : start_val.val;
-    LLVMBuildStore(builder, start_i64, var_alloca);
+    auto to_loop_type = [&](TypedValue tv, const char* name) -> LLVMValueRef {
+        if (use_f64) return promote_to_f64(tv).val;
+        return tv.tag == JD_TAG_F64
+            ? LLVMBuildFPToSI(builder, tv.val, i64_type, name) : tv.val;
+    };
+
+    LLVMValueRef step_val;
+    if (stmt.step_expr) {
+        TypedValue sv = codegen_expr(*stmt.step_expr);
+        step_val = to_loop_type(sv, "ftoi");
+    } else {
+        step_val = use_f64 ? LLVMConstReal(f64_type, 1.0)
+                           : LLVMConstInt(i64_type, 1, 0);
+    }
+
+    LLVMBuildStore(builder, to_loop_type(start_val, "ftoi"), var_alloca);
 
     LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.cond");
     LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "for.body");
@@ -5482,20 +5505,24 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
     LLVMBuildBr(builder, cond_bb);
 
     LLVMPositionBuilderAtEnd(builder, cond_bb);
-    LLVMValueRef cur_val = LLVMBuildLoad2(builder, i64_type, var_alloca, "i");
-    LLVMValueRef end_i64 = end_val.tag == JD_TAG_F64
-        ? LLVMBuildFPToSI(builder, end_val.val, i64_type, "endtoi") : end_val.val;
+    LLVMValueRef cur_val = LLVMBuildLoad2(builder, loop_type, var_alloca, "i");
+    LLVMValueRef end_slot = to_loop_type(end_val, "endtoi");
 
     // Determine comparison direction based on step sign
     // If step is a known negative constant, use >= instead of <=
     bool negative_step = false;
     if (stmt.step_expr && stmt.step_expr->kind == ExprKind::LITERAL_INT && stmt.step_expr->int_val < 0)
         negative_step = true;
+    if (stmt.step_expr && stmt.step_expr->kind == ExprKind::LITERAL_FLOAT && stmt.step_expr->float_val < 0)
+        negative_step = true;
     if (stmt.step_expr && stmt.step_expr->kind == ExprKind::UNARY && stmt.step_expr->op == TokenType::MINUS)
         negative_step = true;
 
-    LLVMValueRef cmp = LLVMBuildICmp(builder,
-        negative_step ? LLVMIntSGE : LLVMIntSLE, cur_val, end_i64, "cmp");
+    LLVMValueRef cmp = use_f64
+        ? LLVMBuildFCmp(builder, negative_step ? LLVMRealOGE : LLVMRealOLE,
+                        cur_val, end_slot, "cmp")
+        : LLVMBuildICmp(builder, negative_step ? LLVMIntSGE : LLVMIntSLE,
+                        cur_val, end_slot, "cmp");
     LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
 
     LLVMPositionBuilderAtEnd(builder, body_bb);
@@ -5506,8 +5533,10 @@ void LLVMCodegen::codegen_for(const Stmt& stmt) {
         LLVMBuildBr(builder, inc_bb);
 
     LLVMPositionBuilderAtEnd(builder, inc_bb);
-    LLVMValueRef cur_val2 = LLVMBuildLoad2(builder, i64_type, var_alloca, "i.load");
-    LLVMValueRef next_val = LLVMBuildAdd(builder, cur_val2, step_val, "i.next");
+    LLVMValueRef cur_val2 = LLVMBuildLoad2(builder, loop_type, var_alloca, "i.load");
+    LLVMValueRef next_val = use_f64
+        ? LLVMBuildFAdd(builder, cur_val2, step_val, "i.next")
+        : LLVMBuildAdd(builder, cur_val2, step_val, "i.next");
     LLVMBuildStore(builder, next_val, var_alloca);
     LLVMBuildBr(builder, cond_bb);
 
@@ -7331,6 +7360,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             case TokenType::MINUS: return { LLVMBuildFSub(builder, lhs.val, rhs.val, "fsub"), JD_TAG_F64 };
             case TokenType::STAR:  return { LLVMBuildFMul(builder, lhs.val, rhs.val, "fmul"), JD_TAG_F64 };
             case TokenType::SLASH: emit_div_zero_check(rhs); return { LLVMBuildFDiv(builder, lhs.val, rhs.val, "fdiv"), JD_TAG_F64 };
+            // `\` divides first and truncates the quotient toward zero, which
+            // is what the interpreter does: 7.9 \ 2.9 is 2, not 3.
+            case TokenType::BACKSLASH: {
+                emit_div_zero_check(rhs);
+                LLVMValueRef q = LLVMBuildFDiv(builder, lhs.val, rhs.val, "idivq");
+                return { LLVMBuildFPToSI(builder, q, i64_type, "idiv"), JD_TAG_I64 };
+            }
             case TokenType::MOD:   emit_div_zero_check(rhs); return { LLVMBuildFRem(builder, lhs.val, rhs.val, "fmod"), JD_TAG_F64 };
             case TokenType::LT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOLT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };
             case TokenType::GT:    return { LLVMBuildZExt(builder, LLVMBuildFCmp(builder, LLVMRealOGT, lhs.val, rhs.val, "cmp"), i64_type, "ext"), JD_TAG_BOOL };

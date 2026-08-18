@@ -1,0 +1,149 @@
+' ============================================================
+' Regression: DOUBLE slots and STRING globals under native -c
+' ============================================================
+' Self-checking. Each failure prints [FAIL].
+' Green in the interpreter by construction; the point is `-c`.
+'
+' Covers three codegen defects:
+'   1. FOR with a control variable declared AS DOUBLE ran the counter in
+'      i64 and stored the bits in the double slot, so the body read ~0.
+'      A fractional STEP truncated to 0 and the loop never terminated.
+'   2. `\` with a DOUBLE operand had no case in the float branch of the
+'      binary-op switch and fell through to a constant 0.
+'   3. `DIM s AS STRING` without a $ suffix left an integer slot, so a SUB
+'      could not write to it and LEN() inside a FUNC picked the array
+'      overload and read heap bytes past the text.
+
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+DIM PASS_COUNT AS INTEGER = 0
+DIM FAIL_COUNT AS INTEGER = 0
+
+SUB CHECK_EQ(name$, expected, actual)
+    IF expected = actual THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected; "  actual="; actual
+    ENDIF
+ENDSUB
+
+SUB CHECK_STR(name$, expected$, actual$)
+    IF expected$ = actual$ THEN
+        PASS_COUNT = PASS_COUNT + 1
+    ELSE
+        FAIL_COUNT = FAIL_COUNT + 1
+        PRINT "[FAIL] "; name$; "  expected="; expected$; "  actual="; actual$
+    ENDIF
+ENDSUB
+
+' ── 1. FOR with a DOUBLE control variable ──────────────────────────────
+
+DIM d AS DOUBLE
+DIM i AS INTEGER
+DIM seen AS DOUBLE
+DIM steps AS INTEGER
+
+seen = 0
+FOR d = 1 TO 3
+    seen = seen + d
+NEXT d
+CHECK_EQ("for double var sums 1+2+3", 6, seen)
+
+seen = 0
+steps = 0
+FOR d = 0 TO 1 STEP 0.5
+    seen = seen + d
+    steps = steps + 1
+NEXT d
+CHECK_EQ("for double step 0.5 iterates 3x", 3, steps)
+CHECK_EQ("for double step 0.5 sums 0+0.5+1", 1.5, seen)
+
+steps = 0
+FOR d = 3 TO 1 STEP -1
+    steps = steps + 1
+NEXT d
+CHECK_EQ("for double var counts down", 3, steps)
+
+seen = 0
+FOR i = 1 TO 3
+    seen = seen + i
+NEXT i
+CHECK_EQ("for integer var still sums 1+2+3", 6, seen)
+
+' ── 2. Integer division with a DOUBLE operand ──────────────────────────
+' `\` divides then truncates the quotient toward zero, which is why
+' 7.9 \ 2.9 is 2 and not 3.
+
+DIM a AS DOUBLE
+DIM b AS DOUBLE
+
+a = 80
+b = 80
+CHECK_EQ("80 \ 80 on doubles", 1, a \ b)
+
+a = 7.9
+b = 2.9
+CHECK_EQ("7.9 \ 2.9 truncates the quotient", 2, a \ b)
+
+a = -7.9
+CHECK_EQ("-7.9 \ 2.9 truncates toward zero", -2, a \ b)
+
+a = 7.5
+b = 2
+CHECK_EQ("7.5 \ 2", 3, a \ b)
+
+a = -7
+CHECK_EQ("-7 \ 2", -3, a \ b)
+
+CHECK_EQ("integer operands unchanged", 5, 11 \ 2)
+CHECK_EQ("MOD on doubles unchanged", 3, 80 MOD 7)
+
+' ── 3. STRING globals across function bodies ───────────────────────────
+
+DIM gtext AS STRING
+DIM gbuilt AS STRING
+
+SUB SET_GLOBAL_STRING()
+    gtext = "written from a SUB"
+ENDSUB
+
+FUNC LEN_FROM_FUNC() AS INTEGER
+    RETURN LEN(gtext)
+ENDFUNC
+
+FUNC BYTE_FROM_FUNC(idx AS INTEGER) AS INTEGER
+    RETURN BYTEAT(gtext, idx)
+ENDFUNC
+
+SET_GLOBAL_STRING()
+CHECK_STR("SUB wrote the string global", "written from a SUB", gtext)
+CHECK_EQ("LEN at top level", 18, LEN(gtext))
+CHECK_EQ("LEN inside a FUNC", 18, LEN_FROM_FUNC())
+CHECK_EQ("BYTEAT inside a FUNC", 119, BYTE_FROM_FUNC(0))
+
+' A runtime-built string, so the value is heap memory rather than a literal.
+gbuilt = ""
+FOR i = 1 TO 5
+    gbuilt = gbuilt + CHR$(64 + i)
+NEXT i
+gtext = gbuilt
+CHECK_STR("built string round trip", "ABCDE", gtext)
+CHECK_EQ("LEN of a built string inside a FUNC", 5, LEN_FROM_FUNC())
+CHECK_EQ("BYTEAT of a built string inside a FUNC", 69, BYTE_FROM_FUNC(4))
+
+' String arrays must stay arrays: the scalar-string case must not swallow
+' `DIM names[N] AS STRING`, which desugars to an array.
+DIM names[4] AS STRING
+names[0] = "alpha"
+names[3] = "delta"
+CHECK_STR("string array element", "alpha", names[0])
+CHECK_STR("string array tail element", "delta", names[3])
+CHECK_EQ("string array LEN is the count", 4, LEN(names))
+
+' ── Summary ────────────────────────────────────────────────────────────
+
+PRINT "============================================="
+PRINT "RESULTS: "; PASS_COUNT; " passed, "; FAIL_COUNT; " failed"
+PRINT "============================================="
