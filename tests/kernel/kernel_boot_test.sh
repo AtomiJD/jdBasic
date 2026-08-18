@@ -17,6 +17,7 @@ set -e
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 JDB=${1:-$ROOT/build/jdBasic.exe}
 KDIR=$ROOT/kernel
+TDIR=$ROOT/tests/kernel
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-15}
 
 skip() { echo "SKIP: $1"; exit 0; }
@@ -32,13 +33,18 @@ if [ "$(uname -o 2>/dev/null)" = "Msys" ] || [ -n "$WINDIR" ]; then
     command -v wsl.exe >/dev/null 2>&1 || skip "no WSL to run the linker and QEMU"
     SH="wsl.exe -e sh -c"
     # Git-Bash reports /d/usr/..., a native shell D:\usr\...; WSL wants /mnt/d/usr/...
-    WKDIR=$(echo "$KDIR" | tr '\\' '/' \
-        | sed -e 's|^\([A-Za-z]\):|/\1|' \
-              -e 's|^/\([A-Za-z]\)/|/mnt/\1/|' \
-        | sed -e 's|^/mnt/\(.\)|/mnt/\L\1|')
+    to_wsl() {
+        echo "$1" | tr '\\' '/' \
+            | sed -e 's|^\([A-Za-z]\):|/\1|' \
+                  -e 's|^/\([A-Za-z]\)/|/mnt/\1/|' \
+            | sed -e 's|^/mnt/\(.\)|/mnt/\L\1|'
+    }
+    WKDIR=$(to_wsl "$KDIR")
+    WTDIR=$(to_wsl "$TDIR")
 else
     SH="sh -c"
     WKDIR=$KDIR
+    WTDIR=$TDIR
 fi
 
 for t in nasm ld objcopy qemu-system-x86_64; do
@@ -46,6 +52,12 @@ for t in nasm ld objcopy qemu-system-x86_64; do
 done
 
 fail=0
+
+# Renders a VGA text-buffer dump as characters, dropping the attribute byte of
+# each cell. Coreutils only, so the test carries no python dependency.
+text_of() {
+    $SH "od -An -v -tu1 $1 2>/dev/null | tr -s ' ' '\n' | grep -v '^\$' | awk 'NR%2==1' | awk '{printf \"%c\", (\$1>=32 && \$1<127) ? \$1 : 32}' | tr -s ' '"
+}
 
 check() {
     name=$1
@@ -134,6 +146,38 @@ check_os() {
 }
 
 check_os
+
+# The REPL is interactive too. The key sequence lives in repl_keys.sh so the
+# monitor commands do not have to survive another level of shell quoting.
+check_repl() {
+    echo "--- repl ---"
+
+    "$JDB" --target=kernel -o "$KDIR/repl.o" "$KDIR/repl.jdb" >/dev/null 2>&1 || {
+        echo "FAIL: repl did not compile to a kernel object"
+        fail=1
+        return
+    }
+    $SH "cd '$WKDIR' && ./build_kernel.sh repl" >/dev/null 2>&1 || {
+        echo "FAIL: repl did not link into an image"
+        fail=1
+        return
+    }
+
+    $SH "cd '$WKDIR' && rm -f /tmp/repltest.bin && '$WTDIR/repl_keys.sh' /tmp/repltest.bin | timeout $((BOOT_TIMEOUT + 45)) qemu-system-x86_64 -kernel repl.bin -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    out=$(text_of /tmp/repltest.bin)
+
+    for want in "a REPL written in jdBasic" "> ? 6*7 42" "; ? n 10" "error: division by zero"; do
+        if echo "$out" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' in the text buffer"
+            fail=1
+        fi
+    done
+}
+
+check_repl
 
 if [ "$fail" = 0 ]; then
     echo "ALL KERNEL BOOT TESTS PASSED!"

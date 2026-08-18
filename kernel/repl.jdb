@@ -1,0 +1,759 @@
+OPTION EXPLICIT
+
+' A REPL for the jdBasic kernel target: screen, keyboard and a small
+' interpreter, all in jdBasic. Modules route calls through the VM bridge, which
+' ring 0 does not have, so this image is one file.
+'
+' Values are DOUBLE throughout. Anything typed INTEGER would need a CINT at
+' every assignment, because array elements and constants both arrive as DOUBLE.
+
+CONST VGA_BASE = $B8000
+CONST SCR_COLS = 80
+CONST SCR_ROWS = 25
+CONST CRTC_INDEX = $3D4
+CONST CRTC_DATA = $3D5
+CONST KBD_DATA = $60
+CONST KBD_STATUS = $64
+
+CONST KEY_ESC = 27
+CONST KEY_BACK = 8
+CONST KEY_ENTER = 13
+
+CONST MAX_VARS = 64
+
+DIM scrAttr AS INTEGER
+DIM scrPos AS INTEGER
+
+DIM kbBase[128]
+DIM kbShift[128]
+DIM kbAltgr[128]
+DIM kbShiftDown AS INTEGER
+DIM kbAltgrDown AS INTEGER
+DIM kbExtended AS INTEGER
+
+DIM srcText AS STRING
+' LEN() on a STRING global picks the array overload inside a FUNC body and
+' returns garbage, so the length is measured at top level and carried along.
+DIM srcLen AS INTEGER
+DIM cur AS INTEGER
+DIM errCode AS INTEGER
+
+DIM varNames[MAX_VARS] AS STRING
+DIM varVals[MAX_VARS]
+DIM varCount AS INTEGER
+
+' ── Screen ─────────────────────────────────────────────────────────────────
+
+SUB SCR_CURSOR(idx AS INTEGER)
+    SYS.OUTB(CRTC_INDEX, 15)
+    SYS.OUTB(CRTC_DATA, idx MOD 256)
+    SYS.OUTB(CRTC_INDEX, 14)
+    SYS.OUTB(CRTC_DATA, (idx \ 256) MOD 256)
+ENDSUB
+
+SUB SCR_CELL(idx AS INTEGER, ch AS INTEGER, attr AS INTEGER)
+    SYS.POKEW(VGA_BASE + idx * 2, attr * 256 + ch)
+ENDSUB
+
+SUB SCR_CLEAR()
+    DIM i AS INTEGER
+    FOR i = 0 TO SCR_COLS * SCR_ROWS - 1
+        SCR_CELL(i, 32, scrAttr)
+    NEXT i
+    scrPos = 0
+    SCR_CURSOR(0)
+ENDSUB
+
+SUB SCR_SCROLL()
+    DIM i AS INTEGER
+    DIM last AS INTEGER
+    last = (SCR_ROWS - 1) * SCR_COLS
+    FOR i = 0 TO last - 1
+        SYS.POKEW(VGA_BASE + i * 2, SYS.PEEKW(VGA_BASE + (i + SCR_COLS) * 2))
+    NEXT i
+    FOR i = last TO SCR_COLS * SCR_ROWS - 1
+        SCR_CELL(i, 32, scrAttr)
+    NEXT i
+    scrPos = last
+ENDSUB
+
+SUB SCR_NEWLINE()
+    scrPos = (scrPos \ SCR_COLS + 1) * SCR_COLS
+    IF scrPos >= SCR_COLS * SCR_ROWS THEN
+        SCR_SCROLL()
+    ENDIF
+    SCR_CURSOR(scrPos)
+ENDSUB
+
+SUB SCR_PUTCHAR(ch AS INTEGER)
+    IF ch = 10 THEN
+        SCR_NEWLINE()
+    ELSE
+        SCR_CELL(scrPos, ch, scrAttr)
+        scrPos = scrPos + 1
+        IF scrPos >= SCR_COLS * SCR_ROWS THEN
+            SCR_SCROLL()
+        ENDIF
+        SCR_CURSOR(scrPos)
+    ENDIF
+ENDSUB
+
+SUB SCR_BACKSPACE()
+    IF scrPos > 0 THEN
+        scrPos = scrPos - 1
+        SCR_CELL(scrPos, 32, scrAttr)
+        SCR_CURSOR(scrPos)
+    ENDIF
+ENDSUB
+
+SUB SCR_WRITE(msg AS STRING)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(msg) - 1
+        SCR_PUTCHAR(BYTEAT(msg, i))
+    NEXT i
+ENDSUB
+
+SUB SCR_WRITELN(msg AS STRING)
+    SCR_WRITE(msg)
+    SCR_NEWLINE()
+ENDSUB
+
+SUB SCR_WRITEINT(v AS DOUBLE)
+    DIM digits AS STRING
+    DIM n AS INTEGER
+    n = CINT(v)
+    IF n < 0 THEN
+        SCR_PUTCHAR(45)
+        n = 0 - n
+    ENDIF
+    IF n = 0 THEN
+        SCR_PUTCHAR(48)
+        RETURN
+    ENDIF
+    digits = ""
+    DO
+        digits = CHR$(48 + n MOD 10) + digits
+        n = n \ 10
+    LOOP WHILE n > 0
+    SCR_WRITE(digits)
+ENDSUB
+
+' Whole numbers print bare, anything else gets six decimals.
+SUB SCR_WRITEVAL(v AS DOUBLE)
+    DIM whole AS INTEGER
+    DIM frac AS DOUBLE
+    DIM i AS INTEGER
+    DIM digit AS INTEGER
+
+    frac = v
+    IF frac < 0 THEN frac = 0 - frac
+    whole = CINT(frac)
+    frac = frac - whole
+
+    IF frac = 0 THEN
+        SCR_WRITEINT(v)
+        RETURN
+    ENDIF
+
+    IF v < 0 THEN SCR_PUTCHAR(45)
+    SCR_WRITEINT(whole)
+    SCR_PUTCHAR(46)
+    FOR i = 1 TO 6
+        frac = frac * 10
+        digit = CINT(frac)
+        SCR_PUTCHAR(48 + digit)
+        frac = frac - digit
+    NEXT i
+ENDSUB
+
+' ── Keyboard ───────────────────────────────────────────────────────────────
+
+SUB KB_ROW(startCode AS INTEGER, chars AS STRING)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(chars) - 1
+        kbBase[startCode + i] = BYTEAT(chars, i)
+    NEXT i
+ENDSUB
+
+SUB KB_INIT()
+    DIM i AS INTEGER
+
+    FOR i = 0 TO 127
+        kbBase[i] = 0
+        kbShift[i] = 0
+        kbAltgr[i] = 0
+    NEXT i
+
+    KB_ROW(2, "1234567890")
+    KB_ROW(16, "qwertzuiop")
+    KB_ROW(30, "asdfghjkl")
+    KB_ROW(44, "yxcvbnm")
+
+    kbBase[12] = 225
+    kbBase[26] = 129
+    kbBase[27] = 43
+    kbBase[39] = 148
+    kbBase[40] = 132
+    kbBase[41] = 94
+    kbBase[43] = 35
+    kbBase[51] = 44
+    kbBase[52] = 46
+    kbBase[53] = 45
+    kbBase[57] = 32
+    kbBase[86] = 60
+
+    FOR i = 0 TO 127
+        IF kbBase[i] >= 97 AND kbBase[i] <= 122 THEN
+            kbShift[i] = kbBase[i] - 32
+        ELSE
+            kbShift[i] = kbBase[i]
+        ENDIF
+    NEXT i
+
+    kbShift[2] = 33
+    kbShift[3] = 34
+    kbShift[4] = 21
+    kbShift[5] = 36
+    kbShift[6] = 37
+    kbShift[7] = 38
+    kbShift[8] = 47
+    kbShift[9] = 40
+    kbShift[10] = 41
+    kbShift[11] = 61
+    kbShift[12] = 63
+    kbShift[26] = 154
+    kbShift[27] = 42
+    kbShift[39] = 153
+    kbShift[40] = 142
+    kbShift[41] = 248
+    kbShift[43] = 39
+    kbShift[51] = 59
+    kbShift[52] = 58
+    kbShift[53] = 95
+    kbShift[86] = 62
+
+    kbAltgr[8] = 123
+    kbAltgr[9] = 91
+    kbAltgr[10] = 93
+    kbAltgr[11] = 125
+    kbAltgr[12] = 92
+    kbAltgr[16] = 64
+    kbAltgr[27] = 126
+    kbAltgr[86] = 124
+
+    kbShiftDown = 0
+    kbAltgrDown = 0
+    kbExtended = 0
+ENDSUB
+
+FUNC KB_ASCII(code AS INTEGER) AS INTEGER
+    IF code = 1 THEN RETURN KEY_ESC
+    IF code = 14 THEN RETURN KEY_BACK
+    IF code = 28 THEN RETURN KEY_ENTER
+    IF code > 127 THEN RETURN 0
+    IF kbAltgrDown = 1 THEN RETURN kbAltgr[code]
+    IF kbShiftDown = 1 THEN RETURN kbShift[code]
+    RETURN kbBase[code]
+ENDFUNC
+
+FUNC KB_READ() AS INTEGER
+    DIM kbStatus AS INTEGER
+    DIM code AS INTEGER
+    DIM ch AS INTEGER
+
+    DO
+        kbStatus = SYS.INB(KBD_STATUS)
+        IF (kbStatus MOD 2) = 1 THEN
+            code = SYS.INB(KBD_DATA)
+
+            IF code = 224 THEN
+                kbExtended = 1
+            ELSE
+                IF code >= 128 THEN
+                    code = code - 128
+                    IF code = 42 OR code = 54 THEN kbShiftDown = 0
+                    IF code = 56 AND kbExtended = 1 THEN kbAltgrDown = 0
+                    kbExtended = 0
+                ELSE
+                    IF code = 42 OR code = 54 THEN
+                        kbShiftDown = 1
+                        kbExtended = 0
+                    ELSE
+                        IF code = 56 AND kbExtended = 1 THEN
+                            kbAltgrDown = 1
+                            kbExtended = 0
+                        ELSE
+                            kbExtended = 0
+                            ch = CINT(KB_ASCII(code))
+                            IF ch > 0 THEN RETURN ch
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    LOOP
+ENDFUNC
+
+FUNC KB_READLINE$() AS STRING
+    DIM buf AS STRING
+    DIM ch AS INTEGER
+    buf = ""
+    DO
+        ch = CINT(KB_READ())
+        IF ch = KEY_ENTER THEN
+            SCR_NEWLINE()
+            RETURN buf
+        ENDIF
+        IF ch = KEY_ESC THEN
+            RETURN CHR$(27)
+        ENDIF
+        IF ch = KEY_BACK THEN
+            IF LEN(buf) > 0 THEN
+                buf = LEFT$(buf, LEN(buf) - 1)
+                SCR_BACKSPACE()
+            ENDIF
+        ELSE
+            buf = buf + CHR$(ch)
+            SCR_PUTCHAR(ch)
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ── Variables ──────────────────────────────────────────────────────────────
+
+FUNC VAR_FIND(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO varCount - 1
+        IF varNames[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC VAR_GET(nm AS STRING) AS DOUBLE
+    DIM idx AS INTEGER
+    idx = CINT(VAR_FIND(nm))
+    IF idx < 0 THEN RETURN 0
+    RETURN varVals[idx]
+ENDFUNC
+
+SUB VAR_SET(nm AS STRING, v AS DOUBLE)
+    DIM idx AS INTEGER
+    idx = CINT(VAR_FIND(nm))
+    IF idx >= 0 THEN
+        varVals[idx] = v
+        RETURN
+    ENDIF
+    IF varCount >= MAX_VARS THEN
+
+        errCode = 6
+        RETURN
+    ENDIF
+    varNames[varCount] = nm
+    varVals[varCount] = v
+    varCount = varCount + 1
+ENDSUB
+
+' ── Scanner ────────────────────────────────────────────────────────────────
+
+FUNC PEEKC() AS INTEGER
+    IF cur >= srcLen THEN RETURN 0
+    RETURN BYTEAT(srcText, cur)
+ENDFUNC
+
+FUNC PEEKC2() AS INTEGER
+    IF cur + 1 >= srcLen THEN RETURN 0
+    RETURN BYTEAT(srcText, cur + 1)
+ENDFUNC
+
+SUB SKIPSP()
+    DO
+        IF PEEKC() <> 32 THEN RETURN
+        cur = cur + 1
+    LOOP
+ENDSUB
+
+FUNC IS_DIGIT(c AS INTEGER) AS INTEGER
+    IF c >= 48 AND c <= 57 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC IS_ALPHA(c AS INTEGER) AS INTEGER
+    IF c >= 97 AND c <= 122 THEN RETURN 1
+    IF c >= 65 AND c <= 90 THEN RETURN 1
+    IF c = 95 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC SCAN_NUMBER() AS DOUBLE
+    DIM v AS DOUBLE
+    DIM scale AS DOUBLE
+    v = 0
+    DO
+        IF IS_DIGIT(PEEKC()) = 0 THEN EXITDO
+        v = v * 10 + (PEEKC() - 48)
+        cur = cur + 1
+    LOOP
+    IF PEEKC() = 46 AND IS_DIGIT(PEEKC2()) = 1 THEN
+        cur = cur + 1
+        scale = 1
+        DO
+            IF IS_DIGIT(PEEKC()) = 0 THEN EXITDO
+            scale = scale / 10
+            v = v + (PEEKC() - 48) * scale
+            cur = cur + 1
+        LOOP
+    ENDIF
+    RETURN v
+ENDFUNC
+
+FUNC SCAN_IDENT$() AS STRING
+    DIM start AS INTEGER
+    start = cur
+    DO
+        IF IS_ALPHA(PEEKC()) = 0 AND IS_DIGIT(PEEKC()) = 0 THEN EXITDO
+        cur = cur + 1
+    LOOP
+    RETURN MID$(srcText, start, cur - start)
+ENDFUNC
+
+' True when the word at the cursor is exactly lit, not a longer identifier.
+FUNC SCAN_KEYWORD(lit AS STRING) AS INTEGER
+    DIM after AS INTEGER
+    SKIPSP()
+    IF MID$(srcText, cur, LEN(lit)) <> lit THEN RETURN 0
+    after = cur + LEN(lit)
+    IF after < srcLen THEN
+        IF IS_ALPHA(BYTEAT(srcText, after)) = 1 THEN RETURN 0
+        IF IS_DIGIT(BYTEAT(srcText, after)) = 1 THEN RETURN 0
+    ENDIF
+    cur = after
+    RETURN 1
+ENDFUNC
+
+' ── Expressions ────────────────────────────────────────────────────────────
+
+
+FUNC EVAL_FACTOR() AS DOUBLE
+    DIM v AS DOUBLE
+    DIM nm AS STRING
+
+    SKIPSP()
+
+    IF PEEKC() = 45 THEN
+        cur = cur + 1
+        RETURN 0 - EVAL_FACTOR()
+    ENDIF
+
+    IF PEEKC() = 40 THEN
+        cur = cur + 1
+        v = EVAL_COMPARE()
+        SKIPSP()
+        IF PEEKC() <> 41 THEN
+
+            errCode = 1
+            RETURN 0
+        ENDIF
+        cur = cur + 1
+        RETURN v
+    ENDIF
+
+    IF IS_DIGIT(PEEKC()) = 1 THEN RETURN SCAN_NUMBER()
+
+    IF IS_ALPHA(PEEKC()) = 1 THEN
+        nm = SCAN_IDENT$()
+        RETURN VAR_GET(nm)
+    ENDIF
+
+
+    errCode = 3
+    RETURN 0
+ENDFUNC
+
+FUNC EVAL_TERM() AS DOUBLE
+    DIM v AS DOUBLE
+    DIM rhs AS DOUBLE
+    DIM op AS INTEGER
+
+    v = EVAL_FACTOR()
+    DO
+        IF errCode > 0 THEN RETURN v
+        SKIPSP()
+        op = CINT(PEEKC())
+        IF op <> 42 AND op <> 47 AND op <> 37 THEN RETURN v
+        cur = cur + 1
+        rhs = EVAL_FACTOR()
+        IF op = 42 THEN
+            v = v * rhs
+        ELSE
+            IF rhs = 0 THEN
+
+                errCode = 2
+                RETURN 0
+            ENDIF
+            IF op = 47 THEN
+                v = v / rhs
+            ELSE
+                v = v MOD rhs
+            ENDIF
+        ENDIF
+    LOOP
+ENDFUNC
+
+FUNC EVAL_EXPR() AS DOUBLE
+    DIM v AS DOUBLE
+    DIM op AS INTEGER
+
+    v = EVAL_TERM()
+    DO
+        IF errCode > 0 THEN RETURN v
+        SKIPSP()
+        op = CINT(PEEKC())
+        IF op <> 43 AND op <> 45 THEN RETURN v
+        cur = cur + 1
+        IF op = 43 THEN
+            v = v + EVAL_TERM()
+        ELSE
+            v = v - EVAL_TERM()
+        ENDIF
+    LOOP
+ENDFUNC
+
+' Assignment uses a single =, so comparison for equality is ==.
+FUNC EVAL_COMPARE() AS DOUBLE
+    DIM lhs AS DOUBLE
+    DIM rhs AS DOUBLE
+    DIM c1 AS INTEGER
+    DIM c2 AS INTEGER
+    DIM kind AS INTEGER
+
+    lhs = EVAL_EXPR()
+    IF errCode > 0 THEN RETURN lhs
+
+    SKIPSP()
+    c1 = CINT(PEEKC())
+    c2 = CINT(PEEKC2())
+    kind = 0
+
+    IF c1 = 61 AND c2 = 61 THEN kind = 1
+    IF c1 = 60 AND c2 = 62 THEN kind = 2
+    IF c1 = 60 AND c2 = 61 THEN kind = 3
+    IF c1 = 62 AND c2 = 61 THEN kind = 4
+
+    IF kind > 0 THEN
+        cur = cur + 2
+    ELSE
+        IF c1 = 60 THEN kind = 5
+        IF c1 = 62 THEN kind = 6
+        IF kind = 0 THEN RETURN lhs
+        cur = cur + 1
+    ENDIF
+
+    rhs = EVAL_EXPR()
+    IF errCode > 0 THEN RETURN 0
+
+    IF kind = 1 AND lhs = rhs THEN RETURN 1
+    IF kind = 2 AND lhs <> rhs THEN RETURN 1
+    IF kind = 3 AND lhs <= rhs THEN RETURN 1
+    IF kind = 4 AND lhs >= rhs THEN RETURN 1
+    IF kind = 5 AND lhs < rhs THEN RETURN 1
+    IF kind = 6 AND lhs > rhs THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' ── Statements ─────────────────────────────────────────────────────────────
+
+FUNC ERR_TEXT$(code AS INTEGER) AS STRING
+    IF code = 1 THEN RETURN "expected )"
+    IF code = 2 THEN RETURN "division by zero"
+    IF code = 3 THEN RETURN "unexpected character"
+    IF code = 4 THEN RETURN "expected {"
+    IF code = 5 THEN RETURN "unclosed {"
+    IF code = 6 THEN RETURN "too many variables"
+    IF code = 7 THEN RETURN "loop ran too long"
+    RETURN "error"
+ENDFUNC
+
+
+' Steps the cursor past a brace-delimited block without executing it.
+SUB SKIP_BLOCK()
+    DIM depth AS INTEGER
+    DIM c AS INTEGER
+    SKIPSP()
+    IF PEEKC() <> 123 THEN
+
+        errCode = 4
+        RETURN
+    ENDIF
+    depth = 0
+    DO
+        c = CINT(PEEKC())
+        IF c = 0 THEN
+
+            errCode = 5
+            RETURN
+        ENDIF
+        IF c = 123 THEN depth = depth + 1
+        IF c = 125 THEN depth = depth - 1
+        cur = cur + 1
+        IF depth = 0 THEN RETURN
+    LOOP
+ENDSUB
+
+SUB RUN_BLOCK()
+    SKIPSP()
+    IF PEEKC() <> 123 THEN
+
+        errCode = 4
+        RETURN
+    ENDIF
+    cur = cur + 1
+    DO
+        IF errCode > 0 THEN RETURN
+        SKIPSP()
+        IF PEEKC() = 125 THEN
+            cur = cur + 1
+            RETURN
+        ENDIF
+        IF PEEKC() = 0 THEN
+
+            errCode = 5
+            RETURN
+        ENDIF
+        IF PEEKC() = 59 THEN
+            cur = cur + 1
+        ELSE
+            RUN_STATEMENT()
+        ENDIF
+    LOOP
+ENDSUB
+
+SUB RUN_IF()
+    IF EVAL_COMPARE() <> 0 THEN
+        RUN_BLOCK()
+    ELSE
+        SKIP_BLOCK()
+    ENDIF
+ENDSUB
+
+SUB RUN_WHILE()
+    DIM condPos AS INTEGER
+    DIM guard AS INTEGER
+    condPos = cur
+    guard = 0
+    DO
+        IF errCode > 0 THEN RETURN
+        guard = guard + 1
+        IF guard > 1000000 THEN
+
+            errCode = 7
+            RETURN
+        ENDIF
+        cur = condPos
+        IF EVAL_COMPARE() = 0 THEN
+            SKIP_BLOCK()
+            RETURN
+        ENDIF
+        RUN_BLOCK()
+    LOOP
+ENDSUB
+
+SUB RUN_STATEMENT()
+    DIM nm AS STRING
+    DIM savePos AS INTEGER
+    DIM discard AS DOUBLE
+    DIM shown AS DOUBLE
+
+    SKIPSP()
+    IF PEEKC() = 0 THEN RETURN
+
+    IF PEEKC() = 63 THEN
+        cur = cur + 1
+        shown = EVAL_COMPARE()
+        IF errCode = 0 THEN
+            SCR_WRITEVAL(shown)
+            SCR_NEWLINE()
+        ENDIF
+        RETURN
+    ENDIF
+
+    IF SCAN_KEYWORD("if") = 1 THEN
+        RUN_IF()
+        RETURN
+    ENDIF
+
+    IF SCAN_KEYWORD("while") = 1 THEN
+        RUN_WHILE()
+        RETURN
+    ENDIF
+
+    ' An identifier followed by a lone = is an assignment; == falls through
+    ' to the expression path.
+    IF IS_ALPHA(PEEKC()) = 1 THEN
+        savePos = cur
+        nm = SCAN_IDENT$()
+        SKIPSP()
+        IF PEEKC() = 61 AND PEEKC2() <> 61 THEN
+            cur = cur + 1
+            VAR_SET(nm, EVAL_COMPARE())
+            RETURN
+        ENDIF
+        cur = savePos
+    ENDIF
+
+    discard = EVAL_COMPARE()
+ENDSUB
+
+' srcText is set by the caller: the native compiler cannot assign a STRING
+' global from inside a SUB, so the line is placed at top level instead.
+SUB RUN_LINE()
+    cur = 0
+    errCode = 0
+    DO
+        IF errCode > 0 THEN EXITDO
+        SKIPSP()
+        IF PEEKC() = 0 THEN EXITDO
+        IF PEEKC() = 59 THEN
+            cur = cur + 1
+        ELSE
+            RUN_STATEMENT()
+        ENDIF
+    LOOP
+    IF errCode > 0 THEN
+        scrAttr = 12
+        SCR_WRITE("error: ")
+        SCR_WRITELN(ERR_TEXT$(errCode))
+        scrAttr = 7
+    ENDIF
+ENDSUB
+
+' ── Main ───────────────────────────────────────────────────────────────────
+
+DIM lineText AS STRING
+
+scrAttr = 7
+scrPos = 0
+varCount = 0
+errCode = 0
+
+SCR_CLEAR()
+scrAttr = 15
+SCR_WRITELN("jdBasic OS - a REPL written in jdBasic")
+scrAttr = 7
+SCR_WRITELN("? expr prints    x = expr assigns    if/while cond { }    ; separates")
+SCR_WRITELN("ESC halts")
+SCR_NEWLINE()
+
+KB_INIT()
+
+DO
+    SCR_WRITE("> ")
+    lineText = KB_READLINE$()
+    IF LEN(lineText) = 1 AND BYTEAT(lineText, 0) = 27 THEN
+        SCR_NEWLINE()
+        SCR_WRITELN("halted.")
+        EXITDO
+    ENDIF
+    srcText = lineText
+    srcLen = LEN(lineText)
+    RUN_LINE()
+LOOP

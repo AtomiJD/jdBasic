@@ -100,14 +100,16 @@ void vga_clear(void) {
 // long-running allocation churn, so a monotonically rising pointer over a
 // fixed region is the whole memory manager.
 
-#define HEAP_BASE  0x00400000ULL
-#define HEAP_LIMIT 0x00800000ULL
+#define HEAP_BASE  0x01000000ULL
+#define HEAP_LIMIT 0x04000000ULL
 
 static uint64_t heap_ptr = HEAP_BASE;
 
+static void panic(const char* msg);
+
 static void* bump_alloc(size_t n) {
     n = (n + 15) & ~15ULL;
-    if (heap_ptr + n >= HEAP_LIMIT) return NULL;
+    if (heap_ptr + n >= HEAP_LIMIT) panic("out of memory");
     void* p = (void*)heap_ptr;
     heap_ptr += n;
     return p;
@@ -190,10 +192,14 @@ static int64_t err_code = 0;
 int64_t jdb_err_code(void)                           { return err_code; }
 void    jdb_err_set(const char* msg, int64_t code)   { (void)msg; err_code = code; }
 
-void jdb_throw_uncaught(void) {
-    vga_puts("\nPANIC: uncaught error\n");
+static void panic(const char* msg) {
+    vga_puts("\nPANIC: ");
+    vga_puts(msg);
+    vga_putc('\n');
     for (;;) __asm__ volatile ("cli; hlt");
 }
+
+void jdb_throw_uncaught(void) { panic("uncaught error"); }
 
 void jdb_print_int(int64_t v)     { put_i64(v); }
 void jdb_print_nl(void)           { vga_putc('\n'); }
@@ -235,6 +241,12 @@ struct JdbArray* jdb_array_new(int64_t size) {
     arr->elem_tags = NULL;
     if (arr->data) memset(arr->data, 0, (size_t)size * sizeof(double));
     return arr;
+}
+
+// Flags bit 0 marks pointer elements, bit 1 marks them strings; the pointer
+// itself rides in the element's double as a bit pattern.
+void jdb_array_set_string_elems(struct JdbArray* arr) {
+    if (arr) arr->flags |= 3;
 }
 
 void jdb_array_set(struct JdbArray* arr, int64_t idx, double val) {
@@ -279,6 +291,36 @@ void    jdb_recursion_leave(void)        { if (rec_depth > 0) rec_depth--; }
 int64_t jdb_recursion_depth(void)        { return rec_depth; }
 void    jdb_recursion_reset_to(int64_t d){ rec_depth = d; }
 
+// ── Math the backend lowers to libm ─────────────────────────
+//
+// Exact for magnitudes inside the 64-bit integer range, which is everything
+// the kernel profile computes with. Larger values are returned unchanged
+// rather than approximated.
+
+#define INT64_SCALE 9.2233720368547758e18
+
+double trunc(double x) {
+    if (x >= INT64_SCALE || x <= -INT64_SCALE) return x;
+    return (double)(int64_t)x;
+}
+
+double floor(double x) {
+    double t = trunc(x);
+    return (x < 0.0 && t != x) ? t - 1.0 : t;
+}
+
+double ceil(double x) {
+    double t = trunc(x);
+    return (x > 0.0 && t != x) ? t + 1.0 : t;
+}
+
+double fabs(double x) { return x < 0.0 ? -x : x; }
+
+double fmod(double x, double y) {
+    if (y == 0.0) return 0.0;
+    return x - trunc(x / y) * y;
+}
+
 // ── Conversions ─────────────────────────────────────────────
 
 int64_t jdb_cint(double x) { return (int64_t)(int32_t)x; }
@@ -296,6 +338,76 @@ int64_t jdb_byteat(const char* s, int64_t idx) {
 
 int64_t jdb_asc(const char* s) {
     return (s && s[0]) ? (int64_t)(uint8_t)s[0] : 0;
+}
+
+static char* bare_strdup(const char* s, int64_t n) {
+    char* r = (char*)bump_alloc((size_t)n + 1);
+    if (!r) return NULL;
+    if (n > 0) memcpy(r, s, (size_t)n);
+    r[n] = '\0';
+    return r;
+}
+
+int64_t jdb_str_eq(const char* a, const char* b) {
+    if (a == b) return 1;
+    if (!a || !b) return 0;
+    size_t la = bare_strlen(a), lb = bare_strlen(b);
+    if (la != lb) return 0;
+    for (size_t i = 0; i < la; i++) if (a[i] != b[i]) return 0;
+    return 1;
+}
+
+int64_t jdb_str_ne(const char* a, const char* b) { return jdb_str_eq(a, b) ? 0 : 1; }
+
+int64_t jdb_str_cmp(const char* a, const char* b) {
+    const unsigned char* x = (const unsigned char*)(a ? a : "");
+    const unsigned char* y = (const unsigned char*)(b ? b : "");
+    while (*x && *x == *y) { x++; y++; }
+    return (int64_t)*x - (int64_t)*y;
+}
+
+// 0-based, -1 when absent.
+int64_t jdb_instr(const char* haystack, const char* needle) {
+    if (!haystack || !needle) return -1;
+    int64_t hlen = (int64_t)bare_strlen(haystack);
+    int64_t nlen = (int64_t)bare_strlen(needle);
+    if (nlen == 0) return 0;
+    if (nlen > hlen) return -1;
+    for (int64_t i = 0; i + nlen <= hlen; i++) {
+        int64_t k = 0;
+        while (k < nlen && haystack[i + k] == needle[k]) k++;
+        if (k == nlen) return i;
+    }
+    return -1;
+}
+
+char* jdb_mid_lax(const char* s, int64_t start, int64_t length) {
+    if (!s) return bare_strdup("", 0);
+    int64_t slen = (int64_t)bare_strlen(s);
+    if (start < 0) start = 0;
+    if (start > slen) return bare_strdup("", 0);
+    if (length < 0 || start + length > slen) length = slen - start;
+    return bare_strdup(s + start, length);
+}
+
+char* jdb_mid(const char* s, int64_t start, int64_t length) {
+    if (!s) return bare_strdup("", 0);
+    int64_t slen = (int64_t)bare_strlen(s);
+    if (start < 0 || start > slen) {
+        jdb_err_set("MID: index out of range", 1);
+        return bare_strdup("", 0);
+    }
+    if (length < 0 || start + length > slen) length = slen - start;
+    return bare_strdup(s + start, length);
+}
+
+char* jdb_left(const char* s, int64_t n) { return jdb_mid_lax(s, 0, n); }
+
+char* jdb_right(const char* s, int64_t n) {
+    if (!s) return bare_strdup("", 0);
+    int64_t slen = (int64_t)bare_strlen(s);
+    if (n >= slen) return bare_strdup(s, slen);
+    return jdb_mid_lax(s, slen - n, n);
 }
 
 char* jdb_chr(int64_t code) {
