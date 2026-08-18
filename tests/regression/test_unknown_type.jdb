@@ -1,0 +1,52 @@
+' An identifier in type position is only legal if a TYPE declares it. Before
+' this check, DIM x AS anything silently produced an empty OBJECT, so a typo
+' in a type name became a working program that did nothing useful.
+
+OPTION EXPLICIT
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+TYPE T_Point
+    X AS INTEGER
+    Y AS INTEGER
+ENDTYPE
+
+PRINT "--- a declared type still works"
+
+DIM p AS T_Point
+p.X = 3
+p.Y = 4
+CHECK("fields hold their values", STR$(p.X + p.Y), "7")
+
+' Type names are case-insensitive, like every other identifier.
+DIM q AS t_point
+q.X = 5
+CHECK("lower case spelling resolves", STR$(q.X), "5")
+
+' The check runs over the finished program, so a type may be declared
+' below the line that uses it.
+DIM later AS T_Below
+later.V = 9
+CHECK("forward reference resolves", STR$(later.V), "9")
+
+TYPE T_Below
+    V AS INTEGER
+ENDTYPE
+
+PRINT ""
+PRINT "test_unknown_type: passed "; passed; ", failed "; failed
+IF failed > 0 THEN
+    PRINT "=== FAILED ==="
+ELSE
+    PRINT "=== ALL TESTS PASSED ==="
+ENDIF

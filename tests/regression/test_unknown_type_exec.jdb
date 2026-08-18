@@ -1,0 +1,75 @@
+' The refusal half of the unknown-type check. INTERPRETER ONLY: it drives the
+' parser through EXECUTE so a parse error can be caught, and under -c EXECUTE
+' runs deferred, after the TRY has already been left. The both-backend half
+' lives in test_unknown_type.jdb.
+
+OPTION EXPLICIT
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB CHECK(what$, got$, want$)
+    IF got$ = want$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL "; what$; "  got ["; got$; "] want ["; want$; "]"
+    ENDIF
+ENDSUB
+
+TYPE T_Point
+    X AS INTEGER
+ENDTYPE
+
+PRINT "--- an undeclared type is refused"
+
+DIM caught AS INTEGER = 0
+DIM msg$ = ""
+TRY
+    EXECUTE "DIM zz AS nosuchtype"
+CATCH
+    caught = 1
+    msg$ = ERRMSG$
+ENDTRY
+CHECK("unknown type raises", STR$(caught), "1")
+
+DIM named AS INTEGER = 0
+IF INSTR(msg$, "unknown type") >= 0 THEN named = 1
+CHECK("  message says what went wrong", STR$(named), "1")
+
+DIM quoted AS INTEGER = 0
+IF INSTR(msg$, "NOSUCHTYPE") >= 0 THEN quoted = 1
+CHECK("  message names the type", STR$(quoted), "1")
+
+' A type declared inside the executed chunk itself is fine, which shows the
+' check is not simply refusing everything dynamic.
+DIM inner AS INTEGER = 0
+DIM src$ = "TYPE T_Inner" + CHR$(10) + "  V AS INTEGER" + CHR$(10) + "ENDTYPE" + CHR$(10)
+src$ = src$ + "DIM z AS T_Inner" + CHR$(10) + "z.V = 4" + CHR$(10)
+TRY
+    EXECUTE src$
+    inner = 1
+CATCH
+    inner = 0
+ENDTRY
+CHECK("chunk-local type inside EXECUTE", STR$(inner), "1")
+
+' A type declared out here is NOT visible to a separate chunk: each chunk
+' compiles on its own. That predates the check and used to surface as a
+' silent empty object rather than an error.
+DIM crosschunk AS INTEGER = 0
+TRY
+    EXECUTE "DIM yy AS T_Point"
+    crosschunk = 0
+CATCH
+    crosschunk = 1
+ENDTRY
+CHECK("host type is not visible to EXECUTE", STR$(crosschunk), "1")
+
+PRINT ""
+PRINT "test_unknown_type_exec: passed "; passed; ", failed "; failed
+IF failed > 0 THEN
+    PRINT "=== FAILED ==="
+ELSE
+    PRINT "=== ALL TESTS PASSED ==="
+ENDIF

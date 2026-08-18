@@ -56,9 +56,12 @@ VarType Parser::parse_type() {
         advance();
         return VarType::STRING;
     }
-    // User-defined type names (any unrecognized IDENTIFIER in type context)
+    // User-defined type names (any unrecognized IDENTIFIER in type context).
+    // Recorded rather than trusted: validate_type_refs() rejects the ones that
+    // never get a TYPE declaration, so a typo cannot silently become an empty
+    // OBJECT.
     if (current().type == TokenType::IDENTIFIER && !is_type_token(current().type)) {
-        // Store name in a temporary - the DIM handler will check it
+        record_type_ref(current().value, current().line);
         advance();
         return VarType::OBJECT; // UDTs are objects
     }
@@ -76,6 +79,62 @@ VarType Parser::parse_type() {
 }
 
 // ── Parse program ────────────────────────────────────────────
+
+void Parser::record_type_ref(const std::string& name, int line) {
+    if (!name.empty()) udt_type_refs.emplace_back(name, line);
+}
+
+namespace {
+std::string upper_copy(const std::string& s) {
+    std::string u = s;
+    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+    return u;
+}
+
+// A TYPE inside an imported module reaches this list under its rewritten name:
+// `MODULE.Type` when exported, `__MODULE__Type` when not. Record the bare name
+// as well, since that is what a reference inside the module itself still says.
+void collect_type_decls(const std::vector<StmtPtr>& stmts,
+                        std::unordered_set<std::string>& out) {
+    for (const auto& s : stmts) {
+        if (!s) continue;
+        if (s->kind == StmtKind::TYPE_DECL && !s->func_name.empty()) {
+            std::string n = upper_copy(s->func_name);
+            out.insert(n);
+            size_t dot = n.rfind('.');
+            if (dot != std::string::npos) out.insert(n.substr(dot + 1));
+            size_t us = n.rfind("__");
+            if (us != std::string::npos && us + 2 < n.size())
+                out.insert(n.substr(us + 2));
+        }
+        collect_type_decls(s->body, out);
+        collect_type_decls(s->catch_body, out);
+        collect_type_decls(s->finally_body, out);
+        for (const auto& br : s->branches) collect_type_decls(br.body, out);
+    }
+}
+}  // namespace
+
+// An identifier in type position is only legal if some TYPE declares it. The
+// check runs over the finished program rather than at the point of use, so a
+// type may be declared below its first use or come from an imported module.
+// A dotted MODULE.TypeName is validated on its last segment, which is the name
+// the module declares.
+void Parser::validate_type_refs(const std::vector<StmtPtr>& stmts) {
+    if (udt_type_refs.empty()) return;
+    std::unordered_set<std::string> declared;
+    collect_type_decls(stmts, declared);
+    for (const auto& ref : udt_type_refs) {
+        std::string name = ref.first;
+        size_t dot = name.rfind('.');
+        if (dot != std::string::npos) name = name.substr(dot + 1);
+        if (declared.count(upper_copy(name))) continue;
+        throw std::runtime_error("Parse error at line " + std::to_string(ref.second) +
+            ": unknown type '" + ref.first + "'. Declare it with TYPE " + ref.first +
+            " ... ENDTYPE, or use a built-in type. A type does not carry across"
+            " separate REPL lines or EXECUTE calls.");
+    }
+}
 
 std::vector<StmtPtr> Parser::parse() {
     std::vector<StmtPtr> stmts;
@@ -98,6 +157,7 @@ std::vector<StmtPtr> Parser::parse() {
         }
         skip_newlines();
     }
+    validate_type_refs(stmts);
     return stmts;
 }
 

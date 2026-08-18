@@ -38,6 +38,14 @@ private:
     // expand `DIM a, b, c` into multiple separate DIM statements.
     std::vector<StmtPtr> pending_stmts;
 
+    // Every type name that parsed as an unknown identifier in type position,
+    // with the line it appeared on. Checked against the TYPE declarations once
+    // the whole program (imports included) has been parsed, so a type may be
+    // declared after its use and may live in an imported module.
+    std::vector<std::pair<std::string, int>> udt_type_refs;
+    void record_type_ref(const std::string& name, int line);
+    void validate_type_refs(const std::vector<StmtPtr>& stmts);
+
     // Helpers
     const Token& current() const;
     const Token& peek_at(size_t offset) const;
