@@ -142,6 +142,68 @@ CHECK_STR("string array element", "alpha", names[0])
 CHECK_STR("string array tail element", "delta", names[3])
 CHECK_EQ("string array LEN is the count", 4, LEN(names))
 
+' ── 4. A string array element assigned to a STRING global from a SUB ────
+' The element arrives runtime-tagged. Letting it retag the global left every
+' function body reading that global on the runtime dispatch, whose non-string
+' arm answers 0, so the value looked fine at top level and empty inside a FUNC.
+
+DIM slot[4] AS STRING
+DIM gsel AS STRING
+
+SUB PICK(idx AS INTEGER)
+    gsel = slot[idx]
+ENDSUB
+
+SUB PICK_LITERAL()
+    gsel = "literal"
+ENDSUB
+
+FUNC SEL_LEN() AS INTEGER
+    RETURN LEN(gsel)
+ENDFUNC
+
+FUNC SEL_BYTE(idx AS INTEGER) AS INTEGER
+    RETURN BYTEAT(gsel, idx)
+ENDFUNC
+
+slot[0] = "hello"
+slot[2] = "kernel"
+
+PICK_LITERAL()
+CHECK_STR("literal via SUB", "literal", gsel)
+CHECK_EQ("literal LEN in a FUNC", 7, SEL_LEN())
+
+PICK(0)
+CHECK_STR("array element via SUB", "hello", gsel)
+CHECK_EQ("array element LEN at top level", 5, LEN(gsel))
+CHECK_EQ("array element LEN in a FUNC", 5, SEL_LEN())
+CHECK_EQ("array element BYTEAT in a FUNC", 104, SEL_BYTE(0))
+
+PICK(2)
+CHECK_STR("second element via SUB", "kernel", gsel)
+CHECK_EQ("second element LEN in a FUNC", 6, SEL_LEN())
+
+' The reading function declared BEFORE the writing SUB is the order that
+' failed: a pre-pass promoted the global to runtime-tagged after scanning the
+' whole file, so the reader was already compiled around the wrong shape.
+
+DIM early[4] AS STRING
+DIM gearly AS STRING
+
+FUNC EARLY_LEN() AS INTEGER
+    RETURN LEN(gearly)
+ENDFUNC
+
+SUB EARLY_PICK(idx AS INTEGER)
+    gearly = early[idx]
+ENDSUB
+
+early[1] = "freestanding"
+EARLY_PICK(1)
+CHECK_STR("reader declared first, value", "freestanding", gearly)
+CHECK_EQ("reader declared first, LEN at top level", 12, LEN(gearly))
+CHECK_EQ("reader declared first, LEN in the FUNC", 12, EARLY_LEN())
+
 ' ── Summary ────────────────────────────────────────────────────────────
 
 PRINT "============================================="

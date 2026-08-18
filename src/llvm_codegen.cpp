@@ -2873,7 +2873,20 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     auto it = scopes[0].vars.find(s->var_name);
                     if (it != scopes[0].vars.end()) g = &it->second;
                 }
-                if (g && g->tag != JD_TAG_RUNTIME && may_be_rtag(s->expr.get())) {
+                // A global declared AS STRING keeps that type. Promoting it
+                // here decides the shape of every function body that reads it,
+                // long before any assignment is compiled, and the runtime
+                // dispatch those bodies then emit answers 0 for LEN on the
+                // non-string arm. The assignment path materialises a runtime-
+                // tagged value into the string slot instead.
+                bool declared_string = false;
+                auto tit = type_env.find(s->var_name);
+                if (tit != type_env.end() &&
+                    tit->second.kind == StaticType::Kind::STRING)
+                    declared_string = true;
+
+                if (g && !declared_string && g->tag != JD_TAG_RUNTIME &&
+                    may_be_rtag(s->expr.get())) {
                     g->tag = JD_TAG_RUNTIME;
                     if (!g->runtime_tag_alloca) {
                         std::string rtag_name = s->var_name + ".rtag";
@@ -3912,6 +3925,16 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             if (!same_source) vi = nullptr;
         }
     }
+    // A declared string slot is the exception to the rule below: retagging it
+    // leaves every function body that reads the variable emitting the runtime
+    // dispatch, and the non-string arm of that dispatch answers 0 for LEN.
+    // `g = arr[i]` from inside a SUB is how this shows up, since a string
+    // array element arrives runtime-tagged.
+    if (vi && vi->tag == JD_TAG_STR && rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+        rhs.val = runtime_to_str(rhs.val, rhs.runtime_tag);
+        rhs.tag = JD_TAG_STR;
+        rhs.runtime_tag = nullptr;
+    }
     // Tag 7 (runtime-tagged): ALWAYS store as tag 7 with companion alloca.
     // Never coerce to a concrete type - the runtime tag carries the truth
     // about what the value IS (could be f64, string, array, VM handle).
@@ -4930,6 +4953,15 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (it != scopes.back().vars.end()) vi = &it->second;
     } else {
         vi = lookup_var(stmt.var_name);
+    }
+    // Same exception as in codegen_let_or_assign: an existing slot the
+    // programmer declared AS STRING keeps its type, and the runtime-tagged
+    // value is materialised into it.
+    if (vi && vi->tag == JD_TAG_STR && stmt.var_type != VarType::NONE &&
+        rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+        rhs.val = runtime_to_str(rhs.val, rhs.runtime_tag);
+        rhs.tag = JD_TAG_STR;
+        rhs.runtime_tag = nullptr;
     }
     // Tag 7 (runtime-tagged): mirror codegen_let_or_assign - store
     // the value AND a companion runtime-tag alloca so later reads can
@@ -10154,6 +10186,42 @@ LLVMValueRef LLVMCodegen::pun_i64_to_f64(LLVMValueRef i64_val) {
     // Store i64, load as f64 (LLVM opaque ptr allows mismatched load type)
     LLVMBuildStore(builder, i64_val, alloca);
     return LLVMBuildLoad2(builder, f64_type, alloca, "pf");
+}
+
+// A runtime-tagged value carries its type at run time, so the string case is
+// a pointer already in the bits and everything else has to be rendered.
+LLVMValueRef LLVMCodegen::runtime_to_str(LLVMValueRef bits, LLVMValueRef rtag) {
+    LLVMBasicBlockRef bb_str   = LLVMAppendBasicBlock(current_fn, "rt2s.str");
+    LLVMBasicBlockRef bb_other = LLVMAppendBasicBlock(current_fn, "rt2s.other");
+    LLVMBasicBlockRef bb_join  = LLVMAppendBasicBlock(current_fn, "rt2s.join");
+
+    LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, rtag,
+        LLVMConstInt(i32_type, JD_TAG_STR, 0), "rt_is_str");
+    LLVMBuildCondBr(builder, is_str, bb_str, bb_other);
+
+    LLVMPositionBuilderAtEnd(builder, bb_str);
+    LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "rt2s_ptr");
+    LLVMBuildBr(builder, bb_join);
+    LLVMBasicBlockRef str_end = LLVMGetInsertBlock(builder);
+
+    LLVMPositionBuilderAtEnd(builder, bb_other);
+    LLVMValueRef as_text = LLVMConstPointerNull(i8_ptr_type);
+    auto* vts = get_runtime_func("__jdrt_val_to_str");
+    LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+    if (vts && hg) {
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef args[] = { rt, bits };
+        as_text = LLVMBuildCall2(builder, vts->fn_type, vts->fn, args, 2, "rt2s_txt");
+    }
+    LLVMBuildBr(builder, bb_join);
+    LLVMBasicBlockRef other_end = LLVMGetInsertBlock(builder);
+
+    LLVMPositionBuilderAtEnd(builder, bb_join);
+    LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "rt2s");
+    LLVMValueRef vals[] = { as_ptr, as_text };
+    LLVMBasicBlockRef blocks[] = { str_end, other_end };
+    LLVMAddIncoming(phi, vals, blocks, 2);
+    return phi;
 }
 
 LLVMValueRef LLVMCodegen::pun_f64_to_i64(LLVMValueRef f64_val) {

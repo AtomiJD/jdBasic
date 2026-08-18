@@ -397,6 +397,10 @@ private:
     LLVMValueRef pun_i64_to_f64(LLVMValueRef i64_val);
     LLVMValueRef pun_f64_to_i64(LLVMValueRef f64_val);
 
+    // Turn a runtime-tagged value into a string pointer, so a slot declared
+    // AS STRING keeps its type instead of being retagged by the assignment.
+    LLVMValueRef runtime_to_str(LLVMValueRef bits, LLVMValueRef rtag);
+
     // Emit object file and link
     bool emit_object_file(const std::string& obj_path);
     bool link_executable(const std::string& obj_path,

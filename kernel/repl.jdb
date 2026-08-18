@@ -755,9 +755,7 @@ SUB RUN_STATEMENT()
     discard = EVAL_COMPARE()
 ENDSUB
 
-' Interprets one line. Assigning a string array element straight to a STRING
-' global inside a SUB leaves the global RUNTIME-tagged for every function that
-' reads it, so the text arrives through a typed parameter instead.
+' Interprets one line of source.
 SUB RUN_TEXT(lineIn AS STRING)
     srcText = lineIn
     RUN_LINE()
