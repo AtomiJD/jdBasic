@@ -1,0 +1,6 @@
+# Build artifacts: the jdBasic object comes from --target=kernel, the rest from
+# build_kernel.sh.
+*.o
+*.bin
+*.elf64
+*.iso

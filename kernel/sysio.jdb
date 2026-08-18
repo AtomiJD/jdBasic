@@ -1,0 +1,36 @@
+OPTION EXPLICIT
+DIM v AS INTEGER
+
+PRINT "SYS.* primitives"
+
+' Scratch sits above the bump heap, which ends at $800000.
+SYS.POKEB($900000, $A5)
+v = SYS.PEEKB($900000)
+PRINT "peekb  (want 165)"
+PRINT v
+
+SYS.POKEW($900010, $1234)
+v = SYS.PEEKW($900010)
+PRINT "peekw  (want 4660)"
+PRINT v
+
+SYS.POKE($900020, $12345678)
+v = SYS.PEEK($900020)
+PRINT "peek   (want 305419896)"
+PRINT v
+
+' Straight into the VGA text buffer, row 10 column 0: attribute $0F, 'H' then 'I'.
+SYS.POKEW($B8000 + 1600, $0F48)
+SYS.POKEW($B8000 + 1602, $0F49)
+v = SYS.PEEKW($B8000 + 1600)
+PRINT "vga cell (want 3912)"
+PRINT v
+
+' Keyboard controller status port.
+v = SYS.INB($64)
+PRINT "kbd status port"
+PRINT v
+
+' POST diagnostic port, harmless to write.
+SYS.OUTB($80, $2A)
+PRINT "outb done"

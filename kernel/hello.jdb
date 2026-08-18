@@ -1,0 +1,15 @@
+OPTION EXPLICIT
+DIM total AS INTEGER
+DIM n AS INTEGER
+
+PRINT "jdBasic on bare metal"
+
+total = 0
+n = 1
+DO
+    total = total + n
+    n = n + 1
+LOOP WHILE n <= 1000
+
+PRINT "sum 1..1000 ="
+PRINT total

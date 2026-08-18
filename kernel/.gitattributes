@@ -1,0 +1,4 @@
+# These run under WSL/Linux; CRLF makes the shebang line unusable.
+*.sh text eol=lf
+*.asm text eol=lf
+*.ld text eol=lf

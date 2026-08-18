@@ -1667,6 +1667,7 @@ int main(int argc, char* argv[]) {
     int debug_port = 0;
     bool compile_native = false;
     bool emit_ir_only = false;
+    bool kernel_target = false;
     bool lint_mode = false;
     bool pretty_mode = false;
     bool pretty_vb   = false;
@@ -1706,6 +1707,8 @@ int main(int argc, char* argv[]) {
               "                            Ctrl+B side-panel, Ctrl+P command palette)\n"
               "      --emit-ir            Emit LLVM IR to stdout instead of an .exe\n"
               "      --trace              Compile with codegen trace logging on\n"
+              "      --target=kernel      Emit a freestanding ELF object instead of an\n"
+              "                            .exe, for a bare-metal image (requires KERNEL)\n"
               "\n"
               "EXAMPLES\n"
               "  jdbasic my_script.jdb arg1 arg2        # interpret, args visible via OS.ARGS\n"
@@ -1783,6 +1786,15 @@ int main(int argc, char* argv[]) {
             continue;
         }
         if (a == "--emit-ir") { emit_ir_only = true; continue; }
+        if (a == "--target=kernel") {
+#ifdef KERNEL
+            kernel_target = true; compile_native = true; continue;
+#else
+            std::cerr << "--target=kernel needs a build with the KERNEL "
+                         "feature flag." << std::endl;
+            return 1;
+#endif
+        }
         if (a == "--trace") { compile_native = true; /* set debug_log below */ continue; }
         if ((a == "-o" || a == "--output") && i + 1 < argc) { compile_output = argv[++i]; continue; }
         filename = a;
@@ -1925,6 +1937,10 @@ int main(int argc, char* argv[]) {
                 if (std::string(argv[j]) == "--trace") { codegen.debug_log = true; break; }
             }
 
+#ifdef KERNEL
+            codegen.kernel_target = kernel_target;
+#endif
+
             if (emit_ir_only) {
                 mark("Emitting IR...");
                 codegen.emit_ir(ast);
@@ -1961,7 +1977,8 @@ int main(int argc, char* argv[]) {
         // compiler - this is exactly SDL3*/libssl/libcrypto (~19 MB), and
         // naturally excludes LLVM-C.dll (compiler-only, not a runtime dep) and
         // the giant on-demand LLM DLLs (ggml/cuda/llama, LoadLibrary'd lazily).
-        try {
+        // A kernel object has no DLL closure and no host to run on.
+        if (!kernel_target) try {
             std::string self = argv[0];
             size_t s_sep = self.find_last_of("/\\");
             std::filesystem::path self_dir = (s_sep != std::string::npos)

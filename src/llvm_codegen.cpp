@@ -262,6 +262,21 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_sleep",      "SLEEP",      void_type, {i64_type}, -1);
     reg("jdb_randomseed", "RANDOMSEED", void_type, {i64_type}, -1);
 
+#ifdef KERNEL
+    // Ring-0 primitives. Namespaced so no existing program can collide with a
+    // new reserved word, and only present in a KERNEL build. The bare runtime
+    // carries the inline asm; a call is cheap next to the bus timing of a port
+    // access, and a memory poke is not hot enough to need an intrinsic.
+    reg("jdb_sys_inb",   "SYS.INB",   i64_type, {i64_type}, 0);
+    reg("jdb_sys_outb",  "SYS.OUTB",  void_type, {i64_type, i64_type}, -1);
+    reg("jdb_sys_peekb", "SYS.PEEKB", i64_type, {i64_type}, 0);
+    reg("jdb_sys_pokeb", "SYS.POKEB", void_type, {i64_type, i64_type}, -1);
+    reg("jdb_sys_peekw", "SYS.PEEKW", i64_type, {i64_type}, 0);
+    reg("jdb_sys_pokew", "SYS.POKEW", void_type, {i64_type, i64_type}, -1);
+    reg("jdb_sys_peek",  "SYS.PEEK",  i64_type, {i64_type}, 0);
+    reg("jdb_sys_poke",  "SYS.POKE",  void_type, {i64_type, i64_type}, -1);
+#endif
+
     // Arrays (JdbArray* is opaque pointer = i8_ptr_type)
     reg("jdb_array_new",  "__array_new",  i8_ptr_type, {i64_type}, 3);
     reg("jdb_array_set",  "__array_set",  void_type, {i8_ptr_type, i64_type, f64_type}, -1);
@@ -2268,6 +2283,16 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     std::string obj_path = output_exe;
     auto dot = obj_path.rfind('.');
     if (dot != std::string::npos) obj_path = obj_path.substr(0, dot);
+
+#ifdef KERNEL
+    if (kernel_target) {
+        obj_path += ".o";
+        if (!emit_object_file(obj_path)) return false;
+        std::cout << "Kernel object: " << obj_path << std::endl;
+        return true;
+    }
+#endif
+
     obj_path += ".obj";
 
     if (!emit_object_file(obj_path)) return false;
@@ -9160,6 +9185,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
         "DATE.UTC", "DATE.PARTS", "EOMONTH", "DATERANGE", "TALLY",
         "MKTEMP$", "RMDIR", "MKDIR", "KILL",
+#ifdef KERNEL
+        // A port or an address is a scalar; spreading one over an array would
+        // turn a single hardware access into a fan-out.
+        "SYS.INB", "SYS.OUTB", "SYS.PEEKB", "SYS.POKEB",
+        "SYS.PEEKW", "SYS.POKEW", "SYS.PEEK", "SYS.POKE",
+#endif
         // Bitwise/math helpers (scalars-only)
         "ROTL", "ROTR", "GCD", "LCM",
         // Collections
@@ -10484,6 +10515,15 @@ bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
     LLVMTargetRef target;
     char* err = nullptr;
 
+#ifdef KERNEL
+    // A bare-metal object is ELF regardless of the host, so a Windows-hosted
+    // compile still produces something a GNU/LLD linker script can consume.
+    if (kernel_target) {
+        LLVMDisposeMessage(triple);
+        triple = LLVMCreateMessage("x86_64-unknown-none-elf");
+    }
+#endif
+
     if (LLVMGetTargetFromTriple(triple, &target, &err)) {
         error_msg = "Failed to get target: " + std::string(err);
         LLVMDisposeMessage(err);
@@ -10496,16 +10536,48 @@ bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
     char* host_cpu = LLVMGetHostCPUName();
     char* host_features = LLVMGetHostCPUFeatures();
 
+    const char* cpu_name      = host_cpu ? host_cpu : "generic";
+    const char* cpu_features  = host_features ? host_features : "";
+    LLVMRelocMode reloc       = LLVMRelocDefault;
+    LLVMCodeModel code_model  = LLVMCodeModelDefault;
+
+#ifdef KERNEL
+    if (kernel_target) {
+        // Baseline x86-64 is SSE2, which long mode gives us once the boot stub
+        // sets CR4.OSFXSR. Anything above that (AVX) needs XSAVE state the
+        // kernel does not set up. Small + Static because the image is linked
+        // into identity-mapped low memory, not the negative half.
+        cpu_name     = "x86-64";
+        cpu_features = "";
+        reloc        = LLVMRelocStatic;
+        code_model   = LLVMCodeModelSmall;
+    }
+#endif
+
     LLVMTargetMachineRef machine = LLVMCreateTargetMachine(
         target, triple,
-        host_cpu ? host_cpu : "generic",
-        host_features ? host_features : "",
-        LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
+        cpu_name,
+        cpu_features,
+        LLVMCodeGenLevelDefault, reloc, code_model);
 
     if (host_cpu)      LLVMDisposeMessage(host_cpu);
     if (host_features) LLVMDisposeMessage(host_features);
 
     LLVMSetModuleDataLayout(module, LLVMCreateTargetDataLayout(machine));
+
+#ifdef KERNEL
+    if (kernel_target) {
+        // An interrupt pushes onto the stack the moment it fires and clobbers
+        // the 128 bytes below rsp, so nothing in a kernel image may hold live
+        // data in the red zone.
+        unsigned kind = LLVMGetEnumAttributeKindForName("noredzone", 9);
+        LLVMAttributeRef nrz = LLVMCreateEnumAttribute(ctx, kind, 0);
+        for (LLVMValueRef fn = LLVMGetFirstFunction(module); fn;
+             fn = LLVMGetNextFunction(fn)) {
+            LLVMAddAttributeAtIndex(fn, LLVMAttributeFunctionIndex, nrz);
+        }
+    }
+#endif
 
     // Run the standard O2 optimization pipeline before emitting the object.
     // Promotes allocas to registers (mem2reg / sroa), runs instcombine /

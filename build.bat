@@ -111,6 +111,10 @@ for %%A in (%*) do (
         set EXTRA_SRC=!EXTRA_SRC! src\mcp_stdio.cpp
         echo [+] MCP Server - Model Context Protocol stdio
     )
+    if /I "%%A"=="KERNEL" (
+        set DEFS=!DEFS! /DKERNEL
+        echo [+] Kernel Target - freestanding ELF objects
+    )
     if /I "%%A"=="SQLITE" (
         set DEFS=!DEFS! /DSQLITE
         set EXTRA_SRC=!EXTRA_SRC! src\sql.cpp

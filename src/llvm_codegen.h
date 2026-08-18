@@ -26,6 +26,13 @@ public:
     std::string error_msg;
     bool debug_log = false;  // emit line-by-line runtime trace
 
+#ifdef KERNEL
+    // Freestanding target: emit an ELF object for a bare-metal loader instead
+    // of a hosted .exe. The object stops at emit_object_file(); boot code,
+    // linker script and the bare runtime live outside the compiler.
+    bool kernel_target = false;
+#endif
+
     // STRICT/EXPLICIT compile mode. Defaults are OFF during the staged
     // The native compiler (`-c`) is STRICT + EXPLICIT by default: every native
     // compile must declare its variables and types. The interpreter stays loose
