@@ -21,6 +21,21 @@ CONST KEY_ENTER = 13
 
 CONST MAX_VARS = 64
 
+CONST K_UP = 256
+CONST K_DOWN = 257
+CONST K_LEFT = 258
+CONST K_RIGHT = 259
+CONST K_HOME = 260
+CONST K_END = 261
+CONST K_DEL = 262
+CONST K_PGUP = 263
+CONST K_PGDN = 264
+CONST K_F2 = 265
+CONST K_F5 = 266
+
+CONST ED_MAXLINES = 200
+CONST ED_ROWS = 23
+
 DIM scrAttr AS INTEGER
 DIM scrPos AS INTEGER
 
@@ -30,6 +45,13 @@ DIM kbAltgr[128]
 DIM kbShiftDown AS INTEGER
 DIM kbAltgrDown AS INTEGER
 DIM kbExtended AS INTEGER
+DIM lineExit AS INTEGER
+
+DIM edLines[ED_MAXLINES] AS STRING
+DIM edCount AS INTEGER
+DIM edRow AS INTEGER
+DIM edCol AS INTEGER
+DIM edTop AS INTEGER
 
 DIM srcText AS STRING
 DIM cur AS INTEGER
@@ -243,8 +265,23 @@ SUB KB_INIT()
     kbExtended = 0
 ENDSUB
 
+FUNC KB_EXTENDED(code AS INTEGER) AS INTEGER
+    IF code = 72 THEN RETURN K_UP
+    IF code = 80 THEN RETURN K_DOWN
+    IF code = 75 THEN RETURN K_LEFT
+    IF code = 77 THEN RETURN K_RIGHT
+    IF code = 71 THEN RETURN K_HOME
+    IF code = 79 THEN RETURN K_END
+    IF code = 83 THEN RETURN K_DEL
+    IF code = 73 THEN RETURN K_PGUP
+    IF code = 81 THEN RETURN K_PGDN
+    RETURN 0
+ENDFUNC
+
 FUNC KB_ASCII(code AS INTEGER) AS INTEGER
     IF code = 1 THEN RETURN KEY_ESC
+    IF code = 60 THEN RETURN K_F2
+    IF code = 63 THEN RETURN K_F5
     IF code = 14 THEN RETURN KEY_BACK
     IF code = 28 THEN RETURN KEY_ENTER
     IF code > 127 THEN RETURN 0
@@ -280,8 +317,12 @@ FUNC KB_READ() AS INTEGER
                             kbAltgrDown = 1
                             kbExtended = 0
                         ELSE
-                            kbExtended = 0
-                            ch = CINT(KB_ASCII(code))
+                            IF kbExtended = 1 THEN
+                                kbExtended = 0
+                                ch = CINT(KB_EXTENDED(code))
+                            ELSE
+                                ch = CINT(KB_ASCII(code))
+                            ENDIF
                             IF ch > 0 THEN RETURN ch
                         ENDIF
                     ENDIF
@@ -291,10 +332,12 @@ FUNC KB_READ() AS INTEGER
     LOOP
 ENDFUNC
 
+' lineExit reports how the line ended: 0 Enter, 1 ESC, 2 F2.
 FUNC KB_READLINE$() AS STRING
     DIM buf AS STRING
     DIM ch AS INTEGER
     buf = ""
+    lineExit = 0
     DO
         ch = CINT(KB_READ())
         IF ch = KEY_ENTER THEN
@@ -302,7 +345,12 @@ FUNC KB_READLINE$() AS STRING
             RETURN buf
         ENDIF
         IF ch = KEY_ESC THEN
-            RETURN CHR$(27)
+            lineExit = 1
+            RETURN buf
+        ENDIF
+        IF ch = K_F2 THEN
+            lineExit = 2
+            RETURN buf
         ENDIF
         IF ch = KEY_BACK THEN
             IF LEN(buf) > 0 THEN
@@ -310,8 +358,10 @@ FUNC KB_READLINE$() AS STRING
                 SCR_BACKSPACE()
             ENDIF
         ELSE
-            buf = buf + CHR$(ch)
-            SCR_PUTCHAR(ch)
+            IF ch >= 32 AND ch < 256 THEN
+                buf = buf + CHR$(ch)
+                SCR_PUTCHAR(ch)
+            ENDIF
         ENDIF
     LOOP
 ENDFUNC
@@ -700,7 +750,14 @@ SUB RUN_STATEMENT()
     discard = EVAL_COMPARE()
 ENDSUB
 
-' The caller places the line and its length, then runs it.
+' Interprets one line. Assigning a string array element straight to a STRING
+' global inside a SUB leaves the global RUNTIME-tagged for every function that
+' reads it, so the text arrives through a typed parameter instead.
+SUB RUN_TEXT(lineIn AS STRING)
+    srcText = lineIn
+    RUN_LINE()
+ENDSUB
+
 SUB RUN_LINE()
     cur = 0
     errCode = 0
@@ -722,6 +779,265 @@ SUB RUN_LINE()
     ENDIF
 ENDSUB
 
+' ── Editor ─────────────────────────────────────────────────────────────────
+'
+' Lines are held one per array slot, so an edit rewrites a single line rather
+' than the whole buffer. lallang keeps one flat byte buffer and rescans it for
+' every line boundary, which is what a language without arrays forces.
+
+SUB ED_INIT()
+    DIM i AS INTEGER
+    FOR i = 0 TO ED_MAXLINES - 1
+        edLines[i] = ""
+    NEXT i
+    edCount = 1
+    edRow = 0
+    edCol = 0
+    edTop = 0
+ENDSUB
+
+SUB ED_CLAMP()
+    IF edRow < 0 THEN edRow = 0
+    IF edRow > edCount - 1 THEN edRow = edCount - 1
+    IF edCol < 0 THEN edCol = 0
+    IF edCol > LEN(edLines[edRow]) THEN edCol = LEN(edLines[edRow])
+ENDSUB
+
+SUB ED_INSERT(ch AS INTEGER)
+    DIM s AS STRING
+    s = edLines[edRow]
+    edLines[edRow] = LEFT$(s, edCol) + CHR$(ch) + MID$(s, edCol, LEN(s) - edCol)
+    edCol = edCol + 1
+ENDSUB
+
+SUB ED_ENTER()
+    DIM s AS STRING
+    DIM i AS INTEGER
+    IF edCount >= ED_MAXLINES THEN RETURN
+    s = edLines[edRow]
+    FOR i = edCount TO edRow + 1 STEP -1
+        edLines[i] = edLines[i - 1]
+    NEXT i
+    edLines[edRow] = LEFT$(s, edCol)
+    edLines[edRow + 1] = MID$(s, edCol, LEN(s) - edCol)
+    edCount = edCount + 1
+    edRow = edRow + 1
+    edCol = 0
+ENDSUB
+
+SUB ED_JOIN(row AS INTEGER)
+    DIM i AS INTEGER
+    IF row < 0 THEN RETURN
+    IF row >= edCount - 1 THEN RETURN
+    edLines[row] = edLines[row] + edLines[row + 1]
+    FOR i = row + 1 TO edCount - 2
+        edLines[i] = edLines[i + 1]
+    NEXT i
+    edLines[edCount - 1] = ""
+    edCount = edCount - 1
+ENDSUB
+
+SUB ED_BACKSPACE()
+    DIM s AS STRING
+    IF edCol > 0 THEN
+        s = edLines[edRow]
+        edLines[edRow] = LEFT$(s, edCol - 1) + MID$(s, edCol, LEN(s) - edCol)
+        edCol = edCol - 1
+        RETURN
+    ENDIF
+    IF edRow = 0 THEN RETURN
+    edCol = LEN(edLines[edRow - 1])
+    ED_JOIN(edRow - 1)
+    edRow = edRow - 1
+ENDSUB
+
+SUB ED_DELETE()
+    DIM s AS STRING
+    s = edLines[edRow]
+    IF edCol < LEN(s) THEN
+        edLines[edRow] = LEFT$(s, edCol) + MID$(s, edCol + 1, LEN(s) - edCol - 1)
+        RETURN
+    ENDIF
+    ED_JOIN(edRow)
+ENDSUB
+
+' ── Rendering ──────────────────────────────────────────────────────────────
+
+FUNC ED_CLASSIFY(word AS STRING) AS INTEGER
+    IF word = "if" THEN RETURN 13
+    IF word = "while" THEN RETURN 13
+    RETURN 10
+ENDFUNC
+
+SUB ED_DRAWLINE(screenRow AS INTEGER, msg AS STRING)
+    DIM base AS INTEGER
+    DIM j AS INTEGER
+    DIM c AS INTEGER
+    DIM wordStart AS INTEGER
+    DIM attr AS INTEGER
+    DIM k AS INTEGER
+
+    base = screenRow * SCR_COLS
+    j = 0
+    DO
+        IF j >= LEN(msg) THEN EXITDO
+        c = CINT(BYTEAT(msg, j))
+
+        IF c = 39 THEN
+            DO
+                IF j >= LEN(msg) THEN EXITDO
+                IF j >= SCR_COLS THEN EXITDO
+                SCR_CELL(base + j, CINT(BYTEAT(msg, j)), 8)
+                j = j + 1
+            LOOP
+            EXITDO
+        ENDIF
+
+        IF IS_DIGIT(c) = 1 THEN
+            DO
+                IF j >= LEN(msg) THEN EXITDO
+                IF IS_DIGIT(CINT(BYTEAT(msg, j))) = 0 THEN EXITDO
+                IF j < SCR_COLS THEN SCR_CELL(base + j, CINT(BYTEAT(msg, j)), 14)
+                j = j + 1
+            LOOP
+        ELSE
+            IF IS_ALPHA(c) = 1 THEN
+                wordStart = j
+                DO
+                    IF j >= LEN(msg) THEN EXITDO
+                    IF IS_ALPHA(CINT(BYTEAT(msg, j))) = 0 AND IS_DIGIT(CINT(BYTEAT(msg, j))) = 0 THEN EXITDO
+                    j = j + 1
+                LOOP
+                attr = CINT(ED_CLASSIFY(MID$(msg, wordStart, j - wordStart)))
+                FOR k = wordStart TO j - 1
+                    IF k < SCR_COLS THEN SCR_CELL(base + k, CINT(BYTEAT(msg, k)), attr)
+                NEXT k
+            ELSE
+                IF j < SCR_COLS THEN SCR_CELL(base + j, c, 15)
+                j = j + 1
+            ENDIF
+        ENDIF
+    LOOP
+
+    DO
+        IF j >= SCR_COLS THEN EXITDO
+        SCR_CELL(base + j, 32, 7)
+        j = j + 1
+    LOOP
+ENDSUB
+
+SUB ED_BAR(screenRow AS INTEGER, msg AS STRING, attr AS INTEGER)
+    DIM base AS INTEGER
+    DIM j AS INTEGER
+    base = screenRow * SCR_COLS
+    FOR j = 0 TO SCR_COLS - 1
+        IF j < LEN(msg) THEN
+            SCR_CELL(base + j, CINT(BYTEAT(msg, j)), attr)
+        ELSE
+            SCR_CELL(base + j, 32, attr)
+        ENDIF
+    NEXT j
+ENDSUB
+
+FUNC ED_NUM$(v AS INTEGER) AS STRING
+    DIM digits AS STRING
+    DIM n AS INTEGER
+    n = v
+    IF n = 0 THEN RETURN "0"
+    digits = ""
+    DO
+        digits = CHR$(48 + n MOD 10) + digits
+        n = n \ 10
+    LOOP WHILE n > 0
+    RETURN digits
+ENDFUNC
+
+SUB ED_SCROLL()
+    IF edRow < edTop THEN edTop = edRow
+    IF edRow > edTop + ED_ROWS - 1 THEN edTop = edRow - ED_ROWS + 1
+    IF edTop < 0 THEN edTop = 0
+ENDSUB
+
+SUB ED_RENDER()
+    DIM sr AS INTEGER
+    DIM lineNo AS INTEGER
+    DIM base AS INTEGER
+    DIM j AS INTEGER
+    DIM status AS STRING
+
+    ED_SCROLL()
+    FOR sr = 0 TO ED_ROWS - 1
+        lineNo = edTop + sr
+        IF lineNo < edCount THEN
+            ED_DRAWLINE(sr, edLines[lineNo])
+        ELSE
+            base = sr * SCR_COLS
+            SCR_CELL(base, 126, 9)
+            FOR j = 1 TO SCR_COLS - 1
+                SCR_CELL(base + j, 32, 7)
+            NEXT j
+        ENDIF
+    NEXT sr
+
+    status = " line " + ED_NUM$(edRow + 1) + "/" + ED_NUM$(edCount)
+    status = status + "   col " + ED_NUM$(edCol + 1)
+    ED_BAR(ED_ROWS, status, 112)
+    ED_BAR(ED_ROWS + 1, " F5 run   ESC back to the prompt   arrows move", 112)
+
+    SCR_CURSOR((edRow - edTop) * SCR_COLS + edCol)
+ENDSUB
+
+' ── Running the buffer ─────────────────────────────────────────────────────
+
+SUB ED_RUN()
+    DIM i AS INTEGER
+    DIM discard AS INTEGER
+    scrAttr = 7
+    SCR_CLEAR()
+    FOR i = 0 TO edCount - 1
+        IF LEN(edLines[i]) > 0 THEN
+            RUN_TEXT(edLines[i])
+        ENDIF
+    NEXT i
+    SCR_NEWLINE()
+    scrAttr = 15
+    SCR_WRITE("-- press a key --")
+    scrAttr = 7
+    discard = CINT(KB_READ())
+ENDSUB
+
+SUB ED_MAIN()
+    DIM ch AS INTEGER
+    DIM j AS INTEGER
+
+    DO
+        ED_RENDER()
+        ch = CINT(KB_READ())
+
+        IF ch = KEY_ESC THEN RETURN
+        IF ch = K_F5 THEN ED_RUN()
+        IF ch = K_UP THEN edRow = edRow - 1
+        IF ch = K_DOWN THEN edRow = edRow + 1
+        IF ch = K_LEFT THEN edCol = edCol - 1
+        IF ch = K_RIGHT THEN edCol = edCol + 1
+        IF ch = K_HOME THEN edCol = 0
+        IF ch = K_END THEN edCol = LEN(edLines[edRow])
+        IF ch = K_PGUP THEN edRow = edRow - ED_ROWS
+        IF ch = K_PGDN THEN edRow = edRow + ED_ROWS
+        IF ch = K_DEL THEN ED_DELETE()
+        IF ch = KEY_BACK THEN ED_BACKSPACE()
+        IF ch = KEY_ENTER THEN ED_ENTER()
+        IF ch = 9 THEN
+            FOR j = 1 TO 4
+                ED_INSERT(32)
+            NEXT j
+        ENDIF
+        IF ch >= 32 AND ch < 256 THEN ED_INSERT(ch)
+
+        ED_CLAMP()
+    LOOP
+ENDSUB
+
 ' ── Main ───────────────────────────────────────────────────────────────────
 
 DIM lineText AS STRING
@@ -736,19 +1052,27 @@ scrAttr = 15
 SCR_WRITELN("jdBasic OS - a REPL written in jdBasic")
 scrAttr = 7
 SCR_WRITELN("? expr prints    x = expr assigns    if/while cond { }    ; separates")
-SCR_WRITELN("ESC halts")
+SCR_WRITELN("F2 opens the editor, ESC halts")
 SCR_NEWLINE()
 
 KB_INIT()
 
+ED_INIT()
+
 DO
     SCR_WRITE("> ")
     lineText = KB_READLINE$()
-    IF LEN(lineText) = 1 AND BYTEAT(lineText, 0) = 27 THEN
+    IF lineExit = 1 THEN
         SCR_NEWLINE()
         SCR_WRITELN("halted.")
         EXITDO
     ENDIF
-    srcText = lineText
-    RUN_LINE()
+    IF lineExit = 2 THEN
+        ED_MAIN()
+        scrAttr = 7
+        SCR_CLEAR()
+        SCR_WRITELN("back at the prompt")
+    ELSE
+        RUN_TEXT(lineText)
+    ENDIF
 LOOP

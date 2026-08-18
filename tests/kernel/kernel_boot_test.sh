@@ -179,6 +179,36 @@ check_repl() {
 
 check_repl
 
+# The editor shares the repl image: F2 at the prompt opens it, F5 runs the
+# buffer. Two dumps are taken, one of the editor and one of the run output.
+check_editor() {
+    echo "--- editor ---"
+
+    $SH "cd '$WKDIR' && rm -f /tmp/edtest.bin /tmp/edtest.bin.edit && '$WTDIR/editor_keys.sh' /tmp/edtest.bin | timeout $((BOOT_TIMEOUT + 60)) qemu-system-x86_64 -kernel repl.bin -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    edit=$(text_of /tmp/edtest.bin.edit)
+    ran=$(text_of /tmp/edtest.bin)
+
+    for want in "while n < 4 { n = n+1 }" "line 3/3 col 7" "F5 run"; do
+        if echo "$edit" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' on the editor screen"
+            fail=1
+        fi
+    done
+
+    # n counts to 4, so the buffer prints 40.
+    if echo "$ran" | grep -qF "40"; then
+        echo "  ok: F5 ran the buffer"
+    else
+        echo "  FAIL: F5 did not produce 40"
+        fail=1
+    fi
+}
+
+check_editor
+
 if [ "$fail" = 0 ]; then
     echo "ALL KERNEL BOOT TESTS PASSED!"
 else

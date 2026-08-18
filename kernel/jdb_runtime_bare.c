@@ -410,6 +410,61 @@ char* jdb_right(const char* s, int64_t n) {
     return jdb_mid_lax(s, slen - n, n);
 }
 
+static char* int_to_text(int64_t v, char* end) {
+    char* p = end;
+    *--p = '\0';
+    int neg = v < 0;
+    uint64_t u = neg ? (uint64_t)(-v) : (uint64_t)v;
+    if (u == 0) *--p = '0';
+    while (u) { *--p = (char)('0' + (u % 10)); u /= 10; }
+    if (neg) *--p = '-';
+    return p;
+}
+
+char* jdb_int_to_str(int64_t v) {
+    char buf[24];
+    char* p = int_to_text(v, buf + sizeof(buf));
+    return bare_strdup(p, (int64_t)bare_strlen(p));
+}
+
+// Whole numbers render without decimals, everything else with six places.
+// The hosted runtime uses %g here; without a formatter that is the closest
+// behaviour worth carrying into ring 0.
+char* jdb_double_to_str(double val) {
+    char buf[64];
+    int n = 0;
+    if (val == trunc(val) && fabs(val) < 1e15) {
+        char t[24];
+        char* p = int_to_text((int64_t)val, t + sizeof(t));
+        while (*p && n < 60) buf[n++] = *p++;
+    } else {
+        double a = val;
+        if (a < 0.0) { buf[n++] = '-'; a = -a; }
+        int64_t whole = (int64_t)trunc(a);
+        char t[24];
+        char* p = int_to_text(whole, t + sizeof(t));
+        while (*p && n < 50) buf[n++] = *p++;
+        buf[n++] = '.';
+        double frac = a - (double)whole;
+        for (int i = 0; i < 6 && n < 62; i++) {
+            frac *= 10.0;
+            int digit = (int)frac;
+            buf[n++] = (char)('0' + digit);
+            frac -= (double)digit;
+        }
+    }
+    buf[n] = '\0';
+    return bare_strdup(buf, n);
+}
+
+// Registered as the length path for VM-handle values. The kernel profile has
+// no VM, and the tag dispatch only reaches this arm for handles, so nothing
+// real can land here.
+int64_t jdrt_val_length(void* h, int64_t val) {
+    (void)h; (void)val;
+    return 0;
+}
+
 char* jdb_chr(int64_t code) {
     char* r = (char*)bump_alloc(2);
     if (!r) return NULL;
