@@ -90,6 +90,51 @@ check sysio \
     "3912" \
     "outb done"
 
+# The screen and keyboard driver is interactive, so it is driven through the
+# QEMU monitor and read back out of the text buffer rather than the serial
+# line. pmemsave needs the path quoted: the size argument is parsed as an
+# expression and would otherwise swallow the leading slash as a division.
+check_os() {
+    echo "--- os ---"
+
+    "$JDB" --target=kernel -o "$KDIR/os.o" "$KDIR/os.jdb" >/dev/null 2>&1 || {
+        echo "FAIL: os did not compile to a kernel object"
+        fail=1
+        return
+    }
+    $SH "cd '$WKDIR' && ./build_kernel.sh os" >/dev/null 2>&1 || {
+        echo "FAIL: os did not link into an image"
+        fail=1
+        return
+    }
+
+    # h a l l o on a German layout puts the US-Y key out as z; alt_r is AltGr.
+    $SH "cd '$WKDIR' && rm -f /tmp/kbtest.bin && {
+        sleep 4
+        for k in h a l l o y; do echo \"sendkey \$k\"; sleep 0.25; done
+        echo 'sendkey shift-a'; sleep 0.3
+        echo 'sendkey alt_r-q'; sleep 0.3
+        echo 'sendkey backspace'; sleep 0.3
+        echo 'sendkey esc'; sleep 0.6
+        echo 'pmemsave 0xb8000 4000 \"/tmp/kbtest.bin\"'; sleep 1
+        echo quit
+    } | timeout $((BOOT_TIMEOUT + 20)) qemu-system-x86_64 -kernel os.bin \
+        -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    out=$($SH "od -An -v -tu1 /tmp/kbtest.bin 2>/dev/null | tr -s ' ' '\n' | grep -v '^\$' | awk 'NR%2==1' | awk '{printf \"%c\", (\$1>=32 && \$1<127) ? \$1 : 32}' | tr -s ' '")
+
+    for want in "screen and keyboard in jdBasic" "> hallozA" "keys typed: 8" "halted."; do
+        if echo "$out" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' in the text buffer"
+            fail=1
+        fi
+    done
+}
+
+check_os
+
 if [ "$fail" = 0 ]; then
     echo "ALL KERNEL BOOT TESTS PASSED!"
 else

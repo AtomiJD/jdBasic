@@ -1,0 +1,299 @@
+OPTION EXPLICIT
+
+' Screen and keyboard for the jdBasic kernel target, written in jdBasic.
+' Text mode is 80x25 at $B8000, two bytes per cell: character then attribute.
+
+CONST VGA_BASE = $B8000
+CONST SCR_COLS = 80
+CONST SCR_ROWS = 25
+CONST CRTC_INDEX = $3D4
+CONST CRTC_DATA = $3D5
+CONST KBD_DATA = $60
+CONST KBD_STATUS = $64
+
+CONST KEY_ESC = 27
+CONST KEY_BACK = 8
+CONST KEY_ENTER = 13
+
+DIM scrAttr AS INTEGER
+DIM scrPos AS INTEGER
+
+DIM kbBase[128]
+DIM kbShift[128]
+DIM kbAltgr[128]
+DIM kbShiftDown AS INTEGER
+DIM kbAltgrDown AS INTEGER
+DIM kbExtended AS INTEGER
+
+' ── Screen ─────────────────────────────────────────────────────────────────
+
+SUB SCR_CURSOR(idx AS INTEGER)
+    SYS.OUTB(CRTC_INDEX, 15)
+    SYS.OUTB(CRTC_DATA, idx MOD 256)
+    SYS.OUTB(CRTC_INDEX, 14)
+    SYS.OUTB(CRTC_DATA, (idx \ 256) MOD 256)
+ENDSUB
+
+SUB SCR_CELL(idx AS INTEGER, ch AS INTEGER, attr AS INTEGER)
+    SYS.POKEW(VGA_BASE + idx * 2, attr * 256 + ch)
+ENDSUB
+
+SUB SCR_CLEAR()
+    DIM i AS INTEGER
+    FOR i = 0 TO SCR_COLS * SCR_ROWS - 1
+        SCR_CELL(i, 32, scrAttr)
+    NEXT i
+    scrPos = 0
+    SCR_CURSOR(0)
+ENDSUB
+
+SUB SCR_SCROLL()
+    DIM i AS INTEGER
+    DIM last AS INTEGER
+    last = (SCR_ROWS - 1) * SCR_COLS
+    FOR i = 0 TO last - 1
+        SYS.POKEW(VGA_BASE + i * 2, SYS.PEEKW(VGA_BASE + (i + SCR_COLS) * 2))
+    NEXT i
+    FOR i = last TO SCR_COLS * SCR_ROWS - 1
+        SCR_CELL(i, 32, scrAttr)
+    NEXT i
+    scrPos = last
+ENDSUB
+
+SUB SCR_NEWLINE()
+    scrPos = (scrPos \ SCR_COLS + 1) * SCR_COLS
+    IF scrPos >= SCR_COLS * SCR_ROWS THEN
+        SCR_SCROLL()
+    ENDIF
+ENDSUB
+
+SUB SCR_PUTCHAR(ch AS INTEGER)
+    IF ch = 10 THEN
+        SCR_NEWLINE()
+    ELSE
+        SCR_CELL(scrPos, ch, scrAttr)
+        scrPos = scrPos + 1
+        IF scrPos >= SCR_COLS * SCR_ROWS THEN
+            SCR_SCROLL()
+        ENDIF
+    ENDIF
+    SCR_CURSOR(scrPos)
+ENDSUB
+
+SUB SCR_BACKSPACE()
+    IF scrPos > 0 THEN
+        scrPos = scrPos - 1
+        SCR_CELL(scrPos, 32, scrAttr)
+        SCR_CURSOR(scrPos)
+    ENDIF
+ENDSUB
+
+SUB SCR_WRITE(msg AS STRING)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(msg) - 1
+        SCR_PUTCHAR(BYTEAT(msg, i))
+    NEXT i
+ENDSUB
+
+SUB SCR_WRITELN(msg AS STRING)
+    SCR_WRITE(msg)
+    SCR_NEWLINE()
+    SCR_CURSOR(scrPos)
+ENDSUB
+
+SUB SCR_WRITENUM(v AS INTEGER)
+    DIM digits AS STRING
+    DIM n AS INTEGER
+    n = v
+    IF n < 0 THEN
+        SCR_PUTCHAR(45)
+        n = 0 - n
+    ENDIF
+    IF n = 0 THEN
+        SCR_PUTCHAR(48)
+        RETURN
+    ENDIF
+    digits = ""
+    DO
+        digits = CHR$(48 + n MOD 10) + digits
+        n = n \ 10
+    LOOP WHILE n > 0
+    SCR_WRITE(digits)
+ENDSUB
+
+' ── Keyboard ───────────────────────────────────────────────────────────────
+
+' Fills consecutive scancodes from a string of unshifted characters.
+SUB KB_ROW(startCode AS INTEGER, chars AS STRING)
+    DIM i AS INTEGER
+    FOR i = 0 TO LEN(chars) - 1
+        kbBase[startCode + i] = BYTEAT(chars, i)
+    NEXT i
+ENDSUB
+
+' German QWERTZ. Codes above 127 are CP437, which is what the text buffer
+' renders: 129 u-umlaut, 132 a-umlaut, 148 o-umlaut, 225 sharp s.
+SUB KB_INIT()
+    DIM i AS INTEGER
+
+    FOR i = 0 TO 127
+        kbBase[i] = 0
+        kbShift[i] = 0
+        kbAltgr[i] = 0
+    NEXT i
+
+    KB_ROW(2, "1234567890")
+    KB_ROW(16, "qwertzuiop")
+    KB_ROW(30, "asdfghjkl")
+    KB_ROW(44, "yxcvbnm")
+
+    kbBase[12] = 225
+    kbBase[26] = 129
+    kbBase[27] = 43
+    kbBase[39] = 148
+    kbBase[40] = 132
+    kbBase[41] = 94
+    kbBase[43] = 35
+    kbBase[51] = 44
+    kbBase[52] = 46
+    kbBase[53] = 45
+    kbBase[57] = 32
+    kbBase[86] = 60
+
+    ' Letters shift to their uppercase form, everything else is placed by hand.
+    FOR i = 0 TO 127
+        IF kbBase[i] >= 97 AND kbBase[i] <= 122 THEN
+            kbShift[i] = kbBase[i] - 32
+        ELSE
+            kbShift[i] = kbBase[i]
+        ENDIF
+    NEXT i
+
+    kbShift[2] = 33
+    kbShift[3] = 34
+    kbShift[4] = 21
+    kbShift[5] = 36
+    kbShift[6] = 37
+    kbShift[7] = 38
+    kbShift[8] = 47
+    kbShift[9] = 40
+    kbShift[10] = 41
+    kbShift[11] = 61
+    kbShift[12] = 63
+    kbShift[26] = 154
+    kbShift[27] = 42
+    kbShift[39] = 153
+    kbShift[40] = 142
+    kbShift[41] = 248
+    kbShift[43] = 39
+    kbShift[51] = 59
+    kbShift[52] = 58
+    kbShift[53] = 95
+    kbShift[86] = 62
+
+    kbAltgr[8] = 123
+    kbAltgr[9] = 91
+    kbAltgr[10] = 93
+    kbAltgr[11] = 125
+    kbAltgr[12] = 92
+    kbAltgr[16] = 64
+    kbAltgr[27] = 126
+    kbAltgr[86] = 124
+
+    kbShiftDown = 0
+    kbAltgrDown = 0
+    kbExtended = 0
+ENDSUB
+
+FUNC KB_ASCII(code AS INTEGER) AS INTEGER
+    IF code = 1 THEN RETURN KEY_ESC
+    IF code = 14 THEN RETURN KEY_BACK
+    IF code = 28 THEN RETURN KEY_ENTER
+    IF code > 127 THEN RETURN 0
+    IF kbAltgrDown = 1 THEN RETURN CINT(kbAltgr[code])
+    IF kbShiftDown = 1 THEN RETURN CINT(kbShift[code])
+    RETURN CINT(kbBase[code])
+ENDFUNC
+
+' Blocks until a key is pressed, then returns its character code. Modifier
+' presses and every key release are consumed here and never surface.
+FUNC KB_READ() AS INTEGER
+    DIM status AS INTEGER
+    DIM code AS INTEGER
+    DIM ch AS INTEGER
+
+    DO
+        status = SYS.INB(KBD_STATUS)
+        IF (status MOD 2) = 1 THEN
+            code = SYS.INB(KBD_DATA)
+
+            IF code = 224 THEN
+                kbExtended = 1
+            ELSE
+                IF code >= 128 THEN
+                    ' Release: 42 and 54 are the shift keys, extended 56 is AltGr.
+                    code = code - 128
+                    IF code = 42 OR code = 54 THEN kbShiftDown = 0
+                    IF code = 56 AND kbExtended = 1 THEN kbAltgrDown = 0
+                    kbExtended = 0
+                ELSE
+                    IF code = 42 OR code = 54 THEN
+                        kbShiftDown = 1
+                        kbExtended = 0
+                    ELSE
+                        IF code = 56 AND kbExtended = 1 THEN
+                            kbAltgrDown = 1
+                            kbExtended = 0
+                        ELSE
+                            kbExtended = 0
+                            ch = CINT(KB_ASCII(code))
+                            IF ch > 0 THEN RETURN ch
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ── Main ───────────────────────────────────────────────────────────────────
+
+DIM ch AS INTEGER
+DIM typed AS INTEGER
+
+scrAttr = 7
+scrPos = 0
+
+SCR_CLEAR()
+scrAttr = 15
+SCR_WRITELN("jdBasic kernel - screen and keyboard in jdBasic")
+scrAttr = 7
+SCR_WRITELN("type something, ESC halts")
+SCR_NEWLINE()
+SCR_WRITE("> ")
+
+KB_INIT()
+
+typed = 0
+DO
+    ch = CINT(KB_READ())
+    IF ch = KEY_ESC THEN
+        SCR_NEWLINE()
+        SCR_WRITE("keys typed: ")
+        SCR_WRITENUM(typed)
+        SCR_NEWLINE()
+        SCR_WRITELN("halted.")
+        EXITDO
+    ENDIF
+    IF ch = KEY_ENTER THEN
+        SCR_NEWLINE()
+        SCR_WRITE("> ")
+    ELSE
+        IF ch = KEY_BACK THEN
+            SCR_BACKSPACE()
+        ELSE
+            SCR_PUTCHAR(ch)
+            typed = typed + 1
+        ENDIF
+    ENDIF
+LOOP

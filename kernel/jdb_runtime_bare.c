@@ -257,6 +257,55 @@ void jdb_print_array_elem(struct JdbArray* arr, int64_t idx) {
     jdb_print_double(arr->data[idx]);
 }
 
+// ── Recursion guard ─────────────────────────────────────────
+//
+// Emitted around every user FUNC and SUB. The 64 KiB boot stack is the real
+// budget here, so the limit is lower than the hosted runtime's 256.
+
+#define MAX_RECURSION 128
+
+static int64_t rec_depth = 0;
+
+int32_t jdb_recursion_enter(void) {
+    if (rec_depth >= MAX_RECURSION) {
+        jdb_err_set("Stack overflow: recursion too deep", 1);
+        return 1;
+    }
+    rec_depth++;
+    return 0;
+}
+
+void    jdb_recursion_leave(void)        { if (rec_depth > 0) rec_depth--; }
+int64_t jdb_recursion_depth(void)        { return rec_depth; }
+void    jdb_recursion_reset_to(int64_t d){ rec_depth = d; }
+
+// ── Conversions ─────────────────────────────────────────────
+
+int64_t jdb_cint(double x) { return (int64_t)(int32_t)x; }
+int64_t jdb_clng(double x) { return (int64_t)x; }
+int64_t jdb_cbool(double x) { return x != 0.0 ? 1 : 0; }
+
+// ── Strings ─────────────────────────────────────────────────
+
+int64_t jdb_len_str(const char* s) { return (int64_t)bare_strlen(s); }
+
+int64_t jdb_byteat(const char* s, int64_t idx) {
+    if (!s || idx < 0 || idx >= (int64_t)bare_strlen(s)) return 0;
+    return (int64_t)(uint8_t)s[idx];
+}
+
+int64_t jdb_asc(const char* s) {
+    return (s && s[0]) ? (int64_t)(uint8_t)s[0] : 0;
+}
+
+char* jdb_chr(int64_t code) {
+    char* r = (char*)bump_alloc(2);
+    if (!r) return NULL;
+    r[0] = (char)(uint8_t)code;
+    r[1] = '\0';
+    return r;
+}
+
 // ── SYS.* ring-0 primitives ─────────────────────────────────
 
 int64_t jdb_sys_inb(int64_t port) {
