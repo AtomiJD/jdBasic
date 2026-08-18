@@ -179,6 +179,13 @@ void jdrt_dispatch_event(void* h, void* name, void* args, int32_t n) {
     (void)h; (void)name; (void)args; (void)n;
 }
 
+// The compiler registers every SUB whose name carries an event suffix, so a
+// name ending in _LOAD is enough to pull this in even with no ON statement
+// anywhere. Nothing dispatches events here.
+void jdrt_register_event_handler(void* name, void* fn) {
+    (void)name; (void)fn;
+}
+
 void* jdrt_last_error(void* h)                       { (void)h; return NULL; }
 void  jdrt_clear_last_error(void* h)                 { (void)h; }
 int64_t jdrt_frame_begin(void* h)                    { (void)h; return 0; }

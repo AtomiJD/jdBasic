@@ -209,6 +209,38 @@ check_editor() {
 
 check_editor
 
+# The RAM disk round trip: write in the editor, SAVE, NEW, DIR, then RUN by
+# name, which has to load the program back before executing it.
+check_disk() {
+    echo "--- disk ---"
+
+    $SH "cd '$WKDIR' && rm -f /tmp/dsktest.bin /tmp/dsktest.bin.dir && '$WTDIR/disk_keys.sh' /tmp/dsktest.bin | timeout $((BOOT_TIMEOUT + 90)) qemu-system-x86_64 -kernel repl.bin -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    dir=$(text_of /tmp/dsktest.bin.dir)
+    ran=$(text_of /tmp/dsktest.bin)
+
+    for want in "saved demo" "new" "demo"; do
+        if echo "$dir" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' after DIR"
+            fail=1
+        fi
+    done
+
+    # The buffer was emptied, so RUN demo has to load it back. 7 + 5 is 12.
+    for want in "loaded demo" "12"; do
+        if echo "$ran" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' after RUN"
+            fail=1
+        fi
+    done
+}
+
+check_disk
+
 if [ "$fail" = 0 ]; then
     echo "ALL KERNEL BOOT TESTS PASSED!"
 else

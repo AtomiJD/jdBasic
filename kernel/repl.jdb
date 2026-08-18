@@ -35,6 +35,7 @@ CONST K_F5 = 266
 
 CONST ED_MAXLINES = 200
 CONST ED_ROWS = 23
+CONST DSK_MAX = 16
 
 DIM scrAttr AS INTEGER
 DIM scrPos AS INTEGER
@@ -52,6 +53,10 @@ DIM edCount AS INTEGER
 DIM edRow AS INTEGER
 DIM edCol AS INTEGER
 DIM edTop AS INTEGER
+
+DIM dskNames[DSK_MAX] AS STRING
+DIM dskText[DSK_MAX] AS STRING
+DIM dskCount AS INTEGER
 
 DIM srcText AS STRING
 DIM cur AS INTEGER
@@ -1038,6 +1043,190 @@ SUB ED_MAIN()
     LOOP
 ENDSUB
 
+' ── RAM disk and commands ──────────────────────────────────────────────────
+'
+' Programs are kept as one string per slot with CHR$(10) between lines, so the
+' whole disk is two string arrays. A line whose first character is an uppercase
+' letter is a command rather than code.
+
+FUNC IS_UPPER(c AS INTEGER) AS INTEGER
+    IF c >= 65 AND c <= 90 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC ED_TEXT$() AS STRING
+    DIM out AS STRING
+    DIM i AS INTEGER
+    out = ""
+    FOR i = 0 TO edCount - 1
+        IF i > 0 THEN out = out + CHR$(10)
+        out = out + edLines[i]
+    NEXT i
+    RETURN out
+ENDFUNC
+
+SUB ED_SETTEXT(body AS STRING)
+    DIM rest AS STRING
+    DIM p AS INTEGER
+    DIM n AS INTEGER
+
+    ED_INIT()
+    rest = body
+    n = 0
+    DO
+        IF n >= ED_MAXLINES THEN EXITDO
+        p = CINT(INSTR(rest, CHR$(10)))
+        IF p < 0 THEN
+            edLines[n] = rest
+            n = n + 1
+            EXITDO
+        ENDIF
+        edLines[n] = LEFT$(rest, p)
+        n = n + 1
+        rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+    LOOP
+    edCount = n
+    IF edCount < 1 THEN edCount = 1
+ENDSUB
+
+FUNC DSK_FIND(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO dskCount - 1
+        IF dskNames[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+SUB DSK_SAVE(nm AS STRING)
+    DIM idx AS INTEGER
+    IF LEN(nm) = 0 THEN
+        SCR_WRITELN("save needs a name")
+        RETURN
+    ENDIF
+    idx = CINT(DSK_FIND(nm))
+    IF idx < 0 THEN
+        IF dskCount >= DSK_MAX THEN
+            SCR_WRITELN("disk full")
+            RETURN
+        ENDIF
+        idx = dskCount
+        dskCount = dskCount + 1
+    ENDIF
+    dskNames[idx] = nm
+    dskText[idx] = ED_TEXT$()
+    SCR_WRITE("saved ")
+    SCR_WRITELN(nm)
+ENDSUB
+
+SUB DSK_LOAD(nm AS STRING)
+    DIM idx AS INTEGER
+    idx = CINT(DSK_FIND(nm))
+    IF idx < 0 THEN
+        SCR_WRITELN("not found")
+        RETURN
+    ENDIF
+    ED_SETTEXT(dskText[idx])
+    SCR_WRITE("loaded ")
+    SCR_WRITELN(nm)
+ENDSUB
+
+SUB DSK_DIR()
+    DIM i AS INTEGER
+    IF dskCount = 0 THEN
+        SCR_WRITELN("no programs")
+        RETURN
+    ENDIF
+    FOR i = 0 TO dskCount - 1
+        SCR_WRITE("  ")
+        SCR_WRITELN(dskNames[i])
+    NEXT i
+ENDSUB
+
+SUB ED_LIST()
+    DIM i AS INTEGER
+    FOR i = 0 TO edCount - 1
+        SCR_WRITELN(edLines[i])
+    NEXT i
+ENDSUB
+
+SUB RUN_BUFFER()
+    DIM i AS INTEGER
+    FOR i = 0 TO edCount - 1
+        IF LEN(edLines[i]) > 0 THEN
+            RUN_TEXT(edLines[i])
+        ENDIF
+    NEXT i
+ENDSUB
+
+SUB CMD_HELP()
+    SCR_WRITELN("DIR          list stored programs")
+    SCR_WRITELN("SAVE name    store the buffer")
+    SCR_WRITELN("LOAD name    recall into the buffer")
+    SCR_WRITELN("RUN [name]   run the buffer, or load then run")
+    SCR_WRITELN("LIST         print the buffer")
+    SCR_WRITELN("NEW          empty the buffer")
+    SCR_WRITELN("CLS          clear the screen")
+    SCR_WRITELN("F2           open the editor")
+ENDSUB
+
+SUB RUN_COMMAND(lineIn AS STRING)
+    DIM word AS STRING
+    DIM arg AS STRING
+    DIM p AS INTEGER
+
+    p = CINT(INSTR(lineIn, " "))
+    IF p < 0 THEN
+        word = lineIn
+        arg = ""
+    ELSE
+        word = LEFT$(lineIn, p)
+        arg = MID$(lineIn, p + 1, LEN(lineIn) - p - 1)
+        DO
+            IF LEN(arg) = 0 THEN EXITDO
+            IF BYTEAT(arg, 0) <> 32 THEN EXITDO
+            arg = MID$(arg, 1, LEN(arg) - 1)
+        LOOP
+    ENDIF
+
+    IF word = "CLS" THEN
+        SCR_CLEAR()
+        RETURN
+    ENDIF
+    IF word = "NEW" THEN
+        ED_INIT()
+        SCR_WRITELN("new")
+        RETURN
+    ENDIF
+    IF word = "LIST" THEN
+        ED_LIST()
+        RETURN
+    ENDIF
+    IF word = "DIR" THEN
+        DSK_DIR()
+        RETURN
+    ENDIF
+    IF word = "SAVE" THEN
+        DSK_SAVE(arg)
+        RETURN
+    ENDIF
+    IF word = "LOAD" THEN
+        DSK_LOAD(arg)
+        RETURN
+    ENDIF
+    IF word = "RUN" THEN
+        IF LEN(arg) > 0 THEN DSK_LOAD(arg)
+        RUN_BUFFER()
+        RETURN
+    ENDIF
+    IF word = "HELP" THEN
+        CMD_HELP()
+        RETURN
+    ENDIF
+
+    SCR_WRITE("unknown command: ")
+    SCR_WRITELN(word)
+ENDSUB
+
 ' ── Main ───────────────────────────────────────────────────────────────────
 
 DIM lineText AS STRING
@@ -1052,12 +1241,13 @@ scrAttr = 15
 SCR_WRITELN("jdBasic OS - a REPL written in jdBasic")
 scrAttr = 7
 SCR_WRITELN("? expr prints    x = expr assigns    if/while cond { }    ; separates")
-SCR_WRITELN("F2 opens the editor, ESC halts")
+SCR_WRITELN("F2 opens the editor, HELP lists commands, ESC halts")
 SCR_NEWLINE()
 
 KB_INIT()
 
 ED_INIT()
+dskCount = 0
 
 DO
     SCR_WRITE("> ")
@@ -1073,6 +1263,10 @@ DO
         SCR_CLEAR()
         SCR_WRITELN("back at the prompt")
     ELSE
-        RUN_TEXT(lineText)
+        IF LEN(lineText) > 0 AND IS_UPPER(CINT(BYTEAT(lineText, 0))) = 1 THEN
+            RUN_COMMAND(lineText)
+        ELSE
+            RUN_TEXT(lineText)
+        ENDIF
     ENDIF
 LOOP
