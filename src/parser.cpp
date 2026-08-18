@@ -123,6 +123,7 @@ void collect_type_decls(const std::vector<StmtPtr>& stmts,
 void Parser::validate_type_refs(const std::vector<StmtPtr>& stmts) {
     if (udt_type_refs.empty()) return;
     std::unordered_set<std::string> declared;
+    for (const auto& t : predeclared_types) declared.insert(upper_copy(t));
     collect_type_decls(stmts, declared);
     for (const auto& ref : udt_type_refs) {
         std::string name = ref.first;
@@ -131,8 +132,7 @@ void Parser::validate_type_refs(const std::vector<StmtPtr>& stmts) {
         if (declared.count(upper_copy(name))) continue;
         throw std::runtime_error("Parse error at line " + std::to_string(ref.second) +
             ": unknown type '" + ref.first + "'. Declare it with TYPE " + ref.first +
-            " ... ENDTYPE, or use a built-in type. A type does not carry across"
-            " separate REPL lines or EXECUTE calls.");
+            " ... ENDTYPE, or use a built-in type.");
     }
 }
 

@@ -24,6 +24,11 @@ public:
     // Tracks already-imported modules to prevent circular imports
     std::unordered_set<std::string> imported_modules;
 
+    // Types the caller already knows about - the VM's registry when a REPL line
+    // or an EXECUTE chunk is parsed. Compared upper-cased, like every other
+    // identifier.
+    std::unordered_set<std::string> predeclared_types;
+
 private:
     std::vector<Token> tokens;
     size_t pos = 0;

@@ -1,7 +1,7 @@
-' The refusal half of the unknown-type check. INTERPRETER ONLY: it drives the
-' parser through EXECUTE so a parse error can be caught, and under -c EXECUTE
-' runs deferred, after the TRY has already been left. The both-backend half
-' lives in test_unknown_type.jdb.
+' The refusal half of the unknown-type check, plus the rule that a TYPE outlives
+' the chunk that declared it. INTERPRETER ONLY: it drives the parser through
+' EXECUTE so a parse error can be caught, and under -c EXECUTE runs deferred,
+' after the TRY has been left. The both-backend half is in test_unknown_type.jdb.
 
 OPTION EXPLICIT
 
@@ -54,17 +54,19 @@ CATCH
 ENDTRY
 CHECK("chunk-local type inside EXECUTE", STR$(inner), "1")
 
-' A type declared out here is NOT visible to a separate chunk: each chunk
-' compiles on its own. That predates the check and used to surface as a
-' silent empty object rather than an error.
-DIM crosschunk AS INTEGER = 0
+' A TYPE outlives the chunk that declared it: the VM keeps the registry and
+' seeds the next parse and compile from it. This used to hand back an empty
+' object, because the fresh compiler had never heard of the type.
+DIM survived AS INTEGER = 0
+DIM shape$ = ""
 TRY
-    EXECUTE "DIM yy AS T_Point"
-    crosschunk = 0
+    EXECUTE "DIM yy AS T_Point" + CHR$(10) + "yy.X = 6" + CHR$(10) + "__SEEN__ = yy.X"
+    survived = 1
 CATCH
-    crosschunk = 1
+    survived = 0
 ENDTRY
-CHECK("host type is not visible to EXECUTE", STR$(crosschunk), "1")
+CHECK("host type survives into EXECUTE", STR$(survived), "1")
+CHECK("  and is a real instance, not an empty object", STR$(__SEEN__), "6")
 
 PRINT ""
 PRINT "test_unknown_type_exec: passed "; passed; ", failed "; failed

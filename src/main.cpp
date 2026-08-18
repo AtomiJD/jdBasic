@@ -237,6 +237,9 @@ static void run_source(const std::string& source, bool show_timing) {
     VM vm;
     setup_dynamic_code(vm);
     set_os_args(vm, g_argc, g_argv);
+    // The script's own TYPEs must outlive its main chunk: an EXECUTE inside it
+    // compiles separately and would not otherwise know them.
+    for (const auto& t : compiler.types()) vm.known_types.insert(t);
     vm.load(compiler.main_chunk(), compiler.functions());
     vm.run();
 #ifdef GFX
@@ -277,9 +280,14 @@ void run_on_vm(VM& vm, const std::string& source) {
     auto tokens = lexer.tokenize();
     Parser parser(tokens);
     setup_parser_modules(parser);  // enable IMPORT in REPL/EXECUTE/EVAL
+    parser.predeclared_types = vm.known_types;
     auto ast = parser.parse();
     Compiler compiler;
+    compiler.seed_types(vm.known_types);
     compiler.compile(ast);
+    // Publish back, so the next REPL line or EXECUTE still knows this chunk's
+    // TYPEs. Each chunk compiles on its own; the VM is what outlives them.
+    for (const auto& t : compiler.types()) vm.known_types.insert(t);
     vm.run_code(compiler.main_chunk(), compiler.functions());
 }
 
@@ -297,10 +305,13 @@ std::string recompile_on_vm(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
     Parser parser(tokens);
+    parser.predeclared_types = vm.known_types;
     setup_parser_modules(parser);
     auto ast = parser.parse();
     Compiler compiler;
+    compiler.seed_types(vm.known_types);
     compiler.compile(ast);
+    for (const auto& t : compiler.types()) vm.known_types.insert(t);
     auto& fns = compiler.functions();
     auto [added, updated] = vm.merge_funcs(fns);
     return "added=" + std::to_string(added) + " updated=" + std::to_string(updated);
@@ -314,12 +325,13 @@ static void setup_dynamic_code(VM& vm) {
 
     // JDB.CHECK$ - Lex + Parse only. No compile, no run, no VM mutation.
     // Returns "" on success or the error message on failure.
-    vm.on_check = [](VM& /*v*/, const std::string& code) -> std::string {
+    vm.on_check = [](VM& v, const std::string& code) -> std::string {
         try {
             Lexer lexer(code + "\n");
             auto tokens = lexer.tokenize();
             Parser parser(tokens);
             setup_parser_modules(parser);
+            parser.predeclared_types = v.known_types;
             (void)parser.parse();
             return "";
         } catch (const std::exception& e) {
@@ -373,6 +385,7 @@ static void setup_dynamic_code(VM& vm) {
         auto tokens = lexer.tokenize();
         Parser parser(tokens);
         setup_parser_modules(parser);
+        parser.predeclared_types = v.known_types;
         auto ast = parser.parse();
         Compiler compiler;
         compiler.compile(ast);

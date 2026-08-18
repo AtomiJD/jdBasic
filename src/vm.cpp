@@ -435,6 +435,7 @@ void VM::reset() {
     sp = 0;
     is_stopped = false;
     event_handlers.clear();
+    known_types.clear();
     func_map_generation++;
 }
 

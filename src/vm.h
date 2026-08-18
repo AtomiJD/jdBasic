@@ -97,6 +97,11 @@ public:
     // should call the bridge once, not four times per colour channel.
     std::unordered_set<std::string> extra_no_vectorize;
 
+    // UDT names the VM has seen so far. The REPL and EXECUTE compile each chunk
+    // on its own, so without this a TYPE declared by one chunk would be unknown
+    // to the next and `DIM x AS T` would be refused. Cleared by reset().
+    std::unordered_set<std::string> known_types;
+
     // Callback for EXECUTE/EVAL - set by the host to provide compilation
     using CompileAndRunFunc = std::function<void(VM&, const std::string&)>;
     using CompileAndEvalFunc = std::function<Value(VM&, const std::string&)>;

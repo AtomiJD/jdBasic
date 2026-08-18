@@ -31,6 +31,16 @@ public:
     Chunk& main_chunk() { return scopes[0].chunk; }
     std::vector<FuncProto>& functions() { return funcs; }
 
+    // Type names this compilation registered. The REPL merges them into the
+    // VM so a TYPE declared by one chunk is still known to the next.
+    const std::unordered_set<std::string>& types() const { return user_types; }
+
+    // Seed from a previous compilation, so `DIM x AS T` resolves against a
+    // TYPE that an earlier chunk declared.
+    void seed_types(const std::unordered_set<std::string>& t) {
+        user_types.insert(t.begin(), t.end());
+    }
+
 private:
     std::vector<CompilerScope> scopes;
     std::vector<FuncProto> funcs;
