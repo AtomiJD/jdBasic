@@ -1,0 +1,91 @@
+OPTION EXPLICIT
+
+' Arrays: numbers and strings, at the top level and inside a routine.
+
+DIM nums[10]
+DIM words[4] AS STRING
+DIM i AS DOUBLE
+DIM total AS DOUBLE
+
+FOR i = 0 TO 9
+    nums[i] = i * i
+NEXT i
+
+total = 0
+FOR i = 0 TO 9
+    total = total + nums[i]
+NEXT i
+PRINT total
+PRINT nums[3]
+PRINT nums[9]
+PRINT nums[2] + nums[5]
+
+words[0] = "alpha"
+words[1] = "beta"
+words[2] = words[0] + "-" + words[1]
+words[3] = words[2]
+PRINT words[0]
+PRINT words[2]
+PRINT words[3]
+IF words[0] = "alpha" THEN PRINT "matched"
+IF words[1] <> "alpha" THEN PRINT "differs"
+
+FUNC ARRSUM(n AS DOUBLE) AS DOUBLE
+    DIM bucket[8]
+    DIM j AS DOUBLE
+    DIM acc AS DOUBLE
+    FOR j = 0 TO n - 1
+        bucket[j] = j + 1
+    NEXT j
+    acc = 0
+    FOR j = 0 TO n - 1
+        acc = acc + bucket[j]
+    NEXT j
+    RETURN acc
+ENDFUNC
+
+FUNC JOIN3$(sep AS STRING) AS STRING
+    DIM parts[3] AS STRING
+    parts[0] = "one"
+    parts[1] = "two"
+    parts[2] = "three"
+    RETURN parts[0] + sep + parts[1] + sep + parts[2]
+ENDFUNC
+
+PRINT ARRSUM(5)
+PRINT ARRSUM(8)
+PRINT JOIN3$("/")
+PRINT JOIN3$(", ")
+
+' A routine reaching the arrays declared at the top level.
+DIM slots[6]
+DIM labels[3] AS STRING
+
+SUB FILLSLOTS(n AS DOUBLE)
+    DIM j AS DOUBLE
+    FOR j = 0 TO n - 1
+        slots[j] = j * 10
+    NEXT j
+ENDSUB
+
+FUNC SLOTAT(j AS DOUBLE) AS DOUBLE
+    RETURN slots[j]
+ENDFUNC
+
+SUB NAMEIT(j AS DOUBLE, v AS STRING)
+    labels[j] = v
+ENDSUB
+
+FUNC LABELAT$(j AS DOUBLE) AS STRING
+    RETURN labels[j]
+ENDFUNC
+
+FILLSLOTS 6
+PRINT SLOTAT(0)
+PRINT SLOTAT(4)
+PRINT slots[5]
+NAMEIT 0, "first"
+NAMEIT 1, "second"
+PRINT LABELAT$(0)
+PRINT LABELAT$(1)
+PRINT labels[0] + "/" + LABELAT$(1)

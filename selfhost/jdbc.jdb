@@ -1302,13 +1302,16 @@ FUNC P_IF() AS INTEGER
     DIM nbr AS INTEGER
     DIM i AS INTEGER
     DIM start AS INTEGER
-    DIM one AS INTEGER
     ' Branches are collected here first. A nested IF inside a body allocates
     ' from the same arena, so writing straight into it would both scatter this
     ' statement's branches and overwrite the inner one's.
     DIM myCond[64]
     DIM myAt[64]
     DIM myN[64]
+    DIM thenS[64]
+    DIM elseS[64]
+    DIM nThen AS INTEGER
+    DIM nElse AS INTEGER
 
     ln = CINT(TL())
     EAT()
@@ -1318,15 +1321,48 @@ FUNC P_IF() AS INTEGER
     nbr = 0
     nd = CINT(NEW_STMT(K_IF, ln))
 
-    ' Single line form: IF c THEN <statement>
+    ' Single line form: IF c THEN stmt [: stmt ...] [ELSE stmt [: stmt ...]],
+    ' which ends at the end of the line.
     IF TT() <> T_NEWLINE AND TT() <> TT_COLON THEN
-        one = CINT(P_STMT())
+        nThen = 0
+        DO
+            IF TT() = KT_ELSE OR TT() = T_NEWLINE OR TT() = T_EOF THEN EXITDO
+            thenS[nThen] = P_STMT()
+            nThen = nThen + 1
+            IF TT() = TT_COLON THEN EAT()
+            IF CINT(TL()) <> ln THEN EXITDO
+        LOOP
+
+        nElse = 0
+        IF TT() = KT_ELSE ANDALSO CINT(TL()) = ln THEN
+            EAT()
+            DO
+                IF TT() = T_NEWLINE OR TT() = T_EOF THEN EXITDO
+                elseS[nElse] = P_STMT()
+                nElse = nElse + 1
+                IF TT() = TT_COLON THEN EAT()
+                IF CINT(TL()) <> ln THEN EXITDO
+            LOOP
+        ENDIF
+
         myCond[0] = cond
         myAt[0] = bodyN
-        bodyBuf[bodyN] = one
-        bodyN = bodyN + 1
-        myN[0] = 1
+        myN[0] = nThen
+        FOR i = 0 TO nThen - 1
+            bodyBuf[bodyN] = thenS[i]
+            bodyN = bodyN + 1
+        NEXT i
         nbr = 1
+        IF nElse > 0 THEN
+            myCond[1] = -1
+            myAt[1] = bodyN
+            myN[1] = nElse
+            FOR i = 0 TO nElse - 1
+                bodyBuf[bodyN] = elseS[i]
+                bodyN = bodyN + 1
+            NEXT i
+            nbr = 2
+        ENDIF
     ELSE
         packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_IF))
         myCond[nbr] = cond
@@ -1655,9 +1691,14 @@ FUNC STARTS_ARGS(t AS INTEGER) AS INTEGER
     IF t = T_STRING_LIT THEN RETURN 1
     IF t = TT_TRUE THEN RETURN 1
     IF t = TT_FALSE THEN RETURN 1
+    IF t = TT_MINUS THEN RETURN 1
+    IF t = TT_NOT THEN RETURN 1
+    ' A bare name is a call too, so its terminators count as the empty
+    ' argument list.
     IF t = T_NEWLINE THEN RETURN 1
     IF t = T_EOF THEN RETURN 1
     IF t = TT_COLON THEN RETURN 1
+    IF t = KT_ELSE THEN RETURN 1
     RETURN 0
 ENDFUNC
 
@@ -1683,6 +1724,7 @@ FUNC P_COMMAND(ln AS INTEGER) AS INTEGER
     n = 0
     DO
         IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF TT() = KT_ELSE THEN EXITDO
         tmp[n] = P_EXPR()
         n = n + 1
         IF TT() = TT_COMMA THEN
@@ -2014,23 +2056,51 @@ ENDSUB
 ' runtime stays C++: generated code only knows how to call jdb_* entry points,
 ' the same ones the reference backend calls.
 '
-' Numbers are f64 and strings are i8*, which is jdBasic's native ABI. Every
-' variable is a module-level global, so nothing needs a stack frame yet.
+' Numbers are f64 and strings are i8*, which is jdBasic's native ABI. An array
+' is an opaque runtime handle, and a string element of one is the pointer's
+' bits reinterpreted as a double, which is the shape the reference stores.
+'
+' A routine becomes its own LLVM define. Its parameters and its declarations
+' live in allocas in the entry block, so recursion works; everything declared
+' at the top level stays a module global.
 
 CONST TY_NUM = 0
 CONST TY_STR = 1
 ' A comparison answers a truth value, and PRINT renders one as TRUE or FALSE
 ' rather than 1 or 0. It is kept as an i1 until something asks for a number.
 CONST TY_BOOL = 2
+CONST TY_ARRN = 3
+CONST TY_ARRS = 4
 
 DIM ir AS STRING
+DIM fnDefs AS STRING
 DIM tmpNo AS INTEGER
 DIM lblNo AS INTEGER
 DIM genError AS STRING
 
-DIM gvName[512] AS STRING
-DIM gvType[512]
+DIM gvName[1024] AS STRING
+DIM gvType[1024]
 DIM gvN AS INTEGER
+
+' The routine being generated: its parameters and its declarations, in allocas.
+DIM lvName[1024] AS STRING
+DIM lvType[1024]
+DIM lvN AS INTEGER
+DIM inRoutine AS INTEGER
+DIM curRet AS INTEGER
+DIM curIsSub AS INTEGER
+
+DIM fnName[512] AS STRING
+DIM fnRet[512]
+DIM fnIsSub[512]
+DIM fnParAt[512]
+DIM fnParN[512]
+DIM fnN AS INTEGER
+
+' Where EXITDO and CONTINUEFOR jump to, innermost last.
+DIM loopBreak[64] AS STRING
+DIM loopNext[64] AS STRING
+DIM loopN AS INTEGER
 
 DIM strLit[512] AS STRING
 DIM strLen[512]
@@ -2054,7 +2124,42 @@ FUNC NEWLBL$(base AS STRING) AS STRING
     RETURN base + STR$(lblNo)
 ENDFUNC
 
-' ── Globals and string literals ────────────────────────────────────────────
+' ── Types ──────────────────────────────────────────────────────────────────
+
+FUNC LL_TY$(ty AS INTEGER) AS STRING
+    IF ty = TY_STR OR ty = TY_ARRN OR ty = TY_ARRS THEN RETURN "ptr"
+    RETURN "double"
+ENDFUNC
+
+FUNC ZERO_OF$(ty AS INTEGER) AS STRING
+    IF LL_TY$(ty) = "ptr" THEN RETURN "null"
+    RETURN "0.0"
+ENDFUNC
+
+FUNC ELEM_TY(ty AS INTEGER) AS INTEGER
+    IF ty = TY_ARRS THEN RETURN TY_STR
+    RETURN TY_NUM
+ENDFUNC
+
+FUNC IS_ARR(ty AS INTEGER) AS INTEGER
+    IF ty = TY_ARRN OR ty = TY_ARRS THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' A truth value is only distinct while it is being carried; a slot holds a
+' number.
+FUNC NORM_TY(ty AS INTEGER) AS INTEGER
+    IF ty = TY_BOOL THEN RETURN TY_NUM
+    RETURN ty
+ENDFUNC
+
+FUNC ENDS_IN_DOLLAR(nm AS STRING) AS INTEGER
+    IF LEN(nm) = 0 THEN RETURN 0
+    IF MID$(nm, LEN(nm) - 1, 1) = "$" THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' ── Symbols ────────────────────────────────────────────────────────────────
 
 FUNC GV_FIND(nm AS STRING) AS INTEGER
     DIM i AS INTEGER
@@ -2071,11 +2176,52 @@ SUB GV_ADD(nm AS STRING, ty AS INTEGER)
     gvN = gvN + 1
 ENDSUB
 
-FUNC GV_TYPE(nm AS STRING) AS INTEGER
+FUNC LV_FIND(nm AS STRING) AS INTEGER
     DIM i AS INTEGER
+    FOR i = 0 TO lvN - 1
+        IF lvName[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+SUB LV_ADD(nm AS STRING, ty AS INTEGER)
+    IF LV_FIND(nm) >= 0 THEN RETURN
+    lvName[lvN] = nm
+    lvType[lvN] = ty
+    lvN = lvN + 1
+ENDSUB
+
+FUNC SYM_REF$(nm AS STRING) AS STRING
+    IF inRoutine = 1 ANDALSO LV_FIND(nm) >= 0 THEN RETURN "%l_" + nm
+    RETURN "@v_" + nm
+ENDFUNC
+
+FUNC SYM_TYPE(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    IF inRoutine = 1 THEN
+        i = CINT(LV_FIND(nm))
+        IF i >= 0 THEN RETURN CINT(lvType[i])
+    ENDIF
     i = CINT(GV_FIND(nm))
     IF i < 0 THEN RETURN TY_NUM
     RETURN CINT(gvType[i])
+ENDFUNC
+
+FUNC FN_FIND(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO fnN - 1
+        IF fnName[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC PARAM_TY(at AS INTEGER) AS INTEGER
+    DIM vt AS INTEGER
+    vt = CINT(parType[at])
+    IF vt = 10 THEN RETURN TY_STR
+    IF vt = V_ARRAY THEN RETURN TY_ARRN
+    IF vt = 0 ANDALSO ENDS_IN_DOLLAR(parName[at]) = 1 THEN RETURN TY_STR
+    RETURN TY_NUM
 ENDFUNC
 
 ' A literal becomes a private constant. The escaping is LLVM's \XX form, and
@@ -2113,8 +2259,163 @@ FUNC STR_CONST$(v AS STRING) AS STRING
     RETURN "@.s" + STR$(idx)
 ENDFUNC
 
+' ── The type an expression will have, without emitting anything ────────────
+
+FUNC E_TYPE(ix AS INTEGER) AS INTEGER
+    DIM k AS INTEGER
+    DIM f AS INTEGER
+    DIM op AS INTEGER
+
+    IF ix < 0 THEN RETURN TY_NUM
+    k = CINT(exKind[ix])
+    IF k = X_LIT_STR THEN RETURN TY_STR
+    IF k = X_VARIABLE THEN RETURN CINT(SYM_TYPE(exStr[ix]))
+    IF k = X_INDEX THEN RETURN CINT(ELEM_TY(CINT(E_TYPE(CINT(exLeft[ix])))))
+    IF k = X_CALL THEN
+        f = CINT(FN_FIND(exFn[ix]))
+        IF f >= 0 THEN RETURN CINT(fnRet[f])
+        RETURN TY_NUM
+    ENDIF
+    IF k = X_BINARY THEN
+        op = CINT(exOp[ix])
+        IF op = TOK_LT OR op = TOK_GT OR op = TOK_LE OR op = TOK_GE THEN RETURN TY_BOOL
+        IF op = TOK_NE OR op = TOK_ASSIGN THEN RETURN TY_BOOL
+        IF op = TOK_PLUS ANDALSO E_TYPE(CINT(exLeft[ix])) = TY_STR THEN RETURN TY_STR
+        RETURN TY_NUM
+    ENDIF
+    RETURN TY_NUM
+ENDFUNC
+
+FUNC DIM_TYPE(ix AS INTEGER) AS INTEGER
+    DIM vt AS INTEGER
+    vt = CINT(stVType[ix])
+    IF vt = V_ARRAY THEN
+        IF stEType[ix] = 10 THEN RETURN TY_ARRS
+        RETURN TY_ARRN
+    ENDIF
+    IF vt = 10 THEN RETURN TY_STR
+    IF vt = 0 ANDALSO stExpr[ix] >= 0 THEN RETURN CINT(NORM_TY(CINT(E_TYPE(CINT(stExpr[ix])))))
+    RETURN TY_NUM
+ENDFUNC
+
+FUNC RET_TY(ix AS INTEGER) AS INTEGER
+    IF stRType[ix] = 10 THEN RETURN TY_STR
+    IF stRType[ix] = V_ARRAY THEN RETURN TY_ARRN
+    IF ENDS_IN_DOLLAR(stFunc[ix]) = 1 THEN RETURN TY_STR
+    RETURN TY_NUM
+ENDFUNC
+
+' ── Collecting declarations before anything is emitted ─────────────────────
+'
+' Routines are hoisted, so a call can stand above its definition and a routine
+' can read a global declared below it. Both are found first and generated
+' afterwards.
+
+SUB SCAN_ROUTINES()
+    DIM j AS INTEGER
+    DIM ix AS INTEGER
+    DIM k AS INTEGER
+
+    fnN = 0
+    FOR j = 0 TO topN - 1
+        ix = CINT(bodyBuf[topAt + j])
+        k = CINT(stKind[ix])
+        IF k = K_FUNCTION OR k = K_SUB THEN
+            fnName[fnN] = stFunc[ix]
+            fnIsSub[fnN] = 0
+            fnRet[fnN] = TY_NUM
+            IF k = K_SUB THEN
+                fnIsSub[fnN] = 1
+            ELSE
+                fnRet[fnN] = RET_TY(ix)
+            ENDIF
+            fnParAt[fnN] = stParAt[ix]
+            fnParN[fnN] = stParN[ix]
+            fnN = fnN + 1
+        ENDIF
+    NEXT j
+ENDSUB
+
+SUB DECLARE_NAME(nm AS STRING, ty AS INTEGER, asLocal AS INTEGER)
+    IF asLocal = 0 THEN
+        GV_ADD(nm, ty)
+        RETURN
+    ENDIF
+    ' A routine that writes a name it does not declare writes the global.
+    IF GV_FIND(nm) >= 0 THEN RETURN
+    LV_ADD(nm, ty)
+ENDSUB
+
+SUB SCAN_DECLS(at AS INTEGER, n AS INTEGER, asLocal AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        SCAN_ONE(CINT(bodyBuf[at + i]), asLocal)
+    NEXT i
+ENDSUB
+
+SUB SCAN_ONE(ix AS INTEGER, asLocal AS INTEGER)
+    DIM k AS INTEGER
+    DIM b AS INTEGER
+    DIM at AS INTEGER
+
+    IF ix < 0 THEN RETURN
+    k = CINT(stKind[ix])
+    IF k = K_FUNCTION OR k = K_SUB THEN RETURN
+    IF k = K_DIM OR k = K_LET THEN
+        DECLARE_NAME(stVar[ix], CINT(DIM_TYPE(ix)), asLocal)
+        RETURN
+    ENDIF
+    IF k = K_ASSIGN THEN
+        DECLARE_NAME(stVar[ix], CINT(NORM_TY(CINT(E_TYPE(CINT(stExpr[ix]))))), asLocal)
+        RETURN
+    ENDIF
+    IF k = K_FOR_LOOP THEN
+        DECLARE_NAME(stVar[ix], TY_NUM, asLocal)
+        SCAN_DECLS(CINT(stBodyAt[ix]), CINT(stBodyN[ix]), asLocal)
+        RETURN
+    ENDIF
+    IF k = K_DO_LOOP THEN
+        SCAN_DECLS(CINT(stBodyAt[ix]), CINT(stBodyN[ix]), asLocal)
+        RETURN
+    ENDIF
+    IF k = K_IF THEN
+        FOR b = 0 TO stBrN[ix] - 1
+            at = CINT(stBrAt[ix]) + b
+            SCAN_DECLS(CINT(brBodyAt[at]), CINT(brBodyN[at]), asLocal)
+        NEXT b
+    ENDIF
+ENDSUB
+
 ' ── Expressions ────────────────────────────────────────────────────────────
 
+FUNC G_STRCMP$(op AS INTEGER, l AS STRING, r AS STRING) AS STRING
+    DIM c AS STRING
+    DIM t AS STRING
+    DIM pred AS STRING
+
+    lastType = TY_BOOL
+    IF op = TOK_ASSIGN OR op = TOK_NE THEN
+        c = NEWTMP$()
+        IF op = TOK_ASSIGN THEN
+            W("  " + c + " = call i64 @jdb_str_eq(ptr " + l + ", ptr " + r + ")")
+        ELSE
+            W("  " + c + " = call i64 @jdb_str_ne(ptr " + l + ", ptr " + r + ")")
+        ENDIF
+        t = NEWTMP$()
+        W("  " + t + " = icmp ne i64 " + c + ", 0")
+        RETURN t
+    ENDIF
+
+    pred = "slt"
+    IF op = TOK_GT THEN pred = "sgt"
+    IF op = TOK_LE THEN pred = "sle"
+    IF op = TOK_GE THEN pred = "sge"
+    c = NEWTMP$()
+    W("  " + c + " = call i64 @jdb_str_cmp(ptr " + l + ", ptr " + r + ")")
+    t = NEWTMP$()
+    W("  " + t + " = icmp " + pred + " i64 " + c + ", 0")
+    RETURN t
+ENDFUNC
 
 FUNC G_BINARY(ix AS INTEGER) AS STRING
     DIM l AS STRING
@@ -2138,6 +2439,8 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
         lastType = TY_STR
         RETURN t
     ENDIF
+
+    IF lt = TY_STR ANDALSO rt = TY_STR THEN RETURN G_STRCMP$(op, l, r)
 
     l = AS_NUM$(l, lt)
     r = AS_NUM$(r, rt)
@@ -2200,10 +2503,105 @@ FUNC G_LOGICAL(op AS INTEGER, l AS STRING, r AS STRING) AS STRING
     RETURN t
 ENDFUNC
 
+' An index is a number in the source and an i64 to the runtime.
+FUNC G_IDX$(ix AS INTEGER) AS STRING
+    DIM v AS STRING
+    DIM t AS STRING
+    v = G_EXPR(ix)
+    t = NEWTMP$()
+    W("  " + t + " = fptosi double " + AS_NUM$(v, lastType) + " to i64")
+    RETURN t
+ENDFUNC
+
+FUNC G_INDEX$(ix AS INTEGER) AS STRING
+    DIM handle AS STRING
+    DIM ht AS INTEGER
+    DIM iv AS STRING
+    DIM raw AS STRING
+    DIM bits AS STRING
+    DIM t AS STRING
+
+    handle = G_EXPR(CINT(exLeft[ix]))
+    ht = lastType
+    iv = G_IDX$(CINT(exRight[ix]))
+
+    raw = NEWTMP$()
+    W("  " + raw + " = call double @jdb_array_get(ptr " + handle + ", i64 " + iv + ")")
+    IF ELEM_TY(ht) <> TY_STR THEN
+        lastType = TY_NUM
+        RETURN raw
+    ENDIF
+
+    ' A string element is the pointer's bits, stored in the cell as a double.
+    bits = NEWTMP$()
+    W("  " + bits + " = bitcast double " + raw + " to i64")
+    t = NEWTMP$()
+    W("  " + t + " = inttoptr i64 " + bits + " to ptr")
+    lastType = TY_STR
+    RETURN t
+ENDFUNC
+
+FUNC G_CALL$(ix AS INTEGER) AS STRING
+    DIM f AS INTEGER
+    DIM i AS INTEGER
+    DIM pat AS INTEGER
+    DIM n AS INTEGER
+    DIM av[64] AS STRING
+    DIM avt[64]
+    DIM argsTxt AS STRING
+    DIM pty AS INTEGER
+    DIM rty AS INTEGER
+    DIM t AS STRING
+
+    f = CINT(FN_FIND(exFn[ix]))
+    IF f < 0 THEN
+        genError = "cannot generate a call to " + exFn[ix]
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    n = CINT(exArgN[ix])
+    IF n <> fnParN[f] THEN
+        genError = exFn[ix] + " wants " + STR$(fnParN[f]) + " arguments, given " + STR$(n)
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    FOR i = 0 TO n - 1
+        av[i] = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        avt[i] = lastType
+    NEXT i
+
+    pat = CINT(fnParAt[f])
+    argsTxt = ""
+    FOR i = 0 TO n - 1
+        IF i > 0 THEN argsTxt = argsTxt + ", "
+        pty = CINT(PARAM_TY(pat + i))
+        IF LL_TY$(pty) = "ptr" THEN
+            argsTxt = argsTxt + "ptr " + av[i]
+        ELSE
+            argsTxt = argsTxt + "double " + AS_NUM$(av[i], CINT(avt[i]))
+        ENDIF
+    NEXT i
+
+    IF fnIsSub[f] = 1 THEN
+        W("  call void @f_" + exFn[ix] + "(" + argsTxt + ")")
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    rty = CINT(fnRet[f])
+    t = NEWTMP$()
+    W("  " + t + " = call " + LL_TY$(rty) + " @f_" + exFn[ix] + "(" + argsTxt + ")")
+    lastType = rty
+    RETURN t
+ENDFUNC
+
 FUNC G_EXPR(ix AS INTEGER) AS STRING
     DIM k AS INTEGER
     DIM t AS STRING
     DIM nm AS STRING
+    DIM ty AS INTEGER
     DIM v AS STRING
 
     IF ix < 0 THEN
@@ -2227,26 +2625,24 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
 
     IF k = X_VARIABLE THEN
         nm = exStr[ix]
+        ty = CINT(SYM_TYPE(nm))
         t = NEWTMP$()
-        IF GV_TYPE(nm) = TY_STR THEN
-            W("  " + t + " = load ptr, ptr @v_" + nm)
-            lastType = TY_STR
-        ELSE
-            W("  " + t + " = load double, ptr @v_" + nm)
-            lastType = TY_NUM
-        ENDIF
+        W("  " + t + " = load " + LL_TY$(ty) + ", ptr " + SYM_REF$(nm))
+        lastType = ty
         RETURN t
     ENDIF
 
     IF k = X_UNARY THEN
         v = G_EXPR(CINT(exRight[ix]))
         t = NEWTMP$()
-        W("  " + t + " = fneg double " + v)
+        W("  " + t + " = fneg double " + AS_NUM$(v, lastType))
         lastType = TY_NUM
         RETURN t
     ENDIF
 
     IF k = X_BINARY THEN RETURN G_BINARY(ix)
+    IF k = X_INDEX THEN RETURN G_INDEX$(ix)
+    IF k = X_CALL THEN RETURN G_CALL$(ix)
 
     genError = "cannot generate expression kind " + STR$(k)
     lastType = TY_NUM
@@ -2328,6 +2724,16 @@ SUB G_IF(ix AS INTEGER)
     W(endL + ":")
 ENDSUB
 
+SUB PUSH_LOOP(breakL AS STRING, nextL AS STRING)
+    loopBreak[loopN] = breakL
+    loopNext[loopN] = nextL
+    loopN = loopN + 1
+ENDSUB
+
+SUB POP_LOOP()
+    IF loopN > 0 THEN loopN = loopN - 1
+ENDSUB
+
 SUB G_DO(ix AS INTEGER)
     DIM topL AS STRING
     DIM bodyL AS STRING
@@ -2341,7 +2747,7 @@ SUB G_DO(ix AS INTEGER)
 
     W("  br label %" + topL)
     W(topL + ":")
-    IF stTop[ix] = 1 ANDALSO stCond[ix] >= 0 THEN
+    IF stCond[ix] >= 0 ANDALSO stTop[ix] = 1 THEN
         cond = AS_NUM$(G_EXPR(CINT(stCond[ix])), lastType)
         cmp = NEWTMP$()
         IF stUntil[ix] = 1 THEN
@@ -2354,9 +2760,10 @@ SUB G_DO(ix AS INTEGER)
         W("  br label %" + bodyL)
     ENDIF
     W(bodyL + ":")
+    PUSH_LOOP(endL, topL)
     G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
-
-    IF stTop[ix] = 0 ANDALSO stCond[ix] >= 0 THEN
+    POP_LOOP()
+    IF stCond[ix] >= 0 ANDALSO stTop[ix] = 0 THEN
         cond = AS_NUM$(G_EXPR(CINT(stCond[ix])), lastType)
         cmp = NEWTMP$()
         IF stUntil[ix] = 1 THEN
@@ -2373,11 +2780,13 @@ ENDSUB
 
 SUB G_FOR(ix AS INTEGER)
     DIM nm AS STRING
+    DIM slot AS STRING
     DIM startV AS STRING
     DIM endV AS STRING
     DIM stepV AS STRING
     DIM topL AS STRING
     DIM bodyL AS STRING
+    DIM stepL AS STRING
     DIM endL AS STRING
     DIM curV AS STRING
     DIM upTest AS STRING
@@ -2388,14 +2797,14 @@ SUB G_FOR(ix AS INTEGER)
     DIM loadV AS STRING
 
     nm = stVar[ix]
-    GV_ADD(nm, TY_NUM)
+    slot = SYM_REF$(nm)
     startV = G_EXPR(CINT(stExpr[ix]))
-    W("  store double " + startV + ", ptr @v_" + nm)
+    W("  store double " + AS_NUM$(startV, lastType) + ", ptr " + slot)
 
     ' The step is evaluated once, before the loop, because the direction of the
     ' comparison depends on its sign and the condition sits at the top.
     IF stStep[ix] >= 0 THEN
-        stepV = G_EXPR(CINT(stStep[ix]))
+        stepV = AS_NUM$(G_EXPR(CINT(stStep[ix])), lastType)
     ELSE
         stepV = "1.0"
     ENDIF
@@ -2404,13 +2813,14 @@ SUB G_FOR(ix AS INTEGER)
 
     topL = NEWLBL$("for.top")
     bodyL = NEWLBL$("for.body")
+    stepL = NEWLBL$("for.step")
     endL = NEWLBL$("for.end")
 
     W("  br label %" + topL)
     W(topL + ":")
     curV = NEWTMP$()
-    W("  " + curV + " = load double, ptr @v_" + nm)
-    endV = G_EXPR(CINT(stEnd[ix]))
+    W("  " + curV + " = load double, ptr " + slot)
+    endV = AS_NUM$(G_EXPR(CINT(stEnd[ix])), lastType)
     upTest = NEWTMP$()
     W("  " + upTest + " = fcmp ole double " + curV + ", " + endV)
     downTest = NEWTMP$()
@@ -2419,19 +2829,187 @@ SUB G_FOR(ix AS INTEGER)
     W("  " + cmp + " = select i1 " + goingUp + ", i1 " + upTest + ", i1 " + downTest)
     W("  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL)
     W(bodyL + ":")
+    PUSH_LOOP(endL, stepL)
     G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
+    POP_LOOP()
+    W("  br label %" + stepL)
+    W(stepL + ":")
     loadV = NEWTMP$()
-    W("  " + loadV + " = load double, ptr @v_" + nm)
+    W("  " + loadV + " = load double, ptr " + slot)
     nextV = NEWTMP$()
     W("  " + nextV + " = fadd double " + loadV + ", " + stepV)
-    W("  store double " + nextV + ", ptr @v_" + nm)
+    W("  store double " + nextV + ", ptr " + slot)
     W("  br label %" + topL)
     W(endL + ":")
 ENDSUB
 
+' DIM a[n] is a runtime handle rather than a stack object, so the slot holds a
+' pointer the runtime owns.
+SUB G_DIM_ARRAY(ix AS INTEGER, nm AS STRING, ty AS INTEGER)
+    DIM callNd AS INTEGER
+    DIM lit AS INTEGER
+    DIM n64 AS STRING
+    DIM handle AS STRING
+
+    callNd = CINT(stExpr[ix])
+    IF callNd < 0 THEN
+        genError = "array " + nm + " has no bounds"
+        RETURN
+    ENDIF
+    lit = CINT(argBuf[CINT(exArgAt[callNd])])
+    IF exArgN[lit] <> 1 THEN
+        genError = "only one dimension is supported, " + nm + " has " + STR$(exArgN[lit])
+        RETURN
+    ENDIF
+
+    n64 = G_IDX$(CINT(argBuf[CINT(exArgAt[lit])]))
+    handle = NEWTMP$()
+    W("  " + handle + " = call ptr @jdb_array_new(i64 " + n64 + ")")
+    IF ty = TY_ARRS THEN W("  call void @jdb_array_set_string_elems(ptr " + handle + ")")
+    W("  store ptr " + handle + ", ptr " + SYM_REF$(nm))
+ENDSUB
+
+SUB G_INDEX_ASSIGN(ix AS INTEGER)
+    DIM nm AS STRING
+    DIM ty AS INTEGER
+    DIM handle AS STRING
+    DIM iv AS STRING
+    DIM v AS STRING
+    DIM bits AS STRING
+    DIM cell AS STRING
+
+    nm = stVar[ix]
+    ty = CINT(SYM_TYPE(nm))
+    IF IS_ARR(ty) = 0 THEN
+        genError = nm + " is not an array"
+        RETURN
+    ENDIF
+    IF stIxN[ix] <> 1 THEN
+        genError = "only one index is supported, " + nm + " has " + STR$(stIxN[ix])
+        RETURN
+    ENDIF
+
+    handle = NEWTMP$()
+    W("  " + handle + " = load ptr, ptr " + SYM_REF$(nm))
+    iv = G_IDX$(CINT(ixBuf[CINT(stIxAt[ix])]))
+    v = G_EXPR(CINT(stExpr[ix]))
+
+    IF ELEM_TY(ty) <> TY_STR THEN
+        W("  call void @jdb_array_set(ptr " + handle + ", i64 " + iv + ", double " + AS_NUM$(v, lastType) + ")")
+        RETURN
+    ENDIF
+
+    bits = NEWTMP$()
+    W("  " + bits + " = ptrtoint ptr " + v + " to i64")
+    cell = NEWTMP$()
+    W("  " + cell + " = bitcast i64 " + bits + " to double")
+    W("  call void @jdb_array_set(ptr " + handle + ", i64 " + iv + ", double " + cell + ")")
+ENDSUB
+
+SUB G_STORE(nm AS STRING, ix AS INTEGER)
+    DIM v AS STRING
+    DIM ty AS INTEGER
+    v = G_EXPR(ix)
+    ty = CINT(SYM_TYPE(nm))
+    IF LL_TY$(ty) = "ptr" THEN
+        W("  store ptr " + v + ", ptr " + SYM_REF$(nm))
+    ELSE
+        W("  store double " + AS_NUM$(v, lastType) + ", ptr " + SYM_REF$(nm))
+    ENDIF
+ENDSUB
+
+SUB G_RETURN(ix AS INTEGER)
+    DIM v AS STRING
+
+    IF inRoutine = 0 THEN
+        genError = "RETURN outside a routine"
+        RETURN
+    ENDIF
+    IF curIsSub = 1 THEN
+        W("  ret void")
+    ELSE
+        IF ix >= 0 ANDALSO stExpr[ix] >= 0 THEN
+            v = G_EXPR(CINT(stExpr[ix]))
+            IF LL_TY$(curRet) = "ptr" THEN
+                W("  ret ptr " + v)
+            ELSE
+                W("  ret double " + AS_NUM$(v, lastType))
+            ENDIF
+        ELSE
+            W("  ret " + LL_TY$(curRet) + " " + ZERO_OF$(curRet))
+        ENDIF
+    ENDIF
+    W(NEWLBL$("after.ret") + ":")
+ENDSUB
+
+' A routine becomes its own define. Parameters arrive in registers and are
+' copied into the same kind of slot a declaration gets, so both are assignable.
+SUB G_ROUTINE(ix AS INTEGER)
+    DIM nm AS STRING
+    DIM f AS INTEGER
+    DIM i AS INTEGER
+    DIM pat AS INTEGER
+    DIM pty AS INTEGER
+    DIM sig AS STRING
+    DIM prologue AS STRING
+    DIM savedIr AS STRING
+    DIM rty AS STRING
+
+    nm = stFunc[ix]
+    f = CINT(FN_FIND(nm))
+    IF f < 0 THEN RETURN
+
+    lvN = 0
+    inRoutine = 1
+    curIsSub = CINT(fnIsSub[f])
+    curRet = CINT(fnRet[f])
+    pat = CINT(fnParAt[f])
+
+    FOR i = 0 TO fnParN[f] - 1
+        LV_ADD(parName[pat + i], CINT(PARAM_TY(pat + i)))
+    NEXT i
+    SCAN_DECLS(CINT(stBodyAt[ix]), CINT(stBodyN[ix]), 1)
+
+    sig = ""
+    FOR i = 0 TO fnParN[f] - 1
+        IF i > 0 THEN sig = sig + ", "
+        sig = sig + LL_TY$(CINT(PARAM_TY(pat + i))) + " %p" + STR$(i)
+    NEXT i
+
+    prologue = ""
+    FOR i = 0 TO lvN - 1
+        prologue = prologue + "  %l_" + lvName[i] + " = alloca " + LL_TY$(CINT(lvType[i])) + CHR$(10)
+        prologue = prologue + "  store " + LL_TY$(CINT(lvType[i])) + " " + ZERO_OF$(CINT(lvType[i]))
+        prologue = prologue + ", ptr %l_" + lvName[i] + CHR$(10)
+    NEXT i
+    FOR i = 0 TO fnParN[f] - 1
+        pty = CINT(PARAM_TY(pat + i))
+        prologue = prologue + "  store " + LL_TY$(pty) + " %p" + STR$(i)
+        prologue = prologue + ", ptr %l_" + parName[pat + i] + CHR$(10)
+    NEXT i
+
+    savedIr = ir
+    ir = ""
+    G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
+
+    rty = "void"
+    IF curIsSub = 0 THEN rty = LL_TY$(curRet)
+    fnDefs = fnDefs + "define " + rty + " @f_" + nm + "(" + sig + ") {" + CHR$(10)
+    fnDefs = fnDefs + "entry:" + CHR$(10) + prologue + ir
+    IF curIsSub = 1 THEN
+        fnDefs = fnDefs + "  ret void" + CHR$(10)
+    ELSE
+        fnDefs = fnDefs + "  ret " + rty + " " + ZERO_OF$(curRet) + CHR$(10)
+    ENDIF
+    fnDefs = fnDefs + "}" + CHR$(10) + CHR$(10)
+
+    ir = savedIr
+    inRoutine = 0
+    lvN = 0
+ENDSUB
+
 SUB G_STMT(ix AS INTEGER)
     DIM k AS INTEGER
-    DIM v AS STRING
     DIM nm AS STRING
 
     IF ix < 0 THEN RETURN
@@ -2442,33 +3020,21 @@ SUB G_STMT(ix AS INTEGER)
 
     IF k = K_DIM OR k = K_LET THEN
         nm = stVar[ix]
-        IF stVType[ix] = 10 THEN
-            GV_ADD(nm, TY_STR)
-        ELSE
-            GV_ADD(nm, TY_NUM)
+        IF IS_ARR(CINT(SYM_TYPE(nm))) = 1 THEN
+            G_DIM_ARRAY(ix, nm, CINT(SYM_TYPE(nm)))
+            RETURN
         ENDIF
-        IF stExpr[ix] >= 0 THEN
-            v = G_EXPR(CINT(stExpr[ix]))
-            IF lastType = TY_STR THEN
-                GV_ADD(nm, TY_STR)
-                W("  store ptr " + v + ", ptr @v_" + nm)
-            ELSE
-                W("  store double " + AS_NUM$(v, lastType) + ", ptr @v_" + nm)
-            ENDIF
-        ENDIF
+        IF stExpr[ix] >= 0 THEN G_STORE(nm, CINT(stExpr[ix]))
         RETURN
     ENDIF
 
     IF k = K_ASSIGN THEN
-        nm = stVar[ix]
-        v = G_EXPR(CINT(stExpr[ix]))
-        IF lastType = TY_STR THEN
-            GV_ADD(nm, TY_STR)
-            W("  store ptr " + v + ", ptr @v_" + nm)
-        ELSE
-            GV_ADD(nm, TY_NUM)
-            W("  store double " + AS_NUM$(v, lastType) + ", ptr @v_" + nm)
-        ENDIF
+        G_STORE(stVar[ix], CINT(stExpr[ix]))
+        RETURN
+    ENDIF
+
+    IF k = K_INDEX_ASSIGN THEN
+        G_INDEX_ASSIGN(ix)
         RETURN
     ENDIF
 
@@ -2488,7 +3054,48 @@ SUB G_STMT(ix AS INTEGER)
         G_FOR(ix)
         RETURN
     ENDIF
+    IF k = K_FUNCTION OR k = K_SUB THEN
+        G_ROUTINE(ix)
+        RETURN
+    ENDIF
+    IF k = K_RETURN THEN
+        G_RETURN(ix)
+        RETURN
+    ENDIF
+    IF k = K_EXPR_STMT THEN
+        nm = G_EXPR(CINT(stExpr[ix]))
+        RETURN
+    ENDIF
+
+    ' EXITFUNC is the exit that names no loop.
+    IF k = K_EXIT_LOOP THEN
+        IF stUntil[ix] = 0 THEN
+            G_RETURN(-1)
+            RETURN
+        ENDIF
+        IF loopN = 0 THEN
+            genError = "EXIT outside a loop"
+            RETURN
+        ENDIF
+        W("  br label %" + loopBreak[loopN - 1])
+        W(NEWLBL$("after.exit") + ":")
+        RETURN
+    ENDIF
+    IF k = K_CONTINUE_LOOP THEN
+        IF loopN = 0 THEN
+            genError = "CONTINUE outside a loop"
+            RETURN
+        ENDIF
+        W("  br label %" + loopNext[loopN - 1])
+        W(NEWLBL$("after.continue") + ":")
+        RETURN
+    ENDIF
+
     IF k = K_END_STMT THEN
+        IF inRoutine = 1 THEN
+            genError = "END inside a routine"
+            RETURN
+        ENDIF
         W("  ret i32 0")
         W(NEWLBL$("after.end") + ":")
         RETURN
@@ -2499,6 +3106,24 @@ ENDSUB
 
 ' ── Assembling the module ──────────────────────────────────────────────────
 
+FUNC DECLS$() AS STRING
+    DIM d AS STRING
+    d = "declare void @jdb_print_double(double)" + CHR$(10)
+    d = d + "declare void @jdb_print_str(ptr)" + CHR$(10)
+    d = d + "declare void @jdb_print_bool(i64)" + CHR$(10)
+    d = d + "declare void @jdb_print_space()" + CHR$(10)
+    d = d + "declare void @jdb_print_nl()" + CHR$(10)
+    d = d + "declare ptr @jdb_str_concat(ptr, ptr)" + CHR$(10)
+    d = d + "declare i64 @jdb_str_eq(ptr, ptr)" + CHR$(10)
+    d = d + "declare i64 @jdb_str_ne(ptr, ptr)" + CHR$(10)
+    d = d + "declare i64 @jdb_str_cmp(ptr, ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_new(i64)" + CHR$(10)
+    d = d + "declare void @jdb_array_set(ptr, i64, double)" + CHR$(10)
+    d = d + "declare double @jdb_array_get(ptr, i64)" + CHR$(10)
+    d = d + "declare void @jdb_array_set_string_elems(ptr)" + CHR$(10)
+    RETURN d
+ENDFUNC
+
 FUNC GENERATE$() AS STRING
     DIM body AS STRING
     DIM head AS STRING
@@ -2506,15 +3131,22 @@ FUNC GENERATE$() AS STRING
     DIM j AS INTEGER
 
     ir = ""
+    fnDefs = ""
     strDecl = ""
     tmpNo = 0
     lblNo = 0
     gvN = 0
+    lvN = 0
+    loopN = 0
     strN = 0
+    inRoutine = 0
     genError = ""
 
-    ' A first walk decides which globals exist and how wide they are, because
-    ' their definitions have to stand above the code that uses them.
+    ' Routines are hoisted and a global can be declared below the routine that
+    ' reads it, so both are collected before a single instruction is emitted.
+    SCAN_ROUTINES()
+    SCAN_DECLS(topAt, topN, 0)
+
     FOR j = 0 TO topN - 1
         G_STMT(CINT(bodyBuf[topAt + j]))
     NEXT j
@@ -2524,24 +3156,16 @@ FUNC GENERATE$() AS STRING
 
     head = "; generated by selfhost/jdbc.jdb" + CHR$(10)
     head = head + "target triple = " + CHR$(34) + "x86_64-pc-windows-msvc" + CHR$(34) + CHR$(10)
-    head = head + CHR$(10)
-    head = head + "declare void @jdb_print_double(double)" + CHR$(10)
-    head = head + "declare void @jdb_print_str(ptr)" + CHR$(10)
-    head = head + "declare void @jdb_print_bool(i64)" + CHR$(10)
-    head = head + "declare void @jdb_print_space()" + CHR$(10)
-    head = head + "declare void @jdb_print_nl()" + CHR$(10)
-    head = head + "declare ptr @jdb_str_concat(ptr, ptr)" + CHR$(10)
+    head = head + CHR$(10) + DECLS$()
     head = head + CHR$(10) + strDecl + CHR$(10)
 
     FOR i = 0 TO gvN - 1
-        IF gvType[i] = TY_STR THEN
-            head = head + "@v_" + gvName[i] + " = internal global ptr null" + CHR$(10)
-        ELSE
-            head = head + "@v_" + gvName[i] + " = internal global double 0.0" + CHR$(10)
-        ENDIF
+        head = head + "@v_" + gvName[i] + " = internal global "
+        head = head + LL_TY$(CINT(gvType[i])) + " " + ZERO_OF$(CINT(gvType[i])) + CHR$(10)
     NEXT i
 
-    head = head + CHR$(10) + "define i32 @main(i32 %argc, ptr %argv) {" + CHR$(10)
+    head = head + CHR$(10) + fnDefs
+    head = head + "define i32 @main(i32 %argc, ptr %argv) {" + CHR$(10)
     head = head + "entry:" + CHR$(10)
     RETURN head + body + "  ret i32 0" + CHR$(10) + "}" + CHR$(10)
 ENDFUNC

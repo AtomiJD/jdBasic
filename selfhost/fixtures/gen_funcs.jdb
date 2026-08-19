@@ -1,0 +1,97 @@
+OPTION EXPLICIT
+
+' Routines: parameters, locals, recursion, string results, early exits.
+
+DIM tally AS DOUBLE
+
+FUNC ADD2(a AS DOUBLE, b AS DOUBLE) AS DOUBLE
+    RETURN a + b
+ENDFUNC
+
+FUNC FACT(n AS DOUBLE) AS DOUBLE
+    IF n <= 1 THEN RETURN 1
+    RETURN n * FACT(n - 1)
+ENDFUNC
+
+FUNC FIB(n AS DOUBLE) AS DOUBLE
+    IF n < 2 THEN RETURN n
+    RETURN FIB(n - 1) + FIB(n - 2)
+ENDFUNC
+
+FUNC GREET$(who AS STRING) AS STRING
+    RETURN "hello, " + who
+ENDFUNC
+
+FUNC PICK$(flag AS DOUBLE, whenTrue AS STRING, whenFalse AS STRING) AS STRING
+    IF flag <> 0 THEN RETURN whenTrue
+    RETURN whenFalse
+ENDFUNC
+
+SUB SHOUT(msg AS STRING, times AS DOUBLE)
+    DIM i AS DOUBLE
+    FOR i = 1 TO times
+        PRINT msg
+    NEXT i
+ENDSUB
+
+SUB BUMP(by AS DOUBLE)
+    tally = tally + by
+ENDSUB
+
+FUNC SUMTO(n AS DOUBLE) AS DOUBLE
+    DIM total AS DOUBLE
+    DIM i AS DOUBLE
+    total = 0
+    FOR i = 1 TO n
+        IF i = 7 THEN CONTINUEFOR
+        IF i > 12 THEN EXITFOR
+        total = total + i
+    NEXT i
+    RETURN total
+ENDFUNC
+
+FUNC EARLY(n AS DOUBLE) AS DOUBLE
+    DIM i AS DOUBLE
+    i = 0
+    DO
+        i = i + 1
+        IF i >= n THEN EXITDO
+    LOOP
+    RETURN i
+ENDFUNC
+
+SUB SILENT(n AS DOUBLE)
+    IF n < 0 THEN EXITFUNC
+    PRINT "positive "; n
+ENDSUB
+
+PRINT ADD2(2, 3)
+PRINT FACT(6)
+PRINT FIB(12)
+PRINT GREET$("world")
+PRINT PICK$(1, "yes", "no")
+PRINT PICK$(0, "yes", "no")
+PRINT ADD2(ADD2(1, 2), FACT(3))
+
+SHOUT "hi", 3
+
+tally = 0
+BUMP 5
+BUMP 7
+PRINT tally
+
+PRINT SUMTO(20)
+PRINT EARLY(4)
+SILENT 3
+SILENT -1
+
+' A call standing above the definition it names.
+PRINT LATER(4)
+
+FUNC LATER(n AS DOUBLE) AS DOUBLE
+    RETURN EVENLATER(n) * 2
+ENDFUNC
+
+FUNC EVENLATER(n AS DOUBLE) AS DOUBLE
+    RETURN n + 1
+ENDFUNC

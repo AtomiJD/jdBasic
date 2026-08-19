@@ -8,3 +8,8 @@ WOBBLE p, 3, "x"
 a + b
 FOO(1)
 FOO(1) + 2
+WOBBLE -1
+WOBBLE [1, 2]
+BARE
+IF a THEN BARE ELSE b = 1
+IF a THEN BARE : b = 2
