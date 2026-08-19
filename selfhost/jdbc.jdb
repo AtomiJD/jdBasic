@@ -1,9 +1,14 @@
 OPTION EXPLICIT
 
-' S2 of the self-hosting plan: the jdBasic parser.
+' The jdBasic compiler, written in jdBasic.
 '
-' Reads a source file, lexes it, builds a parse tree and prints it in exactly
-' the shape `jdbasic --dump-ast` prints, so the two trees can be compared.
+' Three modes:
+'   jdbasic selfhost/jdbc.jdb --tokens <file>   token stream, as --dump-tokens
+'   jdbasic selfhost/jdbc.jdb --ast <file>      parse tree, as --dump-ast
+'   jdbasic selfhost/jdbc.jdb <file> <out.ll>   LLVM IR for clang
+'
+' The first two exist so the front end can be compared against the reference
+' line by line rather than inspected.
 '
 ' jdBasic-0 has no records, so the tree lives in parallel arrays with integer
 ' indices standing in for pointers, and the variable-length lists (bodies,
@@ -11,8 +16,6 @@ OPTION EXPLICIT
 ' count. A body is parsed into a local scratch list first and copied into its
 ' arena afterwards, because nested bodies would otherwise interleave.
 '
-'   jdbasic selfhost/jdbc_parse.jdb <file.jdb>
-
 CONST MAX_TOKENS = 200000
 CONST MAX_NODES = 120000
 CONST MAX_BUF = 120000
@@ -184,6 +187,24 @@ DIM X_CALL AS INTEGER
 DIM X_INDEX AS INTEGER
 DIM X_ARRAY_LIT AS INTEGER
 
+DIM TOK_PLUS AS INTEGER
+DIM TOK_MINUS AS INTEGER
+DIM TOK_STAR AS INTEGER
+DIM TOK_SLASH AS INTEGER
+DIM TOK_MOD AS INTEGER
+DIM TOK_LT AS INTEGER
+DIM TOK_GT AS INTEGER
+DIM TOK_LE AS INTEGER
+DIM TOK_GE AS INTEGER
+DIM TOK_NE AS INTEGER
+DIM TOK_ASSIGN AS INTEGER
+DIM TOK_AND AS INTEGER
+DIM TOK_ANDALSO AS INTEGER
+DIM TOK_OR AS INTEGER
+DIM TOK_ORELSE AS INTEGER
+
+DIM strDecl AS STRING
+
 ' ── Tables, all numbers read from the generated file ───────────────────────
 
 FUNC TOK_BY_NAME(n AS STRING) AS INTEGER
@@ -268,6 +289,21 @@ SUB LOAD_TABLES()
         ENDIF
     LOOP
 
+    TOK_PLUS = CINT(TOK_BY_NAME("PLUS"))
+    TOK_MINUS = CINT(TOK_BY_NAME("MINUS"))
+    TOK_STAR = CINT(TOK_BY_NAME("STAR"))
+    TOK_SLASH = CINT(TOK_BY_NAME("SLASH"))
+    TOK_MOD = CINT(TOK_BY_NAME("MOD"))
+    TOK_LT = CINT(TOK_BY_NAME("LT"))
+    TOK_GT = CINT(TOK_BY_NAME("GT"))
+    TOK_LE = CINT(TOK_BY_NAME("LE"))
+    TOK_GE = CINT(TOK_BY_NAME("GE"))
+    TOK_NE = CINT(TOK_BY_NAME("NE"))
+    TOK_ASSIGN = CINT(TOK_BY_NAME("ASSIGN"))
+    TOK_AND = CINT(TOK_BY_NAME("AND"))
+    TOK_ANDALSO = CINT(TOK_BY_NAME("ANDALSO"))
+    TOK_OR = CINT(TOK_BY_NAME("OR"))
+    TOK_ORELSE = CINT(TOK_BY_NAME("ORELSE"))
     T_INTEGER_LIT = CINT(TOK_BY_NAME("INTEGER_LIT"))
     T_FLOAT_LIT = CINT(TOK_BY_NAME("FLOAT_LIT"))
     T_STRING_LIT = CINT(TOK_BY_NAME("STRING_LIT"))
@@ -1803,6 +1839,47 @@ SUB P_PROGRAM()
     topN = n
 ENDSUB
 
+' ── Output, in the shape --dump-tokens uses ────────────────────────────────
+
+FUNC ESCAPE$(v AS STRING) AS STRING
+    DIM r AS STRING
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    r = ""
+    FOR i = 0 TO LEN(v) - 1
+        c = CINT(BYTEAT(v, i))
+        IF c = 92 THEN
+            r = r + "\\"
+        ELSE
+            IF c = 10 THEN
+                r = r + "\n"
+            ELSE
+                IF c = 9 THEN
+                    r = r + "\t"
+                ELSE
+                    IF c = 13 THEN
+                        r = r + "\r"
+                    ELSE
+                        r = r + CHR$(c)
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN r
+ENDFUNC
+
+SUB EMIT_TOKENS()
+    DIM i AS INTEGER
+    DIM out AS STRING
+    out = ""
+    FOR i = 0 TO tkCount - 1
+        out = out + STR$(tkType[i]) + CHR$(9) + STR$(tkLine[i]) + CHR$(9)
+        out = out + STR$(tkCol[i]) + CHR$(9) + ESCAPE$(tkVal[i]) + CHR$(10)
+    NEXT i
+    PRINT out;
+ENDSUB
+
 ' ── Printing the tree in the shape --dump-ast uses ─────────────────────────
 
 DIM outBuf AS STRING
@@ -1930,10 +2007,551 @@ SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
     EMIT(PAD$(ind) + ")" + CHR$(10))
 ENDSUB
 
+
+' ── Code generation ────────────────────────────────────────────────────────
+'
+' The tree becomes LLVM IR as text, which clang turns into a binary. The
+' runtime stays C++: generated code only knows how to call jdb_* entry points,
+' the same ones the reference backend calls.
+'
+' Numbers are f64 and strings are i8*, which is jdBasic's native ABI. Every
+' variable is a module-level global, so nothing needs a stack frame yet.
+
+CONST TY_NUM = 0
+CONST TY_STR = 1
+' A comparison answers a truth value, and PRINT renders one as TRUE or FALSE
+' rather than 1 or 0. It is kept as an i1 until something asks for a number.
+CONST TY_BOOL = 2
+
+DIM ir AS STRING
+DIM tmpNo AS INTEGER
+DIM lblNo AS INTEGER
+DIM genError AS STRING
+
+DIM gvName[512] AS STRING
+DIM gvType[512]
+DIM gvN AS INTEGER
+
+DIM strLit[512] AS STRING
+DIM strLen[512]
+DIM strN AS INTEGER
+
+' The type of the last expression emitted, since jdBasic-0 cannot answer two
+' values from one call.
+DIM lastType AS INTEGER
+
+SUB W(s AS STRING)
+    ir = ir + s + CHR$(10)
+ENDSUB
+
+FUNC NEWTMP$() AS STRING
+    tmpNo = tmpNo + 1
+    RETURN "%t" + STR$(tmpNo)
+ENDFUNC
+
+FUNC NEWLBL$(base AS STRING) AS STRING
+    lblNo = lblNo + 1
+    RETURN base + STR$(lblNo)
+ENDFUNC
+
+' ── Globals and string literals ────────────────────────────────────────────
+
+FUNC GV_FIND(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO gvN - 1
+        IF gvName[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+SUB GV_ADD(nm AS STRING, ty AS INTEGER)
+    IF GV_FIND(nm) >= 0 THEN RETURN
+    gvName[gvN] = nm
+    gvType[gvN] = ty
+    gvN = gvN + 1
+ENDSUB
+
+FUNC GV_TYPE(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    i = CINT(GV_FIND(nm))
+    IF i < 0 THEN RETURN TY_NUM
+    RETURN CINT(gvType[i])
+ENDFUNC
+
+' A literal becomes a private constant. The escaping is LLVM's \XX form, and
+' the array length counts the terminator.
+FUNC STR_CONST$(v AS STRING) AS STRING
+    DIM i AS INTEGER
+    DIM idx AS INTEGER
+    DIM c AS INTEGER
+    DIM body AS STRING
+    DIM hexd AS STRING
+
+    FOR i = 0 TO strN - 1
+        IF strLit[i] = v THEN RETURN "@.s" + STR$(i)
+    NEXT i
+
+    idx = strN
+    strLit[idx] = v
+    strLen[idx] = LEN(v) + 1
+    strN = strN + 1
+
+    body = ""
+    hexd = "0123456789ABCDEF"
+    FOR i = 0 TO LEN(v) - 1
+        c = CINT(BYTEAT(v, i))
+        IF c >= 32 AND c < 127 AND c <> 34 AND c <> 92 THEN
+            body = body + CHR$(c)
+        ELSE
+            body = body + "\" + MID$(hexd, c \ 16, 1) + MID$(hexd, c MOD 16, 1)
+        ENDIF
+    NEXT i
+    body = body + "\00"
+
+    strDecl = strDecl + "@.s" + STR$(idx) + " = private unnamed_addr constant ["
+    strDecl = strDecl + STR$(LEN(v) + 1) + " x i8] c" + CHR$(34) + body + CHR$(34) + CHR$(10)
+    RETURN "@.s" + STR$(idx)
+ENDFUNC
+
+' ── Expressions ────────────────────────────────────────────────────────────
+
+
+FUNC G_BINARY(ix AS INTEGER) AS STRING
+    DIM l AS STRING
+    DIM r AS STRING
+    DIM lt AS INTEGER
+    DIM rt AS INTEGER
+    DIM t AS STRING
+    DIM op AS INTEGER
+    DIM cmpOp AS STRING
+
+    l = G_EXPR(CINT(exLeft[ix]))
+    lt = lastType
+    r = G_EXPR(CINT(exRight[ix]))
+    rt = lastType
+    op = CINT(exOp[ix])
+
+    ' + over two strings is concatenation, not arithmetic.
+    IF op = TOK_PLUS ANDALSO lt = TY_STR THEN
+        t = NEWTMP$()
+        W("  " + t + " = call ptr @jdb_str_concat(ptr " + l + ", ptr " + r + ")")
+        lastType = TY_STR
+        RETURN t
+    ENDIF
+
+    l = AS_NUM$(l, lt)
+    r = AS_NUM$(r, rt)
+
+    t = NEWTMP$()
+    IF op = TOK_PLUS THEN W("  " + t + " = fadd double " + l + ", " + r)
+    IF op = TOK_MINUS THEN W("  " + t + " = fsub double " + l + ", " + r)
+    IF op = TOK_STAR THEN W("  " + t + " = fmul double " + l + ", " + r)
+    IF op = TOK_SLASH THEN W("  " + t + " = fdiv double " + l + ", " + r)
+    IF op = TOK_MOD THEN W("  " + t + " = frem double " + l + ", " + r)
+
+    cmpOp = ""
+    IF op = TOK_LT THEN cmpOp = "olt"
+    IF op = TOK_GT THEN cmpOp = "ogt"
+    IF op = TOK_LE THEN cmpOp = "ole"
+    IF op = TOK_GE THEN cmpOp = "oge"
+    IF op = TOK_NE THEN cmpOp = "one"
+    IF op = TOK_ASSIGN THEN cmpOp = "oeq"
+
+    IF cmpOp <> "" THEN
+        W("  " + t + " = fcmp " + cmpOp + " double " + l + ", " + r)
+        lastType = TY_BOOL
+        RETURN t
+    ENDIF
+
+    IF op = TOK_AND OR op = TOK_ANDALSO OR op = TOK_OR OR op = TOK_ORELSE THEN
+        RETURN G_LOGICAL(op, l, r)
+    ENDIF
+
+    lastType = TY_NUM
+    RETURN t
+ENDFUNC
+
+' Widens a truth value to a number, for arithmetic and for conditions.
+FUNC AS_NUM$(v AS STRING, ty AS INTEGER) AS STRING
+    DIM t AS STRING
+    IF ty <> TY_BOOL THEN RETURN v
+    t = NEWTMP$()
+    W("  " + t + " = uitofp i1 " + v + " to double")
+    RETURN t
+ENDFUNC
+
+' Both sides are already evaluated, so these do not short-circuit yet. The
+' comparison against the reference is on output, and no test relies on it.
+FUNC G_LOGICAL(op AS INTEGER, l AS STRING, r AS STRING) AS STRING
+    DIM lb AS STRING
+    DIM rb AS STRING
+    DIM t AS STRING
+    lb = NEWTMP$()
+    W("  " + lb + " = fcmp one double " + l + ", 0.0")
+    rb = NEWTMP$()
+    W("  " + rb + " = fcmp one double " + r + ", 0.0")
+    t = NEWTMP$()
+    IF op = TOK_AND OR op = TOK_ANDALSO THEN
+        W("  " + t + " = and i1 " + lb + ", " + rb)
+    ELSE
+        W("  " + t + " = or i1 " + lb + ", " + rb)
+    ENDIF
+    lastType = TY_BOOL
+    RETURN t
+ENDFUNC
+
+FUNC G_EXPR(ix AS INTEGER) AS STRING
+    DIM k AS INTEGER
+    DIM t AS STRING
+    DIM nm AS STRING
+    DIM v AS STRING
+
+    IF ix < 0 THEN
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+    k = CINT(exKind[ix])
+
+    IF k = X_LIT_INT THEN
+        lastType = TY_NUM
+        RETURN NUMLIT$(exInt[ix])
+    ENDIF
+    IF k = X_LIT_FLOAT THEN
+        lastType = TY_NUM
+        RETURN NUMLIT$(exFloat[ix])
+    ENDIF
+    IF k = X_LIT_STR THEN
+        lastType = TY_STR
+        RETURN STR_CONST$(exStr[ix])
+    ENDIF
+
+    IF k = X_VARIABLE THEN
+        nm = exStr[ix]
+        t = NEWTMP$()
+        IF GV_TYPE(nm) = TY_STR THEN
+            W("  " + t + " = load ptr, ptr @v_" + nm)
+            lastType = TY_STR
+        ELSE
+            W("  " + t + " = load double, ptr @v_" + nm)
+            lastType = TY_NUM
+        ENDIF
+        RETURN t
+    ENDIF
+
+    IF k = X_UNARY THEN
+        v = G_EXPR(CINT(exRight[ix]))
+        t = NEWTMP$()
+        W("  " + t + " = fneg double " + v)
+        lastType = TY_NUM
+        RETURN t
+    ENDIF
+
+    IF k = X_BINARY THEN RETURN G_BINARY(ix)
+
+    genError = "cannot generate expression kind " + STR$(k)
+    lastType = TY_NUM
+    RETURN "0.0"
+ENDFUNC
+
+' LLVM wants a decimal point on a floating literal.
+FUNC NUMLIT$(v AS DOUBLE) AS STRING
+    DIM s AS STRING
+    s = STR$(v)
+    IF INSTR(s, ".") < 0 ANDALSO INSTR(s, "e") < 0 THEN s = s + ".0"
+    RETURN s
+ENDFUNC
+
+' ── Statements ─────────────────────────────────────────────────────────────
+
+
+SUB G_BODY(at AS INTEGER, n AS INTEGER)
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        IF genError <> "" THEN RETURN
+        G_STMT(CINT(bodyBuf[at + i]))
+    NEXT i
+ENDSUB
+
+SUB G_PRINT(ix AS INTEGER)
+    DIM i AS INTEGER
+    DIM v AS STRING
+    DIM w2 AS STRING
+    DIM sep AS INTEGER
+
+    FOR i = 0 TO stPrN[ix] - 1
+        sep = CINT(sepBuf[CINT(stSepAt[ix]) + i])
+        IF sep = 1 THEN W("  call void @jdb_print_space()")
+        v = G_EXPR(CINT(prBuf[CINT(stPrAt[ix]) + i]))
+        IF lastType = TY_STR THEN
+            W("  call void @jdb_print_str(ptr " + v + ")")
+        ELSE
+            IF lastType = TY_BOOL THEN
+                w2 = NEWTMP$()
+                W("  " + w2 + " = zext i1 " + v + " to i64")
+                W("  call void @jdb_print_bool(i64 " + w2 + ")")
+            ELSE
+                W("  call void @jdb_print_double(double " + v + ")")
+            ENDIF
+        ENDIF
+    NEXT i
+    IF stNoNl[ix] = 0 THEN W("  call void @jdb_print_nl()")
+ENDSUB
+
+SUB G_IF(ix AS INTEGER)
+    DIM b AS INTEGER
+    DIM cond AS STRING
+    DIM cmp AS STRING
+    DIM thenL AS STRING
+    DIM elseL AS STRING
+    DIM endL AS STRING
+    DIM at AS INTEGER
+
+    endL = NEWLBL$("if.end")
+    FOR b = 0 TO stBrN[ix] - 1
+        at = CINT(stBrAt[ix]) + b
+        IF brCond[at] < 0 THEN
+            G_BODY(CINT(brBodyAt[at]), CINT(brBodyN[at]))
+        ELSE
+            thenL = NEWLBL$("if.then")
+            elseL = NEWLBL$("if.else")
+            cond = AS_NUM$(G_EXPR(CINT(brCond[at])), lastType)
+            cmp = NEWTMP$()
+            W("  " + cmp + " = fcmp one double " + cond + ", 0.0")
+            W("  br i1 " + cmp + ", label %" + thenL + ", label %" + elseL)
+            W(thenL + ":")
+            G_BODY(CINT(brBodyAt[at]), CINT(brBodyN[at]))
+            W("  br label %" + endL)
+            W(elseL + ":")
+        ENDIF
+    NEXT b
+    W("  br label %" + endL)
+    W(endL + ":")
+ENDSUB
+
+SUB G_DO(ix AS INTEGER)
+    DIM topL AS STRING
+    DIM bodyL AS STRING
+    DIM endL AS STRING
+    DIM cond AS STRING
+    DIM cmp AS STRING
+
+    topL = NEWLBL$("do.top")
+    bodyL = NEWLBL$("do.body")
+    endL = NEWLBL$("do.end")
+
+    W("  br label %" + topL)
+    W(topL + ":")
+    IF stTop[ix] = 1 ANDALSO stCond[ix] >= 0 THEN
+        cond = AS_NUM$(G_EXPR(CINT(stCond[ix])), lastType)
+        cmp = NEWTMP$()
+        IF stUntil[ix] = 1 THEN
+            W("  " + cmp + " = fcmp oeq double " + cond + ", 0.0")
+        ELSE
+            W("  " + cmp + " = fcmp one double " + cond + ", 0.0")
+        ENDIF
+        W("  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL)
+    ELSE
+        W("  br label %" + bodyL)
+    ENDIF
+    W(bodyL + ":")
+    G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
+
+    IF stTop[ix] = 0 ANDALSO stCond[ix] >= 0 THEN
+        cond = AS_NUM$(G_EXPR(CINT(stCond[ix])), lastType)
+        cmp = NEWTMP$()
+        IF stUntil[ix] = 1 THEN
+            W("  " + cmp + " = fcmp oeq double " + cond + ", 0.0")
+        ELSE
+            W("  " + cmp + " = fcmp one double " + cond + ", 0.0")
+        ENDIF
+        W("  br i1 " + cmp + ", label %" + topL + ", label %" + endL)
+    ELSE
+        W("  br label %" + topL)
+    ENDIF
+    W(endL + ":")
+ENDSUB
+
+SUB G_FOR(ix AS INTEGER)
+    DIM nm AS STRING
+    DIM startV AS STRING
+    DIM endV AS STRING
+    DIM stepV AS STRING
+    DIM topL AS STRING
+    DIM bodyL AS STRING
+    DIM endL AS STRING
+    DIM curV AS STRING
+    DIM upTest AS STRING
+    DIM downTest AS STRING
+    DIM goingUp AS STRING
+    DIM cmp AS STRING
+    DIM nextV AS STRING
+    DIM loadV AS STRING
+
+    nm = stVar[ix]
+    GV_ADD(nm, TY_NUM)
+    startV = G_EXPR(CINT(stExpr[ix]))
+    W("  store double " + startV + ", ptr @v_" + nm)
+
+    ' The step is evaluated once, before the loop, because the direction of the
+    ' comparison depends on its sign and the condition sits at the top.
+    IF stStep[ix] >= 0 THEN
+        stepV = G_EXPR(CINT(stStep[ix]))
+    ELSE
+        stepV = "1.0"
+    ENDIF
+    goingUp = NEWTMP$()
+    W("  " + goingUp + " = fcmp oge double " + stepV + ", 0.0")
+
+    topL = NEWLBL$("for.top")
+    bodyL = NEWLBL$("for.body")
+    endL = NEWLBL$("for.end")
+
+    W("  br label %" + topL)
+    W(topL + ":")
+    curV = NEWTMP$()
+    W("  " + curV + " = load double, ptr @v_" + nm)
+    endV = G_EXPR(CINT(stEnd[ix]))
+    upTest = NEWTMP$()
+    W("  " + upTest + " = fcmp ole double " + curV + ", " + endV)
+    downTest = NEWTMP$()
+    W("  " + downTest + " = fcmp oge double " + curV + ", " + endV)
+    cmp = NEWTMP$()
+    W("  " + cmp + " = select i1 " + goingUp + ", i1 " + upTest + ", i1 " + downTest)
+    W("  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL)
+    W(bodyL + ":")
+    G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
+    loadV = NEWTMP$()
+    W("  " + loadV + " = load double, ptr @v_" + nm)
+    nextV = NEWTMP$()
+    W("  " + nextV + " = fadd double " + loadV + ", " + stepV)
+    W("  store double " + nextV + ", ptr @v_" + nm)
+    W("  br label %" + topL)
+    W(endL + ":")
+ENDSUB
+
+SUB G_STMT(ix AS INTEGER)
+    DIM k AS INTEGER
+    DIM v AS STRING
+    DIM nm AS STRING
+
+    IF ix < 0 THEN RETURN
+    IF genError <> "" THEN RETURN
+    k = CINT(stKind[ix])
+
+    IF k = K_OPTION THEN RETURN
+
+    IF k = K_DIM OR k = K_LET THEN
+        nm = stVar[ix]
+        IF stVType[ix] = 10 THEN
+            GV_ADD(nm, TY_STR)
+        ELSE
+            GV_ADD(nm, TY_NUM)
+        ENDIF
+        IF stExpr[ix] >= 0 THEN
+            v = G_EXPR(CINT(stExpr[ix]))
+            IF lastType = TY_STR THEN
+                GV_ADD(nm, TY_STR)
+                W("  store ptr " + v + ", ptr @v_" + nm)
+            ELSE
+                W("  store double " + AS_NUM$(v, lastType) + ", ptr @v_" + nm)
+            ENDIF
+        ENDIF
+        RETURN
+    ENDIF
+
+    IF k = K_ASSIGN THEN
+        nm = stVar[ix]
+        v = G_EXPR(CINT(stExpr[ix]))
+        IF lastType = TY_STR THEN
+            GV_ADD(nm, TY_STR)
+            W("  store ptr " + v + ", ptr @v_" + nm)
+        ELSE
+            GV_ADD(nm, TY_NUM)
+            W("  store double " + AS_NUM$(v, lastType) + ", ptr @v_" + nm)
+        ENDIF
+        RETURN
+    ENDIF
+
+    IF k = K_PRINT THEN
+        G_PRINT(ix)
+        RETURN
+    ENDIF
+    IF k = K_IF THEN
+        G_IF(ix)
+        RETURN
+    ENDIF
+    IF k = K_DO_LOOP THEN
+        G_DO(ix)
+        RETURN
+    ENDIF
+    IF k = K_FOR_LOOP THEN
+        G_FOR(ix)
+        RETURN
+    ENDIF
+    IF k = K_END_STMT THEN
+        W("  ret i32 0")
+        W(NEWLBL$("after.end") + ":")
+        RETURN
+    ENDIF
+
+    genError = "cannot generate statement kind " + STR$(k)
+ENDSUB
+
+' ── Assembling the module ──────────────────────────────────────────────────
+
+FUNC GENERATE$() AS STRING
+    DIM body AS STRING
+    DIM head AS STRING
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+
+    ir = ""
+    strDecl = ""
+    tmpNo = 0
+    lblNo = 0
+    gvN = 0
+    strN = 0
+    genError = ""
+
+    ' A first walk decides which globals exist and how wide they are, because
+    ' their definitions have to stand above the code that uses them.
+    FOR j = 0 TO topN - 1
+        G_STMT(CINT(bodyBuf[topAt + j]))
+    NEXT j
+    body = ir
+
+    IF genError <> "" THEN RETURN ""
+
+    head = "; generated by selfhost/jdbc.jdb" + CHR$(10)
+    head = head + "target triple = " + CHR$(34) + "x86_64-pc-windows-msvc" + CHR$(34) + CHR$(10)
+    head = head + CHR$(10)
+    head = head + "declare void @jdb_print_double(double)" + CHR$(10)
+    head = head + "declare void @jdb_print_str(ptr)" + CHR$(10)
+    head = head + "declare void @jdb_print_bool(i64)" + CHR$(10)
+    head = head + "declare void @jdb_print_space()" + CHR$(10)
+    head = head + "declare void @jdb_print_nl()" + CHR$(10)
+    head = head + "declare ptr @jdb_str_concat(ptr, ptr)" + CHR$(10)
+    head = head + CHR$(10) + strDecl + CHR$(10)
+
+    FOR i = 0 TO gvN - 1
+        IF gvType[i] = TY_STR THEN
+            head = head + "@v_" + gvName[i] + " = internal global ptr null" + CHR$(10)
+        ELSE
+            head = head + "@v_" + gvName[i] + " = internal global double 0.0" + CHR$(10)
+        ENDIF
+    NEXT i
+
+    head = head + CHR$(10) + "define i32 @main(i32 %argc, ptr %argv) {" + CHR$(10)
+    head = head + "entry:" + CHR$(10)
+    RETURN head + body + "  ret i32 0" + CHR$(10) + "}" + CHR$(10)
+ENDFUNC
+
 ' ── Main ───────────────────────────────────────────────────────────────────
 
 DIM args AS ARRAY
 DIM path AS STRING
+DIM mode AS STRING
+DIM argAt AS INTEGER
 DIM j AS INTEGER
 
 lexError = ""
@@ -1951,10 +2569,25 @@ outBuf = ""
 
 args = OS.ARGS
 IF LEN(args) < 2 THEN
-    PRINT "usage: jdbasic selfhost/jdbc_parse.jdb <file.jdb>"
+    PRINT "usage: jdbasic selfhost/jdbc.jdb [--tokens|--ast] <file.jdb> [out.ll]"
     END
 ENDIF
-path = args[1]
+
+mode = "compile"
+argAt = 1
+IF args[1] = "--tokens" THEN
+    mode = "tokens"
+    argAt = 2
+ENDIF
+IF args[1] = "--ast" THEN
+    mode = "ast"
+    argAt = 2
+ENDIF
+IF LEN(args) <= argAt THEN
+    PRINT "usage: jdbasic selfhost/jdbc.jdb [--tokens|--ast] <file.jdb> [out.ll]"
+    END
+ENDIF
+path = args[argAt]
 
 LOAD_TABLES()
 LOAD_STMT_TABLES()
@@ -1967,13 +2600,33 @@ IF lexError <> "" THEN
     END
 ENDIF
 
+IF mode = "tokens" THEN
+    EMIT_TOKENS()
+    END
+ENDIF
+
 P_PROGRAM()
 IF parseError <> "" THEN
     PRINT "PARSE ERROR: "; parseError
     END
 ENDIF
 
-FOR j = 0 TO topN - 1
-    D_STMT(CINT(bodyBuf[topAt + j]), 0)
-NEXT j
-PRINT outBuf;
+IF mode = "ast" THEN
+    FOR j = 0 TO topN - 1
+        D_STMT(CINT(bodyBuf[topAt + j]), 0)
+    NEXT j
+    PRINT outBuf;
+    END
+ENDIF
+
+DIM modText AS STRING
+modText = GENERATE$()
+IF genError <> "" THEN
+    PRINT "CODEGEN ERROR: "; genError
+    END
+ENDIF
+IF LEN(args) > argAt + 1 THEN
+    TXTWRITER args[argAt + 1], modText
+ELSE
+    PRINT modText;
+ENDIF

@@ -19,12 +19,12 @@ JDB=${1:-$ROOT/build/jdBasic.exe}
 skip() { echo "SKIP: $1"; exit 0; }
 
 [ -x "$JDB" ] || skip "no jdBasic at $JDB"
-[ -f "$ROOT/selfhost/jdbc_parse.jdb" ] || skip "no selfhost/jdbc_parse.jdb"
+[ -f "$ROOT/selfhost/jdbc.jdb" ] || skip "no selfhost/jdbc.jdb"
 
 cd "$ROOT"
 mkdir -p tmp
 
-corpus="$(ls selfhost/fixtures/*.jdb) selfhost/gen_tokens.jdb selfhost/jdbc_lex.jdb selfhost/jdbc_parse.jdb"
+corpus="$(ls selfhost/fixtures/*.jdb) selfhost/gen_tokens.jdb selfhost/jdbc.jdb"
 
 ok=0
 bad=0
@@ -34,7 +34,7 @@ for f in $corpus; do
         bad=$((bad + 1))
         continue
     }
-    timeout 300 "$JDB" selfhost/jdbc_parse.jdb "$f" > tmp/ast_mine.txt 2>/dev/null || true
+    timeout 300 "$JDB" selfhost/jdbc.jdb --ast "$f" > tmp/ast_mine.txt 2>/dev/null || true
     if cmp -s tmp/ast_ref.txt tmp/ast_mine.txt; then
         ok=$((ok + 1))
         echo "  ok: $f"

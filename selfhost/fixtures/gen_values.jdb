@@ -1,0 +1,11 @@
+DIM a AS INTEGER
+DIM b AS DOUBLE
+DIM s AS STRING
+a = 6 * 7
+b = 10 / 4
+s = "hello" + " world"
+PRINT a
+PRINT b
+PRINT s
+PRINT a, b
+PRINT "sum="; a + 1

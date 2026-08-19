@@ -20,7 +20,7 @@ JDB=${1:-$ROOT/build/jdBasic.exe}
 skip() { echo "SKIP: $1"; exit 0; }
 
 [ -x "$JDB" ] || skip "no jdBasic at $JDB"
-[ -f "$ROOT/selfhost/jdbc_lex.jdb" ] || skip "no selfhost/jdbc_lex.jdb"
+[ -f "$ROOT/selfhost/jdbc.jdb" ] || skip "no selfhost/jdbc.jdb"
 
 cd "$ROOT"
 mkdir -p tmp
@@ -40,7 +40,7 @@ for f in $corpus; do
         # A file the reference itself will not lex says nothing about ours.
         continue
     }
-    timeout 120 "$JDB" selfhost/jdbc_lex.jdb "$f" > tmp/lex_mine.txt 2>/dev/null || true
+    timeout 120 "$JDB" selfhost/jdbc.jdb --tokens "$f" > tmp/lex_mine.txt 2>/dev/null || true
     if cmp -s tmp/lex_ref.txt tmp/lex_mine.txt; then
         ok=$((ok + 1))
     else

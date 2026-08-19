@@ -1,0 +1,35 @@
+DIM a AS DOUBLE
+DIM b AS DOUBLE
+DIM s AS STRING
+DIM i AS INTEGER
+DIM acc AS DOUBLE
+
+a = 3
+b = 4
+PRINT a * a + b * b
+PRINT a / b
+PRINT a MOD b
+PRINT -a
+PRINT a < b
+PRINT a > b
+PRINT a = 3
+PRINT a <> b
+s = ""
+FOR i = 1 TO 3
+    s = s + "ab"
+NEXT i
+PRINT s
+acc = 0
+i = 0
+DO WHILE i < 4
+    acc = acc + i
+    i = i + 1
+LOOP
+PRINT acc
+i = 0
+DO
+    i = i + 1
+LOOP UNTIL i >= 3
+PRINT i
+IF a < b AND b > 0 THEN PRINT "both"
+IF a > b OR b > 0 THEN PRINT "either"
