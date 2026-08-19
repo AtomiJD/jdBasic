@@ -1,0 +1,73 @@
+OPTION EXPLICIT
+
+' The runtime natives the compiler itself leans on.
+
+DIM s AS STRING
+DIM t AS STRING
+DIM n AS DOUBLE
+DIM i AS DOUBLE
+
+s = "Hello World"
+
+PRINT LEN(s)
+PRINT CINT(3.7)
+PRINT CINT(-3.7)
+PRINT CINT(2.5)
+PRINT CHR$(65) + CHR$(66) + CHR$(10) + "x"
+PRINT STR$(42)
+PRINT STR$(-7)
+PRINT MID$(s, 0, 5)
+PRINT MID$(s, 6, 5)
+PRINT LEFT$(s, 5)
+PRINT RIGHT$(s, 5)
+PRINT INSTR(s, "lo")
+PRINT INSTR(s, "zz")
+PRINT BYTEAT(s, 0)
+PRINT BYTEAT(s, 4)
+PRINT VAL("12.5")
+PRINT VAL("-3")
+PRINT UCASE$(s)
+PRINT LCASE$(s)
+PRINT TRIM$("  padded  ") + "|"
+PRINT REPLACE$(s, "l", "L")
+
+' The shapes the compiler writes them in.
+t = ""
+FOR i = 0 TO LEN(s) - 1
+    IF BYTEAT(s, CINT(i)) = 32 THEN CONTINUEFOR
+    t = t + MID$(s, CINT(i), 1)
+NEXT i
+PRINT t
+
+n = CINT(INSTR(s, " "))
+PRINT LEFT$(s, CINT(n))
+PRINT MID$(s, CINT(n) + 1, LEN(s) - CINT(n) - 1)
+
+FUNC PAD$(txt AS STRING, width AS DOUBLE) AS STRING
+    DIM r AS STRING
+    r = txt
+    DO
+        IF LEN(r) >= width THEN EXITDO
+        r = r + "."
+    LOOP
+    RETURN r
+ENDFUNC
+
+FUNC DIGITS$(v AS DOUBLE) AS STRING
+    DIM r AS STRING
+    DIM q AS DOUBLE
+    q = v
+    r = ""
+    IF q = 0 THEN RETURN "0"
+    DO
+        IF q <= 0 THEN EXITDO
+        r = CHR$(48 + CINT(q MOD 10)) + r
+        q = CINT(q / 10)
+    LOOP
+    RETURN r
+ENDFUNC
+
+PRINT PAD$("ab", 6) + "|"
+PRINT DIGITS$(90210)
+PRINT DIGITS$(0)
+PRINT LEN(PAD$("", 4))

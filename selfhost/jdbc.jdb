@@ -192,6 +192,7 @@ DIM TOK_MINUS AS INTEGER
 DIM TOK_STAR AS INTEGER
 DIM TOK_SLASH AS INTEGER
 DIM TOK_MOD AS INTEGER
+DIM TOK_BSLASH AS INTEGER
 DIM TOK_LT AS INTEGER
 DIM TOK_GT AS INTEGER
 DIM TOK_LE AS INTEGER
@@ -206,35 +207,6 @@ DIM TOK_ORELSE AS INTEGER
 DIM strDecl AS STRING
 
 ' ── Tables, all numbers read from the generated file ───────────────────────
-
-FUNC TOK_BY_NAME(n AS STRING) AS INTEGER
-    DIM i AS INTEGER
-    FOR i = 0 TO tokNameCount - 1
-        IF tokName[i] = n THEN RETURN i
-    NEXT i
-    PRINT "SETUP: unknown token name "; n
-    RETURN -1
-ENDFUNC
-
-SUB OP_ADD(w AS STRING, n AS STRING)
-    opName[opCount] = w
-    opType[opCount] = CINT(TOK_BY_NAME(n))
-    opCount = opCount + 1
-ENDSUB
-
-SUB KW_ADD(w AS STRING, t AS INTEGER)
-    kwWord[kwCount] = w
-    kwType[kwCount] = t
-    kwCount = kwCount + 1
-ENDSUB
-
-FUNC KW_LOOKUP(w AS STRING) AS INTEGER
-    DIM i AS INTEGER
-    FOR i = 0 TO kwCount - 1
-        IF kwWord[i] = w THEN RETURN CINT(kwType[i])
-    NEXT i
-    RETURN -1
-ENDFUNC
 
 FUNC PARSE_INT(t AS STRING) AS INTEGER
     RETURN CINT(VAL(t))
@@ -294,6 +266,7 @@ SUB LOAD_TABLES()
     TOK_STAR = CINT(TOK_BY_NAME("STAR"))
     TOK_SLASH = CINT(TOK_BY_NAME("SLASH"))
     TOK_MOD = CINT(TOK_BY_NAME("MOD"))
+    TOK_BSLASH = CINT(TOK_BY_NAME("BACKSLASH"))
     TOK_LT = CINT(TOK_BY_NAME("LT"))
     TOK_GT = CINT(TOK_BY_NAME("GT"))
     TOK_LE = CINT(TOK_BY_NAME("LE"))
@@ -1976,8 +1949,29 @@ FUNC AESC$(v AS STRING) AS STRING
     RETURN r
 ENDFUNC
 
+' The reference prints a float literal with C's "%.17g": seventeen significant
+' digits, trailing zeros dropped. "{:.16g}" produces the same digits, and
+' keeps the zeros, so they come off here.
+'
+' The two agree over the range ordinary source uses. C switches to exponent
+' notation past 1e17 and below 1e-5 and C++20 does not, so a literal out
+' there still reads differently; that is the only band where this comparison
+' is not exact.
 FUNC NUMTXT$(v AS DOUBLE) AS STRING
-    RETURN STR$(v)
+    DIM s AS STRING
+    DIM last AS INTEGER
+
+    s = FORMAT$("{:.16g}", v)
+    IF INSTR(s, ".") < 0 THEN RETURN s
+
+    last = CINT(LEN(s)) - 1
+    DO
+        IF last < 0 THEN EXITDO
+        IF MID$(s, last, 1) <> "0" THEN EXITDO
+        last = last - 1
+    LOOP
+    IF last >= 0 ANDALSO MID$(s, last, 1) = "." THEN last = last - 1
+    RETURN LEFT$(s, last + 1)
 ENDFUNC
 
 SUB D_EXPR(ix AS INTEGER, ind AS INTEGER)
@@ -2170,7 +2164,14 @@ FUNC GV_FIND(nm AS STRING) AS INTEGER
 ENDFUNC
 
 SUB GV_ADD(nm AS STRING, ty AS INTEGER)
-    IF GV_FIND(nm) >= 0 THEN RETURN
+    DIM i AS INTEGER
+    i = CINT(GV_FIND(nm))
+    IF i >= 0 THEN
+        ' AS ARRAY says the name holds an array, not what is in it. The value
+        ' assigned to it does, so that answer wins.
+        IF gvType[i] = TY_ARRN ANDALSO ty = TY_ARRS THEN gvType[i] = TY_ARRS
+        RETURN
+    ENDIF
     gvName[gvN] = nm
     gvType[gvN] = ty
     gvN = gvN + 1
@@ -2259,6 +2260,160 @@ FUNC STR_CONST$(v AS STRING) AS STRING
     RETURN "@.s" + STR$(idx)
 ENDFUNC
 
+' ── Builtins ───────────────────────────────────────────────────────────────
+'
+' The runtime is not reimplemented, only called. Each entry names the jdBasic
+' spelling, the jdb_* symbol behind it, and how the two sides pass values:
+'
+'   sig   one letter per argument - S a string pointer, I an i64 the caller
+'         truncates a number into, D a double
+'   ret   S a string pointer, A an array handle, I an i64 widened back to a
+'         double, D a double, V nothing
+'   extra literal arguments the symbol takes that the source never writes
+'
+' declArgs is spelled out rather than derived, so the declare and the call
+' cannot drift apart.
+
+DIM biName[64] AS STRING
+DIM biSym[64] AS STRING
+DIM biSig[64] AS STRING
+DIM biRet[64] AS STRING
+DIM biExtra[64] AS STRING
+DIM biDeclArgs[64] AS STRING
+DIM biDeclRet[64] AS STRING
+DIM biN AS INTEGER
+
+SUB BI_ADD(nm AS STRING, sym AS STRING, sig AS STRING, ret AS STRING, extra AS STRING, declArgs AS STRING)
+    biName[biN] = nm
+    biSym[biN] = sym
+    biSig[biN] = sig
+    biRet[biN] = ret
+    biExtra[biN] = extra
+    biDeclArgs[biN] = declArgs
+    biDeclRet[biN] = "ptr"
+    IF ret = "V" THEN biDeclRet[biN] = "void"
+    IF ret = "I" THEN biDeclRet[biN] = "i64"
+    IF ret = "D" THEN biDeclRet[biN] = "double"
+    biN = biN + 1
+ENDSUB
+
+SUB BI_INIT()
+    biN = 0
+    BI_ADD("CINT", "jdb_cint", "D", "I", "", "double")
+    BI_ADD("CHR$", "jdb_chr", "I", "S", "", "i64")
+    BI_ADD("STR$", "jdb_str", "D", "S", "", "double")
+    BI_ADD("VAL", "jdb_val", "S", "D", "", "ptr")
+    BI_ADD("LEN", "jdb_len_str", "S", "I", "", "ptr")
+    BI_ADD("MID$", "jdb_mid_lax", "SII", "S", "", "ptr, i64, i64")
+    BI_ADD("LEFT$", "jdb_left", "SI", "S", "", "ptr, i64")
+    BI_ADD("RIGHT$", "jdb_right", "SI", "S", "", "ptr, i64")
+    BI_ADD("INSTR", "jdb_instr", "SS", "I", "", "ptr, ptr")
+    BI_ADD("BYTEAT", "jdb_byteat", "SI", "I", "", "ptr, i64")
+    BI_ADD("UCASE$", "jdb_upper", "S", "S", "", "ptr")
+    BI_ADD("LCASE$", "jdb_lower", "S", "S", "", "ptr")
+    BI_ADD("TRIM$", "jdb_trim", "S", "S", "", "ptr")
+    BI_ADD("REPLACE$", "jdb_replace", "SSS", "S", "", "ptr, ptr, ptr")
+    ' FORMAT$ is variadic in the language and one symbol per arity in the
+    ' runtime. jdBasic-0 only ever formats one number.
+    BI_ADD("FORMAT$", "jdb_format1", "SD", "S", "", "ptr, double")
+    BI_ADD("TXTREADER$", "jdb_txtreader", "S", "S", "", "ptr")
+    BI_ADD("TXTWRITER", "jdb_txtwriter3", "SS", "V", ", i64 0", "ptr, ptr, i64")
+    BI_ADD("OS.ARGS", "jdb_os_args", "", "A", "", "")
+ENDSUB
+
+FUNC BI_FIND(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO biN - 1
+        IF biName[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC BI_RET_TY(bi AS INTEGER) AS INTEGER
+    IF biRet[bi] = "S" THEN RETURN TY_STR
+    IF biRet[bi] = "A" THEN RETURN TY_ARRS
+    RETURN TY_NUM
+ENDFUNC
+
+FUNC TO_I64$(v AS STRING, ty AS INTEGER) AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    W("  " + t + " = fptosi double " + AS_NUM$(v, ty) + " to i64")
+    RETURN t
+ENDFUNC
+
+' Emits the call and leaves lastType describing what came back.
+FUNC EMIT_RT$(sym AS STRING, argsTxt AS STRING, ret AS STRING) AS STRING
+    DIM t AS STRING
+    DIM raw AS STRING
+
+    IF ret = "V" THEN
+        W("  call void @" + sym + "(" + argsTxt + ")")
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+    IF ret = "I" THEN
+        raw = NEWTMP$()
+        W("  " + raw + " = call i64 @" + sym + "(" + argsTxt + ")")
+        t = NEWTMP$()
+        W("  " + t + " = sitofp i64 " + raw + " to double")
+        lastType = TY_NUM
+        RETURN t
+    ENDIF
+    IF ret = "D" THEN
+        t = NEWTMP$()
+        W("  " + t + " = call double @" + sym + "(" + argsTxt + ")")
+        lastType = TY_NUM
+        RETURN t
+    ENDIF
+
+    t = NEWTMP$()
+    W("  " + t + " = call ptr @" + sym + "(" + argsTxt + ")")
+    lastType = TY_STR
+    IF ret = "A" THEN lastType = TY_ARRS
+    RETURN t
+ENDFUNC
+
+FUNC G_BUILTIN$(bi AS INTEGER, ix AS INTEGER) AS STRING
+    DIM i AS INTEGER
+    DIM n AS INTEGER
+    DIM want AS STRING
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM argsTxt AS STRING
+    DIM sym AS STRING
+
+    n = 0
+    IF ix >= 0 THEN n = CINT(exArgN[ix])
+    IF n <> LEN(biSig[bi]) THEN
+        genError = biName[bi] + " wants " + STR$(LEN(biSig[bi])) + " arguments, given " + STR$(n)
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    sym = biSym[bi]
+    argsTxt = ""
+    FOR i = 0 TO n - 1
+        want = MID$(biSig[bi], i, 1)
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        vt = lastType
+        IF i > 0 THEN argsTxt = argsTxt + ", "
+        IF want = "S" THEN
+            argsTxt = argsTxt + "ptr " + v
+            ' LEN is one name over two runtime entry points.
+            IF i = 0 ANDALSO IS_ARR(vt) = 1 ANDALSO biName[bi] = "LEN" THEN sym = "jdb_array_len"
+        ELSE
+            IF want = "I" THEN
+                argsTxt = argsTxt + "i64 " + TO_I64$(v, vt)
+            ELSE
+                argsTxt = argsTxt + "double " + AS_NUM$(v, vt)
+            ENDIF
+        ENDIF
+    NEXT i
+    argsTxt = argsTxt + biExtra[bi]
+    RETURN EMIT_RT$(sym, argsTxt, biRet[bi])
+ENDFUNC
+
 ' ── The type an expression will have, without emitting anything ────────────
 
 FUNC E_TYPE(ix AS INTEGER) AS INTEGER
@@ -2269,11 +2424,18 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
     IF ix < 0 THEN RETURN TY_NUM
     k = CINT(exKind[ix])
     IF k = X_LIT_STR THEN RETURN TY_STR
-    IF k = X_VARIABLE THEN RETURN CINT(SYM_TYPE(exStr[ix]))
+    IF k = X_VARIABLE THEN
+        ' A builtin that takes nothing reads like a variable.
+        f = CINT(BI_FIND(exStr[ix]))
+        IF f >= 0 ANDALSO biSig[f] = "" THEN RETURN CINT(BI_RET_TY(f))
+        RETURN CINT(SYM_TYPE(exStr[ix]))
+    ENDIF
     IF k = X_INDEX THEN RETURN CINT(ELEM_TY(CINT(E_TYPE(CINT(exLeft[ix])))))
     IF k = X_CALL THEN
         f = CINT(FN_FIND(exFn[ix]))
         IF f >= 0 THEN RETURN CINT(fnRet[f])
+        f = CINT(BI_FIND(exFn[ix]))
+        IF f >= 0 THEN RETURN CINT(BI_RET_TY(f))
         RETURN TY_NUM
     ENDIF
     IF k = X_BINARY THEN
@@ -2423,7 +2585,10 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     DIM lt AS INTEGER
     DIM rt AS INTEGER
     DIM t AS STRING
+    DIM q AS STRING
+    DIM whole AS STRING
     DIM op AS INTEGER
+    DIM arith AS STRING
     DIM cmpOp AS STRING
 
     l = G_EXPR(CINT(exLeft[ix]))
@@ -2445,12 +2610,30 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     l = AS_NUM$(l, lt)
     r = AS_NUM$(r, rt)
 
-    t = NEWTMP$()
-    IF op = TOK_PLUS THEN W("  " + t + " = fadd double " + l + ", " + r)
-    IF op = TOK_MINUS THEN W("  " + t + " = fsub double " + l + ", " + r)
-    IF op = TOK_STAR THEN W("  " + t + " = fmul double " + l + ", " + r)
-    IF op = TOK_SLASH THEN W("  " + t + " = fdiv double " + l + ", " + r)
-    IF op = TOK_MOD THEN W("  " + t + " = frem double " + l + ", " + r)
+    arith = ""
+    IF op = TOK_PLUS THEN arith = "fadd"
+    IF op = TOK_MINUS THEN arith = "fsub"
+    IF op = TOK_STAR THEN arith = "fmul"
+    IF op = TOK_SLASH THEN arith = "fdiv"
+    IF op = TOK_MOD THEN arith = "frem"
+    IF arith <> "" THEN
+        t = NEWTMP$()
+        W("  " + t + " = " + arith + " double " + l + ", " + r)
+        lastType = TY_NUM
+        RETURN t
+    ENDIF
+
+    ' Integer division keeps the quotient's whole part, towards zero.
+    IF op = TOK_BSLASH THEN
+        q = NEWTMP$()
+        W("  " + q + " = fdiv double " + l + ", " + r)
+        whole = NEWTMP$()
+        W("  " + whole + " = fptosi double " + q + " to i64")
+        t = NEWTMP$()
+        W("  " + t + " = sitofp i64 " + whole + " to double")
+        lastType = TY_NUM
+        RETURN t
+    ENDIF
 
     cmpOp = ""
     IF op = TOK_LT THEN cmpOp = "olt"
@@ -2461,6 +2644,7 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     IF op = TOK_ASSIGN THEN cmpOp = "oeq"
 
     IF cmpOp <> "" THEN
+        t = NEWTMP$()
         W("  " + t + " = fcmp " + cmpOp + " double " + l + ", " + r)
         lastType = TY_BOOL
         RETURN t
@@ -2470,8 +2654,9 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
         RETURN G_LOGICAL(op, l, r)
     ENDIF
 
+    genError = "cannot generate operator " + STR$(op)
     lastType = TY_NUM
-    RETURN t
+    RETURN "0.0"
 ENDFUNC
 
 ' Widens a truth value to a number, for arithmetic and for conditions.
@@ -2555,6 +2740,8 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
 
     f = CINT(FN_FIND(exFn[ix]))
     IF f < 0 THEN
+        f = CINT(BI_FIND(exFn[ix]))
+        IF f >= 0 THEN RETURN G_BUILTIN$(f, ix)
         genError = "cannot generate a call to " + exFn[ix]
         lastType = TY_NUM
         RETURN "0.0"
@@ -2625,6 +2812,8 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
 
     IF k = X_VARIABLE THEN
         nm = exStr[ix]
+        ty = CINT(BI_FIND(nm))
+        IF ty >= 0 ANDALSO biSig[ty] = "" THEN RETURN G_BUILTIN$(ty, -1)
         ty = CINT(SYM_TYPE(nm))
         t = NEWTMP$()
         W("  " + t + " = load " + LL_TY$(ty) + ", ptr " + SYM_REF$(nm))
@@ -2853,16 +3042,17 @@ SUB G_DIM_ARRAY(ix AS INTEGER, nm AS STRING, ty AS INTEGER)
 
     callNd = CINT(stExpr[ix])
     IF callNd < 0 THEN
-        genError = "array " + nm + " has no bounds"
-        RETURN
+        ' DIM x AS ARRAY names a slot without sizing it, the same empty array
+        ' the reference puts there until something is assigned.
+        n64 = "0"
+    ELSE
+        lit = CINT(argBuf[CINT(exArgAt[callNd])])
+        IF exArgN[lit] <> 1 THEN
+            genError = "only one dimension is supported, " + nm + " has " + STR$(exArgN[lit])
+            RETURN
+        ENDIF
+        n64 = G_IDX$(CINT(argBuf[CINT(exArgAt[lit])]))
     ENDIF
-    lit = CINT(argBuf[CINT(exArgAt[callNd])])
-    IF exArgN[lit] <> 1 THEN
-        genError = "only one dimension is supported, " + nm + " has " + STR$(exArgN[lit])
-        RETURN
-    ENDIF
-
-    n64 = G_IDX$(CINT(argBuf[CINT(exArgAt[lit])]))
     handle = NEWTMP$()
     W("  " + handle + " = call ptr @jdb_array_new(i64 " + n64 + ")")
     IF ty = TY_ARRS THEN W("  call void @jdb_array_set_string_elems(ptr " + handle + ")")
@@ -3108,6 +3298,7 @@ ENDSUB
 
 FUNC DECLS$() AS STRING
     DIM d AS STRING
+    DIM i AS INTEGER
     d = "declare void @jdb_print_double(double)" + CHR$(10)
     d = d + "declare void @jdb_print_str(ptr)" + CHR$(10)
     d = d + "declare void @jdb_print_bool(i64)" + CHR$(10)
@@ -3121,6 +3312,12 @@ FUNC DECLS$() AS STRING
     d = d + "declare void @jdb_array_set(ptr, i64, double)" + CHR$(10)
     d = d + "declare double @jdb_array_get(ptr, i64)" + CHR$(10)
     d = d + "declare void @jdb_array_set_string_elems(ptr)" + CHR$(10)
+    d = d + "declare i64 @jdb_array_len(ptr)" + CHR$(10)
+    d = d + "declare void @jdb_set_args(i32, ptr)" + CHR$(10)
+    FOR i = 0 TO biN - 1
+        d = d + "declare " + biDeclRet[i] + " @" + biSym[i]
+        d = d + "(" + biDeclArgs[i] + ")" + CHR$(10)
+    NEXT i
     RETURN d
 ENDFUNC
 
@@ -3141,6 +3338,8 @@ FUNC GENERATE$() AS STRING
     strN = 0
     inRoutine = 0
     genError = ""
+
+    BI_INIT()
 
     ' Routines are hoisted and a global can be declared below the routine that
     ' reads it, so both are collected before a single instruction is emitted.
@@ -3167,6 +3366,8 @@ FUNC GENERATE$() AS STRING
     head = head + CHR$(10) + fnDefs
     head = head + "define i32 @main(i32 %argc, ptr %argv) {" + CHR$(10)
     head = head + "entry:" + CHR$(10)
+    ' Handing the command line to the runtime is what makes OS.ARGS answer.
+    head = head + "  call void @jdb_set_args(i32 %argc, ptr %argv)" + CHR$(10)
     RETURN head + body + "  ret i32 0" + CHR$(10) + "}" + CHR$(10)
 ENDFUNC
 
