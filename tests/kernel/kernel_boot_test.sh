@@ -296,6 +296,75 @@ check_jitfn() {
 
 check_jitfn
 
+# COMP compiles the whole editor buffer, CALL enters it. The buffer sums the
+# squares of 1..5, which is 55.
+check_comp() {
+    echo "--- comp/call ---"
+
+    $SH "cd '$WKDIR' && rm -f /tmp/comptest.bin && '$WTDIR/comp_keys.sh' /tmp/comptest.bin | timeout $((BOOT_TIMEOUT + 120)) qemu-system-x86_64 -kernel repl.bin -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    out=$(text_of /tmp/comptest.bin)
+
+    for want in "compiled 244 bytes" "> CALL 55"; do
+        if echo "$out" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' from COMP/CALL"
+            fail=1
+        fi
+    done
+}
+
+check_comp
+
+# The game that boot puts on the RAM disk: load it, compile it, play it, leave
+# with ESC. Nothing but ESC stops the loop while lives remain, so returning to
+# the prompt is what proves compiled code reads the keyboard.
+check_game() {
+    echo "--- game ---"
+
+    $SH "cd '$WKDIR' && rm -f /tmp/gametest.bin* && '$WTDIR/game_keys.sh' /tmp/gametest.bin | timeout $((BOOT_TIMEOUT + 150)) qemu-system-x86_64 -kernel repl.bin -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    dir=$(text_of /tmp/gametest.bin.dir)
+    comp=$(text_of /tmp/gametest.bin.comp)
+    play=$(text_of /tmp/gametest.bin)
+    after=$(text_of /tmp/gametest.bin.after)
+
+    if echo "$dir" | grep -qF "pong"; then
+        echo "  ok: boot put pong on the disk"
+    else
+        echo "  FAIL: DIR did not list pong"
+        fail=1
+    fi
+
+    if echo "$comp" | grep -qE "compiled [0-9]+ bytes"; then
+        echo "  ok: the buffer compiled"
+    else
+        echo "  FAIL: COMP did not report a size"
+        fail=1
+    fi
+
+    # Score 1 means the ball met the paddle; the lives counter is drawn by the
+    # compiled code too.
+    for want in "SCORE: 01" "L: "; do
+        if echo "$play" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' on the running game screen"
+            fail=1
+        fi
+    done
+
+    if echo "$after" | grep -qF "> "; then
+        echo "  ok: ESC left the game and returned to the prompt"
+    else
+        echo "  FAIL: ESC did not return to the prompt"
+        fail=1
+    fi
+}
+
+check_game
+
 if [ "$fail" = 0 ]; then
     echo "ALL KERNEL BOOT TESTS PASSED!"
 else

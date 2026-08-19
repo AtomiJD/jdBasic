@@ -418,8 +418,10 @@ FUNC PEEKC2() AS INTEGER
 ENDFUNC
 
 SUB SKIPSP()
+    DIM c AS INTEGER
     DO
-        IF PEEKC() <> 32 THEN RETURN
+        c = CINT(PEEKC())
+        IF c <> 32 AND c <> 9 AND c <> 10 AND c <> 13 THEN RETURN
         cur = cur + 1
     LOOP
 ENDSUB
@@ -1160,11 +1162,35 @@ SUB RUN_BUFFER()
     NEXT i
 ENDSUB
 
+' COMP translates the whole editor buffer to machine code and keeps the entry
+' point; CALL enters it. lallang spells these with an explicit address, which
+' is unnecessary here because the code buffer belongs to the OS.
+SUB CMD_COMP()
+    jitEntry = CINT(JIT_COMPILE(ED_TEXT$()))
+    IF jitEntry < 0 THEN RETURN
+    SCR_WRITE("compiled ")
+    SCR_WRITEINT(jitPos)
+    SCR_WRITELN(" bytes")
+ENDSUB
+
+SUB CMD_CALL()
+    DIM result AS INTEGER
+    IF jitEntry < 0 THEN
+        SCR_WRITELN("nothing compiled")
+        RETURN
+    ENDIF
+    result = CINT(JIT_ENTER(jitEntry))
+    SCR_WRITEINT(result)
+    SCR_NEWLINE()
+ENDSUB
+
 SUB CMD_HELP()
     SCR_WRITELN("DIR          list stored programs")
     SCR_WRITELN("SAVE name    store the buffer")
     SCR_WRITELN("LOAD name    recall into the buffer")
     SCR_WRITELN("RUN [name]   run the buffer, or load then run")
+    SCR_WRITELN("COMP         compile the buffer to machine code")
+    SCR_WRITELN("CALL         run the compiled code")
     SCR_WRITELN("LIST         print the buffer")
     SCR_WRITELN("NEW          empty the buffer")
     SCR_WRITELN("CLS          clear the screen")
@@ -1218,6 +1244,14 @@ SUB RUN_COMMAND(lineIn AS STRING)
     IF word = "RUN" THEN
         IF LEN(arg) > 0 THEN DSK_LOAD(arg)
         RUN_BUFFER()
+        RETURN
+    ENDIF
+    IF word = "COMP" THEN
+        CMD_COMP()
+        RETURN
+    ENDIF
+    IF word = "CALL" THEN
+        CMD_CALL()
         RETURN
     ENDIF
     IF word = "HELP" THEN
@@ -1475,6 +1509,7 @@ CONST JIT_CODE = $A00000
 CONST JIT_VARS = $B00000
 
 DIM jitPos AS INTEGER
+DIM jitEntry AS INTEGER
 
 ' ── Emitter ────────────────────────────────────────────────────────────────
 
@@ -1697,6 +1732,7 @@ SUB JIT_FACTOR()
         nm = SCAN_IDENT$()
         SKIPSP()
         IF PEEKC() = 40 THEN
+            IF JIT_BUILTIN(nm) = 1 THEN RETURN
             JIT_CALL(nm)
             RETURN
         ENDIF
@@ -1711,6 +1747,106 @@ SUB JIT_FACTOR()
 
     errCode = 3
 ENDSUB
+
+' Hardware and memory reach compiled code the same way they reach the rest of
+' the OS, but inline rather than through a call. This is what lets a compiled
+' program drive the screen and the keyboard itself.
+FUNC JIT_BUILTIN(nm AS STRING) AS INTEGER
+    DIM one AS INTEGER
+    DIM two AS INTEGER
+
+    one = 0
+    two = 0
+    IF nm = "peekb" THEN one = 1
+    IF nm = "peekw" THEN one = 1
+    IF nm = "peek" THEN one = 1
+    IF nm = "inb" THEN one = 1
+    IF nm = "pokeb" THEN two = 1
+    IF nm = "pokew" THEN two = 1
+    IF nm = "poke" THEN two = 1
+    IF nm = "outb" THEN two = 1
+    IF one = 0 AND two = 0 THEN RETURN 0
+
+    cur = cur + 1
+    JIT_COMPARE()
+    IF errCode > 0 THEN RETURN 1
+
+    IF two = 1 THEN
+        SKIPSP()
+        IF PEEKC() <> 44 THEN
+            errCode = 1
+            RETURN 1
+        ENDIF
+        cur = cur + 1
+        J_PUSH_RAX()
+        JIT_COMPARE()
+        IF errCode > 0 THEN RETURN 1
+        J_TAKE_RHS()
+    ENDIF
+
+    SKIPSP()
+    IF PEEKC() <> 41 THEN
+        errCode = 1
+        RETURN 1
+    ENDIF
+    cur = cur + 1
+
+    ' One-argument forms take the address or port in rax.
+    IF nm = "peekb" THEN
+        J_B($48)
+        J_B($0F)
+        J_B($B6)
+        J_B($00)
+    ENDIF
+    IF nm = "peekw" THEN
+        J_B($48)
+        J_B($0F)
+        J_B($B7)
+        J_B($00)
+    ENDIF
+    IF nm = "peek" THEN
+        J_B($8B)
+        J_B($00)
+    ENDIF
+    IF nm = "inb" THEN
+        J_B($48)
+        J_B($89)
+        J_B($C2)
+        J_B($31)
+        J_B($C0)
+        J_B($EC)
+        J_B($48)
+        J_B($0F)
+        J_B($B6)
+        J_B($C0)
+    ENDIF
+
+    ' Two-argument forms have the address or port in rax and the value in rbx.
+    IF nm = "pokeb" THEN
+        J_B($88)
+        J_B($18)
+    ENDIF
+    IF nm = "pokew" THEN
+        J_B($66)
+        J_B($89)
+        J_B($18)
+    ENDIF
+    IF nm = "poke" THEN
+        J_B($89)
+        J_B($18)
+    ENDIF
+    IF nm = "outb" THEN
+        J_B($48)
+        J_B($89)
+        J_B($C2)
+        J_B($48)
+        J_B($89)
+        J_B($D8)
+        J_B($EE)
+    ENDIF
+
+    RETURN 1
+ENDFUNC
 
 ' Arguments are pushed left to right and dropped by the caller afterwards.
 SUB JIT_CALL(nm AS STRING)
@@ -1941,11 +2077,12 @@ ENDSUB
 
 ' Compiles the source after the leading ?? and runs it. The value of a trailing
 ' expression is whatever the last statement left in rax.
-SUB JIT_RUN()
-    DIM result AS INTEGER
+FUNC JIT_COMPILE(srcIn AS STRING) AS INTEGER
     DIM startCur AS INTEGER
     DIM mainEntry AS INTEGER
 
+    srcText = srcIn
+    cur = 0
     jitPos = 0
     errCode = 0
     startCur = cur
@@ -1993,24 +2130,83 @@ SUB JIT_RUN()
         SCR_WRITE("error: ")
         SCR_WRITELN(ERR_TEXT$(errCode))
         scrAttr = 7
-        RETURN
+        RETURN -1
     ENDIF
 
     J_RET()
-    JIT_SYNC_IN()
-    result = CINT(SYS.CALL(JIT_CODE + mainEntry))
-    JIT_SYNC_OUT()
+    RETURN mainEntry
+ENDFUNC
 
+FUNC JIT_ENTER(entry AS INTEGER) AS INTEGER
+    DIM result AS INTEGER
+    JIT_SYNC_IN()
+    result = CINT(SYS.CALL(JIT_CODE + entry))
+    JIT_SYNC_OUT()
+    RETURN result
+ENDFUNC
+
+SUB JIT_LINE(lineIn AS STRING)
+    DIM entry AS INTEGER
+    DIM result AS INTEGER
+    entry = CINT(JIT_COMPILE(MID$(lineIn, 2, LEN(lineIn) - 2)))
+    IF entry < 0 THEN RETURN
+    result = CINT(JIT_ENTER(entry))
     SCR_WRITEINT(result)
     SCR_WRITE("   [")
     SCR_WRITEINT(jitPos)
     SCR_WRITELN(" bytes of x86]")
 ENDSUB
 
-SUB JIT_LINE(lineIn AS STRING)
-    srcText = lineIn
-    cur = 2
-    JIT_RUN()
+' ── Preloaded program ──────────────────────────────────────────────────────
+'
+' A paddle-and-ball game written in the OS's own language, sitting on the RAM
+' disk at boot the way lallang bakes invaders.os into slot 0. It reaches the
+' screen and the keyboard through the JIT's builtins, so it only runs as
+' compiled code: LOAD pong, COMP, CALL.
+'
+' 753664 is $B8000, the text buffer. A cell is attribute times 256 plus the
+' character, so 3840 is white on black and 3872 a white space.
+
+SUB DSK_DEFAULTS()
+    DIM g AS STRING
+
+    g = ""
+    g = g + "func cell(r, c, ch) { pokew(753664 + (r*80 + c)*2, 3840 + ch) }" + CHR$(10)
+    g = g + "func wipe() { i = 0; while i < 2000 { pokew(753664 + i*2, 3872); i = i+1 } }" + CHR$(10)
+    g = g + "func row(r, ch) { i = 0; while i < 80 { cell(r, i, ch); i = i+1 } }" + CHR$(10)
+    g = g + "func digits() {" + CHR$(10)
+    g = g + "  cell(0,0,83); cell(0,1,67); cell(0,2,79); cell(0,3,82); cell(0,4,69); cell(0,5,58)" + CHR$(10)
+    g = g + "  cell(0,7,48 + (score/10)%10); cell(0,8,48 + score%10)" + CHR$(10)
+    g = g + "  cell(0,11,76); cell(0,12,58); cell(0,14,48 + lives)" + CHR$(10)
+    g = g + "}" + CHR$(10)
+    g = g + "wipe()" + CHR$(10)
+    g = g + "bx = 34; by = 15; dx = 1; dy = 1; px = 36; score = 0; alive = 1; lives = 3" + CHR$(10)
+    g = g + "while alive == 1 {" + CHR$(10)
+    g = g + "  cell(by, bx, 32)" + CHR$(10)
+    g = g + "  bx = bx + dx; by = by + dy" + CHR$(10)
+    g = g + "  if bx < 1 { bx = 1; dx = 1 }" + CHR$(10)
+    g = g + "  if bx > 78 { bx = 78; dx = 0 - 1 }" + CHR$(10)
+    g = g + "  if by < 2 { by = 2; dy = 1 }" + CHR$(10)
+    g = g + "  if by > 21 {" + CHR$(10)
+    g = g + "    if bx > px - 1 { if bx < px + 8 { by = 21; dy = 0 - 1; score = score + 1 } }" + CHR$(10)
+    g = g + "  }" + CHR$(10)
+    g = g + "  if by > 23 { lives = lives - 1; bx = 34; by = 6; dy = 1; dx = 1 }" + CHR$(10)
+    g = g + "  if lives < 1 { alive = 0 }" + CHR$(10)
+    g = g + "  cell(by, bx, 79)" + CHR$(10)
+    g = g + "  row(23, 32)" + CHR$(10)
+    g = g + "  i = 0; while i < 8 { cell(23, px + i, 61); i = i+1 }" + CHR$(10)
+    g = g + "  digits()" + CHR$(10)
+    g = g + "  k = inb(96)" + CHR$(10)
+    g = g + "  if k == 30 { if px > 0 { px = px - 3 } }" + CHR$(10)
+    g = g + "  if k == 32 { if px < 71 { px = px + 3 } }" + CHR$(10)
+    g = g + "  if k == 1 { alive = 0 }" + CHR$(10)
+    g = g + "  d = 0; while d < 35000000 { d = d+1 }" + CHR$(10)
+    g = g + "}" + CHR$(10)
+    g = g + "score" + CHR$(10)
+
+    dskNames[0] = "pong"
+    dskText[0] = g
+    dskCount = 1
 ENDSUB
 
 ' ── Main ───────────────────────────────────────────────────────────────────
@@ -2034,6 +2230,9 @@ KB_INIT()
 
 ED_INIT()
 dskCount = 0
+jitEntry = -1
+jfnCount = 0
+DSK_DEFAULTS()
 
 DO
     SCR_WRITE("> ")
