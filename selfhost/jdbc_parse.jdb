@@ -1,0 +1,1914 @@
+OPTION EXPLICIT
+
+' S2 of the self-hosting plan: the jdBasic parser.
+'
+' Reads a source file, lexes it, builds a parse tree and prints it in exactly
+' the shape `jdbasic --dump-ast` prints, so the two trees can be compared.
+'
+' jdBasic-0 has no records, so the tree lives in parallel arrays with integer
+' indices standing in for pointers, and the variable-length lists (bodies,
+' arguments, parameters) live in shared arenas addressed by a start and a
+' count. A body is parsed into a local scratch list first and copied into its
+' arena afterwards, because nested bodies would otherwise interleave.
+'
+'   jdbasic selfhost/jdbc_parse.jdb <file.jdb>
+
+CONST MAX_TOKENS = 200000
+CONST MAX_NODES = 120000
+CONST MAX_BUF = 120000
+CONST MAX_LOCAL = 400
+
+' ── Token stream, produced the same way jdbc_lex.jdb produces it ───────────
+
+DIM T_INTEGER_LIT AS INTEGER
+DIM T_FLOAT_LIT AS INTEGER
+DIM T_STRING_LIT AS INTEGER
+DIM T_IDENTIFIER AS INTEGER
+DIM T_NEWLINE AS INTEGER
+DIM T_EOF AS INTEGER
+
+DIM tokName[400] AS STRING
+DIM tokNameCount AS INTEGER
+
+DIM kwWord[400] AS STRING
+DIM kwType[400]
+DIM kwCount AS INTEGER
+
+DIM opName[64] AS STRING
+DIM opType[64]
+DIM opCount AS INTEGER
+
+DIM src AS STRING
+DIM pos AS INTEGER
+DIM lineNo AS INTEGER
+DIM colNo AS INTEGER
+
+DIM tkType[MAX_TOKENS]
+DIM tkLine[MAX_TOKENS]
+DIM tkCol[MAX_TOKENS]
+DIM tkVal[MAX_TOKENS] AS STRING
+DIM tkCount AS INTEGER
+
+DIM lexError AS STRING
+
+' ── Expression nodes ───────────────────────────────────────────────────────
+
+DIM exKind[MAX_NODES]
+DIM exLine[MAX_NODES]
+DIM exInt[MAX_NODES]
+DIM exFloat[MAX_NODES]
+DIM exStr[MAX_NODES] AS STRING
+DIM exOp[MAX_NODES]
+DIM exFn[MAX_NODES] AS STRING
+DIM exLeft[MAX_NODES]
+DIM exRight[MAX_NODES]
+DIM exArgAt[MAX_NODES]
+DIM exArgN[MAX_NODES]
+DIM exCount AS INTEGER
+
+DIM argBuf[MAX_BUF]
+DIM argN AS INTEGER
+
+' ── Statement nodes ────────────────────────────────────────────────────────
+
+DIM stKind[MAX_NODES]
+DIM stLine[MAX_NODES]
+DIM stVar[MAX_NODES] AS STRING
+DIM stVType[MAX_NODES]
+DIM stEType[MAX_NODES]
+DIM stConst[MAX_NODES]
+DIM stFunc[MAX_NODES] AS STRING
+DIM stRType[MAX_NODES]
+DIM stExpr[MAX_NODES]
+DIM stCond[MAX_NODES]
+DIM stEnd[MAX_NODES]
+DIM stStep[MAX_NODES]
+DIM stTop[MAX_NODES]
+DIM stUntil[MAX_NODES]
+DIM stNoNl[MAX_NODES]
+DIM stPrAt[MAX_NODES]
+DIM stPrN[MAX_NODES]
+DIM stSepAt[MAX_NODES]
+DIM stSepN[MAX_NODES]
+DIM stIxAt[MAX_NODES]
+DIM stIxN[MAX_NODES]
+DIM stParAt[MAX_NODES]
+DIM stParN[MAX_NODES]
+DIM stBodyAt[MAX_NODES]
+DIM stBodyN[MAX_NODES]
+DIM stBrAt[MAX_NODES]
+DIM stBrN[MAX_NODES]
+DIM stCount AS INTEGER
+
+DIM prBuf[MAX_BUF]
+DIM prN AS INTEGER
+DIM sepBuf[MAX_BUF]
+DIM sepN AS INTEGER
+DIM ixBuf[MAX_BUF]
+DIM ixN AS INTEGER
+DIM bodyBuf[MAX_BUF]
+DIM bodyN AS INTEGER
+
+DIM parName[MAX_BUF] AS STRING
+DIM parType[MAX_BUF]
+DIM parN AS INTEGER
+
+DIM brCond[MAX_BUF]
+DIM brBodyAt[MAX_BUF]
+DIM brBodyN[MAX_BUF]
+DIM brN AS INTEGER
+
+DIM topAt AS INTEGER
+DIM topN AS INTEGER
+
+' ── Parser cursor ──────────────────────────────────────────────────────────
+
+DIM cur AS INTEGER
+DIM parseError AS STRING
+
+' ── Token type shorthands, all looked up by name ───────────────────────────
+
+DIM TT_ASSIGN AS INTEGER
+DIM TT_LPAREN AS INTEGER
+DIM TT_RPAREN AS INTEGER
+DIM TT_LBRACKET AS INTEGER
+DIM TT_RBRACKET AS INTEGER
+DIM TT_COMMA AS INTEGER
+DIM TT_COLON AS INTEGER
+DIM TT_SEMICOLON AS INTEGER
+DIM TT_DOT AS INTEGER
+DIM TT_MINUS AS INTEGER
+DIM TT_BNOT AS INTEGER
+DIM TT_NOT AS INTEGER
+DIM TT_AND AS INTEGER
+DIM TT_ANDALSO AS INTEGER
+DIM TT_OR AS INTEGER
+DIM TT_ORELSE AS INTEGER
+DIM TT_NE AS INTEGER
+DIM TT_CARET AS INTEGER
+DIM TT_TRUE AS INTEGER
+DIM TT_FALSE AS INTEGER
+
+DIM cmpOps[16]
+DIM cmpN AS INTEGER
+DIM addOps[8]
+DIM addN AS INTEGER
+DIM mulOps[8]
+DIM mulN AS INTEGER
+
+DIM K_LET AS INTEGER
+DIM K_DIM AS INTEGER
+DIM K_PRINT AS INTEGER
+DIM K_IF AS INTEGER
+DIM K_SUB AS INTEGER
+DIM K_FUNCTION AS INTEGER
+DIM K_DO_LOOP AS INTEGER
+DIM K_FOR_LOOP AS INTEGER
+DIM K_RETURN AS INTEGER
+DIM K_EXPR_STMT AS INTEGER
+DIM K_ASSIGN AS INTEGER
+DIM K_INDEX_ASSIGN AS INTEGER
+DIM K_END_STMT AS INTEGER
+DIM K_OPTION AS INTEGER
+DIM K_EXIT_LOOP AS INTEGER
+DIM K_CONTINUE_LOOP AS INTEGER
+
+DIM X_LIT_INT AS INTEGER
+DIM X_LIT_FLOAT AS INTEGER
+DIM X_LIT_STR AS INTEGER
+DIM X_LIT_BOOL AS INTEGER
+DIM X_VARIABLE AS INTEGER
+DIM X_BINARY AS INTEGER
+DIM X_UNARY AS INTEGER
+DIM X_CALL AS INTEGER
+DIM X_INDEX AS INTEGER
+DIM X_ARRAY_LIT AS INTEGER
+
+' ── Tables, all numbers read from the generated file ───────────────────────
+
+FUNC TOK_BY_NAME(n AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO tokNameCount - 1
+        IF tokName[i] = n THEN RETURN i
+    NEXT i
+    PRINT "SETUP: unknown token name "; n
+    RETURN -1
+ENDFUNC
+
+SUB OP_ADD(w AS STRING, n AS STRING)
+    opName[opCount] = w
+    opType[opCount] = CINT(TOK_BY_NAME(n))
+    opCount = opCount + 1
+ENDSUB
+
+SUB KW_ADD(w AS STRING, t AS INTEGER)
+    kwWord[kwCount] = w
+    kwType[kwCount] = t
+    kwCount = kwCount + 1
+ENDSUB
+
+FUNC KW_LOOKUP(w AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO kwCount - 1
+        IF kwWord[i] = w THEN RETURN CINT(kwType[i])
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC PARSE_INT(t AS STRING) AS INTEGER
+    RETURN CINT(VAL(t))
+ENDFUNC
+
+SUB LOAD_TABLES()
+    DIM txt AS STRING
+    DIM at AS INTEGER
+    DIM ln AS STRING
+    DIM p AS INTEGER
+    DIM w AS STRING
+    DIM t AS STRING
+    DIM nl AS INTEGER
+
+    kwCount = 0
+    tokNameCount = 0
+    txt = TXTREADER$("selfhost/jdbc_tokens.jdb")
+    at = 0
+    DO
+        IF at >= LEN(txt) THEN EXITDO
+        nl = CINT(INSTR(MID$(txt, at, LEN(txt) - at), CHR$(10)))
+        IF nl < 0 THEN
+            ln = MID$(txt, at, LEN(txt) - at)
+            at = LEN(txt)
+        ELSE
+            ln = MID$(txt, at, nl)
+            at = at + nl + 1
+        ENDIF
+
+        p = CINT(INSTR(ln, "TOK_NAME["))
+        IF p >= 0 ANDALSO INSTR(ln, "TOK_NAME_COUNT") < 0 THEN
+            p = CINT(INSTR(ln, "["))
+            t = MID$(ln, p + 1, LEN(ln) - p - 1)
+            p = CINT(INSTR(t, "]"))
+            w = LEFT$(t, p)
+            p = CINT(INSTR(ln, CHR$(34)))
+            t = MID$(ln, p + 1, LEN(ln) - p - 1)
+            p = CINT(INSTR(t, CHR$(34)))
+            tokName[PARSE_INT(w)] = LEFT$(t, p)
+            IF PARSE_INT(w) + 1 > tokNameCount THEN tokNameCount = PARSE_INT(w) + 1
+        ENDIF
+
+        p = CINT(INSTR(ln, "KW_WORD["))
+        IF p >= 0 ANDALSO INSTR(ln, "KW_COUNT") < 0 THEN
+            p = CINT(INSTR(ln, CHR$(34)))
+            t = MID$(ln, p + 1, LEN(ln) - p - 1)
+            p = CINT(INSTR(t, CHR$(34)))
+            w = LEFT$(t, p)
+            t = MID$(t, p + 1, LEN(t) - p - 1)
+            p = CINT(INSTR(t, "] = "))
+            IF p >= 0 THEN KW_ADD(w, PARSE_INT(TRIM$(MID$(t, p + 4, LEN(t) - p - 4))))
+        ENDIF
+    LOOP
+
+    T_INTEGER_LIT = CINT(TOK_BY_NAME("INTEGER_LIT"))
+    T_FLOAT_LIT = CINT(TOK_BY_NAME("FLOAT_LIT"))
+    T_STRING_LIT = CINT(TOK_BY_NAME("STRING_LIT"))
+    T_IDENTIFIER = CINT(TOK_BY_NAME("IDENTIFIER"))
+    T_NEWLINE = CINT(TOK_BY_NAME("NEWLINE"))
+    T_EOF = CINT(TOK_BY_NAME("EOF_TOKEN"))
+
+    TT_ASSIGN = CINT(TOK_BY_NAME("ASSIGN"))
+    TT_LPAREN = CINT(TOK_BY_NAME("LPAREN"))
+    TT_RPAREN = CINT(TOK_BY_NAME("RPAREN"))
+    TT_LBRACKET = CINT(TOK_BY_NAME("LBRACKET"))
+    TT_RBRACKET = CINT(TOK_BY_NAME("RBRACKET"))
+    TT_COMMA = CINT(TOK_BY_NAME("COMMA"))
+    TT_COLON = CINT(TOK_BY_NAME("COLON"))
+    TT_SEMICOLON = CINT(TOK_BY_NAME("SEMICOLON"))
+    TT_DOT = CINT(TOK_BY_NAME("DOT"))
+    TT_MINUS = CINT(TOK_BY_NAME("MINUS"))
+    TT_BNOT = CINT(TOK_BY_NAME("BNOT"))
+    TT_NOT = CINT(TOK_BY_NAME("NOT"))
+    TT_AND = CINT(TOK_BY_NAME("AND"))
+    TT_ANDALSO = CINT(TOK_BY_NAME("ANDALSO"))
+    TT_OR = CINT(TOK_BY_NAME("OR"))
+    TT_ORELSE = CINT(TOK_BY_NAME("ORELSE"))
+    TT_NE = CINT(TOK_BY_NAME("NE"))
+    TT_CARET = CINT(TOK_BY_NAME("CARET"))
+    TT_TRUE = CINT(TOK_BY_NAME("TRUE_KW"))
+    TT_FALSE = CINT(TOK_BY_NAME("FALSE_KW"))
+
+    cmpN = 0
+    cmpOps[cmpN] = TOK_BY_NAME("GT") : cmpN = cmpN + 1
+    cmpOps[cmpN] = TOK_BY_NAME("LT") : cmpN = cmpN + 1
+    cmpOps[cmpN] = TOK_BY_NAME("GE") : cmpN = cmpN + 1
+    cmpOps[cmpN] = TOK_BY_NAME("LE") : cmpN = cmpN + 1
+    cmpOps[cmpN] = TOK_BY_NAME("NE") : cmpN = cmpN + 1
+    cmpOps[cmpN] = TOK_BY_NAME("ASSIGN") : cmpN = cmpN + 1
+
+    addN = 0
+    addOps[addN] = TOK_BY_NAME("PLUS") : addN = addN + 1
+    addOps[addN] = TOK_BY_NAME("MINUS") : addN = addN + 1
+
+    mulN = 0
+    mulOps[mulN] = TOK_BY_NAME("STAR") : mulN = mulN + 1
+    mulOps[mulN] = TOK_BY_NAME("SLASH") : mulN = mulN + 1
+    mulOps[mulN] = TOK_BY_NAME("BACKSLASH") : mulN = mulN + 1
+    mulOps[mulN] = TOK_BY_NAME("MOD") : mulN = mulN + 1
+
+    K_LET = 0
+    K_DIM = 1
+    K_PRINT = 2
+    K_IF = 6
+    K_SUB = 7
+    K_FUNCTION = 8
+    K_DO_LOOP = 9
+    K_FOR_LOOP = 10
+    K_RETURN = 11
+    K_EXPR_STMT = 12
+    K_ASSIGN = 13
+    K_INDEX_ASSIGN = 14
+    K_END_STMT = 24
+    K_OPTION = 29
+    K_EXIT_LOOP = 30
+    K_CONTINUE_LOOP = 31
+
+    X_LIT_INT = 0
+    X_LIT_FLOAT = 1
+    X_LIT_STR = 2
+    X_LIT_BOOL = 3
+    X_VARIABLE = 4
+    X_BINARY = 5
+    X_UNARY = 6
+    X_CALL = 7
+    X_INDEX = 8
+    X_ARRAY_LIT = 9
+
+    opCount = 0
+    OP_ADD("->", "ARROW")
+    OP_ADD("|>", "PIPE")
+    OP_ADD("<=", "LE")
+    OP_ADD("<>", "NE")
+    OP_ADD(">=", "GE")
+    OP_ADD("+", "PLUS")
+    OP_ADD("-", "MINUS")
+    OP_ADD("*", "STAR")
+    OP_ADD("/", "SLASH")
+    ' One backslash. jdBasic string literals are raw, so this is not an escape.
+    OP_ADD("\", "BACKSLASH")
+    OP_ADD("^", "CARET")
+    OP_ADD("(", "LPAREN")
+    OP_ADD(")", "RPAREN")
+    OP_ADD("[", "LBRACKET")
+    OP_ADD("]", "RBRACKET")
+    OP_ADD(",", "COMMA")
+    OP_ADD(":", "COLON")
+    OP_ADD(";", "SEMICOLON")
+    OP_ADD(".", "DOT")
+    OP_ADD("@", "AT")
+    OP_ADD("?", "PLACEHOLDER")
+    OP_ADD("{", "LBRACE")
+    OP_ADD("}", "RBRACE")
+    OP_ADD("<", "LT")
+    OP_ADD(">", "GT")
+    OP_ADD("=", "ASSIGN")
+ENDSUB
+
+' ── Lexer ───────────────────────────────────────────────────────────────────
+'
+' Taken verbatim from selfhost/jdbc_lex.jdb, which is the copy the token
+' comparison runs against. jdBasic-0 has no include, and modules do not carry
+' their state across an IMPORT here, so the scanner lives in both files. A
+' drift between them shows up as a different tree in the AST comparison.
+' ── Character tests ────────────────────────────────────────────────────────
+
+FUNC IS_DIGIT_C(c AS INTEGER) AS INTEGER
+    IF c >= 48 AND c <= 57 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC IS_ALPHA_C(c AS INTEGER) AS INTEGER
+    IF c >= 65 AND c <= 90 THEN RETURN 1
+    IF c >= 97 AND c <= 122 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC IS_ALNUM_C(c AS INTEGER) AS INTEGER
+    IF IS_DIGIT_C(c) = 1 THEN RETURN 1
+    IF IS_ALPHA_C(c) = 1 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC IS_HEX_C(c AS INTEGER) AS INTEGER
+    IF IS_DIGIT_C(c) = 1 THEN RETURN 1
+    IF c >= 65 AND c <= 70 THEN RETURN 1
+    IF c >= 97 AND c <= 102 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC HEX_VAL(c AS INTEGER) AS INTEGER
+    IF c >= 48 AND c <= 57 THEN RETURN c - 48
+    IF c >= 65 AND c <= 70 THEN RETURN c - 55
+    RETURN c - 87
+ENDFUNC
+
+' ── Cursor ─────────────────────────────────────────────────────────────────
+
+FUNC PEEKCH() AS INTEGER
+    IF pos >= LEN(src) THEN RETURN 0
+    RETURN BYTEAT(src, pos)
+ENDFUNC
+
+FUNC PEEKNEXT() AS INTEGER
+    IF pos + 1 >= LEN(src) THEN RETURN 0
+    RETURN BYTEAT(src, pos + 1)
+ENDFUNC
+
+FUNC ADVANCE() AS INTEGER
+    DIM c AS INTEGER
+    c = CINT(BYTEAT(src, pos))
+    pos = pos + 1
+    IF c = 10 THEN
+        lineNo = lineNo + 1
+        colNo = 1
+    ELSE
+        colNo = colNo + 1
+    ENDIF
+    RETURN c
+ENDFUNC
+
+' The line and column recorded are the ones current *after* the token text has
+' been consumed, which is what the reference lexer does.
+SUB ADDTOK(ty AS INTEGER, val AS STRING)
+    IF tkCount >= MAX_TOKENS THEN
+        lexError = "too many tokens"
+        RETURN
+    ENDIF
+    tkType[tkCount] = ty
+    tkLine[tkCount] = lineNo
+    tkCol[tkCount] = colNo
+    tkVal[tkCount] = val
+    tkCount = tkCount + 1
+ENDSUB
+
+' ── Tables ─────────────────────────────────────────────────────────────────
+
+SUB KW_ADD(w AS STRING, t AS INTEGER)
+    kwWord[kwCount] = w
+    kwType[kwCount] = t
+    kwCount = kwCount + 1
+ENDSUB
+
+FUNC KW_LOOKUP(w AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO kwCount - 1
+        IF kwWord[i] = w THEN RETURN CINT(kwType[i])
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC TOK_BY_NAME(n AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO tokNameCount - 1
+        IF tokName[i] = n THEN RETURN i
+    NEXT i
+    PRINT "LEX SETUP: unknown token name "; n
+    RETURN -1
+ENDFUNC
+
+SUB OP_ADD(w AS STRING, n AS STRING)
+    opName[opCount] = w
+    opType[opCount] = CINT(TOK_BY_NAME(n))
+    opCount = opCount + 1
+ENDSUB
+
+' ── Scanners ───────────────────────────────────────────────────────────────
+
+' Raw literals: a backslash is an ordinary character and a doubled quote is
+' how a quote gets in, so this one is built up rather than sliced out.
+SUB READ_STRING()
+    DIM r AS STRING
+    DIM c AS INTEGER
+    DIM discard AS INTEGER
+
+    discard = CINT(ADVANCE())
+    r = ""
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        c = CINT(PEEKCH())
+        IF c = 34 THEN
+            IF pos + 1 < LEN(src) ANDALSO PEEKNEXT() = 34 THEN
+                r = r + CHR$(34)
+                discard = CINT(ADVANCE())
+                discard = CINT(ADVANCE())
+            ELSE
+                EXITDO
+            ENDIF
+        ELSE
+            r = r + CHR$(CINT(ADVANCE()))
+        ENDIF
+    LOOP
+    IF pos < LEN(src) THEN discard = CINT(ADVANCE())
+    ADDTOK(T_STRING_LIT, r)
+ENDSUB
+
+SUB READ_NUMBER()
+    DIM start AS INTEGER
+    DIM isFloat AS INTEGER
+    DIM c AS INTEGER
+    DIM discard AS INTEGER
+
+    start = pos
+    isFloat = 0
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        c = CINT(PEEKCH())
+        IF IS_DIGIT_C(c) = 0 AND c <> 46 THEN EXITDO
+        IF c = 46 THEN
+            IF isFloat = 1 THEN EXITDO
+            isFloat = 1
+        ENDIF
+        discard = CINT(ADVANCE())
+    LOOP
+
+    IF pos < LEN(src) THEN
+        c = CINT(PEEKCH())
+        IF c = 101 OR c = 69 THEN
+            isFloat = 1
+            discard = CINT(ADVANCE())
+            IF pos < LEN(src) THEN
+                c = CINT(PEEKCH())
+                IF c = 43 OR c = 45 THEN discard = CINT(ADVANCE())
+            ENDIF
+            DO
+                IF pos >= LEN(src) THEN EXITDO
+                IF IS_DIGIT_C(CINT(PEEKCH())) = 0 THEN EXITDO
+                discard = CINT(ADVANCE())
+            LOOP
+        ENDIF
+    ENDIF
+
+    IF isFloat = 1 THEN
+        ADDTOK(T_FLOAT_LIT, MID$(src, start, pos - start))
+    ELSE
+        ADDTOK(T_INTEGER_LIT, MID$(src, start, pos - start))
+    ENDIF
+ENDSUB
+
+SUB SKIP_COMMENT()
+    DIM discard AS INTEGER
+    DO
+        IF pos >= LEN(src) THEN RETURN
+        IF PEEKCH() = 10 THEN RETURN
+        discard = CINT(ADVANCE())
+    LOOP
+ENDSUB
+
+SUB READ_IDENT()
+    DIM start AS INTEGER
+    DIM id AS STRING
+    DIM up AS STRING
+    DIM t AS INTEGER
+    DIM discard AS INTEGER
+
+    start = pos
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        IF IS_ALNUM_C(CINT(PEEKCH())) = 0 AND PEEKCH() <> 95 THEN EXITDO
+        discard = CINT(ADVANCE())
+    LOOP
+    ' A trailing $ belongs to the name: GETENV$, DATE$ and friends.
+    IF pos < LEN(src) THEN
+        IF PEEKCH() = 36 THEN discard = CINT(ADVANCE())
+    ENDIF
+
+    id = MID$(src, start, pos - start)
+    up = UCASE$(id)
+
+    IF up = "REM" THEN
+        SKIP_COMMENT()
+        ADDTOK(T_NEWLINE, "\n")
+        RETURN
+    ENDIF
+
+    t = CINT(KW_LOOKUP(up))
+    IF t >= 0 THEN
+        ADDTOK(t, up)
+    ELSE
+        ADDTOK(T_IDENTIFIER, up)
+    ENDIF
+ENDSUB
+
+' $FF and %0101 both become an INTEGER_LIT carrying the decimal text.
+SUB READ_RADIX(base AS INTEGER)
+    DIM v AS DOUBLE
+    DIM c AS INTEGER
+    DIM discard AS INTEGER
+
+    discard = CINT(ADVANCE())
+    v = 0
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        c = CINT(PEEKCH())
+        IF base = 16 THEN
+            IF IS_HEX_C(c) = 0 THEN EXITDO
+            v = v * 16 + HEX_VAL(c)
+        ELSE
+            IF c <> 48 AND c <> 49 THEN EXITDO
+            v = v * 2 + (c - 48)
+        ENDIF
+        discard = CINT(ADVANCE())
+    LOOP
+    ADDTOK(T_INTEGER_LIT, STR$(v))
+ENDSUB
+
+' ── The loop ───────────────────────────────────────────────────────────────
+
+SUB TOKENIZE()
+    DIM c AS INTEGER
+    DIM lastWasNewline AS INTEGER
+    DIM i AS INTEGER
+    DIM matched AS INTEGER
+    DIM two AS STRING
+    DIM one AS STRING
+    DIM discard AS INTEGER
+
+    pos = 0
+    lineNo = 1
+    colNo = 1
+    tkCount = 0
+    lastWasNewline = 1
+
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        IF lexError <> "" THEN RETURN
+
+        ' Spaces, tabs and carriage returns carry no token.
+        DO
+            IF pos >= LEN(src) THEN EXITDO
+            c = CINT(PEEKCH())
+            IF c <> 32 AND c <> 9 AND c <> 13 THEN EXITDO
+            discard = CINT(ADVANCE())
+        LOOP
+        IF pos >= LEN(src) THEN EXITDO
+
+        c = CINT(PEEKCH())
+
+        IF c = 10 THEN
+            discard = CINT(ADVANCE())
+            ' A trailing _ joins this line with the next, so it and the break
+            ' both disappear.
+            IF tkCount > 0 ANDALSO tkType[tkCount - 1] = T_IDENTIFIER ANDALSO tkVal[tkCount - 1] = "_" THEN
+                tkCount = tkCount - 1
+                CONTINUEDO
+            ENDIF
+            IF lastWasNewline = 0 THEN
+                ADDTOK(T_NEWLINE, "\n")
+                lastWasNewline = 1
+            ENDIF
+            CONTINUEDO
+        ENDIF
+
+        lastWasNewline = 0
+
+        IF c = 39 THEN
+            SKIP_COMMENT()
+            CONTINUEDO
+        ENDIF
+
+        IF c = 34 THEN
+            READ_STRING()
+            CONTINUEDO
+        ENDIF
+
+        IF c = 36 AND IS_HEX_C(CINT(PEEKNEXT())) = 1 THEN
+            READ_RADIX(16)
+            CONTINUEDO
+        ENDIF
+
+        IF c = 37 AND (PEEKNEXT() = 48 OR PEEKNEXT() = 49) THEN
+            READ_RADIX(2)
+            CONTINUEDO
+        ENDIF
+
+        IF IS_DIGIT_C(c) = 1 OR (c = 46 AND IS_DIGIT_C(CINT(PEEKNEXT())) = 1) THEN
+            READ_NUMBER()
+            CONTINUEDO
+        ENDIF
+
+        IF IS_ALPHA_C(c) = 1 OR c = 95 THEN
+            READ_IDENT()
+            CONTINUEDO
+        ENDIF
+
+        ' Operators, longest first so <= wins over <.
+        two = MID$(src, pos, 2)
+        one = MID$(src, pos, 1)
+        matched = 0
+        FOR i = 0 TO opCount - 1
+            IF LEN(opName[i]) = 2 AND opName[i] = two THEN
+                discard = CINT(ADVANCE())
+                discard = CINT(ADVANCE())
+                ADDTOK(CINT(opType[i]), opName[i])
+                matched = 1
+                EXITFOR
+            ENDIF
+        NEXT i
+        IF matched = 0 THEN
+            FOR i = 0 TO opCount - 1
+                IF LEN(opName[i]) = 1 AND opName[i] = one THEN
+                    discard = CINT(ADVANCE())
+                    ADDTOK(CINT(opType[i]), opName[i])
+                    matched = 1
+                    EXITFOR
+                ENDIF
+            NEXT i
+        ENDIF
+        IF matched = 0 THEN
+            lexError = "Unexpected character " + one + " at line " + STR$(lineNo)
+            RETURN
+        ENDIF
+    LOOP
+
+    IF lastWasNewline = 0 THEN ADDTOK(T_NEWLINE, "\n")
+    ADDTOK(T_EOF, "")
+ENDSUB
+
+' ── Node builders ──────────────────────────────────────────────────────────
+
+FUNC NEW_EXPR(k AS INTEGER, ln AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    i = exCount
+    exKind[i] = k
+    exLine[i] = ln
+    exInt[i] = 0
+    exFloat[i] = 0
+    exStr[i] = ""
+    exOp[i] = 0
+    exFn[i] = ""
+    exLeft[i] = -1
+    exRight[i] = -1
+    exArgAt[i] = 0
+    exArgN[i] = 0
+    exCount = exCount + 1
+    RETURN i
+ENDFUNC
+
+FUNC NEW_STMT(k AS INTEGER, ln AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    i = stCount
+    stKind[i] = k
+    stLine[i] = ln
+    stVar[i] = ""
+    stVType[i] = 0
+    stEType[i] = 0
+    stConst[i] = 0
+    stFunc[i] = ""
+    stRType[i] = 0
+    stExpr[i] = -1
+    stCond[i] = -1
+    stEnd[i] = -1
+    stStep[i] = -1
+    stTop[i] = 0
+    stUntil[i] = 0
+    stNoNl[i] = 0
+    stPrAt[i] = 0
+    stPrN[i] = 0
+    stSepAt[i] = 0
+    stSepN[i] = 0
+    stIxAt[i] = 0
+    stIxN[i] = 0
+    stParAt[i] = 0
+    stParN[i] = 0
+    stBodyAt[i] = 0
+    stBodyN[i] = 0
+    stBrAt[i] = 0
+    stBrN[i] = 0
+    stCount = stCount + 1
+    RETURN i
+ENDFUNC
+
+' ── Cursor over the token stream ───────────────────────────────────────────
+
+FUNC TT() AS INTEGER
+    IF cur >= tkCount THEN RETURN T_EOF
+    RETURN CINT(tkType[cur])
+ENDFUNC
+
+FUNC TT_AT(k AS INTEGER) AS INTEGER
+    IF cur + k >= tkCount THEN RETURN T_EOF
+    RETURN CINT(tkType[cur + k])
+ENDFUNC
+
+FUNC TV$() AS STRING
+    IF cur >= tkCount THEN RETURN ""
+    RETURN tkVal[cur]
+ENDFUNC
+
+FUNC TL() AS INTEGER
+    IF cur >= tkCount THEN RETURN 0
+    RETURN CINT(tkLine[cur])
+ENDFUNC
+
+SUB EAT()
+    cur = cur + 1
+ENDSUB
+
+FUNC IS_ONE_OF(t AS INTEGER, list AS ARRAY, n AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        IF list[i] = t THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+SUB FAIL(msg AS STRING)
+    IF parseError = "" THEN parseError = msg + " at line " + STR$(TL())
+ENDSUB
+
+SUB SKIP_SEPS()
+    DO
+        IF TT() = T_NEWLINE OR TT() = TT_COLON THEN
+            EAT()
+        ELSE
+            RETURN
+        ENDIF
+    LOOP
+ENDSUB
+
+' ── Expressions ────────────────────────────────────────────────────────────
+
+
+FUNC P_PRIMARY() AS INTEGER
+    DIM ln AS INTEGER
+    DIM nd AS INTEGER
+    DIM nm AS STRING
+    DIM a AS INTEGER
+    DIM start AS INTEGER
+    DIM n AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM i AS INTEGER
+
+    ln = CINT(TL())
+
+    IF TT() = T_INTEGER_LIT THEN
+        nd = CINT(NEW_EXPR(X_LIT_INT, ln))
+        exInt[nd] = VAL(TV$())
+        EAT()
+        RETURN nd
+    ENDIF
+    IF TT() = T_FLOAT_LIT THEN
+        nd = CINT(NEW_EXPR(X_LIT_FLOAT, ln))
+        exFloat[nd] = VAL(TV$())
+        EAT()
+        RETURN nd
+    ENDIF
+    IF TT() = T_STRING_LIT THEN
+        nd = CINT(NEW_EXPR(X_LIT_STR, ln))
+        exStr[nd] = TV$()
+        EAT()
+        RETURN nd
+    ENDIF
+    IF TT() = TT_TRUE OR TT() = TT_FALSE THEN
+        nd = CINT(NEW_EXPR(X_LIT_BOOL, ln))
+        EAT()
+        RETURN nd
+    ENDIF
+
+    IF TT() = TT_LPAREN THEN
+        EAT()
+        nd = CINT(P_EXPR())
+        IF TT() <> TT_RPAREN THEN
+            FAIL("expected )")
+            RETURN nd
+        ENDIF
+        EAT()
+        RETURN nd
+    ENDIF
+
+    ' [a, b, c] is an array literal; its elements are the arguments.
+    IF TT() = TT_LBRACKET THEN
+        EAT()
+        n = 0
+        DO
+            IF TT() = TT_RBRACKET THEN EXITDO
+            IF TT() = T_EOF THEN
+                FAIL("expected ]")
+                EXITDO
+            ENDIF
+            tmp[n] = P_EXPR()
+            n = n + 1
+            IF TT() = TT_COMMA THEN EAT()
+        LOOP
+        IF TT() = TT_RBRACKET THEN EAT()
+        nd = CINT(NEW_EXPR(X_ARRAY_LIT, ln))
+        start = argN
+        FOR i = 0 TO n - 1
+            argBuf[argN] = tmp[i]
+            argN = argN + 1
+        NEXT i
+        exArgAt[nd] = start
+        exArgN[nd] = n
+        RETURN nd
+    ENDIF
+
+    ' A name is a call when a parenthesis follows it, otherwise a variable.
+    ' A dotted name is one identifier as far as the tree is concerned.
+    IF TT() = T_IDENTIFIER THEN
+        nm = TV$()
+        EAT()
+        DO
+            IF TT() <> TT_DOT THEN EXITDO
+            EAT()
+            nm = nm + "." + TV$()
+            EAT()
+        LOOP
+        IF TT() = TT_LPAREN THEN
+            EAT()
+            n = 0
+            DO
+                IF TT() = TT_RPAREN THEN EXITDO
+                IF TT() = T_EOF THEN
+                    FAIL("expected )")
+                    EXITDO
+                ENDIF
+                tmp[n] = P_EXPR()
+                n = n + 1
+                IF TT() = TT_COMMA THEN EAT()
+            LOOP
+            IF TT() = TT_RPAREN THEN EAT()
+            nd = CINT(NEW_EXPR(X_CALL, ln))
+            exFn[nd] = nm
+            start = argN
+            FOR i = 0 TO n - 1
+                argBuf[argN] = tmp[i]
+                argN = argN + 1
+            NEXT i
+            exArgAt[nd] = start
+            exArgN[nd] = n
+            RETURN nd
+        ENDIF
+        nd = CINT(NEW_EXPR(X_VARIABLE, ln))
+        exStr[nd] = nm
+        RETURN nd
+    ENDIF
+
+    FAIL("unexpected token " + TV$())
+    RETURN CINT(NEW_EXPR(X_LIT_INT, ln))
+ENDFUNC
+
+' Indexing binds tighter than any operator. C[a, b] is C[a][b].
+FUNC P_POSTFIX(lhs AS INTEGER) AS INTEGER
+    DIM ln AS INTEGER
+    DIM idx AS INTEGER
+    DIM nd AS INTEGER
+    DIM node AS INTEGER
+
+    node = lhs
+    DO
+        IF TT() <> TT_LBRACKET THEN RETURN node
+        ln = CINT(TL())
+        EAT()
+        idx = CINT(P_EXPR())
+        DO
+            IF TT() <> TT_COMMA THEN EXITDO
+            EAT()
+            nd = CINT(NEW_EXPR(X_INDEX, ln))
+            exLeft[nd] = node
+            exRight[nd] = idx
+            node = nd
+            idx = CINT(P_EXPR())
+        LOOP
+        IF TT() = TT_RBRACKET THEN
+            EAT()
+        ELSE
+            FAIL("expected ]")
+        ENDIF
+        nd = CINT(NEW_EXPR(X_INDEX, ln))
+        exLeft[nd] = node
+        exRight[nd] = idx
+        node = nd
+    LOOP
+ENDFUNC
+
+FUNC P_UNARY() AS INTEGER
+    DIM ln AS INTEGER
+    DIM nd AS INTEGER
+    IF TT() = TT_MINUS OR TT() = TT_BNOT THEN
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_UNARY, ln))
+        exOp[nd] = TT()
+        EAT()
+        exRight[nd] = P_UNARY()
+        RETURN nd
+    ENDIF
+    RETURN CINT(P_POSTFIX(CINT(P_PRIMARY())))
+ENDFUNC
+
+FUNC P_POW() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_UNARY())
+    DO
+        IF TT() <> TT_CARET THEN RETURN lhs
+        ln = CINT(TL())
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT_CARET
+        exLeft[nd] = lhs
+        exRight[nd] = P_UNARY()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_MUL() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_POW())
+    DO
+        IF IS_ONE_OF(TT(), mulOps, mulN) = 0 THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_POW()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_ADD() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_MUL())
+    DO
+        IF IS_ONE_OF(TT(), addOps, addN) = 0 THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_MUL()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+' = doubles as equality here, which is why assignment is decided by the
+' statement parser before the expression parser ever sees the line.
+FUNC P_CMP() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_ADD())
+    DO
+        IF IS_ONE_OF(TT(), cmpOps, cmpN) = 0 THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_ADD()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_AND() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_CMP())
+    DO
+        IF TT() <> TT_AND ANDALSO TT() <> TT_ANDALSO THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_CMP()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_EXPR() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_AND())
+    DO
+        IF TT() <> TT_OR ANDALSO TT() <> TT_ORELSE THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_AND()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+' ── Statement keywords, all looked up by name ──────────────────────────────
+
+DIM KT_OPTION AS INTEGER
+DIM KT_CONST AS INTEGER
+DIM KT_DIM AS INTEGER
+DIM KT_PRINT AS INTEGER
+DIM KT_IF AS INTEGER
+DIM KT_THEN AS INTEGER
+DIM KT_ELSE AS INTEGER
+DIM KT_ENDIF AS INTEGER
+DIM KT_DO AS INTEGER
+DIM KT_LOOP AS INTEGER
+DIM KT_WHILE AS INTEGER
+DIM KT_UNTIL AS INTEGER
+DIM KT_FOR AS INTEGER
+DIM KT_TO AS INTEGER
+DIM KT_STEP AS INTEGER
+DIM KT_NEXT AS INTEGER
+DIM KT_FUNC AS INTEGER
+DIM KT_ENDFUNC AS INTEGER
+DIM KT_SUB AS INTEGER
+DIM KT_ENDSUB AS INTEGER
+DIM KT_RETURN AS INTEGER
+DIM KT_END AS INTEGER
+DIM KT_EXITDO AS INTEGER
+DIM KT_EXITFOR AS INTEGER
+DIM KT_EXITFUNC AS INTEGER
+DIM KT_CONTDO AS INTEGER
+DIM KT_CONTFOR AS INTEGER
+DIM KT_AS AS INTEGER
+
+DIM vtypeTok[32]
+DIM vtypeVal[32]
+DIM vtypeN AS INTEGER
+
+DIM V_ARRAY AS INTEGER
+
+SUB LOAD_STMT_TABLES()
+    DIM i AS INTEGER
+    DIM t AS INTEGER
+
+    KT_OPTION = CINT(TOK_BY_NAME("OPTION_KW"))
+    KT_CONST = CINT(TOK_BY_NAME("CONST_KW"))
+    KT_DIM = CINT(TOK_BY_NAME("DIM"))
+    KT_PRINT = CINT(TOK_BY_NAME("PRINT"))
+    KT_IF = CINT(TOK_BY_NAME("IF"))
+    KT_THEN = CINT(TOK_BY_NAME("THEN"))
+    KT_ELSE = CINT(TOK_BY_NAME("ELSE"))
+    KT_ENDIF = CINT(TOK_BY_NAME("ENDIF_KW"))
+    KT_DO = CINT(TOK_BY_NAME("DO"))
+    KT_LOOP = CINT(TOK_BY_NAME("LOOP"))
+    KT_WHILE = CINT(TOK_BY_NAME("WHILE"))
+    KT_UNTIL = CINT(TOK_BY_NAME("UNTIL"))
+    KT_FOR = CINT(TOK_BY_NAME("FOR"))
+    KT_TO = CINT(TOK_BY_NAME("TO"))
+    KT_STEP = CINT(TOK_BY_NAME("STEP"))
+    KT_NEXT = CINT(TOK_BY_NAME("NEXT"))
+    KT_FUNC = CINT(TOK_BY_NAME("FUNCTION"))
+    KT_ENDFUNC = CINT(TOK_BY_NAME("ENDFUNC"))
+    KT_SUB = CINT(TOK_BY_NAME("SUB"))
+    KT_ENDSUB = CINT(TOK_BY_NAME("ENDSUB"))
+    KT_RETURN = CINT(TOK_BY_NAME("RETURN"))
+    KT_END = CINT(TOK_BY_NAME("END"))
+    KT_EXITDO = CINT(TOK_BY_NAME("EXITDO"))
+    KT_EXITFOR = CINT(TOK_BY_NAME("EXITFOR"))
+    KT_EXITFUNC = CINT(TOK_BY_NAME("EXITFUNC"))
+    KT_CONTDO = CINT(TOK_BY_NAME("CONTINUEDO"))
+    KT_CONTFOR = CINT(TOK_BY_NAME("CONTINUEFOR"))
+    KT_AS = CINT(TOK_BY_NAME("AS"))
+
+    ' A type keyword is TY_ plus the VarType name, so the pairing is derived
+    ' rather than written out.
+    vtypeN = 0
+    V_ARRAY = 13
+    FOR i = 0 TO 14
+        t = -1
+        IF i = 1 THEN t = CINT(TOK_BY_NAME("TY_BOOLEAN"))
+        IF i = 2 THEN t = CINT(TOK_BY_NAME("TY_BYTE"))
+        IF i = 3 THEN t = CINT(TOK_BY_NAME("TY_CHAR"))
+        IF i = 4 THEN t = CINT(TOK_BY_NAME("TY_INT16"))
+        IF i = 5 THEN t = CINT(TOK_BY_NAME("TY_INT32"))
+        IF i = 6 THEN t = CINT(TOK_BY_NAME("TY_INT64"))
+        IF i = 7 THEN t = CINT(TOK_BY_NAME("TY_FLOAT16"))
+        IF i = 8 THEN t = CINT(TOK_BY_NAME("TY_FLOAT32"))
+        IF i = 9 THEN t = CINT(TOK_BY_NAME("TY_FLOAT64"))
+        IF i = 10 THEN t = CINT(TOK_BY_NAME("TY_STRING"))
+        IF i = 11 THEN t = CINT(TOK_BY_NAME("TY_OBJECT"))
+        IF i = 12 THEN t = CINT(TOK_BY_NAME("TY_TENSOR"))
+        IF i = 13 THEN t = CINT(TOK_BY_NAME("TY_ARRAY"))
+        IF i = 14 THEN t = CINT(TOK_BY_NAME("TY_ANY"))
+        IF t >= 0 THEN
+            vtypeTok[vtypeN] = t
+            vtypeVal[vtypeN] = i
+            vtypeN = vtypeN + 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+FUNC VTYPE_OF(t AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO vtypeN - 1
+        IF vtypeTok[i] = t THEN RETURN CINT(vtypeVal[i])
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' ── Statements ─────────────────────────────────────────────────────────────
+
+
+' Collects statements until one of the closing keywords, then copies them into
+' the body arena. The scratch list is local so nested bodies do not interleave.
+' endFollow is the keyword that has to follow END for it to close this block.
+' Without that check a bare END, which is a statement of its own, ends every
+' body it appears in.
+FUNC P_BODY(stop1 AS INTEGER, stop2 AS INTEGER, endFollow AS INTEGER) AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = T_EOF THEN EXITDO
+        IF TT() = stop1 OR TT() = stop2 THEN EXITDO
+        IF endFollow >= 0 ANDALSO TT() = KT_END ANDALSO TT_AT(1) = endFollow THEN EXITDO
+        tmp[n] = P_STMT()
+        n = n + 1
+    LOOP
+
+    start = bodyN
+    FOR i = 0 TO n - 1
+        bodyBuf[bodyN] = tmp[i]
+        bodyN = bodyN + 1
+    NEXT i
+    ' Packed as start times 4096 plus count, because jdBasic-0 has no way to
+    ' answer two numbers from one call.
+    RETURN start * 4096 + n
+ENDFUNC
+
+FUNC P_IF() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM cond AS INTEGER
+    DIM packed AS INTEGER
+    DIM nbr AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    DIM one AS INTEGER
+    ' Branches are collected here first. A nested IF inside a body allocates
+    ' from the same arena, so writing straight into it would both scatter this
+    ' statement's branches and overwrite the inner one's.
+    DIM myCond[64]
+    DIM myAt[64]
+    DIM myN[64]
+
+    ln = CINT(TL())
+    EAT()
+    cond = CINT(P_EXPR())
+    IF TT() = KT_THEN THEN EAT()
+
+    nbr = 0
+    nd = CINT(NEW_STMT(K_IF, ln))
+
+    ' Single line form: IF c THEN <statement>
+    IF TT() <> T_NEWLINE AND TT() <> TT_COLON THEN
+        one = CINT(P_STMT())
+        myCond[0] = cond
+        myAt[0] = bodyN
+        bodyBuf[bodyN] = one
+        bodyN = bodyN + 1
+        myN[0] = 1
+        nbr = 1
+    ELSE
+        packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_IF))
+        myCond[nbr] = cond
+        myAt[nbr] = packed \ 4096
+        myN[nbr] = packed MOD 4096
+        nbr = nbr + 1
+
+        DO
+            IF TT() <> KT_ELSE THEN EXITDO
+            EAT()
+            IF TT() = KT_IF THEN
+                EAT()
+                cond = CINT(P_EXPR())
+                IF TT() = KT_THEN THEN EAT()
+                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_IF))
+                myCond[nbr] = cond
+            ELSE
+                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_IF))
+                myCond[nbr] = -1
+            ENDIF
+            myAt[nbr] = packed \ 4096
+            myN[nbr] = packed MOD 4096
+            nbr = nbr + 1
+        LOOP
+
+        IF TT() = KT_ENDIF THEN
+            EAT()
+        ELSE
+            IF TT() = KT_END THEN
+                EAT()
+                IF TT() = KT_IF THEN EAT()
+            ENDIF
+        ENDIF
+    ENDIF
+
+    start = brN
+    FOR i = 0 TO nbr - 1
+        brCond[brN] = myCond[i]
+        brBodyAt[brN] = myAt[i]
+        brBodyN[brN] = myN[i]
+        brN = brN + 1
+    NEXT i
+    stBrAt[nd] = start
+    stBrN[nd] = nbr
+    RETURN nd
+ENDFUNC
+
+FUNC P_DO() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_DO_LOOP, ln))
+
+    IF TT() = KT_WHILE OR TT() = KT_UNTIL THEN
+        stTop[nd] = 1
+        IF TT() = KT_UNTIL THEN stUntil[nd] = 1
+        EAT()
+        stCond[nd] = P_EXPR()
+    ENDIF
+
+    packed = CINT(P_BODY(KT_LOOP, -1, -1))
+    stBodyAt[nd] = packed \ 4096
+    stBodyN[nd] = packed MOD 4096
+
+    IF TT() = KT_LOOP THEN
+        EAT()
+        IF TT() = KT_WHILE OR TT() = KT_UNTIL THEN
+            IF TT() = KT_UNTIL THEN stUntil[nd] = 1
+            EAT()
+            stCond[nd] = P_EXPR()
+        ENDIF
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+FUNC P_FOR() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_FOR_LOOP, ln))
+    stVar[nd] = TV$()
+    EAT()
+    IF TT() = TT_ASSIGN THEN EAT()
+    stExpr[nd] = P_EXPR()
+    IF TT() = KT_TO THEN EAT()
+    stEnd[nd] = P_EXPR()
+    IF TT() = KT_STEP THEN
+        EAT()
+        stStep[nd] = P_EXPR()
+    ENDIF
+
+    packed = CINT(P_BODY(KT_NEXT, -1, -1))
+    stBodyAt[nd] = packed \ 4096
+    stBodyN[nd] = packed MOD 4096
+
+    IF TT() = KT_NEXT THEN
+        EAT()
+        IF TT() = T_IDENTIFIER THEN EAT()
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+SUB P_PARAMS(nd AS INTEGER)
+    DIM start AS INTEGER
+    DIM n AS INTEGER
+    DIM vt AS INTEGER
+
+    start = parN
+    n = 0
+    IF TT() <> TT_LPAREN THEN
+        stParAt[nd] = start
+        stParN[nd] = 0
+        RETURN
+    ENDIF
+    EAT()
+    DO
+        IF TT() = TT_RPAREN THEN EXITDO
+        IF TT() = T_EOF THEN EXITDO
+        IF TT() = TT_COMMA THEN
+            EAT()
+            CONTINUEDO
+        ENDIF
+        parName[parN] = TV$()
+        parType[parN] = 0
+        EAT()
+        IF TT() = KT_AS THEN
+            EAT()
+            vt = CINT(VTYPE_OF(TT()))
+            IF vt >= 0 THEN parType[parN] = vt
+            EAT()
+        ENDIF
+        parN = parN + 1
+        n = n + 1
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+    stParAt[nd] = start
+    stParN[nd] = n
+ENDSUB
+
+FUNC P_ROUTINE(isFunc AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+    DIM vt AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    IF isFunc = 1 THEN
+        nd = CINT(NEW_STMT(K_FUNCTION, ln))
+    ELSE
+        nd = CINT(NEW_STMT(K_SUB, ln))
+    ENDIF
+    stFunc[nd] = TV$()
+    EAT()
+    P_PARAMS(nd)
+    IF TT() = KT_AS THEN
+        EAT()
+        vt = CINT(VTYPE_OF(TT()))
+        IF vt >= 0 THEN stRType[nd] = vt
+        EAT()
+    ENDIF
+
+    IF isFunc = 1 THEN
+        packed = CINT(P_BODY(KT_ENDFUNC, -1, KT_FUNC))
+    ELSE
+        packed = CINT(P_BODY(KT_ENDSUB, -1, KT_SUB))
+    ENDIF
+    stBodyAt[nd] = packed \ 4096
+    stBodyN[nd] = packed MOD 4096
+
+    IF TT() = KT_ENDFUNC OR TT() = KT_ENDSUB THEN
+        EAT()
+    ELSE
+        IF TT() = KT_END THEN
+            EAT()
+            IF TT() = KT_FUNC OR TT() = KT_SUB THEN EAT()
+        ENDIF
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+' DIM name[dims] AS type desugars to a ZEROS call over an array literal, which
+' is the shape the reference produces.
+FUNC P_DIM() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM vt AS INTEGER
+    DIM dims[16]
+    DIM ndim AS INTEGER
+    DIM lit AS INTEGER
+    DIM callNd AS INTEGER
+    DIM start AS INTEGER
+    DIM i AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_DIM, ln))
+    stVar[nd] = TV$()
+    EAT()
+
+    ndim = 0
+    IF TT() = TT_LBRACKET THEN
+        EAT()
+        DO
+            IF TT() = TT_RBRACKET THEN EXITDO
+            IF TT() = T_EOF THEN EXITDO
+            IF TT() = TT_COMMA THEN
+                EAT()
+                CONTINUEDO
+            ENDIF
+            dims[ndim] = P_EXPR()
+            ndim = ndim + 1
+        LOOP
+        IF TT() = TT_RBRACKET THEN EAT()
+    ENDIF
+
+    IF TT() = KT_AS THEN
+        EAT()
+        vt = CINT(VTYPE_OF(TT()))
+        IF vt >= 0 THEN
+            IF ndim > 0 THEN
+                stVType[nd] = V_ARRAY
+                stEType[nd] = vt
+            ELSE
+                stVType[nd] = vt
+            ENDIF
+        ENDIF
+        EAT()
+    ELSE
+        IF ndim > 0 THEN stVType[nd] = V_ARRAY
+    ENDIF
+
+    IF ndim > 0 THEN
+        lit = CINT(NEW_EXPR(X_ARRAY_LIT, ln))
+        start = argN
+        FOR i = 0 TO ndim - 1
+            argBuf[argN] = dims[i]
+            argN = argN + 1
+        NEXT i
+        exArgAt[lit] = start
+        exArgN[lit] = ndim
+        callNd = CINT(NEW_EXPR(X_CALL, ln))
+        exFn[callNd] = "ZEROS"
+        start = argN
+        argBuf[argN] = lit
+        argN = argN + 1
+        exArgAt[callNd] = start
+        exArgN[callNd] = 1
+        stExpr[nd] = callNd
+    ELSE
+        IF TT() = TT_ASSIGN THEN
+            EAT()
+            stExpr[nd] = P_EXPR()
+        ENDIF
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+FUNC P_PRINT() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM tmpE[MAX_LOCAL]
+    DIM tmpS[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM sep AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_PRINT, ln))
+    n = 0
+    sep = 0
+    DO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        tmpE[n] = P_EXPR()
+        tmpS[n] = sep
+        n = n + 1
+        IF TT() = TT_SEMICOLON THEN
+            sep = 2
+            EAT()
+        ELSE
+            IF TT() = TT_COMMA THEN
+                sep = 1
+                EAT()
+            ELSE
+                EXITDO
+            ENDIF
+        ENDIF
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN
+            stNoNl[nd] = 1
+            EXITDO
+        ENDIF
+    LOOP
+
+    start = prN
+    FOR i = 0 TO n - 1
+        prBuf[prN] = tmpE[i]
+        prN = prN + 1
+    NEXT i
+    stPrAt[nd] = start
+    stPrN[nd] = n
+
+    start = sepN
+    FOR i = 0 TO n - 1
+        sepBuf[sepN] = tmpS[i]
+        sepN = sepN + 1
+    NEXT i
+    stSepAt[nd] = start
+    stSepN[nd] = n
+    RETURN nd
+ENDFUNC
+
+FUNC P_STMT() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM t AS INTEGER
+    DIM save AS INTEGER
+    DIM idx AS INTEGER
+    DIM start AS INTEGER
+
+    SKIP_SEPS()
+    ln = CINT(TL())
+    t = CINT(TT())
+
+    IF t = KT_OPTION THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_OPTION, ln))
+        stExpr[nd] = NEW_EXPR(X_LIT_STR, ln)
+        exStr[CINT(stExpr[nd])] = TV$()
+        EAT()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_CONST THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_LET, ln))
+        stVar[nd] = TV$()
+        stConst[nd] = 1
+        EAT()
+        IF TT() = TT_ASSIGN THEN EAT()
+        stExpr[nd] = P_EXPR()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_DIM THEN RETURN CINT(P_DIM())
+    IF t = KT_PRINT THEN RETURN CINT(P_PRINT())
+    IF t = KT_IF THEN RETURN CINT(P_IF())
+    IF t = KT_DO THEN RETURN CINT(P_DO())
+    IF t = KT_FOR THEN RETURN CINT(P_FOR())
+    IF t = KT_FUNC THEN RETURN CINT(P_ROUTINE(1))
+    IF t = KT_SUB THEN RETURN CINT(P_ROUTINE(0))
+
+    IF t = KT_RETURN THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_RETURN, ln))
+        IF TT() <> T_NEWLINE AND TT() <> T_EOF AND TT() <> TT_COLON THEN
+            stExpr[nd] = P_EXPR()
+        ENDIF
+        RETURN nd
+    ENDIF
+
+    IF t = KT_END THEN
+        EAT()
+        RETURN CINT(NEW_STMT(K_END_STMT, ln))
+    ENDIF
+
+    ' The reference reuses is_while on an exit to mean EXITFUNC, so leaving a
+    ' loop clears it and leaving a function does not. Continue never touches it.
+    IF t = KT_EXITDO OR t = KT_EXITFOR OR t = KT_EXITFUNC THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_EXIT_LOOP, ln))
+        IF t <> KT_EXITFUNC THEN stUntil[nd] = 1
+        RETURN nd
+    ENDIF
+    IF t = KT_CONTDO OR t = KT_CONTFOR THEN
+        EAT()
+        RETURN CINT(NEW_STMT(K_CONTINUE_LOOP, ln))
+    ENDIF
+
+    ' A bare name followed by = is an assignment; with a bracket in between it
+    ' is an indexed one. Anything else is an expression statement.
+    IF t = T_IDENTIFIER THEN
+        save = cur
+        IF TT_AT(1) = TT_ASSIGN THEN
+            nd = CINT(NEW_STMT(K_ASSIGN, ln))
+            stVar[nd] = TV$()
+            EAT()
+            EAT()
+            stExpr[nd] = P_EXPR()
+            RETURN nd
+        ENDIF
+        IF TT_AT(1) = TT_LBRACKET THEN
+            nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+            stVar[nd] = TV$()
+            EAT()
+            EAT()
+            idx = CINT(P_EXPR())
+            IF TT() = TT_RBRACKET THEN EAT()
+            IF TT() = TT_ASSIGN THEN
+                EAT()
+                stExpr[nd] = P_EXPR()
+                start = ixN
+                ixBuf[ixN] = idx
+                ixN = ixN + 1
+                stIxAt[nd] = start
+                stIxN[nd] = 1
+                RETURN nd
+            ENDIF
+            cur = save
+            stCount = stCount - 1
+        ENDIF
+    ENDIF
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = P_EXPR()
+    RETURN nd
+ENDFUNC
+
+SUB P_PROGRAM()
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+
+    cur = 0
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = T_EOF THEN EXITDO
+        tmp[n] = P_STMT()
+        n = n + 1
+    LOOP
+    topAt = bodyN
+    FOR i = 0 TO n - 1
+        bodyBuf[bodyN] = tmp[i]
+        bodyN = bodyN + 1
+    NEXT i
+    topN = n
+ENDSUB
+
+' ── Printing the tree in the shape --dump-ast uses ─────────────────────────
+
+DIM outBuf AS STRING
+
+SUB EMIT(s AS STRING)
+    outBuf = outBuf + s
+ENDSUB
+
+FUNC PAD$(ind AS INTEGER) AS STRING
+    DIM r AS STRING
+    DIM i AS INTEGER
+    r = ""
+    FOR i = 1 TO ind
+        r = r + "  "
+    NEXT i
+    RETURN r
+ENDFUNC
+
+FUNC AESC$(v AS STRING) AS STRING
+    DIM r AS STRING
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    r = ""
+    FOR i = 0 TO LEN(v) - 1
+        c = CINT(BYTEAT(v, i))
+        IF c = 92 THEN
+            r = r + "\\"
+        ELSE
+            IF c = 10 THEN
+                r = r + "\n"
+            ELSE
+                IF c = 9 THEN
+                    r = r + "\t"
+                ELSE
+                    IF c = 13 THEN
+                        r = r + "\r"
+                    ELSE
+                        IF c = 32 THEN
+                            r = r + "\s"
+                        ELSE
+                            IF c = 41 THEN
+                                r = r + "\)"
+                            ELSE
+                                r = r + CHR$(c)
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN r
+ENDFUNC
+
+FUNC NUMTXT$(v AS DOUBLE) AS STRING
+    RETURN STR$(v)
+ENDFUNC
+
+SUB D_EXPR(ix AS INTEGER, ind AS INTEGER)
+    DIM i AS INTEGER
+    DIM k AS INTEGER
+    IF ix < 0 THEN RETURN
+    k = CINT(exKind[ix])
+    EMIT(PAD$(ind) + "(e" + STR$(k) + " l" + STR$(exLine[ix]))
+    IF exInt[ix] <> 0 THEN EMIT(" i=" + STR$(exInt[ix]))
+    IF exFloat[ix] <> 0 THEN EMIT(" f=" + NUMTXT$(exFloat[ix]))
+    IF exStr[ix] <> "" THEN EMIT(" s=" + AESC$(exStr[ix]))
+    IF k = X_BINARY OR k = X_UNARY THEN EMIT(" op=" + STR$(exOp[ix]))
+    IF exFn[ix] <> "" THEN EMIT(" fn=" + AESC$(exFn[ix]))
+    EMIT(CHR$(10))
+    D_EXPR(CINT(exLeft[ix]), ind + 1)
+    D_EXPR(CINT(exRight[ix]), ind + 1)
+    FOR i = 0 TO exArgN[ix] - 1
+        D_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]), ind + 1)
+    NEXT i
+    EMIT(PAD$(ind) + ")" + CHR$(10))
+ENDSUB
+
+SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
+    DIM i AS INTEGER
+    DIM b AS INTEGER
+    IF ix < 0 THEN RETURN
+    EMIT(PAD$(ind) + "(s" + STR$(stKind[ix]) + " l" + STR$(stLine[ix]))
+    IF stVar[ix] <> "" THEN EMIT(" v=" + AESC$(stVar[ix]))
+    IF stVType[ix] <> 0 THEN EMIT(" vt=" + STR$(stVType[ix]))
+    IF stEType[ix] <> 0 THEN EMIT(" et=" + STR$(stEType[ix]))
+    IF stConst[ix] <> 0 THEN EMIT(" const=1")
+    IF stFunc[ix] <> "" THEN EMIT(" fn=" + AESC$(stFunc[ix]))
+    IF stRType[ix] <> 0 THEN EMIT(" rt=" + STR$(stRType[ix]))
+    IF stTop[ix] <> 0 THEN EMIT(" top=1")
+    IF stUntil[ix] <> 0 THEN EMIT(" until=1")
+    IF stNoNl[ix] <> 0 THEN EMIT(" nonl=1")
+    FOR i = 0 TO stSepN[ix] - 1
+        EMIT(" sep=" + STR$(sepBuf[CINT(stSepAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stParN[ix] - 1
+        EMIT(" p=" + AESC$(parName[CINT(stParAt[ix]) + i]) + ":" + STR$(parType[CINT(stParAt[ix]) + i]))
+    NEXT i
+    EMIT(CHR$(10))
+
+    D_EXPR(CINT(stExpr[ix]), ind + 1)
+    D_EXPR(CINT(stCond[ix]), ind + 1)
+    D_EXPR(CINT(stEnd[ix]), ind + 1)
+    D_EXPR(CINT(stStep[ix]), ind + 1)
+    FOR i = 0 TO stPrN[ix] - 1
+        D_EXPR(CINT(prBuf[CINT(stPrAt[ix]) + i]), ind + 1)
+    NEXT i
+    FOR i = 0 TO stIxN[ix] - 1
+        D_EXPR(CINT(ixBuf[CINT(stIxAt[ix]) + i]), ind + 1)
+    NEXT i
+
+    FOR b = 0 TO stBrN[ix] - 1
+        EMIT(PAD$(ind + 1) + "(branch" + CHR$(10))
+        D_EXPR(CINT(brCond[CINT(stBrAt[ix]) + b]), ind + 2)
+        FOR i = 0 TO brBodyN[CINT(stBrAt[ix]) + b] - 1
+            D_STMT(CINT(bodyBuf[CINT(brBodyAt[CINT(stBrAt[ix]) + b]) + i]), ind + 2)
+        NEXT i
+        EMIT(PAD$(ind + 1) + ")" + CHR$(10))
+    NEXT b
+
+    FOR i = 0 TO stBodyN[ix] - 1
+        D_STMT(CINT(bodyBuf[CINT(stBodyAt[ix]) + i]), ind + 1)
+    NEXT i
+
+    EMIT(PAD$(ind) + ")" + CHR$(10))
+ENDSUB
+
+' ── Main ───────────────────────────────────────────────────────────────────
+
+DIM args AS ARRAY
+DIM path AS STRING
+DIM j AS INTEGER
+
+lexError = ""
+parseError = ""
+exCount = 0
+stCount = 0
+argN = 0
+prN = 0
+sepN = 0
+ixN = 0
+bodyN = 0
+parN = 0
+brN = 0
+outBuf = ""
+
+args = OS.ARGS
+IF LEN(args) < 2 THEN
+    PRINT "usage: jdbasic selfhost/jdbc_parse.jdb <file.jdb>"
+    END
+ENDIF
+path = args[1]
+
+LOAD_TABLES()
+LOAD_STMT_TABLES()
+
+' The reference reads source in text mode, which folds CRLF to LF.
+src = REPLACE$(TXTREADER$(path), CHR$(13) + CHR$(10), CHR$(10))
+TOKENIZE()
+IF lexError <> "" THEN
+    PRINT "LEX ERROR: "; lexError
+    END
+ENDIF
+
+P_PROGRAM()
+IF parseError <> "" THEN
+    PRINT "PARSE ERROR: "; parseError
+    END
+ENDIF
+
+FOR j = 0 TO topN - 1
+    D_STMT(CINT(bodyBuf[topAt + j]), 0)
+NEXT j
+PRINT outBuf;

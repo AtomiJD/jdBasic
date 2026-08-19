@@ -1,0 +1,15 @@
+DIM a AS INTEGER
+DIM b AS DOUBLE
+DIM s AS STRING
+DIM arr[4]
+a = 1 + 2 * 3 - 4 / 2
+a = (1 + 2) * 3
+a = -a
+a = a MOD 3
+b = 2.5 + 1.0e2
+s = "x" + "y"
+a = arr[1] + arr[2]
+IF a > 1 AND b < 2 OR s <> "" THEN a = 0
+IF a >= 1 ANDALSO a <= 9 THEN a = 1
+a = LEN(s) + INSTR(s, "x")
+a = CINT(VAL(MID$(s, 0, 1)))

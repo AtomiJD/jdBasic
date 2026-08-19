@@ -1,0 +1,10 @@
+OPTION EXPLICIT
+CONST LIMIT = 7
+DIM n AS INTEGER
+DIM names[4] AS STRING
+DIM grid[3]
+n = 1
+grid[0] = 2
+PRINT "x="; n
+PRINT n, 3
+RETURN

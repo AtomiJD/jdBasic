@@ -1,0 +1,9 @@
+DIM c AS INTEGER
+DO
+    IF c = 16 THEN
+        c = 1
+    ELSE
+        IF c <> 48 THEN EXITDO
+        c = 2
+    ENDIF
+LOOP

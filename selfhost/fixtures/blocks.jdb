@@ -1,0 +1,19 @@
+DIM n AS INTEGER
+IF n > 1 THEN n = 2
+IF n > 1 THEN
+    n = 3
+ELSE
+    n = 4
+ENDIF
+DO
+    n = n + 1
+LOOP WHILE n < 9
+FOR n = 0 TO 5 STEP 2
+    EXITFOR
+NEXT n
+FUNC F(a AS INTEGER) AS INTEGER
+    RETURN a
+ENDFUNC
+SUB S(b AS STRING)
+    PRINT b
+ENDSUB
