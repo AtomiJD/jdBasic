@@ -308,3 +308,6 @@ jdb/demos/games/basicroyale/stats.json
 wasm/art.jdb
 jdb/demos/games/basicroyale/admin.txt
 
+
+# self-hosting scratch output
+/tmp/s0_hello.*

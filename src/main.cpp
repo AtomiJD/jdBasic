@@ -1670,6 +1670,7 @@ int main(int argc, char* argv[]) {
     bool kernel_target = false;
     bool lint_mode = false;
     bool pretty_mode = false;
+    bool dump_tokens = false;
     bool pretty_vb   = false;
     bool mcp_mode = false;
     bool ftxui_mode = false;
@@ -1700,6 +1701,7 @@ int main(int argc, char* argv[]) {
               "  -c, --compile            Compile the script to native code (requires NATIVEC)\n"
               "  -o, --output <file>      Write the compiled .exe to <file> (default: script name)\n"
               "      --lint               Parse + typecheck only, do not run\n"
+              "      --dump-tokens        Print the token stream, one token per line\n"
               "      --pretty             Reformat source to stdout (UPPER keywords)\n"
               "      --pretty-vb          Reformat source to stdout (VB-style Pascal-cased keywords)\n"
               "      --mcp                Speak the Model Context Protocol on stdio\n"
@@ -1777,6 +1779,7 @@ int main(int argc, char* argv[]) {
         }
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--lint") { lint_mode = true; continue; }
+        if (a == "--dump-tokens") { dump_tokens = true; continue; }
         if (a == "--pretty") { pretty_mode = true; continue; }
         if (a == "--pretty-vb") { pretty_mode = true; pretty_vb = true; continue; }
         if (a == "--mcp") { mcp_mode = true; continue; }
@@ -1857,6 +1860,39 @@ int main(int argc, char* argv[]) {
     }
 
     // ── PRETTY (reformat source, print to stdout, no execution) ──
+    // Reference token stream, for differential testing against a lexer written
+    // in jdBasic. One token per line: type, line, col, then the raw text with
+    // the whitespace escaped so a string literal stays on its own line. The
+    // type is the TokenType enum value; the other side keeps its own table and
+    // a disagreement is exactly what the test is looking for.
+    if (dump_tokens) {
+        std::string program_buffer;
+        try { program_buffer = read_file(filename); }
+        catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
+        try {
+            Lexer lexer(program_buffer);
+            for (const auto& t : lexer.tokenize()) {
+                std::string v;
+                for (char c : t.value) {
+                    if (c == '\\')      v += "\\\\";
+                    else if (c == '\n') v += "\\n";
+                    else if (c == '\t') v += "\\t";
+                    else if (c == '\r') v += "\\r";
+                    else                v += c;
+                }
+                std::cout << (int)t.type << "\t" << t.line << "\t"
+                          << t.col << "\t" << v << "\n";
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "Lex error: " << e.what() << std::endl;
+            return 1;
+        }
+        return 0;
+    }
+
     if (pretty_mode) {
         std::string program_buffer;
         try { program_buffer = read_file(filename); }
