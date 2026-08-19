@@ -62,6 +62,7 @@ DIM exInt[MAX_NODES]
 DIM exFloat[MAX_NODES]
 DIM exStr[MAX_NODES] AS STRING
 DIM exOp[MAX_NODES]
+DIM exBool[MAX_NODES]
 DIM exFn[MAX_NODES] AS STRING
 DIM exLeft[MAX_NODES]
 DIM exRight[MAX_NODES]
@@ -140,6 +141,7 @@ DIM TT_COMMA AS INTEGER
 DIM TT_COLON AS INTEGER
 DIM TT_SEMICOLON AS INTEGER
 DIM TT_DOT AS INTEGER
+DIM TT_ARROW AS INTEGER
 DIM TT_MINUS AS INTEGER
 DIM TT_BNOT AS INTEGER
 DIM TT_NOT AS INTEGER
@@ -293,6 +295,7 @@ SUB LOAD_TABLES()
     TT_COLON = CINT(TOK_BY_NAME("COLON"))
     TT_SEMICOLON = CINT(TOK_BY_NAME("SEMICOLON"))
     TT_DOT = CINT(TOK_BY_NAME("DOT"))
+    TT_ARROW = CINT(TOK_BY_NAME("ARROW"))
     TT_MINUS = CINT(TOK_BY_NAME("MINUS"))
     TT_BNOT = CINT(TOK_BY_NAME("BNOT"))
     TT_NOT = CINT(TOK_BY_NAME("NOT"))
@@ -752,6 +755,7 @@ FUNC NEW_EXPR(k AS INTEGER, ln AS INTEGER) AS INTEGER
     exFloat[i] = 0
     exStr[i] = ""
     exOp[i] = 0
+    exBool[i] = 0
     exFn[i] = ""
     exLeft[i] = -1
     exRight[i] = -1
@@ -878,6 +882,7 @@ FUNC P_PRIMARY() AS INTEGER
     ENDIF
     IF TT() = TT_TRUE OR TT() = TT_FALSE THEN
         nd = CINT(NEW_EXPR(X_LIT_BOOL, ln))
+        IF TT() = TT_TRUE THEN exBool[nd] = 1
         EAT()
         RETURN nd
     ENDIF
@@ -901,6 +906,11 @@ FUNC P_PRIMARY() AS INTEGER
             IF TT() = TT_RBRACKET THEN EXITDO
             IF TT() = T_EOF THEN
                 FAIL("expected ]")
+                EXITDO
+            ENDIF
+            IF parseError <> "" THEN EXITDO
+            IF n >= MAX_LOCAL THEN
+                FAIL("too many items in one list")
                 EXITDO
             ENDIF
             tmp[n] = P_EXPR()
@@ -937,6 +947,11 @@ FUNC P_PRIMARY() AS INTEGER
                 IF TT() = TT_RPAREN THEN EXITDO
                 IF TT() = T_EOF THEN
                     FAIL("expected )")
+                    EXITDO
+                ENDIF
+                IF parseError <> "" THEN EXITDO
+                IF n >= MAX_LOCAL THEN
+                    FAIL("too many items in one list")
                     EXITDO
                 ENDIF
                 tmp[n] = P_EXPR()
@@ -1299,7 +1314,12 @@ FUNC P_IF() AS INTEGER
     IF TT() <> T_NEWLINE AND TT() <> TT_COLON THEN
         nThen = 0
         DO
+            IF parseError <> "" THEN EXITDO
             IF TT() = KT_ELSE OR TT() = T_NEWLINE OR TT() = T_EOF THEN EXITDO
+            IF nThen >= 64 THEN
+                FAIL("too many statements on one line")
+                EXITDO
+            ENDIF
             thenS[nThen] = P_STMT()
             nThen = nThen + 1
             IF TT() = TT_COLON THEN EAT()
@@ -1310,7 +1330,12 @@ FUNC P_IF() AS INTEGER
         IF TT() = KT_ELSE ANDALSO CINT(TL()) = ln THEN
             EAT()
             DO
+                IF parseError <> "" THEN EXITDO
                 IF TT() = T_NEWLINE OR TT() = T_EOF THEN EXITDO
+                IF nElse >= 64 THEN
+                    FAIL("too many statements on one line")
+                    EXITDO
+                ENDIF
                 elseS[nElse] = P_STMT()
                 nElse = nElse + 1
                 IF TT() = TT_COLON THEN EAT()
@@ -1344,7 +1369,12 @@ FUNC P_IF() AS INTEGER
         nbr = nbr + 1
 
         DO
+            IF parseError <> "" THEN EXITDO
             IF TT() <> KT_ELSE THEN EXITDO
+            IF nbr >= 64 THEN
+                FAIL("too many branches in one IF")
+                EXITDO
+            ENDIF
             EAT()
             IF TT() = KT_IF THEN
                 EAT()
@@ -1552,6 +1582,11 @@ FUNC P_DIM() AS INTEGER
                 EAT()
                 CONTINUEDO
             ENDIF
+            IF parseError <> "" THEN EXITDO
+            IF ndim >= 16 THEN
+                FAIL("too many dimensions")
+                EXITDO
+            ENDIF
             dims[ndim] = P_EXPR()
             ndim = ndim + 1
         LOOP
@@ -1617,6 +1652,11 @@ FUNC P_PRINT() AS INTEGER
     sep = 0
     DO
         IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF parseError <> "" THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many items in one list")
+            EXITDO
+        ENDIF
         tmpE[n] = P_EXPR()
         tmpS[n] = sep
         n = n + 1
@@ -1675,6 +1715,88 @@ FUNC STARTS_ARGS(t AS INTEGER) AS INTEGER
     RETURN 0
 ENDFUNC
 
+' Eight names are read as commands whatever follows them, unless what follows
+' makes the name a call or the left side of something. CD and PWD answer the
+' path they moved to, and the reference shows it, so they carry a PRINT.
+' TUI.BEGIN "hello" is a command whose name happens to carry dots, so what
+' decides the form is the token after the whole name.
+FUNC AFTER_DOTTED() AS INTEGER
+    DIM at AS INTEGER
+    at = 1
+    DO
+        IF TT_AT(at) <> TT_DOT THEN EXITDO
+        at = at + 2
+    LOOP
+    RETURN at
+ENDFUNC
+
+FUNC IS_BUILTIN_CMD(nm AS STRING) AS INTEGER
+    IF nm = "CD" OR nm = "PWD" OR nm = "MKDIR" OR nm = "KILL" THEN RETURN 1
+    IF nm = "DIR" OR nm = "TRON" OR nm = "TROFF" OR nm = "DUMP" THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC TAKES_BUILTIN_CMD(nt AS INTEGER) AS INTEGER
+    IF nt = TT_LPAREN OR nt = TT_ASSIGN OR nt = TT_DOT THEN RETURN 0
+    IF nt = TT_COLON OR nt = TT_ARROW THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+FUNC P_BUILTIN_CMD(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM nm AS STRING
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    nm = TV$()
+    EAT()
+
+    n = 0
+    IF TT() <> T_NEWLINE AND TT() <> T_EOF AND TT() <> TT_COLON THEN
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF n >= MAX_LOCAL THEN
+                FAIL("too many items in one list")
+                EXITDO
+            ENDIF
+            tmp[n] = P_EXPR()
+            n = n + 1
+            IF TT() <> TT_COMMA THEN EXITDO
+            EAT()
+        LOOP
+    ENDIF
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+
+    IF nm = "CD" OR nm = "PWD" THEN
+        nd = CINT(NEW_STMT(K_PRINT, ln))
+        stPrAt[nd] = prN
+        prBuf[prN] = callNd
+        prN = prN + 1
+        stPrN[nd] = 1
+        stSepAt[nd] = sepN
+        sepBuf[sepN] = 0
+        sepN = sepN + 1
+        stSepN[nd] = 1
+        RETURN nd
+    ENDIF
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
 ' NAME arg, arg  and a bare NAME, both of which are calls in the tree.
 FUNC P_COMMAND(ln AS INTEGER) AS INTEGER
     DIM nd AS INTEGER
@@ -1698,6 +1820,11 @@ FUNC P_COMMAND(ln AS INTEGER) AS INTEGER
     DO
         IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
         IF TT() = KT_ELSE THEN EXITDO
+        IF parseError <> "" THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many items in one list")
+            EXITDO
+        ENDIF
         tmp[n] = P_EXPR()
         n = n + 1
         IF TT() = TT_COMMA THEN
@@ -1727,8 +1854,10 @@ FUNC P_STMT() AS INTEGER
     DIM ln AS INTEGER
     DIM t AS INTEGER
     DIM save AS INTEGER
-    DIM idx AS INTEGER
     DIM start AS INTEGER
+    DIM myIdx[MAX_LOCAL]
+    DIM nIdx AS INTEGER
+    DIM i AS INTEGER
 
     SKIP_SEPS()
     ln = CINT(TL())
@@ -1794,6 +1923,9 @@ FUNC P_STMT() AS INTEGER
     ' BASIC's command form, TXTWRITER a, b, which is a call without brackets.
     ' Anything else is an expression statement.
     IF t = T_IDENTIFIER THEN
+        IF IS_BUILTIN_CMD(TV$()) = 1 ANDALSO TAKES_BUILTIN_CMD(CINT(TT_AT(1))) = 1 THEN
+            RETURN CINT(P_BUILTIN_CMD(ln))
+        ENDIF
         save = cur
         IF TT_AT(1) = TT_ASSIGN THEN
             nd = CINT(NEW_STMT(K_ASSIGN, ln))
@@ -1803,28 +1935,50 @@ FUNC P_STMT() AS INTEGER
             stExpr[nd] = P_EXPR()
             RETURN nd
         ENDIF
+        ' C[1][2] and C[1, 2] are the same subscript list, and the whole run
+        ' of them belongs to the assignment.
         IF TT_AT(1) = TT_LBRACKET THEN
             nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
             stVar[nd] = TV$()
             EAT()
-            EAT()
-            idx = CINT(P_EXPR())
-            IF TT() = TT_RBRACKET THEN EAT()
-            IF TT() = TT_ASSIGN THEN
+            nIdx = 0
+            DO
+                IF parseError <> "" THEN EXITDO
+                IF TT() <> TT_LBRACKET THEN EXITDO
+                EAT()
+                DO
+                    IF parseError <> "" THEN EXITDO
+                    IF TT() = TT_RBRACKET THEN EXITDO
+                    IF nIdx >= MAX_LOCAL THEN
+                        FAIL("too many subscripts")
+                        EXITDO
+                    ENDIF
+                    myIdx[nIdx] = P_EXPR()
+                    nIdx = nIdx + 1
+                    IF TT() <> TT_COMMA THEN EXITDO
+                    EAT()
+                LOOP
+                IF TT() <> TT_RBRACKET THEN EXITDO
+                EAT()
+            LOOP
+
+            IF parseError = "" ANDALSO TT() = TT_ASSIGN THEN
                 EAT()
                 stExpr[nd] = P_EXPR()
                 start = ixN
-                ixBuf[ixN] = idx
-                ixN = ixN + 1
+                FOR i = 0 TO nIdx - 1
+                    ixBuf[ixN] = myIdx[i]
+                    ixN = ixN + 1
+                NEXT i
                 stIxAt[nd] = start
-                stIxN[nd] = 1
+                stIxN[nd] = nIdx
                 RETURN nd
             ENDIF
             cur = save
             stCount = stCount - 1
         ENDIF
 
-        IF STARTS_ARGS(CINT(TT_AT(1))) = 1 THEN RETURN CINT(P_COMMAND(ln))
+        IF STARTS_ARGS(CINT(TT_AT(CINT(AFTER_DOTTED())))) = 1 THEN RETURN CINT(P_COMMAND(ln))
     ENDIF
 
     nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
@@ -1950,18 +2104,36 @@ FUNC AESC$(v AS STRING) AS STRING
 ENDFUNC
 
 ' The reference prints a float literal with C's "%.17g": seventeen significant
-' digits, trailing zeros dropped. "{:.16g}" produces the same digits, and
-' keeps the zeros, so they come off here.
+' digits, trailing zeros dropped. C++20's "{:.Ng}" counts digits after the
+' point instead, so the two only line up once N is shifted by the value's
+' decimal exponent. Seventeen significant digits means sixteen after the point
+' for a number in [1,10), one more for every power of ten below that.
 '
-' The two agree over the range ordinary source uses. C switches to exponent
-' notation past 1e17 and below 1e-5 and C++20 does not, so a literal out
-' there still reads differently; that is the only band where this comparison
-' is not exact.
+' C switches to exponent notation past 1e17 and below 1e-5 and C++20 does not,
+' so a literal out there still reads differently; that is the only band where
+' this comparison is not exact.
 FUNC NUMTXT$(v AS DOUBLE) AS STRING
+    DIM a AS DOUBLE
+    DIM expo AS INTEGER
     DIM s AS STRING
     DIM last AS INTEGER
 
-    s = FORMAT$("{:.16g}", v)
+    IF v = 0 THEN RETURN "0"
+
+    a = ABS(v)
+    expo = 0
+    DO
+        IF a < 10 THEN EXITDO
+        a = a / 10
+        expo = expo + 1
+    LOOP
+    DO
+        IF a >= 1 THEN EXITDO
+        a = a * 10
+        expo = expo - 1
+    LOOP
+
+    s = FORMAT$("{:." + STR$(16 - expo) + "g}", v)
     IF INSTR(s, ".") < 0 THEN RETURN s
 
     last = CINT(LEN(s)) - 1
@@ -1982,6 +2154,7 @@ SUB D_EXPR(ix AS INTEGER, ind AS INTEGER)
     EMIT(PAD$(ind) + "(e" + STR$(k) + " l" + STR$(exLine[ix]))
     IF exInt[ix] <> 0 THEN EMIT(" i=" + STR$(exInt[ix]))
     IF exFloat[ix] <> 0 THEN EMIT(" f=" + NUMTXT$(exFloat[ix]))
+    IF exBool[ix] <> 0 THEN EMIT(" b=1")
     IF exStr[ix] <> "" THEN EMIT(" s=" + AESC$(exStr[ix]))
     IF k = X_BINARY OR k = X_UNARY THEN EMIT(" op=" + STR$(exOp[ix]))
     IF exFn[ix] <> "" THEN EMIT(" fn=" + AESC$(exFn[ix]))
@@ -2303,6 +2476,7 @@ SUB BI_INIT()
     BI_ADD("CHR$", "jdb_chr", "I", "S", "", "i64")
     BI_ADD("STR$", "jdb_str", "D", "S", "", "double")
     BI_ADD("VAL", "jdb_val", "S", "D", "", "ptr")
+    BI_ADD("ABS", "jdb_abs", "D", "D", "", "double")
     BI_ADD("LEN", "jdb_len_str", "S", "I", "", "ptr")
     BI_ADD("MID$", "jdb_mid_lax", "SII", "S", "", "ptr, i64, i64")
     BI_ADD("LEFT$", "jdb_left", "SI", "S", "", "ptr, i64")
