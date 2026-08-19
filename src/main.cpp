@@ -137,6 +137,117 @@ static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& fi
 std::string g_jdb_embed_dll_dir;
 #endif
 
+// ── Reference AST dump ──────────────────────────────────────
+//
+// Prints the parse tree in a canonical form so a parser written in jdBasic can
+// be compared against this one. Kinds and types are printed as their enum
+// values rather than names, the same choice --dump-tokens makes: the other
+// side reads the numbering out of the headers, so nothing has to be kept in
+// step by hand. Only fields that differ from their default are printed, which
+// keeps the output readable and still surfaces a disagreement either way.
+
+static std::string ast_escape(const std::string& s) {
+    std::string v;
+    for (char c : s) {
+        if (c == '\\')      v += "\\\\";
+        else if (c == '\n') v += "\\n";
+        else if (c == '\t') v += "\\t";
+        else if (c == '\r') v += "\\r";
+        else if (c == ' ')  v += "\\s";
+        else if (c == ')')  v += "\\)";
+        else                v += c;
+    }
+    return v;
+}
+
+static std::string ast_num(double d) {
+    char buf[40];
+    snprintf(buf, sizeof(buf), "%.17g", d);
+    return buf;
+}
+
+static void dump_expr(const Expr* e, int ind);
+static void dump_stmt(const Stmt* s, int ind);
+
+static void dump_pad(int ind) { for (int i = 0; i < ind; i++) std::cout << "  "; }
+
+static void dump_expr(const Expr* e, int ind) {
+    if (!e) return;
+    dump_pad(ind);
+    std::cout << "(e" << (int)e->kind << " l" << e->line;
+    if (e->int_val)        std::cout << " i=" << e->int_val;
+    if (e->float_val != 0) std::cout << " f=" << ast_num(e->float_val);
+    if (!e->str_val.empty())   std::cout << " s=" << ast_escape(e->str_val);
+    if (e->bool_val)           std::cout << " b=1";
+    if (e->is_funcref_lit)     std::cout << " fr=1";
+    if (e->kind == ExprKind::BINARY || e->kind == ExprKind::UNARY)
+        std::cout << " op=" << (int)e->op;
+    if (!e->func_name.empty()) std::cout << " fn=" << ast_escape(e->func_name);
+    for (auto& k : e->map_keys)        std::cout << " k=" << ast_escape(k);
+    for (auto& p : e->lambda_params)   std::cout << " lp=" << ast_escape(p);
+    for (auto& c : e->lambda_captures) std::cout << " lc=" << ast_escape(c);
+    std::cout << "\n";
+    dump_expr(e->left.get(), ind + 1);
+    dump_expr(e->right.get(), ind + 1);
+    for (auto& a : e->args) dump_expr(a.get(), ind + 1);
+    dump_pad(ind);
+    std::cout << ")\n";
+}
+
+static void dump_stmt(const Stmt* s, int ind) {
+    if (!s) return;
+    dump_pad(ind);
+    std::cout << "(s" << (int)s->kind << " l" << s->line;
+    if (!s->var_name.empty())  std::cout << " v=" << ast_escape(s->var_name);
+    if (s->var_type != VarType::NONE)  std::cout << " vt=" << (int)s->var_type;
+    if (s->elem_type != VarType::NONE) std::cout << " et=" << (int)s->elem_type;
+    if (s->is_const)  std::cout << " const=1";
+    if (s->is_static) std::cout << " static=1";
+    if (!s->label.empty())     std::cout << " lbl=" << ast_escape(s->label);
+    if (!s->func_name.empty()) std::cout << " fn=" << ast_escape(s->func_name);
+    if (s->return_type != VarType::NONE) std::cout << " rt=" << (int)s->return_type;
+    if (s->is_async_func) std::cout << " async=1";
+    if (s->cond_at_top)   std::cout << " top=1";
+    if (!s->is_while)     std::cout << " until=1";
+    if (!s->print_newline) std::cout << " nonl=1";
+    for (int sep : s->print_seps)        std::cout << " sep=" << sep;
+    for (auto& p : s->params)            std::cout << " p=" << ast_escape(p.name)
+                                                   << ":" << (int)p.type;
+    for (auto& d : s->destruct_vars)     std::cout << " dv=" << ast_escape(d);
+    for (auto& m : s->enum_members)      std::cout << " em=" << ast_escape(m.first)
+                                                   << ":" << m.second;
+    for (auto& m : s->type_members)      std::cout << " tm=" << ast_escape(m.name)
+                                                   << ":" << (int)m.type;
+    std::cout << "\n";
+
+    dump_expr(s->expr.get(), ind + 1);
+    dump_expr(s->loop_cond.get(), ind + 1);
+    dump_expr(s->end_expr.get(), ind + 1);
+    dump_expr(s->step_expr.get(), ind + 1);
+    for (auto& e : s->print_exprs) dump_expr(e.get(), ind + 1);
+    for (auto& e : s->index_chain) dump_expr(e.get(), ind + 1);
+    for (auto& e : s->ctor_args)   dump_expr(e.get(), ind + 1);
+
+    for (auto& br : s->branches) {
+        dump_pad(ind + 1);
+        std::cout << "(branch\n";
+        dump_expr(br.condition.get(), ind + 2);
+        for (auto& cl : br.case_labels) {
+            dump_expr(cl.first.get(), ind + 2);
+            dump_expr(cl.second.get(), ind + 2);
+        }
+        for (auto& b : br.body) dump_stmt(b.get(), ind + 2);
+        dump_pad(ind + 1);
+        std::cout << ")\n";
+    }
+    for (auto& b : s->body)         dump_stmt(b.get(), ind + 1);
+    for (auto& b : s->catch_body)   dump_stmt(b.get(), ind + 1);
+    for (auto& b : s->finally_body) dump_stmt(b.get(), ind + 1);
+
+    dump_pad(ind);
+    std::cout << ")\n";
+}
+
 static std::string read_file(const std::string& path) {
     std::ifstream file(path);
     if (!file.is_open()) {
@@ -1671,6 +1782,7 @@ int main(int argc, char* argv[]) {
     bool lint_mode = false;
     bool pretty_mode = false;
     bool dump_tokens = false;
+    bool dump_ast = false;
     bool pretty_vb   = false;
     bool mcp_mode = false;
     bool ftxui_mode = false;
@@ -1780,6 +1892,7 @@ int main(int argc, char* argv[]) {
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--lint") { lint_mode = true; continue; }
         if (a == "--dump-tokens") { dump_tokens = true; continue; }
+        if (a == "--dump-ast") { dump_ast = true; continue; }
         if (a == "--pretty") { pretty_mode = true; continue; }
         if (a == "--pretty-vb") { pretty_mode = true; pretty_vb = true; continue; }
         if (a == "--mcp") { mcp_mode = true; continue; }
@@ -1888,6 +2001,24 @@ int main(int argc, char* argv[]) {
             }
         } catch (const std::exception& e) {
             std::cerr << "Lex error: " << e.what() << std::endl;
+            return 1;
+        }
+        return 0;
+    }
+
+    if (dump_ast) {
+        std::string program_buffer;
+        try { program_buffer = read_file(filename); }
+        catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
+        try {
+            Lexer lexer(program_buffer);
+            Parser parser(lexer.tokenize());
+            for (auto& st : parser.parse()) dump_stmt(st.get(), 0);
+        } catch (const std::exception& e) {
+            std::cerr << "Parse error: " << e.what() << std::endl;
             return 1;
         }
         return 0;

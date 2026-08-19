@@ -1,160 +1,216 @@
 OPTION EXPLICIT
 
-' Generates selfhost/jdbc_tokens.jdb from src/token.h.
+' Generates selfhost/jdbc_tokens.jdb from src/token.h and src/ast.h.
 '
-' The self-hosted lexer has to agree with the reference lexer on the numeric
-' TokenType, because that is what --dump-tokens prints and what the
-' differential test compares. Typing 141 enum entries by hand would be a
-' source of exactly the errors the test is meant to catch, so they are read
-' out of the header instead.
+' The self-hosted front end has to agree with the reference on four numberings:
+' TokenType, which --dump-tokens prints, and StmtKind, ExprKind and VarType,
+' which --dump-ast prints. Writing 300-odd enum entries by hand would be a
+' source of exactly the errors those comparisons exist to catch, so they are
+' read out of the headers instead.
 '
 '   jdbasic selfhost/gen_tokens.jdb
 
-DIM src AS STRING
-DIM out AS STRING
-DIM i AS INTEGER
-DIM lineStart AS INTEGER
-DIM lineEnd AS INTEGER
-DIM ln AS STRING
-DIM inEnum AS INTEGER
-DIM inKw AS INTEGER
-DIM idx AS INTEGER
-DIM piece AS STRING
-DIM rest AS STRING
-DIM p AS INTEGER
-DIM nameCount AS INTEGER
+DIM eNames[400] AS STRING
+DIM eCount AS INTEGER
+
+DIM kwWord[400] AS STRING
+DIM kwName[400] AS STRING
 DIM kwCount AS INTEGER
 
 DIM tokNames[400] AS STRING
-DIM kwWord[400] AS STRING
-DIM kwName[400] AS STRING
+DIM tokCount AS INTEGER
 
-' ── Read the header line by line ───────────────────────────────────────────
+DIM out AS STRING
 
-src = TXTREADER$("src/token.h")
-PRINT "read src/token.h ("; LEN(src); " bytes)"
+' ── Reading an enum out of a header ────────────────────────────────────────
 
-inEnum = 0
-inKw = 0
-idx = 0
-nameCount = 0
-kwCount = 0
-lineStart = 0
+FUNC NEXT_LINE$(txt AS STRING, fromPos AS INTEGER) AS STRING
+    DIM nl AS INTEGER
+    nl = CINT(INSTR(MID$(txt, fromPos, LEN(txt) - fromPos), CHR$(10)))
+    IF nl < 0 THEN RETURN MID$(txt, fromPos, LEN(txt) - fromPos)
+    RETURN MID$(txt, fromPos, nl)
+ENDFUNC
 
-DO
-    IF lineStart >= LEN(src) THEN EXITDO
-    lineEnd = INSTR(MID$(src, lineStart, LEN(src) - lineStart), CHR$(10))
-    IF lineEnd < 0 THEN
-        ln = MID$(src, lineStart, LEN(src) - lineStart)
-        lineStart = LEN(src)
-    ELSE
-        ln = MID$(src, lineStart, lineEnd)
-        lineStart = lineStart + lineEnd + 1
-    ENDIF
+FUNC STRIP$(ln AS STRING) AS STRING
+    DIM p AS INTEGER
+    DIM r AS STRING
+    r = ln
+    IF LEN(r) > 0 ANDALSO BYTEAT(r, LEN(r) - 1) = 13 THEN r = LEFT$(r, LEN(r) - 1)
+    p = CINT(INSTR(r, "//"))
+    IF p >= 0 THEN r = LEFT$(r, p)
+    RETURN TRIM$(r)
+ENDFUNC
 
-    ' Strip a trailing carriage return and any // comment.
-    IF LEN(ln) > 0 AND BYTEAT(ln, LEN(ln) - 1) = 13 THEN ln = LEFT$(ln, LEN(ln) - 1)
-    p = INSTR(ln, "//")
-    IF p >= 0 THEN ln = LEFT$(ln, p)
-    ln = TRIM$(ln)
+' Fills eNames in declaration order, which is what the enum values are.
+SUB READ_ENUM(path AS STRING, enumName AS STRING)
+    DIM txt AS STRING
+    DIM ln AS STRING
+    DIM rest AS STRING
+    DIM piece AS STRING
+    DIM at AS INTEGER
+    DIM p AS INTEGER
+    DIM inside AS INTEGER
 
-    ' ── The enum gives the numbering: position is the value ────────────────
-    IF INSTR(ln, "enum class TokenType") >= 0 THEN
-        inEnum = 1
-    ELSE
-        IF inEnum = 1 AND INSTR(ln, "};") >= 0 THEN
-            inEnum = 0
-        ELSE
-            IF inEnum = 1 AND LEN(ln) > 0 THEN
-                rest = ln
-                DO
-                    IF LEN(rest) = 0 THEN EXITDO
-                    p = INSTR(rest, ",")
-                    IF p < 0 THEN
-                        piece = TRIM$(rest)
-                        rest = ""
-                    ELSE
-                        piece = TRIM$(LEFT$(rest, p))
-                        rest = MID$(rest, p + 1, LEN(rest) - p - 1)
-                    ENDIF
-                    IF LEN(piece) > 0 THEN
-                        tokNames[nameCount] = piece
-                        nameCount = nameCount + 1
-                    ENDIF
-                LOOP
-            ENDIF
+    eCount = 0
+    inside = 0
+    txt = TXTREADER$(path)
+    at = 0
+    DO
+        IF at >= LEN(txt) THEN EXITDO
+        ln = NEXT_LINE$(txt, at)
+        at = at + LEN(ln) + 1
+        ln = STRIP$(ln)
+
+        IF INSTR(ln, "enum class " + enumName) >= 0 THEN
+            inside = 1
+            CONTINUEDO
         ENDIF
-    ENDIF
+        IF inside = 0 THEN CONTINUEDO
+        IF INSTR(ln, "};") >= 0 THEN EXITDO
+        IF LEN(ln) = 0 THEN CONTINUEDO
 
-    ' ── The keyword map gives word to token name ───────────────────────────
-    IF INSTR(ln, "keywords()") >= 0 THEN inKw = 1
-    IF inKw = 1 AND INSTR(ln, "TokenType::") >= 0 THEN
         rest = ln
         DO
-            p = INSTR(rest, CHR$(34))
-            IF p < 0 THEN EXITDO
-            rest = MID$(rest, p + 1, LEN(rest) - p - 1)
-            p = INSTR(rest, CHR$(34))
-            IF p < 0 THEN EXITDO
-            piece = LEFT$(rest, p)
-            rest = MID$(rest, p + 1, LEN(rest) - p - 1)
-
-            p = INSTR(rest, "TokenType::")
-            IF p < 0 THEN EXITDO
-            rest = MID$(rest, p + 11, LEN(rest) - p - 11)
-            p = INSTR(rest, "}")
-            IF p < 0 THEN EXITDO
-            kwWord[kwCount] = piece
-            kwName[kwCount] = TRIM$(LEFT$(rest, p))
-            kwCount = kwCount + 1
-            rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+            IF LEN(rest) = 0 THEN EXITDO
+            p = CINT(INSTR(rest, ","))
+            IF p < 0 THEN
+                piece = TRIM$(rest)
+                rest = ""
+            ELSE
+                piece = TRIM$(LEFT$(rest, p))
+                rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+            ENDIF
+            IF LEN(piece) > 0 THEN
+                eNames[eCount] = piece
+                eCount = eCount + 1
+            ENDIF
         LOOP
-    ENDIF
-    IF inKw = 1 AND INSTR(ln, "return kw;") >= 0 THEN inKw = 0
-LOOP
+    LOOP
+ENDSUB
 
-PRINT "enum entries: "; nameCount
-PRINT "keywords:     "; kwCount
+FUNC E_INDEX(want AS STRING) AS INTEGER
+    DIM j AS INTEGER
+    FOR j = 0 TO tokCount - 1
+        IF tokNames[j] = want THEN RETURN j
+    NEXT j
+    PRINT "WARNING: no TokenType entry for "; want
+    RETURN -1
+ENDFUNC
 
-' ── Write the jdBasic table ────────────────────────────────────────────────
+SUB EMIT_TABLE(prefix AS STRING)
+    DIM i AS INTEGER
+    out = out + "    " + prefix + "_COUNT = " + STR$(eCount) + CHR$(10)
+    FOR i = 0 TO eCount - 1
+        out = out + "    " + prefix + "[" + STR$(i) + "] = "
+        out = out + CHR$(34) + eNames[i] + CHR$(34) + CHR$(10)
+    NEXT i
+ENDSUB
+
+SUB EMIT_HEADER(prefix AS STRING, n AS INTEGER)
+    out = out + "DIM " + prefix + "[" + STR$(n) + "] AS STRING" + CHR$(10)
+    out = out + "DIM " + prefix + "_COUNT AS INTEGER" + CHR$(10)
+ENDSUB
+
+' ── The keyword map ────────────────────────────────────────────────────────
+
+SUB READ_KEYWORDS()
+    DIM txt AS STRING
+    DIM ln AS STRING
+    DIM rest AS STRING
+    DIM at AS INTEGER
+    DIM p AS INTEGER
+    DIM inKw AS INTEGER
+
+    kwCount = 0
+    inKw = 0
+    txt = TXTREADER$("src/token.h")
+    at = 0
+    DO
+        IF at >= LEN(txt) THEN EXITDO
+        ln = NEXT_LINE$(txt, at)
+        at = at + LEN(ln) + 1
+        ln = STRIP$(ln)
+
+        IF INSTR(ln, "keywords()") >= 0 THEN inKw = 1
+        IF inKw = 1 ANDALSO INSTR(ln, "TokenType::") >= 0 THEN
+            rest = ln
+            DO
+                p = CINT(INSTR(rest, CHR$(34)))
+                IF p < 0 THEN EXITDO
+                rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+                p = CINT(INSTR(rest, CHR$(34)))
+                IF p < 0 THEN EXITDO
+                kwWord[kwCount] = LEFT$(rest, p)
+                rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+
+                p = CINT(INSTR(rest, "TokenType::"))
+                IF p < 0 THEN EXITDO
+                rest = MID$(rest, p + 11, LEN(rest) - p - 11)
+                p = CINT(INSTR(rest, "}"))
+                IF p < 0 THEN EXITDO
+                kwName[kwCount] = TRIM$(LEFT$(rest, p))
+                kwCount = kwCount + 1
+                rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+            LOOP
+        ENDIF
+        IF inKw = 1 ANDALSO INSTR(ln, "return kw;") >= 0 THEN inKw = 0
+    LOOP
+ENDSUB
+
+' ── Main ───────────────────────────────────────────────────────────────────
+
+DIM i AS INTEGER
 
 out = ""
-out = out + "' Generated by selfhost/gen_tokens.jdb from src/token.h." + CHR$(10)
-out = out + "' The numbers are the TokenType enum values the reference lexer prints." + CHR$(10)
-out = out + "' Regenerate after any change to that enum." + CHR$(10)
+out = out + "' Generated by selfhost/gen_tokens.jdb from src/token.h and src/ast.h." + CHR$(10)
+out = out + "' These are the numbers --dump-tokens and --dump-ast print." + CHR$(10)
+out = out + "' Regenerate after any change to those enums." + CHR$(10)
 out = out + CHR$(10)
 out = out + "EXPORT MODULE JDBC_TOKENS" + CHR$(10)
 out = out + CHR$(10)
-out = out + "DIM TOK_NAME[" + STR$(nameCount) + "] AS STRING" + CHR$(10)
+
+READ_ENUM("src/token.h", "TokenType")
+tokCount = eCount
+FOR i = 0 TO eCount - 1
+    tokNames[i] = eNames[i]
+NEXT i
+EMIT_HEADER("TOK_NAME", tokCount)
+
+READ_ENUM("src/ast.h", "StmtKind")
+EMIT_HEADER("STMT_NAME", eCount)
+
+READ_ENUM("src/ast.h", "ExprKind")
+EMIT_HEADER("EXPR_NAME", eCount)
+
+READ_ENUM("src/ast.h", "VarType")
+EMIT_HEADER("VTYPE_NAME", eCount)
+
+READ_KEYWORDS()
 out = out + "DIM KW_WORD[" + STR$(kwCount) + "] AS STRING" + CHR$(10)
 out = out + "DIM KW_TYPE[" + STR$(kwCount) + "]" + CHR$(10)
-out = out + "DIM TOK_COUNT AS INTEGER" + CHR$(10)
 out = out + "DIM KW_COUNT AS INTEGER" + CHR$(10)
 out = out + CHR$(10)
 out = out + "SUB INIT()" + CHR$(10)
-out = out + "    TOK_COUNT = " + STR$(nameCount) + CHR$(10)
+
+READ_ENUM("src/token.h", "TokenType")
+EMIT_TABLE("TOK_NAME")
+READ_ENUM("src/ast.h", "StmtKind")
+EMIT_TABLE("STMT_NAME")
+READ_ENUM("src/ast.h", "ExprKind")
+EMIT_TABLE("EXPR_NAME")
+READ_ENUM("src/ast.h", "VarType")
+EMIT_TABLE("VTYPE_NAME")
+
 out = out + "    KW_COUNT = " + STR$(kwCount) + CHR$(10)
-
-FOR i = 0 TO nameCount - 1
-    out = out + "    TOK_NAME[" + STR$(i) + "] = " + CHR$(34) + tokNames[i] + CHR$(34) + CHR$(10)
-NEXT i
-
 FOR i = 0 TO kwCount - 1
     out = out + "    KW_WORD[" + STR$(i) + "] = " + CHR$(34) + kwWord[i] + CHR$(34)
-    out = out + " : KW_TYPE[" + STR$(i) + "] = " + STR$(TOK_INDEX(tokNames, nameCount, kwName[i]))
+    out = out + " : KW_TYPE[" + STR$(i) + "] = " + STR$(E_INDEX(kwName[i]))
     out = out + CHR$(10)
 NEXT i
 
 out = out + "ENDSUB" + CHR$(10)
 
 TXTWRITER "selfhost/jdbc_tokens.jdb", out
+PRINT "TokenType entries: "; tokCount
+PRINT "keywords:          "; kwCount
 PRINT "wrote selfhost/jdbc_tokens.jdb ("; LEN(out); " bytes)"
-
-FUNC TOK_INDEX(names AS ARRAY, n AS INTEGER, want AS STRING) AS INTEGER
-    DIM j AS INTEGER
-    FOR j = 0 TO n - 1
-        IF names[j] = want THEN RETURN j
-    NEXT j
-    PRINT "WARNING: no enum entry for "; want
-    RETURN -1
-ENDFUNC
