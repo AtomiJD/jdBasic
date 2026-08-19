@@ -622,6 +622,10 @@ FUNC ERR_TEXT$(code AS INTEGER) AS STRING
     IF code = 5 THEN RETURN "unclosed {"
     IF code = 6 THEN RETURN "too many variables"
     IF code = 7 THEN RETURN "loop ran too long"
+    IF code = 8 THEN RETURN "too many functions"
+    IF code = 9 THEN RETURN "too many parameters"
+    IF code = 10 THEN RETURN "unknown function"
+    IF code = 11 THEN RETURN "return outside a function"
     RETURN "error"
 ENDFUNC
 
@@ -1225,6 +1229,238 @@ SUB RUN_COMMAND(lineIn AS STRING)
     SCR_WRITELN(word)
 ENDSUB
 
+' ── JIT: user-defined functions ────────────────────────────────────────────
+'
+' Every function gets a real stack frame and its address goes into a table in
+' memory. Calls read the target out of that table at run time, so a function
+' may call one defined later, and two may call each other.
+'
+' Parameters live in the frame; any other name inside a function body is the
+' same global slot the rest of the JIT uses. That is lallang's rule too, and it
+' is why a recursive function cannot keep local state yet.
+
+CONST JIT_FNTAB = $B80000
+CONST JIT_MAXFN = 16
+CONST JIT_MAXPARAM = 4
+
+DIM jfnNames[JIT_MAXFN] AS STRING
+DIM jfnBody[JIT_MAXFN] AS STRING
+DIM jfnParams[64] AS STRING
+DIM jfnArity[JIT_MAXFN]
+DIM jfnCount AS INTEGER
+
+DIM jitInFunc AS INTEGER
+DIM jitParams[JIT_MAXPARAM] AS STRING
+DIM jitArity AS INTEGER
+
+' ── Frame instructions ─────────────────────────────────────────────────────
+
+SUB J_PROLOGUE()
+    J_B($55)
+    J_B($48)
+    J_B($89)
+    J_B($E5)
+ENDSUB
+
+SUB J_EPILOGUE()
+    J_B($48)
+    J_B($89)
+    J_B($EC)
+    J_B($5D)
+    J_B($C3)
+ENDSUB
+
+' Argument i of n sits above the saved rbp and the return address, in the
+' order the caller pushed them.
+SUB J_LOAD_PARAM(idx AS INTEGER, n AS INTEGER)
+    J_B($48)
+    J_B($8B)
+    J_B($45)
+    J_B(16 + 8 * (n - 1 - idx))
+ENDSUB
+
+' call [JIT_FNTAB + idx*8]: the target is read from memory at call time, which
+' is what lets a forward reference resolve.
+SUB J_CALL_SLOT(idx AS INTEGER)
+    J_B($48)
+    J_B($B8)
+    J_64(JIT_FNTAB + idx * 8)
+    J_B($FF)
+    J_B($10)
+ENDSUB
+
+SUB J_DROP_ARGS(n AS INTEGER)
+    IF n = 0 THEN RETURN
+    J_B($48)
+    J_B($83)
+    J_B($C4)
+    J_B(8 * n)
+ENDSUB
+
+' ── The function table ─────────────────────────────────────────────────────
+
+FUNC JFN_FIND(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO jfnCount - 1
+        IF jfnNames[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC JIT_PARAM_INDEX(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    IF jitInFunc = 0 THEN RETURN -1
+    FOR i = 0 TO jitArity - 1
+        IF jitParams[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' Reads the text between matching braces and leaves the cursor past them.
+FUNC JIT_BLOCK_TEXT$() AS STRING
+    DIM depth AS INTEGER
+    DIM start AS INTEGER
+    DIM c AS INTEGER
+
+    SKIPSP()
+    IF PEEKC() <> 123 THEN
+        errCode = 4
+        RETURN ""
+    ENDIF
+    cur = cur + 1
+    start = cur
+    depth = 1
+    DO
+        c = CINT(PEEKC())
+        IF c = 0 THEN
+            errCode = 5
+            RETURN ""
+        ENDIF
+        IF c = 123 THEN depth = depth + 1
+        IF c = 125 THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                cur = cur + 1
+                RETURN MID$(srcText, start, cur - start - 1)
+            ENDIF
+        ENDIF
+        cur = cur + 1
+    LOOP
+ENDFUNC
+
+' func name(a, b) { ... } records the definition; nothing is emitted here.
+SUB JIT_DEFINE()
+    DIM nm AS STRING
+    DIM pn AS STRING
+    DIM idx AS INTEGER
+    DIM n AS INTEGER
+
+    SKIPSP()
+    IF IS_ALPHA(CINT(PEEKC())) = 0 THEN
+        errCode = 3
+        RETURN
+    ENDIF
+    nm = SCAN_IDENT$()
+
+    SKIPSP()
+    IF PEEKC() <> 40 THEN
+        errCode = 1
+        RETURN
+    ENDIF
+    cur = cur + 1
+
+    idx = CINT(JFN_FIND(nm))
+    IF idx < 0 THEN
+        IF jfnCount >= JIT_MAXFN THEN
+            errCode = 8
+            RETURN
+        ENDIF
+        idx = jfnCount
+        jfnCount = jfnCount + 1
+    ENDIF
+    jfnNames[idx] = nm
+
+    n = 0
+    DO
+        SKIPSP()
+        IF PEEKC() = 41 THEN
+            cur = cur + 1
+            EXITDO
+        ENDIF
+        IF PEEKC() = 44 THEN
+            cur = cur + 1
+        ELSE
+            IF IS_ALPHA(CINT(PEEKC())) = 0 THEN
+                errCode = 3
+                RETURN
+            ENDIF
+            IF n >= JIT_MAXPARAM THEN
+                errCode = 9
+                RETURN
+            ENDIF
+            pn = SCAN_IDENT$()
+            jfnParams[idx * JIT_MAXPARAM + n] = pn
+            n = n + 1
+        ENDIF
+    LOOP
+
+    jfnArity[idx] = n
+    jfnBody[idx] = JIT_BLOCK_TEXT$()
+ENDSUB
+
+' ── Compiling a function ───────────────────────────────────────────────────
+
+SUB JIT_COMPILE_FUNC(idx AS INTEGER)
+    DIM savedText AS STRING
+    DIM savedCur AS INTEGER
+    DIM i AS INTEGER
+    DIM body AS STRING
+
+    SYS.POKE(JIT_FNTAB + idx * 8, JIT_CODE + jitPos)
+    SYS.POKE(JIT_FNTAB + idx * 8 + 4, 0)
+
+    savedText = srcText
+    savedCur = cur
+
+    jitArity = CINT(jfnArity[idx])
+    FOR i = 0 TO jitArity - 1
+        jitParams[i] = jfnParams[idx * JIT_MAXPARAM + i]
+    NEXT i
+    jitInFunc = 1
+
+    J_PROLOGUE()
+
+    body = jfnBody[idx]
+    srcText = body
+    cur = 0
+    DO
+        IF errCode > 0 THEN EXITDO
+        SKIPSP()
+        IF PEEKC() = 0 THEN EXITDO
+        IF PEEKC() = 59 THEN
+            cur = cur + 1
+        ELSE
+            JIT_STATEMENT()
+        ENDIF
+    LOOP
+
+    ' A body that runs off the end answers 0.
+    J_MOV_RAX_IMM(0)
+    J_EPILOGUE()
+
+    jitInFunc = 0
+    srcText = savedText
+    cur = savedCur
+ENDSUB
+
+SUB JIT_COMPILE_ALL()
+    DIM i AS INTEGER
+    FOR i = 0 TO jfnCount - 1
+        IF errCode > 0 THEN RETURN
+        JIT_COMPILE_FUNC(i)
+    NEXT i
+ENDSUB
+
 ' ── In-OS JIT ──────────────────────────────────────────────────────────────
 '
 ' Compiles a line to real x86-64 machine code in RAM and calls it. lallang's
@@ -1429,6 +1665,7 @@ ENDFUNC
 
 SUB JIT_FACTOR()
     DIM nm AS STRING
+    DIM pidx AS INTEGER
 
     SKIPSP()
 
@@ -1458,11 +1695,71 @@ SUB JIT_FACTOR()
 
     IF IS_ALPHA(CINT(PEEKC())) = 1 THEN
         nm = SCAN_IDENT$()
-        J_LOAD_VAR(CINT(JIT_SLOT(nm)))
+        SKIPSP()
+        IF PEEKC() = 40 THEN
+            JIT_CALL(nm)
+            RETURN
+        ENDIF
+        pidx = CINT(JIT_PARAM_INDEX(nm))
+        IF pidx >= 0 THEN
+            J_LOAD_PARAM(pidx, jitArity)
+        ELSE
+            J_LOAD_VAR(CINT(JIT_SLOT(nm)))
+        ENDIF
         RETURN
     ENDIF
 
     errCode = 3
+ENDSUB
+
+' Arguments are pushed left to right and dropped by the caller afterwards.
+SUB JIT_CALL(nm AS STRING)
+    DIM idx AS INTEGER
+    DIM n AS INTEGER
+    idx = CINT(JFN_FIND(nm))
+    IF idx < 0 THEN
+        errCode = 10
+        RETURN
+    ENDIF
+    cur = cur + 1
+    n = 0
+    DO
+        SKIPSP()
+        IF PEEKC() = 41 THEN
+            cur = cur + 1
+            EXITDO
+        ENDIF
+        IF PEEKC() = 0 THEN
+            errCode = 1
+            RETURN
+        ENDIF
+        IF PEEKC() = 44 THEN
+            cur = cur + 1
+        ELSE
+            JIT_COMPARE()
+            IF errCode > 0 THEN RETURN
+            J_PUSH_RAX()
+            n = n + 1
+        ENDIF
+    LOOP
+    J_CALL_SLOT(idx)
+    J_DROP_ARGS(n)
+ENDSUB
+
+' Steps over one statement textually, for the pass that only collects
+' definitions.
+SUB JIT_SKIP_STMT()
+    DIM depth AS INTEGER
+    DIM c AS INTEGER
+    depth = 0
+    DO
+        c = CINT(PEEKC())
+        IF c = 0 THEN RETURN
+        IF c = 123 THEN depth = depth + 1
+        IF c = 125 THEN depth = depth - 1
+        IF c = 59 AND depth <= 0 THEN RETURN
+        cur = cur + 1
+    LOOP
 ENDSUB
 
 SUB JIT_TERM()
@@ -1548,6 +1845,17 @@ SUB JIT_STATEMENT()
 
     SKIPSP()
     IF PEEKC() = 0 THEN RETURN
+
+    IF SCAN_KEYWORD("return") = 1 THEN
+        IF jitInFunc = 0 THEN
+            errCode = 11
+            RETURN
+        ENDIF
+        JIT_COMPARE()
+        IF errCode > 0 THEN RETURN
+        J_EPILOGUE()
+        RETURN
+    ENDIF
 
     IF SCAN_KEYWORD("if") = 1 THEN
         JIT_COMPARE()
@@ -1635,10 +1943,35 @@ ENDSUB
 ' expression is whatever the last statement left in rax.
 SUB JIT_RUN()
     DIM result AS INTEGER
+    DIM startCur AS INTEGER
+    DIM mainEntry AS INTEGER
 
     jitPos = 0
     errCode = 0
+    startCur = cur
+
+    ' First pass collects definitions so a call may name a function that is
+    ' defined further along the line, or on an earlier one.
+    DO
+        IF errCode > 0 THEN EXITDO
+        SKIPSP()
+        IF PEEKC() = 0 THEN EXITDO
+        IF PEEKC() = 59 THEN
+            cur = cur + 1
+        ELSE
+            IF SCAN_KEYWORD("func") = 1 THEN
+                JIT_DEFINE()
+            ELSE
+                JIT_SKIP_STMT()
+            ENDIF
+        ENDIF
+    LOOP
+
+    IF errCode = 0 THEN JIT_COMPILE_ALL()
+
+    mainEntry = jitPos
     J_MOV_RAX_IMM(0)
+    cur = startCur
 
     DO
         IF errCode > 0 THEN EXITDO
@@ -1647,7 +1980,11 @@ SUB JIT_RUN()
         IF PEEKC() = 59 THEN
             cur = cur + 1
         ELSE
-            JIT_STATEMENT()
+            IF SCAN_KEYWORD("func") = 1 THEN
+                JIT_DEFINE()
+            ELSE
+                JIT_STATEMENT()
+            ENDIF
         ENDIF
     LOOP
 
@@ -1661,7 +1998,7 @@ SUB JIT_RUN()
 
     J_RET()
     JIT_SYNC_IN()
-    result = CINT(SYS.CALL(JIT_CODE))
+    result = CINT(SYS.CALL(JIT_CODE + mainEntry))
     JIT_SYNC_OUT()
 
     SCR_WRITEINT(result)

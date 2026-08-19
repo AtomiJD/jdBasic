@@ -273,6 +273,29 @@ check_jit() {
 
 check_jit
 
+# Compiled user functions: real stack frames, and calls routed through a table
+# in memory so a definition made on one line is callable from the next.
+check_jitfn() {
+    echo "--- jit functions ---"
+
+    $SH "cd '$WKDIR' && rm -f /tmp/jitfntest.bin && '$WTDIR/jitfn_keys.sh' /tmp/jitfntest.bin | timeout $((BOOT_TIMEOUT + 120)) qemu-system-x86_64 -kernel repl.bin -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    out=$(text_of /tmp/jitfntest.bin)
+
+    # A definition and a call on the same line, then recursion from a later
+    # line, then one call nested inside another: fib(10) is 55, doubled 110.
+    for want in "dbl(21) 42" "fib(20) 6765" "dbl(fib(10)) 110"; do
+        if echo "$out" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' from the compiled functions"
+            fail=1
+        fi
+    done
+}
+
+check_jitfn
+
 if [ "$fail" = 0 ]; then
     echo "ALL KERNEL BOOT TESTS PASSED!"
 else
