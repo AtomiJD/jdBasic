@@ -24,7 +24,7 @@ skip() { echo "SKIP: $1"; exit 0; }
 cd "$ROOT"
 mkdir -p tmp
 
-corpus="$(ls selfhost/fixtures/*.jdb) selfhost/jdbc_lex.jdb selfhost/jdbc_parse.jdb"
+corpus="$(ls selfhost/fixtures/*.jdb) selfhost/gen_tokens.jdb selfhost/jdbc_lex.jdb selfhost/jdbc_parse.jdb"
 
 ok=0
 bad=0

@@ -1610,6 +1610,67 @@ FUNC P_PRINT() AS INTEGER
     RETURN nd
 ENDFUNC
 
+' What may follow a command name as its first argument. An operator here
+' means the line is an ordinary expression instead.
+FUNC STARTS_ARGS(t AS INTEGER) AS INTEGER
+    IF t = T_IDENTIFIER THEN RETURN 1
+    IF t = T_INTEGER_LIT THEN RETURN 1
+    IF t = T_FLOAT_LIT THEN RETURN 1
+    IF t = T_STRING_LIT THEN RETURN 1
+    IF t = TT_TRUE THEN RETURN 1
+    IF t = TT_FALSE THEN RETURN 1
+    IF t = T_NEWLINE THEN RETURN 1
+    IF t = T_EOF THEN RETURN 1
+    IF t = TT_COLON THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' NAME arg, arg  and a bare NAME, both of which are calls in the tree.
+FUNC P_COMMAND(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM nm AS STRING
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    nm = TV$()
+    EAT()
+    DO
+        IF TT() <> TT_DOT THEN EXITDO
+        EAT()
+        nm = nm + "." + TV$()
+        EAT()
+    LOOP
+
+    n = 0
+    DO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() = TT_COMMA THEN
+            EAT()
+        ELSE
+            EXITDO
+        ENDIF
+    LOOP
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
 FUNC P_STMT() AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
@@ -1678,7 +1739,9 @@ FUNC P_STMT() AS INTEGER
     ENDIF
 
     ' A bare name followed by = is an assignment; with a bracket in between it
-    ' is an indexed one. Anything else is an expression statement.
+    ' is an indexed one. A name followed by something that starts a value is
+    ' BASIC's command form, TXTWRITER a, b, which is a call without brackets.
+    ' Anything else is an expression statement.
     IF t = T_IDENTIFIER THEN
         save = cur
         IF TT_AT(1) = TT_ASSIGN THEN
@@ -1709,6 +1772,8 @@ FUNC P_STMT() AS INTEGER
             cur = save
             stCount = stCount - 1
         ENDIF
+
+        IF STARTS_ARGS(CINT(TT_AT(1))) = 1 THEN RETURN CINT(P_COMMAND(ln))
     ENDIF
 
     nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
