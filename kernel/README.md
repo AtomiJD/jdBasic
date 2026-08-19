@@ -14,9 +14,10 @@ host into a freestanding object. You never type jdBasic once the machine has
 booted.
 
 **The language inside the OS** is a small one of its own, in the spirit of
-lallang. It has integers, one namespace of variables, `if`, `while`, functions,
-and direct access to memory and ports. It is what you type at the prompt and
-what you write in the editor.
+[lallang](https://github.com/AtomiJD/lallang), whose `kernel.os` was the
+template for the port. It has integers, one namespace of variables, `if`,
+`while`, functions, and direct access to memory and ports. It is what you type
+at the prompt and what you write in the editor.
 
 ## Building and booting
 
