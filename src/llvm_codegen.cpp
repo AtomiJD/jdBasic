@@ -275,6 +275,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_sys_pokew", "SYS.POKEW", void_type, {i64_type, i64_type}, -1);
     reg("jdb_sys_peek",  "SYS.PEEK",  i64_type, {i64_type}, 0);
     reg("jdb_sys_poke",  "SYS.POKE",  void_type, {i64_type, i64_type}, -1);
+    // Calls machine code the program itself wrote into memory. The image is
+    // identity-mapped without NX, so a data page is executable as it stands.
+    reg("jdb_sys_call",  "SYS.CALL",  i64_type, {i64_type}, 0);
 #endif
 
     // Arrays (JdbArray* is opaque pointer = i8_ptr_type)
@@ -9266,7 +9269,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         // A port or an address is a scalar; spreading one over an array would
         // turn a single hardware access into a fan-out.
         "SYS.INB", "SYS.OUTB", "SYS.PEEKB", "SYS.POKEB",
-        "SYS.PEEKW", "SYS.POKEW", "SYS.PEEK", "SYS.POKE",
+        "SYS.PEEKW", "SYS.POKEW", "SYS.PEEK", "SYS.POKE", "SYS.CALL",
 #endif
         // Bitwise/math helpers (scalars-only)
         "ROTL", "ROTR", "GCD", "LCM",

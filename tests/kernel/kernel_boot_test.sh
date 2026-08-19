@@ -241,6 +241,38 @@ check_disk() {
 
 check_disk
 
+# The in-OS JIT: ?? compiles the line to x86-64 in RAM and calls it. The last
+# two lines matter most, a compiled loop and then the interpreter reading the
+# variable that loop left behind.
+check_jit() {
+    echo "--- jit ---"
+
+    $SH "cd '$WKDIR' && rm -f /tmp/jittest.bin && '$WTDIR/jit_keys.sh' /tmp/jittest.bin | timeout $((BOOT_TIMEOUT + 90)) qemu-system-x86_64 -kernel repl.bin -display none -monitor stdio -serial null >/dev/null 2>&1" || true
+
+    out=$(text_of /tmp/jittest.bin)
+
+    # 40 and 39 bytes are the exact encodings for these two expressions, so a
+    # changed count means the emitter changed shape.
+    for want in "42 [40 bytes of x86]" "6 [39 bytes of x86]" "10 [128 bytes of x86]"; do
+        if echo "$out" | grep -qF "$want"; then
+            echo "  ok: $want"
+        else
+            echo "  FAIL: expected '$want' from the JIT"
+            fail=1
+        fi
+    done
+
+    # ? n after the compiled loop: the interpreter sees the JIT's result.
+    if echo "$out" | grep -qF "> ? n 10"; then
+        echo "  ok: interpreter reads the compiled loop's variable"
+    else
+        echo "  FAIL: the interpreter did not see n = 10"
+        fail=1
+    fi
+}
+
+check_jit
+
 if [ "$fail" = 0 ]; then
     echo "ALL KERNEL BOOT TESTS PASSED!"
 else

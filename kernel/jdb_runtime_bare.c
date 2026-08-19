@@ -513,3 +513,10 @@ int64_t jdb_sys_peek(int64_t addr) {
 void jdb_sys_poke(int64_t addr, int64_t val) {
     *(volatile uint32_t*)(uint64_t)addr = (uint32_t)val;
 }
+
+// Enters code the program generated at run time. The callee follows the SysV
+// convention with no arguments and its result in rax.
+int64_t jdb_sys_call(int64_t addr) {
+    int64_t (*fn)(void) = (int64_t (*)(void))(uint64_t)addr;
+    return fn();
+}

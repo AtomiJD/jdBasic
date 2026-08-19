@@ -1225,6 +1225,457 @@ SUB RUN_COMMAND(lineIn AS STRING)
     SCR_WRITELN(word)
 ENDSUB
 
+' ── In-OS JIT ──────────────────────────────────────────────────────────────
+'
+' Compiles a line to real x86-64 machine code in RAM and calls it. lallang's
+' JIT emits 32-bit code; this kernel runs in long mode, so the encodings carry
+' REX prefixes and variables are reached with movabs to an absolute address.
+'
+' Values are 64-bit integers here, unlike the interpreter's doubles. The two
+' share the same name table: the slots are copied in before the code runs and
+' back out afterwards, so `x = 5` at the prompt is visible to `?? x + 1`.
+
+CONST JIT_CODE = $A00000
+CONST JIT_VARS = $B00000
+
+DIM jitPos AS INTEGER
+
+' ── Emitter ────────────────────────────────────────────────────────────────
+
+SUB J_B(b AS INTEGER)
+    SYS.POKEB(JIT_CODE + jitPos, b MOD 256)
+    jitPos = jitPos + 1
+ENDSUB
+
+' Little endian, two's complement for the negative displacements a jump needs.
+SUB J_32(v AS INTEGER)
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    n = v
+    IF n < 0 THEN n = n + 4294967296
+    FOR i = 1 TO 4
+        J_B(n MOD 256)
+        n = n \ 256
+    NEXT i
+ENDSUB
+
+SUB J_64(v AS INTEGER)
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    n = v
+    FOR i = 1 TO 8
+        J_B(n MOD 256)
+        n = n \ 256
+    NEXT i
+ENDSUB
+
+SUB J_PATCH32(at AS INTEGER, v AS INTEGER)
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    n = v
+    IF n < 0 THEN n = n + 4294967296
+    FOR i = 0 TO 3
+        SYS.POKEB(JIT_CODE + at + i, n MOD 256)
+        n = n \ 256
+    NEXT i
+ENDSUB
+
+' ── Instructions ───────────────────────────────────────────────────────────
+
+SUB J_MOV_RAX_IMM(v AS INTEGER)
+    J_B($48)
+    J_B($B8)
+    J_64(v)
+ENDSUB
+
+SUB J_LOAD_VAR(idx AS INTEGER)
+    J_B($48)
+    J_B($A1)
+    J_64(JIT_VARS + idx * 8)
+ENDSUB
+
+SUB J_STORE_VAR(idx AS INTEGER)
+    J_B($48)
+    J_B($A3)
+    J_64(JIT_VARS + idx * 8)
+ENDSUB
+
+SUB J_PUSH_RAX()
+    J_B($50)
+ENDSUB
+
+' The right operand is in rax; park it in rbx and restore the left from the
+' stack, so rax holds the left and rbx the right for every binary op below.
+SUB J_TAKE_RHS()
+    J_B($48)
+    J_B($89)
+    J_B($C3)
+    J_B($58)
+ENDSUB
+
+SUB J_NEG_RAX()
+    J_B($48)
+    J_B($F7)
+    J_B($D8)
+ENDSUB
+
+SUB J_ADD()
+    J_B($48)
+    J_B($01)
+    J_B($D8)
+ENDSUB
+
+SUB J_SUB()
+    J_B($48)
+    J_B($29)
+    J_B($D8)
+ENDSUB
+
+SUB J_IMUL()
+    J_B($48)
+    J_B($0F)
+    J_B($AF)
+    J_B($C3)
+ENDSUB
+
+' cqo sign-extends rax into rdx, which idiv needs; the quotient lands in rax
+' and the remainder in rdx.
+SUB J_IDIV()
+    J_B($48)
+    J_B($99)
+    J_B($48)
+    J_B($F7)
+    J_B($FB)
+ENDSUB
+
+SUB J_MOV_RAX_RDX()
+    J_B($48)
+    J_B($89)
+    J_B($D0)
+ENDSUB
+
+' kind: 1 == , 2 <> , 3 <= , 4 >= , 5 < , 6 >
+SUB J_CMP(kind AS INTEGER)
+    J_B($48)
+    J_B($39)
+    J_B($D8)
+    J_B($0F)
+    IF kind = 1 THEN J_B($94)
+    IF kind = 2 THEN J_B($95)
+    IF kind = 3 THEN J_B($9E)
+    IF kind = 4 THEN J_B($9D)
+    IF kind = 5 THEN J_B($9C)
+    IF kind = 6 THEN J_B($9F)
+    J_B($C0)
+    J_B($48)
+    J_B($0F)
+    J_B($B6)
+    J_B($C0)
+ENDSUB
+
+SUB J_TEST_RAX()
+    J_B($48)
+    J_B($85)
+    J_B($C0)
+ENDSUB
+
+' Emits a conditional jump with a placeholder displacement and answers where
+' that displacement sits, so the caller can patch it once the target is known.
+FUNC J_JE_HOLE() AS INTEGER
+    DIM at AS INTEGER
+    J_B($0F)
+    J_B($84)
+    at = jitPos
+    J_32(0)
+    RETURN at
+ENDFUNC
+
+FUNC J_JMP_HOLE() AS INTEGER
+    DIM at AS INTEGER
+    J_B($E9)
+    at = jitPos
+    J_32(0)
+    RETURN at
+ENDFUNC
+
+SUB J_JMP_BACK(target AS INTEGER)
+    J_B($E9)
+    J_32(target - (jitPos + 4))
+ENDSUB
+
+SUB J_PATCH_HERE(at AS INTEGER)
+    J_PATCH32(at, jitPos - (at + 4))
+ENDSUB
+
+SUB J_RET()
+    J_B($C3)
+ENDSUB
+
+' ── Compiler ───────────────────────────────────────────────────────────────
+
+FUNC JIT_SLOT(nm AS STRING) AS INTEGER
+    DIM idx AS INTEGER
+    idx = CINT(VAR_FIND(nm))
+    IF idx >= 0 THEN RETURN idx
+    IF varCount >= MAX_VARS THEN
+        errCode = 6
+        RETURN 0
+    ENDIF
+    varNames[varCount] = nm
+    varVals[varCount] = 0
+    varCount = varCount + 1
+    RETURN varCount - 1
+ENDFUNC
+
+SUB JIT_FACTOR()
+    DIM nm AS STRING
+
+    SKIPSP()
+
+    IF PEEKC() = 45 THEN
+        cur = cur + 1
+        JIT_FACTOR()
+        J_NEG_RAX()
+        RETURN
+    ENDIF
+
+    IF PEEKC() = 40 THEN
+        cur = cur + 1
+        JIT_COMPARE()
+        SKIPSP()
+        IF PEEKC() <> 41 THEN
+            errCode = 1
+            RETURN
+        ENDIF
+        cur = cur + 1
+        RETURN
+    ENDIF
+
+    IF IS_DIGIT(CINT(PEEKC())) = 1 THEN
+        J_MOV_RAX_IMM(CINT(SCAN_NUMBER()))
+        RETURN
+    ENDIF
+
+    IF IS_ALPHA(CINT(PEEKC())) = 1 THEN
+        nm = SCAN_IDENT$()
+        J_LOAD_VAR(CINT(JIT_SLOT(nm)))
+        RETURN
+    ENDIF
+
+    errCode = 3
+ENDSUB
+
+SUB JIT_TERM()
+    DIM op AS INTEGER
+    JIT_FACTOR()
+    DO
+        IF errCode > 0 THEN RETURN
+        SKIPSP()
+        op = CINT(PEEKC())
+        IF op <> 42 AND op <> 47 AND op <> 37 THEN RETURN
+        cur = cur + 1
+        J_PUSH_RAX()
+        JIT_FACTOR()
+        J_TAKE_RHS()
+        IF op = 42 THEN
+            J_IMUL()
+        ELSE
+            J_IDIV()
+            IF op = 37 THEN J_MOV_RAX_RDX()
+        ENDIF
+    LOOP
+ENDSUB
+
+SUB JIT_EXPR()
+    DIM op AS INTEGER
+    JIT_TERM()
+    DO
+        IF errCode > 0 THEN RETURN
+        SKIPSP()
+        op = CINT(PEEKC())
+        IF op <> 43 AND op <> 45 THEN RETURN
+        cur = cur + 1
+        J_PUSH_RAX()
+        JIT_TERM()
+        J_TAKE_RHS()
+        IF op = 43 THEN
+            J_ADD()
+        ELSE
+            J_SUB()
+        ENDIF
+    LOOP
+ENDSUB
+
+SUB JIT_COMPARE()
+    DIM c1 AS INTEGER
+    DIM c2 AS INTEGER
+    DIM kind AS INTEGER
+
+    JIT_EXPR()
+    IF errCode > 0 THEN RETURN
+
+    SKIPSP()
+    c1 = CINT(PEEKC())
+    c2 = CINT(PEEKC2())
+    kind = 0
+
+    IF c1 = 61 AND c2 = 61 THEN kind = 1
+    IF c1 = 60 AND c2 = 62 THEN kind = 2
+    IF c1 = 60 AND c2 = 61 THEN kind = 3
+    IF c1 = 62 AND c2 = 61 THEN kind = 4
+
+    IF kind > 0 THEN
+        cur = cur + 2
+    ELSE
+        IF c1 = 60 THEN kind = 5
+        IF c1 = 62 THEN kind = 6
+        IF kind = 0 THEN RETURN
+        cur = cur + 1
+    ENDIF
+
+    J_PUSH_RAX()
+    JIT_EXPR()
+    IF errCode > 0 THEN RETURN
+    J_TAKE_RHS()
+    J_CMP(kind)
+ENDSUB
+
+SUB JIT_STATEMENT()
+    DIM nm AS STRING
+    DIM savePos AS INTEGER
+    DIM condPos AS INTEGER
+    DIM hole AS INTEGER
+
+    SKIPSP()
+    IF PEEKC() = 0 THEN RETURN
+
+    IF SCAN_KEYWORD("if") = 1 THEN
+        JIT_COMPARE()
+        IF errCode > 0 THEN RETURN
+        J_TEST_RAX()
+        hole = CINT(J_JE_HOLE())
+        JIT_BLOCK()
+        J_PATCH_HERE(hole)
+        RETURN
+    ENDIF
+
+    IF SCAN_KEYWORD("while") = 1 THEN
+        condPos = jitPos
+        JIT_COMPARE()
+        IF errCode > 0 THEN RETURN
+        J_TEST_RAX()
+        hole = CINT(J_JE_HOLE())
+        JIT_BLOCK()
+        J_JMP_BACK(condPos)
+        J_PATCH_HERE(hole)
+        RETURN
+    ENDIF
+
+    IF IS_ALPHA(CINT(PEEKC())) = 1 THEN
+        savePos = cur
+        nm = SCAN_IDENT$()
+        SKIPSP()
+        IF PEEKC() = 61 AND PEEKC2() <> 61 THEN
+            cur = cur + 1
+            JIT_COMPARE()
+            IF errCode > 0 THEN RETURN
+            J_STORE_VAR(CINT(JIT_SLOT(nm)))
+            RETURN
+        ENDIF
+        cur = savePos
+    ENDIF
+
+    JIT_COMPARE()
+ENDSUB
+
+SUB JIT_BLOCK()
+    SKIPSP()
+    IF PEEKC() <> 123 THEN
+        errCode = 4
+        RETURN
+    ENDIF
+    cur = cur + 1
+    DO
+        IF errCode > 0 THEN RETURN
+        SKIPSP()
+        IF PEEKC() = 125 THEN
+            cur = cur + 1
+            RETURN
+        ENDIF
+        IF PEEKC() = 0 THEN
+            errCode = 5
+            RETURN
+        ENDIF
+        IF PEEKC() = 59 THEN
+            cur = cur + 1
+        ELSE
+            JIT_STATEMENT()
+        ENDIF
+    LOOP
+ENDSUB
+
+' ── Driving it ─────────────────────────────────────────────────────────────
+
+SUB JIT_SYNC_IN()
+    DIM i AS INTEGER
+    FOR i = 0 TO varCount - 1
+        SYS.POKE(JIT_VARS + i * 8, CINT(varVals[i]))
+        SYS.POKE(JIT_VARS + i * 8 + 4, 0)
+    NEXT i
+ENDSUB
+
+SUB JIT_SYNC_OUT()
+    DIM i AS INTEGER
+    FOR i = 0 TO varCount - 1
+        varVals[i] = SYS.PEEK(JIT_VARS + i * 8)
+    NEXT i
+ENDSUB
+
+' Compiles the source after the leading ?? and runs it. The value of a trailing
+' expression is whatever the last statement left in rax.
+SUB JIT_RUN()
+    DIM result AS INTEGER
+
+    jitPos = 0
+    errCode = 0
+    J_MOV_RAX_IMM(0)
+
+    DO
+        IF errCode > 0 THEN EXITDO
+        SKIPSP()
+        IF PEEKC() = 0 THEN EXITDO
+        IF PEEKC() = 59 THEN
+            cur = cur + 1
+        ELSE
+            JIT_STATEMENT()
+        ENDIF
+    LOOP
+
+    IF errCode > 0 THEN
+        scrAttr = 12
+        SCR_WRITE("error: ")
+        SCR_WRITELN(ERR_TEXT$(errCode))
+        scrAttr = 7
+        RETURN
+    ENDIF
+
+    J_RET()
+    JIT_SYNC_IN()
+    result = CINT(SYS.CALL(JIT_CODE))
+    JIT_SYNC_OUT()
+
+    SCR_WRITEINT(result)
+    SCR_WRITE("   [")
+    SCR_WRITEINT(jitPos)
+    SCR_WRITELN(" bytes of x86]")
+ENDSUB
+
+SUB JIT_LINE(lineIn AS STRING)
+    srcText = lineIn
+    cur = 2
+    JIT_RUN()
+ENDSUB
+
 ' ── Main ───────────────────────────────────────────────────────────────────
 
 DIM lineText AS STRING
@@ -1238,7 +1689,7 @@ SCR_CLEAR()
 scrAttr = 15
 SCR_WRITELN("jdBasic OS - a REPL written in jdBasic")
 scrAttr = 7
-SCR_WRITELN("? expr prints    x = expr assigns    if/while cond { }    ; separates")
+SCR_WRITELN("? interprets   ?? compiles to x86 and runs it   if/while cond { }")
 SCR_WRITELN("F2 opens the editor, HELP lists commands, ESC halts")
 SCR_NEWLINE()
 
@@ -1261,10 +1712,14 @@ DO
         SCR_CLEAR()
         SCR_WRITELN("back at the prompt")
     ELSE
-        IF LEN(lineText) > 0 AND IS_UPPER(CINT(BYTEAT(lineText, 0))) = 1 THEN
-            RUN_COMMAND(lineText)
+        IF LEN(lineText) > 1 AND BYTEAT(lineText, 0) = 63 AND BYTEAT(lineText, 1) = 63 THEN
+            JIT_LINE(lineText)
         ELSE
-            RUN_TEXT(lineText)
+            IF LEN(lineText) > 0 AND IS_UPPER(CINT(BYTEAT(lineText, 0))) = 1 THEN
+                RUN_COMMAND(lineText)
+            ELSE
+                RUN_TEXT(lineText)
+            ENDIF
         ENDIF
     ENDIF
 LOOP
