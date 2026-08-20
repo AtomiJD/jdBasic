@@ -3738,14 +3738,25 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
     RETURN TY_NUM
 ENDFUNC
 
+' Bounds and a value are different things. DIM a[3] carries the call the
+' parser desugared the bounds into; DIM a = [1,2,3] carries the value itself
+' and wants nothing but a store.
+FUNC HAS_BOUNDS(ix AS INTEGER) AS INTEGER
+    DIM callNd AS INTEGER
+    callNd = CINT(stExpr[ix])
+    IF callNd < 0 THEN RETURN 0
+    IF exKind[callNd] <> X_CALL THEN RETURN 0
+    IF exFn[callNd] = "ZEROS" THEN RETURN 1
+    IF exFn[callNd] = "__MAKE_UDT_ARRAY__" THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
 ' A declaration with more than one bound holds arrays, not values.
 FUNC IS_MULTIDIM(ix AS INTEGER) AS INTEGER
     DIM callNd AS INTEGER
     DIM lit AS INTEGER
+    IF HAS_BOUNDS(ix) = 0 THEN RETURN 0
     callNd = CINT(stExpr[ix])
-    IF callNd < 0 THEN RETURN 0
-    IF exKind[callNd] <> X_CALL THEN RETURN 0
-    IF exArgN[callNd] < 1 THEN RETURN 0
     lit = CINT(argBuf[CINT(exArgAt[callNd])])
     IF exKind[lit] <> X_ARRAY_LIT THEN RETURN 0
     IF exArgN[lit] > 1 THEN RETURN 1
@@ -5223,7 +5234,7 @@ SUB G_STMT(ix AS INTEGER)
 
     IF k = K_DIM OR k = K_LET THEN
         nm = stVar[ix]
-        IF IS_ARR(CINT(SYM_TYPE(nm))) = 1 THEN
+        IF IS_ARR(CINT(SYM_TYPE(nm))) = 1 ANDALSO HAS_BOUNDS(ix) = 1 THEN
             G_DIM_ARRAY(ix, nm, CINT(SYM_TYPE(nm)))
             RETURN
         ENDIF

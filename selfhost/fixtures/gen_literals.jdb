@@ -32,3 +32,12 @@ PRINT LEN(computed)
 DIM empty AS ARRAY
 empty = []
 PRINT LEN(empty)
+
+' A declaration whose value is a literal, which carries no bounds at all.
+DIM given = [7, 8, 9]
+DIM words2 = ["one", "two"]
+PRINT LEN(given)
+PRINT given[0]
+PRINT given[2]
+PRINT LEN(words2)
+PRINT words2[1]
