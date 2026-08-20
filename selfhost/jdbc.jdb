@@ -3396,7 +3396,11 @@ FUNC P_STMT() AS INTEGER
                 stExpr[nd] = P_EXPR()
                 RETURN nd
             ENDIF
-            IF after = 3 ANDALSO LEN(TV$()) < 3 THEN RETURN CINT(P_METHOD(ln))
+            ' With a parenthesis after it the whole dotted name is the call;
+            ' without one, the head is an object and the tail its routine.
+            IF after = 3 ANDALSO LEN(TV$()) < 3 ANDALSO TT_AT(after) <> TT_LPAREN THEN
+                RETURN CINT(P_METHOD(ln))
+            ENDIF
         ENDIF
 
         save = cur
@@ -3772,6 +3776,9 @@ CONST TY_ANY = 7
 CONST TY_ARRA = 8
 ' A routine as a value: the pointer to it.
 CONST TY_FN = 9
+' An instance of a declared type, which the runtime keeps in its own store
+' rather than as a map.
+CONST TY_UDT = 10
 
 ' How many arguments one bridged call can carry. Every routine keeps scratch
 ' this wide, so the number is a size rather than a guess.
@@ -3785,11 +3792,13 @@ DIM genError AS STRING
 
 DIM gvName[1024] AS STRING
 DIM gvType[1024]
+DIM gvUdt[1024] AS STRING
 DIM gvN AS INTEGER
 
 ' The routine being generated: its parameters and its declarations, in allocas.
 DIM lvName[1024] AS STRING
 DIM lvType[1024]
+DIM lvUdt[1024] AS STRING
 DIM lvN AS INTEGER
 DIM inRoutine AS INTEGER
 DIM curRet AS INTEGER
@@ -3842,6 +3851,7 @@ ENDFUNC
 FUNC LL_TY$(ty AS INTEGER) AS STRING
     IF ty = TY_ANY THEN RETURN "{i64, i32}"
     IF ty = TY_FN THEN RETURN "ptr"
+    IF ty = TY_UDT THEN RETURN "ptr"
     IF ty = TY_STR OR ty = TY_MAP THEN RETURN "ptr"
     IF IS_ARR(ty) = 1 THEN RETURN "ptr"
     RETURN "double"
@@ -3871,6 +3881,7 @@ ENDFUNC
 FUNC IS_PTRISH(ty AS INTEGER) AS INTEGER
     IF ty = TY_STR OR ty = TY_MAP THEN RETURN 1
     IF ty = TY_FN THEN RETURN 1
+    IF ty = TY_UDT THEN RETURN 1
     IF IS_ARR(ty) = 1 THEN RETURN 1
     RETURN 0
 ENDFUNC
@@ -3913,6 +3924,7 @@ SUB GV_ADD(nm AS STRING, ty AS INTEGER)
     ENDIF
     gvName[gvN] = nm
     gvType[gvN] = ty
+    gvUdt[gvN] = ""
     gvN = gvN + 1
 ENDSUB
 
@@ -3928,6 +3940,7 @@ SUB LV_ADD(nm AS STRING, ty AS INTEGER)
     IF LV_FIND(nm) >= 0 THEN RETURN
     lvName[lvN] = nm
     lvType[lvN] = ty
+    lvUdt[lvN] = ""
     lvN = lvN + 1
 ENDSUB
 
@@ -3947,6 +3960,52 @@ FUNC SYM_TYPE(nm AS STRING) AS INTEGER
     RETURN CINT(gvType[i])
 ENDFUNC
 
+SUB LV_SET_TY(nm AS STRING, ty AS INTEGER)
+    DIM i AS INTEGER
+    i = CINT(LV_FIND(nm))
+    IF i >= 0 THEN lvType[i] = ty
+ENDSUB
+
+SUB SYM_SET_UDT(nm AS STRING, typeName AS STRING, asLocal AS INTEGER)
+    DIM i AS INTEGER
+    IF asLocal = 1 THEN
+        i = CINT(LV_FIND(nm))
+        IF i >= 0 THEN lvUdt[i] = typeName
+        RETURN
+    ENDIF
+    i = CINT(GV_FIND(nm))
+    IF i >= 0 THEN gvUdt[i] = typeName
+ENDSUB
+
+FUNC SYM_UDT$(nm AS STRING) AS STRING
+    DIM i AS INTEGER
+    IF inRoutine = 1 THEN
+        i = CINT(LV_FIND(nm))
+        IF i >= 0 THEN RETURN lvUdt[i]
+    ENDIF
+    i = CINT(GV_FIND(nm))
+    IF i < 0 THEN RETURN ""
+    RETURN gvUdt[i]
+ENDFUNC
+
+' When the object does not say which type it is, the type that owns a routine
+' of that name does. Two types with the same routine name would need the
+' first answer, which is why it is asked first.
+FUNC TYPE_OWNING$(method AS STRING) AS STRING
+    DIM i AS INTEGER
+    DIM suffix AS STRING
+    DIM nm AS STRING
+    DIM p AS INTEGER
+
+    suffix = "." + method
+    FOR i = 0 TO fnN - 1
+        nm = fnName[i]
+        p = CINT(LEN(nm)) - CINT(LEN(suffix))
+        IF p > 0 ANDALSO MID$(nm, p, LEN(suffix)) = suffix THEN RETURN LEFT$(nm, p)
+    NEXT i
+    RETURN ""
+ENDFUNC
+
 FUNC FN_FIND(nm AS STRING) AS INTEGER
     DIM i AS INTEGER
     FOR i = 0 TO fnN - 1
@@ -3958,6 +4017,7 @@ ENDFUNC
 FUNC PARAM_TY(at AS INTEGER) AS INTEGER
     DIM vt AS INTEGER
     vt = CINT(parType[at])
+    IF vt = 11 THEN RETURN TY_UDT
     IF vt = 10 THEN RETURN TY_STR
     IF vt = V_ARRAY THEN RETURN TY_ARRN
     IF vt = 0 ANDALSO ENDS_IN_DOLLAR(parName[at]) = 1 THEN RETURN TY_STR
@@ -4468,6 +4528,10 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
         RETURN CINT(SYM_TYPE(exStr[ix]))
     ENDIF
     IF k = X_INDEX THEN RETURN CINT(ELEM_TY(CINT(E_TYPE(CINT(exLeft[ix])))))
+    IF k = X_MEMBER THEN
+        IF ENDS_IN_DOLLAR(exStr[ix]) = 1 THEN RETURN TY_STR
+        RETURN TY_NUM
+    ENDIF
     IF k = X_CALL THEN
         f = CINT(FN_FIND(exFn[ix]))
         IF f >= 0 THEN RETURN CINT(fnRet[f])
@@ -4519,9 +4583,15 @@ ENDFUNC
 FUNC DIM_TYPE(ix AS INTEGER) AS INTEGER
     DIM vt AS INTEGER
     vt = CINT(stVType[ix])
-    IF vt = 11 ANDALSO stLabel[ix] = "" THEN RETURN TY_MAP
+    IF vt = 11 THEN
+        IF stLabel[ix] <> "" ANDALSO stLabel[ix] <> "__EXPORT__" THEN RETURN TY_UDT
+        RETURN TY_MAP
+    ENDIF
     IF vt = V_ARRAY THEN
         IF IS_MULTIDIM(ix) = 1 THEN RETURN TY_ARRA
+        ' An array of a declared type holds instances, which are pointers,
+        ' so its cells answer with their tag like any mixed array.
+        IF stEType[ix] = 11 THEN RETURN TY_ARRA
         IF stEType[ix] = 10 THEN RETURN TY_ARRS
         RETURN TY_ARRN
     ENDIF
@@ -4547,25 +4617,40 @@ SUB SCAN_ROUTINES()
     DIM j AS INTEGER
     DIM ix AS INTEGER
     DIM k AS INTEGER
+    DIM m AS INTEGER
 
     fnN = 0
     FOR j = 0 TO topN - 1
         ix = CINT(bodyBuf[topAt + j])
         k = CINT(stKind[ix])
-        IF k = K_FUNCTION OR k = K_SUB THEN
-            fnName[fnN] = stFunc[ix]
-            fnIsSub[fnN] = 0
-            fnRet[fnN] = TY_NUM
-            IF k = K_SUB THEN
-                fnIsSub[fnN] = 1
-            ELSE
-                fnRet[fnN] = RET_TY(ix)
-            ENDIF
-            fnParAt[fnN] = stParAt[ix]
-            fnParN[fnN] = stParN[ix]
-            fnN = fnN + 1
+
+        ' A type's routines are inside it, and are routines all the same.
+        IF k = K_TYPE_DECL THEN
+            FOR m = 0 TO stBodyN[ix] - 1
+                SCAN_ONE_ROUTINE(CINT(bodyBuf[CINT(stBodyAt[ix]) + m]))
+            NEXT m
+            CONTINUEFOR
         ENDIF
+
+        SCAN_ONE_ROUTINE(ix)
     NEXT j
+ENDSUB
+
+SUB SCAN_ONE_ROUTINE(ix AS INTEGER)
+    DIM k AS INTEGER
+    k = CINT(stKind[ix])
+    IF k <> K_FUNCTION ANDALSO k <> K_SUB THEN RETURN
+    fnName[fnN] = stFunc[ix]
+    fnIsSub[fnN] = 0
+    fnRet[fnN] = TY_NUM
+    IF k = K_SUB THEN
+        fnIsSub[fnN] = 1
+    ELSE
+        fnRet[fnN] = RET_TY(ix)
+    ENDIF
+    fnParAt[fnN] = stParAt[ix]
+    fnParN[fnN] = stParN[ix]
+    fnN = fnN + 1
 ENDSUB
 
 SUB DECLARE_NAME(nm AS STRING, ty AS INTEGER, asLocal AS INTEGER)
@@ -4600,6 +4685,10 @@ SUB SCAN_ONE(ix AS INTEGER, asLocal AS INTEGER)
             LV_ADD(stVar[ix], CINT(DIM_TYPE(ix)))
         ELSE
             GV_ADD(stVar[ix], CINT(DIM_TYPE(ix)))
+        ENDIF
+        ' Which declared type it is, so a routine call on it can be resolved.
+        IF stLabel[ix] <> "" ANDALSO stLabel[ix] <> "__EXPORT__" THEN
+            SYM_SET_UDT(stVar[ix], stLabel[ix], asLocal)
         ENDIF
         RETURN
     ENDIF
@@ -4850,6 +4939,25 @@ FUNC G_IDX$(ix AS INTEGER) AS STRING
     RETURN t
 ENDFUNC
 
+' The two halves of a name that carries one dot.
+FUNC HEAD_OF$(nm AS STRING) AS STRING
+    RETURN LEFT$(nm, CINT(INSTR(nm, ".")))
+ENDFUNC
+
+FUNC TAIL_OF$(nm AS STRING) AS STRING
+    DIM p AS INTEGER
+    p = CINT(INSTR(nm, "."))
+    RETURN MID$(nm, p + 1, LEN(nm) - p - 1)
+ENDFUNC
+
+' Reading a field of a declared type.
+FUNC G_MEMBER$(ix AS INTEGER) AS STRING
+    DIM obj AS STRING
+    obj = G_EXPR(CINT(exLeft[ix]))
+    IF lastType = TY_ANY THEN obj = ANY_AS_PTR$(obj)
+    RETURN G_UDT_GET$(obj, exStr[ix])
+ENDFUNC
+
 FUNC G_INDEX$(ix AS INTEGER) AS STRING
     DIM handle AS STRING
     DIM ht AS INTEGER
@@ -4895,6 +5003,88 @@ FUNC G_INDEX$(ix AS INTEGER) AS STRING
     RETURN t
 ENDFUNC
 
+FUNC G_METHOD$(ix AS INTEGER) AS STRING
+    DIM member AS INTEGER
+    DIM objEx AS INTEGER
+    DIM obj AS STRING
+    DIM typeName AS STRING
+    DIM f AS INTEGER
+    DIM i AS INTEGER
+    DIM pat AS INTEGER
+    DIM n AS INTEGER
+    DIM argsTxt AS STRING
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM pty AS INTEGER
+    DIM t AS STRING
+
+    member = CINT(exLeft[ix])
+    objEx = CINT(exLeft[member])
+    RETURN G_METHOD_ON$(objEx, exStr[member], ix)
+ENDFUNC
+
+' The same call whether it was written obj.method(x) in a statement, where
+' the tree makes a member of it, or in an expression, where it stays a name
+' with a dot.
+FUNC G_METHOD_ON$(objEx AS INTEGER, method AS STRING, ix AS INTEGER) AS STRING
+    DIM obj AS STRING
+    DIM typeName AS STRING
+    DIM f AS INTEGER
+    DIM i AS INTEGER
+    DIM pat AS INTEGER
+    DIM n AS INTEGER
+    DIM argsTxt AS STRING
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM pty AS INTEGER
+    DIM t AS STRING
+
+    typeName = ""
+    IF exKind[objEx] = X_VARIABLE THEN typeName = SYM_UDT$(exStr[objEx])
+    IF typeName = "" THEN typeName = TYPE_OWNING$(method)
+    IF typeName = "" THEN
+        genError = "no type owns a routine called " + method
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    f = CINT(FN_FIND(typeName + "." + method))
+    IF f < 0 THEN
+        genError = typeName + " has no routine called " + method
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    obj = G_EXPR(objEx)
+    IF lastType = TY_ANY THEN obj = ANY_AS_PTR$(obj)
+
+    n = CINT(exArgN[ix])
+    pat = CINT(fnParAt[f])
+    argsTxt = "ptr " + obj
+    FOR i = 0 TO n - 1
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        vt = lastType
+        argsTxt = argsTxt + ", "
+        pty = TY_NUM
+        IF i + 1 < fnParN[f] THEN pty = CINT(PARAM_TY(pat + i + 1))
+        IF LL_TY$(pty) = "ptr" THEN
+            argsTxt = argsTxt + "ptr " + COERCE$(v, vt, pty)
+        ELSE
+            argsTxt = argsTxt + "double " + COERCE$(v, vt, TY_NUM)
+        ENDIF
+    NEXT i
+
+    IF fnIsSub[f] = 1 THEN
+        W("  call void @f_" + fnName[f] + "(" + argsTxt + ")")
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+    t = NEWTMP$()
+    W("  " + t + " = call " + LL_TY$(CINT(fnRet[f])) + " @f_" + fnName[f] + "(" + argsTxt + ")")
+    lastType = CINT(fnRet[f])
+    RETURN t
+ENDFUNC
+
 FUNC G_CALL$(ix AS INTEGER) AS STRING
     DIM f AS INTEGER
     DIM i AS INTEGER
@@ -4907,6 +5097,21 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     DIM rty AS INTEGER
     DIM t AS STRING
     DIM hof AS STRING
+
+    ' obj.method(args) is a call on the type's own routine, with the instance
+    ' handed in first. In an expression the tree keeps it as a name with a
+    ' dot, so the head is looked up before anything else is tried.
+    IF exFn[ix] = "__METHOD__" THEN RETURN G_METHOD$(ix)
+
+    IF INSTR(exFn[ix], ".") >= 0 THEN
+        hof = HEAD_OF$(exFn[ix])
+        IF SYM_TYPE(hof) = TY_UDT THEN
+            t = NEWTMP$()
+            i = CINT(NEW_EXPR(X_VARIABLE, CINT(exLine[ix])))
+            exStr[i] = hof
+            RETURN G_METHOD_ON$(i, TAIL_OF$(exFn[ix]), ix)
+        ENDIF
+    ENDIF
 
     f = CINT(FN_FIND(exFn[ix]))
     IF f < 0 THEN
@@ -5316,6 +5521,18 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
         nm = exStr[ix]
         ty = CINT(BI_FIND(nm))
         IF ty >= 0 ANDALSO biSig[ty] = "" THEN RETURN G_BUILTIN$(ty, -1)
+
+        ' The tree keeps p.X as one name; whether it is a field of something
+        ' or a name that happens to carry a dot is a question for the symbols.
+        IF INSTR(nm, ".") >= 0 THEN
+            v = HEAD_OF$(nm)
+            IF SYM_TYPE(v) = TY_UDT THEN
+                t = NEWTMP$()
+                W("  " + t + " = load ptr, ptr " + SYM_REF$(v))
+                RETURN G_UDT_GET$(t, TAIL_OF$(nm))
+            ENDIF
+        ENDIF
+
         ty = CINT(SYM_TYPE(nm))
         t = NEWTMP$()
         W("  " + t + " = load " + LL_TY$(ty) + ", ptr " + SYM_REF$(nm))
@@ -5347,6 +5564,7 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
 
     IF k = X_BINARY THEN RETURN G_BINARY(ix)
     IF k = X_INDEX THEN RETURN G_INDEX$(ix)
+    IF k = X_MEMBER THEN RETURN G_MEMBER$(ix)
     IF k = X_LAMBDA THEN RETURN G_LAMBDA$(ix)
     IF k = X_CALL THEN RETURN G_CALL$(ix)
 
@@ -5650,6 +5868,58 @@ SUB G_DIM_ARRAY(ix AS INTEGER, nm AS STRING, ty AS INTEGER)
     W("  " + handle + " = call ptr @jdb_array_new(i64 " + n64 + ")")
     IF ty = TY_ARRS THEN W("  call void @jdb_array_set_string_elems(ptr " + handle + ")")
     W("  store ptr " + handle + ", ptr " + SYM_REF$(nm))
+
+    ' An array of a declared type holds instances, not empty cells, so each
+    ' one is made before anything can reach into it.
+    IF callNd >= 0 ANDALSO exFn[callNd] = "__MAKE_UDT_ARRAY__" THEN
+        G_FILL_UDT_ARRAY(handle, n64, exStr[CINT(argBuf[CINT(exArgAt[callNd]) + 1])])
+    ENDIF
+ENDSUB
+
+SUB G_FILL_UDT_ARRAY(handle AS STRING, count AS STRING, typeName AS STRING)
+    DIM iName AS STRING
+    DIM topL AS STRING
+    DIM bodyL AS STRING
+    DIM endL AS STRING
+    DIM idxV AS STRING
+    DIM lim AS STRING
+    DIM cmp AS STRING
+    DIM obj AS STRING
+    DIM iv AS STRING
+    DIM nextV AS STRING
+
+    iName = "__udtfill" + STR$(eachNo)
+    eachNo = eachNo + 1
+    GV_ADD(iName, TY_NUM)
+    W("  store double 0.0, ptr @v_" + iName)
+
+    topL = NEWLBL$("udtfill.top")
+    bodyL = NEWLBL$("udtfill.body")
+    endL = NEWLBL$("udtfill.end")
+
+    W("  br label %" + topL)
+    W(topL + ":")
+    idxV = NEWTMP$()
+    W("  " + idxV + " = load double, ptr @v_" + iName)
+    lim = NEWTMP$()
+    W("  " + lim + " = sitofp i64 " + count + " to double")
+    cmp = NEWTMP$()
+    W("  " + cmp + " = fcmp olt double " + idxV + ", " + lim)
+    W("  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL)
+
+    W(bodyL + ":")
+    obj = NEWTMP$()
+    W("  " + obj + " = call ptr @jdb_udt_new(ptr " + STR_CONST$(typeName) + ")")
+    iv = NEWTMP$()
+    W("  " + iv + " = fptosi double " + idxV + " to i64")
+    W("  call void @jdb_array_set(ptr " + handle + ", i64 " + iv + ", double " + AS_CELL$(obj, TY_UDT) + ")")
+    nextV = NEWTMP$()
+    W("  " + nextV + " = fadd double " + idxV + ", 1.0")
+    W("  store double " + nextV + ", ptr @v_" + iName)
+    W("  br label %" + topL)
+
+    W(endL + ":")
+    W("  call void @jdb_array_set_nested(ptr " + handle + ")")
 ENDSUB
 
 ' DIM a[rows, cols] is an array of arrays, built a row at a time. Reading it
@@ -5720,6 +5990,64 @@ SUB G_DIM_2D(nm AS STRING, ty AS INTEGER, rowsE AS INTEGER, colsE AS INTEGER)
     W("  store ptr " + outer + ", ptr " + SYM_REF$(nm))
 ENDSUB
 
+' A field of a declared type. Which of the two setters to use is read off the
+' name, since a dollar at the end is how the language says string.
+SUB G_UDT_SET(obj AS STRING, field AS STRING, v AS STRING, vt AS INTEGER)
+    DIM fieldC AS STRING
+    fieldC = STR_CONST$(field)
+    IF ENDS_IN_DOLLAR(field) = 1 OR vt = TY_STR THEN
+        W("  call void @jdb_udt_set_str(ptr " + obj + ", ptr " + fieldC + ", ptr " + COERCE$(v, vt, TY_STR) + ")")
+        RETURN
+    ENDIF
+    W("  call void @jdb_udt_set_f64(ptr " + obj + ", ptr " + fieldC + ", double " + COERCE$(v, vt, TY_NUM) + ")")
+ENDSUB
+
+FUNC G_UDT_GET$(obj AS STRING, field AS STRING) AS STRING
+    DIM fieldC AS STRING
+    DIM t AS STRING
+    fieldC = STR_CONST$(field)
+    t = NEWTMP$()
+    IF ENDS_IN_DOLLAR(field) = 1 THEN
+        W("  " + t + " = call ptr @jdb_udt_get_str(ptr " + obj + ", ptr " + fieldC + ")")
+        lastType = TY_STR
+        RETURN t
+    ENDIF
+    W("  " + t + " = call double @jdb_udt_get_f64(ptr " + obj + ", ptr " + fieldC + ")")
+    lastType = TY_NUM
+    RETURN t
+ENDFUNC
+
+' A slot of a declared type holds an instance, which the runtime makes.
+SUB G_NEW_UDT(nm AS STRING, typeName AS STRING)
+    DIM obj AS STRING
+    obj = NEWTMP$()
+    W("  " + obj + " = call ptr @jdb_udt_new(ptr " + STR_CONST$(typeName) + ")")
+    W("  store ptr " + obj + ", ptr " + SYM_REF$(nm))
+ENDSUB
+
+SUB G_CHAIN_ASSIGN(ix AS INTEGER)
+    DIM at AS INTEGER
+    DIM obj AS STRING
+    DIM objTy AS INTEGER
+    DIM iv AS STRING
+    DIM v AS STRING
+
+    at = CINT(stPrAt[ix])
+    obj = G_EXPR(CINT(prBuf[at]))
+    objTy = lastType
+    IF objTy = TY_ANY THEN obj = ANY_AS_PTR$(obj)
+
+    IF stLabel[ix] = "__INDEX__" THEN
+        iv = G_IDX$(CINT(prBuf[at + 1]))
+        v = G_EXPR(CINT(stExpr[ix]))
+        W("  call void @jdb_array_set(ptr " + obj + ", i64 " + iv + ", double " + AS_CELL$(v, lastType) + ")")
+        RETURN
+    ENDIF
+
+    v = G_EXPR(CINT(stExpr[ix]))
+    G_UDT_SET(obj, stLabel[ix], v, lastType)
+ENDSUB
+
 SUB G_INDEX_ASSIGN(ix AS INTEGER)
     DIM nm AS STRING
     DIM ty AS INTEGER
@@ -5728,11 +6056,31 @@ SUB G_INDEX_ASSIGN(ix AS INTEGER)
     DIM v AS STRING
     DIM bits AS STRING
     DIM cell AS STRING
-    DIM keyV AS STRING
+    DIM keyV AS INTEGER
+    DIM keyS AS STRING
     DIM i AS INTEGER
+
+    ' A chain that reached past the array carries no name: what to write into
+    ' is an expression, and the label says whether a field or a subscript.
+    IF stVar[ix] = "" THEN
+        G_CHAIN_ASSIGN(ix)
+        RETURN
+    ENDIF
 
     nm = stVar[ix]
     ty = CINT(SYM_TYPE(nm))
+
+    ' A field of a declared type is not a subscript of a map: the runtime
+    ' keeps the two in different stores.
+    IF ty = TY_UDT ANDALSO stIxN[ix] = 1 THEN
+        handle = NEWTMP$()
+        W("  " + handle + " = load ptr, ptr " + SYM_REF$(nm))
+        keyV = CINT(ixBuf[CINT(stIxAt[ix])])
+        v = G_EXPR(CINT(stExpr[ix]))
+        G_UDT_SET(handle, exStr[keyV], v, lastType)
+        RETURN
+    ENDIF
+
     IF IS_ARR(ty) = 0 ANDALSO ty <> TY_MAP ANDALSO ty <> TY_ANY THEN
         genError = nm + " is not an array"
         RETURN
@@ -5755,9 +6103,9 @@ SUB G_INDEX_ASSIGN(ix AS INTEGER)
     NEXT i
 
     IF ty = TY_MAP THEN
-        keyV = G_EXPR(CINT(ixBuf[CINT(stIxAt[ix]) + stIxN[ix] - 1]))
+        keyS = G_EXPR(CINT(ixBuf[CINT(stIxAt[ix]) + stIxN[ix] - 1]))
         v = G_EXPR(CINT(stExpr[ix]))
-        W("  call void @jdb_map_set_tagged(ptr " + handle + ", ptr " + keyV + ", double " + AS_CELL$(v, lastType) + ", i32 " + TAG_OF$(lastType) + ")")
+        W("  call void @jdb_map_set_tagged(ptr " + handle + ", ptr " + keyS + ", double " + AS_CELL$(v, lastType) + ", i32 " + TAG_OF$(lastType) + ")")
         RETURN
     ENDIF
 
@@ -5804,6 +6152,16 @@ SUB G_STORE(nm AS STRING, ix AS INTEGER)
     DIM vt AS INTEGER
     DIM half AS STRING
     DIM pair AS STRING
+
+    ' p.X = v keeps the whole thing as one name in the tree, so which part is
+    ' the object and which the field is settled here.
+    IF INSTR(nm, ".") >= 0 ANDALSO SYM_TYPE(HEAD_OF$(nm)) = TY_UDT THEN
+        half = NEWTMP$()
+        W("  " + half + " = load ptr, ptr " + SYM_REF$(HEAD_OF$(nm)))
+        v = G_EXPR(ix)
+        G_UDT_SET(half, TAIL_OF$(nm), v, lastType)
+        RETURN
+    ENDIF
 
     v = G_EXPR(ix)
     vt = lastType
@@ -5877,6 +6235,12 @@ SUB G_ROUTINE(ix AS INTEGER)
     FOR i = 0 TO fnParN[f] - 1
         LV_ADD(parName[pat + i], CINT(PARAM_TY(pat + i)))
     NEXT i
+
+    ' A routine that belongs to a type gets the instance as THIS, and the
+    ' name of the type is the part of its own name before the dot.
+    IF INSTR(nm, ".") >= 0 THEN
+        SYM_SET_UDT("THIS", HEAD_OF$(nm), 1)
+    ENDIF
     SCAN_DECLS(CINT(stBodyAt[ix]), CINT(stBodyN[ix]), 1)
 
     sig = ""
@@ -6162,6 +6526,7 @@ ENDSUB
 SUB G_STMT(ix AS INTEGER)
     DIM k AS INTEGER
     DIM nm AS STRING
+    DIM i AS INTEGER
 
     IF ix < 0 THEN RETURN
     IF genError <> "" THEN RETURN
@@ -6175,7 +6540,12 @@ SUB G_STMT(ix AS INTEGER)
             G_DIM_ARRAY(ix, nm, CINT(SYM_TYPE(nm)))
             RETURN
         ENDIF
-        IF stExpr[ix] >= 0 THEN G_STORE(nm, CINT(stExpr[ix]))
+        IF stExpr[ix] >= 0 THEN
+            G_STORE(nm, CINT(stExpr[ix]))
+            RETURN
+        ENDIF
+        ' A slot of a declared type gets an instance of it to hold.
+        IF stLabel[ix] <> "" ANDALSO stVType[ix] = 11 THEN G_NEW_UDT(nm, stLabel[ix])
         RETURN
     ENDIF
 
@@ -6229,8 +6599,14 @@ SUB G_STMT(ix AS INTEGER)
         RETURN
     ENDIF
 
-    ' A type declaration says what a name means and asks for no code.
-    IF k = K_TYPE_DECL THEN RETURN
+    ' A type declaration asks for no code of its own, but the routines it
+    ' carries are routines and need theirs.
+    IF k = K_TYPE_DECL THEN
+        FOR i = 0 TO stBodyN[ix] - 1
+            G_STMT(CINT(bodyBuf[CINT(stBodyAt[ix]) + i]))
+        NEXT i
+        RETURN
+    ENDIF
     ' STOP is a place to break into a debugger, and compiles away.
     IF k = K_STOP THEN RETURN
 
@@ -6335,6 +6711,11 @@ FUNC DECLS$() AS STRING
     d = d + "declare i32 @jdb_map_get_tagged(ptr, ptr, ptr)" + CHR$(10)
     d = d + "declare double @jdb_array_get_tagged(ptr, i64, ptr)" + CHR$(10)
     d = d + "declare ptr @jdb_frmv(ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_udt_new(ptr)" + CHR$(10)
+    d = d + "declare void @jdb_udt_set_f64(ptr, ptr, double)" + CHR$(10)
+    d = d + "declare void @jdb_udt_set_str(ptr, ptr, ptr)" + CHR$(10)
+    d = d + "declare double @jdb_udt_get_f64(ptr, ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_udt_get_str(ptr, ptr)" + CHR$(10)
     d = d + "declare void @jdb_array_set_nested(ptr)" + CHR$(10)
     d = d + "declare double @jdrt_call_typed_f64(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_str(ptr, ptr, ptr, ptr, i32)" + CHR$(10)

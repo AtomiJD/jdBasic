@@ -1,0 +1,41 @@
+OPTION EXPLICIT
+
+' Declared types: fields, routines that belong to them, and reaching through
+' a subscript to get at either.
+
+TYPE Point
+    X
+    Y
+    Label$
+    SUB SETUP(a, b, l$)
+        THIS.X = a
+        THIS.Y = b
+        THIS.Label$ = l$
+    ENDSUB
+    FUNC SUM_XY()
+        RETURN THIS.X + THIS.Y
+    ENDFUNC
+ENDTYPE
+
+DIM p AS Point
+p.SETUP(3, 4, "origin")
+PRINT p.X
+PRINT p.Y
+PRINT p.Label$
+PRINT p.SUM_XY()
+
+p.X = 10
+PRINT p.X
+PRINT p.SUM_XY()
+
+DIM grid[3] AS Point
+grid[0].SETUP(1, 2, "first")
+grid[1].SETUP(5, 6, "second")
+PRINT grid[0].X
+PRINT grid[1].Y
+PRINT grid[0].Label$
+PRINT grid[1].SUM_XY()
+
+grid[0].X = 99
+PRINT grid[0].X
+PRINT grid[0].SUM_XY()
