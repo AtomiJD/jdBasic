@@ -1,0 +1,47 @@
+OPTION EXPLICIT
+
+' The statement forms that reach the runtime rather than plain arithmetic.
+
+DIM total AS DOUBLE
+DIM it AS DOUBLE
+DIM name AS STRING
+
+PRINT 2 ^ 10
+PRINT 3 ^ 0.5
+
+total = 0
+FOR EACH it IN [5, 10, 15, 20]
+    total = total + it
+NEXT it
+PRINT total
+
+total = 0
+FOR EACH it IN IOTA(6)
+    IF it = 3 THEN CONTINUEFOR
+    IF it > 5 THEN EXITFOR
+    total = total + it
+NEXT it
+PRINT total
+
+DIM words AS ARRAY
+words = ["alpha", "beta", "gamma"]
+FOR EACH name IN words
+    PRINT name
+NEXT name
+
+TRY
+    PRINT "before"
+    THROW "deliberate"
+    PRINT "unreachable"
+CATCH
+    PRINT "caught"
+ENDTRY
+PRINT "after"
+
+TRY
+    PRINT "quiet"
+CATCH
+    PRINT "not reached"
+FINALLY
+    PRINT "finally"
+ENDTRY

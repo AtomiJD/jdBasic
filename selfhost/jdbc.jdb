@@ -3188,8 +3188,8 @@ DIM loopBreak[64] AS STRING
 DIM loopNext[64] AS STRING
 DIM loopN AS INTEGER
 
-DIM strLit[512] AS STRING
-DIM strLen[512]
+DIM strLit[4096] AS STRING
+DIM strLen[4096]
 DIM strN AS INTEGER
 
 ' The type of the last expression emitted, since jdBasic-0 cannot answer two
@@ -3334,6 +3334,10 @@ FUNC STR_CONST$(v AS STRING) AS STRING
         IF strLit[i] = v THEN RETURN "@.s" + STR$(i)
     NEXT i
 
+    IF strN >= 4096 THEN
+        genError = "too many string constants in one module"
+        RETURN "@.s0"
+    ENDIF
     idx = strN
     strLit[idx] = v
     strLen[idx] = LEN(v) + 1
@@ -3778,8 +3782,14 @@ SUB SCAN_ONE(ix AS INTEGER, asLocal AS INTEGER)
     IF ix < 0 THEN RETURN
     k = CINT(stKind[ix])
     IF k = K_FUNCTION OR k = K_SUB THEN RETURN
+    ' A declaration inside a routine is that routine's own, even when a global
+    ' of the same name exists; only a bare assignment reaches out.
     IF k = K_DIM OR k = K_LET THEN
-        DECLARE_NAME(stVar[ix], CINT(DIM_TYPE(ix)), asLocal)
+        IF asLocal = 1 THEN
+            LV_ADD(stVar[ix], CINT(DIM_TYPE(ix)))
+        ELSE
+            GV_ADD(stVar[ix], CINT(DIM_TYPE(ix)))
+        ENDIF
         RETURN
     ENDIF
     IF k = K_ASSIGN THEN
@@ -3874,6 +3884,13 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     IF arith <> "" THEN
         t = NEWTMP$()
         W("  " + t + " = " + arith + " double " + l + ", " + r)
+        lastType = TY_NUM
+        RETURN t
+    ENDIF
+
+    IF op = TT_CARET THEN
+        t = NEWTMP$()
+        W("  " + t + " = call double @jdb_pow(double " + l + ", double " + r + ")")
         lastType = TY_NUM
         RETURN t
     ENDIF
@@ -4181,6 +4198,14 @@ FUNC G_RT_HANDLE$() AS STRING
     RETURN t
 ENDFUNC
 
+' Inside a TRY the failure path leads to its CATCH instead of out of the
+' program, innermost last.
+DIM catchLbl[64] AS STRING
+DIM catchN AS INTEGER
+
+' Each FOR EACH keeps its own cursor and its own hold on the collection.
+DIM eachNo AS INTEGER
+
 SUB G_CHECK_ERR(rt AS STRING)
     DIM last AS STRING
     DIM hasMsg AS STRING
@@ -4193,8 +4218,10 @@ SUB G_CHECK_ERR(rt AS STRING)
 
     pullL = NEWLBL$("bmsg.pull")
     postL = NEWLBL$("bmsg.post")
-    errL = NEWLBL$("call.err")
     okL = NEWLBL$("call.ok")
+
+    errL = NEWLBL$("call.err")
+    IF catchN > 0 THEN errL = catchLbl[catchN - 1]
 
     last = NEWTMP$()
     W("  " + last + " = call ptr @jdrt_last_error(ptr " + rt + ")")
@@ -4214,9 +4241,11 @@ SUB G_CHECK_ERR(rt AS STRING)
     W("  " + hasErr + " = icmp ne i64 " + rc + ", 0")
     W("  br i1 " + hasErr + ", label %" + errL + ", label %" + okL)
 
-    W(errL + ":")
-    W("  call void @jdb_throw_uncaught()")
-    W("  unreachable")
+    IF catchN = 0 THEN
+        W(errL + ":")
+        W("  call void @jdb_throw_uncaught()")
+        W("  unreachable")
+    ENDIF
 
     W(okL + ":")
 ENDSUB
@@ -4696,6 +4725,113 @@ SUB G_ROUTINE(ix AS INTEGER)
     lvN = 0
 ENDSUB
 
+' TRY runs its body with the failure path aimed at CATCH, which clears the
+' error before it runs. FINALLY follows either way.
+SUB G_TRY(ix AS INTEGER)
+    DIM bodyL AS STRING
+    DIM catchL AS STRING
+    DIM endL AS STRING
+
+    bodyL = NEWLBL$("try.body")
+    catchL = NEWLBL$("try.catch")
+    endL = NEWLBL$("try.end")
+
+    W("  br label %" + bodyL)
+    W(bodyL + ":")
+
+    catchLbl[catchN] = catchL
+    catchN = catchN + 1
+    G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
+    catchN = catchN - 1
+
+    W("  br label %" + endL)
+    W(catchL + ":")
+    W("  call void @jdb_err_code_clear()")
+    G_BODY(CINT(stCatchAt[ix]), CINT(stCatchN[ix]))
+    W("  br label %" + endL)
+
+    W(endL + ":")
+    G_BODY(CINT(stFinAt[ix]), CINT(stFinN[ix]))
+ENDSUB
+
+' FOR EACH walks the collection by index, which is what the reference does.
+SUB G_FOR_EACH(ix AS INTEGER)
+    DIM nm AS STRING
+    DIM idxName AS STRING
+    DIM handleName AS STRING
+    DIM topL AS STRING
+    DIM bodyL AS STRING
+    DIM stepL AS STRING
+    DIM endL AS STRING
+    DIM src AS STRING
+    DIM srcTy AS INTEGER
+    DIM idxV AS STRING
+    DIM iv AS STRING
+    DIM lim AS STRING
+    DIM cmp AS STRING
+    DIM elem AS STRING
+    DIM bits AS STRING
+    DIM nextV AS STRING
+    DIM handle AS STRING
+
+    nm = stVar[ix]
+    idxName = "__each" + STR$(eachNo)
+    handleName = "__eachsrc" + STR$(eachNo)
+    eachNo = eachNo + 1
+    GV_ADD(idxName, TY_NUM)
+    GV_ADD(handleName, TY_ARRN)
+
+    src = G_EXPR(CINT(stExpr[ix]))
+    srcTy = lastType
+    W("  store ptr " + src + ", ptr @v_" + handleName)
+    W("  store double 0.0, ptr @v_" + idxName)
+
+    topL = NEWLBL$("each.top")
+    bodyL = NEWLBL$("each.body")
+    stepL = NEWLBL$("each.step")
+    endL = NEWLBL$("each.end")
+
+    W("  br label %" + topL)
+    W(topL + ":")
+    idxV = NEWTMP$()
+    W("  " + idxV + " = load double, ptr @v_" + idxName)
+    handle = NEWTMP$()
+    W("  " + handle + " = load ptr, ptr @v_" + handleName)
+    lim = EMIT_RT$("jdb_array_len", "ptr " + handle, "I")
+    cmp = NEWTMP$()
+    W("  " + cmp + " = fcmp olt double " + idxV + ", " + lim)
+    W("  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL)
+
+    W(bodyL + ":")
+    iv = NEWTMP$()
+    W("  " + iv + " = fptosi double " + idxV + " to i64")
+    elem = NEWTMP$()
+    W("  " + elem + " = call double @jdb_array_get(ptr " + handle + ", i64 " + iv + ")")
+    IF ELEM_TY(CINT(SYM_TYPE(nm))) = TY_STR OR SYM_TYPE(nm) = TY_STR THEN
+        bits = NEWTMP$()
+        W("  " + bits + " = bitcast double " + elem + " to i64")
+        nextV = NEWTMP$()
+        W("  " + nextV + " = inttoptr i64 " + bits + " to ptr")
+        W("  store ptr " + nextV + ", ptr " + SYM_REF$(nm))
+    ELSE
+        W("  store double " + elem + ", ptr " + SYM_REF$(nm))
+    ENDIF
+
+    PUSH_LOOP(endL, stepL)
+    G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
+    POP_LOOP()
+
+    W("  br label %" + stepL)
+    W(stepL + ":")
+    idxV = NEWTMP$()
+    W("  " + idxV + " = load double, ptr @v_" + idxName)
+    nextV = NEWTMP$()
+    W("  " + nextV + " = fadd double " + idxV + ", 1.0")
+    W("  store double " + nextV + ", ptr @v_" + idxName)
+    W("  br label %" + topL)
+    W(endL + ":")
+ENDSUB
+
 SUB G_STMT(ix AS INTEGER)
     DIM k AS INTEGER
     DIM nm AS STRING
@@ -4742,6 +4878,33 @@ SUB G_STMT(ix AS INTEGER)
         G_FOR(ix)
         RETURN
     ENDIF
+    IF k = K_FOR_EACH THEN
+        G_FOR_EACH(ix)
+        RETURN
+    ENDIF
+    IF k = K_TRY_CATCH THEN
+        G_TRY(ix)
+        RETURN
+    ENDIF
+
+    ' A type declaration says what a name means and asks for no code.
+    IF k = K_TYPE_DECL THEN RETURN
+    ' STOP is a place to break into a debugger, and compiles away.
+    IF k = K_STOP THEN RETURN
+
+    IF k = K_SLEEP THEN
+        nm = TO_INT$(G_EXPR(CINT(stExpr[ix])), lastType, "i64")
+        W("  call void @jdb_sleep(i64 " + nm + ")")
+        RETURN
+    ENDIF
+
+    IF k = K_THROW THEN
+        nm = G_EXPR(CINT(stExpr[ix]))
+        W("  call void @jdb_err_set(ptr " + nm + ", i64 1)")
+        G_CHECK_ERR(G_RT_HANDLE$())
+        RETURN
+    ENDIF
+
     IF k = K_FUNCTION OR k = K_SUB THEN
         G_ROUTINE(ix)
         RETURN
@@ -4822,6 +4985,9 @@ FUNC DECLS$() AS STRING
     d = d + "declare void @jdb_err_set(ptr, i64)" + CHR$(10)
     d = d + "declare i64 @jdb_err_code()" + CHR$(10)
     d = d + "declare void @jdb_throw_uncaught()" + CHR$(10)
+    d = d + "declare void @jdb_err_code_clear()" + CHR$(10)
+    d = d + "declare void @jdb_sleep(i64)" + CHR$(10)
+    d = d + "declare double @jdb_pow(double, double)" + CHR$(10)
     d = d + "declare double @jdrt_call_typed_f64(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_str(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_arr(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
@@ -4867,6 +5033,8 @@ FUNC GENERATE$() AS STRING
     gvN = 0
     lvN = 0
     loopN = 0
+    catchN = 0
+    eachNo = 0
     strN = 0
     inRoutine = 0
     genError = ""
