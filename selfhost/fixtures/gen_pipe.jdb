@@ -1,0 +1,71 @@
+OPTION EXPLICIT
+
+' The pipe, elementwise arithmetic, TYPEOF, ENUM members, and a parameter
+' that shadows a constant while it is in scope.
+
+DIM a AS ARRAY
+DIM b AS ARRAY
+DIM n AS DOUBLE
+DIM s AS STRING
+
+' The value on the left lands on the placeholder in the call.
+n = IOTA(5) |> SUM(?)
+PRINT n
+
+' Chained: each pipe hands its answer to the next.
+PRINT IOTA(10) |> REVERSE(?) |> TAKE(3, ?) |> SUM(?)
+
+' The placeholder may sit anywhere in the argument list.
+PRINT IOTA(6) |> TAKE(2, ?) |> SUM(?)
+
+' Elementwise arithmetic against a scalar, on both sides.
+a = IOTA(5)
+b = a * 2
+PRINT b[0]
+PRINT b[4]
+b = 10 - a
+PRINT b[0]
+PRINT b[4]
+
+' Array against array, cell for cell.
+b = a + a
+PRINT b[2]
+PRINT SUM(a * a)
+
+' Comparison answers an array of truth values.
+b = a > 2
+PRINT SUM(b)
+b = 3 <= a
+PRINT SUM(b)
+
+' What a value is, asked at every shape.
+PRINT TYPEOF(1.5)
+PRINT TYPEOF("hello")
+PRINT TYPEOF([1, 2])
+PRINT TYPEOF(IOTA(3) |> SUM(?))
+
+' Members of an ENUM are numbers under dotted names.
+ENUM Rank
+    Low = 10
+    Mid
+    High = 40
+ENDENUM
+PRINT Rank.Low
+PRINT Rank.Mid
+PRINT Rank.High
+
+' Inside the routine the parameter owns the name; outside, the constant
+' keeps it. The subscript tells the compiler the parameter is a container.
+SUB SHOW_KEY(e)
+    PRINT e[0]{"key"}
+ENDSUB
+
+DIM payload AS ARRAY
+payload = [{ "key": "F9" }]
+SHOW_KEY(payload)
+PRINT INT(E * 1000)
+
+' At the top level RETURN ends the program the way END does.
+PRINT "done"
+RETURN
+PRINT "never"

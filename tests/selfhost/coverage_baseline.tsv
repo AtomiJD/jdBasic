@@ -1,6 +1,6 @@
 selfhost/fixtures/blocks.jdb	ok	ok	ok
 selfhost/fixtures/commands.jdb	ok	ok	ok
-selfhost/fixtures/decls.jdb	ok	ok	no
+selfhost/fixtures/decls.jdb	ok	ok	ok
 selfhost/fixtures/else_then_if.jdb	ok	ok	ok
 selfhost/fixtures/exprs.jdb	ok	ok	ok
 selfhost/fixtures/gen_arrays.jdb	ok	ok	ok
@@ -12,6 +12,7 @@ selfhost/fixtures/gen_lambda.jdb	ok	ok	ok
 selfhost/fixtures/gen_literals.jdb	ok	ok	ok
 selfhost/fixtures/gen_mixed.jdb	ok	ok	ok
 selfhost/fixtures/gen_natives.jdb	ok	ok	ok
+selfhost/fixtures/gen_pipe.jdb	ok	ok	ok
 selfhost/fixtures/gen_tagged.jdb	ok	ok	ok
 selfhost/fixtures/gen_udt.jdb	ok	ok	ok
 selfhost/fixtures/gen_values.jdb	ok	ok	ok
@@ -66,7 +67,7 @@ tests/forms/forms_load_selftest.jdb	ok	ok	ok
 tests/forms/forms_mdi_menu_selftest.jdb	ok	ok	ok
 tests/forms/forms_native_smoke.jdb	ok	ok	ok
 tests/forms/forms_selftest.jdb	ok	ok	ok
-tests/forms_events_test.jdb	ok	ok	no
+tests/forms_events_test.jdb	ok	ok	ok
 tests/forms_jdform_test.jdb	ok	ok	ok
 tests/forms_props_test.jdb	ok	ok	ok
 tests/gate/TEST_OUTER.jdb	ok	noref	-
@@ -77,7 +78,7 @@ tests/gate/native_test_modx.jdb	ok	ok	ok
 tests/gate/static_test_mod.jdb	ok	ok	ok
 tests/gate/storage.jdb	ok	ok	ok
 tests/gate/test_apl_complete.jdb	ok	ok	ok
-tests/gate/test_apl_pipelines.jdb	ok	ok	no
+tests/gate/test_apl_pipelines.jdb	ok	ok	ok
 tests/gate/test_imp_mod.jdb	ok	ok	ok
 tests/gate/test_inner.jdb	ok	ok	ok
 tests/gate/test_mod_writeback_mod.jdb	ok	ok	ok
@@ -170,7 +171,7 @@ tests/regression/test_for.jdb	ok	ok	ok
 tests/regression/test_for_step_neg.jdb	ok	ok	ok
 tests/regression/test_for_step_neg2.jdb	ok	ok	ok
 tests/regression/test_for_step_neg3.jdb	ok	ok	ok
-tests/regression/test_for_step_neg4.jdb	ok	ok	no
+tests/regression/test_for_step_neg4.jdb	ok	ok	ok
 tests/regression/test_format_vmh.jdb	ok	ok	ok
 tests/regression/test_frmv.jdb	ok	ok	ok
 tests/regression/test_fs.jdb	ok	ok	ok
@@ -198,7 +199,7 @@ tests/regression/test_noparens.jdb	ok	ok	ok
 tests/regression/test_oneliner.jdb	ok	ok	ok
 tests/regression/test_os.jdb	ok	ok	ok
 tests/regression/test_output_capture.jdb	ok	ok	ok
-tests/regression/test_pipe_tag.jdb	ok	ok	no
+tests/regression/test_pipe_tag.jdb	ok	ok	ok
 tests/regression/test_playbuffer.jdb	ok	ok	ok
 tests/regression/test_print.jdb	ok	ok	ok
 tests/regression/test_print_types.jdb	ok	diff	-
@@ -253,7 +254,7 @@ tests/tui/test_tui_smoke.jdb	ok	diff	-
 tests/tutorial/test_cvdate.jdb	ok	ok	ok
 tests/tutorial/test_letters.jdb	ok	ok	ok
 tests/tutorial/test_strings.jdb	ok	ok	ok
-tests/tutorial/test_switch.jdb	ok	ok	no
+tests/tutorial/test_switch.jdb	ok	ok	ok
 tests/tutorial/test_type.jdb	ok	ok	ok
 tests/tutorial/test_vec.jdb	ok	ok	ok
 tests/udt/test_udt_arr.jdb	ok	ok	ok

@@ -4050,6 +4050,11 @@ DIM lastType AS INTEGER
 ' When the last value was a tagged one, the register holding its tag.
 DIM lastTag AS STRING
 
+' The value left of a pipe, held until the placeholder in the call claims it.
+DIM pipeVal AS STRING
+DIM pipeTy AS INTEGER
+DIM pipeTag AS STRING
+
 
 
 DIM nativesPath AS STRING
@@ -4183,6 +4188,14 @@ FUNC SYM_TYPE(nm AS STRING) AS INTEGER
     RETURN CINT(gvType[i])
 ENDFUNC
 
+' Whether someone declared the name, so the word is theirs: a parameter
+' called e shadows the constant E for as long as it is in scope.
+FUNC SYM_DECLARED(nm AS STRING) AS INTEGER
+    IF inRoutine = 1 ANDALSO LV_FIND(nm) >= 0 THEN RETURN 1
+    IF GV_FIND(nm) >= 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
 SUB LV_SET_TY(nm AS STRING, ty AS INTEGER)
     DIM i AS INTEGER
     i = CINT(LV_FIND(nm))
@@ -4243,6 +4256,7 @@ FUNC PARAM_TY(at AS INTEGER) AS INTEGER
     IF vt = 11 THEN RETURN TY_UDT
     IF vt = 10 THEN RETURN TY_STR
     IF vt = V_ARRAY THEN RETURN TY_ARRN
+    IF vt = 99 THEN RETURN TY_ARRA
     IF vt = 0 ANDALSO ENDS_IN_DOLLAR(parName[at]) = 1 THEN RETURN TY_STR
     RETURN TY_NUM
 ENDFUNC
@@ -4734,6 +4748,8 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
     DIM k AS INTEGER
     DIM f AS INTEGER
     DIM op AS INTEGER
+    DIM ta AS INTEGER
+    DIM tb AS INTEGER
 
     IF ix < 0 THEN RETURN TY_NUM
     k = CINT(exKind[ix])
@@ -4747,7 +4763,12 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
     IF k = X_VARIABLE THEN
         ' A builtin that takes nothing reads like a variable.
         f = CINT(BI_FIND(exStr[ix]))
-        IF f >= 0 ANDALSO biSig[f] = "" THEN RETURN CINT(BI_RET_TY(f))
+        IF f >= 0 ANDALSO biSig[f] = "" ANDALSO SYM_DECLARED(exStr[ix]) = 0 THEN RETURN CINT(BI_RET_TY(f))
+        IF SYM_DECLARED(exStr[ix]) = 0 THEN
+            f = CINT(NAT_FIND(exStr[ix], 0))
+            IF f >= 0 THEN RETURN CINT(NAT_RET_TY(f))
+        ENDIF
+        IF INSTR(exStr[ix], ".") >= 0 ANDALSO ENUM_FIND(exStr[ix]) >= 0 THEN RETURN TY_NUM
         RETURN CINT(SYM_TYPE(exStr[ix]))
     ENDIF
     IF k = X_INDEX THEN RETURN CINT(ELEM_TY(CINT(E_TYPE(CINT(exLeft[ix])))))
@@ -4756,8 +4777,17 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
         RETURN TY_NUM
     ENDIF
     IF k = X_CALL THEN
+        IF exFn[ix] = "TYPEOF" THEN RETURN TY_STR
         f = CINT(FN_FIND(exFn[ix]))
         IF f >= 0 THEN RETURN CINT(fnRet[f])
+        ' A routine handed in as the first argument picks the entry point
+        ' that expects one, whose answer is what this call answers.
+        IF exArgN[ix] > 0 ANDALSO IS_FN_VALUE(CINT(argBuf[CINT(exArgAt[ix])])) = 1 THEN
+            IF HOF_SYM$(exFn[ix]) <> "" THEN
+                f = CINT(NAT_FIND(HOF_SYM$(exFn[ix]), CINT(exArgN[ix])))
+                IF f >= 0 THEN RETURN CINT(NAT_RET_TY(f))
+            ENDIF
+        ENDIF
         f = CINT(BI_FIND(exFn[ix]))
         IF f >= 0 ANDALSO LEN(biSig[f]) = exArgN[ix] THEN RETURN CINT(BI_RET_TY(f))
         f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
@@ -4770,11 +4800,26 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
     ENDIF
     IF k = X_BINARY THEN
         op = CINT(exOp[ix])
+        ' A side that is an array makes the answer one, cell for cell.
+        ta = CINT(E_TYPE(CINT(exLeft[ix])))
+        tb = CINT(E_TYPE(CINT(exRight[ix])))
+        IF IS_ARR(ta) = 1 THEN RETURN ta
+        IF IS_ARR(tb) = 1 THEN RETURN tb
         IF op = TOK_LT OR op = TOK_GT OR op = TOK_LE OR op = TOK_GE THEN RETURN TY_BOOL
         IF op = TOK_NE OR op = TOK_ASSIGN THEN RETURN TY_BOOL
-        IF op = TOK_PLUS ANDALSO E_TYPE(CINT(exLeft[ix])) = TY_STR THEN RETURN TY_STR
+        IF op = TOK_PLUS ANDALSO ta = TY_STR THEN RETURN TY_STR
         RETURN TY_NUM
     ENDIF
+    IF k = X_PIPE THEN
+        f = CINT(exRight[ix])
+        IF exKind[f] = X_VARIABLE ORELSE exKind[f] = X_LIT_STR THEN
+            k = CINT(FN_FIND(exStr[f]))
+            IF k >= 0 THEN RETURN CINT(fnRet[k])
+            RETURN TY_NUM
+        ENDIF
+        RETURN CINT(E_TYPE(f))
+    ENDIF
+    IF k = X_PLACEHOLDER THEN RETURN pipeTy
     RETURN TY_NUM
 ENDFUNC
 
@@ -4859,10 +4904,74 @@ SUB SCAN_ROUTINES()
     NEXT j
 ENDSUB
 
+' Whether an expression anywhere below subscripts the name.
+FUNC NM_IXED_E(ix AS INTEGER, nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    IF ix < 0 THEN RETURN 0
+    IF exKind[ix] = X_INDEX THEN
+        i = CINT(exLeft[ix])
+        IF i >= 0 ANDALSO exKind[i] = X_VARIABLE ANDALSO exStr[i] = nm THEN RETURN 1
+    ENDIF
+    IF NM_IXED_E(CINT(exLeft[ix]), nm) = 1 THEN RETURN 1
+    IF NM_IXED_E(CINT(exRight[ix]), nm) = 1 THEN RETURN 1
+    FOR i = 0 TO exArgN[ix] - 1
+        IF NM_IXED_E(CINT(argBuf[CINT(exArgAt[ix]) + i]), nm) = 1 THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+FUNC NM_IXED_S(ix AS INTEGER, nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    DIM b AS INTEGER
+    DIM at AS INTEGER
+    IF ix < 0 THEN RETURN 0
+    IF stKind[ix] = K_INDEX_ASSIGN ANDALSO stVar[ix] = nm ANDALSO stIxN[ix] > 0 THEN RETURN 1
+    IF NM_IXED_E(CINT(stExpr[ix]), nm) = 1 THEN RETURN 1
+    IF NM_IXED_E(CINT(stCond[ix]), nm) = 1 THEN RETURN 1
+    IF NM_IXED_E(CINT(stEnd[ix]), nm) = 1 THEN RETURN 1
+    IF NM_IXED_E(CINT(stStep[ix]), nm) = 1 THEN RETURN 1
+    FOR i = 0 TO stPrN[ix] - 1
+        IF NM_IXED_E(CINT(prBuf[CINT(stPrAt[ix]) + i]), nm) = 1 THEN RETURN 1
+    NEXT i
+    FOR i = 0 TO stIxN[ix] - 1
+        IF NM_IXED_E(CINT(ixBuf[CINT(stIxAt[ix]) + i]), nm) = 1 THEN RETURN 1
+    NEXT i
+    FOR b = 0 TO stBrN[ix] - 1
+        at = CINT(stBrAt[ix]) + b
+        IF NM_IXED_E(CINT(brCond[at]), nm) = 1 THEN RETURN 1
+        FOR i = 0 TO brBodyN[at] - 1
+            IF NM_IXED_S(CINT(bodyBuf[CINT(brBodyAt[at]) + i]), nm) = 1 THEN RETURN 1
+        NEXT i
+    NEXT b
+    FOR i = 0 TO stBodyN[ix] - 1
+        IF NM_IXED_S(CINT(bodyBuf[CINT(stBodyAt[ix]) + i]), nm) = 1 THEN RETURN 1
+    NEXT i
+    FOR i = 0 TO stCatchN[ix] - 1
+        IF NM_IXED_S(CINT(bodyBuf[CINT(stCatchAt[ix]) + i]), nm) = 1 THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
 SUB SCAN_ONE_ROUTINE(ix AS INTEGER)
     DIM k AS INTEGER
+    DIM i AS INTEGER
+    DIM pat AS INTEGER
+    DIM j AS INTEGER
     k = CINT(stKind[ix])
     IF k <> K_FUNCTION ANDALSO k <> K_SUB THEN RETURN
+    ' An untyped parameter the body subscripts arrives as a container: the
+    ' event convention hands every handler an array holding one map.
+    pat = CINT(stParAt[ix])
+    FOR i = 0 TO stParN[ix] - 1
+        IF parType[pat + i] = 0 ANDALSO ENDS_IN_DOLLAR(parName[pat + i]) = 0 THEN
+            FOR j = 0 TO stBodyN[ix] - 1
+                IF NM_IXED_S(CINT(bodyBuf[CINT(stBodyAt[ix]) + j]), parName[pat + i]) = 1 THEN
+                    parType[pat + i] = 99
+                    EXITFOR
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT i
     fnName[fnN] = stFunc[ix]
     fnIsSub[fnN] = 0
     fnRet[fnN] = TY_NUM
@@ -4875,6 +4984,19 @@ SUB SCAN_ONE_ROUTINE(ix AS INTEGER)
     fnParN[fnN] = stParN[ix]
     fnN = fnN + 1
 ENDSUB
+
+' The members of the ENUMs, each a number under its dotted name.
+DIM ecName[256] AS STRING
+DIM ecVal[256]
+DIM ecN AS INTEGER
+
+FUNC ENUM_FIND(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO ecN - 1
+        IF ecName[i] = nm THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
 
 SUB DECLARE_NAME(nm AS STRING, ty AS INTEGER, asLocal AS INTEGER)
     IF asLocal = 0 THEN
@@ -4897,10 +5019,19 @@ SUB SCAN_ONE(ix AS INTEGER, asLocal AS INTEGER)
     DIM k AS INTEGER
     DIM b AS INTEGER
     DIM at AS INTEGER
+    DIM m AS INTEGER
 
     IF ix < 0 THEN RETURN
     k = CINT(stKind[ix])
     IF k = K_FUNCTION OR k = K_SUB THEN RETURN
+    IF k = K_ENUM THEN
+        FOR m = 0 TO stEmN[ix] - 1
+            ecName[ecN] = stFunc[ix] + "." + emName[CINT(stEmAt[ix]) + m]
+            ecVal[ecN] = emVal[CINT(stEmAt[ix]) + m]
+            ecN = ecN + 1
+        NEXT m
+        RETURN
+    ENDIF
     ' A declaration inside a routine is that routine's own, even when a global
     ' of the same name exists; only a bare assignment reaches out.
     IF k = K_DIM OR k = K_LET THEN
@@ -5007,6 +5138,8 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
 
     IF lt = TY_STR ANDALSO rt = TY_STR THEN RETURN G_STRCMP$(op, l, r)
 
+    IF IS_ARR(lt) = 1 ORELSE IS_ARR(rt) = 1 THEN RETURN G_ARR_OP$(op, l, lt, r, rt)
+
     l = AS_NUM$(l, lt)
     r = AS_NUM$(r, rt)
 
@@ -5083,6 +5216,107 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     genError = "cannot generate operator " + STR$(op)
     lastType = TY_NUM
     RETURN "0.0"
+ENDFUNC
+
+' Elementwise arithmetic and comparison, one side or both an array. The
+' runtime walks the cells, and nesting is its recursion rather than ours.
+FUNC G_ARR_OP$(op AS INTEGER, l AS STRING, lt AS INTEGER, r AS STRING, rt AS INTEGER) AS STRING
+    DIM code AS INTEGER
+    DIM t AS STRING
+    DIM bothArr AS INTEGER
+    DIM scalarLeft AS INTEGER
+    DIM arrV AS STRING
+    DIM sclV AS STRING
+    DIM sclTy AS INTEGER
+    DIM outTy AS INTEGER
+
+    bothArr = 0
+    IF IS_ARR(lt) = 1 ANDALSO IS_ARR(rt) = 1 THEN bothArr = 1
+    scalarLeft = 0
+    IF IS_ARR(lt) = 0 THEN scalarLeft = 1
+    IF scalarLeft = 1 THEN
+        arrV = r : sclV = l : sclTy = lt : outTy = rt
+    ELSE
+        arrV = l : sclV = r : sclTy = rt : outTy = lt
+    ENDIF
+
+    code = -1
+    IF op = TOK_PLUS THEN code = 0
+    IF op = TOK_MINUS THEN code = 1
+    IF op = TOK_STAR THEN code = 2
+    IF op = TOK_SLASH THEN code = 3
+    IF op = TT_BAND THEN code = 4
+    IF op = TT_BOR THEN code = 5
+    IF op = TT_XOR OR op = TT_BXOR THEN code = 6
+    IF op = TT_SHL THEN code = 7
+    IF op = TT_SHR THEN code = 8
+    IF op = TOK_MOD THEN code = 9
+    IF op = TT_CARET THEN code = 10
+    IF code >= 0 THEN
+        t = NEWTMP$()
+        IF bothArr = 1 THEN
+            W("  " + t + " = call ptr @jdb_array_binop(ptr " + l + ", ptr " + r + ", i32 " + STR$(code) + ")")
+        ELSE
+            W("  " + t + " = call ptr @jdb_array_scalar_op(ptr " + arrV + ", double " + AS_NUM$(sclV, sclTy) + ", i32 " + STR$(code) + ", i32 " + STR$(scalarLeft) + ")")
+        ENDIF
+        lastType = outTy
+        RETURN t
+    ENDIF
+
+    ' Comparison answers an array of truth values, one per cell.
+    code = -1
+    IF op = TOK_ASSIGN THEN code = 0
+    IF op = TOK_NE THEN code = 1
+    IF op = TOK_AND THEN code = 2
+    IF op = TOK_OR THEN code = 3
+    IF op = TOK_LT THEN code = 4
+    IF op = TOK_LE THEN code = 5
+    IF op = TOK_GT THEN code = 6
+    IF op = TOK_GE THEN code = 7
+    IF code < 0 THEN
+        genError = "cannot generate operator " + STR$(op) + " on an array"
+        lastType = TY_ARRN
+        RETURN arrV
+    ENDIF
+
+    IF bothArr = 1 THEN
+        t = NEWTMP$()
+        W("  " + t + " = call ptr @jdb_array_cmp_arr(ptr " + l + ", ptr " + r + ", i32 " + STR$(code) + ")")
+        lastType = TY_ARRN
+        RETURN t
+    ENDIF
+
+    ' A scalar on the left mirrors the order the runtime assumes.
+    IF scalarLeft = 1 THEN
+        IF code = 4 THEN
+            code = 6
+        ELSEIF code = 6 THEN
+            code = 4
+        ELSEIF code = 5 THEN
+            code = 7
+        ELSEIF code = 7 THEN
+            code = 5
+        ENDIF
+    ENDIF
+
+    ' Text cells against one string go to the helper that compares text,
+    ' whose op numbers order themselves differently.
+    IF sclTy = TY_STR THEN
+        IF code = 5 THEN
+            code = 6
+        ELSEIF code = 6 THEN
+            code = 5
+        ENDIF
+        t = NEWTMP$()
+        W("  " + t + " = call ptr @jdb_array_cmp_scalar_str(ptr " + arrV + ", ptr " + sclV + ", i32 " + STR$(code) + ")")
+        lastType = TY_ARRN
+        RETURN t
+    ENDIF
+
+    t = NEWTMP$()
+    W("  " + t + " = call ptr @jdb_array_cmp_scalar(ptr " + arrV + ", double " + AS_NUM$(sclV, sclTy) + ", i32 " + STR$(code) + ")")
+    lastType = TY_ARRN
+    RETURN t
 ENDFUNC
 
 ' Widens a truth value to a number, for arithmetic and for conditions. A
@@ -5329,6 +5563,9 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     ' dot, so the head is looked up before anything else is tried.
     IF exFn[ix] = "__METHOD__" THEN RETURN G_METHOD$(ix)
 
+    ' TYPEOF asks what a value is, which the tag already answers.
+    IF exFn[ix] = "TYPEOF" ANDALSO exArgN[ix] = 1 THEN RETURN G_TYPEOF$(ix)
+
     IF INSTR(exFn[ix], ".") >= 0 THEN
         hof = HEAD_OF$(exFn[ix])
         IF SYM_TYPE(hof) = TY_UDT THEN
@@ -5350,12 +5587,19 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
         IF SYM_TYPE(exFn[ix]) = TY_FN THEN RETURN G_INDIRECT$(ix)
 
         ' Handing a routine to one of the natives that take one picks the
-        ' entry point that expects it.
+        ' entry point that expects it. The two that have none cannot resolve
+        ' a compiled routine by name over the bridge, and say so here rather
+        ' than fail at run time.
         IF exArgN[ix] > 0 ANDALSO IS_FN_VALUE(CINT(argBuf[CINT(exArgAt[ix])])) = 1 THEN
             hof = HOF_SYM$(exFn[ix])
             IF hof <> "" THEN
                 f = CINT(NAT_FIND(hof, CINT(exArgN[ix])))
                 IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+            ENDIF
+            IF exFn[ix] = "GROUPBY" ORELSE exFn[ix] = "INTEGRATE" THEN
+                genError = exFn[ix] + " with a function reference has no native path"
+                lastType = TY_NUM
+                RETURN "0.0"
             ENDIF
         ENDIF
 
@@ -5713,6 +5957,67 @@ FUNC G_ARRAY_LIT$(ix AS INTEGER) AS STRING
     RETURN handle
 ENDFUNC
 
+FUNC G_TYPEOF$(ix AS INTEGER) AS STRING
+    DIM v AS STRING
+    DIM t AS STRING
+    DIM q AS STRING
+    v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
+    t = NEWTMP$()
+    IF lastType = TY_ANY THEN
+        q = NEWTMP$()
+        W("  " + q + " = sext i32 " + lastTag + " to i64")
+        W("  " + t + " = call ptr @jdb_typeof_tag(i64 " + q + ")")
+    ELSEIF lastType = TY_NUM THEN
+        W("  " + t + " = call ptr @jdb_typeof_f64(double " + v + ")")
+    ELSE
+        W("  " + t + " = call ptr @jdb_typeof_tag(i64 " + STR$(WIRE_TAG(lastType)) + ")")
+    ENDIF
+    lastType = TY_STR
+    RETURN t
+ENDFUNC
+
+' value |> call(?) hands the value to the placeholder inside the call.
+' value |> Name is the same call with the value as its whole argument list.
+FUNC G_PIPE$(ix AS INTEGER) AS STRING
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM vg AS STRING
+    DIM heldVal AS STRING
+    DIM heldTy AS INTEGER
+    DIM heldTag AS STRING
+    DIM r AS INTEGER
+    DIM c AS INTEGER
+    DIM t AS STRING
+
+    v = G_EXPR(CINT(exLeft[ix]))
+    vt = lastType
+    vg = lastTag
+
+    r = CINT(exRight[ix])
+    c = -1
+    IF exKind[r] = X_CALL THEN c = r
+    IF c < 0 ANDALSO (exKind[r] = X_VARIABLE ORELSE exKind[r] = X_LIT_STR) THEN
+        c = CINT(NEW_EXPR(X_CALL, CINT(exLine[ix])))
+        exFn[c] = exStr[r]
+        exArgAt[c] = argN
+        exArgN[c] = 1
+        argBuf[argN] = NEW_EXPR(X_PLACEHOLDER, CINT(exLine[ix]))
+        argN = argN + 1
+    ENDIF
+    IF c < 0 THEN
+        genError = "cannot pipe into expression kind " + STR$(exKind[r])
+        lastType = vt
+        lastTag = vg
+        RETURN v
+    ENDIF
+
+    heldVal = pipeVal : heldTy = pipeTy : heldTag = pipeTag
+    pipeVal = v : pipeTy = vt : pipeTag = vg
+    t = G_CALL$(c)
+    pipeVal = heldVal : pipeTy = heldTy : pipeTag = heldTag
+    RETURN t
+ENDFUNC
+
 FUNC G_EXPR(ix AS INTEGER) AS STRING
     DIM k AS INTEGER
     DIM t AS STRING
@@ -5746,11 +6051,22 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
     IF k = X_VARIABLE THEN
         nm = exStr[ix]
         ty = CINT(BI_FIND(nm))
-        IF ty >= 0 ANDALSO biSig[ty] = "" THEN RETURN G_BUILTIN$(ty, -1)
+        IF ty >= 0 ANDALSO biSig[ty] = "" ANDALSO SYM_DECLARED(nm) = 0 THEN RETURN G_BUILTIN$(ty, -1)
+
+        ' The constants live in the registry as calls that take nothing.
+        IF SYM_DECLARED(nm) = 0 THEN
+            ty = CINT(NAT_FIND(nm, 0))
+            IF ty >= 0 THEN RETURN G_NATIVE$(ty, ix)
+        ENDIF
 
         ' The tree keeps p.X as one name; whether it is a field of something
         ' or a name that happens to carry a dot is a question for the symbols.
         IF INSTR(nm, ".") >= 0 THEN
+            ty = CINT(ENUM_FIND(nm))
+            IF ty >= 0 THEN
+                lastType = TY_NUM
+                RETURN NUMLIT$(ecVal[ty])
+            ENDIF
             v = HEAD_OF$(nm)
             IF SYM_TYPE(v) = TY_UDT THEN
                 t = NEWTMP$()
@@ -5793,6 +6109,13 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
     IF k = X_MEMBER THEN RETURN G_MEMBER$(ix)
     IF k = X_LAMBDA THEN RETURN G_LAMBDA$(ix)
     IF k = X_CALL THEN RETURN G_CALL$(ix)
+    IF k = X_PIPE THEN RETURN G_PIPE$(ix)
+
+    IF k = X_PLACEHOLDER THEN
+        lastType = pipeTy
+        lastTag = pipeTag
+        RETURN pipeVal
+    ENDIF
 
     genError = "cannot generate expression kind " + STR$(k)
     lastType = TY_NUM
@@ -6414,8 +6737,10 @@ ENDSUB
 SUB G_RETURN(ix AS INTEGER)
     DIM v AS STRING
 
+    ' At the top level RETURN ends the program, the same way END does.
     IF inRoutine = 0 THEN
-        genError = "RETURN outside a routine"
+        W("  ret i32 0")
+        W(NEWLBL$("after.ret") + ":")
         RETURN
     ENDIF
     IF curIsSub = 1 THEN
@@ -6920,12 +7245,27 @@ SUB G_STMT(ix AS INTEGER)
     ENDIF
 
     IF k = K_END_STMT THEN
+        ' Inside a routine END answers the default value, as the reference
+        ' backend has it; only in the main body is it the program's exit.
         IF inRoutine = 1 THEN
-            genError = "END inside a routine"
+            G_RETURN(-1)
             RETURN
         ENDIF
         W("  ret i32 0")
         W(NEWLBL$("after.end") + ":")
+        RETURN
+    ENDIF
+
+    IF k = K_ENUM THEN RETURN
+
+    ' Two statements the reference backend swallows without a word; a wrong
+    ' silence is worse than a loud no.
+    IF k = K_INPUT THEN
+        genError = "INPUT has no native path"
+        RETURN
+    ENDIF
+    IF k = K_REACT THEN
+        genError = "a reactive assignment has no native path"
         RETURN
     ENDIF
 
@@ -6976,6 +7316,13 @@ FUNC DECLS$() AS STRING
     d = d + "declare double @jdb_udt_get_f64(ptr, ptr)" + CHR$(10)
     d = d + "declare ptr @jdb_udt_get_str(ptr, ptr)" + CHR$(10)
     d = d + "declare void @jdb_array_set_nested(ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_binop(ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_scalar_op(ptr, double, i32, i32)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_cmp_scalar(ptr, double, i32)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_cmp_arr(ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_cmp_scalar_str(ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare ptr @jdb_typeof_f64(double)" + CHR$(10)
+    d = d + "declare ptr @jdb_typeof_tag(i64)" + CHR$(10)
     d = d + "declare double @jdrt_call_typed_f64(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_str(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_arr(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
@@ -7019,6 +7366,7 @@ FUNC GENERATE$() AS STRING
     tmpNo = 0
     lblNo = 0
     gvN = 0
+    ecN = 0
     lvN = 0
     loopN = 0
     catchN = 0
