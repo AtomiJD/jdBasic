@@ -2007,6 +2007,10 @@ int main(int argc, char* argv[]) {
     }
 
     if (dump_ast) {
+        {
+            size_t sep = filename.find_last_of("/\\");
+            g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
+        }
         std::string program_buffer;
         try { program_buffer = read_file(filename); }
         catch (const std::exception& e) {
@@ -2016,6 +2020,7 @@ int main(int argc, char* argv[]) {
         try {
             Lexer lexer(program_buffer);
             Parser parser(lexer.tokenize());
+            setup_parser_modules(parser, filename);
             for (auto& st : parser.parse()) dump_stmt(st.get(), 0);
         } catch (const std::exception& e) {
             std::cerr << "Parse error: " << e.what() << std::endl;
