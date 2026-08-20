@@ -92,8 +92,10 @@ DIM stVar[MAX_NODES] AS STRING
 DIM stVType[MAX_NODES]
 DIM stEType[MAX_NODES]
 DIM stConst[MAX_NODES]
+DIM stLabel[MAX_NODES] AS STRING
 DIM stFunc[MAX_NODES] AS STRING
 DIM stRType[MAX_NODES]
+DIM stAsync[MAX_NODES]
 DIM stExpr[MAX_NODES]
 DIM stCond[MAX_NODES]
 DIM stEnd[MAX_NODES]
@@ -201,6 +203,7 @@ DIM K_ASSIGN AS INTEGER
 DIM K_INDEX_ASSIGN AS INTEGER
 DIM K_FOR_EACH AS INTEGER
 DIM K_TYPE_DECL AS INTEGER
+DIM K_SWITCH AS INTEGER
 DIM K_TRY_CATCH AS INTEGER
 DIM K_THROW AS INTEGER
 DIM K_SLEEP AS INTEGER
@@ -225,6 +228,7 @@ DIM X_CALL AS INTEGER
 DIM X_INDEX AS INTEGER
 DIM X_ARRAY_LIT AS INTEGER
 DIM X_MAP_LIT AS INTEGER
+DIM X_MEMBER AS INTEGER
 DIM X_LAMBDA AS INTEGER
 DIM X_PIPE AS INTEGER
 DIM X_PLACEHOLDER AS INTEGER
@@ -385,6 +389,7 @@ SUB LOAD_TABLES()
     K_INDEX_ASSIGN = 14
     K_FOR_EACH = 21
     K_TYPE_DECL = 20
+    K_SWITCH = 17
     K_TRY_CATCH = 18
     K_THROW = 19
     K_SLEEP = 22
@@ -409,6 +414,7 @@ SUB LOAD_TABLES()
     X_INDEX = 8
     X_ARRAY_LIT = 9
     X_MAP_LIT = 10
+    X_MEMBER = 11
     X_LAMBDA = 12
     X_PIPE = 13
     X_PLACEHOLDER = 14
@@ -838,8 +844,10 @@ FUNC NEW_STMT(k AS INTEGER, ln AS INTEGER) AS INTEGER
     stVType[i] = 0
     stEType[i] = 0
     stConst[i] = 0
+    stLabel[i] = ""
     stFunc[i] = ""
     stRType[i] = 0
+    stAsync[i] = 0
     stExpr[i] = -1
     stCond[i] = -1
     stEnd[i] = -1
@@ -1278,12 +1286,32 @@ FUNC IS_INFIX_NOT() AS INTEGER
     RETURN 1
 ENDFUNC
 
-FUNC P_CMP() AS INTEGER
+' The shifts bind tighter than a comparison and looser than a sum.
+FUNC P_SHIFT() AS INTEGER
     DIM lhs AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
     DIM op AS INTEGER
     lhs = CINT(P_ADD())
+    DO
+        IF TT() <> TT_SHL ANDALSO TT() <> TT_SHR THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_ADD()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_CMP() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_SHIFT())
     DO
         IF IS_ONE_OF(TT(), cmpOps, cmpN) = 0 ANDALSO IS_INFIX_NOT() = 0 THEN RETURN lhs
         ln = CINT(TL())
@@ -1293,7 +1321,7 @@ FUNC P_CMP() AS INTEGER
         nd = CINT(NEW_EXPR(X_BINARY, ln))
         exOp[nd] = op
         exLeft[nd] = lhs
-        exRight[nd] = P_ADD()
+        exRight[nd] = P_SHIFT()
         lhs = nd
     LOOP
 ENDFUNC
@@ -1393,6 +1421,16 @@ DIM KT_CATCH AS INTEGER
 DIM KT_FINALLY AS INTEGER
 DIM KT_ENDTRY AS INTEGER
 DIM KT_LAMBDA AS INTEGER
+DIM KT_SWITCH AS INTEGER
+DIM KT_CASE AS INTEGER
+DIM KT_DEFAULT AS INTEGER
+DIM KT_ENDSWITCH AS INTEGER
+DIM KT_ELSEIF AS INTEGER
+DIM KT_ASYNC AS INTEGER
+DIM KT_ON AS INTEGER
+DIM KT_CALL AS INTEGER
+DIM TT_SHL AS INTEGER
+DIM TT_SHR AS INTEGER
 DIM KT_EXPORT AS INTEGER
 DIM KT_MODULE AS INTEGER
 DIM KT_SLEEP AS INTEGER
@@ -1454,6 +1492,16 @@ SUB LOAD_STMT_TABLES()
     KT_FINALLY = CINT(TOK_BY_NAME("FINALLY"))
     KT_ENDTRY = CINT(TOK_BY_NAME("ENDTRY"))
     KT_LAMBDA = CINT(TOK_BY_NAME("LAMBDA"))
+    KT_SWITCH = CINT(TOK_BY_NAME("SWITCH"))
+    KT_CASE = CINT(TOK_BY_NAME("CASE"))
+    KT_DEFAULT = CINT(TOK_BY_NAME("DEFAULT"))
+    KT_ENDSWITCH = CINT(TOK_BY_NAME("ENDSWITCH"))
+    KT_ELSEIF = CINT(TOK_BY_NAME("ELSEIF"))
+    KT_ASYNC = CINT(TOK_BY_NAME("ASYNC"))
+    KT_ON = CINT(TOK_BY_NAME("ON_KW"))
+    KT_CALL = CINT(TOK_BY_NAME("CALL"))
+    TT_SHL = CINT(TOK_BY_NAME("SHL"))
+    TT_SHR = CINT(TOK_BY_NAME("SHR"))
     KT_EXPORT = CINT(TOK_BY_NAME("EXPORT_KW"))
     KT_MODULE = CINT(TOK_BY_NAME("MODULE_KW"))
     KT_SLEEP = CINT(TOK_BY_NAME("SLEEP_KW"))
@@ -1571,6 +1619,7 @@ FUNC P_IF() AS INTEGER
     DIM elseS[64]
     DIM nThen AS INTEGER
     DIM nElse AS INTEGER
+    DIM wasElseIf AS INTEGER
 
     ln = CINT(TL())
     EAT()
@@ -1633,7 +1682,7 @@ FUNC P_IF() AS INTEGER
             nbr = 2
         ENDIF
     ELSE
-        packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, -1, KT_IF))
+        packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_ELSEIF, KT_IF))
         myCond[nbr] = cond
         myAt[nbr] = packed \ 4096
         myN[nbr] = packed MOD 4096
@@ -1641,20 +1690,22 @@ FUNC P_IF() AS INTEGER
 
         DO
             IF parseError <> "" THEN EXITDO
-            IF TT() <> KT_ELSE THEN EXITDO
+            IF TT() <> KT_ELSE ANDALSO TT() <> KT_ELSEIF THEN EXITDO
             IF nbr >= 64 THEN
                 FAIL("too many branches in one IF")
                 EXITDO
             ENDIF
+            wasElseIf = 0
+            IF TT() = KT_ELSEIF THEN wasElseIf = 1
             EAT()
-            IF TT() = KT_IF THEN
-                EAT()
+            IF TT() = KT_IF OR wasElseIf = 1 THEN
+                IF wasElseIf = 0 THEN EAT()
                 cond = CINT(P_EXPR())
                 IF TT() = KT_THEN THEN EAT()
-                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, -1, KT_IF))
+                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_ELSEIF, KT_IF))
                 myCond[nbr] = cond
             ELSE
-                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, -1, KT_IF))
+                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_ELSEIF, KT_IF))
                 myCond[nbr] = -1
             ENDIF
             myAt[nbr] = packed \ 4096
@@ -1821,6 +1872,119 @@ FUNC P_TRY() AS INTEGER
     RETURN nd
 ENDFUNC
 
+' A name after AS that is not one of the built-in type words is a declared
+' type: the statement carries it as its label and the slot itself is an
+' object. MAP is the spelling of a plain object and names nothing, and DATE
+' is kept as a string because that is how the runtime stores one.
+FUNC TYPE_AFTER_AS(nd AS INTEGER) AS INTEGER
+    DIM nm AS STRING
+    DIM vt AS INTEGER
+
+    IF TT() <> T_IDENTIFIER THEN
+        vt = CINT(VTYPE_OF(TT()))
+        EAT()
+        RETURN vt
+    ENDIF
+
+    nm = TV$()
+    IF nm = "MAP" THEN
+        EAT()
+        RETURN 11
+    ENDIF
+
+    ' A type name may be qualified by the module that declares it.
+    EAT()
+    DO
+        IF TT() <> TT_DOT THEN EXITDO
+        IF TT_AT(1) <> T_IDENTIFIER THEN EXITDO
+        EAT()
+        nm = nm + "." + TV$()
+        EAT()
+    LOOP
+    stLabel[nd] = nm
+
+    IF nm = "DATE" THEN RETURN 10
+    RETURN 11
+ENDFUNC
+
+FUNC DOTTED_NAME$() AS STRING
+    DIM nm AS STRING
+    nm = TV$()
+    EAT()
+    DO
+        IF TT() <> TT_DOT THEN EXITDO
+        EAT()
+        nm = nm + "." + TV$()
+        EAT()
+    LOOP
+    RETURN nm
+ENDFUNC
+
+' obj.method arg, arg. The reference tells a method call from a namespaced
+' one by how the name reads: a single dot whose left side is shorter than
+' three characters is an object, anything longer is a module.
+FUNC P_METHOD(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM obj AS INTEGER
+    DIM member AS INTEGER
+    DIM callNd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    DIM parens AS INTEGER
+
+    obj = CINT(NEW_EXPR(X_VARIABLE, ln))
+    exStr[obj] = TV$()
+    EAT()
+    EAT()
+    member = CINT(NEW_EXPR(X_MEMBER, ln))
+    exStr[member] = TV$()
+    exLeft[member] = obj
+    EAT()
+
+    parens = 0
+    IF TT() = TT_LPAREN THEN
+        parens = 1
+        EAT()
+    ENDIF
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF parens = 1 ANDALSO TT() = TT_RPAREN THEN EXITDO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many items in one list")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF parens = 1 ANDALSO TT() = TT_RPAREN THEN EAT()
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    IF n = 0 ANDALSO parens = 0 THEN
+        stExpr[nd] = member
+        RETURN nd
+    ENDIF
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = "__METHOD__"
+    exLeft[callNd] = member
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
 FUNC MKSTR(s AS STRING, ln AS INTEGER) AS INTEGER
     DIM nd AS INTEGER
     nd = CINT(NEW_EXPR(X_LIT_STR, ln))
@@ -1950,6 +2114,94 @@ FUNC P_DECLARE() AS INTEGER
     argN = argN + 1
     exArgAt[callNd] = start
     exArgN[callNd] = 6
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+' SWITCH subject / CASE value / ... / DEFAULT / ENDSWITCH. Each case is a
+' branch whose condition is the value it matches; DEFAULT has none.
+FUNC P_SWITCH() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+    DIM nbr AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    DIM myCond[64]
+    DIM myAt[64]
+    DIM myN[64]
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_SWITCH, ln))
+    stExpr[nd] = P_EXPR()
+
+    nbr = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = KT_ENDSWITCH OR TT() = T_EOF THEN EXITDO
+        IF nbr >= 64 THEN
+            FAIL("too many branches in one SWITCH")
+            EXITDO
+        ENDIF
+
+        IF TT() = KT_CASE THEN
+            EAT()
+            myCond[nbr] = P_EXPR()
+        ELSE
+            IF TT() = KT_DEFAULT THEN
+                EAT()
+                myCond[nbr] = -1
+            ELSE
+                FAIL("expected CASE or DEFAULT")
+                EXITDO
+            ENDIF
+        ENDIF
+
+        packed = CINT(P_BODY(KT_CASE, KT_DEFAULT, KT_ENDSWITCH, -1))
+        myAt[nbr] = packed \ 4096
+        myN[nbr] = packed MOD 4096
+        nbr = nbr + 1
+    LOOP
+
+    IF TT() = KT_ENDSWITCH THEN EAT()
+
+    start = brN
+    FOR i = 0 TO nbr - 1
+        brCond[brN] = myCond[i]
+        brBodyAt[brN] = myAt[i]
+        brBodyN[brN] = myN[i]
+        brN = brN + 1
+    NEXT i
+    stBrAt[nd] = start
+    stBrN[nd] = nbr
+    RETURN nd
+ENDFUNC
+
+' ON event CALL handler registers the handler by name.
+FUNC P_ON(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM subject AS INTEGER
+    DIM start AS INTEGER
+
+    EAT()
+    subject = CINT(P_EXPR())
+    IF TT() = KT_CALL THEN EAT()
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = "__EVENT_ON"
+    start = argN
+    argBuf[argN] = subject
+    argN = argN + 1
+    argBuf[argN] = MKSTR(TV$(), ln)
+    argN = argN + 1
+    EAT()
+    exArgAt[callNd] = start
+    exArgN[callNd] = 2
 
     nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
     stExpr[nd] = callNd
@@ -2128,7 +2380,7 @@ FUNC P_DIM() AS INTEGER
 
     IF TT() = KT_AS THEN
         EAT()
-        vt = CINT(VTYPE_OF(TT()))
+        vt = CINT(TYPE_AFTER_AS(nd))
         IF vt >= 0 THEN
             IF ndim > 0 THEN
                 stVType[nd] = V_ARRAY
@@ -2137,7 +2389,6 @@ FUNC P_DIM() AS INTEGER
                 stVType[nd] = vt
             ENDIF
         ENDIF
-        EAT()
     ELSE
         IF ndim > 0 THEN stVType[nd] = V_ARRAY
     ENDIF
@@ -2152,12 +2403,20 @@ FUNC P_DIM() AS INTEGER
         exArgAt[lit] = start
         exArgN[lit] = ndim
         callNd = CINT(NEW_EXPR(X_CALL, ln))
+        ' An array of a declared type is built by the runtime, which needs to
+        ' be told which type, so it does not go through ZEROS.
         exFn[callNd] = "ZEROS"
         start = argN
         argBuf[argN] = lit
         argN = argN + 1
-        exArgAt[callNd] = start
         exArgN[callNd] = 1
+        IF stEType[nd] = 11 ANDALSO stLabel[nd] <> "" THEN
+            exFn[callNd] = "__MAKE_UDT_ARRAY__"
+            argBuf[argN] = MKSTR(stLabel[nd], ln)
+            argN = argN + 1
+            exArgN[callNd] = 2
+        ENDIF
+        exArgAt[callNd] = start
         stExpr[nd] = callNd
     ELSE
         IF TT() = TT_ASSIGN THEN
@@ -2391,6 +2650,7 @@ FUNC P_STMT() AS INTEGER
     DIM myIdx[MAX_LOCAL]
     DIM nIdx AS INTEGER
     DIM closer AS INTEGER
+    DIM after AS INTEGER
     DIM i AS INTEGER
 
     SKIP_SEPS()
@@ -2424,19 +2684,33 @@ FUNC P_STMT() AS INTEGER
     IF t = KT_FOR THEN RETURN CINT(P_FOR())
     IF t = KT_TYPE THEN RETURN CINT(P_TYPE())
     IF t = KT_TRY THEN RETURN CINT(P_TRY())
+    IF t = KT_SWITCH THEN RETURN CINT(P_SWITCH())
+    IF t = KT_ON THEN RETURN CINT(P_ON(ln))
+
+    IF t = KT_ASYNC THEN
+        EAT()
+        nd = CINT(P_STMT())
+        IF nd >= 0 THEN stAsync[nd] = 1
+        RETURN nd
+    ENDIF
     IF t = KT_DECLARE THEN RETURN CINT(P_DECLARE())
 
     ' SCREEN takes its arguments the way any command does.
     IF t = KT_SCREEN THEN RETURN CINT(P_BUILTIN_CMD(ln))
 
-    ' EXPORT MODULE is handled before the tree is built, and leaves an empty
-    ' statement where it stood.
+    ' EXPORT MODULE is handled before the tree is built and leaves an empty
+    ' statement where it stood. EXPORT on a declaration marks it instead.
     IF t = KT_EXPORT THEN
         EAT()
-        IF TT() = KT_MODULE THEN EAT()
-        IF TT() = T_IDENTIFIER THEN EAT()
-        nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
-        stExpr[nd] = NEW_EXPR(X_LIT_INT, ln)
+        IF TT() = KT_MODULE THEN
+            EAT()
+            IF TT() = T_IDENTIFIER THEN EAT()
+            nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+            stExpr[nd] = NEW_EXPR(X_LIT_INT, ln)
+            RETURN nd
+        ENDIF
+        nd = CINT(P_STMT())
+        IF nd >= 0 THEN stLabel[nd] = "__EXPORT__"
         RETURN nd
     ENDIF
 
@@ -2519,6 +2793,19 @@ FUNC P_STMT() AS INTEGER
         IF IS_BUILTIN_CMD(TV$()) = 1 ANDALSO TAKES_BUILTIN_CMD(CINT(TT_AT(1))) = 1 THEN
             RETURN CINT(P_BUILTIN_CMD(ln))
         ENDIF
+        after = CINT(AFTER_DOTTED())
+        IF after > 1 THEN
+            ' a.b = expr assigns to the field, whatever the name looks like.
+            IF TT_AT(after) = TT_ASSIGN THEN
+                nd = CINT(NEW_STMT(K_ASSIGN, ln))
+                stVar[nd] = DOTTED_NAME$()
+                EAT()
+                stExpr[nd] = P_EXPR()
+                RETURN nd
+            ENDIF
+            IF after = 3 ANDALSO LEN(TV$()) < 3 THEN RETURN CINT(P_METHOD(ln))
+        ENDIF
+
         save = cur
         IF TT_AT(1) = TT_ASSIGN THEN
             nd = CINT(NEW_STMT(K_ASSIGN, ln))
@@ -2791,19 +3078,21 @@ SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
     IF stVType[ix] <> 0 THEN EMIT(" vt=" + STR$(stVType[ix]))
     IF stEType[ix] <> 0 THEN EMIT(" et=" + STR$(stEType[ix]))
     IF stConst[ix] <> 0 THEN EMIT(" const=1")
+    IF stLabel[ix] <> "" THEN EMIT(" lbl=" + AESC$(stLabel[ix]))
     IF stFunc[ix] <> "" THEN EMIT(" fn=" + AESC$(stFunc[ix]))
     IF stRType[ix] <> 0 THEN EMIT(" rt=" + STR$(stRType[ix]))
+    IF stAsync[ix] <> 0 THEN EMIT(" async=1")
     IF stTop[ix] <> 0 THEN EMIT(" top=1")
     IF stUntil[ix] <> 0 THEN EMIT(" until=1")
     IF stNoNl[ix] <> 0 THEN EMIT(" nonl=1")
     FOR i = 0 TO stSepN[ix] - 1
         EMIT(" sep=" + STR$(sepBuf[CINT(stSepAt[ix]) + i]))
     NEXT i
-    FOR i = 0 TO stTmN[ix] - 1
-        EMIT(" tm=" + AESC$(tmName[CINT(stTmAt[ix]) + i]) + ":" + STR$(tmType[CINT(stTmAt[ix]) + i]))
-    NEXT i
     FOR i = 0 TO stParN[ix] - 1
         EMIT(" p=" + AESC$(parName[CINT(stParAt[ix]) + i]) + ":" + STR$(parType[CINT(stParAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stTmN[ix] - 1
+        EMIT(" tm=" + AESC$(tmName[CINT(stTmAt[ix]) + i]) + ":" + STR$(tmType[CINT(stTmAt[ix]) + i]))
     NEXT i
     EMIT(CHR$(10))
 
