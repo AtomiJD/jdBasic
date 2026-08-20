@@ -60,3 +60,28 @@ DIM hay AS STRING
 hay = "haystack"
 PRINT "stack" IN hay
 PRINT "needle" IN hay
+
+' Taking a value apart, and choosing among cases.
+DIM u
+DIM v
+[u, v] = [11, 22]
+PRINT u
+PRINT v
+
+DIM pick AS DOUBLE
+pick = 2
+SWITCH pick
+  CASE 1
+    PRINT "one"
+  CASE 2
+    PRINT "two"
+  DEFAULT
+    PRINT "other"
+ENDSWITCH
+
+SWITCH pick
+  CASE 9
+    PRINT "nine"
+  DEFAULT
+    PRINT "fell through"
+ENDSWITCH

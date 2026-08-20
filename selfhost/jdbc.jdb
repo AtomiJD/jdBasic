@@ -115,6 +115,8 @@ DIM stIxAt[MAX_NODES]
 DIM stIxN[MAX_NODES]
 DIM stCtAt[MAX_NODES]
 DIM stCtN[MAX_NODES]
+DIM stDvAt[MAX_NODES]
+DIM stDvN[MAX_NODES]
 DIM stTmAt[MAX_NODES]
 DIM stTmN[MAX_NODES]
 DIM stEmAt[MAX_NODES]
@@ -140,6 +142,8 @@ DIM ixBuf[MAX_BUF]
 DIM ixN AS INTEGER
 DIM ctBuf[MAX_BUF]
 DIM ctN AS INTEGER
+DIM dvBuf[MAX_BUF] AS STRING
+DIM dvN AS INTEGER
 DIM bodyBuf[MAX_BUF]
 DIM bodyN AS INTEGER
 
@@ -219,6 +223,7 @@ DIM K_ASSIGN AS INTEGER
 DIM K_INDEX_ASSIGN AS INTEGER
 DIM K_FOR_EACH AS INTEGER
 DIM K_TYPE_DECL AS INTEGER
+DIM K_DESTRUCT AS INTEGER
 DIM K_ENUM AS INTEGER
 DIM K_SWITCH AS INTEGER
 DIM K_TRY_CATCH AS INTEGER
@@ -408,6 +413,7 @@ SUB LOAD_TABLES()
     K_INDEX_ASSIGN = 14
     K_FOR_EACH = 21
     K_TYPE_DECL = 20
+    K_DESTRUCT = 15
     K_ENUM = 16
     K_SWITCH = 17
     K_TRY_CATCH = 18
@@ -885,6 +891,8 @@ FUNC NEW_STMT(k AS INTEGER, ln AS INTEGER) AS INTEGER
     stIxN[i] = 0
     stCtAt[i] = 0
     stCtN[i] = 0
+    stDvAt[i] = 0
+    stDvN[i] = 0
     stTmAt[i] = 0
     stTmN[i] = 0
     stEmAt[i] = 0
@@ -3008,6 +3016,7 @@ FUNC P_COMMAND(ln AS INTEGER) AS INTEGER
 ENDFUNC
 
 FUNC P_STMT() AS INTEGER
+    DIM myName[MAX_LOCAL] AS STRING
     DIM nd AS INTEGER
     DIM ln AS INTEGER
     DIM t AS INTEGER
@@ -3179,6 +3188,45 @@ FUNC P_STMT() AS INTEGER
     ' is an indexed one. A name followed by something that starts a value is
     ' BASIC's command form, TXTWRITER a, b, which is a call without brackets.
     ' Anything else is an expression statement.
+    ' [a, b] = expr takes the pieces apart. It only reads that way when every
+    ' name is plain and an assignment follows, so a bracket that starts a
+    ' value is left alone.
+    IF t = TT_LBRACKET THEN
+        save = cur
+        EAT()
+        nIdx = 0
+        DO
+            IF TT() = TT_RBRACKET OR TT() = T_EOF THEN EXITDO
+            IF TT() = TT_COMMA THEN
+                EAT()
+                CONTINUEDO
+            ENDIF
+            IF TT() <> T_IDENTIFIER OR nIdx >= MAX_LOCAL THEN
+                nIdx = -1
+                EXITDO
+            ENDIF
+            myName[nIdx] = TV$()
+            nIdx = nIdx + 1
+            EAT()
+        LOOP
+
+        IF nIdx > 0 ANDALSO TT() = TT_RBRACKET ANDALSO TT_AT(1) = TT_ASSIGN THEN
+            EAT()
+            EAT()
+            nd = CINT(NEW_STMT(K_DESTRUCT, ln))
+            stExpr[nd] = P_EXPR()
+            start = dvN
+            FOR i = 0 TO nIdx - 1
+                dvBuf[dvN] = myName[i]
+                dvN = dvN + 1
+            NEXT i
+            stDvAt[nd] = start
+            stDvN[nd] = nIdx
+            RETURN nd
+        ENDIF
+        cur = save
+    ENDIF
+
     ' THIS.field = value writes a field of the instance, which the tree keeps
     ' as a subscript whose key is the field's name.
     IF t = TT_THIS ANDALSO TT_AT(1) = TT_DOT THEN
@@ -3511,6 +3559,9 @@ SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
     NEXT i
     FOR i = 0 TO stParN[ix] - 1
         EMIT(" p=" + AESC$(parName[CINT(stParAt[ix]) + i]) + ":" + STR$(parType[CINT(stParAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stDvN[ix] - 1
+        EMIT(" dv=" + AESC$(dvBuf[CINT(stDvAt[ix]) + i]))
     NEXT i
     FOR i = 0 TO stEmN[ix] - 1
         EMIT(" em=" + AESC$(emName[CINT(stEmAt[ix]) + i]) + ":" + STR$(emVal[CINT(stEmAt[ix]) + i]))
@@ -5845,6 +5896,137 @@ SUB G_FOR_EACH(ix AS INTEGER)
     W(endL + ":")
 ENDSUB
 
+' A bridged call whose arguments are named one by one rather than read off a
+' call node.
+FUNC G_BRIDGE_ARGS$(nm AS STRING, a AS INTEGER, b AS INTEGER, c AS INTEGER, wantTy AS INTEGER) AS STRING
+    DIM n AS INTEGER
+    DIM slot AS STRING
+    DIM bits AS STRING
+    DIM rt AS STRING
+    DIM nameC AS STRING
+    DIM raw AS STRING
+
+    n = 0
+    IF a >= 0 THEN n = 1
+    IF b >= 0 THEN n = 2
+    IF c >= 0 THEN n = 3
+
+    IF a >= 0 THEN PUT_BRIDGE_ARG(0, a)
+    IF b >= 0 THEN PUT_BRIDGE_ARG(1, b)
+    IF c >= 0 THEN PUT_BRIDGE_ARG(2, c)
+
+    nameC = STR_CONST$(nm)
+    rt = G_RT_HANDLE$()
+    IF wantTy = TY_VOID THEN
+        W("  call void @jdrt_call_typed_void(ptr " + rt + ", ptr " + nameC + ", ptr %bargs, ptr %btags, i32 " + STR$(n) + ")")
+        G_CHECK_ERR(rt)
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+    raw = NEWTMP$()
+    W("  " + raw + " = call double @jdrt_call_typed_f64(ptr " + rt + ", ptr " + nameC + ", ptr %bargs, ptr %btags, i32 " + STR$(n) + ")")
+    G_CHECK_ERR(rt)
+    lastType = TY_NUM
+    RETURN raw
+ENDFUNC
+
+SUB PUT_BRIDGE_ARG(at AS INTEGER, ex AS INTEGER)
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM bits AS STRING
+    DIM slot AS STRING
+
+    v = G_EXPR(ex)
+    vt = lastType
+    bits = AS_BITS$(v, vt)
+    slot = NEWTMP$()
+    W("  " + slot + " = getelementptr i64, ptr %bargs, i32 " + STR$(at))
+    W("  store i64 " + bits + ", ptr " + slot)
+    slot = NEWTMP$()
+    W("  " + slot + " = getelementptr i32, ptr %btags, i32 " + STR$(at))
+    W("  store i32 " + TAG_OF$(vt) + ", ptr " + slot)
+ENDSUB
+
+' SWITCH is a chain of tests against one subject, and DEFAULT is the branch
+' with nothing to test.
+SUB G_SWITCH(ix AS INTEGER)
+    DIM b AS INTEGER
+    DIM at AS INTEGER
+    DIM subj AS STRING
+    DIM subjTy AS INTEGER
+    DIM caseV AS STRING
+    DIM cmp AS STRING
+    DIM thenL AS STRING
+    DIM elseL AS STRING
+    DIM endL AS STRING
+
+    subj = G_EXPR(CINT(stExpr[ix]))
+    subjTy = lastType
+    endL = NEWLBL$("switch.end")
+
+    FOR b = 0 TO stBrN[ix] - 1
+        at = CINT(stBrAt[ix]) + b
+        IF brCond[at] < 0 THEN
+            G_BODY(CINT(brBodyAt[at]), CINT(brBodyN[at]))
+        ELSE
+            thenL = NEWLBL$("case.hit")
+            elseL = NEWLBL$("case.miss")
+            caseV = G_EXPR(CINT(brCond[at]))
+            IF subjTy = TY_STR ANDALSO lastType = TY_STR THEN
+                cmp = G_STRCMP$(TOK_ASSIGN, subj, caseV)
+            ELSE
+                cmp = NEWTMP$()
+                W("  " + cmp + " = fcmp oeq double " + AS_NUM$(subj, subjTy) + ", " + AS_NUM$(caseV, lastType))
+            ENDIF
+            W("  br i1 " + cmp + ", label %" + thenL + ", label %" + elseL)
+            W(thenL + ":")
+            G_BODY(CINT(brBodyAt[at]), CINT(brBodyN[at]))
+            W("  br label %" + endL)
+            W(elseL + ":")
+        ENDIF
+    NEXT b
+    W("  br label %" + endL)
+    W(endL + ":")
+ENDSUB
+
+' [a, b] = expr takes the pieces of what the right side answers and puts one
+' in each name, reading each cell with its tag so the names may differ.
+SUB G_DESTRUCT(ix AS INTEGER)
+    DIM src AS STRING
+    DIM srcTy AS INTEGER
+    DIM i AS INTEGER
+    DIM nm AS STRING
+    DIM ty AS INTEGER
+    DIM bits AS STRING
+    DIM half AS STRING
+    DIM pair AS STRING
+
+    src = G_EXPR(CINT(stExpr[ix]))
+    srcTy = lastType
+    IF srcTy = TY_ANY THEN src = ANY_AS_PTR$(src)
+
+    FOR i = 0 TO stDvN[ix] - 1
+        nm = dvBuf[CINT(stDvAt[ix]) + i]
+        ty = CINT(SYM_TYPE(nm))
+        bits = G_TAGGED_READ$(src, STR$(i), 0)
+
+        IF ty = TY_ANY THEN
+            half = NEWTMP$()
+            W("  " + half + " = insertvalue {i64, i32} undef, i64 " + bits + ", 0")
+            pair = NEWTMP$()
+            W("  " + pair + " = insertvalue {i64, i32} " + half + ", i32 " + lastTag + ", 1")
+            W("  store {i64, i32} " + pair + ", ptr " + SYM_REF$(nm))
+            CONTINUEFOR
+        ENDIF
+
+        IF LL_TY$(ty) = "ptr" THEN
+            W("  store ptr " + ANY_AS_PTR$(bits) + ", ptr " + SYM_REF$(nm))
+        ELSE
+            W("  store double " + AS_NUM$(bits, TY_ANY) + ", ptr " + SYM_REF$(nm))
+        ENDIF
+    NEXT i
+ENDSUB
+
 SUB G_STMT(ix AS INTEGER)
     DIM k AS INTEGER
     DIM nm AS STRING
@@ -5897,6 +6079,21 @@ SUB G_STMT(ix AS INTEGER)
     ENDIF
     IF k = K_TRY_CATCH THEN
         G_TRY(ix)
+        RETURN
+    ENDIF
+
+    ' CLS reaches the screen through the runtime, with whatever it was given.
+    IF k = K_CLS THEN
+        G_BRIDGE_ARGS$("CLS", CINT(stExpr[ix]), CINT(stCond[ix]), CINT(stEnd[ix]), TY_VOID)
+        RETURN
+    ENDIF
+
+    IF k = K_SWITCH THEN
+        G_SWITCH(ix)
+        RETURN
+    ENDIF
+    IF k = K_DESTRUCT THEN
+        G_DESTRUCT(ix)
         RETURN
     ENDIF
 
@@ -6117,6 +6314,7 @@ prN = 0
 sepN = 0
 ixN = 0
 ctN = 0
+dvN = 0
 bodyN = 0
 parN = 0
 brN = 0
