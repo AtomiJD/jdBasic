@@ -67,6 +67,8 @@ DIM exKeyAt[MAX_NODES]
 DIM exKeyN[MAX_NODES]
 DIM exLpAt[MAX_NODES]
 DIM exLpN[MAX_NODES]
+DIM exLcAt[MAX_NODES]
+DIM exLcN[MAX_NODES]
 DIM exFuncRef[MAX_NODES]
 DIM exFn[MAX_NODES] AS STRING
 DIM exLeft[MAX_NODES]
@@ -80,6 +82,8 @@ DIM keyBuf[MAX_BUF] AS STRING
 DIM keyN AS INTEGER
 DIM lpBuf[MAX_BUF] AS STRING
 DIM lpN AS INTEGER
+DIM lcBuf[MAX_BUF] AS STRING
+DIM lcN AS INTEGER
 DIM tmpNodes[MAX_BUF]
 DIM tmpNodeN AS INTEGER
 DIM argN AS INTEGER
@@ -111,6 +115,9 @@ DIM stIxAt[MAX_NODES]
 DIM stIxN[MAX_NODES]
 DIM stTmAt[MAX_NODES]
 DIM stTmN[MAX_NODES]
+DIM stEmAt[MAX_NODES]
+DIM stEmN[MAX_NODES]
+DIM stStatic[MAX_NODES]
 DIM stParAt[MAX_NODES]
 DIM stParN[MAX_NODES]
 DIM stBodyAt[MAX_NODES]
@@ -135,6 +142,10 @@ DIM bodyN AS INTEGER
 DIM tmName[MAX_BUF] AS STRING
 DIM tmType[MAX_BUF]
 DIM tmN AS INTEGER
+
+DIM emName[MAX_BUF] AS STRING
+DIM emVal[MAX_BUF]
+DIM emN AS INTEGER
 
 DIM parName[MAX_BUF] AS STRING
 DIM parType[MAX_BUF]
@@ -203,6 +214,7 @@ DIM K_ASSIGN AS INTEGER
 DIM K_INDEX_ASSIGN AS INTEGER
 DIM K_FOR_EACH AS INTEGER
 DIM K_TYPE_DECL AS INTEGER
+DIM K_ENUM AS INTEGER
 DIM K_SWITCH AS INTEGER
 DIM K_TRY_CATCH AS INTEGER
 DIM K_THROW AS INTEGER
@@ -364,6 +376,7 @@ SUB LOAD_TABLES()
     cmpOps[cmpN] = TOK_BY_NAME("LE") : cmpN = cmpN + 1
     cmpOps[cmpN] = TOK_BY_NAME("NE") : cmpN = cmpN + 1
     cmpOps[cmpN] = TOK_BY_NAME("ASSIGN") : cmpN = cmpN + 1
+    cmpOps[cmpN] = TOK_BY_NAME("IN") : cmpN = cmpN + 1
 
     addN = 0
     addOps[addN] = TOK_BY_NAME("PLUS") : addN = addN + 1
@@ -389,6 +402,7 @@ SUB LOAD_TABLES()
     K_INDEX_ASSIGN = 14
     K_FOR_EACH = 21
     K_TYPE_DECL = 20
+    K_ENUM = 16
     K_SWITCH = 17
     K_TRY_CATCH = 18
     K_THROW = 19
@@ -825,6 +839,8 @@ FUNC NEW_EXPR(k AS INTEGER, ln AS INTEGER) AS INTEGER
     exKeyN[i] = 0
     exLpAt[i] = 0
     exLpN[i] = 0
+    exLcAt[i] = 0
+    exLcN[i] = 0
     exFuncRef[i] = 0
     exFn[i] = ""
     exLeft[i] = -1
@@ -863,6 +879,9 @@ FUNC NEW_STMT(k AS INTEGER, ln AS INTEGER) AS INTEGER
     stIxN[i] = 0
     stTmAt[i] = 0
     stTmN[i] = 0
+    stEmAt[i] = 0
+    stEmN[i] = 0
+    stStatic[i] = 0
     stParAt[i] = 0
     stParN[i] = 0
     stBodyAt[i] = 0
@@ -937,6 +956,8 @@ FUNC P_PRIMARY() AS INTEGER
     DIM n AS INTEGER
     DIM tmp[MAX_LOCAL]
     DIM tmpK[MAX_LOCAL] AS STRING
+    DIM tmpC[MAX_LOCAL] AS STRING
+    DIM nCap AS INTEGER
     DIM i AS INTEGER
 
     ln = CINT(TL())
@@ -1008,6 +1029,19 @@ FUNC P_PRIMARY() AS INTEGER
         RETURN nd
     ENDIF
 
+    ' AWAIT reads as a prefix and is a call on the thing it waits for.
+    IF TT() = KT_AWAIT THEN
+        EAT()
+        nd = CINT(NEW_EXPR(X_CALL, ln))
+        exFn[nd] = "AWAIT"
+        start = argN
+        argBuf[argN] = P_UNARY()
+        argN = argN + 1
+        exArgAt[nd] = start
+        exArgN[nd] = 1
+        RETURN nd
+    ENDIF
+
     ' ? stands where a piped value will land.
     IF TT() = TT_PLACEHOLDER THEN
         nd = CINT(NEW_EXPR(X_PLACEHOLDER, ln))
@@ -1019,6 +1053,30 @@ FUNC P_PRIMARY() AS INTEGER
     ' hangs under it.
     IF TT() = KT_LAMBDA THEN
         EAT()
+
+        ' USE(a, b) names what the lambda takes with it.
+        nCap = 0
+        IF TV$() = "USE" ANDALSO TT_AT(1) = TT_LPAREN THEN
+            EAT()
+            EAT()
+            DO
+                IF parseError <> "" THEN EXITDO
+                IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+                IF TT() = TT_COMMA THEN
+                    EAT()
+                    CONTINUEDO
+                ENDIF
+                IF nCap >= MAX_LOCAL THEN
+                    FAIL("too many captures")
+                    EXITDO
+                ENDIF
+                tmpC[nCap] = TV$()
+                nCap = nCap + 1
+                EAT()
+            LOOP
+            IF TT() = TT_RPAREN THEN EAT()
+        ENDIF
+
         n = 0
         DO
             IF parseError <> "" THEN EXITDO
@@ -1043,6 +1101,13 @@ FUNC P_PRIMARY() AS INTEGER
         NEXT i
         exLpAt[nd] = start
         exLpN[nd] = n
+        start = lcN
+        FOR i = 0 TO nCap - 1
+            lcBuf[lcN] = tmpC[i]
+            lcN = lcN + 1
+        NEXT i
+        exLcAt[nd] = start
+        exLcN[nd] = nCap
         exLeft[nd] = P_EXPR()
         RETURN nd
     ENDIF
@@ -1326,17 +1391,70 @@ FUNC P_CMP() AS INTEGER
     LOOP
 ENDFUNC
 
-' NOT binds looser than a comparison and tighter than AND.
+' NOT binds looser than the bitwise operators and tighter than AND.
 FUNC P_NOT() AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
-    IF TT() <> TT_NOT THEN RETURN CINT(P_CMP())
+    IF TT() <> TT_NOT THEN RETURN CINT(P_BOR())
     ln = CINT(TL())
     nd = CINT(NEW_EXPR(X_UNARY, ln))
     exOp[nd] = TT()
     EAT()
     exRight[nd] = P_NOT()
     RETURN nd
+ENDFUNC
+
+' The bitwise three, each looser than the one below it, and all tighter than
+' a comparison.
+FUNC P_BOR() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_BXOR())
+    DO
+        IF TT() <> TT_BOR THEN RETURN lhs
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT()
+        EAT()
+        exLeft[nd] = lhs
+        exRight[nd] = P_BXOR()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_BXOR() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_BAND())
+    DO
+        IF TT() <> TT_BXOR THEN RETURN lhs
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT()
+        EAT()
+        exLeft[nd] = lhs
+        exRight[nd] = P_BAND()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_BAND() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_CMP())
+    DO
+        IF TT() <> TT_BAND THEN RETURN lhs
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT()
+        EAT()
+        exLeft[nd] = lhs
+        exRight[nd] = P_CMP()
+        lhs = nd
+    LOOP
 ENDFUNC
 
 FUNC P_AND() AS INTEGER
@@ -1421,6 +1539,10 @@ DIM KT_CATCH AS INTEGER
 DIM KT_FINALLY AS INTEGER
 DIM KT_ENDTRY AS INTEGER
 DIM KT_LAMBDA AS INTEGER
+DIM KT_ENUM AS INTEGER
+DIM KT_ENDENUM AS INTEGER
+DIM KT_STATIC AS INTEGER
+DIM KT_AWAIT AS INTEGER
 DIM KT_SWITCH AS INTEGER
 DIM KT_CASE AS INTEGER
 DIM KT_DEFAULT AS INTEGER
@@ -1429,6 +1551,9 @@ DIM KT_ELSEIF AS INTEGER
 DIM KT_ASYNC AS INTEGER
 DIM KT_ON AS INTEGER
 DIM KT_CALL AS INTEGER
+DIM TT_BAND AS INTEGER
+DIM TT_BOR AS INTEGER
+DIM TT_BXOR AS INTEGER
 DIM TT_SHL AS INTEGER
 DIM TT_SHR AS INTEGER
 DIM KT_EXPORT AS INTEGER
@@ -1492,6 +1617,10 @@ SUB LOAD_STMT_TABLES()
     KT_FINALLY = CINT(TOK_BY_NAME("FINALLY"))
     KT_ENDTRY = CINT(TOK_BY_NAME("ENDTRY"))
     KT_LAMBDA = CINT(TOK_BY_NAME("LAMBDA"))
+    KT_ENUM = CINT(TOK_BY_NAME("ENUM"))
+    KT_ENDENUM = CINT(TOK_BY_NAME("ENDENUM"))
+    KT_STATIC = CINT(TOK_BY_NAME("STATIC_KW"))
+    KT_AWAIT = CINT(TOK_BY_NAME("AWAIT_KW"))
     KT_SWITCH = CINT(TOK_BY_NAME("SWITCH"))
     KT_CASE = CINT(TOK_BY_NAME("CASE"))
     KT_DEFAULT = CINT(TOK_BY_NAME("DEFAULT"))
@@ -1500,6 +1629,9 @@ SUB LOAD_STMT_TABLES()
     KT_ASYNC = CINT(TOK_BY_NAME("ASYNC"))
     KT_ON = CINT(TOK_BY_NAME("ON_KW"))
     KT_CALL = CINT(TOK_BY_NAME("CALL"))
+    TT_BAND = CINT(TOK_BY_NAME("BAND"))
+    TT_BOR = CINT(TOK_BY_NAME("BOR"))
+    TT_BXOR = CINT(TOK_BY_NAME("BXOR"))
     TT_SHL = CINT(TOK_BY_NAME("SHL"))
     TT_SHR = CINT(TOK_BY_NAME("SHR"))
     KT_EXPORT = CINT(TOK_BY_NAME("EXPORT_KW"))
@@ -1571,7 +1703,7 @@ ENDFUNC
 ' Without that check a bare END, which is a statement of its own, ends every
 ' body it appears in.
 FUNC P_BODY(stop1 AS INTEGER, stop2 AS INTEGER, stop3 AS INTEGER, endFollow AS INTEGER) AS INTEGER
-    DIM tmp[MAX_LOCAL]
+    DIM tmp[MAX_BUF]
     DIM n AS INTEGER
     DIM i AS INTEGER
     DIM start AS INTEGER
@@ -1582,7 +1714,7 @@ FUNC P_BODY(stop1 AS INTEGER, stop2 AS INTEGER, stop3 AS INTEGER, endFollow AS I
         SKIP_SEPS()
         IF TT() = T_EOF THEN EXITDO
         IF TT() = stop1 OR TT() = stop2 OR TT() = stop3 THEN EXITDO
-        IF n >= MAX_LOCAL THEN
+        IF n >= MAX_BUF THEN
             FAIL("too many statements in one block")
             EXITDO
         ENDIF
@@ -2208,6 +2340,74 @@ FUNC P_ON(ln AS INTEGER) AS INTEGER
     RETURN nd
 ENDFUNC
 
+' ENUM Name / member [= value] / ... / ENDENUM. A member without a value
+' carries on from the one before it.
+FUNC P_ENUM() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM start AS INTEGER
+    DIM n AS INTEGER
+    DIM nextVal AS INTEGER
+    DIM sign AS INTEGER
+    DIM myName[MAX_LOCAL] AS STRING
+    DIM myVal[MAX_LOCAL]
+    DIM i AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_ENUM, ln))
+    stFunc[nd] = TV$()
+    EAT()
+
+    n = 0
+    nextVal = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = KT_ENDENUM OR TT() = T_EOF THEN EXITDO
+        IF TT() = KT_END THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many members in one ENUM")
+            EXITDO
+        ENDIF
+
+        myName[n] = TV$()
+        EAT()
+        IF TT() = TT_ASSIGN THEN
+            EAT()
+            sign = 1
+            IF TT() = TT_MINUS THEN
+                sign = -1
+                EAT()
+            ENDIF
+            nextVal = CINT(VAL(TV$())) * sign
+            EAT()
+        ENDIF
+        myVal[n] = nextVal
+        nextVal = nextVal + 1
+        n = n + 1
+    LOOP
+
+    IF TT() = KT_ENDENUM THEN
+        EAT()
+    ELSE
+        IF TT() = KT_END THEN
+            EAT()
+            IF TT() = KT_ENUM THEN EAT()
+        ENDIF
+    ENDIF
+
+    start = emN
+    FOR i = 0 TO n - 1
+        emName[emN] = myName[i]
+        emVal[emN] = myVal[i]
+        emN = emN + 1
+    NEXT i
+    stEmAt[nd] = start
+    stEmN[nd] = n
+    RETURN nd
+ENDFUNC
+
 FUNC P_FOR() AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
@@ -2522,6 +2722,43 @@ FUNC AFTER_DOTTED() AS INTEGER
     RETURN at
 ENDFUNC
 
+' Sixteen words that are calls with their arguments beside them rather than
+' statements of their own. REACT is not among them: it lexes as a plain name.
+DIM cmdKw[32]
+DIM cmdKwN AS INTEGER
+
+SUB CMD_KW_ADD(n AS STRING)
+    cmdKw[cmdKwN] = CINT(TOK_BY_NAME(n))
+    cmdKwN = cmdKwN + 1
+ENDSUB
+
+SUB LOAD_CMD_KEYWORDS()
+    cmdKwN = 0
+    CMD_KW_ADD("HELP_KW")
+    CMD_KW_ADD("SCREEN_KW")
+    CMD_KW_ADD("SCREENFLIP_KW")
+    CMD_KW_ADD("DRAWCOLOR_KW")
+    CMD_KW_ADD("SETFONT_KW")
+    CMD_KW_ADD("PSET_KW")
+    CMD_KW_ADD("LINE_KW")
+    CMD_KW_ADD("RECT_KW")
+    CMD_KW_ADD("CIRCLE_KW")
+    CMD_KW_ADD("ELLIPSE_KW")
+    CMD_KW_ADD("ROUNDED_RECT_KW")
+    CMD_KW_ADD("CIRCLE_SECTOR_KW")
+    CMD_KW_ADD("TEXT_KW")
+    CMD_KW_ADD("PLOTRAW_KW")
+    CMD_KW_ADD("TOGGLE_FULLSCREEN_KW")
+ENDSUB
+
+FUNC IS_CMD_KEYWORD(t AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO cmdKwN - 1
+        IF cmdKw[i] = t THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
 FUNC IS_BUILTIN_CMD(nm AS STRING) AS INTEGER
     IF nm = "CD" OR nm = "PWD" OR nm = "MKDIR" OR nm = "KILL" THEN RETURN 1
     IF nm = "DIR" OR nm = "TRON" OR nm = "TROFF" OR nm = "DUMP" THEN RETURN 1
@@ -2685,6 +2922,14 @@ FUNC P_STMT() AS INTEGER
     IF t = KT_TYPE THEN RETURN CINT(P_TYPE())
     IF t = KT_TRY THEN RETURN CINT(P_TRY())
     IF t = KT_SWITCH THEN RETURN CINT(P_SWITCH())
+    IF t = KT_ENUM THEN RETURN CINT(P_ENUM())
+
+    IF t = KT_STATIC THEN
+        EAT()
+        nd = CINT(P_STMT())
+        IF nd >= 0 THEN stStatic[nd] = 1
+        RETURN nd
+    ENDIF
     IF t = KT_ON THEN RETURN CINT(P_ON(ln))
 
     IF t = KT_ASYNC THEN
@@ -2696,7 +2941,7 @@ FUNC P_STMT() AS INTEGER
     IF t = KT_DECLARE THEN RETURN CINT(P_DECLARE())
 
     ' SCREEN takes its arguments the way any command does.
-    IF t = KT_SCREEN THEN RETURN CINT(P_BUILTIN_CMD(ln))
+    IF IS_CMD_KEYWORD(t) = 1 THEN RETURN CINT(P_BUILTIN_CMD(ln))
 
     ' EXPORT MODULE is handled before the tree is built and leaves an empty
     ' statement where it stood. EXPORT on a declaration marks it instead.
@@ -3060,6 +3305,9 @@ SUB D_EXPR(ix AS INTEGER, ind AS INTEGER)
     FOR i = 0 TO exLpN[ix] - 1
         EMIT(" lp=" + AESC$(lpBuf[CINT(exLpAt[ix]) + i]))
     NEXT i
+    FOR i = 0 TO exLcN[ix] - 1
+        EMIT(" lc=" + AESC$(lcBuf[CINT(exLcAt[ix]) + i]))
+    NEXT i
     EMIT(CHR$(10))
     D_EXPR(CINT(exLeft[ix]), ind + 1)
     D_EXPR(CINT(exRight[ix]), ind + 1)
@@ -3078,6 +3326,7 @@ SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
     IF stVType[ix] <> 0 THEN EMIT(" vt=" + STR$(stVType[ix]))
     IF stEType[ix] <> 0 THEN EMIT(" et=" + STR$(stEType[ix]))
     IF stConst[ix] <> 0 THEN EMIT(" const=1")
+    IF stStatic[ix] <> 0 THEN EMIT(" static=1")
     IF stLabel[ix] <> "" THEN EMIT(" lbl=" + AESC$(stLabel[ix]))
     IF stFunc[ix] <> "" THEN EMIT(" fn=" + AESC$(stFunc[ix]))
     IF stRType[ix] <> 0 THEN EMIT(" rt=" + STR$(stRType[ix]))
@@ -3090,6 +3339,9 @@ SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
     NEXT i
     FOR i = 0 TO stParN[ix] - 1
         EMIT(" p=" + AESC$(parName[CINT(stParAt[ix]) + i]) + ":" + STR$(parType[CINT(stParAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stEmN[ix] - 1
+        EMIT(" em=" + AESC$(emName[CINT(stEmAt[ix]) + i]) + ":" + STR$(emVal[CINT(stEmAt[ix]) + i]))
     NEXT i
     FOR i = 0 TO stTmN[ix] - 1
         EMIT(" tm=" + AESC$(tmName[CINT(stTmAt[ix]) + i]) + ":" + STR$(tmType[CINT(stTmAt[ix]) + i]))
@@ -3667,11 +3919,6 @@ FUNC G_BUILTIN$(bi AS INTEGER, ix AS INTEGER) AS STRING
 
     n = 0
     IF ix >= 0 THEN n = CINT(exArgN[ix])
-    IF n <> LEN(biSig[bi]) THEN
-        genError = biName[bi] + " wants " + STR$(LEN(biSig[bi])) + " arguments, given " + STR$(n)
-        lastType = TY_NUM
-        RETURN "0.0"
-    ENDIF
 
     sym = biSym[bi]
     argsTxt = ""
@@ -3719,7 +3966,7 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
         f = CINT(FN_FIND(exFn[ix]))
         IF f >= 0 THEN RETURN CINT(fnRet[f])
         f = CINT(BI_FIND(exFn[ix]))
-        IF f >= 0 THEN RETURN CINT(BI_RET_TY(f))
+        IF f >= 0 ANDALSO LEN(biSig[f]) = exArgN[ix] THEN RETURN CINT(BI_RET_TY(f))
         f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
         IF f >= 0 THEN RETURN CINT(NAT_RET_TY(f))
         ' Over the bridge the shape comes from the name: the reference's own
@@ -4128,8 +4375,10 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
         ' A routine of the program wins, then the natives spelled out here,
         ' then the registry lifted from the reference, then the bridge, which
         ' answers for everything else.
+        ' Spelled out here only when the shape matches; a different number of
+        ' arguments is a different call and belongs further down.
         f = CINT(BI_FIND(exFn[ix]))
-        IF f >= 0 THEN RETURN G_BUILTIN$(f, ix)
+        IF f >= 0 ANDALSO LEN(biSig[f]) = exArgN[ix] THEN RETURN G_BUILTIN$(f, ix)
         f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
         IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
         RETURN G_BRIDGE$(exFn[ix], ix, CINT(E_TYPE(ix)))
@@ -5485,8 +5734,10 @@ stCount = 0
 argN = 0
 keyN = 0
 lpN = 0
+lcN = 0
 tmpNodeN = 0
 tmN = 0
+emN = 0
 prN = 0
 sepN = 0
 ixN = 0
@@ -5521,6 +5772,7 @@ nativesPath = "selfhost/jdbc_natives.txt"
 
 LOAD_TABLES()
 LOAD_NATIVES()
+LOAD_CMD_KEYWORDS()
 LOAD_STMT_TABLES()
 
 ' The reference reads source in text mode, which folds CRLF to LF.
