@@ -3587,6 +3587,8 @@ CONST TY_VOID = 6
 ' is what a map answers, and what an array answers when its elements differ.
 CONST TY_ANY = 7
 CONST TY_ARRA = 8
+' A routine as a value: the pointer to it.
+CONST TY_FN = 9
 
 ' How many arguments one bridged call can carry. Every routine keeps scratch
 ' this wide, so the number is a size rather than a guess.
@@ -3656,6 +3658,7 @@ ENDFUNC
 ' A tagged value needs room for both halves, so its slot is a pair.
 FUNC LL_TY$(ty AS INTEGER) AS STRING
     IF ty = TY_ANY THEN RETURN "{i64, i32}"
+    IF ty = TY_FN THEN RETURN "ptr"
     IF ty = TY_STR OR ty = TY_MAP THEN RETURN "ptr"
     IF IS_ARR(ty) = 1 THEN RETURN "ptr"
     RETURN "double"
@@ -3684,6 +3687,7 @@ ENDFUNC
 ' already carries is the one the wire wants.
 FUNC IS_PTRISH(ty AS INTEGER) AS INTEGER
     IF ty = TY_STR OR ty = TY_MAP THEN RETURN 1
+    IF ty = TY_FN THEN RETURN 1
     IF IS_ARR(ty) = 1 THEN RETURN 1
     RETURN 0
 ENDFUNC
@@ -3720,6 +3724,7 @@ SUB GV_ADD(nm AS STRING, ty AS INTEGER)
         IF gvType[i] = TY_ARRN ANDALSO ty = TY_ARRA THEN gvType[i] = TY_ARRA
         IF gvType[i] = TY_NUM ANDALSO ty = TY_ANY THEN gvType[i] = TY_ANY
         IF gvType[i] = TY_NUM ANDALSO ty = TY_MAP THEN gvType[i] = TY_MAP
+        IF gvType[i] = TY_NUM ANDALSO ty = TY_FN THEN gvType[i] = TY_FN
         IF gvType[i] = TY_ARRN ANDALSO ty = TY_ARRS THEN gvType[i] = TY_ARRS
         RETURN
     ENDIF
@@ -4017,6 +4022,145 @@ FUNC G_BRIDGE$(nm AS STRING, ix AS INTEGER, wantTy AS INTEGER) AS STRING
     RETURN raw
 ENDFUNC
 
+' ── Lambdas ────────────────────────────────────────────────────────────────
+'
+' A lambda is an ordinary function under a made-up name, and its value is the
+' pointer to it. USE(...) declares what the body reaches for but captures
+' nothing: the body reads the global, which is what the reference emits too.
+'
+' Seven natives take a function. They are registered under an internal name
+' apiece, and a call whose first argument is one switches to it.
+
+DIM hofName[16] AS STRING
+DIM hofSym[16] AS STRING
+DIM hofN AS INTEGER
+
+SUB LOAD_HOF()
+    hofN = 0
+    HOF_ADD("SELECT", "__select_fn")
+    HOF_ADD("FILTER", "__filter_fn")
+    HOF_ADD("TAKE_WHILE", "__take_while_fn")
+    HOF_ADD("DROP_WHILE", "__drop_while_fn")
+    HOF_ADD("REDUCE", "__reduce_fn")
+    HOF_ADD("OUTER", "__outer_fn")
+    HOF_ADD("AGG", "__agg_fn")
+ENDSUB
+
+SUB HOF_ADD(nm AS STRING, sym AS STRING)
+    hofName[hofN] = nm
+    hofSym[hofN] = sym
+    hofN = hofN + 1
+ENDSUB
+
+FUNC HOF_SYM$(nm AS STRING) AS STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO hofN - 1
+        IF hofName[i] = nm THEN RETURN hofSym[i]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+' A value that is a routine: either a lambda written on the spot or a name
+' with an @ after it.
+FUNC IS_FN_VALUE(ix AS INTEGER) AS INTEGER
+    IF ix < 0 THEN RETURN 0
+    IF exKind[ix] = X_LAMBDA THEN RETURN 1
+    IF exKind[ix] = X_LIT_STR ANDALSO exFuncRef[ix] <> 0 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC G_LAMBDA$(ix AS INTEGER) AS STRING
+    DIM nm AS STRING
+    DIM i AS INTEGER
+    DIM pat AS INTEGER
+    DIM n AS INTEGER
+    DIM sig AS STRING
+    DIM prologue AS STRING
+    DIM savedIr AS STRING
+    DIM savedLv AS INTEGER
+    DIM savedIn AS INTEGER
+    DIM savedRet AS INTEGER
+    DIM savedSub AS INTEGER
+    DIM v AS STRING
+
+    nm = "__lambda" + STR$(lambdaNo)
+    lambdaNo = lambdaNo + 1
+
+    savedLv = lvN
+    savedIn = inRoutine
+    savedRet = curRet
+    savedSub = curIsSub
+
+    lvN = 0
+    inRoutine = 1
+    curIsSub = 0
+    curRet = TY_NUM
+
+    pat = CINT(exLpAt[ix])
+    n = CINT(exLpN[ix])
+    sig = ""
+    FOR i = 0 TO n - 1
+        LV_ADD(lpBuf[pat + i], TY_NUM)
+        IF i > 0 THEN sig = sig + ", "
+        sig = sig + "double %p" + STR$(i)
+    NEXT i
+
+    prologue = "  %bargs = alloca i64, i32 " + STR$(BRIDGE_MAX) + CHR$(10)
+    prologue = prologue + "  %btags = alloca i32, i32 " + STR$(BRIDGE_MAX) + CHR$(10)
+    prologue = prologue + "  %tvval = alloca i64" + CHR$(10)
+    prologue = prologue + "  %tvtag = alloca i32" + CHR$(10)
+    FOR i = 0 TO lvN - 1
+        prologue = prologue + "  %l_" + lvName[i] + " = alloca " + LL_TY$(CINT(lvType[i])) + CHR$(10)
+    NEXT i
+    FOR i = 0 TO n - 1
+        prologue = prologue + "  store double %p" + STR$(i) + ", ptr %l_" + lpBuf[pat + i] + CHR$(10)
+    NEXT i
+
+    savedIr = ir
+    ir = ""
+    v = G_EXPR(CINT(exLeft[ix]))
+    W("  ret double " + AS_NUM$(v, lastType))
+
+    fnDefs = fnDefs + "define double @" + nm + "(" + sig + ") {" + CHR$(10)
+    fnDefs = fnDefs + "entry:" + CHR$(10) + prologue + ir
+    fnDefs = fnDefs + "}" + CHR$(10) + CHR$(10)
+
+    ir = savedIr
+    lvN = savedLv
+    inRoutine = savedIn
+    curRet = savedRet
+    curIsSub = savedSub
+
+    lastType = TY_FN
+    RETURN "@" + nm
+ENDFUNC
+
+' Calling what a variable holds rather than a name the module knows.
+FUNC G_INDIRECT$(ix AS INTEGER) AS STRING
+    DIM fnPtr AS STRING
+    DIM i AS INTEGER
+    DIM n AS INTEGER
+    DIM argsTxt AS STRING
+    DIM v AS STRING
+    DIM t AS STRING
+
+    fnPtr = NEWTMP$()
+    W("  " + fnPtr + " = load ptr, ptr " + SYM_REF$(exFn[ix]))
+
+    n = CINT(exArgN[ix])
+    argsTxt = ""
+    FOR i = 0 TO n - 1
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        IF i > 0 THEN argsTxt = argsTxt + ", "
+        argsTxt = argsTxt + "double " + AS_NUM$(v, lastType)
+    NEXT i
+
+    t = NEWTMP$()
+    W("  " + t + " = call double " + fnPtr + "(" + argsTxt + ")")
+    lastType = TY_NUM
+    RETURN t
+ENDFUNC
+
 ' A registered native: the call goes straight to its jdb_* symbol.
 FUNC G_NATIVE$(ni AS INTEGER, ix AS INTEGER) AS STRING
     DIM i AS INTEGER
@@ -4127,7 +4271,11 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
 
     IF ix < 0 THEN RETURN TY_NUM
     k = CINT(exKind[ix])
-    IF k = X_LIT_STR THEN RETURN TY_STR
+    IF k = X_LAMBDA THEN RETURN TY_FN
+    IF k = X_LIT_STR THEN
+        IF exFuncRef[ix] <> 0 THEN RETURN TY_FN
+        RETURN TY_STR
+    ENDIF
     IF k = X_MAP_LIT THEN RETURN TY_MAP
     IF k = X_ARRAY_LIT THEN RETURN TY_ARRA
     IF k = X_VARIABLE THEN
@@ -4575,6 +4723,7 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     DIM pty AS INTEGER
     DIM rty AS INTEGER
     DIM t AS STRING
+    DIM hof AS STRING
 
     f = CINT(FN_FIND(exFn[ix]))
     IF f < 0 THEN
@@ -4583,6 +4732,19 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
         ' answers for everything else.
         ' Spelled out here only when the shape matches; a different number of
         ' arguments is a different call and belongs further down.
+        ' A name that holds a routine is called through, not looked up.
+        IF SYM_TYPE(exFn[ix]) = TY_FN THEN RETURN G_INDIRECT$(ix)
+
+        ' Handing a routine to one of the natives that take one picks the
+        ' entry point that expects it.
+        IF exArgN[ix] > 0 ANDALSO IS_FN_VALUE(CINT(argBuf[CINT(exArgAt[ix])])) = 1 THEN
+            hof = HOF_SYM$(exFn[ix])
+            IF hof <> "" THEN
+                f = CINT(NAT_FIND(hof, CINT(exArgN[ix])))
+                IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+            ENDIF
+        ENDIF
+
         f = CINT(BI_FIND(exFn[ix]))
         IF f >= 0 ANDALSO LEN(biSig[f]) = exArgN[ix] THEN RETURN G_BUILTIN$(f, ix)
         f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
@@ -4775,6 +4937,7 @@ DIM catchN AS INTEGER
 
 ' Each FOR EACH keeps its own cursor and its own hold on the collection.
 DIM eachNo AS INTEGER
+DIM lambdaNo AS INTEGER
 
 SUB G_CHECK_ERR(rt AS STRING)
     DIM last AS STRING
@@ -4958,6 +5121,10 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
         RETURN NUMLIT$(exFloat[ix])
     ENDIF
     IF k = X_LIT_STR THEN
+        IF exFuncRef[ix] <> 0 THEN
+            lastType = TY_FN
+            RETURN "@f_" + exStr[ix]
+        ENDIF
         lastType = TY_STR
         RETURN STR_CONST$(exStr[ix])
     ENDIF
@@ -4997,6 +5164,7 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
 
     IF k = X_BINARY THEN RETURN G_BINARY(ix)
     IF k = X_INDEX THEN RETURN G_INDEX$(ix)
+    IF k = X_LAMBDA THEN RETURN G_LAMBDA$(ix)
     IF k = X_CALL THEN RETURN G_CALL$(ix)
 
     genError = "cannot generate expression kind " + STR$(k)
@@ -5886,6 +6054,7 @@ FUNC GENERATE$() AS STRING
     loopN = 0
     catchN = 0
     eachNo = 0
+    lambdaNo = 0
     strN = 0
     inRoutine = 0
     genError = ""
@@ -5980,6 +6149,7 @@ nativesPath = "selfhost/jdbc_natives.txt"
 LOAD_TABLES()
 LOAD_NATIVES()
 LOAD_CMD_KEYWORDS()
+LOAD_HOF()
 LOAD_STMT_TABLES()
 
 ' The reference reads source in text mode, which folds CRLF to LF.

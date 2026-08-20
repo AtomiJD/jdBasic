@@ -1,0 +1,45 @@
+OPTION EXPLICIT
+
+' A routine as a value: written on the spot, or named with an @ after it.
+
+DIM base AS DOUBLE
+DIM f
+DIM g
+DIM r AS ARRAY
+
+base = 100
+
+f = LAMBDA x -> x * 2
+PRINT f(21)
+PRINT f(0)
+
+g = LAMBDA USE(base) x -> x + base
+PRINT g(1)
+PRINT g(-100)
+
+DIM h
+h = LAMBDA a, b -> a * 10 + b
+PRINT h(3, 4)
+
+FUNC TRIPLE(n AS DOUBLE) AS DOUBLE
+    RETURN n * 3
+ENDFUNC
+
+DIM t
+t = TRIPLE@
+PRINT t(5)
+
+' The natives that take a routine.
+r = SELECT(LAMBDA i -> i * i, [1, 2, 3, 4])
+PRINT LEN(r)
+PRINT r[0]
+PRINT r[3]
+
+r = FILTER(LAMBDA v -> v > 2, [1, 2, 3, 4, 5])
+PRINT LEN(r)
+PRINT r[0]
+
+r = SELECT(TRIPLE@, [1, 2, 3])
+PRINT r[2]
+
+PRINT REDUCE(LAMBDA a, b -> a + b, [1, 2, 3, 4], 0)
