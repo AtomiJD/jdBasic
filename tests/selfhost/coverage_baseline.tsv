@@ -57,7 +57,7 @@ tests/eval/test_eval_twice.jdb	ok	ok	ok
 tests/eval/test_execute_in_try.jdb	ok	ok	ok
 tests/eval/test_execute_no_try.jdb	ok	ok	ok
 tests/ffi/test_com.jdb	ok	ok	ok
-tests/ffi/test_com2.jdb	ok	diff	-
+tests/ffi/test_com2.jdb	ok	ok	ok
 tests/ffi/test_ffi_native_diag.jdb	ok	ok	ok
 tests/ffi/test_ffi_return.jdb	ok	ok	ok
 tests/ffi/test_ffi_smoke.jdb	ok	ok	ok
@@ -179,7 +179,7 @@ tests/regression/test_func_array_param.jdb	ok	ok	ok
 tests/regression/test_func_local_array.jdb	ok	ok	ok
 tests/regression/test_funcref.jdb	ok	ok	ok
 tests/regression/test_funcref_untyped_param.jdb	ok	ok	ok
-tests/regression/test_functional.jdb	ok	diff	-
+tests/regression/test_functional.jdb	ok	ok	ok
 tests/regression/test_getos.jdb	ok	ok	ok
 tests/regression/test_help.jdb	ok	ok	ok
 tests/regression/test_input.jdb	ok	ok	no
@@ -202,7 +202,7 @@ tests/regression/test_output_capture.jdb	ok	ok	ok
 tests/regression/test_pipe_tag.jdb	ok	ok	ok
 tests/regression/test_playbuffer.jdb	ok	ok	ok
 tests/regression/test_print.jdb	ok	ok	ok
-tests/regression/test_print_types.jdb	ok	diff	-
+tests/regression/test_print_types.jdb	ok	ok	ok
 tests/regression/test_props.jdb	ok	ok	ok
 tests/regression/test_pwd_cd.jdb	ok	ok	ok
 tests/regression/test_python.jdb	ok	ok	ok
@@ -236,13 +236,13 @@ tests/regression/test_unknown_type.jdb	ok	ok	ok
 tests/regression/test_unknown_type_exec.jdb	ok	ok	ok
 tests/regression/test_utf8.jdb	ok	ok	ok
 tests/regression/test_vec_ops.jdb	ok	ok	ok
-tests/strict/test_strict_dim.jdb	ok	diff	-
+tests/strict/test_strict_dim.jdb	ok	ok	ok
 tests/strict/test_strict_dim2.jdb	ok	ok	ok
 tests/strict/test_strict_explicit_bad.jdb	ok	ok	ok
 tests/strict/test_strict_explicit_good.jdb	ok	ok	ok
 tests/strict/test_strict_type_bad.jdb	ok	ok	ok
 tests/strict/test_strict_type_good.jdb	ok	ok	ok
-tests/test_numerics.jdb	ok	diff	-
+tests/test_numerics.jdb	ok	ok	ok
 tests/tui/test_tui_phase_a.jdb	ok	ok	ok
 tests/tui/test_tui_phase_b.jdb	ok	ok	ok
 tests/tui/test_tui_phase_c.jdb	ok	ok	ok
@@ -250,7 +250,7 @@ tests/tui/test_tui_phase_d.jdb	ok	ok	ok
 tests/tui/test_tui_phase_e.jdb	ok	ok	ok
 tests/tui/test_tui_phase_f.jdb	ok	ok	ok
 tests/tui/test_tui_phase_g.jdb	ok	ok	ok
-tests/tui/test_tui_smoke.jdb	ok	diff	-
+tests/tui/test_tui_smoke.jdb	ok	ok	ok
 tests/tutorial/test_cvdate.jdb	ok	ok	ok
 tests/tutorial/test_letters.jdb	ok	ok	ok
 tests/tutorial/test_strings.jdb	ok	ok	ok

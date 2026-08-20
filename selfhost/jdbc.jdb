@@ -71,6 +71,8 @@ DIM exLcAt[MAX_NODES]
 DIM exLcN[MAX_NODES]
 DIM exFuncRef[MAX_NODES]
 DIM exFn[MAX_NODES] AS STRING
+' The spelling of an integer literal too wide for a double to echo back.
+DIM exRaw[MAX_NODES] AS STRING
 DIM exLeft[MAX_NODES]
 DIM exRight[MAX_NODES]
 DIM exArgAt[MAX_NODES]
@@ -870,6 +872,7 @@ FUNC NEW_EXPR(k AS INTEGER, ln AS INTEGER) AS INTEGER
     exLcN[i] = 0
     exFuncRef[i] = 0
     exFn[i] = ""
+    exRaw[i] = ""
     exLeft[i] = -1
     exRight[i] = -1
     exArgAt[i] = 0
@@ -996,6 +999,10 @@ FUNC P_PRIMARY() AS INTEGER
     IF TT() = T_INTEGER_LIT THEN
         nd = CINT(NEW_EXPR(X_LIT_INT, ln))
         exInt[nd] = VAL(TV$())
+        ' A literal wider than a double keeps its spelling for the dump.
+        IF STR$(exInt[nd]) <> TV$() ANDALSO REPLACE$(TV$(), "0", "") <> "" THEN
+            IF INSTR("123456789", LEFT$(TV$(), 1)) >= 0 THEN exRaw[nd] = TV$()
+        ENDIF
         EAT()
         RETURN nd
     ENDIF
@@ -1351,6 +1358,87 @@ FUNC P_CHAIN(ln AS INTEGER) AS INTEGER
     RETURN nd
 ENDFUNC
 
+' obj.a.b(args).field = v: the dotted call is read whole first, and then the
+' walk starts over at the first dot with that call as its root, so the dots
+' and the arguments appear in the tree twice. The reference builds exactly
+' this shape, and the wire format is its dump.
+FUNC P_CALL_CHAIN(ln AS INTEGER) AS INTEGER
+    DIM nm AS STRING
+    DIM rewindTo AS INTEGER
+    DIM callNd AS INTEGER
+    DIM chain AS INTEGER
+    DIM nd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    rewindTo = cur + 1
+    nm = DOTTED_NAME$()
+    EAT()
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+
+    cur = rewindTo
+    chain = CINT(P_POSTFIX(callNd))
+
+    IF TT() <> TT_ASSIGN THEN
+        nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+        stExpr[nd] = chain
+        RETURN nd
+    ENDIF
+    EAT()
+
+    nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+    stExpr[nd] = P_EXPR()
+    start = prN
+
+    IF exKind[chain] = X_MEMBER THEN
+        stLabel[nd] = exStr[chain]
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 1
+        RETURN nd
+    ENDIF
+
+    IF exKind[chain] = X_INDEX THEN
+        stLabel[nd] = "__INDEX__"
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        prBuf[prN] = exRight[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 2
+        RETURN nd
+    ENDIF
+
+    FAIL("cannot assign to this")
+    RETURN nd
+ENDFUNC
+
 FUNC P_METHOD_ARGS(member AS INTEGER, ln AS INTEGER) AS INTEGER
     DIM callNd AS INTEGER
     DIM tmp[MAX_LOCAL]
@@ -1490,8 +1578,29 @@ FUNC P_MUL() AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
     DIM op AS INTEGER
+    DIM fname AS STRING
+    DIM rightNd AS INTEGER
     lhs = CINT(P_POW())
     DO
+        ' a F@ b is the call F(a, b): a routine's name where an operator
+        ' would stand, marked as one by the sign after it.
+        IF TT() = T_IDENTIFIER ANDALSO TT_AT(1) = TT_AT THEN
+            ln = CINT(TL())
+            fname = TV$()
+            EAT()
+            EAT()
+            rightNd = CINT(P_POW())
+            nd = CINT(NEW_EXPR(X_CALL, ln))
+            exFn[nd] = fname
+            exArgAt[nd] = argN
+            argBuf[argN] = lhs
+            argN = argN + 1
+            argBuf[argN] = rightNd
+            argN = argN + 1
+            exArgN[nd] = 2
+            lhs = nd
+            CONTINUEDO
+        ENDIF
         IF IS_ONE_OF(TT(), mulOps, mulN) = 0 THEN RETURN lhs
         ln = CINT(TL())
         op = TT()
@@ -2890,6 +2999,36 @@ FUNC P_DIM_CLAUSE(lnIn AS INTEGER) AS INTEGER
             ENDIF
         ENDIF
 
+        ' DIM arr AS T[] is a typed array that starts empty. One of a
+        ' declared type is built by the runtime with a bound of nothing;
+        ' any other element type is the empty literal itself.
+        IF ndim = 0 ANDALSO TT() = TT_LBRACKET ANDALSO TT_AT(1) = TT_RBRACKET THEN
+            EAT()
+            EAT()
+            stVType[nd] = V_ARRAY
+            stEType[nd] = vt
+            IF vt = 11 ANDALSO stLabel[nd] <> "" THEN
+                lit = CINT(NEW_EXPR(X_ARRAY_LIT, ln))
+                start = argN
+                argBuf[argN] = NEW_EXPR(X_LIT_INT, ln)
+                argN = argN + 1
+                exArgAt[lit] = start
+                exArgN[lit] = 1
+                callNd = CINT(NEW_EXPR(X_CALL, ln))
+                exFn[callNd] = "__MAKE_UDT_ARRAY__"
+                start = argN
+                argBuf[argN] = lit
+                argN = argN + 1
+                argBuf[argN] = MKSTR(stLabel[nd], ln)
+                argN = argN + 1
+                exArgAt[callNd] = start
+                exArgN[callNd] = 2
+                stExpr[nd] = callNd
+            ELSE
+                stExpr[nd] = NEW_EXPR(X_ARRAY_LIT, ln)
+            ENDIF
+        ENDIF
+
         ' DIM r AS Resource("R1") hands the type what it needs to set itself
         ' up, which only a declared type can be asked for.
         IF stLabel[nd] <> "" ANDALSO TT() = TT_LPAREN THEN
@@ -3058,6 +3197,59 @@ FUNC AFTER_DOTTED() AS INTEGER
         at = at + 2
     LOOP
     RETURN at
+ENDFUNC
+
+' A parenthesis that touches the name it follows opens that name's argument
+' list; one with air before it groups the first argument of a command.
+FUNC PAREN_ADJACENT(at AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    i = cur + at
+    IF i <= 0 ORELSE i >= tkCount THEN RETURN 0
+    IF tkLine[i] <> tkLine[i - 1] THEN RETURN 0
+    IF tkCol[i] = tkCol[i - 1] + 1 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Whether the call closing after the offset is followed by more chain.
+FUNC CHAIN_AFTER_CALL(at AS INTEGER) AS INTEGER
+    DIM depth AS INTEGER
+    depth = 0
+    DO
+        IF TT_AT(at) = T_EOF ORELSE TT_AT(at) = T_NEWLINE THEN RETURN 0
+        IF TT_AT(at) = TT_LPAREN THEN depth = depth + 1
+        IF TT_AT(at) = TT_RPAREN THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                at = at + 1
+                IF TT_AT(at) = TT_DOT THEN RETURN 1
+                IF TT_AT(at) = TT_LBRACKET THEN RETURN 1
+                IF TT_AT(at) = TT_LBRACE THEN RETURN 1
+                RETURN 0
+            ENDIF
+        ENDIF
+        at = at + 1
+    LOOP
+ENDFUNC
+
+' Whether the bracket run beginning at the offset closes and is followed by
+' an assignment, which is what tells MOD.ARR[i] = v from MOD.FN [x].
+FUNC BRACKET_ASSIGN_AHEAD(fromAt AS INTEGER) AS INTEGER
+    DIM at AS INTEGER
+    DIM depth AS INTEGER
+    at = fromAt
+    depth = 0
+    DO
+        IF TT_AT(at) = T_EOF ORELSE TT_AT(at) = T_NEWLINE THEN RETURN 0
+        IF TT_AT(at) = TT_LBRACKET THEN depth = depth + 1
+        IF TT_AT(at) = TT_RBRACKET THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                IF TT_AT(at + 1) = TT_ASSIGN THEN RETURN 1
+                RETURN 0
+            ENDIF
+        ENDIF
+        at = at + 1
+    LOOP
 ENDFUNC
 
 ' Sixteen words that are calls with their arguments beside them rather than
@@ -3615,6 +3807,19 @@ FUNC P_STMT() AS INTEGER
                 stExpr[nd] = P_EXPR()
                 RETURN nd
             ENDIF
+            ' A dotted call whose parenthesis touches the name and whose
+            ' chain then carries on is re-walked from the first dot with
+            ' the call as its root, which is the shape the reference has.
+            IF TT_AT(after) = TT_LPAREN ANDALSO PAREN_ADJACENT(CINT(after)) = 1 THEN
+                IF CHAIN_AFTER_CALL(CINT(after)) = 1 THEN RETURN CINT(P_CALL_CHAIN(ln))
+            ENDIF
+
+            ' MOD.FN [x] is a call whose first argument is a literal array;
+            ' MOD.ARR[i] = v assigns. The sign past the bracket decides.
+            IF TT_AT(after) = TT_LBRACKET ANDALSO BRACKET_ASSIGN_AHEAD(CINT(after)) = 0 THEN
+                RETURN CINT(P_COMMAND(ln))
+            ENDIF
+
             ' With a parenthesis after it the whole dotted name is the call;
             ' without one, the head is an object and the tail its routine.
             IF after = 3 ANDALSO LEN(TV$()) < 3 ANDALSO TT_AT(after) <> TT_LPAREN THEN
@@ -3827,38 +4032,207 @@ ENDFUNC
 ' C switches to exponent notation past 1e17 and below 1e-5 and C++20 does not,
 ' so a literal out there still reads differently; that is the only band where
 ' this comparison is not exact.
+' The reference dumper prints a float through C's %.17g, which needs the
+' exact decimal expansion of the double. No formatter on either runtime
+' hands that out whole, so it is computed: the value splits into an integer
+' mantissa and a power of two, both exact moves in a double, and the digits
+' come from multiplying the mantissa out over limbs of seven digits.
+
+DIM bnLimb[400]
+DIM bnN AS INTEGER
+
+SUB BN_SET(m AS DOUBLE)
+    DIM rest AS DOUBLE
+    DIM q AS DOUBLE
+    bnN = 0
+    rest = m
+    DO
+        q = INT(rest / 10000000)
+        bnLimb[bnN] = rest - q * 10000000
+        bnN = bnN + 1
+        rest = q
+        IF rest = 0 THEN EXITDO
+    LOOP
+ENDSUB
+
+SUB BN_MUL(k AS DOUBLE)
+    DIM i AS INTEGER
+    DIM carry AS DOUBLE
+    DIM p AS DOUBLE
+    DIM q AS DOUBLE
+    carry = 0
+    FOR i = 0 TO bnN - 1
+        p = bnLimb[i] * k + carry
+        q = INT(p / 10000000)
+        bnLimb[i] = p - q * 10000000
+        carry = q
+    NEXT i
+    DO
+        IF carry = 0 THEN EXITDO
+        q = INT(carry / 10000000)
+        bnLimb[bnN] = carry - q * 10000000
+        bnN = bnN + 1
+        carry = q
+    LOOP
+ENDSUB
+
+FUNC BN_STR$() AS STRING
+    DIM s AS STRING
+    DIM piece AS STRING
+    DIM i AS INTEGER
+    s = STR$(bnLimb[bnN - 1])
+    FOR i = bnN - 2 TO 0 STEP -1
+        piece = STR$(bnLimb[i])
+        DO
+            IF LEN(piece) >= 7 THEN EXITDO
+            piece = "0" + piece
+        LOOP
+        s = s + piece
+    NEXT i
+    RETURN s
+ENDFUNC
+
 FUNC NUMTXT$(v AS DOUBLE) AS STRING
     DIM a AS DOUBLE
+    DIM e2 AS INTEGER
+    DIM k AS INTEGER
+    DIM digits AS STRING
     DIM expo AS INTEGER
-    DIM s AS STRING
-    DIM last AS INTEGER
+    DIM keep AS STRING
+    DIM rest AS STRING
+    DIM up AS INTEGER
+    DIM i AS INTEGER
+    DIM c AS STRING
+    DIM minus AS STRING
+    DIM outTxt AS STRING
+    DIM expTxt AS STRING
 
     IF v = 0 THEN RETURN "0"
+    minus = ""
+    a = v
+    IF v < 0 THEN
+        minus = "-"
+        a = -v
+    ENDIF
 
-    a = ABS(v)
-    expo = 0
+    ' Mantissa times two to the e2, every step exact.
+    e2 = 0
     DO
-        IF a < 10 THEN EXITDO
-        a = a / 10
-        expo = expo + 1
-    LOOP
-    DO
-        IF a >= 1 THEN EXITDO
-        a = a * 10
-        expo = expo - 1
+        IF a >= 9007199254740992 THEN
+            a = a / 2
+            e2 = e2 + 1
+            CONTINUEDO
+        ENDIF
+        IF a <> INT(a) THEN
+            a = a * 2
+            e2 = e2 - 1
+            CONTINUEDO
+        ENDIF
+        EXITDO
     LOOP
 
-    s = FORMAT$("{:." + STR$(16 - expo) + "g}", v)
-    IF INSTR(s, ".") < 0 THEN RETURN s
+    ' Two to a positive power scales the digits; to a negative one it is
+    ' fives in, tens out, and the tens only move the decimal point.
+    BN_SET(a)
+    IF e2 >= 0 THEN
+        k = e2
+        DO
+            IF k < 20 THEN EXITDO
+            BN_MUL(1048576)
+            k = k - 20
+        LOOP
+        FOR i = 1 TO k
+            BN_MUL(2)
+        NEXT i
+        digits = BN_STR$()
+        expo = CINT(LEN(digits)) - 1
+    ELSE
+        k = -e2
+        DO
+            IF k < 8 THEN EXITDO
+            BN_MUL(390625)
+            k = k - 8
+        LOOP
+        FOR i = 1 TO k
+            BN_MUL(5)
+        NEXT i
+        digits = BN_STR$()
+        expo = CINT(LEN(digits)) - 1 + e2
+    ENDIF
 
-    last = CINT(LEN(s)) - 1
+    ' Seventeen significant digits, ties to the even one, as printf rounds.
+    IF LEN(digits) > 17 THEN
+        keep = LEFT$(digits, 17)
+        rest = MID$(digits, 17, LEN(digits) - 17)
+        up = 0
+        c = LEFT$(rest, 1)
+        IF c > "5" THEN up = 1
+        IF c = "5" THEN
+            up = 1
+            IF REPLACE$(MID$(rest, 1, LEN(rest) - 1), "0", "") = "" THEN
+                IF INSTR("02468", MID$(keep, 16, 1)) >= 0 THEN up = 0
+            ENDIF
+        ENDIF
+        digits = keep
+        IF up = 1 THEN
+            i = 16
+            DO
+                IF i < 0 THEN
+                    digits = "1" + LEFT$(digits, 16)
+                    expo = expo + 1
+                    EXITDO
+                ENDIF
+                c = MID$(digits, i, 1)
+                IF c = "9" THEN
+                    digits = LEFT$(digits, i) + "0" + MID$(digits, i + 1, 16 - i)
+                    i = i - 1
+                ELSE
+                    digits = LEFT$(digits, i) + STR$(CINT(VAL(c)) + 1) + MID$(digits, i + 1, 16 - i)
+                    EXITDO
+                ENDIF
+            LOOP
+        ENDIF
+    ENDIF
+
+    i = CINT(LEN(digits)) - 1
     DO
-        IF last < 0 THEN EXITDO
-        IF MID$(s, last, 1) <> "0" THEN EXITDO
-        last = last - 1
+        IF i <= 0 THEN EXITDO
+        IF MID$(digits, i, 1) <> "0" THEN EXITDO
+        i = i - 1
     LOOP
-    IF last >= 0 ANDALSO MID$(s, last, 1) = "." THEN last = last - 1
-    RETURN LEFT$(s, last + 1)
+    digits = LEFT$(digits, i + 1)
+
+    IF expo < -4 ORELSE expo >= 17 THEN
+        outTxt = LEFT$(digits, 1)
+        IF LEN(digits) > 1 THEN outTxt = outTxt + "." + MID$(digits, 1, LEN(digits) - 1)
+        expTxt = STR$(ABS(expo))
+        IF LEN(expTxt) < 2 THEN expTxt = "0" + expTxt
+        IF expo < 0 THEN
+            outTxt = outTxt + "e-" + expTxt
+        ELSE
+            outTxt = outTxt + "e+" + expTxt
+        ENDIF
+        RETURN minus + outTxt
+    ENDIF
+
+    IF expo >= 0 THEN
+        IF LEN(digits) <= expo THEN
+            outTxt = digits
+            DO
+                IF LEN(outTxt) > expo THEN EXITDO
+                outTxt = outTxt + "0"
+            LOOP
+            RETURN minus + outTxt
+        ENDIF
+        IF LEN(digits) = expo + 1 THEN RETURN minus + digits
+        RETURN minus + LEFT$(digits, expo + 1) + "." + MID$(digits, expo + 1, LEN(digits) - expo - 1)
+    ENDIF
+
+    outTxt = "0."
+    FOR i = 1 TO -expo - 1
+        outTxt = outTxt + "0"
+    NEXT i
+    RETURN minus + outTxt + digits
 ENDFUNC
 
 SUB D_EXPR(ix AS INTEGER, ind AS INTEGER)
@@ -3867,7 +4241,11 @@ SUB D_EXPR(ix AS INTEGER, ind AS INTEGER)
     IF ix < 0 THEN RETURN
     k = CINT(exKind[ix])
     EMIT(PAD$(ind) + "(e" + STR$(k) + " l" + STR$(exLine[ix]))
-    IF exInt[ix] <> 0 THEN EMIT(" i=" + STR$(exInt[ix]))
+    IF exRaw[ix] <> "" THEN
+        EMIT(" i=" + exRaw[ix])
+    ELSE
+        IF exInt[ix] <> 0 THEN EMIT(" i=" + STR$(exInt[ix]))
+    ENDIF
     IF exFloat[ix] <> 0 THEN EMIT(" f=" + NUMTXT$(exFloat[ix]))
     IF exStr[ix] <> "" THEN EMIT(" s=" + AESC$(exStr[ix]))
     IF exBool[ix] <> 0 THEN EMIT(" b=1")
