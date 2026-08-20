@@ -1,0 +1,54 @@
+OPTION EXPLICIT
+
+' Values that only say what they are while the program runs: maps, arrays
+' whose elements differ, and the nesting that falls out of both.
+
+DIM m AS MAP
+DIM mixed AS ARRAY
+DIM grid AS ARRAY
+DIM v
+DIM i AS DOUBLE
+
+m = { "count": 3, "label": "widget", "ratio": 0.5 }
+PRINT m{"count"}
+PRINT m{"label"}
+PRINT m{"ratio"}
+
+m{"count"} = 4
+m{"label"} = "gadget"
+m{"fresh"} = 99
+PRINT m{"count"}
+PRINT m{"label"}
+PRINT m{"fresh"}
+
+' A tagged value carried through a plain variable.
+v = m{"label"}
+PRINT v
+v = m{"count"}
+PRINT v
+PRINT v + 1
+
+' An array whose elements were never promised to be alike.
+mixed = [1, "two", 3, "four"]
+PRINT LEN(mixed)
+PRINT mixed[0]
+PRINT mixed[1]
+PRINT mixed[2]
+PRINT mixed[3]
+
+FOR i = 0 TO LEN(mixed) - 1
+    PRINT mixed[CINT(i)]
+NEXT i
+
+' Nesting, which the tag makes ordinary.
+grid = [[1, 2, 3], [4, 5, 6]]
+PRINT LEN(grid)
+PRINT grid[0][0]
+PRINT grid[0][2]
+PRINT grid[1][1]
+grid[1][1] = 55
+PRINT grid[1][1]
+
+DIM nested AS MAP
+nested = { "inner": { "deep": 7 } }
+PRINT nested{"inner"}{"deep"}

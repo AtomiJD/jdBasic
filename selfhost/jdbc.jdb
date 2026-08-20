@@ -3151,8 +3151,15 @@ CONST TY_STR = 1
 CONST TY_BOOL = 2
 CONST TY_ARRN = 3
 CONST TY_ARRS = 4
+' A map, and an array whose elements were never promised to be alike. What
+' comes out of either is only known while the program runs.
+CONST TY_MAP = 5
 ' What a call answers when it answers nothing.
 CONST TY_VOID = 6
+' A value that carries its own tag: the bits, and what to make of them. This
+' is what a map answers, and what an array answers when its elements differ.
+CONST TY_ANY = 7
+CONST TY_ARRA = 8
 
 ' How many arguments one bridged call can carry. Every routine keeps scratch
 ' this wide, so the number is a size rather than a guess.
@@ -3196,6 +3203,9 @@ DIM strN AS INTEGER
 ' values from one call.
 DIM lastType AS INTEGER
 
+' When the last value was a tagged one, the register holding its tag.
+DIM lastTag AS STRING
+
 
 
 DIM nativesPath AS STRING
@@ -3216,23 +3226,38 @@ ENDFUNC
 
 ' ── Types ──────────────────────────────────────────────────────────────────
 
+' A tagged value needs room for both halves, so its slot is a pair.
 FUNC LL_TY$(ty AS INTEGER) AS STRING
-    IF ty = TY_STR OR ty = TY_ARRN OR ty = TY_ARRS THEN RETURN "ptr"
+    IF ty = TY_ANY THEN RETURN "{i64, i32}"
+    IF ty = TY_STR OR ty = TY_MAP THEN RETURN "ptr"
+    IF IS_ARR(ty) = 1 THEN RETURN "ptr"
     RETURN "double"
 ENDFUNC
 
 FUNC ZERO_OF$(ty AS INTEGER) AS STRING
+    IF ty = TY_ANY THEN RETURN "zeroinitializer"
     IF LL_TY$(ty) = "ptr" THEN RETURN "null"
     RETURN "0.0"
 ENDFUNC
 
+' What comes out of an array. An array that was told what it holds answers
+' that; one that was not answers a tagged value.
 FUNC ELEM_TY(ty AS INTEGER) AS INTEGER
     IF ty = TY_ARRS THEN RETURN TY_STR
+    IF ty = TY_ARRA OR ty = TY_MAP OR ty = TY_ANY THEN RETURN TY_ANY
     RETURN TY_NUM
 ENDFUNC
 
 FUNC IS_ARR(ty AS INTEGER) AS INTEGER
-    IF ty = TY_ARRN OR ty = TY_ARRS THEN RETURN 1
+    IF ty = TY_ARRN OR ty = TY_ARRS OR ty = TY_ARRA THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' A tagged value reaches the wire without being touched, and the tag it
+' already carries is the one the wire wants.
+FUNC IS_PTRISH(ty AS INTEGER) AS INTEGER
+    IF ty = TY_STR OR ty = TY_MAP THEN RETURN 1
+    IF IS_ARR(ty) = 1 THEN RETURN 1
     RETURN 0
 ENDFUNC
 
@@ -3265,6 +3290,9 @@ SUB GV_ADD(nm AS STRING, ty AS INTEGER)
     IF i >= 0 THEN
         ' AS ARRAY says the name holds an array, not what is in it. The value
         ' assigned to it does, so that answer wins.
+        IF gvType[i] = TY_ARRN ANDALSO ty = TY_ARRA THEN gvType[i] = TY_ARRA
+        IF gvType[i] = TY_NUM ANDALSO ty = TY_ANY THEN gvType[i] = TY_ANY
+        IF gvType[i] = TY_NUM ANDALSO ty = TY_MAP THEN gvType[i] = TY_MAP
         IF gvType[i] = TY_ARRN ANDALSO ty = TY_ARRS THEN gvType[i] = TY_ARRS
         RETURN
     ENDIF
@@ -3488,8 +3516,9 @@ ENDFUNC
 ' The wire carries a value as sixty-four bits, whatever it really is.
 FUNC AS_BITS$(v AS STRING, ty AS INTEGER) AS STRING
     DIM t AS STRING
+    IF ty = TY_ANY THEN RETURN v
     t = NEWTMP$()
-    IF ty = TY_STR OR IS_ARR(ty) = 1 THEN
+    IF IS_PTRISH(ty) = 1 THEN
         W("  " + t + " = ptrtoint ptr " + v + " to i64")
     ELSE
         W("  " + t + " = bitcast double " + AS_NUM$(v, ty) + " to i64")
@@ -3677,6 +3706,8 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
     IF ix < 0 THEN RETURN TY_NUM
     k = CINT(exKind[ix])
     IF k = X_LIT_STR THEN RETURN TY_STR
+    IF k = X_MAP_LIT THEN RETURN TY_MAP
+    IF k = X_ARRAY_LIT THEN RETURN TY_ARRA
     IF k = X_VARIABLE THEN
         ' A builtin that takes nothing reads like a variable.
         f = CINT(BI_FIND(exStr[ix]))
@@ -3710,6 +3741,7 @@ ENDFUNC
 FUNC DIM_TYPE(ix AS INTEGER) AS INTEGER
     DIM vt AS INTEGER
     vt = CINT(stVType[ix])
+    IF vt = 11 ANDALSO stLabel[ix] = "" THEN RETURN TY_MAP
     IF vt = V_ARRAY THEN
         IF stEType[ix] = 10 THEN RETURN TY_ARRS
         RETURN TY_ARRN
@@ -3931,13 +3963,51 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     RETURN "0.0"
 ENDFUNC
 
-' Widens a truth value to a number, for arithmetic and for conditions.
+' Widens a truth value to a number, for arithmetic and for conditions. A
+' tagged value gives up its bits and is read as the number they spell.
 FUNC AS_NUM$(v AS STRING, ty AS INTEGER) AS STRING
     DIM t AS STRING
+    IF ty = TY_ANY THEN
+        t = NEWTMP$()
+        W("  " + t + " = bitcast i64 " + v + " to double")
+        RETURN t
+    ENDIF
     IF ty <> TY_BOOL THEN RETURN v
     t = NEWTMP$()
     W("  " + t + " = uitofp i1 " + v + " to double")
     RETURN t
+ENDFUNC
+
+' The tag a value carries. A tagged one says so at runtime; everything else
+' is known while compiling.
+FUNC TAG_OF$(ty AS INTEGER) AS STRING
+    IF ty = TY_ANY THEN RETURN lastTag
+    RETURN STR$(WIRE_TAG(ty))
+ENDFUNC
+
+' Reads a tagged value as a pointer, which is what it holds when its tag
+' says string or array.
+FUNC ANY_AS_PTR$(v AS STRING) AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    W("  " + t + " = inttoptr i64 " + v + " to ptr")
+    RETURN t
+ENDFUNC
+
+' Brings a value to the shape a slot of the given type holds.
+FUNC COERCE$(v AS STRING, from AS INTEGER, dest AS INTEGER) AS STRING
+    DIM t AS STRING
+
+    IF from = dest THEN RETURN v
+    IF dest = TY_ANY THEN RETURN v
+    IF from <> TY_ANY THEN
+        IF LL_TY$(dest) = "double" THEN RETURN AS_NUM$(v, from)
+        RETURN v
+    ENDIF
+
+    ' Out of a tagged value into something that expects one shape.
+    IF LL_TY$(dest) = "ptr" THEN RETURN ANY_AS_PTR$(v)
+    RETURN AS_NUM$(v, TY_ANY)
 ENDFUNC
 
 ' Both sides are already evaluated, so these do not short-circuit yet. The
@@ -3977,10 +4047,27 @@ FUNC G_INDEX$(ix AS INTEGER) AS STRING
     DIM raw AS STRING
     DIM bits AS STRING
     DIM t AS STRING
+    DIM keyV AS STRING
 
     handle = G_EXPR(CINT(exLeft[ix]))
     ht = lastType
+
+    ' What a tagged container is cannot be read off the tag while compiling,
+    ' but the subscript says it: a name keys a map, a number indexes an array.
+    IF ht = TY_ANY THEN
+        handle = ANY_AS_PTR$(handle)
+        ht = TY_ARRA
+        IF E_TYPE(CINT(exRight[ix])) = TY_STR THEN ht = TY_MAP
+    ENDIF
+
+    IF ht = TY_MAP THEN
+        keyV = G_EXPR(CINT(exRight[ix]))
+        RETURN G_TAGGED_READ$(handle, keyV, 1)
+    ENDIF
+
     iv = G_IDX$(CINT(exRight[ix]))
+
+    IF ELEM_TY(ht) = TY_ANY THEN RETURN G_TAGGED_READ$(handle, iv, 0)
 
     raw = NEWTMP$()
     W("  " + raw + " = call double @jdb_array_get(ptr " + handle + ", i64 " + iv + ")")
@@ -4183,6 +4270,8 @@ ENDFUNC
 SUB G_RUNTIME_INIT()
     W("  %bargs = alloca i64, i32 " + STR$(BRIDGE_MAX))
     W("  %btags = alloca i32, i32 " + STR$(BRIDGE_MAX))
+    W("  %tvval = alloca i64")
+    W("  %tvtag = alloca i32")
     W("  call void @jdb_set_args(i32 %argc, ptr %argv)")
     W("  %jdrt = call ptr @jdrt_init()")
     W("  store ptr %jdrt, ptr @__jdrt_handle")
@@ -4255,9 +4344,11 @@ CONST TAG_I64 = 0
 CONST TAG_F64 = 1
 CONST TAG_STR = 2
 CONST TAG_ARR = 3
+CONST TAG_MAP = 4
 
 FUNC WIRE_TAG(ty AS INTEGER) AS INTEGER
     IF ty = TY_STR THEN RETURN TAG_STR
+    IF ty = TY_MAP THEN RETURN TAG_MAP
     IF IS_ARR(ty) = 1 THEN RETURN TAG_ARR
     RETURN TAG_F64
 ENDFUNC
@@ -4267,12 +4358,75 @@ ENDFUNC
 FUNC AS_CELL$(v AS STRING, ty AS INTEGER) AS STRING
     DIM bits AS STRING
     DIM t AS STRING
-    IF ty <> TY_STR ANDALSO IS_ARR(ty) = 0 THEN RETURN AS_NUM$(v, ty)
+    IF ty = TY_ANY THEN
+        t = NEWTMP$()
+        W("  " + t + " = bitcast i64 " + v + " to double")
+        RETURN t
+    ENDIF
+    IF IS_PTRISH(ty) = 0 THEN RETURN AS_NUM$(v, ty)
     bits = NEWTMP$()
     W("  " + bits + " = ptrtoint ptr " + v + " to i64")
     t = NEWTMP$()
     W("  " + t + " = bitcast i64 " + bits + " to double")
     RETURN t
+ENDFUNC
+
+' { "k": v, ... } sets each entry with the tag its value carries, so what
+' goes in is what comes back out.
+FUNC G_MAP_LIT$(ix AS INTEGER) AS STRING
+    DIM i AS INTEGER
+    DIM n AS INTEGER
+    DIM handle AS STRING
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM cell AS STRING
+    DIM tag AS STRING
+    DIM keyC AS STRING
+
+    handle = NEWTMP$()
+    W("  " + handle + " = call ptr @jdb_map_new()")
+
+    n = CINT(exArgN[ix])
+    FOR i = 0 TO n - 1
+        keyC = STR_CONST$(keyBuf[CINT(exKeyAt[ix]) + i])
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        vt = lastType
+        cell = AS_CELL$(v, vt)
+        tag = TAG_OF$(vt)
+        W("  call void @jdb_map_set_tagged(ptr " + handle + ", ptr " + keyC + ", double " + cell + ", i32 " + tag + ")")
+    NEXT i
+
+    lastType = TY_MAP
+    RETURN handle
+ENDFUNC
+
+' Reading a map or a mixed array gives back both halves: the bits, and what
+' to make of them.
+FUNC G_TAGGED_READ$(handle AS STRING, keyOrIdx AS STRING, isMap AS INTEGER) AS STRING
+    DIM slot AS STRING
+    DIM tag AS STRING
+    DIM raw AS STRING
+    DIM bits AS STRING
+
+    IF isMap = 1 THEN
+        tag = NEWTMP$()
+        W("  " + tag + " = call i32 @jdb_map_get_tagged(ptr " + handle + ", ptr " + keyOrIdx + ", ptr %tvval)")
+        bits = NEWTMP$()
+        W("  " + bits + " = load i64, ptr %tvval")
+        lastTag = tag
+        lastType = TY_ANY
+        RETURN bits
+    ENDIF
+
+    raw = NEWTMP$()
+    W("  " + raw + " = call double @jdb_array_get_tagged(ptr " + handle + ", i64 " + keyOrIdx + ", ptr %tvtag)")
+    tag = NEWTMP$()
+    W("  " + tag + " = load i32, ptr %tvtag")
+    bits = NEWTMP$()
+    W("  " + bits + " = bitcast double " + raw + " to i64")
+    lastTag = tag
+    lastType = TY_ANY
+    RETURN bits
 ENDFUNC
 
 ' [a, b, c] grows an empty array one element at a time, which is what the
@@ -4297,7 +4451,7 @@ FUNC G_ARRAY_LIT$(ix AS INTEGER) AS STRING
         handle = nextH
     NEXT i
 
-    lastType = TY_ARRN
+    lastType = TY_ARRA
     RETURN handle
 ENDFUNC
 
@@ -4334,6 +4488,11 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
         ty = CINT(SYM_TYPE(nm))
         t = NEWTMP$()
         W("  " + t + " = load " + LL_TY$(ty) + ", ptr " + SYM_REF$(nm))
+        IF ty = TY_ANY THEN
+            lastTag = EXTRACT_TAG$(t)
+            lastType = TY_ANY
+            RETURN EXTRACT_BITS$(t)
+        ENDIF
         lastType = ty
         RETURN t
     ENDIF
@@ -4353,6 +4512,7 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
     ENDIF
 
     IF k = X_ARRAY_LIT THEN RETURN G_ARRAY_LIT$(ix)
+    IF k = X_MAP_LIT THEN RETURN G_MAP_LIT$(ix)
 
     IF k = X_BINARY THEN RETURN G_BINARY(ix)
     IF k = X_INDEX THEN RETURN G_INDEX$(ix)
@@ -4382,6 +4542,70 @@ SUB G_BODY(at AS INTEGER, n AS INTEGER)
     NEXT i
 ENDSUB
 
+FUNC EMIT_FRMV$(v AS STRING) AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    W("  " + t + " = call ptr @jdb_frmv(ptr " + v + ")")
+    RETURN t
+ENDFUNC
+
+' A tagged value is printed for what its tag says it is, decided while the
+' program runs rather than while it is compiled.
+SUB G_PRINT_TAGGED(bits AS STRING, tag AS STRING)
+    DIM isArr AS STRING
+    DIM isBool AS STRING
+    DIM isStr AS STRING
+    DIM arrL AS STRING
+    DIM boolL AS STRING
+    DIM strL AS STRING
+    DIM numL AS STRING
+    DIM chk1 AS STRING
+    DIM chk2 AS STRING
+    DIM joinL AS STRING
+    DIM p AS STRING
+
+    arrL = NEWLBL$("pr.arr")
+    boolL = NEWLBL$("pr.bool")
+    strL = NEWLBL$("pr.str")
+    numL = NEWLBL$("pr.num")
+    chk1 = NEWLBL$("pr.chk1")
+    chk2 = NEWLBL$("pr.chk2")
+    joinL = NEWLBL$("pr.join")
+
+    isArr = NEWTMP$()
+    W("  " + isArr + " = icmp eq i32 " + tag + ", " + STR$(TAG_ARR))
+    W("  br i1 " + isArr + ", label %" + arrL + ", label %" + chk1)
+
+    W(arrL + ":")
+    W("  call void @jdb_print_str(ptr " + EMIT_FRMV$(ANY_AS_PTR$(bits)) + ")")
+    W("  br label %" + joinL)
+
+    W(chk1 + ":")
+    isBool = NEWTMP$()
+    W("  " + isBool + " = icmp eq i32 " + tag + ", 8")
+    W("  br i1 " + isBool + ", label %" + boolL + ", label %" + chk2)
+
+    W(boolL + ":")
+    W("  call void @jdb_print_bool(i64 " + bits + ")")
+    W("  br label %" + joinL)
+
+    W(chk2 + ":")
+    isStr = NEWTMP$()
+    W("  " + isStr + " = icmp eq i32 " + tag + ", " + STR$(TAG_STR))
+    W("  br i1 " + isStr + ", label %" + strL + ", label %" + numL)
+
+    W(strL + ":")
+    p = ANY_AS_PTR$(bits)
+    W("  call void @jdb_print_str(ptr " + p + ")")
+    W("  br label %" + joinL)
+
+    W(numL + ":")
+    W("  call void @jdb_print_double(double " + AS_NUM$(bits, TY_ANY) + ")")
+    W("  br label %" + joinL)
+
+    W(joinL + ":")
+ENDSUB
+
 SUB G_PRINT(ix AS INTEGER)
     DIM i AS INTEGER
     DIM v AS STRING
@@ -4392,6 +4616,14 @@ SUB G_PRINT(ix AS INTEGER)
         sep = CINT(sepBuf[CINT(stSepAt[ix]) + i])
         IF sep = 1 THEN W("  call void @jdb_print_space()")
         v = G_EXPR(CINT(prBuf[CINT(stPrAt[ix]) + i]))
+        IF lastType = TY_ANY THEN
+            G_PRINT_TAGGED(v, lastTag)
+            CONTINUEFOR
+        ENDIF
+        IF IS_ARR(lastType) = 1 OR lastType = TY_MAP THEN
+            W("  call void @jdb_print_str(ptr " + EMIT_FRMV$(v) + ")")
+            CONTINUEFOR
+        ENDIF
         IF lastType = TY_STR THEN
             W("  call void @jdb_print_str(ptr " + v + ")")
         ELSE
@@ -4592,44 +4824,102 @@ SUB G_INDEX_ASSIGN(ix AS INTEGER)
     DIM v AS STRING
     DIM bits AS STRING
     DIM cell AS STRING
+    DIM keyV AS STRING
+    DIM i AS INTEGER
 
     nm = stVar[ix]
     ty = CINT(SYM_TYPE(nm))
-    IF IS_ARR(ty) = 0 THEN
+    IF IS_ARR(ty) = 0 ANDALSO ty <> TY_MAP ANDALSO ty <> TY_ANY THEN
         genError = nm + " is not an array"
-        RETURN
-    ENDIF
-    IF stIxN[ix] <> 1 THEN
-        genError = "only one index is supported, " + nm + " has " + STR$(stIxN[ix])
         RETURN
     ENDIF
 
     handle = NEWTMP$()
-    W("  " + handle + " = load ptr, ptr " + SYM_REF$(nm))
-    iv = G_IDX$(CINT(ixBuf[CINT(stIxAt[ix])]))
-    v = G_EXPR(CINT(stExpr[ix]))
+    W("  " + handle + " = load " + LL_TY$(ty) + ", ptr " + SYM_REF$(nm))
+    IF ty = TY_ANY THEN
+        handle = ANY_AS_PTR$(EXTRACT_BITS$(handle))
+        ty = TY_ARRA
+        IF E_TYPE(CINT(ixBuf[CINT(stIxAt[ix])])) = TY_STR THEN ty = TY_MAP
+    ENDIF
 
-    IF ELEM_TY(ty) <> TY_STR THEN
-        W("  call void @jdb_array_set(ptr " + handle + ", i64 " + iv + ", double " + AS_NUM$(v, lastType) + ")")
+    ' Every subscript but the last walks one level in; the last one is where
+    ' the value lands.
+    FOR i = 0 TO stIxN[ix] - 2
+        handle = G_STEP_IN$(handle, ty, CINT(ixBuf[CINT(stIxAt[ix]) + i]))
+        ty = TY_ARRA
+        IF E_TYPE(CINT(ixBuf[CINT(stIxAt[ix]) + i + 1])) = TY_STR THEN ty = TY_MAP
+    NEXT i
+
+    IF ty = TY_MAP THEN
+        keyV = G_EXPR(CINT(ixBuf[CINT(stIxAt[ix]) + stIxN[ix] - 1]))
+        v = G_EXPR(CINT(stExpr[ix]))
+        W("  call void @jdb_map_set_tagged(ptr " + handle + ", ptr " + keyV + ", double " + AS_CELL$(v, lastType) + ", i32 " + TAG_OF$(lastType) + ")")
         RETURN
     ENDIF
 
-    bits = NEWTMP$()
-    W("  " + bits + " = ptrtoint ptr " + v + " to i64")
-    cell = NEWTMP$()
-    W("  " + cell + " = bitcast i64 " + bits + " to double")
-    W("  call void @jdb_array_set(ptr " + handle + ", i64 " + iv + ", double " + cell + ")")
+    iv = G_IDX$(CINT(ixBuf[CINT(stIxAt[ix]) + stIxN[ix] - 1]))
+    v = G_EXPR(CINT(stExpr[ix]))
+    W("  call void @jdb_array_set(ptr " + handle + ", i64 " + iv + ", double " + AS_CELL$(v, lastType) + ")")
+    IF ELEM_TY(ty) = TY_STR THEN W("  call void @jdb_array_set_string_elems(ptr " + handle + ")")
 ENDSUB
+
+' Reads one subscript of a nested container and hands back the pointer the
+' next subscript works on.
+FUNC G_STEP_IN$(handle AS STRING, ty AS INTEGER, idxExpr AS INTEGER) AS STRING
+    DIM iv AS STRING
+    DIM keyV AS STRING
+    DIM bits AS STRING
+
+    IF ty = TY_MAP THEN
+        keyV = G_EXPR(idxExpr)
+        bits = G_TAGGED_READ$(handle, keyV, 1)
+        RETURN ANY_AS_PTR$(bits)
+    ENDIF
+    iv = G_IDX$(idxExpr)
+    bits = G_TAGGED_READ$(handle, iv, 0)
+    RETURN ANY_AS_PTR$(bits)
+ENDFUNC
+
+FUNC EXTRACT_BITS$(pair AS STRING) AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    W("  " + t + " = extractvalue {i64, i32} " + pair + ", 0")
+    RETURN t
+ENDFUNC
+
+FUNC EXTRACT_TAG$(pair AS STRING) AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    W("  " + t + " = extractvalue {i64, i32} " + pair + ", 1")
+    RETURN t
+ENDFUNC
 
 SUB G_STORE(nm AS STRING, ix AS INTEGER)
     DIM v AS STRING
     DIM ty AS INTEGER
+    DIM vt AS INTEGER
+    DIM half AS STRING
+    DIM pair AS STRING
+
     v = G_EXPR(ix)
+    vt = lastType
     ty = CINT(SYM_TYPE(nm))
+
+    ' A tagged slot keeps both halves, so a plain value has to be dressed as
+    ' one on the way in.
+    IF ty = TY_ANY THEN
+        half = NEWTMP$()
+        W("  " + half + " = insertvalue {i64, i32} undef, i64 " + AS_BITS$(v, vt) + ", 0")
+        pair = NEWTMP$()
+        W("  " + pair + " = insertvalue {i64, i32} " + half + ", i32 " + TAG_OF$(vt) + ", 1")
+        W("  store {i64, i32} " + pair + ", ptr " + SYM_REF$(nm))
+        RETURN
+    ENDIF
+
     IF LL_TY$(ty) = "ptr" THEN
-        W("  store ptr " + v + ", ptr " + SYM_REF$(nm))
+        W("  store ptr " + COERCE$(v, vt, ty) + ", ptr " + SYM_REF$(nm))
     ELSE
-        W("  store double " + AS_NUM$(v, lastType) + ", ptr " + SYM_REF$(nm))
+        W("  store double " + COERCE$(v, vt, ty) + ", ptr " + SYM_REF$(nm))
     ENDIF
 ENDSUB
 
@@ -4694,6 +4984,8 @@ SUB G_ROUTINE(ix AS INTEGER)
     prologue = ""
     prologue = prologue + "  %bargs = alloca i64, i32 " + STR$(BRIDGE_MAX) + CHR$(10)
     prologue = prologue + "  %btags = alloca i32, i32 " + STR$(BRIDGE_MAX) + CHR$(10)
+    prologue = prologue + "  %tvval = alloca i64" + CHR$(10)
+    prologue = prologue + "  %tvtag = alloca i32" + CHR$(10)
     FOR i = 0 TO lvN - 1
         prologue = prologue + "  %l_" + lvName[i] + " = alloca " + LL_TY$(CINT(lvType[i])) + CHR$(10)
         prologue = prologue + "  store " + LL_TY$(CINT(lvType[i])) + " " + ZERO_OF$(CINT(lvType[i]))
@@ -4988,6 +5280,11 @@ FUNC DECLS$() AS STRING
     d = d + "declare void @jdb_err_code_clear()" + CHR$(10)
     d = d + "declare void @jdb_sleep(i64)" + CHR$(10)
     d = d + "declare double @jdb_pow(double, double)" + CHR$(10)
+    d = d + "declare ptr @jdb_map_new()" + CHR$(10)
+    d = d + "declare void @jdb_map_set_tagged(ptr, ptr, double, i32)" + CHR$(10)
+    d = d + "declare i32 @jdb_map_get_tagged(ptr, ptr, ptr)" + CHR$(10)
+    d = d + "declare double @jdb_array_get_tagged(ptr, i64, ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_frmv(ptr)" + CHR$(10)
     d = d + "declare double @jdrt_call_typed_f64(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_str(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_arr(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
