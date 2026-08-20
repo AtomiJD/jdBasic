@@ -5042,17 +5042,20 @@ FUNC G_METHOD_ON$(objEx AS INTEGER, method AS STRING, ix AS INTEGER) AS STRING
     typeName = ""
     IF exKind[objEx] = X_VARIABLE THEN typeName = SYM_UDT$(exStr[objEx])
     IF typeName = "" THEN typeName = TYPE_OWNING$(method)
-    IF typeName = "" THEN
-        genError = "no type owns a routine called " + method
-        lastType = TY_NUM
-        RETURN "0.0"
-    ENDIF
 
-    f = CINT(FN_FIND(typeName + "." + method))
+    f = -1
+    IF typeName <> "" THEN f = CINT(FN_FIND(typeName + "." + method))
+
+    ' No type owns it, so it was never a method: a name like AI.RAG_ADD only
+    ' looked like one because the head is short. The reference falls through
+    ' to the bridge here as well, but bridges the word __METHOD__, which no
+    ' runtime knows. The name that was written is what the interpreter calls,
+    ' so that is what goes over the wire.
     IF f < 0 THEN
-        genError = typeName + " has no routine called " + method
-        lastType = TY_NUM
-        RETURN "0.0"
+        IF exKind[objEx] = X_VARIABLE THEN
+            RETURN G_BRIDGE$(exStr[objEx] + "." + method, ix, CINT(E_TYPE(ix)))
+        ENDIF
+        RETURN G_BRIDGE$(method, ix, CINT(E_TYPE(ix)))
     ENDIF
 
     obj = G_EXPR(objEx)

@@ -13,6 +13,7 @@ selfhost/fixtures/gen_literals.jdb	ok	ok	ok
 selfhost/fixtures/gen_mixed.jdb	ok	ok	ok
 selfhost/fixtures/gen_natives.jdb	ok	ok	ok
 selfhost/fixtures/gen_tagged.jdb	ok	ok	ok
+selfhost/fixtures/gen_udt.jdb	ok	ok	ok
 selfhost/fixtures/gen_values.jdb	ok	ok	ok
 selfhost/gen_natives.jdb	ok	ok	ok
 selfhost/gen_tokens.jdb	ok	ok	ok
@@ -55,7 +56,7 @@ tests/eval/test_eval_twice.jdb	ok	ok	ok
 tests/eval/test_execute_in_try.jdb	ok	ok	ok
 tests/eval/test_execute_no_try.jdb	ok	ok	ok
 tests/ffi/test_com.jdb	ok	ok	ok
-tests/ffi/test_com2.jdb	ok	err	-
+tests/ffi/test_com2.jdb	ok	diff	-
 tests/ffi/test_ffi_native_diag.jdb	ok	ok	ok
 tests/ffi/test_ffi_return.jdb	ok	ok	ok
 tests/ffi/test_ffi_smoke.jdb	ok	ok	ok
@@ -143,8 +144,8 @@ tests/regression/native_event_suffix_names.jdb	ok	ok	ok
 tests/regression/test_2d.jdb	ok	ok	ok
 tests/regression/test_alias_isolated.jdb	ok	ok	ok
 tests/regression/test_apl.jdb	ok	ok	ok
-tests/regression/test_arr_idx_method.jdb	ok	err	-
-tests/regression/test_arr_idx_method_deep.jdb	ok	err	-
+tests/regression/test_arr_idx_method.jdb	ok	ok	ok
+tests/regression/test_arr_idx_method_deep.jdb	ok	ok	ok
 tests/regression/test_array_row_alias.jdb	ok	ok	ok
 tests/regression/test_array_row_alias2.jdb	ok	ok	ok
 tests/regression/test_bitops_vector.jdb	ok	ok	ok
@@ -255,9 +256,9 @@ tests/tutorial/test_strings.jdb	ok	ok	ok
 tests/tutorial/test_switch.jdb	ok	ok	no
 tests/tutorial/test_type.jdb	ok	ok	ok
 tests/tutorial/test_vec.jdb	ok	ok	ok
-tests/udt/test_udt_arr.jdb	ok	err	-
+tests/udt/test_udt_arr.jdb	ok	ok	ok
 tests/udt/test_udt_array_dispose.jdb	ok	ok	ok
-tests/udt/test_udt_array_vector_init.jdb	ok	err	-
+tests/udt/test_udt_array_vector_init.jdb	ok	ok	ok
 tests/udt/test_udt_dispose_local.jdb	ok	ok	ok
 tests/udt/test_udt_dispose_reassign.jdb	ok	ok	ok
 tests/udt/test_udt_init_basic.jdb	ok	ok	ok
