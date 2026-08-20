@@ -1252,6 +1252,116 @@ FUNC P_PRIMARY() AS INTEGER
     RETURN CINT(NEW_EXPR(X_LIT_INT, ln))
 ENDFUNC
 
+' The arguments of obj.method(...), with the member already built.
+' Looks past a run of subscripts from the current name for a dot, which is
+' what tells a plain indexed assignment from one that reaches further.
+FUNC CHAIN_HAS_DOT() AS INTEGER
+    DIM at AS INTEGER
+    DIM depth AS INTEGER
+    DIM t AS INTEGER
+
+    at = 1
+    depth = 0
+    DO
+        t = CINT(TT_AT(at))
+        IF t = T_EOF OR t = T_NEWLINE THEN RETURN 0
+        IF t = TT_LBRACKET OR t = TT_LBRACE THEN depth = depth + 1
+        IF t = TT_RBRACKET OR t = TT_RBRACE THEN depth = depth - 1
+        IF depth = 0 THEN
+            IF t = TT_DOT THEN RETURN 1
+            IF t = TT_RBRACKET OR t = TT_RBRACE THEN
+                IF TT_AT(at + 1) <> TT_LBRACKET ANDALSO TT_AT(at + 1) <> TT_LBRACE THEN
+                    IF TT_AT(at + 1) = TT_DOT THEN RETURN 1
+                    RETURN 0
+                ENDIF
+            ENDIF
+        ENDIF
+        at = at + 1
+    LOOP
+ENDFUNC
+
+' name[...].field = value, and the rest of the shapes a chain can end in.
+FUNC P_CHAIN(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM root AS INTEGER
+    DIM chain AS INTEGER
+    DIM start AS INTEGER
+
+    root = CINT(NEW_EXPR(X_VARIABLE, ln))
+    exStr[root] = TV$()
+    EAT()
+    chain = CINT(P_POSTFIX(root))
+
+    IF TT() <> TT_ASSIGN THEN
+        nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+        stExpr[nd] = chain
+        RETURN nd
+    ENDIF
+    EAT()
+
+    nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+    stExpr[nd] = P_EXPR()
+    start = prN
+
+    IF exKind[chain] = X_MEMBER THEN
+        stLabel[nd] = exStr[chain]
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 1
+        RETURN nd
+    ENDIF
+
+    IF exKind[chain] = X_INDEX THEN
+        stLabel[nd] = "__INDEX__"
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        prBuf[prN] = exRight[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 2
+        RETURN nd
+    ENDIF
+
+    FAIL("cannot assign to this")
+    RETURN nd
+ENDFUNC
+
+FUNC P_METHOD_ARGS(member AS INTEGER, ln AS INTEGER) AS INTEGER
+    DIM callNd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = "__METHOD__"
+    exLeft[callNd] = member
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+    RETURN callNd
+ENDFUNC
+
 ' Indexing binds tighter than any operator. C[a, b] is C[a][b].
 FUNC P_POSTFIX(lhs AS INTEGER) AS INTEGER
     DIM ln AS INTEGER
@@ -1261,6 +1371,24 @@ FUNC P_POSTFIX(lhs AS INTEGER) AS INTEGER
 
     node = lhs
     DO
+        ' A dot after a subscript reaches into what came out of it, and a
+        ' parenthesis after the name makes it a call on that thing.
+        IF TT() = TT_DOT ANDALSO TT_AT(1) <> T_EOF THEN
+            ln = CINT(TL())
+            EAT()
+            nd = CINT(NEW_EXPR(X_MEMBER, ln))
+            exStr[nd] = TV$()
+            exLeft[nd] = node
+            EAT()
+            IF TT() = TT_LPAREN THEN
+                EAT()
+                node = CINT(P_METHOD_ARGS(nd, ln))
+            ELSE
+                node = nd
+            ENDIF
+            CONTINUEDO
+        ENDIF
+
         ' m{"k"} reads a map the way a[i] reads an array.
         IF TT() = TT_LBRACE THEN
             ln = CINT(TL())
@@ -3315,7 +3443,9 @@ FUNC P_STMT() AS INTEGER
                 EAT()
             LOOP
 
-            IF parseError = "" ANDALSO TT() = TT_ASSIGN THEN
+            ' A dot after the subscripts means the chain does not end at the
+            ' array, and the last link decides how the assignment lands.
+            IF parseError = "" ANDALSO TT() = TT_ASSIGN ANDALSO TT() <> TT_DOT THEN
                 EAT()
                 stExpr[nd] = P_EXPR()
                 start = ixN
@@ -3329,6 +3459,8 @@ FUNC P_STMT() AS INTEGER
             ENDIF
             cur = save
             stCount = stCount - 1
+
+            IF CHAIN_HAS_DOT() = 1 THEN RETURN CINT(P_CHAIN(ln))
         ENDIF
 
         IF STARTS_ARGS(CINT(TT_AT(CINT(AFTER_DOTTED())))) = 1 THEN RETURN CINT(P_COMMAND(ln))
