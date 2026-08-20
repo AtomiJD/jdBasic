@@ -1,0 +1,34 @@
+OPTION EXPLICIT
+
+' Array literals, mixed contents, and truth values.
+
+DIM nums AS ARRAY
+DIM i AS DOUBLE
+DIM flag AS DOUBLE
+
+nums = [10, 20, 30, 40]
+PRINT LEN(nums)
+PRINT nums[0]
+PRINT nums[3]
+
+FOR i = 0 TO LEN(nums) - 1
+    PRINT nums[CINT(i)]
+NEXT i
+
+PRINT TRUE
+PRINT FALSE
+flag = 0
+IF TRUE THEN flag = flag + 1
+IF FALSE THEN flag = flag + 10
+PRINT flag
+
+DIM computed AS ARRAY
+computed = [1 + 1, 2 * 3, LEN("abcd")]
+PRINT computed[0]
+PRINT computed[1]
+PRINT computed[2]
+PRINT LEN(computed)
+
+DIM empty AS ARRAY
+empty = []
+PRINT LEN(empty)

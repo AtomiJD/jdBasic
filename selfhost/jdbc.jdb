@@ -3871,6 +3871,57 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     RETURN t
 ENDFUNC
 
+' The wire tags the runtime uses for a value, from jdb_tags.h.
+CONST TAG_I64 = 0
+CONST TAG_F64 = 1
+CONST TAG_STR = 2
+CONST TAG_ARR = 3
+
+FUNC WIRE_TAG(ty AS INTEGER) AS INTEGER
+    IF ty = TY_STR THEN RETURN TAG_STR
+    IF IS_ARR(ty) = 1 THEN RETURN TAG_ARR
+    RETURN TAG_F64
+ENDFUNC
+
+' Anything that is not already a double reaches the runtime as its bits in
+' one, with the tag saying what to make of them.
+FUNC AS_CELL$(v AS STRING, ty AS INTEGER) AS STRING
+    DIM bits AS STRING
+    DIM t AS STRING
+    IF ty <> TY_STR ANDALSO IS_ARR(ty) = 0 THEN RETURN AS_NUM$(v, ty)
+    bits = NEWTMP$()
+    W("  " + bits + " = ptrtoint ptr " + v + " to i64")
+    t = NEWTMP$()
+    W("  " + t + " = bitcast i64 " + bits + " to double")
+    RETURN t
+ENDFUNC
+
+' [a, b, c] grows an empty array one element at a time, which is what the
+' reference does and what lets the elements differ from each other.
+FUNC G_ARRAY_LIT$(ix AS INTEGER) AS STRING
+    DIM i AS INTEGER
+    DIM n AS INTEGER
+    DIM handle AS STRING
+    DIM nextH AS STRING
+    DIM v AS STRING
+    DIM vt AS INTEGER
+
+    handle = NEWTMP$()
+    W("  " + handle + " = call ptr @jdb_array_new(i64 0)")
+
+    n = CINT(exArgN[ix])
+    FOR i = 0 TO n - 1
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        vt = lastType
+        nextH = NEWTMP$()
+        W("  " + nextH + " = call ptr @jdb_array_append_tagged(ptr " + handle + ", double " + AS_CELL$(v, vt) + ", i32 " + STR$(WIRE_TAG(vt)) + ")")
+        handle = nextH
+    NEXT i
+
+    lastType = TY_ARRN
+    RETURN handle
+ENDFUNC
+
 FUNC G_EXPR(ix AS INTEGER) AS STRING
     DIM k AS INTEGER
     DIM t AS STRING
@@ -3915,6 +3966,14 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
         lastType = TY_NUM
         RETURN t
     ENDIF
+
+    IF k = X_LIT_BOOL THEN
+        lastType = TY_BOOL
+        IF exBool[ix] <> 0 THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+
+    IF k = X_ARRAY_LIT THEN RETURN G_ARRAY_LIT$(ix)
 
     IF k = X_BINARY THEN RETURN G_BINARY(ix)
     IF k = X_INDEX THEN RETURN G_INDEX$(ix)
@@ -4400,6 +4459,7 @@ FUNC DECLS$() AS STRING
     d = d + "declare double @jdb_array_get(ptr, i64)" + CHR$(10)
     d = d + "declare void @jdb_array_set_string_elems(ptr)" + CHR$(10)
     d = d + "declare i64 @jdb_array_len(ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_append_tagged(ptr, double, i32)" + CHR$(10)
     d = d + "declare void @jdb_set_args(i32, ptr)" + CHR$(10)
     FOR i = 0 TO biN - 1
         d = d + "declare " + biDeclRet[i] + " @" + biSym[i]
