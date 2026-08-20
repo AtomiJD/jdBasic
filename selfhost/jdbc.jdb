@@ -144,6 +144,12 @@ DIM ctBuf[MAX_BUF]
 DIM ctN AS INTEGER
 DIM dvBuf[MAX_BUF] AS STRING
 DIM dvN AS INTEGER
+
+' Declarations written with commas arrive as one statement each, so the ones
+' after the first wait here until they are asked for.
+DIM pendBuf[64]
+DIM pendHead AS INTEGER
+DIM pendTail AS INTEGER
 DIM bodyBuf[MAX_BUF]
 DIM bodyN AS INTEGER
 
@@ -162,7 +168,12 @@ DIM parN AS INTEGER
 DIM brCond[MAX_BUF]
 DIM brBodyAt[MAX_BUF]
 DIM brBodyN[MAX_BUF]
+DIM brExAt[MAX_BUF]
+DIM brExN[MAX_BUF]
 DIM brN AS INTEGER
+DIM caseBuf[MAX_BUF]
+DIM caseHi[MAX_BUF]
+DIM caseN AS INTEGER
 
 DIM topAt AS INTEGER
 DIM topN AS INTEGER
@@ -223,6 +234,8 @@ DIM K_ASSIGN AS INTEGER
 DIM K_INDEX_ASSIGN AS INTEGER
 DIM K_FOR_EACH AS INTEGER
 DIM K_TYPE_DECL AS INTEGER
+DIM K_INPUT AS INTEGER
+DIM K_REACT AS INTEGER
 DIM K_DESTRUCT AS INTEGER
 DIM K_ENUM AS INTEGER
 DIM K_SWITCH AS INTEGER
@@ -413,6 +426,8 @@ SUB LOAD_TABLES()
     K_INDEX_ASSIGN = 14
     K_FOR_EACH = 21
     K_TYPE_DECL = 20
+    K_INPUT = 3
+    K_REACT = 32
     K_DESTRUCT = 15
     K_ENUM = 16
     K_SWITCH = 17
@@ -1193,6 +1208,15 @@ FUNC P_PRIMARY() AS INTEGER
         RETURN nd
     ENDIF
 
+    ' Some words are operators between two values and the name of a call in
+    ' front of a parenthesis. Which one is decided by what follows.
+    IF IS_WORD_OPERATOR(CINT(TT())) = 1 ANDALSO TT_AT(1) = TT_LPAREN THEN
+        nm = TV$()
+        EAT()
+        EAT()
+        RETURN CINT(P_CALL_ARGS(nm, ln))
+    ENDIF
+
     ' A name is a call when a parenthesis follows it, otherwise a variable.
     ' A dotted name is one identifier as far as the tree is concerned.
     IF TT() = T_IDENTIFIER THEN
@@ -1702,6 +1726,8 @@ DIM KT_CATCH AS INTEGER
 DIM KT_FINALLY AS INTEGER
 DIM KT_ENDTRY AS INTEGER
 DIM KT_LAMBDA AS INTEGER
+DIM KT_INPUT AS INTEGER
+DIM KT_RAISEEVENT AS INTEGER
 DIM KT_ENUM AS INTEGER
 DIM KT_ENDENUM AS INTEGER
 DIM KT_STATIC AS INTEGER
@@ -1782,6 +1808,8 @@ SUB LOAD_STMT_TABLES()
     KT_FINALLY = CINT(TOK_BY_NAME("FINALLY"))
     KT_ENDTRY = CINT(TOK_BY_NAME("ENDTRY"))
     KT_LAMBDA = CINT(TOK_BY_NAME("LAMBDA"))
+    KT_INPUT = CINT(TOK_BY_NAME("INPUT"))
+    KT_RAISEEVENT = CINT(TOK_BY_NAME("RAISEEVENT_KW"))
     KT_ENUM = CINT(TOK_BY_NAME("ENUM"))
     KT_ENDENUM = CINT(TOK_BY_NAME("ENDENUM"))
     KT_STATIC = CINT(TOK_BY_NAME("STATIC_KW"))
@@ -2489,6 +2517,8 @@ FUNC P_SWITCH() AS INTEGER
     DIM myCond[64]
     DIM myAt[64]
     DIM myN[64]
+    DIM myExAt[64]
+    DIM myExN[64]
 
     ln = CINT(TL())
     EAT()
@@ -2507,8 +2537,27 @@ FUNC P_SWITCH() AS INTEGER
 
         IF TT() = KT_CASE THEN
             EAT()
-            myCond[nbr] = P_EXPR()
+            ' A case tests values rather than a condition: each is a value on
+            ' its own, or a range with TO between two.
+            myCond[nbr] = -1
+            myExAt[nbr] = caseN
+            myExN[nbr] = 0
+            DO
+                IF parseError <> "" THEN EXITDO
+                caseBuf[caseN] = P_EXPR()
+                caseHi[caseN] = -1
+                IF TT() = KT_TO THEN
+                    EAT()
+                    caseHi[caseN] = P_EXPR()
+                ENDIF
+                caseN = caseN + 1
+                myExN[nbr] = myExN[nbr] + 1
+                IF TT() <> TT_COMMA THEN EXITDO
+                EAT()
+            LOOP
         ELSE
+                myExAt[nbr] = caseN
+                myExN[nbr] = 0
             IF TT() = KT_DEFAULT THEN
                 EAT()
                 myCond[nbr] = -1
@@ -2531,6 +2580,8 @@ FUNC P_SWITCH() AS INTEGER
         brCond[brN] = myCond[i]
         brBodyAt[brN] = myAt[i]
         brBodyN[brN] = myN[i]
+        brExAt[brN] = myExAt[i]
+        brExN[brN] = myExN[i]
         brN = brN + 1
     NEXT i
     stBrAt[nd] = start
@@ -2765,7 +2816,30 @@ ENDFUNC
 
 ' DIM name[dims] AS type desugars to a ZEROS call over an array literal, which
 ' is the shape the reference produces.
+' DIM a, b AS STRING, c declares three things. The first is answered now and
+' the others wait, because a statement is one thing at a time.
 FUNC P_DIM() AS INTEGER
+    DIM first AS INTEGER
+    DIM ln AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    first = CINT(P_DIM_CLAUSE(ln))
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() <> TT_COMMA THEN EXITDO
+        IF pendTail >= 64 THEN
+            FAIL("too many declarations on one line")
+            EXITDO
+        ENDIF
+        EAT()
+        pendBuf[pendTail] = P_DIM_CLAUSE(ln)
+        pendTail = pendTail + 1
+    LOOP
+    RETURN first
+ENDFUNC
+
+FUNC P_DIM_CLAUSE(lnIn AS INTEGER) AS INTEGER
     DIM myCtor[MAX_LOCAL]
     DIM nCtor AS INTEGER
     DIM nd AS INTEGER
@@ -2778,8 +2852,7 @@ FUNC P_DIM() AS INTEGER
     DIM start AS INTEGER
     DIM i AS INTEGER
 
-    ln = CINT(TL())
-    EAT()
+    ln = lnIn
     nd = CINT(NEW_STMT(K_DIM, ln))
     stVar[nd] = TV$()
     EAT()
@@ -3056,6 +3129,14 @@ FUNC P_BUILTIN_CMD(ln AS INTEGER) AS INTEGER
                 FAIL("too many items in one list")
                 EXITDO
             ENDIF
+            ' HELP names a thing rather than evaluating one, so a keyword
+            ' after it is the word itself.
+            IF nm = "HELP" ANDALSO TT() <> T_IDENTIFIER ANDALSO TT() <> T_STRING_LIT THEN
+                tmp[n] = MKSTR(TV$(), ln)
+                n = n + 1
+                EAT()
+                EXITDO
+            ENDIF
             tmp[n] = P_EXPR()
             n = n + 1
             IF TT() <> TT_COMMA THEN EXITDO
@@ -3085,6 +3166,116 @@ FUNC P_BUILTIN_CMD(ln AS INTEGER) AS INTEGER
         stSepN[nd] = 1
         RETURN nd
     ENDIF
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+FUNC IS_WORD_OPERATOR(t AS INTEGER) AS INTEGER
+    IF t = TT_SHL OR t = TT_SHR THEN RETURN 1
+    IF t = TT_BAND OR t = TT_BOR THEN RETURN 1
+    IF t = TT_XOR OR t = TT_BXOR OR t = TT_BNOT THEN RETURN 1
+    IF t = TOK_MOD THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' The argument list of a call, with the name and the open parenthesis behind.
+FUNC P_CALL_ARGS(nm AS STRING, ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+
+    nd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[nd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[nd] = start
+    exArgN[nd] = n
+    RETURN nd
+ENDFUNC
+
+' name -> formula recomputes the name whenever the formula's parts change.
+' The formula is kept as text so it can be shown and read back, and that text
+' is the tokens with a space between them rather than the source as written:
+' SUM(TOTALS) comes out as "SUM ( TOTALS )".
+FUNC P_REACT(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM target AS STRING
+    DIM from AS INTEGER
+    DIM i AS INTEGER
+    DIM txt AS STRING
+
+    target = DOTTED_NAME$()
+    EAT()
+
+    nd = CINT(NEW_STMT(K_REACT, 0))
+    stVar[nd] = target
+    from = cur
+    stExpr[nd] = P_EXPR()
+
+    txt = ""
+    FOR i = from TO cur - 1
+        IF i > from THEN txt = txt + " "
+        txt = txt + tkVal[i]
+    NEXT i
+    stLabel[nd] = txt
+    RETURN nd
+ENDFUNC
+
+' A keyword that stands for a call the runtime knows under another name.
+FUNC P_NAMED_CALL(ln AS INTEGER, nm AS STRING) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    EAT()
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
 
     nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
     stExpr[nd] = callNd
@@ -3156,6 +3347,11 @@ FUNC P_STMT() AS INTEGER
     DIM after AS INTEGER
     DIM i AS INTEGER
 
+    IF pendHead < pendTail THEN
+        pendHead = pendHead + 1
+        RETURN CINT(pendBuf[pendHead - 1])
+    ENDIF
+
     SKIP_SEPS()
     ln = CINT(TL())
     t = CINT(TT())
@@ -3189,6 +3385,27 @@ FUNC P_STMT() AS INTEGER
     IF t = KT_TRY THEN RETURN CINT(P_TRY())
     IF t = KT_SWITCH THEN RETURN CINT(P_SWITCH())
     IF t = KT_ENUM THEN RETURN CINT(P_ENUM())
+
+    ' INPUT name, or INPUT "prompt", name. Without a prompt it does not put
+    ' a line break out either.
+    IF t = KT_INPUT THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_INPUT, ln))
+        IF TT() = T_STRING_LIT THEN
+            stExpr[nd] = P_EXPR()
+            ' A semicolon after the prompt keeps the cursor on the line, the
+            ' same way it does after PRINT.
+            IF TT() = TT_SEMICOLON THEN stNoNl[nd] = 1
+            IF TT() = TT_COMMA OR TT() = TT_SEMICOLON THEN EAT()
+        ELSE
+            stNoNl[nd] = 1
+        ENDIF
+        stVar[nd] = TV$()
+        EAT()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_RAISEEVENT THEN RETURN CINT(P_NAMED_CALL(ln, "__EVENT_RAISE"))
 
     IF t = KT_STATIC THEN
         EAT()
@@ -3381,6 +3598,8 @@ FUNC P_STMT() AS INTEGER
         stIxN[nd] = nIdx
         RETURN nd
     ENDIF
+
+    IF t = T_IDENTIFIER ANDALSO TT_AT(CINT(AFTER_DOTTED())) = TT_ARROW THEN RETURN CINT(P_REACT(ln))
 
     IF t = T_IDENTIFIER THEN
         IF IS_BUILTIN_CMD(TV$()) = 1 ANDALSO TAKES_BUILTIN_CMD(CINT(TT_AT(1))) = 1 THEN
@@ -3724,6 +3943,10 @@ SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
     FOR b = 0 TO stBrN[ix] - 1
         EMIT(PAD$(ind + 1) + "(branch" + CHR$(10))
         D_EXPR(CINT(brCond[CINT(stBrAt[ix]) + b]), ind + 2)
+        FOR i = 0 TO brExN[CINT(stBrAt[ix]) + b] - 1
+            D_EXPR(CINT(caseBuf[CINT(brExAt[CINT(stBrAt[ix]) + b]) + i]), ind + 2)
+            D_EXPR(CINT(caseHi[CINT(brExAt[CINT(stBrAt[ix]) + b]) + i]), ind + 2)
+        NEXT i
         FOR i = 0 TO brBodyN[CINT(stBrAt[ix]) + b] - 1
             D_STMT(CINT(bodyBuf[CINT(brBodyAt[CINT(stBrAt[ix]) + b]) + i]), ind + 2)
         NEXT i
@@ -6448,8 +6671,35 @@ ENDSUB
 
 ' SWITCH is a chain of tests against one subject, and DEFAULT is the branch
 ' with nothing to test.
+' One label of a case: a value to equal, or a pair to fall between.
+FUNC G_CASE_TEST$(subj AS STRING, subjTy AS INTEGER, lowEx AS INTEGER, highEx AS INTEGER) AS STRING
+    DIM v AS STRING
+    DIM hi AS STRING
+    DIM t AS STRING
+    DIM t2 AS STRING
+
+    v = G_EXPR(lowEx)
+    IF highEx < 0 THEN
+        IF subjTy = TY_STR ANDALSO lastType = TY_STR THEN RETURN G_STRCMP$(TOK_ASSIGN, subj, v)
+        t = NEWTMP$()
+        W("  " + t + " = fcmp oeq double " + AS_NUM$(subj, subjTy) + ", " + AS_NUM$(v, lastType))
+        RETURN t
+    ENDIF
+
+    v = AS_NUM$(v, lastType)
+    t = NEWTMP$()
+    W("  " + t + " = fcmp oge double " + AS_NUM$(subj, subjTy) + ", " + v)
+    hi = AS_NUM$(G_EXPR(highEx), lastType)
+    t2 = NEWTMP$()
+    W("  " + t2 + " = fcmp ole double " + AS_NUM$(subj, subjTy) + ", " + hi)
+    v = NEWTMP$()
+    W("  " + v + " = and i1 " + t + ", " + t2)
+    RETURN v
+ENDFUNC
+
 SUB G_SWITCH(ix AS INTEGER)
     DIM b AS INTEGER
+    DIM i AS INTEGER
     DIM at AS INTEGER
     DIM subj AS STRING
     DIM subjTy AS INTEGER
@@ -6465,18 +6715,24 @@ SUB G_SWITCH(ix AS INTEGER)
 
     FOR b = 0 TO stBrN[ix] - 1
         at = CINT(stBrAt[ix]) + b
-        IF brCond[at] < 0 THEN
+        ' A branch with no values to test is the default one.
+        IF brExN[at] = 0 THEN
             G_BODY(CINT(brBodyAt[at]), CINT(brBodyN[at]))
         ELSE
-            thenL = NEWLBL$("case.hit")
             elseL = NEWLBL$("case.miss")
-            caseV = G_EXPR(CINT(brCond[at]))
-            IF subjTy = TY_STR ANDALSO lastType = TY_STR THEN
-                cmp = G_STRCMP$(TOK_ASSIGN, subj, caseV)
-            ELSE
-                cmp = NEWTMP$()
-                W("  " + cmp + " = fcmp oeq double " + AS_NUM$(subj, subjTy) + ", " + AS_NUM$(caseV, lastType))
-            ENDIF
+            cmp = ""
+            ' Any of the values matching is enough.
+            FOR i = 0 TO brExN[at] - 1
+                caseV = G_CASE_TEST$(subj, subjTy, CINT(caseBuf[CINT(brExAt[at]) + i]), CINT(caseHi[CINT(brExAt[at]) + i]))
+                IF cmp = "" THEN
+                    cmp = caseV
+                ELSE
+                    thenL = NEWTMP$()
+                    W("  " + thenL + " = or i1 " + cmp + ", " + caseV)
+                    cmp = thenL
+                ENDIF
+            NEXT i
+            thenL = NEWLBL$("case.hit")
             W("  br i1 " + cmp + ", label %" + thenL + ", label %" + elseL)
             W(thenL + ":")
             G_BODY(CINT(brBodyAt[at]), CINT(brBodyN[at]))
@@ -6831,9 +7087,12 @@ sepN = 0
 ixN = 0
 ctN = 0
 dvN = 0
+pendHead = 0
+pendTail = 0
 bodyN = 0
 parN = 0
 brN = 0
+caseN = 0
 outBuf = ""
 
 args = OS.ARGS

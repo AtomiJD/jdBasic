@@ -85,3 +85,18 @@ SWITCH pick
   DEFAULT
     PRINT "fell through"
 ENDSWITCH
+
+' Cases with several values and with ranges.
+DIM n AS DOUBLE
+FOR n = 0 TO 12
+    SWITCH n
+      CASE 1, 3, 5
+        PRINT "small odd"
+      CASE 6 TO 9
+        PRINT "six to nine"
+      CASE 11, 12
+        PRINT "near twelve"
+      DEFAULT
+        PRINT "other"
+    ENDSWITCH
+NEXT n
