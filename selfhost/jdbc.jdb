@@ -3738,11 +3738,26 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
     RETURN TY_NUM
 ENDFUNC
 
+' A declaration with more than one bound holds arrays, not values.
+FUNC IS_MULTIDIM(ix AS INTEGER) AS INTEGER
+    DIM callNd AS INTEGER
+    DIM lit AS INTEGER
+    callNd = CINT(stExpr[ix])
+    IF callNd < 0 THEN RETURN 0
+    IF exKind[callNd] <> X_CALL THEN RETURN 0
+    IF exArgN[callNd] < 1 THEN RETURN 0
+    lit = CINT(argBuf[CINT(exArgAt[callNd])])
+    IF exKind[lit] <> X_ARRAY_LIT THEN RETURN 0
+    IF exArgN[lit] > 1 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
 FUNC DIM_TYPE(ix AS INTEGER) AS INTEGER
     DIM vt AS INTEGER
     vt = CINT(stVType[ix])
     IF vt = 11 ANDALSO stLabel[ix] = "" THEN RETURN TY_MAP
     IF vt = V_ARRAY THEN
+        IF IS_MULTIDIM(ix) = 1 THEN RETURN TY_ARRA
         IF stEType[ix] = 10 THEN RETURN TY_ARRS
         RETURN TY_ARRN
     ENDIF
@@ -4804,8 +4819,12 @@ SUB G_DIM_ARRAY(ix AS INTEGER, nm AS STRING, ty AS INTEGER)
         n64 = "0"
     ELSE
         lit = CINT(argBuf[CINT(exArgAt[callNd])])
+        IF exArgN[lit] = 2 THEN
+            G_DIM_2D(nm, ty, CINT(argBuf[CINT(exArgAt[lit])]), CINT(argBuf[CINT(exArgAt[lit]) + 1]))
+            RETURN
+        ENDIF
         IF exArgN[lit] <> 1 THEN
-            genError = "only one dimension is supported, " + nm + " has " + STR$(exArgN[lit])
+            genError = "only one or two dimensions are supported, " + nm + " has " + STR$(exArgN[lit])
             RETURN
         ENDIF
         n64 = G_IDX$(CINT(argBuf[CINT(exArgAt[lit])]))
@@ -4814,6 +4833,74 @@ SUB G_DIM_ARRAY(ix AS INTEGER, nm AS STRING, ty AS INTEGER)
     W("  " + handle + " = call ptr @jdb_array_new(i64 " + n64 + ")")
     IF ty = TY_ARRS THEN W("  call void @jdb_array_set_string_elems(ptr " + handle + ")")
     W("  store ptr " + handle + ", ptr " + SYM_REF$(nm))
+ENDSUB
+
+' DIM a[rows, cols] is an array of arrays, built a row at a time. Reading it
+' back needs nothing new: the outer read answers a tagged value whose tag
+' says array, and the second subscript works on that.
+SUB G_DIM_2D(nm AS STRING, ty AS INTEGER, rowsE AS INTEGER, colsE AS INTEGER)
+    DIM iName AS STRING
+    DIM oName AS STRING
+    DIM rows AS STRING
+    DIM topL AS STRING
+    DIM bodyL AS STRING
+    DIM endL AS STRING
+    DIM outer AS STRING
+    DIM inner AS STRING
+    DIM idxV AS STRING
+    DIM cmp AS STRING
+    DIM cols AS STRING
+    DIM grown AS STRING
+    DIM nextV AS STRING
+
+    iName = "__dim" + STR$(eachNo) + "i"
+    oName = "__dim" + STR$(eachNo) + "o"
+    eachNo = eachNo + 1
+    GV_ADD(iName, TY_NUM)
+    GV_ADD(oName, TY_ARRA)
+
+    outer = NEWTMP$()
+    W("  " + outer + " = call ptr @jdb_array_new(i64 0)")
+    W("  store ptr " + outer + ", ptr @v_" + oName)
+    W("  store double 0.0, ptr @v_" + iName)
+    rows = G_IDX$(rowsE)
+
+    topL = NEWLBL$("dim2d.top")
+    bodyL = NEWLBL$("dim2d.body")
+    endL = NEWLBL$("dim2d.end")
+
+    W("  br label %" + topL)
+    W(topL + ":")
+    idxV = NEWTMP$()
+    W("  " + idxV + " = load double, ptr @v_" + iName)
+    nextV = NEWTMP$()
+    W("  " + nextV + " = sitofp i64 " + rows + " to double")
+    cmp = NEWTMP$()
+    W("  " + cmp + " = fcmp olt double " + idxV + ", " + nextV)
+    W("  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL)
+
+    W(bodyL + ":")
+    cols = G_IDX$(colsE)
+    inner = NEWTMP$()
+    W("  " + inner + " = call ptr @jdb_array_new(i64 " + cols + ")")
+    IF ty = TY_ARRS THEN W("  call void @jdb_array_set_string_elems(ptr " + inner + ")")
+    outer = NEWTMP$()
+    W("  " + outer + " = load ptr, ptr @v_" + oName)
+    grown = NEWTMP$()
+    W("  " + grown + " = call ptr @jdb_array_append_tagged(ptr " + outer + ", double " + AS_CELL$(inner, TY_ARRA) + ", i32 " + STR$(TAG_ARR) + ")")
+    W("  store ptr " + grown + ", ptr @v_" + oName)
+    idxV = NEWTMP$()
+    W("  " + idxV + " = load double, ptr @v_" + iName)
+    nextV = NEWTMP$()
+    W("  " + nextV + " = fadd double " + idxV + ", 1.0")
+    W("  store double " + nextV + ", ptr @v_" + iName)
+    W("  br label %" + topL)
+
+    W(endL + ":")
+    outer = NEWTMP$()
+    W("  " + outer + " = load ptr, ptr @v_" + oName)
+    W("  call void @jdb_array_set_nested(ptr " + outer + ")")
+    W("  store ptr " + outer + ", ptr " + SYM_REF$(nm))
 ENDSUB
 
 SUB G_INDEX_ASSIGN(ix AS INTEGER)
@@ -5285,6 +5372,7 @@ FUNC DECLS$() AS STRING
     d = d + "declare i32 @jdb_map_get_tagged(ptr, ptr, ptr)" + CHR$(10)
     d = d + "declare double @jdb_array_get_tagged(ptr, i64, ptr)" + CHR$(10)
     d = d + "declare ptr @jdb_frmv(ptr)" + CHR$(10)
+    d = d + "declare void @jdb_array_set_nested(ptr)" + CHR$(10)
     d = d + "declare double @jdrt_call_typed_f64(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_str(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_arr(ptr, ptr, ptr, ptr, i32)" + CHR$(10)

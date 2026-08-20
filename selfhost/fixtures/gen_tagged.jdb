@@ -52,3 +52,28 @@ PRINT grid[1][1]
 DIM nested AS MAP
 nested = { "inner": { "deep": 7 } }
 PRINT nested{"inner"}{"deep"}
+
+' A declaration with two bounds is an array of arrays.
+DIM board[3, 4]
+DIM r AS DOUBLE
+DIM c AS DOUBLE
+
+FOR r = 0 TO 2
+    FOR c = 0 TO 3
+        board[CINT(r)][CINT(c)] = r * 10 + c
+    NEXT c
+NEXT r
+
+PRINT LEN(board)
+PRINT board[0][0]
+PRINT board[1][2]
+PRINT board[2][3]
+
+DIM tally AS DOUBLE
+tally = 0
+FOR r = 0 TO 2
+    FOR c = 0 TO 3
+        tally = tally + board[CINT(r)][CINT(c)]
+    NEXT c
+NEXT r
+PRINT tally
