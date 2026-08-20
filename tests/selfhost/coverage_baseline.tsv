@@ -8,6 +8,7 @@ selfhost/fixtures/gen_builtins.jdb	ok	ok	ok
 selfhost/fixtures/gen_control.jdb	ok	ok	ok
 selfhost/fixtures/gen_flow.jdb	ok	ok	ok
 selfhost/fixtures/gen_funcs.jdb	ok	ok	ok
+selfhost/fixtures/gen_lambda.jdb	ok	ok	ok
 selfhost/fixtures/gen_literals.jdb	ok	ok	ok
 selfhost/fixtures/gen_mixed.jdb	ok	ok	ok
 selfhost/fixtures/gen_natives.jdb	ok	ok	ok
@@ -56,8 +57,8 @@ tests/eval/test_execute_no_try.jdb	ok	ok	ok
 tests/ffi/test_com.jdb	ok	ok	ok
 tests/ffi/test_com2.jdb	ok	err	-
 tests/ffi/test_ffi_native_diag.jdb	ok	ok	ok
-tests/ffi/test_ffi_return.jdb	ok	diff	-
-tests/ffi/test_ffi_smoke.jdb	ok	diff	-
+tests/ffi/test_ffi_return.jdb	ok	ok	ok
+tests/ffi/test_ffi_smoke.jdb	ok	ok	ok
 tests/ffi/test_ffi_string_param.jdb	ok	ok	ok
 tests/forms/forms_controls_selftest.jdb	ok	ok	ok
 tests/forms/forms_load_selftest.jdb	ok	ok	ok
@@ -74,7 +75,7 @@ tests/gate/native_test.strict.jdb	ok	noref	-
 tests/gate/native_test_modx.jdb	ok	ok	ok
 tests/gate/static_test_mod.jdb	ok	ok	ok
 tests/gate/storage.jdb	ok	ok	ok
-tests/gate/test_apl_complete.jdb	ok	ok	no
+tests/gate/test_apl_complete.jdb	ok	ok	ok
 tests/gate/test_apl_pipelines.jdb	ok	ok	no
 tests/gate/test_imp_mod.jdb	ok	ok	ok
 tests/gate/test_inner.jdb	ok	ok	ok
@@ -101,11 +102,11 @@ tests/modules/test_xmod_array.jdb	ok	noref	-
 tests/modules/test_xmod_array_mod.jdb	ok	ok	ok
 tests/modules/test_xmod_funcarg.jdb	ok	noref	-
 tests/modules/test_xmod_funcarg_mod.jdb	ok	ok	ok
-tests/native/test_cls_native.jdb	ok	ok	no
+tests/native/test_cls_native.jdb	ok	ok	ok
 tests/native/test_map_exists_native.jdb	ok	ok	ok
 tests/native/test_native_format_date.jdb	ok	ok	ok
 tests/native/test_native_gaps.jdb	ok	ok	ok
-tests/native/test_native_line_matrix.jdb	ok	ok	no
+tests/native/test_native_line_matrix.jdb	ok	ok	ok
 tests/native/test_native_mixed_array.jdb	ok	ok	ok
 tests/native/test_native_mul.jdb	ok	ok	ok
 tests/native/test_native_os_args.jdb	ok	ok	ok
@@ -116,7 +117,7 @@ tests/native/test_native_rotchain.jdb	ok	ok	ok
 tests/native/test_native_str_nested.jdb	ok	ok	ok
 tests/native/test_native_take_2d.jdb	ok	ok	ok
 tests/native/test_native_transpose_drop.jdb	ok	ok	ok
-tests/native/test_native_v_only.jdb	ok	ok	no
+tests/native/test_native_v_only.jdb	ok	ok	ok
 tests/native/test_native_wire_full.jdb	ok	ok	ok
 tests/native/test_native_wire_i64cx.jdb	ok	ok	ok
 tests/native/test_native_wire_lines.jdb	ok	ok	ok
@@ -158,8 +159,8 @@ tests/regression/test_date_dim_bug.jdb	ok	ok	ok
 tests/regression/test_date_dim_works.jdb	ok	ok	ok
 tests/regression/test_datetime.jdb	ok	ok	ok
 tests/regression/test_debug.jdb	ok	ok	ok
-tests/regression/test_destruct.jdb	ok	diff	-
-tests/regression/test_dollar_coerce.jdb	ok	ok	no
+tests/regression/test_destruct.jdb	ok	ok	ok
+tests/regression/test_dollar_coerce.jdb	ok	ok	ok
 tests/regression/test_dump_run.jdb	ok	ok	ok
 tests/regression/test_env_neg.jdb	ok	ok	ok
 tests/regression/test_errors.jdb	ok	ok	ok
@@ -181,7 +182,7 @@ tests/regression/test_getos.jdb	ok	ok	ok
 tests/regression/test_help.jdb	ok	err	-
 tests/regression/test_input.jdb	ok	err	-
 tests/regression/test_ip.jdb	ok	ok	ok
-tests/regression/test_lambda.jdb	ok	ok	no
+tests/regression/test_lambda.jdb	ok	ok	ok
 tests/regression/test_map_str_concat.jdb	ok	ok	ok
 tests/regression/test_map_values.jdb	ok	ok	ok
 tests/regression/test_math.jdb	ok	ok	ok
