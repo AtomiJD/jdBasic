@@ -1,0 +1,416 @@
+__print_int	jdb_print_int	V	I	-1
+__print_double	jdb_print_double	V	D	-1
+__print_str	jdb_print_str	V	P	-1
+__print_bool	jdb_print_bool	V	I	-1
+__print_nl	jdb_print_nl	V		-1
+__print_space	jdb_print_space	V		-1
+__str_bool	jdb_str_bool	P	I	2
+__str_str	jdb_str_str	P	P	2
+__map_str	jdb_map_str	P	P	2
+__str_concat	jdb_str_concat	P	PP	2
+__int_to_str	jdb_int_to_str	P	I	2
+__double_to_str	jdb_double_to_str	P	D	2
+ABS	jdb_abs	D	D	1
+SQR	jdb_sqr	D	D	1
+SIN	jdb_sin	D	D	1
+COS	jdb_cos	D	D	1
+TAN	jdb_tan	D	D	1
+ASIN	jdb_asin	D	D	1
+ACOS	jdb_acos	D	D	1
+ATAN	jdb_atan	D	D	1
+LOG	jdb_log	D	D	1
+LOG10	jdb_log10	D	D	1
+EXP	jdb_exp	D	D	1
+FLOOR	jdb_floor	D	D	1
+CEIL	jdb_ceil	D	D	1
+__pow	jdb_pow	D	DD	1
+SINH	jdb_sinh	D	D	1
+COSH	jdb_cosh	D	D	1
+TANH	jdb_tanh	D	D	1
+ATAN2	jdb_atan2	D	DD	1
+ROUND	jdb_round	D	D	1
+__round_p	jdb_round_p	D	DD	1
+JOIN	jdb_join_arr	P	PP	2
+TRUNC	jdb_trunc	D	D	1
+SIGN	jdb_sign	D	D	1
+SGN	jdb_sign	D	D	1
+CLAMP	jdb_clamp	D	DDD	1
+FAC	jdb_fac	D	D	1
+FMOD	jdb_fmod	D	DD	1
+__min2	jdb_min2	D	DD	1
+__max2	jdb_max2	D	DD	1
+PI	jdb_pi	D		1
+E	jdb_e	D		1
+INT	jdb_int	I	D	0
+VAL	jdb_val	D	P	1
+RND	jdb_rnd	D		1
+RANDOM	jdb_rnd	D		1
+__random2	jdb_random2	D	DD	1
+TICK	jdb_tick	D		1
+SLEEP	jdb_sleep	V	I	-1
+RANDOMSEED	jdb_randomseed	V	I	-1
+SYS.INB	jdb_sys_inb	I	I	0
+SYS.OUTB	jdb_sys_outb	V	II	-1
+SYS.PEEKB	jdb_sys_peekb	I	I	0
+SYS.POKEB	jdb_sys_pokeb	V	II	-1
+SYS.PEEKW	jdb_sys_peekw	I	I	0
+SYS.POKEW	jdb_sys_pokew	V	II	-1
+SYS.PEEK	jdb_sys_peek	I	I	0
+SYS.POKE	jdb_sys_poke	V	II	-1
+SYS.CALL	jdb_sys_call	I	I	0
+__array_new	jdb_array_new	P	I	3
+__array_set	jdb_array_set	V	PID	-1
+__array_get	jdb_array_get	D	PI	1
+__str_to_chars	jdb_str_to_chars	P	P	3
+__array_gather	jdb_array_gather	P	PP	1
+LEN	jdb_array_len	I	P	0
+IOTA	jdb_iota	P	I	3
+__iota3	jdb_iota3	P	DDD	3
+__arr_pop	jdb_array_pop	D	P	1
+__arr_pop_str	jdb_array_pop_str	P	P	2
+ZEROS	jdb_zeros	P	I	3
+ONES	jdb_ones	P	I	3
+MEAN	jdb_mean	D	P	1
+STDEV	jdb_stdev	D	P	1
+MEDIAN	jdb_array_median	D	P	1
+VARIANCE	jdb_array_variance	D	P	1
+SUM	jdb_array_sum	D	P	1
+PRODUCT	jdb_array_product	D	P	1
+__arr_reduce_axis	jdb_array_reduce_axis	P	PIN	3
+__arr_min	jdb_array_min	D	P	1
+__arr_max	jdb_array_max	D	P	1
+ANY	jdb_array_any	I	P	8
+ALL	jdb_array_all	I	P	8
+DOT	jdb_array_dot	D	PP	1
+__arr_sin	jdb_array_sin	P	P	3
+__arr_cos	jdb_array_cos	P	P	3
+__arr_tan	jdb_array_tan	P	P	3
+__arr_asin	jdb_array_asin	P	P	3
+__arr_acos	jdb_array_acos	P	P	3
+__arr_atan	jdb_array_atan	P	P	3
+__arr_sinh	jdb_array_sinh	P	P	3
+__arr_cosh	jdb_array_cosh	P	P	3
+__arr_tanh	jdb_array_tanh	P	P	3
+__arr_exp	jdb_array_exp	P	P	3
+__arr_log	jdb_array_log	P	P	3
+__arr_log10	jdb_array_log10	P	P	3
+__arr_sqr	jdb_array_sqr	P	P	3
+__arr_abs	jdb_array_abs	P	P	3
+__arr_floor	jdb_array_floor	P	P	3
+__arr_ceil	jdb_array_ceil	P	P	3
+__arr_round	jdb_array_round	P	P	3
+__arr_trunc	jdb_array_trunc	P	P	3
+REVERSE	jdb_array_reverse	P	P	3
+SORT	jdb_array_sort	P	P	3
+APPEND	jdb_array_append	P	PD	3
+__append_arr	jdb_array_append_arr	P	PP	3
+FILLV	jdb_array_fillv	P	PD	3
+COPYV	jdb_array_copyv	P	PP	3
+__arr_append_tagged	jdb_array_append_tagged	P	PDN	-1
+__arr_get_tagged	jdb_array_get_tagged	D	PIP	-1
+COUNT	jdb_array_count	I	PD	0
+INDEXOF	jdb_array_indexof	I	PD	0
+__arr_has_str	jdb_array_has_str	I	PP	0
+__arr_has_num	jdb_array_has_num	I	PD	0
+UNIQUE	jdb_array_unique	P	P	3
+__unique_str	jdb_array_unique_str	P	P	3
+CUMSUM	jdb_array_cumsum	P	P	3
+CUMPROD	jdb_array_cumprod	P	P	3
+TAKE	jdb_take_n	P	IP	3
+DROP	jdb_drop_n	P	IP	3
+DIFF	jdb_array_diff	P	PP	3
+FLATTEN	jdb_array_flatten	P	P	3
+SHUFFLE	jdb_array_shuffle	P	P	3
+__arr_insert	jdb_array_insert	P	PDIN	3
+LINSPACE	jdb_linspace	P	DDI	3
+RANGE	jdb_range	P	III	3
+GRADE	jdb_grade	P	P	3
+__arr_binop	jdb_array_binop	P	PPN	3
+__arr_scalar_op	jdb_array_scalar_op	P	PDNN	3
+__arr_cmp_scalar	jdb_array_cmp_scalar	P	PDN	3
+__arr_cmp_scalar_str	jdb_array_cmp_scalar_str	P	PPN	3
+__arr_cmp_arr	jdb_array_cmp_arr	P	PPN	3
+__arr_set_nested	jdb_array_set_nested	V	P	-1
+__arr_set_string_elems	jdb_array_set_string_elems	V	P	-1
+__arr_set_bool_elems	jdb_array_set_bool_elems	V	P	-1
+__arr_classify	jdb_array_classify_elem	N	PD	2
+__str_repeat	jdb_str_repeat	P	PI	2
+SETLOCALE	jdb_setlocale	V	P	-1
+__map_new	jdb_map_new	P		4
+__map_set_f64	jdb_map_set_f64	V	PPD	-1
+__map_set_str	jdb_map_set_str	V	PPP	-1
+__map_set_tagged	jdb_map_set_tagged	V	PPDN	-1
+__map_get_f64	jdb_map_get_f64	D	PP	1
+__map_get_str	jdb_map_get_str	P	PP	2
+__map_has	jdb_map_has	I	PP	0
+__map_get_obj	jdb_map_get_obj	P	PP	4
+__str_sub	jdb_str_sub	P	PP	2
+__str_slice	jdb_str_slice	P	PIN	2
+__arr_apply_ff	jdb_array_apply_ff	P	PP	3
+__arr_apply_ss	jdb_array_apply_ss	P	PP	3
+__arr_apply_ifs	jdb_array_apply_ifs	P	PP	3
+__arr_apply_sfi	jdb_array_apply_sfi	P	PIP	3
+__arr_apply_sfii	jdb_array_apply_sfii	P	PIIP	3
+__arr_len_shape	jdb_array_len_shape	P	P	3
+__print_arr_elem	jdb_print_array_elem	V	PI	-1
+__arr_str_concat	jdb_array_str_concat	P	PPN	3
+__trace	jdb_trace	V	PI	-1
+__err_set	jdb_err_set	V	PI	-1
+__err_clear	jdb_err_clear	V		-1
+ERRMSG$	jdb_err_msg	P		2
+ERR	jdb_err_code_visible	I		0
+__err_rc	jdb_err_code	I		0
+__throw_uncaught	jdb_throw_uncaught	V		-1
+__err_code_clear	jdb_err_code_clear	V		-1
+__rec_enter	jdb_recursion_enter	N		-1
+__rec_leave	jdb_recursion_leave	V		-1
+__rec_reset	jdb_recursion_reset_to	V	I	-1
+__rec_depth	jdb_recursion_depth	I		0
+__event_on	jdb_event_on	V	PP	-1
+__event_raise_s	jdb_event_raise_str	V	PP	-1
+__jdrt_reg_evh	jdrt_register_event_handler	V	PP	-1
+__jdrt_dispatch_evt	jdrt_dispatch_event	V	PPPN	-1
+__jdrt_set_evt_disp	jdrt_set_event_dispatcher	V	PP	-1
+OS.FEATURE	jdb_os_feature	I	P	0
+__set_args	jdb_set_args	V	NP	-1
+OS.ARGS	jdb_os_args	P		3
+__array_get_str	jdb_array_get_str	P	PI	2
+__val_ptr	jdb_val_ptr	D	D	1
+__format1	jdb_format1	P	PD	2
+__format2	jdb_format2	P	PDD	2
+__format3	jdb_format3	P	PDDD	2
+__format4	jdb_format4	P	PDDDD	2
+__format1_t	jdb_format1_t	P	PPI	2
+__format2_t	jdb_format2_t	P	PPII	2
+__format3_t	jdb_format3_t	P	PPIII	2
+__format4_t	jdb_format4_t	P	PPIIII	2
+__runtime_set_handle	jdb_runtime_set_handle	V	P	1
+LEN$	jdb_len_str	I	P	0
+MID$	jdb_mid_lax	P	PII	2
+MID	jdb_mid	P	PII	2
+LEFT$	jdb_left	P	PI	2
+LEFT	jdb_left	P	PI	2
+RIGHT$	jdb_right	P	PI	2
+RIGHT	jdb_right	P	PI	2
+UPPER$	jdb_upper	P	P	2
+LOWER$	jdb_lower	P	P	2
+TRIM$	jdb_trim	P	P	2
+CHR$	jdb_chr	P	I	2
+CHR	jdb_chr	P	I	2
+ASC	jdb_asc	I	P	0
+INSTR	jdb_instr	I	PP	0
+REPLACE$	jdb_replace	P	PPP	2
+STR$	jdb_str	P	D	2
+__str_arr	jdb_array_str	P	P	3
+STR	jdb_str	P	D	2
+SPACE$	jdb_space	P	I	2
+__str_eq	jdb_str_eq	I	PP	0
+__str_cmp	jdb_str_cmp	I	PP	0
+__str_ne	jdb_str_ne	I	PP	0
+LTRIM$	jdb_ltrim	P	P	2
+RTRIM$	jdb_rtrim	P	P	2
+STARTSWITH	jdb_startswith	I	PP	0
+ENDSWITH	jdb_endswith	I	PP	0
+HEX$	jdb_hex	P	I	2
+BIN$	jdb_bin	P	I	2
+OCT$	jdb_oct	P	I	2
+INSERT$	jdb_insert_str	P	PPI	2
+UCASE$	jdb_upper	P	P	2
+UCASE	jdb_upper	P	P	2
+LCASE$	jdb_lower	P	P	2
+LCASE	jdb_lower	P	P	2
+TXTREADER$	jdb_txtreader	P	P	2
+TXTWRITER	jdb_txtwriter3	V	PPI	-1
+TXTWRITER_APPEND	jdb_txtwriter_append	V	PP	-1
+__TXTREADER_ENC	jdb_txtreader_enc	P	PP	2
+__TXTWRITER_ENC	jdb_txtwriter_enc	V	PPIP	-1
+PWD	jdb_pwd	P		2
+CD	jdb_cd	P	P	2
+MKDIR	jdb_mkdir_native	V	P	-1
+RMDIR	jdb_rmdir	V	P	-1
+KILL	jdb_kill	V	P	-1
+FILE.EXISTS	jdb_file_exists	I	P	0
+FILE.SIZE	jdb_file_size	I	P	0
+FILE.ISDIR	jdb_file_isdir	I	P	0
+PATH.DIRNAME$	jdb_path_dirname	P	P	2
+PATH.NORMALIZE$	jdb_path_normalize	P	P	2
+NOW	jdb_now	P		2
+NOW_EPOCH	jdb_now_epoch	D		1
+DATE$	jdb_date_str	P	D	2
+TIME$	jdb_time_str	P	D	2
+YEAR	jdb_year	I	D	0
+MONTH	jdb_month	I	D	0
+DAY	jdb_day	I	D	0
+HOUR	jdb_hour	I	D	0
+MINUTE	jdb_minute	I	D	0
+SECOND	jdb_second	I	D	0
+WEEKDAY	jdb_weekday	I	D	0
+__year_str	jdb_year_str	I	P	0
+__month_str	jdb_month_str	I	P	0
+__day_str	jdb_day_str	I	P	0
+__hour_str	jdb_hour_str	I	P	0
+__minute_str	jdb_minute_str	I	P	0
+__second_str	jdb_second_str	I	P	0
+FORMAT_DATE	jdb_format_date	P	PPD	2
+GETENV$	jdb_getenv	P	P	2
+SETENV	jdb_setenv	V	PP	-1
+MKTEMP$	jdb_mktemp	P	P	2
+IIF	jdb_iif	D	IDD	1
+ISNUM	jdb_isnum	I	D	0
+ROTL	jdb_rotl2	I	II	0
+ROTR	jdb_rotr2	I	II	0
+REPEAT$	jdb_str_repeat	P	PI	2
+LPAD$	jdb_lpad	P	PIP	2
+RPAD$	jdb_rpad	P	PIP	2
+CODEC.BASE64_ENCODE$	jdb_base64_encode	P	P	2
+CODEC.BASE64_DECODE$	jdb_base64_decode	P	P	2
+CODEC.UUID$	jdb_uuid	P		2
+CODEC.SHA256$	jdb_sha256	P	P	2
+__udt_new	jdb_udt_new	P	P	3
+__udt_set_f64	jdb_udt_set_f64	V	PPD	-1
+__udt_get_f64	jdb_udt_get_f64	D	PP	1
+__udt_set_str	jdb_udt_set_str	V	PPP	-1
+__udt_get_str	jdb_udt_get_str	P	PP	2
+__select_fn	jdb_select_fn	P	PP	3
+__filter_fn	jdb_filter_fn	P	PP	3
+__take_while_fn	jdb_take_while_fn	P	PP	3
+__drop_while_fn	jdb_drop_while_fn	P	PP	3
+__reduce_fn	jdb_reduce_fn	D	PPD	1
+__outer_fn	jdb_outer_fn	P	PPP	3
+__agg_fn	jdb_agg_fn	P	PPPN	3
+__jdrt_init	jdrt_init	P		-1
+__jdrt_shutdown	jdrt_shutdown	V	P	-1
+__jdrt_call_typed_f64	jdrt_call_typed_f64	D	PPPPN	1
+__jdrt_call_typed_str	jdrt_call_typed_str	P	PPPPN	2
+__jdrt_call_typed_void	jdrt_call_typed_void	V	PPPPN	-1
+__jdrt_call_typed_obj	jdrt_call_typed_obj	I	PPPPN	0
+__jdrt_call_typed_arr	jdrt_call_typed_arr	P	PPPPN	3
+__jdrt_obj_get_f64	jdrt_obj_get_f64	D	PIP	1
+__jdrt_obj_get_str	jdrt_obj_get_str	P	PIP	2
+__jdrt_obj_get_obj	jdrt_obj_get_obj	I	PIP	0
+__jdrt_obj_get_arr	jdrt_obj_get_arr	P	PIP	3
+__jdrt_obj_exists	jdrt_obj_exists	I	PIP	0
+__jdrt_map_to_handle	jdrt_map_to_handle	I	PP	0
+__jdrt_async_spawn	jdrt_async_spawn	I	PPPNN	0
+__jdrt_val_to_f64	jdrt_val_to_f64	D	PI	1
+__jdrt_val_to_str	jdrt_val_to_str	P	PI	2
+__jdrt_val_type_str	jdrt_val_type_str	P	PI	2
+__jdrt_val_arr_get	jdrt_val_arr_get	I	PII	0
+__jdrt_val_length	jdrt_val_length	I	PI	0
+__map_get_tagged	jdb_map_get_tagged	N	PPP	0
+__jdrt_obj_get_tagged	jdrt_obj_get_tagged	N	PIPP	0
+__jdrt_tagged_get	jdrt_tagged_get	N	PINPP	0
+__jdrt_tagged_arr_get	jdrt_tagged_arr_get	N	PINIP	0
+__jdrt_promote_handle	jdrt_promote_handle	I	PI	0
+__jdrt_frame_begin	jdrt_frame_begin	I	P	0
+__jdrt_frame_end	jdrt_frame_end	V	PI	-1
+__jdrt_last_error	jdrt_last_error	P	P	2
+__jdrt_clear_last_error	jdrt_clear_last_error	V	P	-1
+DATEADD	jdb_dateadd	P	PDP	2
+DATEDIFF	jdb_datediff	D	PPP	1
+__datediff_vec	jdb_datediff_vec	P	PPP	3
+CVDATE	jdb_cvdate	P	P	2
+CDATE	jdb_cvdate	P	P	2
+__cvdate_num	jdb_cvdate_num	P	D	2
+__cvdate_arr	jdb_cvdate_arr	P	P	3
+REGEX.MATCH	jdb_regex_match	I	PP	0
+REGEX.REPLACE	jdb_regex_replace	P	PPP	2
+REGEX_REPLACE$	jdb_regex_replace	P	PPP	2
+REGEX.FINDALL	jdb_regex_findall	P	PP	3
+__typeof_tag	jdb_typeof_tag	P	I	2
+__typeof_f64	jdb_typeof_f64	P	D	2
+FRMV$	jdb_frmv	P	P	2
+CDBL	jdb_cdbl	D	D	1
+CINT	jdb_cint	I	D	0
+CLNG	jdb_clng	I	D	0
+CSNG	jdb_csng	D	D	1
+CBOOL	jdb_cbool	I	D	0
+TOSTR	jdb_tostr	P	D	2
+CSTR	jdb_cstr	P	D	2
+TONUM	jdb_tonum	D	P	1
+BYTEAT	jdb_byteat	I	PI	0
+OS.GETOS	jdb_os_getos	P		2
+OS.GETOS$	jdb_os_getos	P		2
+OS.HOSTNAME$	jdb_os_hostname	P		2
+@ARR	SPLIT
+@ARR	KEYS
+@ARR	VALUES
+@ARR	SORTBY
+@ARR	REGEX.FINDALL
+@ARR	REGEX_MATCH
+@ARR	REGEX_FINDALL
+@ARR	OS.LIST
+@ARR	OS.ARGS
+@ARR	MAP.KEYS
+@ARR	MAP.VALUES
+@ARR	MAP.ITEMS
+@ARR	LINES
+@ARR	WORDS
+@ARR	CHARS
+@ARR	UNPACK
+@ARR	TILED.SIZE
+@ARR	TILED.TILE_SIZE
+@ARR	TILED.LAYERS$
+@ARR	GFX.HSV_RGB
+@ARR	GFX.TEXTSIZE
+@ARR	SPRITE.COLLISIONS
+@ARR	CHUNK
+@ARR	ENUMERATE
+@ARR	TAKE_WHILE
+@ARR	DROP_WHILE
+@ARR	DIR$
+@ARR	SHIFT
+@ARR	OUTER
+@ARR	ROTATE
+@ARR	INVERT
+@ARR	CONVOLVE
+@ARR	PLACE
+@ARR	MATMUL
+@ARR	RESHAPE
+@ARR	SLICE
+@ARR	STACK
+@ARR	MVLET
+@ARR	MVINS
+@ARR	ZIP
+@ARR	TRANSPOSE
+@ARR	SOLVE
+@ARR	HISTOGRAM
+@ARR	INTEGRATE
+@ARR	FFT
+@ARR	IFFT
+@ARR	XSORT
+@ARR	TAKE
+@ARR	DROP
+@ARR	IOTA
+@ARR	CUMSUM
+@ARR	CUMPROD
+@ARR	SCAN
+@ARR	FLATTEN
+@ARR	RANGE
+@ARR	REVERSE
+@ARR	UNIQUE
+@ARR	SHUFFLE
+@ARR	GRADE
+@ARR	ARGMAX
+@ARR	NORMALIZE
+@ARR	DIFF
+@ARR	APPEND
+@ARR	DATERANGE
+@ARR	TALLY
+@ARR	TILED.LAYERS
+@ARR	FILE.LIST
+@ARR	CSVREADER
+@ARR	CSVHEADER
+@ARR	SQL.TABLE
+@ARR	SQL.COLUMNS
+@ARR	SOUND.RENDER
+@ARR	SOUND.GET_WAVE
+@ARR	SOUND.GET_BUS_WAVE
+@ARR	TILEMAP.SIZE
+@ARR	GUI.ITEM_RECT
+@ARR	AI.LIST
+@ARR	AI.TOPK
+@ARR	AI.EMBED
+@ARR	AI.EMBED_LLM
+@ARR	AI.TOKENIZE
+@ARR	MON.SCOPE

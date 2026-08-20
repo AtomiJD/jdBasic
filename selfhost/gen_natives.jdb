@@ -1,0 +1,226 @@
+OPTION EXPLICIT
+
+' Generates selfhost/jdbc_natives.txt from src/llvm_codegen.cpp.
+'
+' The reference backend keeps a registry of the natives it calls directly:
+'
+'   reg("jdb_iota", "IOTA", i8_ptr_type, {i64_type}, 3);
+'
+' which is the jdBasic name, the runtime symbol behind it, and the shape of
+' the call. Writing those out by hand would be three hundred chances to get a
+' signature wrong, so they are read out of the source instead, the same way
+' the token numbers are read out of the headers.
+'
+' One line per native, tab separated:
+'
+'   NAME <tab> symbol <tab> returnLetter <tab> argLetters <tab> returnTag
+'
+' with V void, D double, I i64, N i32, P pointer. The tag is what tells a
+' returned pointer apart: 2 is a string, 3 an array. It is the same number
+' the bridge puts on the wire, so the two paths agree on what came back.
+'
+'   jdbasic selfhost/gen_natives.jdb
+
+DIM src AS STRING
+DIM out AS STRING
+DIM at AS INTEGER
+DIM ln AS STRING
+DIM joined AS STRING
+DIM emitted AS INTEGER
+DIM skipped AS INTEGER
+
+FUNC NEXT_LINE$(txt AS STRING, fromPos AS INTEGER) AS STRING
+    DIM nl AS INTEGER
+    nl = CINT(INSTR(MID$(txt, fromPos, LEN(txt) - fromPos), CHR$(10)))
+    IF nl < 0 THEN RETURN MID$(txt, fromPos, LEN(txt) - fromPos)
+    RETURN MID$(txt, fromPos, nl)
+ENDFUNC
+
+FUNC TYPE_LETTER$(t AS STRING) AS STRING
+    DIM s AS STRING
+    s = TRIM$(t)
+    IF s = "void_type" THEN RETURN "V"
+    IF s = "f64_type" THEN RETURN "D"
+    IF s = "i64_type" THEN RETURN "I"
+    IF s = "i32_type" THEN RETURN "N"
+    IF s = "i8_ptr_type" THEN RETURN "P"
+    RETURN "?"
+ENDFUNC
+
+' Reads the piece between the next pair of quotes, and leaves the cursor
+' after the closing one.
+DIM cutRest AS STRING
+
+FUNC QUOTED$(s AS STRING) AS STRING
+    DIM p AS INTEGER
+    DIM r AS STRING
+    DIM v AS STRING
+
+    p = CINT(INSTR(s, CHR$(34)))
+    IF p < 0 THEN
+        cutRest = ""
+        RETURN ""
+    ENDIF
+    r = MID$(s, p + 1, LEN(s) - p - 1)
+    p = CINT(INSTR(r, CHR$(34)))
+    IF p < 0 THEN
+        cutRest = ""
+        RETURN ""
+    ENDIF
+    v = LEFT$(r, p)
+    cutRest = MID$(r, p + 1, LEN(r) - p - 1)
+    RETURN v
+ENDFUNC
+
+FUNC TAG_NUMBER$(t AS STRING) AS STRING
+    DIM s AS STRING
+    s = TRIM$(t)
+    IF s = "JD_TAG_BOOL" THEN RETURN "8"
+    IF s = "JD_TAG_STR" THEN RETURN "2"
+    IF s = "JD_TAG_ARR" THEN RETURN "3"
+    IF s = "JD_TAG_F64" THEN RETURN "1"
+    IF s = "JD_TAG_I64" THEN RETURN "0"
+    IF LEN(s) = 0 THEN RETURN "-1"
+    IF s = "-1" THEN RETURN "-1"
+    IF INSTR("0123456789", LEFT$(s, 1)) < 0 THEN RETURN "-1"
+    RETURN s
+ENDFUNC
+
+FUNC ARG_LETTERS$(inner AS STRING) AS STRING
+    DIM rest AS STRING
+    DIM piece AS STRING
+    DIM letters AS STRING
+    DIM p AS INTEGER
+
+    letters = ""
+    rest = TRIM$(inner)
+    DO
+        IF LEN(rest) = 0 THEN EXITDO
+        p = CINT(INSTR(rest, ","))
+        IF p < 0 THEN
+            piece = rest
+            rest = ""
+        ELSE
+            piece = LEFT$(rest, p)
+            rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+        ENDIF
+        IF LEN(TRIM$(piece)) > 0 THEN letters = letters + TYPE_LETTER$(piece)
+    LOOP
+    RETURN letters
+ENDFUNC
+
+' ── Main ───────────────────────────────────────────────────────────────────
+
+DIM nm AS STRING
+DIM sym AS STRING
+DIM retL AS STRING
+DIM argL AS STRING
+DIM rest AS STRING
+DIM p AS INTEGER
+DIM openB AS INTEGER
+DIM closeB AS INTEGER
+DIM tagTxt AS STRING
+
+src = REPLACE$(TXTREADER$("src/llvm_codegen.cpp"), CHR$(13) + CHR$(10), CHR$(10))
+out = ""
+emitted = 0
+skipped = 0
+
+at = 0
+DO
+    IF at >= LEN(src) THEN EXITDO
+    ln = NEXT_LINE$(src, at)
+    at = at + LEN(ln) + 1
+
+    IF INSTR(TRIM$(ln), "reg(" + CHR$(34)) <> 0 THEN CONTINUEDO
+
+    ' A registration may run over several lines; take them until it closes.
+    joined = TRIM$(ln)
+    DO
+        IF INSTR(joined, ");") >= 0 THEN EXITDO
+        IF at >= LEN(src) THEN EXITDO
+        ln = NEXT_LINE$(src, at)
+        at = at + LEN(ln) + 1
+        joined = joined + " " + TRIM$(ln)
+    LOOP
+
+    sym = QUOTED$(joined)
+    nm = QUOTED$(cutRest)
+    rest = cutRest
+
+    ' What is left starts at the comma after the name.
+    p = CINT(INSTR(rest, ","))
+    IF p < 0 THEN
+        skipped = skipped + 1
+        CONTINUEDO
+    ENDIF
+    rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+
+    p = CINT(INSTR(rest, ","))
+    IF p < 0 THEN
+        skipped = skipped + 1
+        CONTINUEDO
+    ENDIF
+    retL = TYPE_LETTER$(LEFT$(rest, p))
+
+    openB = CINT(INSTR(rest, "{"))
+    closeB = CINT(INSTR(rest, "}"))
+    IF openB < 0 OR closeB < 0 THEN
+        skipped = skipped + 1
+        CONTINUEDO
+    ENDIF
+    argL = ARG_LETTERS$(MID$(rest, openB + 1, closeB - openB - 1))
+
+    IF retL = "?" OR INSTR(argL, "?") >= 0 THEN
+        skipped = skipped + 1
+        CONTINUEDO
+    ENDIF
+
+    tagTxt = TRIM$(MID$(rest, closeB + 1, LEN(rest) - closeB - 1))
+    IF LEFT$(tagTxt, 1) = "," THEN tagTxt = TRIM$(MID$(tagTxt, 1, LEN(tagTxt) - 1))
+    p = CINT(INSTR(tagTxt, ")"))
+    IF p >= 0 THEN tagTxt = TRIM$(LEFT$(tagTxt, p))
+
+    out = out + nm + CHR$(9) + sym + CHR$(9) + retL + CHR$(9) + argL
+    out = out + CHR$(9) + TAG_NUMBER$(tagTxt) + CHR$(10)
+    emitted = emitted + 1
+LOOP
+
+' The names that answer an array over the bridge. The reference calls its own
+' list the single source of truth for that shape, so it is read rather than
+' guessed; everything else on the bridge is a string when its name ends in a
+' dollar and a number otherwise, which is the rule the reference applies too.
+
+DIM inSet AS INTEGER
+DIM piece AS STRING
+DIM arrCount AS INTEGER
+
+inSet = 0
+arrCount = 0
+at = 0
+DO
+    IF at >= LEN(src) THEN EXITDO
+    ln = NEXT_LINE$(src, at)
+    at = at + LEN(ln) + 1
+
+    IF INSTR(ln, "kBridgeArrayReturners") >= 0 THEN
+        inSet = 1
+        CONTINUEDO
+    ENDIF
+    IF inSet = 0 THEN CONTINUEDO
+    IF INSTR(ln, "};") >= 0 THEN EXITDO
+
+    rest = ln
+    DO
+        piece = QUOTED$(rest)
+        IF LEN(piece) = 0 THEN EXITDO
+        out = out + "@ARR" + CHR$(9) + piece + CHR$(10)
+        arrCount = arrCount + 1
+        rest = cutRest
+    LOOP
+LOOP
+
+TXTWRITER "selfhost/jdbc_natives.txt", out
+PRINT "natives written: "; emitted
+PRINT "skipped:         "; skipped
+PRINT "array returners: "; arrCount

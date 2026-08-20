@@ -3151,6 +3151,12 @@ CONST TY_STR = 1
 CONST TY_BOOL = 2
 CONST TY_ARRN = 3
 CONST TY_ARRS = 4
+' What a call answers when it answers nothing.
+CONST TY_VOID = 6
+
+' How many arguments one bridged call can carry. Every routine keeps scratch
+' this wide, so the number is a size rather than a guess.
+CONST BRIDGE_MAX = 16
 
 DIM ir AS STRING
 DIM fnDefs AS STRING
@@ -3189,6 +3195,10 @@ DIM strN AS INTEGER
 ' The type of the last expression emitted, since jdBasic-0 cannot answer two
 ' values from one call.
 DIM lastType AS INTEGER
+
+
+
+DIM nativesPath AS STRING
 
 SUB W(s AS STRING)
     ir = ir + s + CHR$(10)
@@ -3461,6 +3471,158 @@ FUNC EMIT_RT$(sym AS STRING, argsTxt AS STRING, ret AS STRING) AS STRING
     RETURN t
 ENDFUNC
 
+' ── The bridge ─────────────────────────────────────────────────────────────
+'
+' A name the registry does not carry is handed to the running VM by name,
+' with its arguments as bits and a tag apiece. That is one mechanism for
+' every native the language has rather than one entry per native, and it is
+' how the reference reaches everything it did not register either.
+'
+' Which of the five entry points to call depends on what comes back, and
+' nothing here knows that, so the call site says what it expects.
+
+' The wire carries a value as sixty-four bits, whatever it really is.
+FUNC AS_BITS$(v AS STRING, ty AS INTEGER) AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    IF ty = TY_STR OR IS_ARR(ty) = 1 THEN
+        W("  " + t + " = ptrtoint ptr " + v + " to i64")
+    ELSE
+        W("  " + t + " = bitcast double " + AS_NUM$(v, ty) + " to i64")
+    ENDIF
+    RETURN t
+ENDFUNC
+
+FUNC G_BRIDGE$(nm AS STRING, ix AS INTEGER, wantTy AS INTEGER) AS STRING
+    DIM i AS INTEGER
+    DIM n AS INTEGER
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM slot AS STRING
+    DIM cell AS STRING
+    DIM bits AS STRING
+    DIM rt AS STRING
+    DIM nameC AS STRING
+    DIM raw AS STRING
+    DIM t AS STRING
+
+    n = 0
+    IF ix >= 0 THEN n = CINT(exArgN[ix])
+    IF n > BRIDGE_MAX THEN
+        genError = nm + " takes more arguments than the bridge carries"
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    FOR i = 0 TO n - 1
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        vt = lastType
+
+        bits = AS_BITS$(v, vt)
+
+        slot = NEWTMP$()
+        W("  " + slot + " = getelementptr i64, ptr %bargs, i32 " + STR$(i))
+        W("  store i64 " + bits + ", ptr " + slot)
+        slot = NEWTMP$()
+        W("  " + slot + " = getelementptr i32, ptr %btags, i32 " + STR$(i))
+        W("  store i32 " + STR$(WIRE_TAG(vt)) + ", ptr " + slot)
+    NEXT i
+
+    nameC = STR_CONST$(nm)
+    rt = G_RT_HANDLE$()
+
+    IF wantTy = TY_STR OR IS_ARR(wantTy) = 1 THEN
+        raw = NEWTMP$()
+        IF wantTy = TY_STR THEN
+            W("  " + raw + " = call ptr @jdrt_call_typed_str(ptr " + rt + ", ptr " + nameC + ", ptr %bargs, ptr %btags, i32 " + STR$(n) + ")")
+        ELSE
+            W("  " + raw + " = call ptr @jdrt_call_typed_arr(ptr " + rt + ", ptr " + nameC + ", ptr %bargs, ptr %btags, i32 " + STR$(n) + ")")
+        ENDIF
+        G_CHECK_ERR(rt)
+        lastType = wantTy
+        RETURN raw
+    ENDIF
+
+    IF wantTy = TY_VOID THEN
+        W("  call void @jdrt_call_typed_void(ptr " + rt + ", ptr " + nameC + ", ptr %bargs, ptr %btags, i32 " + STR$(n) + ")")
+        G_CHECK_ERR(rt)
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    raw = NEWTMP$()
+    W("  " + raw + " = call double @jdrt_call_typed_f64(ptr " + rt + ", ptr " + nameC + ", ptr %bargs, ptr %btags, i32 " + STR$(n) + ")")
+    G_CHECK_ERR(rt)
+    lastType = TY_NUM
+    RETURN raw
+ENDFUNC
+
+' A registered native: the call goes straight to its jdb_* symbol.
+FUNC G_NATIVE$(ni AS INTEGER, ix AS INTEGER) AS STRING
+    DIM i AS INTEGER
+    DIM n AS INTEGER
+    DIM want AS STRING
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM argsTxt AS STRING
+    DIM raw AS STRING
+    DIM t AS STRING
+    DIM rt AS STRING
+
+    natUsed[ni] = 1
+    n = CINT(exArgN[ix])
+    argsTxt = ""
+    FOR i = 0 TO n - 1
+        want = MID$(natArgs[ni], i, 1)
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        vt = lastType
+        IF i > 0 THEN argsTxt = argsTxt + ", "
+        IF want = "P" THEN
+            argsTxt = argsTxt + "ptr " + v
+        ELSE
+            IF want = "D" THEN
+                argsTxt = argsTxt + "double " + AS_NUM$(v, vt)
+            ELSE
+                argsTxt = argsTxt + LL_OF_LETTER$(want) + " " + TO_INT$(v, vt, LL_OF_LETTER$(want))
+            ENDIF
+        ENDIF
+    NEXT i
+
+    IF natRet[ni] = "V" THEN
+        W("  call void @" + natSym[ni] + "(" + argsTxt + ")")
+        lastType = TY_NUM
+        RETURN "0.0"
+    ENDIF
+
+    rt = LL_OF_LETTER$(natRet[ni])
+    raw = NEWTMP$()
+    W("  " + raw + " = call " + rt + " @" + natSym[ni] + "(" + argsTxt + ")")
+
+    IF rt = "ptr" OR rt = "double" THEN
+        lastType = CINT(NAT_RET_TY(ni))
+        RETURN raw
+    ENDIF
+
+    ' An integer answer is a truth value or a number, never left as an i64.
+    IF natTag[ni] = 8 THEN
+        t = NEWTMP$()
+        W("  " + t + " = icmp ne " + rt + " " + raw + ", 0")
+        lastType = TY_BOOL
+        RETURN t
+    ENDIF
+    t = NEWTMP$()
+    W("  " + t + " = sitofp " + rt + " " + raw + " to double")
+    lastType = TY_NUM
+    RETURN t
+ENDFUNC
+
+FUNC TO_INT$(v AS STRING, ty AS INTEGER, llty AS STRING) AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    W("  " + t + " = fptosi double " + AS_NUM$(v, ty) + " to " + llty)
+    RETURN t
+ENDFUNC
+
 FUNC G_BUILTIN$(bi AS INTEGER, ix AS INTEGER) AS STRING
     DIM i AS INTEGER
     DIM n AS INTEGER
@@ -3523,6 +3685,12 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
         IF f >= 0 THEN RETURN CINT(fnRet[f])
         f = CINT(BI_FIND(exFn[ix]))
         IF f >= 0 THEN RETURN CINT(BI_RET_TY(f))
+        f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
+        IF f >= 0 THEN RETURN CINT(NAT_RET_TY(f))
+        ' Over the bridge the shape comes from the name: the reference's own
+        ' list for the array answers, and the dollar for the string ones.
+        IF IS_ARR_RETURNER(exFn[ix]) = 1 THEN RETURN TY_ARRN
+        IF ENDS_IN_DOLLAR(exFn[ix]) = 1 THEN RETURN TY_STR
         RETURN TY_NUM
     ENDIF
     IF k = X_BINARY THEN
@@ -3827,11 +3995,14 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
 
     f = CINT(FN_FIND(exFn[ix]))
     IF f < 0 THEN
+        ' A routine of the program wins, then the natives spelled out here,
+        ' then the registry lifted from the reference, then the bridge, which
+        ' answers for everything else.
         f = CINT(BI_FIND(exFn[ix]))
         IF f >= 0 THEN RETURN G_BUILTIN$(f, ix)
-        genError = "cannot generate a call to " + exFn[ix]
-        lastType = TY_NUM
-        RETURN "0.0"
+        f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
+        IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+        RETURN G_BRIDGE$(exFn[ix], ix, CINT(E_TYPE(ix)))
     ENDIF
 
     n = CINT(exArgN[ix])
@@ -3870,6 +4041,185 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     lastType = rty
     RETURN t
 ENDFUNC
+
+' ── The natives the runtime exports ────────────────────────────────────────
+'
+' Read from selfhost/jdbc_natives.txt, which gen_natives.jdb lifts out of the
+' reference backend's own registry. A name found here is called directly; a
+' name that is not goes over the bridge, which needs no table at all.
+
+DIM natName[512] AS STRING
+DIM natSym[512] AS STRING
+DIM natRet[512] AS STRING
+DIM natArgs[512] AS STRING
+DIM natTag[512]
+DIM natUsed[512]
+DIM natN AS INTEGER
+
+' Names that answer an array over the bridge, from the reference's own list.
+DIM arrRet[256] AS STRING
+DIM arrRetN AS INTEGER
+
+FUNC LL_OF_LETTER$(c AS STRING) AS STRING
+    IF c = "V" THEN RETURN "void"
+    IF c = "D" THEN RETURN "double"
+    IF c = "I" THEN RETURN "i64"
+    IF c = "N" THEN RETURN "i32"
+    RETURN "ptr"
+ENDFUNC
+
+SUB LOAD_NATIVES()
+    DIM txt AS STRING
+    DIM ln AS STRING
+    DIM at AS INTEGER
+    DIM p AS INTEGER
+    DIM rest AS STRING
+
+    natN = 0
+    arrRetN = 0
+    txt = REPLACE$(TXTREADER$(nativesPath), CHR$(13) + CHR$(10), CHR$(10))
+    at = 0
+    DO
+        IF at >= LEN(txt) THEN EXITDO
+        p = CINT(INSTR(MID$(txt, at, LEN(txt) - at), CHR$(10)))
+        IF p < 0 THEN
+            ln = MID$(txt, at, LEN(txt) - at)
+            at = LEN(txt)
+        ELSE
+            ln = MID$(txt, at, p)
+            at = at + p + 1
+        ENDIF
+        IF LEN(ln) = 0 THEN CONTINUEDO
+
+        IF LEFT$(ln, 5) = "@ARR" + CHR$(9) THEN
+            IF arrRetN < 256 THEN
+                arrRet[arrRetN] = MID$(ln, 5, LEN(ln) - 5)
+                arrRetN = arrRetN + 1
+            ENDIF
+            CONTINUEDO
+        ENDIF
+        IF natN >= 512 THEN EXITDO
+
+        rest = ln
+        p = CINT(INSTR(rest, CHR$(9)))
+        IF p < 0 THEN CONTINUEDO
+        natName[natN] = LEFT$(rest, p)
+        rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+
+        p = CINT(INSTR(rest, CHR$(9)))
+        IF p < 0 THEN CONTINUEDO
+        natSym[natN] = LEFT$(rest, p)
+        rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+
+        p = CINT(INSTR(rest, CHR$(9)))
+        IF p < 0 THEN CONTINUEDO
+        natRet[natN] = LEFT$(rest, p)
+        rest = MID$(rest, p + 1, LEN(rest) - p - 1)
+
+        p = CINT(INSTR(rest, CHR$(9)))
+        IF p < 0 THEN
+            natArgs[natN] = rest
+            natTag[natN] = -1
+        ELSE
+            natArgs[natN] = LEFT$(rest, p)
+            natTag[natN] = CINT(VAL(MID$(rest, p + 1, LEN(rest) - p - 1)))
+        ENDIF
+        natUsed[natN] = 0
+        natN = natN + 1
+    LOOP
+ENDSUB
+
+' A native that takes a different number of arguments than it was registered
+' with is a different call, and goes over the bridge instead.
+FUNC NAT_FIND(nm AS STRING, argc AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO natN - 1
+        IF natName[i] = nm ANDALSO LEN(natArgs[i]) = argc THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC IS_ARR_RETURNER(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO arrRetN - 1
+        IF arrRet[i] = nm THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+FUNC NAT_RET_TY(i AS INTEGER) AS INTEGER
+    IF natRet[i] = "P" THEN
+        IF natTag[i] = 3 THEN RETURN TY_ARRN
+        RETURN TY_STR
+    ENDIF
+    IF natTag[i] = 8 THEN RETURN TY_BOOL
+    RETURN TY_NUM
+ENDFUNC
+
+' ── The runtime handle ─────────────────────────────────────────────────────
+'
+' Anything that goes through the bridge needs the running VM behind it, and
+' after every such call the runtime is asked whether it left an error. The
+' reference emits the same sequence, and a program that skips it reports
+' wrong answers instead of failures.
+
+SUB G_RUNTIME_INIT()
+    W("  %bargs = alloca i64, i32 " + STR$(BRIDGE_MAX))
+    W("  %btags = alloca i32, i32 " + STR$(BRIDGE_MAX))
+    W("  call void @jdb_set_args(i32 %argc, ptr %argv)")
+    W("  %jdrt = call ptr @jdrt_init()")
+    W("  store ptr %jdrt, ptr @__jdrt_handle")
+    W("  call void @jdb_runtime_set_handle(ptr %jdrt)")
+    W("  %rt0 = load ptr, ptr @__jdrt_handle")
+    W("  call void @jdrt_set_event_dispatcher(ptr %rt0, ptr @jdrt_dispatch_event)")
+ENDSUB
+
+FUNC G_RT_HANDLE$() AS STRING
+    DIM t AS STRING
+    t = NEWTMP$()
+    W("  " + t + " = load ptr, ptr @__jdrt_handle")
+    RETURN t
+ENDFUNC
+
+SUB G_CHECK_ERR(rt AS STRING)
+    DIM last AS STRING
+    DIM hasMsg AS STRING
+    DIM rc AS STRING
+    DIM hasErr AS STRING
+    DIM pullL AS STRING
+    DIM postL AS STRING
+    DIM errL AS STRING
+    DIM okL AS STRING
+
+    pullL = NEWLBL$("bmsg.pull")
+    postL = NEWLBL$("bmsg.post")
+    errL = NEWLBL$("call.err")
+    okL = NEWLBL$("call.ok")
+
+    last = NEWTMP$()
+    W("  " + last + " = call ptr @jdrt_last_error(ptr " + rt + ")")
+    hasMsg = NEWTMP$()
+    W("  " + hasMsg + " = icmp ne ptr " + last + ", null")
+    W("  br i1 " + hasMsg + ", label %" + pullL + ", label %" + postL)
+
+    W(pullL + ":")
+    W("  call void @jdb_err_set(ptr " + last + ", i64 1)")
+    W("  call void @jdrt_clear_last_error(ptr " + rt + ")")
+    W("  br label %" + postL)
+
+    W(postL + ":")
+    rc = NEWTMP$()
+    W("  " + rc + " = call i64 @jdb_err_code()")
+    hasErr = NEWTMP$()
+    W("  " + hasErr + " = icmp ne i64 " + rc + ", 0")
+    W("  br i1 " + hasErr + ", label %" + errL + ", label %" + okL)
+
+    W(errL + ":")
+    W("  call void @jdb_throw_uncaught()")
+    W("  unreachable")
+
+    W(okL + ":")
+ENDSUB
 
 ' The wire tags the runtime uses for a value, from jdb_tags.h.
 CONST TAG_I64 = 0
@@ -4313,6 +4663,8 @@ SUB G_ROUTINE(ix AS INTEGER)
     NEXT i
 
     prologue = ""
+    prologue = prologue + "  %bargs = alloca i64, i32 " + STR$(BRIDGE_MAX) + CHR$(10)
+    prologue = prologue + "  %btags = alloca i32, i32 " + STR$(BRIDGE_MAX) + CHR$(10)
     FOR i = 0 TO lvN - 1
         prologue = prologue + "  %l_" + lvName[i] + " = alloca " + LL_TY$(CINT(lvType[i])) + CHR$(10)
         prologue = prologue + "  store " + LL_TY$(CINT(lvType[i])) + " " + ZERO_OF$(CINT(lvType[i]))
@@ -4461,11 +4813,44 @@ FUNC DECLS$() AS STRING
     d = d + "declare i64 @jdb_array_len(ptr)" + CHR$(10)
     d = d + "declare ptr @jdb_array_append_tagged(ptr, double, i32)" + CHR$(10)
     d = d + "declare void @jdb_set_args(i32, ptr)" + CHR$(10)
+    d = d + "declare ptr @jdrt_init()" + CHR$(10)
+    d = d + "declare void @jdb_runtime_set_handle(ptr)" + CHR$(10)
+    d = d + "declare void @jdrt_set_event_dispatcher(ptr, ptr)" + CHR$(10)
+    d = d + "declare void @jdrt_dispatch_event(ptr, ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare ptr @jdrt_last_error(ptr)" + CHR$(10)
+    d = d + "declare void @jdrt_clear_last_error(ptr)" + CHR$(10)
+    d = d + "declare void @jdb_err_set(ptr, i64)" + CHR$(10)
+    d = d + "declare i64 @jdb_err_code()" + CHR$(10)
+    d = d + "declare void @jdb_throw_uncaught()" + CHR$(10)
+    d = d + "declare double @jdrt_call_typed_f64(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare ptr @jdrt_call_typed_str(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare ptr @jdrt_call_typed_arr(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare void @jdrt_call_typed_void(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     FOR i = 0 TO biN - 1
         d = d + "declare " + biDeclRet[i] + " @" + biSym[i]
         d = d + "(" + biDeclArgs[i] + ")" + CHR$(10)
     NEXT i
+
+    ' Only the registry entries this module actually called, and only once
+    ' each: a symbol the list above already names is not repeated.
+    FOR i = 0 TO natN - 1
+        IF natUsed[i] = 1 ANDALSO INSTR(d, "@" + natSym[i] + "(") < 0 THEN
+            d = d + "declare " + LL_OF_LETTER$(natRet[i]) + " @" + natSym[i]
+            d = d + "(" + NAT_DECL_ARGS$(i) + ")" + CHR$(10)
+        ENDIF
+    NEXT i
     RETURN d
+ENDFUNC
+
+FUNC NAT_DECL_ARGS$(i AS INTEGER) AS STRING
+    DIM j AS INTEGER
+    DIM s AS STRING
+    s = ""
+    FOR j = 0 TO LEN(natArgs[i]) - 1
+        IF j > 0 THEN s = s + ", "
+        s = s + LL_OF_LETTER$(MID$(natArgs[i], j, 1))
+    NEXT j
+    RETURN s
 ENDFUNC
 
 FUNC GENERATE$() AS STRING
@@ -4487,12 +4872,16 @@ FUNC GENERATE$() AS STRING
     genError = ""
 
     BI_INIT()
+    FOR i = 0 TO natN - 1
+        natUsed[i] = 0
+    NEXT i
 
     ' Routines are hoisted and a global can be declared below the routine that
     ' reads it, so both are collected before a single instruction is emitted.
     SCAN_ROUTINES()
     SCAN_DECLS(topAt, topN, 0)
 
+    G_RUNTIME_INIT()
     FOR j = 0 TO topN - 1
         G_STMT(CINT(bodyBuf[topAt + j]))
     NEXT j
@@ -4510,11 +4899,10 @@ FUNC GENERATE$() AS STRING
         head = head + LL_TY$(CINT(gvType[i])) + " " + ZERO_OF$(CINT(gvType[i])) + CHR$(10)
     NEXT i
 
+    head = head + "@__jdrt_handle = internal global ptr null" + CHR$(10)
     head = head + CHR$(10) + fnDefs
     head = head + "define i32 @main(i32 %argc, ptr %argv) {" + CHR$(10)
     head = head + "entry:" + CHR$(10)
-    ' Handing the command line to the runtime is what makes OS.ARGS answer.
-    head = head + "  call void @jdb_set_args(i32 %argc, ptr %argv)" + CHR$(10)
     RETURN head + body + "  ret i32 0" + CHR$(10) + "}" + CHR$(10)
 ENDFUNC
 
@@ -4565,7 +4953,10 @@ IF LEN(args) <= argAt THEN
 ENDIF
 path = args[argAt]
 
+nativesPath = "selfhost/jdbc_natives.txt"
+
 LOAD_TABLES()
+LOAD_NATIVES()
 LOAD_STMT_TABLES()
 
 ' The reference reads source in text mode, which folds CRLF to LF.

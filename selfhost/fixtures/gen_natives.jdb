@@ -1,0 +1,46 @@
+OPTION EXPLICIT
+
+' Natives on both paths: the registry for the ones the reference calls
+' directly, the bridge for everything else.
+
+DIM a AS ARRAY
+DIM b AS ARRAY
+DIM i AS DOUBLE
+DIM s AS STRING
+
+' Registered: a direct jdb_* call.
+a = IOTA(5)
+PRINT LEN(a)
+PRINT a[0]
+PRINT a[4]
+PRINT SUM(a)
+PRINT MEAN(a)
+PRINT INT(3.9)
+PRINT INT(-3.9)
+
+' Over the bridge: name known to answer an array.
+b = REVERSE(a)
+PRINT b[0]
+PRINT b[4]
+PRINT LEN(b)
+
+b = TALLY([1, 1, 2, 3, 3, 3])
+PRINT LEN(b)
+
+b = UNIQUE([5, 5, 7, 7, 9])
+PRINT LEN(b)
+PRINT b[0]
+PRINT b[1]
+PRINT b[2]
+
+' Over the bridge, answering a number.
+PRINT MAX(a)
+PRINT MIN(a)
+
+' Over the bridge, answering a string: the dollar decides.
+s = JSON.STRINGIFY$([1, 2, 3])
+PRINT s
+
+FOR i = 0 TO LEN(a) - 1
+    PRINT a[CINT(i)] * 2
+NEXT i
