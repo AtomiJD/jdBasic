@@ -45,3 +45,18 @@ CATCH
 FINALLY
     PRINT "finally"
 ENDTRY
+
+' Bit patterns and membership.
+DIM p AS DOUBLE
+DIM q AS DOUBLE
+p = 6
+q = 3
+PRINT p BAND q
+PRINT p BOR q
+PRINT p BXOR q
+PRINT p SHL 2
+PRINT p SHR 1
+DIM hay AS STRING
+hay = "haystack"
+PRINT "stack" IN hay
+PRINT "needle" IN hay

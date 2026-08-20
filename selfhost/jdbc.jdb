@@ -1429,10 +1429,11 @@ FUNC P_BXOR() AS INTEGER
     DIM ln AS INTEGER
     lhs = CINT(P_BAND())
     DO
-        IF TT() <> TT_BXOR THEN RETURN lhs
+        ' Both spellings mean the same operation, and the tree records one.
+        IF TT() <> TT_XOR ANDALSO TT() <> TT_BXOR THEN RETURN lhs
         ln = CINT(TL())
         nd = CINT(NEW_EXPR(X_BINARY, ln))
-        exOp[nd] = TT()
+        exOp[nd] = TT_XOR
         EAT()
         exLeft[nd] = lhs
         exRight[nd] = P_BAND()
@@ -1551,9 +1552,11 @@ DIM KT_ELSEIF AS INTEGER
 DIM KT_ASYNC AS INTEGER
 DIM KT_ON AS INTEGER
 DIM KT_CALL AS INTEGER
+DIM TT_IN AS INTEGER
 DIM TT_BAND AS INTEGER
 DIM TT_BOR AS INTEGER
 DIM TT_BXOR AS INTEGER
+DIM TT_XOR AS INTEGER
 DIM TT_SHL AS INTEGER
 DIM TT_SHR AS INTEGER
 DIM KT_EXPORT AS INTEGER
@@ -1629,9 +1632,11 @@ SUB LOAD_STMT_TABLES()
     KT_ASYNC = CINT(TOK_BY_NAME("ASYNC"))
     KT_ON = CINT(TOK_BY_NAME("ON_KW"))
     KT_CALL = CINT(TOK_BY_NAME("CALL"))
+    TT_IN = CINT(TOK_BY_NAME("IN"))
     TT_BAND = CINT(TOK_BY_NAME("BAND"))
     TT_BOR = CINT(TOK_BY_NAME("BOR"))
     TT_BXOR = CINT(TOK_BY_NAME("BXOR"))
+    TT_XOR = CINT(TOK_BY_NAME("XOR"))
     TT_SHL = CINT(TOK_BY_NAME("SHL"))
     TT_SHR = CINT(TOK_BY_NAME("SHR"))
     KT_EXPORT = CINT(TOK_BY_NAME("EXPORT_KW"))
@@ -2959,10 +2964,26 @@ FUNC P_STMT() AS INTEGER
         RETURN nd
     ENDIF
 
-    IF t = KT_STOP OR t = KT_CLS THEN
+    IF t = KT_STOP THEN
         EAT()
-        IF t = KT_STOP THEN RETURN CINT(NEW_STMT(K_STOP, ln))
-        RETURN CINT(NEW_STMT(K_CLS, ln))
+        RETURN CINT(NEW_STMT(K_STOP, ln))
+    ENDIF
+
+    ' CLS on its own clears; with three numbers it clears to a colour.
+    IF t = KT_CLS THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_CLS, ln))
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN RETURN nd
+        stExpr[nd] = P_EXPR()
+        IF TT() = TT_COMMA THEN
+            EAT()
+            stCond[nd] = P_EXPR()
+        ENDIF
+        IF TT() = TT_COMMA THEN
+            EAT()
+            stEnd[nd] = P_EXPR()
+        ENDIF
+        RETURN nd
     ENDIF
 
     IF t = KT_SLEEP OR t = KT_CURSOR OR t = KT_THROW THEN
@@ -4159,6 +4180,7 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     DIM whole AS STRING
     DIM op AS INTEGER
     DIM arith AS STRING
+    DIM bitOp AS STRING
     DIM cmpOp AS STRING
 
     l = G_EXPR(CINT(exLeft[ix]))
@@ -4172,6 +4194,17 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
         t = NEWTMP$()
         W("  " + t + " = call ptr @jdb_str_concat(ptr " + l + ", ptr " + r + ")")
         lastType = TY_STR
+        RETURN t
+    ENDIF
+
+    ' `needle IN haystack` asks whether the haystack holds it, which is what
+    ' finding its position and testing for one answers.
+    IF op = TT_IN THEN
+        q = NEWTMP$()
+        W("  " + q + " = call i64 @jdb_instr(ptr " + r + ", ptr " + l + ")")
+        t = NEWTMP$()
+        W("  " + t + " = icmp sge i64 " + q + ", 0")
+        lastType = TY_BOOL
         RETURN t
     ENDIF
 
@@ -4191,6 +4224,25 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
         W("  " + t + " = " + arith + " double " + l + ", " + r)
         lastType = TY_NUM
         RETURN t
+    ENDIF
+
+    ' The bitwise operators and the shifts work on whole numbers, so the
+    ' operands go in as integers and the answer comes back out as a number.
+    bitOp = ""
+    IF op = TT_BAND THEN bitOp = "and"
+    IF op = TT_BOR THEN bitOp = "or"
+    IF op = TT_XOR OR op = TT_BXOR THEN bitOp = "xor"
+    IF op = TT_SHL THEN bitOp = "shl"
+    IF op = TT_SHR THEN bitOp = "ashr"
+    IF bitOp <> "" THEN
+        q = TO_INT$(l, TY_NUM, "i64")
+        whole = TO_INT$(r, TY_NUM, "i64")
+        t = NEWTMP$()
+        W("  " + t + " = " + bitOp + " i64 " + q + ", " + whole)
+        q = NEWTMP$()
+        W("  " + q + " = sitofp i64 " + t + " to double")
+        lastType = TY_NUM
+        RETURN q
     ENDIF
 
     IF op = TT_CARET THEN
