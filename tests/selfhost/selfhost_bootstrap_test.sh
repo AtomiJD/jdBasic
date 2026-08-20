@@ -61,8 +61,16 @@ if [ ! -s tmp/bs1.ll ]; then
 fi
 link tmp/bs1.ll tmp/bs1.exe || { echo "SELFHOST BOOTSTRAP TESTS FAILED"; exit 1; }
 
+# The compiled compiler is slower than the interpreted one - every variable is
+# a memory slot and clang is invoked without -O - so reading the whole corpus
+# twice takes minutes, most of it on this file. The fixtures run by default and
+# SELFHOST_DEEP=1 adds the compiler's own source, which the three stages cover
+# anyway by compiling it.
+CORPUS="selfhost/fixtures/*.jdb selfhost/gen_tokens.jdb"
+[ -n "$SELFHOST_DEEP" ] && CORPUS="$CORPUS $SRC"
+
 echo "  stage 1 and the interpreter agree over the corpus"
-for f in selfhost/fixtures/*.jdb selfhost/gen_tokens.jdb "$SRC"; do
+for f in $CORPUS; do
     for mode in --tokens --ast; do
         timeout 300 "$JDB" "$SRC" $mode "$f" > tmp/bs_a.txt 2>&1 || true
         timeout 300 ./tmp/bs1.exe $mode "$f" > tmp/bs_b.txt 2>&1 || true

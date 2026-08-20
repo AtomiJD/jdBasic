@@ -113,6 +113,8 @@ DIM stSepAt[MAX_NODES]
 DIM stSepN[MAX_NODES]
 DIM stIxAt[MAX_NODES]
 DIM stIxN[MAX_NODES]
+DIM stCtAt[MAX_NODES]
+DIM stCtN[MAX_NODES]
 DIM stTmAt[MAX_NODES]
 DIM stTmN[MAX_NODES]
 DIM stEmAt[MAX_NODES]
@@ -136,6 +138,8 @@ DIM sepBuf[MAX_BUF]
 DIM sepN AS INTEGER
 DIM ixBuf[MAX_BUF]
 DIM ixN AS INTEGER
+DIM ctBuf[MAX_BUF]
+DIM ctN AS INTEGER
 DIM bodyBuf[MAX_BUF]
 DIM bodyN AS INTEGER
 
@@ -180,6 +184,7 @@ DIM TT_DOT AS INTEGER
 DIM TT_ARROW AS INTEGER
 DIM TT_PIPE AS INTEGER
 DIM TT_AT AS INTEGER
+DIM TT_THIS AS INTEGER
 DIM TT_PLACEHOLDER AS INTEGER
 DIM TT_MINUS AS INTEGER
 DIM TT_BNOT AS INTEGER
@@ -356,6 +361,7 @@ SUB LOAD_TABLES()
     TT_ARROW = CINT(TOK_BY_NAME("ARROW"))
     TT_PIPE = CINT(TOK_BY_NAME("PIPE"))
     TT_AT = CINT(TOK_BY_NAME("AT"))
+    TT_THIS = CINT(TOK_BY_NAME("THIS_KW"))
     TT_PLACEHOLDER = CINT(TOK_BY_NAME("PLACEHOLDER"))
     TT_MINUS = CINT(TOK_BY_NAME("MINUS"))
     TT_BNOT = CINT(TOK_BY_NAME("BNOT"))
@@ -877,6 +883,8 @@ FUNC NEW_STMT(k AS INTEGER, ln AS INTEGER) AS INTEGER
     stSepN[i] = 0
     stIxAt[i] = 0
     stIxN[i] = 0
+    stCtAt[i] = 0
+    stCtN[i] = 0
     stTmAt[i] = 0
     stTmN[i] = 0
     stEmAt[i] = 0
@@ -1026,6 +1034,24 @@ FUNC P_PRIMARY() AS INTEGER
         NEXT i
         exArgAt[nd] = start
         exArgN[nd] = n
+        RETURN nd
+    ENDIF
+
+    ' THIS.field reaches into the instance a routine was handed, which is a
+    ' member access rather than a name with a dot in it.
+    IF TT() = TT_THIS THEN
+        nd = CINT(NEW_EXPR(X_VARIABLE, ln))
+        exStr[nd] = "THIS"
+        EAT()
+        DO
+            IF TT() <> TT_DOT THEN EXITDO
+            EAT()
+            a = CINT(NEW_EXPR(X_MEMBER, ln))
+            exStr[a] = TV$()
+            exLeft[a] = nd
+            nd = a
+            EAT()
+        LOOP
         RETURN nd
     ENDIF
 
@@ -1905,6 +1931,35 @@ ENDFUNC
 
 ' TYPE Name / member AS type / ... / ENDTYPE. The members sit beside the node
 ' rather than under it, so nothing is nested here.
+' A routine that belongs to a type is handed the instance it works on.
+SUB PREPEND_THIS(nd AS INTEGER)
+    DIM i AS INTEGER
+    DIM at AS INTEGER
+    DIM n AS INTEGER
+    DIM myN[MAX_LOCAL] AS STRING
+    DIM myT[MAX_LOCAL]
+    DIM start AS INTEGER
+
+    at = CINT(stParAt[nd])
+    n = CINT(stParN[nd])
+    FOR i = 0 TO n - 1
+        myN[i] = parName[at + i]
+        myT[i] = parType[at + i]
+    NEXT i
+
+    start = parN
+    parName[parN] = "THIS"
+    parType[parN] = 11
+    parN = parN + 1
+    FOR i = 0 TO n - 1
+        parName[parN] = myN[i]
+        parType[parN] = myT[i]
+        parN = parN + 1
+    NEXT i
+    stParAt[nd] = start
+    stParN[nd] = n + 1
+ENDSUB
+
 FUNC P_TYPE() AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
@@ -1914,6 +1969,10 @@ FUNC P_TYPE() AS INTEGER
     DIM myName[MAX_LOCAL] AS STRING
     DIM myType[MAX_LOCAL]
     DIM i AS INTEGER
+    DIM myMeth[MAX_LOCAL]
+    DIM nMeth AS INTEGER
+    DIM meth AS INTEGER
+    DIM isFn AS INTEGER
 
     ln = CINT(TL())
     EAT()
@@ -1922,11 +1981,30 @@ FUNC P_TYPE() AS INTEGER
     EAT()
 
     n = 0
+    nMeth = 0
     DO
         IF parseError <> "" THEN EXITDO
         SKIP_SEPS()
         IF TT() = KT_ENDTYPE OR TT() = T_EOF THEN EXITDO
         IF TT() = KT_END THEN EXITDO
+
+        ' A type may carry routines as well as fields. They belong to it, so
+        ' they take its name and are handed the instance to work on.
+        IF TT() = KT_FUNC OR TT() = KT_SUB THEN
+            isFn = 0
+            IF TT() = KT_FUNC THEN isFn = 1
+            IF nMeth >= MAX_LOCAL THEN
+                FAIL("too many routines in one TYPE")
+                EXITDO
+            ENDIF
+            meth = CINT(P_ROUTINE(isFn))
+            stFunc[meth] = stFunc[nd] + "." + stFunc[meth]
+            PREPEND_THIS(meth)
+            myMeth[nMeth] = meth
+            nMeth = nMeth + 1
+            CONTINUEDO
+        ENDIF
+
         IF n >= MAX_LOCAL THEN
             FAIL("too many members in one TYPE")
             EXITDO
@@ -1936,9 +2014,8 @@ FUNC P_TYPE() AS INTEGER
         EAT()
         IF TT() = KT_AS THEN
             EAT()
-            vt = CINT(VTYPE_OF(TT()))
+            vt = CINT(TYPE_AFTER_AS(-1))
             IF vt >= 0 THEN myType[n] = vt
-            EAT()
         ENDIF
         n = n + 1
     LOOP
@@ -1960,6 +2037,13 @@ FUNC P_TYPE() AS INTEGER
     NEXT i
     stTmAt[nd] = start
     stTmN[nd] = n
+
+    stBodyAt[nd] = bodyN
+    stBodyN[nd] = nMeth
+    FOR i = 0 TO nMeth - 1
+        bodyBuf[bodyN] = myMeth[i]
+        bodyN = bodyN + 1
+    NEXT i
     RETURN nd
 ENDFUNC
 
@@ -2038,7 +2122,7 @@ FUNC TYPE_AFTER_AS(nd AS INTEGER) AS INTEGER
         nm = nm + "." + TV$()
         EAT()
     LOOP
-    stLabel[nd] = nm
+    IF nd >= 0 THEN stLabel[nd] = nm
 
     IF nm = "DATE" THEN RETURN 10
     RETURN 11
@@ -2546,6 +2630,8 @@ ENDFUNC
 ' DIM name[dims] AS type desugars to a ZEROS call over an array literal, which
 ' is the shape the reference produces.
 FUNC P_DIM() AS INTEGER
+    DIM myCtor[MAX_LOCAL]
+    DIM nCtor AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
     DIM vt AS INTEGER
@@ -2594,6 +2680,28 @@ FUNC P_DIM() AS INTEGER
                 stVType[nd] = vt
             ENDIF
         ENDIF
+
+        ' DIM r AS Resource("R1") hands the type what it needs to set itself
+        ' up, which only a declared type can be asked for.
+        IF stLabel[nd] <> "" ANDALSO TT() = TT_LPAREN THEN
+            EAT()
+            nCtor = 0
+            DO
+                IF parseError <> "" THEN EXITDO
+                IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+                IF TT() = TT_COMMA THEN
+                    EAT()
+                    CONTINUEDO
+                ENDIF
+                IF nCtor >= MAX_LOCAL THEN
+                    FAIL("too many constructor arguments")
+                    EXITDO
+                ENDIF
+                myCtor[nCtor] = P_EXPR()
+                nCtor = nCtor + 1
+            LOOP
+            IF TT() = TT_RPAREN THEN EAT()
+        ENDIF
     ELSE
         IF ndim > 0 THEN stVType[nd] = V_ARRAY
     ENDIF
@@ -2620,6 +2728,13 @@ FUNC P_DIM() AS INTEGER
             argBuf[argN] = MKSTR(stLabel[nd], ln)
             argN = argN + 1
             exArgN[callNd] = 2
+            ' Per-element vectors ride along with the shape and the type.
+            FOR i = 0 TO nCtor - 1
+                argBuf[argN] = myCtor[i]
+                argN = argN + 1
+                exArgN[callNd] = exArgN[callNd] + 1
+            NEXT i
+            nCtor = 0
         ENDIF
         exArgAt[callNd] = start
         stExpr[nd] = callNd
@@ -2628,6 +2743,15 @@ FUNC P_DIM() AS INTEGER
             EAT()
             stExpr[nd] = P_EXPR()
         ENDIF
+    ENDIF
+
+    IF nCtor > 0 THEN
+        stCtAt[nd] = ctN
+        stCtN[nd] = nCtor
+        FOR i = 0 TO nCtor - 1
+            ctBuf[ctN] = myCtor[i]
+            ctN = ctN + 1
+        NEXT i
     ENDIF
     RETURN nd
 ENDFUNC
@@ -3055,6 +3179,33 @@ FUNC P_STMT() AS INTEGER
     ' is an indexed one. A name followed by something that starts a value is
     ' BASIC's command form, TXTWRITER a, b, which is a call without brackets.
     ' Anything else is an expression statement.
+    ' THIS.field = value writes a field of the instance, which the tree keeps
+    ' as a subscript whose key is the field's name.
+    IF t = TT_THIS ANDALSO TT_AT(1) = TT_DOT THEN
+        nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+        stVar[nd] = "THIS"
+        EAT()
+        nIdx = 0
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF TT() <> TT_DOT THEN EXITDO
+            EAT()
+            myIdx[nIdx] = MKSTR(TV$(), ln)
+            nIdx = nIdx + 1
+            EAT()
+        LOOP
+        IF TT() = TT_ASSIGN THEN EAT()
+        stExpr[nd] = P_EXPR()
+        start = ixN
+        FOR i = 0 TO nIdx - 1
+            ixBuf[ixN] = myIdx[i]
+            ixN = ixN + 1
+        NEXT i
+        stIxAt[nd] = start
+        stIxN[nd] = nIdx
+        RETURN nd
+    ENDIF
+
     IF t = T_IDENTIFIER THEN
         IF IS_BUILTIN_CMD(TV$()) = 1 ANDALSO TAKES_BUILTIN_CMD(CINT(TT_AT(1))) = 1 THEN
             RETURN CINT(P_BUILTIN_CMD(ln))
@@ -3378,6 +3529,9 @@ SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
     NEXT i
     FOR i = 0 TO stIxN[ix] - 1
         D_EXPR(CINT(ixBuf[CINT(stIxAt[ix]) + i]), ind + 1)
+    NEXT i
+    FOR i = 0 TO stCtN[ix] - 1
+        D_EXPR(CINT(ctBuf[CINT(stCtAt[ix]) + i]), ind + 1)
     NEXT i
 
     FOR b = 0 TO stBrN[ix] - 1
@@ -5793,6 +5947,7 @@ emN = 0
 prN = 0
 sepN = 0
 ixN = 0
+ctN = 0
 bodyN = 0
 parN = 0
 brN = 0
