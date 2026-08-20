@@ -4950,6 +4950,9 @@ CONST TY_FN = 9
 ' An instance of a declared type, which the runtime keeps in its own store
 ' rather than as a map.
 CONST TY_UDT = 10
+' A whole value the machine behind the bridge holds on to; what travels is
+' the handle it hands out.
+CONST TY_OBJ = 12
 
 ' How many arguments one bridged call can carry. Every routine keeps scratch
 ' this wide, so the number is a size rather than a guess.
@@ -4970,6 +4973,10 @@ DIM gvN AS INTEGER
 DIM lvName[1024] AS STRING
 DIM lvType[1024]
 DIM lvUdt[1024] AS STRING
+' A local that outlives its calls sits in a module slot, not the frame.
+DIM lvStatic[1024]
+DIM curFnName AS STRING
+DIM staticDefs AS STRING
 DIM lvN AS INTEGER
 DIM inRoutine AS INTEGER
 DIM curRet AS INTEGER
@@ -5029,7 +5036,7 @@ ENDFUNC
 FUNC LL_TY$(ty AS INTEGER) AS STRING
     IF ty = TY_ANY THEN RETURN "{i64, i32}"
     IF ty = TY_FN THEN RETURN "ptr"
-    IF ty = TY_UDT THEN RETURN "ptr"
+    IF ty = TY_UDT OR ty = TY_OBJ THEN RETURN "ptr"
     IF ty = TY_STR OR ty = TY_MAP THEN RETURN "ptr"
     IF IS_ARR(ty) = 1 THEN RETURN "ptr"
     RETURN "double"
@@ -5059,7 +5066,7 @@ ENDFUNC
 FUNC IS_PTRISH(ty AS INTEGER) AS INTEGER
     IF ty = TY_STR OR ty = TY_MAP THEN RETURN 1
     IF ty = TY_FN THEN RETURN 1
-    IF ty = TY_UDT THEN RETURN 1
+    IF ty = TY_UDT OR ty = TY_OBJ THEN RETURN 1
     IF IS_ARR(ty) = 1 THEN RETURN 1
     RETURN 0
 ENDFUNC
@@ -5119,11 +5126,19 @@ SUB LV_ADD(nm AS STRING, ty AS INTEGER)
     lvName[lvN] = nm
     lvType[lvN] = ty
     lvUdt[lvN] = ""
+    lvStatic[lvN] = 0
     lvN = lvN + 1
 ENDSUB
 
 FUNC SYM_REF$(nm AS STRING) AS STRING
-    IF inRoutine = 1 ANDALSO LV_FIND(nm) >= 0 THEN RETURN "%l_" + nm
+    DIM i AS INTEGER
+    IF inRoutine = 1 THEN
+        i = CINT(LV_FIND(nm))
+        IF i >= 0 THEN
+            IF lvStatic[i] <> 0 THEN RETURN "@sv_" + curFnName + "_" + nm
+            RETURN "%l_" + nm
+        ENDIF
+    ENDIF
     RETURN "@v_" + nm
 ENDFUNC
 
@@ -5136,6 +5151,18 @@ FUNC SYM_TYPE(nm AS STRING) AS INTEGER
     i = CINT(GV_FIND(nm))
     IF i < 0 THEN RETURN TY_NUM
     RETURN CINT(gvType[i])
+ENDFUNC
+
+' The names CONST bound, which no assignment may touch again.
+DIM constNm[128] AS STRING
+DIM constN AS INTEGER
+
+FUNC IS_CONST_NAME(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO constN - 1
+        IF constNm[i] = nm THEN RETURN 1
+    NEXT i
+    RETURN 0
 ENDFUNC
 
 ' Whether someone declared the name, so the word is theirs: a parameter
@@ -5167,11 +5194,12 @@ FUNC SYM_UDT$(nm AS STRING) AS STRING
     DIM i AS INTEGER
     IF inRoutine = 1 THEN
         i = CINT(LV_FIND(nm))
-        IF i >= 0 THEN RETURN lvUdt[i]
+        IF i >= 0 ANDALSO lvUdt[i] <> "" THEN RETURN lvUdt[i]
     ENDIF
     i = CINT(GV_FIND(nm))
-    IF i < 0 THEN RETURN ""
-    RETURN gvUdt[i]
+    IF i >= 0 ANDALSO gvUdt[i] <> "" THEN RETURN gvUdt[i]
+    ' What the propagation learned stands in when no declaration said.
+    RETURN UDT_OF$(nm)
 ENDFUNC
 
 ' When the object does not say which type it is, the type that owns a routine
@@ -5209,6 +5237,7 @@ FUNC PARAM_TY(at AS INTEGER) AS INTEGER
     ENDIF
     IF vt = 10 THEN RETURN TY_STR
     IF vt = V_ARRAY THEN RETURN TY_ARRN
+    IF vt = 96 THEN RETURN TY_ANY
     IF vt = 97 THEN RETURN TY_ARRS
     IF vt = 98 THEN RETURN TY_FN
     IF vt = 99 THEN RETURN TY_ARRA
@@ -5240,6 +5269,7 @@ SUB PROMOTE_PARAM(at AS INTEGER, ty AS INTEGER)
     IF ty = TY_ARRA THEN bit = 8
     IF ty = TY_MAP THEN bit = 16
     IF ty = TY_FN THEN bit = 32
+    IF ty = TY_ANY OR ty = TY_OBJ THEN bit = 128
     IF (CINT(parSeen[at]) BAND bit) = 0 THEN
         parSeen[at] = CINT(parSeen[at]) BOR bit
         inferChanged = 1
@@ -5256,22 +5286,29 @@ SUB APPLY_PARAM_SEEN()
             at = CINT(fnParAt[f]) + i
             IF parType[at] <> 0 THEN CONTINUEFOR
             IF ENDS_IN_DOLLAR(parName[at]) = 1 THEN CONTINUEFOR
-            mask = CINT(parSeen[at]) BAND 63
-            IF mask = 0 THEN CONTINUEFOR
+            mask = CINT(parSeen[at])
+            IF mask = 0 OR mask = 64 THEN CONTINUEFOR
             IF mask = 1 THEN
                 parType[at] = 10
             ELSEIF mask = 2 THEN
                 parType[at] = V_ARRAY
             ELSEIF mask = 4 THEN
                 parType[at] = 97
+            ELSEIF mask = 8 THEN
+                parType[at] = 99
             ELSEIF mask = 16 THEN
                 parType[at] = 11
                 parUdt[at] = ""
             ELSEIF mask = 32 THEN
                 parType[at] = 98
-            ELSEIF (mask BAND 49) = 0 THEN
+            ELSEIF (mask BAND 241) = 0 THEN
                 ' Some mix of array shapes: the tagged one carries them all.
                 parType[at] = 99
+            ELSE
+                ' Witnesses of different kinds: the value travels with its
+                ' tag, and the body reads it the way the reference reads a
+                ' runtime-tagged parameter.
+                parType[at] = 96
             ENDIF
         NEXT i
     NEXT f
@@ -5389,7 +5426,7 @@ SUB R_RET_SCAN(ix AS INTEGER)
         t = CINT(E_TYPE(CINT(stExpr[ix])))
         ' A tagged answer stays a number: its bits ride the double, the way
         ' the reference puns them, and the slot type never goes two-headed.
-        IF t <> TY_NUM ANDALSO t <> TY_BOOL ANDALSO t <> TY_ANY ANDALSO retSeen = TY_NUM THEN retSeen = t
+        IF t <> TY_NUM ANDALSO t <> TY_ANY ANDALSO retSeen = TY_NUM THEN retSeen = t
     ENDIF
     FOR b = 0 TO stBrN[ix] - 1
         at = CINT(stBrAt[ix]) + b
@@ -5406,6 +5443,32 @@ SUB R_RET_SCAN(ix AS INTEGER)
     FOR i = 0 TO stFinN[ix] - 1
         R_RET_SCAN(CINT(bodyBuf[CINT(stFinAt[ix]) + i]))
     NEXT i
+ENDSUB
+
+' The top-level declarations were typed before the routines' answers were
+' known; whatever was left a plain number is asked again.
+SUB REFRESH_TOP_DECLS()
+    DIM j AS INTEGER
+    DIM ix AS INTEGER
+    DIM k AS INTEGER
+    DIM t AS INTEGER
+    DIM g AS INTEGER
+    FOR j = 0 TO topN - 1
+        ix = CINT(bodyBuf[topAt + j])
+        k = CINT(stKind[ix])
+        IF k <> K_DIM ANDALSO k <> K_LET ANDALSO k <> K_ASSIGN THEN CONTINUEFOR
+        IF stVar[ix] = "" ORELSE stExpr[ix] < 0 THEN CONTINUEFOR
+        IF stVType[ix] <> 0 THEN CONTINUEFOR
+        t = CINT(NORM_TY(CINT(E_TYPE(CINT(stExpr[ix])))))
+        IF t = TY_NUM THEN CONTINUEFOR
+        g = CINT(GV_FIND(stVar[ix]))
+        IF g >= 0 ANDALSO (gvType[g] = TY_NUM ORELSE gvType[g] = TY_ANY) THEN
+            IF gvType[g] <> t THEN
+                gvType[g] = t
+                inferChanged = 1
+            ENDIF
+        ENDIF
+    NEXT j
 ENDSUB
 
 SUB INFER_RETURNS()
@@ -5752,6 +5815,10 @@ FUNC AS_BITS$(v AS STRING, ty AS INTEGER) AS STRING
     DIM t AS STRING
     IF ty = TY_ANY THEN RETURN v
     t = NEWTMP$()
+    IF ty = TY_BOOL THEN
+        W("  " + t + " = zext i1 " + v + " to i64")
+        RETURN t
+    ENDIF
     IF IS_PTRISH(ty) = 1 THEN
         W("  " + t + " = ptrtoint ptr " + v + " to i64")
     ELSE
@@ -5773,6 +5840,8 @@ FUNC G_BRIDGE$(nm AS STRING, ix AS INTEGER, wantTy AS INTEGER) AS STRING
     DIM raw AS STRING
     DIM t AS STRING
     DIM ai AS INTEGER
+    DIM argBits[16] AS STRING
+    DIM argTags[16] AS STRING
 
     n = 0
     IF ix >= 0 THEN n = CINT(exArgN[ix])
@@ -5782,6 +5851,9 @@ FUNC G_BRIDGE$(nm AS STRING, ix AS INTEGER, wantTy AS INTEGER) AS STRING
         RETURN "0.0"
     ENDIF
 
+    ' Every argument is a value before any slot is written: an argument's
+    ' own bridged call uses the same scratch, and a slot filled early
+    ' would be under its feet.
     FOR i = 0 TO n - 1
         ' A routine's name crosses the wire as the name: the machine on the
         ' other side looks it up, which is the only way it can know one
@@ -5794,15 +5866,37 @@ FUNC G_BRIDGE$(nm AS STRING, ix AS INTEGER, wantTy AS INTEGER) AS STRING
         ELSE
             v = G_EXPR(ai)
             vt = lastType
-            bits = AS_BITS$(v, vt)
+            ' A native map has no wire shape of its own; it crosses boxed
+            ' as a handle the machine already understands, and a tagged
+            ' value settles the same question when it runs.
+            IF vt = TY_MAP THEN
+                bits = NEWTMP$()
+                W("  " + bits + " = call i64 @jdrt_map_to_handle(ptr " + G_RT_HANDLE$() + ", ptr " + v + ")")
+                vt = TY_UDT
+            ELSE
+                IF vt = TY_ANY THEN
+                    t = NEWTMP$()
+                    W("  " + t + " = call {i64, i32} @__any_wire(i64 " + v + ", i32 " + lastTag + ", ptr " + G_RT_HANDLE$() + ")")
+                    bits = NEWTMP$()
+                    W("  " + bits + " = extractvalue {i64, i32} " + t + ", 0")
+                    lastTag = NEWTMP$()
+                    W("  " + lastTag + " = extractvalue {i64, i32} " + t + ", 1")
+                ELSE
+                    bits = AS_BITS$(v, vt)
+                ENDIF
+            ENDIF
         ENDIF
+        argBits[i] = bits
+        argTags[i] = TAG_OF$(vt)
+    NEXT i
 
+    FOR i = 0 TO n - 1
         slot = NEWTMP$()
         W("  " + slot + " = getelementptr i64, ptr %bargs, i32 " + STR$(i))
-        W("  store i64 " + bits + ", ptr " + slot)
+        W("  store i64 " + argBits[i] + ", ptr " + slot)
         slot = NEWTMP$()
         W("  " + slot + " = getelementptr i32, ptr %btags, i32 " + STR$(i))
-        W("  store i32 " + STR$(WIRE_TAG(vt)) + ", ptr " + slot)
+        W("  store i32 " + argTags[i] + ", ptr " + slot)
     NEXT i
 
     nameC = STR_CONST$(nm)
@@ -5818,6 +5912,17 @@ FUNC G_BRIDGE$(nm AS STRING, ix AS INTEGER, wantTy AS INTEGER) AS STRING
         G_CHECK_ERR(rt)
         lastType = wantTy
         RETURN raw
+    ENDIF
+
+    ' A whole value stays with the machine; what comes back is its handle.
+    IF wantTy = TY_OBJ OR wantTy = TY_MAP THEN
+        raw = NEWTMP$()
+        W("  " + raw + " = call i64 @jdrt_call_typed_obj(ptr " + rt + ", ptr " + nameC + ", ptr %bargs, ptr %btags, i32 " + STR$(n) + ")")
+        G_CHECK_ERR(rt)
+        t = NEWTMP$()
+        W("  " + t + " = inttoptr i64 " + raw + " to ptr")
+        lastType = TY_OBJ
+        RETURN t
     ENDIF
 
     IF wantTy = TY_VOID THEN
@@ -5912,7 +6017,13 @@ FUNC G_LAMBDA$(ix AS INTEGER) AS STRING
     n = CINT(exLpN[ix])
     sig = ""
     FOR i = 0 TO n - 1
-        LV_ADD(lpBuf[pat + i], TY_NUM)
+        ' A reducer's parameter is the group it is handed, riding punned
+        ' in the double the trampoline contract prescribes.
+        IF aggGrpMode = 1 THEN
+            LV_ADD(lpBuf[pat + i], TY_ARRA)
+        ELSE
+            LV_ADD(lpBuf[pat + i], TY_NUM)
+        ENDIF
         IF i > 0 THEN sig = sig + ", "
         sig = sig + "double %p" + STR$(i)
     NEXT i
@@ -5925,7 +6036,13 @@ FUNC G_LAMBDA$(ix AS INTEGER) AS STRING
         prologue = prologue + "  %l_" + lvName[i] + " = alloca " + LL_TY$(CINT(lvType[i])) + CHR$(10)
     NEXT i
     FOR i = 0 TO n - 1
-        prologue = prologue + "  store double %p" + STR$(i) + ", ptr %l_" + lpBuf[pat + i] + CHR$(10)
+        IF aggGrpMode = 1 THEN
+            prologue = prologue + "  %pb" + STR$(i) + " = bitcast double %p" + STR$(i) + " to i64" + CHR$(10)
+            prologue = prologue + "  %pp" + STR$(i) + " = inttoptr i64 %pb" + STR$(i) + " to ptr" + CHR$(10)
+            prologue = prologue + "  store ptr %pp" + STR$(i) + ", ptr %l_" + lpBuf[pat + i] + CHR$(10)
+        ELSE
+            prologue = prologue + "  store double %p" + STR$(i) + ", ptr %l_" + lpBuf[pat + i] + CHR$(10)
+        ENDIF
     NEXT i
 
     savedIr = ir
@@ -5996,6 +6113,14 @@ FUNC G_NATIVE$(ni AS INTEGER, ix AS INTEGER) AS STRING
         IF want = "P" THEN
             argsTxt = argsTxt + "ptr " + AS_PTR$(v, vt)
         ELSE
+            ' A tagged value's tag is fresh here and says how its bits
+            ' spell the number.
+            IF vt = TY_ANY THEN
+                raw = NEWTMP$()
+                W("  " + raw + " = call double @__any_num(i64 " + v + ", i32 " + lastTag + ", ptr " + G_RT_HANDLE$() + ")")
+                v = raw
+                vt = TY_NUM
+            ENDIF
             IF want = "D" THEN
                 argsTxt = argsTxt + "double " + AS_NUM$(v, vt)
             ELSE
@@ -6058,18 +6183,29 @@ FUNC G_LEN_TAGGED$(bits AS STRING) AS STRING
     aLbl = NEWLBL$("len.arr")
     sLbl = NEWLBL$("len.str")
     eLbl = NEWLBL$("len.done")
-    W("  br i1 " + isArr + ", label %" + aLbl + ", label %" + sLbl)
+    r = NEWLBL$("len.other")
+    W("  br i1 " + isArr + ", label %" + aLbl + ", label %" + r)
     W(aLbl + ":")
     la = NEWTMP$()
     W("  " + la + " = call i64 @jdb_array_len(ptr " + p + ")")
     W("  br label %" + eLbl)
+    W(r + ":")
+    isArr = NEWTMP$()
+    W("  " + isArr + " = icmp eq i32 " + lastTag + ", 2")
+    t = NEWLBL$("len.held")
+    W("  br i1 " + isArr + ", label %" + sLbl + ", label %" + t)
     W(sLbl + ":")
     ls = NEWTMP$()
     W("  " + ls + " = call i64 @jdb_len_str(ptr " + p + ")")
     W("  br label %" + eLbl)
+    W(t + ":")
+    isArr = NEWTMP$()
+    W("  " + isArr + " = call i64 @jdrt_val_length(ptr " + G_RT_HANDLE$() + ", i64 " + bits + ")")
+    W("  br label %" + eLbl)
     W(eLbl + ":")
+    p = t
     t = NEWTMP$()
-    W("  " + t + " = phi i64 [ " + la + ", %" + aLbl + " ], [ " + ls + ", %" + sLbl + " ]")
+    W("  " + t + " = phi i64 [ " + la + ", %" + aLbl + " ], [ " + ls + ", %" + sLbl + " ], [ " + isArr + ", %" + p + " ]")
     r = NEWTMP$()
     W("  " + r + " = sitofp i64 " + t + " to double")
     lastType = TY_NUM
@@ -6084,6 +6220,7 @@ FUNC G_BUILTIN$(bi AS INTEGER, ix AS INTEGER) AS STRING
     DIM vt AS INTEGER
     DIM argsTxt AS STRING
     DIM sym AS STRING
+    DIM t AS STRING
 
     n = 0
     IF ix >= 0 THEN n = CINT(exArgN[ix])
@@ -6104,6 +6241,14 @@ FUNC G_BUILTIN$(bi AS INTEGER, ix AS INTEGER) AS STRING
                 IF vt = TY_ANY THEN RETURN G_LEN_TAGGED$(v)
             ENDIF
         ELSE
+            ' A tagged value's tag is still fresh here and says how its
+            ' bits spell the number.
+            IF vt = TY_ANY THEN
+                t = NEWTMP$()
+                W("  " + t + " = call double @__any_num(i64 " + v + ", i32 " + lastTag + ", ptr " + G_RT_HANDLE$() + ")")
+                v = t
+                vt = TY_NUM
+            ENDIF
             IF want = "I" THEN
                 argsTxt = argsTxt + "i64 " + TO_I64$(v, vt)
             ELSE
@@ -6132,7 +6277,20 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
         RETURN TY_STR
     ENDIF
     IF k = X_MAP_LIT THEN RETURN TY_MAP
-    IF k = X_ARRAY_LIT THEN RETURN TY_ARRA
+    IF k = X_ARRAY_LIT THEN
+        ' A literal whose members are all text is an array of text.
+        IF exArgN[ix] > 0 THEN
+            op = 1
+            FOR f = 0 TO exArgN[ix] - 1
+                IF E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + f])) <> TY_STR THEN
+                    op = 0
+                    EXITFOR
+                ENDIF
+            NEXT f
+            IF op = 1 THEN RETURN TY_ARRS
+        ENDIF
+        RETURN TY_ARRA
+    ENDIF
     IF k = X_VARIABLE THEN
         ' A builtin that takes nothing reads like a variable.
         f = CINT(BI_FIND(exStr[ix]))
@@ -6148,7 +6306,14 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
         ENDIF
         RETURN CINT(SYM_TYPE(exStr[ix]))
     ENDIF
-    IF k = X_INDEX THEN RETURN CINT(ELEM_TY(CINT(E_TYPE(CINT(exLeft[ix])))))
+    IF k = X_INDEX THEN
+        ' An element of an array known to hold instances is an instance.
+        f = CINT(exLeft[ix])
+        IF f >= 0 ANDALSO exKind[f] = X_VARIABLE THEN
+            IF UDT_OF$(exStr[f] + "[]") <> "" THEN RETURN TY_UDT
+        ENDIF
+        RETURN CINT(ELEM_TY(CINT(E_TYPE(CINT(exLeft[ix])))))
+    ENDIF
     IF k = X_MEMBER THEN
         IF ENDS_IN_DOLLAR(exStr[ix]) = 1 THEN RETURN TY_STR
         RETURN TY_NUM
@@ -6160,6 +6325,17 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
             f = CINT(argBuf[CINT(exArgAt[ix])])
             IF exKind[f] = X_ARRAY_LIT ANDALSO exArgN[f] > 1 THEN RETURN TY_ARRA
         ENDIF
+        ' IIF answers whichever arm; the true one names the shape.
+        IF exFn[ix] = "IIF" ANDALSO exArgN[ix] = 3 THEN
+            op = CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + 1])))
+            IF op <> TY_NUM ANDALSO op <> TY_BOOL THEN RETURN op
+        ENDIF
+        ' The five that answer the array they were given keep its text.
+        IF exFn[ix] = "UNIQUE" OR exFn[ix] = "REVERSE" OR exFn[ix] = "SORT" OR exFn[ix] = "TAKE" OR exFn[ix] = "DROP" OR exFn[ix] = "APPEND" THEN
+            FOR op = 0 TO exArgN[ix] - 1
+                IF E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + op])) = TY_ARRS THEN RETURN TY_ARRS
+            NEXT op
+        ENDIF
         f = CINT(FN_FIND(exFn[ix]))
         IF f >= 0 THEN RETURN CINT(fnRet[f])
         ' A routine handed in as the first argument picks the entry point
@@ -6170,24 +6346,32 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
                 IF f >= 0 THEN RETURN CINT(NAT_RET_TY(f))
             ENDIF
         ENDIF
+        ' A name off the no-vectorise list, handed an array, answers one.
+        IF IS_NOVEC(exFn[ix]) = 0 THEN
+            FOR op = 0 TO exArgN[ix] - 1
+                IF IS_ARR(CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + op])))) = 1 THEN
+                    IF BI_FIND(exFn[ix]) >= 0 ORELSE NAT_FIND(exFn[ix], CINT(exArgN[ix])) >= 0 THEN
+                        IF ENDS_IN_DOLLAR(exFn[ix]) = 1 THEN RETURN TY_ARRS
+                        RETURN TY_ARRA
+                    ENDIF
+                ENDIF
+            NEXT op
+        ENDIF
         f = CINT(BI_FIND(exFn[ix]))
         IF f >= 0 ANDALSO LEN(biSig[f]) = exArgN[ix] THEN RETURN CINT(BI_RET_TY(f))
         f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
-        IF f >= 0 THEN
-            ' A scalar-shaped native handed an array answers one, cell by cell.
-            FOR op = 0 TO exArgN[ix] - 1
-                IF MID$(natArgs[f], op, 1) <> "P" THEN
-                    IF IS_ARR(CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + op])))) = 1 THEN RETURN TY_ARRA
-                ENDIF
-            NEXT op
-            RETURN CINT(NAT_RET_TY(f))
-        ENDIF
+        IF f >= 0 THEN RETURN CINT(NAT_RET_TY(f))
         ' Over the bridge the shape comes from the name: the reference's own
         ' list for the array answers, and the dollar for the string ones.
         ' A few of those arrays hold text, and their names say which; the
         ' rest come back tagged, since a bridge array may nest anything.
+        ' The names on the object list answer whole held values.
+        IF IS_OBJ_RETURNER(exFn[ix]) = 1 THEN RETURN TY_OBJ
         ' The clock and the date arithmetic answer date strings.
         IF exFn[ix] = "NOW" OR exFn[ix] = "CVDATE" OR exFn[ix] = "CDATE" OR exFn[ix] = "DATEADD" THEN RETURN TY_STR
+        IF exFn[ix] = "DATE.UTC" THEN RETURN TY_STR
+        ' IIF answers whichever arm; the true one names the shape.
+        IF exFn[ix] = "IIF" ANDALSO exArgN[ix] = 3 THEN RETURN CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + 1])))
         IF exFn[ix] = "SPLIT" OR exFn[ix] = "LINES" OR exFn[ix] = "WORDS" THEN RETURN TY_ARRS
         IF exFn[ix] = "CHARS" OR exFn[ix] = "KEYS" OR exFn[ix] = "MAP.KEYS" THEN RETURN TY_ARRS
         IF exFn[ix] = "REGEX.FINDALL" OR exFn[ix] = "REGEX_FINDALL" OR exFn[ix] = "OS.ARGS" THEN RETURN TY_ARRS
@@ -6257,12 +6441,16 @@ FUNC DIM_TYPE(ix AS INTEGER) AS INTEGER
     IF vt = V_ARRAY THEN
         IF IS_MULTIDIM(ix) = 1 THEN RETURN TY_ARRA
         ' An array of a declared type holds instances, which are pointers,
-        ' so its cells answer with their tag like any mixed array.
+        ' so its cells answer with their tag like any mixed array. A name
+        ' wearing the dollar holds text.
         IF stEType[ix] = 11 THEN RETURN TY_ARRA
         IF stEType[ix] = 10 THEN RETURN TY_ARRS
+        IF ENDS_IN_DOLLAR(stVar[ix]) = 1 THEN RETURN TY_ARRS
         RETURN TY_ARRN
     ENDIF
     IF vt = 10 THEN RETURN TY_STR
+    ' DYNAMIC is the spelled-out tagged array.
+    IF vt = 14 THEN RETURN TY_ARRA
     IF vt = 0 ANDALSO stExpr[ix] >= 0 THEN RETURN CINT(NORM_TY(CINT(E_TYPE(CINT(stExpr[ix])))))
     RETURN TY_NUM
 ENDFUNC
@@ -6270,6 +6458,8 @@ ENDFUNC
 FUNC RET_TY(ix AS INTEGER) AS INTEGER
     IF stRType[ix] = 10 THEN RETURN TY_STR
     IF stRType[ix] = V_ARRAY THEN RETURN TY_ARRN
+    ' AS OBJECT answers a whole held value, the way the reference tags it.
+    IF stRType[ix] = 11 THEN RETURN TY_OBJ
     IF ENDS_IN_DOLLAR(stFunc[ix]) = 1 THEN RETURN TY_STR
     RETURN TY_NUM
 ENDFUNC
@@ -6303,52 +6493,69 @@ SUB SCAN_ROUTINES()
     NEXT j
 ENDSUB
 
-' Whether an expression anywhere below subscripts the name.
+' Whether an expression anywhere below subscripts the name: bit one for a
+' counted cell, bit two for a named entry.
 FUNC NM_IXED_E(ix AS INTEGER, nm AS STRING) AS INTEGER
     DIM i AS INTEGER
+    DIM r AS INTEGER
     IF ix < 0 THEN RETURN 0
+    r = 0
     IF exKind[ix] = X_INDEX THEN
         i = CINT(exLeft[ix])
-        IF i >= 0 ANDALSO exKind[i] = X_VARIABLE ANDALSO exStr[i] = nm THEN RETURN 1
+        IF i >= 0 ANDALSO exKind[i] = X_VARIABLE ANDALSO exStr[i] = nm THEN
+            IF E_TYPE(CINT(exRight[ix])) = TY_STR THEN
+                r = 2
+            ELSE
+                r = 1
+            ENDIF
+        ENDIF
     ENDIF
-    IF NM_IXED_E(CINT(exLeft[ix]), nm) = 1 THEN RETURN 1
-    IF NM_IXED_E(CINT(exRight[ix]), nm) = 1 THEN RETURN 1
+    r = r BOR NM_IXED_E(CINT(exLeft[ix]), nm)
+    r = r BOR NM_IXED_E(CINT(exRight[ix]), nm)
     FOR i = 0 TO exArgN[ix] - 1
-        IF NM_IXED_E(CINT(argBuf[CINT(exArgAt[ix]) + i]), nm) = 1 THEN RETURN 1
+        r = r BOR NM_IXED_E(CINT(argBuf[CINT(exArgAt[ix]) + i]), nm)
     NEXT i
-    RETURN 0
+    RETURN r
 ENDFUNC
 
 FUNC NM_IXED_S(ix AS INTEGER, nm AS STRING) AS INTEGER
     DIM i AS INTEGER
     DIM b AS INTEGER
     DIM at AS INTEGER
+    DIM r AS INTEGER
     IF ix < 0 THEN RETURN 0
-    IF stKind[ix] = K_INDEX_ASSIGN ANDALSO stVar[ix] = nm ANDALSO stIxN[ix] > 0 THEN RETURN 1
-    IF NM_IXED_E(CINT(stExpr[ix]), nm) = 1 THEN RETURN 1
-    IF NM_IXED_E(CINT(stCond[ix]), nm) = 1 THEN RETURN 1
-    IF NM_IXED_E(CINT(stEnd[ix]), nm) = 1 THEN RETURN 1
-    IF NM_IXED_E(CINT(stStep[ix]), nm) = 1 THEN RETURN 1
+    r = 0
+    IF stKind[ix] = K_INDEX_ASSIGN ANDALSO stVar[ix] = nm ANDALSO stIxN[ix] > 0 THEN
+        IF E_TYPE(CINT(ixBuf[CINT(stIxAt[ix])])) = TY_STR THEN
+            r = 2
+        ELSE
+            r = 1
+        ENDIF
+    ENDIF
+    r = r BOR NM_IXED_E(CINT(stExpr[ix]), nm)
+    r = r BOR NM_IXED_E(CINT(stCond[ix]), nm)
+    r = r BOR NM_IXED_E(CINT(stEnd[ix]), nm)
+    r = r BOR NM_IXED_E(CINT(stStep[ix]), nm)
     FOR i = 0 TO stPrN[ix] - 1
-        IF NM_IXED_E(CINT(prBuf[CINT(stPrAt[ix]) + i]), nm) = 1 THEN RETURN 1
+        r = r BOR NM_IXED_E(CINT(prBuf[CINT(stPrAt[ix]) + i]), nm)
     NEXT i
     FOR i = 0 TO stIxN[ix] - 1
-        IF NM_IXED_E(CINT(ixBuf[CINT(stIxAt[ix]) + i]), nm) = 1 THEN RETURN 1
+        r = r BOR NM_IXED_E(CINT(ixBuf[CINT(stIxAt[ix]) + i]), nm)
     NEXT i
     FOR b = 0 TO stBrN[ix] - 1
         at = CINT(stBrAt[ix]) + b
-        IF NM_IXED_E(CINT(brCond[at]), nm) = 1 THEN RETURN 1
+        r = r BOR NM_IXED_E(CINT(brCond[at]), nm)
         FOR i = 0 TO brBodyN[at] - 1
-            IF NM_IXED_S(CINT(bodyBuf[CINT(brBodyAt[at]) + i]), nm) = 1 THEN RETURN 1
+            r = r BOR NM_IXED_S(CINT(bodyBuf[CINT(brBodyAt[at]) + i]), nm)
         NEXT i
     NEXT b
     FOR i = 0 TO stBodyN[ix] - 1
-        IF NM_IXED_S(CINT(bodyBuf[CINT(stBodyAt[ix]) + i]), nm) = 1 THEN RETURN 1
+        r = r BOR NM_IXED_S(CINT(bodyBuf[CINT(stBodyAt[ix]) + i]), nm)
     NEXT i
     FOR i = 0 TO stCatchN[ix] - 1
-        IF NM_IXED_S(CINT(bodyBuf[CINT(stCatchAt[ix]) + i]), nm) = 1 THEN RETURN 1
+        r = r BOR NM_IXED_S(CINT(bodyBuf[CINT(stCatchAt[ix]) + i]), nm)
     NEXT i
-    RETURN 0
+    RETURN r
 ENDFUNC
 
 SUB SCAN_ONE_ROUTINE(ix AS INTEGER)
@@ -6363,12 +6570,17 @@ SUB SCAN_ONE_ROUTINE(ix AS INTEGER)
     pat = CINT(stParAt[ix])
     FOR i = 0 TO stParN[ix] - 1
         IF parType[pat + i] = 0 ANDALSO ENDS_IN_DOLLAR(parName[pat + i]) = 0 THEN
-            FOR j = 0 TO stBodyN[ix] - 1
-                IF NM_IXED_S(CINT(bodyBuf[CINT(stBodyAt[ix]) + j]), parName[pat + i]) = 1 THEN
-                    parType[pat + i] = 99
-                    EXITFOR
-                ENDIF
-            NEXT j
+            j = 0
+            FOR k = 0 TO stBodyN[ix] - 1
+                j = j BOR NM_IXED_S(CINT(bodyBuf[CINT(stBodyAt[ix]) + k]), parName[pat + i])
+            NEXT k
+            ' Only named entries make it a map; any counted cell makes it
+            ' the tagged array that can hold either.
+            IF j = 2 THEN
+                parType[pat + i] = 11
+            ELSEIF j > 0 THEN
+                parType[pat + i] = 99
+            ENDIF
         ENDIF
     NEXT i
     fnName[fnN] = stFunc[ix]
@@ -6389,6 +6601,20 @@ SUB SCAN_ONE_ROUTINE(ix AS INTEGER)
     IF ENDS_IN_DOLLAR(stFunc[ix]) = 1 THEN fnRetDecl[fnN] = 1
     fnN = fnN + 1
 ENDSUB
+
+' Names whose declared value was a whole number or a truth literal. The
+' compiled slot is a double either way; TYPEOF answers what was written.
+DIM litTagName[512] AS STRING
+DIM litTagVal[512]
+DIM litTagN AS INTEGER
+
+FUNC LIT_TAG_OF(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO litTagN - 1
+        IF litTagName[i] = nm THEN RETURN CINT(litTagVal[i])
+    NEXT i
+    RETURN -1
+ENDFUNC
 
 ' The members of the ENUMs, each a number under its dotted name.
 DIM ecName[256] AS STRING
@@ -6442,8 +6668,42 @@ SUB SCAN_ONE(ix AS INTEGER, asLocal AS INTEGER)
     IF k = K_DIM OR k = K_LET THEN
         IF asLocal = 1 THEN
             LV_ADD(stVar[ix], CINT(DIM_TYPE(ix)))
+            IF stStatic[ix] <> 0 THEN lvStatic[CINT(LV_FIND(stVar[ix]))] = 1
         ELSE
             GV_ADD(stVar[ix], CINT(DIM_TYPE(ix)))
+        ENDIF
+        IF stConst[ix] <> 0 ANDALSO constN < 128 THEN
+            constNm[constN] = stVar[ix]
+            constN = constN + 1
+        ENDIF
+        IF stVType[ix] = 0 ANDALSO stExpr[ix] >= 0 ANDALSO litTagN < 512 THEN
+            IF exKind[CINT(stExpr[ix])] = X_LIT_INT THEN
+                litTagName[litTagN] = stVar[ix]
+                litTagVal[litTagN] = 0
+                litTagN = litTagN + 1
+            ENDIF
+            IF exKind[CINT(stExpr[ix])] = X_LIT_BOOL THEN
+                litTagName[litTagN] = stVar[ix]
+                litTagVal[litTagN] = 8
+                litTagN = litTagN + 1
+            ENDIF
+        ENDIF
+        ' One declared AS BOOLEAN answers as one whatever it was fed.
+        IF stVType[ix] = 1 ANDALSO litTagN < 512 THEN
+            litTagName[litTagN] = stVar[ix]
+            litTagVal[litTagN] = 8
+            litTagN = litTagN + 1
+        ENDIF
+        ' One fed from the clock or the date arithmetic holds a date.
+        IF stExpr[ix] >= 0 ANDALSO litTagN < 512 THEN
+            IF exKind[CINT(stExpr[ix])] = X_CALL THEN
+                b = CINT(stExpr[ix])
+                IF exFn[b] = "NOW" OR exFn[b] = "CVDATE" OR exFn[b] = "CDATE" OR exFn[b] = "DATEADD" THEN
+                    litTagName[litTagN] = stVar[ix]
+                    litTagVal[litTagN] = -2
+                    litTagN = litTagN + 1
+                ENDIF
+            ENDIF
         ENDIF
         ' Which declared type it is, so a routine call on it can be resolved.
         IF stLabel[ix] <> "" ANDALSO stLabel[ix] <> "__EXPORT__" THEN
@@ -6452,6 +6712,11 @@ SUB SCAN_ONE(ix AS INTEGER, asLocal AS INTEGER)
         RETURN
     ENDIF
     IF k = K_ASSIGN THEN
+        ' Writing to one of the built-in constants is an error the program
+        ' raises when it runs; the name never becomes a variable. A write
+        ' through a dot goes into something that already exists.
+        IF NAT_FIND(stVar[ix], 0) >= 0 THEN RETURN
+        IF INSTR(stVar[ix], ".") >= 0 THEN RETURN
         DECLARE_NAME(stVar[ix], CINT(NORM_TY(CINT(E_TYPE(CINT(stExpr[ix]))))), asLocal)
         RETURN
     ENDIF
@@ -6544,12 +6809,19 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     DIM arith AS STRING
     DIM bitOp AS STRING
     DIM cmpOp AS STRING
+    DIM lTag AS STRING
+
+    op = CINT(exOp[ix])
+
+    ' ANDALSO and ORELSE read their right side only when the left one has
+    ' not already settled the answer.
+    IF op = TOK_ANDALSO ORELSE op = TOK_ORELSE THEN RETURN G_SHORTCIRCUIT$(ix)
 
     l = G_EXPR(CINT(exLeft[ix]))
     lt = lastType
+    lTag = lastTag
     r = G_EXPR(CINT(exRight[ix]))
     rt = lastType
-    op = CINT(exOp[ix])
 
     ' + over two strings is concatenation, not arithmetic. What rides on
     ' the right becomes text if it is not already: a tagged value is read
@@ -6560,7 +6832,7 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
         ELSE
             IF LL_TY$(rt) <> "ptr" THEN
                 q = NEWTMP$()
-                W("  " + q + " = call ptr @jdb_str(double " + AS_NUM$(r, rt) + ")")
+                W("  " + q + " = call ptr @jdb_double_to_str(double " + AS_NUM$(r, rt) + ")")
                 r = q
             ENDIF
         ENDIF
@@ -6570,9 +6842,29 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
         RETURN t
     ENDIF
 
-    ' `needle IN haystack` asks whether the haystack holds it, which is what
-    ' finding its position and testing for one answers.
+    ' `needle IN haystack` asks whether the haystack holds it: a substring
+    ' of text, a key of a map, or a cell of an array.
     IF op = TT_IN THEN
+        IF rt = TY_MAP THEN
+            q = NEWTMP$()
+            W("  " + q + " = call i64 @jdb_map_has(ptr " + r + ", ptr " + AS_PTR$(l, lt) + ")")
+            t = NEWTMP$()
+            W("  " + t + " = icmp ne i64 " + q + ", 0")
+            lastType = TY_BOOL
+            RETURN t
+        ENDIF
+        IF IS_ARR(rt) = 1 THEN
+            q = NEWTMP$()
+            IF lt = TY_STR ORELSE lt = TY_ANY THEN
+                W("  " + q + " = call i64 @jdb_array_has_str(ptr " + r + ", ptr " + AS_PTR$(l, lt) + ")")
+            ELSE
+                W("  " + q + " = call i64 @jdb_array_has_num(ptr " + r + ", double " + AS_NUM$(l, lt) + ")")
+            ENDIF
+            t = NEWTMP$()
+            W("  " + t + " = icmp ne i64 " + q + ", 0")
+            lastType = TY_BOOL
+            RETURN t
+        ENDIF
         q = NEWTMP$()
         W("  " + q + " = call i64 @jdb_instr(ptr " + AS_PTR$(r, rt) + ", ptr " + AS_PTR$(l, lt) + ")")
         t = NEWTMP$()
@@ -6581,9 +6873,63 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
         RETURN t
     ENDIF
 
+    ' Text times a count repeats it, whichever side the count stands on,
+    ' and taking one text from another removes every occurrence.
+    IF op = TOK_STAR ANDALSO (lt = TY_STR ORELSE rt = TY_STR) THEN
+        t = NEWTMP$()
+        IF lt = TY_STR THEN
+            W("  " + t + " = call ptr @jdb_str_repeat(ptr " + l + ", i64 " + TO_INT$(AS_NUM$(r, rt), TY_NUM, "i64") + ")")
+        ELSE
+            W("  " + t + " = call ptr @jdb_str_repeat(ptr " + r + ", i64 " + TO_INT$(AS_NUM$(l, lt), TY_NUM, "i64") + ")")
+        ENDIF
+        lastType = TY_STR
+        RETURN t
+    ENDIF
+    IF op = TOK_MINUS ANDALSO lt = TY_STR ANDALSO rt = TY_STR THEN
+        t = NEWTMP$()
+        W("  " + t + " = call ptr @jdb_str_sub(ptr " + l + ", ptr " + r + ")")
+        lastType = TY_STR
+        RETURN t
+    ENDIF
+
+    ' Text divided by a count keeps that many characters: the count's side
+    ' says which end they come from.
+    IF op = TOK_SLASH ANDALSO (lt = TY_STR ORELSE rt = TY_STR) ANDALSO lt <> rt THEN
+        t = NEWTMP$()
+        IF lt = TY_STR THEN
+            W("  " + t + " = call ptr @jdb_str_slice(ptr " + l + ", i64 " + TO_INT$(AS_NUM$(r, rt), TY_NUM, "i64") + ", i32 0)")
+        ELSE
+            W("  " + t + " = call ptr @jdb_str_slice(ptr " + r + ", i64 " + TO_INT$(AS_NUM$(l, lt), TY_NUM, "i64") + ", i32 1)")
+        ENDIF
+        lastType = TY_STR
+        RETURN t
+    ENDIF
+
     IF lt = TY_STR ANDALSO rt = TY_STR THEN RETURN G_STRCMP$(op, l, r)
 
+    ' A tagged value against text compares as text, since the literal side
+    ' has already said what kind of comparison was meant.
+    IF op = TOK_ASSIGN OR op = TOK_NE OR op = TOK_LT OR op = TOK_GT OR op = TOK_LE OR op = TOK_GE THEN
+        IF (lt = TY_STR ANDALSO rt = TY_ANY) ORELSE (lt = TY_ANY ANDALSO rt = TY_STR) THEN
+            RETURN G_STRCMP$(op, AS_PTR$(l, lt), AS_PTR$(r, rt))
+        ENDIF
+    ENDIF
+
     IF IS_ARR(lt) = 1 ORELSE IS_ARR(rt) = 1 THEN RETURN G_ARR_OP$(op, l, lt, r, rt)
+
+    ' From here on both sides are numbers; a tagged side is read by its tag.
+    IF lt = TY_ANY THEN
+        t = NEWTMP$()
+        W("  " + t + " = call double @__any_num(i64 " + l + ", i32 " + lTag + ", ptr " + G_RT_HANDLE$() + ")")
+        l = t
+        lt = TY_NUM
+    ENDIF
+    IF rt = TY_ANY THEN
+        t = NEWTMP$()
+        W("  " + t + " = call double @__any_num(i64 " + r + ", i32 " + lastTag + ", ptr " + G_RT_HANDLE$() + ")")
+        r = t
+        rt = TY_NUM
+    ENDIF
 
     l = AS_NUM$(l, lt)
     r = AS_NUM$(r, rt)
@@ -6595,9 +6941,13 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     IF op = TOK_SLASH THEN arith = "fdiv"
     IF op = TOK_MOD THEN arith = "frem"
     IF arith <> "" THEN
+        ' Division raises rather than answering infinity, and the error
+        ' takes the same road every raised error takes.
+        IF op = TOK_SLASH THEN G_DIV_GUARD(r)
         t = NEWTMP$()
         W("  " + t + " = " + arith + " double " + l + ", " + r)
         lastType = TY_NUM
+        IF op = TOK_SLASH THEN G_CHECK_ERR(G_RT_HANDLE$())
         RETURN t
     ENDIF
 
@@ -6663,6 +7013,22 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     RETURN "0.0"
 ENDFUNC
 
+' A divisor of nothing raises before the division happens.
+SUB G_DIV_GUARD(r AS STRING)
+    DIM iszero AS STRING
+    DIM zLbl AS STRING
+    DIM okLbl AS STRING
+    iszero = NEWTMP$()
+    W("  " + iszero + " = fcmp oeq double " + r + ", 0.0")
+    zLbl = NEWLBL$("div.zero")
+    okLbl = NEWLBL$("div.ok")
+    W("  br i1 " + iszero + ", label %" + zLbl + ", label %" + okLbl)
+    W(zLbl + ":")
+    W("  call void @jdb_err_set(ptr " + STR_CONST$("Division by zero") + ", i64 1)")
+    W("  br label %" + okLbl)
+    W(okLbl + ":")
+ENDSUB
+
 ' Elementwise arithmetic and comparison, one side or both an array. The
 ' runtime walks the cells, and nesting is its recursion rather than ours.
 FUNC G_ARR_OP$(op AS INTEGER, l AS STRING, lt AS INTEGER, r AS STRING, rt AS INTEGER) AS STRING
@@ -6683,6 +7049,14 @@ FUNC G_ARR_OP$(op AS INTEGER, l AS STRING, lt AS INTEGER, r AS STRING, rt AS INT
         arrV = r : sclV = l : sclTy = lt : outTy = rt
     ELSE
         arrV = l : sclV = r : sclTy = rt : outTy = lt
+    ENDIF
+
+    ' Adding text to a text array touches every cell.
+    IF op = TOK_PLUS ANDALSO bothArr = 0 ANDALSO sclTy = TY_STR THEN
+        t = NEWTMP$()
+        W("  " + t + " = call ptr @jdb_array_str_concat(ptr " + arrV + ", ptr " + sclV + ", i32 " + STR$(scalarLeft) + ")")
+        lastType = TY_ARRS
+        RETURN t
     ENDIF
 
     code = -1
@@ -6775,6 +7149,14 @@ FUNC AS_NUM$(v AS STRING, ty AS INTEGER) AS STRING
         W("  " + t + " = bitcast i64 " + v + " to double")
         RETURN t
     ENDIF
+    ' A held value's number is asked of the machine holding it.
+    IF ty = TY_OBJ THEN
+        q = NEWTMP$()
+        W("  " + q + " = ptrtoint ptr " + v + " to i64")
+        t = NEWTMP$()
+        W("  " + t + " = call double @jdrt_val_to_f64(ptr " + G_RT_HANDLE$() + ", i64 " + q + ")")
+        RETURN t
+    ENDIF
     IF LL_TY$(ty) = "ptr" THEN
         q = NEWTMP$()
         W("  " + q + " = ptrtoint ptr " + v + " to i64")
@@ -6826,8 +7208,51 @@ FUNC COERCE$(v AS STRING, from AS INTEGER, dest AS INTEGER) AS STRING
     RETURN AS_NUM$(v, from)
 ENDFUNC
 
-' Both sides are already evaluated, so these do not short-circuit yet. The
-' comparison against the reference is on output, and no test relies on it.
+' ANDALSO and ORELSE: the right side is code that may never run, so the
+' answer lives in a slot both arms can reach, whatever blocks the right
+' side unfolds into on the way.
+FUNC G_SHORTCIRCUIT$(ix AS INTEGER) AS STRING
+    DIM mem AS STRING
+    DIM l AS STRING
+    DIM lb AS STRING
+    DIM r AS STRING
+    DIM rb AS STRING
+    DIM rhsL AS STRING
+    DIM endL AS STRING
+    DIM t AS STRING
+
+    mem = NEWTMP$()
+    W("  " + mem + " = alloca i1")
+
+    l = G_EXPR(CINT(exLeft[ix]))
+    lb = NEWTMP$()
+    W("  " + lb + " = fcmp one double " + AS_NUM$(l, lastType) + ", 0.0")
+    W("  store i1 " + lb + ", ptr " + mem)
+
+    rhsL = NEWLBL$("sc.rhs")
+    endL = NEWLBL$("sc.end")
+    IF exOp[ix] = TOK_ANDALSO THEN
+        W("  br i1 " + lb + ", label %" + rhsL + ", label %" + endL)
+    ELSE
+        W("  br i1 " + lb + ", label %" + endL + ", label %" + rhsL)
+    ENDIF
+
+    W(rhsL + ":")
+    r = G_EXPR(CINT(exRight[ix]))
+    rb = NEWTMP$()
+    W("  " + rb + " = fcmp one double " + AS_NUM$(r, lastType) + ", 0.0")
+    W("  store i1 " + rb + ", ptr " + mem)
+    W("  br label %" + endL)
+
+    W(endL + ":")
+    t = NEWTMP$()
+    W("  " + t + " = load i1, ptr " + mem)
+    lastType = TY_BOOL
+    RETURN t
+ENDFUNC
+
+' Both sides are already evaluated, so AND and OR do not short-circuit,
+' which is the eager pair's contract.
 FUNC G_LOGICAL(op AS INTEGER, l AS STRING, r AS STRING) AS STRING
     DIM lb AS STRING
     DIM rb AS STRING
@@ -6874,6 +7299,103 @@ FUNC G_MEMBER$(ix AS INTEGER) AS STRING
     RETURN G_UDT_GET$(AS_PTR$(obj, lastType), exStr[ix])
 ENDFUNC
 
+' A number under a tagged value: an array reads the cell, a value the
+' machine holds is asked for it. Both arms answer bits and a tag.
+FUNC G_ANY_INDEX$(bits AS STRING, tagReg AS STRING, idxExpr AS INTEGER) AS STRING
+    DIM iv AS STRING
+    DIM isHeld AS STRING
+    DIM hLbl AS STRING
+    DIM aLbl AS STRING
+    DIM eLbl AS STRING
+    DIM hv AS STRING
+    DIM p AS STRING
+    DIM raw AS STRING
+    DIM ab AS STRING
+    DIM at AS STRING
+    DIM outB AS STRING
+    DIM outT AS STRING
+
+    iv = G_IDX$(idxExpr)
+    isHeld = NEWTMP$()
+    W("  " + isHeld + " = icmp eq i32 " + tagReg + ", 6")
+    hLbl = NEWLBL$("ix.held")
+    aLbl = NEWLBL$("ix.arr")
+    eLbl = NEWLBL$("ix.done")
+    W("  br i1 " + isHeld + ", label %" + hLbl + ", label %" + aLbl)
+    W(hLbl + ":")
+    hv = NEWTMP$()
+    W("  " + hv + " = call i64 @jdrt_val_arr_get(ptr " + G_RT_HANDLE$() + ", i64 " + bits + ", i64 " + iv + ")")
+    W("  br label %" + eLbl)
+    W(aLbl + ":")
+    p = ANY_AS_PTR$(bits)
+    raw = NEWTMP$()
+    W("  " + raw + " = call double @jdb_array_get_tagged(ptr " + p + ", i64 " + iv + ", ptr %tvtag)")
+    at = NEWTMP$()
+    W("  " + at + " = load i32, ptr %tvtag")
+    ab = NEWTMP$()
+    W("  " + ab + " = icmp eq i32 " + at + ", 0")
+    p = NEWTMP$()
+    W("  " + p + " = select i1 " + ab + ", i32 1, i32 " + at)
+    at = p
+    ab = NEWTMP$()
+    W("  " + ab + " = bitcast double " + raw + " to i64")
+    W("  br label %" + eLbl)
+    W(eLbl + ":")
+    outB = NEWTMP$()
+    W("  " + outB + " = phi i64 [ " + hv + ", %" + hLbl + " ], [ " + ab + ", %" + aLbl + " ]")
+    outT = NEWTMP$()
+    W("  " + outT + " = phi i32 [ 6, %" + hLbl + " ], [ " + at + ", %" + aLbl + " ]")
+    lastTag = outT
+    lastType = TY_ANY
+    RETURN outB
+ENDFUNC
+
+' A name under a tagged value: a map answers its entry, a held value its
+' field, either way with the tag the entry carries.
+FUNC G_ANY_KEY$(bits AS STRING, tagReg AS STRING, keyExpr AS INTEGER) AS STRING
+    DIM keyV AS STRING
+    DIM isHeld AS STRING
+    DIM hLbl AS STRING
+    DIM mLbl AS STRING
+    DIM eLbl AS STRING
+    DIM ht2 AS STRING
+    DIM hb AS STRING
+    DIM p AS STRING
+    DIM mt AS STRING
+    DIM mb AS STRING
+    DIM outB AS STRING
+    DIM outT AS STRING
+
+    keyV = G_EXPR(keyExpr)
+    isHeld = NEWTMP$()
+    W("  " + isHeld + " = icmp eq i32 " + tagReg + ", 6")
+    hLbl = NEWLBL$("key.held")
+    mLbl = NEWLBL$("key.map")
+    eLbl = NEWLBL$("key.done")
+    W("  br i1 " + isHeld + ", label %" + hLbl + ", label %" + mLbl)
+    W(hLbl + ":")
+    ht2 = NEWTMP$()
+    W("  " + ht2 + " = call i32 @jdrt_obj_get_tagged(ptr " + G_RT_HANDLE$() + ", i64 " + bits + ", ptr " + keyV + ", ptr %tvval)")
+    hb = NEWTMP$()
+    W("  " + hb + " = load i64, ptr %tvval")
+    W("  br label %" + eLbl)
+    W(mLbl + ":")
+    p = ANY_AS_PTR$(bits)
+    mt = NEWTMP$()
+    W("  " + mt + " = call i32 @jdb_map_get_tagged(ptr " + p + ", ptr " + keyV + ", ptr %tvval)")
+    mb = NEWTMP$()
+    W("  " + mb + " = load i64, ptr %tvval")
+    W("  br label %" + eLbl)
+    W(eLbl + ":")
+    outB = NEWTMP$()
+    W("  " + outB + " = phi i64 [ " + hb + ", %" + hLbl + " ], [ " + mb + ", %" + mLbl + " ]")
+    outT = NEWTMP$()
+    W("  " + outT + " = phi i32 [ " + ht2 + ", %" + hLbl + " ], [ " + mt + ", %" + mLbl + " ]")
+    lastTag = outT
+    lastType = TY_ANY
+    RETURN outB
+ENDFUNC
+
 FUNC G_INDEX$(ix AS INTEGER) AS STRING
     DIM handle AS STRING
     DIM ht AS INTEGER
@@ -6886,12 +7408,21 @@ FUNC G_INDEX$(ix AS INTEGER) AS STRING
     handle = G_EXPR(CINT(exLeft[ix]))
     ht = lastType
 
-    ' What a tagged container is cannot be read off the tag while compiling,
-    ' but the subscript says it: a name keys a map, a number indexes an array.
-    IF ht = TY_ANY THEN
+    ' A tagged value whose expression is known to be an instance is one.
+    IF ht = TY_ANY ANDALSO E_TYPE(CINT(exLeft[ix])) = TY_UDT THEN
         handle = ANY_AS_PTR$(handle)
-        ht = TY_ARRA
-        IF E_TYPE(CINT(exRight[ix])) = TY_STR THEN ht = TY_MAP
+        ht = TY_UDT
+    ENDIF
+
+    ' What a tagged container is cannot be read off the tag while compiling,
+    ' but the subscript says it: a name keys a map, a number indexes an
+    ' array. The tag still gets the last word at run time, since the value
+    ' may be one the machine behind the bridge is holding.
+    IF ht = TY_ANY THEN
+        IF E_TYPE(CINT(exRight[ix])) = TY_STR THEN
+            RETURN G_ANY_KEY$(handle, lastTag, CINT(exRight[ix]))
+        ENDIF
+        RETURN G_ANY_INDEX$(handle, lastTag, CINT(exRight[ix]))
     ENDIF
 
     ' A container that rode through a numeric slot is punned back to the
@@ -6902,9 +7433,57 @@ FUNC G_INDEX$(ix AS INTEGER) AS STRING
         IF E_TYPE(CINT(exRight[ix])) = TY_STR THEN ht = TY_MAP
     ENDIF
 
+    ' A held value's cells and fields are read by the machine holding it:
+    ' a name asks the field with its tag, a number takes the cell.
+    IF ht = TY_OBJ THEN
+        t = NEWTMP$()
+        W("  " + t + " = ptrtoint ptr " + handle + " to i64")
+        IF E_TYPE(CINT(exRight[ix])) = TY_STR THEN
+            keyV = G_EXPR(CINT(exRight[ix]))
+            raw = NEWTMP$()
+            W("  " + raw + " = call i32 @jdrt_obj_get_tagged(ptr " + G_RT_HANDLE$() + ", i64 " + t + ", ptr " + keyV + ", ptr %tvval)")
+            bits = NEWTMP$()
+            W("  " + bits + " = load i64, ptr %tvval")
+            lastTag = raw
+            lastType = TY_ANY
+            RETURN bits
+        ENDIF
+        iv = G_IDX$(CINT(exRight[ix]))
+        raw = NEWTMP$()
+        W("  " + raw + " = call i64 @jdrt_val_arr_get(ptr " + G_RT_HANDLE$() + ", i64 " + t + ", i64 " + iv + ")")
+        t = NEWTMP$()
+        W("  " + t + " = inttoptr i64 " + raw + " to ptr")
+        lastType = TY_OBJ
+        RETURN t
+    ENDIF
+
+    ' A name subscripting an instance is one of its fields, which live in
+    ' the instance store, not in a map.
+    IF ht = TY_UDT ANDALSO E_TYPE(CINT(exRight[ix])) = TY_STR THEN
+        IF exKind[CINT(exRight[ix])] = X_LIT_STR THEN
+            RETURN G_UDT_GET$(handle, exStr[CINT(exRight[ix])])
+        ENDIF
+        keyV = G_EXPR(CINT(exRight[ix]))
+        t = NEWTMP$()
+        W("  " + t + " = call ptr @jdb_udt_get_str(ptr " + handle + ", ptr " + keyV + ")")
+        lastType = TY_STR
+        RETURN t
+    ENDIF
+
+    ' A name under a value the compiler can prove is a plain array is map
+    ' syntax on an array, which quietly answers nothing, as the reference
+    ' has it. Anything less provable reads as the map it then must be.
+    IF IS_ARR(ht) = 1 ANDALSO E_TYPE(CINT(exRight[ix])) = TY_STR THEN
+        IF exKind[CINT(exLeft[ix])] = X_VARIABLE ANDALSO UDT_OF$(exStr[CINT(exLeft[ix])]) = "" THEN
+            lastType = TY_NUM
+            RETURN "0.0"
+        ENDIF
+        ht = TY_MAP
+    ENDIF
+
     IF ht = TY_MAP THEN
         keyV = G_EXPR(CINT(exRight[ix]))
-        RETURN G_TAGGED_READ$(handle, keyV, 1)
+        RETURN G_TAGGED_READ$(handle, AS_PTR$(keyV, lastType), 1)
     ENDIF
 
     iv = G_IDX$(CINT(exRight[ix]))
@@ -6982,8 +7561,7 @@ FUNC G_METHOD_ON$(objEx AS INTEGER, method AS STRING, ix AS INTEGER) AS STRING
         RETURN G_BRIDGE$(method, ix, CINT(E_TYPE(ix)))
     ENDIF
 
-    obj = G_EXPR(objEx)
-    IF lastType = TY_ANY THEN obj = ANY_AS_PTR$(obj)
+    obj = AS_PTR$(G_EXPR(objEx), lastType)
 
     n = CINT(exArgN[ix])
     pat = CINT(fnParAt[f])
@@ -7019,6 +7597,7 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     DIM n AS INTEGER
     DIM av[64] AS STRING
     DIM avt[64]
+    DIM avg[64] AS STRING
     DIM argsTxt AS STRING
     DIM pty AS INTEGER
     DIM rty AS INTEGER
@@ -7034,12 +7613,14 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     IF exFn[ix] = "TYPEOF" ANDALSO exArgN[ix] = 1 THEN RETURN G_TYPEOF$(ix)
 
     ' PUSH appends and hands back the array, which may have moved; the
-    ' variable that named it is told where it lives now.
+    ' variable that named it is told where it lives now. POP reads the
+    ' last cell by its tag before the runtime shortens the array.
     IF exFn[ix] = "PUSH" ANDALSO exArgN[ix] = 2 THEN RETURN G_PUSH$(ix)
+    IF exFn[ix] = "POP" ANDALSO exArgN[ix] = 1 THEN RETURN G_POP$(ix)
 
     IF INSTR(exFn[ix], ".") >= 0 THEN
         hof = HEAD_OF$(exFn[ix])
-        IF SYM_TYPE(hof) = TY_UDT THEN
+        IF SYM_TYPE(hof) = TY_UDT ORELSE (SYM_DECLARED(hof) = 1 ANDALSO UDT_OF$(hof) <> "") THEN
             t = NEWTMP$()
             i = CINT(NEW_EXPR(X_VARIABLE, CINT(exLine[ix])))
             exStr[i] = hof
@@ -7066,6 +7647,15 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
             IF hof <> "" THEN
                 f = CINT(NAT_FIND(hof, CINT(exArgN[ix])))
                 IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+                ' REDUCE without a seed starts the fold from nothing.
+                IF hof = "__reduce_fn" ANDALSO exArgN[ix] = 2 THEN
+                    hof = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
+                    t = AS_PTR$(G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + 1])), lastType)
+                    argsTxt = NEWTMP$()
+                    W("  " + argsTxt + " = call double @jdb_reduce_fn(ptr " + hof + ", ptr " + t + ", double 0.0)")
+                    lastType = TY_NUM
+                    RETURN argsTxt
+                ENDIF
             ENDIF
             IF exFn[ix] = "GROUPBY" ORELSE exFn[ix] = "INTEGRATE" THEN
                 genError = exFn[ix] + " with a function reference has no native path"
@@ -7080,6 +7670,104 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
             f = CINT(argBuf[CINT(exArgAt[ix])])
             IF exKind[f] = X_ARRAY_LIT ANDALSO exArgN[f] > 1 THEN
                 RETURN G_BRIDGE$(exFn[ix], ix, TY_ARRA)
+            ENDIF
+        ENDIF
+
+        ' IIF whose arms are not numbers goes over the bridge whole, and
+        ' answers the shape of its true arm.
+        IF exFn[ix] = "IIF" ANDALSO exArgN[ix] = 3 THEN
+            pty = CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + 1])))
+            IF pty <> TY_NUM ANDALSO pty <> TY_BOOL THEN RETURN G_BRIDGE$(exFn[ix], ix, pty)
+        ENDIF
+
+        ' FORMAT$ whose arguments are not all numbers goes to the typed
+        ' twins, each argument's bits labelled with what they are.
+        IF exFn[ix] = "FORMAT$" ANDALSO exArgN[ix] >= 2 ANDALSO exArgN[ix] <= 5 THEN
+            hof = ""
+            FOR i = 1 TO exArgN[ix] - 1
+                pty = CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + i])))
+                IF pty = TY_STR THEN
+                    hof = hof + "s"
+                ELSEIF pty = TY_MAP ORELSE pty = TY_OBJ ORELSE pty = TY_ANY THEN
+                    hof = hof + "h"
+                ELSE
+                    hof = hof + "d"
+                ENDIF
+            NEXT i
+            IF INSTR(hof, "s") >= 0 ORELSE INSTR(hof, "h") >= 0 THEN RETURN G_FORMAT_T$(ix, hof)
+        ENDIF
+
+        ' Nothing looks like a missing map entry or the quiet NaN, and
+        ' either way the answer is about absence, not about a number.
+        IF (exFn[ix] = "ISNONE" ORELSE exFn[ix] = "ISNULL") ANDALSO exArgN[ix] = 1 THEN RETURN G_ISNONE$(ix)
+
+        ' OUTER carries its operator third; with a routine there it takes
+        ' the entry point built for one.
+        IF exFn[ix] = "OUTER" ANDALSO exArgN[ix] = 3 THEN
+            IF IS_FN_VALUE(CINT(argBuf[CINT(exArgAt[ix]) + 2])) = 1 THEN
+                f = CINT(NAT_FIND("__outer_fn", 3))
+                IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+            ENDIF
+        ENDIF
+
+        ' AGG carries its reducer third: a lambda as itself, an array
+        ' aggregate's name through a little trampoline that puns the
+        ' group pointer out of the double it rides in.
+        IF exFn[ix] = "AGG" ANDALSO exArgN[ix] = 3 THEN
+            IF IS_FN_VALUE(CINT(argBuf[CINT(exArgAt[ix]) + 2])) = 1 THEN RETURN G_AGG$(ix)
+        ENDIF
+
+        ' COPYV from a scalar fills, which is the fill native's job.
+        IF exFn[ix] = "COPYV" ANDALSO exArgN[ix] = 2 THEN
+            IF IS_ARR(CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + 1])))) = 0 THEN
+                f = CINT(NAT_FIND("FILLV", 2))
+                IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+            ENDIF
+        ENDIF
+
+        ' Binding and raising events go to the runtime's own pair: the
+        ' handler by its compiled address, the payload as one string.
+        IF exFn[ix] = "__EVENT_ON" ANDALSO exArgN[ix] = 2 THEN
+            i = CINT(argBuf[CINT(exArgAt[ix]) + 1])
+            IF exKind[i] = X_LIT_STR THEN
+                hof = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
+                W("  call void @jdb_event_on(ptr " + AS_PTR$(hof, lastType) + ", ptr @f_" + exStr[i] + ")")
+                lastType = TY_NUM
+                RETURN "0.0"
+            ENDIF
+        ENDIF
+        IF exFn[ix] = "__EVENT_RAISE" ANDALSO exArgN[ix] = 2 THEN
+            hof = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
+            t = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + 1]))
+            W("  call void @jdb_event_raise_str(ptr " + AS_PTR$(hof, TY_STR) + ", ptr " + AS_PTR$(t, lastType) + ")")
+            lastType = TY_NUM
+            RETURN "0.0"
+        ENDIF
+
+        ' The length of a held value is asked of the machine holding it.
+        IF exFn[ix] = "LEN" ANDALSO exArgN[ix] = 1 THEN
+            IF E_TYPE(CINT(argBuf[CINT(exArgAt[ix])])) = TY_OBJ THEN RETURN G_OBJ_LEN$(ix)
+        ENDIF
+
+        ' APPEND of two arrays lays them end to end.
+        IF exFn[ix] = "APPEND" ANDALSO exArgN[ix] = 2 THEN
+            IF IS_ARR(CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix])])))) = 1 ANDALSO IS_ARR(CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + 1])))) = 1 THEN
+                f = CINT(NAT_FIND("__append_arr", 2))
+                IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+            ENDIF
+        ENDIF
+
+        ' UNIQUE over text compares the text; LENV asks a nest its shape.
+        IF exFn[ix] = "UNIQUE" ANDALSO exArgN[ix] = 1 THEN
+            IF E_TYPE(CINT(argBuf[CINT(exArgAt[ix])])) = TY_ARRS THEN
+                f = CINT(NAT_FIND("__unique_str", 1))
+                IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
+            ENDIF
+        ENDIF
+        IF exFn[ix] = "LENV" ANDALSO exArgN[ix] = 1 THEN
+            IF IS_ARR(CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix])])))) = 1 THEN
+                f = CINT(NAT_FIND("__arr_len_shape", 1))
+                IF f >= 0 THEN RETURN G_NATIVE$(f, ix)
             ENDIF
         ENDIF
 
@@ -7099,18 +7787,29 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
             ENDIF
         ENDIF
 
+        ' A name off the reference's no-vectorise list, handed an array,
+        ' works cell by cell; the machine behind the bridge does that. One
+        ' expecting a number but handed text parses the text there too.
+        IF IS_NOVEC(exFn[ix]) = 0 THEN
+            FOR i = 0 TO exArgN[ix] - 1
+                IF IS_ARR(CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + i])))) = 1 THEN
+                    IF BI_FIND(exFn[ix]) >= 0 ORELSE NAT_FIND(exFn[ix], CINT(exArgN[ix])) >= 0 THEN
+                        IF ENDS_IN_DOLLAR(exFn[ix]) = 1 THEN RETURN G_BRIDGE$(exFn[ix], ix, TY_ARRS)
+                        RETURN G_BRIDGE$(exFn[ix], ix, TY_ARRA)
+                    ENDIF
+                ENDIF
+            NEXT i
+        ENDIF
+
         f = CINT(BI_FIND(exFn[ix]))
         IF f >= 0 ANDALSO LEN(biSig[f]) = exArgN[ix] THEN RETURN G_BUILTIN$(f, ix)
         f = CINT(NAT_FIND(exFn[ix], CINT(exArgN[ix])))
         IF f >= 0 THEN
-            ' A scalar-shaped native handed an array vectorises cell by
-            ' cell, and one handed text needs the machine that reads text;
-            ' both live behind the bridge.
             FOR i = 0 TO exArgN[ix] - 1
                 IF MID$(natArgs[f], i, 1) <> "P" THEN
-                    pty = CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + i])))
-                    IF IS_ARR(pty) = 1 THEN RETURN G_BRIDGE$(exFn[ix], ix, TY_ARRA)
-                    IF pty = TY_STR THEN RETURN G_BRIDGE$(exFn[ix], ix, CINT(NAT_RET_TY(f)))
+                    IF E_TYPE(CINT(argBuf[CINT(exArgAt[ix]) + i])) = TY_STR THEN
+                        RETURN G_BRIDGE$(exFn[ix], ix, CINT(NAT_RET_TY(f)))
+                    ENDIF
                 ENDIF
             NEXT i
             RETURN G_NATIVE$(f, ix)
@@ -7128,6 +7827,7 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     FOR i = 0 TO n - 1
         av[i] = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
         avt[i] = lastType
+        avg[i] = lastTag
     NEXT i
 
     pat = CINT(fnParAt[f])
@@ -7135,7 +7835,19 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     FOR i = 0 TO n - 1
         IF i > 0 THEN argsTxt = argsTxt + ", "
         pty = CINT(PARAM_TY(pat + i))
-        IF LL_TY$(pty) = "ptr" THEN
+        IF pty = TY_ANY THEN
+            ' The value rides with its tag, whatever shape it came in as.
+            IF avt[i] = TY_ANY THEN
+                t = avg[i]
+            ELSE
+                t = STR$(WIRE_TAG(CINT(avt[i])))
+            ENDIF
+            hof = NEWTMP$()
+            W("  " + hof + " = insertvalue {i64, i32} undef, i64 " + AS_BITS$(av[i], CINT(avt[i])) + ", 0")
+            av[i] = NEWTMP$()
+            W("  " + av[i] + " = insertvalue {i64, i32} " + hof + ", i32 " + t + ", 1")
+            argsTxt = argsTxt + "{i64, i32} " + av[i]
+        ELSEIF LL_TY$(pty) = "ptr" THEN
             argsTxt = argsTxt + "ptr " + AS_PTR$(av[i], CINT(avt[i]))
         ELSE
             argsTxt = argsTxt + "double " + AS_NUM$(av[i], CINT(avt[i]))
@@ -7151,6 +7863,13 @@ FUNC G_CALL$(ix AS INTEGER) AS STRING
     rty = CINT(fnRet[f])
     t = NEWTMP$()
     W("  " + t + " = call " + LL_TY$(rty) + " @f_" + exFn[ix] + "(" + argsTxt + ")")
+    ' A truth answer rides the double and is a truth again on arrival.
+    IF rty = TY_BOOL THEN
+        hof = NEWTMP$()
+        W("  " + hof + " = fcmp one double " + t + ", 0.0")
+        lastType = TY_BOOL
+        RETURN hof
+    ENDIF
     lastType = rty
     RETURN t
 ENDFUNC
@@ -7173,6 +7892,36 @@ DIM natN AS INTEGER
 DIM arrRet[256] AS STRING
 DIM arrRetN AS INTEGER
 
+' Names the reference's backend keeps away from auto-vectorisation, from
+' its own list: they take arrays whole or answer scalars from them.
+DIM novecName[400] AS STRING
+DIM novecN AS INTEGER
+
+FUNC IS_NOVEC(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO novecN - 1
+        IF novecName[i] = nm THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+' Names whose bridge answer is a whole value held by the machine, from the
+' reference's own set, plus its rule that MAP.* builds one except for the
+' four that answer numbers or arrays.
+DIM objRet[64] AS STRING
+DIM objRetN AS INTEGER
+
+FUNC IS_OBJ_RETURNER(nm AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO objRetN - 1
+        IF objRet[i] = nm THEN RETURN 1
+    NEXT i
+    IF LEFT$(nm, 4) = "MAP." THEN
+        IF nm <> "MAP.SIZE" ANDALSO nm <> "MAP.EXISTS" ANDALSO nm <> "MAP.KEYS" ANDALSO nm <> "MAP.VALUES" THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
 FUNC LL_OF_LETTER$(c AS STRING) AS STRING
     IF c = "V" THEN RETURN "void"
     IF c = "D" THEN RETURN "double"
@@ -7190,6 +7939,8 @@ SUB LOAD_NATIVES()
 
     natN = 0
     arrRetN = 0
+    novecN = 0
+    objRetN = 0
     txt = REPLACE$(TXTREADER$(nativesPath), CHR$(13) + CHR$(10), CHR$(10))
     at = 0
     DO
@@ -7208,6 +7959,20 @@ SUB LOAD_NATIVES()
             IF arrRetN < 256 THEN
                 arrRet[arrRetN] = MID$(ln, 5, LEN(ln) - 5)
                 arrRetN = arrRetN + 1
+            ENDIF
+            CONTINUEDO
+        ENDIF
+        IF LEFT$(ln, 7) = "@NOVEC" + CHR$(9) THEN
+            IF novecN < 400 THEN
+                novecName[novecN] = MID$(ln, 7, LEN(ln) - 7)
+                novecN = novecN + 1
+            ENDIF
+            CONTINUEDO
+        ENDIF
+        IF LEFT$(ln, 5) = "@OBJ" + CHR$(9) THEN
+            IF objRetN < 64 THEN
+                objRet[objRetN] = MID$(ln, 5, LEN(ln) - 5)
+                objRetN = objRetN + 1
             ENDIF
             CONTINUEDO
         ENDIF
@@ -7360,6 +8125,9 @@ CONST TAG_MAP = 4
 FUNC WIRE_TAG(ty AS INTEGER) AS INTEGER
     IF ty = TY_STR THEN RETURN TAG_STR
     IF ty = TY_MAP THEN RETURN TAG_MAP
+    IF ty = TY_BOOL THEN RETURN 8
+    IF ty = TY_FN THEN RETURN 5
+    IF ty = TY_UDT OR ty = TY_OBJ THEN RETURN 6
     IF IS_ARR(ty) = 1 THEN RETURN TAG_ARR
     RETURN TAG_F64
 ENDFUNC
@@ -7433,9 +8201,14 @@ FUNC G_TAGGED_READ$(handle AS STRING, keyOrIdx AS STRING, isMap AS INTEGER) AS S
     W("  " + raw + " = call double @jdb_array_get_tagged(ptr " + handle + ", i64 " + keyOrIdx + ", ptr %tvtag)")
     tag = NEWTMP$()
     W("  " + tag + " = load i32, ptr %tvtag")
+    ' An untagged cell holds a plain number: the array convention, unlike
+    ' the map's, keeps the bits as the double they are.
+    slot = NEWTMP$()
+    W("  " + slot + " = icmp eq i32 " + tag + ", 0")
+    lastTag = NEWTMP$()
+    W("  " + lastTag + " = select i1 " + slot + ", i32 1, i32 " + tag)
     bits = NEWTMP$()
     W("  " + bits + " = bitcast double " + raw + " to i64")
-    lastTag = tag
     lastType = TY_ANY
     RETURN bits
 ENDFUNC
@@ -7449,21 +8222,319 @@ FUNC G_ARRAY_LIT$(ix AS INTEGER) AS STRING
     DIM nextH AS STRING
     DIM v AS STRING
     DIM vt AS INTEGER
+    DIM allStr AS INTEGER
 
     handle = NEWTMP$()
     W("  " + handle + " = call ptr @jdb_array_new(i64 0)")
 
     n = CINT(exArgN[ix])
+    allStr = 1
     FOR i = 0 TO n - 1
         v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
         vt = lastType
+        IF vt <> TY_STR THEN allStr = 0
         nextH = NEWTMP$()
-        W("  " + nextH + " = call ptr @jdb_array_append_tagged(ptr " + handle + ", double " + AS_CELL$(v, vt) + ", i32 " + STR$(WIRE_TAG(vt)) + ")")
+        W("  " + nextH + " = call ptr @jdb_array_append_tagged(ptr " + handle + ", double " + AS_CELL$(v, vt) + ", i32 " + TAG_OF$(vt) + ")")
         handle = nextH
     NEXT i
 
+    ' A literal of nothing but text is a text array to every reader.
+    IF n > 0 ANDALSO allStr = 1 THEN
+        W("  call void @jdb_array_set_string_elems(ptr " + handle + ")")
+        lastType = TY_ARRS
+        RETURN handle
+    ENDIF
+
     lastType = TY_ARRA
     RETURN handle
+ENDFUNC
+
+' Whether the k-th pair of braces in the format spells out a number's
+' presentation, which is what a colon inside it asks for.
+FUNC FMT_SLOT_NUM(fmt AS STRING, slot AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    DIM seen AS INTEGER
+    DIM c AS STRING
+    DIM inside AS INTEGER
+    DIM hasColon AS INTEGER
+    seen = -1
+    inside = 0
+    hasColon = 0
+    FOR i = 0 TO LEN(fmt) - 1
+        c = MID$(fmt, i, 1)
+        IF inside = 0 THEN
+            IF c = "{" THEN
+                inside = 1
+                hasColon = 0
+            ENDIF
+        ELSE
+            IF c = "}" THEN
+                seen = seen + 1
+                IF seen = slot THEN RETURN hasColon
+                inside = 0
+            ELSE
+                IF c = ":" THEN hasColon = 1
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+' FORMAT$ through the typed twins: each argument's bits labelled d for a
+' number, s for text. A tagged argument follows the spec: a colon in the
+' format asks for a number, bare braces ask for the text.
+FUNC G_FORMAT_T$(ix AS INTEGER, kinds AS STRING) AS STRING
+    DIM fmtV AS STRING
+    DIM i AS INTEGER
+    DIM v AS STRING
+    DIM vt AS INTEGER
+    DIM bitsTxt AS STRING
+    DIM types AS STRING
+    DIM c AS STRING
+    DIM t AS STRING
+    DIM wantNum AS INTEGER
+    DIM fr AS INTEGER
+
+    fr = CINT(argBuf[CINT(exArgAt[ix])])
+    fmtV = AS_PTR$(G_EXPR(fr), lastType)
+
+    types = ""
+    bitsTxt = ""
+    FOR i = 1 TO exArgN[ix] - 1
+        v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        vt = lastType
+        c = MID$(kinds, i - 1, 1)
+        IF vt = TY_ANY THEN
+            wantNum = 0
+            IF exKind[fr] = X_LIT_STR ANDALSO FMT_SLOT_NUM(exStr[fr], i - 1) = 1 THEN wantNum = 1
+            IF wantNum = 1 THEN
+                t = NEWTMP$()
+                W("  " + t + " = call double @__any_num(i64 " + v + ", i32 " + lastTag + ", ptr " + G_RT_HANDLE$() + ")")
+                v = t
+                vt = TY_NUM
+                c = "d"
+            ELSE
+                t = NEWTMP$()
+                W("  " + t + " = call ptr @__any_str(i64 " + v + ", i32 " + lastTag + ", ptr " + G_RT_HANDLE$() + ")")
+                v = t
+                vt = TY_STR
+                c = "s"
+            ENDIF
+        ENDIF
+        types = types + c
+        bitsTxt = bitsTxt + ", i64 " + AS_BITS$(v, vt)
+    NEXT i
+
+    t = NEWTMP$()
+    W("  " + t + " = call ptr @jdb_format" + STR$(exArgN[ix] - 1) + "_t(ptr " + fmtV + ", ptr " + STR_CONST$(types) + bitsTxt + ")")
+    lastType = TY_STR
+    RETURN t
+ENDFUNC
+
+FUNC G_ISNONE$(ix AS INTEGER) AS STRING
+    DIM v AS STRING
+    DIM t AS STRING
+    DIM q AS STRING
+    DIM r AS STRING
+    v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
+    IF lastType = TY_ANY THEN
+        ' Absent entries come back as an empty integer; a NaN spells the
+        ' same absence in a number's clothes.
+        t = NEWTMP$()
+        W("  " + t + " = icmp eq i32 " + lastTag + ", 0")
+        q = NEWTMP$()
+        W("  " + q + " = icmp eq i64 " + v + ", 0")
+        r = NEWTMP$()
+        W("  " + r + " = and i1 " + t + ", " + q)
+        t = NEWTMP$()
+        W("  " + t + " = bitcast i64 " + v + " to double")
+        q = NEWTMP$()
+        W("  " + q + " = fcmp uno double " + t + ", " + t)
+        t = NEWTMP$()
+        W("  " + t + " = or i1 " + r + ", " + q)
+        lastType = TY_BOOL
+        RETURN t
+    ENDIF
+    IF lastType = TY_NUM THEN
+        t = NEWTMP$()
+        W("  " + t + " = fcmp uno double " + v + ", " + v)
+        lastType = TY_BOOL
+        RETURN t
+    ENDIF
+    lastType = TY_BOOL
+    RETURN "false"
+ENDFUNC
+
+' A routine handed around as a value goes by one calling shape: doubles
+' in, a double out, pointers riding the bits. The wrapper turns that
+' shape into whatever the routine really takes and answers.
+DIM frwName[64] AS STRING
+DIM frwSym[64] AS STRING
+DIM frwN AS INTEGER
+
+FUNC FRW$(fname AS STRING) AS STRING
+    DIM f AS INTEGER
+    DIM i AS INTEGER
+    DIM pat AS INTEGER
+    DIM pty AS INTEGER
+    DIM nm AS STRING
+    DIM argsTxt AS STRING
+    DIM pre AS STRING
+
+    f = CINT(FN_FIND(fname))
+    IF f < 0 THEN RETURN "@f_" + fname
+
+    ' All plain doubles need no dressing.
+    pty = 0
+    pat = CINT(fnParAt[f])
+    FOR i = 0 TO fnParN[f] - 1
+        IF LL_TY$(CINT(PARAM_TY(pat + i))) <> "double" THEN pty = 1
+    NEXT i
+    IF fnIsSub[f] = 0 ANDALSO LL_TY$(CINT(fnRet[f])) <> "double" THEN pty = 1
+    IF pty = 0 ANDALSO fnIsSub[f] = 0 THEN RETURN "@f_" + fname
+
+    FOR i = 0 TO frwN - 1
+        IF frwName[i] = fname THEN RETURN frwSym[i]
+    NEXT i
+
+    nm = "@__frw" + STR$(frwN) + "_" + fname
+    IF frwN < 64 THEN
+        frwName[frwN] = fname
+        frwSym[frwN] = nm
+        frwN = frwN + 1
+    ENDIF
+
+    argsTxt = ""
+    pre = ""
+    FOR i = 0 TO fnParN[f] - 1
+        IF i > 0 THEN argsTxt = argsTxt + ", "
+        pty = CINT(PARAM_TY(pat + i))
+        IF LL_TY$(pty) = "double" THEN
+            argsTxt = argsTxt + "double %a" + STR$(i)
+        ELSE
+            pre = pre + "  %b" + STR$(i) + " = bitcast double %a" + STR$(i) + " to i64" + CHR$(10)
+            pre = pre + "  %q" + STR$(i) + " = inttoptr i64 %b" + STR$(i) + " to ptr" + CHR$(10)
+            argsTxt = argsTxt + "ptr %q" + STR$(i)
+        ENDIF
+    NEXT i
+
+    fnDefs = fnDefs + "define double " + nm + "("
+    FOR i = 0 TO fnParN[f] - 1
+        IF i > 0 THEN fnDefs = fnDefs + ", "
+        fnDefs = fnDefs + "double %a" + STR$(i)
+    NEXT i
+    fnDefs = fnDefs + ") {" + CHR$(10) + "entry:" + CHR$(10) + pre
+    IF fnIsSub[f] = 1 THEN
+        fnDefs = fnDefs + "  call void @f_" + fname + "(" + argsTxt + ")" + CHR$(10)
+        fnDefs = fnDefs + "  ret double 0.0" + CHR$(10)
+    ELSE
+        IF LL_TY$(CINT(fnRet[f])) = "double" THEN
+            fnDefs = fnDefs + "  %r = call double @f_" + fname + "(" + argsTxt + ")" + CHR$(10)
+            fnDefs = fnDefs + "  ret double %r" + CHR$(10)
+        ELSE
+            fnDefs = fnDefs + "  %r = call ptr @f_" + fname + "(" + argsTxt + ")" + CHR$(10)
+            fnDefs = fnDefs + "  %ri = ptrtoint ptr %r to i64" + CHR$(10)
+            fnDefs = fnDefs + "  %rd = bitcast i64 %ri to double" + CHR$(10)
+            fnDefs = fnDefs + "  ret double %rd" + CHR$(10)
+        ENDIF
+    ENDIF
+    fnDefs = fnDefs + "}" + CHR$(10) + CHR$(10)
+    RETURN nm
+ENDFUNC
+
+' Builds the double-to-double trampoline an aggregate's name needs when it
+' stands as a reducer: the parameter's bits are the group array's pointer.
+FUNC AGG_TRAMP$(aggName AS STRING) AS STRING
+    DIM nm AS STRING
+    nm = "__aggw" + STR$(lambdaNo) + "_" + aggName
+    lambdaNo = lambdaNo + 1
+    fnDefs = fnDefs + "define double @" + nm + "(double %g) {" + CHR$(10)
+    fnDefs = fnDefs + "entry:" + CHR$(10)
+    fnDefs = fnDefs + "  %b = bitcast double %g to i64" + CHR$(10)
+    fnDefs = fnDefs + "  %p = inttoptr i64 %b to ptr" + CHR$(10)
+    IF aggName = "SUM" THEN
+        fnDefs = fnDefs + "  %r = call double @jdb_array_sum(ptr %p)" + CHR$(10)
+    ELSEIF aggName = "MEAN" THEN
+        fnDefs = fnDefs + "  %r = call double @jdb_mean(ptr %p)" + CHR$(10)
+    ELSE
+        fnDefs = fnDefs + "  %n = call i64 @jdb_array_len(ptr %p)" + CHR$(10)
+        fnDefs = fnDefs + "  %r = sitofp i64 %n to double" + CHR$(10)
+    ENDIF
+    fnDefs = fnDefs + "  ret double %r" + CHR$(10)
+    fnDefs = fnDefs + "}" + CHR$(10) + CHR$(10)
+    RETURN "@" + nm
+ENDFUNC
+
+DIM aggGrpMode AS INTEGER
+
+FUNC G_AGG$(ix AS INTEGER) AS STRING
+    DIM keysV AS STRING
+    DIM keysTy AS INTEGER
+    DIM valsV AS STRING
+    DIM red AS STRING
+    DIM fr AS INTEGER
+    DIM t AS STRING
+    DIM flagTxt AS STRING
+
+    keysV = AS_PTR$(G_EXPR(CINT(argBuf[CINT(exArgAt[ix])])), lastType)
+    keysTy = CINT(E_TYPE(CINT(argBuf[CINT(exArgAt[ix])])))
+    valsV = AS_PTR$(G_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + 1])), lastType)
+
+    fr = CINT(argBuf[CINT(exArgAt[ix]) + 2])
+    flagTxt = "1"
+    IF exKind[fr] = X_LAMBDA THEN
+        aggGrpMode = 1
+        red = G_LAMBDA$(fr)
+        aggGrpMode = 0
+        ' The reduced cell carries what the reducer answers.
+        IF E_TYPE(CINT(exRight[fr])) = TY_STR THEN flagTxt = "2"
+    ELSE
+        IF exStr[fr] = "SUM" OR exStr[fr] = "MEAN" OR exStr[fr] = "LEN" THEN
+            red = AGG_TRAMP$(exStr[fr])
+        ELSE
+            red = "@f_" + exStr[fr]
+            IF ENDS_IN_DOLLAR(exStr[fr]) = 1 THEN flagTxt = "2"
+        ENDIF
+    ENDIF
+    t = NEWTMP$()
+    W("  " + t + " = call ptr @jdb_agg_fn(ptr " + red + ", ptr " + keysV + ", ptr " + valsV + ", i32 " + flagTxt + ")")
+    lastType = TY_ARRA
+    RETURN t
+ENDFUNC
+
+FUNC G_OBJ_LEN$(ix AS INTEGER) AS STRING
+    DIM v AS STRING
+    DIM h AS STRING
+    DIM t AS STRING
+    v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
+    h = NEWTMP$()
+    W("  " + h + " = ptrtoint ptr " + v + " to i64")
+    t = NEWTMP$()
+    W("  " + t + " = call i64 @jdrt_val_length(ptr " + G_RT_HANDLE$() + ", i64 " + h + ")")
+    v = NEWTMP$()
+    W("  " + v + " = sitofp i64 " + t + " to double")
+    lastType = TY_NUM
+    RETURN v
+ENDFUNC
+
+FUNC G_POP$(ix AS INTEGER) AS STRING
+    DIM arrV AS STRING
+    DIM n AS STRING
+    DIM last AS STRING
+    DIM bits AS STRING
+    DIM t AS STRING
+
+    arrV = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
+    IF lastType = TY_ANY THEN arrV = ANY_AS_PTR$(arrV)
+    n = NEWTMP$()
+    W("  " + n + " = call i64 @jdb_array_len(ptr " + arrV + ")")
+    last = NEWTMP$()
+    W("  " + last + " = sub i64 " + n + ", 1")
+    bits = G_TAGGED_READ$(arrV, last, 0)
+    t = NEWTMP$()
+    W("  " + t + " = call double @jdb_array_pop(ptr " + arrV + ")")
+    lastType = TY_ANY
+    RETURN bits
 ENDFUNC
 
 FUNC G_PUSH$(ix AS INTEGER) AS STRING
@@ -7486,7 +8557,7 @@ FUNC G_PUSH$(ix AS INTEGER) AS STRING
     vt = lastType
 
     t = NEWTMP$()
-    W("  " + t + " = call ptr @jdb_array_append_tagged(ptr " + arrV + ", double " + AS_CELL$(v, vt) + ", i32 " + STR$(WIRE_TAG(vt)) + ")")
+    W("  " + t + " = call ptr @jdb_array_append_tagged(ptr " + arrV + ", double " + AS_CELL$(v, vt) + ", i32 " + TAG_OF$(vt) + ")")
 
     tgt = CINT(argBuf[CINT(exArgAt[ix])])
     IF exKind[tgt] = X_VARIABLE ANDALSO SYM_DECLARED(exStr[tgt]) = 1 THEN
@@ -7503,6 +8574,14 @@ FUNC G_PUSH$(ix AS INTEGER) AS STRING
         ENDIF
     ENDIF
 
+    ' Growing an entry of a map hands the map the grown array back.
+    IF exKind[tgt] = X_INDEX ANDALSO E_TYPE(CINT(exRight[tgt])) = TY_STR THEN
+        half = G_EXPR(CINT(exLeft[tgt]))
+        half = AS_PTR$(half, lastType)
+        pair = G_EXPR(CINT(exRight[tgt]))
+        W("  call void @jdb_map_set_tagged(ptr " + half + ", ptr " + AS_PTR$(pair, lastType) + ", double " + AS_CELL$(t, TY_ARRA) + ", i32 3)")
+    ENDIF
+
     lastType = arrTy
     RETURN t
 ENDFUNC
@@ -7512,12 +8591,26 @@ FUNC G_TYPEOF$(ix AS INTEGER) AS STRING
     DIM t AS STRING
     DIM q AS STRING
 
-    ' A whole-number literal is an integer before it is anything else.
+    ' A whole-number literal is an integer before it is anything else, and
+    ' a name declared from one keeps what was written.
     IF exKind[CINT(argBuf[CINT(exArgAt[ix])])] = X_LIT_INT THEN
         t = NEWTMP$()
         W("  " + t + " = call ptr @jdb_typeof_tag(i64 0)")
         lastType = TY_STR
         RETURN t
+    ENDIF
+    IF exKind[CINT(argBuf[CINT(exArgAt[ix])])] = X_VARIABLE THEN
+        q = exStr[CINT(argBuf[CINT(exArgAt[ix])])]
+        IF LIT_TAG_OF(q) >= 0 ANDALSO SYM_TYPE(q) = TY_NUM THEN
+            t = NEWTMP$()
+            W("  " + t + " = call ptr @jdb_typeof_tag(i64 " + STR$(LIT_TAG_OF(q)) + ")")
+            lastType = TY_STR
+            RETURN t
+        ENDIF
+        IF LIT_TAG_OF(q) = -2 THEN
+            lastType = TY_STR
+            RETURN STR_CONST$("DATE")
+        ENDIF
     ENDIF
 
     v = G_EXPR(CINT(argBuf[CINT(exArgAt[ix])]))
@@ -7528,6 +8621,11 @@ FUNC G_TYPEOF$(ix AS INTEGER) AS STRING
         W("  " + t + " = call ptr @jdb_typeof_tag(i64 " + q + ")")
     ELSEIF lastType = TY_NUM THEN
         W("  " + t + " = call ptr @jdb_typeof_f64(double " + v + ")")
+    ELSEIF lastType = TY_OBJ THEN
+        ' Only the machine holding the value knows what it really is.
+        q = NEWTMP$()
+        W("  " + q + " = ptrtoint ptr " + v + " to i64")
+        W("  " + t + " = call ptr @jdrt_val_type_str(ptr " + G_RT_HANDLE$() + ", i64 " + q + ")")
     ELSE
         W("  " + t + " = call ptr @jdb_typeof_tag(i64 " + STR$(WIRE_TAG(lastType)) + ")")
     ENDIF
@@ -7610,7 +8708,7 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
     IF k = X_LIT_STR THEN
         IF exFuncRef[ix] <> 0 THEN
             lastType = TY_FN
-            RETURN "@f_" + exStr[ix]
+            RETURN FRW$(exStr[ix])
         ENDIF
         lastType = TY_STR
         RETURN STR_CONST$(exStr[ix])
@@ -7684,6 +8782,18 @@ FUNC G_EXPR(ix AS INTEGER) AS STRING
             W("  " + nm + " = sitofp i64 " + t + " to double")
             lastType = TY_NUM
             RETURN nm
+        ENDIF
+        ' The minus on text splits it into its characters.
+        IF lastType = TY_STR THEN
+            t = NEWTMP$()
+            W("  " + t + " = call ptr @jdb_str_to_chars(ptr " + v + ")")
+            lastType = TY_ARRS
+            RETURN t
+        ENDIF
+        IF IS_ARR(lastType) = 1 THEN
+            t = NEWTMP$()
+            W("  " + t + " = call ptr @jdb_array_scalar_op(ptr " + v + ", double -1.0, i32 2, i32 0)")
+            RETURN t
         ENDIF
         t = NEWTMP$()
         W("  " + t + " = fneg double " + AS_NUM$(v, lastType))
@@ -7851,7 +8961,16 @@ SUB G_IF(ix AS INTEGER)
         ELSE
             thenL = NEWLBL$("if.then")
             elseL = NEWLBL$("if.else")
-            cond = AS_NUM$(G_EXPR(CINT(brCond[at])), lastType)
+            cond = G_EXPR(CINT(brCond[at]))
+            ' An array as a condition is true when all its cells are.
+            IF IS_ARR(CINT(lastType)) = 1 THEN
+                cmp = NEWTMP$()
+                W("  " + cmp + " = call i64 @jdb_array_all(ptr " + cond + ")")
+                cond = NEWTMP$()
+                W("  " + cond + " = sitofp i64 " + cmp + " to double")
+            ELSE
+                cond = AS_NUM$(cond, lastType)
+            ENDIF
             cmp = NEWTMP$()
             W("  " + cmp + " = fcmp one double " + cond + ", 0.0")
             W("  br i1 " + cmp + ", label %" + thenL + ", label %" + elseL)
@@ -8017,11 +9136,11 @@ SUB G_DIM_ARRAY(ix AS INTEGER, nm AS STRING, ty AS INTEGER)
     ' An array of a declared type holds instances, not empty cells, so each
     ' one is made before anything can reach into it.
     IF callNd >= 0 ANDALSO exFn[callNd] = "__MAKE_UDT_ARRAY__" THEN
-        G_FILL_UDT_ARRAY(handle, n64, exStr[CINT(argBuf[CINT(exArgAt[callNd]) + 1])])
+        G_FILL_UDT_ARRAY(handle, n64, exStr[CINT(argBuf[CINT(exArgAt[callNd]) + 1])], callNd)
     ENDIF
 ENDSUB
 
-SUB G_FILL_UDT_ARRAY(handle AS STRING, count AS STRING, typeName AS STRING)
+SUB G_FILL_UDT_ARRAY(handle AS STRING, count AS STRING, typeName AS STRING, callNd AS INTEGER)
     DIM iName AS STRING
     DIM topL AS STRING
     DIM bodyL AS STRING
@@ -8032,6 +9151,22 @@ SUB G_FILL_UDT_ARRAY(handle AS STRING, count AS STRING, typeName AS STRING)
     DIM obj AS STRING
     DIM iv AS STRING
     DIM nextV AS STRING
+    DIM vecs[8] AS STRING
+    DIM nVec AS INTEGER
+    DIM i AS INTEGER
+    DIM argsTxt AS STRING
+    DIM initFn AS INTEGER
+
+    ' The per-slot constructor vectors ride behind the shape and the type.
+    nVec = 0
+    initFn = CINT(FN_FIND(typeName + ".INIT"))
+    IF callNd >= 0 THEN
+        FOR i = 2 TO exArgN[callNd] - 1
+            IF nVec >= 8 THEN EXITFOR
+            vecs[nVec] = AS_PTR$(G_EXPR(CINT(argBuf[CINT(exArgAt[callNd]) + i])), lastType)
+            nVec = nVec + 1
+        NEXT i
+    ENDIF
 
     iName = "__udtfill" + STR$(eachNo)
     eachNo = eachNo + 1
@@ -8058,6 +9193,16 @@ SUB G_FILL_UDT_ARRAY(handle AS STRING, count AS STRING, typeName AS STRING)
     iv = NEWTMP$()
     W("  " + iv + " = fptosi double " + idxV + " to i64")
     W("  call void @jdb_array_set(ptr " + handle + ", i64 " + iv + ", double " + AS_CELL$(obj, TY_UDT) + ")")
+    ' Each slot's INIT gets that slot's share of the vectors.
+    IF nVec > 0 ANDALSO initFn >= 0 THEN
+        argsTxt = "ptr " + obj
+        FOR i = 0 TO nVec - 1
+            nextV = NEWTMP$()
+            W("  " + nextV + " = call double @jdb_array_get(ptr " + vecs[i] + ", i64 " + iv + ")")
+            argsTxt = argsTxt + ", double " + nextV
+        NEXT i
+        W("  call void @f_" + typeName + ".INIT(" + argsTxt + ")")
+    ENDIF
     nextV = NEWTMP$()
     W("  " + nextV + " = fadd double " + idxV + ", 1.0")
     W("  store double " + nextV + ", ptr @v_" + iName)
@@ -8147,12 +9292,46 @@ SUB G_UDT_SET(obj AS STRING, field AS STRING, v AS STRING, vt AS INTEGER)
     W("  call void @jdb_udt_set_f64(ptr " + obj + ", ptr " + fieldC + ", double " + COERCE$(v, vt, TY_NUM) + ")")
 ENDSUB
 
+' The names of every string-typed field any declared type carries, held
+' flat: a field read through a loose slot cannot say which type it is of,
+' and a name that is a string field anywhere is read as text, the same
+' fallback the reference applies.
+DIM strFld[512] AS STRING
+DIM strFldN AS INTEGER
+
+FUNC IS_STR_FIELD(field AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    IF ENDS_IN_DOLLAR(field) = 1 THEN RETURN 1
+    IF field = "__TYPE__" THEN RETURN 1
+    FOR i = 0 TO strFldN - 1
+        IF strFld[i] = field THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+SUB SCAN_STR_FIELDS()
+    DIM j AS INTEGER
+    DIM ix AS INTEGER
+    DIM m AS INTEGER
+    strFldN = 0
+    FOR j = 0 TO topN - 1
+        ix = CINT(bodyBuf[topAt + j])
+        IF stKind[ix] <> K_TYPE_DECL THEN CONTINUEFOR
+        FOR m = 0 TO stTmN[ix] - 1
+            IF tmType[CINT(stTmAt[ix]) + m] = 10 ANDALSO strFldN < 512 THEN
+                strFld[strFldN] = tmName[CINT(stTmAt[ix]) + m]
+                strFldN = strFldN + 1
+            ENDIF
+        NEXT m
+    NEXT j
+ENDSUB
+
 FUNC G_UDT_GET$(obj AS STRING, field AS STRING) AS STRING
     DIM fieldC AS STRING
     DIM t AS STRING
     fieldC = STR_CONST$(field)
     t = NEWTMP$()
-    IF ENDS_IN_DOLLAR(field) = 1 THEN
+    IF IS_STR_FIELD(field) = 1 THEN
         W("  " + t + " = call ptr @jdb_udt_get_str(ptr " + obj + ", ptr " + fieldC + ")")
         lastType = TY_STR
         RETURN t
@@ -8168,6 +9347,35 @@ SUB G_NEW_UDT(nm AS STRING, typeName AS STRING)
     obj = NEWTMP$()
     W("  " + obj + " = call ptr @jdb_udt_new(ptr " + STR_CONST$(typeName) + ")")
     W("  store ptr " + obj + ", ptr " + SYM_REF$(nm))
+ENDSUB
+
+' The constructor arguments go to the type's INIT, the instance first.
+SUB G_CALL_INIT(nm AS STRING, typeName AS STRING, ctAt AS INTEGER, ctN AS INTEGER)
+    DIM f AS INTEGER
+    DIM obj AS STRING
+    DIM argsTxt AS STRING
+    DIM i AS INTEGER
+    DIM v AS STRING
+    DIM pty AS INTEGER
+    DIM pat AS INTEGER
+
+    f = CINT(FN_FIND(typeName + ".INIT"))
+    IF f < 0 THEN RETURN
+    obj = NEWTMP$()
+    W("  " + obj + " = load ptr, ptr " + SYM_REF$(nm))
+    argsTxt = "ptr " + obj
+    pat = CINT(fnParAt[f])
+    FOR i = 0 TO ctN - 1
+        v = G_EXPR(CINT(ctBuf[ctAt + i]))
+        pty = TY_NUM
+        IF i + 1 < fnParN[f] THEN pty = CINT(PARAM_TY(pat + i + 1))
+        IF LL_TY$(pty) = "ptr" THEN
+            argsTxt = argsTxt + ", ptr " + AS_PTR$(v, lastType)
+        ELSE
+            argsTxt = argsTxt + ", double " + AS_NUM$(v, lastType)
+        ENDIF
+    NEXT i
+    W("  call void @f_" + typeName + ".INIT(" + argsTxt + ")")
 ENDSUB
 
 SUB G_CHAIN_ASSIGN(ix AS INTEGER)
@@ -8236,8 +9444,9 @@ SUB G_INDEX_ASSIGN(ix AS INTEGER)
     IF ty = TY_ANY THEN
         handle = ANY_AS_PTR$(EXTRACT_BITS$(handle))
         ty = TY_ARRA
-        IF E_TYPE(CINT(ixBuf[CINT(stIxAt[ix])])) = TY_STR THEN ty = TY_MAP
     ENDIF
+    ' A container written to under a name is a map, whatever the slot said.
+    IF E_TYPE(CINT(ixBuf[CINT(stIxAt[ix])])) = TY_STR THEN ty = TY_MAP
 
     ' Every subscript but the last walks one level in; the last one is where
     ' the value lands.
@@ -8314,6 +9523,7 @@ SUB G_STORE(nm AS STRING, ix AS INTEGER)
         RETURN
     ENDIF
 
+
     v = G_EXPR(ix)
     vt = lastType
     ty = CINT(SYM_TYPE(nm))
@@ -8372,6 +9582,7 @@ SUB G_ROUTINE(ix AS INTEGER)
     DIM pty AS INTEGER
     DIM sig AS STRING
     DIM prologue AS STRING
+    DIM prologue2 AS STRING
     DIM savedIr AS STRING
     DIM rty AS STRING
 
@@ -8381,6 +9592,7 @@ SUB G_ROUTINE(ix AS INTEGER)
 
     lvN = 0
     inRoutine = 1
+    curFnName = nm
     curIsSub = CINT(fnIsSub[f])
     curRet = CINT(fnRet[f])
     pat = CINT(fnParAt[f])
@@ -8413,6 +9625,13 @@ SUB G_ROUTINE(ix AS INTEGER)
     prologue = prologue + "  %tvval = alloca i64" + CHR$(10)
     prologue = prologue + "  %tvtag = alloca i32" + CHR$(10)
     FOR i = 0 TO lvN - 1
+        IF lvStatic[i] <> 0 THEN
+            ' A static lives in the module with a flag that says whether
+            ' its first call has already fed it.
+            staticDefs = staticDefs + "@sv_" + nm + "_" + lvName[i] + " = internal global " + LL_TY$(CINT(lvType[i])) + " " + ZERO_OF$(CINT(lvType[i])) + CHR$(10)
+            staticDefs = staticDefs + "@svi_" + nm + "_" + lvName[i] + " = internal global i1 false" + CHR$(10)
+            CONTINUEFOR
+        ENDIF
         prologue = prologue + "  %l_" + lvName[i] + " = alloca " + LL_TY$(CINT(lvType[i])) + CHR$(10)
         prologue = prologue + "  store " + LL_TY$(CINT(lvType[i])) + " " + ZERO_OF$(CINT(lvType[i]))
         prologue = prologue + ", ptr %l_" + lvName[i] + CHR$(10)
@@ -8426,6 +9645,18 @@ SUB G_ROUTINE(ix AS INTEGER)
     savedIr = ir
     ir = ""
     G_BODY(CINT(stBodyAt[ix]), CINT(stBodyN[ix]))
+
+    ' The locals of a declared type whose type says goodbye get to say it
+    ' when the routine falls off its end.
+    FOR i = 0 TO lvN - 1
+        IF lvUdt[i] <> "" ANDALSO lvUdt[i] <> "__SELF__" ANDALSO lvName[i] <> "THIS" THEN
+            IF FN_FIND(lvUdt[i] + ".DISPOSE") >= 0 THEN
+                prologue2 = NEWTMP$()
+                W("  " + prologue2 + " = load ptr, ptr %l_" + lvName[i])
+                W("  call void @f_" + lvUdt[i] + ".DISPOSE(ptr " + prologue2 + ")")
+            ENDIF
+        ENDIF
+    NEXT i
 
     rty = "void"
     IF curIsSub = 0 THEN rty = LL_TY$(curRet)
@@ -8726,6 +9957,7 @@ SUB G_STMT(ix AS INTEGER)
     DIM k AS INTEGER
     DIM nm AS STRING
     DIM i AS INTEGER
+    DIM t AS STRING
 
     IF ix < 0 THEN RETURN
     IF genError <> "" THEN RETURN
@@ -8735,6 +9967,20 @@ SUB G_STMT(ix AS INTEGER)
 
     IF k = K_DIM OR k = K_LET THEN
         nm = stVar[ix]
+        ' A static feeds itself once; every later pass walks around it.
+        IF stStatic[ix] <> 0 ANDALSO inRoutine = 1 THEN
+            t = NEWTMP$()
+            W("  " + t + " = load i1, ptr @svi_" + curFnName + "_" + nm)
+            i = lblNo
+            lblNo = lblNo + 1
+            W("  br i1 " + t + ", label %st.done" + STR$(i) + ", label %st.init" + STR$(i))
+            W("st.init" + STR$(i) + ":")
+            W("  store i1 true, ptr @svi_" + curFnName + "_" + nm)
+            IF stExpr[ix] >= 0 THEN G_STORE(nm, CINT(stExpr[ix]))
+            W("  br label %st.done" + STR$(i))
+            W("st.done" + STR$(i) + ":")
+            RETURN
+        ENDIF
         IF IS_ARR(CINT(SYM_TYPE(nm))) = 1 ANDALSO HAS_BOUNDS(ix) = 1 THEN
             G_DIM_ARRAY(ix, nm, CINT(SYM_TYPE(nm)))
             RETURN
@@ -8743,12 +9989,31 @@ SUB G_STMT(ix AS INTEGER)
             G_STORE(nm, CINT(stExpr[ix]))
             RETURN
         ENDIF
-        ' A slot of a declared type gets an instance of it to hold.
-        IF stLabel[ix] <> "" ANDALSO stVType[ix] = 11 THEN G_NEW_UDT(nm, stLabel[ix])
+        ' A slot of a declared type gets an instance of it to hold, and a
+        ' bare map starts as an empty one rather than as nothing. What was
+        ' written in the parentheses goes to the type's own INIT.
+        IF stLabel[ix] <> "" ANDALSO stVType[ix] = 11 THEN
+            G_NEW_UDT(nm, stLabel[ix])
+            IF stCtN[ix] > 0 THEN G_CALL_INIT(nm, stLabel[ix], CINT(stCtAt[ix]), CINT(stCtN[ix]))
+        ELSE
+            IF SYM_TYPE(nm) = TY_MAP THEN
+                t = NEWTMP$()
+                W("  " + t + " = call ptr @jdb_map_new()")
+                W("  store ptr " + t + ", ptr " + SYM_REF$(nm))
+            ENDIF
+        ENDIF
         RETURN
     ENDIF
 
     IF k = K_ASSIGN THEN
+        ' A constant's name takes no assignment: the write raises instead,
+        ' and the error takes the road every raised error takes.
+        IF IS_CONST_NAME(stVar[ix]) = 1 ORELSE (SYM_DECLARED(stVar[ix]) = 0 ANDALSO INSTR(stVar[ix], ".") < 0 ANDALSO NAT_FIND(stVar[ix], 0) >= 0) THEN
+            nm = G_EXPR(CINT(stExpr[ix]))
+            W("  call void @jdb_err_set(ptr " + STR_CONST$("Cannot assign to constant " + stVar[ix]) + ", i64 1)")
+            G_CHECK_ERR(G_RT_HANDLE$())
+            RETURN
+        ENDIF
         G_STORE(stVar[ix], CINT(stExpr[ix]))
         RETURN
     ENDIF
@@ -8835,9 +10100,15 @@ SUB G_STMT(ix AS INTEGER)
         RETURN
     ENDIF
 
-    ' EXITFUNC is the exit that names no loop.
+    ' EXITFUNC is the exit that names no loop. A numeric routine left this
+    ' way answers the quiet NaN that spells NONE, as the reference does.
     IF k = K_EXIT_LOOP THEN
         IF stUntil[ix] = 0 THEN
+            IF inRoutine = 1 ANDALSO curIsSub = 0 ANDALSO LL_TY$(CINT(curRet)) = "double" THEN
+                W("  ret double 0xFFF8000000000000")
+                W(NEWLBL$("after.ret") + ":")
+                RETURN
+            ENDIF
             G_RETURN(-1)
             RETURN
         ENDIF
@@ -8940,10 +10211,92 @@ FUNC DECLS$() AS STRING
     d = d + "declare ptr @jdb_array_cmp_scalar_str(ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdb_typeof_f64(double)" + CHR$(10)
     d = d + "declare ptr @jdb_typeof_tag(i64)" + CHR$(10)
+    d = d + "declare ptr @jdb_str_repeat(ptr, i64)" + CHR$(10)
+    d = d + "declare ptr @jdb_str_sub(ptr, ptr)" + CHR$(10)
+    d = d + "declare i64 @jdrt_map_to_handle(ptr, ptr)" + CHR$(10)
+    d = d + "declare double @jdb_array_pop(ptr)" + CHR$(10)
+    d = d + "declare i64 @jdb_map_has(ptr, ptr)" + CHR$(10)
+    d = d + "declare i64 @jdb_array_has_str(ptr, ptr)" + CHR$(10)
+    d = d + "declare i64 @jdb_array_has_num(ptr, double)" + CHR$(10)
+    d = d + "declare i64 @jdrt_call_typed_obj(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare i64 @jdrt_val_length(ptr, i64)" + CHR$(10)
+    d = d + "declare ptr @jdrt_val_type_str(ptr, i64)" + CHR$(10)
+    d = d + "declare i32 @jdrt_obj_get_tagged(ptr, i64, ptr, ptr)" + CHR$(10)
+    d = d + "declare i64 @jdrt_val_arr_get(ptr, i64, i64)" + CHR$(10)
+    d = d + "declare double @jdrt_val_to_f64(ptr, i64)" + CHR$(10)
+    d = d + "declare void @jdb_event_on(ptr, ptr)" + CHR$(10)
+    d = d + "declare void @jdb_event_raise_str(ptr, ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_array_str_concat(ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare i64 @jdb_array_all(ptr)" + CHR$(10)
+    d = d + "declare ptr @jdb_double_to_str(double)" + CHR$(10)
+    d = d + "declare ptr @jdb_agg_fn(ptr, ptr, ptr, i32)" + CHR$(10)
+    d = d + "declare ptr @jdb_format1_t(ptr, ptr, i64)" + CHR$(10)
+    d = d + "declare ptr @jdb_format2_t(ptr, ptr, i64, i64)" + CHR$(10)
+    d = d + "declare ptr @jdb_format3_t(ptr, ptr, i64, i64, i64)" + CHR$(10)
+    d = d + "declare ptr @jdb_format4_t(ptr, ptr, i64, i64, i64, i64)" + CHR$(10)
+    d = d + "declare ptr @jdb_str_slice(ptr, i64, i32)" + CHR$(10)
+    d = d + "declare ptr @jdb_str_to_chars(ptr)" + CHR$(10)
+    d = d + "declare double @jdb_reduce_fn(ptr, ptr, double)" + CHR$(10)
+    d = d + "declare double @jdb_mean(ptr)" + CHR$(10)
+    d = d + "declare double @jdb_array_sum(ptr)" + CHR$(10)
     d = d + "declare double @jdrt_call_typed_f64(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_str(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare ptr @jdrt_call_typed_arr(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
     d = d + "declare void @jdrt_call_typed_void(ptr, ptr, ptr, ptr, i32)" + CHR$(10)
+    ' A tagged value read as a number: the tag says how the bits spell it,
+    ' and a held value is asked of the machine holding it.
+    d = d + "define double @__any_num(i64 %b, i32 %t, ptr %rt) {" + CHR$(10)
+    d = d + "  %isheld = icmp eq i32 %t, 6" + CHR$(10)
+    d = d + "  br i1 %isheld, label %held, label %chkint" + CHR$(10)
+    d = d + "held:" + CHR$(10)
+    d = d + "  %hv = call double @jdrt_val_to_f64(ptr %rt, i64 %b)" + CHR$(10)
+    d = d + "  ret double %hv" + CHR$(10)
+    d = d + "chkint:" + CHR$(10)
+    d = d + "  %isint = icmp eq i32 %t, 0" + CHR$(10)
+    d = d + "  %isbool = icmp eq i32 %t, 8" + CHR$(10)
+    d = d + "  %intish = or i1 %isint, %isbool" + CHR$(10)
+    d = d + "  br i1 %intish, label %asint, label %asf64" + CHR$(10)
+    d = d + "asint:" + CHR$(10)
+    d = d + "  %iv = sitofp i64 %b to double" + CHR$(10)
+    d = d + "  ret double %iv" + CHR$(10)
+    d = d + "asf64:" + CHR$(10)
+    d = d + "  %fv = bitcast i64 %b to double" + CHR$(10)
+    d = d + "  ret double %fv" + CHR$(10)
+    d = d + "}" + CHR$(10)
+
+    ' A tagged value on its way over the wire: a native map has no wire
+    ' shape, so it is boxed into a handle and the tag says so.
+    d = d + "define {i64, i32} @__any_wire(i64 %b, i32 %t, ptr %rt) {" + CHR$(10)
+    d = d + "  %ismap = icmp eq i32 %t, 4" + CHR$(10)
+    d = d + "  br i1 %ismap, label %box, label %pass" + CHR$(10)
+    d = d + "box:" + CHR$(10)
+    d = d + "  %mp = inttoptr i64 %b to ptr" + CHR$(10)
+    d = d + "  %h = call i64 @jdrt_map_to_handle(ptr %rt, ptr %mp)" + CHR$(10)
+    d = d + "  br label %done" + CHR$(10)
+    d = d + "pass:" + CHR$(10)
+    d = d + "  br label %done" + CHR$(10)
+    d = d + "done:" + CHR$(10)
+    d = d + "  %ob = phi i64 [ %h, %box ], [ %b, %pass ]" + CHR$(10)
+    d = d + "  %ot = phi i32 [ 6, %box ], [ %t, %pass ]" + CHR$(10)
+    d = d + "  %p1 = insertvalue {i64, i32} undef, i64 %ob, 0" + CHR$(10)
+    d = d + "  %p2 = insertvalue {i64, i32} %p1, i32 %ot, 1" + CHR$(10)
+    d = d + "  ret {i64, i32} %p2" + CHR$(10)
+    d = d + "}" + CHR$(10)
+
+    ' A tagged value read as text: text is itself, anything else is the
+    ' number it holds, spelled out.
+    d = d + "define ptr @__any_str(i64 %b, i32 %t, ptr %rt) {" + CHR$(10)
+    d = d + "  %isstr = icmp eq i32 %t, 2" + CHR$(10)
+    d = d + "  br i1 %isstr, label %astr, label %anum" + CHR$(10)
+    d = d + "astr:" + CHR$(10)
+    d = d + "  %sp = inttoptr i64 %b to ptr" + CHR$(10)
+    d = d + "  ret ptr %sp" + CHR$(10)
+    d = d + "anum:" + CHR$(10)
+    d = d + "  %nv = call double @__any_num(i64 %b, i32 %t, ptr %rt)" + CHR$(10)
+    d = d + "  %ns = call ptr @jdb_double_to_str(double %nv)" + CHR$(10)
+    d = d + "  ret ptr %ns" + CHR$(10)
+    d = d + "}" + CHR$(10)
+
     FOR i = 0 TO biN - 1
         d = d + "declare " + biDeclRet[i] + " @" + biSym[i]
         d = d + "(" + biDeclArgs[i] + ")" + CHR$(10)
@@ -8979,11 +10332,13 @@ FUNC GENERATE$() AS STRING
 
     ir = ""
     fnDefs = ""
+    staticDefs = ""
     strDecl = ""
     tmpNo = 0
     lblNo = 0
     gvN = 0
     ecN = 0
+    constN = 0
     lvN = 0
     loopN = 0
     catchN = 0
@@ -9002,9 +10357,13 @@ FUNC GENERATE$() AS STRING
     ' reads it, so both are collected before a single instruction is emitted.
     SCAN_ROUTINES()
     SCAN_DECLS(topAt, topN, 0)
+    SCAN_STR_FIELDS()
     UDT_PROP()
     INFER_PARAMS()
     INFER_RETURNS()
+    REFRESH_TOP_DECLS()
+    INFER_RETURNS()
+    REFRESH_TOP_DECLS()
 
     G_RUNTIME_INIT()
     FOR j = 0 TO topN - 1
@@ -9024,6 +10383,7 @@ FUNC GENERATE$() AS STRING
         head = head + LL_TY$(CINT(gvType[i])) + " " + ZERO_OF$(CINT(gvType[i])) + CHR$(10)
     NEXT i
 
+    head = head + staticDefs
     head = head + "@__jdrt_handle = internal global ptr null" + CHR$(10)
     head = head + CHR$(10) + fnDefs
     head = head + "define i32 @main(i32 %argc, ptr %argv) {" + CHR$(10)

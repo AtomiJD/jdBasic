@@ -1,0 +1,107 @@
+OPTION EXPLICIT
+
+' The mechanisms the gate suites taught the code generator, each pinned
+' small: lazy logic, text arithmetic, tagged parameters, statics, held
+' values, and the fold shapes.
+
+DIM called AS DOUBLE
+called = 0
+
+FUNC SIDE()
+    called = called + 1
+    RETURN TRUE
+ENDFUNC
+
+' The lazy pair leaves the right side unread.
+DIM ok AS DOUBLE
+ok = FALSE ANDALSO SIDE()
+ok = TRUE ORELSE SIDE()
+PRINT called
+
+' Text arithmetic: repeat, remove, slice from either end, split.
+PRINT "-" * 3
+PRINT 2 * "ab"
+PRINT "ababc" - "ab"
+PRINT 2 / "Echo"
+PRINT "Welcome" / 4
+PRINT LEN(-"banana")
+
+' A parameter whose witnesses disagree travels with its tag.
+FUNC QQ$(v)
+    IF TYPEOF(v) = "STRING" THEN RETURN "<" + v + ">"
+    RETURN STR$(v)
+ENDFUNC
+PRINT QQ$("s")
+PRINT QQ$(7)
+
+' A static feeds itself once and counts across calls.
+FUNC TICKER()
+    STATIC DIM n = 0
+    n = n + 1
+    RETURN n
+ENDFUNC
+PRINT TICKER()
+PRINT TICKER()
+PRINT TICKER()
+
+' A constant's name takes no assignment.
+CONST LIMIT2 = 9
+DIM caught AS DOUBLE
+caught = 0
+TRY
+    LIMIT2 = 10
+CATCH
+    caught = 1
+ENDTRY
+PRINT caught; " "; LIMIT2
+
+' A held value: length, type and cells belong to the machine holding it.
+FUNC HOLDER(s$) AS OBJECT
+    RETURN JSON.PARSE$(s$)
+ENDFUNC
+DIM held = HOLDER("[5,6,7]")
+PRINT LEN(held)
+PRINT TYPEOF(held)
+PRINT STR$(held[1])
+
+' The bridge packs before it stores, so nested bridged calls survive.
+DIM nested = OUTER(IOTA(4, 0), IOTA(2, 0), "SHR") BAND 1
+PRINT LEN(nested)
+
+' The folds: a lambda over groups, a bare aggregate through the
+' trampoline, and a fold with no seed.
+DIM keys2 = [1, 1, 2]
+DIM vals2 = [10, 20, 5]
+DIM g1 = AGG(keys2, vals2, LAMBDA g -> SUM(g))
+PRINT g1[0][1]
+DIM g2 = AGG(keys2, vals2, SUM@)
+PRINT g2[0][1]
+PRINT REDUCE(LAMBDA a, b -> a + b, vals2)
+
+' Containment asks the right holder.
+DIM m3 AS MAP
+m3{"k"} = 1
+PRINT "k" IN m3
+PRINT "B" IN ["A", "B"]
+PRINT 5 IN [4, 5, 6]
+
+' POP answers the last cell and shortens the array.
+DIM st = []
+PUSH st, "x"
+PUSH st, "y"
+PRINT POP(st)
+PRINT LEN(st)
+
+' Division by nothing raises; an array as a condition means all of it.
+caught = 0
+TRY
+    ok = 1 / 0
+CATCH
+    caught = 1
+ENDTRY
+PRINT caught
+IF [1, 1] THEN PRINT "all" ELSE PRINT "not"
+IF [1, 0] THEN PRINT "all" ELSE PRINT "not"
+
+' FORMAT with text goes through the typed twins, spec by spec.
+PRINT FORMAT$("{} und {:.2f}", "text", 2.5)

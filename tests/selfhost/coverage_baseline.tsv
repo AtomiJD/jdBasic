@@ -8,6 +8,7 @@ selfhost/fixtures/gen_builtins.jdb	ok	ok	ok
 selfhost/fixtures/gen_control.jdb	ok	ok	ok
 selfhost/fixtures/gen_flow.jdb	ok	ok	ok
 selfhost/fixtures/gen_funcs.jdb	ok	ok	ok
+selfhost/fixtures/gen_gate.jdb	ok	ok	ok
 selfhost/fixtures/gen_lambda.jdb	ok	ok	ok
 selfhost/fixtures/gen_literals.jdb	ok	ok	ok
 selfhost/fixtures/gen_mixed.jdb	ok	ok	ok

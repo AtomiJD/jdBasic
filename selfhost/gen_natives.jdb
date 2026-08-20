@@ -220,7 +220,70 @@ DO
     LOOP
 LOOP
 
+' The names the reference's own backend refuses to auto-vectorise: they
+' take arrays whole or answer scalars from them. Read from the same list
+' the reference dispatches on, so the two backends refuse alike.
+
+DIM novecCount AS INTEGER
+
+inSet = 0
+novecCount = 0
+at = 0
+DO
+    IF at >= LEN(src) THEN EXITDO
+    ln = NEXT_LINE$(src, at)
+    at = at + LEN(ln) + 1
+
+    IF INSTR(ln, "no_vectorize = {") >= 0 THEN
+        inSet = 1
+        CONTINUEDO
+    ENDIF
+    IF inSet = 0 THEN CONTINUEDO
+    IF INSTR(ln, "};") >= 0 THEN EXITDO
+
+    rest = ln
+    DO
+        piece = QUOTED$(rest)
+        IF LEN(piece) = 0 THEN EXITDO
+        out = out + "@NOVEC" + CHR$(9) + piece + CHR$(10)
+        novecCount = novecCount + 1
+        rest = cutRest
+    LOOP
+LOOP
+
+' The names whose bridge answer is a whole VM value - a map, a tensor, a
+' handle - kept by the reference in its obj_returners set.
+
+DIM objCount AS INTEGER
+
+inSet = 0
+objCount = 0
+at = 0
+DO
+    IF at >= LEN(src) THEN EXITDO
+    ln = NEXT_LINE$(src, at)
+    at = at + LEN(ln) + 1
+
+    IF INSTR(ln, "obj_returners = {") >= 0 THEN
+        inSet = 1
+        CONTINUEDO
+    ENDIF
+    IF inSet = 0 THEN CONTINUEDO
+    IF INSTR(ln, "};") >= 0 THEN EXITDO
+
+    rest = ln
+    DO
+        piece = QUOTED$(rest)
+        IF LEN(piece) = 0 THEN EXITDO
+        out = out + "@OBJ" + CHR$(9) + piece + CHR$(10)
+        objCount = objCount + 1
+        rest = cutRest
+    LOOP
+LOOP
+
 TXTWRITER "selfhost/jdbc_natives.txt", out
 PRINT "natives written: "; emitted
 PRINT "skipped:         "; skipped
 PRINT "array returners: "; arrCount
+PRINT "no-vectorize:    "; novecCount
+PRINT "object returners:"; objCount
