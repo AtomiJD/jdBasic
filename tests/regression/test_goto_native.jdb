@@ -1,0 +1,53 @@
+OPTION EXPLICIT
+
+' GOTO and labels must branch in both backends: backward, forward, and
+' inside a routine. A label right after a RETURN still opens its block.
+
+DIM pass AS DOUBLE
+DIM fail AS DOUBLE
+pass = 0
+fail = 0
+
+SUB Check(ok, msg$)
+    IF ok THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL: "; msg$
+    ENDIF
+ENDSUB
+
+DIM i AS INTEGER
+i = 0
+AGAIN:
+i = i + 1
+IF i < 3 THEN GOTO AGAIN
+Check(i = 3, "backward jump loops")
+
+DIM touched AS DOUBLE
+touched = 0
+GOTO PAST
+touched = 1
+PAST:
+Check(touched = 0, "forward jump skips")
+
+FUNC countdown(n)
+    DIM v AS DOUBLE
+    v = n
+TICKDOWN:
+    v = v - 1
+    IF v > 0 THEN GOTO TICKDOWN
+    RETURN v
+ENDFUNC
+Check(countdown(5) = 0, "jump inside a routine")
+
+FUNC pick_path(flag)
+    IF flag THEN GOTO TAKEN
+    RETURN 1
+TAKEN:
+    RETURN 2
+ENDFUNC
+Check(pick_path(FALSE) = 1, "label after RETURN, not taken")
+Check(pick_path(TRUE) = 2, "label after RETURN, taken")
+
+PRINT "goto: "; pass; " passed, "; fail; " failed"

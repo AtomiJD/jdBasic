@@ -190,6 +190,11 @@ private:
     // branch to try_stack.back() when non-empty, else call jdb_throw_uncaught.
     std::vector<LLVMBasicBlockRef> try_stack;
 
+    // GOTO/LABEL: jump targets of the function under codegen, created on
+    // first mention so forward jumps resolve. Saved and cleared around each
+    // user function; a label left without a terminator fails module verify.
+    std::unordered_map<std::string, LLVMBasicBlockRef> label_blocks;
+
     // CONST tracking: names (upper-cased) bound to user-declared constants.
     // Subsequent assignments throw at runtime.
     std::unordered_set<std::string> const_vars;
@@ -346,6 +351,7 @@ private:
     void codegen_if(const Stmt& stmt);
     void codegen_do_loop(const Stmt& stmt);
     void codegen_function(const Stmt& stmt);
+    LLVMBasicBlockRef get_label_block(const std::string& name);
     void codegen_return(const Stmt& stmt);
     void codegen_switch(const Stmt& stmt);
     void codegen_for_each(const Stmt& stmt);

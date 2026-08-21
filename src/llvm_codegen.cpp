@@ -2945,9 +2945,20 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     }
 }
 
+LLVMBasicBlockRef LLVMCodegen::get_label_block(const std::string& name) {
+    auto it = label_blocks.find(name);
+    if (it != label_blocks.end()) return it->second;
+    LLVMBasicBlockRef bb = LLVMAppendBasicBlock(current_fn, ("ulbl_" + name).c_str());
+    label_blocks[name] = bb;
+    return bb;
+}
+
 void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
-    // Skip if current block already has a terminator (unreachable code)
-    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+    // Skip if current block already has a terminator (unreachable code).
+    // A LABEL is still emitted: it opens a new block that a GOTO may reach
+    // even when the code right before it cannot fall through.
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)) &&
+        stmt.kind != StmtKind::LABEL)
         return;
 
     // Track the source file of the statement under codegen so diagnostics
@@ -3149,6 +3160,19 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                 LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "");
             }
             break;
+        case StmtKind::GOTO: {
+            LLVMBuildBr(builder, get_label_block(stmt.label));
+            LLVMBasicBlockRef dead = LLVMAppendBasicBlock(current_fn, "post_goto");
+            LLVMPositionBuilderAtEnd(builder, dead);
+            break;
+        }
+        case StmtKind::LABEL: {
+            LLVMBasicBlockRef bb = get_label_block(stmt.label);
+            if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder)))
+                LLVMBuildBr(builder, bb);
+            LLVMPositionBuilderAtEnd(builder, bb);
+            break;
+        }
         case StmtKind::CLS_STMT: {
             // CLS [r, g, b] - route through the VM bridge so graphics mode
             // clears the framebuffer (without this the back buffer keeps
@@ -3367,6 +3391,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     LLVMValueRef saved_retval = current_retval_alloca;
     auto saved_dispose = std::move(dispose_locals);
     dispose_locals.clear();
+    auto saved_labels = std::move(label_blocks);
+    label_blocks.clear();
     current_fn = fit->second.fn;
     current_fn_source_file = stmt.source_file;
 
@@ -3465,6 +3491,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     current_exit_bb = saved_exit;
     current_retval_alloca = saved_retval;
     dispose_locals = std::move(saved_dispose);
+    label_blocks = std::move(saved_labels);
 
     // Position builder back at the end of the saved function's last block
     LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
@@ -3477,6 +3504,21 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
     LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
     if (stmt.expr && ret_ty != void_type) {
         TypedValue rv = codegen_expr(*stmt.expr);
+        // An i64-returning function hands objects back as VM handles. A
+        // native map built locally has none yet: box it, so the caller's
+        // handle reads (jdrt_obj_get_tagged & co) see the entries instead
+        // of a punned JdbMap pointer.
+        if (rv.tag == JD_TAG_NATIVE_MAP && ret_ty == i64_type) {
+            auto* boxer = get_runtime_func("__jdrt_map_to_handle");
+            if (boxer) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef bargs[] = { rt, rv.val };
+                rv.val = LLVMBuildCall2(builder, boxer->fn_type, boxer->fn,
+                                        bargs, 2, "mtoh");
+                rv.tag = JD_TAG_VM_HANDLE;
+            }
+        }
         emit_fn_return(coerce_to(rv, ret_ty));
     } else {
         emit_fn_return(nullptr);

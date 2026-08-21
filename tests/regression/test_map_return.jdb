@@ -1,0 +1,32 @@
+OPTION EXPLICIT
+
+' A function declared AS MAP answers a value whose entries survive the
+' return in both backends.
+
+DIM pass AS DOUBLE
+DIM fail AS DOUBLE
+pass = 0
+fail = 0
+
+SUB Check(ok, msg$)
+    IF ok THEN
+        pass = pass + 1
+    ELSE
+        fail = fail + 1
+        PRINT "FAIL: "; msg$
+    ENDIF
+ENDSUB
+
+FUNC settings() AS MAP
+    DIM m AS MAP
+    m{"host"} = "local"
+    m{"port"} = 8080
+    RETURN m
+ENDFUNC
+
+DIM cfg = settings()
+Check(cfg{"host"} = "local", "string entry survives the return")
+Check(cfg{"port"} = 8080, "number entry survives the return")
+Check(TYPEOF(cfg) = "OBJECT", "the answer knows it is an object")
+
+PRINT "map return: "; pass; " passed, "; fail; " failed"
