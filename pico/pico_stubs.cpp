@@ -58,8 +58,20 @@ char* getcwd(char* buf, size_t cap) {
     return buf;
 }
 int chdir(const char*) { errno = ENOSYS; return -1; }
-int mkdir(const char*, unsigned) { errno = ENOSYS; return -1; }
-int rmdir(const char*) { errno = ENOSYS; return -1; }
-int _stat(const char*, struct stat*) { errno = ENOSYS; return -1; }
-int _unlink(const char*) { errno = ENOSYS; return -1; }
+}
+
+// The glob matcher DIR$ filters through: star and question mark, the
+// part of fnmatch anyone means.
+extern "C" int fnmatch(const char* pat, const char* str, int flags) {
+    (void)flags;
+    if (*pat == 0) return *str == 0 ? 0 : 1;
+    if (*pat == '*') {
+        for (const char* s = str; ; s++) {
+            if (fnmatch(pat + 1, s, 0) == 0) return 0;
+            if (*s == 0) return 1;
+        }
+    }
+    if (*str == 0) return 1;
+    if (*pat == '?' || *pat == *str) return fnmatch(pat + 1, str + 1, 0);
+    return 1;
 }

@@ -9,6 +9,8 @@
 #include "pico/cyw43_arch.h"
 #include "jdb_embed_api.h"
 
+extern "C" void jdb_pico_fs_init(void);
+
 static void read_line(char* buf, int cap) {
     int n = 0;
     for (;;) {
@@ -36,6 +38,7 @@ static void read_line(char* buf, int cap) {
 int main() {
     stdio_init_all();
     cyw43_arch_init();
+    jdb_pico_fs_init();
     while (!stdio_usb_connected()) sleep_ms(100);
     sleep_ms(200);
 
