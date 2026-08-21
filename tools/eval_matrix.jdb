@@ -25,6 +25,7 @@ DIM LIMIT$ = GETENV$("EVAL_LIMIT")
 IF LIMIT$ <> "" THEN LIMIT = VAL(LIMIT$)
 DIM HTTP_TIMEOUT$ = GETENV$("EVAL_TIMEOUT")
 IF HTTP_TIMEOUT$ = "" THEN HTTP_TIMEOUT$ = "600"
+HTTP.SETTIMEOUT(VAL(HTTP_TIMEOUT$))
 DIM GEN_TEMP = 0.0
 DIM GEN_TEMP$ = GETENV$("EVAL_TEMP")
 IF GEN_TEMP$ <> "" THEN GEN_TEMP = VAL(GEN_TEMP$)
@@ -68,13 +69,12 @@ FUNC query_model(user$)
     req{"max_tokens"} = GEN_MAXTOK
     req{"repeat_penalty"} = GEN_RPEN
     DIM body$ = JSON.STRINGIFY$(req)
-    DIM reqfile$ = WORKDIR$ + "/_req.json"
-    TXTWRITER reqfile$, body$
-    DIM r = OS.EXEC("curl", ["-s", "-m", HTTP_TIMEOUT$, "-X", "POST", "-H", "Content-Type:application/json", "-d", "@" + reqfile$, ENDPOINT$])
-    IF r{"EXIT_CODE"} <> 0 THEN
+    DIM resp$ = ""
+    TRY
+        resp$ = HTTP.POST$(ENDPOINT$, body$, "application/json")
+    CATCH
         RETURN ""
-    ENDIF
-    DIM resp$ = r{"OUTPUT"}
+    ENDTRY
     IF TRIM$(resp$) = "" THEN
         RETURN ""
     ENDIF
