@@ -1,0 +1,36 @@
+OPTION EXPLICIT
+
+' Tagged containers under way: a map parameter keyed by a variable, a
+' nested keyed write, plus with text on either side, and an iteration
+' variable whose name held text before the loop.
+
+FUNC pick(mp, k$)
+    RETURN mp{k$}
+ENDFUNC
+
+FUNC tune(mp, k$, v)
+    mp{"params"}{k$} = v
+    RETURN mp{"params"}{k$}
+ENDFUNC
+
+DIM m AS MAP
+DIM pm AS MAP
+pm{"gain"} = 1
+m{"a"} = 41
+m{"params"} = pm
+PRINT pick(m, "a")
+PRINT tune(m, "gain", 7)
+
+PRINT 5 + "abc"
+PRINT "abc" + 5
+PRINT 5 + "6"
+PRINT "n=" + m{"a"}
+
+DIM n = "2026-01-01"
+DIM nums = IOTA(4)
+DIM total AS DOUBLE
+total = 0
+FOR EACH n IN nums
+    total = total + n
+NEXT n
+PRINT total

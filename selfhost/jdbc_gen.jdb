@@ -235,9 +235,29 @@ FUNC SYM_TYPE(nm AS STRING) AS INTEGER
         IF i >= 0 THEN RETURN CINT(lvType[i])
     ENDIF
     i = CINT(GV_FIND(nm))
-    IF i < 0 THEN RETURN TY_NUM
+    IF i < 0 THEN
+        ' A name nobody declared yet: the dollar still tells.
+        IF ENDS_IN_DOLLAR(nm) = 1 THEN RETURN TY_STR
+        RETURN TY_NUM
+    ENDIF
     RETURN CINT(gvType[i])
 ENDFUNC
+
+' Overwrites what a name is known as, in whichever scope holds it. The
+' iteration variable of FOR EACH takes the source's element type this
+' way, whatever the name held before the loop.
+SUB SET_SYM_TY(nm AS STRING, ty AS INTEGER)
+    DIM i AS INTEGER
+    IF inRoutine = 1 THEN
+        i = CINT(LV_FIND(nm))
+        IF i >= 0 THEN
+            lvType[i] = ty
+            RETURN
+        ENDIF
+    ENDIF
+    i = CINT(GV_FIND(nm))
+    IF i >= 0 THEN gvType[i] = ty
+ENDSUB
 
 ' The names CONST bound, which no assignment may touch again.
 DIM constNm[128] AS STRING
@@ -1474,7 +1494,7 @@ FUNC E_TYPE(ix AS INTEGER) AS INTEGER
         IF IS_ARR(tb) = 1 THEN RETURN tb
         IF op = TOK_LT OR op = TOK_GT OR op = TOK_LE OR op = TOK_GE THEN RETURN TY_BOOL
         IF op = TOK_NE OR op = TOK_ASSIGN THEN RETURN TY_BOOL
-        IF op = TOK_PLUS ANDALSO ta = TY_STR THEN RETURN TY_STR
+        IF op = TOK_PLUS ANDALSO (ta = TY_STR ORELSE tb = TY_STR) THEN RETURN TY_STR
         RETURN TY_NUM
     ENDIF
     IF k = X_PIPE THEN
@@ -1896,6 +1916,7 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     DIM bitOp AS STRING
     DIM cmpOp AS STRING
     DIM lTag AS STRING
+    DIM rTag AS STRING
 
     op = CINT(exOp[ix])
 
@@ -1908,19 +1929,29 @@ FUNC G_BINARY(ix AS INTEGER) AS STRING
     lTag = lastTag
     r = G_EXPR(CINT(exRight[ix]))
     rt = lastType
+    rTag = lastTag
 
-    ' + over two strings is concatenation, not arithmetic. What rides on
-    ' the right becomes text if it is not already: a tagged value is read
-    ' as the string it holds, a number is spelled out.
-    IF op = TOK_PLUS ANDALSO lt = TY_STR THEN
-        IF rt = TY_ANY THEN
-            r = ANY_AS_PTR$(r)
-        ELSE
-            IF LL_TY$(rt) <> "ptr" THEN
-                q = NEWTMP$()
-                W("  " + q + " = call ptr @jdb_double_to_str(double " + AS_NUM$(r, rt) + ")")
-                r = q
+    ' + with a string on either side is concatenation, not arithmetic.
+    ' The other side becomes text if it is not already: a tagged value is
+    ' read as the text it holds, a number is spelled out.
+    IF op = TOK_PLUS ANDALSO IS_ARR(lt) = 0 ANDALSO IS_ARR(rt) = 0 ANDALSO (lt = TY_STR ORELSE rt = TY_STR) THEN
+        IF lt <> TY_STR THEN
+            q = NEWTMP$()
+            IF lt = TY_ANY THEN
+                W("  " + q + " = call ptr @__any_str(i64 " + l + ", i32 " + lTag + ", ptr " + G_RT_HANDLE$() + ")")
+            ELSE
+                W("  " + q + " = call ptr @jdb_double_to_str(double " + AS_NUM$(l, lt) + ")")
             ENDIF
+            l = q
+        ENDIF
+        IF rt <> TY_STR THEN
+            q = NEWTMP$()
+            IF rt = TY_ANY THEN
+                W("  " + q + " = call ptr @__any_str(i64 " + r + ", i32 " + rTag + ", ptr " + G_RT_HANDLE$() + ")")
+            ELSE
+                W("  " + q + " = call ptr @jdb_double_to_str(double " + AS_NUM$(r, rt) + ")")
+            ENDIF
+            r = q
         ENDIF
         t = NEWTMP$()
         W("  " + t + " = call ptr @jdb_str_concat(ptr " + l + ", ptr " + r + ")")
@@ -4837,12 +4868,21 @@ SUB G_FOR_EACH(ix AS INTEGER)
     W("  " + cmp + " = fcmp olt double " + idxV + ", " + lim)
     W("  br i1 " + cmp + ", label %" + bodyL + ", label %" + endL)
 
+    ' The iteration variable takes the source's element type, whatever the
+    ' name held before the loop: text from an array of text, a number from
+    ' everything else, the way the reference types it.
+    IF srcTy = TY_ARRS THEN
+        SET_SYM_TY(nm, TY_STR)
+    ELSE
+        SET_SYM_TY(nm, TY_NUM)
+    ENDIF
+
     W(bodyL + ":")
     iv = NEWTMP$()
     W("  " + iv + " = fptosi double " + idxV + " to i64")
     elem = NEWTMP$()
     W("  " + elem + " = call double @jdb_array_get(ptr " + handle + ", i64 " + iv + ")")
-    IF ELEM_TY(CINT(SYM_TYPE(nm))) = TY_STR OR SYM_TYPE(nm) = TY_STR THEN
+    IF srcTy = TY_ARRS THEN
         bits = NEWTMP$()
         W("  " + bits + " = bitcast double " + elem + " to i64")
         nextV = NEWTMP$()
@@ -5134,9 +5174,22 @@ SUB G_STMT(ix AS INTEGER)
         RETURN
     ENDIF
 
-    ' CLS reaches the screen through the runtime, with whatever it was given.
+    ' The console statements reach the screen through the runtime, with
+    ' whatever they were given.
     IF k = K_CLS THEN
         G_BRIDGE_ARGS$("CLS", CINT(stExpr[ix]), CINT(stCond[ix]), CINT(stEnd[ix]), TY_VOID)
+        RETURN
+    ENDIF
+    IF k = K_LOCATE THEN
+        G_BRIDGE_ARGS$("LOCATE", CINT(stExpr[ix]), CINT(stCond[ix]), -1, TY_VOID)
+        RETURN
+    ENDIF
+    IF k = K_COLOR THEN
+        G_BRIDGE_ARGS$("COLOR", CINT(stExpr[ix]), CINT(stCond[ix]), -1, TY_VOID)
+        RETURN
+    ENDIF
+    IF k = K_CURSOR THEN
+        G_BRIDGE_ARGS$("CURSOR", CINT(stExpr[ix]), -1, -1, TY_VOID)
         RETURN
     ENDIF
 
