@@ -926,6 +926,7 @@ EXPORT SUB LOAD_STMT_TABLES()
     KT_ASYNC = CINT(TOK_BY_NAME("ASYNC"))
     KT_ON = CINT(TOK_BY_NAME("ON_KW"))
     KT_CALL = CINT(TOK_BY_NAME("CALL"))
+    KT_GOTO = CINT(TOK_BY_NAME("GOTO"))
     TT_IN = CINT(TOK_BY_NAME("IN"))
     TT_BAND = CINT(TOK_BY_NAME("BAND"))
     TT_BOR = CINT(TOK_BY_NAME("BOR"))
@@ -1033,12 +1034,17 @@ FUNC P_BODY(stop1 AS INTEGER, stop2 AS INTEGER, stop3 AS INTEGER, endFollow AS I
     RETURN start * 4096 + n
 ENDFUNC
 
+' Inside a one-line IF a colon separates statements, so a name before it
+' is a call there and a jump target everywhere else.
+DIM inInlineIf AS INTEGER
+
 FUNC P_IF() AS INTEGER
     DIM nd AS INTEGER
     DIM ln AS INTEGER
     DIM cond AS INTEGER
     DIM packed AS INTEGER
     DIM nbr AS INTEGER
+    DIM savedInline AS INTEGER
     DIM i AS INTEGER
     DIM start AS INTEGER
     ' Branches are collected here first. A nested IF inside a body allocates
@@ -1064,6 +1070,8 @@ FUNC P_IF() AS INTEGER
     ' Single line form: IF c THEN stmt [: stmt ...] [ELSE stmt [: stmt ...]],
     ' which ends at the end of the line.
     IF TT() <> T_NEWLINE AND TT() <> TT_COLON THEN
+        savedInline = inInlineIf
+        inInlineIf = 1
         nThen = 0
         DO
             IF parseError <> "" THEN EXITDO
@@ -1113,6 +1121,7 @@ FUNC P_IF() AS INTEGER
             NEXT i
             nbr = 2
         ENDIF
+        inInlineIf = savedInline
     ELSE
         packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_ELSEIF, KT_IF))
         myCond[nbr] = cond
@@ -2694,6 +2703,7 @@ FUNC P_STMT() AS INTEGER
     DIM closer AS INTEGER
     DIM after AS INTEGER
     DIM i AS INTEGER
+    DIM first AS INTEGER
 
     IF pendHead < pendTail THEN
         pendHead = pendHead + 1
@@ -2734,22 +2744,27 @@ FUNC P_STMT() AS INTEGER
     IF t = KT_SWITCH THEN RETURN CINT(P_SWITCH())
     IF t = KT_ENUM THEN RETURN CINT(P_ENUM())
 
-    ' INPUT name, or INPUT "prompt", name. Without a prompt it does not put
-    ' a line break out either.
+    ' INPUT name, or INPUT prompt; name. The prompt is any expression; the
+    ' separator decides the line break, a comma adding one the way the
+    ' reference has it, and without a prompt there is none either.
     IF t = KT_INPUT THEN
         EAT()
         nd = CINT(NEW_STMT(K_INPUT, ln))
-        IF TT() = T_STRING_LIT THEN
-            stExpr[nd] = P_EXPR()
-            ' A semicolon after the prompt keeps the cursor on the line, the
-            ' same way it does after PRINT.
-            IF TT() = TT_SEMICOLON THEN stNoNl[nd] = 1
-            IF TT() = TT_COMMA OR TT() = TT_SEMICOLON THEN EAT()
+        stNoNl[nd] = 1
+        first = CINT(P_EXPR())
+        IF TT() = TT_SEMICOLON OR TT() = TT_COMMA THEN
+            IF TT() = TT_COMMA THEN stNoNl[nd] = 0
+            EAT()
+            stExpr[nd] = first
+            stVar[nd] = TV$()
+            EAT()
         ELSE
-            stNoNl[nd] = 1
+            IF exKind[first] <> X_VARIABLE THEN
+                FAIL("INPUT expects a variable name")
+                RETURN -1
+            ENDIF
+            stVar[nd] = exStr[first]
         ENDIF
-        stVar[nd] = TV$()
-        EAT()
         RETURN nd
     ENDIF
 
@@ -2809,6 +2824,26 @@ FUNC P_STMT() AS INTEGER
             EAT()
             stEnd[nd] = P_EXPR()
         ENDIF
+        RETURN nd
+    ENDIF
+
+    ' CALL name(args) is the call spelled out; the word adds nothing.
+    IF t = KT_CALL THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+        stExpr[nd] = P_EXPR()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_GOTO THEN
+        EAT()
+        IF TT() <> T_IDENTIFIER THEN
+            FAIL("label name")
+            RETURN -1
+        ENDIF
+        nd = CINT(NEW_STMT(K_GOTO, ln))
+        stLabel[nd] = TV$()
+        EAT()
         RETURN nd
     ENDIF
 
@@ -3002,6 +3037,16 @@ FUNC P_STMT() AS INTEGER
             IF after = 3 ANDALSO LEN(TV$()) < 3 ANDALSO CUR_TT(after) <> TT_LPAREN THEN
                 RETURN CINT(P_METHOD(ln))
             ENDIF
+        ENDIF
+
+        ' A name with a colon straight after it marks a jump target, except
+        ' inside a one-line IF, where the colon separates statements.
+        IF CUR_TT(1) = TT_COLON ANDALSO inInlineIf = 0 THEN
+            nd = CINT(NEW_STMT(K_LABEL, ln))
+            stLabel[nd] = TV$()
+            EAT()
+            EAT()
+            RETURN nd
         ENDIF
 
         save = cur

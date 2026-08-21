@@ -1,0 +1,32 @@
+OPTION EXPLICIT
+
+' Jumps: backward to re-run a block, forward past one, and the same
+' inside a routine. CALL spells a call out; a label line is a target,
+' not a call.
+
+DIM i AS INTEGER
+i = 0
+AGAIN:
+i = i + 1
+IF i < 3 THEN GOTO AGAIN
+PRINT i
+
+GOTO PAST
+PRINT "unreachable"
+PAST:
+PRINT "past"
+
+FUNC countdown(n)
+    DIM v AS DOUBLE
+    v = n
+TICKDOWN:
+    v = v - 1
+    IF v > 0 THEN GOTO TICKDOWN
+    RETURN v
+ENDFUNC
+PRINT countdown(5)
+
+SUB hello()
+    PRINT "hello"
+ENDSUB
+CALL hello()

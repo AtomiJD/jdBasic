@@ -5243,6 +5243,19 @@ SUB G_STMT(ix AS INTEGER)
     ' no-op is the shape that convention leans on.
     IF k = K_REACT THEN RETURN
 
+    ' A jump is a branch; a label ends the running block and opens its own,
+    ' with the fall-through spelled out because IR blocks do not fall.
+    IF k = K_GOTO THEN
+        W("  br label %ulbl_" + stLabel[ix])
+        W(NEWLBL$("after.goto") + ":")
+        RETURN
+    ENDIF
+    IF k = K_LABEL THEN
+        W("  br label %ulbl_" + stLabel[ix])
+        W("ulbl_" + stLabel[ix] + ":")
+        RETURN
+    ENDIF
+
     genError = "cannot generate statement kind " + STR$(k)
 ENDSUB
 

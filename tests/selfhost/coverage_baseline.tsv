@@ -35,9 +35,9 @@ fluppi/debug_recruit.jdb	ok	ok	ok
 fluppi/rpg_assets.jdb	ok	ok	ok
 fluppi/rpg_battle.jdb	ok	ok	ok
 fluppi/rpg_combat.jdb	ok	ok	ok
-fluppi/rpg_demo.jdb	ok	diff	-
+fluppi/rpg_demo.jdb	ok	ok	ok
 fluppi/rpg_dialog.jdb	ok	ok	ok
-fluppi/rpg_engine.jdb	ok	diff	-
+fluppi/rpg_engine.jdb	ok	ok	ok
 fluppi/rpg_inventory.jdb	ok	ok	ok
 fluppi/rpg_music.jdb	ok	ok	ok
 fluppi/rpg_party.jdb	ok	ok	ok
@@ -108,7 +108,7 @@ jdb/demos/ai/ai_chat_demo.jdb	ok	ok	ok
 jdb/demos/ai/ai_demo.jdb	ok	ok	ok
 jdb/demos/ai/classifier_demo.jdb	ok	ok	ok
 jdb/demos/ai/coproc.jdb	ok	ok	ok
-jdb/demos/ai/gpt_client.jdb	ok	err	-
+jdb/demos/ai/gpt_client.jdb	ok	ok	no
 jdb/demos/ai/gpt_mini.jdb	ok	ok	ok
 jdb/demos/ai/mini_llm.jdb	ok	ok	ok
 jdb/demos/ai/mini_onnx.jdb	ok	ok	ok
@@ -138,7 +138,7 @@ jdb/demos/apl/prime_sieve.jdb	ok	ok	ok
 jdb/demos/apl/reduce_ops.jdb	ok	ok	ok
 jdb/demos/async/async_await.jdb	ok	ok	ok
 jdb/demos/async/simple_sim.jdb	ok	ok	ok
-jdb/demos/async/task_queue.jdb	ok	err	-
+jdb/demos/async/task_queue.jdb	ok	ok	no
 jdb/demos/async/thread_v1.jdb	ok	noref	-
 jdb/demos/audio/cabinet_demo.jdb	ok	ok	ok
 jdb/demos/audio/fx_chain_demo.jdb	ok	ok	ok
@@ -150,7 +150,7 @@ jdb/demos/audio/live_monitor.jdb	ok	ok	ok
 jdb/demos/audio/synth_to_wav.jdb	ok	ok	ok
 jdb/demos/audio/tone_designer.jdb	ok	ok	ok
 jdb/demos/bfwm/bfwm.jdb	ok	ok	ok
-jdb/demos/bridges/acc_module.jdb	ok	err	-
+jdb/demos/bridges/acc_module.jdb	ok	ok	no
 jdb/demos/bridges/access_reader.jdb	ok	ok	ok
 jdb/demos/bridges/access_sql.jdb	ok	noref	-
 jdb/demos/bridges/access_v1.jdb	ok	noref	-
@@ -161,11 +161,11 @@ jdb/demos/bridges/outlook_summary.jdb	ok	ok	ok
 jdb/demos/bridges/python_basics.jdb	ok	ok	ok
 jdb/demos/bridges/python_chart.jdb	ok	ok	ok
 jdb/demos/bridges/python_ticker.jdb	ok	ok	ok
-jdb/demos/bridges/serial_com.jdb	ok	err	-
+jdb/demos/bridges/serial_com.jdb	ok	ok	no
 jdb/demos/bridges/sql_insert.jdb	ok	ok	ok
 jdb/demos/bridges/sql_logging.jdb	ok	ok	ok
 jdb/demos/bridges/sqlite.jdb	ok	ok	ok
-jdb/demos/bridges/sqlite_core.jdb	ok	err	-
+jdb/demos/bridges/sqlite_core.jdb	ok	ok	ok
 jdb/demos/bridges/sqlite_demo.jdb	ok	ok	ok
 jdb/demos/bridges/word_auto.jdb	ok	ok	ok
 jdb/demos/data/agg.jdb	ok	ok	ok
@@ -309,8 +309,8 @@ jdb/demos/tui/clip_tool.jdb	ok	ok	ok
 jdb/demos/tui/cowsay.jdb	ok	ok	ok
 jdb/demos/tui/input_joy.jdb	ok	ok	no
 jdb/demos/tui/jdtop.jdb	ok	ok	ok
-jdb/demos/tui/md_browser.jdb	ok	err	-
-jdb/demos/tui/md_explorer.jdb	ok	err	-
+jdb/demos/tui/md_browser.jdb	ok	ok	no
+jdb/demos/tui/md_explorer.jdb	ok	ok	no
 jdb/demos/tui/md_render_v1.jdb	ok	noref	-
 jdb/demos/tui/md_render_v2.jdb	ok	noref	-
 jdb/demos/tui/mouse_basics.jdb	ok	ok	ok
@@ -344,9 +344,9 @@ jdb/demos/workflow/lala.jdb	ok	ok	ok
 jdb/demos/workflow/node_regex.jdb	ok	ok	ok
 jdb/demos/workflow/re_basics.jdb	ok	ok	ok
 jdb/demos/workflow/re_library.jdb	ok	ok	ok
-jdb/demos/workflow/wflib.jdb	ok	err	-
+jdb/demos/workflow/wflib.jdb	ok	ok	ok
 jdb/demos/workflow/workflow_pipe.jdb	ok	noref	-
-jdb/demos/workflow/workflow_run.jdb	ok	err	-
+jdb/demos/workflow/workflow_run.jdb	ok	ok	ok
 jdb/demos/workflow/workflow_v3.jdb	ok	noref	-
 jdb/deusexmachina/agent.jdb	ok	ok	ok
 jdb/deusexmachina/bus.jdb	ok	ok	ok
@@ -524,6 +524,7 @@ selfhost/fixtures/gen_literals.jdb	ok	ok	ok
 selfhost/fixtures/gen_mixed.jdb	ok	ok	ok
 selfhost/fixtures/gen_natives.jdb	ok	ok	ok
 selfhost/fixtures/gen_pipe.jdb	ok	ok	ok
+selfhost/fixtures/gen_rettypes.jdb	ok	ok	ok
 selfhost/fixtures/gen_tagged.jdb	ok	ok	ok
 selfhost/fixtures/gen_udt.jdb	ok	ok	ok
 selfhost/fixtures/gen_values.jdb	ok	ok	ok
