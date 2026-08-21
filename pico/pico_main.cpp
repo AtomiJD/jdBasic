@@ -6,6 +6,7 @@
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/stdio_usb.h"
+#include "pico/cyw43_arch.h"
 #include "jdb_embed_api.h"
 
 static void read_line(char* buf, int cap) {
@@ -34,6 +35,7 @@ static void read_line(char* buf, int cap) {
 
 int main() {
     stdio_init_all();
+    cyw43_arch_init();
     while (!stdio_usb_connected()) sleep_ms(100);
     sleep_ms(200);
 

@@ -20,6 +20,7 @@ pico_sdk_init()
 add_executable(jdbasic_repl
     pico_main.cpp
     pico_stubs.cpp
+    pico_builtins.cpp
     ../src/lexer.cpp
     ../src/parser.cpp
     ../src/compiler.cpp
@@ -36,7 +37,7 @@ target_compile_definitions(jdbasic_repl PRIVATE
 target_include_directories(jdbasic_repl PRIVATE ../src shim)
 target_compile_options(jdbasic_repl PRIVATE -Os "$<$<COMPILE_LANGUAGE:CXX>:-include;${CMAKE_CURRENT_LIST_DIR}/shim/jdb_pico_compat.h>")
 
-target_link_libraries(jdbasic_repl pico_stdlib)
+target_link_libraries(jdbasic_repl pico_stdlib pico_cyw43_arch_none)
 
 pico_enable_stdio_usb(jdbasic_repl 1)
 pico_enable_stdio_uart(jdbasic_repl 0)

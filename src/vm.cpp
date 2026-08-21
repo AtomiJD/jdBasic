@@ -4112,6 +4112,12 @@ static int array_rank(const Value& v) {
 }
 
 void VM::register_builtins() {
+#ifdef PICO
+    // The board brings its own family: pins, the LED, whatever the
+    // platform layer in pico/ decides to expose.
+    extern void register_pico_builtins(VM&);
+    register_pico_builtins(*this);
+#endif
     // ── Math ─────────────────────────────────────────────────
     register_native("ABS", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_f64(std::abs(args[0].to_double()));

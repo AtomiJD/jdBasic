@@ -1,5 +1,11 @@
 #pragma once
+// newlib carries no threads. Thread objects become inert, but sleeping
+// is real: the interpreter's SLEEP and its polling pauses go through
+// this_thread, and a REPL that cannot wait is no fun on a board.
 #include <chrono>
+
+extern "C" void jdb_pico_sleep_ms(unsigned);
+
 namespace std {
   struct thread {
     thread() {}
@@ -10,7 +16,10 @@ namespace std {
     static unsigned hardware_concurrency() { return 2; }
   };
   namespace this_thread {
-    template<class T> void sleep_for(T) {}
+    template<class T> void sleep_for(T d) {
+        auto ms = chrono::duration_cast<chrono::milliseconds>(d).count();
+        if (ms > 0) jdb_pico_sleep_ms((unsigned)ms);
+    }
     inline void yield() {}
   }
 }
