@@ -204,8 +204,15 @@ static void vm_heap_dispose_hook(HeapObject* o) {
 }
 
 VM::VM() {
+#ifdef PICO
+    // A board with half a megabyte of RAM starts small; the stack still
+    // doubles on demand like everywhere else.
+    stack.resize(4096);
+    frames.reserve(64);
+#else
     stack.resize(65536); // pre-allocate stack - avoids resize checks on hot paths
     frames.reserve(1024); // pre-allocate frame vector
+#endif
     prev_active_vm_ = g_active_vm;
     g_active_vm = this;
     g_heap_dispose_hook = &vm_heap_dispose_hook;

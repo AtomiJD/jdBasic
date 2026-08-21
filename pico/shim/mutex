@@ -1,0 +1,10 @@
+#pragma once
+namespace std {
+  struct mutex { void lock(){} void unlock(){} bool try_lock(){return true;} };
+  struct recursive_mutex { void lock(){} void unlock(){} bool try_lock(){return true;} };
+  template<class M> struct lock_guard { explicit lock_guard(M&){} lock_guard(M&, int){} };
+  template<class M> struct unique_lock { explicit unique_lock(M&){} void lock(){} void unlock(){} };
+  struct adopt_lock_t {}; struct defer_lock_t {};
+  template<class F> void call_once(int&, F f) { f(); }
+  using once_flag = int;
+}

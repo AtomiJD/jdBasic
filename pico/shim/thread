@@ -1,0 +1,16 @@
+#pragma once
+#include <chrono>
+namespace std {
+  struct thread {
+    thread() {}
+    template<class F, class... A> explicit thread(F&&, A&&...) {}
+    bool joinable() const { return false; }
+    void join() {} void detach() {}
+    struct id {};
+    static unsigned hardware_concurrency() { return 2; }
+  };
+  namespace this_thread {
+    template<class T> void sleep_for(T) {}
+    inline void yield() {}
+  }
+}

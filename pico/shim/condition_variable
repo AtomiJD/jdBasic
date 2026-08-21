@@ -1,0 +1,10 @@
+#pragma once
+#include <mutex>
+namespace std {
+  struct condition_variable {
+    void notify_one(){} void notify_all(){}
+    template<class L> void wait(L&){}
+    template<class L, class P> void wait(L&, P p){ while(!p()){} }
+    template<class L, class T> int wait_for(L&, T){ return 0; }
+  };
+}
