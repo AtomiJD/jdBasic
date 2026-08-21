@@ -1278,6 +1278,13 @@ FUNC P_TYPE() AS INTEGER
             CONTINUEDO
         ENDIF
 
+        ' Only a name opens a member line; anything else is skipped, the
+        ' way the reference walks a TYPE body.
+        IF TT() <> T_IDENTIFIER THEN
+            EAT()
+            CONTINUEDO
+        ENDIF
+
         IF n >= MAX_LOCAL THEN
             FAIL("too many members in one TYPE")
             EXITDO
@@ -1912,9 +1919,8 @@ FUNC P_ROUTINE(isFunc AS INTEGER) AS INTEGER
     P_PARAMS(nd)
     IF TT() = KT_AS THEN
         EAT()
-        vt = CINT(VTYPE_OF(TT()))
+        vt = CINT(TYPE_AFTER_AS(-1))
         IF vt >= 0 THEN stRType[nd] = vt
-        EAT()
     ENDIF
 
     IF isFunc = 1 THEN
@@ -2002,6 +2008,11 @@ FUNC P_DIM_CLAUSE(lnIn AS INTEGER) AS INTEGER
 
     IF TT() = KT_AS THEN
         EAT()
+        ' REACT before the type name marks a reactive slot and leaves no
+        ' trace in the tree.
+        IF TT() = T_IDENTIFIER THEN
+            IF TV$() = "REACT" THEN EAT()
+        ENDIF
         vt = CINT(TYPE_AFTER_AS(nd))
         IF vt >= 0 THEN
             IF ndim > 0 THEN
@@ -2193,6 +2204,7 @@ FUNC STARTS_ARGS(t AS INTEGER) AS INTEGER
     IF t = TT_FALSE THEN RETURN 1
     IF t = TT_MINUS THEN RETURN 1
     IF t = TT_NOT THEN RETURN 1
+    IF t = TT_THIS THEN RETURN 1
     ' A bare name is a call too, so its terminators count as the empty
     ' argument list.
     IF t = T_NEWLINE THEN RETURN 1

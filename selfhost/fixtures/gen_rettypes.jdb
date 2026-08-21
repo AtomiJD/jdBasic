@@ -1,0 +1,40 @@
+OPTION EXPLICIT
+
+' Return clauses that name more than a scalar: a TYPE, a MAP, a DATE.
+' The TYPE spells its members with the optional DIM prefix. The typed
+' returns are exercised as declarations; the calls stay on ground both
+' runtimes agree on.
+
+TYPE T_Pair
+    DIM a
+    DIM b
+
+    FUNC describe$()
+        RETURN STR$(THIS.a) + " " + STR$(THIS.b)
+    ENDFUNC
+ENDTYPE
+
+FUNC make_pair(pa, pb) AS T_Pair
+    DIM p AS T_Pair
+    p.a = pa
+    p.b = pb
+    RETURN p
+ENDFUNC
+
+FUNC settings() AS MAP
+    DIM m AS MAP
+    m{"host"} = "local"
+    m{"port"} = 8080
+    RETURN m
+ENDFUNC
+
+FUNC day_after(d AS DATE) AS DATE
+    RETURN DATEADD("D", 1, d)
+ENDFUNC
+
+DIM pr AS T_Pair
+pr.a = 3
+pr.b = 4
+PRINT pr.describe$()
+
+PRINT day_after("2026-08-20")
