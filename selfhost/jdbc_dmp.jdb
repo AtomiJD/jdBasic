@@ -1,0 +1,420 @@
+EXPORT MODULE JDBC_DMP
+
+' The printers: the token stream in the shape --dump-tokens uses, and
+' the tree in the shape --dump-ast uses, numbers rendered exactly.
+
+' ── Output, in the shape --dump-tokens uses ────────────────────────────────
+
+FUNC ESCAPE$(v AS STRING) AS STRING
+    DIM r AS STRING
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    r = ""
+    FOR i = 0 TO LEN(v) - 1
+        c = CINT(BYTEAT(v, i))
+        IF c = 92 THEN
+            r = r + "\\"
+        ELSE
+            IF c = 10 THEN
+                r = r + "\n"
+            ELSE
+                IF c = 9 THEN
+                    r = r + "\t"
+                ELSE
+                    IF c = 13 THEN
+                        r = r + "\r"
+                    ELSE
+                        r = r + CHR$(c)
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN r
+ENDFUNC
+
+EXPORT SUB EMIT_TOKENS()
+    DIM i AS INTEGER
+    DIM out AS STRING
+    out = ""
+    FOR i = 0 TO tkCount - 1
+        out = out + STR$(tkType[i]) + CHR$(9) + STR$(tkLine[i]) + CHR$(9)
+        out = out + STR$(tkCol[i]) + CHR$(9) + ESCAPE$(tkVal[i]) + CHR$(10)
+    NEXT i
+    PRINT out;
+ENDSUB
+
+' ── Printing the tree in the shape --dump-ast uses ─────────────────────────
+
+
+SUB EMIT(s AS STRING)
+    outBuf = outBuf + s
+ENDSUB
+
+FUNC PAD$(ind AS INTEGER) AS STRING
+    DIM r AS STRING
+    DIM i AS INTEGER
+    r = ""
+    FOR i = 1 TO ind
+        r = r + "  "
+    NEXT i
+    RETURN r
+ENDFUNC
+
+FUNC AESC$(v AS STRING) AS STRING
+    DIM r AS STRING
+    DIM i AS INTEGER
+    DIM c AS INTEGER
+    r = ""
+    FOR i = 0 TO LEN(v) - 1
+        c = CINT(BYTEAT(v, i))
+        IF c = 92 THEN
+            r = r + "\\"
+        ELSE
+            IF c = 10 THEN
+                r = r + "\n"
+            ELSE
+                IF c = 9 THEN
+                    r = r + "\t"
+                ELSE
+                    IF c = 13 THEN
+                        r = r + "\r"
+                    ELSE
+                        IF c = 32 THEN
+                            r = r + "\s"
+                        ELSE
+                            IF c = 41 THEN
+                                r = r + "\)"
+                            ELSE
+                                r = r + CHR$(c)
+                            ENDIF
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN r
+ENDFUNC
+
+' The reference prints a float literal with C's "%.17g": seventeen significant
+' digits, trailing zeros dropped. C++20's "{:.Ng}" counts digits after the
+' point instead, so the two only line up once N is shifted by the value's
+' decimal exponent. Seventeen significant digits means sixteen after the point
+' for a number in [1,10), one more for every power of ten below that.
+'
+' C switches to exponent notation past 1e17 and below 1e-5 and C++20 does not,
+' so a literal out there still reads differently; that is the only band where
+' this comparison is not exact.
+' The reference dumper prints a float through C's %.17g, which needs the
+' exact decimal expansion of the double. No formatter on either runtime
+' hands that out whole, so it is computed: the value splits into an integer
+' mantissa and a power of two, both exact moves in a double, and the digits
+' come from multiplying the mantissa out over limbs of seven digits.
+
+DIM bnLimb[400]
+DIM bnN AS INTEGER
+
+SUB BN_SET(m AS DOUBLE)
+    DIM rest AS DOUBLE
+    DIM q AS DOUBLE
+    bnN = 0
+    rest = m
+    DO
+        q = INT(rest / 10000000)
+        bnLimb[bnN] = rest - q * 10000000
+        bnN = bnN + 1
+        rest = q
+        IF rest = 0 THEN EXITDO
+    LOOP
+ENDSUB
+
+SUB BN_MUL(k AS DOUBLE)
+    DIM i AS INTEGER
+    DIM carry AS DOUBLE
+    DIM p AS DOUBLE
+    DIM q AS DOUBLE
+    carry = 0
+    FOR i = 0 TO bnN - 1
+        p = bnLimb[i] * k + carry
+        q = INT(p / 10000000)
+        bnLimb[i] = p - q * 10000000
+        carry = q
+    NEXT i
+    DO
+        IF carry = 0 THEN EXITDO
+        q = INT(carry / 10000000)
+        bnLimb[bnN] = carry - q * 10000000
+        bnN = bnN + 1
+        carry = q
+    LOOP
+ENDSUB
+
+FUNC BN_STR$() AS STRING
+    DIM s AS STRING
+    DIM piece AS STRING
+    DIM i AS INTEGER
+    s = STR$(bnLimb[bnN - 1])
+    FOR i = bnN - 2 TO 0 STEP -1
+        piece = STR$(bnLimb[i])
+        DO
+            IF LEN(piece) >= 7 THEN EXITDO
+            piece = "0" + piece
+        LOOP
+        s = s + piece
+    NEXT i
+    RETURN s
+ENDFUNC
+
+FUNC NUMTXT$(v AS DOUBLE) AS STRING
+    DIM a AS DOUBLE
+    DIM e2 AS INTEGER
+    DIM k AS INTEGER
+    DIM digits AS STRING
+    DIM expo AS INTEGER
+    DIM keep AS STRING
+    DIM rest AS STRING
+    DIM up AS INTEGER
+    DIM i AS INTEGER
+    DIM c AS STRING
+    DIM minus AS STRING
+    DIM outTxt AS STRING
+    DIM expTxt AS STRING
+
+    IF v = 0 THEN RETURN "0"
+    minus = ""
+    a = v
+    IF v < 0 THEN
+        minus = "-"
+        a = -v
+    ENDIF
+
+    ' Mantissa times two to the e2, every step exact.
+    e2 = 0
+    DO
+        IF a >= 9007199254740992 THEN
+            a = a / 2
+            e2 = e2 + 1
+            CONTINUEDO
+        ENDIF
+        IF a <> INT(a) THEN
+            a = a * 2
+            e2 = e2 - 1
+            CONTINUEDO
+        ENDIF
+        EXITDO
+    LOOP
+
+    ' Two to a positive power scales the digits; to a negative one it is
+    ' fives in, tens out, and the tens only move the decimal point.
+    BN_SET(a)
+    IF e2 >= 0 THEN
+        k = e2
+        DO
+            IF k < 20 THEN EXITDO
+            BN_MUL(1048576)
+            k = k - 20
+        LOOP
+        FOR i = 1 TO k
+            BN_MUL(2)
+        NEXT i
+        digits = BN_STR$()
+        expo = CINT(LEN(digits)) - 1
+    ELSE
+        k = -e2
+        DO
+            IF k < 8 THEN EXITDO
+            BN_MUL(390625)
+            k = k - 8
+        LOOP
+        FOR i = 1 TO k
+            BN_MUL(5)
+        NEXT i
+        digits = BN_STR$()
+        expo = CINT(LEN(digits)) - 1 + e2
+    ENDIF
+
+    ' Seventeen significant digits, ties to the even one, as printf rounds.
+    IF LEN(digits) > 17 THEN
+        keep = LEFT$(digits, 17)
+        rest = MID$(digits, 17, LEN(digits) - 17)
+        up = 0
+        c = LEFT$(rest, 1)
+        IF c > "5" THEN up = 1
+        IF c = "5" THEN
+            up = 1
+            IF REPLACE$(MID$(rest, 1, LEN(rest) - 1), "0", "") = "" THEN
+                IF INSTR("02468", MID$(keep, 16, 1)) >= 0 THEN up = 0
+            ENDIF
+        ENDIF
+        digits = keep
+        IF up = 1 THEN
+            i = 16
+            DO
+                IF i < 0 THEN
+                    digits = "1" + LEFT$(digits, 16)
+                    expo = expo + 1
+                    EXITDO
+                ENDIF
+                c = MID$(digits, i, 1)
+                IF c = "9" THEN
+                    digits = LEFT$(digits, i) + "0" + MID$(digits, i + 1, 16 - i)
+                    i = i - 1
+                ELSE
+                    digits = LEFT$(digits, i) + STR$(CINT(VAL(c)) + 1) + MID$(digits, i + 1, 16 - i)
+                    EXITDO
+                ENDIF
+            LOOP
+        ENDIF
+    ENDIF
+
+    i = CINT(LEN(digits)) - 1
+    DO
+        IF i <= 0 THEN EXITDO
+        IF MID$(digits, i, 1) <> "0" THEN EXITDO
+        i = i - 1
+    LOOP
+    digits = LEFT$(digits, i + 1)
+
+    IF expo < -4 ORELSE expo >= 17 THEN
+        outTxt = LEFT$(digits, 1)
+        IF LEN(digits) > 1 THEN outTxt = outTxt + "." + MID$(digits, 1, LEN(digits) - 1)
+        expTxt = STR$(ABS(expo))
+        IF LEN(expTxt) < 2 THEN expTxt = "0" + expTxt
+        IF expo < 0 THEN
+            outTxt = outTxt + "e-" + expTxt
+        ELSE
+            outTxt = outTxt + "e+" + expTxt
+        ENDIF
+        RETURN minus + outTxt
+    ENDIF
+
+    IF expo >= 0 THEN
+        IF LEN(digits) <= expo THEN
+            outTxt = digits
+            DO
+                IF LEN(outTxt) > expo THEN EXITDO
+                outTxt = outTxt + "0"
+            LOOP
+            RETURN minus + outTxt
+        ENDIF
+        IF LEN(digits) = expo + 1 THEN RETURN minus + digits
+        RETURN minus + LEFT$(digits, expo + 1) + "." + MID$(digits, expo + 1, LEN(digits) - expo - 1)
+    ENDIF
+
+    outTxt = "0."
+    FOR i = 1 TO -expo - 1
+        outTxt = outTxt + "0"
+    NEXT i
+    RETURN minus + outTxt + digits
+ENDFUNC
+
+SUB D_EXPR(ix AS INTEGER, ind AS INTEGER)
+    DIM i AS INTEGER
+    DIM k AS INTEGER
+    IF ix < 0 THEN RETURN
+    k = CINT(exKind[ix])
+    EMIT(PAD$(ind) + "(e" + STR$(k) + " l" + STR$(exLine[ix]))
+    IF exRaw[ix] <> "" THEN
+        EMIT(" i=" + exRaw[ix])
+    ELSE
+        IF exInt[ix] <> 0 THEN EMIT(" i=" + STR$(exInt[ix]))
+    ENDIF
+    IF exFloat[ix] <> 0 THEN EMIT(" f=" + NUMTXT$(exFloat[ix]))
+    IF exStr[ix] <> "" THEN EMIT(" s=" + AESC$(exStr[ix]))
+    IF exBool[ix] <> 0 THEN EMIT(" b=1")
+    IF exFuncRef[ix] <> 0 THEN EMIT(" fr=1")
+    IF k = X_BINARY OR k = X_UNARY THEN EMIT(" op=" + STR$(exOp[ix]))
+    IF exFn[ix] <> "" THEN EMIT(" fn=" + AESC$(exFn[ix]))
+    FOR i = 0 TO exKeyN[ix] - 1
+        EMIT(" k=" + AESC$(keyBuf[CINT(exKeyAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO exLpN[ix] - 1
+        EMIT(" lp=" + AESC$(lpBuf[CINT(exLpAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO exLcN[ix] - 1
+        EMIT(" lc=" + AESC$(lcBuf[CINT(exLcAt[ix]) + i]))
+    NEXT i
+    EMIT(CHR$(10))
+    D_EXPR(CINT(exLeft[ix]), ind + 1)
+    D_EXPR(CINT(exRight[ix]), ind + 1)
+    FOR i = 0 TO exArgN[ix] - 1
+        D_EXPR(CINT(argBuf[CINT(exArgAt[ix]) + i]), ind + 1)
+    NEXT i
+    EMIT(PAD$(ind) + ")" + CHR$(10))
+ENDSUB
+
+EXPORT SUB D_STMT(ix AS INTEGER, ind AS INTEGER)
+    DIM i AS INTEGER
+    DIM b AS INTEGER
+    IF ix < 0 THEN RETURN
+    EMIT(PAD$(ind) + "(s" + STR$(stKind[ix]) + " l" + STR$(stLine[ix]))
+    IF stVar[ix] <> "" THEN EMIT(" v=" + AESC$(stVar[ix]))
+    IF stVType[ix] <> 0 THEN EMIT(" vt=" + STR$(stVType[ix]))
+    IF stEType[ix] <> 0 THEN EMIT(" et=" + STR$(stEType[ix]))
+    IF stConst[ix] <> 0 THEN EMIT(" const=1")
+    IF stStatic[ix] <> 0 THEN EMIT(" static=1")
+    IF stLabel[ix] <> "" THEN EMIT(" lbl=" + AESC$(stLabel[ix]))
+    IF stFunc[ix] <> "" THEN EMIT(" fn=" + AESC$(stFunc[ix]))
+    IF stRType[ix] <> 0 THEN EMIT(" rt=" + STR$(stRType[ix]))
+    IF stAsync[ix] <> 0 THEN EMIT(" async=1")
+    IF stTop[ix] <> 0 THEN EMIT(" top=1")
+    IF stUntil[ix] <> 0 THEN EMIT(" until=1")
+    IF stNoNl[ix] <> 0 THEN EMIT(" nonl=1")
+    FOR i = 0 TO stSepN[ix] - 1
+        EMIT(" sep=" + STR$(sepBuf[CINT(stSepAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stParN[ix] - 1
+        EMIT(" p=" + AESC$(parName[CINT(stParAt[ix]) + i]) + ":" + STR$(parType[CINT(stParAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stDvN[ix] - 1
+        EMIT(" dv=" + AESC$(dvBuf[CINT(stDvAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stEmN[ix] - 1
+        EMIT(" em=" + AESC$(emName[CINT(stEmAt[ix]) + i]) + ":" + STR$(emVal[CINT(stEmAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stTmN[ix] - 1
+        EMIT(" tm=" + AESC$(tmName[CINT(stTmAt[ix]) + i]) + ":" + STR$(tmType[CINT(stTmAt[ix]) + i]))
+    NEXT i
+    EMIT(CHR$(10))
+
+    D_EXPR(CINT(stExpr[ix]), ind + 1)
+    D_EXPR(CINT(stCond[ix]), ind + 1)
+    D_EXPR(CINT(stEnd[ix]), ind + 1)
+    D_EXPR(CINT(stStep[ix]), ind + 1)
+    FOR i = 0 TO stPrN[ix] - 1
+        D_EXPR(CINT(prBuf[CINT(stPrAt[ix]) + i]), ind + 1)
+    NEXT i
+    FOR i = 0 TO stIxN[ix] - 1
+        D_EXPR(CINT(ixBuf[CINT(stIxAt[ix]) + i]), ind + 1)
+    NEXT i
+    FOR i = 0 TO stCtN[ix] - 1
+        D_EXPR(CINT(ctBuf[CINT(stCtAt[ix]) + i]), ind + 1)
+    NEXT i
+
+    FOR b = 0 TO stBrN[ix] - 1
+        EMIT(PAD$(ind + 1) + "(branch" + CHR$(10))
+        D_EXPR(CINT(brCond[CINT(stBrAt[ix]) + b]), ind + 2)
+        FOR i = 0 TO brExN[CINT(stBrAt[ix]) + b] - 1
+            D_EXPR(CINT(caseBuf[CINT(brExAt[CINT(stBrAt[ix]) + b]) + i]), ind + 2)
+            D_EXPR(CINT(caseHi[CINT(brExAt[CINT(stBrAt[ix]) + b]) + i]), ind + 2)
+        NEXT i
+        FOR i = 0 TO brBodyN[CINT(stBrAt[ix]) + b] - 1
+            D_STMT(CINT(bodyBuf[CINT(brBodyAt[CINT(stBrAt[ix]) + b]) + i]), ind + 2)
+        NEXT i
+        EMIT(PAD$(ind + 1) + ")" + CHR$(10))
+    NEXT b
+
+    FOR i = 0 TO stBodyN[ix] - 1
+        D_STMT(CINT(bodyBuf[CINT(stBodyAt[ix]) + i]), ind + 1)
+    NEXT i
+    FOR i = 0 TO stCatchN[ix] - 1
+        D_STMT(CINT(bodyBuf[CINT(stCatchAt[ix]) + i]), ind + 1)
+    NEXT i
+    FOR i = 0 TO stFinN[ix] - 1
+        D_STMT(CINT(bodyBuf[CINT(stFinAt[ix]) + i]), ind + 1)
+    NEXT i
+
+    EMIT(PAD$(ind) + ")" + CHR$(10))
+ENDSUB
+

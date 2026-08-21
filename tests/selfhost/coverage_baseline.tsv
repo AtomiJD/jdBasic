@@ -20,6 +20,10 @@ selfhost/fixtures/gen_values.jdb	ok	ok	ok
 selfhost/gen_natives.jdb	ok	ok	ok
 selfhost/gen_tokens.jdb	ok	ok	ok
 selfhost/jdbc.jdb	ok	ok	ok
+selfhost/jdbc_dmp.jdb	ok	ok	ok
+selfhost/jdbc_gen.jdb	ok	ok	no
+selfhost/jdbc_lex.jdb	ok	ok	no
+selfhost/jdbc_par.jdb	ok	ok	no
 selfhost/jdbc_tokens.jdb	ok	ok	ok
 selfhost/s0_pipeline.jdb	ok	ok	ok
 tests/ai/test_classifier.jdb	ok	ok	ok

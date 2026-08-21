@@ -1,0 +1,346 @@
+EXPORT MODULE JDBC_LEX
+
+' The scanner: turns source text into the token stream arenas that the
+' parser walks. The dictionaries it matches against live in jdbc.jdb and
+' are filled there from the generated token table.
+
+' ── Character tests ────────────────────────────────────────────────────────
+
+FUNC IS_DIGIT_C(c AS INTEGER) AS INTEGER
+    IF c >= 48 AND c <= 57 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC IS_ALPHA_C(c AS INTEGER) AS INTEGER
+    IF c >= 65 AND c <= 90 THEN RETURN 1
+    IF c >= 97 AND c <= 122 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC IS_ALNUM_C(c AS INTEGER) AS INTEGER
+    IF IS_DIGIT_C(c) = 1 THEN RETURN 1
+    IF IS_ALPHA_C(c) = 1 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC IS_HEX_C(c AS INTEGER) AS INTEGER
+    IF IS_DIGIT_C(c) = 1 THEN RETURN 1
+    IF c >= 65 AND c <= 70 THEN RETURN 1
+    IF c >= 97 AND c <= 102 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC HEX_VAL(c AS INTEGER) AS INTEGER
+    IF c >= 48 AND c <= 57 THEN RETURN c - 48
+    IF c >= 65 AND c <= 70 THEN RETURN c - 55
+    RETURN c - 87
+ENDFUNC
+
+' ── Cursor ─────────────────────────────────────────────────────────────────
+
+FUNC PEEKCH() AS INTEGER
+    IF pos >= LEN(src) THEN RETURN 0
+    RETURN BYTEAT(src, pos)
+ENDFUNC
+
+FUNC PEEKNEXT() AS INTEGER
+    IF pos + 1 >= LEN(src) THEN RETURN 0
+    RETURN BYTEAT(src, pos + 1)
+ENDFUNC
+
+FUNC ADVANCE() AS INTEGER
+    DIM c AS INTEGER
+    c = CINT(BYTEAT(src, pos))
+    pos = pos + 1
+    IF c = 10 THEN
+        lineNo = lineNo + 1
+        colNo = 1
+    ELSE
+        colNo = colNo + 1
+    ENDIF
+    RETURN c
+ENDFUNC
+
+' The line and column recorded are the ones current *after* the token text has
+' been consumed, which is what the reference lexer does.
+SUB ADDTOK(ty AS INTEGER, val AS STRING)
+    IF tkCount >= MAX_TOKENS THEN
+        lexError = "too many tokens"
+        RETURN
+    ENDIF
+    tkType[tkCount] = ty
+    tkLine[tkCount] = lineNo
+    tkCol[tkCount] = colNo
+    tkVal[tkCount] = val
+    tkCount = tkCount + 1
+ENDSUB
+
+
+FUNC KW_LOOKUP(w AS STRING) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO kwCount - 1
+        IF kwWord[i] = w THEN RETURN CINT(kwType[i])
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+
+
+' ── Scanners ───────────────────────────────────────────────────────────────
+
+' Raw literals: a backslash is an ordinary character and a doubled quote is
+' how a quote gets in, so this one is built up rather than sliced out.
+SUB READ_STRING()
+    DIM r AS STRING
+    DIM c AS INTEGER
+    DIM discard AS INTEGER
+
+    discard = CINT(ADVANCE())
+    r = ""
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        c = CINT(PEEKCH())
+        IF c = 34 THEN
+            IF pos + 1 < LEN(src) ANDALSO PEEKNEXT() = 34 THEN
+                r = r + CHR$(34)
+                discard = CINT(ADVANCE())
+                discard = CINT(ADVANCE())
+            ELSE
+                EXITDO
+            ENDIF
+        ELSE
+            r = r + CHR$(CINT(ADVANCE()))
+        ENDIF
+    LOOP
+    IF pos < LEN(src) THEN discard = CINT(ADVANCE())
+    ADDTOK(T_STRING_LIT, r)
+ENDSUB
+
+SUB READ_NUMBER()
+    DIM start AS INTEGER
+    DIM isFloat AS INTEGER
+    DIM c AS INTEGER
+    DIM discard AS INTEGER
+
+    start = pos
+    isFloat = 0
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        c = CINT(PEEKCH())
+        IF IS_DIGIT_C(c) = 0 AND c <> 46 THEN EXITDO
+        IF c = 46 THEN
+            IF isFloat = 1 THEN EXITDO
+            isFloat = 1
+        ENDIF
+        discard = CINT(ADVANCE())
+    LOOP
+
+    IF pos < LEN(src) THEN
+        c = CINT(PEEKCH())
+        IF c = 101 OR c = 69 THEN
+            isFloat = 1
+            discard = CINT(ADVANCE())
+            IF pos < LEN(src) THEN
+                c = CINT(PEEKCH())
+                IF c = 43 OR c = 45 THEN discard = CINT(ADVANCE())
+            ENDIF
+            DO
+                IF pos >= LEN(src) THEN EXITDO
+                IF IS_DIGIT_C(CINT(PEEKCH())) = 0 THEN EXITDO
+                discard = CINT(ADVANCE())
+            LOOP
+        ENDIF
+    ENDIF
+
+    IF isFloat = 1 THEN
+        ADDTOK(T_FLOAT_LIT, MID$(src, start, pos - start))
+    ELSE
+        ADDTOK(T_INTEGER_LIT, MID$(src, start, pos - start))
+    ENDIF
+ENDSUB
+
+SUB SKIP_COMMENT()
+    DIM discard AS INTEGER
+    DO
+        IF pos >= LEN(src) THEN RETURN
+        IF PEEKCH() = 10 THEN RETURN
+        discard = CINT(ADVANCE())
+    LOOP
+ENDSUB
+
+SUB READ_IDENT()
+    DIM start AS INTEGER
+    DIM id AS STRING
+    DIM up AS STRING
+    DIM t AS INTEGER
+    DIM discard AS INTEGER
+
+    start = pos
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        IF IS_ALNUM_C(CINT(PEEKCH())) = 0 AND PEEKCH() <> 95 THEN EXITDO
+        discard = CINT(ADVANCE())
+    LOOP
+    ' A trailing $ belongs to the name: GETENV$, DATE$ and friends.
+    IF pos < LEN(src) THEN
+        IF PEEKCH() = 36 THEN discard = CINT(ADVANCE())
+    ENDIF
+
+    id = MID$(src, start, pos - start)
+    up = UCASE$(id)
+
+    IF up = "REM" THEN
+        SKIP_COMMENT()
+        ADDTOK(T_NEWLINE, "\n")
+        RETURN
+    ENDIF
+
+    t = CINT(KW_LOOKUP(up))
+    IF t >= 0 THEN
+        ADDTOK(t, up)
+    ELSE
+        ADDTOK(T_IDENTIFIER, up)
+    ENDIF
+ENDSUB
+
+' $FF and %0101 both become an INTEGER_LIT carrying the decimal text.
+SUB READ_RADIX(base AS INTEGER)
+    DIM v AS DOUBLE
+    DIM c AS INTEGER
+    DIM discard AS INTEGER
+
+    discard = CINT(ADVANCE())
+    v = 0
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        c = CINT(PEEKCH())
+        IF base = 16 THEN
+            IF IS_HEX_C(c) = 0 THEN EXITDO
+            v = v * 16 + HEX_VAL(c)
+        ELSE
+            IF c <> 48 AND c <> 49 THEN EXITDO
+            v = v * 2 + (c - 48)
+        ENDIF
+        discard = CINT(ADVANCE())
+    LOOP
+    ADDTOK(T_INTEGER_LIT, STR$(v))
+ENDSUB
+
+' ── The loop ───────────────────────────────────────────────────────────────
+
+EXPORT SUB TOKENIZE()
+    tkCount = 0
+    TOKENIZE_MORE()
+ENDSUB
+
+' Reads src into the token arrays from wherever they end, so a module's
+' stream can live behind the program's; each ends with its own EOF.
+EXPORT SUB TOKENIZE_MORE()
+    DIM c AS INTEGER
+    DIM lastWasNewline AS INTEGER
+    DIM i AS INTEGER
+    DIM matched AS INTEGER
+    DIM two AS STRING
+    DIM one AS STRING
+    DIM discard AS INTEGER
+
+    pos = 0
+    lineNo = 1
+    colNo = 1
+    lastWasNewline = 1
+
+    DO
+        IF pos >= LEN(src) THEN EXITDO
+        IF lexError <> "" THEN RETURN
+
+        ' Spaces, tabs and carriage returns carry no token.
+        DO
+            IF pos >= LEN(src) THEN EXITDO
+            c = CINT(PEEKCH())
+            IF c <> 32 AND c <> 9 AND c <> 13 THEN EXITDO
+            discard = CINT(ADVANCE())
+        LOOP
+        IF pos >= LEN(src) THEN EXITDO
+
+        c = CINT(PEEKCH())
+
+        IF c = 10 THEN
+            discard = CINT(ADVANCE())
+            ' A trailing _ joins this line with the next, so it and the break
+            ' both disappear.
+            IF tkCount > 0 ANDALSO tkType[tkCount - 1] = T_IDENTIFIER ANDALSO tkVal[tkCount - 1] = "_" THEN
+                tkCount = tkCount - 1
+                CONTINUEDO
+            ENDIF
+            IF lastWasNewline = 0 THEN
+                ADDTOK(T_NEWLINE, "\n")
+                lastWasNewline = 1
+            ENDIF
+            CONTINUEDO
+        ENDIF
+
+        lastWasNewline = 0
+
+        IF c = 39 THEN
+            SKIP_COMMENT()
+            CONTINUEDO
+        ENDIF
+
+        IF c = 34 THEN
+            READ_STRING()
+            CONTINUEDO
+        ENDIF
+
+        IF c = 36 AND IS_HEX_C(CINT(PEEKNEXT())) = 1 THEN
+            READ_RADIX(16)
+            CONTINUEDO
+        ENDIF
+
+        IF c = 37 AND (PEEKNEXT() = 48 OR PEEKNEXT() = 49) THEN
+            READ_RADIX(2)
+            CONTINUEDO
+        ENDIF
+
+        IF IS_DIGIT_C(c) = 1 OR (c = 46 AND IS_DIGIT_C(CINT(PEEKNEXT())) = 1) THEN
+            READ_NUMBER()
+            CONTINUEDO
+        ENDIF
+
+        IF IS_ALPHA_C(c) = 1 OR c = 95 THEN
+            READ_IDENT()
+            CONTINUEDO
+        ENDIF
+
+        ' Operators, longest first so <= wins over <.
+        two = MID$(src, pos, 2)
+        one = MID$(src, pos, 1)
+        matched = 0
+        FOR i = 0 TO opCount - 1
+            IF LEN(opName[i]) = 2 AND opName[i] = two THEN
+                discard = CINT(ADVANCE())
+                discard = CINT(ADVANCE())
+                ADDTOK(CINT(opType[i]), opName[i])
+                matched = 1
+                EXITFOR
+            ENDIF
+        NEXT i
+        IF matched = 0 THEN
+            FOR i = 0 TO opCount - 1
+                IF LEN(opName[i]) = 1 AND opName[i] = one THEN
+                    discard = CINT(ADVANCE())
+                    ADDTOK(CINT(opType[i]), opName[i])
+                    matched = 1
+                    EXITFOR
+                ENDIF
+            NEXT i
+        ENDIF
+        IF matched = 0 THEN
+            lexError = "Unexpected character " + one + " at line " + STR$(lineNo)
+            RETURN
+        ENDIF
+    LOOP
+
+    IF lastWasNewline = 0 THEN ADDTOK(T_NEWLINE, "\n")
+    ADDTOK(T_EOF, "")
+ENDSUB
+

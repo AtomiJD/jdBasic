@@ -1,0 +1,3473 @@
+EXPORT MODULE JDBC_PAR
+
+' The parser: a cursor over the token stream and one recursive descent
+' walk that fills the expression and statement arenas, IMPORT included.
+
+' ── Cursor over the token stream ───────────────────────────────────────────
+
+FUNC TT() AS INTEGER
+    IF cur >= tkCount THEN RETURN T_EOF
+    RETURN CINT(tkType[cur])
+ENDFUNC
+
+FUNC CUR_TT(k AS INTEGER) AS INTEGER
+    IF cur + k >= tkCount THEN RETURN T_EOF
+    RETURN CINT(tkType[cur + k])
+ENDFUNC
+
+FUNC TV$() AS STRING
+    IF cur >= tkCount THEN RETURN ""
+    RETURN tkVal[cur]
+ENDFUNC
+
+FUNC TL() AS INTEGER
+    IF cur >= tkCount THEN RETURN 0
+    RETURN CINT(tkLine[cur])
+ENDFUNC
+
+SUB EAT()
+    cur = cur + 1
+ENDSUB
+
+FUNC IS_ONE_OF(t AS INTEGER, list AS ARRAY, n AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO n - 1
+        IF list[i] = t THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+SUB FAIL(msg AS STRING)
+    IF parseError = "" THEN parseError = msg + " at line " + STR$(TL())
+ENDSUB
+
+SUB SKIP_SEPS()
+    DO
+        IF TT() = T_NEWLINE OR TT() = TT_COLON THEN
+            EAT()
+        ELSE
+            RETURN
+        ENDIF
+    LOOP
+ENDSUB
+
+' ── Expressions ────────────────────────────────────────────────────────────
+
+
+FUNC P_PRIMARY() AS INTEGER
+    DIM ln AS INTEGER
+    DIM nd AS INTEGER
+    DIM nm AS STRING
+    DIM a AS INTEGER
+    DIM start AS INTEGER
+    DIM n AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM tmpK[MAX_LOCAL] AS STRING
+    DIM tmpC[MAX_LOCAL] AS STRING
+    DIM nCap AS INTEGER
+    DIM i AS INTEGER
+
+    ln = CINT(TL())
+
+    IF TT() = T_INTEGER_LIT THEN
+        nd = CINT(NEW_EXPR(X_LIT_INT, ln))
+        exInt[nd] = VAL(TV$())
+        ' A literal wider than a double keeps its spelling for the dump.
+        IF STR$(exInt[nd]) <> TV$() ANDALSO REPLACE$(TV$(), "0", "") <> "" THEN
+            IF INSTR("123456789", LEFT$(TV$(), 1)) >= 0 THEN exRaw[nd] = TV$()
+        ENDIF
+        EAT()
+        RETURN nd
+    ENDIF
+    IF TT() = T_FLOAT_LIT THEN
+        nd = CINT(NEW_EXPR(X_LIT_FLOAT, ln))
+        exFloat[nd] = VAL(TV$())
+        EAT()
+        RETURN nd
+    ENDIF
+    IF TT() = T_STRING_LIT THEN
+        nd = CINT(NEW_EXPR(X_LIT_STR, ln))
+        exStr[nd] = TV$()
+        EAT()
+        RETURN nd
+    ENDIF
+    IF TT() = TT_TRUE OR TT() = TT_FALSE THEN
+        nd = CINT(NEW_EXPR(X_LIT_BOOL, ln))
+        IF TT() = TT_TRUE THEN exBool[nd] = 1
+        EAT()
+        RETURN nd
+    ENDIF
+
+    IF TT() = TT_LPAREN THEN
+        EAT()
+        nd = CINT(P_EXPR())
+        IF TT() <> TT_RPAREN THEN
+            FAIL("expected )")
+            RETURN nd
+        ENDIF
+        EAT()
+        RETURN nd
+    ENDIF
+
+    ' [a, b, c] is an array literal; its elements are the arguments.
+    IF TT() = TT_LBRACKET THEN
+        EAT()
+        n = 0
+        DO
+            IF TT() = TT_RBRACKET THEN EXITDO
+            IF TT() = T_EOF THEN
+                FAIL("expected ]")
+                EXITDO
+            ENDIF
+            IF parseError <> "" THEN EXITDO
+            IF n >= MAX_LOCAL THEN
+                FAIL("too many items in one list")
+                EXITDO
+            ENDIF
+            tmp[n] = P_EXPR()
+            n = n + 1
+            IF TT() = TT_COMMA THEN EAT()
+        LOOP
+        IF TT() = TT_RBRACKET THEN EAT()
+        nd = CINT(NEW_EXPR(X_ARRAY_LIT, ln))
+        start = argN
+        FOR i = 0 TO n - 1
+            argBuf[argN] = tmp[i]
+            argN = argN + 1
+        NEXT i
+        exArgAt[nd] = start
+        exArgN[nd] = n
+        RETURN nd
+    ENDIF
+
+    ' THIS.field reaches into the instance a routine was handed, which is a
+    ' member access rather than a name with a dot in it.
+    IF TT() = TT_THIS THEN
+        nd = CINT(NEW_EXPR(X_VARIABLE, ln))
+        exStr[nd] = "THIS"
+        EAT()
+        DO
+            IF TT() <> TT_DOT THEN EXITDO
+            EAT()
+            a = CINT(NEW_EXPR(X_MEMBER, ln))
+            exStr[a] = TV$()
+            exLeft[a] = nd
+            nd = a
+            EAT()
+        LOOP
+        RETURN nd
+    ENDIF
+
+    ' AWAIT reads as a prefix and is a call on the thing it waits for.
+    IF TT() = KT_AWAIT THEN
+        EAT()
+        nd = CINT(NEW_EXPR(X_CALL, ln))
+        exFn[nd] = "AWAIT"
+        start = argN
+        argBuf[argN] = P_UNARY()
+        argN = argN + 1
+        exArgAt[nd] = start
+        exArgN[nd] = 1
+        RETURN nd
+    ENDIF
+
+    ' ? stands where a piped value will land.
+    IF TT() = TT_PLACEHOLDER THEN
+        nd = CINT(NEW_EXPR(X_PLACEHOLDER, ln))
+        EAT()
+        RETURN nd
+    ENDIF
+
+    ' LAMBDA a, b -> expr. The parameters sit beside the node and the body
+    ' hangs under it.
+    IF TT() = KT_LAMBDA THEN
+        EAT()
+
+        ' USE(a, b) names what the lambda takes with it.
+        nCap = 0
+        IF TV$() = "USE" ANDALSO CUR_TT(1) = TT_LPAREN THEN
+            EAT()
+            EAT()
+            DO
+                IF parseError <> "" THEN EXITDO
+                IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+                IF TT() = TT_COMMA THEN
+                    EAT()
+                    CONTINUEDO
+                ENDIF
+                IF nCap >= MAX_LOCAL THEN
+                    FAIL("too many captures")
+                    EXITDO
+                ENDIF
+                tmpC[nCap] = TV$()
+                nCap = nCap + 1
+                EAT()
+            LOOP
+            IF TT() = TT_RPAREN THEN EAT()
+        ENDIF
+
+        n = 0
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF TT() = TT_ARROW OR TT() = T_NEWLINE OR TT() = T_EOF THEN EXITDO
+            IF n >= MAX_LOCAL THEN
+                FAIL("too many parameters")
+                EXITDO
+            ENDIF
+            tmpK[n] = TV$()
+            n = n + 1
+            EAT()
+            IF TT() <> TT_COMMA THEN EXITDO
+            EAT()
+        LOOP
+        IF TT() = TT_ARROW THEN EAT()
+
+        nd = CINT(NEW_EXPR(X_LAMBDA, ln))
+        start = lpN
+        FOR i = 0 TO n - 1
+            lpBuf[lpN] = tmpK[i]
+            lpN = lpN + 1
+        NEXT i
+        exLpAt[nd] = start
+        exLpN[nd] = n
+        start = lcN
+        FOR i = 0 TO nCap - 1
+            lcBuf[lcN] = tmpC[i]
+            lcN = lcN + 1
+        NEXT i
+        exLcAt[nd] = start
+        exLcN[nd] = nCap
+        exLeft[nd] = P_EXPR()
+        RETURN nd
+    ENDIF
+
+    ' { "k": v, ... } is a map literal: the keys sit beside the node, the
+    ' values are its arguments.
+    IF TT() = TT_LBRACE THEN
+        EAT()
+        n = 0
+        DO
+            IF TT() = TT_RBRACE THEN EXITDO
+            IF TT() = T_EOF THEN
+                FAIL("expected }")
+                EXITDO
+            ENDIF
+            IF parseError <> "" THEN EXITDO
+            IF n >= MAX_LOCAL THEN
+                FAIL("too many items in one list")
+                EXITDO
+            ENDIF
+            IF TT() = T_NEWLINE THEN
+                EAT()
+                CONTINUEDO
+            ENDIF
+            tmpK[n] = TV$()
+            EAT()
+            IF TT() = TT_COLON THEN EAT()
+            tmp[n] = P_EXPR()
+            n = n + 1
+            IF TT() = TT_COMMA THEN EAT()
+        LOOP
+        IF TT() = TT_RBRACE THEN EAT()
+
+        nd = CINT(NEW_EXPR(X_MAP_LIT, ln))
+        start = keyN
+        FOR i = 0 TO n - 1
+            keyBuf[keyN] = tmpK[i]
+            keyN = keyN + 1
+        NEXT i
+        exKeyAt[nd] = start
+        exKeyN[nd] = n
+        start = argN
+        FOR i = 0 TO n - 1
+            argBuf[argN] = tmp[i]
+            argN = argN + 1
+        NEXT i
+        exArgAt[nd] = start
+        exArgN[nd] = n
+        RETURN nd
+    ENDIF
+
+    ' Some words are operators between two values and the name of a call in
+    ' front of a parenthesis. Which one is decided by what follows.
+    IF IS_WORD_OPERATOR(CINT(TT())) = 1 ANDALSO CUR_TT(1) = TT_LPAREN THEN
+        nm = TV$()
+        EAT()
+        EAT()
+        RETURN CINT(P_CALL_ARGS(nm, ln))
+    ENDIF
+
+    ' A name is a call when a parenthesis follows it, otherwise a variable.
+    ' A dotted name is one identifier as far as the tree is concerned.
+    IF TT() = T_IDENTIFIER THEN
+        nm = TV$()
+        EAT()
+        DO
+            IF TT() <> TT_DOT THEN EXITDO
+            EAT()
+            nm = nm + "." + TV$()
+            EAT()
+        LOOP
+        ' name@ is a reference to the routine, carried as its name.
+        IF TT() = TT_AT THEN
+            EAT()
+            nd = CINT(NEW_EXPR(X_LIT_STR, ln))
+            exStr[nd] = nm
+            exFuncRef[nd] = 1
+            RETURN nd
+        ENDIF
+
+        IF TT() = TT_LPAREN THEN
+            EAT()
+            n = 0
+            DO
+                IF TT() = TT_RPAREN THEN EXITDO
+                IF TT() = T_EOF THEN
+                    FAIL("expected )")
+                    EXITDO
+                ENDIF
+                IF parseError <> "" THEN EXITDO
+                IF n >= MAX_LOCAL THEN
+                    FAIL("too many items in one list")
+                    EXITDO
+                ENDIF
+                tmp[n] = P_EXPR()
+                n = n + 1
+                IF TT() = TT_COMMA THEN EAT()
+            LOOP
+            IF TT() = TT_RPAREN THEN EAT()
+            nd = CINT(NEW_EXPR(X_CALL, ln))
+            exFn[nd] = nm
+            start = argN
+            FOR i = 0 TO n - 1
+                argBuf[argN] = tmp[i]
+                argN = argN + 1
+            NEXT i
+            exArgAt[nd] = start
+            exArgN[nd] = n
+            RETURN nd
+        ENDIF
+        nd = CINT(NEW_EXPR(X_VARIABLE, ln))
+        exStr[nd] = nm
+        RETURN nd
+    ENDIF
+
+    FAIL("unexpected token " + TV$())
+    RETURN CINT(NEW_EXPR(X_LIT_INT, ln))
+ENDFUNC
+
+' The arguments of obj.method(...), with the member already built.
+' Looks past a run of subscripts from the current name for a dot, which is
+' what tells a plain indexed assignment from one that reaches further.
+FUNC CHAIN_HAS_DOT() AS INTEGER
+    DIM at AS INTEGER
+    DIM depth AS INTEGER
+    DIM t AS INTEGER
+
+    at = 1
+    depth = 0
+    DO
+        t = CINT(CUR_TT(at))
+        IF t = T_EOF OR t = T_NEWLINE THEN RETURN 0
+        IF t = TT_LBRACKET OR t = TT_LBRACE THEN depth = depth + 1
+        IF t = TT_RBRACKET OR t = TT_RBRACE THEN depth = depth - 1
+        IF depth = 0 THEN
+            IF t = TT_DOT THEN RETURN 1
+            IF t = TT_RBRACKET OR t = TT_RBRACE THEN
+                IF CUR_TT(at + 1) <> TT_LBRACKET ANDALSO CUR_TT(at + 1) <> TT_LBRACE THEN
+                    IF CUR_TT(at + 1) = TT_DOT THEN RETURN 1
+                    RETURN 0
+                ENDIF
+            ENDIF
+        ENDIF
+        at = at + 1
+    LOOP
+ENDFUNC
+
+' name[...].field = value, and the rest of the shapes a chain can end in.
+FUNC P_CHAIN(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM root AS INTEGER
+    DIM chain AS INTEGER
+    DIM start AS INTEGER
+
+    root = CINT(NEW_EXPR(X_VARIABLE, ln))
+    exStr[root] = TV$()
+    EAT()
+    chain = CINT(P_POSTFIX(root))
+
+    IF TT() <> TT_ASSIGN THEN
+        nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+        stExpr[nd] = chain
+        RETURN nd
+    ENDIF
+    EAT()
+
+    nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+    stExpr[nd] = P_EXPR()
+    start = prN
+
+    IF exKind[chain] = X_MEMBER THEN
+        stLabel[nd] = exStr[chain]
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 1
+        RETURN nd
+    ENDIF
+
+    IF exKind[chain] = X_INDEX THEN
+        stLabel[nd] = "__INDEX__"
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        prBuf[prN] = exRight[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 2
+        RETURN nd
+    ENDIF
+
+    FAIL("cannot assign to this")
+    RETURN nd
+ENDFUNC
+
+' obj.a.b(args).field = v: the dotted call is read whole first, and then the
+' walk starts over at the first dot with that call as its root, so the dots
+' and the arguments appear in the tree twice. The reference builds exactly
+' this shape, and the wire format is its dump.
+FUNC P_CALL_CHAIN(ln AS INTEGER) AS INTEGER
+    DIM nm AS STRING
+    DIM rewindTo AS INTEGER
+    DIM callNd AS INTEGER
+    DIM chain AS INTEGER
+    DIM nd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    rewindTo = cur + 1
+    nm = DOTTED_NAME$()
+    EAT()
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+
+    cur = rewindTo
+    chain = CINT(P_POSTFIX(callNd))
+
+    IF TT() <> TT_ASSIGN THEN
+        nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+        stExpr[nd] = chain
+        RETURN nd
+    ENDIF
+    EAT()
+
+    nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+    stExpr[nd] = P_EXPR()
+    start = prN
+
+    IF exKind[chain] = X_MEMBER THEN
+        stLabel[nd] = exStr[chain]
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 1
+        RETURN nd
+    ENDIF
+
+    IF exKind[chain] = X_INDEX THEN
+        stLabel[nd] = "__INDEX__"
+        prBuf[prN] = exLeft[chain]
+        prN = prN + 1
+        prBuf[prN] = exRight[chain]
+        prN = prN + 1
+        stPrAt[nd] = start
+        stPrN[nd] = 2
+        RETURN nd
+    ENDIF
+
+    FAIL("cannot assign to this")
+    RETURN nd
+ENDFUNC
+
+FUNC P_METHOD_ARGS(member AS INTEGER, ln AS INTEGER) AS INTEGER
+    DIM callNd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = "__METHOD__"
+    exLeft[callNd] = member
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+    RETURN callNd
+ENDFUNC
+
+' Indexing binds tighter than any operator. C[a, b] is C[a][b].
+FUNC P_POSTFIX(lhs AS INTEGER) AS INTEGER
+    DIM ln AS INTEGER
+    DIM idx AS INTEGER
+    DIM nd AS INTEGER
+    DIM node AS INTEGER
+
+    node = lhs
+    DO
+        ' A dot after a subscript reaches into what came out of it, and a
+        ' parenthesis after the name makes it a call on that thing.
+        IF TT() = TT_DOT ANDALSO CUR_TT(1) <> T_EOF THEN
+            ln = CINT(TL())
+            EAT()
+            nd = CINT(NEW_EXPR(X_MEMBER, ln))
+            exStr[nd] = TV$()
+            exLeft[nd] = node
+            EAT()
+            IF TT() = TT_LPAREN THEN
+                EAT()
+                node = CINT(P_METHOD_ARGS(nd, ln))
+            ELSE
+                node = nd
+            ENDIF
+            CONTINUEDO
+        ENDIF
+
+        ' m{"k"} reads a map the way a[i] reads an array.
+        IF TT() = TT_LBRACE THEN
+            ln = CINT(TL())
+            EAT()
+            idx = CINT(P_EXPR())
+            IF TT() = TT_RBRACE THEN
+                EAT()
+            ELSE
+                FAIL("expected }")
+            ENDIF
+            nd = CINT(NEW_EXPR(X_INDEX, ln))
+            exLeft[nd] = node
+            exRight[nd] = idx
+            node = nd
+            CONTINUEDO
+        ENDIF
+        IF TT() <> TT_LBRACKET THEN RETURN node
+        ln = CINT(TL())
+        EAT()
+        idx = CINT(P_EXPR())
+        DO
+            IF TT() <> TT_COMMA THEN EXITDO
+            EAT()
+            nd = CINT(NEW_EXPR(X_INDEX, ln))
+            exLeft[nd] = node
+            exRight[nd] = idx
+            node = nd
+            idx = CINT(P_EXPR())
+        LOOP
+        IF TT() = TT_RBRACKET THEN
+            EAT()
+        ELSE
+            FAIL("expected ]")
+        ENDIF
+        nd = CINT(NEW_EXPR(X_INDEX, ln))
+        exLeft[nd] = node
+        exRight[nd] = idx
+        node = nd
+    LOOP
+ENDFUNC
+
+FUNC P_UNARY() AS INTEGER
+    DIM ln AS INTEGER
+    DIM nd AS INTEGER
+    IF TT() = TT_MINUS OR TT() = TT_BNOT THEN
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_UNARY, ln))
+        exOp[nd] = TT()
+        EAT()
+        exRight[nd] = P_UNARY()
+        RETURN nd
+    ENDIF
+    RETURN CINT(P_POSTFIX(CINT(P_PRIMARY())))
+ENDFUNC
+
+FUNC P_POW() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_UNARY())
+    DO
+        IF TT() <> TT_CARET THEN RETURN lhs
+        ln = CINT(TL())
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT_CARET
+        exLeft[nd] = lhs
+        exRight[nd] = P_UNARY()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_MUL() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    DIM fname AS STRING
+    DIM rightNd AS INTEGER
+    lhs = CINT(P_POW())
+    DO
+        ' a F@ b is the call F(a, b): a routine's name where an operator
+        ' would stand, marked as one by the sign after it.
+        IF TT() = T_IDENTIFIER ANDALSO CUR_TT(1) = TT_AT THEN
+            ln = CINT(TL())
+            fname = TV$()
+            EAT()
+            EAT()
+            rightNd = CINT(P_POW())
+            nd = CINT(NEW_EXPR(X_CALL, ln))
+            exFn[nd] = fname
+            exArgAt[nd] = argN
+            argBuf[argN] = lhs
+            argN = argN + 1
+            argBuf[argN] = rightNd
+            argN = argN + 1
+            exArgN[nd] = 2
+            lhs = nd
+            CONTINUEDO
+        ENDIF
+        IF IS_ONE_OF(TT(), mulOps, mulN) = 0 THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_POW()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_ADD() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_MUL())
+    DO
+        IF IS_ONE_OF(TT(), addOps, addN) = 0 THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_MUL()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+' = doubles as equality here, which is why assignment is decided by the
+' statement parser before the expression parser ever sees the line.
+' Classic BASIC reads `IF x NOT y` as `x <> y`. Only a NOT with a value after
+' it is the infix one; NOT before THEN or a line end is the prefix form that
+' belongs to the level above.
+FUNC IS_INFIX_NOT() AS INTEGER
+    DIM nt AS INTEGER
+    IF TT() <> TT_NOT THEN RETURN 0
+    nt = CINT(CUR_TT(1))
+    IF nt = KT_THEN OR nt = T_NEWLINE OR nt = T_EOF THEN RETURN 0
+    IF nt = TT_AND OR nt = TT_OR THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+' The shifts bind tighter than a comparison and looser than a sum.
+FUNC P_SHIFT() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_ADD())
+    DO
+        IF TT() <> TT_SHL ANDALSO TT() <> TT_SHR THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_ADD()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_CMP() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_SHIFT())
+    DO
+        IF IS_ONE_OF(TT(), cmpOps, cmpN) = 0 ANDALSO IS_INFIX_NOT() = 0 THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        IF op = TT_NOT THEN op = TOK_NE
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_SHIFT()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+' NOT binds looser than the bitwise operators and tighter than AND.
+FUNC P_NOT() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    IF TT() <> TT_NOT THEN RETURN CINT(P_BOR())
+    ln = CINT(TL())
+    nd = CINT(NEW_EXPR(X_UNARY, ln))
+    exOp[nd] = TT()
+    EAT()
+    exRight[nd] = P_NOT()
+    RETURN nd
+ENDFUNC
+
+' The bitwise three, each looser than the one below it, and all tighter than
+' a comparison.
+FUNC P_BOR() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_BXOR())
+    DO
+        IF TT() <> TT_BOR THEN RETURN lhs
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT()
+        EAT()
+        exLeft[nd] = lhs
+        exRight[nd] = P_BXOR()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_BXOR() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_BAND())
+    DO
+        ' Both spellings mean the same operation, and the tree records one.
+        IF TT() <> TT_XOR ANDALSO TT() <> TT_BXOR THEN RETURN lhs
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT_XOR
+        EAT()
+        exLeft[nd] = lhs
+        exRight[nd] = P_BAND()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_BAND() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_CMP())
+    DO
+        IF TT() <> TT_BAND THEN RETURN lhs
+        ln = CINT(TL())
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = TT()
+        EAT()
+        exLeft[nd] = lhs
+        exRight[nd] = P_CMP()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_AND() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_NOT())
+    DO
+        IF TT() <> TT_AND ANDALSO TT() <> TT_ANDALSO THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_NOT()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+' The pipe binds looser than anything else, so it sits at the top.
+FUNC P_EXPR() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    lhs = CINT(P_OR())
+    DO
+        IF TT() <> TT_PIPE THEN RETURN lhs
+        ln = CINT(TL())
+        EAT()
+        nd = CINT(NEW_EXPR(X_PIPE, ln))
+        exLeft[nd] = lhs
+        exRight[nd] = P_OR()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+FUNC P_OR() AS INTEGER
+    DIM lhs AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM op AS INTEGER
+    lhs = CINT(P_AND())
+    DO
+        IF TT() <> TT_OR ANDALSO TT() <> TT_ORELSE THEN RETURN lhs
+        ln = CINT(TL())
+        op = TT()
+        EAT()
+        nd = CINT(NEW_EXPR(X_BINARY, ln))
+        exOp[nd] = op
+        exLeft[nd] = lhs
+        exRight[nd] = P_AND()
+        lhs = nd
+    LOOP
+ENDFUNC
+
+
+EXPORT SUB LOAD_STMT_TABLES()
+    DIM i AS INTEGER
+    DIM t AS INTEGER
+
+    KT_OPTION = CINT(TOK_BY_NAME("OPTION_KW"))
+    KT_CONST = CINT(TOK_BY_NAME("CONST_KW"))
+    KT_DIM = CINT(TOK_BY_NAME("DIM"))
+    KT_PRINT = CINT(TOK_BY_NAME("PRINT"))
+    KT_IF = CINT(TOK_BY_NAME("IF"))
+    KT_THEN = CINT(TOK_BY_NAME("THEN"))
+    KT_ELSE = CINT(TOK_BY_NAME("ELSE"))
+    KT_ENDIF = CINT(TOK_BY_NAME("ENDIF_KW"))
+    KT_DO = CINT(TOK_BY_NAME("DO"))
+    KT_LOOP = CINT(TOK_BY_NAME("LOOP"))
+    KT_WHILE = CINT(TOK_BY_NAME("WHILE"))
+    KT_UNTIL = CINT(TOK_BY_NAME("UNTIL"))
+    KT_FOR = CINT(TOK_BY_NAME("FOR"))
+    KT_TO = CINT(TOK_BY_NAME("TO"))
+    KT_STEP = CINT(TOK_BY_NAME("STEP"))
+    KT_NEXT = CINT(TOK_BY_NAME("NEXT"))
+    KT_LET = CINT(TOK_BY_NAME("LET"))
+    KT_EACH = CINT(TOK_BY_NAME("EACH"))
+    KT_IN = CINT(TOK_BY_NAME("IN"))
+    KT_TYPE = CINT(TOK_BY_NAME("TYPE_KW"))
+    KT_ENDTYPE = CINT(TOK_BY_NAME("ENDTYPE"))
+    KT_TRY = CINT(TOK_BY_NAME("TRY"))
+    KT_CATCH = CINT(TOK_BY_NAME("CATCH"))
+    KT_FINALLY = CINT(TOK_BY_NAME("FINALLY"))
+    KT_ENDTRY = CINT(TOK_BY_NAME("ENDTRY"))
+    KT_LAMBDA = CINT(TOK_BY_NAME("LAMBDA"))
+    KT_INPUT = CINT(TOK_BY_NAME("INPUT"))
+    KT_RAISEEVENT = CINT(TOK_BY_NAME("RAISEEVENT_KW"))
+    KT_ENUM = CINT(TOK_BY_NAME("ENUM"))
+    KT_ENDENUM = CINT(TOK_BY_NAME("ENDENUM"))
+    KT_STATIC = CINT(TOK_BY_NAME("STATIC_KW"))
+    KT_AWAIT = CINT(TOK_BY_NAME("AWAIT_KW"))
+    KT_SWITCH = CINT(TOK_BY_NAME("SWITCH"))
+    KT_CASE = CINT(TOK_BY_NAME("CASE"))
+    KT_DEFAULT = CINT(TOK_BY_NAME("DEFAULT"))
+    KT_ENDSWITCH = CINT(TOK_BY_NAME("ENDSWITCH"))
+    KT_ELSEIF = CINT(TOK_BY_NAME("ELSEIF"))
+    KT_ASYNC = CINT(TOK_BY_NAME("ASYNC"))
+    KT_ON = CINT(TOK_BY_NAME("ON_KW"))
+    KT_CALL = CINT(TOK_BY_NAME("CALL"))
+    TT_IN = CINT(TOK_BY_NAME("IN"))
+    TT_BAND = CINT(TOK_BY_NAME("BAND"))
+    TT_BOR = CINT(TOK_BY_NAME("BOR"))
+    TT_BXOR = CINT(TOK_BY_NAME("BXOR"))
+    TT_XOR = CINT(TOK_BY_NAME("XOR"))
+    TT_SHL = CINT(TOK_BY_NAME("SHL"))
+    TT_SHR = CINT(TOK_BY_NAME("SHR"))
+    KT_EXPORT = CINT(TOK_BY_NAME("EXPORT_KW"))
+    KT_MODULE = CINT(TOK_BY_NAME("MODULE_KW"))
+    KT_IMPORT = CINT(TOK_BY_NAME("IMPORT_KW"))
+    KT_SLEEP = CINT(TOK_BY_NAME("SLEEP_KW"))
+    KT_STOP = CINT(TOK_BY_NAME("STOP_KW"))
+    KT_CLS = CINT(TOK_BY_NAME("CLS_KW"))
+    KT_SCREEN = CINT(TOK_BY_NAME("SCREEN_KW"))
+    KT_LOCATE = CINT(TOK_BY_NAME("LOCATE_KW"))
+    KT_COLOR = CINT(TOK_BY_NAME("COLOR_KW"))
+    KT_CURSOR = CINT(TOK_BY_NAME("CURSOR_KW"))
+    KT_THROW = CINT(TOK_BY_NAME("THROW_KW"))
+    KT_DECLARE = CINT(TOK_BY_NAME("DECLARE_KW"))
+    KT_FUNC = CINT(TOK_BY_NAME("FUNCTION"))
+    KT_ENDFUNC = CINT(TOK_BY_NAME("ENDFUNC"))
+    KT_SUB = CINT(TOK_BY_NAME("SUB"))
+    KT_ENDSUB = CINT(TOK_BY_NAME("ENDSUB"))
+    KT_RETURN = CINT(TOK_BY_NAME("RETURN"))
+    KT_END = CINT(TOK_BY_NAME("END"))
+    KT_EXITDO = CINT(TOK_BY_NAME("EXITDO"))
+    KT_EXITFOR = CINT(TOK_BY_NAME("EXITFOR"))
+    KT_EXITFUNC = CINT(TOK_BY_NAME("EXITFUNC"))
+    KT_CONTDO = CINT(TOK_BY_NAME("CONTINUEDO"))
+    KT_CONTFOR = CINT(TOK_BY_NAME("CONTINUEFOR"))
+    KT_AS = CINT(TOK_BY_NAME("AS"))
+
+    ' A type keyword is TY_ plus the VarType name, so the pairing is derived
+    ' rather than written out.
+    vtypeN = 0
+    V_ARRAY = 13
+    FOR i = 0 TO 14
+        t = -1
+        IF i = 1 THEN t = CINT(TOK_BY_NAME("TY_BOOLEAN"))
+        IF i = 2 THEN t = CINT(TOK_BY_NAME("TY_BYTE"))
+        IF i = 3 THEN t = CINT(TOK_BY_NAME("TY_CHAR"))
+        IF i = 4 THEN t = CINT(TOK_BY_NAME("TY_INT16"))
+        IF i = 5 THEN t = CINT(TOK_BY_NAME("TY_INT32"))
+        IF i = 6 THEN t = CINT(TOK_BY_NAME("TY_INT64"))
+        IF i = 7 THEN t = CINT(TOK_BY_NAME("TY_FLOAT16"))
+        IF i = 8 THEN t = CINT(TOK_BY_NAME("TY_FLOAT32"))
+        IF i = 9 THEN t = CINT(TOK_BY_NAME("TY_FLOAT64"))
+        IF i = 10 THEN t = CINT(TOK_BY_NAME("TY_STRING"))
+        IF i = 11 THEN t = CINT(TOK_BY_NAME("TY_OBJECT"))
+        IF i = 12 THEN t = CINT(TOK_BY_NAME("TY_TENSOR"))
+        IF i = 13 THEN t = CINT(TOK_BY_NAME("TY_ARRAY"))
+        IF i = 14 THEN t = CINT(TOK_BY_NAME("TY_ANY"))
+        IF t >= 0 THEN
+            vtypeTok[vtypeN] = t
+            vtypeVal[vtypeN] = i
+            vtypeN = vtypeN + 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+FUNC VTYPE_OF(t AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO vtypeN - 1
+        IF vtypeTok[i] = t THEN RETURN CINT(vtypeVal[i])
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' ── Statements ─────────────────────────────────────────────────────────────
+
+
+' Collects statements until one of the closing keywords, then copies them into
+' the body arena. The scratch list is local so nested bodies do not interleave.
+' endFollow is the keyword that has to follow END for it to close this block.
+' Without that check a bare END, which is a statement of its own, ends every
+' body it appears in.
+FUNC P_BODY(stop1 AS INTEGER, stop2 AS INTEGER, stop3 AS INTEGER, endFollow AS INTEGER) AS INTEGER
+    DIM tmp[MAX_BUF]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = T_EOF THEN EXITDO
+        IF TT() = stop1 OR TT() = stop2 OR TT() = stop3 THEN EXITDO
+        IF n >= MAX_BUF THEN
+            FAIL("too many statements in one block")
+            EXITDO
+        ENDIF
+        IF endFollow >= 0 ANDALSO TT() = KT_END ANDALSO CUR_TT(1) = endFollow THEN EXITDO
+        tmp[n] = P_STMT()
+        n = n + 1
+    LOOP
+
+    start = bodyN
+    FOR i = 0 TO n - 1
+        bodyBuf[bodyN] = tmp[i]
+        bodyN = bodyN + 1
+    NEXT i
+    ' Packed as start times 4096 plus count, because jdBasic-0 has no way to
+    ' answer two numbers from one call.
+    RETURN start * 4096 + n
+ENDFUNC
+
+FUNC P_IF() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM cond AS INTEGER
+    DIM packed AS INTEGER
+    DIM nbr AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    ' Branches are collected here first. A nested IF inside a body allocates
+    ' from the same arena, so writing straight into it would both scatter this
+    ' statement's branches and overwrite the inner one's.
+    DIM myCond[64]
+    DIM myAt[64]
+    DIM myN[64]
+    DIM thenS[64]
+    DIM elseS[64]
+    DIM nThen AS INTEGER
+    DIM nElse AS INTEGER
+    DIM wasElseIf AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    cond = CINT(P_EXPR())
+    IF TT() = KT_THEN THEN EAT()
+
+    nbr = 0
+    nd = CINT(NEW_STMT(K_IF, ln))
+
+    ' Single line form: IF c THEN stmt [: stmt ...] [ELSE stmt [: stmt ...]],
+    ' which ends at the end of the line.
+    IF TT() <> T_NEWLINE AND TT() <> TT_COLON THEN
+        nThen = 0
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF TT() = KT_ELSE OR TT() = T_NEWLINE OR TT() = T_EOF THEN EXITDO
+            IF nThen >= 64 THEN
+                FAIL("too many statements on one line")
+                EXITDO
+            ENDIF
+            thenS[nThen] = P_STMT()
+            nThen = nThen + 1
+            IF TT() = TT_COLON THEN EAT()
+            IF CINT(TL()) <> ln THEN EXITDO
+        LOOP
+
+        nElse = 0
+        IF TT() = KT_ELSE ANDALSO CINT(TL()) = ln THEN
+            EAT()
+            DO
+                IF parseError <> "" THEN EXITDO
+                IF TT() = T_NEWLINE OR TT() = T_EOF THEN EXITDO
+                IF nElse >= 64 THEN
+                    FAIL("too many statements on one line")
+                    EXITDO
+                ENDIF
+                elseS[nElse] = P_STMT()
+                nElse = nElse + 1
+                IF TT() = TT_COLON THEN EAT()
+                IF CINT(TL()) <> ln THEN EXITDO
+            LOOP
+        ENDIF
+
+        myCond[0] = cond
+        myAt[0] = bodyN
+        myN[0] = nThen
+        FOR i = 0 TO nThen - 1
+            bodyBuf[bodyN] = thenS[i]
+            bodyN = bodyN + 1
+        NEXT i
+        nbr = 1
+        IF nElse > 0 THEN
+            myCond[1] = -1
+            myAt[1] = bodyN
+            myN[1] = nElse
+            FOR i = 0 TO nElse - 1
+                bodyBuf[bodyN] = elseS[i]
+                bodyN = bodyN + 1
+            NEXT i
+            nbr = 2
+        ENDIF
+    ELSE
+        packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_ELSEIF, KT_IF))
+        myCond[nbr] = cond
+        myAt[nbr] = packed \ 4096
+        myN[nbr] = packed MOD 4096
+        nbr = nbr + 1
+
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF TT() <> KT_ELSE ANDALSO TT() <> KT_ELSEIF THEN EXITDO
+            IF nbr >= 64 THEN
+                FAIL("too many branches in one IF")
+                EXITDO
+            ENDIF
+            wasElseIf = 0
+            IF TT() = KT_ELSEIF THEN wasElseIf = 1
+            EAT()
+            IF TT() = KT_IF OR wasElseIf = 1 THEN
+                IF wasElseIf = 0 THEN EAT()
+                cond = CINT(P_EXPR())
+                IF TT() = KT_THEN THEN EAT()
+                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_ELSEIF, KT_IF))
+                myCond[nbr] = cond
+            ELSE
+                packed = CINT(P_BODY(KT_ELSE, KT_ENDIF, KT_ELSEIF, KT_IF))
+                myCond[nbr] = -1
+            ENDIF
+            myAt[nbr] = packed \ 4096
+            myN[nbr] = packed MOD 4096
+            nbr = nbr + 1
+        LOOP
+
+        IF TT() = KT_ENDIF THEN
+            EAT()
+        ELSE
+            IF TT() = KT_END THEN
+                EAT()
+                IF TT() = KT_IF THEN EAT()
+            ENDIF
+        ENDIF
+    ENDIF
+
+    start = brN
+    FOR i = 0 TO nbr - 1
+        brCond[brN] = myCond[i]
+        brBodyAt[brN] = myAt[i]
+        brBodyN[brN] = myN[i]
+        brN = brN + 1
+    NEXT i
+    stBrAt[nd] = start
+    stBrN[nd] = nbr
+    RETURN nd
+ENDFUNC
+
+FUNC P_DO() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_DO_LOOP, ln))
+
+    IF TT() = KT_WHILE OR TT() = KT_UNTIL THEN
+        stTop[nd] = 1
+        IF TT() = KT_UNTIL THEN stUntil[nd] = 1
+        EAT()
+        stCond[nd] = P_EXPR()
+    ENDIF
+
+    packed = CINT(P_BODY(KT_LOOP, -1, -1, -1))
+    stBodyAt[nd] = packed \ 4096
+    stBodyN[nd] = packed MOD 4096
+
+    IF TT() = KT_LOOP THEN
+        EAT()
+        IF TT() = KT_WHILE OR TT() = KT_UNTIL THEN
+            IF TT() = KT_UNTIL THEN stUntil[nd] = 1
+            EAT()
+            stCond[nd] = P_EXPR()
+        ENDIF
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+' TYPE Name / member AS type / ... / ENDTYPE. The members sit beside the node
+' rather than under it, so nothing is nested here.
+' A routine that belongs to a type is handed the instance it works on.
+SUB PREPEND_THIS(nd AS INTEGER)
+    DIM i AS INTEGER
+    DIM at AS INTEGER
+    DIM n AS INTEGER
+    DIM myN[MAX_LOCAL] AS STRING
+    DIM myT[MAX_LOCAL]
+    DIM myU[MAX_LOCAL] AS STRING
+    DIM start AS INTEGER
+
+    at = CINT(stParAt[nd])
+    n = CINT(stParN[nd])
+    FOR i = 0 TO n - 1
+        myN[i] = parName[at + i]
+        myT[i] = parType[at + i]
+        myU[i] = parUdt[at + i]
+    NEXT i
+
+    start = parN
+    parName[parN] = "THIS"
+    parType[parN] = 11
+    parUdt[parN] = "__SELF__"
+    parN = parN + 1
+    FOR i = 0 TO n - 1
+        parName[parN] = myN[i]
+        parType[parN] = myT[i]
+        parUdt[parN] = myU[i]
+        parN = parN + 1
+    NEXT i
+    stParAt[nd] = start
+    stParN[nd] = n + 1
+ENDSUB
+
+FUNC P_TYPE() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM start AS INTEGER
+    DIM n AS INTEGER
+    DIM vt AS INTEGER
+    DIM myName[MAX_LOCAL] AS STRING
+    DIM myType[MAX_LOCAL]
+    DIM i AS INTEGER
+    DIM myMeth[MAX_LOCAL]
+    DIM nMeth AS INTEGER
+    DIM meth AS INTEGER
+    DIM isFn AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_TYPE_DECL, ln))
+    stFunc[nd] = TV$()
+    EAT()
+
+    n = 0
+    nMeth = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = KT_ENDTYPE OR TT() = T_EOF THEN EXITDO
+        IF TT() = KT_END THEN EXITDO
+
+        ' A type may carry routines as well as fields. They belong to it, so
+        ' they take its name and are handed the instance to work on.
+        IF TT() = KT_FUNC OR TT() = KT_SUB THEN
+            isFn = 0
+            IF TT() = KT_FUNC THEN isFn = 1
+            IF nMeth >= MAX_LOCAL THEN
+                FAIL("too many routines in one TYPE")
+                EXITDO
+            ENDIF
+            meth = CINT(P_ROUTINE(isFn))
+            stFunc[meth] = stFunc[nd] + "." + stFunc[meth]
+            PREPEND_THIS(meth)
+            myMeth[nMeth] = meth
+            nMeth = nMeth + 1
+            CONTINUEDO
+        ENDIF
+
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many members in one TYPE")
+            EXITDO
+        ENDIF
+        myName[n] = TV$()
+        myType[n] = 0
+        EAT()
+        IF TT() = KT_AS THEN
+            EAT()
+            vt = CINT(TYPE_AFTER_AS(-1))
+            IF vt >= 0 THEN myType[n] = vt
+        ENDIF
+        n = n + 1
+    LOOP
+
+    IF TT() = KT_ENDTYPE THEN
+        EAT()
+    ELSE
+        IF TT() = KT_END THEN
+            EAT()
+            IF TT() = KT_TYPE THEN EAT()
+        ENDIF
+    ENDIF
+
+    start = tmN
+    FOR i = 0 TO n - 1
+        tmName[tmN] = myName[i]
+        tmType[tmN] = myType[i]
+        tmN = tmN + 1
+    NEXT i
+    stTmAt[nd] = start
+    stTmN[nd] = n
+
+    stBodyAt[nd] = bodyN
+    stBodyN[nd] = nMeth
+    FOR i = 0 TO nMeth - 1
+        bodyBuf[bodyN] = myMeth[i]
+        bodyN = bodyN + 1
+    NEXT i
+    RETURN nd
+ENDFUNC
+
+' TRY / CATCH / FINALLY / ENDTRY. The three blocks are separate lists, and
+' the dump prints them one after another with nothing between, so the order
+' is what has to match.
+FUNC P_TRY() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_TRY_CATCH, ln))
+
+    packed = CINT(P_BODY(KT_CATCH, KT_FINALLY, KT_ENDTRY, KT_TRY))
+    stBodyAt[nd] = packed \ 4096
+    stBodyN[nd] = packed MOD 4096
+
+    IF TT() = KT_CATCH THEN
+        EAT()
+        ' CATCH may name the variable it binds the error to.
+        IF TT() = T_IDENTIFIER THEN
+            stVar[nd] = TV$()
+            EAT()
+        ENDIF
+        packed = CINT(P_BODY(KT_FINALLY, KT_ENDTRY, -1, KT_TRY))
+        stCatchAt[nd] = packed \ 4096
+        stCatchN[nd] = packed MOD 4096
+    ENDIF
+
+    IF TT() = KT_FINALLY THEN
+        EAT()
+        packed = CINT(P_BODY(KT_ENDTRY, -1, -1, KT_TRY))
+        stFinAt[nd] = packed \ 4096
+        stFinN[nd] = packed MOD 4096
+    ENDIF
+
+    IF TT() = KT_ENDTRY THEN
+        EAT()
+    ELSE
+        IF TT() = KT_END THEN
+            EAT()
+            IF TT() = KT_TRY THEN EAT()
+        ENDIF
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+' A name after AS that is not one of the built-in type words is a declared
+' type: the statement carries it as its label and the slot itself is an
+' object. MAP is the spelling of a plain object and names nothing, and DATE
+' is kept as a string because that is how the runtime stores one.
+FUNC TYPE_AFTER_AS(nd AS INTEGER) AS INTEGER
+    DIM nm AS STRING
+    DIM vt AS INTEGER
+
+    IF TT() <> T_IDENTIFIER THEN
+        vt = CINT(VTYPE_OF(TT()))
+        EAT()
+        RETURN vt
+    ENDIF
+
+    nm = TV$()
+    IF nm = "MAP" THEN
+        EAT()
+        RETURN 11
+    ENDIF
+
+    ' A type name may be qualified by the module that declares it.
+    EAT()
+    DO
+        IF TT() <> TT_DOT THEN EXITDO
+        IF CUR_TT(1) <> T_IDENTIFIER THEN EXITDO
+        EAT()
+        nm = nm + "." + TV$()
+        EAT()
+    LOOP
+    IF nd >= 0 THEN stLabel[nd] = nm
+
+    IF nm = "DATE" THEN RETURN 10
+    RETURN 11
+ENDFUNC
+
+FUNC DOTTED_NAME$() AS STRING
+    DIM nm AS STRING
+    nm = TV$()
+    EAT()
+    DO
+        IF TT() <> TT_DOT THEN EXITDO
+        EAT()
+        nm = nm + "." + TV$()
+        EAT()
+    LOOP
+    RETURN nm
+ENDFUNC
+
+' obj.method arg, arg. The reference tells a method call from a namespaced
+' one by how the name reads: a single dot whose left side is shorter than
+' three characters is an object, anything longer is a module.
+FUNC P_METHOD(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM obj AS INTEGER
+    DIM member AS INTEGER
+    DIM callNd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    DIM parens AS INTEGER
+
+    obj = CINT(NEW_EXPR(X_VARIABLE, ln))
+    exStr[obj] = TV$()
+    EAT()
+    EAT()
+    member = CINT(NEW_EXPR(X_MEMBER, ln))
+    exStr[member] = TV$()
+    exLeft[member] = obj
+    EAT()
+
+    parens = 0
+    IF TT() = TT_LPAREN THEN
+        parens = 1
+        EAT()
+    ENDIF
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF parens = 1 ANDALSO TT() = TT_RPAREN THEN EXITDO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many items in one list")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF parens = 1 ANDALSO TT() = TT_RPAREN THEN EAT()
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    IF n = 0 ANDALSO parens = 0 THEN
+        stExpr[nd] = member
+        RETURN nd
+    ENDIF
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = "__METHOD__"
+    exLeft[callNd] = member
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+FUNC MKSTR(s AS STRING, ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    nd = CINT(NEW_EXPR(X_LIT_STR, ln))
+    exStr[nd] = s
+    RETURN nd
+ENDFUNC
+
+FUNC MKLIST(at AS INTEGER, n AS INTEGER, ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    nd = CINT(NEW_EXPR(X_ARRAY_LIT, ln))
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmpNodes[at + i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[nd] = start
+    exArgN[nd] = n
+    RETURN nd
+ENDFUNC
+
+' DECLARE SUB|FUNCTION name LIB "l" [ALIAS "a"] (params) [AS type] is not a
+' statement of its own in the tree: it becomes a call that hands the runtime
+' the name, the library, the alias, the parameter types, the parameter names
+' and the return type.
+FUNC P_DECLARE() AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM ln AS INTEGER
+    DIM nm AS STRING
+    DIM libS AS STRING
+    DIM aliasS AS STRING
+    DIM retS AS STRING
+    DIM pName[MAX_LOCAL] AS STRING
+    DIM pType[MAX_LOCAL] AS STRING
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    DIM tyAt AS INTEGER
+    DIM nmAt AS INTEGER
+    DIM tyArr AS INTEGER
+    DIM nmArr AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    EAT()
+    nm = TV$()
+    EAT()
+
+    libS = ""
+    IF TV$() = "LIB" THEN
+        EAT()
+        libS = TV$()
+        EAT()
+    ENDIF
+
+    aliasS = nm
+    IF TV$() = "ALIAS" THEN
+        EAT()
+        aliasS = TV$()
+        EAT()
+    ENDIF
+
+    n = 0
+    IF TT() = TT_LPAREN THEN
+        EAT()
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+            IF TT() = TT_COMMA THEN
+                EAT()
+                CONTINUEDO
+            ENDIF
+            IF n >= MAX_LOCAL THEN
+                FAIL("too many parameters")
+                EXITDO
+            ENDIF
+            pName[n] = TV$()
+            pType[n] = ""
+            EAT()
+            IF TT() = KT_AS THEN
+                EAT()
+                pType[n] = TV$()
+                EAT()
+            ENDIF
+            n = n + 1
+        LOOP
+        IF TT() = TT_RPAREN THEN EAT()
+    ENDIF
+
+    retS = "VOID"
+    IF TT() = KT_AS THEN
+        EAT()
+        retS = TV$()
+        EAT()
+    ENDIF
+
+    tyAt = tmpNodeN
+    FOR i = 0 TO n - 1
+        tmpNodes[tmpNodeN] = MKSTR(pType[i], ln)
+        tmpNodeN = tmpNodeN + 1
+    NEXT i
+    nmAt = tmpNodeN
+    FOR i = 0 TO n - 1
+        tmpNodes[tmpNodeN] = MKSTR(pName[i], ln)
+        tmpNodeN = tmpNodeN + 1
+    NEXT i
+    tyArr = CINT(MKLIST(tyAt, n, ln))
+    nmArr = CINT(MKLIST(nmAt, n, ln))
+    tmpNodeN = tyAt
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = "__FFI_DECLARE"
+    start = argN
+    argBuf[argN] = MKSTR(nm, ln)
+    argN = argN + 1
+    argBuf[argN] = MKSTR(libS, ln)
+    argN = argN + 1
+    argBuf[argN] = MKSTR(aliasS, ln)
+    argN = argN + 1
+    argBuf[argN] = tyArr
+    argN = argN + 1
+    argBuf[argN] = nmArr
+    argN = argN + 1
+    argBuf[argN] = MKSTR(retS, ln)
+    argN = argN + 1
+    exArgAt[callNd] = start
+    exArgN[callNd] = 6
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+' SWITCH subject / CASE value / ... / DEFAULT / ENDSWITCH. Each case is a
+' branch whose condition is the value it matches; DEFAULT has none.
+FUNC P_SWITCH() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+    DIM nbr AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+    DIM myCond[64]
+    DIM myAt[64]
+    DIM myN[64]
+    DIM myExAt[64]
+    DIM myExN[64]
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_SWITCH, ln))
+    stExpr[nd] = P_EXPR()
+
+    nbr = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = KT_ENDSWITCH OR TT() = T_EOF THEN EXITDO
+        IF nbr >= 64 THEN
+            FAIL("too many branches in one SWITCH")
+            EXITDO
+        ENDIF
+
+        IF TT() = KT_CASE THEN
+            EAT()
+            ' A case tests values rather than a condition: each is a value on
+            ' its own, or a range with TO between two.
+            myCond[nbr] = -1
+            myExAt[nbr] = caseN
+            myExN[nbr] = 0
+            DO
+                IF parseError <> "" THEN EXITDO
+                caseBuf[caseN] = P_EXPR()
+                caseHi[caseN] = -1
+                IF TT() = KT_TO THEN
+                    EAT()
+                    caseHi[caseN] = P_EXPR()
+                ENDIF
+                caseN = caseN + 1
+                myExN[nbr] = myExN[nbr] + 1
+                IF TT() <> TT_COMMA THEN EXITDO
+                EAT()
+            LOOP
+        ELSE
+                myExAt[nbr] = caseN
+                myExN[nbr] = 0
+            IF TT() = KT_DEFAULT THEN
+                EAT()
+                myCond[nbr] = -1
+            ELSE
+                FAIL("expected CASE or DEFAULT")
+                EXITDO
+            ENDIF
+        ENDIF
+
+        packed = CINT(P_BODY(KT_CASE, KT_DEFAULT, KT_ENDSWITCH, -1))
+        myAt[nbr] = packed \ 4096
+        myN[nbr] = packed MOD 4096
+        nbr = nbr + 1
+    LOOP
+
+    IF TT() = KT_ENDSWITCH THEN EAT()
+
+    start = brN
+    FOR i = 0 TO nbr - 1
+        brCond[brN] = myCond[i]
+        brBodyAt[brN] = myAt[i]
+        brBodyN[brN] = myN[i]
+        brExAt[brN] = myExAt[i]
+        brExN[brN] = myExN[i]
+        brN = brN + 1
+    NEXT i
+    stBrAt[nd] = start
+    stBrN[nd] = nbr
+    RETURN nd
+ENDFUNC
+
+' ON event CALL handler registers the handler by name.
+FUNC P_ON(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM subject AS INTEGER
+    DIM start AS INTEGER
+
+    EAT()
+    subject = CINT(P_EXPR())
+    IF TT() = KT_CALL THEN EAT()
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = "__EVENT_ON"
+    start = argN
+    argBuf[argN] = subject
+    argN = argN + 1
+    argBuf[argN] = MKSTR(TV$(), ln)
+    argN = argN + 1
+    EAT()
+    exArgAt[callNd] = start
+    exArgN[callNd] = 2
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+' ENUM Name / member [= value] / ... / ENDENUM. A member without a value
+' carries on from the one before it.
+FUNC P_ENUM() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM start AS INTEGER
+    DIM n AS INTEGER
+    DIM nextVal AS INTEGER
+    DIM sign AS INTEGER
+    DIM myName[MAX_LOCAL] AS STRING
+    DIM myVal[MAX_LOCAL]
+    DIM i AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_ENUM, ln))
+    stFunc[nd] = TV$()
+    EAT()
+
+    n = 0
+    nextVal = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = KT_ENDENUM OR TT() = T_EOF THEN EXITDO
+        IF TT() = KT_END THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many members in one ENUM")
+            EXITDO
+        ENDIF
+
+        myName[n] = TV$()
+        EAT()
+        IF TT() = TT_ASSIGN THEN
+            EAT()
+            sign = 1
+            IF TT() = TT_MINUS THEN
+                sign = -1
+                EAT()
+            ENDIF
+            nextVal = CINT(VAL(TV$())) * sign
+            EAT()
+        ENDIF
+        myVal[n] = nextVal
+        nextVal = nextVal + 1
+        n = n + 1
+    LOOP
+
+    IF TT() = KT_ENDENUM THEN
+        EAT()
+    ELSE
+        IF TT() = KT_END THEN
+            EAT()
+            IF TT() = KT_ENUM THEN EAT()
+        ENDIF
+    ENDIF
+
+    start = emN
+    FOR i = 0 TO n - 1
+        emName[emN] = myName[i]
+        emVal[emN] = myVal[i]
+        emN = emN + 1
+    NEXT i
+    stEmAt[nd] = start
+    stEmN[nd] = n
+    RETURN nd
+ENDFUNC
+
+FUNC P_FOR() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+
+    ' FOR EACH walks a collection instead of counting.
+    IF TT() = KT_EACH THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_FOR_EACH, ln))
+        stVar[nd] = TV$()
+        EAT()
+        IF TT() = KT_IN THEN EAT()
+        stExpr[nd] = P_EXPR()
+
+        packed = CINT(P_BODY(KT_NEXT, -1, -1, -1))
+        stBodyAt[nd] = packed \ 4096
+        stBodyN[nd] = packed MOD 4096
+
+        IF TT() = KT_NEXT THEN
+            EAT()
+            IF TT() = T_IDENTIFIER THEN EAT()
+        ENDIF
+        RETURN nd
+    ENDIF
+
+    nd = CINT(NEW_STMT(K_FOR_LOOP, ln))
+    stVar[nd] = TV$()
+    EAT()
+    IF TT() = TT_ASSIGN THEN EAT()
+    stExpr[nd] = P_EXPR()
+    IF TT() = KT_TO THEN EAT()
+    stEnd[nd] = P_EXPR()
+    IF TT() = KT_STEP THEN
+        EAT()
+        stStep[nd] = P_EXPR()
+    ENDIF
+
+    packed = CINT(P_BODY(KT_NEXT, -1, -1, -1))
+    stBodyAt[nd] = packed \ 4096
+    stBodyN[nd] = packed MOD 4096
+
+    IF TT() = KT_NEXT THEN
+        EAT()
+        IF TT() = T_IDENTIFIER THEN EAT()
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+SUB P_PARAMS(nd AS INTEGER)
+    DIM start AS INTEGER
+    DIM n AS INTEGER
+    DIM vt AS INTEGER
+
+    start = parN
+    n = 0
+    IF TT() <> TT_LPAREN THEN
+        stParAt[nd] = start
+        stParN[nd] = 0
+        RETURN
+    ENDIF
+    EAT()
+    DO
+        IF TT() = TT_RPAREN THEN EXITDO
+        IF TT() = T_EOF THEN EXITDO
+        IF TT() = TT_COMMA THEN
+            EAT()
+            CONTINUEDO
+        ENDIF
+        parName[parN] = TV$()
+        parType[parN] = 0
+        parUdt[parN] = ""
+        EAT()
+        IF TT() = KT_AS THEN
+            EAT()
+            ' MAP spells a plain object, DATE is kept as a string, and any
+            ' other name in type position is a declared type, so an object.
+            IF TT() = T_IDENTIFIER THEN
+                IF TV$() = "DATE" THEN
+                    parType[parN] = 10
+                ELSE
+                    parType[parN] = 11
+                    IF TV$() <> "MAP" THEN parUdt[parN] = TV$()
+                ENDIF
+                EAT()
+            ELSE
+                vt = CINT(VTYPE_OF(TT()))
+                IF vt >= 0 THEN parType[parN] = vt
+                EAT()
+            ENDIF
+        ENDIF
+        parN = parN + 1
+        n = n + 1
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+    stParAt[nd] = start
+    stParN[nd] = n
+ENDSUB
+
+FUNC P_ROUTINE(isFunc AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM packed AS INTEGER
+    DIM vt AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    IF isFunc = 1 THEN
+        nd = CINT(NEW_STMT(K_FUNCTION, ln))
+    ELSE
+        nd = CINT(NEW_STMT(K_SUB, ln))
+    ENDIF
+    stFunc[nd] = TV$()
+    EAT()
+    P_PARAMS(nd)
+    IF TT() = KT_AS THEN
+        EAT()
+        vt = CINT(VTYPE_OF(TT()))
+        IF vt >= 0 THEN stRType[nd] = vt
+        EAT()
+    ENDIF
+
+    IF isFunc = 1 THEN
+        packed = CINT(P_BODY(KT_ENDFUNC, -1, -1, KT_FUNC))
+    ELSE
+        packed = CINT(P_BODY(KT_ENDSUB, -1, -1, KT_SUB))
+    ENDIF
+    stBodyAt[nd] = packed \ 4096
+    stBodyN[nd] = packed MOD 4096
+
+    IF TT() = KT_ENDFUNC OR TT() = KT_ENDSUB THEN
+        EAT()
+    ELSE
+        IF TT() = KT_END THEN
+            EAT()
+            IF TT() = KT_FUNC OR TT() = KT_SUB THEN EAT()
+        ENDIF
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+' DIM name[dims] AS type desugars to a ZEROS call over an array literal, which
+' is the shape the reference produces.
+' DIM a, b AS STRING, c declares three things. The first is answered now and
+' the others wait, because a statement is one thing at a time.
+FUNC P_DIM() AS INTEGER
+    DIM first AS INTEGER
+    DIM ln AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    first = CINT(P_DIM_CLAUSE(ln))
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() <> TT_COMMA THEN EXITDO
+        IF pendTail >= 64 THEN
+            FAIL("too many declarations on one line")
+            EXITDO
+        ENDIF
+        EAT()
+        pendBuf[pendTail] = P_DIM_CLAUSE(ln)
+        pendTail = pendTail + 1
+    LOOP
+    RETURN first
+ENDFUNC
+
+FUNC P_DIM_CLAUSE(lnIn AS INTEGER) AS INTEGER
+    DIM myCtor[MAX_LOCAL]
+    DIM nCtor AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM vt AS INTEGER
+    DIM dims[16]
+    DIM ndim AS INTEGER
+    DIM lit AS INTEGER
+    DIM callNd AS INTEGER
+    DIM start AS INTEGER
+    DIM i AS INTEGER
+
+    ln = lnIn
+    nd = CINT(NEW_STMT(K_DIM, ln))
+    stVar[nd] = TV$()
+    EAT()
+
+    ndim = 0
+    IF TT() = TT_LBRACKET THEN
+        EAT()
+        DO
+            IF TT() = TT_RBRACKET THEN EXITDO
+            IF TT() = T_EOF THEN EXITDO
+            IF TT() = TT_COMMA THEN
+                EAT()
+                CONTINUEDO
+            ENDIF
+            IF parseError <> "" THEN EXITDO
+            IF ndim >= 16 THEN
+                FAIL("too many dimensions")
+                EXITDO
+            ENDIF
+            dims[ndim] = P_EXPR()
+            ndim = ndim + 1
+        LOOP
+        IF TT() = TT_RBRACKET THEN EAT()
+    ENDIF
+
+    IF TT() = KT_AS THEN
+        EAT()
+        vt = CINT(TYPE_AFTER_AS(nd))
+        IF vt >= 0 THEN
+            IF ndim > 0 THEN
+                stVType[nd] = V_ARRAY
+                stEType[nd] = vt
+            ELSE
+                stVType[nd] = vt
+            ENDIF
+        ENDIF
+
+        ' DIM arr AS T[] is a typed array that starts empty. One of a
+        ' declared type is built by the runtime with a bound of nothing;
+        ' any other element type is the empty literal itself.
+        IF ndim = 0 ANDALSO TT() = TT_LBRACKET ANDALSO CUR_TT(1) = TT_RBRACKET THEN
+            EAT()
+            EAT()
+            stVType[nd] = V_ARRAY
+            stEType[nd] = vt
+            IF vt = 11 ANDALSO stLabel[nd] <> "" THEN
+                lit = CINT(NEW_EXPR(X_ARRAY_LIT, ln))
+                start = argN
+                argBuf[argN] = NEW_EXPR(X_LIT_INT, ln)
+                argN = argN + 1
+                exArgAt[lit] = start
+                exArgN[lit] = 1
+                callNd = CINT(NEW_EXPR(X_CALL, ln))
+                exFn[callNd] = "__MAKE_UDT_ARRAY__"
+                start = argN
+                argBuf[argN] = lit
+                argN = argN + 1
+                argBuf[argN] = MKSTR(stLabel[nd], ln)
+                argN = argN + 1
+                exArgAt[callNd] = start
+                exArgN[callNd] = 2
+                stExpr[nd] = callNd
+            ELSE
+                stExpr[nd] = NEW_EXPR(X_ARRAY_LIT, ln)
+            ENDIF
+        ENDIF
+
+        ' DIM r AS Resource("R1") hands the type what it needs to set itself
+        ' up, which only a declared type can be asked for.
+        IF stLabel[nd] <> "" ANDALSO TT() = TT_LPAREN THEN
+            EAT()
+            nCtor = 0
+            DO
+                IF parseError <> "" THEN EXITDO
+                IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+                IF TT() = TT_COMMA THEN
+                    EAT()
+                    CONTINUEDO
+                ENDIF
+                IF nCtor >= MAX_LOCAL THEN
+                    FAIL("too many constructor arguments")
+                    EXITDO
+                ENDIF
+                myCtor[nCtor] = P_EXPR()
+                nCtor = nCtor + 1
+            LOOP
+            IF TT() = TT_RPAREN THEN EAT()
+        ENDIF
+    ELSE
+        IF ndim > 0 THEN stVType[nd] = V_ARRAY
+    ENDIF
+
+    IF ndim > 0 THEN
+        lit = CINT(NEW_EXPR(X_ARRAY_LIT, ln))
+        start = argN
+        FOR i = 0 TO ndim - 1
+            argBuf[argN] = dims[i]
+            argN = argN + 1
+        NEXT i
+        exArgAt[lit] = start
+        exArgN[lit] = ndim
+        callNd = CINT(NEW_EXPR(X_CALL, ln))
+        ' An array of a declared type is built by the runtime, which needs to
+        ' be told which type, so it does not go through ZEROS.
+        exFn[callNd] = "ZEROS"
+        start = argN
+        argBuf[argN] = lit
+        argN = argN + 1
+        exArgN[callNd] = 1
+        IF stEType[nd] = 11 ANDALSO stLabel[nd] <> "" THEN
+            exFn[callNd] = "__MAKE_UDT_ARRAY__"
+            argBuf[argN] = MKSTR(stLabel[nd], ln)
+            argN = argN + 1
+            exArgN[callNd] = 2
+            ' Per-element vectors ride along with the shape and the type.
+            FOR i = 0 TO nCtor - 1
+                argBuf[argN] = myCtor[i]
+                argN = argN + 1
+                exArgN[callNd] = exArgN[callNd] + 1
+            NEXT i
+            nCtor = 0
+        ENDIF
+        exArgAt[callNd] = start
+        stExpr[nd] = callNd
+        ' A value after the bounds takes their place.
+        IF TT() = TT_ASSIGN THEN
+            EAT()
+            stExpr[nd] = P_EXPR()
+        ENDIF
+    ELSE
+        IF TT() = TT_ASSIGN THEN
+            EAT()
+            stExpr[nd] = P_EXPR()
+        ENDIF
+    ENDIF
+
+    IF nCtor > 0 THEN
+        stCtAt[nd] = ctN
+        stCtN[nd] = nCtor
+        FOR i = 0 TO nCtor - 1
+            ctBuf[ctN] = myCtor[i]
+            ctN = ctN + 1
+        NEXT i
+    ENDIF
+    RETURN nd
+ENDFUNC
+
+FUNC P_PRINT() AS INTEGER
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM tmpE[MAX_LOCAL]
+    DIM tmpS[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM sep AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nd = CINT(NEW_STMT(K_PRINT, ln))
+    n = 0
+    sep = 0
+    DO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF parseError <> "" THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many items in one list")
+            EXITDO
+        ENDIF
+        tmpE[n] = P_EXPR()
+        tmpS[n] = sep
+        n = n + 1
+        IF TT() = TT_SEMICOLON THEN
+            sep = 2
+            EAT()
+        ELSE
+            IF TT() = TT_COMMA THEN
+                sep = 1
+                EAT()
+            ELSE
+                EXITDO
+            ENDIF
+        ENDIF
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN
+            stNoNl[nd] = 1
+            EXITDO
+        ENDIF
+    LOOP
+
+    start = prN
+    FOR i = 0 TO n - 1
+        prBuf[prN] = tmpE[i]
+        prN = prN + 1
+    NEXT i
+    stPrAt[nd] = start
+    stPrN[nd] = n
+
+    start = sepN
+    FOR i = 0 TO n - 1
+        sepBuf[sepN] = tmpS[i]
+        sepN = sepN + 1
+    NEXT i
+    stSepAt[nd] = start
+    stSepN[nd] = n
+    RETURN nd
+ENDFUNC
+
+' What may follow a command name as its first argument. An operator here
+' means the line is an ordinary expression instead.
+FUNC STARTS_ARGS(t AS INTEGER) AS INTEGER
+    IF t = T_IDENTIFIER THEN RETURN 1
+    IF t = T_INTEGER_LIT THEN RETURN 1
+    IF t = T_FLOAT_LIT THEN RETURN 1
+    IF t = T_STRING_LIT THEN RETURN 1
+    IF t = TT_TRUE THEN RETURN 1
+    IF t = TT_FALSE THEN RETURN 1
+    IF t = TT_MINUS THEN RETURN 1
+    IF t = TT_NOT THEN RETURN 1
+    ' A bare name is a call too, so its terminators count as the empty
+    ' argument list.
+    IF t = T_NEWLINE THEN RETURN 1
+    IF t = T_EOF THEN RETURN 1
+    IF t = TT_COLON THEN RETURN 1
+    IF t = KT_ELSE THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Eight names are read as commands whatever follows them, unless what follows
+' makes the name a call or the left side of something. CD and PWD answer the
+' path they moved to, and the reference shows it, so they carry a PRINT.
+' TUI.BEGIN "hello" is a command whose name happens to carry dots, so what
+' decides the form is the token after the whole name.
+FUNC AFTER_DOTTED() AS INTEGER
+    DIM at AS INTEGER
+    at = 1
+    DO
+        IF CUR_TT(at) <> TT_DOT THEN EXITDO
+        at = at + 2
+    LOOP
+    RETURN at
+ENDFUNC
+
+' A parenthesis that touches the name it follows opens that name's argument
+' list; one with air before it groups the first argument of a command.
+FUNC PAREN_ADJACENT(at AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    i = cur + at
+    IF i <= 0 ORELSE i >= tkCount THEN RETURN 0
+    IF tkLine[i] <> tkLine[i - 1] THEN RETURN 0
+    IF tkCol[i] = tkCol[i - 1] + 1 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' Whether the call closing after the offset is followed by more chain.
+FUNC CHAIN_AFTER_CALL(at AS INTEGER) AS INTEGER
+    DIM depth AS INTEGER
+    depth = 0
+    DO
+        IF CUR_TT(at) = T_EOF ORELSE CUR_TT(at) = T_NEWLINE THEN RETURN 0
+        IF CUR_TT(at) = TT_LPAREN THEN depth = depth + 1
+        IF CUR_TT(at) = TT_RPAREN THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                at = at + 1
+                IF CUR_TT(at) = TT_DOT THEN RETURN 1
+                IF CUR_TT(at) = TT_LBRACKET THEN RETURN 1
+                IF CUR_TT(at) = TT_LBRACE THEN RETURN 1
+                RETURN 0
+            ENDIF
+        ENDIF
+        at = at + 1
+    LOOP
+ENDFUNC
+
+' Whether the bracket run beginning at the offset closes and is followed by
+' an assignment, which is what tells MOD.ARR[i] = v from MOD.FN [x].
+FUNC BRACKET_ASSIGN_AHEAD(fromAt AS INTEGER) AS INTEGER
+    DIM at AS INTEGER
+    DIM depth AS INTEGER
+    at = fromAt
+    depth = 0
+    DO
+        IF CUR_TT(at) = T_EOF ORELSE CUR_TT(at) = T_NEWLINE THEN RETURN 0
+        IF CUR_TT(at) = TT_LBRACKET THEN depth = depth + 1
+        IF CUR_TT(at) = TT_RBRACKET THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                IF CUR_TT(at + 1) = TT_ASSIGN THEN RETURN 1
+                RETURN 0
+            ENDIF
+        ENDIF
+        at = at + 1
+    LOOP
+ENDFUNC
+
+' Sixteen words that are calls with their arguments beside them rather than
+' statements of their own. REACT is not among them: it lexes as a plain name.
+DIM cmdKw[32]
+DIM cmdKwN AS INTEGER
+
+SUB CMD_KW_ADD(n AS STRING)
+    cmdKw[cmdKwN] = CINT(TOK_BY_NAME(n))
+    cmdKwN = cmdKwN + 1
+ENDSUB
+
+EXPORT SUB LOAD_CMD_KEYWORDS()
+    cmdKwN = 0
+    CMD_KW_ADD("HELP_KW")
+    CMD_KW_ADD("SCREEN_KW")
+    CMD_KW_ADD("SCREENFLIP_KW")
+    CMD_KW_ADD("DRAWCOLOR_KW")
+    CMD_KW_ADD("SETFONT_KW")
+    CMD_KW_ADD("PSET_KW")
+    CMD_KW_ADD("LINE_KW")
+    CMD_KW_ADD("RECT_KW")
+    CMD_KW_ADD("CIRCLE_KW")
+    CMD_KW_ADD("ELLIPSE_KW")
+    CMD_KW_ADD("ROUNDED_RECT_KW")
+    CMD_KW_ADD("CIRCLE_SECTOR_KW")
+    CMD_KW_ADD("TEXT_KW")
+    CMD_KW_ADD("PLOTRAW_KW")
+    CMD_KW_ADD("TOGGLE_FULLSCREEN_KW")
+ENDSUB
+
+FUNC IS_CMD_KEYWORD(t AS INTEGER) AS INTEGER
+    DIM i AS INTEGER
+    FOR i = 0 TO cmdKwN - 1
+        IF cmdKw[i] = t THEN RETURN 1
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+FUNC IS_BUILTIN_CMD(nm AS STRING) AS INTEGER
+    IF nm = "CD" OR nm = "PWD" OR nm = "MKDIR" OR nm = "KILL" THEN RETURN 1
+    IF nm = "DIR" OR nm = "TRON" OR nm = "TROFF" OR nm = "DUMP" THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+FUNC TAKES_BUILTIN_CMD(nt AS INTEGER) AS INTEGER
+    IF nt = TT_LPAREN OR nt = TT_ASSIGN OR nt = TT_DOT THEN RETURN 0
+    IF nt = TT_COLON OR nt = TT_ARROW THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+FUNC P_BUILTIN_CMD(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM nm AS STRING
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    nm = TV$()
+    EAT()
+
+    n = 0
+    IF TT() <> T_NEWLINE AND TT() <> T_EOF AND TT() <> TT_COLON THEN
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF n >= MAX_LOCAL THEN
+                FAIL("too many items in one list")
+                EXITDO
+            ENDIF
+            ' HELP names a thing rather than evaluating one, so a keyword
+            ' after it is the word itself.
+            IF nm = "HELP" ANDALSO TT() <> T_IDENTIFIER ANDALSO TT() <> T_STRING_LIT THEN
+                tmp[n] = MKSTR(TV$(), ln)
+                n = n + 1
+                EAT()
+                EXITDO
+            ENDIF
+            tmp[n] = P_EXPR()
+            n = n + 1
+            IF TT() <> TT_COMMA THEN EXITDO
+            EAT()
+        LOOP
+    ENDIF
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+
+    IF nm = "CD" OR nm = "PWD" THEN
+        nd = CINT(NEW_STMT(K_PRINT, ln))
+        stPrAt[nd] = prN
+        prBuf[prN] = callNd
+        prN = prN + 1
+        stPrN[nd] = 1
+        stSepAt[nd] = sepN
+        sepBuf[sepN] = 0
+        sepN = sepN + 1
+        stSepN[nd] = 1
+        RETURN nd
+    ENDIF
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+FUNC IS_WORD_OPERATOR(t AS INTEGER) AS INTEGER
+    IF t = TT_SHL OR t = TT_SHR THEN RETURN 1
+    IF t = TT_BAND OR t = TT_BOR THEN RETURN 1
+    IF t = TT_XOR OR t = TT_BXOR OR t = TT_BNOT THEN RETURN 1
+    IF t = TOK_MOD THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+' The argument list of a call, with the name and the open parenthesis behind.
+FUNC P_CALL_ARGS(nm AS STRING, ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = TT_RPAREN OR TT() = T_EOF THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+    IF TT() = TT_RPAREN THEN EAT()
+
+    nd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[nd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[nd] = start
+    exArgN[nd] = n
+    RETURN nd
+ENDFUNC
+
+' name -> formula recomputes the name whenever the formula's parts change.
+' The formula is kept as text so it can be shown and read back, and that text
+' is the tokens with a space between them rather than the source as written:
+' SUM(TOTALS) comes out as "SUM ( TOTALS )".
+FUNC P_REACT(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM target AS STRING
+    DIM from AS INTEGER
+    DIM i AS INTEGER
+    DIM txt AS STRING
+
+    target = DOTTED_NAME$()
+    EAT()
+
+    nd = CINT(NEW_STMT(K_REACT, 0))
+    stVar[nd] = target
+    from = cur
+    stExpr[nd] = P_EXPR()
+
+    txt = ""
+    FOR i = from TO cur - 1
+        IF i > from THEN txt = txt + " "
+        txt = txt + tkVal[i]
+    NEXT i
+    stLabel[nd] = txt
+    RETURN nd
+ENDFUNC
+
+' A keyword that stands for a call the runtime knows under another name.
+FUNC P_NAMED_CALL(ln AS INTEGER, nm AS STRING) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    EAT()
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many arguments")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() <> TT_COMMA THEN EXITDO
+        EAT()
+    LOOP
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+' NAME arg, arg  and a bare NAME, both of which are calls in the tree.
+FUNC P_COMMAND(ln AS INTEGER) AS INTEGER
+    DIM nd AS INTEGER
+    DIM callNd AS INTEGER
+    DIM nm AS STRING
+    DIM tmp[MAX_LOCAL]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM start AS INTEGER
+
+    nm = TV$()
+    EAT()
+    DO
+        IF TT() <> TT_DOT THEN EXITDO
+        EAT()
+        nm = nm + "." + TV$()
+        EAT()
+    LOOP
+
+    n = 0
+    DO
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN EXITDO
+        IF TT() = KT_ELSE THEN EXITDO
+        IF parseError <> "" THEN EXITDO
+        IF n >= MAX_LOCAL THEN
+            FAIL("too many items in one list")
+            EXITDO
+        ENDIF
+        tmp[n] = P_EXPR()
+        n = n + 1
+        IF TT() = TT_COMMA THEN
+            EAT()
+        ELSE
+            EXITDO
+        ENDIF
+    LOOP
+
+    callNd = CINT(NEW_EXPR(X_CALL, ln))
+    exFn[callNd] = nm
+    start = argN
+    FOR i = 0 TO n - 1
+        argBuf[argN] = tmp[i]
+        argN = argN + 1
+    NEXT i
+    exArgAt[callNd] = start
+    exArgN[callNd] = n
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = callNd
+    RETURN nd
+ENDFUNC
+
+' Numbers the temps a desugared destructuring leaves behind.
+DIM destrSeq AS INTEGER
+
+' [t0, t1, ...] = value. Plain names ride on the statement itself; indexed
+' targets become stores fed from temps, the right side read once up front.
+FUNC P_DESTRUCT(ln AS INTEGER, nTgt AS INTEGER, tgts) AS INTEGER
+    DIM nd AS INTEGER
+    DIM valNd AS INTEGER
+    DIM allSimple AS INTEGER
+    DIM i AS INTEGER
+    DIM j AS INTEGER
+    DIM start AS INTEGER
+    DIM tName AS STRING
+    DIM letNd AS INTEGER
+    DIM iaNd AS INTEGER
+    DIM node AS INTEGER
+    DIM chainN AS INTEGER
+    DIM chain[16]
+    DIM rv[MAX_LOCAL]
+    DIM kids[MAX_LOCAL]
+    DIM nKids AS INTEGER
+
+    valNd = CINT(P_EXPR())
+    nd = CINT(NEW_STMT(K_DESTRUCT, ln))
+
+    allSimple = 1
+    FOR i = 0 TO nTgt - 1
+        IF exKind[CINT(tgts[i])] = X_VARIABLE THEN CONTINUEFOR
+        IF exKind[CINT(tgts[i])] = X_INDEX THEN
+            allSimple = 0
+            CONTINUEFOR
+        ENDIF
+        FAIL("destructuring target must be a variable or an indexed element")
+        RETURN nd
+    NEXT i
+
+    IF allSimple = 1 THEN
+        stExpr[nd] = valNd
+        start = dvN
+        FOR i = 0 TO nTgt - 1
+            dvBuf[dvN] = exStr[CINT(tgts[i])]
+            dvN = dvN + 1
+        NEXT i
+        stDvAt[nd] = start
+        stDvN[nd] = nTgt
+        RETURN nd
+    ENDIF
+
+    nKids = 0
+    IF exKind[valNd] = X_ARRAY_LIT ANDALSO exArgN[valNd] = nTgt THEN
+        ' Each element gets its own temp, so what was a string stays one.
+        FOR i = 0 TO nTgt - 1
+            tName = "__destr_" + STR$(destrSeq)
+            destrSeq = destrSeq + 1
+            letNd = CINT(NEW_STMT(K_LET, ln))
+            stVar[letNd] = tName
+            stExpr[letNd] = argBuf[CINT(exArgAt[valNd]) + i]
+            kids[nKids] = letNd
+            nKids = nKids + 1
+            rv[i] = NEW_EXPR(X_VARIABLE, ln)
+            exStr[CINT(rv[i])] = tName
+        NEXT i
+    ELSE
+        tName = "__destr_" + STR$(destrSeq)
+        destrSeq = destrSeq + 1
+        letNd = CINT(NEW_STMT(K_LET, ln))
+        stVar[letNd] = tName
+        stExpr[letNd] = valNd
+        kids[nKids] = letNd
+        nKids = nKids + 1
+        FOR i = 0 TO nTgt - 1
+            rv[i] = NEW_EXPR(X_INDEX, ln)
+            node = CINT(NEW_EXPR(X_VARIABLE, ln))
+            exStr[node] = tName
+            exLeft[CINT(rv[i])] = node
+            node = CINT(NEW_EXPR(X_LIT_INT, ln))
+            exInt[node] = i
+            exRight[CINT(rv[i])] = node
+        NEXT i
+    ENDIF
+
+    FOR i = 0 TO nTgt - 1
+        IF exKind[CINT(tgts[i])] = X_VARIABLE THEN
+            letNd = CINT(NEW_STMT(K_LET, ln))
+            stVar[letNd] = exStr[CINT(tgts[i])]
+            stExpr[letNd] = rv[i]
+            kids[nKids] = letNd
+            nKids = nKids + 1
+            CONTINUEFOR
+        ENDIF
+        ' The subscripts come off the target inside out and go on in order.
+        chainN = 0
+        node = CINT(tgts[i])
+        DO
+            IF exKind[node] <> X_INDEX THEN EXITDO
+            chain[chainN] = exRight[node]
+            chainN = chainN + 1
+            node = CINT(exLeft[node])
+        LOOP
+        IF exKind[node] <> X_VARIABLE THEN
+            FAIL("destructuring index target must have a variable base")
+            RETURN nd
+        ENDIF
+        iaNd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+        stVar[iaNd] = exStr[node]
+        stExpr[iaNd] = rv[i]
+        start = ixN
+        FOR j = chainN - 1 TO 0 STEP -1
+            ixBuf[ixN] = chain[j]
+            ixN = ixN + 1
+        NEXT j
+        stIxAt[iaNd] = start
+        stIxN[iaNd] = chainN
+        kids[nKids] = iaNd
+        nKids = nKids + 1
+    NEXT i
+
+    stBodyAt[nd] = bodyN
+    FOR i = 0 TO nKids - 1
+        bodyBuf[bodyN] = kids[i]
+        bodyN = bodyN + 1
+    NEXT i
+    stBodyN[nd] = nKids
+    RETURN nd
+ENDFUNC
+
+FUNC P_STMT() AS INTEGER
+    DIM myName[MAX_LOCAL] AS STRING
+    DIM nd AS INTEGER
+    DIM ln AS INTEGER
+    DIM t AS INTEGER
+    DIM save AS INTEGER
+    DIM start AS INTEGER
+    DIM myIdx[MAX_LOCAL]
+    DIM nIdx AS INTEGER
+    DIM closer AS INTEGER
+    DIM after AS INTEGER
+    DIM i AS INTEGER
+
+    IF pendHead < pendTail THEN
+        pendHead = pendHead + 1
+        RETURN CINT(pendBuf[pendHead - 1])
+    ENDIF
+
+    SKIP_SEPS()
+    ln = CINT(TL())
+    t = CINT(TT())
+
+    IF t = KT_OPTION THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_OPTION, ln))
+        stExpr[nd] = NEW_EXPR(X_LIT_STR, ln)
+        exStr[CINT(stExpr[nd])] = TV$()
+        EAT()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_CONST THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_LET, ln))
+        stVar[nd] = TV$()
+        stConst[nd] = 1
+        EAT()
+        IF TT() = TT_ASSIGN THEN EAT()
+        stExpr[nd] = P_EXPR()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_DIM THEN RETURN CINT(P_DIM())
+    IF t = KT_PRINT THEN RETURN CINT(P_PRINT())
+    IF t = KT_IF THEN RETURN CINT(P_IF())
+    IF t = KT_DO THEN RETURN CINT(P_DO())
+    IF t = KT_FOR THEN RETURN CINT(P_FOR())
+    IF t = KT_TYPE THEN RETURN CINT(P_TYPE())
+    IF t = KT_TRY THEN RETURN CINT(P_TRY())
+    IF t = KT_SWITCH THEN RETURN CINT(P_SWITCH())
+    IF t = KT_ENUM THEN RETURN CINT(P_ENUM())
+
+    ' INPUT name, or INPUT "prompt", name. Without a prompt it does not put
+    ' a line break out either.
+    IF t = KT_INPUT THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_INPUT, ln))
+        IF TT() = T_STRING_LIT THEN
+            stExpr[nd] = P_EXPR()
+            ' A semicolon after the prompt keeps the cursor on the line, the
+            ' same way it does after PRINT.
+            IF TT() = TT_SEMICOLON THEN stNoNl[nd] = 1
+            IF TT() = TT_COMMA OR TT() = TT_SEMICOLON THEN EAT()
+        ELSE
+            stNoNl[nd] = 1
+        ENDIF
+        stVar[nd] = TV$()
+        EAT()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_RAISEEVENT THEN RETURN CINT(P_NAMED_CALL(ln, "__EVENT_RAISE"))
+
+    IF t = KT_STATIC THEN
+        EAT()
+        nd = CINT(P_STMT())
+        IF nd >= 0 THEN stStatic[nd] = 1
+        RETURN nd
+    ENDIF
+    IF t = KT_ON THEN RETURN CINT(P_ON(ln))
+
+    IF t = KT_ASYNC THEN
+        EAT()
+        nd = CINT(P_STMT())
+        IF nd >= 0 THEN stAsync[nd] = 1
+        RETURN nd
+    ENDIF
+    IF t = KT_DECLARE THEN RETURN CINT(P_DECLARE())
+
+    ' SCREEN takes its arguments the way any command does.
+    IF IS_CMD_KEYWORD(t) = 1 THEN RETURN CINT(P_BUILTIN_CMD(ln))
+
+    ' EXPORT MODULE is handled before the tree is built and leaves an empty
+    ' statement where it stood. EXPORT on a declaration marks it instead.
+    IF t = KT_EXPORT THEN
+        EAT()
+        IF TT() = KT_MODULE THEN
+            EAT()
+            IF TT() = T_IDENTIFIER THEN EAT()
+            nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+            stExpr[nd] = NEW_EXPR(X_LIT_INT, ln)
+            RETURN nd
+        ENDIF
+        nd = CINT(P_STMT())
+        IF nd >= 0 THEN stLabel[nd] = "__EXPORT__"
+        RETURN nd
+    ENDIF
+
+    IF t = KT_STOP THEN
+        EAT()
+        RETURN CINT(NEW_STMT(K_STOP, ln))
+    ENDIF
+
+    ' CLS on its own clears; with three numbers it clears to a colour.
+    IF t = KT_CLS THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_CLS, ln))
+        IF TT() = T_NEWLINE OR TT() = T_EOF OR TT() = TT_COLON THEN RETURN nd
+        stExpr[nd] = P_EXPR()
+        IF TT() = TT_COMMA THEN
+            EAT()
+            stCond[nd] = P_EXPR()
+        ENDIF
+        IF TT() = TT_COMMA THEN
+            EAT()
+            stEnd[nd] = P_EXPR()
+        ENDIF
+        RETURN nd
+    ENDIF
+
+    IF t = KT_SLEEP OR t = KT_CURSOR OR t = KT_THROW THEN
+        EAT()
+        IF t = KT_SLEEP THEN nd = CINT(NEW_STMT(K_SLEEP, ln))
+        IF t = KT_CURSOR THEN nd = CINT(NEW_STMT(K_CURSOR, ln))
+        IF t = KT_THROW THEN nd = CINT(NEW_STMT(K_THROW, ln))
+        stExpr[nd] = P_EXPR()
+        RETURN nd
+    ENDIF
+
+    IF t = KT_LOCATE OR t = KT_COLOR THEN
+        EAT()
+        IF t = KT_LOCATE THEN
+            nd = CINT(NEW_STMT(K_LOCATE, ln))
+        ELSE
+            nd = CINT(NEW_STMT(K_COLOR, ln))
+        ENDIF
+        stExpr[nd] = P_EXPR()
+        IF TT() = TT_COMMA THEN
+            EAT()
+            stCond[nd] = P_EXPR()
+        ENDIF
+        RETURN nd
+    ENDIF
+
+    IF t = KT_LET THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_LET, ln))
+        stVar[nd] = TV$()
+        EAT()
+        IF TT() = TT_ASSIGN THEN
+            EAT()
+            stExpr[nd] = P_EXPR()
+        ENDIF
+        RETURN nd
+    ENDIF
+    IF t = KT_FUNC THEN RETURN CINT(P_ROUTINE(1))
+    IF t = KT_SUB THEN RETURN CINT(P_ROUTINE(0))
+
+    IF t = KT_RETURN THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_RETURN, ln))
+        IF TT() <> T_NEWLINE AND TT() <> T_EOF AND TT() <> TT_COLON THEN
+            stExpr[nd] = P_EXPR()
+        ENDIF
+        RETURN nd
+    ENDIF
+
+    IF t = KT_END THEN
+        EAT()
+        RETURN CINT(NEW_STMT(K_END_STMT, ln))
+    ENDIF
+
+    ' The reference reuses is_while on an exit to mean EXITFUNC, so leaving a
+    ' loop clears it and leaving a function does not. Continue never touches it.
+    IF t = KT_EXITDO OR t = KT_EXITFOR OR t = KT_EXITFUNC THEN
+        EAT()
+        nd = CINT(NEW_STMT(K_EXIT_LOOP, ln))
+        IF t <> KT_EXITFUNC THEN stUntil[nd] = 1
+        RETURN nd
+    ENDIF
+    IF t = KT_CONTDO OR t = KT_CONTFOR THEN
+        EAT()
+        RETURN CINT(NEW_STMT(K_CONTINUE_LOOP, ln))
+    ENDIF
+
+    ' A bare name followed by = is an assignment; with a bracket in between it
+    ' is an indexed one. A name followed by something that starts a value is
+    ' BASIC's command form, TXTWRITER a, b, which is a call without brackets.
+    ' Anything else is an expression statement.
+    ' [a, b] = expr takes the pieces apart. Plain names stand as they are;
+    ' an indexed target desugars into temps and stores, so the right side is
+    ' read once and a swap through the same array cannot trip over itself.
+    IF t = TT_LBRACKET THEN
+        save = cur
+        EAT()
+        nIdx = 0
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF TT() = TT_RBRACKET OR TT() = T_EOF THEN EXITDO
+            IF TT() = TT_COMMA THEN
+                EAT()
+                CONTINUEDO
+            ENDIF
+            IF nIdx >= MAX_LOCAL THEN
+                nIdx = -1
+                EXITDO
+            ENDIF
+            myIdx[nIdx] = P_EXPR()
+            nIdx = nIdx + 1
+            IF TT() <> TT_COMMA THEN EXITDO
+        LOOP
+
+        IF parseError = "" ANDALSO nIdx > 0 ANDALSO TT() = TT_RBRACKET ANDALSO CUR_TT(1) = TT_ASSIGN THEN
+            EAT()
+            EAT()
+            RETURN CINT(P_DESTRUCT(ln, nIdx, myIdx))
+        ENDIF
+        cur = save
+    ENDIF
+
+    ' THIS.field = value writes a field of the instance, which the tree keeps
+    ' as a subscript whose key is the field's name.
+    IF t = TT_THIS ANDALSO CUR_TT(1) = TT_DOT THEN
+        nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+        stVar[nd] = "THIS"
+        EAT()
+        nIdx = 0
+        DO
+            IF parseError <> "" THEN EXITDO
+            IF TT() <> TT_DOT THEN EXITDO
+            EAT()
+            myIdx[nIdx] = MKSTR(TV$(), ln)
+            nIdx = nIdx + 1
+            EAT()
+        LOOP
+        IF TT() = TT_ASSIGN THEN EAT()
+        stExpr[nd] = P_EXPR()
+        start = ixN
+        FOR i = 0 TO nIdx - 1
+            ixBuf[ixN] = myIdx[i]
+            ixN = ixN + 1
+        NEXT i
+        stIxAt[nd] = start
+        stIxN[nd] = nIdx
+        RETURN nd
+    ENDIF
+
+    IF t = T_IDENTIFIER ANDALSO CUR_TT(CINT(AFTER_DOTTED())) = TT_ARROW THEN RETURN CINT(P_REACT(ln))
+
+    IF t = T_IDENTIFIER THEN
+        IF IS_BUILTIN_CMD(TV$()) = 1 ANDALSO TAKES_BUILTIN_CMD(CINT(CUR_TT(1))) = 1 THEN
+            RETURN CINT(P_BUILTIN_CMD(ln))
+        ENDIF
+        after = CINT(AFTER_DOTTED())
+        IF after > 1 THEN
+            ' a.b = expr assigns to the field, whatever the name looks like.
+            IF CUR_TT(after) = TT_ASSIGN THEN
+                nd = CINT(NEW_STMT(K_ASSIGN, ln))
+                stVar[nd] = DOTTED_NAME$()
+                EAT()
+                stExpr[nd] = P_EXPR()
+                RETURN nd
+            ENDIF
+            ' A dotted call whose parenthesis touches the name and whose
+            ' chain then carries on is re-walked from the first dot with
+            ' the call as its root, which is the shape the reference has.
+            IF CUR_TT(after) = TT_LPAREN ANDALSO PAREN_ADJACENT(CINT(after)) = 1 THEN
+                IF CHAIN_AFTER_CALL(CINT(after)) = 1 THEN RETURN CINT(P_CALL_CHAIN(ln))
+            ENDIF
+
+            ' MOD.FN [x] is a call whose first argument is a literal array;
+            ' MOD.ARR[i, j] = v assigns. The sign past the bracket decides.
+            IF CUR_TT(after) = TT_LBRACKET THEN
+                IF BRACKET_ASSIGN_AHEAD(CINT(after)) = 0 THEN RETURN CINT(P_COMMAND(ln))
+                nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+                stVar[nd] = DOTTED_NAME$()
+                EAT()
+                nIdx = 0
+                DO
+                    IF parseError <> "" THEN EXITDO
+                    IF TT() = TT_RBRACKET OR TT() = T_EOF THEN EXITDO
+                    IF TT() = TT_COMMA THEN
+                        EAT()
+                        CONTINUEDO
+                    ENDIF
+                    IF nIdx >= MAX_LOCAL THEN
+                        FAIL("too many subscripts")
+                        EXITDO
+                    ENDIF
+                    myIdx[nIdx] = P_EXPR()
+                    nIdx = nIdx + 1
+                LOOP
+                IF TT() = TT_RBRACKET THEN EAT()
+                IF TT() = TT_ASSIGN THEN EAT()
+                stExpr[nd] = P_EXPR()
+                start = ixN
+                FOR i = 0 TO nIdx - 1
+                    ixBuf[ixN] = myIdx[i]
+                    ixN = ixN + 1
+                NEXT i
+                stIxAt[nd] = start
+                stIxN[nd] = nIdx
+                RETURN nd
+            ENDIF
+
+            ' With a parenthesis after it the whole dotted name is the call;
+            ' without one, the head is an object and the tail its routine.
+            IF after = 3 ANDALSO LEN(TV$()) < 3 ANDALSO CUR_TT(after) <> TT_LPAREN THEN
+                RETURN CINT(P_METHOD(ln))
+            ENDIF
+        ENDIF
+
+        save = cur
+        IF CUR_TT(1) = TT_ASSIGN THEN
+            nd = CINT(NEW_STMT(K_ASSIGN, ln))
+            stVar[nd] = TV$()
+            EAT()
+            EAT()
+            stExpr[nd] = P_EXPR()
+            RETURN nd
+        ENDIF
+        ' C[1][2], C[1, 2] and m{"k"} are all subscript lists, and the whole
+        ' run of them belongs to the assignment.
+        IF CUR_TT(1) = TT_LBRACKET OR CUR_TT(1) = TT_LBRACE THEN
+            nd = CINT(NEW_STMT(K_INDEX_ASSIGN, ln))
+            stVar[nd] = TV$()
+            EAT()
+            nIdx = 0
+            DO
+                IF parseError <> "" THEN EXITDO
+                IF TT() = TT_LBRACKET THEN
+                    closer = TT_RBRACKET
+                ELSE
+                    IF TT() = TT_LBRACE THEN
+                        closer = TT_RBRACE
+                    ELSE
+                        EXITDO
+                    ENDIF
+                ENDIF
+                EAT()
+                DO
+                    IF parseError <> "" THEN EXITDO
+                    IF TT() = closer THEN EXITDO
+                    IF nIdx >= MAX_LOCAL THEN
+                        FAIL("too many subscripts")
+                        EXITDO
+                    ENDIF
+                    myIdx[nIdx] = P_EXPR()
+                    nIdx = nIdx + 1
+                    IF TT() <> TT_COMMA THEN EXITDO
+                    EAT()
+                LOOP
+                IF TT() <> closer THEN EXITDO
+                EAT()
+            LOOP
+
+            ' A dot after the subscripts means the chain does not end at the
+            ' array, and the last link decides how the assignment lands.
+            IF parseError = "" ANDALSO TT() = TT_ASSIGN ANDALSO TT() <> TT_DOT THEN
+                EAT()
+                stExpr[nd] = P_EXPR()
+                start = ixN
+                FOR i = 0 TO nIdx - 1
+                    ixBuf[ixN] = myIdx[i]
+                    ixN = ixN + 1
+                NEXT i
+                stIxAt[nd] = start
+                stIxN[nd] = nIdx
+                RETURN nd
+            ENDIF
+            cur = save
+            stCount = stCount - 1
+
+            IF CHAIN_HAS_DOT() = 1 THEN RETURN CINT(P_CHAIN(ln))
+        ENDIF
+
+        IF STARTS_ARGS(CINT(CUR_TT(CINT(AFTER_DOTTED())))) = 1 THEN RETURN CINT(P_COMMAND(ln))
+    ENDIF
+
+    nd = CINT(NEW_STMT(K_EXPR_STMT, ln))
+    stExpr[nd] = P_EXPR()
+    RETURN nd
+ENDFUNC
+
+' ── IMPORT ─────────────────────────────────────────────────────────────────
+'
+' IMPORT reads the module beside the program, parses it with the same
+' arenas, and renames what it declares: an exported name becomes
+' MOD.NAME, a private one __MOD__NAME, and every mention inside the
+' module follows. The statements land where the IMPORT stood. A module
+' someone already imported is not read twice.
+
+
+' The rename maps of the import being resolved right now. Nested imports
+' finish their whole rename before the outer one builds its maps.
+DIM mrFnFrom[256] AS STRING
+DIM mrFnTo[256] AS STRING
+DIM mrFnN AS INTEGER
+DIM mrVarFrom[256] AS STRING
+DIM mrVarTo[256] AS STRING
+DIM mrVarN AS INTEGER
+
+FUNC MR_FN$(nm AS STRING) AS STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO mrFnN - 1
+        IF mrFnFrom[i] = nm THEN RETURN mrFnTo[i]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+FUNC MR_VAR$(nm AS STRING) AS STRING
+    DIM i AS INTEGER
+    FOR i = 0 TO mrVarN - 1
+        IF mrVarFrom[i] = nm THEN RETURN mrVarTo[i]
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+' Reading a file that may not be there: one runtime answers nothing, the
+' other raises, and both of those mean the same here.
+FUNC READ_IF_THERE$(p AS STRING) AS STRING
+    DIM t AS STRING
+    t = ""
+    TRY
+        t = TXTREADER$(p)
+    CATCH
+        t = ""
+    ENDTRY
+    RETURN t
+ENDFUNC
+
+' The reference's own candidate order: the script's directory in both
+' spellings, its modules subdirectory, then the working directory.
+FUNC MODULE_SRC$(nm AS STRING) AS STRING
+    DIM lower AS STRING
+    DIM t AS STRING
+    lower = LCASE$(nm)
+    IF baseDir <> "" THEN
+        t = READ_IF_THERE$(baseDir + "/" + nm + ".jdb")
+        IF t <> "" THEN RETURN t
+        t = READ_IF_THERE$(baseDir + "/" + lower + ".jdb")
+        IF t <> "" THEN RETURN t
+        t = READ_IF_THERE$(baseDir + "/modules/" + nm + ".jdb")
+        IF t <> "" THEN RETURN t
+        t = READ_IF_THERE$(baseDir + "/modules/" + lower + ".jdb")
+        IF t <> "" THEN RETURN t
+    ENDIF
+    t = READ_IF_THERE$(nm + ".jdb")
+    IF t <> "" THEN RETURN t
+    t = READ_IF_THERE$(lower + ".jdb")
+    IF t <> "" THEN RETURN t
+    t = READ_IF_THERE$("modules/" + nm + ".jdb")
+    IF t <> "" THEN RETURN t
+    RETURN READ_IF_THERE$("modules/" + lower + ".jdb")
+ENDFUNC
+
+SUB M_REN_E(ix AS INTEGER)
+    DIM k AS INTEGER
+    DIM t AS STRING
+    DIM i AS INTEGER
+
+    IF ix < 0 THEN RETURN
+    k = CINT(exKind[ix])
+
+    IF k = X_VARIABLE THEN
+        t = MR_VAR$(exStr[ix])
+        IF t <> "" THEN exStr[ix] = t
+        RETURN
+    ENDIF
+    IF k = X_LIT_STR THEN
+        IF exFuncRef[ix] <> 0 THEN
+            t = MR_FN$(exStr[ix])
+            IF t <> "" THEN exStr[ix] = t
+        ENDIF
+        RETURN
+    ENDIF
+    IF k = X_CALL THEN
+        t = MR_FN$(exFn[ix])
+        IF t <> "" THEN
+            exFn[ix] = t
+        ELSE
+            ' A routine held in a module slot is called through that slot.
+            t = MR_VAR$(exFn[ix])
+            IF t <> "" THEN exFn[ix] = t
+        ENDIF
+        FOR i = 0 TO exArgN[ix] - 1
+            M_REN_E(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        NEXT i
+        M_REN_E(CINT(exLeft[ix]))
+        RETURN
+    ENDIF
+    IF k = X_BINARY OR k = X_INDEX OR k = X_PIPE OR k = X_LAMBDA THEN
+        M_REN_E(CINT(exLeft[ix]))
+        M_REN_E(CINT(exRight[ix]))
+        RETURN
+    ENDIF
+    IF k = X_UNARY THEN
+        M_REN_E(CINT(exRight[ix]))
+        RETURN
+    ENDIF
+    IF k = X_ARRAY_LIT OR k = X_MAP_LIT THEN
+        FOR i = 0 TO exArgN[ix] - 1
+            M_REN_E(CINT(argBuf[CINT(exArgAt[ix]) + i]))
+        NEXT i
+        RETURN
+    ENDIF
+    IF k = X_MEMBER THEN M_REN_E(CINT(exLeft[ix]))
+ENDSUB
+
+SUB M_REN_S(ix AS INTEGER)
+    DIM k AS INTEGER
+    DIM t AS STRING
+    DIM i AS INTEGER
+    DIM b AS INTEGER
+    DIM at AS INTEGER
+    DIM m AS INTEGER
+
+    IF ix < 0 THEN RETURN
+    k = CINT(stKind[ix])
+
+    IF k = K_FUNCTION OR k = K_SUB THEN
+        t = MR_FN$(stFunc[ix])
+        IF t <> "" THEN stFunc[ix] = t
+        ' A parameter wearing a module variable's name would be silently
+        ' captured by the rename below; better to refuse it out loud.
+        FOR i = 0 TO stParN[ix] - 1
+            IF MR_VAR$(parName[CINT(stParAt[ix]) + i]) <> "" THEN
+                FAIL("parameter " + parName[CINT(stParAt[ix]) + i] + " in " + stFunc[ix] + " shadows a module variable")
+                RETURN
+            ENDIF
+        NEXT i
+    ENDIF
+
+    IF k = K_TYPE_DECL THEN
+        t = MR_FN$(stFunc[ix])
+        IF t <> "" THEN stFunc[ix] = t
+        FOR i = 0 TO stBodyN[ix] - 1
+            m = CINT(bodyBuf[CINT(stBodyAt[ix]) + i])
+            IF stKind[m] = K_FUNCTION OR stKind[m] = K_SUB THEN
+                t = MR_FN$(stFunc[m])
+                IF t <> "" THEN stFunc[m] = t
+            ENDIF
+        NEXT i
+    ENDIF
+
+    IF k = K_LET OR k = K_DIM OR k = K_ASSIGN OR k = K_INDEX_ASSIGN THEN
+        t = MR_VAR$(stVar[ix])
+        IF t <> "" THEN stVar[ix] = t
+    ENDIF
+
+    ' A declared type used inside its own module goes by its new name too.
+    IF k = K_DIM ANDALSO stLabel[ix] <> "" THEN
+        t = MR_FN$(stLabel[ix])
+        IF t <> "" THEN stLabel[ix] = t
+    ENDIF
+
+    M_REN_E(CINT(stExpr[ix]))
+    M_REN_E(CINT(stEnd[ix]))
+    M_REN_E(CINT(stStep[ix]))
+    M_REN_E(CINT(stCond[ix]))
+    FOR i = 0 TO stPrN[ix] - 1
+        M_REN_E(CINT(prBuf[CINT(stPrAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stIxN[ix] - 1
+        M_REN_E(CINT(ixBuf[CINT(stIxAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stCtN[ix] - 1
+        M_REN_E(CINT(ctBuf[CINT(stCtAt[ix]) + i]))
+    NEXT i
+
+    FOR b = 0 TO stBrN[ix] - 1
+        at = CINT(stBrAt[ix]) + b
+        M_REN_E(CINT(brCond[at]))
+        FOR i = 0 TO brExN[at] - 1
+            M_REN_E(CINT(caseBuf[CINT(brExAt[at]) + i]))
+            M_REN_E(CINT(caseHi[CINT(brExAt[at]) + i]))
+        NEXT i
+        FOR i = 0 TO brBodyN[at] - 1
+            M_REN_S(CINT(bodyBuf[CINT(brBodyAt[at]) + i]))
+        NEXT i
+    NEXT b
+
+    FOR i = 0 TO stBodyN[ix] - 1
+        M_REN_S(CINT(bodyBuf[CINT(stBodyAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stCatchN[ix] - 1
+        M_REN_S(CINT(bodyBuf[CINT(stCatchAt[ix]) + i]))
+    NEXT i
+    FOR i = 0 TO stFinN[ix] - 1
+        M_REN_S(CINT(bodyBuf[CINT(stFinAt[ix]) + i]))
+    NEXT i
+ENDSUB
+
+' Whether the statement came out of a deeper import, whose names are
+' already spoken for.
+FUNC M_IS_SUB_IMPORT(ix AS INTEGER) AS INTEGER
+    DIM k AS INTEGER
+    k = CINT(stKind[ix])
+    IF k = K_FUNCTION OR k = K_SUB OR k = K_TYPE_DECL THEN
+        IF INSTR(stFunc[ix], ".") >= 0 THEN RETURN 1
+        IF LEFT$(stFunc[ix], 2) = "__" THEN RETURN 1
+    ENDIF
+    IF k = K_LET OR k = K_DIM OR k = K_ASSIGN THEN
+        IF INSTR(stVar[ix], ".") >= 0 THEN RETURN 1
+        IF LEFT$(stVar[ix], 2) = "__" THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+SUB P_IMPORT()
+    DIM nm AS STRING
+    DIM modSrc AS STRING
+    DIM modStart AS INTEGER
+    DIM savedCur AS INTEGER
+    DIM myList[2048]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+    DIM m AS INTEGER
+    DIM k AS INTEGER
+    DIM member AS INTEGER
+    DIM memberAt AS INTEGER
+    DIM exported AS INTEGER
+    DIM ln AS INTEGER
+
+    ln = CINT(TL())
+    EAT()
+    nm = TV$()
+    EAT()
+
+    impRetN = 0
+    FOR i = 0 TO impModsN - 1
+        IF impMods[i] = nm THEN RETURN
+    NEXT i
+    impMods[impModsN] = nm
+    impModsN = impModsN + 1
+
+    modSrc = MODULE_SRC$(nm)
+    IF modSrc = "" THEN
+        FAIL("cannot load module " + nm)
+        RETURN
+    ENDIF
+
+    src = REPLACE$(modSrc, CHR$(13) + CHR$(10), CHR$(10))
+    modStart = tkCount
+    JDBC_LEX.TOKENIZE_MORE()
+    IF lexError <> "" THEN
+        FAIL("lex error in module " + nm + ": " + lexError)
+        RETURN
+    ENDIF
+
+    savedCur = cur
+    cur = modStart
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = T_EOF THEN EXITDO
+        IF TT() = KT_IMPORT THEN
+            P_IMPORT()
+            FOR i = 0 TO impRetN - 1
+                IF n >= 2048 THEN
+                    FAIL("module " + nm + " is too large")
+                    EXITFOR
+                ENDIF
+                myList[n] = impBuf[impRetAt + i]
+                n = n + 1
+            NEXT i
+            CONTINUEDO
+        ENDIF
+        IF n >= 2048 THEN
+            FAIL("module " + nm + " is too large")
+            EXITDO
+        ENDIF
+        myList[n] = P_STMT()
+        n = n + 1
+    LOOP
+    cur = savedCur
+    IF parseError <> "" THEN RETURN
+
+    ' What the module declares, and under which of the two names each
+    ' thing goes on. Deeper imports are already renamed and stay out.
+    mrFnN = 0
+    mrVarN = 0
+    FOR i = 0 TO n - 1
+        m = CINT(myList[i])
+        IF M_IS_SUB_IMPORT(m) = 1 THEN CONTINUEFOR
+        k = CINT(stKind[m])
+        exported = 0
+        IF stLabel[m] = "__EXPORT__" THEN exported = 1
+        IF k = K_FUNCTION OR k = K_SUB THEN
+            mrFnFrom[mrFnN] = stFunc[m]
+            IF exported = 1 THEN
+                mrFnTo[mrFnN] = nm + "." + stFunc[m]
+            ELSE
+                mrFnTo[mrFnN] = "__" + nm + "__" + stFunc[m]
+            ENDIF
+            mrFnN = mrFnN + 1
+        ENDIF
+        IF k = K_TYPE_DECL THEN
+            mrFnFrom[mrFnN] = stFunc[m]
+            IF exported = 1 THEN
+                mrFnTo[mrFnN] = nm + "." + stFunc[m]
+            ELSE
+                mrFnTo[mrFnN] = "__" + nm + "__" + stFunc[m]
+            ENDIF
+            mrFnN = mrFnN + 1
+            ' The type's own routines already wear TYPE.NAME and follow it.
+            FOR memberAt = 0 TO stBodyN[m] - 1
+                member = CINT(bodyBuf[CINT(stBodyAt[m]) + memberAt])
+                IF stKind[member] = K_FUNCTION OR stKind[member] = K_SUB THEN
+                    mrFnFrom[mrFnN] = stFunc[member]
+                    IF exported = 1 THEN
+                        mrFnTo[mrFnN] = nm + "." + stFunc[member]
+                    ELSE
+                        mrFnTo[mrFnN] = "__" + nm + "__" + stFunc[member]
+                    ENDIF
+                    mrFnN = mrFnN + 1
+                ENDIF
+            NEXT memberAt
+        ENDIF
+        IF k = K_LET OR k = K_DIM THEN
+            mrVarFrom[mrVarN] = stVar[m]
+            IF exported = 1 THEN
+                mrVarTo[mrVarN] = nm + "." + stVar[m]
+            ELSE
+                mrVarTo[mrVarN] = "__" + nm + "__" + stVar[m]
+            ENDIF
+            mrVarN = mrVarN + 1
+        ENDIF
+        IF k = K_ASSIGN THEN
+            IF MR_VAR$(stVar[m]) = "" THEN
+                mrVarFrom[mrVarN] = stVar[m]
+                mrVarTo[mrVarN] = "__" + nm + "__" + stVar[m]
+                mrVarN = mrVarN + 1
+            ENDIF
+        ENDIF
+    NEXT i
+
+    FOR i = 0 TO n - 1
+        m = CINT(myList[i])
+        IF M_IS_SUB_IMPORT(m) = 0 THEN M_REN_S(m)
+    NEXT i
+
+    impRetAt = impN
+    FOR i = 0 TO n - 1
+        IF impN >= 8192 THEN
+            FAIL("too many imported statements")
+            RETURN
+        ENDIF
+        impBuf[impN] = myList[i]
+        impN = impN + 1
+    NEXT i
+    impRetN = n
+ENDSUB
+
+' The top level is held in its own arena rather than a local, because a
+' program has as many statements as it has, and a nested body allocates from
+' bodyBuf while this is still collecting.
+EXPORT SUB P_PROGRAM()
+    DIM tmp[MAX_BUF]
+    DIM n AS INTEGER
+    DIM i AS INTEGER
+
+    cur = 0
+    n = 0
+    DO
+        IF parseError <> "" THEN EXITDO
+        SKIP_SEPS()
+        IF TT() = T_EOF THEN EXITDO
+        IF n >= MAX_BUF THEN
+            FAIL("too many statements in one program")
+            EXITDO
+        ENDIF
+        IF TT() = KT_IMPORT THEN
+            P_IMPORT()
+            FOR i = 0 TO impRetN - 1
+                tmp[n] = impBuf[impRetAt + i]
+                n = n + 1
+            NEXT i
+            CONTINUEDO
+        ENDIF
+        tmp[n] = P_STMT()
+        n = n + 1
+    LOOP
+    topAt = bodyN
+    FOR i = 0 TO n - 1
+        bodyBuf[bodyN] = tmp[i]
+        bodyN = bodyN + 1
+    NEXT i
+    topN = n
+ENDSUB
