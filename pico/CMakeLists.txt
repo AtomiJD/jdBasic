@@ -27,6 +27,10 @@ add_executable(jdbasic_repl
     picocalc_kbd.c
     picocalc_gfx.c
     picocalc_snd.c
+    picocalc_sd.c
+    fatfs/ff.c
+    fatfs/ffsystem.c
+    fatfs/ffunicode.c
     littlefs/lfs.c
     littlefs/lfs_util.c
     ../src/lexer.cpp

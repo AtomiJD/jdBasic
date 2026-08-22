@@ -103,12 +103,40 @@ extern "C" void jdb_pico_fs_init(void) {
     g_mounted = (rc == 0);
 }
 
+// The SD card behind the /sd prefix, through the wrappers in
+// picocalc_sd.c so FatFS types stay out of this file.
+extern "C" {
+int  sd_open(const char* path, int write, int create, int truncate, int append);
+int  sd_read(int h, void* buf, int len);
+int  sd_write(int h, const void* buf, int len);
+long sd_lseek(int h, long pos, int whence);
+long sd_size(int h);
+int  sd_close(int h);
+int  sd_stat(const char* path, long* size, int* isdir);
+int  sd_unlink(const char* path);
+int  sd_mkdir(const char* path);
+int  sd_opendir(const char* path);
+int  sd_readdir(int h, char* name, int cap, int* isdir);
+int  sd_closedir(int h);
+}
+
+// A path that means the card: /sd, /sd/... - the rest of the path in
+// FatFS terms, or NULL when it belongs to the flash store.
+static const char* sd_part(const char* path) {
+    if (strncmp(path, "/sd", 3) != 0) return nullptr;
+    if (path[3] == 0) return "/";
+    if (path[3] == '/') return path + 3;
+    return nullptr;
+}
+
 // Open-file table, newlib fds 3 and up. fds 0 to 2 stay with the SDK's
 // stdio, handled the way the weak defaults handle them.
 
 #define MAX_FILES 8
 static lfs_file_t g_files[MAX_FILES];
 static bool g_used[MAX_FILES];
+static bool g_is_sd[MAX_FILES];
+static int  g_sdh[MAX_FILES];
 
 static int lfs_err_to_errno(int e) {
     switch (e) {
@@ -124,11 +152,23 @@ static int lfs_err_to_errno(int e) {
 extern "C" {
 
 int _open(const char* path, int oflag, ...) {
-    if (!g_mounted) { errno = ENODEV; return -1; }
     int slot = -1;
     for (int i = 0; i < MAX_FILES; i++) if (!g_used[i]) { slot = i; break; }
     if (slot < 0) { errno = EMFILE; return -1; }
 
+    const char* sp = sd_part(path);
+    if (sp) {
+        int wr = (oflag & O_ACCMODE) != O_RDONLY;
+        int h = sd_open(sp, wr, (oflag & O_CREAT) != 0,
+                        (oflag & O_TRUNC) != 0, (oflag & O_APPEND) != 0);
+        if (h < 0) { errno = EIO; return -1; }
+        g_used[slot] = true;
+        g_is_sd[slot] = true;
+        g_sdh[slot] = h;
+        return slot + 3;
+    }
+
+    if (!g_mounted) { errno = ENODEV; return -1; }
     int flags = 0;
     switch (oflag & O_ACCMODE) {
         case O_RDONLY: flags = LFS_O_RDONLY; break;
@@ -142,6 +182,7 @@ int _open(const char* path, int oflag, ...) {
     int rc = lfs_file_open(&g_lfs, &g_files[slot], path, flags);
     if (rc < 0) { errno = lfs_err_to_errno(rc); return -1; }
     g_used[slot] = true;
+    g_is_sd[slot] = false;
     return slot + 3;
 }
 
@@ -149,6 +190,11 @@ int _read(int fd, char* buf, int len) {
     if (fd == 0) return stdio_get_until(buf, len, at_the_end_of_time);
     int slot = fd - 3;
     if (slot < 0 || slot >= MAX_FILES || !g_used[slot]) { errno = EBADF; return -1; }
+    if (g_is_sd[slot]) {
+        int rc = sd_read(g_sdh[slot], buf, len);
+        if (rc < 0) { errno = EIO; return -1; }
+        return rc;
+    }
     int rc = lfs_file_read(&g_lfs, &g_files[slot], buf, len);
     if (rc < 0) { errno = lfs_err_to_errno(rc); return -1; }
     return rc;
@@ -161,6 +207,11 @@ int _write(int fd, char* buf, int len) {
     }
     int slot = fd - 3;
     if (slot < 0 || slot >= MAX_FILES || !g_used[slot]) { errno = EBADF; return -1; }
+    if (g_is_sd[slot]) {
+        int rc = sd_write(g_sdh[slot], buf, len);
+        if (rc < 0) { errno = EIO; return -1; }
+        return rc;
+    }
     int rc = lfs_file_write(&g_lfs, &g_files[slot], buf, len);
     if (rc < 0) { errno = lfs_err_to_errno(rc); return -1; }
     return rc;
@@ -169,14 +220,22 @@ int _write(int fd, char* buf, int len) {
 int _close(int fd) {
     int slot = fd - 3;
     if (slot < 0 || slot >= MAX_FILES || !g_used[slot]) { errno = EBADF; return -1; }
-    lfs_file_close(&g_lfs, &g_files[slot]);
+    if (g_is_sd[slot]) sd_close(g_sdh[slot]);
+    else lfs_file_close(&g_lfs, &g_files[slot]);
     g_used[slot] = false;
+    g_is_sd[slot] = false;
     return 0;
 }
 
 off_t _lseek(int fd, off_t pos, int whence) {
     int slot = fd - 3;
     if (slot < 0 || slot >= MAX_FILES || !g_used[slot]) { errno = EBADF; return -1; }
+    if (g_is_sd[slot]) {
+        int w = (whence == SEEK_SET) ? 0 : (whence == SEEK_CUR) ? 1 : 2;
+        long rc = sd_lseek(g_sdh[slot], (long)pos, w);
+        if (rc < 0) { errno = EIO; return -1; }
+        return (off_t)rc;
+    }
     int w = (whence == SEEK_SET) ? LFS_SEEK_SET
           : (whence == SEEK_CUR) ? LFS_SEEK_CUR
           : LFS_SEEK_END;
@@ -191,13 +250,23 @@ int _fstat(int fd, struct stat* st) {
     int slot = fd - 3;
     if (slot < 0 || slot >= MAX_FILES || !g_used[slot]) { errno = EBADF; return -1; }
     st->st_mode = S_IFREG;
-    st->st_size = lfs_file_size(&g_lfs, &g_files[slot]);
+    st->st_size = g_is_sd[slot] ? sd_size(g_sdh[slot])
+                                : lfs_file_size(&g_lfs, &g_files[slot]);
     return 0;
 }
 
 int _isatty(int fd) { return fd < 3; }
 
 int _stat(const char* path, struct stat* st) {
+    const char* sp = sd_part(path);
+    if (sp) {
+        long size; int isdir;
+        if (sd_stat(sp, &size, &isdir) != 0) { errno = ENOENT; return -1; }
+        memset(st, 0, sizeof *st);
+        st->st_mode = isdir ? S_IFDIR : S_IFREG;
+        st->st_size = size;
+        return 0;
+    }
     if (!g_mounted) { errno = ENODEV; return -1; }
     struct lfs_info info;
     int rc = lfs_stat(&g_lfs, path, &info);
@@ -211,6 +280,11 @@ int _stat(const char* path, struct stat* st) {
 int stat(const char* path, struct stat* st) { return _stat(path, st); }
 
 int _unlink(const char* path) {
+    const char* sp = sd_part(path);
+    if (sp) {
+        if (sd_unlink(sp) != 0) { errno = EIO; return -1; }
+        return 0;
+    }
     int rc = lfs_remove(&g_lfs, path);
     if (rc < 0) { errno = lfs_err_to_errno(rc); return -1; }
     return 0;
@@ -220,6 +294,11 @@ int unlink(const char* path) { return _unlink(path); }
 
 int mkdir(const char* path, mode_t mode) {
     (void)mode;
+    const char* sp = sd_part(path);
+    if (sp) {
+        if (sd_mkdir(sp) != 0) { errno = EIO; return -1; }
+        return 0;
+    }
     int rc = lfs_mkdir(&g_lfs, path);
     if (rc < 0) { errno = lfs_err_to_errno(rc); return -1; }
     return 0;
@@ -233,15 +312,27 @@ struct DIR {
     lfs_dir_t dir;
     struct dirent ent;
     bool open;
+    bool is_sd;
+    int sdh;
 };
 
 static DIR g_dirs[4];
 
 DIR* opendir(const char* path) {
-    if (!g_mounted) return nullptr;
     for (auto& d : g_dirs) {
         if (d.open) continue;
+        const char* sp = sd_part(path);
+        if (sp) {
+            int h = sd_opendir(sp);
+            if (h < 0) return nullptr;
+            d.is_sd = true;
+            d.sdh = h;
+            d.open = true;
+            return &d;
+        }
+        if (!g_mounted) return nullptr;
         if (lfs_dir_open(&g_lfs, &d.dir, path) < 0) return nullptr;
+        d.is_sd = false;
         d.open = true;
         return &d;
     }
@@ -250,6 +341,13 @@ DIR* opendir(const char* path) {
 
 struct dirent* readdir(DIR* d) {
     if (!d || !d->open) return nullptr;
+    if (d->is_sd) {
+        int isdir = 0;
+        int rc = sd_readdir(d->sdh, d->ent.d_name, sizeof d->ent.d_name, &isdir);
+        if (rc <= 0) return nullptr;
+        d->ent.d_type = isdir ? DT_DIR : DT_REG;
+        return &d->ent;
+    }
     struct lfs_info info;
     for (;;) {
         int rc = lfs_dir_read(&g_lfs, &d->dir, &info);
@@ -264,7 +362,8 @@ struct dirent* readdir(DIR* d) {
 
 int closedir(DIR* d) {
     if (!d || !d->open) return -1;
-    lfs_dir_close(&g_lfs, &d->dir);
+    if (d->is_sd) sd_closedir(d->sdh);
+    else lfs_dir_close(&g_lfs, &d->dir);
     d->open = false;
     return 0;
 }

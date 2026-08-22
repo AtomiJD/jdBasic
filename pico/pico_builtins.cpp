@@ -17,6 +17,8 @@ void register_pico_tap(VM& vm);
 void register_pico_taparm(VM& vm);
 void register_pico_gfx(VM& vm);
 void register_pico_snd(VM& vm);
+void register_pico_sdtest(VM& vm);
+void register_pico_sdbb(VM& vm);
 
 void register_pico_builtins(VM& vm) {
     vm.register_native("GPIO.MODE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -47,6 +49,8 @@ void register_pico_builtins(VM& vm) {
     register_pico_taparm(vm);
     register_pico_gfx(vm);
     register_pico_snd(vm);
+    register_pico_sdtest(vm);
+    register_pico_sdbb(vm);
     vm.register_native("LED", 1, 1, [](const std::vector<Value>& args) -> Value {
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, args[0].to_double() != 0);
         return Value();
@@ -214,5 +218,25 @@ void register_pico_snd(VM& vm) {
         int ms   = args.size() >= 2 ? (int)args[1].to_double() : 200;
         picocalc_snd_beep(freq, ms);
         return Value();
+    });
+}
+
+extern "C" void sd_selftest(char* out, int cap);
+
+void register_pico_sdtest(VM& vm) {
+    vm.register_native("SD.TEST", 0, 0, [](const std::vector<Value>&) -> Value {
+        char buf[160];
+        sd_selftest(buf, sizeof buf);
+        return Value::make_string(buf);
+    });
+}
+
+extern "C" void sd_bitbang_test(char* out, int cap);
+
+void register_pico_sdbb(VM& vm) {
+    vm.register_native("SD.BB", 0, 0, [](const std::vector<Value>&) -> Value {
+        char buf[64];
+        sd_bitbang_test(buf, sizeof buf);
+        return Value::make_string(buf);
     });
 }
