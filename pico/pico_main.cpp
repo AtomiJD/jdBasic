@@ -54,7 +54,10 @@ static stdio_driver_t pc_driver = {
 #define K_DEL   0xD4
 #define K_END   0xD5
 
-static int read_key(void) {
+extern "C" int repl_read_key(void);
+void pico_editor(const char* name);
+
+extern "C" int repl_read_key(void) {
     int c = getchar();
     if (c != 0x1B) return c;
     int c2 = getchar();
@@ -107,7 +110,7 @@ static void read_line(char* buf, int cap) {
     buf[0] = 0;
 
     for (;;) {
-        int c = read_key();
+        int c = repl_read_key();
         if (c == '\r' || c == '\n') {
             redraw(buf, len, len, old_len);
             printf("\r\n");
@@ -186,6 +189,22 @@ int main() {
         printf("> ");
         read_line(line, sizeof line);
         if (!line[0]) continue;
+
+        // EDIT name opens the full-screen editor; quotes are welcome
+        // but not required.
+        if ((strncmp(line, "EDIT ", 5) == 0 || strncmp(line, "edit ", 5) == 0)) {
+            char* nm = line + 5;
+            while (*nm == ' ') nm++;
+            size_t nl = strlen(nm);
+            if (nl >= 2 && (nm[0] == '"' || nm[0] == '\'')) {
+                nm++;
+                nl -= 2;
+                nm[nl] = 0;
+            }
+            if (*nm) pico_editor(nm);
+            continue;
+        }
+
         char* out = jdb_embed_eval(vm, line);
         if (out) {
             fputs(out, stdout);

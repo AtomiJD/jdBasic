@@ -132,8 +132,57 @@ static void scroll_up(void) {
     g_dirty[ROWS - 1] = 1;
 }
 
+// A small ANSI escape parser: cursor position (H and f), clear screen
+// (2J), clear to end of line (K). Enough for a full-screen editor to
+// speak the same stream to this panel and to a USB terminal.
+static int g_esc = 0;          // 0 plain, 1 after ESC, 2 in CSI
+static int g_par[4];
+static int g_parn = 0;
+
+static int ansi_step(char c) {
+    if (g_esc == 0) {
+        if (c == 0x1B) { g_esc = 1; return 1; }
+        return 0;
+    }
+    if (g_esc == 1) {
+        if (c == '[') {
+            g_esc = 2;
+            g_parn = 0;
+            memset(g_par, 0, sizeof g_par);
+            return 1;
+        }
+        g_esc = 0;
+        return 1;
+    }
+    // inside CSI
+    if (c >= '0' && c <= '9') {
+        g_par[g_parn] = g_par[g_parn] * 10 + (c - '0');
+        return 1;
+    }
+    if (c == ';') {
+        if (g_parn < 3) g_parn++;
+        return 1;
+    }
+    g_esc = 0;
+    if (c == 'H' || c == 'f') {
+        int row = g_par[0] > 0 ? g_par[0] - 1 : 0;
+        int col = (g_parn >= 1 && g_par[1] > 0) ? g_par[1] - 1 : 0;
+        g_dirty[g_cy] = 1;
+        g_cy = row < ROWS ? row : ROWS - 1;
+        g_cx = col < COLS ? col : COLS - 1;
+        g_dirty[g_cy] = 1;
+    } else if (c == 'J') {
+        clear_screen();
+    } else if (c == 'K') {
+        for (int x = g_cx; x < COLS; x++) g_text[g_cy][x] = ' ';
+        g_dirty[g_cy] = 1;
+    }
+    return 1;
+}
+
 void picocalc_lcd_putc(char c) {
     int prev_cy = g_cy;
+    if (ansi_step(c)) return;
     if (c == '\r') { g_cx = 0; g_dirty[g_cy] = 1; return; }
     if (c == '\n') {
         g_cx = 0;

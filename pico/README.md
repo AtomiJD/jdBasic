@@ -36,3 +36,18 @@ rate reaches it.
 
 Image: ~810 KB flash, ~14 KB static RAM; roughly 370 KB of heap remain
 for the VM.
+
+## Coming from MicroPython
+
+The stock PicoCalc firmware leaves an RP2350 partition table at the
+start of flash. The bootrom then loads any uf2 into a partition and
+switches on QMI address translation: reads above 1 MB return 0xFF and
+the flash store cannot work. The prompt has the tools to see and fix
+it once:
+
+    PRINT FS.ATRANS()   ' identity is 04000000 04000400 04000800 04000c00
+    FS.NUKEPT()         ' erase the partition table, drop to BOOTSEL
+
+then copy the uf2 onto the drive again. FS.TEST() exercises the flash
+layer end to end and reports each step - note that it reformats the
+store.

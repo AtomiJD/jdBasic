@@ -23,25 +23,40 @@
 static int bd_read(const struct lfs_config* c, lfs_block_t block,
                    lfs_off_t off, void* buffer, lfs_size_t size) {
     (void)c;
-    memcpy(buffer, (const uint8_t*)(XIP_BASE + FS_OFFSET + block * FS_BLOCK + off), size);
+    // Through the uncached alias: littlefs verifies what it programs,
+    // and the XIP cache would hand it yesterday's bytes.
+    memcpy(buffer,
+           (const uint8_t*)(XIP_NOCACHE_NOALLOC_BASE + FS_OFFSET + block * FS_BLOCK + off),
+           size);
     return 0;
+}
+
+
+#include "pico/flash.h"
+
+struct prog_args { uint32_t off; const uint8_t* buf; size_t n; };
+
+static void do_prog(void* p) {
+    struct prog_args* a = (struct prog_args*)p;
+    flash_range_program(a->off, a->buf, a->n);
+}
+
+static void do_erase(void* p) {
+    flash_range_erase((uint32_t)(uintptr_t)p, FS_BLOCK);
 }
 
 static int bd_prog(const struct lfs_config* c, lfs_block_t block,
                    lfs_off_t off, const void* buffer, lfs_size_t size) {
     (void)c;
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_program(FS_OFFSET + block * FS_BLOCK + off, (const uint8_t*)buffer, size);
-    restore_interrupts(ints);
-    return 0;
+    struct prog_args a = { (uint32_t)(FS_OFFSET + block * FS_BLOCK + off),
+                           (const uint8_t*)buffer, size };
+    return flash_safe_execute(do_prog, &a, 2000) == PICO_OK ? 0 : LFS_ERR_IO;
 }
 
 static int bd_erase(const struct lfs_config* c, lfs_block_t block) {
     (void)c;
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(FS_OFFSET + block * FS_BLOCK, FS_BLOCK);
-    restore_interrupts(ints);
-    return 0;
+    uintptr_t off = FS_OFFSET + block * FS_BLOCK;
+    return flash_safe_execute(do_erase, (void*)off, 2000) == PICO_OK ? 0 : LFS_ERR_IO;
 }
 
 static int bd_sync(const struct lfs_config* c) { (void)c; return 0; }
@@ -71,11 +86,21 @@ static const struct lfs_config g_cfg = {
 };
 
 extern "C" void jdb_pico_fs_init(void) {
-    if (lfs_mount(&g_lfs, &g_cfg) != 0) {
-        lfs_format(&g_lfs, &g_cfg);
-        lfs_mount(&g_lfs, &g_cfg);
+    int rc = lfs_mount(&g_lfs, &g_cfg);
+    if (rc == 0) {
+        // A leftover littlefs from other firmware mounts fine and then
+        // fails every write: only a store with our geometry counts.
+        struct lfs_fsinfo fi;
+        if (lfs_fs_stat(&g_lfs, &fi) != 0 || fi.block_count != g_cfg.block_count) {
+            lfs_unmount(&g_lfs);
+            rc = -1;
+        }
     }
-    g_mounted = true;
+    if (rc != 0) {
+        lfs_format(&g_lfs, &g_cfg);
+        rc = lfs_mount(&g_lfs, &g_cfg);
+    }
+    g_mounted = (rc == 0);
 }
 
 // Open-file table, newlib fds 3 and up. fds 0 to 2 stay with the SDK's
@@ -244,4 +269,68 @@ int closedir(DIR* d) {
     return 0;
 }
 
+}
+
+// Layer-by-layer self test, reachable from the prompt as FS.TEST:
+// raw erase, raw program, verify, then every littlefs step with its
+// error code. The answer names the layer that fails.
+extern "C" void jdb_pico_fs_selftest(char* out, int cap) {
+    uint8_t pat[256];
+    const uint8_t* rd = (const uint8_t*)(XIP_NOCACHE_NOALLOC_BASE + FS_OFFSET);
+    uint8_t tx[2], rx[2];
+
+    uint32_t ints = save_and_disable_interrupts();
+    tx[0] = 0x15; tx[1] = 0;
+    flash_do_cmd(tx, rx, 2);
+    uint8_t sr3 = rx[1];
+    // Global block unlock: with WPS the chip wakes with every block
+    // locked, and this is the key that opens them all.
+    tx[0] = 0x06;
+    flash_do_cmd(tx, rx, 1);
+    tx[0] = 0x98;
+    flash_do_cmd(tx, rx, 1);
+    restore_interrupts(ints);
+
+    int erc = bd_erase(&g_cfg, 0);
+    for (int i = 0; i < 256; i++) pat[i] = (uint8_t)(i * 7 + 3);
+    int prc = bd_prog(&g_cfg, 0, 0, pat, 256);
+    int prog_ok = 1;
+    for (int i = 0; i < 256; i++) if (rd[i] != pat[i]) { prog_ok = 0; break; }
+
+    int fmt = -99, mnt = -99;
+    if (prog_ok) {
+        fmt = lfs_format(&g_lfs, &g_cfg);
+        mnt = lfs_mount(&g_lfs, &g_cfg);
+        g_mounted = (mnt == 0);
+    }
+    snprintf(out, cap, "sr3=%02x erc=%d prc=%d prog=%d got=%02x %02x fmt=%d mnt=%d",
+        sr3, erc, prc, prog_ok, rd[0], rd[1], fmt, mnt);
+}
+
+extern "C" void jdb_pico_alias_probe(char* out, int cap) {
+    const uint8_t* cached   = (const uint8_t*)(XIP_BASE);
+    const uint8_t* uncached = (const uint8_t*)(XIP_NOCACHE_NOALLOC_BASE);
+    snprintf(out, cap, "cached=%02x %02x %02x %02x uncached=%02x %02x %02x %02x",
+        cached[0], cached[1], cached[2], cached[3],
+        uncached[0], uncached[1], uncached[2], uncached[3]);
+}
+
+#include "hardware/structs/qmi.h"
+
+extern "C" void jdb_pico_atrans_probe(char* out, int cap) {
+    snprintf(out, cap, "atrans0=%08x 1=%08x 2=%08x 3=%08x",
+        (unsigned)qmi_hw->atrans[0], (unsigned)qmi_hw->atrans[1],
+        (unsigned)qmi_hw->atrans[2], (unsigned)qmi_hw->atrans[3]);
+}
+
+#include "pico/bootrom.h"
+
+// One-shot repair: erase the leftover partition table at the physical
+// start of flash and drop to BOOTSEL. The next uf2 lands at zero and
+// boots without address translation.
+extern "C" void jdb_pico_nuke_pt(void) {
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(0x0, 8192);
+    restore_interrupts(ints);
+    reset_usb_boot(0, 0);
 }
