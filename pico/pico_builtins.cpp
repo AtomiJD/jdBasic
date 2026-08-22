@@ -4,14 +4,17 @@
 
 #include "../src/vm.h"
 #include "pico/stdlib.h"
+#ifdef JDB_HAS_CYW43
 #include "pico/cyw43_arch.h"
+#endif
 
 void register_pico_fs_debug(VM& vm);
 void register_pico_alias_probe(VM& vm);
 void register_pico_atrans_probe(VM& vm);
 void register_pico_nuke_pt(VM& vm);
-void register_pico_diag(VM& vm);
 void register_pico_keyget(VM& vm);
+#ifdef PICOCALC
+void register_pico_diag(VM& vm);
 void register_pico_lcdstat(VM& vm);
 void register_pico_tap(VM& vm);
 void register_pico_taparm(VM& vm);
@@ -19,6 +22,7 @@ void register_pico_gfx(VM& vm);
 void register_pico_snd(VM& vm);
 void register_pico_sdtest(VM& vm);
 void register_pico_sdbb(VM& vm);
+#endif
 
 void register_pico_builtins(VM& vm) {
     vm.register_native("GPIO.MODE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -42,8 +46,9 @@ void register_pico_builtins(VM& vm) {
     register_pico_alias_probe(vm);
     register_pico_atrans_probe(vm);
     register_pico_nuke_pt(vm);
-    register_pico_diag(vm);
     register_pico_keyget(vm);
+#ifdef PICOCALC
+    register_pico_diag(vm);
     register_pico_lcdstat(vm);
     register_pico_tap(vm);
     register_pico_taparm(vm);
@@ -51,8 +56,15 @@ void register_pico_builtins(VM& vm) {
     register_pico_snd(vm);
     register_pico_sdtest(vm);
     register_pico_sdbb(vm);
+#endif
     vm.register_native("LED", 1, 1, [](const std::vector<Value>& args) -> Value {
+#ifdef JDB_HAS_CYW43
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, args[0].to_double() != 0);
+#else
+        gpio_init(PICO_DEFAULT_LED_PIN);
+        gpio_set_dir(PICO_DEFAULT_LED_PIN, true);
+        gpio_put(PICO_DEFAULT_LED_PIN, args[0].to_double() != 0);
+#endif
         return Value();
     });
 }
@@ -100,6 +112,7 @@ void register_pico_nuke_pt(VM& vm) {
     });
 }
 
+#ifdef PICOCALC
 extern "C" int picocalc_kbd_rawget(uint16_t* out, int cap);
 extern "C" void picocalc_lcd_row(int row, char* out, int cap);
 
@@ -120,6 +133,7 @@ void register_pico_diag(VM& vm) {
         return Value::make_string(buf);
     });
 }
+#endif // PICOCALC
 
 void register_pico_keyget(VM& vm) {
     vm.register_native("KEY.GET", 0, 0, [](const std::vector<Value>&) -> Value {
@@ -127,6 +141,7 @@ void register_pico_keyget(VM& vm) {
     });
 }
 
+#ifdef PICOCALC
 extern "C" void picocalc_lcd_stat(int* scroll, int* cx, int* cy);
 
 void register_pico_lcdstat(VM& vm) {
@@ -240,3 +255,4 @@ void register_pico_sdbb(VM& vm) {
         return Value::make_string(buf);
     });
 }
+#endif // PICOCALC

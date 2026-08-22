@@ -14,9 +14,14 @@
 #include "littlefs/lfs.h"
 #include "shim/dirent.h"
 
-// The image sits at the front of the 4 MB chip; the filesystem takes
-// the back. 1.5 MB of programs is a lot of BASIC.
+// The image sits at the front of the chip; the filesystem takes the
+// back. On a 4 MB chip 1.5 MB of programs is a lot of BASIC; a 2 MB
+// chip keeps a quarter for files and the rest for the image.
+#if PICO_FLASH_SIZE_BYTES >= (4u * 1024u * 1024u)
 #define FS_SIZE   (1536u * 1024u)
+#else
+#define FS_SIZE   (512u * 1024u)
+#endif
 #define FS_OFFSET (PICO_FLASH_SIZE_BYTES - FS_SIZE)
 #define FS_BLOCK  4096u
 
@@ -104,7 +109,9 @@ extern "C" void jdb_pico_fs_init(void) {
 }
 
 // The SD card behind the /sd prefix, through the wrappers in
-// picocalc_sd.c so FatFS types stay out of this file.
+// picocalc_sd.c so FatFS types stay out of this file. A bare board has
+// no card slot; stubs keep every /sd path an ENOENT.
+#ifdef PICOCALC
 extern "C" {
 int  sd_open(const char* path, int write, int create, int truncate, int append);
 int  sd_read(int h, void* buf, int len);
@@ -119,6 +126,20 @@ int  sd_opendir(const char* path);
 int  sd_readdir(int h, char* name, int cap, int* isdir);
 int  sd_closedir(int h);
 }
+#else
+static int  sd_open(const char*, int, int, int, int) { return -1; }
+static int  sd_read(int, void*, int) { return -1; }
+static int  sd_write(int, const void*, int) { return -1; }
+static long sd_lseek(int, long, int) { return -1; }
+static long sd_size(int) { return 0; }
+static int  sd_close(int) { return 0; }
+static int  sd_stat(const char*, long*, int*) { return -1; }
+static int  sd_unlink(const char*) { return -1; }
+static int  sd_mkdir(const char*) { return -1; }
+static int  sd_opendir(const char*) { return -1; }
+static int  sd_readdir(int, char*, int, int*) { return -1; }
+static int  sd_closedir(int) { return 0; }
+#endif
 
 // A path that means the card: /sd, /sd/... - the rest of the path in
 // FatFS terms, or NULL when it belongs to the flash store.
@@ -414,6 +435,13 @@ extern "C" void jdb_pico_alias_probe(char* out, int cap) {
         uncached[0], uncached[1], uncached[2], uncached[3]);
 }
 
+// The QMI's address translation exists only on the RP2350; the RP2040
+// runs flash straight, so the probe just says so.
+#if PICO_RP2040
+extern "C" void jdb_pico_atrans_probe(char* out, int cap) {
+    snprintf(out, cap, "no atrans on RP2040");
+}
+#else
 #include "hardware/structs/qmi.h"
 
 extern "C" void jdb_pico_atrans_probe(char* out, int cap) {
@@ -421,6 +449,7 @@ extern "C" void jdb_pico_atrans_probe(char* out, int cap) {
         (unsigned)qmi_hw->atrans[0], (unsigned)qmi_hw->atrans[1],
         (unsigned)qmi_hw->atrans[2], (unsigned)qmi_hw->atrans[3]);
 }
+#endif
 
 #include "pico/bootrom.h"
 

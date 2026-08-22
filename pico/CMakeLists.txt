@@ -1,11 +1,21 @@
 cmake_minimum_required(VERSION 3.13)
 
-# jdBasic on the RP2350: the core interpreter behind a USB-CDC REPL.
-# Sources come straight from ../src; everything platform-shaped lives in
-# this directory, and the PICO define guards the few spots inside src
-# the board cannot have.
+# jdBasic on the Pico family: the core interpreter behind a serial
+# REPL. Sources come straight from ../src; everything platform-shaped
+# lives in this directory, and the PICO define guards the few spots
+# inside src the board cannot have.
+#
+# The matrix:
+#   PICO_BOARD  pico | pico_w | pico2 | pico2_w   (default pico2_w)
+#   PICOCALC    ON | OFF                          (default ON)
+#
+# PICOCALC=ON adds the PicoCalc's screen, keyboard, speaker, graphics
+# and SD card. OFF builds for a bare board: USB-CDC console, GPIO and
+# LED builtins, and the flash store - nothing that needs the device.
 
 set(PICO_BOARD pico2_w CACHE STRING "Board type")
+option(PICOCALC "Build with the PicoCalc device drivers" ON)
+
 set(PICO_CXX_ENABLE_EXCEPTIONS 1)
 set(PICO_CXX_ENABLE_RTTI 1)
 
@@ -17,20 +27,11 @@ set(CMAKE_CXX_STANDARD 17)
 
 pico_sdk_init()
 
-add_executable(jdbasic_repl
+set(JDB_SOURCES
     pico_main.cpp
     pico_stubs.cpp
     pico_builtins.cpp
-    pico_editor.cpp
     pico_fs.cpp
-    picocalc_lcd.c
-    picocalc_kbd.c
-    picocalc_gfx.c
-    picocalc_snd.c
-    picocalc_sd.c
-    fatfs/ff.c
-    fatfs/ffsystem.c
-    fatfs/ffunicode.c
     littlefs/lfs.c
     littlefs/lfs_util.c
     ../src/lexer.cpp
@@ -42,18 +43,56 @@ add_executable(jdbasic_repl
     ../src/file_streams.cpp
 )
 
+if (PICOCALC)
+    list(APPEND JDB_SOURCES
+        pico_editor.cpp
+        picocalc_lcd.c
+        picocalc_kbd.c
+        picocalc_gfx.c
+        picocalc_snd.c
+        picocalc_sd.c
+        fatfs/ff.c
+        fatfs/ffsystem.c
+        fatfs/ffunicode.c
+    )
+endif()
+
+add_executable(jdbasic_repl ${JDB_SOURCES})
+
 target_compile_definitions(jdbasic_repl PRIVATE
     PICO
     NDEBUG
     CFG_TUD_CDC_RX_BUFSIZE=1024
     CFG_TUD_CDC_TX_BUFSIZE=1024
 )
+if (PICOCALC)
+    target_compile_definitions(jdbasic_repl PRIVATE PICOCALC=1)
+endif()
+
 target_include_directories(jdbasic_repl PRIVATE ../src shim ${CMAKE_CURRENT_LIST_DIR})
 target_compile_options(jdbasic_repl PRIVATE -Os "$<$<COMPILE_LANGUAGE:CXX>:-include;${CMAKE_CURRENT_LIST_DIR}/shim/jdb_pico_compat.h>")
 
-target_link_libraries(jdbasic_repl pico_stdlib pico_cyw43_arch_none hardware_flash hardware_spi hardware_i2c hardware_pwm pico_flash)
+target_link_libraries(jdbasic_repl pico_stdlib hardware_flash hardware_gpio pico_flash)
+
+# The radio chip exists only on the W boards; the LED builtin adapts.
+if (PICO_CYW43_SUPPORTED)
+    target_link_libraries(jdbasic_repl pico_cyw43_arch_none)
+    target_compile_definitions(jdbasic_repl PRIVATE JDB_HAS_CYW43=1)
+endif()
+
+if (PICOCALC)
+    target_link_libraries(jdbasic_repl hardware_spi hardware_i2c hardware_pwm)
+endif()
 
 pico_enable_stdio_usb(jdbasic_repl 1)
 pico_enable_stdio_uart(jdbasic_repl 0)
-pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack.ld)
+
+# Both chips move the core-0 stack out of the 4 KB scratch bank to the
+# top of main RAM; the RP2040's smaller RAM gets the smaller cut.
+if (PICO_BOARD STREQUAL "pico2" OR PICO_BOARD STREQUAL "pico2_w")
+    pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack.ld)
+else()
+    pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack2040.ld)
+endif()
+
 pico_add_extra_outputs(jdbasic_repl)

@@ -1,10 +1,16 @@
 #!/bin/sh
 # Build the REPL image. Runs under WSL/Linux with the toolchain from
-# ~/pico2350 (pico-sdk 2.3.0 + Arm GNU 14.2), producing jdbasic_repl.uf2
-# for a Pico 2 W. Drag the uf2 onto the BOOTSEL drive.
+# ~/pico2350 (pico-sdk 2.3.0 + Arm GNU 14.2), producing jdbasic_repl.uf2.
+# Drag the uf2 onto the BOOTSEL drive.
 #
-#   ./build_pico.sh          configure + build
-#   ./build_pico.sh clean    wipe the build directory first
+#   ./build_pico.sh [board] [calc|nocalc] [clean]
+#
+#   board   pico | pico_w | pico2 | pico2_w      (default pico2_w)
+#   calc    with the PicoCalc drivers (default); nocalc = bare board
+#
+# Each combination builds in its own directory, build-<board>[-nocalc],
+# so the matrix coexists. The plain "build" directory stays the default
+# pico2_w + PicoCalc image.
 
 set -e
 cd "$(dirname "$0")"
@@ -13,8 +19,29 @@ cd "$(dirname "$0")"
 : "${PICO_TOOLCHAIN_PATH:=$HOME/pico2350/toolchain}"
 export PICO_SDK_PATH PICO_TOOLCHAIN_PATH
 
-[ "$1" = "clean" ] && rm -rf build
+BOARD=pico2_w
+CALC=ON
+CLEAN=0
+for a in "$@"; do
+    case "$a" in
+        pico|pico_w|pico2|pico2_w) BOARD=$a ;;
+        calc)   CALC=ON ;;
+        nocalc) CALC=OFF ;;
+        clean)  CLEAN=1 ;;
+        *) echo "unknown argument: $a"; exit 1 ;;
+    esac
+done
 
-cmake -G Ninja -B build -S . > build_cmake.log 2>&1 || { tail -20 build_cmake.log; exit 1; }
-ninja -C build 2> build_ninja.err || { tail -30 build_ninja.err; exit 1; }
-ls -la build/jdbasic_repl.uf2
+if [ "$BOARD" = "pico2_w" ] && [ "$CALC" = "ON" ]; then
+    DIR=build
+else
+    DIR=build-$BOARD
+    [ "$CALC" = "OFF" ] && DIR=$DIR-nocalc
+fi
+
+[ "$CLEAN" = "1" ] && rm -rf "$DIR"
+
+cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC \
+    > build_cmake.log 2>&1 || { tail -20 build_cmake.log; exit 1; }
+ninja -C "$DIR" 2> build_ninja.err || { tail -30 build_ninja.err; exit 1; }
+ls -la "$DIR"/jdbasic_repl.uf2

@@ -11,10 +11,13 @@
 #include "pico/stdio.h"
 #include "pico/stdio/driver.h"
 #include "pico/stdio_usb.h"
+#ifdef JDB_HAS_CYW43
 #include "pico/cyw43_arch.h"
+#endif
 #include "jdb_embed_api.h"
 
 extern "C" void jdb_pico_fs_init(void);
+#ifdef PICOCALC
 extern "C" void picocalc_lcd_init(void);
 extern "C" void picocalc_lcd_putc(char c);
 extern "C" void picocalc_lcd_flush(void);
@@ -43,6 +46,7 @@ static stdio_driver_t pc_driver = {
     .crlf_enabled = true,
 #endif
 };
+#endif // PICOCALC
 
 // Key codes as the PicoCalc's keyboard controller sends them; a USB
 // terminal's ANSI sequences fold into the same values.
@@ -55,7 +59,9 @@ static stdio_driver_t pc_driver = {
 #define K_END   0xD5
 
 extern "C" int repl_read_key(void);
+#ifdef PICOCALC
 void pico_editor(const char* name);
+#endif
 
 extern "C" int repl_read_key(void) {
     int c = getchar();
@@ -177,18 +183,26 @@ static void read_line(char* buf, int cap) {
 
 int main() {
     stdio_init_all();
+#ifdef JDB_HAS_CYW43
     cyw43_arch_init();
+#endif
     jdb_pico_fs_init();
+#ifdef PICOCALC
     picocalc_lcd_init();
     picocalc_kbd_init();
     stdio_set_driver_enabled(&pc_driver, true);
+#endif
 
     // A host may be listening on USB; standalone, nothing is, and the
     // prompt should not wait for one.
     for (int i = 0; i < 30 && !stdio_usb_connected(); i++) sleep_ms(100);
     sleep_ms(200);
 
+#if PICO_RP2040
+    printf("\r\njdBasic on RP2040\r\n");
+#else
     printf("\r\njdBasic on RP2350\r\n");
+#endif
 
     JdbEmbed* vm = jdb_embed_init();
     if (!vm) {
@@ -232,8 +246,12 @@ int main() {
                 continue;
             }
             if (meta == 1) {
+#ifdef PICOCALC
                 snprintf(g_current, sizeof g_current, "%s", nm);
                 pico_editor(nm);
+#else
+                printf("no editor on a bare board\r\n");
+#endif
             } else if (meta == 2) {
                 FILE* probe = fopen(nm, "r");
                 if (!probe) {

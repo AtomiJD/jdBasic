@@ -1,3 +1,4 @@
 build/
 build_cmake.log
 build_ninja.err
+build-*/
