@@ -122,6 +122,7 @@ int  sd_close(int h);
 int  sd_stat(const char* path, long* size, int* isdir);
 int  sd_unlink(const char* path);
 int  sd_mkdir(const char* path);
+int  sd_rename(const char* oldp, const char* newp);
 int  sd_opendir(const char* path);
 int  sd_readdir(int h, char* name, int cap, int* isdir);
 int  sd_closedir(int h);
@@ -136,6 +137,7 @@ static int  sd_close(int) { return 0; }
 static int  sd_stat(const char*, long*, int*) { return -1; }
 static int  sd_unlink(const char*) { return -1; }
 static int  sd_mkdir(const char*) { return -1; }
+static int  sd_rename(const char*, const char*) { return -1; }
 static int  sd_opendir(const char*) { return -1; }
 static int  sd_readdir(int, char*, int, int*) { return -1; }
 static int  sd_closedir(int) { return 0; }
@@ -148,6 +150,52 @@ static const char* sd_part(const char* path) {
     if (path[3] == 0) return "/";
     if (path[3] == '/') return path + 3;
     return nullptr;
+}
+
+// The current directory, applied to every path the runtime hands down
+// before the store split - so relative names, dot and dotdot work the
+// same on flash and card.
+static char g_cwd[128] = "/";
+
+static void jdb_resolve(const char* path, char* out, int cap) {
+    char tmp[256];
+    if (path[0] == '/')
+        snprintf(tmp, sizeof tmp, "%s", path);
+    else
+        snprintf(tmp, sizeof tmp, "%s/%s", g_cwd, path);
+    char* parts[24];
+    int np = 0;
+    for (char* p = strtok(tmp, "/"); p; p = strtok(nullptr, "/")) {
+        if (strcmp(p, ".") == 0) continue;
+        if (strcmp(p, "..") == 0) { if (np) np--; continue; }
+        if (np < 24) parts[np++] = p;
+    }
+    int at = 0;
+    out[0] = 0;
+    for (int i = 0; i < np && at < cap - 1; i++)
+        at += snprintf(out + at, cap - at, "/%s", parts[i]);
+    if (!out[0]) snprintf(out, cap, "/");
+}
+
+extern "C" int _stat(const char* path, struct stat* st);
+
+extern "C" char* getcwd(char* buf, size_t cap) {
+    if (!buf || cap < 2) return nullptr;
+    snprintf(buf, cap, "%s", g_cwd);
+    return buf;
+}
+
+extern "C" int chdir(const char* path) {
+    char rp[160];
+    jdb_resolve(path, rp, sizeof rp);
+    // The two roots exist by definition; FatFS cannot stat its own "/".
+    if (strcmp(rp, "/") != 0 && strcmp(rp, "/sd") != 0) {
+        struct stat st;
+        if (_stat(rp, &st) != 0) return -1;
+        if (!S_ISDIR(st.st_mode)) { errno = ENOTDIR; return -1; }
+    }
+    snprintf(g_cwd, sizeof g_cwd, "%s", rp);
+    return 0;
 }
 
 // Open-file table, newlib fds 3 and up. fds 0 to 2 stay with the SDK's
@@ -173,6 +221,7 @@ static int lfs_err_to_errno(int e) {
 extern "C" {
 
 int _open(const char* path, int oflag, ...) {
+    char rp[160]; jdb_resolve(path, rp, sizeof rp); path = rp;
     int slot = -1;
     for (int i = 0; i < MAX_FILES; i++) if (!g_used[i]) { slot = i; break; }
     if (slot < 0) { errno = EMFILE; return -1; }
@@ -279,6 +328,7 @@ int _fstat(int fd, struct stat* st) {
 int _isatty(int fd) { return fd < 3; }
 
 int _stat(const char* path, struct stat* st) {
+    char rp[160]; jdb_resolve(path, rp, sizeof rp); path = rp;
     const char* sp = sd_part(path);
     if (sp) {
         long size; int isdir;
@@ -301,6 +351,7 @@ int _stat(const char* path, struct stat* st) {
 int stat(const char* path, struct stat* st) { return _stat(path, st); }
 
 int _unlink(const char* path) {
+    char rp[160]; jdb_resolve(path, rp, sizeof rp); path = rp;
     const char* sp = sd_part(path);
     if (sp) {
         if (sd_unlink(sp) != 0) { errno = EIO; return -1; }
@@ -315,6 +366,7 @@ int unlink(const char* path) { return _unlink(path); }
 
 int mkdir(const char* path, mode_t mode) {
     (void)mode;
+    char rp[160]; jdb_resolve(path, rp, sizeof rp); path = rp;
     const char* sp = sd_part(path);
     if (sp) {
         if (sd_mkdir(sp) != 0) { errno = EIO; return -1; }
@@ -326,6 +378,25 @@ int mkdir(const char* path, mode_t mode) {
 }
 
 int rmdir(const char* path) { return _unlink(path); }
+
+// Rename inside one store is native; across stores the caller falls
+// back to copy and delete, signalled by EXDEV.
+int rename(const char* oldp, const char* newp) {
+    char ra[160], rb[160];
+    jdb_resolve(oldp, ra, sizeof ra);
+    jdb_resolve(newp, rb, sizeof rb);
+    const char* sa = sd_part(ra);
+    const char* sb = sd_part(rb);
+    if ((sa != nullptr) != (sb != nullptr)) { errno = EXDEV; return -1; }
+    if (sa) {
+        if (sd_rename(sa, sb) != 0) { errno = EIO; return -1; }
+        return 0;
+    }
+    if (!g_mounted) { errno = ENODEV; return -1; }
+    int rc = lfs_rename(&g_lfs, ra, rb);
+    if (rc < 0) { errno = lfs_err_to_errno(rc); return -1; }
+    return 0;
+}
 
 // Directory listing for DIR$.
 
@@ -340,6 +411,7 @@ struct DIR {
 static DIR g_dirs[4];
 
 DIR* opendir(const char* path) {
+    char rp[160]; jdb_resolve(path, rp, sizeof rp); path = rp;
     for (auto& d : g_dirs) {
         if (d.open) continue;
         const char* sp = sd_part(path);

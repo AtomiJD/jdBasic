@@ -7,6 +7,10 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/stat.h>
 #include "pico/stdlib.h"
 #include "pico/stdio.h"
 #include "pico/stdio/driver.h"
@@ -60,6 +64,99 @@ static stdio_driver_t pc_driver = {
 
 extern "C" int repl_read_key(void);
 void pico_help(const char* topic);
+
+// The DOS set at the prompt, unquoted arguments welcome: CD, TYPE,
+// DEL, COPY, REN, MD, RD. Returns 0 when the line is not one of them
+// and belongs to the interpreter instead. TYPE steps aside for a
+// one-line TYPE..ENDTYPE declaration.
+
+static const char* dos_arg(char* s) {
+    while (*s == ' ') s++;
+    size_t n = strlen(s);
+    while (n && s[n-1] == ' ') s[--n] = 0;
+    if (n >= 2 && (s[0] == '"' || s[0] == '\'') && s[n-1] == s[0]) {
+        s[n-1] = 0;
+        s++;
+    }
+    return s;
+}
+
+static int copy_file(const char* src, const char* dst) {
+    FILE* in = fopen(src, "rb");
+    if (!in) return -1;
+    FILE* out = fopen(dst, "wb");
+    if (!out) { fclose(in); return -1; }
+    char buf[512];
+    size_t n;
+    int rc = 0;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0)
+        if (fwrite(buf, 1, n, out) != n) { rc = -1; break; }
+    fclose(in);
+    if (fclose(out) != 0) rc = -1;
+    return rc;
+}
+
+static int dos_command(char* line) {
+    char cmd[8];
+    int ci = 0;
+    const char* p = line;
+    while (*p && *p != ' ' && ci < 7) cmd[ci++] = toupper((unsigned char)*p++);
+    cmd[ci] = 0;
+    if (*p && *p != ' ') return 0;
+    char rest[1024];
+    snprintf(rest, sizeof rest, "%s", p);
+    char* a = rest;
+    while (*a == ' ') a++;
+
+    if (strcmp(cmd, "CD") == 0) {
+        if (*a && chdir(dos_arg(a)) != 0) { printf("no such directory\r\n"); return 1; }
+        char cwd[160];
+        printf("%s\r\n", getcwd(cwd, sizeof cwd) ? cwd : "?");
+        return 1;
+    }
+    if (strcmp(cmd, "TYPE") == 0 && *a && !strchr(a, ':')) {
+        FILE* f = fopen(dos_arg(a), "r");
+        if (!f) { printf("cannot open %s\r\n", a); return 1; }
+        char buf[256];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof buf, f)) > 0)
+            printf("%.*s", (int)n, buf);
+        fclose(f);
+        printf("\r\n");
+        return 1;
+    }
+    if (strcmp(cmd, "DEL") == 0 && *a) {
+        printf(remove(dos_arg(a)) == 0 ? "deleted\r\n" : "cannot delete %s\r\n", a);
+        return 1;
+    }
+    if ((strcmp(cmd, "MD") == 0 || strcmp(cmd, "RD") == 0) && *a) {
+        int rc = cmd[0] == 'M' ? mkdir(dos_arg(a), 0777) : rmdir(dos_arg(a));
+        if (rc != 0) printf("cannot %s %s\r\n", cmd[0] == 'M' ? "create" : "remove", a);
+        return 1;
+    }
+    if (strcmp(cmd, "COPY") == 0 || strcmp(cmd, "REN") == 0) {
+        char* sp = strchr(a, ' ');
+        if (!*a || !sp) { printf("usage: %s from to\r\n", cmd); return 1; }
+        *sp = 0;
+        const char* src = dos_arg(a);
+        char* b = sp + 1;
+        const char* dst = dos_arg(b);
+        int rc;
+        if (cmd[0] == 'C') {
+            rc = copy_file(src, dst);
+        } else {
+            rc = rename(src, dst);
+            // Across flash and card a rename becomes copy plus delete.
+            if (rc != 0 && errno == EXDEV) {
+                rc = copy_file(src, dst);
+                if (rc == 0) rc = remove(src);
+            }
+        }
+        if (rc != 0) printf("cannot %s %s\r\n", cmd[0] == 'C' ? "copy" : "rename", src);
+        return 1;
+    }
+    return 0;
+}
 #ifdef PICOCALC
 void pico_editor(const char* name);
 #endif
@@ -221,6 +318,11 @@ int main() {
 
         if (strncasecmp(line, "HELP", 4) == 0 && (line[4] == 0 || line[4] == ' ')) {
             pico_help(line + 4);
+            fflush(NULL);
+            continue;
+        }
+
+        if (dos_command(line)) {
             fflush(NULL);
             continue;
         }

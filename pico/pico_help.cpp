@@ -68,7 +68,10 @@ static const char* HELP_ARRAY =
 
 static const char* HELP_FILES =
 "flash store is /, SD card is /sd\n"
+"CD dir  CD ..  CD    current dir\n"
 "DIR [\"*.jdb\"]    name and size\n"
+"TYPE f  DEL f  COPY a b  REN a b\n"
+"MD d  RD d     unquoted args ok\n"
 "LOAD \"prog\"  RUN [\"prog\"]  EDIT\n"
 "KILL \"f\"   MKDIR \"d\"   RMDIR \"d\"\n"
 "s$ = TXTREADER$(\"f\")\n"

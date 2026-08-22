@@ -260,6 +260,11 @@ int sd_mkdir(const char* path) {
     return f_mkdir(path) == FR_OK ? 0 : -1;
 }
 
+int sd_rename(const char* oldp, const char* newp) {
+    if (sd_mount() != 0) return -1;
+    return f_rename(oldp, newp) == FR_OK ? 0 : -1;
+}
+
 int sd_opendir(const char* path) {
     if (sd_mount() != 0) return -1;
     int slot = -1;

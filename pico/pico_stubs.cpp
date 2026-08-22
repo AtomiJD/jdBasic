@@ -48,18 +48,6 @@ bool g_editor_autoindent = true;
 
 extern "C" int jdb_screencap(const char*, const char*, const char*) { return -1; }
 
-// Filesystem syscalls newlib routes here. No filesystem yet: the current
-// directory is the root and everything else declines.
-extern "C" {
-char* getcwd(char* buf, size_t cap) {
-    if (!buf || cap < 2) return nullptr;
-    buf[0] = '/';
-    buf[1] = 0;
-    return buf;
-}
-int chdir(const char*) { errno = ENOSYS; return -1; }
-}
-
 // The glob matcher DIR$ filters through: star and question mark, the
 // part of fnmatch anyone means.
 extern "C" int fnmatch(const char* pat, const char* str, int flags) {
