@@ -26,6 +26,7 @@ add_executable(jdbasic_repl
     picocalc_lcd.c
     picocalc_kbd.c
     picocalc_gfx.c
+    picocalc_snd.c
     littlefs/lfs.c
     littlefs/lfs_util.c
     ../src/lexer.cpp
@@ -40,11 +41,13 @@ add_executable(jdbasic_repl
 target_compile_definitions(jdbasic_repl PRIVATE
     PICO
     NDEBUG
+    CFG_TUD_CDC_RX_BUFSIZE=1024
+    CFG_TUD_CDC_TX_BUFSIZE=1024
 )
 target_include_directories(jdbasic_repl PRIVATE ../src shim ${CMAKE_CURRENT_LIST_DIR})
 target_compile_options(jdbasic_repl PRIVATE -Os "$<$<COMPILE_LANGUAGE:CXX>:-include;${CMAKE_CURRENT_LIST_DIR}/shim/jdb_pico_compat.h>")
 
-target_link_libraries(jdbasic_repl pico_stdlib pico_cyw43_arch_none hardware_flash hardware_spi hardware_i2c pico_flash)
+target_link_libraries(jdbasic_repl pico_stdlib pico_cyw43_arch_none hardware_flash hardware_spi hardware_i2c hardware_pwm pico_flash)
 
 pico_enable_stdio_usb(jdbasic_repl 1)
 pico_enable_stdio_uart(jdbasic_repl 0)

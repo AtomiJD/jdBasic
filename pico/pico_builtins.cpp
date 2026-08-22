@@ -16,6 +16,7 @@ void register_pico_lcdstat(VM& vm);
 void register_pico_tap(VM& vm);
 void register_pico_taparm(VM& vm);
 void register_pico_gfx(VM& vm);
+void register_pico_snd(VM& vm);
 
 void register_pico_builtins(VM& vm) {
     vm.register_native("GPIO.MODE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -45,6 +46,7 @@ void register_pico_builtins(VM& vm) {
     register_pico_tap(vm);
     register_pico_taparm(vm);
     register_pico_gfx(vm);
+    register_pico_snd(vm);
     vm.register_native("LED", 1, 1, [](const std::vector<Value>& args) -> Value {
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, args[0].to_double() != 0);
         return Value();
@@ -200,6 +202,17 @@ void register_pico_gfx(VM& vm) {
         gfx_maybe_color(args, 4);
         picocalc_gfx_circle((int)args[0].to_double(), (int)args[1].to_double(),
                             (int)args[2].to_double(), fill);
+        return Value();
+    });
+}
+
+extern "C" void picocalc_snd_beep(int freq, int ms);
+
+void register_pico_snd(VM& vm) {
+    vm.register_native("BEEP", 0, 2, [](const std::vector<Value>& args) -> Value {
+        int freq = args.size() >= 1 ? (int)args[0].to_double() : 880;
+        int ms   = args.size() >= 2 ? (int)args[1].to_double() : 200;
+        picocalc_snd_beep(freq, ms);
         return Value();
     });
 }

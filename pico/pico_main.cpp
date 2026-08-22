@@ -157,6 +157,13 @@ static void read_line(char* buf, int cap) {
             memmove(buf + cur + 1, buf + cur, len - cur + 1);
             buf[cur] = (char)c;
             cur++; len++;
+            // Appending at the end of a short line: echo the character
+            // and skip the full redraw, so pasted input keeps up.
+            if (cur == len && len <= 37) {
+                printf("%c", c);
+                old_len = len;
+                continue;
+            }
         }
         else {
             continue;
