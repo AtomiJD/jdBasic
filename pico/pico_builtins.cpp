@@ -14,6 +14,9 @@ void register_pico_atrans_probe(VM& vm);
 void register_pico_nuke_pt(VM& vm);
 void register_pico_keyget(VM& vm);
 void register_pico_hw(VM& vm);
+#ifdef JDB_HAS_CYW43
+void register_pico_wifi(VM& vm);
+#endif
 #ifdef PICOCALC
 void register_pico_diag(VM& vm);
 void register_pico_lcdstat(VM& vm);
@@ -49,6 +52,9 @@ void register_pico_builtins(VM& vm) {
     register_pico_nuke_pt(vm);
     register_pico_keyget(vm);
     register_pico_hw(vm);
+#ifdef JDB_HAS_CYW43
+    register_pico_wifi(vm);
+#endif
 #ifdef PICOCALC
     register_pico_diag(vm);
     register_pico_lcdstat(vm);

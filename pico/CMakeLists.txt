@@ -76,9 +76,11 @@ target_compile_options(jdbasic_repl PRIVATE -Os "$<$<COMPILE_LANGUAGE:CXX>:-incl
 target_link_libraries(jdbasic_repl pico_stdlib hardware_flash hardware_gpio pico_flash
     hardware_adc hardware_pwm hardware_i2c hardware_spi hardware_pio)
 
-# The radio chip exists only on the W boards; the LED builtin adapts.
+# The radio chip exists only on the W boards; the LED builtin adapts
+# and the WiFi family comes along, lwIP in threadsafe-background mode.
 if (PICO_CYW43_SUPPORTED)
-    target_link_libraries(jdbasic_repl pico_cyw43_arch_none)
+    target_sources(jdbasic_repl PRIVATE pico_wifi.cpp)
+    target_link_libraries(jdbasic_repl pico_cyw43_arch_lwip_threadsafe_background)
     target_compile_definitions(jdbasic_repl PRIVATE JDB_HAS_CYW43=1)
 endif()
 

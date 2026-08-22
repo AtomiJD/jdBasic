@@ -1,0 +1,9 @@
+' WiFi on a W board: join the network, show the address, fetch a page.
+INPUT "ssid: ", ssid$
+INPUT "password: ", pw$
+IF WIFI.CONNECT(ssid$, pw$) <> 0 THEN
+    PRINT "no connection"
+ELSE
+    PRINT "connected, ip "; WIFI.IP$()
+    PRINT HTTP.GET$("http://example.com/")
+ENDIF
