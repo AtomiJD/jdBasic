@@ -1,0 +1,6 @@
+' A little tune through the speaker.
+DIM notes = [262, 294, 330, 349, 392, 392, 440, 440, 440, 440, 392]
+DIM lens = [300, 300, 300, 300, 600, 600, 300, 300, 300, 300, 900]
+FOR i = 0 TO LEN(notes) - 1
+    BEEP notes[i], lens[i]
+NEXT i

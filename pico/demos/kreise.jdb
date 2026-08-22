@@ -1,0 +1,9 @@
+' Rings and rays on the PicoCalc panel.
+FOR r = 12 TO 150 STEP 12
+    CIRCLE 160, 160, r, 0, 55 + r, 255 - r, 120
+NEXT r
+DRAWCOLOR 255, 220, 0
+FOR i = 0 TO 23
+    DIM w = i * 3.14159 / 12
+    LINE 160, 160, 160 + 150 * COS(w), 160 + 150 * SIN(w)
+NEXT i

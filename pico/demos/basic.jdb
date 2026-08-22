@@ -1,0 +1,14 @@
+' The language itself, in a dozen lines.
+PRINT "jdBasic on the PicoCalc"
+DIM a = IOTA(10)
+PRINT "iota:     "; a
+PRINT "squares:  "; a * a
+PRINT "sum:      "; SUM(a * a)
+PRINT "even:     "; FILTER(LAMBDA x -> x MOD 2 = 0, a)
+PRINT "fold:     "; REDUCE(LAMBDA x, y -> x + y, IOTA(100))
+DIM m AS MAP
+m{"name"} = "PicoCalc"
+m{"year"} = 2026
+PRINT "map:      "; m{"name"}; " "; m{"year"}
+DIM s$ = "BASIC lives"
+PRINT "text:     "; UCASE$(s$); " len="; LEN(s$)
