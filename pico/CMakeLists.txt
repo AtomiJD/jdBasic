@@ -31,6 +31,7 @@ set(JDB_SOURCES
     pico_main.cpp
     pico_stubs.cpp
     pico_builtins.cpp
+    pico_hw.cpp
     pico_fs.cpp
     littlefs/lfs.c
     littlefs/lfs_util.c
@@ -72,16 +73,13 @@ endif()
 target_include_directories(jdbasic_repl PRIVATE ../src shim ${CMAKE_CURRENT_LIST_DIR})
 target_compile_options(jdbasic_repl PRIVATE -Os "$<$<COMPILE_LANGUAGE:CXX>:-include;${CMAKE_CURRENT_LIST_DIR}/shim/jdb_pico_compat.h>")
 
-target_link_libraries(jdbasic_repl pico_stdlib hardware_flash hardware_gpio pico_flash)
+target_link_libraries(jdbasic_repl pico_stdlib hardware_flash hardware_gpio pico_flash
+    hardware_adc hardware_pwm hardware_i2c hardware_spi hardware_pio)
 
 # The radio chip exists only on the W boards; the LED builtin adapts.
 if (PICO_CYW43_SUPPORTED)
     target_link_libraries(jdbasic_repl pico_cyw43_arch_none)
     target_compile_definitions(jdbasic_repl PRIVATE JDB_HAS_CYW43=1)
-endif()
-
-if (PICOCALC)
-    target_link_libraries(jdbasic_repl hardware_spi hardware_i2c hardware_pwm)
 endif()
 
 pico_enable_stdio_usb(jdbasic_repl 1)

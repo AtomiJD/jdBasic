@@ -1,0 +1,11 @@
+' The hardware families: ADC, PWM, I2C. On a PicoCalc the I2C scan of
+' bus 1 finds the keyboard controller at 31 (0x1F), and the PWM sweep
+' plays on the speaker pin.
+PRINT "chip temperature: "; ADC.TEMP(); " C"
+PRINT "i2c bus 1 devices: "; I2C.SCAN(1)
+FOR f = 400 TO 1200 STEP 100
+    PWM.SET(26, f, 50)
+    SLEEP 80
+NEXT f
+PWM.OFF(26)
+PRINT "done"

@@ -13,6 +13,7 @@ void register_pico_alias_probe(VM& vm);
 void register_pico_atrans_probe(VM& vm);
 void register_pico_nuke_pt(VM& vm);
 void register_pico_keyget(VM& vm);
+void register_pico_hw(VM& vm);
 #ifdef PICOCALC
 void register_pico_diag(VM& vm);
 void register_pico_lcdstat(VM& vm);
@@ -47,6 +48,7 @@ void register_pico_builtins(VM& vm) {
     register_pico_atrans_probe(vm);
     register_pico_nuke_pt(vm);
     register_pico_keyget(vm);
+    register_pico_hw(vm);
 #ifdef PICOCALC
     register_pico_diag(vm);
     register_pico_lcdstat(vm);
