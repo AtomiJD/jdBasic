@@ -1,6 +1,9 @@
 // The PicoCalc's screen as a text console: an ILI9488-class panel,
 // 320 by 320, on spi1, drawn with the 8x8 C64 font from the old jdos.
-// 40 columns by 40 rows, green on black, software scroll.
+// 40 columns by 40 rows, green on black. Scrolling turns the panel's
+// own vertical-scroll registers over a 60-row ring in display RAM, so
+// a scroll costs one row, not a repaint. Drawing is lazy: characters
+// mark rows dirty and a flush sends them, one SPI burst per row.
 
 #include <string.h>
 #include <stdint.h>
@@ -19,8 +22,10 @@
 
 #define LCD_W        320
 #define LCD_H        320
+#define RAM_H        480
 #define COLS         40
 #define ROWS         40
+#define RING_ROWS    (RAM_H / 8)
 
 // 18-bit interface: every pixel travels as three bytes.
 #define FG_R 0x30
@@ -31,7 +36,10 @@
 #define BG_B 0x00
 
 static char g_text[ROWS][COLS];
+static uint8_t g_dirty[ROWS];
 static int g_cx = 0, g_cy = 0;
+static int g_scroll = 0;          // ring offset in text rows, 0..RING_ROWS-1
+static int g_cursor_on = 1;
 
 static void cs(int v)  { gpio_put(PIN_CS, v); }
 static void dc(int v)  { gpio_put(PIN_DC, v); }
@@ -65,6 +73,12 @@ static void set_window(int x0, int y0, int x1, int y1) {
     wr_cmd(0x2C);
 }
 
+static void set_scroll(int px) {
+    uint8_t b[2] = { (uint8_t)(px >> 8), (uint8_t)(px & 0xFF) };
+    wr_cmd(0x37);
+    wr_burst(b, 2);
+}
+
 // One text row rendered as pixels: 320 wide, 8 tall, 3 bytes a pixel.
 static uint8_t g_rowbuf[LCD_W * 8 * 3];
 
@@ -75,8 +89,11 @@ static void draw_row(int row) {
             unsigned ch = (unsigned char)g_text[row][col];
             if (ch < 32 || ch > 151) ch = 32;
             uint8_t bits = jdos_font8x8_c64[(ch - 32) * 8 + line];
+            int inv = g_cursor_on && row == g_cy && col == g_cx;
             for (int px = 0; px < 8; px++) {
-                if (bits & (0x80 >> px)) {
+                int on = (bits & (0x80 >> px)) != 0;
+                if (inv) on = !on;
+                if (on) {
                     *p++ = FG_R; *p++ = FG_G; *p++ = FG_B;
                 } else {
                     *p++ = BG_R; *p++ = BG_G; *p++ = BG_B;
@@ -84,34 +101,52 @@ static void draw_row(int row) {
             }
         }
     }
-    set_window(0, row * 8, LCD_W - 1, row * 8 + 7);
+    int ram_row = (g_scroll + row) % RING_ROWS;
+    set_window(0, ram_row * 8, LCD_W - 1, ram_row * 8 + 7);
     wr_burst(g_rowbuf, sizeof g_rowbuf);
+}
+
+void picocalc_lcd_flush(void) {
+    for (int r = 0; r < ROWS; r++) {
+        if (g_dirty[r]) {
+            draw_row(r);
+            g_dirty[r] = 0;
+        }
+    }
 }
 
 static void clear_screen(void) {
     memset(g_text, ' ', sizeof g_text);
+    memset(g_dirty, 1, sizeof g_dirty);
     g_cx = 0; g_cy = 0;
-    for (int r = 0; r < ROWS; r++) draw_row(r);
+    picocalc_lcd_flush();
 }
 
 static void scroll_up(void) {
     memmove(g_text[0], g_text[1], (ROWS - 1) * COLS);
     memset(g_text[ROWS - 1], ' ', COLS);
-    for (int r = 0; r < ROWS; r++) draw_row(r);
+    g_scroll = (g_scroll + 1) % RING_ROWS;
+    set_scroll((g_scroll * 8) % RAM_H);
+    // The ring makes every kept row land where it already is; only the
+    // fresh last row needs pixels.
+    g_dirty[ROWS - 1] = 1;
 }
 
 void picocalc_lcd_putc(char c) {
-    if (c == '\r') { g_cx = 0; return; }
+    int prev_cy = g_cy;
+    if (c == '\r') { g_cx = 0; g_dirty[g_cy] = 1; return; }
     if (c == '\n') {
         g_cx = 0;
+        g_dirty[g_cy] = 1;
         if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
+        g_dirty[g_cy] = 1;
         return;
     }
     if (c == '\b' || c == 127) {
         if (g_cx > 0) {
             g_cx--;
             g_text[g_cy][g_cx] = ' ';
-            draw_row(g_cy);
+            g_dirty[g_cy] = 1;
         }
         return;
     }
@@ -119,15 +154,17 @@ void picocalc_lcd_putc(char c) {
     if ((unsigned char)c < 32) return;
 
     g_text[g_cy][g_cx] = c;
-    draw_row(g_cy);
+    g_dirty[g_cy] = 1;
     if (++g_cx >= COLS) {
         g_cx = 0;
         if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
     }
+    if (g_cy != prev_cy) g_dirty[prev_cy] = 1;
 }
 
 // The panel's init words, as the PicoCalc wants them: gamma, power,
-// VCOM, 18-bit pixels, inversion on.
+// VCOM, 18-bit pixels, inversion on, and the full RAM height declared
+// as the scroll area.
 void picocalc_lcd_init(void) {
     spi_init(LCD_SPI, LCD_SPI_HZ);
     gpio_set_function(PIN_SCK, GPIO_FUNC_SPI);
@@ -161,6 +198,21 @@ void picocalc_lcd_init(void) {
     wr_cmd(0xF7); wr_data(0xA9); wr_data(0x51); wr_data(0x2C); wr_data(0x82);
     wr_cmd(0x11); sleep_ms(120);
     wr_cmd(0x29); sleep_ms(20);
+
+    // Vertical scroll over the whole RAM: no fixed bands.
+    wr_cmd(0x33);
+    {
+        uint8_t b[6] = {0, 0, (uint8_t)(RAM_H >> 8), (uint8_t)(RAM_H & 0xFF), 0, 0};
+        wr_burst(b, 6);
+    }
+    set_scroll(0);
+
+    // The ring behind the visible screen starts known-black.
+    memset(g_rowbuf, 0, sizeof g_rowbuf);
+    for (int r = 0; r < RING_ROWS; r++) {
+        set_window(0, r * 8, LCD_W - 1, r * 8 + 7);
+        wr_burst(g_rowbuf, sizeof g_rowbuf);
+    }
 
     clear_screen();
 }

@@ -38,6 +38,8 @@ int picocalc_kbd_poll(void) {
     if ((buff & 0xFF) != 1) return -1;
 
     int c = buff >> 8;
+    // Modifier keys arrive as key events of their own; they carry no text.
+    if (c >= 0xA1 && c <= 0xA5) return -1;
     if (g_ctrl && c >= 'a' && c <= 'z') c = c - 'a' + 1;
     return c;
 }

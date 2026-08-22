@@ -2,6 +2,8 @@
 // interpreter for the whole session. Console I/O runs through the
 // SDK's stdio, which carries both USB-CDC and - on a PicoCalc - the
 // screen and keyboard, registered here as one more stdio driver.
+// The input line is a small editor: cursor keys, insert, delete,
+// home, end, and a history ring on up and down.
 
 #include <stdio.h>
 #include <string.h>
@@ -15,11 +17,13 @@
 extern "C" void jdb_pico_fs_init(void);
 extern "C" void picocalc_lcd_init(void);
 extern "C" void picocalc_lcd_putc(char c);
+extern "C" void picocalc_lcd_flush(void);
 extern "C" void picocalc_kbd_init(void);
 extern "C" int  picocalc_kbd_poll(void);
 
 static void pc_out_chars(const char* buf, int len) {
     for (int i = 0; i < len; i++) picocalc_lcd_putc(buf[i]);
+    picocalc_lcd_flush();
 }
 
 static int pc_in_chars(char* buf, int len) {
@@ -40,28 +44,120 @@ static stdio_driver_t pc_driver = {
 #endif
 };
 
+// Key codes as the PicoCalc's keyboard controller sends them; a USB
+// terminal's ANSI sequences fold into the same values.
+#define K_LEFT  0xB4
+#define K_UP    0xB5
+#define K_DOWN  0xB6
+#define K_RIGHT 0xB7
+#define K_HOME  0xD2
+#define K_DEL   0xD4
+#define K_END   0xD5
+
+static int read_key(void) {
+    int c = getchar();
+    if (c != 0x1B) return c;
+    int c2 = getchar();
+    if (c2 != '[') return 0;
+    int c3 = getchar();
+    switch (c3) {
+        case 'A': return K_UP;
+        case 'B': return K_DOWN;
+        case 'C': return K_RIGHT;
+        case 'D': return K_LEFT;
+        case 'H': return K_HOME;
+        case 'F': return K_END;
+        case '3': getchar(); return K_DEL;
+    }
+    return 0;
+}
+
+#define HIST_N   16
+#define HIST_LEN 256
+static char g_hist[HIST_N][HIST_LEN];
+static int g_hist_count = 0;
+static int g_hist_next = 0;
+
+static void hist_add(const char* line) {
+    if (!line[0]) return;
+    int last = (g_hist_next + HIST_N - 1) % HIST_N;
+    if (g_hist_count > 0 && strcmp(g_hist[last], line) == 0) return;
+    strncpy(g_hist[g_hist_next], line, HIST_LEN - 1);
+    g_hist[g_hist_next][HIST_LEN - 1] = 0;
+    g_hist_next = (g_hist_next + 1) % HIST_N;
+    if (g_hist_count < HIST_N) g_hist_count++;
+}
+
+static const char* hist_get(int back) {
+    if (back < 1 || back > g_hist_count) return nullptr;
+    return g_hist[(g_hist_next + HIST_N - back) % HIST_N];
+}
+
+static void redraw(const char* buf, int len, int cur, int old_len) {
+    printf("\r> %s", buf);
+    for (int i = len; i < old_len; i++) putchar(' ');
+    printf("\r> ");
+    for (int i = 0; i < cur; i++) putchar(buf[i]);
+}
+
 static void read_line(char* buf, int cap) {
-    int n = 0;
+    int len = 0, cur = 0, old_len = 0;
+    int back = 0;
+    char stash[HIST_LEN] = {0};
+    buf[0] = 0;
+
     for (;;) {
-        int c = getchar();
+        int c = read_key();
         if (c == '\r' || c == '\n') {
-            putchar('\r');
-            putchar('\n');
+            redraw(buf, len, len, old_len);
+            printf("\r\n");
             break;
         }
-        if (c == 8 || c == 127) {
-            if (n > 0) {
-                n--;
-                printf("\b \b");
+        if (c == K_LEFT)  { if (cur > 0) cur--; }
+        else if (c == K_RIGHT) { if (cur < len) cur++; }
+        else if (c == K_HOME)  { cur = 0; }
+        else if (c == K_END)   { cur = len; }
+        else if (c == 8 || c == 127) {
+            if (cur > 0) {
+                memmove(buf + cur - 1, buf + cur, len - cur + 1);
+                cur--; len--;
             }
+        }
+        else if (c == K_DEL) {
+            if (cur < len) {
+                memmove(buf + cur, buf + cur + 1, len - cur);
+                len--;
+            }
+        }
+        else if (c == K_UP || c == K_DOWN) {
+            if (c == K_UP && back < g_hist_count) {
+                if (back == 0) { strncpy(stash, buf, HIST_LEN - 1); }
+                back++;
+            } else if (c == K_DOWN && back > 0) {
+                back--;
+            } else {
+                continue;
+            }
+            const char* src = (back == 0) ? stash : hist_get(back);
+            if (!src) src = "";
+            strncpy(buf, src, cap - 1);
+            buf[cap - 1] = 0;
+            len = (int)strlen(buf);
+            cur = len;
+        }
+        else if (c >= 32 && c < 127 && len < cap - 1) {
+            memmove(buf + cur + 1, buf + cur, len - cur + 1);
+            buf[cur] = (char)c;
+            cur++; len++;
+        }
+        else {
             continue;
         }
-        if (c >= 32 && c < 127 && n < cap - 1) {
-            buf[n++] = (char)c;
-            putchar(c);
-        }
+        redraw(buf, len, cur, old_len);
+        old_len = len;
     }
-    buf[n] = 0;
+    buf[len] = 0;
+    hist_add(buf);
 }
 
 int main() {
