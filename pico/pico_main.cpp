@@ -185,23 +185,64 @@ int main() {
     }
 
     static char line[1024];
+    static char g_current[128];
+    g_current[0] = 0;
     for (;;) {
         printf("> ");
         read_line(line, sizeof line);
         if (!line[0]) continue;
 
-        // EDIT name opens the full-screen editor; quotes are welcome
-        // but not required.
-        if ((strncmp(line, "EDIT ", 5) == 0 || strncmp(line, "edit ", 5) == 0)) {
-            char* nm = line + 5;
-            while (*nm == ' ') nm++;
-            size_t nl = strlen(nm);
-            if (nl >= 2 && (nm[0] == '"' || nm[0] == '\'')) {
-                nm++;
+        // The classic trio, in any spelling, with or without quotes or
+        // parentheses: LOAD remembers the current program, RUN executes
+        // it (or a named one), EDIT opens it in the editor.
+        char* meta_arg = nullptr;
+        int meta = 0;
+        if (strncasecmp(line, "EDIT", 4) == 0 && (line[4] == 0 || line[4] == ' ' || line[4] == '(' || line[4] == '"')) {
+            meta = 1; meta_arg = line + 4;
+        } else if (strncasecmp(line, "LOAD", 4) == 0 && (line[4] == 0 || line[4] == ' ' || line[4] == '(' || line[4] == '"')) {
+            meta = 2; meta_arg = line + 4;
+        } else if (strncasecmp(line, "RUN", 3) == 0 && (line[3] == 0 || line[3] == ' ' || line[3] == '(' || line[3] == '"')) {
+            meta = 3; meta_arg = line + 3;
+        }
+        if (meta) {
+            while (*meta_arg == ' ' || *meta_arg == '(') meta_arg++;
+            size_t nl = strlen(meta_arg);
+            while (nl && (meta_arg[nl-1] == ' ' || meta_arg[nl-1] == ')')) meta_arg[--nl] = 0;
+            if (nl >= 2 && (meta_arg[0] == '"' || meta_arg[0] == '\'')) {
+                meta_arg++;
                 nl -= 2;
-                nm[nl] = 0;
+                meta_arg[nl] = 0;
             }
-            if (*nm) pico_editor(nm);
+            const char* nm = *meta_arg ? meta_arg : g_current;
+            if (!*nm) {
+                printf("no program loaded - LOAD name first\r\n");
+                fflush(NULL);
+                continue;
+            }
+            if (meta == 1) {
+                snprintf(g_current, sizeof g_current, "%s", nm);
+                pico_editor(nm);
+            } else if (meta == 2) {
+                FILE* probe = fopen(nm, "r");
+                if (!probe) {
+                    printf("cannot open %s\r\n", nm);
+                } else {
+                    fclose(probe);
+                    snprintf(g_current, sizeof g_current, "%s", nm);
+                    printf("loaded %s\r\n", nm);
+                }
+            } else {
+                snprintf(g_current, sizeof g_current, "%s", nm);
+                char* out = jdb_embed_load(vm, nm);
+                if (out) {
+                    fputs(out, stdout);
+                    jdb_embed_free(out);
+                } else {
+                    const char* err = jdb_embed_last_error(vm);
+                    printf("ERROR: %s\r\n", err ? err : "unknown");
+                }
+            }
+            fflush(NULL);
             continue;
         }
 
@@ -213,5 +254,8 @@ int main() {
             const char* err = jdb_embed_last_error(vm);
             printf("ERROR: %s\r\n", err ? err : "unknown");
         }
+        // Escape sequences carry no newline; without a flush a CLS sits
+        // in stdout until the next PRINT pushes it out.
+        fflush(NULL);
     }
 }

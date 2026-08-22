@@ -74,6 +74,7 @@ void pico_editor(const char* name) {
         }
         draw_status(name, cy, (int)lines.size(), dirty);
         cup(cy - top, cx - xoff);
+        fflush(NULL);
 
         int c = repl_read_key();
         std::string& ln = lines[cy];
