@@ -307,3 +307,28 @@ int picocalc_lcd_tap_get(uint8_t* out, int cap) {
     g_tap_armed = 0;
     return n;
 }
+
+// Pixel ground for the graphics builtins: a filled span of panel
+// coordinates, translated through the scroll ring, clipped, one burst
+// per row.
+void picocalc_lcd_fill_rect(int x, int y, int w, int h,
+                            uint8_t r, uint8_t g, uint8_t b) {
+    if (x < 0) { w += x; x = 0; }
+    if (y < 0) { h += y; y = 0; }
+    if (x + w > LCD_W) w = LCD_W - x;
+    if (y + h > LCD_H) h = LCD_H - y;
+    if (w <= 0 || h <= 0) return;
+
+    for (int i = 0; i < w * 3; i += 3) {
+        g_rowbuf[i] = r; g_rowbuf[i + 1] = g; g_rowbuf[i + 2] = b;
+    }
+    for (int row = y; row < y + h; row++) {
+        int ram_y = (g_scroll * 8 + row) % RAM_H;
+        set_window(x, ram_y, x + w - 1, ram_y);
+        wr_burst(g_rowbuf, (size_t)w * 3);
+    }
+}
+
+void picocalc_lcd_pset(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
+    picocalc_lcd_fill_rect(x, y, 1, 1, r, g, b);
+}

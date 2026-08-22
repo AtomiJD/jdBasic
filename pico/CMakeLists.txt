@@ -25,6 +25,7 @@ add_executable(jdbasic_repl
     pico_fs.cpp
     picocalc_lcd.c
     picocalc_kbd.c
+    picocalc_gfx.c
     littlefs/lfs.c
     littlefs/lfs_util.c
     ../src/lexer.cpp
