@@ -13,6 +13,8 @@ void register_pico_nuke_pt(VM& vm);
 void register_pico_diag(VM& vm);
 void register_pico_keyget(VM& vm);
 void register_pico_lcdstat(VM& vm);
+void register_pico_tap(VM& vm);
+void register_pico_taparm(VM& vm);
 
 void register_pico_builtins(VM& vm) {
     vm.register_native("GPIO.MODE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -39,6 +41,8 @@ void register_pico_builtins(VM& vm) {
     register_pico_diag(vm);
     register_pico_keyget(vm);
     register_pico_lcdstat(vm);
+    register_pico_tap(vm);
+    register_pico_taparm(vm);
     vm.register_native("LED", 1, 1, [](const std::vector<Value>& args) -> Value {
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, args[0].to_double() != 0);
         return Value();
@@ -124,5 +128,29 @@ void register_pico_lcdstat(VM& vm) {
         char buf[64];
         snprintf(buf, sizeof buf, "scroll=%d cx=%d cy=%d", s, x, y);
         return Value::make_string(buf);
+    });
+}
+
+extern "C" int picocalc_lcd_tap_get(uint8_t* out, int cap);
+
+void register_pico_tap(VM& vm) {
+    vm.register_native("LCD.TAP$", 0, 0, [](const std::vector<Value>&) -> Value {
+        uint8_t w[160];
+        int n = picocalc_lcd_tap_get(w, 160);
+        char buf[512];
+        int at = 0;
+        for (int i = 0; i < n && at < 500; i++)
+            at += snprintf(buf + at, sizeof buf - at, "%02x", w[i]);
+        buf[at] = 0;
+        return Value::make_string(buf);
+    });
+}
+
+extern "C" void picocalc_lcd_tap_arm(void);
+
+void register_pico_taparm(VM& vm) {
+    vm.register_native("LCD.TAPARM", 0, 0, [](const std::vector<Value>&) -> Value {
+        picocalc_lcd_tap_arm();
+        return Value();
     });
 }

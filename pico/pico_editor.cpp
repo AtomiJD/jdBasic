@@ -2,6 +2,11 @@
 // prompt opens it, Ctrl-S writes the file back, Ctrl-Q (or the ESC
 // key on the device) leaves. It speaks plain ANSI, so the same code
 // serves the panel and a USB terminal.
+//
+// Painting is stingy: moving the cursor paints nothing (the console
+// walks its own inverted cell on cursor moves), editing a line paints
+// that line, and only structure changes repaint from the edit
+// downward - never a clear, so nothing flickers.
 
 #include <stdio.h>
 #include <string.h>
@@ -26,17 +31,22 @@ extern "C" int repl_read_key(void);
 
 static void cup(int row, int col) { printf("\x1b[%d;%dH", row + 1, col + 1); }
 
-static void draw_status(const char* name, int line, int total, bool dirty) {
+static void draw_status(const char* name, int line, int total, bool dirty,
+                        int cx, int top) {
     cup(ED_ROWS, 0);
-    printf("\x1b[K%c%s  %d/%d  ^S save ^Q quit", dirty ? '*' : ' ', name, line + 1, total);
+    printf("\x1b[K%c%s %d/%d c%d t%d ^S ^Q", dirty ? '*' : ' ', name,
+           line + 1, total, cx, top);
 }
 
 static void draw_line(const std::string& s, int screen_row, int off) {
     cup(screen_row, 0);
     printf("\x1b[K");
-    if ((int)s.size() > off)
-        fwrite(s.data() + off, 1,
-               (s.size() - off) > ED_COLS ? ED_COLS : s.size() - off, stdout);
+    // printf only: the SDK's printf writes straight to stdio while the
+    // newlib FILE calls buffer, and mixing the two reorders the frame.
+    if ((int)s.size() > off) {
+        int n = (int)((s.size() - off) > ED_COLS ? ED_COLS : s.size() - off);
+        printf("%.*s", n, s.c_str() + off);
+    }
 }
 
 void pico_editor(const char* name) {
@@ -55,24 +65,32 @@ void pico_editor(const char* name) {
 
     int cy = 0, cx = 0, top = 0;
     bool dirty = false;
-    bool full = true;
+    int paint_from = 0;        // first screen row to repaint; ED_ROWS = none
+    bool paint_line = false;   // repaint just the cursor line
+    int last_xoff = 0;
 
     for (;;) {
-        if (cy < top) { top = cy; full = true; }
-        if (cy >= top + ED_ROWS) { top = cy - ED_ROWS + 1; full = true; }
+        if (cy < top) { top = cy; paint_from = 0; }
+        if (cy >= top + ED_ROWS) { top = cy - ED_ROWS + 1; paint_from = 0; }
         int xoff = (cx / ED_COLS) * ED_COLS;
+        if (xoff != last_xoff) { paint_line = true; last_xoff = xoff; }
 
-        if (full) {
-            printf("\x1b[2J");
-            for (int r = 0; r < ED_ROWS; r++) {
+        if (paint_from < ED_ROWS) {
+            for (int r = paint_from; r < ED_ROWS; r++) {
                 if (top + r < (int)lines.size())
                     draw_line(lines[top + r], r, r == cy - top ? xoff : 0);
+                else {
+                    cup(r, 0);
+                    printf("\x1b[K");
+                }
             }
-            full = false;
-        } else {
+        } else if (paint_line) {
             draw_line(lines[cy], cy - top, xoff);
         }
-        draw_status(name, cy, (int)lines.size(), dirty);
+        paint_from = ED_ROWS;
+        paint_line = false;
+
+        draw_status(name, cy, (int)lines.size(), dirty, cx, top);
         cup(cy - top, cx - xoff);
         fflush(NULL);
 
@@ -82,6 +100,7 @@ void pico_editor(const char* name) {
         if (c == 17 || c == K_ESC) {           // Ctrl-Q
             printf("\x1b[2J");
             cup(0, 0);
+            fflush(NULL);
             return;
         }
         if (c == 19) {                          // Ctrl-S
@@ -93,51 +112,54 @@ void pico_editor(const char* name) {
             }
             continue;
         }
-        if (c == K_UP)    { if (cy > 0) { cy--; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); full = true; } continue; }
-        if (c == K_DOWN)  { if (cy + 1 < (int)lines.size()) { cy++; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); full = true; } continue; }
-        if (c == K_PGUP)  { cy = cy > ED_ROWS ? cy - ED_ROWS : 0; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); full = true; continue; }
-        if (c == K_PGDN)  { cy += ED_ROWS; if (cy >= (int)lines.size()) cy = lines.size() - 1; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); full = true; continue; }
-        if (c == K_LEFT)  { if (cx > 0) cx--; else if (cy > 0) { cy--; cx = lines[cy].size(); full = true; } continue; }
-        if (c == K_RIGHT) { if (cx < (int)ln.size()) cx++; else if (cy + 1 < (int)lines.size()) { cy++; cx = 0; full = true; } continue; }
+        if (c == K_UP)    { if (cy > 0) { cy--; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); } continue; }
+        if (c == K_DOWN)  { if (cy + 1 < (int)lines.size()) { cy++; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); } continue; }
+        if (c == K_PGUP)  { cy = cy > ED_ROWS ? cy - ED_ROWS : 0; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); continue; }
+        if (c == K_PGDN)  { cy += ED_ROWS; if (cy >= (int)lines.size()) cy = lines.size() - 1; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); continue; }
+        if (c == K_LEFT)  { if (cx > 0) cx--; else if (cy > 0) { cy--; cx = lines[cy].size(); } continue; }
+        if (c == K_RIGHT) { if (cx < (int)ln.size()) cx++; else if (cy + 1 < (int)lines.size()) { cy++; cx = 0; } continue; }
         if (c == K_HOME)  { cx = 0; continue; }
         if (c == K_END)   { cx = ln.size(); continue; }
         if (c == '\r' || c == '\n') {
             std::string rest = ln.substr(cx);
             ln.erase(cx);
             lines.insert(lines.begin() + cy + 1, rest);
+            paint_from = cy - top;
             cy++; cx = 0;
-            dirty = true; full = true;
+            dirty = true;
             continue;
         }
         if (c == 8 || c == 127) {
             if (cx > 0) {
                 ln.erase(cx - 1, 1);
                 cx--;
-                dirty = true;
+                dirty = true; paint_line = true;
             } else if (cy > 0) {
                 cx = lines[cy - 1].size();
                 lines[cy - 1] += ln;
                 lines.erase(lines.begin() + cy);
                 cy--;
-                dirty = true; full = true;
+                dirty = true;
+                paint_from = cy - top;
             }
             continue;
         }
         if (c == K_DEL) {
             if (cx < (int)ln.size()) {
                 ln.erase(cx, 1);
-                dirty = true;
+                dirty = true; paint_line = true;
             } else if (cy + 1 < (int)lines.size()) {
                 ln += lines[cy + 1];
                 lines.erase(lines.begin() + cy + 1);
-                dirty = true; full = true;
+                dirty = true;
+                paint_from = cy - top;
             }
             continue;
         }
         if (c >= 32 && c < 127) {
             ln.insert(ln.begin() + cx, (char)c);
             cx++;
-            dirty = true;
+            dirty = true; paint_line = true;
         }
     }
 }

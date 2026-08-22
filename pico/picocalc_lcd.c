@@ -183,6 +183,7 @@ static int ansi_step(char c) {
 }
 
 void picocalc_lcd_putc(char c) {
+    { void picocalc_lcd_tap_log(uint8_t); picocalc_lcd_tap_log((uint8_t)c); }
     int prev_cy = g_cy;
     if (ansi_step(c)) return;
     if (c == '\r') { g_cx = 0; g_dirty[g_cy] = 1; return; }
@@ -280,4 +281,29 @@ void picocalc_lcd_stat(int* scroll, int* cx, int* cy) {
     *scroll = g_scroll;
     *cx = g_cx;
     *cy = g_cy;
+}
+
+// A tap on the incoming stream: armed from the prompt, it starts
+// recording at the next escape byte, which is where a full-screen
+// frame begins.
+static uint8_t g_tap[512];
+static int g_tapn = 0;
+static int g_tap_armed = 0;
+
+void picocalc_lcd_tap_log(uint8_t b) {
+    if (g_tap_armed == 1 && b == 0x1B) g_tap_armed = 2;
+    if (g_tap_armed == 2 && g_tapn < (int)sizeof g_tap) g_tap[g_tapn++] = b;
+}
+
+void picocalc_lcd_tap_arm(void) {
+    g_tap_armed = 1;
+    g_tapn = 0;
+}
+
+int picocalc_lcd_tap_get(uint8_t* out, int cap) {
+    int n = g_tapn < cap ? g_tapn : cap;
+    for (int i = 0; i < n; i++) out[i] = g_tap[i];
+    g_tapn = 0;
+    g_tap_armed = 0;
+    return n;
 }

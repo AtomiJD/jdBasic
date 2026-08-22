@@ -105,7 +105,7 @@ static void redraw(const char* buf, int len, int cur, int old_len) {
     if (cur > width) start = cur - width;
     printf("\r> %-*.*s", width, width, buf + start);
     printf("\r> ");
-    for (int i = start; i < cur; i++) putchar(buf[i]);
+    for (int i = start; i < cur; i++) printf("%c", buf[i]);
 }
 
 static void read_line(char* buf, int cap) {
@@ -240,7 +240,7 @@ int main() {
                 snprintf(g_current, sizeof g_current, "%s", nm);
                 char* out = jdb_embed_load(vm, nm);
                 if (out) {
-                    fputs(out, stdout);
+                    printf("%s", out);
                     jdb_embed_free(out);
                 } else {
                     const char* err = jdb_embed_last_error(vm);
@@ -253,7 +253,7 @@ int main() {
 
         char* out = jdb_embed_eval(vm, line);
         if (out) {
-            fputs(out, stdout);
+            printf("%s", out);
             jdb_embed_free(out);
         } else {
             const char* err = jdb_embed_last_error(vm);
