@@ -100,6 +100,7 @@ JDB_EMBED_API JdbValue jdb_embed_call(JdbEmbed* e, const char* func_name,
 // empty. Caller frees with jdb_embed_free. Lets the host forward callback
 // PRINT output to its console without the eval path's return-string.
 JDB_EMBED_API char*    jdb_embed_take_output(JdbEmbed* e);
+JDB_EMBED_API void     jdb_embed_output_stdout(JdbEmbed* e);
 
 // Read a top-level global by name. Returns 0 if no such global exists.
 JDB_EMBED_API JdbValue jdb_embed_get_global(JdbEmbed* e, const char* name);

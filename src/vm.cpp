@@ -2369,6 +2369,27 @@ void VM::run() {
 #ifdef __EMSCRIPTEN__
             { char* line = jdb_read_line_js();
               if (line) { input = line; std::free(line); } }
+#elif defined(PICO)
+            // The board's stdio does not echo: read by character, show
+            // what arrives, honour backspace, stop at return.
+            for (;;) {
+                int ch = std::getchar();
+                if (ch == '\r' || ch == '\n') break;
+                if (ch == 8 || ch == 127) {
+                    if (!input.empty()) {
+                        input.pop_back();
+                        std::printf("\b \b");
+                        std::fflush(stdout);
+                    }
+                    continue;
+                }
+                if (ch < 32 || ch > 126) continue;
+                input.push_back((char)ch);
+                std::printf("%c", ch);
+                std::fflush(stdout);
+            }
+            std::printf("\r\n");
+            std::fflush(stdout);
 #else
             std::getline(std::cin, input);
 #endif

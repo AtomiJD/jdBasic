@@ -312,6 +312,9 @@ int main() {
         printf("VM init failed\r\n");
         for (;;) sleep_ms(1000);
     }
+    // Output goes live to the console as programs print - INPUT shows
+    // its prompt before it blocks, CLS clears when it runs.
+    jdb_embed_output_stdout(vm);
 
     static char line[1024];
     static char g_current[128];

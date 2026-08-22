@@ -14,6 +14,7 @@
 #include "value.h"
 #include "lexer.h"
 #include "parser.h"
+#include <cstdio>
 #include "compiler.h"
 #include "ai.h"
 #include "numerics.h"
@@ -496,6 +497,18 @@ JDB_EMBED_API JdbValue jdb_embed_call(JdbEmbed* eh, const char* func_name,
         e->last_error = "unknown exception in jdb_embed_call";
         return 0;
     }
+}
+
+// Route program output straight to stdout instead of the capture
+// buffer: a live console wants PRINT as it happens, and INPUT needs
+// its prompt on screen before it blocks for the answer.
+JDB_EMBED_API void jdb_embed_output_stdout(JdbEmbed* eh) {
+    if (!eh) return;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->vm.on_output = [](const std::string& s) {
+        printf("%s", s.c_str());
+        fflush(stdout);
+    };
 }
 
 JDB_EMBED_API char* jdb_embed_take_output(JdbEmbed* eh) {
