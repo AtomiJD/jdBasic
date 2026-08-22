@@ -59,6 +59,7 @@ static stdio_driver_t pc_driver = {
 #define K_END   0xD5
 
 extern "C" int repl_read_key(void);
+void pico_help(const char* topic);
 #ifdef PICOCALC
 void pico_editor(const char* name);
 #endif
@@ -217,6 +218,12 @@ int main() {
         printf("> ");
         read_line(line, sizeof line);
         if (!line[0]) continue;
+
+        if (strncasecmp(line, "HELP", 4) == 0 && (line[4] == 0 || line[4] == ' ')) {
+            pico_help(line + 4);
+            fflush(NULL);
+            continue;
+        }
 
         // The classic trio, in any spelling, with or without quotes or
         // parentheses: LOAD remembers the current program, RUN executes
