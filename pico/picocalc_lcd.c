@@ -203,6 +203,13 @@ void picocalc_lcd_putc(char c) {
         return;
     }
     if (c == '\f') { clear_screen(); return; }
+    if (c == '\t') {
+        int next = (g_cx / 8 + 1) * 8;
+        if (next >= COLS) next = COLS - 1;
+        while (g_cx < next) g_text[g_cy][g_cx++] = ' ';
+        g_dirty[g_cy] = 1;
+        return;
+    }
     if ((unsigned char)c < 32) return;
 
     g_text[g_cy][g_cx] = c;

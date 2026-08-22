@@ -8366,12 +8366,22 @@ void VM::register_builtins() {
             std::string name = r->elements[0].to_string();
             std::string size_s = (r->elements.size() > 1) ? r->elements[1].to_string() : "";
             std::string date_s = (r->elements.size() > 3) ? r->elements[3].to_string() : "";
+#ifdef PICO
+            // The board has no clock worth printing and forty columns to
+            // spend: name, a tab, the size.
+            if (type == "DIR") {
+                emit(name + "\t<DIR>\n");
+            } else {
+                emit(name + "\t" + size_s + "\n");
+            }
+#else
             if (type == "DIR") {
                 emit(date_s + "    <DIR>          " + name + "\n");
             } else {
                 char buf[16]; snprintf(buf, sizeof(buf), "%12s", size_s.c_str());
                 emit(date_s + " " + std::string(buf) + " " + name + "\n");
             }
+#endif
         }
         emit("  " + std::to_string(arr->elements.size()) + " item(s)\n");
         return Value::make_none();
