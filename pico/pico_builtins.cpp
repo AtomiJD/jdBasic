@@ -10,6 +10,9 @@ void register_pico_fs_debug(VM& vm);
 void register_pico_alias_probe(VM& vm);
 void register_pico_atrans_probe(VM& vm);
 void register_pico_nuke_pt(VM& vm);
+void register_pico_diag(VM& vm);
+void register_pico_keyget(VM& vm);
+void register_pico_lcdstat(VM& vm);
 
 void register_pico_builtins(VM& vm) {
     vm.register_native("GPIO.MODE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -33,6 +36,9 @@ void register_pico_builtins(VM& vm) {
     register_pico_alias_probe(vm);
     register_pico_atrans_probe(vm);
     register_pico_nuke_pt(vm);
+    register_pico_diag(vm);
+    register_pico_keyget(vm);
+    register_pico_lcdstat(vm);
     vm.register_native("LED", 1, 1, [](const std::vector<Value>& args) -> Value {
         cyw43_arch_gpio_put(CYW43_WL_GPIO_LED_PIN, args[0].to_double() != 0);
         return Value();
@@ -79,5 +85,44 @@ void register_pico_nuke_pt(VM& vm) {
     vm.register_native("FS.NUKEPT", 0, 0, [](const std::vector<Value>&) -> Value {
         jdb_pico_nuke_pt();
         return Value();
+    });
+}
+
+extern "C" int picocalc_kbd_rawget(uint16_t* out, int cap);
+extern "C" void picocalc_lcd_row(int row, char* out, int cap);
+
+void register_pico_diag(VM& vm) {
+    vm.register_native("KBD.RAW$", 0, 0, [](const std::vector<Value>&) -> Value {
+        uint16_t w[16];
+        int n = picocalc_kbd_rawget(w, 16);
+        char buf[128];
+        int at = 0;
+        for (int i = 0; i < n && at < 110; i++)
+            at += snprintf(buf + at, sizeof buf - at, "%04x ", w[i]);
+        buf[at] = 0;
+        return Value::make_string(buf);
+    });
+    vm.register_native("LCD.ROW$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        char buf[64];
+        picocalc_lcd_row((int)args[0].to_double(), buf, sizeof buf);
+        return Value::make_string(buf);
+    });
+}
+
+void register_pico_keyget(VM& vm) {
+    vm.register_native("KEY.GET", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(getchar());
+    });
+}
+
+extern "C" void picocalc_lcd_stat(int* scroll, int* cx, int* cy);
+
+void register_pico_lcdstat(VM& vm) {
+    vm.register_native("LCD.STAT$", 0, 0, [](const std::vector<Value>&) -> Value {
+        int s, x, y;
+        picocalc_lcd_stat(&s, &x, &y);
+        char buf[64];
+        snprintf(buf, sizeof buf, "scroll=%d cx=%d cy=%d", s, x, y);
+        return Value::make_string(buf);
     });
 }

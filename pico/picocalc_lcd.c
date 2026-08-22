@@ -125,10 +125,12 @@ static void clear_screen(void) {
 static void scroll_up(void) {
     memmove(g_text[0], g_text[1], (ROWS - 1) * COLS);
     memset(g_text[ROWS - 1], ' ', COLS);
+    // The dirty flags ride along with their text: a row written but not
+    // yet flushed keeps its claim at its new place, or the ring shows
+    // whatever it held twenty scrolls ago.
+    memmove(g_dirty, g_dirty + 1, ROWS - 1);
     g_scroll = (g_scroll + 1) % RING_ROWS;
     set_scroll((g_scroll * 8) % RAM_H);
-    // The ring makes every kept row land where it already is; only the
-    // fresh last row needs pixels.
     g_dirty[ROWS - 1] = 1;
 }
 
@@ -264,4 +266,18 @@ void picocalc_lcd_init(void) {
     }
 
     clear_screen();
+}
+
+// One text row as characters, for diagnosis from the prompt.
+void picocalc_lcd_row(int row, char* out, int cap) {
+    if (row < 0 || row >= ROWS || cap < COLS + 1) { if (cap > 0) out[0] = 0; return; }
+    memcpy(out, g_text[row], COLS);
+    out[COLS] = 0;
+}
+
+// Scroll ring and cursor state, for diagnosis from the prompt.
+void picocalc_lcd_stat(int* scroll, int* cx, int* cy) {
+    *scroll = g_scroll;
+    *cx = g_cx;
+    *cy = g_cy;
 }

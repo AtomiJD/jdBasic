@@ -97,10 +97,15 @@ static const char* hist_get(int back) {
 }
 
 static void redraw(const char* buf, int len, int cur, int old_len) {
-    printf("\r> %s", buf);
-    for (int i = len; i < old_len; i++) putchar(' ');
+    // The panel is 40 columns wide; long lines scroll horizontally so
+    // the redraw never wraps and stacks.
+    (void)old_len;
+    const int width = 37;
+    int start = 0;
+    if (cur > width) start = cur - width;
+    printf("\r> %-*.*s", width, width, buf + start);
     printf("\r> ");
-    for (int i = 0; i < cur; i++) putchar(buf[i]);
+    for (int i = start; i < cur; i++) putchar(buf[i]);
 }
 
 static void read_line(char* buf, int cap) {
