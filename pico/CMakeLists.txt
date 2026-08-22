@@ -33,6 +33,7 @@ set(JDB_SOURCES
     pico_builtins.cpp
     pico_hw.cpp
     pico_help.cpp
+    pico_syntax.cpp
     pico_fs.cpp
     littlefs/lfs.c
     littlefs/lfs_util.c

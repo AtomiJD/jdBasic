@@ -64,6 +64,7 @@ static stdio_driver_t pc_driver = {
 
 extern "C" int repl_read_key(void);
 void pico_help(const char* topic);
+void syntax_print(const char* s, int n);
 
 // The DOS set at the prompt, unquoted arguments welcome: CD, TYPE,
 // DEL, COPY, REN, MD, RD. Returns 0 when the line is not one of them
@@ -202,14 +203,18 @@ static const char* hist_get(int back) {
 
 static void redraw(const char* buf, int len, int cur, int old_len) {
     // The panel is 40 columns wide; long lines scroll horizontally so
-    // the redraw never wraps and stacks.
+    // the redraw never wraps and stacks. The visible slice prints in
+    // colour and the cursor lands by stepping forward, not reprinting.
     (void)old_len;
     const int width = 37;
     int start = 0;
     if (cur > width) start = cur - width;
-    printf("\r> %-*.*s", width, width, buf + start);
+    int vis = len - start;
+    if (vis > width) vis = width;
     printf("\r> ");
-    for (int i = start; i < cur; i++) printf("%c", buf[i]);
+    syntax_print(buf + start, vis);
+    printf("%*s\r", width - vis, "");
+    if (cur - start + 2 > 0) printf("\x1b[%dC", cur - start + 2);
 }
 
 static void read_line(char* buf, int cap) {

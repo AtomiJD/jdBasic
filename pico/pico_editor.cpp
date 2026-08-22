@@ -14,6 +14,7 @@
 #include <string>
 
 extern "C" int repl_read_key(void);
+void syntax_print(const char* s, int n);
 
 #define K_LEFT  0xB4
 #define K_UP    0xB5
@@ -45,7 +46,7 @@ static void draw_line(const std::string& s, int screen_row, int off) {
     // newlib FILE calls buffer, and mixing the two reorders the frame.
     if ((int)s.size() > off) {
         int n = (int)((s.size() - off) > ED_COLS ? ED_COLS : s.size() - off);
-        printf("%.*s", n, s.c_str() + off);
+        syntax_print(s.c_str() + off, n);
     }
 }
 

@@ -36,8 +36,23 @@
 #define BG_B 0x00
 
 static char g_text[ROWS][COLS];
+static uint8_t g_attr[ROWS][COLS];
 static uint8_t g_dirty[ROWS];
 static int g_cx = 0, g_cy = 0;
+
+// Per-cell foreground, index 0 the classic green. Set through the SGR
+// escapes; 0m falls back to the default.
+static const uint8_t g_pal[8][3] = {
+    { FG_R, FG_G, FG_B },       // 0 default green
+    { 0xF8, 0xF8, 0xF8 },       // 1 white
+    { 0xF8, 0xE8, 0x40 },       // 2 yellow
+    { 0x50, 0xD8, 0xF8 },       // 3 cyan
+    { 0x90, 0x90, 0x90 },       // 4 gray
+    { 0xF8, 0x50, 0x50 },       // 5 red
+    { 0xE0, 0x60, 0xE0 },       // 6 magenta
+    { 0x60, 0x80, 0xF8 },       // 7 blue
+};
+static uint8_t g_cur_attr = 0;
 static int g_scroll = 0;          // ring offset in text rows, 0..RING_ROWS-1
 static int g_cursor_on = 1;
 
@@ -90,11 +105,12 @@ static void draw_row(int row) {
             if (ch < 32 || ch > 151) ch = 32;
             uint8_t bits = jdos_font8x8_c64[(ch - 32) * 8 + line];
             int inv = g_cursor_on && row == g_cy && col == g_cx;
+            const uint8_t* fg = g_pal[g_attr[row][col] & 7];
             for (int px = 0; px < 8; px++) {
                 int on = (bits & (0x80 >> px)) != 0;
                 if (inv) on = !on;
                 if (on) {
-                    *p++ = FG_R; *p++ = FG_G; *p++ = FG_B;
+                    *p++ = fg[0]; *p++ = fg[1]; *p++ = fg[2];
                 } else {
                     *p++ = BG_R; *p++ = BG_G; *p++ = BG_B;
                 }
@@ -117,6 +133,7 @@ void picocalc_lcd_flush(void) {
 
 static void clear_screen(void) {
     memset(g_text, ' ', sizeof g_text);
+    memset(g_attr, 0, sizeof g_attr);
     memset(g_dirty, 1, sizeof g_dirty);
     g_cx = 0; g_cy = 0;
     picocalc_lcd_flush();
@@ -125,6 +142,8 @@ static void clear_screen(void) {
 static void scroll_up(void) {
     memmove(g_text[0], g_text[1], (ROWS - 1) * COLS);
     memset(g_text[ROWS - 1], ' ', COLS);
+    memmove(g_attr[0], g_attr[1], (ROWS - 1) * COLS);
+    memset(g_attr[ROWS - 1], 0, COLS);
     // The dirty flags ride along with their text: a row written but not
     // yet flushed keeps its claim at its new place, or the ring shows
     // whatever it held twenty scrolls ago.
@@ -176,8 +195,31 @@ static int ansi_step(char c) {
     } else if (c == 'J') {
         clear_screen();
     } else if (c == 'K') {
-        for (int x = g_cx; x < COLS; x++) g_text[g_cy][x] = ' ';
+        for (int x = g_cx; x < COLS; x++) {
+            g_text[g_cy][x] = ' ';
+            g_attr[g_cy][x] = 0;
+        }
         g_dirty[g_cy] = 1;
+    } else if (c == 'C') {
+        int n = g_par[0] > 0 ? g_par[0] : 1;
+        g_dirty[g_cy] = 1;
+        g_cx = g_cx + n < COLS ? g_cx + n : COLS - 1;
+    } else if (c == 'm') {
+        // The SGR subset: 0 resets, the 3x and bright 9x foregrounds
+        // pick from the palette.
+        for (int i = 0; i <= g_parn; i++) {
+            switch (g_par[i]) {
+                case 0:            g_cur_attr = 0; break;
+                case 37: case 97:  g_cur_attr = 1; break;
+                case 33: case 93:  g_cur_attr = 2; break;
+                case 36: case 96:  g_cur_attr = 3; break;
+                case 90:           g_cur_attr = 4; break;
+                case 31: case 91:  g_cur_attr = 5; break;
+                case 35: case 95:  g_cur_attr = 6; break;
+                case 34: case 94:  g_cur_attr = 7; break;
+                case 32: case 92:  g_cur_attr = 0; break;
+            }
+        }
     }
     return 1;
 }
@@ -198,6 +240,7 @@ void picocalc_lcd_putc(char c) {
         if (g_cx > 0) {
             g_cx--;
             g_text[g_cy][g_cx] = ' ';
+            g_attr[g_cy][g_cx] = 0;
             g_dirty[g_cy] = 1;
         }
         return;
@@ -206,13 +249,14 @@ void picocalc_lcd_putc(char c) {
     if (c == '\t') {
         int next = (g_cx / 8 + 1) * 8;
         if (next >= COLS) next = COLS - 1;
-        while (g_cx < next) g_text[g_cy][g_cx++] = ' ';
+        while (g_cx < next) { g_attr[g_cy][g_cx] = 0; g_text[g_cy][g_cx++] = ' '; }
         g_dirty[g_cy] = 1;
         return;
     }
     if ((unsigned char)c < 32) return;
 
     g_text[g_cy][g_cx] = c;
+    g_attr[g_cy][g_cx] = g_cur_attr;
     g_dirty[g_cy] = 1;
     if (++g_cx >= COLS) {
         g_cx = 0;
