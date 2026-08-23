@@ -57,6 +57,12 @@ struct HttpXfer {
     volatile bool failed = false;
 };
 
+// The last transfer's trail, for WIFI.DIAG$: how far it came and what
+// the stack said on the way.
+static volatile int g_dg_stage = 0;   // 1 resolved 2 pcb 3 connected 4 sent 5 data 6 closed
+static volatile int g_dg_err = 0;
+static volatile int g_dg_got = 0;
+
 static void http_finish(HttpXfer* x) {
     if (x->pcb) {
         tcp_arg(x->pcb, nullptr);
@@ -70,7 +76,7 @@ static void http_finish(HttpXfer* x) {
 }
 
 static void http_err_cb(void* arg, err_t err) {
-    (void)err;
+    g_dg_err = err;
     HttpXfer* x = (HttpXfer*)arg;
     if (!x) return;
     x->pcb = nullptr;
@@ -86,6 +92,8 @@ static err_t http_recv_cb(void* arg, struct tcp_pcb* pcb, struct pbuf* p, err_t 
         for (struct pbuf* q = p; q; q = q->next)
             x->response.append((const char*)q->payload, q->len);
         tcp_recved(pcb, p->tot_len);
+        g_dg_stage = 5;
+        g_dg_got = (int)x->response.size();
     }
     pbuf_free(p);
     return ERR_OK;
@@ -115,9 +123,11 @@ static err_t http_connected_cb(void* arg, struct tcp_pcb* pcb, err_t err) {
     (void)pcb;
     HttpXfer* x = (HttpXfer*)arg;
     if (!x) return ERR_OK;
-    if (err != ERR_OK) { x->failed = true; x->closed = true; return ERR_OK; }
+    if (err != ERR_OK) { g_dg_err = err; x->failed = true; x->closed = true; return ERR_OK; }
+    g_dg_stage = 3;
     x->connected = true;
     http_send_more(x);
+    if (x->sent == x->request.size()) g_dg_stage = 4;
     return ERR_OK;
 }
 
@@ -140,21 +150,28 @@ static std::string http_get(const std::string& url, int timeout_ms) {
     }
     if (host.empty()) return "";
 
+    g_dg_stage = 0; g_dg_err = 0; g_dg_got = 0;
     ip_addr_t addr;
-    if (!resolve(host.c_str(), &addr, 5000)) return "";
+    if (!resolve(host.c_str(), &addr, 8000)) { g_dg_stage = -1; return ""; }
+    g_dg_stage = 1;
 
     HttpXfer x;
-    x.request = "GET " + path + " HTTP/1.1\r\nHost: " + host +
+    // HTTP/1.0 keeps the reply un-chunked, so the body needs no
+    // transfer decoding.
+    x.request = "GET " + path + " HTTP/1.0\r\nHost: " + host +
                 "\r\nConnection: close\r\nUser-Agent: jdBasic-pico\r\n\r\n";
 
     cyw43_arch_lwip_begin();
     x.pcb = tcp_new();
     if (x.pcb) {
+        g_dg_stage = 2;
         tcp_arg(x.pcb, &x);
         tcp_recv(x.pcb, http_recv_cb);
         tcp_sent(x.pcb, http_sent_cb);
         tcp_err(x.pcb, http_err_cb);
-        if (tcp_connect(x.pcb, &addr, port, http_connected_cb) != ERR_OK) {
+        err_t crc = tcp_connect(x.pcb, &addr, port, http_connected_cb);
+        if (crc != ERR_OK) {
+            g_dg_err = crc;
             tcp_abort(x.pcb);
             x.pcb = nullptr;
         }
@@ -167,6 +184,7 @@ static std::string http_get(const std::string& url, int timeout_ms) {
     cyw43_arch_lwip_begin();
     if (!x.closed) { x.failed = true; http_finish(&x); }
     cyw43_arch_lwip_end();
+    if (x.closed && !x.failed) g_dg_stage = 6;
 
     if (x.failed && x.response.empty()) return "";
     size_t body = x.response.find("\r\n\r\n");
@@ -182,6 +200,20 @@ void register_pico_wifi(VM& vm) {
         int rc = cyw43_arch_wifi_connect_timeout_ms(
             args[0].to_string().c_str(), args[1].to_string().c_str(),
             CYW43_AUTH_WPA2_MIXED_PSK, timeout);
+        // Default power save naps through unicast packets: DHCP gets
+        // through on broadcast, then ARP replies, SYN-ACKs and DNS
+        // answers vanish. Performance mode keeps the receiver awake.
+        if (rc == 0) {
+            cyw43_wifi_pm(&cyw43_state, CYW43_PERFORMANCE_PM);
+            // A public resolver as backup: lwIP fails over to it inside
+            // a single query when the advertised server never answers.
+            // Index 0 belongs to DHCP.
+            ip_addr_t fb;
+            IP4_ADDR(&fb, 8, 8, 8, 8);
+            cyw43_arch_lwip_begin();
+            dns_setserver(1, &fb);
+            cyw43_arch_lwip_end();
+        }
         return Value::make_i64(rc);
     });
     vm.register_native("WIFI.STATUS", 0, 0, [](const std::vector<Value>&) -> Value {
@@ -192,6 +224,24 @@ void register_pico_wifi(VM& vm) {
         struct netif* n = netif_default;
         if (!n || !netif_is_up(n)) return Value::make_string("");
         return Value::make_string(ip4addr_ntoa(netif_ip4_addr(n)));
+    });
+    vm.register_native("WIFI.DNS$", 0, 0, [](const std::vector<Value>&) -> Value {
+        const ip_addr_t* s = dns_getserver(0);
+        return Value::make_string(ipaddr_ntoa(s));
+    });
+    vm.register_native("WIFI.DNS", 1, 1, [](const std::vector<Value>& args) -> Value {
+        ip_addr_t a;
+        if (!ipaddr_aton(args[0].to_string().c_str(), &a)) return Value::make_i64(-1);
+        cyw43_arch_lwip_begin();
+        dns_setserver(0, &a);
+        cyw43_arch_lwip_end();
+        return Value::make_i64(0);
+    });
+    vm.register_native("WIFI.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char buf[64];
+        snprintf(buf, sizeof buf, "stage=%d err=%d got=%d",
+                 (int)g_dg_stage, (int)g_dg_err, (int)g_dg_got);
+        return Value::make_string(buf);
     });
     vm.register_native("HTTP.GET$", 1, 2, [](const std::vector<Value>& args) -> Value {
         int timeout = args.size() >= 2 ? (int)args[1].to_double() : 10000;

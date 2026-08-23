@@ -34,6 +34,7 @@
 #define LWIP_TCP                    1
 #define LWIP_UDP                    1
 #define LWIP_DNS                    1
+#define DNS_MAX_RETRIES             2
 #define LWIP_TCP_KEEPALIVE          1
 #define LWIP_NETIF_TX_SINGLE_PBUF   1
 #define DHCP_DOES_ARP_CHECK         0
