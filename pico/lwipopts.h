@@ -37,6 +37,10 @@
 #define DNS_MAX_RETRIES             2
 #define LWIP_TCP_KEEPALIVE          1
 #define LWIP_NETIF_TX_SINGLE_PBUF   1
+// A packet addressed to our own IP comes back to us, so the board can
+// reach its own server. Off by default; with NO_SYS the queue needs
+// netif_poll_all() from the main loop, which the pumps do.
+#define LWIP_NETIF_LOOPBACK         1
 #define DHCP_DOES_ARP_CHECK         0
 #define LWIP_DHCP_DOES_ACD_CHECK    0
 

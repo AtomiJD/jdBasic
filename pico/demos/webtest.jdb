@@ -1,0 +1,38 @@
+' The board talks to its own server: query parameters, a POST body, and
+' a map answer turned into JSON.
+DIM ip
+DIM rc
+DIM r
+
+FUNC ECHO(req)
+    RETURN "path=" + req{"PATH"} + " name=" + req{"PARAMS"}{"name"}
+ENDFUNC
+
+FUNC MYPOST(req)
+    DIM m AS MAP
+    m{"got"} = req{"BODY"}
+    m{"method"} = req{"METHOD"}
+    RETURN m
+ENDFUNC
+
+IF WIFI.CONNECT("flupp", "flupp1234") <> 0 THEN
+    PRINT "no connection"
+ELSE
+    ip = WIFI.IP$()
+    HTTP.SERVER.ON_GET("/echo", "ECHO")
+    HTTP.SERVER.ON_POST("/take", "MYPOST")
+    rc = HTTP.SERVER.START(80)
+    PRINT "listen "; rc; " free "; SYS.FREE()
+
+    r = HTTP.GET$("http://" + ip + "/echo?name=world", 8000)
+    PRINT "GET  -> "; r
+
+    r = HTTP.POST$("http://" + ip + "/take", "hello board", "text/plain", 8000)
+    PRINT "POST -> "; r
+
+    r = HTTP.GET$("http://" + ip + "/nothing", 8000)
+    PRINT "404  -> "; r
+
+    PRINT "free "; SYS.FREE()
+    HTTP.SERVER.STOP()
+ENDIF

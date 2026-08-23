@@ -134,8 +134,10 @@ static err_t http_connected_cb(void* arg, struct tcp_pcb* pcb, err_t err) {
 }
 
 // url: http://host[:port]/path - returns the body, or an empty string
-// on any failure.
-static std::string http_get(const std::string& url, int timeout_ms) {
+// on any failure. A body turns it into a POST.
+static std::string http_request(const std::string& method, const std::string& url,
+                                const std::string& body, const std::string& ctype,
+                                int timeout_ms) {
     std::string rest;
     if (url.rfind("http://", 0) == 0) rest = url.substr(7);
     else if (url.find("://") == std::string::npos) rest = url;
@@ -160,8 +162,13 @@ static std::string http_get(const std::string& url, int timeout_ms) {
     HttpXfer x;
     // HTTP/1.0 keeps the reply un-chunked, so the body needs no
     // transfer decoding.
-    x.request = "GET " + path + " HTTP/1.0\r\nHost: " + host +
-                "\r\nConnection: close\r\nUser-Agent: jdBasic-pico\r\n\r\n";
+    x.request = method + " " + path + " HTTP/1.0\r\nHost: " + host +
+                "\r\nConnection: close\r\nUser-Agent: jdBasic-pico\r\n";
+    if (!body.empty()) {
+        x.request += "Content-Type: " + ctype + "\r\n";
+        x.request += "Content-Length: " + std::to_string(body.size()) + "\r\n";
+    }
+    x.request += "\r\n" + body;
 
     cyw43_arch_lwip_begin();
     x.pcb = tcp_new();
@@ -181,7 +188,13 @@ static std::string http_get(const std::string& url, int timeout_ms) {
     cyw43_arch_lwip_end();
     if (!x.pcb) return "";
 
-    for (int t = 0; t < timeout_ms && !x.closed; t += 10) sleep_ms(10);
+    // Keep serving while waiting: the board has one thread, so a fetch
+    // that just slept would freeze its own web server.
+    extern void pico_httpd_pump();
+    for (int t = 0; t < timeout_ms && !x.closed; t += 10) {
+        pico_httpd_pump();
+        sleep_ms(10);
+    }
 
     cyw43_arch_lwip_begin();
     if (!x.closed) { x.failed = true; http_finish(&x); }
@@ -189,8 +202,8 @@ static std::string http_get(const std::string& url, int timeout_ms) {
     if (x.closed && !x.failed) g_dg_stage = 6;
 
     if (x.failed && x.response.empty()) return "";
-    size_t body = x.response.find("\r\n\r\n");
-    return body == std::string::npos ? x.response : x.response.substr(body + 4);
+    size_t head = x.response.find("\r\n\r\n");
+    return head == std::string::npos ? x.response : x.response.substr(head + 4);
 }
 
 // ── The clock ────────────────────────────────────────────────────────
@@ -321,6 +334,13 @@ void register_pico_wifi(VM& vm) {
     });
     vm.register_native("HTTP.GET$", 1, 2, [](const std::vector<Value>& args) -> Value {
         int timeout = args.size() >= 2 ? (int)args[1].to_double() : 10000;
-        return Value::make_string(http_get(args[0].to_string(), timeout));
+        return Value::make_string(http_request("GET", args[0].to_string(), "", "", timeout));
+    });
+    // HTTP.POST$(url$, body$ [, content_type$ [, timeout_ms]])
+    vm.register_native("HTTP.POST$", 2, 4, [](const std::vector<Value>& args) -> Value {
+        std::string ctype = args.size() >= 3 ? args[2].to_string() : "application/json";
+        int timeout = args.size() >= 4 ? (int)args[3].to_double() : 10000;
+        return Value::make_string(http_request("POST", args[0].to_string(),
+                                               args[1].to_string(), ctype, timeout));
     });
 }

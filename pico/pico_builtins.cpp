@@ -18,6 +18,7 @@ void register_pico_mem(VM& vm);
 void register_pico_events(VM& vm);
 #ifdef JDB_HAS_CYW43
 void register_pico_wifi(VM& vm);
+void register_pico_httpd(VM& vm);
 #endif
 #ifdef PICOCALC
 void register_pico_diag(VM& vm);
@@ -58,6 +59,7 @@ void register_pico_builtins(VM& vm) {
     register_pico_events(vm);
 #ifdef JDB_HAS_CYW43
     register_pico_wifi(vm);
+    register_pico_httpd(vm);
 #endif
 #ifdef PICOCALC
     register_pico_diag(vm);
