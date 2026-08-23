@@ -287,13 +287,20 @@ static std::pair<std::string, std::string> bundled_module_reader(const std::stri
 }
 
 void run_source(VM& vm, const std::string& source) {
-    Lexer lexer(source);
-    auto tokens = lexer.tokenize();
-    Parser parser(tokens);
-    parser.file_reader = bundled_module_reader;
-    auto ast = parser.parse();
     Compiler c;
-    c.compile(ast);
+    // The token stream and the syntax tree are finished once the chunk
+    // is built - the chunk owns its own constants and names - so they go
+    // before the program runs rather than sitting beside it for its whole
+    // life. On a board with tens of kilobytes of heap that is most of the
+    // room a program was costing.
+    {
+        Lexer lexer(source);
+        auto tokens = lexer.tokenize();
+        Parser parser(tokens);
+        parser.file_reader = bundled_module_reader;
+        auto ast = parser.parse();
+        c.compile(ast);
+    }
     vm.run_code(c.main_chunk(), c.functions());
 }
 
