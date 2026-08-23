@@ -151,6 +151,49 @@ static int dos_command(char* line) {
         return 1;
     }
 
+    // Take a file straight off the wire. The line editor echoes every
+    // keystroke as a full recoloured line, which costs kilobytes per
+    // line of source; here nothing is echoed and nothing is parsed, so
+    // a program arrives at the speed of the link. Ends on Ctrl-D, or on
+    // a quiet line once something has arrived.
+    if (strcmp(cmd, "RECV") == 0) {
+        const char* nm = dos_arg(a);
+        if (!*nm) { printf("RECV name\r\n"); return 1; }
+        FILE* f = fopen(nm, "w");
+        if (!f) { printf("cannot write %s\r\n", nm); return 1; }
+        printf("receiving %s, end with Ctrl-D\r\n", nm);
+        fflush(NULL);
+        size_t n = 0;
+        int idle = 0;
+        int pending_cr = 0;
+        for (;;) {
+            int c = getchar_timeout_us(100000);
+            if (c == PICO_ERROR_TIMEOUT) {
+                idle++;
+                if (n && idle >= 30) break;
+                if (!n && idle >= 300) break;
+                continue;
+            }
+            idle = 0;
+            if (c == 0x04) break;
+            if (c == 0x1B) {
+                fclose(f);
+                remove(nm);
+                printf("cancelled\r\n");
+                return 1;
+            }
+            // Whatever the sender's line endings, the file gets \n.
+            if (pending_cr && c == '\n') { pending_cr = 0; continue; }
+            pending_cr = 0;
+            if (c == '\r') { pending_cr = 1; c = '\n'; }
+            fputc(c, f);
+            n++;
+        }
+        fclose(f);
+        printf("%u bytes\r\n", (unsigned)n);
+        return 1;
+    }
+
     if (strcmp(cmd, "CD") == 0) {
         if (*a && chdir(dos_arg(a)) != 0) { printf("no such directory\r\n"); return 1; }
         char cwd[160];

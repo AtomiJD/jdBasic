@@ -76,6 +76,8 @@ static const char* HELP_FILES =
 "LOAD \"prog\"  RUN [\"prog\"]  EDIT\n"
 "AUTORUN name   run it at power-on\n"
 "AUTORUN        show;  AUTORUN OFF\n"
+"RECV name      take a file off the\n"
+"  wire raw, no echo, ends Ctrl-D\n"
 "KILL \"f\"   MKDIR \"d\"   RMDIR \"d\"\n"
 "s$ = TXTREADER$(\"f\")\n"
 "TXTWRITER \"f\", s$ [, TRUE append]\n"
