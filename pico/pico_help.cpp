@@ -150,7 +150,11 @@ static const char* HELP_WIFI =
 "  0 = connected (WPA2)\n"
 "WIFI.IP$()   WIFI.STATUS()\n"
 "HTTP.GET$(\"http://host/p\" [,ms])\n"
-"  plain http, empty on failure\n";
+"  plain http, empty on failure\n"
+"NTP.SYNC([server$] [,hours])\n"
+"  sets the clock, hours is your\n"
+"  offset from UTC; 0 = no answer\n"
+"  then DATE$ TIME$ NOW are real\n";
 #else
 "this board has no radio\n";
 #endif

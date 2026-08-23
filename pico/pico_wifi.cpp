@@ -8,6 +8,8 @@
 #include "pico/cyw43_arch.h"
 #include "lwip/dns.h"
 #include "lwip/tcp.h"
+#include "lwip/udp.h"
+#include <sys/time.h>
 
 static bool g_sta_up = false;
 
@@ -191,6 +193,63 @@ static std::string http_get(const std::string& url, int timeout_ms) {
     return body == std::string::npos ? x.response : x.response.substr(body + 4);
 }
 
+// ── The clock ────────────────────────────────────────────────────────
+//
+// A board with no battery wakes up in 1970. One SNTP exchange fixes
+// that: a 48-byte datagram to port 123, and the answer carries seconds
+// since 1900 in bytes 40 to 43.
+
+#define NTP_EPOCH_DELTA 2208988800u   // 1900 to 1970, in seconds
+
+static volatile uint32_t g_ntp_secs = 0;
+static volatile bool g_ntp_done = false;
+
+static void ntp_recv_cb(void*, struct udp_pcb*, struct pbuf* p,
+                        const ip_addr_t*, u16_t) {
+    if (p && p->tot_len >= 48) {
+        uint8_t stamp[4];
+        if (pbuf_copy_partial(p, stamp, 4, 40) == 4) {
+            uint32_t secs1900 = ((uint32_t)stamp[0] << 24) | ((uint32_t)stamp[1] << 16) |
+                                ((uint32_t)stamp[2] << 8) | stamp[3];
+            if (secs1900 > NTP_EPOCH_DELTA) {
+                g_ntp_secs = secs1900 - NTP_EPOCH_DELTA;
+                g_ntp_done = true;
+            }
+        }
+    }
+    if (p) pbuf_free(p);
+}
+
+// Returns the epoch second, or 0 when the server stayed silent.
+static uint32_t ntp_query(const char* host, int timeout_ms) {
+    ip_addr_t addr;
+    if (!resolve(host, &addr, 8000)) return 0;
+
+    g_ntp_done = false;
+    g_ntp_secs = 0;
+
+    cyw43_arch_lwip_begin();
+    struct udp_pcb* u = udp_new();
+    if (!u) { cyw43_arch_lwip_end(); return 0; }
+    udp_recv(u, ntp_recv_cb, nullptr);
+    struct pbuf* p = pbuf_alloc(PBUF_TRANSPORT, 48, PBUF_RAM);
+    if (p) {
+        memset(p->payload, 0, 48);
+        ((uint8_t*)p->payload)[0] = 0x1B;   // no leap warning, version 3, client
+        udp_sendto(u, p, &addr, 123);
+        pbuf_free(p);
+    }
+    cyw43_arch_lwip_end();
+
+    for (int t = 0; t < timeout_ms && !g_ntp_done; t += 10) sleep_ms(10);
+
+    cyw43_arch_lwip_begin();
+    udp_remove(u);
+    cyw43_arch_lwip_end();
+
+    return g_ntp_done ? g_ntp_secs : 0;
+}
+
 // ── Registration ─────────────────────────────────────────────────────
 
 void register_pico_wifi(VM& vm) {
@@ -242,6 +301,23 @@ void register_pico_wifi(VM& vm) {
         snprintf(buf, sizeof buf, "stage=%d err=%d got=%d",
                  (int)g_dg_stage, (int)g_dg_err, (int)g_dg_got);
         return Value::make_string(buf);
+    });
+    // NTP.SYNC([server$] [, offset_hours]) -> the epoch second it set,
+    // or 0 when nothing answered. The offset goes into the clock, so
+    // DATE$ and TIME$ read local time on a board with no timezone.
+    vm.register_native("NTP.SYNC", 0, 2, [](const std::vector<Value>& args) -> Value {
+        std::string host = args.size() >= 1 ? args[0].to_string() : "pool.ntp.org";
+        double offset = args.size() >= 2 ? args[1].to_double() : 0.0;
+        uint32_t secs = ntp_query(host.c_str(), 5000);
+        if (!secs && host != "time.google.com")
+            secs = ntp_query("time.google.com", 5000);
+        if (!secs) return Value::make_i64(0);
+        int64_t local = (int64_t)secs + (int64_t)(offset * 3600.0);
+        struct timeval tv;
+        tv.tv_sec = (time_t)local;
+        tv.tv_usec = 0;
+        settimeofday(&tv, nullptr);
+        return Value::make_i64(local);
     });
     vm.register_native("HTTP.GET$", 1, 2, [](const std::vector<Value>& args) -> Value {
         int timeout = args.size() >= 2 ? (int)args[1].to_double() : 10000;

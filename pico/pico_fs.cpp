@@ -5,6 +5,7 @@
 
 #include <string.h>
 #include <errno.h>
+#include <time.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include "pico/stdlib.h"
@@ -203,6 +204,10 @@ extern "C" int chdir(const char* path) {
 
 #define MAX_FILES 8
 static lfs_file_t g_files[MAX_FILES];
+// littlefs keeps no modification time of its own, so a written file
+// gets one as a custom attribute, stamped when it closes.
+#define ATTR_MTIME 0x74
+static char g_wpath[MAX_FILES][160];
 static bool g_used[MAX_FILES];
 static bool g_is_sd[MAX_FILES];
 static int  g_sdh[MAX_FILES];
@@ -253,6 +258,9 @@ int _open(const char* path, int oflag, ...) {
     if (rc < 0) { errno = lfs_err_to_errno(rc); return -1; }
     g_used[slot] = true;
     g_is_sd[slot] = false;
+    g_wpath[slot][0] = 0;
+    if ((oflag & O_ACCMODE) != O_RDONLY)
+        snprintf(g_wpath[slot], sizeof g_wpath[slot], "%s", path);
     return slot + 3;
 }
 
@@ -291,9 +299,16 @@ int _close(int fd) {
     int slot = fd - 3;
     if (slot < 0 || slot >= MAX_FILES || !g_used[slot]) { errno = EBADF; return -1; }
     if (g_is_sd[slot]) sd_close(g_sdh[slot]);
-    else lfs_file_close(&g_lfs, &g_files[slot]);
+    else {
+        lfs_file_close(&g_lfs, &g_files[slot]);
+        if (g_wpath[slot][0]) {
+            uint32_t now = (uint32_t)time(nullptr);
+            lfs_setattr(&g_lfs, g_wpath[slot], ATTR_MTIME, &now, sizeof now);
+        }
+    }
     g_used[slot] = false;
     g_is_sd[slot] = false;
+    g_wpath[slot][0] = 0;
     return 0;
 }
 
@@ -345,6 +360,9 @@ int _stat(const char* path, struct stat* st) {
     memset(st, 0, sizeof *st);
     st->st_mode = (info.type == LFS_TYPE_DIR) ? S_IFDIR : S_IFREG;
     st->st_size = info.size;
+    uint32_t mtime = 0;
+    if (lfs_getattr(&g_lfs, path, ATTR_MTIME, &mtime, sizeof mtime) == sizeof mtime)
+        st->st_mtime = (time_t)mtime;
     return 0;
 }
 
