@@ -383,3 +383,27 @@ void picocalc_lcd_fill_rect(int x, int y, int w, int h,
 void picocalc_lcd_pset(int x, int y, uint8_t r, uint8_t g, uint8_t b) {
     picocalc_lcd_fill_rect(x, y, 1, 1, r, g, b);
 }
+
+
+// A rectangle streamed in one go: the panel auto-increments inside the
+// window, so the address is sent once and chip select stays low for the
+// whole run. Callers pass display-RAM rows, already unwrapped.
+void picocalc_lcd_blit_begin(int x, int ram_y, int w, int h) {
+    set_window(x, ram_y, x + w - 1, ram_y + h - 1);
+    dc(1); cs(0);
+}
+
+void picocalc_lcd_blit_row(const uint8_t* rgb3, int w) {
+    spi_write_blocking(LCD_SPI, rgb3, (size_t)w * 3);
+}
+
+void picocalc_lcd_blit_end(void) {
+    cs(1);
+}
+
+// Where a screen row currently lives in display RAM.
+int picocalc_lcd_ram_row(int y) {
+    return (g_scroll * 8 + y) % RAM_H;
+}
+
+int picocalc_lcd_ram_height(void) { return RAM_H; }

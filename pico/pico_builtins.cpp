@@ -14,6 +14,7 @@ void register_pico_atrans_probe(VM& vm);
 void register_pico_nuke_pt(VM& vm);
 void register_pico_keyget(VM& vm);
 void register_pico_hw(VM& vm);
+void register_pico_mem(VM& vm);
 void register_pico_events(VM& vm);
 #ifdef JDB_HAS_CYW43
 void register_pico_wifi(VM& vm);
@@ -53,6 +54,7 @@ void register_pico_builtins(VM& vm) {
     register_pico_nuke_pt(vm);
     register_pico_keyget(vm);
     register_pico_hw(vm);
+    register_pico_mem(vm);
     register_pico_events(vm);
 #ifdef JDB_HAS_CYW43
     register_pico_wifi(vm);
@@ -194,6 +196,12 @@ extern "C" void picocalc_gfx_pset(int x, int y);
 extern "C" void picocalc_gfx_line(int x1, int y1, int x2, int y2);
 extern "C" void picocalc_gfx_rect(int x, int y, int w, int h, int fill);
 extern "C" void picocalc_gfx_circle(int cx, int cy, int rad, int fill);
+extern "C" void picocalc_gfx_text(int x, int y, const char* s, int scale);
+extern "C" int  picocalc_gfx_buffer(int x, int y, int w, int h);
+extern "C" int  picocalc_gfx_buffered(void);
+extern "C" void picocalc_gfx_flip(void);
+extern "C" void picocalc_gfx_clear(int index);
+extern "C" void picocalc_gfx_palette(int i, int r, int g, int b);
 
 static void gfx_maybe_color(const std::vector<Value>& args, size_t at) {
     if (args.size() >= at + 3)
@@ -233,8 +241,57 @@ void register_pico_gfx(VM& vm) {
                             (int)args[2].to_double(), fill);
         return Value();
     });
+    // x, y, text [, r, g, b] like the desktop, with scale as an extra.
+    vm.register_native("TEXT", 3, 7, [](const std::vector<Value>& args) -> Value {
+        gfx_maybe_color(args, 3);
+        int scale = args.size() >= 7 ? (int)args[6].to_double() : 1;
+        picocalc_gfx_text((int)args[0].to_double(), (int)args[1].to_double(),
+                          args[2].to_string().c_str(), scale);
+        return Value();
+    });
+    // GFX.BUFFER(x, y, w, h) buffers that rectangle and answers with the
+    // bytes it took, -1 if there was not enough room. GFX.BUFFER(0)
+    // gives it back.
+    vm.register_native("GFX.BUFFER", 1, 4, [](const std::vector<Value>& args) -> Value {
+        if (args.size() < 4)
+            return Value::make_i64(picocalc_gfx_buffer(0, 0, 0, 0));
+        return Value::make_i64(picocalc_gfx_buffer(
+            (int)args[0].to_double(), (int)args[1].to_double(),
+            (int)args[2].to_double(), (int)args[3].to_double()));
+    });
+    vm.register_native("GFX.BUFFERED", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_bool(picocalc_gfx_buffered() != 0);
+    });
+    vm.register_native("SCREENFLIP", 0, 0, [](const std::vector<Value>&) -> Value {
+        picocalc_gfx_flip();
+        return Value();
+    });
+    vm.register_native("GFX.CLEAR", 0, 1, [](const std::vector<Value>& args) -> Value {
+        picocalc_gfx_clear(args.size() >= 1 ? (int)args[0].to_double() : 0);
+        return Value();
+    });
+    vm.register_native("GFX.PALETTE", 4, 4, [](const std::vector<Value>& args) -> Value {
+        picocalc_gfx_palette((int)args[0].to_double(), (int)args[1].to_double(),
+                             (int)args[2].to_double(), (int)args[3].to_double());
+        return Value();
+    });
 }
 
+
+// What a program can still get: the ground the heap has not claimed
+// yet, plus what it claimed and handed back. Counting only the first
+// reads as zero while there is plenty on the free list.
+#include <malloc.h>
+extern "C" char __StackLimit;
+extern "C" void* sbrk(int);
+
+void register_pico_mem(VM& vm) {
+    vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
+        struct mallinfo mi = mallinfo();
+        int64_t unclaimed = (int64_t)(&__StackLimit - (char*)sbrk(0));
+        return Value::make_i64(unclaimed + (int64_t)mi.fordblks);
+    });
+}
 extern "C" void sd_selftest(char* out, int cap);
 
 void register_pico_sdtest(VM& vm) {

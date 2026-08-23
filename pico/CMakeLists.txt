@@ -67,6 +67,10 @@ add_executable(jdbasic_repl ${JDB_SOURCES})
 target_compile_definitions(jdbasic_repl PRIVATE
     PICO
     NDEBUG
+    # A failed malloc must raise a jdBasic error, not stop the board:
+    # the SDK default panics, which is an interrupts-off spin that even
+    # the BOOTSEL reset cannot reach.
+    PICO_MALLOC_PANIC=0
     CFG_TUD_CDC_RX_BUFSIZE=1024
     CFG_TUD_CDC_TX_BUFSIZE=1024
 )

@@ -1,0 +1,36 @@
+' Buffered drawing. There is no room for a whole screen of buffer, so
+' you buffer the strip that moves: 320x40 at 4 bits a pixel is 6400
+' bytes. Drawing outside the strip still goes straight to the panel.
+DIM used
+DIM t0
+DIM i
+
+PRINT "free before: "; SYS.FREE()
+used = GFX.BUFFER(0, 240, 320, 40)
+IF used <= 0 THEN
+    PRINT "no room for the buffer"
+ELSE
+    PRINT "buffer: "; used; " bytes, free now "; SYS.FREE()
+
+    ' Straight to the panel, outside the buffered strip.
+    DRAWCOLOR 48, 252, 48
+    TEXT 8, 8, "jdBasic on the PicoCalc"
+    DRAWCOLOR 80, 216, 248
+    CIRCLE 160, 130, 55, 1
+
+    ' Inside the strip: erase and redraw, one flip per frame.
+    t0 = TICK()
+    FOR i = 0 TO 29
+        DRAWCOLOR 0, 0, 0
+        RECT 0, 240, 320, 40, 1
+        DRAWCOLOR 248, 144, 48
+        RECT i * 10, 245, 28, 28, 1
+        DRAWCOLOR 248, 248, 248
+        TEXT 4, 264, "frame"
+        SCREENFLIP
+    NEXT i
+    PRINT "30 frames: "; TICK() - t0; " ms"
+
+    GFX.BUFFER(0)
+    PRINT "free after: "; SYS.FREE()
+ENDIF
