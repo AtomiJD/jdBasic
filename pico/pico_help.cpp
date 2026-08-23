@@ -18,6 +18,7 @@ static const char* HELP_INDEX =
 "  FILES   programs, flash and SD\n"
 "  GFX     graphics and sound\n"
 "  HW      pins and buses\n"
+"  EVENTS  timers, keys, pin edges\n"
 "  WIFI    network (W boards)\n"
 "  SYS     board diagnostics\n"
 "Prompt: EDIT/LOAD/RUN name, DIR\n";
@@ -92,6 +93,18 @@ static const char* HELP_GFX =
 "screen 320x320, text 40x40\n"
 "BEEP [freq [, ms]]\n";
 
+
+static const char* HELP_EVENTS =
+"ON \"TICK\" CALL Handler\n"
+"TIMER.EVERY(ms)   TIMER.STOP()\n"
+"ON \"KEY\" CALL H   KEY.WATCH(1)\n"
+"  handler gets d[0] = key code\n"
+"ON \"PIN\" CALL H\n"
+"GPIO.WATCH(pin, edge) 1 up 2 down\n"
+"  3 both, 0 off; d[0] pin d[1] lvl\n"
+"handlers run between statements,\n"
+"  never inside the interrupt\n";
+
 static const char* HELP_HW =
 "GPIO.MODE(pin, out)  GPIO.WRITE\n"
 "GPIO.READ  GPIO.PULLUP   LED(0/1)\n"
@@ -126,6 +139,7 @@ static const char* HELP_SYS =
 "FS.TEST()  flash store selftest\n"
 "SD.TEST()  card probe   SD.BB()\n"
 "LCD.STAT$()  KBD.RAW$()  KEY.GET()\n"
+"PIN.DIAG$() edge ISR + queue state\n"
 "FS.NUKEPT() wipes flash to BOOTSEL\n";
 
 struct HelpTopic { const char* name; const char* text; };
@@ -138,6 +152,7 @@ static const HelpTopic TOPICS[] = {
     { "FILES",  HELP_FILES },
     { "GFX",    HELP_GFX },
     { "HW",     HELP_HW },
+    { "EVENTS", HELP_EVENTS },
     { "WIFI",   HELP_WIFI },
     { "SYS",    HELP_SYS },
 };

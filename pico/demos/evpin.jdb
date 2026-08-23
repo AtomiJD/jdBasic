@@ -1,0 +1,32 @@
+' Pin edges reach a jdBasic handler. Wire GP2 to GP3: GP2 is driven,
+' GP3 is the watched input.
+DIM edges
+DIM ups
+DIM downs
+edges = 0
+ups = 0
+downs = 0
+
+SUB OnPin(d)
+    edges = edges + 1
+    IF d[1] = 1 THEN
+        ups = ups + 1
+    ELSE
+        downs = downs + 1
+    ENDIF
+ENDSUB
+
+ON "PIN" CALL OnPin
+GPIO.MODE(2, 1)
+GPIO.WRITE(2, 0)
+GPIO.WATCH(3, 3)
+
+FOR i = 1 TO 5
+    GPIO.WRITE(2, 1)
+    SLEEP 60
+    GPIO.WRITE(2, 0)
+    SLEEP 60
+NEXT i
+SLEEP 200
+GPIO.WATCH(3, 0)
+PRINT "edges="; edges; " up="; ups; " down="; downs

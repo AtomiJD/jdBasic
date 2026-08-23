@@ -8866,6 +8866,14 @@ void VM::event_raise(const std::string& event_name, const std::vector<Value>& da
 void VM::event_poll() {
     if (event_handlers.empty()) return;
 
+#ifdef PICO
+    // The board's sources: periodic timer, keyboard, pin edges. The
+    // platform layer drains what its ISRs collected.
+    extern void pico_event_poll(VM& vm);
+    pico_event_poll(*this);
+    return;
+#endif
+
 #ifdef GFX
     extern bool gfx_is_active();
     extern bool gfx_has_pending_events();

@@ -14,6 +14,7 @@ void register_pico_atrans_probe(VM& vm);
 void register_pico_nuke_pt(VM& vm);
 void register_pico_keyget(VM& vm);
 void register_pico_hw(VM& vm);
+void register_pico_events(VM& vm);
 #ifdef JDB_HAS_CYW43
 void register_pico_wifi(VM& vm);
 #endif
@@ -52,6 +53,7 @@ void register_pico_builtins(VM& vm) {
     register_pico_nuke_pt(vm);
     register_pico_keyget(vm);
     register_pico_hw(vm);
+    register_pico_events(vm);
 #ifdef JDB_HAS_CYW43
     register_pico_wifi(vm);
 #endif

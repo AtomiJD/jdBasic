@@ -1,0 +1,29 @@
+' Timer and key events: handlers run between statements, never in an ISR.
+DIM ticks
+DIM lastkey
+ticks = 0
+lastkey = 0
+
+SUB OnTick(d)
+    ticks = ticks + 1
+    PRINT "tick "; ticks
+ENDSUB
+
+SUB OnKey(d)
+    lastkey = d[0]
+    PRINT "key "; lastkey
+ENDSUB
+
+ON "TICK" CALL OnTick
+ON "KEY" CALL OnKey
+TIMER.EVERY(400)
+KEY.WATCH(TRUE)
+
+PRINT "running - press keys"
+FOR i = 1 TO 30
+    SLEEP 100
+NEXT i
+
+TIMER.STOP()
+KEY.WATCH(FALSE)
+PRINT "ticks="; ticks; " lastkey="; lastkey

@@ -1,0 +1,23 @@
+' Handlers do not nest. This one outlives its own period and SLEEPs,
+' which polls events again - maxdepth must stay 1.
+DIM depth
+DIM maxdepth
+DIM calls
+depth = 0
+maxdepth = 0
+calls = 0
+
+SUB OnTick(d)
+    depth = depth + 1
+    IF depth > maxdepth THEN maxdepth = depth
+    calls = calls + 1
+    IF calls >= 5 THEN TIMER.STOP()
+    SLEEP 300
+    depth = depth - 1
+ENDSUB
+
+ON "TICK" CALL OnTick
+TIMER.EVERY(100)
+SLEEP 2000
+TIMER.STOP()
+PRINT "calls="; calls; " maxdepth="; maxdepth
