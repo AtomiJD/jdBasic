@@ -15,8 +15,8 @@ FUNC MYPOST(req)
     RETURN m
 ENDFUNC
 
-IF WIFI.CONNECT("flupp", "flupp1234") <> 0 THEN
-    PRINT "no connection"
+IF WIFI.AUTO() <> 0 THEN
+    PRINT "no wifi - put ssid and password in wifi.txt"
 ELSE
     ip = WIFI.IP$()
     HTTP.SERVER.ON_GET("/echo", "ECHO")

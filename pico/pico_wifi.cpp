@@ -288,6 +288,33 @@ void register_pico_wifi(VM& vm) {
         }
         return Value::make_i64(rc);
     });
+    // The same two lines every networked program would otherwise carry:
+    // ssid and password from /wifi.txt. Source is the scarce resource
+    // on this board, so the boilerplate lives here instead.
+    vm.register_native("WIFI.AUTO", 0, 0, [&vm](const std::vector<Value>&) -> Value {
+        FILE* f = fopen("/wifi.txt", "r");
+        if (!f) return Value::make_i64(-2);
+        char ssid[64] = {0}, pass[80] = {0};
+        bool ok = fgets(ssid, sizeof ssid, f) && fgets(pass, sizeof pass, f);
+        fclose(f);
+        if (!ok) return Value::make_i64(-2);
+        for (char* p : { ssid, pass })
+            for (int i = (int)strlen(p) - 1; i >= 0 && (p[i] == '\n' || p[i] == '\r' || p[i] == ' '); i--)
+                p[i] = 0;
+        if (!ssid[0]) return Value::make_i64(-2);
+        wifi_sta_up();
+        int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, pass,
+                                                    CYW43_AUTH_WPA2_MIXED_PSK, 30000);
+        if (rc == 0) {
+            cyw43_wifi_pm(&cyw43_state, CYW43_PERFORMANCE_PM);
+            ip_addr_t fb;
+            IP4_ADDR(&fb, 8, 8, 8, 8);
+            cyw43_arch_lwip_begin();
+            dns_setserver(1, &fb);
+            cyw43_arch_lwip_end();
+        }
+        return Value::make_i64(rc);
+    });
     vm.register_native("WIFI.STATUS", 0, 0, [](const std::vector<Value>&) -> Value {
         wifi_sta_up();
         return Value::make_i64(cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA));

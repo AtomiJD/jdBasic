@@ -1,25 +1,25 @@
-' The board serves its own page. Keep such a program short: while it
-' runs, the interpreter holds roughly thirty times its source size, and
-' what is left has to cover the request, the handler and the answer.
-' SYS.FREE on the page shows how much that is.
+' The board serves its own page. Keep such a program short: a running
+' program holds about thirty times its source size, comments included,
+' and the rest has to cover request, handler and answer.
+' Credentials go in wifi.txt: ssid first line, password second.
 DIM hits
 hits = 0
 
 FUNC HOMEPAGE(req)
     hits = hits + 1
     RETURN "<h1>jdBasic on the PicoCalc</h1><p>hit " + STR$(hits) + _
-           ", free " + STR$(SYS.FREE()) + " bytes, " + TIME$ + "</p>"
+           ", free " + STR$(SYS.FREE()) + "</p>"
 ENDFUNC
 
-IF WIFI.CONNECT("flupp", "flupp1234") <> 0 THEN
-    PRINT "no connection"
+IF WIFI.AUTO() <> 0 THEN
+    PRINT "no wifi - see wifi.txt"
 ELSE
     HTTP.SERVER.ON_GET("/", "HOMEPAGE")
     IF HTTP.SERVER.START(80) <> 0 THEN
         PRINT "cannot listen"
     ELSE
-        PRINT "http://"; WIFI.IP$(); "/  free "; SYS.FREE()
-        HTTP.SERVER.WAIT(300000)
+        PRINT "http://"; WIFI.IP$(); "/ free "; SYS.FREE()
+        HTTP.SERVER.WAIT(600000)
         HTTP.SERVER.STOP()
         PRINT "served "; hits
     ENDIF

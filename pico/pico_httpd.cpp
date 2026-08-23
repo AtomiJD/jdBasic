@@ -334,6 +334,10 @@ void register_pico_httpd(VM& vm) {
             httpd_poll(vm);
             if (vm.is_halted) break;
             if (ms > 0 && (int)(to_ms_since_boot(get_absolute_time()) - start) >= ms) break;
+            // Without this a long wait owns the board until it expires:
+            // nothing else here reads the keyboard.
+            int key = getchar_timeout_us(0);
+            if (key == 0x1B || key == 3) break;
             sleep_ms(5);
         }
         return Value::make_i64((int64_t)g_served);
