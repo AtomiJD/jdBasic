@@ -54,6 +54,7 @@ if (PICOCALC)
         picocalc_kbd.c
         picocalc_gfx.c
         picocalc_snd.c
+        pico_sound.cpp
         picocalc_sd.c
         fatfs/ff.c
         fatfs/ffsystem.c

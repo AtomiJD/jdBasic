@@ -91,7 +91,13 @@ static const char* HELP_GFX =
 "CLS on its own line, not after a\n"
 "  drawing call in one statement\n"
 "screen 320x320, text 40x40\n"
-"BEEP [freq [, ms]]\n";
+"BEEP [freq [, ms]]   blocks\n"
+"PLAY \"T120 O4 CDEFGAB\"  plays in\n"
+"  the background: L4 length,\n"
+"  P rest, # sharp, - flat,\n"
+"  . dotted, < > octave down/up\n"
+"PLAY.STOP()   PLAY.BUSY()\n"
+"PLAY.VOLUME(0-100)   TONE(hz)\n";
 
 
 static const char* HELP_EVENTS =

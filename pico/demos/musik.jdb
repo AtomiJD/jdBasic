@@ -1,0 +1,16 @@
+' The tune plays in the background while the program keeps working.
+DIM n
+PLAY.VOLUME(70)
+PLAY "T140 O4 L8 CDEFGAB > C4 < P8 GFEDC4"
+
+n = 0
+DO WHILE PLAY.BUSY()
+    n = n + 1
+    SLEEP 50
+LOOP
+PRINT "loop ran "; n; " times while the tune played"
+
+PLAY "T80 O3 L2 CDEFGAB"
+SLEEP 400
+PLAY.STOP()
+PRINT "stopped, busy="; PLAY.BUSY()
