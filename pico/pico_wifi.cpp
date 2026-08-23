@@ -9,6 +9,7 @@
 #include "lwip/dns.h"
 #include "lwip/tcp.h"
 #include "lwip/udp.h"
+#include "lwip/netif.h"
 #include <sys/time.h>
 
 static bool g_sta_up = false;
@@ -18,6 +19,42 @@ static void wifi_sta_up() {
         cyw43_arch_enable_sta_mode();
         g_sta_up = true;
     }
+}
+
+// Joining a network, with the two things every caller needs afterwards.
+//
+// The return code alone cannot be trusted: an attempt can answer -7
+// (bad auth) and still leave the link coming up, which reads to a
+// program as "no connection" while the board is happily online. So on
+// failure: try once more, then believe the interface over the code.
+static int wifi_join(const char* ssid, const char* pass, int timeout_ms) {
+    wifi_sta_up();
+    int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, pass,
+                                                CYW43_AUTH_WPA2_MIXED_PSK, timeout_ms);
+    if (rc != 0)
+        rc = cyw43_arch_wifi_connect_timeout_ms(ssid, pass,
+                                                CYW43_AUTH_WPA2_MIXED_PSK, timeout_ms);
+    if (rc != 0) {
+        struct netif* n = netif_default;
+        if (cyw43_tcpip_link_status(&cyw43_state, CYW43_ITF_STA) == CYW43_LINK_UP &&
+            n && netif_is_up(n) && !ip4_addr_isany_val(*netif_ip4_addr(n)))
+            rc = 0;
+    }
+    if (rc == 0) {
+        // Default power save naps through unicast packets: DHCP gets
+        // through on broadcast, then ARP replies, SYN-ACKs and DNS
+        // answers vanish. Performance mode keeps the receiver awake.
+        cyw43_wifi_pm(&cyw43_state, CYW43_PERFORMANCE_PM);
+        // A public resolver as backup: lwIP fails over to it inside a
+        // single query when the advertised server never answers.
+        // Index 0 belongs to DHCP.
+        ip_addr_t fb;
+        IP4_ADDR(&fb, 8, 8, 8, 8);
+        cyw43_arch_lwip_begin();
+        dns_setserver(1, &fb);
+        cyw43_arch_lwip_end();
+    }
+    return rc;
 }
 
 // ── DNS, synchronous ─────────────────────────────────────────────────
@@ -64,6 +101,7 @@ struct HttpXfer {
 static volatile int g_dg_stage = 0;   // 1 resolved 2 pcb 3 connected 4 sent 5 data 6 closed
 static volatile int g_dg_err = 0;
 static volatile int g_dg_got = 0;
+static int g_http_status = 0;
 
 static void http_finish(HttpXfer* x) {
     if (x->pcb) {
@@ -202,8 +240,22 @@ static std::string http_request(const std::string& method, const std::string& ur
     if (x.closed && !x.failed) g_dg_stage = 6;
 
     if (x.failed && x.response.empty()) return "";
+    // Keep the status: a body alone cannot tell an answer from an error
+    // page, and INSTALL would happily store a 404.
+    g_http_status = 0;
+    if (x.response.rfind("HTTP/", 0) == 0) {
+        size_t sp = x.response.find(' ');
+        if (sp != std::string::npos) g_http_status = atoi(x.response.c_str() + sp + 1);
+    }
     size_t head = x.response.find("\r\n\r\n");
     return head == std::string::npos ? x.response : x.response.substr(head + 4);
+}
+
+// For the prompt's INSTALL command, which lives with the other file
+// commands in pico_main.cpp.
+bool pico_http_fetch(const char* url, std::string& out) {
+    out = http_request("GET", url, "", "", 15000);
+    return g_http_status == 200 && !out.empty();
 }
 
 // ── The clock ────────────────────────────────────────────────────────
@@ -267,31 +319,14 @@ static uint32_t ntp_query(const char* host, int timeout_ms) {
 
 void register_pico_wifi(VM& vm) {
     vm.register_native("WIFI.CONNECT", 2, 3, [](const std::vector<Value>& args) -> Value {
-        wifi_sta_up();
         int timeout = args.size() >= 3 ? (int)args[2].to_double() : 30000;
-        int rc = cyw43_arch_wifi_connect_timeout_ms(
-            args[0].to_string().c_str(), args[1].to_string().c_str(),
-            CYW43_AUTH_WPA2_MIXED_PSK, timeout);
-        // Default power save naps through unicast packets: DHCP gets
-        // through on broadcast, then ARP replies, SYN-ACKs and DNS
-        // answers vanish. Performance mode keeps the receiver awake.
-        if (rc == 0) {
-            cyw43_wifi_pm(&cyw43_state, CYW43_PERFORMANCE_PM);
-            // A public resolver as backup: lwIP fails over to it inside
-            // a single query when the advertised server never answers.
-            // Index 0 belongs to DHCP.
-            ip_addr_t fb;
-            IP4_ADDR(&fb, 8, 8, 8, 8);
-            cyw43_arch_lwip_begin();
-            dns_setserver(1, &fb);
-            cyw43_arch_lwip_end();
-        }
-        return Value::make_i64(rc);
+        return Value::make_i64(wifi_join(args[0].to_string().c_str(),
+                                         args[1].to_string().c_str(), timeout));
     });
     // The same two lines every networked program would otherwise carry:
     // ssid and password from /wifi.txt. Source is the scarce resource
     // on this board, so the boilerplate lives here instead.
-    vm.register_native("WIFI.AUTO", 0, 0, [&vm](const std::vector<Value>&) -> Value {
+    vm.register_native("WIFI.AUTO", 0, 0, [](const std::vector<Value>&) -> Value {
         FILE* f = fopen("/wifi.txt", "r");
         if (!f) return Value::make_i64(-2);
         char ssid[64] = {0}, pass[80] = {0};
@@ -302,18 +337,7 @@ void register_pico_wifi(VM& vm) {
             for (int i = (int)strlen(p) - 1; i >= 0 && (p[i] == '\n' || p[i] == '\r' || p[i] == ' '); i--)
                 p[i] = 0;
         if (!ssid[0]) return Value::make_i64(-2);
-        wifi_sta_up();
-        int rc = cyw43_arch_wifi_connect_timeout_ms(ssid, pass,
-                                                    CYW43_AUTH_WPA2_MIXED_PSK, 30000);
-        if (rc == 0) {
-            cyw43_wifi_pm(&cyw43_state, CYW43_PERFORMANCE_PM);
-            ip_addr_t fb;
-            IP4_ADDR(&fb, 8, 8, 8, 8);
-            cyw43_arch_lwip_begin();
-            dns_setserver(1, &fb);
-            cyw43_arch_lwip_end();
-        }
-        return Value::make_i64(rc);
+        return Value::make_i64(wifi_join(ssid, pass, 30000));
     });
     vm.register_native("WIFI.STATUS", 0, 0, [](const std::vector<Value>&) -> Value {
         wifi_sta_up();
@@ -335,6 +359,9 @@ void register_pico_wifi(VM& vm) {
         dns_setserver(0, &a);
         cyw43_arch_lwip_end();
         return Value::make_i64(0);
+    });
+    vm.register_native("HTTP.STATUS", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(g_http_status);
     });
     vm.register_native("WIFI.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
         char buf[64];

@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <string>
 #include <ctype.h>
 #include <errno.h>
 #include <unistd.h>
@@ -193,6 +194,33 @@ static int dos_command(char* line) {
         printf("%u bytes\r\n", (unsigned)n);
         return 1;
     }
+
+    // Fetch a program off the web straight into the flash store. With a
+    // radio on board this beats a serial transfer protocol: the name
+    // defaults to the last part of the URL.
+#ifdef JDB_HAS_CYW43
+    if (strcmp(cmd, "INSTALL") == 0) {
+        char url[256];
+        snprintf(url, sizeof url, "%s", dos_arg(a));
+        if (!url[0]) { printf("INSTALL url [name]\r\n"); return 1; }
+        char* sp = strchr(url, ' ');
+        const char* name = nullptr;
+        if (sp) { *sp = 0; name = sp + 1; while (*name == ' ') name++; }
+        if (!name || !*name) {
+            const char* slash = strrchr(url, '/');
+            name = (slash && slash[1]) ? slash + 1 : "download.jdb";
+        }
+        std::string body;
+        extern bool pico_http_fetch(const char* url, std::string& out);
+        if (!pico_http_fetch(url, body)) { printf("fetch failed\r\n"); return 1; }
+        FILE* f = fopen(name, "w");
+        if (!f) { printf("cannot write %s\r\n", name); return 1; }
+        size_t n = fwrite(body.data(), 1, body.size(), f);
+        if (fclose(f) != 0 || n != body.size()) { printf("write failed\r\n"); return 1; }
+        printf("%s, %u bytes\r\n", name, (unsigned)n);
+        return 1;
+    }
+#endif
 
     if (strcmp(cmd, "CD") == 0) {
         if (*a && chdir(dos_arg(a)) != 0) { printf("no such directory\r\n"); return 1; }
