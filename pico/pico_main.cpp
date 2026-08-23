@@ -97,6 +97,30 @@ static int copy_file(const char* src, const char* dst) {
     return rc;
 }
 
+
+// Autorun: a program name in the flash store, started at power-on so
+// the board comes up as whatever its owner built. The name lives in a
+// plain file, so DEL turns it off like anything else.
+
+#define AUTORUN_CFG "/.autorun"
+
+static int autorun_get(char* out, size_t cap) {
+    FILE* f = fopen(AUTORUN_CFG, "r");
+    if (!f) return 0;
+    if (!fgets(out, (int)cap, f)) { fclose(f); return 0; }
+    fclose(f);
+    size_t n = strlen(out);
+    while (n && (out[n-1] == '\n' || out[n-1] == '\r' || out[n-1] == ' ')) out[--n] = 0;
+    return out[0] ? 1 : 0;
+}
+
+static int autorun_set(const char* name) {
+    FILE* f = fopen(AUTORUN_CFG, "w");
+    if (!f) return -1;
+    fprintf(f, "%s\n", name);
+    return fclose(f) == 0 ? 0 : -1;
+}
+
 static int dos_command(char* line) {
     char cmd[8];
     int ci = 0;
@@ -108,6 +132,24 @@ static int dos_command(char* line) {
     snprintf(rest, sizeof rest, "%s", p);
     char* a = rest;
     while (*a == ' ') a++;
+    if (strcmp(cmd, "AUTORUN") == 0) {
+        char name[128];
+        const char* arg = dos_arg(a);
+        if (!*arg) {
+            if (autorun_get(name, sizeof name)) printf("autorun: %s\r\n", name);
+            else printf("autorun: off\r\n");
+        } else if (strcasecmp(arg, "OFF") == 0) {
+            remove(AUTORUN_CFG);
+            printf("autorun off\r\n");
+        } else {
+            FILE* probe = fopen(arg, "r");
+            if (!probe) { printf("cannot open %s\r\n", arg); return 1; }
+            fclose(probe);
+            if (autorun_set(arg) != 0) printf("cannot save autorun\r\n");
+            else printf("autorun: %s\r\n", arg);
+        }
+        return 1;
+    }
 
     if (strcmp(cmd, "CD") == 0) {
         if (*a && chdir(dos_arg(a)) != 0) { printf("no such directory\r\n"); return 1; }
@@ -316,9 +358,37 @@ int main() {
     // its prompt before it blocks, CLS clears when it runs.
     jdb_embed_output_stdout(vm);
 
-    static char line[1024];
     static char g_current[128];
     g_current[0] = 0;
+
+    // Power-on program, with a window to get out of it: without one a
+    // looping autorun program would own the board for good.
+    char ar_name[128];
+    if (autorun_get(ar_name, sizeof ar_name)) {
+        printf("autorun %s - ESC to stop\r\n", ar_name);
+        fflush(NULL);
+        int cancelled = 0;
+        for (int i = 0; i < 20 && !cancelled; i++) {
+            int c = getchar_timeout_us(100000);
+            if (c == 0x1B || c == 3) cancelled = 1;
+        }
+        if (cancelled) {
+            printf("cancelled\r\n");
+        } else {
+            snprintf(g_current, sizeof g_current, "%s", ar_name);
+            char* out = jdb_embed_load(vm, ar_name);
+            if (out) {
+                printf("%s", out);
+                jdb_embed_free(out);
+            } else {
+                const char* err = jdb_embed_last_error(vm);
+                printf("ERROR: %s\r\n", err ? err : "unknown");
+            }
+        }
+        fflush(NULL);
+    }
+
+    static char line[1024];
     for (;;) {
         printf("> ");
         read_line(line, sizeof line);

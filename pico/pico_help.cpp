@@ -73,6 +73,8 @@ static const char* HELP_FILES =
 "TYPE f  DEL f  COPY a b  REN a b\n"
 "MD d  RD d     unquoted args ok\n"
 "LOAD \"prog\"  RUN [\"prog\"]  EDIT\n"
+"AUTORUN name   run it at power-on\n"
+"AUTORUN        show;  AUTORUN OFF\n"
 "KILL \"f\"   MKDIR \"d\"   RMDIR \"d\"\n"
 "s$ = TXTREADER$(\"f\")\n"
 "TXTWRITER \"f\", s$ [, TRUE append]\n"
