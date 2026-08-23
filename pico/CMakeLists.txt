@@ -32,6 +32,7 @@ set(JDB_SOURCES
     pico_stubs.cpp
     pico_builtins.cpp
     pico_events.cpp
+    pico_psram.cpp
     pico_hw.cpp
     pico_help.cpp
     pico_syntax.cpp

@@ -206,8 +206,11 @@ static void vm_heap_dispose_hook(HeapObject* o) {
 VM::VM() {
 #ifdef PICO
     // A board with half a megabyte of RAM starts small; the stack still
-    // doubles on demand like everywhere else.
-    stack.resize(4096);
+    // doubles on demand like everywhere else. Starting small is what
+    // makes that doubling possible at all: from 4096 slots the next step
+    // wanted more memory than the board has, so the stack could only
+    // ever be its opening size.
+    stack.resize(1024);
     frames.reserve(64);
 #else
     stack.resize(65536); // pre-allocate stack - avoids resize checks on hot paths
