@@ -1,33 +1,54 @@
-#ifdef GFX
+// The sprite engine. Nearly all of it - motion, animation timing,
+// collision, z-order, gravity - is arithmetic on the Sprite struct and
+// runs anywhere. Six things need a platform underneath: reading an
+// image, allocating one, uploading changed pixels, drawing, saving, and
+// asking the time. Those sit behind the backend hooks below, with SDL on
+// a desktop and the panel's own framebuffer on the board.
+#if defined(GFX) || defined(PICO)
 #include "vm.h"
-#include "graphics_internal.h"
 #include "sprites.h"
 #include "errors.h"
+#ifdef GFX
+#include "graphics_internal.h"
 #include <SDL3/SDL.h>
 #include <SDL3_image/SDL_image.h>
+#endif
 #include <algorithm>
 #include <cmath>
 #include <map>
 #include <string>
 #include <vector>
+#include <cstdint>
 
-// Sprite + animation structs live in graphics_internal.h so the
-// TILEMAP / TILED collision builtins in graphics.cpp can resolve a
-// sprite handle the same way SPRITE.* builtins do.
 std::map<int, Sprite> g_sprites;
 int g_next_sprite_id = 1;
-static Uint64 g_last_update_tick = 0;
+static uint64_t g_last_update_tick = 0;
 
-// AI-created sprites carry a CPU-side RGBA buffer in addition to the
-// GPU texture. SETPIXEL / SETBUFFER mutate the buffer and SDL_UpdateTexture
-// uploads. SAVE reads from the buffer (no render-target round-trip).
+// Created sprites carry a CPU-side RGBA buffer. SETPIXEL / SETBUFFER
+// mutate it and the backend uploads; SAVE reads from it, so nothing has
+// to be read back off a screen.
 struct SpritePixels {
     int width;
     int height;
-    std::vector<Uint8> rgba;   // width * height * 4, RGBA byte order
+    std::vector<uint8_t> rgba;   // width * height * 4, RGBA byte order
 };
 
 static std::map<int, SpritePixels> g_sprite_pixels;
+
+// ── What a platform has to provide ───────────────────────────────────
+
+static int      backend_image_create(int w, int h);
+static void     backend_image_upload(int image_id, const SpritePixels& px);
+static void     backend_draw(const Sprite& sp);
+static uint64_t backend_ticks_ms();
+// Loading and saving go through image files, which not every platform
+// has a decoder for; these report whether they did anything.
+static bool     backend_image_load(const std::string& path, int* image_id,
+                                   float* w, float* h);
+static bool     backend_image_save(const SpritePixels& px, const std::string& path);
+// A board has no window to open; the desktop insists on one.
+static void     backend_require_screen(const char* fn);
+static std::string backend_asset_path(const std::string& given);
 
 Sprite& get_sprite(const char* fn, int id) {
     auto it = g_sprites.find(id);
@@ -36,6 +57,8 @@ Sprite& get_sprite(const char* fn, int id) {
             std::string(fn) + ": invalid sprite id " + std::to_string(id));
     return it->second;
 }
+
+#ifdef GFX
 
 // Texture handle for a sprite id, for GUI.IMAGE (ImGui::Image). nullptr if the
 // id or its texture is unknown; fills the pixel size when out_w/out_h given.
@@ -80,25 +103,150 @@ static void draw_one_sprite(const Sprite& sp) {
     SDL_RenderTextureRotated(g_renderer, tex, src_ptr, &dst, sp.angle, &center, flip);
 }
 
+static int backend_image_create(int w, int h) {
+    SDL_Texture* tex = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_RGBA32,
+                                         SDL_TEXTUREACCESS_STREAMING, w, h);
+    if (!tex)
+        throw jdError(ErrCode::RUNTIME_ERROR,
+            std::string("SPRITE.CREATE: ") + SDL_GetError());
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    int id = g_next_image_id++;
+    g_images[id] = tex;
+    return id;
+}
+
+static void backend_image_upload(int image_id, const SpritePixels& px) {
+    auto it = g_images.find(image_id);
+    if (it == g_images.end()) return;
+    SDL_UpdateTexture(it->second, nullptr, px.rgba.data(), px.width * 4);
+}
+
+static void backend_draw(const Sprite& sp) { draw_one_sprite(sp); }
+
+static uint64_t backend_ticks_ms() { return (uint64_t)SDL_GetTicks(); }
+
+static bool backend_image_load(const std::string& path, int* image_id,
+                               float* w, float* h) {
+    SDL_Surface* surface = IMG_Load(path.c_str());
+    if (!surface)
+        throw jdError(ErrCode::RUNTIME_ERROR,
+            std::string("SPRITE.LOAD: ") + SDL_GetError());
+    *w = (float)surface->w;
+    *h = (float)surface->h;
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(g_renderer, surface);
+    SDL_DestroySurface(surface);
+    if (!tex)
+        throw jdError(ErrCode::RUNTIME_ERROR,
+            std::string("SPRITE.LOAD: ") + SDL_GetError());
+    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
+    *image_id = g_next_image_id++;
+    g_images[*image_id] = tex;
+    return true;
+}
+
+static bool backend_image_save(const SpritePixels& px, const std::string& path) {
+    SDL_Surface* surf = SDL_CreateSurfaceFrom(px.width, px.height,
+                                              SDL_PIXELFORMAT_RGBA32,
+                                              (void*)px.rgba.data(),
+                                              px.width * 4);
+    if (!surf)
+        throw jdError(ErrCode::RUNTIME_ERROR,
+            std::string("SPRITE.SAVE: ") + SDL_GetError());
+    bool ok = IMG_SavePNG(surf, path.c_str());
+    SDL_DestroySurface(surf);
+    if (!ok)
+        throw jdError(ErrCode::RUNTIME_ERROR,
+            std::string("SPRITE.SAVE: ") + SDL_GetError());
+    return true;
+}
+
+static void backend_require_screen(const char* fn) { ensure_screen(fn); }
+
+static std::string backend_asset_path(const std::string& given) {
+    return resolve_asset_path(given);
+}
+
+#else   // PICO: the panel's own framebuffer, no window and no decoder
+
+// An image is just its pixels here - there is nothing to upload them to.
+static std::map<int, SpritePixels> g_pico_images;
+static int g_pico_next_image = 1;
+
+extern "C" void picocalc_gfx_blit_rgba(int dst_x, int dst_y,
+                                       const uint8_t* rgba, int src_w,
+                                       int sx, int sy, int w, int h,
+                                       int flip_h, int flip_v, int alpha);
+extern "C" uint32_t jdb_pico_millis(void);
+
+static int backend_image_create(int w, int h) {
+    int id = g_pico_next_image++;
+    SpritePixels px;
+    px.width = w;
+    px.height = h;
+    px.rgba.assign((size_t)w * h * 4, 0);
+    g_pico_images[id] = std::move(px);
+    return id;
+}
+
+static void backend_image_upload(int image_id, const SpritePixels& px) {
+    g_pico_images[image_id] = px;
+}
+
+static void backend_draw(const Sprite& sp) {
+    auto it = g_pico_images.find(sp.texture_id);
+    if (it == g_pico_images.end()) return;
+    const SpritePixels& px = it->second;
+    int sx = 0, sy = 0;
+    int w = (int)sp.w, h = (int)sp.h;
+    if (sp.frame_w > 0 && sp.frame_h > 0) {
+        int col = sp.cols > 0 ? sp.current_frame % sp.cols : 0;
+        int row = sp.cols > 0 ? sp.current_frame / sp.cols : 0;
+        sx = col * sp.frame_w;
+        sy = row * sp.frame_h;
+        w = sp.frame_w;
+        h = sp.frame_h;
+    }
+    // Rotation and fractional scaling are what a GPU is for; the panel
+    // gets position, frame, flip and alpha.
+    picocalc_gfx_blit_rgba((int)sp.x, (int)sp.y, px.rgba.data(), px.width,
+                           sx, sy, w, h, sp.flip_h ? 1 : 0, sp.flip_v ? 1 : 0,
+                           sp.alpha);
+}
+
+static uint64_t backend_ticks_ms() { return (uint64_t)jdb_pico_millis(); }
+
+static bool backend_image_load(const std::string&, int*, float*, float*) {
+    throw jdError(ErrCode::RUNTIME_ERROR,
+        "SPRITE.LOAD: no image decoder on this board - build sprites with "
+        "SPRITE.CREATE and SPRITE.SETPIXEL/SETBUFFER");
+}
+
+static bool backend_image_save(const SpritePixels&, const std::string&) {
+    throw jdError(ErrCode::RUNTIME_ERROR,
+        "SPRITE.SAVE: no image encoder on this board");
+}
+
+static void backend_require_screen(const char*) {}
+
+static std::string backend_asset_path(const std::string& given) { return given; }
+
+// On a desktop graphics.cpp owns these and the CAMERA.* builtins move
+// them; here the sprite engine is the only thing that has a view.
+Camera g_cam;
+int g_screen_w = 320;
+int g_screen_h = 320;
+
+#endif
+
 void register_sprite_builtins(VM& vm) {
     // SPRITE.LOAD file$ - single image sprite
     // SPRITE.LOAD file$, frame_w, frame_h - spritesheet with frame size
     vm.register_native("SPRITE.LOAD", 1, 3, [](const std::vector<Value>& args) -> Value {
-        ensure_screen("SPRITE.LOAD");
-        std::string path = resolve_asset_path(args[0].as_string()->data);
-        SDL_Surface* surface = IMG_Load(path.c_str());
-        if (!surface)
-            throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("SPRITE.LOAD: ") + SDL_GetError());
-        float tw = (float)surface->w, th = (float)surface->h;
-        SDL_Texture* tex = SDL_CreateTextureFromSurface(g_renderer, surface);
-        SDL_DestroySurface(surface);
-        if (!tex)
-            throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("SPRITE.LOAD: ") + SDL_GetError());
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-        int img_id = g_next_image_id++;
-        g_images[img_id] = tex;
+        backend_require_screen("SPRITE.LOAD");
+        std::string path = backend_asset_path(args[0].as_string()->data);
+        int img_id = 0;
+        float tw = 0, th = 0;
+        backend_image_load(path, &img_id, &tw, &th);
 
         int fw = (args.size() >= 3) ? (int)args[1].to_int() : 0;
         int fh = (args.size() >= 3) ? (int)args[2].to_int() : 0;
@@ -133,28 +281,20 @@ void register_sprite_builtins(VM& vm) {
     // buffer. Returns the new sprite id. Fill via SPRITE.SETPIXEL/SETBUFFER
     // and persist via SPRITE.SAVE.
     vm.register_native("SPRITE.CREATE", 2, 2, [](const std::vector<Value>& args) -> Value {
-        ensure_screen("SPRITE.CREATE");
+        backend_require_screen("SPRITE.CREATE");
         int w = (int)args[0].to_int();
         int h = (int)args[1].to_int();
         if (w <= 0 || h <= 0 || w > 4096 || h > 4096)
             throw jdError(ErrCode::RUNTIME_ERROR,
                 "SPRITE.CREATE: width/height must be 1..4096");
 
-        SDL_Texture* tex = SDL_CreateTexture(g_renderer, SDL_PIXELFORMAT_RGBA32,
-                                             SDL_TEXTUREACCESS_STREAMING, w, h);
-        if (!tex)
-            throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("SPRITE.CREATE: ") + SDL_GetError());
-        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-
-        int tid = g_next_image_id++;
-        g_images[tid] = tex;
+        int tid = backend_image_create(w, h);
 
         SpritePixels px;
         px.width = w;
         px.height = h;
         px.rgba.assign((size_t)w * h * 4, 0);   // transparent black
-        SDL_UpdateTexture(tex, nullptr, px.rgba.data(), w * 4);
+        backend_image_upload(tid, px);
 
         int sid = g_next_sprite_id++;
         Sprite sp{};
@@ -200,14 +340,13 @@ void register_sprite_builtins(VM& vm) {
                 std::to_string(y) + ") out of bounds for " +
                 std::to_string(px.width) + "x" + std::to_string(px.height));
         size_t i = ((size_t)y * px.width + x) * 4;
-        px.rgba[i + 0] = (Uint8)args[3].to_int();
-        px.rgba[i + 1] = (Uint8)args[4].to_int();
-        px.rgba[i + 2] = (Uint8)args[5].to_int();
-        px.rgba[i + 3] = (Uint8)args[6].to_int();
+        px.rgba[i + 0] = (uint8_t)args[3].to_int();
+        px.rgba[i + 1] = (uint8_t)args[4].to_int();
+        px.rgba[i + 2] = (uint8_t)args[5].to_int();
+        px.rgba[i + 3] = (uint8_t)args[6].to_int();
 
         Sprite& sp = get_sprite("SPRITE.SETPIXEL", sid);
-        SDL_Texture* tex = g_images[sp.texture_id];
-        SDL_UpdateTexture(tex, nullptr, px.rgba.data(), px.width * 4);
+        backend_image_upload(sp.texture_id, px);
         return Value::make_none();
     });
 
@@ -235,12 +374,11 @@ void register_sprite_builtins(VM& vm) {
             int v = (int)elems[i].to_int();
             if (v < 0) v = 0;
             if (v > 255) v = 255;
-            px.rgba[i] = (Uint8)v;
+            px.rgba[i] = (uint8_t)v;
         }
 
         Sprite& sp = get_sprite("SPRITE.SETBUFFER", sid);
-        SDL_Texture* tex = g_images[sp.texture_id];
-        SDL_UpdateTexture(tex, nullptr, px.rgba.data(), px.width * 4);
+        backend_image_upload(sp.texture_id, px);
         return Value::make_none();
     });
 
@@ -255,20 +393,8 @@ void register_sprite_builtins(VM& vm) {
                 "SPRITE.SAVE: sprite " + std::to_string(sid) +
                 " was not created via SPRITE.CREATE");
         SpritePixels& px = it->second;
-        std::string path = resolve_asset_path(args[1].as_string()->data);
-
-        SDL_Surface* surf = SDL_CreateSurfaceFrom(px.width, px.height,
-                                                  SDL_PIXELFORMAT_RGBA32,
-                                                  px.rgba.data(),
-                                                  px.width * 4);
-        if (!surf)
-            throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("SPRITE.SAVE: ") + SDL_GetError());
-        bool ok = IMG_SavePNG(surf, path.c_str());
-        SDL_DestroySurface(surf);
-        if (!ok)
-            throw jdError(ErrCode::RUNTIME_ERROR,
-                std::string("SPRITE.SAVE: ") + SDL_GetError());
+        std::string path = backend_asset_path(args[1].as_string()->data);
+        backend_image_save(px, path);
         return Value::make_none();
     });
 
@@ -287,14 +413,14 @@ void register_sprite_builtins(VM& vm) {
     });
 
     vm.register_native("SPRITE.DRAW", 1, 1, [](const std::vector<Value>& args) -> Value {
-        ensure_screen("SPRITE.DRAW");
+        backend_require_screen("SPRITE.DRAW");
         Sprite& sp = get_sprite("SPRITE.DRAW", (int)args[0].to_int());
-        if (sp.visible) draw_one_sprite(sp);
+        if (sp.visible) backend_draw(sp);
         return Value::make_none();
     });
 
     vm.register_native("SPRITE.DRAW_ALL", 0, 2, [](const std::vector<Value>& args) -> Value {
-        ensure_screen("SPRITE.DRAW_ALL");
+        backend_require_screen("SPRITE.DRAW_ALL");
         // Use camera offset (auto from g_cam, or manual override)
         float cam_x = g_cam.x + g_cam.shake_ox;
         float cam_y = g_cam.y + g_cam.shake_oy;
@@ -313,7 +439,7 @@ void register_sprite_builtins(VM& vm) {
             Sprite tmp = *sp;
             tmp.x -= cam_x;
             tmp.y -= cam_y;
-            draw_one_sprite(tmp);
+            backend_draw(tmp);
         }
         return Value::make_none();
     });
@@ -456,7 +582,7 @@ void register_sprite_builtins(VM& vm) {
     // SPRITE.UPDATE - advance all animations by elapsed time
     vm.register_native("SPRITE.UPDATE", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        Uint64 now = SDL_GetTicks();
+        uint64_t now = backend_ticks_ms();
         float dt;
         if (g_last_update_tick == 0) {
             dt = 1.0f / 60.0f; // assume 60fps on first call
@@ -531,7 +657,9 @@ void register_sprite_builtins(VM& vm) {
             if (g_cam.shake_timer <= 0) { g_cam.shake_ox = 0; g_cam.shake_oy = 0; }
         }
 
-        // Particle update
+#ifdef GFX
+        // Particle update - the emitters live in graphics.cpp, which the
+        // board does not build.
         for (auto it = g_particles.begin(); it != g_particles.end(); ) {
             it->life -= dt;
             if (it->life <= 0) { it = g_particles.erase(it); continue; }
@@ -540,6 +668,7 @@ void register_sprite_builtins(VM& vm) {
             it->y += it->vy * dt;
             ++it;
         }
+#endif
 
         return Value::make_none();
     });

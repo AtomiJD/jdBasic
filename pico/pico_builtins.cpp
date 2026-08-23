@@ -16,6 +16,7 @@ void register_pico_keyget(VM& vm);
 void register_pico_hw(VM& vm);
 void register_pico_mem(VM& vm);
 void register_pico_psram(VM& vm);
+void register_sprite_builtins(VM& vm);
 void register_pico_events(VM& vm);
 #ifdef JDB_HAS_CYW43
 void register_pico_wifi(VM& vm);
@@ -69,6 +70,7 @@ void register_pico_builtins(VM& vm) {
     register_pico_tap(vm);
     register_pico_taparm(vm);
     register_pico_gfx(vm);
+    register_sprite_builtins(vm);
     register_pico_sound(vm);
     register_pico_sdtest(vm);
     register_pico_sdbb(vm);
@@ -263,6 +265,16 @@ void register_pico_gfx(VM& vm) {
             (int)args[0].to_double(), (int)args[1].to_double(),
             (int)args[2].to_double(), (int)args[3].to_double()));
     });
+    // The desktop's way in, so a program that opens a screen and draws
+    // sprites reads the same on both. Here it buffers the panel, which
+    // now fits: a whole 320x320 at four bits is 51 KB.
+    vm.register_native("SCREEN", 0, 4, [](const std::vector<Value>& args) -> Value {
+        int w = args.size() >= 1 ? (int)args[0].to_double() : 320;
+        int h = args.size() >= 2 ? (int)args[1].to_double() : 320;
+        if (w > 320) w = 320;
+        if (h > 320) h = 320;
+        return Value::make_i64(picocalc_gfx_buffer(0, 0, w, h));
+    });
     vm.register_native("GFX.BUFFERED", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_bool(picocalc_gfx_buffered() != 0);
     });
@@ -316,3 +328,7 @@ void register_pico_sdbb(VM& vm) {
     });
 }
 #endif // PICOCALC
+
+extern "C" uint32_t jdb_pico_millis(void) {
+    return to_ms_since_boot(get_absolute_time());
+}

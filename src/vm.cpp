@@ -203,6 +203,11 @@ static void vm_heap_dispose_hook(HeapObject* o) {
     }
 }
 
+#ifdef PICOCALC
+extern "C" int  picocalc_gfx_buffered(void);
+extern "C" void picocalc_gfx_clear(int index);
+#endif
+
 VM::VM() {
 #ifdef PICO
     // A board with half a megabyte of RAM starts small; the stack still
@@ -6079,6 +6084,14 @@ void VM::register_builtins() {
 #ifdef GFX
         if (gfx_is_active()) {
             gfx_clear(r, g, b);
+            return Value::make_none();
+        }
+#endif
+#ifdef PICOCALC
+        // Same rule on the board: with a drawing buffer open, CLS means
+        // the picture, not the text console.
+        if (picocalc_gfx_buffered()) {
+            picocalc_gfx_clear(0);
             return Value::make_none();
         }
 #endif

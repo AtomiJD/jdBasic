@@ -240,3 +240,27 @@ void picocalc_gfx_text(int x, int y, const char* s, int scale) {
         x += 8 * scale;
     }
 }
+
+// A sprite frame from an RGBA source onto the panel. Colours snap to the
+// sixteen-entry palette; a pixel is skipped when it is transparent
+// enough to be meant as background, so sprites keep their shape without
+// a mask. Alpha below the same line hides the whole sprite rather than
+// blending, which this depth cannot do honestly.
+void picocalc_gfx_blit_rgba(int dst_x, int dst_y, const uint8_t* rgba,
+                            int src_w, int sx, int sy, int w, int h,
+                            int flip_h, int flip_v, int alpha) {
+    if (!rgba || w <= 0 || h <= 0 || alpha < 128) return;
+    int saved = g_index;
+    for (int row = 0; row < h; row++) {
+        int src_row = flip_v ? (h - 1 - row) : row;
+        const uint8_t* line = rgba + ((size_t)(sy + src_row) * src_w + sx) * 4;
+        for (int col = 0; col < w; col++) {
+            int src_col = flip_h ? (w - 1 - col) : col;
+            const uint8_t* p = line + (size_t)src_col * 4;
+            if (p[3] < 128) continue;
+            g_index = nearest_index(p[0], p[1], p[2]);
+            picocalc_gfx_pset(dst_x + col, dst_y + row);
+        }
+    }
+    g_index = saved;
+}

@@ -1,0 +1,34 @@
+' The same program on a desktop and on the PicoCalc. The sprite is built
+' in code, so there is no image file and no decoder in the way.
+DIM s
+DIM i
+
+FUNC MAKEBALL(size, r, g, b)
+    DIM id
+    DIM px
+    DIM py
+    DIM mid
+    id = SPRITE.CREATE(size, size)
+    mid = size / 2
+    FOR py = 0 TO size - 1
+        FOR px = 0 TO size - 1
+            IF (px - mid) * (px - mid) + (py - mid) * (py - mid) < mid * mid THEN
+                SPRITE.SETPIXEL(id, px, py, r, g, b, 255)
+            ENDIF
+        NEXT px
+    NEXT py
+    RETURN id
+ENDFUNC
+
+SCREEN 320, 320
+s = MAKEBALL(24, 248, 144, 48)
+
+FOR i = 0 TO 28
+    CLS
+    SPRITE.POS(s, i * 10, 140)
+    SPRITE.DRAW(s)
+    SCREENFLIP
+    SLEEP 30
+NEXT i
+
+PRINT "28 frames drawn"

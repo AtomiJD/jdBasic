@@ -45,6 +45,7 @@ set(JDB_SOURCES
     ../src/vm.cpp
     ../src/jdb_embed_api.cpp
     ../src/channels.cpp
+    ../src/sprites.cpp
     ../src/file_streams.cpp
 )
 
