@@ -1,0 +1,382 @@
+' jdPlot - a function plotter for the PicoCalc panel and the desktop window.
+'
+' RUN it once. The verbs stay in the VM, the prompt comes back, and every
+' array you build from then on can be drawn:
+'
+'   x = IOTA(64, 0) / 8
+'   PLOT SIN(x)
+'   PTITLE$ = "two waves"
+'   PYLAB$ = "amp"
+'   PLOTADD COS(x)
+'   PLOTSTYLE 2, "dot", 4
+'   PLOTR
+'
+' The settings are plain globals, so the prompt changes a chart by
+' assigning one and calling PLOTR - there is no setter to remember.
+'
+' A literal array wants the call in parentheses - PLOT([3, 7, 4]) - since
+' a bare verb followed by a bracket reads as an index.
+
+' -- settings --------------------------------------------------
+PTITLE$ = ""
+PXLAB$ = ""
+PYLAB$ = ""
+PLOGX = 0
+PLOGY = 0
+PGRID = 1
+PLEG = 1
+PBG = 0
+PAUTO = 1
+PXMIN = 0
+PXMAX = 0
+PYMIN = 0
+PYMAX = 0
+
+' -- the stacked series ----------------------------------------
+PSX = []
+PSY = []
+PSC = []
+PSS = []
+PSN = []
+PNS = 0
+
+' -- plot box and data window, refilled by every redraw ---------
+PX0 = 0
+PY0 = 0
+PX1 = 0
+PY1 = 0
+PXLO = 0
+PXHI = 0
+PYLO = 0
+PYHI = 0
+
+' Eight pen colours, chosen to land on the panel's sixteen-entry palette.
+PCR = [48, 80, 248, 248, 224, 248, 248, 96]
+PCG = [252, 216, 232, 144, 96, 80, 248, 128]
+PCB = [48, 248, 64, 48, 224, 80, 248, 248]
+
+' The board draws straight into display RAM - a full-screen buffer costs
+' more than the heap has. The desktop needs a window opened first.
+PBOARD = 1
+PWINOPEN = 0
+PWSCALE = 2
+PFREE = 0
+TRY
+    PFREE = SYS.FREE()
+CATCH
+    PBOARD = 0
+ENDTRY
+
+' -- the verbs -------------------------------------------------
+
+SUB PLOT(ys)
+    P_CLEAR
+    PLOTADD(ys)
+ENDSUB
+
+SUB PLOTXY(xs, ys)
+    P_CLEAR
+    PLOTADDXY(xs, ys)
+ENDSUB
+
+SUB PLOTADD(ys)
+    PLOTADDXY(IOTA(LEN(ys), 0), ys)
+ENDSUB
+
+SUB PLOTADDXY(xs, ys)
+    PSX = APPEND(PSX, [xs])
+    PSY = APPEND(PSY, [ys])
+    PSC = APPEND(PSC, PNS MOD 8)
+    PSS = APPEND(PSS, "line")
+    PSN = APPEND(PSN, "")
+    PNS = PNS + 1
+    PLOTR
+ENDSUB
+
+SUB PLOTSTYLE(idx, style$, col)
+    IF idx < 1 ORELSE idx > PNS THEN RETURN
+    PSS[idx - 1] = style$
+    IF col >= 0 THEN PSC[idx - 1] = col MOD 8
+    PLOTR
+ENDSUB
+
+SUB PLOTNAME(idx, name$)
+    IF idx < 1 ORELSE idx > PNS THEN RETURN
+    PSN[idx - 1] = name$
+    PLOTR
+ENDSUB
+
+SUB PLOTR()
+    IF PNS = 0 THEN
+        PRINT "nothing to plot - PLOT ys first"
+        RETURN
+    ENDIF
+    P_OPEN
+    P_RANGE
+    P_FRAME
+    P_GRID
+    P_SERIES
+    P_LEGEND
+    SCREENFLIP
+ENDSUB
+
+SUB PLOTHELP()
+    PRINT "PLOT ys          PLOTXY xs, ys     PLOTADD ys"
+    PRINT "PLOTADDXY xs, ys PLOTR             PLOTHELP"
+    PRINT "PLOTSTYLE n, style$, col   line dot bar step, col 0-7"
+    PRINT "PLOTNAME n, name$          a name switches the legend on"
+    PRINT "PTITLE$ PXLAB$ PYLAB$ PGRID PLEG PBG PLOGX PLOGY"
+    PRINT "PAUTO = 0 plus PXMIN PXMAX PYMIN PYMAX pins the axes"
+ENDSUB
+
+' -- internals -------------------------------------------------
+
+SUB P_CLEAR()
+    PSX = []
+    PSY = []
+    PSC = []
+    PSS = []
+    PSN = []
+    PNS = 0
+ENDSUB
+
+SUB P_OPEN()
+    IF PBOARD = 1 THEN RETURN
+    IF PWINOPEN = 1 THEN RETURN
+    SCREEN 320, 320, "jdPlot", PWSCALE
+    PWINOPEN = 1
+ENDSUB
+
+' A log axis works on the decimal exponent, so range finding and pixel
+' mapping stay one transform away from the linear case.
+FUNC P_TRANS(a, flag)
+    IF flag = 0 THEN RETURN a
+    RETURN LOG10(IIF(a <= 0, 0.000000001, a))
+ENDFUNC
+
+SUB P_RANGE()
+    DIM i, tx, ty, pad, lw
+    PX1 = 302
+    PY0 = 6
+    PY1 = 300
+    IF PTITLE$ <> "" THEN PY0 = 20
+    IF PXLAB$ <> "" THEN PY1 = 286
+
+    IF PAUTO = 0 THEN
+        PXLO = P_TRANS(PXMIN, PLOGX)
+        PXHI = P_TRANS(PXMAX, PLOGX)
+        PYLO = P_TRANS(PYMIN, PLOGY)
+        PYHI = P_TRANS(PYMAX, PLOGY)
+    ELSE
+        FOR i = 0 TO PNS - 1
+            tx = P_TRANS(PSX[i], PLOGX)
+            ty = P_TRANS(PSY[i], PLOGY)
+            IF i = 0 THEN
+                PXLO = MIN(tx)
+                PXHI = MAX(tx)
+                PYLO = MIN(ty)
+                PYHI = MAX(ty)
+            ELSE
+                PXLO = MIN([PXLO, MIN(tx)])
+                PXHI = MAX([PXHI, MAX(tx)])
+                PYLO = MIN([PYLO, MIN(ty)])
+                PYHI = MAX([PYHI, MAX(ty)])
+            ENDIF
+        NEXT i
+        pad = (PYHI - PYLO) * 0.06
+        IF pad <= 0 THEN pad = 1
+        PYLO = PYLO - pad
+        PYHI = PYHI + pad
+        ' Bars are read against their baseline, so a bar series drags the
+        ' axis down to zero however far the data sits above it.
+        IF PLOGY = 0 THEN
+            FOR i = 0 TO PNS - 1
+                IF PSS[i] = "bar" ANDALSO PYLO > 0 THEN PYLO = 0
+            NEXT i
+        ENDIF
+    ENDIF
+    IF PXHI - PXLO <= 0 THEN PXHI = PXLO + 1
+    IF PYHI - PYLO <= 0 THEN PYHI = PYLO + 1
+
+    ' The left margin is whatever the widest y tick label needs, plus a
+    ' column for the upright axis caption.
+    lw = LEN(P_TICK$(PYLO, PYHI - PYLO, PLOGY))
+    lw = MAX([lw, LEN(P_TICK$(PYHI, PYHI - PYLO, PLOGY))])
+    lw = MAX([lw, LEN(P_TICK$((PYLO + PYHI) / 2, PYHI - PYLO, PLOGY))])
+    PX0 = 8 + lw * 8
+    IF PYLAB$ <> "" THEN PX0 = PX0 + 10
+    IF PX0 > 96 THEN PX0 = 96
+ENDSUB
+
+SUB P_PEN(c)
+    DRAWCOLOR PCR[c], PCG[c], PCB[c]
+ENDSUB
+
+' shade 0 is frame and lettering, shade 1 the grid behind them.
+SUB P_INK(shade)
+    IF PBG = 1 THEN
+        IF shade = 1 THEN
+            DRAWCOLOR 200, 200, 200
+        ELSE
+            DRAWCOLOR 32, 32, 32
+        ENDIF
+    ELSE
+        IF shade = 1 THEN
+            DRAWCOLOR 64, 64, 64
+        ELSE
+            DRAWCOLOR 192, 192, 192
+        ENDIF
+    ENDIF
+ENDSUB
+
+FUNC P_CENTER(s$, cx)
+    DIM x
+    x = INT(cx - LEN(s$) * 4)
+    IF x < 0 THEN x = 0
+    IF x > 320 - LEN(s$) * 8 THEN x = 320 - LEN(s$) * 8
+    RETURN x
+ENDFUNC
+
+' The span decides the decimals, not the value - otherwise a tick that
+' happens to land on zero asks for four of them while its neighbours
+' need one, and the row no longer lines up.
+FUNC P_TICK$(v, span, flag)
+    DIM w, d
+    IF flag = 1 THEN
+        w = 10 ^ v
+        d = 0
+        IF ABS(w) < 10 THEN d = 1
+        IF ABS(w) < 1 THEN d = 3
+        RETURN FORMAT$("{:." + STR$(d) + "f}", w)
+    ENDIF
+    w = v
+    d = 0
+    IF span < 100 THEN d = 1
+    IF span < 10 THEN d = 2
+    IF span < 1 THEN d = 3
+    IF span < 0.1 THEN d = 4
+    RETURN FORMAT$("{:." + STR$(d) + "f}", w)
+ENDFUNC
+
+SUB P_VTEXT(x, y, s$)
+    DIM i
+    FOR i = 0 TO LEN(s$) - 1
+        TEXT x, y + i * 8, MID$(s$, i, 1)
+    NEXT i
+ENDSUB
+
+SUB P_FRAME()
+    IF PBG = 1 THEN
+        DRAWCOLOR 248, 248, 248
+    ELSE
+        DRAWCOLOR 0, 0, 0
+    ENDIF
+    RECT 0, 0, 320, 320, 1
+    P_INK 0
+    RECT PX0, PY0, PX1 - PX0, PY1 - PY0, 0
+    IF PTITLE$ <> "" THEN TEXT P_CENTER(PTITLE$, 160), 5, PTITLE$
+ENDSUB
+
+SUB P_GRID()
+    DIM i, gx, gy, s$
+    FOR i = 0 TO 4
+        gx = INT(PX0 + (PX1 - PX0) * i / 4)
+        gy = INT(PY1 - (PY1 - PY0) * i / 4)
+        IF PGRID = 1 ANDALSO i > 0 ANDALSO i < 4 THEN
+            P_INK 1
+            LINE gx, PY0 + 1, gx, PY1 - 1
+            LINE PX0 + 1, gy, PX1 - 1, gy
+        ENDIF
+        P_INK 0
+        LINE gx, PY1, gx, PY1 + 3
+        LINE PX0 - 3, gy, PX0, gy
+        ' Five numbers across 320 pixels of eight-pixel font touch, so the
+        ' x axis labels every second tick. The outer two align to their
+        ' tick instead of straddling it, to stay on the panel.
+        IF i MOD 2 = 0 THEN
+            s$ = P_TICK$(PXLO + (PXHI - PXLO) * i / 4, PXHI - PXLO, PLOGX)
+            IF i = 0 THEN
+                TEXT gx, PY1 + 6, s$
+            ELSEIF i = 4 THEN
+                TEXT gx - LEN(s$) * 8, PY1 + 6, s$
+            ELSE
+                TEXT P_CENTER(s$, gx), PY1 + 6, s$
+            ENDIF
+        ENDIF
+        s$ = P_TICK$(PYLO + (PYHI - PYLO) * i / 4, PYHI - PYLO, PLOGY)
+        TEXT PX0 - 4 - LEN(s$) * 8, gy - 3, s$
+    NEXT i
+    IF PXLAB$ <> "" THEN TEXT P_CENTER(PXLAB$, 160), PY1 + 16, PXLAB$
+    IF PYLAB$ <> "" THEN P_VTEXT(2, INT((PY0 + PY1) / 2 - LEN(PYLAB$) * 4), PYLAB$)
+ENDSUB
+
+SUB P_SERIES()
+    DIM i, k, n, tx, ty, px, py, base, x1, y1, x2, y2, st$, bw, ry, rh
+    base = INT(PY1 - (0 - PYLO) * (PY1 - PY0) / (PYHI - PYLO))
+    IF base > PY1 THEN base = PY1
+    IF base < PY0 THEN base = PY0
+    FOR i = 0 TO PNS - 1
+        tx = P_TRANS(PSX[i], PLOGX)
+        ty = P_TRANS(PSY[i], PLOGY)
+        px = PX0 + (tx - PXLO) * (PX1 - PX0) / (PXHI - PXLO)
+        py = PY1 - (ty - PYLO) * (PY1 - PY0) / (PYHI - PYLO)
+        P_PEN PSC[i]
+        st$ = PSS[i]
+        n = LEN(px)
+        bw = INT((PX1 - PX0) * 0.6 / n)
+        IF bw < 1 THEN bw = 1
+        x1 = 0
+        y1 = 0
+        FOR k = 0 TO n - 1
+            x2 = INT(px[k])
+            y2 = INT(py[k])
+            IF x2 < PX0 THEN x2 = PX0
+            IF x2 > PX1 THEN x2 = PX1
+            IF y2 < PY0 THEN y2 = PY0
+            IF y2 > PY1 THEN y2 = PY1
+            IF st$ = "dot" THEN
+                RECT x2 - 1, y2 - 1, 3, 3, 1
+            ELSEIF st$ = "bar" THEN
+                ry = y2
+                IF y2 > base THEN ry = base
+                rh = ABS(base - y2)
+                IF rh < 1 THEN rh = 1
+                RECT x2 - INT(bw / 2), ry, bw, rh, 1
+            ELSEIF k > 0 THEN
+                IF st$ = "step" THEN
+                    LINE x1, y1, x2, y1
+                    LINE x2, y1, x2, y2
+                ELSE
+                    LINE x1, y1, x2, y2
+                ENDIF
+            ENDIF
+            x1 = x2
+            y1 = y2
+        NEXT k
+    NEXT i
+ENDSUB
+
+' One column for every entry, so the swatches line up however long the
+' individual names are.
+SUB P_LEGEND()
+    DIM i, lx, ly, wide
+    IF PLEG = 0 THEN RETURN
+    wide = 0
+    FOR i = 0 TO PNS - 1
+        IF LEN(PSN[i]) > wide THEN wide = LEN(PSN[i])
+    NEXT i
+    IF wide = 0 THEN RETURN
+    lx = PX1 - 6 - wide * 8 - 15
+    ly = PY0 + 5
+    FOR i = 0 TO PNS - 1
+        IF PSN[i] <> "" THEN
+            P_PEN PSC[i]
+            RECT lx, ly + 3, 11, 3, 1
+            P_INK 0
+            TEXT lx + 15, ly, PSN[i]
+            ly = ly + 10
+        ENDIF
+    NEXT i
+ENDSUB
+
+PRINT "jdPlot ready - PLOTHELP lists the verbs"
