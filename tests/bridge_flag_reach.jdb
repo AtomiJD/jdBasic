@@ -1,0 +1,74 @@
+' Builtins that only exist as register_native reach a -c compiled program
+' through the bridge, and the bridge VM lives in jdbrt.dll. If the DLL was
+' built without the matching flag the call dies at runtime with "Undefined
+' function" while the interpreter is perfectly happy - so this has to run
+' natively to mean anything.
+'
+' Needs an exe and a DLL built with MIDI ONNX PYTHON SQLITE.
+
+OPTION EXPLICIT
+OPTION STRICT
+
+DIM fails AS INTEGER
+fails = 0
+
+' MIDI - a port list is available whether or not any device is plugged in.
+DIM ports AS DOUBLE
+ports = MIDI.PORTS()
+IF ports < 0 THEN
+    PRINT "FAIL: MIDI.PORTS returned "; ports
+    fails = fails + 1
+ENDIF
+
+' PYTHON - the embedded interpreter has to answer across the bridge.
+DIM answer AS DOUBLE
+answer = CDBL(PY.EVAL("6 * 7"))
+IF answer <> 42 THEN
+    PRINT "FAIL: PY.EVAL gave "; answer; ", expected 42"
+    fails = fails + 1
+ENDIF
+
+DIM greeting AS STRING
+greeting = PYTHON$("print('from cpython')")
+IF INSTR(greeting, "from cpython") < 0 THEN
+    PRINT "FAIL: PYTHON$ gave "; greeting
+    fails = fails + 1
+ENDIF
+
+' SQLITE - SQL.CLOSE is a bridged bool, and a bool has to arrive as TRUE
+' rather than as the number one.
+DIM db AS DOUBLE
+db = SQL.OPEN(":memory:")
+DIM shut AS BOOLEAN
+shut = SQL.CLOSE(db)
+IF shut <> TRUE THEN
+    PRINT "FAIL: SQL.CLOSE gave "; shut; ", expected TRUE"
+    fails = fails + 1
+ENDIF
+
+' ONNX - AI.LOAD / AI.RUN are ONNX-backed, and a matmul is small enough to
+' check against the interpreter's own answer. Run from the repo root.
+DIM mid AS DOUBLE
+mid = AI.LOAD("jdb/bench/matmul.onnx")
+IF mid < 0 THEN
+    PRINT "FAIL: AI.LOAD gave "; mid
+    fails = fails + 1
+ELSE
+    DIM lhs = [[1.0, 2.0], [3.0, 4.0]]
+    DIM rhs = [[5.0, 6.0], [7.0, 8.0]]
+    DIM onnx_out = AI.RUN(mid, [lhs, rhs])
+    IF ABS(onnx_out[0][0] - 19.0) > 0.001 THEN
+        PRINT "FAIL: AI.RUN top-left = "; onnx_out[0][0]; ", expected 19"
+        fails = fails + 1
+    ENDIF
+    IF ABS(onnx_out[1][1] - 50.0) > 0.001 THEN
+        PRINT "FAIL: AI.RUN bottom-right = "; onnx_out[1][1]; ", expected 50"
+        fails = fails + 1
+    ENDIF
+ENDIF
+
+IF fails = 0 THEN
+    PRINT "bridge_flag_reach: ALL TESTS PASSED!"
+ELSE
+    PRINT "bridge_flag_reach: "; fails; " failed"
+ENDIF

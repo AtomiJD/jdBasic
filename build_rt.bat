@@ -107,6 +107,13 @@ for %%A in (%*) do (
             echo [+] LLM - llama.cpp
         )
     )
+    if /I "%%A"=="ONNX" (
+        set DEFS=!DEFS! /DONNX
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\onnxruntime\include
+        set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:libs\onnxruntime\lib
+        set EXTRA_LIB=!EXTRA_LIB! onnxruntime.lib
+        echo [+] ONNX Runtime - AI Inference
+    )
     if /I "%%A"=="SOUND" (
         REM Sequencer DSP without an SDL device - the host pulls via SOUND.RENDER.
         set DEFS=!DEFS! /DSOUND_DSP
@@ -120,6 +127,18 @@ for %%A in (%*) do (
         set DEFS=!DEFS! /DMINIAUDIO
         set EXTRA_INC=!EXTRA_INC! /Ilibs\miniaudio
         echo [+] MINIAUDIO - realtime audio device engine
+    )
+    if /I "%%A"=="MIDI" (
+        set DEFS=!DEFS! /DMIDI /D__WINDOWS_MM__
+        set EXTRA_SRC=!EXTRA_SRC! libs\rtmidi\RtMidi.cpp
+        set EXTRA_INC=!EXTRA_INC! /Ilibs\rtmidi
+        set EXTRA_LIB=!EXTRA_LIB! winmm.lib
+        echo [+] MIDI - RtMidi WinMM
+    )
+    if /I "%%A"=="PYTHON" (
+        set DEFS=!DEFS! /DPYTHON
+        set WANT_PYTHON=1
+        echo [+] Python - embedded CPython interpreter
     )
     if /I "%%A"=="SQLITE" (
         set DEFS=!DEFS! /DSQLITE
@@ -161,6 +180,26 @@ if defined WANT_TUI if not defined HAVE_FTXUI (
     echo [+] TUI implies FTXUI - lib auto-enabled
 )
 
+REM PYTHON embeds CPython. Resolve the interpreter home the way build.bat does
+REM - JDB_PYTHON_HOME wins, else the per-user pythoncore package - and wire its
+REM headers plus import lib.
+if defined WANT_PYTHON (
+    if defined JDB_PYTHON_HOME (
+        set "PYHOME=%JDB_PYTHON_HOME%"
+    ) else (
+        set "PYHOME=%LOCALAPPDATA%\python\pythoncore-3.14-64"
+    )
+    if not exist "!PYHOME!\include\Python.h" (
+        echo [!] PYTHON needs CPython dev headers at !PYHOME!\include\Python.h
+        echo     Set JDB_PYTHON_HOME to a Python install with include\ + libs\
+        exit /b 1
+    )
+    set EXTRA_INC=!EXTRA_INC! /I"!PYHOME!\include"
+    set EXTRA_LIBPATH=!EXTRA_LIBPATH! /LIBPATH:"!PYHOME!\libs"
+    set EXTRA_LIB=!EXTRA_LIB! python314.lib
+    echo [+] Python home: !PYHOME!
+)
+
 REM ftxui.lib is /MD; mixing /MT vm_bridge with /MD ftxui hits LNK2038.
 REM Match the CRT whenever FTXUI is in the mix.
 set CRT_FLAG=/MT
@@ -198,7 +237,7 @@ REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\jdb_embed_api.cpp src\numerics.cpp src\screencap.cpp !EXTRA_SRC! ^
+  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\midi.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\jdb_embed_api.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp !EXTRA_SRC! ^
   /Fe:build\jdbrt.dll ^
   /Fo:build\ ^
   /link ^

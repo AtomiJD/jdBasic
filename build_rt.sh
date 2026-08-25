@@ -53,15 +53,18 @@ WANT_SOUND=${SOUND:-0}
 WANT_SQLITE=${SQLITE:-0}
 WANT_FX=${FX:-0}
 WANT_MINIAUDIO=${MINIAUDIO:-0}
+WANT_MIDI=${MIDI:-0}
+WANT_ONNX=${ONNX:-0}
+WANT_PYTHON=${PYTHON:-0}
 
 # Base translation units - mirror build_rt.bat's always-on list. gui.cpp and
 # sound.cpp guard their device code behind #ifdef GFX / SOUND_DSP, so they
 # compile in a headless build too.
 SRC="src/vm_bridge.cpp src/vm.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
-     src/audio_fx.cpp src/audio_io.cpp \
+     src/audio_fx.cpp src/midi.cpp src/audio_io.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-     src/jdb_embed_api.cpp src/numerics.cpp src/screencap.cpp"
+     src/jdb_embed_api.cpp src/numerics.cpp src/screencap.cpp src/pybridge.cpp"
 
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
@@ -154,6 +157,44 @@ if [ "$WANT_LLM" = "1" ]; then
     fi
 fi
 
+# The three below mirror build.sh. A -c compiled program reaches a
+# register_native-only builtin through the bridge, and the bridge VM lives in
+# this .so - without the matching flag here the call dies at runtime with
+# "Undefined function" while the interpreter is perfectly happy.
+if [ "$WANT_MIDI" = "1" ]; then
+    CXXFLAGS="$CXXFLAGS -DMIDI -Ilibs/rtmidi"
+    SRC="$SRC libs/rtmidi/RtMidi.cpp"
+    if [ "$(uname -s)" = "Darwin" ]; then
+        CXXFLAGS="$CXXFLAGS -D__MACOSX_CORE__"
+        LDFLAGS="$LDFLAGS -framework CoreMIDI -framework CoreAudio -framework CoreFoundation"
+    else
+        CXXFLAGS="$CXXFLAGS -D__LINUX_ALSA__"
+        LDFLAGS="$LDFLAGS -lasound -lpthread"
+    fi
+fi
+
+if [ "$WANT_ONNX" = "1" ]; then
+    ORT_DIR="libs/onnxruntime"
+    if [ ! -f "$ORT_DIR/lib/libonnxruntime.so" ]; then
+        echo "ERROR: $ORT_DIR/lib/libonnxruntime.so missing, fetch the prebuilt tarball"; exit 1
+    fi
+    CXXFLAGS="$CXXFLAGS -DONNX -I$ORT_DIR/include"
+    LDFLAGS="$LDFLAGS -L$ORT_DIR/lib -lonnxruntime \
+        -Wl,-rpath,\$ORIGIN -Wl,-rpath,\$ORIGIN/../libs/onnxruntime/lib"
+fi
+
+if [ "$WANT_PYTHON" = "1" ]; then
+    PYCFG="${PYTHON_CONFIG:-python3-config}"
+    if ! command -v "$PYCFG" >/dev/null 2>&1; then
+        echo "ERROR: PYTHON needs $PYCFG on PATH (install the python3 dev package,"
+        echo "       or set PYTHON_CONFIG to the python3-config of your interpreter)"
+        exit 1
+    fi
+    CXXFLAGS="$CXXFLAGS -DPYTHON $($PYCFG --includes)"
+    # --embed gives the libpython link flags on 3.8+; fall back without it.
+    LDFLAGS="$LDFLAGS $($PYCFG --ldflags --embed 2>/dev/null || $PYCFG --ldflags)"
+fi
+
 if [ "$WANT_SQLITE" = "1" ]; then
     if [ ! -f bridges/sqlitebridge/sqlite3.c ]; then
         echo "ERROR: SQLITE needs the amalgamation - download sqlite3.c/sqlite3.h"
@@ -195,6 +236,9 @@ features="embed"
 [ "$WANT_GFX"   = "1" ] && features="$features+GFX"
 [ "$WANT_IMGUI" = "1" ] && features="$features+IMGUI"
 [ "$WANT_SQLITE" = "1" ] && features="$features+SQLITE"
+[ "$WANT_MIDI"   = "1" ] && features="$features+MIDI"
+[ "$WANT_ONNX"   = "1" ] && features="$features+ONNX"
+[ "$WANT_PYTHON" = "1" ] && features="$features+PYTHON"
 echo "== Building libjdbrt.so ($features) - $JOBS jobs, ${#TO_BUILD[@]} of ${#OBJS[@]} stale =="
 
 export CXX CXXFLAGS

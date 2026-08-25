@@ -70,10 +70,35 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
 // prints 1 instead of TRUE and a `= TRUE` comparison against a declared
 // BOOLEAN mismatches. Same single-source-of-truth rule as the array set:
 // the dispatch and the inference paths both read this.
+// Bridged builtins whose every return path is a bool. Without an entry the
+// call takes the f64 fallback, so TRUE arrives as the number 1 - it compares
+// and branches correctly, it just prints and STRICT-types wrong. Only
+// builtins that reach the bridge belong here: anything llvm_codegen compiles
+// to a direct runtime call carries its tag in the reg() table instead.
 const std::unordered_set<std::string> kBridgeBoolReturners = {
     "WAV.WRITE", "WAV.RECSTART",
     "FX.ADD", "FX.SPLIT", "FX.MIX", "FX.SET",
     "MON.START", "MON.RECSTART", "MON.RUNNING",
+    "SQL.CLOSE",
+    "PY.SET",
+    "CHAN.IS_CLOSED", "CHAN.IS_EOF",
+    "FILE.AT_EOF",
+    "THREAD.ISDONE",
+    "OS.FEATURE",
+    "MIDI.SEND",
+    "GFX.KEYSTATE", "GFX.MOUSEBUTTON", "MOUSEB", "JOY.BUTTON",
+    "SPRITE.COLLISION", "SPRITE.ON_GROUND", "SPRITE.PLAYING",
+    "TILED.LOAD", "TILED.COLLIDES", "TILEMAP.COLLIDES",
+    "FORM.DOEVENTS",
+    "GUI.BEGIN", "GUI.BEGIN_MAIN_MENU_BAR", "GUI.BEGIN_MENU",
+    "GUI.BEGIN_MENU_BAR", "GUI.BEGIN_POPUP", "GUI.BEGIN_POPUP_MODAL",
+    "GUI.BEGIN_TABLE", "GUI.BEGIN_TAB_BAR", "GUI.BEGIN_TAB_ITEM",
+    "GUI.BUTTON", "GUI.CHECKBOX", "GUI.COLLAPSING_HEADER", "GUI.COLOR",
+    "GUI.IMAGE", "GUI.ITEM_DEACTIVATED_AFTER_EDIT", "GUI.MENU_ITEM",
+    "GUI.SELECTABLE", "GUI.TABLE_NEXT_COLUMN", "GUI.TABLE_SET_COLUMN_INDEX",
+    "GUI.TREE_NODE",
+    "TUI.BUTTON", "TUI.MENUITEM", "TUI.MODAL_BEGIN", "TUI.QUIT",
+    "TUI.SELECTABLE", "TUI.SUBMENU_BEGIN", "TUI.TAB_BEGIN",
 };
 } // namespace
 
@@ -8192,16 +8217,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
     }
 
-    // The PYTHON / PY.* family drives an embedded CPython interpreter through
-    // the C-API, which a standalone compiled binary has no access to. Run
-    // these in the interpreter (the MCP workshop VM).
-    if (upper == "PYTHON$" || upper.rfind("PY.", 0) == 0) {
-        report_error(m_current_stmt_file, expr.line,
-            upper + " is interpreter-only (the embedded CPython runtime isn't "
-            "linked into compiled programs) - run it in the interpreter");
-        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
-    }
-
     // JSON.STRINGIFY$ supports MAP and ARRAY only. A native UDT instance does
     // not marshal across the VM bridge - it would silently stringify to "".
     // Fail loud at compile time instead (use a MAP, or build the JSON from the
@@ -9334,6 +9349,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "CSVREADER", "CSVWRITER", "CSVHEADER",
         "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
         "SQL.TABLE", "SQL.COLUMNS",
+        // Embedded CPython: the code block and the injected value are
+        // payloads, not element streams. Mirrors jdb_no_vectorize in vm.cpp -
+        // a bridged builtin needs the entry on both sides.
+        "PYTHON$", "PY.EVAL", "PY.SET", "PY.GET", "PY.DIR$", "PY.HELP$",
         // Native Windows forms: creation calls take coordinate scalars, the
         // SET/MENU/TOOLBAR/STATUSBAR calls carry whole-array payloads.
         "FORM.CREATE", "FORM.MDI", "FORM.CHILD", "FORM.BUTTON", "FORM.LABEL",
@@ -10117,6 +10136,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // AWAIT was hitting the f64 fallback and stringifying via
                 // to_double() = 0.0, killing string-returning ASYNC funcs.
                 "AWAIT", "THREAD.GETRESULT",
+                // PY.EVAL / PY.GET hand back whatever Python produced - an
+                // int, a float, a string, a list turned into an array, a dict
+                // turned into a map. VM_HANDLE keeps the tag, where the f64
+                // fallback would flatten every string to 0.
+                "PY.EVAL", "PY.GET",
                 // MAT4.* returns a TENSOR Value; route through VM_HANDLE so
                 // the 16-element flat doesn't get unboxed into a scalar.
                 "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",

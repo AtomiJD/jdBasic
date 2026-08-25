@@ -38,6 +38,8 @@ static std::mutex& bin_mx() { static std::mutex m; return m; }
 // Forward declarations for module registrations
 extern void register_sound_builtins(VM& vm);
 extern void register_audiofx_builtins(VM& vm);
+extern void register_midi_builtins(VM& vm);
+extern void register_python_builtins(VM& vm);
 extern void register_audioio_builtins(VM& vm);
 extern void register_ffi_builtins(VM& vm);
 extern void register_ai_builtins(VM& vm);
@@ -154,9 +156,11 @@ static void setup_all_builtins(VM& vm) {
     register_forms_builtins(vm);
 #endif
     register_sound_builtins(vm);
-    // Both compile to empty stubs without FX / MINIAUDIO, so the calls are
-    // unconditional like register_sound_builtins above.
+    // These compile to empty stubs without FX / MINIAUDIO / MIDI / PYTHON,
+    // so the calls are unconditional like register_sound_builtins above.
     register_audiofx_builtins(vm);
+    register_midi_builtins(vm);
+    register_python_builtins(vm);
     register_audioio_builtins(vm);
     register_ffi_builtins(vm);
     register_ai_builtins(vm);
