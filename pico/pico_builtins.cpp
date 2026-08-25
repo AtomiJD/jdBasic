@@ -312,6 +312,45 @@ void register_pico_mem(VM& vm) {
     // one of these, and a heap holding plenty in scattered pieces still
     // says no - which is what a program hits long before the total runs
     // out. Binary search over malloc, ~21 probes, each one handed back.
+    // Where the memory a loaded program never gives back actually went,
+    // component by component across every function the VM owns. Counts the
+    // storage the containers hold, not their headers - enough to tell which
+    // term dominates, which is the only thing worth knowing before changing
+    // a representation.
+    vm.register_native("SYS.CHUNKS", 0, 0, [&vm](const std::vector<Value>&) -> Value {
+        size_t code = 0, lines = 0, names = 0, consts = 0, caches = 0, protos = 0;
+        size_t fns = 0, slack = 0;
+        for (const auto& f : vm.get_funcs()) {
+            fns++;
+            const Chunk& c = f.chunk;
+            // What a vector holds beyond what it uses: growth doubles, and a
+            // chunk never grows again once it is loaded.
+            slack += c.code.capacity() - c.code.size();
+            slack += (c.line_table.capacity() - c.line_table.size()) * sizeof(Chunk::LineEntry);
+            slack += (c.constants.capacity() - c.constants.size()) * sizeof(Value);
+            slack += (c.var_names.capacity() - c.var_names.size()) * sizeof(std::string);
+            code   += c.code.capacity();
+            lines  += c.line_table.capacity() * sizeof(Chunk::LineEntry);
+            consts += c.constants.capacity() * sizeof(Value);
+            caches += c.call_cache.capacity() * sizeof(uint64_t);
+            caches += c.global_cache.capacity() * sizeof(uint64_t);
+            caches += c.method_cache.capacity() * sizeof(Chunk::MethodCacheEntry);
+            names  += c.var_names.capacity() * sizeof(std::string);
+            for (const auto& n : c.var_names) names += n.capacity() + 1;
+            names  += c.source_file.capacity() + 1;
+            protos += f.name.capacity() + 1;
+            protos += f.param_names.capacity() * sizeof(std::string);
+            for (const auto& p : f.param_names) protos += p.capacity() + 1;
+        }
+        char buf[224];
+        snprintf(buf, sizeof buf,
+                 "funcs=%u code=%u lines=%u names=%u consts=%u caches=%u protos=%u total=%u slack=%u",
+                 (unsigned)fns, (unsigned)code, (unsigned)lines, (unsigned)names,
+                 (unsigned)consts, (unsigned)caches, (unsigned)protos,
+                 (unsigned)(code + lines + names + consts + caches + protos),
+                 (unsigned)slack);
+        return Value::make_string(buf);
+    });
     vm.register_native("SYS.LARGEST", 0, 0, [](const std::vector<Value>&) -> Value {
         size_t lo = 0, hi = 4u * 1024 * 1024;
         while (lo < hi) {

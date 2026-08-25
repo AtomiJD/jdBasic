@@ -137,7 +137,16 @@ struct Chunk {
     std::vector<uint8_t> code;
     std::vector<Value> constants;
     std::vector<std::string> var_names;      // slot -> name mapping
-    std::vector<int> line_info;              // bytecode offset -> source line
+    // Source line per bytecode offset, kept as one entry per line change
+    // rather than one int per byte. A statement is several bytes of code and
+    // one line, so the table collapses to roughly a pair per statement. The
+    // dense form was four times the code by construction, and on the RP2350
+    // it measured 45% of everything a loaded program never gives back.
+    struct LineEntry {
+        uint32_t offset;
+        int32_t  line;
+    };
+    std::vector<LineEntry> line_table;
     std::string source_file;                 // originating source file path (for debugger)
 
     // Per-chunk inline cache for CALL dispatch. Each entry packs a 32-bit
@@ -179,27 +188,71 @@ struct Chunk {
     mutable std::vector<Value>   static_values;
     mutable std::vector<uint8_t> static_inited;
 
+#ifdef PICO
+    // Nothing is appended to a chunk once it is compiled, so the room the
+    // vectors kept while doubling is dead weight for the rest of the run. On
+    // the RP2350 it measured 22% of everything a loaded program keeps, and
+    // there the trade is worth a copy at load time. The inline caches and the
+    // STATIC storage are left alone: those do grow, at runtime.
+    void shrink() {
+        code.shrink_to_fit();
+        line_table.shrink_to_fit();
+        constants.shrink_to_fit();
+        var_names.shrink_to_fit();
+    }
+#else
+    void shrink() {}
+#endif
+
+    // Note that the bytes about to be appended belong to `line`. Only a
+    // change starts a new entry, so a run of bytes from one statement costs
+    // nothing beyond the first.
+    void note_line(int line) {
+        if (line_table.empty() || line_table.back().line != line)
+            line_table.push_back({ static_cast<uint32_t>(code.size()), line });
+    }
+
+    // The source line an offset came from, 0 when there is nothing to say.
+    int line_at(size_t ip) const {
+        if (line_table.empty() || ip >= code.size()) return 0;
+        size_t lo = 0, hi = line_table.size();
+        while (lo + 1 < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            if (line_table[mid].offset <= ip) lo = mid; else hi = mid;
+        }
+        return line_table[lo].line;
+    }
+
+    // The first offset belonging to `line`, or code.size() when that line
+    // emitted no code. Entries are the transitions, so the first match is the
+    // opcode boundary a debugger wants to land on.
+    size_t first_ip_of_line(int line) const {
+        if (line <= 0) return code.size();
+        for (const auto& e : line_table)
+            if (e.line == line) return e.offset;
+        return code.size();
+    }
+
     // Emit helpers
     size_t emit(OpCode op, int line) {
         size_t pos = code.size();
+        note_line(line);
         code.push_back(static_cast<uint8_t>(op));
-        line_info.push_back(line);
         return pos;
     }
 
     size_t emit_u8(uint8_t val, int line) {
         size_t pos = code.size();
+        note_line(line);
         code.push_back(val);
-        line_info.push_back(line);
         return pos;
     }
 
     size_t emit_u16(uint16_t val, int line) {
         size_t pos = code.size();
+        note_line(line);
         code.push_back(val & 0xFF);
         code.push_back((val >> 8) & 0xFF);
-        line_info.push_back(line);
-        line_info.push_back(line);
         return pos;
     }
 

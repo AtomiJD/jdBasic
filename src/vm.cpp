@@ -239,8 +239,8 @@ void VM::push(Value v) {
 
 Value VM::pop() {
     if (sp == 0) throw jdError(ErrCode::STACK_UNDERFLOW, "Stack underflow",
-        (!frames.empty() && frame().ip > 0 && frame().ip <= frame().chunk->line_info.size())
-            ? frame().chunk->line_info[frame().ip - 1] : 0);
+        (!frames.empty() && frame().ip > 0)
+            ? frame().chunk->line_at(frame().ip - 1) : 0);
     return std::move(stack[--sp]);
 }
 
@@ -278,6 +278,9 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     // across nested run_code() calls (EXECUTE/EVAL/REPL).
     for (auto& f : funcs) {
         reject_builtin_collision(f);
+        // Compiled and about to become permanent: give back the room the
+        // vectors kept while they were growing.
+        f.chunk.shrink();
         auto it = func_map.find(f.name);
         if (it != func_map.end()) {
             owned_funcs[it->second] = std::move(f);
@@ -309,6 +312,9 @@ std::pair<size_t, size_t> VM::merge_funcs(std::vector<FuncProto>& new_funcs) {
     size_t added = 0, updated = 0;
     for (auto& f : new_funcs) {
         reject_builtin_collision(f);
+        // Compiled and about to become permanent: give back the room the
+        // vectors kept while they were growing.
+        f.chunk.shrink();
         auto it = func_map.find(f.name);
         if (it != func_map.end()) {
             owned_funcs[it->second] = std::move(f);
@@ -329,6 +335,9 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     bool funcs_changed = false;
     for (auto& f : new_funcs) {
         reject_builtin_collision(f);
+        // Compiled and about to become permanent: give back the room the
+        // vectors kept while they were growing.
+        f.chunk.shrink();
         auto it = func_map.find(f.name);
         if (it != func_map.end()) {
             owned_funcs[it->second] = std::move(f);
@@ -1071,11 +1080,10 @@ void VM::run() {
             // STOP statement: stash state, return; run_code's epilogue
             // moves frames into stopped_* and inject_stopped_locals exposes
             // the pause-point's frame. cf.ip currently points to the NEXT
-            // opcode (the one we're about to fetch), so line_info[cf.ip]
+            // opcode (the one we are about to fetch), so the line at cf.ip
             // is the line that will execute on resume.
             if (stop_requested.exchange(false)) {
-                int stop_line = (cf.ip < cf.chunk->line_info.size())
-                    ? cf.chunk->line_info[cf.ip] : 0;
+                int stop_line = cf.chunk->line_at(cf.ip);
                 emit("STOP (external) at line " + std::to_string(stop_line)
                      + ". Type RESUME or call jdb_resume to continue.\n");
                 is_stopped = true;
@@ -1088,7 +1096,7 @@ void VM::run() {
         OpCode op = static_cast<OpCode>(cf.chunk->code[cf.ip++]);
 
         if (trace_enabled && !frames.empty()) {
-            int tline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+            int tline = frame().chunk->line_at(trace_ip);
             if (tline > 0) std::cerr << "[TRACE] line " << tline << " op " << (int)op << std::endl;
         }
 
@@ -1096,8 +1104,8 @@ void VM::run() {
         // Either the socket DAP (standalone / VS Code) or the embed host hook
         // (Godot) drives it.
         if (debug && (debug->dap || debug->host_hook) && !frames.empty()) {
-            if (trace_ip < frame().chunk->line_info.size()) {
-                int dline = frame().chunk->line_info[trace_ip];
+            if (true) {
+                int dline = frame().chunk->line_at(trace_ip);
                 if (dline > 0) {
                     debug_check(dline);
                     // If IP was moved (goto) or the chunk was hot-swapped
@@ -1465,7 +1473,7 @@ void VM::run() {
                             break;
                         }
                         case OpCode::IDIV:
-                            if (y == 0) { int eln = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0; throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero", eln); }
+                            if (y == 0) { int eln = cf.chunk->line_at(trace_ip); throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero", eln); }
                             r = x / y; break; // C++ int division truncates toward zero
                         case OpCode::MOD_OP: r = (y != 0) ? x % y : 0; break;
                         default: r = 0;
@@ -1502,10 +1510,10 @@ void VM::run() {
                         case OpCode::SUB:    r = x - y; break;
                         case OpCode::MUL:    r = x * y; break;
                         case OpCode::DIV:
-                            if (y == 0.0) { int eln = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0; throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero", eln); }
+                            if (y == 0.0) { int eln = cf.chunk->line_at(trace_ip); throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero", eln); }
                             r = x / y; break;
                         case OpCode::IDIV:
-                            if (y == 0.0) { int eln = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0; throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero", eln); }
+                            if (y == 0.0) { int eln = cf.chunk->line_at(trace_ip); throw jdError(ErrCode::DIVISION_BY_ZERO, "Division by zero", eln); }
                             // Truncates toward zero, like C++ integer division
                             r = (double)(int64_t)(x / y); want_int = true; break;
                         case OpCode::MOD_OP: r = (y != 0.0) ? std::fmod(x, y) : 0.0; break;
@@ -1842,7 +1850,7 @@ void VM::run() {
 
             const NativeFunc* fn = ((size_t)slot < native_table.size()) ? &native_table[slot] : nullptr;
             if (fn == nullptr || !*fn) {
-                int eline = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0;
+                int eline = cf.chunk->line_at(trace_ip);
                 throw jdError(ErrCode::UNDEFINED_FUNCTION,
                     "native '" + jdb_native_name(slot) + "' not available in this VM", eline);
             }
@@ -1871,11 +1879,11 @@ void VM::run() {
                     args.clear(); --m_arg_depth; throw;
                 } catch (const std::exception& e) {
                     args.clear(); --m_arg_depth;
-                    int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                    int eline = frame().chunk->line_at(trace_ip);
                     throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": " + e.what(), eline);
                 } catch (...) {
                     args.clear(); --m_arg_depth;
-                    int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                    int eline = frame().chunk->line_at(trace_ip);
                     throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": internal error", eline);
                 }
                 args.clear();
@@ -1900,8 +1908,7 @@ void VM::run() {
                     if (gen == func_map_generation && idx >= 0) {
                         FuncProto& proto = (*func_protos)[idx];
                         if (argc != proto.arity) {
-                            int eline = (trace_ip < cf.chunk->line_info.size())
-                                ? cf.chunk->line_info[trace_ip] : 0;
+                            int eline = cf.chunk->line_at(trace_ip);
                             throw jdError(ErrCode::WRONG_ARG_COUNT,
                                 "Function '" + proto.name + "' expects " +
                                 std::to_string(proto.arity) + " args, got " +
@@ -1995,19 +2002,19 @@ void VM::run() {
                     } catch (const jdError&) {
                         throw;
                     } catch (const std::out_of_range&) {
-                        int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                        int eline = frame().chunk->line_at(trace_ip);
                         throw jdError(ErrCode::WRONG_ARG_COUNT,
                             func_name + ": wrong number of arguments (got " + std::to_string(argc) + ")", eline);
                     } catch (const std::bad_alloc&) {
-                        int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                        int eline = frame().chunk->line_at(trace_ip);
                         throw jdError(ErrCode::RUNTIME_ERROR,
                             func_name + ": out of memory", eline);
                     } catch (const std::exception& e) {
-                        int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                        int eline = frame().chunk->line_at(trace_ip);
                         throw jdError(ErrCode::RUNTIME_ERROR,
                             func_name + ": " + e.what(), eline);
                     } catch (...) {
-                        int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                        int eline = frame().chunk->line_at(trace_ip);
                         throw jdError(ErrCode::RUNTIME_ERROR,
                             func_name + ": internal error", eline);
                     }
@@ -2156,7 +2163,7 @@ void VM::run() {
                     }
                 }
                 {
-                    int eline = (trace_ip < frame().chunk->line_info.size()) ? frame().chunk->line_info[trace_ip] : 0;
+                    int eline = frame().chunk->line_at(trace_ip);
                     throw jdError(ErrCode::UNDEFINED_FUNCTION, "Undefined function: " + func_name, eline);
                 }
             call_done: break;
@@ -2496,7 +2503,7 @@ void VM::run() {
                         }
                         int64_t i = iv.to_int();
                         if (i < 0 || i >= (int64_t)arr->elements.size()) {
-                            int eln = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0;
+                            int eln = cf.chunk->line_at(trace_ip);
                             throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "Array index out of bounds: " + std::to_string(i), eln);
                         }
                         return arr->elements[i];
@@ -2505,7 +2512,7 @@ void VM::run() {
                 } else {
                     int64_t i = idx.to_int();
                     if (i < 0 || i >= (int64_t)arr->elements.size()) {
-                        int eln = (trace_ip < cf.chunk->line_info.size()) ? cf.chunk->line_info[trace_ip] : 0;
+                        int eln = cf.chunk->line_at(trace_ip);
                         throw jdError(ErrCode::INDEX_OUT_OF_RANGE, "Array index out of bounds: " + std::to_string(i), eln);
                     }
                     push(arr->elements[i]);
@@ -2734,17 +2741,17 @@ void VM::run() {
 
         case OpCode::THROW_OP: {
             Value msg = pop();
-            // Get current line from line_info
+            // Get current line from the chunk
             int err_line = 0;
-            if (frame().ip > 0 && frame().ip - 1 < frame().chunk->line_info.size())
-                err_line = frame().chunk->line_info[frame().ip - 1];
+            if (frame().ip > 0)
+                err_line = frame().chunk->line_at(frame().ip - 1);
             throw std::runtime_error(msg.to_string());
         }
 
         case OpCode::STOP_OP: {
             int stop_line = 0;
-            if (frame().ip > 0 && frame().ip - 1 < frame().chunk->line_info.size())
-                stop_line = frame().chunk->line_info[frame().ip - 1];
+            if (frame().ip > 0)
+                stop_line = frame().chunk->line_at(frame().ip - 1);
             emit("STOP at line " + std::to_string(stop_line) + ". Type RESUME to continue.\n");
             is_stopped = true;
             return;
@@ -3057,8 +3064,8 @@ void VM::run() {
 
             // Get error line
             int err_line = 0;
-            if (!frames.empty() && frame().ip > 0 && frame().ip <= frame().chunk->line_info.size())
-                err_line = frame().chunk->line_info[frame().ip - 1];
+            if (!frames.empty() && frame().ip > 0)
+                err_line = frame().chunk->line_at(frame().ip - 1);
 
             // Restore VM state
             while (frames.size() > handler.saved_frame_count) frames.pop_back();
@@ -3075,8 +3082,8 @@ void VM::run() {
         } else {
             // Re-throw with line number so the caller can display it
             int err_line = 0;
-            if (!frames.empty() && frame().ip > 0 && frame().ip <= frame().chunk->line_info.size())
-                err_line = frame().chunk->line_info[frame().ip - 1];
+            if (!frames.empty() && frame().ip > 0)
+                err_line = frame().chunk->line_at(frame().ip - 1);
             // If it's already a jdError, preserve code and add line if missing
             if (auto* je = dynamic_cast<const jdError*>(&e)) {
                 throw jdError(je->code, je->what(), je->line > 0 ? je->line : err_line);
@@ -3703,7 +3710,7 @@ int VM::debug_current_line() const {
     if (frames.empty()) return 0;
     auto& f = frames.back();
     size_t ip = f.ip > 0 ? f.ip - 1 : 0;
-    if (ip < f.chunk->line_info.size()) return f.chunk->line_info[ip];
+    return f.chunk->line_at(ip);
     return 0;
 }
 
@@ -3719,23 +3726,17 @@ size_t VM::debug_call_depth() const {
 bool VM::debug_goto_line(int target_line) {
     if (frames.empty()) return false;
     auto& f = frames.back();
-    const auto& li = f.chunk->line_info;
-
-    // Find the first bytecode offset where the line transitions TO target_line.
-    // This ensures we land on an opcode boundary, not in the middle of operands.
-    int prev_line = 0;
-    for (size_t i = 0; i < li.size(); i++) {
-        if (li[i] == target_line && li[i] != prev_line) {
-            f.ip = i;
-            // Reset stack to frame base and clear exception handlers
-            sp = f.stack_base;
-            try_handlers.clear();
-            if (debug) debug->last_debug_line = -1;
-            return true;
-        }
-        prev_line = li[i];
-    }
-    return false;
+    // The first bytecode offset where the line transitions TO target_line -
+    // an opcode boundary, never the middle of an operand. The line table
+    // stores exactly those transitions.
+    size_t at = f.chunk->first_ip_of_line(target_line);
+    if (at >= f.chunk->code.size()) return false;
+    f.ip = at;
+    // Reset stack to frame base and clear exception handlers
+    sp = f.stack_base;
+    try_handlers.clear();
+    if (debug) debug->last_debug_line = -1;
+    return true;
 }
 
 bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, int target_line) {
@@ -3750,6 +3751,7 @@ bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, i
         return false;
     };
     for (auto& f : new_funcs) {
+        f.chunk.shrink();
         auto it = func_map.find(f.name);
         if (it != func_map.end()) {
             if (on_stack(&owned_funcs[it->second].chunk)) continue;
@@ -3780,17 +3782,13 @@ bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, i
     CallFrame& f = frames[0];
     f.chunk = &new_main;
 
-    const auto& li = new_main.line_info;
-    int prev_line = 0;
-    for (size_t i = 0; i < li.size(); i++) {
-        if (li[i] == target_line && li[i] != prev_line) {
-            f.ip = i;
-            sp = f.stack_base;
-            try_handlers.clear();
-            if (debug) debug->last_debug_line = -1;
-            return true;
-        }
-        prev_line = li[i];
+    size_t at = new_main.first_ip_of_line(target_line);
+    if (at < new_main.code.size()) {
+        f.ip = at;
+        sp = f.stack_base;
+        try_handlers.clear();
+        if (debug) debug->last_debug_line = -1;
+        return true;
     }
     // Target line no longer exists (deleted or blank now): restart the chunk.
     f.ip = 0;
@@ -3806,8 +3804,7 @@ std::vector<VM::DebugFrame> VM::debug_get_stack_frames() const {
     for (size_t i = 1; i < frames.size(); i++) {
         int line = 0;
         size_t ip = frames[i].ip > 0 ? frames[i].ip - 1 : 0;
-        if (ip < frames[i].chunk->line_info.size())
-            line = frames[i].chunk->line_info[ip];
+        line = frames[i].chunk->line_at(ip);
         // Find function name by matching chunk pointer
         std::string name = "<unknown>";
         if (func_protos) {
@@ -8541,9 +8538,8 @@ void VM::register_builtins() {
             emit("--- Call Stack (" + std::to_string(frames.size()) + " frames) ---\n");
             for (size_t i = 0; i < frames.size(); i++) {
                 int line = 0;
-                if (frames[i].chunk && frames[i].ip > 0 &&
-                    frames[i].ip - 1 < frames[i].chunk->line_info.size())
-                    line = frames[i].chunk->line_info[frames[i].ip - 1];
+                if (frames[i].chunk && frames[i].ip > 0)
+                    line = frames[i].chunk->line_at(frames[i].ip - 1);
                 emit("  #" + std::to_string(i) + " line " + std::to_string(line) + "\n");
             }
         } else if (what == "FUNCS" || what == "FUNCTIONS") {

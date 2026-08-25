@@ -1,0 +1,71 @@
+' The chunk keeps one entry per line change rather than one int per bytecode
+' byte, so every reported line number now comes out of a binary search over
+' the transitions. If that search is off by an entry the language still runs
+' and every diagnostic quietly points at the wrong line.
+'
+' ERL is the observable, so the assertions carry the line they expect. Keep
+' the line numbers in this file in step when editing it.
+
+DIM fails
+fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " reported line "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+' A run of statements on consecutive lines: each has to keep its own line.
+TRY
+    DIM z
+    z = 1 / 0
+CATCH
+    CHK("division on line 22", ERL, 22)
+ENDTRY
+
+TRY
+    PRINT NOT_A_FUNCTION_HERE()
+CATCH
+    CHK("undefined call on line 28", ERL, 28)
+ENDTRY
+
+' Several statements on one line share a single entry - the last one still
+' has to report that line and not the next.
+TRY
+    DIM q : q = 2 : q = q / 0
+CATCH
+    CHK("colon-joined on line 36", ERL, 36)
+ENDTRY
+
+' Inside a function the chunk is a different one, with its own table.
+FUNC BLOWS_UP()
+    DIM d
+    d = 0
+    RETURN 7 / d
+ENDFUNC
+
+TRY
+    PRINT BLOWS_UP()
+CATCH
+    CHK("inside a FUNC on line 45", ERL, 45)
+ENDTRY
+
+' A long gap of lines between two statements must not shift the table.
+DIM spread
+spread = 0
+
+
+
+
+TRY
+    spread = 1 / 0
+CATCH
+    CHK("after blank lines on line 62", ERL, 62)
+ENDTRY
+
+IF fails = 0 THEN
+    PRINT "line_table: ALL TESTS PASSED!"
+ELSE
+    PRINT "line_table: "; fails; " failed"
+ENDIF
