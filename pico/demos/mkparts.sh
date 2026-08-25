@@ -53,11 +53,9 @@ block() {
 #
 # One DIM per line, and it matters: `DIM a, b, c` registers only `a`.
 # Measured on the board - a later chunk's function body then binds locals
-# for b and c and reads NONE. That costs about fifty bytes a part over the
-# comma form, which is enough to push P_SERIES over the compile cliff; it
-# is the one part that does not currently load. Splitting P_SERIES into an
-# outer loop and a per-point drawing SUB is the way out, and belongs in
-# jdm.jdb rather than here.
+# for b and c and reads NONE. It costs about fifty bytes a part over the
+# comma form, which was enough to push the old single-SUB P_SERIES over
+# the cliff; splitting its point loop into P_CURVE bought that back.
 part() {
     file="$out/$1"
     name="$1"
@@ -101,6 +99,10 @@ part plt6.jdb \
 part plt7.jdb \
     "PBG  PTITLE\$  PX0  PY0  PX1  PY1" \
     "P_FRAME"
+
+part plt8.jdb \
+    "PX0  PY0  PX1  PY1" \
+    "P_CURVE"
 
 # First, and it has to be first: by the seventh load the heap is too broken
 # up to compile even half a kilobyte, and the defaults are the one part that

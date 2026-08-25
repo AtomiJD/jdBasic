@@ -1,0 +1,99 @@
+' The plotter's data window is the part that breaks without anyone noticing:
+' the drawing still happens, it is just aimed at the wrong numbers. P_RANGE
+' touches no pixels, so it can be checked without a screen.
+'
+' Run from the repo root - the library is read by path.
+
+EXECUTE TXTREADER$("pico/demos/jdm.jdb")
+
+DIM fails
+fails = 0
+
+SUB CHK(what$, got, want)
+    IF ABS(got - want) > 0.001 THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+' Two series, autoscaled together, with the 6% pad on y.
+PSX = [[0, 1, 2, 3]]
+PSY = [[0, 10, 5, 20]]
+PSS = ["line"]
+PSC = [0]
+PSN = [""]
+PNS = 1
+PSX = APPEND(PSX, [[0, 1, 2, 3]])
+PSY = APPEND(PSY, [[-4, 2, 2, 2]])
+PSS = APPEND(PSS, "line")
+PSC = APPEND(PSC, 1)
+PSN = APPEND(PSN, "")
+PNS = 2
+
+PAUTO = 1
+PLOGX = 0
+PLOGY = 0
+PTITLE$ = ""
+PXLAB$ = ""
+PYLAB$ = ""
+P_RANGE
+
+CHK("x low", PXLO, 0)
+CHK("x high", PXHI, 3)
+CHK("y low", PYLO, -4 - 24 * 0.06)
+CHK("y high", PYHI, 20 + 24 * 0.06)
+
+' A bar series pulls the axis down to zero however high the data sits.
+PSX = [[0, 1, 2]]
+PSY = [[10, 12, 11]]
+PSS = ["bar"]
+PSC = [0]
+PSN = [""]
+PNS = 1
+P_RANGE
+CHK("bar baseline", PYLO, 0)
+
+' A log axis works on the decimal exponent, so four decades span 4.
+PSX = [[1, 2, 3]]
+PSY = [[1, 100, 10000]]
+PSS = ["line"]
+PNS = 1
+PLOGY = 1
+PAUTO = 1
+P_RANGE
+CHK("log y low", PYLO, 0 - 4 * 0.06)
+CHK("log y high", PYHI, 4 + 4 * 0.06)
+PLOGY = 0
+
+' Fixed limits are taken as given, with no pad.
+PAUTO = 0
+PXMIN = -5
+PXMAX = 5
+PYMIN = -1
+PYMAX = 1
+P_RANGE
+CHK("fixed x low", PXLO, -5)
+CHK("fixed y high", PYHI, 1)
+PAUTO = 1
+
+' A flat series must still leave a window to draw in.
+PSX = [[0, 1, 2]]
+PSY = [[7, 7, 7]]
+PNS = 1
+P_RANGE
+IF PYHI - PYLO <= 0 THEN
+    PRINT "FAIL: a flat series collapsed the y window"
+    fails = fails + 1
+ENDIF
+
+' The left margin has to hold the widest y tick label.
+IF PX0 < 8 THEN
+    PRINT "FAIL: no room for the y tick labels, PX0 = "; PX0
+    fails = fails + 1
+ENDIF
+
+IF fails = 0 THEN
+    PRINT "jdplot_range: ALL TESTS PASSED!"
+ELSE
+    PRINT "jdplot_range: "; fails; " failed"
+ENDIF
