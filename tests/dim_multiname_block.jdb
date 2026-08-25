@@ -1,0 +1,112 @@
+' `DIM a, b, c` reads as one statement and compiles to three. The extras are
+' queued in the parser, so a block body loop that stops on its end token while
+' two are still queued hoists them out of the block - they then run when the
+' block does not, and they are not registered as globals of the block either.
+'
+' The shape that found it: a never-taken IF used to declare names without
+' assigning them, which is how a library gets split across several loads.
+
+DIM fails
+fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+' A branch that never runs must not touch the values.
+DIM x, y, z
+x = 1
+y = 2
+z = 3
+IF 0 THEN
+DIM x, y, z
+ENDIF
+CHK("IF 0 leaves x", x, 1)
+CHK("IF 0 leaves y", y, 2)
+CHK("IF 0 leaves z", z, 3)
+
+' The ELSE arm of a taken branch is just as much a block.
+DIM p, q
+p = 7
+q = 8
+IF 1 THEN
+    p = 70
+ELSE
+DIM p, q
+ENDIF
+CHK("ELSE not taken leaves p", p, 70)
+CHK("ELSE not taken leaves q", q, 8)
+
+' Same on one line, where the parser has to tell a queued statement from the
+' end of the line.
+DIM r, s
+r = 5
+s = 6
+IF 0 THEN DIM r, s
+CHK("one-liner IF 0 leaves r", r, 5)
+CHK("one-liner IF 0 leaves s", s, 6)
+
+' A loop body that never runs.
+DIM u, v
+u = 10
+v = 11
+DIM i
+FOR i = 1 TO 0
+DIM u, v
+NEXT i
+CHK("empty FOR leaves u", u, 10)
+CHK("empty FOR leaves v", v, 11)
+
+' A DO loop that never runs.
+DIM m, n
+m = 20
+n = 21
+DO WHILE 0
+DIM m, n
+LOOP
+CHK("empty DO leaves m", m, 20)
+CHK("empty DO leaves n", n, 21)
+
+' A CATCH arm that is never entered.
+DIM e1, e2
+e1 = 30
+e2 = 31
+TRY
+    e1 = 300
+CATCH
+DIM e1, e2
+ENDTRY
+CHK("untaken CATCH leaves e1", e1, 300)
+CHK("untaken CATCH leaves e2", e2, 31)
+
+' And the normal case still declares every name it was given.
+DIM g1, g2, g3
+g1 = 1
+g2 = 2
+g3 = 3
+FUNC SEES_ALL()
+    RETURN g1 + g2 + g3
+ENDFUNC
+CHK("a FUNC sees every name", SEES_ALL(), 6)
+
+' Inside a SUB the extras stay local to that SUB.
+DIM outer_a, outer_b
+outer_a = 100
+outer_b = 200
+SUB SHADOWS()
+    DIM outer_a, outer_b
+    outer_a = 1
+    outer_b = 2
+ENDSUB
+SHADOWS
+CHK("a SUB's DIM does not reach out for a", outer_a, 100)
+CHK("a SUB's DIM does not reach out for b", outer_b, 200)
+
+IF fails = 0 THEN
+    PRINT "dim_multiname_block: ALL TESTS PASSED!"
+ELSE
+    PRINT "dim_multiname_block: "; fails; " failed"
+ENDIF

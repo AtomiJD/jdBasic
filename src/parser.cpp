@@ -139,8 +139,8 @@ void Parser::validate_type_refs(const std::vector<StmtPtr>& stmts) {
 std::vector<StmtPtr> Parser::parse() {
     std::vector<StmtPtr> stmts;
     skip_newlines();
-    while (!check(TokenType::EOF_TOKEN)) {
-        if (check(TokenType::IMPORT_KW)) {
+    while (owes_statement() || !check(TokenType::EOF_TOKEN)) {
+        if (!owes_statement() && check(TokenType::IMPORT_KW)) {
             auto imported = parse_import();
             for (auto& s : imported) stmts.push_back(std::move(s));
         } else {
@@ -262,7 +262,7 @@ StmtPtr Parser::parse_statement() {
             s->kind = StmtKind::TYPE_DECL;
             s->func_name = type_name;
             s->line = ln;
-            while (!check(TokenType::ENDTYPE) && !check(TokenType::EOF_TOKEN)) {
+            while (owes_statement() || !check(TokenType::ENDTYPE) && !check(TokenType::EOF_TOKEN)) {
                 if (check(TokenType::SUB) || check(TokenType::FUNCTION)) {
                     // Method: prepend THIS as implicit first parameter
                     auto method = parse_statement(); // parses SUB or FUNCTION
@@ -322,7 +322,7 @@ StmtPtr Parser::parse_statement() {
                     } while (match(TokenType::COMMA));
                     expect_newline();
                     skip_newlines();
-                    while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) &&
+                    while (owes_statement() || !check(TokenType::CASE) && !check(TokenType::DEFAULT) &&
                            !check(TokenType::ENDSWITCH) && !check(TokenType::EOF_TOKEN)) {
                         branch.body.push_back(parse_statement());
                         skip_newlines();
@@ -333,7 +333,7 @@ StmtPtr Parser::parse_statement() {
                     expect_newline();
                     skip_newlines();
                     IfBranch branch; // condition is nullptr = default
-                    while (!check(TokenType::CASE) && !check(TokenType::DEFAULT) &&
+                    while (owes_statement() || !check(TokenType::CASE) && !check(TokenType::DEFAULT) &&
                            !check(TokenType::ENDSWITCH) && !check(TokenType::EOF_TOKEN)) {
                         branch.body.push_back(parse_statement());
                         skip_newlines();
@@ -381,7 +381,7 @@ StmtPtr Parser::parse_statement() {
             s->line = ln;
 
             // TRY body
-            while (!check(TokenType::CATCH) && !check(TokenType::FINALLY) &&
+            while (owes_statement() || !check(TokenType::CATCH) && !check(TokenType::FINALLY) &&
                    !check(TokenType::ENDTRY) && !check(TokenType::EOF_TOKEN)) {
                 s->body.push_back(parse_statement());
                 skip_newlines();
@@ -392,7 +392,7 @@ StmtPtr Parser::parse_statement() {
                 advance(); // CATCH
                 expect_newline();
                 skip_newlines();
-                while (!check(TokenType::FINALLY) && !check(TokenType::ENDTRY) && !check(TokenType::EOF_TOKEN)) {
+                while (owes_statement() || !check(TokenType::FINALLY) && !check(TokenType::ENDTRY) && !check(TokenType::EOF_TOKEN)) {
                     s->catch_body.push_back(parse_statement());
                     skip_newlines();
                 }
@@ -403,7 +403,7 @@ StmtPtr Parser::parse_statement() {
                 advance(); // FINALLY
                 expect_newline();
                 skip_newlines();
-                while (!check(TokenType::ENDTRY) && !check(TokenType::EOF_TOKEN)) {
+                while (owes_statement() || !check(TokenType::ENDTRY) && !check(TokenType::EOF_TOKEN)) {
                     s->finally_body.push_back(parse_statement());
                     skip_newlines();
                 }
@@ -1099,8 +1099,12 @@ StmtPtr Parser::parse_if() {
         // So after each statement, check if we're still on the same line
         // and if the next token continues the one-liner body.
         while (true) {
-            if (check(TokenType::ELSE) || check(TokenType::NEWLINE) || check(TokenType::EOF_TOKEN)) break;
+            if (!owes_statement() &&
+                (check(TokenType::ELSE) || check(TokenType::NEWLINE) || check(TokenType::EOF_TOKEN))) break;
             first.body.push_back(parse_statement());
+            // A queued statement belongs to this branch, whatever the tokens
+            // after it say - the line has already moved on.
+            if (owes_statement()) continue;
             // parse_statement consumed ':' via expect_newline - check if still on same line
             if (current().line != ln) break;
             if (check(TokenType::ELSE)) break;
@@ -1113,8 +1117,10 @@ StmtPtr Parser::parse_if() {
             advance(); // ELSE
             IfBranch else_branch;
             while (true) {
-                if (check(TokenType::NEWLINE) || check(TokenType::EOF_TOKEN)) break;
+                if (!owes_statement() &&
+                    (check(TokenType::NEWLINE) || check(TokenType::EOF_TOKEN))) break;
                 else_branch.body.push_back(parse_statement());
+                if (owes_statement()) continue;
                 if (current().line != ln) break;
                 if (check(TokenType::NEWLINE) || check(TokenType::EOF_TOKEN)) break;
             }
@@ -1134,7 +1140,7 @@ StmtPtr Parser::parse_if() {
     };
 
     // Collect body until ELSEIF, ELSE, or END IF / ENDIF
-    while (!check(TokenType::ELSEIF) && !check(TokenType::ELSE) && !is_end_if() && !check(TokenType::EOF_TOKEN)) {
+    while (owes_statement() || !check(TokenType::ELSEIF) && !check(TokenType::ELSE) && !is_end_if() && !check(TokenType::EOF_TOKEN)) {
         first.body.push_back(parse_statement());
         skip_newlines();
     }
@@ -1148,7 +1154,7 @@ StmtPtr Parser::parse_if() {
         expect(TokenType::THEN, "'THEN'");
         expect_newline();
         skip_newlines();
-        while (!check(TokenType::ELSEIF) && !check(TokenType::ELSE) && !is_end_if() && !check(TokenType::EOF_TOKEN)) {
+        while (owes_statement() || !check(TokenType::ELSEIF) && !check(TokenType::ELSE) && !is_end_if() && !check(TokenType::EOF_TOKEN)) {
             branch.body.push_back(parse_statement());
             skip_newlines();
         }
@@ -1160,7 +1166,7 @@ StmtPtr Parser::parse_if() {
         expect_newline();
         skip_newlines();
         IfBranch else_branch;
-        while (!is_end_if() && !check(TokenType::EOF_TOKEN)) {
+        while (owes_statement() || !is_end_if() && !check(TokenType::EOF_TOKEN)) {
             else_branch.body.push_back(parse_statement());
             skip_newlines();
         }
@@ -1203,7 +1209,7 @@ StmtPtr Parser::parse_sub() {
     expect_newline();
     skip_newlines();
 
-    while (!(check(TokenType::END) && peek_at(1).type == TokenType::SUB) &&
+    while (owes_statement() || !(check(TokenType::END) && peek_at(1).type == TokenType::SUB) &&
            !check(TokenType::ENDSUB) && !check(TokenType::EOF_TOKEN)) {
         s->body.push_back(parse_statement());
         skip_newlines();
@@ -1232,7 +1238,7 @@ StmtPtr Parser::parse_function() {
     expect_newline();
     skip_newlines();
 
-    while (!(check(TokenType::END) && peek_at(1).type == TokenType::FUNCTION) &&
+    while (owes_statement() || !(check(TokenType::END) && peek_at(1).type == TokenType::FUNCTION) &&
            !check(TokenType::ENDFUNC) && !check(TokenType::EOF_TOKEN)) {
         s->body.push_back(parse_statement());
         skip_newlines();
@@ -1265,7 +1271,7 @@ StmtPtr Parser::parse_do_loop() {
     skip_newlines();
 
     // Body
-    while (!check(TokenType::LOOP) && !check(TokenType::EOF_TOKEN)) {
+    while (owes_statement() || !check(TokenType::LOOP) && !check(TokenType::EOF_TOKEN)) {
         s->body.push_back(parse_statement());
         skip_newlines();
     }
@@ -1298,7 +1304,7 @@ StmtPtr Parser::parse_for() {
         s->line = ln;
         if (check(TokenType::NEWLINE) || check(TokenType::COLON)) advance();
         skip_newlines();
-        while (!check(TokenType::NEXT) && !check(TokenType::EOF_TOKEN)) {
+        while (owes_statement() || !check(TokenType::NEXT) && !check(TokenType::EOF_TOKEN)) {
             s->body.push_back(parse_statement());
             skip_newlines();
         }
@@ -1335,7 +1341,7 @@ StmtPtr Parser::parse_for() {
 
     // Collect body until NEXT
     skip_newlines();
-    while (!check(TokenType::NEXT) && !check(TokenType::EOF_TOKEN)) {
+    while (owes_statement() || !check(TokenType::NEXT) && !check(TokenType::EOF_TOKEN)) {
         s->body.push_back(parse_statement());
         skip_newlines();
     }

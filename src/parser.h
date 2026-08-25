@@ -43,6 +43,13 @@ private:
     // expand `DIM a, b, c` into multiple separate DIM statements.
     std::vector<StmtPtr> pending_stmts;
 
+    // A statement the parser still owes the block it is filling. `DIM a, b, c`
+    // reads as one statement and compiles to three, and all three belong where
+    // the DIM was written: a body loop that stops on its end token while two
+    // are still queued hoists them out of the block, so they run when the
+    // block does not.
+    bool owes_statement() const { return !pending_stmts.empty(); }
+
     // Every type name that parsed as an unknown identifier in type position,
     // with the line it appeared on. Checked against the TYPE declarations once
     // the whole program (imports included) has been parsed, so a type may be
