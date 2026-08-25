@@ -298,8 +298,8 @@ void VM::load(Chunk& main_chunk, std::vector<FuncProto>& funcs) {
     // `global_names["A"]` point at slot 0 (held by PI). User code that
     // referenced an undefined `A` then read PI's value (3.14159) and
     // `obj.x` for any name `obj` whose slot collided returned junk.
-    for (uint16_t i = 0; i < main_chunk.var_names.size(); i++) {
-        const std::string& name = main_chunk.var_names[i];
+    for (uint16_t i = 0; i < main_chunk.name_count(); i++) {
+        const std::string& name = main_chunk.name_at(i);
         if (global_names.count(name)) continue;
         global_names[name] = static_cast<uint16_t>(globals.size());
         globals.push_back(Value::make_none());
@@ -370,9 +370,9 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     // outer user function (e.g. EVAL called from inside Calc). Start the new
     // chunk's frame ABOVE the current sp so we don't clobber outer locals.
     size_t base = saved_sp;
-    size_t needed = base + chunk.var_names.size() + 64;
+    size_t needed = base + chunk.name_count() + 64;
     while (needed >= stack.size()) stack.resize(stack.size() * 2);
-    sp = base + chunk.var_names.size();
+    sp = base + chunk.name_count();
     min_frame_depth = 0;
     is_stopped = false;  // fresh sub-run; prior STOP state preserved in stopped_*
     // A previous run may have ended via END_PROGRAM, leaving is_halted=true.
@@ -469,8 +469,8 @@ void VM::inject_stopped_locals() {
     // The deepest frame is where execution paused - usually the function with STOP
     const CallFrame& f = stopped_frames.back();
     if (!f.chunk) return;
-    for (size_t i = 0; i < f.chunk->var_names.size(); i++) {
-        const std::string& name = f.chunk->var_names[i];
+    for (size_t i = 0; i < f.chunk->name_count(); i++) {
+        const std::string& name = f.chunk->name_at(i);
         if (name.empty()) continue;
         size_t stack_idx = f.stack_base + i;
         if (stack_idx >= stopped_stack.size()) continue;
@@ -624,7 +624,7 @@ void VM::propagate_reactive(const std::string& changed_var) {
 
                 FuncProto& proto = func_protos ? (*func_protos)[fit->second] : owned_funcs[fit->second];
                 frames.push_back({&proto.chunk, 0, 0});
-                size_t needed = proto.chunk.var_names.size();
+                size_t needed = proto.chunk.name_count();
                 while (needed >= stack.size()) stack.resize(stack.size() * 2);
                 if (sp < needed) sp = needed;
                 run();
@@ -977,7 +977,7 @@ Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
 
     size_t new_base = sp;
     for (auto& a : args) push(a);
-    size_t needed = new_base + proto.chunk.var_names.size();
+    size_t needed = new_base + proto.chunk.name_count();
     while (needed >= stack.size()) stack.resize(stack.size() * 2);
     if (sp < needed) sp = needed;
 
@@ -1035,7 +1035,7 @@ Value VM::apply_binary_op(const std::string& op, const Value& a, const Value& b)
 }
 
 uint16_t VM::ensure_global(uint16_t name_idx) {
-    const auto& name = frame().chunk->var_names[name_idx];
+    const auto& name = frame().chunk->name_at(name_idx);
     auto it = global_names.find(name);
     if (it != global_names.end()) return it->second;
     uint16_t slot = static_cast<uint16_t>(globals.size());
@@ -1278,7 +1278,7 @@ void VM::run() {
             Value& val = globals[slot];
             if (val.type == ValueType::NONE) {
                 // Dotted name fallback: "OBJ.X.Y.FIELD" → navigate chain
-                const std::string& full = cf.chunk->var_names[name_idx];
+                const std::string& full = cf.chunk->name_at(name_idx);
                 size_t dot = full.find('.');
                 if (dot != std::string::npos) {
                     std::string obj_name = full.substr(0, dot);
@@ -1299,9 +1299,9 @@ void VM::run() {
                     Value cur;
                     bool have_cur = false;
                     if (frames.size() > 1) {
-                        auto& var_names = frame().chunk->var_names;
-                        for (size_t li = 0; li < var_names.size(); li++) {
-                            if (ci_eq(var_names[li], obj_name)) {
+                        const Chunk* fc = frame().chunk;
+                        for (size_t li = 0; li < fc->name_count(); li++) {
+                            if (ci_eq(fc->name_at(li), obj_name)) {
                                 size_t abs = frame().stack_base + li;
                                 if (abs < stack.size() &&
                                     stack[abs].type == ValueType::OBJECT) {
@@ -1344,7 +1344,7 @@ void VM::run() {
                 // call. This makes constant-like natives (PI, E, TICK, NOW, ...)
                 // usable as bare identifiers: `2 * PI`.
                 {
-                    const std::string& full2 = cf.chunk->var_names[name_idx];
+                    const std::string& full2 = cf.chunk->name_at(name_idx);
                     auto nit = natives.find(full2);
                     if (nit != natives.end()) {
                         try {
@@ -1366,7 +1366,7 @@ void VM::run() {
         case OpCode::STORE_GLOBAL: {
             uint16_t name_idx = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip += 2;
-            const std::string& full = cf.chunk->var_names[name_idx];
+            const std::string& full = cf.chunk->name_at(name_idx);
             // Check if this is a protected constant - but allow if this is
             // a CONST re-declaration (next opcode is MARK_CONST for same name).
             // This makes CONST idempotent across repeated module loads.
@@ -1375,7 +1375,7 @@ void VM::run() {
                 if (cf.ip < cf.chunk->code.size() &&
                     (OpCode)cf.chunk->code[cf.ip] == OpCode::MARK_CONST) {
                     uint16_t mc_idx = cf.chunk->code[cf.ip + 1] | (cf.chunk->code[cf.ip + 2] << 8);
-                    if (cf.chunk->var_names[mc_idx] == full) is_const_init = true;
+                    if (cf.chunk->name_at(mc_idx) == full) is_const_init = true;
                 }
                 if (!is_const_init) {
                     throw jdError(ErrCode::RUNTIME_ERROR,
@@ -1918,7 +1918,7 @@ void VM::run() {
                         if (frames.size() >= 512)
                             throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (max 512 frames)");
                         size_t new_base = sp - argc;
-                        size_t needed = new_base + proto.chunk.var_names.size();
+                        size_t needed = new_base + proto.chunk.name_count();
                         while (needed >= stack.size()) stack.resize(stack.size() * 2);
                         if (sp < needed) sp = needed;
                         // NOTE: push_back may reallocate and invalidate cf.
@@ -2035,8 +2035,8 @@ void VM::run() {
                     // Check local
                     if (!ref_val && frames.size() > 1) {
                         size_t base = frame().stack_base;
-                        for (uint16_t vi = 0; vi < frame().chunk->var_names.size(); vi++) {
-                            if (frame().chunk->var_names[vi] == func_name) {
+                        for (uint16_t vi = 0; vi < frame().chunk->name_count(); vi++) {
+                            if (frame().chunk->name_at(vi) == func_name) {
                                 ref_val = &stack[base + vi]; break;
                             }
                         }
@@ -2089,9 +2089,9 @@ void VM::run() {
                         bool found = false;
                         Value obj;
                         if (frames.size() > 1) {
-                            auto& var_names = frame().chunk->var_names;
-                            for (size_t li = 0; li < var_names.size(); li++) {
-                                if (ci_eq(var_names[li], obj_name)) {
+                            const Chunk* fc = frame().chunk;
+                            for (size_t li = 0; li < fc->name_count(); li++) {
+                                if (ci_eq(fc->name_at(li), obj_name)) {
                                     size_t abs = frame().stack_base + li;
                                     if (abs < stack.size() &&
                                         stack[abs].type == ValueType::OBJECT) {
@@ -2243,7 +2243,7 @@ void VM::run() {
             frames.push_back({&proto.chunk, 0, new_base});
 
             // Ensure enough stack space for locals
-            size_t needed = new_base + proto.chunk.var_names.size();
+            size_t needed = new_base + proto.chunk.name_count();
             while (needed >= stack.size()) stack.resize(stack.size() * 2);
             if (sp < needed) sp = needed;
             break;
@@ -2898,7 +2898,7 @@ void VM::run() {
         case OpCode::MARK_CONST: {
             uint16_t name_idx = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip += 2;
-            const std::string& cname = cf.chunk->var_names[name_idx];
+            const std::string& cname = cf.chunk->name_at(name_idx);
             const_globals.insert(cname);
             break;
         }
@@ -3767,8 +3767,8 @@ bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, i
     // Register top-level globals the recompiled chunk introduces (mirrors
     // load()), so a freshly added variable resolves to a real slot rather
     // than tripping LOAD_GLOBAL's NONE-name-as-native fallback.
-    for (uint16_t i = 0; i < new_main.var_names.size(); i++) {
-        const std::string& name = new_main.var_names[i];
+    for (uint16_t i = 0; i < new_main.name_count(); i++) {
+        std::string name = new_main.name_at(i);
         if (global_names.count(name)) continue;
         global_names[name] = static_cast<uint16_t>(globals.size());
         globals.push_back(Value::make_none());
@@ -3851,12 +3851,12 @@ std::vector<std::pair<std::string, std::string>> VM::debug_get_locals_at(int lev
     // (or sp for the innermost) - bound by that so deeper frames don't
     // pick up the slots of the frames above them.
     size_t upper = (idx + 1 < (int)frames.size()) ? frames[idx + 1].stack_base : sp;
-    for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
+    for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
         size_t abs = f.stack_base + i;
         if (abs < upper) {
             std::string name = func_name.empty()
-                ? f.chunk->var_names[i]
-                : func_name + "_" + f.chunk->var_names[i];
+                ? f.chunk->name_at(i)
+                : func_name + "_" + f.chunk->name_at(i);
             result.push_back({name, stack[abs].to_string()});
         }
     }
@@ -3901,10 +3901,10 @@ std::vector<VM::DebugVar> VM::debug_vars_local(int frame_index) {
     // for the innermost), so deeper frames don't bleed their slots in.
     size_t upper = (frame_index + 1 < (int)frames.size())
                    ? frames[frame_index + 1].stack_base : sp;
-    for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
+    for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
         size_t abs = f.stack_base + i;
         if (abs >= upper) continue;
-        const std::string& name = f.chunk->var_names[i];
+        const std::string& name = f.chunk->name_at(i);
         const Value& v = stack[abs];
         out.push_back({ name, v.to_string(), name, debug_register_var(v, name) });
     }
@@ -3949,9 +3949,9 @@ bool VM::debug_eval_value(const std::string& expr, Value& result_out) {
         std::transform(name.begin(), name.end(), name.begin(), ::toupper);
         if (frames.size() > 1) {
             auto& f = frames.back();
-            for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
+            for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
                 size_t abs = f.stack_base + i;
-                if (abs < sp && f.chunk->var_names[i] == name) { out = stack[abs]; return true; }
+                if (abs < sp && f.chunk->name_at(i) == name) { out = stack[abs]; return true; }
             }
         }
         auto it = global_names.find(name);
@@ -4031,10 +4031,10 @@ bool VM::debug_eval_value(const std::string& expr, Value& result_out) {
         std::vector<std::pair<uint16_t, std::string>> created;  // slots/names we added
         if (frames.size() > 1) {
             auto& f = frames.back();
-            for (uint16_t i = 0; i < f.chunk->var_names.size(); i++) {
+            for (uint16_t i = 0; i < f.chunk->name_count(); i++) {
                 size_t abs = f.stack_base + i;
                 if (abs >= sp) continue;
-                const std::string& nm = f.chunk->var_names[i];
+                const std::string& nm = f.chunk->name_at(i);
                 auto it = global_names.find(nm);
                 uint16_t slot;
                 if (it != global_names.end()) {

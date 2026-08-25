@@ -136,7 +136,23 @@ enum class OpCode : uint8_t {
 struct Chunk {
     std::vector<uint8_t> code;
     std::vector<Value> constants;
-    std::vector<std::string> var_names;      // slot -> name mapping
+    // Slot -> name. The names live packed end to end in one buffer with an
+    // offset per slot, not a std::string per slot. Measured on the board: the
+    // text of every name in a whole library came to 625 bytes while the string
+    // headers around them came to 5.3 KB, so the cost was the per-slot
+    // container and not the characters. Offsets are four bytes instead of the
+    // twenty-four a std::string header takes there.
+    std::string name_blob;
+    std::vector<uint32_t> name_offsets;
+
+    size_t name_count() const { return name_offsets.size(); }
+
+    // Valid until the next add_var_name - the blob may move when it grows.
+    // Nothing holds one across a compile step; at runtime the chunk is fixed.
+    const char* name_at(size_t slot) const {
+        if (slot >= name_offsets.size()) return "";
+        return name_blob.c_str() + name_offsets[slot];
+    }
     // Source line per bytecode offset, kept as one entry per line change
     // rather than one int per byte. A statement is several bytes of code and
     // one line, so the table collapses to roughly a pair per statement. The
@@ -198,7 +214,8 @@ struct Chunk {
         code.shrink_to_fit();
         line_table.shrink_to_fit();
         constants.shrink_to_fit();
-        var_names.shrink_to_fit();
+        name_blob.shrink_to_fit();
+        name_offsets.shrink_to_fit();
     }
 #else
     void shrink() {}
@@ -279,11 +296,13 @@ struct Chunk {
     }
 
     uint16_t add_var_name(const std::string& name) {
-        for (uint16_t i = 0; i < var_names.size(); i++) {
-            if (var_names[i] == name) return i;
+        for (uint16_t i = 0; i < name_offsets.size(); i++) {
+            if (name == name_at(i)) return i;
         }
-        var_names.push_back(name);
-        return static_cast<uint16_t>(var_names.size() - 1);
+        name_offsets.push_back(static_cast<uint32_t>(name_blob.size()));
+        name_blob.append(name);
+        name_blob.push_back('\0');
+        return static_cast<uint16_t>(name_offsets.size() - 1);
     }
 };
 

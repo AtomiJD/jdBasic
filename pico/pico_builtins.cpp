@@ -3,6 +3,7 @@
 // a Pico 2 W hangs off the radio chip, so it gets a word of its own.
 
 #include "../src/vm.h"
+#include <set>
 #include "pico/stdlib.h"
 #ifdef JDB_HAS_CYW43
 #include "pico/cyw43_arch.h"
@@ -320,6 +321,28 @@ void register_pico_mem(VM& vm) {
     vm.register_native("SYS.CHUNKS", 0, 0, [&vm](const std::vector<Value>&) -> Value {
         size_t code = 0, lines = 0, names = 0, consts = 0, caches = 0, protos = 0;
         size_t fns = 0, slack = 0;
+        // What the same text costs across chunks. A global read by five
+        // functions is five copies of its name, and a string constant
+        // repeats the same way - this measures the prize before anyone pays
+        // for an intern table.
+        std::set<std::string> uniq_names, uniq_strs;
+        size_t names_txt = 0, strs_txt = 0;
+        for (const auto& f : vm.get_funcs()) {
+            for (size_t s = 0; s < f.chunk.name_count(); s++) {
+                const char* n = f.chunk.name_at(s);
+                names_txt += strlen(n) + 1;
+                uniq_names.insert(n);
+            }
+            for (const auto& c : f.chunk.constants) {
+                if (c.type != ValueType::STRING) continue;
+                const std::string& s = c.as_string()->data;
+                strs_txt += s.size() + 1;
+                uniq_strs.insert(s);
+            }
+        }
+        size_t names_uniq = 0, strs_uniq = 0;
+        for (const auto& n : uniq_names) names_uniq += n.size() + 1;
+        for (const auto& s : uniq_strs) strs_uniq += s.size() + 1;
         for (const auto& f : vm.get_funcs()) {
             fns++;
             const Chunk& c = f.chunk;
@@ -328,27 +351,30 @@ void register_pico_mem(VM& vm) {
             slack += c.code.capacity() - c.code.size();
             slack += (c.line_table.capacity() - c.line_table.size()) * sizeof(Chunk::LineEntry);
             slack += (c.constants.capacity() - c.constants.size()) * sizeof(Value);
-            slack += (c.var_names.capacity() - c.var_names.size()) * sizeof(std::string);
+            slack += (c.name_offsets.capacity() - c.name_offsets.size()) * sizeof(uint32_t);
             code   += c.code.capacity();
             lines  += c.line_table.capacity() * sizeof(Chunk::LineEntry);
             consts += c.constants.capacity() * sizeof(Value);
             caches += c.call_cache.capacity() * sizeof(uint64_t);
             caches += c.global_cache.capacity() * sizeof(uint64_t);
             caches += c.method_cache.capacity() * sizeof(Chunk::MethodCacheEntry);
-            names  += c.var_names.capacity() * sizeof(std::string);
-            for (const auto& n : c.var_names) names += n.capacity() + 1;
+            names  += c.name_offsets.capacity() * sizeof(uint32_t);
+            names  += c.name_blob.capacity() + 1;
             names  += c.source_file.capacity() + 1;
             protos += f.name.capacity() + 1;
             protos += f.param_names.capacity() * sizeof(std::string);
             for (const auto& p : f.param_names) protos += p.capacity() + 1;
         }
-        char buf[224];
+        char buf[320];
         snprintf(buf, sizeof buf,
-                 "funcs=%u code=%u lines=%u names=%u consts=%u caches=%u protos=%u total=%u slack=%u",
+                 "funcs=%u code=%u lines=%u names=%u consts=%u caches=%u protos=%u total=%u slack=%u "
+                 "nametxt=%u/%u strtxt=%u/%u",
                  (unsigned)fns, (unsigned)code, (unsigned)lines, (unsigned)names,
                  (unsigned)consts, (unsigned)caches, (unsigned)protos,
                  (unsigned)(code + lines + names + consts + caches + protos),
-                 (unsigned)slack);
+                 (unsigned)slack,
+                 (unsigned)names_uniq, (unsigned)names_txt,
+                 (unsigned)strs_uniq, (unsigned)strs_txt);
         return Value::make_string(buf);
     });
     vm.register_native("SYS.LARGEST", 0, 0, [](const std::vector<Value>&) -> Value {
