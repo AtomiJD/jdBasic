@@ -1,0 +1,89 @@
+' A value that arrives as a VM handle carries no type in its tag - the tag
+' says "ask the store", not what is in it. The type predicates used to be
+' folded at compile time from that tag alone, so under -c they answered
+' false for everything CHAN.RECV, AWAIT, THREAD.GETRESULT, FORM.GET, PY.EVAL
+' and PY.GET produce, silently and with no diagnostic.
+'
+' CHAN carries any Value and needs no feature flag, so it is the cheapest way
+' to get a handle of each kind. Both backends must agree line for line.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM ch = CHAN.OPEN(16)
+
+' A handle holding a string.
+CHAN.SEND(ch, "a string")
+DIM s = CHAN.RECV(ch)
+CHK("ISSTR on a string handle", ISSTR(s), TRUE)
+CHK("ISARR on a string handle", ISARR(s), FALSE)
+CHK("ISMAP on a string handle", ISMAP(s), FALSE)
+CHK("ISNUM on a string handle", ISNUM(s), FALSE)
+
+' A handle holding an array, including the empty one that has nothing to
+' infer from.
+CHAN.SEND(ch, [1, 2, 3])
+DIM a = CHAN.RECV(ch)
+CHK("ISARR on an array handle", ISARR(a), TRUE)
+CHK("ISSTR on an array handle", ISSTR(a), FALSE)
+CHK("LEN still works", LEN(a), 3)
+
+CHAN.SEND(ch, [])
+DIM empty = CHAN.RECV(ch)
+CHK("ISARR on an empty array", ISARR(empty), TRUE)
+CHK("LEN of an empty array", LEN(empty), 0)
+
+' A handle holding a map.
+CHAN.SEND(ch, {"k": 1})
+DIM m = CHAN.RECV(ch)
+CHK("ISMAP on a map handle", ISMAP(m), TRUE)
+CHK("ISARR on a map handle", ISARR(m), FALSE)
+
+' A handle holding a number and one holding a bool.
+CHAN.SEND(ch, 42)
+DIM n = CHAN.RECV(ch)
+CHK("ISNUM on a number handle", ISNUM(n), TRUE)
+CHK("ISSTR on a number handle", ISSTR(n), FALSE)
+
+' No ISBOOL case here on purpose. A compiled program hands a bool to the
+' bridge as the i64 it is backed by, so the store really does hold an INT64
+' and the predicate is right to say no - TYPEOF agrees with it. That is a
+' marshalling defect of its own, tracked separately, not a predicate one.
+
+' TYPEOF already asked the store; it has to keep agreeing with the predicates.
+CHKS("TYPEOF a string handle", TYPEOF(s), "STRING")
+CHKS("TYPEOF an array handle", TYPEOF(a), "ARRAY")
+CHKS("TYPEOF a map handle", TYPEOF(m), "OBJECT")
+
+' The direct-call shape, where there is no variable to inspect.
+CHAN.SEND(ch, "direct")
+CHK("ISSTR on a call result", ISSTR(CHAN.RECV(ch)), TRUE)
+CHAN.SEND(ch, [9])
+CHK("ISARR on a call result", ISARR(CHAN.RECV(ch)), TRUE)
+
+' A plain local is unaffected - it never was a handle.
+DIM plain$ = "ordinary"
+CHK("ISSTR on a plain string", ISSTR(plain$), TRUE)
+DIM plain_arr = [1, 2]
+CHK("ISARR on a plain array", ISARR(plain_arr), TRUE)
+
+CHAN.CLOSE(ch)
+
+IF fails = 0 THEN
+    PRINT "vm_handle_predicates: ALL TESTS PASSED!"
+ELSE
+    PRINT "vm_handle_predicates: "; fails; " failed"
+ENDIF

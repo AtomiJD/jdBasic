@@ -70,6 +70,16 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
 // prints 1 instead of TRUE and a `= TRUE` comparison against a declared
 // BOOLEAN mismatches. Same single-source-of-truth rule as the array set:
 // the dispatch and the inference paths both read this.
+// What jdrt_val_kind answers. Their own numbering rather than ValueType's, so
+// reordering an interpreter enum cannot silently change what an already
+// compiled program believes about a value. Keep in step with vm_bridge.cpp.
+constexpr int kValKindNone   = 0;
+constexpr int kValKindBool   = 1;
+constexpr int kValKindNumber = 2;
+constexpr int kValKindString = 3;
+constexpr int kValKindArray  = 4;
+constexpr int kValKindMap    = 5;
+
 // Bridged builtins whose every return path is a bool. Without an entry the
 // call takes the f64 fallback, so TRUE arrives as the number 1 - it compares
 // and branches correctly, it just prints and STRICT-types wrong. Only
@@ -646,6 +656,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdrt_val_arr_get", "__jdrt_val_arr_get", i64_type,
         {i8_ptr_type, i64_type, i64_type}, 0);
     reg("jdrt_val_length",  "__jdrt_val_length",  i64_type,
+        {i8_ptr_type, i64_type}, 0);
+    reg("jdrt_val_kind",    "__jdrt_val_kind",    i32_type,
         {i8_ptr_type, i64_type}, 0);
     // Tagged value getters: return tag (i32), write val to i64* out param.
     reg("jdb_map_get_tagged",  "__map_get_tagged",  i32_type,
@@ -9168,11 +9180,50 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // RUNTIME / unknown base: can't tell - conservatively not none.
                 return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
             }
-            // Any other arg: native has no NONE representation for it (a
-            // no-RETURN function returns 0, not a sentinel; a math NaN is a
-            // number, not NONE per the interpreter). Conservatively not-none.
-            return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+            // Not an index: fall through to the handle check below. If that
+            // does not apply either, native has no NONE representation for
+            // the argument - a no-RETURN function returns 0, not a sentinel,
+            // and a math NaN is a number, not NONE per the interpreter - so
+            // the answer is conservatively not-none.
         }
+
+        // A value that arrived as a VM handle carries no type in its tag: the
+        // tag says "ask the store", not what is in it. Folding from the tag
+        // alone therefore answered false for everything CHAN.RECV, AWAIT,
+        // THREAD.GETRESULT, FORM.GET, PY.EVAL and PY.GET produce. Two shapes
+        // can hold one - a variable already typed as a handle, which costs a
+        // load to inspect, and a call, which the interpreter evaluates here
+        // too. Anything else keeps the compile-time answer below.
+        bool may_be_handle = false;
+        if (arg.kind == ExprKind::VARIABLE) {
+            VarInfo* v = lookup_var(arg.str_val);
+            may_be_handle = (v && v->tag == JD_TAG_VM_HANDLE);
+        } else if (arg.kind == ExprKind::CALL) {
+            may_be_handle = true;
+        }
+        if (may_be_handle) {
+            TypedValue av = codegen_expr(arg);
+            RuntimeFunc* fn = get_runtime_func("__jdrt_val_kind");
+            if (av.tag == JD_TAG_VM_HANDLE && fn) {
+                LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+                LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+                LLVMValueRef a[] = { rt, av.val };
+                LLVMValueRef kind = LLVMBuildCall2(builder, fn->fn_type, fn->fn, a, 2, "vkind");
+                int want = kValKindNone;
+                if (upper == "ISBOOL")      want = kValKindBool;
+                else if (upper == "ISNUM")  want = kValKindNumber;
+                else if (upper == "ISSTR")  want = kValKindString;
+                else if (upper == "ISARR")  want = kValKindArray;
+                else if (upper == "ISMAP")  want = kValKindMap;
+                LLVMValueRef eq = LLVMBuildICmp(builder, LLVMIntEQ, kind,
+                    LLVMConstInt(i32_type, want, 0), "vkind_eq");
+                return { LLVMBuildZExt(builder, eq, i64_type, "ext"), JD_TAG_BOOL };
+            }
+        }
+
+        if (upper == "ISNONE" || upper == "ISNULL")
+            return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+
         bool result = false;
         if (upper == "ISBOOL") {
             result = (arg.kind == ExprKind::LITERAL_BOOL);

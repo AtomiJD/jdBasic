@@ -927,6 +927,31 @@ JDRT_API int64_t jdrt_val_length(JdRT handle, int64_t h) {
     return 0;
 }
 
+// What kind of value a handle actually holds. A compiled program knows only
+// that something came back as a VM_HANDLE - the tag says "ask the store", not
+// what is in it - so ISARR / ISSTR / ISMAP / ISNONE / TYPEOF have to ask.
+//
+// The codes are deliberately their own numbering rather than ValueType's:
+// reordering an interpreter enum must not silently change what an already
+// compiled program believes about a value. Keep them in step with
+// kValKind* in llvm_codegen.cpp.
+//
+//   0 none   1 bool   2 number   3 string   4 array   5 map/object
+JDRT_API int32_t jdrt_val_kind(JdRT handle, int64_t h) {
+    auto* rt = resolve_rt(handle);
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end()) return 0;
+    switch (it->second.type) {
+        case ValueType::NONE:    return 0;
+        case ValueType::BOOLEAN: return 1;
+        case ValueType::STRING:  return 3;
+        case ValueType::ARRAY:
+        case ValueType::TENSOR:  return 4;
+        case ValueType::OBJECT:  return 5;
+        default:                 return 2;   // every numeric width
+    }
+}
+
 // Pull `key` out of the VM Value stored at handle `h` and return it as a
 // (tag, bits) pair. Used by the tag-7 dispatch path in compiled code.
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, int64_t* out_val) {
