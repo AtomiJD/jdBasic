@@ -307,6 +307,25 @@ void register_pico_mem(VM& vm) {
         int64_t unclaimed = (int64_t)(&__StackLimit - (char*)sbrk(0));
         return Value::make_i64(unclaimed + (int64_t)mi.fordblks);
     });
+    // The number SYS.FREE cannot give: the biggest single block the heap
+    // will actually hand over. A vector that doubles as it grows asks for
+    // one of these, and a heap holding plenty in scattered pieces still
+    // says no - which is what a program hits long before the total runs
+    // out. Binary search over malloc, ~21 probes, each one handed back.
+    vm.register_native("SYS.LARGEST", 0, 0, [](const std::vector<Value>&) -> Value {
+        size_t lo = 0, hi = 4u * 1024 * 1024;
+        while (lo < hi) {
+            size_t mid = lo + (hi - lo + 1) / 2;
+            void* p = malloc(mid);
+            if (p) {
+                free(p);
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        return Value::make_i64((int64_t)lo);
+    });
 }
 extern "C" void sd_selftest(char* out, int cap);
 

@@ -1,0 +1,42 @@
+' A name declared inside a branch that never runs must still count as a
+' global for a function compiled in a later chunk. The compiler's global
+' prepass walks into IF bodies before anything executes, which is what
+' lets a library be split across several loads without the part loaded
+' second wiping the values the part loaded first set.
+'
+' The comma form is the trap: DIM a, b, c registers only a.
+
+DIM fails
+fails = 0
+
+G_ONE = 41
+G_TWO$ = "keep me"
+
+DIM one_per_line$
+one_per_line$ = "IF 0 THEN" + CHR$(10)
+one_per_line$ = one_per_line$ + "DIM G_ONE" + CHR$(10)
+one_per_line$ = one_per_line$ + "DIM G_TWO$" + CHR$(10)
+one_per_line$ = one_per_line$ + "ENDIF" + CHR$(10)
+one_per_line$ = one_per_line$ + "FUNC DECL_PROBE$()" + CHR$(10)
+one_per_line$ = one_per_line$ + "RETURN G_TWO$ + STR$(G_ONE)" + CHR$(10)
+one_per_line$ = one_per_line$ + "ENDFUNC" + CHR$(10)
+EXECUTE one_per_line$
+
+DIM got$
+got$ = DECL_PROBE$()
+IF got$ <> "keep me41" THEN
+    PRINT "FAIL: a declared-only global is not visible to a later chunk, got "; got$
+    fails = fails + 1
+ENDIF
+
+' The branch must not have run: the values are the ones set above, not NONE.
+IF G_ONE <> 41 THEN
+    PRINT "FAIL: the never-taken branch assigned after all, G_ONE = "; G_ONE
+    fails = fails + 1
+ENDIF
+
+IF fails = 0 THEN
+    PRINT "decl_never_taken_branch: ALL TESTS PASSED!"
+ELSE
+    PRINT "decl_never_taken_branch: "; fails; " failed"
+ENDIF

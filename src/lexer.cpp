@@ -116,6 +116,17 @@ Token Lexer::read_identifier() {
 
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
+#ifdef PICO
+    // Growing this vector is what kills a load on the board. A Token is
+    // 36 bytes there, so a doubling near the end wants the old block and
+    // the new one at the same time - around 110 KB for eight kilobytes of
+    // source, and the heap refuses long before its total runs out.
+    // Reserving once removes the copy entirely. Real jdBasic source runs
+    // about one token per three and a half bytes; reserving on three
+    // deliberately overshoots, because falling short costs a reallocation
+    // that is far more expensive than the slack.
+    tokens.reserve(src.size() / 3 + 32);
+#endif
     bool last_was_newline = true;
 
     while (pos < src.size()) {

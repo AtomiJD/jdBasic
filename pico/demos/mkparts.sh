@@ -1,16 +1,22 @@
 #!/bin/sh
-# Cut jdm.jdb into pieces small enough for the board to compile.
+# Cut jdm.jdb into pieces the board can compile, in the order it can take them.
 #
-# The RP2350 dies with std::bad_alloc somewhere above 3 KB of source in one
-# chunk: the lexer's token vector and the syntax tree are alive at the same
-# time, and the heap cannot serve a block that large however much of it is
-# free. Measured on a PicoCalc with 117 KB free: 2848 bytes compiles, 3540
-# does not.
+# The RP2350 throws std::bad_alloc long before its heap runs out, and the
+# limit is structural rather than a byte count. Measured on a PicoCalc with
+# 120376 free: P_SERIES alone (1559 bytes) compiles, P_LEGEND alone (576)
+# compiles, the two together (2038) do not, while an unrelated 2848-byte
+# demo does. Every load also costs about seven times its source permanently
+# and leaves the heap more broken up, so a part that fits third may not fit
+# fourth.
 #
-# So each part carries only the globals its own functions touch - the
-# compiler must see a name as global in the chunk that reads it, or the
-# function body binds a local instead - and jdm_boot.jdb walks the parts
-# with EXECUTE, one parse peak at a time, then sets the defaults.
+# Hence: one part per small group of functions, largest first. Each part
+# carries only the globals its own bodies read - the compiler must see a
+# name as global in the chunk that reads it, or the body binds a local
+# instead - and pltinit.jdb sets the real defaults once everything is in.
+#
+# EXECUTE is not an option for chaining these. `EXECUTE TXTREADER$(part)`
+# keeps the outer chunk, the source string and the tokens alive together
+# and fails where a plain RUN of the same file succeeds.
 #
 # Usage: ./mkparts.sh [outdir]     (default: parts/)
 
@@ -19,6 +25,7 @@ here=$(dirname "$0")
 src="$here/jdm.jdb"
 out=${1:-"$here/parts"}
 mkdir -p "$out"
+: > "$out/LOAD.txt"
 
 # Body without comments or blank lines: the lexer drops them anyway, and on
 # the board they are the difference between fitting and not.
@@ -39,44 +46,67 @@ block() {
     '
 }
 
+# A branch that is never taken still registers its names: the compiler's
+# global prepass walks into IF bodies before anything runs. A plain DIM
+# would work too, but it also assigns NONE - and NONE compares equal to
+# anything, so the part loaded after the defaults would quietly wipe them.
+#
+# One DIM per line, and it matters: `DIM a, b, c` registers only `a`.
+# Measured on the board - a later chunk's function body then binds locals
+# for b and c and reads NONE. That costs about fifty bytes a part over the
+# comma form, which is enough to push P_SERIES over the compile cliff; it
+# is the one part that does not currently load. Splitting P_SERIES into an
+# outer loop and a per-point drawing SUB is the way out, and belongs in
+# jdm.jdb rather than here.
 part() {
     file="$out/$1"
+    name="$1"
     shift
     dims="$1"
     shift
-    printf 'DIM %s\n' "$dims" > "$file"
+    {
+        echo "IF 0 THEN"
+        for d in $dims; do echo "DIM $d"; done
+        echo "ENDIF"
+    } > "$file"
     block "$*" >> "$file"
-    printf '%-20s %s bytes\n' "$1" "$(wc -c < "$file")"
+    printf 'RUN %s\n' "$name" >> "$out/LOAD.txt"
+    printf '%-14s %5s bytes   %s\n' "$name" "$(wc -c < "$file")" "$1"
 }
 
-part jdmp1.jdb \
-    "PSX, PSY, PSC, PSS, PSN, PNS, PBOARD, PWINOPEN, PWSCALE" \
-    "PLOT PLOTXY PLOTADD PLOTADDXY PLOTSTYLE PLOTNAME PLOTR PLOTHELP P_CLEAR P_OPEN"
-
-part jdmp2.jdb \
-    "PX0, PY0, PX1, PY1, PXLO, PXHI, PYLO, PYHI, PTITLE\$, PXLAB\$, PYLAB\$, PAUTO, PXMIN, PXMAX, PYMIN, PYMAX, PLOGX, PLOGY, PNS, PSX, PSY, PSS" \
+part plt1.jdb \
+    "PX0  PY0  PX1  PY1  PXLO  PXHI  PYLO  PYHI  PTITLE\$  PXLAB\$  PYLAB\$  PAUTO  PXMIN  PXMAX  PYMIN  PYMAX  PLOGX  PLOGY  PNS  PSX  PSY  PSS" \
     "P_TRANS P_RANGE"
 
-part jdmp3.jdb \
-    "PCR, PCG, PCB, PBG" \
+part plt2.jdb \
+    "PNS  PSX  PSY  PSC  PSS  PLOGX  PLOGY  PX0  PY0  PX1  PY1  PXLO  PXHI  PYLO  PYHI" \
+    "P_SERIES"
+
+part plt3.jdb \
+    "PSX  PSY  PSC  PSS  PSN  PNS  PBOARD  PWINOPEN  PWSCALE" \
+    "PLOT PLOTXY PLOTADD PLOTADDXY PLOTSTYLE PLOTNAME PLOTR PLOTHELP P_CLEAR P_OPEN"
+
+part plt4.jdb \
+    "PXLAB\$  PYLAB\$  PGRID  PX0  PY0  PX1  PY1  PXLO  PXHI  PYLO  PYHI  PLOGX  PLOGY" \
+    "P_GRID"
+
+part plt5.jdb \
+    "PCR  PCG  PCB  PBG" \
     "P_PEN P_INK P_CENTER P_TICK\$ P_VTEXT"
 
-part jdmp4.jdb \
-    "PBG, PTITLE\$, PXLAB\$, PYLAB\$, PGRID, PX0, PY0, PX1, PY1, PXLO, PXHI, PYLO, PYHI, PLOGX, PLOGY" \
-    "P_FRAME P_GRID"
+part plt6.jdb \
+    "PNS  PSN  PSC  PLEG  PX0  PY0  PX1" \
+    "P_LEGEND"
 
-part jdmp5.jdb \
-    "PNS, PSX, PSY, PSC, PSS, PSN, PLOGX, PLOGY, PX0, PY0, PX1, PY1, PXLO, PXHI, PYLO, PYHI, PLEG" \
-    "P_SERIES P_LEGEND"
+part plt7.jdb \
+    "PBG  PTITLE\$  PX0  PY0  PX1  PY1" \
+    "P_FRAME"
 
-# The defaults come last: a part that DIMs a name it reads leaves it NONE,
-# and NONE compares equal to anything, so a caption test would misfire.
-cat > "$out/jdm_boot.jdb" <<'BOOT'
-EXECUTE TXTREADER$("jdmp1.jdb")
-EXECUTE TXTREADER$("jdmp2.jdb")
-EXECUTE TXTREADER$("jdmp3.jdb")
-EXECUTE TXTREADER$("jdmp4.jdb")
-EXECUTE TXTREADER$("jdmp5.jdb")
+# First, and it has to be first: by the seventh load the heap is too broken
+# up to compile even half a kilobyte, and the defaults are the one part that
+# must not be the one that fails. Nothing loaded after it touches these
+# values - the parts declare their globals in a branch that never runs.
+cat > "$out/pltinit.jdb" <<'INIT'
 PTITLE$ = ""
 PXLAB$ = ""
 PYLAB$ = ""
@@ -117,5 +147,12 @@ CATCH
     PBOARD = 0
 ENDTRY
 PRINT "jdPlot ready - PLOTHELP lists the verbs"
-BOOT
-printf '%-20s %s bytes\n' jdm_boot.jdb "$(wc -c < "$out/jdm_boot.jdb")"
+INIT
+printf '%-14s %5s bytes   %s\n' pltinit.jdb "$(wc -c < "$out/pltinit.jdb")" defaults
+# Biggest first. The whole heap is only there for the first load, and by the
+# last one half a kilobyte is a gamble - so the order is purely by size, and
+# the declarations above are what make that safe: nothing a part loads can
+# clobber a value another part already set.
+ls -S "$out"/plt*.jdb 2>/dev/null | sed 's|.*/|RUN |' > "$out/LOAD.txt"
+echo
+echo "Send each file with the REPL's RECV, then paste $out/LOAD.txt at the prompt."

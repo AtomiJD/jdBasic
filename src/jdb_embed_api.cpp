@@ -537,10 +537,26 @@ JDB_EMBED_API char* jdb_embed_load(JdbEmbed* eh, const char* path) {
         e->last_error = std::string("Cannot read ") + path;
         return nullptr;
     }
+#ifdef PICO
+    // Three copies of the program were alive while it compiled: the
+    // stringstream's own buffer, the string str() hands back, and the
+    // lexer's. On a board where the source is the smaller half of the
+    // problem it is still tens of kilobytes for nothing. Read once, and
+    // let the file go before the lexer starts.
+    std::string src;
+    {
+        std::stringstream ss;
+        ss << in.rdbuf();
+        src = ss.str();
+    }
+    in.close();
+#else
     std::stringstream ss;
     ss << in.rdbuf();
+    std::string src = ss.str();
+#endif
     try {
-        run_source(e->vm, ss.str());
+        run_source(e->vm, src);
         return dup_cstr(e->output_buf);
     } catch (const std::exception& ex) {
         e->last_error = ex.what();
