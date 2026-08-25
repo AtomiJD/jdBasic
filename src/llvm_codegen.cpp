@@ -6299,6 +6299,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMValueRef args[] = { m, key, fv,
                         LLVMConstInt(i32_type, JD_TAG_BOOL, 0) };
                     LLVMBuildCall2(builder, set_tg.fn_type, set_tg.fn, args, 4, "");
+                } else if (v.tag == JD_TAG_I64) {
+                    // Keep the integer identity. Untagged, the cell is just a
+                    // number and TYPEOF reports FLOAT64 - which is how
+                    // {"score": 9} reached Python as 9.0 and str() rendered
+                    // it that way. The cell still holds a real double; the
+                    // tag is what says to read it back as an int.
+                    LLVMValueRef fv = coerce_to(v, f64_type);
+                    auto& set_tg = runtime_funcs["__map_set_tagged"];
+                    LLVMValueRef args[] = { m, key, fv,
+                        LLVMConstInt(i32_type, JD_TAG_I64, 0) };
+                    LLVMBuildCall2(builder, set_tg.fn_type, set_tg.fn, args, 4, "");
                 } else {
                     LLVMValueRef fv = coerce_to(v, f64_type);
                     auto& set_f64 = runtime_funcs["__map_set_f64"];
@@ -10115,6 +10126,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         } else {
                             encoded = av.val;
                         }
+                    } else if (av.tag == JD_TAG_BOOL) {
+                        // The wire already decodes BOOL; without saying so a
+                        // TRUE handed to CHAN.SEND came back as the INT64 it
+                        // is backed by, and printed as 1.
+                        encoded = av.val;
+                        tag = JD_TAG_BOOL;
                     } else {
                         encoded = av.val;
                         tag = JD_TAG_I64;

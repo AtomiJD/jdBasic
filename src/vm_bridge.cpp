@@ -380,8 +380,11 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
             } else if (t == jd_tag(JdTag::NATIVE_MAP)) {
                 JdbMapFwd* m = (JdbMapFwd*)(intptr_t)u.i;
                 out->elements.push_back(m ? jdbmap_to_value(m) : Value::make_none());
+            } else if (t == jd_tag(JdTag::I64)) {
+                // Same convention as the map cells: stored as a real double.
+                out->elements.push_back(Value::make_i64((int64_t)d));
             } else {
-                // F64 / I64 - numeric.
+                // F64 - numeric.
                 out->elements.push_back(Value::make_f64(d));
             }
             continue;
@@ -753,9 +756,16 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
         Value cell;
         switch (static_cast<JdTag>(t)) {
             case JdTag::I64: {
-                int64_t bits;
-                memcpy(&bits, &d, sizeof(bits));
-                cell = Value::make_i64(bits);
+                // The storage convention is jdb_map_get_tagged's: an I64 cell
+                // holds the value as a real double, not the integer's bit
+                // pattern. Reading it as a pun turned a 7 that reached a map
+                // through the RUNTIME path into 4619567317775286272 the
+                // moment it crossed the bridge.
+                cell = Value::make_i64((int64_t)d);
+                break;
+            }
+            case JdTag::BOOL: {
+                cell = Value::make_bool(d != 0.0);
                 break;
             }
             case JdTag::STR: {

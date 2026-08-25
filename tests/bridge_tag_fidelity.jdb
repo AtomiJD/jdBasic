@@ -1,0 +1,72 @@
+' A compiled program hands values to the bridge with a tag saying what they
+' are. Where the tag was dropped the value still arrived, its type did not -
+' a TRUE came back as the INT64 it is backed by, and an integer in a map
+' literal came back as FLOAT64. Nothing errors; it only shows up once
+' something downstream cares about the difference, and then it is baffling.
+'
+' The map cell convention is jdb_map_get_tagged's: an I64 cell holds a real
+' double and the tag is what says to read it back as an int. The bridge used
+' to read it as a bit pattern instead, which turned a 7 into 4619567317775286272.
+
+DIM fails = 0
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM ch = CHAN.OPEN(16)
+
+' A bool has to stay a bool across the wire.
+CHAN.SEND(ch, TRUE)
+DIM b = CHAN.RECV(ch)
+CHKS("a bool keeps its type", TYPEOF(b), "BOOLEAN")
+CHK("a bool keeps its value", b, TRUE)
+
+CHAN.SEND(ch, FALSE)
+DIM b2 = CHAN.RECV(ch)
+CHKS("FALSE keeps its type", TYPEOF(b2), "BOOLEAN")
+CHK("FALSE keeps its value", b2, FALSE)
+
+' An integer literal in a map literal has to stay an integer.
+DIM m = {"score": 9, "name": "ada", "flag": TRUE}
+CHKS("an int in a map literal", TYPEOF(m{"score"}), "INT64")
+CHK("and keeps its value", m{"score"}, 9)
+CHKS("a string beside it", TYPEOF(m{"name"}), "STRING")
+CHKS("a bool beside it", TYPEOF(m{"flag"}), "BOOLEAN")
+
+' The same map crossing the bridge keeps every one of them.
+CHAN.SEND(ch, m)
+DIM m2 = CHAN.RECV(ch)
+CHKS("the int survives the wire", TYPEOF(m2{"score"}), "INT64")
+CHK("with its value", m2{"score"}, 9)
+CHKS("the string survives", TYPEOF(m2{"name"}), "STRING")
+CHKS("the bool survives", TYPEOF(m2{"flag"}), "BOOLEAN")
+
+' An int that reached a map through a runtime-tagged read, which is the path
+' that produced a bit pattern rather than a number.
+DIM row = JSON.PARSE$("{""id"": 7}")
+DIM carrier = {"seed": 0}
+carrier{"id"} = row{"id"}
+CHK("a runtime-tagged int in a map", carrier{"id"}, 7)
+CHAN.SEND(ch, carrier)
+DIM carrier2 = CHAN.RECV(ch)
+CHK("and across the wire", carrier2{"id"}, 7)
+CHKS("still an int", TYPEOF(carrier2{"id"}), "INT64")
+
+CHAN.CLOSE(ch)
+
+IF fails = 0 THEN
+    PRINT "bridge_tag_fidelity: ALL TESTS PASSED!"
+ELSE
+    PRINT "bridge_tag_fidelity: "; fails; " failed"
+ENDIF
