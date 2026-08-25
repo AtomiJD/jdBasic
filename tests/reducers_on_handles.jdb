@@ -1,0 +1,79 @@
+' A direct binding takes native representations: an array is a JdbArray*, a
+' string a char*. A value that arrived as a VM handle is neither - it is a
+' key into the bridge's value store, a small integer - so coercing one into a
+' pointer parameter dereferenced it. SUM on anything CHAN.RECV, AWAIT or
+' PY.EVAL produced segfaulted there, with no error and no diagnostic.
+'
+' Every array and string builtin with a direct binding was in that position,
+' which is why this walks a spread of them rather than just the reducer that
+' happened to be reported.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM ch = CHAN.OPEN(32)
+
+' Floats through the store.
+CHAN.SEND(ch, [1.5, 2.5, 3.5])
+DIM f = CHAN.RECV(ch)
+CHK("SUM of a float handle", SUM(f), 7.5)
+CHK("MEAN of a float handle", MEAN(f), 2.5)
+
+' Integers through the store.
+CHAN.SEND(ch, [5, 6, 7])
+DIM i = CHAN.RECV(ch)
+CHK("SUM of an int handle", SUM(i), 18)
+CHK("MIN of an int handle", MIN(i), 5)
+CHK("MAX of an int handle", MAX(i), 7)
+CHK("PRODUCT of an int handle", PRODUCT(i), 210)
+CHK("MEDIAN of an int handle", MEDIAN(i), 6)
+CHK("LEN of an int handle", LEN(i), 3)
+
+' A single element, where a reducer has nothing to fold over.
+CHAN.SEND(ch, [4])
+DIM one = CHAN.RECV(ch)
+CHK("SUM of a one-element handle", SUM(one), 4)
+CHK("MIN of a one-element handle", MIN(one), 4)
+
+' Strings through the store: JOIN returns a string without saying so in its
+' name, so the bridge had to be told.
+CHAN.SEND(ch, ["b", "a", "c"])
+DIM s = CHAN.RECV(ch)
+CHKS("JOIN of a string handle", JOIN(s, "-"), "b-a-c")
+CHK("LEN of a string handle", LEN(s), 3)
+
+' Booleans, where ANY and ALL are the reducers.
+CHAN.SEND(ch, [TRUE, FALSE, TRUE])
+DIM flags = CHAN.RECV(ch)
+CHK("ANY of a bool handle", ANY(flags), TRUE)
+CHK("ALL of a bool handle", ALL(flags), FALSE)
+
+' The direct-call shape, with no variable in between.
+CHAN.SEND(ch, [10, 20, 30])
+CHK("SUM straight off a call", SUM(CHAN.RECV(ch)), 60)
+
+' A plain native array is untouched by any of this.
+DIM native = [1, 2, 3, 4]
+CHK("SUM of a native array", SUM(native), 10)
+CHK("MAX of a native array", MAX(native), 4)
+
+CHAN.CLOSE(ch)
+
+IF fails = 0 THEN
+    PRINT "reducers_on_handles: ALL TESTS PASSED!"
+ELSE
+    PRINT "reducers_on_handles: "; fails; " failed"
+ENDIF

@@ -9785,8 +9785,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Handle MIN/MAX - array (1 arg)
-    if ((upper == "MIN" || upper == "MAX") && expr.args.size() == 1) {
+    // Handle MIN/MAX - array (1 arg). A VM handle is not a JdbArray*, so it
+    // goes to the bridge with the rest of the reducers rather than into the
+    // native binding.
+    if ((upper == "MIN" || upper == "MAX") && expr.args.size() == 1 &&
+        arg_cache[0].tag != JD_TAG_VM_HANDLE) {
         // Array version
         std::string fn_name = (upper == "MIN") ? "__arr_min" : "__arr_max";
         auto ait = runtime_funcs.find(fn_name);
@@ -9911,7 +9914,24 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
     auto rit = runtime_funcs.find(upper);
-    if (rit != runtime_funcs.end() &&
+    // A direct binding takes native representations: an array is a JdbArray*,
+    // a string a char*. A VM handle is neither - it is a key into the bridge's
+    // value store, a small integer - so coercing one into a pointer parameter
+    // dereferences it. SUM on anything CHAN.RECV, AWAIT or PY.EVAL produced
+    // segfaulted exactly there, and so would every other array or string
+    // builtin with a direct binding. The bridge path below marshals handles
+    // by design, so when one would land on a pointer parameter, leave the
+    // call to it.
+    bool handle_into_ptr = false;
+    if (rit != runtime_funcs.end()) {
+        unsigned pc = LLVMCountParamTypes(rit->second.fn_type);
+        std::vector<LLVMTypeRef> pts(pc);
+        if (pc > 0) LLVMGetParamTypes(rit->second.fn_type, pts.data());
+        for (size_t i = 0; i < expr.args.size() && i < pc && i < arg_cache.size(); i++)
+            if (arg_cache[i].tag == JD_TAG_VM_HANDLE && pts[i] == i8_ptr_type)
+                handle_into_ptr = true;
+    }
+    if (rit != runtime_funcs.end() && !handle_into_ptr &&
         expr.args.size() <= LLVMCountParamTypes(rit->second.fn_type)) {
         // If the user passed MORE args than the direct binding accepts, fall
         // through to the VM bridge so optional tail args (e.g. an optional TZ
@@ -10177,7 +10197,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 "GUI.INPUT",
                 // TUI.INPUT mirrors GUI.INPUT - string return value, would
                 // otherwise be dropped by the bridge's default f64 path.
-                "TUI.INPUT"
+                "TUI.INPUT",
+                // JOIN returns a string without saying so in its name. It has
+                // a direct binding, so the bridge only ever sees it when the
+                // array is a VM handle - and then the default f64 path turned
+                // the result into 0.
+                "JOIN"
             };
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
                                 string_returners.count(upper) ||
