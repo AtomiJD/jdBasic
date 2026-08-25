@@ -1,0 +1,64 @@
+' Interpreter hot paths, timed. At top level every assignment is a global
+' one, and STORE_GLOBAL reads the variable's name out of the chunk on every
+' execution - to check it against the constant set and to spot a dotted name.
+' Nothing on that path may build a std::string from it.
+'
+' The four cases separate the two things that could cost: how long the name
+' is, and what type the value is. The locals loop is the control: STORE_VAR
+' never touches a name, so a divergence between it and the rest points at the
+' global path rather than at the machine being busy.
+
+DIM t0
+DIM t1
+DIM i
+DIM n
+n = 300000
+
+DIM s
+DIM a_rather_long_global_variable_name
+DIM q$
+DIM a_rather_long_global_string_name$
+
+t0 = TICK()
+FOR i = 1 TO n
+    s = i
+NEXT i
+t1 = TICK()
+PRINT "short name, number  "; t1 - t0; " ms"
+
+t0 = TICK()
+FOR i = 1 TO n
+    a_rather_long_global_variable_name = i
+NEXT i
+t1 = TICK()
+PRINT "long name,  number  "; t1 - t0; " ms"
+
+t0 = TICK()
+FOR i = 1 TO n
+    q$ = "x"
+NEXT i
+t1 = TICK()
+PRINT "short name, string  "; t1 - t0; " ms"
+
+t0 = TICK()
+FOR i = 1 TO n
+    a_rather_long_global_string_name$ = "x"
+NEXT i
+t1 = TICK()
+PRINT "long name,  string  "; t1 - t0; " ms"
+
+FUNC LOCALS_LOOP(rounds)
+    DIM k
+    DIM acc
+    acc = 0
+    FOR k = 1 TO rounds
+        acc = acc + k
+    NEXT k
+    RETURN acc
+ENDFUNC
+
+t0 = TICK()
+DIM r
+r = LOCALS_LOOP(n)
+t1 = TICK()
+PRINT "locals, control     "; t1 - t0; " ms"

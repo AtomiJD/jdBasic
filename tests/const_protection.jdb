@@ -1,0 +1,77 @@
+' STORE_GLOBAL asks on every single store whether the target is a protected
+' constant. By name that is a string hash - and once the name lives packed in
+' the chunk, a copy of its characters to build one, which showed up as a
+' cliff at the small-string boundary. The question is answered by resolved
+' slot instead, which is an integer, so the check moved to after the slot is
+' known. This pins that the move did not weaken it.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+' The built-in constants are registered before any program runs, which is why
+' the constant set is never empty.
+DIM caught
+caught = 0
+TRY
+    PI = 3
+CATCH
+    caught = 1
+ENDTRY
+CHK("PI is protected", caught, 1)
+CHK("PI kept its value", INT(PI * 100), 314)
+
+caught = 0
+TRY
+    E = 0
+CATCH
+    caught = 1
+ENDTRY
+CHK("E is protected", caught, 1)
+
+' A user constant, declared at runtime by MARK_CONST.
+CONST GREETING = "hello"
+CHK("the constant holds", GREETING = "hello", TRUE)
+
+caught = 0
+TRY
+    GREETING = "goodbye"
+CATCH
+    caught = 1
+ENDTRY
+CHK("a user constant is protected", caught, 1)
+CHK("and kept its value", GREETING = "hello", TRUE)
+
+' A name long enough to leave the small-string budget, which is where the
+' by-name check used to allocate.
+CONST A_CONSTANT_WITH_A_RATHER_LONG_NAME = 42
+caught = 0
+TRY
+    A_CONSTANT_WITH_A_RATHER_LONG_NAME = 43
+CATCH
+    caught = 1
+ENDTRY
+CHK("a long-named constant is protected", caught, 1)
+CHK("and kept its value", A_CONSTANT_WITH_A_RATHER_LONG_NAME, 42)
+
+' An ordinary global that merely sits next to them must still be writable,
+' including one whose name is long.
+DIM an_ordinary_global_with_a_long_name
+an_ordinary_global_with_a_long_name = 1
+an_ordinary_global_with_a_long_name = 2
+CHK("an ordinary global still stores", an_ordinary_global_with_a_long_name, 2)
+
+DIM plain
+plain = 7
+CHK("a short ordinary global still stores", plain, 7)
+
+IF fails = 0 THEN
+    PRINT "const_protection: ALL TESTS PASSED!"
+ELSE
+    PRINT "const_protection: "; fails; " failed"
+ENDIF

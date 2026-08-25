@@ -145,13 +145,24 @@ struct Chunk {
     std::string name_blob;
     std::vector<uint32_t> name_offsets;
 
+    // Bit 31 of an offset marks a name that contains a '.'. Whether it does
+    // is settled when the name is added, and STORE_GLOBAL asks on every
+    // single store to decide between a plain global and an object field -
+    // so it is answered once here instead of by scanning the characters
+    // each time. A name blob never comes near two gigabytes.
+    static constexpr uint32_t kDottedName = 0x80000000u;
+
     size_t name_count() const { return name_offsets.size(); }
 
     // Valid until the next add_var_name - the blob may move when it grows.
     // Nothing holds one across a compile step; at runtime the chunk is fixed.
     const char* name_at(size_t slot) const {
         if (slot >= name_offsets.size()) return "";
-        return name_blob.c_str() + name_offsets[slot];
+        return name_blob.c_str() + (name_offsets[slot] & ~kDottedName);
+    }
+
+    bool name_is_dotted(size_t slot) const {
+        return slot < name_offsets.size() && (name_offsets[slot] & kDottedName) != 0;
     }
     // Source line per bytecode offset, kept as one entry per line change
     // rather than one int per byte. A statement is several bytes of code and
@@ -299,7 +310,9 @@ struct Chunk {
         for (uint16_t i = 0; i < name_offsets.size(); i++) {
             if (name == name_at(i)) return i;
         }
-        name_offsets.push_back(static_cast<uint32_t>(name_blob.size()));
+        uint32_t off = static_cast<uint32_t>(name_blob.size());
+        if (name.find('.') != std::string::npos) off |= kDottedName;
+        name_offsets.push_back(off);
         name_blob.append(name);
         name_blob.push_back('\0');
         return static_cast<uint16_t>(name_offsets.size() - 1);

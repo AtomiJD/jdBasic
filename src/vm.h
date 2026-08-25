@@ -300,6 +300,13 @@ private:
     std::vector<Value> globals;
     std::unordered_map<std::string, uint16_t> global_names;
     std::unordered_set<std::string> const_globals;  // protected constant names (uppercase)
+    // The same set by resolved global slot. STORE_GLOBAL asks on every store,
+    // and the name form costs a string hash - and, once the name lives packed
+    // in the chunk rather than as a std::string, a copy of the characters to
+    // build one. PI, E and TAU are registered as constants at startup, so the
+    // set is never empty and the question is never free. Kept in step at the
+    // two inserts and rebuilt on reset, where slot numbers start over.
+    std::unordered_set<uint16_t> const_global_slots;
 
     // Functions (owned).
     // std::deque (not vector) so push_back never invalidates pointers/refs
