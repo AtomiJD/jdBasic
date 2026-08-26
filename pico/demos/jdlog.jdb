@@ -1,0 +1,74 @@
+' Autonomous temperature logger for the PicoCalc.
+'
+' Set it as the power-on program once:
+'
+'     AUTORUN jdlog.jdb
+'
+' From then on the board comes up on its own, brings the plotter in, and
+' samples the RP2350's internal sensor into a rolling window that it redraws
+' after every reading. No terminal has to be attached.
+'
+' Every sample is also appended to log.csv on the flash store, so a power cut
+' costs the picture but not the data.
+'
+' ESC returns to the prompt with the plotter still loaded, so the chart can be
+' restyled by hand. AUTORUN also gives a two-second window at boot to cancel
+' before any of this starts.
+
+EXECUTE TXTREADER$("plt1.jdb")
+EXECUTE TXTREADER$("plt3.jdb")
+EXECUTE TXTREADER$("plt4.jdb")
+EXECUTE TXTREADER$("plt5.jdb")
+EXECUTE TXTREADER$("plt8.jdb")
+EXECUTE TXTREADER$("plt2.jdb")
+EXECUTE TXTREADER$("plt6.jdb")
+EXECUTE TXTREADER$("pltinit.jdb")
+EXECUTE TXTREADER$("plt7.jdb")
+
+' The window is what the panel shows and what memory has to hold. 120 samples
+' at one a minute is two hours on screen; the budget is around 300 per series.
+DIM WINDOW
+WINDOW = 120
+
+DIM SAMPLES
+DIM RUNNING
+DIM SEQ
+SAMPLES = []
+RUNNING = 1
+SEQ = 0
+
+PTITLE$ = "board temperature"
+PXLAB$ = "samples"
+PYLAB$ = "degC"
+PLEG = 0
+
+SUB ONSAMPLE(d)
+    DIM c
+    c = ADC.TEMP()
+    SEQ = SEQ + 1
+    ' Drop the oldest once the window is full. TAKE with a negative count
+    ' keeps the tail, which is the whole rolling-window operation.
+    SAMPLES = APPEND(SAMPLES, c)
+    IF LEN(SAMPLES) > WINDOW THEN SAMPLES = TAKE(0 - WINDOW, SAMPLES)
+    TXTWRITER("log.csv", STR$(SEQ) + "," + FORMAT$("{:.2f}", c) + CHR$(10), TRUE)
+    PLOT SAMPLES
+ENDSUB
+
+SUB ONKEY(d)
+    ' 27 is ESC. Anything else is ignored, so a stray keypress cannot stop it.
+    IF d[0] = 27 THEN RUNNING = 0
+ENDSUB
+
+ON "TICK" CALL ONSAMPLE
+ON "KEY" CALL ONKEY
+KEY.WATCH(TRUE)
+TIMER.EVERY(60000)
+
+PRINT "logging every 60 s - ESC for the prompt"
+DO WHILE RUNNING = 1
+    SLEEP 200
+LOOP
+
+TIMER.STOP()
+KEY.WATCH(FALSE)
+PRINT "stopped after "; SEQ; " samples, plotter still loaded"

@@ -68,9 +68,20 @@ Repeat for all nine. Two things matter when a terminal sends the bytes for you:
 
 Any line ending is fine, `RECV` normalises to `\n`.
 
-### 3. Load them, once per power-on
+### 3. Load them
 
-Paste the contents of `LOAD.txt` at the prompt:
+`mkparts.sh` also writes `jdm_boot.jdb`, which is the same nine loads as one
+303-byte program:
+
+    > RUN jdm_boot.jdb
+    jdPlot ready
+
+That is the short way, and it is what an unattended board uses. `EXECUTE` was
+not an option for this until recently: it keeps the outer chunk, the source
+string and the tokens alive at once, and used to fail where a plain `RUN` of
+the same file succeeded. It became usable when the load peak came down.
+
+Or paste the contents of `LOAD.txt` at the prompt, one line at a time:
 
     RUN plt1.jdb
     RUN plt3.jdb
@@ -211,6 +222,44 @@ largest block the heap will actually hand over, and that is the number to watch.
 
 A plot is not animation. Every shape goes straight to the panel as it is drawn,
 so you watch the curve appear. `SCREENFLIP` is a no-op with no buffer open.
+
+---
+
+## Leaving it running
+
+`AUTORUN <name>` records a program to start at power-on. The board then needs
+no terminal at all: it comes up, runs it, and whatever that program leaves in
+the VM is still there afterwards. Two seconds of ESC at boot cancels, so a
+misbehaving autorun never locks the board out.
+
+`jdlog.jdb` in this directory is the shape of it. Set it once:
+
+    > AUTORUN jdlog.jdb
+    autorun: jdlog.jdb
+
+From then on, every power-on brings the plotter in through `jdm_boot.jdb`,
+samples the RP2350's own temperature sensor into a rolling window, redraws the
+chart after each reading, and appends the sample to `log.csv` on the flash
+store. A power cut costs the picture, not the data.
+
+ESC hands the prompt back with the plotter still loaded, so the chart can be
+restyled by hand:
+
+    stopped after 13 samples, plotter still loaded
+    > PLOTSTYLE 1, "bar", 3
+
+`AUTORUN OFF` clears it, `AUTORUN` on its own reports what is set.
+
+The three pieces that make a program like this work unattended:
+
+- **`TIMER.EVERY(ms)` with an `ON "TICK"` handler.** Handlers run between
+  statements, never inside the interrupt, so a handler may draw, write files
+  and call the plotter. They do not nest: a tick that arrives while one is
+  still running is dropped rather than queued, so a slow handler cannot build
+  a backlog it will never work off.
+- **A rolling window.** `TAKE(0 - n, arr)` keeps the tail. Without it the
+  array grows until the heap gives out.
+- **`KEY.WATCH(TRUE)` with an `ON "KEY"` handler**, so there is a way back in.
 
 ---
 

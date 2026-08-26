@@ -156,5 +156,13 @@ printf '%-14s %5s bytes   %s\n' pltinit.jdb "$(wc -c < "$out/pltinit.jdb")" defa
 # the declarations above are what make that safe: nothing a part loads can
 # clobber a value another part already set.
 ls -S "$out"/plt*.jdb 2>/dev/null | sed 's|.*/|RUN |' > "$out/LOAD.txt"
+
+# The same order as one program, for AUTORUN. EXECUTE keeps the outer chunk,
+# the source string and the tokens alive together, so it used to fail where a
+# plain RUN of the same file succeeded - it only became usable once the load
+# peak came down. Anything that wants the plotter at power-on starts from here.
+sed 's|^RUN \(.*\)$|EXECUTE TXTREADER$("\1")|' "$out/LOAD.txt" > "$out/jdm_boot.jdb"
+printf 'PRINT "jdPlot ready"\n' >> "$out/jdm_boot.jdb"
+printf '%-14s %5s bytes   %s\n' jdm_boot.jdb "$(wc -c < "$out/jdm_boot.jdb")" "the whole library as one program"
 echo
 echo "Send each file with the REPL's RECV, then paste $out/LOAD.txt at the prompt."
