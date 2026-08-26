@@ -259,19 +259,19 @@ of ESC at boot cancels a run, which is the way back in if a program misbehaves.
 
 ### Stopping it
 
-Any of ESC, Ctrl-C or `q` stops the logger. It takes several codes because the
-PicoCalc's own keyboard does not send what a serial terminal sends, and a
-handler that only tests for 27 will never see the key on the device.
+Any of ESC, Ctrl-C or `q` stops the logger.
 
-`keycode.jdb` prints what each key actually sends here. Run it, press the key
-in question, then hold any key to finish:
+**The PicoCalc's ESC key sends 177**, not the 27 a serial terminal sends. The
+keyboard controller has its own block up there: the arrows are 180 to 183, HOME
+is 210, END is 213. A handler that only tests for 27 works perfectly over the
+wire and never fires on the device, which is a good way to lose an afternoon.
+
+`keycode.jdb` prints what any key actually sends. Run it, press the key, then
+hold any key to finish:
 
     > RUN keycode.jdb
     press keys - hold one to finish
-    code 27
-
-If the ESC on your board reports something not in the list, add it to the
-`ONKEY` handler in `jdlog.jdb`.
+    code 177
 
 The pieces that make a program like this work unattended:
 

@@ -40,9 +40,10 @@ ENDSUB
 SUB ONKEY(d)
     DIM k
     k = d[0]
-    ' 27 is ESC on a serial terminal, 3 is Ctrl-C, 177 is what the PicoCalc's
-    ' own ESC key sends. 'q' works from either.
-    IF k = 27 ORELSE k = 3 ORELSE k = 177 ORELSE k = 113 ORELSE k = 81 THEN RUNNING = 0
+    ' 177 is the PicoCalc's ESC key, measured with keycode.jdb - the keyboard
+    ' controller has its own block up there, the arrows being 180 to 183. 27 is
+    ' ESC from a serial terminal, 3 is Ctrl-C, and q works from either.
+    IF k = 177 ORELSE k = 27 ORELSE k = 3 ORELSE k = 113 ORELSE k = 81 THEN RUNNING = 0
 ENDSUB
 
 ON "TICK" CALL ONSAMPLE
