@@ -1,0 +1,39 @@
+' Draw what jdlog.jdb collected. Load the plotter first:
+'
+'     RUN jdmload.jdb
+'     RUN jdshow.jdb
+'
+' The window is the tail of the file, because the panel is 320 pixels wide and
+' the board holds about 300 points per series comfortably.
+
+DIM WINDOW
+WINDOW = 240
+
+DIM raw$
+raw$ = TXTREADER$("log.csv")
+
+DIM rows
+rows = SPLIT(raw$, CHR$(10))
+
+DIM vals
+vals = []
+DIM i
+DIM parts
+FOR i = 0 TO LEN(rows) - 1
+    IF LEN(rows[i]) > 2 THEN
+        parts = SPLIT(rows[i], ",")
+        IF LEN(parts) = 2 THEN vals = APPEND(vals, VAL(parts[1]))
+    ENDIF
+NEXT i
+
+IF LEN(vals) = 0 THEN
+    PRINT "log.csv has no samples yet"
+ELSE
+    IF LEN(vals) > WINDOW THEN vals = TAKE(0 - WINDOW, vals)
+    PTITLE$ = "board temperature"
+    PXLAB$ = "sample"
+    PYLAB$ = "degC"
+    PLEG = 0
+    PLOT vals
+    PRINT LEN(vals); " samples drawn"
+ENDIF

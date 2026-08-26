@@ -1,0 +1,33 @@
+' What a key actually sends on this board. The PicoCalc's controller does not
+' use the same codes as a serial terminal, so a handler that only tests for 27
+' will never see its ESC key.
+'
+' Press keys. Any key held for two seconds ends it.
+
+DIM last
+DIM same
+DIM run
+last = 0
+same = 0
+run = 1
+
+SUB OK(d)
+    IF d[0] = last THEN
+        same = same + 1
+    ELSE
+        same = 0
+        last = d[0]
+    ENDIF
+    PRINT "code "; d[0]
+    IF same > 8 THEN run = 0
+ENDSUB
+
+ON "KEY" CALL OK
+KEY.WATCH(TRUE)
+CLS
+PRINT "press keys - hold one to finish"
+DO WHILE run = 1
+    SLEEP 100
+LOOP
+KEY.WATCH(FALSE)
+PRINT "done"

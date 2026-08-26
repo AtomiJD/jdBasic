@@ -1,74 +1,64 @@
-' Autonomous temperature logger for the PicoCalc.
-'
-' Set it as the power-on program once:
+' Autonomous temperature logger. This is the power-on program:
 '
 '     AUTORUN jdlog.jdb
 '
-' From then on the board comes up on its own, brings the plotter in, and
-' samples the RP2350's internal sensor into a rolling window that it redraws
-' after every reading. No terminal has to be attached.
+' It does not load the plotter. Nobody is looking at the panel while the board
+' is away, and the library costs 33 KB and a few seconds of loading that the
+' logging job does not need. The samples go to log.csv on the flash store.
 '
-' Every sample is also appended to log.csv on the flash store, so a power cut
-' costs the picture but not the data.
+' To see them, load the plotter and draw the file:
 '
-' ESC returns to the prompt with the plotter still loaded, so the chart can be
-' restyled by hand. AUTORUN also gives a two-second window at boot to cancel
-' before any of this starts.
+'     RUN jdmload.jdb
+'     RUN jdshow.jdb
+'
+' The first sample is taken immediately, so the screen says something within a
+' second of power-on rather than after the first interval.
+'
+' Any of ESC, Ctrl-C or q stops it and hands back the prompt. The PicoCalc
+' keyboard does not send the same code as a serial terminal, so the handler
+' accepts several - run keycode.jdb to see what a given key sends here.
 
-EXECUTE TXTREADER$("plt1.jdb")
-EXECUTE TXTREADER$("plt3.jdb")
-EXECUTE TXTREADER$("plt4.jdb")
-EXECUTE TXTREADER$("plt5.jdb")
-EXECUTE TXTREADER$("plt8.jdb")
-EXECUTE TXTREADER$("plt2.jdb")
-EXECUTE TXTREADER$("plt6.jdb")
-EXECUTE TXTREADER$("pltinit.jdb")
-EXECUTE TXTREADER$("plt7.jdb")
-
-' The window is what the panel shows and what memory has to hold. 120 samples
-' at one a minute is two hours on screen; the budget is around 300 per series.
-DIM WINDOW
-WINDOW = 120
-
-DIM SAMPLES
+DIM PERIOD
 DIM RUNNING
 DIM SEQ
-SAMPLES = []
+PERIOD = 60000
 RUNNING = 1
 SEQ = 0
 
-PTITLE$ = "board temperature"
-PXLAB$ = "samples"
-PYLAB$ = "degC"
-PLEG = 0
-
-SUB ONSAMPLE(d)
+SUB TAKESAMPLE()
     DIM c
     c = ADC.TEMP()
     SEQ = SEQ + 1
-    ' Drop the oldest once the window is full. TAKE with a negative count
-    ' keeps the tail, which is the whole rolling-window operation.
-    SAMPLES = APPEND(SAMPLES, c)
-    IF LEN(SAMPLES) > WINDOW THEN SAMPLES = TAKE(0 - WINDOW, SAMPLES)
     TXTWRITER("log.csv", STR$(SEQ) + "," + FORMAT$("{:.2f}", c) + CHR$(10), TRUE)
-    PLOT SAMPLES
+    PRINT SEQ; ": "; FORMAT$("{:.2f}", c); " degC"
+ENDSUB
+
+SUB ONSAMPLE(d)
+    TAKESAMPLE
 ENDSUB
 
 SUB ONKEY(d)
-    ' 27 is ESC. Anything else is ignored, so a stray keypress cannot stop it.
-    IF d[0] = 27 THEN RUNNING = 0
+    DIM k
+    k = d[0]
+    ' 27 is ESC on a serial terminal, 3 is Ctrl-C, 177 is what the PicoCalc's
+    ' own ESC key sends. 'q' works from either.
+    IF k = 27 ORELSE k = 3 ORELSE k = 177 ORELSE k = 113 ORELSE k = 81 THEN RUNNING = 0
 ENDSUB
 
 ON "TICK" CALL ONSAMPLE
 ON "KEY" CALL ONKEY
 KEY.WATCH(TRUE)
-TIMER.EVERY(60000)
 
-PRINT "logging every 60 s - ESC for the prompt"
+CLS
+PRINT "jdlog - a sample every "; PERIOD / 1000; " s"
+PRINT "ESC, Ctrl-C or q stops"
+TAKESAMPLE
+TIMER.EVERY(PERIOD)
+
 DO WHILE RUNNING = 1
     SLEEP 200
 LOOP
 
 TIMER.STOP()
 KEY.WATCH(FALSE)
-PRINT "stopped after "; SEQ; " samples, plotter still loaded"
+PRINT "stopped after "; SEQ; " samples - log.csv has them"

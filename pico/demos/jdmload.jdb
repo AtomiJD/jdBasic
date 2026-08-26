@@ -1,0 +1,10 @@
+EXECUTE TXTREADER$("plt1.jdb")
+EXECUTE TXTREADER$("plt3.jdb")
+EXECUTE TXTREADER$("plt4.jdb")
+EXECUTE TXTREADER$("plt5.jdb")
+EXECUTE TXTREADER$("plt8.jdb")
+EXECUTE TXTREADER$("plt2.jdb")
+EXECUTE TXTREADER$("plt6.jdb")
+EXECUTE TXTREADER$("pltinit.jdb")
+EXECUTE TXTREADER$("plt7.jdb")
+PRINT "jdPlot ready"

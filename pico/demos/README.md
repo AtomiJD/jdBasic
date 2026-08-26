@@ -237,29 +237,59 @@ misbehaving autorun never locks the board out.
     > AUTORUN jdlog.jdb
     autorun: jdlog.jdb
 
-From then on, every power-on brings the plotter in through `jdm_boot.jdb`,
-samples the RP2350's own temperature sensor into a rolling window, redraws the
-chart after each reading, and appends the sample to `log.csv` on the flash
-store. A power cut costs the picture, not the data.
+**It does not load the plotter.** Nobody is watching the panel while the board
+is away, and the library costs 33 KB and several seconds of loading that the
+logging job has no use for. The logger samples the board's own temperature
+sensor and appends to `log.csv` on the flash store. The first sample is taken
+before the timer starts, so the screen says something within a second of
+power-on instead of after the first interval.
 
-ESC hands the prompt back with the plotter still loaded, so the chart can be
-restyled by hand:
+Looking at it is a separate job, for when you are back:
 
-    stopped after 13 samples, plotter still loaded
-    > PLOTSTYLE 1, "bar", 3
+    > RUN jdmload.jdb        the plotter, as one program
+    jdPlot ready
+    > RUN jdshow.jdb         draws the tail of log.csv
+    240 samples drawn
 
-`AUTORUN OFF` clears it, `AUTORUN` on its own reports what is set.
+That split is the whole point. Collecting has to survive being alone for days;
+drawing only has to work while someone is looking.
 
-The three pieces that make a program like this work unattended:
+`AUTORUN OFF` clears it, `AUTORUN` on its own reports what is set. Two seconds
+of ESC at boot cancels a run, which is the way back in if a program misbehaves.
+
+### Stopping it
+
+Any of ESC, Ctrl-C or `q` stops the logger. It takes several codes because the
+PicoCalc's own keyboard does not send what a serial terminal sends, and a
+handler that only tests for 27 will never see the key on the device.
+
+`keycode.jdb` prints what each key actually sends here. Run it, press the key
+in question, then hold any key to finish:
+
+    > RUN keycode.jdb
+    press keys - hold one to finish
+    code 27
+
+If the ESC on your board reports something not in the list, add it to the
+`ONKEY` handler in `jdlog.jdb`.
+
+The pieces that make a program like this work unattended:
 
 - **`TIMER.EVERY(ms)` with an `ON "TICK"` handler.** Handlers run between
-  statements, never inside the interrupt, so a handler may draw, write files
-  and call the plotter. They do not nest: a tick that arrives while one is
-  still running is dropped rather than queued, so a slow handler cannot build
-  a backlog it will never work off.
-- **A rolling window.** `TAKE(0 - n, arr)` keeps the tail. Without it the
-  array grows until the heap gives out.
+  statements, never inside the interrupt, so a handler may draw and write
+  files. They do not nest: a tick arriving while one is still running is
+  dropped rather than queued, so a slow handler cannot build a backlog it will
+  never work off.
+- **Take the first sample before starting the timer.** Otherwise nothing
+  happens for a whole interval, and on a minute timer that reads as a board
+  that has hung.
+- **Write to flash as you go.** A power cut then costs nothing that was
+  already sampled.
 - **`KEY.WATCH(TRUE)` with an `ON "KEY"` handler**, so there is a way back in.
+- **A rolling window if you keep data in memory.** `TAKE(0 - n, arr)` keeps
+  the tail; without it the array grows until the heap gives out. `jdshow.jdb`
+  does this when it reads the file back, which is why the logger itself does
+  not have to.
 
 ---
 
