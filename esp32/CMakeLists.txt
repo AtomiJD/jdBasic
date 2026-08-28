@@ -14,3 +14,9 @@ cmake_minimum_required(VERSION 3.16)
 
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(jdbasic_esp32)
+
+# The examples ship in the image: fs/ becomes the storage partition, so
+# a freshly flashed board already has something to RUN. Reflashing
+# storage.bin resets the store, which is why it is not part of the
+# routine flash in build.sh.
+fatfs_create_spiflash_image(storage fs)

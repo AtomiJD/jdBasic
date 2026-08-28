@@ -1,0 +1,7 @@
+' The smallest thing that proves the board runs jdBasic.
+
+PRINT "hello from the ESP32-S3"
+PRINT
+PRINT "internal RAM free : "; SYS.INTERNAL()
+PRINT "PSRAM free        : "; SYS.PSRAM()
+PRINT "flash store       : "; SYS.DF()

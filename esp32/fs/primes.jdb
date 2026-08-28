@@ -1,0 +1,22 @@
+' A sieve, written the way jdBasic likes it: no inner loop over the
+' array, just a mask that gets crossed out in strides.
+
+DIM n
+n = 20000
+
+DIM mask = RESHAPE([1], [n + 1])
+mask[0] = 0
+mask[1] = 0
+
+DIM i
+FOR i = 2 TO INT(SQR(n))
+    IF mask[i] = 1 THEN
+        DIM j
+        FOR j = i * i TO n STEP i
+            mask[j] = 0
+        NEXT j
+    ENDIF
+NEXT i
+
+PRINT "primes below "; n; ": "; SUM(mask)
+PRINT "largest      : "; MAX(mask * IOTA(n + 1, 0))

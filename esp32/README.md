@@ -41,6 +41,62 @@ like a build that did not take.
 If the board falls off USB entirely, unplug it. Nothing software-side
 brings it back.
 
+## The flash store
+
+A 2 MB FATFS partition on wear levelling, mounted as the *default*
+filesystem rather than under a prefix. IDF has no `chdir`, so a mount at
+`/flash` would leave the interpreter's own opens - `IMPORT`,
+`TXTREADER$`, `OPEN` - unable to find anything. Registering a VFS with
+an empty prefix makes it the fallback for every path that matches no
+other mount, and bare names work everywhere.
+
+One consequence: IDF builds FATFS with `FF_FS_RPATH 0`, so there is no
+working directory at all and `"."` never resolves. `DIR$` starts its
+listing at the root on this target.
+
+At the prompt:
+
+    DIR                 the store, name and size
+    RUN name            load and run a program
+    LOAD name           remember it, so a bare RUN repeats it
+    TYPE name           print a file
+    DEL name            remove one
+    COPY from to        and REN from to
+    RECV name           take a file straight off the wire
+    AUTORUN name        run it at power-on; OFF clears it; bare reports
+
+`SYS.DF` reports the store as a line, `SYS.FREEDISK` as a number.
+
+`RECV` parses nothing and echoes nothing, so a program arrives at the
+speed of the link. It ends on a single `0x04`, or after three seconds of
+silence once data has started. Send in small chunks with a short pause,
+128 bytes every 30 ms works, and any line ending is fine.
+
+`AUTORUN` leaves two seconds of ESC at boot to cancel, so a misbehaving
+program never locks the board out.
+
+### The examples
+
+`fs/` becomes the storage partition at build time, so a freshly flashed
+board already has something to run:
+
+    hello.jdb     the board, its two memories and the store
+    primes.jdb    a sieve over 20000, as a mask rather than a loop
+    mem.jdb       where an array lives, and what an element costs
+    mandel.jdb    the set as text, 78 by 24, about 1.3 s
+    bench.jdb     vectors, an interpreted loop, string building
+
+Reflashing `storage.bin` resets the store, which is why `build.sh` does
+not do it. Flash it once at `0x410000`, then leave it alone and use
+`RECV` for everything after.
+
+### What ends a run
+
+Reducers copy. `SUM` over a 100000-element array asks for about 2.2 MB
+on top of the 2.4 MB the array already holds, and then wants more, so it
+fails while five megabytes are still free. 50000 elements is comfortable.
+The limit to watch is `SYS.LARGEST`, not `SYS.FREE`.
+
 ## What it measures
 
 `SYS.FREE` and `SYS.LARGEST` answer directly here; the RP2350 has to

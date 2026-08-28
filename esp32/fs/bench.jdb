@@ -1,0 +1,30 @@
+' What 240 MHz buys. Three shapes of work, timed with TICK. The
+' vector step holds two arrays at once, a and a*a, so its size is
+' bounded by the largest free block rather than by the total.
+
+DIM t0, n
+n = 50000
+
+t0 = TICK()
+DIM a = IOTA(n)
+DIM s = SUM(a * a)
+PRINT "vector   "; n; " squares summed : "; TICK() - t0; " ms"
+
+DIM i, acc
+t0 = TICK()
+acc = 0
+FOR i = 1 TO 100000
+    acc = acc + i
+NEXT i
+PRINT "loop     100000 additions       : "; TICK() - t0; " ms"
+
+DIM txt$
+t0 = TICK()
+txt$ = ""
+FOR i = 1 TO 2000
+    txt$ = txt$ + "x"
+NEXT i
+PRINT "strings  2000 concatenations    : "; TICK() - t0; " ms"
+
+PRINT
+PRINT "sum of squares was "; s; " over "; LEN(txt$); " chars built"

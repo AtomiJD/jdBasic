@@ -8379,7 +8379,14 @@ void VM::register_builtins() {
         // POSIX: opendir + readdir + stat. Pattern-matching uses fnmatch on
         // the basename. If the pattern has no slash and no glob chars, treat
         // it as a directory listing of the cwd.
+#ifdef ESP32
+        // IDF builds FATFS with FF_FS_RPATH 0, so there is no working
+        // directory to be relative to and a bare listing starts at the
+        // root. Everywhere else "." is the cwd, as it should be.
+        std::string dir_part = "/", base_pat = pattern;
+#else
         std::string dir_part = ".", base_pat = pattern;
+#endif
         size_t sl = pattern.find_last_of('/');
         if (sl != std::string::npos) { dir_part = pattern.substr(0, sl); base_pat = pattern.substr(sl + 1); }
         if (base_pat.empty()) base_pat = "*";

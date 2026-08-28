@@ -1,0 +1,3 @@
+# Console on the native USB port, the one that enumerates as 303a:4001.
+# No bridge chip in the path, which is what a board without one needs.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y

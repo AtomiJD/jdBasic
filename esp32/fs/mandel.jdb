@@ -1,0 +1,35 @@
+' The Mandelbrot set as text, 78 by 24. Escape counts pick a character
+' from a ramp, densest first.
+
+DIM ramp$
+ramp$ = " .:-=+*#%@"
+
+DIM w, h, maxit
+w = 78
+h = 24
+maxit = 40
+
+DIM row, col
+FOR row = 0 TO h - 1
+    DIM lineOut$
+    lineOut$ = ""
+    FOR col = 0 TO w - 1
+        DIM cr, ci, zr, zi, it, t
+        cr = -2.2 + 3.0 * col / (w - 1)
+        ci = -1.2 + 2.4 * row / (h - 1)
+        zr = 0
+        zi = 0
+        it = 0
+        DO WHILE it < maxit ANDALSO zr * zr + zi * zi <= 4
+            t = zr * zr - zi * zi + cr
+            zi = 2 * zr * zi + ci
+            zr = t
+            it = it + 1
+        LOOP
+        DIM idx
+        idx = INT(it * 9 / maxit)
+        IF idx > 9 THEN idx = 9
+        lineOut$ = lineOut$ + MID$(ramp$, idx, 1)
+    NEXT col
+    PRINT lineOut$
+NEXT row

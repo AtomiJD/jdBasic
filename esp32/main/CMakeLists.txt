@@ -5,6 +5,7 @@ idf_component_register(
         "esp32_main.cpp"
         "esp32_builtins.cpp"
         "esp32_events.cpp"
+        "esp32_fs.cpp"
         "esp32_stubs.cpp"
         "../../src/lexer.cpp"
         "../../src/parser.cpp"
@@ -14,7 +15,7 @@ idf_component_register(
         "../../src/channels.cpp"
         "../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../src"
-    REQUIRES esp_timer driver
+    REQUIRES esp_timer driver fatfs vfs
 )
 
 # ESP32 is the platform switch, JDB_MCU the shared one: the same trades

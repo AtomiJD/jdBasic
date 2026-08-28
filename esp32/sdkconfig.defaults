@@ -6,9 +6,12 @@ CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
-# The console goes out the native USB port, the one that enumerates as
-# 303a:4001. No bridge chip in the path.
-CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+# The console goes out UART0, which on a DevKitC-1 is the socket with
+# the CH343 bridge. That path has a real reset circuit, flashes without
+# the watchdog dance, and stays up when a fault takes the native USB
+# device down. sdkconfig.usbconsole moves it to the native port.
+
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 
 # TRY/CATCH and std::bad_alloc are load-bearing in the interpreter.
 CONFIG_COMPILER_CXX_EXCEPTIONS=y
@@ -34,3 +37,8 @@ CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS=n
 # test app passes on the same board. Costs nothing when PSRAM is out,
 # and a faster interpreter is no loss either.
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# The flash store: FATFS on a wear-levelled partition. Long names,
+# because 8.3 would rename half the examples.
+CONFIG_FATFS_LFN_HEAP=y
+CONFIG_FATFS_MAX_LFN=128
