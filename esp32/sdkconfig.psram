@@ -2,13 +2,28 @@
 # sdkconfig.defaults. Leaving it out is the S3FN8 configuration, which
 # is what a Cardputer would give us.
 #
-# STATUS: this does not boot. The image stalls right after cpu_start
-# logs "Multicore app" and before heap_init, so before any interpreter
-# code runs. It is not ours: IDF's own hello_world example, grown to a
-# comparable image size and built with exactly these four options,
-# stalls at the same instruction. Whatever it is sits between the S3,
-# this board and IDF v5.5.5. A core dump to flash, read back with
-# espcoredump, is the next thing to try.
+# STATUS: this does not boot on the DevKitC-1 N16R8 here, and the fault
+# is in the hardware path rather than in anything above it.
+#
+# The chip's PSRAM answers on its configuration registers - vendor id
+# 0x0d, 64 Mbit, good-die pass - and the MSPI timing tuning completes
+# and picks a point. The first real data access then stalls the bus:
+# the boot hangs inside esp_psram_extram_test(), which cpu_start runs
+# right after starting the second core, and the RTC watchdog resets the
+# board. It never reaches the log line that reports a failed test.
+#
+# Not ours, and not the speed:
+#   - IDF's own hello_world example, built with these options and grown
+#     to a comparable image size, hangs at the same instruction
+#   - 40 MHz behaves exactly like 80 MHz
+#   - single-core mode moves the hang but does not remove it
+#   - with CONFIG_SPIRAM_MEMTEST=n the boot gets as far as heap_init and
+#     then stalls where the pool is added to the allocator, which is the
+#     next real access
+#
+# So the next thing to rule out is power: octal PSRAM at speed draws
+# more than the ID reads do. A different supply before suspecting the
+# module. Everything the port needs works without this file.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y

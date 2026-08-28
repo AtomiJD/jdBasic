@@ -1,0 +1,12 @@
+# Bring-up overlay: console on UART0 instead of the native USB port,
+# with debug logging. The DevKitC-1's second USB socket goes through a
+# CH343 bridge to UART0, and that path stays up when a fault takes the
+# USB-Serial/JTAG device down with it. It is how the PSRAM stall in
+# sdkconfig.psram was located.
+#
+#   idf.py -B build-diag \
+#       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.psram;sdkconfig.uartlog" \
+#       -DSDKCONFIG="build-diag/sdkconfig" build
+CONFIG_ESP_CONSOLE_UART_DEFAULT=y
+CONFIG_LOG_DEFAULT_LEVEL_DEBUG=y
+CONFIG_BOOTLOADER_LOG_LEVEL_DEBUG=y
