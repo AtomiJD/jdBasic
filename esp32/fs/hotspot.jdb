@@ -1,0 +1,37 @@
+' The board as its own network with its own web page. Connect to the
+' access point, then open http://192.168.4.1 - the page is built by this
+' program, so PRINT and PSRAM and the flash store are all one click away.
+
+DIM served
+
+FUNC HOME(req)
+    DIM body$
+    body$ = "<html><head><title>jdBasic</title></head><body>"
+    body$ = body$ + "<h1>jdBasic on the ESP32-S3</h1>"
+    body$ = body$ + "<p>internal RAM free: " + STR$(SYS.INTERNAL()) + "</p>"
+    body$ = body$ + "<p>PSRAM free: " + STR$(SYS.PSRAM()) + "</p>"
+    body$ = body$ + "<p>flash store: " + SYS.DF() + "</p>"
+    body$ = body$ + "<p>clients on this network: " + STR$(WIFI.CLIENTS()) + "</p>"
+    body$ = body$ + "<p>requests served: " + STR$(served) + "</p>"
+    body$ = body$ + "</body></html>"
+    served = served + 1
+    RETURN body$
+ENDFUNC
+
+served = 0
+
+IF WIFI.AP("jdbasic", "plotter123") <> 0 THEN
+    PRINT "could not start the access point"
+    END
+ENDIF
+
+PRINT "network jdbasic, password plotter123"
+PRINT "open http://"; WIFI.IP$()
+PRINT "ESC or Ctrl-C stops"
+
+HTTP.SERVER.ON_GET("/", "HOME")
+HTTP.SERVER.START(80)
+HTTP.SERVER.WAIT(0)
+HTTP.SERVER.STOP()
+WIFI.OFF()
+PRINT "stopped after "; served; " requests"

@@ -8,8 +8,31 @@
 // board has about 56 KB of heap to play with.
 
 #include "../src/vm.h"
+#ifdef ESP32
+// lwIP is the same library on both boards; what differs is who owns it.
+// Here it runs in its own task and callers take the core lock, and there
+// is no netif to pump because that task does it.
+#include "lwip/tcpip.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_timer.h"
+#include <stdio.h>
+#define jdb_lwip_begin() LOCK_TCPIP_CORE()
+#define jdb_lwip_end()   UNLOCK_TCPIP_CORE()
+static inline uint32_t jdb_ms_now() { return (uint32_t)(esp_timer_get_time() / 1000); }
+static inline void jdb_sleep_ms(unsigned ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
+static inline void jdb_net_poll() {}
+static inline int jdb_key_now() { int c = getchar(); return c == EOF ? -1 : c; }
+#else
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
+#define jdb_lwip_begin() cyw43_arch_lwip_begin()
+#define jdb_lwip_end()   cyw43_arch_lwip_end()
+static inline uint32_t jdb_ms_now() { return to_ms_since_boot(get_absolute_time()); }
+static inline void jdb_sleep_ms(unsigned ms) { sleep_ms(ms); }
+static inline void jdb_net_poll() { netif_poll_all(); }
+static inline int jdb_key_now() { return getchar_timeout_us(0); }
+#endif
 #include "lwip/tcp.h"
 #include "lwip/netif.h"
 #include <string>
@@ -258,9 +281,9 @@ static int httpd_poll(VM& vm) {
         c.out = wrap_response(status, ctype, body);
         c.in.clear();
         c.sent = 0;
-        cyw43_arch_lwip_begin();
+        jdb_lwip_begin();
         srv_send_more(&c);
-        cyw43_arch_lwip_end();
+        jdb_lwip_end();
         g_served++;
         done++;
     }
@@ -274,9 +297,9 @@ static VM* g_vm = nullptr;
 
 void pico_httpd_pump() {
     // NO_SYS keeps looped-back packets in a queue until someone drains it.
-    cyw43_arch_lwip_begin();
-    netif_poll_all();
-    cyw43_arch_lwip_end();
+    jdb_lwip_begin();
+    jdb_net_poll();
+    jdb_lwip_end();
     if (g_listen && g_vm) httpd_poll(*g_vm);
 }
 
@@ -298,7 +321,7 @@ void register_pico_httpd(VM& vm) {
     // of it; the port is the only argument that means anything here.
     vm.register_native("HTTP.SERVER.START", 1, 2, [](const std::vector<Value>& args) -> Value {
         int port = (int)args[0].to_double();
-        cyw43_arch_lwip_begin();
+        jdb_lwip_begin();
         // A program that ended without stopping the server would
         // otherwise hold the port until the next reboot, and every
         // later run would be refused.
@@ -313,14 +336,14 @@ void register_pico_httpd(VM& vm) {
         } else if (p) {
             tcp_abort(p);
         }
-        cyw43_arch_lwip_end();
+        jdb_lwip_end();
         return Value::make_i64(g_listen ? 0 : -1);
     });
     vm.register_native("HTTP.SERVER.STOP", 0, 0, [](const std::vector<Value>&) -> Value {
-        cyw43_arch_lwip_begin();
+        jdb_lwip_begin();
         for (auto& c : g_conns) conn_release(&c);
         if (g_listen) { tcp_close(g_listen); g_listen = nullptr; }
-        cyw43_arch_lwip_end();
+        jdb_lwip_end();
         return Value();
     });
     vm.register_native("HTTP.SERVER.POLL", 0, 0, [&vm](const std::vector<Value>&) -> Value {
@@ -329,16 +352,16 @@ void register_pico_httpd(VM& vm) {
     // Serve until the time runs out, or for good when no time is given.
     vm.register_native("HTTP.SERVER.WAIT", 0, 1, [&vm](const std::vector<Value>& args) -> Value {
         int ms = args.size() >= 1 ? (int)args[0].to_double() : 0;
-        uint32_t start = to_ms_since_boot(get_absolute_time());
+        uint32_t start = jdb_ms_now();
         for (;;) {
             httpd_poll(vm);
             if (vm.is_halted) break;
-            if (ms > 0 && (int)(to_ms_since_boot(get_absolute_time()) - start) >= ms) break;
+            if (ms > 0 && (int)(jdb_ms_now() - start) >= ms) break;
             // Without this a long wait owns the board until it expires:
             // nothing else here reads the keyboard.
-            int key = getchar_timeout_us(0);
+            int key = jdb_key_now();
             if (key == 0x1B || key == 3) break;
-            sleep_ms(5);
+            jdb_sleep_ms(5);
         }
         return Value::make_i64((int64_t)g_served);
     });

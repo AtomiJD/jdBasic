@@ -10,9 +10,13 @@
 #define CAP_INT (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 
 void register_esp32_fs(VM& vm);
+void register_esp32_wifi(VM& vm);
+void register_pico_httpd(VM& vm);
 
 void register_esp32_builtins(VM& vm) {
     register_esp32_fs(vm);
+    register_esp32_wifi(vm);
+    register_pico_httpd(vm);
 
     vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));

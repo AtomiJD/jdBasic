@@ -104,6 +104,42 @@ on top of the 2.4 MB the array already holds, and then wants more, so it
 fails while five megabytes are still free. 50000 elements is comfortable.
 The limit to watch is `SYS.LARGEST`, not `SYS.FREE`.
 
+## The radio
+
+The S3 is a station on someone else's network or its own access point,
+and jdBasic reaches both. It is a mode rather than a state: the radio
+costs about 113 KB of internal RAM, which is most of what the
+interpreter has, so it is started and stopped rather than left on.
+
+    WIFI.AP(ssid$ [, pass$ [, channel]])   own network; open with no pass
+    WIFI.CONNECT(ssid$, pass$ [, ms])      join one; 0 on success
+    WIFI.AUTO                              the two lines from wifi.txt
+    WIFI.OFF                               give the memory back
+    WIFI.STATUS                            0 down, 1 serving, 2 joined
+    WIFI.IP$   WIFI.MAC$   WIFI.CLIENTS   WIFI.DIAG$
+
+An access point comes up on 192.168.4.1 with a DHCP server behind it.
+`WIFI.OFF` returns about 44 KB of the 113; the rest belongs to the
+TCP/IP stack, which is set up once and not torn down again.
+
+The HTTP server is `pico/pico_httpd.cpp`, compiled by both ports. It is
+raw lwIP, and lwIP is the same library here; what differs is who owns
+it. On the RP2350 the callbacks run in the radio interrupt and the code
+brackets them with the SDK's lock, here lwIP has its own task and the
+brackets are the core lock. The millisecond clock, the sleep, the netif
+pump and the non-blocking key read are named rather than taken from an
+SDK, and the file picks a side with one `#ifdef`.
+
+    HTTP.SERVER.ON_GET(path$, handler$)    and ON_POST, ON_NOTFOUND
+    HTTP.SERVER.START(port)                and STOP
+    HTTP.SERVER.POLL                       one pass
+    HTTP.SERVER.WAIT(ms)                   keep going; 0 means forever
+    HTTP.SERVER.SERVED                     requests so far
+
+`fs/hotspot.jdb` is the two together: the board raises its own network,
+serves a page built by a jdBasic function, and ESC takes it all down
+again.
+
 ## What it measures
 
 `SYS.FREE` and `SYS.LARGEST` answer directly here; the RP2350 has to

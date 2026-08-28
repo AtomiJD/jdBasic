@@ -6,11 +6,16 @@ idf_component_register(
         "esp32_builtins.cpp"
         "esp32_events.cpp"
         "esp32_fs.cpp"
+        "esp32_wifi.cpp"
         "esp32_stubs.cpp"
         # Colouring one line of jdBasic is the same job on both boards and
         # depends on nothing either SDK provides. Shared rather than copied;
         # if a third caller turns up it moves somewhere neutral.
         "../../pico/pico_syntax.cpp"
+        # Raw lwIP, and lwIP is the same library here. The four locking
+        # pairs, the millisecond clock and the netif pump are what differ,
+        # and the file now names them instead of the SDK.
+        "../../pico/pico_httpd.cpp"
         "../../src/lexer.cpp"
         "../../src/parser.cpp"
         "../../src/compiler.cpp"
@@ -19,7 +24,7 @@ idf_component_register(
         "../../src/channels.cpp"
         "../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../src"
-    REQUIRES esp_timer driver fatfs vfs
+    REQUIRES esp_timer driver fatfs vfs esp_wifi esp_netif nvs_flash esp_event lwip
 )
 
 # ESP32 is the platform switch, JDB_MCU the shared one: the same trades
