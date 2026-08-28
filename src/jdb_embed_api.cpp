@@ -537,7 +537,7 @@ JDB_EMBED_API char* jdb_embed_load(JdbEmbed* eh, const char* path) {
         e->last_error = std::string("Cannot read ") + path;
         return nullptr;
     }
-#ifdef PICO
+#ifdef JDB_MCU
     // Three copies of the program were alive while it compiled: the
     // stringstream's own buffer, the string str() hands back, and the
     // lexer's. On a board where the source is the smaller half of the

@@ -116,7 +116,7 @@ Token Lexer::read_identifier() {
 
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
-#ifdef PICO
+#ifdef JDB_MCU
     // Growing this vector is what kills a load on the board. A Token is
     // 36 bytes there, so a doubling near the end wants the old block and
     // the new one at the same time - around 110 KB for eight kilobytes of

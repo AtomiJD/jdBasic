@@ -215,7 +215,7 @@ struct Chunk {
     mutable std::vector<Value>   static_values;
     mutable std::vector<uint8_t> static_inited;
 
-#ifdef PICO
+#ifdef JDB_MCU
     // Nothing is appended to a chunk once it is compiled, so the room the
     // vectors kept while doubling is dead weight for the rest of the run. On
     // the RP2350 it measured 22% of everything a loaded program keeps, and

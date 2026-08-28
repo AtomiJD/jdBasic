@@ -209,7 +209,7 @@ extern "C" void picocalc_gfx_clear(int index);
 #endif
 
 VM::VM() {
-#ifdef PICO
+#ifdef JDB_MCU
     // A board with half a megabyte of RAM starts small; the stack still
     // doubles on demand like everywhere else. Starting small is what
     // makes that doubling possible at all: from 4096 slots the next step
@@ -2410,7 +2410,7 @@ void VM::run() {
 #ifdef __EMSCRIPTEN__
             { char* line = jdb_read_line_js();
               if (line) { input = line; std::free(line); } }
-#elif defined(PICO)
+#elif defined(JDB_MCU)
             // The board's stdio does not echo: read by character, show
             // what arrives, honour backspace, stop at return.
             for (;;) {
@@ -4170,6 +4170,12 @@ void VM::register_builtins() {
     // platform layer in pico/ decides to expose.
     extern void register_pico_builtins(VM&);
     register_pico_builtins(*this);
+#endif
+#ifdef ESP32
+    // The S3 brings its own family: pins, heap figures, whatever the
+    // platform layer in esp32/ decides to expose.
+    extern void register_esp32_builtins(VM&);
+    register_esp32_builtins(*this);
 #endif
     // ── Math ─────────────────────────────────────────────────
     register_native("ABS", 1, 1, [](const std::vector<Value>& args) -> Value {
@@ -8427,7 +8433,7 @@ void VM::register_builtins() {
             std::string name = r->elements[0].to_string();
             std::string size_s = (r->elements.size() > 1) ? r->elements[1].to_string() : "";
             std::string date_s = (r->elements.size() > 3) ? r->elements[3].to_string() : "";
-#ifdef PICO
+#ifdef JDB_MCU
             // The board has no clock worth printing and forty columns to
             // spend: name, a tab, the size.
             if (type == "DIR") {
@@ -8910,6 +8916,12 @@ void VM::event_poll() {
     // platform layer drains what its ISRs collected.
     extern void pico_event_poll(VM& vm);
     pico_event_poll(*this);
+    return;
+#endif
+#ifdef ESP32
+    // Same three sources on the S3, drained by the platform layer in esp32/.
+    extern void esp32_event_poll(VM& vm);
+    esp32_event_poll(*this);
     return;
 #endif
 

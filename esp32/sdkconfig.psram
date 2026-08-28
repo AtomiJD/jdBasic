@@ -1,0 +1,21 @@
+# The 8 MB of octal PSRAM an S3R8 carries in package, layered on top of
+# sdkconfig.defaults. Leaving it out is the S3FN8 configuration, which
+# is what a Cardputer would give us.
+#
+# STATUS: this does not boot. The image stalls right after cpu_start
+# logs "Multicore app" and before heap_init, so before any interpreter
+# code runs. It is not ours: IDF's own hello_world example, grown to a
+# comparable image size and built with exactly these four options,
+# stalls at the same instruction. Whatever it is sits between the S3,
+# this board and IDF v5.5.5. A core dump to flash, read back with
+# espcoredump, is the next thing to try.
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Left at the IDF default deliberately. Zero lets the interpreter's
+# small allocations reach PSRAM, which is the only way it would benefit
+# from having any, but it also lets allocations that must stay internal
+# out into external memory.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384

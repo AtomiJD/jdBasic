@@ -1,0 +1,29 @@
+CONFIG_IDF_TARGET="esp32s3"
+
+# 16 MB on the DevKitC-1 N16R8. The app alone is well past the 1 MB a
+# default partition table gives, hence partitions.csv.
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# The console goes out the native USB port, the one that enumerates as
+# 303a:4001. No bridge chip in the path.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+# TRY/CATCH and std::bad_alloc are load-bearing in the interpreter.
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+CONFIG_COMPILER_CXX_RTTI=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+
+# jdBasic parses and interprets recursively. The main task is where the
+# REPL runs, so it gets the stack the RP2350 build carves out in its
+# linker script.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=98304
+
+# Compiling a program blocks the core for longer than the watchdog's
+# patience, and there is no other task waiting on it.
+CONFIG_ESP_TASK_WDT_INIT=n
+
+# A failed allocation must reach the interpreter as std::bad_alloc.
+CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS=n
+
