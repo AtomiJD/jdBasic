@@ -1,0 +1,95 @@
+' Whole-array reductions walk their input instead of flattening it into a
+' second array. The shapes that walk has to keep getting right: a flat
+' array, a nested one, a single element, an empty one, and the two-pass
+' reducers that read their input twice.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM flat = [3, 1, 4, 1, 5, 9, 2, 6]
+DIM nested = [[3, 1], [4, 1], [5, 9], [2, 6]]
+DIM one = [7]
+DIM empty = []
+
+' ── SUM and PRODUCT ──────────────────────────────────────────
+CHK "SUM flat", SUM(flat), 31
+CHK "SUM nested", SUM(nested), 31
+CHK "SUM one", SUM(one), 7
+CHK "SUM empty", SUM(empty), 0
+CHK "PRODUCT flat", PRODUCT(flat), 6480
+CHK "PRODUCT nested", PRODUCT(nested), 6480
+CHK "PRODUCT empty", PRODUCT(empty), 1
+
+' ── MIN and MAX, including the first-element bookkeeping ─────
+CHK "MIN flat", MIN(flat), 1
+CHK "MAX flat", MAX(flat), 9
+CHK "MIN nested", MIN(nested), 1
+CHK "MAX nested", MAX(nested), 9
+CHK "MIN one", MIN(one), 7
+CHK "MAX one", MAX(one), 7
+CHK "MIN empty", MIN(empty), 0
+CHK "MAX empty", MAX(empty), 0
+
+' A maximum that only appears first, and a minimum that only appears
+' last: a walker that seeds itself wrongly gets exactly one of these.
+CHK "MAX leading", MAX([9, 1, 2]), 9
+CHK "MIN trailing", MIN([9, 8, 1]), 1
+CHK "MAX negative", MAX([-5, -2, -9]), -2
+CHK "MIN negative", MIN([-5, -2, -9]), -9
+
+' ── ANY and ALL stop early, and must still see every leaf ────
+CHK "ANY none", ANY([0, 0, 0]), FALSE
+CHK "ANY last", ANY([0, 0, 1]), TRUE
+CHK "ANY nested", ANY([[0, 0], [0, 1]]), TRUE
+CHK "ALL all", ALL([1, 2, 3]), TRUE
+CHK "ALL last zero", ALL([1, 2, 0]), FALSE
+CHK "ALL nested", ALL([[1, 1], [1, 0]]), FALSE
+CHK "ANY empty", ANY(empty), FALSE
+CHK "ALL empty", ALL(empty), TRUE
+
+' ── Two-pass reducers: mean, then the spread around it ───────
+CHK "MEAN flat", MEAN([2, 4, 6, 8]), 5
+CHK "MEAN nested", MEAN([[2, 4], [6, 8]]), 5
+CHK "MEAN one", MEAN(one), 7
+CHK "MEAN empty", MEAN(empty), 0
+CHK "VARIANCE", VARIANCE([2, 4, 4, 4, 5, 5, 7, 9]), 4
+CHK "STDEV", STDEV([2, 4, 4, 4, 5, 5, 7, 9]), 2
+CHK "VARIANCE one", VARIANCE(one), 0
+CHK "STDEV empty", STDEV(empty), 0
+
+' ── NORMALIZE reads twice and writes a new array ─────────────
+DIM norm = NORMALIZE([10, 20, 30])
+CHK "NORMALIZE len", LEN(norm), 3
+CHK "NORMALIZE low", norm[0], 0
+CHK "NORMALIZE mid", norm[1], 0.5
+CHK "NORMALIZE high", norm[2], 1
+CHK "NORMALIZE flat range", SUM(NORMALIZE([5, 5, 5])), 0
+CHK "NORMALIZE empty", LEN(NORMALIZE(empty)), 0
+
+' ── HISTOGRAM bins the same input twice ──────────────────────
+DIM hist = HISTOGRAM([1, 1, 2, 2, 2, 3], 3)
+CHK "HISTOGRAM bins", LEN(hist), 3
+CHK "HISTOGRAM total", SUM(hist), 6
+CHK "HISTOGRAM low", hist[0], 2
+CHK "HISTOGRAM high", hist[2], 1
+
+' ── An array big enough that a flattening copy would show ────
+' Not a memory test on a desktop, but it keeps the walk honest over a
+' length where an off-by-one in the recursion would surface.
+DIM big = IOTA(50000)
+CHK "SUM big", SUM(big), 1250025000
+CHK "MAX big", MAX(big), 50000
+CHK "MIN big", MIN(big), 1
+CHK "MEAN big", MEAN(big), 25000.5
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF

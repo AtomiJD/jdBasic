@@ -6,11 +6,11 @@ DIM i0, p0
 i0 = SYS.INTERNAL()
 p0 = SYS.PSRAM()
 
-DIM a = IOTA(50000)
+DIM a = IOTA(100000)
 
-PRINT "50000 elements"
+PRINT "100000 elements"
 PRINT "  internal spent : "; i0 - SYS.INTERNAL()
 PRINT "  psram spent    : "; p0 - SYS.PSRAM()
-PRINT "  bytes each     : "; (p0 - SYS.PSRAM()) / 50000
+PRINT "  bytes each     : "; (p0 - SYS.PSRAM()) / 100000
 PRINT
 PRINT "and it computes: SUM = "; SUM(a)

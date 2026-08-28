@@ -3469,6 +3469,32 @@ static std::vector<Value> flatten_values(const Value& v) {
     return flat;
 }
 
+// Walk the leaves of a possibly nested array without building a copy of
+// it. A reduction only ever reads its input, and materialising the
+// leaves costs as much as the array already holds: on 100000 elements
+// that is another 2.4 MB, which is what makes SUM fail on a board with
+// megabytes still free.
+template <class F>
+static void for_each_leaf(const Value& v, F&& fn) {
+    if (v.type == ValueType::ARRAY) {
+        for (const auto& e : v.as_array()->elements) for_each_leaf(e, fn);
+    } else {
+        fn(v);
+    }
+}
+
+// The same walk, stopping at the first leaf the predicate accepts.
+template <class F>
+static bool any_leaf(const Value& v, F&& pred) {
+    if (v.type == ValueType::ARRAY) {
+        for (const auto& e : v.as_array()->elements)
+            if (any_leaf(e, pred)) return true;
+        return false;
+    }
+    return pred(v);
+}
+
+
 static void get_2d(const Value& m, int& rows, int& cols) {
     auto* a = m.as_array();
     rows = (int)a->elements.size();
@@ -4723,15 +4749,24 @@ void VM::register_builtins() {
 
     // ── NORMALIZE ────────────────────────────────────────────
     register_native("NORMALIZE", [](const std::vector<Value>& args) -> Value {
-        auto flat = flatten_values(args[0]);
-        if (flat.empty()) return Value::make_array();
-        double mn = flat[0].to_double(), mx = mn;
-        for (auto& v : flat) { double d = v.to_double(); if (d < mn) mn = d; if (d > mx) mx = d; }
+        bool seen = false;
+        double mn = 0, mx = 0;
+        size_t n = 0;
+        for_each_leaf(args[0], [&](const Value& v) {
+            double d = v.to_double();
+            if (!seen) { mn = mx = d; seen = true; }
+            else if (d < mn) mn = d;
+            else if (d > mx) mx = d;
+            n++;
+        });
+        if (!seen) return Value::make_array();
         double range = mx - mn;
         Value r = Value::make_array();
         auto* out = r.as_array();
-        for (auto& v : flat)
+        out->elements.reserve(n);
+        for_each_leaf(args[0], [&](const Value& v) {
             out->elements.push_back(Value::make_f64(range == 0 ? 0.0 : (v.to_double() - mn) / range));
+        });
         return r;
     });
 
@@ -4850,8 +4885,8 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_sum);
-        auto flat = flatten_values(args[0]);
-        double s = 0; for (auto& v : flat) s += v.to_double();
+        double s = 0;
+        for_each_leaf(args[0], [&](const Value& v) { s += v.to_double(); });
         return Value::make_f64(s);
     });
 
@@ -4861,8 +4896,8 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_product);
-        auto flat = flatten_values(args[0]);
-        double s = 1; for (auto& v : flat) s *= v.to_double();
+        double s = 1;
+        for_each_leaf(args[0], [&](const Value& v) { s *= v.to_double(); });
         return Value::make_f64(s);
     });
 
@@ -4872,11 +4907,13 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value - use MIN([a, b])");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_min);
-        auto flat = flatten_values(args[0]);
-        if (flat.empty()) return Value::make_f64(0);
-        double m = flat[0].to_double();
-        for (size_t i = 1; i < flat.size(); i++) { double d = flat[i].to_double(); if (d < m) m = d; }
-        return Value::make_f64(m);
+        bool seen = false;
+        double m = 0;
+        for_each_leaf(args[0], [&](const Value& v) {
+            double d = v.to_double();
+            if (!seen || d < m) { m = d; seen = true; }
+        });
+        return Value::make_f64(seen ? m : 0);
     });
 
     register_native("MAX", 1, 2, [](const std::vector<Value>& args) -> Value {
@@ -4885,11 +4922,13 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value - use MAX([a, b])");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_max);
-        auto flat = flatten_values(args[0]);
-        if (flat.empty()) return Value::make_f64(0);
-        double m = flat[0].to_double();
-        for (size_t i = 1; i < flat.size(); i++) { double d = flat[i].to_double(); if (d > m) m = d; }
-        return Value::make_f64(m);
+        bool seen = false;
+        double m = 0;
+        for_each_leaf(args[0], [&](const Value& v) {
+            double d = v.to_double();
+            if (!seen || d > m) { m = d; seen = true; }
+        });
+        return Value::make_f64(seen ? m : 0);
     });
 
     register_native("ANY", 1, 2, [](const std::vector<Value>& args) -> Value {
@@ -4898,9 +4937,7 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_any, true);
-        auto flat = flatten_values(args[0]);
-        for (auto& v : flat) if (v.to_bool()) return Value::make_bool(true);
-        return Value::make_bool(false);
+        return Value::make_bool(any_leaf(args[0], [](const Value& v) { return v.to_bool(); }));
     });
 
     register_native("ALL", 1, 2, [](const std::vector<Value>& args) -> Value {
@@ -4909,9 +4946,7 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_all, true);
-        auto flat = flatten_values(args[0]);
-        for (auto& v : flat) if (!v.to_bool()) return Value::make_bool(false);
-        return Value::make_bool(true);
+        return Value::make_bool(!any_leaf(args[0], [](const Value& v) { return !v.to_bool(); }));
     });
 
     // ── SCAN ─────────────────────────────────────────────────
@@ -7045,8 +7080,7 @@ void VM::register_builtins() {
                 result += "\n";
             }
         } else {
-            auto flat = flatten_values(args[0]);
-            for (auto& v : flat) result += v.to_string() + "\n";
+            for_each_leaf(args[0], [&](const Value& v) { result += v.to_string() + "\n"; });
         }
         return Value::make_string(result);
     });
@@ -7364,10 +7398,11 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_mean);
-        auto flat = flatten_values(args[0]);
-        if (flat.empty()) return Value::make_f64(0);
-        double s = 0; for (auto& v : flat) s += v.to_double();
-        return Value::make_f64(s / flat.size());
+        double s = 0;
+        size_t n = 0;
+        for_each_leaf(args[0], [&](const Value& v) { s += v.to_double(); n++; });
+        if (n == 0) return Value::make_f64(0);
+        return Value::make_f64(s / n);
     });
     register_native("MEDIAN", 1, 2, [](const std::vector<Value>& args) -> Value {
         if (reduce_form(args) == ReduceForm::BAD_SCALAR)
@@ -7388,12 +7423,13 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_variance);
-        auto flat = flatten_values(args[0]);
-        if (flat.size() < 2) return Value::make_f64(0);
-        double s = 0; for (auto& v : flat) s += v.to_double();
-        double mean = s / flat.size(); double ss = 0;
-        for (auto& v : flat) { double d = v.to_double() - mean; ss += d * d; }
-        return Value::make_f64(ss / flat.size());
+        double s = 0;
+        size_t n = 0;
+        for_each_leaf(args[0], [&](const Value& v) { s += v.to_double(); n++; });
+        if (n < 2) return Value::make_f64(0);
+        double mean = s / n, ss = 0;
+        for_each_leaf(args[0], [&](const Value& v) { double d = v.to_double() - mean; ss += d * d; });
+        return Value::make_f64(ss / n);
     });
     register_native("STDEV", 1, 2, [](const std::vector<Value>& args) -> Value {
         if (reduce_form(args) == ReduceForm::BAD_SCALAR)
@@ -7401,12 +7437,13 @@ void VM::register_builtins() {
                 "is the axis of a matrix, not a second value");
         if (reduce_form(args) == ReduceForm::ALONG_AXIS)
             return reduce_along_axis(args[0], (int)args[1].to_int(), lane_stdev);
-        auto flat = flatten_values(args[0]);
-        if (flat.size() < 2) return Value::make_f64(0);
-        double s = 0; for (auto& v : flat) s += v.to_double();
-        double mean = s / flat.size(); double ss = 0;
-        for (auto& v : flat) { double d = v.to_double() - mean; ss += d * d; }
-        return Value::make_f64(std::sqrt(ss / flat.size()));
+        double s = 0;
+        size_t n = 0;
+        for_each_leaf(args[0], [&](const Value& v) { s += v.to_double(); n++; });
+        if (n < 2) return Value::make_f64(0);
+        double mean = s / n, ss = 0;
+        for_each_leaf(args[0], [&](const Value& v) { double d = v.to_double() - mean; ss += d * d; });
+        return Value::make_f64(std::sqrt(ss / n));
     });
     register_native("DOT", [](const std::vector<Value>& args) -> Value {
         auto* a = args[0].as_array(); auto* b = args[1].as_array();
@@ -7438,18 +7475,25 @@ void VM::register_builtins() {
         return r;
     });
     register_native("HISTOGRAM", [](const std::vector<Value>& args) -> Value {
-        auto flat = flatten_values(args[0]);
         int bins = (args.size() >= 2) ? (int)args[1].to_int() : 10;
-        double mn = flat[0].to_double(), mx = mn;
-        for (auto& v : flat) { double d = v.to_double(); if (d<mn) mn=d; if (d>mx) mx=d; }
-        double range = mx - mn; if (range == 0) range = 1;
+        bool seen = false;
+        double mn = 0, mx = 0;
+        for_each_leaf(args[0], [&](const Value& v) {
+            double d = v.to_double();
+            if (!seen) { mn = mx = d; seen = true; }
+            else if (d < mn) mn = d;
+            else if (d > mx) mx = d;
+        });
+        double range = mx - mn;
+        if (range == 0) range = 1;
         Value r = Value::make_array();
         r.as_array()->elements.resize(bins, Value::make_i64(0));
-        for (auto& v : flat) {
+        for_each_leaf(args[0], [&](const Value& v) {
             int b = (int)((v.to_double() - mn) / range * bins);
-            if (b >= bins) b = bins - 1; if (b < 0) b = 0;
+            if (b >= bins) b = bins - 1;
+            if (b < 0) b = 0;
             r.as_array()->elements[b] = Value::make_i64(r.as_array()->elements[b].to_int() + 1);
-        }
+        });
         return r;
     });
     register_native("LINSPACE", [](const std::vector<Value>& args) -> Value {

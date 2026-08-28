@@ -3,7 +3,7 @@
 ' bounded by the largest free block rather than by the total.
 
 DIM t0, n
-n = 50000
+n = 100000
 
 t0 = TICK()
 DIM a = IOTA(n)
