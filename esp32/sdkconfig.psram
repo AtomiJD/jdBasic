@@ -2,41 +2,39 @@
 # sdkconfig.defaults. Leaving it out is the S3FN8 configuration, which
 # is what a Cardputer would give us.
 #
-# STATUS: this does not boot on the DevKitC-1 N16R8 here, and the fault
-# is in the hardware path rather than in anything above it.
+# STATUS: the DevKitC-1 N16R8 here has bad PSRAM. Espressif's own test
+# settles it - components/esp_psram/test_apps/psram, built with their CI
+# configuration sdkconfig.ci.esp32s3_octal_release, hangs on this board
+# at the same instruction ours does. Nothing above the hardware is left
+# to blame.
 #
-# The chip's PSRAM answers on its configuration registers - vendor id
-# 0x0d, 64 Mbit, good-die pass - and the MSPI timing tuning completes
-# and picks a point. The first real data access then stalls the bus:
-# the boot hangs inside esp_psram_extram_test(), which cpu_start runs
-# right after starting the second core, and the RTC watchdog resets the
-# board. It never reaches the log line that reports a failed test.
+# The shape of the fault: the PSRAM answers on its configuration
+# registers - vendor id 0x0d (AP), 64 Mbit, good-die pass - and the MSPI
+# timing tuning completes and picks a point. The first real data access
+# then stalls the bus. The boot hangs inside esp_psram_extram_test(),
+# which cpu_start runs right after starting the second core, and the RTC
+# watchdog resets the board. The log line that reports a failed test
+# never prints, because the test does not return to print it.
 #
-# Not ours, and not the speed:
-#   - IDF's own hello_world example, built with these options and grown
-#     to a comparable image size, hangs at the same instruction
-#   - 40 MHz behaves exactly like 80 MHz
-#   - single-core mode moves the hang but does not remove it
-#   - with CONFIG_SPIRAM_MEMTEST=n the boot gets as far as heap_init and
-#     then stalls where the pool is added to the allocator, which is the
-#     next real access
+# What was ruled out on the way there:
+#   - our code: IDF's hello_world, same options, comparable image size,
+#     hangs at the same instruction
+#   - the speed: 40 MHz behaves exactly like 80 MHz
+#   - the second core: single-core mode moves the hang, not removes it
+#   - the memory test alone: with CONFIG_SPIRAM_MEMTEST=n the boot
+#     reaches heap_init and stalls where the pool is added to the
+#     allocator, which is simply the next real access
+#   - the configuration: Espressif's compatibility table puts quad flash
+#     at 80 MHz SDR and octal PSRAM at 80 MHz in the same permitted
+#     group, and the v0.2 errata list carries nothing about PSRAM, SPI
+#     RAM or MSPI
 #
-
-# So the cause is still open, but it is not the configuration. Espressif's
-# own flash/PSRAM compatibility table puts quad flash at 80 MHz SDR
-# together with octal PSRAM at 80 MHz in the same permitted group, and the
-# v0.2 errata list carries nothing about PSRAM, SPI RAM or MSPI. The
-# closest report in the wild is esphome/esphome#15907: the same N16R8
-# designation, the same "Embedded PSRAM 8MB (AP_3v3)" from esptool, boot
-# loops in octal mode at both 80 and 40 MHz, and the hang inside
-# esp_psram_extram_test. It is unresolved there too.
+# esphome/esphome#15907 reports the same failure on the same N16R8
+# designation, down to the "Embedded PSRAM 8MB (AP_3v3)" line esptool
+# prints, and is unresolved there too.
 #
-# That leaves the module itself as the leading suspect. To tell a bad die
-# from a mismarked one, build with CONFIG_SPIRAM_USE_MALLOC=n as well, so
-# PSRAM is initialised but nothing touches it, then read and write it by
-# hand from the prompt: a smaller chip sold as 8 MB gives itself away by
-# mirroring. Everything the port needs works without this file.
-#
+# So this file is correct and waits for a board whose PSRAM works.
+# Everything the port needs runs without it.
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
