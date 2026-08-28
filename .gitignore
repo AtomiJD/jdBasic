@@ -124,6 +124,7 @@ desktop.ini
 *.idx
 !tests/**/*.csv
 !jdb/**/*.csv
+!esp32/partitions.csv
 
 # ── Personal data files — must NEVER be committed (override above) ─
 # Re-block specific files even though jdb/**/*.csv is whitelisted.
