@@ -13,14 +13,28 @@
 #include "esp_chip_info.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#include "driver/uart_vfs.h"
 
 #include "jdb_embed_api.h"
 
 extern "C" bool esp32_fs_init(void);
+void syntax_print(const char* s, int n);
 
 #define AUTORUN_CFG "autorun.cfg"
 
 static char g_current[128];
+
+// A name without an extension may mean the .jdb of that name. What was
+// typed wins, so a file that really has no extension is still reachable.
+static const char* resolve_name(const char* name, char* buf, size_t cap) {
+    FILE* f = fopen(name, "r");
+    if (f) { fclose(f); return name; }
+    if (strchr(name, '.')) return name;
+    snprintf(buf, cap, "%s.jdb", name);
+    f = fopen(buf, "r");
+    if (f) { fclose(f); return buf; }
+    return name;
+}
 
 static void console_init() {
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
@@ -32,6 +46,11 @@ static void console_init() {
     // A terminal sends CR for the return key and expects CRLF back.
     usb_serial_jtag_vfs_set_rx_line_endings(ESP_LINE_ENDINGS_CR);
     usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
+#else
+    // Everything here writes CR LF itself, so the console must not add a
+    // second carriage return on top of it.
+    uart_vfs_dev_port_set_tx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_LF);
+    uart_vfs_dev_port_set_rx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CR);
 #endif
     setvbuf(stdin, NULL, _IONBF, 0);
     // RECV needs to know when the wire has gone quiet, and the boot
@@ -144,14 +163,16 @@ static int dos_command(char* line) {
             remove(AUTORUN_CFG);
             printf("autorun off\r\n");
         } else {
-            FILE* probe = fopen(arg, "r");
-            if (!probe) { printf("cannot open %s\r\n", arg); return 1; }
+            char resolved[160];
+            const char* nm = resolve_name(arg, resolved, sizeof resolved);
+            FILE* probe = fopen(nm, "r");
+            if (!probe) { printf("cannot open %s\r\n", nm); return 1; }
             fclose(probe);
             FILE* f = fopen(AUTORUN_CFG, "w");
             if (!f) { printf("cannot save autorun\r\n"); return 1; }
-            fprintf(f, "%s\n", arg);
+            fprintf(f, "%s\n", nm);
             fclose(f);
-            printf("autorun: %s\r\n", arg);
+            printf("autorun: %s\r\n", nm);
         }
         return 1;
     }
@@ -183,8 +204,32 @@ static int dos_command(char* line) {
         return 1;
     }
 
+    // The listing the desktop gives: a line number, a rule, and the line
+    // coloured the way the editor colours it.
+    if (strcmp(cmd, "LIST") == 0) {
+        char resolved[160];
+        const char* nm = dos_arg(a);
+        if (!*nm) nm = g_current;
+        if (!*nm) { printf("No program loaded.\r\n"); return 1; }
+        nm = resolve_name(nm, resolved, sizeof resolved);
+        FILE* f = fopen(nm, "r");
+        if (!f) { printf("cannot open %s\r\n", nm); return 1; }
+        char buf[256];
+        int ln = 1;
+        while (fgets(buf, sizeof buf, f)) {
+            int n = (int)strlen(buf);
+            while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
+            printf("\x1b[90m%4d | \x1b[0m", ln++);
+            syntax_print(buf, n);
+            printf("\r\n");
+        }
+        fclose(f);
+        return 1;
+    }
+
     if (strcmp(cmd, "TYPE") == 0 && *a) {
-        FILE* f = fopen(dos_arg(a), "r");
+        char resolved[160];
+        FILE* f = fopen(resolve_name(dos_arg(a), resolved, sizeof resolved), "r");
         if (!f) { printf("cannot open %s\r\n", a); return 1; }
         char buf[256];
         size_t n;
@@ -196,7 +241,8 @@ static int dos_command(char* line) {
     }
 
     if (strcmp(cmd, "DEL") == 0 && *a) {
-        const char* nm = dos_arg(a);
+        char resolved[160];
+        const char* nm = resolve_name(dos_arg(a), resolved, sizeof resolved);
         printf(remove(nm) == 0 ? "deleted\r\n" : "cannot delete\r\n");
         return 1;
     }
@@ -217,6 +263,8 @@ static int dos_command(char* line) {
 }
 
 static void run_file(JdbEmbed* vm, const char* name) {
+    char resolved[160];
+    name = resolve_name(name, resolved, sizeof resolved);
     snprintf(g_current, sizeof g_current, "%s", name);
     char* out = jdb_embed_load(vm, name);
     if (out) {
@@ -303,6 +351,8 @@ extern "C" void app_main(void) {
             } else if (meta == 1) {
                 run_file(vm, nm);
             } else {
+                char resolved[160];
+                nm = resolve_name(nm, resolved, sizeof resolved);
                 FILE* probe = fopen(nm, "r");
                 if (!probe) printf("cannot open %s\r\n", nm);
                 else {

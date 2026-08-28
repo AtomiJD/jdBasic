@@ -57,6 +57,8 @@ listing at the root on this target.
 At the prompt:
 
     DIR                 the store, name and size
+    LIST                the current program, numbered and coloured
+    LIST name           any other file
     RUN name            load and run a program
     LOAD name           remember it, so a bare RUN repeats it
     TYPE name           print a file
@@ -66,6 +68,11 @@ At the prompt:
     AUTORUN name        run it at power-on; OFF clears it; bare reports
 
 `SYS.DF` reports the store as a line, `SYS.FREEDISK` as a number.
+
+A name without an extension may mean the `.jdb` of that name: `RUN hello`
+finds `hello.jdb`. What was typed wins, so a file that really has no
+extension is still reachable. `RECV` is the exception and writes exactly
+the name given, because not everything on the store is a program.
 
 `RECV` parses nothing and echoes nothing, so a program arrives at the
 speed of the link. It ends on a single `0x04`, or after three seconds of

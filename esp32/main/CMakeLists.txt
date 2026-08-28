@@ -7,6 +7,10 @@ idf_component_register(
         "esp32_events.cpp"
         "esp32_fs.cpp"
         "esp32_stubs.cpp"
+        # Colouring one line of jdBasic is the same job on both boards and
+        # depends on nothing either SDK provides. Shared rather than copied;
+        # if a third caller turns up it moves somewhere neutral.
+        "../../pico/pico_syntax.cpp"
         "../../src/lexer.cpp"
         "../../src/parser.cpp"
         "../../src/compiler.cpp"
