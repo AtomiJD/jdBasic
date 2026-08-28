@@ -27,3 +27,10 @@ CONFIG_ESP_TASK_WDT_INIT=n
 # A failed allocation must reach the interpreter as std::bad_alloc.
 CONFIG_HEAP_ABORT_WHEN_ALLOCATION_FAILS=n
 
+
+# Octal PSRAM needs this. At the IDF default of 160 MHz the first real
+# access to PSRAM stalls the bus on this silicon and the boot never
+# returns from esp_psram_extram_test(); at 240 MHz Espressif's own PSRAM
+# test app passes on the same board. Costs nothing when PSRAM is out,
+# and a faster interpreter is no loss either.
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y

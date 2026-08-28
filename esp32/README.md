@@ -15,8 +15,9 @@ Needs ESP-IDF v5.5 (GCC 14.2, the same compiler the RP2350 build uses).
     ./build.sh nopsram      512 KB SRAM alone      -> an S3FN8 part
     ./build.sh psram        plus 8 MB PSRAM        -> an S3R8 part
 
-Each keeps its own build directory. `psram` does not boot yet, see
-`sdkconfig.psram`.
+Each keeps its own build directory. `psram` needs the 240 MHz clock that
+`sdkconfig.defaults` sets; at IDF's default of 160 MHz the first access
+to PSRAM stalls the bus. `sdkconfig.psram` has the details.
 
 ## Flashing
 
@@ -48,16 +49,36 @@ find the largest block by binary search over malloc. `SYS.INTERNAL` and
 low-water mark. `esp32_main.cpp` reports the heap before and after the
 VM is built, which is what the interpreter's own baseline costs.
 
-Measured on a DevKitC-1 N16R8, without PSRAM, 96 KB REPL stack:
+Measured on a DevKitC-1 N16R8, 96 KB REPL stack, at 240 MHz:
 
-    boot         internal  280828   largest  221184
-    after init   internal  182252   largest  139264
-    VM costs     internal   98576
+    without PSRAM
+    boot         internal  280000   largest  221184
+    after init   internal  181416   largest  139264
+    VM costs     internal   98584
 
-For comparison the PicoCalc reports 120376 free at a bare prompt. The
-S3 has about half again as much room, on a part with 8 KB less SRAM,
-because the RP2350 build spends 128 KB of its on a stack in the linker
-script and carries the panel, keyboard and flash store as well.
+    with PSRAM
+    boot         internal  272643   largest  180224   psram  8386156
+    after init   internal  198639   largest  124928   psram  8361576
+    VM costs     internal   74004                     psram    24580
+
+For comparison the PicoCalc reports 120376 free at a bare prompt. Even
+with PSRAM out the S3 has about half again as much room, on a part with
+8 KB less SRAM, because the RP2350 build spends 128 KB of its on a stack
+in the linker script and carries the panel, keyboard and flash store as
+well.
+
+With PSRAM in, the interpreter's own tables stay internal - they are
+below the 16 KB threshold that decides where an allocation goes - and
+arrays go outside. A jdBasic array costs about 24.2 bytes an element,
+measured twice:
+
+    IOTA(50000)    1212420 bytes of PSRAM
+    IOTA(100000)   2424836 bytes of PSRAM
+
+So roughly 340,000 elements fit, against the 2,500 or so that fit in
+what a PicoCalc has left at its prompt. What ends the run is the largest
+free block rather than the total: IOTA(200000) wants 4.85 MB in one
+piece and fails while 4.72 MB is the biggest the heap will hand over.
 
 ## Shared with the pico port
 
