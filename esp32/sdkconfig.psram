@@ -21,9 +21,22 @@
 #     then stalls where the pool is added to the allocator, which is the
 #     next real access
 #
-# So the next thing to rule out is power: octal PSRAM at speed draws
-# more than the ID reads do. A different supply before suspecting the
-# module. Everything the port needs works without this file.
+
+# So the cause is still open, but it is not the configuration. Espressif's
+# own flash/PSRAM compatibility table puts quad flash at 80 MHz SDR
+# together with octal PSRAM at 80 MHz in the same permitted group, and the
+# v0.2 errata list carries nothing about PSRAM, SPI RAM or MSPI. The
+# closest report in the wild is esphome/esphome#15907: the same N16R8
+# designation, the same "Embedded PSRAM 8MB (AP_3v3)" from esptool, boot
+# loops in octal mode at both 80 and 40 MHz, and the hang inside
+# esp_psram_extram_test. It is unresolved there too.
+#
+# That leaves the module itself as the leading suspect. To tell a bad die
+# from a mismarked one, build with CONFIG_SPIRAM_USE_MALLOC=n as well, so
+# PSRAM is initialised but nothing touches it, then read and write it by
+# hand from the prompt: a smaller chip sold as 8 MB gives itself away by
+# mirroring. Everything the port needs works without this file.
+#
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
