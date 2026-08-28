@@ -1,0 +1,1268 @@
+' f1_dashboard.jdb - Formula 1 dashboard (GFX/ImGui).
+' Championship tables, race calendar, session results, tyre strategy, pit
+' stops, race control and a live timing view. Data: OpenF1, no key needed.
+' Flags and headshots: HTTP.GET$ -> BINWRITER -> SPRITE.LOAD -> GUI.IMAGE,
+' cached in tmp/ so a second start reuses them.
+' Run:  jdBasic f1_dashboard.jdb            (ESC quits, F toggles fullscreen)
+
+MKDIR "tmp"
+
+SCREEN 1180, 760, "Formel 1 Dashboard", 2
+GUI.THEME "DARK"
+
+DIM API$ = "https://api.openf1.org/v1/"
+DIM YEARS$ = ["2026", "2025", "2024", "2023"]
+DIM gYear$ = "2026"
+DIM gYearIdx = 0
+DIM gPendingYear = -1
+
+DIM gMeet = []
+DIM gSess = []
+DIM gChD = []
+DIM gChT = []
+DIM gRefRace$ = ""
+DIM gDrv AS MAP
+DIM gRes AS MAP
+DIM gStint AS MAP
+DIM gPit AS MAP
+DIM gRC AS MAP
+DIM gWx AS MAP
+DIM gImg AS MAP
+DIM gSeen AS MAP
+
+DIM gSelMeet = -1
+DIM gSelSess = 0
+DIM gSelDrv = -1
+DIM gTopPit = []
+DIM gTopPitDone = FALSE
+DIM gTopPitWanted = FALSE
+
+DIM gLiveSess AS MAP
+DIM gLiveKey$ = ""
+DIM gLiveOn = FALSE
+DIM gLiveHave = FALSE
+DIM gLivePos = []
+DIM gLiveInt = []
+DIM gLiveRC = []
+DIM gLastRefresh = 0
+
+' ---------------------------------------------------------------- helpers
+
+FUNC TXT$(v)
+    IF ISNONE(v) THEN RETURN ""
+    RETURN "" + v
+ENDFUNC
+
+FUNC NVAL(v)
+    IF ISNONE(v) THEN RETURN 0
+    IF TYPEOF(v) = "STRING" THEN RETURN VAL(v)
+    IF TYPEOF(v) = "ARRAY" THEN RETURN 0
+    RETURN v
+ENDFUNC
+
+FUNC ZP2$(n)
+    DIM s$ = FORMAT$("{}", INT(n))
+    IF LEN(s$) < 2 THEN RETURN "0" + s$
+    RETURN s$
+ENDFUNC
+
+FUNC NSTR$(n)
+    RETURN FORMAT$("{}", INT(n))
+ENDFUNC
+
+' the layout is written for a 1180 wide canvas and scaled to the real one
+FUNC CW(w)
+    RETURN INT(w * GUI.DISPLAY_WIDTH() / 1180)
+ENDFUNC
+
+' "2026-08-23T13:00:00+00:00" -> DateTime. The string is UTC, the date parts
+' of the result read back as local wall clock.
+FUNC ISODT(iso$)
+    IF LEN(iso$) < 19 THEN RETURN CVDATE("1970-01-01 00:00:00", 0)
+    RETURN CVDATE(REPLACE$(LEFT$(iso$, 19), "T", " "), 0)
+ENDFUNC
+
+FUNC DTSHORT$(iso$)
+    IF LEN(iso$) < 19 THEN RETURN ""
+    DIM d = ISODT(iso$)
+    RETURN ZP2$(DAY(d)) + "." + ZP2$(MONTH(d)) + ". " + ZP2$(HOUR(d)) + ":" + ZP2$(MINUTE(d))
+ENDFUNC
+
+FUNC DATESTR$(iso$)
+    IF LEN(iso$) < 19 THEN RETURN ""
+    DIM d = ISODT(iso$)
+    RETURN ZP2$(DAY(d)) + "." + ZP2$(MONTH(d)) + "." + FORMAT$("{}", YEAR(d))
+ENDFUNC
+
+' seconds from now to the given instant, negative once it has passed
+FUNC SECS_TO(iso$)
+    IF LEN(iso$) < 19 THEN RETURN 0
+    RETURN DATEDIFF("S", NOW(), ISODT(iso$))
+ENDFUNC
+
+FUNC COUNTDOWN$(sec)
+    IF sec <= 0 THEN RETURN "jetzt"
+    DIM dd = INT(sec / 86400)
+    DIM hh = INT((sec - dd * 86400) / 3600)
+    DIM mm = INT((sec - dd * 86400 - hh * 3600) / 60)
+    IF dd > 0 THEN RETURN NSTR$(dd) + "d " + NSTR$(hh) + "h"
+    RETURN NSTR$(hh) + "h " + NSTR$(mm) + "min"
+ENDFUNC
+
+' local clock offset against UTC, read off a known UTC instant
+FUNC TZOFF_SEC()
+    DIM n = NOW()
+    DIM u$ = FORMAT$("{}", YEAR(n)) + "-" + ZP2$(MONTH(n)) + "-" + ZP2$(DAY(n)) + " 12:00:00"
+    DIM d = CVDATE(u$, 0)
+    RETURN (((DAY(d) - DAY(n)) * 24 + HOUR(d) - 12) * 60 + MINUTE(d)) * 60
+ENDFUNC
+
+' UTC wall clock back_sec ago, in the format the API date filters expect
+FUNC UTCSTAMP$(back_sec)
+    DIM t = DATEADD("S", -(TZOFF_SEC() + back_sec), NOW())
+    RETURN FORMAT$("{}", YEAR(t)) + "-" + ZP2$(MONTH(t)) + "-" + ZP2$(DAY(t)) + "T" + ZP2$(HOUR(t)) + ":" + ZP2$(MINUTE(t)) + ":" + ZP2$(SECOND(t))
+ENDFUNC
+
+FUNC LAPTIME$(sec)
+    IF sec <= 0 THEN RETURN "-"
+    DIM mm = INT(sec / 60)
+    DIM r = sec - mm * 60
+    IF mm = 0 THEN RETURN FORMAT$("{:.3f}", r)
+    DIM rs$ = FORMAT$("{:.3f}", r)
+    IF r < 10 THEN rs$ = "0" + rs$
+    RETURN NSTR$(mm) + ":" + rs$
+ENDFUNC
+
+FUNC RACETIME$(sec)
+    IF sec <= 0 THEN RETURN "-"
+    DIM hh = INT(sec / 3600)
+    DIM mm = INT((sec - hh * 3600) / 60)
+    DIM r = sec - hh * 3600 - mm * 60
+    DIM rs$ = FORMAT$("{:.3f}", r)
+    IF r < 10 THEN rs$ = "0" + rs$
+    RETURN NSTR$(hh) + ":" + ZP2$(mm) + ":" + rs$
+ENDFUNC
+
+' gap_to_leader is a number in races, "+1 LAP" for lapped cars and an array
+' of three values in qualifying
+FUNC GAPTXT$(v)
+    IF ISNONE(v) THEN RETURN ""
+    IF TYPEOF(v) = "STRING" THEN RETURN v
+    IF TYPEOF(v) = "ARRAY" THEN
+        IF LEN(v) = 0 THEN RETURN ""
+        RETURN GAPTXT$(v[LEN(v) - 1])
+    ENDIF
+    IF v = 0 THEN RETURN "-"
+    RETURN "+" + FORMAT$("{:.3f}", v)
+ENDFUNC
+
+' best of the three qualifying laps, or the single session time
+FUNC BESTTIME$(v)
+    IF ISNONE(v) THEN RETURN "-"
+    IF TYPEOF(v) <> "ARRAY" THEN RETURN LAPTIME$(NVAL(v))
+    DIM best = 0
+    DIM i
+    FOR i = 0 TO LEN(v) - 1
+        DIM t = NVAL(v[i])
+        IF t > 0 ANDALSO (best = 0 ORELSE t < best) THEN best = t
+    NEXT i
+    RETURN LAPTIME$(best)
+ENDFUNC
+
+FUNC HEXVAL(h$)
+    DIM digits$ = "0123456789ABCDEF"
+    DIM total = 0
+    DIM i
+    FOR i = 0 TO LEN(h$) - 1
+        DIM p = INSTR(digits$, UCASE$(MID$(h$, i, 1)))
+        IF p < 0 THEN p = 0
+        total = total * 16 + p
+    NEXT i
+    RETURN total
+ENDFUNC
+
+FUNC RGBOF(hex$)
+    IF LEN(hex$) < 6 THEN RETURN [190, 190, 190, 255]
+    RETURN [HEXVAL(MID$(hex$, 0, 2)), HEXVAL(MID$(hex$, 2, 2)), HEXVAL(MID$(hex$, 4, 2)), 255]
+ENDFUNC
+
+FUNC TYRECOL(c$)
+    DIM u$ = UCASE$(c$)
+    IF u$ = "SOFT" THEN RETURN [237, 60, 60, 255]
+    IF u$ = "MEDIUM" THEN RETURN [250, 214, 70, 255]
+    IF u$ = "HARD" THEN RETURN [235, 235, 235, 255]
+    IF u$ = "INTERMEDIATE" THEN RETURN [70, 200, 110, 255]
+    IF u$ = "WET" THEN RETURN [70, 150, 240, 255]
+    RETURN [150, 150, 150, 255]
+ENDFUNC
+
+FUNC TYRECHR$(c$)
+    DIM u$ = UCASE$(c$)
+    IF u$ = "INTERMEDIATE" THEN RETURN "I"
+    IF LEN(u$) = 0 THEN RETURN "?"
+    RETURN LEFT$(u$, 1)
+ENDFUNC
+
+FUNC FLAGCOL(f$)
+    DIM u$ = UCASE$(f$)
+    IF u$ = "YELLOW" ORELSE u$ = "DOUBLE YELLOW" THEN RETURN [250, 220, 60, 255]
+    IF u$ = "RED" THEN RETURN [240, 70, 70, 255]
+    IF u$ = "GREEN" THEN RETURN [90, 210, 110, 255]
+    IF u$ = "BLUE" THEN RETURN [90, 160, 245, 255]
+    IF u$ = "CHEQUERED" THEN RETURN [235, 235, 235, 255]
+    RETURN [200, 200, 200, 255]
+ENDFUNC
+
+FUNC DELTA$(before, after)
+    IF before = 0 ORELSE after = 0 ORELSE before = after THEN RETURN ""
+    IF after < before THEN RETURN " (+" + NSTR$(before - after) + ")"
+    RETURN " (-" + NSTR$(after - before) + ")"
+ENDFUNC
+
+' a fixed panel: the canvas is the window, nothing to drag, collapse or
+' restore from a remembered layout
+FUNC PANELFLAGS()
+    RETURN GUI.FLAG("NOTITLEBAR") + GUI.FLAG("NOMOVE") + GUI.FLAG("NORESIZE") + GUI.FLAG("NOSAVEDSETTINGS")
+ENDFUNC
+
+SUB SPLASH(msg$, frac)
+    CLS
+    IF GUI.BEGIN("Boxenfunk", GUI.DISPLAY_WIDTH() / 2 - 230, GUI.DISPLAY_HEIGHT() / 2 - 55, 460, 110, TRUE, PANELFLAGS()) THEN
+        GUI.TEXT msg$
+        GUI.PROGRESS frac
+        GUI.END
+    ENDIF
+    SCREENFLIP
+ENDSUB
+
+' ------------------------------------------------------------- data access
+
+' every OpenF1 answer is a JSON array, an error answer is an object - that is
+' reported as an empty result after one retry
+FUNC GETJ(url$)
+    DIM attempt
+    FOR attempt = 1 TO 3
+        DIM body$ = HTTP.GET$(url$)
+        IF LEN(body$) > 1 ANDALSO LEFT$(body$, 1) = "[" THEN RETURN JSON.PARSE$(body$)
+        SLEEP 400 * attempt
+    NEXT attempt
+    RETURN []
+ENDFUNC
+
+FUNC IMG(url$, key$)
+    IF key$ = "" ORELSE LEN(url$) < 8 THEN RETURN -1
+    IF MAP.EXISTS(gImg, key$) THEN RETURN gImg{key$}
+    DIM fn$ = "tmp/f1_" + key$ + ".png"
+    IF NOT FILE.EXISTS(fn$) THEN
+        DIM png$ = HTTP.GET$(url$)
+        IF LEN(png$) < 100 THEN
+            gImg{key$} = -1
+            RETURN -1
+        ENDIF
+        BINWRITER fn$, png$
+    ENDIF
+    DIM sid = SPRITE.LOAD(fn$)
+    gImg{key$} = sid
+    RETURN sid
+ENDFUNC
+
+' driver records are per session - pull one session in and keep every number
+' that is still unknown
+SUB MERGE_DRIVERS(sk$)
+    IF sk$ = "" ORELSE MAP.EXISTS(gSeen, sk$) THEN RETURN
+    gSeen{sk$} = TRUE
+    DIM ds = GETJ(API$ + "drivers?session_key=" + sk$)
+    DIM i
+    FOR i = 0 TO LEN(ds) - 1
+        DIM k$ = NSTR$(NVAL(ds[i]{"driver_number"}))
+        IF NOT MAP.EXISTS(gDrv, k$) THEN gDrv{k$} = ds[i]
+    NEXT i
+ENDSUB
+
+FUNC DNAME$(n)
+    DIM k$ = NSTR$(n)
+    IF MAP.EXISTS(gDrv, k$) THEN RETURN TXT$(gDrv{k$}{"full_name"})
+    RETURN "Nr. " + k$
+ENDFUNC
+
+FUNC DACR$(n)
+    DIM k$ = NSTR$(n)
+    IF MAP.EXISTS(gDrv, k$) THEN RETURN TXT$(gDrv{k$}{"name_acronym"})
+    RETURN k$
+ENDFUNC
+
+FUNC DTEAM$(n)
+    DIM k$ = NSTR$(n)
+    IF MAP.EXISTS(gDrv, k$) THEN RETURN TXT$(gDrv{k$}{"team_name"})
+    RETURN ""
+ENDFUNC
+
+FUNC DCOL(n)
+    DIM k$ = NSTR$(n)
+    IF MAP.EXISTS(gDrv, k$) THEN RETURN RGBOF(TXT$(gDrv{k$}{"team_colour"}))
+    RETURN [190, 190, 190, 255]
+ENDFUNC
+
+FUNC DHEAD(n)
+    DIM k$ = NSTR$(n)
+    IF NOT MAP.EXISTS(gDrv, k$) THEN RETURN -1
+    RETURN IMG(TXT$(gDrv{k$}{"headshot_url"}), "drv" + k$)
+ENDFUNC
+
+FUNC TEAMCOL(team$)
+    DIM ks = MAP.KEYS(gDrv)
+    DIM i
+    FOR i = 0 TO LEN(ks) - 1
+        IF TXT$(gDrv{ks[i]}{"team_name"}) = team$ THEN RETURN RGBOF(TXT$(gDrv{ks[i]}{"team_colour"}))
+    NEXT i
+    RETURN [190, 190, 190, 255]
+ENDFUNC
+
+FUNC UNKNOWN_COUNT()
+    DIM c = 0
+    DIM i
+    FOR i = 0 TO LEN(gChD) - 1
+        IF NOT MAP.EXISTS(gDrv, NSTR$(NVAL(gChD[i]{"driver_number"}))) THEN c = c + 1
+    NEXT i
+    RETURN c
+ENDFUNC
+
+FUNC FIELD()
+    DIM out = []
+    DIM i
+    IF LEN(gChD) > 0 THEN
+        FOR i = 0 TO LEN(gChD) - 1
+            out = APPEND(out, NVAL(gChD[i]{"driver_number"}))
+        NEXT i
+        RETURN out
+    ENDIF
+    DIM ks = MAP.KEYS(gDrv)
+    IF LEN(ks) = 0 THEN RETURN out
+    DIM nums = []
+    FOR i = 0 TO LEN(ks) - 1
+        nums = APPEND(nums, VAL(ks[i]))
+    NEXT i
+    DIM ord = GRADE(nums)
+    FOR i = 0 TO LEN(ord) - 1
+        out = APPEND(out, nums[ord[i]])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC RESULT(sk$)
+    IF sk$ = "" THEN RETURN []
+    IF NOT MAP.EXISTS(gRes, sk$) THEN gRes{sk$} = GETJ(API$ + "session_result?session_key=" + sk$)
+    RETURN gRes{sk$}
+ENDFUNC
+
+FUNC STINTS(sk$)
+    IF NOT MAP.EXISTS(gStint, sk$) THEN gStint{sk$} = GETJ(API$ + "stints?session_key=" + sk$)
+    RETURN gStint{sk$}
+ENDFUNC
+
+FUNC PITS(sk$)
+    IF NOT MAP.EXISTS(gPit, sk$) THEN gPit{sk$} = GETJ(API$ + "pit?session_key=" + sk$)
+    RETURN gPit{sk$}
+ENDFUNC
+
+FUNC RCMSG(sk$)
+    IF NOT MAP.EXISTS(gRC, sk$) THEN gRC{sk$} = GETJ(API$ + "race_control?session_key=" + sk$)
+    RETURN gRC{sk$}
+ENDFUNC
+
+FUNC WEATHER(sk$)
+    IF NOT MAP.EXISTS(gWx, sk$) THEN gWx{sk$} = GETJ(API$ + "weather?session_key=" + sk$)
+    RETURN gWx{sk$}
+ENDFUNC
+
+FUNC SESSKEY$(s)
+    RETURN NSTR$(NVAL(s{"session_key"}))
+ENDFUNC
+
+FUNC IS_PAST(s)
+    RETURN SECS_TO(TXT$(s{"date_start"})) < 0
+ENDFUNC
+
+' the sessions of one race weekend, in the order the weekend runs
+FUNC WEEKEND(mk)
+    DIM out = []
+    DIM i
+    FOR i = 0 TO LEN(gSess) - 1
+        IF NVAL(gSess[i]{"meeting_key"}) = mk THEN out = APPEND(out, gSess[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC RACE_OF(mk)
+    DIM w = WEEKEND(mk)
+    DIM i
+    FOR i = 0 TO LEN(w) - 1
+        IF TXT$(w[i]{"session_name"}) = "Race" THEN RETURN w[i]
+    NEXT i
+    DIM empty AS MAP
+    RETURN empty
+ENDFUNC
+
+FUNC WINNER_OF(mk)
+    DIM r = RACE_OF(mk)
+    IF NOT MAP.EXISTS(r, "session_key") THEN RETURN ""
+    IF NOT IS_PAST(r) THEN RETURN ""
+    DIM res = RESULT(SESSKEY$(r))
+    IF LEN(res) = 0 THEN RETURN ""
+    RETURN DACR$(NVAL(res[0]{"driver_number"}))
+ENDFUNC
+
+FUNC MEETFLAG(m)
+    RETURN IMG(TXT$(m{"country_flag"}), "flag" + TXT$(m{"country_code"}))
+ENDFUNC
+
+FUNC MEET_BY_KEY(mk)
+    DIM i
+    FOR i = 0 TO LEN(gMeet) - 1
+        IF NVAL(gMeet[i]{"meeting_key"}) = mk THEN RETURN gMeet[i]
+    NEXT i
+    DIM empty AS MAP
+    RETURN empty
+ENDFUNC
+
+FUNC NEXT_SESSION()
+    DIM i
+    FOR i = 0 TO LEN(gSess) - 1
+        IF SECS_TO(TXT$(gSess[i]{"date_start"})) > 0 THEN RETURN gSess[i]
+    NEXT i
+    DIM empty AS MAP
+    RETURN empty
+ENDFUNC
+
+' ------------------------------------------------------------------ pieces
+
+SUB WX_LINE(sk$)
+    DIM w = WEATHER(sk$)
+    IF LEN(w) = 0 THEN
+        GUI.TEXT "Wetter: keine Daten"
+        RETURN
+    ENDIF
+    DIM last = w[LEN(w) - 1]
+    DIM rain$ = "trocken"
+    IF NVAL(last{"rainfall"}) > 0 THEN rain$ = "REGEN"
+    GUI.TEXT "Luft " + FORMAT$("{:.1f}", NVAL(last{"air_temperature"})) + " C    Strecke " + FORMAT$("{:.1f}", NVAL(last{"track_temperature"})) + " C    Wind " + FORMAT$("{:.1f}", NVAL(last{"wind_speed"})) + " m/s    " + rain$
+ENDSUB
+
+' a driver without a headshot still takes the same space, so a grid row keeps
+' its baseline
+SUB DRIVER_CELL(n, w, h)
+    DIM sid = DHEAD(n)
+    IF sid >= 0 THEN
+        GUI.IMAGE sid, w, h
+    ELSE
+        GUI.DUMMY w, h
+    ENDIF
+ENDSUB
+
+SUB COLTEXT(n, s$)
+    GUI.PUSH_STYLE_COLOR "TEXT", DCOL(n)
+    GUI.TEXT s$
+    GUI.POP_STYLE_COLOR
+ENDSUB
+
+SUB RC_LIST(msgs, limit)
+    IF LEN(msgs) = 0 THEN
+        GUI.TEXT "(keine Meldungen)"
+        RETURN
+    ENDIF
+    DIM first = LEN(msgs) - limit
+    IF first < 0 THEN first = 0
+    DIM i
+    FOR i = LEN(msgs) - 1 TO first STEP -1
+        DIM m = msgs[i]
+        DIM fl$ = TXT$(m{"flag"})
+        DIM entry$ = "Rd " + NSTR$(NVAL(m{"lap_number"})) + "   " + TXT$(m{"message"})
+        IF fl$ <> "" THEN
+            GUI.PUSH_STYLE_COLOR "TEXT", FLAGCOL(fl$)
+            GUI.TEXT "[" + fl$ + "] " + entry$
+            GUI.POP_STYLE_COLOR
+        ELSE
+            GUI.TEXT entry$
+        ENDIF
+    NEXT i
+ENDSUB
+
+FUNC POSTXT$(r)
+    IF r{"dnf"} = TRUE THEN RETURN "DNF"
+    IF r{"dns"} = TRUE THEN RETURN "DNS"
+    IF r{"dsq"} = TRUE THEN RETURN "DSQ"
+    DIM pos = NVAL(r{"position"})
+    IF pos <= 0 THEN RETURN "-"
+    RETURN NSTR$(pos)
+ENDFUNC
+
+SUB RESULT_TABLE(s)
+    DIM sk$ = SESSKEY$(s)
+    DIM res = RESULT(sk$)
+    IF LEN(res) = 0 THEN
+        GUI.TEXT "(noch kein Ergebnis)"
+        RETURN
+    ENDIF
+    DIM isRace = (TXT$(s{"session_type"}) = "Race")
+    IF GUI.BEGIN_TABLE("res" + sk$, 8) THEN
+        GUI.TABLE_SETUP_COLUMN("Pos", 16, CW(55))
+        GUI.TABLE_SETUP_COLUMN("", 16, CW(45))
+        GUI.TABLE_SETUP_COLUMN("Nr", 16, CW(45))
+        GUI.TABLE_SETUP_COLUMN("Fahrer", 16, CW(250))
+        GUI.TABLE_SETUP_COLUMN("Team", 16, CW(190))
+        GUI.TABLE_SETUP_COLUMN("Rd", 16, CW(50))
+        GUI.TABLE_SETUP_COLUMN("Zeit / Rueckstand", 16, CW(200))
+        GUI.TABLE_SETUP_COLUMN("Pkt", 16, CW(60))
+        GUI.TABLE_HEADERS_ROW
+        DIM i
+        FOR i = 0 TO LEN(res) - 1
+            DIM r = res[i]
+            DIM n = NVAL(r{"driver_number"})
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT POSTXT$(r)
+            GUI.TABLE_NEXT_COLUMN
+            DRIVER_CELL n, CW(30), CW(30)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT NSTR$(n)
+            GUI.TABLE_NEXT_COLUMN
+            COLTEXT n, DNAME$(n)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT DTEAM$(n)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT NSTR$(NVAL(r{"number_of_laps"}))
+            GUI.TABLE_NEXT_COLUMN
+            IF isRace THEN
+                IF NVAL(r{"position"}) = 1 THEN
+                    GUI.TEXT RACETIME$(NVAL(r{"duration"}))
+                ELSE
+                    GUI.TEXT GAPTXT$(r{"gap_to_leader"})
+                ENDIF
+            ELSE
+                GUI.TEXT BESTTIME$(r{"duration"}) + "    " + GAPTXT$(r{"gap_to_leader"})
+            ENDIF
+            GUI.TABLE_NEXT_COLUMN
+            IF isRace ANDALSO NVAL(r{"points"}) > 0 THEN
+                GUI.TEXT NSTR$(NVAL(r{"points"}))
+            ELSE
+                GUI.TEXT ""
+            ENDIF
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+' one coloured block per stint, its width follows the number of laps
+SUB STINT_ROW(sts, n)
+    DIM i
+    DIM drawn = FALSE
+    FOR i = 0 TO LEN(sts) - 1
+        DIM st = sts[i]
+        IF NVAL(st{"driver_number"}) <> n THEN CONTINUEFOR
+        DIM laps = NVAL(st{"lap_end"}) - NVAL(st{"lap_start"}) + 1
+        DIM w = INT(laps / 2)
+        IF w < 1 THEN w = 1
+        IF drawn THEN GUI.SAME_LINE
+        drawn = TRUE
+        DIM c$ = TXT$(st{"compound"})
+        GUI.PUSH_STYLE_COLOR "TEXT", TYRECOL(c$)
+        GUI.TEXT REPEAT$(TYRECHR$(c$), w)
+        GUI.POP_STYLE_COLOR
+    NEXT i
+    IF NOT drawn THEN GUI.TEXT "-"
+ENDSUB
+
+SUB STRATEGY_VIEW(s)
+    DIM sk$ = SESSKEY$(s)
+    DIM sts = STINTS(sk$)
+    IF LEN(sts) = 0 THEN
+        GUI.TEXT "(keine Reifendaten)"
+        RETURN
+    ENDIF
+    GUI.TEXT "S = Soft (rot)    M = Medium (gelb)    H = Hard (weiss)    I = Intermediate    W = Wet"
+    GUI.SEPARATOR
+    DIM res = RESULT(sk$)
+    IF GUI.BEGIN_TABLE("strat" + sk$, 3) THEN
+        GUI.TABLE_SETUP_COLUMN("Pos", 16, CW(50))
+        GUI.TABLE_SETUP_COLUMN("Fahrer", 16, CW(190))
+        GUI.TABLE_SETUP_COLUMN("Reifen ueber die Distanz", 16, CW(700))
+        GUI.TABLE_HEADERS_ROW
+        DIM i
+        FOR i = 0 TO LEN(res) - 1
+            DIM n = NVAL(res[i]{"driver_number"})
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT POSTXT$(res[i])
+            GUI.TABLE_NEXT_COLUMN
+            COLTEXT n, DACR$(n) + "   " + NSTR$(n)
+            GUI.TABLE_NEXT_COLUMN
+            STINT_ROW sts, n
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB PIT_VIEW(s)
+    DIM sk$ = SESSKEY$(s)
+    DIM ps = PITS(sk$)
+    IF LEN(ps) = 0 THEN
+        GUI.TEXT "(keine Boxenstopps)"
+        RETURN
+    ENDIF
+    DIM durs = []
+    DIM i
+    FOR i = 0 TO LEN(ps) - 1
+        durs = APPEND(durs, NVAL(ps[i]{"pit_duration"}))
+    NEXT i
+    DIM ord = GRADE(durs)
+    IF GUI.BEGIN_TABLE("pit" + sk$, 4) THEN
+        GUI.TABLE_SETUP_COLUMN("#", 16, CW(45))
+        GUI.TABLE_SETUP_COLUMN("Fahrer", 16, CW(250))
+        GUI.TABLE_SETUP_COLUMN("Runde", 16, CW(70))
+        GUI.TABLE_SETUP_COLUMN("Zeit in der Boxengasse", 16, CW(220))
+        GUI.TABLE_HEADERS_ROW
+        FOR i = 0 TO LEN(ord) - 1
+            DIM p = ps[ord[i]]
+            DIM n = NVAL(p{"driver_number"})
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT NSTR$(i + 1)
+            GUI.TABLE_NEXT_COLUMN
+            COLTEXT n, DNAME$(n)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT NSTR$(NVAL(p{"lap_number"}))
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT FORMAT$("{:.1f}", NVAL(p{"pit_duration"})) + " s"
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+' -------------------------------------------------------------------- tabs
+
+' last position and last interval per driver, ordered by position
+SUB LIVE_ORDER_TABLE()
+    DIM lastPos AS MAP
+    DIM i
+    FOR i = 0 TO LEN(gLivePos) - 1
+        lastPos{NSTR$(NVAL(gLivePos[i]{"driver_number"}))} = NVAL(gLivePos[i]{"position"})
+    NEXT i
+    DIM ks = MAP.KEYS(lastPos)
+    IF LEN(ks) = 0 THEN
+        GUI.TEXT "(noch keine Positionen)"
+        RETURN
+    ENDIF
+    DIM lastGap AS MAP
+    DIM lastInt AS MAP
+    FOR i = 0 TO LEN(gLiveInt) - 1
+        DIM ik$ = NSTR$(NVAL(gLiveInt[i]{"driver_number"}))
+        lastGap{ik$} = GAPTXT$(gLiveInt[i]{"gap_to_leader"})
+        lastInt{ik$} = GAPTXT$(gLiveInt[i]{"interval"})
+    NEXT i
+    DIM poss = []
+    FOR i = 0 TO LEN(ks) - 1
+        poss = APPEND(poss, lastPos{ks[i]})
+    NEXT i
+    DIM ord = GRADE(poss)
+    IF GUI.BEGIN_TABLE("live", 6) THEN
+        GUI.TABLE_SETUP_COLUMN("Pos", 16, CW(50))
+        GUI.TABLE_SETUP_COLUMN("", 16, CW(40))
+        GUI.TABLE_SETUP_COLUMN("Fahrer", 16, CW(250))
+        GUI.TABLE_SETUP_COLUMN("Team", 16, CW(180))
+        GUI.TABLE_SETUP_COLUMN("Rueckstand", 16, CW(130))
+        GUI.TABLE_SETUP_COLUMN("Abstand nach vorn", 16, CW(150))
+        GUI.TABLE_HEADERS_ROW
+        FOR i = 0 TO LEN(ord) - 1
+            DIM dk$ = ks[ord[i]]
+            DIM n = VAL(dk$)
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT NSTR$(lastPos{dk$})
+            GUI.TABLE_NEXT_COLUMN
+            DRIVER_CELL n, CW(30), CW(30)
+            GUI.TABLE_NEXT_COLUMN
+            COLTEXT n, DNAME$(n)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT DTEAM$(n)
+            GUI.TABLE_NEXT_COLUMN
+            IF MAP.EXISTS(lastGap, dk$) THEN
+                GUI.TEXT lastGap{dk$}
+            ELSE
+                GUI.TEXT ""
+            ENDIF
+            GUI.TABLE_NEXT_COLUMN
+            IF MAP.EXISTS(lastInt, dk$) THEN
+                GUI.TEXT lastInt{dk$}
+            ELSE
+                GUI.TEXT ""
+            ENDIF
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB LIVE_TAB()
+    IF NOT gLiveHave THEN
+        GUI.TEXT "Keine Session gefunden."
+        RETURN
+    ENDIF
+    DIM m = MEET_BY_KEY(NVAL(gLiveSess{"meeting_key"}))
+    IF MAP.EXISTS(m, "country_flag") THEN
+        DIM mf = MEETFLAG(m)
+        IF mf >= 0 THEN
+            GUI.IMAGE mf, CW(54), CW(30)
+            GUI.SAME_LINE
+        ENDIF
+    ENDIF
+    GUI.SEPARATOR_TEXT(TXT$(gLiveSess{"location"}) + " - " + TXT$(gLiveSess{"session_name"}))
+    IF gLiveOn THEN
+        GUI.PUSH_STYLE_COLOR "TEXT", [90, 230, 110, 255]
+        GUI.TEXT "LIVE    " + DTSHORT$(TXT$(gLiveSess{"date_start"})) + " bis " + DTSHORT$(TXT$(gLiveSess{"date_end"}))
+        GUI.POP_STYLE_COLOR
+    ELSE
+        GUI.TEXT "beendet    " + DTSHORT$(TXT$(gLiveSess{"date_start"}))
+        DIM nx = NEXT_SESSION()
+        IF MAP.EXISTS(nx, "session_key") THEN
+            GUI.PUSH_STYLE_COLOR "TEXT", [250, 210, 90, 255]
+            GUI.TEXT "Als naechstes: " + TXT$(nx{"location"}) + " - " + TXT$(nx{"session_name"}) + "    " + DTSHORT$(TXT$(nx{"date_start"})) + "    (in " + COUNTDOWN$(SECS_TO(TXT$(nx{"date_start"}))) + ")"
+            GUI.POP_STYLE_COLOR
+        ENDIF
+    ENDIF
+    WX_LINE gLiveKey$
+    GUI.SEPARATOR
+    IF gLiveOn THEN
+        LIVE_ORDER_TABLE()
+        GUI.SEPARATOR_TEXT("Rennleitung")
+        RC_LIST gLiveRC, 8
+    ELSE
+        GUI.SEPARATOR_TEXT("Ergebnis")
+        RESULT_TABLE gLiveSess
+    ENDIF
+ENDSUB
+
+SUB CHAMP_DRIVERS()
+    IF GUI.BEGIN_TABLE("chd", 6) THEN
+        GUI.TABLE_SETUP_COLUMN("Pos", 16, CW(55))
+        GUI.TABLE_SETUP_COLUMN("", 16, CW(45))
+        GUI.TABLE_SETUP_COLUMN("Fahrer", 16, CW(215))
+        GUI.TABLE_SETUP_COLUMN("Team", 16, CW(160))
+        GUI.TABLE_SETUP_COLUMN("Pkt", 16, CW(60))
+        GUI.TABLE_SETUP_COLUMN("+/-", 16, CW(55))
+        GUI.TABLE_HEADERS_ROW
+        DIM i
+        FOR i = 0 TO LEN(gChD) - 1
+            DIM c = gChD[i]
+            DIM n = NVAL(c{"driver_number"})
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT NSTR$(NVAL(c{"position_current"})) + DELTA$(NVAL(c{"position_start"}), NVAL(c{"position_current"}))
+            GUI.TABLE_NEXT_COLUMN
+            DRIVER_CELL n, CW(36), CW(36)
+            GUI.TABLE_NEXT_COLUMN
+            IF GUI.SELECTABLE(DNAME$(n) + "##cd" + NSTR$(n)) THEN gSelDrv = n
+            GUI.TABLE_NEXT_COLUMN
+            GUI.PUSH_STYLE_COLOR "TEXT", DCOL(n)
+            GUI.TEXT DTEAM$(n)
+            GUI.POP_STYLE_COLOR
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT FORMAT$("{:.0f}", NVAL(c{"points_current"}))
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT "+" + FORMAT$("{:.0f}", NVAL(c{"points_current"}) - NVAL(c{"points_start"}))
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB CHAMP_TEAMS()
+    IF GUI.BEGIN_TABLE("cht", 4) THEN
+        GUI.TABLE_SETUP_COLUMN("Pos", 16, CW(55))
+        GUI.TABLE_SETUP_COLUMN("Team", 16, CW(230))
+        GUI.TABLE_SETUP_COLUMN("Pkt", 16, CW(65))
+        GUI.TABLE_SETUP_COLUMN("+/-", 16, CW(55))
+        GUI.TABLE_HEADERS_ROW
+        DIM i
+        FOR i = 0 TO LEN(gChT) - 1
+            DIM c = gChT[i]
+            DIM tn$ = TXT$(c{"team_name"})
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT NSTR$(NVAL(c{"position_current"})) + DELTA$(NVAL(c{"position_start"}), NVAL(c{"position_current"}))
+            GUI.TABLE_NEXT_COLUMN
+            GUI.PUSH_STYLE_COLOR "TEXT", TEAMCOL(tn$)
+            GUI.TEXT tn$
+            GUI.POP_STYLE_COLOR
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT FORMAT$("{:.0f}", NVAL(c{"points_current"}))
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT "+" + FORMAT$("{:.0f}", NVAL(c{"points_current"}) - NVAL(c{"points_start"}))
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB CHAMP_TAB()
+    IF LEN(gChD) = 0 THEN
+        GUI.TEXT "Kein WM-Stand da. OpenF1 fuehrt ihn erst ab 2025, und bei zu"
+        GUI.TEXT "vielen Anfragen kurz hintereinander weist der Server auch mal eine ab."
+        IF GUI.BUTTON("Nochmal holen") THEN
+            gChD = GETJ(API$ + "championship_drivers?session_key=" + gRefRace$)
+            gChT = GETJ(API$ + "championship_teams?session_key=" + gRefRace$)
+        ENDIF
+        RETURN
+    ENDIF
+    GUI.TEXT "Stand nach dem letzten Rennen. Die Spalte +/- zeigt, was dort dazugekommen ist."
+    GUI.SEPARATOR
+    IF GUI.BEGIN_TABLE("champ", 2) THEN
+        GUI.TABLE_SETUP_COLUMN("Fahrerwertung", 16, CW(640))
+        GUI.TABLE_SETUP_COLUMN("Teamwertung", 16, CW(460))
+        GUI.TABLE_HEADERS_ROW
+        GUI.TABLE_NEXT_ROW
+        GUI.TABLE_NEXT_COLUMN
+        CHAMP_DRIVERS()
+        GUI.TABLE_NEXT_COLUMN
+        CHAMP_TEAMS()
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB MEETING_DETAIL()
+    DIM m = gMeet[gSelMeet]
+    IF GUI.BUTTON("<- Rennkalender") THEN gSelMeet = -1
+    GUI.SAME_LINE
+    GUI.SEPARATOR_TEXT(TXT$(m{"meeting_official_name"}))
+    DIM fid = MEETFLAG(m)
+    IF fid >= 0 THEN
+        GUI.IMAGE fid, CW(90), CW(50)
+        GUI.SAME_LINE
+    ENDIF
+    DIM cid = IMG(TXT$(m{"circuit_image"}), "trk" + NSTR$(NVAL(m{"circuit_key"})))
+    IF cid >= 0 THEN GUI.IMAGE cid, CW(130), CW(98)
+    GUI.TEXT TXT$(m{"location"}) + " (" + TXT$(m{"country_name"}) + ")    " + TXT$(m{"circuit_short_name"}) + "    " + TXT$(m{"circuit_type"})
+    GUI.TEXT "Wochenende: " + DATESTR$(TXT$(m{"date_start"})) + " bis " + DATESTR$(TXT$(m{"date_end"}))
+    GUI.SEPARATOR
+
+    DIM w = WEEKEND(NVAL(m{"meeting_key"}))
+    IF LEN(w) = 0 THEN
+        GUI.TEXT "(keine Sessions)"
+        RETURN
+    ENDIF
+    DIM names$ = []
+    DIM i
+    FOR i = 0 TO LEN(w) - 1
+        names$ = APPEND(names$, TXT$(w[i]{"session_name"}) + "   " + DTSHORT$(TXT$(w[i]{"date_start"})))
+    NEXT i
+    IF gSelSess >= LEN(w) THEN gSelSess = LEN(w) - 1
+    gSelSess = GUI.COMBO("Session", gSelSess, names$)
+    DIM s = w[gSelSess]
+    DIM sk$ = SESSKEY$(s)
+    IF NOT IS_PAST(s) THEN
+        GUI.TEXT "Startet in " + COUNTDOWN$(SECS_TO(TXT$(s{"date_start"}))) + "."
+        RETURN
+    ENDIF
+    MERGE_DRIVERS sk$
+    WX_LINE sk$
+    IF GUI.BEGIN_TAB_BAR("mt") THEN
+        IF GUI.BEGIN_TAB_ITEM("Ergebnis") THEN
+            RESULT_TABLE s
+            GUI.END_TAB_ITEM
+        ENDIF
+        IF GUI.BEGIN_TAB_ITEM("Reifen") THEN
+            STRATEGY_VIEW s
+            GUI.END_TAB_ITEM
+        ENDIF
+        IF GUI.BEGIN_TAB_ITEM("Boxenstopps") THEN
+            PIT_VIEW s
+            GUI.END_TAB_ITEM
+        ENDIF
+        IF GUI.BEGIN_TAB_ITEM("Rennleitung") THEN
+            RC_LIST RCMSG(sk$), 40
+            GUI.END_TAB_ITEM
+        ENDIF
+        GUI.END_TAB_BAR
+    ENDIF
+ENDSUB
+
+SUB CALENDAR_TAB()
+    IF gSelMeet >= 0 THEN
+        MEETING_DETAIL()
+        RETURN
+    ENDIF
+    IF GUI.BEGIN_TABLE("cal", 6) THEN
+        GUI.TABLE_SETUP_COLUMN("", 16, CW(60))
+        GUI.TABLE_SETUP_COLUMN("Datum", 16, CW(110))
+        GUI.TABLE_SETUP_COLUMN("Grand Prix", 16, CW(330))
+        GUI.TABLE_SETUP_COLUMN("Strecke", 16, CW(190))
+        GUI.TABLE_SETUP_COLUMN("Sieger", 16, CW(90))
+        GUI.TABLE_SETUP_COLUMN("Status", 16, CW(150))
+        GUI.TABLE_HEADERS_ROW
+        DIM i
+        FOR i = 0 TO LEN(gMeet) - 1
+            DIM m = gMeet[i]
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            DIM fid = MEETFLAG(m)
+            IF fid >= 0 THEN GUI.IMAGE fid, CW(50), CW(28)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT DATESTR$(TXT$(m{"date_start"}))
+            GUI.TABLE_NEXT_COLUMN
+            IF GUI.SELECTABLE(TXT$(m{"meeting_name"}) + "##m" + NSTR$(i)) THEN
+                gSelMeet = i
+                gSelSess = 0
+            ENDIF
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT TXT$(m{"circuit_short_name"})
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT WINNER_OF(NVAL(m{"meeting_key"}))
+            GUI.TABLE_NEXT_COLUMN
+            DIM r = RACE_OF(NVAL(m{"meeting_key"}))
+            IF NOT MAP.EXISTS(r, "session_key") THEN
+                GUI.TEXT "-"
+            ELSE
+                DIM secs = SECS_TO(TXT$(r{"date_start"}))
+                IF secs < 0 THEN
+                    GUI.TEXT "gefahren"
+                ELSE
+                    GUI.PUSH_STYLE_COLOR "TEXT", [250, 210, 90, 255]
+                    GUI.TEXT "in " + COUNTDOWN$(secs)
+                    GUI.POP_STYLE_COLOR
+                ENDIF
+            ENDIF
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB DRIVER_DETAIL(n)
+    IF GUI.BUTTON("<- Fahrer") THEN gSelDrv = -1
+    GUI.SAME_LINE
+    GUI.SEPARATOR_TEXT(DNAME$(n))
+    DIM sid = DHEAD(n)
+    IF sid >= 0 THEN
+        GUI.IMAGE sid, CW(120), CW(120)
+        GUI.SAME_LINE
+    ENDIF
+    GUI.PUSH_STYLE_COLOR "TEXT", DCOL(n)
+    GUI.TEXT "Nr. " + NSTR$(n) + "    " + DTEAM$(n)
+    GUI.POP_STYLE_COLOR
+    DIM i
+    FOR i = 0 TO LEN(gChD) - 1
+        IF NVAL(gChD[i]{"driver_number"}) = n THEN GUI.TEXT "WM-Platz " + NSTR$(NVAL(gChD[i]{"position_current"})) + "    " + FORMAT$("{:.0f}", NVAL(gChD[i]{"points_current"})) + " Punkte"
+    NEXT i
+    GUI.SEPARATOR_TEXT("Saison " + gYear$)
+    DIM wins = 0
+    DIM podiums = 0
+    DIM total = 0
+    IF GUI.BEGIN_TABLE("dseason" + NSTR$(n), 5) THEN
+        GUI.TABLE_SETUP_COLUMN("Rennen", 16, CW(300))
+        GUI.TABLE_SETUP_COLUMN("Datum", 16, CW(110))
+        GUI.TABLE_SETUP_COLUMN("Platz", 16, CW(80))
+        GUI.TABLE_SETUP_COLUMN("Runden", 16, CW(80))
+        GUI.TABLE_SETUP_COLUMN("Punkte", 16, CW(80))
+        GUI.TABLE_HEADERS_ROW
+        DIM mi
+        FOR mi = 0 TO LEN(gMeet) - 1
+            DIM m = gMeet[mi]
+            DIM r = RACE_OF(NVAL(m{"meeting_key"}))
+            IF NOT MAP.EXISTS(r, "session_key") THEN CONTINUEFOR
+            IF NOT IS_PAST(r) THEN CONTINUEFOR
+            DIM res = RESULT(SESSKEY$(r))
+            DIM j
+            FOR j = 0 TO LEN(res) - 1
+                IF NVAL(res[j]{"driver_number"}) <> n THEN CONTINUEFOR
+                DIM pos = NVAL(res[j]{"position"})
+                DIM pts = NVAL(res[j]{"points"})
+                total = total + pts
+                IF pos = 1 THEN wins = wins + 1
+                IF pos > 0 ANDALSO pos <= 3 THEN podiums = podiums + 1
+                GUI.TABLE_NEXT_ROW
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT TXT$(m{"meeting_name"})
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT DATESTR$(TXT$(r{"date_start"}))
+                GUI.TABLE_NEXT_COLUMN
+                DIM pos$ = POSTXT$(res[j])
+                IF pos > 0 ANDALSO pos <= 3 THEN
+                    GUI.PUSH_STYLE_COLOR "TEXT", [250, 210, 90, 255]
+                    GUI.TEXT pos$
+                    GUI.POP_STYLE_COLOR
+                ELSE
+                    GUI.TEXT pos$
+                ENDIF
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT NSTR$(NVAL(res[j]{"number_of_laps"}))
+                GUI.TABLE_NEXT_COLUMN
+                GUI.TEXT FORMAT$("{:.0f}", pts)
+            NEXT j
+        NEXT mi
+        GUI.END_TABLE
+    ENDIF
+    GUI.SEPARATOR
+    GUI.TEXT "Siege: " + NSTR$(wins) + "    Podestplaetze: " + NSTR$(podiums) + "    Rennpunkte: " + FORMAT$("{:.0f}", total)
+ENDSUB
+
+SUB DRIVERS_TAB()
+    IF gSelDrv >= 0 THEN
+        DRIVER_DETAIL gSelDrv
+        RETURN
+    ENDIF
+    DIM field = FIELD()
+    IF LEN(field) = 0 THEN
+        GUI.TEXT "(kein Fahrerfeld geladen)"
+        RETURN
+    ENDIF
+    DIM cols = 5
+    IF GUI.BEGIN_TABLE("drvgrid", cols) THEN
+        DIM i
+        FOR i = 0 TO LEN(field) - 1
+            DIM n = field[i]
+            IF i MOD cols = 0 THEN GUI.TABLE_NEXT_ROW
+            GUI.TABLE_SET_COLUMN_INDEX(i MOD cols)
+            DRIVER_CELL n, CW(84), CW(84)
+            GUI.PUSH_STYLE_COLOR "TEXT", DCOL(n)
+            GUI.TEXT NSTR$(n) + "   " + DACR$(n)
+            GUI.POP_STYLE_COLOR
+            IF GUI.SELECTABLE(DNAME$(n) + "##g" + NSTR$(n)) THEN gSelDrv = n
+            GUI.TEXT DTEAM$(n)
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+SUB BUILD_TOPPIT()
+    gTopPit = []
+    DIM mi
+    FOR mi = 0 TO LEN(gMeet) - 1
+        DIM m = gMeet[mi]
+        DIM r = RACE_OF(NVAL(m{"meeting_key"}))
+        IF NOT MAP.EXISTS(r, "session_key") THEN CONTINUEFOR
+        IF NOT IS_PAST(r) THEN CONTINUEFOR
+        SPLASH "Boxenstopps: " + TXT$(m{"meeting_name"}), (mi + 1) / LEN(gMeet)
+        DIM ps = PITS(SESSKEY$(r))
+        DIM best = 0
+        DIM bestNum = 0
+        DIM bestStop = 0
+        DIM j
+        FOR j = 0 TO LEN(ps) - 1
+            DIM d = NVAL(ps[j]{"pit_duration"})
+            IF d <= 0 ORELSE d > 60 THEN CONTINUEFOR
+            IF best = 0 ORELSE d < best THEN
+                best = d
+                bestNum = NVAL(ps[j]{"driver_number"})
+                bestStop = NVAL(ps[j]{"stop_duration"})
+            ENDIF
+        NEXT j
+        IF best > 0 THEN
+            DIM ent AS MAP
+            ent{"num"} = bestNum
+            ent{"dur"} = best
+            ent{"stop"} = bestStop
+            ent{"race"} = TXT$(m{"meeting_name"})
+            gTopPit = APPEND(gTopPit, ent)
+        ENDIF
+    NEXT mi
+    gTopPitDone = TRUE
+ENDSUB
+
+' the fastest stop of every race so far; the pit lane itself is short at some
+' circuits and long at others, so the times only compare within one race
+SUB TOPPIT_TAB()
+    IF NOT gTopPitDone THEN
+        GUI.TEXT "Der schnellste Boxenstopp aus jedem Rennen der Saison."
+        GUI.TEXT "Wird Rennen fuer Rennen nachgeladen."
+        IF GUI.BUTTON("Jetzt laden") THEN gTopPitWanted = TRUE
+        RETURN
+    ENDIF
+    IF LEN(gTopPit) = 0 THEN
+        GUI.TEXT "(keine Boxenstopps gefunden)"
+        RETURN
+    ENDIF
+    GUI.TEXT "Boxengasse = Einfahrt bis Ausfahrt. Standzeit = wie lange das Auto"
+    GUI.TEXT "wirklich stand, die liefert OpenF1 nicht fuer jedes Rennen."
+    GUI.SEPARATOR
+    IF GUI.BEGIN_TABLE("toppit", 5) THEN
+        GUI.TABLE_SETUP_COLUMN("Rennen", 16, CW(300))
+        GUI.TABLE_SETUP_COLUMN("Fahrer", 16, CW(250))
+        GUI.TABLE_SETUP_COLUMN("Team", 16, CW(190))
+        GUI.TABLE_SETUP_COLUMN("Boxengasse", 16, CW(140))
+        GUI.TABLE_SETUP_COLUMN("Standzeit", 16, CW(140))
+        GUI.TABLE_HEADERS_ROW
+        DIM i
+        FOR i = 0 TO LEN(gTopPit) - 1
+            DIM ent = gTopPit[i]
+            DIM n = NVAL(ent{"num"})
+            GUI.TABLE_NEXT_ROW
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT TXT$(ent{"race"})
+            GUI.TABLE_NEXT_COLUMN
+            COLTEXT n, DNAME$(n)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT DTEAM$(n)
+            GUI.TABLE_NEXT_COLUMN
+            GUI.TEXT FORMAT$("{:.1f}", NVAL(ent{"dur"})) + " s"
+            GUI.TABLE_NEXT_COLUMN
+            IF NVAL(ent{"stop"}) > 0 THEN
+                GUI.TEXT FORMAT$("{:.2f}", NVAL(ent{"stop"})) + " s"
+            ELSE
+                GUI.TEXT "-"
+            ENDIF
+        NEXT i
+        GUI.END_TABLE
+    ENDIF
+ENDSUB
+
+' ----------------------------------------------------------------- loading
+
+SUB REFRESH_LIVE()
+    DIM ls = GETJ(API$ + "sessions?session_key=latest")
+    IF LEN(ls) = 0 THEN RETURN
+    gLiveSess = ls[0]
+    gLiveHave = TRUE
+    gLiveKey$ = SESSKEY$(gLiveSess)
+    DIM started = SECS_TO(TXT$(gLiveSess{"date_start"}))
+    DIM ended = SECS_TO(TXT$(gLiveSess{"date_end"}))
+    gLiveOn = (started < 0 ANDALSO ended > -900)
+    MERGE_DRIVERS gLiveKey$
+    IF NOT gLiveOn THEN RETURN
+    gLivePos = GETJ(API$ + "position?session_key=latest")
+    gLiveInt = GETJ(API$ + "intervals?session_key=latest&date%3E=" + UTCSTAMP$(300))
+    gLiveRC = GETJ(API$ + "race_control?session_key=latest")
+ENDSUB
+
+SUB LOAD_SEASON(yr$)
+    gYear$ = yr$
+    DIM c1 AS MAP
+    gDrv = c1
+    DIM c2 AS MAP
+    gRes = c2
+    DIM c3 AS MAP
+    gStint = c3
+    DIM c4 AS MAP
+    gPit = c4
+    DIM c5 AS MAP
+    gRC = c5
+    DIM c6 AS MAP
+    gWx = c6
+    DIM c7 AS MAP
+    gSeen = c7
+    gMeet = []
+    gSess = []
+    gChD = []
+    gChT = []
+    gSelMeet = -1
+    gSelDrv = -1
+    gSelSess = 0
+    gTopPit = []
+    gTopPitDone = FALSE
+    gTopPitWanted = FALSE
+
+    SPLASH "Rennkalender " + yr$ + " ...", 0.08
+    gMeet = GETJ(API$ + "meetings?year=" + yr$)
+    SPLASH "Sessions ...", 0.16
+    gSess = GETJ(API$ + "sessions?year=" + yr$)
+
+    ' the last race that has already started carries the championship tables
+    gRefRace$ = ""
+    DIM i
+    FOR i = 0 TO LEN(gSess) - 1
+        IF TXT$(gSess[i]{"session_name"}) = "Race" ANDALSO IS_PAST(gSess[i]) THEN gRefRace$ = SESSKEY$(gSess[i])
+    NEXT i
+
+    IF gRefRace$ <> "" THEN
+        SPLASH "Fahrerfeld ...", 0.24
+        MERGE_DRIVERS gRefRace$
+        SPLASH "WM-Stand ...", 0.32
+        gChD = GETJ(API$ + "championship_drivers?session_key=" + gRefRace$)
+        gChT = GETJ(API$ + "championship_teams?session_key=" + gRefRace$)
+    ENDIF
+
+    DIM races = []
+    FOR i = 0 TO LEN(gMeet) - 1
+        DIM r = RACE_OF(NVAL(gMeet[i]{"meeting_key"}))
+        IF MAP.EXISTS(r, "session_key") ANDALSO IS_PAST(r) THEN races = APPEND(races, r)
+    NEXT i
+    FOR i = 0 TO LEN(races) - 1
+        SPLASH "Ergebnisse ... " + NSTR$(i + 1) + "/" + NSTR$(LEN(races)), 0.35 + 0.3 * (i + 1) / LEN(races)
+        DIM res = RESULT(SESSKEY$(races[i]))
+    NEXT i
+
+    ' the reference race does not have to carry the whole season's field
+    FOR i = LEN(races) - 1 TO 0 STEP -1
+        IF UNKNOWN_COUNT() = 0 THEN EXITFOR
+        SPLASH "Fahrerfeld ergaenzen ...", 0.64
+        MERGE_DRIVERS SESSKEY$(races[i])
+    NEXT i
+
+    FOR i = 0 TO LEN(gMeet) - 1
+        SPLASH "Flaggen ... " + NSTR$(i + 1) + "/" + NSTR$(LEN(gMeet)), 0.65 + 0.15 * (i + 1) / LEN(gMeet)
+        DIM fid = MEETFLAG(gMeet[i])
+    NEXT i
+
+    DIM field = FIELD()
+    FOR i = 0 TO LEN(field) - 1
+        SPLASH "Fahrerfotos ... " + NSTR$(i + 1) + "/" + NSTR$(LEN(field)), 0.8 + 0.2 * (i + 1) / LEN(field)
+        DIM hid = DHEAD(field[i])
+    NEXT i
+ENDSUB
+
+' -------------------------------------------------------------------- main
+
+SPLASH "Lichter aus ...", 0.03
+LOAD_SEASON YEARS$[0]
+REFRESH_LIVE()
+gLastRefresh = TICK()
+PRINT "meetings: "; LEN(gMeet); "  sessions: "; LEN(gSess); "  drivers: "; LEN(MAP.KEYS(gDrv))
+
+DO
+    IF (TICK() - gLastRefresh) > 20000 THEN
+        REFRESH_LIVE()
+        gLastRefresh = TICK()
+    ENDIF
+    CLS
+    IF GUI.BEGIN("Formel 1 Dashboard", 0, 0, GUI.DISPLAY_WIDTH(), GUI.DISPLAY_HEIGHT(), TRUE, PANELFLAGS()) THEN
+        DIM ni = GUI.COMBO("Saison", gYearIdx, YEARS$)
+        IF ni <> gYearIdx THEN gPendingYear = ni
+        GUI.SAME_LINE
+        GUI.TEXT "    Daten: openf1.org     [F] Vollbild   [ESC] Ende"
+        IF GUI.BEGIN_TAB_BAR("tabs") THEN
+            IF GUI.BEGIN_TAB_ITEM("Live") THEN
+                LIVE_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            IF GUI.BEGIN_TAB_ITEM("WM-Stand") THEN
+                CHAMP_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            IF GUI.BEGIN_TAB_ITEM("Rennkalender") THEN
+                CALENDAR_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            IF GUI.BEGIN_TAB_ITEM("Fahrer") THEN
+                DRIVERS_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            IF GUI.BEGIN_TAB_ITEM("Boxenstopp-Bestzeiten") THEN
+                TOPPIT_TAB()
+                GUI.END_TAB_ITEM
+            ENDIF
+            GUI.END_TAB_BAR
+        ENDIF
+        GUI.END
+    ENDIF
+    SCREENFLIP
+    IF gTopPitWanted THEN
+        gTopPitWanted = FALSE
+        BUILD_TOPPIT()
+        gLastRefresh = TICK()
+    ENDIF
+    IF gPendingYear >= 0 THEN
+        gYearIdx = gPendingYear
+        gPendingYear = -1
+        LOAD_SEASON YEARS$[gYearIdx]
+        gLastRefresh = TICK()
+    ENDIF
+    DIM kk$ = INKEY$()
+    IF kk$ = CHR$(27) THEN EXITDO
+    IF kk$ = "f" ORELSE kk$ = "F" THEN TOGGLE_FULLSCREEN
+LOOP
+GFX.CLOSE
+PRINT "Zielflagge."
