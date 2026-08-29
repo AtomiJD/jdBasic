@@ -912,7 +912,7 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
     * `DIM` always declares (even with EXPLICIT on).
     * `FOR` / `FOR EACH` loop variables must be declared when EXPLICIT is on.
     * Disable with `OPTION "NOEXPLICIT"` or `OPTION "EXPLICITOFF"`.
-* **`SLEEP milliseconds`**: Pauses execution for a specified duration.
+* **`SLEEP milliseconds`**: Pauses execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, about 15.6 ms on Windows and under a millisecond elsewhere.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
 * **`EXPORT MODULE [module]`**: Marks a file as EXPORT for importing with IMPORT
@@ -3610,6 +3610,130 @@ neuron to a trainable XOR network using nothing but the array operations
 documented above. For working with an existing model rather than training
 one, use the `AI.*` inference calls (`AI.LOAD_LLM`, `AI.CHAT`, `AI.EMBED`,
 the `AI.RAG_*` set).
+
+## On a board: RP2350 and ESP32-S3
+
+jdBasic runs on two microcontrollers with the same interpreter that runs
+on a desktop. `pico/` is the RP2350, which is what a PicoCalc is; `esp32/`
+is the ESP32-S3. Both are the REPL over a serial line with a flash store
+behind it, and both read the language documented above without exception.
+
+What differs is what the machine has, and how little of it there is.
+
+### What is the same
+
+The verbs are chosen so a program reads alike on either board:
+`GPIO.MODE` / `WRITE` / `READ` / `PULLUP`, `ADC.READ`, `ADC.TEMP`,
+`PWM.SET` / `OFF`, `I2C.SETUP` / `WRITE` / `READ` / `SCAN`,
+`SPI.SETUP` / `XFER`, `TIMER.EVERY` / `STOP`, `GPIO.WATCH`, `KEY.WATCH`,
+`WIFI.*` and the `HTTP.SERVER.*` family. The HTTP server is literally the
+same file compiled into both.
+
+Events work the same way in both: an interrupt only records what
+happened, and the VM drains the record between statements, so a handler
+never runs inside an ISR and may draw, write files or call anything else.
+Handlers do not nest - a tick arriving while one is still running is
+dropped rather than queued, so a slow handler cannot build a backlog it
+will never work off.
+
+```basic
+SUB OnTick(d)
+    PRINT ADC.TEMP()
+ENDSUB
+
+ON "TICK" CALL OnTick
+TIMER.EVERY(1000)
+```
+
+### What differs
+
+| | RP2350 | ESP32-S3 |
+|---|---|---|
+| free at a bare prompt | 120376 | 181416, or 198639 with PSRAM |
+| arrays beyond that | none | 8 MB of PSRAM |
+| `ADC.READ` takes | the channel | the pin, GPIO 1 to 10 |
+| I2C speed belongs to | the bus | the device, so it is named at the transfer |
+| PIO | yes, `PIO.LOAD` and friends | no; RMT and I2S are the nearest things |
+| radio | only on a W part | always, and it can be an access point |
+
+The ESP32-S3 refuses the pins it cannot spare. GPIO 26 to 32 carry the
+SPI flash, 33 to 37 the octal PSRAM, and 43 and 44 the console. Writing
+to one takes the board down with no diagnostic, so every verb refuses
+them by name before the write, and `PIN.FREE` lists what is left.
+
+### The flash store
+
+Both boards keep programs in flash and both answer `DIR`, `RUN`, `LOAD`,
+`LIST`, `TYPE`, `DEL`, `RECV` and `AUTORUN` at the prompt. `RECV` takes a
+file straight off the serial line, parsing nothing and echoing nothing,
+which is far faster than typing into the editor. `AUTORUN` names a
+program to start at power-on and leaves a window at boot to cancel it, so
+a misbehaving program never locks the board out.
+
+On the ESP32-S3 a name without an extension may mean the `.jdb` of that
+name: `RUN hello` finds `hello.jdb`. What was typed wins, so a file that
+really has no extension stays reachable.
+
+One consequence of the platform worth knowing: ESP-IDF has no working
+directory at all, so `"."` never resolves and `DIR$` starts its listing
+at the root there.
+
+### The radio, on the ESP32-S3
+
+It is a mode rather than a state. A started radio costs about a hundred
+kilobytes of internal RAM, which is most of what the interpreter has, so
+it is turned on for the job and off again:
+
+```basic
+IF WIFI.AP("jdbasic", "plotter123") = 0 THEN
+    PRINT "open http://"; WIFI.IP$()
+    HTTP.SERVER.ON_GET("/", "HOME")
+    HTTP.SERVER.START(80)
+    HTTP.SERVER.WAIT(0)
+ENDIF
+WIFI.OFF()
+```
+
+`WIFI.OFF` returns most of it; the rest belongs to the TCP/IP stack,
+which is set up once and stays. Bluetooth is Low Energy only - the chip
+has no classic BR/EDR - and its stack and the WiFi one do not
+comfortably fit together in 512 KB.
+
+### Trades the interpreter makes on a small machine
+
+Six things behave differently when the interpreter is built for a
+controller, all of them about memory rather than meaning:
+
+* A chunk is shrunk to fit once it is compiled. Nothing is appended to it
+  afterwards, and the room its vectors kept while doubling measured 22
+  percent of everything a loaded program keeps.
+* A program is read once rather than through a stringstream, which
+  otherwise holds three copies of the source at the same moment.
+* The lexer reserves its token vector up front. Growing it is what kills
+  a load: a doubling near the end wants the old block and the new one at
+  once, and the heap refuses long before its total runs out.
+* The VM's value stack starts at 1024 slots rather than 65536.
+* `INPUT` reads a character at a time and echoes what arrives, because
+  the board's stdio does not echo.
+* `DIR` prints name and size only, there being forty columns to spend and
+  no clock worth printing.
+
+None of that changes what a program means. A `.jdb` file that runs on a
+desktop runs on a board until it runs out of memory.
+
+### Watching the memory
+
+`SYS.FREE` is the total, and the total is not what a single allocation
+can have. `SYS.LARGEST` is the biggest block the heap will actually hand
+over, and that is the number a growing array hits first:
+
+```
+> PRINT SYS.MEM()
+internal=163247/422787 largest=90112 psram=8361576/8388608 largest=8257536
+```
+
+An array costs about 24 bytes an element on both boards, so 8 MB of PSRAM
+holds roughly 340000 of them and the PicoCalc's 120376 about 5000.
 
 ## The Integrated Editor
 

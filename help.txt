@@ -2663,7 +2663,7 @@ Description: Returns the sine of an angle.
 
 [SLEEP]
 Syntax: SLEEP milliseconds
-Description: Pauses program execution for a specified duration.
+Description: Pauses program execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, which is about 15.6 ms on Windows and under a millisecond elsewhere. Twenty SLEEP 10 in a row therefore take longer than 200 ms on Windows.
 
 [SLICE]
 Syntax: SLICE(matrix, dimension, index)
@@ -3883,3 +3883,171 @@ Description: Font picker; returns "" on cancel.
 [FORM.TOPMOST]
 Syntax: FORM.SET(frm, "TOPMOST", bool)
 Description: Keep a form above all normal windows (always on top); FALSE releases it. FORM.GET reads the state.
+
+[??]
+Syntax: expression ?? expression
+Description: The left side unless it is absent, in which case the right. Asks about absence, not truth, so 0 and "" keep their place where ORELSE would replace them. The right side is only evaluated when it is needed, and a chain of fallbacks may be written as a chain. Both backends.
+
+[?.]
+Syntax: object?.field | object?{key} | object?[index]
+Description: Reads into something that may not be there. A missing map key already reads as NONE; it is the step after that faults, and this guards it - with nothing to read into the read does not happen and the answer is absent, so the chain stops. Not a bounds check: an index out of range is still an error. Not allowed before a method call.
+
+[$"]
+Syntax: $"text {{ expression }} text"
+Description: A string with expressions in it, using the same {{ }} the template engine speaks. Single braces and angle brackets stay text, which is what building JSON and HTML need. Inside, the ordinary string rules hold, so a quote is doubled: $"{{m{""key""}}}". Becomes text + FORMAT$("{}", expr) + text at parse time, so it compiles exactly as it interprets.
+
+[OPTIONAL PARAMETERS]
+Syntax: FUNC Name(required, optional = default) ... ENDFUNC
+Description: A trailing parameter may carry a default, and a call that leaves it out gets that value. Optional parameters come last, because arguments are matched left to right. A default is a literal - a number, a string, TRUE, FALSE or NONE - since a function is declared before any scope exists to evaluate one in; take NONE and decide in the body for a computed default. SUB takes them too, lambdas do not.
+
+[GPIO.MODE]
+Syntax: GPIO.MODE(pin, is_output)
+Description: Sets a pin to output (1) or input (0). Boards only. On the ESP32-S3 the pins carrying flash (26-32), PSRAM (33-37) and the console UART are refused by name before the write, because touching one takes the board down with no diagnostic; PIN.FREE lists what is left.
+
+[GPIO.WRITE]
+Syntax: GPIO.WRITE(pin, level)
+Description: Drives an output pin high (non-zero) or low. Boards only.
+
+[GPIO.READ]
+Syntax: GPIO.READ(pin) -> 0 | 1
+Description: Reads an input pin. Boards only.
+
+[GPIO.PULLUP]
+Syntax: GPIO.PULLUP(pin [, on])
+Description: Enables (default) or releases the pin's internal pull-up. Boards only.
+
+[GPIO.WATCH]
+Syntax: GPIO.WATCH(pin, edge)
+Description: Raises the "PIN" event on a pin edge: 1 rising, 2 falling, 3 both, 0 stops watching. Use with ON "PIN" CALL Handler(pin, level). The interrupt only records; the handler runs between statements. Boards only.
+
+[PIN.DIAG$]
+Syntax: PIN.DIAG$ -> text$
+Description: What the pin interrupt has seen so far: raw count and queue positions. Boards only.
+
+[PIN.FREE]
+Syntax: PIN.FREE -> text$
+Description: The GPIO numbers this build will let you use, with flash, PSRAM and the console pins left out. ESP32-S3 only.
+
+[ADC.READ]
+Syntax: ADC.READ(pin) -> raw
+Description: One analogue conversion. On the ESP32-S3 the converter sits on GPIO 1 to 10 in order, so the argument is the pin; on the RP2350 it is the channel. Boards only.
+
+[ADC.TEMP]
+Syntax: ADC.TEMP -> degrees
+Description: The chip's own temperature sensor, in degrees Celsius. Boards only.
+
+[PWM.SET]
+Syntax: PWM.SET(pin, hz [, duty_percent])
+Description: A square wave on a pin, duty in percent (default 50). Eight channels, handed out per pin in order of first use. Boards only.
+
+[PWM.OFF]
+Syntax: PWM.OFF(pin)
+Description: Stops the wave and frees the channel. Boards only.
+
+[I2C.SETUP]
+Syntax: I2C.SETUP(bus, sda, scl [, hz])
+Description: Opens an I2C bus (0 or 1) on two pins. On the ESP32-S3 the speed belongs to the device rather than the bus, so it is named at the transfer instead. Boards only.
+
+[I2C.WRITE]
+Syntax: I2C.WRITE(bus, address, data [, hz]) -> bytes_written
+Description: Writes an array of byte values or a string to a device. Returns the count, or -1. Boards only.
+
+[I2C.READ]
+Syntax: I2C.READ(bus, address, count [, hz]) -> array
+Description: Reads count bytes from a device. Returns an empty array on failure. Boards only.
+
+[I2C.SCAN]
+Syntax: I2C.SCAN(bus) -> array
+Description: The addresses that answered on the bus. Boards only.
+
+[SPI.SETUP]
+Syntax: SPI.SETUP(bus, sck, mosi, miso [, hz])
+Description: Opens an SPI bus. Chip select is left alone: drive it with GPIO.WRITE, which is what a display or a card needs anyway. Boards only.
+
+[SPI.XFER]
+Syntax: SPI.XFER(bus, data) -> array
+Description: Full duplex: as many bytes come back as went out. Takes an array of byte values or a string. Boards only.
+
+[TIMER.EVERY]
+Syntax: TIMER.EVERY(ms) -> 0 | -1
+Description: Raises the "TICK" event every ms milliseconds; 0 stops. Use with ON "TICK" CALL Handler. Handlers run between statements, never inside the interrupt, and do not nest - a tick arriving while one is still running is dropped rather than queued, so a slow handler cannot build a backlog. Boards only.
+
+[TIMER.STOP]
+Syntax: TIMER.STOP
+Description: Stops the periodic tick. Boards only.
+
+[KEY.WATCH]
+Syntax: KEY.WATCH(on)
+Description: Raises the "KEY" event for each key that arrives. Use with ON "KEY" CALL Handler(code). Boards only.
+
+[SYS.FREE]
+Syntax: SYS.FREE -> bytes
+Description: Free heap. It is the total across scattered pieces, so it is not what a single allocation can have - watch SYS.LARGEST for that. Boards only.
+
+[SYS.LARGEST]
+Syntax: SYS.LARGEST -> bytes
+Description: The biggest single block the heap will hand over. A growing array asks for one of these, and a heap holding plenty in scattered pieces still says no, which is what a program hits long before the total runs out. Boards only.
+
+[SYS.INTERNAL]
+Syntax: SYS.INTERNAL -> bytes
+Description: Free internal RAM, the scarce pool. ESP32-S3 only.
+
+[SYS.PSRAM]
+Syntax: SYS.PSRAM -> bytes
+Description: Free PSRAM, where arrays and programs live. Zero on a part without it. ESP32-S3 only.
+
+[SYS.MEM]
+Syntax: SYS.MEM -> text$
+Description: Both pools with their totals and largest blocks, plus the low-water mark - the smallest the heap has been since boot, which is what a program actually survived rather than what it happens to hold now. ESP32-S3 only.
+
+[SYS.CHUNKS]
+Syntax: SYS.CHUNKS -> text$
+Description: Where the memory a loaded program never gives back actually went, component by component: code, line table, names, constants, inline caches, prototypes, and the slack the vectors keep. RP2350 only.
+
+[SYS.NATIVES]
+Syntax: SYS.NATIVES -> text$
+Description: How many builtins this build registered, how many bytes of name that is, and what registering them cost. ESP32-S3 only.
+
+[SYS.DF]
+Syntax: SYS.DF -> text$
+Description: The flash store as a line: bytes free of bytes total. ESP32-S3 only.
+
+[SYS.FREEDISK]
+Syntax: SYS.FREEDISK -> bytes
+Description: Free space on the flash store, as a number. ESP32-S3 only.
+
+[WIFI.AP]
+Syntax: WIFI.AP(ssid$ [, password$ [, channel]]) -> 0 | -1
+Description: Raises the board's own network on 192.168.4.1 with a DHCP server behind it. Open with no password, WPA2 with one of at least eight characters. ESP32-S3 only.
+
+[WIFI.CONNECT]
+Syntax: WIFI.CONNECT(ssid$, password$ [, timeout_ms]) -> 0 | negative
+Description: Joins a network and waits for an address. Zero on success. Boards only.
+
+[WIFI.AUTO]
+Syntax: WIFI.AUTO -> 0 | negative
+Description: Joins using the two lines in wifi.txt on the flash store: ssid, then password. Boards only.
+
+[WIFI.OFF]
+Syntax: WIFI.OFF
+Description: Stops the radio and gives its memory back. A started radio costs most of what the interpreter has, so it is a mode rather than a state. ESP32-S3 only.
+
+[WIFI.STATUS]
+Syntax: WIFI.STATUS -> 0 | 1 | 2
+Description: 0 down, 1 serving as an access point, 2 joined with an address. ESP32-S3 only.
+
+[WIFI.IP$]
+Syntax: WIFI.IP$ -> text$
+Description: The address of whichever interface is carrying traffic, or "". Boards only.
+
+[WIFI.MAC$]
+Syntax: WIFI.MAC$ -> text$
+Description: The hardware address of the interface in use. ESP32-S3 only.
+
+[WIFI.CLIENTS]
+Syntax: WIFI.CLIENTS -> count
+Description: How many stations are connected to this board's own network. ESP32-S3 only.
+
+[WIFI.DIAG$]
+Syntax: WIFI.DIAG$ -> text$
+Description: Mode, network, address, and either the signal strength or the number of clients. Boards only.
