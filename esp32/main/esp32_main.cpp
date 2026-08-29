@@ -13,6 +13,7 @@
 #include "esp_chip_info.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
+#include "driver/uart.h"
 #include "driver/uart_vfs.h"
 
 #include "jdb_embed_api.h"
@@ -48,6 +49,14 @@ static void console_init() {
     usb_serial_jtag_vfs_set_rx_line_endings(ESP_LINE_ENDINGS_CR);
     usb_serial_jtag_vfs_set_tx_line_endings(ESP_LINE_ENDINGS_CRLF);
 #else
+    // Without a driver the reader takes bytes straight out of the 128-byte
+    // hardware FIFO, and RECV sleeps ten milliseconds whenever it finds it
+    // empty. At 115200 baud ten milliseconds is 115 bytes, so an upload
+    // arriving at line speed overruns the FIFO and loses whatever landed
+    // during the sleep. The driver's interrupt collects into a ring buffer
+    // instead, and four kilobytes is thirty times the gap.
+    uart_driver_install((uart_port_t)CONFIG_ESP_CONSOLE_UART_NUM, 4096, 0, 0, NULL, 0);
+    uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
     // Everything here writes CR LF itself, so the console must not add a
     // second carriage return on top of it.
     uart_vfs_dev_port_set_tx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_LF);
