@@ -1,5 +1,6 @@
 #include "parser.h"
 #include <algorithm>
+#include "lexer.h"
 
 Parser::Parser(const std::vector<Token>& tokens) : tokens(tokens) {}
 
@@ -1953,6 +1954,89 @@ ExprPtr Parser::parse_expr() {
 }
 
 // ?? binds looser than everything but the pipe, so `a{"k"} ?? b + 1`
+
+// $"text {{ expr }} text" becomes text + FORMAT$("{}", expr) + text.
+// Nothing new exists at runtime: this is an ordinary concatenation, which
+// is why it compiles as well as it interprets.
+//
+// FORMAT$ rather than STR$ or a bare +, because both of those broadcast
+// over an array: STR$([1,2,3]) is an array of three strings and "n=" +
+// [1,2] is ["n=1", "n=2"], where the string wanted "n=[1, 2]". FORMAT$
+// takes its argument whole and renders arrays, maps and NONE the way
+// PRINT does.
+//
+// The closing braces are found by counting, not by searching: an
+// expression may contain a map access, and `{{ m{"k"} }}` ends at the
+// last two braces rather than the first pair it meets. Quotes are
+// skipped for the same reason.
+ExprPtr Parser::parse_interp_string(const std::string& raw, int line) {
+    std::vector<ExprPtr> parts;
+    std::string literal;
+
+    auto flush_literal = [&]() {
+        if (literal.empty()) return;
+        parts.push_back(make_string_lit(literal, line));
+        literal.clear();
+    };
+
+    size_t i = 0;
+    while (i < raw.size()) {
+        if (raw[i] == '{' && i + 1 < raw.size() && raw[i + 1] == '{') {
+            size_t start = i + 2;
+            size_t j = start;
+            int depth = 0;
+            bool in_str = false;
+            bool closed = false;
+            while (j < raw.size()) {
+                char c = raw[j];
+                if (in_str) {
+                    if (c == '"') in_str = false;
+                    j++;
+                    continue;
+                }
+                if (c == '"') { in_str = true; j++; continue; }
+                if (c == '{') { depth++; j++; continue; }
+                if (c == '}') {
+                    if (depth > 0) { depth--; j++; continue; }
+                    if (j + 1 < raw.size() && raw[j + 1] == '}') { closed = true; break; }
+                }
+                j++;
+            }
+            if (!closed)
+                throw std::runtime_error("Interpolated string: '{{' at line " +
+                    std::to_string(line) + " has no matching '}}'");
+
+            std::string src = raw.substr(start, j - start);
+            flush_literal();
+
+            // The piece is ordinary jdBasic source, so it is read by an
+            // ordinary lexer and parser rather than by a second grammar.
+            Lexer sub_lexer(src);
+            auto sub_tokens = sub_lexer.tokenize();
+            Parser sub_parser(sub_tokens);
+            ExprPtr inner = sub_parser.parse_expr();
+
+            auto call = std::make_unique<Expr>();
+            call->kind = ExprKind::CALL;
+            call->func_name = "FORMAT$";
+            call->line = line;
+            call->args.push_back(make_string_lit("{}", line));
+            call->args.push_back(std::move(inner));
+            parts.push_back(std::move(call));
+
+            i = j + 2;
+            continue;
+        }
+        literal += raw[i++];
+    }
+    flush_literal();
+
+    if (parts.empty()) return make_string_lit("", line);
+    ExprPtr out = std::move(parts[0]);
+    for (size_t k = 1; k < parts.size(); k++)
+        out = make_binary(TokenType::PLUS, std::move(out), std::move(parts[k]), line);
+    return out;
+}
 // reads the way it looks. Right-associative, which lets a chain of
 // fallbacks be written as a chain: first ?? second ?? last.
 ExprPtr Parser::parse_coalesce() {
@@ -2158,6 +2242,11 @@ ExprPtr Parser::parse_primary() {
     // String literal
     if (check(TokenType::STRING_LIT)) {
         return make_string_lit(advance().value, ln);
+    }
+
+    // Interpolated string: $"text {{ expr }} text"
+    if (check(TokenType::INTERP_STRING)) {
+        return parse_interp_string(advance().value, ln);
     }
 
     // Parenthesized expression

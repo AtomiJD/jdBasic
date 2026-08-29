@@ -166,6 +166,17 @@ std::vector<Token> Lexer::tokenize() {
             continue;
         }
 
+        // Interpolated string: $"text {{ expr }} text". The body is read by
+        // the ordinary string reader, so the doubled-quote rule holds inside
+        // it and the parser sees text with real quotes in it.
+        if (c == '$' && peek_next() == '"') {
+            advance();
+            Token t = read_string();
+            t.type = TokenType::INTERP_STRING;
+            tokens.push_back(t);
+            continue;
+        }
+
         // Hex literal: $FF, $80000
         if (c == '$' && std::isxdigit(peek_next())) {
             advance(); // skip $

@@ -173,6 +173,43 @@ callers share the same slot.
 
 
 
+
+### `$"..."` - a string with expressions in it
+
+```basic
+DIM name$ = "world"
+DIM n = 3
+
+PRINT $"Hallo {{name$}}, du hast {{n}} Nachrichten"
+PRINT $"html: <div class=""row"">{{name$}}</div>"
+PRINT $"json: {""model"": ""{{name$}}"", ""n"": {{n}}}"
+```
+
+`{{ ... }}` is the same interpolation the template engine in
+`jdb/demos/web/tmpl.jdb` uses, so the two read alike. Single braces stay
+text, which is what building JSON needs, and angle brackets never meant
+anything here, which is what building HTML needs.
+
+The `$` prefix is required. Without it every existing string that
+happens to contain two braces would change meaning.
+
+Inside, the ordinary string rules hold: a quote is written doubled. A
+map access therefore reads `$"{{m{""key""}}}"`.
+
+Anything can go between the braces, not only a name:
+
+```basic
+$"{{n * 2 + 1}}"           ' 7
+$"{{UCASE$(name$)}}"       ' WORLD
+$"{{m{""nope""} ?? 42}}"   ' 42
+```
+
+Values render the way `PRINT` renders them, arrays and maps included:
+`$"a: {{arr}}"` gives `a: [1, 2, 3]`, not one string per element.
+
+It becomes `text + FORMAT$("{}", expr) + text` at parse time, so nothing
+new exists at runtime and it compiles exactly as it interprets.
+
 ### `??` - the left side unless it is absent
 
 ```basic

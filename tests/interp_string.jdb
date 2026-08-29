@@ -1,0 +1,74 @@
+' $"text {{ expr }} text" builds a string from pieces. It becomes an
+' ordinary concatenation at parse time - text + FORMAT$("{}", expr) +
+' text - so nothing new exists at runtime and it compiles as well as it
+' interprets.
+'
+' The prefix is required. Without it every existing string that happens
+' to contain two braces would change meaning, and that is not a thing to
+' do to code that already works.
+
+DIM fails = 0
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = ["; got$; "], expected ["; want$; "]"
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM name$ = "world"
+DIM n = 3
+DIM f = 1.5
+DIM b = TRUE
+DIM arr = [1, 2, 3]
+DIM m = { "key": "value", "n": 7 }
+
+' ── The plain cases ──────────────────────────────────────────
+CHKS "one variable", $"{{name$}}", "world"
+CHKS "text around it", $"Hallo {{name$}}!", "Hallo world!"
+CHKS "two of them", $"{{name$}} has {{n}}", "world has 3"
+CHKS "no interpolation", $"just text", "just text"
+CHKS "empty", $"", ""
+CHKS "only text with a brace", $"a { b", "a { b"
+
+' ── Every kind renders the way PRINT renders it ──────────────
+CHKS "integer", $"{{n}}", "3"
+CHKS "float", $"{{f}}", "1.5"
+CHKS "boolean", $"{{b}}", "TRUE"
+CHKS "string", $"{{name$}}", "world"
+
+' An array is the case a bare + gets wrong: it broadcasts, and
+' "n=" + [1,2] would give ["n=1", "n=2"] rather than one string.
+CHKS "array whole", $"{{arr}}", "[1, 2, 3]"
+CHKS "array in text", $"a: {{arr}}", "a: [1, 2, 3]"
+CHKS "map whole", $"{{m{""key""}}}", "value"
+
+' ── Expressions, not only names ──────────────────────────────
+CHKS "arithmetic", $"{{n * 2 + 1}}", "7"
+CHKS "a call", $"{{UCASE$(name$)}}", "WORLD"
+CHKS "nested access", $"{{m{""n""} + 1}}", "8"
+CHKS "an operator we added today", $"{{m{""nope""} ?? 42}}", "42"
+
+' ── The two things it has to survive ─────────────────────────
+' Angle brackets, because HTML is full of them.
+CHKS "html", $"<div class=""row"">{{name$}}</div>", "<div class=" + CHR$(34) + "row" + CHR$(34) + ">world</div>"
+
+' Single braces, because JSON is full of them, and they stay text.
+CHKS "json", $"{""n"": {{n}}}", "{" + CHR$(34) + "n" + CHR$(34) + ": 3}"
+CHKS "a lone closing brace", $"} alone", "} alone"
+CHKS "a lone opening brace", $"{ alone", "{ alone"
+
+' ── The closing braces are counted, not searched for ─────────
+' A map access inside the expression ends with a brace of its own, so
+' looking for the first }} would stop in the wrong place.
+CHKS "brace inside the expression", $"[{{m{""key""}}}]", "[value]"
+
+' ── Adjacent and repeated ────────────────────────────────────
+CHKS "back to back", $"{{n}}{{n}}", "33"
+CHKS "at both ends", $"{{n}} middle {{n}}", "3 middle 3"
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF

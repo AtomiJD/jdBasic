@@ -89,6 +89,7 @@ private:
 
     // Expressions (precedence climbing)
     ExprPtr parse_expr();
+    ExprPtr parse_interp_string(const std::string& raw, int line);
     ExprPtr parse_coalesce();
     ExprPtr parse_or();
     ExprPtr parse_and();
