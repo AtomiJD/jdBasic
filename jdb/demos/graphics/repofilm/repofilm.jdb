@@ -576,7 +576,7 @@ IF RIGHT$(reponame$, 1) = CHR$(13) THEN reponame$ = LEFT$(reponame$, LEN(reponam
 IF reponame$ = "" THEN reponame$ = "repository"
 
 SCREEN SCR_W, SCR_H, "repofilm - " + reponame$
-SETFONT "fonts/JetBrainsMono-Regular.ttf", INT(15 * SC)
+SETFONT "resources/fonts/JetBrainsMono-Regular.ttf", INT(15 * SC)
 IF want_fs = 1 THEN TOGGLE_FULLSCREEN
 
 DIM now_t = t_zero

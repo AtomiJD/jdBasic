@@ -503,10 +503,10 @@ jdb/tv/yt/create_playlist.jdb	ok	ok	no
 jdb/udt_full_demo/INV.jdb	ok	ok	ok
 jdb/udt_full_demo/LOG.jdb	ok	ok	ok
 jdb/udt_full_demo/main.jdb	ok	ok	ok
-kernel/hello.jdb	ok	ok	ok
-kernel/os.jdb	ok	ok	ok
-kernel/repl.jdb	ok	ok	ok
-kernel/sysio.jdb	ok	ok	ok
+embedded/kernel/hello.jdb	ok	ok	ok
+embedded/kernel/os.jdb	ok	ok	ok
+embedded/kernel/repl.jdb	ok	ok	ok
+embedded/kernel/sysio.jdb	ok	ok	ok
 modules/chart.jdb	ok	ok	ok
 selfhost/fixtures/blocks.jdb	ok	ok	ok
 selfhost/fixtures/commands.jdb	ok	ok	ok

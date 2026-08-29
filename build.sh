@@ -344,8 +344,8 @@ echo "OK: build/jdbasic"
 # Bundle the default font next to the binary so SCREEN can auto-load it
 # (TEXT no longer requires an explicit SETFONT call). Silent skip if the
 # source font is missing, keeps minimal-checkout builds working.
-if [ -f fonts/JetBrainsMono-Regular.ttf ]; then
-    cp -f fonts/JetBrainsMono-Regular.ttf build/jdbasic_default.ttf
+if [ -f resources/fonts/JetBrainsMono-Regular.ttf ]; then
+    cp -f resources/fonts/JetBrainsMono-Regular.ttf build/jdbasic_default.ttf
 fi
 
 # When NATIVEC is on, build the runtime support pieces too:

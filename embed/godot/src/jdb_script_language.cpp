@@ -76,7 +76,8 @@ static void push_case_variants(PackedStringArray& out, const char* kw) {
 }
 
 PackedStringArray JdbScriptLanguage::_get_reserved_words() const {
-    // Canonical jdBasic keyword set, mirrored from syntaxes/jdbasic.tmLanguage.json
+    // Canonical jdBasic keyword set, mirrored from the TextMate grammar that
+    // tools/update_syntax_highlighting.py generates for the VS Code extension.
     // so Godot's editor colours the same words as VS Code / the existing
     // tooling. Tier-3-specific additions: EXTENDS, INSPECTOR.
     static const char* kw[] = {

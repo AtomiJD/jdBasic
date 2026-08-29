@@ -1,7 +1,7 @@
 #!/bin/sh
 # End-to-end regression test for the KERNEL target.
 #
-# Compiles the kernel/ sample programs with --target=kernel, links them into
+# Compiles the embedded/kernel/ sample programs with --target=kernel, links them into
 # bootable images and boots each one under QEMU, comparing the serial console
 # against the expected output.
 #
@@ -16,7 +16,7 @@ set -e
 
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 JDB=${1:-$ROOT/build/jdBasic.exe}
-KDIR=$ROOT/kernel
+KDIR=$ROOT/embedded/kernel
 TDIR=$ROOT/tests/kernel
 BOOT_TIMEOUT=${BOOT_TIMEOUT:-15}
 

@@ -314,14 +314,14 @@ Cloned the repo and built from source instead? Try the pixel-storm:
 src/        - interpreter source (lexer, parser, compiler, VM, runtime modules)
 bridges/    - optional native bridges (SQLite, Python, ...)
 embed/      - Godot GDExtension (jdb_godot) that embeds the VM in Godot 4
+embedded/   - the microcontroller ports: RP2350/PicoCalc, ESP32-S3, bare metal
 godot/      - Godot projects: rpg-native (LLM RPG), audioviz, livecoder, jd-one
 jdb/        - example .jdb programs - start at the sample gallery, jdb/README.md
 fluppi/     - "Vallys Reise", a complete top-down RPG written in jdBasic
 doc/        - documentation (see the table above) and doc/img/ screenshots
 tests/      - regression suite; tests/gate/ holds the pre-commit gate suites
-fonts/      - bundled TTF fonts
-resources/  - icon, manifest, version info
-syntaxes/   - editor syntax highlighting files
+modules/    - modules that IMPORT finds by name from the working directory
+resources/  - icon, manifest, version info, the bundled TTF fonts
 tools/      - auxiliary scripts
 wasm/       - the browser build behind jdbasic.org/live
 vscode_extension/ - VS Code extension (.vsix) and install instructions

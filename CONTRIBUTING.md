@@ -37,7 +37,7 @@ The history uses [Conventional Commits](https://www.conventionalcommits.org/): `
 
 - C++ core: see [doc/CODING_STYLE.md](doc/CODING_STYLE.md).
 - Identifiers and comments are **English-only**, in `.jdb` samples too.
-- New keywords or builtins must be registered in `doc/languages.md`, `help.txt` and `syntaxes/jdbasic.tmLanguage.json` - the language reference is also read at runtime (`HELP`, the MCP `jdb_doc` tool, editor hovers), so an undocumented builtin effectively does not exist.
+- New keywords or builtins must be registered in `doc/languages.md`, `help.txt` - the language reference is also read at runtime (`HELP`, the MCP `jdb_doc` tool, editor hovers), so an undocumented builtin effectively does not exist. The TextMate grammar lives in the VS Code extension repository; `tools/update_syntax_highlighting.py` regenerates a drop-in copy from `src/`.
 
 ## Reporting bugs
 

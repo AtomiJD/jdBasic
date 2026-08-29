@@ -18,7 +18,7 @@ The jdBasic MCP (`jdbasic-stdio-win`) is a live VM. Ask it instead of assuming:
 If a function is not in `doc/languages.md` AND doesn't probe-eval cleanly, do not use it.
 
 ## 2. Only documented syntax
-Use only syntax/functions from `doc/languages.md` or a known-good example under `jdb/` or `tests/`. Don't invent keywords or assume "it works like other BASICs". (New keywords you add must also land in `languages.md` + `help.txt` + `syntaxes/jdbasic.tmLanguage.json`.)
+Use only syntax/functions from `doc/languages.md` or a known-good example under `jdb/` or `tests/`. Don't invent keywords or assume "it works like other BASICs". (New keywords you add must also land in `languages.md` + `help.txt`.)
 
 ## 3. Reserved identifiers - NEVER use as variable / param / function names
 Identifiers are **case-insensitive** (`V` and `v` are the same slot).
