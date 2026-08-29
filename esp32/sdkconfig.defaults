@@ -42,3 +42,8 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 # because 8.3 would rename half the examples.
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=128
+
+# The interpreter gets a core to itself. WiFi and lwIP are pinned to
+# core 0 by IDF, and the main task lands there too by default, so the
+# radio and the program being run share one core while the other idles.
+CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
