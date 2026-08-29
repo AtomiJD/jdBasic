@@ -32,6 +32,7 @@ enum class TokenType {
     EXITFUNC, EXITDO, EXITFOR,
     CONTINUEFOR, CONTINUEDO, HELP_KW,
     LAMBDA, ARROW, PIPE, PLACEHOLDER, USE,
+    COALESCE,               // ?? - the left side unless it is NONE
     ASYNC, AWAIT_KW,
     TRUE_KW, FALSE_KW,
     STATIC_KW,

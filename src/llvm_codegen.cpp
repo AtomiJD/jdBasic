@@ -7033,6 +7033,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
 }
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
+    // ?? asks whether a value is absent, and absence is not something this
+    // backend can represent: JdTag runs from I64 to BOOL with no NONE, so a
+    // missing map key compiles to a number and the question has no answer.
+    // Saying so beats the silent zero at the bottom of this function.
+    if (expr.op == TokenType::COALESCE) {
+        report_error(current_fn_source_file, expr.line,
+            "?? needs to tell an absent value from a present one, and a compiled "
+            "map has no tag for absent - TYPEOF on a missing key answers INT64 here "
+            "and NONE in the interpreter. Run this one interpreted, or test the key "
+            "with MAP.EXISTS before reading it.");
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+    }
+
     // Handle AND/OR with short-circuit semantics (scalar only)
     // For arrays, fall through to the array arithmetic path below
     if (expr.op == TokenType::AND || expr.op == TokenType::OR ||

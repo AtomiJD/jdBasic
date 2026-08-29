@@ -1936,7 +1936,7 @@ StmtPtr Parser::parse_ident_stmt() {
 // ── Expressions ──────────────────────────────────────────────
 
 ExprPtr Parser::parse_expr() {
-    auto left = parse_or();
+    auto left = parse_coalesce();
     // Pipe operator: lowest precedence
     while (check(TokenType::PIPE)) {
         int ln = current().line;
@@ -1948,6 +1948,20 @@ ExprPtr Parser::parse_expr() {
         pipe->right = std::move(right);
         pipe->line = ln;
         left = std::move(pipe);
+    }
+    return left;
+}
+
+// ?? binds looser than everything but the pipe, so `a{"k"} ?? b + 1`
+// reads the way it looks. Right-associative, which lets a chain of
+// fallbacks be written as a chain: first ?? second ?? last.
+ExprPtr Parser::parse_coalesce() {
+    auto left = parse_or();
+    if (check(TokenType::COALESCE)) {
+        int ln = current().line;
+        advance();
+        auto right = parse_coalesce();
+        return make_binary(TokenType::COALESCE, std::move(left), std::move(right), ln);
     }
     return left;
 }

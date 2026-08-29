@@ -1515,6 +1515,17 @@ void Compiler::compile_binary(const Expr& expr) {
         patch_jump(skip);
         return;
     }
+    // ?? asks whether the left side is absent, not whether it is false.
+    // Zero and the empty string are values and keep their place.
+    if (expr.op == TokenType::COALESCE) {
+        compile_expr(*expr.left);
+        current_chunk().emit(OpCode::DUP, expr.line);
+        size_t skip = emit_jump(OpCode::JUMP_IF_NOT_NONE, expr.line);
+        current_chunk().emit(OpCode::POP, expr.line);
+        compile_expr(*expr.right);
+        patch_jump(skip);
+        return;
+    }
     if (expr.op == TokenType::ORELSE) {
         compile_expr(*expr.left);
         current_chunk().emit(OpCode::DUP, expr.line);

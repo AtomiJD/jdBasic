@@ -219,7 +219,13 @@ std::vector<Token> Lexer::tokenize() {
             case ';': advance(); tokens.push_back(make_token(TokenType::SEMICOLON, ";")); break;
             case '.': advance(); tokens.push_back(make_token(TokenType::DOT, ".")); break;
             case '@': advance(); tokens.push_back(make_token(TokenType::AT, "@")); break;
-            case '?': advance(); tokens.push_back(make_token(TokenType::PLACEHOLDER, "?")); break;
+            case '?':
+                advance();
+                // Two of them is the null-coalescing operator; one on its own
+                // stays the pipe placeholder.
+                if (peek() == '?') { advance(); tokens.push_back(make_token(TokenType::COALESCE, "??")); }
+                else { tokens.push_back(make_token(TokenType::PLACEHOLDER, "?")); }
+                break;
             case '|':
                 advance();
                 if (peek() == '>') { advance(); tokens.push_back(make_token(TokenType::PIPE, "|>")); }

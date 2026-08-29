@@ -89,6 +89,7 @@ private:
 
     // Expressions (precedence climbing)
     ExprPtr parse_expr();
+    ExprPtr parse_coalesce();
     ExprPtr parse_or();
     ExprPtr parse_and();
     ExprPtr parse_not();

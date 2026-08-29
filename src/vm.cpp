@@ -1875,6 +1875,14 @@ void VM::run() {
             break;
         }
 
+        case OpCode::JUMP_IF_NOT_NONE: {
+            int16_t offset = (int16_t)(cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8));
+            cf.ip += 2;
+            Value v = std::move(stack[--sp]);
+            if (v.type != ValueType::NONE) cf.ip += offset;
+            break;
+        }
+
         case OpCode::JUMP_ABS: {
             uint16_t addr = cf.chunk->code[cf.ip] | (cf.chunk->code[cf.ip + 1] << 8);
             cf.ip = addr;

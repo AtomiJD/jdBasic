@@ -31,6 +31,8 @@ enum class OpCode : uint8_t {
     JUMP,               // i16 offset (relative)
     JUMP_IF_FALSE,      // i16 offset
     JUMP_IF_TRUE,       // i16 offset
+    JUMP_IF_NOT_NONE,   // i16 offset - for ??, which asks about NONE and
+                        // not about truth: 0 and "" are values, not absences
     JUMP_ABS,           // u32 absolute address
 
     // Functions
@@ -339,6 +341,7 @@ inline int opcode_width(OpCode op) {
         case OpCode::JUMP:
         case OpCode::JUMP_IF_FALSE:
         case OpCode::JUMP_IF_TRUE:
+        case OpCode::JUMP_IF_NOT_NONE:
         case OpCode::JUMP_ABS:
         case OpCode::SETUP_TRY:
         case OpCode::BREAK_LOOP:
@@ -408,7 +411,7 @@ inline void peephole_optimize(Chunk& chunk) {
 
         // Jump targets
         if (op == OpCode::JUMP || op == OpCode::JUMP_IF_FALSE ||
-            op == OpCode::JUMP_IF_TRUE) {
+            op == OpCode::JUMP_IF_TRUE || op == OpCode::JUMP_IF_NOT_NONE) {
             int16_t off = (int16_t)(code[ip + 1] | (code[ip + 2] << 8));
             size_t target = ip + 3 + off;
             if (target < n) is_jump_target[target] = true;

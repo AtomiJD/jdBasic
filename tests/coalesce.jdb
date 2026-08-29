@@ -1,0 +1,73 @@
+' ?? gives the left side unless it is absent. The word is absent, not
+' false: in jdBasic a missing map key reads as NONE, and testing for it
+' with `= NONE` is a documented trap because that comparison is true for
+' values that are not NONE at all. This operator is the short way to say
+' what everyone means.
+'
+' Interpreter only for now. A compiled map has no tag for an absent key -
+' TYPEOF on one answers INT64 there and NONE here - so `-c` refuses the
+' operator rather than answering a question it cannot ask.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM m = { "a": 1, "zero": 0, "empty": "", "no": FALSE }
+
+' ── Absent takes the fallback ────────────────────────────────
+CHK "missing key", m{"nope"} ?? 42, 42
+CHKS "missing key, string", m{"nope"} ?? "gone", "gone"
+
+' ── Present keeps its value, whatever it is ──────────────────
+CHK "present", m{"a"} ?? 42, 1
+
+' The whole point. ORELSE would replace all three of these, because it
+' asks about truth. ?? asks about absence, so they stay.
+CHK "zero stays zero", m{"zero"} ?? 42, 0
+CHKS "empty string stays empty", m{"empty"} ?? "gone", ""
+CHK "false stays false", m{"no"} ?? TRUE, FALSE
+
+' ── Chaining, right to left ──────────────────────────────────
+CHKS "first present wins", m{"x"} ?? m{"empty"} ?? "last", ""
+CHKS "all absent falls through", m{"x"} ?? m{"y"} ?? "last", "last"
+
+' ── The right side is not evaluated when it is not needed ────
+DIM touched
+touched = 0
+
+FUNC MARK(v)
+    touched = touched + 1
+    RETURN v
+ENDFUNC
+
+CHK "present short-circuits", m{"a"} ?? MARK(9), 1
+CHK "and the right side never ran", touched, 0
+CHK "absent evaluates the right", m{"nope"} ?? MARK(9), 9
+CHK "which ran exactly once", touched, 1
+
+' ── Precedence: looser than arithmetic, tighter than the pipe ─
+CHK "arithmetic binds first", m{"nope"} ?? 40 + 2, 42
+CHK "and on the left too", m{"a"} ?? 40 + 2, 1
+
+' ── A plain NONE, not only a missing key ─────────────────────
+DIM nothing
+nothing = NONE
+CHK "an explicit NONE", nothing ?? 7, 7
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF

@@ -172,6 +172,35 @@ function definition (per-VM), so all recursive depths and cross-module
 callers share the same slot.
 
 
+
+### `??` - the left side unless it is absent
+
+```basic
+DIM m = { "zero": 0, "empty": "" }
+
+PRINT m{"nope"} ?? "fallback"    ' fallback
+PRINT m{"zero"} ?? 42            ' 0    - a value, not an absence
+PRINT m{"empty"} ?? "gone"       ' ""   - likewise
+PRINT m{"x"} ?? m{"y"} ?? "last" ' last - chains right to left
+```
+
+`??` asks whether the left side is **absent**, not whether it is false.
+That is the difference from `ORELSE`, which would have replaced all
+three of the middle cases. It matters because `x = NONE` is a trap in
+jdBasic: that comparison reads true for values that are not NONE at all,
+so the correct long form is `TYPEOF(x) = "NONE"`. `??` makes the right
+thing shorter than the wrong one.
+
+The right side is only evaluated when it is needed.
+
+It binds looser than arithmetic and tighter than the pipe, so
+`m{"k"} ?? 40 + 2` is `m{"k"} ?? 42`.
+
+**Interpreter only.** A compiled map carries a tag per value and there is
+no tag for absent - `TYPEOF` on a missing key answers `INT64` under `-c`
+and `NONE` interpreted - so the native compiler refuses `??` rather than
+answer a question it cannot ask. Test with `MAP.EXISTS` in code you
+intend to compile.
 ### Optional parameters
 
 A trailing parameter may carry a default, and a call that leaves it out
