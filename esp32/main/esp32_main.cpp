@@ -57,9 +57,10 @@ static void console_init() {
     // instead, and four kilobytes is thirty times the gap.
     uart_driver_install((uart_port_t)CONFIG_ESP_CONSOLE_UART_NUM, 4096, 0, 0, NULL, 0);
     uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
-    // Everything here writes CR LF itself, so the console must not add a
-    // second carriage return on top of it.
-    uart_vfs_dev_port_set_tx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_LF);
+    // The console turns a newline into CR LF, and everything writes plain
+    // newlines: this file, the interpreter's own output, IDF's logging.
+    // Only the terminal's return key needs saying, because it sends CR
+    // where the reader below expects one.
     uart_vfs_dev_port_set_rx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CR);
 #endif
     setvbuf(stdin, NULL, _IONBF, 0);
@@ -76,7 +77,7 @@ static size_t free_psram() {
 }
 
 static void report(const char* label) {
-    printf("%-12s internal %7u  largest %7u  psram %8u\r\n", label,
+    printf("%-12s internal %7u  largest %7u  psram %8u\n", label,
            (unsigned)free_internal(),
            (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
            (unsigned)free_psram());
@@ -114,7 +115,7 @@ static void read_line(char* buf, size_t cap) {
         fflush(stdout);
     }
     buf[len] = 0;
-    printf("\r\n");
+    printf("\n");
 }
 
 // Strip surrounding quotes and trailing blanks from a command argument.
@@ -167,22 +168,22 @@ static int dos_command(char* line) {
         char name[128];
         const char* arg = dos_arg(a);
         if (!*arg) {
-            if (autorun_get(name, sizeof name)) printf("autorun: %s\r\n", name);
-            else printf("autorun: off\r\n");
+            if (autorun_get(name, sizeof name)) printf("autorun: %s\n", name);
+            else printf("autorun: off\n");
         } else if (strcasecmp(arg, "OFF") == 0) {
             remove(AUTORUN_CFG);
-            printf("autorun off\r\n");
+            printf("autorun off\n");
         } else {
             char resolved[160];
             const char* nm = resolve_name(arg, resolved, sizeof resolved);
             FILE* probe = fopen(nm, "r");
-            if (!probe) { printf("cannot open %s\r\n", nm); return 1; }
+            if (!probe) { printf("cannot open %s\n", nm); return 1; }
             fclose(probe);
             FILE* f = fopen(AUTORUN_CFG, "w");
-            if (!f) { printf("cannot save autorun\r\n"); return 1; }
+            if (!f) { printf("cannot save autorun\n"); return 1; }
             fprintf(f, "%s\n", nm);
             fclose(f);
-            printf("autorun: %s\r\n", nm);
+            printf("autorun: %s\n", nm);
         }
         return 1;
     }
@@ -192,10 +193,10 @@ static int dos_command(char* line) {
     // Ctrl-D, or once the line has been quiet for three seconds.
     if (strcmp(cmd, "RECV") == 0) {
         const char* nm = dos_arg(a);
-        if (!*nm) { printf("RECV name\r\n"); return 1; }
+        if (!*nm) { printf("RECV name\n"); return 1; }
         FILE* f = fopen(nm, "w");
-        if (!f) { printf("cannot write %s\r\n", nm); return 1; }
-        printf("receiving %s, end with Ctrl-D\r\n", nm);
+        if (!f) { printf("cannot write %s\n", nm); return 1; }
+        printf("receiving %s, end with Ctrl-D\n", nm);
         fflush(stdout);
         size_t n = 0;
         int pending_cr = 0;
@@ -210,7 +211,7 @@ static int dos_command(char* line) {
             n++;
         }
         fclose(f);
-        printf("%u bytes\r\n", (unsigned)n);
+        printf("%u bytes\n", (unsigned)n);
         return 1;
     }
 
@@ -220,10 +221,10 @@ static int dos_command(char* line) {
         char resolved[160];
         const char* nm = dos_arg(a);
         if (!*nm) nm = g_current;
-        if (!*nm) { printf("No program loaded.\r\n"); return 1; }
+        if (!*nm) { printf("No program loaded.\n"); return 1; }
         nm = resolve_name(nm, resolved, sizeof resolved);
         FILE* f = fopen(nm, "r");
-        if (!f) { printf("cannot open %s\r\n", nm); return 1; }
+        if (!f) { printf("cannot open %s\n", nm); return 1; }
         char buf[256];
         int ln = 1;
         while (fgets(buf, sizeof buf, f)) {
@@ -231,7 +232,7 @@ static int dos_command(char* line) {
             while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
             printf("\x1b[90m%4d | \x1b[0m", ln++);
             syntax_print(buf, n);
-            printf("\r\n");
+            printf("\n");
         }
         fclose(f);
         return 1;
@@ -240,32 +241,32 @@ static int dos_command(char* line) {
     if (strcmp(cmd, "TYPE") == 0 && *a) {
         char resolved[160];
         FILE* f = fopen(resolve_name(dos_arg(a), resolved, sizeof resolved), "r");
-        if (!f) { printf("cannot open %s\r\n", a); return 1; }
+        if (!f) { printf("cannot open %s\n", a); return 1; }
         char buf[256];
         size_t n;
         while ((n = fread(buf, 1, sizeof buf, f)) > 0)
             printf("%.*s", (int)n, buf);
         fclose(f);
-        printf("\r\n");
+        printf("\n");
         return 1;
     }
 
     if (strcmp(cmd, "DEL") == 0 && *a) {
         char resolved[160];
         const char* nm = resolve_name(dos_arg(a), resolved, sizeof resolved);
-        printf(remove(nm) == 0 ? "deleted\r\n" : "cannot delete\r\n");
+        printf(remove(nm) == 0 ? "deleted\n" : "cannot delete\n");
         return 1;
     }
 
     if ((strcmp(cmd, "COPY") == 0 || strcmp(cmd, "REN") == 0) && *a) {
         char* sp = strchr(a, ' ');
-        if (!sp) { printf("usage: %s from to\r\n", cmd); return 1; }
+        if (!sp) { printf("usage: %s from to\n", cmd); return 1; }
         *sp = 0;
         const char* src = dos_arg(a);
         char* b = sp + 1;
         const char* dst = dos_arg(b);
         int rc = (cmd[0] == 'C') ? copy_file(src, dst) : rename(src, dst);
-        if (rc != 0) printf("cannot %s %s\r\n", cmd[0] == 'C' ? "copy" : "rename", src);
+        if (rc != 0) printf("cannot %s %s\n", cmd[0] == 'C' ? "copy" : "rename", src);
         return 1;
     }
 
@@ -282,7 +283,7 @@ static void run_file(JdbEmbed* vm, const char* name) {
         jdb_embed_free(out);
     } else {
         const char* err = jdb_embed_last_error(vm);
-        printf("ERROR: %s\r\n", err ? err : "unknown");
+        printf("ERROR: %s\n", err ? err : "unknown");
     }
     fflush(stdout);
 }
@@ -296,13 +297,13 @@ extern "C" void app_main(void) {
 
     esp_chip_info_t chip;
     esp_chip_info(&chip);
-    printf("\r\njdBasic on ESP32-S%d rev v%d.%d, %d core%s\r\n",
+    printf("\njdBasic on ESP32-S%d rev v%d.%d, %d core%s\n",
            chip.model == CHIP_ESP32S3 ? 3 : 2,
            chip.revision / 100, chip.revision % 100,
            chip.cores, chip.cores == 1 ? "" : "s");
 
     bool fs_ok = esp32_fs_init();
-    if (!fs_ok) printf("no flash store\r\n");
+    if (!fs_ok) printf("no flash store\n");
 
     size_t before_int = free_internal();
     size_t before_psram = free_psram();
@@ -310,14 +311,14 @@ extern "C" void app_main(void) {
 
     JdbEmbed* vm = jdb_embed_init();
     if (!vm) {
-        printf("VM init failed\r\n");
+        printf("VM init failed\n");
         for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
     }
     jdb_embed_output_stdout(vm);
     esp32_note_after_init();
 
     report("after init");
-    printf("VM costs    internal %7d  psram %8d\r\n",
+    printf("VM costs    internal %7d  psram %8d\n",
            (int)before_int - (int)free_internal(),
            (int)before_psram - (int)free_psram());
 
@@ -325,14 +326,14 @@ extern "C" void app_main(void) {
     // looping autorun program would own the board for good.
     char ar_name[128];
     if (fs_ok && autorun_get(ar_name, sizeof ar_name)) {
-        printf("autorun %s - ESC to stop\r\n", ar_name);
+        printf("autorun %s - ESC to stop\n", ar_name);
         fflush(stdout);
         bool cancelled = false;
         for (int i = 0; i < 20 && !cancelled; i++) {
             int c = read_byte_ms(100);
             if (c == 0x1B || c == 3) cancelled = true;
         }
-        if (cancelled) printf("cancelled\r\n");
+        if (cancelled) printf("cancelled\n");
         else run_file(vm, ar_name);
     }
 
@@ -358,18 +359,18 @@ extern "C" void app_main(void) {
             const char* nm = dos_arg(arg);
             if (!*nm) nm = g_current;
             if (!*nm) {
-                printf("no program named - RUN name\r\n");
+                printf("no program named - RUN name\n");
             } else if (meta == 1) {
                 run_file(vm, nm);
             } else {
                 char resolved[160];
                 nm = resolve_name(nm, resolved, sizeof resolved);
                 FILE* probe = fopen(nm, "r");
-                if (!probe) printf("cannot open %s\r\n", nm);
+                if (!probe) printf("cannot open %s\n", nm);
                 else {
                     fclose(probe);
                     snprintf(g_current, sizeof g_current, "%s", nm);
-                    printf("loaded %s\r\n", nm);
+                    printf("loaded %s\n", nm);
                 }
             }
             fflush(stdout);
@@ -382,7 +383,7 @@ extern "C" void app_main(void) {
             jdb_embed_free(out);
         } else {
             const char* err = jdb_embed_last_error(vm);
-            printf("ERROR: %s\r\n", err ? err : "unknown");
+            printf("ERROR: %s\n", err ? err : "unknown");
         }
         fflush(stdout);
     }
