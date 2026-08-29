@@ -1,0 +1,47 @@
+' What the board has to offer besides memory. The timer drives the
+' sampling, so the loop below does nothing but wait for it: handlers run
+' between statements, never inside the interrupt.
+
+DIM samples
+DIM running
+
+SUB ONTICK(d)
+    DIM c, raw
+    c = ADC.TEMP()
+    raw = ADC.READ(4)
+    samples = samples + 1
+    PRINT samples; ": "; FORMAT$("{:.2f}", c); " degC, GP4 reads "; raw
+    IF samples >= 5 THEN running = 0
+ENDSUB
+
+samples = 0
+running = 1
+
+PRINT "pins you may use:"
+PRINT PIN.FREE()
+PRINT
+PRINT "chip temperature : "; FORMAT$("{:.2f}", ADC.TEMP()); " degC"
+PRINT "GP4 on the ADC   : "; ADC.READ(4)
+PRINT
+
+' A quarter-duty square wave on GP6, audible on a piezo, visible on a
+' scope, and harmless on a pin with nothing attached.
+PWM.SET(6, 1000, 25)
+PRINT "GP6 now carries 1 kHz at 25 percent"
+
+' Nothing is wired to this bus yet, so the scan is expected to be empty.
+I2C.SETUP(0, 8, 9)
+PRINT "I2C devices on GP8/GP9: "; I2C.SCAN(0)
+PRINT
+
+PRINT "five samples, one a second"
+ON "TICK" CALL ONTICK
+TIMER.EVERY(1000)
+
+DO WHILE running = 1
+    SLEEP 100
+LOOP
+
+TIMER.STOP()
+PWM.OFF(6)
+PRINT "done"

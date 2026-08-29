@@ -140,6 +140,60 @@ SDK, and the file picks a side with one `#ifdef`.
 serves a page built by a jdBasic function, and ESC takes it all down
 again.
 
+## Pins, converters, buses
+
+The verbs are the RP2350 ones, so a program reads the same on either
+board. What differs is which numbers are yours:
+
+    GPIO 26 to 32     the SPI flash
+    GPIO 33 to 37     the octal PSRAM
+    GPIO 43 and 44    the console UART
+
+Touching any of those takes the board down with no diagnostic, so the
+answer comes before the write rather than after it: every verb refuses
+them by name, and `PIN.FREE` lists what is left. On this build that is
+0 to 25, 38 to 42, and 45 to 48.
+
+    GPIO.MODE(pin, output)     1 output, 0 input
+    GPIO.WRITE(pin, level)     GPIO.READ(pin)
+    GPIO.PULLUP(pin [, on])
+
+    ADC.READ(pin)              raw, and the converter is on GPIO 1 to 10
+    ADC.TEMP                   the chip's own sensor, in degrees
+
+    PWM.SET(pin, hz [, duty])  duty in percent, eight channels
+    PWM.OFF(pin)
+
+    I2C.SETUP(bus, sda, scl)   bus 0 or 1
+    I2C.WRITE(bus, addr, data [, hz])
+    I2C.READ(bus, addr, n [, hz])
+    I2C.SCAN(bus)              the addresses that answered
+
+    SPI.SETUP(bus, sck, mosi, miso [, hz])
+    SPI.XFER(bus, data)        full duplex, same length back
+
+Speed is per device on this chip rather than per bus, so `I2C.WRITE` and
+`I2C.READ` take it where the transfer happens. `SPI.SETUP` leaves chip
+select alone: drive it with `GPIO.WRITE`, which is what a display or a
+card needs anyway.
+
+### Events
+
+The interrupts only record what happened; the VM drains the record
+between statements, so a handler never runs inside an ISR, and handlers
+do not nest. A tick that arrives while one is still running is dropped
+rather than queued, so a slow handler cannot build a backlog.
+
+    TIMER.EVERY(ms)   with ON "TICK" CALL Handler
+    TIMER.STOP
+    GPIO.WATCH(pin, edge)   1 rising, 2 falling, 3 both, 0 stop
+                            with ON "PIN" CALL Handler(pin, level)
+    KEY.WATCH(on)           with ON "KEY" CALL Handler(code)
+    PIN.DIAG$               what the interrupt has seen
+
+`fs/pins.jdb` walks the lot: the free pins, the temperature, an analogue
+reading, a square wave, an empty bus scan, and five timed samples.
+
 ## What it measures
 
 `SYS.FREE` and `SYS.LARGEST` answer directly here; the RP2350 has to

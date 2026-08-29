@@ -7,6 +7,7 @@ idf_component_register(
         "esp32_events.cpp"
         "esp32_fs.cpp"
         "esp32_wifi.cpp"
+        "esp32_hw.cpp"
         "esp32_stubs.cpp"
         # Colouring one line of jdBasic is the same job on both boards and
         # depends on nothing either SDK provides. Shared rather than copied;
@@ -25,6 +26,8 @@ idf_component_register(
         "../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../src"
     REQUIRES esp_timer driver fatfs vfs esp_wifi esp_netif nvs_flash esp_event lwip
+             esp_adc esp_driver_gpio esp_driver_ledc esp_driver_i2c esp_driver_spi
+             esp_driver_tsens
 )
 
 # ESP32 is the platform switch, JDB_MCU the shared one: the same trades
