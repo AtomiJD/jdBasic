@@ -32,3 +32,11 @@ PRINT "X + 5 = "; X + 5
 
 PRINT ""
 PRINT "=== ALL TESTS PASSED ==="
+
+' The scratch files are the point of the test, not of the directory it
+' ran in.
+KILL "test_np.txt"
+KILL "test_np.csv"
+KILL "test_np.bin"
+KILL "test_np2.txt"
+KILL "test_np3.txt"

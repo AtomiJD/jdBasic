@@ -31,3 +31,9 @@ PRINT "Unpacked: "; unpacked
 
 PRINT ""
 PRINT "=== ALL TESTS PASSED ==="
+
+' The scratch files are the point of the test, not of the directory it
+' ran in.
+KILL "test_out.txt"
+KILL "test_out.csv"
+KILL "test_out.bin"
