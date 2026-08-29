@@ -3386,6 +3386,151 @@ Assert(OICALLS = 0, "THEN SUB not fired when condition false")
 OICALLS = 0 : IF 1 = 1 THEN OIQ = 0 ELSE OIBump
 Assert(OICALLS = 0, "ELSE SUB not fired when condition true")
 
+
+' ══════════════════════════════════════════════════════════════════
+' 28. OPTIONAL PARAMETERS
+' ══════════════════════════════════════════════════════════════════
+Header("Optional Parameters")
+
+FUNC OPGreet$(name$, greeting$ = "Hello", mark$ = ".")
+  RETURN greeting$ + ", " + name$ + mark$
+ENDFUNC
+
+Assert(OPGreet$("world") = "Hello, world.", "both defaults used")
+Assert(OPGreet$("world", "Moin") = "Moin, world.", "one given")
+Assert(OPGreet$("world", "Moin", "!") = "Moin, world!", "all given")
+
+FUNC OPKinds$(a = 7, b = 1.5, c$ = "x", d = TRUE)
+  DIM out$ = STR$(a) + "|" + STR$(b) + "|" + c$ + "|"
+  IF d THEN out$ = out$ + "T" ELSE out$ = out$ + "F"
+  RETURN out$
+ENDFUNC
+
+Assert(OPKinds$() = "7|1.5|x|T", "every literal kind as a default")
+Assert(OPKinds$(9) = "9|1.5|x|T", "first positional given")
+Assert(OPKinds$(9, 2.5, "y", FALSE) = "9|2.5|y|F", "all four given")
+
+DIM OPLOG$ = ""
+
+SUB OPNote(msg$, level = 1)
+  OPLOG$ = OPLOG$ + STR$(level) + ":" + msg$ + " "
+ENDSUB
+
+OPNote "plain"
+OPNote "urgent", 3
+Assert(OPLOG$ = "1:plain 3:urgent ", "a SUB takes defaults too")
+
+FUNC OPCountdown(n, acc = 0)
+  IF n <= 0 THEN RETURN acc
+  RETURN OPCountdown(n - 1, acc + n)
+ENDFUNC
+
+Assert(OPCountdown(4) = 10, "recursion sees its own default")
+
+' ══════════════════════════════════════════════════════════════════
+' 29. NULL-COALESCING
+' ══════════════════════════════════════════════════════════════════
+Header("Null-Coalescing (??)")
+
+DIM NCM AS MAP
+NCM = { "a": 1, "zero": 0, "empty": "", "no": FALSE }
+
+Assert((NCM{"nope"} ?? 42) = 42, "a missing key takes the fallback")
+Assert((NCM{"nope"} ?? "gone") = "gone", "a string fallback")
+Assert((NCM{"a"} ?? 42) = 1, "a present key keeps its value")
+
+Assert((NCM{"zero"} ?? 42) = 0, "zero is present, not absent")
+Assert((NCM{"empty"} ?? "gone") = "", "an empty string is present")
+Assert((NCM{"no"} ?? TRUE) = FALSE, "FALSE is present")
+
+Assert((NCM{"x"} ?? NCM{"empty"} ?? "last") = "", "chains stop at the first present")
+Assert((NCM{"x"} ?? NCM{"y"} ?? "last") = "last", "and fall through when all are absent")
+
+DIM NCTOUCHED = 0
+
+FUNC NCMark(v)
+  NCTOUCHED = NCTOUCHED + 1
+  RETURN v
+ENDFUNC
+
+Assert((NCM{"a"} ?? NCMark(9)) = 1, "a present left short-circuits")
+Assert(NCTOUCHED = 0, "so the right side never ran")
+Assert((NCM{"nope"} ?? NCMark(9)) = 9, "an absent left evaluates the right")
+Assert(NCTOUCHED = 1, "exactly once")
+
+Assert((NCM{"nope"} ?? 40 + 2) = 42, "arithmetic binds tighter")
+Assert((NCM{"a"} ?? 40 + 2) = 1, "on the left as well")
+
+Assert(TYPEOF(NCM{"nope"}) = "NONE", "a missing key reads as NONE")
+
+' ══════════════════════════════════════════════════════════════════
+' 30. OPTIONAL CHAINING
+' ══════════════════════════════════════════════════════════════════
+Header("Optional Chaining (?. ?{ ?[)")
+
+DIM OCR AS MAP
+OCR = { "choices": [ { "message": { "content": "hi" } } ], "n": 0, "meta": { "deep": { "x": 1 } } }
+
+Assert(OCR{"choices"}[0]{"message"}{"content"} = "hi", "the unguarded good path")
+Assert(OCR?{"choices"}?[0]?{"message"}?{"content"} = "hi", "the guarded good path")
+Assert(OCR?{"choices"}[0]{"message"}{"content"} = "hi", "guarded and plain steps mix")
+Assert(OCR?{"meta"}?{"deep"}?{"x"} = 1, "a guarded chain of keys")
+
+Assert(TYPEOF(OCR?{"nope"}?{"deep"}) = "NONE", "absent at the front")
+Assert(TYPEOF(OCR?{"meta"}?{"nope"}?{"x"}) = "NONE", "absent in the middle")
+Assert(TYPEOF(OCR?{"meta"}?{"deep"}?{"nope"}) = "NONE", "absent at the end")
+
+Assert((OCR?{"nope"}?{"deep"} ?? "no answer") = "no answer", "a stopped chain takes the fallback")
+Assert((OCR?{"meta"}?{"deep"}?{"x"} ?? 99) = 1, "a chain that found something")
+Assert((OCR?{"n"} ?? 99) = 0, "a falsy value survives the chain")
+
+Assert(TYPEOF(OCR?{"choices"}?[0]) = "OBJECT", "a guarded index reads as itself")
+Assert(TYPEOF(OCR?{"meta"}) = "OBJECT", "a guarded key reads as itself")
+
+TYPE T_OCNode
+  Label AS STRING
+ENDTYPE
+
+DIM OCN AS T_OCNode
+OCN.Label = "here"
+Assert(OCN?.Label = "here", "a guarded field of a user type")
+
+' ══════════════════════════════════════════════════════════════════
+' 31. STRING INTERPOLATION
+' ══════════════════════════════════════════════════════════════════
+Header("String Interpolation")
+
+DIM SIN$ = "world"
+DIM SIN_N = 3
+DIM SIN_F = 1.5
+DIM SIN_B = TRUE
+DIM SIN_ARR AS ARRAY = [1, 2, 3]
+DIM SIN_M AS MAP
+SIN_M = { "key": "value", "n": 7 }
+
+Assert($"{{SIN$}}" = "world", "a single variable")
+Assert($"Hallo {{SIN$}}!" = "Hallo world!", "text around it")
+Assert($"{{SIN$}} has {{SIN_N}}" = "world has 3", "two of them")
+Assert($"just text" = "just text", "nothing to interpolate")
+Assert($"" = "", "an empty one")
+
+Assert($"{{SIN_N}}" = "3", "an integer")
+Assert($"{{SIN_F}}" = "1.5", "a float")
+
+Assert($"{{SIN_N * 2 + 1}}" = "7", "arithmetic")
+Assert($"{{UCASE$(SIN$)}}" = "WORLD", "a call")
+Assert($"{{SIN_M{""n""} + 1}}" = "8", "a map access")
+Assert($"{{SIN_M{""nope""} ?? 42}}" = "42", "with ?? inside")
+Assert($"[{{SIN_M{""key""}}}]" = "[value]", "closing braces are counted, not searched")
+
+Assert($"<div class=""row"">{{SIN$}}</div>" = "<div class=" + CHR$(34) + "row" + CHR$(34) + ">world</div>", "angle brackets, for HTML")
+Assert($"{""n"": {{SIN_N}}}" = "{" + CHR$(34) + "n" + CHR$(34) + ": 3}", "single braces stay text, for JSON")
+Assert($"a { b" = "a { b", "a lone opening brace")
+Assert($"} alone" = "} alone", "a lone closing brace")
+
+Assert($"{{SIN_N}}{{SIN_N}}" = "33", "back to back")
+Assert($"{{SIN_N}} middle {{SIN_N}}" = "3 middle 3", "at both ends")
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

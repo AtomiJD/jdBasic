@@ -8179,6 +8179,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (!fi.param_defaults[i]) break;
             call_args.push_back(fi.param_defaults[i]);
         }
+        // An argument count outside what the declaration accepts is reported
+        // here. Left to the emit below it produces a call with the wrong
+        // number of operands, which only the IR verifier catches, and it
+        // names the LLVM function rather than the line that wrote it.
+        // Skipped when the signature is unknown (an entry with no param tags,
+        // such as a generated UDT constructor).
+        if (!fi.param_tags.empty()) {
+            size_t maxa = fi.param_tags.size();
+            size_t mina = maxa;
+            if (fi.param_defaults.size() == maxa)
+                while (mina > 0 && fi.param_defaults[mina - 1]) mina--;
+            size_t got = expr.args.size();
+            if (got < mina || got > maxa) {
+                std::string want = (mina == maxa)
+                    ? std::to_string(maxa) + " args"
+                    : std::to_string(mina) + " to " + std::to_string(maxa) + " args";
+                report_error("", expr.line,
+                    "Function '" + name + "' expects " + want +
+                    ", got " + std::to_string(got));
+                return { LLVMConstReal(f64_type, 0.0), JD_TAG_F64 };
+            }
+        }
         for (size_t i = 0; i < call_args.size(); i++) {
             int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
             TypedValue av;
