@@ -7033,17 +7033,54 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
 }
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
-    // ?? asks whether a value is absent, and absence is not something this
-    // backend can represent: JdTag runs from I64 to BOOL with no NONE, so a
-    // missing map key compiles to a number and the question has no answer.
-    // Saying so beats the silent zero at the bottom of this function.
+    // ?? asks whether the left side is absent. Only a runtime-tagged value
+    // can be: anything whose type the compiler already knows is present by
+    // construction, and there the fallback is dead code.
     if (expr.op == TokenType::COALESCE) {
-        report_error(current_fn_source_file, expr.line,
-            "?? needs to tell an absent value from a present one, and a compiled "
-            "map has no tag for absent - TYPEOF on a missing key answers INT64 here "
-            "and NONE in the interpreter. Run this one interpreted, or test the key "
-            "with MAP.EXISTS before reading it.");
-        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+        TypedValue lhs = codegen_expr(*expr.left);
+        if (lhs.tag != JD_TAG_RUNTIME || !lhs.runtime_tag) return lhs;
+
+        LLVMValueRef is_none = LLVMBuildICmp(builder, LLVMIntEQ, lhs.runtime_tag,
+            LLVMConstInt(i32_type, JD_TAG_NONE, 0), "coal_isnone");
+        LLVMBasicBlockRef bb_lhs = LLVMGetInsertBlock(builder);
+        LLVMBasicBlockRef bb_rhs = LLVMAppendBasicBlock(current_fn, "coal.rhs");
+        LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "coal.join");
+        LLVMBuildCondBr(builder, is_none, bb_rhs, bb_join);
+
+        // The right side is only reached when the left one was absent, which
+        // is what makes it lazy here as well as interpreted.
+        LLVMPositionBuilderAtEnd(builder, bb_rhs);
+        TypedValue rhs = codegen_expr(*expr.right);
+        LLVMValueRef rv, rt;
+        if (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+            rv = rhs.val;
+            rt = rhs.runtime_tag;
+        } else if (rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_ARR ||
+                   rhs.tag == JD_TAG_NATIVE_MAP || rhs.tag == JD_TAG_FUNCREF) {
+            rv = LLVMBuildPtrToInt(builder, rhs.val, i64_type, "coal_pti");
+            rt = LLVMConstInt(i32_type, rhs.tag, 0);
+        } else if (rhs.tag == JD_TAG_F64) {
+            rv = pun_f64_to_i64(rhs.val);
+            rt = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+        } else if (rhs.tag == JD_TAG_BOOL) {
+            rv = LLVMBuildSExt(builder, rhs.val, i64_type, "coal_b2i");
+            rt = LLVMConstInt(i32_type, JD_TAG_BOOL, 0);
+        } else {
+            rv = rhs.val;
+            rt = LLVMConstInt(i32_type, rhs.tag, 0);
+        }
+        LLVMBasicBlockRef bb_rhs_end = LLVMGetInsertBlock(builder);
+        LLVMBuildBr(builder, bb_join);
+
+        LLVMPositionBuilderAtEnd(builder, bb_join);
+        LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "coal_v");
+        LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "coal_t");
+        LLVMValueRef vals[] = { lhs.val, rv };
+        LLVMValueRef tags[] = { lhs.runtime_tag, rt };
+        LLVMBasicBlockRef bbs[] = { bb_lhs, bb_rhs_end };
+        LLVMAddIncoming(pv, vals, bbs, 2);
+        LLVMAddIncoming(pt, tags, bbs, 2);
+        return { pv, JD_TAG_RUNTIME, pt };
     }
 
     // Handle AND/OR with short-circuit semantics (scalar only)
@@ -10388,12 +10425,26 @@ LLVMValueRef LLVMCodegen::pun_i64_to_f64(LLVMValueRef i64_val) {
 // a pointer already in the bits and everything else has to be rendered.
 LLVMValueRef LLVMCodegen::runtime_to_str(LLVMValueRef bits, LLVMValueRef rtag) {
     LLVMBasicBlockRef bb_str   = LLVMAppendBasicBlock(current_fn, "rt2s.str");
+    LLVMBasicBlockRef bb_none  = LLVMAppendBasicBlock(current_fn, "rt2s.none");
     LLVMBasicBlockRef bb_other = LLVMAppendBasicBlock(current_fn, "rt2s.other");
     LLVMBasicBlockRef bb_join  = LLVMAppendBasicBlock(current_fn, "rt2s.join");
 
     LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, rtag,
         LLVMConstInt(i32_type, JD_TAG_STR, 0), "rt_is_str");
-    LLVMBuildCondBr(builder, is_str, bb_str, bb_other);
+    LLVMBasicBlockRef bb_notstr = LLVMAppendBasicBlock(current_fn, "rt2s.notstr");
+    LLVMBuildCondBr(builder, is_str, bb_str, bb_notstr);
+
+    // Absent has no bits to render, so the helper below would print the
+    // zero it was handed. The interpreter writes NONE and so does this.
+    LLVMPositionBuilderAtEnd(builder, bb_notstr);
+    LLVMValueRef is_none = LLVMBuildICmp(builder, LLVMIntEQ, rtag,
+        LLVMConstInt(i32_type, JD_TAG_NONE, 0), "rt_is_none");
+    LLVMBuildCondBr(builder, is_none, bb_none, bb_other);
+
+    LLVMPositionBuilderAtEnd(builder, bb_none);
+    LLVMValueRef as_none = LLVMBuildGlobalStringPtr(builder, "NONE", "rt2s_none");
+    LLVMBuildBr(builder, bb_join);
+    LLVMBasicBlockRef none_end = LLVMGetInsertBlock(builder);
 
     LLVMPositionBuilderAtEnd(builder, bb_str);
     LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "rt2s_ptr");
@@ -10414,9 +10465,9 @@ LLVMValueRef LLVMCodegen::runtime_to_str(LLVMValueRef bits, LLVMValueRef rtag) {
 
     LLVMPositionBuilderAtEnd(builder, bb_join);
     LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "rt2s");
-    LLVMValueRef vals[] = { as_ptr, as_text };
-    LLVMBasicBlockRef blocks[] = { str_end, other_end };
-    LLVMAddIncoming(phi, vals, blocks, 2);
+    LLVMValueRef vals[] = { as_ptr, as_none, as_text };
+    LLVMBasicBlockRef blocks[] = { str_end, none_end, other_end };
+    LLVMAddIncoming(phi, vals, blocks, 3);
     return phi;
 }
 

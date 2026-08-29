@@ -1812,7 +1812,10 @@ int32_t jdb_tagged_get(int64_t val_bits, int32_t val_tag, const char* key, int64
 int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
     *out_val = 0;
     int64_t idx = map_find(m, key);
-    if (idx < 0) return 0;
+    // A key that is not there is absent, and absent is not the integer
+    // zero. Reporting I64 here is what made TYPEOF answer INT64 on a
+    // missing key while the interpreter answered NONE.
+    if (idx < 0) return JD_TAG_NONE;
     union { double d; int64_t i; } u;
     u.d = m->values[idx];
     int32_t t = m->tags[idx];
@@ -3690,6 +3693,12 @@ char* jdb_sha256(const char* input) {
 // codegen picks the matching stub. NaN on an f64 means the EXITFUNC
 // sentinel was returned, which surfaces as "NONE".
 char* jdb_typeof_f64(double v) {
+    // A compiled FUNC returns f64, and one that fell out of EXITFUNC
+    // without a value has nothing else to say so with: NaN is how the
+    // native side spells "returned nothing", and the gate checks it.
+    // The cost is that a genuine NaN answers NONE here while the
+    // interpreter calls SQR(-1) a FLOAT64. Telling the two apart needs
+    // a runtime-tagged return, not a wider tag on the value.
     if (v != v) return _strdup("NONE");
     return _strdup("FLOAT64");
 }
@@ -3706,6 +3715,7 @@ char* jdb_typeof_tag(int64_t tag) {
         case JdTag::FUNCREF:    return _strdup("FUNCREF");
         case JdTag::VM_HANDLE:  return _strdup("OBJECT");
         case JdTag::BOOL:       return _strdup("BOOLEAN");
+        case JdTag::NONE:       return _strdup("NONE");
         case JdTag::RUNTIME:
         default:                return _strdup("UNKNOWN");
     }

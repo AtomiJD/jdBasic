@@ -35,6 +35,10 @@ enum class JdTag : int32_t {
     RUNTIME    = 7,
     // Codegen-internal: backed by i64 0/1, never appears on the wire.
     BOOL       = 8,
+    // Absent, which is not the same as any value. A missing map key
+    // reads as this; NaN does not - the interpreter calls SQR(-1) a
+    // FLOAT64 and only a key that is not there a NONE.
+    NONE       = 9,
 };
 
 constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
@@ -56,3 +60,4 @@ constexpr int32_t jd_tag(JdTag t) { return static_cast<int32_t>(t); }
 // helpers so users see TRUE/FALSE instead of 1/0. Codegen downgrades
 // this to JD_TAG_I64 on bridge marshalling so the wire never carries it.
 #define JD_TAG_BOOL       8
+#define JD_TAG_NONE       9

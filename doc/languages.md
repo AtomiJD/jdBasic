@@ -196,11 +196,10 @@ The right side is only evaluated when it is needed.
 It binds looser than arithmetic and tighter than the pipe, so
 `m{"k"} ?? 40 + 2` is `m{"k"} ?? 42`.
 
-**Interpreter only.** A compiled map carries a tag per value and there is
-no tag for absent - `TYPEOF` on a missing key answers `INT64` under `-c`
-and `NONE` interpreted - so the native compiler refuses `??` rather than
-answer a question it cannot ask. Test with `MAP.EXISTS` in code you
-intend to compile.
+Both backends answer the same. A compiled map carries a tag per value
+and one of them means absent, so `TYPEOF` on a missing key is `NONE`
+whether the program was interpreted or compiled.
+
 ### Optional parameters
 
 A trailing parameter may carry a default, and a call that leaves it out

@@ -4,9 +4,9 @@
 ' values that are not NONE at all. This operator is the short way to say
 ' what everyone means.
 '
-' Interpreter only for now. A compiled map has no tag for an absent key -
-' TYPEOF on one answers INT64 there and NONE here - so `-c` refuses the
-' operator rather than answering a question it cannot ask.
+' Both backends. A compiled map now carries a tag for an absent key, so
+' TYPEOF answers NONE on either side and the operator means the same
+' thing compiled as interpreted.
 
 DIM fails = 0
 
