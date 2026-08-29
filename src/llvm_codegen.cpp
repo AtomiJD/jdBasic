@@ -1962,7 +1962,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             param_types.empty() ? nullptr : param_types.data(),
             (unsigned)param_types.size(), 0);
         LLVMValueRef fn = LLVMAddFunction(module, name.c_str(), fn_type);
-        user_functions[name] = { fn, decl.return_tag, decl.tags, decl.is_async };
+        std::vector<const Expr*> defaults;
+        if (decl.stmt)
+            for (auto& p : decl.stmt->params) defaults.push_back(p.default_value.get());
+        user_functions[name] = { fn, decl.return_tag, decl.tags, defaults, decl.is_async };
     }
 }
 
@@ -8117,7 +8120,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
 
         std::vector<LLVMValueRef> args;
-        for (size_t i = 0; i < expr.args.size(); i++) {
+        // A call may leave the trailing parameters out. Their literals stand
+        // in here, so everything below sees one uniform argument list and the
+        // coercion to each parameter's tag happens in exactly one place.
+        std::vector<const Expr*> call_args;
+        for (auto& a : expr.args) call_args.push_back(a.get());
+        for (size_t i = call_args.size(); i < fi.param_defaults.size(); i++) {
+            if (!fi.param_defaults[i]) break;
+            call_args.push_back(fi.param_defaults[i]);
+        }
+        for (size_t i = 0; i < call_args.size(); i++) {
             int expected_tag = (i < fi.param_tags.size()) ? fi.param_tags[i] : 1;
             TypedValue av;
             // Funcref-literal arg (`name@`) → build a wrapper trampoline
@@ -8130,13 +8142,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // parameter count (was hardcoded to 1, so a 2-arg target such as a
             // comparator/reducer passed as `fn@` was miscalled). Fall back to 1
             // only when the function is unknown.
-            if (expected_tag == JD_TAG_FUNCREF && expr.args[i] &&
-                expr.args[i]->kind == ExprKind::LITERAL_STRING &&
-                expr.args[i]->is_funcref_lit) {
-                auto uf = user_functions.find(expr.args[i]->str_val);
+            if (expected_tag == JD_TAG_FUNCREF && call_args[i] &&
+                call_args[i]->kind == ExprKind::LITERAL_STRING &&
+                call_args[i]->is_funcref_lit) {
+                auto uf = user_functions.find(call_args[i]->str_val);
                 int arity = (uf != user_functions.end() && !uf->second.param_tags.empty())
                     ? (int)uf->second.param_tags.size() : 1;
-                LLVMValueRef wrap = build_funcref_wrapper(expr.args[i]->str_val, arity);
+                LLVMValueRef wrap = build_funcref_wrapper(call_args[i]->str_val, arity);
                 if (wrap) {
                     args.push_back(wrap);
                     continue;
@@ -8155,7 +8167,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             int arg_leaf_hint = (expected_tag == JD_TAG_STR) ? JD_TAG_STR : -1;
             {
                 ScopedLeafTag _lt(this, arg_leaf_hint);
-                av = codegen_expr(*expr.args[i]);
+                av = codegen_expr(*call_args[i]);
             }
             if (expected_tag == JD_TAG_RUNTIME) {
                 // Tag-aware ABI: pack (i64 val, i32 tag) for this param.

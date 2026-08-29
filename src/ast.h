@@ -230,6 +230,11 @@ enum class StmtKind {
 struct Param {
     std::string name;
     VarType type = VarType::NONE;
+    // A trailing parameter may name what it stands for when the caller
+    // leaves it out. Literals only: a default that had to be evaluated
+    // would need a scope to be evaluated in, and there is none at the
+    // point a function is declared.
+    ExprPtr default_value;
 };
 
 struct IfBranch {

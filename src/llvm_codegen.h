@@ -166,6 +166,11 @@ private:
         LLVMValueRef fn;
         int return_tag;             // 0=i64, 1=f64, 2=str, -1=void(sub)
         std::vector<int> param_tags;
+        // Literal defaults for trailing parameters a call may leave out.
+        // Null for a required one. The call site codegens these through
+        // the same path as a supplied argument, so the coercion to the
+        // parameter tag happens once, here as everywhere.
+        std::vector<const Expr*> param_defaults;
         bool is_async = false;      // ASYNC FUNC: call site spawns a thread
     };
     std::unordered_map<std::string, FuncInfo> user_functions;

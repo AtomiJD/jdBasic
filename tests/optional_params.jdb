@@ -1,0 +1,106 @@
+' A trailing parameter may name what it stands for when the caller
+' leaves it out. Builtins have taken optional arguments all along -
+' SUM(a) and SUM(a, axis), PWM.SET(pin, hz) and with a duty - and this
+' is the same thing one level down, for functions you write yourself.
+'
+' Defaults are literals. A default that had to be evaluated would need a
+' scope to be evaluated in, and there is none where a function is
+' declared.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+' ── One default, then two, then all of them ──────────────────
+FUNC GREET(name$, greeting$ = "Hello", mark$ = ".")
+    RETURN greeting$ + ", " + name$ + mark$
+ENDFUNC
+
+CHKS "both left out", GREET("world"), "Hello, world."
+CHKS "one given", GREET("world", "Moin"), "Moin, world."
+CHKS "all given", GREET("world", "Moin", "!"), "Moin, world!"
+
+' ── Every literal kind a default can be ──────────────────────
+FUNC KINDS(a = 7, b = 1.5, c$ = "x", d = TRUE)
+    DIM out$
+    out$ = STR$(a) + "|" + STR$(b) + "|" + c$ + "|"
+    IF d THEN out$ = out$ + "T" ELSE out$ = out$ + "F"
+    RETURN out$
+ENDFUNC
+
+CHKS "all defaults", KINDS(), "7|1.5|x|T"
+CHKS "first given", KINDS(9), "9|1.5|x|T"
+CHKS "false given", KINDS(9, 2.5, "y", FALSE), "9|2.5|y|F"
+
+' ── A SUB takes them too ─────────────────────────────────────
+DIM logged$
+logged$ = ""
+
+SUB NOTE(msg$, level = 1)
+    logged$ = logged$ + STR$(level) + ":" + msg$ + " "
+ENDSUB
+
+NOTE "plain"
+NOTE "urgent", 3
+CHKS "sub defaults", logged$, "1:plain 3:urgent "
+
+' ── The counts that are wrong ────────────────────────────────
+DIM caught, msg$
+caught = FALSE
+msg$ = ""
+TRY
+    PRINT GREET()
+CATCH
+    caught = TRUE
+    msg$ = ERRMSG$
+ENDTRY
+CHK "too few caught", caught, TRUE
+CHK "message names the range", INSTR(msg$, "1 to 3") >= 0, TRUE
+
+caught = FALSE
+TRY
+    PRINT GREET("a", "b", "c", "d")
+CATCH
+    caught = TRUE
+ENDTRY
+CHK "too many caught", caught, TRUE
+
+' A function where nothing is optional still reports a plain count.
+FUNC EXACT(a, b)
+    RETURN a + b
+ENDFUNC
+
+msg$ = ""
+TRY
+    PRINT EXACT(1)
+CATCH
+    msg$ = ERRMSG$
+ENDTRY
+CHK "required-only message stays plain", INSTR(msg$, "2 args") >= 0, TRUE
+CHK "and says nothing about a range", INSTR(msg$, " to ") < 0, TRUE
+
+' ── Recursion still sees its own defaults ────────────────────
+FUNC COUNTDOWN(n, acc = 0)
+    IF n <= 0 THEN RETURN acc
+    RETURN COUNTDOWN(n - 1, acc + n)
+ENDFUNC
+
+CHK "recursive with default", COUNTDOWN(4), 10
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF

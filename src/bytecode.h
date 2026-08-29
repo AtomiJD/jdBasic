@@ -501,7 +501,12 @@ inline void peephole_optimize(Chunk& chunk) {
 
 struct FuncProto {
     std::string name;
-    int arity = 0;
+    int arity = 0;            // how many parameters there are
+    // How many the caller has to supply. Trailing parameters with a
+    // default make up the difference, and defaults[i] holds the value
+    // for parameter i - the entries below min_arity are never read.
+    int min_arity = 0;
+    std::vector<Value> defaults;
     std::vector<std::string> param_names;
     Chunk chunk;
     bool is_sub = false;      // SUB vs FUNCTION

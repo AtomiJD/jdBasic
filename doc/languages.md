@@ -171,6 +171,49 @@ subsequent call the slot keeps its previous value. Storage hangs off the
 function definition (per-VM), so all recursive depths and cross-module
 callers share the same slot.
 
+
+### Optional parameters
+
+A trailing parameter may carry a default, and a call that leaves it out
+gets that value. Builtins have always worked this way - `SUM(a)` and
+`SUM(a, axis)`, `PWM.SET(pin, hz)` and with a duty - and this is the
+same thing for functions you write.
+
+```basic
+FUNC Greet(name$, greeting$ = "Hello", mark$ = ".")
+    RETURN greeting$ + ", " + name$ + mark$
+ENDFUNC
+
+PRINT Greet("world")                  ' Hello, world.
+PRINT Greet("world", "Moin")          ' Moin, world.
+PRINT Greet("world", "Moin", "!")     ' Moin, world!
+```
+
+Two rules:
+
+* **Optional parameters come last.** Arguments are matched left to right,
+  so a required parameter after an optional one could never be reached.
+  The parser refuses it.
+* **A default is a literal** - a number, a string, `TRUE`, `FALSE` or
+  `NONE`. Anything else would need a scope to be evaluated in, and a
+  function is declared before any scope exists. For a computed default,
+  take `NONE` and decide in the body:
+
+```basic
+FUNC Open(path$, mode$ = NONE)
+    IF TYPEOF(mode$) = "NONE" THEN mode$ = DefaultMode$()
+    ...
+ENDFUNC
+```
+
+`SUB` takes them the same way. Lambdas do not: their parameter list is a
+bare list of names with no room to write one.
+
+A wrong argument count names the range it wanted:
+
+```
+Function 'Greet' expects 1 to 3 args, got 4
+```
 **`STATIC DIM name [AS type] [= initializer]`** (inside FUNC/SUB only)
 
 ```basic

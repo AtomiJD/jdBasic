@@ -174,6 +174,13 @@ static auto g_program_start = std::chrono::steady_clock::now();
 // runs it before the call.
 static void check_native_arity(const std::string& name, const VM::NativeEntry& e, size_t argc);
 
+// "2 args" when every parameter is required, "2 to 4 args" when the
+// trailing ones carry defaults.
+static std::string describe_arity(const FuncProto& p) {
+    if (p.min_arity == p.arity) return std::to_string(p.arity) + " args";
+    return std::to_string(p.min_arity) + " to " + std::to_string(p.arity) + " args";
+}
+
 std::map<int, std::shared_ptr<AsyncTask>> g_async_tasks;
 std::mutex g_async_mutex;
 std::atomic<int> g_async_next_id{1};
@@ -1943,12 +1950,20 @@ void VM::run() {
                     int32_t idx = (int32_t)(entry & 0xFFFFFFFFu);
                     if (gen == func_map_generation && idx >= 0) {
                         FuncProto& proto = (*func_protos)[idx];
-                        if (argc != proto.arity) {
+                        if (argc < proto.min_arity || argc > proto.arity) {
                             int eline = cf.chunk->line_at(trace_ip);
                             throw jdError(ErrCode::WRONG_ARG_COUNT,
                                 "Function '" + proto.name + "' expects " +
-                                std::to_string(proto.arity) + " args, got " +
+                                describe_arity(proto) + ", got " +
                                 std::to_string(argc), eline);
+                        }
+                        // The parameters the caller left out stand where it
+                        // would have put them, so the frame below sees one
+                        // uniform argument list.
+                        while (argc < proto.arity) {
+                            if (sp >= stack.size()) stack.resize(stack.size() * 2);
+                            stack[sp++] = proto.defaults[argc];
+                            argc++;
                         }
                         if (proto.is_async) goto call_slow_path;
                         if (frames.size() >= 512)
@@ -2206,9 +2221,14 @@ void VM::run() {
             call_done: break;
             }
             FuncProto& proto = (*func_protos)[it->second];
-            if (argc != proto.arity) {
+            if (argc < proto.min_arity || argc > proto.arity) {
                 throw std::runtime_error("Function '" + func_name + "' expects " +
-                    std::to_string(proto.arity) + " args, got " + std::to_string(argc));
+                    describe_arity(proto) + ", got " + std::to_string(argc));
+            }
+            while (argc < proto.arity) {
+                if (sp >= stack.size()) stack.resize(stack.size() * 2);
+                stack[sp++] = proto.defaults[argc];
+                argc++;
             }
 
             // Populate the inline cache so subsequent calls at this site hit

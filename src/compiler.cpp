@@ -1188,6 +1188,31 @@ void Compiler::compile_return(const Stmt& stmt) {
     }
 }
 
+// A default has to be a literal. Anything else would need a scope to be
+// evaluated in, and a function is declared before any scope exists.
+static void fill_param_defaults(FuncProto& proto, const std::vector<Param>& params) {
+    proto.min_arity = 0;
+    proto.defaults.assign(params.size(), Value::make_none());
+    bool optional_from_here = false;
+    for (size_t i = 0; i < params.size(); i++) {
+        const Expr* d = params[i].default_value.get();
+        if (!d) {
+            if (!optional_from_here) proto.min_arity = (int)i + 1;
+            continue;
+        }
+        optional_from_here = true;
+        switch (d->kind) {
+            case ExprKind::LITERAL_INT:    proto.defaults[i] = Value::make_i64(d->int_val); break;
+            case ExprKind::LITERAL_FLOAT:  proto.defaults[i] = Value::make_f64(d->float_val); break;
+            case ExprKind::LITERAL_STRING: proto.defaults[i] = Value::make_string(d->str_val); break;
+            case ExprKind::LITERAL_BOOL:   proto.defaults[i] = Value::make_bool(d->bool_val); break;
+            default:
+                throw std::runtime_error("Default for parameter '" + params[i].name +
+                    "' must be a literal number, string, TRUE, FALSE or NONE");
+        }
+    }
+}
+
 void Compiler::compile_sub(const Stmt& stmt) {
     // Builtins always win at call dispatch, so a SUB with a builtin's name
     // could never be reached - reject the definition instead. Module exports
@@ -1200,6 +1225,7 @@ void Compiler::compile_sub(const Stmt& stmt) {
     FuncProto proto;
     proto.name = stmt.func_name;
     proto.arity = static_cast<int>(stmt.params.size());
+    fill_param_defaults(proto, stmt.params);
     proto.is_sub = true;
     proto.is_exported = exported;
     for (auto& p : stmt.params) proto.param_names.push_back(p.name);
@@ -1241,6 +1267,7 @@ void Compiler::compile_function(const Stmt& stmt) {
     FuncProto proto;
     proto.name = stmt.func_name;
     proto.arity = static_cast<int>(stmt.params.size());
+    fill_param_defaults(proto, stmt.params);
     proto.is_sub = false;
     proto.is_exported = exported;
     proto.is_async = stmt.is_async_func;
@@ -1440,6 +1467,9 @@ void Compiler::compile_expr(const Expr& expr) {
             for (auto& c : expr.lambda_captures) proto.param_names.push_back(c);
             for (auto& p : expr.lambda_params) proto.param_names.push_back(p);
             proto.arity = (int)proto.param_names.size();
+            // Lambdas take no defaults: their parameter list is a bare name
+            // list with no room to write one.
+            proto.min_arity = proto.arity;
 
             // Compile body into the function's chunk
             scopes.push_back(CompilerScope{});

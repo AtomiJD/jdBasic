@@ -270,7 +270,7 @@ StmtPtr Parser::parse_statement() {
                     method->func_name = type_name + "." + method->func_name;
                     // Insert THIS as first parameter
                     Param this_param; this_param.name = "THIS"; this_param.type = VarType::OBJECT;
-                    method->params.insert(method->params.begin(), this_param);
+                    method->params.insert(method->params.begin(), std::move(this_param));
                     s->body.push_back(std::move(method));
                 } else if (check(TokenType::IDENTIFIER)) {
                     // Member declaration: Name AS Type
@@ -1182,12 +1182,25 @@ StmtPtr Parser::parse_if() {
 std::vector<Param> Parser::parse_params() {
     std::vector<Param> params;
     expect(TokenType::LPAREN, "'('");
+    bool seen_default = false;
     if (!check(TokenType::RPAREN)) {
         do {
             Param p;
             p.name = expect(TokenType::IDENTIFIER, "parameter name").value;
             if (match(TokenType::AS)) {
                 p.type = parse_type();
+            }
+            if (match(TokenType::ASSIGN)) {
+                p.default_value = parse_expr();
+                seen_default = true;
+            } else if (seen_default) {
+                // Otherwise a call could not say which argument it meant:
+                // the ones it gives are matched left to right, so every
+                // parameter after the first optional one has to be optional
+                // as well.
+                throw std::runtime_error("Parameter '" + p.name +
+                    "' has no default but follows one that does - "
+                    "optional parameters come last");
             }
             params.push_back(std::move(p));
         } while (match(TokenType::COMMA));
