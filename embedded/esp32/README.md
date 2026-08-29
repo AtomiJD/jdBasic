@@ -4,9 +4,9 @@ A serial REPL on the S3's native USB port, the same shape as `pico/`:
 the interpreter comes from `../../../src` unchanged, everything that knows it
 is on an S3 lives in `main/`.
 
-This is the headless stage. No display, no keyboard, no filesystem. It
-exists to answer one question with a number instead of an estimate: how
-much room does the interpreter leave on a 512 KB part.
+This is the headless stage: a flash store and the radio, no display and
+no keyboard. It answers one question with a number instead of an
+estimate - how much room does the interpreter leave on a 512 KB part.
 
 ## Building
 
