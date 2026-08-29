@@ -170,6 +170,10 @@ static auto g_program_start = std::chrono::steady_clock::now();
 #include <map>
 #include "async_task.h"
 
+// Defined beside register_native; every path that reaches a builtin
+// runs it before the call.
+static void check_native_arity(const std::string& name, const VM::NativeEntry& e, size_t argc);
+
 std::map<int, std::shared_ptr<AsyncTask>> g_async_tasks;
 std::mutex g_async_mutex;
 std::atomic<int> g_async_next_id{1};
@@ -1011,9 +1015,10 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
     // Native?
     auto nit = natives.find(name);
     if (nit != natives.end()) {
+        check_native_arity(name, nit->second, args.size());
         bool no_vec = jdb_no_vectorize(name)
             || extra_no_vectorize.find(name) != extra_no_vectorize.end();
-        return invoke_native(nit->second, args, no_vec);
+        return invoke_native(nit->second.fn, args, no_vec);
     }
 
     // User-defined?
@@ -1358,9 +1363,13 @@ void VM::run() {
                 {
                     const std::string& full2 = cf.chunk->name_at(name_idx);
                     auto nit = natives.find(full2);
-                    if (nit != natives.end()) {
+                    // Only the ones that genuinely take nothing. This used to
+                    // call and let the arity wrapper throw, which is no longer
+                    // there to catch the mistake before it indexes an argument
+                    // that was never passed.
+                    if (nit != natives.end() && nit->second.min_args == 0) {
                         try {
-                            Value r = nit->second({});
+                            Value r = nit->second.fn({});
                             if (sp >= stack.size()) stack.resize(stack.size() * 2);
                             stack[sp++] = std::move(r);
                             break;
@@ -1874,8 +1883,8 @@ void VM::run() {
             cf.ip += 2;
             uint8_t argc = cf.chunk->code[cf.ip++];
 
-            const NativeFunc* fn = ((size_t)slot < native_table.size()) ? &native_table[slot] : nullptr;
-            if (fn == nullptr || !*fn) {
+            const NativeEntry* fn = ((size_t)slot < native_table.size()) ? native_table[slot] : nullptr;
+            if (fn == nullptr || !fn->fn) {
                 int eline = cf.chunk->line_at(trace_ip);
                 throw jdError(ErrCode::UNDEFINED_FUNCTION,
                     "native '" + jdb_native_name(slot) + "' not available in this VM", eline);
@@ -1900,7 +1909,8 @@ void VM::run() {
                 ++m_arg_depth;
                 for (int i = argc - 1; i >= 0; i--) args[i] = pop();
                 try {
-                    nat_result = invoke_native(*fn, args, nv != 0);
+                    check_native_arity(jdb_native_name(slot), *fn, args.size());
+                    nat_result = invoke_native(fn->fn, args, nv != 0);
                 } catch (const jdError&) {
                     args.clear(); --m_arg_depth; throw;
                 } catch (const std::exception& e) {
@@ -1965,6 +1975,7 @@ void VM::run() {
                 for (int i = argc - 1; i >= 0; i--) {
                     args[i] = pop();
                 }
+                check_native_arity(func_name, native_it->second, args.size());
 
                 // Auto-vectorize: if any arg is an array and the function
                 // is not array-aware, apply element-wise automatically.
@@ -1998,7 +2009,7 @@ void VM::run() {
                                 if (n > alen) alen = n;
                             }
                         }
-                        if (!any_arr) return native_it->second(cur_args);
+                        if (!any_arr) return native_it->second.fn(cur_args);
                         Value result = Value::make_array();
                         auto* out = result.as_array();
                         out->elements.reserve(alen);
@@ -2024,7 +2035,7 @@ void VM::run() {
                     }
                 } else {
                     try {
-                        push(native_it->second(args));
+                        push(native_it->second.fn(args));
                     } catch (const jdError&) {
                         throw;
                     } catch (const std::out_of_range&) {
@@ -3426,15 +3437,31 @@ static int native_slot_intern(const std::string& name) {
     return slot;
 }
 
+// Every path that reaches a builtin runs this first. It used to be a
+// lambda wrapped around each function, which is why there were two
+// std::functions and a heap copy of the name for all of them.
+static void check_native_arity(const std::string& name, const VM::NativeEntry& e, size_t argc) {
+    int n = (int)argc;
+    if (n < e.min_args)
+        throw jdError(ErrCode::WRONG_ARG_COUNT,
+            name + ": expected at least " + std::to_string(e.min_args) + " argument(s), got " + std::to_string(n));
+    if (e.max_args >= 0 && n > e.max_args)
+        throw jdError(ErrCode::WRONG_ARG_COUNT,
+            name + ": expected at most " + std::to_string(e.max_args) + " argument(s), got " + std::to_string(n));
+}
+
 void VM::register_native(const std::string& name, NativeFunc fn) {
-    natives[name] = std::move(fn);
+    NativeEntry& entry = natives[name];
+    entry.fn = std::move(fn);
+    entry.min_args = 0;
+    entry.max_args = -1;
     // Mirror into the slot-indexed table for CALL_NATIVE dispatch.
     int slot = native_slot_intern(name);
     if ((size_t)slot >= native_table.size()) {
         native_table.resize(slot + 1);
         native_novec.resize(slot + 1, -1);
     }
-    native_table[slot] = natives[name];
+    native_table[slot] = &entry;
     native_novec[slot] = -1;  // recomputed lazily (extra_no_vectorize may fill later)
 }
 
@@ -3443,17 +3470,10 @@ void VM::register_native(const std::string& name, NativeFunc fn) {
 // (name, min, max, fn) provides better error messages.
 
 void VM::register_native(const std::string& name, int min_args, int max_args, NativeFunc fn) {
-    std::string fname = name;
-    register_native(name, [fname, min_args, max_args, fn](const std::vector<Value>& args) -> Value {
-        int n = (int)args.size();
-        if (n < min_args)
-            throw jdError(ErrCode::WRONG_ARG_COUNT,
-                fname + ": expected at least " + std::to_string(min_args) + " argument(s), got " + std::to_string(n));
-        if (max_args >= 0 && n > max_args)
-            throw jdError(ErrCode::WRONG_ARG_COUNT,
-                fname + ": expected at most " + std::to_string(max_args) + " argument(s), got " + std::to_string(n));
-        return fn(args);
-    });
+    register_native(name, std::move(fn));
+    NativeEntry& entry = natives[name];
+    entry.min_args = (int16_t)min_args;
+    entry.max_args = (int16_t)max_args;
 }
 
 // ── Helpers for matrix operations ─────────────────────────────
@@ -5654,7 +5674,9 @@ void VM::register_builtins() {
         };
         return one(args[0]);
     });
-    register_native("CDATE", natives["CVDATE"]);
+    register_native("CDATE", natives["CVDATE"].fn);
+    natives["CDATE"].min_args = natives["CVDATE"].min_args;
+    natives["CDATE"].max_args = natives["CVDATE"].max_args;
 
     register_native("DATEADD", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
         // DATEADD(part$, num, date_epoch, [tz]). TZ accepted for API symmetry

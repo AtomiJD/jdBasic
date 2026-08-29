@@ -1,0 +1,101 @@
+' Builtins carry their argument counts beside the function rather than
+' inside a wrapper around it, and every path that reaches one checks
+' them. The paths are not the same code: a call by name, a compiled
+' CALL_NATIVE, the vectorising slow path, and a bare identifier used as
+' a constant all arrive differently.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+' ── The counts that are right ────────────────────────────────
+CHK "ABS one arg", ABS(-3), 3
+CHK "MID$ three", LEN(MID$("hello", 1, 3)), 3
+CHK "MID$ two", MID$("hello", 1) <> "", TRUE
+CHK "MAX reducer", MAX([3, 9, 2]), 9
+CHK "SUM reducer", SUM([1, 2, 3]), 6
+
+' ── Too few ──────────────────────────────────────────────────
+DIM caught, msg$
+caught = FALSE
+msg$ = ""
+TRY
+    PRINT ABS()
+CATCH
+    caught = TRUE
+    msg$ = ERRMSG$
+ENDTRY
+CHK "too few caught", caught, TRUE
+CHK "too few names the builtin", INSTR(msg$, "ABS") >= 0, TRUE
+CHK "too few says at least", INSTR(msg$, "at least") >= 0, TRUE
+
+' ── Too many ─────────────────────────────────────────────────
+caught = FALSE
+msg$ = ""
+TRY
+    PRINT ABS(1, 2, 3)
+CATCH
+    caught = TRUE
+    msg$ = ERRMSG$
+ENDTRY
+CHK "too many caught", caught, TRUE
+CHK "too many says at most", INSTR(msg$, "at most") >= 0, TRUE
+
+' ── Through a call by name rather than a compiled call ───────
+' SELECT reaches its function the way native code does, by name, which
+' is a different path from a compiled CALL_NATIVE and checks arity of
+' its own.
+DIM byname = SELECT("ABS", [-7, -8])
+CHK "by name len", LEN(byname), 2
+CHK "by name first", byname[0], 7
+CHK "by name last", byname[1], 8
+
+' ── The bare-identifier path ─────────────────────────────────
+' A zero-argument builtin used as a value, without parentheses. This
+' one is the reason arity has to be readable without calling: the VM
+' has to know PI takes nothing before it tries.
+CHK "PI as a value", INT(2 * PI * 1000), 6283
+CHK "TRUE as a value", TRUE, 1
+
+' A builtin that does need arguments must not be reachable this way,
+' and must not crash reaching for one that was never passed.
+DIM bare
+bare = 0
+TRY
+    bare = LEN
+CATCH
+    bare = -1
+ENDTRY
+CHK "LEN alone does not take an argument out of nowhere", bare <> 99, TRUE
+
+' ── The vectorising path ─────────────────────────────────────
+' An array argument to a scalar builtin fans out element by element,
+' and the count is checked once before the fan-out rather than per
+' element.
+DIM fanned = ABS([-1, -2, -3])
+CHK "vectorised len", LEN(fanned), 3
+CHK "vectorised first", fanned[0], 1
+CHK "vectorised last", fanned[2], 3
+
+' ── Optional arguments still optional ────────────────────────
+CHK "SUM one arg", SUM([1, 2, 3]), 6
+CHK "LEFT$ two", LEN(LEFT$("hello", 2)), 2
+CHKS "STR$ one", STR$(42), "42"
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF

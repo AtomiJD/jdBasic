@@ -86,6 +86,16 @@ public:
 
     // Register a native/built-in function
     using NativeFunc = std::function<Value(const std::vector<Value>&)>;
+
+    // A builtin and how many arguments it takes. The arity used to live in
+    // a wrapper lambda around every function, which cost a second
+    // std::function and a copy of the name on the heap for each of them.
+    // Here it is four bytes beside the function and the callers check it.
+    struct NativeEntry {
+        NativeFunc fn;
+        int16_t min_args = 0;
+        int16_t max_args = -1;   // -1 is unbounded
+    };
     void register_native(const std::string& name, NativeFunc fn);
     // Register with arity check: min_args, max_args (-1 = unlimited)
     void register_native(const std::string& name, int min_args, int max_args, NativeFunc fn);
@@ -316,11 +326,14 @@ private:
     // those pointers and the next opcode read crashes with garbage data.
     std::deque<FuncProto> owned_funcs;
     std::unordered_map<std::string, size_t> func_map;
-    std::unordered_map<std::string, NativeFunc> natives;
+    std::unordered_map<std::string, NativeEntry> natives;
     // Per-VM native dispatch tables indexed by the *global* native slot
     // (jdb_native_slot). CALL_NATIVE indexes these directly, skipping the
     // name hash. native_novec is computed lazily on first call (-1 = unknown).
-    std::vector<NativeFunc> native_table;
+    // Points into natives. unordered_map keeps its elements put, so these
+    // stay valid across rehashing, and the table costs a pointer a slot
+    // rather than a whole std::function.
+    std::vector<const NativeEntry*> native_table;
     std::vector<int8_t>     native_novec;
     // Reusable per-depth argument buffers for native calls, so a hot loop of
     // CALL_NATIVE doesn't heap-allocate a std::vector every call. A deque keeps

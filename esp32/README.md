@@ -214,6 +214,23 @@ Measured on a DevKitC-1 N16R8, 96 KB REPL stack, at 240 MHz:
     after init   internal  198639   largest  124928   psram  8361576
     VM costs     internal   74004                     psram    24580
 
+
+`SYS.NATIVES` breaks the second of those down. The heap is sampled at
+the top of `register_builtins`, which runs before a single native
+exists, and again the moment `app_main` gets the VM back:
+
+    342 natives, 2869 bytes of name, cost internal 54168
+
+342 rather than the 869 `register_native` calls in `src/`, because TUI,
+GUI, AI, FORM, GL, SOUND and the rest sit behind feature flags the board
+does not build. 279 of the 869 are the language itself. The name text is
+2.9 KB of it, so what the table costs is structure rather than text: a
+hash node, a `std::function`, and an entry in the global slot registry
+for each one.
+
+The VM's own value stack is the PSRAM figure above: `stack.resize(1024)`
+of a 24-byte Value is 24576 bytes, just over the 16 KB threshold that
+decides which pool an allocation lands in.
 For comparison the PicoCalc reports 120376 free at a bare prompt. Even
 with PSRAM out the S3 has about half again as much room, on a part with
 8 KB less SRAM, because the RP2350 build spends 128 KB of its on a stack
