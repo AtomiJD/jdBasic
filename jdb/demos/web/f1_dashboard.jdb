@@ -303,10 +303,12 @@ FUNC DCOL(n)
     RETURN [190, 190, 190, 255]
 ENDFUNC
 
+' the season belongs in the key: a car number changes hands between seasons,
+' so a number alone would hand one driver the face of another
 FUNC DHEAD(n)
     DIM k$ = NSTR$(n)
     IF NOT MAP.EXISTS(gDrv, k$) THEN RETURN -1
-    RETURN IMG(TXT$(gDrv{k$}{"headshot_url"}), "drv" + k$)
+    RETURN IMG(TXT$(gDrv{k$}{"headshot_url"}), "drv" + gYear$ + "_" + k$)
 ENDFUNC
 
 FUNC TEAMCOL(team$)
