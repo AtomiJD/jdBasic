@@ -16,7 +16,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 
-#include "../../src/vm.h"
+#include "../../../src/vm.h"
 
 static bool s_stack_up = false;      // netif, event loop and nvs, once
 static bool s_wifi_inited = false;   // esp_wifi_init holds the buffers

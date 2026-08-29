@@ -4,7 +4,7 @@
 '
 ' Run from the repo root - the library is read by path.
 
-EXECUTE TXTREADER$("pico/demos/jdm.jdb")
+EXECUTE TXTREADER$("embedded/pico/demos/jdm.jdb")
 
 DIM fails
 fails = 0

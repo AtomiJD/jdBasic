@@ -295,14 +295,17 @@ Two rules:
 * **Optional parameters come last.** Arguments are matched left to right,
   so a required parameter after an optional one could never be reached.
   The parser refuses it.
-* **A default is a literal** - a number, a string, `TRUE`, `FALSE` or
-  `NONE`. Anything else would need a scope to be evaluated in, and a
-  function is declared before any scope exists. For a computed default,
-  take `NONE` and decide in the body:
+* **A default is a literal** - a number, a string, `TRUE` or `FALSE`.
+  Anything else would need a scope to be evaluated in, and a function is
+  declared before any scope exists. `NONE` is not among them, because it
+  is not a literal either: it reads as absent only because an undeclared
+  name does, which the interpreter allows and `-c` refuses. For a
+  computed default, pick a value the caller would never pass and decide
+  in the body:
 
 ```basic
-FUNC Open(path$, mode$ = NONE)
-    IF TYPEOF(mode$) = "NONE" THEN mode$ = DefaultMode$()
+FUNC Open(path$, mode$ = "")
+    IF mode$ = "" THEN mode$ = DefaultMode$()
     ...
 ENDFUNC
 ```
@@ -3614,9 +3617,10 @@ the `AI.RAG_*` set).
 ## On a board: RP2350 and ESP32-S3
 
 jdBasic runs on two microcontrollers with the same interpreter that runs
-on a desktop. `pico/` is the RP2350, which is what a PicoCalc is; `esp32/`
-is the ESP32-S3. Both are the REPL over a serial line with a flash store
-behind it, and both read the language documented above without exception.
+on a desktop. `embedded/pico/` is the RP2350, which is what a PicoCalc is;
+`embedded/esp32/` is the ESP32-S3. Both are the REPL over a serial line
+with a flash store behind it, and both read the language documented above
+without exception.
 
 What differs is what the machine has, and how little of it there is.
 

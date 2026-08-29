@@ -4241,13 +4241,13 @@ static int array_rank(const Value& v) {
 void VM::register_builtins() {
 #ifdef PICO
     // The board brings its own family: pins, the LED, whatever the
-    // platform layer in pico/ decides to expose.
+    // platform layer in embedded/pico/ decides to expose.
     extern void register_pico_builtins(VM&);
     register_pico_builtins(*this);
 #endif
 #ifdef ESP32
     // The S3 brings its own family: pins, heap figures, whatever the
-    // platform layer in esp32/ decides to expose.
+    // platform layer in embedded/esp32/ decides to expose.
     extern void register_esp32_builtins(VM&);
     register_esp32_builtins(*this);
 #endif
@@ -9032,7 +9032,7 @@ void VM::event_poll() {
     return;
 #endif
 #ifdef ESP32
-    // Same three sources on the S3, drained by the platform layer in esp32/.
+    // Same three sources on the S3, drained by the platform layer in embedded/esp32/.
     extern void esp32_event_poll(VM& vm);
     esp32_event_poll(*this);
     return;

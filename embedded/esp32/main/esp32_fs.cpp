@@ -12,7 +12,7 @@
 #include "esp_log.h"
 #include "ff.h"
 
-#include "../../src/vm.h"
+#include "../../../src/vm.h"
 
 static wl_handle_t s_wl = WL_INVALID_HANDLE;
 

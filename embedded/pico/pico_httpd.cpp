@@ -7,7 +7,7 @@
 // Two connections at a time and a capped request, because the whole
 // board has about 56 KB of heap to play with.
 
-#include "../src/vm.h"
+#include "../../src/vm.h"
 #ifdef ESP32
 // lwIP is the same library on both boards; what differs is who owns it.
 // Here it runs in its own task and callers take the core lock, and there

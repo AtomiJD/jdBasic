@@ -1,4 +1,4 @@
-# The interpreter comes from ../../src unchanged; only the files in this
+# The interpreter comes from ../../../src unchanged; only the files in this
 # directory know they are on an S3.
 idf_component_register(
     SRCS
@@ -17,14 +17,14 @@ idf_component_register(
         # pairs, the millisecond clock and the netif pump are what differ,
         # and the file now names them instead of the SDK.
         "../../pico/pico_httpd.cpp"
-        "../../src/lexer.cpp"
-        "../../src/parser.cpp"
-        "../../src/compiler.cpp"
-        "../../src/vm.cpp"
-        "../../src/jdb_embed_api.cpp"
-        "../../src/channels.cpp"
-        "../../src/file_streams.cpp"
-    INCLUDE_DIRS "." "../../src"
+        "../../../src/lexer.cpp"
+        "../../../src/parser.cpp"
+        "../../../src/compiler.cpp"
+        "../../../src/vm.cpp"
+        "../../../src/jdb_embed_api.cpp"
+        "../../../src/channels.cpp"
+        "../../../src/file_streams.cpp"
+    INCLUDE_DIRS "." "../../../src"
     REQUIRES esp_timer driver fatfs vfs esp_wifi esp_netif nvs_flash esp_event lwip
              esp_adc esp_driver_gpio esp_driver_ledc esp_driver_i2c esp_driver_spi
              esp_driver_tsens

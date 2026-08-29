@@ -4,7 +4,7 @@
 // choice - on a PicoCalc, i2c1 is the keyboard, spi1 the display and
 // spi0 the SD card, so user peripherals belong on i2c0.
 
-#include "../src/vm.h"
+#include "../../src/vm.h"
 #include "pico/stdlib.h"
 #include "hardware/adc.h"
 #include "hardware/pwm.h"

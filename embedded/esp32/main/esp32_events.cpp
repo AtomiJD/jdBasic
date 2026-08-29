@@ -3,12 +3,16 @@
 // happened; the VM drains the record at a safe point in its loop, so a
 // handler never runs inside an ISR.
 
-#include "../src/vm.h"
-#include "pico/stdlib.h"
-#include "hardware/gpio.h"
 #include <stdio.h>
+#include "esp_attr.h"
+#include "esp_timer.h"
+#include "driver/gpio.h"
 
-static repeating_timer_t g_timer;
+#include "../../../src/vm.h"
+
+bool esp32_pin_allowed(int pin, const char** why);
+
+static esp_timer_handle_t g_timer = nullptr;
 static bool g_timer_on = false;
 static volatile uint32_t g_ticks = 0;
 
@@ -20,19 +24,20 @@ static volatile uint8_t g_pin_level[PIN_QUEUE];
 static volatile uint8_t g_pin_head = 0, g_pin_tail = 0;
 
 static bool g_key_watch = false;
+static bool g_isr_service = false;
 static volatile uint32_t g_isr_raw = 0;
 
-static bool timer_isr(repeating_timer_t*) {
+static void timer_isr(void*) {
     g_ticks++;
-    return true;
 }
 
-static void gpio_isr(uint gpio, uint32_t events) {
+static void IRAM_ATTR gpio_isr(void* arg) {
+    int pin = (int)(intptr_t)arg;
     g_isr_raw++;
     uint8_t next = (uint8_t)((g_pin_head + 1) % PIN_QUEUE);
     if (next == g_pin_tail) return;
-    g_pin_no[g_pin_head] = (uint8_t)gpio;
-    g_pin_level[g_pin_head] = (events & GPIO_IRQ_EDGE_RISE) ? 1 : 0;
+    g_pin_no[g_pin_head] = (uint8_t)pin;
+    g_pin_level[g_pin_head] = (uint8_t)gpio_get_level((gpio_num_t)pin);
     g_pin_head = next;
 }
 
@@ -47,7 +52,7 @@ struct PollGuard {
 };
 bool PollGuard::busy = false;
 
-void pico_event_poll(VM& vm) {
+void esp32_event_poll(VM& vm) {
     PollGuard guard;
     if (!guard.taken) return;
 
@@ -68,50 +73,67 @@ void pico_event_poll(VM& vm) {
     }
 
     if (g_key_watch) {
-        int c = getchar_timeout_us(0);
-        if (c != PICO_ERROR_TIMEOUT) {
-            vm.event_raise("KEY", { Value::make_i64(c) });
-        }
+        int c = getchar();
+        if (c != EOF) vm.event_raise("KEY", { Value::make_i64(c) });
     }
 }
 
-void register_pico_events(VM& vm) {
+void register_esp32_events(VM& vm) {
     vm.register_native("TIMER.EVERY", 1, 1, [](const std::vector<Value>& args) -> Value {
         int ms = (int)args[0].to_double();
-        if (g_timer_on) { cancel_repeating_timer(&g_timer); g_timer_on = false; }
+        if (g_timer_on) { esp_timer_stop(g_timer); g_timer_on = false; }
         g_ticks = 0;
         if (ms <= 0) return Value::make_i64(0);
-        g_timer_on = add_repeating_timer_ms(-ms, timer_isr, nullptr, &g_timer);
+        if (!g_timer) {
+            esp_timer_create_args_t cfg = {};
+            cfg.callback = timer_isr;
+            cfg.name = "jdb_tick";
+            if (esp_timer_create(&cfg, &g_timer) != ESP_OK) return Value::make_i64(-1);
+        }
+        g_timer_on = esp_timer_start_periodic(g_timer, (uint64_t)ms * 1000) == ESP_OK;
         return Value::make_i64(g_timer_on ? 0 : -1);
     });
+
     vm.register_native("TIMER.STOP", 0, 0, [](const std::vector<Value>&) -> Value {
-        if (g_timer_on) { cancel_repeating_timer(&g_timer); g_timer_on = false; }
+        if (g_timer_on) { esp_timer_stop(g_timer); g_timer_on = false; }
         g_ticks = 0;
         return Value();
     });
-    // edge: 1 rising, 2 falling, 3 both
+
+    // edge: 1 rising, 2 falling, 3 both, 0 stop watching
     vm.register_native("GPIO.WATCH", 2, 2, [](const std::vector<Value>& args) -> Value {
-        unsigned pin = (unsigned)args[0].to_double();
+        int pin = (int)args[0].to_double();
         int edge = (int)args[1].to_double();
-        if (pin > 29) return Value::make_i64(-1);
-        uint32_t mask = 0;
-        if (edge & 1) mask |= GPIO_IRQ_EDGE_RISE;
-        if (edge & 2) mask |= GPIO_IRQ_EDGE_FALL;
-        if (!mask) {
-            gpio_set_irq_enabled(pin, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, false);
+        const char* why = nullptr;
+        if (!esp32_pin_allowed(pin, &why)) throw std::runtime_error(why);
+
+        if (!edge) {
+            gpio_set_intr_type((gpio_num_t)pin, GPIO_INTR_DISABLE);
+            gpio_isr_handler_remove((gpio_num_t)pin);
             return Value::make_i64(0);
         }
-        gpio_init(pin);
-        gpio_set_dir(pin, false);
-        gpio_set_irq_enabled_with_callback(pin, mask, true, gpio_isr);
+        gpio_config_t cfg = {};
+        cfg.pin_bit_mask = 1ULL << pin;
+        cfg.mode = GPIO_MODE_INPUT;
+        cfg.intr_type = (edge == 1) ? GPIO_INTR_POSEDGE
+                      : (edge == 2) ? GPIO_INTR_NEGEDGE
+                                    : GPIO_INTR_ANYEDGE;
+        if (gpio_config(&cfg) != ESP_OK) return Value::make_i64(-1);
+        if (!g_isr_service) {
+            if (gpio_install_isr_service(0) != ESP_OK) return Value::make_i64(-1);
+            g_isr_service = true;
+        }
+        gpio_isr_handler_add((gpio_num_t)pin, gpio_isr, (void*)(intptr_t)pin);
         return Value::make_i64(0);
     });
+
     vm.register_native("PIN.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
         char buf[64];
         snprintf(buf, sizeof buf, "isr=%u head=%d tail=%d",
                  (unsigned)g_isr_raw, (int)g_pin_head, (int)g_pin_tail);
         return Value::make_string(buf);
     });
+
     vm.register_native("KEY.WATCH", 1, 1, [](const std::vector<Value>& args) -> Value {
         g_key_watch = args[0].to_double() != 0;
         return Value();

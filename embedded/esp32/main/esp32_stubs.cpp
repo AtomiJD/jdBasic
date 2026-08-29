@@ -33,8 +33,8 @@ int jdb_screencap(const char*, const char*, const char*) { return -1; }
 
 }
 
-#include "../../src/dap.h"
-#include "../../src/vm.h"
+#include "../../../src/dap.h"
+#include "../../../src/vm.h"
 
 void DAPHandler::send_stopped_message(const std::string&, int, const std::string&) {}
 void DAPHandler::send_output_message(const std::string&) {}

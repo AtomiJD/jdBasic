@@ -2,7 +2,7 @@
 // behind the PICO define. GPIO numbers are the RP2350's own; the LED on
 // a Pico 2 W hangs off the radio chip, so it gets a word of its own.
 
-#include "../src/vm.h"
+#include "../../src/vm.h"
 #include <set>
 #include "pico/stdlib.h"
 #ifdef JDB_HAS_CYW43

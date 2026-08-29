@@ -32,8 +32,8 @@ time_t timegm(struct tm* t) { return mktime(t); }
 // adapter, the builtin families behind feature flags, screen capture,
 // and the editor knob. Each is the quiet version of itself.
 
-#include "../src/dap.h"
-#include "../src/vm.h"
+#include "../../src/dap.h"
+#include "../../src/vm.h"
 
 void DAPHandler::send_stopped_message(const std::string&, int, const std::string&) {}
 void DAPHandler::send_output_message(const std::string&) {}

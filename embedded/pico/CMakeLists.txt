@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.13)
 
 # jdBasic on the Pico family: the core interpreter behind a serial
-# REPL. Sources come straight from ../src; everything platform-shaped
+# REPL. Sources come straight from ../../src; everything platform-shaped
 # lives in this directory, and the PICO define guards the few spots
 # inside src the board cannot have.
 #
@@ -39,14 +39,14 @@ set(JDB_SOURCES
     pico_fs.cpp
     littlefs/lfs.c
     littlefs/lfs_util.c
-    ../src/lexer.cpp
-    ../src/parser.cpp
-    ../src/compiler.cpp
-    ../src/vm.cpp
-    ../src/jdb_embed_api.cpp
-    ../src/channels.cpp
-    ../src/sprites.cpp
-    ../src/file_streams.cpp
+    ../../src/lexer.cpp
+    ../../src/parser.cpp
+    ../../src/compiler.cpp
+    ../../src/vm.cpp
+    ../../src/jdb_embed_api.cpp
+    ../../src/channels.cpp
+    ../../src/sprites.cpp
+    ../../src/file_streams.cpp
 )
 
 if (PICOCALC)
@@ -81,7 +81,7 @@ if (PICOCALC)
     target_compile_definitions(jdbasic_repl PRIVATE PICOCALC=1)
 endif()
 
-target_include_directories(jdbasic_repl PRIVATE ../src shim ${CMAKE_CURRENT_LIST_DIR})
+target_include_directories(jdbasic_repl PRIVATE ../../src shim ${CMAKE_CURRENT_LIST_DIR})
 target_compile_options(jdbasic_repl PRIVATE -Os "$<$<COMPILE_LANGUAGE:CXX>:-include;${CMAKE_CURRENT_LIST_DIR}/shim/jdb_pico_compat.h>")
 
 target_link_libraries(jdbasic_repl pico_stdlib hardware_flash hardware_gpio pico_flash

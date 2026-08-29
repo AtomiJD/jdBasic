@@ -1,7 +1,7 @@
 # jdBasic on the ESP32-S3
 
 A serial REPL on the S3's native USB port, the same shape as `pico/`:
-the interpreter comes from `../src` unchanged, everything that knows it
+the interpreter comes from `../../../src` unchanged, everything that knows it
 is on an S3 lives in `main/`.
 
 This is the headless stage. No display, no keyboard, no filesystem. It

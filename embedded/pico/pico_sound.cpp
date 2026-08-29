@@ -11,7 +11,7 @@
 //   P<n>     rest, R is the same
 //   .        after a note, hold it half again as long
 
-#include "../src/vm.h"
+#include "../../src/vm.h"
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
 #include <string>

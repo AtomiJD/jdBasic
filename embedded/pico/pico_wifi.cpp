@@ -3,7 +3,7 @@
 // REPL blocked in getchar keeps the connection alive. HTTP.GET$ is a
 // plain-HTTP fetch over raw TCP, one transfer at a time.
 
-#include "../src/vm.h"
+#include "../../src/vm.h"
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
 #include "lwip/dns.h"

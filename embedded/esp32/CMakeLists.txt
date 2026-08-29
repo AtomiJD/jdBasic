@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # jdBasic on the ESP32-S3: the core interpreter behind a serial REPL,
-# the same shape as pico/. Sources come from ../src; everything
+# the same shape as pico/. Sources come from ../../src; everything
 # platform-shaped lives in main/.
 #
 # Two configurations, and the difference between them is the whole

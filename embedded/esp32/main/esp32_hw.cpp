@@ -12,7 +12,7 @@
 #include "driver/temperature_sensor.h"
 #include "esp_adc/adc_oneshot.h"
 
-#include "../../src/vm.h"
+#include "../../../src/vm.h"
 
 // GPIO 26 to 32 carry the SPI flash and 33 to 37 the octal PSRAM. The
 // board works because nobody touches them, and a program that does

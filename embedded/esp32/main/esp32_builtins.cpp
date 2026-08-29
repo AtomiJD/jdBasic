@@ -3,7 +3,7 @@
 // to find by binary search, and it answers twice: internal RAM and
 // PSRAM are separate pools with very different sizes and speeds.
 
-#include "../../src/vm.h"
+#include "../../../src/vm.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 

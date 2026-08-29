@@ -12,7 +12,7 @@
 // DRAM behind an SPI face and refreshes itself: chip select must not
 // stay low much beyond eight microseconds.
 
-#include "../src/vm.h"
+#include "../../src/vm.h"
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include <stdio.h>
