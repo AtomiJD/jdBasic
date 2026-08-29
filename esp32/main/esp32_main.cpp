@@ -18,6 +18,7 @@
 #include "jdb_embed_api.h"
 
 extern "C" bool esp32_fs_init(void);
+void esp32_note_after_init(void);
 void syntax_print(const char* s, int n);
 
 #define AUTORUN_CFG "autorun.cfg"
@@ -304,6 +305,7 @@ extern "C" void app_main(void) {
         for (;;) vTaskDelay(pdMS_TO_TICKS(1000));
     }
     jdb_embed_output_stdout(vm);
+    esp32_note_after_init();
 
     report("after init");
     printf("VM costs    internal %7d  psram %8d\r\n",

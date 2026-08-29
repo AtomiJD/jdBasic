@@ -15,7 +15,36 @@ void register_pico_httpd(VM& vm);
 void register_esp32_hw(VM& vm);
 void register_esp32_events(VM& vm);
 
+// This runs first inside VM::register_builtins, so the heap here is the
+// heap after the VM is constructed and before a single native exists.
+// SYS.NATIVES reads the difference back out.
+static size_t s_before_natives_int = 0;
+static size_t s_before_natives_psram = 0;
+
+// Called from app_main the moment the VM is built, so the difference is
+// registration and nothing else: no REPL line has been compiled yet.
+static size_t s_after_natives_int = 0;
+void esp32_note_after_init(void) {
+    s_after_natives_int = heap_caps_get_free_size(CAP_INT);
+}
+
 void register_esp32_builtins(VM& vm) {
+    s_before_natives_int = heap_caps_get_free_size(CAP_INT);
+    s_before_natives_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    vm.register_native("SYS.NATIVES", 0, 0, [&vm](const std::vector<Value>&) -> Value {
+        auto names = vm.native_names();
+        size_t text = 0;
+        for (const auto& n : names) text += n.size() + 1;
+        char buf[192];
+        snprintf(buf, sizeof buf,
+                 "%u natives, %u bytes of name, cost internal %d psram %d",
+                 (unsigned)names.size(), (unsigned)text,
+                 (int)s_before_natives_int - (int)s_after_natives_int,
+                 (int)s_before_natives_psram - (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        return Value::make_string(buf);
+    });
+
     register_esp32_fs(vm);
     register_esp32_wifi(vm);
     register_pico_httpd(vm);
