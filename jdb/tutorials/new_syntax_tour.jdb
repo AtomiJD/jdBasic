@@ -1,0 +1,60 @@
+' --- The four together: rendering a reply that may be incomplete ---
+'
+' Optional parameters, ??, ?. and $"..." were built for the same job:
+' turning data you did not write into output you can trust. This is what
+' they look like when they work as one.
+
+DIM raw$
+raw$ = "{""tickets"": [" + _
+       "{""id"": 298, ""title"": ""Builtin diet"", ""owner"": {""name"": ""ada""}, ""hours"": 4}," + _
+       "{""id"": 299, ""title"": ""Native NONE""}," + _
+       "{""id"": 300, ""title"": ""Silent codegen"", ""owner"": {""name"": ""grace""}, ""hours"": 0}" + _
+       "]}"
+
+DIM reply = JSON.PARSE$(raw$)
+
+' The renderer takes one required argument. Everything else has a default,
+' so the common call stays short and the rare call is still possible.
+
+FUNC Row$(ticket, tag$ = "td", unassigned$ = "nobody")
+    DIM id = ticket?{"id"} ?? 0
+    DIM title$ = ticket?{"title"} ?? "(untitled)"
+    DIM owner$ = ticket?{"owner"}?{"name"} ?? unassigned$
+    DIM hours = ticket?{"hours"} ?? -1
+
+    DIM budget$
+    IF hours < 0 THEN
+        budget$ = "unplanned"
+    ELSE
+        budget$ = $"{{hours}}h"
+    ENDIF
+
+    RETURN $"<tr id=""t-{{id}}""><{{tag$}}>{{title$}}</{{tag$}}>" + _
+           $"<{{tag$}}>{{owner$}}</{{tag$}}><{{tag$}}>{{budget$}}</{{tag$}}></tr>"
+ENDFUNC
+
+DIM tickets = reply{"tickets"}
+
+PRINT "<table>"
+FOR EACH t IN tickets
+    PRINT "  "; Row$(t)
+NEXT
+PRINT "</table>"
+PRINT
+
+' Note what did not have to be written: no test for a missing owner, no
+' guard around the nested name, no STR$ around a number, no + "" chain.
+' Ticket 299 has neither an owner nor an hours field and still renders.
+
+' The same data, the same function, a different shape.
+PRINT "the second ticket as a header row:"
+PRINT "  "; Row$(tickets[1], "th", "unclaimed")
+PRINT
+
+' And the failure that is still a failure. A guard says "absent", it does
+' not say "fine": the ninth ticket does not exist, and that is an error.
+TRY
+    PRINT Row$(tickets?[9])
+CATCH
+    PRINT "out of range : "; ERRMSG$
+ENDTRY

@@ -1,0 +1,42 @@
+' --- ?? : the left side unless it is absent ---
+
+DIM settings = { "port": 0, "host": "", "retries": 3 }
+
+' A key that is not there reads as NONE, and ?? names what to use then.
+PRINT "missing key   : "; settings{"timeout"} ?? 30
+
+' A key that is there keeps its value, whatever the value is. This is
+' where ?? differs from ORELSE: ORELSE asks whether something is true,
+' and would have replaced all three of these.
+PRINT "zero stays    : "; settings{"port"} ?? 8080
+PRINT "empty stays   : ["; settings{"host"} ?? "localhost"; "]"
+PRINT "three stays   : "; settings{"retries"} ?? 5
+PRINT
+
+' Compare, so the difference is on the screen rather than in a comment.
+PRINT "with ORELSE   : "; settings{"port"} ORELSE 8080
+PRINT
+
+' Fallbacks chain, right to left, and stop at the first one that is there.
+DIM a = {}
+PRINT "chained       : "; a{"x"} ?? a{"y"} ?? "last resort"
+PRINT
+
+' The right side is only evaluated when it is needed. This never divides.
+FUNC Boom(n)
+    PRINT "  (the right side ran)"
+    RETURN n
+ENDFUNC
+
+PRINT "present, so the fallback is skipped:"
+PRINT "  "; settings{"retries"} ?? Boom(99)
+PRINT "absent, so it runs:"
+PRINT "  "; settings{"nope"} ?? Boom(99)
+PRINT
+
+' Why it earns its keep: testing for absence by hand is a known trap,
+' because = NONE reads true for values that are not NONE at all. The
+' correct long form is TYPEOF(v) = "NONE", and ?? is shorter than both.
+DIM v = settings{"port"}
+PRINT "v = NONE says          : "; v = NONE
+PRINT "TYPEOF(v) = NONE says  : "; TYPEOF(v) = "NONE"

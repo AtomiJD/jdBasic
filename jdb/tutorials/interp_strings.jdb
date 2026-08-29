@@ -1,0 +1,45 @@
+' --- $"..." : a string with expressions in it ---
+
+DIM name$ = "world"
+DIM n = 3
+DIM items = [1, 2, 3]
+DIM row = { "id": 42, "title": "a thing" }
+
+' {{ }} is the same interpolation the template engine speaks, so the two
+' read alike. The $ prefix is what turns it on; without it a string is
+' a string, exactly as before.
+
+PRINT $"Hallo {{name$}}, du hast {{n}} Nachrichten"
+PRINT
+PRINT "the long way : " + name$ + " has " + STR$(n)
+PRINT "the short way: " + $"{{name$}} has {{n}}"
+PRINT
+
+' Anything can go between the braces, not only a name.
+PRINT $"arithmetic : {{n * 2 + 1}}"
+PRINT $"a call     : {{UCASE$(name$)}}"
+PRINT $"a fallback : {{row{""missing""} ?? 0}}"
+PRINT
+
+' Values render the way PRINT renders them, arrays and maps included.
+PRINT $"an array   : {{items}}"
+PRINT $"a map      : {{row}}"
+PRINT
+
+' The two jobs this exists for. Single braces stay text, which JSON
+' needs, and angle brackets never meant anything here, which HTML needs.
+
+DIM html$
+html$ = $"<tr id=""row-{{row{""id""}}}""><td>{{row{""title""}}}</td></tr>"
+PRINT "html : "; html$
+
+DIM body$
+body$ = $"{""id"": {{row{""id""}}}, ""title"": ""{{row{""title""}}}""}"
+PRINT "json : "; body$
+PRINT
+
+' Inside, the ordinary string rules hold, so a quote is doubled. That is
+' why a map access reads as {{row{""id""}}} rather than {{row{"id"}}}.
+
+' And a string with nothing to interpolate is just a string.
+PRINT $"nothing to substitute here"

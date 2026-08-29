@@ -1,0 +1,58 @@
+' --- ?. ?{ ?[ : reading into something that may not be there ---
+
+DIM reply = JSON.PARSE$("{""choices"": [{""message"": {""content"": ""hello""}}]}")
+
+' The good path needs no guard at all.
+PRINT "found       : "; reply{"choices"}[0]{"message"}{"content"}
+PRINT
+
+' A missing key already reads as NONE on its own. It is the step AFTER
+' that fails, and that is the one worth guarding.
+PRINT "unguarded, when the key is missing:"
+TRY
+    PRINT reply{"nope"}[0]
+CATCH
+    PRINT "  "; ERRMSG$
+ENDTRY
+PRINT
+
+' With the guard the chain stops instead, and the answer is absent.
+PRINT "guarded     : "; TYPEOF(reply?{"nope"}?[0]?{"message"})
+PRINT "and in the middle: "; TYPEOF(reply?{"choices"}?[0]?{"nope"}?{"deep"})
+PRINT
+
+' Which is why it is usually written together with ??.
+PRINT "the answer, or a stand-in:"
+PRINT "  "; reply?{"choices"}?[0]?{"message"}?{"content"} ?? "no answer"
+PRINT "  "; reply?{"error"}?{"message"} ?? "no answer"
+PRINT
+
+' Guard only the steps that can be absent. Where a step cannot fail,
+' leave it plain.
+PRINT "mixed       : "; reply?{"choices"}[0]{"message"}{"content"}
+PRINT
+
+' Two things the guard is not.
+
+' It is not a bounds check. The object is there, the index is wrong, and
+' a wrong index stays an error.
+PRINT "index out of range is still an error:"
+TRY
+    PRINT reply?{"choices"}?[9]
+CATCH
+    PRINT "  "; ERRMSG$
+ENDTRY
+PRINT
+
+' And it guards a field, not a method call: guarding the lookup would
+' still leave the call, and calling an absent thing is not a question
+' this operator can answer. `object?.Method(x)` is refused by the parser.
+
+' ?. works on the fields of a user type too.
+TYPE _Node
+    Label AS STRING
+ENDTYPE
+
+DIM n AS _Node
+n.Label = "here"
+PRINT "a field     : "; n?.Label

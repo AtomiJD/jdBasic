@@ -1,0 +1,52 @@
+' --- Optional parameters: a default for what the caller left out ---
+
+' Builtins have always taken optional arguments - SUM(a) and SUM(a, axis).
+' Now so do the functions you write.
+
+FUNC Greet(name$, greeting$ = "Hello", mark$ = ".")
+    RETURN greeting$ + ", " + name$ + mark$
+ENDFUNC
+
+PRINT Greet("world")
+PRINT Greet("world", "Moin")
+PRINT Greet("world", "Moin", "!")
+PRINT
+
+' Optional parameters come last, because arguments are matched left to
+' right: a required one behind an optional one could never be reached.
+' A default is a literal - a number, a string, TRUE or FALSE.
+
+SUB Note(message$, level = 1, prefix$ = "log")
+    PRINT prefix$; " ["; level; "] "; message$
+ENDSUB
+
+Note "started"
+Note "getting warm", 2
+Note "on fire", 3, "alarm"
+PRINT
+
+' For a default that has to be computed, pick a value the caller would
+' never pass and decide in the body. A function is declared before there
+' is any scope to evaluate an expression in.
+
+FUNC Bar$(label$, width = 0)
+    IF width <= 0 THEN width = LEN(label$) + 4
+    DIM out$
+    out$ = label$
+    DO WHILE LEN(out$) < width
+        out$ = out$ + "-"
+    LOOP
+    RETURN out$
+ENDFUNC
+
+PRINT Bar$("measured")
+PRINT Bar$("measured", 20)
+PRINT
+
+' A wrong count names the range it wanted.
+
+TRY
+    PRINT Greet()
+CATCH
+    PRINT "refused: "; ERRMSG$
+ENDTRY
