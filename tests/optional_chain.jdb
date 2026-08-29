@@ -1,0 +1,74 @@
+' ?. ?{ ?[ read into something that may not be there. If it is not, the
+' read does not happen and the answer is absent, so a chain stops rather
+' than faulting on the step after the one that came up empty.
+'
+' The shape this exists for is unpacking a reply: a key that is missing
+' reads as NONE on its own, and it is the *next* step that fails.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM r = JSON.PARSE$("{""choices"": [{""message"": {""content"": ""hi""}}], ""n"": 0}")
+
+' ── A guarded chain reads the same as an unguarded one ───────
+CHKS "unguarded good path", r{"choices"}[0]{"message"}{"content"}, "hi"
+CHKS "guarded good path", r?{"choices"}?[0]?{"message"}?{"content"}, "hi"
+
+' ── Absent at any point stops the chain ──────────────────────
+CHKS "absent at the front", TYPEOF(r?{"nope"}?[0]?{"message"}), "NONE"
+CHKS "absent in the middle", TYPEOF(r?{"choices"}?[0]?{"nope"}?{"deep"}), "NONE"
+CHKS "absent at the end", TYPEOF(r?{"choices"}?[0]?{"message"}?{"nope"}), "NONE"
+
+' ── Together with ??, which is what it is for ────────────────
+CHKS "chain then fallback", r?{"nope"}?[0]?{"message"} ?? "no answer", "no answer"
+CHKS "chain that found something", r?{"choices"}?[0]?{"message"}?{"content"} ?? "no answer", "hi"
+
+' A present value that happens to be falsy still stops nothing.
+CHK "zero survives the chain", r?{"n"} ?? 99, 0
+
+' ── The guard is only a guard ────────────────────────────────
+' Reading a key that is there behaves exactly as without it, including
+' the array step.
+CHKS "guarded array index", TYPEOF(r?{"choices"}?[0]), "OBJECT"
+
+' The guard is about the object being absent, not about an index being
+' wrong. Nine is out of range, and that stays an error.
+DIM oob
+oob = 0
+TRY
+    PRINT r?{"choices"}?[9]
+CATCH
+    oob = 1
+ENDTRY
+CHK "out of range is still an error", oob, 1
+
+' ── ?. on a field of a user type ─────────────────────────────
+TYPE _Node
+    Label AS STRING
+ENDTYPE
+
+DIM n AS _Node
+n.Label = "here"
+CHKS "guarded field", n?.Label, "here"
+
+' ── Mixed: guarded where it matters, plain where it cannot fail
+CHKS "mixed chain", r?{"choices"}[0]{"message"}{"content"}, "hi"
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF

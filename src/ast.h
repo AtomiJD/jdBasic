@@ -89,6 +89,10 @@ struct Expr {
     // compiler treats them like any other LITERAL_STRING; the module
     // rename pass uses the flag to namespace the referenced name.
     bool is_funcref_lit = false;
+    // Set on an INDEX or MEMBER_ACCESS written with ?. / ?{ / ?[ : if the
+    // thing being read into is absent, the access does not happen and the
+    // result is absent too, so a chain stops instead of faulting.
+    bool optional = false;
 
     // BINARY
     TokenType op = TokenType::PLUS;

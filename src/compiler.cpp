@@ -1371,6 +1371,19 @@ void Compiler::compile_expr(const Expr& expr) {
 
         case ExprKind::INDEX:
             compile_expr(*expr.left);
+            if (expr.optional) {
+                // Written with ?[ or ?{ : if there is nothing to read into,
+                // the read does not happen and the absence is the answer,
+                // which is what lets a chain stop instead of faulting.
+                current_chunk().emit(OpCode::DUP, expr.line);
+                size_t go = emit_jump(OpCode::JUMP_IF_NOT_NONE, expr.line);
+                size_t done = emit_jump(OpCode::JUMP, expr.line);
+                patch_jump(go);
+                compile_expr(*expr.right);
+                current_chunk().emit(OpCode::INDEX_GET, expr.line);
+                patch_jump(done);
+                break;
+            }
             compile_expr(*expr.right);
             current_chunk().emit(OpCode::INDEX_GET, expr.line);
             break;
@@ -1398,6 +1411,16 @@ void Compiler::compile_expr(const Expr& expr) {
             {
                 uint16_t name_idx = current_chunk().add_constant(
                     Value::make_string(expr.str_val));
+                if (expr.optional) {
+                    current_chunk().emit(OpCode::DUP, expr.line);
+                    size_t go = emit_jump(OpCode::JUMP_IF_NOT_NONE, expr.line);
+                    size_t done = emit_jump(OpCode::JUMP, expr.line);
+                    patch_jump(go);
+                    current_chunk().emit(OpCode::GET_FIELD, expr.line);
+                    current_chunk().emit_u16(name_idx, expr.line);
+                    patch_jump(done);
+                    break;
+                }
                 current_chunk().emit(OpCode::GET_FIELD, expr.line);
                 current_chunk().emit_u16(name_idx, expr.line);
             }

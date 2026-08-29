@@ -200,6 +200,42 @@ Both backends answer the same. A compiled map carries a tag per value
 and one of them means absent, so `TYPEOF` on a missing key is `NONE`
 whether the program was interpreted or compiled.
 
+
+### `?.` `?{` `?[` - read into something that may not be there
+
+```basic
+DIM r = JSON.PARSE$(reply$)
+
+PRINT r?{"choices"}?[0]?{"message"}?{"content"} ?? "no answer"
+```
+
+A missing key already reads as `NONE` on its own. What fails is the
+*next* step, and that is what these guard: if there is nothing to read
+into, the read does not happen and the answer is absent, so the chain
+stops instead of faulting.
+
+```basic
+r{"nope"}[0]      ' Cannot index into NONE
+r?{"nope"}?[0]    ' NONE
+```
+
+The `?` goes in front of the accessor and works with all three: `?.`
+for a field, `?{` for a key, `?[` for an index. Where a step cannot be
+absent you can leave it off - `r?{"choices"}[0]{"message"}` guards only
+the part that needs it.
+
+Two things it is not:
+
+* **Not a bounds check.** The guard is about the object being absent,
+  not about an index being wrong. `r?{"choices"}?[9]` on a one-element
+  array is still an error.
+* **Not for method calls.** `a?.Method(x)` is refused: guarding the
+  lookup would still leave the call, and calling an absent thing is not
+  a question `?.` can answer. Test the object first.
+
+It pairs with `??`, which is usually how it is written: guard the walk,
+then name what to use when the walk came up empty.
+
 ### Optional parameters
 
 A trailing parameter may carry a default, and a call that leaves it out

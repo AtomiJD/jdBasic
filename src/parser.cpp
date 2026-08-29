@@ -2624,6 +2624,18 @@ void Parser::module_rename_stmt(Stmt& stmt,
 ExprPtr Parser::parse_postfix(ExprPtr expr) {
     // Postfix chain: [idx], {key}, .field, .method(args)
     while (true) {
+        // A ? in front of an accessor makes it optional. The same token
+        // is the pipe placeholder, but that one stands where an
+        // expression begins and this one stands after one, so position
+        // tells them apart without either giving ground.
+        bool optional = false;
+        if (check(TokenType::PLACEHOLDER) &&
+            (peek_at(1).type == TokenType::LBRACKET ||
+             peek_at(1).type == TokenType::LBRACE ||
+             peek_at(1).type == TokenType::DOT)) {
+            advance();
+            optional = true;
+        }
         if (check(TokenType::LBRACKET) || check(TokenType::LBRACE)) {
             int ln = current().line;
             bool is_brace = check(TokenType::LBRACE);
@@ -2633,12 +2645,14 @@ ExprPtr Parser::parse_postfix(ExprPtr expr) {
             if (!is_brace && check(TokenType::COMMA)) {
                 while (match(TokenType::COMMA)) {
                     expr = make_index(std::move(expr), std::move(idx), ln);
+                    if (optional) { expr->optional = true; optional = false; }
                     idx = parse_expr();
                 }
             }
             if (is_brace) expect(TokenType::RBRACE, "'}'");
             else expect(TokenType::RBRACKET, "']'");
             expr = make_index(std::move(expr), std::move(idx), ln);
+            if (optional) expr->optional = true;
         }
         else if (check(TokenType::DOT)) {
             int ln = current().line;
@@ -2646,6 +2660,11 @@ ExprPtr Parser::parse_postfix(ExprPtr expr) {
             std::string field = advance().value; // accept any token as field
             // .method(args) → member access then call
             if (check(TokenType::LPAREN)) {
+                // Guarding the lookup would still leave the call, and
+                // calling an absent thing is not something ?. can answer.
+                if (optional)
+                    throw std::runtime_error("?. guards a field, not a method call - "
+                        "'" + field + "' is called here, so test the object first");
                 // First: get the member (creates the dispatch target)
                 auto member = std::make_unique<Expr>();
                 member->kind = ExprKind::MEMBER_ACCESS;
@@ -2674,6 +2693,7 @@ ExprPtr Parser::parse_postfix(ExprPtr expr) {
                 member->str_val = field;
                 member->left = std::move(expr);
                 member->line = ln;
+                member->optional = optional;
                 expr = std::move(member);
             }
         }
