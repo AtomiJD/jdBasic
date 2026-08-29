@@ -3898,7 +3898,7 @@ Description: A string with expressions in it, using the same {{ }} the template 
 
 [OPTIONAL PARAMETERS]
 Syntax: FUNC Name(required, optional = default) ... ENDFUNC
-Description: A trailing parameter may carry a default, and a call that leaves it out gets that value. Optional parameters come last, because arguments are matched left to right. A default is a literal - a number, a string, TRUE, FALSE or NONE - since a function is declared before any scope exists to evaluate one in; take NONE and decide in the body for a computed default. SUB takes them too, lambdas do not.
+Description: A trailing parameter may carry a default, and a call that leaves it out gets that value. Optional parameters come last, because arguments are matched left to right. A default is a literal - a number, a string, TRUE or FALSE - since a function is declared before any scope exists to evaluate one in. NONE is not one: it reads as absent only because an undeclared name does, which the interpreter allows and -c refuses. For a computed default pick a value the caller would never pass and decide in the body. SUB takes them too, lambdas do not.
 
 [GPIO.MODE]
 Syntax: GPIO.MODE(pin, is_output)

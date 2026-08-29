@@ -1208,7 +1208,7 @@ static void fill_param_defaults(FuncProto& proto, const std::vector<Param>& para
             case ExprKind::LITERAL_BOOL:   proto.defaults[i] = Value::make_bool(d->bool_val); break;
             default:
                 throw std::runtime_error("Default for parameter '" + params[i].name +
-                    "' must be a literal number, string, TRUE, FALSE or NONE");
+                    "' must be a literal number, string, TRUE or FALSE");
         }
     }
 }
