@@ -6237,10 +6237,23 @@ void VM::register_builtins() {
         // Slice the wait so events get polled while sleeping. Without this,
         // a tight `DO sleep 15 LOOP` could starve key/quit events for many
         // seconds - the periodic on_tick fires only every 2000 VM ticks.
+        //
+        // The slices are measured against a deadline rather than counted.
+        // Counting assumes a five-millisecond slice takes five
+        // milliseconds, and on Windows the default timer granularity is
+        // about 15.6 ms, so each one took three times its length and
+        // SLEEP 1000 waited 3.2 seconds. Against a deadline the loop just
+        // runs fewer, longer slices and the error stays inside one tick of
+        // whatever the platform's clock happens to be.
         const int slice_ms = 5;
-        int remaining = ms;
-        while (remaining > 0) {
-            int chunk = remaining > slice_ms ? slice_ms : remaining;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+        while (true) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) break;
+            const auto left =
+                std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
+            int chunk = left > slice_ms ? slice_ms : (int)left;
+            if (chunk <= 0) chunk = 1;
 #ifdef __EMSCRIPTEN__
             // Asyncify: hand control back to the browser so the canvas paints
             // and key/quit events are delivered, then resume here.
@@ -6248,7 +6261,6 @@ void VM::register_builtins() {
 #else
             std::this_thread::sleep_for(std::chrono::milliseconds(chunk));
 #endif
-            remaining -= chunk;
             if (on_tick) on_tick();
             if (!event_handlers.empty()) event_poll();
             if (is_halted) break; // event handler may have run END

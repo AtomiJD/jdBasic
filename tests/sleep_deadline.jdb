@@ -1,0 +1,62 @@
+' SLEEP waits against a deadline rather than counting slices. Counting
+' assumed a five-millisecond slice took five milliseconds; on Windows the
+' default timer granularity is about 15.6 ms, so every slice took three
+' times its length and SLEEP 1000 waited 3.2 seconds.
+'
+' The bounds here are deliberately loose. A sleep can only ever be late,
+' never early, and how late depends on the platform's timer: one tick of
+' it per slice, which is 15.6 ms on Windows and under a millisecond on
+' Linux. What the upper bounds catch is the old behaviour, which was a
+' multiple rather than an offset.
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM t0, took
+
+' 500 ms took about 1600 before the fix.
+t0 = TICK()
+SLEEP 500
+took = TICK() - t0
+CHK "SLEEP 500 is not early", took >= 450, TRUE
+CHK "SLEEP 500 is not a multiple", took < 1200, TRUE
+
+' 1000 took about 3200.
+t0 = TICK()
+SLEEP 1000
+took = TICK() - t0
+CHK "SLEEP 1000 is not early", took >= 950, TRUE
+CHK "SLEEP 1000 is not a multiple", took < 2000, TRUE
+
+' Zero and negative must return at once rather than loop.
+t0 = TICK()
+SLEEP 0
+CHK "SLEEP 0 returns", TICK() - t0 < 100, TRUE
+
+t0 = TICK()
+SLEEP -5
+CHK "SLEEP with a negative returns", TICK() - t0 < 100, TRUE
+
+' A run of short sleeps stays proportional. Each one still costs at
+' least one timer tick, so the total is bounded from below by the count
+' rather than by the sum, which is why the ceiling is generous.
+t0 = TICK()
+DIM i
+FOR i = 1 TO 20
+    SLEEP 10
+NEXT i
+took = TICK() - t0
+CHK "20 short sleeps are not early", took >= 180, TRUE
+CHK "20 short sleeps do not multiply", took < 1200, TRUE
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF
