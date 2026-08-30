@@ -1,0 +1,50 @@
+' A level meter. The bar follows the mean, the marker holds the peak,
+' and the board proves the microphone works by listening to its own
+' speaker: a tone sounds every few seconds and the bar jumps.
+
+SCREEN 320, 240
+GFX.CONSOLE 0
+MIC.GAIN 6
+PLAY.VOLUME 90
+
+DIM W = GFX.WIDTH
+DIM hold = 0
+DIM i = 0
+
+GFX.CLEAR 8, 10, 24
+DRAWCOLOR 255, 255, 255
+TEXT 10, 10, "microphone", 2
+TEXT 10, 210, "a tone every 4 seconds", 1
+SCREENFLIP
+
+DO
+    DIM m = MIC(60)
+    DIM peak = m[0]
+    DIM mean = m[1]
+
+    IF peak > hold THEN hold = peak
+    hold = hold - 1
+    IF hold < 0 THEN hold = 0
+
+    ' The meter strip, cleared and redrawn.
+    DRAWCOLOR 8, 10, 24
+    RECT 0, 90, W, 70, 1
+
+    DIM bar = mean * (W - 40) / 100
+    DRAWCOLOR 60, 220, 120
+    IF mean > 60 THEN DRAWCOLOR 240, 200, 60
+    IF mean > 85 THEN DRAWCOLOR 240, 80, 80
+    RECT 20, 100, bar, 40, 1
+
+    DIM hx = 20 + hold * (W - 40) / 100
+    DRAWCOLOR 255, 255, 255
+    RECT hx, 96, 3, 48, 1
+
+    DRAWCOLOR 90, 90, 120
+    RECT 20, 96, W - 40, 48, 0
+    SCREENFLIP
+
+    i = i + 1
+    IF i MOD 50 = 0 THEN BEEP 660, 400
+    SLEEP 20
+LOOP

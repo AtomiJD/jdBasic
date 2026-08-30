@@ -394,3 +394,32 @@ It is an ordinary GPIO: anything that writes it - a program, a probe -
 would otherwise leave the board silently muted until the next reset.
 That is not a hypothetical; it happened during bringup and sent the
 search after the wrong suspect.
+
+## The microphone
+
+The same codec the other way round, on the codec's own data-out line
+(IO6), reading through a second I2S channel on the same port. The codec
+is a slave and takes its clocks from the transmit side, which runs
+continuously, so the microphone has a clock whether or not anything is
+playing.
+
+`MIC ms` answers `[peak, mean]` over that window, both 0 to 100. Peak
+says whether something happened, mean how loud it is now - a clap
+detector wants the first, a level meter the second. `MIC.GAIN step`
+takes 0 to 7, six decibels apart.
+
+Two things it needed. The read timeout has to be generous: 200 ms was
+not enough to get the first block out of a freshly enabled channel, and
+the failure looks exactly like a dead microphone. And the first block
+after enabling holds whatever the DMA buffer held before, which reads as
+one loud spike out of silence, so it is drawn and thrown away.
+
+The board can check this one on its own, which is worth more than it
+sounds after a weekend of asking a human what he heard:
+
+    silence     peak 2   mean 0
+    TONE 880    peak 81  mean 48
+    silence     peak 1   mean 0
+
+`fs/vu.jdb` is a level meter that sounds a tone every few seconds, so it
+proves itself while you watch it.

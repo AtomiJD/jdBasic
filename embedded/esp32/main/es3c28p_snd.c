@@ -34,6 +34,7 @@
 extern int es3c28p_i2c_up(void);
 
 static i2s_chan_handle_t g_tx;
+static i2s_chan_handle_t g_rx;
 static es8311_handle_t g_codec;
 static int g_ready = 0;
 
@@ -92,7 +93,10 @@ static int snd_init(void) {
     i2s_chan_config_t cc = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
     cc.dma_desc_num = 4;
     cc.dma_frame_num = CHUNK;
-    if (i2s_new_channel(&cc, &g_tx, NULL) != ESP_OK) return -2;
+    // Both directions on one port: the codec is a slave and takes its
+    // clocks from the transmit side, which runs continuously, so the
+    // microphone has a clock whether or not anything is playing.
+    if (i2s_new_channel(&cc, &g_tx, &g_rx) != ESP_OK) return -2;
 
     i2s_std_config_t sc = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_HZ),
@@ -109,7 +113,9 @@ static int snd_init(void) {
     };
     sc.clk_cfg.mclk_multiple = I2S_MCLK_MULTIPLE_256;
     if (i2s_channel_init_std_mode(g_tx, &sc) != ESP_OK) return -3;
+    if (i2s_channel_init_std_mode(g_rx, &sc) != ESP_OK) return -3;
     if (i2s_channel_enable(g_tx) != ESP_OK) return -4;
+    if (i2s_channel_enable(g_rx) != ESP_OK) return -4;
 
     g_codec = es8311_create(I2C_NUM_0, ES8311_ADDRRES_0);
     if (!g_codec) return -5;
@@ -123,6 +129,8 @@ static int snd_init(void) {
     };
     if (es8311_init(g_codec, &clk, ES8311_RESOLUTION_16, ES8311_RESOLUTION_16) != ESP_OK)
         return -6;
+    es8311_microphone_config(g_codec, false);   // the analog one on the board
+    es8311_microphone_gain_set(g_codec, ES8311_MIC_GAIN_30DB);
     es8311_voice_mute(g_codec, false);
     es8311_voice_volume_set(g_codec, g_vol, NULL);
 
@@ -204,4 +212,64 @@ uint32_t jdb_snd_lock(void) {
 void jdb_snd_unlock(uint32_t saved) {
     (void)saved;
     portEXIT_CRITICAL(&g_note_lock);
+}
+
+// ── The microphone ───────────────────────────────────────────────────
+// The same codec the other way round. Reading blocks until the frames
+// arrive, which at this rate is the length of what was asked for, so a
+// caller decides how long it waits by how much it asks for.
+
+int es3c28p_mic_gain(int step) {
+    if (!g_ready && snd_init() != 0) return -1;
+    if (step < 0) step = 0;
+    if (step > 7) step = 7;
+    return es8311_microphone_gain_set(g_codec,
+               (es8311_mic_gain_t)(ES8311_MIC_GAIN_0DB + step)) == ESP_OK ? 0 : -2;
+}
+
+// Peak and mean magnitude over a window, both as 0 to 100. Peak answers
+// "did something happen", the mean "how loud is it now", and a level
+// meter wants the second while a clap detector wants the first.
+static int g_mic_primed = 0;
+
+int es3c28p_mic_level(int ms, int* peak, int* mean) {
+    *peak = *mean = 0;
+    if (!g_ready && snd_init() != 0) return -1;
+
+    // The first block after the channel is enabled holds whatever the DMA
+    // buffer held before, which reads as one loud spike out of silence.
+    if (!g_mic_primed) {
+        static int16_t junk[CHUNK * 2];
+        size_t got = 0;
+        i2s_channel_read(g_rx, junk, sizeof junk, &got, pdMS_TO_TICKS(1000));
+        g_mic_primed = 1;
+    }
+    if (ms < 1) ms = 1;
+    if (ms > 500) ms = 500;
+
+    int frames = SAMPLE_HZ * ms / 1000;
+    static int16_t buf[CHUNK * 2];
+    int32_t hi = 0;
+    int64_t sum = 0;
+    int counted = 0;
+
+    while (counted < frames) {
+        size_t got = 0;
+        esp_err_t e = i2s_channel_read(g_rx, buf, sizeof buf, &got,
+                                       pdMS_TO_TICKS(1000));
+        if (e != ESP_OK) return -(int)e;
+        int n = (int)(got / 2);
+        for (int i = 0; i < n; i += 2) {          // the left channel only
+            int32_t v = buf[i];
+            if (v < 0) v = -v;
+            if (v > hi) hi = v;
+            sum += v;
+            counted++;
+        }
+        if (got == 0) break;
+    }
+    if (counted == 0) return -3;
+    *peak = (int)(hi * 100 / 32768);
+    *mean = (int)((sum / counted) * 100 / 32768);
+    return 0;
 }

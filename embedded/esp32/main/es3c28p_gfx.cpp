@@ -37,6 +37,8 @@ int  es3c28p_touch_raw(int* n, int* x, int* y);
 int  es3c28p_touch_read(int* n, int* x, int* y);
 int  es3c28p_snd_start(void);
 int  es3c28p_snd_ready(void);
+int  es3c28p_mic_level(int ms, int* peak, int* mean);
+int  es3c28p_mic_gain(int step);
 void picocalc_snd_tone(int freq);
 void picocalc_snd_beep(int freq, int ms);
 void picocalc_snd_volume(int pct);
@@ -179,6 +181,24 @@ void register_es3c28p_gfx(VM& vm) {
         es3c28p_lcd_diag(&sent, &failed, &last);
         return rgb_value(sent, failed, last);
     });
+    // The microphone, the same codec the other way round. MIC answers
+    // [peak, mean] over a window in milliseconds, both 0 to 100.
+    vm.register_native("MIC", 0, 1, [](const std::vector<Value>& args) -> Value {
+        int ms = args.size() >= 1 ? (int)args[0].to_double() : 50;
+        int peak, mean;
+        int rc = es3c28p_mic_level(ms, &peak, &mean);
+        if (rc != 0)
+            throw std::runtime_error("the microphone did not answer (" +
+                                     std::to_string(rc) + ")");
+        return rgb_value(peak, mean, 0);
+    });
+    // Eight steps of six decibels, 0 to 7.
+    vm.register_native("MIC.GAIN", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (es3c28p_mic_gain((int)args[0].to_double()) != 0)
+            throw std::runtime_error("the microphone did not take that gain");
+        return Value();
+    });
+
     // The touch screen. TOUCH answers [count, x, y] in screen coordinates,
     // TOUCH.RAW the controller's own portrait numbers, so a mapping can be
     // argued with a finger instead of an assumption.
