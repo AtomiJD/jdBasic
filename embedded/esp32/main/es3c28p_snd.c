@@ -14,6 +14,7 @@
 #include "freertos/task.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
+#include "esp_timer.h"
 #include "es8311.h"
 
 #define PIN_EN    1        // low enables the amplifier
@@ -165,3 +166,42 @@ void picocalc_snd_beep(int freq, int ms) {
 int es3c28p_snd_ready(void) { return g_ready; }
 
 int es3c28p_snd_start(void) { return snd_init(); }
+
+// The melody engine's timer and lock. A one-shot esp_timer ends the note
+// and a spinlock guards the hand-over, which is the same shape as the
+// RP2350's alarm and interrupt mask - only the words differ.
+
+extern void jdb_snd_note_due(void);
+
+static esp_timer_handle_t g_note_timer;
+static portMUX_TYPE g_note_lock = portMUX_INITIALIZER_UNLOCKED;
+
+static void note_timer_cb(void* arg) {
+    (void)arg;
+    jdb_snd_note_due();
+}
+
+void jdb_snd_timer_start(int ms) {
+    if (!g_note_timer) {
+        esp_timer_create_args_t a = {0};
+        a.callback = note_timer_cb;
+        a.name = "note";
+        if (esp_timer_create(&a, &g_note_timer) != ESP_OK) return;
+    }
+    esp_timer_stop(g_note_timer);
+    esp_timer_start_once(g_note_timer, (uint64_t)(ms > 0 ? ms : 1) * 1000);
+}
+
+void jdb_snd_timer_cancel(void) {
+    if (g_note_timer) esp_timer_stop(g_note_timer);
+}
+
+uint32_t jdb_snd_lock(void) {
+    portENTER_CRITICAL(&g_note_lock);
+    return 0;
+}
+
+void jdb_snd_unlock(uint32_t saved) {
+    (void)saved;
+    portEXIT_CRITICAL(&g_note_lock);
+}

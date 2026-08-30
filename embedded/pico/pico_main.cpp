@@ -13,6 +13,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include "pico/stdlib.h"
+#include "hardware/sync.h"
 #include "pico/stdio.h"
 #include "pico/stdio/driver.h"
 #include "pico/stdio_usb.h"
@@ -64,6 +65,7 @@ static stdio_driver_t pc_driver = {
 #define K_END   0xD5
 
 extern "C" int repl_read_key(void);
+extern "C" void jdb_snd_note_due(void);
 void pico_help(const char* topic);
 void syntax_print(const char* s, int n);
 
@@ -279,6 +281,27 @@ extern "C" void jdb_con_size(int* cols, int* rows) {
     *cols = 40;
     *rows = 40;
 }
+
+// The melody engine's timer and lock, in SDK terms.
+static alarm_id_t g_note_alarm = 0;
+
+static int64_t note_alarm_cb(alarm_id_t, void*) {
+    g_note_alarm = 0;
+    jdb_snd_note_due();
+    return 0;
+}
+
+extern "C" void jdb_snd_timer_start(int ms) {
+    if (g_note_alarm) cancel_alarm(g_note_alarm);
+    g_note_alarm = add_alarm_in_ms(ms > 0 ? ms : 1, note_alarm_cb, nullptr, true);
+}
+
+extern "C" void jdb_snd_timer_cancel(void) {
+    if (g_note_alarm) { cancel_alarm(g_note_alarm); g_note_alarm = 0; }
+}
+
+extern "C" uint32_t jdb_snd_lock(void) { return save_and_disable_interrupts(); }
+extern "C" void jdb_snd_unlock(uint32_t saved) { restore_interrupts(saved); }
 
 extern "C" int repl_read_key(void) {
     int c = getchar();

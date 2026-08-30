@@ -1,7 +1,10 @@
-// PLAY: a melody in the background. An alarm hands the next note to the
+// PLAY: a melody in the background. A timer hands the next note to the
 // speaker when the current one is up, so the program keeps running while
 // it sounds. Notes are parsed at safe points into a small ring; the
-// alarm only consumes it, never parses.
+// timer only consumes it, never parses.
+//
+// Shared by both boards. Only the timer and the lock are the platform's;
+// everything else here is arithmetic over a string.
 //
 // The string is the classic BASIC one:
 //   A-G      note, with # or + for sharp, - for flat
@@ -12,10 +15,19 @@
 //   .        after a note, hold it half again as long
 
 #include "../../src/vm.h"
-#include "pico/stdlib.h"
-#include "hardware/sync.h"
 #include <string>
 #include <cstring>
+#include <cctype>
+#include <cstdint>
+
+// What a board has to bring. The score, the ring and the note maths are
+// arithmetic over a string and belong to nobody in particular; the timer
+// that ends a note and the lock that guards the decision are the only
+// parts a platform owns.
+extern "C" void     jdb_snd_timer_start(int ms);   // then call jdb_snd_note_due
+extern "C" void     jdb_snd_timer_cancel(void);
+extern "C" uint32_t jdb_snd_lock(void);
+extern "C" void     jdb_snd_unlock(uint32_t saved);
 
 extern "C" void picocalc_snd_tone(int freq);
 extern "C" void picocalc_snd_volume(int pct);
@@ -27,7 +39,7 @@ struct Note { uint16_t freq; uint16_t ms; };
 static Note g_ring[NOTE_RING];
 static volatile uint8_t g_head = 0, g_tail = 0;
 static volatile bool g_running = false;
-static alarm_id_t g_alarm = 0;
+static volatile bool g_armed = false;
 
 static std::string g_score;
 static size_t g_cursor = 0;
@@ -125,32 +137,36 @@ static void score_fill() {
     }
 }
 
-static int64_t note_alarm(alarm_id_t, void*) {
+// The note that was playing is over: take the next one, or fall silent.
+// The port calls this from whatever its timer is.
+extern "C" void jdb_snd_note_due(void) {
     if (g_tail == g_head) {
         picocalc_snd_tone(0);
         g_running = false;
-        g_alarm = 0;
-        return 0;
+        g_armed = false;
+        return;
     }
     Note n = g_ring[g_tail];
     g_tail = ring_next(g_tail);
     picocalc_snd_tone(n.freq);
-    return -(int64_t)n.ms * 1000;
+    g_armed = true;
+    jdb_snd_timer_start(n.ms);
 }
 
-// Start the alarm if the queue has work and nothing is driving it.
-// Interrupts off for the decision: the alarm clears g_running when it
-// finds the ring empty, and that must not race with a fresh PLAY.
+// Start the timer if the queue has work and nothing is driving it. The
+// decision is locked: the timer clears g_running when it finds the ring
+// empty, and that must not race with a fresh PLAY.
 static void snd_kick() {
-    uint32_t save = save_and_disable_interrupts();
+    uint32_t save = jdb_snd_lock();
     bool idle = !g_running && g_tail != g_head;
     if (idle) g_running = true;
-    restore_interrupts(save);
-    if (idle) g_alarm = add_alarm_in_ms(1, note_alarm, nullptr, true);
+    jdb_snd_unlock(save);
+    if (idle) jdb_snd_timer_start(1);
 }
 
 static void snd_reset() {
-    if (g_alarm) { cancel_alarm(g_alarm); g_alarm = 0; }
+    jdb_snd_timer_cancel();
+    g_armed = false;
     g_running = false;
     g_head = g_tail = 0;
     g_score.clear();

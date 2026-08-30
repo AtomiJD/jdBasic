@@ -358,10 +358,20 @@ into an amplifier whose enable line is GPIO 1, low to enable.
     MCLK 4   BCLK 5   LRCK 7   codec-in 8   codec-out 6   enable 1
 
 `BEEP freq, ms`, `TONE freq`, `TONE 0` or `PLAY.STOP` to stop, and
-`PLAY.VOLUME pct`. The names are the RP2350's, so a program that beeps
-reads the same on either board. `PLAY` with a score is not here yet: the
-PicoCalc's melody engine hangs off the Pico SDK's alarm timer, and that
-wants a proper port rather than a copy.
+`PLAY.VOLUME pct`, and `PLAY` with a score in the classic BASIC
+notation - A-G with # + or -, O for the octave, < and > to step it, L
+for the length, T for the tempo, P or R for a rest, . to dot a note.
+The names are the RP2350's, so a program that beeps reads the same on
+either board, and `fs/tune.jdb` plays one.
+
+The score engine is `../../pico/pico_sound.cpp`, shared rather than
+copied. Of its two hundred lines exactly four things belonged to the
+Pico SDK - the timer that ends a note, its cancel, and a critical
+section - so those became `jdb_snd_timer_start`, `jdb_snd_timer_cancel`,
+`jdb_snd_lock` and `jdb_snd_unlock`, which each board fills in. Here
+that is a one-shot esp_timer and a spinlock; there it is an alarm and
+the interrupt mask. The parser, the note ring and the frequency
+arithmetic are the same file on both.
 
 Three things this cost, all of them worth writing down.
 

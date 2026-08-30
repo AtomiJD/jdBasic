@@ -1,0 +1,26 @@
+' The score is the classic BASIC one: A-G with # + or - , O for the
+' octave, < and > to step it, L for the default length, T for the tempo,
+' P or R for a rest, and . to hold a note half again as long.
+
+SCREEN 320, 240
+GFX.CONSOLE 1
+PLAY.VOLUME 85
+
+PRINT "a scale"
+PLAY "T140 O4 CDEFGAB>C"
+DO WHILE PLAY.BUSY
+    SLEEP 50
+LOOP
+
+PRINT "and a tune - the program keeps running while it sounds"
+PLAY "T120 O4 L8 EEE4 EEE4 EGC.D16E2 FFF.F16FEEE EDDED4G4"
+
+DIM dots = 0
+DO WHILE PLAY.BUSY
+    PRINT ".";
+    dots = dots + 1
+    SLEEP 200
+LOOP
+
+PRINT ""
+PRINT "done after "; dots; " ticks"

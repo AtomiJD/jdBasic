@@ -16,6 +16,10 @@ idf_component_register(
         "es3c28p_i2c.c"
         "es3c28p_snd.c"
         "es8311_vendor.c"
+        # The score engine behind PLAY: a parser, a ring and note arithmetic.
+        # Only its timer and lock are the platform's, and those live in
+        # es3c28p_snd.c here and in pico_main.cpp there.
+        "../../pico/pico_sound.cpp"
         "es3c28p_gfx.cpp"
         "esp32_stubs.cpp"
         # Colouring one line of jdBasic is the same job on both boards and
