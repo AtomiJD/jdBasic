@@ -294,9 +294,27 @@ Three settings that only the panel in front of you can decide:
 - The orientation bit puts the long edge across, so it is 320 by 240.
 
 `GFX.DIAG` answers with the transfers attempted, the transfers refused
-and the last reason. `GFX.PANELID` asks the panel who it is; an ILI9341
-should say 0, 147, 65. It does not answer yet, and the read path is
-still to be sorted out - it is diagnosis, not drawing.
+and the last reason.
+
+Reading back works, and it took measuring rather than reasoning. The
+panel does answer over MISO - `GFX.PANELSTATE` returns the power mode
+from 0x0A, and a live display reports 0x9C: booster on, sleep out,
+normal mode, display on. What it does not answer is its identity: the ID
+registers at 0x04 and 0xD3 read back as zeros on this panel, so a check
+against the datasheet 0x00 0x93 0x41 fails on perfectly good hardware.
+That is what the first attempt was checking, and why it looked dead.
+
+`GFX.READBACK x, y` reads one pixel out of the panel's own memory. The
+answer is one dummy byte and then six bits a channel, which five known
+screens settled: red gives 0, 252, 0, 0 and blue gives 0, 0, 0, 252, so
+the dummy is real and the order is plain RGB whatever the BGR bit in
+MADCTL says. It agrees with `GFX.PEEK` within the quantisation between
+the framebuffer's 5-6-5 and the panel's 6-6-6 - 248 against 252 on the
+red and blue channels, exact on green.
+
+`GFX.PANELREG cmd, n` and `GFX.PANELREGAT cmd, x, y, n` hand back the raw
+bytes of any read command. They are what turned this from guesswork into
+a table.
 
 ## The console and the editor
 

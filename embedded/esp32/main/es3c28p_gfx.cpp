@@ -27,7 +27,9 @@ void es3c28p_lcd_clear(void);
 void es3c28p_lcd_flip(void);
 void es3c28p_lcd_peek(int x, int y, int* r, int* g, int* b);
 int  es3c28p_lcd_readback(int x, int y, int* r, int* g, int* b);
-int  es3c28p_lcd_panel_id(int* a, int* b, int* c);
+int  es3c28p_lcd_panel_state(int* mode, int* awake, int* displaying);
+int  es3c28p_lcd_reg(int cmd, unsigned char* out, int n);
+int  es3c28p_lcd_reg_at(int cmd, int x, int y, unsigned char* out, int n);
 int  es3c28p_con_enable(int on);
 void es3c28p_con_size(int* cols, int* rows);
 int  es3c28p_touch_init(void);
@@ -255,16 +257,44 @@ void register_es3c28p_gfx(VM& vm) {
             throw std::runtime_error("the touch controller did not answer");
         return rgb_value(c, v, 0);
     });
-    // The panel says who it is: an ILI9341 answers 0, 147, 65. The one
-    // read with an answer the datasheet already knows.
-    vm.register_native("GFX.PANELID", 0, 0, [](const std::vector<Value>&) -> Value {
-        need_panel("GFX.PANELID");
-        int a, b, c;
-        int rc = es3c28p_lcd_panel_id(&a, &b, &c);
+    // The raw bytes a read command answers with, up to eight.
+    vm.register_native("GFX.PANELREG", 1, 2, [](const std::vector<Value>& args) -> Value {
+        need_panel("GFX.PANELREG");
+        int n = args.size() >= 2 ? (int)args[1].to_double() : 5;
+        unsigned char buf[8];
+        int rc = es3c28p_lcd_reg((int)args[0].to_double(), buf, n);
         if (rc != 0)
             throw std::runtime_error("the panel did not answer (" +
                                      std::to_string(rc) + ")");
-        return rgb_value(a, b, c);
+        Value arr = Value::make_array();
+        for (int i = 0; i < n; i++)
+            arr.as_array()->elements.push_back(Value::make_i64(buf[i]));
+        return arr;
+    });
+    // The same, at one pixel, so a memory read can be seen raw.
+    vm.register_native("GFX.PANELREGAT", 3, 4, [](const std::vector<Value>& args) -> Value {
+        need_panel("GFX.PANELREGAT");
+        int n = args.size() >= 4 ? (int)args[3].to_double() : 5;
+        unsigned char buf[8];
+        int rc = es3c28p_lcd_reg_at((int)args[0].to_double(), (int)args[1].to_double(),
+                                    (int)args[2].to_double(), buf, n);
+        if (rc != 0)
+            throw std::runtime_error("the panel did not answer");
+        Value arr = Value::make_array();
+        for (int i = 0; i < n; i++)
+            arr.as_array()->elements.push_back(Value::make_i64(buf[i]));
+        return arr;
+    });
+    // The panel says who it is: an ILI9341 answers 0, 147, 65. The one
+    // read with an answer the datasheet already knows.
+    vm.register_native("GFX.PANELSTATE", 0, 0, [](const std::vector<Value>&) -> Value {
+        need_panel("GFX.PANELSTATE");
+        int mode, awake, displaying;
+        int rc = es3c28p_lcd_panel_state(&mode, &awake, &displaying);
+        if (rc != 0)
+            throw std::runtime_error("the panel did not answer (" +
+                                     std::to_string(rc) + ")");
+        return rgb_value(mode, awake, displaying);
     });
     // What the panel holds at a point, read back over MISO. Not the same
     // question as GFX.PEEK: this one crosses the wire, so it answers

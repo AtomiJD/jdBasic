@@ -371,18 +371,50 @@ void es3c28p_lcd_text(int x, int y, const char* s, int scale) {
     }
 }
 
-// The panel's own identification, which has a known answer: an ILI9341
-// says 0x00 0x93 0x41. It is the one read whose result can be checked
-// against the datasheet rather than against what this driver believes it
-// drew.
-int es3c28p_lcd_panel_id(int* a, int* b, int* c) {
-    uint8_t rx[4] = {0, 0, 0, 0};
-    *a = *b = *c = -1;
+// Raw bytes from any read command, for finding out what the wire is
+// actually carrying. esp_lcd sends the command and reads straight after
+// it with no dummy clock, and the ILI9341 asks for one, so what arrives
+// may be the truth shifted by a bit - which is worth looking at rather
+// than guessing about.
+int es3c28p_lcd_reg(int cmd, uint8_t* out, int n) {
     if (!g_ready) return -1;
-    esp_err_t e = esp_lcd_panel_io_rx_param(g_io, 0x04, rx, 4);
+    if (n < 1) return -3;
+    if (n > 8) return -3;
+    memset(out, 0, n);
+    esp_err_t e = esp_lcd_panel_io_rx_param(g_io, cmd, out, n);
+    note(e);
+    return e == ESP_OK ? 0 : -2;
+}
+
+// The same, after pointing the panel at one pixel, so a memory read can
+// be looked at raw while the answer's shape is still being worked out.
+int es3c28p_lcd_reg_at(int cmd, int x, int y, uint8_t* out, int n) {
+    if (!g_ready) return -1;
+    if (n < 1) return -3;
+    if (n > 8) return -3;
+    uint8_t w[4];
+    w[0] = x >> 8; w[1] = x & 0xFF; w[2] = x >> 8; w[3] = x & 0xFF;
+    cmd_p(0x2A, w, 4);
+    w[0] = y >> 8; w[1] = y & 0xFF; w[2] = y >> 8; w[3] = y & 0xFF;
+    cmd_p(0x2B, w, 4);
+    return es3c28p_lcd_reg(cmd, out, n);
+}
+
+// What the panel says about itself. Not its identity: the ID registers
+// (0x04 and 0xD3) read back as zeros on this one, so a check against
+// 0x00 0x93 0x41 would fail on a perfectly good panel. The power mode at
+// 0x0A does answer, and answers something checkable - a live display
+// reports 0x9C, which is booster on, sleep out, normal mode, display on.
+int es3c28p_lcd_panel_state(int* mode, int* awake, int* displaying) {
+    uint8_t rx[2] = {0, 0};
+    *mode = *awake = *displaying = -1;
+    if (!g_ready) return -1;
+    esp_err_t e = esp_lcd_panel_io_rx_param(g_io, 0x0A, rx, 2);
     note(e);
     if (e != ESP_OK) return -2;
-    *a = rx[0]; *b = rx[1]; *c = rx[2];
+    *mode = rx[0];
+    *awake = (rx[0] & 0x10) ? 1 : 0;
+    *displaying = (rx[0] & 0x04) ? 1 : 0;
     return 0;
 }
 
@@ -398,10 +430,14 @@ int es3c28p_lcd_readback(int x, int y, int* r, int* g, int* b) {
     w[0] = y >> 8; w[1] = y & 0xFF; w[2] = y >> 8; w[3] = y & 0xFF;
     cmd_p(0x2B, w, 4);
 
+    // One dummy byte, then six bits a channel left-aligned in a byte.
+    // Measured against five known screens: red answers 0, 252, 0, 0 and
+    // blue answers 0, 0, 0, 252, so the dummy is real and the order is
+    // plain RGB regardless of the BGR bit in MADCTL.
     uint8_t rx[4] = {0, 0, 0, 0};
     esp_err_t e = esp_lcd_panel_io_rx_param(g_io, 0x2E, rx, 4);
     note(e);
     if (e != ESP_OK) return -2;
-    *r = rx[0]; *g = rx[1]; *b = rx[2];
+    *r = rx[1]; *g = rx[2]; *b = rx[3];
     return 0;
 }
