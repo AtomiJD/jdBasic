@@ -423,3 +423,21 @@ sounds after a weekend of asking a human what he heard:
 
 `fs/vu.jdb` is a level meter that sounds a tone every few seconds, so it
 proves itself while you watch it.
+
+## The card
+
+SDIO with four data lines, not SPI with one: CLK 38, CMD 40, D0 to D3 on
+39, 41, 48 and 47. `SD.MOUNT` answers the size in megabytes, `SD.INFO`
+gives name, megabytes and the bus width the card actually negotiated,
+and `SD.UNMOUNT` lets go.
+
+It mounts at `/sd`. The flash store owns the empty prefix and is the
+fallback for every path that matches no other mount, so a bare name
+still means flash and only a path that says `/sd` reaches the card.
+Everything else follows from that: `COPY hello.jdb /sd/hello.jdb`,
+`DIR "/sd"`, `RUN "/sd/hello.jdb"`.
+
+A card that will not mount is not formatted. `format_if_mount_failed` is
+off, because a card that refuses is a card to look at, not one to erase.
+
+Measured on a 4 GB card: 3770 MB, four lines negotiated.

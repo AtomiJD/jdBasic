@@ -8451,6 +8451,18 @@ void VM::register_builtins() {
         bool extended = (args.size() >= 2) ? args[1].to_bool() : false;
         Value result = Value::make_array();
 #if defined(_WIN32)
+        // A name that is a directory lists that directory, the same as it
+        // does on the other platforms. Without this the call answers with
+        // the directory's own entry, which is a different question than
+        // the one anybody asks.
+        if (!pattern.empty() && pattern.find_first_of("*?") == std::string::npos) {
+            DWORD at = GetFileAttributesA(pattern.c_str());
+            if (at != INVALID_FILE_ATTRIBUTES && (at & FILE_ATTRIBUTE_DIRECTORY)) {
+                char last = pattern[pattern.size() - 1];
+                if (last != '\\' && last != '/') pattern += "\\";
+                pattern += "*";
+            }
+        }
         WIN32_FIND_DATAA fd;
         HANDLE hFind = FindFirstFileA(pattern.c_str(), &fd);
         if (hFind != INVALID_HANDLE_VALUE) {
@@ -8493,9 +8505,20 @@ void VM::register_builtins() {
 #else
         std::string dir_part = ".", base_pat = pattern;
 #endif
-        size_t sl = pattern.find_last_of('/');
-        if (sl != std::string::npos) { dir_part = pattern.substr(0, sl); base_pat = pattern.substr(sl + 1); }
-        if (base_pat.empty()) base_pat = "*";
+        // A name that is a directory lists that directory. Splitting it at
+        // the last slash instead would look for a file called "sd" in the
+        // root, find nothing, and report an empty listing - which reads as
+        // "the directory is empty" rather than "you meant something else".
+        struct stat dst;
+        if (!pattern.empty() && pattern.find_first_of("*?") == std::string::npos &&
+            stat(pattern.c_str(), &dst) == 0 && S_ISDIR(dst.st_mode)) {
+            dir_part = pattern;
+            base_pat = "*";
+        } else {
+            size_t sl = pattern.find_last_of('/');
+            if (sl != std::string::npos) { dir_part = pattern.substr(0, sl); base_pat = pattern.substr(sl + 1); }
+            if (base_pat.empty()) base_pat = "*";
+        }
         DIR* d = opendir(dir_part.c_str());
         if (d) {
             struct dirent* de;

@@ -1,0 +1,37 @@
+' DIR$ with a name that is a directory lists that directory. Splitting
+' it at the last slash instead would look for a file of that name in the
+' parent, find nothing, and answer with an empty list - which reads as
+' "the directory is empty" rather than "you meant something else".
+
+DIM fails = 0
+
+SUB CHK(what$, got, want)
+    IF got <> want THEN
+        PRINT "FAIL: "; what$; " = "; got; ", expected "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+' tests/ holds this file, so a listing of it is never empty.
+DIM here = DIR$("tests")
+CHK "a directory name lists it", LEN(here) > 1, TRUE
+
+' The trailing slash and the explicit glob have always worked; the bare
+' name has to agree with them.
+DIM slash = DIR$("tests/")
+DIM glob = DIR$("tests/*")
+CHK "trailing slash agrees", LEN(here) = LEN(slash), TRUE
+CHK "explicit glob agrees", LEN(here) = LEN(glob), TRUE
+
+' A pattern is still a pattern, and a plain file is still itself.
+DIM one = DIR$("tests/dir_of_directory.jdb")
+CHK "a file names itself", LEN(one) = 1, TRUE
+
+DIM none = DIR$("tests/no_such_thing_here")
+CHK "a name that is nothing lists nothing", LEN(none) = 0, TRUE
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "RESULTS: "; fails; " failed"
+ENDIF

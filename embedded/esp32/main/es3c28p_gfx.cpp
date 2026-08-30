@@ -39,6 +39,10 @@ int  es3c28p_snd_start(void);
 int  es3c28p_snd_ready(void);
 int  es3c28p_mic_level(int ms, int* peak, int* mean);
 int  es3c28p_mic_gain(int step);
+int  es3c28p_sd_mount(void);
+int  es3c28p_sd_unmount(void);
+int  es3c28p_sd_mounted(void);
+int  es3c28p_sd_info(char* name, int cap, int* mb, int* width);
 void picocalc_snd_tone(int freq);
 void picocalc_snd_beep(int freq, int ms);
 void picocalc_snd_volume(int pct);
@@ -181,6 +185,31 @@ void register_es3c28p_gfx(VM& vm) {
         es3c28p_lcd_diag(&sent, &failed, &last);
         return rgb_value(sent, failed, last);
     });
+    // The card. It mounts at /sd; a bare name still means the flash store.
+    vm.register_native("SD.MOUNT", 0, 0, [](const std::vector<Value>&) -> Value {
+        int rc = es3c28p_sd_mount();
+        if (rc != 0)
+            throw std::runtime_error("no card (" + std::to_string(rc) + ")");
+        char name[24]; int mb, width;
+        es3c28p_sd_info(name, sizeof name, &mb, &width);
+        return Value::make_i64(mb);
+    });
+    vm.register_native("SD.UNMOUNT", 0, 0, [](const std::vector<Value>&) -> Value {
+        es3c28p_sd_unmount();
+        return Value();
+    });
+    // Name, megabytes and the bus width the card actually negotiated.
+    vm.register_native("SD.INFO", 0, 0, [](const std::vector<Value>&) -> Value {
+        char name[24]; int mb = 0, width = 0;
+        if (es3c28p_sd_info(name, sizeof name, &mb, &width) != 0)
+            throw std::runtime_error("no card mounted");
+        Value arr = Value::make_array();
+        arr.as_array()->elements.push_back(Value::make_string(name));
+        arr.as_array()->elements.push_back(Value::make_i64(mb));
+        arr.as_array()->elements.push_back(Value::make_i64(width));
+        return arr;
+    });
+
     // The microphone, the same codec the other way round. MIC answers
     // [peak, mean] over a window in milliseconds, both 0 to 100.
     vm.register_native("MIC", 0, 1, [](const std::vector<Value>& args) -> Value {
