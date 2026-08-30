@@ -1,0 +1,28 @@
+' The card. It mounts at /sd; a bare name still means the flash store,
+' so the two live side by side without a working directory to confuse.
+
+SCREEN 320, 240
+GFX.CONSOLE 1
+
+DIM mb = SD.MOUNT
+PRINT "card mounted, "; mb; " MB"
+
+DIM info = SD.INFO
+PRINT "name "; info[0]; "  width "; info[2]; " lines"
+PRINT
+
+TXTWRITER("/sd/note.txt", "written by jdBasic on the ESP32-S3")
+PRINT "wrote  : /sd/note.txt"
+PRINT "read   : "; TXTREADER$("/sd/note.txt")
+PRINT
+
+PRINT "on the card:"
+DIM names = DIR$("/sd")
+DIM i
+FOR i = 0 TO LEN(names) - 1
+    PRINT "  "; names[i]
+NEXT
+PRINT
+
+PRINT "and the flash store is still the bare name:"
+PRINT "  hello.jdb is "; LEN(TXTREADER$("hello.jdb")); " bytes"

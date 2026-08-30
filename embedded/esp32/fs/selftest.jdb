@@ -1,0 +1,85 @@
+' Every part of the board, checked against something other than its own
+' opinion. The panel is read back over its own wire, the microphone
+' listens to the speaker, and the card is written and read again. What
+' cannot be checked without a person says so instead of claiming a pass.
+
+SCREEN 320, 240
+GFX.CONSOLE 1
+
+DIM passed = 0
+DIM failed = 0
+
+SUB CHK(what$, ok)
+    IF ok THEN
+        PRINT CHR$(27); "[92mok  "; CHR$(27); "[0m"; what$
+        passed = passed + 1
+    ELSE
+        PRINT CHR$(27); "[91mFAIL"; CHR$(27); "[0m "; what$
+        failed = failed + 1
+    ENDIF
+ENDSUB
+
+PRINT "jdBasic on the ES3C28P"
+PRINT
+
+' ── The panel, asked over its own wire ───────────────────────
+DIM st = GFX.PANELSTATE
+CHK "panel awake", st[1] = 1
+CHK "panel displaying", st[2] = 1
+
+GFX.CLEAR 0, 0, 200
+SCREENFLIP
+DIM fb = GFX.PEEK(160, 120)
+DIM lcd = GFX.READBACK(160, 120)
+' Five bits of blue in the frame, six on the glass, so they agree to
+' within four counts rather than exactly.
+CHK "the glass holds what was drawn", ABS(lcd[2] - fb[2]) <= 4 AND lcd[0] = 0
+
+GFX.CLEAR 0, 0, 0
+SCREENFLIP
+
+' ── The touch controller names itself ────────────────────────
+DIM tid = TOUCH.ID
+CHK "touch is a FocalTech", tid[1] = 17
+CHK "touch answers", tid[0] = 100
+
+' ── The codec, heard by the microphone ───────────────────────
+MIC.GAIN 6
+PLAY.VOLUME 90
+DIM quiet = MIC(80)
+TONE 880
+SLEEP 150
+DIM loud = MIC(120)
+TONE 0
+' Four DMA buffers of 256 frames is about 64 ms of sound already on
+' its way, and TONE 0 does not throw that away - it would click. So the
+' room is only the room again a little after the command.
+SLEEP 300
+DIM after = MIC(80)
+CHK "the microphone hears the speaker", loud[1] > quiet[1] + 10
+CHK "and the room again after", after[1] <= quiet[1] + 5
+
+' ── The card, if one is in ───────────────────────────────────
+DIM mb = 0
+TRY
+    mb = SD.MOUNT
+CATCH
+    mb = 0
+ENDTRY
+IF mb > 0 THEN
+    TXTWRITER("/sd/_selftest.tmp", "round trip")
+    CHK "the card takes a file back", TXTREADER$("/sd/_selftest.tmp") = "round trip"
+    KILL "/sd/_selftest.tmp"
+ELSE
+    PRINT "--  no card in the slot"
+ENDIF
+
+' ── Memory ───────────────────────────────────────────────────
+CHK "PSRAM is there", SYS.PSRAM() > 4000000
+CHK "internal RAM left", SYS.INTERNAL() > 40000
+
+PRINT
+PRINT "passed "; passed; ", failed "; failed
+IF failed = 0 THEN
+    PRINT CHR$(27); "[92mall green"; CHR$(27); "[0m"
+ENDIF

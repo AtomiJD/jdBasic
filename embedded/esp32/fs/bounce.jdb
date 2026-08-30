@@ -1,0 +1,59 @@
+' Everything at once: the panel draws, the codec sounds on each wall,
+' and a finger moves the ball. Touch anywhere to send it that way.
+
+SCREEN 320, 240
+GFX.CONSOLE 0
+PLAY.VOLUME 70
+
+DIM W = GFX.WIDTH
+DIM H = GFX.HEIGHT
+
+DIM bx = 160.0
+DIM by = 120.0
+DIM vx = 2.3
+DIM vy = 1.7
+DIM rad = 9
+
+DO
+    GFX.CLEAR 6, 8, 20
+
+    DRAWCOLOR 40, 60, 120
+    RECT 0, 0, W, H, 0
+
+    bx = bx + vx
+    by = by + vy
+
+    IF bx < rad THEN
+        bx = rad : vx = -vx : BEEP 330, 40
+    ENDIF
+    IF bx > W - rad THEN
+        bx = W - rad : vx = -vx : BEEP 330, 40
+    ENDIF
+    IF by < rad THEN
+        by = rad : vy = -vy : BEEP 660, 40
+    ENDIF
+    IF by > H - rad THEN
+        by = H - rad : vy = -vy : BEEP 660, 40
+    ENDIF
+
+    DIM t = TOUCH
+    IF t[0] > 0 THEN
+        ' Aim away from the finger, gently.
+        vx = vx + (bx - t[1]) / 120.0
+        vy = vy + (by - t[2]) / 120.0
+        IF vx > 6 THEN vx = 6
+        IF vx < -6 THEN vx = -6
+        IF vy > 6 THEN vy = 6
+        IF vy < -6 THEN vy = -6
+        DRAWCOLOR 90, 90, 140
+        CIRCLE t[1], t[2], 14, 0
+    ENDIF
+
+    DRAWCOLOR 240, 200, 60
+    CIRCLE INT(bx), INT(by), rad, 1
+    DRAWCOLOR 255, 255, 255
+    TEXT 8, 8, "touch to push", 1
+
+    SCREENFLIP
+    SLEEP 10
+LOOP

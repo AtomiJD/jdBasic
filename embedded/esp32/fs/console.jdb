@@ -1,0 +1,27 @@
+' The panel as a text console. Everything printed goes to the glass and
+' the serial line at once, so this reads the same in a terminal.
+
+SCREEN 320, 240
+GFX.CONSOLE 1
+
+DIM size = GFX.CONSIZE
+PRINT "the console is "; size[0]; " by "; size[1]
+PRINT
+
+' The colour selects are the terminal ones, so a program that colours
+' its output in a terminal colours it here too.
+PRINT CHR$(27); "[97mwhite "; CHR$(27); "[93myellow "; CHR$(27); "[96mcyan"
+PRINT CHR$(27); "[91mred "; CHR$(27); "[95mmagenta "; CHR$(27); "[94mblue"
+PRINT CHR$(27); "[0mand back to the default"
+PRINT
+
+DIM i
+FOR i = 1 TO 4
+    PRINT "line "; i; " of a scroll test"
+NEXT
+PRINT
+
+PRINT "a listing keeps its 40 columns:"
+PRINT "1234567890123456789012345678901234567890"
+PRINT
+PRINT "EDIT a name opens the editor on this."
