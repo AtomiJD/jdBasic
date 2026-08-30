@@ -90,6 +90,7 @@ This is the **v2 rewrite**. Compared to the original tree-walking interpreter, j
 - **Hot reload** of source files without losing the workspace
 - **DAP debug adapter** so you can step through BASIC code from VS Code
 - A **persistent REPL workspace** that survives restarts via `SAVEWS`/`LOADWS`
+- **Microcontroller ports** - the same interpreter on an RP2350 or an ESP32-S3, with a REPL and a flash store on the board; on the 2.8 inch ES3C28P it boots into its own prompt on the panel, with touch, sound, a microphone and a card slot - see [`embedded/`](embedded/)
 - An **MCP server** (`jdbasic --mcp`) that exposes the persistent VM to LLM agents like Claude Code, Cursor, or Cline - see [`doc/MCP.md`](doc/MCP.md)
 
 > The original v1 codebase is preserved on the [`legacy-v1`](https://github.com/AtomiJD/jdBasic/tree/legacy-v1) branch and the [`v1-legacy`](https://github.com/AtomiJD/jdBasic/tree/v1-legacy) tag for archival and bugfixes.
@@ -336,10 +337,11 @@ RP2350 build is what a PicoCalc is; the ESP32-S3 build runs on a bare
 DevKitC and on the 2.8 inch ES3C28P display board, which boots into its
 own prompt on the glass with a panel, a touch screen, sound, a
 microphone and a card slot. Both read the language documented in
-[doc/languages.md](doc/languages.md) without exception - see the chapter
+[doc/languages.md](doc/languages.md) without exception. See the chapter
 "On a board" there for what each machine has, and
 [embedded/esp32/README.md](embedded/esp32/README.md) for how that board
 was brought up.
+
 ---
 
 ## Contributing

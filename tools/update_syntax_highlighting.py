@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """
-Scans src/ for all register_native("NAME", ...) calls and regenerates both
-syntax-highlighting artifacts:
+Scans src/ and embedded/ for all register_native("NAME", ...) calls and
+regenerates both syntax-highlighting artifacts:
 
   1. src/natives_list.h
      Used by the built-in console editor to colour known native functions.
@@ -28,6 +28,10 @@ import sys
 
 
 SRC_DIR = "src"
+# The board ports register their own builtins outside src/, and they are
+# written on a desktop like everything else, so the editor should colour
+# TOUCH and SD.MOUNT even on a machine that has neither.
+SCAN_DIRS = ["src", "embedded"]
 NATIVES_LIST_H = os.path.join(SRC_DIR, "natives_list.h")
 TMLANG_FILE = os.path.join("syntaxes", "jdbasic.tmLanguage.json")
 
@@ -36,14 +40,17 @@ def collect_natives():
     """Returns a sorted list of all unique names passed to register_native."""
     names = set()
     rx = re.compile(r'register_native\("([A-Z][A-Z0-9._$]*)"')
-    for root, _, files in os.walk(SRC_DIR):
-        for fn in files:
-            if fn.endswith((".cpp", ".h")):
-                path = os.path.join(root, fn)
-                with open(path, "r", encoding="utf-8", errors="ignore") as f:
-                    for line in f:
-                        for m in rx.findall(line):
-                            names.add(m)
+    for base in SCAN_DIRS:
+        if not os.path.isdir(base):
+            continue
+        for root, _, files in os.walk(base):
+            for fn in files:
+                if fn.endswith((".cpp", ".h")):
+                    path = os.path.join(root, fn)
+                    with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                        for line in f:
+                            for m in rx.findall(line):
+                                names.add(m)
     return sorted(names)
 
 
