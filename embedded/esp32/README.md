@@ -258,3 +258,42 @@ VM's opening stack size, character-at-a-time INPUT, and the narrow DIR
 listing. Those are `JDB_MCU`, which both ports define. `PICO` and
 `ESP32` are left for what is genuinely one board's: the platform's own
 builtins and its event poll.
+
+## The panel
+
+The ES3C28P carries a 2.8 inch ILI9341V, 240 by 320, on FSPI. `SCREEN`
+starts it; after that the drawing verbs are the RP2350 ones and the
+desktop ones, so a program that draws reads the same everywhere.
+
+    SCLK 12   MOSI 11   MISO 13   CS 10   DC 46   backlight 45
+
+There is no reset pin. It hangs on the chip's EN, which a watchdog reset
+does not pull, so the panel keeps whatever state it was left in across a
+warm restart. Only unplugging the board resets it, and command 0x01 is
+the only reset the driver has.
+
+Every primitive writes a framebuffer in PSRAM and `SCREENFLIP` sends it.
+The RP2350 draws straight into display RAM because 264 KB has no room
+for a frame; 320 by 240 at two bytes is 150 KB, which 8 MB does have.
+
+The bytes go out through `esp_lcd`'s SPI panel-IO layer rather than
+through `spi_master` directly. That matters more than it sounds: the
+layer carries the data/command line inside the transaction and owns chip
+select, and it reports what a hand-rolled transport reports as success.
+A frame cannot go out in one piece either, because a PSRAM buffer makes
+the SPI driver ask for a bounce buffer of the same size in internal
+memory, and 150 KB of that does not exist here. So the frame goes as
+bands through a small internal buffer: the first as memory write, the
+rest as memory-write-continue.
+
+Three settings that only the panel in front of you can decide:
+
+- Inversion is **on**. On this IPS panel, with it off, black comes out
+  white and every colour is its complement.
+- The colour order is **BGR**. Sending red without that bit gives blue.
+- The orientation bit puts the long edge across, so it is 320 by 240.
+
+`GFX.DIAG` answers with the transfers attempted, the transfers refused
+and the last reason. `GFX.PANELID` asks the panel who it is; an ILI9341
+should say 0, 147, 65. It does not answer yet, and the read path is
+still to be sorted out - it is diagnosis, not drawing.

@@ -14,6 +14,7 @@ void register_esp32_wifi(VM& vm);
 void register_pico_httpd(VM& vm);
 void register_esp32_hw(VM& vm);
 void register_esp32_events(VM& vm);
+void register_es3c28p_gfx(VM& vm);
 
 // This runs first inside VM::register_builtins, so the heap here is the
 // heap after the VM is constructed and before a single native exists.
@@ -50,6 +51,7 @@ void register_esp32_builtins(VM& vm) {
     register_pico_httpd(vm);
     register_esp32_hw(vm);
     register_esp32_events(vm);
+    register_es3c28p_gfx(vm);
 
     vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));

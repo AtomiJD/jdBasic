@@ -14,6 +14,8 @@
 
 #include "../../../src/vm.h"
 
+extern "C" int es3c28p_lcd_uses_pin(int pin);
+
 // GPIO 26 to 32 carry the SPI flash and 33 to 37 the octal PSRAM. The
 // board works because nobody touches them, and a program that does
 // takes the whole thing down with no diagnostic, so the answer has to
@@ -27,6 +29,9 @@ bool esp32_pin_allowed(int pin, const char** why) {
 #else
     if (pin == 19 || pin == 20) { *why = "pin: 19 and 20 are the native USB"; return false; }
 #endif
+    // The panel claims six pins the moment SCREEN starts it, and a write
+    // to any of them blanks the screen or corrupts a transfer.
+    if (es3c28p_lcd_uses_pin(pin)) { *why = "pin: the panel is using it"; return false; }
     return true;
 }
 

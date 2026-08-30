@@ -8,6 +8,10 @@ idf_component_register(
         "esp32_fs.cpp"
         "esp32_wifi.cpp"
         "esp32_hw.cpp"
+        # The 2.8 inch panel and its drawing verbs. Only the ES3C28P has one,
+        # and a board without it never calls SCREEN, so the cost is code.
+        "es3c28p_lcd.c"
+        "es3c28p_gfx.cpp"
         "esp32_stubs.cpp"
         # Colouring one line of jdBasic is the same job on both boards and
         # depends on nothing either SDK provides. Shared rather than copied;
@@ -25,7 +29,7 @@ idf_component_register(
         "../../../src/channels.cpp"
         "../../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../../src"
-    REQUIRES esp_timer driver fatfs vfs esp_wifi esp_netif nvs_flash esp_event lwip
+    REQUIRES esp_timer driver fatfs vfs esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd
              esp_adc esp_driver_gpio esp_driver_ledc esp_driver_i2c esp_driver_spi
              esp_driver_tsens
 )
