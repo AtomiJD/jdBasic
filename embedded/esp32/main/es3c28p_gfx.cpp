@@ -30,6 +30,11 @@ int  es3c28p_lcd_readback(int x, int y, int* r, int* g, int* b);
 int  es3c28p_lcd_panel_id(int* a, int* b, int* c);
 int  es3c28p_con_enable(int on);
 void es3c28p_con_size(int* cols, int* rows);
+int  es3c28p_touch_init(void);
+int  es3c28p_touch_ready(void);
+int  es3c28p_touch_id(int* chip, int* vendor);
+int  es3c28p_touch_raw(int* n, int* x, int* y);
+int  es3c28p_touch_read(int* n, int* x, int* y);
 void es3c28p_lcd_diag(int* sent, int* failed, int* last);
 }
 
@@ -168,6 +173,33 @@ void register_es3c28p_gfx(VM& vm) {
         int sent, failed, last;
         es3c28p_lcd_diag(&sent, &failed, &last);
         return rgb_value(sent, failed, last);
+    });
+    // The touch screen. TOUCH answers [count, x, y] in screen coordinates,
+    // TOUCH.RAW the controller's own portrait numbers, so a mapping can be
+    // argued with a finger instead of an assumption.
+    vm.register_native("TOUCH", 0, 0, [](const std::vector<Value>&) -> Value {
+        if (!es3c28p_touch_ready() && es3c28p_touch_init() != 0)
+            throw std::runtime_error("no touch controller");
+        int n, x, y;
+        if (es3c28p_touch_read(&n, &x, &y) != 0)
+            throw std::runtime_error("the touch controller did not answer");
+        return rgb_value(n, x, y);
+    });
+    vm.register_native("TOUCH.RAW", 0, 0, [](const std::vector<Value>&) -> Value {
+        if (!es3c28p_touch_ready() && es3c28p_touch_init() != 0)
+            throw std::runtime_error("no touch controller");
+        int n, x, y;
+        if (es3c28p_touch_raw(&n, &x, &y) != 0)
+            throw std::runtime_error("the touch controller did not answer");
+        return rgb_value(n, x, y);
+    });
+    vm.register_native("TOUCH.ID", 0, 0, [](const std::vector<Value>&) -> Value {
+        if (!es3c28p_touch_ready() && es3c28p_touch_init() != 0)
+            throw std::runtime_error("no touch controller");
+        int c, v;
+        if (es3c28p_touch_id(&c, &v) != 0)
+            throw std::runtime_error("the touch controller did not answer");
+        return rgb_value(c, v, 0);
     });
     // The panel says who it is: an ILI9341 answers 0, 147, 65. The one
     // read with an answer the datasheet already knows.

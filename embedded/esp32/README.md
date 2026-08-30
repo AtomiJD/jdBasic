@@ -323,3 +323,29 @@ tell the two apart.
 There is still no keyboard on this board. The keys come over the serial
 line, which means the editor works in a terminal today and will work on
 the panel the moment there is something to type on.
+
+## Touch
+
+An FT6336G at 0x38 on I2C, with its own reset and interrupt lines:
+SDA 16, SCL 15, INT 17, RST 18. It is the one part on this board that
+confirms itself - `TOUCH.ID` answers chip 0x64, vendor 0x11, which is
+what a FocalTech controller must say.
+
+`TOUCH` gives `[count, x, y]` in screen coordinates, `TOUCH.RAW` the
+controller's own numbers. The controller reports in the panel's native
+portrait frame while the screen is turned to landscape, so its Y is the
+screen's X and its X runs backwards to the screen's Y. That mapping is
+not read off the MADCTL bits, it is measured: four corners touched, all
+four consistent.
+
+    links oben   raw 199, 32   -> 32, 40
+    rechts oben  raw 228, 302  -> 302, 11
+    links unten  raw  36, 35   -> 35, 203
+    rechts unten raw  38, 295  -> 295, 201
+
+The interrupt line never fired across 900 samples while touches were
+reported correctly, so the driver polls. Good enough for an on-screen
+keyboard; worth revisiting for gestures.
+
+`fs/touch.jdb` is a finger-painting program: colour patches along the
+top, canvas below, hold the bottom left corner to clear.

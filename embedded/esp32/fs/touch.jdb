@@ -1,0 +1,72 @@
+' Draw with a finger. Four colour patches along the top pick the ink,
+' the rest of the panel is the canvas, and a long press on the bottom
+' left corner clears it.
+
+SCREEN 320, 240
+GFX.CONSOLE 0
+
+DIM W = GFX.WIDTH
+DIM H = GFX.HEIGHT
+
+DIM INKR = 255
+DIM INKG = 80
+DIM INKB = 80
+
+SUB Palette()
+    DRAWCOLOR 255, 80, 80
+    RECT 0, 0, 80, 24, 1
+    DRAWCOLOR 80, 255, 120
+    RECT 80, 0, 80, 24, 1
+    DRAWCOLOR 90, 160, 255
+    RECT 160, 0, 80, 24, 1
+    DRAWCOLOR 240, 220, 60
+    RECT 240, 0, 80, 24, 1
+    DRAWCOLOR 255, 255, 255
+    TEXT 4, 228, "hold bottom left to clear", 1
+ENDSUB
+
+SUB Fresh()
+    DRAWCOLOR 10, 10, 20
+    GFX.CLEAR 10, 10, 20
+    Palette
+    SCREENFLIP
+ENDSUB
+
+Fresh
+
+DIM held = 0
+
+DO
+    DIM t = TOUCH
+    IF t[0] > 0 THEN
+        DIM x = t[1]
+        DIM y = t[2]
+        IF y < 24 THEN
+            ' The palette strip: pick an ink and show nothing else.
+            IF x < 80 THEN
+                INKR = 255 : INKG = 80 : INKB = 80
+            ELSEIF x < 160 THEN
+                INKR = 80 : INKG = 255 : INKB = 120
+            ELSEIF x < 240 THEN
+                INKR = 90 : INKG = 160 : INKB = 255
+            ELSE
+                INKR = 240 : INKG = 220 : INKB = 60
+            ENDIF
+            held = 0
+        ELSEIF x < 40 AND y > 200 THEN
+            held = held + 1
+            IF held > 8 THEN
+                Fresh
+                held = 0
+            ENDIF
+        ELSE
+            DRAWCOLOR INKR, INKG, INKB
+            CIRCLE x, y, 4, 1
+            SCREENFLIP
+            held = 0
+        ENDIF
+    ELSE
+        held = 0
+    ENDIF
+    SLEEP 20
+LOOP

@@ -12,6 +12,7 @@ idf_component_register(
         # and a board without it never calls SCREEN, so the cost is code.
         "es3c28p_lcd.c"
         "es3c28p_con.c"
+        "es3c28p_touch.c"
         "es3c28p_gfx.cpp"
         "esp32_stubs.cpp"
         # Colouring one line of jdBasic is the same job on both boards and
@@ -33,7 +34,7 @@ idf_component_register(
         "../../../src/channels.cpp"
         "../../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../../src"
-    REQUIRES esp_timer driver fatfs vfs esp_vfs_console esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd
+    REQUIRES esp_timer driver fatfs vfs esp_vfs_console esp_driver_i2c esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd
              esp_adc esp_driver_gpio esp_driver_ledc esp_driver_i2c esp_driver_spi
              esp_driver_tsens
 )
