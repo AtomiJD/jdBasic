@@ -35,6 +35,11 @@ int  es3c28p_touch_ready(void);
 int  es3c28p_touch_id(int* chip, int* vendor);
 int  es3c28p_touch_raw(int* n, int* x, int* y);
 int  es3c28p_touch_read(int* n, int* x, int* y);
+int  es3c28p_snd_start(void);
+int  es3c28p_snd_ready(void);
+void picocalc_snd_tone(int freq);
+void picocalc_snd_beep(int freq, int ms);
+void picocalc_snd_volume(int pct);
 void es3c28p_lcd_diag(int* sent, int* failed, int* last);
 }
 
@@ -174,6 +179,30 @@ void register_es3c28p_gfx(VM& vm) {
         es3c28p_lcd_diag(&sent, &failed, &last);
         return rgb_value(sent, failed, last);
     });
+    // Sound. The names are the RP2350's, so a program that beeps reads the
+    // same on either board. What differs is that here it goes through a
+    // codec and an amplifier rather than a pin and a speaker.
+    vm.register_native("BEEP", 0, 2, [](const std::vector<Value>& args) -> Value {
+        int freq = args.size() >= 1 ? (int)args[0].to_double() : 880;
+        int ms   = args.size() >= 2 ? (int)args[1].to_double() : 200;
+        if (es3c28p_snd_start() != 0) throw std::runtime_error("no audio codec");
+        picocalc_snd_beep(freq, ms);
+        return Value();
+    });
+    vm.register_native("TONE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        if (es3c28p_snd_start() != 0) throw std::runtime_error("no audio codec");
+        picocalc_snd_tone((int)args[0].to_double());
+        return Value();
+    });
+    vm.register_native("PLAY.STOP", 0, 0, [](const std::vector<Value>&) -> Value {
+        picocalc_snd_tone(0);
+        return Value();
+    });
+    vm.register_native("PLAY.VOLUME", 1, 1, [](const std::vector<Value>& args) -> Value {
+        picocalc_snd_volume((int)args[0].to_double());
+        return Value();
+    });
+
     // The touch screen. TOUCH answers [count, x, y] in screen coordinates,
     // TOUCH.RAW the controller's own portrait numbers, so a mapping can be
     // argued with a finger instead of an assumption.

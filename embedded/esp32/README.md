@@ -349,3 +349,38 @@ keyboard; worth revisiting for gestures.
 
 `fs/touch.jdb` is a finger-painting program: colour patches along the
 top, canvas below, hold the bottom left corner to clear.
+
+## Sound
+
+An ES8311 codec at 0x18 on the same I2C bus as the touch, fed over I2S,
+into an amplifier whose enable line is GPIO 1, low to enable.
+
+    MCLK 4   BCLK 5   LRCK 7   codec-in 8   codec-out 6   enable 1
+
+`BEEP freq, ms`, `TONE freq`, `TONE 0` or `PLAY.STOP` to stop, and
+`PLAY.VOLUME pct`. The names are the RP2350's, so a program that beeps
+reads the same on either board. `PLAY` with a score is not here yet: the
+PicoCalc's melody engine hangs off the Pico SDK's alarm timer, and that
+wants a proper port rather than a copy.
+
+Three things this cost, all of them worth writing down.
+
+The board's I2S nets are named **from the codec's point of view**.
+`I2S_DO` is the codec's output, so it is the ESP32's input; `I2S_DI` is
+the codec's input, so the ESP32 sends on it. The manual's wording ("bit
+output data signal") does not say whose output, and reasoning about it is
+a coin toss - three minutes of measuring settles it.
+
+The two ESP-IDF I2C drivers cannot coexist in one binary; it aborts at
+boot with "CONFLICT! driver_ng is not allowed to be used with this old
+driver". jdBasic's I2C verbs use `i2c_master`, and the vendor's ES8311
+driver was written against the old one, so the driver is vendored in
+`es8311_vendor.c` with its two I2C calls pointed at the board bus. Its
+clock coefficient table is untouched, which is the point of vendoring
+rather than retyping.
+
+The enable line is asserted on every note rather than once at startup.
+It is an ordinary GPIO: anything that writes it - a program, a probe -
+would otherwise leave the board silently muted until the next reset.
+That is not a hypothetical; it happened during bringup and sent the
+search after the wrong suspect.
