@@ -1,4 +1,4 @@
-# jdBasic for Visual Studio Code (v1.0.29)
+# jdBasic for Visual Studio Code (v1.0.30)
 
 The `jdbasic-debug` extension turns VS Code into a small IDE for jdBasic: a
 full debugger plus editor language features (linting, autocomplete, hover
@@ -16,7 +16,7 @@ talk to the jdBasic runtime itself, so they never drift from the real build.
 ## 2. Installation
 
 1. Extensions view (`Ctrl+Shift+X`) -> `...` menu -> **Install from VSIX...**.
-2. Pick `jdbasic-debug-1.0.29.vsix`.
+2. Pick `jdbasic-debug-1.0.30.vsix`.
 3. **Reload Window** when prompted.
 
 ## 3. Settings
@@ -46,6 +46,11 @@ These work as soon as you open a `.jdb` file.
   the current file. Sourced from `jdBasic --dump-symbols`.
 - **Hover docs**: hover a function or keyword to see its syntax and
   description (from `jdBasic --dump-help`).
+- **Board builtins**: the microcontroller verbs (`TOUCH`, `MIC`, `SD.*`,
+  `GPIO.*`, the panel and sound families) are coloured and hover, because
+  colouring comes from the grammar and hovers from `help.txt`. They are
+  not offered by autocomplete: that list comes from the runtime you point
+  `jdbasic.runtime` at, and a desktop build does not register them.
 - **Signature help**: typing `LEFT$(` shows the parameters; the active
   parameter is highlighted as you type past each comma.
 - **Go to Definition**: jump to a `FUNC`/`SUB`/`TYPE` definition or a
