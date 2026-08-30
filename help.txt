@@ -4051,3 +4051,106 @@ Description: How many stations are connected to this board's own network. ESP32-
 [WIFI.DIAG$]
 Syntax: WIFI.DIAG$ -> text$
 Description: Mode, network, address, and either the signal strength or the number of clients. Boards only.
+[BEEP]
+Syntax: BEEP [freq [, ms]]
+Description: A tone for a while, then silence. Boards only. Defaults to 880 Hz for 200 ms. The program keeps running; the note ends on its own.
+
+[TONE]
+Syntax: TONE(freq)
+Description: A tone held until told otherwise. Boards only. TONE 0 stops it, as does PLAY.STOP.
+
+[PLAY]
+Syntax: PLAY(score$)
+Description: A melody in the background, in the classic BASIC notation. Boards only. A-G with # or + for sharp and - for flat, O<n> for the octave and < > to step it, L<n> for the default length (4 is a quarter note), T<n> for the tempo in quarter notes per minute, P or R for a rest, and . after a note to hold it half again as long. The program keeps running while it sounds; PLAY.BUSY says whether it still is.
+
+[PLAY.STOP]
+Syntax: PLAY.STOP
+Description: Stops a score or a held tone. Boards only.
+
+[PLAY.BUSY]
+Syntax: PLAY.BUSY
+Description: TRUE while a score is still sounding. Boards only.
+
+[PLAY.VOLUME]
+Syntax: PLAY.VOLUME(pct)
+Description: Loudness from 0 to 100. Boards only.
+
+[GFX.CLEAR]
+Syntax: GFX.CLEAR [r, g, b]
+Description: Fills the whole panel, black without a colour. Boards with a panel only. Writes the framebuffer; SCREENFLIP puts it on the glass.
+
+[GFX.LIGHT]
+Syntax: GFX.LIGHT(on)
+Description: The panel backlight. Boards with a panel only.
+
+[GFX.WIDTH]
+Syntax: GFX.WIDTH
+Description: The panel width in pixels. Boards with a panel only.
+
+[GFX.HEIGHT]
+Syntax: GFX.HEIGHT
+Description: The panel height in pixels. Boards with a panel only.
+
+[GFX.CONSOLE]
+Syntax: GFX.CONSOLE(on)
+Description: Turns the panel into a text console, or gives it back to a program that wants to draw. Boards with a panel only. While it is on, everything printed goes to both the serial line and the glass. On the ES3C28P it starts with the board unless CONSOLE OFF said otherwise at the prompt.
+
+[GFX.CONSIZE]
+Syntax: GFX.CONSIZE
+Description: The console as [columns, rows]. Boards with a panel only. 40 by 30 on the 2.8 inch board.
+
+[GFX.PEEK]
+Syntax: GFX.PEEK(x, y)
+Description: What the framebuffer holds at a point, as [r, g, b]. Boards with a panel only. This asks the memory, not the glass; GFX.READBACK asks the glass.
+
+[GFX.READBACK]
+Syntax: GFX.READBACK(x, y)
+Description: What the panel itself holds at a point, as [r, g, b], read back over its own wire. Boards with a panel only. Agrees with GFX.PEEK to within the quantisation between the framebuffer's 5-6-5 and the panel's 6-6-6.
+
+[GFX.PANELSTATE]
+Syntax: GFX.PANELSTATE
+Description: What the panel says about itself, as [power_mode, awake, displaying]. Boards with a panel only. A live ILI9341 reports 156, which is booster on, sleep out, normal mode and display on.
+
+[GFX.PANELREG]
+Syntax: GFX.PANELREG(cmd [, n])
+Description: The raw bytes a panel read command answers with, up to eight. Boards with a panel only. For finding out what a wire is carrying when a value looks wrong, rather than reasoning about the protocol.
+
+[GFX.PANELREGAT]
+Syntax: GFX.PANELREGAT(cmd, x, y [, n])
+Description: The same as GFX.PANELREG, after pointing the panel at one pixel. Boards with a panel only.
+
+[GFX.DIAG]
+Syntax: GFX.DIAG
+Description: What the panel transport did, as [transfers, failures, last_error]. Boards with a panel only. A driver that discards its return codes cannot tell "the panel ignored us" from "nothing was ever sent".
+
+[TOUCH]
+Syntax: TOUCH
+Description: The touch screen as [count, x, y] in screen coordinates. Boards with a touch panel only. Count is 0 when nothing is touching, and x and y are -1 then.
+
+[TOUCH.RAW]
+Syntax: TOUCH.RAW
+Description: The touch controller's own numbers, before the mapping to screen coordinates. Boards with a touch panel only. The controller reports in the panel's native orientation, which is not the screen's.
+
+[TOUCH.ID]
+Syntax: TOUCH.ID
+Description: The touch controller's identity as [chip, vendor, 0]. Boards with a touch panel only. A FocalTech FT6336 answers 100 and 17.
+
+[MIC]
+Syntax: MIC([ms])
+Description: The microphone over a window in milliseconds, as [peak, mean], both 0 to 100. Boards with a microphone only. Peak says whether something happened, mean how loud it is now: a clap detector wants the first, a level meter the second.
+
+[MIC.GAIN]
+Syntax: MIC.GAIN(step)
+Description: Microphone gain, 0 to 7 in steps of six decibels. Boards with a microphone only.
+
+[SD.MOUNT]
+Syntax: SD.MOUNT
+Description: Mounts the card and answers its size in megabytes. Boards with a card slot only. It appears at /sd; a bare name still means the flash store. A card that will not mount is not formatted.
+
+[SD.UNMOUNT]
+Syntax: SD.UNMOUNT
+Description: Lets go of the card. Boards with a card slot only.
+
+[SD.INFO]
+Syntax: SD.INFO
+Description: The mounted card as [name$, megabytes, bus_width]. Boards with a card slot only. Four is the width this slot is wired for.

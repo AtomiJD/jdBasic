@@ -128,7 +128,15 @@ build_rt.bat HTTP GFX IMGUI OPENGL NATIVEC MCPSERVER
 
 **Always pass the same feature flags** to `build_rt.bat` as you passed to `build.bat`. A bare `build_rt.bat` produces a `jdbrt.dll` without `SCREEN`/`RECT`/`SPRITE`/etc., and any generated EXE that uses graphics will fail at runtime.
 
-Rebuild the DLL after any change under `src/graphics.cpp`, `src/gui.cpp`, `src/jdb_runtime.cpp`, `src/sprites.cpp`, `src/tiledmap.cpp`, `src/opengl.cpp`, or `src/imgui/*`.
+Rebuild the DLL after **any** change under `src/` that a compiled program
+can reach at runtime - which is most of it, because the DLL carries the VM
+itself, not just the graphics. `src/graphics.cpp`, `src/gui.cpp`,
+`src/jdb_runtime.cpp`, `src/sprites.cpp`, `src/tiledmap.cpp`,
+`src/opengl.cpp` and `src/imgui/*` are the obvious ones, and `src/vm.cpp`
+is the one that catches people: a builtin fixed there is fixed in
+`jdBasic.exe` immediately and in every generated EXE only after this
+build. The gate then passes interpreted and fails compiled, on a change
+that is correct in both.
 
 ### Using the native compiler
 

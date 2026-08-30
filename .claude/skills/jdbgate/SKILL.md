@@ -24,7 +24,13 @@ Both must end with `BUILD OK`. **Always all four flags together** - dropping HTT
 
 If build fails with `LNK1104: cannot open file 'build\jdBasic.exe'`, kill the stale process directly (no need to ask): `taskkill //F //IM jdBasic.exe` - then retry the build.
 
-If you edited `src/graphics.cpp`, `src/gui.cpp`, `src/vm_bridge.cpp`, `src/tiledmap.cpp`, or `src/imgui/*`, **`build_rt.bat` is mandatory** - `build.bat` only rebuilds the EXE; native `.exes` load the DLL.
+If you edited anything under `src/` that a compiled program reaches at
+runtime, **`build_rt.bat` is mandatory** - `build.bat` only rebuilds the
+EXE, and native `.exes` load the DLL. That includes `src/vm.cpp`, which
+is the one that catches people: the DLL carries the VM, so a builtin
+fixed there is right in the interpreter and stale in every generated EXE
+until the DLL is rebuilt. Symptom: Step 1 green, Step 2 red, on a change
+that is correct.
 
 ## Step 0b - check the binary can actually run this gate (always)
 

@@ -1756,6 +1756,24 @@ Assert(FILE.EXISTS(tmp_a) = 0, "KILL removes temp file")
 
 MKDIR "jdb_comp_rmdir"
 Assert(FILE.EXISTS("jdb_comp_rmdir") = 1, "MKDIR created scratch dir")
+
+' A name that is a directory lists that directory. Splitting it at the
+' last slash instead would look for a file of that name in the parent,
+' find nothing, and answer with an empty list - which reads as "the
+' directory is empty" rather than "you meant something else".
+TXTWRITER("jdb_comp_rmdir/one.txt", "a")
+TXTWRITER("jdb_comp_rmdir/two.txt", "b")
+DIM d_bare = DIR$("jdb_comp_rmdir")
+DIM d_slash = DIR$("jdb_comp_rmdir/")
+DIM d_glob = DIR$("jdb_comp_rmdir/*")
+Assert(LEN(d_bare) = 2, "DIR$ of a directory name lists it")
+Assert(LEN(d_bare) = LEN(d_slash), "DIR$ bare name agrees with trailing slash")
+Assert(LEN(d_bare) = LEN(d_glob), "DIR$ bare name agrees with the glob")
+Assert(LEN(DIR$("jdb_comp_rmdir/one.txt")) = 1, "DIR$ of a file names itself")
+Assert(LEN(DIR$("jdb_comp_rmdir/nothing_here")) = 0, "DIR$ of nothing lists nothing")
+KILL "jdb_comp_rmdir/one.txt"
+KILL "jdb_comp_rmdir/two.txt"
+
 RMDIR "jdb_comp_rmdir"
 Assert(FILE.EXISTS("jdb_comp_rmdir") = 0, "RMDIR removes empty dir")
 

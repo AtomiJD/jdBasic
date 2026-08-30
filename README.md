@@ -329,6 +329,17 @@ libs/       - third-party libraries (not in git, see doc/BUILD.md)
 build/      - compile output (not in git)
 ```
 
+### On a board
+
+The same interpreter runs on microcontrollers, under `embedded/`. The
+RP2350 build is what a PicoCalc is; the ESP32-S3 build runs on a bare
+DevKitC and on the 2.8 inch ES3C28P display board, which boots into its
+own prompt on the glass with a panel, a touch screen, sound, a
+microphone and a card slot. Both read the language documented in
+[doc/languages.md](doc/languages.md) without exception - see the chapter
+"On a board" there for what each machine has, and
+[embedded/esp32/README.md](embedded/esp32/README.md) for how that board
+was brought up.
 ---
 
 ## Contributing

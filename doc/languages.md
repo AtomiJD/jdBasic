@@ -3618,9 +3618,10 @@ the `AI.RAG_*` set).
 
 jdBasic runs on two microcontrollers with the same interpreter that runs
 on a desktop. `embedded/pico/` is the RP2350, which is what a PicoCalc is;
-`embedded/esp32/` is the ESP32-S3. Both are the REPL over a serial line
-with a flash store behind it, and both read the language documented above
-without exception.
+`embedded/esp32/` is the ESP32-S3. Both read the language documented above without
+exception. Both are a REPL with a flash store behind it, and one of them
+is more than that: the 2.8 inch ES3C28P has a panel, a touch screen, a
+codec and a card slot, and boots into its own prompt on the glass.
 
 What differs is what the machine has, and how little of it there is.
 
@@ -3724,6 +3725,3785 @@ controller, all of them about memory rather than meaning:
 
 None of that changes what a program means. A `.jdb` file that runs on a
 desktop runs on a board until it runs out of memory.
+
+### The 2.8 inch board
+
+The ES3C28P carries an ILI9341V panel, an FT6336G touch screen, an ES8311
+codec with a speaker and a microphone, and a card slot. The verbs are the
+desktop ones wherever one exists, so a program that draws or beeps reads
+the same on a laptop and on the board.
+
+`SCREEN` starts the panel, 320 by 240. Every primitive writes a
+framebuffer in PSRAM and `SCREENFLIP` puts it on the glass, which is the
+one difference a program can feel: on the RP2350 drawing goes straight
+out, because that board has no room to keep a frame. The drawing verbs
+are `DRAWCOLOR`, `PSET`, `LINE`, `RECT`, `CIRCLE`, `TEXT` and
+`GFX.CLEAR`, with `GFX.WIDTH`, `GFX.HEIGHT` and `GFX.LIGHT` beside them.
+
+`GFX.CONSOLE 1` turns the panel into 40 columns by 30 rows of text, the
+grid a listing assumes. While it is on, everything printed goes to both
+the serial line and the glass, so `EDIT` and a program's output appear
+without either of them knowing about the screen. `GFX.CONSOLE 0` gives
+the panel back to a program that wants to draw on it. On this board the
+console starts with the power unless `CONSOLE OFF` at the prompt said
+otherwise.
+
+`TOUCH` answers `[count, x, y]` in screen coordinates, `TOUCH.RAW` the
+controller's own numbers before the mapping, and `TOUCH.ID` its identity.
+
+`BEEP freq, ms` and `TONE freq` make a sound; `PLAY score# jdBasic Language Reference
+
+This document describes the syntax, commands, and functions for the jdBasic interpreter.
+
+## Data Types
+
+jdBasic supports a variety of data types. While variables are variants and can hold any type, they can be explicitly created using the `DIM` statement.
+
+* **Boolean**: `TRUE` or `FALSE`.
+* **Number**: 64-bit double-precision floating-point numbers.
+* **String**: Text of variable length. String variable names traditionally end with a `$` suffix (e.g., `A$`).
+* **DateTime**: A type for storing date and time values, created with `NOW()` or `CVDATE()`.
+* **Array**: A multi-dimensional array of other Basic values.
+* **Map**: A key-value dictionary where keys are strings and values can be any Basic value. Used for creating complex data structures.
+* **Tensor**: A multi-dimensional floating-point value used by the AI functions, built with `AI.TENSOR(data, [shape])` from nested arrays. `TYPEOF` reports it as `ARRAY`. The autodiff and layer-training operations this type once carried are no longer part of the runtime; see the note on neural networks near the end of this document.
+* **Sized numeric types**: `DIM` also accepts explicit widths - `INT16`, `INT32`, `INT64` for signed integers and `FLOAT16`, `FLOAT32`, `FLOAT64` for floating point - plus `CHAR` for a single character and `BYTE`. The classic-BASIC spellings are aliases of these: `INTEGER` and `LONG` are `INT64`, `SHORT` is `INT16`, `DOUBLE` is `FLOAT64`, `SINGLE` is `FLOAT32`, `BOOL` is `BOOLEAN`.
+* **JsonObject**: A special type returned by `JSON.PARSE$`, which can be accessed like a Map or Array.
+* **ComObject**: A special type returned by `CREATEOBJECT`, representing an instance of a COM Automation object.
+* **DYNAMIC**: A tagged-mixed array - opt-in storage for arrays whose elements have heterogeneous types known only at runtime (e.g. `[m{"name"}, m{"age"}, m{"email"}]`). Each cell carries its own JdTag so reads via `arr[i]` recover the actual type. Use on FUNC parameters or DIM destinations that receive such arrays:
+
+```basic
+FUNC mxFmt$(template$, params AS DYNAMIC)
+    DIM v = params[0]   ' string, number, or handle - type preserved
+    ...
+ENDFUNC
+mxFmt$("INSERT t(name,age,email) VALUES (?,?,?)", _
+       [m{"name"}, m{"age"}, m{"email"}])
+```
+
+The native compiler emits a `[warn]` diagnostic when a mixed-element array literal is passed to a non-`DYNAMIC` parameter. Numeric arrays (e.g. `mem[]`, lookup tables) MUST stay un-annotated; `AS DYNAMIC` on a plain numeric array forces the tagged-storage path and slows reads with no benefit. The interpreter treats `DYNAMIC` like `ARRAY`.
+
+## Numeric Semantics
+
+jdBasic has two scalar numeric types:
+
+* **INTEGER** - signed 64-bit: `-9,223,372,036,854,775,808 … 9,223,372,036,854,775,807`
+* **DOUBLE** - IEEE-754 64-bit floating point
+
+### Literals
+
+* Plain digits (no decimal/exponent) → **INTEGER**: `0`, `42`, `9223372036854775807`
+* With decimal point → **DOUBLE**: `1.0`
+* Hex/bin: `$FF`, `%1010` → **INTEGER**
+
+### Built-in Constants
+
+These are special keywords that hold predefined, constant values.
+
+* **`PI`**: A high-precision value of Pi (approx. 3.141592653589793).
+* **`E`**: Euler's number (approx. 2.718281828459045).
+* **`VBNEWLINE`**: A string representing the carriage return and line feed characters (`CHR$(13) + CHR$(10)`), commonly used for creating multi-line strings for Windows systems.
+* **`VBCRLF`**: The VB6-style spelling of `VBNEWLINE`, the same CRLF string.
+* **`VBTAB`**: The tab character, `CHR$(9)`.
+
+```basic
+PRINT "The value of PI is: " + PI
+PRINT "Area of a circle with radius 5: " + (PI * 5^2)
+
+MultiLine$ = "First line." + VBNEWLINE + "Second line."
+PRINT MultiLine$
+```
+
+### Conversions
+
+* **Promotion:** In mixed expressions, `INTEGER` promotes to `DOUBLE`.
+* **Narrowing:** `DOUBLE → INTEGER` occurs when assigning to an integer variable or when using integer-only operators; conversion **truncates toward zero**.
+* **Overflow:** If a result doesn’t fit in 64-bit signed range → DOUBLE.
+
+### Operators matrix
+
+| Operator                              | Operands                   | Result  | Notes                                                                                           |
+| ------------------------------------- | -------------------------- | ------- | ----------------------------------------------------------------------------------------------- |
+| `+` `-` `*`                           | `INTEGER, INTEGER`         | INTEGER | Integer arithmetic (overflow policy applies).                                                   |
+| `+` `-` `*`                           | otherwise                  | DOUBLE  | If any side is DOUBLE, result is DOUBLE.                                                        |
+| `/`                                   | any                        | DOUBLE  | Floating division.                                                                              |
+| `\`                                   | numeric (integer division) | INTEGER | **Truncates toward zero**; division by zero is an error.                                        |
+| `MOD`                                 | numeric remainder          | INTEGER | `a - trunc(a/b) * b`; division by zero is an error.                                             |
+| `^`                                   | numeric                    | DOUBLE  | Power.                                                                                          |
+| `BAND` `BOR` `BXOR` `BNOT` `SHL` `SHR` | numeric                    | INTEGER | Operands coerced to 64-bit integer (trunc toward 0 first). `BNOT` is unary prefix. Shift counts are clamped to `0..63`. |
+
+**Arrays:** `+ - * / \ MOD` and bitwise ops apply **element-wise** for arrays of equal shape. Scalar–array operations broadcast the scalar.
+**Tensors:** `/` is supported; `\` (integer division) and `MOD` are **not supported** for tensors.
+
+### Comparisons
+
+* `INTEGER` vs `INTEGER` → integer comparison
+* `DOUBLE` vs `DOUBLE` → double comparison
+* Mixed → promote to **DOUBLE** for comparison
+
+### `TYPEOF`
+
+Returns `"INTEGER"` for 64-bit integers and `"DOUBLE"` for floating point values.
+
+### Interop (COM)
+
+* `VT_I8` maps to jdBasic **INTEGER**
+* `VT_UI8` maps to **INTEGER** when ≤ `2^63-1`, otherwise to **DOUBLE**
+* Other COM numeric types map to **DOUBLE**
+
+### Examples
+
+```basic
+' Basic arithmetic
+PRINT 5 / 2          ' 2.5   (DOUBLE)
+PRINT 5 \ 2          ' 2     (INTEGER, trunc toward 0)
+PRINT -5 \ 2         ' -2
+PRINT 5 MOD 2        ' 1
+
+' Mixed numeric types
+PRINT 2 * 3          ' 6     (INTEGER)
+PRINT 2 * 3.0        ' 6     (DOUBLE)
+PRINT TYPEOF(2 * 3), TYPEOF(2 * 3.0)  ' INTEGER, DOUBLE
+
+' Bitwise are integer-only
+PRINT 5 BAND 3       ' 1
+PRINT TYPEOF(5 BAND 3)  ' INTEGER
+PRINT SHL(1, 65)     ' shift count clamped to 63
+
+' Arrays (element-wise; scalar broadcast)
+PRINT [1,2,3] \ 2           ' [0 1 1]
+PRINT 10 \ [3,4]            ' [3 2]
+PRINT [5,6,7,8] MOD [2,3,2,3]  ' [1 0 1 2]
+```
+
+> **Notes for users coming from other BASICs:** `/` always returns a floating result; use `\` for integer division. Bitwise operators return **INTEGER** results and truncate floating operands to integers before operating.
+
+## Variables and Assignment
+
+Variables are created on their first use or explicitly with `DIM`.
+
+**`DIM var [AS type] [=Initializer]`**
+Declares a variable. The `AS` clause is used for specific types.
+
+```basic
+DIM X AS INTEGER
+DIM N AS DOUBLE
+DIM S AS STRING
+DIM D AS DATE
+DIM M AS MAP
+DIM A AS INTEGER = 2
+DIM M AS MAP = {"Name":"Atomi"}
+```
+
+**`DIM array[size1, size2, ...]`**
+Declares an N-dimensional array with given sizes.
+
+```basic
+' A vector with 10 elements (0-9)
+DIM A[10]
+
+' A 5x3 matrix
+DIM M[5, 3]
+```
+
+**Literal Assignment**
+Variables can be created by assigning a literal value. This is the modern way to create arrays.
+
+```basic
+A = 10
+B$ = "hello"
+C = TRUE
+MyArray = [1, 2, 3, 4] ' Creates an array
+EmptyArray = []
+```
+
+## STATIC Local Variables
+
+`STATIC DIM` inside a `FUNC` or `SUB` declares a per-function persistent
+slot. The initializer runs on the first execution of the line; on every
+subsequent call the slot keeps its previous value. Storage hangs off the
+function definition (per-VM), so all recursive depths and cross-module
+callers share the same slot.
+
+
+
+
+### `$"..."` - a string with expressions in it
+
+```basic
+DIM name$ = "world"
+DIM n = 3
+
+PRINT $"Hallo {{name$}}, du hast {{n}} Nachrichten"
+PRINT $"html: <div class=""row"">{{name$}}</div>"
+PRINT $"json: {""model"": ""{{name$}}"", ""n"": {{n}}}"
+```
+
+`{{ ... }}` is the same interpolation the template engine in
+`jdb/demos/web/tmpl.jdb` uses, so the two read alike. Single braces stay
+text, which is what building JSON needs, and angle brackets never meant
+anything here, which is what building HTML needs.
+
+The `$` prefix is required. Without it every existing string that
+happens to contain two braces would change meaning.
+
+Inside, the ordinary string rules hold: a quote is written doubled. A
+map access therefore reads `$"{{m{""key""}}}"`.
+
+Anything can go between the braces, not only a name:
+
+```basic
+$"{{n * 2 + 1}}"           ' 7
+$"{{UCASE$(name$)}}"       ' WORLD
+$"{{m{""nope""} ?? 42}}"   ' 42
+```
+
+Values render the way `PRINT` renders them, arrays and maps included:
+`$"a: {{arr}}"` gives `a: [1, 2, 3]`, not one string per element.
+
+It becomes `text + FORMAT$("{}", expr) + text` at parse time, so nothing
+new exists at runtime and it compiles exactly as it interprets.
+
+### `??` - the left side unless it is absent
+
+```basic
+DIM m = { "zero": 0, "empty": "" }
+
+PRINT m{"nope"} ?? "fallback"    ' fallback
+PRINT m{"zero"} ?? 42            ' 0    - a value, not an absence
+PRINT m{"empty"} ?? "gone"       ' ""   - likewise
+PRINT m{"x"} ?? m{"y"} ?? "last" ' last - chains right to left
+```
+
+`??` asks whether the left side is **absent**, not whether it is false.
+That is the difference from `ORELSE`, which would have replaced all
+three of the middle cases. It matters because `x = NONE` is a trap in
+jdBasic: that comparison reads true for values that are not NONE at all,
+so the correct long form is `TYPEOF(x) = "NONE"`. `??` makes the right
+thing shorter than the wrong one.
+
+The right side is only evaluated when it is needed.
+
+It binds looser than arithmetic and tighter than the pipe, so
+`m{"k"} ?? 40 + 2` is `m{"k"} ?? 42`.
+
+Both backends answer the same. A compiled map carries a tag per value
+and one of them means absent, so `TYPEOF` on a missing key is `NONE`
+whether the program was interpreted or compiled.
+
+
+### `?.` `?{` `?[` - read into something that may not be there
+
+```basic
+DIM r = JSON.PARSE$(reply$)
+
+PRINT r?{"choices"}?[0]?{"message"}?{"content"} ?? "no answer"
+```
+
+A missing key already reads as `NONE` on its own. What fails is the
+*next* step, and that is what these guard: if there is nothing to read
+into, the read does not happen and the answer is absent, so the chain
+stops instead of faulting.
+
+```basic
+r{"nope"}[0]      ' Cannot index into NONE
+r?{"nope"}?[0]    ' NONE
+```
+
+The `?` goes in front of the accessor and works with all three: `?.`
+for a field, `?{` for a key, `?[` for an index. Where a step cannot be
+absent you can leave it off - `r?{"choices"}[0]{"message"}` guards only
+the part that needs it.
+
+Two things it is not:
+
+* **Not a bounds check.** The guard is about the object being absent,
+  not about an index being wrong. `r?{"choices"}?[9]` on a one-element
+  array is still an error.
+* **Not for method calls.** `a?.Method(x)` is refused: guarding the
+  lookup would still leave the call, and calling an absent thing is not
+  a question `?.` can answer. Test the object first.
+
+It pairs with `??`, which is usually how it is written: guard the walk,
+then name what to use when the walk came up empty.
+
+### Optional parameters
+
+A trailing parameter may carry a default, and a call that leaves it out
+gets that value. Builtins have always worked this way - `SUM(a)` and
+`SUM(a, axis)`, `PWM.SET(pin, hz)` and with a duty - and this is the
+same thing for functions you write.
+
+```basic
+FUNC Greet(name$, greeting$ = "Hello", mark$ = ".")
+    RETURN greeting$ + ", " + name$ + mark$
+ENDFUNC
+
+PRINT Greet("world")                  ' Hello, world.
+PRINT Greet("world", "Moin")          ' Moin, world.
+PRINT Greet("world", "Moin", "!")     ' Moin, world!
+```
+
+Two rules:
+
+* **Optional parameters come last.** Arguments are matched left to right,
+  so a required parameter after an optional one could never be reached.
+  The parser refuses it.
+* **A default is a literal** - a number, a string, `TRUE` or `FALSE`.
+  Anything else would need a scope to be evaluated in, and a function is
+  declared before any scope exists. `NONE` is not among them, because it
+  is not a literal either: it reads as absent only because an undeclared
+  name does, which the interpreter allows and `-c` refuses. For a
+  computed default, pick a value the caller would never pass and decide
+  in the body:
+
+```basic
+FUNC Open(path$, mode$ = "")
+    IF mode$ = "" THEN mode$ = DefaultMode$()
+    ...
+ENDFUNC
+```
+
+`SUB` takes them the same way. Lambdas do not: their parameter list is a
+bare list of names with no room to write one.
+
+A wrong argument count names the range it wanted:
+
+```
+Function 'Greet' expects 1 to 3 args, got 4
+```
+**`STATIC DIM name [AS type] [= initializer]`** (inside FUNC/SUB only)
+
+```basic
+FUNC counter() AS INTEGER
+    STATIC DIM n AS INTEGER = 0     ' init runs once on first call
+    n = n + 1
+    RETURN n
+ENDFUNC
+
+PRINT counter()    ' 1
+PRINT counter()    ' 2
+PRINT counter()    ' 3
+```
+
+* Allowed types: `INTEGER`/`LONG`, `DOUBLE`/`SINGLE`, `STRING`, `BOOLEAN`,
+  `ARRAY`, `MAP`, plus the usual integer aliases. Initializer can be any
+  expression - literals, calls, array/map literals.
+* Recursion shares the slot. A `STATIC DIM hits = 0` increment in a
+  recursive `FUNC` accumulates across every depth in one call chain and
+  persists into the next call.
+* Cross-module: a `STATIC DIM` in a module's exported function resolves
+  to the same slot regardless of which file calls it (storage is keyed
+  on the function identity, not the call site).
+* Top-level `STATIC DIM` is a parse error - STATIC has meaning only
+  inside a function body.
+* Recursive `STATIC` initializer (the init expression calls back into the
+  enclosing function): the guard is set **before** the initializer runs,
+  so the inner call sees a default-zero slot rather than re-entering the
+  init block. Don't write initializers that depend on a fully-resolved
+  STATIC slot of the same function.
+* `STATIC` slots are private to their function - they're not reactive
+  (`REACT` does not track them) and they aren't currently persisted by
+  `SAVEWS` / `LOADWS`. A workspace reload starts every static fresh.
+
+## Constants
+
+The `CONST` statement declares a named constant whose value cannot be changed after initialization. Constants are always global, even when declared inside a function.
+
+**`CONST name = expression`**
+
+```basic
+CONST MAX_HEALTH = 100
+CONST GREETING$ = "Hello, World!"
+CONST TAX_RATE = 0.19
+CONST GRID_SIZE = 8 * 8
+```
+
+Any attempt to reassign a constant will cause a runtime error:
+
+```basic
+CONST SPEED = 5
+SPEED = 10          ' Runtime error: Cannot assign to constant 'SPEED'
+```
+
+Constants are case-insensitive, just like all jdBasic variables:
+
+```basic
+CONST myVal = 42
+myval = 99          ' Runtime error: Cannot assign to constant 'MYVAL'
+```
+
+Constants can reference other constants and use any valid expression:
+
+```basic
+CONST RADIUS = 10
+CONST AREA = PI * RADIUS ^ 2
+```
+
+> **Note:** The built-in constants `PI`, `E`, and `VBNEWLINE` (see [Built-in Constants](#built-in-constants)) are also protected against reassignment using the same mechanism.
+
+## Destructuring Assignment
+
+Destructuring allows you to unpack values from an array into individual variables in a single statement. It is a concise way to assign multiple variables at once.
+
+[var1, var2, ...]
+Assigns variables from an array expression.
+
+```basic
+DIM A, B, C
+
+' Simple assignment from a literal array
+[A, B] = [1, 2]
+PRINT A, B ' Output: 1 2
+
+' Swapping variables in a single line
+[B, A] = [A, B]
+PRINT A, B ' Output: 2 1
+
+' Unpacking the result of a function that returns an array
+FUNC GetValues()
+    RETURN [10, 20, 30]
+ENDFUNC
+
+[A, B, C] = GetValues()
+PRINT A, B, C ' Output: 10 20 30
+```
+
+Targets are not limited to plain variables - an **indexed array element** (`arr[i]`)
+or a **map value** (`m{key}`) may also appear on the left, so an in-place swap of
+two array slots (or map entries) is a one-liner. The whole right-hand side is
+evaluated before any assignment, so swaps are safe.
+
+```basic
+DIM nums = [10, 20, 30]
+' Swap two array elements in place
+[nums[0], nums[2]] = [nums[2], nums[0]]
+PRINT nums[0], nums[2] ' Output: 30 10
+
+DIM scores AS MAP
+scores{"a"} = 1 : scores{"b"} = 2
+[scores{"a"}, scores{"b"}] = [scores{"b"}, scores{"a"}]   ' swap map values
+
+' Mixed targets and mixed value types in one statement
+DIM x : DIM b = [100, 200]
+[x, b[0]] = [b[1], "hello"]
+PRINT x, b[0] ' Output: 200 hello
+```
+
+## Reactive Variables and Assignment
+
+Reactive variables needs to be created explicitly with `DIM`.
+
+**`DIM var AS REACT type]`**
+Declares a reactive variable. The `AS REACT` clause is used for specific types.
+
+**`DIM array[size1, size2, ...] AS REACT INTEGER`**
+Declares an N-dimensional array with given sizes as reactive integer variable.
+
+```basic
+DIM A AS REACT INTEGER
+DIM B AS REACT INTEGER
+
+B = 2
+A -> B * 2 'A is reactive and depends on B ' The -> Operator mark this term as reactive
+
+PRINT A 'Prints 4
+
+B = 4
+
+PRINT A 'Prints 8, A is automatically recalculated when B changes
+```
+
+For dynamic programmatic use, the following functions let you register/unregister reactive bindings without using the `->` operator:
+
+* **`REACT_BIND(var_name$, formula$)`**: Programmatically binds a global variable to a formula string. Equivalent to writing `var -> formula` in source.
+* **`UNREACT(var_name$)`**: Removes a previously established reactive binding.
+
+## Array Slicing and Vectorized Assignment
+
+jdBasic supports powerful slicing and vectorized assignments for arrays and matrices, allowing you to manipulate sub-sections or broadcast scalars across dimensions.
+
+```basic
+DIM A = RESHAPE(IOTA(8), [2,2,2])
+
+' 1. Deep Slicing
+PRINT A[1]       ' Extracts a 2D slice
+PRINT A[1][0]    ' Extracts a 1D slice (vector)
+
+' 2. Scalar Broadcasting
+A[0] = 99        ' Replaces all elements in the first 2D slice with 99
+
+' 3. Cyclic Vectorized Assignment
+A[1] = [42, 84]  ' Assigns the vector [42, 84] cyclically across the target slice
+```
+
+## Enumerations
+
+To improve code clarity, you can define named integer constants using `ENUM`.
+
+* **`ENUM name ... ENDENUM`**: Defines a new enumeration. Members are assigned incrementing integer values starting from 0 by default. You can also assign explicit integer values.
+
+```basic
+' Using automatic values (Car = 0, Truck = 1, Boat = 2)
+ENUM VehicleType
+    Car
+    Truck
+    Boat
+ENDENUM
+
+' Using explicit values
+ENUM WebStatus
+    OK = 200
+    NotFound = 404
+    Error = 500
+ENDENUM
+
+PRINT "Vehicle: ", VehicleType.Car  ' Prints 0
+PRINT "Status: ", WebStatus.NotFound ' Prints 404
+
+CurrentVehicle = VehicleType.Truck
+IF CurrentVehicle = VehicleType.Truck THEN
+    PRINT "It's a truck!"
+ENDIF
+```
+
+## User-Defined Types (TYPE...ENDTYPE)
+
+You can create your own complex data structures, similar to a `struct` in C or a simple class, using the **`TYPE...ENDTYPE`** block. This allows you to group related variables into a single object.
+
+* **`TYPE TypeName`**: Begins the definition of a new custom type.
+* **`MemberName AS Type`**: Inside the block, you declare the data members (properties) of the type. Supported data types include `INTEGER`, `DOUBLE`, `STRING`, `BOOLEAN`, `DATE`, and `MAP`.
+* **`SUB` / `FUNC`**: You can define methods (procedures and functions) that operate on the type's data. Inside a method, use the **`THIS`** keyword to refer to the specific object instance the method was called on.
+* **`SUB INIT([params])`**: Optional **constructor**. Runs automatically after the implicit field defaults whenever the type is instantiated with `DIM x AS TypeName(args)`. If `INIT` takes no parameters, it also runs for the bare form `DIM x AS TypeName`. If `INIT` takes parameters, the bare form leaves the object default-initialised so legacy code that calls `obj.INIT(args)` manually keeps working.
+* **`SUB DISPOSE()`**: Optional **destructor**. Always parameter-less. The interpreter runs `DISPOSE` automatically when the object loses its last reference (going out of scope, being re-assigned, last copy released). The native compiler runs `DISPOSE` when a tracked local goes out of scope (function return / end of `main`); it does *not* fire on re-assignment, since native UDTs are not refcounted.
+* **`ENDTYPE`**: Ends the type definition.
+
+### Instantiation and Usage
+
+You create an instance of your custom type using the `DIM` command. You can then access its members and call its methods using dot notation (`.`).
+
+For arrays of UDTs, constructor arguments are supplied as **vectors** of the same length as the array shape: each slot `i` receives `(vec1[i], vec2[i], …)` and `INIT` is invoked once per slot.
+
+```basic
+DIM hero AS Player("Hero", 100)                                  ' scalar
+DIM npc[3] AS T_NPC(["Monster", "Trader", "Quest"], [100, 20, 10]) ' array, vectorised
+```
+
+### Constructor / Destructor example
+
+```basic
+TYPE FileLogger
+    Path  AS STRING
+    Open  AS BOOLEAN
+
+    SUB INIT(p AS STRING)
+        THIS.Path = p
+        THIS.Open = TRUE
+        PRINT "open  " + p
+    ENDSUB
+
+    SUB DISPOSE()
+        IF THIS.Open THEN
+            PRINT "close " + THIS.Path
+            THIS.Open = FALSE
+        ENDIF
+    ENDSUB
+ENDTYPE
+
+SUB use_it()
+    DIM log AS FileLogger("trace.txt")
+    PRINT "doing work"
+ENDSUB
+
+use_it()
+' Output:
+'   open  trace.txt
+'   doing work
+'   close trace.txt
+```
+
+### Example
+
+Here is a complete example defining a `Character` type, creating instances of it, and using its members and methods.
+
+```basic
+' --- 1. Define the custom data type ---
+TYPE Character
+    Name AS STRING
+    Health AS INTEGER
+    Position AS MAP ' UDTs can contain other complex types like Maps
+
+    ' A method to display the character's info
+    SUB PrintInfo()
+        PRINT "Name: " + THIS.Name
+        PRINT "Health: " + THIS.Health
+        PRINT "Position: (" + THIS.Position{"x"} + ", " + THIS.Position{"y"} + ")"
+    ENDSUB
+
+    ' A method to deal damage
+    SUB TakeDamage(damage_amount)
+        THIS.Health = THIS.Health - damage_amount
+        IF THIS.Health < 0 THEN THIS.Health = 0
+    ENDSUB
+ENDTYPE
+
+' --- 2. Create instances of the new type ---
+DIM Player1 AS Character
+DIM Enemy AS Character
+
+' --- 3. Assign values to the members ---
+Player1.Name = "Hero"
+Player1.Health = 100
+Player1.Position = {"x": 10, "y": 20}
+
+Enemy.Name = "Goblin"
+Enemy.Health = 30
+Enemy.Position = {"x": 50, "y": 60}
+
+' --- 4. Call methods on the instances ---
+Player1.PrintInfo()
+PRINT ""
+Enemy.PrintInfo()
+
+PRINT ""
+PRINT Enemy.Name + " takes 12 damage!"
+Enemy.TakeDamage(12)
+Enemy.PrintInfo()
+
+' You can also create arrays of your custom types
+DIM NPCs[2] AS Character
+NPCs[0].Name = "Villager"
+NPCs[0].Health = 10
+NPCs[1].Name = "Guard"
+NPCs[1].Health = 80
+PRINT ""
+PRINT "First NPC is: " + NPCs[0].Name
+```
+
+## Operators
+
+jdBasic supports a rich set of operators for arithmetic, string manipulation, and logical comparisons.
+
+### String Operators
+
+Standard arithmetic operators are overloaded for powerful string manipulation.
+
+**`+`**: (Concatenation): Joins two strings.
+
+```basic
+"Hello " + "World!" -> "Hello World!"
+```
+
+**`-`**: (Replacement): Removes all occurrences of the right string from the left string.
+
+```basic
+"abababac" - "ab" -> "ac"
+```
+
+**`*`**: (Repetition): Repeats a string a specified number of times.
+
+```basic
+"-" * 10 -> "----------"
+```
+
+**`/`**: (Slicing): Extracts a substring from the left or right.
+
+```basic
+5 / "Welcome" -> "Welco" (Left part)
+"Welcome" / 4 -> "come" (Right part)
+```
+
+**`-`**: (Unary Split): Splits a string into an array of its characters.
+
+```basic
+-"ABC" -> ["A", "B", "C"]
+```
+
+### Bitwise Operators / Operations
+
+These operators perform bit-level calculations on numeric values, which are treated as 64-bit integers.
+
+**`BAND`**: (Bitwise AND): 5 BAND 3 -> 1 (%0101 & %0011 = %0001)
+
+**`BOR`**: (Bitwise OR): 5 BOR 3 -> 7 (%0101 | %0011 = %0111)
+
+**`BXOR`**: (Bitwise XOR): 5 BXOR 3 -> 6 (%0101 ^ %0011 = %0110)
+
+**`BNOT`**: (Bitwise NOT, unary prefix): `BNOT 0` -> -1, `BNOT 5` -> -6, `(BNOT $AA) BAND $FF` -> $55. Vectorises element-wise over arrays.
+
+**`SHL`** - Bitwise shift left. Both **infix** and **function** form work:
+* `1 SHL 8` -> 256
+* `SHL(1, 8)` -> 256 (also vectorises over arrays as the function form)
+
+**`SHR`** - Bitwise shift right (arithmetic, sign-preserving):
+* `256 SHR 4` -> 16
+* `-8 SHR 1` -> -4
+* `SHR(value, n)` - function form also accepts arrays
+
+Shift precedence is **looser than addition**, **tighter than comparison and BAND/BOR/BXOR**. So `1 SHL 2 + 1` parses as `1 SHL (2 + 1)` = 8, and `5 BAND 3 SHL 1` is `5 BAND (3 SHL 1)` = 4. Use parentheses if in doubt.
+
+### Logical Operators
+
+These operators are used in conditional logic, such as IF statements.
+
+**`AND`**:, **`OR`**:, **`XOR`**:: Standard logical operators. They evaluate both sides of the expression and support element-wise operations on arrays.
+
+**`ANDALSO`**:: A short-circuiting version of AND. If the left side is FALSE, the right side is never evaluated. This is safer for chained conditions.
+
+**`ORELSE`**:: A short-circuiting version of OR. If the left side is TRUE, the right side is never evaluated.
+
+```basic
+' This is safe because the second part is never run if MyMap is NULL
+IF MyMap <> NULL ANDALSO MAP.EXISTS(MyMap, "key") THEN ...
+```
+
+**`IN`**: Evaluates if the left hand value exists in the right hand expression.
+
+```basic
+DIM MyMap As MAP 
+MyMap = {"name": "jd", "value": 100}
+IF "Lall" IN MyMap THEN PRINT "Key exists!"
+
+MyArray = [10, 20, 30]
+IF 20 IN MyArray THEN PRINT "Value exists!"
+```
+
+## Chained Access Syntax
+
+jdBasic supports a modern, chained syntax for accessing elements within nested data structures, which is especially useful for JSON, COM objects, and Tensors.
+
+**JSON and Map/Array Chaining**
+You can chain `{"key"}` and `[index]` accessors to navigate complex objects returned by `JSON.PARSE$`.
+
+```basic
+RESPONSE_JSON = JSON.PARSE$(RESPONSE$)
+
+' Access nested data in a single line
+AI_MESSAGE$ = RESPONSE_JSON{"choices"}[0]{"message"}{"content"}
+```
+
+**COM Chaining**
+You can chain property accesses and method calls for COM objects.
+
+```basic
+objXL = CREATEOBJECT("Excel.Application")
+objXL.Visible = TRUE
+wb = objXL.Workbooks.Add()
+objXL.ActiveSheet.Cells(1, 1).Value = "Hello from a jdBasic!"
+```
+
+**Tensor Gradient Access**
+You can access the gradient of a tensor after backpropagation using dot notation.
+
+```basic
+' After TENSOR.BACKWARD has been called on a loss
+gradient_of_weights = MyModel{"layer1"}{"weights"}.grad
+```
+
+## Functional Syntax
+
+**Function chaining (The Pipe Operator **`|>`**)**
+
+```basic
+PRINT "--- Processing the Pipe Way (with Pipe Operator) ---"
+final_result$ = FILTER_GT_150(SALES_DATA) |> SUM_ARRAY(?) |> FORMAT_RESULT$(?)
+PRINT final_result$
+```
+
+**Lambda Function chaining (The Pipe Operator **`|>`**)**
+
+```basic
+PRINT "--- Processing the Pipe / Lambda Way (with Pipe Operator) ---"
+PRINT SELECT(lambda i -> i + 1, IOTA(10))
+PRINT SELECT(lambda i -> i + 1, IOTA(10)) |> FILTER(lambda val -> val > 5, ?) |> SELECT(lambda v -> v * 10, ?)
+```
+
+**Lambda Function Closures with USE()**
+
+```basic
+FUNC MakeAdder(base_value)
+    ' The returned Lambda captures 'base_value' in its backpack.
+    ' Even after MakeAdder finishes, the lambda remembers it.
+    RETURN LAMBDA USE(base_value) x -> x + base_value
+ENDFUNC
+
+Add5 = MakeAdder(5)
+Add100 = MakeAdder(100)
+
+PRINT "5 + 10 = "; Add5(10)      ' Output: 15
+PRINT "100 + 10 = "; Add100(10)  ' Output: 110
+PRINT
+```
+
+### Function as operators
+
+```basic
+'AtomiJD Divider
+FUNC JD(x,y)
+    IF Y = 0 THEN
+        RETURN "Infinity"
+    ELSE
+        RETURN x/y
+    ENDIF
+ENDFUNC
+
+PRINT 10 JD@ 5, 10 JD@ 0, IOTA(10) jd@ 2, IOTA(10) jd@ IOTA(10)*2, 2 jd@ [1,2,4]
+'Should return:
+'2       Infinity        [0.5 1 1.5 2 2.5 3 3.5 4 4.5 5] [2 2 2 2 2 2 2 2 2 2]   [2 1 0.5]
+```
+
+### Higher Order Function
+
+```basic
+print "Using higher order functions"
+print
+
+func inc(ab)
+    return ab+1
+endfunc
+func dec(ac)
+    return ac-1
+endfunc
+
+func apply(fa,cc)
+    return fa(cc)
+endfunc
+
+print apply(inc@,10) ' Should return 11
+print apply(dec@,12) ' Should return 11
+```
+
+## Commands
+
+### Console I/O Functions
+
+* **`INPUT [Prompt], variable`**: Prompts the user for a line input. Value is returned in variable
+* **`PRINT [Vairable,String,function,...] [;|,] ...`**: Prints the given arguments on screen "," places a tab between arguments ";" for direct concating or at the end of PRINT supresses the Newline
+
+#### `LOCATE row, col`
+
+Moves the text cursor to a specific position on the console screen. The top-left corner is position 1, 1. This is a procedure.
+
+* **`row`**: The row number (1-based).
+* **`col`**: The column number (1-based).
+
+```basic
+CLS
+LOCATE 5, 10
+PRINT "This text starts at row 5, column 10."
+LOCATE 20, 1
+```
+
+-----
+
+#### `GETX() -> Number` and `GETY() -> Number`
+
+These functions return the current horizontal (`GETX`) or vertical (`GETY`) position of the text cursor.
+
+* **Returns**: An integer representing the current column (`GETX`) or row (`GETY`).
+
+```basic
+CLS
+LOCATE 8, 12
+PRINT "Cursor is at: " + GETY() + ", " + GETX()
+' Output: Cursor is at: 8, 28
+' (The position is after the text has been printed)
+```
+
+-----
+
+### User Input Functions
+
+#### `INKEY$() -> String`
+
+Checks the keyboard buffer for a key press. This function is **non-blocking**; it returns immediately, whether a key has been pressed or not.
+
+* **Returns**: A single-character string if a key has been pressed since the last check, otherwise an empty string `""`.
+
+```basic
+PRINT "Press 'q' to quit..."
+DO
+    ' Your main program logic would go here
+    
+    KeyPressed$ = INKEY$()
+    IF KeyPressed$ <> "" THEN
+        PRINT "You pressed: " + KeyPressed$
+    ENDIF
+LOOP UNTIL LCASE$(KeyPressed$) = "q"
+```
+
+-----
+
+#### `WAITKEY$() -> String`
+
+Pauses program execution and waits for the user to press any key. This function is **blocking**.
+
+* **Returns**: A single-character string representing the key that was pressed.
+
+```basic
+PRINT "Press any key to continue..."
+AnyKey$ = WAITKEY$()
+PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
+```
+
+-----
+
+### System & Flow Control
+
+* **`CLS`**: Clears the console screen.
+* **`COLOR fg, bg`**: Sets the foreground and background colors for text.
+* **`CURSOR state`**: Turns the cursor on (`TRUE`) or off (`FALSE`).
+* **`GOTO label`**: Jumps execution to a `label:`.
+* **`IF condition THEN ... [ELSEIF ...] [ELSE ...] ENDIF`**: Conditional execution block. Single-line `IF condition THEN statement` is also supported.
+* **`FOR variable TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
+* **`FOR EACH variable IN collection`**: This command provides a simple way to iterate over every element in a collection, such as an Array or a Map.
+* **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
+* **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
+* **`EXITFUNC`, `EXITDO`, `EXITFOR`**: Exiting functions and loops.
+* **`CONTINUEFOR`, `CONTINUEDO`, `CONTINUELOOP`**: Skips the rest of the current loop iteration and continues with the next one.
+* **`OPTION option$`**: Sets a VM option.
+  * `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
+  * `OPTION "EXPLICIT"` enforces declarations: variables **must** be introduced with `DIM` before first use (read or write). With **EXPLICITOFF** (default), variables are created on first use and default to `0` (numeric) or `""` (string).
+    * **Reads** of undeclared names: error 27 “Undeclared variable”.
+    * **Writes** to undeclared names: error 27.
+    * `DIM` always declares (even with EXPLICIT on).
+    * `FOR` / `FOR EACH` loop variables must be declared when EXPLICIT is on.
+    * Disable with `OPTION "NOEXPLICIT"` or `OPTION "EXPLICITOFF"`.
+* **`SLEEP milliseconds`**: Pauses execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, about 15.6 ms on Windows and under a millisecond elsewhere.
+* **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
+* **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
+* **`EXPORT MODULE [module]`**: Marks a file as EXPORT for importing with IMPORT
+* **`DECLARE FUNC name LIB "lib" ALIAS "export_name" (params) AS rettype`**: Declares a foreign function from a shared library so it can be called from jdBasic. See the **Foreign Function Interface** section below.
+* **`CLIPBOARD.SET text$`**: Sets the system clipboard text.
+* **`CLIPBOARD.GET$() -> string$`**: Returns the text currently in the system clipboard.
+* **`END`**: Immediately terminates the program execution (unlike `STOP` which pauses for debugging).
+* **`YIELD`**: Pauses execution and yields to the host environment's event loop for one frame (critical for Web/WASM environments to prevent freezing).
+* **`ON event_name$ func_name$`**: Registers a subroutine to handle system or custom events. The handler must be a `SUB`. For `ON "ERROR"`, the function must accept exactly one argument.
+* **`RAISEEVENT event_name$, [event_data]`**: Triggers a custom event, passing optional data to the registered event handler.
+
+### SWITCH...CASE...ENDSWITCH
+
+Provides a clear way to execute one of several blocks of code based on the value of a single expression. It is a more readable alternative to a long series of `IF...ELSEIF` statements.
+
+* **`SWITCH expression`**: Evaluates the `expression` once at the beginning.
+* **`CASE value_expression[, value_expression]...`**: Compares each value to the main switch expression. If any match, the body runs. Each value can also be a range `lo TO hi` (inclusive both ends), and you may mix singletons and ranges in one `CASE`: `CASE 1, 5 TO 9, 12`.
+* **`DEFAULT`**: An optional block that executes if no preceding `CASE` statement matches.
+* **`ENDSWITCH`**: Marks the end of the `SWITCH` block.
+
+**Note**: The interpreter does not "fall through" cases. Once a `CASE` or `DEFAULT` block is executed, control jumps immediately to the statement following `ENDSWITCH`.
+
+**Multi-case examples:**
+
+```basic
+SWITCH n
+    CASE 1, 3, 5, 7, 9
+        PRINT "odd single-digit"
+    CASE 10 TO 19
+        PRINT "teen"
+    CASE 20 TO 29, 40 TO 49
+        PRINT "20s or 40s"
+    DEFAULT
+        PRINT "other"
+ENDSWITCH
+```
+
+String values work identically: `CASE "red", "orange", "yellow"`. `lo TO hi` ranges are intended for numeric values only.
+
+**Example:**
+
+```basic
+INPUT "Enter a command (start, stop, pause): ", command$
+
+SWITCH UCASE$(command$)
+    CASE "START"
+        PRINT "Starting process..."
+        ' ... code to start ...
+
+    CASE "STOP"
+        PRINT "Stopping process..."
+        ' ... code to stop ...
+
+    CASE "PAUSE"
+        PRINT "Pausing process."
+
+    DEFAULT
+        PRINT "Unknown command: " + command$
+ENDSWITCH
+
+PRINT "Switch block finished."
+```
+
+### Error Handling (TRY...CATCH)
+
+jdBasic uses a modern, structured error handling system. The old ON ERROR system is no longer supported.
+
+* **`TRY`**: Begins a block of code that is protected.
+* **`CATCH`**: If an error occurs inside the TRY block, execution jumps to the CATCH block.
+* **`FINALLY`**: This block of code is always executed after the TRY or CATCH block, regardless of whether an error occurred. It's ideal for cleanup tasks like closing files.
+* **`ENDTRY`**: Ends the error handling block.
+
+Inside a CATCH block, you can use the following built-in variables:
+
+* **`ERR`**: The numeric error code.
+* **`ERL`**: The line number where the error occurred.
+* **`ERRMSG$`**: The descriptive error message string.
+* **`STACK$`**: The call stack .
+
+```basic
+TRY
+    PRINT "Opening file..."
+    ' Code that might fail, e.g., file operations
+    A = 10 / 0
+CATCH
+    PRINT "An error occurred!"
+    PRINT "Code: "; ERR; ", Line: "; ERL; ", Message: "; ERRMSG$
+FINALLY
+    PRINT "Closing file (this always runs)."
+ENDTRY
+```
+
+#### `THROW [error_message]`
+
+Manually triggers a runtime error that can be caught by a `TRY...CATCH` block. This is useful for creating custom error conditions in your own functions.
+
+* **`error_message`** (Optional): A string or number that will become the value of `ERRMSG$` in the `CATCH` block. If omitted, a default message is used.
+
+```basic
+SUB SetAge(age)
+    IF age < 0 THEN
+        THROW "Age cannot be negative."
+    ENDIF
+    ' ... set the age ...
+ENDSUB
+
+TRY
+    SetAge(-5)
+CATCH
+    PRINT "Error caught!"
+    PRINT "Message: " + ERRMSG$
+    PRINT "At line: " + ERL
+ENDTRY
+
+' Output:
+' Error caught!
+' Message: Age cannot be negative.
+' At line: 3
+```
+
+-----
+
+### Dynamic Code Functions
+
+* **`EXECUTE(code_string$)`**: Compiles and executes a string of jdBasic code at runtime.
+* **`EVAL(expression_string$) -> value`**: Compiles and evaluates a string as a single expression, returning its result. This is the functional counterpart to the `EXECUTE` command.
+
+```basic
+    X = 10
+    Y = 20
+    MyFormula$ = "SQR(X^2 + Y^2)"
+    PRINT EVAL(MyFormula$) ' Evaluates the formula using current X and Y
+```
+
+> **Scope binding is per compilation unit.** Every dynamically compiled chunk - an `EXECUTE` string, a REPL line, an MCP `jdb_eval` call - is its own unit. Top-level code in a later unit sees all existing globals, but a `FUNC` or `LAMBDA` body resolves its free variables against the unit in which the function was **defined**: a function defined in a later unit cannot read a global created in an earlier one (the read yields `NONE`). Pass data as parameters, or define the function and its module state in the same unit. `LOADWS` replays the whole workspace source as a single unit, so restored functions and restored globals share one scope again.
+
+### Development & Debugging
+
+* **`COMPILE`**: Compiles the source code currently in memory into p-code.
+* **`PRETTY [PREVIEW] [STYLE UPPER|VB] [WIDTH n]`**:  Formats loaded source code in-place (unless PREVIEW).
+* **`LINT`**: Check the loaded source code for extra LINT conditions like Unclosed block, unused parameter and unused variable.
+* **`DUMP [arg]`**: Dumps the p-code of the main program. "GLOBAL" -> Dumps global vars, "LOCAL" -> Dumps local vars, "STACK" -> Dumps the call stack, "REACT", "VARNAME" -> Dumps the react graph., "MODULE [NAME]" ->  Dumps the p-code of a loaded module
+* **`EDIT`**: Opens the integrated text editor with the current source code.
+* **`LIST`**: Lists the current source code in memory to the console.
+* **`LOAD "filename"`**: Loads a source file from disk into memory.
+* **`SAVE "filename"`**: Saves the source code in memory to a file on disk.
+* **`RUN`**: Compiles and runs the program currently in memory.
+* **`TRON` / `TROFF`**: Turns instruction tracing on or off.
+* **`LOADWS "workspacename"`**: Loads a source file and all variables of an saved workspace from disk into memory.
+* **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
+* **`CLEARWS`**: Empties source code, p-code, and all global variables
+* **`NEW`**: Empties the source code, compiled p-code, and user-defined function tables.
+* **`UNREACT(name$)`**: Remove reactive variable. name$ can be a plain var (e.g., "A"), a dotted member (e.g., "PLAYER.X") or special "ALL"/"*" to clear the entire reactive graph.
+
+#### Diagnostics: `DEBUG.PRINT` and `DEBUG.ASSERT`
+
+Both write to the diagnostic channel, never to stdout: while a debugger is attached the line appears in the VS Code debug console, otherwise on stderr. A program whose output is redirected therefore keeps its tracing visible, and the redirected file stays clean.
+
+* **`DEBUG.PRINT v, [v2, ...]`**: Stringifies each argument and joins them with a single space. An array argument prints as one value (`[1, 2, 3]`), it is not mapped over.
+* **`DEBUG.ASSERT cond, [message$]`**: A no-op while `cond` is true. Otherwise it raises a catchable runtime error reading `assertion failed: <message>`, so `TRY ... CATCH` sees it in `ERRMSG$` and an uncaught one ends the program with exit code 1.
+
+```basic
+DIM total = SUM(prices)
+DEBUG.PRINT "total after discount", total
+DEBUG.ASSERT total >= 0, "a total can never be negative"
+```
+
+Both work in the interpreter and under `-c`. The interpreter prefixes the raised message with the builtin name and the source line; the native runtime reports the bare message, as it does for every uncaught error.
+
+The names are dotted on purpose. A bare `ASSERT` would collide with the many scripts that define their own `SUB ASSERT` helper, and a user routine carrying a builtin's name is rejected at load.
+
+### REPL Keyboard Shortcuts
+
+The interactive REPL hosts up to four parallel workspaces, each with its own VM.
+
+* **`F1` … `F4`**: Switch to workspace 1–4. Works at the prompt and while a console-mode program is running (the keys are intercepted before reaching `INKEY$`).
+* **`Ctrl+F1` … `Ctrl+F4`**: Same as `F1`…`F4`, but also works while a graphics program is running. The chord is consumed before ImGui or `ON KEYDOWN` handlers see it, so the running program is free to bind plain `F1`…`F4` for its own use (help screens, save slots, etc.).
+* **`F5`**: Run the current source buffer.
+* **`F7`**: Show command history.
+* **`F8`**: Search command history (incremental, by prefix of current line).
+
+The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Standalone runs (`jdbasic foo.jdb`) install no hook, so the chord has zero overhead and `F1`…`F4` reach the program normally.
+
+### Filesystem
+
+* **`DIR [path]`**: Lists files and directories. Supports wildcards like `*` and `?`.
+* **`DIR$(wildcard$, [extended_info]) -> Array`**: Lists files and directories matching the pattern.
+  * If `extended_info` is `FALSE` (default), it returns a **1D Array** of filenames.
+  * If `extended_info` is `TRUE`, it returns a **2D Matrix** (Nx5) containing details for each file:
+    * **Col 0**: Filename (String)
+    * **Col 1**: Size in bytes (Number)
+    * **Col 2**: Type ("FILE", "DIR", "LINK")
+    * **Col 3**: Date (YYYY-MM-DD HH:MM:SS)
+    * **Col 4**: Attributes ("R", "W", "X", etc.)
+* **`CD "path"`**: Changes the current working directory.
+* **`PWD`**: Prints the current working directory.
+* **`MKDIR "path"`**: Creates a new directory.
+* **`RMDIR "path"`**: Removes an empty directory.
+* **`KILL "filename"`**: Deletes a file.
+
+#### Path Functions
+
+* **`PATH.JOIN$(part1$, part2$, ...) -> string$`**: Joins multiple file path components using the correct separator for the current OS (e.g., `\` on Windows, `/` on Linux).
+* **`PATH.BASENAME$(path$) -> string$`**: Returns the filename part of a path (e.g., `"file.txt"` from `"/dir/file.txt"`).
+* **`PATH.EXT$(path$) -> string$`**: Returns the file extension including the dot (e.g., `".txt"`).
+* **`PATH.DIRNAME$(path$) -> string$`**: Returns the directory part of a path (e.g., `"a/b"` from `"a/b/c.txt"`). Returns `""` for a bare filename and `"/"` for a root-level path like `"/x"`.
+* **`PATH.NORMALIZE$(path$) -> string$`**: Normalizes a path by resolving `.` and `..` segments and converting to the OS-native separator. Preserves drive prefixes on Windows (e.g., `"C:\"`).
+
+#### File Inspection Functions
+
+* **`FILE.EXISTS(path$) -> integer`**: Returns `1` if the file or directory at `path$` exists, `0` otherwise.
+* **`FILE.SIZE(path$) -> integer`**: Returns the size of the file in bytes, or `-1` if the file does not exist.
+* **`FILE.ISDIR(path$) -> integer`**: Returns `1` if `path$` is an existing directory, `0` otherwise.
+* **`FILE.STAT(path$) -> map`**: Returns a map describing the file with keys:
+  * `"exists"` (boolean), `"size"` (integer bytes), `"is_dir"` (boolean), `"readonly"` (boolean), `"hidden"` (boolean), `"mtime"` (string `YYYY-MM-DD HH:MM:SS`). For missing files, `exists` is `FALSE` and other fields are default values.
+
+### OS Functions
+
+* **`OS.GETOS() -> string$`** / **`OS.GETOS$()`**: Returns a string identifying the current operating system. Possible values are `"WINDOWS"`, `"LINUX"`, and `"MACOS"`. Both forms are equivalent.
+
+    ```basic
+    PRINT "Running on: " + OS.GETOS()
+    ```
+
+  * **`OS.ARGS() -> array`**: Returns a 1D array of strings containing the command-line arguments passed to the jdBasic interpreter.
+
+    ```basic
+    CmdArgs = OS.ARGS()
+    PRINT "Launched with " + LEN(CmdArgs) + " arguments."
+    ```
+
+* **`OS.EXEC(command$, [args_array$]) -> map`**: Executes an external program or shell command. It returns a `Map` containing two keys: `"output"` (the captured standard output and error text) and `"exit_code"` (the integer return code from the program).
+
+    > **Note on Windows**: Internal commands like `dir` or `cls` are not standalone programs. To run them, you must execute the command shell `cmd.exe` with the `/c` flag, like this: `OS.EXEC("cmd /c dir")`.
+
+    ```basic
+    ' On Linux/macOS
+    Result = OS.EXEC("ls -l")
+
+    ' On Windows
+    Result = OS.EXEC("ping", ["-n", "4", "google.com"])
+
+    PRINT "Exit Code: " + Result{"exit_code"}
+    PRINT "--- Output ---"
+    PRINT Result{"output"}
+    ```
+
+* **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
+* **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
+* **`OS.LOAD() -> Number`**: Returns the current system-wide CPU load as a percentage (0.0 to 100.0). Accuracy and behavior are OS-dependent.
+* **`OS.FEATURE(name$) -> BOOLEAN`**: Returns `TRUE` when the running binary advertises the named build feature, `FALSE` otherwise. Useful to gate code paths the current backend cannot run - for example, programs that should skip reactive variables or `EXECUTE`/`EVAL` blocks when running from a natively compiled `.exe`. Recognised feature names: `"NATIVEC"` (running from `--compile` output), `"INTERPRETER"` (running in the VM), `"COM"`, `"HTTP"`, `"SERIAL"`, `"GFX"`, `"IMGUI"`, `"LLM"`, `"ONNX"`, `"SQLITE"`, `"PYTHON"`, `"LLVMC"` (compiler available). Unknown names return `FALSE`.
+
+    ```basic
+    IF NOT OS.FEATURE("NATIVEC") THEN
+        ' VM-only features go here (REACTIVE bindings, EXECUTE, EVAL, ...)
+    ENDIF
+    ```
+* **`OS.SCREENSHOT(path$, [mode$], [caption$]) -> INTEGER`**: Captures the screen or a window to an image file and returns `0` on success (negative on error). **Windows only** (returns `-100` on other platforms). The image format is chosen from the file extension - `.png`, `.jpg`/`.jpeg`, `.bmp`, `.tif`/`.tiff`, `.gif` - and encoded via the Windows Imaging Component. `mode$` selects what to grab:
+    * `"screen"` (default) - the whole (virtual) desktop.
+    * `"window"` - a window including its title bar and borders.
+    * `"client"` - only a window's client area (its content, no frame).
+
+    For `"window"` / `"client"`, the optional `caption$` is a window title matched with `FindWindow`; if omitted (or empty) the current **foreground** window is captured.
+
+    ```basic
+    OS.SCREENSHOT("desktop.png")                   ' full screen -> PNG
+    OS.SCREENSHOT("shot.jpg", "window")            ' foreground window frame -> JPG
+    rc = OS.SCREENSHOT("calc.bmp", "client", "Calculator")
+    IF rc <> 0 THEN PRINT "capture failed: "; rc
+    ```
+
+#### Setting EXE file properties (`.jdb.props` sidecar)
+
+When building a standalone `.exe` with `jdBasic --compile myprog.jdb`, the
+compiler looks for an optional sidecar file `myprog.jdb.props` next to the
+source. If present, its contents are baked into the produced `.exe` as a
+standard Win32 `VERSIONINFO` resource (visible in *Properties → Details* and
+queryable via `GetFileVersionInfo`). Without the sidecar, the `.exe` is built
+exactly as before - the file is purely additive.
+
+The format is one `key = value` per line; lines starting with `#` are
+comments, and surrounding double-quotes around values are stripped. Recognised
+keys:
+
+| Key                | Purpose                                                 |
+| ------------------ | ------------------------------------------------------- |
+| `FileVersion`      | "1.2.3.4"-style four-part version (the binary version). |
+| `ProductVersion`   | Product-level version. Defaults to `FileVersion`.       |
+| `CompanyName`      | Publisher / company.                                    |
+| `FileDescription`  | Short description shown in tooltips and Task Manager.   |
+| `ProductName`      | Marketing name of the product.                          |
+| `LegalCopyright`   | Copyright string.                                       |
+| `OriginalFilename` | Filename the binary was originally built as.            |
+| `InternalName`     | Internal name. Defaults to `OriginalFilename`.          |
+| `Icon`             | Path to a `.ico` file embedded as the EXE icon.         |
+
+Example `myprog.jdb.props`:
+
+```
+# EXE properties for myprog.exe
+FileVersion     = 2.5.1.0
+ProductVersion  = 2.5.0.0
+CompanyName     = Acme Industries
+FileDescription = Widget Builder
+ProductName     = Acme Widget Builder
+LegalCopyright  = Copyright (C) 2026 Acme Industries
+OriginalFilename= myprog.exe
+Icon            = resources/myprog.ico
+```
+
+If `rc.exe` (the Windows resource compiler) is unavailable or fails, the
+linker continues without the version resource and a warning is printed to
+stderr - compilation never fails because of a bad props file.
+
+### What `-c` will not compile
+
+The native compiler covers the language, not the whole REPL. Everything below
+is rejected at **compile time** with a message naming the reason, so nothing
+fails silently at runtime. The interpreter runs all of it.
+
+| Construct | Why | What to do instead |
+|---|---|---|
+| `PYTHON$`, `PY.*` | the embedded CPython runtime is not linked into a standalone binary | run it in the interpreter (the MCP workshop VM) |
+| `SQL.QUERY` | returns an array of row MAPs, which cannot cross the native bridge | `SQL.TABLE` + `SQL.COLUMNS` compile fine |
+| `GROUPBY(fn@, ...)`, `INTEGRATE(fn@, ...)` | a compiled program cannot resolve a funcref by name at runtime | run in the interpreter |
+| `HELP`, `HELP$` | the help text ships with the REPL, not with your `.exe` | run in the interpreter |
+| `JSON.STRINGIFY$(<UDT>)` | a UDT instance does not marshal across the bridge | pass a MAP or ARRAY, or build the JSON from the fields |
+| `name@` that resolves to nothing | there is no FUNC of that name and no builtin with a matching scalar signature | check the name and arity |
+
+**`-c` is also STRICT + EXPLICIT, always.** Every variable must be declared and
+every type must line up; there is no flag to turn that off for the main file
+(an IMPORTed module stays loose unless it opts in). The interpreter is
+deliberately permissive, so loose code that runs interpreted and is rejected by
+`-c` is the two backends working as designed, not a bug. `tests/gate/native_test.jdb`
+and its strict twin `native_test.strict.jdb` are the same suite either way.
+
+### Foreign Function Interface (DECLARE FUNC)
+
+`DECLARE FUNC` / `DECLARE SUB` lets jdBasic call any C-style function exported
+from a shared library - Win32 APIs, your own bridge DLLs (e.g. for SQLite,
+ZeroMQ, OpenSSL), or third-party libraries. There is no preprocessor and no
+header file: each function is declared inline.
+
+**Syntax**
+
+```basic
+DECLARE FUNC name LIB "library" ALIAS "export_name" (p1 AS type, ...) AS ret_type
+DECLARE SUB  name LIB "library" ALIAS "export_name" (p1 AS type, ...)
+```
+
+* **`name`** - the identifier you call from jdBasic. Does not have to match the export.
+* **`LIB "library"`** - base library name. The runtime appends the platform extension automatically:
+  * Windows: `name.dll`
+  * Linux:   `libname.so`
+  * macOS:   `libname.dylib`
+  * If the string already contains a path separator or one of these extensions, it is used verbatim.
+* **`ALIAS "export_name"`** - symbol exported by the library (case-sensitive). Default is `name`.
+* **Parameter types**: `INTEGER`, `STRING`, `RETURN`. Up to 8 parameters.
+* **Return types**: `INTEGER` (default for FUNC), `STRING`, `ARRAY`, `VOID` (SUB).
+
+**Parameter types in detail**
+
+| Type      | C-side                          | jdBasic-side                                    |
+|-----------|---------------------------------|-------------------------------------------------|
+| `INTEGER` | `intptr_t` (any int / pointer)  | Numeric value                                   |
+| `STRING`  | `const char*` (NUL-terminated)  | jdBasic string is copied into a temp buffer     |
+| `RETURN`  | `char*` writable output buffer  | The integer passed by the caller is the **buffer size in bytes** (0 = default 64 KB; clamped at 64 MB) |
+
+When a function uses one or more `RETURN` parameters, **or** declares
+`AS ARRAY`, the call returns an array: `[function_return, return_buf_1,
+return_buf_2, ...]`. Each `RETURN` slot is decoded as a NUL-terminated
+string. Use array destructuring to unpack:
+
+```basic
+[bytes_written, json$] = sqlb_query_json(db, "SELECT * FROM users", 1024*1024, 1024*1024)
+```
+
+The first `1024*1024` here both *requests* a 1 MB output buffer **and** is
+the integer the C function receives as its size argument - a single value
+serves both ends, which is the typical Win32 / POSIX pattern.
+
+**Calling convention**: x86-64 only - Win64 ABI on Windows and System V on
+Linux/macOS. Pass everything as `intptr_t`-sized values. There is no
+`STDCALL` / `CDECL` / `double` support today; floats must be marshalled as
+strings or bit-pattern integers in the bridge.
+
+**Example - Win32 API**
+
+```basic
+DECLARE FUNC MessageBox LIB "user32.dll" ALIAS "MessageBoxA" _
+    (hwnd AS INTEGER, text AS STRING, title AS STRING, type AS INTEGER) AS INTEGER
+
+result = MessageBox(0, "Hello from jdBasic!", "FFI demo", 0)
+```
+
+**Example - your own bridge DLL** (`bridges/sqlitebridge/sqlitebridge.c`):
+
+```basic
+DECLARE FUNC sqlb_open LIB "sqlitebridge" ALIAS "sqlb_open" (path AS STRING) AS INTEGER
+DECLARE FUNC sqlb_exec LIB "sqlitebridge" ALIAS "sqlb_exec" (h AS INTEGER, sql AS STRING) AS INTEGER
+
+db = sqlb_open("test.db")
+n  = sqlb_exec(db, "CREATE TABLE t(id INTEGER, name TEXT)")
+```
+
+Wrap your bridge in an `EXPORT MODULE` file so callers see a clean namespace:
+see `jdb/demos/bridges/sqlite.jdb` and `jdb/demos/bridges/sqlite_demo.jdb` for the full pattern.
+
+**Platform notes**
+
+* **Windows**: production-tested. Loads via `LoadLibraryA` / `GetProcAddress`.
+* **Linux/macOS**: `dlopen` / `dlsym` path is in place; build & validation
+  pending - see `src/ffi.cpp`.
+
+### Python Integration (build flag `PYTHON`)
+
+The `PYTHON` build flag embeds a CPython interpreter, so jdBasic can borrow the whole Python ecosystem (numpy, scipy, scikit-learn, requests, …) without leaving the language. Check availability with `OS.FEATURE("PYTHON")`. One namespace persists across every call for the life of the process, mirroring the warm state of the MCP workshop VM - define a function or import a module once and reuse it in later calls.
+
+The interpreter home is resolved at first use: the `JDB_PYTHON_HOME` environment variable wins, otherwise the per-user `pythoncore` package the build is wired against. The matching `python3xx.dll` must sit next to the executable (or on `PATH`).
+
+Values convert recursively in both directions: jdBasic array ↔ Python list, MAP/object ↔ dict, plus scalar strings, integers, floats and booleans. Any Python object exposing `tolist()` - numpy arrays, `array.array` - converts to a native (possibly nested) jdBasic array, shape- and dtype-agnostic, so the result is usable straight away (`SUM`, indexing, vector ops).
+
+* **`PYTHON$(code$) -> string$`**: Runs a multi-line code block in the persistent namespace and returns whatever it printed to stdout. A Python exception throws a jdBasic error (catch with `TRY`). Use `CHR$(10)` for line breaks - jdBasic strings have no `\n` escape.
+* **`PY.EVAL(expr$) -> value`**: Evaluates a single expression and returns the result converted to a native jdBasic value.
+* **`PY.SET(name$, value) -> bool`**: Injects a jdBasic value into the Python namespace under `name$`.
+* **`PY.GET(name$) -> value`**: Reads a Python variable back as a jdBasic value (errors if the name is undefined).
+* **`PY.DIR$([target$]) -> string$`**: With no argument, lists the namespace's own names; with a target, lists the public members of that object/module - a comma-separated string.
+* **`PY.HELP$(target$) -> string$`**: Returns `inspect.getdoc(target)` for a module or function.
+
+All six are **interpreter-only** (the CPython C-API isn't linked into compiled binaries); `-c` rejects them at compile time.
+
+```basic
+IF OS.FEATURE("PYTHON") THEN
+    PY.SET("xs", [3, 1, 4, 1, 5, 9, 2, 6])
+    PRINT PY.EVAL("sorted(set(xs))")            ' [1, 2, 3, 4, 5, 6, 9]
+    PRINT PYTHON$("import statistics" + CHR$(10) + "print(statistics.mean(xs))")
+ENDIF
+```
+
+## Functions
+
+**Reserved names:** every built-in function name is reserved. Defining a `FUNC` or `SUB` whose name matches a builtin (e.g. `SUB Outer()` vs the APL builtin `OUTER`) is rejected at load time with `collides with the builtin function ... - choose another name`, because call dispatch always resolves builtins first and the user definition could never be reached.
+
+### Map Functions
+
+This suite of functions provides powerful tools for manipulating `Map` data structures.
+
+#### `MAP.EXISTS(map, key$) -> Boolean`
+
+Checks if a given key exists within a map.
+
+* **`map`**: The Map variable to check.
+* **`key$`**: The string key to look for.
+* **Returns**: `TRUE` if the key is found, otherwise `FALSE`.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+
+PRINT MAP.EXISTS(MyMap, "Name")    ' Output: TRUE
+PRINT MAP.EXISTS(MyMap, "Version") ' Output: TRUE
+PRINT MAP.EXISTS(MyMap, "Author")  ' Output: FALSE
+```
+
+-----
+
+#### `MAP.KEYS(map) -> Array`
+
+Retrieves all of the keys from a map and returns them as a 1D array of strings.
+
+* **`map`**: The Map variable from which to extract keys.
+* **Returns**: A 1D array containing all the keys from the map. The order is not guaranteed.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2, "Active": TRUE}
+DIM KeysArray
+
+KeysArray = MAP.KEYS(MyMap)
+
+PRINT "Keys in the map:"
+FOR EACH Key IN KeysArray
+    PRINT "- " + Key
+NEXT
+' Possible Output:
+' Keys in the map:
+' - Active
+' - Name
+' - Version
+```
+
+-----
+
+#### `MAP.VALUES(map) -> Array`
+
+Retrieves all of the values from a map and returns them as a 1D array.
+
+* **`map`**: The Map variable from which to extract values.
+* **Returns**: A 1D array containing all the values from the map. The order corresponds to the order from `MAP.KEYS`.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2, "Active": TRUE}
+DIM ValuesArray
+
+ValuesArray = MAP.VALUES(MyMap)
+
+PRINT "Values in the map:"
+FOR EACH Value IN ValuesArray
+    PRINT "- " + Value
+NEXT
+' Possible Output:
+' Values in the map:
+' - TRUE
+' - Atomi
+' - 1.2
+```
+
+-----
+
+#### `MAP.ITEMS(map) -> Array`
+
+Retrieves all key-value pairs from a map and returns them as a 2D array.
+
+* **`map`**: The Map variable from which to extract items.
+* **Returns**: A 2D array where each row is a 2-element array of the form `[key, value]`.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+DIM ItemsArray, Item
+
+ItemsArray = MAP.ITEMS(MyMap)
+
+PRINT "Items in the map:"
+' ItemsArray is now a 2x2 matrix: [["Name", "Atomi"], ["Version", 1.2]]
+FOR EACH Item IN ItemsArray
+    PRINT "Key: " + Item[0] + ", Value: " + Item[1]
+NEXT
+' Output:
+' Items in the map:
+' Key: Name, Value: Atomi
+' Key: Version, Value: 1.2
+```
+
+-----
+
+#### `MAP.DELETE(map, key$)`
+
+Removes a key-value pair from a map. This is a procedure that modifies the map in place.
+
+* **`map`**: The Map variable to modify.
+* **`key$`**: The string key of the item to remove. If the key does not exist, nothing happens.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+PRINT "Map size before delete: " + MAP.SIZE(MyMap) ' Output: 2
+
+MAP.DELETE MyMap, "Version"
+
+PRINT "Map size after delete: " + MAP.SIZE(MyMap)  ' Output: 1
+PRINT MAP.EXISTS(MyMap, "Version")                 ' Output: FALSE
+```
+
+-----
+
+#### `MAP.CLEAR(map)`
+
+Removes all key-value pairs from a map, leaving it empty. This is a procedure.
+
+* **`map`**: The Map variable to clear.
+
+```basic
+DIM MyMap AS MAP = {"Name": "Atomi", "Version": 1.2}
+PRINT "Map size before clear: " + MAP.SIZE(MyMap) ' Output: 2
+
+MAP.CLEAR MyMap
+
+PRINT "Map size after clear: " + MAP.SIZE(MyMap)  ' Output: 0
+```
+
+-----
+
+#### `MAP.SIZE(map) -> Number`
+
+Returns the number of key-value pairs in a map.
+
+* **`map`**: The Map variable to measure.
+* **Returns**: The integer count of items in the map.
+
+```basic
+DIM MyMap AS MAP = {"A": 1, "B": 2, "C": 3}
+PRINT MAP.SIZE(MyMap) ' Output: 3
+
+DIM EmptyMap AS MAP
+PRINT MAP.SIZE(EmptyMap) ' Output: 0
+```
+
+-----
+
+#### `MAP.MERGE(destination_map, source_map)`
+
+Copies all key-value pairs from a source map into a destination map. This is a procedure. If a key from the source map already exists in the destination, its value will be overwritten.
+
+* **`destination_map`**: The Map variable to be modified.
+* **`source_map`**: The Map variable to copy items from.
+
+```basic
+DIM Map1 AS MAP = {"Name": "Atomi", "Version": 1.0}
+DIM Map2 AS MAP = {"Author": "JD", "Version": 1.2}
+
+PRINT "Merging Map2 into Map1..."
+MAP.MERGE Map1, Map2
+
+' Map1 is now {"Name": "Atomi", "Version": 1.2, "Author": "JD"}
+PRINT FRMV$(MAP.ITEMS(Map1))
+' Output:
+'    Name Atomi
+' Version 1.2
+'  Author JD
+```
+
+#### `MAP.FROM(json_object_string$) -> Map`
+
+Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"value"}`).
+
+* **`json_object_string$`**: The JSON-formatted string to parse.
+* **Returns**: A new Map containing the parsed key-value pairs.
+
+### JSON Functions
+
+* **`JSON.PARSE$(json_string$)`**: Parses a JSON string and returns a special `JsonObject`. This object can be accessed like a `Map` or an `Array`.
+* **`JSON.STRINGIFY$(map_or_array)`**: Takes a `Map` or `Array` variable and returns its compact JSON string representation. Ideal for creating API payloads. **Native (`-c`):** only `Map`/`Array` are supported - a UDT instance does not marshal across the VM bridge and is rejected at compile time (the interpreter still stringifies a UDT to `{"__TYPE__":...}`). To serialise a UDT under `-c`, copy its fields into a `Map` first, or build the JSON string from the fields directly.
+
+### COM Automation Functions
+
+* **`CREATEOBJECT(progID$)`**: Creates a COM Automation object (e.g., "Excel.Application") and returns a `ComObject`.
+* **`RELEASEOBJECT(com_obj)`**: Explicitly releases a single COM object reference. Usually not required - objects are released automatically when they go out of scope - but useful to free expensive resources like Office applications deterministically.
+* **`RELEASEALL`**: Releases every COM object currently held by the runtime. Handy to clean up at the end of a script or on error.
+
+### String Functions
+
+* **`LEFT$(str$, n)`**, **`RIGHT$(str$, n)`**, **`MID$(str$, start, [len])`**: Extracts parts of a string. The start position is 0 - based. Also available as `LEFT`, `RIGHT`, `MID` without the `$`.
+* **`LEN(expression)`**: Returns a scalar length. For strings, the byte count; for arrays, the element count of the outermost dimension. Always returns a scalar - use `LENV` when you need the full shape of a nested array.
+* **`LENV(expression)`**: Returns a shape vector `[dim0, dim1, ...]` describing the full extent of a nested array. For a 1D array returns `[n]`; for a string returns `[byte_count]`.
+* **`LCASE$(str$)`**, **`UCASE$(str$)`**, **`TRIM$(str$)`**: Manipulates string case and whitespace. Also available as `LCASE`, `UCASE`, `TRIM`, and as the VB6-style spellings **`LOWER$(str$)`** and **`UPPER$(str$)`**.
+* **`LTRIM$(str$)`** / **`RTRIM$(str$)`**: Trims whitespace from the left or right end only.
+* **`STARTSWITH(str$, prefix$) -> bool`** / **`ENDSWITH(str$, suffix$) -> bool`**: Returns `TRUE` if `str$` starts/ends with the given substring.
+* **`SPACE$(n) -> string$`**: Returns a string of `n` spaces - handy for padding.
+* **`REPEAT$(str$, n) -> string$`**: Returns `str$` concatenated `n` times. `n <= 0` or empty input returns `""`.
+* **`LPAD$(str$, width [, pad$]) -> string$`** / **`RPAD$(str$, width [, pad$]) -> string$`**: Left- or right-pads `str$` to `width` characters using `pad$` (default `" "`). Multi-character `pad$` cycles (e.g. `LPAD$("x", 5, "-=")` -> `"-=-=x"`). If `str$` is already `>= width`, it is returned unchanged.
+* **`BIN$(n)` / `HEX$(n)` / `OCT$(n)` -> string$**: Converts an integer into its binary, hexadecimal or octal string representation.
+* **`STR$(number)`**, **`VAL(string$)`**: Converts between numbers and strings.
+* **`CHR$(ascii_code)`**, **`ASC(char$)`**: Converts between ASCII codes and characters.
+* **`INSTR([start, ]haystack$, needle$)` / `INSTR$()`**: Finds the position of one string within another. Positions are 0-based. Returns -1 if not found. *(Both variants are supported)*.
+* **`INSERT$(target_string or array, text_to_insert$ string or array, position or array) -> string or array`**: Inserts a text_to_insert$ in target at position.
+* **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
+* **`JOIN(array, delimiter$) -> string$`**: Inverse of `SPLIT` - concatenates the elements of an array into a single string, joined by `delimiter$`.
+* **`FRMV$(array, [format_string$]) -> string$`**: Formats a 1D or 2D array into a string. If format_string$ is provided, it's used to format each row. Otherwise, it creates a right-aligned string matrix.
+* **`FORMAT$(format_string$, arg1, arg2, ...) -> string$`**: Formats a string using C++20-style format specifiers.
+* **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array`**: Returns a string where all found find_string$ are replaced with replace_with_string$.
+* **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
+* **`BYTEAT(str$, index) -> Integer`**: Returns the numeric byte value (0-255) at the specified 0-based index in a string. This provides fast O(1) access to raw string data, which is essential when processing binary data loaded via `BINREADER$`.
+* **`PACK$(format$, v1, v2, ...) -> string$`**: Packs numbers into a binary string based on a format.
+  * Format specifiers: `<` (Little Endian), `>` (Big Endian), `b` (Byte), `s` (Short), `i` (Integer), `l` (Long), `f` (Float), `d` (Double).
+* **`UNPACK(format$, binary_data$) -> Array`**: Unpacks a binary string into an Array of numbers based on the format string.
+
+### Math/Arithmetic/Round Functions
+
+All numeric functions are vectorized - they also accept arrays and apply element-wise.
+
+#### Trigonometry
+
+* **`SIN(x)`**, **`COS(x)`**, **`TAN(x)`**: Standard trig functions (radians).
+* **`ASIN(x)`**, **`ACOS(x)`**, **`ATAN(x)`**: Inverse trig functions.
+* **`ATAN2(y, x)`**: Two-argument arctangent returning the correct quadrant.
+* **`SINH(x)`**, **`COSH(x)`**, **`TANH(x)`**: Hyperbolic functions.
+
+#### Exponentials & Logs
+
+* **`SQR(x)`**: Square root.
+* **`EXP(x)`**: Natural exponential e^x.
+* **`LOG(x)`**: Natural logarithm.
+* **`LOG10(x)`**: Base-10 logarithm.
+* **`POW(base, exp)`**: Power function. Also available as the `^` operator.
+* **`FAC(n)`**: Factorial.
+* **`GCD(a, b, ...)`**: Greatest common divisor of two or more integers. Any-zero input yields the non-zero operand's magnitude.
+* **`LCM(a, b, ...)`**: Least common multiple of two or more integers.
+* **`ROTL(x, n [, bits])`** / **`ROTR(x, n [, bits])`**: Bit rotation of integer `x` by `n` positions. Optional `bits` argument sets the width (defaults to 64). `ROTL(1,1) = 2`, `ROTR(16,4) = 1`.
+
+#### Rounding & Sign
+
+* **`INT(x)`**: Traditional BASIC integer function (floor for positives).
+* **`FLOOR(x)`**: Rounds down toward `-∞`.
+* **`CEIL(x)`**: Rounds up toward `+∞`.
+* **`ROUND(n, [decimals])`**: Rounds to the specified number of decimal places (default 0).
+* **`TRUNC(x)`**: Truncates toward zero.
+* **`ABS(x)`**: Absolute value.
+* **`SGN(x)`**: Returns -1, 0, or +1 depending on the sign of `x`.
+* **`CLAMP(value_or_array, min, max) -> number or array`**: Clamps the value in the given range.
+
+#### Random Numbers
+
+* **`RND()`**: Returns a pseudo-random double in `[0, 1]` - **both ends inclusive**; exactly 1.0 is rare (about 1 in 32768 draws) but real. Arguments are accepted and silently ignored. For a random integer in `[1, n]` use `INT(RND() * n) MOD n + 1` (the `MOD` clamps the 1.0 case).
+* **`RANDOM([lo], [hi])`**: Uniform double in `[lo, hi]` (hi inclusive). `RANDOM()` is `[0, 1]`, `RANDOM(hi)` is `[0, hi]`. All three arities work in both the interpreter and native `-c`.
+* **`RANDOMSEED(seed)`**: Seeds the PRNG. Using the same seed twice produces the same sequence - useful for reproducible tests.
+
+#### Conversion
+
+Classic BASIC cast family - each takes any numeric/convertible value:
+
+* **`CINT(x)`**: Cast to 32-bit integer (truncates toward zero). Overflow wraps like C `int32_t`.
+* **`CLNG(x)`**: Cast to 64-bit integer (truncates toward zero).
+* **`CSNG(x)`**: Roundtrip through 32-bit float - useful to force single-precision loss on doubles.
+* **`CDBL(x)`**: Cast to double-precision float.
+* **`CBOOL(x)`**: Returns `0` for zero, `1` for any non-zero value.
+* **`CSTR(x) -> string$`** / **`TOSTR(x) -> string$`** / **`STR(x) -> string$`**: Converts any value to its string form.
+* **`CDATE(str$)`** / **`CVDATE(str$)`**: Parses `"YYYY-MM-DD"` (optionally with time) into a `DateTime`.
+* **`TONUM(str$) -> number`** / **`VAL(str$) -> number`**: Parses a string as a number.
+
+Integer-to-string formatting helpers live under **[Strings](#strings)**: `HEX$`, `BIN$`, `OCT$`, `FORMAT$`, `FORMAT_DATE$`.
+
+#### Utility
+
+* **`IIF(condition, value_if_true, value_if_false) -> value or array`**: A vectorized ternary operator. Evaluates a condition (scalar or array) and returns the corresponding true/false value element-wise.
+
+### Regular Expression Functions
+
+* **`REGEX.MATCH(pattern$, text$) -> Boolean or Array`**: Checks if the entire `text$` string matches the `pattern$`.
+  * Returns `TRUE` or `FALSE` if the pattern has no capture groups.
+  * If the pattern contains capture groups `(...)`, it returns a 1D array of the captured substrings upon a successful match, otherwise `FALSE`.
+* **`REGEX.FINDALL(pattern$, text$) -> Array`**: Finds all non-overlapping occurrences of `pattern$` in `text$`.
+  * Returns a 1D array of all matches found.
+  * If the pattern contains capture groups, it returns a 2D array where each row contains the groups for a single match.
+* **`REGEX.REPLACE(pattern$, text$, replacement$) -> String`**: Replaces all occurrences of `pattern$` in `text$` with `replacement$`. The replacement string can use backreferences like `$1`, `$2` to insert captured group content.
+
+For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)` and `REGEX_REPLACE$(pattern$, text$, replacement$)` are also accepted and map to `REGEX.MATCH` / `REGEX.REPLACE`.
+
+### Array & Matrix Functions
+
+* **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
+* **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
+* **`IOTA(N, [B=1], [S=1]) -> vector`**: Generates a vector of N numbers starting from B with step S. B,S defaults to 1 if not provided.
+* **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
+
+  A reducer takes **one** array. The optional second argument names the axis of a matrix; it is never a second value to compare against. `MAX(3, 9)` is a malformed reduction, not a two-argument maximum - write `MAX([3, 9])`. The axis form is available on `SUM`, `MIN`, `MAX`, `PRODUCT`, `MEAN`, `MEDIAN`, `VARIANCE`, `STDEV`, `ANY` and `ALL`.
+
+  ```basic
+  DIM m = RESHAPE([1,2,3,4,5,6], [2,3])   ' [[1,2,3],[4,5,6]]
+  PRINT MAX(m)      ' 6         - whole matrix
+  PRINT MAX(m, 0)   ' [4, 5, 6] - one value per column
+  PRINT MAX(m, 1)   ' [3, 6]    - one value per row
+  ```
+* **`SCAN(operator, array) -> array`**: Performs a cumulative reduction (scan) along the last axis of an array.
+* **`SELECT(function@, array, [row_wise_bool]) -> array`**: Applies a user-defined function to each element of an array, returning a new array with the same dimensions containing the transformed elements. The provided function must accept exactly one argument. If the optional third argument 'row_wise_bool' is TRUE, it applies the function to each row of a 2D matrix instead. The result of a row-wise select is always a 1D array.
+* **`FILTER(function@, array) -> array`**: Filters an array by applying a user-defined predicate function to each element. It returns a new 1D array containing only the elements for which the predicate function returned `TRUE`. The provided function must accept one argument and should return a boolean value.
+
+  > **Native (`-c`) and string arrays:** `SELECT`/`FILTER` over string arrays compile native, including string-returning mappers (`SELECT(upper$@, names)`) and predicates over strings - `FILTER` preserves the element type of its source. The one rule the compiler can't infer: a mapper/predicate that *receives* a string must declare its parameter as a string (`FUNC f(s$)` or `AS STRING`). An untyped parameter (`FUNC f(s)`) is treated as a number under `-c` and reads the string as garbage - the interpreter is loose here, native is strict. (`AGG` with a function reference stays interpreter-only - its reducer runs in the bridged VM, which can't call a natively-compiled function.)
+* **`REDUCE(function@, array, [initial_value]) -> value`**: Performs a cumulative reduction on an array using a user-provided function.
+* **`TAKE(N, array)`**, **`DROP(N, array)`**: Takes or drops N elements from the beginning (or end if N is negative) of an array.
+* **`TAKE_WHILE(predicate@, array) -> array`**: Returns the longest prefix of `array` for which `predicate(element)` is true. Stops at the first false. Compiles native (the predicate runs through its funcref wrapper).
+* **`DROP_WHILE(predicate@, array) -> array`**: Drops the longest prefix where `predicate(element)` is true, returning the remainder. Compiles native.
+* **`CHUNK(array, size) -> array`**: Splits `array` into sub-arrays of length `size`; the last chunk may be shorter. `size >= 1`.
+* **`ENUMERATE(array) -> array`**: Pairs each element with its 0-based index, returning `[[0, a0], [1, a1], ...]`.
+* **`GROUPBY(key_fn@, array) -> map`**: Buckets elements into a map keyed by `key_fn(element)` (coerced to string). Each value is the list of matching elements. Interpreter only - native `-c` rejects it at compile time (the funcref can't be resolved by name through the bridge); use `AGG`, which has a native funcref path and preserves the key type.
+* **`AGG(keys, values, fn@) -> array`**: Group-and-reduce in one O(n) pass (APL's dyadic *key*). Groups `values` by the matching `keys` entry, applies `fn` to each group's value-array, and returns a 2-column table `[[key, fn(group)], ...]` in first-seen key order. The key type is preserved (numbers stay numbers, unlike `GROUPBY`). Example: `AGG(months, nights, LAMBDA g -> SUM(g))` → room-nights per month; `AGG(months, nights, LEN@)` counts per group. Compiles native: the reducer may be a `LAMBDA g -> ...`, one of the array builtins `SUM@`/`MEAN@`/`LEN@`, or a user `FUNC` whose parameter is declared `AS ARRAY` (an untyped parameter is treated as a number under `-c` - see the SELECT/FILTER note above). String keys are preserved.
+* **`TALLY(array) -> array`**: Distinct values with their counts, `[[value, count], ...]`, in first-seen order (pandas `value_counts`). `TALLY([1,2,2,3,3,3])` → `[[1,1],[2,2],[3,3]]`. Both numeric and string-key tallies compile native (e.g. `TALLY(-"banana")` → `[["b",1],["a",3],["n",2]]`).
+* **`RESHAPE(array, shape_vector)`**: Creates a new array with new dimensions from the data of a source array.
+* **`REVERSE(array)`**: Reverses the elements of an array.
+* **`TRANSPOSE(matrix)`**: Transposes a 2D matrix.
+* **`MATMUL(matrixA, matrixB)`**: Performs matrix multiplication.
+* **`MVLET(matrix, dimension, index, vector) -> matrix`**: Replaces a row or column in a matrix with a vector, returning a new matrix.
+* **`MVINS(matrix, dimension, index, value) -> matrix`**: **Inserts** a new row (`dimension = 0`) or column (`dimension = 1`) into a 2D matrix at `index`, returning a new matrix (the original is untouched). Pass `index = ` the current row/column count to **append** at the end. `value` is either a vector (one entry per row/column - e.g. a computed column) or a **scalar**, which is broadcast to fill the whole new row/column. Faster and clearer than rebuilding via `SELECT(APPEND(...))` or `ZIP`/`TRANSPOSE`.
+
+    ```basic
+    ' Append a computed column (e.g. nights per booking) as the last column:
+    m2 = MVINS(m, 1, COLS, nights)        ' COLS = current column count
+    ' Insert a constant column of 0 at position 2:
+    m3 = MVINS(m, 1, 2, 0)
+    ' Append a row (vector) at the bottom:
+    m4 = MVINS(m, 0, ROWS, [1, 2, 3])
+    ```
+* **`INTEGRATE(function@, limits, rule)`**: It parses arguments, performs the coordinate transformation, and loops through the Gauss points to calculate the final sum. Interpreter only - native `-c` rejects it at compile time (the integrand funcref can't be resolved by name through the bridge).
+* **`SOLVE(matrix A, vector b) -> vector_x`**: Solves the linear system Ax = b for the unknown vector x.
+* **`INVERT(matrix) -> matrix`**: Computes the inverse of a square matrix.
+* **`DET(matrix) -> number`**: Determinant of a square matrix (Eigen).
+* **`SVD(matrix) -> map`**: Singular Value Decomposition. Returns a map `{ "U", "S", "V" }` where `S` is the vector of singular values and `U`/`V` are the (thin) factor matrices (Eigen JacobiSVD).
+* **`QR(matrix) -> map`**: Householder QR decomposition. Returns `{ "Q", "R" }` (Eigen).
+* **`EIG(square matrix) -> map`**: Eigen-decomposition. Returns `{ "EIGENVALUES", "EIGENVECTORS" }`; eigenvalues are an `[n][2]` array of `[real, imag]` pairs and eigenvectors an `[n][n][2]` complex array (Eigen EigenSolver).
+* **`FFT(signal) -> array`** / **`IFFT(spectrum) -> array`**: Fast Fourier transform and its inverse. Input is a 1-D array of reals (or `[real, imag]` pairs); the result is an `[N][2]` array of complex `[real, imag]` pairs. Any length N (Eigen unsupported/FFT, kissfft backend).
+* **`NORMALIZE(array) -> array`**: Scales the elements of a numeric array to the range [0.0, 1.0].
+* **`UNIQUE(array) -> array`**: Returns a new array containing only the unique elements from the source.
+* **`SHUFFLE(array) -> array`**: Returns a new array with the elements of the source array randomly shuffled.
+* **`FIND_IN_ARRAY(array, value) -> number`**: Finds the first 0-based index of a value in an array. Returns -1 if not found.
+* **`DISTANCE(point1_array, point2_array) -> number`**: Calculates the Euclidean distance between two points.
+* **`STACK(dimension, array1, array2, ...) -> matrix`**: Stacks 1D vectors into a 2D matrix.
+* **`SLICE(matrix, dim, index)`**: Extracts a row (`dim=0`) or column (`dim=1`) from a 2D matrix.
+* **`LERP(start, end, alpha) -> number or array`**: Performs linear interpolation.
+* **`GRADE(vector)`**: Returns the indices that would sort the vector.
+* **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, *, /, MOD, >, <, =, ^) or a reference to a function (sqr@).
+* **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array. One entry of `shift_vector` per axis, outermost first; more entries than the array has axes is an error. `ROTATE(m, [1, 0])` turns the rows, `ROTATE(m, [0, 1])` the columns, `ROTATE(m, [1, 1])` both. A positive shift **pulls from ahead**: `out[i] = in[i + k]`, so `ROTATE([1,2,3,4,5], [1])` is `2 3 4 5 1`.
+* **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Like `ROTATE` but without the wraparound: what moves in from outside is `fill_value` (default `0`), and a whole row shifted off the edge comes back as a row of `fill_value`. Same per-axis rule as `ROTATE`, but note the **opposite sign convention**: a positive shift **pushes along** like a shift register, `out[i] = in[i - k]`, so `SHIFT([1,2,3,4,5], [1], 0)` is `0 1 2 3 4`. A shift at least as large as the axis leaves nothing but the fill.
+* **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix. Sorts numbers and strings (lexicographic); in a mixed array numbers order before strings. For a 2D matrix, `dimension` selects the column whose values order the rows - string key columns work (`XSORT(rows, 0)` sorts `[["bob",30],["alice",25]]` by name).
+* **`CONVOLVE(array, kernel, wrap_mode) -> array`**: Performs a 2D convolution of an array with a kernel.
+* **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.
+
+#### Constructors & Flattening
+
+* **`ZEROS(shape_vector) -> array`**: Creates an array of the given shape filled with zeros.
+* **`ONES(shape_vector) -> array`**: Creates an array of the given shape filled with ones.
+* **`FILLV arr, value`** / **`FILLV(arr, value) -> arr`**: **In-place** bulk fill of every leaf element of `arr` with `value`. Recurses into nested arrays (2D, 3D, ...). Returns the same array handle (the function form is useful for chaining; statement form is the typical use). Works in interpreter AND `-c` native compile - native uses `memset`/`std::fill_n` over the flat double buffer for memset-speed (~50× faster than `ZEROS([...])` + slice-assign loop for large arrays). String / Object values not supported.
+* **`COPYV dst, src`** / **`COPYV(dst, src) -> dst`**: **In-place** bulk copy from `src` into `dst`. Same-shape fast path is a single `memcpy`. On shape mismatch broadcasts cyclically (`dst[i] = src[i mod len(src)]`) - never throws. `src` may also be a scalar, in which case `COPYV` behaves like `FILLV`. Returns `dst` for chaining.
+  > **Mutator note:** `FILLV` and `COPYV` modify the destination array's storage in place (unlike `ZEROS` which allocates a fresh array, or `dst = src + 0` which deep-copies). Use for bulk pixel buffers, visplane resets, and any hot loop where you'd otherwise pay per-element jdBasic overhead.
+* **`RANGE(start, stop, [step=1]) -> vector`**: Python-style range - returns `[start, start+step, ..., stop)`.
+* **`LINSPACE(start, stop, n) -> vector`**: Returns `n` evenly spaced samples over `[start, stop]` inclusive.
+* **`FLATTEN(array) -> vector`**: Flattens a multi-dimensional array into a 1D vector.
+* **`ZIP(arr1, arr2, ...) -> 2D matrix`**: Combines multiple vectors into a matrix where each row is `[arr1[i], arr2[i], ...]`.
+
+#### Searching & Counting
+
+* **`INDEXOF(array, value) -> number`**: Same as `FIND_IN_ARRAY` - returns the first 0-based index of a value, or -1 if not found.
+* **`COUNT(array, [value]) -> number`**: Counts occurrences of `value` in `array`. Without the second argument, returns the total length.
+* **`POP(array) -> value`** / **`PUSH(array, value)`**: Stack-like operations on an array.
+* **`HISTOGRAM(array, bins) -> [counts, edges]`**: Builds a histogram with the given number of bins. Returns counts and bin edges as two arrays.
+
+#### Statistics
+
+* **`MEAN(array)`**, **`MEDIAN(array)`**: Central tendency.
+* **`VARIANCE(array)`**, **`STDEV(array)`**: Dispersion.
+
+#### Vector Math
+
+* **`DOT(a, b) -> number`**: Dot product of two vectors.
+* **`CROSS(a, b) -> vector`**: Cross product of two 3D vectors.
+* **`CUMSUM(array) -> array`**: Cumulative sum along the last axis.
+* **`CUMPROD(array) -> array`**: Cumulative product along the last axis.
+
+### File I/O Functions
+
+* **`TXTREADER$(filename$, [encoding$])`**: Reads an entire text file into a single string variable. If the optional `encoding$` argument is given, the file's bytes are decoded from that codepage to UTF-8 for the returned string. Default (no arg, `""`, or `"utf-8"`) is byte-pass-through. Supported codepage names: `"cp1252"` / `"windows-1252"` / `"latin1"`, `"cp850"`, `"cp437"`, `"cp1250"`, `"cp1251"`, `"cp936"`, `"cp932"`. Codepage decoding is Windows-only; other platforms only support pass-through.
+* **`TXTWRITER filename$, content$, [append], [encoding$]`**: Writes a string variable to a text file. The optional 3rd argument `append` (boolean) chooses overwrite (`FALSE`, default) vs. append. The optional 4th argument `encoding$` re-encodes the UTF-8 jdBasic string to the named codepage on disk; same name set as `TXTREADER$`. The file is written in binary mode, so no newline translation is performed. Example for round-tripping a VBA `.bas` export:
+
+    ```basic
+    DIM src$ = TXTREADER$("modAuftragFachlich.bas", "cp1252")
+    src$ = REPLACE$(src$, "Datensätze", "Datensätze (geprüft)")
+    TXTWRITER "modAuftragFachlich.bas", src$, FALSE, "cp1252"
+    ```
+* **`CSVREADER(filename$, [delimiter$], [has_header], [types])`**: Reads a CSV file into a 2D array of rows. Each cell is inferred per value (integer → double → string), so mixed files load with real types. The optional `types` array forces a target type per column, using the `AS` declaration type names: `"AUTO"`, `"STRING"`, `"INTEGER"`, `"DOUBLE"`, `"DATE"` (ISO `YYYY-MM-DD[ HH:MM:SS]` or `DD.MM.YYYY`; pre-1970 dates work), `"BOOLEAN"` (`1`/`true`/`yes`); columns beyond the list keep inferring. Use `"STRING"` to protect values that would otherwise lose information to inference (ZIP codes, phone numbers, IDs with leading zeros). A UTF-8 BOM on the first line is stripped. Example: `CSVREADER("people.csv", ";", TRUE, ["INTEGER", "STRING", "INTEGER", "DATE", "BOOLEAN"])`.
+* **`CSVHEADER(filename$, [delimiter$]) -> array`**: Returns the first line of a CSV file as a string array of column names (which `CSVREADER` discards when `has_header` is set).
+* **`CSVWRITER filename$, array, [delimiter$], [header_array]`**: Writes a 2D array to a CSV file.
+* **`BINREADER$(filename$) -> string$`**: Reads the entire content of a binary file into a single string. Unlike `TXTREADER$`, this preserves raw bytes (including null bytes `0x00`) and performs no newline translation.
+* **`PDF.TEXT$(filename$) -> string$`**: Extracts the text of a PDF file with the built-in PDF extractor (uncompressed streams, FlateDecode, ASCIIHex/ASCII85). Encrypted or image-only PDFs yield only what is decodable. Interpreter runtime (native `-c` rejects it). The same extractor backs `AI.RAG_ADD_FILE` for `.pdf` sources.
+* **`BINWRITER filename$, data$`**: Writes a raw string of bytes to a file, overwriting it.
+
+#### SQLite (build flag `SQLITE`)
+
+The `SQLITE` build flag links the SQLite engine statically into the binary - no DLL, no installation, every `.db` file just works. Check availability with `OS.FEATURE("SQLITE")`. Handles are plain integers.
+
+* **`SQL.OPEN(path$) -> handle`**: Opens (or creates) a database file. Returns `0` on failure; `SQL.ERRMSG$(0)` carries the reason.
+* **`SQL.CLOSE(handle) -> bool`**: Closes the database.
+* **`SQL.EXEC(handle, sql$) -> n`**: Runs a non-query statement (DDL/INSERT/UPDATE/DELETE; multiple statements separated by `;` are allowed). Returns the affected row count, or `-1` on error (`SQL.ERRMSG$` explains).
+* **`SQL.QUERY(handle, sql$) -> array of maps`**: Runs a SELECT and returns one map per row keyed by column name, with real cell types (INTEGER → int, REAL → double, TEXT → string, NULL → NONE). Errors throw (catch with `TRY`). **Interpreter-only** - row maps can't cross the native bridge; `-c` rejects it at compile time.
+* **`SQL.TABLE(handle, sql$) -> 2D array`**: The compiled-friendly twin of `SQL.QUERY`: rows as plain arrays with the same per-cell typing. Works in interpreter and native `-c`.
+* **`SQL.COLUMNS(handle, sql$) -> array`**: The result column names of a query as a string array (prepares without executing). Pair with `SQL.TABLE`.
+* **`SQL.ERRMSG$(handle) -> string$`**: Last error message for the handle (or the last failed `SQL.OPEN` when called with `0`).
+
+```basic
+DIM db = SQL.OPEN("crm.db")
+SQL.EXEC(db, "CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY, name TEXT, score REAL)")
+SQL.EXEC(db, "INSERT INTO people(name, score) VALUES ('ada', 9.5), ('bob', 7)")
+DIM rows = SQL.QUERY(db, "SELECT * FROM people ORDER BY score DESC")
+PRINT rows[0]{"name"}                       ' interpreter: maps per row
+DIM t = SQL.TABLE(db, "SELECT name, score FROM people")
+PRINT SQL.COLUMNS(db, "SELECT name, score FROM people"); " "; t   ' native-safe
+SQL.CLOSE(db)
+```
+
+### System and Time Functions
+
+* **`GETENV$(var_name$)`**: Gets the value of a system environment variable.
+* **`SETENV name$, value$`**: Sets an environment variable for the current process. Passing an empty `value$` (or omitting it) removes the variable.
+* **`MKTEMP$([prefix$])`**: Returns a unique, freshly created-and-released path in the OS temp directory. Default prefix is `"jdb"`.
+* **`SETLOCALE("locale_string")`**: Sets the locale for number formatting (e.g., "en-US" or "de-DE").
+* **`TICK()`**: Returns the number of milliseconds since the program started.
+* **`DATE$()` / `TIME$()`**: Returns the current system date/time as a string.
+* **`NOW()`**: Returns a `DateTime` object for the current moment.
+* **`NOW_EPOCH()`**: Returns the current wallclock time as plain seconds since 1970-01-01 UTC. Unlike `TICK()` it is comparable across program runs; unlike `NOW()` it is an untagged number, safe to store in databases or JSON.
+* **`DATEADD(part$, num, date [, tz_hours])`**: Adds an interval to a `DateTime` object. Interval part$: D,H,N,S. Optional numeric UTC offset (hours, may be fractional e.g. `5.5`) is accepted for symmetry but has no effect on the arithmetic.
+* **`DATEDIFF(part$, date1, date2 [, tz_hours]) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S. Optional `tz_hours` accepted but has no effect (difference is TZ-independent).
+* **`CVDATE(date_string$ [, tz_hours])`**: Converts a string (`"YYYY-MM-DD[ HH:MM[:SS]]"`) to a `DateTime` object. When `tz_hours` is given, the input string is interpreted as wall-clock time in that UTC offset (e.g. `CVDATE("2024-01-15 14:00:00", 2)` yields the same instant as `CVDATE("2024-01-15 12:00:00", 0)`).
+* **`FORMAT_DATE(date, format_string$ [, tz_hours]) -> string$`**: Formats a `DateTime` using C-style specifiers (`%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, ...). Without `tz_hours` the wall-clock is local time; with `tz_hours` the output reflects the chosen UTC offset (`0` = UTC, `2` = UTC+2, `-5` = UTC−5, `5.5` = UTC+5:30).
+* **`DATE.UTC(year, month, day [, hour [, minute [, second]]]) -> DateTime`**: Builds a `DateTime` from UTC components. Month is 1–12, day is 1–31. Omitted time components default to zero.
+* **`DATE.PARTS(date [, tz_hours]) -> object`**: Breaks a `DateTime` into a map with keys `year`, `month`, `day`, `hour`, `minute`, `second`, `weekday` (0=Sunday ... 6=Saturday), `yday` (1..366). With `tz_hours` the wall-clock fields reflect the chosen offset.
+* **`YEAR(date)`**, **`MONTH(date)`**, **`DAY(date)`**: Extract the year (four digits), month (1-12), or day of month (1-31) from a `DateTime`.
+* **`HOUR(date)`**, **`MINUTE(date)`**, **`SECOND(date)`**: Extract the time-of-day components.
+* **`WEEKDAY(date) -> number`**: Returns the day of the week (0=Sunday ... 6=Saturday).
+* **`EOMONTH(date [, offset_months]) -> DateTime`**: Returns the last day (midnight, local) of the month `offset_months` away from `date` (Excel-style; `offset` defaults to 0). Days-in-month is then just `DAY(EOMONTH(d))` - leap years handled, no lookup table. Vectorises element-wise over a date array.
+* **`DATERANGE(start, end [, unit$="D"] [, step=1]) -> array`**: Array of `DateTime`s from `start` to `end` **inclusive**, stepping by `step` units. Calendar units `D`/`W`/`M`/`Y` advance by whole local calendar days/weeks/months/years (DST-safe - a "day" never drifts by an hour); clock units `H`/`N`/`S` advance by fixed seconds. A negative `step` counts down. Example: `DATERANGE(checkin, checkout, "D")`.
+
+### Type Inspection
+
+* **`TYPEOF(value) -> string$`**: Returns the type name as a string: `"NUMBER"`, `"STRING"`, `"ARRAY"`, `"OBJECT"`, `"FUNCREF"`, `"NONE"`, etc.
+* **`ISNUM(v) -> bool`**: `TRUE` if `v` is a number (integer or double).
+* **`ISSTR(v) -> bool`**: `TRUE` if `v` is a string.
+* **`ISARR(v) -> bool`**: `TRUE` if `v` is an array.
+* **`ISMAP(v) -> bool`**: `TRUE` if `v` is a map/object.
+* **`ISBOOL(v) -> bool`**: `TRUE` if `v` is a boolean.
+* **`ISNONE(v) -> bool`** / **`ISNULL(v) -> bool`**: `TRUE` if `v` is the `NONE` value.
+* **`VARS() -> array`**: Returns an array of names of all currently defined global variables - useful for live debugging and the REPL.
+* **`FUNCS`**: Prints every user-defined `FUNC`, `SUB` and `ASYNC FUNC` with its parameter signature, one per line. The companion to `VARS` for the REPL; names beginning with a double underscore stay hidden.
+* **`JDB.GLOBAL_GET(name$) -> value`** / **`JDB.GLOBAL_SET(name$, value)`**: Read or write a single global by name (case-insensitive). `GET` returns `NONE` for an unknown name; `SET` allocates the slot if the name is new. These back the MCP state-save and state-restore tools, which capture a value copy of each user variable before an experimental snippet runs.
+* **`JDB.CHECK$(code$) -> string`**: Validates a snippet without running it and returns the diagnostics. Backs the MCP `jdb_check` tool, so a generated snippet can be checked before it touches the persistent VM. Returns an "unavailable" message when the host registered no checker.
+
+#### `HELP [topic$]` and `HELP$()`
+
+Provides access to the built-in help system.
+
+* **`HELP`** (Procedure):
+  * Without arguments, `HELP` lists all available help topics.
+  * With a `topic$` argument, it prints the detailed help for that specific command or function.
+* **`HELP$()`** (Function):
+  * Returns a 1D array of strings, where each element is an available help topic.
+
+```basic
+' Example 1: List all topics
+HELP
+
+' Example 2: Get help for a specific command
+HELP "PRINT"
+
+' Example 3: Use HELP$() to get the list as data
+DIM Topics AS ARRAY
+Topics = HELP$()
+PRINT "There are " + LEN(Topics) + " help topics available."
+```
+
+### HTTP Functions
+
+* **`HTTP.GET$(url$)`**: Performs an HTTP GET request and returns the response body as a string.
+* **`HTTP.POST$(url$, data$, contentType$)`**: Performs an HTTP POST request with the given data and content type, returning the response body.
+* **`HTTP.PUT$(url$, data$, contentType$)`**: Performs an HTTP PUT request.
+* **`HTTP.GET_ASYNC$(url$) -> task_id`**: Non-blocking variant of `HTTP.GET$`. Returns an async task id that can be polled with `THREAD.ISDONE` / `THREAD.GETRESULT` or awaited with `AWAIT`.
+* **`HTTP.POST_ASYNC$(url$, data$, contentType$) -> task_id`**: Non-blocking POST.
+* **`HTTP.PUT_ASYNC$(url$, data$, contentType$) -> task_id`**: Non-blocking PUT.
+* **`HTTP.SETHEADER(name$, value$)`**: Sets a custom header for subsequent HTTP requests.
+* **`HTTP.CLEARHEADERS()`**: Clears all custom HTTP headers.
+* **`HTTP.STATUSCODE()`**: Returns the HTTP status code from the last request.
+* **`HTTP.SETTIMEOUT(seconds)`**: Sets the connection / read / write timeout (seconds) for subsequent client calls. Default is 10s.
+* **`HTTP.FOLLOWREDIRECTS(flag)`**: Enables (default) or disables automatic follow-redirect on client calls.
+* **`HTTP.SETPARAM(name$, value$)`**: Appends (or updates) a URL query parameter applied to all subsequent client calls. Values are url-encoded automatically.
+* **`HTTP.CLEARPARAMS()`**: Removes all query parameters set via `HTTP.SETPARAM`.
+* **`HTTP.SETCOOKIE(name$, value$)`**: Stores a cookie sent as a `Cookie:` header on subsequent requests.
+* **`HTTP.CLEARCOOKIES()`**: Removes all client-side cookies.
+* **`HTTP.GETCOOKIE$(name$)`**: Returns the stored cookie value, or empty string if the key is unknown.
+* **`HTTP.DELETE$(url$)`**: Performs an HTTP DELETE request and returns the response body. Status is available via `HTTP.STATUSCODE()`.
+* **`HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> map`**: Generic HTTP call. Returns a map with `status`, `body`, and `headers`. Unlike the shortcut forms this does not throw on HTTP-level errors (4xx/5xx) - only on transport failure. `method$` accepts `GET`, `DELETE`, `HEAD`, `POST`, `PUT`, `PATCH`.
+* **`HTTP.SERVER.START(port [, host$])`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success. `host$` defaults to `"127.0.0.1"` (loopback only); pass `"0.0.0.0"` to expose the server to the LAN.
+* **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
+* **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.
+* **`HTTP.SERVER.ON_POST(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `POST` requests for a specific URL path.
+
+* **`HTTP.SERVER.ON_NOTFOUND(function_name$)`**: Registers a `jdBasic` function to render unmatched routes (HTTP 404). The function receives the request map and may return HTML (sent as `text/html` with status 404) or a rich-response map (`{__http_status, __http_body, __http_content_type, __http_headers}`). Wired through httplib's `set_error_handler`; it fires only for 404, so handler-set statuses like 401/500 keep their own output. Call it before `HTTP.SERVER.START`.
+
+* **`HTTP.SERVER.WAIT`**: Parks the main thread in C++ until the server stops, and returns when a handler calls `HTTP.SERVER.STOP` (or the process exits). Use this instead of a `DO ... SLEEP ... LOOP` keep-alive: handlers run on httplib worker threads that share the one VM, so a jdBasic loop on the main thread would step the VM concurrently with a running handler and corrupt it. That is fatal for handlers that take seconds, an LLM query for example.
+
+### Output capture
+
+These three natives redirect `PRINT`/all script output to an in-memory string buffer instead of letting it leak to stdout. Captures are stacked: each `OUTPUT.CAPTURE_BEGIN` saves the previous output handler so nested captures and host-installed routers (e.g. the Console workspace buffer) restore correctly.
+
+* **`OUTPUT.CAPTURE_BEGIN`**: Begins capturing all subsequent output to a fresh buffer.
+* **`OUTPUT.CAPTURE_END$() -> string$`**: Stops the most recent capture and returns the buffered text. Errors if no capture is active.
+* **`OUTPUT.CAPTURE_PEEK$() -> string$`**: Returns the current buffer contents without stopping capture.
+
+### Encoding & Hashing (CODEC)
+
+* **`CODEC.BASE64_ENCODE$(string$) -> string$`**: Encodes a string into Base64 format. Useful for API authentication headers.
+* **`CODEC.BASE64_DECODE$(string$) -> string$`**: Decodes a Base64 encoded string back to its original format.
+* **`CODEC.SHA256$(string$) -> string$`**: Calculates the SHA256 hash of a string and returns it as a 64-character hex string.
+* **`CODEC.UUID$() -> string$`**: Generates a random Version 4 UUID (e.g., `"550e8400-e29b-41d4-a716-446655440000"`).
+
+### Building a Web Server & API
+
+The built-in HTTP server allows `jdBasic` to serve websites and create simple JSON APIs. The server runs in the background, handling requests by calling user-defined `jdBasic` functions.
+
+Handler functions receive one argument: a `Map` containing details about the incoming request:
+
+* `PATH`, `METHOD`, `BODY`, `PARAMS` - request path, method, body bytes, and parsed query parameters.
+* `HEADERS` - a map of incoming request headers. **Keys are normalised to lowercase**, since HTTP header names are case-insensitive (RFC 7230). Look up `req{"HEADERS"}{"content-type"}`, `req{"HEADERS"}{"mcp-session-id"}`, etc.
+
+The `RETURN` value of the function is sent back to the client as the response.
+
+* If the function returns a `String`, it is sent with `Content-Type: text/html`.
+* If the function returns a `Map`, the default behaviour is to auto-convert it to JSON with `Content-Type: application/json` and HTTP 200.
+* For custom status codes / response headers / body bytes, return a "rich response" map carrying any of these reserved keys (auto-JSON encoding is suppressed when `__http_status` is present):
+    * `__http_status` (number) - the HTTP status code (e.g. `202`, `404`).
+    * `__http_body` (string) - the raw response body. Omit for an empty body.
+    * `__http_headers` (map) - extra response headers as `{name: value}`.
+    * `__http_content_type` (string) - defaults to `application/json` when a body is present.
+
+```basic
+' Custom response: 202 Accepted with no body and a custom session header
+RETURN { _
+    "__http_status": 202,                              _
+    "__http_headers": {"Mcp-Session-Id": new_sid$}     _
+}
+```
+
+```basic
+' --- Web Server and API Example ---
+ExitMe = FALSE
+
+SUB HandleKeys(data)
+    ExitMe = TRUE
+ENDSUB
+
+ON "KEYDOWN" CALL HandleKeys
+' Handler for the main web page at "/"
+FUNC HandleWebsite(request)
+    ' Build an HTML string to return as the website
+    html$ = "<!DOCTYPE html><html><head><title>My jdBasic Site</title></head>"
+    html$ = html$ + "<body><h1>Welcome!</h1><p>This page is served by jdBasic.</p>"
+    html$ = html$ + "</body></html>"
+
+    ' Return the HTML string. The server will send it with Content-Type: text/html.
+    RETURN html$
+ENDFUNC
+
+' Handler for a JSON API endpoint at "/api/info"
+FUNC HandleApi(request)
+    ' Create a response map
+    response_map = {
+        "server_time": NOW(),
+        "status": "ok",
+        "request_path": request{"path"}
+    }
+    
+    ' Return the map. The server will convert it to a JSON string.
+    RETURN response_map
+ENDFUNC
+
+' --- Main Program ---
+PRINT "Setting up HTTP server..."
+
+HTTP.SERVER.ON_GET "/", "HandleWebsite"
+HTTP.SERVER.ON_POST "/api/info", "HandleApi"
+
+IF HTTP.SERVER.START(8080) THEN
+    PRINT "Server is running at http://localhost:8080"
+    PRINT "Press any key to stop."
+    
+    ' Loop to keep the main program alive while the server runs in the background
+    DO
+        SLEEP 100
+    LOOP UNTIL ExitMe = TRUE
+ELSE
+    PRINT "Error starting server: "; ERRMSG$
+ENDIF
+
+PRINT "Shutting down server..."
+HTTP.SERVER.STOP
+```
+
+### Serial Communication (COM)
+
+Available when compiled with `USE_COM`.
+
+* **`SERIAL.OPEN(port$, baud_rate) -> Handle`**: Opens a serial port (e.g., "COM3" on Windows, "/dev/ttyUSB0" on Linux) and returns a handle.
+* **`SERIAL.CLOSE(handle)`**: Closes an open serial port.
+* **`SERIAL.WRITE(handle, data$)`**: Writes a string (or binary bytes) to the serial port.
+* **`SERIAL.READ$(handle, max_bytes) -> string$`**: Reads up to `max_bytes` from the port. Returns an empty string if no data is available (non-blocking).
+* **`SERIAL.AVAILABLE(handle) -> number`**: Returns the number of bytes currently waiting in the input buffer.
+* **`SERIAL.FLUSH(handle)`**: Clears the input and output buffers.
+
+```basic
+' Arduino Communication Example
+hCom = SERIAL.OPEN("COM3", 9600)
+IF TypeOf(hCom) <> "SERIAL_PORT" THEN
+    SERIAL.WRITE hCom, "LED_ON" + CHR$(10)
+    SLEEP 100
+    Response$ = SERIAL.READ$(hCom, 256)
+    PRINT "Arduino said: " + Response$
+    SERIAL.CLOSE hCom
+ENDIF
+```
+
+### Graphics and Multimedia Functions
+
+#### Graphics
+
+* **`SCREEN width, height, [title$], scalefactor`**: Initializes a graphics window of the specified size.
+* **`SCREENFLIP`**: Updates the screen to show all drawing operations performed since the last flip.
+* **`SCREENWIDTH() -> number`** / **`SCREENHEIGHT() -> number`**: The logical `SCREEN` size. Both return `0` when `SCREEN` was never called, so code can detect a headless run.
+* **`DRAWCOLOR r, g, b, [a]`**: Sets the current drawing color using RGB values (0-255). The optional alpha defaults to `255`.
+* **`SETFONT filename$, size`**: Sets the current font to filename$ and size.
+* **`PSET x, y, [r, g, b] OR PSET matrix, [colors]`**: Draws a single pixel at the specified coordinates. Can also take a matrix of points.
+* **`LINE x1, y1, x2, y2, [r, g, b] OR LINE matrix, [colors]`**: Draws a line between two points. Can also take a matrix of lines.
+* **`RECT x, y, w, h, [fill], [r, g, b] OR RECT matrix, [fill], [colors]`**: Draws a rectangle. `fill` is a boolean. Can also take a matrix of rectangles.
+* **`CIRCLE x, y, r, [fill], [r, g, b] OR CIRCLE matrix, [fill], [colors]`**: Draws a circle. Can also take a matrix of circles.
+* **`ELLIPSE cx, cy, rx, ry, [fill], [r, g, b] OR ELLIPSE matrix, [fill], [colors]`**: Draws an ellipse. Can also take a matrix of ellipses.
+* **`ROUNDED_RECT x, y, w, h, radius, [fill], [r, g, b] OR ROUNDED_RECT matrix, [fill], [colors]`**: Draws a rounded rect. Can also take a matrix of rounded rects.
+* **`CIRCLE_SECTOR cx, cy, radius, start_angle, end_angle, [fill], [r, g, b] OR CIRCLE_SECTOR matrix, [fill], [colors]`**: Draws a circle sector. Can also take a matrix of sectors.
+* **`TEXT x, y, content$, [r, g, b]`**: Draws a string of text on the graphics screen.
+* **`PLOTRAW x, y, matrix, [scaleX, scaleY]`**: Draws a matrix of color values directly to the screen at a given position and scale.
+* **`GFX.PLOT_POINTS(xs, ys, [rgb])`**: Batch pixel plot from two parallel 1-D coordinate arrays. `rgb` is either a single `[r, g, b]` for all points, or a flat stream of length `N*3`; omit it to use the current `DRAWCOLOR`. A single shared colour goes out as one draw call.
+* **`GFX.PLOT_POINTS_TEX(xs, ys, rgb_lut, [bg_rgb])`**: The fastest path for many coloured pixels: scatters into a streaming texture and uploads it in one call instead of one call per pixel. `rgb_lut` is a flat array of length `N*3`; `bg_rgb` fills the background (default black). The texture follows the logical `SCREEN` size.
+* **`GFX.HSV_RGB(h, s, v) -> [r, g, b]`**: HSV to RGB in C++, for per-pixel loops where a jdBasic helper would dominate the frame time. `h` wraps at 360, `s` and `v` clamp to 0..1, the result is three 0-255 components.
+* **`GFX.FADE(direction, duration, [r], [g], [b])`**: Fades the current frame out (`direction = 0`) or in (`direction = 1`) over `duration` seconds against a fill colour (default black). **Blocks** until the fade completes, flipping the screen itself each frame.
+* **`TOGGLE_FULLSCREEN`**: Toggles the graphics window between fullscreen and windowed mode.
+
+#### Graphics Window & Event Handling
+
+In addition to the high-level drawing commands above, the `GFX.*` namespace exposes lower-level window, timing, image, and input access.
+
+* **`GFX.CLOSE`**: Closes the graphics window and releases SDL resources.
+* **`GFX.POLLEVENT() -> object`** *(deprecated - prefer `ON "KEYDOWN" ...`, `ON "QUIT" ...`, etc.)*: Polls one pending SDL event and returns it as an object, or `NONE` if the queue is empty. Common types are `"quit"`, `"keydown"`, `"keyup"`, `"mousemove"`, `"mousebutton"`, `"windowresized"`. Note: when IMGUI is built in, POLLEVENT goes through the ImGui input filter which can swallow keystrokes - `ON "KEYDOWN"` handlers bypass that and are the recommended pattern.
+* **`GFX.KEYSTATE(scancode) -> boolean`**: Returns `TRUE` if the given SDL scancode is currently held down.
+* **`GFX.DELAY(ms)`**: Pauses for `ms` milliseconds using SDL's high-resolution timer.
+* **`GFX.TICKS() -> number`**: Returns a monotonically increasing millisecond counter since the SDL subsystem was initialised - ideal for delta-time computations in game loops.
+* **`GFX.MOUSEX() -> number`** / **`GFX.MOUSEY() -> number`**: Returns the current mouse position inside the graphics window.
+* **`GFX.MOUSEBUTTON(btn) -> boolean`**: Returns `TRUE` if mouse button `btn` (1=L, 2=M, 3=R) is currently pressed.
+
+#### Image Loading (SDL_image)
+
+* **`GFX.LOADIMAGE(path$) -> image_id`**: Loads a PNG/JPG/BMP/etc. image via SDL_image and returns a handle.
+* **`GFX.DRAWIMAGE(image_id, x, y, [w], [h])`**: Blits the image at `(x, y)`, optionally scaled to `w × h`.
+* **`GFX.FREEIMAGE(image_id)`**: Releases the image.
+* **`GFX.SAVE_SCREENSHOT(path$, [x, y, w, h])`**: Saves the current renderer contents to a PNG. With no rectangle it captures the whole viewport; with `x, y, w, h` it captures that region. **Call it BEFORE `SCREENFLIP`** - after the flip the back buffer is cleared and you'd capture an empty frame. Great for verifying rendered output headlessly.
+* **`GFX.SAVE_IMAGE(image_id, path$)`**: Saves a loaded (and possibly modified) image handle to a PNG.
+* **`GFX.CAPTURE() -> image_id`**: Snapshots the current renderer into a reusable image handle (e.g. for transitions). **`GFX.DRAW_CAPTURE(image_id)`** blits such a snapshot back over the whole screen.
+* **`GFX.DRAWIMAGE_REGION(image_id, sx, sy, sw, sh, dx, dy, [dw], [dh])`**: Blits the source rectangle `(sx, sy, sw, sh)` of an image to `(dx, dy)`. Without `dw`/`dh` the region keeps its source size. The sprite-sheet primitive.
+* **`GFX.DRAWIMAGE_EX(image_id, x, y, [w], [h], [angle], [flip_h])`**: Blits an image with rotation and horizontal flip. `w`/`h` default to the texture size, `angle` is in degrees (default `0`), `flip_h` mirrors the image (default `FALSE`).
+* **`GFX.COLOR_TO_ALPHA(image_id, [tolerance])` / `GFX.COLOR_TO_ALPHA(image_id, r, g, b, [tolerance])`**: Makes the background of a loaded image transparent, in place. With no colour it takes the top-left corner pixel as the background; `tolerance` defaults to `40`. It flood-fills from the four corners, so only *connected* background is removed and a similar colour inside the figure survives.
+* **`GL.SAVE_SCREENSHOT(path$)`**: OpenGL counterpart of `GFX.SAVE_SCREENSHOT` - saves the current `GL.WINDOW` back buffer to a PNG (glReadPixels, flipped to top-down). **Call it BEFORE `GL.FLIP`** (the swap leaves the back buffer undefined). Lets you verify OpenGL / 3D output to a file the same way the 2D renderer does.
+* **`GFX.TEXTSIZE(text$, [size]) -> [w, h]`**: Measures the rendered size of a string with the current font.
+
+#### OpenGL 3D (`GL.*`)
+
+The `GL.*` namespace is a thin wrapper over OpenGL 3.3-core for custom 3D rendering, separate from the 2D `GFX.*`/`SCREEN` renderer. It runs its own window (`GL.WINDOW`) and pairs with the `MAT4.*` matrix helpers for transforms. Every `GL.*` call except `GL.WINDOW`/`GL.CLOSE` requires an open GL window (they throw otherwise). Handle-returning calls (`GL.SHADER`, `GL.VBO`, `GL.EBO`, `GL.VAO`, `GL.TEX.LOAD`) return an integer id.
+
+Window and frame:
+
+* **`GL.WINDOW(width, height, [title$="jdBasic GL"])`**: Creates or replaces the SDL OpenGL 3.3-core window and makes it current.
+* **`GL.CLOSE()`**: Destroys the GL window and context.
+* **`GL.CLEAR(r, g, b, [a=255])`**: Clears the color and depth buffers. Components are `0..255`.
+* **`GL.FLIP()`**: Pumps SDL events into the gfx queue and swaps the double buffer (presents the frame).
+* **`GL.VIEWPORT(x, y, width, height)`**: Sets the GL viewport rectangle.
+* **`GL.ENABLE(flag$)`** / **`GL.DISABLE(flag$)`**: Enables/disables a capability; `flag$` is `"DEPTH_TEST"`, `"BLEND"` or `"CULL_FACE"`.
+
+Shaders and uniforms (uniform setters act on the currently `GL.USE`'d program; an unknown uniform name silently no-ops):
+
+* **`GL.SHADER(vertexSrc$, fragmentSrc$) -> int`**: Compiles and links a shader program from GLSL source strings; returns the program id (throws on a compile/link error).
+* **`GL.SHADER.DELETE(program)`**: Deletes a shader program.
+* **`GL.USE(program)`**: Makes a shader program current (required before setting uniforms).
+* **`GL.UNIFORM.F1(name$, x)`** / **`GL.UNIFORM.F3(name$, x, y, z)`** / **`GL.UNIFORM.F4(name$, x, y, z, w)`**: Set a float / vec3 / vec4 uniform.
+* **`GL.UNIFORM.I1(name$, i)`**: Sets an int or sampler uniform.
+* **`GL.UNIFORM.MAT4(name$, mat4)`**: Uploads a 16-element column-major `mat4` uniform (feed it a `MAT4.*` result).
+
+Buffers, arrays and attributes:
+
+* **`GL.VBO(data) -> int`**: Creates a vertex buffer from a numeric TENSOR/ARRAY (floats, `GL_STATIC_DRAW`), leaves it bound; returns the id.
+* **`GL.VBO.BIND(vbo)`**: Binds a vertex buffer to `GL_ARRAY_BUFFER`.
+* **`GL.EBO(indices) -> int`**: Creates an element (index) buffer from an integer TENSOR/ARRAY, leaves it bound; returns the id.
+* **`GL.VAO() -> int`** / **`GL.VAO.BIND(vao)`** / **`GL.VAO.DELETE(vao)`**: Create/bind/delete a vertex array object.
+* **`GL.BUFFER.DELETE(buffer)`**: Deletes a buffer (VBO or EBO).
+* **`GL.ATTRIB(index, components, stride_bytes, offset_bytes)`**: Defines and enables a `GL_FLOAT` vertex attribute on the bound VAO/VBO. `stride`/`offset` are in **bytes**.
+
+Textures:
+
+* **`GL.TEX.LOAD(path$) -> int`**: Loads a PNG/JPG via SDL_image (RGBA32, LINEAR, REPEAT); path resolves against the script dir. Returns the texture id.
+* **`GL.TEX.BIND(tex, slot)`**: Binds a texture to `GL_TEXTURE0 + slot`.
+* **`GL.TEX.DELETE(tex)`**: Deletes a texture.
+
+Drawing and debug:
+
+* **`GL.DRAW.LINES(first, count)`** / **`GL.DRAW.TRIS(first, count)`**: `glDrawArrays` as `GL_LINES` / `GL_TRIANGLES`.
+* **`GL.DRAW.TRIS.IDX(count)`**: `glDrawElements` as `GL_TRIANGLES` using the bound EBO (`GL_UNSIGNED_INT` indices).
+* **`GL.SAVE_SCREENSHOT(path$)`**: Saves the GL back buffer to a PNG. **Call it BEFORE `GL.FLIP`** (the swap leaves the back buffer undefined).
+
+#### 4x4 Matrix Math (`MAT4.*`)
+
+The `MAT4.*` helpers build 4x4 transforms for OpenGL. Every function returns a 16-element flat numeric tensor in **column-major** (OpenGL) order; any `m` / `mat4` argument accepts such a tensor. Feed results to `GL.UNIFORM.MAT4`. Note the angle-unit trap: `MAT4.PERSPECTIVE` takes degrees, `MAT4.ROTATE` takes radians.
+
+* **`MAT4.IDENTITY() -> mat4`**: The identity matrix.
+* **`MAT4.PERSPECTIVE(fov_deg, aspect, near, far) -> mat4`**: Perspective projection; `fov_deg` in **degrees**.
+* **`MAT4.LOOKAT(ex, ey, ez, tx, ty, tz, ux, uy, uz) -> mat4`**: View matrix from eye, target and up vectors (9 scalars).
+* **`MAT4.MUL(a, b) -> mat4`**: Matrix product `a * b`.
+* **`MAT4.TRANSLATE(m, x, y, z) -> mat4`**: `m * Translation(x, y, z)`.
+* **`MAT4.ROTATE(m, angle_rad, ax, ay, az) -> mat4`**: `m * Rotation(angle about axis)`; `angle_rad` in **radians**.
+* **`MAT4.SCALE(m, sx, sy, sz) -> mat4`**: `m * Scale(sx, sy, sz)`.
+
+#### Audio File Playback (SDL_mixer)
+
+The `AUDIO.*` family provides file-based playback for sound effects (WAV) and music (MP3/OGG/FLAC), powered by SDL_mixer. This is separate from the `SOUND.*` live-coding sequencer/synth described further below - use `AUDIO.*` to play pre-recorded audio files, and `SOUND.*` to programmatically synthesize notes and rhythms.
+
+* **`AUDIO.INIT`**: Initialises the audio subsystem (mixer opens at 44.1 kHz, stereo). Must be called before any other `AUDIO.*` function.
+* **`AUDIO.CLOSE`**: Frees all loaded chunks and music and shuts down the audio subsystem.
+
+##### Sound Effects (Chunks)
+
+* **`AUDIO.LOADWAV(path$) -> sfx_id`**: Loads a short audio file (WAV, OGG, etc.) into a chunk suitable for repeated fire-and-forget playback.
+* **`AUDIO.PLAY(sfx_id, [loops=0], [channel=-1]) -> channel`**: Plays the chunk. `loops=0` means play once; `-1` means loop forever. Returns the channel index it was scheduled on.
+* **`AUDIO.STOP([channel])`**: Halts playback on the given channel. With no argument, halts all channels.
+* **`AUDIO.PAUSE([channel])`** / **`AUDIO.RESUME([channel])`**: Pauses/resumes the given channel (or all if omitted).
+* **`AUDIO.VOLUME(level, [channel]) -> previous_volume`**: Sets the channel volume (0..128). With no channel, sets the master SFX volume. Returns the previous value.
+* **`AUDIO.FREE(sfx_id)`**: Releases the chunk memory.
+
+##### Music
+
+* **`AUDIO.LOADMUS(path$) -> music_id`**: Loads a music file (MP3, OGG, FLAC, etc.) as a streaming music track.
+* **`AUDIO.PLAYMUS(music_id, [loops=-1])`**: Starts playing the music. `-1` (default) loops forever, `0` plays once.
+* **`AUDIO.STOPMUS`**: Halts the current music track.
+* **`AUDIO.PAUSEMUS`** / **`AUDIO.RESUMEMUS`**: Pauses/resumes the music track.
+* **`AUDIO.VOLUMEMUS(level) -> previous_volume`**: Sets the music volume (0..128).
+* **`AUDIO.FREEMUS(music_id)`**: Releases the music memory.
+
+```basic
+AUDIO.INIT
+DIM shoot = AUDIO.LOADWAV("sfx/laser.wav")
+DIM bgm   = AUDIO.LOADMUS("music/theme.ogg")
+
+AUDIO.VOLUMEMUS 64
+AUDIO.PLAYMUS bgm          ' loops forever
+
+' In the game loop, fire the SFX on demand
+AUDIO.PLAY shoot
+
+' On exit
+AUDIO.CLOSE
+```
+
+### ImGui Functions
+
+This suite of functions provides immediate-mode GUI capabilities using the Dear ImGui library. These functions allow you to create windows, inputs, plots, and complex layouts directly from your code.
+
+#### Windows & Containers
+
+* **`GUI.BEGIN(title$, [x, y, w, h], [p_open], [flags]) -> boolean`**: Starts a new window. Returns `TRUE` if the window is visible (not collapsed). If a `p_open` variable is passed, it returns the new state of that variable (handling the close 'X' button).
+* **`GUI.END`**: Ends the current window. Must be called for every `GUI.BEGIN`.
+* **`GUI.BEGIN_CHILD(id$, [width, height], [border], [flags])`**: Starts a scrolling child region.
+* **`GUI.END_CHILD`**: Ends a child region.
+* **`GUI.COLLAPSING_HEADER(label$, [visible_bool]) -> boolean`**: Displays a collapsible header. Returns `TRUE` if the header is currently open.
+* **`GUI.TREE_NODE(label$) -> boolean`**: Displays a tree node. Returns `TRUE` if the node is open. If open, you must call `GUI.TREE_POP` after rendering children.
+* **`GUI.TREE_POP`**: Ends a tree node.
+
+#### Layout
+
+* **`GUI.SAME_LINE`**: Places the next widget on the same horizontal line as the previous one.
+* **`GUI.SEPARATOR`**: Draws a horizontal line separator.
+* **`GUI.SEPARATOR_TEXT(text$)`**: Draws a separator with centered text.
+* **`GUI.DUMMY(width, height)`**: Adds an invisible spacer of the specified size.
+
+#### Basic Widgets
+
+* **`GUI.TEXT(text$, [wrap_bool])`**: Displays text in the UI. If `wrap_bool` is `TRUE`, long lines are wrapped at the right edge of the current window/child region.
+* **`GUI.TEXT_WRAPPED(text$)`**: Convenience form - always wraps long lines at the right edge.
+* **`GUI.BUTTON(label$, [width, height]) -> boolean`**: Displays a button. Returns `TRUE` if clicked.
+* **`GUI.CHECKBOX(label$, checked_bool) -> boolean`**: Displays a checkbox. Returns the new boolean state.
+* **`GUI.RADIO(label$, current_value, button_value) -> value`**: Displays a radio button. Returns `button_value` if selected, otherwise returns `current_value`.
+* **`GUI.SLIDER(label$, value, min, max) -> number`**: Displays a slider. Returns the new value.
+* **`GUI.PROGRESS(fraction, [overlay_text$])`**: Displays a progress bar (0.0 to 1.0).
+* **`GUI.IMAGE(sprite_id, [width, height]) -> boolean`**: Draws a `SPRITE.LOAD`'d texture inside the current ImGui window (e.g. a downloaded flag/logo PNG). Defaults to the texture's native pixel size; pass `width`/`height` to scale. Returns `FALSE` for an unknown sprite id. The image scrolls and clips with the surrounding ImGui layout (tables, child regions), unlike `SPRITE.DRAW` which paints on the raw canvas.
+* **`GUI.COLOR(label$, color_array) -> boolean`**: Displays a color picker. Updates the array (`[r, g, b, a]`) in place. Returns `TRUE` if the color changed.
+* **`GUI.HELPMARKER(text$)`**: Displays a `(?)` icon that shows a tooltip when hovered.
+* **`GUI.TOOLTIP(text$)`**: Sets a tooltip for the item immediately preceding this call.
+
+#### Input Widgets
+
+* **`GUI.INPUT(label$, current_value$) -> string$`**: Displays a text input field. Returns the new string value.
+* **`GUI.INPUT_INT(label$, value) -> number`**: Displays an integer input field. Returns the new value.
+* **`GUI.INPUT_DOUBLE(label$, value) -> number`**: Displays a double-precision input field. Returns the new value.
+* **`GUI.COMBO(label$, current_index, items_array) -> number`**: Displays a combo box (dropdown). Returns the new selected index.
+* **`GUI.LISTBOX(label$, current_index, items_array, [height]) -> number`**: Displays a selectable list box. Returns the new selected index.
+* **`GUI.SELECTABLE(label$, [selected], [flags], [w], [h]) -> boolean`**: Displays a selectable item (row), useful for custom lists. Returns `TRUE` if clicked.
+
+#### Menus
+
+* **`GUI.BEGIN_MAIN_MENU_BAR() -> boolean`**: Creates a full-screen menu bar at the top of the viewport.
+* **`GUI.END_MAIN_MENU_BAR`**: Ends the main menu bar.
+* **`GUI.BEGIN_MENU_BAR() -> boolean`**: Creates a menu bar attached to the current window.
+* **`GUI.END_MENU_BAR`**: Ends the window menu bar.
+* **`GUI.BEGIN_MENU(label$, [enabled]) -> boolean`**: Creates a sub-menu (e.g., "File"). Returns `TRUE` if open.
+* **`GUI.END_MENU`**: Ends a menu.
+* **`GUI.MENU_ITEM(label$, [shortcut], [selected], [enabled]) -> boolean`**: Creates a menu item. Returns `TRUE` if activated.
+
+#### Popups & Modals
+
+* **`GUI.OPEN_POPUP(str_id$)`**: Marks a popup identifier as open.
+* **`GUI.BEGIN_POPUP(str_id$) -> boolean`**: Starts a popup window. Returns `TRUE` if open.
+* **`GUI.BEGIN_POPUP_MODAL(name$, [p_open]) -> boolean`**: Starts a modal popup that blocks interaction behind it.
+* **`GUI.END_POPUP`**: Ends a popup.
+* **`GUI.CLOSE_CURRENT_POPUP`**: Manually closes the currently active popup.
+
+#### Tabs
+
+* **`GUI.BEGIN_TAB_BAR(str_id$, [flags]) -> boolean`**: Starts a tab bar container. Returns `TRUE` if successful.
+* **`GUI.END_TAB_BAR`**: Ends a tab bar.
+* **`GUI.BEGIN_TAB_ITEM(label$, [p_open], [flags]) -> boolean`**: Starts a tab item. Returns `TRUE` if the tab is currently selected/active.
+* **`GUI.END_TAB_ITEM`**: Ends a tab item.
+
+#### Plots & Data Visualization
+
+* **`GUI.PLOT_LINES(label$, values_array, [overlay], [min], [max])`**: Draws a simple line chart from an array of numbers.
+* **`GUI.PLOT_HISTOGRAM(label$, values_array, [overlay], [min], [max])`**: Draws a histogram chart from an array of numbers.
+
+#### Tables
+
+* **`GUI.BEGIN_TABLE(id$, columns, [flags], [outer_w], [outer_h]) -> bool`**: Starts an ImGui table. Returns `TRUE` if the table is visible and should be populated.
+* **`GUI.END_TABLE`**: Ends a table started with `GUI.BEGIN_TABLE`.
+* **`GUI.TABLE_SETUP_COLUMN(label$, [flags], [init_width_or_weight])`**: Declares a table column. Call once per column before `GUI.TABLE_HEADERS_ROW`.
+* **`GUI.TABLE_HEADERS_ROW`**: Submits a header row based on the columns configured with `GUI.TABLE_SETUP_COLUMN`.
+* **`GUI.TABLE_NEXT_ROW([row_flags], [min_row_height])`**: Advances to the next row in the current table.
+* **`GUI.TABLE_SET_COLUMN_INDEX(index) -> bool`**: Switches the current table column. Returns `TRUE` if the column is visible.
+* **`GUI.TABLE_NEXT_COLUMN() -> bool`**: Switches to the next column in the current table. Returns `TRUE` if the column is visible.
+
+#### Utilities & Styling
+
+* **`GUI.THEME(theme_name$)`**: Sets the global UI theme. Options: `"DARK"`, `"LIGHT"`, `"CLASSIC"`.
+* **`GUI.FLAG(flag_name$) -> number`**: Returns the integer value of an ImGui configuration flag.
+  * Options: `"MENUBAR"`, `"NO_RESIZE"`, `"NO_TITLEBAR"`, `"NO_MOVE"`, `"NO_SCROLLBAR"`, `"NO_COLLAPSE"`, `"ALWAYS_AUTO_RESIZE"`, `"NO_SAVED_SETTINGS"`.
+* **`GUI.COL(color_name$) -> number`**: Returns the integer index for a specific ImGui interface color (ImGuiCol_ enum). This is used with style pushing functions to customize specific UI elements.
+  * Options: `"TEXT"`, `"WINDOWBG"`, `"BUTTON"`, `"BUTTONHOVERED"`, `"BUTTONACTIVE"`, `"HEADER"`, `"HEADERHOVERED"`, `"HEADERACTIVE"`, `"FRAMEBG"`, `"FRAMEBGHOVERED"`, `"FRAMEBGACTIVE"`, `"TITLEBG"`, `"TITLEBGACTIVE"`, `"CHECKMARK"`, `"SLIDERGRAB"`, `"SLIDERGRABACTIVE"`.
+* **`GUI.PUSH_STYLE_COLOR(col_idx, [r, g, b, a])`**: Overrides one ImGui style colour until it is popped. `col_idx` comes from `GUI.COL`, the colour is a four-element `[r, g, b, a]` array in 0-255.
+* **`GUI.POP_STYLE_COLOR([count])`**: Pops the last `count` pushed style colours (default `1`). Every push needs its pop, or the style stack leaks into the next frame.
+* **`GUI.PUSH_ID(id)`**: Pushes an integer or string ID to the stack to prevent ID collisions in loops.
+* **`GUI.POP_ID`**: Pops the last ID from the stack.
+* **`GUI.SHOW_FONT_ATLAS`**: Opens the built-in ImGui font visualizer for debugging.
+* **`GUI.ITEM_RECT() -> array`**: Returns the rectangle of the last submitted GUI item as `[minx, miny, maxx, maxy]` in **screen coordinates**.
+* **`GUI.SET_CURSOR_SCREEN_POS(x, y)`**: Sets the cursor position in screen coordinates for the next widget (useful for overlay editors).
+* **`GUI.SET_NEXT_ITEM_WIDTH(width)`**: Sets the width of the next input widget.
+* **`GUI.SET_KEYBOARD_FOCUS`**: Gives keyboard focus to the next input widget that is created.
+* **`GUI.ITEM_DEACTIVATED_AFTER_EDIT() -> bool`**: Returns `TRUE` if the last item became inactive after an edit (e.g., user pressed Enter/Esc or focus moved away).
+
+#### Layout Queries (for responsive layouts)
+
+* **`GUI.AVAIL_WIDTH() -> number`**: Returns the width still available in the current window/child region, after accounting for widgets already submitted this frame. Use together with `GUI.SET_NEXT_ITEM_WIDTH` to build layouts that resize with the window.
+* **`GUI.AVAIL_HEIGHT() -> number`**: Same as above but for vertical space.
+* **`GUI.WINDOW_WIDTH() -> number`**: Returns the full width of the current window (including padding, title bar etc.).
+* **`GUI.WINDOW_HEIGHT() -> number`**: Returns the full height of the current window.
+* **`GUI.DISPLAY_WIDTH() -> number`** / **`GUI.DISPLAY_HEIGHT() -> number`**: Returns the actual drawable size in physical pixels (`io.DisplaySize`) - the real output area regardless of the `SCREEN` scale factor or the desktop resolution (`SCREEN` clamps an over-large window to the display). Size a full-screen panel to these (`GUI.BEGIN "app", 0, 0, GUI.DISPLAY_WIDTH(), GUI.DISPLAY_HEIGHT()`) so it fills any screen instead of a fixed guess.
+
+```basic
+' Responsive input that grows with the window
+IF GUI.BEGIN("Panel", 10, 35, 400, 600) THEN
+  DIM w = GUI.AVAIL_WIDTH() - 10
+  GUI.SET_NEXT_ITEM_WIDTH w
+  query = GUI.INPUT("##q", query)
+ENDIF
+GUI.END
+```
+
+#### Sound
+
+* **`SOUND.INIT`**: Initializes the audio system. Must be called before other sound functions.
+* **`SOUND.VOICE track, waveform$, attack, decay, sustain, release`**: Configures the ADSR envelope and waveform for a sound track.
+  * **Waveforms**: `"SINE"`, `"SQUARE"`, `"SAW"`, `"TRIANGLE"`, `"NOISE"`, `"SAMPLE"`.
+
+* **`SOUND.SAMPLE track, sample_id, [base_note$], [loop_bool]`**: Assigns a loaded `SFX` ID to a track for pitched playback.
+  * `base_note$`: The root pitch of the original sample (e.g., "C3").
+  * `loop_bool`: If `TRUE`, the sample loops continuously while the key is held.
+
+* **`SOUND.PLAY track, frequency`**: Plays a note at a specific frequency (or note name like "C4") on the given track.
+* **`SOUND.RELEASE track`**: Starts the release phase of the note on the given track.
+* **`SOUND.STOP track`**: Immediately stops the note on the given track.
+* **`SOUND.PLAYBUFFER samples, [sample_rate], [channels]`**: Pushes a 1D float array (-1..1) directly onto a separate PCM stream that mixes alongside the synth tracks. Use this for hand-rolled waveforms, emulator audio (Apple II speaker), or anything that doesn't fit the ADSR/voice model. `sample_rate` defaults to 44100, `channels` to 1; if either changes between calls the underlying SDL stream is reopened so the resampler does the conversion. Calls are non-blocking - SDL queues until the device drains.
+* **`SOUND.QUEUED() -> integer`**: Returns the number of bytes still waiting in the PLAYBUFFER queue. Useful for keeping the buffer between min/max watermarks without overflowing or underrunning. Returns 0 if `SOUND.INIT` hasn't run.
+* **`SOUND.NOTE pattern$, [loop], [debug]`**: Programs a note pattern into the live-coding sequencer, in the same mini-notation `SOUND.SEQ` uses, including the parallel form `< melody , bass >`. `loop` repeats the pattern (default `FALSE`); `debug` dumps the parsed events per track to stderr.
+* **`SOUND.STATS() -> string`**: Returns `"triggers=N alloc_fail=M"` since the last call and resets both counters. `alloc_fail` counting up means the mixer ran out of voices.
+* **`SFX.LOAD id, "filepath.wav"`**: Loads a WAV file into memory slot `id`.
+* **`SFX.PLAY id`**: Plays a loaded WAV file once (fire-and-forget).
+* **`MUSIC.PLAY id, [loop_bool]`**: Plays a loaded WAV file as background music. Defaults to looping.
+* **`MUSIC.STOP`**: Immediately stops the background music.
+
+### Native Windows Forms (FORM.*)
+
+The `FORM.*` namespace creates **real Win32 windows and common controls** - push buttons, edit fields, list boxes - in the retained, event-driven style of classic Visual Basic. It is separate from both the ImGui immediate-mode layer and the SDL `SCREEN` renderer. Available only in Windows builds compiled with the `FORMS` flag.
+
+**Event model.** Every control has a *name*; events dispatch through the standard `ON` handler mechanism as **`NAME_EVENT`** (always uppercase). A handler is a `SUB` taking one argument, an array whose first element is an info map (`e[0]{"name"}`, plus event-specific keys like `text`, `index`, `checked`).
+
+**The event vocabulary.** Forms fire `LOAD`, `UNLOAD`, `RESIZE` and the mouse events; every control that takes input fires `GOTFOCUS`, `LOSTFOCUS`, `KEYDOWN`, `KEYUP`, `KEYPRESS`, `MOUSEDOWN`, `MOUSEUP` and `MOUSEMOVE` on top of its own (`CLICK`, `CHANGE`, `DBLCLICK`, `TICK`). Keyboard events carry `key` (the virtual key, or the character for `KEYPRESS`), mouse events `button` (1 left, 2 right, 0 for a move) and `x`/`y` in logical units; both carry `shift`, `ctrl` and `alt`. All of them bind by name without an `ON`.
+
+**Refusing to close.** `NAME_UNLOAD` runs **synchronously while the window still exists**, so a handler can read its own controls one last time and can call the close off by setting `e[0]{"cancel"} = TRUE` - the VB6 `Form_QueryUnload(Cancel)` pattern, for the window cross, `Alt+F4` and `FORM.CLOSE` alike.
+
+```basic
+SUB MAIN_UNLOAD(e)
+    IF FORM.GET(FORM.FIND(frm, "TXT"), "TEXT") <> saved$ THEN
+        IF MSGBOX("Unsaved changes. Close anyway?", 4 + 32) = 7 THEN
+            e[0]{"cancel"} = TRUE
+        ENDIF
+    ENDIF
+ENDSUB
+```
+
+```basic
+frm = FORM.CREATE("Hello", 320, 200, "MAIN")
+btn = FORM.BUTTON(frm, "btnOK", "OK", 110, 80, 100, 28)
+
+SUB BTNOK_CLICK(e)
+    MSGBOX("Clicked!", 64, "Hello")
+ENDSUB
+ON "BTNOK_CLICK" CALL BTNOK_CLICK
+
+FORM.RUN(frm)    ' message loop; returns when every form is closed
+```
+
+Events per control: form `_LOAD` / `_UNLOAD` / `_RESIZE`; button, checkbox, radio `_CLICK`; textbox `_CHANGE`; listbox `_CLICK` / `_DBLCLICK`; combo `_CHANGE`; timer `_TICK`. Handlers run on the main thread between window messages - never from a background thread.
+
+* **`FORM.CREATE(title$, width, height, [name$]) -> handle`**: Creates a form (client-area size). Default name is `FORM<n>`.
+* **`FORM.BUTTON(frm, name$, caption$, x, y, w, h) -> handle`** / **`FORM.LABEL(...)`** / **`FORM.CHECKBOX(...)`** / **`FORM.FRAME(...)`**: Standard controls; `&` in a caption underlines the Alt accelerator like VB6.
+* **`FORM.RADIO(frm, name$, caption$, x, y, w, h, [new_group])`**: Radio button; `new_group=TRUE` starts a new exclusive group.
+* **`FORM.TEXTBOX(frm, name$, text$, x, y, w, h, [multiline]) -> handle`**: Edit control.
+* **`FORM.LISTBOX(frm, name$, x, y, w, h)`** / **`FORM.COMBO(frm, name$, x, y, w, h)`**: Item lists; fill with `FORM.SET(h, "ITEMS", array)`.
+* **`FORM.TIMER(frm, name$, interval_ms) -> handle`**: Fires `NAME_TICK` every `interval_ms` (0 = created disabled; retune via the `INTERVAL` property).
+* **`FORM.SET(handle, prop$, value)`**: Properties: `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `ITEMS`, `ADDITEM`, `CLEAR`, `SELINDEX`, `FOCUS`, `X`/`Y`/`WIDTH`/`HEIGHT`, `INTERVAL` (timer), `VALUE` (TRUE clicks a button programmatically, VB6-style), `MAXIMIZED` (forms and MDI children; FALSE restores).
+* **`FORM.GET(handle, prop$) -> value`**: Reads `TEXT`, `ENABLED`, `VISIBLE`, `CHECKED`, `SELINDEX`, `SELTEXT`, `COUNT`, `NAME`, `KIND`, `HWND`, `X`/`Y`/`WIDTH`/`HEIGHT`.
+* **Appearance and behaviour** (SET and GET unless noted): `FORECOLOR` / `BACKCOLOR` as `0xRRGGBB` (GET returns `-1` when never set); `FONT`, a map of `name`, `size`, `bold`, `italic`, `underline`, `strike`, where anything absent stays at the system UI font, so `{"bold": TRUE}` is enough (SET only); `TAG`, any value at all, the VB6 scratch slot; `TOOLTIP`; `ALIGN` (`LEFT`/`CENTER`/`RIGHT`, labels and edit fields, SET only); `MAXLENGTH`, `PASSWORD` (a character, or TRUE for `*`, or FALSE to undo, SET only), `LOCKED` for edit fields; `TABSTOP` and `TABINDEX` (SET only, moves the control to that position in the tab order); `CURSOR` (`ARROW`, `WAIT`, `HAND`, `IBEAM`, `CROSS`, `SIZEALL`, `NO`, SET only). A form takes `BACKCOLOR` too and paints its own background with it. A **themed push button draws itself and ignores colours** - the same rule VB6 had, where a button needed `Style = Graphical` first.
+* **`FORM.LOAD(path$, [mdi_frame]) -> handle`**: Instantiates a **`.jdform` file** (see below) and returns the form handle; with a frame handle as second argument the form becomes an MDI child of it. Relative paths resolve against the script's directory. Every `SUB` named `<CONTROL>_<EVENT>` that exists in the program is bound automatically - a `.jdform`-based program needs no `ON` statements at all.
+* **`FORM.FIND(frm, name$) -> handle`**: Looks up a control of a form by name (case-insensitive); returns `0` if absent. The code-behind companion to `FORM.LOAD`.
+* **`FORM.MENU(frm, spec)`**: Builds (or replaces) the form's **menu bar**. `spec` is an array of maps: `text` (required; `&` marks the Alt key, `"-"` is a separator), `items` (submenu array), `name` (makes the item clickable: it becomes a forms handle dispatching `NAME_CLICK`, findable via `FORM.FIND`), `key` (a real keyboard accelerator like `"Ctrl+O"` or `"F5"`, shown right-aligned in the item). Menu items support `FORM.SET` `ENABLED`/`CHECKED`/`TEXT`/`VALUE` (TRUE clicks) and `FORM.GET` `CHECKED`/`ENABLED`.
+* **`FORM.POPUP(frm, spec, [x], [y])`**: Shows a **context menu** at the mouse (or at logical form coordinates when `x`/`y` are given) and returns when it closes. `spec` is the same shape as `FORM.MENU`, and a chosen item dispatches its `NAME_CLICK` exactly like a menu-bar item. The handles from the form's previous popup are dropped on each call, so reopening one does not pile them up. Pairs with `NAME_MOUSEDOWN` and `button = 2`.
+* **`FORM.MDI(title$, width, height, [name$]) -> handle`**: Creates an **MDI frame** (the classic multi-document parent window). Behaves like a form: menu, `FORM.RUN`, `LOAD`/`UNLOAD`/`RESIZE` events.
+* **`FORM.CHILD(frame, title$, width, height, [name$]) -> handle`**: Creates an MDI **child document window** inside a frame. Children host controls like any form and fire `LOAD`/`UNLOAD`/`RESIZE`, but do **not** count toward the program lifetime: closing the last child keeps `FORM.RUN` alive, closing the frame ends it. `Ctrl+F4`/`Ctrl+F6` close/cycle children as usual.
+* **`FORM.TOOLBAR(frm, name$, spec) -> handle`**: Builds a flat icon **toolbar** along the top of the form (one per form). `spec` is an array of maps: `name` (required; the button dispatches `NAME_CLICK`), `text` (tooltip), `icon` (a stock name: `NEW`, `OPEN`, `SAVE`, `CUT`, `COPY`, `PASTE`, `UNDO`, `REDO`, `DELETE`, `PRINT`, `PRINTPRE`, `FIND`, `REPLACE`, `PROPERTIES`, `HELP`), `check` (TRUE = toggle button); `"-"` is a separator. Buttons support `FORM.SET`/`GET` `ENABLED`/`CHECKED` and `VALUE` (TRUE clicks). On an MDI frame the client area starts below the toolbar automatically.
+* **`FORM.STATUSBAR(frm, name$, [part_widths]) -> handle`**: Builds a **status bar** along the bottom (one per form). `part_widths` is an array of widths in logical units, `-1` stretches the last part to the right edge; omitted = one full-width part. `FORM.SET(h, "TEXT", v)` takes a string (part 0) or an array of strings (all parts); `FORM.GET(h, "TEXT")` reads part 0. On an MDI frame the client area ends above the status bar automatically.
+* **`FORM.LINE(frm, name$, x, y, length, [vertical]) -> handle`**: The classic etched divider line.
+* **`FORM.SHAPE(frm, name$, x, y, w, h, [rgb]) -> handle`**: A filled rectangle; `COLOR` property (0xRRGGBB) via `FORM.SET`/`GET`.
+* **`FORM.PICTURE(frm, name$, path$, x, y, w, h) -> handle`**: An image (PNG/JPG/BMP/GIF via WIC) scaled to the control; swap with `FORM.SET(h, "PICTURE", path$)`.
+* **`FORM.PROGRESS(frm, name$, x, y, w, h) -> handle`**: Progress bar; `VALUE`/`MAX` (default range 0..100).
+* **`FORM.SLIDER(frm, name$, x, y, w, h, [max=100], [vertical]) -> handle`**: Trackbar; `VALUE`/`MIN`/`MAX`, fires `NAME_CHANGE` with `value` while dragging.
+* **`FORM.UPDOWN(frm, name$, x, y, w, h, [min=0], [max=100]) -> handle`**: Numeric edit with spin arrows; `VALUE`/`MIN`/`MAX`/`TEXT`, fires `NAME_CHANGE`.
+* **`FORM.LISTVIEW(frm, name$, x, y, w, h) -> handle`**: Report-mode list (columns, full-row select, grid lines). `COLUMNS` takes an array of maps (`{"text": "Name", "width": 120}`) or strings; `ITEMS` an array of row-arrays; plus `ADDITEM`, `CLEAR`, `SELINDEX`, `SELTEXT`, `COUNT` and cell reads via **`FORM.GET(h, "CELL", row, col)`**. Fires `NAME_CLICK` (`index`, `text`) on selection and `NAME_DBLCLICK`.
+* **`FORM.TREEVIEW(frm, name$, x, y, w, h) -> handle`** + **`FORM.NODE(tree, parent, text$) -> node`**: Hierarchy control; `parent` 0 is the root level. Tree properties: `SELNODE` (get/set), `SELTEXT`, `COUNT`, `EXPAND` (set = node id), `CLEAR`. Fires `NAME_CLICK` (`node`, `text`) on selection change.
+* **`FORM.TABS(frm, name$, x, y, w, h, titles) -> handle`** + **`FORM.TABPAGE(tab, page, ctl)`**: Tab strip; assigning a control to a page makes its visibility follow the selected tab. `SELINDEX`/`COUNT`; fires `NAME_CHANGE` (`index`).
+* **`FORM.DATETIME(frm, name$, x, y, w, h) -> handle`**: Date picker; `VALUE` is an epoch (pairs with `CVDATE`/`YEAR`/`MONTH`/`DAY`), `TEXT` reads the display; fires `NAME_CHANGE`.
+* **`FORM.RICHTEXT(frm, name$, x, y, w, h) -> handle`**: Rich-edit box (Msftedit); `TEXT` get/set, fires `NAME_CHANGE`.
+* **Common dialogs**: **`FILEOPEN$([filter$], [title$], [initial_dir$])`** and **`FILESAVE$([filter$], [title$], [default_name$])`** (filter format `"Text files|*.txt|All files|*.*"`, `""` = cancelled), **`COLORDIALOG([initial_rgb])`** (returns 0xRRGGBB or -1), **`FONTDIALOG$([face$], [size])`** (returns `"face,size,bold,italic"` or `""`).
+* **`FORM.RUN(frm)`**: Shows the form, fires `NAME_LOAD`, then blocks in the message loop until **all** forms are closed. The form is brought **in front of the launching editor/terminal** on show. Position it beforehand with `FORM.SET(frm, "X", 0)` / `"Y"` (screen coordinates, logical units) or fix it in the `.jdform` via `"x"`/`"y"` on the form object; `FORM.SET(frm, "TOPMOST", TRUE)` keeps it above all normal windows.
+* **`FORM.SHOW(frm)`**: Shows a secondary form (non-blocking) and fires its `NAME_LOAD`.
+* **`FORM.DOEVENTS() -> bool`**: Pumps pending messages once; `TRUE` while any form is open. The cooperative alternative to `FORM.RUN` for `DO ... LOOP` programs.
+* **`FORM.CLOSE(frm)`**: Closes a form.
+* **`MSGBOX(text$, [flags], [title$]) -> button`**: Message box. Flags are the VB6/Win32 values (`1`=OKCancel, `4`=YesNo, `16`=Critical, `32`=Question, `48`=Exclamation, `64`=Information); returns `1`=OK, `2`=Cancel, `6`=Yes, `7`=No.
+* **`INPUTBOX$(prompt$, [title$], [default$]) -> string`**: Modal input dialog; returns `""` on Cancel.
+
+#### The `.jdform` file format
+
+A `.jdform` file is the declarative layout a form designer edits; `FORM.LOAD` instantiates it. JSON, one form per file:
+
+```json
+{
+  "version": 1,
+  "form": { "name": "MAIN", "title": "Task List", "width": 480, "height": 340 },
+  "controls": [
+    { "type": "TEXTBOX", "name": "txtTask", "text": "", "x": 12, "y": 34, "w": 330, "h": 24 },
+    { "type": "BUTTON",  "name": "btnAdd",  "text": "&Add", "x": 352, "y": 33, "w": 108, "h": 26 },
+    { "type": "LISTBOX", "name": "lstTasks", "x": 12, "y": 70, "w": 330, "h": 200,
+      "properties": { "ITEMS": ["Buy milk"], "SELINDEX": 0 } },
+    { "type": "TIMER",   "name": "tmrClock", "interval": 1000 }
+  ]
+}
+```
+
+* **`version`** (required): format version, currently `1`. A newer number is rejected with a clear error.
+* **`form`**: `name` (event prefix), `title`, `width`/`height` (client area). Optional: `"mdi": true` makes it an MDI frame; `"menu": [...]` is a `FORM.MENU` spec, `"toolbar": [...]` a `FORM.TOOLBAR` spec and `"statusbar": [widths]` (or `true`) a `FORM.STATUSBAR`, all built at load time (handlers auto-bind like everything else).
+* **`controls`**: created in file order. `type` is one of `BUTTON`, `LABEL`, `TEXTBOX`, `CHECKBOX`, `RADIO`, `FRAME`, `LISTBOX`, `COMBO`, `TIMER`, `LINE`, `SHAPE`, `PICTURE`, `PROGRESS`, `SLIDER`, `UPDOWN`, `LISTVIEW`, `TREEVIEW`, `TABS`, `DATETIME`, `RICHTEXT`. Visible controls need `x`/`y`/`w`/`h`; `text` where it applies. Type-specific keys: `TEXTBOX` `multiline`, `RADIO` `new_group`, `TIMER` `interval` (instead of a geometry), `LINE`/`SLIDER` `vertical`, `SHAPE` `color`, `PICTURE` `picture` (path), `PROGRESS`/`SLIDER` `max`, `UPDOWN` `min`/`max`, `TABS` `titles` (array). Any control may carry `"tab": "<tabs name>"` + `"page": n` to live on a tab page.
+* **`properties`** (optional, on the **form** as well as on each control): applied through the `FORM.SET` path after creation - anything `FORM.SET` accepts, so appearance belongs here too: `{"FORECOLOR": 13369344, "FONT": {"bold": true, "size": 12}, "ALIGN": "RIGHT", "PASSWORD": true, "LOCKED": true, "TOOLTIP": "...", "TAG": {...}, "CURSOR": "HAND"}`. On the form object it is where `BACKCOLOR` goes. A designer writes nothing but this file, so what the file carries is what a designer can offer.
+* Errors name the culprit: `FORM.LOAD: controls[3] (lstTasks): unknown type "GRID"`. A failed load tears the half-built form down again.
+
+Demos: `jdb/demos/forms/forms_demo.jdb` (task list, hand-built), `jdb/demos/forms/tasklist.jdb` + `tasklist.jdform` (the same app as `.jdform` + code-behind), `jdb/demos/forms/mdi_demo.jdb` (MDI + menu + toolbar + statusbar). Self-tests: `tests/forms/forms_selftest.jdb`, `forms_load_selftest.jdb`, `forms_mdi_menu_selftest.jdb` (timer-driven, close themselves); `forms_native_smoke.jdb` is the STRICT twin that also compiles.
+
+**Native `-c` support**: forms programs compile when both the compiler exe and `jdbrt.dll` were built with the `FORMS` flag (`build.bat ... FORMS` + `build_rt.bat ... FORMS`). The `FORM.*` calls route through the VM bridge; events reach the compiled handlers through the event trampoline, and **handlers bind by name convention alone** - a one-parameter `SUB <NAME>_<EVENT>` is bound automatically at control creation, no `ON` statement needed (in both backends). Compiled exes activate common-controls v6 at runtime, so the visual style matches the interpreter.
+
+### Terminal UI (TUI.*)
+
+The `TUI.*` namespace mirrors `GUI.*` against the **FTXUI** library, rendering jdBasic apps into the terminal. The control flow matches ImGui: rebuild the frame every loop, call `TUI.RENDER`, repeat. Available only in builds compiled with the `TUI` flag (which implies `FTXUI`). See the suites under `tests/tui/` (`test_tui_phase_a.jdb` and friends) for runnable references.
+
+The script-facing surface is value-in / value-out (no byref) - widgets receive the current state, return the (possibly mutated) state, and the script reassigns:
+
+```basic
+DIM volume AS DOUBLE = 0.5
+DO
+    TUI.BEGIN "App"
+    TUI.TEXT "Hello"
+    IF TUI.BUTTON("OK") THEN TUI.EXIT
+    volume = TUI.SLIDER("Volume", volume, 0.0, 1.0)
+    TUI.END
+    TUI.RENDER
+    SLEEP 16
+LOOP UNTIL TUI.QUIT()
+```
+
+#### Core loop
+
+* **`TUI.BEGIN([title$])`**: Open a frame. `title$` becomes the outer window caption (tinted by the active theme).
+* **`TUI.END`**: Seal the frame. Auto-closes layout frames the script left open.
+* **`TUI.RENDER`**: Paint to the alt-screen buffer; drain pending input.
+* **`TUI.WAIT_EVENT`**: Block until a key, return the key name.
+* **`TUI.QUIT() -> bool`**: TRUE once Ctrl+Q was pressed or `TUI.EXIT` ran.
+* **`TUI.EXIT`**: Set the QUIT flag from the script.
+
+#### Layout
+
+* **`TUI.HBOX_BEGIN`/`HBOX_END`**, **`TUI.VBOX_BEGIN`/`VBOX_END`**: Horizontal / vertical collectors.
+* **`TUI.GRID_BEGIN(cols)`/`GRID_END`**: N-column grid; trailing row padded with empty cells.
+* **`TUI.BORDER_BEGIN([title$])`/`BORDER_END`**: Rounded border (or titled window).
+* **`TUI.SEPARATOR`**, **`TUI.SEPARATOR_TEXT(label$)`**: Direction-aware separator line, with optional inline label.
+* **`TUI.SPACER`**: `filler()` - stretches to consume free space.
+* **`TUI.SIZE(w, h)`**: Retroactively constrain the previous element (-1 = skip).
+* **`TUI.SAME_LINE`**: Join next emit with previous in an hbox.
+
+#### Text & links
+
+* **`TUI.TEXT(text$)`**: One-line text element.
+* **`TUI.PARAGRAPH(text$)`**: Auto-wrapped paragraph.
+* **`TUI.HEADING(text$, [level])`**: Level 1 = bold+underlined, 2 = bold, 3+ = dim.
+* **`TUI.LINK(label$, url$)`**: Underlined OSC-8 hyperlink (clickable in Windows Terminal).
+
+#### Input widgets
+
+Focus advances via **Tab / Shift+Tab**. The focused widget inverts; Enter / arrow keys drive its action.
+
+* **`TUI.BUTTON(label$) -> bool`**: TRUE the frame Enter fires on a focused button.
+* **`TUI.CHECKBOX(label$, checked) -> int`**: Returns new state (0/1).
+* **`TUI.RADIO(label$, options[], sel) -> int`**: Up/Down cycles when focused. Long lists scroll inside a vertical frame, keeping the selection in view.
+* **`TUI.INPUT(label$, text$) -> string`**: Type / Backspace edit the buffer.
+* **`TUI.INPUT_INT(label$, value) -> int`**: Digit append, Backspace delete, Up/Down ±1.
+* **`TUI.INPUT_DOUBLE(label$, value) -> double`**: Up/Down ±1, Left/Right ±0.1.
+* **`TUI.SLIDER(label$, value, min, max, [step]) -> double`**: Left/Right by step.
+* **`TUI.MENU(label$, options[], sel) -> int`**: Vertical menu list. Long lists scroll inside a vertical frame (with a scroll indicator), keeping the selection in view.
+* **`TUI.DROPDOWN(label$, options[], sel) -> int`**: Compact picker; Left/Right cycles.
+* **`TUI.SELECTABLE(label$, selected) -> bool`**: Row-style clickable.
+
+#### Display
+
+* **`TUI.PROGRESS(frac, [label$])`**: Horizontal gauge with optional inline label.
+* **`TUI.GAUGE(frac, [label$])`**: Same bar wrapped in a window/border.
+* **`TUI.SPINNER(frame, [variant])`**: 22 styles (`variant` 0-21); `frame` advances the animation.
+
+#### Braille canvas
+
+* **`TUI.CANVAS_BEGIN(w, h)`** … **`TUI.CANVAS_END`**: Draws into a 2×4-sub-cell canvas.
+* **`TUI.LINE(x1, y1, x2, y2, color)`**: Line on the active canvas; `color` is a Palette16 index (0-15).
+* **`TUI.PIXEL(x, y, color)`**: Single point.
+
+#### Tables
+
+* **`TUI.TABLE_BEGIN(headers[])`** … **`TUI.TABLE_ROW(cells[])`** … **`TUI.TABLE_END`**: LIGHT outer border with DOUBLE-bordered header; short rows are padded.
+
+#### Modal
+
+* **`TUI.MODAL_OPEN(id$)`**: Mark a modal active. Next frame's `MODAL_BEGIN(id$)` returns TRUE.
+* **`TUI.MODAL_BEGIN(id$, [title$]) -> bool`**: Begin overlay body. Frame is only pushed when active - pair with `IF` and `MODAL_END` inside.
+* **`TUI.MODAL_END`**: Seal overlay. Rendered centred over the main doc.
+* **`TUI.MODAL_CLOSE`**: Dismiss (Esc also does this).
+
+#### Menubar
+
+F-keys (F1, F2, …) open submenus by index. Arrows navigate items, Enter fires, Esc closes.
+
+* **`TUI.MENUBAR_BEGIN`** … **`TUI.MENUBAR_END`**: Top-row menu strip + popup body.
+* **`TUI.SUBMENU_BEGIN(label$) -> bool`** … **`TUI.SUBMENU_END`**: TRUE only when this submenu is the open one. Items inside the `IF` block render in the popup.
+* **`TUI.MENUITEM(label$, [hint$]) -> bool`**: TRUE the frame Enter fires on a focused item; selecting also closes the menu.
+
+#### Tabs
+
+* **`TUI.TAB_BAR_BEGIN(labels[], active_idx)`** … **`TUI.TAB_BAR_END`**: Paints the strip and sets the active index.
+* **`TUI.TAB_BEGIN(label$) -> bool`** … **`TUI.TAB_END`**: Body only renders for the active tab; pair with `IF`.
+
+#### Colour + style + theme
+
+The colour and style stacks decorate every subsequent emit until popped.
+
+* **`TUI.COLOR(r, g, b)`**, **`TUI.BG_COLOR(r, g, b)`**, **`TUI.POP_COLOR`**.
+* **`TUI.STYLE_PUSH(name$)`** with `"bold"`, `"dim"`, `"italic"`, `"underlined"`, `"inverted"`; **`TUI.STYLE_POP`**.
+* **`TUI.THEME(name$)`**: `"cool"` (default), `"warm"`, `"neon"`, `"cyber"`, `"gold"` - tints the title bar.
+
+#### Events + diagnostics
+
+* **`TUI.KEY$`**: Last drained key name (e.g. `"Enter"`, `"Up"`, `"F1"`, `"C-t"`, `" "`, `"a"`).
+* **`TUI.MOUSE_X / MOUSE_Y / MOUSE_BTN / MOUSE_WHEEL`**: Mouse position (cell coords, 0-based), button mask (bit 0 = left, 1 = right, 2 = middle) and an accumulating wheel delta. Polled from `MOUSE_EVENT` records via `ReadConsoleInputW`; the Windows-Terminal QuickEdit flag is auto-disabled while the script runs so clicks fire as events instead of dragging a selection.
+* **`TUI.ON(event$, handler$)`**: Recording-only stub today; dispatch arrives alongside the mouse driver.
+* **`TUI.WIDTH / TUI.HEIGHT`**: Live terminal dimensions in cells.
+* **`TUI.LAST_RENDER_MS`**: Wall-clock ms for the previous `TUI.RENDER`.
+* **`TUI.VERSION$`**: Namespace version string.
+
+### Live Coding Sequencer
+
+The live coding sequencer allows you to program rhythmic musical patterns and manipulate sound in real-time.
+
+#### `SOUND.SEQ layer_id, pattern$, waveform$` Programs a rhythmic musical pattern into the live-coding sequencer for a specific layer
+
+* **`layer_id`** (Integer): The index of the sequencer layer (corresponds to Track ID).
+* **`pattern$`** (String): A rhythm string using "mini-notation".
+* **`waveform$`** (String): Defines the sound source.
+* **"VOICE"**: Uses the track's existing design (ADSR, Filter, Sample, etc.).
+* **"SINE", "SQUARE", etc.**: Overrides the track's sound with a raw waveform.
+
+##### Pattern SyntaxThe sequencer divides time into "cycles". You can arrange events within a cycle using space-separated tokens
+
+* **Notes**: Plays a musical note.
+* **Frequency**: `"c3"`, `"f#4"`
+* **Scale Degree**: `"0"`, `"1"`, `"-1"` (Requires `SOUND.SCALE` to be set).
+
+
+* **Rests** (`"~"`): A step of silence.
+* **Subdivision** (`"[... ...]" `): Groups multiple steps into the timespan of a single step. This allows you to create fast rhythms (tuplets).
+* `"c4 c4"` = Two quarter notes (if cycle is 1 bar).
+* `"[c4 c4] c4"` = Two eighth notes followed by one quarter note.
+* `"c4 [c4 c4 c4]"` = One quarter note followed by eighth note triplets.
+
+##### Sequencer Examples
+
+```basic
+
+' 1. Basic 4-step techno kick (Square wave)
+SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE"
+
+' 2. Fast hi-hats using subdivision (White Noise)
+'    "[c4 c4]" fits two hits into one step
+SOUND.SEQ 1, "[c4 c4] [c4 c4] [c4 c4] [c4 c4]", "NOISE"
+
+' 3. Melodic pattern using custom Voice design
+'    First, design the sound:
+SOUND.VOICE 2, "SAW", 0.01, 0.2, 0.0, 0.2
+SOUND.FILTER 2, 800
+'    Then sequence it using "VOICE" to keep the filter/envelope settings:
+SOUND.SEQ 2, "c3 [e3 g3] ~ b3", "VOICE"
+
+```
+
+#### Sound Design (Track Specific)Apply these effects to specific tracks (0-7)
+
+* **`SOUND.GAIN track, volume`**: Sets track volume (1.0 = standard).
+* **`SOUND.PAN track, pan`**: Sets stereo panning (0.0=Left, 0.5=Center, 1.0=Right).
+* **`SOUND.FILTER track, cutoff_hz`**: Applies a Low-Pass Filter.
+* **`SOUND.EQ track, low, mid, high`**: 3-band Equalizer gains (1.0 = Flat).
+* **`SOUND.LFO track, freq, depth`**: Applies Vibrato (pitch modulation).
+* **`SOUND.FM track, amount, ratio`**: Frequency Modulation for metallic/bell tones.
+* **`SOUND.UNISON track, voices, detune, spread`**: Stacks multiple voices for a "Super-Saw" effect.
+  * `voices`: 1-16.
+  * `detune`: 0.0-1.0.
+
+* **`SOUND.BITCRUSH track, bits, rate`**: Lo-Fi effect.
+  * `bits`: 1-16 (Resolution).
+  * `rate`: 0.0-1.0 (Sample rate reduction).
+
+* **`SOUND.RINGMOD track, freq, mix`**: Robotic/Sci-Fi modulation.
+
+### Sound Design (Track Specific)
+
+These commands allow you to control how individual tracks interact with global effects and other tracks.
+
+* **`SOUND.REVERBSEND track, amount`**: Sets the amount of the track's signal sent to the global reverb bus.
+* `amount`: 0.0 (Dry) to 1.0 (Full Wet).
+
+* **`SOUND.DELAYSEND track, amount`**: Sets the amount of the track's signal sent to the global delay bus.
+* `amount`: 0.0 (Dry) to 1.0 (Full Wet).
+
+* **`SOUND.SIDECHAIN target_track, source_track, amount`**: Dynamically "ducks" the volume of the `target_track` based on the volume of the `source_track`.
+* `amount`: 0.0 (No ducking) to 1.0 (Full silence when source plays).
+* *Example*: `SOUND.SIDECHAIN 1, 0, 0.8` (Makes a synth on track 1 duck when the kick on track 0 hits).
+
+#### Global Effects (Master Bus)
+
+* **`SOUND.DELAY active_bool, time_ms, feedback, mix`**: Stereo Delay
+
+* **`SOUND.REVERB room_size, damping, width, wet`**: Stereo Reverb.
+  * `room_size`: 0.0-0.98.
+  * `width`: 0.0 (Mono) to 1.0 (Wide).
+
+* **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master Dynamics.
+  * `thresh`: 0.0-1.0.
+  * `ratio`: 1.0-20.0.
+  * `attack`/`release`: In milliseconds.
+
+* **`SOUND.DISTORTION amount`**: Master saturation/overdrive.
+* **`SOUND.RESET`**: Silences audio, clears sequencer, and resets effects.
+* **`SOUND.SHUTDOWN`**: Releases audio resources.
+* **`SOUND.DEBUG(enabled_bool)`**: Enables or disables verbose debug tracing from the audio engine - useful for diagnosing voice allocation or sequencer timing issues.
+
+#### Scale QuantizationMaps numbers in patterns (e.g., "0", "1") to musical scales
+
+**`SOUND.SCALE track, root_note$, scale_mode$`**
+
+* **`root_note$`**: E.g., "C3", "F#2".
+* **`scale_mode$`**: The type of scale to use.
+
+##### Available Scales
+
+| Scale Mode | Description |
+| --- | --- |
+| `"CHROMATIC"` | All 12 semitones. |
+| `"MAJOR"` | The standard happy/bright scale. |
+| `"MINOR"` | The standard sad/emotional scale. |
+| `"DORIAN"` | Jazzy, sophisticated minor. |
+| `"PHRYGIAN"` | Dark, exotic, "Spanish" flavor. |
+| `"LYDIAN"` | Dreamy, sci-fi, "floaty" major. |
+| `"MIXOLYDIAN"` | Bluesy major (rock/pop). |
+| `"LOCRIAN"` | Tense, dissonant, unstable. |
+| `"PENT_MAJ"` | 5-note major scale (very safe, folk/pop). |
+| `"PENT_MIN"` | 5-note minor scale (blues/rock riffs). |
+| `"BLUES"` | Hexatonic blues scale. |
+| `"ARABIC"` | Hijaz scale (Middle-Eastern feel). |
+
+### Visualization & Analysis
+
+Use these functions to retrieve audio data for custom ImGui oscilloscopes or debug monitors.
+
+* **`SOUND.GET_WAVE() -> Array`**: Returns a 1D array of the current master stereo mix (averaged to mono).
+* **`SOUND.GET_BUS_WAVE(bus_id) -> Array`**: Returns a 1D array of the audio data currently residing in a specific effect bus.
+* `bus_id`: `0` for Reverb, `1` for Delay.
+* **`SOUND.RENDER(frames) -> Array`**: Renders the next `frames` stereo frames of the live sequencer and returns them interleaved as `[L0, R0, L1, R1, ...]` (length `frames * 2`), advancing the sequencer by `frames` at 44100 Hz. For embed hosts built without an audio device (the `SOUND` build flag) that drive their own engine - e.g. feeding a Godot `AudioStreamGenerator`. See SequencerHelp.md "Embedded / Pull-Mode Rendering".
+
+### Example: Custom Studio Monitor
+
+You can combine these new features with **ImGui** to create a live dashboard.
+
+```basic
+SCREEN 1280, 720, "jdBasic Sequencer", 2
+SOUND.INIT
+SOUND.BPM 120
+' Setup a pulsing synth with sidechain
+SOUND.SEQ 0, "c2 ~ c2 ~", "SQUARE"       ' Kick
+SOUND.SEQ 1, "c4 c4 c4 c4", "SAW"        ' Synth
+SOUND.SIDECHAIN 1, 0, 0.7               ' Duck synth to kick
+
+' Send synth to reverb
+SOUND.REVERB 0.8, 0.5, 1.0, 0.4
+SOUND.REVERBSEND 1, 0.6
+
+DO
+    CLS
+    IF GUI.BEGIN("Master Mixer", 0, 0, 400, 300) THEN
+        ' 1. Master Output
+        WaveData = SOUND.GET_WAVE()
+        GUI.TEXT "Master Output (Stereo Mix)"
+        GUI.PLOT_LINES("Output", WaveData, "Live Audio", -1.0, 1.0)
+        
+        GUI.SEPARATOR()
+        
+        ' 2. Reverb Bus (Bus ID 0)
+        ReverbWave = SOUND.GET_BUS_WAVE(0)
+        GUI.PLOT_LINES "Reverb", ReverbWave, "", -0.5, 0.5
+    ENDIF
+    GUI.END()
+
+    SCREENFLIP
+    
+    k$ = INKEY$()
+    SLEEP 16 
+LOOP  UNTIL k$ = "q" OR k$ = "Q"
+
+```
+
+#### Sprites
+
+A sprite is a drawable image handle. Load one from a file or create a blank
+texture; the returned `sprite_id` is what every other `SPRITE.*` call expects.
+
+**Loading & creation**
+
+* **`SPRITE.LOAD("filename.png"[, frame_w, frame_h]) -> sprite_id`**: Loads a sprite image, optionally as a spritesheet with the given frame size, and returns its sprite id.
+* **`SPRITE.CREATE(w, h) -> sprite_id`**: Allocates a new transparent sprite texture (`w`, `h` in `1..4096`) and returns its sprite id. Fill it with `SPRITE.SETPIXEL` / `SPRITE.SETBUFFER`, then optionally `SPRITE.SAVE`.
+* **`SPRITE.DELETE(id)`**: Removes a sprite instance.
+* **`SPRITE.SETPIXEL(id, x, y, r, g, b, a)`**: Writes one RGBA pixel into a `SPRITE.CREATE`'d sprite (components 0-255). Uploads the texture after each write; use `SPRITE.SETBUFFER` for bulk fills.
+* **`SPRITE.SETBUFFER(id, rgba_array)`**: Bulk RGBA-fill from a flat array of length `width * height * 4`. Length mismatch raises an error; values are clamped to 0-255. This is the fast path (and the one Claude uses when generating sprites via MCP).
+* **`SPRITE.SAVE(id, path$)`**: Writes a `SPRITE.CREATE`'d sprite's RGBA buffer to a PNG. For `SPRITE.LOAD`'d images use `GFX.SAVE_IMAGE` instead.
+
+**Position & transform**
+
+* **`SPRITE.POS(id, x, y)`** / **`SPRITE.MOVE(id, x, y)`**: Sets the absolute position of a sprite.
+* **`SPRITE.GET_X(id)`** / **`SPRITE.GET_Y(id)`**: Returns the X or Y coordinate of a sprite.
+* **`SPRITE.WIDTH(id) -> number`** / **`SPRITE.HEIGHT(id) -> number`**: Returns the scaled pixel size of a sprite.
+* **`SPRITE.SCALE(id, scale_x, [scale_y])`**: Sets the sprite scale; `scale_y` defaults to `scale_x`.
+* **`SPRITE.ROTATE(id, angle)`**: Sets the rotation angle in degrees.
+* **`SPRITE.SET_ORIGIN(id, origin_x, origin_y)`**: Sets the rotation/scale origin point.
+* **`SPRITE.FLIP(id, flip_h, [flip_v])`**: Sets the horizontal (and optional vertical) mirror state.
+* **`SPRITE.ALPHA(id, alpha)`**: Sets the per-sprite transparency (0-255).
+* **`SPRITE.VISIBLE(id, visible)`**: Sets whether the sprite is drawn.
+* **`SPRITE.ZORDER(id, z)`**: Sets the draw order used by `SPRITE.DRAW_ALL`.
+
+**Animation**
+
+* **`SPRITE.ANIM(id, name$, frames_array, fps, [loop])`**: Defines a named animation clip from an array of frame indices played at `fps`. `loop` defaults to `TRUE`.
+* **`SPRITE.PLAY(id, name$)`**: Starts playing a named clip (errors if the clip is unknown).
+* **`SPRITE.STOP(id)`**: Stops the current animation playback.
+* **`SPRITE.FRAME(id, frame_index)`**: Sets a fixed frame, stopping any playing animation.
+* **`SPRITE.PLAYING(id) -> boolean`**: Returns `TRUE` while an animation is playing.
+
+**Velocity & simple physics**
+
+* **`SPRITE.VELOCITY(id, vx, vy)`**: Sets the velocity in pixels per second. `SPRITE.UPDATE` advances the position.
+* **`SPRITE.GET_VX(id)`** / **`SPRITE.GET_VY(id)`**: Reads back the current velocity.
+* **`SPRITE.GRAVITY(id, gravity)`**: Sets a per-second vertical gravity acceleration applied during `SPRITE.UPDATE`.
+* **`SPRITE.LAND(id, ground_y)`**: Snaps a falling sprite to rest on a ground y-line, zeroing vertical velocity and flagging it on-ground.
+* **`SPRITE.ON_GROUND(id) -> boolean`**: Returns `TRUE` if `SPRITE.LAND` flagged the sprite as grounded.
+* **`SPRITE.UPDATE([delta_time])`**: Advances the positions and animations of all sprites from their velocities (and gravity).
+
+**Drawing**
+
+* **`SPRITE.DRAW(id)`**: Draws a single sprite if visible.
+* **`SPRITE.DRAW_ALL([world_x, world_y])`**: Draws all active sprites in z-order, optionally offset by a camera/world position.
+
+**Collision**
+
+* **`SPRITE.COLLISION(id1, id2) -> boolean`**: Returns `TRUE` if two sprites' bounding boxes overlap.
+* **`SPRITE.GROUP(id, group_name$)`**: Assigns a sprite to a named collision group.
+* **`SPRITE.COLLISIONS(group1$, group2$) -> array`**: Returns all colliding pairs between two groups as `[[id_a, id_b], ...]`.
+* **`SPRITE.COLLISION_FIRST(id, group$) -> number`**: Returns the id of the first sprite in `group$` overlapping `id`, or `-1`.
+
+#### Tiled Maps (`TILED.*`)
+
+Load and render maps authored in the [Tiled](https://www.mapeditor.org/) editor. Maps are referenced by a name you choose at load time.
+
+* **`TILED.LOAD(name$, filename$) -> boolean`**: Loads a Tiled (`.tmx`) map under `name$`; returns `TRUE` on success.
+* **`TILED.FREE(name$)`**: Frees a loaded map and its resources.
+* **`TILED.DRAW(name$, [cam_x], [cam_y])`**: Draws all layers in order; uses the global camera offset when none is given.
+* **`TILED.DRAW_LAYER(name$, layer$, [cam_x], [cam_y])`**: Draws a single named layer.
+* **`TILED.LAYERS$(name$) -> array`**: Returns the layer name strings in draw order.
+* **`TILED.OBJECTS(name$, layer$) -> array`**: Returns the objects of an object layer, each with `id, name, type, x, y, width, height, gid` and any custom properties.
+* **`TILED.PROPERTIES(name$) -> object`**: Returns the map-level custom properties.
+* **`TILED.TILE_AT(name$, layer$, pixel_x, pixel_y) -> gid`**: Returns the tile gid at a pixel position in a layer (`0` = empty).
+* **`TILED.COLLIDES(sprite_id, name$, layer$) -> boolean`**: Returns `TRUE` if a sprite overlaps a non-empty tile in the layer.
+* **`TILED.SIZE(name$) -> [w, h]`** / **`TILED.TILE_SIZE(name$) -> [tile_w, tile_h]`**: Map size in pixels / single tile size.
+* **`TILED.UPDATE(dt)`**: Advances animated tiles of all loaded maps by `dt` seconds.
+
+#### Programmatic Tilemaps (`TILEMAP.*`)
+
+Build a tilemap in code from a 2D array of tile ids, drawn from a tileset image. Use this when you generate levels at runtime instead of loading a Tiled file.
+
+* **`TILEMAP.CREATE(name$, tileset_image_id, data, tile_w, tile_h)`**: Creates a named tilemap from a 2D array of 1-based tile ids (`0` = empty) using a tileset image loaded via `GFX.LOADIMAGE`.
+* **`TILEMAP.DRAW(name$, [cam_x], [cam_y])`**: Draws the tilemap; uses the global camera offset when none is given.
+* **`TILEMAP.GET(name$, col, row) -> tile_id`** / **`TILEMAP.SET(name$, col, row, tile_id)`**: Reads/writes a single cell (out-of-range reads return `0`).
+* **`TILEMAP.TILE_AT(name$, pixel_x, pixel_y) -> tile_id`**: Returns the tile id at a pixel position (`0` if out of range).
+* **`TILEMAP.SIZE(name$) -> [cols, rows]`**: Returns the grid dimensions.
+* **`TILEMAP.COLLIDES(sprite_id, name$) -> boolean`**: Returns `TRUE` if the sprite's bounding box overlaps any non-empty tile.
+
+#### Camera (`CAM.*`)
+
+A 2D camera offset applied by `SPRITE.DRAW_ALL`, `TILED.DRAW` and `TILEMAP.DRAW` when no explicit offset is passed.
+
+* **`CAM.SET(x, y)`**: Sets the camera position manually (disables following).
+* **`CAM.FOLLOW(sprite_id, [smooth])`**: Makes the camera track a sprite, with an optional smoothing factor for lerped movement.
+* **`CAM.BOUNDS(x, y, w, h)`**: Clamps the camera to a rectangular world boundary during `SPRITE.UPDATE`.
+* **`CAM.SHAKE(intensity, duration)`**: Starts a camera shake of the given intensity for `duration` seconds.
+* **`CAM.X() -> number`** / **`CAM.Y() -> number`**: Returns the current camera position including any shake offset.
+
+#### Particles (`PARTICLE.*`)
+
+A lightweight fire-and-forget particle system for effects (explosions, sparks, dust).
+
+* **`PARTICLE.EMIT(x, y, count, r, g, b, [speed], [life], [gravity], [size])`**: Emits a burst of `count` colored particles with optional speed, lifetime, gravity and size.
+* **`PARTICLE.DRAW([cam_x], [cam_y])`**: Draws all active particles with life-based fade; uses the global camera offset when none is given.
+* **`PARTICLE.COUNT() -> number`**: Returns the number of currently active particles.
+* **`PARTICLE.CLEAR()`**: Removes all active particles.
+
+#### Turtle
+  
+* **`TURTLE.FORWARD distance`**: Moves the turte forward with the distance at the given angle.
+* **`TURTLE.BACKWARD distance`**: Moves the turte backward with the distance at the given angle.
+* **`TURTLE.LEFT degrees`**: Subtract degrees to the turles angle.
+* **`TURTLE.RIGHT degrees`**: Adds degrees to the turles angle.
+* **`TURTLE.PENUP`**: Stop drawing while moving.
+* **`TURTLE.PENDOWN`**: Begins drawing while moving.
+* **`TURTLE.SETPOS x, y`**: Set the turle position to x,y
+* **`TURTLE.SETHEADING degrees`**: Set the turtles angle to the degrees
+* **`TURTLE.HOME`**: Move the turtles position to the center of the canVas
+* **`TURTLE.DRAW`**: Redraws the entire path the turtle has taken so far.
+* **`TURTLE.CLEAR`**: Clears the turtle's path memory. Does not clear the screen.
+* **`TURTLE.SET_COLOR r, g, b`**: Set the turtles draw color to r,g,b
+
+## Real-time Audio: WAV, FX Chain, MIDI & Live Monitor
+
+A self-contained audio toolchain that is separate from the SDL3 `SOUND.*` synth.
+Each part is behind its own build flag so it is opt-in and the SDL3 path stays
+untouched: `FX` (WAV + the effect chain), `MIDI` (RtMidi), `MINIAUDIO` (the
+real-time device monitor). A full guide is in `doc/HowTo-FX.md`; the effect
+vocabulary + tone cookbook is in `doc/AudioFX.md`.
+
+### WAV I/O (`FX` flag)
+
+| Function | Description |
+|---|---|
+| `WAV.WRITE(path$, samples[], [rate=44100], [channels=1])` -> bool | Write interleaved floats in [-1,1] as a 16-bit PCM WAV. |
+| `WAV.READ(path$)` -> `{ samples, rate, channels, frames }` or NONE | Read a WAV into interleaved floats in [-1,1]. |
+| `WAV.INFO(path$)` -> `{ rate, channels, bits, frames }` or NONE | Read the header without loading the audio. |
+
+`WAV.READ` accepts PCM 8/16/24/32-bit, IEEE float 32/64 and `WAVE_FORMAT_EXTENSIBLE`
+(what WASAPI recorders and ffmpeg write by default), and skips over metadata chunks
+that sit before `fmt `. The samples come back **interleaved**: frame `f` channel `c`
+is `samples[f * channels + c]`, so a two-microphone recording de-interleaves with a
+stride of 2. Unsupported encodings (ADPCM, mu-law) return NONE rather than noise.
+
+`SOUND.RENDER(frames)` returns interleaved-stereo floats that drop straight into
+`WAV.WRITE` (take the left channel for the mono FX chain).
+
+### FX chain (`FX` flag)
+
+Build a named chain once, then process arrays offline or route it into the live
+monitor. `WAV.WRITE`, `FX.PROCESS` are non-vectorizing (they take whole arrays).
+
+| Function | Description |
+|---|---|
+| `FX.NEW()` -> chain | New empty chain handle. |
+| `FX.ADD(chain, type$, params{}, [bus=0])` -> bool | Append an effect node (params optional; defaults fill in). |
+| `FX.PROCESS(chain, samples[], [rate=44100], [channels=1])` -> samples[] | Run a mono buffer through the chain (offline); `channels` 2 returns interleaved stereo. |
+| `FX.SET(chain, nodeIndex, param$, value, [bus=0])` -> bool | Live-tweak one existing param; race-safe while monitoring. `nodeIndex` counts within its bus. |
+| `FX.SPLIT(chain, on)` -> bool | Feed two branches from the common section instead of one signal path. |
+| `FX.MIX(chain, bus, level, pan)` -> bool | Where a branch lands in the stereo mix. `pan` -1 is hard left, +1 hard right. |
+| `FX.DUMP$(chain)` -> string | Readable nodeIndex / type / params listing per section (for the REPL). |
+| `FX.FREE(chain)` | Free the chain. Use the **paren form** `FX.FREE(ch)`. |
+
+A chain has three sections. Bus 0 is the common path every signal takes; with
+`FX.SPLIT` on, its output feeds bus 1 and bus 2 separately, and `FX.MIX` places
+each of them in the stereo image. That is how one guitar reaches two amps: keep
+bus 1 dry at pan -1 and put the echo on bus 2 at pan +1. With the split off, or
+into a single output channel, the branches are simply summed.
+
+```basic
+ch = FX.NEW()
+ok = FX.ADD(ch, "drive", { "amount": 22 })              ' both amps hear this
+ok = FX.SPLIT(ch, TRUE)
+ok = FX.ADD(ch, "delay", { "time_ms": 800, "dry": 0 }, 2)  ' echo-only amp
+ok = FX.MIX(ch, 1, 1.0, -1.0)
+ok = FX.MIX(ch, 2, 0.85, 1.0)
+```
+
+`chorus` and `flanger` take a negative `mix`, which subtracts the delayed copy
+instead of adding it. With `depth` at zero that is a fixed comb filter, and the
+two polarities notch where the other one peaks - the sound of an out-of-phase
+pickup pair.
+
+`drive` models a valve stage when asked to: `asym` offsets the two halves
+against each other for even harmonics, `bloom` lets the operating point drift
+with how hard the stage is driven and `recover` says how fast it settles back,
+with a coupling filter after it so no offset reaches the next node. All three
+default to the plain symmetric shaper. `compressor` gained `attack`, `release`
+and `sag`, where sag stretches the recovery with the level that hit it, the way
+a power supply sinks under a chord.
+
+Node `type$` values (see `doc/AudioFX.md` for params + ranges): `gain`, `drive`,
+`lowpass`, `highpass`, `delay`, `compressor`, `cabinet` (offline-only),
+`chorus`, `flanger`, `vibrato`, `phaser`, `tremolo`, `fuzz`, `bitcrush`,
+`octave`, `autowah`, `noisegate`, `eq`, `reverb`. All except `cabinet` are
+real-time-safe.
+
+### MIDI (`MIDI` flag)
+
+`channel` is 0-15. Incoming events are buffered lock-free; drain with `MIDI.POLL`.
+
+| Function | Description |
+|---|---|
+| `MIDI.PORTS()` -> `{ in:[names], out:[names] }` | List MIDI ports. |
+| `MIDI.OPEN_IN(portIndex)` / `MIDI.OPEN_OUT(portIndex)` -> handle or -1 | Open a port. |
+| `MIDI.SEND(handle, status, [data1], [data2])` -> bool | Send a raw message. |
+| `MIDI.NOTEON(handle, channel, note, velocity)` -> bool | Note On. |
+| `MIDI.NOTEOFF(handle, channel, note)` -> bool | Note Off. |
+| `MIDI.CC(handle, channel, cc, value)` -> bool | Control Change. |
+| `MIDI.POLL(handle)` -> `[[status, d1, d2], ...]` | Drain incoming events. |
+| `MIDI.CLOSE(handle)` | Close a port. |
+
+### Live monitor (`MINIAUDIO` flag)
+
+Duplex device: input -> gain -> FX chain -> output, in a lock-free audio callback.
+Use headphones with a line/instrument input (mic -> speakers howls).
+
+| Function | Description |
+|---|---|
+| `MON.DEVICES()` -> `{ playback:[names], capture:[names] }` | List devices. |
+| `MON.BACKEND$()` -> string | Backend in use (WASAPI / CoreAudio / ALSA). |
+| `MON.START([captureIdx], [playbackIdx])` -> bool | Start monitoring (defaults = system devices). |
+| `MON.STOP()` / `MON.RUNNING()` -> bool | Stop / query. |
+| `MON.GAIN(g)` | Output gain (lock-free). |
+| `MON.FX(chain)` | Route the monitor through a chain (0 = bypass; cabinet skipped live). |
+| `MON.LEVEL()` -> `{ in, out }` | Decaying peak levels for a VU meter. |
+| `MON.SCOPE([count=1024])` -> [floats] | Last output samples for an oscilloscope / FFT spectrum. |
+| `MON.PITCH()` -> Hz | Detected fundamental of the dry input (autocorrelation), 0 if none. |
+| `MON.RECSTART()` -> bool / `MON.RECSTOP(path$)` -> seconds / `MON.RECLEN()` -> seconds | Record the wet output to a WAV while monitoring. |
+
+The full ImGui pedalboard built on these is `jdb/demos/audio/fx_rack.jdb`.
+
+### Capture (`MINIAUDIO` flag)
+
+`MON.REC*` taps the monitor's **wet output**. `WAV.RECORD` is the other side: a
+capture device of its own, raw input, any channel count, independent of the
+monitor. It returns the same map `WAV.READ` does, so a recording feeds `WAV.WRITE`
+and `FFT` without conversion.
+
+| Function | Description |
+|---|---|
+| `WAV.RECORD(seconds, [opts{}])` -> `{ samples, rate, channels, frames }` or NONE | Record, blocking until the buffer is full. |
+| `WAV.RECSTART([opts{}])` -> bool | Start recording without blocking. |
+| `WAV.RECLEN()` -> seconds | How much has been captured so far. |
+| `WAV.RECSTOP()` -> `{ samples, rate, channels, frames }` or NONE | Stop and hand back the recording. |
+
+`opts` keys, all optional: `channels` (default 1), `rate` (48000), `device` (index
+into `MON.DEVICES().capture`, default the system device), `seconds` (buffer cap for
+`WAV.RECSTART`, default 60), `play` (samples to output while capturing),
+`playchannels`, `playdevice`.
+
+A `play` array switches the device to duplex, so playback and capture run off one
+clock and stay in step. That is what a measurement needs: send a sweep, record the
+answer, and the offset between them is the hardware round trip alone - constant, and
+measurable once with a loopback cable.
+
+```basic
+' send a sweep through amp and speaker, record what the microphone hears
+DIM cap = WAV.RECORD(3.0, { "rate": 48000, "play": sweep, "channels": 2 })
+WAV.WRITE "response.wav", cap{"samples"}, cap{"rate"}, cap{"channels"}
+```
+
+The impulse response follows from dividing the recorded spectrum by the sweep's,
+which is a complex division and has to be written out per bin: `FFT` returns
+`[N][2]` pairs, so an elementwise `/` would divide the real and imaginary parts
+separately and give something that is not a quotient.
+
+The device may hand back a different rate or channel count than asked for; the
+returned map reports what was actually captured, so read `rate` and `channels`
+from it rather than assuming.
+
+### Mouse / Joystick / Gamepad Input
+
+* **`MOUSEX -> number`**: Returns the current X coordinate of the mouse in the graphics window.
+* **`MOUSEY -> number`**: Returns the current Y coordinate of the mouse in the graphics window.
+* **`MOUSEB(button_index)-> number`**: Returns TRUE if the specified mouse button (1=L, 2=M, 3=R) is pressed.
+
+* **`JOY.COUNT() -> number`**: Returns the number of connected joysticks/gamepads.
+* **`JOY.NAME$(id) -> string$`**: Returns the name of the joystick at index `id` (0-based).
+* **`JOY.BUTTON(id, button_index) -> boolean`**: Returns `TRUE` if the specified button is pressed. Common mapping: 0=A, 1=B, 2=X, 3=Y (mappings vary by controller).
+* **`JOY.AXIS(id, axis_index) -> number`**: Returns the axis position value normalized between `-1.0` and `1.0`.
+* `0`: Left Stick X
+* `1`: Left Stick Y
+* `2`: Right Stick X
+* `3`: Right Stick Y
+* *Note: Mappings may vary slightly depending on the OS and controller driver.*
+
+* **`JOY.HAT(id, hat_index) -> number`**: Returns the hat (D-Pad) state as a bitmask.
+* `1`: Up
+* `2`: Right
+* `4`: Down
+* `8`: Left
+* *Example: `3` means Up-Right.*
+
+```basic
+' Simple Gamepad Loop
+PRINT "Connect a gamepad..."
+DO
+    IF JOY.COUNT() > 0 THEN
+        ' Read Left Stick (Axis 0 and 1)
+        X = JOY.AXIS(0, 0) 
+        Y = JOY.AXIS(0, 1)
+        
+        ' Read Button A (usually index 0)
+        IF JOY.BUTTON(0, 0) THEN PRINT "Fire!"
+        
+        ' Check D-Pad Up (Bitmask 1)
+        IF (JOY.HAT(0, 0) BAND 1) <> 0 THEN PRINT "Going Up!"
+
+        PRINT "Stick: "; X; ", "; Y
+    ENDIF
+    SLEEP 16
+LOOP
+```
+
+### Type Functions
+
+* **`TYPEOF(AnyVar)`**: Returns the type of an object as string.
+
+### Thread Functions
+
+This section describes functions for low-level, background-threaded tasks, distinct from the `ASYNC`/`AWAIT` pattern. A function launched with `THREAD` will run in parallel.
+
+* **`THREAD.ISDONE(handle)`**: Returns `TRUE` if the background thread associated with the handle has finished its execution.
+* **`THREAD.GETRESULT(handle)`**: Waits for the thread to complete and returns its result. This is a blocking call.
+
+### Background Tasks & Timers
+
+* **`RECUR(interval_ms, code_string$) -> task_id`**: Starts a recursive background task that evaluates and executes a string of jdBasic code every `interval_ms` milliseconds. Returns an integer `task_id`.
+* **`CLEAR_RECUR(task_id)`**: Stops and removes an active recursive background task by its ID.
+* **`LIST_RECUR() -> array`**: Returns a list of all currently active recurring tasks with their `id`, `interval_ms` and `code`.
+
+### Async Functions
+
+* **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronius.
+* **`AWAIT task`**: Waits for the given task to be completed and returns the result of the function.
+
+### LLM Streaming via Channel (sugar)
+
+`AI.CHAT_TOKENS(llm_id, prompt$, [capacity])` is a channel-flavoured
+companion to the callback-based `AI.CHAT_STREAM`. It opens a fresh
+channel, spawns a generation thread that pushes each token into it, and
+closes the channel when generation completes. Returns the channel
+handle immediately - the caller drains it with the standard
+`DO/RECV/IS_EOF` idiom. `SEND` blocks the LLM thread when the buffer
+fills, so consumer slowness applies natural backpressure to token
+generation. Closing the channel from outside cancels the run.
+
+```basic
+DIM ch = AI.CHAT_TOKENS(my_llm, "Erkläre Channels in 3 Sätzen.", 64)
+DO
+    DIM tok$ = CHAN.RECV(ch)
+    IF CHAN.IS_EOF(tok$) THEN EXITDO
+    PRINT tok$;                  ' stream live to console / GUI
+LOOP
+PRINT
+```
+
+`AI.CHAT_TOKENS` works in **both interp and native compile**. The
+generation thread is spawned inside the native handler itself (not via
+an `ASYNC FUNC`), so the native-compile gap around `ASYNC FUNC` doesn't
+apply.
+
+### File streaming (handle-based reads)
+
+Alongside the slurp-style `TXTREADER$` / `BINREADER$`, jdBasic exposes a
+small handle-based API for line-by-line reads and `tail -f` style
+follow. Lives in a process-global registry, so a handle opened in one
+ASYNC FUNC is usable from any other.
+
+| Native | Signature | Behaviour |
+|---|---|---|
+| `FILE.OPEN_LINES(path$)` | `STRING → handle` | Open for line-by-line reading. Throws if the file cannot be opened. |
+| `FILE.OPEN_TAIL(path$)` | `STRING → handle` | Same as `OPEN_LINES` but `READLINE$` blocks polling for newly-appended data instead of returning EOF. |
+| `FILE.READLINE$(handle)` | `handle → STRING` | Returns the next line (CRLF and LF stripped). Tail-mode: blocks until data arrives or the handle is closed. |
+| `FILE.AT_EOF(handle)` | `handle → BOOLEAN` | Non-tail: true after the last line. Tail: only true once `FILE.CLOSE` has been called. |
+| `FILE.CLOSE(handle)` | `handle` | Idempotent. Wakes any tail reader within ~50ms. |
+| `FILE.STREAM_LINES(path$, ch [, cap])` | `STRING, channel handle` | Spawns a producer thread that reads `path$` line by line and pushes each line into `ch`. Closes `ch` when the file is exhausted (or when the consumer closes it from outside). Returns the channel handle for chaining. |
+| `FILE.STREAM_TAIL(path$, ch [, cap])` | `STRING, channel handle` | Like `STREAM_LINES` but follows growth. Stops when the consumer closes the channel. |
+
+```basic
+' Slurp replaced with streaming - constant memory regardless of file size.
+DIM h = FILE.OPEN_LINES("huge.log")
+DIM hits = 0
+DO
+    DIM line$ = FILE.READLINE$(h)
+    IF FILE.AT_EOF(h) THEN EXITDO
+    IF INSTR(line$, "ERROR") > 0 THEN hits = hits + 1
+LOOP
+FILE.CLOSE h
+PRINT "ERROR lines: "; hits
+```
+
+```basic
+' Tail-and-grep with channels. Line producer + matcher run in parallel,
+' constant memory, capacity 256 buffers a small spike.
+DIM ch = CHAN.OPEN(256)
+FILE.STREAM_TAIL "app.log", ch
+ASYNC FUNC matcher(ch)
+    DO
+        DIM line$ = CHAN.RECV(ch)
+        IF CHAN.IS_EOF(line$) THEN EXITDO
+        IF INSTR(line$, "FATAL") > 0 THEN PRINT line$
+    LOOP
+ENDFUNC
+DIM m = matcher(ch)
+SLEEP 60000                        ' watch for 60 seconds
+CHAN.CLOSE ch                      ' producer + matcher both exit
+DIM r = AWAIT m
+```
+
+Native compile supports the full FILE streaming API (line reader, tail
+mode, STREAM_* sugars) with concurrent ASYNC FUNC writers/readers - the
+underlying ASYNC FUNC dispatch became native in the same pass that made
+channels concurrent.
+
+### Channels (Phase 1)
+
+Channels are bounded MP/MC queues for ASYNC tasks. Each `ASYNC FUNC` runs
+on its own OS thread with a fresh VM copy of globals/funcs; channels live
+in a process-global registry indexed by an `i64` handle, so workers can
+look up the same Channel regardless of which VM they belong to.
+
+`CHAN.SEND` blocks the calling thread when the buffer is full. `CHAN.RECV`
+blocks while empty. `CHAN.CLOSE` wakes everyone - pending RECVers drain
+the rest of the buffer and then keep returning the **EOF marker** (a
+`MAP { __chan_eof__: TRUE }`, recognised by `CHAN.IS_EOF`). Send on a
+closed channel throws.
+
+Native compile supports the full `CHAN.*` API including concurrent use
+across `ASYNC FUNC` consumers/producers - the call site for an ASYNC
+FUNC emits a `__jdrt_async_spawn` runtime call that detaches a thread
+running the function via its `__funcref_*` wrapper, then returns the
+task id (`AWAIT` consumes it through the VM-handle path so any return
+type makes it back).
+
+`FOR EACH v IN ch` in native iterates only the array branch today -
+the polymorphic `FOREACH_NEXT` opcode is interp-only. Use the explicit
+`DO ... CHAN.RECV ... IS_EOF` loop for native channel iteration. Phase
+5c will add a runtime helper for native channel iteration via FOR EACH.
+
+Native channel `RECV` returns the underlying value via the VM-handle
+path (so mixed-type payloads survive intact). Numeric values materialise
+through `f64`, which means STRICT-mode native code needs DOUBLE
+accumulators (`DIM total AS DOUBLE = 0.0`) when summing recv'd
+integers. Interp keeps the original tag and accepts either.
+
+| Native | Signature | Behaviour |
+|---|---|---|
+| `CHAN.OPEN(capacity)` | `INTEGER → handle` | `capacity = 0` → unbuffered rendezvous; `> 0` → bounded queue. |
+| `CHAN.SEND(ch, value)` | `handle, ANY` | Blocks while buffer full. Throws on a closed channel. |
+| `CHAN.RECV(ch)` | `handle → value` | Blocks while empty. Returns the EOF marker on a closed-and-drained channel. |
+| `CHAN.CLOSE(ch)` | `handle` | Idempotent. Wakes every parked SEND/RECV. |
+| `CHAN.IS_EOF(value)` | `ANY → BOOLEAN` | Tests if a `RECV` result is the EOF marker. |
+| `CHAN.IS_CLOSED(ch)` | `handle → BOOLEAN` | Status query. Returns `TRUE` for unknown handles. |
+| `CHAN.LEN(ch)` | `handle → INTEGER` | Current buffer depth. |
+| `CHAN.CAP(ch)` | `handle → INTEGER` | Configured capacity (for diagnostics). |
+
+```basic
+ASYNC FUNC produce(handle, n)
+    FOR i = 1 TO n
+        CHAN.SEND handle, i
+    NEXT
+    CHAN.CLOSE handle
+ENDFUNC
+
+ASYNC FUNC consume(handle)
+    DIM total = 0
+    DO
+        DIM v = CHAN.RECV(handle)
+        IF CHAN.IS_EOF(v) THEN EXITDO
+        total = total + v
+    LOOP
+    RETURN total
+ENDFUNC
+
+DIM ch = CHAN.OPEN(4)             ' tiny buffer → real backpressure
+DIM p  = produce(ch, 1000)
+DIM c  = consume(ch)
+PRINT AWAIT c                       ' 500500
+```
+
+`FOR EACH v IN ch` iterates the channel until EOF - same syntax as
+`FOR EACH x IN [1,2,3]`. The loop blocks on RECV between iterations, so
+producer/consumer backpressure works naturally:
+
+```basic
+DIM total = 0
+FOR EACH v IN ch
+    total = total + v
+NEXT
+```
+
+The explicit `DO ... LOOP` with `CHAN.IS_EOF` is still useful when you
+need to inspect the EOF marker directly or interleave multiple channels
+manually.
+
+Worker-pool / fan-in / fan-out flows fall out naturally:
+
+```basic
+ASYNC FUNC worker(jobs_ch, results_ch)
+    FOR EACH path$ IN jobs_ch        ' drains until producer closes jobs_ch
+        CHAN.SEND results_ch, parse_one(path$)
+    NEXT
+ENDFUNC
+
+DIM jobs    = CHAN.OPEN(0)         ' unbuffered → producer waits for a free worker
+DIM results = CHAN.OPEN(64)
+DIM w1 = worker(jobs, results)
+DIM w2 = worker(jobs, results)
+FOR EACH path$ IN DIR$("data/*.csv")
+    CHAN.SEND jobs, path$
+NEXT
+CHAN.CLOSE jobs                    ' workers drain, see EOF, exit
+DIM r1 = AWAIT w1
+DIM r2 = AWAIT w2
+```
+
+```basic
+' This function simulates a "download" that takes some time.
+ASYNC FUNC DOWNLOADFILE(url$, duration)
+  PRINT "  [Task 1] Starting download from "; url$
+  ' Simulate work by looping
+  FOR i = 1 TO duration
+    PRINT "  [Task 1] ... downloading chunk "; i; " of "; duration; " ..."
+  NEXT i
+  PRINT "  [Task 1] Download finished."
+  RETURN "Download of " + url$ + " successful."
+ENDFUNC
+
+' This function simulates a "data processing" job.
+ASYNC FUNC PROCESSDATA(dataset$, duration)
+  PRINT "    [Task 2] Starting to process data from "; dataset$
+  ' Simulate work by looping
+  FOR i = 1 TO duration
+    PRINT "    [Task 2] ... processing record block "; i; " of "; duration; " ..."
+  NEXT i
+  PRINT "    [Task 2] Data processing finished."
+  RETURN "Processed " + dataset$ + " and found 42 insights."
+ENDFUNC
+
+task1 = DOWNLOADFILE("https://example.com/data.zip", 5)
+task2 = PROCESSDATA("some_large_dataset.csv", 3)
+
+PRINT "Main: Now doing other work while tasks run in the background."
+FOR i = 1 TO 4
+  PRINT "Main: ... processing main task step "; i; " ..."
+  ' In a real program, you could do other things here,
+  ' like updating the UI or handling user input.
+NEXT i
+PRINT "Main: Finished with other work."
+
+PRINT "Main: Now waiting for Task 1 to complete..."
+result1 = AWAIT task1
+PRINT "Main: Task 1 finished with result: '"; result1; "'"
+PRINT
+
+PRINT "Main: Now waiting for Task 2 to complete..."
+result2 = AWAIT task2
+PRINT "Main: Task 2 finished with result: '"; result2; "'"
+PRINT
+```
+
+## AI & Machine Learning
+
+jdBasic ships with a full AI stack that runs entirely on the local machine:
+ONNX Runtime for classical ML models, llama.cpp for local LLMs (with CUDA
+support), dense embeddings, RAG, structured output via GBNF grammars, and a
+ready-to-use text classifier. All features are exposed through the `AI.*`
+function family.
+
+The stack is optional at build time - the relevant builds are `ONNX` for
+ONNX Runtime and `LLM` for llama.cpp (see `build.bat ONNX LLM`).
+
+### ONNX Runtime (Classical ML)
+
+Load any ONNX model (e.g. exported from PyTorch, TensorFlow, scikit-learn)
+and run inference on it. Models are referenced by an integer id.
+
+* **`AI.LOAD(path$) -> id`**
+  Loads an `.onnx` file and returns a model id.
+
+* **`AI.INFO(id) -> object`**
+  Returns `{inputs, outputs}` where each entry contains `name`, `shape` and
+  `type` - useful for understanding what a model expects.
+
+* **`AI.RUN(id, input[, input2, ...]) -> result`**
+  Runs inference. For single-input models, just pass the input array/tensor;
+  for multi-input models, pass one arg per input or a single array of inputs.
+  The return type matches the model output shape: a scalar for a 0-D output,
+  a flat array for a 1-D output, nested arrays for higher ranks.
+
+* **`AI.FREE(id)`** - releases the model.
+* **`AI.LIST() -> array`** - returns the ids of all currently loaded ONNX models.
+
+#### Tensor helpers
+
+* **`AI.TENSOR(data, [shape])`** - creates a tensor value from nested arrays,
+  optionally reshaping.
+* **`AI.SOFTMAX(vec) -> vec`** - applies softmax to a probability vector.
+* **`AI.ARGMAX(vec) -> index`** - returns the index of the largest element.
+* **`AI.TOPK(vec, k) -> array`** - returns the top-k `{index, score}` pairs.
+
+##### Example: MNIST digit classification
+
+```basic
+DIM m = AI.LOAD("models/mnist.onnx")
+PRINT AI.INFO(m){"inputs"}          ' e.g. [{name:"Input3", shape:"1x1x28x28", type:"FLOAT"}]
+
+' Prepare a 28x28 pixel image as a flat float array (0..1)
+DIM pixels = ...                    ' length 784
+DIM logits = AI.RUN(m, pixels)
+DIM probs  = AI.SOFTMAX(logits)
+PRINT "Predicted digit: "; AI.ARGMAX(probs)
+AI.FREE m
+```
+
+### Local LLMs (llama.cpp)
+
+jdBasic embeds llama.cpp with full CUDA acceleration. Models are loaded from
+GGUF files and referenced by an integer id. Two model flavors are supported:
+
+1. **Generative models** (Phi-3, Llama, Mistral, ...): `AI.LOAD_LLM`
+2. **Embedding models** (nomic-embed, bge-m3, MiniLM, ...): `AI.LOAD_EMBEDDINGS`
+
+Both return an id that the other `AI.*` functions consume.
+
+#### Loading & Configuration
+
+* **`AI.LOAD_LLM(path$, [n_ctx=2048], [n_gpu_layers=99]) -> id`**
+  Loads a generative GGUF model. `n_gpu_layers=99` puts the whole model on
+  the GPU; set to `0` for pure CPU. `n_batch` is automatically set to
+  `n_ctx` so long RAG/tool-call prompts fit in a single decode.
+
+* **`AI.LOAD_EMBEDDINGS(path$, [n_ctx=512], [n_gpu_layers=99]) -> id`**
+  Loads an embedding model in encoder mode (mean pooling over the sequence).
+  For BERT-based embedders (bge-m3, nomic-embed) set `n_ctx` to the
+  model's training context (e.g. 2048 for nomic, 8192 for bge-m3) to avoid
+  quality degradation.
+
+* **`AI.SET(id, key$, value)`** - sets a generation parameter. Keys:
+  `"temperature"`, `"top_p"`, `"top_k"`, `"min_p"`, `"max_tokens"`, `"seed"`,
+  `"system"` (system prompt).
+
+* **`AI.LLM_INFO(id) -> object`** - returns `{n_ctx, n_vocab, n_embd, ...}`.
+
+* **`AI.FREE_LLM(id)`** - releases the model and frees GPU memory.
+
+#### Chat
+
+* **`AI.CHAT(id, prompt$) -> response$`**
+  Multi-turn chat. The prompt is built from the model's chat template plus
+  the running history maintained in the model itself.
+
+* **`AI.CHAT_STREAM(id, prompt$, callback) -> response$`**
+  Same as `AI.CHAT` but tokens are streamed to a user callback
+  `FUNC OnToken(piece$) RETURN TRUE`.
+  Returning `FALSE` from the callback aborts generation.
+
+* **`AI.CHAT_RAW(id, raw_prompt$) -> text$`**
+  Bypasses the chat template and history - send a raw prompt, receive raw
+  tokens. Useful for custom templating or completion-style use cases.
+
+* **`AI.CLEAR_HISTORY(id)`** - resets the chat history.
+* **`AI.GET_HISTORY(id) -> array`** - returns the raw history
+  `[{role, content}, ...]`.
+* **`AI.TOKEN_COUNT(id, text$) -> n`** - counts tokens without generating.
+
+#### Tokenizer
+
+* **`AI.TOKENIZE(id, text$) -> array`** - returns the token ids.
+* **`AI.DETOKENIZE(id, tokens) -> text$`** - converts ids back to text.
+
+#### Structured Output (GBNF Grammars)
+
+llama.cpp's grammar sampler lets you **force** the model output to match a
+context-free grammar, making tool-calling and JSON output reliable even on
+small models.
+
+* **`AI.SET_GRAMMAR(id, gbnf$)`**
+  Sets an arbitrary GBNF grammar. All subsequent `CHAT`/`CHAT_RAW` calls
+  will only produce outputs that match.
+
+* **`AI.CLEAR_GRAMMAR(id)`** - removes the grammar.
+
+* **`AI.SET_JSON_MODE(id)`**
+  Convenience - installs the built-in JSON grammar so the model can only
+  emit valid JSON.
+
+* **`AI.CHAT_JSON(id, prompt$) -> object`**
+  One-shot: temporarily enables JSON mode, generates, parses the response
+  via `JSON.PARSE$`, returns the parsed object directly. Any previously
+  set grammar is restored afterwards.
+
+##### Example: constrained output
+
+```basic
+llm = AI.LOAD_LLM("models/Phi-3-mini-4k-instruct-q4.gguf")
+
+' Option A - one-shot JSON convenience
+DIM obj = AI.CHAT_JSON(llm, "Give me Berlin as a JSON with name, country, population.")
+PRINT obj{"name"}       ' "Berlin"
+PRINT obj{"population"} ' 3769000
+
+' Option B - custom GBNF: yes or no only
+AI.SET_GRAMMAR llm, "root ::= (\"yes\" | \"no\")"
+PRINT AI.CHAT(llm, "Is Berlin the capital of Germany?")  ' -> "yes"
+AI.CLEAR_GRAMMAR llm
+```
+
+#### Function Calling / Tool Use
+
+Register jdBasic functions as tools; when the LLM decides it needs one, it
+emits `<TOOL>name|arg1|arg2</TOOL>`, which jdBasic intercepts, calls the
+function, and feeds the result back into the conversation.
+
+* **`AI.TOOL_ADD(id, name$, params$, description$, funcref)`**
+  Registers a tool. `funcref` is a jdBasic function reference (e.g. `MyFunc@`).
+  `params$` is a human-readable argument description like `"city_name"` or `"x, y"`.
+
+* **`AI.TOOL_REMOVE(id, name$)`** - unregisters a tool.
+* **`AI.TOOL_LIST(id) -> array`** - returns `[{name, params, description}, ...]`.
+* **`AI.TOOL_CHAT(id, prompt$, [max_rounds=5]) -> response$`**
+  Like `AI.CHAT` but with automatic tool execution. The loop runs up to
+  `max_rounds` iterations: LLM → tool call → result → LLM → ...
+
+##### Example: weather tool
+
+```basic
+llm = AI.LOAD_LLM("models/Phi-3-mini-4k-instruct-q4.gguf")
+
+FUNC GetWeather(city)
+  IF city = "Berlin" THEN RETURN "15C, cloudy"
+  IF city = "Miami"  THEN RETURN "32C, sunny"
+  RETURN "Unknown city"
+ENDFUNC
+
+AI.TOOL_ADD llm, "WEATHER", "city_name", "Get current weather for a city", GetWeather@
+PRINT AI.TOOL_CHAT(llm, "What is the weather in Berlin right now?")
+```
+
+#### Dense Embeddings
+
+Embedding models produce dense L2-normalized vectors for semantic similarity.
+
+* **`AI.EMBED_LLM(id, text$) -> array of float`**
+  Returns the embedding for a text. Works with both embedding-only models
+  (recommended) and generative models (lower quality but possible).
+
+* **`AI.EMBED(text$) -> array`**
+  Fallback TF-IDF embedding that doesn't need a loaded model. Sparse,
+  represented as `[[word, weight], ...]`. Good for simple similarity without
+  llama.cpp.
+
+* **`AI.COSINE_SIM(a, b) -> number`** - cosine similarity of two vectors.
+* **`AI.NORMALIZE(vec) -> vec`** - L2 normalization.
+* **`AI.SIMILARITY(text1$, text2$) -> number`** - quick text similarity using TF-IDF.
+
+##### Example
+
+```basic
+emb = AI.LOAD_EMBEDDINGS("models/bge-m3-Q4_K_M.gguf", 2048, 99)
+DIM v1 = AI.EMBED_LLM(emb, "Berlin ist die Hauptstadt von Deutschland")
+DIM v2 = AI.EMBED_LLM(emb, "Paris ist die Hauptstadt von Frankreich")
+PRINT AI.COSINE_SIM(v1, v2)         ' ~0.90 - semantically very close
+```
+
+### RAG - Retrieval Augmented Generation
+
+The `RAG_*` family builds a chunked document store, computes embeddings for
+each chunk, and lets the LLM answer questions grounded in the retrieved
+context. Dense or TF-IDF modes are supported, as is an optional HNSW index
+for fast approximate search on large corpora.
+
+#### Creating a store
+
+* **`AI.RAG_CREATE(llm_id, [chunk_size=500], [overlap=50], [embed_llm_id=0]) -> rag_id`**
+  `llm_id` is used for answer generation. If `embed_llm_id` is provided and
+  points to an `AI.LOAD_EMBEDDINGS` model, the store runs in **dense mode**;
+  otherwise it falls back to TF-IDF.
+
+* **`AI.RAG_INFO(rag_id) -> object`**
+  Returns statistics including `chunks`, `num_labels`, `mode`
+  (`"dense"`/`"tfidf"`), `embed_dim`, `chunk_size`, `index`
+  (`"linear"`/`"hnsw"`/`"hnsw_stale"`).
+
+* **`AI.RAG_CLEAR(rag_id)`** - empties the store.
+* **`AI.RAG_FREE(rag_id)`** - destroys the store.
+
+#### Adding content
+
+* **`AI.RAG_ADD(rag_id, text$, [source$="inline"]) -> chunks`**
+  Adds a single text, splitting it into overlapping chunks. `source$` is
+  stored with each chunk as an attribution label.
+
+* **`AI.RAG_ADD_FILE(rag_id, filepath$) -> chunks`**
+  Loads a file and adds its contents. Files with a `.pdf` extension are
+  automatically parsed with the built-in PDF extractor (supports
+  FlateDecode-compressed streams).
+
+* **`AI.RAG_ADD_DIR(rag_id, dirpath$, [pattern$], [recursive=1]) -> stats`**
+  Indexes a whole directory. `pattern$` is a simple glob like `*.txt` or
+  `*.{md,txt,pdf,cpp,h}`; if omitted, a default list of text file
+  extensions plus `.pdf` is used. Returns
+  `{files_added, files_failed, total_chunks}`.
+
+#### Searching and querying
+
+* **`AI.RAG_SEARCH(rag_id, query$, [top_k=3]) -> array`**
+  Raw similarity search. Returns `[{score, text, source, index}, ...]`.
+
+* **`AI.RAG_QUERY(rag_id, question$, [top_k=3]) -> answer$`**
+  Full pipeline: search + build prompt + generate. The system prompt is
+  taken from the LLM's `system` setting (via `AI.SET`); if unset, a minimal
+  neutral default is used.
+
+* **`AI.RAG_QUERY_FULL(rag_id, question$, [top_k=3]) -> object`**
+  Like `AI.RAG_QUERY` but returns `{answer, sources}` where `sources` is the
+  list of chunks used (with their `score`, `source`, `text`, `index`).
+
+* **`AI.RAG_QUERY_STREAM(rag_id, question$, callback, [top_k=3]) -> answer$`**
+  Streaming variant - tokens are delivered to the callback as they are
+  generated.
+
+#### HNSW fast index
+
+For large corpora (>10k chunks) build an HNSW index once, then all searches
+become approximate-but-fast.
+
+* **`AI.RAG_BUILD_INDEX(rag_id, [M=16], [ef_construction=200])`**
+  Builds the index from the currently stored chunks. Requires dense mode.
+  New chunks added afterwards invalidate the index (shown as `hnsw_stale`)
+  - call again to rebuild.
+
+#### Persistence
+
+Indexes are serialized to a single binary file (magic `JRAG`). The optional
+HNSW graph is saved too, so a restart doesn't need to rebuild it.
+
+* **`AI.RAG_SAVE(rag_id, path$)`** - writes the store to disk.
+* **`AI.RAG_LOAD(path$, [llm_id], [embed_llm_id]) -> rag_id`**
+  Loads a previously saved store. For dense indexes, the `embed_llm_id`
+  must point to the same kind of embedding model used at save time.
+
+##### Example: RAG over a directory
+
+```basic
+llm = AI.LOAD_LLM("models/Phi-3-mini-4k-instruct-q4.gguf")
+emb = AI.LOAD_EMBEDDINGS("models/bge-m3-Q4_K_M.gguf", 2048, 99)
+
+AI.SET llm, "system", "You are an expert on the jdBasic source code."
+
+rag = AI.RAG_CREATE(llm, 500, 50, emb)
+AI.RAG_ADD_DIR rag, "src", "*.{cpp,h}", 1
+AI.RAG_BUILD_INDEX rag
+
+' Query with sources
+DIM r = AI.RAG_QUERY_FULL(rag, "How does the HALT opcode work?")
+PRINT r{"answer"}
+FOR i = 0 TO LEN(r{"sources"}) - 1
+  PRINT "  - "; r{"sources"}[i]{"source"}; " ("; r{"sources"}[i]{"score"}; ")"
+NEXT i
+
+' Persist for next run
+AI.RAG_SAVE rag, "src_index.idx"
+```
+
+### Text Classifier (k-NN on Embeddings)
+
+A full-featured nearest-neighbor text classifier - a **training-free**
+alternative to fine-tuning BERT for sentence classification. Works with any
+`AI.LOAD_EMBEDDINGS` model; bge-m3 gives excellent results on multilingual
+text.
+
+Predictions are majority votes weighted by similarity over the top-k
+neighbors, so the classifier returns both a **label** and a **confidence**.
+It supports batch import, HNSW acceleration, and persistence in the same
+way as the RAG store.
+
+#### API
+
+* **`AI.CLASSIFIER_CREATE(embed_llm_id) -> cls_id`**
+  Creates an empty classifier bound to an embedding model.
+
+* **`AI.CLASSIFIER_ADD(cls_id, text$, label$) -> count`**
+  Adds a single training sample (embeds it immediately).
+
+* **`AI.CLASSIFIER_ADD_BATCH(cls_id, texts_arr, labels_arr) -> count`**
+  Batch-imports two arrays of equal length. Prints progress every ~5%.
+
+* **`AI.CLASSIFIER_PREDICT(cls_id, text$, [k=5]) -> object`**
+  Returns:
+  ```
+  {
+    label       : best-scoring class,
+    confidence  : share of the winning class's weight (0..1),
+    neighbors   : [{score, label, text, index}, ...],
+    votes       : [{label, count}, ...]  (sorted by count desc)
+  }
+  ```
+
+* **`AI.CLASSIFIER_BUILD_INDEX(cls_id, [M=16], [ef_construction=200])`**
+  Builds an HNSW index over the training samples for fast prediction on
+  large datasets (10k+ samples).
+
+* **`AI.CLASSIFIER_INFO(cls_id) -> object`**
+  Returns `{samples, embed_dim, num_labels, labels, index}` where `labels`
+  is a list of `{label, count}` entries.
+
+* **`AI.CLASSIFIER_SAVE(cls_id, path$)`** - serializes to a binary file
+  (magic `JCLF`, includes the optional HNSW graph).
+
+* **`AI.CLASSIFIER_LOAD(path$, embed_llm_id) -> cls_id`**
+  Loads a previously saved classifier. Must use the same embedding model.
+
+* **`AI.CLASSIFIER_FREE(cls_id)`** - releases the classifier.
+
+##### Example: ticket categorization
+
+```basic
+emb = AI.LOAD_EMBEDDINGS("models/bge-m3-Q4_K_M.gguf", 2048, 99)
+clf = AI.CLASSIFIER_CREATE(emb)
+
+' Train from a CSV: label in column 0, text in column 1
+DIM rows = CSVREADER("tickets.csv", ";", 0)
+DIM texts AS ARRAY
+DIM labels AS ARRAY
+FOR i = 0 TO LEN(rows) - 1
+  PUSH labels, rows[i][0]
+  PUSH texts,  rows[i][1]
+NEXT i
+AI.CLASSIFIER_ADD_BATCH clf, texts, labels
+
+' Fast index
+AI.CLASSIFIER_BUILD_INDEX clf
+
+' Predict a new ticket
+DIM p = AI.CLASSIFIER_PREDICT(clf, "My printer is showing a red blinking light.", 7)
+PRINT p{"label"}        ' e.g. "Hardware | Printer | LED"
+PRINT p{"confidence"}   ' 0.71
+
+' Persist for later
+AI.CLASSIFIER_SAVE clf, "tickets.clf"
+```
+
+### Neural networks in plain jdBasic
+
+The runtime carries no autodiff engine and no layer/optimizer API. What it
+does have is fast whole-array arithmetic, which is enough to write a network
+by hand: the `nl_*.jdb` series under `jdb/demos/tensor/` walks from a single
+neuron to a trainable XOR network using nothing but the array operations
+documented above. For working with an existing model rather than training
+one, use the `AI.*` inference calls (`AI.LOAD_LLM`, `AI.CHAT`, `AI.EMBED`,
+the `AI.RAG_*` set).
+
+## On a board: RP2350 and ESP32-S3
+
+jdBasic runs on two microcontrollers with the same interpreter that runs
+on a desktop. `embedded/pico/` is the RP2350, which is what a PicoCalc is;
+`embedded/esp32/` is the ESP32-S3. Both read the language documented above without
+exception. Both are a REPL with a flash store behind it, and one of them
+is more than that: the 2.8 inch ES3C28P has a panel, a touch screen, a
+codec and a card slot, and boots into its own prompt on the glass.
+
+What differs is what the machine has, and how little of it there is.
+
+### What is the same
+
+The verbs are chosen so a program reads alike on either board:
+`GPIO.MODE` / `WRITE` / `READ` / `PULLUP`, `ADC.READ`, `ADC.TEMP`,
+`PWM.SET` / `OFF`, `I2C.SETUP` / `WRITE` / `READ` / `SCAN`,
+`SPI.SETUP` / `XFER`, `TIMER.EVERY` / `STOP`, `GPIO.WATCH`, `KEY.WATCH`,
+`WIFI.*` and the `HTTP.SERVER.*` family. The HTTP server is literally the
+same file compiled into both.
+
+Events work the same way in both: an interrupt only records what
+happened, and the VM drains the record between statements, so a handler
+never runs inside an ISR and may draw, write files or call anything else.
+Handlers do not nest - a tick arriving while one is still running is
+dropped rather than queued, so a slow handler cannot build a backlog it
+will never work off.
+
+```basic
+SUB OnTick(d)
+    PRINT ADC.TEMP()
+ENDSUB
+
+ON "TICK" CALL OnTick
+TIMER.EVERY(1000)
+```
+
+### What differs
+
+| | RP2350 | ESP32-S3 |
+|---|---|---|
+| free at a bare prompt | 120376 | 181416, or 198639 with PSRAM |
+| arrays beyond that | none | 8 MB of PSRAM |
+| `ADC.READ` takes | the channel | the pin, GPIO 1 to 10 |
+| I2C speed belongs to | the bus | the device, so it is named at the transfer |
+| PIO | yes, `PIO.LOAD` and friends | no; RMT and I2S are the nearest things |
+| radio | only on a W part | always, and it can be an access point |
+
+The ESP32-S3 refuses the pins it cannot spare. GPIO 26 to 32 carry the
+SPI flash, 33 to 37 the octal PSRAM, and 43 and 44 the console. Writing
+to one takes the board down with no diagnostic, so every verb refuses
+them by name before the write, and `PIN.FREE` lists what is left.
+
+### The flash store
+
+Both boards keep programs in flash and both answer `DIR`, `RUN`, `LOAD`,
+`LIST`, `TYPE`, `DEL`, `RECV` and `AUTORUN` at the prompt. `RECV` takes a
+file straight off the serial line, parsing nothing and echoing nothing,
+which is far faster than typing into the editor. `AUTORUN` names a
+program to start at power-on and leaves a window at boot to cancel it, so
+a misbehaving program never locks the board out.
+
+On the ESP32-S3 a name without an extension may mean the `.jdb` of that
+name: `RUN hello` finds `hello.jdb`. What was typed wins, so a file that
+really has no extension stays reachable.
+
+One consequence of the platform worth knowing: ESP-IDF has no working
+directory at all, so `"."` never resolves and `DIR$` starts its listing
+at the root there.
+
+### The radio, on the ESP32-S3
+
+It is a mode rather than a state. A started radio costs about a hundred
+kilobytes of internal RAM, which is most of what the interpreter has, so
+it is turned on for the job and off again:
+
+```basic
+IF WIFI.AP("jdbasic", "plotter123") = 0 THEN
+    PRINT "open http://"; WIFI.IP$()
+    HTTP.SERVER.ON_GET("/", "HOME")
+    HTTP.SERVER.START(80)
+    HTTP.SERVER.WAIT(0)
+ENDIF
+WIFI.OFF()
+```
+
+`WIFI.OFF` returns most of it; the rest belongs to the TCP/IP stack,
+which is set up once and stays. Bluetooth is Low Energy only - the chip
+has no classic BR/EDR - and its stack and the WiFi one do not
+comfortably fit together in 512 KB.
+
+### Trades the interpreter makes on a small machine
+
+Six things behave differently when the interpreter is built for a
+controller, all of them about memory rather than meaning:
+
+* A chunk is shrunk to fit once it is compiled. Nothing is appended to it
+  afterwards, and the room its vectors kept while doubling measured 22
+  percent of everything a loaded program keeps.
+* A program is read once rather than through a stringstream, which
+  otherwise holds three copies of the source at the same moment.
+* The lexer reserves its token vector up front. Growing it is what kills
+  a load: a doubling near the end wants the old block and the new one at
+  once, and the heap refuses long before its total runs out.
+* The VM's value stack starts at 1024 slots rather than 65536.
+* `INPUT` reads a character at a time and echoes what arrives, because
+  the board's stdio does not echo.
+* `DIR` prints name and size only, there being forty columns to spend and
+  no clock worth printing.
+
+None of that changes what a program means. A `.jdb` file that runs on a
+desktop runs on a board until it runs out of memory.
+
+ plays a
+melody in the background while the program keeps running, in the classic
+notation - A-G with `#` `+` `-`, `O` for the octave, `<` and `>` to step
+it, `L` for the length, `T` for the tempo, `P` or `R` for a rest, `.` to
+dot a note. `PLAY.BUSY` says whether it still sounds, `PLAY.STOP` ends
+it, `PLAY.VOLUME` sets the loudness. These are the RP2350's verbs and the
+same file parses the score for both; only what moves the air differs.
+
+`MIC ms` answers `[peak, mean]` from the microphone, both 0 to 100, and
+`MIC.GAIN` takes 0 to 7 in six-decibel steps. Peak says whether something
+happened and mean how loud it is now.
+
+`SD.MOUNT` puts the card at `/sd` and answers its size; `SD.INFO` gives
+name, size and the bus width it negotiated. A bare filename still means
+the flash store, so the two live side by side without a working
+directory to confuse them: `COPY hello.jdb /sd/hello.jdb` and
+`RUN "/sd/hello.jdb"` both do what they look like.
+
+For when something answers strangely there are `GFX.DIAG`, which counts
+what the panel transport sent and what it refused, `GFX.PANELSTATE`,
+which asks the panel whether it is awake and displaying, `GFX.READBACK`,
+which reads one pixel back off the glass, and `GFX.PANELREG`, which hands
+over the raw bytes of any read command. The last one is the useful one:
+reading a table of bytes settles in minutes what reasoning about a
+protocol does not settle in days.
 
 ### Watching the memory
 
