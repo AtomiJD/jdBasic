@@ -11,12 +11,16 @@ idf_component_register(
         # The 2.8 inch panel and its drawing verbs. Only the ES3C28P has one,
         # and a board without it never calls SCREEN, so the cost is code.
         "es3c28p_lcd.c"
+        "es3c28p_con.c"
         "es3c28p_gfx.cpp"
         "esp32_stubs.cpp"
         # Colouring one line of jdBasic is the same job on both boards and
         # depends on nothing either SDK provides. Shared rather than copied;
         # if a third caller turns up it moves somewhere neutral.
         "../../pico/pico_syntax.cpp"
+        # The editor speaks plain ANSI and asks the port how big the page is,
+        # so the same file serves a 40 by 40 PicoCalc and a 40 by 30 panel.
+        "../../pico/pico_editor.cpp"
         # Raw lwIP, and lwIP is the same library here. The four locking
         # pairs, the millisecond clock and the netif pump are what differ,
         # and the file now names them instead of the SDK.
@@ -29,7 +33,7 @@ idf_component_register(
         "../../../src/channels.cpp"
         "../../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../../src"
-    REQUIRES esp_timer driver fatfs vfs esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd
+    REQUIRES esp_timer driver fatfs vfs esp_vfs_console esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd
              esp_adc esp_driver_gpio esp_driver_ledc esp_driver_i2c esp_driver_spi
              esp_driver_tsens
 )

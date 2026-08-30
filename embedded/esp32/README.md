@@ -297,3 +297,29 @@ Three settings that only the panel in front of you can decide:
 and the last reason. `GFX.PANELID` asks the panel who it is; an ILI9341
 should say 0, 147, 65. It does not answer yet, and the read path is
 still to be sorted out - it is diagnosis, not drawing.
+
+## The console and the editor
+
+`GFX.CONSOLE 1` turns the panel into a text console: 40 columns by 30
+rows of the 8x8 font, the grid a jdBasic listing assumes. Everything
+printed goes to both the serial line and the glass - prompt, `DIR`,
+errors, `PRINT` - because the tee sits under `stdout` as a small VFS
+file rather than in the individual calls. `GFX.CONSOLE 0` gives the
+panel back to a program that wants to draw on it.
+
+A character marks its text row dirty and the flush sends only those
+eight pixel rows, 5 KB rather than the 150 KB a whole frame costs. The
+escape subset is the one an editor needs: absolute cursor, clear screen,
+clear to end of line, cursor right, colours.
+
+`EDIT name` opens the full-screen editor, Ctrl-S writes, Ctrl-Q leaves.
+It is `../../pico/pico_editor.cpp`, the PicoCalc's, unchanged in
+substance: it speaks plain ANSI and now asks the port how big the page
+is, so one file serves a 40 by 40 PicoCalc and a 40 by 30 panel. Arrow
+keys arrive as a terminal's escape sequences and fold into the same
+codes the PicoCalc's keyboard controller sends, so the editor cannot
+tell the two apart.
+
+There is still no keyboard on this board. The keys come over the serial
+line, which means the editor works in a terminal today and will work on
+the panel the moment there is something to type on.

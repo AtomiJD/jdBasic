@@ -28,6 +28,8 @@ void es3c28p_lcd_flip(void);
 void es3c28p_lcd_peek(int x, int y, int* r, int* g, int* b);
 int  es3c28p_lcd_readback(int x, int y, int* r, int* g, int* b);
 int  es3c28p_lcd_panel_id(int* a, int* b, int* c);
+int  es3c28p_con_enable(int on);
+void es3c28p_con_size(int* cols, int* rows);
 void es3c28p_lcd_diag(int* sent, int* failed, int* last);
 }
 
@@ -126,6 +128,25 @@ void register_es3c28p_gfx(VM& vm) {
     vm.register_native("GFX.LIGHT", 1, 1, [](const std::vector<Value>& args) -> Value {
         es3c28p_lcd_backlight(args[0].to_double() != 0);
         return Value();
+    });
+    // The panel as a text console. Everything printed goes to both the
+    // serial line and the glass while it is on.
+    vm.register_native("GFX.CONSOLE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int on = args[0].to_double() != 0;
+        if (on && !es3c28p_lcd_ready()) es3c28p_lcd_init();
+        int rc = es3c28p_con_enable(on);
+        if (rc != 0)
+            throw std::runtime_error("the console would not start (" +
+                                     std::to_string(rc) + ")");
+        return Value();
+    });
+    vm.register_native("GFX.CONSIZE", 0, 0, [](const std::vector<Value>&) -> Value {
+        int c, r;
+        es3c28p_con_size(&c, &r);
+        Value arr = Value::make_array();
+        arr.as_array()->elements.push_back(Value::make_i64(c));
+        arr.as_array()->elements.push_back(Value::make_i64(r));
+        return arr;
     });
     vm.register_native("GFX.WIDTH", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64(es3c28p_lcd_width());

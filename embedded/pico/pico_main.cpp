@@ -275,6 +275,11 @@ static int dos_command(char* line) {
 void pico_editor(const char* name);
 #endif
 
+extern "C" void jdb_con_size(int* cols, int* rows) {
+    *cols = 40;
+    *rows = 40;
+}
+
 extern "C" int repl_read_key(void) {
     int c = getchar();
     if (c != 0x1B) return c;

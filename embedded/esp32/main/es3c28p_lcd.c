@@ -121,6 +121,43 @@ int es3c28p_lcd_uses_pin(int pin) {
 //
 // One staging buffer means waiting for each band before refilling it.
 // The transfer is queued, not synchronous, so the wait is the callback.
+// A band of rows and nothing else. The console redraws a text line as
+// eight pixel rows, which is 5 KB; sending the whole frame for one
+// character would be thirty times that.
+void es3c28p_lcd_blit_rows(int y0, int rows) {
+    if (!g_ready || rows <= 0) return;
+    if (y0 < 0) { rows += y0; y0 = 0; }
+    if (y0 + rows > LCD_H) rows = LCD_H - y0;
+    if (rows <= 0) return;
+
+    uint8_t w[4];
+    w[0] = 0; w[1] = 0; w[2] = (LCD_W - 1) >> 8; w[3] = (LCD_W - 1) & 0xFF;
+    cmd_p(0x2A, w, 4);
+    w[0] = y0 >> 8; w[1] = y0 & 0xFF;
+    w[2] = (y0 + rows - 1) >> 8; w[3] = (y0 + rows - 1) & 0xFF;
+    cmd_p(0x2B, w, 4);
+
+    for (int y = 0; y < rows; y += BAND_ROWS) {
+        int n = (y + BAND_ROWS <= rows) ? BAND_ROWS : (rows - y);
+        size_t bytes = (size_t)n * LCD_W * 2;
+        memcpy(g_band, g_fb + (size_t)(y0 + y) * LCD_W, bytes);
+        esp_err_t e = esp_lcd_panel_io_tx_color(g_io, y == 0 ? 0x2C : 0x3C,
+                                                g_band, bytes);
+        note(e);
+        if (e != ESP_OK) return;
+        xSemaphoreTake(g_band_free, portMAX_DELAY);
+    }
+}
+
+// Where a pixel row lives, for a caller that draws into the frame and
+// then asks for just that part to be sent.
+uint16_t* es3c28p_lcd_row(int y) {
+    if (!g_ready || y < 0 || y >= LCD_H) return NULL;
+    return g_fb + (size_t)y * LCD_W;
+}
+
+uint16_t es3c28p_lcd_encode(int r, int g, int b) { return rgb565_be(r, g, b); }
+
 void es3c28p_lcd_flip(void) {
     if (!g_ready) return;
     uint8_t w[4];

@@ -27,8 +27,12 @@ void syntax_print(const char* s, int n);
 #define K_PGDN  0xD7
 #define K_ESC   0xB1
 
-#define ED_COLS 40
-#define ED_ROWS 39   // last row is the status line
+// The console decides how big the page is: 40 by 40 on the PicoCalc, 40
+// by 30 on the 2.8 inch panel. The port answers, the editor adapts.
+extern "C" void jdb_con_size(int* cols, int* rows);
+
+static int ED_COLS = 40;
+static int ED_ROWS = 39;   // last row is the status line
 
 static void cup(int row, int col) { printf("\x1b[%d;%dH", row + 1, col + 1); }
 
@@ -51,6 +55,13 @@ static void draw_line(const std::string& s, int screen_row, int off) {
 }
 
 void pico_editor(const char* name) {
+    {
+        int c, r;
+        jdb_con_size(&c, &r);
+        if (c > 0) ED_COLS = c;
+        if (r > 1) ED_ROWS = r - 1;
+    }
+
     std::vector<std::string> lines;
     FILE* f = fopen(name, "r");
     if (f) {

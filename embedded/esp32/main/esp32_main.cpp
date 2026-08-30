@@ -28,6 +28,10 @@ static char g_current[128];
 
 // A name without an extension may mean the .jdb of that name. What was
 // typed wins, so a file that really has no extension is still reachable.
+extern "C" int  es3c28p_con_on(void);
+extern "C" void es3c28p_con_size(int* cols, int* rows);
+void pico_editor(const char* name);
+
 static const char* resolve_name(const char* name, char* buf, size_t cap) {
     FILE* f = fopen(name, "r");
     if (f) { fclose(f); return name; }
@@ -92,6 +96,46 @@ static int read_byte_ms(int timeout_ms) {
         vTaskDelay(pdMS_TO_TICKS(10));
     }
     return -1;
+}
+
+// The keys an editor needs, with a terminal's escape sequences folded
+// into the same codes the PicoCalc's keyboard controller sends. Blocking:
+// stdin is non-blocking here, so an empty read waits rather than gives up.
+#define K_LEFT  0xB4
+#define K_UP    0xB5
+#define K_DOWN  0xB6
+#define K_RIGHT 0xB7
+#define K_HOME  0xD2
+#define K_DEL   0xD4
+#define K_END   0xD5
+
+static int getch_blocking(void) {
+    for (;;) {
+        int c = getchar();
+        if (c != EOF) return c;
+        vTaskDelay(pdMS_TO_TICKS(5));
+    }
+}
+
+extern "C" int repl_read_key(void) {
+    int c = getch_blocking();
+    if (c != 0x1B) return c;
+    int c2 = getch_blocking();
+    if (c2 != '[') return 0;
+    switch (getch_blocking()) {
+        case 'A': return K_UP;
+        case 'B': return K_DOWN;
+        case 'C': return K_RIGHT;
+        case 'D': return K_LEFT;
+        case 'H': return K_HOME;
+        case 'F': return K_END;
+        case '3': getch_blocking(); return K_DEL;
+    }
+    return 0;
+}
+
+extern "C" void jdb_con_size(int* cols, int* rows) {
+    es3c28p_con_size(cols, rows);
 }
 
 // The board's stdio does not echo: read by character, show what
@@ -217,6 +261,18 @@ static int dos_command(char* line) {
 
     // The listing the desktop gives: a line number, a rule, and the line
     // coloured the way the editor colours it.
+    if (strcmp(cmd, "EDIT") == 0) {
+        char resolved[160];
+        const char* nm = dos_arg(a);
+        if (!*nm) nm = g_current;
+        if (!*nm) { printf("EDIT what? Give it a name.\n"); return 1; }
+        nm = resolve_name(nm, resolved, sizeof resolved);
+        if (!es3c28p_con_on())
+            printf("no panel console - GFX.CONSOLE 1 first, or edit blind\n");
+        pico_editor(nm);
+        return 1;
+    }
+
     if (strcmp(cmd, "LIST") == 0) {
         char resolved[160];
         const char* nm = dos_arg(a);
