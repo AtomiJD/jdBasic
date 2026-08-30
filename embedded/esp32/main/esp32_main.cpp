@@ -1,5 +1,5 @@
 // jdBasic on the ESP32-S3: a serial REPL on the native USB port, with
-// the flash store behind it. No display and no keyboard yet.
+// the flash store behind it, and the panel console up from the start.
 
 #include <stdio.h>
 #include <string.h>
@@ -29,6 +29,10 @@ static char g_current[128];
 // A name without an extension may mean the .jdb of that name. What was
 // typed wins, so a file that really has no extension is still reachable.
 extern "C" int  es3c28p_con_on(void);
+extern "C" int  es3c28p_lcd_init(void);
+extern "C" int  es3c28p_con_enable(int on);
+extern "C" int  es3c28p_lcd_width(void);
+extern "C" int  es3c28p_lcd_height(void);
 extern "C" void es3c28p_con_size(int* cols, int* rows);
 void pico_editor(const char* name);
 
@@ -171,6 +175,51 @@ static const char* dos_arg(char* a) {
     return a;
 }
 
+// Whether the panel console starts with the board. On unless a file says
+// otherwise, because a display board that boots dark is a display board
+// you have to be told about.
+#define CONSOLE_CFG "console.cfg"
+
+static bool console_boot_wanted(void) {
+    FILE* f = fopen(CONSOLE_CFG, "r");
+    if (!f) return true;
+    char buf[8] = {0};
+    bool got = fgets(buf, sizeof buf, f) != NULL;
+    fclose(f);
+    return !(got && (buf[0] == 'o' || buf[0] == 'O') &&
+                    (buf[1] == 'f' || buf[1] == 'F'));
+}
+
+// The first page on the panel: forty columns, so it is written for
+// forty. Kilobytes rather than bytes, because the digit that matters on
+// a screen this size is the first one.
+static void panel_hello(const esp_chip_info_t* chip) {
+    printf("\x1b[93m jdBasic\x1b[0m   on an ES3C28P\n");
+    // Two short of the width: a rule that fills the row exactly makes the
+    // console wrap, and the newline after it then costs a blank line.
+    printf("\x1b[90m--------------------------------------\x1b[0m\n");
+    printf(" chip   ESP32-S%d rev v%d.%d, %d core%s\n",
+           chip->model == CHIP_ESP32S3 ? 3 : 2,
+           chip->revision / 100, chip->revision % 100,
+           chip->cores, chip->cores == 1 ? "" : "s");
+    printf(" ram    %u KB free\n", (unsigned)(free_internal() / 1024));
+    printf(" psram  %u KB free\n", (unsigned)(free_psram() / 1024));
+    printf(" panel  %dx%d, touch and sound\n",
+           es3c28p_lcd_width(), es3c28p_lcd_height());
+    printf("\n");
+    // Sixteen columns for the command and the rest for what it does, so
+    // the two make columns rather than a paragraph.
+    static const char* const hints[][2] = {
+        { "TYPE readme.txt", "start here" },
+        { "DIR",             "what is on the board" },
+        { "RUN selftest",    "check every part" },
+        { "EDIT name",       "write something" },
+    };
+    for (size_t i = 0; i < sizeof hints / sizeof hints[0]; i++)
+        printf(" \x1b[96m%-16s\x1b[0m%s\n", hints[i][0], hints[i][1]);
+    printf("\n");
+}
+
 static bool autorun_get(char* name, size_t cap) {
     FILE* f = fopen(AUTORUN_CFG, "r");
     if (!f) return false;
@@ -261,6 +310,27 @@ static int dos_command(char* line) {
 
     // The listing the desktop gives: a line number, a rule, and the line
     // coloured the way the editor colours it.
+    if (strcmp(cmd, "CONSOLE") == 0) {
+        const char* arg = dos_arg(a);
+        if (!*arg) {
+            printf("console at boot: %s\n", console_boot_wanted() ? "on" : "off");
+        } else if (strcasecmp(arg, "OFF") == 0) {
+            FILE* f = fopen(CONSOLE_CFG, "w");
+            if (!f) { printf("cannot write %s\n", CONSOLE_CFG); return 1; }
+            fputs("off\n", f);
+            fclose(f);
+            es3c28p_con_enable(0);
+            printf("console off at boot\n");
+        } else if (strcasecmp(arg, "ON") == 0) {
+            remove(CONSOLE_CFG);
+            if (es3c28p_lcd_init() == 0) es3c28p_con_enable(1);
+            printf("console on at boot\n");
+        } else {
+            printf("CONSOLE ON, CONSOLE OFF, or CONSOLE to ask\n");
+        }
+        return 1;
+    }
+
     if (strcmp(cmd, "EDIT") == 0) {
         char resolved[160];
         const char* nm = dos_arg(a);
@@ -377,6 +447,18 @@ extern "C" void app_main(void) {
     printf("VM costs    internal %7d  psram %8d\n",
            (int)before_int - (int)free_internal(),
            (int)before_psram - (int)free_psram());
+
+    // Everything above is sixty columns of diagnosis and belongs on the
+    // wire. The panel is forty, and gets a page written for forty: the
+    // same facts, shaped to be read rather than wrapped.
+    //
+    // The console starts here rather than earlier for that reason - it
+    // clears on start, so anything printed before it would be lost, and
+    // anything printed to both would have to fit the narrower of the two.
+    if (fs_ok && console_boot_wanted() && es3c28p_lcd_init() == 0) {
+        es3c28p_con_enable(1);
+        panel_hello(&chip);
+    }
 
     // Power-on program, with a window to get out of it: without one a
     // looping autorun program would own the board for good.

@@ -34,7 +34,14 @@ static int g_cursor = 1;
 
 // Index 0 is the default. The SGR escapes pick from here, so a program
 // that colours its output on a terminal colours it on the panel too.
-static const uint8_t g_pal[8][3] = {
+//
+// Sixteen rather than eight, and green has its own place. On the
+// PicoCalc the default ink is green, so green could map onto the default
+// and nobody noticed; here the default is a soft green-white, and a
+// program printing green got white. Eight entries left no room to fix
+// that, so the attribute carries four bits now instead of three.
+#define PAL_N 16
+static const uint8_t g_pal[PAL_N][3] = {
     { 0xC8, 0xE8, 0xC8 },       // 0 default, a soft green-white
     { 0xF8, 0xF8, 0xF8 },       // 1 white
     { 0xF8, 0xE8, 0x40 },       // 2 yellow
@@ -43,6 +50,14 @@ static const uint8_t g_pal[8][3] = {
     { 0xF8, 0x50, 0x50 },       // 5 red
     { 0xE0, 0x60, 0xE0 },       // 6 magenta
     { 0x60, 0x80, 0xF8 },       // 7 blue
+    { 0x50, 0xE8, 0x70 },       // 8 green
+    { 0xF8, 0xA0, 0x40 },       // 9 orange
+    { 0x30, 0x90, 0x40 },       // 10 dark green
+    { 0xA0, 0x50, 0xF8 },       // 11 violet
+    { 0x60, 0x60, 0x70 },       // 12 dim
+    { 0xF8, 0x90, 0xB0 },       // 13 pink
+    { 0x40, 0xB0, 0xB0 },       // 14 teal
+    { 0xE8, 0xE8, 0xB0 },       // 15 sand
 };
 static uint8_t g_cur_attr = 0;
 
@@ -58,7 +73,7 @@ static void draw_row(int row) {
             if (ch < 32 || ch > 151) ch = 32;
             uint8_t bits = jdos_font8x8_c64[(ch - 32) * CH + line];
             int inv = g_cursor && row == g_cy && col == g_cx;
-            const uint8_t* fg = g_pal[g_attr[row][col] & 7];
+            const uint8_t* fg = g_pal[g_attr[row][col] & (PAL_N - 1)];
             uint16_t ink = es3c28p_lcd_encode(fg[0], fg[1], fg[2]);
             for (int b = 0; b < CW; b++) {
                 int on = (bits & (0x80 >> b)) != 0;
@@ -147,14 +162,14 @@ static int ansi_step(char c) {
         for (int i = 0; i <= g_parn; i++) {
             switch (g_par[i]) {
                 case 0:            g_cur_attr = 0; break;
-                case 37: case 97:  g_cur_attr = 1; break;
-                case 33: case 93:  g_cur_attr = 2; break;
-                case 36: case 96:  g_cur_attr = 3; break;
-                case 90:           g_cur_attr = 4; break;
+                case 30: case 90:  g_cur_attr = 4; break;
                 case 31: case 91:  g_cur_attr = 5; break;
-                case 35: case 95:  g_cur_attr = 6; break;
+                case 32: case 92:  g_cur_attr = 8; break;
+                case 33: case 93:  g_cur_attr = 2; break;
                 case 34: case 94:  g_cur_attr = 7; break;
-                case 32: case 92:  g_cur_attr = 0; break;
+                case 35: case 95:  g_cur_attr = 6; break;
+                case 36: case 96:  g_cur_attr = 3; break;
+                case 37: case 97:  g_cur_attr = 1; break;
             }
         }
     }
