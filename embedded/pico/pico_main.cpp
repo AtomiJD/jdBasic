@@ -31,6 +31,7 @@ extern "C" int  fruitjam_dvi_alloc(void);
 extern "C" void fruitjam_usb_init(void);
 #endif
 extern "C" void fruitjam_dvi_trace(const char* s);
+extern "C" void fruitjam_con_init(void);
 #endif
 #ifdef PICOCALC
 extern "C" void picocalc_lcd_init(void);
@@ -447,6 +448,7 @@ int main() {
 #ifdef FRUITJAM
     fruitjam_dvi_init();
     fruitjam_dvi_alloc();
+    fruitjam_con_init();
 #ifdef FRUITJAM_USB
     fruitjam_usb_init();
 #endif

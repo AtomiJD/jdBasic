@@ -114,6 +114,9 @@ static uint32_t* g_cmds = NULL;
 static int       g_ch_pixel = -1;
 static int       g_ch_cmd = -1;
 
+void fruitjam_con_write(const char* s, int len);
+void fruitjam_con_tick(void);
+
 static uint32_t g_frames = 0;
 static uint32_t g_frame_us = 0;
 static uint32_t g_last_wrap = 0;
@@ -129,6 +132,8 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
     g_frame_us = now - g_last_wrap;
     g_last_wrap = now;
     g_frames++;
+
+    fruitjam_con_tick();
 }
 
 uint8_t* fruitjam_dvi_framebuffer(void) { return g_fb; }
@@ -179,25 +184,13 @@ int fruitjam_dvi_alloc(void) { return g_fb != NULL; }
 void fruitjam_gfx_color(int r, int g, int b);
 void fruitjam_gfx_text(int x, int y, const char* s, int scale);
 
-// A line of live state at the foot of the screen, overwritten in place.
-// When the console is the thing under investigation, the monitor is the
-// only instrument left.
-void fruitjam_dvi_status(int row, const char* s) {
-    if (!g_fb) return;
-    int y = 180 + row * 10;
-    for (int i = 0; i < 9; i++) fruitjam_dvi_hline(0, y + i, FB_W, 0);
-    fruitjam_gfx_color(48, 252, 48);
-    fruitjam_gfx_text(2, y, s, 1);
-}
-
 // Bring-up leaves a trail on the screen. A hang before the console exists
 // cannot report itself any other way.
-static int g_trace_y = 4;
 void fruitjam_dvi_trace(const char* s) {
     if (!g_fb) return;
-    fruitjam_gfx_color(48, 252, 48);
-    fruitjam_gfx_text(4, g_trace_y, s, 1);
-    g_trace_y += 10;
+    fruitjam_con_write(s, (int)strlen(s));
+    static const char crlf[2] = { 13, 10 };
+    fruitjam_con_write(crlf, 2);
 }
 
 // One pair per transfer: how many words, and where from. Writing the

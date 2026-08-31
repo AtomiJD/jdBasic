@@ -64,6 +64,7 @@ if (FRUITJAM)
     list(APPEND JDB_SOURCES
         fruitjam_dvi.c
         fruitjam_gfx.c
+        fruitjam_con.c
         fruitjam_builtins.cpp
     )
     if (FJ_USB)

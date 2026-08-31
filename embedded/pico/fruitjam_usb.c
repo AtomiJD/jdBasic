@@ -24,20 +24,15 @@
 
 #include <stdint.h>
 #include <string.h>
-#include <stdio.h>
 
 #include "pico/stdlib.h"
 #include "pico/stdio/driver.h"
-#include "pico/stdio_usb.h"
 #include "hardware/dma.h"
 #include "pico/multicore.h"
-#include "hardware/structs/usb.h"
-#include "hardware/irq.h"
 #include "pio_usb.h"
 #include "tusb.h"
 
 void fruitjam_dvi_trace(const char* s);
-void fruitjam_dvi_status(int row, const char* s);
 int  fruitjam_usb_start(void);
 
 #define USB_DP_PIN      1
@@ -83,48 +78,8 @@ int fruitjam_usb_key_count(void)     { return (int)g_keys; }
 int fruitjam_usb_keyboards(void)    { return g_keyboards; }
 int fruitjam_usb_devices(void)      { return g_devices; }
 
-static uint32_t g_polls = 0;
-
-// Everything worth knowing about both USB roles, refreshed twice a second
-// from the poll the prompt is already doing.
-static void status_tick(void) {
-    static uint32_t last = 0;
-    uint32_t now = time_us_32();
-    if (now - last < 500000) return;
-    last = now;
-    char b[64];
-    snprintf(b, sizeof b, "dev  inited=%d mounted=%d susp=%d",
-             tud_inited() ? 1 : 0, tud_mounted() ? 1 : 0, tud_suspended() ? 1 : 0);
-    fruitjam_dvi_status(0, b);
-    snprintf(b, sizeof b, "cdc  connected=%d   polls=%lu",
-             stdio_usb_connected() ? 1 : 0, (unsigned long)g_polls);
-    fruitjam_dvi_status(1, b);
-    snprintf(b, sizeof b, "host up=%d devices=%d keyboards=%d",
-             g_up ? 1 : 0, g_devices, g_keyboards);
-    fruitjam_dvi_status(2, b);
-    // The bus itself. PULLUP_EN in sie_ctrl is what tells a PC that
-    // anything is plugged in at all.
-    snprintf(b, sizeof b, "sie=%08lx main=%08lx pull=%d",
-             (unsigned long)usb_hw->sie_ctrl, (unsigned long)usb_hw->main_ctrl,
-             (usb_hw->sie_ctrl & USB_SIE_CTRL_PULLUP_EN_BITS) ? 1 : 0);
-    fruitjam_dvi_status(3, b);
-    // sof counts frames the PC sends us. Standing still means the host is
-    // not talking to this device at all; climbing means it is, and the
-    // fault is further up.
-    snprintf(b, sizeof b, "keys=%lu out=%lu last=%u [%s]",
-             (unsigned long)g_keys, (unsigned long)g_returned,
-             g_last_key, g_tail_txt);
-    fruitjam_dvi_status(4, b);
-    snprintf(b, sizeof b, "inte=%08lx irq=%d sof=%lu",
-             (unsigned long)usb_hw->inte, irq_is_enabled(USBCTRL_IRQ) ? 1 : 0,
-             (unsigned long)(usb_hw->sof_rd & 0x7ff));
-    fruitjam_dvi_status(5, b);
-}
-
 // Asking for a key is what drives the host stack.
 static int fj_in_chars(char* buf, int len) {
-    g_polls++;
-    status_tick();
     if (g_up) tuh_task();
     int n = 0;
     while (n < len) {
