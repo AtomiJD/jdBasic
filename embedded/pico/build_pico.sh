@@ -5,7 +5,7 @@
 #
 #   ./build_pico.sh [board] [calc|nocalc] [clean]
 #
-#   board   pico | pico_w | pico2 | pico2_w      (default pico2_w)
+#   board   pico | pico_w | pico2 | pico2_w | fruitjam  (default pico2_w)
 #   calc    with the PicoCalc drivers (default); nocalc = bare board
 #
 # Each combination builds in its own directory, build-<board>[-nocalc],
@@ -17,14 +17,17 @@ cd "$(dirname "$0")"
 
 : "${PICO_SDK_PATH:=$HOME/pico2350/pico-sdk}"
 : "${PICO_TOOLCHAIN_PATH:=$HOME/pico2350/toolchain}"
-export PICO_SDK_PATH PICO_TOOLCHAIN_PATH
+: "${PICO_PIO_USB_PATH:=$HOME/pico2350/Pico-PIO-USB}"
+export PICO_SDK_PATH PICO_TOOLCHAIN_PATH PICO_PIO_USB_PATH
 
 BOARD=pico2_w
 CALC=ON
+JAM=OFF
 CLEAN=0
 for a in "$@"; do
     case "$a" in
         pico|pico_w|pico2|pico2_w) BOARD=$a ;;
+        fruitjam|adafruit_fruit_jam) BOARD=adafruit_fruit_jam; CALC=OFF; JAM=ON ;;
         calc)   CALC=ON ;;
         nocalc) CALC=OFF ;;
         clean)  CLEAN=1 ;;
@@ -41,7 +44,7 @@ fi
 
 [ "$CLEAN" = "1" ] && rm -rf "$DIR"
 
-cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC \
+cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM \
     > build_cmake.log 2>&1 || { tail -20 build_cmake.log; exit 1; }
 ninja -C "$DIR" 2> build_ninja.err || { tail -30 build_ninja.err; exit 1; }
 ls -la "$DIR"/jdbasic_repl.uf2

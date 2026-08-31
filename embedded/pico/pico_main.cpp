@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
+#include "hardware/clocks.h"
 #include "pico/stdio.h"
 #include "pico/stdio/driver.h"
 #include "pico/stdio_usb.h"
@@ -23,6 +24,14 @@
 #include "jdb_embed_api.h"
 
 extern "C" void jdb_pico_fs_init(void);
+#ifdef FRUITJAM
+extern "C" void fruitjam_dvi_init(void);
+extern "C" int  fruitjam_dvi_alloc(void);
+#ifdef FRUITJAM_USB
+extern "C" void fruitjam_usb_stdio_init(void);
+#endif
+extern "C" void fruitjam_dvi_trace(const char* s);
+#endif
 #ifdef PICOCALC
 extern "C" void picocalc_lcd_init(void);
 extern "C" void picocalc_lcd_putc(char c);
@@ -426,7 +435,23 @@ static void read_line(char* buf, int cap) {
 }
 
 int main() {
+#ifdef FRUITJAM
+    // 480p60 wants a 252 MHz bit clock, and the serialiser puts out two
+    // bits per cycle, so HSTX has to see exactly 126 MHz. clk_hstx follows
+    // clk_sys, so the system runs there too and the pixel rate lands on
+    // 25.2 MHz. PIO-USB divides the same clock down to 12 MHz and takes a
+    // fractional divider to do it, which is what the reference ports use.
+    set_sys_clock_khz(126000, true);
+#endif
     stdio_init_all();
+#ifdef FRUITJAM
+    fruitjam_dvi_init();
+    fruitjam_dvi_alloc();
+#ifdef FRUITJAM_USB
+    fruitjam_usb_stdio_init();
+#endif
+    fruitjam_dvi_trace("3 ready");
+#endif
 #ifdef JDB_HAS_CYW43
     cyw43_arch_init();
 #endif

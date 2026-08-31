@@ -19,6 +19,9 @@ void register_pico_mem(VM& vm);
 void register_pico_psram(VM& vm);
 void register_sprite_builtins(VM& vm);
 void register_pico_events(VM& vm);
+#ifdef FRUITJAM
+void register_fruitjam_gfx(VM& vm);
+#endif
 #ifdef JDB_HAS_CYW43
 void register_pico_wifi(VM& vm);
 void register_pico_httpd(VM& vm);
@@ -61,6 +64,9 @@ void register_pico_builtins(VM& vm) {
     register_pico_mem(vm);
     register_pico_psram(vm);
     register_pico_events(vm);
+#ifdef FRUITJAM
+    register_fruitjam_gfx(vm);
+#endif
 #ifdef JDB_HAS_CYW43
     register_pico_wifi(vm);
     register_pico_httpd(vm);
@@ -295,6 +301,7 @@ void register_pico_gfx(VM& vm) {
 }
 
 
+#endif // PICOCALC
 // What a program can still get: the ground the heap has not claimed
 // yet, plus what it claimed and handed back. Counting only the first
 // reads as zero while there is plenty on the free list.
@@ -392,6 +399,7 @@ void register_pico_mem(VM& vm) {
         return Value::make_i64((int64_t)lo);
     });
 }
+#ifdef PICOCALC
 extern "C" void sd_selftest(char* out, int cap);
 
 void register_pico_sdtest(VM& vm) {

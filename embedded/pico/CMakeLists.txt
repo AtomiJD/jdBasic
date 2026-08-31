@@ -6,8 +6,10 @@ cmake_minimum_required(VERSION 3.13)
 # inside src the board cannot have.
 #
 # The matrix:
-#   PICO_BOARD  pico | pico_w | pico2 | pico2_w   (default pico2_w)
+#   PICO_BOARD  pico | pico_w | pico2 | pico2_w | adafruit_fruit_jam
+#                                               (default pico2_w)
 #   PICOCALC    ON | OFF                          (default ON)
+#   FRUITJAM    ON | OFF                          (default OFF)
 #
 # PICOCALC=ON adds the PicoCalc's screen, keyboard, speaker, graphics
 # and SD card. OFF builds for a bare board: USB-CDC console, GPIO and
@@ -15,6 +17,15 @@ cmake_minimum_required(VERSION 3.13)
 
 set(PICO_BOARD pico2_w CACHE STRING "Board type")
 option(PICOCALC "Build with the PicoCalc device drivers" ON)
+option(FRUITJAM "Build with the Fruit Jam device drivers" OFF)
+option(FJ_USB "Build the Fruit Jam USB host (keyboard, mouse)" OFF)
+
+# The USB host is PIO-USB, which the SDK's TinyUSB glue picks up on its
+# own once it knows where the library is - it has to be told before
+# pico_sdk_init pulls that glue in.
+if (FRUITJAM AND FJ_USB AND DEFINED ENV{PICO_PIO_USB_PATH})
+    set(PICO_PIO_USB_PATH $ENV{PICO_PIO_USB_PATH})
+endif()
 
 set(PICO_CXX_ENABLE_EXCEPTIONS 1)
 set(PICO_CXX_ENABLE_RTTI 1)
@@ -49,6 +60,17 @@ set(JDB_SOURCES
     ../../src/file_streams.cpp
 )
 
+if (FRUITJAM)
+    list(APPEND JDB_SOURCES
+        fruitjam_dvi.c
+        fruitjam_gfx.c
+        fruitjam_builtins.cpp
+    )
+    if (FJ_USB)
+        list(APPEND JDB_SOURCES fruitjam_usb.c)
+    endif()
+endif()
+
 if (PICOCALC)
     list(APPEND JDB_SOURCES
         pico_editor.cpp
@@ -80,12 +102,39 @@ target_compile_definitions(jdbasic_repl PRIVATE
 if (PICOCALC)
     target_compile_definitions(jdbasic_repl PRIVATE PICOCALC=1)
 endif()
+if (FRUITJAM)
+    # Linking TinyUSB host makes the SDK drop its own CDC descriptors, on
+    # the assumption that an app touching TinyUSB directly brings its own.
+    # We want them: they carry the console and the reset-to-BOOTSEL that
+    # the serial port triggers.
+    target_compile_definitions(jdbasic_repl PRIVATE FRUITJAM=1)
+endif()
+
+# The host stack replaces the SDK's TinyUSB configuration wholesale, so its
+# tusb_config.h lives in a directory of its own: on the general include path
+# it would reach a build that has no host linked at all.
+if (FRUITJAM AND FJ_USB)
+    target_compile_definitions(jdbasic_repl PRIVATE
+        FRUITJAM_USB=1
+        PICO_STDIO_USB_USE_DEFAULT_DESCRIPTORS=1
+    )
+    target_include_directories(jdbasic_repl PRIVATE fjusb)
+endif()
 
 target_include_directories(jdbasic_repl PRIVATE ../../src shim ${CMAKE_CURRENT_LIST_DIR})
 target_compile_options(jdbasic_repl PRIVATE -Os "$<$<COMPILE_LANGUAGE:CXX>:-include;${CMAKE_CURRENT_LIST_DIR}/shim/jdb_pico_compat.h>")
 
 target_link_libraries(jdbasic_repl pico_stdlib hardware_flash hardware_gpio pico_flash
     hardware_adc hardware_pwm hardware_i2c hardware_spi hardware_pio)
+
+# The HSTX scanout is DMA driven; its registers come with the structs
+# headers pico_stdlib already carries.
+if (FRUITJAM)
+    target_link_libraries(jdbasic_repl hardware_dma pico_multicore)
+endif()
+if (FRUITJAM AND FJ_USB)
+    target_link_libraries(jdbasic_repl tinyusb_host tinyusb_pico_pio_usb)
+endif()
 
 # The radio chip exists only on the W boards; the LED builtin adapts
 # and the WiFi family comes along, lwIP in threadsafe-background mode.
@@ -100,10 +149,10 @@ pico_enable_stdio_uart(jdbasic_repl 0)
 
 # Both chips move the core-0 stack out of the 4 KB scratch bank to the
 # top of main RAM; the RP2040's smaller RAM gets the smaller cut.
-if (PICO_BOARD STREQUAL "pico2" OR PICO_BOARD STREQUAL "pico2_w")
-    pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack.ld)
-else()
+if (PICO_BOARD STREQUAL "pico" OR PICO_BOARD STREQUAL "pico_w")
     pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack2040.ld)
+else()
+    pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack.ld)
 endif()
 
 pico_add_extra_outputs(jdbasic_repl)
