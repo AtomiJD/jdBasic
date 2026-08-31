@@ -4,7 +4,7 @@ Convention: one section per released version, newest at the top. Pre-release / u
 
 ---
 
-## v1.0 Build 82 - 2026-08-31
+## v1.0 Build 82 - 2026-08-31 (VB6 Pack Build 83)
 
 Refresh of all four Windows bundles. Four pieces of syntax, one fix to a
 builtin that answered the wrong question quietly, and the interpreter now
@@ -32,7 +32,7 @@ None of this is in the Windows bundles - it is a separate build tree - but the l
 
 ### Distribution
 
-The same four Windows x64 bundles, all Authenticode-signed: **core**, **mcp-native**, **vibe-game-pack**, **vb6**. SHA256 hashes are on the [release page](https://github.com/AtomiJD/jdBasic/releases).
+The same four Windows x64 bundles, all Authenticode-signed: **core**, **mcp-native**, **vibe-game-pack**, **vb6**. The VB6 Pack carries Build 83, one ahead of the other three: every RELEASE build bumps the number, and it was rebuilt after the first three had been signed and published. SHA256 hashes are on the [release page](https://github.com/AtomiJD/jdBasic/releases).
 
 ---
 
