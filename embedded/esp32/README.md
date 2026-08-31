@@ -273,6 +273,24 @@ warm restart. Only unplugging the board resets it, and command 0x01 is
 the only reset the driver has.
 
 Every primitive writes a framebuffer in PSRAM and `SCREENFLIP` sends it.
+`SCREENFLIP y, rows` sends only that band, which is what a game wants.
+
+Measured on the board, 40 MHz panel clock: a whole frame is 150 KB and
+costs 32 ms, so 31 frames a second if everything moves. Drawing costs
+almost nothing next to that - a filled circle 0.044 ms, clearing the
+whole frame 4.4 ms. Twenty sprites drawn and only their 40-row band
+sent is 7 ms, so a game that pushes what changed is not waiting on the
+panel.
+
+Two things had to be right for that. The clock had been left at 10 MHz
+from the bringup, on a wrong diagnosis: the black screen was chip
+select, not the clock, and the lower clock was never re-tested after the
+real cause was found. And 40 MHz alone changed nothing, because the
+frame goes out as fifteen bands and the code waited for each one - at
+the default 100 Hz FreeRTOS tick a wait costs up to 10 ms, which is the
+150 ms a frame that was measured. The tick is 1000 Hz now and there are
+two staging buffers, so a band is filled while the previous is on the
+wire.
 The RP2350 draws straight into display RAM because 264 KB has no room
 for a frame; 320 by 240 at two bytes is 150 KB, which 8 MB does have.
 
@@ -459,3 +477,19 @@ A card that will not mount is not formatted. `format_if_mount_failed` is
 off, because a card that refuses is a card to look at, not one to erase.
 
 Measured on a 4 GB card: 3770 MB, four lines negotiated.
+
+## The radio, scanning
+
+`WIFI.SCAN [ms]` looks without joining: one row a network, `[name$,
+dBm, channel, open]`, sorted by the radio with the strongest first.
+Hidden networks come back with an empty name rather than being left out.
+The radio has to be in station mode to scan, so a scan after a
+`WIFI.CONNECT` drops the connection.
+
+`fs/wifiscan.jdb` is the analyser: an arc a network, height for signal
+and place for channel, the strongest on each channel named, and the
+banner naming the quietest channels. The noise figure is the one the
+Arduino analyser uses - each network adds the square of its margin above
+the floor to its own channel and the four either side, because 2.4 GHz
+channels overlap that far, which is why the quietest channel is rarely
+the emptiest.

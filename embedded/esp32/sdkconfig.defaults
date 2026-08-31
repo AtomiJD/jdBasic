@@ -47,3 +47,9 @@ CONFIG_FATFS_MAX_LFN=128
 # core 0 by IDF, and the main task lands there too by default, so the
 # radio and the program being run share one core while the other idles.
 CONFIG_ESP_MAIN_TASK_AFFINITY_CPU1=y
+
+# A frame goes out as fifteen bands and the code waits for each one. At
+# the default 100 Hz tick a wait that misses costs 10 ms, which is 150 ms
+# a frame - the transfer itself is 30. The clock was not the bottleneck;
+# the scheduler was.
+CONFIG_FREERTOS_HZ=1000

@@ -13,6 +13,7 @@ extension gets .jdb added if that is what exists.
   tune       PLAY with the classic note notation
   vu         a level meter off the microphone
   sdcard     the card at /sd next to the flash store
+  wifiscan   what is on the air, drawn per channel
   hello      the smallest thing that proves the board runs
   primes     a sieve
   bench      three loops, timed
@@ -32,6 +33,11 @@ the panel back to a program that wants to draw.
 
 TOUCH answers [count, x, y] in screen coordinates.  BEEP, TONE and PLAY
 make sound; MIC ms answers [peak, mean].  SD.MOUNT puts the card at /sd.
+WIFI.SCAN gives a row a network: [name$, dBm, channel, open].
+
+SCREENFLIP sends the whole frame, 150 KB, 32 ms.  SCREENFLIP y, rows
+sends only that band, which is what a game wants: twenty sprites drawn
+and a 40-row band sent is 7 ms, so the panel is not the limit.
 
 The board has no keyboard.  Keys come over USB, which is why EDIT works
 from a terminal today.

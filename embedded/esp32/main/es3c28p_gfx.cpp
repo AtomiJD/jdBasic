@@ -25,6 +25,7 @@ void es3c28p_lcd_circle(int cx, int cy, int rad, int fill);
 void es3c28p_lcd_text(int x, int y, const char* s, int scale);
 void es3c28p_lcd_clear(void);
 void es3c28p_lcd_flip(void);
+void es3c28p_lcd_blit_rows(int y0, int rows);
 void es3c28p_lcd_peek(int x, int y, int* r, int* g, int* b);
 int  es3c28p_lcd_readback(int x, int y, int* r, int* g, int* b);
 int  es3c28p_lcd_panel_state(int* mode, int* awake, int* displaying);
@@ -86,9 +87,16 @@ void register_es3c28p_gfx(VM& vm) {
         return Value::make_i64((int64_t)es3c28p_lcd_width() *
                                es3c28p_lcd_height() * 2);
     });
-    vm.register_native("SCREENFLIP", 0, 0, [](const std::vector<Value>&) -> Value {
+    // SCREENFLIP sends the frame; SCREENFLIP y, rows sends that band and
+    // nothing else. A whole frame is 150 KB and costs 32 ms on the wire,
+    // so a game that only pushes what moved is not waiting on the panel.
+    vm.register_native("SCREENFLIP", 0, 2, [](const std::vector<Value>& args) -> Value {
         need_panel("SCREENFLIP");
-        es3c28p_lcd_flip();
+        if (args.size() >= 2)
+            es3c28p_lcd_blit_rows((int)args[0].to_double(),
+                                  (int)args[1].to_double());
+        else
+            es3c28p_lcd_flip();
         return Value();
     });
     vm.register_native("DRAWCOLOR", 3, 3, [](const std::vector<Value>& args) -> Value {

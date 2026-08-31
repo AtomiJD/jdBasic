@@ -39,16 +39,23 @@
 #define LCD_H       240
 
 // The datasheet gives the serial clock as 100 ns minimum for a write,
-// which is 10 MHz.
-#define SPI_HZ_WRITE (10 * 1000 * 1000)
+// which is 10 MHz, and this panel runs happily at four times that -
+// checked by reading known screens back off the glass rather than by
+// looking at it. The frame is 150 KB, so the clock is the frame rate.
+#define SPI_HZ_WRITE (40 * 1000 * 1000)
 
 // One transfer is a band of rows staged in internal, DMA-capable memory.
 #define BAND_ROWS   16
 
+// Two staging buffers, so one band can be filled while the previous is
+// still on the wire. With one, every band waited for its own completion
+// and the frame cost the transfer plus fifteen scheduler waits.
+#define BANDS 2
+
 static esp_lcd_panel_io_handle_t g_io;
 static uint16_t* g_fb;                 // PSRAM, stored in the panel's byte order
-static uint16_t* g_band;               // internal, DMA-capable
-static SemaphoreHandle_t g_band_free;
+static uint16_t* g_band[BANDS];        // internal, DMA-capable
+static SemaphoreHandle_t g_band_free;  // counting, one permit a buffer
 static uint16_t g_color = 0xE0FF;      // white, byte-swapped
 static int g_ready = 0;
 
@@ -121,6 +128,34 @@ int es3c28p_lcd_uses_pin(int pin) {
 //
 // One staging buffer means waiting for each band before refilling it.
 // The transfer is queued, not synchronous, so the wait is the callback.
+// One band of the frame out of the staging buffer whose turn it is. The
+// caller holds a permit for that buffer; the completion callback gives
+// it back.
+static void send_band(int y0, int rows, int first, int slot) {
+    size_t bytes = (size_t)rows * LCD_W * 2;
+    memcpy(g_band[slot], g_fb + (size_t)y0 * LCD_W, bytes);
+    esp_err_t e = esp_lcd_panel_io_tx_color(g_io, first ? 0x2C : 0x3C,
+                                            g_band[slot], bytes);
+    note(e);
+    if (e != ESP_OK) xSemaphoreGive(g_band_free);
+}
+
+// Wait until nothing is in flight, so a caller that reads the panel back
+// straight afterwards sees the frame it just sent.
+static void drain(void) {
+    for (int i = 0; i < BANDS; i++) xSemaphoreTake(g_band_free, portMAX_DELAY);
+    for (int i = 0; i < BANDS; i++) xSemaphoreGive(g_band_free);
+}
+
+static void window(int y0, int rows) {
+    uint8_t w[4];
+    w[0] = 0; w[1] = 0; w[2] = (LCD_W - 1) >> 8; w[3] = (LCD_W - 1) & 0xFF;
+    cmd_p(0x2A, w, 4);
+    w[0] = y0 >> 8; w[1] = y0 & 0xFF;
+    w[2] = (y0 + rows - 1) >> 8; w[3] = (y0 + rows - 1) & 0xFF;
+    cmd_p(0x2B, w, 4);
+}
+
 // A band of rows and nothing else. The console redraws a text line as
 // eight pixel rows, which is 5 KB; sending the whole frame for one
 // character would be thirty times that.
@@ -130,23 +165,15 @@ void es3c28p_lcd_blit_rows(int y0, int rows) {
     if (y0 + rows > LCD_H) rows = LCD_H - y0;
     if (rows <= 0) return;
 
-    uint8_t w[4];
-    w[0] = 0; w[1] = 0; w[2] = (LCD_W - 1) >> 8; w[3] = (LCD_W - 1) & 0xFF;
-    cmd_p(0x2A, w, 4);
-    w[0] = y0 >> 8; w[1] = y0 & 0xFF;
-    w[2] = (y0 + rows - 1) >> 8; w[3] = (y0 + rows - 1) & 0xFF;
-    cmd_p(0x2B, w, 4);
-
+    window(y0, rows);
+    int slot = 0;
     for (int y = 0; y < rows; y += BAND_ROWS) {
         int n = (y + BAND_ROWS <= rows) ? BAND_ROWS : (rows - y);
-        size_t bytes = (size_t)n * LCD_W * 2;
-        memcpy(g_band, g_fb + (size_t)(y0 + y) * LCD_W, bytes);
-        esp_err_t e = esp_lcd_panel_io_tx_color(g_io, y == 0 ? 0x2C : 0x3C,
-                                                g_band, bytes);
-        note(e);
-        if (e != ESP_OK) return;
         xSemaphoreTake(g_band_free, portMAX_DELAY);
+        send_band(y0 + y, n, y == 0, slot);
+        slot = (slot + 1) % BANDS;
     }
+    drain();
 }
 
 // Where a pixel row lives, for a caller that draws into the frame and
@@ -159,24 +186,9 @@ uint16_t* es3c28p_lcd_row(int y) {
 uint16_t es3c28p_lcd_encode(int r, int g, int b) { return rgb565_be(r, g, b); }
 
 void es3c28p_lcd_flip(void) {
-    if (!g_ready) return;
-    uint8_t w[4];
-    w[0] = 0; w[1] = 0; w[2] = (LCD_W - 1) >> 8; w[3] = (LCD_W - 1) & 0xFF;
-    cmd_p(0x2A, w, 4);
-    w[0] = 0; w[1] = 0; w[2] = (LCD_H - 1) >> 8; w[3] = (LCD_H - 1) & 0xFF;
-    cmd_p(0x2B, w, 4);
-
-    for (int y = 0; y < LCD_H; y += BAND_ROWS) {
-        int rows = (y + BAND_ROWS <= LCD_H) ? BAND_ROWS : (LCD_H - y);
-        size_t bytes = (size_t)rows * LCD_W * 2;
-        memcpy(g_band, g_fb + (size_t)y * LCD_W, bytes);
-        esp_err_t e = esp_lcd_panel_io_tx_color(g_io, y == 0 ? 0x2C : 0x3C,
-                                                g_band, bytes);
-        note(e);
-        if (e != ESP_OK) return;
-        xSemaphoreTake(g_band_free, portMAX_DELAY);
-    }
+    es3c28p_lcd_blit_rows(0, LCD_H);
 }
+
 
 int es3c28p_lcd_init(void) {
     if (g_ready) return 0;
@@ -184,10 +196,12 @@ int es3c28p_lcd_init(void) {
     g_fb = (uint16_t*)heap_caps_malloc(LCD_W * LCD_H * 2, MALLOC_CAP_SPIRAM);
     if (!g_fb) return -1;
     memset(g_fb, 0, LCD_W * LCD_H * 2);
-    g_band = (uint16_t*)heap_caps_malloc(LCD_W * BAND_ROWS * 2,
-                                         MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if (!g_band) { heap_caps_free(g_fb); g_fb = NULL; return -2; }
-    g_band_free = xSemaphoreCreateBinary();
+    for (int i = 0; i < BANDS; i++) {
+        g_band[i] = (uint16_t*)heap_caps_malloc(LCD_W * BAND_ROWS * 2,
+                                                MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if (!g_band[i]) { heap_caps_free(g_fb); g_fb = NULL; return -2; }
+    }
+    g_band_free = xSemaphoreCreateCounting(BANDS, BANDS);
     if (!g_band_free) return -6;
 
     gpio_config_t io = {0};

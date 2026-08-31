@@ -158,7 +158,66 @@ static int ap_clients() {
     return list.num;
 }
 
+// Look, without joining anything. The radio has to be up and in station
+// mode for a scan, so this brings it there and leaves it there; a scan
+// after a WIFI.CONNECT drops the connection, which is why it says so.
+static int wifi_scan_prepare(void) {
+    if (!stack_up()) return -1;
+    if (s_mode != WIFI_MODE_STA || !s_radio_up) {
+        radio_down();
+        if (!wifi_inited()) return -1;
+        if (!s_sta) s_sta = esp_netif_create_default_wifi_sta();
+        if (!s_sta) return -1;
+        if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) return -1;
+        if (esp_wifi_start() != ESP_OK) return -1;
+        s_radio_up = true;
+        s_mode = WIFI_MODE_STA;
+    }
+    return 0;
+}
+
 void register_esp32_wifi(VM& vm) {
+    // One row a network: [ssid$, rssi, channel, open]. Sorted by the
+    // radio, strongest first, and hidden networks come back with an
+    // empty name rather than being left out.
+    vm.register_native("WIFI.SCAN", 0, 1, [](const std::vector<Value>& args) -> Value {
+        int ms = args.size() >= 1 ? (int)args[0].to_double() : 120;
+        if (ms < 20) ms = 20;
+        if (ms > 1500) ms = 1500;
+        if (wifi_scan_prepare() != 0)
+            throw std::runtime_error("WIFI.SCAN: the radio would not start");
+
+        wifi_scan_config_t sc = {};
+        sc.show_hidden = true;
+        sc.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+        sc.scan_time.active.min = 20;
+        sc.scan_time.active.max = (uint32_t)ms;
+        if (esp_wifi_scan_start(&sc, true) != ESP_OK)
+            throw std::runtime_error("WIFI.SCAN: the scan did not run");
+
+        uint16_t n = 0;
+        esp_wifi_scan_get_ap_num(&n);
+        Value out = Value::make_array();
+        if (n == 0) return out;
+        if (n > 40) n = 40;
+
+        wifi_ap_record_t* recs =
+            (wifi_ap_record_t*)malloc(sizeof(wifi_ap_record_t) * n);
+        if (!recs) { esp_wifi_clear_ap_list(); return out; }
+        if (esp_wifi_scan_get_ap_records(&n, recs) == ESP_OK) {
+            for (uint16_t i = 0; i < n; i++) {
+                Value row = Value::make_array();
+                auto& c = row.as_array()->elements;
+                c.push_back(Value::make_string((const char*)recs[i].ssid));
+                c.push_back(Value::make_i64(recs[i].rssi));
+                c.push_back(Value::make_i64(recs[i].primary));
+                c.push_back(Value::make_bool(recs[i].authmode == WIFI_AUTH_OPEN));
+                out.as_array()->elements.push_back(std::move(row));
+            }
+        }
+        free(recs);
+        return out;
+    });
     vm.register_native("WIFI.CONNECT", 2, 3, [](const std::vector<Value>& args) -> Value {
         int timeout = args.size() >= 3 ? (int)args[2].to_double() : 20000;
         return Value::make_i64(wifi_join(args[0].to_string().c_str(),
