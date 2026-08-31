@@ -117,6 +117,23 @@ if (FRUITJAM AND FJ_USB)
     target_compile_definitions(jdbasic_repl PRIVATE
         FRUITJAM_USB=1
         PICO_STDIO_USB_USE_DEFAULT_DESCRIPTORS=1
+        # ...and it stops calling tusb_init() too, on the assumption that an
+        # app touching TinyUSB brings the whole stack up itself. Under NDEBUG
+        # the assert that would have said so is compiled away, so the device
+        # side simply never initialises: no pull-up, no enumeration, no
+        # console, no message. Our config leaves the host out of tusb_init(),
+        # so letting the SDK make that call again is exactly right.
+        PICO_STDIO_USB_ENABLE_TINYUSB_INIT=1
+        # ...and it stops running the background task that calls tud_task(),
+        # for the same reason. The interrupt then collects device events that
+        # nobody ever drains, so the descriptor request goes unanswered and
+        # the PC gives up with "Device Descriptor Request Failed". The host
+        # half is ours; the device half should keep behaving like any other
+        # pico_stdio_usb build.
+        PICO_STDIO_USB_ENABLE_IRQ_BACKGROUND_TASK=1
+        # ...and the fourth of the same kind: resetting into BOOTSEL when the
+        # host picks 1200 baud. Without it the only way back is the button.
+        PICO_ENABLE_USB_RESET_VIA_BAUD_RATE=1
     )
     target_include_directories(jdbasic_repl PRIVATE fjusb)
 endif()

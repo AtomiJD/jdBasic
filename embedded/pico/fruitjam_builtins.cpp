@@ -19,8 +19,11 @@ int      fruitjam_dvi_width(void);
 int      fruitjam_dvi_height(void);
 unsigned fruitjam_dvi_frames(void);
 #ifdef FRUITJAM_USB
-int fruitjam_usb_mounted(void);
+int fruitjam_usb_start(void);
+int fruitjam_usb_keyboards(void);
+int fruitjam_usb_devices(void);
 int fruitjam_usb_keys_waiting(void);
+int fruitjam_usb_key_count(void);
 #endif
 unsigned fruitjam_dvi_irqs(void);
 unsigned fruitjam_dvi_frame_us(void);
@@ -135,8 +138,17 @@ void register_fruitjam_gfx(VM& vm) {
         return Value::make_i64((int64_t)fruitjam_dvi_frame_us());
     });
 #ifdef FRUITJAM_USB
+    vm.register_native("USB.START", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_bool(fruitjam_usb_start() != 0);
+    });
     vm.register_native("USB.KEYBOARDS", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64(fruitjam_usb_mounted());
+        return Value::make_i64(fruitjam_usb_keyboards());
+    });
+    vm.register_native("USB.DEVICES", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(fruitjam_usb_devices());
+    });
+    vm.register_native("USB.KEYS", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(fruitjam_usb_key_count());
     });
     vm.register_native("USB.PENDING", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_bool(fruitjam_usb_keys_waiting() != 0);

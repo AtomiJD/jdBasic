@@ -7,6 +7,7 @@
 #
 #   board   pico | pico_w | pico2 | pico2_w | fruitjam  (default pico2_w)
 #   calc    with the PicoCalc drivers (default); nocalc = bare board
+#   usb     fruitjam only: build the USB host (keyboard, mouse)
 #
 # Each combination builds in its own directory, build-<board>[-nocalc],
 # so the matrix coexists. The plain "build" directory stays the default
@@ -23,6 +24,7 @@ export PICO_SDK_PATH PICO_TOOLCHAIN_PATH PICO_PIO_USB_PATH
 BOARD=pico2_w
 CALC=ON
 JAM=OFF
+USBHOST=OFF
 CLEAN=0
 for a in "$@"; do
     case "$a" in
@@ -30,6 +32,7 @@ for a in "$@"; do
         fruitjam|adafruit_fruit_jam) BOARD=adafruit_fruit_jam; CALC=OFF; JAM=ON ;;
         calc)   CALC=ON ;;
         nocalc) CALC=OFF ;;
+        usb)    USBHOST=ON ;;
         clean)  CLEAN=1 ;;
         *) echo "unknown argument: $a"; exit 1 ;;
     esac
@@ -40,11 +43,12 @@ if [ "$BOARD" = "pico2_w" ] && [ "$CALC" = "ON" ]; then
 else
     DIR=build-$BOARD
     [ "$CALC" = "OFF" ] && DIR=$DIR-nocalc
+    [ "$USBHOST" = "ON" ] && DIR=$DIR-usb
 fi
 
 [ "$CLEAN" = "1" ] && rm -rf "$DIR"
 
-cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM \
+cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM -DFJ_USB=$USBHOST \
     > build_cmake.log 2>&1 || { tail -20 build_cmake.log; exit 1; }
 ninja -C "$DIR" 2> build_ninja.err || { tail -30 build_ninja.err; exit 1; }
 ls -la "$DIR"/jdbasic_repl.uf2

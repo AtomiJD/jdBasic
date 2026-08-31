@@ -28,7 +28,7 @@ extern "C" void jdb_pico_fs_init(void);
 extern "C" void fruitjam_dvi_init(void);
 extern "C" int  fruitjam_dvi_alloc(void);
 #ifdef FRUITJAM_USB
-extern "C" void fruitjam_usb_stdio_init(void);
+extern "C" void fruitjam_usb_init(void);
 #endif
 extern "C" void fruitjam_dvi_trace(const char* s);
 #endif
@@ -448,7 +448,7 @@ int main() {
     fruitjam_dvi_init();
     fruitjam_dvi_alloc();
 #ifdef FRUITJAM_USB
-    fruitjam_usb_stdio_init();
+    fruitjam_usb_init();
 #endif
     fruitjam_dvi_trace("jdBasic on RP2350");
 #endif

@@ -179,6 +179,17 @@ int fruitjam_dvi_alloc(void) { return g_fb != NULL; }
 void fruitjam_gfx_color(int r, int g, int b);
 void fruitjam_gfx_text(int x, int y, const char* s, int scale);
 
+// A line of live state at the foot of the screen, overwritten in place.
+// When the console is the thing under investigation, the monitor is the
+// only instrument left.
+void fruitjam_dvi_status(int row, const char* s) {
+    if (!g_fb) return;
+    int y = 180 + row * 10;
+    for (int i = 0; i < 9; i++) fruitjam_dvi_hline(0, y + i, FB_W, 0);
+    fruitjam_gfx_color(48, 252, 48);
+    fruitjam_gfx_text(2, y, s, 1);
+}
+
 // Bring-up leaves a trail on the screen. A hang before the console exists
 // cannot report itself any other way.
 static int g_trace_y = 4;
