@@ -4,6 +4,39 @@ Convention: one section per released version, newest at the top. Pre-release / u
 
 ---
 
+## v1.0 Build 82 - 2026-08-31
+
+Refresh of all four Windows bundles. Four pieces of syntax, one fix to a
+builtin that answered the wrong question quietly, and the interpreter now
+runs on microcontrollers.
+
+### Highlights
+
+- **Optional parameters with defaults**, for `FUNC` and `SUB`. Builtins have taken optional arguments all along - `SUM(a)` and `SUM(a, axis)` - and now so do the functions you write: `FUNC Greet(name$, greeting$ = "Hello", mark$ = ".")`. Defaults are literals, because a default that had to be evaluated would need a scope to be evaluated in and there is none where a function is declared. Optional parameters come last, since arguments are matched left to right. A wrong count names the range it wanted.
+- **`??` gives the left side unless it is absent.** Absent, not falsy: `m{"port"} ?? 8080` keeps a port of `0`, where `ORELSE` would replace it. This matters because the hand-written test, `x = NONE`, is a documented trap - that comparison is true for values that are not NONE at all, and `TYPEOF(v) = "NONE"` is the correct long form.
+- **`?.` `?{` `?[` read into something that may not be there.** A missing key already reads as NONE on its own; it is the *next* step that fails. The guard stops the chain instead: `reply?{"choices"}?[0]?{"message"}?{"content"} ?? "no answer"`. It is not a bounds check - an index out of range stays an error - and it guards a field, not a call.
+- **`$"..."` puts expressions inside a string**: `$"Hallo {{name$}}, du hast {{n}} Nachrichten"`. Double braces, because single ones are what JSON is made of and angle brackets are what HTML is made of, and neither should need escaping. It becomes an ordinary concatenation at parse time, so it compiles exactly as well as it interprets.
+- **`DIR$` of a directory lists that directory.** It used to split the name at its last slash, look for a file of that name in the parent, find nothing, and answer with an empty list - which reads as "the directory is empty" rather than "you meant something else". Fixed on Windows and POSIX alike, so both answer the same.
+- **Native compiler**: a call with the wrong number of arguments is now a compile error naming the line and the range it wanted, instead of an LLVM IR verification failure naming a mangled function.
+- **Faster**: builtins carry their own arity instead of wearing a wrapper (about 9% off the builtin call path), reductions walk their input instead of copying it, and `SLEEP` waits against a deadline rather than counting slices, so a long sleep no longer drifts.
+
+### On a board
+
+The same interpreter now runs on microcontrollers, under `embedded/`. The RP2350 build is what a PicoCalc is. The ESP32-S3 build runs on a bare DevKitC and on the 2.8 inch ES3C28P display board, where it boots into its own prompt on the panel: 320 by 240 graphics, a 40 by 30 text console, the editor, a capacitive touch screen, sound with the classic `PLAY` notation, a microphone, and an SD card at `/sd` beside the flash store. Measured on the board: a full frame is 32 ms, and a game redrawing only the band that moved is 7 ms.
+
+None of this is in the Windows bundles - it is a separate build tree - but the language is the same one documented in `doc/languages.md`, without exception.
+
+### Documentation
+
+`help.txt` gained twenty-six entries covering the board verbs, six of which were older debt from the PicoCalc. `doc/languages.md` gained a chapter for the ports. The VS Code extension is at 1.0.30: its grammar generator only ever scanned `src/`, so the 108 builtins the board ports register elsewhere had never been coloured. `doc/BUILD.md` and the gate skill both listed the files that require a runtime-DLL rebuild and both omitted `src/vm.cpp`, which is the one that catches people - the symptom is an interpreter that is right and every generated EXE stale.
+
+### Distribution
+
+The same four Windows x64 bundles, all Authenticode-signed: **core**, **mcp-native**, **vibe-game-pack**, **vb6**. SHA256 hashes are on the [release page](https://github.com/AtomiJD/jdBasic/releases).
+
+---
+
+
 ## v1.0 Build 78 - 2026-08-14
 
 Refresh of all four Windows bundles. No new bundle, no new build flag. Supersedes Build 77 from the same day, which shipped the identical binaries with a `help.txt` that still predated the Forms work.
