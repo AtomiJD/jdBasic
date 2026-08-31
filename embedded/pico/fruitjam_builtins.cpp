@@ -14,7 +14,6 @@ void fruitjam_gfx_rect(int x, int y, int w, int h, int fill);
 void fruitjam_gfx_circle(int cx, int cy, int rad, int fill);
 void fruitjam_gfx_text(int x, int y, const char* s, int scale);
 int      fruitjam_dvi_alloc(void);
-void     fruitjam_dvi_free(void);
 unsigned char* fruitjam_dvi_framebuffer(void);
 int      fruitjam_dvi_width(void);
 int      fruitjam_dvi_height(void);
@@ -143,8 +142,4 @@ void register_fruitjam_gfx(VM& vm) {
         return Value::make_bool(fruitjam_usb_keys_waiting() != 0);
     });
 #endif
-    vm.register_native("DVI.RELEASE", 0, 0, [](const std::vector<Value>&) -> Value {
-        fruitjam_dvi_free();
-        return Value();
-    });
 }

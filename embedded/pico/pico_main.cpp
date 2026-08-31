@@ -450,7 +450,7 @@ int main() {
 #ifdef FRUITJAM_USB
     fruitjam_usb_stdio_init();
 #endif
-    fruitjam_dvi_trace("3 ready");
+    fruitjam_dvi_trace("jdBasic on RP2350");
 #endif
 #ifdef JDB_HAS_CYW43
     cyw43_arch_init();
