@@ -60,7 +60,15 @@ rate reaches it.
   bank to the top of main RAM (128 KB): parser and interpreter recurse.
 
 Image: ~1.8 MB flash for a Fruit Jam with the USB host; roughly 40 KB of
-SRAM heap remain for the VM once the framebuffer is out.
+SRAM heap remain for the VM once the framebuffer is out, with about 39 KB
+of that in one piece.
+
+That number is the ceiling on how big a program can be, and it is low:
+a 169-byte program loads, a 1305-byte one does not. Loading is what
+costs, not running - the lexer reserves `source/3` tokens up front and a
+token carries a std::string, so a kilobyte of source wants tens of
+kilobytes in one contiguous block, on top of the AST and the chunk.
+The 8 MB below is the way out of this, not a nicety.
 
 ## The Fruit Jam's PSRAM, and where it stands
 
@@ -75,9 +83,12 @@ few thousand blocks while the scanout and the USB host are running -
 allocator on the desktop under AddressSanitizer.
 
 `./build_pico.sh fruitjam usb psram` puts the interpreter's allocations
-of 512 bytes and up in it, and free SRAM at the prompt goes from 41 KB
-to 91 KB. It is **off by default** because one thing still fails, and
-it reduces to this:
+of 512 bytes and up in it. Free SRAM at the prompt goes from 41 KB to
+91 KB, and the ceiling above lifts: the 73 KB desktop space shooter
+loads and starts, where a 3 KB program cannot without it.
+
+It is **off by default** because one thing still fails, and it reduces
+to this:
 
     DIM n AS INTEGER = 6
     DIM a[6]
@@ -92,6 +103,13 @@ that does it. With the pool off the same program runs. The pool itself
 is not the suspect - the arithmetic is proven on both sides - so the
 next thing to look at is what a native call does to the value stack
 while that stack lives behind the XIP cache.
+
+Raising the threshold to 16 KB makes that program run again, which is
+the clue: whatever breaks is a block between 512 bytes and 16 KB. But
+it also gives the ceiling back, because the allocations that exhaust
+SRAM during a load are individually smaller than that. The two ends of
+the trade are one constant apart, `PSRAM_MIN` in
+`fruitjam_psram_heap.cpp`, which is where to start.
 
 ## Coming from MicroPython
 

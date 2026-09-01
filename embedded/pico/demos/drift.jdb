@@ -2,147 +2,128 @@
 ' the framebuffer is what the wire is reading, so everything that moves
 ' is erased in black at its old place and drawn at its new one.
 '
-' Arrows or A and D fly, space or button 2 fires, Q leaves.
+' Arrows fly, space or button 2 fires, q leaves. Written small on
+' purpose: the board has about forty kilobytes for a program.
 
 GFX.CONSOLE 0
 GFX.CLEAR 0
 
-DIM K_LEFT AS INTEGER = 180
-DIM K_RIGHT AS INTEGER = 183
-DIM SCR_W AS INTEGER = 320
-DIM SCR_H AS INTEGER = 240
+DIM sx[10]
+DIM sy[10]
+DIM bx[4]
+DIM by[4]
+DIM ex[4]
+DIM ey[4]
 
-DIM shipX AS INTEGER = 160
-DIM oldShipX AS INTEGER = 160
-DIM score AS INTEGER = 0
-DIM lives AS INTEGER = 3
-DIM running AS INTEGER = 1
-
-DIM N_STARS AS INTEGER = 24
-DIM starX[24]
-DIM starY[24]
-DIM N_SHOTS AS INTEGER = 6
-DIM shotX[6]
-DIM shotY[6]
-DIM N_FOES AS INTEGER = 5
-DIM foeX[5]
-DIM foeY[5]
-
-FOR i = 0 TO N_STARS - 1
-    starX[i] = RND(1) * SCR_W
-    starY[i] = RND(1) * SCR_H
+FOR i = 0 TO 9
+  sx[i] = RND(1) * 318
+  sy[i] = RND(1) * 200 + 14
 NEXT i
-FOR i = 0 TO N_SHOTS - 1
-    shotY[i] = -1
-NEXT i
-FOR i = 0 TO N_FOES - 1
-    foeX[i] = RND(1) * (SCR_W - 16) + 8
-    foeY[i] = 0 - RND(1) * 200
+FOR i = 0 TO 3
+  by[i] = 0 - 1
+  ex[i] = RND(1) * 300 + 10
+  ey[i] = RND(1) * 100 + 14
 NEXT i
 
-SUB DrawShip(x, ink)
-    DRAWCOLOR ink * 40, ink * 220, ink * 90
-    LINE x, 214, x - 7, 228
-    LINE x, 214, x + 7, 228
-    LINE x - 7, 228, x + 7, 228
-ENDSUB
-
-SUB DrawFoe(x, y, r, g, b)
-    DRAWCOLOR r, g, b
-    LINE x - 6, y, x, y + 8
-    LINE x + 6, y, x, y + 8
-    LINE x - 6, y, x + 6, y
-ENDSUB
+px = 160
+op = 160
+sc = 0
+go = 1
 
 DRAWCOLOR 255, 255, 255
 TEXT 4, 4, "STELLAR DRIFT", 1
 
 DO
-    k = KEY.NOW()
-    IF k = K_LEFT OR k = 97 OR k = 65 THEN shipX = shipX - 6
-    IF k = K_RIGHT OR k = 100 OR k = 68 THEN shipX = shipX + 6
-    IF k = 113 OR k = 81 THEN running = 0
-    IF k = 32 OR BUTTON.GET(2) THEN
-        FOR i = 0 TO N_SHOTS - 1
-            IF shotY[i] < 0 THEN
-                shotX[i] = shipX
-                shotY[i] = 210
-                EXITFOR
-            ENDIF
-        NEXT i
-    ENDIF
-    IF shipX < 10 THEN shipX = 10
-    IF shipX > SCR_W - 10 THEN shipX = SCR_W - 10
+  k = KEY.NOW()
+  IF k = 180 THEN px = px - 6
+  IF k = 183 THEN px = px + 6
+  IF k = 113 THEN go = 0
+  IF px < 10 THEN px = 10
+  IF px > 310 THEN px = 310
 
-    ' Stars first, so everything else draws over them.
-    FOR i = 0 TO N_STARS - 1
-        DRAWCOLOR 0, 0, 0
-        PSET starX[i], starY[i]
-        starY[i] = starY[i] + 1
-        IF starY[i] > 205 THEN
-            starY[i] = 12
-            starX[i] = RND(1) * SCR_W
-        ENDIF
-        DRAWCOLOR 120, 120, 160
-        PSET starX[i], starY[i]
+  IF k = 32 OR BUTTON.GET(2) THEN
+    FOR i = 0 TO 3
+      IF by[i] < 0 THEN
+        bx[i] = px
+        by[i] = 206
+        EXITFOR
+      ENDIF
     NEXT i
+  ENDIF
 
-    FOR i = 0 TO N_SHOTS - 1
-        IF shotY[i] >= 0 THEN
-            DRAWCOLOR 0, 0, 0
-            LINE shotX[i], shotY[i], shotX[i], shotY[i] + 4
-            shotY[i] = shotY[i] - 7
-            IF shotY[i] < 14 THEN
-                shotY[i] = -1
-            ELSE
-                DRAWCOLOR 255, 230, 60
-                LINE shotX[i], shotY[i], shotX[i], shotY[i] + 4
-            ENDIF
-        ENDIF
-    NEXT i
-
-    FOR i = 0 TO N_FOES - 1
-        DrawFoe(foeX[i], foeY[i], 0, 0, 0)
-        foeY[i] = foeY[i] + 2
-        IF foeY[i] > 206 THEN
-            foeY[i] = 12
-            foeX[i] = RND(1) * (SCR_W - 16) + 8
-            lives = lives - 1
-            IF lives <= 0 THEN running = 0
-        ENDIF
-        FOR j = 0 TO N_SHOTS - 1
-            IF shotY[j] >= 0 THEN
-                dx = shotX[j] - foeX[i]
-                IF dx < 0 THEN dx = 0 - dx
-                dy = shotY[j] - foeY[i]
-                IF dy < 0 THEN dy = 0 - dy
-                IF dx < 8 AND dy < 9 THEN
-                    DRAWCOLOR 0, 0, 0
-                    LINE shotX[j], shotY[j], shotX[j], shotY[j] + 4
-                    shotY[j] = -1
-                    foeY[i] = 12
-                    foeX[i] = RND(1) * (SCR_W - 16) + 8
-                    score = score + 10
-                ENDIF
-            ENDIF
-        NEXT j
-        DrawFoe(foeX[i], foeY[i], 230, 60, 60)
-    NEXT i
-
-    IF shipX <> oldShipX THEN
-        DrawShip(oldShipX, 0)
-        oldShipX = shipX
-    ENDIF
-    DrawShip(shipX, 1)
-
+  FOR i = 0 TO 9
     DRAWCOLOR 0, 0, 0
-    RECT 200, 2, 118, 10, 1
-    DRAWCOLOR 160, 220, 255
-    TEXT 200, 4, "S" + STR$(score) + " L" + STR$(lives), 1
+    PSET sx[i], sy[i]
+    sy[i] = sy[i] + 1
+    IF sy[i] > 205 THEN
+      sy[i] = 14
+      sx[i] = RND(1) * 318
+    ENDIF
+    DRAWCOLOR 130, 130, 170
+    PSET sx[i], sy[i]
+  NEXT i
 
-    SLEEP 16
-LOOP WHILE running = 1
+  FOR i = 0 TO 3
+    IF by[i] >= 0 THEN
+      DRAWCOLOR 0, 0, 0
+      LINE bx[i], by[i], bx[i], by[i] + 4
+      by[i] = by[i] - 8
+      IF by[i] < 14 THEN
+        by[i] = 0 - 1
+      ELSE
+        DRAWCOLOR 255, 230, 60
+        LINE bx[i], by[i], bx[i], by[i] + 4
+      ENDIF
+    ENDIF
+  NEXT i
+
+  FOR i = 0 TO 3
+    DRAWCOLOR 0, 0, 0
+    LINE ex[i] - 6, ey[i], ex[i] + 6, ey[i]
+    LINE ex[i], ey[i] + 7, ex[i] - 6, ey[i]
+    LINE ex[i], ey[i] + 7, ex[i] + 6, ey[i]
+    ey[i] = ey[i] + 2
+    IF ey[i] > 200 THEN
+      ey[i] = 14
+      ex[i] = RND(1) * 300 + 10
+    ENDIF
+    FOR j = 0 TO 3
+      IF by[j] >= 0 THEN
+        dx = bx[j] - ex[i]
+        IF dx < 0 THEN dx = 0 - dx
+        dy = by[j] - ey[i]
+        IF dy < 0 THEN dy = 0 - dy
+        IF dx < 8 AND dy < 9 THEN
+          DRAWCOLOR 0, 0, 0
+          LINE bx[j], by[j], bx[j], by[j] + 4
+          by[j] = 0 - 1
+          ey[i] = 14
+          ex[i] = RND(1) * 300 + 10
+          sc = sc + 10
+        ENDIF
+      ENDIF
+    NEXT j
+    DRAWCOLOR 230, 60, 60
+    LINE ex[i] - 6, ey[i], ex[i] + 6, ey[i]
+    LINE ex[i], ey[i] + 7, ex[i] - 6, ey[i]
+    LINE ex[i], ey[i] + 7, ex[i] + 6, ey[i]
+  NEXT i
+
+  IF px <> op THEN
+    DRAWCOLOR 0, 0, 0
+    LINE op, 214, op - 7, 228
+    LINE op, 214, op + 7, 228
+    LINE op - 7, 228, op + 7, 228
+    op = px
+  ENDIF
+  DRAWCOLOR 40, 220, 90
+  LINE px, 214, px - 7, 228
+  LINE px, 214, px + 7, 228
+  LINE px - 7, 228, px + 7, 228
+
+  SLEEP 20
+LOOP WHILE go = 1
 
 GFX.CLEAR 0
 GFX.CONSOLE 1
-PRINT "score "; score
+PRINT "score "; sc
