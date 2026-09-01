@@ -67,8 +67,13 @@ if (FRUITJAM)
         fruitjam_con.c
         fruitjam_builtins.cpp
         fruitjam_snd.c
+        fruitjam_board.c
         pico_sound.cpp
         pico_editor.cpp
+        picocalc_sd.c
+        fatfs/ff.c
+        fatfs/ffsystem.c
+        fatfs/ffunicode.c
     )
     if (FJ_USB)
         list(APPEND JDB_SOURCES fruitjam_usb.c)
@@ -111,7 +116,12 @@ if (FRUITJAM)
     # the assumption that an app touching TinyUSB directly brings its own.
     # We want them: they carry the console and the reset-to-BOOTSEL that
     # the serial port triggers.
-    target_compile_definitions(jdbasic_repl PRIVATE FRUITJAM=1)
+    target_compile_definitions(jdbasic_repl PRIVATE
+        FRUITJAM=1
+        # The board has 48 pins and the NeoPixels sit at 32; without this
+        # the PIO helpers drop bit 5 of a pin number.
+        PICO_PIO_USE_GPIO_BASE=1
+    )
 endif()
 
 # The host stack replaces the SDK's TinyUSB configuration wholesale, so its

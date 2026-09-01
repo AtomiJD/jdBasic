@@ -19,6 +19,12 @@ int      fruitjam_dvi_width(void);
 int      fruitjam_dvi_height(void);
 unsigned fruitjam_dvi_frames(void);
 #ifdef FRUITJAM_USB
+int  fruitjam_button(int n);
+int  fruitjam_ir_raw(void);
+void fruitjam_neo_set(int index, int r, int g, int b);
+void fruitjam_neo_show(void);
+void fruitjam_neo_clear(void);
+int  fruitjam_neo_count(void);
 void jdb_snd_out_route(int speaker);
 int  jdb_snd_out_probe(char* out, int cap);
 int  jdb_snd_out_stat(char* out, int cap);
@@ -142,6 +148,31 @@ void register_fruitjam_gfx(VM& vm) {
         return Value::make_i64((int64_t)fruitjam_dvi_frame_us());
     });
 #ifdef FRUITJAM_USB
+    // 1 is the BOOT button, 2 and 3 are the pair beside it.
+    vm.register_native("BUTTON", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_bool(fruitjam_button((int)args[0].to_double()) != 0);
+    });
+    vm.register_native("IR.RAW", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(fruitjam_ir_raw());
+    });
+    // Nothing reaches the strip until NEOPIXEL.SHOW, so a whole pattern
+    // arrives at once rather than crawling across.
+    vm.register_native("NEOPIXEL", 4, 4, [](const std::vector<Value>& args) -> Value {
+        fruitjam_neo_set((int)args[0].to_double(), (int)args[1].to_double(),
+                         (int)args[2].to_double(), (int)args[3].to_double());
+        return Value();
+    });
+    vm.register_native("NEOPIXEL.SHOW", 0, 0, [](const std::vector<Value>&) -> Value {
+        fruitjam_neo_show();
+        return Value();
+    });
+    vm.register_native("NEOPIXEL.CLEAR", 0, 0, [](const std::vector<Value>&) -> Value {
+        fruitjam_neo_clear();
+        return Value();
+    });
+    vm.register_native("NEOPIXEL.COUNT", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(fruitjam_neo_count());
+    });
     vm.register_native("SND.PROBE", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[160];
         jdb_snd_out_probe(b, sizeof b);

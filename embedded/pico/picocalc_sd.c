@@ -10,11 +10,21 @@
 #include "fatfs/ff.h"
 #include "fatfs/diskio.h"
 
+// Same driver, two boards, different corners of the chip.
+#ifdef FRUITJAM
+#define SD_SPI    spi0
+#define PIN_SCK   34
+#define PIN_MOSI  35
+#define PIN_MISO  36
+#define PIN_CS    39
+#define PIN_DETECT 33
+#else
 #define SD_SPI    spi0
 #define PIN_MISO  16
 #define PIN_CS    17
 #define PIN_SCK   18
 #define PIN_MOSI  19
+#endif
 
 #define SPI_SLOW  400000
 #define SPI_FAST  12500000

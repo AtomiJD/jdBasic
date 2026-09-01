@@ -29,6 +29,9 @@ void register_pico_httpd(VM& vm);
 #if defined(PICOCALC) || defined(FRUITJAM)
 // The melody engine is board independent; only its output stage is not.
 void register_pico_sound(VM& vm);
+// So is the card reader, once it is told which pins it sits on.
+void register_pico_sdtest(VM& vm);
+void register_pico_sdbb(VM& vm);
 #endif
 #ifdef PICOCALC
 void register_pico_diag(VM& vm);
@@ -36,8 +39,7 @@ void register_pico_lcdstat(VM& vm);
 void register_pico_tap(VM& vm);
 void register_pico_taparm(VM& vm);
 void register_pico_gfx(VM& vm);
-void register_pico_sdtest(VM& vm);
-void register_pico_sdbb(VM& vm);
+
 #endif
 
 void register_pico_builtins(VM& vm) {
@@ -72,6 +74,8 @@ void register_pico_builtins(VM& vm) {
 #endif
 #if defined(PICOCALC) || defined(FRUITJAM)
     register_pico_sound(vm);
+    register_pico_sdtest(vm);
+    register_pico_sdbb(vm);
 #endif
 #ifdef JDB_HAS_CYW43
     register_pico_wifi(vm);
@@ -84,8 +88,6 @@ void register_pico_builtins(VM& vm) {
     register_pico_taparm(vm);
     register_pico_gfx(vm);
     register_sprite_builtins(vm);
-    register_pico_sdtest(vm);
-    register_pico_sdbb(vm);
 #endif
     vm.register_native("LED", 1, 1, [](const std::vector<Value>& args) -> Value {
 #ifdef JDB_HAS_CYW43
@@ -404,7 +406,7 @@ void register_pico_mem(VM& vm) {
         return Value::make_i64((int64_t)lo);
     });
 }
-#ifdef PICOCALC
+#if defined(PICOCALC) || defined(FRUITJAM)
 extern "C" void sd_selftest(char* out, int cap);
 
 void register_pico_sdtest(VM& vm) {
@@ -424,7 +426,7 @@ void register_pico_sdbb(VM& vm) {
         return Value::make_string(buf);
     });
 }
-#endif // PICOCALC
+#endif
 
 extern "C" uint32_t jdb_pico_millis(void) {
     return to_ms_since_boot(get_absolute_time());

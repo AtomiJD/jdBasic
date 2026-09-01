@@ -34,6 +34,7 @@ extern "C" void fruitjam_usb_init(void);
 extern "C" void fruitjam_dvi_trace(const char* s);
 extern "C" void fruitjam_con_init(void);
 extern "C" void fruitjam_snd_init(void);
+extern "C" void fruitjam_board_init(void);
 #endif
 #ifdef PICOCALC
 extern "C" void picocalc_lcd_init(void);
@@ -545,10 +546,10 @@ int main() {
     fruitjam_dvi_alloc();
     fruitjam_con_init();
     fruitjam_snd_init();
+    fruitjam_board_init();
 #ifdef FRUITJAM_USB
     fruitjam_usb_init();
 #endif
-    fruitjam_dvi_trace("jdBasic on RP2350");
 #endif
 #ifdef JDB_HAS_CYW43
     cyw43_arch_init();

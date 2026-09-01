@@ -112,7 +112,7 @@ extern "C" void jdb_pico_fs_init(void) {
 // The SD card behind the /sd prefix, through the wrappers in
 // picocalc_sd.c so FatFS types stay out of this file. A bare board has
 // no card slot; stubs keep every /sd path an ENOENT.
-#ifdef PICOCALC
+#if defined(PICOCALC) || defined(FRUITJAM)
 extern "C" {
 int  sd_open(const char* path, int write, int create, int truncate, int append);
 int  sd_read(int h, void* buf, int len);
