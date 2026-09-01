@@ -110,24 +110,68 @@ static uint32_t vactive_line[] = {
     HSTX_CMD_TMDS       | MODE_H_ACTIVE_PIXELS
 };
 
-// The framebuffer is written by the processor and read by the scanout
-// DMA. Both reach the memory through the same XIP cache, so the cached
-// window is coherent between them and is the one to use: the uncached
-// alias costs a QSPI transaction per read and the scanout fell to 41 Hz
-// on it.
+// The framebuffer sits in the uncached alias. Once the scanout stopped
+// reading it directly the cached window lost its advantage and kept a
+// cost: 150 KB streamed through an 8 KB cache every frame evicts the
+// code the processor is running. Uncached, the framebuffer and the code
+// stay out of each other's way, and there is no coherency question
+// between what the processor writes and what the copy channel reads.
 //
 // It takes the bottom of the window; the pool above it is told to start
 // past the reservation, so the two never describe the same bytes.
-#define PSRAM_FB_ADDR     0x11000000u
+#define PSRAM_FB_ADDR     0x15000000u
 #define PSRAM_FB_RESERVED ((FB_BYTES + 4095u) & ~4095u)
 
 static int       g_fb_in_psram = 0;
 static uint8_t*  g_fb = NULL;
+
+#ifdef JDB_FB_IN_PSRAM
+// The part cannot be read fast enough to feed the picture directly: a
+// line is fetched twice for the vertical doubling, which is 18.4 MB/s
+// against the 14 a quad read of this chip sustains, and the frame
+// stretches until the monitor lets go.
+//
+// So the scanout never reads PSRAM. It reads two line buffers in SRAM,
+// and a second pair of channels copies the next stored line into the
+// one that is not on screen. Each stored line is copied once instead of
+// read twice, which halves the traffic to 9.2 MB/s and fits.
+//
+// The copy is paced by a DMA timer rather than chained to anything: the
+// pixel clock and the timer both come off clk_sys, so once the phase is
+// set at the top of a frame it holds. A copy that arrives late tears one
+// line; it cannot disturb the sync, because the sync comes from the
+// command list and that is unchanged.
+#define LINE_BUF_BYTES FB_STRIDE
+static uint8_t  g_lines[2][LINE_BUF_BYTES] __attribute__((aligned(4)));
+static uint32_t g_copy_scratch;
+
+// Four words an entry, written into the copy channel's alias 2:
+// control, count, source, and the destination that starts it.
+#define COPY_ENTRY_WORDS 4
+// Blank lines between the frame interrupt and the first pixel: 45 signal
+// lines, which is 22 and a half stored-line periods. Twenty-two entries
+// carry that gap and the odd half is waited out at the restart, so the
+// first real copy begins exactly when the line it will replace starts
+// being displayed and has the whole period to finish in. The first two
+// of the lead entries are real work - they fill both buffers for the
+// frame about to start - and the rest move a single word into a scratch.
+#define COPY_LEAD_ENTRIES 22
+#define COPY_LEAD_US      32
+#define COPY_REAL_ENTRIES (FB_H - 2)
+#define COPY_ENTRIES      (COPY_LEAD_ENTRIES + COPY_REAL_ENTRIES)
+static uint32_t g_copycmd[COPY_ENTRIES * COPY_ENTRY_WORDS];
+static int      g_ch_copy = -1;
+static int      g_ch_trig = -1;
+#endif
 static uint32_t* g_cmds = NULL;
 static int       g_ch_pixel = -1;
 static int       g_ch_cmd = -1;
 
 void fruitjam_con_tick(void);
+#ifdef JDB_FB_IN_PSRAM
+static void copy_restart(void);
+static void copy_channels_init(void);
+#endif
 
 static uint32_t g_frames = 0;
 static uint32_t g_frame_us = 0;
@@ -145,6 +189,9 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
     g_last_wrap = now;
     g_frames++;
 
+#ifdef JDB_FB_IN_PSRAM
+    if (g_ch_trig >= 0) copy_restart();
+#endif
     fruitjam_con_tick();
 }
 
@@ -214,13 +261,93 @@ static void build_command_list(void) {
             // Two signal lines per stored line: the shift is the doubling.
             uint row = (v - MODE_V_BLANK_LINES) >> 1;
             g_cmds[w++] = FB_STRIDE / sizeof(uint32_t);
+#ifdef JDB_FB_IN_PSRAM
+            g_cmds[w++] = (uintptr_t)g_lines[row & 1];
+#else
             g_cmds[w++] = (uintptr_t)(g_fb + (size_t)row * FB_STRIDE);
+#endif
         }
     }
     // A null trigger ends the frame and raises the interrupt.
     g_cmds[w++] = 0;
     g_cmds[w++] = 0;
 }
+
+#ifdef JDB_FB_IN_PSRAM
+// One entry per stored line. The lead entries move a single word into a
+// scratch and exist only to carry the phase across the blank lines; the
+// rest copy line L into the buffer that is not being displayed while
+// line L-1 is on screen.
+static void build_copy_list(uint32_t copy_ctrl) {
+    uint32_t* e = g_copycmd;
+    for (int i = 0; i < COPY_LEAD_ENTRIES; i++) {
+        *e++ = copy_ctrl;
+        if (i < 2) {
+            // The two buffers the frame starts on.
+            *e++ = FB_STRIDE / sizeof(uint32_t);
+            *e++ = (uintptr_t)(g_fb + (size_t)i * FB_STRIDE);
+            *e++ = (uintptr_t)g_lines[i];
+        } else {
+            *e++ = 1;
+            *e++ = (uintptr_t)g_fb;
+            *e++ = (uintptr_t)&g_copy_scratch;
+        }
+    }
+    for (int line = 2; line < FB_H; line++) {
+        *e++ = copy_ctrl;
+        *e++ = FB_STRIDE / sizeof(uint32_t);
+        *e++ = (uintptr_t)(g_fb + (size_t)line * FB_STRIDE);
+        *e++ = (uintptr_t)g_lines[line & 1];
+    }
+}
+
+// At the top of every frame the two buffers are refilled by hand and the
+// paced list starts again, so a copy that slipped cannot accumulate.
+// This runs in the frame interrupt, where the blank lines leave more
+// than a millisecond and the scanout is reading nothing from PSRAM.
+static void __not_in_flash_func(copy_restart)(void) {
+    dma_hw->abort = 1u << g_ch_trig;
+    while (dma_hw->abort & (1u << g_ch_trig)) tight_loop_contents();
+    // The odd half of a stored-line period that the blank lines do not
+    // divide into. Cheap here: the frame has a millisecond of blanking
+    // left and nothing to do in it.
+    busy_wait_us_32(COPY_LEAD_US);
+    dma_hw->ch[g_ch_trig].read_addr = (uintptr_t)g_copycmd;
+    dma_hw->ch[g_ch_trig].write_addr = (uintptr_t)&dma_hw->ch[g_ch_copy].al2_ctrl;
+    dma_hw->ch[g_ch_trig].al1_transfer_count_trig = COPY_ENTRIES * COPY_ENTRY_WORDS;
+}
+
+static void copy_channels_init(void) {
+    g_ch_copy = dma_claim_unused_channel(true);
+    g_ch_trig = dma_claim_unused_channel(true);
+
+    // Straight memory to memory, as fast as the bus allows.
+    dma_channel_config c = dma_channel_get_default_config(g_ch_copy);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, true);
+    channel_config_set_irq_quiet(&c, true);
+    dma_channel_set_config(g_ch_copy, &c, false);
+    build_copy_list(channel_config_get_ctrl_value(&c));
+
+    // One word a tick into the copy channel's four registers, the last of
+    // which starts it. Four ticks to an entry, so the timer runs at four
+    // times the stored-line rate: 126 MHz over 2000 is 63 kHz, and a
+    // stored line lasts two of the 31.746 us signal lines.
+    dma_hw->timer[0] = (1u << 16) | 2000u;
+
+    c = dma_channel_get_default_config(g_ch_trig);
+    channel_config_set_transfer_data_size(&c, DMA_SIZE_32);
+    channel_config_set_read_increment(&c, true);
+    channel_config_set_write_increment(&c, true);
+    channel_config_set_ring(&c, true, 4);          // the four registers
+    channel_config_set_dreq(&c, DREQ_DMA_TIMER0);
+    channel_config_set_irq_quiet(&c, true);
+    dma_channel_configure(g_ch_trig, &c,
+                          &dma_hw->ch[g_ch_copy].al2_ctrl,
+                          g_copycmd, COPY_ENTRIES * COPY_ENTRY_WORDS, false);
+}
+#endif
 
 unsigned fruitjam_psram_reserved(void) {
     return g_fb_in_psram ? PSRAM_FB_RESERVED : 0u;
@@ -307,6 +434,10 @@ void fruitjam_dvi_init(void) {
     channel_config_set_dreq(&c, DREQ_HSTX);
     channel_config_set_chain_to(&c, g_ch_cmd);
     channel_config_set_irq_quiet(&c, true);
+    // Above the line copy, which reads PSRAM and stalls while it does:
+    // the two share the DMA's read port, and the picture is the one with
+    // a deadline.
+    channel_config_set_high_priority(&c, true);
     dma_channel_configure(g_ch_pixel, &c, &hstx_fifo_hw->fifo, NULL, 0, false);
 
     // Reads the list straight through, writes the same two registers over
@@ -316,9 +447,16 @@ void fruitjam_dvi_init(void) {
     channel_config_set_read_increment(&c, true);
     channel_config_set_write_increment(&c, true);
     channel_config_set_ring(&c, true, 3);
+    channel_config_set_high_priority(&c, true);
     dma_channel_configure(g_ch_cmd, &c,
                           &dma_hw->ch[g_ch_pixel].al3_transfer_count,
                           g_cmds, 2, false);
+
+#ifdef JDB_FB_IN_PSRAM
+    // Before the first frame: the buffers the command list already
+    // points at have to hold something.
+    if (g_fb_in_psram) copy_channels_init();
+#endif
 
     dma_hw->ints1 = 1u << g_ch_pixel;
     dma_hw->inte1 = 1u << g_ch_pixel;
