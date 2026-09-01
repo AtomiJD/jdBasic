@@ -19,6 +19,7 @@ int      fruitjam_dvi_alloc(void);
 unsigned char* fruitjam_dvi_framebuffer(void);
 int      fruitjam_dvi_width(void);
 int      fruitjam_dvi_peek(int x, int y);
+int      fruitjam_dvi_cache(char* out, int cap);
 int      fruitjam_dvi_height(void);
 unsigned fruitjam_dvi_frames(void);
 int  fruitjam_con_enable(int on);
@@ -196,6 +197,11 @@ void register_fruitjam_gfx(VM& vm) {
     // Everything the scanout can be asked about in one line: the two
     // HSTX registers, the DMA control word, and the two clocks as the
     // counter actually measured them rather than as they were asked for.
+    vm.register_native("DVI.CACHE$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[128];
+        fruitjam_dvi_cache(b, sizeof b);
+        return Value::make_string(b);
+    });
     vm.register_native("DVI.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[128];
         snprintf(b, sizeof b, "csr=%08x expand=%08x dma=%08x hstx=%u sys=%u",

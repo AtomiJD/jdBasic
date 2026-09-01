@@ -26,6 +26,7 @@
 // One byte per pixel, RGB332: red and green get three bits, blue two.
 
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -119,7 +120,7 @@ static uint32_t vactive_line[] = {
 //
 // It takes the bottom of the window; the pool above it is told to start
 // past the reservation, so the two never describe the same bytes.
-#define PSRAM_FB_ADDR     0x15000000u
+#define PSRAM_FB_ADDR     0x11000000u
 #define PSRAM_FB_RESERVED ((FB_BYTES + 4095u) & ~4095u)
 
 static int       g_fb_in_psram = 0;
@@ -348,6 +349,24 @@ static void copy_channels_init(void) {
                           g_copycmd, COPY_ENTRIES * COPY_ENTRY_WORDS, false);
 }
 #endif
+
+// What the line cache is actually doing: the first bytes of each buffer,
+// what the framebuffer holds at the same place, and how much work the
+// two channels have left. Empty buffers against a written framebuffer
+// says the copy never ran.
+int fruitjam_dvi_cache(char* out, int cap) {
+#ifdef JDB_FB_IN_PSRAM
+    return snprintf(out, cap,
+        "b0=%02x%02x%02x b1=%02x%02x%02x fb=%02x%02x%02x trig=%u copy=%u",
+        g_lines[0][0], g_lines[0][1], g_lines[0][2],
+        g_lines[1][0], g_lines[1][1], g_lines[1][2],
+        g_fb[0], g_fb[1], g_fb[2],
+        (unsigned)dma_hw->ch[g_ch_trig].transfer_count,
+        (unsigned)dma_hw->ch[g_ch_copy].transfer_count);
+#else
+    return snprintf(out, cap, "no line cache in this build");
+#endif
+}
 
 unsigned fruitjam_psram_reserved(void) {
     return g_fb_in_psram ? PSRAM_FB_RESERVED : 0u;

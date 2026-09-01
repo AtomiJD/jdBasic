@@ -115,10 +115,37 @@ write-back cache would need it, is slower still (41 Hz against 47) and
 unnecessary - the processor and the DMA reach the memory through the
 same cache, so the cached window is coherent between them.
 
-The way to have both is a line cache: each stored line feeds two
-scanlines, so a third DMA channel copying one line ahead into a pair of
-640-byte SRAM buffers halves the PSRAM traffic to 9.2 MB/s, which is
-inside what the part delivers. That is the next thing to build here.
+The line cache was built and does not rescue it. `FJ_FB_PSRAM` carries
+it: the scanout reads two 640-byte SRAM buffers and a paced pair of DMA
+channels copies the next stored line into whichever is not on screen,
+so each line is copied once instead of read twice and the traffic
+halves to 9.2 MB/s. The frame still comes out at 18,853 us.
+
+Why it does not help: the DMA has one read master. A PSRAM read costs
+around 46 clocks, the copy issues 160 of them per stored line, and that
+occupies the port for most of the 63 us the line lasts. The pixel
+channel is marked high priority and still cannot get a word in every 25
+clocks, which is what the picture needs. Halving the *bytes* did not
+halve the *transactions* that matter.
+
+Two measurements from that work worth keeping:
+
+The DMA cannot read the uncached XIP alias at all. Pointed at
+0x15000000 the copy channels run, their counters advance, and the
+buffers stay zero; the same code on 0x11000000 fills them. The
+processor reads and writes 0x15000000 perfectly well, so this is a
+DMA-side restriction and not a dead window. `DVI.CACHE$` is what showed
+it and stays for the next attempt.
+
+Anything measured while the copy was pointed at the uncached alias is
+worthless - the frame looked like 16,706 us precisely because nothing
+was being fetched.
+
+What is left to try is the QMI itself: the 24-cycle dummy is per
+transaction, so a burst or continuous-read configuration for chip
+select 1 would cut the cost per word rather than the number of words.
+Until then the framebuffer stays in SRAM and the memory has to come
+from somewhere else.
 
 The VM's 85 KB is the other half of the problem. `SYS.NATIVES` says 386
 builtins with 3.2 KB of names between them, so the names are not it and
