@@ -228,9 +228,9 @@ static std::string http_request(const std::string& method, const std::string& ur
 
     // Keep serving while waiting: the board has one thread, so a fetch
     // that just slept would freeze its own web server.
-    extern void pico_httpd_pump();
+    extern void jdb_httpd_pump();
     for (int t = 0; t < timeout_ms && !x.closed; t += 10) {
-        pico_httpd_pump();
+        jdb_httpd_pump();
         sleep_ms(10);
     }
 

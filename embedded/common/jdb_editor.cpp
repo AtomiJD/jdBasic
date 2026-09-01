@@ -88,7 +88,7 @@ static int ask(const char* q) {
     return repl_read_key();
 }
 
-void pico_editor(const char* name) {
+void jdb_editor(const char* name) {
     {
         int c, r;
         jdb_con_size(&c, &r);

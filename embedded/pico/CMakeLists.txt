@@ -45,9 +45,11 @@ set(JDB_SOURCES
     pico_events.cpp
     pico_psram.cpp
     pico_hw.cpp
-    pico_help.cpp
-    pico_syntax.cpp
     pico_fs.cpp
+    ../common/jdb_repl.cpp
+    ../common/jdb_help.cpp
+    ../common/jdb_syntax.cpp
+    ../common/jdb_editor.cpp
     littlefs/lfs.c
     littlefs/lfs_util.c
     ../../src/lexer.cpp
@@ -68,8 +70,6 @@ if (FRUITJAM)
         fruitjam_builtins.cpp
         fruitjam_snd.c
         fruitjam_board.c
-        pico_sound.cpp
-        pico_editor.cpp
         picocalc_sd.c
         fatfs/ff.c
         fatfs/ffsystem.c
@@ -80,14 +80,18 @@ if (FRUITJAM)
     endif()
 endif()
 
+# The melody engine needs somewhere to put a note; a board with no
+# speaker registers no PLAY and does not carry it.
+if (PICOCALC OR FRUITJAM)
+    list(APPEND JDB_SOURCES ../common/jdb_play.cpp)
+endif()
+
 if (PICOCALC)
     list(APPEND JDB_SOURCES
-        pico_editor.cpp
         picocalc_lcd.c
         picocalc_kbd.c
         picocalc_gfx.c
         picocalc_snd.c
-        pico_sound.cpp
         picocalc_sd.c
         fatfs/ff.c
         fatfs/ffsystem.c
@@ -170,7 +174,7 @@ endif()
 # The radio chip exists only on the W boards; the LED builtin adapts
 # and the WiFi family comes along, lwIP in threadsafe-background mode.
 if (PICO_CYW43_SUPPORTED)
-    target_sources(jdbasic_repl PRIVATE pico_wifi.cpp pico_httpd.cpp)
+    target_sources(jdbasic_repl PRIVATE pico_wifi.cpp ../common/jdb_httpd.cpp)
     target_link_libraries(jdbasic_repl pico_cyw43_arch_lwip_threadsafe_background)
     target_compile_definitions(jdbasic_repl PRIVATE JDB_HAS_CYW43=1)
 endif()

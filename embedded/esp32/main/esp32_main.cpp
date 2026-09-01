@@ -1,8 +1,11 @@
-// jdBasic on the ESP32-S3: a serial REPL on the native USB port, with
-// the flash store behind it, and the panel console up from the start.
+// jdBasic on the ESP32-S3: what this board brings to the shared prompt.
+// The console is the native USB port, the flash store sits behind it and
+// the panel console comes up with the board. The prompt itself, the file
+// verbs and the editor live in ../../common.
 
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -17,34 +20,24 @@
 #include "driver/uart_vfs.h"
 
 #include "jdb_embed_api.h"
+#include "../../common/jdb_repl.h"
 
 extern "C" bool esp32_fs_init(void);
 void esp32_note_after_init(void);
-void syntax_print(const char* s, int n);
 
-#define AUTORUN_CFG "autorun.cfg"
-
-static char g_current[128];
-
-// A name without an extension may mean the .jdb of that name. What was
-// typed wins, so a file that really has no extension is still reachable.
 extern "C" int  es3c28p_con_on(void);
 extern "C" int  es3c28p_lcd_init(void);
 extern "C" int  es3c28p_con_enable(int on);
 extern "C" int  es3c28p_lcd_width(void);
 extern "C" int  es3c28p_lcd_height(void);
 extern "C" void es3c28p_con_size(int* cols, int* rows);
-void pico_editor(const char* name);
 
-static const char* resolve_name(const char* name, char* buf, size_t cap) {
-    FILE* f = fopen(name, "r");
-    if (f) { fclose(f); return name; }
-    if (strchr(name, '.')) return name;
-    snprintf(buf, cap, "%s.jdb", name);
-    f = fopen(buf, "r");
-    if (f) { fclose(f); return buf; }
-    return name;
-}
+#define AUTORUN_CFG "autorun.cfg"
+
+// Whether the panel console starts with the board. On unless a file says
+// otherwise, because a display board that boots dark is a display board
+// you have to be told about.
+#define CONSOLE_CFG "console.cfg"
 
 static void console_init() {
 #if CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG
@@ -93,7 +86,7 @@ static void report(const char* label) {
 }
 
 // One byte, or -1 once the wire has been quiet for the given time.
-static int read_byte_ms(int timeout_ms) {
+static int esp32_read_byte_ms(int timeout_ms) {
     for (int waited = 0; waited <= timeout_ms; waited += 10) {
         int ch = getchar();
         if (ch != EOF) return ch;
@@ -103,8 +96,7 @@ static int read_byte_ms(int timeout_ms) {
 }
 
 // The keys an editor needs, with a terminal's escape sequences folded
-// into the same codes the PicoCalc's keyboard controller sends. Blocking:
-// stdin is non-blocking here, so an empty read waits rather than gives up.
+// into the same codes the PicoCalc's keyboard controller sends.
 #define K_LEFT  0xB4
 #define K_UP    0xB5
 #define K_DOWN  0xB6
@@ -112,7 +104,15 @@ static int read_byte_ms(int timeout_ms) {
 #define K_HOME  0xD2
 #define K_DEL   0xD4
 #define K_END   0xD5
+#define K_SLEFT  0xB8
+#define K_SUP    0xB9
+#define K_SDOWN  0xBA
+#define K_SRIGHT 0xBB
+#define K_SHOME  0xD8
+#define K_SEND   0xD9
 
+// Blocking: stdin is non-blocking here, so an empty read waits rather
+// than gives up.
 static int getch_blocking(void) {
     for (;;) {
         int c = getchar();
@@ -121,19 +121,42 @@ static int getch_blocking(void) {
     }
 }
 
+// A shifted arrow carries a modifier parameter: ESC[1;2A. Collecting the
+// parameters rather than reading a fixed three bytes is what lets the
+// editor's selection work over the serial line.
 extern "C" int repl_read_key(void) {
     int c = getch_blocking();
     if (c != 0x1B) return c;
-    int c2 = getch_blocking();
-    if (c2 != '[') return 0;
-    switch (getch_blocking()) {
-        case 'A': return K_UP;
-        case 'B': return K_DOWN;
-        case 'C': return K_RIGHT;
-        case 'D': return K_LEFT;
-        case 'H': return K_HOME;
-        case 'F': return K_END;
-        case '3': getch_blocking(); return K_DEL;
+    if (getch_blocking() != '[') return 0;
+
+    char par[8];
+    int n = 0, f;
+    for (;;) {
+        f = getch_blocking();
+        if ((f >= '0' && f <= '9') || f == ';') {
+            if (n < (int)sizeof par - 1) par[n++] = (char)f;
+            continue;
+        }
+        break;
+    }
+    par[n] = 0;
+
+    int shift = 0;
+    const char* semi = strchr(par, ';');
+    if (semi && semi[1] == '2') shift = 1;
+
+    switch (f) {
+        case 'A': return shift ? K_SUP : K_UP;
+        case 'B': return shift ? K_SDOWN : K_DOWN;
+        case 'C': return shift ? K_SRIGHT : K_RIGHT;
+        case 'D': return shift ? K_SLEFT : K_LEFT;
+        case 'H': return shift ? K_SHOME : K_HOME;
+        case 'F': return shift ? K_SEND : K_END;
+        case '~':
+            if (par[0] == '3') return K_DEL;
+            if (par[0] == '1' || par[0] == '7') return shift ? K_SHOME : K_HOME;
+            if (par[0] == '4' || par[0] == '8') return shift ? K_SEND : K_END;
+            break;
     }
     return 0;
 }
@@ -141,44 +164,6 @@ extern "C" int repl_read_key(void) {
 extern "C" void jdb_con_size(int* cols, int* rows) {
     es3c28p_con_size(cols, rows);
 }
-
-// The board's stdio does not echo: read by character, show what
-// arrives, honour backspace, stop at return.
-static void read_line(char* buf, size_t cap) {
-    size_t len = 0;
-    for (;;) {
-        int ch = getchar();
-        if (ch == EOF) {
-            vTaskDelay(pdMS_TO_TICKS(10));
-            continue;
-        }
-        if (ch == '\r' || ch == '\n') break;
-        if (ch == 8 || ch == 127) {
-            if (len > 0) { len--; printf("\b \b"); fflush(stdout); }
-            continue;
-        }
-        if (ch < 32 || len + 1 >= cap) continue;
-        buf[len++] = (char)ch;
-        putchar(ch);
-        fflush(stdout);
-    }
-    buf[len] = 0;
-    printf("\n");
-}
-
-// Strip surrounding quotes and trailing blanks from a command argument.
-static const char* dos_arg(char* a) {
-    while (*a == ' ') a++;
-    size_t n = strlen(a);
-    while (n && (a[n - 1] == ' ' || a[n - 1] == '\r')) a[--n] = 0;
-    if (n >= 2 && (a[0] == '"' || a[0] == '\'')) { a++; n -= 2; a[n] = 0; }
-    return a;
-}
-
-// Whether the panel console starts with the board. On unless a file says
-// otherwise, because a display board that boots dark is a display board
-// you have to be told about.
-#define CONSOLE_CFG "console.cfg"
 
 static bool console_boot_wanted(void) {
     FILE* f = fopen(CONSOLE_CFG, "r");
@@ -189,6 +174,40 @@ static bool console_boot_wanted(void) {
     return !(got && (buf[0] == 'o' || buf[0] == 'O') &&
                     (buf[1] == 'f' || buf[1] == 'F'));
 }
+
+static int esp32_board_command(const char* cmd, char* a) {
+    if (strcmp(cmd, "CONSOLE") != 0) return 0;
+    const char* arg = jdb_repl_arg(a);
+    if (!*arg) {
+        printf("console at boot: %s\n", console_boot_wanted() ? "on" : "off");
+    } else if (strcasecmp(arg, "OFF") == 0) {
+        FILE* f = fopen(CONSOLE_CFG, "w");
+        if (!f) { printf("cannot write %s\n", CONSOLE_CFG); return 1; }
+        fputs("off\n", f);
+        fclose(f);
+        es3c28p_con_enable(0);
+        printf("console off at boot\n");
+    } else if (strcasecmp(arg, "ON") == 0) {
+        remove(CONSOLE_CFG);
+        if (es3c28p_lcd_init() == 0) es3c28p_con_enable(1);
+        printf("console on at boot\n");
+    } else {
+        printf("CONSOLE ON, CONSOLE OFF, or CONSOLE to ask\n");
+    }
+    return 1;
+}
+
+static void esp32_before_edit(void) {
+    if (!es3c28p_con_on())
+        printf("no panel console - GFX.CONSOLE 1 first, or edit blind\n");
+}
+
+static const JdbReplPort PORT = {
+    esp32_read_byte_ms,
+    esp32_board_command,
+    esp32_before_edit,
+    AUTORUN_CFG,
+};
 
 // The first page on the panel: forty columns, so it is written for
 // forty. Kilobytes rather than bytes, because the digit that matters on
@@ -218,200 +237,6 @@ static void panel_hello(const esp_chip_info_t* chip) {
     for (size_t i = 0; i < sizeof hints / sizeof hints[0]; i++)
         printf(" \x1b[96m%-16s\x1b[0m%s\n", hints[i][0], hints[i][1]);
     printf("\n");
-}
-
-static bool autorun_get(char* name, size_t cap) {
-    FILE* f = fopen(AUTORUN_CFG, "r");
-    if (!f) return false;
-    bool ok = fgets(name, (int)cap, f) != NULL;
-    fclose(f);
-    if (!ok) return false;
-    size_t n = strlen(name);
-    while (n && (name[n - 1] == '\n' || name[n - 1] == '\r')) name[--n] = 0;
-    return n > 0;
-}
-
-static int copy_file(const char* src, const char* dst) {
-    FILE* in = fopen(src, "rb");
-    if (!in) return -1;
-    FILE* out = fopen(dst, "wb");
-    if (!out) { fclose(in); return -1; }
-    char buf[512];
-    size_t n;
-    int rc = 0;
-    while ((n = fread(buf, 1, sizeof buf, in)) > 0)
-        if (fwrite(buf, 1, n, out) != n) { rc = -1; break; }
-    fclose(in);
-    return fclose(out) == 0 ? rc : -1;
-}
-
-static int dos_command(char* line) {
-    char cmd[10];
-    int ci = 0;
-    const char* p = line;
-    while (*p && *p != ' ' && ci < 9) cmd[ci++] = toupper((unsigned char)*p++);
-    cmd[ci] = 0;
-    if (*p && *p != ' ') return 0;
-    char rest[1024];
-    snprintf(rest, sizeof rest, "%s", p);
-    char* a = rest;
-    while (*a == ' ') a++;
-
-    if (strcmp(cmd, "AUTORUN") == 0) {
-        char name[128];
-        const char* arg = dos_arg(a);
-        if (!*arg) {
-            if (autorun_get(name, sizeof name)) printf("autorun: %s\n", name);
-            else printf("autorun: off\n");
-        } else if (strcasecmp(arg, "OFF") == 0) {
-            remove(AUTORUN_CFG);
-            printf("autorun off\n");
-        } else {
-            char resolved[160];
-            const char* nm = resolve_name(arg, resolved, sizeof resolved);
-            FILE* probe = fopen(nm, "r");
-            if (!probe) { printf("cannot open %s\n", nm); return 1; }
-            fclose(probe);
-            FILE* f = fopen(AUTORUN_CFG, "w");
-            if (!f) { printf("cannot save autorun\n"); return 1; }
-            fprintf(f, "%s\n", nm);
-            fclose(f);
-            printf("autorun: %s\n", nm);
-        }
-        return 1;
-    }
-
-    // Take a file straight off the wire. Nothing is echoed and nothing
-    // is parsed, so a program arrives at the speed of the link. Ends on
-    // Ctrl-D, or once the line has been quiet for three seconds.
-    if (strcmp(cmd, "RECV") == 0) {
-        const char* nm = dos_arg(a);
-        if (!*nm) { printf("RECV name\n"); return 1; }
-        FILE* f = fopen(nm, "w");
-        if (!f) { printf("cannot write %s\n", nm); return 1; }
-        printf("receiving %s, end with Ctrl-D\n", nm);
-        fflush(stdout);
-        size_t n = 0;
-        int pending_cr = 0;
-        for (;;) {
-            int c = read_byte_ms(n ? 3000 : 30000);
-            if (c < 0 || c == 4) break;
-            // Any line ending becomes a single newline.
-            if (c == '\r') { pending_cr = 1; fputc('\n', f); n++; continue; }
-            if (c == '\n' && pending_cr) { pending_cr = 0; continue; }
-            pending_cr = 0;
-            fputc(c, f);
-            n++;
-        }
-        fclose(f);
-        printf("%u bytes\n", (unsigned)n);
-        return 1;
-    }
-
-    // The listing the desktop gives: a line number, a rule, and the line
-    // coloured the way the editor colours it.
-    if (strcmp(cmd, "CONSOLE") == 0) {
-        const char* arg = dos_arg(a);
-        if (!*arg) {
-            printf("console at boot: %s\n", console_boot_wanted() ? "on" : "off");
-        } else if (strcasecmp(arg, "OFF") == 0) {
-            FILE* f = fopen(CONSOLE_CFG, "w");
-            if (!f) { printf("cannot write %s\n", CONSOLE_CFG); return 1; }
-            fputs("off\n", f);
-            fclose(f);
-            es3c28p_con_enable(0);
-            printf("console off at boot\n");
-        } else if (strcasecmp(arg, "ON") == 0) {
-            remove(CONSOLE_CFG);
-            if (es3c28p_lcd_init() == 0) es3c28p_con_enable(1);
-            printf("console on at boot\n");
-        } else {
-            printf("CONSOLE ON, CONSOLE OFF, or CONSOLE to ask\n");
-        }
-        return 1;
-    }
-
-    if (strcmp(cmd, "EDIT") == 0) {
-        char resolved[160];
-        const char* nm = dos_arg(a);
-        if (!*nm) nm = g_current;
-        if (!*nm) { printf("EDIT what? Give it a name.\n"); return 1; }
-        nm = resolve_name(nm, resolved, sizeof resolved);
-        if (!es3c28p_con_on())
-            printf("no panel console - GFX.CONSOLE 1 first, or edit blind\n");
-        pico_editor(nm);
-        return 1;
-    }
-
-    if (strcmp(cmd, "LIST") == 0) {
-        char resolved[160];
-        const char* nm = dos_arg(a);
-        if (!*nm) nm = g_current;
-        if (!*nm) { printf("No program loaded.\n"); return 1; }
-        nm = resolve_name(nm, resolved, sizeof resolved);
-        FILE* f = fopen(nm, "r");
-        if (!f) { printf("cannot open %s\n", nm); return 1; }
-        char buf[256];
-        int ln = 1;
-        while (fgets(buf, sizeof buf, f)) {
-            int n = (int)strlen(buf);
-            while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
-            printf("\x1b[90m%4d | \x1b[0m", ln++);
-            syntax_print(buf, n);
-            printf("\n");
-        }
-        fclose(f);
-        return 1;
-    }
-
-    if (strcmp(cmd, "TYPE") == 0 && *a) {
-        char resolved[160];
-        FILE* f = fopen(resolve_name(dos_arg(a), resolved, sizeof resolved), "r");
-        if (!f) { printf("cannot open %s\n", a); return 1; }
-        char buf[256];
-        size_t n;
-        while ((n = fread(buf, 1, sizeof buf, f)) > 0)
-            printf("%.*s", (int)n, buf);
-        fclose(f);
-        printf("\n");
-        return 1;
-    }
-
-    if (strcmp(cmd, "DEL") == 0 && *a) {
-        char resolved[160];
-        const char* nm = resolve_name(dos_arg(a), resolved, sizeof resolved);
-        printf(remove(nm) == 0 ? "deleted\n" : "cannot delete\n");
-        return 1;
-    }
-
-    if ((strcmp(cmd, "COPY") == 0 || strcmp(cmd, "REN") == 0) && *a) {
-        char* sp = strchr(a, ' ');
-        if (!sp) { printf("usage: %s from to\n", cmd); return 1; }
-        *sp = 0;
-        const char* src = dos_arg(a);
-        char* b = sp + 1;
-        const char* dst = dos_arg(b);
-        int rc = (cmd[0] == 'C') ? copy_file(src, dst) : rename(src, dst);
-        if (rc != 0) printf("cannot %s %s\n", cmd[0] == 'C' ? "copy" : "rename", src);
-        return 1;
-    }
-
-    return 0;
-}
-
-static void run_file(JdbEmbed* vm, const char* name) {
-    char resolved[160];
-    name = resolve_name(name, resolved, sizeof resolved);
-    snprintf(g_current, sizeof g_current, "%s", name);
-    char* out = jdb_embed_load(vm, name);
-    if (out) {
-        printf("%s", out);
-        jdb_embed_free(out);
-    } else {
-        const char* err = jdb_embed_last_error(vm);
-        printf("ERROR: %s\n", err ? err : "unknown");
-    }
-    fflush(stdout);
 }
 
 extern "C" void app_main(void) {
@@ -460,69 +285,5 @@ extern "C" void app_main(void) {
         panel_hello(&chip);
     }
 
-    // Power-on program, with a window to get out of it: without one a
-    // looping autorun program would own the board for good.
-    char ar_name[128];
-    if (fs_ok && autorun_get(ar_name, sizeof ar_name)) {
-        printf("autorun %s - ESC to stop\n", ar_name);
-        fflush(stdout);
-        bool cancelled = false;
-        for (int i = 0; i < 20 && !cancelled; i++) {
-            int c = read_byte_ms(100);
-            if (c == 0x1B || c == 3) cancelled = true;
-        }
-        if (cancelled) printf("cancelled\n");
-        else run_file(vm, ar_name);
-    }
-
-    static char line[1024];
-    for (;;) {
-        printf("> ");
-        fflush(stdout);
-        read_line(line, sizeof line);
-        if (!line[0]) continue;
-
-        if (dos_command(line)) { fflush(stdout); continue; }
-
-        // RUN and LOAD name a file rather than an expression, and an
-        // empty argument means the one already named.
-        int meta = 0;
-        char* arg = NULL;
-        if (strncasecmp(line, "RUN", 3) == 0 && (line[3] == 0 || line[3] == ' ' || line[3] == '"')) {
-            meta = 1; arg = line + 3;
-        } else if (strncasecmp(line, "LOAD", 4) == 0 && (line[4] == 0 || line[4] == ' ' || line[4] == '"')) {
-            meta = 2; arg = line + 4;
-        }
-        if (meta) {
-            const char* nm = dos_arg(arg);
-            if (!*nm) nm = g_current;
-            if (!*nm) {
-                printf("no program named - RUN name\n");
-            } else if (meta == 1) {
-                run_file(vm, nm);
-            } else {
-                char resolved[160];
-                nm = resolve_name(nm, resolved, sizeof resolved);
-                FILE* probe = fopen(nm, "r");
-                if (!probe) printf("cannot open %s\n", nm);
-                else {
-                    fclose(probe);
-                    snprintf(g_current, sizeof g_current, "%s", nm);
-                    printf("loaded %s\n", nm);
-                }
-            }
-            fflush(stdout);
-            continue;
-        }
-
-        char* out = jdb_embed_eval(vm, line);
-        if (out) {
-            if (out[0]) printf("%s", out);
-            jdb_embed_free(out);
-        } else {
-            const char* err = jdb_embed_last_error(vm);
-            printf("ERROR: %s\n", err ? err : "unknown");
-        }
-        fflush(stdout);
-    }
+    jdb_repl_run(vm, &PORT);
 }

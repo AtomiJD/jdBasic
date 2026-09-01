@@ -541,6 +541,17 @@ extern "C" void jdb_pico_atrans_probe(char* out, int cap) {
 }
 #endif
 
+// What the flash store has left. littlefs counts the blocks in use, so
+// the numbers move a block at a time rather than byte for byte.
+extern "C" int jdb_pico_fs_free(unsigned* freebytes, unsigned* total) {
+    lfs_ssize_t used = lfs_fs_size(&g_lfs);
+    if (used < 0) return -1;
+    *total = (unsigned)(g_cfg.block_count * g_cfg.block_size);
+    unsigned in_use = (unsigned)used * g_cfg.block_size;
+    *freebytes = in_use > *total ? 0 : *total - in_use;
+    return 0;
+}
+
 #include "pico/bootrom.h"
 
 // One-shot repair: erase the leftover partition table at the physical

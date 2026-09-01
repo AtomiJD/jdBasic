@@ -146,7 +146,7 @@ static int snd_init(void) {
 
 // The three the score engine calls. Names and meaning are the RP2350's.
 
-void picocalc_snd_volume(int pct) {
+void jdb_snd_out_volume(int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     g_vol = pct;
@@ -156,14 +156,14 @@ void picocalc_snd_volume(int pct) {
 // The enable line is asserted on every note, not once at startup. It is
 // an ordinary GPIO, so anything else that writes it - a program, a probe
 // - would otherwise leave the board silently muted until the next reset.
-void picocalc_snd_tone(int freq) {
+void jdb_snd_out_tone(int freq) {
     if (snd_init() != 0) return;
     gpio_set_level((gpio_num_t)PIN_EN, 0);
     g_until = 0;
     g_freq = freq > 0 ? freq : 0;
 }
 
-void picocalc_snd_beep(int freq, int ms) {
+void jdb_snd_out_beep(int freq, int ms) {
     if (snd_init() != 0) return;
     gpio_set_level((gpio_num_t)PIN_EN, 0);
     if (ms <= 0) ms = 1;

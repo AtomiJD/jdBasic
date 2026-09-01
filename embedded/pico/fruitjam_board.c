@@ -59,6 +59,8 @@ int fruitjam_button(int n) {
     return gpio_get(pin) ? 0 : 1;      // pulled up, so pressed reads low
 }
 
+int fruitjam_button_count(void) { return 3; }
+
 int fruitjam_ir_raw(void) { return gpio_get(IR_PIN) ? 1 : 0; }
 
 // Colours go out green first, and the state machine wants them at the top

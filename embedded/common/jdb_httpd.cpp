@@ -295,7 +295,7 @@ static int httpd_poll(VM& vm) {
 // visitor, and the board could never fetch its own page.
 static VM* g_vm = nullptr;
 
-void pico_httpd_pump() {
+void jdb_httpd_pump() {
     // NO_SYS keeps looped-back packets in a queue until someone drains it.
     jdb_lwip_begin();
     jdb_net_poll();
@@ -303,7 +303,7 @@ void pico_httpd_pump() {
     if (g_listen && g_vm) httpd_poll(*g_vm);
 }
 
-void register_pico_httpd(VM& vm) {
+void register_jdb_httpd(VM& vm) {
     g_vm = &vm;
     vm.register_native("HTTP.SERVER.ON_GET", 2, 2, [](const std::vector<Value>& args) -> Value {
         g_get_routes[args[0].to_string()] = args[1].to_string();

@@ -143,7 +143,6 @@ size_t   fruitjam_dvi_stride(void) { return FB_STRIDE; }
 uint32_t fruitjam_dvi_frames(void) { return g_frames; }
 uint32_t fruitjam_dvi_irqs(void)   { return g_frames; }
 uint32_t fruitjam_dvi_frame_us(void) { return g_frame_us; }
-uint32_t fruitjam_dvi_hstx_hz(void)  { return clock_get_hz(clk_hstx); }
 uint32_t fruitjam_dvi_sys_hz(void)   { return clock_get_hz(clk_sys); }
 uint32_t fruitjam_dvi_csr(void)    { return hstx_ctrl_hw->csr; }
 uint32_t fruitjam_dvi_expand(void) { return hstx_ctrl_hw->expand_shift; }

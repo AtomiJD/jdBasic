@@ -39,6 +39,9 @@ static int g_cursor_on = 0;
 static int g_reverse = 0;
 static volatile int g_busy = 0;
 static int g_blink = 0;
+// A program that wants the whole screen turns the console off; the
+// prompt keeps running over the serial line while it does.
+static int g_enabled = 1;
 
 static void cell_fill(int col, int row, uint8_t colour) {
     uint8_t* fb = fruitjam_dvi_framebuffer();
@@ -231,14 +234,26 @@ void fruitjam_con_write(const char* s, int len) {
 // The scanout hands out sixty of these a second, which is the only clock
 // this needs. Half a second on, half a second off.
 void fruitjam_con_tick(void) {
-    if (g_busy) return;
+    if (g_busy || !g_enabled) return;
     if (++g_blink < 30) return;
     g_blink = 0;
     g_cursor_on = !g_cursor_on;
     cursor_draw(g_cursor_on);
 }
 
-static void con_out_chars(const char* buf, int len) { fruitjam_con_write(buf, len); }
+int fruitjam_con_enable(int on) {
+    if (!on && g_cursor_on) { cursor_draw(0); g_cursor_on = 0; }
+    g_enabled = on ? 1 : 0;
+    return g_enabled;
+}
+
+int fruitjam_con_on(void) { return g_enabled; }
+
+void fruitjam_con_size(int* cols, int* rows) { *cols = COLS; *rows = ROWS; }
+
+static void con_out_chars(const char* buf, int len) {
+    if (g_enabled) fruitjam_con_write(buf, len);
+}
 
 static stdio_driver_t con_driver = {
     .out_chars = con_out_chars,

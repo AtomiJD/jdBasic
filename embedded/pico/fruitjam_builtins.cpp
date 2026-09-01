@@ -4,6 +4,7 @@
 
 #include "../../src/vm.h"
 #include <ctype.h>
+#include <stdio.h>
 
 extern "C" {
 void fruitjam_gfx_palette(int i, int r, int g, int b);
@@ -19,10 +20,14 @@ unsigned char* fruitjam_dvi_framebuffer(void);
 int      fruitjam_dvi_width(void);
 int      fruitjam_dvi_height(void);
 unsigned fruitjam_dvi_frames(void);
+int  fruitjam_con_enable(int on);
+int  fruitjam_con_on(void);
+void fruitjam_con_size(int* cols, int* rows);
 #ifdef FRUITJAM_USB
 void fruitjam_kbd_layout(int de);
 int  fruitjam_kbd_layout_get(void);
 int  fruitjam_button(int n);
+int  fruitjam_button_count(void);
 int  fruitjam_ir_raw(void);
 void fruitjam_neo_set(int index, int r, int g, int b);
 void fruitjam_neo_show(void);
@@ -45,7 +50,6 @@ unsigned fruitjam_dvi_hstx_meas(void);
 unsigned fruitjam_dvi_sys_meas(void);
 unsigned fruitjam_dvi_expand(void);
 unsigned fruitjam_dvi_ctrl(void);
-unsigned fruitjam_dvi_hstx_hz(void);
 unsigned fruitjam_dvi_sys_hz(void);
 }
 
@@ -118,6 +122,21 @@ void register_fruitjam_gfx(VM& vm) {
     vm.register_native("GFX.HEIGHT", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64(fruitjam_dvi_height());
     });
+    // The console and a drawing program share one framebuffer, so a
+    // program that wants the screen to itself takes it here. The prompt
+    // keeps running over the serial line meanwhile.
+    vm.register_native("GFX.CONSOLE", 0, 1, [](const std::vector<Value>& args) -> Value {
+        if (args.size() >= 1) fruitjam_con_enable(args[0].to_double() != 0);
+        return Value::make_bool(fruitjam_con_on() != 0);
+    });
+    vm.register_native("GFX.CONSIZE", 0, 0, [](const std::vector<Value>&) -> Value {
+        int cols = 0, rows = 0;
+        fruitjam_con_size(&cols, &rows);
+        Value arr = Value::make_array();
+        arr.as_array()->elements.push_back(Value::make_i64(cols));
+        arr.as_array()->elements.push_back(Value::make_i64(rows));
+        return arr;
+    });
     // Counts completed fields, so a program can measure what it costs to
     // draw and whether the signal is still running.
     vm.register_native("DVI.FRAMES", 0, 0, [](const std::vector<Value>&) -> Value {
@@ -126,34 +145,36 @@ void register_fruitjam_gfx(VM& vm) {
     vm.register_native("DVI.IRQS", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)fruitjam_dvi_irqs());
     });
+    // Measured against the reference, not what the SDK was told: the
+    // scanout retunes clk_hstx behind its back, so its bookkeeping value
+    // still reads the 150 MHz default.
     vm.register_native("DVI.CLOCK", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64((int64_t)fruitjam_dvi_hstx_hz());
+        return Value::make_i64((int64_t)fruitjam_dvi_hstx_meas() * 1000);
     });
     vm.register_native("SYS.CLOCK", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)fruitjam_dvi_sys_hz());
     });
-    vm.register_native("DVI.CSR", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64((int64_t)fruitjam_dvi_csr());
-    });
-    vm.register_native("DVI.EXPAND", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64((int64_t)fruitjam_dvi_expand());
-    });
-    vm.register_native("DVI.DMACTRL", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64((int64_t)fruitjam_dvi_ctrl());
-    });
-    vm.register_native("DVI.MEASHSTX", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64((int64_t)fruitjam_dvi_hstx_meas());
-    });
-    vm.register_native("DVI.MEASSYS", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64((int64_t)fruitjam_dvi_sys_meas());
+    // Everything the scanout can be asked about in one line: the two
+    // HSTX registers, the DMA control word, and the two clocks as the
+    // counter actually measured them rather than as they were asked for.
+    vm.register_native("DVI.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[128];
+        snprintf(b, sizeof b, "csr=%08x expand=%08x dma=%08x hstx=%u sys=%u",
+                 (unsigned)fruitjam_dvi_csr(), (unsigned)fruitjam_dvi_expand(),
+                 (unsigned)fruitjam_dvi_ctrl(), (unsigned)fruitjam_dvi_hstx_meas(),
+                 (unsigned)fruitjam_dvi_sys_meas());
+        return Value::make_string(b);
     });
     vm.register_native("DVI.FRAMEUS", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)fruitjam_dvi_frame_us());
     });
 #ifdef FRUITJAM_USB
     // 1 is the BOOT button, 2 and 3 are the pair beside it.
-    vm.register_native("BUTTON", 1, 1, [](const std::vector<Value>& args) -> Value {
+    vm.register_native("BUTTON.GET", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_bool(fruitjam_button((int)args[0].to_double()) != 0);
+    });
+    vm.register_native("BUTTON.COUNT", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(fruitjam_button_count());
     });
     // KBD.LAYOUT with no argument reports, with one it sets: "DE" or "US".
     vm.register_native("KBD.LAYOUT", 0, 1, [](const std::vector<Value>& args) -> Value {
@@ -169,7 +190,7 @@ void register_fruitjam_gfx(VM& vm) {
     });
     // Nothing reaches the strip until NEOPIXEL.SHOW, so a whole pattern
     // arrives at once rather than crawling across.
-    vm.register_native("NEOPIXEL", 4, 4, [](const std::vector<Value>& args) -> Value {
+    vm.register_native("NEOPIXEL.SET", 4, 4, [](const std::vector<Value>& args) -> Value {
         fruitjam_neo_set((int)args[0].to_double(), (int)args[1].to_double(),
                          (int)args[2].to_double(), (int)args[3].to_double());
         return Value();

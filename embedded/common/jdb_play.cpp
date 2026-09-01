@@ -176,15 +176,15 @@ static void snd_reset() {
 
 // Rides on the VM's periodic tick, which runs whether or not the
 // program registered event handlers, so a long score keeps feeding.
-static void pico_sound_pump() {
+static void jdb_play_pump() {
     if (g_cursor < g_score.size()) score_fill();
     snd_kick();
 }
 
 extern "C" void jdb_snd_out_beep(int freq, int ms);
 
-void register_pico_sound(VM& vm) {
-    vm.on_tick = []() { pico_sound_pump(); };
+void register_jdb_play(VM& vm) {
+    vm.on_tick = []() { jdb_play_pump(); };
     vm.register_native("BEEP", 0, 2, [](const std::vector<Value>& args) -> Value {
         int freq = args.size() >= 1 ? (int)args[0].to_double() : 880;
         int ms   = args.size() >= 2 ? (int)args[1].to_double() : 200;

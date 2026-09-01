@@ -4154,3 +4154,215 @@ Description: Lets go of the card. Boards with a card slot only.
 [SD.INFO]
 Syntax: SD.INFO
 Description: The mounted card as [name$, megabytes, bus_width]. Boards with a card slot only. Four is the width this slot is wired for.
+
+[LINE]
+Syntax: LINE x1, y1, x2, y2 [, r, g, b]
+Description: A straight line between two points. The colour is optional and, when given, stays in force for later drawing the way DRAWCOLOR does.
+
+[GFX.PALETTE]
+Syntax: GFX.PALETTE(index, r, g, b)
+Description: Sets one of the sixteen palette entries a buffered screen draws through. Boards only.
+
+[GFX.BUFFER]
+Syntax: GFX.BUFFER(x, y, w, h) -> bytes | GFX.BUFFER(0)
+Description: Keeps that rectangle in memory at four bits a pixel, so drawing goes to RAM and SCREENFLIP sends only what changed. Answers with the bytes it took, or -1 if there was no room. GFX.BUFFER(0) gives it back. RP2350 with a panel only; a whole 320 by 320 screen is 51 KB, so check SYS.LARGEST first.
+
+[GFX.BUFFERED]
+Syntax: GFX.BUFFERED -> TRUE | FALSE
+Description: Whether a buffer is being held. Boards with a panel only.
+
+[LED]
+Syntax: LED(on)
+Description: The board's own LED. Boards only. On a W board it hangs off the radio chip, so it needs the radio started.
+
+[KEY.GET]
+Syntax: KEY.GET -> code
+Description: One key code from the console, waiting for one if none has arrived. Boards only. The codes are the PicoCalc keyboard controller's: ESC is 177 and the arrows are 180 to 183, and a terminal's escape sequences fold into the same values.
+
+[KBD.RAW$]
+Syntax: KBD.RAW$ -> text$
+Description: What the keyboard controller actually sent, byte for byte. PicoCalc only, for when a key does not arrive as expected.
+
+[KBD.LAYOUT]
+Syntax: KBD.LAYOUT [(layout$)] -> text$
+Description: The keyboard layout, US or DE, and with an argument it sets it. Fruit Jam only. German swaps y and z, the digit row and the punctuation. It starts as US at every power-on, so a program calling KBD.LAYOUT with DE behind AUTORUN is what makes it stick.
+
+[LCD.STAT$]
+Syntax: LCD.STAT$ -> text$
+Description: The panel's scroll offset and cursor position. PicoCalc only.
+
+[LCD.ROW$]
+Syntax: LCD.ROW$(y) -> text$
+Description: One row of the text console as it stands on the glass. PicoCalc only.
+
+[LCD.TAP$]
+Syntax: LCD.TAP$ -> text$
+Description: The bytes the display bus last carried. PicoCalc only.
+
+[LCD.TAPARM]
+Syntax: LCD.TAPARM -> count
+Description: Arms the display-bus tap for the next transfer. PicoCalc only.
+
+[BUTTON.GET]
+Syntax: BUTTON.GET(n) -> TRUE | FALSE
+Description: Whether button n is held down. Fruit Jam only, where 1 is the BOOT button and 2 and 3 are the pair beside it. BOOT is only a boot function while the chip is coming up; afterwards it is an ordinary button.
+
+[BUTTON.COUNT]
+Syntax: BUTTON.COUNT -> count
+Description: How many buttons this board has. Fruit Jam only.
+
+[NEOPIXEL.SET]
+Syntax: NEOPIXEL.SET(index, r, g, b)
+Description: Sets one addressable LED. Fruit Jam only. Nothing reaches the strip until NEOPIXEL.SHOW, so a whole pattern arrives at once rather than crawling across.
+
+[NEOPIXEL.SHOW]
+Syntax: NEOPIXEL.SHOW
+Description: Sends what NEOPIXEL.SET has set. Fruit Jam only.
+
+[NEOPIXEL.CLEAR]
+Syntax: NEOPIXEL.CLEAR
+Description: All of them off, and sends it. Fruit Jam only.
+
+[NEOPIXEL.COUNT]
+Syntax: NEOPIXEL.COUNT -> count
+Description: How many LEDs the strip has. Fruit Jam only; five on this board.
+
+[IR.RAW]
+Syntax: IR.RAW -> 0 | 1
+Description: The infrared receiver's pin as it stands. Fruit Jam only. This is the raw level, not a decoded command: a remote's carrier shows as the pin going busy.
+
+[SND.OUT]
+Syntax: SND.OUT(to_speaker)
+Description: Routes the codec to the speaker amplifier (1) or the headphone jack (0). Fruit Jam only. The routing bits carry one or the other, never both.
+
+[SND.PROBE]
+Syntax: SND.PROBE -> text$
+Description: What the codec answers on the I2C bus, register by register. Fruit Jam only.
+
+[SND.STAT]
+Syntax: SND.STAT -> text$
+Description: The converter's own status flags: powered, running, and what it thinks it is being fed. Fruit Jam only.
+
+[SND.PINS]
+Syntax: SND.PINS -> text$
+Description: The state of the three I2S pins and the rate the state machine is clocking them at. Fruit Jam only, for telling a line that carries nothing from one that carries something nobody hears.
+
+[USB.START]
+Syntax: USB.START -> TRUE | FALSE
+Description: Brings the USB host up if it is not already running. Fruit Jam only; it starts with the board, so this is for after a USB verb says it did not.
+
+[USB.KEYBOARDS]
+Syntax: USB.KEYBOARDS -> count
+Description: How many keyboards have enumerated. Fruit Jam only.
+
+[USB.DEVICES]
+Syntax: USB.DEVICES -> count
+Description: How many USB devices of any kind have enumerated. Fruit Jam only.
+
+[USB.KEYS]
+Syntax: USB.KEYS -> count
+Description: How many keystrokes the host has delivered since boot. Fruit Jam only.
+
+[USB.PENDING]
+Syntax: USB.PENDING -> TRUE | FALSE
+Description: Whether a keystroke is waiting to be read. Fruit Jam only.
+
+[DVI.FRAMES]
+Syntax: DVI.FRAMES -> count
+Description: Completed fields since boot. Fruit Jam only. A program can measure what drawing costs by watching how many go by, and a count that stops moving says the signal has.
+
+[DVI.FRAMEUS]
+Syntax: DVI.FRAMEUS -> microseconds
+Description: How long the last field took. Fruit Jam only. 16666 is 60 Hz exactly.
+
+[DVI.IRQS]
+Syntax: DVI.IRQS -> count
+Description: How often the scanout interrupt has run. Fruit Jam only. One per field; more than that means the command list is restarting early.
+
+[DVI.CLOCK]
+Syntax: DVI.CLOCK -> hertz
+Description: The HSTX serialiser clock. Fruit Jam only. 480p60 needs exactly 126 MHz, because the serialiser puts out two bits a cycle.
+
+[DVI.DIAG$]
+Syntax: DVI.DIAG$ -> text$
+Description: The scanout's registers in one line: the two HSTX words, the DMA control word, and both clocks as the counter measured them rather than as they were asked for. Fruit Jam only.
+
+[SYS.CLOCK]
+Syntax: SYS.CLOCK -> hertz
+Description: The system clock as it is actually running. Boards only.
+
+[SD.TEST]
+Syntax: SD.TEST -> text$
+Description: Probes the card slot and reports what answered: the card's response to each initialisation step, and the first bytes it returned. RP2350 with a card slot only. A card that will not mount is usually not formatted.
+
+[SD.BB]
+Syntax: SD.BB -> text$
+Description: Drives the card's wires by hand rather than through the SPI block, which separates a card that is not answering from a bus that is not being driven. RP2350 with a card slot only.
+
+[FS.TEST]
+Syntax: FS.TEST -> text$
+Description: Writes, reads back and erases in the flash store, and reports what each step returned. Boards only. Non-zero error codes on the erase and program steps mean the other core is running without having called into the flash-safety contract.
+
+[FS.ALIAS]
+Syntax: FS.ALIAS -> text$
+Description: Where the flash store is actually mapped, and what the same bytes look like through the other address windows. RP2350 only.
+
+[FS.ATRANS]
+Syntax: FS.ATRANS -> text$
+Description: The four address-translation registers as they stand. RP2350 only. A uf2 that boots through translation reads its own flash somewhere other than zero.
+
+[FS.NUKEPT]
+Syntax: FS.NUKEPT
+Description: Erases the partition table at the physical start of flash and drops to BOOTSEL. RP2350 only, and one-way: the next uf2 lands at zero and boots without address translation.
+
+[PSRAM.ID$]
+Syntax: PSRAM.ID$ -> text$
+Description: The PSRAM chip's identity as it answers it. RP2350 only; empty on a board without one.
+
+[PIO.LOAD]
+Syntax: PIO.LOAD(words) -> offset
+Description: Loads an assembled PIO program - an array of 16-bit instruction words - and answers where it landed. RP2350 only.
+
+[PIO.START]
+Syntax: PIO.START(sm, offset, len, pin [, divider])
+Description: Starts state machine sm on the program at that offset, with the pin as its first output. RP2350 only.
+
+[PIO.PUT]
+Syntax: PIO.PUT(sm, value)
+Description: Puts a word in the state machine's transmit queue. RP2350 only. Does not block: a full queue drops the word.
+
+[PIO.GET]
+Syntax: PIO.GET(sm) -> value
+Description: Takes a word from the state machine's receive queue, or -1 when there is none. RP2350 only.
+
+[PIO.STOP]
+Syntax: PIO.STOP(sm)
+Description: Stops the state machine and lets go of its pins. RP2350 only.
+
+[NTP.SYNC]
+Syntax: NTP.SYNC([server$] [, hours_from_utc]) -> 1 | 0
+Description: Sets the board's clock from a time server, so DATE$, TIME$ and NOW mean something. RP2350 W boards only. Zero means nothing answered. The offset is yours to give: the protocol carries UTC and knows nothing about where the board is.
+
+[WIFI.DNS$]
+Syntax: WIFI.DNS$ -> text$
+Description: The name server currently in use. RP2350 W boards only.
+
+[WIFI.DNS]
+Syntax: WIFI.DNS(address$) -> 0 | -1
+Description: Sets the name server by address. RP2350 W boards only, for a network whose DHCP hands out one that does not answer.
+
+[WIFI.SCAN]
+Syntax: WIFI.SCAN([ms]) -> array
+Description: The networks the radio can hear, strongest first, each as ssid, signal, channel and whether it is open. ESP32-S3 only. Hidden networks come back with an empty name rather than being left out.
+
+[HTTP.STATUS]
+Syntax: HTTP.STATUS -> code
+Description: The status code the last HTTP.GET$ or HTTP.POST$ came back with. Boards with a radio only. Both answer with an empty string on failure, and this says whether that was a 404 or no answer at all.
+
+[HTTP.SERVER.POLL]
+Syntax: HTTP.SERVER.POLL -> count
+Description: One pass of the server: hands over whatever requests have arrived and returns how many it served. Boards only. For a program that runs its own loop; HTTP.SERVER.WAIT is the same thing kept up.
+
+[HTTP.SERVER.SERVED]
+Syntax: HTTP.SERVER.SERVED -> count
+Description: How many requests this server has answered since it started. Boards only.

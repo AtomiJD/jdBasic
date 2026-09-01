@@ -24,11 +24,11 @@ void register_fruitjam_gfx(VM& vm);
 #endif
 #ifdef JDB_HAS_CYW43
 void register_pico_wifi(VM& vm);
-void register_pico_httpd(VM& vm);
+void register_jdb_httpd(VM& vm);
 #endif
 #if defined(PICOCALC) || defined(FRUITJAM)
 // The melody engine is board independent; only its output stage is not.
-void register_pico_sound(VM& vm);
+void register_jdb_play(VM& vm);
 // So is the card reader, once it is told which pins it sits on.
 void register_pico_sdtest(VM& vm);
 void register_pico_sdbb(VM& vm);
@@ -73,13 +73,13 @@ void register_pico_builtins(VM& vm) {
     register_fruitjam_gfx(vm);
 #endif
 #if defined(PICOCALC) || defined(FRUITJAM)
-    register_pico_sound(vm);
+    register_jdb_play(vm);
     register_pico_sdtest(vm);
     register_pico_sdbb(vm);
 #endif
 #ifdef JDB_HAS_CYW43
     register_pico_wifi(vm);
-    register_pico_httpd(vm);
+    register_jdb_httpd(vm);
 #endif
 #ifdef PICOCALC
     register_pico_diag(vm);
@@ -222,6 +222,7 @@ extern "C" int  picocalc_gfx_buffered(void);
 extern "C" void picocalc_gfx_flip(void);
 extern "C" void picocalc_gfx_clear(int index);
 extern "C" void picocalc_gfx_palette(int i, int r, int g, int b);
+extern "C" void jdb_con_size(int* cols, int* rows);
 
 static void gfx_maybe_color(const std::vector<Value>& args, size_t at) {
     if (args.size() >= at + 3)
@@ -305,6 +306,20 @@ void register_pico_gfx(VM& vm) {
                              (int)args[2].to_double(), (int)args[3].to_double());
         return Value();
     });
+    vm.register_native("GFX.WIDTH", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(320);
+    });
+    vm.register_native("GFX.HEIGHT", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(320);
+    });
+    vm.register_native("GFX.CONSIZE", 0, 0, [](const std::vector<Value>&) -> Value {
+        int cols = 0, rows = 0;
+        jdb_con_size(&cols, &rows);
+        Value arr = Value::make_array();
+        arr.as_array()->elements.push_back(Value::make_i64(cols));
+        arr.as_array()->elements.push_back(Value::make_i64(rows));
+        return arr;
+    });
 }
 
 
@@ -316,7 +331,22 @@ void register_pico_gfx(VM& vm) {
 extern "C" char __StackLimit;
 extern "C" void* sbrk(int);
 
+extern "C" int jdb_pico_fs_free(unsigned* freebytes, unsigned* total);
+
 void register_pico_mem(VM& vm) {
+    vm.register_native("SYS.DF", 0, 0, [](const std::vector<Value>&) -> Value {
+        unsigned avail = 0, total = 0;
+        if (jdb_pico_fs_free(&avail, &total) != 0)
+            return Value::make_string("no filesystem");
+        char buf[96];
+        snprintf(buf, sizeof buf, "flash %u free of %u bytes", avail, total);
+        return Value::make_string(buf);
+    });
+    vm.register_native("SYS.FREEDISK", 0, 0, [](const std::vector<Value>&) -> Value {
+        unsigned avail = 0, total = 0;
+        if (jdb_pico_fs_free(&avail, &total) != 0) return Value::make_i64(0);
+        return Value::make_i64((int64_t)avail);
+    });
     vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
         struct mallinfo mi = mallinfo();
         int64_t unclaimed = (int64_t)(&__StackLimit - (char*)sbrk(0));

@@ -17,23 +17,19 @@ idf_component_register(
         "es3c28p_snd.c"
         "es3c28p_sd.c"
         "es8311_vendor.c"
-        # The score engine behind PLAY: a parser, a ring and note arithmetic.
-        # Only its timer and lock are the platform's, and those live in
-        # es3c28p_snd.c here and in pico_main.cpp there.
-        "../../pico/pico_sound.cpp"
         "es3c28p_gfx.cpp"
         "esp32_stubs.cpp"
-        # Colouring one line of jdBasic is the same job on both boards and
-        # depends on nothing either SDK provides. Shared rather than copied;
-        # if a third caller turns up it moves somewhere neutral.
-        "../../pico/pico_syntax.cpp"
-        # The editor speaks plain ANSI and asks the port how big the page is,
-        # so the same file serves a 40 by 40 PicoCalc and a 40 by 30 panel.
-        "../../pico/pico_editor.cpp"
-        # Raw lwIP, and lwIP is the same library here. The four locking
-        # pairs, the millisecond clock and the netif pump are what differ,
-        # and the file now names them instead of the SDK.
-        "../../pico/pico_httpd.cpp"
+        # Everything that is the same job on every board: the prompt with
+        # its command set and line editor, the full-screen editor, the
+        # syntax colouring, the score engine behind PLAY, and the web
+        # server over lwIP. Only the timer, the lock and the byte reader
+        # under them are the platform's.
+        "../../common/jdb_repl.cpp"
+        "../../common/jdb_editor.cpp"
+        "../../common/jdb_help.cpp"
+        "../../common/jdb_syntax.cpp"
+        "../../common/jdb_play.cpp"
+        "../../common/jdb_httpd.cpp"
         "../../../src/lexer.cpp"
         "../../../src/parser.cpp"
         "../../../src/compiler.cpp"
@@ -41,7 +37,7 @@ idf_component_register(
         "../../../src/jdb_embed_api.cpp"
         "../../../src/channels.cpp"
         "../../../src/file_streams.cpp"
-    INCLUDE_DIRS "." "../../../src"
+    INCLUDE_DIRS "." "../../../src" "../../common"
     REQUIRES esp_timer driver fatfs vfs esp_vfs_console esp_driver_i2c esp_driver_i2s esp_driver_sdmmc sdmmc esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd
              esp_adc esp_driver_gpio esp_driver_ledc esp_driver_i2c esp_driver_spi
              esp_driver_tsens

@@ -122,7 +122,7 @@ An access point comes up on 192.168.4.1 with a DHCP server behind it.
 `WIFI.OFF` returns about 44 KB of the 113; the rest belongs to the
 TCP/IP stack, which is set up once and not torn down again.
 
-The HTTP server is `pico/pico_httpd.cpp`, compiled by both ports. It is
+The HTTP server is `common/jdb_httpd.cpp`, compiled by every port. It is
 raw lwIP, and lwIP is the same library here; what differs is who owns
 it. On the RP2350 the callbacks run in the radio interrupt and the code
 brackets them with the SDK's lock, here lwIP has its own task and the
@@ -349,9 +349,9 @@ escape subset is the one an editor needs: absolute cursor, clear screen,
 clear to end of line, cursor right, colours.
 
 `EDIT name` opens the full-screen editor, Ctrl-S writes, Ctrl-Q leaves.
-It is `../../pico/pico_editor.cpp`, the PicoCalc's, unchanged in
-substance: it speaks plain ANSI and now asks the port how big the page
-is, so one file serves a 40 by 40 PicoCalc and a 40 by 30 panel. Arrow
+It is `../../common/jdb_editor.cpp`, shared by every board: it speaks
+plain ANSI and asks the port how big the page is, so one file serves a
+40 by 40 PicoCalc, a 40 by 30 panel and a terminal. Arrow
 keys arrive as a terminal's escape sequences and fold into the same
 codes the PicoCalc's keyboard controller sends, so the editor cannot
 tell the two apart.
@@ -400,7 +400,7 @@ for the length, T for the tempo, P or R for a rest, . to dot a note.
 The names are the RP2350's, so a program that beeps reads the same on
 either board, and `fs/tune.jdb` plays one.
 
-The score engine is `../../pico/pico_sound.cpp`, shared rather than
+The score engine is `../../common/jdb_play.cpp`, shared rather than
 copied. Of its two hundred lines exactly four things belonged to the
 Pico SDK - the timer that ends a note, its cancel, and a critical
 section - so those became `jdb_snd_timer_start`, `jdb_snd_timer_cancel`,

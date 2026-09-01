@@ -46,9 +46,9 @@ int  es3c28p_sd_mount(void);
 int  es3c28p_sd_unmount(void);
 int  es3c28p_sd_mounted(void);
 int  es3c28p_sd_info(char* name, int cap, int* mb, int* width);
-void picocalc_snd_tone(int freq);
-void picocalc_snd_beep(int freq, int ms);
-void picocalc_snd_volume(int pct);
+void jdb_snd_out_tone(int freq);
+void jdb_snd_out_beep(int freq, int ms);
+void jdb_snd_out_volume(int pct);
 void es3c28p_lcd_diag(int* sent, int* failed, int* last);
 }
 
