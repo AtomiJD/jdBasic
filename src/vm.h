@@ -251,16 +251,17 @@ public:
     void event_raise(const std::string& event_name, const std::vector<Value>& data);
     void event_poll(); // called from tick - polls SDL/keyboard events
 
-    bool is_native(const std::string& name) const { return natives.count(name) > 0; }
+    // Finding a builtin by its name is a compiler's job. The interpreter
+    // dispatches on the slot the global registry hands out and never asks
+    // for a name, so on a board the per-VM map of name to entry is 386
+    // strings that nothing reads once a program is running - see the
+    // storage below.
+    const NativeEntry* native_find(const std::string& name) const;
+    bool is_native(const std::string& name) const { return native_find(name) != nullptr; }
     bool function_exists(const std::string& name) const {
-        return natives.count(name) > 0 || func_map.count(name) > 0;
+        return native_find(name) != nullptr || func_map.count(name) > 0;
     }
-    std::vector<std::string> native_names() const {
-        std::vector<std::string> out;
-        out.reserve(natives.size());
-        for (auto& kv : natives) out.push_back(kv.first);
-        return out;
-    }
+    std::vector<std::string> native_names() const;
 
 private:
     // Save the previous "active VM" pointer so nested VMs (REPL/EXECUTE)
@@ -326,14 +327,23 @@ private:
     // those pointers and the next opcode read crashes with garbage data.
     std::deque<FuncProto> owned_funcs;
     std::unordered_map<std::string, size_t> func_map;
+#ifdef JDB_MCU
+    // The slot registry already keeps one copy of every name for the whole
+    // process, and the dispatch table already turns a slot into an entry.
+    // A second map from name to entry, per VM, only served lookups the
+    // compiler makes - so here there is none, and the entries sit in a
+    // deque whose addresses the dispatch table can hold.
+    std::deque<NativeEntry> native_store;
+#else
     std::unordered_map<std::string, NativeEntry> natives;
+#endif
     // Per-VM native dispatch tables indexed by the *global* native slot
     // (jdb_native_slot). CALL_NATIVE indexes these directly, skipping the
     // name hash. native_novec is computed lazily on first call (-1 = unknown).
     // Points into natives. unordered_map keeps its elements put, so these
     // stay valid across rehashing, and the table costs a pointer a slot
     // rather than a whole std::function.
-    std::vector<const NativeEntry*> native_table;
+    std::vector<NativeEntry*> native_table;
     std::vector<int8_t>     native_novec;
     // Reusable per-depth argument buffers for native calls, so a hot loop of
     // CALL_NATIVE doesn't heap-allocate a std::vector every call. A deque keeps

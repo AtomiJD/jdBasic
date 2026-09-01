@@ -35,14 +35,17 @@ extern "C" unsigned fruitjam_psram_reserved(void);
 #define PSRAM_WINDOW 0x11000000u
 #endif
 
-// Below this a request is better off in SRAM. With FJ_PSRAM_HEAP off the
-// pool is built and measurable but nothing is placed in it, which is the
-// default until the window is trusted under load - see the README.
-#ifdef JDB_PSRAM_HEAP_ON
-#define PSRAM_MIN 512u
-#else
-#define PSRAM_MIN 0xFFFFFFFFu
-#endif
+// Nothing goes to PSRAM by size. It goes there by *scope*: the caller
+// marks the stretch of work whose allocations are transient - lexing and
+// parsing, where the tokens and the syntax tree are built, read once by
+// the compiler and thrown away - and everything asked for inside it is
+// served from the pool. The runtime's own structures, which are asked
+// for outside any scope, stay in SRAM where they are fast.
+//
+// This is the safe half of what was tried by size earlier: the value
+// stack, the chunk and the globals never move, so nothing with a
+// deadline ever waits on the memory controller.
+static int g_scope = 0;
 
 namespace {
 
@@ -160,6 +163,10 @@ extern "C" int fruitjam_psram_torture(char* out, int cap, int rounds) {
     return snprintf(out, cap, "%d blocks, %s", done, bad ? "CORRUPT" : "intact");
 }
 
+// Nestable, because a module IMPORT lexes and parses inside a parse.
+extern "C" void jdb_transient_begin(void) { g_scope++; }
+extern "C" void jdb_transient_end(void)   { if (g_scope > 0) g_scope--; }
+
 extern "C" unsigned fruitjam_psram_heap_free(void) {
     heap_start();
     if (!g_first) return 0;
@@ -186,13 +193,13 @@ void  jdb_psram_test_free(void* p)   { if (p) psram_free(p); }
 #else
 static void* jdb_alloc(size_t n) {
     if (n == 0) n = 1;
-    if (n >= PSRAM_MIN) {
+    if (g_scope > 0) {
         void* p = psram_alloc(n);
         if (p) return p;
     }
     void* p = malloc(n);
     if (p) return p;
-    // SRAM said no; the big pool is the last chance whatever the size.
+    // SRAM said no; the big pool is the last chance either way.
     return psram_alloc(n);
 }
 

@@ -286,7 +286,42 @@ static std::pair<std::string, std::string> bundled_module_reader(const std::stri
     return { std::string(), std::string() };
 }
 
+#if defined(JDB_MCU) && defined(JDB_LOAD_TRACE)
+// The port prints heap and stack at each stage. A load that stops
+// without a message says nothing about where; this says which of the
+// four steps it was in and what memory looked like going into it.
+extern "C" void jdb_load_trace(const char* stage);
+#define LOAD_TRACE(s) jdb_load_trace(s)
+#else
+#define LOAD_TRACE(s) ((void)0)
+#endif
+
+#ifdef JDB_MCU
+// A board with memory to spare somewhere other than SRAM says so by
+// defining these; the weak versions here mean every other board carries
+// on unchanged. Everything allocated between them is transient - the
+// tokens and the syntax tree, which the compiler reads once and which
+// are gone before the program runs.
+extern "C" __attribute__((weak)) void jdb_transient_begin(void) {}
+extern "C" __attribute__((weak)) void jdb_transient_end(void) {}
+struct TransientScope {
+    TransientScope()  { jdb_transient_begin(); }
+    ~TransientScope() { jdb_transient_end(); }
+};
+// Shuts the scope again for the stretch that builds something lasting.
+struct TransientPause {
+    TransientPause()  { jdb_transient_end(); }
+    ~TransientPause() { jdb_transient_begin(); }
+};
+#define JDB_TRANSIENT_SCOPE TransientScope jdb_ts_
+#define JDB_TRANSIENT_PAUSE TransientPause jdb_tp_
+#else
+#define JDB_TRANSIENT_SCOPE (void)0
+#define JDB_TRANSIENT_PAUSE (void)0
+#endif
+
 void run_source(VM& vm, const std::string& source) {
+    LOAD_TRACE("enter");
     Compiler c;
     // The token stream and the syntax tree are finished once the chunk
     // is built - the chunk owns its own constants and names - so they go
@@ -294,14 +329,25 @@ void run_source(VM& vm, const std::string& source) {
     // life. On a board with tens of kilobytes of heap that is most of the
     // room a program was costing.
     {
+        JDB_TRANSIENT_SCOPE;
         Lexer lexer(source);
         auto tokens = lexer.tokenize();
+        LOAD_TRACE("lexed");
         Parser parser(tokens);
         parser.file_reader = bundled_module_reader;
         auto ast = parser.parse();
-        c.compile(ast);
+        LOAD_TRACE("parsed");
+        // The chunk outlives this block, so it is built with the scope
+        // shut: it belongs in SRAM with the rest of what runs.
+        {
+            JDB_TRANSIENT_PAUSE;
+            c.compile(ast);
+        }
+        LOAD_TRACE("compiled");
     }
+    LOAD_TRACE("freed");
     vm.run_code(c.main_chunk(), c.functions());
+    LOAD_TRACE("ran");
 }
 
 // Recompile pattern: lex / parse / compile, then merge_funcs into the

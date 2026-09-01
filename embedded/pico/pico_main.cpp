@@ -41,6 +41,29 @@ static void heap_at(const char* stage) {
 static void heap_at(const char*) {}
 #endif
 
+#ifdef JDB_LOAD_TRACE
+// Heap and stack at each step of a load, for finding where one that
+// stops without a message stopped. The stack figure is how far the
+// pointer has come down from the top of RAM, which is what a runaway
+// recursion shows up in.
+extern "C" char __StackTop;
+extern "C" void jdb_load_trace(const char* stage) {
+    struct mallinfo mi = mallinfo();
+    char here;
+    printf("[load] %-9s used %7u free %6u stack %6u\n", stage,
+           (unsigned)mi.uordblks, (unsigned)mi.fordblks,
+           (unsigned)(&__StackTop - &here));
+    fflush(NULL);
+}
+
+extern "C" void jdb_load_trace_n(const char* stage, unsigned a, unsigned b, unsigned c) {
+    struct mallinfo mi = mallinfo();
+    printf("[load] %-9s need %6u have %6u slot %3u  free %6u\n",
+           stage, a, b, c, (unsigned)mi.fordblks);
+    fflush(NULL);
+}
+#endif
+
 extern "C" void jdb_pico_fs_init(void);
 #ifdef FRUITJAM
 extern "C" void fruitjam_dvi_init(void);

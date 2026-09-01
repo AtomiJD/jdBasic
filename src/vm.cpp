@@ -277,7 +277,7 @@ int16_t VM::read_i16() {
 
 void VM::reject_builtin_collision(const FuncProto& f) const {
     if (f.is_exported) return; // module exports are namespaced on IMPORT
-    if (natives.find(f.name) == natives.end()) return;
+    if (!native_find(f.name)) return;
     throw jdError(ErrCode::SYNTAX_ERROR,
         std::string(f.is_sub ? "SUB " : "FUNC ") + f.name +
         " collides with the builtin function " + f.name + " - choose another name");
@@ -341,6 +341,10 @@ std::pair<size_t, size_t> VM::merge_funcs(std::vector<FuncProto>& new_funcs) {
     return {added, updated};
 }
 
+#if defined(JDB_MCU) && defined(JDB_LOAD_TRACE)
+extern "C" void jdb_load_trace_n(const char*, unsigned, unsigned, unsigned);
+#endif
+
 void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     // Merge new functions into owned storage
     bool funcs_changed = false;
@@ -382,6 +386,11 @@ void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
     // chunk's frame ABOVE the current sp so we don't clobber outer locals.
     size_t base = saved_sp;
     size_t needed = base + chunk.name_count() + 64;
+#if defined(JDB_MCU) && defined(JDB_LOAD_TRACE)
+    // What the value stack is being asked for, and what a slot costs.
+    jdb_load_trace_n("stack", (unsigned)needed, (unsigned)stack.size(),
+                     (unsigned)sizeof(Value));
+#endif
     while (needed >= stack.size()) stack.resize(stack.size() * 2);
     sp = base + chunk.name_count();
     min_frame_depth = 0;
@@ -1020,12 +1029,11 @@ Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
 
 Value VM::call_function(const std::string& name, const std::vector<Value>& args) {
     // Native?
-    auto nit = natives.find(name);
-    if (nit != natives.end()) {
-        check_native_arity(name, nit->second, args.size());
+    if (const NativeEntry* ne = native_find(name)) {
+        check_native_arity(name, *ne, args.size());
         bool no_vec = jdb_no_vectorize(name)
             || extra_no_vectorize.find(name) != extra_no_vectorize.end();
-        return invoke_native(nit->second.fn, args, no_vec);
+        return invoke_native(ne->fn, args, no_vec);
     }
 
     // User-defined?
@@ -1369,14 +1377,14 @@ void VM::run() {
                 // usable as bare identifiers: `2 * PI`.
                 {
                     const std::string& full2 = cf.chunk->name_at(name_idx);
-                    auto nit = natives.find(full2);
+                    const NativeEntry* nit = native_find(full2);
                     // Only the ones that genuinely take nothing. This used to
                     // call and let the arity wrapper throw, which is no longer
                     // there to catch the mistake before it indexes an argument
                     // that was never passed.
-                    if (nit != natives.end() && nit->second.min_args == 0) {
+                    if (nit && nit->min_args == 0) {
                         try {
-                            Value r = nit->second.fn({});
+                            Value r = nit->fn({});
                             if (sp >= stack.size()) stack.resize(stack.size() * 2);
                             stack[sp++] = std::move(r);
                             break;
@@ -1992,13 +2000,13 @@ void VM::run() {
             std::string func_name = cf.chunk->constants[name_idx].as_string()->data;
 
             // Check native functions first
-            auto native_it = natives.find(func_name);
-            if (native_it != natives.end()) {
+            const NativeEntry* native_it = native_find(func_name);
+            if (native_it) {
                 std::vector<Value> args(argc);
                 for (int i = argc - 1; i >= 0; i--) {
                     args[i] = pop();
                 }
-                check_native_arity(func_name, native_it->second, args.size());
+                check_native_arity(func_name, *native_it, args.size());
 
                 // Auto-vectorize: if any arg is an array and the function
                 // is not array-aware, apply element-wise automatically.
@@ -2032,7 +2040,7 @@ void VM::run() {
                                 if (n > alen) alen = n;
                             }
                         }
-                        if (!any_arr) return native_it->second.fn(cur_args);
+                        if (!any_arr) return native_it->fn(cur_args);
                         Value result = Value::make_array();
                         auto* out = result.as_array();
                         out->elements.reserve(alen);
@@ -2058,7 +2066,7 @@ void VM::run() {
                     }
                 } else {
                     try {
-                        push(native_it->second.fn(args));
+                        push(native_it->fn(args));
                     } catch (const jdError&) {
                         throw;
                     } catch (const std::out_of_range&) {
@@ -3432,18 +3440,58 @@ Value VM::cast_value(const Value& v, ValueType target) {
 // baked into a chunk stay valid under any VM. Guarded by a mutex because an
 // async-worker VM may register on another thread while the main thread relinks.
 static std::mutex& native_slot_mutex() { static std::mutex m; return m; }
+static std::vector<std::string>& native_slot_names() {
+    static std::vector<std::string> v;
+    if (v.empty()) v.reserve(512);
+    return v;
+}
+
+#ifdef JDB_MCU
+// A hash from name to slot costs a node and a second copy of the name
+// for every builtin, and the only caller is the compiler resolving a
+// word it has just read. The names are already kept once, in slot
+// order; this is four bytes a builtin holding the same slots in
+// alphabetical order, searched rather than hashed.
+static std::vector<int32_t>& native_slot_sorted() {
+    static std::vector<int32_t> v;
+    if (v.empty()) v.reserve(512);
+    return v;
+}
+
+// Both halves of the search, on the caller's lock.
+static size_t slot_lower_bound(const std::string& name) {
+    const auto& v = native_slot_sorted();
+    const auto& names = native_slot_names();
+    size_t lo = 0, hi = v.size();
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        if (names[v[mid]].compare(name) < 0) lo = mid + 1;
+        else hi = mid;
+    }
+    return lo;
+}
+
+static int slot_find_locked(const std::string& name) {
+    size_t at = slot_lower_bound(name);
+    const auto& v = native_slot_sorted();
+    if (at < v.size() && native_slot_names()[v[at]] == name) return v[at];
+    return -1;
+}
+#else
 static std::unordered_map<std::string, int>& native_slot_map() {
     static std::unordered_map<std::string, int> m; return m;
 }
-static std::vector<std::string>& native_slot_names() {
-    static std::vector<std::string> v; return v;
-}
+#endif
 
 int jdb_native_slot(const std::string& name) {
     std::lock_guard<std::mutex> lk(native_slot_mutex());
+#ifdef JDB_MCU
+    return slot_find_locked(name);
+#else
     auto& m = native_slot_map();
     auto it = m.find(name);
     return it == m.end() ? -1 : it->second;
+#endif
 }
 
 const std::string& jdb_native_name(int slot) {
@@ -3456,6 +3504,15 @@ const std::string& jdb_native_name(int slot) {
 
 static int native_slot_intern(const std::string& name) {
     std::lock_guard<std::mutex> lk(native_slot_mutex());
+#ifdef JDB_MCU
+    size_t at = slot_lower_bound(name);
+    auto& v = native_slot_sorted();
+    if (at < v.size() && native_slot_names()[v[at]] == name) return v[at];
+    int slot = (int)native_slot_names().size();
+    native_slot_names().push_back(name);
+    v.insert(v.begin() + (long)at, slot);
+    return slot;
+#else
     auto& m = native_slot_map();
     auto it = m.find(name);
     if (it != m.end()) return it->second;
@@ -3463,6 +3520,7 @@ static int native_slot_intern(const std::string& name) {
     m[name] = slot;
     native_slot_names().push_back(name);
     return slot;
+#endif
 }
 
 // Every path that reaches a builtin runs this first. It used to be a
@@ -3478,18 +3536,48 @@ static void check_native_arity(const std::string& name, const VM::NativeEntry& e
             name + ": expected at most " + std::to_string(e.max_args) + " argument(s), got " + std::to_string(n));
 }
 
+const VM::NativeEntry* VM::native_find(const std::string& name) const {
+#ifdef JDB_MCU
+    int slot = jdb_native_slot(name);
+    if (slot < 0 || (size_t)slot >= native_table.size()) return nullptr;
+    return native_table[slot];
+#else
+    auto it = natives.find(name);
+    return it == natives.end() ? nullptr : &it->second;
+#endif
+}
+
+std::vector<std::string> VM::native_names() const {
+    std::vector<std::string> out;
+#ifdef JDB_MCU
+    for (size_t slot = 0; slot < native_table.size(); slot++)
+        if (native_table[slot]) out.push_back(jdb_native_name((int)slot));
+#else
+    out.reserve(natives.size());
+    for (auto& kv : natives) out.push_back(kv.first);
+#endif
+    return out;
+}
+
 void VM::register_native(const std::string& name, NativeFunc fn) {
-    NativeEntry& entry = natives[name];
-    entry.fn = std::move(fn);
-    entry.min_args = 0;
-    entry.max_args = -1;
-    // Mirror into the slot-indexed table for CALL_NATIVE dispatch.
     int slot = native_slot_intern(name);
     if ((size_t)slot >= native_table.size()) {
         native_table.resize(slot + 1);
         native_novec.resize(slot + 1, -1);
     }
-    native_table[slot] = &entry;
+    NativeEntry* entry = native_table[slot];
+    if (!entry) {
+#ifdef JDB_MCU
+        native_store.emplace_back();
+        entry = &native_store.back();
+#else
+        entry = &natives[name];
+#endif
+    }
+    entry->fn = std::move(fn);
+    entry->min_args = 0;
+    entry->max_args = -1;
+    native_table[slot] = entry;
     native_novec[slot] = -1;  // recomputed lazily (extra_no_vectorize may fill later)
 }
 
@@ -3499,9 +3587,9 @@ void VM::register_native(const std::string& name, NativeFunc fn) {
 
 void VM::register_native(const std::string& name, int min_args, int max_args, NativeFunc fn) {
     register_native(name, std::move(fn));
-    NativeEntry& entry = natives[name];
-    entry.min_args = (int16_t)min_args;
-    entry.max_args = (int16_t)max_args;
+    NativeEntry* entry = native_table[native_slot_intern(name)];
+    entry->min_args = (int16_t)min_args;
+    entry->max_args = (int16_t)max_args;
 }
 
 // ── Helpers for matrix operations ─────────────────────────────
@@ -5702,9 +5790,11 @@ void VM::register_builtins() {
         };
         return one(args[0]);
     });
-    register_native("CDATE", natives["CVDATE"].fn);
-    natives["CDATE"].min_args = natives["CVDATE"].min_args;
-    natives["CDATE"].max_args = natives["CVDATE"].max_args;
+    // CDATE is CVDATE under a second name, arity and all.
+    {
+        const NativeEntry* cv = native_find("CVDATE");
+        register_native("CDATE", cv->min_args, cv->max_args, cv->fn);
+    }
 
     register_native("DATEADD", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
         // DATEADD(part$, num, date_epoch, [tz]). TZ accepted for API symmetry

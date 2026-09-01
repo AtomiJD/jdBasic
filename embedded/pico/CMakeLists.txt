@@ -26,6 +26,9 @@ option(FJ_USB "Build the Fruit Jam USB host (keyboard, mouse)" OFF)
 option(FJ_PSRAM_HEAP "Put the interpreter's large allocations in PSRAM" OFF)
 # Prints what each step of coming up costs the heap, before the prompt.
 option(FJ_HEAP_TRACE "Trace the heap through boot" OFF)
+# Heap and stack at each step of a load, for a load that stops
+# without saying anything.
+option(FJ_LOAD_TRACE "Trace a load through lex, parse and compile" OFF)
 # The framebuffer is 150 KB of the SRAM heap, and in PSRAM it buys the
 # largest free block back: 39 KB becomes 188. But the part cannot feed
 # the picture - a frame stretches to 20816 us against the 16666 the mode
@@ -188,6 +191,9 @@ if (FRUITJAM)
     endif()
     if (FJ_HEAP_TRACE)
         target_compile_definitions(jdbasic_repl PRIVATE JDB_BOOT_HEAP_TRACE=1)
+    endif()
+    if (FJ_LOAD_TRACE)
+        target_compile_definitions(jdbasic_repl PRIVATE JDB_LOAD_TRACE=1)
     endif()
     if (FJ_FB_PSRAM)
         target_compile_definitions(jdbasic_repl PRIVATE JDB_FB_IN_PSRAM=1)

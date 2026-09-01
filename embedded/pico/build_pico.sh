@@ -32,6 +32,7 @@ JAM=OFF
 USBHOST=OFF
 PSRAMHEAP=OFF
 HEAPTRACE=OFF
+LOADTRACE=OFF
 FBPSRAM=OFF
 CLEAN=0
 for a in "$@"; do
@@ -43,6 +44,7 @@ for a in "$@"; do
         usb)    USBHOST=ON ;;
         psram)  PSRAMHEAP=ON ;;
         heaptrace) HEAPTRACE=ON ;;
+        loadtrace) LOADTRACE=ON ;;
         fbpsram)   FBPSRAM=ON ;;
         nofbpsram) FBPSRAM=OFF ;;
         clean)  CLEAN=1 ;;
@@ -58,11 +60,12 @@ else
     [ "$USBHOST" = "ON" ] && DIR=$DIR-usb
     [ "$PSRAMHEAP" = "ON" ] && DIR=$DIR-psram
     [ "$FBPSRAM" = "ON" ] && DIR=$DIR-fbps
+    [ "$LOADTRACE" = "ON" ] && DIR=$DIR-lt
 fi
 
 [ "$CLEAN" = "1" ] && rm -rf "$DIR"
 
-cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM -DFJ_USB=$USBHOST -DFJ_PSRAM_HEAP=$PSRAMHEAP -DFJ_HEAP_TRACE=$HEAPTRACE -DFJ_FB_PSRAM=$FBPSRAM \
+cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM -DFJ_USB=$USBHOST -DFJ_PSRAM_HEAP=$PSRAMHEAP -DFJ_HEAP_TRACE=$HEAPTRACE -DFJ_LOAD_TRACE=$LOADTRACE -DFJ_FB_PSRAM=$FBPSRAM \
     > build_cmake.log 2>&1 || { tail -20 build_cmake.log; exit 1; }
 ninja -C "$DIR" 2> build_ninja.err || { tail -30 build_ninja.err; exit 1; }
 ls -la "$DIR"/jdbasic_repl.uf2
