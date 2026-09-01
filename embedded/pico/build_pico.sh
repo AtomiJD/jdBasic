@@ -11,8 +11,8 @@
 #   psram   fruitjam only: put the interpreter's large allocations
 #           in the 8 MB on QMI chip select 1 (see README)
 #   heaptrace  print what each boot step costs the heap
-#   nofbpsram  keep the framebuffer in SRAM; it is in PSRAM by
-#              default, which buys 150 KB of heap at some frame rate
+#   fbpsram    framebuffer in PSRAM: 150 KB of heap back, but the
+#              part cannot feed the picture and the screen stays dark
 #
 # Each combination builds in its own directory, build-<board>[-nocalc],
 # so the matrix coexists. The plain "build" directory stays the default
@@ -32,7 +32,7 @@ JAM=OFF
 USBHOST=OFF
 PSRAMHEAP=OFF
 HEAPTRACE=OFF
-FBPSRAM=ON
+FBPSRAM=OFF
 CLEAN=0
 for a in "$@"; do
     case "$a" in
@@ -57,7 +57,7 @@ else
     [ "$CALC" = "OFF" ] && DIR=$DIR-nocalc
     [ "$USBHOST" = "ON" ] && DIR=$DIR-usb
     [ "$PSRAMHEAP" = "ON" ] && DIR=$DIR-psram
-    [ "$FBPSRAM" = "OFF" ] && DIR=$DIR-fbsram
+    [ "$FBPSRAM" = "ON" ] && DIR=$DIR-fbps
 fi
 
 [ "$CLEAN" = "1" ] && rm -rf "$DIR"

@@ -91,25 +91,34 @@ in one piece.
 
 Two things dominate, and neither is the interpreter's bytecode.
 
-The framebuffer is now in PSRAM, which is what `FJ_FB_PSRAM` does and
-what the default build takes. The scanout DMA reads the XIP window and
-the processor writes it through the same window, so the cache is
-coherent between them and there is nothing to flush; the uncached alias
-was tried and is slower, 41 Hz against 47 on the same picture. What it
-buys, measured at the prompt:
+The framebuffer can be moved into PSRAM - `FJ_FB_PSRAM`, or `fbpsram`
+on the build line - and what it buys is exactly what the ceiling needs:
 
 | | SRAM | PSRAM |
 |---|---|---|
 | free | 41,240 | 194,736 |
 | largest single block | 39,012 | 188,396 |
 
-That last column is the whole point: 39 KB is not enough to load a 3 KB
-program and 188 KB is. It costs frame rate under load - the picture
-wants 18.4 MB/s and a quad read of this part carries a 24-cycle dummy
-per transaction, which lands nearer 14. Idle it measures 17100 us a
-frame, so 58.5 Hz; while the console is drawing its welcome page it
-drops to 47. `./build_pico.sh fruitjam usb nofbpsram` goes back to 60.00
-Hz and 39 KB.
+39 KB cannot load a 3 KB program and 188 KB can; `drift.jdb` got past
+its own init for the first time this way. It is off anyway, because the
+part cannot feed the picture. A frame stretches from 16,666 us to
+20,816, the mode's timing goes with it, and the monitor shows nothing
+at all - the framebuffer is fine, `GFX.PEEK` reads back everything
+written to it, but the scanout arrives late.
+
+The arithmetic says why. The picture wants 640 bytes a line read twice
+for the vertical doubling, 307,200 bytes a frame, 18.4 MB/s. A quad read
+of this part carries an eight-clock command and a 24-cycle dummy per
+transaction, which lands nearer 14. Two things were tried and are worth
+not trying again: the uncached alias, on the assumption that a
+write-back cache would need it, is slower still (41 Hz against 47) and
+unnecessary - the processor and the DMA reach the memory through the
+same cache, so the cached window is coherent between them.
+
+The way to have both is a line cache: each stored line feeds two
+scanlines, so a third DMA channel copying one line ahead into a pair of
+640-byte SRAM buffers halves the PSRAM traffic to 9.2 MB/s, which is
+inside what the part delivers. That is the next thing to build here.
 
 The VM's 85 KB is the other half of the problem. `SYS.NATIVES` says 386
 builtins with 3.2 KB of names between them, so the names are not it and
