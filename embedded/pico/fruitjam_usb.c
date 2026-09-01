@@ -50,6 +50,14 @@ int  fruitjam_usb_start(void);
 // bare 27 would be read as the start of an escape sequence and block
 // waiting for the rest of it.
 #define K_ESC   0xB1
+// Selection needs the shifted arrows to be distinguishable from the plain
+// ones, so they get codes of their own.
+#define K_SLEFT  0xB8
+#define K_SUP    0xB9
+#define K_SDOWN  0xBA
+#define K_SRIGHT 0xBB
+#define K_SHOME  0xD8
+#define K_SEND   0xD9
 
 #define KEYRING 64
 static volatile uint8_t  g_ring[KEYRING];
@@ -114,16 +122,48 @@ static stdio_driver_t fj_driver = {
 
 static const uint8_t conv_table[128][2] = { HID_KEYCODE_TO_ASCII };
 
+// The German layout as a sparse correction to the US one: only the keys
+// whose engraving differs. Umlauts and the sharp s leave as Latin-1
+// bytes, which is what a file wants; the console font stops at 151 and
+// draws them blank, so they are for text rather than for looking at.
+static int g_layout_de = 0;
+
+struct de_key { uint8_t code; uint8_t plain; uint8_t shift; };
+static const struct de_key DE[] = {
+    { HID_KEY_Y, 'z', 'Z' }, { HID_KEY_Z, 'y', 'Y' },
+    { HID_KEY_1, '1', '!' }, { HID_KEY_2, '2', '"' },
+    { HID_KEY_3, '3', 0xA7 }, { HID_KEY_4, '4', '$' },
+    { HID_KEY_5, '5', '%' }, { HID_KEY_6, '6', '&' },
+    { HID_KEY_7, '7', '/' }, { HID_KEY_8, '8', '(' },
+    { HID_KEY_9, '9', ')' }, { HID_KEY_0, '0', '=' },
+    { HID_KEY_MINUS, 0xDF, '?' },
+    { HID_KEY_EQUAL, 0xB4, '`' },
+    { HID_KEY_BRACKET_LEFT, 0xFC, 0xDC },
+    { HID_KEY_BRACKET_RIGHT, '+', '*' },
+    { HID_KEY_BACKSLASH, '#', 0x27 },
+    { HID_KEY_SEMICOLON, 0xF6, 0xD6 },
+    { HID_KEY_APOSTROPHE, 0xE4, 0xC4 },
+    { HID_KEY_GRAVE, '^', 0xB0 },
+    { HID_KEY_COMMA, ',', ';' },
+    { HID_KEY_PERIOD, '.', ':' },
+    { HID_KEY_SLASH, '-', '_' },
+    { HID_KEY_EUROPE_2, '<', '>' },
+};
+
+// 0 is US, anything else German.
+void fruitjam_kbd_layout(int de) { g_layout_de = de ? 1 : 0; }
+int  fruitjam_kbd_layout_get(void) { return g_layout_de; }
+
 static uint8_t translate(uint8_t keycode, uint8_t modifier) {
     const uint8_t shift = (uint8_t)(modifier & (KEYBOARD_MODIFIER_LEFTSHIFT |
                                                 KEYBOARD_MODIFIER_RIGHTSHIFT));
     switch (keycode) {
-        case HID_KEY_ARROW_LEFT:  return K_LEFT;
-        case HID_KEY_ARROW_RIGHT: return K_RIGHT;
-        case HID_KEY_ARROW_UP:    return K_UP;
-        case HID_KEY_ARROW_DOWN:  return K_DOWN;
-        case HID_KEY_HOME:        return K_HOME;
-        case HID_KEY_END:         return K_END;
+        case HID_KEY_ARROW_LEFT:  return shift ? K_SLEFT : K_LEFT;
+        case HID_KEY_ARROW_RIGHT: return shift ? K_SRIGHT : K_RIGHT;
+        case HID_KEY_ARROW_UP:    return shift ? K_SUP : K_UP;
+        case HID_KEY_ARROW_DOWN:  return shift ? K_SDOWN : K_DOWN;
+        case HID_KEY_HOME:        return shift ? K_SHOME : K_HOME;
+        case HID_KEY_END:         return shift ? K_SEND : K_END;
         case HID_KEY_DELETE:      return K_DEL;
         case HID_KEY_ENTER:
         case HID_KEY_KEYPAD_ENTER: return '\r';
@@ -134,6 +174,10 @@ static uint8_t translate(uint8_t keycode, uint8_t modifier) {
     }
     if (keycode < 128) {
         uint8_t c = conv_table[keycode][shift ? 1 : 0];
+        if (g_layout_de) {
+            for (unsigned i = 0; i < sizeof DE / sizeof DE[0]; i++)
+                if (DE[i].code == keycode) { c = shift ? DE[i].shift : DE[i].plain; break; }
+        }
         // Control codes come from the letter row, the way a terminal makes
         // them: ctrl-c is 3.
         if (c && (modifier & (KEYBOARD_MODIFIER_LEFTCTRL |

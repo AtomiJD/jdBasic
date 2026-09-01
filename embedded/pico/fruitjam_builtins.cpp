@@ -3,6 +3,7 @@
 // is kept and does nothing: this framebuffer is already on the wire.
 
 #include "../../src/vm.h"
+#include <ctype.h>
 
 extern "C" {
 void fruitjam_gfx_palette(int i, int r, int g, int b);
@@ -19,6 +20,8 @@ int      fruitjam_dvi_width(void);
 int      fruitjam_dvi_height(void);
 unsigned fruitjam_dvi_frames(void);
 #ifdef FRUITJAM_USB
+void fruitjam_kbd_layout(int de);
+int  fruitjam_kbd_layout_get(void);
 int  fruitjam_button(int n);
 int  fruitjam_ir_raw(void);
 void fruitjam_neo_set(int index, int r, int g, int b);
@@ -151,6 +154,15 @@ void register_fruitjam_gfx(VM& vm) {
     // 1 is the BOOT button, 2 and 3 are the pair beside it.
     vm.register_native("BUTTON", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_bool(fruitjam_button((int)args[0].to_double()) != 0);
+    });
+    // KBD.LAYOUT with no argument reports, with one it sets: "DE" or "US".
+    vm.register_native("KBD.LAYOUT", 0, 1, [](const std::vector<Value>& args) -> Value {
+        if (args.size() >= 1) {
+            std::string w = args[0].to_string();
+            for (auto& ch : w) ch = (char)toupper((unsigned char)ch);
+            fruitjam_kbd_layout(w == "DE" || w == "DEUTSCH" || w == "1");
+        }
+        return Value::make_string(fruitjam_kbd_layout_get() ? "DE" : "US");
     });
     vm.register_native("IR.RAW", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64(fruitjam_ir_raw());

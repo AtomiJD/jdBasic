@@ -76,6 +76,12 @@ static stdio_driver_t pc_driver = {
 #define K_HOME  0xD2
 #define K_DEL   0xD4
 #define K_END   0xD5
+#define K_SLEFT  0xB8
+#define K_SUP    0xB9
+#define K_SDOWN  0xBA
+#define K_SRIGHT 0xBB
+#define K_SHOME  0xD8
+#define K_SEND   0xD9
 
 extern "C" int repl_read_key(void);
 extern "C" void jdb_snd_note_due(void);
@@ -409,20 +415,56 @@ extern "C" void jdb_snd_timer_cancel(void) {
 extern "C" uint32_t jdb_snd_lock(void) { return save_and_disable_interrupts(); }
 extern "C" void jdb_snd_unlock(uint32_t saved) { restore_interrupts(saved); }
 
+// A terminal sends its arrows as escape sequences, and a shifted arrow
+// carries a modifier parameter: ESC[1;2A. Collecting the parameters
+// rather than reading a fixed three bytes is what lets selection work
+// over the serial line as well as on the board's own keyboard.
 extern "C" int repl_read_key(void) {
-    int c = getchar();
+    // A terminal ends a line with both characters, and whoever read the
+    // carriage return leaves the line feed behind - often for whatever
+    // runs next. Taking both as a return doubles every line break in
+    // pasted text, so the pair is coalesced here, once, for everyone.
+    static bool after_cr = false;
+    int c;
+    for (;;) {
+        c = getchar();
+        if (c == 10 && after_cr) { after_cr = false; continue; }
+        after_cr = (c == 13);
+        break;
+    }
     if (c != 0x1B) return c;
-    int c2 = getchar();
-    if (c2 != '[') return 0;
-    int c3 = getchar();
-    switch (c3) {
-        case 'A': return K_UP;
-        case 'B': return K_DOWN;
-        case 'C': return K_RIGHT;
-        case 'D': return K_LEFT;
-        case 'H': return K_HOME;
-        case 'F': return K_END;
-        case '3': getchar(); return K_DEL;
+    if (getchar() != '[') return 0;
+
+    char par[8];
+    int n = 0, f;
+    for (;;) {
+        f = getchar();
+        if (f < 0) return 0;
+        if ((f >= '0' && f <= '9') || f == ';') {
+            if (n < (int)sizeof par - 1) par[n++] = (char)f;
+            continue;
+        }
+        break;
+    }
+    par[n] = 0;
+
+    // The modifier is the parameter after the semicolon; 2 means shift.
+    int shift = 0;
+    const char* semi = strchr(par, ';');
+    if (semi && semi[1] == '2') shift = 1;
+
+    switch (f) {
+        case 'A': return shift ? K_SUP : K_UP;
+        case 'B': return shift ? K_SDOWN : K_DOWN;
+        case 'C': return shift ? K_SRIGHT : K_RIGHT;
+        case 'D': return shift ? K_SLEFT : K_LEFT;
+        case 'H': return shift ? K_SHOME : K_HOME;
+        case 'F': return shift ? K_SEND : K_END;
+        case '~':
+            if (par[0] == '3') return K_DEL;
+            if (par[0] == '1' || par[0] == '7') return shift ? K_SHOME : K_HOME;
+            if (par[0] == '4' || par[0] == '8') return shift ? K_SEND : K_END;
+            break;
     }
     return 0;
 }

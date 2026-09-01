@@ -36,6 +36,7 @@ static char g_seq[16];
 static int  g_seq_len = 0;
 
 static int g_cursor_on = 0;
+static int g_reverse = 0;
 static volatile int g_busy = 0;
 static int g_blink = 0;
 
@@ -54,11 +55,13 @@ static void cell_glyph(int col, int row, unsigned char c) {
     size_t stride = fruitjam_dvi_stride();
     if (c < 32 || c > 151) c = 32;
     const uint8_t* gl = &jdos_font8x8_c64[(c - 32) * 8];
+    const uint8_t ink   = g_reverse ? g_bg : g_fg;
+    const uint8_t paper = g_reverse ? g_fg : g_bg;
     for (int y = 0; y < CH_H; y++) {
         uint8_t bits = gl[y];
         uint8_t* p = fb + (size_t)(row * CH_H + y) * stride + (size_t)col * CELL_BYTES;
         for (int x = 0; x < CH_W; x++) {
-            uint8_t v = (bits & (0x80 >> x)) ? g_fg : g_bg;
+            uint8_t v = (bits & (0x80 >> x)) ? ink : paper;
             *p++ = v;
             *p++ = v;
         }
@@ -96,7 +99,9 @@ static void put_printable(char c) {
 // Only the colours the prompt actually emits, plus a reset.
 static void sgr(int code) {
     switch (code) {
-        case 0:  g_fg = 0xB6; break;
+        case 0:  g_fg = 0xB6; g_reverse = 0; break;
+        case 7:  g_reverse = 1; break;
+        case 27: g_reverse = 0; break;
         case 90: g_fg = 0x92; break;
         case 93: g_fg = 0xFC; break;
         case 96: g_fg = 0x1F; break;

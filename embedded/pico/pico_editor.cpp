@@ -1,12 +1,17 @@
-// A full-screen editor over the 40 by 40 console: EDIT "name" at the
-// prompt opens it, Ctrl-S writes the file back, Ctrl-Q (or the ESC
-// key on the device) leaves. It speaks plain ANSI, so the same code
-// serves the panel and a USB terminal.
+// A full-screen editor over the console: EDIT "name" at the prompt opens
+// it, Ctrl-S writes the file back, Ctrl-Q leaves - asking first if there
+// is anything to lose. It speaks plain ANSI, so the same code serves the
+// panel, the board's own screen and a USB terminal.
 //
-// Painting is stingy: moving the cursor paints nothing (the console
-// walks its own inverted cell on cursor moves), editing a line paints
-// that line, and only structure changes repaint from the edit
-// downward - never a clear, so nothing flickers.
+// Shift and an arrow starts a selection and extends it; Ctrl-C, Ctrl-X
+// and Ctrl-V copy, cut and paste. The clipboard outlives the editor, so
+// a passage can be carried from one file to another.
+//
+// Painting is stingy: moving the cursor paints nothing (the console walks
+// its own cell), editing a line paints that line, and only structure
+// changes repaint from the edit downward - never a clear, so nothing
+// flickers. A live selection is the exception and repaints the page,
+// because the highlight moves under text the cursor never touched.
 
 #include <stdio.h>
 #include <string.h>
@@ -27,6 +32,13 @@ void syntax_print(const char* s, int n);
 #define K_PGDN  0xD7
 #define K_ESC   0xB1
 
+#define K_SLEFT  0xB8
+#define K_SUP    0xB9
+#define K_SDOWN  0xBA
+#define K_SRIGHT 0xBB
+#define K_SHOME  0xD8
+#define K_SEND   0xD9
+
 // The console decides how big the page is: 40 by 40 on the PicoCalc, 40
 // by 30 on the 2.8 inch panel. The port answers, the editor adapts.
 extern "C" void jdb_con_size(int* cols, int* rows);
@@ -34,24 +46,46 @@ extern "C" void jdb_con_size(int* cols, int* rows);
 static int ED_COLS = 40;
 static int ED_ROWS = 39;   // last row is the status line
 
+// Outlives one editing session on purpose: that is what makes it possible
+// to cut here and paste there.
+static std::string g_clip;
+
 static void cup(int row, int col) { printf("\x1b[%d;%dH", row + 1, col + 1); }
 
 static void draw_status(const char* name, int line, int total, bool dirty,
-                        int cx, int top) {
+                        int cx, bool sel) {
     cup(ED_ROWS, 0);
-    printf("\x1b[K%c%s %d/%d c%d t%d ^S ^Q", dirty ? '*' : ' ', name,
-           line + 1, total, cx, top);
+    printf("\x1b[K%c%s %d/%d c%d%s ^S ^Q", dirty ? '*' : ' ', name,
+           line + 1, total, cx, sel ? " SEL" : "");
 }
 
-static void draw_line(const std::string& s, int screen_row, int off) {
+// selfrom/selto are columns within the line, in buffer coordinates; an
+// empty range means nothing on this row is selected.
+static void draw_line(const std::string& s, int screen_row, int off,
+                      int selfrom, int selto) {
     cup(screen_row, 0);
     printf("\x1b[K");
-    // printf only: the SDK's printf writes straight to stdio while the
-    // newlib FILE calls buffer, and mixing the two reorders the frame.
-    if ((int)s.size() > off) {
-        int n = (int)((s.size() - off) > ED_COLS ? ED_COLS : s.size() - off);
+    if ((int)s.size() <= off) return;
+    int n = (int)((s.size() - off) > (size_t)ED_COLS ? ED_COLS : s.size() - off);
+
+    int a = selfrom - off, b = selto - off;
+    if (a < 0) a = 0;
+    if (b > n) b = n;
+    if (a >= b) {                       // nothing selected on this row
         syntax_print(s.c_str() + off, n);
+        return;
     }
+    if (a > 0) syntax_print(s.c_str() + off, a);
+    printf("\x1b[7m%.*s\x1b[27m", b - a, s.c_str() + off + a);
+    if (b < n) syntax_print(s.c_str() + off + b, n - b);
+}
+
+// A question on the status line, answered with a single key.
+static int ask(const char* q) {
+    cup(ED_ROWS, 0);
+    printf("\x1b[K%s", q);
+    fflush(NULL);
+    return repl_read_key();
 }
 
 void pico_editor(const char* name) {
@@ -81,35 +115,101 @@ void pico_editor(const char* name) {
     bool paint_line = false;   // repaint just the cursor line
     int last_xoff = 0;
 
+    int ay = -1, ax = 0;       // selection anchor; ay < 0 means none
+
+    auto has_sel = [&]() { return ay >= 0 && (ay != cy || ax != cx); };
+
+    // The anchor may sit after the cursor, so hand back an ordered pair.
+    auto sel_span = [&](int& y0, int& x0, int& y1, int& x1) {
+        if (ay < cy || (ay == cy && ax <= cx)) { y0 = ay; x0 = ax; y1 = cy; x1 = cx; }
+        else { y0 = cy; x0 = cx; y1 = ay; x1 = ax; }
+    };
+
+    auto sel_text = [&]() {
+        int y0, x0, y1, x1;
+        sel_span(y0, x0, y1, x1);
+        std::string out;
+        if (y0 == y1) return lines[y0].substr(x0, x1 - x0);
+        out = lines[y0].substr(x0);
+        for (int y = y0 + 1; y < y1; y++) { out += '\n'; out += lines[y]; }
+        out += '\n';
+        out += lines[y1].substr(0, x1);
+        return out;
+    };
+
+    auto sel_drop = [&]() {
+        int y0, x0, y1, x1;
+        sel_span(y0, x0, y1, x1);
+        if (y0 == y1) {
+            lines[y0].erase(x0, x1 - x0);
+        } else {
+            lines[y0].erase(x0);
+            lines[y0] += lines[y1].substr(x1);
+            lines.erase(lines.begin() + y0 + 1, lines.begin() + y1 + 1);
+        }
+        cy = y0; cx = x0;
+        ay = -1;
+        dirty = true;
+    };
+
+    auto anchor = [&](bool keep) {
+        if (!keep) { ay = -1; return; }
+        if (ay < 0) { ay = cy; ax = cx; }
+    };
+
     for (;;) {
         if (cy < top) { top = cy; paint_from = 0; }
         if (cy >= top + ED_ROWS) { top = cy - ED_ROWS + 1; paint_from = 0; }
         int xoff = (cx / ED_COLS) * ED_COLS;
         if (xoff != last_xoff) { paint_line = true; last_xoff = xoff; }
 
+        int sy0 = 0, sx0 = 0, sy1 = -1, sx1 = 0;
+        bool sel = has_sel();
+        if (sel) sel_span(sy0, sx0, sy1, sx1);
+
         if (paint_from < ED_ROWS) {
             for (int r = paint_from; r < ED_ROWS; r++) {
-                if (top + r < (int)lines.size())
-                    draw_line(lines[top + r], r, r == cy - top ? xoff : 0);
-                else {
+                int y = top + r;
+                if (y < (int)lines.size()) {
+                    int from = 0, to = 0;
+                    if (sel && y >= sy0 && y <= sy1) {
+                        from = (y == sy0) ? sx0 : 0;
+                        to   = (y == sy1) ? sx1 : (int)lines[y].size();
+                    }
+                    draw_line(lines[y], r, r == cy - top ? xoff : 0, from, to);
+                } else {
                     cup(r, 0);
                     printf("\x1b[K");
                 }
             }
         } else if (paint_line) {
-            draw_line(lines[cy], cy - top, xoff);
+            draw_line(lines[cy], cy - top, xoff, 0, 0);
         }
         paint_from = ED_ROWS;
         paint_line = false;
 
-        draw_status(name, cy, (int)lines.size(), dirty, cx, top);
+        draw_status(name, cy, (int)lines.size(), dirty, cx, sel);
         cup(cy - top, cx - xoff);
         fflush(NULL);
 
         int c = repl_read_key();
         std::string& ln = lines[cy];
 
-        if (c == 17 || c == K_ESC) {           // Ctrl-Q
+        if (c == 17 || c == K_ESC) {            // Ctrl-Q
+            if (dirty) {
+                int a = ask("save changes? y=save n=discard esc=back ");
+                if (a == K_ESC || a == 17) { paint_from = 0; continue; }
+                if (a == 'y' || a == 'Y') {
+                    FILE* w = fopen(name, "w");
+                    if (!w) {
+                        ask("cannot write - press a key ");
+                        paint_from = 0;
+                        continue;
+                    }
+                    for (auto& s : lines) { fputs(s.c_str(), w); fputc('\n', w); }
+                    fclose(w);
+                }
+            }
             printf("\x1b[2J");
             cup(0, 0);
             fflush(NULL);
@@ -124,17 +224,85 @@ void pico_editor(const char* name) {
             }
             continue;
         }
-        if (c == K_UP)    { if (cy > 0) { cy--; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); } continue; }
-        if (c == K_DOWN)  { if (cy + 1 < (int)lines.size()) { cy++; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); } continue; }
-        if (c == K_PGUP)  { cy = cy > ED_ROWS ? cy - ED_ROWS : 0; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); continue; }
-        if (c == K_PGDN)  { cy += ED_ROWS; if (cy >= (int)lines.size()) cy = lines.size() - 1; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); continue; }
-        if (c == K_LEFT)  { if (cx > 0) cx--; else if (cy > 0) { cy--; cx = lines[cy].size(); } continue; }
-        if (c == K_RIGHT) { if (cx < (int)ln.size()) cx++; else if (cy + 1 < (int)lines.size()) { cy++; cx = 0; } continue; }
-        if (c == K_HOME)  { cx = 0; continue; }
-        if (c == K_END)   { cx = ln.size(); continue; }
+        if (c == 3 || c == 24) {                // Ctrl-C, Ctrl-X
+            if (has_sel()) {
+                g_clip = sel_text();
+                if (c == 24) { sel_drop(); }
+                else { ay = -1; }
+                paint_from = 0;
+            }
+            continue;
+        }
+        if (c == 22) {                          // Ctrl-V
+            if (g_clip.empty()) continue;
+            if (has_sel()) sel_drop();
+            std::string& cur = lines[cy];
+            std::string tail = cur.substr(cx);
+            cur.erase(cx);
+            size_t i = 0;
+            bool first = true;
+            while (i <= g_clip.size()) {
+                size_t nl = g_clip.find('\n', i);
+                std::string piece = g_clip.substr(i, nl == std::string::npos ? std::string::npos : nl - i);
+                if (first) { lines[cy] += piece; cx = lines[cy].size(); first = false; }
+                else {
+                    cy++;
+                    lines.insert(lines.begin() + cy, piece);
+                    cx = piece.size();
+                }
+                if (nl == std::string::npos) break;
+                i = nl + 1;
+            }
+            lines[cy] += tail;
+            dirty = true;
+            paint_from = 0;
+            continue;
+        }
+
+        // Movement. The shifted twin of each key keeps the anchor, the
+        // plain one drops it.
+        if (c == K_UP || c == K_SUP) {
+            anchor(c == K_SUP);
+            if (cy > 0) { cy--; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); }
+            paint_from = 0; continue;
+        }
+        if (c == K_DOWN || c == K_SDOWN) {
+            anchor(c == K_SDOWN);
+            if (cy + 1 < (int)lines.size()) { cy++; if (cx > (int)lines[cy].size()) cx = lines[cy].size(); }
+            paint_from = 0; continue;
+        }
+        if (c == K_LEFT || c == K_SLEFT) {
+            anchor(c == K_SLEFT);
+            if (cx > 0) cx--; else if (cy > 0) { cy--; cx = lines[cy].size(); }
+            paint_from = 0; continue;
+        }
+        if (c == K_RIGHT || c == K_SRIGHT) {
+            anchor(c == K_SRIGHT);
+            if (cx < (int)ln.size()) cx++; else if (cy + 1 < (int)lines.size()) { cy++; cx = 0; }
+            paint_from = 0; continue;
+        }
+        if (c == K_HOME || c == K_SHOME) { anchor(c == K_SHOME); cx = 0; paint_from = 0; continue; }
+        if (c == K_END  || c == K_SEND)  { anchor(c == K_SEND); cx = ln.size(); paint_from = 0; continue; }
+        if (c == K_PGUP) {
+            anchor(false);
+            cy = cy > ED_ROWS ? cy - ED_ROWS : 0;
+            if (cx > (int)lines[cy].size()) cx = lines[cy].size();
+            continue;
+        }
+        if (c == K_PGDN) {
+            anchor(false);
+            cy += ED_ROWS;
+            if (cy >= (int)lines.size()) cy = lines.size() - 1;
+            if (cx > (int)lines[cy].size()) cx = lines[cy].size();
+            continue;
+        }
+
+        // Anything that writes replaces the selection first.
         if (c == '\r' || c == '\n') {
-            std::string rest = ln.substr(cx);
-            ln.erase(cx);
+            if (has_sel()) { sel_drop(); paint_from = 0; }
+            std::string& cur = lines[cy];
+            std::string rest = cur.substr(cx);
+            cur.erase(cx);
             lines.insert(lines.begin() + cy + 1, rest);
             paint_from = cy - top;
             cy++; cx = 0;
@@ -142,6 +310,7 @@ void pico_editor(const char* name) {
             continue;
         }
         if (c == 8 || c == 127) {
+            if (has_sel()) { sel_drop(); paint_from = 0; continue; }
             if (cx > 0) {
                 ln.erase(cx - 1, 1);
                 cx--;
@@ -157,6 +326,7 @@ void pico_editor(const char* name) {
             continue;
         }
         if (c == K_DEL) {
+            if (has_sel()) { sel_drop(); paint_from = 0; continue; }
             if (cx < (int)ln.size()) {
                 ln.erase(cx, 1);
                 dirty = true; paint_line = true;
@@ -168,10 +338,12 @@ void pico_editor(const char* name) {
             }
             continue;
         }
-        if (c >= 32 && c < 127) {
-            ln.insert(ln.begin() + cx, (char)c);
+        if (c >= 32 && c < 255) {
+            if (has_sel()) { sel_drop(); paint_from = 0; }
+            lines[cy].insert(lines[cy].begin() + cx, (char)c);
             cx++;
-            dirty = true; paint_line = true;
+            dirty = true;
+            if (paint_from >= ED_ROWS) paint_line = true;
         }
     }
 }
