@@ -59,8 +59,39 @@ rate reaches it.
 - `memmap_bigstack.ld` moves the core-0 stack from the 4 KB scratch
   bank to the top of main RAM (128 KB): parser and interpreter recurse.
 
-Image: ~1.8 MB flash for a Fruit Jam with the USB host; roughly 120 KB
-of heap remain for the VM.
+Image: ~1.8 MB flash for a Fruit Jam with the USB host; roughly 40 KB of
+SRAM heap remain for the VM once the framebuffer is out.
+
+## The Fruit Jam's PSRAM, and where it stands
+
+The board has 8 MB on QMI chip select 1. The SDK's `hardware_psram`
+maps it from the board header, and `psram_reinitialize` is called after
+`set_sys_clock_khz` because the timings computed during runtime init
+describe the clock the board booted on, not the 126 MHz the scanout
+needs. The window is proven: `PSRAM.TEST$` reads a pattern back from
+both ends, and `PSRAM.TORTURE$` allocates, fills, verifies and frees a
+few thousand blocks while the scanout and the USB host are running -
+"1508 blocks, intact". `tests/psram_heap_test.cpp` runs the same
+allocator on the desktop under AddressSanitizer.
+
+`./build_pico.sh fruitjam usb psram` puts the interpreter's allocations
+of 512 bytes and up in it, and free SRAM at the prompt goes from 41 KB
+to 91 KB. It is **off by default** because one thing still fails, and
+it reduces to this:
+
+    DIM n AS INTEGER = 6
+    DIM a[6]
+    FOR i = 0 TO n - 1
+        a[i] = RND(1) * 320      ' a native call inside the loop
+    NEXT i
+
+With the pool on, that program dies partway with no message and takes
+the board with it. `a[i] = i * 0.5` in the same loop is fine, and
+`x = RND(1)` on its own is fine; it is the native call inside the loop
+that does it. With the pool off the same program runs. The pool itself
+is not the suspect - the arithmetic is proven on both sides - so the
+next thing to look at is what a native call does to the value stack
+while that stack lives behind the XIP cache.
 
 ## Coming from MicroPython
 

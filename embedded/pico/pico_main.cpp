@@ -11,6 +11,9 @@
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
 #include "hardware/clocks.h"
+#ifdef FRUITJAM
+#include "hardware/psram.h"
+#endif
 #include "pico/stdio.h"
 #include "pico/stdio/driver.h"
 #include "pico/stdio_usb.h"
@@ -286,6 +289,12 @@ int main() {
     // 25.2 MHz. PIO-USB divides the same clock down to 12 MHz and takes a
     // fractional divider to do it, which is what the reference ports use.
     set_sys_clock_khz(126000, true);
+    // The QMI timings for chip select 1 were worked out during runtime
+    // init, against the clock the board came up on. Moving the clock
+    // afterwards leaves them describing a machine that no longer exists,
+    // and PSRAM then works for a read here and there and fails under
+    // load. Core 1 is not running yet, so this is the safe moment.
+    psram_reinitialize();
 #endif
     stdio_init_all();
 #ifdef FRUITJAM

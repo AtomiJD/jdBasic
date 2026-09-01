@@ -81,10 +81,13 @@ int fruitjam_psram_check(char* out, int cap) {
     if (!psram_is_available()) return snprintf(out, cap, "no psram");
     size_t words = psram_get_size() / 4;
     volatile uint32_t* p = (volatile uint32_t*)PSRAM_BASE;
+    // Not the first word: the pool keeps its list head there, and a probe
+    // that scribbles on it would take the heap with it.
+    size_t low = 1024;
     const uint32_t first = 0xA5A5F00Du, last = 0x5A5A0FF0u;
-    p[0] = first;
+    p[low] = first;
     p[words - 1] = last;
-    uint32_t got_first = p[0], got_last = p[words - 1];
+    uint32_t got_first = p[low], got_last = p[words - 1];
     return snprintf(out, cap, "%u KB at %08x, %s",
                     (unsigned)(psram_get_size() / 1024), PSRAM_BASE,
                     (got_first == first && got_last == last) ? "reads back" : "MISMATCH");

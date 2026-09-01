@@ -19,6 +19,11 @@ set(PICO_BOARD pico2_w CACHE STRING "Board type")
 option(PICOCALC "Build with the PicoCalc device drivers" ON)
 option(FRUITJAM "Build with the Fruit Jam device drivers" OFF)
 option(FJ_USB "Build the Fruit Jam USB host (keyboard, mouse)" OFF)
+# The PSRAM pool is always built and always measurable; this decides
+# whether the interpreter's large allocations are actually placed in it.
+# Off by default: the window reads back and the allocator is proven, but
+# a program run from a file still dies partway with it on.
+option(FJ_PSRAM_HEAP "Put the interpreter's large allocations in PSRAM" OFF)
 
 # The USB host is PIO-USB, which the SDK's TinyUSB glue picks up on its
 # own once it knows where the library is - it has to be told before
@@ -169,6 +174,9 @@ if (FRUITJAM)
     # hardware_psram brings the runtime-init hook that maps the 8 MB on
     # QMI chip select 1; the board header names the pin and the size.
     target_link_libraries(jdbasic_repl hardware_dma pico_multicore hardware_psram)
+    if (FJ_PSRAM_HEAP)
+        target_compile_definitions(jdbasic_repl PRIVATE JDB_PSRAM_HEAP_ON=1)
+    endif()
 endif()
 if (FRUITJAM AND FJ_USB)
     target_link_libraries(jdbasic_repl tinyusb_host tinyusb_pico_pio_usb)

@@ -15,16 +15,32 @@
 // allocator for a load that does not need one.
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <new>
 
+#ifdef JDB_PSRAM_HEAP_TEST
+// The allocator is plain arithmetic over a window, so the test gives it
+// an ordinary buffer and hammers it on the desktop.
+extern bool     psram_is_available(void);
+extern size_t   psram_get_size(void);
+extern uint8_t* jdb_psram_window(void);
+#define PSRAM_WINDOW ((uintptr_t)jdb_psram_window())
+#else
 #include "pico/stdlib.h"
 #include "hardware/psram.h"
+#define PSRAM_WINDOW 0x11000000u
+#endif
 
-#define PSRAM_BASE 0x11000000u
-
-// Below this a request is better off in SRAM.
+// Below this a request is better off in SRAM. With FJ_PSRAM_HEAP off the
+// pool is built and measurable but nothing is placed in it, which is the
+// default until the window is trusted under load - see the README.
+#ifdef JDB_PSRAM_HEAP_ON
 #define PSRAM_MIN 512u
+#else
+#define PSRAM_MIN 0xFFFFFFFFu
+#endif
 
 namespace {
 
@@ -48,7 +64,7 @@ void heap_start() {
     size_t n = psram_get_size();
     if (n < 64 * 1024) return;
     g_bytes = n;
-    g_first = (Block*)PSRAM_BASE;
+    g_first = (Block*)PSRAM_WINDOW;
     g_first->size = n - sizeof(Block);
     g_first->next = nullptr;
     g_first->used = 0;
@@ -80,7 +96,7 @@ void* psram_alloc(size_t want) {
 
 bool is_ours(void* p) {
     uintptr_t a = (uintptr_t)p;
-    return g_first && a > PSRAM_BASE && a < PSRAM_BASE + g_bytes;
+    return g_first && a > PSRAM_WINDOW && a < PSRAM_WINDOW + g_bytes;
 }
 
 void psram_free(void* p) {
@@ -100,6 +116,43 @@ void psram_free(void* p) {
 
 } // namespace
 
+// The desktop test in tests/psram_heap_test.cpp proves the arithmetic.
+// This runs the same shape on the board, where the DVI DMA is reading a
+// framebuffer and core 1 is fetching USB frames out of flash, because
+// that is the part a desktop cannot reproduce.
+extern "C" int fruitjam_psram_torture(char* out, int cap, int rounds) {
+    heap_start();
+    if (!g_first) return snprintf(out, cap, "no psram");
+    void* live[24];
+    size_t sizes[24];
+    unsigned char fills[24];
+    for (int i = 0; i < 24; i++) live[i] = nullptr;
+    uint32_t seed = 12345;
+    int bad = 0, done = 0;
+    for (int r = 0; r < rounds && !bad; r++) {
+        seed = seed * 1103515245u + 12345u;
+        int slot = (seed >> 16) % 24;
+        if (live[slot]) {
+            unsigned char* p = (unsigned char*)live[slot];
+            for (size_t k = 0; k < sizes[slot]; k++)
+                if (p[k] != fills[slot]) { bad = 1; break; }
+            psram_free(live[slot]);
+            live[slot] = nullptr;
+        } else {
+            size_t n = 64 + ((seed >> 8) % 20000);
+            void* p = psram_alloc(n);
+            if (!p) continue;
+            live[slot] = p;
+            sizes[slot] = n;
+            fills[slot] = (unsigned char)(seed & 0xFF);
+            memset(p, fills[slot], n);
+            done++;
+        }
+    }
+    for (int i = 0; i < 24; i++) if (live[i]) psram_free(live[i]);
+    return snprintf(out, cap, "%d blocks, %s", done, bad ? "CORRUPT" : "intact");
+}
+
 extern "C" unsigned fruitjam_psram_heap_free(void) {
     heap_start();
     if (!g_first) return 0;
@@ -118,6 +171,12 @@ extern "C" unsigned fruitjam_psram_heap_largest(void) {
     return (unsigned)big;
 }
 
+#ifdef JDB_PSRAM_HEAP_TEST
+// The test drives the pool directly; replacing operator new here would
+// take the harness's own allocations with it.
+void* jdb_psram_test_alloc(size_t n) { return psram_alloc(n); }
+void  jdb_psram_test_free(void* p)   { if (p) psram_free(p); }
+#else
 static void* jdb_alloc(size_t n) {
     if (n == 0) n = 1;
     if (n >= PSRAM_MIN) {
@@ -155,3 +214,4 @@ void operator delete(void* p, size_t) noexcept { jdb_release(p); }
 void operator delete[](void* p, size_t) noexcept { jdb_release(p); }
 void operator delete(void* p, const std::nothrow_t&) noexcept { jdb_release(p); }
 void operator delete[](void* p, const std::nothrow_t&) noexcept { jdb_release(p); }
+#endif // JDB_PSRAM_HEAP_TEST

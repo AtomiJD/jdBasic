@@ -4378,3 +4378,7 @@ Description: One key code if one is waiting, -1 if none is. Boards only. The one
 [SYS.PSRAMLARGEST]
 Syntax: SYS.PSRAMLARGEST -> bytes
 Description: The biggest single block the PSRAM heap will hand over. Fruit Jam only. The companion to SYS.LARGEST, and the number that matters when a program grows one large array.
+
+[PSRAM.TORTURE$]
+Syntax: PSRAM.TORTURE$([rounds=2000]) -> text$
+Description: Allocates, fills, verifies and frees blocks in the PSRAM pool while the scanout and the USB host are running, and says how many it got through and whether anything came back changed. Fruit Jam only. The desktop cannot reproduce the part that matters here, which is the traffic on the same memory controller.

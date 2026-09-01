@@ -27,6 +27,7 @@ void fruitjam_con_size(int* cols, int* rows);
 unsigned fruitjam_psram_size(void);
 unsigned fruitjam_psram_heap_free(void);
 unsigned fruitjam_psram_heap_largest(void);
+int  fruitjam_psram_torture(char* out, int cap, int rounds);
 int  fruitjam_psram_check(char* out, int cap);
 #ifdef FRUITJAM_USB
 void fruitjam_kbd_layout(int de);
@@ -175,6 +176,14 @@ void register_fruitjam_gfx(VM& vm) {
     });
     vm.register_native("SYS.PSRAMLARGEST", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)fruitjam_psram_heap_largest());
+    });
+    // Alloc, fill, verify and free in the window while the scanout and
+    // the USB host are running - the part a desktop cannot reproduce.
+    vm.register_native("PSRAM.TORTURE$", 0, 1, [](const std::vector<Value>& args) -> Value {
+        int rounds = args.size() >= 1 ? (int)args[0].to_double() : 2000;
+        char b[96];
+        fruitjam_psram_torture(b, sizeof b, rounds);
+        return Value::make_string(b);
     });
     vm.register_native("PSRAM.TEST$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[96];
