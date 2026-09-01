@@ -33,7 +33,6 @@
 #include "pio_usb.h"
 #include "tusb.h"
 
-void fruitjam_dvi_trace(const char* s);
 int  fruitjam_usb_start(void);
 
 #define USB_DP_PIN      1
@@ -89,6 +88,11 @@ static int key_pop(void) {
 int fruitjam_usb_keys_waiting(void) { return g_head != g_tail; }
 int fruitjam_usb_key_count(void)     { return (int)g_keys; }
 int fruitjam_usb_keyboards(void)    { return g_keyboards; }
+
+// Enumeration only advances while the stack is asked to run, and the only
+// thing that asks is a read for a key. Boot has none to make, so it drives
+// the stack directly for the moment it takes a keyboard to appear.
+void fruitjam_usb_poll(void) { if (g_up) tuh_task(); }
 int fruitjam_usb_devices(void)      { return g_devices; }
 
 // Asking for a key is what drives the host stack.
@@ -269,7 +273,6 @@ int fruitjam_usb_start(void) {
     gpio_set_dir(USB_5V_PIN, true);
     gpio_put(USB_5V_PIN, 1);
 
-    fruitjam_dvi_trace("usb: configuring host");
     pio_usb_configuration_t cfg = PIO_USB_DEFAULT_CONFIG;
     cfg.pin_dp = USB_DP_PIN;
 
@@ -285,12 +288,9 @@ int fruitjam_usb_start(void) {
     cfg.skip_alarm_pool = true;
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
 
-    fruitjam_dvi_trace("usb: starting host");
     g_up = tuh_init(1);
-    fruitjam_dvi_trace(g_up ? "usb: host up" : "usb: host FAILED");
     if (g_up) {
         multicore_launch_core1(core1_usb_frames);
-        fruitjam_dvi_trace("usb: frames on core 1");
     }
     return g_up;
 }

@@ -3814,7 +3814,13 @@ The console and a drawing program share that one framebuffer, so
 `GFX.CONSOLE 0` takes the screen for the program and `GFX.CONSOLE 1`
 gives it back; the prompt keeps running over USB either way.
 `DVI.FRAMES`, `DVI.FRAMEUS` and `DVI.CLOCK` say what the signal is doing,
-and `DVI.DIAG$` puts the scanout's registers on one line.
+and `DVI.DIAG$` puts the scanout's registers on one line. `GFX.PEEK`
+reads a pixel back, which here is the glass as well as the memory.
+
+The board comes up with a page saying what it is: chip and clock, free
+memory, the screen and its refresh rate, what enumerated on the USB
+host, and how much of the flash store is left. Nothing else is printed
+before it, so that page is the first thing on the screen.
 
 `BUTTON.GET(n)` reads the three buttons - 1 is the BOOT button, which is
 only a boot function while the chip is coming up - and `BUTTON.COUNT`

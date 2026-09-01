@@ -27,7 +27,7 @@ size_t   fruitjam_dvi_stride(void);
 #define CELL_BYTES (CH_W * 2)
 
 static int     g_col = 0, g_row = 0;
-static uint8_t g_fg = 0xB6;     // light gray, the resting colour
+static uint8_t g_fg = 0x3C;     // green, the resting colour
 static uint8_t g_bg = 0x00;
 
 // Escape sequence state: 0 idle, 1 saw ESC, 2 inside a CSI.
@@ -102,7 +102,7 @@ static void put_printable(char c) {
 // Only the colours the prompt actually emits, plus a reset.
 static void sgr(int code) {
     switch (code) {
-        case 0:  g_fg = 0xB6; g_reverse = 0; break;
+        case 0:  g_fg = 0x3C; g_reverse = 0; break;
         case 7:  g_reverse = 1; break;
         case 27: g_reverse = 0; break;
         case 90: g_fg = 0x92; break;

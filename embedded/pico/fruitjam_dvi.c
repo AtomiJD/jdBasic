@@ -114,7 +114,6 @@ static uint32_t* g_cmds = NULL;
 static int       g_ch_pixel = -1;
 static int       g_ch_cmd = -1;
 
-void fruitjam_con_write(const char* s, int len);
 void fruitjam_con_tick(void);
 
 static uint32_t g_frames = 0;
@@ -168,6 +167,11 @@ void fruitjam_dvi_pset(int x, int y, uint8_t rgb332) {
     ((uint16_t*)g_fb)[(size_t)y * FB_W + x] = (uint16_t)rgb332 * 0x0101u;
 }
 
+int fruitjam_dvi_peek(int x, int y) {
+    if (!g_fb || x < 0 || y < 0 || x >= FB_W || y >= FB_H) return -1;
+    return ((uint16_t*)g_fb)[(size_t)y * FB_W + x] & 0xFF;
+}
+
 void fruitjam_dvi_hline(int x, int y, int w, uint8_t rgb332) {
     if (!g_fb || y < 0 || y >= FB_H) return;
     if (x < 0) { w += x; x = 0; }
@@ -179,18 +183,6 @@ void fruitjam_dvi_hline(int x, int y, int w, uint8_t rgb332) {
 // The framebuffer is part of the machine and outlives any program: the
 // command list holds a pointer into every one of its lines.
 int fruitjam_dvi_alloc(void) { return g_fb != NULL; }
-
-void fruitjam_gfx_color(int r, int g, int b);
-void fruitjam_gfx_text(int x, int y, const char* s, int scale);
-
-// Bring-up leaves a trail on the screen. A hang before the console exists
-// cannot report itself any other way.
-void fruitjam_dvi_trace(const char* s) {
-    if (!g_fb) return;
-    fruitjam_con_write(s, (int)strlen(s));
-    static const char crlf[2] = { 13, 10 };
-    fruitjam_con_write(crlf, 2);
-}
 
 // One pair per transfer: how many words, and where from. Writing the
 // second of the two triggers the pixel channel.

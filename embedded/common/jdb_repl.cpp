@@ -476,10 +476,26 @@ static int program_verb(char* line) {
     return 1;
 }
 
+// Sixteen columns for the command and the rest for what it does, so the
+// two make columns rather than a paragraph.
+void jdb_repl_hints(void) {
+    static const char* const hints[][2] = {
+        { "HELP",       "the board's own manual" },
+        { "DIR",        "what is on the board" },
+        { "EDIT name",  "write something" },
+        { "RUN name",   "start it" },
+    };
+    for (size_t i = 0; i < sizeof hints / sizeof hints[0]; i++)
+        printf(" \x1b[96m%-14s\x1b[0m%s\n", hints[i][0], hints[i][1]);
+    printf("\n");
+}
+
 void jdb_repl_run(JdbEmbed* vm, const JdbReplPort* port) {
     g_vm = vm;
     g_port = port;
     g_current[0] = 0;
+
+    if (port->hello) port->hello();
 
     // Power-on program, with a window to get out of it: without one a
     // looping autorun program would own the board for good.

@@ -333,6 +333,11 @@ extern "C" void* sbrk(int);
 
 extern "C" int jdb_pico_fs_free(unsigned* freebytes, unsigned* total);
 
+extern "C" unsigned jdb_pico_heap_free(void) {
+    struct mallinfo mi = mallinfo();
+    return (unsigned)((&__StackLimit - (char*)sbrk(0)) + (long)mi.fordblks);
+}
+
 void register_pico_mem(VM& vm) {
     vm.register_native("SYS.DF", 0, 0, [](const std::vector<Value>&) -> Value {
         unsigned avail = 0, total = 0;
@@ -348,9 +353,7 @@ void register_pico_mem(VM& vm) {
         return Value::make_i64((int64_t)avail);
     });
     vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
-        struct mallinfo mi = mallinfo();
-        int64_t unclaimed = (int64_t)(&__StackLimit - (char*)sbrk(0));
-        return Value::make_i64(unclaimed + (int64_t)mi.fordblks);
+        return Value::make_i64((int64_t)jdb_pico_heap_free());
     });
     // The number SYS.FREE cannot give: the biggest single block the heap
     // will actually hand over. A vector that doubles as it grows asks for

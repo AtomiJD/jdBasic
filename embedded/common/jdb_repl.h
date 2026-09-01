@@ -25,9 +25,17 @@ struct JdbReplPort {
     // say about its screen first. May be null.
     void (*before_edit)(void);
 
+    // The page the board shows at power-on: what it is and what it has.
+    // Called once, before the autorun window. May be null.
+    void (*hello)(void);
+
     // Where the name of the power-on program is kept.
     const char* autorun_path;
 };
+
+// The four hints every board's welcome page ends with, in the two columns
+// they read as. A port calls this from its own hello.
+void jdb_repl_hints(void);
 
 // Argument tidying, shared with the board commands: leading and trailing
 // blanks off, surrounding quotes off.

@@ -18,6 +18,7 @@ void fruitjam_gfx_text(int x, int y, const char* s, int scale);
 int      fruitjam_dvi_alloc(void);
 unsigned char* fruitjam_dvi_framebuffer(void);
 int      fruitjam_dvi_width(void);
+int      fruitjam_dvi_peek(int x, int y);
 int      fruitjam_dvi_height(void);
 unsigned fruitjam_dvi_frames(void);
 int  fruitjam_con_enable(int on);
@@ -128,6 +129,18 @@ void register_fruitjam_gfx(VM& vm) {
     vm.register_native("GFX.CONSOLE", 0, 1, [](const std::vector<Value>& args) -> Value {
         if (args.size() >= 1) fruitjam_con_enable(args[0].to_double() != 0);
         return Value::make_bool(fruitjam_con_on() != 0);
+    });
+    // What the framebuffer holds at a point, the way the panel boards
+    // answer it. Here that is the glass too - this framebuffer is what
+    // the wire is reading.
+    vm.register_native("GFX.PEEK", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int v = fruitjam_dvi_peek((int)args[0].to_double(), (int)args[1].to_double());
+        Value arr = Value::make_array();
+        if (v < 0) return arr;
+        arr.as_array()->elements.push_back(Value::make_i64(v & 0xE0));
+        arr.as_array()->elements.push_back(Value::make_i64((v << 3) & 0xE0));
+        arr.as_array()->elements.push_back(Value::make_i64((v << 6) & 0xC0));
+        return arr;
     });
     vm.register_native("GFX.CONSIZE", 0, 0, [](const std::vector<Value>&) -> Value {
         int cols = 0, rows = 0;

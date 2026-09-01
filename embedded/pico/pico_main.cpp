@@ -30,6 +30,14 @@ extern "C" void fruitjam_usb_init(void);
 extern "C" void fruitjam_con_init(void);
 extern "C" void fruitjam_snd_init(void);
 extern "C" void fruitjam_board_init(void);
+extern "C" int  fruitjam_dvi_width(void);
+extern "C" int  fruitjam_dvi_height(void);
+extern "C" unsigned fruitjam_dvi_frame_us(void);
+#ifdef FRUITJAM_USB
+extern "C" int  fruitjam_usb_keyboards(void);
+extern "C" int  fruitjam_usb_devices(void);
+extern "C" void fruitjam_usb_poll(void);
+#endif
 #endif
 #ifdef PICOCALC
 extern "C" void picocalc_lcd_init(void);
@@ -205,10 +213,62 @@ static int pico_board_command(const char* cmd, char* a) {
     return 0;
 }
 
+extern "C" unsigned jdb_pico_heap_free(void);
+extern "C" int jdb_pico_fs_free(unsigned* freebytes, unsigned* total);
+
+#if defined(FRUITJAM)
+#define BOARD_TEXT "a Fruit Jam"
+#define CHIP_TEXT  "RP2350B"
+#elif defined(PICOCALC)
+#define BOARD_TEXT "a PicoCalc"
+#define CHIP_TEXT  "RP2350"
+#elif PICO_RP2040
+#define BOARD_TEXT "a Pico"
+#define CHIP_TEXT  "RP2040"
+#else
+#define BOARD_TEXT "a Pico 2"
+#define CHIP_TEXT  "RP2350"
+#endif
+
+// The first page: what this machine is and what it has, written for forty
+// columns. Kilobytes rather than bytes, because the digit that matters on
+// a screen this size is the first one.
+static void pico_hello(void) {
+    printf("\x1b[93m jdBasic\x1b[0m   on " BOARD_TEXT "\n");
+    // Two short of the width: a rule that fills the row exactly makes the
+    // console wrap, and the newline after it then costs a blank line.
+    printf("\x1b[90m--------------------------------------\x1b[0m\n");
+    printf(" chip   " CHIP_TEXT ", 2 cores at %u MHz\n",
+           (unsigned)(clock_get_hz(clk_sys) / 1000000u));
+    printf(" ram    %u KB free\n", jdb_pico_heap_free() / 1024u);
+#ifdef FRUITJAM
+    unsigned us = fruitjam_dvi_frame_us();
+    printf(" video  %dx%d over DVI at %u Hz\n",
+           fruitjam_dvi_width(), fruitjam_dvi_height(),
+           us ? (1000000u + us / 2) / us : 0);
+    printf(" sound  TLV320 codec, jack and speaker\n");
+#ifdef FRUITJAM_USB
+    int kb = fruitjam_usb_keyboards(), dev = fruitjam_usb_devices();
+    if (dev == 0) printf(" usb    host running, nothing attached\n");
+    else printf(" usb    %d keyboard%s, %d device%s\n",
+                kb, kb == 1 ? "" : "s", dev, dev == 1 ? "" : "s");
+#endif
+#endif
+#ifdef PICOCALC
+    printf(" panel  320x320, keyboard and sound\n");
+#endif
+    unsigned avail = 0, total = 0;
+    if (jdb_pico_fs_free(&avail, &total) == 0)
+        printf(" store  %u KB free of %u KB\n", avail / 1024u, total / 1024u);
+    printf("\n");
+    jdb_repl_hints();
+}
+
 static const JdbReplPort PORT = {
     pico_read_byte_ms,
     pico_board_command,
     nullptr,
+    pico_hello,
     "/.autorun",
 };
 
@@ -225,7 +285,6 @@ int main() {
 #ifdef FRUITJAM
     fruitjam_dvi_init();
     fruitjam_dvi_alloc();
-    fruitjam_con_init();
     fruitjam_snd_init();
     fruitjam_board_init();
 #ifdef FRUITJAM_USB
@@ -247,10 +306,21 @@ int main() {
     for (int i = 0; i < 30 && !stdio_usb_connected(); i++) sleep_ms(100);
     sleep_ms(200);
 
-#if PICO_RP2040
-    printf("\njdBasic on RP2040\n");
-#else
-    printf("\njdBasic on RP2350\n");
+#ifdef FRUITJAM
+#ifdef FRUITJAM_USB
+    // Enumeration only advances while something drives the host stack,
+    // and the only thing that does is a read for a key. Nothing reads one
+    // before the prompt exists, so the welcome page would count no
+    // keyboard however long it waited. Two seconds is more than one
+    // needs, and is only spent when nothing is attached.
+    for (int i = 0; i < 100 && fruitjam_usb_devices() == 0; i++) {
+        fruitjam_usb_poll();
+        sleep_ms(20);
+    }
+#endif
+    // The screen stays black until here, so the first thing on it is the
+    // welcome page rather than whatever the drivers had to say.
+    fruitjam_con_init();
 #endif
 
     JdbEmbed* vm = jdb_embed_init();

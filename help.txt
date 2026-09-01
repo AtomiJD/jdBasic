@@ -4101,7 +4101,7 @@ Description: The console as [columns, rows]. Boards with a panel only. 40 by 30 
 
 [GFX.PEEK]
 Syntax: GFX.PEEK(x, y)
-Description: What the framebuffer holds at a point, as [r, g, b]. Boards with a panel only. This asks the memory, not the glass; GFX.READBACK asks the glass.
+Description: What the framebuffer holds at a point, as [r, g, b]. Boards with a screen only, and empty outside it. This asks the memory rather than the glass, which on a panel board is a real distinction - GFX.READBACK asks the glass there. On the Fruit Jam the two are the same thing, because the framebuffer is what the wire is reading.
 
 [GFX.READBACK]
 Syntax: GFX.READBACK(x, y)

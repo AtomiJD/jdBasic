@@ -206,6 +206,9 @@ static const JdbReplPort PORT = {
     esp32_read_byte_ms,
     esp32_board_command,
     esp32_before_edit,
+    // The page goes up with the panel console rather than with the
+    // prompt: by then the serial line has had sixty columns of diagnosis.
+    nullptr,
     AUTORUN_CFG,
 };
 
@@ -226,17 +229,7 @@ static void panel_hello(const esp_chip_info_t* chip) {
     printf(" panel  %dx%d, touch and sound\n",
            es3c28p_lcd_width(), es3c28p_lcd_height());
     printf("\n");
-    // Sixteen columns for the command and the rest for what it does, so
-    // the two make columns rather than a paragraph.
-    static const char* const hints[][2] = {
-        { "TYPE readme.txt", "start here" },
-        { "DIR",             "what is on the board" },
-        { "RUN selftest",    "check every part" },
-        { "EDIT name",       "write something" },
-    };
-    for (size_t i = 0; i < sizeof hints / sizeof hints[0]; i++)
-        printf(" \x1b[96m%-16s\x1b[0m%s\n", hints[i][0], hints[i][1]);
-    printf("\n");
+    jdb_repl_hints();
 }
 
 extern "C" void app_main(void) {
