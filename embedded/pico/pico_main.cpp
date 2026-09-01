@@ -33,6 +33,7 @@ extern "C" void fruitjam_board_init(void);
 extern "C" int  fruitjam_dvi_width(void);
 extern "C" int  fruitjam_dvi_height(void);
 extern "C" unsigned fruitjam_dvi_frame_us(void);
+extern "C" unsigned fruitjam_psram_size(void);
 #ifdef FRUITJAM_USB
 extern "C" int  fruitjam_usb_keyboards(void);
 extern "C" int  fruitjam_usb_devices(void);
@@ -241,6 +242,10 @@ static void pico_hello(void) {
     printf(" chip   " CHIP_TEXT ", 2 cores at %u MHz\n",
            (unsigned)(clock_get_hz(clk_sys) / 1000000u));
     printf(" ram    %u KB free\n", jdb_pico_heap_free() / 1024u);
+#ifdef FRUITJAM
+    unsigned ps = fruitjam_psram_size();
+    if (ps) printf(" psram  %u KB mapped, not in the heap\n", ps / 1024u);
+#endif
 #ifdef FRUITJAM
     unsigned us = fruitjam_dvi_frame_us();
     printf(" video  %dx%d over DVI at %u Hz\n",

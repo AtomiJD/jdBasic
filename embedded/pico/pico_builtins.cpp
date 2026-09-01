@@ -67,7 +67,13 @@ void register_pico_builtins(VM& vm) {
     register_pico_keyget(vm);
     register_pico_hw(vm);
     register_pico_mem(vm);
+#ifdef PICOCALC
+    // The bit-banged probe drives GP2 to GP5, GP20 and GP21, which is
+    // where the PicoCalc's chip sits and where other boards have other
+    // things. The Fruit Jam's PSRAM is on the QMI bus and answers under
+    // SYS.PSRAM instead.
     register_pico_psram(vm);
+#endif
     register_pico_events(vm);
 #ifdef FRUITJAM
     register_fruitjam_gfx(vm);

@@ -14,9 +14,12 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <stdio.h>
+
 #include "pico/stdlib.h"
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
+#include "hardware/psram.h"
 
 #define BTN1_PIN 0
 #define BTN2_PIN 4
@@ -60,6 +63,32 @@ int fruitjam_button(int n) {
 }
 
 int fruitjam_button_count(void) { return 3; }
+
+// Eight megabytes on QMI chip select 1, mapped rather than reached over
+// SPI: the SDK's runtime init sets it up from the board header, so the
+// window is simply there to be read and written. It is not part of the
+// heap - malloc still hands out SRAM - so this says what the machine
+// has, not what a program can ask for yet.
+#define PSRAM_BASE 0x11000000u
+
+unsigned fruitjam_psram_size(void) {
+    return psram_is_available() ? (unsigned)psram_get_size() : 0;
+}
+
+// A pattern at each end, read back. What the chip does rather than what
+// the board header says it should.
+int fruitjam_psram_check(char* out, int cap) {
+    if (!psram_is_available()) return snprintf(out, cap, "no psram");
+    size_t words = psram_get_size() / 4;
+    volatile uint32_t* p = (volatile uint32_t*)PSRAM_BASE;
+    const uint32_t first = 0xA5A5F00Du, last = 0x5A5A0FF0u;
+    p[0] = first;
+    p[words - 1] = last;
+    uint32_t got_first = p[0], got_last = p[words - 1];
+    return snprintf(out, cap, "%u KB at %08x, %s",
+                    (unsigned)(psram_get_size() / 1024), PSRAM_BASE,
+                    (got_first == first && got_last == last) ? "reads back" : "MISMATCH");
+}
 
 int fruitjam_ir_raw(void) { return gpio_get(IR_PIN) ? 1 : 0; }
 

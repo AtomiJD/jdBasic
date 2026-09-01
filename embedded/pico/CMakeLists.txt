@@ -43,7 +43,6 @@ set(JDB_SOURCES
     pico_stubs.cpp
     pico_builtins.cpp
     pico_events.cpp
-    pico_psram.cpp
     pico_hw.cpp
     pico_fs.cpp
     ../common/jdb_repl.cpp
@@ -88,6 +87,7 @@ endif()
 
 if (PICOCALC)
     list(APPEND JDB_SOURCES
+        pico_psram.cpp
         picocalc_lcd.c
         picocalc_kbd.c
         picocalc_gfx.c
@@ -165,7 +165,9 @@ target_link_libraries(jdbasic_repl pico_stdlib hardware_flash hardware_gpio pico
 # The HSTX scanout is DMA driven; its registers come with the structs
 # headers pico_stdlib already carries.
 if (FRUITJAM)
-    target_link_libraries(jdbasic_repl hardware_dma pico_multicore)
+    # hardware_psram brings the runtime-init hook that maps the 8 MB on
+    # QMI chip select 1; the board header names the pin and the size.
+    target_link_libraries(jdbasic_repl hardware_dma pico_multicore hardware_psram)
 endif()
 if (FRUITJAM AND FJ_USB)
     target_link_libraries(jdbasic_repl tinyusb_host tinyusb_pico_pio_usb)

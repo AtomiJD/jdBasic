@@ -24,6 +24,8 @@ unsigned fruitjam_dvi_frames(void);
 int  fruitjam_con_enable(int on);
 int  fruitjam_con_on(void);
 void fruitjam_con_size(int* cols, int* rows);
+unsigned fruitjam_psram_size(void);
+int  fruitjam_psram_check(char* out, int cap);
 #ifdef FRUITJAM_USB
 void fruitjam_kbd_layout(int de);
 int  fruitjam_kbd_layout_get(void);
@@ -163,6 +165,16 @@ void register_fruitjam_gfx(VM& vm) {
     // still reads the 150 MHz default.
     vm.register_native("DVI.CLOCK", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)fruitjam_dvi_hstx_meas() * 1000);
+    });
+    // The name the ES3C28P uses for the same question. Mapped, not yet
+    // in the heap: a program cannot ask malloc for it.
+    vm.register_native("SYS.PSRAM", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64((int64_t)fruitjam_psram_size());
+    });
+    vm.register_native("PSRAM.TEST$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[96];
+        fruitjam_psram_check(b, sizeof b);
+        return Value::make_string(b);
     });
     vm.register_native("SYS.CLOCK", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)fruitjam_dvi_sys_hz());

@@ -3994,7 +3994,7 @@ Description: Free internal RAM, the scarce pool. ESP32-S3 only.
 
 [SYS.PSRAM]
 Syntax: SYS.PSRAM -> bytes
-Description: Free PSRAM, where arrays and programs live. Zero on a part without it. ESP32-S3 only.
+Description: The PSRAM this board has. Zero on a part without it. On the ESP32-S3 it is free PSRAM, and arrays and programs live there. On the Fruit Jam it is the size mapped on the QMI bus, which is not yet part of the heap: the window can be read and written directly, but malloc still hands out SRAM.
 
 [SYS.MEM]
 Syntax: SYS.MEM -> text$
@@ -4366,3 +4366,7 @@ Description: One pass of the server: hands over whatever requests have arrived a
 [HTTP.SERVER.SERVED]
 Syntax: HTTP.SERVER.SERVED -> count
 Description: How many requests this server has answered since it started. Boards only.
+
+[PSRAM.TEST$]
+Syntax: PSRAM.TEST$ -> text$
+Description: Writes a pattern at each end of the PSRAM window and reads it back, answering with the size, the address it is mapped at, and whether it survived. RP2350 boards whose PSRAM is on the QMI bus only - the Fruit Jam is one.
