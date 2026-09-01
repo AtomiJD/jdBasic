@@ -368,6 +368,31 @@ void register_pico_mem(VM& vm) {
     vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)jdb_pico_heap_free());
     });
+    // Where the heap actually stands, in the allocator's own terms.
+    // arena is what it has taken off the break so far, used and free
+    // divide that, frags counts the free pieces, and ground is the
+    // stretch below the stack that nobody has claimed yet.
+    // The name the ES3C28P uses for the same question: how many builtins
+    // this build registered and what their names alone cost.
+    vm.register_native("SYS.NATIVES", 0, 0, [&vm](const std::vector<Value>&) -> Value {
+        auto names = vm.native_names();
+        size_t text = 0;
+        for (const auto& n : names) text += n.size() + 1;
+        char buf[96];
+        snprintf(buf, sizeof buf, "%u natives, %u bytes of name",
+                 (unsigned)names.size(), (unsigned)text);
+        return Value::make_string(buf);
+    });
+    vm.register_native("SYS.HEAP$", 0, 0, [](const std::vector<Value>&) -> Value {
+        struct mallinfo mi = mallinfo();
+        char buf[160];
+        snprintf(buf, sizeof buf,
+                 "arena %u used %u free %u frags %u ground %u",
+                 (unsigned)mi.arena, (unsigned)mi.uordblks,
+                 (unsigned)mi.fordblks, (unsigned)mi.ordblks,
+                 (unsigned)(&__StackLimit - (char*)sbrk(0)));
+        return Value::make_string(buf);
+    });
     // The number SYS.FREE cannot give: the biggest single block the heap
     // will actually hand over. A vector that doubles as it grows asks for
     // one of these, and a heap holding plenty in scattered pieces still

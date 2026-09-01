@@ -10,6 +10,7 @@
 #   usb     fruitjam only: build the USB host (keyboard, mouse)
 #   psram   fruitjam only: put the interpreter's large allocations
 #           in the 8 MB on QMI chip select 1 (see README)
+#   heaptrace  print what each boot step costs the heap
 #
 # Each combination builds in its own directory, build-<board>[-nocalc],
 # so the matrix coexists. The plain "build" directory stays the default
@@ -28,6 +29,7 @@ CALC=ON
 JAM=OFF
 USBHOST=OFF
 PSRAMHEAP=OFF
+HEAPTRACE=OFF
 CLEAN=0
 for a in "$@"; do
     case "$a" in
@@ -37,6 +39,7 @@ for a in "$@"; do
         nocalc) CALC=OFF ;;
         usb)    USBHOST=ON ;;
         psram)  PSRAMHEAP=ON ;;
+        heaptrace) HEAPTRACE=ON ;;
         clean)  CLEAN=1 ;;
         *) echo "unknown argument: $a"; exit 1 ;;
     esac
@@ -53,7 +56,7 @@ fi
 
 [ "$CLEAN" = "1" ] && rm -rf "$DIR"
 
-cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM -DFJ_USB=$USBHOST -DFJ_PSRAM_HEAP=$PSRAMHEAP \
+cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM -DFJ_USB=$USBHOST -DFJ_PSRAM_HEAP=$PSRAMHEAP -DFJ_HEAP_TRACE=$HEAPTRACE \
     > build_cmake.log 2>&1 || { tail -20 build_cmake.log; exit 1; }
 ninja -C "$DIR" 2> build_ninja.err || { tail -30 build_ninja.err; exit 1; }
 ls -la "$DIR"/jdbasic_repl.uf2

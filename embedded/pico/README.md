@@ -68,7 +68,35 @@ a 169-byte program loads, a 1305-byte one does not. Loading is what
 costs, not running - the lexer reserves `source/3` tokens up front and a
 token carries a std::string, so a kilobyte of source wants tens of
 kilobytes in one contiguous block, on top of the AST and the chunk.
-The 8 MB below is the way out of this, not a nicety.
+The compiled p-code is small; the compiler is not.
+
+### Where the 327 KB goes
+
+`./build_pico.sh fruitjam usb heaptrace` prints what each step of coming
+up costs, and `SYS.HEAP$` says where the heap stands at any moment.
+Measured on the board:
+
+| | bytes |
+|---|---|
+| framebuffer, 640 by 240 at a byte a pixel | 153,600 |
+| DVI command list, two words per transfer | 8,048 |
+| flash store, USB host, sound, buttons | ~1,100 |
+| **everything above, before the VM exists** | **162,764** |
+| constructing the VM | 84,880 |
+| **at the prompt, before any program** | **247,644** |
+
+The heap region is 327,188 bytes, so a program starts with about 79 KB
+and the prompt's own working set takes it to roughly 41 KB free with 39
+in one piece.
+
+Two things dominate, and neither is the interpreter's bytecode. The
+framebuffer is half the heap and it is the obvious candidate for moving
+into PSRAM: the scanout DMA can read the XIP window, and at 640 bytes a
+line read twice for the vertical doubling it wants 18.4 MB/s against a
+QMI that has about 63. The VM's 85 KB is the other half of the problem;
+`SYS.NATIVES` says 386 builtins with 3.2 KB of names between them, so
+the names are not it and the rest is worth measuring before it is
+guessed at.
 
 ## The Fruit Jam's PSRAM, and where it stands
 

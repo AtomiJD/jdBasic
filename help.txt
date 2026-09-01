@@ -4382,3 +4382,7 @@ Description: The biggest single block the PSRAM heap will hand over. Fruit Jam o
 [PSRAM.TORTURE$]
 Syntax: PSRAM.TORTURE$([rounds=2000]) -> text$
 Description: Allocates, fills, verifies and frees blocks in the PSRAM pool while the scanout and the USB host are running, and says how many it got through and whether anything came back changed. Fruit Jam only. The desktop cannot reproduce the part that matters here, which is the traffic on the same memory controller.
+
+[SYS.HEAP$]
+Syntax: SYS.HEAP$ -> text$
+Description: Where the heap stands, in the allocator's own terms: arena is what it has taken off the break so far, used and free divide that, frags counts the free pieces, and ground is the stretch below the stack that nobody has claimed yet. RP2350 only. SYS.FREE adds the last two together; this says which of them a program is actually short of.

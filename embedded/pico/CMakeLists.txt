@@ -24,6 +24,8 @@ option(FJ_USB "Build the Fruit Jam USB host (keyboard, mouse)" OFF)
 # Off by default: the window reads back and the allocator is proven, but
 # a program run from a file still dies partway with it on.
 option(FJ_PSRAM_HEAP "Put the interpreter's large allocations in PSRAM" OFF)
+# Prints what each step of coming up costs the heap, before the prompt.
+option(FJ_HEAP_TRACE "Trace the heap through boot" OFF)
 
 # The USB host is PIO-USB, which the SDK's TinyUSB glue picks up on its
 # own once it knows where the library is - it has to be told before
@@ -176,6 +178,9 @@ if (FRUITJAM)
     target_link_libraries(jdbasic_repl hardware_dma pico_multicore hardware_psram)
     if (FJ_PSRAM_HEAP)
         target_compile_definitions(jdbasic_repl PRIVATE JDB_PSRAM_HEAP_ON=1)
+    endif()
+    if (FJ_HEAP_TRACE)
+        target_compile_definitions(jdbasic_repl PRIVATE JDB_BOOT_HEAP_TRACE=1)
     endif()
 endif()
 if (FRUITJAM AND FJ_USB)

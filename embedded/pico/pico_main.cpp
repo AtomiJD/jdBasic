@@ -22,6 +22,24 @@
 #endif
 #include "jdb_embed_api.h"
 #include "../common/jdb_repl.h"
+#include <malloc.h>
+
+extern "C" char __StackLimit;
+extern "C" void* sbrk(int);
+
+// What each step of coming up costs, in the allocator's own terms.
+// Only ever wanted while chasing where the heap went, so it is behind a
+// define rather than in the boot path for good.
+#ifdef JDB_BOOT_HEAP_TRACE
+static void heap_at(const char* stage) {
+    struct mallinfo mi = mallinfo();
+    printf("[heap] %-12s used %7u free %6u ground %6u\n", stage,
+           (unsigned)mi.uordblks, (unsigned)mi.fordblks,
+           (unsigned)(&__StackLimit - (char*)sbrk(0)));
+}
+#else
+static void heap_at(const char*) {}
+#endif
 
 extern "C" void jdb_pico_fs_init(void);
 #ifdef FRUITJAM
@@ -297,19 +315,24 @@ int main() {
     psram_reinitialize();
 #endif
     stdio_init_all();
+    heap_at("stdio");
 #ifdef FRUITJAM
     fruitjam_dvi_init();
     fruitjam_dvi_alloc();
+    heap_at("dvi");
     fruitjam_snd_init();
     fruitjam_board_init();
+    heap_at("snd+board");
 #ifdef FRUITJAM_USB
     fruitjam_usb_init();
+    heap_at("usb");
 #endif
 #endif
 #ifdef JDB_HAS_CYW43
     cyw43_arch_init();
 #endif
     jdb_pico_fs_init();
+    heap_at("flash store");
 #ifdef PICOCALC
     picocalc_lcd_init();
     picocalc_kbd_init();
@@ -338,7 +361,9 @@ int main() {
     fruitjam_con_init();
 #endif
 
+    heap_at("before vm");
     JdbEmbed* vm = jdb_embed_init();
+    heap_at("after vm");
     if (!vm) {
         printf("VM init failed\n");
         for (;;) sleep_ms(1000);
