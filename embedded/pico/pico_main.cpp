@@ -33,6 +33,7 @@ extern "C" void fruitjam_usb_init(void);
 #endif
 extern "C" void fruitjam_dvi_trace(const char* s);
 extern "C" void fruitjam_con_init(void);
+extern "C" void fruitjam_snd_init(void);
 #endif
 #ifdef PICOCALC
 extern "C" void picocalc_lcd_init(void);
@@ -86,6 +87,14 @@ void pico_editor(const char* name);
 // The program the prompt is working on, by name. LIST, SAVE, EDIT and RUN
 // all mean "this one" when given no argument.
 static char g_current[128];
+
+// A name without a dot in it means a program, the same way it does at the
+// desktop prompt: LOAD spiel finds spiel.jdb.
+static const char* prog_name(const char* in, char* out, size_t cap) {
+    if (strchr(in, '.')) return in;
+    snprintf(out, cap, "%s.jdb", in);
+    return out;
+}
 
 // The DOS set at the prompt, unquoted arguments welcome: CD, TYPE,
 // DEL, COPY, REN, MD, RD. Returns 0 when the line is not one of them
@@ -298,7 +307,8 @@ static int dos_command(char* line) {
     // TYPE with line numbers and the editor's colours, SAVE is a copy
     // that also moves the name along, and NEW starts an empty one.
     if (strcmp(cmd, "LIST") == 0) {
-        const char* nm = *a ? dos_arg(a) : g_current;
+        char nb[160];
+        const char* nm = *a ? prog_name(dos_arg(a), nb, sizeof nb) : g_current;
         if (!*nm) { printf("no program - LOAD name first\r\n"); return 1; }
         FILE* f = fopen(nm, "r");
         if (!f) { printf("cannot open %s\r\n", nm); return 1; }
@@ -317,15 +327,18 @@ static int dos_command(char* line) {
     if (strcmp(cmd, "SAVE") == 0) {
         if (!*a) { printf("usage: SAVE name\r\n"); return 1; }
         if (!g_current[0]) { printf("no program - LOAD or NEW first\r\n"); return 1; }
-        const char* dst = dos_arg(a);
+        char nb[160];
+        const char* dst = prog_name(dos_arg(a), nb, sizeof nb);
         if (copy_file(g_current, dst) != 0) { printf("cannot write %s\r\n", dst); return 1; }
         snprintf(g_current, sizeof g_current, "%s", dst);
         printf("saved %s\r\n", dst);
         return 1;
     }
     if (strcmp(cmd, "NEW") == 0) {
-        const char* nm = dos_arg(a);
-        if (!*nm) { g_current[0] = 0; printf("no program\r\n"); return 1; }
+        char nb[160];
+        const char* raw = dos_arg(a);
+        if (!*raw) { g_current[0] = 0; printf("no program\r\n"); return 1; }
+        const char* nm = prog_name(raw, nb, sizeof nb);
         FILE* f = fopen(nm, "w");
         if (!f) { printf("cannot create %s\r\n", nm); return 1; }
         fclose(f);
@@ -531,6 +544,7 @@ int main() {
     fruitjam_dvi_init();
     fruitjam_dvi_alloc();
     fruitjam_con_init();
+    fruitjam_snd_init();
 #ifdef FRUITJAM_USB
     fruitjam_usb_init();
 #endif
@@ -633,7 +647,8 @@ int main() {
                 nl -= 2;
                 meta_arg[nl] = 0;
             }
-            const char* nm = *meta_arg ? meta_arg : g_current;
+            char nb[160];
+            const char* nm = *meta_arg ? prog_name(meta_arg, nb, sizeof nb) : g_current;
             if (!*nm) {
                 printf("no program loaded - LOAD name first\r\n");
                 fflush(NULL);

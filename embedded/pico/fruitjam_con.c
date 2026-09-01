@@ -107,41 +107,79 @@ static void sgr(int code) {
     }
 }
 
-static int seq_number(void) {
-    int n = 0, any = 0;
-    for (int i = 0; i < g_seq_len; i++) {
-        if (g_seq[i] >= '0' && g_seq[i] <= '9') { n = n * 10 + (g_seq[i] - '0'); any = 1; }
-        else break;
+// Semicolon-separated numbers, however many the sequence carried. The
+// editor positions its cursor with two of them, which is the whole reason
+// this has to be a real parser rather than a single number.
+#define MAX_PARAMS 4
+static int g_param[MAX_PARAMS];
+static int g_params = 0;
+
+static void seq_parse(void) {
+    g_params = 0;
+    int v = 0, seen = 0;
+    for (int i = 0; i <= g_seq_len; i++) {
+        char c = (i < g_seq_len) ? g_seq[i] : ';';
+        if (c >= '0' && c <= '9') { v = v * 10 + (c - '0'); seen = 1; }
+        else if (c == ';') {
+            if (g_params < MAX_PARAMS) g_param[g_params++] = seen ? v : -1;
+            v = 0; seen = 0;
+        }
     }
-    return any ? n : -1;
+}
+
+// Absent parameters mean "the default", which is 1 for movement and 0 for
+// the erase and colour codes.
+static int param(int i, int dflt) {
+    if (i >= g_params || g_param[i] < 0) return dflt;
+    return g_param[i];
+}
+
+static void erase_row(int row, int from, int to) {
+    for (int c = from; c < to; c++) cell_fill(c, row, g_bg);
 }
 
 static void csi_final(char f) {
-    int n = seq_number();
+    seq_parse();
     switch (f) {
-        case 'm': {
-            // A run of semicolon-separated codes; the prompt sends one.
-            int v = 0, seen = 0;
-            for (int i = 0; i <= g_seq_len; i++) {
-                char c = (i < g_seq_len) ? g_seq[i] : ';';
-                if (c >= '0' && c <= '9') { v = v * 10 + (c - '0'); seen = 1; }
-                else if (c == ';') { sgr(seen ? v : 0); v = 0; seen = 0; }
-            }
-            if (!g_seq_len) sgr(0);
+        case 'm':
+            if (g_params == 0) sgr(0);
+            for (int i = 0; i < g_params; i++) sgr(param(i, 0));
+            break;
+        case 'C': g_col += param(0, 1); if (g_col > COLS) g_col = COLS; break;
+        case 'D': g_col -= param(0, 1); if (g_col < 0) g_col = 0; break;
+        case 'A': g_row -= param(0, 1); if (g_row < 0) g_row = 0; break;
+        case 'B': g_row += param(0, 1); if (g_row >= ROWS) g_row = ROWS - 1; break;
+        case 'G': g_col = param(0, 1) - 1; break;
+        case 'H':
+        case 'f':
+            g_row = param(0, 1) - 1;
+            g_col = param(1, 1) - 1;
+            if (g_row < 0) g_row = 0;
+            if (g_col < 0) g_col = 0;
+            if (g_row >= ROWS) g_row = ROWS - 1;
+            if (g_col > COLS) g_col = COLS;
+            break;
+        case 'K': {
+            int mode = param(0, 0);
+            if (mode == 0) erase_row(g_row, g_col, COLS);
+            else if (mode == 1) erase_row(g_row, 0, g_col + 1);
+            else erase_row(g_row, 0, COLS);
             break;
         }
-        case 'C': g_col += (n > 0 ? n : 1); if (g_col > COLS) g_col = COLS; break;
-        case 'D': g_col -= (n > 0 ? n : 1); if (g_col < 0) g_col = 0; break;
-        case 'G': g_col = (n > 0 ? n - 1 : 0); break;
-        case 'K':
-            for (int c = g_col; c < COLS; c++) cell_fill(c, g_row, g_bg);
+        case 'J': {
+            int mode = param(0, 0);
+            if (mode == 2 || mode == 3) {
+                for (int r = 0; r < ROWS; r++) erase_row(r, 0, COLS);
+                g_col = g_row = 0;
+            } else if (mode == 0) {
+                erase_row(g_row, g_col, COLS);
+                for (int r = g_row + 1; r < ROWS; r++) erase_row(r, 0, COLS);
+            } else {
+                for (int r = 0; r < g_row; r++) erase_row(r, 0, COLS);
+                erase_row(g_row, 0, g_col + 1);
+            }
             break;
-        case 'J':
-            for (int r = 0; r < ROWS; r++)
-                for (int c = 0; c < COLS; c++) cell_fill(c, r, g_bg);
-            g_col = g_row = 0;
-            break;
-        case 'H': g_col = 0; g_row = 0; break;
+        }
         default: break;
     }
 }

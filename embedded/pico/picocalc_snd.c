@@ -1,5 +1,5 @@
 // The speaker: a square wave out of the PWM slice behind GP26 and
-// GP27. picocalc_snd_tone holds a pitch until it is changed or
+// GP27. jdb_snd_out_tone holds a pitch until it is changed or
 // silenced; BEEP is that plus a wait. Volume rides on the duty cycle,
 // full swing at 50 percent.
 
@@ -21,14 +21,14 @@ static void snd_apply_level(void) {
     pwm_set_gpio_level(SND_R, (uint16_t)lvl);
 }
 
-void picocalc_snd_volume(int pct) {
+void jdb_snd_out_volume(int pct) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     g_volume = pct;
     if (g_tone_on) snd_apply_level();
 }
 
-void picocalc_snd_tone(int freq) {
+void jdb_snd_out_tone(int freq) {
     if (freq < 20 || freq > 20000) {
         if (g_tone_on) {
             pwm_set_gpio_level(SND_L, 0);
@@ -56,9 +56,9 @@ void picocalc_snd_tone(int freq) {
     snd_apply_level();
 }
 
-void picocalc_snd_beep(int freq, int ms) {
+void jdb_snd_out_beep(int freq, int ms) {
     if (ms <= 0) return;
-    picocalc_snd_tone(freq);
+    jdb_snd_out_tone(freq);
     sleep_ms(ms);
-    picocalc_snd_tone(0);
+    jdb_snd_out_tone(0);
 }

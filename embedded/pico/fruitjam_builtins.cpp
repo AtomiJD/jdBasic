@@ -19,6 +19,10 @@ int      fruitjam_dvi_width(void);
 int      fruitjam_dvi_height(void);
 unsigned fruitjam_dvi_frames(void);
 #ifdef FRUITJAM_USB
+void jdb_snd_out_route(int speaker);
+int  jdb_snd_out_probe(char* out, int cap);
+int  jdb_snd_out_stat(char* out, int cap);
+int  jdb_snd_out_pins(char* out, int cap);
 int fruitjam_usb_start(void);
 int fruitjam_usb_keyboards(void);
 int fruitjam_usb_devices(void);
@@ -138,6 +142,27 @@ void register_fruitjam_gfx(VM& vm) {
         return Value::make_i64((int64_t)fruitjam_dvi_frame_us());
     });
 #ifdef FRUITJAM_USB
+    vm.register_native("SND.PROBE", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[160];
+        jdb_snd_out_probe(b, sizeof b);
+        return Value::make_string(b);
+    });
+    // 1 picks the Class-D speaker amplifier, 0 the headphone jack. The
+    // routing bits carry one or the other, never both.
+    vm.register_native("SND.STAT", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[160];
+        jdb_snd_out_stat(b, sizeof b);
+        return Value::make_string(b);
+    });
+    vm.register_native("SND.PINS", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[128];
+        jdb_snd_out_pins(b, sizeof b);
+        return Value::make_string(b);
+    });
+    vm.register_native("SND.OUT", 1, 1, [](const std::vector<Value>& args) -> Value {
+        jdb_snd_out_route((int)args[0].to_double() != 0);
+        return Value();
+    });
     vm.register_native("USB.START", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_bool(fruitjam_usb_start() != 0);
     });

@@ -26,13 +26,16 @@ void register_fruitjam_gfx(VM& vm);
 void register_pico_wifi(VM& vm);
 void register_pico_httpd(VM& vm);
 #endif
+#if defined(PICOCALC) || defined(FRUITJAM)
+// The melody engine is board independent; only its output stage is not.
+void register_pico_sound(VM& vm);
+#endif
 #ifdef PICOCALC
 void register_pico_diag(VM& vm);
 void register_pico_lcdstat(VM& vm);
 void register_pico_tap(VM& vm);
 void register_pico_taparm(VM& vm);
 void register_pico_gfx(VM& vm);
-void register_pico_sound(VM& vm);
 void register_pico_sdtest(VM& vm);
 void register_pico_sdbb(VM& vm);
 #endif
@@ -67,6 +70,9 @@ void register_pico_builtins(VM& vm) {
 #ifdef FRUITJAM
     register_fruitjam_gfx(vm);
 #endif
+#if defined(PICOCALC) || defined(FRUITJAM)
+    register_pico_sound(vm);
+#endif
 #ifdef JDB_HAS_CYW43
     register_pico_wifi(vm);
     register_pico_httpd(vm);
@@ -78,7 +84,6 @@ void register_pico_builtins(VM& vm) {
     register_pico_taparm(vm);
     register_pico_gfx(vm);
     register_sprite_builtins(vm);
-    register_pico_sound(vm);
     register_pico_sdtest(vm);
     register_pico_sdbb(vm);
 #endif

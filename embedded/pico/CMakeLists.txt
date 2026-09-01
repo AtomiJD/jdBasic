@@ -66,6 +66,8 @@ if (FRUITJAM)
         fruitjam_gfx.c
         fruitjam_con.c
         fruitjam_builtins.cpp
+        fruitjam_snd.c
+        pico_sound.cpp
         pico_editor.cpp
     )
     if (FJ_USB)

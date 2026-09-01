@@ -29,8 +29,8 @@ extern "C" void     jdb_snd_timer_cancel(void);
 extern "C" uint32_t jdb_snd_lock(void);
 extern "C" void     jdb_snd_unlock(uint32_t saved);
 
-extern "C" void picocalc_snd_tone(int freq);
-extern "C" void picocalc_snd_volume(int pct);
+extern "C" void jdb_snd_out_tone(int freq);
+extern "C" void jdb_snd_out_volume(int pct);
 
 #define NOTE_RING 32
 
@@ -141,14 +141,14 @@ static void score_fill() {
 // The port calls this from whatever its timer is.
 extern "C" void jdb_snd_note_due(void) {
     if (g_tail == g_head) {
-        picocalc_snd_tone(0);
+        jdb_snd_out_tone(0);
         g_running = false;
         g_armed = false;
         return;
     }
     Note n = g_ring[g_tail];
     g_tail = ring_next(g_tail);
-    picocalc_snd_tone(n.freq);
+    jdb_snd_out_tone(n.freq);
     g_armed = true;
     jdb_snd_timer_start(n.ms);
 }
@@ -171,7 +171,7 @@ static void snd_reset() {
     g_head = g_tail = 0;
     g_score.clear();
     g_cursor = 0;
-    picocalc_snd_tone(0);
+    jdb_snd_out_tone(0);
 }
 
 // Rides on the VM's periodic tick, which runs whether or not the
@@ -181,7 +181,7 @@ static void pico_sound_pump() {
     snd_kick();
 }
 
-extern "C" void picocalc_snd_beep(int freq, int ms);
+extern "C" void jdb_snd_out_beep(int freq, int ms);
 
 void register_pico_sound(VM& vm) {
     vm.on_tick = []() { pico_sound_pump(); };
@@ -189,7 +189,7 @@ void register_pico_sound(VM& vm) {
         int freq = args.size() >= 1 ? (int)args[0].to_double() : 880;
         int ms   = args.size() >= 2 ? (int)args[1].to_double() : 200;
         snd_reset();
-        picocalc_snd_beep(freq, ms);
+        jdb_snd_out_beep(freq, ms);
         return Value();
     });
     vm.register_native("PLAY", 1, 1, [](const std::vector<Value>& args) -> Value {
@@ -210,12 +210,12 @@ void register_pico_sound(VM& vm) {
         return Value::make_bool(busy);
     });
     vm.register_native("PLAY.VOLUME", 1, 1, [](const std::vector<Value>& args) -> Value {
-        picocalc_snd_volume((int)args[0].to_double());
+        jdb_snd_out_volume((int)args[0].to_double());
         return Value();
     });
     vm.register_native("TONE", 1, 1, [](const std::vector<Value>& args) -> Value {
         snd_reset();
-        picocalc_snd_tone((int)args[0].to_double());
+        jdb_snd_out_tone((int)args[0].to_double());
         return Value();
     });
 }
