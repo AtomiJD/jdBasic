@@ -177,6 +177,13 @@ void register_pico_keyget(VM& vm) {
     vm.register_native("KEY.GET", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64(getchar());
     });
+    // The one a game loop needs: -1 rather than a wait when nothing has
+    // been pressed. Reads whatever console the board has, so the same
+    // loop works on the board's own keyboard and over the serial line.
+    vm.register_native("KEY.NOW", 0, 0, [](const std::vector<Value>&) -> Value {
+        int c = getchar_timeout_us(0);
+        return Value::make_i64(c == PICO_ERROR_TIMEOUT ? -1 : c);
+    });
 }
 
 #ifdef PICOCALC

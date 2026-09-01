@@ -69,6 +69,7 @@ if (FRUITJAM)
         fruitjam_builtins.cpp
         fruitjam_snd.c
         fruitjam_board.c
+        fruitjam_psram_heap.cpp
         picocalc_sd.c
         fatfs/ff.c
         fatfs/ffsystem.c

@@ -34,6 +34,7 @@ extern "C" int  fruitjam_dvi_width(void);
 extern "C" int  fruitjam_dvi_height(void);
 extern "C" unsigned fruitjam_dvi_frame_us(void);
 extern "C" unsigned fruitjam_psram_size(void);
+extern "C" unsigned fruitjam_psram_heap_free(void);
 #ifdef FRUITJAM_USB
 extern "C" int  fruitjam_usb_keyboards(void);
 extern "C" int  fruitjam_usb_devices(void);
@@ -244,7 +245,7 @@ static void pico_hello(void) {
     printf(" ram    %u KB free\n", jdb_pico_heap_free() / 1024u);
 #ifdef FRUITJAM
     unsigned ps = fruitjam_psram_size();
-    if (ps) printf(" psram  %u KB mapped, not in the heap\n", ps / 1024u);
+    if (ps) printf(" psram  %u KB free of %u KB\n", fruitjam_psram_heap_free() / 1024u, ps / 1024u);
 #endif
 #ifdef FRUITJAM
     unsigned us = fruitjam_dvi_frame_us();

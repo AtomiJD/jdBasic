@@ -25,6 +25,8 @@ int  fruitjam_con_enable(int on);
 int  fruitjam_con_on(void);
 void fruitjam_con_size(int* cols, int* rows);
 unsigned fruitjam_psram_size(void);
+unsigned fruitjam_psram_heap_free(void);
+unsigned fruitjam_psram_heap_largest(void);
 int  fruitjam_psram_check(char* out, int cap);
 #ifdef FRUITJAM_USB
 void fruitjam_kbd_layout(int de);
@@ -169,7 +171,10 @@ void register_fruitjam_gfx(VM& vm) {
     // The name the ES3C28P uses for the same question. Mapped, not yet
     // in the heap: a program cannot ask malloc for it.
     vm.register_native("SYS.PSRAM", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64((int64_t)fruitjam_psram_size());
+        return Value::make_i64((int64_t)fruitjam_psram_heap_free());
+    });
+    vm.register_native("SYS.PSRAMLARGEST", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64((int64_t)fruitjam_psram_heap_largest());
     });
     vm.register_native("PSRAM.TEST$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[96];
