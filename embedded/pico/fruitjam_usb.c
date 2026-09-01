@@ -29,6 +29,7 @@
 #include "pico/stdio/driver.h"
 #include "hardware/dma.h"
 #include "pico/multicore.h"
+#include "pico/flash.h"
 #include "pio_usb.h"
 #include "tusb.h"
 
@@ -45,6 +46,10 @@ int  fruitjam_usb_start(void);
 #define K_HOME  0xD2
 #define K_DEL   0xD4
 #define K_END   0xD5
+// The editor and the prompt already speak the PicoCalc's codes, and a
+// bare 27 would be read as the start of an escape sequence and block
+// waiting for the rest of it.
+#define K_ESC   0xB1
 
 #define KEYRING 64
 static volatile uint8_t  g_ring[KEYRING];
@@ -124,7 +129,7 @@ static uint8_t translate(uint8_t keycode, uint8_t modifier) {
         case HID_KEY_KEYPAD_ENTER: return '\r';
         case HID_KEY_BACKSPACE:   return 8;
         case HID_KEY_TAB:         return 9;
-        case HID_KEY_ESCAPE:      return 27;
+        case HID_KEY_ESCAPE:      return K_ESC;
         default: break;
     }
     if (keycode < 128) {
@@ -187,6 +192,11 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
 // Nothing but the frame, once a millisecond. The library does the bit
 // level work in PIO and DMA; this only has to be punctual.
 static void core1_usb_frames(void) {
+    // Core 1 fetches its instructions from flash, so core 0 cannot erase
+    // or program while it runs. Registering here lets flash_safe_execute
+    // park this core for the duration; without it the call refuses
+    // outright and every write to the store comes back as an I/O error.
+    flash_safe_execute_core_init();
     while (true) {
         uint32_t t = timer_hw->timerawl;
         pio_usb_host_frame();

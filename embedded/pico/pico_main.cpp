@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include "pico/stdlib.h"
 #include "hardware/sync.h"
 #include "hardware/clocks.h"
@@ -78,6 +79,13 @@ extern "C" int repl_read_key(void);
 extern "C" void jdb_snd_note_due(void);
 void pico_help(const char* topic);
 void syntax_print(const char* s, int n);
+#if defined(PICOCALC) || defined(FRUITJAM)
+void pico_editor(const char* name);
+#endif
+
+// The program the prompt is working on, by name. LIST, SAVE, EDIT and RUN
+// all mean "this one" when given no argument.
+static char g_current[128];
 
 // The DOS set at the prompt, unquoted arguments welcome: CD, TYPE,
 // DEL, COPY, REN, MD, RD. Returns 0 when the line is not one of them
@@ -260,6 +268,76 @@ static int dos_command(char* line) {
         if (rc != 0) printf("cannot %s %s\r\n", cmd[0] == 'M' ? "create" : "remove", a);
         return 1;
     }
+    if (strcmp(cmd, "DIR") == 0) {
+        const char* path = *a ? dos_arg(a) : ".";
+        DIR* d = opendir(path);
+        if (!d) { printf("cannot open %s\r\n", path); return 1; }
+        struct dirent* e;
+        int n = 0;
+        unsigned long bytes = 0;
+        while ((e = readdir(d)) != NULL) {
+            if (e->d_name[0] == '.') continue;
+            if (e->d_type == DT_DIR) {
+                printf("%-24s   <DIR>\r\n", e->d_name);
+            } else {
+                char full[192];
+                snprintf(full, sizeof full, "%s/%s", path, e->d_name);
+                struct stat st;
+                long sz = (stat(full, &st) == 0) ? (long)st.st_size : 0;
+                printf("%-24s %7ld\r\n", e->d_name, sz);
+                bytes += (unsigned long)sz;
+            }
+            n++;
+        }
+        closedir(d);
+        printf("%d entries, %lu bytes\r\n", n, bytes);
+        return 1;
+    }
+
+    // The program is the file; these three work on it by name. LIST is
+    // TYPE with line numbers and the editor's colours, SAVE is a copy
+    // that also moves the name along, and NEW starts an empty one.
+    if (strcmp(cmd, "LIST") == 0) {
+        const char* nm = *a ? dos_arg(a) : g_current;
+        if (!*nm) { printf("no program - LOAD name first\r\n"); return 1; }
+        FILE* f = fopen(nm, "r");
+        if (!f) { printf("cannot open %s\r\n", nm); return 1; }
+        char ln[256];
+        int no = 0;
+        while (fgets(ln, sizeof ln, f)) {
+            size_t l = strlen(ln);
+            while (l && (ln[l - 1] == '\n' || ln[l - 1] == '\r')) ln[--l] = 0;
+            printf("%3d ", ++no);
+            syntax_print(ln, (int)l);
+            printf("\r\n");
+        }
+        fclose(f);
+        return 1;
+    }
+    if (strcmp(cmd, "SAVE") == 0) {
+        if (!*a) { printf("usage: SAVE name\r\n"); return 1; }
+        if (!g_current[0]) { printf("no program - LOAD or NEW first\r\n"); return 1; }
+        const char* dst = dos_arg(a);
+        if (copy_file(g_current, dst) != 0) { printf("cannot write %s\r\n", dst); return 1; }
+        snprintf(g_current, sizeof g_current, "%s", dst);
+        printf("saved %s\r\n", dst);
+        return 1;
+    }
+    if (strcmp(cmd, "NEW") == 0) {
+        const char* nm = dos_arg(a);
+        if (!*nm) { g_current[0] = 0; printf("no program\r\n"); return 1; }
+        FILE* f = fopen(nm, "w");
+        if (!f) { printf("cannot create %s\r\n", nm); return 1; }
+        fclose(f);
+        snprintf(g_current, sizeof g_current, "%s", nm);
+#if defined(PICOCALC) || defined(FRUITJAM)
+        pico_editor(g_current);
+#else
+        printf("new %s\r\n", nm);
+#endif
+        return 1;
+    }
+
     if (strcmp(cmd, "COPY") == 0 || strcmp(cmd, "REN") == 0) {
         char* sp = strchr(a, ' ');
         if (!*a || !sp) { printf("usage: %s from to\r\n", cmd); return 1; }
@@ -283,13 +361,17 @@ static int dos_command(char* line) {
     }
     return 0;
 }
-#ifdef PICOCALC
-void pico_editor(const char* name);
-#endif
 
+// The editor needs a screen and a keyboard, nothing else - it draws with
+// the same syntax printer the prompt uses and reads through the same key
+// reader, so any board that has both can run it.
 extern "C" void jdb_con_size(int* cols, int* rows) {
     *cols = 40;
-    *rows = 40;
+#ifdef FRUITJAM
+    *rows = 30;   // 320 by 240 in the 8 by 8 font
+#else
+    *rows = 40;   // the PicoCalc's panel is square
+#endif
 }
 
 // The melody engine's timer and lock, in SDK terms.
@@ -484,7 +566,6 @@ int main() {
     // its prompt before it blocks, CLS clears when it runs.
     jdb_embed_output_stdout(vm);
 
-    static char g_current[128];
     g_current[0] = 0;
 
     // Power-on program, with a window to get out of it: without one a
@@ -559,11 +640,11 @@ int main() {
                 continue;
             }
             if (meta == 1) {
-#ifdef PICOCALC
+#if defined(PICOCALC) || defined(FRUITJAM)
                 snprintf(g_current, sizeof g_current, "%s", nm);
                 pico_editor(nm);
 #else
-                printf("no editor on a bare board\r\n");
+                printf("no editor without a screen\r\n");
 #endif
             } else if (meta == 2) {
                 FILE* probe = fopen(nm, "r");

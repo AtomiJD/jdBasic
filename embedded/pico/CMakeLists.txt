@@ -66,6 +66,7 @@ if (FRUITJAM)
         fruitjam_gfx.c
         fruitjam_con.c
         fruitjam_builtins.cpp
+        pico_editor.cpp
     )
     if (FJ_USB)
         list(APPEND JDB_SOURCES fruitjam_usb.c)
