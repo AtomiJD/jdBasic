@@ -21,6 +21,8 @@
 #include "hardware/clocks.h"
 #include "hardware/psram.h"
 
+unsigned fruitjam_psram_reserved(void);
+
 #define BTN1_PIN 0
 #define BTN2_PIN 4
 #define BTN3_PIN 5
@@ -81,9 +83,10 @@ int fruitjam_psram_check(char* out, int cap) {
     if (!psram_is_available()) return snprintf(out, cap, "no psram");
     size_t words = psram_get_size() / 4;
     volatile uint32_t* p = (volatile uint32_t*)PSRAM_BASE;
-    // Not the first word: the pool keeps its list head there, and a probe
-    // that scribbles on it would take the heap with it.
-    size_t low = 1024;
+    // Past the scanout's reservation and past the pool's list head:
+    // a probe that scribbles on either takes the picture or the heap
+    // with it.
+    size_t low = fruitjam_psram_reserved() / 4 + 1024;
     const uint32_t first = 0xA5A5F00Du, last = 0x5A5A0FF0u;
     p[low] = first;
     p[words - 1] = last;

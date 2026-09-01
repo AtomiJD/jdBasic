@@ -89,14 +89,31 @@ The heap region is 327,188 bytes, so a program starts with about 79 KB
 and the prompt's own working set takes it to roughly 41 KB free with 39
 in one piece.
 
-Two things dominate, and neither is the interpreter's bytecode. The
-framebuffer is half the heap and it is the obvious candidate for moving
-into PSRAM: the scanout DMA can read the XIP window, and at 640 bytes a
-line read twice for the vertical doubling it wants 18.4 MB/s against a
-QMI that has about 63. The VM's 85 KB is the other half of the problem;
-`SYS.NATIVES` says 386 builtins with 3.2 KB of names between them, so
-the names are not it and the rest is worth measuring before it is
-guessed at.
+Two things dominate, and neither is the interpreter's bytecode.
+
+The framebuffer is now in PSRAM, which is what `FJ_FB_PSRAM` does and
+what the default build takes. The scanout DMA reads the XIP window and
+the processor writes it through the same window, so the cache is
+coherent between them and there is nothing to flush; the uncached alias
+was tried and is slower, 41 Hz against 47 on the same picture. What it
+buys, measured at the prompt:
+
+| | SRAM | PSRAM |
+|---|---|---|
+| free | 41,240 | 194,736 |
+| largest single block | 39,012 | 188,396 |
+
+That last column is the whole point: 39 KB is not enough to load a 3 KB
+program and 188 KB is. It costs frame rate under load - the picture
+wants 18.4 MB/s and a quad read of this part carries a 24-cycle dummy
+per transaction, which lands nearer 14. Idle it measures 17100 us a
+frame, so 58.5 Hz; while the console is drawing its welcome page it
+drops to 47. `./build_pico.sh fruitjam usb nofbpsram` goes back to 60.00
+Hz and 39 KB.
+
+The VM's 85 KB is the other half of the problem. `SYS.NATIVES` says 386
+builtins with 3.2 KB of names between them, so the names are not it and
+the rest is worth measuring before it is guessed at.
 
 ## The Fruit Jam's PSRAM, and where it stands
 

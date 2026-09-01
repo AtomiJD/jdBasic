@@ -26,10 +26,12 @@
 extern bool     psram_is_available(void);
 extern size_t   psram_get_size(void);
 extern uint8_t* jdb_psram_window(void);
+extern unsigned fruitjam_psram_reserved(void);
 #define PSRAM_WINDOW ((uintptr_t)jdb_psram_window())
 #else
 #include "pico/stdlib.h"
 #include "hardware/psram.h"
+extern "C" unsigned fruitjam_psram_reserved(void);
 #define PSRAM_WINDOW 0x11000000u
 #endif
 
@@ -53,19 +55,24 @@ struct Block {
 
 const uint32_t GUARD = 0x50535246u;   // "PSRF"
 
-Block* g_first = nullptr;
-size_t g_bytes = 0;
-size_t g_in_use = 0;
+Block*    g_first = nullptr;
+uintptr_t g_base = 0;
+size_t    g_bytes = 0;
+size_t    g_in_use = 0;
 
 inline size_t align8(size_t n) { return (n + 7u) & ~(size_t)7u; }
 
 void heap_start() {
     if (g_first || !psram_is_available()) return;
+    // The scanout has the bottom of the window; the pool starts above
+    // whatever it reserved.
+    size_t off = fruitjam_psram_reserved();
     size_t n = psram_get_size();
-    if (n < 64 * 1024) return;
-    g_bytes = n;
-    g_first = (Block*)PSRAM_WINDOW;
-    g_first->size = n - sizeof(Block);
+    if (n < off + 64 * 1024) return;
+    g_base = PSRAM_WINDOW + off;
+    g_bytes = n - off;
+    g_first = (Block*)g_base;
+    g_first->size = g_bytes - sizeof(Block);
     g_first->next = nullptr;
     g_first->used = 0;
     g_first->guard = GUARD;
@@ -96,7 +103,7 @@ void* psram_alloc(size_t want) {
 
 bool is_ours(void* p) {
     uintptr_t a = (uintptr_t)p;
-    return g_first && a > PSRAM_WINDOW && a < PSRAM_WINDOW + g_bytes;
+    return g_first && a > g_base && a < g_base + g_bytes;
 }
 
 void psram_free(void* p) {

@@ -22,6 +22,7 @@ static uint8_t* g_window = nullptr;
 bool     psram_is_available(void) { return true; }
 size_t   psram_get_size(void)     { return WINDOW_BYTES; }
 uint8_t* jdb_psram_window(void)   { return g_window; }
+unsigned fruitjam_psram_reserved(void) { return 0; }   // no scanout here
 
 void* jdb_psram_test_alloc(size_t n);
 void  jdb_psram_test_free(void* p);

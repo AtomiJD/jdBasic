@@ -26,6 +26,11 @@ option(FJ_USB "Build the Fruit Jam USB host (keyboard, mouse)" OFF)
 option(FJ_PSRAM_HEAP "Put the interpreter's large allocations in PSRAM" OFF)
 # Prints what each step of coming up costs the heap, before the prompt.
 option(FJ_HEAP_TRACE "Trace the heap through boot" OFF)
+# The framebuffer is 150 KB of the SRAM heap, and in PSRAM it buys the
+# largest free block back: 39 KB becomes 188, which is the difference
+# between a program that loads and one that does not. It costs frame
+# rate under load. On by default for that trade; nofbpsram goes back.
+option(FJ_FB_PSRAM "Put the framebuffer in PSRAM" ON)
 
 # The USB host is PIO-USB, which the SDK's TinyUSB glue picks up on its
 # own once it knows where the library is - it has to be told before
@@ -181,6 +186,9 @@ if (FRUITJAM)
     endif()
     if (FJ_HEAP_TRACE)
         target_compile_definitions(jdbasic_repl PRIVATE JDB_BOOT_HEAP_TRACE=1)
+    endif()
+    if (FJ_FB_PSRAM)
+        target_compile_definitions(jdbasic_repl PRIVATE JDB_FB_IN_PSRAM=1)
     endif()
 endif()
 if (FRUITJAM AND FJ_USB)

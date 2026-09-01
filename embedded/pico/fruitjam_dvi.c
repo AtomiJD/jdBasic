@@ -37,6 +37,7 @@
 #include "hardware/structs/hstx_fifo.h"
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
+#include "hardware/psram.h"
 
 #define MODE_H_FRONT_PORCH   16
 #define MODE_H_SYNC_WIDTH    96
@@ -109,6 +110,18 @@ static uint32_t vactive_line[] = {
     HSTX_CMD_TMDS       | MODE_H_ACTIVE_PIXELS
 };
 
+// The framebuffer is written by the processor and read by the scanout
+// DMA. Both reach the memory through the same XIP cache, so the cached
+// window is coherent between them and is the one to use: the uncached
+// alias costs a QSPI transaction per read and the scanout fell to 41 Hz
+// on it.
+//
+// It takes the bottom of the window; the pool above it is told to start
+// past the reservation, so the two never describe the same bytes.
+#define PSRAM_FB_ADDR     0x11000000u
+#define PSRAM_FB_RESERVED ((FB_BYTES + 4095u) & ~4095u)
+
+static int       g_fb_in_psram = 0;
 static uint8_t*  g_fb = NULL;
 static uint32_t* g_cmds = NULL;
 static int       g_ch_pixel = -1;
@@ -209,8 +222,27 @@ static void build_command_list(void) {
     g_cmds[w++] = 0;
 }
 
+unsigned fruitjam_psram_reserved(void) {
+    return g_fb_in_psram ? PSRAM_FB_RESERVED : 0u;
+}
+
+int fruitjam_dvi_fb_in_psram(void) { return g_fb_in_psram; }
+
 void fruitjam_dvi_init(void) {
-    g_fb = (uint8_t*)malloc(FB_BYTES);
+    // 150 KB of the 200 the board has in SRAM was the framebuffer, and
+    // it is the one big allocation that does not have to be there. It
+    // costs frame rate: the picture wants 18.4 MB/s and a QSPI read of
+    // this part carries a 24-cycle dummy per transaction, which lands
+    // around 14. Off by default for that reason, one flag away.
+#ifdef JDB_FB_IN_PSRAM
+    if (psram_is_available() && psram_get_size() >= PSRAM_FB_RESERVED + 64u * 1024u) {
+        g_fb = (uint8_t*)PSRAM_FB_ADDR;
+        g_fb_in_psram = 1;
+    } else
+#endif
+    {
+        g_fb = (uint8_t*)malloc(FB_BYTES);
+    }
     g_cmds = (uint32_t*)malloc(CMD_WORDS * sizeof(uint32_t));
     if (!g_fb || !g_cmds) return;
     memset(g_fb, 0, FB_BYTES);
