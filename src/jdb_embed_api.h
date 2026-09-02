@@ -50,6 +50,10 @@ JDB_EMBED_API char*      jdb_embed_load(JdbEmbed* e, const char* path);
 // recompile, and the next FUNC invocation runs the new body against the
 // existing state.
 JDB_EMBED_API char*      jdb_embed_recompile(JdbEmbed* e, const char* path);
+// Compile a source file and write the chunk beside it as p-code. Zero on
+// success; jdb_embed_last_error says why not.
+JDB_EMBED_API int        jdb_embed_write_pcode(JdbEmbed* e, const char* src_path,
+                                               const char* out_path);
 JDB_EMBED_API char*      jdb_embed_recompile_source(JdbEmbed* e, const char* source);
 
 JDB_EMBED_API const char* jdb_embed_last_error(JdbEmbed* e);

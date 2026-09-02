@@ -9,6 +9,7 @@
 #define JDRT_EXPORTS
 
 #include "jdb_embed_api.h"
+#include "pcode.h"
 #include "vm.h"
 #include "dap.h"
 #include "value.h"
@@ -573,11 +574,43 @@ JDB_EMBED_API char* jdb_embed_take_output(JdbEmbed* eh) {
     return out;
 }
 
+// Already compiled: read the chunk and run it. Nothing here touches the
+// lexer, the parser or the compiler, which is the whole point - a board
+// that needs fifty seconds to translate sixteen kilobytes of source
+// starts the same program in the time it takes to read the file.
+static bool load_pcode(JdbEmbedImpl* e, const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) {
+        e->last_error = std::string("Cannot read ") + path;
+        return true;   // handled, and failed
+    }
+    Chunk chunk;
+    std::vector<FuncProto> funcs;
+    std::string err;
+    if (!pcode_read(in, chunk, funcs, err)) {
+        e->last_error = err;
+        return true;
+    }
+    e->vm.run_code(chunk, funcs);
+    return true;
+}
+
 JDB_EMBED_API char* jdb_embed_load(JdbEmbed* eh, const char* path) {
     if (!eh || !path) return nullptr;
     auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
     e->output_buf.clear();
     e->last_error.clear();
+    if (pcode_is_file(path)) {
+        try {
+            load_pcode(e, path);
+        } catch (const std::exception& ex) {
+            e->last_error = ex.what();
+        } catch (...) {
+            e->last_error = "unknown exception running p-code";
+        }
+        if (!e->last_error.empty()) return nullptr;
+        return dup_cstr(e->output_buf);
+    }
     std::ifstream in(path);
     if (!in.is_open()) {
         e->last_error = std::string("Cannot read ") + path;
@@ -610,6 +643,55 @@ JDB_EMBED_API char* jdb_embed_load(JdbEmbed* eh, const char* path) {
     } catch (...) {
         e->last_error = "unknown exception in jdb_embed_load";
         return nullptr;
+    }
+}
+
+JDB_EMBED_API int jdb_embed_write_pcode(JdbEmbed* eh, const char* src_path,
+                                        const char* out_path) {
+    if (!eh || !src_path || !out_path) return -1;
+    auto* e = reinterpret_cast<JdbEmbedImpl*>(eh);
+    e->last_error.clear();
+    std::ifstream in(src_path);
+    if (!in.is_open()) {
+        e->last_error = std::string("Cannot read ") + src_path;
+        return -1;
+    }
+    std::stringstream ss;
+    ss << in.rdbuf();
+    std::string src = ss.str();
+    in.close();
+    try {
+        Compiler c;
+        {
+            JDB_TRANSIENT_SCOPE;
+            Lexer lexer(src);
+            auto tokens = lexer.tokenize();
+            Parser parser(tokens);
+            parser.file_reader = bundled_module_reader;
+            auto ast = parser.parse();
+            {
+                JDB_TRANSIENT_PAUSE;
+                c.compile(ast);
+            }
+        }
+        std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            e->last_error = std::string("Cannot write ") + out_path;
+            return -1;
+        }
+        std::string err;
+        if (!pcode_write(out, c.main_chunk(), c.functions(), err)) {
+            e->last_error = err;
+            return -1;
+        }
+        out.close();
+        return 0;
+    } catch (const std::exception& ex) {
+        e->last_error = ex.what();
+        return -1;
+    } catch (...) {
+        e->last_error = "unknown exception writing p-code";
+        return -1;
     }
 }
 

@@ -35,6 +35,7 @@ idf_component_register(
         "../../../src/compiler.cpp"
         "../../../src/vm.cpp"
         "../../../src/jdb_embed_api.cpp"
+        "../../../src/pcode.cpp"
         "../../../src/channels.cpp"
         "../../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../../src" "../../common"

@@ -49,6 +49,9 @@ int fruitjam_usb_keyboards(void);
 int fruitjam_usb_devices(void);
 int fruitjam_usb_keys_waiting(void);
 int fruitjam_usb_key_count(void);
+int fruitjam_usb_diag(char* out, int cap);
+int fruitjam_pad_count(void);
+int fruitjam_pad_raw(int idx, char* out, int cap);
 #endif
 unsigned fruitjam_dvi_irqs(void);
 unsigned fruitjam_dvi_frame_us(void);
@@ -283,6 +286,22 @@ void register_fruitjam_gfx(VM& vm) {
     });
     vm.register_native("USB.KEYS", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64(fruitjam_usb_key_count());
+    });
+    // Every address the host stack has, with what each says it is.
+    vm.register_native("USB.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[160];
+        fruitjam_usb_diag(b, sizeof b);
+        return Value::make_string(b);
+    });
+    // A gamepad's report as it arrives. What the bytes mean differs per
+    // pad, so they are handed over before anything decides.
+    vm.register_native("JOY.COUNT", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(fruitjam_pad_count());
+    });
+    vm.register_native("JOY.RAW$", 0, 1, [](const std::vector<Value>& args) -> Value {
+        char b[64];
+        fruitjam_pad_raw(args.size() >= 1 ? (int)args[0].to_double() : 0, b, sizeof b);
+        return Value::make_string(b);
     });
     vm.register_native("USB.PENDING", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_bool(fruitjam_usb_keys_waiting() != 0);

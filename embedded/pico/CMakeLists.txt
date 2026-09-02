@@ -73,6 +73,7 @@ set(JDB_SOURCES
     ../../src/compiler.cpp
     ../../src/vm.cpp
     ../../src/jdb_embed_api.cpp
+    ../../src/pcode.cpp
     ../../src/channels.cpp
     ../../src/sprites.cpp
     ../../src/file_streams.cpp

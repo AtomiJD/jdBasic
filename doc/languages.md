@@ -3845,6 +3845,30 @@ swaps y and z, the digit row and the punctuation. It starts as US at
 every power-on, so a one-line program behind `AUTORUN` is what makes
 German stick.
 
+### Compiled programs: p-code on disk
+
+A board that takes fifty seconds to translate sixteen kilobytes of
+source does not have to translate it at all. `jdbasic --pcode prog.jdb`
+writes `prog.jdpb` beside it - the chunk the compiler produced, nothing
+else - and `RUN prog.jdpb` on the board reads it and starts. No lexer,
+no parser, no compiler in the way. Measured on a Fruit Jam with a four
+kilobyte program: 2.53 seconds from source, 0.17 as p-code.
+
+The file begins with `JDPB` and carries the format revision and the
+opcode count it was built against, so a file from a different build is
+refused rather than executed as rubbish. The extension finds it; the
+magic is what is actually checked, and any file starting with it runs
+as p-code whatever it is called.
+
+Getting one onto a board over the serial line needs the length, because
+a compiled program contains every byte there is including the ones that
+used to end the transfer: `RECV prog.jdpb 12788` takes exactly that many
+bytes raw, with no line-ending translation.
+
+What p-code does not do is make the program smaller in memory. The
+chunk still lives in RAM while it runs, and on the Fruit Jam that is
+now what limits size rather than the time.
+
 ### Watching the memory
 
 `SYS.FREE` is the total, and the total is not what a single allocation

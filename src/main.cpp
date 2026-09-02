@@ -11,6 +11,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
+#include "pcode.h"
 #include "vm.h"
 #include "console.h"
 #include "editor.h"
@@ -386,6 +387,21 @@ static void run_source(const std::string& source, bool show_timing) {
 }
 
 // Run source on an existing VM (keeps state)
+// An already-compiled program: read the chunk and run it. No lexer, no
+// parser, no compiler. The chunk has to outlive the run, so it is held
+// here rather than inside the call.
+bool run_pcode_file(VM& vm, const std::string& path, std::string& err) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in.is_open()) { err = "Cannot open file: " + path; return false; }
+    static std::vector<std::unique_ptr<Chunk>> kept;
+    static std::vector<std::unique_ptr<std::vector<FuncProto>>> kept_funcs;
+    kept.push_back(std::make_unique<Chunk>());
+    kept_funcs.push_back(std::make_unique<std::vector<FuncProto>>());
+    if (!pcode_read(in, *kept.back(), *kept_funcs.back(), err)) return false;
+    vm.run_code(*kept.back(), *kept_funcs.back());
+    return true;
+}
+
 void run_on_vm(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
@@ -1117,7 +1133,15 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
     if (cmd_upper.substr(0, 4) == "RUN " && cmd_upper != "RUN") {
         std::string filename = cmd_arg(cmd);
         if (filename.find('.') == std::string::npos) filename += ".jdb";
-        try { run_on_vm(vm, read_file(filename)); }
+        try {
+            if (pcode_is_file(filename)) {
+                std::string err;
+                if (!run_pcode_file(vm, filename, err))
+                    std::cerr << "Error: " << err << std::endl;
+            } else {
+                run_on_vm(vm, read_file(filename));
+            }
+        }
         catch (const std::exception& e) { std::cerr << "Error: " << e.what() << std::endl; }
         // The script may have called END - clear the halt flag so the
         // REPL accepts further commands.
@@ -1780,6 +1804,8 @@ int main(int argc, char* argv[]) {
     bool emit_ir_only = false;
     bool kernel_target = false;
     bool lint_mode = false;
+    bool pcode_mode = false;
+    std::string pcode_out;
     bool pretty_mode = false;
     bool dump_tokens = false;
     bool dump_ast = false;
@@ -1891,6 +1917,10 @@ int main(int argc, char* argv[]) {
         }
         if (a == "--compile" || a == "-c") { compile_native = true; continue; }
         if (a == "--lint") { lint_mode = true; continue; }
+        // Compile to p-code and stop, writing beside the source the way
+        // -c writes an exe. The board reads what this produces without a
+        // lexer, a parser or a compiler in the way.
+        if (a == "--pcode") { pcode_mode = true; continue; }
         if (a == "--dump-tokens") { dump_tokens = true; continue; }
         if (a == "--dump-ast") { dump_ast = true; continue; }
         if (a == "--pretty") { pretty_mode = true; continue; }
@@ -1952,6 +1982,51 @@ int main(int argc, char* argv[]) {
     if (filename.empty()) {
         std::cerr << "Error: no input file specified. Run `jdbasic --help` for usage." << std::endl;
         return 1;
+    }
+
+    // ── P-CODE (compile to a chunk on disk, no execution) ───────
+    if (pcode_mode) {
+        {
+            size_t sep = filename.find_last_of("/\\");
+            g_base_dir = (sep != std::string::npos) ? filename.substr(0, sep) : ".";
+        }
+        std::string program_buffer;
+        try { program_buffer = read_file(filename); }
+        catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
+        if (pcode_out.empty()) {
+            size_t dot = filename.find_last_of('.');
+            size_t sep = filename.find_last_of("/\\");
+            bool has_ext = dot != std::string::npos
+                && (sep == std::string::npos || dot > sep);
+            pcode_out = (has_ext ? filename.substr(0, dot) : filename) + ".jdpb";
+        }
+        try {
+            Lexer lexer(program_buffer);
+            auto tokens = lexer.tokenize();
+            Parser parser(tokens);
+            auto ast = parser.parse();
+            Compiler c;
+            c.compile(ast);
+            std::ofstream out(pcode_out, std::ios::binary | std::ios::trunc);
+            if (!out.is_open()) {
+                std::cerr << "Error: cannot write " << pcode_out << std::endl;
+                return 1;
+            }
+            std::string err;
+            if (!pcode_write(out, c.main_chunk(), c.functions(), err)) {
+                std::cerr << "Error: " << err << std::endl;
+                return 1;
+            }
+            out.close();
+            std::cout << "Wrote " << pcode_out << std::endl;
+            return 0;
+        } catch (const std::exception& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 1;
+        }
     }
 
     // ── LINT (static analysis only, no execution) ───────────────
@@ -2462,6 +2537,16 @@ int main(int argc, char* argv[]) {
 
     // ── Normal file execution ───────────────────────────────────
     try {
+        if (pcode_is_file(filename)) {
+            VM vm;
+            setup_dynamic_code(vm);
+            std::string err;
+            if (!run_pcode_file(vm, filename, err)) {
+                std::cerr << "Error: " << err << std::endl;
+                return 1;
+            }
+            return 0;
+        }
         std::string source = read_file(filename);
         run_source(source, timing);
     } catch (const jdError& e) {

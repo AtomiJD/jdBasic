@@ -14,6 +14,7 @@
 #include <strings.h>
 #include <ctype.h>
 #include <errno.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <dirent.h>
@@ -104,6 +105,25 @@ static void run_file(const char* name) {
 // keystroke as a full recoloured line, which costs kilobytes per line of
 // source; here nothing is echoed and nothing is parsed, so a program
 // arrives at the speed of the link.
+// With a byte count the transfer is raw: no line-ending translation and
+// no terminator byte, because a compiled program contains every byte
+// there is, including the ones that used to mean "stop" and "newline".
+static void recv_binary(const char* name, long want) {
+    FILE* f = fopen(name, "wb");
+    if (!f) { printf("cannot write %s\n", name); return; }
+    printf("receiving %s, %ld bytes\n", name, want);
+    fflush(NULL);
+    long n = 0;
+    while (n < want) {
+        int c = g_port->read_byte_ms(5000);
+        if (c < 0) break;
+        fputc(c, f);
+        n++;
+    }
+    fclose(f);
+    printf("%ld of %ld bytes\n", n, want);
+}
+
 static void recv_file(const char* name) {
     FILE* f = fopen(name, "w");
     if (!f) { printf("cannot write %s\n", name); return; }
@@ -211,9 +231,16 @@ static int dos_command(char* line) {
     }
 
     if (strcmp(cmd, "RECV") == 0) {
+        char* sp = strchr(a, ' ');
+        long want = 0;
+        if (sp) {
+            *sp = 0;
+            want = strtol(sp + 1, NULL, 10);
+        }
         const char* nm = jdb_repl_arg(a);
-        if (!*nm) { printf("RECV name\n"); return 1; }
-        recv_file(nm);
+        if (!*nm) { printf("RECV name [bytes]\n"); return 1; }
+        if (want > 0) recv_binary(nm, want);
+        else recv_file(nm);
         return 1;
     }
 

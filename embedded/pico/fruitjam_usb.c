@@ -23,6 +23,7 @@
 // use the PicoCalc's codes, which is what that editor already understands.
 
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
@@ -214,11 +215,78 @@ static void handle_kbd(const hid_keyboard_report_t* now) {
 void tuh_mount_cb(uint8_t dev_addr)   { (void)dev_addr; g_devices++; }
 void tuh_umount_cb(uint8_t dev_addr)  { (void)dev_addr; if (g_devices) g_devices--; }
 
+// A gamepad is an ordinary HID interface with no boot protocol, so it
+// arrives here as HID_ITF_PROTOCOL_NONE. What its report means differs
+// per pad, and the only way to find out is to look at the bytes - hence
+// the raw capture below, which is what JOY.RAW$ hands over.
+#define PAD_MAX      2
+#define PAD_REPORT   20
+
+typedef struct {
+    uint8_t used;
+    uint8_t dev_addr;
+    uint8_t instance;
+    uint8_t len;
+    uint8_t report[PAD_REPORT];
+    uint32_t count;
+} FjPad;
+
+static FjPad g_pads[PAD_MAX];
+
+static FjPad* pad_for(uint8_t dev_addr, uint8_t instance) {
+    for (int i = 0; i < PAD_MAX; i++)
+        if (g_pads[i].used && g_pads[i].dev_addr == dev_addr
+            && g_pads[i].instance == instance) return &g_pads[i];
+    return NULL;
+}
+
+int fruitjam_pad_count(void) {
+    int n = 0;
+    for (int i = 0; i < PAD_MAX; i++) if (g_pads[i].used) n++;
+    return n;
+}
+
+int fruitjam_pad_raw(int idx, char* out, int cap) {
+    if (idx < 0 || idx >= PAD_MAX || !g_pads[idx].used)
+        return snprintf(out, cap, "");
+    int at = snprintf(out, cap, "n=%u ", (unsigned)g_pads[idx].count);
+    for (int i = 0; i < g_pads[idx].len && at < cap - 3; i++)
+        at += snprintf(out + at, cap - at, "%02x", g_pads[idx].report[i]);
+    return at;
+}
+
+// Every address the stack has, and what it says it is.
+int fruitjam_usb_diag(char* out, int cap) {
+    int at = snprintf(out, cap, "dev=%u kbd=%u pad=%u",
+                      (unsigned)g_devices, (unsigned)g_keyboards,
+                      (unsigned)fruitjam_pad_count());
+    for (uint8_t a = 1; a <= CFG_TUH_DEVICE_MAX && at < cap - 24; a++) {
+        if (!tuh_mounted(a)) continue;
+        uint16_t vid = 0, pid = 0;
+        tuh_vid_pid_get(a, &vid, &pid);
+        at += snprintf(out + at, cap - at, " [%u:%04x/%04x]",
+                       (unsigned)a, vid, pid);
+    }
+    return at;
+}
+
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
                       uint8_t const* desc_report, uint16_t desc_len) {
     (void)desc_report; (void)desc_len;
-    if (tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_KEYBOARD)
+    uint8_t proto = tuh_hid_interface_protocol(dev_addr, instance);
+    if (proto == HID_ITF_PROTOCOL_KEYBOARD) {
         g_keyboards++;
+    } else if (proto == HID_ITF_PROTOCOL_NONE) {
+        for (int i = 0; i < PAD_MAX; i++) {
+            if (g_pads[i].used) continue;
+            g_pads[i].used = 1;
+            g_pads[i].dev_addr = dev_addr;
+            g_pads[i].instance = instance;
+            g_pads[i].len = 0;
+            g_pads[i].count = 0;
+            break;
+        }
+    }
     tuh_hid_receive_report(dev_addr, instance);
 }
 
@@ -226,10 +294,18 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance) {
     if (tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_KEYBOARD
         && g_keyboards)
         g_keyboards--;
+    FjPad* p = pad_for(dev_addr, instance);
+    if (p) p->used = 0;
 }
 
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
                                 uint8_t const* report, uint16_t len) {
+    FjPad* pad = pad_for(dev_addr, instance);
+    if (pad) {
+        pad->len = (uint8_t)(len > PAD_REPORT ? PAD_REPORT : len);
+        memcpy(pad->report, report, pad->len);
+        pad->count++;
+    }
     if (tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_KEYBOARD
         && len >= sizeof(hid_keyboard_report_t))
         handle_kbd((const hid_keyboard_report_t*)report);
