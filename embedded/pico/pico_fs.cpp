@@ -90,15 +90,17 @@ static void irqs_unpark(void) {
     }
 }
 
-// Falls back to the SDK's wrapper if the other core will not park; a
-// stuttered frame beats a write that does not happen.
+// The other core is not parked either. Parking it is what the SDK's
+// wrapper does, and it is only needed because a core executing from
+// flash cannot execute while the flash is busy. Core 1 here runs the USB
+// frame loop, and that loop and everything it reaches were put in RAM
+// for this reason: a sector erase is fifty milliseconds, a USB device
+// that hears nothing for three of them goes to sleep, and nothing wakes
+// it again. Parking the core cost the keyboard on every save.
 static int flash_op(void (*fn)(void*), void* arg) {
-    if (!multicore_lockout_start_timeout_us(2000000))
-        return flash_safe_execute(fn, arg, 2000) == PICO_OK ? 0 : LFS_ERR_IO;
     irqs_park();
     fn(arg);
     irqs_unpark();
-    multicore_lockout_end_blocking();
     return 0;
 }
 #else

@@ -72,7 +72,9 @@ static char     g_tail_txt[12] = {0};
 static uint8_t g_devices = 0;
 static bool    g_up = false;
 
-static void key_push(uint8_t c) {
+// In RAM with the rest of core 1's loop: while a flash sector is being
+// erased, code fetched from flash is not there to fetch.
+static void __not_in_flash_func(key_push)(uint8_t c) {
     uint16_t next = (uint16_t)((g_head + 1) % KEYRING);
     if (next == g_tail) return;
     g_ring[g_head] = c;
@@ -310,7 +312,7 @@ static void handle_kbd(const hid_keyboard_report_t* now) {
 }
 
 // Called once a millisecond beside the frame timing.
-static void kbd_repeat_tick(void) {
+static void __not_in_flash_func(kbd_repeat_tick)(void) {
     if (!g_rep_char) return;
     uint32_t now = time_us_32();
     // A repeat is only honest while the host stack is being serviced.
@@ -514,11 +516,17 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
 // it is started on core 0 and has to be run from there, which two
 // attempts at moving it established - split across the cores it
 // enumerates nothing at all.
-static void core1_usb_frames(void) {
-    // Core 1 fetches its instructions from flash, so core 0 cannot erase
-    // or program while it runs. Registering here lets flash_safe_execute
-    // park this core for the duration; without it the call refuses
-    // outright and every write to the store comes back as an I/O error.
+static void __not_in_flash_func(core1_usb_frames)(void) {
+    // This loop and everything it reaches live in RAM, which is what
+    // lets it keep running while core 0 erases a flash sector. That
+    // matters: a sector takes fifty milliseconds, a USB device that
+    // hears nothing for three goes to sleep, and nothing wakes it
+    // again - which is how a save from the editor used to cost the
+    // keyboard. The library's own frame path was already written this
+    // way; only these two were not.
+    //
+    // Registered as a lockout victim anyway, so anything that does ask
+    // for the safe wrapper still gets it.
     flash_safe_execute_core_init();
     while (true) {
         uint32_t t = timer_hw->timerawl;
