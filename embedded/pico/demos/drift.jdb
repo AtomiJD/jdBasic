@@ -2,8 +2,12 @@
 ' the framebuffer is what the wire is reading, so everything that moves
 ' is erased in black at its old place and drawn at its new one.
 '
-' Arrows fly, space or button 2 fires, q leaves. Written small on
-' purpose: the board has about forty kilobytes for a program.
+' A DualShock flies it: left stick or d-pad to steer, cross or R2 to
+' fire, options to leave. The keyboard still works - arrows, space, q -
+' so it plays without a pad too.
+'
+' Written small on purpose: the board has about seventy kilobytes for a
+' program and the compiler is the part that spends them.
 
 GFX.CONSOLE 0
 GFX.CLEAR 0
@@ -29,19 +33,41 @@ px = 160
 op = 160
 sc = 0
 go = 1
+pad = JOY.COUNT()
+fired = 0
 
 DRAWCOLOR 255, 255, 255
 TEXT 4, 4, "STELLAR DRIFT", 1
+IF pad > 0 THEN TEXT 4, 240 - 10, JOY.NAME$(0), 1
 
 DO
-  k = KEY.NOW()
-  IF k = 180 THEN px = px - 6
-  IF k = 183 THEN px = px + 6
-  IF k = 113 THEN go = 0
+  ' Held, not typed. The key queue gives one character a press and then
+  ' a pause, which is right for an editor and useless for steering.
+  IF GFX.KEYSTATE(180) THEN px = px - 6
+  IF GFX.KEYSTATE(183) THEN px = px + 6
+  shoot = 0
+  IF GFX.KEYSTATE(32) THEN shoot = 1
+  IF GFX.KEYSTATE(113) THEN go = 0
+
+  IF pad > 0 THEN
+    ' The stick steers by how far it is pushed; the hat is all or
+    ' nothing. Bit 2 of the hat is right, bit 8 is left.
+    ax = JOY.AXIS(0, 0)
+    px = px + ax * 7
+    h = JOY.HAT(0)
+    IF h = 2 OR h = 3 OR h = 1 + 2 THEN px = px + 5
+    IF h = 8 OR h = 12 OR h = 9 THEN px = px - 5
+    ' Cross, or the right trigger pulled past halfway.
+    IF JOY.BUTTON(0, 1) OR JOY.AXIS(0, 5) > 0.5 THEN shoot = 1
+    IF JOY.BUTTON(0, 9) THEN go = 0
+  ENDIF
+
   IF px < 10 THEN px = 10
   IF px > 310 THEN px = 310
 
-  IF k = 32 OR BUTTON.GET(2) THEN
+  ' One shot a press, so holding the button does not empty the magazine
+  ' in a single frame.
+  IF shoot = 1 AND fired = 0 THEN
     FOR i = 0 TO 3
       IF by[i] < 0 THEN
         bx[i] = px
@@ -50,6 +76,7 @@ DO
       ENDIF
     NEXT i
   ENDIF
+  fired = shoot
 
   FOR i = 0 TO 9
     DRAWCOLOR 0, 0, 0

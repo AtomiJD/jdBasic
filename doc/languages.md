@@ -3845,6 +3845,31 @@ swaps y and z, the digit row and the punctuation. It starts as US at
 every power-on, so a one-line program behind `AUTORUN` is what makes
 German stick.
 
+Keys repeat when held, after a short pause, which is what makes the
+editor bearable; Page Up and Page Down move by a screen. A game wants
+neither. `GFX.KEYSTATE(code)` asks whether a key is down at this instant
+instead of taking one off the queue, so a ship steers as long as the key
+is held rather than once per press.
+
+A USB game controller is a joystick under the same names the desktop
+uses: `JOY.COUNT`, `JOY.AXIS(id, n)` between -1 and 1, `JOY.BUTTON`,
+`JOY.HAT` as a bitmask and `JOY.NAME$`. A program written against a pad
+on a PC therefore runs on the board unchanged. A DualShock 4 is decoded
+by its report layout, with the sticks on axes 0 to 3 and the triggers on
+4 and 5; `JOY.RAW$(id)` hands back the last raw report as hex, which is
+how another pad's layout gets worked out. XInput controllers - the Xbox
+family - are not HID and are not supported.
+
+The host stack is polled from the calls a program already makes, and no
+faster than every half millisecond. Without that brake a program that
+sits waiting for a key calls into the stack thousands of times a frame,
+which measured out at a fifth of the frame spent on nothing.
+`USB.TIME$` reports what the stack costs - calls, calls over 4 ms, worst
+and mean - and `USB.DIAG$` lists what enumerated with vendor and product
+ids. `DVI.LATE$` counts frames that ran long or short against the
+16.7 ms the signal expects, which is what separates a picture the board
+generated badly from one the monitor lost on its own.
+
 ### Compiled programs: p-code on disk
 
 A board that takes fifty seconds to translate sixteen kilobytes of

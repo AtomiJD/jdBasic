@@ -50,6 +50,8 @@ int  fruitjam_usb_start(void);
 // bare 27 would be read as the start of an escape sequence and block
 // waiting for the rest of it.
 #define K_ESC   0xB1
+#define K_PGUP  0xD6
+#define K_PGDN  0xD7
 // Selection needs the shifted arrows to be distinguishable from the plain
 // ones, so they get codes of their own.
 #define K_SLEFT  0xB8
@@ -96,9 +98,15 @@ int fruitjam_usb_keyboards(void)    { return g_keyboards; }
 void fruitjam_usb_poll(void) { if (g_up) tuh_task(); }
 int fruitjam_usb_devices(void)      { return g_devices; }
 
-// Asking for a key is what drives the host stack.
+static void usb_task_timed(void);
+static void usb_pump(void);
+
+// Asking for a key drives the host stack too, but under the same brake
+// as the state reads. Without it a blocking read calls into the stack as
+// fast as the processor can loop - measured at 3600 times a frame, which
+// at a microsecond each is a fifth of the frame spent on nothing.
 static int fj_in_chars(char* buf, int len) {
-    if (g_up) tuh_task();
+    usb_pump();
     int n = 0;
     while (n < len) {
         int c = key_pop();
@@ -168,6 +176,8 @@ static uint8_t translate(uint8_t keycode, uint8_t modifier) {
         case HID_KEY_ARROW_UP:    return shift ? K_SUP : K_UP;
         case HID_KEY_ARROW_DOWN:  return shift ? K_SDOWN : K_DOWN;
         case HID_KEY_HOME:        return shift ? K_SHOME : K_HOME;
+        case HID_KEY_PAGE_UP:     return K_PGUP;
+        case HID_KEY_PAGE_DOWN:   return K_PGDN;
         case HID_KEY_END:         return shift ? K_SEND : K_END;
         case HID_KEY_DELETE:      return K_DEL;
         case HID_KEY_ENTER:
@@ -197,6 +207,72 @@ static uint8_t translate(uint8_t keycode, uint8_t modifier) {
 
 // Only keys that were not already down in the previous report count, so
 // holding one down does not flood the ring.
+// A held key. The keyboard reports a change, not a stream, so repeat is
+// ours to make: remember what is down and when it is next due, and let
+// the frame loop on core 1 post it again.
+static volatile uint8_t  g_rep_char = 0;
+static volatile uint32_t g_rep_due = 0;
+#define REPEAT_DELAY_US  400000u
+#define REPEAT_EVERY_US   40000u
+
+// What is held right now, for a game that wants a key's state rather
+// than the queue of what was typed.
+static hid_keyboard_report_t g_held;
+
+// Reading a state does not go through stdio, so nothing else would run
+// the host stack while a game asks - which is exactly what happened:
+// the pad was named at startup and then never moved again. Half a
+// millisecond is the floor, so a loop that asks eight times a frame
+// still only pumps once.
+// How long the host stack actually takes when it is asked to run. The
+// scanout has 16666 microseconds between interrupts and needs its own
+// serviced promptly; anything here that approaches that number is the
+// reason the picture lets go.
+static uint32_t g_task_calls = 0;
+static uint32_t g_task_worst = 0;
+static uint32_t g_task_total = 0;
+// A single outlier at boot - enumeration, half a second of it - hides
+// everything after it behind the worst figure. What matters for a
+// picture is how often a call runs longer than a frame, so those are
+// counted separately.
+static uint32_t g_task_slow = 0;
+
+static void usb_task_timed(void) {
+    uint32_t t0 = time_us_32();
+    tuh_task();
+    uint32_t d = time_us_32() - t0;
+    g_task_calls++;
+    g_task_total += d;
+    if (d > g_task_worst) g_task_worst = d;
+    if (d > 4000u) g_task_slow++;
+}
+
+int fruitjam_usb_time(char* out, int cap) {
+    return snprintf(out, cap, "%u calls, %u over 4ms, worst %u us, mean %u us",
+                    (unsigned)g_task_calls, (unsigned)g_task_slow,
+                    (unsigned)g_task_worst,
+                    (unsigned)(g_task_calls ? g_task_total / g_task_calls : 0));
+}
+
+static void usb_pump(void) {
+    static uint32_t last = 0;
+    uint32_t now = time_us_32();
+    if (g_up && (uint32_t)(now - last) >= 500u) {
+        last = now;
+        usb_task_timed();
+    }
+}
+
+int fruitjam_kbd_down(int code) {
+    usb_pump();
+    for (int j = 0; j < 6; j++) {
+        uint8_t k = g_held.keycode[j];
+        if (!k) continue;
+        if (translate(k, g_held.modifier) == (uint8_t)code) return 1;
+    }
+    return 0;
+}
+
 static void handle_kbd(const hid_keyboard_report_t* now) {
     static hid_keyboard_report_t before = { 0, 0, { 0 } };
     for (int i = 0; i < 6; i++) {
@@ -207,9 +283,33 @@ static void handle_kbd(const hid_keyboard_report_t* now) {
             if (before.keycode[j] == k) { held = true; break; }
         if (held) continue;
         uint8_t c = translate(k, now->modifier);
-        if (c) key_push(c);
+        if (c) {
+            key_push(c);
+            g_rep_char = c;
+            g_rep_due = time_us_32() + REPEAT_DELAY_US;
+        }
     }
+    // Nothing held any more, or a different key: the old one stops
+    // repeating either way.
+    if (g_rep_char) {
+        int still = 0;
+        for (int j = 0; j < 6; j++) {
+            uint8_t k = now->keycode[j];
+            if (k && translate(k, now->modifier) == g_rep_char) { still = 1; break; }
+        }
+        if (!still) g_rep_char = 0;
+    }
+    g_held = *now;
     before = *now;
+}
+
+// Called once a millisecond beside the frame timing.
+static void kbd_repeat_tick(void) {
+    if (!g_rep_char) return;
+    uint32_t now = time_us_32();
+    if ((int32_t)(now - g_rep_due) < 0) return;
+    key_push(g_rep_char);
+    g_rep_due = now + REPEAT_EVERY_US;
 }
 
 void tuh_mount_cb(uint8_t dev_addr)   { (void)dev_addr; g_devices++; }
@@ -229,9 +329,26 @@ typedef struct {
     uint8_t len;
     uint8_t report[PAD_REPORT];
     uint32_t count;
+    uint16_t vid, pid;
 } FjPad;
 
 static FjPad g_pads[PAD_MAX];
+
+// Every HID interface that is not a keyboard gets a slot, because the
+// report descriptor turned out not to be a reliable way to tell a pad
+// from a keyboard's volume keys. What is reliable is the traffic: a pad
+// sends a report of eight bytes or more, a volume-key interface sends
+// nothing until someone presses a volume key. So a slot only becomes a
+// joystick once it has spoken, and the numbering below skips the rest.
+#define PAD_SPEAKS(p) ((p)->used && (p)->len >= 8)
+
+static int pad_slot(int id) {
+    if (id < 0) return -1;
+    for (int i = 0; i < PAD_MAX; i++)
+        if (PAD_SPEAKS(&g_pads[i]) && id-- == 0) return i;
+    return -1;
+}
+
 
 static FjPad* pad_for(uint8_t dev_addr, uint8_t instance) {
     for (int i = 0; i < PAD_MAX; i++)
@@ -241,17 +358,80 @@ static FjPad* pad_for(uint8_t dev_addr, uint8_t instance) {
 }
 
 int fruitjam_pad_count(void) {
+    usb_pump();
     int n = 0;
-    for (int i = 0; i < PAD_MAX; i++) if (g_pads[i].used) n++;
+    for (int i = 0; i < PAD_MAX; i++) if (PAD_SPEAKS(&g_pads[i])) n++;
     return n;
 }
 
+// A DualShock 4 over USB, report 0x01: the four sticks, then the face
+// buttons packed above the d-pad hat, then the shoulders, then the
+// analogue triggers. Verified against the pad; other pads fall back to
+// the same shape, which is what most of them use, and JOY.RAW$ is there
+// for the ones that do not.
+#define PAD_IS_DS4(p) ((p)->vid == 0x054c)
+
+int fruitjam_pad_present(int idx) { return pad_slot(idx) >= 0; }
+
+int fruitjam_pad_name(int idx, char* out, int cap) {
+    int i = pad_slot(idx);
+    if (i < 0) return snprintf(out, cap, "");
+    if (PAD_IS_DS4(&g_pads[i])) return snprintf(out, cap, "DualShock");
+    return snprintf(out, cap, "pad %04x/%04x", g_pads[i].vid, g_pads[i].pid);
+}
+
+// Sticks come back as -1 to 1 with the middle eighth treated as centre,
+// because a stick at rest does not sit exactly on 128. Triggers are 0
+// to 1 and have no such trouble.
+double fruitjam_pad_axis(int idx, int axis) {
+    usb_pump();
+    int i = pad_slot(idx);
+    if (i < 0 || g_pads[i].len < 10) return 0.0;
+    const uint8_t* r = g_pads[i].report;
+    int raw;
+    switch (axis) {
+        case 0: raw = r[1]; break;
+        case 1: raw = r[2]; break;
+        case 2: raw = r[3]; break;
+        case 3: raw = r[4]; break;
+        case 4: return r[8] / 255.0;
+        case 5: return r[9] / 255.0;
+        default: return 0.0;
+    }
+    double v = (raw - 128) / 127.0;
+    if (v > -0.12 && v < 0.12) return 0.0;
+    return v < -1.0 ? -1.0 : (v > 1.0 ? 1.0 : v);
+}
+
+int fruitjam_pad_button(int idx, int btn) {
+    usb_pump();
+    int i = pad_slot(idx);
+    if (i < 0) return 0;
+    const uint8_t* r = g_pads[i].report;
+    if (btn >= 0 && btn < 4)  return (r[5] >> (4 + btn)) & 1;   // square cross circle triangle
+    if (btn >= 4 && btn < 12) return (r[6] >> (btn - 4)) & 1;   // L1 R1 L2 R2 share options L3 R3
+    if (btn == 12 || btn == 13) return (r[7] >> (btn - 12)) & 1; // PS, touchpad
+    return 0;
+}
+
+// The hat as the desktop reports it: 1 up, 2 right, 4 down, 8 left,
+// added together on the diagonals.
+int fruitjam_pad_hat(int idx) {
+    usb_pump();
+    int i = pad_slot(idx);
+    if (i < 0) return 0;
+    static const uint8_t dir[8] = { 1, 1|2, 2, 2|4, 4, 4|8, 8, 8|1 };
+    int d = g_pads[i].report[5] & 0x0F;
+    return d < 8 ? dir[d] : 0;
+}
+
 int fruitjam_pad_raw(int idx, char* out, int cap) {
-    if (idx < 0 || idx >= PAD_MAX || !g_pads[idx].used)
-        return snprintf(out, cap, "");
-    int at = snprintf(out, cap, "n=%u ", (unsigned)g_pads[idx].count);
-    for (int i = 0; i < g_pads[idx].len && at < cap - 3; i++)
-        at += snprintf(out + at, cap - at, "%02x", g_pads[idx].report[i]);
+    usb_pump();
+    int s = pad_slot(idx);
+    if (s < 0) return snprintf(out, cap, "");
+    int at = snprintf(out, cap, "n=%u ", (unsigned)g_pads[s].count);
+    for (int i = 0; i < g_pads[s].len && at < cap - 3; i++)
+        at += snprintf(out + at, cap - at, "%02x", g_pads[s].report[i]);
     return at;
 }
 
@@ -284,6 +464,8 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
             g_pads[i].instance = instance;
             g_pads[i].len = 0;
             g_pads[i].count = 0;
+            g_pads[i].vid = g_pads[i].pid = 0;
+            tuh_vid_pid_get(dev_addr, &g_pads[i].vid, &g_pads[i].pid);
             break;
         }
     }
@@ -313,8 +495,11 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
 }
 
 
-// Nothing but the frame, once a millisecond. The library does the bit
-// level work in PIO and DMA; this only has to be punctual.
+// Nothing but the frame, once a millisecond, and the key repeat that
+// hangs off the same clock. The host stack itself is not driven here:
+// it is started on core 0 and has to be run from there, which two
+// attempts at moving it established - split across the cores it
+// enumerates nothing at all.
 static void core1_usb_frames(void) {
     // Core 1 fetches its instructions from flash, so core 0 cannot erase
     // or program while it runs. Registering here lets flash_safe_execute
@@ -324,6 +509,7 @@ static void core1_usb_frames(void) {
     while (true) {
         uint32_t t = timer_hw->timerawl;
         pio_usb_host_frame();
+        kbd_repeat_tick();
         while ((timer_hw->timerawl - t) < 1000) tight_loop_contents();
     }
 }
@@ -365,8 +551,6 @@ int fruitjam_usb_start(void) {
     tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &cfg);
 
     g_up = tuh_init(1);
-    if (g_up) {
-        multicore_launch_core1(core1_usb_frames);
-    }
+    if (g_up) multicore_launch_core1(core1_usb_frames);
     return g_up;
 }

@@ -2070,6 +2070,31 @@ Description: Returns the hat (D-Pad) state as a bitmask (1=Up, 2=Right, 4=Down, 
 Syntax: JOY.NAME$(id)
 Description: Returns the name of the joystick at index id.
 
+[JOY.RAW$]
+Syntax: JOY.RAW$(id)
+Description: Returns the pad's last raw HID report as hex. Boards only, for
+             working out an unknown pad's layout.
+
+[DVI.LATE$]
+Syntax: DVI.LATE$()
+Description: Reports frames that ran long or short against the 16.7 ms the
+             signal expects, with the worst of each. Fruit Jam only.
+
+[DVI.CACHE$]
+Syntax: DVI.CACHE$()
+Description: Reports the scanline cache that feeds the display from PSRAM.
+             Fruit Jam only.
+
+[USB.TIME$]
+Syntax: USB.TIME$()
+Description: Reports how much time the USB host stack takes: calls, calls
+             over 4 ms, worst and mean. Boards only.
+
+[USB.DIAG$]
+Syntax: USB.DIAG$()
+Description: Lists the devices the USB host has enumerated with their
+             vendor and product ids. Boards only.
+
 [KILL]
 Syntax: KILL "filename"
 Description: Deletes a file from the disk.

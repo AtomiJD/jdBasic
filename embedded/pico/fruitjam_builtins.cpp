@@ -33,6 +33,7 @@ int  fruitjam_psram_check(char* out, int cap);
 #ifdef FRUITJAM_USB
 void fruitjam_kbd_layout(int de);
 int  fruitjam_kbd_layout_get(void);
+int  fruitjam_kbd_down(int code);
 int  fruitjam_button(int n);
 int  fruitjam_button_count(void);
 int  fruitjam_ir_raw(void);
@@ -50,11 +51,20 @@ int fruitjam_usb_devices(void);
 int fruitjam_usb_keys_waiting(void);
 int fruitjam_usb_key_count(void);
 int fruitjam_usb_diag(char* out, int cap);
+int fruitjam_usb_time(char* out, int cap);
 int fruitjam_pad_count(void);
 int fruitjam_pad_raw(int idx, char* out, int cap);
+int fruitjam_pad_name(int idx, char* out, int cap);
+double fruitjam_pad_axis(int idx, int axis);
+int fruitjam_pad_button(int idx, int btn);
+int fruitjam_pad_hat(int idx);
 #endif
 unsigned fruitjam_dvi_irqs(void);
 unsigned fruitjam_dvi_frame_us(void);
+unsigned fruitjam_dvi_late(void);
+unsigned fruitjam_dvi_worst(void);
+unsigned fruitjam_dvi_short(void);
+unsigned fruitjam_dvi_shortest(void);
 unsigned fruitjam_dvi_csr(void);
 unsigned fruitjam_dvi_hstx_meas(void);
 unsigned fruitjam_dvi_sys_meas(void);
@@ -205,6 +215,17 @@ void register_fruitjam_gfx(VM& vm) {
         fruitjam_dvi_cache(b, sizeof b);
         return Value::make_string(b);
     });
+    // How many frames arrived late since boot, and the worst one. A
+    // blackout that leaves this at zero is the monitor's doing; one that
+    // moves it is ours.
+    vm.register_native("DVI.LATE$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[96];
+        snprintf(b, sizeof b, "%u late %u early of %u, worst %u us, shortest %u us",
+                 (unsigned)fruitjam_dvi_late(), (unsigned)fruitjam_dvi_short(),
+                 (unsigned)fruitjam_dvi_frames(),
+                 (unsigned)fruitjam_dvi_worst(), (unsigned)fruitjam_dvi_shortest());
+        return Value::make_string(b);
+    });
     vm.register_native("DVI.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[128];
         snprintf(b, sizeof b, "csr=%08x expand=%08x dma=%08x hstx=%u sys=%u",
@@ -288,6 +309,12 @@ void register_fruitjam_gfx(VM& vm) {
         return Value::make_i64(fruitjam_usb_key_count());
     });
     // Every address the host stack has, with what each says it is.
+    // What the host stack costs the core it runs on.
+    vm.register_native("USB.TIME$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[96];
+        fruitjam_usb_time(b, sizeof b);
+        return Value::make_string(b);
+    });
     vm.register_native("USB.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[160];
         fruitjam_usb_diag(b, sizeof b);
@@ -297,6 +324,41 @@ void register_fruitjam_gfx(VM& vm) {
     // pad, so they are handed over before anything decides.
     vm.register_native("JOY.COUNT", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64(fruitjam_pad_count());
+    });
+    // The names the desktop uses, so a program that reads a pad reads the
+    // same on both. Axes 0 to 3 are the sticks and 4 and 5 the triggers;
+    // buttons run square, cross, circle, triangle, then the shoulders.
+    // Whether a key is held right now, rather than what was typed. A
+    // game loop wants this: the queue gives one character a press and
+    // then a pause, which is right for an editor and wrong for steering.
+    // The name is the desktop's; the argument is the code KEY.NOW hands
+    // back, or a one-character string.
+    vm.register_native("GFX.KEYSTATE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int code;
+        if (args[0].type == ValueType::STRING) {
+            const std::string& s = args[0].as_string()->data;
+            if (s.empty()) return Value::make_bool(false);
+            code = (unsigned char)s[0];
+        } else {
+            code = (int)args[0].to_double();
+        }
+        return Value::make_bool(fruitjam_kbd_down(code) != 0);
+    });
+    vm.register_native("JOY.NAME$", 0, 1, [](const std::vector<Value>& args) -> Value {
+        char b[32];
+        fruitjam_pad_name(args.size() >= 1 ? (int)args[0].to_double() : 0, b, sizeof b);
+        return Value::make_string(b);
+    });
+    vm.register_native("JOY.AXIS", 2, 2, [](const std::vector<Value>& args) -> Value {
+        return Value::make_f64(fruitjam_pad_axis((int)args[0].to_double(),
+                                                 (int)args[1].to_double()));
+    });
+    vm.register_native("JOY.BUTTON", 2, 2, [](const std::vector<Value>& args) -> Value {
+        return Value::make_bool(fruitjam_pad_button((int)args[0].to_double(),
+                                                    (int)args[1].to_double()) != 0);
+    });
+    vm.register_native("JOY.HAT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(fruitjam_pad_hat((int)args[0].to_double()));
     });
     vm.register_native("JOY.RAW$", 0, 1, [](const std::vector<Value>& args) -> Value {
         char b[64];

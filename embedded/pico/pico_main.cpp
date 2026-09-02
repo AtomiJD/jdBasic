@@ -132,6 +132,8 @@ static stdio_driver_t pc_driver = {
 #define K_SRIGHT 0xBB
 #define K_SHOME  0xD8
 #define K_SEND   0xD9
+#define K_PGUP   0xD6
+#define K_PGDN   0xD7
 
 extern "C" void jdb_snd_note_due(void);
 
@@ -216,6 +218,8 @@ extern "C" int repl_read_key(void) {
         case 'F': return shift ? K_SEND : K_END;
         case '~':
             if (par[0] == '3') return K_DEL;
+            if (par[0] == '5') return K_PGUP;
+            if (par[0] == '6') return K_PGDN;
             if (par[0] == '1' || par[0] == '7') return shift ? K_SHOME : K_HOME;
             if (par[0] == '4' || par[0] == '8') return shift ? K_SEND : K_END;
             break;

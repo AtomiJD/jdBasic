@@ -176,6 +176,10 @@ static void copy_channels_init(void);
 
 static uint32_t g_frames = 0;
 static uint32_t g_frame_us = 0;
+static uint32_t g_frame_late = 0;
+static uint32_t g_frame_worst = 0;
+static uint32_t g_frame_short = 0;
+static uint32_t g_frame_shortest = 0xFFFFFFFFu;
 static uint32_t g_last_wrap = 0;
 
 // The null trigger at the end of the list lands here. Everything the
@@ -189,6 +193,22 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
     g_frame_us = now - g_last_wrap;
     g_last_wrap = now;
     g_frames++;
+    // A frame that took a fifth longer than it should have. One of these
+    // is enough for a monitor to let go and spend a second or two
+    // finding the signal again, which is what a blackout in the middle
+    // of a game looks like. Counting them says whether the picture
+    // really slipped or whether the monitor is being fussy.
+    if (g_frame_us > 20000u) {
+        g_frame_late++;
+        if (g_frame_us > g_frame_worst) g_frame_worst = g_frame_us;
+    }
+    // And the other side of it. A frame that arrives early breaks a
+    // monitor's lock exactly as a late one does, and counting only the
+    // long ones would call that clean.
+    if (g_frames > 4 && g_frame_us < 14000u) {
+        g_frame_short++;
+        if (g_frame_us < g_frame_shortest) g_frame_shortest = g_frame_us;
+    }
 
 #ifdef JDB_FB_IN_PSRAM
     if (g_ch_trig >= 0) copy_restart();
@@ -203,6 +223,10 @@ size_t   fruitjam_dvi_stride(void) { return FB_STRIDE; }
 uint32_t fruitjam_dvi_frames(void) { return g_frames; }
 uint32_t fruitjam_dvi_irqs(void)   { return g_frames; }
 uint32_t fruitjam_dvi_frame_us(void) { return g_frame_us; }
+uint32_t fruitjam_dvi_late(void)     { return g_frame_late; }
+uint32_t fruitjam_dvi_worst(void)    { return g_frame_worst; }
+uint32_t fruitjam_dvi_short(void)    { return g_frame_short; }
+uint32_t fruitjam_dvi_shortest(void) { return g_frame_shortest == 0xFFFFFFFFu ? 0 : g_frame_shortest; }
 uint32_t fruitjam_dvi_sys_hz(void)   { return clock_get_hz(clk_sys); }
 uint32_t fruitjam_dvi_csr(void)    { return hstx_ctrl_hw->csr; }
 uint32_t fruitjam_dvi_expand(void) { return hstx_ctrl_hw->expand_shift; }
