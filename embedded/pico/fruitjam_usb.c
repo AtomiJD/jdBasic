@@ -100,6 +100,7 @@ int fruitjam_usb_devices(void)      { return g_devices; }
 
 static void usb_task_timed(void);
 static void usb_pump(void);
+static volatile uint32_t g_task_last = 0;
 
 // Asking for a key drives the host stack too, but under the same brake
 // as the state reads. Without it a blocking read calls into the stack as
@@ -240,6 +241,7 @@ static uint32_t g_task_slow = 0;
 static void usb_task_timed(void) {
     uint32_t t0 = time_us_32();
     tuh_task();
+    g_task_last = t0;
     uint32_t d = time_us_32() - t0;
     g_task_calls++;
     g_task_total += d;
@@ -253,6 +255,10 @@ int fruitjam_usb_time(char* out, int cap) {
                     (unsigned)g_task_worst,
                     (unsigned)(g_task_calls ? g_task_total / g_task_calls : 0));
 }
+
+// Long running work can drive the stack from here, which keeps the
+// keyboard alive across an operation that reads no keys.
+void fruitjam_usb_pump(void) { usb_pump(); }
 
 static void usb_pump(void) {
     static uint32_t last = 0;
@@ -307,6 +313,14 @@ static void handle_kbd(const hid_keyboard_report_t* now) {
 static void kbd_repeat_tick(void) {
     if (!g_rep_char) return;
     uint32_t now = time_us_32();
+    // A repeat is only honest while the host stack is being serviced.
+    // Behind a long operation that reads no keys, the release that
+    // should end it cannot arrive, and the key would otherwise bank up
+    // hundreds of characters to be delivered all at once afterwards.
+    if ((uint32_t)(now - g_task_last) > 50000u) {
+        g_rep_char = 0;
+        return;
+    }
     if ((int32_t)(now - g_rep_due) < 0) return;
     key_push(g_rep_char);
     g_rep_due = now + REPEAT_EVERY_US;

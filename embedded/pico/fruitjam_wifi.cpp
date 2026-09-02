@@ -23,6 +23,22 @@ const uint8_t* fruitjam_esp_data(void);
 int  fruitjam_esp_fw(char* out, int cap);
 int  fruitjam_esp_error(void);
 void fruitjam_esp_reset(void);
+#ifdef FRUITJAM_USB
+void fruitjam_usb_pump(void);
+#endif
+}
+
+// Waiting on the radio must not starve the keyboard: a key held when a
+// long call starts would otherwise never be seen to be released.
+static void wifi_wait(int ms) {
+#ifdef FRUITJAM_USB
+    for (int i = 0; i < ms; i++) {
+        fruitjam_usb_pump();
+        sleep_ms(1);
+    }
+#else
+    sleep_ms(ms);
+#endif
 }
 
 #define C_SET_NET          0x10
@@ -86,7 +102,7 @@ static int wifi_join(const char* ssid, const char* pass, int timeout_ms) {
     absolute_time_t end = make_timeout_time_ms(timeout_ms);
     while (!time_reached(end)) {
         if (wifi_status() == WL_CONNECTED) return 0;
-        sleep_ms(200);
+        wifi_wait(200);
     }
     return -2;
 }
@@ -274,7 +290,7 @@ static std::string http_request(const char* verb, const std::string& url,
     absolute_time_t end = make_timeout_time_ms(timeout_ms);
     while (sock_state(sock) != SOCKET_ESTABLISHED) {
         if (time_reached(end)) { sock_close(sock); return ""; }
-        sleep_ms(20);
+        wifi_wait(20);
     }
 
     std::string req = std::string(verb) + " " + u.path + " HTTP/1.1\r\nHost: " +
@@ -305,7 +321,7 @@ static std::string http_request(const char* verb, const std::string& url,
             if (sock_available(sock) <= 0) break;
             continue;
         }
-        sleep_ms(10);
+        wifi_wait(10);
     }
     sock_close(sock);
 
@@ -378,7 +394,7 @@ void register_fruitjam_wifi(VM& vm) {
         uint16_t off[32], rlen[32];
         int got = 0;
         for (int attempt = 0; attempt < waits; attempt++) {
-            sleep_ms(500);
+            wifi_wait(500);
             if (esp_ok(C_SCAN_NETWORKS, nullptr, nullptr, 0, off, rlen, 32, &got) &&
                 got > 0)
                 break;
