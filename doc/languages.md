@@ -3895,6 +3895,22 @@ query the host sends.
 restarting the radio reprograms the codec's registers on the way back;
 the sound engine itself keeps running.
 
+There is a board to read with it. `jdb/demos/web/mdbbs.jdb` serves
+markdown - the file itself to a client that renders it, the same file as
+HTML to one that does not - and `embedded/pico/demos/bbs.jdb` is the
+reader: forty columns by twenty, links numbered, and a number typed to
+follow one. Line based on purpose, the way a bulletin board was, which
+works on a serial line and before a USB keyboard has enumerated. A link
+to a program is downloaded rather than followed and lands in the flash
+store under its own name.
+
+Those pages carry one addition to markdown. `{cyan}text{/}` colours a
+run, the end of a line ends it whether it was closed or not, and the
+names are the ones a terminal has: red, green, yellow, blue, magenta,
+cyan, white, gray, orange. The HTML side turns them into spans; the
+board side turns them into escapes that take no room in the column
+count, so wrapping still measures what is visible.
+
 ### Compiled programs: p-code on disk
 
 A board that takes fifty seconds to translate sixteen kilobytes of

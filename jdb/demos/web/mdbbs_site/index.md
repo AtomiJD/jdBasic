@@ -1,24 +1,24 @@
-========================================
-       j d B A S I C    B B S
-========================================
+{green}========================================{/}
+{yellow}       j d B A S I C    B B S{/}
+{green}========================================{/}
 
- A little dirty language, running on
+ A {orange}little dirty language{/}, running on
  machines that fit in your hand.
 
- ---- MAIN MENU ----------------------
+{cyan} ---- MAIN MENU ----------------------{/}
 
- [News](news.md)
-   what has just landed
+ {orange}[News](news.md){/}
+{gray}   what has just landed{/}
 
- [Infos](infos.md)
-   the language and the boards
+ {orange}[Infos](infos.md){/}
+{gray}   the language and the boards{/}
 
- [Examples](examples.md)
-   programs to pull down and run
+ {orange}[Examples](examples.md){/}
+{gray}   programs to pull down and run{/}
 
- [Boards](boards.md)
-   what it runs on, and how much fits
+ {orange}[Boards](boards.md){/}
+{gray}   what it runs on, and how much fits{/}
 
-========================================
- forty columns, the way it was
-========================================
+{green}========================================{/}
+{gray} forty columns, the way it was{/}
+{green}========================================{/}

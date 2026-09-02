@@ -99,20 +99,31 @@ static void put_printable(char c) {
     g_col++;
 }
 
-// Only the colours the prompt actually emits, plus a reset.
+// The foreground colours, dull and bright, mapped onto the three bits
+// of red, three of green and two of blue this framebuffer has. Blue is
+// the one that suffers: two bits is all there is, so it is lifted with
+// a little green to stay visible against the dark ground.
 static void sgr(int code) {
     switch (code) {
         case 0:  g_fg = 0x3C; g_reverse = 0; break;
         case 7:  g_reverse = 1; break;
         case 27: g_reverse = 0; break;
+        case 30: g_fg = 0x00; break;
+        case 31: g_fg = 0xA0; break;
+        case 32: g_fg = 0x14; break;
+        case 33: g_fg = 0xF0; break;
+        case 34: g_fg = 0x07; break;
+        case 35: g_fg = 0xA2; break;
+        case 36: g_fg = 0x16; break;
+        case 37: g_fg = 0xB6; break;
         case 90: g_fg = 0x92; break;
-        case 93: g_fg = 0xFC; break;
-        case 96: g_fg = 0x1F; break;
-        case 97: g_fg = 0xFF; break;
         case 91: g_fg = 0xE0; break;
         case 92: g_fg = 0x1C; break;
+        case 93: g_fg = 0xFC; break;
+        case 94: g_fg = 0x0F; break;
         case 95: g_fg = 0xE3; break;
-        case 33: g_fg = 0xF0; break;
+        case 96: g_fg = 0x1F; break;
+        case 97: g_fg = 0xFF; break;
         default: break;
     }
 }

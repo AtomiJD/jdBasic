@@ -48,3 +48,27 @@ Drop a forty column `.md` into `mdbbs_site/`, link it from `index.md`,
 and it is served. No restart: the file is read per request. A program in
 `mdbbs_site/progs/` is offered as a download by any page that links to
 it.
+
+## Colour
+
+The pages are markdown with one addition, because a board with eight
+colours should be allowed to use them:
+
+```
+{cyan} ---- MAIN MENU ----------------------{/}
+ A {orange}little dirty language{/}, running on
+```
+
+`{name}` starts a colour and `{/}` ends it; the end of a line ends it
+too, so a whole line can be coloured by opening at the front and never
+closing. The names are `red green yellow blue magenta cyan white gray
+orange`, which is what a terminal has and therefore what every reader of
+these pages can show. An unknown name is left alone as text.
+
+Two renderers honour it. The HTML one wraps the run in a span; the board
+one emits the terminal escape and, importantly, does not count it
+towards the forty columns - the wrap measures what is visible and a line
+broken mid-colour carries that colour onto the next.
+
+Blue is the one to go easy on: the Fruit Jam's framebuffer has two bits
+of it against three of everything else.

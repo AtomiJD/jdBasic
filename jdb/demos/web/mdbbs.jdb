@@ -42,6 +42,61 @@ FUNC HTML_ESC$(s$)
     RETURN o$
 ENDFUNC
 
+' Colour is written {red}like this{/} and stops at the end of the line
+' whether it was closed or not. The names are the ones a terminal has,
+' because the other reader of these pages is a board with eight colours
+' and no stylesheet.
+FUNC WEBCOLOR$(name$)
+    IF name$ = "red" THEN RETURN "#ff5f56"
+    IF name$ = "green" THEN RETURN "#33ff66"
+    IF name$ = "yellow" THEN RETURN "#ffe066"
+    IF name$ = "blue" THEN RETURN "#6ab0ff"
+    IF name$ = "magenta" THEN RETURN "#ff7bd5"
+    IF name$ = "cyan" THEN RETURN "#7de8ff"
+    IF name$ = "white" THEN RETURN "#e8ffe8"
+    IF name$ = "gray" THEN RETURN "#6f8f7a"
+    IF name$ = "orange" THEN RETURN "#ffb347"
+    RETURN ""
+ENDFUNC
+
+FUNC COLORIZE$(s$)
+    out$ = ""
+    rest$ = s$
+    open = 0
+    DO
+        a = INSTR(rest$, "{")
+        IF a < 0 THEN EXITDO
+        b = INSTR(MID$(rest$, a, LEN(rest$)), "}")
+        IF b < 0 THEN EXITDO
+        IF b > 9 THEN EXITDO
+        tag$ = MID$(rest$, a + 1, b - 1)
+        IF tag$ = "/" THEN
+            IF open > 0 THEN
+                out$ = out$ + MID$(rest$, 0, a) + "</span>"
+                open = open - 1
+            ELSE
+                out$ = out$ + MID$(rest$, 0, a)
+            ENDIF
+            rest$ = MID$(rest$, a + b + 1, LEN(rest$))
+            CONTINUEDO
+        ENDIF
+        c$ = WEBCOLOR$(tag$)
+        IF LEN(c$) = 0 THEN
+            out$ = out$ + MID$(rest$, 0, a + 1)
+            rest$ = MID$(rest$, a + 1, LEN(rest$))
+            CONTINUEDO
+        ENDIF
+        out$ = out$ + MID$(rest$, 0, a) + "<span style=" + CHR$(34) + "color:" + c$ + CHR$(34) + ">"
+        open = open + 1
+        rest$ = MID$(rest$, a + b + 1, LEN(rest$))
+    LOOP WHILE TRUE
+    out$ = out$ + rest$
+    FOR i = 1 TO open
+        out$ = out$ + "</span>"
+    NEXT i
+    RETURN out$
+ENDFUNC
+
 ' [text](target) becomes a link. Targets keep their .md off, so a click
 ' lands on the rendered page rather than the raw file.
 FUNC LINKS$(s$)
@@ -87,13 +142,13 @@ FUNC RENDER_HTML$(md$, title$)
             CONTINUEFOR
         ENDIF
         IF LEFT$(l$, 3) = "## " THEN
-            body$ = body$ + "<h2>" + MID$(e$, 3, LEN(e$)) + "</h2>" + CHR$(10)
+            body$ = body$ + "<h2>" + COLORIZE$(MID$(e$, 3, LEN(e$))) + "</h2>" + CHR$(10)
         ELSEIF LEFT$(l$, 2) = "# " THEN
-            body$ = body$ + "<h1>" + MID$(e$, 2, LEN(e$)) + "</h1>" + CHR$(10)
+            body$ = body$ + "<h1>" + COLORIZE$(MID$(e$, 2, LEN(e$))) + "</h1>" + CHR$(10)
         ELSEIF LEN(TRIM$(l$)) = 0 THEN
             body$ = body$ + "<br>" + CHR$(10)
         ELSE
-            body$ = body$ + LINKS$(e$) + "<br>" + CHR$(10)
+            body$ = body$ + COLORIZE$(LINKS$(e$)) + "<br>" + CHR$(10)
         ENDIF
     NEXT raw$
 

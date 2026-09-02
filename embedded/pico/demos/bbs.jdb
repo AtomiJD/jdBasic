@@ -14,10 +14,6 @@
 ' Copy bbs.jdpb to the board and:  RUN bbs.jdpb
 
 BASE$ = "http://bbs.jdbasic.tech/"
-' The same board answers on its bare address, which is what a client
-' uses while the name is still finding its way through the world.
-ALT$ = "http://72.60.176.59/"
-swapped = 0
 ' A desktop can point it somewhere else to try a server out.
 DIM argv = OS.ARGS()
 IF LEN(argv) > 1 THEN BASE$ = argv[1]
@@ -29,6 +25,23 @@ PGROWS = 20
 ' Everything the server sends is already forty columns wide, so the only
 ' real work is pulling the links out and numbering them. A link becomes
 ' [n] label, and n indexes the target list the caller navigates by.
+
+' Colour is written {red}like this{/}. The escape it turns into takes
+' no room on the screen, so it must take none in the column count
+' either - the wrap below counts what is visible and nothing else.
+FUNC TERMCOLOR$(name$)
+    IF name$ = "/" THEN RETURN CHR$(27) + "[0m"
+    IF name$ = "red" THEN RETURN CHR$(27) + "[91m"
+    IF name$ = "green" THEN RETURN CHR$(27) + "[92m"
+    IF name$ = "yellow" THEN RETURN CHR$(27) + "[93m"
+    IF name$ = "blue" THEN RETURN CHR$(27) + "[94m"
+    IF name$ = "magenta" THEN RETURN CHR$(27) + "[95m"
+    IF name$ = "cyan" THEN RETURN CHR$(27) + "[96m"
+    IF name$ = "white" THEN RETURN CHR$(27) + "[97m"
+    IF name$ = "gray" THEN RETURN CHR$(27) + "[90m"
+    IF name$ = "orange" THEN RETURN CHR$(27) + "[33m"
+    RETURN ""
+ENDFUNC
 
 FUNC PARSE(md$)
     DIM res AS MAP
@@ -56,13 +69,50 @@ FUNC PARSE(md$)
             rest$ = MID$(rest$, c + 1, LEN(rest$))
         LOOP WHILE TRUE
         built$ = built$ + rest$
-        ' A long line is broken rather than left to wrap wherever the
-        ' console happens to run out.
-        DO WHILE LEN(built$) > PGCOLS
-            out = APPEND(out, MID$(built$, 0, PGCOLS))
-            built$ = MID$(built$, PGCOLS, LEN(built$))
+
+        ' One pass: colour tags become escapes, everything else counts
+        ' towards the forty columns, and a line that runs over is broken
+        ' and carries its colour onto the next one.
+        reset$ = CHR$(27) + "[0m"
+        cur$ = ""
+        line$ = ""
+        vis = 0
+        pushed = 0
+        i = 0
+        DO WHILE i < LEN(built$)
+            ch$ = MID$(built$, i, 1)
+            IF ch$ = "{" THEN
+                eb = INSTR(MID$(built$, i, LEN(built$)), "}")
+                IF eb >= 2 ANDALSO eb <= 9 THEN
+                    tag$ = MID$(built$, i + 1, eb - 1)
+                    code$ = TERMCOLOR$(tag$)
+                    IF LEN(code$) > 0 THEN
+                        line$ = line$ + code$
+                        IF tag$ = "/" THEN
+                            cur$ = ""
+                        ELSE
+                            cur$ = code$
+                        ENDIF
+                        i = i + eb + 1
+                        CONTINUEDO
+                    ENDIF
+                ENDIF
+            ENDIF
+            line$ = line$ + ch$
+            vis = vis + 1
+            i = i + 1
+            IF vis >= PGCOLS THEN
+                ' Only close what is open: a line that closed its own
+                ' colour does not want a second reset after it.
+                IF LEN(cur$) > 0 THEN line$ = line$ + reset$
+                out = APPEND(out, line$)
+                pushed = 1
+                line$ = cur$
+                vis = 0
+            ENDIF
         LOOP
-        out = APPEND(out, built$)
+        IF LEN(cur$) > 0 THEN line$ = line$ + reset$
+        IF vis > 0 OR pushed = 0 THEN out = APPEND(out, line$)
     NEXT raw$
     res{"LINES"} = out
     res{"TARGETS"} = targets
@@ -126,12 +176,6 @@ DO
         fetch = 0
         PRINT "loading ..."
         md$ = HTTP.GET$(url$, 15000)
-        IF LEN(md$) = 0 ANDALSO swapped = 0 ANDALSO LEFT$(url$, LEN(BASE$)) = BASE$ THEN
-            swapped = 1
-            url$ = ALT$ + MID$(url$, LEN(BASE$), LEN(url$))
-            PRINT "name did not answer, trying the address"
-            md$ = HTTP.GET$(url$, 15000)
-        ENDIF
         IF LEN(md$) = 0 THEN
             md$ = "========================================" + CHR$(10)
             md$ = md$ + " NO ANSWER" + CHR$(10) + CHR$(10)
