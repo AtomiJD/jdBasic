@@ -1,12 +1,25 @@
-' The C64 one-liner, as one line and without a loop.
+' The C64 one-liner, on the board.
 '
-' The original was 10 PRINT CHR$(205.5+RND(1)); : GOTO 10 - two diagonal
-' characters picked at random, filling the screen with a maze nobody
-' designed. Here the loop is gone entirely: RND runs over an array, CHR$
-' runs over its result, and JOIN glues the lot into one string. The
-' diagonals sit at 215 and 216 in this font.
+' 10 PRINT CHR$(205.5+RND(1)); : GOTO 10 was the whole program: two
+' diagonal characters picked at random, filling the screen with a maze
+' nobody designed. The diagonals sit at 215 and 216 in this font, and
+' the rest is unchanged - a label, a print, a jump.
 '
-' The count is what the board's memory allows, not what the screen holds:
-' every character is an array element on the way there.
+' The semicolon is doing half the work. Without it every character gets
+' its own line and the maze is a single column down the left edge. And
+' RND wants its parentheses: inside a FUNC or SUB a bare RND is an
+' undeclared local rather than the builtin, which makes it zero, which
+' makes every character the same one.
+'
+' The array form reads better and does not fit here:
+'
+'   PRINT JOIN(CHR$(215 + INT(RND(IOTA(1160, 0)) * 2)), "");
+'
+' Every operator in an array expression materialises a whole new array,
+' so that chain is five arrays of 1160 elements at 24 bytes each against
+' the seventy kilobytes this board has free. The jump below does the
+' same work in no memory at all.
 
-PRINT JOIN(CHR$(215 + INT(RND(IOTA(800, 0)) * 2)), "");
+Lo:
+PRINT CHR$(215 + INT(RND()*2));
+GOTO Lo
