@@ -3915,6 +3915,27 @@ a compiled program contains every byte there is including the ones that
 used to end the transfer: `RECV prog.jdpb 12788` takes exactly that many
 bytes raw, with no line-ending translation.
 
+Building one on a desktop is the whole point, and it needs nothing from
+the board. `jdbasic --pcode prog.jdb` writes `prog.jdpb` beside the
+source with whatever desktop build is at hand; the board's own builtins
+do not have to exist there. A verb the desktop has never heard of, say
+`WIFI.AUTO` or `NEOPIXEL.SET`, compiles to a call resolved by name, and
+the board resolves it when it runs.
+
+What does have to be handled is the opposite case: a builtin both ends
+know. Those are called by slot number, and slots are handed out in
+registration order, so `SIN` is not the same number in a desktop build as
+on a board. The file therefore carries the name of every builtin it
+calls, and the loader rewrites the slots against the target's own
+registry. A file that calls something the target does not have is
+refused at load with that name, rather than calling whatever happens to
+sit at that number.
+
+So the working loop is: write and test on the desktop, `--pcode`, copy
+the file across, `RUN` it. `embedded/pico/demos/mandel.jdb` and
+`netclock.jdb` are built that way - one all arithmetic and graphics, one
+joining the network and taking the time from the radio.
+
 What p-code does not do is make the program smaller in memory. The
 chunk still lives in RAM while it runs, and on the Fruit Jam that is
 now what limits size rather than the time.

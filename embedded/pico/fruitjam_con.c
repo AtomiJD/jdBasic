@@ -111,6 +111,8 @@ static void sgr(int code) {
         case 97: g_fg = 0xFF; break;
         case 91: g_fg = 0xE0; break;
         case 92: g_fg = 0x1C; break;
+        case 95: g_fg = 0xE3; break;
+        case 33: g_fg = 0xF0; break;
         default: break;
     }
 }

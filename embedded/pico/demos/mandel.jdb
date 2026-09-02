@@ -1,0 +1,150 @@
+' MANDELBROT, a p-code app for the Fruit Jam.
+'
+' Draws the set, then lets a pad or the arrow keys move the view and zoom
+' in. Each frame is a hundred and ninety two hundred blocks of arithmetic,
+' which is exactly the kind of work the board is slow to translate and
+' fast enough to run.
+'
+' Build it on a desktop:  jdbasic --pcode mandel.jdb
+' Copy mandel.jdpb to the board and:  RUN mandel.jdpb
+'
+' pad: stick or hat to move, cross to zoom in, circle out, options quits
+' keys: arrows to move, a and z to zoom, q quits
+
+GFX.CONSOLE 0
+GFX.CLEAR 0
+
+BLOCK = 2
+COLS = 160
+ROWS = 116
+MAXIT = 40
+
+cx = 0 - 0.6
+cy = 0
+span = 3.2
+pad = JOY.COUNT()
+
+DIM pal[16]
+FOR i = 0 TO 15
+  pal[i] = i
+NEXT i
+
+SUB draw_set()
+  x0 = cx - span / 2
+  y0 = cy - span * 0.72 / 2
+  dx = span / COLS
+  dy = span * 0.72 / ROWS
+
+  FOR py = 0 TO ROWS - 1
+    ci = y0 + py * dy
+    FOR px = 0 TO COLS - 1
+      cr = x0 + px * dx
+      zr = 0
+      zi = 0
+      n = 0
+      DO
+        zr2 = zr * zr
+        zi2 = zi * zi
+        IF zr2 + zi2 > 4 THEN EXITDO
+        zi = 2 * zr * zi + ci
+        zr = zr2 - zi2 + cr
+        n = n + 1
+      LOOP WHILE n < MAXIT
+
+      IF n >= MAXIT THEN
+        DRAWCOLOR 0, 0, 0
+      ELSE
+        ' A band of colour per escape speed, warm at the edge of the set
+        ' and cold far from it.
+        v = n * 6
+        IF v > 255 THEN v = 255
+        DRAWCOLOR v, 40 + n * 3, 255 - v
+      ENDIF
+      RECT px * BLOCK, 8 + py * BLOCK, BLOCK, BLOCK, 1
+    NEXT px
+  NEXT py
+ENDSUB
+
+SUB banner()
+  DRAWCOLOR 0, 0, 0
+  RECT 0, 0, 320, 8, 1
+  DRAWCOLOR 200, 200, 220
+  TEXT 2, 0, "MANDELBROT  span " + STR$(span), 1
+ENDSUB
+
+banner()
+draw_set()
+
+DO
+  moved = 0
+  zoomstep = span / 8
+
+  IF GFX.KEYSTATE(180) THEN
+    cx = cx - zoomstep
+    moved = 1
+  ENDIF
+  IF GFX.KEYSTATE(183) THEN
+    cx = cx + zoomstep
+    moved = 1
+  ENDIF
+  IF GFX.KEYSTATE(181) THEN
+    cy = cy - zoomstep
+    moved = 1
+  ENDIF
+  IF GFX.KEYSTATE(182) THEN
+    cy = cy + zoomstep
+    moved = 1
+  ENDIF
+  IF GFX.KEYSTATE(97) THEN
+    span = span / 1.4
+    moved = 1
+  ENDIF
+  IF GFX.KEYSTATE(122) THEN
+    span = span * 1.4
+    moved = 1
+  ENDIF
+
+  IF pad > 0 THEN
+    ax = JOY.AXIS(0, 0)
+    ay = JOY.AXIS(0, 1)
+    IF ax > 0.4 OR ax < 0 - 0.4 THEN
+      cx = cx + ax * zoomstep
+      moved = 1
+    ENDIF
+    IF ay > 0.4 OR ay < 0 - 0.4 THEN
+      cy = cy + ay * zoomstep
+      moved = 1
+    ENDIF
+    h = JOY.HAT(0)
+    IF h = 2 OR h = 3 OR h = 1 THEN
+      cx = cx + zoomstep
+      moved = 1
+    ENDIF
+    IF h = 8 OR h = 12 OR h = 9 THEN
+      cx = cx - zoomstep
+      moved = 1
+    ENDIF
+    IF JOY.BUTTON(0, 1) THEN
+      span = span / 1.4
+      moved = 1
+    ENDIF
+    IF JOY.BUTTON(0, 2) THEN
+      span = span * 1.4
+      moved = 1
+    ENDIF
+    IF JOY.BUTTON(0, 9) THEN EXITDO
+  ENDIF
+
+  IF GFX.KEYSTATE(113) THEN EXITDO
+
+  IF moved = 1 THEN
+    banner()
+    draw_set()
+  ELSE
+    SLEEP 40
+  ENDIF
+LOOP WHILE TRUE
+
+GFX.CLEAR 0
+GFX.CONSOLE 1
+PRINT "done"

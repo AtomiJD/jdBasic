@@ -1,7 +1,11 @@
 #include "pcode.h"
 
+#include "vm.h"
+
+#include <algorithm>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <istream>
 #include <ostream>
 
@@ -187,6 +191,46 @@ bool read_value(std::istream& i, Value& v, std::string& err) {
     }
 }
 
+// A native call carries a slot number that only means anything inside
+// the build that produced it: slots are handed out in registration
+// order, and a board registers a different set of builtins from a
+// desktop. So the names travel with the file and the slots are rewritten
+// against the target's registry on load. Without this a file built on
+// one and run on the other calls the wrong builtin and says nothing.
+static void collect_native_slots(const Chunk& c, std::vector<uint16_t>& out) {
+    size_t ip = 0;
+    while (ip + 2 < c.code.size()) {
+        OpCode op = (OpCode)c.code[ip];
+        int w = opcode_width(op);
+        if (w <= 0) break;
+        if (op == OpCode::CALL_NATIVE) {
+            uint16_t slot = (uint16_t)(c.code[ip + 1] | (c.code[ip + 2] << 8));
+            if (std::find(out.begin(), out.end(), slot) == out.end())
+                out.push_back(slot);
+        }
+        ip += (size_t)w;
+    }
+}
+
+static void remap_native_slots(Chunk& c, const std::map<uint16_t, uint16_t>& map) {
+    if (map.empty()) return;
+    size_t ip = 0;
+    while (ip + 2 < c.code.size()) {
+        OpCode op = (OpCode)c.code[ip];
+        int w = opcode_width(op);
+        if (w <= 0) break;
+        if (op == OpCode::CALL_NATIVE) {
+            uint16_t slot = (uint16_t)(c.code[ip + 1] | (c.code[ip + 2] << 8));
+            auto it = map.find(slot);
+            if (it != map.end()) {
+                c.code[ip + 1] = (uint8_t)(it->second & 0xFF);
+                c.code[ip + 2] = (uint8_t)(it->second >> 8);
+            }
+        }
+        ip += (size_t)w;
+    }
+}
+
 bool write_chunk(std::ostream& o, const Chunk& c, std::string& err) {
     put_bytes(o, c.code.data(), c.code.size());
 
@@ -209,6 +253,14 @@ bool write_chunk(std::ostream& o, const Chunk& c, std::string& err) {
     // is not a cache: its slots are baked into the code, so the size has
     // to survive even though every value in it starts out empty.
     put_u32(o, (uint32_t)c.static_values.size());
+
+    std::vector<uint16_t> slots;
+    collect_native_slots(c, slots);
+    put_u32(o, (uint32_t)slots.size());
+    for (uint16_t slot : slots) {
+        put_u32(o, (uint32_t)slot);
+        put_str(o, jdb_native_name((int)slot));
+    }
     return (bool)o;
 }
 
@@ -242,6 +294,20 @@ bool read_chunk(std::istream& i, Chunk& c, std::string& err) {
     if (!get_u32(i, n) || n > PCODE_MAX_BLOB) { err = "bad static count"; return false; }
     c.static_values.assign(n, Value());
     c.static_inited.assign(n, 0);
+
+    if (!get_u32(i, n) || n > PCODE_MAX_BLOB) { err = "bad native count"; return false; }
+    std::map<uint16_t, uint16_t> remap;
+    for (uint32_t k = 0; k < n; k++) {
+        uint32_t was;
+        std::string name;
+        if (!get_u32(i, was)) { err = "truncated natives"; return false; }
+        if (!get_str(i, name, 128)) { err = "bad native name"; return false; }
+        if (name.empty()) { err = "empty native name"; return false; }
+        int now = jdb_native_slot(name);
+        if (now < 0) { err = "unknown builtin: " + name; return false; }
+        if ((uint32_t)now != was) remap[(uint16_t)was] = (uint16_t)now;
+    }
+    remap_native_slots(c, remap);
     return true;
 }
 

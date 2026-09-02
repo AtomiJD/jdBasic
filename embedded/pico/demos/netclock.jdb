@@ -1,0 +1,119 @@
+' NET CLOCK, a p-code app for the Fruit Jam.
+'
+' The board joins the network from /wifi.txt, takes the time from the
+' radio, and then draws a clock face until q is pressed. Nothing here is
+' clever; the point is the size. As source this takes the board the best
+' part of a minute to translate. As p-code it starts at once.
+'
+' Build it on a desktop:  jdbasic --pcode netclock.jdb
+' Copy netclock.jdpb to the board and:  RUN netclock.jdpb
+
+GFX.CONSOLE 0
+GFX.CLEAR 0
+
+cx = 160
+cy = 128
+r = 88
+
+DRAWCOLOR 255, 255, 255
+TEXT 92, 6, "NET CLOCK", 1
+
+DRAWCOLOR 160, 160, 160
+TEXT 8, 232, "joining the network", 1
+rc = WIFI.AUTO()
+
+DRAWCOLOR 0, 0, 0
+RECT 0, 228, 320, 12, 1
+
+IF rc <> 0 THEN
+  DRAWCOLOR 230, 80, 80
+  TEXT 8, 232, "no network - check wifi.txt", 1
+ELSE
+  DRAWCOLOR 120, 200, 120
+  TEXT 8, 232, WIFI.IP$(), 1
+  DRAWCOLOR 160, 160, 160
+  TEXT 150, 232, "syncing", 1
+  t = NTP.SYNC(2)
+  DRAWCOLOR 0, 0, 0
+  RECT 148, 228, 172, 12, 1
+  IF t = 0 THEN
+    DRAWCOLOR 230, 80, 80
+    TEXT 150, 232, "no time", 1
+  ENDIF
+ENDIF
+
+' The face. Twelve marks, the quarters longer than the rest.
+FOR i = 0 TO 11
+  a = i * PI / 6
+  IF i MOD 3 = 0 THEN
+    DRAWCOLOR 255, 255, 255
+    inner = r - 12
+  ELSE
+    DRAWCOLOR 110, 110, 130
+    inner = r - 6
+  ENDIF
+  x1 = cx + SIN(a) * inner
+  y1 = cy - COS(a) * inner
+  x2 = cx + SIN(a) * r
+  y2 = cy - COS(a) * r
+  LINE x1, y1, x2, y2
+NEXT i
+
+DRAWCOLOR 70, 70, 90
+CIRCLE cx, cy, r + 6, 0
+
+' Old hand ends, so each one can be rubbed out where it was drawn.
+ohx = cx
+ohy = cy
+omx = cx
+omy = cy
+osx = cx
+osy = cy
+last$ = ""
+
+DO
+  t$ = TIME$
+  IF t$ <> last$ THEN
+    last$ = t$
+    hh = VAL(MID$(t$, 0, 2))
+    mm = VAL(MID$(t$, 3, 2))
+    ss = VAL(MID$(t$, 6, 2))
+
+    ' Erase where the hands were, then put the face back where they
+    ' crossed it. There is no back buffer here: the framebuffer is what
+    ' the wire is reading.
+    DRAWCOLOR 0, 0, 0
+    LINE cx, cy, osx, osy
+    LINE cx, cy, omx, omy
+    LINE cx, cy, ohx, ohy
+
+    ah = (hh MOD 12) * PI / 6 + mm * PI / 360
+    am = mm * PI / 30
+    asec = ss * PI / 30
+
+    ohx = cx + SIN(ah) * (r - 34)
+    ohy = cy - COS(ah) * (r - 34)
+    omx = cx + SIN(am) * (r - 18)
+    omy = cy - COS(am) * (r - 18)
+    osx = cx + SIN(asec) * (r - 10)
+    osy = cy - COS(asec) * (r - 10)
+
+    DRAWCOLOR 255, 255, 255
+    LINE cx, cy, ohx, ohy
+    DRAWCOLOR 200, 200, 220
+    LINE cx, cy, omx, omy
+    DRAWCOLOR 230, 90, 60
+    LINE cx, cy, osx, osy
+
+    DRAWCOLOR 0, 0, 0
+    RECT 108, 206, 104, 14, 1
+    DRAWCOLOR 180, 180, 200
+    TEXT 112, 208, t$, 1
+  ENDIF
+
+  SLEEP 60
+LOOP WHILE GFX.KEYSTATE(113) = FALSE
+
+GFX.CLEAR 0
+GFX.CONSOLE 1
+PRINT "clock stopped"

@@ -22,7 +22,7 @@
 
 // "JDPB", then the format revision, then the opcode count.
 extern const char PCODE_MAGIC[4];
-#define PCODE_FORMAT_VERSION 1
+#define PCODE_FORMAT_VERSION 2
 
 // True when the file begins with the magic. Cheap: reads four bytes.
 bool pcode_is_file(const std::string& path);

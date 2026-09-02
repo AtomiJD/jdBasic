@@ -1,7 +1,8 @@
 // Syntax colour for one line of jdBasic, spoken as SGR escapes: the
-// panel's parser and any USB terminal both understand them. Comments
-// gray, strings yellow, numbers cyan, keywords white, the rest in the
-// default green. Printing always ends on the default.
+// panel's parser and any USB terminal both understand them. The scheme
+// is the one the editors use: comments green, keywords magenta, numbers
+// and constants cyan, strings orange, everything else in the default
+// ink. Printing always ends on the default.
 
 #include <stdio.h>
 #include <string.h>
@@ -13,24 +14,37 @@ static const char* const KEYWORDS[] = {
     "DO", "ELSE", "ELSEIF", "ENDFUNC", "ENDIF", "ENDSUB", "ENDTRY",
     "ENDTYPE", "EXITDO", "EXITFOR", "EXITFUNC", "FALSE", "FOR", "FUNC",
     "GOSUB", "GOTO", "IF", "INPUT", "LAMBDA", "LET", "LOOP", "MOD",
-    "NEXT", "NONE", "NOT", "OR", "ANDALSO", "ORELSE", "PRINT", "REM",
-    "RETURN", "SLEEP", "STEP", "SUB", "THEN", "TO", "TRUE", "TRY",
+    "NEXT", "NOT", "OR", "ANDALSO", "ORELSE", "PRINT", "REM",
+    "RETURN", "SLEEP", "STEP", "SUB", "THEN", "TO", "TRY",
     "TYPE", "UNTIL", "WHILE",
 };
 
-static int is_keyword(const char* s, int n) {
-    for (unsigned i = 0; i < sizeof KEYWORDS / sizeof *KEYWORDS; i++) {
-        if ((int)strlen(KEYWORDS[i]) == n && strncasecmp(s, KEYWORDS[i], n) == 0)
+// Coloured with the numbers, because that is what they are.
+static const char* const CONSTANTS[] = {
+    "TRUE", "FALSE", "NONE", "PI", "E", "TAU",
+};
+
+static int in_list(const char* const* list, unsigned count, const char* s, int n) {
+    for (unsigned i = 0; i < count; i++) {
+        if ((int)strlen(list[i]) == n && strncasecmp(s, list[i], n) == 0)
             return 1;
     }
     return 0;
 }
 
+static int is_keyword(const char* s, int n) {
+    return in_list(KEYWORDS, sizeof KEYWORDS / sizeof *KEYWORDS, s, n);
+}
+
+static int is_constant(const char* s, int n) {
+    return in_list(CONSTANTS, sizeof CONSTANTS / sizeof *CONSTANTS, s, n);
+}
+
 #define C_RESET   "\x1b[0m"
-#define C_KEYWORD "\x1b[97m"
-#define C_STRING  "\x1b[93m"
+#define C_KEYWORD "\x1b[95m"
+#define C_STRING  "\x1b[33m"
 #define C_NUMBER  "\x1b[96m"
-#define C_COMMENT "\x1b[90m"
+#define C_COMMENT "\x1b[92m"
 
 static int is_word(char c) {
     return isalnum((unsigned char)c) || c == '_' || c == '$' || c == '.';
@@ -65,6 +79,8 @@ void syntax_print(const char* s, int n) {
             while (j < n && is_word(s[j])) j++;
             if (is_keyword(s + i, j - i))
                 printf(C_KEYWORD "%.*s" C_RESET, j - i, s + i);
+            else if (is_constant(s + i, j - i))
+                printf(C_NUMBER "%.*s" C_RESET, j - i, s + i);
             else
                 printf("%.*s", j - i, s + i);
             i = j;
