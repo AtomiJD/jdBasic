@@ -1,0 +1,26 @@
+' What this machine is. Every board answers a different subset, so each
+' question is asked on its own and a missing verb is reported rather
+' than fatal.
+
+FUNC ASK$(label$, fn$)
+  TRY
+    v = EVAL(fn$)
+    RETURN label$ + ": " + STR$(v)
+  CATCH
+    RETURN label$ + ": -"
+  ENDTRY
+ENDFUNC
+
+PRINT "---- this machine ----"
+PRINT ASK$("clock hz  ", "SYS.CLOCK()")
+PRINT ASK$("free bytes", "SYS.FREE()")
+PRINT ASK$("largest   ", "SYS.LARGEST()")
+PRINT ASK$("psram     ", "SYS.PSRAM()")
+PRINT ASK$("disk free ", "SYS.FREEDISK()")
+PRINT ASK$("screen w  ", "GFX.WIDTH()")
+PRINT ASK$("screen h  ", "GFX.HEIGHT()")
+PRINT ASK$("keyboards ", "USB.KEYBOARDS()")
+PRINT ASK$("pads      ", "JOY.COUNT()")
+PRINT ASK$("wifi      ", "WIFI.STATUS()")
+PRINT ASK$("address   ", "WIFI.IP$()")
+PRINT "time      : "; DATE$; " "; TIME$

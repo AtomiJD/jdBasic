@@ -1,0 +1,217 @@
+' jdBBS, the board's browser.
+'
+' Fetches markdown from a board that serves it, renders forty columns by
+' twenty, numbers the links, and lets you walk between pages by typing a
+' number. A link to a program is downloaded instead of followed: it
+' lands in the flash store under its own name, and RUN takes it from
+' there.
+'
+' Written line by line on purpose. A bulletin board asked you for a
+' number and you pressed return, and that works on a serial line, on a
+' panel, and over a keyboard that has not enumerated yet.
+'
+' Build it on a desktop:  jdbasic --pcode bbs.jdb
+' Copy bbs.jdpb to the board and:  RUN bbs.jdpb
+
+BASE$ = "http://bbs.jdbasic.tech/"
+' The same board answers on its bare address, which is what a client
+' uses while the name is still finding its way through the world.
+ALT$ = "http://72.60.176.59/"
+swapped = 0
+' A desktop can point it somewhere else to try a server out.
+DIM argv = OS.ARGS()
+IF LEN(argv) > 1 THEN BASE$ = argv[1]
+PGCOLS = 40
+PGROWS = 20
+
+' ---- markdown to screen ----------------------------------------------
+'
+' Everything the server sends is already forty columns wide, so the only
+' real work is pulling the links out and numbering them. A link becomes
+' [n] label, and n indexes the target list the caller navigates by.
+
+FUNC PARSE(md$)
+    DIM res AS MAP
+    lines = SPLIT(md$, CHR$(10))
+    out = []
+    targets = []
+    n = 0
+    FOR EACH raw$ IN lines
+        l$ = REPLACE$(raw$, CHR$(13), "")
+        IF LEFT$(TRIM$(l$), 3) = "```" THEN CONTINUEFOR
+        built$ = ""
+        rest$ = l$
+        DO
+            a = INSTR(rest$, "[")
+            IF a < 0 THEN EXITDO
+            b = INSTR(rest$, "](")
+            IF b < a THEN EXITDO
+            c = INSTR(rest$, ")")
+            IF c < b THEN EXITDO
+            n = n + 1
+            label$ = MID$(rest$, a + 1, b - a - 1)
+            target$ = MID$(rest$, b + 2, c - b - 2)
+            targets = APPEND(targets, target$)
+            built$ = built$ + MID$(rest$, 0, a) + "[" + STR$(n) + "] " + label$
+            rest$ = MID$(rest$, c + 1, LEN(rest$))
+        LOOP WHILE TRUE
+        built$ = built$ + rest$
+        ' A long line is broken rather than left to wrap wherever the
+        ' console happens to run out.
+        DO WHILE LEN(built$) > PGCOLS
+            out = APPEND(out, MID$(built$, 0, PGCOLS))
+            built$ = MID$(built$, PGCOLS, LEN(built$))
+        LOOP
+        out = APPEND(out, built$)
+    NEXT raw$
+    res{"LINES"} = out
+    res{"TARGETS"} = targets
+    RETURN res
+ENDFUNC
+
+' A target is resolved against the page it was found on, so a page can
+' say news.md and a program can say progs/life.jdb.
+FUNC RESOLVE$(base$, target$)
+    IF LEFT$(target$, 7) = "http://" THEN RETURN target$
+    IF LEFT$(target$, 8) = "https://" THEN RETURN target$
+    RETURN base$ + target$
+ENDFUNC
+
+FUNC ISPROG(target$)
+    IF RIGHT$(target$, 4) = ".jdb" THEN RETURN TRUE
+    IF RIGHT$(target$, 5) = ".jdpb" THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+FUNC BASENAME$(p$)
+    s$ = p$
+    DO
+        i = INSTR(s$, "/")
+        IF i < 0 THEN EXITDO
+        s$ = MID$(s$, i + 1, LEN(s$))
+    LOOP WHILE TRUE
+    RETURN s$
+ENDFUNC
+
+' ---- the session -----------------------------------------------------
+
+CLS
+PRINT "jdBBS - connecting"
+
+' A desktop has no radio to ask, and needs none.
+TRY
+    IF WIFI.STATUS() <> 3 THEN
+        rc = WIFI.AUTO()
+        IF rc <> 0 THEN
+            PRINT "no network. put the ssid and the"
+            PRINT "password in wifi.txt, two lines."
+            END
+        ENDIF
+    ENDIF
+    PRINT "address "; WIFI.IP$()
+CATCH
+    PRINT "no radio - using the network as it is"
+ENDTRY
+
+url$ = BASE$ + "index.md"
+history = []
+page = 0
+doc = NONE
+lines = []
+targets = []
+fetch = 1
+
+DO
+    IF fetch = 1 THEN
+        fetch = 0
+        PRINT "loading ..."
+        md$ = HTTP.GET$(url$, 15000)
+        IF LEN(md$) = 0 ANDALSO swapped = 0 ANDALSO LEFT$(url$, LEN(BASE$)) = BASE$ THEN
+            swapped = 1
+            url$ = ALT$ + MID$(url$, LEN(BASE$), LEN(url$))
+            PRINT "name did not answer, trying the address"
+            md$ = HTTP.GET$(url$, 15000)
+        ENDIF
+        IF LEN(md$) = 0 THEN
+            md$ = "========================================" + CHR$(10)
+            md$ = md$ + " NO ANSWER" + CHR$(10) + CHR$(10)
+            md$ = md$ + " status " + STR$(HTTP.STATUS()) + CHR$(10) + CHR$(10)
+            md$ = md$ + " [Main menu](index.md)" + CHR$(10)
+        ENDIF
+        doc = PARSE(md$)
+        lines = doc{"LINES"}
+        targets = doc{"TARGETS"}
+        page = 0
+    ENDIF
+
+    CLS
+    first = page * PGROWS
+    FOR i = first TO first + PGROWS - 1
+        IF i < LEN(lines) THEN PRINT lines[i]
+    NEXT i
+
+    pages = INT((LEN(lines) + PGROWS - 1) / PGROWS)
+    IF pages < 1 THEN pages = 1
+    PRINT "----------------------------------------"
+    PRINT "page "; page + 1; "/"; pages; "  links "; LEN(targets)
+    INPUT "1-9 go  n p b r q > ", cmd$
+    ' INPUT hands back a number when the answer looks like one, even for
+    ' a name that ends in a dollar. Joining it to nothing makes it text.
+    cmd$ = TRIM$(LOWER$("" + cmd$))
+
+    IF cmd$ = "q" THEN EXITDO
+
+    IF cmd$ = "n" THEN
+        IF page < pages - 1 THEN page = page + 1
+        CONTINUEDO
+    ENDIF
+    IF cmd$ = "p" THEN
+        IF page > 0 THEN page = page - 1
+        CONTINUEDO
+    ENDIF
+    IF cmd$ = "r" THEN
+        fetch = 1
+        CONTINUEDO
+    ENDIF
+    IF cmd$ = "b" THEN
+        IF LEN(history) > 0 THEN
+            url$ = history[LEN(history) - 1]
+            history = TAKE(LEN(history) - 1, history)
+            fetch = 1
+        ENDIF
+        CONTINUEDO
+    ENDIF
+
+    k = VAL(cmd$)
+    IF k >= 1 ANDALSO k <= LEN(targets) THEN
+        target$ = targets[k - 1]
+        ' The base is the directory the current page came from.
+        cut = 0
+        FOR i = 0 TO LEN(url$) - 1
+            IF MID$(url$, i, 1) = "/" THEN cut = i
+        NEXT i
+        dir$ = MID$(url$, 0, cut + 1)
+
+        IF ISPROG(target$) THEN
+            full$ = RESOLVE$(dir$, target$)
+            PRINT "downloading "; BASENAME$(target$)
+            body$ = HTTP.GET$(full$, 20000)
+            IF LEN(body$) = 0 THEN
+                PRINT "failed, status "; HTTP.STATUS()
+            ELSE
+                name$ = BASENAME$(target$)
+                TXTWRITER name$, body$
+                PRINT LEN(body$); " bytes saved as "; name$
+                PRINT "leave the browser and: RUN "; name$
+            ENDIF
+            INPUT "return to carry on", junk$
+        ELSE
+            history = APPEND(history, url$)
+            url$ = RESOLVE$(dir$, target$)
+            fetch = 1
+        ENDIF
+    ENDIF
+LOOP WHILE TRUE
+
+CLS
+PRINT "jdBBS closed"

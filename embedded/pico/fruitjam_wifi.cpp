@@ -295,7 +295,10 @@ static std::string http_request(const char* verb, const std::string& url,
 
     std::string req = std::string(verb) + " " + u.path + " HTTP/1.1\r\nHost: " +
                       u.host + "\r\nConnection: close\r\n" +
-                      "User-Agent: jdBasic\r\n";
+                      "User-Agent: jdBasic\r\n"
+                      // Nothing here can inflate a compressed body, so
+                      // ask not to be sent one.
+                      "Accept-Encoding: identity\r\n";
     if (!body.empty()) {
         char n[32];
         snprintf(n, sizeof n, "%u", (unsigned)body.size());
@@ -330,7 +333,30 @@ static std::string http_request(const char* verb, const std::string& url,
         if (sp != std::string::npos) g_http_status = atoi(resp.c_str() + sp + 1);
     }
     size_t split = resp.find("\r\n\r\n");
-    return split == std::string::npos ? resp : resp.substr(split + 4);
+    if (split == std::string::npos) return resp;
+    std::string head = resp.substr(0, split);
+    std::string data = resp.substr(split + 4);
+
+    // A proxy in front of the server is free to send the body in pieces,
+    // each announced by its length in hex. Undo that here so a program
+    // sees the page and not the bookkeeping.
+    if (head.find("Transfer-Encoding: chunked") != std::string::npos ||
+        head.find("transfer-encoding: chunked") != std::string::npos) {
+        std::string out;
+        size_t p = 0;
+        while (p < data.size()) {
+            size_t eol = data.find("\r\n", p);
+            if (eol == std::string::npos) break;
+            size_t n = (size_t)strtoul(data.c_str() + p, nullptr, 16);
+            if (n == 0) break;
+            size_t start = eol + 2;
+            if (start + n > data.size()) n = data.size() - start;
+            out.append(data, start, n);
+            p = start + n + 2;
+        }
+        return out;
+    }
+    return data;
 }
 
 // ── verbs ────────────────────────────────────────────────────────────

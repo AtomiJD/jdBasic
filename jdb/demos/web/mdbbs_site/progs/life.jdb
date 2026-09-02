@@ -1,0 +1,74 @@
+' Conway's game of life on the console, forty columns wide.
+' Any key stops it.
+
+W = 40
+H = 20
+
+DIM cur[H, W]
+DIM nxt[H, W]
+
+FOR y = 0 TO H - 1
+  FOR x = 0 TO W - 1
+    IF RND(1) > 0.78 THEN
+      cur[y, x] = 1
+    ELSE
+      cur[y, x] = 0
+    ENDIF
+  NEXT x
+NEXT y
+
+gen = 0
+DO
+  out$ = ""
+  FOR y = 0 TO H - 1
+    row$ = ""
+    FOR x = 0 TO W - 1
+      IF cur[y, x] = 1 THEN
+        row$ = row$ + "#"
+      ELSE
+        row$ = row$ + " "
+      ENDIF
+    NEXT x
+    out$ = out$ + row$ + CHR$(10)
+  NEXT y
+  PRINT out$;
+
+  FOR y = 0 TO H - 1
+    FOR x = 0 TO W - 1
+      n = 0
+      FOR dy = 0 - 1 TO 1
+        FOR dx = 0 - 1 TO 1
+          IF dy <> 0 OR dx <> 0 THEN
+            yy = (y + dy + H) MOD H
+            xx = (x + dx + W) MOD W
+            n = n + cur[yy, xx]
+          ENDIF
+        NEXT dx
+      NEXT dy
+      IF cur[y, x] = 1 THEN
+        IF n = 2 OR n = 3 THEN
+          nxt[y, x] = 1
+        ELSE
+          nxt[y, x] = 0
+        ENDIF
+      ELSE
+        IF n = 3 THEN
+          nxt[y, x] = 1
+        ELSE
+          nxt[y, x] = 0
+        ENDIF
+      ENDIF
+    NEXT x
+  NEXT y
+
+  FOR y = 0 TO H - 1
+    FOR x = 0 TO W - 1
+      cur[y, x] = nxt[y, x]
+    NEXT x
+  NEXT y
+
+  gen = gen + 1
+  SLEEP 40
+LOOP WHILE gen < 200
+
+PRINT "generations: "; gen

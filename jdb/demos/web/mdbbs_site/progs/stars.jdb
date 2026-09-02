@@ -1,0 +1,42 @@
+' A starfield. There is no back buffer on these boards: the framebuffer
+' is what the wire is reading, so every star is rubbed out in black at
+' its old place before it is drawn at the new one.
+'
+' q stops it.
+
+GFX.CONSOLE 0
+GFX.CLEAR 0
+
+N = 60
+W = GFX.WIDTH()
+H = GFX.HEIGHT()
+
+DIM sx[N]
+DIM sy[N]
+DIM sv[N]
+
+FOR i = 0 TO N - 1
+  sx[i] = RND(1) * W
+  sy[i] = RND(1) * H
+  sv[i] = 1 + RND(1) * 3
+NEXT i
+
+DO
+  FOR i = 0 TO N - 1
+    DRAWCOLOR 0, 0, 0
+    PSET sx[i], sy[i]
+    sx[i] = sx[i] + sv[i]
+    IF sx[i] >= W THEN
+      sx[i] = 0
+      sy[i] = RND(1) * H
+    ENDIF
+    b = 60 + sv[i] * 55
+    DRAWCOLOR b, b, 255
+    PSET sx[i], sy[i]
+  NEXT i
+  SLEEP 20
+LOOP WHILE GFX.KEYSTATE(113) = FALSE
+
+GFX.CLEAR 0
+GFX.CONSOLE 1
+PRINT "done"

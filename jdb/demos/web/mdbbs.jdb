@@ -1,0 +1,162 @@
+' jdBBS - a markdown board.
+'
+' Everything it serves is a plain .md file in site/, written forty columns
+' wide because the clients that matter are forty columns wide. A path
+' ending in .md hands the file over untouched, which is what the boards
+' read. Any other path renders the same file as HTML for a desktop
+' browser, in the colours of a terminal that has been on too long.
+'
+' Programs under site/progs/ are served as they are, so a board can pull
+' one down and run it.
+'
+'   jdBasic mdbbs.jdb [port]
+'
+' Default port 8100 on loopback; a reverse proxy puts it on the network.
+
+DIM gRoot$ = PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "mdbbs_site")
+DIM gPort = 8100
+
+DIM args = OS.ARGS()
+IF LEN(args) > 1 THEN gPort = VAL(args[1])
+
+' A path is only allowed to name a file inside the site directory. Two
+' dots anywhere is enough to refuse it: there is nothing legitimate one
+' page here needs from outside.
+FUNC SAFE$(p$)
+    IF INSTR(p$, "..") >= 0 THEN RETURN ""
+    IF INSTR(p$, CHR$(92)) >= 0 THEN RETURN ""
+    s$ = p$
+    DO WHILE LEN(s$) > 0 ANDALSO LEFT$(s$, 1) = "/"
+        s$ = MID$(s$, 1, LEN(s$))
+    LOOP
+    IF LEN(s$) = 0 THEN s$ = "index"
+    RETURN s$
+ENDFUNC
+
+' ---- HTML rendering, enough markdown for a board that has none ----
+
+FUNC HTML_ESC$(s$)
+    o$ = REPLACE$(s$, "&", "&amp;")
+    o$ = REPLACE$(o$, "<", "&lt;")
+    o$ = REPLACE$(o$, ">", "&gt;")
+    RETURN o$
+ENDFUNC
+
+' [text](target) becomes a link. Targets keep their .md off, so a click
+' lands on the rendered page rather than the raw file.
+FUNC LINKS$(s$)
+    out$ = ""
+    rest$ = s$
+    DO
+        a = INSTR(rest$, "[")
+        IF a < 0 THEN EXITDO
+        b = INSTR(rest$, "](")
+        IF b < a THEN EXITDO
+        c = INSTR(rest$, ")")
+        IF c < b THEN EXITDO
+        out$ = out$ + MID$(rest$, 0, a)
+        label$ = MID$(rest$, a + 1, b - a - 1)
+        target$ = MID$(rest$, b + 2, c - b - 2)
+        href$ = target$
+        IF RIGHT$(href$, 3) = ".md" THEN href$ = MID$(href$, 0, LEN(href$) - 3)
+        out$ = out$ + "<a href=" + CHR$(34) + "/" + href$ + CHR$(34) + ">" + label$ + "</a>"
+        rest$ = MID$(rest$, c + 1, LEN(rest$))
+    LOOP WHILE TRUE
+    RETURN out$ + rest$
+ENDFUNC
+
+FUNC RENDER_HTML$(md$, title$)
+    lines = SPLIT(md$, CHR$(10))
+    body$ = ""
+    incode = 0
+    FOR EACH raw$ IN lines
+        l$ = REPLACE$(raw$, CHR$(13), "")
+        e$ = HTML_ESC$(l$)
+        IF LEFT$(l$, 3) = "```" THEN
+            IF incode = 0 THEN
+                body$ = body$ + "<pre>"
+                incode = 1
+            ELSE
+                body$ = body$ + "</pre>" + CHR$(10)
+                incode = 0
+            ENDIF
+            CONTINUEFOR
+        ENDIF
+        IF incode = 1 THEN
+            body$ = body$ + e$ + CHR$(10)
+            CONTINUEFOR
+        ENDIF
+        IF LEFT$(l$, 3) = "## " THEN
+            body$ = body$ + "<h2>" + MID$(e$, 3, LEN(e$)) + "</h2>" + CHR$(10)
+        ELSEIF LEFT$(l$, 2) = "# " THEN
+            body$ = body$ + "<h1>" + MID$(e$, 2, LEN(e$)) + "</h1>" + CHR$(10)
+        ELSEIF LEN(TRIM$(l$)) = 0 THEN
+            body$ = body$ + "<br>" + CHR$(10)
+        ELSE
+            body$ = body$ + LINKS$(e$) + "<br>" + CHR$(10)
+        ENDIF
+    NEXT raw$
+
+    css$ = "body{background:#0b0f0b;color:#33ff66;font-family:ui-monospace,Consolas,monospace;"
+    css$ = css$ + "font-size:16px;line-height:1.35;margin:0;padding:24px 12px}"
+    css$ = css$ + ".scr{max-width:41ch;margin:0 auto;border:1px solid #1f5c33;padding:16px 12px;"
+    css$ = css$ + "box-shadow:0 0 24px #0f3f22 inset}"
+    css$ = css$ + "h1,h2{color:#7dffb0;font-size:16px;margin:12px 0 6px}"
+    css$ = css$ + "a{color:#ffb347}a:visited{color:#c98a3a}"
+    css$ = css$ + "pre{color:#9fe8ff;margin:6px 0;white-space:pre-wrap}"
+    css$ = css$ + ".ft{color:#1f7a44;margin-top:18px;font-size:13px}"
+
+    h$ = "<!doctype html><html><head><meta charset=" + CHR$(34) + "utf-8" + CHR$(34) + ">"
+    h$ = h$ + "<meta name=" + CHR$(34) + "viewport" + CHR$(34) + " content=" + CHR$(34)
+    h$ = h$ + "width=device-width,initial-scale=1" + CHR$(34) + ">"
+    h$ = h$ + "<title>" + title$ + "</title><style>" + css$ + "</style></head><body>"
+    h$ = h$ + "<div class=" + CHR$(34) + "scr" + CHR$(34) + ">" + body$
+    h$ = h$ + "<div class=" + CHR$(34) + "ft" + CHR$(34) + ">served by jdBasic - "
+    h$ = h$ + "add .md to any page for the raw text</div></div></body></html>"
+    RETURN h$
+ENDFUNC
+
+FUNC REPLY(status, ct$, body$)
+    DIM r AS MAP
+    r{"__http_status"} = status
+    r{"__http_content_type"} = ct$
+    r{"__http_body"} = body$
+    RETURN r
+ENDFUNC
+
+' Everything arrives here: one router, no route table.
+FUNC SERVE(request)
+    p$ = SAFE$("" + request{"PATH"})
+    IF LEN(p$) = 0 THEN RETURN REPLY(400, "text/plain", "bad path")
+
+    ' A program is handed over as it is.
+    IF LEFT$(p$, 6) = "progs/" THEN
+        f$ = PATH.JOIN$(gRoot$, p$)
+        t$ = TXTREADER$(f$)
+        IF LEN(t$) = 0 THEN RETURN REPLY(404, "text/plain", "no such program")
+        RETURN REPLY(200, "text/plain; charset=utf-8", t$)
+    ENDIF
+
+    ' With the extension: the source, for a client that renders it itself.
+    IF RIGHT$(p$, 3) = ".md" THEN
+        t$ = TXTREADER$(PATH.JOIN$(gRoot$, p$))
+        IF LEN(t$) = 0 THEN RETURN REPLY(404, "text/plain", "# 404" + CHR$(10) + CHR$(10) + "No such page." + CHR$(10) + CHR$(10) + "[Main menu](index.md)" + CHR$(10))
+        RETURN REPLY(200, "text/markdown; charset=utf-8", t$)
+    ENDIF
+
+    ' Without it: the same file, dressed.
+    name$ = p$
+    IF RIGHT$(name$, 1) = "/" THEN name$ = MID$(name$, 0, LEN(name$) - 1)
+    IF LEN(name$) = 0 THEN name$ = "index"
+    t$ = TXTREADER$(PATH.JOIN$(gRoot$, name$ + ".md"))
+    IF LEN(t$) = 0 THEN
+        t$ = "# 404" + CHR$(10) + CHR$(10) + "No such page." + CHR$(10) + CHR$(10) + "[Main menu](index.md)" + CHR$(10)
+        RETURN REPLY(404, "text/html; charset=utf-8", RENDER_HTML$(t$, "404"))
+    ENDIF
+    RETURN REPLY(200, "text/html; charset=utf-8", RENDER_HTML$(t$, "jdBBS - " + name$))
+ENDFUNC
+
+PRINT "jdBBS serving "; gRoot$; " on port "; gPort
+HTTP.SERVER.ON_NOTFOUND("SERVE")
+HTTP.SERVER.START(gPort)
+HTTP.SERVER.WAIT()

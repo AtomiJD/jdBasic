@@ -1,0 +1,5 @@
+' The smallest program on the board, and the one that proves a download
+' arrived in one piece.
+
+PRINT "hello from the board"
+PRINT "the year is "; LEFT$(DATE$, 4)
