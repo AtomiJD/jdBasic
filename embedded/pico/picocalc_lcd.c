@@ -102,7 +102,7 @@ static void draw_row(int row) {
     for (int line = 0; line < 8; line++) {
         for (int col = 0; col < COLS; col++) {
             unsigned ch = (unsigned char)g_text[row][col];
-            if (ch < 32 || ch > 151) ch = 32;
+            if (ch < 32) ch = 32;
             uint8_t bits = jdos_font8x8_c64[(ch - 32) * 8 + line];
             int inv = g_cursor_on && row == g_cy && col == g_cx;
             const uint8_t* fg = g_pal[g_attr[row][col] & 7];

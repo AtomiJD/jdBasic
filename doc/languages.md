@@ -3845,6 +3845,22 @@ swaps y and z, the digit row and the punctuation. It starts as US at
 every power-on, so a one-line program behind `AUTORUN` is what makes
 German stick.
 
+The console font is a C64 font and always was, but only its letters
+were filled in. The half above them is there now: `CHR$(n)` for n from
+152 to 237 draws the graphics characters, and they work in `PRINT` and
+in `TEXT` alike, on the panel boards as well as over DVI.
+
+They are laid out in blocks of eight so a program can compute the one it
+wants. 152 is a line across, one code per row; 160 a line down, one per
+column. 168 is a bar growing up in eighths, 176 one growing right, 184
+down, 192 left - a bar chart is `CHR$(167 + height)`. 200 to 210 are the
+box pieces, corners, tees and the cross, drawn to meet across cell
+edges; 211 rounds those corners off. 215 are the diagonals, 218 the
+shades, 222 the four card suits, 226 a ball, a circle, a plus and a pi,
+230 the arrows and 234 the wedges. 238 upwards is empty and waiting.
+
+`embedded/pico/demos/petscii.jdb` prints the lot with its numbers.
+
 Keys repeat when held, after a short pause, which is what makes the
 editor bearable; Page Up and Page Down move by a screen. A game wants
 neither. `GFX.KEYSTATE(code)` asks whether a key is down at this instant

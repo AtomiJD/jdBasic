@@ -1,0 +1,81 @@
+' The graphics half of the console font: what the C64 had above its
+' letters. Everything here is CHR$ of a number between 152 and 237, so
+' any program can draw with it.
+'
+' Codes, in blocks of eight:
+'   152 lines across, one per row      160 lines down, one per column
+'   168 bars up 1..8                   176 bars right 1..8
+'   184 bars down 1..8                 192 bars left 1..8
+'   200 box pieces, 200 to 210         211 rounded corners
+'   215 diagonals                      218 shades
+'   222 card suits                     226 ball circle plus pi
+'   230 arrows                         234 wedges
+
+FUNC G$(n)
+  RETURN CHR$(n)
+ENDFUNC
+
+FUNC ROW$(first, count)
+  s$ = ""
+  FOR i = 0 TO count - 1
+    s$ = s$ + CHR$(first + i)
+  NEXT i
+  RETURN s$
+ENDFUNC
+
+' A frame drawn out of the box pieces, the way a listing used to look.
+SUB FRAME(w, title$)
+  top$ = CHR$(202)
+  FOR i = 1 TO w - 2
+    top$ = top$ + CHR$(200)
+  NEXT i
+  top$ = top$ + CHR$(203)
+  bot$ = CHR$(204)
+  FOR i = 1 TO w - 2
+    bot$ = bot$ + CHR$(200)
+  NEXT i
+  bot$ = bot$ + CHR$(205)
+  PRINT top$
+  PRINT CHR$(201); " "; title$;
+  pad = w - 3 - LEN(title$)
+  FOR i = 1 TO pad
+    PRINT " ";
+  NEXT i
+  PRINT CHR$(201)
+  PRINT bot$
+ENDSUB
+
+CLS
+PRINT "GRAPHICS CHARSET"
+PRINT
+
+PRINT "152 "; ROW$(152, 8); "   160 "; ROW$(160, 8)
+PRINT "168 "; ROW$(168, 8); "   176 "; ROW$(176, 8)
+PRINT "184 "; ROW$(184, 8); "   192 "; ROW$(192, 8)
+PRINT "200 "; ROW$(200, 11)
+PRINT "211 "; ROW$(211, 4); "   215 "; ROW$(215, 3)
+PRINT "218 "; ROW$(218, 4); "   222 "; ROW$(222, 4)
+PRINT "226 "; ROW$(226, 4); "   230 "; ROW$(230, 4)
+PRINT "234 "; ROW$(234, 4)
+PRINT
+
+FRAME(28, "drawn with 200 to 210")
+
+PRINT
+PRINT "a bar chart out of 168 up:"
+DIM v[8]
+v[0] = 3
+v[1] = 7
+v[2] = 5
+v[3] = 8
+v[4] = 2
+v[5] = 6
+v[6] = 4
+v[7] = 1
+line$ = ""
+FOR i = 0 TO 7
+  line$ = line$ + CHR$(167 + v[i]) + CHR$(167 + v[i])
+NEXT i
+PRINT line$
+PRINT
+PRINT "suits "; ROW$(222, 4); "   shades "; ROW$(218, 4)

@@ -56,7 +56,7 @@ static void cell_glyph(int col, int row, unsigned char c) {
     uint8_t* fb = fruitjam_dvi_framebuffer();
     if (!fb) return;
     size_t stride = fruitjam_dvi_stride();
-    if (c < 32 || c > 151) c = 32;
+    if (c < 32) c = 32;
     const uint8_t* gl = &jdos_font8x8_c64[(c - 32) * 8];
     const uint8_t ink   = g_reverse ? g_bg : g_fg;
     const uint8_t paper = g_reverse ? g_fg : g_bg;

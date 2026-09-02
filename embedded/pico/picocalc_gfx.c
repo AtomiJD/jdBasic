@@ -222,7 +222,7 @@ void picocalc_gfx_text(int x, int y, const char* s, int scale) {
     if (scale < 1) scale = 1;
     for (; *s; s++) {
         unsigned char c = (unsigned char)*s;
-        if (c < 32 || c > 151) c = 32;
+        if (c < 32) c = 32;
         const uint8_t* gl = &jdos_font8x8_c64[(c - 32) * 8];
         for (int row = 0; row < 8; row++) {
             uint8_t bits = gl[row];
