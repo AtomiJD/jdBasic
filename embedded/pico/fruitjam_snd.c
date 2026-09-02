@@ -84,21 +84,28 @@ static const struct pio_program i2s_program = {
 
 static int g_i2c_fails = 0;
 
+// Timed out rather than blocking: the codec shares its reset line with
+// the radio, and a chip that is still coming up can hold the bus down.
+// A blocking write there never returns and takes the board with it.
+#define I2C_TIMEOUT_US 2000
+
 static void wr(uint8_t page, uint8_t reg, uint8_t val) {
     uint8_t p[2] = { 0x00, page };
-    if (i2c_write_blocking(SND_I2C, CODEC_ADDR, p, 2, false) < 0) g_i2c_fails++;
+    if (i2c_write_timeout_us(SND_I2C, CODEC_ADDR, p, 2, false, I2C_TIMEOUT_US) < 0)
+        g_i2c_fails++;
     uint8_t d[2] = { reg, val };
-    if (i2c_write_blocking(SND_I2C, CODEC_ADDR, d, 2, false) < 0) g_i2c_fails++;
+    if (i2c_write_timeout_us(SND_I2C, CODEC_ADDR, d, 2, false, I2C_TIMEOUT_US) < 0)
+        g_i2c_fails++;
 }
 
 // Reading a register back is the only way to know the codec is listening
 // at all; a silent chip and a wrongly routed one look identical.
 static int rd(uint8_t page, uint8_t reg) {
     uint8_t p[2] = { 0x00, page };
-    if (i2c_write_blocking(SND_I2C, CODEC_ADDR, p, 2, false) < 0) return -1;
-    if (i2c_write_blocking(SND_I2C, CODEC_ADDR, &reg, 1, true) < 0) return -2;
+    if (i2c_write_timeout_us(SND_I2C, CODEC_ADDR, p, 2, false, I2C_TIMEOUT_US) < 0) return -1;
+    if (i2c_write_timeout_us(SND_I2C, CODEC_ADDR, &reg, 1, true, I2C_TIMEOUT_US) < 0) return -2;
     uint8_t v = 0;
-    if (i2c_read_blocking(SND_I2C, CODEC_ADDR, &v, 1, false) < 0) return -3;
+    if (i2c_read_timeout_us(SND_I2C, CODEC_ADDR, &v, 1, false, I2C_TIMEOUT_US) < 0) return -3;
     return v;
 }
 
@@ -296,6 +303,15 @@ void jdb_snd_out_beep(int freq, int ms) {
 }
 
 int jdb_snd_out_ready(void) { return g_up ? 1 : 0; }
+
+// The reset line is shared with the radio, so anything that pulses it
+// leaves the codec blank. Only its registers need programming again;
+// the PIO, the DMA pair and the interrupt are still running and must
+// not be set up a second time.
+void fruitjam_snd_codec_reinit(void) {
+    if (!g_up) return;
+    codec_init();
+}
 
 void fruitjam_snd_init(void) {
     i2c_init(SND_I2C, 400 * 1000);

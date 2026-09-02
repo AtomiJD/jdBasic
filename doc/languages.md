@@ -3870,6 +3870,31 @@ ids. `DVI.LATE$` counts frames that ran long or short against the
 16.7 ms the signal expects, which is what separates a picture the board
 generated badly from one the monitor lost on its own.
 
+The Fruit Jam has no cyw43. Its radio is an ESP32-C6 on its own SPI bus,
+carrying Adafruit's nina firmware, and that firmware runs the TCP/IP
+stack itself. So there is no lwIP on this board: a socket is a number the
+radio hands out, and the host sends commands and reads answers. A
+command is a start byte, the command, its parameters each with a length,
+and an end byte; a busy line says when the chip will listen. The chip
+wants its select line held high while it comes out of reset, which the
+first command of a session arranges, so the radio costs about a second
+the first time it is used and nothing afterwards.
+
+None of that reaches a program. `WIFI.CONNECT`, `WIFI.AUTO` (ssid and
+password from `/wifi.txt`), `WIFI.STATUS` (3 is a live connection here as
+it is on the W boards), `WIFI.IP$`, `WIFI.MAC$`, `WIFI.SCAN`, `WIFI.OFF`,
+`HTTP.GET$`, `HTTP.POST$`, `HTTP.STATUS` and `NTP.SYNC` are the same
+verbs as everywhere else, so a program that fetches a page runs unchanged
+on a Pico W, an ESP32 and here. `WIFI.SCAN` returns a row per network of
+name, signal, channel and whether it is open. The time comes from the
+radio, which keeps its own clock once it is online, rather than from a
+query the host sends.
+
+`ESP.PROBE$` reports the firmware version, `ESP.FW$` just the version and
+`ESP.RESET` restarts the radio. Reset is shared with the audio codec, so
+restarting the radio reprograms the codec's registers on the way back;
+the sound engine itself keeps running.
+
 ### Compiled programs: p-code on disk
 
 A board that takes fifty seconds to translate sixteen kilobytes of

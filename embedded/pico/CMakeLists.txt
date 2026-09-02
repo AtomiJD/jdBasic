@@ -88,6 +88,8 @@ if (FRUITJAM)
         fruitjam_snd.c
         fruitjam_board.c
         fruitjam_psram_heap.cpp
+        fruitjam_esp.c
+        fruitjam_wifi.cpp
         picocalc_sd.c
         fatfs/ff.c
         fatfs/ffsystem.c

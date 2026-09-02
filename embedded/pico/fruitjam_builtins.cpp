@@ -30,6 +30,10 @@ unsigned fruitjam_psram_heap_free(void);
 unsigned fruitjam_psram_heap_largest(void);
 int  fruitjam_psram_torture(char* out, int cap, int rounds);
 int  fruitjam_psram_check(char* out, int cap);
+int  fruitjam_esp_probe(char* out, int cap, int do_reset, int khz);
+int  fruitjam_esp_fw(char* out, int cap);
+int  fruitjam_esp_pins(char* out, int cap);
+void fruitjam_esp_reset(void);
 #ifdef FRUITJAM_USB
 void fruitjam_kbd_layout(int de);
 int  fruitjam_kbd_layout_get(void);
@@ -193,6 +197,31 @@ void register_fruitjam_gfx(VM& vm) {
     });
     // Alloc, fill, verify and free in the window while the scanout and
     // the USB host are running - the part a desktop cannot reproduce.
+    // The radio sits on its own SPI bus with two lines coming back from
+    // it. These say what the transport is doing before anything is
+    // built on top of it.
+    vm.register_native("ESP.PROBE$", 0, 2, [](const std::vector<Value>& args) -> Value {
+        int rst = args.size() >= 1 ? (int)args[0].to_double() : 0;
+        int khz = args.size() >= 2 ? (int)args[1].to_double() : 0;
+        char b[512];
+        fruitjam_esp_probe(b, sizeof b, rst, khz);
+        return Value::make_string(b);
+    });
+    vm.register_native("ESP.FW$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[48];
+        fruitjam_esp_fw(b, sizeof b);
+        return Value::make_string(b);
+    });
+    vm.register_native("ESP.PINS$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[64];
+        fruitjam_esp_pins(b, sizeof b);
+        return Value::make_string(b);
+    });
+    // Shared with the codec, so sound comes back up with it.
+    vm.register_native("ESP.RESET", 0, 0, [](const std::vector<Value>&) -> Value {
+        fruitjam_esp_reset();
+        return Value();
+    });
     vm.register_native("PSRAM.TORTURE$", 0, 1, [](const std::vector<Value>& args) -> Value {
         int rounds = args.size() >= 1 ? (int)args[0].to_double() : 2000;
         char b[96];

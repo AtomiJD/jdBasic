@@ -21,6 +21,7 @@ void register_sprite_builtins(VM& vm);
 void register_pico_events(VM& vm);
 #ifdef FRUITJAM
 void register_fruitjam_gfx(VM& vm);
+void register_fruitjam_wifi(VM& vm);
 #endif
 #ifdef JDB_HAS_CYW43
 void register_pico_wifi(VM& vm);
@@ -77,6 +78,7 @@ void register_pico_builtins(VM& vm) {
     register_pico_events(vm);
 #ifdef FRUITJAM
     register_fruitjam_gfx(vm);
+    register_fruitjam_wifi(vm);
 #endif
 #if defined(PICOCALC) || defined(FRUITJAM)
     register_jdb_play(vm);
