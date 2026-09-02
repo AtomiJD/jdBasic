@@ -3947,6 +3947,16 @@ a compiled program contains every byte there is including the ones that
 used to end the transfer: `RECV prog.jdpb 12788` takes exactly that many
 bytes raw, with no line-ending translation.
 
+The board answers every 256 bytes with a `#`, and only once those bytes
+are stored. A sender has to wait for it. Storing stops the board reading
+the line for as long as a flash erase takes, about fifty milliseconds,
+and the port buffers sixty four bytes: a sender that keeps going loses
+what it sent meanwhile. If a transfer does come up short the board eats
+whatever is still arriving rather than handing it to the prompt, because
+a file read as commands is worse than a file lost - the first two lines
+of a graphics program turn the console off and clear the screen, which
+looks exactly like the board dying.
+
 Building one on a desktop is the whole point, and it needs nothing from
 the board. `jdbasic --pcode prog.jdb` writes `prog.jdpb` beside the
 source with whatever desktop build is at hand; the board's own builtins

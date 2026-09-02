@@ -108,19 +108,49 @@ static void run_file(const char* name) {
 // With a byte count the transfer is raw: no line-ending translation and
 // no terminator byte, because a compiled program contains every byte
 // there is, including the ones that used to mean "stop" and "newline".
+// One acknowledgement per block, and nothing left over for the parser.
+//
+// Storing what has arrived stops reading the line for as long as a flash
+// erase takes, which is around fifty milliseconds, and the port's buffer
+// holds sixty four bytes. A sender that keeps going loses everything it
+// sends meanwhile, the read then times out, and - this is the part that
+// bites - the rest of the file arrives at the prompt and is run as
+// commands. A graphics program's first two lines turn the console off
+// and clear the screen, so a truncated transfer looked exactly like the
+// board dying.
+#define RECV_BLOCK 256
+
 static void recv_binary(const char* name, long want) {
     FILE* f = fopen(name, "wb");
     if (!f) { printf("cannot write %s\n", name); return; }
     printf("receiving %s, %ld bytes\n", name, want);
     fflush(NULL);
     long n = 0;
+    int block = 0;
     while (n < want) {
         int c = g_port->read_byte_ms(5000);
         if (c < 0) break;
         fputc(c, f);
         n++;
+        if (++block == RECV_BLOCK) {
+            block = 0;
+            // Stored first, then acknowledged, so the sender waits
+            // through the erase instead of talking into it.
+            fflush(f);
+            putchar('#');
+            fflush(NULL);
+        }
     }
     fclose(f);
+
+    if (n < want) {
+        // Whatever is still on its way belongs to the file, not to the
+        // prompt.
+        int drained = 0;
+        while (g_port->read_byte_ms(400) >= 0) drained++;
+        printf("%ld of %ld bytes SHORT, %d discarded\n", n, want, drained);
+        return;
+    }
     printf("%ld of %ld bytes\n", n, want);
 }
 
