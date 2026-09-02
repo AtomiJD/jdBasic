@@ -77,6 +77,7 @@ unsigned fruitjam_dvi_expand(void);
 unsigned fruitjam_dvi_ctrl(void);
 unsigned fruitjam_dvi_sys_hz(void);
 unsigned fruitjam_dvi_wof(void);
+int  fruitjam_reset_why(char* out, int cap);
 unsigned fruitjam_dvi_dma_err(void);
 }
 
@@ -260,6 +261,13 @@ void register_fruitjam_gfx(VM& vm) {
     });
     // Faults that would break the picture while the frame timing stayed
     // perfect. Both are latched by the hardware.
+    // A board that reboots and a monitor that loses the signal look the
+    // same from the far side of the cable. This tells them apart.
+    vm.register_native("SYS.RESET$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[96];
+        fruitjam_reset_why(b, sizeof b);
+        return Value::make_string(b);
+    });
     vm.register_native("DVI.ERR$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[96];
         snprintf(b, sizeof b, "fifo overruns %u, dma errors %s",

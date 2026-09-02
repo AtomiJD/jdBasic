@@ -107,6 +107,8 @@ static volatile uint32_t g_f_last = 0;
 static volatile uint32_t g_f_calls = 0;
 static volatile uint32_t g_f_late = 0;
 static volatile uint32_t g_f_worst = 0;
+static volatile uint32_t g_f_dur_worst = 0;
+static volatile uint64_t g_f_total = 0;
 // Counted, not just tracked: a device that leaves the bus and comes back
 // is the difference between a keyboard that was disturbed and one that
 // was never spoken to.
@@ -261,8 +263,11 @@ static void usb_task_timed(void) {
 }
 
 int fruitjam_usb_frame(char* out, int cap) {
-    return snprintf(out, cap, "%u frames, %u late, worst %u us, %u mounts %u drops",
+    unsigned mean = g_f_calls ? (unsigned)(g_f_total / g_f_calls) : 0;
+    return snprintf(out, cap,
+                    "%u frames, %u late, gap %u us, work %u/%u us, %u mounts %u drops",
                     (unsigned)g_f_calls, (unsigned)g_f_late, (unsigned)g_f_worst,
+                    mean, (unsigned)g_f_dur_worst,
                     (unsigned)g_mounts, (unsigned)g_umounts);
 }
 
@@ -560,6 +565,9 @@ static void __not_in_flash_func(core1_usb_frames)(void) {
         }
         g_f_last = t;
         pio_usb_host_frame();
+        uint32_t dur = timer_hw->timerawl - t;
+        g_f_total += dur;
+        if (dur > g_f_dur_worst) g_f_dur_worst = dur;
         kbd_repeat_tick();
         while ((timer_hw->timerawl - t) < 1000) tight_loop_contents();
     }

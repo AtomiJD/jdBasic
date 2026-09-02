@@ -67,6 +67,7 @@ extern "C" void jdb_load_trace_n(const char* stage, unsigned a, unsigned b, unsi
 extern "C" void jdb_pico_fs_init(void);
 #ifdef FRUITJAM
 extern "C" void fruitjam_dvi_init(void);
+extern "C" void fruitjam_reset_latch(void);
 extern "C" int  fruitjam_dvi_alloc(void);
 #ifdef FRUITJAM_USB
 extern "C" void fruitjam_usb_init(void);
@@ -330,6 +331,8 @@ static const JdbReplPort PORT = {
 };
 
 int main() {
+    // First thing, before anything can clear it: why this boot happened.
+    fruitjam_reset_latch();
 #ifdef FRUITJAM
     // 480p60 wants a 252 MHz bit clock, and the serialiser puts out two
     // bits per cycle, so HSTX has to see exactly 126 MHz. clk_hstx follows

@@ -20,6 +20,7 @@
 #include "hardware/pio.h"
 #include "hardware/clocks.h"
 #include "hardware/psram.h"
+#include "hardware/structs/powman.h"
 
 unsigned fruitjam_psram_reserved(void);
 
@@ -122,6 +123,37 @@ void fruitjam_neo_clear(void) {
 }
 
 int fruitjam_neo_count(void) { return NEO_COUNT; }
+
+// Why the chip last started. The register survives until the next reset,
+// and it is the difference between a monitor that lost the signal and a
+// board that quietly rebooted underneath it - which look identical from
+// the far side of an HDMI cable.
+static uint32_t g_reset_why = 0;
+
+void fruitjam_reset_latch(void) { g_reset_why = powman_hw->chip_reset; }
+
+int fruitjam_reset_why(char* out, int cap) {
+    uint32_t r = g_reset_why;
+    int w = snprintf(out, cap, "%08x", (unsigned)r);
+    if (r & POWMAN_CHIP_RESET_HAD_POR_BITS)
+        w += snprintf(out + w, cap - w, " power-on");
+    if (r & POWMAN_CHIP_RESET_HAD_BOR_BITS)
+        w += snprintf(out + w, cap - w, " BROWNOUT");
+    if (r & POWMAN_CHIP_RESET_HAD_GLITCH_DETECT_BITS)
+        w += snprintf(out + w, cap - w, " SUPPLY GLITCH");
+    if (r & POWMAN_CHIP_RESET_HAD_RUN_LOW_BITS)
+        w += snprintf(out + w, cap - w, " reset pin");
+    if (r & (POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET_PSM_BITS |
+             POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET_SWCORE_BITS |
+             POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET_POWMAN_BITS |
+             POWMAN_CHIP_RESET_HAD_WATCHDOG_RESET_POWMAN_ASYNC_BITS))
+        w += snprintf(out + w, cap - w, " WATCHDOG");
+    if (r & POWMAN_CHIP_RESET_HAD_HZD_SYS_RESET_REQ_BITS)
+        w += snprintf(out + w, cap - w, " software request");
+    if (r & POWMAN_CHIP_RESET_HAD_RESCUE_BITS)
+        w += snprintf(out + w, cap - w, " rescue");
+    return w;
+}
 
 void fruitjam_board_init(void) {
     static const int btn[3] = { BTN1_PIN, BTN2_PIN, BTN3_PIN };
