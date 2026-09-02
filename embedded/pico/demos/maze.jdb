@@ -1,0 +1,12 @@
+' The C64 one-liner, as one line and without a loop.
+'
+' The original was 10 PRINT CHR$(205.5+RND(1)); : GOTO 10 - two diagonal
+' characters picked at random, filling the screen with a maze nobody
+' designed. Here the loop is gone entirely: RND runs over an array, CHR$
+' runs over its result, and JOIN glues the lot into one string. The
+' diagonals sit at 215 and 216 in this font.
+'
+' The count is what the board's memory allows, not what the screen holds:
+' every character is an array element on the way there.
+
+PRINT JOIN(CHR$(215 + INT(RND(IOTA(800, 0)) * 2)), "");
