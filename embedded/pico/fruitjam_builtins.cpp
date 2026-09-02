@@ -56,6 +56,7 @@ int fruitjam_usb_keys_waiting(void);
 int fruitjam_usb_key_count(void);
 int fruitjam_usb_diag(char* out, int cap);
 int fruitjam_usb_time(char* out, int cap);
+int fruitjam_usb_frame(char* out, int cap);
 int fruitjam_pad_count(void);
 int fruitjam_pad_raw(int idx, char* out, int cap);
 int fruitjam_pad_name(int idx, char* out, int cap);
@@ -342,6 +343,12 @@ void register_fruitjam_gfx(VM& vm) {
     vm.register_native("USB.TIME$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[96];
         fruitjam_usb_time(b, sizeof b);
+        return Value::make_string(b);
+    });
+    // The second core's own timing. Everything else here watches core 0.
+    vm.register_native("USB.FRAME$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[128];
+        fruitjam_usb_frame(b, sizeof b);
         return Value::make_string(b);
     });
     vm.register_native("USB.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {

@@ -103,6 +103,15 @@ int fruitjam_usb_devices(void)      { return g_devices; }
 static void usb_task_timed(void);
 static void usb_pump(void);
 static volatile uint32_t g_task_last = 0;
+static volatile uint32_t g_f_last = 0;
+static volatile uint32_t g_f_calls = 0;
+static volatile uint32_t g_f_late = 0;
+static volatile uint32_t g_f_worst = 0;
+// Counted, not just tracked: a device that leaves the bus and comes back
+// is the difference between a keyboard that was disturbed and one that
+// was never spoken to.
+static volatile uint32_t g_mounts = 0;
+static volatile uint32_t g_umounts = 0;
 
 // Asking for a key drives the host stack too, but under the same brake
 // as the state reads. Without it a blocking read calls into the stack as
@@ -251,6 +260,12 @@ static void usb_task_timed(void) {
     if (d > 4000u) g_task_slow++;
 }
 
+int fruitjam_usb_frame(char* out, int cap) {
+    return snprintf(out, cap, "%u frames, %u late, worst %u us, %u mounts %u drops",
+                    (unsigned)g_f_calls, (unsigned)g_f_late, (unsigned)g_f_worst,
+                    (unsigned)g_mounts, (unsigned)g_umounts);
+}
+
 int fruitjam_usb_time(char* out, int cap) {
     return snprintf(out, cap, "%u calls, %u over 4ms, worst %u us, mean %u us",
                     (unsigned)g_task_calls, (unsigned)g_task_slow,
@@ -328,8 +343,8 @@ static void __not_in_flash_func(kbd_repeat_tick)(void) {
     g_rep_due = now + REPEAT_EVERY_US;
 }
 
-void tuh_mount_cb(uint8_t dev_addr)   { (void)dev_addr; g_devices++; }
-void tuh_umount_cb(uint8_t dev_addr)  { (void)dev_addr; if (g_devices) g_devices--; }
+void tuh_mount_cb(uint8_t dev_addr)   { (void)dev_addr; g_devices++; g_mounts++; }
+void tuh_umount_cb(uint8_t dev_addr)  { (void)dev_addr; if (g_devices) g_devices--; g_umounts++; }
 
 // A gamepad is an ordinary HID interface with no boot protocol, so it
 // arrives here as HID_ITF_PROTOCOL_NONE. What its report means differs
@@ -530,6 +545,20 @@ static void __not_in_flash_func(core1_usb_frames)(void) {
     flash_safe_execute_core_init();
     while (true) {
         uint32_t t = timer_hw->timerawl;
+        // What the frame timing on this core actually was. The display's
+        // counters watch core 0 and say nothing about here, and a USB
+        // frame that arrives late is invisible from over there - which
+        // is exactly the gap to close when the picture and the keyboard
+        // fail together.
+        if (g_f_last) {
+            uint32_t d = t - g_f_last;
+            g_f_calls++;
+            if (d > 2000u) {
+                g_f_late++;
+                if (d > g_f_worst) g_f_worst = d;
+            }
+        }
+        g_f_last = t;
         pio_usb_host_frame();
         kbd_repeat_tick();
         while ((timer_hw->timerawl - t) < 1000) tight_loop_contents();
