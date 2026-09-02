@@ -71,13 +71,22 @@ static void cell_glyph(int col, int row, unsigned char c) {
     }
 }
 
-static void cursor_draw(int on) {
+// In RAM, and so is everything it reaches: the frame interrupt calls
+// this, and the frame interrupt has to finish while the flash is being
+// erased. Code fetched from flash stalls until the erase is over, which
+// is fifty milliseconds - three frames the monitor does not get, and
+// enough for it to let go of the signal and go black for a second. The
+// byte loop is here for the same reason: it does not matter where the
+// library keeps its memset.
+static void __not_in_flash_func(cursor_draw)(int on) {
     uint8_t* fb = fruitjam_dvi_framebuffer();
     if (!fb || g_col >= COLS || g_row >= ROWS) return;
     size_t stride = fruitjam_dvi_stride();
     // An underline, so it marks the place without hiding the character.
-    memset(fb + (size_t)(g_row * CH_H + CH_H - 1) * stride + (size_t)g_col * CELL_BYTES,
-           on ? g_fg : g_bg, CELL_BYTES);
+    uint8_t* p = fb + (size_t)(g_row * CH_H + CH_H - 1) * stride
+                    + (size_t)g_col * CELL_BYTES;
+    uint8_t v = on ? g_fg : g_bg;
+    for (int i = 0; i < CELL_BYTES; i++) p[i] = v;
 }
 
 static void scroll_up(void) {
@@ -246,7 +255,7 @@ void fruitjam_con_write(const char* s, int len) {
 
 // The scanout hands out sixty of these a second, which is the only clock
 // this needs. Half a second on, half a second off.
-void fruitjam_con_tick(void) {
+void __not_in_flash_func(fruitjam_con_tick)(void) {
     if (g_busy || !g_enabled) return;
     if (++g_blink < 30) return;
     g_blink = 0;

@@ -216,10 +216,12 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
     fruitjam_con_tick();
 }
 
-uint8_t* fruitjam_dvi_framebuffer(void) { return g_fb; }
+// The first two are reached from the frame interrupt by way of the
+// console's cursor, so they live in RAM with it.
+uint8_t* __not_in_flash_func(fruitjam_dvi_framebuffer)(void) { return g_fb; }
+size_t   __not_in_flash_func(fruitjam_dvi_stride)(void) { return FB_STRIDE; }
 int      fruitjam_dvi_width(void)  { return FB_W; }
 int      fruitjam_dvi_height(void) { return FB_H; }
-size_t   fruitjam_dvi_stride(void) { return FB_STRIDE; }
 uint32_t fruitjam_dvi_frames(void) { return g_frames; }
 uint32_t fruitjam_dvi_irqs(void)   { return g_frames; }
 uint32_t fruitjam_dvi_frame_us(void) { return g_frame_us; }

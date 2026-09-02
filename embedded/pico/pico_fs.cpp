@@ -39,6 +39,8 @@ static int bd_read(const struct lfs_config* c, lfs_block_t block,
 
 
 #include "pico/flash.h"
+#include "pico/multicore.h"
+#include "hardware/irq.h"
 
 struct prog_args { uint32_t off; const uint8_t* buf; size_t n; };
 
@@ -51,18 +53,72 @@ static void do_erase(void* p) {
     flash_range_erase((uint32_t)(uintptr_t)p, FS_BLOCK);
 }
 
+#ifdef FRUITJAM
+// Erasing a sector takes about fifty milliseconds, and the SDK's safe
+// wrapper switches every interrupt off for the duration. On this board
+// one of them cannot wait that long: the scanout needs an interrupt per
+// frame to aim its DMA back at the top of the command list, and three
+// frames the monitor does not get are enough for it to drop the signal
+// and go black for a second or two. That is what a save from the editor
+// looked like.
+//
+// So the operation runs with that one interrupt still alive and every
+// other one parked by hand. It is safe because nothing on its path
+// leaves RAM: the handler, the console tick it calls, the command list,
+// the line templates and the framebuffer are all there, and code
+// fetched from flash while the flash is busy would simply stall until
+// the erase finished, which is the whole problem.
+#define KEEP_IRQ DMA_IRQ_1
+
+static uint32_t g_irq_saved[2];
+
+static void irqs_park(void) {
+    g_irq_saved[0] = 0;
+    g_irq_saved[1] = 0;
+    for (uint i = 0; i < NUM_IRQS; i++) {
+        if (i == (uint)KEEP_IRQ) continue;
+        if (irq_is_enabled(i)) {
+            g_irq_saved[i / 32] |= 1u << (i % 32);
+            irq_set_enabled(i, false);
+        }
+    }
+}
+
+static void irqs_unpark(void) {
+    for (uint i = 0; i < NUM_IRQS; i++) {
+        if (g_irq_saved[i / 32] & (1u << (i % 32))) irq_set_enabled(i, true);
+    }
+}
+
+// Falls back to the SDK's wrapper if the other core will not park; a
+// stuttered frame beats a write that does not happen.
+static int flash_op(void (*fn)(void*), void* arg) {
+    if (!multicore_lockout_start_timeout_us(2000000))
+        return flash_safe_execute(fn, arg, 2000) == PICO_OK ? 0 : LFS_ERR_IO;
+    irqs_park();
+    fn(arg);
+    irqs_unpark();
+    multicore_lockout_end_blocking();
+    return 0;
+}
+#else
+static int flash_op(void (*fn)(void*), void* arg) {
+    return flash_safe_execute(fn, arg, 2000) == PICO_OK ? 0 : LFS_ERR_IO;
+}
+#endif
+
 static int bd_prog(const struct lfs_config* c, lfs_block_t block,
                    lfs_off_t off, const void* buffer, lfs_size_t size) {
     (void)c;
     struct prog_args a = { (uint32_t)(FS_OFFSET + block * FS_BLOCK + off),
                            (const uint8_t*)buffer, size };
-    return flash_safe_execute(do_prog, &a, 2000) == PICO_OK ? 0 : LFS_ERR_IO;
+    return flash_op(do_prog, &a);
 }
 
 static int bd_erase(const struct lfs_config* c, lfs_block_t block) {
     (void)c;
     uintptr_t off = FS_OFFSET + block * FS_BLOCK;
-    return flash_safe_execute(do_erase, (void*)off, 2000) == PICO_OK ? 0 : LFS_ERR_IO;
+    return flash_op(do_erase, (void*)off);
 }
 
 static int bd_sync(const struct lfs_config* c) { (void)c; return 0; }
