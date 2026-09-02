@@ -182,6 +182,14 @@ static uint32_t g_frame_short = 0;
 static uint32_t g_frame_shortest = 0xFFFFFFFFu;
 static uint32_t g_last_wrap = 0;
 
+// Two faults that would break the picture while every frame still
+// arrives on time, and so would be invisible to the counters above.
+// WOF latches when the DMA writes the serialiser's FIFO while it is
+// full; the DMA's own error bits latch when a transfer faults on the
+// bus. Both are sticky, so one glance afterwards is enough.
+static uint32_t g_hstx_wof = 0;
+static uint32_t g_dma_err = 0;
+
 // The null trigger at the end of the list lands here. Everything the
 // picture needs has already happened; this only aims the command channel
 // back at the top of the list and lets it go again.
@@ -210,6 +218,15 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
         if (g_frame_us < g_frame_shortest) g_frame_shortest = g_frame_us;
     }
 
+    uint32_t st = hstx_fifo_hw->stat;
+    if (st & HSTX_FIFO_STAT_WOF_BITS) {
+        g_hstx_wof++;
+        hstx_fifo_hw->stat = HSTX_FIFO_STAT_WOF_BITS;
+    }
+    g_dma_err |= (dma_hw->ch[g_ch_pixel].ctrl_trig |
+                  dma_hw->ch[g_ch_cmd].ctrl_trig) &
+                 DMA_CH0_CTRL_TRIG_AHB_ERROR_BITS;
+
 #ifdef JDB_FB_IN_PSRAM
     if (g_ch_trig >= 0) copy_restart();
 #endif
@@ -230,6 +247,8 @@ uint32_t fruitjam_dvi_worst(void)    { return g_frame_worst; }
 uint32_t fruitjam_dvi_short(void)    { return g_frame_short; }
 uint32_t fruitjam_dvi_shortest(void) { return g_frame_shortest == 0xFFFFFFFFu ? 0 : g_frame_shortest; }
 uint32_t fruitjam_dvi_sys_hz(void)   { return clock_get_hz(clk_sys); }
+uint32_t fruitjam_dvi_wof(void)      { return g_hstx_wof; }
+uint32_t fruitjam_dvi_dma_err(void)  { return g_dma_err; }
 uint32_t fruitjam_dvi_csr(void)    { return hstx_ctrl_hw->csr; }
 uint32_t fruitjam_dvi_expand(void) { return hstx_ctrl_hw->expand_shift; }
 uint32_t fruitjam_dvi_ctrl(void)   { return dma_hw->ch[g_ch_pixel].al1_ctrl; }

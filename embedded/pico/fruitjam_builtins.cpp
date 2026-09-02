@@ -76,6 +76,8 @@ unsigned fruitjam_dvi_sys_meas(void);
 unsigned fruitjam_dvi_expand(void);
 unsigned fruitjam_dvi_ctrl(void);
 unsigned fruitjam_dvi_sys_hz(void);
+unsigned fruitjam_dvi_wof(void);
+unsigned fruitjam_dvi_dma_err(void);
 }
 
 static void gfx_maybe_color(const std::vector<Value>& args, size_t at) {
@@ -254,6 +256,15 @@ void register_fruitjam_gfx(VM& vm) {
                  (unsigned)fruitjam_dvi_late(), (unsigned)fruitjam_dvi_short(),
                  (unsigned)fruitjam_dvi_frames(),
                  (unsigned)fruitjam_dvi_worst(), (unsigned)fruitjam_dvi_shortest());
+        return Value::make_string(b);
+    });
+    // Faults that would break the picture while the frame timing stayed
+    // perfect. Both are latched by the hardware.
+    vm.register_native("DVI.ERR$", 0, 0, [](const std::vector<Value>&) -> Value {
+        char b[96];
+        snprintf(b, sizeof b, "fifo overruns %u, dma errors %s",
+                 (unsigned)fruitjam_dvi_wof(),
+                 fruitjam_dvi_dma_err() ? "yes" : "none");
         return Value::make_string(b);
     });
     vm.register_native("DVI.DIAG$", 0, 0, [](const std::vector<Value>&) -> Value {
