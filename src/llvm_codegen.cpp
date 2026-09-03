@@ -1924,7 +1924,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     auto e1 = m.find(a_ptr);
                     if (e1 != m.end()) ln = e1->second;
                 }
-                report_error(decl.stmt->source_file, ln ? ln : decl.stmt->line,
+                report_error(decl.stmt->source_file(), ln ? ln : decl.stmt->line,
                     "parameter '" + p.name + "' of " + name + " is called with " +
                     tag_name(a_ptr) + " and with " + tag_name(a_num) +
                     "; a compiled parameter has one LLVM type. Use TYPEOF(" + p.name + ") in the body "
@@ -2230,7 +2230,7 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     // Phase 3 diagnostics conditional on explicit_mode). codegen_stmt still
     // handles OPTION at statement time so mid-program toggles work too.
     // Options are file-scoped: a STRICT main file can IMPORT a loose module
-    // without forcing its migration. Group by stmt->source_file.
+    // without forcing its migration. Group by stmt->source_file().
     for (auto& s : program) {
         if (s && s->kind == StmtKind::OPTION_STMT && s->expr &&
             s->expr->kind == ExprKind::LITERAL_STRING) {
@@ -2238,16 +2238,16 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
             std::transform(opt.begin(), opt.end(), opt.begin(), ::toupper);
             if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT") {
                 explicit_mode = false;
-                explicit_files.erase(s->source_file);
+                explicit_files.erase(s->source_file());
             } else if (opt == "EXPLICIT") {
                 explicit_mode = true;
-                explicit_files.insert(s->source_file);
+                explicit_files.insert(s->source_file());
             } else if (opt == "NOSTRICT" || opt == "STRICTOFF") {
                 strict_mode = false;
-                strict_files.erase(s->source_file);
+                strict_files.erase(s->source_file());
             } else if (opt == "STRICT") {
                 strict_mode = true;
-                strict_files.insert(s->source_file);
+                strict_files.insert(s->source_file());
             }
         }
     }
@@ -2510,9 +2510,9 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 // auto-declare x globally (so codegen_let_or_assign's own
                 // check misses it). DIM and LET both count as declarations;
                 // only bare ASSIGN (x = ...) without prior binding errors.
-                if (is_explicit_here(stmt->source_file) &&
+                if (is_explicit_here(stmt->source_file()) &&
                     stmt->kind == StmtKind::ASSIGN) {
-                    report_error(stmt->source_file, stmt->line,
+                    report_error(stmt->source_file(), stmt->line,
                         "undeclared variable '" + stmt->var_name + "'");
                 }
                 // Determine type from initial expression
@@ -2835,7 +2835,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 // Remember which source file this top-level DIM came from
                 // so a SUB defined in the same file can write to the global
                 // (the isolation rule in codegen_let_or_assign consults this).
-                global_source_file[stmt->var_name] = stmt->source_file;
+                global_source_file[stmt->var_name] = stmt->source_file();
             }
         }
         // Also register destruct vars: [a, b, c] = expr
@@ -3003,11 +3003,11 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
 
     // Track the source file of the statement under codegen so diagnostics
     // raised from nested expressions can attribute "error at file:line".
-    m_current_stmt_file = stmt.source_file;
+    m_current_stmt_file = stmt.source_file();
 
     // Emit runtime trace if enabled (--trace flag)
     if (stmt.line > 0)
-        emit_trace(stmt.line, stmt.source_file);
+        emit_trace(stmt.line, stmt.source_file());
 
     try {
     switch (stmt.kind) {
@@ -3434,7 +3434,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     auto saved_labels = std::move(label_blocks);
     label_blocks.clear();
     current_fn = fit->second.fn;
-    current_fn_source_file = stmt.source_file;
+    current_fn_source_file = stmt.source_file();
 
     // Push function scope
     scopes.push_back(Scope{});
@@ -3575,12 +3575,12 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // dotted module/UDT write) is a compile error. Skip when kind == DIM
     // (DIMs are declarations, routed here for DIM-without-init); skip
     // dotted names (module writes / UDT fields, handled elsewhere).
-    if (is_explicit_here(stmt.source_file) && stmt.kind == StmtKind::ASSIGN &&
+    if (is_explicit_here(stmt.source_file()) && stmt.kind == StmtKind::ASSIGN &&
         stmt.var_name.find('.') == std::string::npos) {
         VarInfo* prior = lookup_var(stmt.var_name);
         bool declared_global = type_env.count(stmt.var_name) > 0;
         if (!prior && !declared_global) {
-            report_error(stmt.source_file, stmt.line,
+            report_error(stmt.source_file(), stmt.line,
                 "undeclared variable '" + stmt.var_name + "'");
             // Fall through: let the normal codegen path run (auto-creates the
             // var) so downstream uses of this name don't cascade more errors
@@ -3592,14 +3592,14 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
     // Phase 4 STRICT: assignment to a declared global must have a
     // compatible RHS. Only checked when the LHS is a known global -
     // locals lack a StaticType table today (future phase extends).
-    if (is_strict_here(stmt.source_file) && stmt.kind != StmtKind::DIM &&
+    if (is_strict_here(stmt.source_file()) && stmt.kind != StmtKind::DIM &&
         stmt.expr && stmt.var_name.find('.') == std::string::npos) {
         auto tit = type_env.find(stmt.var_name);
         if (tit != type_env.end() && !tit->second.is_unknown()) {
             StaticType actual = infer_expr_type(*stmt.expr);
             if (!actual.is_unknown() &&
                 !types_compatible(actual, tit->second)) {
-                report_error(stmt.source_file, stmt.line,
+                report_error(stmt.source_file(), stmt.line,
                     "Type Mismatch in assignment to '" + stmt.var_name +
                     "': expected " + tit->second.describe() +
                     ", got " + actual.describe());
@@ -4166,7 +4166,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // direction (DOUBLE → INTEGER) IS lossy and stays flagged.
         bool int_to_double_widen =
             (vi->tag == JD_TAG_F64 && rhs.tag == JD_TAG_I64);
-        if (is_strict_here(stmt.source_file) && stmt.kind == StmtKind::ASSIGN &&
+        if (is_strict_here(stmt.source_file()) && stmt.kind == StmtKind::ASSIGN &&
             vi->tag != rhs.tag && !bool_int_pair && !int_to_double_widen &&
             // Pointer-typed slot can legitimately be retagged (e.g. a MAP
             // var that later gets a JSON.PARSE$ handle assigned). The bit-
@@ -4203,7 +4203,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 hint = "; wrap with VAL() to parse the string";
             else if (vi->tag == JD_TAG_STR)
                 hint = "; wrap with STR$() to stringify";
-            report_error(stmt.source_file, stmt.line,
+            report_error(stmt.source_file(), stmt.line,
                 "STRICT: cannot assign " + std::string(tag_name(rhs.tag)) +
                 " to " + std::string(tag_name(vi->tag)) + " '" +
                 stmt.var_name + "'" + hint);
@@ -4284,12 +4284,12 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
 
 void LLVMCodegen::codegen_static_dim(const Stmt& stmt) {
     if (scopes.size() <= 1) {
-        report_error(stmt.source_file, stmt.line,
+        report_error(stmt.source_file(), stmt.line,
             "STATIC DIM is only allowed inside a FUNC or SUB");
         return;
     }
     if (scopes.back().vars.count(stmt.var_name)) {
-        report_error(stmt.source_file, stmt.line,
+        report_error(stmt.source_file(), stmt.line,
             "STATIC DIM '" + stmt.var_name + "' redeclared");
         return;
     }
@@ -4417,7 +4417,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         std::string cup = stmt.var_name;
         std::transform(cup.begin(), cup.end(), cup.begin(), ::toupper);
         if (kBuiltinConsts.count(cup)) {
-            report_error(stmt.source_file, stmt.line,
+            report_error(stmt.source_file(), stmt.line,
                 "Cannot DIM built-in constant '" + stmt.var_name +
                 "', choose another name");
         }
@@ -4428,10 +4428,10 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     // c="x" -> STRING, d=CVDATE(..) -> DATE). A bare `DIM x` with neither is the
     // untyped-slot footgun (silent bit-pun on a later foreign assignment), so
     // require the author to commit to a type.
-    if (is_strict_here(stmt.source_file) &&
+    if (is_strict_here(stmt.source_file()) &&
         stmt.var_type == VarType::NONE && !stmt.expr &&
         (stmt.label.empty() || stmt.label == "__EXPORT__")) {
-        report_error(stmt.source_file, stmt.line,
+        report_error(stmt.source_file(), stmt.line,
             "STRICT: untyped DIM '" + stmt.var_name +
             "' has no type and no initializer; add `AS <type>` or initialise it");
     }
@@ -4441,7 +4441,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     // ARRAY and multi-dim shape inits are exempt - the initializer shape
     // doesn't infer cleanly as a StaticType yet, so let the legacy path
     // handle them (Phase 4 extends later).
-    if (is_strict_here(stmt.source_file) && stmt.expr &&
+    if (is_strict_here(stmt.source_file()) && stmt.expr &&
         stmt.var_type != VarType::NONE &&
         stmt.var_type != VarType::ARRAY) {
         StaticType declared = StaticType::from_vartype(
@@ -4449,7 +4449,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         StaticType actual = infer_expr_type(*stmt.expr);
         if (!declared.is_unknown() && !actual.is_unknown() &&
             !types_compatible(actual, declared)) {
-            report_error(stmt.source_file, stmt.line,
+            report_error(stmt.source_file(), stmt.line,
                 "Type Mismatch in DIM '" + stmt.var_name +
                 "': expected " + declared.describe() +
                 ", got " + actual.describe());
@@ -4612,7 +4612,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 size_t got = stmt.ctor_args.size() + 1; // +THIS
                 bool emit_init = !stmt.ctor_args.empty() || expected == 1;
                 if (emit_init && got != expected) {
-                    report_error(stmt.source_file, stmt.line,
+                    report_error(stmt.source_file(), stmt.line,
                         "SUB " + stmt.label + ".INIT expects " +
                         std::to_string(expected - 1) +
                         " argument(s), got " + std::to_string(stmt.ctor_args.size()));
@@ -4630,7 +4630,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                                    args.data(), (unsigned)args.size(), "");
                 }
             } else if (!stmt.ctor_args.empty()) {
-                report_error(stmt.source_file, stmt.line,
+                report_error(stmt.source_file(), stmt.line,
                     "Type '" + stmt.label +
                     "' has no SUB INIT, cannot pass constructor arguments");
             }
@@ -4844,7 +4844,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             std::vector<int> ctor_vec_tags;
             for (size_t k = 2; k < stmt.expr->args.size(); k++) {
                 if (init_it == user_functions.end()) {
-                    report_error(stmt.source_file, stmt.line,
+                    report_error(stmt.source_file(), stmt.line,
                         "Type '" + type_name +
                         "' has no SUB INIT, cannot pass constructor argument vectors");
                     break;

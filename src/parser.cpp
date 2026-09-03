@@ -189,11 +189,11 @@ std::vector<StmtPtr> Parser::parse() {
         } else {
             auto s = parse_statement();
             // Tag with current source file if not already set (imports set their own)
-            if (s && s->source_file.empty() && !current_source_file.empty()) {
-                s->source_file = current_source_file;
+            if (s && !s->file && !current_source_file.empty()) {
+                s->file = file_ref();
                 for (auto& child : s->body) {
-                    if (child && child->source_file.empty())
-                        child->source_file = current_source_file;
+                    if (child && !child->file)
+                        child->file = file_ref();
                 }
             }
             stmts.push_back(std::move(s));
@@ -2477,6 +2477,7 @@ std::vector<StmtPtr> Parser::parse_import() {
     mod_parser.file_reader = file_reader;
     mod_parser.imported_modules = imported_modules; // share import set
     mod_parser.current_source_file = module_file_path; // propagate file path
+    auto mod_file_ref = std::make_shared<const std::string>(module_file_path);
     auto mod_stmts = mod_parser.parse();
     // Propagate any new imports back
     imported_modules = mod_parser.imported_modules;
@@ -2567,7 +2568,7 @@ std::vector<StmtPtr> Parser::parse_import() {
             module_rename_stmt(*s, func_map, var_map);
             // Tag with module source file recursively (module_rename_stmt
             // already visits every descendant - no separate loop needed).
-            module_set_source_file(*s, module_file_path);
+            module_set_source_file(*s, mod_file_ref);
         }
     }
 
@@ -2646,8 +2647,9 @@ void Parser::module_rename_expr(Expr& expr,
 }
 
 // Recursively tag every statement and its descendants with a source file.
-void Parser::module_set_source_file(Stmt& stmt, const std::string& path) {
-    if (stmt.source_file.empty()) stmt.source_file = path;
+void Parser::module_set_source_file(Stmt& stmt,
+                                    const std::shared_ptr<const std::string>& path) {
+    if (!stmt.file) stmt.file = path;
     for (auto& s : stmt.body)         if (s) module_set_source_file(*s, path);
     for (auto& s : stmt.catch_body)   if (s) module_set_source_file(*s, path);
     for (auto& s : stmt.finally_body) if (s) module_set_source_file(*s, path);

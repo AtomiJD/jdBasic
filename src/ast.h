@@ -253,7 +253,13 @@ struct IfBranch {
 struct Stmt {
     StmtKind kind;
     int line = 0;
-    std::string source_file;   // originating source file (set by parse_import)
+    // The file the statement came from, one string shared by every
+    // statement of that file; unset for the main program.
+    std::shared_ptr<const std::string> file;
+    const std::string& source_file() const {
+        static const std::string none;
+        return file ? *file : none;
+    }
 
     // LET / DIM / ASSIGN / CONST
     std::string var_name;

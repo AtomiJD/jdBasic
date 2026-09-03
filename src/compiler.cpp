@@ -1234,8 +1234,8 @@ void Compiler::compile_sub(const Stmt& stmt) {
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
     // Propagate source file for debugger (module file, or inherit from main chunk)
-    current_chunk().source_file = !stmt.source_file.empty()
-        ? stmt.source_file : scopes[0].chunk.source_file;
+    current_chunk().source_file = !stmt.source_file().empty()
+        ? stmt.source_file() : scopes[0].chunk.source_file;
 
     // Register parameters as local variables (always local, even if name matches a global)
     for (auto& p : stmt.params) {
@@ -1276,8 +1276,8 @@ void Compiler::compile_function(const Stmt& stmt) {
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
     // Propagate source file for debugger (module file, or inherit from main chunk)
-    current_chunk().source_file = !stmt.source_file.empty()
-        ? stmt.source_file : scopes[0].chunk.source_file;
+    current_chunk().source_file = !stmt.source_file().empty()
+        ? stmt.source_file() : scopes[0].chunk.source_file;
 
     // Register parameters as local variables (always local, even if name matches a global)
     for (auto& p : stmt.params) {

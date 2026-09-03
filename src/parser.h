@@ -137,7 +137,15 @@ private:
     static void module_rename_expr(Expr& expr,
         const std::unordered_map<std::string, std::string>& func_map,
         const std::unordered_map<std::string, std::string>& var_map);
-    static void module_set_source_file(Stmt& stmt, const std::string& path);
+    static void module_set_source_file(Stmt& stmt,
+        const std::shared_ptr<const std::string>& path);
+    // current_source_file as one shared string, made when it changes.
+    std::shared_ptr<const std::string> file_ref_;
+    const std::shared_ptr<const std::string>& file_ref() {
+        if (!file_ref_ || *file_ref_ != current_source_file)
+            file_ref_ = std::make_shared<const std::string>(current_source_file);
+        return file_ref_;
+    }
     static void module_rename_stmt(Stmt& stmt,
         const std::unordered_map<std::string, std::string>& func_map,
         const std::unordered_map<std::string, std::string>& var_map);

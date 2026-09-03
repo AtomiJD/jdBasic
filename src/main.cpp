@@ -1490,12 +1490,12 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                     s->expr->kind == ExprKind::LITERAL_STRING) {
                     std::string opt = s->expr->str_val;
                     std::transform(opt.begin(), opt.end(), opt.begin(), ::toupper);
-                    if (opt == "EXPLICIT")        explicit_files.insert(s->source_file);
-                    else if (opt == "STRICT")     strict_files.insert(s->source_file);
+                    if (opt == "EXPLICIT")        explicit_files.insert(s->source_file());
+                    else if (opt == "STRICT")     strict_files.insert(s->source_file());
                     else if (opt == "EXPLICITOFF" || opt == "NOEXPLICIT")
-                                                  explicit_files.erase(s->source_file);
+                                                  explicit_files.erase(s->source_file());
                     else if (opt == "NOSTRICT" || opt == "STRICTOFF")
-                                                  strict_files.erase(s->source_file);
+                                                  strict_files.erase(s->source_file());
                 }
             }
 
@@ -1591,7 +1591,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             walk_stmts = [&](const std::vector<StmtPtr>& stmts) {
                 for (auto& s : stmts) {
                     if (!s) continue;
-                    bool in_strict = strict_files.count(s->source_file) > 0;
+                    bool in_strict = strict_files.count(s->source_file()) > 0;
                     // Bare ASSIGN to an undeclared name is the classic
                     // implicit-DIM the interpreter tolerates and the strict
                     // codegen rejects. LINT always flags it so REPL users
