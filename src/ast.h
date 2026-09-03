@@ -241,6 +241,30 @@ struct Param {
     ExprPtr default_value;
 };
 
+// TYPE_DECL member: name and type.
+struct StmtTypeMember { std::string name; VarType type; };
+
+// The payloads only some kinds of statement carry.
+struct StmtExtra {
+    // SUB / FUNCTION
+    std::vector<Param> params;
+    // DESTRUCTURE: [var1, var2, ...] = expr
+    std::vector<std::string> destruct_vars;
+    // ENUM_DECL: {name, value} pairs
+    std::vector<std::pair<std::string, int64_t>> enum_members;
+    // TYPE_DECL: {name, type} members; the methods are the statement's body
+    std::vector<StmtTypeMember> type_members;
+    // DIM x AS T(arg1, arg2)            - scalar UDT constructor args
+    // DIM arr[N] AS T(vec1, vec2)       - vectorised: vecK[i] -> arg K of slot i
+    std::vector<ExprPtr> ctor_args;
+
+    // One empty block for every statement that has none.
+    static const StmtExtra& none() {
+        static const StmtExtra empty;
+        return empty;
+    }
+};
+
 struct IfBranch {
     ExprPtr condition;           // nullptr for ELSE/SWITCH-DEFAULT
     // SWITCH multi-case labels: each pair is (low, high). high is nullptr for
@@ -277,15 +301,15 @@ struct Stmt {
     // INPUT
     // var_name
 
-    // GOTO / LABEL
+    // GOTO / LABEL; also the field name of a member assignment, the
+    // export marker of a FUNC or DIM, and the text of a REACT formula
     std::string label;
 
     // IF
     std::vector<IfBranch> branches;
 
-    // SUB / FUNCTION
+    // SUB / FUNCTION: func_name, ext().params
     std::string func_name;
-    std::vector<Param> params;
     VarType return_type = VarType::NONE;
     std::vector<StmtPtr> body;
 
@@ -308,23 +332,24 @@ struct Stmt {
     // INDEX_ASSIGN: var_name[i1][i2]...[iN] = expr
     std::vector<ExprPtr> index_chain;
 
-    // DESTRUCTURE: [var1, var2, ...] = expr
-    std::vector<std::string> destruct_vars;
-
-    // ENUM_DECL: func_name = enum name, enum_members = {name, value} pairs
-    std::vector<std::pair<std::string, int64_t>> enum_members;
-
-    // TYPE_DECL: func_name=type name, type_members={name,type}, body=method stmts
-    struct TypeMember { std::string name; VarType type; };
-    std::vector<TypeMember> type_members;
-
-    // DIM x AS T(arg1, arg2)            - scalar UDT constructor args
-    // DIM arr[N] AS T(vec1, vec2)       - vectorised: vecK[i] -> arg K of slot i
-    std::vector<ExprPtr> ctor_args;
-
     // TRY_CATCH: body=TRY block, catch_body, finally_body
     std::vector<StmtPtr> catch_body;
     std::vector<StmtPtr> finally_body;
+
+    // What only a few kinds of statement carry lives in a block of its
+    // own: ext() makes it, the readers below answer with nothing when
+    // there is none.
+    using TypeMember = StmtTypeMember;
+    std::unique_ptr<StmtExtra> x;
+    StmtExtra& ext() {
+        if (!x) x = std::make_unique<StmtExtra>();
+        return *x;
+    }
+    const std::vector<Param>& params() const { return x ? x->params : StmtExtra::none().params; }
+    const std::vector<std::string>& destruct_vars() const { return x ? x->destruct_vars : StmtExtra::none().destruct_vars; }
+    const std::vector<std::pair<std::string, int64_t>>& enum_members() const { return x ? x->enum_members : StmtExtra::none().enum_members; }
+    const std::vector<StmtTypeMember>& type_members() const { return x ? x->type_members : StmtExtra::none().type_members; }
+    const std::vector<ExprPtr>& ctor_args() const { return x ? x->ctor_args : StmtExtra::none().ctor_args; }
 
     Stmt() : kind(StmtKind::LET) {}
 };

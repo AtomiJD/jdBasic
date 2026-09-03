@@ -894,13 +894,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 default: break;  // numeric / BOOLEAN / NONE → keep heuristic
             }
         }
-        if (is_sub && stmt->params.size() == 1 && uses_forms &&
+        if (is_sub && stmt->params().size() == 1 && uses_forms &&
             is_forms_event_handler_name(stmt->func_name))
             event_handler_subs.insert(stmt->func_name);
         std::vector<int> tags;
         bool is_event_handler = is_sub && event_handler_subs.count(stmt->func_name);
-        for (size_t pi = 0; pi < stmt->params.size(); pi++) {
-            auto& p = stmt->params[pi];
+        for (size_t pi = 0; pi < stmt->params().size(); pi++) {
+            auto& p = stmt->params()[pi];
             bool sp = (!p.name.empty() && p.name.back() == '$');
             int t = sp ? 2 : 1;
             // Honour explicit `AS <type>` annotations on params. Without this,
@@ -1242,7 +1242,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         // otherwise a literal `ADD_GOLD 10` would get
                         // coerced to i64 and mis-read as a VM handle ID.
                         else if (a.kind == ExprKind::INDEX) {
-                            const std::string& pname = it->second.stmt->params[i].name;
+                            const std::string& pname = it->second.stmt->params()[i].name;
                             std::function<bool(const Expr&)> param_used_as_index =
                                 [&](const Expr& x) -> bool {
                                 if (x.kind == ExprKind::INDEX && x.left &&
@@ -1312,7 +1312,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         // it again here only to walk inner CALL expressions.
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
             std::vector<std::pair<std::string, int>> saved;
-            for (auto& p : s.params) {
+            for (auto& p : s.params()) {
                 auto it = pre_var_tags.find(p.name);
                 if (it != pre_var_tags.end()) {
                     saved.push_back({p.name, it->second});
@@ -1391,8 +1391,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             auto tit = decls.find(h.target);
             if (wit == decls.end() || tit == decls.end()) continue;
             const Stmt* wbody = wit->second.stmt;
-            if (!wbody || h.idx >= wbody->params.size()) continue;
-            const std::string fn_param = wbody->params[h.idx].name;
+            if (!wbody || h.idx >= wbody->params().size()) continue;
+            const std::string fn_param = wbody->params()[h.idx].name;
 
             std::function<void(const Expr&)> find_inner = [&](const Expr& e) {
                 if (e.kind == ExprKind::CALL)
@@ -1402,9 +1402,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         if (!e.args[a]) continue;
                         int tag = -1;
                         if (e.args[a]->kind == ExprKind::VARIABLE) {
-                            for (size_t p = 0; p < wbody->params.size() &&
+                            for (size_t p = 0; p < wbody->params().size() &&
                                                p < wit->second.tags.size(); p++)
-                                if (wbody->params[p].name == e.args[a]->str_val)
+                                if (wbody->params()[p].name == e.args[a]->str_val)
                                     tag = wit->second.tags[p];
                         } else if (is_str_expr(*e.args[a])) {
                             tag = JD_TAG_STR;
@@ -1450,11 +1450,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             auto fit = decls.find(e.func_name);
             if (fit != decls.end() && fit->second.stmt) {
                 auto& callee = *fit->second.stmt;
-                size_t n = std::min(e.args.size(), callee.params.size());
+                size_t n = std::min(e.args.size(), callee.params().size());
                 for (size_t i = 0; i < n; i++) {
                     if (!e.args[i]) continue;
                     if (!arg_is_mixed_literal(*e.args[i])) continue;
-                    auto& p = callee.params[i];
+                    auto& p = callee.params()[i];
                     if (p.type != VarType::ANY) {
                         std::cerr << "[warn] " << e.func_name << "(): arg #"
                                   << (i + 1) << " is a mixed-element array "
@@ -1525,9 +1525,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     };
     for (auto& [name, decl] : decls) {
         if (decl.return_tag != JD_TAG_F64 || !decl.stmt) continue;
-        for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
+        for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
             if (decl.tags[pi] == JD_TAG_STR &&
-                returns_param(*decl.stmt, decl.stmt->params[pi].name)) {
+                returns_param(*decl.stmt, decl.stmt->params()[pi].name)) {
                 decl.return_tag = JD_TAG_STR;
                 break;
             }
@@ -1556,8 +1556,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
         if (ambiguous) continue;
         const Stmt* wbody = wit->second.stmt;
-        if (!wbody || h.idx >= wbody->params.size()) continue;
-        const std::string fn_param = wbody->params[h.idx].name;
+        if (!wbody || h.idx >= wbody->params().size()) continue;
+        const std::string fn_param = wbody->params()[h.idx].name;
 
         std::function<bool(const Stmt&)> returns_call_through =
             [&](const Stmt& s) -> bool {
@@ -1679,9 +1679,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             // can flow ARR through. Without this, AMAP-style HOFs that
             // return an array built from an array param come back as f64
             // and the caller never sees the array.
-            for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
+            for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
                 if (decl.tags[pi] == JD_TAG_ARR || decl.tags[pi] == JD_TAG_NATIVE_MAP)
-                    local_kinds[decl.stmt->params[pi].name] = decl.tags[pi];
+                    local_kinds[decl.stmt->params()[pi].name] = decl.tags[pi];
             }
             int k = classify_return(*decl.stmt, local_kinds);
             if (k == JD_TAG_ARR || k == JD_TAG_NATIVE_MAP) {
@@ -1711,8 +1711,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         std::unordered_set<std::string> local_str_arr;
         std::unordered_set<std::string> local_str_var;
         // Seed scalar-string locals from string-typed params.
-        for (size_t pi = 0; pi < fd.stmt->params.size(); pi++) {
-            auto& p = fd.stmt->params[pi];
+        for (size_t pi = 0; pi < fd.stmt->params().size(); pi++) {
+            auto& p = fd.stmt->params()[pi];
             if (p.type == VarType::STRING ||
                 (!p.name.empty() && p.name.back() == '$'))
                 local_str_var.insert(p.name);
@@ -1874,11 +1874,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
 
         for (auto& [name, decl] : decls) {
             if (!decl.stmt) continue;
-            for (size_t pi = 0; pi < decl.stmt->params.size() && pi < decl.tags.size(); pi++) {
+            for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
                 // Don't override $-suffixed params (already STRING-typed)
                 // or AS-typed declarations - those have a real declared
                 // intent that should win.
-                const auto& p = decl.stmt->params[pi];
+                const auto& p = decl.stmt->params()[pi];
                 if (!p.name.empty() && p.name.back() == '$') continue;
                 if (p.type != VarType::NONE) continue;
                 if (body_uses_typeof_param(*decl.stmt, p.name)) {
@@ -1907,8 +1907,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (!decl.stmt) continue;
             auto sit = arg_tag_seen.find(name);
             if (sit == arg_tag_seen.end()) continue;
-            for (size_t pi = 0; pi < decl.stmt->params.size() && pi < sit->second.size(); pi++) {
-                const auto& p = decl.stmt->params[pi];
+            for (size_t pi = 0; pi < decl.stmt->params().size() && pi < sit->second.size(); pi++) {
+                const auto& p = decl.stmt->params()[pi];
                 if (!p.name.empty() && p.name.back() == '$') continue;
                 if (p.type != VarType::NONE) continue;
                 const auto& seen = sit->second[pi];
@@ -1964,7 +1964,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         LLVMValueRef fn = LLVMAddFunction(module, name.c_str(), fn_type);
         std::vector<const Expr*> defaults;
         if (decl.stmt)
-            for (auto& p : decl.stmt->params) defaults.push_back(p.default_value.get());
+            for (auto& p : decl.stmt->params()) defaults.push_back(p.default_value.get());
         user_functions[name] = { fn, decl.return_tag, decl.tags, defaults, decl.is_async };
     }
 }
@@ -2840,7 +2840,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         }
         // Also register destruct vars: [a, b, c] = expr
         if (stmt->kind == StmtKind::DESTRUCTURE) {
-            for (auto& vn : stmt->destruct_vars) {
+            for (auto& vn : stmt->destruct_vars()) {
                 if (!lookup_var(vn)) create_var(vn, JD_TAG_F64);  // f64 from array_get
             }
             // Desugared (indexed/mixed) form: register plain-variable targets
@@ -3122,7 +3122,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             TypedValue arr = codegen_expr(*stmt.expr);
             if (arr.tag != JD_TAG_ARR) break;  // not an array, can't destructure
             auto& get_fn = runtime_funcs["__array_get"];
-            for (size_t i = 0; i < stmt.destruct_vars.size(); i++) {
+            for (size_t i = 0; i < stmt.destruct_vars().size(); i++) {
                 LLVMValueRef idx = LLVMConstInt(i64_type, i, 0);
                 LLVMValueRef args[] = { arr.val, idx };
                 LLVMValueRef elem = LLVMBuildCall2(builder, get_fn.fn_type,
@@ -3132,7 +3132,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                 // string slot - without this it would alloca a double, the
                 // f64-bit-pun of the char* pointer survives the store but
                 // any subsequent string use sees garbage.
-                const std::string& vn = stmt.destruct_vars[i];
+                const std::string& vn = stmt.destruct_vars()[i];
                 bool is_str = !vn.empty() && vn.back() == '$';
                 VarInfo* vi = lookup_var(vn);
                 if (!vi) {
@@ -3479,22 +3479,22 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     bool is_evt_handler = (stmt.kind == StmtKind::SUB) &&
                           event_handler_subs.count(stmt.func_name);
     unsigned llvm_arg_idx = 0;
-    for (size_t i = 0; i < stmt.params.size() && i < fit->second.param_tags.size(); i++) {
+    for (size_t i = 0; i < stmt.params().size() && i < fit->second.param_tags.size(); i++) {
         int ptag = fit->second.param_tags[i];
-        VarInfo& vi = create_var(stmt.params[i].name, ptag);
+        VarInfo& vi = create_var(stmt.params()[i].name, ptag);
         LLVMBuildStore(builder, LLVMGetParam(current_fn, llvm_arg_idx), vi.alloca_val);
         llvm_arg_idx++;
         if (ptag == JD_TAG_RUNTIME) {
             // Allocate the tag slot here (create_var doesn't do it for us)
             // and store the second LLVM arg.
-            std::string rtag_name = stmt.params[i].name + ".rtag";
+            std::string rtag_name = stmt.params()[i].name + ".rtag";
             vi.runtime_tag_alloca = LLVMBuildAlloca(builder, i32_type, rtag_name.c_str());
             LLVMBuildStore(builder, LLVMGetParam(current_fn, llvm_arg_idx),
                            vi.runtime_tag_alloca);
             llvm_arg_idx++;
         }
         if (is_evt_handler && i == 0) {
-            map_array_vars.insert(stmt.params[i].name);
+            map_array_vars.insert(stmt.params()[i].name);
         }
     }
 
@@ -4609,18 +4609,18 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             auto init_it = user_functions.find(stmt.label + ".INIT");
             if (init_it != user_functions.end()) {
                 size_t expected = init_it->second.param_tags.size();
-                size_t got = stmt.ctor_args.size() + 1; // +THIS
-                bool emit_init = !stmt.ctor_args.empty() || expected == 1;
+                size_t got = stmt.ctor_args().size() + 1; // +THIS
+                bool emit_init = !stmt.ctor_args().empty() || expected == 1;
                 if (emit_init && got != expected) {
                     report_error(stmt.source_file(), stmt.line,
                         "SUB " + stmt.label + ".INIT expects " +
                         std::to_string(expected - 1) +
-                        " argument(s), got " + std::to_string(stmt.ctor_args.size()));
+                        " argument(s), got " + std::to_string(stmt.ctor_args().size()));
                 } else if (emit_init) {
                     std::vector<LLVMValueRef> args;
                     args.push_back(obj); // THIS as i8_ptr (param 0)
-                    for (size_t i = 0; i < stmt.ctor_args.size(); i++) {
-                        TypedValue av = codegen_expr(*stmt.ctor_args[i]);
+                    for (size_t i = 0; i < stmt.ctor_args().size(); i++) {
+                        TypedValue av = codegen_expr(*stmt.ctor_args()[i]);
                         int want_tag = (i + 1 < init_it->second.param_tags.size())
                             ? init_it->second.param_tags[i + 1] : JD_TAG_F64;
                         args.push_back(coerce_to_tag(av, want_tag).val);
@@ -4629,7 +4629,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     LLVMBuildCall2(builder, init_ft, init_it->second.fn,
                                    args.data(), (unsigned)args.size(), "");
                 }
-            } else if (!stmt.ctor_args.empty()) {
+            } else if (!stmt.ctor_args().empty()) {
                 report_error(stmt.source_file(), stmt.line,
                     "Type '" + stmt.label +
                     "' has no SUB INIT, cannot pass constructor arguments");
@@ -6001,7 +6001,7 @@ void LLVMCodegen::codegen_enum(const Stmt& stmt) {
     // Interpreter exposes both: ENUM Direction { NORTH=0 } makes both
     // 'NORTH' and 'Direction.NORTH' resolve to 0.
     const std::string& enum_name = stmt.func_name;
-    for (auto& [name, value] : stmt.enum_members) {
+    for (auto& [name, value] : stmt.enum_members()) {
         // Bare name
         LLVMValueRef bare = LLVMGetNamedGlobal(module, name.c_str());
         if (!bare) {
@@ -6031,7 +6031,7 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
     // Register type fields for member access resolution
     // String if: explicitly AS STRING, or name ends with $ (convention)
     std::vector<UDTField> fields;
-    for (auto& mem : stmt.type_members) {
+    for (auto& mem : stmt.type_members()) {
         bool is_str = (mem.type == VarType::STRING) ||
                       (!mem.name.empty() && mem.name.back() == '$');
         fields.push_back({ mem.name, is_str });
@@ -6057,7 +6057,7 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
     LLVMValueRef obj = LLVMBuildCall2(builder, new_fn.fn_type, new_fn.fn, new_args, 1, "obj");
 
     // Set default values for each field
-    for (auto& mem : stmt.type_members) {
+    for (auto& mem : stmt.type_members()) {
         LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, mem.name.c_str(), ".field");
         bool is_str = (mem.type == VarType::STRING) ||
                       (!mem.name.empty() && mem.name.back() == '$');
@@ -6105,7 +6105,7 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
             // so `n AS STRING` types correctly.
             std::vector<LLVMTypeRef> ptypes;
             std::vector<int> ptags;
-            for (auto& p : method->params) {
+            for (auto& p : method->params()) {
                 if (p.name == "THIS" || p.type == VarType::OBJECT) {
                     ptypes.push_back(i8_ptr_type);
                     ptags.push_back(3);  // ptr for UDT object

@@ -315,7 +315,7 @@ StmtPtr Parser::parse_statement() {
                     method->func_name = type_name + "." + method->func_name;
                     // Insert THIS as first parameter
                     Param this_param; this_param.name = "THIS"; this_param.type = VarType::OBJECT;
-                    method->params.insert(method->params.begin(), std::move(this_param));
+                    method->ext().params.insert(method->ext().params.begin(), std::move(this_param));
                     s->body.push_back(std::move(method));
                 } else if (check(TokenType::IDENTIFIER)) {
                     // Member declaration: Name AS Type
@@ -326,7 +326,7 @@ StmtPtr Parser::parse_statement() {
                     } else {
                         mem.type = VarType::NONE;
                     }
-                    s->type_members.push_back(std::move(mem));
+                    s->ext().type_members.push_back(std::move(mem));
                     expect_newline();
                 } else {
                     advance(); // skip unexpected
@@ -493,7 +493,7 @@ StmtPtr Parser::parse_statement() {
                         next_val = -std::stoll(expect(TokenType::INTEGER_LIT, "integer").value);
                     }
                 }
-                s->enum_members.push_back({member, next_val});
+                s->ext().enum_members.push_back({member, next_val});
                 next_val++;
                 expect_newline();
                 skip_newlines();
@@ -782,7 +782,7 @@ StmtPtr Parser::parse_statement() {
 
             if (all_simple) {
                 // Fast path (unchanged): plain variable targets.
-                for (auto& t : targets) s->destruct_vars.push_back(t->str_val);
+                for (auto& t : targets) s->ext().destruct_vars.push_back(t->str_val);
                 s->expr = std::move(val);
                 return s;
             }
@@ -1010,7 +1010,7 @@ StmtPtr Parser::parse_dim_clause(int ln) {
     s->elem_type = et;
     s->label = udt_name;
     s->expr = std::move(val);
-    s->ctor_args = std::move(ctor_args);
+    s->ext().ctor_args = std::move(ctor_args);
     s->line = ln;
     return s;
 }
@@ -1264,7 +1264,7 @@ StmtPtr Parser::parse_sub() {
     s->kind = StmtKind::SUB;
     s->func_name = name;
     s->line = ln;
-    s->params = parse_params();
+    s->ext().params = parse_params();
     expect_newline();
     skip_newlines();
 
@@ -1289,7 +1289,7 @@ StmtPtr Parser::parse_function() {
     s->kind = StmtKind::FUNCTION;
     s->func_name = name;
     s->line = ln;
-    s->params = parse_params();
+    s->ext().params = parse_params();
 
     if (match(TokenType::AS)) {
         s->return_type = parse_type();
@@ -2673,7 +2673,7 @@ void Parser::module_rename_stmt(Stmt& stmt,
         // whatever the global holds" - debugged 2026-05-20 on the DOOM
         // renderer's `DrawWallStrip(tex_name$ AS STRING)` colliding with
         // the module's `DIM tex_name$[...]`. Catch it at parse time.
-        for (auto& p : stmt.params) {
+        for (auto& p : stmt.params()) {
             if (var_map.count(p.name)) {
                 throw std::runtime_error("Parse error at line " +
                     std::to_string(stmt.line) +
@@ -2722,7 +2722,7 @@ void Parser::module_rename_stmt(Stmt& stmt,
     if (stmt.loop_cond) module_rename_expr(*stmt.loop_cond, func_map, var_map);
     for (auto& e : stmt.print_exprs) module_rename_expr(*e, func_map, var_map);
     for (auto& e : stmt.index_chain) module_rename_expr(*e, func_map, var_map);
-    for (auto& e : stmt.ctor_args) module_rename_expr(*e, func_map, var_map);
+    for (auto& e : stmt.ctor_args()) module_rename_expr(*e, func_map, var_map);
 
     // Rename in branches (IF/SWITCH).
     // SWITCH multi-case lives in `case_labels` (vector of (low, high)

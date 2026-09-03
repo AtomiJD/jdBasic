@@ -212,12 +212,12 @@ static void dump_stmt(const Stmt* s, int ind) {
     if (!s->is_while)     std::cout << " until=1";
     if (!s->print_newline) std::cout << " nonl=1";
     for (int sep : s->print_seps)        std::cout << " sep=" << sep;
-    for (auto& p : s->params)            std::cout << " p=" << ast_escape(p.name)
+    for (auto& p : s->params())            std::cout << " p=" << ast_escape(p.name)
                                                    << ":" << (int)p.type;
-    for (auto& d : s->destruct_vars)     std::cout << " dv=" << ast_escape(d);
-    for (auto& m : s->enum_members)      std::cout << " em=" << ast_escape(m.first)
+    for (auto& d : s->destruct_vars())     std::cout << " dv=" << ast_escape(d);
+    for (auto& m : s->enum_members())      std::cout << " em=" << ast_escape(m.first)
                                                    << ":" << m.second;
-    for (auto& m : s->type_members)      std::cout << " tm=" << ast_escape(m.name)
+    for (auto& m : s->type_members())      std::cout << " tm=" << ast_escape(m.name)
                                                    << ":" << (int)m.type;
     std::cout << "\n";
 
@@ -227,7 +227,7 @@ static void dump_stmt(const Stmt* s, int ind) {
     dump_expr(s->step_expr.get(), ind + 1);
     for (auto& e : s->print_exprs) dump_expr(e.get(), ind + 1);
     for (auto& e : s->index_chain) dump_expr(e.get(), ind + 1);
-    for (auto& e : s->ctor_args)   dump_expr(e.get(), ind + 1);
+    for (auto& e : s->ctor_args())   dump_expr(e.get(), ind + 1);
 
     for (auto& br : s->branches) {
         dump_pad(ind + 1);
@@ -1518,7 +1518,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                         case StmtKind::FUNCTION:
                             declared.insert(s->func_name);
                             defined_funcs.push_back(s->func_name);
-                            for (auto& p : s->params) declared.insert(p.name);
+                            for (auto& p : s->params()) declared.insert(p.name);
                             collect(s->body);
                             break;
                         case StmtKind::FOR_LOOP:
@@ -1527,7 +1527,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                             collect(s->body);
                             break;
                         case StmtKind::DESTRUCTURE:
-                            for (auto& v : s->destruct_vars) declared.insert(v);
+                            for (auto& v : s->destruct_vars()) declared.insert(v);
                             // Desugared (indexed/mixed) form carries its temp +
                             // variable targets as LET/INDEX_ASSIGN sub-statements.
                             collect(s->body);
@@ -1550,7 +1550,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                             break;
                         case StmtKind::ENUM_DECL:
                             declared.insert(s->func_name);
-                            for (auto& m : s->enum_members) declared.insert(m.first);
+                            for (auto& m : s->enum_members()) declared.insert(m.first);
                             break;
                         default: break;
                     }

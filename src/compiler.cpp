@@ -223,7 +223,7 @@ void Compiler::collect_globals_stmt(const Stmt& stmt) {
             known_globals.insert(stmt.var_name);
             break;
         case StmtKind::DESTRUCTURE:
-            for (auto& v : stmt.destruct_vars) known_globals.insert(v);
+            for (auto& v : stmt.destruct_vars()) known_globals.insert(v);
             break;
         case StmtKind::INDEX_ASSIGN:
             if (!stmt.var_name.empty()) known_globals.insert(stmt.var_name);
@@ -248,7 +248,7 @@ void Compiler::collect_globals_stmt(const Stmt& stmt) {
             known_globals.insert(stmt.var_name);
             break;
         case StmtKind::ENUM_DECL:
-            for (auto& [member, val] : stmt.enum_members)
+            for (auto& [member, val] : stmt.enum_members())
                 known_globals.insert(stmt.func_name + "." + member);
             break;
         default: break;
@@ -287,7 +287,7 @@ void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& m
                     type_inits.insert(m->func_name);
                     // Parser prepended THIS as param 0; user-param count is
                     // params.size() - 1. Zero-arg INIT means params.size()==1.
-                    if (m->params.size() <= 1)
+                    if (m->params().size() <= 1)
                         type_init_zero_arg.insert(m->func_name);
                 } else if (m->func_name == stmt->func_name + ".DISPOSE") {
                     type_disposes.insert(m->func_name);
@@ -408,12 +408,12 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                 if (!method) continue;
                 if (method->func_name == stmt.func_name + ".INIT") {
                     type_inits.insert(method->func_name);
-                    if (method->params.size() <= 1)
+                    if (method->params().size() <= 1)
                         type_init_zero_arg.insert(method->func_name);
                 } else if (method->func_name == stmt.func_name + ".DISPOSE") {
                     // DISPOSE must take only THIS - no user parameters.
                     // Parser already prepended THIS, so params.size() must be 1.
-                    if (method->params.size() != 1) {
+                    if (method->params().size() != 1) {
                         throw std::runtime_error("Line " + std::to_string(method->line) +
                             ": SUB DISPOSE must not take parameters");
                     }
@@ -443,7 +443,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             cc.emit(OpCode::INDEX_SET, 0);
 
             // Set default values for each member
-            for (auto& mem : stmt.type_members) {
+            for (auto& mem : stmt.type_members()) {
                 cc.emit(OpCode::DUP, 0); // keep object on stack
                 uint16_t key_idx = cc.add_constant(Value::make_string(mem.name));
                 cc.emit(OpCode::LOAD_CONST, 0); cc.emit_u16(key_idx, 0);
@@ -726,7 +726,7 @@ void Compiler::compile_stmt(const Stmt& stmt) {
         }
         case StmtKind::ENUM_DECL: {
             // ENUM creates global constants: ENUMNAME.MEMBER = value
-            for (auto& [member, val] : stmt.enum_members) {
+            for (auto& [member, val] : stmt.enum_members()) {
                 std::string full_name = stmt.func_name + "." + member;
                 emit_constant(Value::make_i64(val), stmt.line);
                 uint16_t slot = resolve_var(full_name);
@@ -861,7 +861,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
         std::string init_name = stmt.label + ".INIT";
         bool init_known = type_inits.count(init_name) > 0;
         bool emit_init = false;
-        if (!stmt.ctor_args.empty()) {
+        if (!stmt.ctor_args().empty()) {
             if (!init_known) {
                 throw std::runtime_error("Line " + std::to_string(stmt.line) +
                     ": type '" + stmt.label +
@@ -873,11 +873,11 @@ void Compiler::compile_dim(const Stmt& stmt) {
         }
         if (emit_init) {
             current_chunk().emit(OpCode::DUP, stmt.line);
-            for (auto& a : stmt.ctor_args) compile_expr(*a);
+            for (auto& a : stmt.ctor_args()) compile_expr(*a);
             uint16_t init_idx = current_chunk().add_constant(Value::make_string(init_name));
             current_chunk().emit(OpCode::CALL, stmt.line);
             current_chunk().emit_u16(init_idx, stmt.line);
-            current_chunk().emit_u8(static_cast<uint8_t>(stmt.ctor_args.size() + 1), stmt.line);
+            current_chunk().emit_u8(static_cast<uint8_t>(stmt.ctor_args().size() + 1), stmt.line);
             current_chunk().emit(OpCode::POP, stmt.line);
         }
     } else {
@@ -1224,11 +1224,11 @@ void Compiler::compile_sub(const Stmt& stmt) {
             stmt.func_name + " - choose another name");
     FuncProto proto;
     proto.name = stmt.func_name;
-    proto.arity = static_cast<int>(stmt.params.size());
-    fill_param_defaults(proto, stmt.params);
+    proto.arity = static_cast<int>(stmt.params().size());
+    fill_param_defaults(proto, stmt.params());
     proto.is_sub = true;
     proto.is_exported = exported;
-    for (auto& p : stmt.params) proto.param_names.push_back(p.name);
+    for (auto& p : stmt.params()) proto.param_names.push_back(p.name);
 
     // Push a new scope for the function body
     scopes.push_back(CompilerScope{});
@@ -1238,7 +1238,7 @@ void Compiler::compile_sub(const Stmt& stmt) {
         ? stmt.source_file() : scopes[0].chunk.source_file;
 
     // Register parameters as local variables (always local, even if name matches a global)
-    for (auto& p : stmt.params) {
+    for (auto& p : stmt.params()) {
         resolve_local(p.name);
         current_scope().params.insert(p.name);
     }
@@ -1266,12 +1266,12 @@ void Compiler::compile_function(const Stmt& stmt) {
             stmt.func_name + " - choose another name");
     FuncProto proto;
     proto.name = stmt.func_name;
-    proto.arity = static_cast<int>(stmt.params.size());
-    fill_param_defaults(proto, stmt.params);
+    proto.arity = static_cast<int>(stmt.params().size());
+    fill_param_defaults(proto, stmt.params());
     proto.is_sub = false;
     proto.is_exported = exported;
     proto.is_async = stmt.is_async_func;
-    for (auto& p : stmt.params) proto.param_names.push_back(p.name);
+    for (auto& p : stmt.params()) proto.param_names.push_back(p.name);
 
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
@@ -1280,7 +1280,7 @@ void Compiler::compile_function(const Stmt& stmt) {
         ? stmt.source_file() : scopes[0].chunk.source_file;
 
     // Register parameters as local variables (always local, even if name matches a global)
-    for (auto& p : stmt.params) {
+    for (auto& p : stmt.params()) {
         resolve_local(p.name);
         current_scope().params.insert(p.name);
     }
@@ -1319,11 +1319,11 @@ void Compiler::compile_destructure(const Stmt& stmt) {
     bool is_global = (scopes.size() <= 1);
 
     // For each target variable: DUP array, push index, INDEX_GET, STORE
-    for (size_t i = 0; i < stmt.destruct_vars.size(); i++) {
+    for (size_t i = 0; i < stmt.destruct_vars().size(); i++) {
         current_chunk().emit(OpCode::DUP, stmt.line);
         emit_constant(Value::make_i64(static_cast<int64_t>(i)), stmt.line);
         current_chunk().emit(OpCode::INDEX_GET, stmt.line);
-        uint16_t slot = resolve_var(stmt.destruct_vars[i]);
+        uint16_t slot = resolve_var(stmt.destruct_vars()[i]);
         current_chunk().emit(is_global ? OpCode::STORE_GLOBAL : OpCode::STORE_VAR, stmt.line);
         current_chunk().emit_u16(slot, stmt.line);
     }
