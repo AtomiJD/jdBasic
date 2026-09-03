@@ -5,7 +5,10 @@
 
 class Lexer {
 public:
+    // The source is read in place for the lexer's lifetime, so it has to
+    // outlive it; a temporary is refused at compile time.
     explicit Lexer(const std::string& source);
+    explicit Lexer(std::string&&) = delete;
     std::vector<Token> tokenize();
 
 private:
