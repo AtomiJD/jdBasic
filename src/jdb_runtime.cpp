@@ -586,7 +586,7 @@ JdbArray* jdb_array_reduce_axis(JdbArray* arr, int64_t dim, int32_t op) {
 }
 
 double jdb_array_product(JdbArray* arr) {
-    if (!arr || arr->length == 0) return 0.0;
+    if (!arr) return 1.0;
     double s = 1.0;
     if (arr->flags & 1) {
         for (int64_t i = 0; i < arr->length; i++)
@@ -698,7 +698,12 @@ JDB_ARRAY_FF(round, round)
 JDB_ARRAY_FF(trunc, trunc)
 
 int64_t jdb_array_all(JdbArray* arr) {
-    if (!arr || arr->length == 0) return 0;
+    if (!arr) return 1;
+    if (arr->flags & 1) {
+        for (int64_t i = 0; i < arr->length; i++)
+            if (!jdb_array_all(decode_inner(arr->data[i]))) return 0;
+        return 1;
+    }
     for (int64_t i = 0; i < arr->length; i++) if (arr->data[i] == 0.0) return 0;
     return 1;
 }
