@@ -119,10 +119,12 @@ SUB DRAWCAPSULE(x, y, kind, lit)
         IF kind = 1 THEN DRAWCOLOR 255, 230, 60
         IF kind = 2 THEN DRAWCOLOR 60, 230, 230
         IF kind = 3 THEN DRAWCOLOR 90, 120, 255
+        IF kind = 4 THEN DRAWCOLOR 60, 230, 90
         RECT x - 5, y - 5, 11, 11
         IF kind = 1 THEN TEXT x - 3, y - 3, "R"
         IF kind = 2 THEN TEXT x - 3, y - 3, "W"
         IF kind = 3 THEN TEXT x - 3, y - 3, "S"
+        IF kind = 4 THEN TEXT x - 3, y - 3, "+"
     ENDIF
 ENDSUB
 
@@ -180,7 +182,7 @@ DO WHILE go = 1
     CENTERTEXT(74, "HIGH " + STR$(hiscore), 255, 230, 60)
     CENTERTEXT(90, "FIRE TO START", 130, 130, 170)
     IF pad > 0 THEN CENTERTEXT(110, JOY.NAME$(0), 90, 90, 120)
-    CENTERTEXT(140, "R RAPID  W WIDE  S SHIELD", 90, 90, 120)
+    CENTERTEXT(140, "R RAPID  W WIDE  S SHIELD  + SHIP", 90, 90, 120)
     CENTERTEXT(160, "Q TO QUIT", 90, 90, 120)
     CENTERTEXT(200, "HEAP " + STR$(SYS.FREE()), 60, 60, 80)
     PLAY "T160 O4 L8 C E G > C4 < G4 C2"
@@ -247,8 +249,8 @@ DO WHILE go = 1
         IF kills >= need THEN
             wave = wave + 1
             kills = 0
-            need = 6 + wave * 4
-            active = 3 + wave
+            need = 5 + wave * 3
+            active = 2 + wave
             IF active > NENE THEN active = NENE
             FOR i = 0 TO NENE - 1
                 IF ealive[i] = 1 THEN DRAWENEMY(ex[i], ey[i], 0, 0, 0)
@@ -272,8 +274,19 @@ DO WHILE go = 1
                 IF wave >= 3 AND RND(1) < 0.3 THEN et[i] = 2
                 ex[i] = 20 + INT(RND(1) * 280)
                 ey[i] = TOPY - INT(RND(1) * 100)
-                ev[i] = 0.5 + wave * 0.15 + RND(1) * 0.3
+                ev[i] = 0.3 + wave * 0.12 + RND(1) * 0.2
             NEXT i
+            ' Every third wave opens with a spare ship drifting down.
+            IF wave MOD 3 = 0 THEN
+                FOR k = 0 TO NPOW - 1
+                    IF cy[k] < 0 THEN
+                        cx[k] = 40 + INT(RND(1) * 240)
+                        cy[k] = TOPY
+                        ck[k] = 4
+                        EXITFOR
+                    ENDIF
+                NEXT k
+            ENDIF
             banner = 60
             hud = 1
             PLAY "T200 O5 L16 C E G > C8"
@@ -552,6 +565,7 @@ DO WHILE go = 1
                     IF ck[i] = 1 THEN rapid = RAPIDFRAMES
                     IF ck[i] = 2 THEN wide = WIDEFRAMES
                     IF ck[i] = 3 THEN shield = 1
+                    IF ck[i] = 4 AND lives < 5 THEN lives = lives + 1
                     score = score + 50
                     hud = 1
                     PLAY "T240 O5 L32 C E G > C E G"
