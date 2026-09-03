@@ -1,0 +1,3 @@
+' Runs at power-on through AUTORUN: the USB keyboard speaks German.
+KBD.LAYOUT "DE"
+PRINT "keyboard: "; KBD.LAYOUT()
