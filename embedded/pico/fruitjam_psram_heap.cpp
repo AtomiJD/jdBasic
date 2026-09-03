@@ -38,14 +38,17 @@ extern "C" unsigned fruitjam_psram_reserved(void);
 // Nothing goes to PSRAM by size. It goes there by *scope*: the caller
 // marks the stretch of work whose allocations are transient - lexing and
 // parsing, where the tokens and the syntax tree are built, read once by
-// the compiler and thrown away - and everything asked for inside it is
-// served from the pool. The runtime's own structures, which are asked
-// for outside any scope, stay in SRAM where they are fast.
+// the compiler and thrown away. The runtime's own structures, which are
+// asked for outside any scope, stay in SRAM where they are fast.
 //
-// This is the safe half of what was tried by size earlier: the value
-// stack, the chunk and the globals never move, so nothing with a
-// deadline ever waits on the memory controller.
+// Inside the scope, requests are served from a bump arena carved out of
+// the pool: an allocation advances a pointer, a release gives back only
+// the most recent block, and the arena starts over empty when the next
+// outermost scope opens. Whatever the scope left alive - an error
+// message on its way out - stays readable until then. A request the
+// arena cannot hold falls through to the pool.
 static int g_scope = 0;
+static int g_paused = 0;
 
 namespace {
 
@@ -64,7 +67,25 @@ size_t    g_bytes = 0;
 size_t    g_in_use = 0;
 size_t    g_peak = 0;
 
+// The arena: one block of the pool, handed out front to back.
+const size_t ARENA_BYTES = 3u << 20;
+uint8_t* g_arena = nullptr;
+size_t   g_arena_size = 0;
+size_t   g_arena_top = 0;
+size_t   g_arena_last = (size_t)-1;
+
 inline size_t align8(size_t n) { return (n + 7u) & ~(size_t)7u; }
+
+// Pool bytes in use, the arena counted by what it has handed out rather
+// than by the block it sits in.
+inline size_t bytes_in_use() {
+    return g_in_use - (g_arena ? g_arena_size : 0) + g_arena_top;
+}
+
+inline void note_peak() {
+    size_t u = bytes_in_use();
+    if (u > g_peak) g_peak = u;
+}
 
 void heap_start() {
     if (g_first || !psram_is_available()) return;
@@ -100,7 +121,7 @@ void* psram_alloc(size_t want) {
         }
         b->used = 1;
         g_in_use += b->size;
-        if (g_in_use > g_peak) g_peak = g_in_use;
+        note_peak();
         return b + 1;
     }
     return nullptr;
@@ -124,6 +145,43 @@ void psram_free(void* p) {
             s->size += sizeof(Block) + s->next->size;
             s->next = s->next->next;
         }
+}
+
+void arena_start() {
+    if (g_arena) return;
+    heap_start();
+    if (!g_first) return;
+    void* p = psram_alloc(ARENA_BYTES);
+    if (!p) return;
+    g_arena = (uint8_t*)p;
+    g_arena_size = ARENA_BYTES;
+}
+
+inline bool in_arena(void* p) {
+    return g_arena && (uint8_t*)p >= g_arena && (uint8_t*)p < g_arena + g_arena_size;
+}
+
+void* arena_alloc(size_t n) {
+    n = align8(n);
+    if (!g_arena || g_arena_top + n > g_arena_size) return nullptr;
+    void* p = g_arena + g_arena_top;
+    g_arena_last = g_arena_top;
+    g_arena_top += n;
+    note_peak();
+    return p;
+}
+
+void arena_free(void* p) {
+    size_t off = (size_t)((uint8_t*)p - g_arena);
+    if (off == g_arena_last) {
+        g_arena_top = off;
+        g_arena_last = (size_t)-1;
+    }
+}
+
+void arena_reset() {
+    g_arena_top = 0;
+    g_arena_last = (size_t)-1;
 }
 
 } // namespace
@@ -166,15 +224,26 @@ extern "C" int fruitjam_psram_torture(char* out, int cap, int rounds) {
 }
 
 // Nestable, because a module IMPORT lexes and parses inside a parse.
-extern "C" void jdb_transient_begin(void) { g_scope++; }
+// The arena is emptied when the outermost scope opens, not when it
+// closes.
+extern "C" void jdb_transient_begin(void) {
+    if (g_scope++ == 0) {
+        arena_start();
+        arena_reset();
+    }
+}
 extern "C" void jdb_transient_end(void)   { if (g_scope > 0) g_scope--; }
+// A pause inside the scope routes requests to SRAM again without
+// touching the arena.
+extern "C" void jdb_transient_pause(void)  { g_paused++; }
+extern "C" void jdb_transient_resume(void) { if (g_paused > 0) g_paused--; }
 
 // Bytes in use in the pool right now, and the most that were in use
 // since the last reset of the mark.
-extern "C" unsigned fruitjam_psram_in_use(void) { return (unsigned)g_in_use; }
+extern "C" unsigned fruitjam_psram_in_use(void) { return (unsigned)bytes_in_use(); }
 extern "C" unsigned fruitjam_psram_peak(int reset) {
     unsigned p = (unsigned)g_peak;
-    if (reset) g_peak = g_in_use;
+    if (reset) g_peak = bytes_in_use();
     return p;
 }
 
@@ -204,8 +273,9 @@ void  jdb_psram_test_free(void* p)   { if (p) psram_free(p); }
 #else
 static void* jdb_alloc(size_t n) {
     if (n == 0) n = 1;
-    if (g_scope > 0) {
-        void* p = psram_alloc(n);
+    if (g_scope > 0 && g_paused == 0) {
+        void* p = arena_alloc(n);
+        if (!p) p = psram_alloc(n);
         if (p) return p;
     }
     void* p = malloc(n);
@@ -216,7 +286,8 @@ static void* jdb_alloc(size_t n) {
 
 static void jdb_release(void* p) {
     if (!p) return;
-    if (is_ours(p)) psram_free(p);
+    if (in_arena(p)) arena_free(p);
+    else if (is_ours(p)) psram_free(p);
     else free(p);
 }
 

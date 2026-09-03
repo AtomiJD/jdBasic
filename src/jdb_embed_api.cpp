@@ -305,14 +305,17 @@ extern "C" void jdb_load_trace(const char* stage);
 // are gone before the program runs.
 extern "C" __attribute__((weak)) void jdb_transient_begin(void) {}
 extern "C" __attribute__((weak)) void jdb_transient_end(void) {}
+extern "C" __attribute__((weak)) void jdb_transient_pause(void) {}
+extern "C" __attribute__((weak)) void jdb_transient_resume(void) {}
 struct TransientScope {
     TransientScope()  { jdb_transient_begin(); }
     ~TransientScope() { jdb_transient_end(); }
 };
-// Shuts the scope again for the stretch that builds something lasting.
+// Routes the stretch that builds something lasting back to ordinary
+// memory, with the scope still open around it.
 struct TransientPause {
-    TransientPause()  { jdb_transient_end(); }
-    ~TransientPause() { jdb_transient_begin(); }
+    TransientPause()  { jdb_transient_pause(); }
+    ~TransientPause() { jdb_transient_resume(); }
 };
 #define JDB_TRANSIENT_SCOPE TransientScope jdb_ts_
 #define JDB_TRANSIENT_PAUSE TransientPause jdb_tp_
@@ -506,6 +509,10 @@ JDB_EMBED_API JdbEmbed* jdb_embed_init(void) {
     auto* e = new (std::nothrow) JdbEmbedImpl();
     if (!e) return nullptr;
     setup(e);
+    // Tables built on first use have to exist before the first transient
+    // scope opens, or they would be built in the scope's arena and lost
+    // with it.
+    (void)keywords();
     return reinterpret_cast<JdbEmbed*>(e);
 }
 

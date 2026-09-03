@@ -55,14 +55,17 @@ static unsigned fruitjam_psram_in_use(void) { return 0; }
 static unsigned fruitjam_psram_peak(int) { return 0; }
 #endif
 extern "C" void jdb_load_trace(const char* stage) {
+    static uint32_t t0 = 0;
     struct mallinfo mi = mallinfo();
     char here;
-    // The transient pool's high-water mark restarts with every load.
-    if (strcmp(stage, "enter") == 0) fruitjam_psram_peak(1);
-    printf("[load] %-9s used %7u free %6u pool %6u peak %6u stack %6u\n", stage,
+    uint32_t now = time_us_32();
+    // The transient pool's high-water mark and the clock restart with
+    // every load.
+    if (strcmp(stage, "enter") == 0) { fruitjam_psram_peak(1); t0 = now; }
+    printf("[load] %-9s used %7u free %6u pool %6u peak %6u stack %6u t %8u us\n", stage,
            (unsigned)mi.uordblks, (unsigned)mi.fordblks,
            fruitjam_psram_in_use(), fruitjam_psram_peak(0),
-           (unsigned)(&__StackTop - &here));
+           (unsigned)(&__StackTop - &here), (unsigned)(now - t0));
     fflush(NULL);
 }
 
