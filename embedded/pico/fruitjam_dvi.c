@@ -33,6 +33,7 @@
 #include "hardware/dma.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "hardware/structs/bus_ctrl.h"
 #include "hardware/structs/hstx_ctrl.h"
 #include "hardware/structs/hstx_fifo.h"
@@ -190,10 +191,26 @@ static uint32_t g_last_wrap = 0;
 static uint32_t g_hstx_wof = 0;
 static uint32_t g_dma_err = 0;
 
+// FIFO level at entry to the frame interrupt, and each frame's deviation
+// from the 16666.67 us period as the microsecond timer reads it.
+#define FRAME_PERIOD_US 16667u
+static uint32_t g_lvl_min = 0xFFFFFFFFu;
+static uint32_t g_lvl_zero = 0;
+static uint32_t g_lvl_zero_frame = 0;
+static int32_t  g_dev_long = 0;
+static int32_t  g_dev_short = 0;
+static uint32_t g_dev_over2 = 0;
+static uint32_t g_dev_over10 = 0;
+static int32_t  g_dev_last = 0;
+static uint32_t g_dev_last_frame = 0;
+static uint32_t g_dev_last_lvl = 0;
+static uint32_t g_meas_frames = 0;
+
 // The null trigger at the end of the list lands here. Everything the
 // picture needs has already happened; this only aims the command channel
 // back at the top of the list and lets it go again.
 static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
+    uint32_t lvl = hstx_fifo_hw->stat & HSTX_FIFO_STAT_LEVEL_BITS;
     dma_hw->intr = 1u << g_ch_pixel;
     dma_hw->ch[g_ch_cmd].al3_read_addr_trig = (uintptr_t)g_cmds;
 
@@ -201,6 +218,23 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
     g_frame_us = now - g_last_wrap;
     g_last_wrap = now;
     g_frames++;
+
+    if (g_frames > 4) {
+        g_meas_frames++;
+        if (lvl < g_lvl_min) g_lvl_min = lvl;
+        if (lvl == 0) { g_lvl_zero++; g_lvl_zero_frame = g_frames; }
+        int32_t dev = (int32_t)g_frame_us - (int32_t)FRAME_PERIOD_US;
+        if (dev > g_dev_long)  g_dev_long = dev;
+        if (dev < g_dev_short) g_dev_short = dev;
+        uint32_t mag = dev < 0 ? (uint32_t)-dev : (uint32_t)dev;
+        if (mag > 2) {
+            g_dev_over2++;
+            g_dev_last = dev;
+            g_dev_last_frame = g_frames;
+            g_dev_last_lvl = lvl;
+        }
+        if (mag > 10) g_dev_over10++;
+    }
     // A frame that took a fifth longer than it should have. One of these
     // is enough for a monitor to let go and spend a second or two
     // finding the signal again, which is what a blackout in the middle
@@ -249,6 +283,34 @@ uint32_t fruitjam_dvi_shortest(void) { return g_frame_shortest == 0xFFFFFFFFu ? 
 uint32_t fruitjam_dvi_sys_hz(void)   { return clock_get_hz(clk_sys); }
 uint32_t fruitjam_dvi_wof(void)      { return g_hstx_wof; }
 uint32_t fruitjam_dvi_dma_err(void)  { return g_dma_err; }
+
+// Lowest FIFO level at the frame interrupt, how often it was empty,
+// the widest frame deviations and how many frames exceeded 2 and 10 us,
+// and the last such frame with the level seen then.
+int fruitjam_dvi_jitter(char* out, int cap, int reset) {
+    unsigned mn = g_lvl_min == 0xFFFFFFFFu ? 0 : (unsigned)g_lvl_min;
+    int w = snprintf(out, cap,
+        "irq margin low %u words, empty %u (frame %u); "
+        "frame %+d/%+d us, over 2us %u, over 10us %u, of %u; "
+        "last %+d us at frame %u, margin %u",
+        mn, (unsigned)g_lvl_zero, (unsigned)g_lvl_zero_frame,
+        (int)g_dev_long, (int)g_dev_short,
+        (unsigned)g_dev_over2, (unsigned)g_dev_over10, (unsigned)g_meas_frames,
+        (int)g_dev_last, (unsigned)g_dev_last_frame, (unsigned)g_dev_last_lvl);
+    if (reset) {
+        uint32_t saved = save_and_disable_interrupts();
+        g_lvl_min = 0xFFFFFFFFu;
+        g_lvl_zero = 0;
+        g_lvl_zero_frame = 0;
+        g_dev_long = g_dev_short = 0;
+        g_dev_over2 = g_dev_over10 = 0;
+        g_dev_last = 0;
+        g_dev_last_frame = g_dev_last_lvl = 0;
+        g_meas_frames = 0;
+        restore_interrupts(saved);
+    }
+    return w;
+}
 uint32_t fruitjam_dvi_csr(void)    { return hstx_ctrl_hw->csr; }
 uint32_t fruitjam_dvi_expand(void) { return hstx_ctrl_hw->expand_shift; }
 uint32_t fruitjam_dvi_ctrl(void)   { return dma_hw->ch[g_ch_pixel].al1_ctrl; }

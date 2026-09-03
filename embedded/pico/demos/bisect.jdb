@@ -1,0 +1,45 @@
+' Which half of the pad is doing it.
+'
+' The same drawing load as the game, at the same rate, but it never asks
+' the pad anything. If the picture still breaks, the pad's mere presence
+' on the bus is the cause - the host library polls it whether or not a
+' program looks. If it stops breaking, the asking is the cause and that
+' is ours to throttle.
+'
+' q stops it.
+
+GFX.CONSOLE 0
+GFX.CLEAR 0
+
+N = 40
+W = GFX.WIDTH()
+H = GFX.HEIGHT()
+
+DIM sx[N]
+DIM sy[N]
+DIM sv[N]
+
+FOR i = 0 TO N - 1
+  sx[i] = RND() * W
+  sy[i] = RND() * H
+  sv[i] = 1 + RND() * 4
+NEXT i
+
+DO
+  FOR i = 0 TO N - 1
+    DRAWCOLOR 0, 0, 0
+    LINE sx[i], sy[i], sx[i] + 6, sy[i]
+    sx[i] = sx[i] + sv[i]
+    IF sx[i] >= W - 8 THEN
+      sx[i] = 0
+      sy[i] = RND() * H
+    ENDIF
+    DRAWCOLOR 90, 160, 255
+    LINE sx[i], sy[i], sx[i] + 6, sy[i]
+  NEXT i
+  SLEEP 16
+LOOP WHILE GFX.KEYSTATE(113) = FALSE
+
+GFX.CLEAR 0
+GFX.CONSOLE 1
+PRINT "stopped"

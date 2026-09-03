@@ -57,6 +57,10 @@ int fruitjam_usb_key_count(void);
 int fruitjam_usb_diag(char* out, int cap);
 int fruitjam_usb_time(char* out, int cap);
 int fruitjam_usb_frame(char* out, int cap);
+int fruitjam_dvi_fifo(char* out, int cap, int reset);
+int fruitjam_dvi_jitter(char* out, int cap, int reset);
+void fruitjam_dvi_probe_rate(int n);
+void fruitjam_pad_rate(int ms);
 int fruitjam_pad_count(void);
 int fruitjam_pad_raw(int idx, char* out, int cap);
 int fruitjam_pad_name(int idx, char* out, int cap);
@@ -266,6 +270,38 @@ void register_fruitjam_gfx(VM& vm) {
     vm.register_native("SYS.RESET$", 0, 0, [](const std::vector<Value>&) -> Value {
         char b[96];
         fruitjam_reset_why(b, sizeof b);
+        return Value::make_string(b);
+    });
+    // How close the serialiser came to running dry. A FIFO that empties
+    // breaks the picture without moving a single frame boundary, which
+    // the frame counters therefore cannot show. Pass 1 to start a fresh
+    // measurement.
+    vm.register_native("DVI.FIFO$", 0, 1, [](const std::vector<Value>& args) -> Value {
+        int rst = args.size() >= 1 ? (int)args[0].to_double() : 0;
+        char b[96];
+        fruitjam_dvi_fifo(b, sizeof b, rst);
+        return Value::make_string(b);
+    });
+    // Looks per millisecond at the FIFO. Every look is a read on the
+    // bus that feeds it, so this is a dial for adding contention on
+    // purpose: 0 is silent, 200 is loud.
+    // Milliseconds between asking a pad for its next report. 0 stops
+    // asking, which is what separates the pad's own place on the bus
+    // from the traffic we cause by talking to it.
+    vm.register_native("USB.PADRATE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        fruitjam_pad_rate((int)args[0].to_double());
+        return Value();
+    });
+    vm.register_native("DVI.PROBE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        fruitjam_dvi_probe_rate((int)args[0].to_double());
+        return Value();
+    });
+    // FIFO level at the frame interrupt and the frame's deviation from
+    // its period. Pass 1 to reset the counters.
+    vm.register_native("DVI.JITTER$", 0, 1, [](const std::vector<Value>& args) -> Value {
+        int rst = args.size() >= 1 ? (int)args[0].to_double() : 0;
+        char b[192];
+        fruitjam_dvi_jitter(b, sizeof b, rst);
         return Value::make_string(b);
     });
     vm.register_native("DVI.ERR$", 0, 0, [](const std::vector<Value>&) -> Value {

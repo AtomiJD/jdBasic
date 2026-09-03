@@ -29,6 +29,7 @@
 #include "pico/stdlib.h"
 #include "pico/stdio/driver.h"
 #include "hardware/dma.h"
+#include "hardware/structs/hstx_fifo.h"
 #include "pico/multicore.h"
 #include "pico/flash.h"
 #include "pio_usb.h"
@@ -102,12 +103,24 @@ int fruitjam_usb_devices(void)      { return g_devices; }
 
 static void usb_task_timed(void);
 static void usb_pump(void);
+static void pads_rearm(void);
+// Milliseconds between asking a pad again. Zero stops asking at all,
+// which is how the pad's own traffic gets told apart from ours.
+static volatile uint32_t g_pad_rate_ms = 8;
 static volatile uint32_t g_task_last = 0;
 static volatile uint32_t g_f_last = 0;
 static volatile uint32_t g_f_calls = 0;
 static volatile uint32_t g_f_late = 0;
 static volatile uint32_t g_f_worst = 0;
 static volatile uint32_t g_f_dur_worst = 0;
+static volatile uint32_t g_fifo_min = 0xFFFFFFFFu;
+static volatile uint32_t g_fifo_dry = 0;
+static volatile uint32_t g_fifo_seen = 0;
+// How many times a millisecond the FIFO is looked at. Each look is a
+// read on the peripheral bus, which is the same bus the DMA uses to
+// feed that FIFO - so this number is also a way of adding known
+// contention on purpose and watching what it does to the picture.
+static volatile uint32_t g_fifo_rate = 0;
 static volatile uint64_t g_f_total = 0;
 // Counted, not just tracked: a device that leaves the bus and comes back
 // is the difference between a keyboard that was disturbed and one that
@@ -262,6 +275,27 @@ static void usb_task_timed(void) {
     if (d > 4000u) g_task_slow++;
 }
 
+void fruitjam_dvi_probe_rate(int n) {
+    g_fifo_rate = n < 0 ? 0 : (unsigned)n;
+}
+
+int fruitjam_dvi_fifo(char* out, int cap, int reset) {
+    unsigned mn = g_fifo_min == 0xFFFFFFFFu ? 0 : (unsigned)g_fifo_min;
+    int w = snprintf(out, cap, "fifo low %u, dry %u of %u, probe %u",
+                     mn, (unsigned)g_fifo_dry, (unsigned)g_fifo_seen,
+                     (unsigned)g_fifo_rate);
+    if (reset) {
+        g_fifo_min = 0xFFFFFFFFu;
+        g_fifo_dry = 0;
+        g_fifo_seen = 0;
+    }
+    return w;
+}
+
+void fruitjam_pad_rate(int ms) {
+    g_pad_rate_ms = ms < 0 ? 0 : (unsigned)ms;
+}
+
 int fruitjam_usb_frame(char* out, int cap) {
     unsigned mean = g_f_calls ? (unsigned)(g_f_total / g_f_calls) : 0;
     return snprintf(out, cap,
@@ -282,12 +316,27 @@ int fruitjam_usb_time(char* out, int cap) {
 // keyboard alive across an operation that reads no keys.
 void fruitjam_usb_pump(void) { usb_pump(); }
 
+// Often and briefly, not seldom and long. Every call reaches into the
+// host controller's registers, which is the bus the DMA feeds the
+// picture over, and what hurts a FIFO with one and a third microseconds
+// of slack is the length of a single uninterrupted block rather than
+// the number of them. Stretching this to two milliseconds took the mean
+// call from thirteen microseconds to fifty six and made the blackouts
+// worse, which is the same total work in worse shape.
+#define PUMP_EVERY_US 500u
+
 static void usb_pump(void) {
     static uint32_t last = 0;
+    static uint32_t last_arm = 0;
     uint32_t now = time_us_32();
-    if (g_up && (uint32_t)(now - last) >= 500u) {
+    if (g_up && (uint32_t)(now - last) >= PUMP_EVERY_US) {
         last = now;
         usb_task_timed();
+        if (g_pad_rate_ms &&
+            (uint32_t)(now - last_arm) >= g_pad_rate_ms * 1000u) {
+            last_arm = now;
+            pads_rearm();
+        }
     }
 }
 
@@ -360,6 +409,7 @@ void tuh_umount_cb(uint8_t dev_addr)  { (void)dev_addr; if (g_devices) g_devices
 
 typedef struct {
     uint8_t used;
+    uint8_t needs_arm;
     uint8_t dev_addr;
     uint8_t instance;
     uint8_t len;
@@ -486,6 +536,16 @@ int fruitjam_usb_diag(char* out, int cap) {
     return at;
 }
 
+// Deferred from the report callback, so the pad is polled at the rate a
+// game reads it rather than the rate the bus will allow.
+static void pads_rearm(void) {
+    for (int i = 0; i < PAD_MAX; i++) {
+        if (!g_pads[i].used || !g_pads[i].needs_arm) continue;
+        g_pads[i].needs_arm = 0;
+        tuh_hid_receive_report(g_pads[i].dev_addr, g_pads[i].instance);
+    }
+}
+
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
                       uint8_t const* desc_report, uint16_t desc_len) {
     (void)desc_report; (void)desc_len;
@@ -500,6 +560,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance,
             g_pads[i].instance = instance;
             g_pads[i].len = 0;
             g_pads[i].count = 0;
+            g_pads[i].needs_arm = 0;
             g_pads[i].vid = g_pads[i].pid = 0;
             tuh_vid_pid_get(dev_addr, &g_pads[i].vid, &g_pads[i].pid);
             break;
@@ -525,9 +586,21 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
         pad->count++;
     }
     if (tuh_hid_interface_protocol(dev_addr, instance) == HID_ITF_PROTOCOL_KEYBOARD
-        && len >= sizeof(hid_keyboard_report_t))
+        && len >= sizeof(hid_keyboard_report_t)) {
         handle_kbd((const hid_keyboard_report_t*)report);
-    tuh_hid_receive_report(dev_addr, instance);
+        tuh_hid_receive_report(dev_addr, instance);
+        return;
+    }
+
+    // A pad is asked again on a timer rather than straight away. Every
+    // packet makes the USB library spin on PIO registers, and that is
+    // the same bus the DMA uses to feed the serialiser's FIFO - which
+    // holds eight words, about one and a third microseconds of picture.
+    // Enough of that traffic empties it, and an empty FIFO breaks the
+    // image without moving a single frame boundary. A game wants the
+    // stick a hundred times a second; the bus was being asked a thousand.
+    if (pad) pad->needs_arm = 1;
+    else tuh_hid_receive_report(dev_addr, instance);
 }
 
 
@@ -569,7 +642,26 @@ static void __not_in_flash_func(core1_usb_frames)(void) {
         g_f_total += dur;
         if (dur > g_f_dur_worst) g_f_dur_worst = dur;
         kbd_repeat_tick();
-        while ((timer_hw->timerawl - t) < 1000) tight_loop_contents();
+
+        // The rest of the millisecond watches the serialiser's FIFO. It
+        // is filled by DMA and drained at the pixel clock, and if it ever
+        // runs dry the picture breaks while every frame boundary still
+        // arrives exactly on time - the one failure the frame counters
+        // cannot see. This core has the time: the USB frame above costs
+        // twenty seven microseconds of the thousand.
+        unsigned probes = 0;
+        while ((timer_hw->timerawl - t) < 1000) {
+            if (probes < g_fifo_rate) {
+                probes++;
+                uint32_t st = hstx_fifo_hw->stat;
+                if (st & HSTX_FIFO_STAT_EMPTY_BITS) g_fifo_dry++;
+                uint32_t lvl = st & HSTX_FIFO_STAT_LEVEL_BITS;
+                if (lvl < g_fifo_min) g_fifo_min = lvl;
+                g_fifo_seen++;
+            } else {
+                tight_loop_contents();
+            }
+        }
     }
 }
 
