@@ -346,6 +346,9 @@ extern "C" void jdb_load_trace_n(const char*, unsigned, unsigned, unsigned);
 #endif
 
 void VM::run_code(Chunk& chunk, std::vector<FuncProto>& new_funcs) {
+    // The chunk is finished; the room its vectors kept while growing is
+    // given back before it runs.
+    chunk.shrink();
     // Merge new functions into owned storage
     bool funcs_changed = false;
     for (auto& f : new_funcs) {
