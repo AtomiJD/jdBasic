@@ -150,14 +150,15 @@ static uint32_t g_copy_scratch;
 // Four words an entry, written into the copy channel's alias 2:
 // control, count, source, and the destination that starts it.
 #define COPY_ENTRY_WORDS 4
-// Blank lines between the frame interrupt and the first pixel: 45 signal
-// lines, which is 22 and a half stored-line periods. Twenty-two entries
-// carry that gap and the odd half is waited out at the restart, so the
-// first real copy begins exactly when the line it will replace starts
-// being displayed and has the whole period to finish in. The first two
-// of the lead entries are real work - they fill both buffers for the
-// frame about to start - and the rest move a single word into a scratch.
-#define COPY_LEAD_ENTRIES 22
+// Blank lines between the frame interrupt and the first pixel: the
+// vsync and back porch, 35 signal lines, which is 17 and a half
+// stored-line periods. Seventeen entries carry that gap and the odd
+// half is waited out at the restart, so the first real copy begins
+// exactly when the line it will replace starts being displayed and has
+// the whole period to finish in. The first two of the lead entries are
+// real work - they fill both buffers for the frame about to start - and
+// the rest move a single word into a scratch.
+#define COPY_LEAD_ENTRIES 17
 #define COPY_LEAD_US      32
 #define COPY_REAL_ENTRIES (FB_H - 2)
 #define COPY_ENTRIES      (COPY_LEAD_ENTRIES + COPY_REAL_ENTRIES)
@@ -240,7 +241,7 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
     // finding the signal again, which is what a blackout in the middle
     // of a game looks like. Counting them says whether the picture
     // really slipped or whether the monitor is being fussy.
-    if (g_frame_us > 20000u) {
+    if (g_frames > 4 && g_frame_us > 20000u) {
         g_frame_late++;
         if (g_frame_us > g_frame_worst) g_frame_worst = g_frame_us;
     }
@@ -354,27 +355,36 @@ int fruitjam_dvi_alloc(void) { return g_fb != NULL; }
 
 // One pair per transfer: how many words, and where from. Writing the
 // second of the two triggers the pixel channel.
+//
+// The frame is written vsync, back porch, picture, front porch, so the
+// list ends on blank lines and the null trigger fires with a blank line
+// in the FIFO: about thirty microseconds for the interrupt to restart
+// the list before the FIFO runs empty.
 static void build_command_list(void) {
     size_t w = 0;
-    for (uint v = 0; v < MODE_V_TOTAL_LINES; v++) {
-        if (v >= MODE_V_FRONT_PORCH && v < MODE_V_FRONT_PORCH + MODE_V_SYNC_WIDTH) {
-            g_cmds[w++] = count_of(vblank_line_vsync_on);
-            g_cmds[w++] = (uintptr_t)vblank_line_vsync_on;
-        } else if (v < MODE_V_BLANK_LINES) {
-            g_cmds[w++] = count_of(vblank_line_vsync_off);
-            g_cmds[w++] = (uintptr_t)vblank_line_vsync_off;
-        } else {
-            g_cmds[w++] = count_of(vactive_line);
-            g_cmds[w++] = (uintptr_t)vactive_line;
-            // Two signal lines per stored line: the shift is the doubling.
-            uint row = (v - MODE_V_BLANK_LINES) >> 1;
-            g_cmds[w++] = FB_STRIDE / sizeof(uint32_t);
+    for (uint v = 0; v < MODE_V_SYNC_WIDTH; v++) {
+        g_cmds[w++] = count_of(vblank_line_vsync_on);
+        g_cmds[w++] = (uintptr_t)vblank_line_vsync_on;
+    }
+    for (uint v = 0; v < MODE_V_BACK_PORCH; v++) {
+        g_cmds[w++] = count_of(vblank_line_vsync_off);
+        g_cmds[w++] = (uintptr_t)vblank_line_vsync_off;
+    }
+    for (uint v = 0; v < MODE_V_ACTIVE_LINES; v++) {
+        g_cmds[w++] = count_of(vactive_line);
+        g_cmds[w++] = (uintptr_t)vactive_line;
+        // Two signal lines per stored line: the shift is the doubling.
+        uint row = v >> 1;
+        g_cmds[w++] = FB_STRIDE / sizeof(uint32_t);
 #ifdef JDB_FB_IN_PSRAM
-            g_cmds[w++] = (uintptr_t)g_lines[row & 1];
+        g_cmds[w++] = (uintptr_t)g_lines[row & 1];
 #else
-            g_cmds[w++] = (uintptr_t)(g_fb + (size_t)row * FB_STRIDE);
+        g_cmds[w++] = (uintptr_t)(g_fb + (size_t)row * FB_STRIDE);
 #endif
-        }
+    }
+    for (uint v = 0; v < MODE_V_FRONT_PORCH; v++) {
+        g_cmds[w++] = count_of(vblank_line_vsync_off);
+        g_cmds[w++] = (uintptr_t)vblank_line_vsync_off;
     }
     // A null trigger ends the frame and raises the interrupt.
     g_cmds[w++] = 0;
