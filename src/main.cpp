@@ -242,8 +242,8 @@ static void dump_stmt(const Stmt* s, int ind) {
         std::cout << ")\n";
     }
     for (auto& b : s->body)         dump_stmt(b.get(), ind + 1);
-    for (auto& b : s->catch_body)   dump_stmt(b.get(), ind + 1);
-    for (auto& b : s->finally_body) dump_stmt(b.get(), ind + 1);
+    for (auto& b : s->catch_body())   dump_stmt(b.get(), ind + 1);
+    for (auto& b : s->finally_body()) dump_stmt(b.get(), ind + 1);
 
     dump_pad(ind);
     std::cout << ")\n";
@@ -1541,8 +1541,8 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                             break;
                         case StmtKind::TRY_CATCH:
                             collect(s->body);
-                            collect(s->catch_body);
-                            collect(s->finally_body);
+                            collect(s->catch_body());
+                            collect(s->finally_body());
                             break;
                         case StmtKind::TYPE_DECL:
                             declared.insert(s->func_name);
@@ -1611,8 +1611,8 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                     for (auto& br : s->branches) walk_expr(br.condition.get());
                     (void)in_strict; // STRICT type-mismatch checks live in the codegen
                     walk_stmts(s->body);
-                    walk_stmts(s->catch_body);
-                    walk_stmts(s->finally_body);
+                    walk_stmts(s->catch_body());
+                    walk_stmts(s->finally_body());
                     for (auto& br : s->branches) walk_stmts(br.body);
                 }
             };

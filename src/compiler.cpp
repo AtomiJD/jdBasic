@@ -241,8 +241,8 @@ void Compiler::collect_globals_stmt(const Stmt& stmt) {
             break;
         case StmtKind::TRY_CATCH:
             for (auto& s : stmt.body) collect_globals_stmt(*s);
-            for (auto& s : stmt.catch_body) collect_globals_stmt(*s);
-            for (auto& s : stmt.finally_body) collect_globals_stmt(*s);
+            for (auto& s : stmt.catch_body()) collect_globals_stmt(*s);
+            for (auto& s : stmt.finally_body()) collect_globals_stmt(*s);
             break;
         case StmtKind::REACT_ASSIGN:
             known_globals.insert(stmt.var_name);
@@ -644,13 +644,13 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                 static_cast<uint16_t>(catch_target - catch_addr - 2));
 
             // CATCH body
-            for (auto& s : stmt.catch_body) compile_stmt(*s);
+            for (auto& s : stmt.catch_body()) compile_stmt(*s);
 
             // FINALLY label (reached from both paths)
             patch_jump(jump_to_finally);
 
             // FINALLY body
-            for (auto& s : stmt.finally_body) compile_stmt(*s);
+            for (auto& s : stmt.finally_body()) compile_stmt(*s);
             break;
         }
         case StmtKind::SWITCH_STMT: {

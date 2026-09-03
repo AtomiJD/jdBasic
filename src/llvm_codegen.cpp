@@ -830,7 +830,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (s.expr) scan_event(*s.expr);
         for (auto& b : s.body) if (b) scan_stmt_event(*b);
         for (auto& br : s.branches) for (auto& b : br.body) if (b) scan_stmt_event(*b);
-        for (auto& c : s.catch_body) if (c) scan_stmt_event(*c);
+        for (auto& c : s.catch_body()) if (c) scan_stmt_event(*c);
     };
     for (auto& stmt : program) if (stmt) scan_stmt_event(*stmt);
 
@@ -865,7 +865,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (s.expr) scan_ffi(*s.expr);
         for (auto& b : s.body) if (b) scan_stmt_ffi(*b);
         for (auto& br : s.branches) for (auto& b : br.body) if (b) scan_stmt_ffi(*b);
-        for (auto& c : s.catch_body) if (c) scan_stmt_ffi(*c);
+        for (auto& c : s.catch_body()) if (c) scan_stmt_ffi(*c);
     };
     for (auto& stmt : program) if (stmt) scan_stmt_ffi(*stmt);
 
@@ -1089,8 +1089,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             return;
         }
         for (auto& b : s.body)         if (b) scan_idx_assigns(*b, kinds);
-        for (auto& b : s.catch_body)   if (b) scan_idx_assigns(*b, kinds);
-        for (auto& b : s.finally_body) if (b) scan_idx_assigns(*b, kinds);
+        for (auto& b : s.catch_body())   if (b) scan_idx_assigns(*b, kinds);
+        for (auto& b : s.finally_body()) if (b) scan_idx_assigns(*b, kinds);
         for (auto& br : s.branches)
             for (auto& b : br.body) if (b) scan_idx_assigns(*b, kinds);
     };
@@ -1114,8 +1114,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 funcref_alias[s.var_name] = s.expr->str_val;
             }
             for (auto& b : s.body)         if (b) scan_alias(*b);
-            for (auto& c : s.catch_body)   if (c) scan_alias(*c);
-            for (auto& f : s.finally_body) if (f) scan_alias(*f);
+            for (auto& c : s.catch_body())   if (c) scan_alias(*c);
+            for (auto& f : s.finally_body()) if (f) scan_alias(*f);
             for (auto& br : s.branches)
                 for (auto& b : br.body) if (b) scan_alias(*b);
         };
@@ -1274,9 +1274,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                                     for (auto& b : br.body)
                                         if (b && body_drills_param(*b)) return true;
                                 }
-                                for (auto& c : s.catch_body)
+                                for (auto& c : s.catch_body())
                                     if (c && body_drills_param(*c)) return true;
-                                for (auto& f : s.finally_body)
+                                for (auto& f : s.finally_body())
                                     if (f && body_drills_param(*f)) return true;
                                 return false;
                             };
@@ -1338,8 +1338,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             }
             for (auto& b : br.body) if (b) scan_stmt(*b);
         }
-        for (auto& c : s.catch_body) if (c) scan_stmt(*c);
-        for (auto& f : s.finally_body) if (f) scan_stmt(*f);
+        for (auto& c : s.catch_body()) if (c) scan_stmt(*c);
+        for (auto& f : s.finally_body()) if (f) scan_stmt(*f);
     };
 
     for (auto& stmt : program) {
@@ -1375,8 +1375,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (s.loop_cond) find_handoffs(*s.loop_cond);
             for (auto& pe : s.print_exprs) if (pe) find_handoffs(*pe);
             for (auto& b : s.body)         if (b) walk_handoffs(*b);
-            for (auto& c : s.catch_body)   if (c) walk_handoffs(*c);
-            for (auto& f : s.finally_body) if (f) walk_handoffs(*f);
+            for (auto& c : s.catch_body())   if (c) walk_handoffs(*c);
+            for (auto& f : s.finally_body()) if (f) walk_handoffs(*f);
             for (auto& br : s.branches) {
                 if (br.condition) find_handoffs(*br.condition);
                 for (auto& b : br.body) if (b) walk_handoffs(*b);
@@ -1422,8 +1422,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (s.loop_cond) find_inner(*s.loop_cond);
                 for (auto& pe : s.print_exprs) if (pe) find_inner(*pe);
                 for (auto& b : s.body)         if (b) walk_inner(*b);
-                for (auto& c : s.catch_body)   if (c) walk_inner(*c);
-                for (auto& f : s.finally_body) if (f) walk_inner(*f);
+                for (auto& c : s.catch_body())   if (c) walk_inner(*c);
+                for (auto& f : s.finally_body()) if (f) walk_inner(*f);
                 for (auto& br : s.branches) {
                     if (br.condition) find_inner(*br.condition);
                     for (auto& b : br.body) if (b) walk_inner(*b);
@@ -1479,8 +1479,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (br.condition) warn_expr_calls(*br.condition);
             for (auto& b : br.body) if (b) warn_calls(*b);
         }
-        for (auto& c : s.catch_body) if (c) warn_calls(*c);
-        for (auto& f : s.finally_body) if (f) warn_calls(*f);
+        for (auto& c : s.catch_body()) if (c) warn_calls(*c);
+        for (auto& f : s.finally_body()) if (f) warn_calls(*f);
     };
     for (auto& stmt : program) {
         if (stmt) warn_calls(*stmt);
@@ -1498,8 +1498,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (auto& b : s.body) if (b && any_return_returns_string(*b)) return true;
         for (auto& br : s.branches)
             for (auto& b : br.body) if (b && any_return_returns_string(*b)) return true;
-        for (auto& c : s.catch_body) if (c && any_return_returns_string(*c)) return true;
-        for (auto& f : s.finally_body) if (f && any_return_returns_string(*f)) return true;
+        for (auto& c : s.catch_body()) if (c && any_return_returns_string(*c)) return true;
+        for (auto& f : s.finally_body()) if (f && any_return_returns_string(*f)) return true;
         return false;
     };
     for (auto& [name, decl] : decls) {
@@ -1517,8 +1517,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             s.expr->kind == ExprKind::VARIABLE && s.expr->str_val == pname)
             return true;
         for (auto& b : s.body)         if (b && returns_param(*b, pname)) return true;
-        for (auto& c : s.catch_body)   if (c && returns_param(*c, pname)) return true;
-        for (auto& f : s.finally_body) if (f && returns_param(*f, pname)) return true;
+        for (auto& c : s.catch_body())   if (c && returns_param(*c, pname)) return true;
+        for (auto& f : s.finally_body()) if (f && returns_param(*f, pname)) return true;
         for (auto& br : s.branches)
             for (auto& b : br.body) if (b && returns_param(*b, pname)) return true;
         return false;
@@ -1565,8 +1565,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 s.expr->kind == ExprKind::CALL && s.expr->func_name == fn_param)
                 return true;
             for (auto& b : s.body)         if (b && returns_call_through(*b)) return true;
-            for (auto& c : s.catch_body)   if (c && returns_call_through(*c)) return true;
-            for (auto& f : s.finally_body) if (f && returns_call_through(*f)) return true;
+            for (auto& c : s.catch_body())   if (c && returns_call_through(*c)) return true;
+            for (auto& f : s.finally_body()) if (f && returns_call_through(*f)) return true;
             for (auto& br : s.branches)
                 for (auto& b : br.body) if (b && returns_call_through(*b)) return true;
             return false;
@@ -1663,8 +1663,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (auto& b : s.body) if (b) { int k = classify_return(*b, local_kinds); if (k && !kind) kind = k; }
         for (auto& br : s.branches)
             for (auto& b : br.body) if (b) { int k = classify_return(*b, local_kinds); if (k && !kind) kind = k; }
-        for (auto& c : s.catch_body) if (c) { int k = classify_return(*c, local_kinds); if (k && !kind) kind = k; }
-        for (auto& f : s.finally_body) if (f) { int k = classify_return(*f, local_kinds); if (k && !kind) kind = k; }
+        for (auto& c : s.catch_body()) if (c) { int k = classify_return(*c, local_kinds); if (k && !kind) kind = k; }
+        for (auto& f : s.finally_body()) if (f) { int k = classify_return(*f, local_kinds); if (k && !kind) kind = k; }
         return kind;
     };
     // Fixpoint: callee kinds may unlock caller kinds.
@@ -1799,8 +1799,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             for (auto& b : s.body) if (b) rec(*b);
             for (auto& br : s.branches)
                 for (auto& b : br.body) if (b) rec(*b);
-            for (auto& c : s.catch_body) if (c) rec(*c);
-            for (auto& f : s.finally_body) if (f) rec(*f);
+            for (auto& c : s.catch_body()) if (c) rec(*c);
+            for (auto& f : s.finally_body()) if (f) rec(*f);
         };
         rec(body);
         return returns_str;
@@ -1867,7 +1867,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 for (auto& b : br.body)
                     if (b && body_uses_typeof_param(*b, pname)) return true;
             }
-            for (auto& c : s.catch_body)
+            for (auto& c : s.catch_body())
                 if (c && body_uses_typeof_param(*c, pname)) return true;
             return false;
         };
@@ -2477,8 +2477,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 }
                 // Recurse into nested bodies (FUNC/SUB/FOR/DO/TRY/IF-branches).
                 for (auto& b : s->body) scan(b.get());
-                for (auto& b : s->catch_body) scan(b.get());
-                for (auto& b : s->finally_body) scan(b.get());
+                for (auto& b : s->catch_body()) scan(b.get());
+                for (auto& b : s->finally_body()) scan(b.get());
                 for (auto& br : s->branches)
                     for (auto& bs : br.body) scan(bs.get());
             };
@@ -2950,8 +2950,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 }
             }
             for (auto& b : s->body) scan(b.get());
-            for (auto& b : s->catch_body) scan(b.get());
-            for (auto& b : s->finally_body) scan(b.get());
+            for (auto& b : s->catch_body()) scan(b.get());
+            for (auto& b : s->finally_body()) scan(b.get());
             for (auto& br : s->branches)
                 for (auto& bs : br.body) scan(bs.get());
         };
@@ -3094,7 +3094,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                     LLVMBuildCall2(builder, rr.fn_type, rr.fn, args, 1, "");
                 }
             }
-            for (auto& s : stmt.catch_body) { if (s) codegen_stmt(*s); }
+            for (auto& s : stmt.catch_body()) { if (s) codegen_stmt(*s); }
             if (!LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) {
                 // Hard-clear g_err_msg when leaving the catch body - a
                 // THROW outside this TRY mustn't see the previously-caught

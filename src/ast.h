@@ -257,6 +257,9 @@ struct StmtExtra {
     // DIM x AS T(arg1, arg2)            - scalar UDT constructor args
     // DIM arr[N] AS T(vec1, vec2)       - vectorised: vecK[i] -> arg K of slot i
     std::vector<ExprPtr> ctor_args;
+    // TRY_CATCH: the statement's body is the TRY block
+    std::vector<StmtPtr> catch_body;
+    std::vector<StmtPtr> finally_body;
 
     // One empty block for every statement that has none.
     static const StmtExtra& none() {
@@ -332,10 +335,6 @@ struct Stmt {
     // INDEX_ASSIGN: var_name[i1][i2]...[iN] = expr
     std::vector<ExprPtr> index_chain;
 
-    // TRY_CATCH: body=TRY block, catch_body, finally_body
-    std::vector<StmtPtr> catch_body;
-    std::vector<StmtPtr> finally_body;
-
     // What only a few kinds of statement carry lives in a block of its
     // own: ext() makes it, the readers below answer with nothing when
     // there is none.
@@ -350,6 +349,8 @@ struct Stmt {
     const std::vector<std::pair<std::string, int64_t>>& enum_members() const { return x ? x->enum_members : StmtExtra::none().enum_members; }
     const std::vector<StmtTypeMember>& type_members() const { return x ? x->type_members : StmtExtra::none().type_members; }
     const std::vector<ExprPtr>& ctor_args() const { return x ? x->ctor_args : StmtExtra::none().ctor_args; }
+    const std::vector<StmtPtr>& catch_body() const { return x ? x->catch_body : StmtExtra::none().catch_body; }
+    const std::vector<StmtPtr>& finally_body() const { return x ? x->finally_body : StmtExtra::none().finally_body; }
 
     Stmt() : kind(StmtKind::LET) {}
 };

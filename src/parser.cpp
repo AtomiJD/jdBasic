@@ -151,8 +151,8 @@ void collect_type_decls(const std::vector<StmtPtr>& stmts,
                 out.insert(n.substr(us + 2));
         }
         collect_type_decls(s->body, out);
-        collect_type_decls(s->catch_body, out);
-        collect_type_decls(s->finally_body, out);
+        collect_type_decls(s->catch_body(), out);
+        collect_type_decls(s->finally_body(), out);
         for (const auto& br : s->branches) collect_type_decls(br.body, out);
     }
 }
@@ -438,7 +438,7 @@ StmtPtr Parser::parse_statement() {
                 expect_newline();
                 skip_newlines();
                 while (owes_statement() || !check(TokenType::FINALLY) && !check(TokenType::ENDTRY) && !check(TokenType::EOF_TOKEN)) {
-                    s->catch_body.push_back(parse_statement());
+                    s->ext().catch_body.push_back(parse_statement());
                     skip_newlines();
                 }
             }
@@ -449,7 +449,7 @@ StmtPtr Parser::parse_statement() {
                 expect_newline();
                 skip_newlines();
                 while (owes_statement() || !check(TokenType::ENDTRY) && !check(TokenType::EOF_TOKEN)) {
-                    s->finally_body.push_back(parse_statement());
+                    s->ext().finally_body.push_back(parse_statement());
                     skip_newlines();
                 }
             }
@@ -2651,8 +2651,8 @@ void Parser::module_set_source_file(Stmt& stmt,
                                     const std::shared_ptr<const std::string>& path) {
     if (!stmt.file) stmt.file = path;
     for (auto& s : stmt.body)         if (s) module_set_source_file(*s, path);
-    for (auto& s : stmt.catch_body)   if (s) module_set_source_file(*s, path);
-    for (auto& s : stmt.finally_body) if (s) module_set_source_file(*s, path);
+    for (auto& s : stmt.catch_body())   if (s) module_set_source_file(*s, path);
+    for (auto& s : stmt.finally_body()) if (s) module_set_source_file(*s, path);
     for (auto& br : stmt.branches)
         for (auto& s : br.body) if (s) module_set_source_file(*s, path);
 }
@@ -2742,8 +2742,8 @@ void Parser::module_rename_stmt(Stmt& stmt,
 
     // Rename in body (FUNC/SUB/DO/FOR/TRY)
     for (auto& s : stmt.body) module_rename_stmt(*s, func_map, var_map);
-    for (auto& s : stmt.catch_body) module_rename_stmt(*s, func_map, var_map);
-    for (auto& s : stmt.finally_body) module_rename_stmt(*s, func_map, var_map);
+    for (auto& s : stmt.catch_body()) module_rename_stmt(*s, func_map, var_map);
+    for (auto& s : stmt.finally_body()) module_rename_stmt(*s, func_map, var_map);
 }
 
 // ── Postfix parsing ─────────────────────────────────────────────
