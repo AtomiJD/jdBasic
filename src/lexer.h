@@ -9,7 +9,7 @@ public:
     std::vector<Token> tokenize();
 
 private:
-    std::string src;
+    const std::string& src;
     size_t pos = 0;
     int line = 1;
     int col = 1;

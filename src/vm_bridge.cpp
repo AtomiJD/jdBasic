@@ -107,7 +107,7 @@ static void setup_parser_modules(Parser& parser) {
 static void run_on_vm(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    Parser parser(std::move(tokens));
     setup_parser_modules(parser);
     auto ast = parser.parse();
     Compiler compiler;

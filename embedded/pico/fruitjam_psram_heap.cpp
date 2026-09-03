@@ -62,6 +62,7 @@ Block*    g_first = nullptr;
 uintptr_t g_base = 0;
 size_t    g_bytes = 0;
 size_t    g_in_use = 0;
+size_t    g_peak = 0;
 
 inline size_t align8(size_t n) { return (n + 7u) & ~(size_t)7u; }
 
@@ -99,6 +100,7 @@ void* psram_alloc(size_t want) {
         }
         b->used = 1;
         g_in_use += b->size;
+        if (g_in_use > g_peak) g_peak = g_in_use;
         return b + 1;
     }
     return nullptr;
@@ -166,6 +168,15 @@ extern "C" int fruitjam_psram_torture(char* out, int cap, int rounds) {
 // Nestable, because a module IMPORT lexes and parses inside a parse.
 extern "C" void jdb_transient_begin(void) { g_scope++; }
 extern "C" void jdb_transient_end(void)   { if (g_scope > 0) g_scope--; }
+
+// Bytes in use in the pool right now, and the most that were in use
+// since the last reset of the mark.
+extern "C" unsigned fruitjam_psram_in_use(void) { return (unsigned)g_in_use; }
+extern "C" unsigned fruitjam_psram_peak(int reset) {
+    unsigned p = (unsigned)g_peak;
+    if (reset) g_peak = g_in_use;
+    return p;
+}
 
 extern "C" unsigned fruitjam_psram_heap_free(void) {
     heap_start();

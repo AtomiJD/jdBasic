@@ -226,7 +226,7 @@ VM::VM() {
     // makes that doubling possible at all: from 4096 slots the next step
     // wanted more memory than the board has, so the stack could only
     // ever be its opening size.
-    stack.resize(1024);
+    stack.resize(256);
     frames.reserve(64);
 #else
     stack.resize(65536); // pre-allocate stack - avoids resize checks on hot paths

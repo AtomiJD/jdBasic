@@ -303,7 +303,18 @@ struct Chunk {
         patch_u16(offset, static_cast<uint16_t>(val));
     }
 
+    // A scalar or string equal to one already in the pool shares its slot.
     uint16_t add_constant(Value v) {
+        bool scalar = v.type <= ValueType::FLOAT64;
+        if (scalar || v.type == ValueType::STRING) {
+            for (size_t i = 0; i < constants.size(); i++) {
+                const Value& c = constants[i];
+                if (c.type != v.type || c.subtype != v.subtype) continue;
+                if (scalar ? c.i64 == v.i64
+                           : c.as_string()->data == v.as_string()->data)
+                    return static_cast<uint16_t>(i);
+            }
+        }
         constants.push_back(std::move(v));
         return static_cast<uint16_t>(constants.size() - 1);
     }

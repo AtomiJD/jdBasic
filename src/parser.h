@@ -10,7 +10,7 @@
 
 class Parser {
 public:
-    explicit Parser(const std::vector<Token>& tokens);
+    explicit Parser(std::vector<Token> tokens);
     std::vector<StmtPtr> parse();
 
     // Module support: callback to read a file

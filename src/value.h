@@ -145,9 +145,22 @@ enum class ValueSubtype : uint8_t {
     DATE = 1,
 };
 
+// On a 32-bit target the pointer sits between the tags and the 8-byte
+// union, which packs the whole value into 16 bytes; on 64-bit targets the
+// order below the tags is the one the native code generator knows, 24
+// bytes either way.
+#if UINTPTR_MAX == 0xFFFFFFFFu
+#define JDB_VALUE_PTR_FIRST 1
+#endif
+
 struct Value {
     ValueType type = ValueType::NONE;
     ValueSubtype subtype = ValueSubtype::NONE;
+
+#ifdef JDB_VALUE_PTR_FIRST
+    // Raw pointer with manual ref-counting. nullptr for scalar values.
+    HeapObject* obj = nullptr;
+#endif
 
     union {
         bool boolean;
@@ -160,22 +173,24 @@ struct Value {
         double f64;
     };
 
+#ifndef JDB_VALUE_PTR_FIRST
     // Raw pointer with manual ref-counting. nullptr for scalar values.
     HeapObject* obj = nullptr;
+#endif
 
     // ── Lifecycle ────────────────────────────────────────────
 
-    Value() noexcept : type(ValueType::NONE), subtype(ValueSubtype::NONE), i64(0), obj(nullptr) {}
+    Value() noexcept { type = ValueType::NONE; subtype = ValueSubtype::NONE; i64 = 0; obj = nullptr; }
 
     ~Value() { heap_release(obj); }
 
-    Value(const Value& other) noexcept
-        : type(other.type), subtype(other.subtype), i64(other.i64), obj(other.obj) {
+    Value(const Value& other) noexcept {
+        type = other.type; subtype = other.subtype; i64 = other.i64; obj = other.obj;
         heap_retain(obj);
     }
 
-    Value(Value&& other) noexcept
-        : type(other.type), subtype(other.subtype), i64(other.i64), obj(other.obj) {
+    Value(Value&& other) noexcept {
+        type = other.type; subtype = other.subtype; i64 = other.i64; obj = other.obj;
         other.obj = nullptr;
         other.type = ValueType::NONE;
         other.subtype = ValueSubtype::NONE;

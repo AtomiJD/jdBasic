@@ -2,7 +2,7 @@
 #include <algorithm>
 #include "lexer.h"
 
-Parser::Parser(const std::vector<Token>& tokens) : tokens(tokens) {}
+Parser::Parser(std::vector<Token> t) : tokens(std::move(t)) {}
 
 const Token& Parser::current() const { return tokens[pos]; }
 const Token& Parser::peek_at(size_t offset) const { return tokens[pos + offset]; }

@@ -337,7 +337,7 @@ static void run_source(const std::string& source, bool show_timing) {
     auto tokens = lexer.tokenize();
     auto t1 = std::chrono::high_resolution_clock::now();
 
-    Parser parser(tokens);
+    Parser parser(std::move(tokens));
     setup_parser_modules(parser);
     auto ast = parser.parse();
     auto t2 = std::chrono::high_resolution_clock::now();
@@ -405,7 +405,7 @@ bool run_pcode_file(VM& vm, const std::string& path, std::string& err) {
 void run_on_vm(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    Parser parser(std::move(tokens));
     setup_parser_modules(parser);  // enable IMPORT in REPL/EXECUTE/EVAL
     parser.predeclared_types = vm.known_types;
     auto ast = parser.parse();
@@ -431,7 +431,7 @@ void run_on_vm(VM& vm, const std::string& source) {
 std::string recompile_on_vm(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    Parser parser(std::move(tokens));
     parser.predeclared_types = vm.known_types;
     setup_parser_modules(parser);
     auto ast = parser.parse();
@@ -454,9 +454,10 @@ static void setup_dynamic_code(VM& vm) {
     // Returns "" on success or the error message on failure.
     vm.on_check = [](VM& v, const std::string& code) -> std::string {
         try {
-            Lexer lexer(code + "\n");
+            std::string code_nl = code + "\n";
+            Lexer lexer(code_nl);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             setup_parser_modules(parser);
             parser.predeclared_types = v.known_types;
             (void)parser.parse();
@@ -510,7 +511,7 @@ static void setup_dynamic_code(VM& vm) {
         std::string code = "LET __EVAL_RESULT__ = " + expr + "\n";
         Lexer lexer(code);
         auto tokens = lexer.tokenize();
-        Parser parser(tokens);
+        Parser parser(std::move(tokens));
         setup_parser_modules(parser);
         parser.predeclared_types = v.known_types;
         auto ast = parser.parse();
@@ -837,7 +838,7 @@ void load_workspace(VM& vm, std::string& program_buffer, const std::string& name
         try {
             Lexer lexer(program_buffer);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             setup_parser_modules(parser);
             auto ast = parser.parse();
             Compiler compiler;
@@ -1167,7 +1168,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
         try {
             Lexer lexer(program_buffer);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             setup_parser_modules(parser);
             auto ast = parser.parse();
             Compiler compiler;
@@ -1306,7 +1307,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             try {
                 Lexer lexer(program_buffer);
                 auto tokens = lexer.tokenize();
-                Parser parser(tokens);
+                Parser parser(std::move(tokens));
                 setup_parser_modules(parser);
                 auto ast = parser.parse();
                 Compiler compiler;
@@ -1460,7 +1461,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
         try {
             Lexer lexer(program_buffer);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             setup_parser_modules(parser);
             auto ast = parser.parse();
 
@@ -2006,7 +2007,7 @@ int main(int argc, char* argv[]) {
         try {
             Lexer lexer(program_buffer);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             auto ast = parser.parse();
             Compiler c;
             c.compile(ast);
@@ -2152,7 +2153,7 @@ int main(int argc, char* argv[]) {
             Lexer lexer(source);
             auto tokens = lexer.tokenize();
             mark("Parsing...");
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             setup_parser_modules(parser);
             ast = parser.parse();
         } catch (const jdError& e) {
@@ -2383,9 +2384,10 @@ int main(int argc, char* argv[]) {
             auto run_statement = [&]() -> std::string {
                 Compiler c;
                 try {
-                    Lexer lexer(src + "\n");
+                    std::string src_nl = src + "\n";
+                    Lexer lexer(src_nl);
                     auto tokens = lexer.tokenize();
-                    Parser parser(tokens);
+                    Parser parser(std::move(tokens));
                     setup_parser_modules(parser);
                     auto ast = parser.parse();
                     c.compile(ast);
@@ -2409,9 +2411,10 @@ int main(int argc, char* argv[]) {
             // run it as a statement instead.
             Compiler ec;
             try {
-                Lexer lexer("LET __REPL_RESULT__ = " + src + "\n");
+                std::string src_nl = "LET __REPL_RESULT__ = " + src + "\n";
+                Lexer lexer(src_nl);
                 auto tokens = lexer.tokenize();
-                Parser parser(tokens);
+                Parser parser(std::move(tokens));
                 setup_parser_modules(parser);
                 auto ast = parser.parse();
                 ec.compile(ast);
@@ -2445,7 +2448,7 @@ int main(int argc, char* argv[]) {
                 std::string source = read_file(path);
                 Lexer lexer(source);
                 auto tokens = lexer.tokenize();
-                Parser parser(tokens);
+                Parser parser(std::move(tokens));
                 setup_parser_modules(parser, abs_filename);
                 auto ast = parser.parse();
                 auto comp = std::make_unique<Compiler>();
@@ -2479,7 +2482,7 @@ int main(int argc, char* argv[]) {
             std::string source = read_file(filename);
             Lexer lexer(source);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             setup_parser_modules(parser, abs_filename);
             auto ast = parser.parse();
             auto compiler = std::make_unique<Compiler>();

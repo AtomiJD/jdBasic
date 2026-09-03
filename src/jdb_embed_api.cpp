@@ -331,13 +331,18 @@ void run_source(VM& vm, const std::string& source) {
     // room a program was costing.
     {
         JDB_TRANSIENT_SCOPE;
-        Lexer lexer(source);
-        auto tokens = lexer.tokenize();
-        LOAD_TRACE("lexed");
-        Parser parser(tokens);
-        parser.file_reader = bundled_module_reader;
-        auto ast = parser.parse();
-        LOAD_TRACE("parsed");
+        std::vector<StmtPtr> ast;
+        // The parser owns the tokens, so both are gone before the
+        // compile starts.
+        {
+            Lexer lexer(source);
+            auto tokens = lexer.tokenize();
+            LOAD_TRACE("lexed");
+            Parser parser(std::move(tokens));
+            parser.file_reader = bundled_module_reader;
+            ast = parser.parse();
+            LOAD_TRACE("parsed");
+        }
         // The chunk outlives this block, so it is built with the scope
         // shut: it belongs in SRAM with the rest of what runs.
         {
@@ -359,7 +364,7 @@ void run_source(VM& vm, const std::string& source) {
 std::string recompile_source(VM& vm, const std::string& source) {
     Lexer lexer(source);
     auto tokens = lexer.tokenize();
-    Parser parser(tokens);
+    Parser parser(std::move(tokens));
     parser.file_reader = bundled_module_reader;
     auto ast = parser.parse();
     Compiler c;
@@ -380,9 +385,10 @@ void setup(JdbEmbedImpl* e) {
     };
     e->vm.on_check = [](VM&, const std::string& code) -> std::string {
         try {
-            Lexer lexer(code + "\n");
+            std::string code_nl = code + "\n";
+            Lexer lexer(code_nl);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             parser.file_reader = bundled_module_reader;
             (void)parser.parse();
             return "";
@@ -666,7 +672,7 @@ JDB_EMBED_API int jdb_embed_write_pcode(JdbEmbed* eh, const char* src_path,
             JDB_TRANSIENT_SCOPE;
             Lexer lexer(src);
             auto tokens = lexer.tokenize();
-            Parser parser(tokens);
+            Parser parser(std::move(tokens));
             parser.file_reader = bundled_module_reader;
             auto ast = parser.parse();
             {
@@ -753,7 +759,7 @@ JDB_EMBED_API char* jdb_embed_check_standalone(const char* source) {
         if (src.empty() || src.back() != '\n') src += '\n';
         Lexer lexer(src);
         auto tokens = lexer.tokenize();
-        Parser parser(tokens);
+        Parser parser(std::move(tokens));
         parser.file_reader = bundled_module_reader;
         (void)parser.parse();
         return nullptr;  // success

@@ -47,11 +47,21 @@ static void heap_at(const char*) {}
 // pointer has come down from the top of RAM, which is what a runaway
 // recursion shows up in.
 extern "C" char __StackTop;
+#ifdef FRUITJAM
+extern "C" unsigned fruitjam_psram_in_use(void);
+extern "C" unsigned fruitjam_psram_peak(int reset);
+#else
+static unsigned fruitjam_psram_in_use(void) { return 0; }
+static unsigned fruitjam_psram_peak(int) { return 0; }
+#endif
 extern "C" void jdb_load_trace(const char* stage) {
     struct mallinfo mi = mallinfo();
     char here;
-    printf("[load] %-9s used %7u free %6u stack %6u\n", stage,
+    // The transient pool's high-water mark restarts with every load.
+    if (strcmp(stage, "enter") == 0) fruitjam_psram_peak(1);
+    printf("[load] %-9s used %7u free %6u pool %6u peak %6u stack %6u\n", stage,
            (unsigned)mi.uordblks, (unsigned)mi.fordblks,
+           fruitjam_psram_in_use(), fruitjam_psram_peak(0),
            (unsigned)(&__StackTop - &here));
     fflush(NULL);
 }
