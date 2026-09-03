@@ -1,156 +1,636 @@
-' STELLAR DRIFT, the Fruit Jam cut. 320 by 240 over DVI, no back buffer:
-' the framebuffer is what the wire is reading, so everything that moves
-' is erased in black at its old place and drawn at its new one.
+' STELLAR DRIFT for the Fruit Jam. 320 by 240 over DVI, drawn straight
+' into the framebuffer: everything that moves is wiped in black at its
+' old place and drawn again at its new one.
 '
-' A DualShock flies it: left stick or d-pad to steer, cross or R2 to
-' fire, options to leave. The keyboard still works - arrows, space, q -
-' so it plays without a pad too.
+' DualShock: left stick or d-pad steers, cross or R2 fires, options
+' quits. Keyboard: arrows, space, q. Fire starts a game.
 '
-' Written small on purpose: the board has about seventy kilobytes for a
-' program and the compiler is the part that spends them.
+' Every array the game uses is sized here, once. The loop allocates
+' nothing: sounds are a tone switched on and off by a frame counter,
+' text is redrawn only when its value changes.
 
 GFX.CONSOLE 0
 GFX.CLEAR 0
+SND.OUT(0)
+PLAY.VOLUME(15)
 
-DIM sx[10]
-DIM sy[10]
-DIM bx[4]
-DIM by[4]
-DIM ex[4]
-DIM ey[4]
+CONST NSTAR = 12
+CONST NBUL = 8
+CONST NENE = 8
+CONST NEBUL = 6
+CONST NPOW = 2
+CONST NEXPL = 4
+CONST TOPY = 14
+CONST GROUND = 206
+CONST SHIPY = 214
+CONST SHIPSPEED = 8
+CONST RAPIDFRAMES = 700
+CONST WIDEFRAMES = 700
+CONST BOSSY = 24
 
-FOR i = 0 TO 9
-  sx[i] = RND(1) * 318
-  sy[i] = RND(1) * 200 + 14
-NEXT i
-FOR i = 0 TO 3
-  by[i] = 0 - 1
-  ex[i] = RND(1) * 300 + 10
-  ey[i] = RND(1) * 100 + 14
-NEXT i
+DIM sx[NSTAR]
+DIM sy[NSTAR]
+DIM sb[NSTAR]
+DIM bx[NBUL]
+DIM by[NBUL]
+DIM ex[NENE]
+DIM ey[NENE]
+DIM ev[NENE]
+DIM ealive[NENE]
+DIM fx[NEBUL]
+DIM fy[NEBUL]
+DIM cx[NPOW]
+DIM cy[NPOW]
+DIM ck[NPOW]
+DIM xx[NEXPL]
+DIM xy[NEXPL]
+DIM xr[NEXPL]
+DIM et[NENE]
 
-px = 160
-op = 160
-sc = 0
-go = 1
-pad = JOY.COUNT()
-fired = 0
+DIM i
+DIM j
+DIM px
+DIM op
+DIM score
+DIM lives
+DIM wave
+DIM active
+DIM kills
+DIM need
+DIM pad
+DIM fired
+DIM shoot
+DIM cool
+DIM ax
+DIM h
+DIM dx
+DIM dy
+DIM go
+DIM playing
+DIM blink
+DIM sfx
+DIM banner
+DIM t0
+DIM dt
+DIM frames
+DIM heap0
+DIM hud
+DIM rapid
+DIM wide
+DIM shield
+DIM oshield
+DIM hit
+DIM k
+DIM hiscore
+DIM bossalive
+DIM bossx
+DIM bossdir
+DIM bosshp
+DIM bossmax
+DIM bossflash
 
-DRAWCOLOR 255, 255, 255
-TEXT 4, 4, "STELLAR DRIFT", 1
-IF pad > 0 THEN TEXT 4, 240 - 10, JOY.NAME$(0), 1
+' ---- helpers that only draw ---------------------------------------
 
-DO
-  ' Held, not typed. The key queue gives one character a press and then
-  ' a pause, which is right for an editor and useless for steering.
-  IF GFX.KEYSTATE(180) THEN px = px - 6
-  IF GFX.KEYSTATE(183) THEN px = px + 6
-  shoot = 0
-  IF GFX.KEYSTATE(32) THEN shoot = 1
-  IF GFX.KEYSTATE(113) THEN go = 0
+SUB DRAWSHIP(x, r, g, b)
+    DRAWCOLOR r, g, b
+    LINE x, SHIPY, x - 7, SHIPY + 14
+    LINE x, SHIPY, x + 7, SHIPY + 14
+    LINE x - 7, SHIPY + 14, x + 7, SHIPY + 14
+ENDSUB
 
-  IF pad > 0 THEN
-    ' The stick steers by how far it is pushed; the hat is all or
-    ' nothing. Bit 2 of the hat is right, bit 8 is left.
-    ax = JOY.AXIS(0, 0)
-    px = px + ax * 7
-    h = JOY.HAT(0)
-    IF h = 2 OR h = 3 OR h = 1 + 2 THEN px = px + 5
-    IF h = 8 OR h = 12 OR h = 9 THEN px = px - 5
-    ' Cross, or the right trigger pulled past halfway.
-    IF JOY.BUTTON(0, 1) OR JOY.AXIS(0, 5) > 0.5 THEN shoot = 1
-    IF JOY.BUTTON(0, 9) THEN go = 0
-  ENDIF
+SUB DRAWRING(x, r, g, b)
+    DRAWCOLOR r, g, b
+    CIRCLE x, SHIPY + 7, 12
+ENDSUB
 
-  IF px < 10 THEN px = 10
-  IF px > 310 THEN px = 310
+SUB DRAWENEMY(x, y, r, g, b)
+    DRAWCOLOR r, g, b
+    LINE x - 6, y, x + 6, y
+    LINE x, y + 7, x - 6, y
+    LINE x, y + 7, x + 6, y
+ENDSUB
 
-  ' One shot a press, so holding the button does not empty the magazine
-  ' in a single frame.
-  IF shoot = 1 AND fired = 0 THEN
-    FOR i = 0 TO 3
-      IF by[i] < 0 THEN
-        bx[i] = px
-        by[i] = 206
-        EXITFOR
-      ENDIF
-    NEXT i
-  ENDIF
-  fired = shoot
-
-  FOR i = 0 TO 9
-    DRAWCOLOR 0, 0, 0
-    PSET sx[i], sy[i]
-    sy[i] = sy[i] + 1
-    IF sy[i] > 205 THEN
-      sy[i] = 14
-      sx[i] = RND(1) * 318
+' A capsule: a box with the letter of what it gives.
+SUB DRAWCAPSULE(x, y, kind, lit)
+    IF lit = 0 THEN
+        DRAWCOLOR 0, 0, 0
+        RECT x - 5, y - 5, 11, 11, 1
+    ELSE
+        IF kind = 1 THEN DRAWCOLOR 255, 230, 60
+        IF kind = 2 THEN DRAWCOLOR 60, 230, 230
+        IF kind = 3 THEN DRAWCOLOR 90, 120, 255
+        RECT x - 5, y - 5, 11, 11
+        IF kind = 1 THEN TEXT x - 3, y - 3, "R"
+        IF kind = 2 THEN TEXT x - 3, y - 3, "W"
+        IF kind = 3 THEN TEXT x - 3, y - 3, "S"
     ENDIF
-    DRAWCOLOR 130, 130, 170
-    PSET sx[i], sy[i]
-  NEXT i
+ENDSUB
 
-  FOR i = 0 TO 3
-    IF by[i] >= 0 THEN
-      DRAWCOLOR 0, 0, 0
-      LINE bx[i], by[i], bx[i], by[i] + 4
-      by[i] = by[i] - 8
-      IF by[i] < 14 THEN
-        by[i] = 0 - 1
-      ELSE
+SUB DRAWHUD(s, w, l, rp, wd, sh)
+    DRAWCOLOR 0, 0, 0
+    RECT 0, 0, 320, 12, 1
+    DRAWCOLOR 255, 255, 255
+    TEXT 4, 2, "SCORE " + STR$(s)
+    TEXT 120, 2, "WAVE " + STR$(w)
+    TEXT 190, 2, "SHIPS " + STR$(l)
+    IF rp > 0 THEN
         DRAWCOLOR 255, 230, 60
-        LINE bx[i], by[i], bx[i], by[i] + 4
-      ENDIF
+        TEXT 256, 2, "R"
     ENDIF
-  NEXT i
+    IF wd > 0 THEN
+        DRAWCOLOR 60, 230, 230
+        TEXT 266, 2, "W"
+    ENDIF
+    IF sh > 0 THEN
+        DRAWCOLOR 90, 120, 255
+        TEXT 276, 2, "S"
+    ENDIF
+    DRAWCOLOR 120, 120, 120
+    TEXT 290, 2, STR$(INT(SYS.FREE() / 1024)) + "K"
+ENDSUB
 
-  FOR i = 0 TO 3
-    DRAWCOLOR 0, 0, 0
-    LINE ex[i] - 6, ey[i], ex[i] + 6, ey[i]
-    LINE ex[i], ey[i] + 7, ex[i] - 6, ey[i]
-    LINE ex[i], ey[i] + 7, ex[i] + 6, ey[i]
-    ey[i] = ey[i] + 2
-    IF ey[i] > 200 THEN
-      ey[i] = 14
-      ex[i] = RND(1) * 300 + 10
-    ENDIF
-    FOR j = 0 TO 3
-      IF by[j] >= 0 THEN
-        dx = bx[j] - ex[i]
-        IF dx < 0 THEN dx = 0 - dx
-        dy = by[j] - ey[i]
-        IF dy < 0 THEN dy = 0 - dy
-        IF dx < 8 AND dy < 9 THEN
-          DRAWCOLOR 0, 0, 0
-          LINE bx[j], by[j], bx[j], by[j] + 4
-          by[j] = 0 - 1
-          ey[i] = 14
-          ex[i] = RND(1) * 300 + 10
-          sc = sc + 10
+SUB CENTERTEXT(y, msg$, r, g, b)
+    DRAWCOLOR r, g, b
+    TEXT 160 - LEN(msg$) * 4, y, msg$
+ENDSUB
+
+' ---- one-time setup ------------------------------------------------
+
+FOR i = 0 TO NSTAR - 1
+    sx[i] = INT(RND(1) * 318)
+    sy[i] = INT(RND(1) * 190) + TOPY
+    sb[i] = 90 + INT(RND(1) * 110)
+NEXT i
+pad = JOY.COUNT()
+heap0 = SYS.FREE()
+hiscore = 0
+TRY
+    hiscore = VAL(TXTREADER$("hiscore.txt"))
+CATCH
+    hiscore = 0
+ENDTRY
+
+' ---- title ---------------------------------------------------------
+
+playing = 0
+go = 1
+DO WHILE go = 1
+    GFX.CLEAR 0
+    CENTERTEXT(60, "STELLAR DRIFT", 255, 255, 255)
+    CENTERTEXT(74, "HIGH " + STR$(hiscore), 255, 230, 60)
+    CENTERTEXT(90, "FIRE TO START", 130, 130, 170)
+    IF pad > 0 THEN CENTERTEXT(110, JOY.NAME$(0), 90, 90, 120)
+    CENTERTEXT(140, "R RAPID  W WIDE  S SHIELD", 90, 90, 120)
+    CENTERTEXT(160, "Q TO QUIT", 90, 90, 120)
+    CENTERTEXT(200, "HEAP " + STR$(SYS.FREE()), 60, 60, 80)
+    PLAY "T160 O4 L8 C E G > C4 < G4 C2"
+    fired = 1
+    DO
+        shoot = 0
+        IF GFX.KEYSTATE(32) THEN shoot = 1
+        IF GFX.KEYSTATE(113) THEN go = 0
+        IF pad > 0 THEN
+            IF JOY.BUTTON(0, 1) OR JOY.AXIS(0, 5) > 0.5 THEN shoot = 1
+            IF JOY.BUTTON(0, 9) THEN go = 0
         ENDIF
-      ENDIF
-    NEXT j
-    DRAWCOLOR 230, 60, 60
-    LINE ex[i] - 6, ey[i], ex[i] + 6, ey[i]
-    LINE ex[i], ey[i] + 7, ex[i] - 6, ey[i]
-    LINE ex[i], ey[i] + 7, ex[i] + 6, ey[i]
-  NEXT i
+        IF shoot = 1 AND fired = 0 THEN playing = 1
+        fired = shoot
+        SLEEP 20
+    LOOP UNTIL playing = 1 OR go = 0
+    IF go = 0 THEN EXITDO
 
-  IF px <> op THEN
-    DRAWCOLOR 0, 0, 0
-    LINE op, 214, op - 7, 228
-    LINE op, 214, op + 7, 228
-    LINE op - 7, 228, op + 7, 228
-    op = px
-  ENDIF
-  DRAWCOLOR 40, 220, 90
-  LINE px, 214, px - 7, 228
-  LINE px, 214, px + 7, 228
-  LINE px - 7, 228, px + 7, 228
+    ' ---- a game ----------------------------------------------------
 
-  SLEEP 20
-LOOP WHILE go = 1
+    GFX.CLEAR 0
+    PLAY.STOP()
+    px = 160
+    op = 160
+    score = 0
+    lives = 3
+    wave = 0
+    kills = 0
+    need = 0
+    active = 0
+    blink = 0
+    sfx = 0
+    banner = 0
+    frames = 0
+    fired = 1
+    cool = 0
+    rapid = 0
+    wide = 0
+    shield = 0
+    oshield = 0
+    FOR i = 0 TO NBUL - 1
+        by[i] = 0 - 1
+    NEXT i
+    FOR i = 0 TO NENE - 1
+        ealive[i] = 0
+    NEXT i
+    FOR i = 0 TO NEBUL - 1
+        fy[i] = 0 - 1
+    NEXT i
+    FOR i = 0 TO NPOW - 1
+        cy[i] = 0 - 1
+    NEXT i
+    FOR i = 0 TO NEXPL - 1
+        xr[i] = 0
+    NEXT i
+    bossalive = 0
+    hud = 1
 
+    DO WHILE playing = 1
+        t0 = TICK()
+
+        ' A wave is done when its quota of kills is in. The banner holds
+        ' for a moment and the next wave brings more ships, faster.
+        IF kills >= need THEN
+            wave = wave + 1
+            kills = 0
+            need = 6 + wave * 4
+            active = 3 + wave
+            IF active > NENE THEN active = NENE
+            FOR i = 0 TO NENE - 1
+                IF ealive[i] = 1 THEN DRAWENEMY(ex[i], ey[i], 0, 0, 0)
+                ealive[i] = 0
+            NEXT i
+            ' Every fifth wave is a boss: the wave ends when it falls.
+            IF wave MOD 5 = 0 THEN
+                bossalive = 1
+                bossmax = 6 + wave * 2
+                bosshp = bossmax
+                bossx = 160
+                bossdir = 1
+                bossflash = 0
+                need = 100000
+                active = 3
+            ENDIF
+            ' From the third wave some ships hunt, drifting after the player.
+            FOR i = 0 TO active - 1
+                ealive[i] = 1
+                et[i] = 1
+                IF wave >= 3 AND RND(1) < 0.3 THEN et[i] = 2
+                ex[i] = 20 + INT(RND(1) * 280)
+                ey[i] = TOPY - INT(RND(1) * 100)
+                ev[i] = 0.5 + wave * 0.15 + RND(1) * 0.3
+            NEXT i
+            banner = 60
+            hud = 1
+            PLAY "T200 O5 L16 C E G > C8"
+            IF bossalive = 1 THEN
+                CENTERTEXT(110, "BOSS", 200, 80, 220)
+            ELSE
+                CENTERTEXT(110, "WAVE " + STR$(wave), 255, 230, 60)
+            ENDIF
+        ENDIF
+        IF banner > 0 THEN
+            banner = banner - 1
+            IF banner = 0 THEN
+                DRAWCOLOR 0, 0, 0
+                RECT 100, 108, 120, 12, 1
+            ENDIF
+        ENDIF
+
+        ' ---- input ---------------------------------------------------
+        IF GFX.KEYSTATE(180) THEN px = px - SHIPSPEED
+        IF GFX.KEYSTATE(183) THEN px = px + SHIPSPEED
+        shoot = 0
+        IF GFX.KEYSTATE(32) THEN shoot = 1
+        IF GFX.KEYSTATE(113) THEN playing = 0
+        IF pad > 0 THEN
+            ax = JOY.AXIS(0, 0)
+            px = px + ax * (SHIPSPEED + 1)
+            h = JOY.HAT(0)
+            IF h = 2 OR h = 3 OR h = 6 THEN px = px + SHIPSPEED
+            IF h = 8 OR h = 12 OR h = 9 THEN px = px - SHIPSPEED
+            IF JOY.BUTTON(0, 1) OR JOY.AXIS(0, 5) > 0.5 THEN shoot = 1
+            IF JOY.BUTTON(0, 9) THEN playing = 0
+        ENDIF
+        IF px < 10 THEN px = 10
+        IF px > 310 THEN px = 310
+
+        ' One shot a press; with rapid fire the button may stay down and
+        ' a shot leaves every few frames.
+        IF cool > 0 THEN cool = cool - 1
+        hit = 0
+        IF shoot = 1 AND fired = 0 THEN hit = 1
+        IF shoot = 1 AND rapid > 0 AND cool = 0 THEN hit = 1
+        IF hit = 1 THEN
+            k = 1
+            IF wide > 0 THEN k = 3
+            FOR i = 0 TO NBUL - 1
+                IF by[i] < 0 AND k > 0 THEN
+                    bx[i] = px
+                    IF wide > 0 AND k = 3 THEN bx[i] = px - 7
+                    IF wide > 0 AND k = 1 THEN bx[i] = px + 7
+                    by[i] = SHIPY - 8
+                    k = k - 1
+                ENDIF
+            NEXT i
+            cool = 6
+            TONE 1200
+            sfx = 2
+        ENDIF
+        fired = shoot
+
+        ' ---- stars ---------------------------------------------------
+        FOR i = 0 TO NSTAR - 1
+            DRAWCOLOR 0, 0, 0
+            PSET sx[i], sy[i]
+            sy[i] = sy[i] + 1
+            IF sy[i] > GROUND THEN
+                sy[i] = TOPY
+                sx[i] = INT(RND(1) * 318)
+            ENDIF
+            DRAWCOLOR sb[i], sb[i], sb[i] + 50
+            PSET sx[i], sy[i]
+        NEXT i
+
+        ' ---- our bullets ---------------------------------------------
+        FOR i = 0 TO NBUL - 1
+            IF by[i] >= 0 THEN
+                DRAWCOLOR 0, 0, 0
+                LINE bx[i], by[i], bx[i], by[i] + 4
+                by[i] = by[i] - 8
+                IF by[i] < TOPY THEN
+                    by[i] = 0 - 1
+                ELSE
+                    DRAWCOLOR 255, 230, 60
+                    LINE bx[i], by[i], bx[i], by[i] + 4
+                ENDIF
+            ENDIF
+        NEXT i
+
+        ' ---- enemies -------------------------------------------------
+        FOR i = 0 TO active - 1
+            IF ealive[i] = 1 THEN
+                DRAWENEMY(ex[i], ey[i], 0, 0, 0)
+                ey[i] = ey[i] + ev[i]
+                ex[i] = ex[i] + SIN(ey[i] / 12) * 1.5
+                IF et[i] = 2 AND px > ex[i] THEN ex[i] = ex[i] + 0.9
+                IF et[i] = 2 AND px < ex[i] THEN ex[i] = ex[i] - 0.9
+                IF ex[i] < 8 THEN ex[i] = 8
+                IF ex[i] > 312 THEN ex[i] = 312
+                ' Past the floor: one ship lost, the enemy comes round again.
+                IF ey[i] > GROUND THEN
+                    ey[i] = TOPY - 20
+                    ex[i] = 20 + INT(RND(1) * 280)
+                    lives = lives - 1
+                    blink = 40
+                    hud = 1
+                    TONE 160
+                    sfx = 10
+                ENDIF
+                ' Now and then a ship on screen drops a shot.
+                IF ey[i] > TOPY AND ey[i] < 160 AND RND(1) < 0.004 + wave * 0.002 THEN
+                    FOR j = 0 TO NEBUL - 1
+                        IF fy[j] < 0 THEN
+                            fx[j] = ex[i]
+                            fy[j] = ey[i] + 8
+                            EXITFOR
+                        ENDIF
+                    NEXT j
+                ENDIF
+                FOR j = 0 TO NBUL - 1
+                    IF by[j] >= 0 THEN
+                        dx = bx[j] - ex[i]
+                        IF dx < 0 THEN dx = 0 - dx
+                        dy = by[j] - ey[i]
+                        IF dy < 0 THEN dy = 0 - dy
+                        IF dx < 8 AND dy < 9 THEN
+                            DRAWCOLOR 0, 0, 0
+                            LINE bx[j], by[j], bx[j], by[j] + 4
+                            by[j] = 0 - 1
+                            ' An explosion where it was, a capsule now and then.
+                            FOR k = 0 TO NEXPL - 1
+                                IF xr[k] = 0 THEN
+                                    xx[k] = ex[i]
+                                    xy[k] = ey[i] + 3
+                                    xr[k] = 2
+                                    EXITFOR
+                                ENDIF
+                            NEXT k
+                            IF RND(1) < 0.18 THEN
+                                FOR k = 0 TO NPOW - 1
+                                    IF cy[k] < 0 THEN
+                                        cx[k] = ex[i]
+                                        cy[k] = ey[i]
+                                        ck[k] = 1 + INT(RND(1) * 3)
+                                        EXITFOR
+                                    ENDIF
+                                NEXT k
+                            ENDIF
+                            ey[i] = TOPY - 20 - INT(RND(1) * 60)
+                            ex[i] = 20 + INT(RND(1) * 280)
+                            score = score + 10 * wave
+                            kills = kills + 1
+                            hud = 1
+                            TONE 660
+                            sfx = 3
+                        ENDIF
+                    ENDIF
+                NEXT j
+                ' Touching the ship costs a life, or the shield.
+                dx = px - ex[i]
+                IF dx < 0 THEN dx = 0 - dx
+                IF blink = 0 AND ey[i] + 7 >= SHIPY AND dx < 12 THEN
+                    ey[i] = TOPY - 20
+                    ex[i] = 20 + INT(RND(1) * 280)
+                    IF shield > 0 THEN
+                        shield = 0
+                    ELSE
+                        lives = lives - 1
+                    ENDIF
+                    blink = 40
+                    hud = 1
+                    TONE 160
+                    sfx = 10
+                ENDIF
+                IF ey[i] >= TOPY AND et[i] = 1 THEN DRAWENEMY(ex[i], ey[i], 230, 60 + wave * 20, 60)
+                IF ey[i] >= TOPY AND et[i] = 2 THEN DRAWENEMY(ex[i], ey[i], 60, 220, 220)
+            ENDIF
+        NEXT i
+
+        ' ---- the boss: wide, slow, and it takes a beating --------------
+        IF bossalive = 1 THEN
+            DRAWCOLOR 0, 0, 0
+            RECT bossx - 26, BOSSY - 4, 53, 17, 1
+            bossx = bossx + bossdir * 1.5
+            IF bossx < 30 THEN bossdir = 1
+            IF bossx > 290 THEN bossdir = 0 - 1
+            ' A pair of shots from the wingtips, now and then.
+            IF RND(1) < 0.02 THEN
+                k = 2
+                FOR j = 0 TO NEBUL - 1
+                    IF fy[j] < 0 AND k > 0 THEN
+                        fx[j] = bossx - 60 + k * 40
+                        fy[j] = BOSSY + 14
+                        k = k - 1
+                    ENDIF
+                NEXT j
+            ENDIF
+            FOR j = 0 TO NBUL - 1
+                IF by[j] >= 0 THEN
+                    dx = bx[j] - bossx
+                    IF dx < 0 THEN dx = 0 - dx
+                    IF dx < 25 AND by[j] < BOSSY + 12 AND by[j] + 4 > BOSSY THEN
+                        DRAWCOLOR 0, 0, 0
+                        LINE bx[j], by[j], bx[j], by[j] + 4
+                        by[j] = 0 - 1
+                        bosshp = bosshp - 1
+                        bossflash = 3
+                        TONE 300
+                        sfx = 2
+                    ENDIF
+                ENDIF
+            NEXT j
+            IF bosshp <= 0 THEN
+                bossalive = 0
+                FOR k = 0 TO NEXPL - 1
+                    xx[k] = bossx - 18 + k * 12
+                    xy[k] = BOSSY + 6
+                    xr[k] = 2 + k
+                NEXT k
+                score = score + 250 * wave
+                kills = need
+                hud = 1
+                PLAY "T240 O5 L16 G E C < G E C"
+            ELSE
+                IF bossflash > 0 THEN
+                    bossflash = bossflash - 1
+                    DRAWCOLOR 255, 255, 255
+                ELSE
+                    DRAWCOLOR 200, 80, 220
+                ENDIF
+                RECT bossx - 24, BOSSY, 48, 12
+                LINE bossx - 8, BOSSY + 3, bossx - 4, BOSSY + 8
+                LINE bossx + 8, BOSSY + 3, bossx + 4, BOSSY + 8
+                DRAWCOLOR 255, 60, 60
+                LINE bossx - 24, BOSSY - 3, bossx - 24 + 48 * bosshp / bossmax, BOSSY - 3
+            ENDIF
+        ENDIF
+
+        ' ---- their bullets -------------------------------------------
+        FOR i = 0 TO NEBUL - 1
+            IF fy[i] >= 0 THEN
+                DRAWCOLOR 0, 0, 0
+                LINE fx[i], fy[i], fx[i], fy[i] + 3
+                fy[i] = fy[i] + 3
+                IF fy[i] > SHIPY + 14 THEN
+                    fy[i] = 0 - 1
+                ELSE
+                    dx = px - fx[i]
+                    IF dx < 0 THEN dx = 0 - dx
+                    IF blink = 0 AND fy[i] + 3 >= SHIPY AND dx < 8 THEN
+                        fy[i] = 0 - 1
+                        IF shield > 0 THEN
+                            shield = 0
+                        ELSE
+                            lives = lives - 1
+                        ENDIF
+                        blink = 40
+                        hud = 1
+                        TONE 160
+                        sfx = 10
+                    ELSE
+                        DRAWCOLOR 255, 120, 40
+                        LINE fx[i], fy[i], fx[i], fy[i] + 3
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT i
+
+        ' ---- capsules ------------------------------------------------
+        FOR i = 0 TO NPOW - 1
+            IF cy[i] >= 0 THEN
+                DRAWCAPSULE(cx[i], cy[i], ck[i], 0)
+                cy[i] = cy[i] + 1
+                dx = px - cx[i]
+                IF dx < 0 THEN dx = 0 - dx
+                IF cy[i] + 5 >= SHIPY AND dx < 12 THEN
+                    cy[i] = 0 - 1
+                    IF ck[i] = 1 THEN rapid = RAPIDFRAMES
+                    IF ck[i] = 2 THEN wide = WIDEFRAMES
+                    IF ck[i] = 3 THEN shield = 1
+                    score = score + 50
+                    hud = 1
+                    PLAY "T240 O5 L32 C E G > C E G"
+                ELSEIF cy[i] > SHIPY + 14 THEN
+                    cy[i] = 0 - 1
+                ELSE
+                    DRAWCAPSULE(cx[i], cy[i], ck[i], 1)
+                ENDIF
+            ENDIF
+        NEXT i
+        IF rapid > 0 THEN
+            rapid = rapid - 1
+            IF rapid = 0 THEN hud = 1
+        ENDIF
+        IF wide > 0 THEN
+            wide = wide - 1
+            IF wide = 0 THEN hud = 1
+        ENDIF
+
+        ' ---- explosions: a ring that grows and goes ------------------
+        FOR i = 0 TO NEXPL - 1
+            IF xr[i] > 0 THEN
+                DRAWCOLOR 0, 0, 0
+                CIRCLE xx[i], xy[i], xr[i]
+                xr[i] = xr[i] + 2
+                IF xr[i] > 12 THEN
+                    xr[i] = 0
+                ELSE
+                    DRAWCOLOR 255, 200 - xr[i] * 10, 40
+                    CIRCLE xx[i], xy[i], xr[i]
+                ENDIF
+            ENDIF
+        NEXT i
+
+        ' ---- the ship, blinking while it is untouchable ----------------
+        IF px <> op OR blink > 0 OR shield <> oshield THEN
+            DRAWSHIP(op, 0, 0, 0)
+            DRAWRING(op, 0, 0, 0)
+            op = px
+        ENDIF
+        IF blink > 0 THEN blink = blink - 1
+        IF blink = 0 OR (blink BAND 4) = 0 THEN DRAWSHIP(px, 40, 220, 90)
+        IF shield > 0 THEN DRAWRING(px, 90, 120, 255)
+        oshield = shield
+
+        ' ---- sound off, hud, pacing -----------------------------------
+        IF sfx > 0 THEN
+            sfx = sfx - 1
+            IF sfx = 0 THEN TONE 0
+        ENDIF
+        IF hud = 1 THEN
+            DRAWHUD(score, wave, lives, rapid, wide, shield)
+            hud = 0
+        ENDIF
+        IF lives <= 0 THEN playing = 0
+        frames = frames + 1
+        IF (frames BAND 255) = 0 THEN hud = 1
+
+        dt = TICK() - t0
+        IF dt < 20 THEN SLEEP 20 - dt
+    LOOP
+
+    ' ---- game over -------------------------------------------------
+    TONE 0
+    PLAY "T120 O3 L4 E C2"
+    CENTERTEXT(100, "GAME OVER", 230, 60, 60)
+    CENTERTEXT(120, "SCORE " + STR$(score), 255, 255, 255)
+    IF score > hiscore THEN
+        hiscore = score
+        TXTWRITER "hiscore.txt", STR$(score)
+        CENTERTEXT(140, "NEW HIGH SCORE", 255, 230, 60)
+    ENDIF
+    SLEEP 2500
+    playing = 0
+LOOP
+
+TONE 0
+PLAY.STOP()
 GFX.CLEAR 0
 GFX.CONSOLE 1
-PRINT "score "; sc
+PRINT "score "; score; " wave "; wave
+PRINT "heap at start "; heap0; " at end "; SYS.FREE()
