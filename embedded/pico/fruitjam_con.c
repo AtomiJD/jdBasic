@@ -52,12 +52,40 @@ static void cell_fill(int col, int row, uint8_t colour) {
                colour, CELL_BYTES);
 }
 
-static void cell_glyph(int col, int row, unsigned char c) {
+// Glyphs the font has no byte for, reached through their code point:
+// the German letters, the section and degree signs and the euro. In the
+// style of the C64 face, two dots over the base letter.
+struct extra_glyph { uint32_t cp; uint8_t rows[8]; };
+static const struct extra_glyph g_extra[] = {
+    { 0x00E4, { 0x66, 0x00, 0x3c, 0x06, 0x3e, 0x66, 0x3e, 0x00 } },   // ae
+    { 0x00F6, { 0x66, 0x00, 0x3c, 0x66, 0x66, 0x66, 0x3c, 0x00 } },   // oe
+    { 0x00FC, { 0x66, 0x00, 0x66, 0x66, 0x66, 0x66, 0x3e, 0x00 } },   // ue
+    { 0x00C4, { 0x66, 0x00, 0x18, 0x3c, 0x66, 0x7e, 0x66, 0x00 } },   // AE
+    { 0x00D6, { 0x66, 0x00, 0x3c, 0x66, 0x66, 0x66, 0x3c, 0x00 } },   // OE
+    { 0x00DC, { 0x66, 0x00, 0x66, 0x66, 0x66, 0x66, 0x3c, 0x00 } },   // UE
+    { 0x00DF, { 0x3c, 0x66, 0x66, 0x6c, 0x66, 0x66, 0x6c, 0x60 } },   // sharp s
+    { 0x00A7, { 0x3c, 0x60, 0x3c, 0x66, 0x3c, 0x06, 0x3c, 0x00 } },   // section
+    { 0x00B0, { 0x18, 0x24, 0x24, 0x18, 0x00, 0x00, 0x00, 0x00 } },   // degree
+    { 0x00B4, { 0x0c, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00 } },   // acute
+    { 0x20AC, { 0x1c, 0x30, 0x7c, 0x30, 0x7c, 0x30, 0x1c, 0x00 } },   // euro
+};
+static const uint8_t g_unknown_glyph[8] = { 0x7e, 0x42, 0x42, 0x42, 0x42, 0x42, 0x7e, 0x00 };
+
+static const uint8_t* glyph_for_byte(unsigned char c) {
+    if (c < 32) c = 32;
+    return &jdos_font8x8_c64[(c - 32) * 8];
+}
+
+static const uint8_t* glyph_for_cp(uint32_t cp) {
+    for (size_t i = 0; i < sizeof g_extra / sizeof g_extra[0]; i++)
+        if (g_extra[i].cp == cp) return g_extra[i].rows;
+    return g_unknown_glyph;
+}
+
+static void cell_draw(int col, int row, const uint8_t* gl) {
     uint8_t* fb = fruitjam_dvi_framebuffer();
     if (!fb) return;
     size_t stride = fruitjam_dvi_stride();
-    if (c < 32) c = 32;
-    const uint8_t* gl = &jdos_font8x8_c64[(c - 32) * 8];
     const uint8_t ink   = g_reverse ? g_bg : g_fg;
     const uint8_t paper = g_reverse ? g_fg : g_bg;
     for (int y = 0; y < CH_H; y++) {
@@ -102,10 +130,33 @@ static void newline(void) {
     if (++g_row >= ROWS) { g_row = ROWS - 1; scroll_up(); }
 }
 
-static void put_printable(char c) {
+static void put_glyph(const uint8_t* gl) {
     if (g_col >= COLS) newline();
-    cell_glyph(g_col, g_row, (unsigned char)c);
+    cell_draw(g_col, g_row, gl);
     g_col++;
+}
+
+// Text arrives as UTF-8. A two or three byte sequence is one code point
+// and one cell; any other byte above 127 is a glyph of the font by
+// number, which is how the graphics characters are reached.
+static uint32_t      g_utf_cp = 0;
+static int           g_utf_need = 0;
+static unsigned char g_utf_lead = 0;
+
+static void put_printable(char ch) {
+    unsigned char c = (unsigned char)ch;
+    if (g_utf_need > 0) {
+        if ((c & 0xC0) == 0x80) {
+            g_utf_cp = (g_utf_cp << 6) | (c & 0x3F);
+            if (--g_utf_need == 0) put_glyph(glyph_for_cp(g_utf_cp));
+            return;
+        }
+        put_glyph(glyph_for_byte(g_utf_lead));
+        g_utf_need = 0;
+    }
+    if (c >= 0xC2 && c <= 0xDF) { g_utf_need = 1; g_utf_cp = c & 0x1F; g_utf_lead = c; return; }
+    if (c >= 0xE0 && c <= 0xEF) { g_utf_need = 2; g_utf_cp = c & 0x0F; g_utf_lead = c; return; }
+    put_glyph(glyph_for_byte(c));
 }
 
 // The foreground colours, dull and bright, mapped onto the three bits

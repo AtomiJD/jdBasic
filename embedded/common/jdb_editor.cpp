@@ -17,8 +17,35 @@
 #include <string.h>
 #include <vector>
 #include <string>
+#include "jdb_utf8.h"
 
 extern "C" int repl_read_key(void);
+
+// Positions in a line are bytes; the screen counts code points. These
+// step and measure in bytes over UTF-8 sequences.
+static int prev_cp(const std::string& s, int i) { return utf8_prev(s.c_str(), i); }
+static int next_cp(const std::string& s, int i) { return utf8_next(s.c_str(), (int)s.size(), i); }
+static int cols_to(const std::string& s, int i) { return utf8_cols(s.c_str(), 0, i); }
+static int byte_at(const std::string& s, int col) { return utf8_byte_at(s.c_str(), (int)s.size(), col); }
+// A byte position inside a sequence is moved back to its lead byte.
+static int snap(const std::string& s, int i) {
+    if (i > (int)s.size()) i = (int)s.size();
+    while (i > 0 && i < (int)s.size() && utf8_is_cont((unsigned char)s[i])) i--;
+    return i;
+}
+
+// The rest of a sequence whose lead byte was just read: its continuation
+// bytes follow in the queue.
+static std::string read_sequence(int lead) {
+    std::string seq(1, (char)lead);
+    int n = utf8_seq_len((unsigned char)lead);
+    for (int k = 1; k < n; k++) {
+        int b = repl_read_key();
+        if (b < 0x80 || b > 0xBF) break;
+        seq += (char)b;
+    }
+    return seq;
+}
 void syntax_print(const char* s, int n);
 
 #define K_LEFT  0xB4
@@ -66,7 +93,10 @@ static void draw_line(const std::string& s, int screen_row, int off,
     cup(screen_row, 0);
     printf("\x1b[K");
     if ((int)s.size() <= off) return;
-    int n = (int)((s.size() - off) > (size_t)ED_COLS ? ED_COLS : s.size() - off);
+    // As many bytes as fill the row's columns.
+    int end = off, cols = 0;
+    while (end < (int)s.size() && cols < ED_COLS) { end = next_cp(s, end); cols++; }
+    int n = end - off;
 
     int a = selfrom - off, b = selto - off;
     if (a < 0) a = 0;
@@ -160,7 +190,10 @@ void jdb_editor(const char* name) {
     for (;;) {
         if (cy < top) { top = cy; paint_from = 0; }
         if (cy >= top + ED_ROWS) { top = cy - ED_ROWS + 1; paint_from = 0; }
-        int xoff = (cx / ED_COLS) * ED_COLS;
+        cx = snap(lines[cy], cx);
+        int cxcol = cols_to(lines[cy], cx);
+        int xcol = (cxcol / ED_COLS) * ED_COLS;
+        int xoff = byte_at(lines[cy], xcol);
         if (xoff != last_xoff) { paint_line = true; last_xoff = xoff; }
 
         int sy0 = 0, sx0 = 0, sy1 = -1, sx1 = 0;
@@ -188,8 +221,8 @@ void jdb_editor(const char* name) {
         paint_from = ED_ROWS;
         paint_line = false;
 
-        draw_status(name, cy, (int)lines.size(), dirty, cx, sel);
-        cup(cy - top, cx - xoff);
+        draw_status(name, cy, (int)lines.size(), dirty, cxcol, sel);
+        cup(cy - top, cxcol - xcol);
         fflush(NULL);
 
         int c = repl_read_key();
@@ -273,12 +306,12 @@ void jdb_editor(const char* name) {
         }
         if (c == K_LEFT || c == K_SLEFT) {
             anchor(c == K_SLEFT);
-            if (cx > 0) cx--; else if (cy > 0) { cy--; cx = lines[cy].size(); }
+            if (cx > 0) cx = prev_cp(ln, cx); else if (cy > 0) { cy--; cx = lines[cy].size(); }
             paint_from = 0; continue;
         }
         if (c == K_RIGHT || c == K_SRIGHT) {
             anchor(c == K_SRIGHT);
-            if (cx < (int)ln.size()) cx++; else if (cy + 1 < (int)lines.size()) { cy++; cx = 0; }
+            if (cx < (int)ln.size()) cx = next_cp(ln, cx); else if (cy + 1 < (int)lines.size()) { cy++; cx = 0; }
             paint_from = 0; continue;
         }
         if (c == K_HOME || c == K_SHOME) { anchor(c == K_SHOME); cx = 0; paint_from = 0; continue; }
@@ -312,8 +345,9 @@ void jdb_editor(const char* name) {
         if (c == 8 || c == 127) {
             if (has_sel()) { sel_drop(); paint_from = 0; continue; }
             if (cx > 0) {
-                ln.erase(cx - 1, 1);
-                cx--;
+                int p = prev_cp(ln, cx);
+                ln.erase(p, cx - p);
+                cx = p;
                 dirty = true; paint_line = true;
             } else if (cy > 0) {
                 cx = lines[cy - 1].size();
@@ -328,7 +362,7 @@ void jdb_editor(const char* name) {
         if (c == K_DEL) {
             if (has_sel()) { sel_drop(); paint_from = 0; continue; }
             if (cx < (int)ln.size()) {
-                ln.erase(cx, 1);
+                ln.erase(cx, next_cp(ln, cx) - cx);
                 dirty = true; paint_line = true;
             } else if (cy + 1 < (int)lines.size()) {
                 ln += lines[cy + 1];
@@ -340,8 +374,9 @@ void jdb_editor(const char* name) {
         }
         if (c >= 32 && c < 255) {
             if (has_sel()) { sel_drop(); paint_from = 0; }
-            lines[cy].insert(lines[cy].begin() + cx, (char)c);
-            cx++;
+            std::string seq = c >= 0xC2 ? read_sequence(c) : std::string(1, (char)c);
+            lines[cy].insert(cx, seq);
+            cx += (int)seq.size();
             dirty = true;
             if (paint_from >= ED_ROWS) paint_line = true;
         }

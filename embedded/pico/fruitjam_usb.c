@@ -163,9 +163,8 @@ static stdio_driver_t fj_driver = {
 static const uint8_t conv_table[128][2] = { HID_KEYCODE_TO_ASCII };
 
 // The German layout as a sparse correction to the US one: only the keys
-// whose engraving differs. Umlauts and the sharp s leave as Latin-1
-// bytes, which is what a file wants; the console font stops at 151 and
-// draws them blank, so they are for text rather than for looking at.
+// whose engraving differs. The values are code points; umlauts and the
+// sharp s leave the ring as UTF-8.
 static int g_layout_de = 0;
 
 struct de_key { uint8_t code; uint8_t plain; uint8_t shift; };
@@ -190,13 +189,46 @@ static const struct de_key DE[] = {
     { HID_KEY_EUROPE_2, '<', '>' },
 };
 
+// The third level of the German layout, reached with AltGr.
+struct de_altgr { uint8_t code; uint16_t cp; };
+static const struct de_altgr DE_ALTGR[] = {
+    { HID_KEY_Q, '@' }, { HID_KEY_E, 0x20AC },
+    { HID_KEY_7, '{' }, { HID_KEY_8, '[' }, { HID_KEY_9, ']' }, { HID_KEY_0, '}' },
+    { HID_KEY_MINUS, '\\' }, { HID_KEY_BRACKET_RIGHT, '~' },
+    { HID_KEY_EUROPE_2, '|' }, { HID_KEY_M, 0xB5 },
+};
+
 // 0 is US, anything else German.
 void fruitjam_kbd_layout(int de) { g_layout_de = de ? 1 : 0; }
 int  fruitjam_kbd_layout_get(void) { return g_layout_de; }
 
-static uint8_t translate(uint8_t keycode, uint8_t modifier) {
+// A key becomes a byte for the ring, or a code point above 127 marked as
+// text, which leaves the ring as UTF-8. The two are told apart because
+// the editing keys have codes in the same range as the Latin letters.
+#define TEXT_CP 0x10000
+
+static void __not_in_flash_func(key_emit)(int code) {
+    if (!(code & TEXT_CP)) { key_push((uint8_t)code); return; }
+    unsigned cp = (unsigned)(code & 0xFFFF);
+    if (cp < 0x80) {
+        key_push((uint8_t)cp);
+    } else if (cp < 0x800) {
+        key_push((uint8_t)(0xC0 | (cp >> 6)));
+        key_push((uint8_t)(0x80 | (cp & 0x3F)));
+    } else {
+        key_push((uint8_t)(0xE0 | (cp >> 12)));
+        key_push((uint8_t)(0x80 | ((cp >> 6) & 0x3F)));
+        key_push((uint8_t)(0x80 | (cp & 0x3F)));
+    }
+}
+
+static int translate(uint8_t keycode, uint8_t modifier) {
     const uint8_t shift = (uint8_t)(modifier & (KEYBOARD_MODIFIER_LEFTSHIFT |
                                                 KEYBOARD_MODIFIER_RIGHTSHIFT));
+    if (g_layout_de && (modifier & KEYBOARD_MODIFIER_RIGHTALT)) {
+        for (unsigned i = 0; i < sizeof DE_ALTGR / sizeof DE_ALTGR[0]; i++)
+            if (DE_ALTGR[i].code == keycode) return TEXT_CP | DE_ALTGR[i].cp;
+    }
     switch (keycode) {
         case HID_KEY_ARROW_LEFT:  return shift ? K_SLEFT : K_LEFT;
         case HID_KEY_ARROW_RIGHT: return shift ? K_SRIGHT : K_RIGHT;
@@ -224,9 +256,10 @@ static uint8_t translate(uint8_t keycode, uint8_t modifier) {
         // them: ctrl-c is 3.
         if (c && (modifier & (KEYBOARD_MODIFIER_LEFTCTRL |
                               KEYBOARD_MODIFIER_RIGHTCTRL))) {
-            if (c >= 'a' && c <= 'z') return (uint8_t)(c - 'a' + 1);
-            if (c >= 'A' && c <= 'Z') return (uint8_t)(c - 'A' + 1);
+            if (c >= 'a' && c <= 'z') return c - 'a' + 1;
+            if (c >= 'A' && c <= 'Z') return c - 'A' + 1;
         }
+        if (c >= 0x80) return TEXT_CP | c;
         return c;
     }
     return 0;
@@ -237,7 +270,7 @@ static uint8_t translate(uint8_t keycode, uint8_t modifier) {
 // A held key. The keyboard reports a change, not a stream, so repeat is
 // ours to make: remember what is down and when it is next due, and let
 // the frame loop on core 1 post it again.
-static volatile uint8_t  g_rep_char = 0;
+static volatile int      g_rep_char = 0;
 static volatile uint32_t g_rep_due = 0;
 #define REPEAT_DELAY_US  400000u
 #define REPEAT_EVERY_US   40000u
@@ -345,7 +378,7 @@ int fruitjam_kbd_down(int code) {
     for (int j = 0; j < 6; j++) {
         uint8_t k = g_held.keycode[j];
         if (!k) continue;
-        if (translate(k, g_held.modifier) == (uint8_t)code) return 1;
+        if (translate(k, g_held.modifier) == code) return 1;
     }
     return 0;
 }
@@ -359,9 +392,9 @@ static void handle_kbd(const hid_keyboard_report_t* now) {
         for (int j = 0; j < 6; j++)
             if (before.keycode[j] == k) { held = true; break; }
         if (held) continue;
-        uint8_t c = translate(k, now->modifier);
+        int c = translate(k, now->modifier);
         if (c) {
-            key_push(c);
+            key_emit(c);
             g_rep_char = c;
             g_rep_due = time_us_32() + REPEAT_DELAY_US;
         }
@@ -393,7 +426,7 @@ static void __not_in_flash_func(kbd_repeat_tick)(void) {
         return;
     }
     if ((int32_t)(now - g_rep_due) < 0) return;
-    key_push(g_rep_char);
+    key_emit(g_rep_char);
     g_rep_due = now + REPEAT_EVERY_US;
 }
 

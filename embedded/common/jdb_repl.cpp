@@ -20,6 +20,7 @@
 #include <dirent.h>
 
 #include "jdb_repl.h"
+#include "jdb_utf8.h"
 
 extern "C" int repl_read_key(void);
 extern "C" void jdb_con_size(int* cols, int* rows);
@@ -406,16 +407,18 @@ static int line_width(void) {
 static void redraw(const char* buf, int len, int cur) {
     // Long lines scroll sideways so the redraw never wraps and stacks.
     // The visible slice prints in colour and the cursor lands by stepping
-    // forward, not by reprinting.
+    // forward, not by reprinting. Positions are bytes, the screen counts
+    // code points.
     const int width = line_width();
-    int start = 0;
-    if (cur > width) start = cur - width;
-    int vis = len - start;
-    if (vis > width) vis = width;
+    int curcol = utf8_cols(buf, 0, cur);
+    int startcol = curcol > width ? curcol - width : 0;
+    int start = utf8_byte_at(buf, len, startcol);
+    int end = start, viscols = 0;
+    while (end < len && viscols < width) { end = utf8_next(buf, len, end); viscols++; }
     printf("\r> ");
-    syntax_print(buf + start, vis);
-    printf("%*s\r", width - vis, "");
-    if (cur - start + 2 > 0) printf("\x1b[%dC", cur - start + 2);
+    syntax_print(buf + start, end - start);
+    printf("%*s\r", width - viscols, "");
+    if (curcol - startcol + 2 > 0) printf("\x1b[%dC", curcol - startcol + 2);
 }
 
 static void read_line(char* buf, int cap) {
@@ -431,20 +434,22 @@ static void read_line(char* buf, int cap) {
             printf("\n");
             break;
         }
-        if (c == K_LEFT)  { if (cur > 0) cur--; }
-        else if (c == K_RIGHT) { if (cur < len) cur++; }
+        if (c == K_LEFT)  { if (cur > 0) cur = utf8_prev(buf, cur); }
+        else if (c == K_RIGHT) { if (cur < len) cur = utf8_next(buf, len, cur); }
         else if (c == K_HOME)  { cur = 0; }
         else if (c == K_END)   { cur = len; }
         else if (c == 8 || c == 127) {
             if (cur > 0) {
-                memmove(buf + cur - 1, buf + cur, len - cur + 1);
-                cur--; len--;
+                int p = utf8_prev(buf, cur);
+                memmove(buf + p, buf + cur, len - cur + 1);
+                len -= cur - p; cur = p;
             }
         }
         else if (c == K_DEL) {
             if (cur < len) {
-                memmove(buf + cur, buf + cur + 1, len - cur);
-                len--;
+                int q = utf8_next(buf, len, cur);
+                memmove(buf + cur, buf + q, len - q + 1);
+                len -= q - cur;
             }
         }
         else if (c == K_UP || c == K_DOWN) {
@@ -463,14 +468,26 @@ static void read_line(char* buf, int cap) {
             len = (int)strlen(buf);
             cur = len;
         }
-        else if (c >= 32 && c < 127 && len < cap - 1) {
-            memmove(buf + cur + 1, buf + cur, len - cur + 1);
-            buf[cur] = (char)c;
-            cur++; len++;
+        else if (((c >= 32 && c < 127) || c >= 0xC2) && len < cap - 4) {
+            // A lead byte brings its continuation bytes with it.
+            char seq[4];
+            int n = 1;
+            seq[0] = (char)c;
+            if (c >= 0xC2) {
+                int want = utf8_seq_len((unsigned char)c);
+                while (n < want) {
+                    int b = repl_read_key();
+                    if (b < 0x80 || b > 0xBF) break;
+                    seq[n++] = (char)b;
+                }
+            }
+            memmove(buf + cur + n, buf + cur, len - cur + 1);
+            memcpy(buf + cur, seq, n);
+            cur += n; len += n;
             // Appending at the end of a short line: echo the character
             // and skip the full redraw, so pasted input keeps up.
-            if (cur == len && len <= line_width()) {
-                printf("%c", c);
+            if (cur == len && utf8_cols(buf, 0, len) <= line_width()) {
+                fwrite(seq, 1, n, stdout);
                 continue;
             }
         }
