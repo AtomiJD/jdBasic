@@ -9,6 +9,8 @@ public:
     // outlive it; a temporary is refused at compile time.
     explicit Lexer(const std::string& source);
     explicit Lexer(std::string&&) = delete;
+    // The next token; EOF_TOKEN again and again once the source is used up.
+    Token next();
     std::vector<Token> tokenize();
 
 private:
@@ -16,6 +18,8 @@ private:
     size_t pos = 0;
     int line = 1;
     int col = 1;
+    bool last_was_newline = true;
+    bool done = false;
 
     char peek() const;
     char peek_next() const;

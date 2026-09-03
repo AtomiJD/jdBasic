@@ -2,18 +2,60 @@
 #include <algorithm>
 #include "lexer.h"
 
-Parser::Parser(std::vector<Token> t) : tokens(std::move(t)) {}
+Parser::Parser(std::vector<Token> t) : ring(std::move(t)), count(ring.size()) {}
+Parser::Parser(Lexer& lx) : ring(128), lexer(&lx) {}
 
-const Token& Parser::current() const { return tokens[pos]; }
-const Token& Parser::peek_at(size_t offset) const { return tokens[pos + offset]; }
+// Token number i, fetched from the lexer if the window does not reach it
+// yet. Without a lexer the stream ends on its last token, the EOF.
+const Token& Parser::at(size_t i) {
+    if (lexer) {
+        while (base + count <= i) {
+            if (count == ring.size()) {
+                // One line wants more than the ring holds: twice the
+                // room, the tokens laid out from the front again.
+                std::vector<Token> wider(ring.size() * 2);
+                for (size_t k = 0; k < count; k++)
+                    wider[k] = std::move(ring[(head + k) % ring.size()]);
+                ring.swap(wider);
+                head = 0;
+            }
+            ring[(head + count) % ring.size()] = lexer->next();
+            count++;
+        }
+    } else if (i >= base + count) {
+        i = base + count - 1;
+    }
+    return ring[(head + (i - base)) % ring.size()];
+}
+
+// Drops tokens the parser can no longer come back to: everything more
+// than eight behind pos and below the statement's hold.
+void Parser::trim() {
+    if (!lexer) return;
+    size_t keep = pos > 8 ? pos - 8 : 0;
+    if (hold < keep) keep = hold;
+    while (base < keep) {
+        head = (head + 1) % ring.size();
+        base++;
+        count--;
+    }
+}
+
+const Token& Parser::current() { return at(pos); }
+const Token& Parser::peek_at(size_t offset) { return at(pos + offset); }
 
 Token Parser::advance() {
-    Token t = tokens[pos];
-    if (pos < tokens.size() - 1) pos++;
+    Token t = at(pos);
+    if (t.type != TokenType::EOF_TOKEN) pos++;
+    if (recording) {
+        if (!recording->empty()) *recording += " ";
+        *recording += t.value;
+    }
+    trim();
     return t;
 }
 
-bool Parser::check(TokenType type) const { return current().type == type; }
+bool Parser::check(TokenType type) { return current().type == type; }
 
 bool Parser::match(TokenType type) {
     if (check(type)) { advance(); return true; }
@@ -165,6 +207,8 @@ std::vector<StmtPtr> Parser::parse() {
 // ── Statements ───────────────────────────────────────────────
 
 StmtPtr Parser::parse_statement() {
+    // A statement never comes back to a position before its own start.
+    hold = (size_t)-1;
     // Drain any synthesised statements queued from a previous call (e.g.
     // multi-variable DIM `DIM a, b, c` which expands into 3 separate stmts).
     if (!pending_stmts.empty()) {
@@ -865,9 +909,10 @@ StmtPtr Parser::parse_dim_clause(int ln) {
         if (current().type == TokenType::IDENTIFIER && current().value != "MAP") {
             udt_name = current().value;
             // Allow dotted type names: MODULE.TypeName
-            while (pos + 1 < tokens.size() && peek_at(1).type == TokenType::DOT) {
+            while (peek_at(1).type == TokenType::DOT) {
                 // Check: ident DOT ident
                 size_t saved = pos;
+                mark(saved);
                 advance(); // consume first ident
                 if (check(TokenType::DOT)) {
                     advance(); // consume dot
@@ -1434,15 +1479,11 @@ StmtPtr Parser::parse_ident_stmt() {
     if (peek_at(1).type == TokenType::ARROW) {
         advance(); // identifier
         advance(); // ->
-        // Capture formula as string from tokens
-        size_t formula_start = pos;
-        ExprPtr val = parse_expr();
-        // Reconstruct formula string
+        // The formula's text, as the tokens of the expression.
         std::string formula;
-        for (size_t i = formula_start; i < pos; i++) {
-            if (i > formula_start) formula += " ";
-            formula += tokens[i].value;
-        }
+        recording = &formula;
+        ExprPtr val = parse_expr();
+        recording = nullptr;
         expect_newline();
         auto s = std::make_unique<Stmt>();
         s->kind = StmtKind::REACT_ASSIGN;
@@ -1472,6 +1513,7 @@ StmtPtr Parser::parse_ident_stmt() {
         {
             std::string dotted = name;
             size_t saved = pos;
+            mark(saved);
             bool pure_dots = true;
             while (check(TokenType::DOT)) {
                 advance();
@@ -1496,8 +1538,8 @@ StmtPtr Parser::parse_ident_stmt() {
                 // - e.g. 'TURTLE.SETPOS (x+1), (y+1)' should parse as
                 // SETPOS with two args, not as 'SETPOS((x+1))' followed
                 // by stray ', (y+1)'.
-                const Token& prev_name = tokens[pos - 1];
-                const Token& lpar_tok  = tokens[pos];
+                Token prev_name = at(pos - 1);
+                Token lpar_tok  = at(pos);
                 // Lexer stores Token.col as the column AFTER the last
                 // consumed character (i.e. where the next char will
                 // land). Adjacency therefore means lpar.col equals
@@ -1538,13 +1580,10 @@ StmtPtr Parser::parse_ident_stmt() {
             if (pure_dots && check(TokenType::ARROW)) {
                 // Dotted reactive assignment: obj.field -> expr
                 advance(); // ->
-                size_t formula_start = pos;
-                ExprPtr val = parse_expr();
                 std::string formula;
-                for (size_t fi = formula_start; fi < pos; fi++) {
-                    if (fi > formula_start) formula += " ";
-                    formula += tokens[fi].value;
-                }
+                recording = &formula;
+                ExprPtr val = parse_expr();
+                recording = nullptr;
                 expect_newline();
                 auto s = std::make_unique<Stmt>();
                 s->kind = StmtKind::REACT_ASSIGN;
@@ -1561,8 +1600,8 @@ StmtPtr Parser::parse_ident_stmt() {
             if (pure_dots && check(TokenType::LBRACKET)) {
                 size_t la = pos;
                 int depth = 0;
-                while (la < tokens.size()) {
-                    TokenType lt = tokens[la].type;
+                for (;;) {
+                    TokenType lt = at(la).type;
                     if (lt == TokenType::LBRACKET) depth++;
                     else if (lt == TokenType::RBRACKET) {
                         depth--;
@@ -1571,8 +1610,7 @@ StmtPtr Parser::parse_ident_stmt() {
                                lt == TokenType::EOF_TOKEN) break;
                     la++;
                 }
-                if (la < tokens.size() &&
-                    tokens[la].type == TokenType::ASSIGN) {
+                if (at(la).type == TokenType::ASSIGN) {
                     advance(); // [
                     std::vector<ExprPtr> simple_chain;
                     simple_chain.push_back(parse_expr());
@@ -2012,8 +2050,7 @@ ExprPtr Parser::parse_interp_string(const std::string& raw, int line) {
             // The piece is ordinary jdBasic source, so it is read by an
             // ordinary lexer and parser rather than by a second grammar.
             Lexer sub_lexer(src);
-            auto sub_tokens = sub_lexer.tokenize();
-            Parser sub_parser(sub_tokens);
+            Parser sub_parser(sub_lexer);
             ExprPtr inner = sub_parser.parse_expr();
 
             auto call = std::make_unique<Expr>();
@@ -2436,8 +2473,7 @@ std::vector<StmtPtr> Parser::parse_import() {
 
     // Lex + parse the module file
     Lexer mod_lexer(source);
-    auto mod_tokens = mod_lexer.tokenize();
-    Parser mod_parser(mod_tokens);
+    Parser mod_parser(mod_lexer);
     mod_parser.file_reader = file_reader;
     mod_parser.imported_modules = imported_modules; // share import set
     mod_parser.current_source_file = module_file_path; // propagate file path

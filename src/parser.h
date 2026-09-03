@@ -8,9 +8,14 @@
 #include "token.h"
 #include "ast.h"
 
+class Lexer;
+
 class Parser {
 public:
     explicit Parser(std::vector<Token> tokens);
+    // Reads tokens from the lexer as it goes, keeping only the current
+    // line and a few tokens behind it.
+    explicit Parser(Lexer& lexer);
     std::vector<StmtPtr> parse();
 
     // Module support: callback to read a file
@@ -30,8 +35,25 @@ public:
     std::unordered_set<std::string> predeclared_types;
 
 private:
-    std::vector<Token> tokens;
+    // The token window, a ring: token number `base` sits at ring[head],
+    // `count` tokens follow it. With a lexer attached the ring fills on
+    // demand, drops what lies more than a few tokens behind `pos` - never
+    // below `hold`, which a statement sets at a position it may come back
+    // to - and doubles only when one line needs more than it holds.
+    // Without a lexer it holds the whole stream.
+    std::vector<Token> ring;
+    size_t head = 0;
+    size_t count = 0;
     size_t pos = 0;
+    size_t base = 0;
+    size_t hold = (size_t)-1;
+    Lexer* lexer = nullptr;
+    // While set, every token taken by advance() is appended to it.
+    std::string* recording = nullptr;
+
+    const Token& at(size_t i);
+    void mark(size_t at_pos) { if (at_pos < hold) hold = at_pos; }
+    void trim();
 
     // True while parsing a one-liner IF body (IF c THEN stmt [:stmt] [ELSE ...]).
     // There a bare identifier before ':' or ELSE is a no-args SUB/FUNC call, not
@@ -59,10 +81,10 @@ private:
     void validate_type_refs(const std::vector<StmtPtr>& stmts);
 
     // Helpers
-    const Token& current() const;
-    const Token& peek_at(size_t offset) const;
+    const Token& current();
+    const Token& peek_at(size_t offset);
     Token advance();
-    bool check(TokenType type) const;
+    bool check(TokenType type);
     bool match(TokenType type);
     Token expect(TokenType type, const std::string& msg);
     void skip_newlines();

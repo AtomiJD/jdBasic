@@ -339,9 +339,7 @@ void run_source(VM& vm, const std::string& source) {
         // compile starts.
         {
             Lexer lexer(source);
-            auto tokens = lexer.tokenize();
-            LOAD_TRACE("lexed");
-            Parser parser(std::move(tokens));
+            Parser parser(lexer);
             parser.file_reader = bundled_module_reader;
             ast = parser.parse();
             LOAD_TRACE("parsed");

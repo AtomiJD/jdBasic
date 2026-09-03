@@ -114,20 +114,8 @@ Token Lexer::read_identifier() {
     return make_token(TokenType::IDENTIFIER, upper);
 }
 
-std::vector<Token> Lexer::tokenize() {
-    std::vector<Token> tokens;
-#ifdef JDB_MCU
-    // Growing this vector is what kills a load on the board. A Token is
-    // 36 bytes there, so a doubling near the end wants the old block and
-    // the new one at the same time - around 110 KB for eight kilobytes of
-    // source, and the heap refuses long before its total runs out.
-    // Reserving once removes the copy entirely. Real jdBasic source runs
-    // about one token per three and a half bytes; reserving on three
-    // deliberately overshoots, because falling short costs a reallocation
-    // that is far more expensive than the slack.
-    tokens.reserve(src.size() / 3 + 32);
-#endif
-    bool last_was_newline = true;
+Token Lexer::next() {
+    if (done) return make_token(TokenType::EOF_TOKEN, "");
 
     while (pos < src.size()) {
         skip_whitespace();
@@ -137,17 +125,9 @@ std::vector<Token> Lexer::tokenize() {
 
         if (c == '\n') {
             advance();
-            // Line continuation: if last non-whitespace token was '_', remove it
-            // and skip the newline (join with next line)
-            if (!tokens.empty() && tokens.back().type == TokenType::IDENTIFIER &&
-                tokens.back().value == "_") {
-                tokens.pop_back(); // remove the '_' token
-                // Don't emit NEWLINE - lines are joined
-                continue;
-            }
             if (!last_was_newline) {
-                tokens.push_back(make_token(TokenType::NEWLINE, "\\n"));
                 last_was_newline = true;
+                return make_token(TokenType::NEWLINE, "\\n");
             }
             continue;
         }
@@ -161,10 +141,7 @@ std::vector<Token> Lexer::tokenize() {
         }
 
         // String
-        if (c == '"') {
-            tokens.push_back(read_string());
-            continue;
-        }
+        if (c == '"') return read_string();
 
         // Interpolated string: $"text {{ expr }} text". The body is read by
         // the ordinary string reader, so the doubled-quote rule holds inside
@@ -173,8 +150,7 @@ std::vector<Token> Lexer::tokenize() {
             advance();
             Token t = read_string();
             t.type = TokenType::INTERP_STRING;
-            tokens.push_back(t);
-            continue;
+            return t;
         }
 
         // Hex literal: $FF, $80000
@@ -182,9 +158,8 @@ std::vector<Token> Lexer::tokenize() {
             advance(); // skip $
             std::string hex;
             while (pos < src.size() && std::isxdigit(peek())) hex += advance();
-            tokens.push_back(make_token(TokenType::INTEGER_LIT,
-                std::to_string((int64_t)std::stoull(hex, nullptr, 16))));
-            continue;
+            return make_token(TokenType::INTEGER_LIT,
+                std::to_string((int64_t)std::stoull(hex, nullptr, 16)));
         }
 
         // Binary literal: %0101  (classic-BASIC syntax)
@@ -192,70 +167,69 @@ std::vector<Token> Lexer::tokenize() {
             advance(); // skip %
             std::string bin;
             while (pos < src.size() && (peek() == '0' || peek() == '1')) bin += advance();
-            tokens.push_back(make_token(TokenType::INTEGER_LIT,
-                std::to_string((int64_t)std::stoull(bin, nullptr, 2))));
-            continue;
+            return make_token(TokenType::INTEGER_LIT,
+                std::to_string((int64_t)std::stoull(bin, nullptr, 2)));
         }
 
         // Number
-        if (std::isdigit(c) || (c == '.' && std::isdigit(peek_next()))) {
-            tokens.push_back(read_number());
-            continue;
-        }
+        if (std::isdigit(c) || (c == '.' && std::isdigit(peek_next()))) return read_number();
 
         // Identifier / keyword
         if (std::isalpha(c) || c == '_') {
-            tokens.push_back(read_identifier());
-            continue;
+            Token t = read_identifier();
+            // A lone underscore before the end of the line joins it with
+            // the next one: neither the underscore nor the newline is a
+            // token.
+            if (t.type == TokenType::IDENTIFIER && t.value == "_") {
+                skip_whitespace();
+                if (peek() == '\'') skip_comment();
+                if (peek() == '\n') { advance(); continue; }
+            }
+            return t;
         }
 
         // Operators and punctuation
         switch (c) {
-            case '+': advance(); tokens.push_back(make_token(TokenType::PLUS, "+")); break;
+            case '+': advance(); return make_token(TokenType::PLUS, "+");
             case '-':
                 advance();
-                if (peek() == '>') { advance(); tokens.push_back(make_token(TokenType::ARROW, "->")); }
-                else { tokens.push_back(make_token(TokenType::MINUS, "-")); }
-                break;
-            case '*': advance(); tokens.push_back(make_token(TokenType::STAR, "*")); break;
-            case '/': advance(); tokens.push_back(make_token(TokenType::SLASH, "/")); break;
-            case '\\': advance(); tokens.push_back(make_token(TokenType::BACKSLASH, "\\")); break;
-            case '^': advance(); tokens.push_back(make_token(TokenType::CARET, "^")); break;
-            case '(': advance(); tokens.push_back(make_token(TokenType::LPAREN, "(")); break;
-            case ')': advance(); tokens.push_back(make_token(TokenType::RPAREN, ")")); break;
-            case '[': advance(); tokens.push_back(make_token(TokenType::LBRACKET, "[")); break;
-            case ']': advance(); tokens.push_back(make_token(TokenType::RBRACKET, "]")); break;
-            case ',': advance(); tokens.push_back(make_token(TokenType::COMMA, ",")); break;
-            case ':': advance(); tokens.push_back(make_token(TokenType::COLON, ":")); break;
-            case ';': advance(); tokens.push_back(make_token(TokenType::SEMICOLON, ";")); break;
-            case '.': advance(); tokens.push_back(make_token(TokenType::DOT, ".")); break;
-            case '@': advance(); tokens.push_back(make_token(TokenType::AT, "@")); break;
+                if (peek() == '>') { advance(); return make_token(TokenType::ARROW, "->"); }
+                return make_token(TokenType::MINUS, "-");
+            case '*': advance(); return make_token(TokenType::STAR, "*");
+            case '/': advance(); return make_token(TokenType::SLASH, "/");
+            case '\\': advance(); return make_token(TokenType::BACKSLASH, "\\");
+            case '^': advance(); return make_token(TokenType::CARET, "^");
+            case '(': advance(); return make_token(TokenType::LPAREN, "(");
+            case ')': advance(); return make_token(TokenType::RPAREN, ")");
+            case '[': advance(); return make_token(TokenType::LBRACKET, "[");
+            case ']': advance(); return make_token(TokenType::RBRACKET, "]");
+            case ',': advance(); return make_token(TokenType::COMMA, ",");
+            case ':': advance(); return make_token(TokenType::COLON, ":");
+            case ';': advance(); return make_token(TokenType::SEMICOLON, ";");
+            case '.': advance(); return make_token(TokenType::DOT, ".");
+            case '@': advance(); return make_token(TokenType::AT, "@");
             case '?':
                 advance();
                 // Two of them is the null-coalescing operator; one on its own
                 // stays the pipe placeholder.
-                if (peek() == '?') { advance(); tokens.push_back(make_token(TokenType::COALESCE, "??")); }
-                else { tokens.push_back(make_token(TokenType::PLACEHOLDER, "?")); }
-                break;
+                if (peek() == '?') { advance(); return make_token(TokenType::COALESCE, "??"); }
+                return make_token(TokenType::PLACEHOLDER, "?");
             case '|':
                 advance();
-                if (peek() == '>') { advance(); tokens.push_back(make_token(TokenType::PIPE, "|>")); }
-                else { throw std::runtime_error("Unexpected '|' at line " + std::to_string(line)); }
-                break;
-            case '{': advance(); tokens.push_back(make_token(TokenType::LBRACE, "{")); break;
-            case '}': advance(); tokens.push_back(make_token(TokenType::RBRACE, "}")); break;
+                if (peek() == '>') { advance(); return make_token(TokenType::PIPE, "|>"); }
+                throw std::runtime_error("Unexpected '|' at line " + std::to_string(line));
+            case '{': advance(); return make_token(TokenType::LBRACE, "{");
+            case '}': advance(); return make_token(TokenType::RBRACE, "}");
             case '<':
                 advance();
-                if (peek() == '=') { advance(); tokens.push_back(make_token(TokenType::LE, "<=")); }
-                else if (peek() == '>') { advance(); tokens.push_back(make_token(TokenType::NE, "<>")); }
-                else { tokens.push_back(make_token(TokenType::LT, "<")); }
-                break;
+                if (peek() == '=') { advance(); return make_token(TokenType::LE, "<="); }
+                if (peek() == '>') { advance(); return make_token(TokenType::NE, "<>"); }
+                return make_token(TokenType::LT, "<");
             case '>':
                 advance();
-                if (peek() == '=') { advance(); tokens.push_back(make_token(TokenType::GE, ">=")); }
-                else { tokens.push_back(make_token(TokenType::GT, ">")); }
-                break;
-            case '=': advance(); tokens.push_back(make_token(TokenType::ASSIGN, "=")); break;
+                if (peek() == '=') { advance(); return make_token(TokenType::GE, ">="); }
+                return make_token(TokenType::GT, ">");
+            case '=': advance(); return make_token(TokenType::ASSIGN, "=");
             default:
                 throw std::runtime_error("Unexpected character '" + std::string(1, c) +
                     "' at line " + std::to_string(line) + ":" + std::to_string(col));
@@ -263,8 +237,18 @@ std::vector<Token> Lexer::tokenize() {
     }
 
     if (!last_was_newline) {
-        tokens.push_back(make_token(TokenType::NEWLINE, "\\n"));
+        last_was_newline = true;
+        return make_token(TokenType::NEWLINE, "\\n");
     }
-    tokens.push_back(make_token(TokenType::EOF_TOKEN, ""));
+    done = true;
+    return make_token(TokenType::EOF_TOKEN, "");
+}
+
+std::vector<Token> Lexer::tokenize() {
+    std::vector<Token> tokens;
+    for (;;) {
+        tokens.push_back(next());
+        if (tokens.back().type == TokenType::EOF_TOKEN) break;
+    }
     return tokens;
 }
