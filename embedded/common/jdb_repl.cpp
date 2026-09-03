@@ -487,7 +487,7 @@ static void read_line(char* buf, int cap) {
             // Appending at the end of a short line: echo the character
             // and skip the full redraw, so pasted input keeps up.
             if (cur == len && utf8_cols(buf, 0, len) <= line_width()) {
-                fwrite(seq, 1, n, stdout);
+                printf("%.*s", n, seq);
                 continue;
             }
         }
