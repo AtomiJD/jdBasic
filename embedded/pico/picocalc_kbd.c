@@ -21,16 +21,11 @@ void picocalc_kbd_init(void) {
     gpio_pull_up(KBD_SCL);
 }
 
-// One poll: the pressed key's code, or -1 when nothing is down.
 // One poll: the pressed key's code, or -1 when nothing is down. The
-// controller reports press (1), hold (2) and release (3); holds repeat,
-// releases only matter for the modifiers.
-// One poll: the pressed key's code, or -1 when nothing is down. The
-// controller repeats a held key on every poll; a throttle turns that
-// into a sane typematic rate.
-// One poll: the pressed key's code, or -1 when nothing is down. The
-// controller repeats a held key on every poll; a throttle turns that
-// into a typematic rate - first repeat after 400 ms, then every 80.
+// controller reports press (1), hold (2) and release (3); a held key
+// repeats on every poll, throttled to a typematic rate - first repeat
+// after 400 ms, then every 80. Ctrl with a letter gives the control
+// code; Ctrl with an arrow, Home or End gives the word and file codes.
 int picocalc_kbd_poll(void) {
     uint8_t reg = 0x09;
     uint16_t buff = 0;
@@ -71,8 +66,13 @@ int picocalc_kbd_poll(void) {
         return -1;
     }
 
+    if (g_ctrl && (c == 'h' || c == 'H')) return 0xC1;   // help
     if (g_ctrl && c >= 'a' && c <= 'z') c = c - 'a' + 1;
     if (g_ctrl && c >= 'A' && c <= 'Z') c = c - 'A' + 1;
+    if (g_ctrl && c == 0xB4) c = 0xBC;      // left  -> word left
+    if (g_ctrl && c == 0xB7) c = 0xBD;      // right -> word right
+    if (g_ctrl && c == 0xD2) c = 0xDA;      // home  -> file start
+    if (g_ctrl && c == 0xD5) c = 0xDB;      // end   -> file end
     return c;
 }
 

@@ -148,6 +148,12 @@ static stdio_driver_t pc_driver = {
 #define K_SEND   0xD9
 #define K_PGUP   0xD6
 #define K_PGDN   0xD7
+#define K_CLEFT  0xBC
+#define K_CRIGHT 0xBD
+#define K_CHOME  0xDA
+#define K_CEND   0xDB
+#define K_F1     0xC1
+#define K_STAB   0xC2
 
 extern "C" void jdb_snd_note_due(void);
 
@@ -203,7 +209,9 @@ extern "C" int repl_read_key(void) {
         break;
     }
     if (c != 0x1B) return c;
-    if (getchar() != '[') return 0;
+    int intro = getchar();
+    if (intro == 'O') return getchar() == 'P' ? K_F1 : 0;
+    if (intro != '[') return 0;
 
     char par[8];
     int n = 0, f;
@@ -218,24 +226,27 @@ extern "C" int repl_read_key(void) {
     }
     par[n] = 0;
 
-    // The modifier is the parameter after the semicolon; 2 means shift.
-    int shift = 0;
+    // The modifier is the parameter after the semicolon: 2 shift, 5 ctrl.
+    int shift = 0, ctrl = 0;
     const char* semi = strchr(par, ';');
     if (semi && semi[1] == '2') shift = 1;
+    if (semi && semi[1] == '5') ctrl = 1;
 
     switch (f) {
         case 'A': return shift ? K_SUP : K_UP;
         case 'B': return shift ? K_SDOWN : K_DOWN;
-        case 'C': return shift ? K_SRIGHT : K_RIGHT;
-        case 'D': return shift ? K_SLEFT : K_LEFT;
-        case 'H': return shift ? K_SHOME : K_HOME;
-        case 'F': return shift ? K_SEND : K_END;
+        case 'C': return ctrl ? K_CRIGHT : shift ? K_SRIGHT : K_RIGHT;
+        case 'D': return ctrl ? K_CLEFT : shift ? K_SLEFT : K_LEFT;
+        case 'H': return ctrl ? K_CHOME : shift ? K_SHOME : K_HOME;
+        case 'F': return ctrl ? K_CEND : shift ? K_SEND : K_END;
+        case 'Z': return K_STAB;
         case '~':
+            if (par[0] == '1' && par[1] == '1') return K_F1;
             if (par[0] == '3') return K_DEL;
             if (par[0] == '5') return K_PGUP;
             if (par[0] == '6') return K_PGDN;
-            if (par[0] == '1' || par[0] == '7') return shift ? K_SHOME : K_HOME;
-            if (par[0] == '4' || par[0] == '8') return shift ? K_SEND : K_END;
+            if (par[0] == '1' || par[0] == '7') return ctrl ? K_CHOME : shift ? K_SHOME : K_HOME;
+            if (par[0] == '4' || par[0] == '8') return ctrl ? K_CEND : shift ? K_SEND : K_END;
             break;
     }
     return 0;
@@ -344,9 +355,9 @@ static const JdbReplPort PORT = {
 };
 
 int main() {
+#ifdef FRUITJAM
     // First thing, before anything can clear it: why this boot happened.
     fruitjam_reset_latch();
-#ifdef FRUITJAM
     // 480p60 wants a 252 MHz bit clock, and the serialiser puts out two
     // bits per cycle, so HSTX has to see exactly 126 MHz. clk_hstx follows
     // clk_sys, so the system runs there too and the pixel rate lands on

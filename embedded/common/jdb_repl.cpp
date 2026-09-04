@@ -26,7 +26,9 @@ extern "C" int repl_read_key(void);
 extern "C" void jdb_con_size(int* cols, int* rows);
 void syntax_print(const char* s, int n);
 void jdb_help(const char* topic);
-void jdb_editor(const char* name);
+// Returns 1 when the file was written and should run, 0 on quit. A line
+// above 0 puts the cursor there.
+int jdb_editor(const char* name, int line);
 
 // Key codes as the PicoCalc's keyboard controller sends them; a USB
 // terminal's escape sequences fold into the same values.
@@ -90,15 +92,46 @@ static int autorun_get(char* out, size_t cap) {
     return out[0] ? 1 : 0;
 }
 
-static void run_file(const char* name) {
+// Runs the file and reports; the error text, if there was one, is
+// handed back for whoever wants the line number out of it.
+static const char* run_file(const char* name) {
     snprintf(g_current, sizeof g_current, "%s", name);
     char* out = jdb_embed_load(g_vm, name);
     if (out) {
         printf("%s", out);
         jdb_embed_free(out);
-    } else {
-        const char* err = jdb_embed_last_error(g_vm);
-        printf("ERROR: %s\n", err ? err : "unknown");
+        return nullptr;
+    }
+    const char* err = jdb_embed_last_error(g_vm);
+    printf("ERROR: %s\n", err ? err : "unknown");
+    return err ? err : "";
+}
+
+// The line an error message names, in any of the spellings the
+// interpreter uses; 0 when it names none.
+static int error_line(const char* err) {
+    for (const char* p = err; *p; p++) {
+        if (strncasecmp(p, "line ", 5) == 0 && p[5] >= '0' && p[5] <= '9')
+            return atoi(p + 5);
+    }
+    return 0;
+}
+
+// The editor, and what Ctrl-R in it asks for: the file runs, and any key
+// afterwards opens the editor again - on the offending line when the run
+// ended in an error. Escape returns to the prompt instead.
+static void edit_file(const char* nm) {
+    int line = 0;
+    for (;;) {
+        if (g_port->before_edit) g_port->before_edit();
+        if (!jdb_editor(nm, line)) return;
+        const char* err = run_file(nm);
+        line = err ? error_line(err) : 0;
+        printf("\n-- %s: any key returns to the editor, ESC to the prompt --\n",
+               err ? "stopped" : "done");
+        fflush(NULL);
+        int c = repl_read_key();
+        if (c == 0xB1 || c == 27) return;
     }
 }
 
@@ -346,8 +379,7 @@ static int dos_command(char* line) {
         if (!f) { printf("cannot create %s\n", nm); return 1; }
         fclose(f);
         snprintf(g_current, sizeof g_current, "%s", nm);
-        if (g_port->before_edit) g_port->before_edit();
-        jdb_editor(g_current);
+        edit_file(g_current);
         return 1;
     }
 
@@ -533,8 +565,7 @@ static int program_verb(char* line) {
     }
     if (verb == 1) {
         snprintf(g_current, sizeof g_current, "%s", nm);
-        if (g_port->before_edit) g_port->before_edit();
-        jdb_editor(nm);
+        edit_file(nm);
     } else if (verb == 2) {
         FILE* probe = fopen(nm, "r");
         if (!probe) {

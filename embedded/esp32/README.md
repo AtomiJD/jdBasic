@@ -349,6 +349,17 @@ escape subset is the one an editor needs: absolute cursor, clear screen,
 clear to end of line, cursor right, colours.
 
 `EDIT name` opens the full-screen editor, Ctrl-S writes, Ctrl-Q leaves.
+F1 (or Ctrl-H on a board's own keyboard) lists the keys: Shift with an
+arrow selects, Ctrl-A selects all, Ctrl-C, Ctrl-X and Ctrl-V copy, cut
+and paste, Ctrl-F finds text, Ctrl-G the next place it occurs, Ctrl-T
+replaces, Ctrl-L goes to a line, Ctrl-Z takes the last change back.
+Ctrl-D duplicates the line, Ctrl-K deletes it, Tab and Shift-Tab indent
+and outdent a line or a selection, Enter keeps the indentation. Ctrl
+with an arrow jumps a word, Ctrl-Home and Ctrl-End go to the ends of
+the file. Ctrl-R writes the file and runs it; afterwards any key opens
+the editor again, on the line an error named. A line wider than the
+page scrolls the whole page sideways, and a row that goes on past the
+edge ends in a marker.
 It is `../../common/jdb_editor.cpp`, shared by every board: it speaks
 plain ANSI and asks the port how big the page is, so one file serves a
 40 by 40 PicoCalc, a 40 by 30 panel and a terminal. Arrow

@@ -61,6 +61,12 @@ int  fruitjam_usb_start(void);
 #define K_SRIGHT 0xBB
 #define K_SHOME  0xD8
 #define K_SEND   0xD9
+#define K_CLEFT  0xBC
+#define K_CRIGHT 0xBD
+#define K_CHOME  0xDA
+#define K_CEND   0xDB
+#define K_F1     0xC1
+#define K_STAB   0xC2
 
 #define KEYRING 64
 static volatile uint8_t  g_ring[KEYRING];
@@ -225,25 +231,28 @@ static void __not_in_flash_func(key_emit)(int code) {
 static int translate(uint8_t keycode, uint8_t modifier) {
     const uint8_t shift = (uint8_t)(modifier & (KEYBOARD_MODIFIER_LEFTSHIFT |
                                                 KEYBOARD_MODIFIER_RIGHTSHIFT));
+    const uint8_t ctrl = (uint8_t)(modifier & (KEYBOARD_MODIFIER_LEFTCTRL |
+                                               KEYBOARD_MODIFIER_RIGHTCTRL));
     if (g_layout_de && (modifier & KEYBOARD_MODIFIER_RIGHTALT)) {
         for (unsigned i = 0; i < sizeof DE_ALTGR / sizeof DE_ALTGR[0]; i++)
             if (DE_ALTGR[i].code == keycode) return TEXT_CP | DE_ALTGR[i].cp;
     }
     switch (keycode) {
-        case HID_KEY_ARROW_LEFT:  return shift ? K_SLEFT : K_LEFT;
-        case HID_KEY_ARROW_RIGHT: return shift ? K_SRIGHT : K_RIGHT;
+        case HID_KEY_ARROW_LEFT:  return ctrl ? K_CLEFT : shift ? K_SLEFT : K_LEFT;
+        case HID_KEY_ARROW_RIGHT: return ctrl ? K_CRIGHT : shift ? K_SRIGHT : K_RIGHT;
         case HID_KEY_ARROW_UP:    return shift ? K_SUP : K_UP;
         case HID_KEY_ARROW_DOWN:  return shift ? K_SDOWN : K_DOWN;
-        case HID_KEY_HOME:        return shift ? K_SHOME : K_HOME;
+        case HID_KEY_HOME:        return ctrl ? K_CHOME : shift ? K_SHOME : K_HOME;
         case HID_KEY_PAGE_UP:     return K_PGUP;
         case HID_KEY_PAGE_DOWN:   return K_PGDN;
-        case HID_KEY_END:         return shift ? K_SEND : K_END;
+        case HID_KEY_END:         return ctrl ? K_CEND : shift ? K_SEND : K_END;
         case HID_KEY_DELETE:      return K_DEL;
         case HID_KEY_ENTER:
         case HID_KEY_KEYPAD_ENTER: return '\r';
         case HID_KEY_BACKSPACE:   return 8;
-        case HID_KEY_TAB:         return 9;
+        case HID_KEY_TAB:         return shift ? K_STAB : 9;
         case HID_KEY_ESCAPE:      return K_ESC;
+        case HID_KEY_F1:          return K_F1;
         default: break;
     }
     if (keycode < 128) {
@@ -256,6 +265,7 @@ static int translate(uint8_t keycode, uint8_t modifier) {
         // them: ctrl-c is 3.
         if (c && (modifier & (KEYBOARD_MODIFIER_LEFTCTRL |
                               KEYBOARD_MODIFIER_RIGHTCTRL))) {
+            if (c == 'h' || c == 'H') return K_F1;
             if (c >= 'a' && c <= 'z') return c - 'a' + 1;
             if (c >= 'A' && c <= 'Z') return c - 'A' + 1;
         }
