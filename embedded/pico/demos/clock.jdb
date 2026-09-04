@@ -3,7 +3,8 @@
 '
 ' A switches between the digital and the analog face, W shows the five
 ' day forecast and brings the clock back, V steps through the colour
-' schemes, Q leaves.
+' schemes, C asks for a place and looks it up, H shows the keys, Q
+' leaves.
 '
 ' The place comes from /clock.txt as "latitude longitude Name", one
 ' line; without the file the clock stands in Berlin.
@@ -17,6 +18,7 @@ GFX.CLEAR 0
 CONST VIEW_DIGITAL = 0
 CONST VIEW_ANALOG = 1
 CONST VIEW_WEATHER = 2
+CONST VIEW_HELP = 3
 CONST WEATHER_EVERY_MS = 900000
 CONST SYNC_EVERY_MS = 3600000
 
@@ -35,9 +37,15 @@ DIM t_s
 DIM key_a
 DIM key_w
 DIM key_v
+DIM key_h
+DIM key_c
 DIM prev_a
 DIM prev_w
 DIM prev_v
+DIM prev_h
+DIM prev_c
+DIM typed$
+DIM found
 DIM scheme
 DIM pal
 DIM rainbow
@@ -270,14 +278,73 @@ ENDSUB
 ' The date, centred across the screen or against the right edge beside
 ' the analog face, where only the right part of the row is wiped.
 SUB DRAWDATE(y, d$, at_right)
-    INK_MID()
     IF at_right = 1 THEN
         WIPE(180, y, 140, 10)
+        INK_MID()
         TEXT 314 - LEN(d$) * 8, y, d$
     ELSE
         WIPE(0, y, 320, 10)
+        INK_MID()
         TEXT 160 - LEN(d$) * 4, y, d$
     ENDIF
+ENDSUB
+
+' A line typed on the board's keyboard, shown as it grows; Enter ends
+' it, Escape gives back nothing.
+FUNC READLINE$(y)
+    DIM s$ = ""
+    DO WHILE KEY.NOW() >= 0
+    LOOP
+    DO
+        WIPE(0, y, 320, 12)
+        INKTEXT(6, y, "> " + s$ + "_", 0, 1)
+        DIM c = KEY.GET()
+        IF c = 13 OR c = 10 THEN EXITDO
+        IF c = 27 OR c = 177 THEN RETURN ""
+        IF c = 8 OR c = 127 THEN
+            IF LEN(s$) > 0 THEN s$ = LEFT$(s$, LEN(s$) - 1)
+        ELSEIF c >= 32 AND c < 127 AND LEN(s$) < 30 THEN
+            s$ = s$ + CHR$(c)
+        ENDIF
+    LOOP
+    RETURN s$
+ENDFUNC
+
+' Open-Meteo's geocoder: a place name in, latitude, longitude and the
+' name it settled on out, or an empty array.
+FUNC GEOCODE(name$)
+    DIM q$ = ""
+    DIM k
+    FOR k = 0 TO LEN(name$) - 1
+        DIM ch$ = MID$(name$, k, 1)
+        IF ch$ = " " THEN ch$ = "+"
+        q$ = q$ + ch$
+    NEXT k
+    DIM body$ = HTTP.GET$("http://geocoding-api.open-meteo.com/v1/search?name=" + q$ + "&count=1&language=de&format=json")
+    DIM out
+    out = []
+    IF LEN(body$) < 20 THEN RETURN out
+    DIM g = JSON.PARSE$(body$)
+    IF TYPEOF(g{"results"}) = "NONE" THEN RETURN out
+    IF LEN(g{"results"}) < 1 THEN RETURN out
+    out = APPEND(out, g{"results"}[0]{"latitude"})
+    out = APPEND(out, g{"results"}[0]{"longitude"})
+    out = APPEND(out, UCASE$(g{"results"}[0]{"name"}))
+    RETURN out
+ENDFUNC
+
+SUB DRAWHELP()
+    INKTEXT(96, 40, "NET CLOCK", 0, 2)
+    INK_MID()
+    TEXT 60, 80, "A   ANALOG OR DIGITAL FACE"
+    TEXT 60, 96, "W   FIVE DAY FORECAST"
+    TEXT 60, 112, "V   NEXT COLOUR SCHEME"
+    TEXT 60, 128, "C   CHOOSE THE PLACE"
+    TEXT 60, 144, "H   THIS PAGE"
+    TEXT 60, 160, "Q   LEAVE"
+    INK_DIM()
+    TEXT 60, 190, "TIME FROM NTP, WEATHER FROM"
+    TEXT 60, 202, "OPEN-METEO, EVERY 15 MINUTES"
 ENDSUB
 
 ' The weather band along the bottom: picture, temperature, words.
@@ -328,6 +395,9 @@ TRY
         lat = VAL(parts[0])
         lon = VAL(parts[1])
         place$ = UCASE$(parts[2])
+        FOR i = 3 TO LEN(parts) - 1
+            place$ = place$ + " " + UCASE$(parts[i])
+        NEXT i
     ENDIF
 CATCH
     place$ = "BERLIN"
@@ -356,6 +426,8 @@ last_date$ = ""
 prev_a = 0
 prev_w = 0
 prev_v = 0
+prev_h = 0
+prev_c = 0
 
 ' ---- the loop ---------------------------------------------------------
 
@@ -369,6 +441,46 @@ DO
         redraw = 1
     ENDIF
     prev_v = key_v
+    key_h = GFX.KEYSTATE(104)
+    IF key_h = 1 AND prev_h = 0 THEN
+        IF view = VIEW_HELP THEN
+            view = VIEW_DIGITAL
+        ELSE
+            view = VIEW_HELP
+        ENDIF
+        redraw = 1
+    ENDIF
+    prev_h = key_h
+    ' C: a place typed on the keyboard, looked up, kept in clock.txt.
+    key_c = GFX.KEYSTATE(99)
+    IF key_c = 1 AND prev_c = 0 THEN
+        GFX.CLEAR 0
+        INKTEXT(6, 40, "WHICH PLACE?", 0, 2)
+        INK_MID()
+        TEXT 6, 70, "TYPE A TOWN, THEN ENTER. ESC KEEPS IT."
+        typed$ = READLINE$(90)
+        IF typed$ <> "" THEN
+            INK_MID()
+            TEXT 6, 110, "ASKING OPEN-METEO ..."
+            found = GEOCODE(typed$)
+            IF LEN(found) = 3 THEN
+                lat = found[0]
+                lon = found[1]
+                place$ = found[2]
+                TXTWRITER "clock.txt", STR$(lat) + " " + STR$(lon) + " " + place$
+                weather_ok = 0
+                weather_at = 0 - WEATHER_EVERY_MS
+                PRINT "place "; place$; " "; lat; " "; lon
+            ELSE
+                DRAWCOLOR 230, 90, 60
+                TEXT 6, 130, "NOT FOUND"
+                SLEEP 1500
+            ENDIF
+        ENDIF
+        view = VIEW_DIGITAL
+        redraw = 1
+    ENDIF
+    prev_c = key_c
     IF key_a = 1 AND prev_a = 0 THEN
         IF view = VIEW_ANALOG THEN
             view = VIEW_DIGITAL
@@ -432,6 +544,7 @@ DO
             osx = 96
             osy = 88
         ENDIF
+        IF view = VIEW_HELP THEN DRAWHELP()
         IF view = VIEW_WEATHER THEN
             IF weather_ok = 1 THEN
                 DRAWICON(30, 44, cur_code, 5)
@@ -459,7 +572,7 @@ DO
             ENDIF
             INK_DIM()
             TEXT 6, 228, "W  BACK TO THE CLOCK"
-        ELSE
+        ELSEIF view <> VIEW_HELP THEN
             DRAWWEATHERBAND(weather_ok, cur_temp, cur_code, cur_wind, cur_hum)
         ENDIF
         last_time$ = ""
