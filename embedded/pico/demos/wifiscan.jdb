@@ -1,0 +1,130 @@
+' A WiFi analyser on the screen, after the Arduino one for the
+' JC4827W543. Each network is an arc whose height is its signal and
+' whose place is its channel; the strongest on a channel gets named.
+' The banner counts what was found and names the quietest channels.
+'
+' Noise per channel is the Arduino version's: every network adds the
+' square of its margin above the floor to its own channel and to the
+' four either side, because 2.4 GHz channels overlap that far.
+'
+' Hold q to leave.
+
+SCREEN 320, 240
+GFX.CONSOLE 0
+
+DIM W = GFX.WIDTH
+DIM H = GFX.HEIGHT
+
+DIM FLOOR_DBM = -100
+DIM CEIL_DBM = -40
+DIM BANNER = 22
+DIM BASELINE = H - 22
+DIM GRAPH_H = BASELINE - BANNER - 12
+DIM CHW = W / 17
+DIM SIGW = CHW * 2
+
+' Channel colours, one per channel 1 to 14, repeating after seven.
+DIM COL_R = [240,240,240, 80, 60, 90,220, 240,240,240, 80, 60, 90,220]
+DIM COL_G = [ 70,150,220,220,200,120, 90,  70,150,220,220,200,120, 90]
+DIM COL_B = [ 70, 50, 60, 90,220,240,230,  70, 50, 60, 90,220,240,230]
+
+DO
+    DIM nets = WIFI.SCAN()
+    DIM found = LEN(nets)
+    PRINT found; " networks"
+
+    DIM counts = ZEROS(14)
+    DIM noise = ZEROS(14)
+    DIM peak = ZEROS(14) + FLOOR_DBM
+    DIM peak_at = ZEROS(14) - 1
+    DIM i
+
+    ' Tally: strongest per channel, how many per channel, and the noise
+    ' each network spreads over its neighbours.
+    FOR i = 0 TO found - 1
+        DIM ch = nets[i][2]
+        DIM rssi = nets[i][1]
+        IF ch >= 1 AND ch <= 14 THEN
+            DIM k = ch - 1
+            IF rssi > peak[k] THEN
+                peak[k] = rssi
+                peak_at[k] = i
+            ENDIF
+            counts[k] = counts[k] + 1
+
+            DIM m = rssi - FLOOR_DBM
+            IF m < 0 THEN m = 0
+            DIM nz = m * m
+            DIM j
+            FOR j = k - 4 TO k + 4
+                IF j >= 0 AND j <= 13 THEN noise[j] = noise[j] + nz
+            NEXT
+        ENDIF
+    NEXT
+
+    GFX.CLEAR 0
+
+    ' Banner.
+    DRAWCOLOR 240, 80, 80
+    TEXT 2, 2, "Fruit Jam", 1
+    DRAWCOLOR 255, 255, 255
+    TEXT 74, 2, "WiFi Analyzer", 1
+
+    DIM quiet = noise[0]
+    FOR i = 1 TO 10
+        IF noise[i] < quiet THEN quiet = noise[i]
+    NEXT
+    DIM line2$ = STR$(found) + " nets, quiet:"
+    FOR i = 0 TO 10
+        IF noise[i] = quiet THEN line2$ = line2$ + " " + STR$(i + 1)
+    NEXT
+    DRAWCOLOR 170, 170, 190
+    TEXT 2, 12, line2$, 1
+
+    ' The arcs, tallest last so a strong one is not hidden.
+    FOR i = 0 TO found - 1
+        DIM ch2 = nets[i][2]
+        IF ch2 >= 1 AND ch2 <= 14 THEN
+            DIM k2 = ch2 - 1
+            DIM r2 = nets[i][1]
+            IF r2 < FLOOR_DBM THEN r2 = FLOOR_DBM
+            DIM hgt = (r2 - FLOOR_DBM) * GRAPH_H / (CEIL_DBM - FLOOR_DBM)
+            IF hgt < 2 THEN hgt = 2
+            IF hgt > GRAPH_H THEN hgt = GRAPH_H
+            DIM cx = (ch2 + 1) * CHW
+
+            DRAWCOLOR COL_R[k2], COL_G[k2], COL_B[k2]
+            DIM t
+            FOR t = -SIGW TO SIGW
+                DIM y = BASELINE - hgt + (t * t * hgt) / (SIGW * SIGW)
+                IF cx + t >= 0 AND cx + t < W THEN LINE cx + t, y, cx + t, BASELINE
+            NEXT
+
+            IF peak_at[k2] = i THEN
+                DIM nm$ = nets[i][0]
+                IF nm$ = "" THEN nm$ = "(hidden)"
+                DIM tx = cx - SIGW
+                IF tx + LEN(nm$) * 8 > W THEN tx = W - LEN(nm$) * 8
+                IF tx < 0 THEN tx = 0
+                DRAWCOLOR 255, 255, 255
+                TEXT tx, BASELINE - hgt - 10, nm$, 1
+            ENDIF
+        ENDIF
+    NEXT
+
+    ' The axis and the channel numbers under it.
+    DRAWCOLOR 200, 200, 200
+    LINE 0, BASELINE, W - 1, BASELINE
+    FOR i = 0 TO 13
+        DIM ax = (i + 2) * CHW
+        DRAWCOLOR COL_R[i], COL_G[i], COL_B[i]
+        TEXT ax - 4, BASELINE + 3, STR$(i + 1), 1
+        IF counts[i] > 0 THEN TEXT ax - 4, BASELINE + 12, STR$(counts[i]), 1
+    NEXT
+
+    SCREENFLIP
+    SLEEP 2500
+    IF GFX.KEYSTATE(113) THEN EXITDO
+LOOP
+GFX.CLEAR 0
+GFX.CONSOLE 1
