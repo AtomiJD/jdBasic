@@ -1,0 +1,488 @@
+' NET CLOCK for the Fruit Jam: time from the network, weather from
+' Open-Meteo, green on black over DVI.
+'
+' A switches between the digital and the analog face, W shows the five
+' day forecast and brings the clock back, Q leaves.
+'
+' The place comes from /clock.txt as "latitude longitude Name", one
+' line; without the file the clock stands in Berlin.
+'
+' Nothing is redrawn that did not change: the minute, the second and the
+' weather band each have their own patch of screen.
+
+GFX.CONSOLE 0
+GFX.CLEAR 0
+
+CONST VIEW_DIGITAL = 0
+CONST VIEW_ANALOG = 1
+CONST VIEW_WEATHER = 2
+CONST WEATHER_EVERY_MS = 900000
+CONST SYNC_EVERY_MS = 3600000
+
+DIM lat
+DIM lon
+DIM place$
+DIM view
+DIM net_ok
+DIM time_ok
+DIM last_time$
+DIM last_min$
+DIM last_date$
+DIM t_h
+DIM t_m
+DIM t_s
+DIM key_a
+DIM key_w
+DIM prev_a
+DIM prev_w
+DIM redraw
+DIM weather_ok
+DIM weather_at
+DIM sync_at
+DIM cur_temp
+DIM cur_code
+DIM cur_wind
+DIM cur_hum
+DIM fc_code[5]
+DIM fc_max[5]
+DIM fc_min[5]
+DIM ohx
+DIM ohy
+DIM omx
+DIM omy
+DIM osx
+DIM osy
+DIM i
+DIM wx
+DIM parts
+DIM body$
+
+DIM day_names$[7]
+day_names$[0] = "SUNDAY"
+day_names$[1] = "MONDAY"
+day_names$[2] = "TUESDAY"
+day_names$[3] = "WEDNESDAY"
+day_names$[4] = "THURSDAY"
+day_names$[5] = "FRIDAY"
+day_names$[6] = "SATURDAY"
+DIM month_names$[12]
+month_names$[0] = "JAN"
+month_names$[1] = "FEB"
+month_names$[2] = "MAR"
+month_names$[3] = "APR"
+month_names$[4] = "MAY"
+month_names$[5] = "JUN"
+month_names$[6] = "JUL"
+month_names$[7] = "AUG"
+month_names$[8] = "SEP"
+month_names$[9] = "OCT"
+month_names$[10] = "NOV"
+month_names$[11] = "DEC"
+
+' ---- the palette: three greens and a white ------------------------
+
+SUB INK_BRIGHT()
+    DRAWCOLOR 80, 255, 100
+ENDSUB
+
+SUB INK_MID()
+    DRAWCOLOR 30, 170, 60
+ENDSUB
+
+SUB INK_DIM()
+    DRAWCOLOR 0, 90, 30
+ENDSUB
+
+SUB INK_WHITE()
+    DRAWCOLOR 225, 255, 230
+ENDSUB
+
+SUB INK_BLACK()
+    DRAWCOLOR 0, 0, 0
+ENDSUB
+
+SUB WIPE(x, y, w, h)
+    DRAWCOLOR 0, 0, 0
+    RECT x, y, w, h, 1
+ENDSUB
+
+' ---- weather words and pictures ------------------------------------
+
+FUNC WMO$(code)
+    IF code = 0 THEN RETURN "CLEAR SKY"
+    IF code = 1 THEN RETURN "MAINLY CLEAR"
+    IF code = 2 THEN RETURN "PARTLY CLOUDY"
+    IF code = 3 THEN RETURN "OVERCAST"
+    IF code = 45 OR code = 48 THEN RETURN "FOG"
+    IF code >= 51 AND code <= 57 THEN RETURN "DRIZZLE"
+    IF code >= 61 AND code <= 67 THEN RETURN "RAIN"
+    IF code >= 71 AND code <= 77 THEN RETURN "SNOW"
+    IF code >= 80 AND code <= 82 THEN RETURN "SHOWERS"
+    IF code = 85 OR code = 86 THEN RETURN "SNOW SHOWERS"
+    IF code >= 95 THEN RETURN "THUNDERSTORM"
+    RETURN "WEATHER " + STR$(code)
+ENDFUNC
+
+' An outline cloud whose centre is x, y and whose width is about 5 s.
+SUB CLOUD(x, y, s)
+    CIRCLE x - s, y + s / 2, s
+    CIRCLE x + s / 2, y - s / 2, s * 1.3
+    CIRCLE x + s * 1.6, y + s / 2, s
+    LINE x - s * 2, y + s * 1.5, x + s * 2.6, y + s * 1.5
+ENDSUB
+
+SUB SUN(x, y, s)
+    CIRCLE x, y, s
+    DIM k
+    FOR k = 0 TO 7
+        DIM a = k * PI / 4
+        LINE x + COS(a) * s * 1.5, y + SIN(a) * s * 1.5, x + COS(a) * s * 2.1, y + SIN(a) * s * 2.1
+    NEXT k
+ENDSUB
+
+' The picture for a WMO code, centred on x, y; s is the unit size,
+' 6 draws it about 30 pixels wide.
+SUB DRAWICON(x, y, code, s)
+    INK_BRIGHT()
+    IF code = 0 OR code = 1 THEN
+        SUN(x, y, s)
+    ELSEIF code = 2 THEN
+        SUN(x - s, y - s, s * 0.7)
+        INK_MID()
+        CLOUD(x + s * 0.5, y + s * 0.6, s * 0.9)
+    ELSEIF code = 3 THEN
+        INK_MID()
+        CLOUD(x, y, s)
+    ELSEIF code = 45 OR code = 48 THEN
+        INK_MID()
+        LINE x - s * 2, y - s, x + s * 2, y - s
+        LINE x - s * 2.5, y, x + s * 1.5, y
+        LINE x - s * 1.5, y + s, x + s * 2.5, y + s
+    ELSEIF code >= 71 AND code <= 77 OR code = 85 OR code = 86 THEN
+        INK_MID()
+        CLOUD(x, y - s * 0.6, s * 0.9)
+        INK_BRIGHT()
+        DIM k
+        FOR k = -1 TO 1
+            LINE x + k * s * 1.3 - 2, y + s * 1.8, x + k * s * 1.3 + 2, y + s * 1.8
+            LINE x + k * s * 1.3, y + s * 1.8 - 2, x + k * s * 1.3, y + s * 1.8 + 2
+        NEXT k
+    ELSEIF code >= 95 THEN
+        INK_MID()
+        CLOUD(x, y - s * 0.6, s * 0.9)
+        INK_BRIGHT()
+        LINE x + s * 0.3, y + s * 0.9, x - s * 0.4, y + s * 1.8
+        LINE x - s * 0.4, y + s * 1.8, x + s * 0.4, y + s * 1.8
+        LINE x + s * 0.4, y + s * 1.8, x - s * 0.3, y + s * 2.7
+    ELSE
+        INK_MID()
+        CLOUD(x, y - s * 0.6, s * 0.9)
+        INK_BRIGHT()
+        DIM k
+        FOR k = -1 TO 1
+            LINE x + k * s * 1.3 + 1, y + s * 1.4, x + k * s * 1.3 - 1, y + s * 2.4
+        NEXT k
+    ENDIF
+ENDSUB
+
+' A temperature with its degree ring, at text scale sc.
+SUB DEGTEXT(x, y, t, sc)
+    DIM s$ = STR$(ROUND(t))
+    TEXT x, y, s$, 80, 255, 100, sc
+    DIM w = LEN(s$) * 8 * sc
+    CIRCLE x + w + 3 * sc, y + 2 * sc, 2 * sc
+ENDSUB
+
+' ---- the network side ----------------------------------------------
+
+' Asks Open-Meteo for now and five days; an array of nineteen numbers
+' back, or an empty one.
+FUNC FETCHWEATHER(la, lo)
+    DIM url$ = "http://api.open-meteo.com/v1/forecast?latitude=" + STR$(la) + "&longitude=" + STR$(lo) + "&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=auto&forecast_days=5"
+    DIM body$ = HTTP.GET$(url$)
+    DIM out
+    out = []
+    IF LEN(body$) < 50 THEN RETURN out
+    DIM w = JSON.PARSE$(body$)
+    IF TYPEOF(w{"current"}) = "NONE" THEN RETURN out
+    out = APPEND(out, w{"current"}{"temperature_2m"})
+    out = APPEND(out, w{"current"}{"weather_code"})
+    out = APPEND(out, w{"current"}{"wind_speed_10m"})
+    out = APPEND(out, w{"current"}{"relative_humidity_2m"})
+    DIM k
+    FOR k = 0 TO 4
+        out = APPEND(out, w{"daily"}{"weather_code"}[k])
+        out = APPEND(out, w{"daily"}{"temperature_2m_max"}[k])
+        out = APPEND(out, w{"daily"}{"temperature_2m_min"}[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ---- the three faces -----------------------------------------------
+
+SUB DRAWHEADER(place$, net_ok)
+    INK_DIM()
+    LINE 0, 18, 319, 18
+    INK_MID()
+    TEXT 6, 5, place$
+    IF net_ok = 1 THEN
+        TEXT 320 - 8 * LEN(WIFI.IP$()) - 6, 5, WIFI.IP$()
+    ELSE
+        DRAWCOLOR 230, 90, 60
+        TEXT 320 - 8 * 10 - 6, 5, "NO NETWORK"
+    ENDIF
+ENDSUB
+
+SUB DRAWDATE(y, d$)
+    WIPE(0, y, 320, 10)
+    INK_MID()
+    TEXT 160 - LEN(d$) * 4, y, d$
+ENDSUB
+
+' The weather band along the bottom: picture, temperature, words.
+SUB DRAWWEATHERBAND(ok, temp, code, wind, hum)
+    WIPE(0, 158, 320, 82)
+    INK_DIM()
+    LINE 0, 158, 319, 158
+    IF ok = 0 THEN
+        INK_MID()
+        TEXT 6, 196, "waiting for weather"
+        RETURN
+    ENDIF
+    DRAWICON(34, 196, code, 6)
+    DEGTEXT(72, 178, temp, 4)
+    INK_WHITE()
+    TEXT 160, 182, WMO$(code)
+    INK_MID()
+    TEXT 160, 198, "WIND " + STR$(ROUND(wind)) + " KM/H"
+    TEXT 160, 212, "HUMIDITY " + STR$(hum) + "%"
+ENDSUB
+
+SUB DRAWFACE(cx, cy, r)
+    DIM k
+    FOR k = 0 TO 59
+        DIM a = k * PI / 30
+        DIM inner = r - 4
+        IF k MOD 5 = 0 THEN
+            inner = r - 10
+            INK_BRIGHT()
+        ELSE
+            INK_DIM()
+        ENDIF
+        LINE cx + SIN(a) * inner, cy - COS(a) * inner, cx + SIN(a) * r, cy - COS(a) * r
+    NEXT k
+    INK_DIM()
+    CIRCLE cx, cy, r + 4
+ENDSUB
+
+' ---- start up --------------------------------------------------------
+
+lat = 52.52
+lon = 13.41
+place$ = "BERLIN"
+TRY
+    parts = SPLIT(TRIM$(TXTREADER$("clock.txt")), " ")
+    IF LEN(parts) >= 3 THEN
+        lat = VAL(parts[0])
+        lon = VAL(parts[1])
+        place$ = UCASE$(parts[2])
+    ENDIF
+CATCH
+    place$ = "BERLIN"
+ENDTRY
+
+INK_BRIGHT()
+TEXT 96, 100, "NET CLOCK", 80, 255, 100, 2
+INK_MID()
+TEXT 92, 130, "joining the network"
+net_ok = 0
+time_ok = 0
+IF WIFI.AUTO() = 0 THEN
+    net_ok = 1
+    WIPE(0, 130, 320, 10)
+    TEXT 130, 130, "syncing"
+    IF NTP.SYNC(2) <> 0 THEN time_ok = 1
+    sync_at = TICK()
+ENDIF
+weather_ok = 0
+weather_at = 0 - WEATHER_EVERY_MS
+
+view = VIEW_DIGITAL
+redraw = 1
+last_time$ = ""
+last_min$ = ""
+last_date$ = ""
+prev_a = 0
+prev_w = 0
+
+' ---- the loop ---------------------------------------------------------
+
+DO
+    ' Keys, on the press rather than while held.
+    key_a = GFX.KEYSTATE(97)
+    key_w = GFX.KEYSTATE(119)
+    IF key_a = 1 AND prev_a = 0 THEN
+        IF view = VIEW_ANALOG THEN
+            view = VIEW_DIGITAL
+        ELSE
+            view = VIEW_ANALOG
+        ENDIF
+        redraw = 1
+    ENDIF
+    IF key_w = 1 AND prev_w = 0 THEN
+        IF view = VIEW_WEATHER THEN
+            view = VIEW_DIGITAL
+        ELSE
+            view = VIEW_WEATHER
+        ENDIF
+        redraw = 1
+    ENDIF
+    prev_a = key_a
+    prev_w = key_w
+    IF GFX.KEYSTATE(113) THEN EXITDO
+
+    ' Weather every quarter hour, the clock resynced every hour.
+    IF net_ok = 1 AND TICK() - weather_at >= WEATHER_EVERY_MS THEN
+        weather_at = TICK()
+        wx = FETCHWEATHER(lat, lon)
+        IF LEN(wx) = 19 THEN
+            cur_temp = wx[0]
+            cur_code = wx[1]
+            cur_wind = wx[2]
+            cur_hum = wx[3]
+            FOR i = 0 TO 4
+                fc_code[i] = wx[4 + i * 3]
+                fc_max[i] = wx[5 + i * 3]
+                fc_min[i] = wx[6 + i * 3]
+            NEXT i
+            weather_ok = 1
+            PRINT "weather "; cur_temp; " "; WMO$(cur_code); " wind "; cur_wind; " hum "; cur_hum
+        ELSE
+            PRINT "weather fetch failed, status "; HTTP.STATUS()
+        ENDIF
+        wx = []
+        IF view <> VIEW_WEATHER THEN
+            DRAWWEATHERBAND(weather_ok, cur_temp, cur_code, cur_wind, cur_hum)
+        ELSE
+            redraw = 1
+        ENDIF
+    ENDIF
+    IF net_ok = 1 AND TICK() - sync_at >= SYNC_EVERY_MS THEN
+        sync_at = TICK()
+        IF NTP.SYNC(2) <> 0 THEN time_ok = 1
+    ENDIF
+
+    IF redraw = 1 THEN
+        GFX.CLEAR 0
+        DRAWHEADER(place$, net_ok)
+        IF view = VIEW_ANALOG THEN
+            DRAWFACE(96, 88, 60)
+            ohx = 96
+            ohy = 88
+            omx = 96
+            omy = 88
+            osx = 96
+            osy = 88
+        ENDIF
+        IF view = VIEW_WEATHER THEN
+            IF weather_ok = 1 THEN
+                DRAWICON(30, 44, cur_code, 5)
+                DEGTEXT(60, 32, cur_temp, 3)
+                INK_WHITE()
+                TEXT 130, 30, WMO$(cur_code)
+                INK_MID()
+                TEXT 130, 44, "WIND " + STR$(ROUND(cur_wind)) + " KM/H  HUM " + STR$(cur_hum) + "%"
+                INK_DIM()
+                LINE 0, 70, 319, 70
+                FOR i = 0 TO 4
+                    DIM col_x = 32 + i * 64
+                    INK_MID()
+                    DIM dn$ = LEFT$(day_names$[(WEEKDAY(NOW + i * 86400))], 3)
+                    IF i = 0 THEN dn$ = "TODAY"
+                    TEXT col_x - LEN(dn$) * 4, 80, dn$
+                    DRAWICON(col_x, 118, fc_code[i], 5)
+                    DEGTEXT(col_x - 16, 152, fc_max[i], 2)
+                    INK_DIM()
+                    DEGTEXT(col_x - 8, 176, fc_min[i], 1)
+                NEXT i
+            ELSE
+                INK_MID()
+                TEXT 96, 110, "waiting for weather"
+            ENDIF
+            INK_DIM()
+            TEXT 6, 228, "W  BACK TO THE CLOCK"
+        ELSE
+            DRAWWEATHERBAND(weather_ok, cur_temp, cur_code, cur_wind, cur_hum)
+        ENDIF
+        last_time$ = ""
+        last_min$ = ""
+        last_date$ = ""
+        redraw = 0
+    ENDIF
+
+    IF TIME$ <> last_time$ THEN
+        last_time$ = TIME$
+        t_h = VAL(MID$(last_time$, 0, 2))
+        t_m = VAL(MID$(last_time$, 3, 2))
+        t_s = VAL(MID$(last_time$, 6, 2))
+
+        IF DATE$ <> last_date$ THEN
+            last_date$ = DATE$
+            DIM d$ = day_names$[WEEKDAY(NOW)] + ", " + STR$(VAL(MID$(last_date$, 8, 2))) + " " + month_names$[VAL(MID$(last_date$, 5, 2)) - 1] + " " + LEFT$(last_date$, 4)
+            IF view = VIEW_DIGITAL THEN DRAWDATE(126, d$)
+            IF view = VIEW_ANALOG THEN DRAWDATE(140, d$)
+        ENDIF
+
+        IF view = VIEW_DIGITAL THEN
+            IF LEFT$(last_time$, 5) <> last_min$ THEN
+                last_min$ = LEFT$(last_time$, 5)
+                WIPE(52, 60, 204, 44)
+                TEXT 52, 62, last_min$, 80, 255, 100, 5
+            ENDIF
+            WIPE(262, 78, 40, 20)
+            TEXT 262, 80, RIGHT$(last_time$, 2), 30, 170, 60, 2
+            IF time_ok = 0 THEN
+                INK_DIM()
+                TEXT 6, 146, "clock not synced"
+            ENDIF
+        ENDIF
+
+        IF view = VIEW_ANALOG THEN
+            INK_BLACK()
+            LINE 96, 88, osx, osy
+            LINE 96, 88, omx, omy
+            LINE 96, 88, ohx, ohy
+            DIM ah = (t_h MOD 12) * PI / 6 + t_m * PI / 360
+            DIM am = t_m * PI / 30
+            DIM asec = t_s * PI / 30
+            ohx = 96 + SIN(ah) * 30
+            ohy = 88 - COS(ah) * 30
+            omx = 96 + SIN(am) * 42
+            omy = 88 - COS(am) * 42
+            osx = 96 + SIN(asec) * 47
+            osy = 88 - COS(asec) * 47
+            INK_WHITE()
+            LINE 96, 88, ohx, ohy
+            INK_BRIGHT()
+            LINE 96, 88, omx, omy
+            INK_MID()
+            LINE 96, 88, osx, osy
+            INK_BRIGHT()
+            CIRCLE 96, 88, 2
+            WIPE(196, 70, 120, 40)
+            TEXT 196, 74, LEFT$(last_time$, 5), 80, 255, 100, 3
+            TEXT 200, 100, RIGHT$(last_time$, 2), 30, 170, 60, 1
+        ENDIF
+
+        IF view = VIEW_WEATHER THEN
+            WIPE(240, 224, 80, 12)
+            TEXT 250, 228, LEFT$(last_time$, 5), 30, 170, 60, 1
+        ENDIF
+    ENDIF
+
+    SLEEP 40
+LOOP
+
+GFX.CLEAR 0
+GFX.CONSOLE 1
+PRINT "clock stopped"
