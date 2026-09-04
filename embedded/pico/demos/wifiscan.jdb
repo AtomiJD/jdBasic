@@ -123,8 +123,16 @@ DO
     NEXT
 
     SCREENFLIP
-    SLEEP 2500
-    IF GFX.KEYSTATE(113) THEN EXITDO
+    DIM want_out = 0
+    DIM tick_no
+    FOR tick_no = 1 TO 25
+        SLEEP 100
+        IF GFX.KEYSTATE(113) THEN
+            want_out = 1
+            EXITFOR
+        ENDIF
+    NEXT
+    IF want_out = 1 THEN EXITDO
 LOOP
 GFX.CLEAR 0
 GFX.CONSOLE 1
