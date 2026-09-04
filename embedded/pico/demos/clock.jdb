@@ -267,13 +267,15 @@ SUB DRAWHEADER(place$, net_ok)
     ENDIF
 ENDSUB
 
-' The date, centred or against the right edge.
+' The date, centred across the screen or against the right edge beside
+' the analog face, where only the right part of the row is wiped.
 SUB DRAWDATE(y, d$, at_right)
-    WIPE(0, y, 320, 10)
     INK_MID()
     IF at_right = 1 THEN
+        WIPE(180, y, 140, 10)
         TEXT 314 - LEN(d$) * 8, y, d$
     ELSE
+        WIPE(0, y, 320, 10)
         TEXT 160 - LEN(d$) * 4, y, d$
     ENDIF
 ENDSUB
@@ -476,7 +478,7 @@ DO
             last_date$ = DATE$
             DIM d$ = day_names$[WEEKDAY(NOW)] + ", " + STR$(VAL(MID$(last_date$, 8, 2))) + " " + month_names$[VAL(MID$(last_date$, 5, 2)) - 1] + " " + LEFT$(last_date$, 4)
             IF view = VIEW_DIGITAL THEN DRAWDATE(126, d$, 0)
-            IF view = VIEW_ANALOG THEN DRAWDATE(140, d$, 1)
+            IF view = VIEW_ANALOG THEN DRAWDATE(140, LEFT$(day_names$[WEEKDAY(NOW)], 3) + ", " + STR$(VAL(MID$(last_date$, 8, 2))) + " " + month_names$[VAL(MID$(last_date$, 5, 2)) - 1] + " " + LEFT$(last_date$, 4), 1)
         ENDIF
 
         IF view = VIEW_DIGITAL THEN
