@@ -137,22 +137,15 @@ SUB INK(code)
     PRINT esc$ + "[" + STR$(code) + "m";
 ENDSUB
 
-FUNC REP$(code, n)
-    DIM s$ = ""
-    DIM i
-    FOR i = 1 TO n
-        s$ = s$ + CHR$(code)
-    NEXT i
-    RETURN s$
-ENDFUNC
-
 ' A box out of the PETSCII pieces, rows r1 to r2, columns c1 to c2.
+' A string times a number is that string repeated, so a run of one
+' glyph is a multiplication.
 SUB BOX(r1, c1, r2, c2)
     DIM w = c2 - c1 - 1
     AT(r1, c1)
-    PRINT CHR$(202) + REP$(200, w) + CHR$(203);
+    PRINT CHR$(202) + CHR$(200) * w + CHR$(203);
     AT(r2, c1)
-    PRINT CHR$(204) + REP$(200, w) + CHR$(205);
+    PRINT CHR$(204) + CHR$(200) * w + CHR$(205);
     DIM r
     FOR r = r1 + 1 TO r2 - 1
         AT(r, c1)
@@ -166,6 +159,7 @@ ENDSUB
 
 FUNC TITLE()
     GFX.CONSOLE 1
+    CURSOR 0
     PRINT esc$ + "[2J";
     INK(92)
     BOX(2, 2, 29, 39)
@@ -223,6 +217,7 @@ ENDFUNC
 
 FUNC BARS()
     GFX.CONSOLE 1
+    CURSOR 0
     PRINT esc$ + "[2J";
     INK(92)
     BOX(1, 1, 30, 40)
@@ -529,6 +524,7 @@ SUB FINALE()
     NEOOFF()
     GFX.CLEAR 0
     GFX.CONSOLE 1
+    CURSOR 1
     PRINT "jam session over, " + STR$(presses) + " button presses"
 ENDSUB
 
