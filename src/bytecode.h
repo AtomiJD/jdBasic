@@ -355,6 +355,7 @@ inline int opcode_width(OpCode op) {
         case OpCode::JUMP_IF_NOT_NONE:
         case OpCode::JUMP_ABS:
         case OpCode::SETUP_TRY:
+        case OpCode::MARK_CONST:
         case OpCode::BREAK_LOOP:
         case OpCode::CONTINUE_LOOP_OP:
         case OpCode::FOREACH_NEXT:
