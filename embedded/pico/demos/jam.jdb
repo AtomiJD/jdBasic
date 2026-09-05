@@ -1,0 +1,552 @@
+' JAM SESSION for the Fruit Jam: five scenes that use the whole board.
+' The text console with its colours, the PETSCII half of the font, the
+' drawing verbs, the codec, the five NeoPixels and the three buttons.
+'
+' Button 1 or Space goes to the next scene, button 2 changes the colour
+' mood, button 3 or M toggles the sound. 1 to 5 jump to a scene, Q
+' leaves with a small finale.
+
+SND.OUT(0)
+PLAY.VOLUME(15)
+
+CONST N_SCENES = 5
+CONST GO_NEXT = 100
+CONST GO_QUIT = 101
+
+DIM esc$ = CHR$(27)
+DIM mood = 0
+DIM snd_on = 1
+DIM prev_b1 = 0
+DIM prev_b2 = 0
+DIM prev_b3 = 0
+DIM presses = 0
+DIM fr = 0
+DIM scene = 1
+DIM want = 0
+
+' ---- colours -----------------------------------------------------------
+
+' A hue on the colour wheel, 0 to 359, as [r, g, b] at full saturation.
+FUNC HUE(h, v)
+    h = h MOD 360
+    IF h < 0 THEN h = h + 360
+    DIM sector = INT(h / 60)
+    DIM f = (h - sector * 60) / 60
+    DIM q = v * (1 - f)
+    DIM t = v * f
+    IF sector = 0 THEN RETURN [v, t, 0]
+    IF sector = 1 THEN RETURN [q, v, 0]
+    IF sector = 2 THEN RETURN [0, v, t]
+    IF sector = 3 THEN RETURN [0, q, v]
+    IF sector = 4 THEN RETURN [t, 0, v]
+    RETURN [v, 0, q]
+ENDFUNC
+
+' The mood shifts every hue: 0 the rainbow as it is, 1 warm, 2 cold.
+FUNC MOODHUE(h)
+    IF mood = 1 THEN RETURN 20 + (h MOD 360) / 6
+    IF mood = 2 THEN RETURN 180 + (h MOD 360) / 4
+    RETURN h
+ENDFUNC
+
+SUB INKHUE(h, v)
+    DIM c = HUE(MOODHUE(h), v)
+    DRAWCOLOR c[0], c[1], c[2]
+ENDSUB
+
+' The five pixels along the wheel from a starting hue, dimmed to taste.
+SUB NEORAINBOW(h0, v)
+    DIM p
+    FOR p = 0 TO 4
+        DIM c = HUE(MOODHUE(h0 + p * 40), v)
+        NEOPIXEL.SET(p, c[0], c[1], c[2])
+    NEXT p
+    NEOPIXEL.SHOW()
+ENDSUB
+
+SUB NEOOFF()
+    NEOPIXEL.CLEAR()
+    NEOPIXEL.SHOW()
+ENDSUB
+
+' ---- sound -------------------------------------------------------------
+
+SUB NOTE(f)
+    IF snd_on = 1 THEN TONE f
+ENDSUB
+
+SUB HUSH()
+    TONE 0
+ENDSUB
+
+SUB TUNE(s$)
+    IF snd_on = 1 THEN PLAY s$
+ENDSUB
+
+' ---- input -------------------------------------------------------------
+
+' What the person wants: 0 nothing, 1 to 5 a scene, GO_NEXT, GO_QUIT.
+' The buttons report on the press, not while held; button 2 and 3 are
+' handled here and return 0.
+FUNC ASK()
+    RETURN ASKKEY(KEY.NOW())
+ENDFUNC
+
+' The same, for a scene that has already read the key itself.
+FUNC ASKKEY(k)
+    DIM r = 0
+    IF k >= 65 AND k <= 90 THEN k = k + 32
+    IF k = 32 THEN r = GO_NEXT
+    IF k = 113 THEN r = GO_QUIT
+    IF k >= 49 AND k <= 53 THEN r = k - 48
+    IF k = 109 THEN
+        snd_on = 1 - snd_on
+        IF snd_on = 0 THEN
+            PLAY.STOP()
+            TONE 0
+        ENDIF
+    ENDIF
+    DIM b1 = 0
+    DIM b2 = 0
+    DIM b3 = 0
+    IF BUTTON.GET(1) THEN b1 = 1
+    IF BUTTON.GET(2) THEN b2 = 1
+    IF BUTTON.GET(3) THEN b3 = 1
+    IF b1 = 1 AND prev_b1 = 0 THEN r = GO_NEXT
+    IF b2 = 1 AND prev_b2 = 0 THEN mood = (mood + 1) MOD 3
+    IF b3 = 1 AND prev_b3 = 0 THEN
+        snd_on = 1 - snd_on
+        IF snd_on = 0 THEN
+            PLAY.STOP()
+            TONE 0
+        ENDIF
+    ENDIF
+    prev_b1 = b1
+    prev_b2 = b2
+    prev_b3 = b3
+    RETURN r
+ENDFUNC
+
+' ---- console helpers ---------------------------------------------------
+
+SUB AT(row, col)
+    PRINT esc$ + "[" + STR$(row) + ";" + STR$(col) + "H";
+ENDSUB
+
+SUB INK(code)
+    PRINT esc$ + "[" + STR$(code) + "m";
+ENDSUB
+
+FUNC REP$(code, n)
+    DIM s$ = ""
+    DIM i
+    FOR i = 1 TO n
+        s$ = s$ + CHR$(code)
+    NEXT i
+    RETURN s$
+ENDFUNC
+
+' A box out of the PETSCII pieces, rows r1 to r2, columns c1 to c2.
+SUB BOX(r1, c1, r2, c2)
+    DIM w = c2 - c1 - 1
+    AT(r1, c1)
+    PRINT CHR$(202) + REP$(200, w) + CHR$(203);
+    AT(r2, c1)
+    PRINT CHR$(204) + REP$(200, w) + CHR$(205);
+    DIM r
+    FOR r = r1 + 1 TO r2 - 1
+        AT(r, c1)
+        PRINT CHR$(201);
+        AT(r, c2)
+        PRINT CHR$(201);
+    NEXT r
+ENDSUB
+
+' ---- scene 1: the title page, typed ----------------------------------
+
+FUNC TITLE()
+    GFX.CONSOLE 1
+    PRINT esc$ + "[2J";
+    INK(92)
+    BOX(2, 2, 29, 39)
+    INK(93)
+    AT(5, 12)
+    PRINT "JAM SESSION";
+    INK(92)
+    AT(7, 8)
+    PRINT CHR$(222) + " " + CHR$(223) + " " + CHR$(224) + " " + CHR$(225) + "  one board, everything  " + CHR$(226);
+    DIM lines$[9]
+    lines$[0] = "a text console, forty by thirty"
+    lines$[1] = "the C64 font with its graphics"
+    lines$[2] = "lines, circles, boxes over DVI"
+    lines$[3] = "a codec that plays MML tunes"
+    lines$[4] = "five NeoPixels on a PIO"
+    lines$[5] = "three buttons on the edge"
+    lines$[6] = ""
+    lines$[7] = "button 1 / space: next scene"
+    lines$[8] = "button 2: mood   button 3 / m: sound"
+    DIM li
+    DIM ch
+    DIM r = 0
+    FOR li = 0 TO 8
+        INK(37)
+        IF li >= 7 THEN INK(90)
+        AT(10 + li * 2, 4)
+        DIM s$ = lines$[li]
+        FOR ch = 0 TO LEN(s$) - 1
+            PRINT MID$(s$, ch, 1);
+            NOTE(600 + ch * 30)
+            NEORAINBOW(fr * 3, 40)
+            fr = fr + 1
+            SLEEP 12
+            HUSH()
+            r = ASK()
+            IF r <> 0 THEN RETURN r
+        NEXT ch
+    NEXT li
+    ' Idle: the title breathes through the hues, the pixels turn.
+    DIM h = 0
+    DO
+        h = h + 4
+        DIM code = 91 + (INT(h / 60) MOD 3)
+        INK(code)
+        AT(5, 12)
+        PRINT "JAM SESSION";
+        NEORAINBOW(h, 60)
+        SLEEP 40
+        r = ASK()
+        IF r <> 0 THEN RETURN r
+    LOOP
+ENDFUNC
+
+' ---- scene 2: PETSCII bars, a spectrum that never heard a signal ----
+
+FUNC BARS()
+    GFX.CONSOLE 1
+    PRINT esc$ + "[2J";
+    INK(92)
+    BOX(1, 1, 30, 40)
+    INK(93)
+    AT(2, 3)
+    PRINT "PETSCII SPECTRUM  " + CHR$(230) + CHR$(231) + CHR$(232) + CHR$(233);
+    DIM h = ZEROS(18)
+    DIM col
+    DIM row
+    DIM ph = 0
+    DIM r
+    DO
+        ph = ph + 0.15
+        DIM peak = 0
+        DIM peak_at = 0
+        FOR col = 0 TO 17
+            DIM want_h = 6 + 6 * SIN(ph + col * 0.5) + 4 * SIN(ph * 2.3 - col * 0.9) + RND * 3
+            IF want_h < 1 THEN want_h = 1
+            IF want_h > 20 THEN want_h = 20
+            ' Fast up, slow down, the way a meter falls.
+            IF want_h > h[col] THEN
+                h[col] = want_h
+            ELSE
+                h[col] = h[col] - 0.8
+                IF h[col] < 1 THEN h[col] = 1
+            ENDIF
+            IF h[col] > peak THEN
+                peak = h[col]
+                peak_at = col
+            ENDIF
+            DIM full = INT(h[col])
+            DIM frac = INT((h[col] - full) * 8)
+            FOR row = 0 TO 20
+                AT(27 - row, 3 + col * 2)
+                IF row < full THEN
+                    IF row < 8 THEN
+                        INK(92)
+                    ELSEIF row < 15 THEN
+                        INK(93)
+                    ELSE
+                        INK(91)
+                    ENDIF
+                    PRINT CHR$(175) + CHR$(175);
+                ELSEIF row = full AND frac > 0 THEN
+                    INK(37)
+                    PRINT CHR$(167 + frac) + CHR$(167 + frac);
+                ELSE
+                    PRINT "  ";
+                ENDIF
+            NEXT row
+        NEXT col
+        ' The loudest lvl sets the note and the pixels.
+        NOTE(220 + peak * 40)
+        DIM p
+        FOR p = 0 TO 4
+            DIM lvl = h[p * 3 + 2] / 20
+            DIM c = HUE(MOODHUE(120 - lvl * 120), 30 + lvl * 90)
+            NEOPIXEL.SET(p, c[0], c[1], c[2])
+        NEXT p
+        NEOPIXEL.SHOW()
+        INK(90)
+        AT(29, 3)
+        PRINT "peak in band " + STR$(peak_at + 1) + "   ";
+        SLEEP 30
+        r = ASK()
+        IF r <> 0 THEN
+            HUSH()
+            RETURN r
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ---- scene 3: a spirograph in the mood's colours ----------------------
+
+FUNC SPIRO()
+    GFX.CONSOLE 0
+    GFX.CLEAR 0
+    TUNE("T120 O4 L8 C E G > C E G > C4")
+    DIM a = 0
+    DIM h = 0
+    DIM r
+    DIM suits$ = CHR$(222) + CHR$(223) + CHR$(224) + CHR$(225)
+    DO
+        a = a + 0.05
+        h = h + 2
+        ' Three arms of different speeds, each leaving a coloured trail.
+        DIM arm
+        FOR arm = 0 TO 2
+            DIM ra = 60 + arm * 22
+            DIM x1 = 160 + COS(a * (arm + 1)) * ra
+            DIM y1 = 120 + SIN(a * (arm + 1)) * ra * 0.75
+            DIM x2 = 160 + COS(a * (arm + 1) + 2.1) * ra
+            DIM y2 = 120 + SIN(a * (arm + 1) + 2.1) * ra * 0.75
+            INKHUE(h + arm * 120, 255)
+            LINE x1, y1, x2, y2
+            CIRCLE x2, y2, 2
+        NEXT arm
+        ' A ring of card suits turning the other way.
+        DIM k
+        FOR k = 0 TO 3
+            DIM ang = 0 - a * 0.5 + k * PI / 2
+            DIM sx = 160 + COS(ang) * 130
+            DIM sy = 120 + SIN(ang) * 95
+            INKHUE(h + k * 90, 255)
+            TEXT sx - 8, sy - 8, MID$(suits$, k, 1), 2
+        NEXT k
+        ' The old paint fades: a black frame at the edge every few passes
+        ' keeps the trails from filling the screen.
+        IF (INT(a * 20) MOD 40) = 0 THEN
+            DRAWCOLOR 0, 0, 0
+            RECT 0, 0, 320, 20, 1
+            INKHUE(h, 255)
+            TEXT 6, 6, "SPIROGRAPH  " + CHR$(226) + "  mood " + STR$(mood), 1
+        ENDIF
+        NEORAINBOW(h, 50)
+        IF PLAY.BUSY() = 0 AND (INT(a * 20) MOD 200) = 0 THEN TUNE("T120 O4 L8 C E G > C E G > C4")
+        SLEEP 20
+        r = ASK()
+        IF r <> 0 THEN
+            PLAY.STOP()
+            RETURN r
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ---- scene 4: a tune, a ball, and pixels that keep the beat ----------
+
+FUNC BOUNCE()
+    GFX.CONSOLE 0
+    GFX.CLEAR 0
+    DIM song$ = "T140 O4 L8 E E R E R C E4 G4 R4 < G4 R4 > C4 R < G4 R E4 R A4 B4 B-4 A4 G E > G A F G R E C D < B4"
+    TUNE(song$)
+    DIM bx = 60
+    DIM by = 60
+    DIM vx = 3.2
+    DIM vy = 0
+    DIM h = 0
+    DIM flash = 0
+    DIM bounces = 0
+    DIM r
+    DIM step_no = 0
+    DO
+        step_no = step_no + 1
+        h = h + 3
+        ' Gravity, a floor, two walls, and a little energy back each bounce.
+        vy = vy + 0.35
+        bx = bx + vx
+        by = by + vy
+        DIM hit = 0
+        IF by > 200 THEN
+            by = 200
+            vy = 0 - ABS(vy) * 0.85
+            IF vy > -2 THEN vy = -9
+            hit = 1
+        ENDIF
+        IF bx < 20 OR bx > 300 THEN
+            vx = 0 - vx
+            IF bx < 20 THEN bx = 20
+            IF bx > 300 THEN bx = 300
+            hit = 1
+        ENDIF
+        IF hit = 1 THEN
+            bounces = bounces + 1
+            flash = 6
+        ENDIF
+        ' The trail: the old ball is painted over in a darker hue.
+        DIM dark = HUE(MOODHUE(h - 40), 60)
+        CIRCLE bx - vx, by - vy, 12, dark[0], dark[1], dark[2], 1
+        DIM bright = HUE(MOODHUE(h), 255)
+        CIRCLE bx, by, 12, bright[0], bright[1], bright[2], 1
+        INKHUE(h + 180, 255)
+        TEXT bx - 4, by - 4, CHR$(226), 1
+        ' The floor and the score.
+        INKHUE(h + 60, 200)
+        LINE 0, 214, 319, 214
+        DRAWCOLOR 0, 0, 0
+        RECT 0, 220, 320, 20, 1
+        INKHUE(h, 255)
+        TEXT 6, 224, "BOUNCES " + STR$(bounces) + "   " + CHR$(230) + " space for the next scene", 1
+        ' Pixels: a white flash on a bounce, else a slow wheel.
+        IF flash > 0 THEN
+            DIM p
+            FOR p = 0 TO 4
+                NEOPIXEL.SET(p, 200, 200, 200)
+            NEXT p
+            NEOPIXEL.SHOW()
+            flash = flash - 1
+        ELSE
+            NEORAINBOW(h * 2, 40)
+        ENDIF
+        IF PLAY.BUSY() = 0 AND (step_no MOD 50) = 0 THEN TUNE(song$)
+        SLEEP 20
+        r = ASK()
+        IF r <> 0 THEN
+            PLAY.STOP()
+            RETURN r
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ---- scene 5: the three buttons, on screen and in the hand -----------
+
+SUB DRAWBUTTON(n, down, h)
+    DIM x = 40 + (n - 1) * 100
+    IF down = 1 THEN
+        INKHUE(h + n * 60, 255)
+        RECT x, 90, 60, 60, 1
+        DRAWCOLOR 0, 0, 0
+    ELSE
+        DRAWCOLOR 0, 0, 0
+        RECT x, 90, 60, 60, 1
+        INKHUE(h + n * 60, 255)
+    ENDIF
+    RECT x, 90, 60, 60
+    TEXT x + 22, 108, STR$(n), 3
+ENDSUB
+
+FUNC BUTTONS()
+    GFX.CONSOLE 0
+    GFX.CLEAR 0
+    DIM h = 0
+    DIM r
+    DIM notes = [523, 659, 784]
+    DIM held = ZEROS(3)
+    DIM n
+    DIM breath = 0
+    INKHUE(0, 255)
+    TEXT 40, 30, "PRESS THE BUTTONS", 2
+    DO
+        h = h + 1
+        breath = breath + 0.08
+        ' Buttons 1 to 3 as they are right now; the poll sees the edges.
+        DIM any_down = 0
+        DIM k = KEY.NOW()
+        FOR n = 1 TO 3
+            DIM now_down = 0
+            IF BUTTON.GET(n) THEN now_down = 1
+            IF k = 105 + n THEN now_down = 1
+            IF now_down <> held[n - 1] THEN
+                held[n - 1] = now_down
+                DRAWBUTTON(n, now_down, h)
+                IF now_down = 1 THEN
+                    presses = presses + 1
+                    NOTE(notes[n - 1])
+                    DIM p
+                    FOR p = 0 TO 4
+                        DIM c = HUE(MOODHUE(h + n * 60), 255)
+                        NEOPIXEL.SET(p, c[0], c[1], c[2])
+                    NEXT p
+                    NEOPIXEL.SHOW()
+                ENDIF
+            ENDIF
+            IF now_down = 1 THEN any_down = 1
+        NEXT n
+        IF any_down = 0 THEN
+            HUSH()
+            NEORAINBOW(h * 2, 15 + 15 * SIN(breath))
+        ENDIF
+        IF (h MOD 10) = 0 THEN
+            DRAWCOLOR 0, 0, 0
+            RECT 0, 170, 320, 12, 1
+            INKHUE(h * 3, 255)
+            TEXT 40, 172, STR$(presses) + " PRESSES   " + CHR$(230) + " j k l work too", 1
+            DRAWBUTTON(1, held[0], h)
+            DRAWBUTTON(2, held[1], h)
+            DRAWBUTTON(3, held[2], h)
+        ENDIF
+        SLEEP 20
+        r = ASKKEY(k)
+        IF r <> 0 THEN
+            HUSH()
+            RETURN r
+        ENDIF
+    LOOP
+ENDFUNC
+
+' ---- the finale --------------------------------------------------------
+
+SUB FINALE()
+    GFX.CONSOLE 0
+    GFX.CLEAR 0
+    TUNE("T180 O5 L16 C E G > C E G > C8")
+    DIM burst
+    DIM k
+    FOR burst = 0 TO 5
+        DIM cx = 40 + RND * 240
+        DIM cy = 40 + RND * 140
+        DIM h0 = RND * 360
+        FOR k = 0 TO 11
+            DIM ang = k * PI / 6
+            DIM rr
+            FOR rr = 4 TO 40 STEP 6
+                INKHUE(h0 + rr * 3, 255)
+                CIRCLE cx + COS(ang) * rr, cy + SIN(ang) * rr * 0.75, 2
+            NEXT rr
+        NEXT k
+        NEORAINBOW(h0, 120)
+        SLEEP 220
+    NEXT burst
+    INKHUE(120, 255)
+    TEXT 92, 110, "THANKS FOR PLAYING", 1
+    SLEEP 1500
+    PLAY.STOP()
+    NEOOFF()
+    GFX.CLEAR 0
+    GFX.CONSOLE 1
+    PRINT "jam session over, " + STR$(presses) + " button presses"
+ENDSUB
+
+' ---- the show ----------------------------------------------------------
+
+DO
+    IF scene = 1 THEN want = TITLE()
+    IF scene = 2 THEN want = BARS()
+    IF scene = 3 THEN want = SPIRO()
+    IF scene = 4 THEN want = BOUNCE()
+    IF scene = 5 THEN want = BUTTONS()
+    IF want = GO_QUIT THEN EXITDO
+    IF want = GO_NEXT THEN
+        scene = scene + 1
+        IF scene > N_SCENES THEN scene = 1
+    ELSEIF want >= 1 AND want <= N_SCENES THEN
+        scene = want
+    ENDIF
+    HUSH()
+LOOP
+FINALE()

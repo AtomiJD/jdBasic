@@ -39,6 +39,7 @@ build time.
 | mandel.jdb | x |  |  | Mandelbrot with the pad, ships as p-code (`.jdpb`) |
 | bisect.jdb | x |  |  | which half of the pad is doing it |
 | drift.jdb | x |  |  | STELLAR DRIFT, the game: pad, sound, waves, boss |
+| jam.jdb | x |  |  | JAM SESSION: console, PETSCII, drawing, tunes, NeoPixels and buttons in five scenes |
 | boot.jdb | x |  |  | AUTORUN: the USB keyboard speaks German |
 | hello.jdb | o | o | x | the board, its two memories and the store |
 | primes.jdb | o | o | x | a sieve as a mask, no inner loop |
