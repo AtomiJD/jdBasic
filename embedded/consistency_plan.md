@@ -4,7 +4,7 @@ What the three boards (Fruit Jam, PicoCalc, ESP32-S3 / ES3C28P) still need
 before the article and the video can claim "one program, every board".
 Ordered by what the reader or viewer sees first.
 
-Status 2026-09-04. Head e52834d.
+Status 2026-09-05: points 1 to 7 done, see the notes under each.
 
 ## 1. Network builtins on the ESP32
 
@@ -12,9 +12,15 @@ Status 2026-09-04. Head e52834d.
 (`pico_wifi.cpp` and `fruitjam_wifi.cpp`). NET CLOCK therefore does not
 run on the ESP32. ESP-IDF ships `esp_http_client` and SNTP.
 
-- [ ] `NTP.SYNC` in `esp32/main/esp32_wifi.cpp`
-- [ ] `HTTP.GET$` and `HTTP.STATUS` there too, plain http first
-- [ ] `RUN clock.jdb` on the ES3C28P shows the time and the weather
+- [x] `NTP.SYNC` in `esp32/main/esp32_wifi.cpp` (SNTP once, then taken down, clock set to local)
+- [x] `HTTP.GET$`, `HTTP.POST$`, `HTTP.STATUS` over esp_http_client, https through the certificate bundle
+- [x] `RUN clock.jdb` on the ES3C28P shows the time and the weather (weather line 7 s after RUN, 1.5 s when the radio is already up)
+
+Found on the way: https failed every signature check until the
+hardware bignum unit was switched off (`CONFIG_MBEDTLS_HARDWARE_MPI=n`);
+the radio ran out of internal RAM when a large program was parsed, so
+the interpreter now lives in PSRAM (`ALWAYSINTERNAL=0`), and a join no
+longer restarts a radio that is already on the network.
 
 Also missing on the ESP32: `HTTP.POST$`, `WIFI.DNS$`. Missing on the pico:
 `WIFI.AP`, `WIFI.CLIENTS`, `SYS.MEM`. Lower priority.
@@ -24,8 +30,8 @@ Also missing on the ESP32: `HTTP.POST$`, `WIFI.DNS$`. Missing on the pico:
 `KEY.GET` and `KEY.NOW` are registered in `pico_builtins.cpp` only. On the
 ESP32 they read the serial line until there is a keyboard.
 
-- [ ] `KEY.GET` (blocking) and `KEY.NOW` (-1 if none) in `esp32_builtins.cpp`
-- [ ] document `GFX.KEYSTATE`, `KBD.LAYOUT`, `JOY.*` as Fruit Jam only
+- [x] `KEY.GET` (blocking) and `KEY.NOW` (-1 if none) in `esp32_builtins.cpp`
+- [x] the demo index lists `GFX.KEYSTATE`, `KBD.LAYOUT`, `JOY.*` programs under the Fruit Jam only
 
 ## 3. UTF-8 console on every board
 
@@ -35,9 +41,9 @@ console (`es3c28p_con.c`) draw bytes, so an umlaut in a PRINT is two
 wrong glyphs there. Editor and REPL in `common/` already work in code
 points.
 
-- [ ] move the extra glyphs and the decoder to `common/` (next to `jdb_utf8.h`)
-- [ ] use them in all three consoles
-- [ ] `PRINT "Grüße"` looks the same on all three screens
+- [x] `common/jdb_glyphs.h`: the glyph table, the decoder, the cell byte scheme
+- [x] used by `fruitjam_con.c`, `picocalc_lcd.c`, `es3c28p_con.c`
+- [x] `PRINT "Grüße: Ärger Öl Übung 5° §3 12€"` printed on the PicoCalc and the ESP32 panel
 
 ## 4. One clock, one analyser
 
@@ -47,17 +53,17 @@ the source takes the best part of a minute, which the load-time work
 made false. `wifiscan.jdb` exists twice, in `pico/demos` and `esp32/fs`,
 as different files.
 
-- [ ] retire `netclock.jdb`, or keep it only as the p-code size example with a corrected header
-- [ ] one `wifiscan.jdb` that runs unchanged on the Fruit Jam and the ESP32
-- [ ] one `clock.jdb` that runs unchanged on both (needs 1 and 2)
+- [x] `netclock.jdb` retired; `doc/languages.md` points at `bbs.jdb` for the p-code example
+- [x] one `wifiscan.jdb`, q over `KEY.NOW`, run on both boards
+- [x] one `clock.jdb`, keys over `KEY.NOW`, `SCREENFLIP` per pass, run on both boards
 
 ## 5. Demo index
 
 `pico/demos/README.md` is about jdPlot only. There is no list of the
 30 demos and no note on which board runs which.
 
-- [ ] a short index at the top of `pico/demos/README.md`: name, one line, board matrix (FJ / PC / ESP)
-- [ ] `esp32/fs/readme.txt` points to it
+- [x] the index with the board matrix at the top of `pico/demos/README.md`
+- [x] `esp32/fs/readme.txt` points to it
 
 ## 6. Load-time and memory numbers for all boards
 
@@ -65,9 +71,16 @@ The measurements from the memory work (load 883 to ~150 ms, peak
 308 KB to 128 KB on bbs.jdb) are Fruit Jam numbers. The same `-lt`
 trace on the PicoCalc and the ESP32 gives the article one table.
 
-- [ ] PicoCalc trace (also open on trakr #323)
-- [ ] ESP32 trace
-- [ ] one table: board, prompt free, bbs.jdb load ms, peak
+- [x] the load-trace build now exists for the PicoCalc too (`build_pico.sh loadtrace`)
+- [x] measured 2026-09-05, bbs.jdb (8294 bytes with a PRINT in front), host clock from RUN to the first line:
+
+    board      free at prompt   load ms   trace ms   peak
+    Fruit Jam        88632        156       129       128 KB in the PSRAM arena, +20 KB heap
+    PicoCalc        211568        139       121       +148 KB heap (80 -> 229 KB used)
+    ESP32       184 KB internal   219        -         everything in PSRAM
+
+  The PicoCalc cannot load the 19 KB clock as source (std::bad_alloc);
+  p-code would be the way and fails today (trakr #328).
 
 ## 7. Same boot line everywhere
 
@@ -76,7 +89,7 @@ line: version, board name, free heap. Note in the docs that the German
 layout on the Fruit Jam comes from `boot.jdb` on the card (AUTORUN), not
 from the image.
 
-- [ ] compare the three boot screens side by side
+- [x] both welcome pages: `jdBasic 1.0   on <board>`, built date, chip at MHz, ram, board lines, store
 - [ ] `boot.jdb` and AUTORUN in the Fruit Jam section of `pico/README.md`
 
 ## 8. Sound
