@@ -13,7 +13,9 @@ extension gets .jdb added if that is what exists.
   tune       PLAY with the classic note notation
   vu         a level meter off the microphone
   sdcard     the card at /sd next to the flash store
-  wifiscan   what is on the air, drawn per channel
+  wifiscan   what is on the air, drawn per channel, q leaves
+  clock      NET CLOCK: the time from the network, the weather from
+             Open-Meteo; a analog, w weather, v colours, c place, q
   hello      the smallest thing that proves the board runs
   primes     a sieve
   bench      three loops, timed
@@ -39,5 +41,9 @@ SCREENFLIP sends the whole frame, 150 KB, 32 ms.  SCREENFLIP y, rows
 sends only that band, which is what a game wants: twenty sprites drawn
 and a 40-row band sent is 7 ms, so the panel is not the limit.
 
-The board has no keyboard.  Keys come over USB, which is why EDIT works
-from a terminal today.
+The board has no keyboard.  Keys come over the serial line: KEY.GET
+waits for one, KEY.NOW answers -1 when none is there, and EDIT works
+from a terminal.
+
+The same demos, with a table of which board runs which, are described
+in embedded/pico/demos/README.md in the repository.

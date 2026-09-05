@@ -3975,8 +3975,8 @@ sit at that number.
 
 So the working loop is: write and test on the desktop, `--pcode`, copy
 the file across, `RUN` it. `embedded/pico/demos/mandel.jdb` and
-`netclock.jdb` are built that way - one all arithmetic and graphics, one
-joining the network and taking the time from the radio.
+`bbs.jdb` are built that way - one all arithmetic and graphics, one
+joining the network and fetching pages.
 
 What p-code does not do is make the program smaller in memory. The
 chunk still lives in RAM while it runs, and on the Fruit Jam that is

@@ -1,3 +1,67 @@
+# The demos, and where they run
+
+One language, three boards: the Fruit Jam (FJ, 320x240 over DVI, USB
+keyboard, sound), the PicoCalc (PC, 320x320 panel, its own keyboard) and
+the ESP32-S3 display board (ESP, 320x240 panel, keys over the serial
+line, touch). The drawing verbs, the console, the network verbs and the
+file store read the same everywhere; what a program can use beyond that
+is the board's own hardware.
+
+`x` runs there, `o` uses only verbs that board has but has not been run
+on it yet, blank means it needs something the board does not have. The
+ESP32 copies live in `../../esp32/fs`, which becomes the flash store at
+build time.
+
+| demo | FJ | PC | ESP | what it is |
+|---|---|---|---|---|
+| basic.jdb | x | x | o | the language itself, in a dozen lines |
+| maze.jdb | x | x | o | the C64 one-liner |
+| petscii.jdb | x | o | o | the graphics half of the console font |
+| keycode.jdb | o | x | o | what a key actually sends on this board |
+| events.jdb | o | x | o | timer and key events between statements |
+| evreent.jdb | o | x | o | handlers do not nest |
+| evpin.jdb | o | x | o | pin edges reach a handler (wire GP2 to GP3) |
+| hardware.jdb | o | x | o | ADC, PWM, I2C |
+| jdlog.jdb | o | x | o | autonomous temperature logger, meant for AUTORUN |
+| jdshow.jdb |  | x |  | draw what jdlog collected, on the plotter |
+| jdm.jdb, jdmini.jdb, jdmload.jdb |  | x |  | jdPlot, the function plotter (below) |
+| kreise.jdb | o | x | o | rings and rays |
+| sprites.jdb | o | x | o | the same sprite on a desktop and on the panel |
+| grafik.jdb | x | x |  | buffered drawing in a band |
+| melodie.jdb | x | x | o | a tune, in one line |
+| musik.jdb | x | x | o | the tune plays while the program works |
+| funk.jdb | o | x | o | join the network, show the address, fetch a page |
+| webserver.jdb | o | x | x | the board serves its own page |
+| webtest.jdb | o | x | o | the board talks to its own server |
+| bbs.jdb | x | o | o | jdBBS, the board's browser |
+| wifiscan.jdb | x |  | x | the WiFi analyser, q leaves |
+| clock.jdb | x |  | x | NET CLOCK: time, weather, five colour schemes; too big for the PicoCalc as source |
+| mandel.jdb | x |  |  | Mandelbrot with the pad, ships as p-code (`.jdpb`) |
+| bisect.jdb | x |  |  | which half of the pad is doing it |
+| drift.jdb | x |  |  | STELLAR DRIFT, the game: pad, sound, waves, boss |
+| boot.jdb | x |  |  | AUTORUN: the USB keyboard speaks German |
+| hello.jdb | o | o | x | the board, its two memories and the store |
+| primes.jdb | o | o | x | a sieve as a mask, no inner loop |
+| mem.jdb | o | o | x | where an array lives, what an element costs |
+| bench.jdb | o | o | x | three shapes of work, timed |
+| console.jdb | o |  | x | the panel as a text console |
+| panel.jdb | o | o | x | the panel, drawn with the common verbs |
+| tune.jdb | o | o | x | the PLAY score notation |
+| hotspot.jdb |  |  | x | the board as its own network with a page |
+| pins.jdb |  |  | x | free pins, temperature, a square wave, a bus scan |
+| sdcard.jdb |  | o | x | the card at /sd next to the flash store |
+| touch.jdb |  |  | x | finger painting |
+| vu.jdb |  |  | x | a level meter on the microphone |
+| bounce.jdb |  |  | x | panel, codec and touch at once |
+| selftest.jdb |  |  | x | every part of the board against something else |
+
+Getting a file onto a board: `RECV name` at the prompt, then send the
+file over the serial line (128 bytes every 30 ms, end with a single
+0x04). The Fruit Jam also reads `.jdpb` files that `jdbasic --pcode`
+wrote on a desktop, which start at once instead of being parsed.
+
+---
+
 # jdPlot - a function plotter for the PicoCalc
 
 `jdm.jdb` turns the PicoCalc prompt into a plotting calculator. You load it

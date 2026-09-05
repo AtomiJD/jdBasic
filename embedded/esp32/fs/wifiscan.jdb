@@ -1,4 +1,4 @@
-' A WiFi analyser on the panel, after the Arduino one for the
+' A WiFi analyser, after the Arduino one for the
 ' JC4827W543. Each network is an arc whose height is its signal and
 ' whose place is its channel; the strongest on a channel gets named.
 ' The banner counts what was found and names the quietest channels.
@@ -6,6 +6,8 @@
 ' Noise per channel is the Arduino version's: every network adds the
 ' square of its margin above the floor to its own channel and to the
 ' four either side, because 2.4 GHz channels overlap that far.
+'
+' The same file runs on the Fruit Jam and the ESP32 panel. q leaves.
 
 SCREEN 320, 240
 GFX.CONSOLE 0
@@ -27,8 +29,9 @@ DIM COL_G = [ 70,150,220,220,200,120, 90,  70,150,220,220,200,120, 90]
 DIM COL_B = [ 70, 50, 60, 90,220,240,230,  70, 50, 60, 90,220,240,230]
 
 DO
-    DIM nets = WIFI.SCAN(150)
+    DIM nets = WIFI.SCAN()
     DIM found = LEN(nets)
+    PRINT found; " networks"
 
     DIM counts = ZEROS(14)
     DIM noise = ZEROS(14)
@@ -59,13 +62,13 @@ DO
         ENDIF
     NEXT
 
-    GFX.CLEAR 0, 0, 0
+    GFX.CLEAR 0
 
     ' Banner.
     DRAWCOLOR 240, 80, 80
-    TEXT 2, 2, "ESP32-S3", 1
+    TEXT 2, 2, "jdBasic", 1
     DRAWCOLOR 255, 255, 255
-    TEXT 74, 2, "WiFi Analyzer", 1
+    TEXT 66, 2, "WiFi Analyzer", 1
 
     DIM quiet = noise[0]
     FOR i = 1 TO 10
@@ -120,5 +123,16 @@ DO
     NEXT
 
     SCREENFLIP
-    SLEEP 2500
+    DIM want_out = 0
+    DIM tick_no
+    FOR tick_no = 1 TO 25
+        SLEEP 100
+        IF KEY.NOW() = 113 THEN
+            want_out = 1
+            EXITFOR
+        ENDIF
+    NEXT
+    IF want_out = 1 THEN EXITDO
 LOOP
+GFX.CLEAR 0
+GFX.CONSOLE 1

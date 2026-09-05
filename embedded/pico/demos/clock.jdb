@@ -1,5 +1,6 @@
-' NET CLOCK for the Fruit Jam: time from the network, weather from
-' Open-Meteo, green on black over DVI.
+' NET CLOCK: time from the network, weather from Open-Meteo, green on
+' black. The same file runs on the Fruit Jam over DVI and on the ESP32
+' panel; the keys come from whatever keyboard the board has.
 '
 ' A switches between the digital and the analog face, W shows the five
 ' day forecast and brings the clock back, V steps through the colour
@@ -34,16 +35,7 @@ DIM last_date$
 DIM t_h
 DIM t_m
 DIM t_s
-DIM key_a
-DIM key_w
-DIM key_v
-DIM key_h
-DIM key_c
-DIM prev_a
-DIM prev_w
-DIM prev_v
-DIM prev_h
-DIM prev_c
+DIM k
 DIM typed$
 DIM found
 DIM scheme
@@ -423,26 +415,18 @@ redraw = 1
 last_time$ = ""
 last_min$ = ""
 last_date$ = ""
-prev_a = 0
-prev_w = 0
-prev_v = 0
-prev_h = 0
-prev_c = 0
 
 ' ---- the loop ---------------------------------------------------------
 
 DO
-    ' Keys, on the press rather than while held.
-    key_a = GFX.KEYSTATE(97)
-    key_w = GFX.KEYSTATE(119)
-    key_v = GFX.KEYSTATE(118)
-    IF key_v = 1 AND prev_v = 0 THEN
+    ' One key per pass, upper or lower case.
+    k = KEY.NOW()
+    IF k >= 65 AND k <= 90 THEN k = k + 32
+    IF k = 118 THEN
         scheme = (scheme + 1) MOD LEN(pal)
         redraw = 1
     ENDIF
-    prev_v = key_v
-    key_h = GFX.KEYSTATE(104)
-    IF key_h = 1 AND prev_h = 0 THEN
+    IF k = 104 THEN
         IF view = VIEW_HELP THEN
             view = VIEW_DIGITAL
         ELSE
@@ -450,10 +434,8 @@ DO
         ENDIF
         redraw = 1
     ENDIF
-    prev_h = key_h
     ' C: a place typed on the keyboard, looked up, kept in clock.txt.
-    key_c = GFX.KEYSTATE(99)
-    IF key_c = 1 AND prev_c = 0 THEN
+    IF k = 99 THEN
         GFX.CLEAR 0
         INKTEXT(6, 40, "WHICH PLACE?", 0, 2)
         INK_MID()
@@ -480,8 +462,7 @@ DO
         view = VIEW_DIGITAL
         redraw = 1
     ENDIF
-    prev_c = key_c
-    IF key_a = 1 AND prev_a = 0 THEN
+    IF k = 97 THEN
         IF view = VIEW_ANALOG THEN
             view = VIEW_DIGITAL
         ELSE
@@ -489,7 +470,7 @@ DO
         ENDIF
         redraw = 1
     ENDIF
-    IF key_w = 1 AND prev_w = 0 THEN
+    IF k = 119 THEN
         IF view = VIEW_WEATHER THEN
             view = VIEW_DIGITAL
         ELSE
@@ -497,9 +478,7 @@ DO
         ENDIF
         redraw = 1
     ENDIF
-    prev_a = key_a
-    prev_w = key_w
-    IF GFX.KEYSTATE(113) THEN EXITDO
+    IF k = 113 THEN EXITDO
 
     ' Weather every quarter hour, the clock resynced every hour.
     IF net_ok = 1 AND TICK() - weather_at >= WEATHER_EVERY_MS THEN
@@ -641,6 +620,7 @@ DO
         ENDIF
     ENDIF
 
+    SCREENFLIP
     SLEEP 40
 LOOP
 
