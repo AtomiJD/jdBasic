@@ -41,6 +41,11 @@ like a build that did not take.
 If the board falls off USB entirely, unplug it. Nothing software-side
 brings it back.
 
+The `usbconsole` build (the display board) talks through the chip's
+USB-Serial/JTAG unit instead, which enumerates as `303a:1001` all the
+time. There the ordinary reset lines work: `--before default-reset
+--after hard-reset`, and the board comes back on its own.
+
 ## The flash store
 
 A 2 MB FATFS partition on wear levelling, mounted as the *default*
@@ -209,10 +214,10 @@ Measured on a DevKitC-1 N16R8, 96 KB REPL stack, at 240 MHz:
     after init   internal  181416   largest  139264
     VM costs     internal   98584
 
-    with PSRAM
-    boot         internal  272643   largest  180224   psram  8386156
-    after init   internal  198639   largest  124928   psram  8361576
-    VM costs     internal   74004                     psram    24580
+    with PSRAM, everything in PSRAM that does not ask for internal RAM
+    boot         internal  211839   largest  118784   psram  8340332
+    after init   internal  211575   largest  118784   psram  8302020
+    VM costs     internal     264                     psram    38312
 
 
 `SYS.NATIVES` breaks the second of those down. The heap is sampled at
@@ -228,19 +233,23 @@ does not build. 279 of the 869 are the language itself. The name text is
 hash node, a `std::function`, and an entry in the global slot registry
 for each one.
 
-The VM's own value stack is the PSRAM figure above: `stack.resize(1024)`
-of a 24-byte Value is 24576 bytes, just over the 16 KB threshold that
-decides which pool an allocation lands in.
+With PSRAM the interpreter lives there whole: `sdkconfig.psram` sets
+`CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL` to 0, so an ordinary allocation
+goes to PSRAM first and to internal RAM only when PSRAM is gone. The
+radio and the drivers ask for internal memory by name and always find
+it. With a threshold instead (small blocks internal, the IDF default of
+16 KB) a twenty kilobyte program being parsed drained internal RAM to
+nothing, and the PHY, waking from modem sleep in that moment, aborted
+for want of a timer. The price is speed on the interpreter's own hot
+paths; `bench.jdb` on this build: 100000 squares summed as a vector
+352 ms, 100000 additions in a loop 942 ms, 2000 concatenations 155 ms.
 For comparison the PicoCalc reports 120376 free at a bare prompt. Even
 with PSRAM out the S3 has about half again as much room, on a part with
 8 KB less SRAM, because the RP2350 build spends 128 KB of its on a stack
 in the linker script and carries the panel, keyboard and flash store as
 well.
 
-With PSRAM in, the interpreter's own tables stay internal - they are
-below the 16 KB threshold that decides where an allocation goes - and
-arrays go outside. A jdBasic array costs about 24.2 bytes an element,
-measured twice:
+A jdBasic array costs about 24.2 bytes an element, measured twice:
 
     IOTA(50000)    1212420 bytes of PSRAM
     IOTA(100000)   2424836 bytes of PSRAM

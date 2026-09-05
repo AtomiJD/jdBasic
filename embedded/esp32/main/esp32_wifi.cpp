@@ -15,8 +15,58 @@
 #include "nvs_flash.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_netif_sntp.h"
+#include <sys/time.h>
+#include <time.h>
+#include <string>
 
 #include "../../../src/vm.h"
+
+static int s_http_status = 0;
+
+// One request, the answer's body as a string. The client follows
+// redirects and undoes chunking on its own; https goes through the
+// certificate bundle. An empty string with HTTP.STATUS 0 means the
+// request never got an answer.
+static std::string http_request(esp_http_client_method_t method, const std::string& url,
+                                const std::string& body, const std::string& ctype,
+                                int timeout_ms) {
+    s_http_status = 0;
+    esp_http_client_config_t cfg = {};
+    cfg.url = url.c_str();
+    cfg.method = method;
+    cfg.timeout_ms = timeout_ms;
+    cfg.user_agent = "jdBasic";
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+    cfg.buffer_size = 2048;
+    cfg.buffer_size_tx = 1024;
+    esp_http_client_handle_t h = esp_http_client_init(&cfg);
+    if (!h) return "";
+    esp_http_client_set_header(h, "Accept-Encoding", "identity");
+    if (!body.empty())
+        esp_http_client_set_header(h, "Content-Type",
+                                   ctype.empty() ? "application/json" : ctype.c_str());
+
+    std::string out;
+    if (esp_http_client_open(h, (int)body.size()) == ESP_OK) {
+        bool sent = body.empty() ||
+                    esp_http_client_write(h, body.data(), (int)body.size()) == (int)body.size();
+        if (sent && esp_http_client_fetch_headers(h) >= 0) {
+            s_http_status = esp_http_client_get_status_code(h);
+            char buf[1024];
+            for (;;) {
+                int n = esp_http_client_read(h, buf, sizeof buf);
+                if (n <= 0) break;
+                out.append(buf, (size_t)n);
+            }
+        }
+        esp_http_client_close(h);
+    }
+    esp_http_client_cleanup(h);
+    return out;
+}
 
 static bool s_stack_up = false;      // netif, event loop and nvs, once
 static bool s_wifi_inited = false;   // esp_wifi_init holds the buffers
@@ -29,9 +79,16 @@ static EventGroupHandle_t s_events = nullptr;
 #define GOT_IP_BIT   BIT0
 #define FAILED_BIT   BIT1
 
+// A join tries again a few times before it gives up: the first attempt
+// after the radio comes up often ends in one disconnect event before
+// the access point settles.
+static int s_retries = 0;
+
 static void on_wifi_event(void*, esp_event_base_t base, int32_t id, void*) {
-    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED)
-        xEventGroupSetBits(s_events, FAILED_BIT);
+    if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
+        if (s_retries > 0) { s_retries--; esp_wifi_connect(); }
+        else xEventGroupSetBits(s_events, FAILED_BIT);
+    }
 }
 
 static void on_ip_event(void*, esp_event_base_t base, int32_t id, void*) {
@@ -72,6 +129,7 @@ static bool wifi_inited() {
 // Stopping alone gives back a few kilobytes; deinit and dropping the
 // interfaces is what returns the rest of the hundred-odd it costs.
 static void radio_down() {
+    s_retries = 0;
     if (s_radio_up) esp_wifi_stop();
     s_radio_up = false;
     if (s_wifi_inited) {
@@ -86,23 +144,43 @@ static void radio_down() {
 // Joins a network and waits for an address. Returns 0 on success, and a
 // negative number for each way it can fail, the way the RP2350 build
 // reports it.
+static bool current_ip(char* out, size_t cap);
+
 static int wifi_join(const char* ssid, const char* pass, int timeout_ms) {
     if (!stack_up()) return -1;
-    radio_down();
-    if (!wifi_inited()) return -1;
-    if (!s_sta) s_sta = esp_netif_create_default_wifi_sta();
-    if (!s_sta) return -1;
+    // A radio already running as a station keeps running: it is only
+    // pointed at the network again. Tearing it down and up from inside
+    // a program has left the PHY without memory for its timer.
+    bool station = s_radio_up && s_mode == WIFI_MODE_STA;
+    if (station) {
+        wifi_ap_record_t ap;
+        char ip[20];
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK &&
+            strcmp((const char*)ap.ssid, ssid) == 0 && current_ip(ip, sizeof ip))
+            return 0;
+        s_retries = 0;
+        esp_wifi_disconnect();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    } else {
+        radio_down();
+        if (!wifi_inited()) return -1;
+        if (!s_sta) s_sta = esp_netif_create_default_wifi_sta();
+        if (!s_sta) return -1;
+        if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) return -1;
+    }
 
     wifi_config_t wc = {};
     snprintf((char*)wc.sta.ssid, sizeof wc.sta.ssid, "%s", ssid);
     snprintf((char*)wc.sta.password, sizeof wc.sta.password, "%s", pass);
-    if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) return -1;
     if (esp_wifi_set_config(WIFI_IF_STA, &wc) != ESP_OK) return -1;
-    if (esp_wifi_start() != ESP_OK) return -1;
-    s_radio_up = true;
-    s_mode = WIFI_MODE_STA;
+    if (!station) {
+        if (esp_wifi_start() != ESP_OK) return -1;
+        s_radio_up = true;
+        s_mode = WIFI_MODE_STA;
+    }
 
     xEventGroupClearBits(s_events, GOT_IP_BIT | FAILED_BIT);
+    s_retries = 4;
     esp_wifi_connect();
     EventBits_t bits = xEventGroupWaitBits(s_events, GOT_IP_BIT | FAILED_BIT,
                                            pdFALSE, pdFALSE,
@@ -176,6 +254,12 @@ static int wifi_scan_prepare(void) {
     return 0;
 }
 
+// A station that has its address.
+static bool online(void) {
+    char ip[20];
+    return s_radio_up && current_ip(ip, sizeof ip);
+}
+
 void register_esp32_wifi(VM& vm) {
     // One row a network: [ssid$, rssi, channel, open]. Sorted by the
     // radio, strongest first, and hidden networks come back with an
@@ -235,7 +319,7 @@ void register_esp32_wifi(VM& vm) {
         if (!ok) return Value::make_i64(-2);
         for (char* p = ssid; *p; p++) if (*p == '\n' || *p == '\r') { *p = 0; break; }
         for (char* p = pass; *p; p++) if (*p == '\n' || *p == '\r') { *p = 0; break; }
-        return Value::make_i64(wifi_join(ssid, pass, 20000));
+        return Value::make_i64(wifi_join(ssid, pass, 30000));
     });
 
     vm.register_native("WIFI.AP", 1, 3, [](const std::vector<Value>& args) -> Value {
@@ -296,5 +380,47 @@ void register_esp32_wifi(VM& vm) {
                 snprintf(buf, sizeof buf, "station not associated");
         }
         return Value::make_string(buf);
+    });
+
+    // The clock from the network, set to local time: the argument is the
+    // offset from UTC in hours. One exchange, then the client is taken
+    // down again so nothing pulls the clock back to UTC later. Returns
+    // the local epoch seconds, or 0 when no server answered in time.
+    // Nothing below touches the TCP/IP stack unless the station has an
+    // address; lwIP asserts rather than fails when asked before that.
+    vm.register_native("NTP.SYNC", 0, 2, [](const std::vector<Value>& args) -> Value {
+        if (!online()) return Value::make_i64(0);
+        double offset = args.size() >= 2 ? args[1].to_double()
+                      : (args.size() >= 1 ? args[0].to_double() : 0.0);
+        esp_sntp_config_t cfg = ESP_NETIF_SNTP_DEFAULT_CONFIG("pool.ntp.org");
+        cfg.start = true;
+        if (esp_netif_sntp_init(&cfg) != ESP_OK) return Value::make_i64(0);
+        esp_err_t err = esp_netif_sntp_sync_wait(pdMS_TO_TICKS(10000));
+        esp_netif_sntp_deinit();
+        if (err != ESP_OK) return Value::make_i64(0);
+        time_t now = time(nullptr);
+        if (now < 1600000000) return Value::make_i64(0);
+        int64_t local = (int64_t)now + (int64_t)(offset * 3600.0);
+        struct timeval tv;
+        tv.tv_sec = (time_t)local;
+        tv.tv_usec = 0;
+        settimeofday(&tv, nullptr);
+        return Value::make_i64(local);
+    });
+
+    vm.register_native("HTTP.GET$", 1, 2, [](const std::vector<Value>& args) -> Value {
+        if (!online()) { s_http_status = 0; return Value::make_string(""); }
+        int timeout = args.size() >= 2 ? (int)args[1].to_double() : 10000;
+        return Value::make_string(http_request(HTTP_METHOD_GET, args[0].to_string(), "", "", timeout));
+    });
+    vm.register_native("HTTP.POST$", 2, 4, [](const std::vector<Value>& args) -> Value {
+        if (!online()) { s_http_status = 0; return Value::make_string(""); }
+        std::string ctype = args.size() >= 3 ? args[2].to_string() : "";
+        int timeout = args.size() >= 4 ? (int)args[3].to_double() : 10000;
+        return Value::make_string(http_request(HTTP_METHOD_POST, args[0].to_string(),
+                                               args[1].to_string(), ctype, timeout));
+    });
+    vm.register_native("HTTP.STATUS", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_i64(s_http_status);
     });
 }

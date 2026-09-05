@@ -39,7 +39,7 @@ idf_component_register(
         "../../../src/channels.cpp"
         "../../../src/file_streams.cpp"
     INCLUDE_DIRS "." "../../../src" "../../common"
-    REQUIRES esp_timer driver fatfs vfs esp_vfs_console esp_driver_i2c esp_driver_i2s esp_driver_sdmmc sdmmc esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd
+    REQUIRES esp_timer driver fatfs vfs esp_vfs_console esp_driver_i2c esp_driver_i2s esp_driver_sdmmc sdmmc esp_wifi esp_netif nvs_flash esp_event lwip esp_lcd esp_http_client mbedtls
              esp_adc esp_driver_gpio esp_driver_ledc esp_driver_i2c esp_driver_spi
              esp_driver_tsens
 )

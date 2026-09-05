@@ -1,6 +1,6 @@
-' Where an array actually lives. Anything past the 16 KB threshold goes
-' to PSRAM, so the internal figure barely moves while the PSRAM one
-' drops by about 24 bytes an element.
+' Where an array actually lives. Ordinary allocations go to PSRAM, so
+' the internal figure barely moves while the PSRAM one drops by about
+' 24 bytes an element.
 
 DIM i0, p0
 i0 = SYS.INTERNAL()

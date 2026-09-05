@@ -21,9 +21,11 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 
-# Allocations below this stay in internal RAM. At the IDF default the
-# interpreter's own tables are small enough to stay internal, which is
-# what should happen, while arrays and programs go to PSRAM. Measured:
-# a jdBasic array costs about 24.2 bytes an element and lands in PSRAM
-# from roughly 700 elements up.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+# Every ordinary allocation goes to PSRAM first and to internal RAM only
+# when PSRAM is exhausted. The radio and the drivers ask for internal
+# memory by name and find it; the interpreter, its syntax tree and its
+# strings live in the 8 MB. With a threshold instead (small blocks
+# internal) a large program being parsed drains internal RAM to nothing,
+# and the PHY, waking from modem sleep in that moment, aborts for want
+# of a timer. A jdBasic array costs about 24.2 bytes an element.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=0

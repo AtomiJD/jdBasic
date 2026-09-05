@@ -4,8 +4,11 @@
 // PSRAM are separate pools with very different sizes and speeds.
 
 #include "../../../src/vm.h"
+#include <stdio.h>
 #include "esp_heap_caps.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 #define CAP_INT (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 
@@ -54,6 +57,21 @@ void register_esp32_builtins(VM& vm) {
     register_esp32_events(vm);
     register_es3c28p_gfx(vm);
     register_jdb_play(vm);
+
+    // The console's keys, the way the RP2350 boards hand them out: KEY.GET
+    // waits for one, KEY.NOW answers -1 when none has arrived. stdin is
+    // non-blocking here, so the wait is a poll.
+    vm.register_native("KEY.GET", 0, 0, [](const std::vector<Value>&) -> Value {
+        for (;;) {
+            int c = getchar();
+            if (c != EOF) return Value::make_i64(c);
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+    });
+    vm.register_native("KEY.NOW", 0, 0, [](const std::vector<Value>&) -> Value {
+        int c = getchar();
+        return Value::make_i64(c == EOF ? -1 : c);
+    });
 
     vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
