@@ -506,9 +506,19 @@ DO
             redraw = 1
         ENDIF
     ENDIF
-    IF net_ok = 1 AND TICK() - sync_at >= SYNC_EVERY_MS THEN
-        sync_at = TICK()
-        IF NTP.SYNC(2) <> 0 THEN time_ok = 1
+    ' The clock resyncs every hour; without a time yet it asks again
+    ' every twenty seconds, since the radio often has none right after
+    ' joining.
+    IF net_ok = 1 THEN
+        DIM sync_gap = SYNC_EVERY_MS
+        IF time_ok = 0 THEN sync_gap = 20000
+        IF TICK() - sync_at >= sync_gap THEN
+            sync_at = TICK()
+            IF NTP.SYNC(2) <> 0 THEN
+                IF time_ok = 0 THEN redraw = 1
+                time_ok = 1
+            ENDIF
+        ENDIF
     ENDIF
 
     IF redraw = 1 THEN
