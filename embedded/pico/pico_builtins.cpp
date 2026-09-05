@@ -190,8 +190,15 @@ void register_pico_keyget(VM& vm) {
 
 #ifdef PICOCALC
 extern "C" void picocalc_lcd_stat(int* scroll, int* cx, int* cy);
+extern "C" void picocalc_lcd_console(int on);
 
 void register_pico_lcdstat(VM& vm) {
+    // The same switch the other boards have: 0 gives the panel to a
+    // program that draws, 1 brings the text console back on a clear page.
+    vm.register_native("GFX.CONSOLE", 0, 1, [](const std::vector<Value>& args) -> Value {
+        picocalc_lcd_console(args.size() >= 1 ? (int)args[0].to_double() : 1);
+        return Value();
+    });
     vm.register_native("LCD.STAT$", 0, 0, [](const std::vector<Value>&) -> Value {
         int s, x, y;
         picocalc_lcd_stat(&s, &x, &y);

@@ -223,8 +223,11 @@ static int ansi_step(char c) {
     return 1;
 }
 
+static int g_paint = 1;
+
 void picocalc_lcd_putc(char c) {
     { void picocalc_lcd_tap_log(uint8_t); picocalc_lcd_tap_log((uint8_t)c); }
+    if (!g_paint) return;
     int prev_cy = g_cy;
     if (ansi_step(c)) return;
     if (c == '\r') { g_cx = 0; g_dirty[g_cy] = 1; return; }
@@ -333,6 +336,19 @@ void picocalc_lcd_row(int row, char* out, int cap) {
 }
 
 // Scroll ring and cursor state, for diagnosis from the prompt.
+// The panel is shared with the drawing verbs. Switched off, the console
+// keeps nothing and paints nothing; switched on again it starts from a
+// clear page.
+void picocalc_lcd_console(int on) {
+    if (on && !g_paint) {
+        clear_screen();
+        for (int r = 0; r < ROWS; r++) g_dirty[r] = 1;
+        g_paint = 1;
+        picocalc_lcd_flush();
+    }
+    g_paint = on ? 1 : 0;
+}
+
 void picocalc_lcd_stat(int* scroll, int* cx, int* cy) {
     *scroll = g_scroll;
     *cx = g_cx;
