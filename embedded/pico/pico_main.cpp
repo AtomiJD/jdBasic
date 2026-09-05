@@ -21,6 +21,7 @@
 #include "pico/cyw43_arch.h"
 #endif
 #include "jdb_embed_api.h"
+#include "version.h"
 #include "../common/jdb_repl.h"
 #include <malloc.h>
 
@@ -309,11 +310,14 @@ extern "C" int jdb_pico_fs_free(unsigned* freebytes, unsigned* total);
 // The first page: what this machine is and what it has, written for forty
 // columns. Kilobytes rather than bytes, because the digit that matters on
 // a screen this size is the first one.
+// The page every board shows at power-on, in the same shape: what it
+// is, what it has, and the four verbs to start with.
 static void pico_hello(void) {
-    printf("\x1b[93m jdBasic\x1b[0m   on " BOARD_TEXT "\n");
+    printf("\x1b[93m jdBasic " JDBASIC_VERSION "\x1b[0m   on " BOARD_TEXT "\n");
     // Two short of the width: a rule that fills the row exactly makes the
     // console wrap, and the newline after it then costs a blank line.
     printf("\x1b[90m--------------------------------------\x1b[0m\n");
+    printf(" built  " __DATE__ "\n");
     printf(" chip   " CHIP_TEXT ", 2 cores at %u MHz\n",
            (unsigned)(clock_get_hz(clk_sys) / 1000000u));
     printf(" ram    %u KB free\n", jdb_pico_heap_free() / 1024u);

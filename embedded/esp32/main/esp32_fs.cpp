@@ -28,7 +28,7 @@ extern "C" bool esp32_fs_init(void) {
 
 // Blocks total and free, in bytes. FATFS counts in clusters, so the
 // numbers move in cluster steps rather than byte for byte.
-static bool fs_space(uint64_t* total, uint64_t* freebytes) {
+bool esp32_fs_space(uint64_t* total, uint64_t* freebytes) {
     FATFS* fs;
     DWORD free_clusters;
     if (f_getfree("0:", &free_clusters, &fs) != FR_OK) return false;
@@ -41,7 +41,7 @@ static bool fs_space(uint64_t* total, uint64_t* freebytes) {
 void register_esp32_fs(VM& vm) {
     vm.register_native("SYS.DF", 0, 0, [](const std::vector<Value>&) -> Value {
         uint64_t total = 0, avail = 0;
-        if (!fs_space(&total, &avail)) return Value::make_string("no filesystem");
+        if (!esp32_fs_space(&total, &avail)) return Value::make_string("no filesystem");
         char buf[96];
         snprintf(buf, sizeof buf, "flash %u free of %u bytes",
                  (unsigned)avail, (unsigned)total);
@@ -50,7 +50,7 @@ void register_esp32_fs(VM& vm) {
 
     vm.register_native("SYS.FREEDISK", 0, 0, [](const std::vector<Value>&) -> Value {
         uint64_t total = 0, avail = 0;
-        if (!fs_space(&total, &avail)) return Value::make_i64(0);
+        if (!esp32_fs_space(&total, &avail)) return Value::make_i64(0);
         return Value::make_i64((int64_t)avail);
     });
 }

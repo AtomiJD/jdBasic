@@ -60,8 +60,8 @@ else
     [ "$USBHOST" = "ON" ] && DIR=$DIR-usb
     [ "$PSRAMHEAP" = "ON" ] && DIR=$DIR-psram
     [ "$FBPSRAM" = "ON" ] && DIR=$DIR-fbps
-    [ "$LOADTRACE" = "ON" ] && DIR=$DIR-lt
 fi
+[ "$LOADTRACE" = "ON" ] && DIR=$DIR-lt
 
 [ "$CLEAN" = "1" ] && rm -rf "$DIR"
 

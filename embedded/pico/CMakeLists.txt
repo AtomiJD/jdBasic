@@ -152,6 +152,13 @@ endif()
 # The host stack replaces the SDK's TinyUSB configuration wholesale, so its
 # tusb_config.h lives in a directory of its own: on the general include path
 # it would reach a build that has no host linked at all.
+# The two traces read the same on every board.
+if (FJ_HEAP_TRACE)
+    target_compile_definitions(jdbasic_repl PRIVATE JDB_BOOT_HEAP_TRACE=1)
+endif()
+if (FJ_LOAD_TRACE)
+    target_compile_definitions(jdbasic_repl PRIVATE JDB_LOAD_TRACE=1)
+endif()
 if (FRUITJAM AND FJ_USB)
     target_compile_definitions(jdbasic_repl PRIVATE
         FRUITJAM_USB=1
@@ -191,12 +198,6 @@ if (FRUITJAM)
     target_link_libraries(jdbasic_repl hardware_dma pico_multicore hardware_psram)
     if (FJ_PSRAM_HEAP)
         target_compile_definitions(jdbasic_repl PRIVATE JDB_PSRAM_HEAP_ON=1)
-    endif()
-    if (FJ_HEAP_TRACE)
-        target_compile_definitions(jdbasic_repl PRIVATE JDB_BOOT_HEAP_TRACE=1)
-    endif()
-    if (FJ_LOAD_TRACE)
-        target_compile_definitions(jdbasic_repl PRIVATE JDB_LOAD_TRACE=1)
     endif()
     if (FJ_FB_PSRAM)
         target_compile_definitions(jdbasic_repl PRIVATE JDB_FB_IN_PSRAM=1)

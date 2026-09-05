@@ -232,6 +232,9 @@ static void list_file(const char* name) {
 
 static void dir_listing(const char* path) {
     DIR* d = opendir(path);
+    // A store with no working directory has no "."; the root is the
+    // same place there.
+    if (!d && strcmp(path, ".") == 0) { path = "/"; d = opendir(path); }
     if (!d) { printf("cannot open %s\n", path); return; }
     struct dirent* e;
     int n = 0;

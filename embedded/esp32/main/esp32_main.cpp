@@ -20,6 +20,8 @@
 #include "driver/uart_vfs.h"
 
 #include "jdb_embed_api.h"
+#include "../../../src/version.h"
+#include "esp_private/esp_clk.h"
 #include "../../common/jdb_repl.h"
 
 extern "C" bool esp32_fs_init(void);
@@ -231,19 +233,29 @@ static const JdbReplPort PORT = {
 // The first page on the panel: forty columns, so it is written for
 // forty. Kilobytes rather than bytes, because the digit that matters on
 // a screen this size is the first one.
+bool esp32_fs_space(uint64_t* total, uint64_t* freebytes);
+
+// The page every board shows at power-on, in the same shape: what it
+// is, what it has, and the four verbs to start with.
 static void panel_hello(const esp_chip_info_t* chip) {
-    printf("\x1b[93m jdBasic\x1b[0m   on an ES3C28P\n");
+    printf("\x1b[93m jdBasic " JDBASIC_VERSION "\x1b[0m   on an ES3C28P\n");
     // Two short of the width: a rule that fills the row exactly makes the
     // console wrap, and the newline after it then costs a blank line.
     printf("\x1b[90m--------------------------------------\x1b[0m\n");
-    printf(" chip   ESP32-S%d rev v%d.%d, %d core%s\n",
+    printf(" built  " __DATE__ "\n");
+    printf(" chip   ESP32-S%d rev v%d.%d, %d core%s at %u MHz\n",
            chip->model == CHIP_ESP32S3 ? 3 : 2,
            chip->revision / 100, chip->revision % 100,
-           chip->cores, chip->cores == 1 ? "" : "s");
+           chip->cores, chip->cores == 1 ? "" : "s",
+           (unsigned)(esp_clk_cpu_freq() / 1000000));
     printf(" ram    %u KB free\n", (unsigned)(free_internal() / 1024));
     printf(" psram  %u KB free\n", (unsigned)(free_psram() / 1024));
     printf(" panel  %dx%d, touch and sound\n",
            es3c28p_lcd_width(), es3c28p_lcd_height());
+    uint64_t total = 0, avail = 0;
+    if (esp32_fs_space(&total, &avail))
+        printf(" store  %u KB free of %u KB\n",
+               (unsigned)(avail / 1024), (unsigned)(total / 1024));
     printf("\n");
     jdb_repl_hints();
 }
