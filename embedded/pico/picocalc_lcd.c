@@ -183,7 +183,13 @@ static int ansi_step(char c) {
         if (g_parn < 3) g_parn++;
         return 1;
     }
+    if (c == '?') return 1;
     g_esc = 0;
+    if ((c == 'l' || c == 'h') && g_par[0] == 25) {
+        g_cursor_on = (c == 'h');
+        g_dirty[g_cy] = 1;
+        return 1;
+    }
     if (c == 'H' || c == 'f') {
         int row = g_par[0] > 0 ? g_par[0] - 1 : 0;
         int col = (g_parn >= 1 && g_par[1] > 0) ? g_par[1] - 1 : 0;
@@ -225,9 +231,31 @@ static int ansi_step(char c) {
 
 static int g_paint = 1;
 
+// Text arrives as UTF-8; a sequence is one cell.
+static struct jdb_utf8_dec g_dec = { {0, 0, 0}, 0, 0 };
+
+static void put_cell(uint8_t cell) {
+    g_text[g_cy][g_cx] = (char)cell;
+    g_attr[g_cy][g_cx] = g_cur_attr;
+    g_dirty[g_cy] = 1;
+    if (++g_cx >= COLS) {
+        g_cx = 0;
+        if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
+    }
+}
+
+// A byte held back by the decoder is drawn before a control byte or an
+// escape moves the cursor.
+static void flush_held(void) {
+    uint32_t v[3];
+    int n = jdb_utf8_flush(&g_dec, v);
+    for (int i = 0; i < n; i++) put_cell(jdb_cell_for(v[i]));
+}
+
 void picocalc_lcd_putc(char c) {
     { void picocalc_lcd_tap_log(uint8_t); picocalc_lcd_tap_log((uint8_t)c); }
     if (!g_paint) return;
+    if ((unsigned char)c < 32) flush_held();
     int prev_cy = g_cy;
     if (ansi_step(c)) return;
     if (c == '\r') { g_cx = 0; g_dirty[g_cy] = 1; return; }
@@ -257,19 +285,9 @@ void picocalc_lcd_putc(char c) {
     }
     if ((unsigned char)c < 32) return;
 
-    // Text arrives as UTF-8; a sequence is one cell.
-    static struct jdb_utf8_dec dec = { 0, 0, 0 };
-    uint32_t v[2];
-    int n = jdb_utf8_feed(&dec, (unsigned char)c, v);
-    for (int i = 0; i < n; i++) {
-        g_text[g_cy][g_cx] = (char)jdb_cell_for(v[i]);
-        g_attr[g_cy][g_cx] = g_cur_attr;
-        g_dirty[g_cy] = 1;
-        if (++g_cx >= COLS) {
-            g_cx = 0;
-            if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
-        }
-    }
+    uint32_t v[3];
+    int n = jdb_utf8_feed(&g_dec, (unsigned char)c, v);
+    for (int i = 0; i < n; i++) put_cell(jdb_cell_for(v[i]));
     if (g_cy != prev_cy) g_dirty[prev_cy] = 1;
 }
 

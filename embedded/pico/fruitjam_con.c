@@ -37,6 +37,7 @@ static char g_seq[16];
 static int  g_seq_len = 0;
 
 static int g_cursor_on = 0;
+static int g_hidden = 0;        // ESC[?25l, until ESC[?25h
 static int g_reverse = 0;
 static volatile int g_busy = 0;
 static int g_blink = 0;
@@ -114,19 +115,29 @@ static void put_glyph(const uint8_t* gl) {
 
 // Text arrives as UTF-8: a sequence is one code point and one cell, a
 // lone byte above 127 a glyph of the font by number.
-static struct jdb_utf8_dec g_utf = { 0, 0, 0 };
+static struct jdb_utf8_dec g_utf = { {0, 0, 0}, 0, 0 };
+
+static void put_value(uint32_t v) {
+    if (v & JDB_RAW_BYTE) put_glyph(glyph_for_byte((unsigned char)(v & 0xFF)));
+    else if (v < 0x80) put_glyph(glyph_for_byte((unsigned char)v));
+    else {
+        int k = jdb_extra_index(v);
+        put_glyph(k >= 0 ? jdb_extra_glyphs[k].rows : jdb_unknown_glyph);
+    }
+}
 
 static void put_printable(char ch) {
-    uint32_t v[2];
+    uint32_t v[3];
     int n = jdb_utf8_feed(&g_utf, (unsigned char)ch, v);
-    for (int i = 0; i < n; i++) {
-        if (v[i] & JDB_RAW_BYTE) put_glyph(glyph_for_byte((unsigned char)(v[i] & 0xFF)));
-        else if (v[i] < 0x80) put_glyph(glyph_for_byte((unsigned char)v[i]));
-        else {
-            int k = jdb_extra_index(v[i]);
-            put_glyph(k >= 0 ? jdb_extra_glyphs[k].rows : jdb_unknown_glyph);
-        }
-    }
+    for (int i = 0; i < n; i++) put_value(v[i]);
+}
+
+// A byte held back by the decoder is drawn before a control byte or an
+// escape moves the cursor.
+static void flush_held(void) {
+    uint32_t v[3];
+    int n = jdb_utf8_flush(&g_utf, v);
+    for (int i = 0; i < n; i++) put_value(v[i]);
 }
 
 // The foreground colours, dull and bright, mapped onto the three bits
@@ -231,11 +242,19 @@ static void csi_final(char f) {
             }
             break;
         }
+        case 'l':
+        case 'h':
+            if (param(0, 0) == 25) {
+                g_hidden = (f == 'l');
+                if (g_hidden && g_cursor_on) { cursor_draw(0); g_cursor_on = 0; }
+            }
+            break;
         default: break;
     }
 }
 
 void fruitjam_con_putc(char c) {
+    if (g_esc == 0 && (unsigned char)c < 32) flush_held();
     if (g_esc == 1) {
         g_esc = (c == '[') ? 2 : 0;
         g_seq_len = 0;
@@ -268,8 +287,7 @@ void fruitjam_con_write(const char* s, int len) {
     for (int i = 0; i < len; i++) fruitjam_con_putc(s[i]);
     // Freshly typed text keeps the cursor lit, so it never blinks out
     // from under the character you are looking at.
-    cursor_draw(1);
-    g_cursor_on = 1;
+    if (!g_hidden) { cursor_draw(1); g_cursor_on = 1; }
     g_blink = 0;
     g_busy = 0;
 }
@@ -277,7 +295,7 @@ void fruitjam_con_write(const char* s, int len) {
 // The scanout hands out sixty of these a second, which is the only clock
 // this needs. Half a second on, half a second off.
 void __not_in_flash_func(fruitjam_con_tick)(void) {
-    if (g_busy || !g_enabled) return;
+    if (g_busy || !g_enabled || g_hidden) return;
     if (++g_blink < 30) return;
     g_blink = 0;
     g_cursor_on = !g_cursor_on;

@@ -60,25 +60,44 @@ static inline const uint8_t* jdb_cell_rows(const uint8_t* font, uint8_t cell) {
 
 #define JDB_RAW_BYTE 0x10000000u
 
-struct jdb_utf8_dec { uint32_t cp; int need; unsigned char lead; };
+struct jdb_utf8_dec { unsigned char buf[3]; int have; int need; };
 
 // Feeds one byte. Returns how many values are ready in out: a code
-// point, or a byte flagged JDB_RAW_BYTE. A lead byte whose sequence
-// breaks off comes back as a raw byte first.
-static inline int jdb_utf8_feed(struct jdb_utf8_dec* d, unsigned char c, uint32_t out[2]) {
+// point the font has a glyph for, or bytes flagged JDB_RAW_BYTE. A
+// sequence is only taken as UTF-8 when it spells one of the extra
+// glyphs; anything else stays the bytes it was, which is what a
+// program drawing with the graphics half of the font sends.
+static inline int jdb_utf8_feed(struct jdb_utf8_dec* d, unsigned char c, uint32_t out[3]) {
     int n = 0;
-    if (d->need > 0) {
+    if (d->need) {
         if ((c & 0xC0) == 0x80) {
-            d->cp = (d->cp << 6) | (c & 0x3F);
-            if (--d->need == 0) out[n++] = d->cp;
+            d->buf[d->have++] = c;
+            if (d->have == d->need) {
+                uint32_t cp = d->need == 2
+                    ? (uint32_t)((d->buf[0] & 0x1F) << 6) | (uint32_t)(d->buf[1] & 0x3F)
+                    : (uint32_t)((d->buf[0] & 0x0F) << 12) | (uint32_t)((d->buf[1] & 0x3F) << 6) | (uint32_t)(d->buf[2] & 0x3F);
+                if (jdb_extra_index(cp) >= 0) out[n++] = cp;
+                else for (int i = 0; i < d->have; i++) out[n++] = JDB_RAW_BYTE | d->buf[i];
+                d->need = d->have = 0;
+            }
             return n;
         }
-        out[n++] = JDB_RAW_BYTE | d->lead;
-        d->need = 0;
+        for (int i = 0; i < d->have; i++) out[n++] = JDB_RAW_BYTE | d->buf[i];
+        d->need = d->have = 0;
     }
-    if (c >= 0xC2 && c <= 0xDF) { d->need = 1; d->cp = c & 0x1F; d->lead = c; return n; }
-    if (c >= 0xE0 && c <= 0xEF) { d->need = 2; d->cp = c & 0x0F; d->lead = c; return n; }
+    if (c >= 0xC2 && c <= 0xDF) { d->buf[0] = c; d->have = 1; d->need = 2; return n; }
+    if (c >= 0xE0 && c <= 0xEF) { d->buf[0] = c; d->have = 1; d->need = 3; return n; }
     out[n++] = c < 0x80 ? c : (JDB_RAW_BYTE | c);
+    return n;
+}
+
+// Hands back whatever a sequence in progress holds, as raw bytes. A
+// console calls this before it acts on a control byte or an escape, so
+// a held byte lands where it was printed and not after the cursor moved.
+static inline int jdb_utf8_flush(struct jdb_utf8_dec* d, uint32_t out[3]) {
+    int n = 0;
+    for (int i = 0; i < d->have; i++) out[n++] = JDB_RAW_BYTE | d->buf[i];
+    d->need = d->have = 0;
     return n;
 }
 
