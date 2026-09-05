@@ -10,6 +10,7 @@
 #include "pico/stdlib.h"
 #include "hardware/spi.h"
 #include "picocalc_font.h"
+#include "../common/jdb_glyphs.h"
 
 #define LCD_SPI      spi1
 #define LCD_SPI_HZ   25000000
@@ -101,9 +102,7 @@ static void draw_row(int row) {
     uint8_t* p = g_rowbuf;
     for (int line = 0; line < 8; line++) {
         for (int col = 0; col < COLS; col++) {
-            unsigned ch = (unsigned char)g_text[row][col];
-            if (ch < 32) ch = 32;
-            uint8_t bits = jdos_font8x8_c64[(ch - 32) * 8 + line];
+            uint8_t bits = jdb_cell_rows(jdos_font8x8_c64, (uint8_t)g_text[row][col])[line];
             int inv = g_cursor_on && row == g_cy && col == g_cx;
             const uint8_t* fg = g_pal[g_attr[row][col] & 7];
             for (int px = 0; px < 8; px++) {
@@ -255,12 +254,18 @@ void picocalc_lcd_putc(char c) {
     }
     if ((unsigned char)c < 32) return;
 
-    g_text[g_cy][g_cx] = c;
-    g_attr[g_cy][g_cx] = g_cur_attr;
-    g_dirty[g_cy] = 1;
-    if (++g_cx >= COLS) {
-        g_cx = 0;
-        if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
+    // Text arrives as UTF-8; a sequence is one cell.
+    static struct jdb_utf8_dec dec = { 0, 0, 0 };
+    uint32_t v[2];
+    int n = jdb_utf8_feed(&dec, (unsigned char)c, v);
+    for (int i = 0; i < n; i++) {
+        g_text[g_cy][g_cx] = (char)jdb_cell_for(v[i]);
+        g_attr[g_cy][g_cx] = g_cur_attr;
+        g_dirty[g_cy] = 1;
+        if (++g_cx >= COLS) {
+            g_cx = 0;
+            if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
+        }
     }
     if (g_cy != prev_cy) g_dirty[prev_cy] = 1;
 }

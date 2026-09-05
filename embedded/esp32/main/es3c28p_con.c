@@ -14,6 +14,7 @@
 #include <sys/types.h>
 #include "esp_vfs.h"
 #include "../../pico/picocalc_font.h"
+#include "../../common/jdb_glyphs.h"
 
 extern int   es3c28p_lcd_ready(void);
 extern void  es3c28p_lcd_blit_rows(int y0, int rows);
@@ -69,9 +70,7 @@ static void draw_row(int row) {
         uint16_t* px = es3c28p_lcd_row(row * CH + line);
         if (!px) return;
         for (int col = 0; col < COLS; col++) {
-            unsigned ch = (unsigned char)g_text[row][col];
-            if (ch < 32 || ch > 151) ch = 32;
-            uint8_t bits = jdos_font8x8_c64[(ch - 32) * CH + line];
+            uint8_t bits = jdb_cell_rows(jdos_font8x8_c64, (uint8_t)g_text[row][col])[line];
             int inv = g_cursor && row == g_cy && col == g_cx;
             const uint8_t* fg = g_pal[g_attr[row][col] & (PAL_N - 1)];
             uint16_t ink = es3c28p_lcd_encode(fg[0], fg[1], fg[2]);
@@ -207,12 +206,18 @@ void es3c28p_con_putc(char c) {
     }
     if ((unsigned char)c < 32) return;
 
-    g_text[g_cy][g_cx] = c;
-    g_attr[g_cy][g_cx] = g_cur_attr;
-    g_dirty[g_cy] = 1;
-    if (++g_cx >= COLS) {
-        g_cx = 0;
-        if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
+    // Text arrives as UTF-8; a sequence is one cell.
+    static struct jdb_utf8_dec dec = { 0, 0, 0 };
+    uint32_t v[2];
+    int n = jdb_utf8_feed(&dec, (unsigned char)c, v);
+    for (int i = 0; i < n; i++) {
+        g_text[g_cy][g_cx] = (char)jdb_cell_for(v[i]);
+        g_attr[g_cy][g_cx] = g_cur_attr;
+        g_dirty[g_cy] = 1;
+        if (++g_cx >= COLS) {
+            g_cx = 0;
+            if (++g_cy >= ROWS) { g_cy = ROWS - 1; scroll_up(); }
+        }
     }
     if (g_cy != prev_cy) g_dirty[prev_cy] = 1;
 }
