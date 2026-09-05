@@ -12,8 +12,9 @@ estimate - how much room does the interpreter leave on a 512 KB part.
 
 Needs ESP-IDF v5.5 (GCC 14.2, the same compiler the RP2350 build uses).
 
-    ./build.sh nopsram      512 KB SRAM alone      -> an S3FN8 part
-    ./build.sh psram        plus 8 MB PSRAM        -> an S3R8 part
+    ./build.sh usbconsole   the ES3C28P display board: PSRAM, console on USB
+    ./build.sh psram        an S3R8 DevKit, console on UART0
+    ./build.sh nopsram      an S3FN8 part, 512 KB SRAM alone
 
 Each keeps its own build directory. `psram` needs the 240 MHz clock that
 `sdkconfig.defaults` sets; at IDF's default of 160 MHz the first access

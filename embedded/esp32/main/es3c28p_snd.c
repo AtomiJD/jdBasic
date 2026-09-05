@@ -39,7 +39,7 @@ static es8311_handle_t g_codec;
 static int g_ready = 0;
 
 static volatile int g_freq = 0;      // 0 is silence
-static volatile int g_vol = 70;
+static volatile int g_vol = 50;
 static volatile int64_t g_until = 0; // 0 means until told otherwise
 static TaskHandle_t g_task;
 

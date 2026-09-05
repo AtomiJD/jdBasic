@@ -80,7 +80,9 @@ trace on the PicoCalc and the ESP32 gives the article one table.
     ESP32       184 KB internal   219        -         everything in PSRAM
 
   The PicoCalc cannot load the 19 KB clock as source (std::bad_alloc);
-  p-code would be the way and fails today (trakr #328).
+  as p-code from the desktop it runs (the loader walked the code with a
+  width table that lacked MARK_CONST, fixed with #328; GFX.CONSOLE now
+  exists on the PicoCalc too).
 
 ## 7. Same boot line everywhere
 
@@ -90,7 +92,7 @@ layout on the Fruit Jam comes from `boot.jdb` on the card (AUTORUN), not
 from the image.
 
 - [x] both welcome pages: `jdBasic 1.0   on <board>`, built date, chip at MHz, ram, board lines, store
-- [ ] `boot.jdb` and AUTORUN in the Fruit Jam section of `pico/README.md`
+- [x] AUTORUN, the ESC window and `boot.jdb` in `pico/README.md`
 
 ## 8. Sound
 
@@ -98,24 +100,35 @@ The Fruit Jam speaker is silent under CircuitPython too, so hardware.
 Headphones for the video, or open the case. Start volume low on every
 board.
 
-- [ ] check the default of `PLAY.VOLUME` on all three boards
-- [ ] `SND.OUT` default documented
+- [x] start volumes: Fruit Jam 20, PicoCalc buzzer 60, ESP32 codec 50 (was 70); in `pico/README.md`
+- [x] `SND.OUT` default (speaker) and the jack documented there too
 
 ## 9. Instrument builtins
 
 The pico registers about 40 measurement builtins (`DVI.*`, `USB.*`,
 `PSRAM.*`, `SND.PROBE`, `FS.TEST`, `ESP.*`), the ESP32 has
 `GFX.PANELREG` and friends. They stay in the image and out of the docs.
-They do show up in `SYS.NATIVES`, so decide before quoting a native
-count in the article whether the instruments are included.
+
+Decided 2026-09-05: the article counts verbs, not instruments. Measured
+with `SYS.NATIVES` and the source lists:
+
+    board       SYS.NATIVES   instruments   verbs
+    Fruit Jam        420           47        373
+    ESP32            383           10        373
+    PicoCalc         368           16        352   (from the source lists)
+
+Instruments are the `DVI.*`, `USB.*`, `PSRAM.*`, `ESP.*`, `LCD.*`
+families, the `FS.*`/`SD.*`/`SND.*` probes, `*.DIAG$`, `*.RAW$`,
+`GFX.PANEL*`, `GFX.READBACK`, `TOUCH.ID`, `TOUCH.RAW`, `SYS.HEAP$`,
+`SYS.CHUNKS`, `SYS.RESET$` and `SYS.NATIVES` itself.
 
 ## 10. One build command per board
 
 `pico/` holds six Fruit Jam build directories. The README names exactly
 one command as the image, presumably `./build_pico.sh fruitjam usb psram`.
 
-- [ ] `pico/README.md`: the one command per board
-- [ ] `esp32/README.md`: the one command (`./build.sh psram`)
+- [x] `pico/README.md`: one command per board, the trace variants, the 1200-baud way to BOOTSEL
+- [x] `esp32/README.md`: `./build.sh usbconsole` is the display board's image
 
 ## Order
 

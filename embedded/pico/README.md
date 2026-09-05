@@ -12,15 +12,34 @@ Runs under WSL/Linux with pico-sdk 2.3.0 and Arm GNU 14.2 (default
 locations under `~/pico2350`, override with PICO_SDK_PATH,
 PICO_TOOLCHAIN_PATH and PICO_PIO_USB_PATH):
 
-    ./build_pico.sh                   # pico2_w + PicoCalc -> build/
-    ./build_pico.sh pico2 nocalc      # a bare board
-    ./build_pico.sh fruitjam usb      # Fruit Jam, DVI and USB host
-    ./build_pico.sh ... clean         # wipe the build directory first
+One command per board; each is the image that board runs:
 
-Each combination builds in its own directory, so the matrix coexists.
-Hold BOOTSEL while plugging the board in and drag the uf2 onto the
-RP2350 drive. It reboots into the REPL; any serial terminal at any baud
-rate reaches it.
+    ./build_pico.sh                   # PicoCalc            -> build/
+    ./build_pico.sh fruitjam usb      # Fruit Jam           -> build-adafruit_fruit_jam-nocalc-usb/
+    ./build_pico.sh pico2 nocalc      # a bare Pico 2       -> build-pico2-nocalc/
+
+`loadtrace` or `heaptrace` on the end builds the same image with the
+load or the boot traced, in a directory of its own; `clean` wipes the
+directory first. Every combination keeps its own directory, so the
+matrix coexists.
+
+Flashing: hold BOOTSEL while plugging the board in and drag the uf2
+onto the RP2350 drive. A board that already runs jdBasic does not need
+the button: opening its serial port at 1200 baud reboots it into
+BOOTSEL, which is what a script does. It reboots into the REPL; any
+serial terminal at any baud rate reaches it.
+
+The power-on program is a file on the board: `AUTORUN name` at the
+prompt names it, `AUTORUN OFF` clears it, and ESC in the first two
+seconds of a boot skips it. The Fruit Jam ships its German keyboard
+that way: `demos/boot.jdb` is one line, `KBD.LAYOUT "DE"`, sent with
+`RECV` and set as AUTORUN, so the layout is a file on the card rather
+than something in the image.
+
+Sound starts quiet on every board, `PLAY.VOLUME` raises it: the Fruit
+Jam at 20 percent, the PicoCalc's buzzer at 60, the ESP32 codec at 50.
+The Fruit Jam plays through its speaker by default; `SND.OUT 0` moves
+it to the headphone jack.
 
 ## The boards
 

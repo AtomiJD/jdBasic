@@ -35,7 +35,7 @@ build time.
 | webtest.jdb | o | x | o | the board talks to its own server |
 | bbs.jdb | x | o | o | jdBBS, the board's browser |
 | wifiscan.jdb | x |  | x | the WiFi analyser, q leaves |
-| clock.jdb | x |  | x | NET CLOCK: time, weather, five colour schemes; too big for the PicoCalc as source |
+| clock.jdb | x | x | x | NET CLOCK: time, weather, five colour schemes; the PicoCalc runs it as p-code (`jdbasic --pcode`, see below) |
 | mandel.jdb | x |  |  | Mandelbrot with the pad, ships as p-code (`.jdpb`) |
 | bisect.jdb | x |  |  | which half of the pad is doing it |
 | drift.jdb | x |  |  | STELLAR DRIFT, the game: pad, sound, waves, boss |
