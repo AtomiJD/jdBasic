@@ -18,9 +18,10 @@
 set -e
 mode=${1:-psram}
 shift || true
-# Knobs after the mode: stack=64 (main task stack in KB, 96), hist=8,
-# histlen=128 (the prompt's history), fat (keep the desktop-only
-# builtins and std::regex).
+# Knobs after the mode, each with the small value as its default:
+# stack=96 (main task stack in KB, 64), frames=512 (call depth, 256),
+# hist=16 histlen=256 (the prompt's history, 8 by 128), fat (keep the
+# desktop-only builtins and std::regex).
 extra=""
 stack=""
 for a in "$@"; do

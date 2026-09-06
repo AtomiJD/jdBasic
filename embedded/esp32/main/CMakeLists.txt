@@ -47,18 +47,18 @@ idf_component_register(
 # ESP32 is the platform switch, JDB_MCU the shared one: the same trades
 # the RP2350 build takes, reserving token vectors and shrinking chunks.
 # The RAM knobs, with their old values unless the build says otherwise;
-# build.sh passes them as hist=8, histlen=128, fat.
+# build.sh passes them as hist=16, histlen=256, frames=512, fat.
 if (NOT DEFINED JDB_HIST_N)
-    set(JDB_HIST_N 16)
+    set(JDB_HIST_N 8)
 endif()
 if (NOT DEFINED JDB_HIST_LEN)
-    set(JDB_HIST_LEN 256)
+    set(JDB_HIST_LEN 128)
 endif()
 if (NOT DEFINED JDB_LEAN)
     set(JDB_LEAN 1)
 endif()
 if (NOT DEFINED JDB_MAX_FRAMES)
-    set(JDB_MAX_FRAMES 512)
+    set(JDB_MAX_FRAMES 256)
 endif()
 target_compile_definitions(${COMPONENT_LIB} PRIVATE ESP32 JDB_MCU NDEBUG
     JDB_HIST_N=${JDB_HIST_N} JDB_HIST_LEN=${JDB_HIST_LEN} JDB_MAX_FRAMES=${JDB_MAX_FRAMES})

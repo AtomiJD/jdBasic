@@ -12,10 +12,10 @@
 #           in the 8 MB on QMI chip select 1 (see README)
 #   heaptrace  print what each boot step costs the heap
 #   fbpsram    framebuffer in PSRAM: 150 KB of heap back, but the
-#   stack=64   main stack in KB (128), hist=8 histlen=128 the prompt's history,
-#   pbuf=12    lwIP packet buffers (24), arena=2 the Fruit Jam's load arena in MB (3),
+#   stack=128  main stack in KB (64), hist=16 histlen=256 the prompt's history (8 by 128),
+#   pbuf=24    lwIP packet buffers (12), arena=2 the Fruit Jam's load arena in MB (3),
+#   frames=512 deepest call nesting (256); about 130 bytes of stack a frame
 #   fat        keep the desktop-only builtins and std::regex (lean is the default)
-#   frames=256 deepest call nesting (512); about 130 bytes of stack a frame
 #              part cannot feed the picture and the screen stays dark
 #
 # Each combination builds in its own directory, build-<board>[-nocalc],
@@ -39,13 +39,13 @@ HEAPTRACE=OFF
 LOADTRACE=OFF
 FBPSRAM=OFF
 CLEAN=0
-STACK_KB=128
-HIST_N=16
-HIST_LEN=256
-PBUF=24
+STACK_KB=64
+HIST_N=8
+HIST_LEN=128
+PBUF=12
 ARENA_MB=3
 LEAN=ON
-FRAMES=512
+FRAMES=256
 for a in "$@"; do
     case "$a" in
         pico|pico_w|pico2|pico2_w) BOARD=$a ;;

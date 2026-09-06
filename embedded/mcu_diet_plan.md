@@ -237,3 +237,6 @@ left with the radio up. Image: 1897648 -> 1827040 bytes.
 
 Still open from the RAM list: B (the registry as a flash table), D (the
 load arena on every board), E, F, I.
+
+The small values are the defaults since 2026-09-06 on all three boards.
+Fruit Jam, free at the prompt: 88632 -> 166208 (395 natives, from 420).

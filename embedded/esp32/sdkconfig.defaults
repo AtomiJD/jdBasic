@@ -21,7 +21,7 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 # jdBasic parses and interprets recursively. The main task is where the
 # REPL runs, so it gets the stack the RP2350 build carves out in its
 # linker script.
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=98304
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=65536
 
 # Compiling a program blocks the core for longer than the watchdog's
 # patience, and there is no other task waiting on it.
