@@ -507,10 +507,6 @@ JDB_EMBED_API JdbEmbed* jdb_embed_init(void) {
     auto* e = new (std::nothrow) JdbEmbedImpl();
     if (!e) return nullptr;
     setup(e);
-    // Tables built on first use have to exist before the first transient
-    // scope opens, or they would be built in the scope's arena and lost
-    // with it.
-    (void)keywords();
     return reinterpret_cast<JdbEmbed*>(e);
 }
 

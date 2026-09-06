@@ -319,3 +319,4 @@ embedded/pico/demos/parts/
 # personal working notes
 doc/notes/
 *.jdpb
+embedded/esp32/build-*.stack

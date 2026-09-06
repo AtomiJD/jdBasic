@@ -106,11 +106,8 @@ Token Lexer::read_identifier() {
         return make_token(TokenType::NEWLINE, "\\n");
     }
 
-    auto& kw = keywords();
-    auto it = kw.find(upper);
-    if (it != kw.end()) {
-        return make_token(it->second, upper);
-    }
+    TokenType kwtype;
+    if (keyword_lookup(upper, kwtype)) return make_token(kwtype, upper);
     return make_token(TokenType::IDENTIFIER, upper);
 }
 

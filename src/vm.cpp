@@ -46,7 +46,15 @@ EM_JS(int, jdb_poll_key_js, (void), {
 #include <iomanip>
 #include <sstream>
 #include <fstream>
+#ifndef JDB_LEAN
 #include <regex>
+#endif
+
+// How deep jdBasic calls may nest. Every frame costs about 130 bytes of
+// the C stack, so a board with a small stack sets this lower.
+#ifndef JDB_MAX_FRAMES
+#define JDB_MAX_FRAMES 512
+#endif
 #include <unordered_set>
 #include <random>
 #include <thread>
@@ -1016,8 +1024,8 @@ Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
     while (needed >= stack.size()) stack.resize(stack.size() * 2);
     if (sp < needed) sp = needed;
 
-    if (frames.size() >= 512)
-        throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (max 512 frames)");
+    if (frames.size() >= JDB_MAX_FRAMES)
+        throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (max " + std::to_string(JDB_MAX_FRAMES) + " frames)");
     size_t saved_min = min_frame_depth;
     min_frame_depth = frames.size();
     frames.push_back({&proto.chunk, 0, new_base});
@@ -1985,8 +1993,8 @@ void VM::run() {
                             argc++;
                         }
                         if (proto.is_async) goto call_slow_path;
-                        if (frames.size() >= 512)
-                            throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (max 512 frames)");
+                        if (frames.size() >= JDB_MAX_FRAMES)
+                            throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (max " + std::to_string(JDB_MAX_FRAMES) + " frames)");
                         size_t new_base = sp - argc;
                         size_t needed = new_base + proto.chunk.name_count();
                         while (needed >= stack.size()) stack.resize(stack.size() * 2);
@@ -6501,6 +6509,7 @@ void VM::register_builtins() {
 #endif
     });
 
+#ifndef JDB_LEAN
     register_native("CLIPBOARD.SET", [](const std::vector<Value>& args) -> Value {
 #if defined(_WIN32)
         std::string text = args[0].to_string();
@@ -6513,7 +6522,9 @@ void VM::register_builtins() {
 #endif
         return Value::make_none();
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("CLIPBOARD.GET$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
 #if defined(_WIN32)
@@ -6528,6 +6539,7 @@ void VM::register_builtins() {
 #endif
         return Value::make_string("");
     });
+#endif
 
     register_native("OPTION", [](const std::vector<Value>& args) -> Value {
         if (args.empty()) return Value::make_none();
@@ -6619,6 +6631,7 @@ void VM::register_builtins() {
 
     // DEBUG.PRINT v, [v2, ...] - arguments are stringified and joined with a
     // single space.
+#ifndef JDB_LEAN
     register_native("DEBUG.PRINT", 1, -1,
                     [emit_diagnostic](const std::vector<Value>& args) -> Value {
         std::string text;
@@ -6629,16 +6642,19 @@ void VM::register_builtins() {
         emit_diagnostic(text);
         return Value::make_none();
     });
+#endif
 
     // DEBUG.ASSERT cond, [message$] - a std::runtime_error here picks up the
     // native's name and the source line from the CALL handler, which a
     // jdError would bypass.
+#ifndef JDB_LEAN
     register_native("DEBUG.ASSERT", 1, 2, [](const std::vector<Value>& args) -> Value {
         if (args[0].to_bool()) return Value::make_none();
         std::string msg = args.size() >= 2 ? args[1].to_string() : std::string();
         throw std::runtime_error(msg.empty() ? "assertion failed"
                                              : "assertion failed: " + msg);
     });
+#endif
 
     // Text extraction from PDF files (uncompressed, FlateDecode, ASCIIHex/85
     // streams). Encrypted PDFs and image-only pages yield what is decodable.
@@ -7462,6 +7478,7 @@ void VM::register_builtins() {
         char buf[32]; snprintf(buf, sizeof(buf), "%llo", (long long)args[0].to_int());
         return Value::make_string(buf);
     });
+#ifndef JDB_LEAN
     register_native("REGEX_MATCH", [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data, pat = args[1].as_string()->data;
         Value r = Value::make_array();
@@ -7473,13 +7490,17 @@ void VM::register_builtins() {
         } catch (...) { }
         return r;
     });
+#endif
+#ifndef JDB_LEAN
     register_native("REGEX_REPLACE$", [](const std::vector<Value>& args) -> Value {
         std::string s = args[0].as_string()->data, pat = args[1].as_string()->data, repl = args[2].as_string()->data;
         try { return Value::make_string(std::regex_replace(s, std::regex(pat), repl)); }
         catch (...) { return Value::make_string(s); }
     });
+#endif
 
     // REGEX.MATCH(pattern, text) → TRUE/FALSE or array of captures
+#ifndef JDB_LEAN
     register_native("REGEX.MATCH", [](const std::vector<Value>& args) -> Value {
         const std::string& pat = args[0].as_string()->data;
         std::string text = args[1].as_string()->data;
@@ -7499,8 +7520,10 @@ void VM::register_builtins() {
             return r;
         } catch (...) { return Value::make_bool(false); }
     });
+#endif
 
     // REGEX.FINDALL(pattern, text) → 1D array of matches or 2D if groups
+#ifndef JDB_LEAN
     register_native("REGEX.FINDALL", [](const std::vector<Value>& args) -> Value {
         const std::string& pat = args[0].as_string()->data;
         std::string text = args[1].as_string()->data;
@@ -7528,8 +7551,10 @@ void VM::register_builtins() {
         } catch (...) { }
         return r;
     });
+#endif
 
     // REGEX.REPLACE(pattern, text, replacement) → string
+#ifndef JDB_LEAN
     register_native("REGEX.REPLACE", [](const std::vector<Value>& args) -> Value {
         const std::string& pat = args[0].as_string()->data;
         const std::string& text = args[1].as_string()->data;
@@ -7544,6 +7569,7 @@ void VM::register_builtins() {
         }
         catch (...) { return Value::make_string(text); }
     });
+#endif
 
     // ── 3. Statistics ────────────────────────────────────────
 
@@ -7965,6 +7991,7 @@ void VM::register_builtins() {
         return Value::make_string(hex);
     });
 
+#ifndef JDB_LEAN
     register_native("CODEC.UUID$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
         // Use a properly seeded std::mt19937. The previous implementation
@@ -7987,6 +8014,7 @@ void VM::register_builtins() {
             bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]);
         return Value::make_string(buf);
     });
+#endif
 
     // ── OS Functions ──────────────────────────────────────────
 
@@ -8011,6 +8039,7 @@ void VM::register_builtins() {
         return Value::make_array(); // fallback; main sets the real value
     });
 
+#ifndef JDB_LEAN
     register_native("OS.EXEC", [](const std::vector<Value>& args) -> Value {
         std::string cmd = args[0].as_string()->data;
         // Append args if provided
@@ -8045,7 +8074,9 @@ void VM::register_builtins() {
         result.as_object()->set("EXIT_CODE", Value::make_i64(exit_code));
         return result;
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("OS.HOSTNAME$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
         char buf[256] = {};
@@ -8057,7 +8088,9 @@ void VM::register_builtins() {
 #endif
         return Value::make_string(buf);
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("OS.IP$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
         std::string ip = "127.0.0.1";
@@ -8094,6 +8127,7 @@ void VM::register_builtins() {
 #endif
         return Value::make_string(ip);
     });
+#endif
 
     register_native("OS.FEATURE", 1, 1, [](const std::vector<Value>& args) -> Value {
         // Reports whether the running binary advertises a given build feature.
@@ -8143,6 +8177,7 @@ void VM::register_builtins() {
         return Value::make_bool(on);
     });
 
+#ifndef JDB_LEAN
     register_native("OS.SCREENSHOT", 1, 3, [](const std::vector<Value>& args) -> Value {
         // OS.SCREENSHOT(path$ [, mode$] [, caption$]) -> int rc (0 = ok).
         //   mode$    : "screen" (default) | "window" (frame) | "client" (content)
@@ -8161,7 +8196,9 @@ void VM::register_builtins() {
                                cap.empty()  ? nullptr : cap.c_str());
         return Value::make_i64(rc);
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("OS.LOAD", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
         double load = 0.0;
@@ -8181,6 +8218,7 @@ void VM::register_builtins() {
 #endif
         return Value::make_f64(load);
     });
+#endif
 
     // ── Reactive system ───────────────────────────────────────
 
@@ -8226,6 +8264,7 @@ void VM::register_builtins() {
         return result;
     });
 
+#ifndef JDB_LEAN
     register_native("THREAD.ISDONE", [](const std::vector<Value>& args) -> Value {
         int task_id = (int)args[0].to_int();
         std::lock_guard<std::mutex> lock(g_async_mutex);
@@ -8233,7 +8272,9 @@ void VM::register_builtins() {
         if (it == g_async_tasks.end()) return Value::make_bool(true);
         return Value::make_bool(it->second->done.load());
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("THREAD.GETRESULT", [](const std::vector<Value>& args) -> Value {
         int task_id = (int)args[0].to_int();
         std::shared_ptr<AsyncTask> task;
@@ -8247,6 +8288,7 @@ void VM::register_builtins() {
           g_async_tasks.erase(task_id); }
         return result;
     });
+#endif
 
     // ── Channels ──────────────────────────────────────────────
     //
@@ -8820,6 +8862,7 @@ void VM::register_builtins() {
 
     // ── Path Functions ───────────────────────────────────────
 
+#ifndef JDB_LEAN
     register_native("PATH.JOIN$", [](const std::vector<Value>& args) -> Value {
 #if defined(_WIN32)
         char sep = '\\';
@@ -8835,13 +8878,17 @@ void VM::register_builtins() {
         }
         return Value::make_string(result);
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("PATH.BASENAME$", [](const std::vector<Value>& args) -> Value {
         std::string p = args[0].as_string()->data;
         size_t pos = p.find_last_of("/\\");
         return Value::make_string(pos == std::string::npos ? p : p.substr(pos + 1));
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("PATH.EXT$", [](const std::vector<Value>& args) -> Value {
         std::string p = args[0].as_string()->data;
         size_t slash = p.find_last_of("/\\");
@@ -8850,7 +8897,9 @@ void VM::register_builtins() {
             return Value::make_string("");
         return Value::make_string(p.substr(dot));
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("PATH.DIRNAME$", 1, 1, [](const std::vector<Value>& args) -> Value {
         std::string p = args[0].as_string()->data;
         size_t pos = p.find_last_of("/\\");
@@ -8859,7 +8908,9 @@ void VM::register_builtins() {
         if (pos == 0) return Value::make_string(p.substr(0, 1));
         return Value::make_string(p.substr(0, pos));
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("PATH.NORMALIZE$", 1, 1, [](const std::vector<Value>& args) -> Value {
         std::string p = args[0].as_string()->data;
 #if defined(_WIN32)
@@ -8910,6 +8961,7 @@ void VM::register_builtins() {
         if (res.empty()) res = ".";
         return Value::make_string(res);
     });
+#endif
 
     // ── File metadata ───────────────────────────────────────────
     register_native("FILE.EXISTS", 1, 1, [](const std::vector<Value>& args) -> Value {
@@ -9014,11 +9066,13 @@ void VM::register_builtins() {
     // happens, no globals or functions get registered. Useful for the
     // MCP jdb_check tool: validate a snippet before EXECUTE'ing it on
     // the persistent VM.
+#ifndef JDB_LEAN
     register_native("JDB.CHECK$", 1, 1, [this](const std::vector<Value>& args) -> Value {
         std::string code = args[0].as_string()->data;
         if (on_check) return Value::make_string(on_check(*this, code));
         return Value::make_string("JDB.CHECK$ unavailable: host did not register on_check");
     });
+#endif
 
     // JDB.GLOBAL_GET(name$) - read a single global by (case-insensitive)
     // name. Returns NONE if the name is unknown. Companion to set_global.
@@ -9049,6 +9103,7 @@ void VM::register_builtins() {
     // of letting it leak to stdout. Stacked: each BEGIN saves the previous
     // on_output handler (Console's workspace router etc.) and END$ restores it.
 
+#ifndef JDB_LEAN
     register_native("OUTPUT.CAPTURE_BEGIN", 0, 0,
         [this](const std::vector<Value>& args) -> Value {
         (void)args;
@@ -9058,7 +9113,9 @@ void VM::register_builtins() {
         on_output = [buf](const std::string& s) { buf->append(s); };
         return Value::make_none();
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("OUTPUT.CAPTURE_END$", 0, 0,
         [this](const std::vector<Value>& args) -> Value {
         (void)args;
@@ -9070,7 +9127,9 @@ void VM::register_builtins() {
         output_capture_prev.pop_back();
         return Value::make_string(*buf);
     });
+#endif
 
+#ifndef JDB_LEAN
     register_native("OUTPUT.CAPTURE_PEEK$", 0, 0,
         [this](const std::vector<Value>& args) -> Value {
         (void)args;
@@ -9078,6 +9137,7 @@ void VM::register_builtins() {
             throw std::runtime_error("OUTPUT.CAPTURE_PEEK$: no capture is active");
         return Value::make_string(*output_capture_buffers.back());
     });
+#endif
 
     // ── Pipe apply (internal: calls funcref with value) ─────
     register_native("__PIPE_APPLY", 2, 2, [this](const std::vector<Value>& args) -> Value {

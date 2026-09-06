@@ -71,80 +71,158 @@ struct Token {
     int col;
 };
 
-inline const std::unordered_map<std::string, TokenType>& keywords() {
-    static const std::unordered_map<std::string, TokenType> kw = {
-        {"LET", TokenType::LET}, {"DIM", TokenType::DIM}, {"AS", TokenType::AS},
-        {"PRINT", TokenType::PRINT}, {"INPUT", TokenType::INPUT}, {"GOTO", TokenType::GOTO},
-        {"IF", TokenType::IF}, {"THEN", TokenType::THEN}, {"ELSE", TokenType::ELSE},
-        {"ELSEIF", TokenType::ELSEIF}, {"END", TokenType::END},
-        {"SUB", TokenType::SUB}, {"FUNCTION", TokenType::FUNCTION},
-        {"DO", TokenType::DO}, {"WHILE", TokenType::WHILE}, {"UNTIL", TokenType::UNTIL},
-        {"LOOP", TokenType::LOOP}, {"RETURN", TokenType::RETURN}, {"CALL", TokenType::CALL},
-        {"FOR", TokenType::FOR}, {"TO", TokenType::TO},
-        {"STEP", TokenType::STEP}, {"NEXT", TokenType::NEXT},
-        {"ENUM", TokenType::ENUM}, {"ENDENUM", TokenType::ENDENUM},
-        {"SWITCH", TokenType::SWITCH}, {"CASE", TokenType::CASE},
-        {"DEFAULT", TokenType::DEFAULT}, {"ENDSWITCH", TokenType::ENDSWITCH},
-        {"FUNC", TokenType::FUNCTION},
-        {"ENDFUNC", TokenType::ENDFUNC}, {"ENDSUB", TokenType::ENDSUB},
-        {"ENDIF", TokenType::ENDIF_KW},
-        {"TYPE", TokenType::TYPE_KW}, {"ENDTYPE", TokenType::ENDTYPE},
-        {"THIS", TokenType::THIS_KW},
-        {"EACH", TokenType::EACH}, {"IN", TokenType::IN},
-        {"SLEEP", TokenType::SLEEP_KW}, {"STOP", TokenType::STOP_KW},
-        {"COLOR", TokenType::COLOR_KW}, {"LOCATE", TokenType::LOCATE_KW},
-        {"CURSOR", TokenType::CURSOR_KW}, {"CLS", TokenType::CLS_KW},
-        {"OPTION", TokenType::OPTION_KW},
-        {"EXITFUNC", TokenType::EXITFUNC}, {"EXITDO", TokenType::EXITDO},
-        {"EXITFOR", TokenType::EXITFOR},
-        {"CONTINUEFOR", TokenType::CONTINUEFOR}, {"CONTINUEDO", TokenType::CONTINUEDO},
-        {"HELP", TokenType::HELP_KW},
-        {"CONTINUELOOP", TokenType::CONTINUEDO},
-        {"REACT", TokenType::IDENTIFIER},  // handled in DIM parser, not a keyword
-        // Graphics keywords
-        {"SCREEN", TokenType::SCREEN_KW}, {"SCREENFLIP", TokenType::SCREENFLIP_KW},
-        {"DRAWCOLOR", TokenType::DRAWCOLOR_KW}, {"SETFONT", TokenType::SETFONT_KW},
-        {"PSET", TokenType::PSET_KW}, {"LINE", TokenType::LINE_KW},
-        {"RECT", TokenType::RECT_KW}, {"CIRCLE", TokenType::CIRCLE_KW},
-        {"ELLIPSE", TokenType::ELLIPSE_KW}, {"ROUNDED_RECT", TokenType::ROUNDED_RECT_KW},
-        {"CIRCLE_SECTOR", TokenType::CIRCLE_SECTOR_KW}, {"TEXT", TokenType::TEXT_KW},
-        {"PLOTRAW", TokenType::PLOTRAW_KW}, {"TOGGLE_FULLSCREEN", TokenType::TOGGLE_FULLSCREEN_KW},
-        {"ON", TokenType::ON_KW}, {"RAISEEVENT", TokenType::RAISEEVENT_KW},
-        {"IMPORT", TokenType::IMPORT_KW}, {"MODULE", TokenType::MODULE_KW},
-        {"EXPORT", TokenType::EXPORT_KW},
-        {"DECLARE", TokenType::DECLARE_KW},
-        {"CONST", TokenType::CONST_KW},
-        {"LAMBDA", TokenType::LAMBDA}, {"USE", TokenType::USE},
-        {"ASYNC", TokenType::ASYNC}, {"AWAIT", TokenType::AWAIT_KW},
-        {"TRY", TokenType::TRY}, {"CATCH", TokenType::CATCH},
-        {"FINALLY", TokenType::FINALLY}, {"ENDTRY", TokenType::ENDTRY},
-        {"THROW", TokenType::THROW_KW},
-        {"TRUE", TokenType::TRUE_KW}, {"FALSE", TokenType::FALSE_KW},
-        {"STATIC", TokenType::STATIC_KW},
-        {"AND", TokenType::AND}, {"OR", TokenType::OR}, {"NOT", TokenType::NOT},
-        {"ANDALSO", TokenType::ANDALSO}, {"ORELSE", TokenType::ORELSE},
-        {"BAND", TokenType::BAND}, {"BOR", TokenType::BOR},
-        {"XOR", TokenType::XOR}, {"BXOR", TokenType::BXOR},
-        {"BNOT", TokenType::BNOT},
-        {"SHL", TokenType::SHL}, {"SHR", TokenType::SHR},
-        {"MOD", TokenType::MOD}, {"OF", TokenType::OF},
-        {"BOOLEAN", TokenType::TY_BOOLEAN}, {"BYTE", TokenType::TY_BYTE},
-        {"CHAR", TokenType::TY_CHAR}, {"INT16", TokenType::TY_INT16},
-        {"INT32", TokenType::TY_INT32}, {"INT64", TokenType::TY_INT64},
-        {"FLOAT16", TokenType::TY_FLOAT16}, {"FLOAT32", TokenType::TY_FLOAT32},
-        {"FLOAT64", TokenType::TY_FLOAT64}, {"STRING", TokenType::TY_STRING},
-        {"OBJECT", TokenType::TY_OBJECT}, {"TENSOR", TokenType::TY_TENSOR},
-        {"ARRAY", TokenType::TY_ARRAY},
-        // DYNAMIC: tagged-mixed array (per-cell JdTag). `ANY` is taken by
-        // the truthy-test builtin so we only expose `DYNAMIC` here.
-        {"DYNAMIC", TokenType::TY_ANY},
-        // Classic-BASIC type aliases - friendlier than INT64/FLOAT64
-        {"INTEGER", TokenType::TY_INT64},
-        {"LONG",    TokenType::TY_INT64},
-        {"SHORT",   TokenType::TY_INT16},
-        {"DOUBLE",  TokenType::TY_FLOAT64},
-        {"SINGLE",  TokenType::TY_FLOAT32},
-        {"BOOL",    TokenType::TY_BOOLEAN},
+// The keywords, sorted by name so a lookup is a binary search over a
+// table in flash; nothing is built at boot. keywords() below serves the
+// desktop tools that want a map to walk.
+struct KeywordEntry { const char* name; TokenType type; };
+
+inline const KeywordEntry* keyword_table(size_t* count) {
+    static const KeywordEntry kw[] = {
+        {"AND",             TokenType::AND},
+        {"ANDALSO",         TokenType::ANDALSO},
+        {"ARRAY",           TokenType::TY_ARRAY},
+        {"AS",              TokenType::AS},
+        {"ASYNC",           TokenType::ASYNC},
+        {"AWAIT",           TokenType::AWAIT_KW},
+        {"BAND",            TokenType::BAND},
+        {"BNOT",            TokenType::BNOT},
+        {"BOOL",            TokenType::TY_BOOLEAN},
+        {"BOOLEAN",         TokenType::TY_BOOLEAN},
+        {"BOR",             TokenType::BOR},
+        {"BXOR",            TokenType::BXOR},
+        {"BYTE",            TokenType::TY_BYTE},
+        {"CALL",            TokenType::CALL},
+        {"CASE",            TokenType::CASE},
+        {"CATCH",           TokenType::CATCH},
+        {"CHAR",            TokenType::TY_CHAR},
+        {"CIRCLE",          TokenType::CIRCLE_KW},
+        {"CIRCLE_SECTOR",   TokenType::CIRCLE_SECTOR_KW},
+        {"CLS",             TokenType::CLS_KW},
+        {"COLOR",           TokenType::COLOR_KW},
+        {"CONST",           TokenType::CONST_KW},
+        {"CONTINUEDO",      TokenType::CONTINUEDO},
+        {"CONTINUEFOR",     TokenType::CONTINUEFOR},
+        {"CONTINUELOOP",    TokenType::CONTINUEDO},
+        {"CURSOR",          TokenType::CURSOR_KW},
+        {"DECLARE",         TokenType::DECLARE_KW},
+        {"DEFAULT",         TokenType::DEFAULT},
+        {"DIM",             TokenType::DIM},
+        {"DO",              TokenType::DO},
+        {"DOUBLE",          TokenType::TY_FLOAT64},
+        {"DRAWCOLOR",       TokenType::DRAWCOLOR_KW},
+        {"DYNAMIC",         TokenType::TY_ANY},
+        {"EACH",            TokenType::EACH},
+        {"ELLIPSE",         TokenType::ELLIPSE_KW},
+        {"ELSE",            TokenType::ELSE},
+        {"ELSEIF",          TokenType::ELSEIF},
+        {"END",             TokenType::END},
+        {"ENDENUM",         TokenType::ENDENUM},
+        {"ENDFUNC",         TokenType::ENDFUNC},
+        {"ENDIF",           TokenType::ENDIF_KW},
+        {"ENDSUB",          TokenType::ENDSUB},
+        {"ENDSWITCH",       TokenType::ENDSWITCH},
+        {"ENDTRY",          TokenType::ENDTRY},
+        {"ENDTYPE",         TokenType::ENDTYPE},
+        {"ENUM",            TokenType::ENUM},
+        {"EXITDO",          TokenType::EXITDO},
+        {"EXITFOR",         TokenType::EXITFOR},
+        {"EXITFUNC",        TokenType::EXITFUNC},
+        {"EXPORT",          TokenType::EXPORT_KW},
+        {"FALSE",           TokenType::FALSE_KW},
+        {"FINALLY",         TokenType::FINALLY},
+        {"FLOAT16",         TokenType::TY_FLOAT16},
+        {"FLOAT32",         TokenType::TY_FLOAT32},
+        {"FLOAT64",         TokenType::TY_FLOAT64},
+        {"FOR",             TokenType::FOR},
+        {"FUNC",            TokenType::FUNCTION},
+        {"FUNCTION",        TokenType::FUNCTION},
+        {"GOTO",            TokenType::GOTO},
+        {"HELP",            TokenType::HELP_KW},
+        {"IF",              TokenType::IF},
+        {"IMPORT",          TokenType::IMPORT_KW},
+        {"IN",              TokenType::IN},
+        {"INPUT",           TokenType::INPUT},
+        {"INT16",           TokenType::TY_INT16},
+        {"INT32",           TokenType::TY_INT32},
+        {"INT64",           TokenType::TY_INT64},
+        {"INTEGER",         TokenType::TY_INT64},
+        {"LAMBDA",          TokenType::LAMBDA},
+        {"LET",             TokenType::LET},
+        {"LINE",            TokenType::LINE_KW},
+        {"LOCATE",          TokenType::LOCATE_KW},
+        {"LONG",            TokenType::TY_INT64},
+        {"LOOP",            TokenType::LOOP},
+        {"MOD",             TokenType::MOD},
+        {"MODULE",          TokenType::MODULE_KW},
+        {"NEXT",            TokenType::NEXT},
+        {"NOT",             TokenType::NOT},
+        {"OBJECT",          TokenType::TY_OBJECT},
+        {"OF",              TokenType::OF},
+        {"ON",              TokenType::ON_KW},
+        {"OPTION",          TokenType::OPTION_KW},
+        {"OR",              TokenType::OR},
+        {"ORELSE",          TokenType::ORELSE},
+        {"PLOTRAW",         TokenType::PLOTRAW_KW},
+        {"PRINT",           TokenType::PRINT},
+        {"PSET",            TokenType::PSET_KW},
+        {"RAISEEVENT",      TokenType::RAISEEVENT_KW},
+        {"REACT",           TokenType::IDENTIFIER},
+        {"RECT",            TokenType::RECT_KW},
+        {"RETURN",          TokenType::RETURN},
+        {"ROUNDED_RECT",    TokenType::ROUNDED_RECT_KW},
+        {"SCREEN",          TokenType::SCREEN_KW},
+        {"SCREENFLIP",      TokenType::SCREENFLIP_KW},
+        {"SETFONT",         TokenType::SETFONT_KW},
+        {"SHL",             TokenType::SHL},
+        {"SHORT",           TokenType::TY_INT16},
+        {"SHR",             TokenType::SHR},
+        {"SINGLE",          TokenType::TY_FLOAT32},
+        {"SLEEP",           TokenType::SLEEP_KW},
+        {"STATIC",          TokenType::STATIC_KW},
+        {"STEP",            TokenType::STEP},
+        {"STOP",            TokenType::STOP_KW},
+        {"STRING",          TokenType::TY_STRING},
+        {"SUB",             TokenType::SUB},
+        {"SWITCH",          TokenType::SWITCH},
+        {"TENSOR",          TokenType::TY_TENSOR},
+        {"TEXT",            TokenType::TEXT_KW},
+        {"THEN",            TokenType::THEN},
+        {"THIS",            TokenType::THIS_KW},
+        {"THROW",           TokenType::THROW_KW},
+        {"TO",              TokenType::TO},
+        {"TOGGLE_FULLSCREEN", TokenType::TOGGLE_FULLSCREEN_KW},
+        {"TRUE",            TokenType::TRUE_KW},
+        {"TRY",             TokenType::TRY},
+        {"TYPE",            TokenType::TYPE_KW},
+        {"UNTIL",           TokenType::UNTIL},
+        {"USE",             TokenType::USE},
+        {"WHILE",           TokenType::WHILE},
+        {"XOR",             TokenType::XOR},
     };
+    *count = sizeof kw / sizeof kw[0];
     return kw;
+}
+
+inline bool keyword_lookup(const std::string& upper, TokenType& out) {
+    size_t n;
+    const KeywordEntry* kw = keyword_table(&n);
+    size_t lo = 0, hi = n;
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        int c = upper.compare(kw[mid].name);
+        if (c == 0) { out = kw[mid].type; return true; }
+        if (c < 0) hi = mid; else lo = mid + 1;
+    }
+    return false;
+}
+
+inline const std::unordered_map<std::string, TokenType>& keywords() {
+    static const std::unordered_map<std::string, TokenType> map = [] {
+        std::unordered_map<std::string, TokenType> m;
+        size_t n;
+        const KeywordEntry* kw = keyword_table(&n);
+        for (size_t i = 0; i < n; i++) m.emplace(kw[i].name, kw[i].type);
+        return m;
+    }();
+    return map;
 }
