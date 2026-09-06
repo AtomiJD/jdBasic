@@ -134,6 +134,7 @@ if (PICOCALC)
 endif()
 
 add_executable(jdbasic_repl ${JDB_SOURCES})
+pico_set_printf_implementation(jdbasic_repl compiler)
 
 target_compile_definitions(jdbasic_repl PRIVATE
     PICO
