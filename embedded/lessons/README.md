@@ -18,7 +18,7 @@ unchanged. Four lessons have a board edition:
 | lesson | board edition |
 |---|---|
 | 09 graphics | draws 320 by 240 on the board's own screen between `GFX.CONSOLE 0` and `GFX.CONSOLE 1`, and shows each picture for three seconds |
-| 13 http_json | calls `WIFI.AUTO()` first, so `wifi.txt` on the store (ssid, then password) is what joins the network |
+| 13 http_json | calls `WIFI.AUTO()` first, so `wifi.txt` on the store (ssid, then password) is what joins the network; the weather comes over plain http, the GitHub part needs https |
 | 14 native | runs the typed benchmark interpreted and names the desktop commands, `jdbasic -c` and `jdbasic --pcode`; a board has no compiler |
 | 10 modules | unchanged, `mathx.jdb` sits beside it in the folder and IMPORT finds it there |
 
@@ -39,4 +39,5 @@ the details.
 |---|---|---|---|
 | 01 to 08, 10 to 12, 14 | yes | yes | yes |
 | 09 graphics | yes | yes | yes |
-| 13 http_json | no radio | yes | yes |
+| 13 http_json a, b | yes, over the Pico 2 W radio | yes | yes |
+| 13 http_json c | no, https needs the Fruit Jam's or the ESP32's TLS | yes | yes |

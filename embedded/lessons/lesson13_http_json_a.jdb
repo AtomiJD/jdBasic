@@ -8,7 +8,7 @@ IF WIFI.AUTO() <> 0 THEN
     END
 ENDIF
 
-DIM url$ = "https://api.open-meteo.com/v1/forecast?latitude=49.40&longitude=8.69&current_weather=true"
+DIM url$ = "http://api.open-meteo.com/v1/forecast?latitude=49.40&longitude=8.69&current_weather=true"
 PRINT "Fetching..."
 DIM body$ = HTTP.GET$(url$)
 PRINT body$

@@ -101,6 +101,9 @@ static const char* run_file(const char* name) {
     jdb_running = 1;
     char* out = jdb_embed_load(g_vm, name);
     jdb_running = 0;
+    // A Ctrl-C the program ended on before it polled is not kept for
+    // the next one.
+    while (jdb_break_pending()) jdb_break_poll();
     if (out) {
         printf("%s", out);
         jdb_embed_free(out);

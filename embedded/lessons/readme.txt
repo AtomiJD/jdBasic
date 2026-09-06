@@ -28,7 +28,9 @@ it, EDIT the same name opens it.
 13 http_json    HTTP.GET$ and JSON -
                 needs wifi.txt on the
                 store: ssid, then
-                password, one per line
+                password, one per line;
+                c needs https, which
+                a PicoCalc has not
 14 native       the benchmark; the
                 compiler is on the
                 desktop

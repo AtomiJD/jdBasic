@@ -51,6 +51,7 @@ EM_JS(int, jdb_poll_key_js, (void), {
 #endif
 #ifdef JDB_MCU
 extern "C" int jdb_break_poll(void);
+extern "C" int jdb_stdin_getc(int timeout_us);
 #endif
 
 // How deep jdBasic calls may nest. Every frame costs about 130 bytes of
@@ -2432,9 +2433,16 @@ void VM::run() {
               if (line) { input = line; std::free(line); } }
 #elif defined(JDB_MCU)
             // The board's stdio does not echo: read by character, show
-            // what arrives, honour backspace, stop at return.
+            // what arrives, honour backspace, stop at return. A Ctrl-C
+            // comes back as -1 and ends the program here as anywhere.
             for (;;) {
-                int ch = std::getchar();
+                int ch = jdb_stdin_getc(-1);
+                if (ch < 0) {
+                    is_waiting_input = false;
+                    emit("\nBreak at line " + std::to_string(frames.back().chunk->line_at(frames.back().ip)) + "\n");
+                    is_halted = true;
+                    return;
+                }
                 if (ch == '\r' || ch == '\n') break;
                 if (ch == 8 || ch == 127) {
                     if (!input.empty()) {
