@@ -6400,7 +6400,11 @@ void VM::register_builtins() {
             if (on_tick) on_tick();
             if (!event_handlers.empty()) event_poll();
 #ifdef JDB_MCU
-            if (jdb_break_poll()) { emit("Break\n"); is_halted = true; }
+            if (jdb_break_poll()) {
+                const CallFrame& bf = frames.back();
+                emit("Break at line " + std::to_string(bf.chunk->line_at(bf.ip)) + "\n");
+                is_halted = true;
+            }
 #endif
             if (is_halted) break; // event handler may have run END
         }
