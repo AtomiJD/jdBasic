@@ -1,0 +1,6 @@
+' Train jdBasic - lesson 12: 12 | Higher-Order Functions | Functions as Data
+' Chapter: The pipe operator
+' Source: jdb/tv/scripts/script_12_higher_order.txt
+
+DIM result = IOTA(10) |> FILTER(LAMBDA x -> x MOD 2 = 0, ?) |> SELECT(LAMBDA x -> x * x, ?) |> REDUCE(LAMBDA a, b -> a + b, ?)
+PRINT "Sum of squares of even numbers from 1 to 10: "; result

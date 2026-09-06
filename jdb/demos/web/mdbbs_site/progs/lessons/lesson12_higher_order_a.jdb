@@ -1,0 +1,10 @@
+' Train jdBasic - lesson 12: 12 | Higher-Order Functions | Functions as Data
+' Chapter: SELECT + the @ reference
+' Source: jdb/tv/scripts/script_12_higher_order.txt
+
+FUNC Twice(x)
+    RETURN x * 2
+ENDFUNC
+
+DIM nums = [1, 2, 3, 4, 5]
+PRINT SELECT(Twice@, nums)

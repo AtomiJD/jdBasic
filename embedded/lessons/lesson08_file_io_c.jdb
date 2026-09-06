@@ -1,0 +1,12 @@
+' Train jdBasic - lesson 08: 08 | File I/O | Saving Your Work
+' Chapter: Multi-line + todo demo
+' Source: jdb/tv/scripts/script_08_file_io.txt
+
+DIM todos$ = "Buy bread" + CHR$(10) + "Walk dog" + CHR$(10) + "Record lesson"
+TXTWRITER "todo.txt", todos$
+DIM raw$ = TXTREADER$("todo.txt")
+DIM lines = SPLIT(raw$, CHR$(10))
+PRINT "You have "; LEN(lines); " todos:"
+FOR i = 0 TO LEN(lines) - 1
+    PRINT "  - "; lines[i]
+NEXT i

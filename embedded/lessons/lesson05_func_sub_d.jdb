@@ -1,0 +1,14 @@
+' Train jdBasic - lesson 05: 05 | Functions and SUBs | Code You Can Name
+' Chapter: Recursion - Fibonacci
+' Source: jdb/tv/scripts/script_05_func_sub.txt
+
+FUNC Fib(n)
+    IF n < 2 THEN
+        RETURN n
+    ENDIF
+    RETURN Fib(n - 1) + Fib(n - 2)
+ENDFUNC
+FOR i = 0 TO 10
+    PRINT Fib(i); " ";
+NEXT i
+PRINT

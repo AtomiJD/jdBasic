@@ -1,0 +1,9 @@
+' Train jdBasic - lesson 02: 02 | If and For | Decisions and Loops
+' Chapter: Block IF + EDIT
+' Source: jdb/tv/scripts/script_02_if_for.txt
+
+DIM age = 18
+IF age >= 18 THEN
+    PRINT "You can vote!"
+    PRINT "And drive."
+ENDIF

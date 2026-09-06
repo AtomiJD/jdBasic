@@ -1,0 +1,16 @@
+' Train jdBasic - lesson 09: 09 | Graphics | Pixels on Screen
+' Chapter: Drawing in a loop
+' Board edition: draws on the board's own screen, 320 by 240, and hands
+' the screen back to the console after three seconds.
+
+SCREEN 320, 240
+GFX.CONSOLE 0
+DRAWCOLOR 0, 0, 0
+RECT 0, 0, 320, 240, TRUE
+FOR i = 0 TO 9
+    DRAWCOLOR 255 - i * 25, 100, i * 25
+    CIRCLE 32 + i * 28, 120, 12, TRUE
+NEXT i
+SCREENFLIP
+SLEEP 3000
+GFX.CONSOLE 1

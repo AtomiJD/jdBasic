@@ -261,6 +261,10 @@ static const char* GDX_MODULE_SRC =
     "    RETURN [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t]\n"
     "ENDFUNC\n";
 
+// The folder of the program jdb_embed_load is running, so a module beside
+// it is found from any working directory, and on a board without one.
+static std::string g_script_dir;
+
 static std::pair<std::string, std::string> bundled_module_reader(const std::string& name) {
     std::string up = name, low = name;
     std::transform(up.begin(), up.end(), up.begin(), ::toupper);
@@ -269,13 +273,18 @@ static std::pair<std::string, std::string> bundled_module_reader(const std::stri
     // Modules shipped inside the runtime take precedence.
     if (up == "GDX") return { std::string(GDX_MODULE_SRC), std::string("res://__bundled__/gdx.jdb") };
 
-    // Disk fallback: resolve <name>.jdb relative to the process working
-    // directory (the host is expected to chdir into the project dir), plus a
-    // one-level modules/ subdir. Mirrors the standalone reader's cwd lookup.
-    std::vector<std::string> candidates = {
-        up + ".jdb", low + ".jdb",
-        "modules/" + up + ".jdb", "modules/" + low + ".jdb"
-    };
+    // Disk fallback: the program's own folder first, then <name>.jdb
+    // relative to the process working directory (the host is expected to
+    // chdir into the project dir), plus a one-level modules/ subdir.
+    std::vector<std::string> candidates;
+    if (!g_script_dir.empty()) {
+        candidates.push_back(g_script_dir + "/" + up + ".jdb");
+        candidates.push_back(g_script_dir + "/" + low + ".jdb");
+    }
+    candidates.push_back(up + ".jdb");
+    candidates.push_back(low + ".jdb");
+    candidates.push_back("modules/" + up + ".jdb");
+    candidates.push_back("modules/" + low + ".jdb");
     for (auto& cand : candidates) {
         std::ifstream f(cand);
         if (f.is_open()) {
@@ -622,6 +631,11 @@ JDB_EMBED_API char* jdb_embed_load(JdbEmbed* eh, const char* path) {
     if (!in.is_open()) {
         e->last_error = std::string("Cannot read ") + path;
         return nullptr;
+    }
+    {
+        std::string p(path);
+        size_t slash = p.find_last_of("/\\");
+        g_script_dir = slash == std::string::npos ? std::string() : p.substr(0, slash);
     }
 #ifdef JDB_MCU
     // Three copies of the program were alive while it compiled: the

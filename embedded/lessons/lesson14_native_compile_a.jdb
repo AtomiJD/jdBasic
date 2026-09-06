@@ -1,0 +1,23 @@
+' Train jdBasic - lesson 14: 14 | Native Compilation | One EXE, Ten Times Faster
+' Chapter: The benchmark + type annotations
+' Board edition: the benchmark runs interpreted here. The compiler lives
+' on a desktop: jdbasic -c builds the EXE there, and jdbasic --pcode
+' writes the p-code file a board runs without parsing it first.
+
+FUNC SumSquares(n AS INTEGER) AS DOUBLE
+    DIM total AS DOUBLE = 0.0
+    DIM i AS INTEGER
+    FOR i = 1 TO n
+        total = total + i * i
+    NEXT i
+    RETURN total
+ENDFUNC
+
+DIM t0 AS INTEGER = TICK()
+DIM s AS DOUBLE = SumSquares(100000)
+DIM t1 AS INTEGER = TICK()
+PRINT "Result : "; s
+PRINT "Elapsed: "; (t1 - t0); " ms for 100000 squares"
+PRINT
+PRINT "Desktop: jdbasic -c lesson14_native_compile_a.jdb"
+PRINT "Board:   jdbasic --pcode name.jdb, then RUN name.jdpb"

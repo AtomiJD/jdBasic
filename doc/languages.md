@@ -3669,12 +3669,12 @@ TIMER.EVERY(1000)
 
 | | RP2350 | ESP32-S3 |
 |---|---|---|
-| free at a bare prompt | 120376 | 181416, or 198639 with PSRAM |
-| arrays beyond that | none | 8 MB of PSRAM |
+| free at a bare prompt | 351720 on a PicoCalc, 209912 on a Fruit Jam | 229615, with 8 MB of PSRAM beside it |
+| arrays beyond that | 8 MB of PSRAM on the Fruit Jam, none on the PicoCalc | 8 MB of PSRAM |
 | `ADC.READ` takes | the channel | the pin, GPIO 1 to 10 |
 | I2C speed belongs to | the bus | the device, so it is named at the transfer |
 | PIO | yes, `PIO.LOAD` and friends | no; RMT and I2S are the nearest things |
-| radio | only on a W part | always, and it can be an access point |
+| radio | on a W part, and on the Fruit Jam through its ESP32-C6 | always, and it can be an access point |
 | working directory | yes, `CD` | no; IDF has none, so there is no `CD` |
 
 The ESP32-S3 refuses the pins it cannot spare. GPIO 26 to 32 carry the
@@ -3697,11 +3697,39 @@ against whatever the console turns out to be.
 
 A name without an extension may mean the `.jdb` of that name: `RUN hello`
 finds `hello.jdb`. What is actually there wins, so a file that really has
-no extension stays reachable.
+no extension stays reachable. A name may carry a folder: `RUN
+lessons/lesson01_hello_a` runs from the `lessons` folder on any board,
+and a module a program `IMPORT`s is looked for in the program's own
+folder first.
 
 One consequence of the platform worth knowing: ESP-IDF has no working
 directory at all, so `"."` never resolves, `DIR$` starts its listing at
 the root there, and there is no `CD`.
+
+Ctrl-C on the console ends a running program, whatever it is doing: in
+a loop, inside a `SLEEP`, while `HTTP.SERVER.WAIT` serves. The program
+ends with `Break at line N` and the prompt comes back. A program never
+sees that byte; `KEY.GET` waits for a key and answers its code, `KEY.NOW`
+answers at once with -1 when nothing is waiting, and neither hands over
+a Ctrl-C. `CURSOR 0` hides the text cursor and `CURSOR 1` shows it, on
+every board's console.
+
+The editor is the same on every board. F1 lists its keys: Ctrl-S saves,
+Ctrl-Q leaves, Ctrl-R saves and runs the file and comes back to the
+editor afterwards; Ctrl-F finds, Ctrl-G finds the next, Ctrl-T replaces;
+Ctrl-Z undoes; Ctrl-L goes to a line; Shift with an arrow selects,
+Ctrl-C, Ctrl-X and Ctrl-V copy, cut and paste; Ctrl-D duplicates a line,
+Ctrl-K deletes one; Tab and Shift-Tab indent and outdent a selection;
+Ctrl with an arrow moves by a word, Ctrl-Home and Ctrl-End to either end
+of the file. A line longer than the screen scrolls sideways with the
+cursor. `HELP` at the prompt is the board's own manual, `HELP MORE` the
+families it does not spell out.
+
+The Train jdBasic lessons sit on every board in a `lessons` folder: `TYPE
+lessons/readme.txt` lists them, `RUN lessons/lesson01_hello_a` starts
+one. The files are those of `jdb/tutorials/tv/`, with a board edition
+of the graphics, HTTP and native-compile lessons; `embedded/lessons/`
+in the repository holds the pack.
 
 ### The radio, on the ESP32-S3
 
@@ -3723,6 +3751,11 @@ WIFI.OFF()
 which is set up once and stays. Bluetooth is Low Energy only - the chip
 has no classic BR/EDR - and its stack and the WiFi one do not
 comfortably fit together in 512 KB.
+
+`HTTP.GET$` and `HTTP.POST$` fetch over http and https alike, with
+`HTTP.STATUS` holding the last answer's code, and `NTP.SYNC` sets the
+clock from the network so `DATE$`, `TIME$` and `NOW` are real. These are
+the same verbs on every board with a radio.
 
 ### Trades the interpreter makes on a small machine
 
@@ -3796,6 +3829,20 @@ which reads one pixel back off the glass, and `GFX.PANELREG`, which hands
 over the raw bytes of any read command. The last one is the useful one:
 reading a table of bytes settles in minutes what reasoning about a
 protocol does not settle in days.
+
+### The PicoCalc
+
+The PicoCalc is an RP2350 in a case with a 320 by 320 panel, its own
+keyboard and an SD card at `/sd`. Text is 40 by 40. Drawing goes
+straight to the panel, and `GFX.BUFFER(x, y, w, h)` holds one rectangle
+of it in memory, sixteen colours at four bits a pixel, so `SCREENFLIP`
+sends only what changed; `GFX.BUFFER(0)` frees it and `GFX.BUFFERED`
+says whether one is held. A whole screen does not fit beside a program,
+so a game buffers the strip that moves. `GFX.CONSOLE 0` keeps the
+console off the panel while a program draws and `GFX.CONSOLE 1` puts it
+back. The keyboard controller sends its own codes: ESC is 177 and the
+arrows are 180 to 183, and `keycode.jdb` in the demos prints what any
+key sends.
 
 ### The Fruit Jam
 
@@ -3994,7 +4041,19 @@ internal=163247/422787 largest=90112 psram=8361576/8388608 largest=8257536
 ```
 
 An array costs about 24 bytes an element on both boards, so 8 MB of PSRAM
-holds roughly 340000 of them and the PicoCalc's 120376 about 5000.
+holds roughly 340000 of them and the PicoCalc's 351720 about 14000.
+
+`SYS.STACK` answers `[size, deepest use]` of the C stack in bytes, which
+is what a deep recursion runs into before the heap does. `SYS.NATIVES`
+is what the builtin registry costs and `SYS.NATIVES$` lists every
+builtin the board has by name, so a program can ask before it calls. On
+the RP2350 boards `SYS.CHUNKS` says where a loaded program's memory
+went, and `SYS.LARGEST` is the number to watch before `GFX.BUFFER` on a
+PicoCalc.
+
+How much stack, history, network buffer and PSRAM arena a board gets is
+set when its image is built; `embedded/pico/README.md` and
+`embedded/esp32/README.md` list the knobs and the defaults.
 
 ## The Integrated Editor
 

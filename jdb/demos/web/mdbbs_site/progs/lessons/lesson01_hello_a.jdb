@@ -1,0 +1,14 @@
+' Train jdBasic - lesson 01: 01 | Hello jdBasic | PRINT and Variables
+' Chapter: Hello, World
+' Source: jdb/tv/scripts/script_01_hello.txt
+
+PRINT "Hello, World!"
+PRINT 5 + 7
+PRINT "The answer is "; 6 * 7
+DIM age = 38
+PRINT age
+DIM name AS STRING = "Atomi"
+PRINT "Hello, "; name
+age = age + 1
+PRINT "Now I am "; age
+PRINT name, age, age * 365

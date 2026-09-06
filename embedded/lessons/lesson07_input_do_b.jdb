@@ -1,0 +1,6 @@
+' Train jdBasic - lesson 07: 07 | Input and Do Loops | Talking Back
+' Chapter: INPUT - reading a number
+' Source: jdb/tv/scripts/script_07_input_do.txt
+
+INPUT "How old are you? ", age
+PRINT "In ten years you will be "; age + 10

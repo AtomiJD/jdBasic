@@ -1,0 +1,16 @@
+' Train jdBasic - lesson 13: 13 | HTTP and JSON | Talk to the Web
+' Chapter: GitHub user demo
+' Board edition: joins the network first. wifi.txt on the flash store
+' holds the ssid on one line and the password on the next.
+
+IF WIFI.AUTO() <> 0 THEN
+    PRINT "no network - put ssid and password in wifi.txt"
+    END
+ENDIF
+
+DIM body$ = HTTP.GET$("https://api.github.com/users/AtomiJD")
+DIM user = JSON.PARSE$(body$)
+PRINT "Name        : "; user["name"]
+PRINT "Public repos: "; user["public_repos"]
+PRINT "Followers   : "; user["followers"]
+PRINT "Joined      : "; user["created_at"]

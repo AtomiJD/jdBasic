@@ -1,0 +1,14 @@
+' Train jdBasic - lesson 13: 13 | HTTP and JSON | Talk to the Web
+' Chapter: HTTP.GET$ - raw response
+' Board edition: joins the network first. wifi.txt on the flash store
+' holds the ssid on one line and the password on the next.
+
+IF WIFI.AUTO() <> 0 THEN
+    PRINT "no network - put ssid and password in wifi.txt"
+    END
+ENDIF
+
+DIM url$ = "https://api.open-meteo.com/v1/forecast?latitude=49.40&longitude=8.69&current_weather=true"
+PRINT "Fetching..."
+DIM body$ = HTTP.GET$(url$)
+PRINT body$

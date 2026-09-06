@@ -12,6 +12,11 @@ on it yet, blank means it needs something the board does not have. The
 ESP32 copies live in `../../esp32/fs`, which becomes the flash store at
 build time.
 
+The Train jdBasic lessons are a folder of their own, `lessons`, on every
+board: `TYPE lessons/readme.txt` lists them, `RUN lessons/lesson01_hello_a`
+starts one. `../../lessons/README.md` says what is in the pack and which
+lessons have a board edition.
+
 | demo | FJ | PC | ESP | what it is |
 |---|---|---|---|---|
 | basic.jdb | x | x | o | the language itself, in a dozen lines |

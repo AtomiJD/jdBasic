@@ -19,6 +19,9 @@
  {orange}[Boards](boards.md){/}
 {gray}   what it runs on, and how much fits{/}
 
+ {orange}[Lessons](lessons.md){/}
+{gray}   the Train jdBasic lessons, to pull{/}
+
 {green}========================================{/}
 {gray} forty columns, the way it was{/}
 {green}========================================{/}

@@ -1,0 +1,19 @@
+' Train jdBasic - lesson 09: 09 | Graphics | Pixels on Screen
+' Chapter: Layered shapes
+' Board edition: draws on the board's own screen, 320 by 240, and hands
+' the screen back to the console after three seconds.
+
+SCREEN 320, 240
+GFX.CONSOLE 0
+DRAWCOLOR 30, 30, 50
+RECT 0, 0, 320, 240, TRUE
+DRAWCOLOR 80, 200, 255
+RECT 50, 50, 220, 140, TRUE
+DRAWCOLOR 255, 100, 100
+CIRCLE 160, 120, 40, TRUE
+DRAWCOLOR 255, 255, 255
+LINE 0, 0, 319, 239
+LINE 319, 0, 0, 239
+SCREENFLIP
+SLEEP 3000
+GFX.CONSOLE 1

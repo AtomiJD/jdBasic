@@ -34,7 +34,11 @@ static const char* HELP_INDEX =
 "  EVENTS  timers, keys, pin edges\n"
 "  WIFI    network\n"
 "  SYS     memory and diagnostics\n"
-"Prompt: EDIT/LOAD/RUN name, DIR\n";
+"  MORE    json, maps, files, dates\n"
+"Prompt: EDIT/LOAD/RUN name, DIR\n"
+"Ctrl-C ends a running program\n"
+"F1 in the editor lists its keys\n"
+"TYPE lessons/readme.txt  the lessons\n";
 
 static const char* HELP_BASIC =
 "DIM x          also a[10], m AS MAP\n"
@@ -112,8 +116,12 @@ static const char* HELP_GFX =
 "TEXT x, y, s$ [,r,g,b [,scale]]\n"
 "colors also trail each call\n"
 "GFX.WIDTH GFX.HEIGHT GFX.CLEAR(i)\n"
+#ifndef ESP32
 "GFX.PALETTE(i, r, g, b)  i 0-15\n"
+#endif
 "GFX.CONSIZE  [columns, rows]\n"
+"CURSOR 0 hides the text cursor,\n"
+"  CURSOR 1 shows it again\n"
 #if defined(FRUITJAM)
 "screen 320x240, text 40x30\n"
 "the console and a drawing program\n"
@@ -136,6 +144,9 @@ static const char* HELP_GFX =
 "a whole screen does not fit -\n"
 "  buffer the strip that moves\n"
 "  and check SYS.FREE first\n"
+"GFX.CONSOLE 0 keeps the console off\n"
+"  the panel while a program draws,\n"
+"  GFX.CONSOLE 1 puts it back\n"
 #elif defined(ESP32)
 "screen 320x240, text 40x30\n"
 "SCREEN starts the panel; every\n"
@@ -170,10 +181,17 @@ static const char* HELP_BOARD =
 "SND.OUT(1) speaker, SND.OUT(0)\n"
 "  headphones - one or the other\n"
 "SND.PROBE SND.STAT SND.PINS\n"
-"SD card is /sd, SD.TEST() probes\n";
+"SD card is /sd, SD.TEST() probes\n"
+"GFX.KEYSTATE(code) is it down now\n"
+"GFX.PEEK(x, y) reads a pixel back\n"
+"JOY.COUNT JOY.AXIS(id, n) JOY.HAT\n"
+"JOY.BUTTON JOY.NAME$ JOY.RAW$  a\n"
+"  USB pad, the desktop's names\n"
+"ESP.FW$ ESP.PROBE$ ESP.RESET  the\n"
+"  ESP32-C6 that is the radio\n"
+"USB.TIME$ USB.DIAG$ DVI.DIAG$\n"
+"DVI.LATE$  what the stacks cost\n";
 #elif defined(PICOCALC)
-"KEY.GET()   one key code, 0 if\n"
-"  nothing is waiting\n"
 "KBD.RAW$()  what the controller\n"
 "  actually sent\n"
 "LCD.STAT$() LCD.ROW$(y)\n"
@@ -201,6 +219,11 @@ static const char* HELP_EVENTS =
 "TIMER.EVERY(ms)   TIMER.STOP()\n"
 "ON \"KEY\" CALL H   KEY.WATCH(1)\n"
 "  handler gets d[0] = key code\n"
+"KEY.GET()  waits for a key, answers\n"
+"  its code;  KEY.NOW() answers at\n"
+"  once, -1 when none is waiting\n"
+"Ctrl-C never reaches a program: it\n"
+"  ends it with the line it was on\n"
 "ON \"PIN\" CALL H\n"
 "GPIO.WATCH(pin, edge) 1 up 2 down\n"
 "  3 both, 0 off; d[0] pin d[1] lvl\n"
@@ -247,22 +270,27 @@ static const char* HELP_HW =
 ;
 
 static const char* HELP_WIFI =
-#if defined(JDB_HAS_CYW43) || defined(ESP32)
+#if defined(JDB_HAS_CYW43) || defined(ESP32) || defined(FRUITJAM)
 "WIFI.CONNECT(ssid$, pw$ [,ms])\n"
 "  0 = connected (WPA2)\n"
 "WIFI.AUTO()  reads wifi.txt: ssid\n"
 "  on one line, password the next\n"
 "WIFI.IP$()   WIFI.STATUS()\n"
 "WIFI.DIAG$()\n"
+#if defined(ESP32) || defined(FRUITJAM)
+"WIFI.SCAN()  a row per network:\n"
+"  name, signal, channel, open\n"
+"WIFI.MAC$()  WIFI.OFF()\n"
+#endif
 #ifdef ESP32
 "WIFI.AP(ssid$ [,pw$ [,channel]])\n"
 "  the board's own net on\n"
 "  192.168.4.1, WPA2 with 8+ chars\n"
-"WIFI.SCAN()  WIFI.CLIENTS()\n"
-"WIFI.MAC$()  WIFI.OFF()\n"
+"WIFI.CLIENTS()\n"
 #endif
-"HTTP.GET$(\"http://host/p\" [,ms])\n"
-"  plain http, empty on failure\n"
+"HTTP.GET$(url$ [,ms])  http and\n"
+"  https, empty on failure\n"
+"HTTP.STATUS  the last answer's code\n"
 "HTTP.POST$(url$, body$ [,type$])\n"
 "HTTP.SERVER.ON_GET(path$, FN$)\n"
 "HTTP.SERVER.ON_POST(path$, FN$)\n"
@@ -275,12 +303,10 @@ static const char* HELP_WIFI =
 "  map: PATH METHOD BODY HEADERS\n"
 "  PARAMS; return text, or a map\n"
 "  for JSON\n"
-#ifndef ESP32
 "NTP.SYNC([server$] [,hours])\n"
 "  sets the clock, hours is your\n"
 "  offset from UTC; 0 = no answer\n"
 "  then DATE$ TIME$ NOW are real\n"
-#endif
 ;
 #else
 "this board has no radio\n";
@@ -293,9 +319,19 @@ static const char* HELP_SYS =
 "  hits first, long before FREE\n"
 "SYS.DF()      the flash store\n"
 "SYS.FREEDISK() the same as bytes\n"
+"SYS.STACK()   [size, deepest use]\n"
+"  of the C stack, in bytes\n"
+"SYS.NATIVES() bytes the builtin\n"
+"  registry takes;  SYS.NATIVES$()\n"
+"  lists every builtin by name\n"
 #ifndef ESP32
 "SYS.CHUNKS()  where a loaded\n"
 "  program's memory actually went\n"
+#if defined(FRUITJAM)
+"SYS.PSRAM() SYS.PSRAMLARGEST()\n"
+"  the 8 MB beside the chip\n"
+"SYS.CLOCK()   the core clock in Hz\n"
+#endif
 "FS.TEST()  flash store selftest\n"
 "FS.NUKEPT() wipes flash to BOOTSEL\n"
 "PIN.DIAG$() edge ISR + queue state\n"
@@ -303,11 +339,34 @@ static const char* HELP_SYS =
 "SYS.MEM()     both pools, with the\n"
 "  low-water mark since boot\n"
 "SYS.INTERNAL() SYS.PSRAM()\n"
-"SYS.NATIVES()  what the builtins\n"
-"  cost to register\n"
 "PIN.DIAG$() edge ISR + queue state\n"
 #endif
 ;
+
+static const char* HELP_MORE =
+"JSON.PARSE$(s$) -> map or array\n"
+"JSON.STRINGIFY$(v)\n"
+"MAP.KEYS(m) MAP.VALUES(m)\n"
+"MAP.EXISTS(m, k$) MAP.DELETE(m, k$)\n"
+"MAP.SIZE(m) MAP.MERGE(a, b)\n"
+"FILE.EXISTS(f$) FILE.SIZE(f$)\n"
+"FILE.ISDIR(f$)  FILE.STAT(f$)\n"
+"h = FILE.OPEN_LINES(f$)\n"
+"  FILE.READLINE$(h) FILE.AT_EOF(h)\n"
+"  FILE.CLOSE(h)\n"
+"DATE$ TIME$ NOW  after NTP.SYNC\n"
+"DATE.PARTS(d) DATE.UTC()\n"
+"CODEC.SHA256$(s$)\n"
+"CODEC.BASE64_ENCODE$ / _DECODE$\n"
+#ifndef ESP32
+"SPRITE.LOAD SPRITE.DRAW SPRITE.MOVE\n"
+"  and the rest of the desktop's\n"
+"  SPRITE family\n"
+#endif
+"CHAN.OPEN CHAN.SEND CHAN.RECV\n"
+"  CHAN.CLOSE  a queue of values\n"
+"OS.GETOS$()  which board this is\n"
+"doc/languages.md has them all\n";
 
 struct HelpTopic { const char* name; const char* text; };
 
@@ -323,6 +382,7 @@ static const HelpTopic TOPICS[] = {
     { "EVENTS", HELP_EVENTS },
     { "WIFI",   HELP_WIFI },
     { "SYS",    HELP_SYS },
+    { "MORE",   HELP_MORE },
 };
 
 // Page-print against whatever the console is, minus prompt room.

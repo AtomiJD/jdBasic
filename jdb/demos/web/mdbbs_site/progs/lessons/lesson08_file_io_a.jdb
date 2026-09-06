@@ -1,0 +1,7 @@
+' Train jdBasic - lesson 08: 08 | File I/O | Saving Your Work
+' Chapter: TXTWRITER - write a file
+' Source: jdb/tv/scripts/script_08_file_io.txt
+
+DIM message$ = "Hello from jdBasic!"
+TXTWRITER "hello.txt", message$
+PRINT "wrote hello.txt"

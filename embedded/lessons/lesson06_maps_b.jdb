@@ -1,0 +1,8 @@
+' Train jdBasic - lesson 06: 06 | Maps | Key-Value Storage
+' Chapter: FOR EACH iteration
+' Source: jdb/tv/scripts/script_06_maps.txt
+
+DIM person = {"name": "Atomi", "age": 39, "city": "Heidelberg"}
+FOR EACH k IN MAP.KEYS(person)
+    PRINT k; ": "; person[k]
+NEXT

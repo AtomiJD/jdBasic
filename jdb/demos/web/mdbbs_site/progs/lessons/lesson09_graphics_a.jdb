@@ -1,0 +1,14 @@
+' Train jdBasic - lesson 09: 09 | Graphics | Pixels on Screen
+' Chapter: First circle
+' Board edition: draws on the board's own screen, 320 by 240, and hands
+' the screen back to the console after three seconds.
+
+SCREEN 320, 240
+GFX.CONSOLE 0
+DRAWCOLOR 0, 0, 0
+RECT 0, 0, 320, 240, TRUE
+DRAWCOLOR 255, 220, 0
+CIRCLE 160, 120, 60, TRUE
+SCREENFLIP
+SLEEP 3000
+GFX.CONSOLE 1

@@ -1,0 +1,20 @@
+' Train jdBasic - lesson 04: 04 | Strings | Text the Right Way
+' Chapter: Concatenation + LEN
+' Source: jdb/tv/scripts/script_04_strings.txt
+
+DIM first$ = "Jaydee"
+DIM last$ = "Basica"
+PRINT first$ + " " + last$
+PRINT LEN(first$)
+PRINT LEFT$("Hello, World!", 5)
+PRINT RIGHT$("Hello, World!", 6)
+PRINT MID$("Hello, World!", 7, 5)
+DIM pos = INSTR$("Hello, World!", "World")
+PRINT pos
+PRINT INSTR$("Hello", "xyz")
+PRINT UCASE$("hello")
+PRINT LCASE$("WORLD")
+PRINT TRIM$("   spaces around   ")
+DIM parts = SPLIT("red,green,blue", ",")
+PRINT parts
+PRINT parts[1]

@@ -1,0 +1,10 @@
+' Train jdBasic - lesson 05: 05 | Functions and SUBs | Code You Can Name
+' Chapter: SUB - actions, no return
+' Source: jdb/tv/scripts/script_05_func_sub.txt
+
+SUB Greet(name$)
+    PRINT "Hello, "; name$; "!"
+    PRINT "Welcome aboard."
+ENDSUB
+Greet("Atomi")
+Greet("World")
