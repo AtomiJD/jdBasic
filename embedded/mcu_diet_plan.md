@@ -259,7 +259,8 @@ remaining std::function, so the cut went elsewhere:
 
     registry bytes      PicoCalc 22389 -> 13068     ESP32 20607 -> 11814
     heap in use at the prompt, PicoCalc: 67104 -> 23124
-    free at the prompt: PicoCalc 307680 -> 351720, ESP32 PSRAM 8121408 -> 8163176
+    free at the prompt: PicoCalc 307680 -> 351720, Fruit Jam 166208 -> 209912,
+    ESP32 PSRAM 8121408 -> 8163176
 
 The std::function per builtin (16 bytes) is what remains; the flash
 table would take another 5 KB and is not worth the rewrite.
