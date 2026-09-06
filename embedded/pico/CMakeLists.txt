@@ -18,6 +18,17 @@ cmake_minimum_required(VERSION 3.13)
 set(PICO_BOARD pico2_w CACHE STRING "Board type")
 option(PICOCALC "Build with the PicoCalc device drivers" ON)
 option(FRUITJAM "Build with the Fruit Jam device drivers" OFF)
+
+# What a board has to spare is decided here. Every knob keeps its old
+# value unless the build says otherwise; build_pico.sh passes them as
+# stack=64, hist=8, histlen=128, pbuf=12, arena=2, fat.
+set(JDB_STACK_KB 128 CACHE STRING "Main stack in KB, taken off the top of RAM")
+set(JDB_HIST_N 16 CACHE STRING "Lines the prompt remembers")
+set(JDB_HIST_LEN 256 CACHE STRING "Longest remembered line")
+set(JDB_PBUF_POOL 24 CACHE STRING "lwIP packet buffers; each is about 1.5 KB of RAM")
+set(FJ_ARENA_MB 3 CACHE STRING "Fruit Jam: the slice of PSRAM a load may use")
+set(JDB_MAX_FRAMES 512 CACHE STRING "Deepest call nesting; about 130 bytes of stack a frame")
+option(JDB_LEAN "Leave out the desktop-only builtins and std::regex" ON)
 option(FJ_USB "Build the Fruit Jam USB host (keyboard, mouse)" OFF)
 # The PSRAM pool is always built and always measurable; this decides
 # whether the interpreter's large allocations are actually placed in it.
@@ -53,6 +64,8 @@ project(jdbasic_pico C CXX ASM)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 
+# Before the SDK's own targets exist, so lwIP sees the pool size too.
+add_compile_definitions(PBUF_POOL_SIZE=${JDB_PBUF_POOL})
 pico_sdk_init()
 
 set(JDB_SOURCES
@@ -126,6 +139,10 @@ target_compile_definitions(jdbasic_repl PRIVATE
     PICO
     JDB_MCU
     NDEBUG
+    JDB_HIST_N=${JDB_HIST_N}
+    JDB_MAX_FRAMES=${JDB_MAX_FRAMES}
+    JDB_HIST_LEN=${JDB_HIST_LEN}
+    FJ_ARENA_MB=${FJ_ARENA_MB}
     # A failed malloc must raise a jdBasic error, not stop the board:
     # the SDK default panics, which is an interrupts-off spin that even
     # the BOOTSEL reset cannot reach.
@@ -133,6 +150,9 @@ target_compile_definitions(jdbasic_repl PRIVATE
     CFG_TUD_CDC_RX_BUFSIZE=1024
     CFG_TUD_CDC_TX_BUFSIZE=1024
 )
+if (JDB_LEAN)
+    target_compile_definitions(jdbasic_repl PRIVATE JDB_LEAN=1)
+endif()
 if (PICOCALC)
     target_compile_definitions(jdbasic_repl PRIVATE PICOCALC=1)
 endif()
@@ -221,9 +241,11 @@ pico_enable_stdio_uart(jdbasic_repl 0)
 # Both chips move the core-0 stack out of the 4 KB scratch bank to the
 # top of main RAM; the RP2040's smaller RAM gets the smaller cut.
 if (PICO_BOARD STREQUAL "pico" OR PICO_BOARD STREQUAL "pico_w")
-    pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack2040.ld)
+    set(JDB_LD memmap_bigstack2040.ld)
 else()
-    pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_LIST_DIR}/memmap_bigstack.ld)
+    set(JDB_LD memmap_bigstack.ld)
 endif()
+configure_file(${CMAKE_CURRENT_LIST_DIR}/${JDB_LD}.in ${CMAKE_CURRENT_BINARY_DIR}/${JDB_LD} @ONLY)
+pico_set_linker_script(jdbasic_repl ${CMAKE_CURRENT_BINARY_DIR}/${JDB_LD})
 
 pico_add_extra_outputs(jdbasic_repl)

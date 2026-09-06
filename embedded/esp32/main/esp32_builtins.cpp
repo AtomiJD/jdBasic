@@ -73,6 +73,16 @@ void register_esp32_builtins(VM& vm) {
         return Value::make_i64(c == EOF ? -1 : c);
     });
 
+    // [size, deepest use so far] of the main task's stack, in bytes.
+    vm.register_native("SYS.STACK", 0, 0, [](const std::vector<Value>&) -> Value {
+        Value a = Value::make_array();
+        unsigned size = CONFIG_ESP_MAIN_TASK_STACK_SIZE;
+        unsigned left = (unsigned)uxTaskGetStackHighWaterMark(NULL);
+        a.as_array()->elements.push_back(Value::make_i64(size));
+        a.as_array()->elements.push_back(Value::make_i64(size > left ? size - left : 0));
+        return a;
+    });
+
     vm.register_native("SYS.FREE", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64((int64_t)heap_caps_get_free_size(MALLOC_CAP_DEFAULT));
     });

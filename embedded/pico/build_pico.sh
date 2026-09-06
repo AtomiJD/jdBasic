@@ -12,6 +12,10 @@
 #           in the 8 MB on QMI chip select 1 (see README)
 #   heaptrace  print what each boot step costs the heap
 #   fbpsram    framebuffer in PSRAM: 150 KB of heap back, but the
+#   stack=64   main stack in KB (128), hist=8 histlen=128 the prompt's history,
+#   pbuf=12    lwIP packet buffers (24), arena=2 the Fruit Jam's load arena in MB (3),
+#   fat        keep the desktop-only builtins and std::regex (lean is the default)
+#   frames=256 deepest call nesting (512); about 130 bytes of stack a frame
 #              part cannot feed the picture and the screen stays dark
 #
 # Each combination builds in its own directory, build-<board>[-nocalc],
@@ -35,6 +39,13 @@ HEAPTRACE=OFF
 LOADTRACE=OFF
 FBPSRAM=OFF
 CLEAN=0
+STACK_KB=128
+HIST_N=16
+HIST_LEN=256
+PBUF=24
+ARENA_MB=3
+LEAN=ON
+FRAMES=512
 for a in "$@"; do
     case "$a" in
         pico|pico_w|pico2|pico2_w) BOARD=$a ;;
@@ -48,6 +59,14 @@ for a in "$@"; do
         fbpsram)   FBPSRAM=ON ;;
         nofbpsram) FBPSRAM=OFF ;;
         clean)  CLEAN=1 ;;
+        stack=*)   STACK_KB=${a#stack=} ;;
+        hist=*)    HIST_N=${a#hist=} ;;
+        histlen=*) HIST_LEN=${a#histlen=} ;;
+        pbuf=*)    PBUF=${a#pbuf=} ;;
+        arena=*)   ARENA_MB=${a#arena=} ;;
+        fat)       LEAN=OFF ;;
+        frames=*)  FRAMES=${a#frames=} ;;
+        lean)      LEAN=ON ;;
         *) echo "unknown argument: $a"; exit 1 ;;
     esac
 done
@@ -65,7 +84,7 @@ fi
 
 [ "$CLEAN" = "1" ] && rm -rf "$DIR"
 
-cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM -DFJ_USB=$USBHOST -DFJ_PSRAM_HEAP=$PSRAMHEAP -DFJ_HEAP_TRACE=$HEAPTRACE -DFJ_LOAD_TRACE=$LOADTRACE -DFJ_FB_PSRAM=$FBPSRAM \
+cmake -G Ninja -B "$DIR" -S . -DPICO_BOARD=$BOARD -DPICOCALC=$CALC -DFRUITJAM=$JAM -DFJ_USB=$USBHOST -DFJ_PSRAM_HEAP=$PSRAMHEAP -DFJ_HEAP_TRACE=$HEAPTRACE -DFJ_LOAD_TRACE=$LOADTRACE -DFJ_FB_PSRAM=$FBPSRAM -DJDB_STACK_KB=$STACK_KB -DJDB_HIST_N=$HIST_N -DJDB_HIST_LEN=$HIST_LEN -DJDB_PBUF_POOL=$PBUF -DFJ_ARENA_MB=$ARENA_MB -DJDB_LEAN=$LEAN -DJDB_MAX_FRAMES=$FRAMES \
     > build_cmake.log 2>&1 || { tail -20 build_cmake.log; exit 1; }
 ninja -C "$DIR" 2> build_ninja.err || { tail -30 build_ninja.err; exit 1; }
 ls -la "$DIR"/jdbasic_repl.uf2

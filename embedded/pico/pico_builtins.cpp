@@ -5,6 +5,9 @@
 #include "../../src/vm.h"
 #include <set>
 #include "pico/stdlib.h"
+
+extern "C" unsigned jdb_stack_size(void);
+extern "C" unsigned jdb_stack_high_water(void);
 #ifdef JDB_HAS_CYW43
 #include "pico/cyw43_arch.h"
 #endif
@@ -185,6 +188,13 @@ void register_pico_keyget(VM& vm) {
     vm.register_native("KEY.NOW", 0, 0, [](const std::vector<Value>&) -> Value {
         int c = getchar_timeout_us(0);
         return Value::make_i64(c == PICO_ERROR_TIMEOUT ? -1 : c);
+    });
+    // [size, deepest use so far], both in bytes.
+    vm.register_native("SYS.STACK", 0, 0, [](const std::vector<Value>&) -> Value {
+        Value a = Value::make_array();
+        a.as_array()->elements.push_back(Value::make_i64(jdb_stack_size()));
+        a.as_array()->elements.push_back(Value::make_i64(jdb_stack_high_water()));
+        return a;
     });
 }
 

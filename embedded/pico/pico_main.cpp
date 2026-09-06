@@ -26,7 +26,29 @@
 #include <malloc.h>
 
 extern "C" char __StackLimit;
+extern "C" char __StackTop;
 extern "C" void* sbrk(int);
+
+// The stack is painted at boot from its limit up to just under where
+// main starts; the deepest the program has ever been is where the paint
+// stops. SYS.STACK reads it, so a stack size can be chosen from a
+// number rather than a guess.
+#define STACK_PAINT 0x5EEDF00Du
+
+static void __attribute__((noinline)) stack_paint(void) {
+    uint32_t* p = (uint32_t*)&__StackLimit;
+    uint32_t* top = (uint32_t*)((uintptr_t)__builtin_frame_address(0) - 512);
+    while (p < top) *p++ = STACK_PAINT;
+}
+
+extern "C" unsigned jdb_stack_size(void) { return (unsigned)(&__StackTop - &__StackLimit); }
+
+extern "C" unsigned jdb_stack_high_water(void) {
+    uint32_t* p = (uint32_t*)&__StackLimit;
+    uint32_t* top = (uint32_t*)&__StackTop;
+    while (p < top && *p == STACK_PAINT) p++;
+    return (unsigned)((char*)top - (char*)p);
+}
 
 // What each step of coming up costs, in the allocator's own terms.
 // Only ever wanted while chasing where the heap went, so it is behind a
@@ -359,6 +381,7 @@ static const JdbReplPort PORT = {
 };
 
 int main() {
+    stack_paint();
 #ifdef FRUITJAM
     // First thing, before anything can clear it: why this boot happened.
     fruitjam_reset_latch();

@@ -17,6 +17,23 @@
 
 set -e
 mode=${1:-psram}
+shift || true
+# Knobs after the mode: stack=64 (main task stack in KB, 96), hist=8,
+# histlen=128 (the prompt's history), fat (keep the desktop-only
+# builtins and std::regex).
+extra=""
+stack=""
+for a in "$@"; do
+    case "$a" in
+        stack=*)   stack=${a#stack=} ;;
+        hist=*)    extra="$extra -DJDB_HIST_N=${a#hist=}" ;;
+        histlen=*) extra="$extra -DJDB_HIST_LEN=${a#histlen=}" ;;
+        fat)       extra="$extra -DJDB_LEAN=0" ;;
+        frames=*)  extra="$extra -DJDB_MAX_FRAMES=${a#frames=}" ;;
+        lean)      extra="$extra -DJDB_LEAN=1" ;;
+        *) echo "unknown argument: $a"; exit 1 ;;
+    esac
+done
 idf=${IDF_PATH:-$HOME/esp/esp-idf-v5.5}
 . "$idf/export.sh" >/dev/null
 
@@ -26,6 +43,10 @@ case "$mode" in
     usbconsole) defaults="sdkconfig.defaults;sdkconfig.psram;sdkconfig.usbconsole" ;;
     *)          echo "usage: $0 [psram|nopsram|usbconsole]"; exit 1 ;;
 esac
+if [ -n "$stack" ]; then
+    echo "CONFIG_ESP_MAIN_TASK_STACK_SIZE=$((stack * 1024))" > "build-$mode.stack"
+    defaults="$defaults;build-$mode.stack"
+fi
 
-idf.py -B "build-$mode" -DSDKCONFIG_DEFAULTS="$defaults" -DSDKCONFIG="build-$mode/sdkconfig" set-target esp32s3
-idf.py -B "build-$mode" -DSDKCONFIG_DEFAULTS="$defaults" -DSDKCONFIG="build-$mode/sdkconfig" build
+idf.py -B "build-$mode" -DSDKCONFIG_DEFAULTS="$defaults" -DSDKCONFIG="build-$mode/sdkconfig" $extra set-target esp32s3
+idf.py -B "build-$mode" -DSDKCONFIG_DEFAULTS="$defaults" -DSDKCONFIG="build-$mode/sdkconfig" $extra build

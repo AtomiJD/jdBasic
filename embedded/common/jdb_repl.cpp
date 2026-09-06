@@ -412,8 +412,16 @@ static int dos_command(char* line) {
     return 0;
 }
 
-#define HIST_N   16
-#define HIST_LEN 256
+// The history is a build option: a board with little RAM keeps fewer and
+// shorter lines.
+#ifndef JDB_HIST_N
+#define JDB_HIST_N 16
+#endif
+#ifndef JDB_HIST_LEN
+#define JDB_HIST_LEN 256
+#endif
+#define HIST_N   JDB_HIST_N
+#define HIST_LEN JDB_HIST_LEN
 static char g_hist[HIST_N][HIST_LEN];
 static int g_hist_count = 0;
 static int g_hist_next = 0;

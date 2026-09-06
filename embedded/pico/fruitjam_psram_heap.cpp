@@ -68,7 +68,11 @@ size_t    g_in_use = 0;
 size_t    g_peak = 0;
 
 // The arena: one block of the pool, handed out front to back.
-const size_t ARENA_BYTES = 3u << 20;
+// A build option (FJ_ARENA_MB): the slice of PSRAM a load may use.
+#ifndef FJ_ARENA_MB
+#define FJ_ARENA_MB 3
+#endif
+const size_t ARENA_BYTES = (size_t)FJ_ARENA_MB << 20;
 uint8_t* g_arena = nullptr;
 size_t   g_arena_size = 0;
 size_t   g_arena_top = 0;

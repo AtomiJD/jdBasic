@@ -46,7 +46,25 @@ idf_component_register(
 
 # ESP32 is the platform switch, JDB_MCU the shared one: the same trades
 # the RP2350 build takes, reserving token vectors and shrinking chunks.
-target_compile_definitions(${COMPONENT_LIB} PRIVATE ESP32 JDB_MCU NDEBUG)
+# The RAM knobs, with their old values unless the build says otherwise;
+# build.sh passes them as hist=8, histlen=128, fat.
+if (NOT DEFINED JDB_HIST_N)
+    set(JDB_HIST_N 16)
+endif()
+if (NOT DEFINED JDB_HIST_LEN)
+    set(JDB_HIST_LEN 256)
+endif()
+if (NOT DEFINED JDB_LEAN)
+    set(JDB_LEAN 1)
+endif()
+if (NOT DEFINED JDB_MAX_FRAMES)
+    set(JDB_MAX_FRAMES 512)
+endif()
+target_compile_definitions(${COMPONENT_LIB} PRIVATE ESP32 JDB_MCU NDEBUG
+    JDB_HIST_N=${JDB_HIST_N} JDB_HIST_LEN=${JDB_HIST_LEN} JDB_MAX_FRAMES=${JDB_MAX_FRAMES})
+if (JDB_LEAN)
+    target_compile_definitions(${COMPONENT_LIB} PRIVATE JDB_LEAN=1)
+endif()
 
 # IDF compiles with -Werror=all, and GCC's -Wno-error=all does not undo
 # that: the specific forms have to be named. These are style warnings on
