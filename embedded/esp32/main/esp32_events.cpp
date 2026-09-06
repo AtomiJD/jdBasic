@@ -9,6 +9,7 @@
 #include "driver/gpio.h"
 
 #include "../../../src/vm.h"
+extern "C" int jdb_stdin_getc(int timeout_us);
 
 bool esp32_pin_allowed(int pin, const char** why);
 
@@ -73,8 +74,8 @@ void esp32_event_poll(VM& vm) {
     }
 
     if (g_key_watch) {
-        int c = getchar();
-        if (c != EOF) vm.event_raise("KEY", { Value::make_i64(c) });
+        int c = jdb_stdin_getc(0);
+        if (c >= 0) vm.event_raise("KEY", { Value::make_i64(c) });
     }
 }
 

@@ -6,6 +6,8 @@
 #include <set>
 #include "pico/stdlib.h"
 
+extern "C" int jdb_stdin_getc(int timeout_us);
+extern "C" int jdb_stdin_getc(int timeout_us);
 extern "C" unsigned jdb_stack_size(void);
 extern "C" unsigned jdb_stack_high_water(void);
 #ifdef JDB_HAS_CYW43
@@ -180,14 +182,13 @@ void register_pico_diag(VM& vm) {
 
 void register_pico_keyget(VM& vm) {
     vm.register_native("KEY.GET", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_i64(getchar());
+        return Value::make_i64(jdb_stdin_getc(-1));
     });
     // The one a game loop needs: -1 rather than a wait when nothing has
     // been pressed. Reads whatever console the board has, so the same
     // loop works on the board's own keyboard and over the serial line.
     vm.register_native("KEY.NOW", 0, 0, [](const std::vector<Value>&) -> Value {
-        int c = getchar_timeout_us(0);
-        return Value::make_i64(c == PICO_ERROR_TIMEOUT ? -1 : c);
+        return Value::make_i64(jdb_stdin_getc(0));
     });
     // [size, deepest use so far], both in bytes.
     vm.register_native("SYS.STACK", 0, 0, [](const std::vector<Value>&) -> Value {
@@ -393,6 +394,12 @@ void register_pico_mem(VM& vm) {
     // stretch below the stack that nobody has claimed yet.
     // The name the ES3C28P uses for the same question: how many builtins
     // this build registered and what their names alone cost.
+    // Every builtin this board has, by name, one line.
+    vm.register_native("SYS.NATIVES$", 0, 0, [&vm](const std::vector<Value>&) -> Value {
+        std::string out;
+        for (const auto& n : vm.native_names()) { if (!out.empty()) out += " "; out += n; }
+        return Value::make_string(out);
+    });
     vm.register_native("SYS.NATIVES", 0, 0, [&vm](const std::vector<Value>&) -> Value {
         auto names = vm.native_names();
         size_t text = 0;

@@ -16,6 +16,9 @@ Needs ESP-IDF v5.5 (GCC 14.2, the same compiler the RP2350 build uses).
     ./build.sh psram        an S3R8 DevKit, console on UART0
     ./build.sh nopsram      an S3FN8 part, 512 KB SRAM alone
 
+Ctrl-C on the serial line ends a running program with "Break at line N"
+and brings the prompt back, HTTP.SERVER.WAIT included.
+
 Knobs after the mode, the small values being the defaults: `stack=64`
 (the main task stack in KB), `frames=256` (deepest call nesting),
 `hist=8 histlen=128` (the prompt's history), `fat` (keep the desktop-only

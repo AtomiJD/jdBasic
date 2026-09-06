@@ -371,3 +371,18 @@ desktop the cheap place to get a chart right before sending it over.
 `jdmini.jdb` in this directory is the cut-down version: one SUB, a frame, a
 title, the range extremes and the curve, 670 bytes stripped. It loads in one
 piece and needs none of the part-splitting above.
+
+## Checked 2026-09-06
+
+Every program on the three boards' stores was read back and checked
+against the board's own builtin list (`SYS.NATIVES$`), then run with a
+ten second cap and Ctrl-C. Nothing on the boards uses a builtin the
+lean build took out. What is not a program's fault:
+
+- `bench.jdb` on the PicoCalc stops at `IOTA(100000)` with bad_alloc:
+  1.6 MB of array on a board with 300 KB. It is the ESP32's benchmark.
+- `pins.jdb` on the ES3C28P cannot open I2C bus 0: the touch controller
+  and the codec own it there. It is the DevKit's demo.
+- `sdcard.jdb` needs a card in the slot.
+- `sdcopy.jdb` on a Fruit Jam is the ESP32's hello.jdb under another
+  name; `SYS.INTERNAL` and `SYS.PSRAM` exist on the ESP32 only.

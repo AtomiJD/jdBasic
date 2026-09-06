@@ -49,6 +49,9 @@ EM_JS(int, jdb_poll_key_js, (void), {
 #ifndef JDB_LEAN
 #include <regex>
 #endif
+#ifdef JDB_MCU
+extern "C" int jdb_break_poll(void);
+#endif
 
 // How deep jdBasic calls may nest. Every frame costs about 130 bytes of
 // the C stack, so a board with a small stack sets this lower.
@@ -1049,6 +1052,18 @@ void VM::run() {
         // recursive loops. CALL/RETURN fall out of the switch via break, so
         // the next iteration refetches automatically.
         CallFrame& cf = frames.back();
+
+#ifdef JDB_MCU
+        // Ctrl-C on the console ends the program the way END does, with
+        // the line it was on. Every sixteenth opcode asks; the poll itself
+        // looks at the console no more than ten times a second.
+        static uint32_t break_ctr = 0;
+        if ((++break_ctr & 15) == 0 && jdb_break_poll()) {
+            emit("Break at line " + std::to_string(cf.chunk->line_at(cf.ip)) + "\n");
+            is_halted = true;
+            return;
+        }
+#endif
 
         // Process pending reactive updates
         if (!reactive_pending.empty() && !reactive_updating && !reactive_bindings.empty()) {
@@ -6384,6 +6399,9 @@ void VM::register_builtins() {
 #endif
             if (on_tick) on_tick();
             if (!event_handlers.empty()) event_poll();
+#ifdef JDB_MCU
+            if (jdb_break_poll()) { emit("Break\n"); is_halted = true; }
+#endif
             if (is_halted) break; // event handler may have run END
         }
         return Value::make_none();

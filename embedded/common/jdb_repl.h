@@ -47,6 +47,20 @@ const char* jdb_repl_progname(const char* in, char* out, size_t cap);
 
 void jdb_repl_run(JdbEmbed* vm, const struct JdbReplPort* port);
 
+// The byte every console reader on a board goes through: a byte the
+// break poll took and had to keep comes back first. timeout_us 0 answers
+// at once with -1 for nothing, -1 waits.
+int jdb_stdin_getc(int timeout_us);
+// Asked by the VM between instructions: 1 when the console holds a
+// Ctrl-C, which ends the running program.
+int jdb_break_poll(void);
+// 1 while a Ctrl-C waits to be reported, without taking it: a native that
+// waits in its own loop leaves on this and lets the VM report it.
+int jdb_break_pending(void);
+// 1 while a program runs, so a console reader knows a Ctrl-C is a break
+// and not a key.
+extern int jdb_running;
+
 #ifdef __cplusplus
 }
 #endif

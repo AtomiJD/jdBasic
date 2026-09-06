@@ -22,7 +22,9 @@
 static inline uint32_t jdb_ms_now() { return (uint32_t)(esp_timer_get_time() / 1000); }
 static inline void jdb_sleep_ms(unsigned ms) { vTaskDelay(pdMS_TO_TICKS(ms)); }
 static inline void jdb_net_poll() {}
-static inline int jdb_key_now() { int c = getchar(); return c == EOF ? -1 : c; }
+extern "C" int jdb_stdin_getc(int timeout_us);
+extern "C" int jdb_break_pending(void);
+static inline int jdb_key_now() { return jdb_stdin_getc(0); }
 #else
 #include "pico/stdlib.h"
 #include "pico/cyw43_arch.h"
@@ -31,7 +33,9 @@ static inline int jdb_key_now() { int c = getchar(); return c == EOF ? -1 : c; }
 static inline uint32_t jdb_ms_now() { return to_ms_since_boot(get_absolute_time()); }
 static inline void jdb_sleep_ms(unsigned ms) { sleep_ms(ms); }
 static inline void jdb_net_poll() { netif_poll_all(); }
-static inline int jdb_key_now() { return getchar_timeout_us(0); }
+extern "C" int jdb_stdin_getc(int timeout_us);
+extern "C" int jdb_break_pending(void);
+static inline int jdb_key_now() { return jdb_stdin_getc(0); }
 #endif
 #include "lwip/tcp.h"
 #include "lwip/netif.h"
@@ -360,7 +364,7 @@ void register_jdb_httpd(VM& vm) {
             // Without this a long wait owns the board until it expires:
             // nothing else here reads the keyboard.
             int key = jdb_key_now();
-            if (key == 0x1B || key == 3) break;
+            if (key == 0x1B || key == 3 || jdb_break_pending()) break;
             jdb_sleep_ms(5);
         }
         return Value::make_i64((int64_t)g_served);

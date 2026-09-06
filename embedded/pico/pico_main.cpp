@@ -50,6 +50,48 @@ extern "C" unsigned jdb_stack_high_water(void) {
     return (unsigned)((char*)top - (char*)p);
 }
 
+// One byte the break poll took that belongs to the program.
+static int g_pushback = -1;
+
+// A Ctrl-C that any reader meets while a program runs is a break, not a
+// key; the poll below reports it.
+static int g_break = 0;
+
+static int taken(int c) {
+    if (c == 3 && jdb_running) { g_break = 1; return -1; }
+    return c;
+}
+
+extern "C" int jdb_break_pending(void) { return g_break; }
+
+extern "C" int jdb_stdin_getc(int timeout_us) {
+    if (g_pushback >= 0) { int c = g_pushback; g_pushback = -1; return c; }
+    if (timeout_us < 0) {
+        for (;;) {
+            int c = getchar_timeout_us(100000);
+            if (c != PICO_ERROR_TIMEOUT) return taken(c);
+        }
+    }
+    int c = getchar_timeout_us((uint32_t)timeout_us);
+    return c == PICO_ERROR_TIMEOUT ? -1 : taken(c);
+}
+
+// Ten times a second while a program runs: a Ctrl-C ends it, any other
+// byte is kept for the program.
+extern "C" int jdb_break_poll(void) {
+    if (g_break) { g_break = 0; return 1; }
+    static uint32_t last = 0;
+    uint32_t now = time_us_32();
+    if (now - last < 100000) return 0;
+    last = now;
+    if (g_pushback >= 0) return 0;
+    int c = getchar_timeout_us(0);
+    if (c == PICO_ERROR_TIMEOUT) return 0;
+    if (c == 3) return 1;
+    g_pushback = c;
+    return 0;
+}
+
 // What each step of coming up costs, in the allocator's own terms.
 // Only ever wanted while chasing where the heap went, so it is behind a
 // define rather than in the boot path for good.
@@ -226,20 +268,20 @@ extern "C" int repl_read_key(void) {
     static bool after_cr = false;
     int c;
     for (;;) {
-        c = getchar();
+        c = jdb_stdin_getc(-1);
         if (c == 10 && after_cr) { after_cr = false; continue; }
         after_cr = (c == 13);
         break;
     }
     if (c != 0x1B) return c;
-    int intro = getchar();
-    if (intro == 'O') return getchar() == 'P' ? K_F1 : 0;
+    int intro = jdb_stdin_getc(-1);
+    if (intro == 'O') return jdb_stdin_getc(-1) == 'P' ? K_F1 : 0;
     if (intro != '[') return 0;
 
     char par[8];
     int n = 0, f;
     for (;;) {
-        f = getchar();
+        f = jdb_stdin_getc(-1);
         if (f < 0) return 0;
         if ((f >= '0' && f <= '9') || f == ';') {
             if (n < (int)sizeof par - 1) par[n++] = (char)f;
@@ -276,8 +318,7 @@ extern "C" int repl_read_key(void) {
 }
 
 static int pico_read_byte_ms(int timeout_ms) {
-    int c = getchar_timeout_us((uint32_t)timeout_ms * 1000u);
-    return c == PICO_ERROR_TIMEOUT ? -1 : c;
+    return jdb_stdin_getc(timeout_ms * 1000);
 }
 
 // Fetching a program off the web beats a serial transfer protocol when

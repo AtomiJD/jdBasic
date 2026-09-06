@@ -13,6 +13,7 @@
 #include "freertos/task.h"
 #include "esp_heap_caps.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "esp_chip_info.h"
 #include "driver/usb_serial_jtag.h"
 #include "driver/usb_serial_jtag_vfs.h"
@@ -87,14 +88,49 @@ static void report(const char* label) {
     fflush(stdout);
 }
 
-// One byte, or -1 once the wire has been quiet for the given time.
-static int esp32_read_byte_ms(int timeout_ms) {
-    for (int waited = 0; waited <= timeout_ms; waited += 10) {
-        int ch = getchar();
-        if (ch != EOF) return ch;
-        vTaskDelay(pdMS_TO_TICKS(10));
+// One byte the break poll took that belongs to the program.
+static int g_pushback = -1;
+
+// A Ctrl-C that any reader meets while a program runs is a break, not a
+// key; the poll below reports it.
+static int g_break = 0;
+
+static int taken(int c) {
+    if (c == 3 && jdb_running) { g_break = 1; return -1; }
+    return c;
+}
+
+extern "C" int jdb_break_pending(void) { return g_break; }
+
+extern "C" int jdb_stdin_getc(int timeout_us) {
+    if (g_pushback >= 0) { int c = g_pushback; g_pushback = -1; return c; }
+    int64_t end = esp_timer_get_time() + timeout_us;
+    for (;;) {
+        int c = getchar();
+        if (c != EOF) return taken(c);
+        if (timeout_us >= 0 && esp_timer_get_time() >= end) return -1;
+        vTaskDelay(pdMS_TO_TICKS(5));
     }
-    return -1;
+}
+
+// Ten times a second while a program runs: a Ctrl-C ends it, any other
+// byte is kept for the program.
+extern "C" int jdb_break_poll(void) {
+    if (g_break) { g_break = 0; return 1; }
+    static int64_t last = 0;
+    int64_t now = esp_timer_get_time();
+    if (now - last < 100000) return 0;
+    last = now;
+    if (g_pushback >= 0) return 0;
+    int c = getchar();
+    if (c == EOF) return 0;
+    if (c == 3) return 1;
+    g_pushback = c;
+    return 0;
+}
+
+static int esp32_read_byte_ms(int timeout_ms) {
+    return jdb_stdin_getc(timeout_ms * 1000);
 }
 
 // The keys an editor needs, with a terminal's escape sequences folded
@@ -123,13 +159,7 @@ static int esp32_read_byte_ms(int timeout_ms) {
 
 // Blocking: stdin is non-blocking here, so an empty read waits rather
 // than gives up.
-static int getch_blocking(void) {
-    for (;;) {
-        int c = getchar();
-        if (c != EOF) return c;
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-}
+static int getch_blocking(void) { return jdb_stdin_getc(-1); }
 
 // A shifted arrow carries a modifier parameter: ESC[1;2A. Collecting the
 // parameters rather than reading a fixed three bytes is what lets the

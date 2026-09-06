@@ -94,9 +94,13 @@ static int autorun_get(char* out, size_t cap) {
 
 // Runs the file and reports; the error text, if there was one, is
 // handed back for whoever wants the line number out of it.
+extern "C" { int jdb_running = 0; }
+
 static const char* run_file(const char* name) {
     snprintf(g_current, sizeof g_current, "%s", name);
+    jdb_running = 1;
     char* out = jdb_embed_load(g_vm, name);
+    jdb_running = 0;
     if (out) {
         printf("%s", out);
         jdb_embed_free(out);

@@ -11,6 +11,7 @@
 #include "freertos/task.h"
 
 #define CAP_INT (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
+extern "C" int jdb_stdin_getc(int timeout_us);
 
 void register_esp32_fs(VM& vm);
 void register_esp32_wifi(VM& vm);
@@ -37,6 +38,12 @@ void register_esp32_builtins(VM& vm) {
     s_before_natives_int = heap_caps_get_free_size(CAP_INT);
     s_before_natives_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
 
+    // Every builtin this board has, by name, one line.
+    vm.register_native("SYS.NATIVES$", 0, 0, [&vm](const std::vector<Value>&) -> Value {
+        std::string out;
+        for (const auto& n : vm.native_names()) { if (!out.empty()) out += " "; out += n; }
+        return Value::make_string(out);
+    });
     vm.register_native("SYS.NATIVES", 0, 0, [&vm](const std::vector<Value>&) -> Value {
         auto names = vm.native_names();
         size_t text = 0;
@@ -62,15 +69,10 @@ void register_esp32_builtins(VM& vm) {
     // waits for one, KEY.NOW answers -1 when none has arrived. stdin is
     // non-blocking here, so the wait is a poll.
     vm.register_native("KEY.GET", 0, 0, [](const std::vector<Value>&) -> Value {
-        for (;;) {
-            int c = getchar();
-            if (c != EOF) return Value::make_i64(c);
-            vTaskDelay(pdMS_TO_TICKS(5));
-        }
+        return Value::make_i64(jdb_stdin_getc(-1));
     });
     vm.register_native("KEY.NOW", 0, 0, [](const std::vector<Value>&) -> Value {
-        int c = getchar();
-        return Value::make_i64(c == EOF ? -1 : c);
+        return Value::make_i64(jdb_stdin_getc(0));
     });
 
     // [size, deepest use so far] of the main task's stack, in bytes.

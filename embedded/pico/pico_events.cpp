@@ -4,6 +4,7 @@
 // handler never runs inside an ISR.
 
 #include "../../src/vm.h"
+extern "C" int jdb_stdin_getc(int timeout_us);
 #include "pico/stdlib.h"
 #include "hardware/gpio.h"
 #include <stdio.h>
@@ -68,8 +69,8 @@ void pico_event_poll(VM& vm) {
     }
 
     if (g_key_watch) {
-        int c = getchar_timeout_us(0);
-        if (c != PICO_ERROR_TIMEOUT) {
+        int c = jdb_stdin_getc(0);
+        if (c >= 0) {
             vm.event_raise("KEY", { Value::make_i64(c) });
         }
     }

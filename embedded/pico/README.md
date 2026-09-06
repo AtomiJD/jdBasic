@@ -43,6 +43,11 @@ the button: opening its serial port at 1200 baud reboots it into
 BOOTSEL, which is what a script does. It reboots into the REPL; any
 serial terminal at any baud rate reaches it.
 
+Ctrl-C on the keyboard or the serial line ends a running program with
+"Break at line N" and the prompt comes back; a program that needs the
+byte itself does not get it. Ten times a second the interpreter looks,
+also inside SLEEP.
+
 The power-on program is a file on the board: `AUTORUN name` at the
 prompt names it, `AUTORUN OFF` clears it, and ESC in the first two
 seconds of a boot skips it. The Fruit Jam ships its German keyboard
