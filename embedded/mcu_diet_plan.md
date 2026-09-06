@@ -240,3 +240,26 @@ load arena on every board), E, F, I.
 
 The small values are the defaults since 2026-09-06 on all three boards.
 Fruit Jam, free at the prompt: 88632 -> 166208 (395 natives, from 420).
+
+### B, done 2026-09-06: names in flash
+
+Measured first: the registry held 22389 bytes on the PicoCalc and 20607
+on the ESP32 for about 400 builtins, 57 bytes each, not the 158 the
+plan assumed (the boards never had the map). A table of function
+pointers would have meant rewriting 870 registrations for the
+remaining std::function, so the cut went elsewhere:
+
+- a builtin registered with a literal keeps the pointer into flash; only
+  a name built at run time by a host is copied (`register_native(const
+  char*, ...)` next to the std::string overloads)
+- the growth room of the slot tables goes back once every builtin is in
+- `jdb_no_vectorize`, 629 names in an unordered_set built on the heap
+  at first use, is a sorted table in flash with a binary search, the
+  same way the keywords went
+
+    registry bytes      PicoCalc 22389 -> 13068     ESP32 20607 -> 11814
+    heap in use at the prompt, PicoCalc: 67104 -> 23124
+    free at the prompt: PicoCalc 307680 -> 351720, ESP32 PSRAM 8121408 -> 8163176
+
+The std::function per builtin (16 bytes) is what remains; the flash
+table would take another 5 KB and is not worth the rewrite.

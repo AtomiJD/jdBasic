@@ -397,9 +397,9 @@ void register_pico_mem(VM& vm) {
         auto names = vm.native_names();
         size_t text = 0;
         for (const auto& n : names) text += n.size() + 1;
-        char buf[96];
-        snprintf(buf, sizeof buf, "%u natives, %u bytes of name",
-                 (unsigned)names.size(), (unsigned)text);
+        char buf[128];
+        snprintf(buf, sizeof buf, "%u natives, %u bytes of name, registry %u bytes",
+                 (unsigned)names.size(), (unsigned)text, (unsigned)vm.native_registry_bytes());
         return Value::make_string(buf);
     });
     vm.register_native("SYS.HEAP$", 0, 0, [](const std::vector<Value>&) -> Value {

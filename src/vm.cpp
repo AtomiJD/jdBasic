@@ -758,221 +758,168 @@ Value VM::call_funcref(const Value& ref, const std::vector<Value>& args) {
 // auto-vectorize per-cell, and CSVWRITER would receive 6 scalar calls
 // instead of one matrix call.
 bool jdb_no_vectorize(const std::string& name) {
-    static const std::unordered_set<std::string> set = {
-        "ZEROS", "ONES", "__MAKE_UDT_ARRAY__",
-        "IOTA", "RESHAPE", "LEN", "LENV", "PUSH", "POP",
-        "TENSOR", "TYPEOF", "APPEND", "DIFF", "FILLV", "COPYV",
-        "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL",
-        "SCAN", "SELECT", "FILTER", "REDUCE", "AGG", "TALLY",
-        "TAKE_WHILE", "DROP_WHILE", "CHUNK", "ENUMERATE", "GROUPBY",
-        "SORT", "TAKE", "DROP", "REVERSE", "UNIQUE", "SHUFFLE",
-        "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE", "GRADE",
-        "TRANSPOSE", "MATMUL", "MVLET", "MVINS", "STACK", "SLICE",
-        "SOLVE", "INVERT", "CONVOLVE", "PLACE",
-        "SVD", "QR", "DET", "EIG", "FFT", "IFFT",
-        "OUTER", "ROTATE", "SHIFT", "XSORT", "INTEGRATE",
-        "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
-        "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
-        "DATE.UTC", "DATE.PARTS", "EOMONTH", "DATERANGE",
-        // DATEADD/DATEDIFF/FORMAT_DATE intentionally vectorize so e.g.
-        // DATEDIFF("D", scalar, [d1,d2,d3]) → element-wise.
-        "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
-        "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",
-        "JSON.PARSE$", "JSON.STRINGIFY$",
-        "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP", "YIELD",
-        "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",
-        "CLIPBOARD.SET", "CLIPBOARD.GET$",
-        "SPLIT", "FORMAT$", "FRMV$", "INSERT$",
-        "REPLACE$", "REVERSE$", "PACK$", "UNPACK",
-        "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
-        // Diagnostics take their arguments as a payload to render, so an
-        // array prints once instead of once per element.
-        "DEBUG.PRINT", "DEBUG.ASSERT",
-        "PDF.TEXT$",
-        "CSVREADER", "CSVWRITER", "CSVHEADER", "IIF",
-        "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
-        "SQL.QUERY", "SQL.TABLE", "SQL.COLUMNS",
-        "PYTHON$", "PY.EVAL", "PY.SET", "PY.GET", "PY.DIR$", "PY.HELP$",
-        "JOIN", "REGEX_MATCH", "REGEX_REPLACE$",
-        "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
-        "MEAN", "MEDIAN", "VARIANCE", "STDEV",
-        "DOT", "CROSS", "CUMSUM", "CUMPROD",
-        "HISTOGRAM", "LINSPACE", "FLATTEN", "ZIP",
-        "RANGE", "COUNT", "INDEXOF",
-        "ISNUM", "ISSTR", "ISARR", "ISMAP", "ISBOOL", "ISNONE", "ISNULL",
-        "ROTL", "ROTR", "GCD", "LCM",
-        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
-        "CODEC.SHA256$", "CODEC.UUID$",
-        "OS.GETOS", "OS.GETOS$", "OS.ARGS", "OS.EXEC",
-        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD", "OS.FEATURE", "OS.SCREENSHOT",
-        "DIR$", "DIR", "CD", "PWD", "MKDIR", "KILL", "RMDIR", "MKTEMP$",
-        "FILE.EXISTS", "FILE.SIZE", "FILE.ISDIR", "FILE.STAT",
-        "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
-        "PATH.DIRNAME$", "PATH.NORMALIZE$",
-        "RECUR", "CLEAR_RECUR", "LIST_RECUR",
-        "AWAIT", "THREAD.ISDONE", "THREAD.GETRESULT",
-        "CHAN.OPEN", "CHAN.SEND", "CHAN.RECV", "CHAN.CLOSE",
-        "CHAN.IS_EOF", "CHAN.IS_CLOSED", "CHAN.LEN", "CHAN.CAP",
-        "FILE.OPEN_LINES", "FILE.OPEN_TAIL", "FILE.READLINE$",
-        "FILE.AT_EOF", "FILE.CLOSE",
-        "FILE.STREAM_LINES", "FILE.STREAM_TAIL",
-        "AI.CHAT_TOKENS",
-        "REACT_BIND", "UNREACT",
-        "EXECUTE", "EVAL",
-        "JDB.GLOBAL_GET", "JDB.GLOBAL_SET", "JDB.CHECK$", "FUNCS",
-        "LOAD", "SAVE", "LIST", "HELP", "HELP$", "VARS",
-        "SCREEN", "SCREENFLIP", "DRAWCOLOR", "SETFONT",
-        "PSET", "LINE", "RECT", "CIRCLE", "ELLIPSE",
-        "ROUNDED_RECT", "CIRCLE_SECTOR", "TEXT",
-        "PLOTRAW", "TOGGLE_FULLSCREEN",
-        "AUDIO.INIT", "AUDIO.LOADWAV", "AUDIO.LOADMUS",
-        "AUDIO.PLAY", "AUDIO.PLAYMUS", "AUDIO.STOP",
-        "AUDIO.STOPMUS", "AUDIO.VOLUME", "AUDIO.VOLUMEMUS",
-        "AUDIO.PAUSE", "AUDIO.RESUME", "AUDIO.PAUSEMUS",
-        "AUDIO.RESUMEMUS", "AUDIO.FREE", "AUDIO.FREEMUS",
-        "AUDIO.CLOSE",
-        "GFX.POLLEVENT", "GFX.KEYSTATE", "GFX.MOUSEX",
-        "GFX.MOUSEY", "GFX.MOUSEBUTTON", "GFX.DELAY",
-        "GFX.TICKS", "GFX.CLOSE", "GFX.LOADIMAGE",
-        "GFX.DRAWIMAGE", "GFX.FREEIMAGE", "GFX.TEXTSIZE",
-        "GFX.PLOT_POINTS", "GFX.PLOT_POINTS_TEX", "GFX.HSV_RGB",
-        "GFX.CAPTURE", "GFX.DRAW_CAPTURE",
-        "GFX.FADE", "GFX.SAVE_SCREENSHOT", "GFX.SAVE_IMAGE",
-        "GFX.DRAWIMAGE_REGION", "GFX.DRAWIMAGE_EX",
-        "GFX.COLOR_TO_ALPHA",
-        "SOUND.PLAYBUFFER",
-        "MOUSEX", "MOUSEY", "MOUSEB",
-        "TURTLE.FORWARD", "TURTLE.BACKWARD",
-        "TURTLE.LEFT", "TURTLE.RIGHT",
-        "TURTLE.PENUP", "TURTLE.PENDOWN",
-        "TURTLE.SETPOS", "TURTLE.SETHEADING",
-        "TURTLE.HOME", "TURTLE.DRAW", "TURTLE.CLEAR",
-        "TURTLE.SET_COLOR",
-        "JOY.COUNT", "JOY.NAME$", "JOY.BUTTON",
-        "JOY.AXIS", "JOY.HAT",
-        "SPRITE.LOAD", "SPRITE.CREATE", "SPRITE.SETPIXEL", "SPRITE.SETBUFFER",
-        "SPRITE.SAVE", "SPRITE.POS", "SPRITE.MOVE",
-        "SPRITE.DRAW", "SPRITE.DRAW_ALL", "SPRITE.DELETE",
-        "SPRITE.GET_X", "SPRITE.GET_Y",
-        "SPRITE.SCALE", "SPRITE.FLIP", "SPRITE.ALPHA",
-        "SPRITE.VISIBLE", "SPRITE.ROTATE", "SPRITE.SET_ORIGIN",
-        "SPRITE.COLLISION", "SPRITE.WIDTH", "SPRITE.HEIGHT",
-        "SPRITE.ANIM", "SPRITE.PLAY", "SPRITE.STOP",
-        "SPRITE.FRAME", "SPRITE.UPDATE", "SPRITE.PLAYING",
-        "SPRITE.VELOCITY", "SPRITE.GET_VX", "SPRITE.GET_VY",
-        "SPRITE.GROUP", "SPRITE.COLLISIONS", "SPRITE.COLLISION_FIRST",
-        "SPRITE.ZORDER", "SPRITE.GRAVITY", "SPRITE.ON_GROUND", "SPRITE.LAND",
-        "GL.WINDOW", "GL.CLOSE", "GL.CLEAR", "GL.FLIP", "GL.VIEWPORT",
-        "GL.ENABLE", "GL.DISABLE",
-        "GL.SHADER", "GL.USE", "GL.SHADER.DELETE",
-        "GL.VBO", "GL.VBO.BIND", "GL.BUFFER.DELETE",
-        "GL.VAO", "GL.VAO.BIND", "GL.VAO.DELETE",
-        "GL.ATTRIB", "GL.DRAW.TRIS", "GL.DRAW.LINES", "GL.DRAW.TRIS.IDX",
+    // Sorted, so the lookup is a binary search over a table in flash;
+    // the VM caches the answer per slot after the first call anyway.
+    static const char* const table[] = {
+        "AGG", "AI.ARGMAX", "AI.CHAT", "AI.CHAT_JSON", "AI.CHAT_RAW",
+        "AI.CHAT_STREAM", "AI.CHAT_TOKENS", "AI.CLASSIFIER_ADD",
+        "AI.CLASSIFIER_ADD_BATCH", "AI.CLASSIFIER_BUILD_INDEX",
+        "AI.CLASSIFIER_CREATE", "AI.CLASSIFIER_FREE", "AI.CLASSIFIER_INFO",
+        "AI.CLASSIFIER_LOAD", "AI.CLASSIFIER_PREDICT", "AI.CLASSIFIER_SAVE",
+        "AI.CLEAR_GRAMMAR", "AI.CLEAR_HISTORY", "AI.COSINE_SIM",
+        "AI.DETOKENIZE", "AI.EMBED", "AI.EMBED_LLM", "AI.FREE",
+        "AI.FREE_LLM", "AI.GET_HISTORY", "AI.INFO", "AI.LIST",
+        "AI.LLM_INFO", "AI.LOAD", "AI.LOAD_EMBEDDINGS", "AI.LOAD_LLM",
+        "AI.NORMALIZE", "AI.RAG_ADD", "AI.RAG_ADD_DIR", "AI.RAG_ADD_FILE",
+        "AI.RAG_BUILD_INDEX", "AI.RAG_CLEAR", "AI.RAG_CREATE",
+        "AI.RAG_FREE", "AI.RAG_INFO", "AI.RAG_LOAD", "AI.RAG_QUERY",
+        "AI.RAG_QUERY_FULL", "AI.RAG_QUERY_STREAM", "AI.RAG_SAVE",
+        "AI.RAG_SEARCH", "AI.RUN", "AI.SET", "AI.SET_GRAMMAR",
+        "AI.SET_JSON_MODE", "AI.SIMILARITY", "AI.SOFTMAX", "AI.TENSOR",
+        "AI.TOKENIZE", "AI.TOKEN_COUNT", "AI.TOOL_ADD", "AI.TOOL_CHAT",
+        "AI.TOOL_LIST", "AI.TOOL_REMOVE", "AI.TOPK", "ALL", "ANY", "APPEND",
+        "AUDIO.CLOSE", "AUDIO.FREE", "AUDIO.FREEMUS", "AUDIO.INIT",
+        "AUDIO.LOADMUS", "AUDIO.LOADWAV", "AUDIO.PAUSE", "AUDIO.PAUSEMUS",
+        "AUDIO.PLAY", "AUDIO.PLAYMUS", "AUDIO.RESUME", "AUDIO.RESUMEMUS",
+        "AUDIO.STOP", "AUDIO.STOPMUS", "AUDIO.VOLUME", "AUDIO.VOLUMEMUS",
+        "AWAIT", "BINREADER$", "BINWRITER", "CAM.BOUNDS", "CAM.FOLLOW",
+        "CAM.SET", "CAM.SHAKE", "CAM.X", "CAM.Y", "CD", "CDATE", "CHAN.CAP",
+        "CHAN.CLOSE", "CHAN.IS_CLOSED", "CHAN.IS_EOF", "CHAN.LEN",
+        "CHAN.OPEN", "CHAN.RECV", "CHAN.SEND", "CHUNK", "CIRCLE",
+        "CIRCLE_SECTOR", "CLEAR_RECUR", "CLIPBOARD.GET$", "CLIPBOARD.SET",
+        "CLS", "CODEC.BASE64_DECODE$", "CODEC.BASE64_ENCODE$",
+        "CODEC.SHA256$", "CODEC.UUID$", "COLOR", "CONVOLVE", "COPYV",
+        "COUNT", "CROSS", "CSVHEADER", "CSVREADER", "CSVWRITER", "CUMPROD",
+        "CUMSUM", "CURSOR", "CVDATE", "D", "DATE$", "DATE.PARTS",
+        "DATE.UTC", "DATERANGE", "DEBUG.ASSERT", "DEBUG.PRINT", "DET",
+        "DIFF", "DIR", "DIR$", "DISTANCE", "DOT", "DRAWCOLOR", "DROP",
+        "DROP_WHILE", "EIG", "ELLIPSE", "ENUMERATE", "EOMONTH", "EVAL",
+        "EXECUTE", "FFT", "FILE.AT_EOF", "FILE.CLOSE", "FILE.EXISTS",
+        "FILE.ISDIR", "FILE.OPEN_LINES", "FILE.OPEN_TAIL", "FILE.READLINE$",
+        "FILE.SIZE", "FILE.STAT", "FILE.STREAM_LINES", "FILE.STREAM_TAIL",
+        "FILLV", "FILTER", "FIND_IN_ARRAY", "FLATTEN", "FORMAT$", "FRMV$",
+        "FUNCS", "GCD", "GETENV$", "GETX", "GETY", "GFX.CAPTURE",
+        "GFX.CLOSE", "GFX.COLOR_TO_ALPHA", "GFX.DELAY", "GFX.DRAWIMAGE",
+        "GFX.DRAWIMAGE_EX", "GFX.DRAWIMAGE_REGION", "GFX.DRAW_CAPTURE",
+        "GFX.FADE", "GFX.FREEIMAGE", "GFX.HSV_RGB", "GFX.KEYSTATE",
+        "GFX.LOADIMAGE", "GFX.MOUSEBUTTON", "GFX.MOUSEX", "GFX.MOUSEY",
+        "GFX.PLOT_POINTS", "GFX.PLOT_POINTS_TEX", "GFX.POLLEVENT",
+        "GFX.SAVE_IMAGE", "GFX.SAVE_SCREENSHOT", "GFX.TEXTSIZE",
+        "GFX.TICKS", "GL.ATTRIB", "GL.BUFFER.DELETE", "GL.CLEAR",
+        "GL.CLOSE", "GL.DISABLE", "GL.DRAW.LINES", "GL.DRAW.TRIS",
+        "GL.DRAW.TRIS.IDX", "GL.EBO", "GL.ENABLE", "GL.FLIP", "GL.SHADER",
+        "GL.SHADER.DELETE", "GL.TEX.BIND", "GL.TEX.DELETE", "GL.TEX.LOAD",
         "GL.UNIFORM.F1", "GL.UNIFORM.F3", "GL.UNIFORM.F4", "GL.UNIFORM.I1",
-        "GL.UNIFORM.MAT4",
-        "GL.TEX.LOAD", "GL.TEX.BIND", "GL.TEX.DELETE", "GL.EBO",
-        "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
-        "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
-        "TILEMAP.CREATE", "TILEMAP.DRAW", "TILEMAP.SET",
-        "TILEMAP.GET", "TILEMAP.SIZE", "TILEMAP.COLLIDES",
-        "TILEMAP.TILE_AT",
-        "CAM.FOLLOW", "CAM.SET", "CAM.BOUNDS", "CAM.SHAKE",
-        "CAM.X", "CAM.Y",
-        "PARTICLE.EMIT", "PARTICLE.DRAW", "PARTICLE.CLEAR", "PARTICLE.COUNT",
+        "GL.UNIFORM.MAT4", "GL.USE", "GL.VAO", "GL.VAO.BIND",
+        "GL.VAO.DELETE", "GL.VBO", "GL.VBO.BIND", "GL.VIEWPORT",
+        "GL.WINDOW", "GRADE", "GROUPBY", "GUI.BEGIN", "GUI.BEGIN_CHILD",
+        "GUI.BEGIN_MAIN_MENU_BAR", "GUI.BEGIN_MENU", "GUI.BEGIN_MENU_BAR",
+        "GUI.BEGIN_POPUP", "GUI.BEGIN_POPUP_MODAL", "GUI.BEGIN_TABLE",
+        "GUI.BEGIN_TAB_BAR", "GUI.BEGIN_TAB_ITEM", "GUI.BUTTON",
+        "GUI.CHECKBOX", "GUI.CLOSE_CURRENT_POPUP", "GUI.COL",
+        "GUI.COLLAPSING_HEADER", "GUI.COLOR", "GUI.COMBO", "GUI.DUMMY",
+        "GUI.END", "GUI.END_CHILD", "GUI.END_MAIN_MENU_BAR", "GUI.END_MENU",
+        "GUI.END_MENU_BAR", "GUI.END_POPUP", "GUI.END_TABLE",
+        "GUI.END_TAB_BAR", "GUI.END_TAB_ITEM", "GUI.FLAG", "GUI.HELPMARKER",
+        "GUI.INPUT", "GUI.INPUT_DOUBLE", "GUI.INPUT_INT",
+        "GUI.ITEM_DEACTIVATED_AFTER_EDIT", "GUI.ITEM_RECT", "GUI.LISTBOX",
+        "GUI.MENU_ITEM", "GUI.OPEN_POPUP", "GUI.PLOT_HISTOGRAM",
+        "GUI.PLOT_LINES", "GUI.POP_ID", "GUI.POP_STYLE_COLOR",
+        "GUI.PROGRESS", "GUI.PUSH_ID", "GUI.PUSH_STYLE_COLOR", "GUI.RADIO",
+        "GUI.SAME_LINE", "GUI.SELECTABLE", "GUI.SEPARATOR",
+        "GUI.SEPARATOR_TEXT", "GUI.SET_CURSOR_SCREEN_POS",
+        "GUI.SET_KEYBOARD_FOCUS", "GUI.SET_NEXT_ITEM_WIDTH",
+        "GUI.SHOW_FONT_ATLAS", "GUI.SLIDER", "GUI.TABLE_HEADERS_ROW",
+        "GUI.TABLE_NEXT_COLUMN", "GUI.TABLE_NEXT_ROW",
+        "GUI.TABLE_SETUP_COLUMN", "GUI.TABLE_SET_COLUMN_INDEX", "GUI.TEXT",
+        "GUI.THEME", "GUI.TOOLTIP", "GUI.TREE_NODE", "GUI.TREE_POP", "HELP",
+        "HELP$", "HISTOGRAM", "IFFT", "IIF", "INDEXOF", "INKEY$", "INSERT$",
+        "INTEGRATE", "INVERT", "IOTA", "ISARR", "ISBOOL", "ISMAP", "ISNONE",
+        "ISNULL", "ISNUM", "ISSTR", "JDB.CHECK$", "JDB.GLOBAL_GET",
+        "JDB.GLOBAL_SET", "JOIN", "JOY.AXIS", "JOY.BUTTON", "JOY.COUNT",
+        "JOY.HAT", "JOY.NAME$", "JSON.PARSE$", "JSON.STRINGIFY$", "KILL",
+        "LCM", "LEN", "LENV", "LINE", "LINSPACE", "LIST", "LIST_RECUR",
+        "LOAD", "LOCATE", "MAP.CLEAR", "MAP.DELETE", "MAP.EXISTS",
+        "MAP.FROM", "MAP.ITEMS", "MAP.KEYS", "MAP.MERGE", "MAP.SIZE",
+        "MAP.VALUES", "MAT4.IDENTITY", "MAT4.LOOKAT", "MAT4.MUL",
+        "MAT4.PERSPECTIVE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.TRANSLATE",
+        "MATMUL", "MAX", "MEAN", "MEDIAN", "MIN", "MKDIR", "MKTEMP$",
+        "MOUSEB", "MOUSEX", "MOUSEY", "MUSIC.PLAY", "MUSIC.STOP", "MVINS",
+        "MVLET", "NORMALIZE", "NOW", "NOW_EPOCH", "ONES", "OPTION",
+        "OS.ARGS", "OS.EXEC", "OS.FEATURE", "OS.GETOS", "OS.GETOS$",
+        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD", "OS.SCREENSHOT", "OUTER",
+        "PACK$", "PARTICLE.CLEAR", "PARTICLE.COUNT", "PARTICLE.DRAW",
+        "PARTICLE.EMIT", "PATH.BASENAME$", "PATH.DIRNAME$", "PATH.EXT$",
+        "PATH.JOIN$", "PATH.NORMALIZE$", "PDF.TEXT$", "PLACE", "PLOTRAW",
+        "POP", "PRODUCT", "PSET", "PUSH", "PWD", "PY.DIR$", "PY.EVAL",
+        "PY.GET", "PY.HELP$", "PY.SET", "PYTHON$", "QR", "RANDOMSEED",
+        "RANGE", "REACT_BIND", "RECT", "RECUR", "REDUCE", "REGEX.FINDALL",
+        "REGEX.MATCH", "REGEX.REPLACE", "REGEX_MATCH", "REGEX_REPLACE$",
+        "REPLACE$", "RESHAPE", "REVERSE", "REVERSE$", "RMDIR", "ROTATE",
+        "ROTL", "ROTR", "ROUNDED_RECT", "SAVE", "SCAN", "SCREEN",
+        "SCREENFLIP", "SELECT", "SETENV", "SETFONT", "SETLOCALE",
+        "SFX.LOAD", "SFX.PLAY", "SHIFT", "SHUFFLE", "SLEEP", "SLICE",
+        "SOLVE", "SORT", "SOUND.BITCRUSH", "SOUND.BPM", "SOUND.COMPRESSOR",
+        "SOUND.DELAY", "SOUND.DELAYSEND", "SOUND.DISTORTION", "SOUND.EQ",
+        "SOUND.FILTER", "SOUND.FM", "SOUND.GAIN", "SOUND.GET_BUS_WAVE",
+        "SOUND.GET_WAVE", "SOUND.INIT", "SOUND.LFO", "SOUND.NOTE",
+        "SOUND.PAN", "SOUND.PLAY", "SOUND.PLAYBUFFER", "SOUND.RELEASE",
+        "SOUND.RESET", "SOUND.REVERB", "SOUND.REVERBSEND", "SOUND.RINGMOD",
+        "SOUND.SAMPLE", "SOUND.SCALE", "SOUND.SEQ", "SOUND.SHUTDOWN",
+        "SOUND.SIDECHAIN", "SOUND.STOP", "SOUND.UNISON", "SOUND.VOICE",
+        "SPLIT", "SPRITE.ALPHA", "SPRITE.ANIM", "SPRITE.COLLISION",
+        "SPRITE.COLLISIONS", "SPRITE.COLLISION_FIRST", "SPRITE.CREATE",
+        "SPRITE.DELETE", "SPRITE.DRAW", "SPRITE.DRAW_ALL", "SPRITE.FLIP",
+        "SPRITE.FRAME", "SPRITE.GET_VX", "SPRITE.GET_VY", "SPRITE.GET_X",
+        "SPRITE.GET_Y", "SPRITE.GRAVITY", "SPRITE.GROUP", "SPRITE.HEIGHT",
+        "SPRITE.LAND", "SPRITE.LOAD", "SPRITE.MOVE", "SPRITE.ON_GROUND",
+        "SPRITE.PLAY", "SPRITE.PLAYING", "SPRITE.POS", "SPRITE.ROTATE",
+        "SPRITE.SAVE", "SPRITE.SCALE", "SPRITE.SETBUFFER",
+        "SPRITE.SETPIXEL", "SPRITE.SET_ORIGIN", "SPRITE.STOP",
+        "SPRITE.UPDATE", "SPRITE.VELOCITY", "SPRITE.VISIBLE",
+        "SPRITE.WIDTH", "SPRITE.ZORDER", "SQL.CLOSE", "SQL.COLUMNS",
+        "SQL.ERRMSG$", "SQL.EXEC", "SQL.OPEN", "SQL.QUERY", "SQL.TABLE",
+        "STACK", "STDEV", "SUM", "SVD", "TAKE", "TAKE_WHILE", "TALLY",
+        "TENSOR", "TEXT", "THREAD.GETRESULT", "THREAD.ISDONE", "TICK",
+        "TILEMAP.COLLIDES", "TILEMAP.CREATE", "TILEMAP.DRAW", "TILEMAP.GET",
+        "TILEMAP.SET", "TILEMAP.SIZE", "TILEMAP.TILE_AT", "TIME$",
+        "TOGGLE_FULLSCREEN", "TRANSPOSE", "TUI.BEGIN", "TUI.BG_COLOR",
+        "TUI.BORDER_BEGIN", "TUI.BORDER_END", "TUI.BUTTON",
+        "TUI.CANVAS_BEGIN", "TUI.CANVAS_END", "TUI.CHECKBOX", "TUI.COLOR",
+        "TUI.DROPDOWN", "TUI.END", "TUI.EXIT", "TUI.GAUGE",
+        "TUI.GRID_BEGIN", "TUI.GRID_END", "TUI.HBOX_BEGIN", "TUI.HBOX_END",
+        "TUI.HEADING", "TUI.HEIGHT", "TUI.INPUT", "TUI.INPUT_DOUBLE",
+        "TUI.INPUT_INT", "TUI.KEY$", "TUI.LAST_RENDER_MS", "TUI.LINE",
+        "TUI.LINK", "TUI.MENU", "TUI.MENUBAR_BEGIN", "TUI.MENUBAR_END",
+        "TUI.MENUITEM", "TUI.MODAL_BEGIN", "TUI.MODAL_CLOSE",
+        "TUI.MODAL_END", "TUI.MODAL_OPEN", "TUI.MOUSE_BTN",
+        "TUI.MOUSE_WHEEL", "TUI.MOUSE_X", "TUI.MOUSE_Y", "TUI.ON",
+        "TUI.PARAGRAPH", "TUI.PIXEL", "TUI.POP_COLOR", "TUI.PROGRESS",
+        "TUI.QUIT", "TUI.RADIO", "TUI.RENDER", "TUI.RENDER_HEADLESS$",
+        "TUI.SAME_LINE", "TUI.SELECTABLE", "TUI.SEPARATOR",
+        "TUI.SEPARATOR_TEXT", "TUI.SIZE", "TUI.SLIDER", "TUI.SPACER",
+        "TUI.SPINNER", "TUI.STYLE_POP", "TUI.STYLE_PUSH",
+        "TUI.SUBMENU_BEGIN", "TUI.SUBMENU_END", "TUI.TABLE_BEGIN",
+        "TUI.TABLE_END", "TUI.TABLE_ROW", "TUI.TAB_BAR_BEGIN",
+        "TUI.TAB_BAR_END", "TUI.TAB_BEGIN", "TUI.TAB_END", "TUI.TEXT",
+        "TUI.THEME", "TUI.VBOX_BEGIN", "TUI.VBOX_END", "TUI.VERSION$",
+        "TUI.WAIT_EVENT", "TUI.WIDTH", "TURTLE.BACKWARD", "TURTLE.CLEAR",
+        "TURTLE.DRAW", "TURTLE.FORWARD", "TURTLE.HOME", "TURTLE.LEFT",
+        "TURTLE.PENDOWN", "TURTLE.PENUP", "TURTLE.RIGHT",
+        "TURTLE.SETHEADING", "TURTLE.SETPOS", "TURTLE.SET_COLOR",
+        "TXTREADER$", "TXTWRITER", "TYPEOF", "UNIQUE", "UNPACK", "UNREACT",
+        "VARIANCE", "VARS", "WAITKEY$", "XSORT", "YIELD", "ZEROS", "ZIP",
         "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
-        "AI.LOAD", "AI.RUN", "AI.FREE", "AI.INFO",
-        "AI.LIST", "AI.TENSOR", "AI.SOFTMAX",
-        "AI.ARGMAX", "AI.TOPK",
-        "AI.LOAD_LLM", "AI.CHAT", "AI.CHAT_STREAM",
-        "AI.CHAT_RAW", "AI.SET", "AI.TOKENIZE",
-        "AI.DETOKENIZE", "AI.LLM_INFO", "AI.FREE_LLM",
-        "AI.TOOL_ADD", "AI.TOOL_REMOVE", "AI.TOOL_CHAT",
-        "AI.TOOL_LIST",
-        "AI.CLEAR_HISTORY", "AI.GET_HISTORY",
-        "AI.TOKEN_COUNT", "AI.COSINE_SIM", "AI.NORMALIZE",
-        "AI.RAG_CREATE", "AI.RAG_ADD", "AI.RAG_ADD_FILE",
-        "AI.RAG_ADD_DIR", "AI.RAG_SAVE", "AI.RAG_LOAD",
-        "AI.RAG_SEARCH", "AI.RAG_QUERY", "AI.RAG_QUERY_FULL",
-        "AI.RAG_QUERY_STREAM", "AI.RAG_BUILD_INDEX",
-        "AI.RAG_INFO", "AI.RAG_CLEAR", "AI.RAG_FREE",
-        "AI.EMBED", "AI.EMBED_LLM", "AI.SIMILARITY",
-        "AI.LOAD_EMBEDDINGS",
-        "AI.SET_GRAMMAR", "AI.CLEAR_GRAMMAR",
-        "AI.SET_JSON_MODE", "AI.CHAT_JSON",
-        "AI.CLASSIFIER_CREATE", "AI.CLASSIFIER_ADD",
-        "AI.CLASSIFIER_ADD_BATCH", "AI.CLASSIFIER_PREDICT",
-        "AI.CLASSIFIER_BUILD_INDEX",
-        "AI.CLASSIFIER_SAVE", "AI.CLASSIFIER_LOAD",
-        "AI.CLASSIFIER_INFO", "AI.CLASSIFIER_FREE",
-        "SOUND.INIT", "SOUND.VOICE", "SOUND.SAMPLE",
-        "SOUND.PLAY", "SOUND.RELEASE", "SOUND.STOP",
-        "SOUND.SEQ", "SOUND.BPM", "SOUND.NOTE",
-        "SOUND.GAIN", "SOUND.PAN", "SOUND.FILTER",
-        "SOUND.EQ", "SOUND.LFO", "SOUND.FM",
-        "SOUND.UNISON", "SOUND.BITCRUSH", "SOUND.RINGMOD",
-        "SOUND.REVERBSEND", "SOUND.DELAYSEND", "SOUND.SIDECHAIN",
-        "SOUND.SCALE", "SOUND.DELAY", "SOUND.REVERB",
-        "SOUND.COMPRESSOR", "SOUND.DISTORTION",
-        "SOUND.RESET", "SOUND.SHUTDOWN",
-        "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
-        "SFX.LOAD", "SFX.PLAY", "MUSIC.PLAY", "MUSIC.STOP",
-        "GUI.BEGIN", "GUI.END", "GUI.BEGIN_CHILD", "GUI.END_CHILD",
-        "GUI.COLLAPSING_HEADER", "GUI.TREE_NODE", "GUI.TREE_POP",
-        "GUI.SAME_LINE", "GUI.SEPARATOR", "GUI.SEPARATOR_TEXT", "GUI.DUMMY",
-        "GUI.TEXT", "GUI.BUTTON", "GUI.CHECKBOX", "GUI.RADIO",
-        "GUI.SLIDER", "GUI.PROGRESS", "GUI.COLOR",
-        "GUI.HELPMARKER", "GUI.TOOLTIP",
-        "GUI.INPUT", "GUI.INPUT_INT", "GUI.INPUT_DOUBLE",
-        "GUI.COMBO", "GUI.LISTBOX", "GUI.SELECTABLE",
-        "GUI.BEGIN_MAIN_MENU_BAR", "GUI.END_MAIN_MENU_BAR",
-        "GUI.BEGIN_MENU_BAR", "GUI.END_MENU_BAR",
-        "GUI.BEGIN_MENU", "GUI.END_MENU", "GUI.MENU_ITEM",
-        "GUI.OPEN_POPUP", "GUI.BEGIN_POPUP", "GUI.BEGIN_POPUP_MODAL",
-        "GUI.END_POPUP", "GUI.CLOSE_CURRENT_POPUP",
-        "GUI.BEGIN_TAB_BAR", "GUI.END_TAB_BAR",
-        "GUI.BEGIN_TAB_ITEM", "GUI.END_TAB_ITEM",
-        "GUI.PLOT_LINES", "GUI.PLOT_HISTOGRAM",
-        "GUI.BEGIN_TABLE", "GUI.END_TABLE",
-        "GUI.TABLE_SETUP_COLUMN", "GUI.TABLE_HEADERS_ROW",
-        "GUI.TABLE_NEXT_ROW", "GUI.TABLE_SET_COLUMN_INDEX", "GUI.TABLE_NEXT_COLUMN",
-        "GUI.THEME", "GUI.FLAG", "GUI.COL",
-        "GUI.PUSH_STYLE_COLOR", "GUI.POP_STYLE_COLOR",
-        "GUI.PUSH_ID", "GUI.POP_ID", "GUI.SHOW_FONT_ATLAS",
-        "GUI.ITEM_RECT", "GUI.SET_CURSOR_SCREEN_POS",
-        "GUI.SET_NEXT_ITEM_WIDTH", "GUI.SET_KEYBOARD_FOCUS",
-        "GUI.ITEM_DEACTIVATED_AFTER_EDIT",
-        // TUI.* - every entry. None of the immediate-mode widgets
-        // want auto-vectorization (an array passed as options[] is
-        // ONE argument, not a fan-out trigger). See
-        // project_matrix_gfx_novec.md for the canonical rule.
-        "TUI.BEGIN", "TUI.END", "TUI.RENDER", "TUI.RENDER_HEADLESS$",
-        "TUI.WAIT_EVENT", "TUI.QUIT", "TUI.EXIT",
-        "TUI.HBOX_BEGIN", "TUI.HBOX_END",
-        "TUI.VBOX_BEGIN", "TUI.VBOX_END",
-        "TUI.GRID_BEGIN", "TUI.GRID_END",
-        "TUI.BORDER_BEGIN", "TUI.BORDER_END",
-        "TUI.SEPARATOR", "TUI.SEPARATOR_TEXT",
-        "TUI.SPACER", "TUI.SIZE", "TUI.SAME_LINE",
-        "TUI.TEXT", "TUI.PARAGRAPH", "TUI.HEADING", "TUI.LINK",
-        "TUI.BUTTON", "TUI.CHECKBOX", "TUI.RADIO",
-        "TUI.INPUT", "TUI.INPUT_INT", "TUI.INPUT_DOUBLE",
-        "TUI.SLIDER", "TUI.MENU", "TUI.DROPDOWN", "TUI.SELECTABLE",
-        "TUI.PROGRESS", "TUI.GAUGE", "TUI.SPINNER",
-        "TUI.CANVAS_BEGIN", "TUI.CANVAS_END",
-        "TUI.LINE", "TUI.PIXEL",
-        "TUI.TABLE_BEGIN", "TUI.TABLE_ROW", "TUI.TABLE_END",
-        "TUI.MODAL_OPEN", "TUI.MODAL_BEGIN", "TUI.MODAL_END", "TUI.MODAL_CLOSE",
-        "TUI.MENUBAR_BEGIN", "TUI.MENUBAR_END",
-        "TUI.SUBMENU_BEGIN", "TUI.SUBMENU_END", "TUI.MENUITEM",
-        "TUI.TAB_BAR_BEGIN", "TUI.TAB_BAR_END",
-        "TUI.TAB_BEGIN", "TUI.TAB_END",
-        "TUI.COLOR", "TUI.BG_COLOR", "TUI.POP_COLOR",
-        "TUI.STYLE_PUSH", "TUI.STYLE_POP", "TUI.THEME",
-        "TUI.KEY$", "TUI.MOUSE_X", "TUI.MOUSE_Y",
-        "TUI.MOUSE_BTN", "TUI.MOUSE_WHEEL", "TUI.ON",
-        "TUI.WIDTH", "TUI.HEIGHT", "TUI.LAST_RENDER_MS", "TUI.VERSION$",
+        "__MAKE_UDT_ARRAY__",
     };
-    return set.find(name) != set.end();
+    size_t lo = 0, hi = sizeof table / sizeof table[0];
+    while (lo < hi) {
+        size_t mid = lo + (hi - lo) / 2;
+        int c = strcmp(table[mid], name.c_str());
+        if (c == 0) return true;
+        if (c < 0) lo = mid + 1; else hi = mid;
+    }
+    return false;
 }
 
 // Invoke an already-resolved native: a direct call, or element-wise
@@ -3451,11 +3398,22 @@ Value VM::cast_value(const Value& v, ValueType target) {
 // baked into a chunk stay valid under any VM. Guarded by a mutex because an
 // async-worker VM may register on another thread while the main thread relinks.
 static std::mutex& native_slot_mutex() { static std::mutex m; return m; }
+#ifdef JDB_MCU
+// The names live where the registration wrote them: a literal in flash
+// for every builtin the interpreter and the boards register, a copy on
+// the heap only for a host that builds a name at run time.
+static std::vector<const char*>& native_slot_names() {
+    static std::vector<const char*> v;
+    if (v.empty()) v.reserve(512);
+    return v;
+}
+#else
 static std::vector<std::string>& native_slot_names() {
     static std::vector<std::string> v;
     if (v.empty()) v.reserve(512);
     return v;
 }
+#endif
 
 #ifdef JDB_MCU
 // A hash from name to slot costs a node and a second copy of the name
@@ -3470,22 +3428,22 @@ static std::vector<int32_t>& native_slot_sorted() {
 }
 
 // Both halves of the search, on the caller's lock.
-static size_t slot_lower_bound(const std::string& name) {
+static size_t slot_lower_bound(const char* name) {
     const auto& v = native_slot_sorted();
     const auto& names = native_slot_names();
     size_t lo = 0, hi = v.size();
     while (lo < hi) {
         size_t mid = lo + (hi - lo) / 2;
-        if (names[v[mid]].compare(name) < 0) lo = mid + 1;
+        if (strcmp(names[v[mid]], name) < 0) lo = mid + 1;
         else hi = mid;
     }
     return lo;
 }
 
-static int slot_find_locked(const std::string& name) {
+static int slot_find_locked(const char* name) {
     size_t at = slot_lower_bound(name);
     const auto& v = native_slot_sorted();
-    if (at < v.size() && native_slot_names()[v[at]] == name) return v[at];
+    if (at < v.size() && strcmp(native_slot_names()[v[at]], name) == 0) return v[at];
     return -1;
 }
 #else
@@ -3497,7 +3455,7 @@ static std::unordered_map<std::string, int>& native_slot_map() {
 int jdb_native_slot(const std::string& name) {
     std::lock_guard<std::mutex> lk(native_slot_mutex());
 #ifdef JDB_MCU
-    return slot_find_locked(name);
+    return slot_find_locked(name.c_str());
 #else
     auto& m = native_slot_map();
     auto it = m.find(name);
@@ -3505,25 +3463,27 @@ int jdb_native_slot(const std::string& name) {
 #endif
 }
 
-const std::string& jdb_native_name(int slot) {
+std::string jdb_native_name(int slot) {
     std::lock_guard<std::mutex> lk(native_slot_mutex());
-    static const std::string empty;
     auto& v = native_slot_names();
-    if (slot < 0 || (size_t)slot >= v.size()) return empty;
-    return v[slot];
+    if (slot < 0 || (size_t)slot >= v.size()) return std::string();
+    return std::string(v[slot]);
 }
 
-static int native_slot_intern(const std::string& name) {
+// copy says whether the name has to be duplicated: a literal lives as
+// long as the program, a name built by a host does not.
+static int native_slot_intern(const char* name, bool copy) {
     std::lock_guard<std::mutex> lk(native_slot_mutex());
 #ifdef JDB_MCU
     size_t at = slot_lower_bound(name);
     auto& v = native_slot_sorted();
-    if (at < v.size() && native_slot_names()[v[at]] == name) return v[at];
+    if (at < v.size() && strcmp(native_slot_names()[v[at]], name) == 0) return v[at];
     int slot = (int)native_slot_names().size();
-    native_slot_names().push_back(name);
+    native_slot_names().push_back(copy ? strdup(name) : name);
     v.insert(v.begin() + (long)at, slot);
     return slot;
 #else
+    (void)copy;
     auto& m = native_slot_map();
     auto it = m.find(name);
     if (it != m.end()) return it->second;
@@ -3570,8 +3530,25 @@ std::vector<std::string> VM::native_names() const {
     return out;
 }
 
-void VM::register_native(const std::string& name, NativeFunc fn) {
-    int slot = native_slot_intern(name);
+size_t VM::native_registry_bytes() const {
+    size_t n = native_table.capacity() * sizeof(NativeEntry*) + native_novec.capacity();
+#ifdef JDB_MCU
+    n += native_store.size() * sizeof(NativeEntry);
+    n += native_slot_sorted().capacity() * sizeof(int32_t);
+#else
+    for (auto& kv : natives) n += sizeof(kv) + kv.first.capacity() + 1;
+#endif
+#ifdef JDB_MCU
+    n += native_slot_names().capacity() * sizeof(const char*);
+#else
+    for (auto& name : native_slot_names())
+        n += sizeof(std::string) + (name.capacity() > 15 ? name.capacity() + 1 : 0);
+#endif
+    return n;
+}
+
+void VM::install_native(int slot, const char* name, NativeFunc fn) {
+    (void)name;
     if ((size_t)slot >= native_table.size()) {
         native_table.resize(slot + 1);
         native_novec.resize(slot + 1, -1);
@@ -3596,11 +3573,26 @@ void VM::register_native(const std::string& name, NativeFunc fn) {
 // CALL handler's try/catch for safety. The arity-checked overload
 // (name, min, max, fn) provides better error messages.
 
+void VM::register_native(const std::string& name, NativeFunc fn) {
+    install_native(native_slot_intern(name.c_str(), true), name.c_str(), std::move(fn));
+}
+
+void VM::register_native(const char* name, NativeFunc fn) {
+    install_native(native_slot_intern(name, false), name, std::move(fn));
+}
+
 void VM::register_native(const std::string& name, int min_args, int max_args, NativeFunc fn) {
-    register_native(name, std::move(fn));
-    NativeEntry* entry = native_table[native_slot_intern(name)];
-    entry->min_args = (int16_t)min_args;
-    entry->max_args = (int16_t)max_args;
+    int slot = native_slot_intern(name.c_str(), true);
+    install_native(slot, name.c_str(), std::move(fn));
+    native_table[slot]->min_args = (int16_t)min_args;
+    native_table[slot]->max_args = (int16_t)max_args;
+}
+
+void VM::register_native(const char* name, int min_args, int max_args, NativeFunc fn) {
+    int slot = native_slot_intern(name, false);
+    install_native(slot, name, std::move(fn));
+    native_table[slot]->min_args = (int16_t)min_args;
+    native_table[slot]->max_args = (int16_t)max_args;
 }
 
 // ── Helpers for matrix operations ─────────────────────────────
@@ -9160,6 +9152,16 @@ void VM::register_builtins() {
         event_raise(event_name, data);
         return Value::make_none();
     });
+#ifdef JDB_MCU
+    // Every builtin there will be is in now; the growth room goes back.
+    native_table.shrink_to_fit();
+    native_novec.shrink_to_fit();
+    {
+        std::lock_guard<std::mutex> lk(native_slot_mutex());
+        native_slot_names().shrink_to_fit();
+        native_slot_sorted().shrink_to_fit();
+    }
+#endif
 }
 
 // ── Event system implementation ─────────────────────────────────

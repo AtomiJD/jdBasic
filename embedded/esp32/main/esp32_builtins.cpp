@@ -43,8 +43,8 @@ void register_esp32_builtins(VM& vm) {
         for (const auto& n : names) text += n.size() + 1;
         char buf[192];
         snprintf(buf, sizeof buf,
-                 "%u natives, %u bytes of name, cost internal %d psram %d",
-                 (unsigned)names.size(), (unsigned)text,
+                 "%u natives, %u bytes of name, registry %u bytes, cost internal %d psram %d",
+                 (unsigned)names.size(), (unsigned)text, (unsigned)vm.native_registry_bytes(),
                  (int)s_before_natives_int - (int)s_after_natives_int,
                  (int)s_before_natives_psram - (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         return Value::make_string(buf);

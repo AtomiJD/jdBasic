@@ -38,7 +38,7 @@ struct VMState {
 // in any VM (each VM fills its own native_table at those slots). Returns -1 if
 // `name` is not a registered native.
 int jdb_native_slot(const std::string& name);
-const std::string& jdb_native_name(int slot);
+std::string jdb_native_name(int slot);
 
 class VM {
 public:
@@ -97,8 +97,13 @@ public:
         int16_t max_args = -1;   // -1 is unbounded
     };
     void register_native(const std::string& name, NativeFunc fn);
+    // The same with a name that outlives the program, a literal: the
+    // boards keep the pointer rather than a copy.
+    void register_native(const char* name, NativeFunc fn);
     // Register with arity check: min_args, max_args (-1 = unlimited)
     void register_native(const std::string& name, int min_args, int max_args, NativeFunc fn);
+    void register_native(const char* name, int min_args, int max_args, NativeFunc fn);
+    void install_native(int slot, const char* name, NativeFunc fn);
 
     // Per-VM no-vectorize extension. Names added here join the static
     // jdb_no_vectorize() set: a call to one of them will pass through
@@ -262,6 +267,10 @@ public:
         return native_find(name) != nullptr || func_map.count(name) > 0;
     }
     std::vector<std::string> native_names() const;
+    // What the registry holds in RAM for this VM: the entries, the slot
+    // table, and the process-wide names. A number for deciding whether the
+    // table belongs in flash.
+    size_t native_registry_bytes() const;
 
 private:
     // Save the previous "active VM" pointer so nested VMs (REPL/EXECUTE)
