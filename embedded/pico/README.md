@@ -23,6 +23,19 @@ load or the boot traced, in a directory of its own; `clean` wipes the
 directory first. Every combination keeps its own directory, so the
 matrix coexists.
 
+What the board has to spare is decided by knobs that keep their old
+value unless the build names another:
+
+    stack=64      the main stack in KB (128); SYS.STACK reports [size, deepest use]
+    frames=256    deepest call nesting (512), about 130 bytes of stack a frame
+    hist=8        lines the prompt remembers (16), histlen=128 their length (256)
+    pbuf=12       lwIP packet buffers (24), about 1.5 KB each
+    arena=2       the Fruit Jam's load arena in MB (3)
+    fat           keep the desktop-only builtins and std::regex; lean is the default
+
+On the PicoCalc `stack=64 hist=8 histlen=128 pbuf=12 frames=256` turns
+211 KB free at the prompt into 307 KB.
+
 Flashing: hold BOOTSEL while plugging the board in and drag the uf2
 onto the RP2350 drive. A board that already runs jdBasic does not need
 the button: opening its serial port at 1200 baud reboots it into

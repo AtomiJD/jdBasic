@@ -199,3 +199,41 @@ A, C, G and H are an afternoon and about 100 KB. B is the one real
 piece of work with a sure gain. D decides more programs than its number
 suggests. E and I are the big ones and the risky ones; E only after the
 gate has a test for every construct that crosses a unit boundary.
+
+## Done and measured, 2026-09-06
+
+A, C, G and H, each behind a build knob with the old value as default:
+
+    JDB_LEAN          desktop-only builtins and std::regex out    (build_pico.sh: fat to keep them)
+    JDB_STACK_KB      the main stack                              stack=64
+    JDB_MAX_FRAMES    deepest call nesting, ~130 B of stack each  frames=256
+    JDB_HIST_N/LEN    the prompt's history                        hist=8 histlen=128
+    JDB_PBUF_POOL     lwIP packet buffers                         pbuf=12
+    FJ_ARENA_MB       the Fruit Jam's load arena                  arena=2
+    SYS.STACK         [size, deepest use so far], both boards, the stack painted at boot
+
+The keyword table moved into flash (a sorted array, binary search) on
+every build; the desktop keeps its map for the tools.
+
+PicoCalc, free at the prompt:
+
+    211568   before
+    220688   lean, keywords in flash, everything else at the old values     +9 KB
+    307680   stack=64 hist=8 histlen=128 pbuf=12 frames=256                 +96 KB
+
+The deepest the stack has gone in anything run so far is 29.6 KB
+(recursion 200 deep, nested expressions, the demos); 600 levels stop
+with "Call stack overflow (max 256 frames)" and the prompt answers.
+Image: 2487808 -> 2370560 bytes of uf2, most of it the 25 builtins.
+
+ESP32 (ES3C28P, interpreter in PSRAM), internal RAM free at the prompt:
+
+    189255   before
+    193775   lean, keywords in flash, everything else at the old values     +4.5 KB (and +6 KB of PSRAM)
+    229615   stack=64 hist=8 histlen=128 frames=256                         +40 KB
+
+Stack peak 30.9 KB of 64 with the same probes; the clock runs, 198 KB
+left with the radio up. Image: 1897648 -> 1827040 bytes.
+
+Still open from the RAM list: B (the registry as a flash table), D (the
+load arena on every board), E, F, I.

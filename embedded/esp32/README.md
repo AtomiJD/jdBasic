@@ -16,6 +16,12 @@ Needs ESP-IDF v5.5 (GCC 14.2, the same compiler the RP2350 build uses).
     ./build.sh psram        an S3R8 DevKit, console on UART0
     ./build.sh nopsram      an S3FN8 part, 512 KB SRAM alone
 
+Knobs after the mode keep their old value unless named: `stack=64` (the
+main task stack in KB, 96), `frames=256` (deepest call nesting, 512),
+`hist=8 histlen=128` (the prompt's history, 16 by 256), `fat` (keep the
+desktop-only builtins and std::regex; lean is the default). SYS.STACK
+reports [size, deepest use so far].
+
 Each keeps its own build directory. `psram` needs the 240 MHz clock that
 `sdkconfig.defaults` sets; at IDF's default of 160 MHz the first access
 to PSRAM stalls the bus. `sdkconfig.psram` has the details.
