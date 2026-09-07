@@ -19,5 +19,5 @@ DIM t1 AS INTEGER = TICK()
 PRINT "Result : "; s
 PRINT "Elapsed: "; (t1 - t0); " ms for 100000 squares"
 PRINT
-PRINT "Desktop: jdbasic -c lesson14_native_compile_a.jdb"
+PRINT "Desktop: jdbasic -c native1.jdb"
 PRINT "Board:   jdbasic --pcode name.jdb, then RUN name.jdpb"

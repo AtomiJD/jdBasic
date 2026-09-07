@@ -122,6 +122,10 @@ static const char* HELP_GFX =
 "GFX.CONSIZE  [columns, rows]\n"
 "CURSOR 0 hides the text cursor,\n"
 "  CURSOR 1 shows it again\n"
+"colour per cell, terminal escapes:\n"
+"  PRINT CHR$(27) + \"[93m\"  ink\n"
+"  \"[44m\" paper, \"[7m\" swap, \"[0m\"\n"
+"  back; 3x/4x dull, 9x/10x bright\n"
 #if defined(FRUITJAM)
 "screen 320x240, text 40x30\n"
 "the console and a drawing program\n"
@@ -332,7 +336,8 @@ static const char* HELP_SYS =
 "  the 8 MB beside the chip\n"
 "SYS.CLOCK()   the core clock in Hz\n"
 #endif
-"FS.TEST()  flash store selftest\n"
+"FS.TEST()  FORMATS the store and\n"
+"  mounts it again: every file gone\n"
 "FS.NUKEPT() wipes flash to BOOTSEL\n"
 "PIN.DIAG$() edge ISR + queue state\n"
 #else

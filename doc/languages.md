@@ -3698,7 +3698,7 @@ against whatever the console turns out to be.
 A name without an extension may mean the `.jdb` of that name: `RUN hello`
 finds `hello.jdb`. What is actually there wins, so a file that really has
 no extension stays reachable. A name may carry a folder: `RUN
-lessons/lesson01_hello_a` runs from the `lessons` folder on any board,
+lessons/hello1` runs from the `lessons` folder on any board,
 and a module a program `IMPORT`s is looked for in the program's own
 folder first.
 
@@ -3726,7 +3726,7 @@ cursor. `HELP` at the prompt is the board's own manual, `HELP MORE` the
 families it does not spell out.
 
 The Train jdBasic lessons sit on every board in a `lessons` folder: `TYPE
-lessons/readme.txt` lists them, `RUN lessons/lesson01_hello_a` starts
+lessons/readme.txt` lists them, `RUN lessons/hello1` starts
 one. The files are those of `jdb/tutorials/tv/`, with a board edition
 of the graphics, HTTP and native-compile lessons; `embedded/lessons/`
 in the repository holds the pack.
@@ -3891,6 +3891,15 @@ The keyboard is a real USB one: `USB.KEYBOARDS`, `USB.DEVICES`,
 swaps y and z, the digit row and the punctuation. It starts as US at
 every power-on, so a one-line program behind `AUTORUN` is what makes
 German stick.
+
+The console takes the terminal's colour escapes, on every board and per
+character cell: `ESC[3xm` and the bright `ESC[9xm` set the ink,
+`ESC[4xm` and `ESC[10xm` the paper, `ESC[7m` swaps the two, `ESC[27m`
+swaps them back and `ESC[0m` restores the defaults. So `PRINT CHR$(27) +
+"[97;44m" + " menu " + CHR$(27) + "[0m"` is a white-on-blue bar, and a
+row of spaces on a coloured ground is a bar chart without a drawing
+verb. The Fruit Jam maps the sixteen onto its RGB332 framebuffer, the
+PicoCalc and the ES3C28P onto their palettes.
 
 The console font is a C64 font and always was, but only its letters
 were filled in. The half above them is there now: `CHR$(n)` for n from

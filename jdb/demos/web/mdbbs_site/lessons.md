@@ -1,5 +1,5 @@
 {green}========================================{/}
-{yellow} L E S S O N S{/}
+{white/blue} L E S S O N S                          {/}
 {green}========================================{/}
 
  The Train jdBasic lessons, one file
@@ -12,126 +12,126 @@
 {cyan} ---- 01 Hello jdBasic -----------------{/}
 
 {gray}   Hello, World{/}
- {orange}[lesson01_hello_a.jdb](progs/lessons/lesson01_hello_a.jdb){/}
+ {orange}[hello1.jdb](progs/lessons/hello1.jdb){/}
 
 {cyan} ---- 02 If and For --------------------{/}
 
 {gray}   Inline IF{/}
- {orange}[lesson02_if_for_a.jdb](progs/lessons/lesson02_if_for_a.jdb){/}
+ {orange}[iffor1.jdb](progs/lessons/iffor1.jdb){/}
 {gray}   Block IF + EDIT{/}
- {orange}[lesson02_if_for_b.jdb](progs/lessons/lesson02_if_for_b.jdb){/}
+ {orange}[iffor2.jdb](progs/lessons/iffor2.jdb){/}
 {gray}   IF / ELSE{/}
- {orange}[lesson02_if_for_c.jdb](progs/lessons/lesson02_if_for_c.jdb){/}
+ {orange}[iffor3.jdb](progs/lessons/iffor3.jdb){/}
 {gray}   ELSEIF chains{/}
- {orange}[lesson02_if_for_d.jdb](progs/lessons/lesson02_if_for_d.jdb){/}
+ {orange}[iffor4.jdb](progs/lessons/iffor4.jdb){/}
 {gray}   FOR loops{/}
- {orange}[lesson02_if_for_e.jdb](progs/lessons/lesson02_if_for_e.jdb){/}
+ {orange}[iffor5.jdb](progs/lessons/iffor5.jdb){/}
 {gray}   STEP - count by anything{/}
- {orange}[lesson02_if_for_f.jdb](progs/lessons/lesson02_if_for_f.jdb){/}
+ {orange}[iffor6.jdb](progs/lessons/iffor6.jdb){/}
 {gray}   FizzBuzz finale{/}
- {orange}[lesson02_if_for_g.jdb](progs/lessons/lesson02_if_for_g.jdb){/}
+ {orange}[iffor7.jdb](progs/lessons/iffor7.jdb){/}
 
 {cyan} ---- 03 Arrays ------------------------{/}
 
 {gray}   Array literals + indexing{/}
- {orange}[lesson03_arrays_a.jdb](progs/lessons/lesson03_arrays_a.jdb){/}
+ {orange}[array1.jdb](progs/lessons/array1.jdb){/}
 {gray}   Putting it together{/}
- {orange}[lesson03_arrays_b.jdb](progs/lessons/lesson03_arrays_b.jdb){/}
+ {orange}[array2.jdb](progs/lessons/array2.jdb){/}
 
 {cyan} ---- 04 Strings -----------------------{/}
 
 {gray}   Concatenation + LEN{/}
- {orange}[lesson04_strings_a.jdb](progs/lessons/lesson04_strings_a.jdb){/}
+ {orange}[string1.jdb](progs/lessons/string1.jdb){/}
 {gray}   CSV mini-parser{/}
- {orange}[lesson04_strings_b.jdb](progs/lessons/lesson04_strings_b.jdb){/}
+ {orange}[string2.jdb](progs/lessons/string2.jdb){/}
 
 {cyan} ---- 05 Functions and SUBs ------------{/}
 
 {gray}   FUNC + RETURN{/}
- {orange}[lesson05_func_sub_a.jdb](progs/lessons/lesson05_func_sub_a.jdb){/}
+ {orange}[func1.jdb](progs/lessons/func1.jdb){/}
 {gray}   Multiple parameters{/}
- {orange}[lesson05_func_sub_b.jdb](progs/lessons/lesson05_func_sub_b.jdb){/}
+ {orange}[func2.jdb](progs/lessons/func2.jdb){/}
 {gray}   SUB - actions, no return{/}
- {orange}[lesson05_func_sub_c.jdb](progs/lessons/lesson05_func_sub_c.jdb){/}
+ {orange}[func3.jdb](progs/lessons/func3.jdb){/}
 {gray}   Recursion - Fibonacci{/}
- {orange}[lesson05_func_sub_d.jdb](progs/lessons/lesson05_func_sub_d.jdb){/}
+ {orange}[func4.jdb](progs/lessons/func4.jdb){/}
 
 {cyan} ---- 06 Maps --------------------------{/}
 
 {gray}   Map literal + indexing{/}
- {orange}[lesson06_maps_a.jdb](progs/lessons/lesson06_maps_a.jdb){/}
+ {orange}[maps1.jdb](progs/lessons/maps1.jdb){/}
 {gray}   FOR EACH iteration{/}
- {orange}[lesson06_maps_b.jdb](progs/lessons/lesson06_maps_b.jdb){/}
+ {orange}[maps2.jdb](progs/lessons/maps2.jdb){/}
 
 {cyan} ---- 07 Input and Do Loops ------------{/}
 
 {gray}   INPUT - reading a string{/}
- {orange}[lesson07_input_do_a.jdb](progs/lessons/lesson07_input_do_a.jdb){/}
+ {orange}[input1.jdb](progs/lessons/input1.jdb){/}
 {gray}   INPUT - reading a number{/}
- {orange}[lesson07_input_do_b.jdb](progs/lessons/lesson07_input_do_b.jdb){/}
+ {orange}[input2.jdb](progs/lessons/input2.jdb){/}
 {gray}   DO ... LOOP UNTIL{/}
- {orange}[lesson07_input_do_c.jdb](progs/lessons/lesson07_input_do_c.jdb){/}
+ {orange}[input3.jdb](progs/lessons/input3.jdb){/}
 {gray}   INPUT + DO together{/}
- {orange}[lesson07_input_do_d.jdb](progs/lessons/lesson07_input_do_d.jdb){/}
+ {orange}[input4.jdb](progs/lessons/input4.jdb){/}
 
 {cyan} ---- 08 File I/O ----------------------{/}
 
 {gray}   TXTWRITER - write a file{/}
- {orange}[lesson08_file_io_a.jdb](progs/lessons/lesson08_file_io_a.jdb){/}
+ {orange}[fileio1.jdb](progs/lessons/fileio1.jdb){/}
 {gray}   TXTREADER$ - read a file{/}
- {orange}[lesson08_file_io_b.jdb](progs/lessons/lesson08_file_io_b.jdb){/}
+ {orange}[fileio2.jdb](progs/lessons/fileio2.jdb){/}
 {gray}   Multi-line + todo demo{/}
- {orange}[lesson08_file_io_c.jdb](progs/lessons/lesson08_file_io_c.jdb){/}
+ {orange}[fileio3.jdb](progs/lessons/fileio3.jdb){/}
 
 {cyan} ---- 09 Graphics ----------------------{/}
 
 {gray}   First circle{/}
- {orange}[lesson09_graphics_a.jdb](progs/lessons/lesson09_graphics_a.jdb){/}
+ {orange}[gfx1.jdb](progs/lessons/gfx1.jdb){/}
 {gray}   Layered shapes{/}
- {orange}[lesson09_graphics_b.jdb](progs/lessons/lesson09_graphics_b.jdb){/}
+ {orange}[gfx2.jdb](progs/lessons/gfx2.jdb){/}
 {gray}   Drawing in a loop{/}
- {orange}[lesson09_graphics_c.jdb](progs/lessons/lesson09_graphics_c.jdb){/}
+ {orange}[gfx3.jdb](progs/lessons/gfx3.jdb){/}
 
 {cyan} ---- 10 Modules -----------------------{/}
 
 {gray}   IMPORT + dotted calls{/}
- {orange}[lesson10_modules_b.jdb](progs/lessons/lesson10_modules_b.jdb){/}
+ {orange}[module1.jdb](progs/lessons/module1.jdb){/}
 
 {cyan} ---- 11 REPL Workflow -----------------{/}
 
 {gray}   Intro{/}
- {orange}[lesson11_repl_workflow_a.jdb](progs/lessons/lesson11_repl_workflow_a.jdb){/}
+ {orange}[repl1.jdb](progs/lessons/repl1.jdb){/}
 
 {cyan} ---- 12 Higher-Order Functions --------{/}
 
 {gray}   SELECT + the @ reference{/}
- {orange}[lesson12_higher_order_a.jdb](progs/lessons/lesson12_higher_order_a.jdb){/}
+ {orange}[hiord1.jdb](progs/lessons/hiord1.jdb){/}
 {gray}   Lambdas{/}
- {orange}[lesson12_higher_order_b.jdb](progs/lessons/lesson12_higher_order_b.jdb){/}
+ {orange}[hiord2.jdb](progs/lessons/hiord2.jdb){/}
 {gray}   FILTER{/}
- {orange}[lesson12_higher_order_c.jdb](progs/lessons/lesson12_higher_order_c.jdb){/}
+ {orange}[hiord3.jdb](progs/lessons/hiord3.jdb){/}
 {gray}   REDUCE{/}
- {orange}[lesson12_higher_order_d.jdb](progs/lessons/lesson12_higher_order_d.jdb){/}
+ {orange}[hiord4.jdb](progs/lessons/hiord4.jdb){/}
 {gray}   The pipe operator{/}
- {orange}[lesson12_higher_order_e.jdb](progs/lessons/lesson12_higher_order_e.jdb){/}
+ {orange}[hiord5.jdb](progs/lessons/hiord5.jdb){/}
 {gray}   Closures - MakeAdder{/}
- {orange}[lesson12_higher_order_f.jdb](progs/lessons/lesson12_higher_order_f.jdb){/}
+ {orange}[hiord6.jdb](progs/lessons/hiord6.jdb){/}
 
 {cyan} ---- 13 HTTP and JSON -----------------{/}
 
 {gray}   HTTP.GET$ - raw response{/}
- {orange}[lesson13_http_json_a.jdb](progs/lessons/lesson13_http_json_a.jdb){/}
+ {orange}[http1.jdb](progs/lessons/http1.jdb){/}
 {gray}   JSON.PARSE$ - structured data{/}
- {orange}[lesson13_http_json_b.jdb](progs/lessons/lesson13_http_json_b.jdb){/}
+ {orange}[http2.jdb](progs/lessons/http2.jdb){/}
 {gray}   GitHub user demo{/}
- {orange}[lesson13_http_json_c.jdb](progs/lessons/lesson13_http_json_c.jdb){/}
+ {orange}[http3.jdb](progs/lessons/http3.jdb){/}
 
 {cyan} ---- 14 Native Compilation ------------{/}
 
 {gray}   The benchmark + type annotations{/}
- {orange}[lesson14_native_compile_a.jdb](progs/lessons/lesson14_native_compile_a.jdb){/}
+ {orange}[native1.jdb](progs/lessons/native1.jdb){/}
 
-{gray}   mathx.jdb goes with lesson 10{/}
+{gray}   mathx.jdb goes with module1{/}
  {orange}[mathx.jdb](progs/lessons/mathx.jdb){/}
 
  {orange}[Main menu](index.md){/}

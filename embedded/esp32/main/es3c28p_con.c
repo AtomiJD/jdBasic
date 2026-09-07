@@ -61,11 +61,22 @@ static const uint8_t g_pal[PAL_N][3] = {
     { 0xE8, 0xE8, 0xB0 },       // 15 sand
 };
 static uint8_t g_cur_attr = 0;
+static int g_cur_fg = 0, g_cur_bg = 0, g_cur_rev = 0;
+
+// Ink in the low nibble, paper in the high one: 0 is the black ground,
+// n is palette entry n. Reverse video swaps the two; a black ground
+// becomes gray ink and the default ink white paper.
+static void attr_update(void) {
+    int fg = g_cur_fg, bg = g_cur_bg;
+    if (g_cur_rev) {
+        fg = bg ? bg : 4;
+        bg = g_cur_fg ? g_cur_fg : 1;
+    }
+    g_cur_attr = (uint8_t)(fg | (bg << 4));
+}
 
 static void draw_row(int row) {
-    const uint8_t* bg = NULL;
-    uint16_t back = es3c28p_lcd_encode(0, 0, 0);
-    (void)bg;
+    const uint16_t black = es3c28p_lcd_encode(0, 0, 0);
     for (int line = 0; line < CH; line++) {
         uint16_t* px = es3c28p_lcd_row(row * CH + line);
         if (!px) return;
@@ -74,6 +85,8 @@ static void draw_row(int row) {
             int inv = g_cursor && row == g_cy && col == g_cx;
             const uint8_t* fg = g_pal[g_attr[row][col] & (PAL_N - 1)];
             uint16_t ink = es3c28p_lcd_encode(fg[0], fg[1], fg[2]);
+            int bgn = g_attr[row][col] >> 4;
+            uint16_t back = bgn ? es3c28p_lcd_encode(g_pal[bgn][0], g_pal[bgn][1], g_pal[bgn][2]) : black;
             for (int b = 0; b < CW; b++) {
                 int on = (bits & (0x80 >> b)) != 0;
                 if (inv) on = !on;
@@ -166,17 +179,30 @@ static int ansi_step(char c) {
     } else if (c == 'm') {
         for (int i = 0; i <= g_parn; i++) {
             switch (g_par[i]) {
-                case 0:            g_cur_attr = 0; break;
-                case 30: case 90:  g_cur_attr = 4; break;
-                case 31: case 91:  g_cur_attr = 5; break;
-                case 32: case 92:  g_cur_attr = 8; break;
-                case 33: case 93:  g_cur_attr = 2; break;
-                case 34: case 94:  g_cur_attr = 7; break;
-                case 35: case 95:  g_cur_attr = 6; break;
-                case 36: case 96:  g_cur_attr = 3; break;
-                case 37: case 97:  g_cur_attr = 1; break;
+                case 0:            g_cur_fg = 0; g_cur_bg = 0; g_cur_rev = 0; break;
+                case 7:            g_cur_rev = 1; break;
+                case 27:           g_cur_rev = 0; break;
+                case 39:           g_cur_fg = 0; break;
+                case 49:           g_cur_bg = 0; break;
+                case 30: case 90:  g_cur_fg = 4; break;
+                case 31: case 91:  g_cur_fg = 5; break;
+                case 32: case 92:  g_cur_fg = 8; break;
+                case 33: case 93:  g_cur_fg = 2; break;
+                case 34: case 94:  g_cur_fg = 7; break;
+                case 35: case 95:  g_cur_fg = 6; break;
+                case 36: case 96:  g_cur_fg = 3; break;
+                case 37: case 97:  g_cur_fg = 1; break;
+                case 40: case 100: g_cur_bg = 0; break;
+                case 41: case 101: g_cur_bg = 5; break;
+                case 42: case 102: g_cur_bg = 8; break;
+                case 43: case 103: g_cur_bg = 2; break;
+                case 44: case 104: g_cur_bg = 7; break;
+                case 45: case 105: g_cur_bg = 6; break;
+                case 46: case 106: g_cur_bg = 3; break;
+                case 47: case 107: g_cur_bg = 1; break;
             }
         }
+        attr_update();
     }
     return 1;
 }

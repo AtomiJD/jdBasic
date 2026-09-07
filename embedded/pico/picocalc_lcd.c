@@ -41,9 +41,10 @@ static uint8_t g_attr[ROWS][COLS];
 static uint8_t g_dirty[ROWS];
 static int g_cx = 0, g_cy = 0;
 
-// Per-cell foreground, index 0 the classic green. Set through the SGR
-// escapes; 0m falls back to the default.
-static const uint8_t g_pal[8][3] = {
+// Per-cell ink in the low nibble, index 0 the classic green, and paper
+// in the high nibble, 0 for the black ground and n for palette entry
+// n - 1. Set through the SGR escapes; 0m falls back to the defaults.
+static const uint8_t g_pal[9][3] = {
     { FG_R, FG_G, FG_B },       // 0 default green
     { 0xF8, 0xF8, 0xF8 },       // 1 white
     { 0xF8, 0xE8, 0x40 },       // 2 yellow
@@ -52,8 +53,20 @@ static const uint8_t g_pal[8][3] = {
     { 0xF8, 0x50, 0x50 },       // 5 red
     { 0xE0, 0x60, 0xE0 },       // 6 magenta
     { 0x60, 0x80, 0xF8 },       // 7 blue
+    { 0x00, 0x00, 0x00 },       // 8 black
 };
 static uint8_t g_cur_attr = 0;
+static int g_cur_fg = 0, g_cur_bg = 0, g_cur_rev = 0;
+
+// Reverse video swaps the two; a black ground becomes black ink.
+static void attr_update(void) {
+    int fg = g_cur_fg, bg = g_cur_bg;
+    if (g_cur_rev) {
+        fg = bg ? bg - 1 : 8;
+        bg = g_cur_fg + 1;
+    }
+    g_cur_attr = (uint8_t)(fg | (bg << 4));
+}
 static int g_scroll = 0;          // ring offset in text rows, 0..RING_ROWS-1
 static int g_cursor_on = 1;
 
@@ -104,12 +117,16 @@ static void draw_row(int row) {
         for (int col = 0; col < COLS; col++) {
             uint8_t bits = jdb_cell_rows(jdos_font8x8_c64, (uint8_t)g_text[row][col])[line];
             int inv = g_cursor_on && row == g_cy && col == g_cx;
-            const uint8_t* fg = g_pal[g_attr[row][col] & 7];
+            const uint8_t* fg = g_pal[g_attr[row][col] & 15];
+            int bgn = g_attr[row][col] >> 4;
+            const uint8_t* paper = bgn ? g_pal[bgn - 1] : NULL;
             for (int px = 0; px < 8; px++) {
                 int on = (bits & (0x80 >> px)) != 0;
                 if (inv) on = !on;
                 if (on) {
                     *p++ = fg[0]; *p++ = fg[1]; *p++ = fg[2];
+                } else if (paper) {
+                    *p++ = paper[0]; *p++ = paper[1]; *p++ = paper[2];
                 } else {
                     *p++ = BG_R; *p++ = BG_G; *p++ = BG_B;
                 }
@@ -210,21 +227,35 @@ static int ansi_step(char c) {
         g_dirty[g_cy] = 1;
         g_cx = g_cx + n < COLS ? g_cx + n : COLS - 1;
     } else if (c == 'm') {
-        // The SGR subset: 0 resets, the 3x and bright 9x foregrounds
-        // pick from the palette.
+        // The SGR subset: 0 resets, 3x and bright 9x pick the ink from
+        // the palette, 4x and 10x the paper, 7 and 27 swap them.
         for (int i = 0; i <= g_parn; i++) {
             switch (g_par[i]) {
-                case 0:            g_cur_attr = 0; break;
-                case 37: case 97:  g_cur_attr = 1; break;
-                case 33: case 93:  g_cur_attr = 2; break;
-                case 36: case 96:  g_cur_attr = 3; break;
-                case 90:           g_cur_attr = 4; break;
-                case 31: case 91:  g_cur_attr = 5; break;
-                case 35: case 95:  g_cur_attr = 6; break;
-                case 34: case 94:  g_cur_attr = 7; break;
-                case 32: case 92:  g_cur_attr = 0; break;
+                case 0:            g_cur_fg = 0; g_cur_bg = 0; g_cur_rev = 0; break;
+                case 7:            g_cur_rev = 1; break;
+                case 27:           g_cur_rev = 0; break;
+                case 39:           g_cur_fg = 0; break;
+                case 49:           g_cur_bg = 0; break;
+                case 30:           g_cur_fg = 8; break;
+                case 37: case 97:  g_cur_fg = 1; break;
+                case 33: case 93:  g_cur_fg = 2; break;
+                case 36: case 96:  g_cur_fg = 3; break;
+                case 90:           g_cur_fg = 4; break;
+                case 31: case 91:  g_cur_fg = 5; break;
+                case 35: case 95:  g_cur_fg = 6; break;
+                case 34: case 94:  g_cur_fg = 7; break;
+                case 32: case 92:  g_cur_fg = 0; break;
+                case 40: case 100: g_cur_bg = 0; break;
+                case 41: case 101: g_cur_bg = 6; break;
+                case 42: case 102: g_cur_bg = 1; break;
+                case 43: case 103: g_cur_bg = 3; break;
+                case 44: case 104: g_cur_bg = 8; break;
+                case 45: case 105: g_cur_bg = 7; break;
+                case 46: case 106: g_cur_bg = 4; break;
+                case 47: case 107: g_cur_bg = 2; break;
             }
         }
+        attr_update();
     }
     return 1;
 }

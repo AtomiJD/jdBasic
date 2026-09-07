@@ -1,38 +1,38 @@
 Train jdBasic - the lessons, on the board
 =========================================
 One file per segment of a video lesson.
-RUN lessons/lesson01_hello_a  starts one;
-TYPE lessons/lesson01_hello_a.jdb shows
-it, EDIT the same name opens it.
+RUN lessons/hello1  starts one;
+TYPE lessons/hello1.jdb shows it, EDIT
+the same name opens it.
 
-01 hello        PRINT and variables
-02 if_for       IF, ELSEIF, FOR, STEP,
-                FizzBuzz (a to g)
-03 arrays       literals, indexing (a b)
-04 strings      LEN, MID$, a CSV parser
-05 func_sub     FUNC, SUB, recursion
-06 maps         literals, FOR EACH
-07 input_do     INPUT and DO loops -
-                these ask you to type
-08 file_io      TXTWRITER, TXTREADER$;
-                writes hello.txt and
-                todo.txt on the store
-09 graphics     the board's screen, 320
-                by 240, three seconds
-                each
-10 modules      IMPORT MATHX from
-                mathx.jdb in this folder
-11 repl         a program to poke at
-12 higher_order SELECT, FILTER, REDUCE,
-                the pipe, closures
-13 http_json    HTTP.GET$ and JSON -
-                needs wifi.txt on the
-                store: ssid, then
-                password, one per line;
-                c needs https, which
-                a PicoCalc has not
-14 native       the benchmark; the
-                compiler is on the
-                desktop
+01 hello1        PRINT and variables
+02 iffor1-7      IF, ELSEIF, FOR, STEP,
+                 FizzBuzz
+03 array1-2      literals, indexing
+04 string1-2     LEN, MID$, a CSV parser
+05 func1-4       FUNC, SUB, recursion
+06 maps1-2       literals, FOR EACH
+07 input1-4      INPUT and DO loops -
+                 these ask you to type
+08 fileio1-3     TXTWRITER, TXTREADER$;
+                 writes hello.txt and
+                 todo.txt on the store
+09 gfx1-3        the board's screen, 320
+                 by 240, three seconds
+                 each
+10 module1       IMPORT MATHX from
+                 mathx.jdb in this folder
+11 repl1         a program to poke at
+12 hiord1-6      SELECT, FILTER, REDUCE,
+                 the pipe, closures
+13 http1-3       HTTP.GET$ and JSON -
+                 needs wifi.txt on the
+                 store: ssid, then
+                 password, one per line;
+                 http3 needs https, which
+                 a PicoCalc has not
+14 native1       the benchmark; the
+                 compiler is on the
+                 desktop
 
 Ctrl-C ends a running lesson.

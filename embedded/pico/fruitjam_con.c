@@ -144,29 +144,20 @@ static void flush_held(void) {
 // of red, three of green and two of blue this framebuffer has. Blue is
 // the one that suffers: two bits is all there is, so it is lifted with
 // a little green to stay visible against the dark ground.
+// Ink and paper take the same eight, 3x/4x dull and 9x/10x bright.
+static const uint8_t SGR_DULL[8]   = { 0x00, 0xA0, 0x14, 0xF0, 0x07, 0xA2, 0x16, 0xB6 };
+static const uint8_t SGR_BRIGHT[8] = { 0x92, 0xE0, 0x1C, 0xFC, 0x0F, 0xE3, 0x1F, 0xFF };
+
 static void sgr(int code) {
-    switch (code) {
-        case 0:  g_fg = 0x3C; g_reverse = 0; break;
-        case 7:  g_reverse = 1; break;
-        case 27: g_reverse = 0; break;
-        case 30: g_fg = 0x00; break;
-        case 31: g_fg = 0xA0; break;
-        case 32: g_fg = 0x14; break;
-        case 33: g_fg = 0xF0; break;
-        case 34: g_fg = 0x07; break;
-        case 35: g_fg = 0xA2; break;
-        case 36: g_fg = 0x16; break;
-        case 37: g_fg = 0xB6; break;
-        case 90: g_fg = 0x92; break;
-        case 91: g_fg = 0xE0; break;
-        case 92: g_fg = 0x1C; break;
-        case 93: g_fg = 0xFC; break;
-        case 94: g_fg = 0x0F; break;
-        case 95: g_fg = 0xE3; break;
-        case 96: g_fg = 0x1F; break;
-        case 97: g_fg = 0xFF; break;
-        default: break;
-    }
+    if (code == 0) { g_fg = 0x3C; g_bg = 0x00; g_reverse = 0; }
+    else if (code == 7) g_reverse = 1;
+    else if (code == 27) g_reverse = 0;
+    else if (code == 39) g_fg = 0x3C;
+    else if (code == 49) g_bg = 0x00;
+    else if (code >= 30 && code <= 37) g_fg = SGR_DULL[code - 30];
+    else if (code >= 90 && code <= 97) g_fg = SGR_BRIGHT[code - 90];
+    else if (code >= 40 && code <= 47) g_bg = SGR_DULL[code - 40];
+    else if (code >= 100 && code <= 107) g_bg = SGR_BRIGHT[code - 100];
 }
 
 // Semicolon-separated numbers, however many the sequence carried. The

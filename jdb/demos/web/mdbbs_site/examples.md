@@ -1,5 +1,5 @@
 {green}========================================{/}
-{yellow} E X A M P L E S{/}
+{white/blue} E X A M P L E S                        {/}
 {green}========================================{/}
 
  Pull one down and run it. On a board

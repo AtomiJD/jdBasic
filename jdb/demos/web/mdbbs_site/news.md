@@ -1,5 +1,5 @@
 {green}========================================{/}
-{yellow} N E W S{/}
+{white/blue} N E W S                                {/}
 {green}========================================{/}
 
 {cyan} ---- Ctrl-C --------------------------{/}
@@ -52,7 +52,10 @@
  board, the same UTF-8 glyphs, the
  same PETSCII block from CHR$(152) up.
  CURSOR 0 hides the cursor, CURSOR 1
- shows it.
+ shows it. Ink and paper per cell:
+ {white/blue} like this {/} is one
+ escape on every board, and this page
+ writes it as {white}{white/blue}{/}.
 
 {cyan} ---- Programs that skip the compiler -{/}
 

@@ -4,7 +4,7 @@ The programs from the Train jdBasic video lessons, in the form a board
 runs them. They sit in a `lessons` folder on every board's flash store:
 
 ```
-> RUN lessons/lesson01_hello_a
+> RUN lessons/hello1
 > TYPE lessons/readme.txt
 ```
 
@@ -39,5 +39,5 @@ the details.
 |---|---|---|---|
 | 01 to 08, 10 to 12, 14 | yes | yes | yes |
 | 09 graphics | yes | yes | yes |
-| 13 http_json a, b | yes, over the Pico 2 W radio | yes | yes |
-| 13 http_json c | no, https needs the Fruit Jam's or the ESP32's TLS | yes | yes |
+| 13 http1, http2 | yes, over the Pico 2 W radio | yes | yes |
+| 13 http3 | no, https needs the Fruit Jam's or the ESP32's TLS | yes | yes |

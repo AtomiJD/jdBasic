@@ -29,8 +29,7 @@ PGROWS = 20
 ' Colour is written {red}like this{/}. The escape it turns into takes
 ' no room on the screen, so it must take none in the column count
 ' either - the wrap below counts what is visible and nothing else.
-FUNC TERMCOLOR$(name$)
-    IF name$ = "/" THEN RETURN CHR$(27) + "[0m"
+FUNC TERMFG$(name$)
     IF name$ = "red" THEN RETURN CHR$(27) + "[91m"
     IF name$ = "green" THEN RETURN CHR$(27) + "[92m"
     IF name$ = "yellow" THEN RETURN CHR$(27) + "[93m"
@@ -40,7 +39,37 @@ FUNC TERMCOLOR$(name$)
     IF name$ = "white" THEN RETURN CHR$(27) + "[97m"
     IF name$ = "gray" THEN RETURN CHR$(27) + "[90m"
     IF name$ = "orange" THEN RETURN CHR$(27) + "[33m"
+    IF name$ = "black" THEN RETURN CHR$(27) + "[30m"
     RETURN ""
+ENDFUNC
+
+FUNC TERMBG$(name$)
+    IF name$ = "red" THEN RETURN CHR$(27) + "[41m"
+    IF name$ = "green" THEN RETURN CHR$(27) + "[42m"
+    IF name$ = "yellow" THEN RETURN CHR$(27) + "[43m"
+    IF name$ = "blue" THEN RETURN CHR$(27) + "[44m"
+    IF name$ = "magenta" THEN RETURN CHR$(27) + "[45m"
+    IF name$ = "cyan" THEN RETURN CHR$(27) + "[46m"
+    IF name$ = "white" THEN RETURN CHR$(27) + "[47m"
+    IF name$ = "gray" THEN RETURN CHR$(27) + "[100m"
+    IF name$ = "orange" THEN RETURN CHR$(27) + "[43m"
+    IF name$ = "black" THEN RETURN CHR$(27) + "[40m"
+    RETURN ""
+ENDFUNC
+
+' {red} is ink, {white/blue} ink on paper, {/blue} paper alone; {/} ends
+' both.
+FUNC TERMCOLOR$(name$)
+    DIM s, fg$, bg$, code$
+    IF name$ = "/" THEN RETURN CHR$(27) + "[0m"
+    s = INSTR(name$, "/")
+    IF s < 0 THEN RETURN TERMFG$(name$)
+    fg$ = MID$(name$, 0, s)
+    bg$ = MID$(name$, s + 1, LEN(name$))
+    code$ = ""
+    IF fg$ <> "" THEN code$ = TERMFG$(fg$)
+    IF bg$ <> "" THEN code$ = code$ + TERMBG$(bg$)
+    RETURN code$
 ENDFUNC
 
 FUNC PARSE(md$)
@@ -83,7 +112,7 @@ FUNC PARSE(md$)
             ch$ = MID$(built$, i, 1)
             IF ch$ = "{" THEN
                 eb = INSTR(MID$(built$, i, LEN(built$)), "}")
-                IF eb >= 2 ANDALSO eb <= 9 THEN
+                IF eb >= 2 ANDALSO eb <= 16 THEN
                     tag$ = MID$(built$, i + 1, eb - 1)
                     code$ = TERMCOLOR$(tag$)
                     IF LEN(code$) > 0 THEN

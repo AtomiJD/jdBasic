@@ -56,6 +56,7 @@ FUNC WEBCOLOR$(name$)
     IF name$ = "white" THEN RETURN "#e8ffe8"
     IF name$ = "gray" THEN RETURN "#6f8f7a"
     IF name$ = "orange" THEN RETURN "#ffb347"
+    IF name$ = "black" THEN RETURN "#0b0f0b"
     RETURN ""
 ENDFUNC
 
@@ -68,7 +69,7 @@ FUNC COLORIZE$(s$)
         IF a < 0 THEN EXITDO
         b = INSTR(MID$(rest$, a, LEN(rest$)), "}")
         IF b < 0 THEN EXITDO
-        IF b > 9 THEN EXITDO
+        IF b > 16 THEN EXITDO
         tag$ = MID$(rest$, a + 1, b - 1)
         IF tag$ = "/" THEN
             IF open > 0 THEN
@@ -80,13 +81,27 @@ FUNC COLORIZE$(s$)
             rest$ = MID$(rest$, a + b + 1, LEN(rest$))
             CONTINUEDO
         ENDIF
-        c$ = WEBCOLOR$(tag$)
-        IF LEN(c$) = 0 THEN
+        ' {red} is ink, {white/blue} ink on paper, {/blue} paper alone.
+        fg$ = tag$
+        bg$ = ""
+        s = INSTR(tag$, "/")
+        IF s >= 0 THEN
+            fg$ = MID$(tag$, 0, s)
+            bg$ = MID$(tag$, s + 1, LEN(tag$))
+        ENDIF
+        c$ = ""
+        IF LEN(fg$) > 0 THEN c$ = WEBCOLOR$(fg$)
+        d$ = ""
+        IF LEN(bg$) > 0 THEN d$ = WEBCOLOR$(bg$)
+        IF LEN(c$) = 0 ANDALSO LEN(d$) = 0 THEN
             out$ = out$ + MID$(rest$, 0, a + 1)
             rest$ = MID$(rest$, a + 1, LEN(rest$))
             CONTINUEDO
         ENDIF
-        out$ = out$ + MID$(rest$, 0, a) + "<span style=" + CHR$(34) + "color:" + c$ + CHR$(34) + ">"
+        style$ = ""
+        IF LEN(c$) > 0 THEN style$ = "color:" + c$ + ";"
+        IF LEN(d$) > 0 THEN style$ = style$ + "background:" + d$ + ";"
+        out$ = out$ + MID$(rest$, 0, a) + "<span style=" + CHR$(34) + style$ + CHR$(34) + ">"
         open = open + 1
         rest$ = MID$(rest$, a + b + 1, LEN(rest$))
     LOOP WHILE TRUE

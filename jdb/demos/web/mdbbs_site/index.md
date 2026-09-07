@@ -1,5 +1,5 @@
 {green}========================================{/}
-{yellow}       j d B A S I C    B B S{/}
+{white/blue}       j d B A S I C    B B S           {/}
 {green}========================================{/}
 
  A {orange}little dirty language{/}, running on

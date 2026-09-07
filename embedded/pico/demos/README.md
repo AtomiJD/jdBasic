@@ -13,7 +13,7 @@ ESP32 copies live in `../../esp32/fs`, which becomes the flash store at
 build time.
 
 The Train jdBasic lessons are a folder of their own, `lessons`, on every
-board: `TYPE lessons/readme.txt` lists them, `RUN lessons/lesson01_hello_a`
+board: `TYPE lessons/readme.txt` lists them, `RUN lessons/hello1`
 starts one. `../../lessons/README.md` says what is in the pack and which
 lessons have a board edition.
 
