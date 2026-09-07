@@ -525,10 +525,19 @@ static void read_line(char* buf, int cap) {
             seq[0] = (char)c;
             if (c >= 0xC2) {
                 int want = utf8_seq_len((unsigned char)c);
+                int b = -1;
                 while (n < want) {
-                    int b = repl_read_key();
+                    b = repl_read_key();
                     if (b < 0x80 || b > 0xBF) break;
                     seq[n++] = (char)b;
+                    b = -1;
+                }
+                // A lead byte without its continuation is line noise,
+                // and the byte that followed it is the real keystroke.
+                if (n < want) {
+                    if (b < 32 || b >= 127) continue;
+                    seq[0] = (char)b;
+                    n = 1;
                 }
             }
             memmove(buf + cur + n, buf + cur, len - cur + 1);
