@@ -1,0 +1,365 @@
+' PINBALL for the Fruit Jam, and the desktop window.
+'
+' A table of straight segments, two flippers, three bumpers and two
+' slingshots. The ball is a circle under gravity, moved in three small
+' steps a frame so it never skips a wall. Everything that moves is wiped
+' in black where it was and drawn again where it is; the table lines are
+' redrawn every frame underneath, so a wipe leaves no hole in them.
+'
+' Keys: the arrows are the flippers, space is the plunger, q quits.
+' With no keyboard on the board, or "auto" as an argument on the desktop,
+' the table plays itself. Every 300 frames a line on the console says
+' what a frame costs.
+
+PBOARD = 1
+TRY
+    junk = SYS.FREE()
+CATCH
+    PBOARD = 0
+ENDTRY
+
+DIM RUNNING = 1
+SUB OnQuit()
+    RUNNING = 0
+ENDSUB
+
+IF PBOARD = 1 THEN
+    GFX.CONSOLE 0
+    KLEFT = 180
+    KRIGHT = 183
+    KSPACE = 32
+    KQUIT = 113
+ELSE
+    SCREEN 320, 240, "PINBALL", 3
+    ON "QUIT" CALL OnQuit
+    KLEFT = 80
+    KRIGHT = 79
+    KSPACE = 44
+    KQUIT = 20
+ENDIF
+
+' The table plays itself until a flipper key is pressed, and again
+' after ten seconds without one.
+AUTO = 1
+idle = 0
+
+' ---- the table --------------------------------------------------------
+' Playfield x 60 to 260, the plunger lane on the right of it, the margins
+' left and right carry the score.
+
+CONST R = 4
+CONST G = 0.08
+CONST VMAX = 6
+CONST SUBSTEPS = 4
+CONST BR = 10
+CONST FLEN = 34
+CONST FSPEED = 0.22
+
+' walls, the lane, the roof deflector, two slingshots, the lane floor
+SX1 = [60, 260, 60, 244, 260, 60, 244, 244]
+SY1 = [0, 0, 0, 70, 70, 165, 165, 239]
+SX2 = [60, 260, 260, 244, 215, 100, 204, 260]
+SY2 = [239, 239, 0, 239, 10, 205, 205, 239]
+SE  = [0.5, 0.5, 0.5, 0.5, 0.5, 1.3, 1.3, 0.3]
+NSEG = LEN(SX1)
+
+BX = [120, 170, 205]
+BY = [70, 45, 100]
+BHIT = [0, 0, 0]
+
+LFX = 100
+LFY = 205
+RFX = 204
+RFY = 205
+LREST = 0.45
+LUP = -0.45
+RREST = PI - 0.45
+RUP = PI + 0.45
+
+' ---- the ball ---------------------------------------------------------
+
+px = 252
+py = 228
+vx = 0
+vy = 0
+ox = px
+oy = py
+la = LREST
+ra = RREST
+ola = la
+ora = ra
+score = 0
+balls = 3
+hud = 1
+snd = 0
+autowait = 30
+
+' The ball against one segment: pushed out along the normal, the
+' velocity mirrored with the segment's bounce, and kick is the least
+' speed it leaves with when a moving flipper is the segment.
+SUB HITSEG(x1, y1, x2, y2, e, kick)
+    DIM ddx, ddy, l2, t, qx, qy, dx, dy, d2, d, nx, ny, vn
+    ddx = x2 - x1
+    ddy = y2 - y1
+    l2 = ddx * ddx + ddy * ddy
+    t = ((px - x1) * ddx + (py - y1) * ddy) / l2
+    IF t < 0 THEN t = 0
+    IF t > 1 THEN t = 1
+    qx = x1 + t * ddx
+    qy = y1 + t * ddy
+    dx = px - qx
+    dy = py - qy
+    d2 = dx * dx + dy * dy
+    IF d2 >= R * R ORELSE d2 = 0 THEN RETURN
+    d = SQR(d2)
+    nx = dx / d
+    ny = dy / d
+    px = qx + nx * R
+    py = qy + ny * R
+    vn = vx * nx + vy * ny
+    IF vn < 0 THEN
+        vx = vx - (1 + e) * vn * nx
+        vy = vy - (1 + e) * vn * ny
+        IF e > 1 THEN
+            score = score + 10
+            snd = 2
+            hud = 1
+        ENDIF
+    ENDIF
+    IF kick > 0 THEN
+        vn = vx * nx + vy * ny
+        IF vn < kick THEN
+            vx = vx + (kick - vn) * nx
+            vy = vy + (kick - vn) * ny
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB PHYSTEP(lmove, rmove)
+    DIM i, dx, dy, d2, d, nx, ny, sp, lk, rk
+    vy = vy + G
+    sp = SQR(vx * vx + vy * vy)
+    IF sp > VMAX THEN
+        vx = vx * VMAX / sp
+        vy = vy * VMAX / sp
+    ENDIF
+    px = px + vx
+    py = py + vy
+    FOR i = 0 TO NSEG - 1
+        HITSEG(SX1[i], SY1[i], SX2[i], SY2[i], SE[i], 0)
+    NEXT i
+    lk = 0
+    IF lmove = 1 THEN lk = 5.5
+    rk = 0
+    IF rmove = 1 THEN rk = 5.5
+    HITSEG(LFX, LFY, LFX + FLEN * COS(la), LFY + FLEN * SIN(la), 0.6, lk)
+    HITSEG(RFX, RFY, RFX + FLEN * COS(ra), RFY + FLEN * SIN(ra), 0.6, rk)
+    FOR i = 0 TO 2
+        dx = px - BX[i]
+        dy = py - BY[i]
+        d2 = dx * dx + dy * dy
+        IF d2 < (R + BR) * (R + BR) ANDALSO d2 > 0 THEN
+            d = SQR(d2)
+            nx = dx / d
+            ny = dy / d
+            px = BX[i] + nx * (R + BR)
+            py = BY[i] + ny * (R + BR)
+            vx = nx * 3.8
+            vy = ny * 3.8
+            score = score + 100
+            BHIT[i] = 6
+            snd = 3
+            hud = 1
+        ENDIF
+    NEXT i
+ENDSUB
+
+' ---- drawing ----------------------------------------------------------
+
+SUB DRAWTABLE()
+    DIM i
+    FOR i = 0 TO NSEG - 1
+        IF SE[i] > 1 THEN
+            DRAWCOLOR 255, 160, 40
+        ELSE
+            DRAWCOLOR 80, 200, 255
+        ENDIF
+        LINE SX1[i], SY1[i], SX2[i], SY2[i]
+    NEXT i
+    FOR i = 0 TO 2
+        IF BHIT[i] > 0 THEN
+            DRAWCOLOR 255, 255, 255
+            BHIT[i] = BHIT[i] - 1
+        ELSE
+            DRAWCOLOR 230, 80, 230
+        ENDIF
+        CIRCLE BX[i], BY[i], BR
+    NEXT i
+ENDSUB
+
+SUB DRAWFLIPPER(x0, y0, a, cr, cg, cb)
+    DIM tx, ty
+    tx = x0 + FLEN * COS(a)
+    ty = y0 + FLEN * SIN(a)
+    DRAWCOLOR cr, cg, cb
+    LINE x0, y0 - 1, tx, ty - 1
+    LINE x0, y0, tx, ty
+    LINE x0, y0 + 1, tx, ty + 1
+    CIRCLE x0, y0, 3, 1
+ENDSUB
+
+SUB DRAWHUD()
+    DRAWCOLOR 0, 0, 0
+    RECT 0, 0, 58, 60, 1
+    DRAWCOLOR 255, 230, 60
+    TEXT 2, 4, "SCORE"
+    TEXT 2, 14, STR$(score)
+    DRAWCOLOR 200, 200, 200
+    TEXT 2, 34, "BALL " + STR$(balls)
+ENDSUB
+
+DRAWCOLOR 0, 0, 0
+RECT 0, 0, 320, 240, 1
+DRAWTABLE
+DRAWHUD
+DRAWCOLOR 200, 200, 200
+TEXT 264, 4, "ARROWS"
+TEXT 264, 14, "FLIP"
+TEXT 264, 30, "SPACE"
+TEXT 264, 40, "LAUNCH"
+
+
+' ---- the frame loop ---------------------------------------------------
+
+frames = 0
+busy = 0
+busymax = 0
+tphys = 0
+tdraw = 0
+
+DO WHILE RUNNING = 1
+    t0 = TICK()
+
+    lhold = 0
+    rhold = 0
+    launch = 0
+    IF GFX.KEYSTATE(KLEFT) THEN lhold = 1
+    IF GFX.KEYSTATE(KRIGHT) THEN rhold = 1
+    IF GFX.KEYSTATE(KSPACE) THEN launch = 1
+    IF GFX.KEYSTATE(KQUIT) THEN RUNNING = 0
+    IF lhold = 1 ORELSE rhold = 1 ORELSE launch = 1 THEN
+        AUTO = 0
+        idle = 0
+    ELSE
+        idle = idle + 1
+        IF idle > 600 THEN AUTO = 1
+    ENDIF
+    IF AUTO = 1 THEN
+        IF py > 175 ANDALSO px < 152 ANDALSO vy > 0 THEN lhold = 1
+        IF py > 175 ANDALSO px >= 152 ANDALSO px < 244 ANDALSO vy > 0 THEN rhold = 1
+        IF px > 244 ANDALSO py > 220 THEN
+            autowait = autowait - 1
+            IF autowait <= 0 THEN
+                launch = 1
+                autowait = 30
+            ENDIF
+        ENDIF
+    ENDIF
+
+    ' the plunger: a ball resting in the lane goes up it
+    IF launch = 1 ANDALSO px > 244 ANDALSO py > 220 ANDALSO ABS(vy) < 0.5 THEN
+        vy = -VMAX
+        vx = 0
+    ENDIF
+
+    ' flippers swing between rest and up at a fixed speed
+    lmove = 0
+    IF lhold = 1 ANDALSO la > LUP THEN
+        la = la - FSPEED
+        IF la < LUP THEN la = LUP
+        lmove = 1
+    ENDIF
+    IF lhold = 0 ANDALSO la < LREST THEN
+        la = la + FSPEED
+        IF la > LREST THEN la = LREST
+    ENDIF
+    rmove = 0
+    IF rhold = 1 ANDALSO ra < RUP THEN
+        ra = ra + FSPEED
+        IF ra > RUP THEN ra = RUP
+        rmove = 1
+    ENDIF
+    IF rhold = 0 ANDALSO ra > RREST THEN
+        ra = ra - FSPEED
+        IF ra < RREST THEN ra = RREST
+    ENDIF
+
+    t1 = TICK()
+    FOR s = 1 TO SUBSTEPS
+        PHYSTEP(lmove, rmove)
+    NEXT s
+    tphys = tphys + (TICK() - t1)
+
+    ' the drain
+    IF py > 246 THEN
+        balls = balls - 1
+        hud = 1
+        IF balls <= 0 THEN
+            balls = 3
+            score = 0
+        ENDIF
+        px = 252
+        py = 228
+        vx = 0
+        vy = 0
+        autowait = 40
+    ENDIF
+
+    t1 = TICK()
+    DRAWCOLOR 0, 0, 0
+    CIRCLE ox, oy, R + 1, 1
+    DRAWFLIPPER(LFX, LFY, ola, 0, 0, 0)
+    DRAWFLIPPER(RFX, RFY, ora, 0, 0, 0)
+    DRAWTABLE
+    DRAWFLIPPER(LFX, LFY, la, 255, 255, 255)
+    DRAWFLIPPER(RFX, RFY, ra, 255, 255, 255)
+    DRAWCOLOR 255, 230, 60
+    CIRCLE px, py, R, 1
+    IF hud = 1 THEN
+        DRAWHUD
+        hud = 0
+    ENDIF
+    SCREENFLIP
+    tdraw = tdraw + (TICK() - t1)
+    ox = px
+    oy = py
+    ola = la
+    ora = ra
+
+    IF PBOARD = 1 THEN
+        IF snd = 3 THEN TONE 880
+        IF snd = 2 THEN TONE 440
+        IF snd = 1 THEN TONE 0
+    ENDIF
+
+
+    IF snd > 0 THEN snd = snd - 1
+
+    frames = frames + 1
+    el = TICK() - t0
+    busy = busy + el
+    IF el > busymax THEN busymax = el
+    IF frames MOD 300 = 0 THEN
+        PRINT "frames "; frames; "  busy "; FORMAT$("{:.1f}", busy / 300); " ms  physics "; FORMAT$("{:.1f}", tphys / 300); "  draw "; FORMAT$("{:.1f}", tdraw / 300); "  worst "; busymax; "  score "; score; "  ball "; INT(px); ","; INT(py); " v "; FORMAT$("{:.1f}", vx); ","; FORMAT$("{:.1f}", vy)
+        IF PBOARD = 1 THEN PRINT "  free "; SYS.FREE(); "  largest "; SYS.LARGEST()
+        busy = 0
+        busymax = 0
+        tphys = 0
+        tdraw = 0
+    ENDIF
+    IF el < 16 THEN SLEEP 16 - el
+LOOP
+
+IF PBOARD = 1 THEN TONE 0
+IF PBOARD = 1 THEN GFX.CONSOLE 1
+PRINT "pinball closed, score "; score
