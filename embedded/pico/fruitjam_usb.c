@@ -106,14 +106,24 @@ int fruitjam_usb_keyboards(void)    { return g_keyboards; }
 // thing that asks is a read for a key. Boot has none to make, so it drives
 // the stack directly for the moment it takes a keyboard to appear.
 static volatile uint32_t g_resync_at;
+static volatile int g_need_resync = 0;
+static uint32_t g_resyncs = 0;
 
-void fruitjam_usb_poll(void) {
-    if (!g_up) return;
+// The device that slept through a flash burst is taken off the bus and
+// put back, which resets and enumerates it again.
+static void resync_due(void) {
     if (g_resync_at && (int32_t)(time_us_32() - g_resync_at) >= 0) {
         g_resync_at = 0;
+        g_need_resync = 0;
+        g_resyncs++;
         hcd_event_device_remove(1, false);
         hcd_event_device_attach(1, false);
     }
+}
+
+void fruitjam_usb_poll(void) {
+    if (!g_up) return;
+    resync_due();
     tuh_task();
 }
 int fruitjam_usb_devices(void)      { return g_devices; }
@@ -385,6 +395,7 @@ static void usb_pump(void) {
     uint32_t now = time_us_32();
     if (g_up && (uint32_t)(now - last) >= PUMP_EVERY_US) {
         last = now;
+        resync_due();
         usb_task_timed();
         if (g_pad_rate_ms &&
             (uint32_t)(now - last_arm) >= g_pad_rate_ms * 1000u) {
@@ -583,9 +594,9 @@ int fruitjam_pad_raw(int idx, char* out, int cap) {
 
 // Every address the stack has, and what it says it is.
 int fruitjam_usb_diag(char* out, int cap) {
-    int at = snprintf(out, cap, "dev=%u kbd=%u pad=%u",
+    int at = snprintf(out, cap, "dev=%u kbd=%u pad=%u resyncs=%u",
                       (unsigned)g_devices, (unsigned)g_keyboards,
-                      (unsigned)fruitjam_pad_count());
+                      (unsigned)fruitjam_pad_count(), (unsigned)g_resyncs);
     for (uint8_t a = 1; a <= CFG_TUH_DEVICE_MAX && at < cap - 24; a++) {
         if (!tuh_mounted(a)) continue;
         uint16_t vid = 0, pid = 0;
@@ -684,9 +695,14 @@ void __not_in_flash_func(fruitjam_usb_flash_hold)(int on) {
     g_flash_hold = on;
     if (on) {
         g_hold_since = time_us_32();
-    } else if (time_us_32() - g_hold_since > 5000u) {
-        g_resync_at = time_us_32() + 400000u;
-        if (g_resync_at == 0) g_resync_at = 1;
+    } else {
+        if (time_us_32() - g_hold_since > 5000u) g_need_resync = 1;
+        // Every operation, long or short, pushes the moment out, so a
+        // whole transfer ends in one resync rather than one per sector.
+        if (g_need_resync) {
+            g_resync_at = time_us_32() + 400000u;
+            if (g_resync_at == 0) g_resync_at = 1;
+        }
     }
 }
 
