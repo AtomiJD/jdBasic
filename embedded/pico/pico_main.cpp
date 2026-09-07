@@ -154,6 +154,7 @@ extern "C" void fruitjam_usb_init(void);
 extern "C" void fruitjam_con_init(void);
 extern "C" void fruitjam_snd_init(void);
 extern "C" void fruitjam_board_init(void);
+extern "C" void fruitjam_buttons_init(void);
 extern "C" int  fruitjam_dvi_width(void);
 extern "C" int  fruitjam_dvi_height(void);
 extern "C" unsigned fruitjam_dvi_frame_us(void);
@@ -487,6 +488,7 @@ int main() {
     // The screen stays black until here, so the first thing on it is the
     // welcome page rather than whatever the drivers had to say.
     fruitjam_con_init();
+    fruitjam_buttons_init();
 #endif
 
     heap_at("before vm");

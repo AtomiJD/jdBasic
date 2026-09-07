@@ -237,7 +237,7 @@ static const char* HELP_EVENTS =
 
 static const char* HELP_HW =
 "GPIO.MODE(pin, out)  GPIO.WRITE\n"
-"GPIO.READ  GPIO.PULLUP\n"
+"GPIO.READ  GPIO.PULLUP PULLDOWN\n"
 #ifndef ESP32
 "LED(0/1)\n"
 "ADC.READ(ch)  0-3 = GP26-29\n"

@@ -155,13 +155,18 @@ int fruitjam_reset_why(char* out, int cap) {
     return w;
 }
 
-void fruitjam_board_init(void) {
+// The buttons are set up last of all, after the USB host and the rest
+// have claimed their pins, so nothing set up later undoes them.
+void fruitjam_buttons_init(void) {
     static const int btn[3] = { BTN1_PIN, BTN2_PIN, BTN3_PIN };
     for (int i = 0; i < 3; i++) {
         gpio_init(btn[i]);
         gpio_set_dir(btn[i], false);
         gpio_pull_up(btn[i]);
     }
+}
+
+void fruitjam_board_init(void) {
     gpio_init(IR_PIN);
     gpio_set_dir(IR_PIN, false);
     gpio_pull_up(IR_PIN);

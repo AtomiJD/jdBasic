@@ -66,6 +66,10 @@ void register_pico_builtins(VM& vm) {
         gpio_pull_up((unsigned)args[0].to_double());
         return Value();
     });
+    vm.register_native("GPIO.PULLDOWN", 1, 1, [](const std::vector<Value>& args) -> Value {
+        gpio_pull_down((unsigned)args[0].to_double());
+        return Value();
+    });
     register_pico_fs_debug(vm);
     register_pico_alias_probe(vm);
     register_pico_atrans_probe(vm);
