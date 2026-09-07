@@ -108,16 +108,48 @@ int fruitjam_usb_keyboards(void)    { return g_keyboards; }
 static volatile uint32_t g_resync_at;
 static volatile int g_need_resync = 0;
 static uint32_t g_resyncs = 0;
+static uint32_t g_resync_retries = 0;
+
+// Whatever hangs off the hub comes back through the hub's own port
+// resets, and the stack stops after three failed attempts at any one
+// stage. So the count from before is remembered, and the whole port is
+// cycled again while it has not been reached.
+#define RESYNC_SETTLE_US 2500000u
+#define RESYNC_TRIES 3
+static uint32_t g_resync_check_at = 0;
+static uint8_t g_resync_want = 0;
+static uint8_t g_resync_tries = 0;
+
+static void resync_cycle(void) {
+    hcd_event_device_remove(1, false);
+    hcd_event_device_attach(1, false);
+    g_resync_check_at = time_us_32() + RESYNC_SETTLE_US;
+    if (g_resync_check_at == 0) g_resync_check_at = 1;
+}
 
 // The device that slept through a flash burst is taken off the bus and
 // put back, which resets and enumerates it again.
 static void resync_due(void) {
-    if (g_resync_at && (int32_t)(time_us_32() - g_resync_at) >= 0) {
+    uint32_t now = time_us_32();
+    if (g_resync_at && (int32_t)(now - g_resync_at) >= 0) {
         g_resync_at = 0;
         g_need_resync = 0;
         g_resyncs++;
-        hcd_event_device_remove(1, false);
-        hcd_event_device_attach(1, false);
+        if (!g_resync_check_at) {
+            g_resync_want = g_devices;
+            g_resync_tries = 0;
+        }
+        resync_cycle();
+        return;
+    }
+    if (g_resync_check_at && (int32_t)(now - g_resync_check_at) >= 0) {
+        if (g_devices >= g_resync_want || g_resync_tries >= RESYNC_TRIES) {
+            g_resync_check_at = 0;
+            return;
+        }
+        g_resync_tries++;
+        g_resync_retries++;
+        resync_cycle();
     }
 }
 
@@ -594,9 +626,10 @@ int fruitjam_pad_raw(int idx, char* out, int cap) {
 
 // Every address the stack has, and what it says it is.
 int fruitjam_usb_diag(char* out, int cap) {
-    int at = snprintf(out, cap, "dev=%u kbd=%u pad=%u resyncs=%u",
+    int at = snprintf(out, cap, "dev=%u kbd=%u pad=%u resyncs=%u retries=%u",
                       (unsigned)g_devices, (unsigned)g_keyboards,
-                      (unsigned)fruitjam_pad_count(), (unsigned)g_resyncs);
+                      (unsigned)fruitjam_pad_count(), (unsigned)g_resyncs,
+                      (unsigned)g_resync_retries);
     for (uint8_t a = 1; a <= CFG_TUH_DEVICE_MAX && at < cap - 24; a++) {
         if (!tuh_mounted(a)) continue;
         uint16_t vid = 0, pid = 0;
@@ -685,7 +718,6 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
 static volatile int g_flash_hold = 0;
 
 static uint32_t g_hold_since = 0;
-static volatile uint32_t g_resync_at = 0;
 
 // A hold long enough to be a sector erase leaves the device without
 // frames for longer than it tolerates; it sleeps and does not wake for
