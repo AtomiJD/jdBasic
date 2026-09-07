@@ -118,12 +118,25 @@ extern "C" void jdb_pico_sleep_ms(unsigned ms) {
     sleep_ms(ms);
 }
 
-extern "C" void jdb_pico_fs_selftest(char* out, int cap);
+extern "C" void jdb_pico_fs_diag(char* out, int cap);
+extern "C" void jdb_pico_fs_format(char* out, int cap);
+
+// The two verbs that erase take the word ERASE as their argument and do
+// nothing without it.
+static bool erase_confirmed(const std::vector<Value>& args) {
+    return args.size() >= 1 && args[0].to_string() == "ERASE";
+}
 
 void register_pico_fs_debug(VM& vm) {
-    vm.register_native("FS.TEST", 0, 0, [](const std::vector<Value>&) -> Value {
+    vm.register_native("FS.FORMAT", 0, 1, [](const std::vector<Value>& args) -> Value {
         char buf[192];
-        jdb_pico_fs_selftest(buf, sizeof buf);
+        if (erase_confirmed(args)) {
+            jdb_pico_fs_format(buf, sizeof buf);
+        } else {
+            char diag[96];
+            jdb_pico_fs_diag(diag, sizeof diag);
+            snprintf(buf, sizeof buf, "%s - FS.FORMAT(\"ERASE\") makes a new, empty store", diag);
+        }
         return Value::make_string(buf);
     });
 }
@@ -151,9 +164,9 @@ void register_pico_atrans_probe(VM& vm) {
 extern "C" void jdb_pico_nuke_pt(void);
 
 void register_pico_nuke_pt(VM& vm) {
-    vm.register_native("FS.NUKEPT", 0, 0, [](const std::vector<Value>&) -> Value {
-        jdb_pico_nuke_pt();
-        return Value();
+    vm.register_native("FS.NUKEPT", 0, 1, [](const std::vector<Value>& args) -> Value {
+        if (erase_confirmed(args)) jdb_pico_nuke_pt();
+        return Value::make_string("FS.NUKEPT(\"ERASE\") erases the partition table and drops to BOOTSEL");
     });
 }
 

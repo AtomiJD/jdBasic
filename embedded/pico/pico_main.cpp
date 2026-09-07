@@ -143,6 +143,7 @@ extern "C" void jdb_load_trace_n(const char* stage, unsigned a, unsigned b, unsi
 #endif
 
 extern "C" void jdb_pico_fs_init(void);
+extern "C" int jdb_pico_fs_mounted(void);
 #ifdef FRUITJAM
 extern "C" void fruitjam_dvi_init(void);
 extern "C" void fruitjam_reset_latch(void);
@@ -407,7 +408,9 @@ static void pico_hello(void) {
     printf(" panel  320x320, keyboard and sound\n");
 #endif
     unsigned avail = 0, total = 0;
-    if (jdb_pico_fs_free(&avail, &total) == 0)
+    if (!jdb_pico_fs_mounted())
+        printf(" store  not mounted - FS.FORMAT(\"ERASE\") makes a new one\n");
+    else if (jdb_pico_fs_free(&avail, &total) == 0)
         printf(" store  %u KB free of %u KB\n", avail / 1024u, total / 1024u);
     printf("\n");
     jdb_repl_hints();

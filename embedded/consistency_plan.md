@@ -106,7 +106,7 @@ board.
 ## 9. Instrument builtins
 
 The pico registers about 40 measurement builtins (`DVI.*`, `USB.*`,
-`PSRAM.*`, `SND.PROBE`, `FS.TEST`, `ESP.*`), the ESP32 has
+`PSRAM.*`, `SND.PROBE`, `FS.FORMAT`, `ESP.*`), the ESP32 has
 `GFX.PANELREG` and friends. They stay in the image and out of the docs.
 
 Decided 2026-09-05: the article counts verbs, not instruments. Measured

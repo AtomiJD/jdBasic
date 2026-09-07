@@ -161,11 +161,21 @@ extern "C" void jdb_pico_fs_init(void) {
         }
     }
     if (rc != 0) {
-        lfs_format(&g_lfs, &g_cfg);
-        rc = lfs_mount(&g_lfs, &g_cfg);
+        // Only a blank chip gets a store on its own. One that will not
+        // mount is left as it is, and FS.FORMAT("ERASE") is the way to
+        // a new one.
+        const uint8_t* p = (const uint8_t*)(XIP_NOCACHE_NOALLOC_BASE + FS_OFFSET);
+        bool blank = true;
+        for (int i = 0; i < 4096 && blank; i++) if (p[i] != 0xFF) blank = false;
+        if (blank) {
+            lfs_format(&g_lfs, &g_cfg);
+            rc = lfs_mount(&g_lfs, &g_cfg);
+        }
     }
     g_mounted = (rc == 0);
 }
+
+extern "C" int jdb_pico_fs_mounted(void) { return g_mounted ? 1 : 0; }
 
 // The SD card behind the /sd prefix, through the wrappers in
 // picocalc_sd.c so FatFS types stay out of this file. A bare board has
@@ -539,18 +549,27 @@ int closedir(DIR* d) {
 
 }
 
-// Layer-by-layer self test, reachable from the prompt as FS.TEST:
-// raw erase, raw program, verify, then every littlefs step with its
-// error code. The answer names the layer that fails.
-extern "C" void jdb_pico_fs_selftest(char* out, int cap) {
-    uint8_t pat[256];
-    const uint8_t* rd = (const uint8_t*)(XIP_NOCACHE_NOALLOC_BASE + FS_OFFSET);
+static uint8_t flash_sr3(void) {
     uint8_t tx[2], rx[2];
-
     uint32_t ints = save_and_disable_interrupts();
     tx[0] = 0x15; tx[1] = 0;
     flash_do_cmd(tx, rx, 2);
-    uint8_t sr3 = rx[1];
+    restore_interrupts(ints);
+    return rx[1];
+}
+
+// What FS.FORMAT answers without the word: the flash status register,
+// whether the store is mounted, and its geometry. Reads only.
+extern "C" void jdb_pico_fs_diag(char* out, int cap) {
+    snprintf(out, cap, "sr3=%02x mounted=%d blocks=%u x %u",
+        flash_sr3(), g_mounted ? 1 : 0,
+        (unsigned)g_cfg.block_count, (unsigned)g_cfg.block_size);
+}
+
+// FS.FORMAT("ERASE"): a new, empty store. Every file is gone.
+extern "C" void jdb_pico_fs_format(char* out, int cap) {
+    uint8_t tx[1], rx[1];
+    uint32_t ints = save_and_disable_interrupts();
     // Global block unlock: with WPS the chip wakes with every block
     // locked, and this is the key that opens them all.
     tx[0] = 0x06;
@@ -559,20 +578,11 @@ extern "C" void jdb_pico_fs_selftest(char* out, int cap) {
     flash_do_cmd(tx, rx, 1);
     restore_interrupts(ints);
 
-    int erc = bd_erase(&g_cfg, 0);
-    for (int i = 0; i < 256; i++) pat[i] = (uint8_t)(i * 7 + 3);
-    int prc = bd_prog(&g_cfg, 0, 0, pat, 256);
-    int prog_ok = 1;
-    for (int i = 0; i < 256; i++) if (rd[i] != pat[i]) { prog_ok = 0; break; }
-
-    int fmt = -99, mnt = -99;
-    if (prog_ok) {
-        fmt = lfs_format(&g_lfs, &g_cfg);
-        mnt = lfs_mount(&g_lfs, &g_cfg);
-        g_mounted = (mnt == 0);
-    }
-    snprintf(out, cap, "sr3=%02x erc=%d prc=%d prog=%d got=%02x %02x fmt=%d mnt=%d",
-        sr3, erc, prc, prog_ok, rd[0], rd[1], fmt, mnt);
+    if (g_mounted) lfs_unmount(&g_lfs);
+    int fmt = lfs_format(&g_lfs, &g_cfg);
+    int mnt = lfs_mount(&g_lfs, &g_cfg);
+    g_mounted = (mnt == 0);
+    snprintf(out, cap, "formatted: fmt=%d mnt=%d, the store is empty", fmt, mnt);
 }
 
 extern "C" void jdb_pico_alias_probe(char* out, int cap) {

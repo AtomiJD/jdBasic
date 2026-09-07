@@ -336,9 +336,11 @@ static const char* HELP_SYS =
 "  the 8 MB beside the chip\n"
 "SYS.CLOCK()   the core clock in Hz\n"
 #endif
-"FS.TEST()  FORMATS the store and\n"
-"  mounts it again: every file gone\n"
-"FS.NUKEPT() wipes flash to BOOTSEL\n"
+"FS.FORMAT(\"ERASE\")  a new, empty\n"
+"  store: every file gone\n"
+"FS.NUKEPT(\"ERASE\")  erases the\n"
+"  partition table, drops to BOOTSEL\n"
+"  without the word both only report\n"
 "PIN.DIAG$() edge ISR + queue state\n"
 #else
 "SYS.MEM()     both pools, with the\n"

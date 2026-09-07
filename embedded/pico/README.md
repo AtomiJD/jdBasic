@@ -239,8 +239,11 @@ the flash store cannot work. The prompt has the tools to see and fix
 it once:
 
     PRINT FS.ATRANS()   ' identity is 04000000 04000400 04000800 04000c00
-    FS.NUKEPT()         ' erase the partition table, drop to BOOTSEL
+    FS.NUKEPT("ERASE")  ' erase the partition table, drop to BOOTSEL
 
-then copy the uf2 onto the drive again. FS.TEST() exercises the flash
-layer end to end and reports each step - note that it reformats the
-store.
+then copy the uf2 onto the drive again. `FS.FORMAT("ERASE")` makes a
+new, empty store; without the word it only reports the flash status
+register, whether the store is mounted and its geometry. The two verbs
+do nothing without the word. A store that does not mount at boot is left
+as it is and the welcome page says so; only a blank chip is formatted on
+its own.

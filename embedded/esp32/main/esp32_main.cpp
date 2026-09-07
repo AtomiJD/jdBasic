@@ -26,6 +26,7 @@
 #include "../../common/jdb_repl.h"
 
 extern "C" bool esp32_fs_init(void);
+extern "C" bool esp32_fs_mounted(void);
 void esp32_note_after_init(void);
 
 extern "C" int  es3c28p_con_on(void);
@@ -283,7 +284,9 @@ static void panel_hello(const esp_chip_info_t* chip) {
     printf(" panel  %dx%d, touch and sound\n",
            es3c28p_lcd_width(), es3c28p_lcd_height());
     uint64_t total = 0, avail = 0;
-    if (esp32_fs_space(&total, &avail))
+    if (!esp32_fs_mounted())
+        printf(" store  not mounted - FS.FORMAT(\"ERASE\") makes a new one\n");
+    else if (esp32_fs_space(&total, &avail))
         printf(" store  %u KB free of %u KB\n",
                (unsigned)(avail / 1024), (unsigned)(total / 1024));
     printf("\n");
