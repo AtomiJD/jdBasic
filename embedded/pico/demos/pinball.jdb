@@ -57,14 +57,14 @@ ENDIF
 ' left and right carry the score and the help.
 
 CONST R = 4
-CONST G = 0.045
-CONST VMAX = 4.5
-CONST SUBSTEPS = 4
+CONST G = 0.012
+CONST VMAX = 2.6
+CONST SUBSTEPS = 3
 CONST BR = 10
 CONST FLEN = 42
 CONST FSPEED = 0.22
-CONST FKICK = 3.4
-CONST BKICK = 2.6
+CONST FKICK = 2.0
+CONST BKICK = 1.5
 CONST CELL = 32
 CONST GW = 10
 CONST GH = 8
@@ -81,14 +81,16 @@ SX1 = APPEND(SX1, [112, 142, 172])
 SY1 = APPEND(SY1, [26, 22, 26])
 SX2 = APPEND(SX2, [112, 142, 172])
 SY2 = APPEND(SY2, [50, 46, 50])
-' the outlane posts, and the slingshots that leave the outlanes open
-SX1 = APPEND(SX1, [84, 220, 72, 232])
-SY1 = APPEND(SY1, [140, 140, 170, 170])
-SX2 = APPEND(SX2, [84, 220, 100, 204])
-SY2 = APPEND(SY2, [160, 160, 205, 205])
+' the outlane posts, the slingshots that leave the outlanes open, and
+' the plain stretch of each slingshot down to the flipper pivot, where
+' a ball may rest on a raised flipper without being kicked
+SX1 = APPEND(SX1, [84, 220, 72, 232, 92, 212])
+SY1 = APPEND(SY1, [140, 140, 170, 170, 195, 195])
+SX2 = APPEND(SX2, [84, 220, 92, 212, 100, 204])
+SY2 = APPEND(SY2, [160, 160, 195, 195, 205, 205])
 NSEG = LEN(SX1)
-SLING1 = NSEG - 2
-SLING2 = NSEG - 1
+SLING1 = NSEG - 4
+SLING2 = NSEG - 3
 ' bounce per segment, above 1 is a kick
 SE = []
 FOR i = 0 TO NSEG - 1
@@ -96,6 +98,8 @@ FOR i = 0 TO NSEG - 1
 NEXT i
 SE[SLING1] = 1.3
 SE[SLING2] = 1.3
+SE[NSEG - 2] = 0.3
+SE[NSEG - 1] = 0.3
 
 ' Every cell lists the segments within a ball's reach of it: GN[c] how
 ' many, GL[c * GMAX + k] which.
@@ -223,7 +227,7 @@ ENDSUB
 ' velocity mirrored with the segment's bounce. kickv is what a moving
 ' flipper adds, more towards its tip.
 SUB HITSEG(x1, y1, x2, y2, e, kickv)
-    DIM ddx, ddy, l2, t, qx, qy, dx, dy, d2, d, nx, ny, vn, k
+    DIM ddx, ddy, l2, t, qx, qy, dx, dy, d2, d, nx, ny, vn, k, eb
     ddx = x2 - x1
     ddy = y2 - y1
     l2 = ddx * ddx + ddy * ddy
@@ -244,9 +248,13 @@ SUB HITSEG(x1, y1, x2, y2, e, kickv)
     py = qy + ny * R
     vn = vx * nx + vy * ny
     IF vn < 0 THEN
-        vx = vx - (1 + e) * vn * nx
-        vy = vy - (1 + e) * vn * ny
-        IF e > 1 THEN
+        ' a slingshot kicks a ball that arrives with some speed; one
+        ' that merely rests against it is a wall
+        eb = e
+        IF e > 1 ANDALSO vn > -0.4 THEN eb = 0.3
+        vx = vx - (1 + eb) * vn * nx
+        vy = vy - (1 + eb) * vn * ny
+        IF eb > 1 THEN
             ADDSCORE(10)
             snd = 440
             sndf = 2
@@ -669,7 +677,7 @@ DO WHILE RUNNING = 1
     ENDIF
 
     IF launch > 0 THEN
-        vy = -(2.6 + launch * (VMAX - 2.6))
+        vy = -(1.5 + launch * (VMAX - 1.5))
         vx = 0
         launching = 6
         saver = 180
@@ -690,8 +698,8 @@ DO WHILE RUNNING = 1
 
     ' a nudge shoves the ball sideways; three of them in two seconds tilt
     IF nudge = 1 ANDALSO nudget = 0 ANDALSO tilt = 0 THEN
-        vx = vx + (RND(1) - 0.5) * 2
-        vy = vy - 0.4
+        vx = vx + (RND(1) - 0.5)
+        vy = vy - 0.2
         nudget = 15
         nudges = nudges + 1
         snd = 150
@@ -830,6 +838,8 @@ DO WHILE RUNNING = 1
     IF flip = 1 THEN
         DRAWSEG(SLING1)
         DRAWSEG(SLING2)
+        DRAWSEG(NSEG - 2)
+        DRAWSEG(NSEG - 1)
         DRAWKICK
     ENDIF
     FOR i = 0 TO 2
