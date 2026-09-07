@@ -9,8 +9,9 @@
 ' than all of them, and a frame redraws only what the ball's wipe may
 ' have cut.
 '
-' Keys: the arrows left and right are the flippers, space held and
-' released is the plunger, the arrow down nudges, q quits. On the board
+' Keys: the two shift keys, or the arrows left and right, are the
+' flippers, space held and released is the plunger, the arrow down
+' nudges, q quits. On the board
 ' the two buttons beside BOOT are the flippers, and both together while
 ' the ball waits in the lane charge the plunger.
 ' Without a key for ten seconds the table plays itself. Every 300 frames
@@ -38,6 +39,8 @@ IF PBOARD = 1 THEN
     GFX.CONSOLE 0
     KLEFT = 180
     KRIGHT = 183
+    KLSHIFT = 142
+    KRSHIFT = 143
     KDOWN = 182
     KSPACE = 32
     KQUIT = 113
@@ -47,6 +50,8 @@ ELSE
     ON "QUIT" CALL OnQuit
     KLEFT = 80
     KRIGHT = 79
+    KLSHIFT = 225
+    KRSHIFT = 229
     KDOWN = 81
     KSPACE = 44
     KQUIT = 20
@@ -58,7 +63,7 @@ ENDIF
 
 CONST R = 4
 CONST G = 0.012
-CONST VMAX = 2.6
+CONST VMAX = 3.4
 CONST SUBSTEPS = 3
 CONST BR = 10
 CONST FLEN = 42
@@ -81,25 +86,31 @@ SX1 = APPEND(SX1, [112, 142, 172])
 SY1 = APPEND(SY1, [26, 22, 26])
 SX2 = APPEND(SX2, [112, 142, 172])
 SY2 = APPEND(SY2, [50, 46, 50])
-' the outlane posts, the slingshots that leave the outlanes open, and
-' the plain stretch of each slingshot down to the flipper pivot, where
-' a ball may rest on a raised flipper without being kicked
-SX1 = APPEND(SX1, [84, 220, 72, 232, 92, 212])
-SY1 = APPEND(SY1, [140, 140, 170, 170, 195, 195])
-SX2 = APPEND(SX2, [84, 220, 92, 212, 100, 204])
-SY2 = APPEND(SY2, [160, 160, 195, 195, 205, 205])
+' the outlane posts, the slingshots (the left one leaves an outlane open,
+' the right one reaches the lane divider), the plain stretch of each
+' slingshot down to the flipper pivot, where a ball may rest on a raised
+' flipper without being kicked, and a guide that closes the gap between
+' the target bank and the divider
+SX1 = APPEND(SX1, [84, 220, 72, 244, 92, 216, 230])
+SY1 = APPEND(SY1, [140, 140, 170, 165, 195, 193, 112])
+SX2 = APPEND(SX2, [84, 220, 92, 216, 100, 204, 244])
+SY2 = APPEND(SY2, [160, 160, 195, 193, 205, 205, 100])
 NSEG = LEN(SX1)
-SLING1 = NSEG - 4
-SLING2 = NSEG - 3
-' bounce per segment, above 1 is a kick
+SLING1 = NSEG - 5
+SLING2 = NSEG - 4
+' bounce per segment, above 1 is a kick; the top arc keeps most of the
+' launch
 SE = []
 FOR i = 0 TO NSEG - 1
     SE = APPEND(SE, 0.5)
 NEXT i
+FOR i = 3 TO 11
+    SE[i] = 0.7
+NEXT i
 SE[SLING1] = 1.3
 SE[SLING2] = 1.3
+SE[NSEG - 3] = 0.3
 SE[NSEG - 2] = 0.3
-SE[NSEG - 1] = 0.3
 
 ' Every cell lists the segments within a ball's reach of it: GN[c] how
 ' many, GL[c * GMAX + k] which.
@@ -540,7 +551,7 @@ SUB DRAWHELP()
     DRAWCOLOR 0, 0, 0
     RECT 262, 0, 58, 120, 1
     DRAWCOLOR 200, 200, 200
-    TEXT 264, 4, "ARROWS"
+    TEXT 264, 4, "SHIFTS"
     TEXT 264, 14, "FLIP"
     TEXT 264, 30, "SPACE"
     TEXT 264, 40, "HOLD"
@@ -622,8 +633,8 @@ DO WHILE RUNNING = 1
     rhold = 0
     space = 0
     nudge = 0
-    IF GFX.KEYSTATE(KLEFT) THEN lhold = 1
-    IF GFX.KEYSTATE(KRIGHT) THEN rhold = 1
+    IF GFX.KEYSTATE(KLEFT) ORELSE GFX.KEYSTATE(KLSHIFT) THEN lhold = 1
+    IF GFX.KEYSTATE(KRIGHT) ORELSE GFX.KEYSTATE(KRSHIFT) THEN rhold = 1
     IF GFX.KEYSTATE(KSPACE) THEN space = 1
     IF GFX.KEYSTATE(KDOWN) THEN nudge = 1
     IF GFX.KEYSTATE(KQUIT) THEN RUNNING = 0
@@ -752,10 +763,18 @@ DO WHILE RUNNING = 1
     ' a ball resting in the lane has nothing to compute
     t1 = TICK()
     HIT = 0
+    ' The flippers move a third of their frame's swing per step, so a
+    ' ball never finds one on the far side of where it was a moment ago.
     IF inlane = 0 ORELSE launch > 0 THEN
+        lt = la
+        rt = ra
         FOR s = 1 TO SUBSTEPS
+            la = ola + (lt - ola) * s / SUBSTEPS
+            ra = ora + (rt - ora) * s / SUBSTEPS
             PHYSTEP(lmove, rmove)
         NEXT s
+        la = lt
+        ra = rt
     ENDIF
     tphys = tphys + (TICK() - t1)
     IF SPIN > 0 THEN
@@ -838,8 +857,8 @@ DO WHILE RUNNING = 1
     IF flip = 1 THEN
         DRAWSEG(SLING1)
         DRAWSEG(SLING2)
+        DRAWSEG(NSEG - 3)
         DRAWSEG(NSEG - 2)
-        DRAWSEG(NSEG - 1)
         DRAWKICK
     ENDIF
     FOR i = 0 TO 2

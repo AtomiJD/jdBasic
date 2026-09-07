@@ -385,6 +385,12 @@ static void usb_pump(void) {
 
 int fruitjam_kbd_down(int code) {
     usb_pump();
+    // The modifiers have no character of their own; 140 to 143 ask for
+    // left control, right control, left shift and right shift.
+    if (code == 0x8C) return (g_held.modifier & KEYBOARD_MODIFIER_LEFTCTRL) ? 1 : 0;
+    if (code == 0x8D) return (g_held.modifier & KEYBOARD_MODIFIER_RIGHTCTRL) ? 1 : 0;
+    if (code == 0x8E) return (g_held.modifier & KEYBOARD_MODIFIER_LEFTSHIFT) ? 1 : 0;
+    if (code == 0x8F) return (g_held.modifier & KEYBOARD_MODIFIER_RIGHTSHIFT) ? 1 : 0;
     for (int j = 0; j < 6; j++) {
         uint8_t k = g_held.keycode[j];
         if (!k) continue;
