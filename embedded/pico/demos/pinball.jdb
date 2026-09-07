@@ -46,7 +46,14 @@ IF PBOARD = 1 THEN
     KQUIT = 113
     PLAY.VOLUME(20)
 ELSE
-    SCREEN 320, 240, "PINBALL", 3
+    ' "shot" as the argument draws the table at scale 1, saves it as a
+    ' picture and leaves.
+    SHOT = 0
+    argv = OS.ARGS()
+    IF LEN(argv) > 1 THEN
+        IF argv[1] = "shot" THEN SHOT = 1
+    ENDIF
+    SCREEN 320, 240, "PINBALL", 3 - 2 * SHOT
     ON "QUIT" CALL OnQuit
     KLEFT = 80
     KRIGHT = 79
@@ -148,10 +155,10 @@ BY = [92, 80, 124]
 BHIT = [0, 0, 0]
 
 ' a diagonal bank on the right, facing the flippers
-T1X = [206, 218, 230]
-T1Y = [124, 136, 148]
-T2X = [214, 226, 238]
-T2Y = [132, 144, 156]
+T1X = [184, 196, 208]
+T1Y = [100, 112, 124]
+T2X = [192, 204, 216]
+T2Y = [108, 120, 132]
 TUP = [1, 1, 1]
 
 ' the rollover lanes between the dividers, lit when the ball rolls through
@@ -324,7 +331,7 @@ SUB PHYSTEP(lmove, rmove)
         ENDIF
     ENDIF
     ' the targets: a standing one is a wall that falls when struck
-    IF px > 198 ANDALSO px < 246 ANDALSO py > 116 ANDALSO py < 164 THEN
+    IF px > 176 ANDALSO px < 224 ANDALSO py > 92 ANDALSO py < 140 THEN
         FOR i = 0 TO 2
             IF TUP[i] = 1 THEN
                 HIT = 0
@@ -641,6 +648,13 @@ DRAWCOLOR 200, 200, 200
 TEXT 2, 206, "PINBALL"
 DRAWCOLOR 90, 90, 40
 TEXT 2, 222, "V1"
+
+IF PBOARD = 0 THEN
+    IF SHOT = 1 THEN
+        GFX.SAVE_SCREENSHOT("D:/usr/dev/cc/tmp/pinball.png")
+        END
+    ENDIF
+ENDIF
 IF PBOARD = 1 THEN LEDBALLS
 
 ' ---- the frame loop ---------------------------------------------------
@@ -897,7 +911,7 @@ DO WHILE RUNNING = 1
             IF ABS(ox - BX[i]) < BR + R + 2 ANDALSO ABS(oy - BY[i]) < BR + R + 2 THEN DRAWBUMPER(i)
         ENDIF
     NEXT i
-    IF TDRAW = 1 ORELSE (ox > 196 ANDALSO ox < 246 ANDALSO oy > 114 ANDALSO oy < 166) THEN
+    IF TDRAW = 1 ORELSE (ox > 174 ANDALSO ox < 226 ANDALSO oy > 90 ANDALSO oy < 142) THEN
         DRAWTARGETS
         TDRAW = 0
     ENDIF
