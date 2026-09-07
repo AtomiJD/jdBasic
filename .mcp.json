@@ -10,7 +10,7 @@
         "env": { "JDBASIC_MCP_LOG": "1" }
       },
       "jdbasic-stdio-win": {
-        "command": "D:\\usr\\dev\\cc\\mcp-runtime\\jdBasic.exe",
+        "command": "D:\\usr\\dev\\cc\\mcp-runtime\\jdBasic_mcp.exe",
         "args": ["--mcp"],
         "env": { "JDBASIC_MCP_LOG": "1" }
       }
