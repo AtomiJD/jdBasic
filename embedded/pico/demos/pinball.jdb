@@ -1,17 +1,26 @@
 ' PINBALL for the Fruit Jam, and the desktop window.
 '
 ' A table of straight segments: a rounded top, four rollover lanes, three
-' pop bumpers, a bank of three drop targets, two slingshots and two
-' flippers. The ball is a circle under gravity, moved in four small
-' steps a frame so it never skips a wall. The table is cut into 32 pixel
-' cells, each knowing the segments that reach into it, so a step tests
-' two or three segments rather than all of them, and a frame redraws
-' only what the ball's wipe may have cut.
+' pop bumpers, a bank of three drop targets, a spinner, two slingshots,
+' two outlanes with a kickback on the left, and two flippers. The ball
+' is a circle under gravity, moved in four small steps a frame so it
+' never skips a wall. The table is cut into 32 pixel cells, each knowing
+' the segments that reach into it, so a step tests two or three rather
+' than all of them, and a frame redraws only what the ball's wipe may
+' have cut.
 '
-' Keys: the arrows are the flippers, space is the plunger, q quits. On
-' the board the two buttons beside BOOT are the flippers and BOOT is the
-' plunger. Without a key for ten seconds the table plays itself. Every
-' 300 frames a line on the console says what a frame costs.
+' Keys: the arrows left and right are the flippers, space held and
+' released is the plunger, the arrow down nudges, q quits. On the board
+' the two buttons beside BOOT are the flippers, and both together while
+' the ball waits in the lane charge the plunger.
+' Without a key for ten seconds the table plays itself. Every 300 frames
+' a line on the console says what a frame costs.
+'
+' Scoring: bumper 100, target 200 and a cleared bank 1000, slingshot 10,
+' spinner 5 a turn, rollover lane 50 and all four lit 500 plus one on
+' the multiplier, kickback 500, skill shot into the lit lane 1000, the
+' end of a ball pays 100 a lit lane. An extra ball at 10000. Three
+' nudges in two seconds tilt the table until the ball is lost.
 
 PBOARD = 1
 TRY
@@ -29,6 +38,7 @@ IF PBOARD = 1 THEN
     GFX.CONSOLE 0
     KLEFT = 180
     KRIGHT = 183
+    KDOWN = 182
     KSPACE = 32
     KQUIT = 113
     PLAY.VOLUME(20)
@@ -37,6 +47,7 @@ ELSE
     ON "QUIT" CALL OnQuit
     KLEFT = 80
     KRIGHT = 79
+    KDOWN = 81
     KSPACE = 44
     KQUIT = 20
 ENDIF
@@ -46,12 +57,14 @@ ENDIF
 ' left and right carry the score and the help.
 
 CONST R = 4
-CONST G = 0.08
-CONST VMAX = 6
+CONST G = 0.045
+CONST VMAX = 4.5
 CONST SUBSTEPS = 4
 CONST BR = 10
 CONST FLEN = 42
 CONST FSPEED = 0.22
+CONST FKICK = 3.4
+CONST BKICK = 2.6
 CONST CELL = 32
 CONST GW = 10
 CONST GH = 8
@@ -68,19 +81,21 @@ SX1 = APPEND(SX1, [112, 142, 172])
 SY1 = APPEND(SY1, [26, 22, 26])
 SX2 = APPEND(SX2, [112, 142, 172])
 SY2 = APPEND(SY2, [50, 46, 50])
-' the slingshots, kicking, and the outlane posts above them
-SX1 = APPEND(SX1, [60, 244, 84, 220])
-SY1 = APPEND(SY1, [165, 165, 140, 140])
-SX2 = APPEND(SX2, [100, 204, 84, 220])
-SY2 = APPEND(SY2, [205, 205, 160, 160])
+' the outlane posts, and the slingshots that leave the outlanes open
+SX1 = APPEND(SX1, [84, 220, 72, 232])
+SY1 = APPEND(SY1, [140, 140, 170, 170])
+SX2 = APPEND(SX2, [84, 220, 100, 204])
+SY2 = APPEND(SY2, [160, 160, 205, 205])
 NSEG = LEN(SX1)
+SLING1 = NSEG - 2
+SLING2 = NSEG - 1
 ' bounce per segment, above 1 is a kick
 SE = []
 FOR i = 0 TO NSEG - 1
     SE = APPEND(SE, 0.5)
 NEXT i
-SE[NSEG - 4] = 1.3
-SE[NSEG - 3] = 1.3
+SE[SLING1] = 1.3
+SE[SLING2] = 1.3
 
 ' Every cell lists the segments within a ball's reach of it: GN[c] how
 ' many, GL[c * GMAX + k] which.
@@ -127,6 +142,13 @@ TUP = [1, 1, 1]
 LX1 = [88, 113, 143, 173]
 LX2 = [111, 141, 171, 198]
 LLIT = [0, 0, 0, 0]
+SKILL = 1
+
+' the spinner, a bar the ball turns on its way down the left side
+SPX = 74
+SPY = 118
+SPIN = 0
+SPA = 0
 
 LFX = 100
 LFY = 205
@@ -151,6 +173,14 @@ ola = la
 ora = ra
 score = 0
 balls = 3
+mult = 1
+extra = 0
+kick = 1
+saver = 0
+tilt = 0
+nudges = 0
+nudget = 0
+charge = 0
 hiscore = 0
 TRY
     hiscore = VAL(TXTREADER$("pinhi.txt"))
@@ -170,13 +200,29 @@ over = 0
 HIT = 0
 TDRAW = 1
 LDRAW = 1
+msg$ = ""
+msgt = 0
+chase = 0
+
+SUB ADDSCORE(n)
+    score = score + n * mult
+    hud = 1
+    IF extra = 0 ANDALSO score >= 10000 THEN
+        extra = 1
+        balls = balls + 1
+        msg$ = "EXTRA BALL"
+        msgt = 120
+        flash = 8
+        IF PBOARD = 1 THEN PLAY "T240 O5 L16 C E G > C < G > C"
+    ENDIF
+ENDSUB
 
 ' ---- physics ----------------------------------------------------------
 
 ' The ball against one segment: pushed out along the normal, the
-' velocity mirrored with the segment's bounce. kick is what a moving
+' velocity mirrored with the segment's bounce. kickv is what a moving
 ' flipper adds, more towards its tip.
-SUB HITSEG(x1, y1, x2, y2, e, kick)
+SUB HITSEG(x1, y1, x2, y2, e, kickv)
     DIM ddx, ddy, l2, t, qx, qy, dx, dy, d2, d, nx, ny, vn, k
     ddx = x2 - x1
     ddy = y2 - y1
@@ -201,14 +247,13 @@ SUB HITSEG(x1, y1, x2, y2, e, kick)
         vx = vx - (1 + e) * vn * nx
         vy = vy - (1 + e) * vn * ny
         IF e > 1 THEN
-            score = score + 10
+            ADDSCORE(10)
             snd = 440
             sndf = 2
-            hud = 1
         ENDIF
     ENDIF
-    IF kick > 0 THEN
-        k = kick * (0.5 + t)
+    IF kickv > 0 THEN
+        k = kickv * (0.5 + t)
         vn = vx * nx + vy * ny
         IF vn < k THEN
             vx = vx + (k - vn) * nx
@@ -234,13 +279,28 @@ SUB PHYSTEP(lmove, rmove)
             HITSEG(SX1[i], SY1[i], SX2[i], SY2[i], SE[i], 0)
         NEXT k
     ENDIF
-    IF py > 160 THEN
-        lk = 0
-        IF lmove = 1 THEN lk = 5.5
-        rk = 0
-        IF rmove = 1 THEN rk = 5.5
-        HITSEG(LFX, LFY, LFX + FLEN * COS(la), LFY + FLEN * SIN(la), 0.6, lk)
-        HITSEG(RFX, RFY, RFX + FLEN * COS(ra), RFY + FLEN * SIN(ra), 0.6, rk)
+    IF py > 160 ANDALSO px < 244 THEN
+        IF px < 152 THEN
+            lk = 0
+            IF lmove = 1 THEN lk = FKICK
+            HITSEG(LFX, LFY, LFX + FLEN * COS(la), LFY + FLEN * SIN(la), 0.6, lk)
+        ELSE
+            rk = 0
+            IF rmove = 1 THEN rk = FKICK
+            HITSEG(RFX, RFY, RFX + FLEN * COS(ra), RFY + FLEN * SIN(ra), 0.6, rk)
+        ENDIF
+        ' the kickback throws a ball in the left outlane back up, once
+        IF kick = 1 ANDALSO px < 72 ANDALSO py > 222 THEN
+            kick = 0
+            vy = -VMAX
+            vx = 0.3
+            ADDSCORE(500)
+            snd = 700
+            sndf = 4
+            flash = 4
+            msg$ = "KICKBACK"
+            msgt = 60
+        ENDIF
     ENDIF
     ' the targets: a standing one is a wall that falls when struck
     IF px > TX - R - 2 ANDALSO px < TX + R + 2 THEN
@@ -251,16 +311,18 @@ SUB PHYSTEP(lmove, rmove)
                 IF HIT = 1 THEN
                     TUP[i] = 0
                     TDRAW = 1
-                    score = score + 200
+                    ADDSCORE(200)
                     snd = 660
                     sndf = 3
                     flash = 2
-                    hud = 1
                     IF TUP[0] + TUP[1] + TUP[2] = 0 THEN
-                        score = score + 1000
+                        ADDSCORE(1000)
                         TUP[0] = 1
                         TUP[1] = 1
                         TUP[2] = 1
+                        kick = 1
+                        msg$ = "BANK 1000"
+                        msgt = 90
                         IF PBOARD = 1 THEN PLAY "T240 O5 L16 C E G > C"
                         flash = 6
                     ENDIF
@@ -280,16 +342,19 @@ SUB PHYSTEP(lmove, rmove)
                 ny = dy / d
                 px = BX[i] + nx * (R + BR)
                 py = BY[i] + ny * (R + BR)
-                vx = nx * 3.8
-                vy = ny * 3.8
-                score = score + 100
+                vx = nx * BKICK
+                vy = ny * BKICK
+                ADDSCORE(100)
                 BHIT[i] = 6
                 snd = 880
                 sndf = 3
                 flash = 3
-                hud = 1
             ENDIF
         NEXT i
+    ENDIF
+    ' the spinner turns while the ball passes through it
+    IF ABS(px - SPX) < 10 ANDALSO ABS(py - SPY) < R + 2 ANDALSO SPIN < 10 THEN
+        SPIN = 48
     ENDIF
     ' the rollover lanes light up as the ball passes their row
     IF py > 34 ANDALSO py < 42 THEN
@@ -297,16 +362,27 @@ SUB PHYSTEP(lmove, rmove)
             IF px > LX1[i] ANDALSO px < LX2[i] ANDALSO LLIT[i] = 0 THEN
                 LLIT[i] = 1
                 LDRAW = 1
-                score = score + 50
-                snd = 1200
-                sndf = 2
-                hud = 1
+                IF i = SKILL ANDALSO saver > 0 THEN
+                    ADDSCORE(1000)
+                    msg$ = "SKILL SHOT"
+                    msgt = 90
+                    flash = 6
+                    snd = 1500
+                    sndf = 4
+                ELSE
+                    ADDSCORE(50)
+                    snd = 1200
+                    sndf = 2
+                ENDIF
                 IF LLIT[0] + LLIT[1] + LLIT[2] + LLIT[3] = 4 THEN
-                    score = score + 500
+                    ADDSCORE(500)
                     LLIT[0] = 0
                     LLIT[1] = 0
                     LLIT[2] = 0
                     LLIT[3] = 0
+                    IF mult < 5 THEN mult = mult + 1
+                    msg$ = "BONUS X" + STR$(mult)
+                    msgt = 90
                     IF PBOARD = 1 THEN PLAY "T240 O5 L16 G E C E G"
                     flash = 6
                 ENDIF
@@ -360,10 +436,32 @@ SUB DRAWLANES()
         ELSE
             DRAWCOLOR 0, 0, 0
             CIRCLE (LX1[i] + LX2[i]) / 2, 38, 2, 1
-            DRAWCOLOR 90, 90, 40
+            IF i = SKILL ANDALSO saver > 0 THEN
+                DRAWCOLOR 255, 160, 40
+            ELSE
+                DRAWCOLOR 90, 90, 40
+            ENDIF
             CIRCLE (LX1[i] + LX2[i]) / 2, 38, 3
         ENDIF
     NEXT i
+ENDSUB
+
+SUB DRAWSPINNER(cr, cg, cb)
+    DIM dx, dy
+    dx = 8 * COS(SPA)
+    dy = 3 * SIN(SPA)
+    DRAWCOLOR cr, cg, cb
+    LINE SPX - dx, SPY - dy, SPX + dx, SPY + dy
+    LINE SPX - dx, SPY - dy + 1, SPX + dx, SPY + dy + 1
+ENDSUB
+
+SUB DRAWKICK()
+    IF kick = 1 THEN
+        DRAWCOLOR 60, 255, 120
+    ELSE
+        DRAWCOLOR 30, 60, 40
+    ENDIF
+    RECT 61, 226, 10, 3, 1
 ENDSUB
 
 SUB DRAWTABLE()
@@ -376,6 +474,8 @@ SUB DRAWTABLE()
     NEXT i
     DRAWTARGETS
     DRAWLANES
+    DRAWSPINNER(120, 255, 200)
+    DRAWKICK
 ENDSUB
 
 SUB DRAWFLIPPER(x0, y0, a, cr, cg, cb)
@@ -391,18 +491,40 @@ ENDSUB
 
 SUB DRAWHUD()
     DRAWCOLOR 0, 0, 0
-    RECT 0, 0, 58, 110, 1
+    RECT 0, 0, 58, 130, 1
     DRAWCOLOR 255, 230, 60
     TEXT 2, 4, "SCORE"
     TEXT 2, 14, STR$(score)
     DRAWCOLOR 200, 200, 200
-    TEXT 2, 34, "HIGH"
-    TEXT 2, 44, STR$(hiscore)
-    TEXT 2, 64, "BALL " + STR$(balls)
+    TEXT 2, 30, "HIGH"
+    TEXT 2, 40, STR$(hiscore)
+    TEXT 2, 56, "BALL " + STR$(balls)
+    IF mult > 1 THEN
+        DRAWCOLOR 255, 160, 40
+        TEXT 2, 68, "BONUS X" + STR$(mult)
+    ENDIF
+    IF saver > 0 THEN
+        DRAWCOLOR 60, 255, 120
+        TEXT 2, 80, "SAVE"
+    ENDIF
+    IF tilt = 1 THEN
+        DRAWCOLOR 255, 80, 80
+        TEXT 2, 96, "TILT"
+    ENDIF
     IF over = 1 THEN
         DRAWCOLOR 255, 80, 80
-        TEXT 2, 84, "GAME"
-        TEXT 2, 94, "OVER"
+        TEXT 2, 96, "GAME"
+        TEXT 2, 106, "OVER"
+    ENDIF
+ENDSUB
+
+SUB DRAWMSG()
+    DRAWCOLOR 0, 0, 0
+    RECT 262, 130, 58, 40, 1
+    IF msgt > 0 THEN
+        DRAWCOLOR 255, 230, 60
+        TEXT 264, 134, LEFT$(msg$, 7)
+        IF LEN(msg$) > 7 THEN TEXT 264, 144, MID$(msg$, 7, 7)
     ENDIF
 ENDSUB
 
@@ -413,8 +535,20 @@ SUB DRAWHELP()
     TEXT 264, 4, "ARROWS"
     TEXT 264, 14, "FLIP"
     TEXT 264, 30, "SPACE"
-    TEXT 264, 40, "LAUNCH"
-    TEXT 264, 56, "Q QUIT"
+    TEXT 264, 40, "HOLD"
+    TEXT 264, 50, "LAUNCH"
+    TEXT 264, 66, "DOWN"
+    TEXT 264, 76, "NUDGE"
+    TEXT 264, 92, "Q QUIT"
+ENDSUB
+
+SUB DRAWCHARGE()
+    DRAWCOLOR 0, 0, 0
+    RECT 247, 190, 12, 46, 1
+    IF charge > 0 THEN
+        DRAWCOLOR 255, 120, 40
+        RECT 248, 236 - charge * 44, 10, charge * 44, 1
+    ENDIF
 ENDSUB
 
 SUB LEDS(r, g, b)
@@ -437,6 +571,23 @@ SUB LEDBALLS()
     NEOPIXEL.SHOW
 ENDSUB
 
+SUB NEWGAME()
+    over = 0
+    balls = 3
+    score = 0
+    mult = 1
+    extra = 0
+    kick = 1
+    tilt = 0
+    LLIT[0] = 0
+    LLIT[1] = 0
+    LLIT[2] = 0
+    LLIT[3] = 0
+    LDRAW = 1
+    hud = 1
+    IF PBOARD = 1 THEN PLAY "T200 O4 L16 C E G > C"
+ENDSUB
+
 DRAWCOLOR 0, 0, 0
 RECT 0, 0, 320, 240, 1
 DRAWTABLE
@@ -457,59 +608,107 @@ tdraw = 0
 DO WHILE RUNNING = 1
     t0 = TICK()
 
+    inlane = 0
+    IF px > 244 ANDALSO py > 220 ANDALSO ABS(vy) < 0.5 THEN inlane = 1
     lhold = 0
     rhold = 0
-    launch = 0
+    space = 0
+    nudge = 0
     IF GFX.KEYSTATE(KLEFT) THEN lhold = 1
     IF GFX.KEYSTATE(KRIGHT) THEN rhold = 1
-    IF GFX.KEYSTATE(KSPACE) THEN launch = 1
+    IF GFX.KEYSTATE(KSPACE) THEN space = 1
+    IF GFX.KEYSTATE(KDOWN) THEN nudge = 1
     IF GFX.KEYSTATE(KQUIT) THEN RUNNING = 0
+    ' the two buttons beside BOOT: flippers, and both together while the
+    ' ball waits in the lane is the plunger
     IF PBOARD = 1 THEN
-        IF BUTTON.GET(2) THEN lhold = 1
-        IF BUTTON.GET(3) THEN rhold = 1
-        IF BUTTON.GET(1) THEN launch = 1
-    ENDIF
-    IF lhold = 1 ORELSE rhold = 1 ORELSE launch = 1 THEN
-        IF AUTO = 1 ANDALSO over = 1 THEN
-            over = 0
-            balls = 3
-            score = 0
-            hud = 1
+        b2 = 0
+        b3 = 0
+        IF BUTTON.GET(2) THEN b2 = 1
+        IF BUTTON.GET(3) THEN b3 = 1
+        IF inlane = 1 ANDALSO b2 = 1 ANDALSO b3 = 1 THEN
+            space = 1
+        ELSE
+            IF b2 = 1 THEN lhold = 1
+            IF b3 = 1 THEN rhold = 1
         ENDIF
-        AUTO = 0
+    ENDIF
+    IF lhold = 1 ORELSE rhold = 1 ORELSE space = 1 ORELSE nudge = 1 THEN
+        IF AUTO = 1 THEN
+            AUTO = 0
+            IF over = 1 THEN NEWGAME
+        ENDIF
         idle = 0
     ELSE
         idle = idle + 1
         IF idle > 600 THEN AUTO = 1
     ENDIF
+    launch = 0
     IF AUTO = 1 THEN
         IF py > 175 ANDALSO px < 152 ANDALSO vy > 0 THEN lhold = 1
         IF py > 175 ANDALSO px >= 152 ANDALSO px < 244 ANDALSO vy > 0 THEN rhold = 1
-        IF px > 244 ANDALSO py > 220 THEN
+        IF inlane = 1 THEN
             autowait = autowait - 1
             IF autowait <= 0 THEN
-                launch = 1
+                launch = 0.6 + RND(1) * 0.4
                 autowait = 30
             ENDIF
         ENDIF
+    ELSE
+        ' the plunger charges while space is held and fires on release
+        IF inlane = 1 ANDALSO space = 1 THEN
+            charge = charge + 0.025
+            IF charge > 1 THEN charge = 1
+            IF frames MOD 4 = 0 THEN DRAWCHARGE
+        ENDIF
+        IF inlane = 1 ANDALSO space = 0 ANDALSO charge > 0 THEN
+            launch = charge
+            charge = 0
+            DRAWCHARGE
+        ENDIF
     ENDIF
 
-    ' the plunger: a ball resting in the lane goes up it
-    IF launch = 1 ANDALSO px > 244 ANDALSO py > 220 ANDALSO ABS(vy) < 0.5 THEN
-        vy = -VMAX
+    IF launch > 0 THEN
+        vy = -(2.6 + launch * (VMAX - 2.6))
         vx = 0
         launching = 6
-        IF over = 1 THEN
-            over = 0
-            balls = 3
-            score = 0
-            hud = 1
-        ENDIF
+        saver = 180
+        SKILL = INT(RND(1) * 4)
+        LDRAW = 1
+        hud = 1
+        IF over = 1 THEN NEWGAME
     ENDIF
     IF launching > 0 THEN
         snd = 300 + (6 - launching) * 120
         sndf = 1
         launching = launching - 1
+    ENDIF
+    IF saver > 0 THEN
+        saver = saver - 1
+        IF saver = 0 THEN hud = 1
+    ENDIF
+
+    ' a nudge shoves the ball sideways; three of them in two seconds tilt
+    IF nudge = 1 ANDALSO nudget = 0 ANDALSO tilt = 0 THEN
+        vx = vx + (RND(1) - 0.5) * 2
+        vy = vy - 0.4
+        nudget = 15
+        nudges = nudges + 1
+        snd = 150
+        sndf = 2
+        IF nudges >= 3 THEN
+            tilt = 1
+            msg$ = "TILT"
+            msgt = 120
+            hud = 1
+            IF PBOARD = 1 THEN PLAY "T120 O3 L4 C"
+        ENDIF
+    ENDIF
+    IF nudget > 0 THEN nudget = nudget - 1
+    IF frames MOD 120 = 0 THEN nudges = 0
+    IF tilt = 1 THEN
+        lhold = 0
+        rhold = 0
     ENDIF
 
     ' flippers swing between rest and up at a fixed speed
@@ -542,37 +741,72 @@ DO WHILE RUNNING = 1
         IF ra < RREST THEN ra = RREST
     ENDIF
 
+    ' a ball resting in the lane has nothing to compute
     t1 = TICK()
     HIT = 0
-    FOR s = 1 TO SUBSTEPS
-        PHYSTEP(lmove, rmove)
-    NEXT s
+    IF inlane = 0 ORELSE launch > 0 THEN
+        FOR s = 1 TO SUBSTEPS
+            PHYSTEP(lmove, rmove)
+        NEXT s
+    ENDIF
     tphys = tphys + (TICK() - t1)
+    IF SPIN > 0 THEN
+        SPIN = SPIN - 1
+        SPA = SPA + 0.35
+        IF SPIN MOD 4 = 0 THEN
+            ADDSCORE(5)
+            snd = 500 + SPIN * 10
+            sndf = 1
+        ENDIF
+    ENDIF
 
-    ' the drain
+    ' the drain: the saver hands the ball back, otherwise it is gone
     IF py > 246 THEN
-        balls = balls - 1
-        hud = 1
         px = 252
         py = 228
         vx = 0
         vy = 0
         autowait = 40
-        IF balls <= 0 THEN
-            over = 1
-            IF score > hiscore THEN
-                hiscore = score
-                TRY
-                    TXTWRITER "pinhi.txt", STR$(hiscore)
-                CATCH
-                    junk = 0
-                ENDTRY
-            ENDIF
-            IF PBOARD = 1 THEN PLAY "T120 O4 L8 E C < A2"
+        IF saver > 0 THEN
+            saver = 0
+            msg$ = "BALL SAVED"
+            msgt = 90
+            IF AUTO = 0 THEN launch = 1
+            IF PBOARD = 1 THEN PLAY "T200 O5 L16 E G E G"
         ELSE
-            IF PBOARD = 1 THEN PLAY "T200 O3 L16 C < B A G"
+            bonus = (LLIT[0] + LLIT[1] + LLIT[2] + LLIT[3]) * 100
+            IF bonus > 0 THEN
+                ADDSCORE(bonus)
+                msg$ = "BONUS " + STR$(bonus * mult)
+                msgt = 90
+            ENDIF
+            balls = balls - 1
+            tilt = 0
+            kick = 1
+            hud = 1
+            IF balls <= 0 THEN
+                over = 1
+                IF score > hiscore THEN
+                    hiscore = score
+                    TRY
+                        TXTWRITER "pinhi.txt", STR$(hiscore)
+                    CATCH
+                        junk = 0
+                    ENDTRY
+                    msg$ = "NEW HIGH"
+                    msgt = 180
+                ENDIF
+                IF PBOARD = 1 THEN PLAY "T120 O4 L8 E C < A2"
+            ELSE
+                IF PBOARD = 1 THEN PLAY "T200 O3 L16 C < B A G"
+            ENDIF
+            IF PBOARD = 1 THEN LEDBALLS
         ENDIF
-        IF PBOARD = 1 THEN LEDBALLS
+        IF launch = 1 THEN
+            vy = -VMAX
+            saver = 0
+            launching = 6
+        ENDIF
     ENDIF
 
     ' Wipe the ball and, when they moved or the ball is near them, the
@@ -594,8 +828,9 @@ DO WHILE RUNNING = 1
         NEXT k
     ENDIF
     IF flip = 1 THEN
-        DRAWSEG(NSEG - 4)
-        DRAWSEG(NSEG - 3)
+        DRAWSEG(SLING1)
+        DRAWSEG(SLING2)
+        DRAWKICK
     ENDIF
     FOR i = 0 TO 2
         IF BHIT[i] > 0 THEN
@@ -613,6 +848,11 @@ DO WHILE RUNNING = 1
         DRAWLANES
         LDRAW = 0
     ENDIF
+    IF SPIN > 0 ORELSE (ABS(ox - SPX) < 14 ANDALSO ABS(oy - SPY) < 10) THEN
+        DRAWCOLOR 0, 0, 0
+        RECT SPX - 9, SPY - 4, 19, 9, 1
+        DRAWSPINNER(120, 255, 200)
+    ENDIF
     IF flip = 1 THEN
         DRAWFLIPPER(LFX, LFY, la, 255, 255, 255)
         DRAWFLIPPER(RFX, RFY, ra, 255, 255, 255)
@@ -625,16 +865,21 @@ DO WHILE RUNNING = 1
         DRAWHUD
         hud = 0
     ENDIF
+    IF msgt > 0 THEN
+        IF msgt MOD 10 = 0 THEN DRAWMSG
+        msgt = msgt - 1
+        IF msgt = 0 THEN DRAWMSG
+    ENDIF
     blink = blink + 1
     IF AUTO = 1 ANDALSO over = 0 THEN
         IF blink MOD 60 = 0 THEN
             DRAWCOLOR 255, 230, 60
-            TEXT 264, 80, "PRESS"
-            TEXT 264, 90, "SPACE"
+            TEXT 264, 180, "PRESS"
+            TEXT 264, 190, "SPACE"
         ENDIF
         IF blink MOD 60 = 30 THEN
             DRAWCOLOR 0, 0, 0
-            RECT 262, 78, 58, 22, 1
+            RECT 262, 178, 58, 22, 1
         ENDIF
     ENDIF
     SCREENFLIP
@@ -654,6 +899,18 @@ DO WHILE RUNNING = 1
             LEDS(80, 80, 80)
             flash = flash - 1
             IF flash = 0 THEN LEDBALLS
+        ELSE
+            IF AUTO = 1 ANDALSO blink MOD 8 = 0 THEN
+                chase = (chase + 1) MOD 5
+                FOR i = 0 TO 4
+                    IF i = chase THEN
+                        NEOPIXEL.SET(i, 40, 0, 60)
+                    ELSE
+                        NEOPIXEL.SET(i, 0, 0, 0)
+                    ENDIF
+                NEXT i
+                NEOPIXEL.SHOW
+            ENDIF
         ENDIF
     ENDIF
 

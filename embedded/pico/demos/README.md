@@ -30,7 +30,7 @@ lessons have a board edition.
 | jdlog.jdb | o | x | o | autonomous temperature logger, meant for AUTORUN |
 | jdshow.jdb |  | x |  | draw what jdlog collected, on the plotter |
 | jdm.jdb | x | x | x | jdPlot, the function plotter (below) |
-| pinball.jdb | x |  |  | a pinball table: rounded top, rollover lanes, pop bumpers, drop targets, slingshots, flippers on the arrows or the board buttons, sound, the LEDs as ball count; plays itself until a key is pressed |
+| pinball.jdb | x |  |  | a pinball table: rounded top, rollover lanes with a skill shot, pop bumpers, drop targets, spinner, slingshots, outlanes with a kickback, a charged plunger, nudge and tilt, ball saver, bonus multiplier, extra ball, high score; flippers on the arrows or the board buttons, sound, the LEDs; plays itself until a key is pressed |
 | kreise.jdb | o | x | o | rings and rays |
 | sprites.jdb | o | x | o | the same sprite on a desktop and on the panel |
 | grafik.jdb | x | x |  | buffered drawing in a band |

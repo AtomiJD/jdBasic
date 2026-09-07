@@ -652,6 +652,12 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
 // it is started on core 0 and has to be run from there, which two
 // attempts at moving it established - split across the cores it
 // enumerates nothing at all.
+// 1 while core 0 writes the flash: the frames pause, because a report that
+// completes meanwhile would run TinyUSB code out of a flash that is busy.
+static volatile int g_flash_hold = 0;
+
+void __not_in_flash_func(fruitjam_usb_flash_hold)(int on) { g_flash_hold = on; }
+
 static void __not_in_flash_func(core1_usb_frames)(void) {
     // This loop and everything it reaches live in RAM, which is what
     // lets it keep running while core 0 erases a flash sector. That
@@ -680,7 +686,7 @@ static void __not_in_flash_func(core1_usb_frames)(void) {
             }
         }
         g_f_last = t;
-        pio_usb_host_frame();
+        if (!g_flash_hold) pio_usb_host_frame();
         uint32_t dur = timer_hw->timerawl - t;
         g_f_total += dur;
         if (dur > g_f_dur_worst) g_f_dur_worst = dur;

@@ -100,12 +100,17 @@ static void irqs_unpark(void) {
 // The scanout's line copies read the PSRAM window, which the flash
 // operation takes the QMI away from; they pause for the duration.
 extern "C" void fruitjam_dvi_copy_hold(int on);
+// Core 1 keeps the USB frames going, but a report completing during the
+// operation would run code out of the busy flash; the frames pause.
+extern "C" void __attribute__((weak)) fruitjam_usb_flash_hold(int on) { (void)on; }
 
 static int flash_op(void (*fn)(void*), void* arg) {
     fruitjam_dvi_copy_hold(1);
+    fruitjam_usb_flash_hold(1);
     irqs_park();
     fn(arg);
     irqs_unpark();
+    fruitjam_usb_flash_hold(0);
     fruitjam_dvi_copy_hold(0);
     return 0;
 }
