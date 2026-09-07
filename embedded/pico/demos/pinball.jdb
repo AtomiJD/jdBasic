@@ -11,9 +11,9 @@
 '
 ' Keys: the two shift keys, or the arrows left and right, are the
 ' flippers, space held and released is the plunger, the arrow down
-' nudges, q quits. On the board
-' the two buttons beside BOOT are the flippers, and both together while
-' the ball waits in the lane charge the plunger.
+' nudges, q quits. On the board BOOT is the plunger, the two buttons
+' beside it are the flippers, and both of those together while the ball
+' waits in the lane charge the plunger too.
 ' Without a key for ten seconds the table plays itself. Every 300 frames
 ' a line on the console says what a frame costs.
 '
@@ -684,6 +684,7 @@ DO WHILE RUNNING = 1
     IF PBOARD = 1 THEN
         b2 = 0
         b3 = 0
+        IF BUTTON.GET(1) THEN space = 1
         IF BUTTON.GET(2) THEN b2 = 1
         IF BUTTON.GET(3) THEN b3 = 1
         IF inlane = 1 ANDALSO b2 = 1 ANDALSO b3 = 1 THEN
