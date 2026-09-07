@@ -1,6 +1,6 @@
 ' Draw what jdlog.jdb collected. Load the plotter first:
 '
-'     RUN jdmload.jdb
+'     RUN jdm.jdb
 '     RUN jdshow.jdb
 '
 ' The window is the tail of the file, because the panel is 320 pixels wide and

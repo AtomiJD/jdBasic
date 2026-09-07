@@ -1,4 +1,4 @@
-' jdPlot - a function plotter for the PicoCalc panel and the desktop window.
+' jdPlot - a function plotter for the boards' panels and the desktop window.
 '
 ' RUN it once. The verbs stay in the VM, the prompt comes back, and every
 ' array you build from then on can be drawn:
@@ -123,6 +123,7 @@ ENDSUB
 SUB PLOTHELP()
     PRINT "PLOT ys          PLOTXY xs, ys     PLOTADD ys"
     PRINT "PLOTADDXY xs, ys PLOTR             PLOTHELP"
+    PRINT "PLOTCLOSE        the console gets the panel back"
     PRINT "PLOTSTYLE n, style$, col   line dot bar step, col 0-7"
     PRINT "PLOTNAME n, name$          a name switches the legend on"
     PRINT "PTITLE$ PXLAB$ PYLAB$ PGRID PLEG PBG PLOGX PLOGY"
@@ -141,10 +142,20 @@ SUB P_CLEAR()
 ENDSUB
 
 SUB P_OPEN()
-    IF PBOARD = 1 THEN RETURN
+    IF PBOARD = 1 THEN
+        ' The Fruit Jam and the ES3C28P draw into the console's own
+        ' framebuffer, so the console steps aside; the PicoCalc keeps
+        ' it, its keyboard echoes there.
+        IF OS.GETOS$() <> "PICOCALC" THEN GFX.CONSOLE 0
+        RETURN
+    ENDIF
     IF PWINOPEN = 1 THEN RETURN
     SCREEN 320, 320, "jdPlot", PWSCALE
     PWINOPEN = 1
+ENDSUB
+
+SUB PLOTCLOSE()
+    IF PBOARD = 1 THEN GFX.CONSOLE 1
 ENDSUB
 
 ' A log axis works on the decimal exponent, so range finding and pixel
@@ -159,8 +170,9 @@ SUB P_RANGE()
     PX1 = 302
     PY0 = 6
     PY1 = 300
+    IF PBOARD = 1 THEN PY1 = GFX.HEIGHT() - 20
     IF PTITLE$ <> "" THEN PY0 = 20
-    IF PXLAB$ <> "" THEN PY1 = 286
+    IF PXLAB$ <> "" THEN PY1 = PY1 - 14
 
     IF PAUTO = 0 THEN
         PXLO = P_TRANS(PXMIN, PLOGX)

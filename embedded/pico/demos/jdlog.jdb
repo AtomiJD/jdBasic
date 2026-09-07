@@ -3,12 +3,12 @@
 '     AUTORUN jdlog.jdb
 '
 ' It does not load the plotter. Nobody is looking at the panel while the board
-' is away, and the library costs 33 KB and a few seconds of loading that the
+' is away, and the library costs 23 KB and a second of loading that the
 ' logging job does not need. The samples go to log.csv on the flash store.
 '
 ' To see them, load the plotter and draw the file:
 '
-'     RUN jdmload.jdb
+'     RUN jdm.jdb
 '     RUN jdshow.jdb
 '
 ' The first sample is taken immediately, so the screen says something within a

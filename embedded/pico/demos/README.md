@@ -29,7 +29,7 @@ lessons have a board edition.
 | hardware.jdb | o | x | o | ADC, PWM, I2C |
 | jdlog.jdb | o | x | o | autonomous temperature logger, meant for AUTORUN |
 | jdshow.jdb |  | x |  | draw what jdlog collected, on the plotter |
-| jdm.jdb, jdmini.jdb, jdmload.jdb |  | x |  | jdPlot, the function plotter (below) |
+| jdm.jdb | x | x | x | jdPlot, the function plotter (below) |
 | kreise.jdb | o | x | o | rings and rays |
 | sprites.jdb | o | x | o | the same sprite on a desktop and on the panel |
 | grafik.jdb | x | x |  | buffered drawing in a band |
@@ -68,109 +68,42 @@ wrote on a desktop, which start at once instead of being parsed.
 
 ---
 
-# jdPlot - a function plotter for the PicoCalc
+# jdPlot - a function plotter for the boards
 
-`jdm.jdb` turns the PicoCalc prompt into a plotting calculator. You load it
-once, it defines its verbs in the running VM, and the prompt comes back. From
-then on any array you build can be drawn:
+`jdm.jdb` turns the prompt into a plotting calculator. You run it once, it
+defines its verbs in the running VM, and the prompt comes back. From then
+on any array you build can be drawn:
 
     x = IOTA(64, 0) / 8
     PTITLE$ = "sin"
     PLOT SIN(x)
 
-The library draws straight into display RAM. It never asks for a screen
-buffer, because a whole 320x320 panel at four bits a pixel is 51 KB and the
-board does not have that to spare.
+The library draws straight into display RAM and never asks for a screen
+buffer of its own. On the Fruit Jam and the ES3C28P it takes the panel
+away from the console while it draws, because the two share one
+framebuffer there, and `PLOTCLOSE` gives the console the panel back. On
+the PicoCalc the console stays, so the keyboard keeps its echo.
 
-The same file runs on the desktop, where it opens a window instead. `SYS.FREE()`
-inside a TRY decides which host it is on.
+The same file runs on the desktop, where it opens a window instead.
+`SYS.FREE()` inside a TRY decides which host it is on, and `OS.GETOS$()`
+which board.
 
 ---
 
 ## Getting it onto the board
 
-The board cannot compile the whole library in one go. It throws `std::bad_alloc`
-somewhere above 3 KB of source in a single chunk, and the limit is the shape of
-the code rather than its size: the lexer's token vector and the syntax tree are
-alive at the same time, and the heap cannot serve a block that large however
-much of it is free. So the library ships as one file per small group of
-functions.
+One file, one transfer. At the prompt, `RECV jdm.jdb` takes the file
+straight off the serial line and ends on Ctrl-D; it parses nothing and
+echoes nothing, so the program arrives at the speed of the link. Send in
+chunks of 128 bytes with a short pause between them and finish with a
+single `0x04`; the byte count printed back is the check. Any line ending
+is fine, `RECV` normalises to `\n`.
 
-### 1. Cut the library into parts
+    > RUN jdm.jdb
+    jdPlot ready - PLOTHELP lists the verbs
 
-    cd pico/demos
-    ./mkparts.sh
-
-That writes `parts/` from `jdm.jdb`:
-
-    plt1.jdb        1795 bytes   P_TRANS P_RANGE
-    plt2.jdb         702 bytes   P_SERIES
-    plt3.jdb        1577 bytes   the verbs
-    plt4.jdb        1171 bytes   P_GRID
-    plt5.jdb        1105 bytes   pens, ink, tick labels
-    plt6.jdb         552 bytes   P_LEGEND
-    plt7.jdb         334 bytes   P_FRAME
-    plt8.jdb         907 bytes   P_CURVE
-    pltinit.jdb      536 bytes   the defaults
-    LOAD.txt                     the load order
-
-Comments and blank lines are stripped: the lexer drops them anyway, and on the
-board they are the difference between fitting and not.
-
-### 2. Send each file over the wire
-
-At the prompt, `RECV <name>` takes a file straight off the serial line and ends
-on Ctrl-D. It parses nothing and echoes nothing, so a program arrives at the
-speed of the link - much faster than typing into the editor, which redraws a
-whole recoloured line per keystroke.
-
-    > RECV plt1.jdb
-    receiving plt1.jdb, end with Ctrl-D
-    <paste or send the file, then Ctrl-D>
-    1795 bytes
-
-Repeat for all nine. Two things matter when a terminal sends the bytes for you:
-
-- Send in small chunks with a short pause between them. `RECV` gives up after
-  about three seconds of silence once data has started, so keep the gaps well
-  under that. 128 bytes every 30 ms works.
-- Finish with a single `0x04`. The byte count it prints back is the check.
-
-Any line ending is fine, `RECV` normalises to `\n`.
-
-### 3. Load them
-
-`mkparts.sh` also writes `jdm_boot.jdb`, which is the same nine loads as one
-303-byte program:
-
-    > RUN jdm_boot.jdb
-    jdPlot ready
-
-That is the short way, and it is what an unattended board uses. `EXECUTE` was
-not an option for this until recently: it keeps the outer chunk, the source
-string and the tokens alive at once, and used to fail where a plain `RUN` of
-the same file succeeded. It became usable when the load peak came down.
-
-Or paste the contents of `LOAD.txt` at the prompt, one line at a time:
-
-    RUN plt1.jdb
-    RUN plt3.jdb
-    RUN plt4.jdb
-    RUN plt5.jdb
-    RUN plt8.jdb
-    RUN plt2.jdb
-    RUN plt6.jdb
-    RUN pltinit.jdb
-    RUN plt7.jdb
-
-`jdPlot ready` means it is in. The order is not cosmetic: it is by size,
-largest first, because the whole heap is only available to the first load and
-every load leaves it more broken up. Each part declares the globals its own
-functions read inside a branch that never runs, so no part can wipe what
-another already set and the order is free to be chosen for memory alone.
-
-The files stay in flash. After a power cycle you re-run the nine lines; you do
-not re-send them.
+The file stays in flash. After a power cycle you run it again; you do not
+re-send it.
 
 ---
 
@@ -184,6 +117,7 @@ not re-send them.
     PLOTSTYLE n, style$, col
     PLOTNAME n, name$       a name switches the legend on
     PLOTHELP                the list, on the device
+    PLOTCLOSE               the console gets the panel back
 
 Series are numbered from 1. Styles are `line`, `dot`, `bar` and `step`. Colours
 are 0 to 7, picked to land on the panel's sixteen-entry palette: green, cyan,
@@ -281,17 +215,21 @@ Measured on a PicoCalc, freshly powered:
 
 | | free |
 |---|---|
-| bare prompt | 120376 |
-| library loaded, all nine parts | 87000 |
-| after a 300-point two-coordinate plot | 61568 |
+| bare prompt | 350648 |
+| library loaded | 323824 |
+| after a 64-point plot | 318400 |
+| after a 400-point two-coordinate plot | 301136 |
+| after a 1000-point one | 272328 |
 
-**About 300 points per series is the working budget.** 400 fails with
-`MIN: std::bad_alloc` while `SYS.FREE()` still reports 56 KB, because what runs
-out is one contiguous block rather than the total. `SYS.LARGEST()` reports the
-largest block the heap will actually hand over, and that is the number to watch.
+**About 1000 points per series is the working budget.** 3000 fail with
+`SIN: std::bad_alloc` while `SYS.FREE()` still reports 240 KB, because what runs
+out is one contiguous block rather than the total: a 3000-element array is
+72 KB, and `SYS.LARGEST()`, the largest block the heap will actually hand over,
+reports about 54 KB by then. That is the number to watch.
 
-A plot is not animation. Every shape goes straight to the panel as it is drawn,
-so you watch the curve appear. `SCREENFLIP` is a no-op with no buffer open.
+A plot is not animation. On the PicoCalc and the Fruit Jam every shape goes
+straight to the panel as it is drawn, so you watch the curve appear; on the
+ES3C28P the `SCREENFLIP` at the end puts the finished chart on the glass.
 
 ---
 
@@ -308,7 +246,7 @@ misbehaving autorun never locks the board out.
     autorun: jdlog.jdb
 
 **It does not load the plotter.** Nobody is watching the panel while the board
-is away, and the library costs 33 KB and several seconds of loading that the
+is away, and the library costs 23 KB and a second of loading that the
 logging job has no use for. The logger samples the board's own temperature
 sensor and appends to `log.csv` on the flash store. The first sample is taken
 before the timer starts, so the screen says something within a second of
@@ -316,7 +254,7 @@ power-on instead of after the first interval.
 
 Looking at it is a separate job, for when you are back:
 
-    > RUN jdmload.jdb        the plotter, as one program
+    > RUN jdm.jdb            the plotter
     jdPlot ready
     > RUN jdshow.jdb         draws the tail of log.csv
     240 samples drawn
@@ -365,17 +303,13 @@ The pieces that make a program like this work unattended:
 
 ## On the desktop
 
-The same `jdm.jdb` runs unsplit:
+The same `jdm.jdb`:
 
     ./build/jdBasic.exe pico/demos/jdm.jdb
 
 It opens a 320x320 window at `PWSCALE` magnification (2 by default) instead of
 drawing into display RAM. Everything else behaves the same, which makes the
 desktop the cheap place to get a chart right before sending it over.
-
-`jdmini.jdb` in this directory is the cut-down version: one SUB, a frame, a
-title, the range extremes and the curve, 670 bytes stripped. It loads in one
-piece and needs none of the part-splitting above.
 
 ## Checked 2026-09-06
 

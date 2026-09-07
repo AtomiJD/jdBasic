@@ -8048,6 +8048,14 @@ void VM::register_builtins() {
         return Value::make_string("WINDOWS");
 #elif defined(__APPLE__)
         return Value::make_string("MACOS");
+#elif defined(FRUITJAM)
+        return Value::make_string("FRUITJAM");
+#elif defined(PICOCALC)
+        return Value::make_string("PICOCALC");
+#elif defined(ESP32)
+        return Value::make_string("ESP32");
+#elif defined(JDB_MCU)
+        return Value::make_string("PICO");
 #else
         return Value::make_string("LINUX");
 #endif
