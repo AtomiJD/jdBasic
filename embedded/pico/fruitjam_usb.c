@@ -34,6 +34,7 @@
 #include "pico/flash.h"
 #include "pio_usb.h"
 #include "tusb.h"
+#include "host/hcd.h"
 
 int  fruitjam_usb_start(void);
 
@@ -104,7 +105,17 @@ int fruitjam_usb_keyboards(void)    { return g_keyboards; }
 // Enumeration only advances while the stack is asked to run, and the only
 // thing that asks is a read for a key. Boot has none to make, so it drives
 // the stack directly for the moment it takes a keyboard to appear.
-void fruitjam_usb_poll(void) { if (g_up) tuh_task(); }
+static volatile uint32_t g_resync_at;
+
+void fruitjam_usb_poll(void) {
+    if (!g_up) return;
+    if (g_resync_at && (int32_t)(time_us_32() - g_resync_at) >= 0) {
+        g_resync_at = 0;
+        hcd_event_device_remove(1, false);
+        hcd_event_device_attach(1, false);
+    }
+    tuh_task();
+}
 int fruitjam_usb_devices(void)      { return g_devices; }
 
 static void usb_task_timed(void);
@@ -662,7 +673,22 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance,
 // completes meanwhile would run TinyUSB code out of a flash that is busy.
 static volatile int g_flash_hold = 0;
 
-void __not_in_flash_func(fruitjam_usb_flash_hold)(int on) { g_flash_hold = on; }
+static uint32_t g_hold_since = 0;
+static volatile uint32_t g_resync_at = 0;
+
+// A hold long enough to be a sector erase leaves the device without
+// frames for longer than it tolerates; it sleeps and does not wake for
+// frames alone. So once the burst of operations is over the device is
+// taken off the bus and put back, which resets and enumerates it again.
+void __not_in_flash_func(fruitjam_usb_flash_hold)(int on) {
+    g_flash_hold = on;
+    if (on) {
+        g_hold_since = time_us_32();
+    } else if (time_us_32() - g_hold_since > 5000u) {
+        g_resync_at = time_us_32() + 400000u;
+        if (g_resync_at == 0) g_resync_at = 1;
+    }
+}
 
 static void __not_in_flash_func(core1_usb_frames)(void) {
     // This loop and everything it reaches live in RAM, which is what
