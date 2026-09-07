@@ -34,6 +34,7 @@ int  fruitjam_esp_probe(char* out, int cap, int do_reset, int khz);
 int  fruitjam_esp_fw(char* out, int cap);
 int  fruitjam_esp_pins(char* out, int cap);
 void fruitjam_esp_reset(void);
+int  fruitjam_dvi_jitter(char* out, int cap, int reset);
 #ifdef FRUITJAM_USB
 void fruitjam_kbd_layout(int de);
 int  fruitjam_kbd_layout_get(void);
@@ -58,7 +59,6 @@ int fruitjam_usb_diag(char* out, int cap);
 int fruitjam_usb_time(char* out, int cap);
 int fruitjam_usb_frame(char* out, int cap);
 int fruitjam_dvi_fifo(char* out, int cap, int reset);
-int fruitjam_dvi_jitter(char* out, int cap, int reset);
 void fruitjam_dvi_probe_rate(int n);
 void fruitjam_pad_rate(int ms);
 int fruitjam_pad_count(void);
@@ -276,18 +276,21 @@ void register_fruitjam_gfx(VM& vm) {
     // breaks the picture without moving a single frame boundary, which
     // the frame counters therefore cannot show. Pass 1 to start a fresh
     // measurement.
+#ifdef FRUITJAM_USB
     vm.register_native("DVI.FIFO$", 0, 1, [](const std::vector<Value>& args) -> Value {
         int rst = args.size() >= 1 ? (int)args[0].to_double() : 0;
         char b[96];
         fruitjam_dvi_fifo(b, sizeof b, rst);
         return Value::make_string(b);
     });
+#endif
     // Looks per millisecond at the FIFO. Every look is a read on the
     // bus that feeds it, so this is a dial for adding contention on
     // purpose: 0 is silent, 200 is loud.
     // Milliseconds between asking a pad for its next report. 0 stops
     // asking, which is what separates the pad's own place on the bus
     // from the traffic we cause by talking to it.
+#ifdef FRUITJAM_USB
     vm.register_native("USB.PADRATE", 1, 1, [](const std::vector<Value>& args) -> Value {
         fruitjam_pad_rate((int)args[0].to_double());
         return Value();
@@ -296,6 +299,7 @@ void register_fruitjam_gfx(VM& vm) {
         fruitjam_dvi_probe_rate((int)args[0].to_double());
         return Value();
     });
+#endif
     // FIFO level at the frame interrupt and the frame's deviation from
     // its period. Pass 1 to reset the counters.
     vm.register_native("DVI.JITTER$", 0, 1, [](const std::vector<Value>& args) -> Value {

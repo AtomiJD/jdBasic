@@ -178,6 +178,9 @@ static void copy_channels_init(void);
 
 static uint32_t g_frames = 0;
 static uint32_t g_frame_us = 0;
+// 1 while a flash operation runs: the line copies and the console tick
+// keep off the PSRAM window until it is back.
+static volatile int g_copy_hold = 0;
 static uint32_t g_frame_late = 0;
 static uint32_t g_frame_worst = 0;
 static uint32_t g_frame_short = 0;
@@ -265,8 +268,14 @@ static void __scratch_x("dvi") fruitjam_dvi_irq(void) {
 #ifdef JDB_FB_IN_PSRAM
     if (g_ch_trig >= 0) copy_restart();
 #endif
-    fruitjam_con_tick();
+    if (!g_copy_hold) fruitjam_con_tick();
 }
+
+#ifndef JDB_FB_IN_PSRAM
+// The framebuffer is in SRAM here and nothing reads the PSRAM window
+// during a flash operation; only the console tick waits.
+void __not_in_flash_func(fruitjam_dvi_copy_hold)(int on) { g_copy_hold = on; }
+#endif
 
 // The first two are reached from the frame interrupt by way of the
 // console's cursor, so they live in RAM with it.
@@ -423,7 +432,24 @@ static void build_copy_list(uint32_t copy_ctrl) {
 // paced list starts again, so a copy that slipped cannot accumulate.
 // This runs in the frame interrupt, where the blank lines leave more
 // than a millisecond and the scanout is reading nothing from PSRAM.
+// A flash operation takes the QMI away from the PSRAM window, and a copy
+// that reads the window meanwhile stalls the bus with everything on it.
+// So the copies stop for the duration, the two line buffers go black,
+// and the first frame after the operation starts them again.
+void __not_in_flash_func(fruitjam_dvi_copy_hold)(int on) {
+    if (g_ch_trig < 0) return;
+    g_copy_hold = on;
+    if (on) {
+        uint32_t both = (1u << g_ch_trig) | (1u << g_ch_copy);
+        dma_hw->abort = both;
+        while (dma_hw->abort & both) tight_loop_contents();
+        uint8_t* p = (uint8_t*)g_lines;
+        for (size_t i = 0; i < sizeof g_lines; i++) p[i] = 0;
+    }
+}
+
 static void __not_in_flash_func(copy_restart)(void) {
+    if (g_copy_hold) return;
     dma_hw->abort = 1u << g_ch_trig;
     while (dma_hw->abort & (1u << g_ch_trig)) tight_loop_contents();
     // The odd half of a stored-line period that the blank lines do not

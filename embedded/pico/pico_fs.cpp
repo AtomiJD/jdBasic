@@ -97,10 +97,16 @@ static void irqs_unpark(void) {
 // for this reason: a sector erase is fifty milliseconds, a USB device
 // that hears nothing for three of them goes to sleep, and nothing wakes
 // it again. Parking the core cost the keyboard on every save.
+// The scanout's line copies read the PSRAM window, which the flash
+// operation takes the QMI away from; they pause for the duration.
+extern "C" void fruitjam_dvi_copy_hold(int on);
+
 static int flash_op(void (*fn)(void*), void* arg) {
+    fruitjam_dvi_copy_hold(1);
     irqs_park();
     fn(arg);
     irqs_unpark();
+    fruitjam_dvi_copy_hold(0);
     return 0;
 }
 #else
