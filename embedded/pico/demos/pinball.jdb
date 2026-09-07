@@ -93,7 +93,7 @@ SY2 = APPEND(SY2, [50, 46, 50])
 ' the target bank and the divider
 SX1 = APPEND(SX1, [84, 220, 72, 244, 92, 216, 230])
 SY1 = APPEND(SY1, [140, 140, 170, 165, 195, 193, 112])
-SX2 = APPEND(SX2, [84, 220, 92, 216, 100, 204, 244])
+SX2 = APPEND(SX2, [84, 220, 92, 216, 106, 198, 244])
 SY2 = APPEND(SY2, [160, 160, 195, 193, 205, 205, 100])
 NSEG = LEN(SX1)
 SLING1 = NSEG - 5
@@ -148,9 +148,11 @@ BY = [100, 95, 130]
 BHIT = [0, 0, 0]
 
 ' the drop targets, a bank on the right facing left
-TX = 226
-TY1 = [118, 136, 154]
-TY2 = [130, 148, 166]
+' a diagonal bank on the right, facing the flippers
+T1X = [206, 218, 230]
+T1Y = [124, 136, 148]
+T2X = [214, 226, 238]
+T2Y = [132, 144, 156]
 TUP = [1, 1, 1]
 
 ' the rollover lanes between the dividers, lit when the ball rolls through
@@ -165,9 +167,9 @@ SPY = 118
 SPIN = 0
 SPA = 0
 
-LFX = 100
+LFX = 106
 LFY = 205
-RFX = 204
+RFX = 198
 RFY = 205
 LREST = 0.45
 LUP = -0.45
@@ -312,21 +314,22 @@ SUB PHYSTEP(lmove, rmove)
         IF kick = 1 ANDALSO px < 72 ANDALSO py > 222 THEN
             kick = 0
             vy = -VMAX
-            vx = 0.3
+            vx = 0
+            px = 66
             ADDSCORE(500)
             snd = 700
             sndf = 4
             flash = 4
-            msg$ = "KICKBACK"
+            msg$ = "KICK BACK"
             msgt = 60
         ENDIF
     ENDIF
     ' the targets: a standing one is a wall that falls when struck
-    IF px > TX - R - 2 ANDALSO px < TX + R + 2 THEN
+    IF px > 198 ANDALSO px < 246 ANDALSO py > 116 ANDALSO py < 164 THEN
         FOR i = 0 TO 2
-            IF TUP[i] = 1 ANDALSO py > TY1[i] - R ANDALSO py < TY2[i] + R THEN
+            IF TUP[i] = 1 THEN
                 HIT = 0
-                HITSEG(TX, TY1[i], TX, TY2[i], 0.6, 0)
+                HITSEG(T1X[i], T1Y[i], T2X[i], T2Y[i], 0.6, 0)
                 IF HIT = 1 THEN
                     TUP[i] = 0
                     TDRAW = 1
@@ -436,13 +439,15 @@ ENDSUB
 
 SUB DRAWTARGETS()
     DIM i
-    DRAWCOLOR 0, 0, 0
-    RECT TX, TY1[0], 4, TY2[2] - TY1[0], 1
     FOR i = 0 TO 2
         IF TUP[i] = 1 THEN
             DRAWCOLOR 255, 80, 80
-            RECT TX, TY1[i], 4, TY2[i] - TY1[i], 1
+        ELSE
+            DRAWCOLOR 0, 0, 0
         ENDIF
+        LINE T1X[i], T1Y[i], T2X[i], T2Y[i]
+        LINE T1X[i] + 1, T1Y[i], T2X[i] + 1, T2Y[i]
+        LINE T1X[i], T1Y[i] + 1, T2X[i], T2Y[i] + 1
     NEXT i
 ENDSUB
 
@@ -472,6 +477,14 @@ SUB DRAWSPINNER(cr, cg, cb)
     DRAWCOLOR cr, cg, cb
     LINE SPX - dx, SPY - dy, SPX + dx, SPY + dy
     LINE SPX - dx, SPY - dy + 1, SPX + dx, SPY + dy + 1
+ENDSUB
+
+' The name on the apron between the flippers, redrawn with them.
+SUB DRAWTITLE()
+    DRAWCOLOR 70, 70, 150
+    TEXT 124, 226, "jdBASIC"
+    DRAWCOLOR 45, 45, 100
+    TEXT 124, 234, "PINBALL"
 ENDSUB
 
 SUB DRAWKICK()
@@ -520,30 +533,38 @@ SUB DRAWHUD()
     TEXT 2, 56, "BALL " + STR$(balls)
     IF mult > 1 THEN
         DRAWCOLOR 255, 160, 40
-        TEXT 2, 68, "BONUS X" + STR$(mult)
+        TEXT 2, 68, "BONUS"
+        TEXT 2, 78, "X" + STR$(mult)
     ENDIF
     IF saver > 0 THEN
         DRAWCOLOR 60, 255, 120
-        TEXT 2, 80, "SAVE"
+        TEXT 2, 92, "SAVE"
     ENDIF
     IF tilt = 1 THEN
         DRAWCOLOR 255, 80, 80
-        TEXT 2, 96, "TILT"
+        TEXT 2, 106, "TILT"
     ENDIF
     IF over = 1 THEN
         DRAWCOLOR 255, 80, 80
-        TEXT 2, 96, "GAME"
-        TEXT 2, 106, "OVER"
+        TEXT 2, 106, "GAME"
+        TEXT 2, 116, "OVER"
     ENDIF
 ENDSUB
 
+' The margin is seven characters wide; a message breaks at its space.
 SUB DRAWMSG()
+    DIM sp
     DRAWCOLOR 0, 0, 0
     RECT 262, 130, 58, 40, 1
     IF msgt > 0 THEN
         DRAWCOLOR 255, 230, 60
-        TEXT 264, 134, LEFT$(msg$, 7)
-        IF LEN(msg$) > 7 THEN TEXT 264, 144, MID$(msg$, 7, 7)
+        sp = INSTR(msg$, " ")
+        IF sp < 0 THEN
+            TEXT 264, 134, LEFT$(msg$, 7)
+        ELSE
+            TEXT 264, 134, LEFT$(msg$, sp)
+            TEXT 264, 144, LEFT$(MID$(msg$, sp + 1, LEN(msg$)), 7)
+        ENDIF
     ENDIF
 ENDSUB
 
@@ -612,8 +633,15 @@ RECT 0, 0, 320, 240, 1
 DRAWTABLE
 DRAWFLIPPER(LFX, LFY, la, 255, 255, 255)
 DRAWFLIPPER(RFX, RFY, ra, 255, 255, 255)
+DRAWTITLE
 DRAWHUD
 DRAWHELP
+DRAWCOLOR 60, 255, 120
+TEXT 2, 196, "jdBASIC"
+DRAWCOLOR 200, 200, 200
+TEXT 2, 206, "PINBALL"
+DRAWCOLOR 90, 90, 40
+TEXT 2, 222, "V1"
 IF PBOARD = 1 THEN LEDBALLS
 
 ' ---- the frame loop ---------------------------------------------------
@@ -860,6 +888,7 @@ DO WHILE RUNNING = 1
         DRAWSEG(NSEG - 3)
         DRAWSEG(NSEG - 2)
         DRAWKICK
+        DRAWTITLE
     ENDIF
     FOR i = 0 TO 2
         IF BHIT[i] > 0 THEN
@@ -869,7 +898,7 @@ DO WHILE RUNNING = 1
             IF ABS(ox - BX[i]) < BR + R + 2 ANDALSO ABS(oy - BY[i]) < BR + R + 2 THEN DRAWBUMPER(i)
         ENDIF
     NEXT i
-    IF TDRAW = 1 ORELSE ABS(ox - TX) < R + 6 THEN
+    IF TDRAW = 1 ORELSE (ox > 196 ANDALSO ox < 246 ANDALSO oy > 114 ANDALSO oy < 166) THEN
         DRAWTARGETS
         TDRAW = 0
     ENDIF
