@@ -50,6 +50,7 @@ void jdb_snd_out_route(int speaker);
 int  jdb_snd_out_probe(char* out, int cap);
 int  jdb_snd_out_stat(char* out, int cap);
 int  jdb_snd_out_pins(char* out, int cap);
+int  jdb_snd_out_reg(int page, int reg);
 int fruitjam_usb_start(void);
 int fruitjam_usb_keyboards(void);
 int fruitjam_usb_devices(void);
@@ -384,6 +385,9 @@ void register_fruitjam_gfx(VM& vm) {
     vm.register_native("SND.OUT", 1, 1, [](const std::vector<Value>& args) -> Value {
         jdb_snd_out_route((int)args[0].to_double() != 0);
         return Value();
+    });
+    vm.register_native("SND.REG", 2, 2, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64(jdb_snd_out_reg((int)args[0].to_double(), (int)args[1].to_double()));
     });
     vm.register_native("USB.START", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_bool(fruitjam_usb_start() != 0);

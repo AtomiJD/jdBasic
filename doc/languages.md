@@ -3877,8 +3877,10 @@ arrives at once rather than crawling across; `NEOPIXEL.CLEAR` and
 `NEOPIXEL.COUNT` round it off. `IR.RAW` is the infrared receiver's pin as
 it stands, which is a level rather than a decoded command.
 
-Sound goes through the codec: `SND.OUT(1)` picks the speaker amplifier
-and `SND.OUT(0)` the headphone jack, one or the other and never both.
+Sound goes through the codec and starts on the headphone jack. `SND.OUT(1)`
+switches to the speaker amplifier and `SND.OUT(0)` back to the jack, one or
+the other and never both. `PLAY.VOLUME` starts at 30 of 100. `SND.REG(page,
+reg)` reads one codec register.
 `BEEP`, `TONE` and `PLAY` are then the same verbs as everywhere else -
 the score is parsed by the same file on every board, and only what moves
 the air differs. `SND.PROBE`, `SND.STAT` and `SND.PINS` are there for

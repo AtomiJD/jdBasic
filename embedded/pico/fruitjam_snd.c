@@ -56,7 +56,7 @@ static volatile uint32_t g_step = 0;   // phase increment, 16.16
 static volatile int      g_amp  = 0;   // 0 when silent
 static uint32_t g_phase = 0;
 static volatile uint32_t g_irqs = 0;
-static int      g_volume = 20;
+static int      g_volume = 30;
 
 // The instructions come straight from the reference port, already
 // assembled: pull a frame, clock out sixteen bits with the word select
@@ -111,7 +111,7 @@ static int rd(uint8_t page, uint8_t reg) {
 
 // Headphone amp or the Class-D speaker amp; the routing bits pick one or
 // the other, so this is a switch rather than a pair of enables.
-static int g_out = 1;   // 1 = speaker, 0 = headphone
+static int g_out = 0;   // 1 = speaker, 0 = headphone
 
 void jdb_snd_out_route(int speaker) {
     g_out = speaker ? 1 : 0;
@@ -141,6 +141,10 @@ void jdb_snd_out_route(int speaker) {
         wr(1, 0x29, 0x04);
     }
     sleep_ms(20);
+}
+
+int jdb_snd_out_reg(int page, int reg) {
+    return rd((uint8_t)page, (uint8_t)reg);
 }
 
 int jdb_snd_out_probe(char* out, int cap) {
