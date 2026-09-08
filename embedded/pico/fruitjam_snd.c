@@ -239,7 +239,11 @@ static void codec_init(void) {
     wr(0, 0x41, 0xEC);              // -10 dB digital
     wr(0, 0x42, 0xEC);
 
-    jdb_snd_out_route(g_out);
+    // The speaker path is set up once before the chosen output is routed;
+    // headphone drivers brought up straight from the reset stay silent.
+    int want = g_out;
+    jdb_snd_out_route(1);
+    jdb_snd_out_route(want);
     sleep_ms(10);
 }
 
