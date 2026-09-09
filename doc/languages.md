@@ -829,7 +829,7 @@ print apply(dec@,12) ' Should return 11
 
 ### Console I/O Functions
 
-* **`INPUT [Prompt], variable`**: Prompts the user for a line input. Value is returned in variable
+* **`INPUT [Prompt], variable`**: Prompts the user for a line input. Value is returned in variable. A `$` variable, or one declared `AS STRING`, receives the line as text; any other variable receives a number when the line reads as one, and the text otherwise.
 * **`PRINT [Vairable,String,function,...] [;|,] ...`**: Prints the given arguments on screen "," places a tab between arguments ";" for direct concating or at the end of PRINT supresses the Newline
 
 #### `LOCATE row, col`

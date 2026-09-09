@@ -436,6 +436,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_err_set",       "__err_set",   void_type,   {i8_ptr_type, i64_type}, -1);
     reg("jdb_err_clear",     "__err_clear", void_type,   {}, -1);
     reg("jdb_err_set_if_clear", "__err_set_ifclear", void_type, {i8_ptr_type, i64_type}, -1);
+    reg("jdb_input_line",    "__input_line", i8_ptr_type, {}, 2);
     reg("jdb_err_msg",          "ERRMSG$",  i8_ptr_type, {}, 2);
     // ERR → user-visible reader (with shadow fallback). The raw-code
     // getter below is what emit_err_check's propagation loop calls.
@@ -3025,6 +3026,9 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
         case StmtKind::PRINT:
             codegen_print(stmt);
             break;
+        case StmtKind::INPUT:
+            codegen_input(stmt);
+            break;
         case StmtKind::FOR_LOOP:
             codegen_for(stmt);
             break;
@@ -3290,6 +3294,51 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
     // propagates up the call chain - this is the native analogue of the
     // VM's C++ exception unwinding.
     emit_err_check();
+}
+
+// INPUT [prompt ;|,] var: the prompt, one line from standard input, and
+// the line stored the way the variable is typed - text into a string
+// slot, a number into a numeric one.
+void LLVMCodegen::codegen_input(const Stmt& stmt) {
+    auto& pr_str = runtime_funcs["__print_str"];
+    if (stmt.expr) {
+        TypedValue p = codegen_expr(*stmt.expr);
+        LLVMValueRef ptxt = to_string_ptr(p);
+        LLVMValueRef pargs[] = { ptxt };
+        LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, pargs, 1, "");
+        if (stmt.print_newline) {
+            LLVMValueRef q = LLVMBuildGlobalStringPtr(builder, "? ", ".inq");
+            LLVMValueRef qargs[] = { q };
+            LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, qargs, 1, "");
+        }
+    } else {
+        LLVMValueRef q = LLVMBuildGlobalStringPtr(builder, "? ", ".inq");
+        LLVMValueRef qargs[] = { q };
+        LLVMBuildCall2(builder, pr_str.fn_type, pr_str.fn, qargs, 1, "");
+    }
+
+    VarInfo* vi = lookup_var(stmt.var_name);
+    if (!vi) {
+        bool sigil = !stmt.var_name.empty() && stmt.var_name.back() == '$';
+        vi = &create_var(stmt.var_name, sigil ? JD_TAG_STR : JD_TAG_F64);
+    }
+    auto& rd = runtime_funcs["__input_line"];
+    LLVMValueRef line = LLVMBuildCall2(builder, rd.fn_type, rd.fn, nullptr, 0, "inline");
+    if (vi->tag == JD_TAG_STR) {
+        LLVMBuildStore(builder, line, vi->alloca_val);
+        return;
+    }
+    auto& val_fn = runtime_funcs["VAL"];
+    LLVMValueRef vargs[] = { line };
+    LLVMValueRef num = LLVMBuildCall2(builder, val_fn.fn_type, val_fn.fn, vargs, 1, "inval");
+    if (vi->tag == JD_TAG_I64 || vi->tag == JD_TAG_BOOL) {
+        LLVMBuildStore(builder, LLVMBuildFPToSI(builder, num, i64_type, "inint"), vi->alloca_val);
+    } else if (vi->tag == JD_TAG_RUNTIME && vi->runtime_tag_alloca) {
+        LLVMBuildStore(builder, pun_f64_to_i64(num), vi->alloca_val);
+        LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_F64, 0), vi->runtime_tag_alloca);
+    } else {
+        LLVMBuildStore(builder, num, vi->alloca_val);
+    }
 }
 
 // ── FUNC / SUB ──────────────────────────────────────────────

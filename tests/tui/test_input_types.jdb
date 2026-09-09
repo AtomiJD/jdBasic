@@ -1,0 +1,32 @@
+' INPUT and the type of what arrives. Needs three lines on standard
+' input: 42, 42, 42.
+'   printf '42\n42\n42\n' | jdBasic tests/tui/test_input_types.jdb
+' A $ variable and one declared AS STRING keep the text; an untyped
+' variable takes the number.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+DIM fails = 0
+SUB CHECK(name$, got$, want$)
+    IF got$ = want$ THEN
+        PRINT "PASS "; name$
+    ELSE
+        PRINT "FAIL "; name$; ": got ["; got$; "] want ["; want$; "]"
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+DIM n$ AS STRING
+DIM s AS STRING
+DIM a AS DOUBLE
+INPUT "Name: "; n$
+INPUT "Text: "; s
+INPUT "Number: "; a
+CHECK("dollar variable is text", TYPEOF(n$), "STRING")
+CHECK("AS STRING variable is text", TYPEOF(s), "STRING")
+CHECK("dollar variable value", n$, "42")
+CHECK("number variable value", STR$(a), "42")
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT fails; " failed"
+ENDIF

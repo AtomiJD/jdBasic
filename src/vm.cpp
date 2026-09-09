@@ -2519,6 +2519,14 @@ void VM::run() {
             is_waiting_input = false;
 
             Value val;
+            // The sigil decides: a $ variable keeps what was typed as text.
+            // Anything else becomes a number when it reads as one.
+            const Chunk* name_chunk = (frames.size() <= 1) ? cf.chunk : frame().chunk;
+            const char* target = name_chunk->name_at(name_idx);
+            size_t target_len = target ? std::strlen(target) : 0;
+            if (target_len && target[target_len - 1] == '$') {
+                val = Value::make_string(input);
+            } else
             // Try to parse as number
             try {
                 size_t pos;

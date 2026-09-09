@@ -905,6 +905,7 @@ void Compiler::compile_dim(const Stmt& stmt) {
         current_chunk().emit(OpCode::CAST, stmt.line);
         current_chunk().emit_u8(vartype_to_valuetype_byte(stmt.var_type), stmt.line);
     }
+    if (stmt.var_type == VarType::STRING) string_typed_vars.insert(stmt.var_name);
     // DIM always declares a LOCAL variable in function scope
     if (scopes.size() > 1) {
         // Reject DIM-shadows-parameter: BASIC is case-insensitive, so
@@ -1015,6 +1016,14 @@ void Compiler::compile_input(const Stmt& stmt) {
     uint16_t slot = resolve_var(stmt.var_name);
     current_chunk().emit(OpCode::INPUT_VAR, stmt.line);
     current_chunk().emit_u16(slot, stmt.line);
+    // A variable declared AS STRING keeps the line as text, the way a
+    // $ variable does inside INPUT_VAR itself.
+    if (string_typed_vars.count(stmt.var_name)) {
+        emit_var_load(stmt.var_name, stmt.line);
+        current_chunk().emit(OpCode::CAST, stmt.line);
+        current_chunk().emit_u8(vartype_to_valuetype_byte(VarType::STRING), stmt.line);
+        emit_var_store(stmt.var_name, stmt.line, scopes.size() > 1);
+    }
 }
 
 void Compiler::compile_goto(const Stmt& stmt) {

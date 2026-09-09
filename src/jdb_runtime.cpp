@@ -423,6 +423,16 @@ void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
         arr->data[idx] = val;
 }
 
+// One line from standard input for INPUT, without its line ending.
+char* jdb_input_line(void) {
+    fflush(stdout);
+    char buf[4096];
+    if (!fgets(buf, sizeof buf, stdin)) return _strdup("");
+    size_t n = strlen(buf);
+    while (n && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = '\0';
+    return _strdup(buf);
+}
+
 // The cold half of every bounds check, kept out of the getters so their
 // hot path stays a compare and a load.
 static __declspec(noinline) void jdb_index_out_of_bounds(int64_t idx) {

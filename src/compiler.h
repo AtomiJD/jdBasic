@@ -68,6 +68,8 @@ private:
 
     // Known global variable names (collected before function compilation)
     std::unordered_set<std::string> known_globals;
+    // Names declared AS STRING without the sigil, so INPUT keeps text in them.
+    std::unordered_set<std::string> string_typed_vars;
 
     // Loop context for EXITFOR/CONTINUFOR etc.
     struct LoopCtx {

@@ -307,6 +307,7 @@ private:
     //   - inside main with no TRY → __throw_uncaught + unreachable
     // The builder is left positioned at the fall-through ok block.
     void emit_err_check();
+    void codegen_input(const Stmt& stmt);
 
     // LLVM types
     LLVMTypeRef i64_type;
