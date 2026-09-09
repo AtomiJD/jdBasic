@@ -91,6 +91,8 @@ private:
     void expect_newline();
     bool is_type_token(TokenType t) const;
     VarType parse_type();
+    // The user type the last parse_type() saw, empty for a builtin type.
+    std::string last_udt_name;
 
     // Statements
     StmtPtr parse_statement();

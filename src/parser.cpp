@@ -87,6 +87,7 @@ bool Parser::is_type_token(TokenType t) const {
 }
 
 VarType Parser::parse_type() {
+    last_udt_name.clear();
     // MAP as alias for OBJECT
     if (current().type == TokenType::IDENTIFIER && current().value == "MAP") {
         advance();
@@ -105,7 +106,7 @@ VarType Parser::parse_type() {
     // OBJECT.
     if (current().type == TokenType::IDENTIFIER && !is_type_token(current().type)) {
         record_type_ref(current().value, current().line);
-        advance();
+        last_udt_name = advance().value;
         return VarType::OBJECT; // UDTs are objects
     }
     if (!is_type_token(current().type)) {
@@ -1235,6 +1236,7 @@ std::vector<Param> Parser::parse_params() {
             p.name = expect(TokenType::IDENTIFIER, "parameter name").value;
             if (match(TokenType::AS)) {
                 p.type = parse_type();
+                p.type_name = last_udt_name;
             }
             if (match(TokenType::ASSIGN)) {
                 p.default_value = parse_expr();

@@ -234,6 +234,9 @@ enum class StmtKind {
 struct Param {
     std::string name;
     VarType type = VarType::NONE;
+    // The user type named after AS, when there is one; OBJECT alone does
+    // not say which.
+    std::string type_name;
     // A trailing parameter may name what it stands for when the caller
     // leaves it out. Literals only: a default that had to be evaluated
     // would need a scope to be evaluated in, and there is none at the

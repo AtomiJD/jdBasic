@@ -3609,6 +3609,13 @@ TYPE T_DSBox
   n AS INTEGER
 ENDTYPE
 
+SUB DS_SetParam(o AS T_DSBox)
+    o.n = 9
+    o.p.x = 7
+ENDSUB
+FUNC DS_ReadParam(o AS T_DSBox) AS INTEGER
+    RETURN o.p.x * 100 + o.n
+ENDFUNC
 SUB DS_SetGlobal()
     DSG.n = 9
     DSG.p.y = 11
@@ -3619,6 +3626,11 @@ DSB.n = 4
 DSB.p.x = 3
 Assert(DSB.n = 4, "a member of a user type")
 Assert(DSB.p.x = 3, "a nested member of a user type")
+Assert(DS_ReadParam(DSB) = 304, "a FUNC reads members of its parameter")
+
+DS_SetParam(DSB)
+Assert(DSB.n = 9, "a SUB sets a member of its parameter, the caller sees it")
+Assert(DSB.p.x = 7, "a SUB sets a nested member of its parameter")
 
 DIM DSG AS T_DSBox
 DS_SetGlobal()

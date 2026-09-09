@@ -3499,9 +3499,24 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         }
     }
 
+    // A parameter declared AS <user type> is that type inside the body,
+    // so its fields read and write through the pointer the caller passed.
+    std::vector<std::pair<std::string, std::string>> saved_udt;
+    for (auto& p : stmt.params()) {
+        if (p.type_name.empty()) continue;
+        auto it = var_udt_type.find(p.name);
+        saved_udt.push_back({ p.name, it == var_udt_type.end() ? std::string() : it->second });
+        var_udt_type[p.name] = p.type_name;
+    }
+
     // Compile body
     for (auto& s : stmt.body) {
         if (s) codegen_stmt(*s);
+    }
+
+    for (auto& [pname, prev] : saved_udt) {
+        if (prev.empty()) var_udt_type.erase(pname);
+        else var_udt_type[pname] = prev;
     }
 
     // If no terminator yet, branch to the unified exit block. The implicit
