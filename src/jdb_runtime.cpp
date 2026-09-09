@@ -423,12 +423,18 @@ void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
         arr->data[idx] = val;
 }
 
-double jdb_array_get(JdbArray* arr, int64_t idx) {
-    if (idx >= 0 && idx < arr->length)
-        return arr->data[idx];
+// The cold half of every bounds check, kept out of the getters so their
+// hot path stays a compare and a load.
+static __declspec(noinline) void jdb_index_out_of_bounds(int64_t idx) {
     char msg[64];
     snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
     jdb_err_set(msg, 13);
+}
+
+double jdb_array_get(JdbArray* arr, int64_t idx) {
+    if (idx >= 0 && idx < arr->length)
+        return arr->data[idx];
+    jdb_index_out_of_bounds(idx);
     return 0.0;
 }
 
@@ -781,9 +787,7 @@ JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
 double jdb_array_get_tagged(JdbArray* arr, int64_t idx, int32_t* out_tag) {
     if (!arr || idx < 0 || idx >= arr->length) {
         if (out_tag) *out_tag = JD_TAG_NONE;
-        char msg[64];
-        snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
-        jdb_err_set(msg, 13);
+        jdb_index_out_of_bounds(idx);
         return 0.0;
     }
     double v = arr->data[idx];
@@ -2059,9 +2063,7 @@ int32_t jdb_array_is_nested(JdbArray* arr) {
 // Bit 3: per-element tags array present - dispatch on the cell's own JdTag.
 void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length) {
-        char msg[64];
-        snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
-        jdb_err_set(msg, 13);
+        jdb_index_out_of_bounds(idx);
         return;
     }
     double val = arr->data[idx];
@@ -2221,9 +2223,7 @@ JdbArray* jdb_os_args() {
 // Get string pointer from an OS.ARGS array element
 const char* jdb_array_get_str(JdbArray* arr, int64_t idx) {
     if (!arr || idx < 0 || idx >= arr->length) {
-        char msg[64];
-        snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
-        jdb_err_set(msg, 13);
+        jdb_index_out_of_bounds(idx);
         return "";
     }
     intptr_t p;

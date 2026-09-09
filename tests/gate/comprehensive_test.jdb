@@ -3596,6 +3596,36 @@ Assert($"{{SIN_N}}{{SIN_N}}" = "33", "back to back")
 Assert($"{{SIN_N}} middle {{SIN_N}}" = "3 middle 3", "at both ends")
 
 ' ══════════════════════════════════════════════════════════════════
+' 32. DOTTED MEMBER STORES
+' ══════════════════════════════════════════════════════════════════
+Header("Dotted member stores")
+
+TYPE T_DSPt
+  x AS INTEGER
+  y AS INTEGER
+ENDTYPE
+TYPE T_DSBox
+  p AS T_DSPt
+  n AS INTEGER
+ENDTYPE
+
+SUB DS_SetGlobal()
+    DSG.n = 9
+    DSG.p.y = 11
+ENDSUB
+
+DIM DSB AS T_DSBox
+DSB.n = 4
+DSB.p.x = 3
+Assert(DSB.n = 4, "a member of a user type")
+Assert(DSB.p.x = 3, "a nested member of a user type")
+
+DIM DSG AS T_DSBox
+DS_SetGlobal()
+Assert(DSG.n = 9, "a SUB sets a member of a global")
+Assert(DSG.p.y = 11, "a SUB sets a nested member of a global")
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""
