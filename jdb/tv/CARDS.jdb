@@ -48,6 +48,15 @@ EXPORT FUNC RenderTitle(out_png$, lesson$, title$, subtitle$, host$)
     RETURN Run("title", out_png$, payload)
 ENDFUNC
 
+' Render a lower-third band on a transparent 1920x1080 page: the topic
+' in large type, a note beneath it. Laid over the picture by compose.
+EXPORT FUNC RenderTopic(out_png$, topic$, note$)
+    DIM payload = {}
+    payload{"topic"} = topic$
+    payload{"note"} = note$
+    RETURN Run("topic", out_png$, payload)
+ENDFUNC
+
 ' Render a 1280×720 YouTube thumbnail.
 '   lesson$  e.g. "01"
 '   title$   e.g. "Hello jdBasic"

@@ -1,0 +1,47 @@
+' ──────────────────────────────────────────────────────────────────
+'  jdBasic on the Fruit Jam
+'  The picture is D:\usr\video\Out\FruitJam_90.mp4, played by the OBS
+'  scene "Video" (media source, restarts when the scene goes live).
+'  AT: marks are seconds on that picture. Runtime 94 s.
+' ──────────────────────────────────────────────────────────────────
+
+SCENE: Video
+
+TITLE: FJ | jdBasic on the Fruit Jam | a BASIC computer on an RP2350B
+
+CHAPTER: The editor
+TOPIC: maze.jdb | the C64 one-liner, in the board's editor
+SAY: This is jdBasic on an Adafruit Fruit Jam. A monitor on the DVI socket, a USB keyboard, and the whole interpreter runs on the board. I am in the editor with the Commodore maze one-liner. Control R saves it and runs it.
+
+AT: 15
+SAY: "DIR" shows the flash store. I start the clock.
+
+CHAPTER: NET CLOCK
+AT: 19
+TOPIC: NET CLOCK | time from NTP, weather from Open-Meteo
+SAY: NET CLOCK joins the network, takes the time from NTP and the weather from Open Meteo. Five colour schemes, an analog face, and the forecast for the week. Nineteen kilobytes of BASIC.
+
+CHAPTER: Pinball
+AT: 34
+TOPIC: PINBALL | pinball.jdb, 900 lines, 60 frames a second
+SAY: Pinball. Pop bumpers, drop targets, a spinner, slingshots, a kickback and a charged plunger. The flippers are on the shift keys, and the BOOT button on the board is the plunger. The table redraws in a grid of cells, so a frame costs seven milliseconds on the RP2350. The sound goes out of the headphone jack. You cannot hear it here, the capture only took the picture.
+
+CHAPTER: Ctrl-C
+AT: 57.5
+TOPIC: Ctrl-C | ends a program wherever it is
+SAY: A loop at the prompt prints until I press Control C. The program ends with "Break at line one" and the prompt comes back. That works wherever the program is, in a loop, in a sleep, or while it serves a web page.
+
+AT: 69.5
+SAY: Next, STELLAR DRIFT.
+
+CHAPTER: STELLAR DRIFT
+AT: 72
+TOPIC: STELLAR DRIFT | drift.jdb, a USB pad, waves and a boss
+SAY: A shooter with a USB pad. Waves, a boss every fifth wave, power ups, and a high score in the flash store. Twenty kilobytes of source, and the board still has thirty kilobytes free while it runs.
+
+CHAPTER: jdBBS
+AT: 82
+TOPIC: jdBBS | a browser for a markdown board on my server
+SAY: jdBBS is a browser for a markdown board on my server. News, the boards, the lessons, and programs you can pull down and run. The same forty columns on every board, with colour per character cell.
+
+AT: 94

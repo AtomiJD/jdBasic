@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Train jdBasic - Topic band</title>
+<style>
+  /* A lower-third band on a transparent 1920x1080 page. render_card.py
+     screenshots it with the background omitted, so only the band lands
+     on the picture. Tokens: {{TOPIC}} {{NOTE}} */
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@500&family=Inter:wght@400;700;900&display=swap');
+
+  *  { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: transparent; }
+  body { font-family: 'Inter', system-ui, sans-serif; position: relative; }
+
+  .band {
+    position: absolute;
+    left: 0; bottom: 0;
+    display: flex;
+    align-items: stretch;
+    background: rgba(12, 16, 33, 0.86);
+    border-top: 1px solid rgba(94, 234, 212, 0.35);
+    border-bottom: 1px solid rgba(94, 234, 212, 0.35);
+    padding: 14px 56px 14px 0;
+    min-width: 700px;
+    max-width: 1180px;
+  }
+  .bar {
+    width: 18px;
+    background: #5eead4;
+    box-shadow: 0 0 24px rgba(94, 234, 212, 0.6);
+    margin-right: 40px;
+  }
+  .text { display: flex; flex-direction: column; justify-content: center; }
+  .topic {
+    font-size: 44px;
+    font-weight: 900;
+    color: #ffffff;
+    letter-spacing: -0.01em;
+    line-height: 1.05;
+  }
+  .note {
+    font-family: 'Fira Code', monospace;
+    font-size: 24px;
+    color: #94a3b8;
+    margin-top: 6px;
+  }
+  .brand {
+    position: absolute;
+    right: 24px; bottom: 14px;
+    font-family: 'Fira Code', monospace;
+    font-size: 26px;
+    color: rgba(148, 163, 184, 0.9);
+    background: rgba(12, 16, 33, 0.7);
+    padding: 8px 18px;
+    border-radius: 6px;
+  }
+  .brand .accent { color: #5eead4; }
+</style>
+</head>
+<body>
+  <div class="band">
+    <div class="bar"></div>
+    <div class="text">
+      <div class="topic">{{TOPIC}}</div>
+      <div class="note">{{NOTE}}</div>
+    </div>
+  </div>
+  <div class="brand">jdbasic.org <span class="accent">/</span> @AtomiJD</div>
+</body>
+</html>

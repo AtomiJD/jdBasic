@@ -22,7 +22,7 @@ title cards, 1280x720 for thumbnails).
 import sys, pathlib, json
 
 if len(sys.argv) != 4:
-    print("usage: render_card.py {title|thumb} <out.png> <args.json>", file=sys.stderr)
+    print("usage: render_card.py {title|thumb|topic} <out.png> <args.json>", file=sys.stderr)
     sys.exit(2)
 
 kind     = sys.argv[1].lower()
@@ -52,9 +52,18 @@ elif kind == "thumb":
         "{{TITLE}}":  payload.get("title", ""),
         "{{HOOK}}":   payload.get("hook", ""),
     }
+elif kind == "topic":
+    # A lower-third band on a transparent page, laid over the picture.
+    tpl_path = here / "cards" / "template_topic.html"
+    width, height = 1920, 1080
+    substitutions = {
+        "{{TOPIC}}": payload.get("topic", ""),
+        "{{NOTE}}":  payload.get("note", ""),
+    }
 else:
-    print(f"unknown kind: {kind!r} — use 'title' or 'thumb'", file=sys.stderr)
+    print(f"unknown kind: {kind!r} — use 'title', 'thumb' or 'topic'", file=sys.stderr)
     sys.exit(2)
+transparent = (kind == "topic")
 
 if not tpl_path.exists():
     print(f"ERROR: template not found: {tpl_path}", file=sys.stderr)
@@ -88,6 +97,7 @@ with sync_playwright() as p:
     page.goto(mat_path.as_uri())
     page.wait_for_load_state("networkidle")
     page.screenshot(path=str(out_path), full_page=False,
+                    omit_background=transparent,
                     clip={"x": 0, "y": 0, "width": width, "height": height})
     browser.close()
 

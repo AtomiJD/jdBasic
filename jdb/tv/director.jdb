@@ -109,8 +109,10 @@ DIM lines = SPLIT(TXTREADER$(SCRIPT_PATH$), CHR$(10))
 DIM voice_wavs = []
 DIM voice_durs = []
 DIM card_pngs  = []
+DIM topic_pngs = []
 DIM say_count AS INTEGER = 0
 DIM title_count AS INTEGER = 0
+DIM topic_count AS INTEGER = 0
 DIM prl AS INTEGER
 FOR prl = 0 TO LEN(lines) - 1
     DIM pline$ = TRIM$(lines[prl])
@@ -140,6 +142,18 @@ FOR prl = 0 TO LEN(lines) - 1
         PUSH card_pngs, cpng$
         PRINT "  TITLE ["; title_count; "]  "; lesson$; " | "; ttitle$; " | "; tsub$
         title_count = title_count + 1
+    ELSEIF STARTSWITH(pline$, "TOPIC:") THEN
+        ' TOPIC: <topic> | <note>     a lower-third band over the picture
+        DIM tbody$ = TRIM$(MID$(pline$, 7))
+        DIM tparts = SPLIT(tbody$, "|")
+        DIM ttopic$ = TRIM$(tparts[0])
+        DIM tnote$ = ""
+        IF LEN(tparts) >= 2 THEN tnote$ = TRIM$(tparts[1])
+        DIM tpng2$ = "cards\" + SCRIPT_BASE$ + "_topic_" + FORMAT$("{:0>3}", topic_count) + ".png"
+        DIM tok = CARDS.RenderTopic(tpng2$, ttopic$, tnote$)
+        PUSH topic_pngs, tpng2$
+        PRINT "  TOPIC ["; topic_count; "]  "; ttopic$; " | "; tnote$
+        topic_count = topic_count + 1
     ENDIF
 NEXT prl
 PRINT "── "; say_count; " voice clip(s) + "; title_count; " card(s) ready ──"
@@ -175,8 +189,10 @@ DIM MANIFEST = ""            ' accumulates "offset_ms\tdur_ms\twav_path\n"
 ' Manifest data rows are prefixed with VOICE\t or CARD\t so the
 ' composer can dispatch.  Card display window is 3.5 s.
 DIM CARD_DUR_MS AS INTEGER = 2500
+DIM TOPIC_DUR_MS AS INTEGER = 4000
 DIM say_idx AS INTEGER = 0
 DIM title_idx AS INTEGER = 0
+DIM topic_idx AS INTEGER = 0
 
 FOR I = 0 TO LEN(lines) - 1
     DIM raw$ = lines[I]
@@ -212,6 +228,24 @@ FOR I = 0 TO LEN(lines) - 1
         MANIFEST = MANIFEST + "CARD" + CHR$(9) + STR$(CINT(title_offset)) + CHR$(9) + STR$(CARD_DUR_MS) + CHR$(9) + tpng$ + CHR$(10)
         title_idx = title_idx + 1
         SLEEP CARD_DUR_MS
+
+    ELSEIF STARTSWITH(line$, "TOPIC:") THEN
+        ' The band goes into the manifest for the composer; the take
+        ' carries on underneath it, nothing waits.
+        DIM tp$ = TRIM$(MID$(line$, 7))
+        COLOR 13, 0 : PRINT "[TOPIC] "; tp$ : COLOR 7, 0
+        DIM topic_offset = TICK() - REC_T0
+        DIM tpng3$ = topic_pngs[topic_idx]
+        MANIFEST = MANIFEST + "CARD" + CHR$(9) + STR$(CINT(topic_offset)) + CHR$(9) + STR$(TOPIC_DUR_MS) + CHR$(9) + tpng3$ + CHR$(10)
+        topic_idx = topic_idx + 1
+
+    ELSEIF STARTSWITH(line$, "AT:") THEN
+        ' Wait until this many seconds of the recording have passed, so
+        ' a script can be laid against a picture that runs on its own.
+        DIM at_secs = VAL(TRIM$(MID$(line$, 4)))
+        DIM at_left = CINT(at_secs * 1000) - (TICK() - REC_T0)
+        PRINT "[AT] "; at_secs; "s"
+        IF at_left > 0 THEN SLEEP at_left
 
     ELSEIF STARTSWITH(line$, "SCENE:") THEN
         DIM scn$ = TRIM$(MID$(line$, 7))
