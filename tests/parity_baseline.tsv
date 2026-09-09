@@ -141,7 +141,7 @@ tests/regression/test_functional.jdb	OK	CFAIL	GAP
 tests/regression/test_getos.jdb	OK	OK	OK
 tests/regression/test_goto_native.jdb	PASS	PASS	OK
 tests/regression/test_help.jdb	OK	CFAIL	GAP
-
+tests/regression/test_input.jdb	OK	OK	OK
 tests/regression/test_ip.jdb	OK	OK	OK
 tests/regression/test_lambda.jdb	OK	OK	OK
 tests/regression/test_map_return.jdb	PASS	PASS	OK
