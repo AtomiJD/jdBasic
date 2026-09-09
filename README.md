@@ -6,6 +6,20 @@
 [![Try it online](https://img.shields.io/badge/try_it-in_your_browser-brightgreen)](https://jdbasic.org/live/index.html)
 [![YouTube](https://img.shields.io/badge/YouTube-Train_jdBasic-red)](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ)
 
+## An agent edits a running game, no restart
+
+[![Claude Code pauses the running shooter, swaps a function, and resumes it](https://img.youtube.com/vi/s-BRaSy1EQo/maxresdefault.jpg)](https://youtu.be/s-BRaSy1EQo)
+
+The shooter is running. F6 parks the VM at the next safe opcode; every variable, sprite and enemy stays in memory. Claude Code holds a handle on that paused process over **MCP**:
+
+- `g_palette{"player"} = [255, 80, 80] : lives = 100` is one `jdb_eval` against the live VM
+- a source edit plus `jdb_recompile` re-parses the file and merges the FUNC/SUB bodies into the running program; module-level data is left alone
+- on resume the score is unchanged and the same enemies fly the same paths, one routine now drawing its bar 20 pixels higher
+
+VB6 called this Edit and Continue. jdBasic keeps it, and MCP only changes who types. **[Video, 73 seconds](https://youtu.be/s-BRaSy1EQo)** · **[Write-up](https://www.atomijd.onl/blog-post-19.html)** · **[MCP setup and tool reference](https://jdbasic.org/ai-pair-coding/)** · **[Windows zip with the shooter, nothing to install](https://github.com/AtomiJD/jdBasic/releases/latest)**
+
+---
+
 **jdBasic** is a modern BASIC interpreter built around a custom **bytecode virtual machine** with APL-style array programming, hot-reloadable code, a persistent REPL workspace, and first-class graphics, GUI, audio, networking, AI, and **Godot-engine** integration.
 
 It combines the immediacy of classic BASIC with powerful built-in capabilities and a "stay in the session" philosophy - no constant restarts, no rebuild loops, just **think and run**.
