@@ -791,8 +791,8 @@ Syntax: FOR EACH variable IN collection
 Description: Keyword used to begin a loop that iterates over a collection.
 
 [EDIT]
-Syntax: EDIT
-Description: Opens the built-in source code editor.
+Syntax: EDIT [name]
+Description: Opens the built-in source code editor on a file, or on the program in memory. Ctrl-S save, Ctrl-R save and run (any key returns on the error line), F5 run without saving, Ctrl-F find, Ctrl-G/F3 find next, Ctrl-T replace, Ctrl-L go to line, Ctrl-A select all, Ctrl-D duplicate, Ctrl-K delete line, Tab/Shift-Tab indent, Ctrl-Z/Ctrl-Y undo/redo, F1 the key list, Ctrl-Q or Esc leave.
 
 [ELLIPSE]
 Syntax: ELLIPSE cx, cy, rx, ry, [fill], [r, g, b]

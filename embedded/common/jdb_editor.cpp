@@ -209,7 +209,7 @@ static void help_page(void) {
         "^D duplicate line   ^K delete line",
         "Tab indent   Shift-Tab outdent",
         "Ctrl+arrow word   Ctrl+Home/End file",
-        "F1 or ^H this page",
+        "F1 this page",
         "",
         "any key returns",
     };

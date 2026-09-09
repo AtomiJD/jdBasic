@@ -24,12 +24,36 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <conio.h>
 #elif defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <unistd.h>
+#include <termios.h>
 #else
 #include <unistd.h>
+#include <termios.h>
 #endif
+
+// One key from the console, without echo and without waiting for Return.
+static int wait_key() {
+#if defined(_WIN32)
+    int c = _getch();
+    if (c == 0 || c == 224) _getch();
+    return c;
+#else
+    struct termios saved, raw;
+    if (tcgetattr(STDIN_FILENO, &saved) != 0) return getchar();
+    raw = saved;
+    raw.c_lflag &= ~(ICANON | ECHO);
+    raw.c_cc[VMIN] = 1;
+    raw.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+    unsigned char ch = 0;
+    int got = (int)read(STDIN_FILENO, &ch, 1);
+    tcsetattr(STDIN_FILENO, TCSANOW, &saved);
+    return got == 1 ? ch : 27;
+#endif
+}
 
 #if defined(_WIN32) && defined(LLVM_CODEGEN)
 #include <vector>
@@ -1676,22 +1700,33 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
         // Default the editor's filename to the last LOAD'd file so Ctrl+S
         // writes back to it instead of prompting.
         std::string editor_filename = !edit_file.empty() ? edit_file : g_loaded_filename;
-        Editor editor(lines, editor_filename);
-        editor.run();
-        std::string new_buf;
-        for (size_t i = 0; i < lines.size(); i++) {
-            new_buf += lines[i];
-            if (i + 1 < lines.size()) new_buf += "\n";
-        }
-        program_buffer = new_buf;
-        // F5 in the editor: compile + run the buffer (no save).
-        if (editor.wants_run()) {
+        int goto_line = 0;
+        for (;;) {
+            Editor editor(lines, editor_filename, goto_line);
+            editor.run();
+            editor_filename = editor.file();
+            std::string new_buf;
+            for (size_t i = 0; i < lines.size(); i++) {
+                new_buf += lines[i];
+                if (i + 1 < lines.size()) new_buf += "\n";
+            }
+            program_buffer = new_buf;
+            if (!editor.wants_run() && !editor.wants_run_return()) break;
+            // F5: compile + run the buffer, no save. Ctrl-R: the editor has
+            // saved; run, then any key reopens it on the error line.
+            int err_line = 0;
             try { run_on_vm(vm, program_buffer); }
-            catch (const jdError& e) { print_error(e.code, e.what(), e.line); }
+            catch (const jdError& e) { print_error(e.code, e.what(), e.line); err_line = e.line; }
             catch (const std::exception& e) {
                 print_error(ErrCode::RUNTIME_ERROR, e.what());
             }
             vm.is_halted = false;
+            if (!editor.wants_run_return()) break;
+            std::cout << "\n-- stopped/done: any key returns to the editor, ESC to the prompt --" << std::flush;
+            int k = wait_key();
+            std::cout << "\n";
+            if (k == 27) break;
+            goto_line = err_line;
         }
         return;
     }

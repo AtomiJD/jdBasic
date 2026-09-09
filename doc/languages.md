@@ -4074,17 +4074,25 @@ set when its image is built; `embedded/pico/README.md` and
 
 ## The Integrated Editor
 
-The `EDIT` command launches a simple, built-in text editor.
+The `EDIT` command launches the built-in text editor; `EDIT name` opens a
+file (`.jdb` is appended when the name has no dot), `EDIT` alone the program
+in memory. The same keys work on the boards.
 
 ### Keyboard Shortcuts
 
-* **Arrow Keys, PageUp, PageDown**: Navigate text. Holding SHIFT for marking the text.
-* **`Ctrl+Q`**: Exit the editor.
-* **`Ctrl+S`**: Save the current file. If the file is unnamed, you will be prompted for a name.
-* **`Ctrl+F`**: Find text. You will be prompted for a search query.
-* **`Ctrl+P`**: Fast paste clipboard text (preserves formatting!)
-* **`Ctrl+C`**: Copy selected text
-* **`Ctrl+X`**: Cut selected text
-* **`Ctrl+V`**: Paste selected text
-* **`F3`**: Find the next occurrence of the last search query.
-* **`Ctrl+G`**: Go to a specific line number.
+* **Arrow keys, Home, End, PageUp, PageDown**: move; with SHIFT they select. `Ctrl+Left` / `Ctrl+Right` jump by word, `Ctrl+Home` / `Ctrl+End` go to the start and end of the file.
+* **`Ctrl+S`**: save; an unnamed buffer asks for a name.
+* **`Ctrl+Q`, `Esc`**: leave the editor. With unsaved changes it asks `save to file? y n esc`; the buffer stays the program in memory either way.
+* **`Ctrl+R`**: save and run. Afterwards any key reopens the editor on the line of the error, `Esc` returns to the prompt.
+* **`F5`**: run the buffer on the live VM without saving; the editor closes.
+* **`Ctrl+F`**: find, case-blind; the hit becomes the selection. **`Ctrl+G`** and **`F3`** find the next one with the same text.
+* **`Ctrl+T`**: replace. Each hit asks `y n a=all esc`; the count is reported.
+* **`Ctrl+L`**: go to a line.
+* **`Ctrl+A`**: select all. **`Ctrl+C`** copy, **`Ctrl+X`** cut, **`Ctrl+V`** or **`Ctrl+P`** paste, through the system clipboard.
+* **`Ctrl+Z`** undo, **`Ctrl+Y`** redo.
+* **`Ctrl+D`**: duplicate the line. **`Ctrl+K`**: delete the line.
+* **`Tab`** / **`Shift+Tab`**: indent or outdent by four spaces, the whole selection when there is one.
+* **`Insert`**: overwrite mode (Windows).
+* **`F1`**: the key list.
+
+The editor remembers where each file was left during the session and reopens it there.

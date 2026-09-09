@@ -17,6 +17,87 @@
 // (e.g. jdb/tv/director.jdb typing pre-indented code into the editor).
 bool g_editor_autoindent = true;
 
+#include <unordered_map>
+#include <vector>
+#include <string>
+#include <cctype>
+
+// What the two console editors share: the search, the replace scan, block
+// indent, the help page, the last search text, and where a file was left.
+namespace edcore {
+
+struct Spot { int cy = 0, cx = 0; };
+static std::unordered_map<std::string, Spot> g_spots;
+static std::string g_find;
+static const int INDENT = 4;
+
+static std::string fold(const std::string& s) {
+    std::string t = s;
+    for (auto& c : t) c = (char)std::tolower((unsigned char)c);
+    return t;
+}
+
+// The first hit at or after (y, byte), no wrap. Case-blind.
+static bool find_forward(const std::vector<std::string>& lines, int y, int byte,
+                         const std::string& q, int& hit_y, int& hit_byte) {
+    if (q.empty()) return false;
+    std::string fq = fold(q);
+    for (int li = y; li < (int)lines.size(); li++) {
+        int from = (li == y) ? byte : 0;
+        if (from > (int)lines[li].size()) continue;
+        size_t p = fold(lines[li]).find(fq, (size_t)from);
+        if (p != std::string::npos) { hit_y = li; hit_byte = (int)p; return true; }
+    }
+    return false;
+}
+
+// The next hit from (y, byte), wrapping once round the file.
+static bool find_from(const std::vector<std::string>& lines, int y, int byte,
+                      const std::string& q, int& hit_y, int& hit_byte) {
+    if (find_forward(lines, y, byte, q, hit_y, hit_byte)) return true;
+    if (!find_forward(lines, 0, 0, q, hit_y, hit_byte)) return false;
+    return hit_y < y || (hit_y == y && hit_byte < byte);
+}
+
+static void indent_block(std::vector<std::string>& lines, int y1, int y2) {
+    for (int y = y1; y <= y2; y++) lines[y].insert(0, std::string(INDENT, ' '));
+}
+
+// Up to INDENT leading spaces, or one leading tab, leave each line; the
+// answer says how many bytes each line lost.
+static std::vector<int> outdent_block(std::vector<std::string>& lines, int y1, int y2) {
+    std::vector<int> gone;
+    for (int y = y1; y <= y2; y++) {
+        std::string& l = lines[y];
+        int k = 0;
+        if (!l.empty() && l[0] == '\t') k = 1;
+        else while (k < INDENT && k < (int)l.size() && l[k] == ' ') k++;
+        l.erase(0, k);
+        gone.push_back(k);
+    }
+    return gone;
+}
+
+static const char* const HELP[] = {
+    "jdBasic editor",
+    "",
+    "Ctrl-S  save                 Ctrl-Q Esc  quit, asks when unsaved",
+    "Ctrl-R  save and run; any key returns here, Esc goes to the prompt",
+    "F5      run the buffer on the live VM without saving",
+    "Ctrl-F  find                 Ctrl-G F3   find next",
+    "Ctrl-T  replace: y n a=all esc per hit",
+    "Ctrl-L  go to line           Ctrl-A      select all",
+    "Ctrl-C  copy   Ctrl-X  cut   Ctrl-V Ctrl-P  paste",
+    "Ctrl-Z  undo                 Ctrl-Y      redo",
+    "Ctrl-D  duplicate line       Ctrl-K      delete line",
+    "Tab / Shift-Tab   indent or outdent the line or the selection",
+    "Ctrl-Left/Right   word       Ctrl-Home/End  file start and end",
+    "Shift + arrows, Home, End, PgUp, PgDn select",
+    nullptr
+};
+
+} // namespace edcore
+
 #if !defined(_WIN32)
 // ── POSIX full-screen editor ────────────────────────────────
 // Termios raw-mode + ANSI-escape full-screen edit. Same Editor class API
@@ -58,6 +139,8 @@ enum : int {
     PK_CTRL_LEFT, PK_CTRL_RIGHT,
     PK_SHIFT_LEFT, PK_SHIFT_RIGHT, PK_SHIFT_UP, PK_SHIFT_DOWN,
     PK_SHIFT_HOME, PK_SHIFT_END,
+    PK_F1, PK_F3, PK_CTRL_T, PK_CTRL_L, PK_CTRL_D, PK_CTRL_K, PK_CTRL_R,
+    PK_SHIFT_TAB, PK_CTRL_HOME, PK_CTRL_END,
 };
 
 // Internal clipboard fallback. xclip/wl-copy fail silently when there's no
@@ -119,6 +202,11 @@ int read_key_blocking(std::string& utf8_out) {
     if (c == 0x07) return PK_CTRL_G;
     if (c == 0x06) return PK_CTRL_F;
     if (c == 0x01) return PK_CTRL_A;
+    if (c == 0x14) return PK_CTRL_T;
+    if (c == 0x0C) return PK_CTRL_L;
+    if (c == 0x04) return PK_CTRL_D;
+    if (c == 0x0B) return PK_CTRL_K;
+    if (c == 0x12) return PK_CTRL_R;
 
     if (c == 0x1B) {
         int b1 = read_byte_timed(20);
@@ -136,7 +224,9 @@ int read_key_blocking(std::string& utf8_out) {
 
         if (b1 == 'O') {
             switch (final) {
-                case 'P': case 'Q': case 'R': case 'S': return PK_NONE;  // F1-F4 unmapped
+                case 'P': return PK_F1;
+                case 'R': return PK_F3;
+                case 'Q': case 'S': return PK_NONE;
                 case 'H': return PK_HOME;
                 case 'F': return PK_END;
             }
@@ -160,15 +250,18 @@ int read_key_blocking(std::string& utf8_out) {
             case 'B': return shift_mod ? PK_SHIFT_DOWN  : PK_DOWN;
             case 'C': return ctrl_mod ? PK_CTRL_RIGHT : (shift_mod ? PK_SHIFT_RIGHT : PK_RIGHT);
             case 'D': return ctrl_mod ? PK_CTRL_LEFT  : (shift_mod ? PK_SHIFT_LEFT  : PK_LEFT);
-            case 'H': return shift_mod ? PK_SHIFT_HOME  : PK_HOME;
-            case 'F': return shift_mod ? PK_SHIFT_END   : PK_END;
+            case 'H': return ctrl_mod ? PK_CTRL_HOME : (shift_mod ? PK_SHIFT_HOME : PK_HOME);
+            case 'F': return ctrl_mod ? PK_CTRL_END  : (shift_mod ? PK_SHIFT_END  : PK_END);
+            case 'Z': return PK_SHIFT_TAB;
             case '~':
                 switch (p1) {
-                    case 1: case 7:  return shift_mod ? PK_SHIFT_HOME : PK_HOME;
-                    case 4: case 8:  return shift_mod ? PK_SHIFT_END  : PK_END;
+                    case 1: case 7:  return ctrl_mod ? PK_CTRL_HOME : (shift_mod ? PK_SHIFT_HOME : PK_HOME);
+                    case 4: case 8:  return ctrl_mod ? PK_CTRL_END  : (shift_mod ? PK_SHIFT_END  : PK_END);
                     case 3:  return PK_DELETE;
                     case 5:  return PK_PAGEUP;
                     case 6:  return PK_PAGEDOWN;
+                    case 11: return PK_F1;
+                    case 13: return PK_F3;
                     case 15: return PK_F5;
                 }
                 return PK_NONE;
@@ -286,8 +379,10 @@ std::string clip_get() {
 
 class EditorImpl {
 public:
-    EditorImpl(std::vector<std::string>& lines, const std::string& fname, bool* run_flag)
-        : lines_ref(lines), filename(fname), run_requested_out(run_flag)
+    EditorImpl(std::vector<std::string>& lines, const std::string& fname, int goto_line,
+               bool* run_flag, bool* run_return_flag, std::string* fname_out)
+        : lines_ref(lines), filename(fname), goto_line(goto_line), run_requested_out(run_flag),
+          run_return_out(run_return_flag), filename_out(fname_out)
     {
         if (lines_ref.empty()) lines_ref.push_back("");
         update_screen_size();
@@ -297,7 +392,10 @@ public:
 private:
     std::vector<std::string>& lines_ref;
     std::string filename;
+    int goto_line = 0;
     bool* run_requested_out;
+    bool* run_return_out;
+    std::string* filename_out;
     int screen_cols = 80, screen_rows = 24;
     int text_rows() const { return std::max(1, screen_rows - 2); }  // status + msg
     int cy = 0, cx = 0;     // cursor in (line, codepoint-column)
@@ -412,15 +510,170 @@ private:
     void draw_status();
     void draw_line(int line_idx, int row_on_screen);
 
-    void save_file() {
+    bool save_file() {
+        if (filename.empty()) {
+            std::string n = prompt_str("Save as: ");
+            if (n.empty()) { status_msg = "Save aborted"; return false; }
+            filename = n;
+        }
         std::ofstream out(filename);
-        if (!out) { status_msg = "Save failed: " + filename; return; }
+        if (!out) { status_msg = "Save failed: " + filename; return false; }
         for (size_t i = 0; i < lines_ref.size(); i++) {
             out << lines_ref[i];
             if (i + 1 < lines_ref.size()) out << "\n";
         }
         dirty = false;
         status_msg = "Saved: " + filename;
+        return true;
+    }
+    // One key at the message row: the key code, or -1 with the character.
+    int prompt_key(const std::string& q, std::string& ch) {
+        std::cout << "\033[" << screen_rows << ";1H\033[K" << q << std::flush;
+        for (;;) {
+            int k = read_key_blocking(ch);
+            if (k != PK_NONE) return k;
+        }
+    }
+    bool confirm_quit() {
+        if (!dirty) return true;
+        std::string ch;
+        for (;;) {
+            int k = prompt_key("save to file? y n esc=back", ch);
+            if (k == PK_ESC) return false;
+            if (k == -1 && !ch.empty()) {
+                char c = (char)std::tolower((unsigned char)ch[0]);
+                if (c == 'y') return save_file();
+                if (c == 'n') return true;
+            }
+        }
+    }
+    void select_hit(int y, int byte, const std::string& q) {
+        cy = y;
+        sel_active = true;
+        sel_anchor_y = y;
+        sel_anchor_x = byte_to_cp(lines_ref[y], byte);
+        cx = sel_anchor_x + utf8_codepoints(q);
+        int rows = text_rows();
+        if (cy < top_row || cy >= top_row + rows) top_row = std::max(0, cy - rows / 2);
+    }
+    void find_text() {
+        std::string q = prompt_str("Find: ");
+        if (!q.empty()) edcore::g_find = q;
+        if (edcore::g_find.empty()) return;
+        find_next();
+    }
+    void find_next() {
+        if (edcore::g_find.empty()) { find_text(); return; }
+        int from = cp_to_byte(lines_ref[cy], has_sel() ? cx : cx + 1);
+        int hy, hb;
+        if (edcore::find_from(lines_ref, cy, from, edcore::g_find, hy, hb))
+            select_hit(hy, hb, edcore::g_find);
+        else
+            status_msg = "not found: " + edcore::g_find;
+    }
+    void replace_text() {
+        std::string q = prompt_str("Replace: ");
+        if (!q.empty()) edcore::g_find = q;
+        if (edcore::g_find.empty()) return;
+        q = edcore::g_find;
+        std::string r = prompt_str("With: ");
+        int start_y = cy, start_byte = cp_to_byte(lines_ref[cy], cx);
+        int count = 0;
+        bool all = false;
+        save_state();
+        // Pass one runs from the cursor to the end, pass two from the top
+        // to where the cursor was.
+        int y = start_y, b = start_byte, pass = 1;
+        for (;;) {
+            int hy, hb;
+            bool found = edcore::find_forward(lines_ref, y, b, q, hy, hb);
+            if (found && pass == 2 && (hy > start_y || (hy == start_y && hb >= start_byte))) found = false;
+            if (!found) {
+                if (pass == 1) { pass = 2; y = 0; b = 0; continue; }
+                break;
+            }
+            int act = 1;
+            if (!all) {
+                select_hit(hy, hb, q);
+                draw();
+                std::string ch;
+                for (;;) {
+                    int k = prompt_key("replace? y n a=all esc", ch);
+                    if (k == PK_ESC) { act = -1; break; }
+                    if (k == -1 && !ch.empty()) {
+                        char c = (char)std::tolower((unsigned char)ch[0]);
+                        if (c == 'y') { act = 1; break; }
+                        if (c == 'n') { act = 0; break; }
+                        if (c == 'a') { all = true; act = 1; break; }
+                    }
+                }
+            }
+            if (act < 0) break;
+            if (act == 1) {
+                lines_ref[hy].replace(hb, q.size(), r);
+                count++;
+                dirty = true;
+                if (pass == 2 && hy == start_y) start_byte += (int)r.size() - (int)q.size();
+                y = hy; b = hb + (int)r.size();
+            } else {
+                y = hy; b = hb + (int)q.size();
+            }
+        }
+        clear_sel();
+        clamp_cursor();
+        status_msg = std::to_string(count) + " replaced";
+    }
+    void duplicate_line() {
+        save_state();
+        lines_ref.insert(lines_ref.begin() + cy + 1, lines_ref[cy]);
+        cy++;
+        dirty = true;
+    }
+    void delete_line() {
+        save_state();
+        lines_ref.erase(lines_ref.begin() + cy);
+        if (lines_ref.empty()) lines_ref.push_back("");
+        clear_sel();
+        clamp_cursor();
+        dirty = true;
+    }
+    void indent_sel(bool outdent) {
+        save_state();
+        bool block = has_sel();
+        int y1 = cy, y2 = cy;
+        if (block) {
+            int sy, sx, ey, ex; get_sel_range(sy, sx, ey, ex);
+            y1 = sy; y2 = ey;
+            if (ey > sy && ex == 0) y2 = ey - 1;
+        }
+        if (!block && !outdent) {
+            int b = cp_to_byte(lines_ref[cy], cx);
+            lines_ref[cy].insert(b, std::string(edcore::INDENT, ' '));
+            cx += edcore::INDENT;
+            dirty = true;
+            return;
+        }
+        if (outdent) {
+            std::vector<int> gone = edcore::outdent_block(lines_ref, y1, y2);
+            if (cy >= y1 && cy <= y2) cx = std::max(0, cx - gone[cy - y1]);
+            if (block && sel_anchor_y >= y1 && sel_anchor_y <= y2)
+                sel_anchor_x = std::max(0, sel_anchor_x - gone[sel_anchor_y - y1]);
+        } else {
+            edcore::indent_block(lines_ref, y1, y2);
+            if (cy >= y1 && cy <= y2) cx += edcore::INDENT;
+            if (block && sel_anchor_y >= y1 && sel_anchor_y <= y2) sel_anchor_x += edcore::INDENT;
+        }
+        dirty = true;
+    }
+    void show_help() {
+        std::cout << "\033[2J\033[H";
+        int row = 1;
+        for (int i = 0; edcore::HELP[i]; i++, row++)
+            std::cout << "\033[" << row << ";1H" << edcore::HELP[i];
+        std::cout << "\033[" << (row + 1) << ";1Hany key returns to the text" << std::flush;
+        std::string ch;
+        while (read_key_blocking(ch) == PK_NONE) {}
+        std::cout << "\033[2J" << std::flush;
     }
     bool prompt_yn(const std::string& q) {
         std::cout << "\033[" << screen_rows << ";1H\033[K" << q << " (y/n) " << std::flush;
@@ -462,23 +715,6 @@ private:
               cy = std::min((int)lines_ref.size() - 1, n - 1); cx = 0;
               status_msg = "Jumped to line " + std::to_string(n);
         } catch (...) { status_msg = "Bad line number"; }
-    }
-    void find_next() {
-        static std::string last_query;
-        std::string q = prompt_str("Find: ");
-        if (!q.empty()) last_query = q;
-        if (last_query.empty()) return;
-        for (int dy = 0; dy <= (int)lines_ref.size(); dy++) {
-            int idx = (cy + dy) % lines_ref.size();
-            int from = (dy == 0) ? cp_to_byte(lines_ref[idx], cx + 1) : 0;
-            size_t pos = lines_ref[idx].find(last_query, from);
-            if (pos != std::string::npos) {
-                cy = idx; cx = byte_to_cp(lines_ref[idx], (int)pos);
-                status_msg = "Match line " + std::to_string(cy + 1);
-                return;
-            }
-        }
-        status_msg = "Not found: " + last_query;
     }
 
     bool is_kw(const std::string& w) const {
@@ -609,7 +845,7 @@ void EditorImpl::draw_status() {
       << (dirty ? " * " : "   ")
       << "L" << (cy + 1) << "/" << lines_ref.size()
       << " C" << (cx + 1)
-      << "  ^S save  ^Q quit  F5 run  ^Z undo  ^G goto  ^F find";
+      << "  ^S save  ^R run  ^F find  ^T replace  F1 help  ^Q quit";
     std::string line = s.str();
     int cp = utf8_codepoints(line);
     if (cp > screen_cols) line = line.substr(0, cp_to_byte(line, screen_cols));
@@ -641,6 +877,19 @@ void EditorImpl::run() {
     guard.enable();
     std::cout << "\033[?1049h\033[2J\033[H" << std::flush;  // alt screen + clear
 
+    if (goto_line > 0) {
+        cy = std::min(goto_line - 1, (int)lines_ref.size() - 1);
+        cx = 0;
+        top_row = std::max(0, cy - text_rows() / 2);
+    } else {
+        auto sp = edcore::g_spots.find(filename);
+        if (sp != edcore::g_spots.end()) {
+            cy = sp->second.cy; cx = sp->second.cx;
+            clamp_cursor();
+            top_row = std::max(0, cy - text_rows() / 2);
+        }
+    }
+
     while (true) {
         draw();
         std::string utf;
@@ -652,24 +901,40 @@ void EditorImpl::run() {
         // proceeds - typing replaces the selection.
         bool is_plain_move = (key == PK_LEFT || key == PK_RIGHT || key == PK_UP || key == PK_DOWN ||
                               key == PK_HOME || key == PK_END || key == PK_PAGEUP || key == PK_PAGEDOWN ||
-                              key == PK_CTRL_LEFT || key == PK_CTRL_RIGHT);
+                              key == PK_CTRL_LEFT || key == PK_CTRL_RIGHT ||
+                              key == PK_CTRL_HOME || key == PK_CTRL_END);
         if (is_plain_move) clear_sel();
 
         switch (key) {
             case PK_CTRL_Q:
-                // Exit unconditionally. The buffer (lines_ref) is the live
-                // in-memory program - main.cpp picks it up after we return,
-                // so a "discard?" prompt would be misleading. Ctrl+S still
-                // exists for writing to disk.
-                goto done;
+            case PK_ESC:
+                // The buffer stays the live program either way; the
+                // question is only whether the file on disk gets it.
+                if (confirm_quit()) goto done;
+                break;
             case PK_F5:
                 if (run_requested_out) *run_requested_out = true;
                 goto done;
+            case PK_CTRL_R:
+                if (save_file()) {
+                    if (run_return_out) *run_return_out = true;
+                    goto done;
+                }
+                break;
             case PK_CTRL_S: save_file(); break;
             case PK_CTRL_Z: undo(); break;
             case PK_CTRL_Y: redo(); break;
-            case PK_CTRL_G: go_to_line(); break;
-            case PK_CTRL_F: find_next(); break;
+            case PK_CTRL_L: go_to_line(); break;
+            case PK_CTRL_F: find_text(); break;
+            case PK_CTRL_G:
+            case PK_F3:     find_next(); break;
+            case PK_CTRL_T: replace_text(); break;
+            case PK_CTRL_D: duplicate_line(); break;
+            case PK_CTRL_K: delete_line(); break;
+            case PK_F1:     show_help(); break;
+            case PK_CTRL_HOME: cy = 0; cx = 0; break;
+            case PK_CTRL_END:  cy = (int)lines_ref.size() - 1; cx = line_cps(cy); break;
+            case PK_SHIFT_TAB: indent_sel(true); break;
             case PK_CTRL_A:
                 // Select all
                 sel_active = true; sel_anchor_y = 0; sel_anchor_x = 0;
@@ -807,14 +1072,7 @@ void EditorImpl::run() {
                 dirty = true;
                 break;
             }
-            case PK_TAB: {
-                save_state();
-                if (has_sel()) delete_sel();
-                int b = cp_to_byte(lines_ref[cy], cx);
-                lines_ref[cy].insert(b, "    ");
-                cx += 4; dirty = true;
-                break;
-            }
+            case PK_TAB: indent_sel(false); break;
             case -1: {
                 if (!utf.empty()) {
                     save_state();
@@ -830,6 +1088,8 @@ void EditorImpl::run() {
         }
     }
 done:
+    edcore::g_spots[filename] = { cy, cx };
+    if (filename_out) *filename_out = filename;
     // Reset SGR + show cursor + leave alt screen, in that order. The alt-
     // screen restore brings back the prior buffer; the SGR/cursor resets
     // make sure attributes from the editor don't leak into the REPL.
@@ -839,12 +1099,13 @@ done:
 
 }  // namespace
 
-Editor::Editor(std::vector<std::string>& lines, const std::string& fname)
-    : lines_ref(lines), filename(fname) {}
+Editor::Editor(std::vector<std::string>& lines, const std::string& fname, int goto_line)
+    : lines_ref(lines), filename(fname), goto_line(goto_line) {}
 
 void Editor::run() {
     run_requested = false;
-    EditorImpl impl(lines_ref, filename, &run_requested);
+    run_return_requested = false;
+    EditorImpl impl(lines_ref, filename, goto_line, &run_requested, &run_return_requested, &filename);
     impl.run();
 }
 
@@ -861,8 +1122,9 @@ void Editor::run() {
 class EditorImpl {
 public:
     EditorImpl(std::vector<std::string>& lines, const std::string& fname,
-               bool* run_flag = nullptr)
-        : lines_ref(lines), filename(fname), run_requested_out(run_flag) {
+               int goto_line, bool* run_flag, bool* run_return_flag, std::string* fname_out)
+        : lines_ref(lines), filename(fname), goto_line(goto_line),
+          run_requested_out(run_flag), run_return_out(run_return_flag), filename_out(fname_out) {
         hOut = GetStdHandle(STD_OUTPUT_HANDLE);
         GetConsoleScreenBufferInfo(hOut, &csbi);
         screen_cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
@@ -876,7 +1138,12 @@ public:
 private:
     std::vector<std::string>& lines_ref;
     std::string filename;
+    int goto_line = 0;
     bool* run_requested_out = nullptr;
+    bool* run_return_out = nullptr;
+    std::string* filename_out = nullptr;
+    // Shown once in the status row instead of the key hints.
+    std::wstring msg;
     HANDLE hOut;
     CONSOLE_SCREEN_BUFFER_INFO csbi;
     int screen_cols, screen_rows;
@@ -938,10 +1205,25 @@ private:
     void move_cursor(int dx, int dy);
 
     // Editing
-    void save_file();
+    bool save_file();
     void find_text();
+    void find_next();
+    void replace_text();
     void go_to_line();
     void paste_from_clipboard();
+    void duplicate_line();
+    void delete_line();
+    void select_all();
+    void indent_selection(bool outdent);
+    void show_help();
+    bool confirm_quit();
+    // One key as the console reports it; modifier presses alone are skipped.
+    struct KeyIn { WORD vk = 0; wchar_t ch = 0; bool ctrl = false, shift = false; };
+    KeyIn read_key();
+    // A column in UTF-16 units against the line's UTF-8 bytes, both ways.
+    int byte_of(int line_idx, int wide_x);
+    int wide_of(int line_idx, int byte);
+    void select_hit(int y, int byte, const std::string& q);
 
     // Undo/Redo
     void save_state();
@@ -982,6 +1264,18 @@ void EditorImpl::run() {
     GetConsoleMode(hIn, &original_mode);
     SetConsoleMode(hIn, ENABLE_WINDOW_INPUT | ENABLE_MOUSE_INPUT | ENABLE_EXTENDED_FLAGS);
 
+    if (goto_line > 0) {
+        cy = std::clamp(goto_line - 1, 0, (int)lines_ref.size() - 1);
+        top_row = std::max(0, cy - screen_rows / 2);
+    } else {
+        auto sp = edcore::g_spots.find(filename);
+        if (sp != edcore::g_spots.end()) {
+            cy = std::clamp(sp->second.cy, 0, (int)lines_ref.size() - 1);
+            cx = std::clamp(sp->second.cx, 0, (int)to_wide(lines_ref[cy]).length());
+            top_row = std::max(0, cy - screen_rows / 2);
+        }
+    }
+
     clear_screen();
     draw_screen();
     visual_cx = calc_visual_x(cy, cx);
@@ -1015,28 +1309,49 @@ void EditorImpl::run() {
             case 'C': copy_to_clipboard(); break;
             case 'X': copy_to_clipboard(); delete_selection(); break;
             case 'V': if (has_selection()) delete_selection(); paste_from_clipboard(); break;
+            case VK_HOME: cy = 0; cx = 0; break;
+            case VK_END:
+                cy = (int)lines_ref.size() - 1;
+                cx = (int)to_wide(lines_ref[cy]).length();
+                break;
             }
         }
         // Ctrl combos (but NOT AltGr)
         else if (ctrl && !alt) {
             switch (key.wVirtualKeyCode) {
-            case 'Q': goto exit_editor;
+            case 'Q': if (confirm_quit()) goto exit_editor; break;
             case 'S': save_file(); break;
+            case 'R':
+                if (save_file()) {
+                    if (run_return_out) *run_return_out = true;
+                    goto exit_editor;
+                }
+                break;
             case 'F': find_text(); break;
-            case 'G': go_to_line(); break;
+            case 'G': find_next(); break;
+            case 'T': replace_text(); break;
+            case 'L': go_to_line(); break;
+            case 'A': select_all(); break;
+            case 'D': duplicate_line(); break;
+            case 'K': delete_line(); break;
             case 'C': copy_to_clipboard(); break;
             case 'X': copy_to_clipboard(); delete_selection(); break;
             case 'P': if (has_selection()) delete_selection(); paste_from_clipboard(); break;
             case 'V': if (has_selection()) delete_selection(); paste_from_clipboard(); break;
             case 'Z': undo(); break;
             case 'Y': redo(); break;
-            case 37: { // Ctrl+Left
+            case VK_HOME: cy = 0; cx = 0; top_row = 0; break;
+            case VK_END:
+                cy = (int)lines_ref.size() - 1;
+                cx = (int)to_wide(lines_ref[cy]).length();
+                break;
+            case VK_LEFT: {
                 std::wstring wl = to_wide(lines_ref[cy]);
                 while (cx > 0 && iswspace(wl[cx - 1])) move_cursor(-1, 0);
                 while (cx > 0 && !iswspace(wl[cx - 1])) move_cursor(-1, 0);
                 break;
             }
-            case 39: { // Ctrl+Right
+            case VK_RIGHT: {
                 std::wstring wl = to_wide(lines_ref[cy]);
                 int len = (int)wl.length();
                 while (cx < len && !iswspace(wl[cx])) move_cursor(1, 0);
@@ -1048,6 +1363,9 @@ void EditorImpl::run() {
         // Normal keys
         else {
             switch (key.wVirtualKeyCode) {
+            case VK_F1: show_help(); break;
+            case VK_F3: find_next(); break;
+            case VK_ESCAPE: if (confirm_quit()) goto exit_editor; break;
             case VK_F5:
                 // Compile + run the current buffer. Do NOT save: F5 just
                 // signals the host (main.cpp) to execute the in-memory text
@@ -1126,15 +1444,7 @@ void EditorImpl::run() {
                 }
                 break;
             }
-            case VK_TAB: {
-                if (has_selection()) delete_selection();
-                save_state();
-                std::wstring wl = to_wide(lines_ref[cy]);
-                wl.insert(cx, 1, L'\t');
-                lines_ref[cy] = to_utf8(wl);
-                cx++; file_modified = true;
-                break;
-            }
+            case VK_TAB: indent_selection(shift); break;
             default: {
                 wchar_t ch = key.uChar.UnicodeChar;
                 if (iswprint(ch)) {
@@ -1166,6 +1476,8 @@ void EditorImpl::run() {
         set_cursor(cy - top_row, visual_cx - left_col);
     }
 exit_editor:
+    edcore::g_spots[filename] = { cy, cx };
+    if (filename_out) *filename_out = filename;
     SetConsoleMode(hIn, original_mode);
     clear_screen();
 }
@@ -1322,7 +1634,12 @@ void EditorImpl::draw_screen() {
     if (file_modified) status += L" *";
     status += L" | Ln:" + std::to_wstring(cy + 1) + L" Col:" + std::to_wstring(cx + 1);
     status += overwrite_mode ? L" | OVR" : L" | INS";
-    status += L" | ^S:Save ^F:Find ^G:GoTo ^P:Paste ^Q:Exit";
+    if (!msg.empty()) {
+        status += L" | " + msg;
+        msg.clear();
+    } else {
+        status += L" | ^S save ^R run ^F find ^T repl F1 help ^Q quit";
+    }
     write_status(status);
 }
 
@@ -1338,36 +1655,134 @@ void EditorImpl::move_cursor(int dx, int dy) {
 
 // ── File operations ──────────────────────────────────────────
 
-void EditorImpl::save_file() {
+bool EditorImpl::save_file() {
     if (filename.empty()) {
         std::wstring wn = prompt(L"Save as: ");
-        if (wn.empty()) { write_status(L"Save aborted."); return; }
+        if (wn.empty()) { msg = L"save aborted"; return false; }
         filename = to_utf8(wn);
     }
     std::ofstream out(filename);
-    if (!out) { write_status(L"Error writing file!"); return; }
+    if (!out) { msg = L"cannot write " + to_wide(filename); return false; }
     for (size_t i = 0; i < lines_ref.size(); i++) {
         out << lines_ref[i];
         if (i + 1 < lines_ref.size()) out << "\n";
     }
     file_modified = false;
-    write_status(L"File saved.");
+    msg = L"saved " + to_wide(filename);
+    return true;
+}
+
+EditorImpl::KeyIn EditorImpl::read_key() {
+    HANDLE hIn = GetStdHandle(STD_INPUT_HANDLE);
+    for (;;) {
+        INPUT_RECORD in;
+        DWORD n = 0;
+        if (!ReadConsoleInput(hIn, &in, 1, &n) || n == 0) { KeyIn k; k.vk = VK_ESCAPE; return k; }
+        if (in.EventType != KEY_EVENT || !in.Event.KeyEvent.bKeyDown) continue;
+        const auto& e = in.Event.KeyEvent;
+        if (e.wVirtualKeyCode == VK_SHIFT || e.wVirtualKeyCode == VK_CONTROL ||
+            e.wVirtualKeyCode == VK_MENU) continue;
+        KeyIn k;
+        k.vk = e.wVirtualKeyCode;
+        k.ch = e.uChar.UnicodeChar;
+        k.ctrl = (e.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+        k.shift = (e.dwControlKeyState & SHIFT_PRESSED) != 0;
+        return k;
+    }
+}
+
+int EditorImpl::byte_of(int line_idx, int wide_x) {
+    std::wstring wl = to_wide(lines_ref[line_idx]);
+    if (wide_x > (int)wl.length()) wide_x = (int)wl.length();
+    if (wide_x < 0) wide_x = 0;
+    return (int)to_utf8(wl.substr(0, wide_x)).size();
+}
+
+int EditorImpl::wide_of(int line_idx, int byte) {
+    const std::string& l = lines_ref[line_idx];
+    if (byte > (int)l.size()) byte = (int)l.size();
+    if (byte < 0) byte = 0;
+    return (int)to_wide(l.substr(0, byte)).length();
+}
+
+void EditorImpl::select_hit(int y, int byte, const std::string& q) {
+    cy = y;
+    sel_cy = y;
+    sel_cx = wide_of(y, byte);
+    cx = sel_cx + (int)to_wide(q).length();
+    is_selecting = true;
+    if (cy < top_row || cy >= top_row + screen_rows) top_row = std::max(0, cy - screen_rows / 2);
 }
 
 void EditorImpl::find_text() {
     std::wstring query = prompt(L"Find: ");
-    if (query.empty()) return;
-    std::string q = to_utf8(query);
-    for (size_t i = 0; i < lines_ref.size(); ++i) {
-        size_t li = (cy + i) % lines_ref.size();
-        size_t found = lines_ref[li].find(q, (li == (size_t)cy ? cx + 1 : 0));
-        if (found != std::string::npos) {
-            cy = (int)li; cx = (int)found;
-            top_row = std::max(0, cy - screen_rows / 2);
-            return;
+    if (!query.empty()) edcore::g_find = to_utf8(query);
+    if (edcore::g_find.empty()) return;
+    find_next();
+}
+
+void EditorImpl::find_next() {
+    if (edcore::g_find.empty()) { find_text(); return; }
+    int from = byte_of(cy, has_selection() ? cx : cx + 1);
+    int hy = 0, hb = 0;
+    if (edcore::find_from(lines_ref, cy, from, edcore::g_find, hy, hb))
+        select_hit(hy, hb, edcore::g_find);
+    else
+        msg = L"not found: " + to_wide(edcore::g_find);
+}
+
+void EditorImpl::replace_text() {
+    std::wstring wq = prompt(L"Replace: ");
+    if (!wq.empty()) edcore::g_find = to_utf8(wq);
+    if (edcore::g_find.empty()) return;
+    std::string q = edcore::g_find;
+    std::string r = to_utf8(prompt(L"With: "));
+    int start_y = cy, start_byte = byte_of(cy, cx);
+    int count = 0;
+    bool all = false;
+    save_state();
+    // Pass one runs from the cursor to the end, pass two from the top to
+    // where the cursor was.
+    int y = start_y, b = start_byte, pass = 1;
+    for (;;) {
+        int hy = 0, hb = 0;
+        bool found = edcore::find_forward(lines_ref, y, b, q, hy, hb);
+        if (found && pass == 2 && (hy > start_y || (hy == start_y && hb >= start_byte))) found = false;
+        if (!found) {
+            if (pass == 1) { pass = 2; y = 0; b = 0; continue; }
+            break;
+        }
+        int act = 1;
+        if (!all) {
+            select_hit(hy, hb, q);
+            visual_cx = calc_visual_x(cy, cx);
+            if (visual_cx < left_col) left_col = visual_cx;
+            if (visual_cx >= left_col + screen_cols) left_col = visual_cx - screen_cols + 1;
+            draw_screen();
+            write_status(L"replace? y n a=all esc");
+            set_cursor(cy - top_row, visual_cx - left_col);
+            for (;;) {
+                KeyIn k = read_key();
+                if (k.vk == VK_ESCAPE) { act = -1; break; }
+                wchar_t c = towlower(k.ch);
+                if (c == L'y') { act = 1; break; }
+                if (c == L'n') { act = 0; break; }
+                if (c == L'a') { all = true; act = 1; break; }
+            }
+        }
+        if (act < 0) break;
+        if (act == 1) {
+            lines_ref[hy].replace(hb, q.size(), r);
+            count++;
+            file_modified = true;
+            if (pass == 2 && hy == start_y) start_byte += (int)r.size() - (int)q.size();
+            y = hy; b = hb + (int)r.size();
+        } else {
+            y = hy; b = hb + (int)q.size();
         }
     }
-    write_status(L"Not found: " + query);
+    is_selecting = false;
+    msg = std::to_wstring(count) + L" replaced";
 }
 
 void EditorImpl::go_to_line() {
@@ -1379,9 +1794,93 @@ void EditorImpl::go_to_line() {
             cy = line - 1; cx = 0;
             top_row = std::max(0, cy - screen_rows / 2);
         } else {
-            write_status(L"Line out of range.");
+            msg = L"line out of range";
         }
-    } catch (...) { write_status(L"Invalid input."); }
+    } catch (...) { msg = L"not a line number"; }
+}
+
+void EditorImpl::duplicate_line() {
+    save_state();
+    lines_ref.insert(lines_ref.begin() + cy + 1, lines_ref[cy]);
+    cy++;
+    file_modified = true;
+}
+
+void EditorImpl::delete_line() {
+    save_state();
+    lines_ref.erase(lines_ref.begin() + cy);
+    if (lines_ref.empty()) lines_ref.push_back("");
+    if (cy >= (int)lines_ref.size()) cy = (int)lines_ref.size() - 1;
+    is_selecting = false;
+    file_modified = true;
+}
+
+void EditorImpl::select_all() {
+    is_selecting = true;
+    sel_cx = 0; sel_cy = 0;
+    cy = (int)lines_ref.size() - 1;
+    cx = (int)to_wide(lines_ref[cy]).length();
+}
+
+void EditorImpl::indent_selection(bool outdent) {
+    save_state();
+    bool block = has_selection();
+    int y1 = cy, y2 = cy;
+    if (block) {
+        int sx, sy, ex, ey;
+        get_selection(sx, sy, ex, ey);
+        y1 = sy; y2 = ey;
+        if (ey > sy && ex == 0) y2 = ey - 1;
+    }
+    if (!block && !outdent) {
+        std::wstring wl = to_wide(lines_ref[cy]);
+        wl.insert(cx, edcore::INDENT, L' ');
+        lines_ref[cy] = to_utf8(wl);
+        cx += edcore::INDENT;
+        file_modified = true;
+        return;
+    }
+    if (outdent) {
+        std::vector<int> gone = edcore::outdent_block(lines_ref, y1, y2);
+        if (cy >= y1 && cy <= y2) cx = std::max(0, cx - gone[cy - y1]);
+        if (block && sel_cy >= y1 && sel_cy <= y2) sel_cx = std::max(0, sel_cx - gone[sel_cy - y1]);
+    } else {
+        edcore::indent_block(lines_ref, y1, y2);
+        if (cy >= y1 && cy <= y2) cx += edcore::INDENT;
+        if (block && sel_cy >= y1 && sel_cy <= y2) sel_cx += edcore::INDENT;
+    }
+    file_modified = true;
+}
+
+void EditorImpl::show_help() {
+    clear_screen();
+    DWORD written = 0;
+    int row = 0;
+    for (int i = 0; edcore::HELP[i]; i++, row++) {
+        set_cursor(row, 0);
+        std::wstring w = to_wide(edcore::HELP[i]);
+        WriteConsoleW(hOut, w.c_str(), (DWORD)w.length(), &written, nullptr);
+    }
+    set_cursor(row, 0);
+    std::wstring ins = L"Insert  overwrite mode";
+    WriteConsoleW(hOut, ins.c_str(), (DWORD)ins.length(), &written, nullptr);
+    set_cursor(row + 2, 0);
+    std::wstring back = L"any key returns to the text";
+    WriteConsoleW(hOut, back.c_str(), (DWORD)back.length(), &written, nullptr);
+    read_key();
+    clear_screen();
+}
+
+bool EditorImpl::confirm_quit() {
+    if (!file_modified) return true;
+    write_status(L"save to file? y n esc=back");
+    for (;;) {
+        KeyIn k = read_key();
+        if (k.vk == VK_ESCAPE) return false;
+        wchar_t c = towlower(k.ch);
+        if (c == L'y') return save_file();
+        if (c == L'n') return true;
+    }
 }
 
 void EditorImpl::paste_from_clipboard() {
@@ -1540,12 +2039,13 @@ std::wstring EditorImpl::prompt(const std::wstring& msg) {
 
 // ── Public interface ─────────────────────────────────────────
 
-Editor::Editor(std::vector<std::string>& lines, const std::string& filename)
-    : lines_ref(lines), filename(filename) {}
+Editor::Editor(std::vector<std::string>& lines, const std::string& filename, int goto_line)
+    : lines_ref(lines), filename(filename), goto_line(goto_line) {}
 
 void Editor::run() {
     run_requested = false;
-    EditorImpl impl(lines_ref, filename, &run_requested);
+    run_return_requested = false;
+    EditorImpl impl(lines_ref, filename, goto_line, &run_requested, &run_return_requested, &filename);
     impl.run();
 }
 #endif // _WIN32
