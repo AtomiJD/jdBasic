@@ -2,7 +2,7 @@ tests/array_move_test.jdb	OK	CFAIL	GAP
 tests/async/test_async.jdb	PASS	PASS	OK
 tests/async/test_async2.jdb	OK	OK	OK
 tests/bench_globals.jdb	OK	CFAIL	GAP
-tests/bridge_flag_reach.jdb	PASS	PASS	OK
+tests/bridge_flag_reach.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/bridge_tag_fidelity.jdb	PASS	PASS	OK
 tests/channels/test_channels.jdb	PASS	FAIL	GAP
 tests/channels/test_channels_concurrent.jdb	PASS	PASS	OK
@@ -38,6 +38,7 @@ tests/eval/test_execute_in_try.jdb	OK	OK	OK
 tests/eval/test_execute_no_try.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/ffi/test_com.jdb	OK	OK	OK
 tests/ffi/test_com2.jdb	OK	CFAIL	GAP
+tests/ffi/test_com329.jdb	FAIL:1	CFAIL	BOTH_RED
 tests/ffi/test_ffi_native_diag.jdb	OK	CFAIL	GAP
 tests/ffi/test_ffi_return.jdb	OK	OK	OK
 tests/ffi/test_ffi_smoke.jdb	OK	CFAIL	GAP
@@ -131,7 +132,7 @@ tests/regression/test_for_step_neg3.jdb	OK	CFAIL	GAP
 tests/regression/test_for_step_neg4.jdb	OK	CFAIL	GAP
 tests/regression/test_format_vmh.jdb	OK	OK	OK
 tests/regression/test_frmv.jdb	OK	OK	OK
-tests/regression/test_fs.jdb	FAIL:1	PASS	NATIVE_ONLY
+tests/regression/test_fs.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/regression/test_func_array_param.jdb	OK	OK	OK
 tests/regression/test_func_local_array.jdb	OK	OK	OK
 tests/regression/test_funcref.jdb	OK	OK	OK
@@ -164,7 +165,7 @@ tests/regression/test_print.jdb	OK	OK	OK
 tests/regression/test_print_types.jdb	OK	CFAIL	GAP
 tests/regression/test_props.jdb	OK	OK	OK
 tests/regression/test_pwd_cd.jdb	OK	OK	OK
-tests/regression/test_python.jdb	PASS	PASS	OK
+tests/regression/test_python.jdb	OK	OK	OK
 tests/regression/test_react.jdb	PASS	PASS	OK
 tests/regression/test_react_cache.jdb	OK	OK	OK
 tests/regression/test_react_udt.jdb	OK	OK	OK
@@ -181,7 +182,7 @@ tests/regression/test_shift_infix.jdb	OK	OK	OK
 tests/regression/test_sin_arr.jdb	OK	CFAIL	GAP
 tests/regression/test_slice.jdb	OK	OK	OK
 tests/regression/test_sprite_create_save_load.jdb	OK	OK	OK
-tests/regression/test_sql.jdb	PASS	CFAIL	GAP
+tests/regression/test_sql.jdb	OK	CFAIL	GAP
 tests/regression/test_stop.jdb	OK	OK	OK
 tests/regression/test_str_array.jdb	OK	OK	OK
 tests/regression/test_string_array_push.jdb	OK	CFAIL	GAP
@@ -202,6 +203,7 @@ tests/strict/test_strict_explicit_bad.jdb	OK	CFAIL	XFAIL
 tests/strict/test_strict_explicit_good.jdb	OK	OK	OK
 tests/strict/test_strict_type_bad.jdb	OK	CFAIL	XFAIL
 tests/strict/test_strict_type_good.jdb	OK	OK	OK
+tests/test_dotted_store.jdb	PASS	CFAIL	GAP
 tests/test_numerics.jdb	PASS	CFAIL	GAP
 tests/tutorial/test_cvdate.jdb	OK	OK	OK
 tests/tutorial/test_letters.jdb	OK	CFAIL	GAP

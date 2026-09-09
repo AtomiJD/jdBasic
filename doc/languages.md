@@ -259,7 +259,9 @@ r?{"nope"}?[0]    ' NONE
 The `?` goes in front of the accessor and works with all three: `?.`
 for a field, `?{` for a key, `?[` for an index. Where a step cannot be
 absent you can leave it off - `r?{"choices"}[0]{"message"}` guards only
-the part that needs it.
+the part that needs it. Both backends raise the same errors for the
+unguarded step, `Cannot index into ...` and `Array index out of
+bounds: N`, and `TRY` catches them in compiled code as well.
 
 Two things it is not:
 
