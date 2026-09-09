@@ -968,7 +968,7 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
     *out_val = 0;
     auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
-    if (!v) return 0;
+    if (!v) return jd_tag(JdTag::NONE);
     union { double d; int64_t i; } u;
     switch (v->type) {
         case ValueType::STRING:
@@ -1031,13 +1031,16 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
     if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
         return jdrt_obj_get_tagged(handle, val_bits, key, out_val);
     }
+    // Absent stays absent: a base that is not there, and a key that is
+    // not in the map, both read as NONE rather than as the integer zero.
+    if (val_tag == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
     auto* m = (JdbMap*)(intptr_t)val_bits;
-    if (!m) return 0;
+    if (!m) return jd_tag(JdTag::NONE);
     int64_t idx = -1;
     for (int64_t i = 0; i < m->count; i++) {
         if (m->keys[i] && strcmp(m->keys[i], key) == 0) { idx = i; break; }
     }
-    if (idx < 0) return 0;
+    if (idx < 0) return jd_tag(JdTag::NONE);
     union { double d; int64_t i; } u;
     u.d = m->values[idx];
     int32_t t = m->tags[idx];
@@ -1058,12 +1061,26 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
 JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_tag,
                                       int64_t idx, int64_t* out_val) {
     *out_val = 0;
+    auto* rt = resolve_rt(handle);
+    // An index past the end is the interpreter's error, raised through the
+    // bridge's error slot so the statement's check picks it up.
+    auto out_of_range = [&](int64_t i) {
+        rt->last_error = "Array index out of bounds: " + std::to_string(i);
+        return jd_tag(JdTag::NONE);
+    };
     if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
-        *out_val = jdrt_val_arr_get(handle, val_bits, idx);
-        return (*out_val != 0) ? jd_tag(JdTag::VM_HANDLE) : 0;
+        auto it = rt->value_store.find(val_bits);
+        if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY)
+            return jd_tag(JdTag::NONE);
+        auto* a = it->second.as_array();
+        if (idx < 0 || (size_t)idx >= a->elements.size()) return out_of_range(idx);
+        *out_val = rt->store_value(a->elements[(size_t)idx]);
+        return jd_tag(JdTag::VM_HANDLE);
     }
+    if (val_tag == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
     auto* arr = (JdbArray*)(intptr_t)val_bits;
-    if (!arr || idx < 0 || idx >= arr->length) return 0;
+    if (!arr) return jd_tag(JdTag::NONE);
+    if (idx < 0 || idx >= arr->length) return out_of_range(idx);
     union { double d; int64_t i; } u;
     u.d = arr->data[idx];
     *out_val = u.i;

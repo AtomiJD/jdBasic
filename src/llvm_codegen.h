@@ -3,6 +3,7 @@
 
 #include <string>
 #include <vector>
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <stack>
@@ -396,6 +397,19 @@ private:
     // and branch to the top-of-stack catch block (or abort if none).
     // Caller positions the builder in the normal-path block afterwards.
     void emit_div_zero_check(TypedValue rhs);
+    // Reading into a runtime-tagged base that is absent: an optional step
+    // yields absent, a plain one raises the interpreter's error. The getter
+    // runs only when the base is there.
+    TypedValue index_none_guard(const TypedValue& base, bool optional,
+                                const std::function<TypedValue()>& getter);
+    // Reading into a map pointer that is null, which is how a missing key
+    // arrives when the chain asked for a pointer: same rule as above.
+    TypedValue map_null_guard(LLVMValueRef ptr, bool optional,
+                              const std::function<TypedValue()>& getter);
+    // Any value as (i64 bits, i32 tag), the pair a runtime-tagged slot holds.
+    void to_bits_tag(const TypedValue& tv, LLVMValueRef& bits, LLVMValueRef& tag);
+    // A runtime-tagged value rendered the way PRINT would show it.
+    LLVMValueRef runtime_to_text(LLVMValueRef bits, LLVMValueRef rtag);
     RuntimeFunc* get_runtime_func(const std::string& name);
     // Coerce a TypedValue to the expected LLVM type (prevents type mismatches)
     LLVMValueRef coerce_to(TypedValue tv, LLVMTypeRef target);

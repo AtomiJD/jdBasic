@@ -2869,11 +2869,19 @@ Assert(FORMAT$("{} {} {}", 1, 2.5, "x")  = "1 2.5 x",  "FORMAT$ multi-arg i64 + 
 Assert(FORMAT$("{:.2f} x {:.2f}", fmt_p{"f"}, fmt_p{"i"}) = "12.50 x 7.00", _
        "FORMAT$ multi-arg both VM_HANDLE")
 
+DIM fmt_b = TRUE
+DIM fmt_arr AS ARRAY = [1, 2, 3]
+DIM fmt_m AS MAP = { "k": 1 }
+Assert(FORMAT$("{}", fmt_b)   = "TRUE",       "FORMAT$ BOOL via {}")
+Assert(FORMAT$("{}", FALSE)   = "FALSE",      "FORMAT$ literal FALSE via {}")
+Assert(FORMAT$("{}", fmt_arr) = "[1, 2, 3]",  "FORMAT$ ARRAY via {}")
+Assert(FORMAT$("{}", fmt_m)   = "{" + CHR$(34) + "k" + CHR$(34) + ": 1}", "FORMAT$ MAP via {}")
+Assert(FORMAT$("{} {}", fmt_b, fmt_arr) = "TRUE [1, 2, 3]", "FORMAT$ BOOL and ARRAY together")
+
 ' --- Known native codegen gaps (pre-existing). Left commented so
 '  they're discoverable. Uncomment once the corresponding native-
 '  format-codegen issue lands. (string-from-VM_HANDLE was fixed in
 '  the FORMAT$ 'h' tag follow-up - see asserts above.)
-' Assert(FORMAT$("{}", TRUE)             = "TRUE",     "FORMAT$ BOOL - native says '1'")
 ' Assert(FORMAT$("{:>8.2f}", 3.14)       = "    3.14", "FORMAT$ width >8 - native ignores width")
 ' Assert(FORMAT$("{:0>4}", 7)            = "0007",     "FORMAT$ zero-pad 0>4 - native ignores fill")
 
@@ -3505,6 +3513,41 @@ Assert((OCR?{"n"} ?? 99) = 0, "a falsy value survives the chain")
 Assert(TYPEOF(OCR?{"choices"}?[0]) = "OBJECT", "a guarded index reads as itself")
 Assert(TYPEOF(OCR?{"meta"}) = "OBJECT", "a guarded key reads as itself")
 
+Assert(TYPEOF(OCR?{"choices"}?[0]?{"nope"}) = "NONE", "absent after a guarded index")
+Assert(TYPEOF(OCR?{"choices"}?[0]?{"nope"}?{"deep"}) = "NONE", "absent carries past a guarded index")
+Assert((OCR?{"choices"}?[0]?{"nope"}?{"deep"} ?? "no answer") = "no answer", "the fallback after a guarded index")
+
+' A plain step into something absent, or past the end, is the error the
+' interpreter raises; only the guarded step stays quiet.
+DIM OCERR$ = ""
+TRY
+    OCERR$ = TYPEOF(OCR{"nope"}{"deep"})
+CATCH
+    OCERR$ = ERRMSG$
+ENDTRY
+Assert(OCERR$ = "Cannot index into NONE", "a plain step into absent is an error")
+DIM OCARR AS ARRAY = [1, 2, 3]
+OCERR$ = ""
+TRY
+    OCERR$ = STR$(OCARR[7])
+CATCH
+    OCERR$ = ERRMSG$
+ENDTRY
+Assert(OCERR$ = "Array index out of bounds: 7", "an index past the end is an error")
+OCERR$ = ""
+TRY
+    OCERR$ = TYPEOF(OCR{"n"}{"deep"})
+CATCH
+    OCERR$ = ERRMSG$
+ENDTRY
+Assert(OCERR$ = "Cannot index into 0", "a step into a number is an error")
+
+' ANDALSO / ORELSE answer with the operand that decided.
+Assert((OCR{"n"} ORELSE 42) = 42, "ORELSE hands on the right operand when the left is falsy")
+Assert((5 ORELSE 42) = 5, "ORELSE keeps a truthy left operand")
+Assert((5 ANDALSO 42) = 42, "ANDALSO hands on the right operand when the left is truthy")
+Assert((0 ANDALSO 42) = 0, "ANDALSO keeps a falsy left operand")
+
 TYPE T_OCNode
   Label AS STRING
 ENDTYPE
@@ -3534,6 +3577,9 @@ Assert($"" = "", "an empty one")
 
 Assert($"{{SIN_N}}" = "3", "an integer")
 Assert($"{{SIN_F}}" = "1.5", "a float")
+Assert($"{{SIN_B}}" = "TRUE", "a boolean")
+Assert($"{{SIN_ARR}}" = "[1, 2, 3]", "an array, which a bare + would broadcast")
+Assert($"{{SIN_M}}" = "{" + CHR$(34) + "key" + CHR$(34) + ": " + CHR$(34) + "value" + CHR$(34) + ", " + CHR$(34) + "n" + CHR$(34) + ": 7}", "a map")
 
 Assert($"{{SIN_N * 2 + 1}}" = "7", "arithmetic")
 Assert($"{{UCASE$(SIN$)}}" = "WORLD", "a call")

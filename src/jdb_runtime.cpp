@@ -426,6 +426,9 @@ void jdb_array_set(JdbArray* arr, int64_t idx, double val) {
 double jdb_array_get(JdbArray* arr, int64_t idx) {
     if (idx >= 0 && idx < arr->length)
         return arr->data[idx];
+    char msg[64];
+    snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
+    jdb_err_set(msg, 13);
     return 0.0;
 }
 
@@ -777,7 +780,10 @@ JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
 // existing classifier so callers always get a sensible tag.
 double jdb_array_get_tagged(JdbArray* arr, int64_t idx, int32_t* out_tag) {
     if (!arr || idx < 0 || idx >= arr->length) {
-        if (out_tag) *out_tag = 1;  // F64
+        if (out_tag) *out_tag = JD_TAG_NONE;
+        char msg[64];
+        snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
+        jdb_err_set(msg, 13);
         return 0.0;
     }
     double v = arr->data[idx];
@@ -1800,11 +1806,35 @@ int64_t jdb_map_has(JdbMap* m, const char* key) {
 // Used by the codegen for nested-map / array-typed fields. The caller is
 // responsible for knowing the real type - the map itself doesn't expose
 // per-field tags through this entry point.
+// The pointer behind a key that holds a container. A key that is not
+// there answers null and nothing else; a key that holds a scalar is the
+// interpreter's error, since there is nothing to read into.
 void* jdb_map_get_obj(JdbMap* m, const char* key) {
     int64_t idx = map_find(m, key);
     if (idx < 0) return nullptr;
     union { double d; int64_t i; } u; u.d = m->values[idx];
-    return (void*)(intptr_t)u.i;
+    int32_t t = m->tags[idx];
+    if (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP) return (void*)(intptr_t)u.i;
+    char msg[128];
+    if (t == JD_TAG_STR) {
+        const char* s = (const char*)(intptr_t)u.i;
+        snprintf(msg, sizeof msg, "Cannot index into %s", s ? s : "");
+    } else if (t == JD_TAG_BOOL) {
+        snprintf(msg, sizeof msg, "Cannot index into %s", u.d != 0.0 ? "TRUE" : "FALSE");
+    } else {
+        char num[64];
+        jdb_format_double(num, sizeof num, u.d);
+        snprintf(msg, sizeof msg, "Cannot index into %s", num);
+    }
+    jdb_err_set(msg, 99);
+    return nullptr;
+}
+
+// A message for the statement that finds nothing pending yet; an error
+// already raised further in keeps its own words.
+void jdb_err_set_if_clear(const char* msg, int64_t code) {
+    if (g_err_code) return;
+    jdb_err_set(msg, code);
 }
 
 // Forward decl - the unified dispatcher that picks between this and
@@ -2028,7 +2058,12 @@ int32_t jdb_array_is_nested(JdbArray* arr) {
 // Bit 2: element is a boolean (TRUE/FALSE rendering).
 // Bit 3: per-element tags array present - dispatch on the cell's own JdTag.
 void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
-    if (!arr || idx < 0 || idx >= arr->length) return;
+    if (!arr || idx < 0 || idx >= arr->length) {
+        char msg[64];
+        snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
+        jdb_err_set(msg, 13);
+        return;
+    }
     double val = arr->data[idx];
     bool has_tagged = (arr->flags & 8) != 0 && arr->elem_tags != nullptr;
     bool has_ptr = (arr->flags & 1) != 0;
@@ -2185,7 +2220,12 @@ JdbArray* jdb_os_args() {
 
 // Get string pointer from an OS.ARGS array element
 const char* jdb_array_get_str(JdbArray* arr, int64_t idx) {
-    if (!arr || idx < 0 || idx >= arr->length) return "";
+    if (!arr || idx < 0 || idx >= arr->length) {
+        char msg[64];
+        snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
+        jdb_err_set(msg, 13);
+        return "";
+    }
     intptr_t p;
     memcpy(&p, &arr->data[idx], sizeof(p));
     return (const char*)p;
@@ -2628,7 +2668,8 @@ static int jdb_value_str_tag(char* buf, int cap, int pos, double val, int32_t ta
     union { double d; int64_t i; } u; u.d = val;
     switch (tag) {
         case JD_TAG_I64:
-            return pos + snprintf(buf + pos, cap - pos, "%lld", (long long)u.i);
+            // Map cells hold every number as f64; the tag says how it reads.
+            return pos + snprintf(buf + pos, cap - pos, "%lld", (long long)val);
         case JD_TAG_F64: {
             char num[64];
             jdb_format_double(num, sizeof(num), val);
