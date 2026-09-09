@@ -6,17 +6,18 @@
 [![Try it online](https://img.shields.io/badge/try_it-in_your_browser-brightgreen)](https://jdbasic.org/live/index.html)
 [![YouTube](https://img.shields.io/badge/YouTube-Train_jdBasic-red)](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ)
 
-## An agent edits a running game, no restart
+## I rewrite the game while it is still running
 
-[![Claude Code pauses the running shooter, swaps a function, and resumes it](https://img.youtube.com/vi/s-BRaSy1EQo/maxresdefault.jpg)](https://youtu.be/s-BRaSy1EQo)
+[![Claude Code pauses the running shooter, changes the code, and resumes it](https://img.youtube.com/vi/s-BRaSy1EQo/maxresdefault.jpg)](https://youtu.be/s-BRaSy1EQo)
 
-The shooter is running. F6 parks the VM at the next safe opcode; every variable, sprite and enemy stays in memory. Claude Code holds a handle on that paused process over **MCP**:
+jdBasic can run as an MCP server. The video shows AI pair coding with Claude: while my mini shooter is running I press F6, the VM pauses, and whatever I ask Claude to change goes through the jdBasic MCP server straight into the running interpreter.
 
-- `g_palette{"player"} = [255, 80, 80] : lives = 100` is one `jdb_eval` against the live VM
-- a source edit plus `jdb_recompile` re-parses the file and merges the FUNC/SUB bodies into the running program; module-level data is left alone
-- on resume the score is unchanged and the same enemies fly the same paths, one routine now drawing its bar 20 pixels higher
+- "Turn the ship red and give me 100 lives" - Claude changes two variables with `jdb_eval`: `g_palette{"player"} = [255, 80, 80] : lives = 100`
+- "Move the shield bar 20 pixels up" - that needs a source edit and a recompile. `jdb_recompile` compiles the code and puts the program pointer back on the right opcode. Claude resumes, everything is still at the same position with the same values, only the rendering loop now draws with the changed SUB.
 
-VB6 called this Edit and Continue. jdBasic keeps it, and MCP only changes who types. **[Video, 73 seconds](https://youtu.be/s-BRaSy1EQo)** · **[Write-up](https://www.atomijd.onl/blog-post-19.html)** · **[MCP setup and tool reference](https://jdbasic.org/ai-pair-coding/)** · **[Windows zip with the shooter, nothing to install](https://github.com/AtomiJD/jdBasic/releases/latest)**
+I built jdBasic because I missed the easiness of VB6: pause a running program, edit the code and the form, carry on. jdBasic was always meant to be a dirty little language that still does this. Using AI to code needed an MCP server inside jdBasic. Inside the game it is one small IMPORT for the MCP handling and one line in the rendering loop.
+
+**[Video, 73 seconds](https://youtu.be/s-BRaSy1EQo)** · **[My blog post](https://www.atomijd.onl/blog-post-19.html)** · **[MCP setup and tool reference](https://jdbasic.org/ai-pair-coding/)** · **[Windows zip with the shooter, nothing to install](https://github.com/AtomiJD/jdBasic/releases/latest)**
 
 ---
 
