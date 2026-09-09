@@ -67,6 +67,10 @@ FUNC ParseMd(path$)
     DIM out = {}
     out{"title"} = ""
     out{"hook"} = ""
+    ' playlist: none keeps a video out of the series playlist; label:
+    ' is what the thumbnail shows where a lesson number would sit.
+    out{"playlist"} = ""
+    out{"label"} = ""
     out{"tags"} = []
     out{"description"} = ""
 
@@ -106,6 +110,8 @@ FUNC ParseMd(path$)
             ENDIF
             IF k$ = "title" THEN out{"title"} = v$
             IF k$ = "hook"  THEN out{"hook"}  = v$
+            IF k$ = "playlist" THEN out{"playlist"} = LCASE$(v$)
+            IF k$ = "label" THEN out{"label"} = v$
             IF k$ = "tags"  THEN
                 DIM parts = SPLIT(v$, ",")
                 DIM pi AS INTEGER
@@ -314,6 +320,7 @@ SUB EnsureThumbnail(base$, lesson_md)
     IF STARTSWITH(base$, "script_") AND LEN(base$) >= 9 THEN
         lesson$ = MID$(base$, 7, 2)
     ENDIF
+    IF LEN(lesson_md{"label"}) > 0 THEN lesson$ = lesson_md{"label"}
     DIM hook$ = lesson_md{"hook"}
     IF LEN(hook$) = 0 THEN hook$ = lesson_md{"title"}
     PRINT "[upload] rendering thumbnail: "; thumb$
@@ -429,7 +436,7 @@ SUB UploadOne(base$, env, defaults, dry_run)
         PRINT "  OK - marker: "; marker$
     ENDIF
     IF FILE.EXISTS(meta_tmp$) THEN KILL meta_tmp$
-    AddToPlaylist(marker$, defaults)
+    IF lesson_md{"playlist"} <> "none" THEN AddToPlaylist(marker$, defaults)
 ENDSUB
 
 ' ── Walk every final\*.mp4 missing a marker ──────────────────────
