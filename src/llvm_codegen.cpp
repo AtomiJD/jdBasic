@@ -7107,7 +7107,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
     // can be: anything whose type the compiler already knows is present by
     // construction, and there the fallback is dead code.
     if (expr.op == TokenType::COALESCE) {
-        TypedValue lhs = codegen_expr(*expr.left);
+        // The left side has to be read tagged, or a string hint from the
+        // outer context turns an absent key into "" before ?? can see it.
+        TypedValue lhs;
+        {
+            ScopedLeafTag _lt(this, -1);
+            lhs = codegen_expr(*expr.left);
+        }
         if (lhs.tag != JD_TAG_RUNTIME || !lhs.runtime_tag) return lhs;
 
         LLVMValueRef is_none = LLVMBuildICmp(builder, LLVMIntEQ, lhs.runtime_tag,
@@ -8505,7 +8511,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         evald.reserve(nargs);
         bool needs_tagged = false;
         for (int i = 0; i < nargs; i++) {
-            TypedValue av = codegen_expr(*expr.args[i + 1]);
+            // Each argument carries its own type; a string hint from the
+            // outer context would send a numeric map cell through the
+            // string getter and concatenate where it should add.
+            TypedValue av;
+            {
+                ScopedLeafTag _lt(this, -1);
+                av = codegen_expr(*expr.args[i + 1]);
+            }
             if (av.tag == JD_TAG_STR ||
                 av.tag == JD_TAG_VM_HANDLE ||
                 av.tag == JD_TAG_RUNTIME ||

@@ -51,7 +51,7 @@ tests/gate/native_test.jdb	PASS	CFAIL	GAP
 tests/gate/native_test.strict.jdb	PASS	PASS	OK
 tests/gate/test_apl_complete.jdb	PASS	PASS	OK
 tests/gate/test_apl_pipelines.jdb	PASS	PASS	OK
-tests/interp_string.jdb	PASS	FAIL	GAP
+tests/interp_string.jdb	PASS	PASS	OK
 tests/jdplot_range.jdb	PASS	CFAIL	GAP
 tests/jdvoid/arena_rules.jdb	OK	OK	OK
 tests/line_table.jdb	PASS	CFAIL	GAP
