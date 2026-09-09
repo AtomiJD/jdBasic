@@ -1515,6 +1515,7 @@ StmtPtr Parser::parse_ident_stmt() {
             size_t saved = pos;
             mark(saved);
             bool pure_dots = true;
+            bool call_taken = false;
             while (check(TokenType::DOT)) {
                 advance();
                 // Accept any word token after dot (identifiers AND keywords like TEXT, END, etc.)
@@ -1558,8 +1559,11 @@ StmtPtr Parser::parse_ident_stmt() {
                     expect(TokenType::RPAREN, "')'");
                     // If chain continues (.field, [idx], {key}), fall through to chain parser
                     if (check(TokenType::DOT) || check(TokenType::LBRACKET) || check(TokenType::LBRACE)) {
+                        // The call is the head of the chain; the chain
+                        // parser continues from here, without rewinding.
                         lhs = make_call(dotted, std::move(args), ln);
-                        pure_dots = false; // prevent rewind below
+                        pure_dots = false;
+                        call_taken = true;
                     } else {
                         auto call = make_call(dotted, std::move(args), ln);
                         expect_newline();
@@ -1681,7 +1685,7 @@ StmtPtr Parser::parse_ident_stmt() {
                 return make_expr_stmt(std::move(call), ln);
             }
             // Fall through to chain parser (handles method calls on objects)
-            pos = saved;
+            if (!call_taken) pos = saved;
         }
 
         // Build chain with parse_postfix-like logic (for complex chains with method calls)

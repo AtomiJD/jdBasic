@@ -182,6 +182,16 @@ static auto g_program_start = std::chrono::steady_clock::now();
 #include <map>
 #include "async_task.h"
 
+// Names in a chunk keep the case they were written in.
+static bool name_ci_equal(const char* a, const std::string& b) {
+    size_t n = b.size();
+    for (size_t i = 0; i < n; i++) {
+        if (!a[i] || std::toupper((unsigned char)a[i]) !=
+                     std::toupper((unsigned char)b[i])) return false;
+    }
+    return a[n] == '\0';
+}
+
 // Defined beside register_native; every path that reaches a builtin
 // runs it before the call.
 static void check_native_arity(const std::string& name, const VM::NativeEntry& e, size_t argc);
@@ -1395,26 +1405,70 @@ void VM::run() {
                              ? strchr(full, '.') : nullptr;
             if (dotp) {
                 std::string obj_name(full, dotp - full);
-                std::string field(dotp + 1);
-                auto oit = global_names.find(obj_name);
-                if (oit != global_names.end() && oit->second < globals.size() &&
-                    globals[oit->second].type == ValueType::OBJECT) {
-{
+                std::string rest(dotp + 1);
+                // The base object: a local of the running function first,
+                // the way LOAD_GLOBAL and CALL resolve the same names, then
+                // a global.
+                Value cur;
+                bool have_cur = false;
+                if (frames.size() > 1) {
+                    const Chunk* fc = frame().chunk;
+                    for (size_t li = 0; li < fc->name_count(); li++) {
+                        if (name_ci_equal(fc->name_at(li), obj_name)) {
+                            size_t abs = frame().stack_base + li;
+                            if (abs < stack.size() &&
+                                stack[abs].type == ValueType::OBJECT) {
+                                cur = stack[abs];
+                                have_cur = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!have_cur) {
+                    auto oit = global_names.find(obj_name);
+                    if (oit != global_names.end() && oit->second < globals.size() &&
+                        globals[oit->second].type == ValueType::OBJECT) {
+                        cur = globals[oit->second];
+                        have_cur = true;
+                    }
+                }
+                // Walk the parts before the last one; the last is the field.
+                bool ok = have_cur;
+                size_t pos = 0;
+                while (ok) {
+                    size_t next = rest.find('.', pos);
+                    if (next == std::string::npos) break;
+                    std::string part = rest.substr(pos, next - pos);
+                    Value nr;
+#ifdef COM
+                    if (com_try_get_field(cur, part, nr)) { cur = nr; }
+                    else if (cur.as_com()) { ok = false; }
+                    else
+#endif
+                    if (cur.type == ValueType::OBJECT) {
+                        Value* f = cur.as_object()->get(part);
+                        if (f) cur = *f; else ok = false;
+                    } else ok = false;
+                    pos = next + 1;
+                }
+                if (ok && cur.type == ValueType::OBJECT) {
+                    std::string field = rest.substr(pos);
                     Value new_val = pop();
 #ifdef COM
-                    // COM first: as_object() on a ComObj is an invalid cast
-                    if (com_try_set_field(globals[oit->second], field, new_val)) {
+                    if (com_try_set_field(cur, field, new_val)) {
                         if (!reactive_bindings.empty() && !reactive_updating)
                             reactive_pending.push_back(full);
                         break;
                     }
+                    if (cur.as_com())
+                        throw std::runtime_error("COM: Unknown member '" + field + "'");
 #endif
-                    Value* old_val = globals[oit->second].as_object()->get(field);
+                    Value* old_val = cur.as_object()->get(field);
                     bool changed = !old_val || !values_equal(*old_val, new_val);
-                    globals[oit->second].as_object()->set(field, std::move(new_val));
+                    cur.as_object()->set(field, std::move(new_val));
                     if (changed && !reactive_bindings.empty() && !reactive_updating)
                         reactive_pending.push_back(full);
-}
                     break;
                 }
             }

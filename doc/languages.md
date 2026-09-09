@@ -738,6 +738,10 @@ wb = objXL.Workbooks.Add()
 objXL.ActiveSheet.Cells(1, 1).Value = "Hello from a jdBasic!"
 ```
 
+The same forms work inside a `SUB` or `FUNC`, whether the object arrives
+as a parameter or is a global, and an assignment may run through a chain
+of any length (`wb.Worksheets(1).Name = "Data"`, `doc.documentElement.firstChild.text = "x"`).
+
 **Tensor Gradient Access**
 You can access the gradient of a tensor after backpropagation using dot notation.
 

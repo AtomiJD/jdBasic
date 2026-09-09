@@ -1,0 +1,63 @@
+' COM assignment forms on MSXML2.DOMDocument (always present on Windows):
+' assignment through a parameterized call, through a dotted chain, and
+' inside FUNC/SUB with the object as a parameter or as a global.
+DIM fails = 0
+SUB CHECK(name$, got$, want$)
+    IF got$ = want$ THEN
+        PRINT "PASS "; name$
+    ELSE
+        PRINT "FAIL "; name$; ": got ["; got$; "] want ["; want$; "]"
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+SUB SET_A(d, path$, v$)
+    n = d.selectSingleNode(path$)
+    n.text = v$
+ENDSUB
+FUNC GET_A(d, path$)
+    n = d.selectSingleNode(path$)
+    RETURN n.text
+ENDFUNC
+SUB SET_B(path$, v$)
+    n = GD.selectSingleNode(path$)
+    n.text = v$
+ENDSUB
+FUNC GET_B(path$)
+    n = GD.selectSingleNode(path$)
+    RETURN n.text
+ENDFUNC
+FUNC NODE$(id$)
+    RETURN GD.selectSingleNode("//a[@id='" + id$ + "']").text
+ENDFUNC
+
+GD = CREATEOBJECT("MSXML2.DOMDocument.6.0")
+GD.loadXML("<r><a id='1'>-</a><a id='2'>-</a><a id='3'>-</a><a id='4'>-</a><a id='5'>-</a><a id='6'>-</a></r>")
+
+GD.selectSingleNode("//a[@id='1']").text = "direct1"
+CHECK("call then property", NODE$("1"), "direct1")
+
+n2 = GD.selectSingleNode("//a[@id='2']")
+n2.text = "viavar2"
+CHECK("via variable", NODE$("2"), "viavar2")
+
+GD.documentElement.firstChild.text = "chain1"
+CHECK("dotted chain of three", NODE$("1"), "chain1")
+
+SET_A(GD, "//a[@id='3']", "A3")
+SET_A(GD, "//a[@id='4']", "A4")
+CHECK("SUB with object parameter", NODE$("3") + NODE$("4"), "A3A4")
+CHECK("FUNC with object parameter", GET_A(GD, "//a[@id='3']") + GET_A(GD, "//a[@id='4']"), "A3A4")
+
+SET_B("//a[@id='5']", "B5")
+SET_B("//a[@id='6']", "B6")
+CHECK("SUB on global object", NODE$("5") + NODE$("6"), "B5B6")
+CHECK("FUNC on global object", GET_B("//a[@id='5']") + GET_B("//a[@id='6']"), "B5B6")
+
+CHECK("read through two calls", GD.selectSingleNode("//r").selectSingleNode("a[@id='2']").text, "viavar2")
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT fails; " failed"
+ENDIF

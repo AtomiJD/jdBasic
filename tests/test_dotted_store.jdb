@@ -1,0 +1,62 @@
+' Assignment through dotted names on maps and UDTs: nested members, and
+' members of an object that is a local or a parameter inside SUB/FUNC.
+DIM fails = 0
+SUB CHECK(name$, got, want)
+    IF got = want THEN
+        PRINT "PASS "; name$
+    ELSE
+        PRINT "FAIL "; name$; ": got "; got; " want "; want
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+TYPE PT
+    x AS INTEGER
+    y AS INTEGER
+ENDTYPE
+TYPE BOX
+    p AS PT
+    n AS INTEGER
+ENDTYPE
+
+SUB SET_PARAM(o)
+    o.n = 9
+    o.p.x = 7
+ENDSUB
+FUNC GET_PARAM(o)
+    RETURN o.p.x * 100 + o.n
+ENDFUNC
+SUB SET_GLOBAL_MEMBER()
+    GB.p.y = 11
+ENDSUB
+FUNC LOCAL_MAP()
+    m = {"A": {"B": 1}}
+    m.A.B = 5
+    RETURN m.A.B
+ENDFUNC
+
+DIM b AS BOX
+b.n = 4
+b.p.x = 3
+CHECK("UDT member", b.n, 4)
+CHECK("nested UDT member", b.p.x, 3)
+
+SET_PARAM(b)
+CHECK("SUB sets member of parameter", b.n, 9)
+CHECK("SUB sets nested member of parameter", b.p.x, 7)
+CHECK("FUNC reads members of parameter", GET_PARAM(b), 709)
+
+DIM GB AS BOX
+SET_GLOBAL_MEMBER()
+CHECK("SUB sets nested member of global", GB.p.y, 11)
+
+m = {"POS": {"X": 1}}
+m.POS.X = 5
+CHECK("nested map member", m{"POS"}{"X"}, 5)
+CHECK("nested map member in FUNC local", LOCAL_MAP(), 5)
+
+IF fails = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT fails; " failed"
+ENDIF

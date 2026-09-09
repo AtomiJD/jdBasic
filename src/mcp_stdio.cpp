@@ -55,6 +55,7 @@ extern std::string g_base_dir;
     #define WIN32_LEAN_AND_MEAN
   #endif
   #include <windows.h>
+  #include <objbase.h>
   #define MCP_POPEN  _popen
   #define MCP_PCLOSE _pclose
 #else
@@ -327,6 +328,11 @@ void worker_loop(VM& vm) {
     // etc.) inside a job is NOT caught by the catch(...) below and tears down
     // the whole MCP server ("Connection closed") instead of becoming an error.
     install_seh_translator_for_this_thread();
+#ifdef COM
+    // COM objects live on the thread that creates them; this is the thread
+    // that runs every tool call, so it is the one that holds the apartment.
+    CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+#endif
     while (true) {
         VmJob job;
         {
@@ -348,6 +354,9 @@ void worker_loop(VM& vm) {
         }
         g_worker.busy.store(false);
     }
+#ifdef COM
+    CoUninitialize();
+#endif
 }
 
 // Post a job and notify the worker. Caller must NOT hold g_worker.m.
