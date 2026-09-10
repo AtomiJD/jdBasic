@@ -570,6 +570,10 @@ Description: Decodes a Base64 encoded string.
 Syntax: CODEC.BASE64_ENCODE$(string$)
 Description: Encodes a string into Base64 format.
 
+[CODEC.CRC32$]
+Syntax: CODEC.CRC32$(string$)
+Description: Returns the CRC-32 checksum of a string as an 8-char hex string (the ZIP/PNG variant).
+
 [CODEC.HMAC$]
 Syntax: CODEC.HMAC$(key$, message$, [algo$])
 Description: Returns the HMAC of message$ under key$ as a 64-char hex string. Only "SHA256" (the default) is supported. Binary safe.
@@ -3588,6 +3592,18 @@ Description: Creates an array of the given shape filled with zeros.
 [ZIP]
 Syntax: ZIP(arr1, arr2, ...) -> matrix
 Description: Combines vectors into a matrix where each row is [arr1[i], arr2[i], ...].
+
+[ZIP.WRITE]
+Syntax: ZIP.WRITE(path$, entries)
+Description: Writes a map of entry name to content as a ZIP archive (stored, uncompressed). Returns the entry count.
+
+[ZIP.READ]
+Syntax: ZIP.READ(path$)
+Description: Reads a ZIP archive into a map of entry name to content. Handles stored and deflated entries.
+
+[ZIP.LIST]
+Syntax: ZIP.LIST(path$)
+Description: Returns an array of the entry names in a ZIP archive.
 
 [WAV.WRITE]
 Syntax: WAV.WRITE(path$, samples[], [rate=44100], [channels=1]) -> bool

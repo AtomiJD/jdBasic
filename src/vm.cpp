@@ -802,7 +802,8 @@ bool jdb_no_vectorize(const std::string& name) {
         "CHAN.OPEN", "CHAN.RECV", "CHAN.SEND", "CHUNK", "CIRCLE",
         "CIRCLE_SECTOR", "CLEAR_RECUR", "CLIPBOARD.GET$", "CLIPBOARD.SET",
         "CLS", "CODEC.BASE64_DECODE$", "CODEC.BASE64_ENCODE$",
-        "CODEC.HMAC$", "CODEC.SHA256$", "CODEC.UUID$", "COLOR", "CONVOLVE",
+        "CODEC.CRC32$", "CODEC.HMAC$", "CODEC.SHA256$", "CODEC.UUID$",
+        "COLOR", "CONVOLVE",
         "COPYV",
         "COUNT", "CROSS", "CSVHEADER", "CSVREADER", "CSVWRITER", "CUMPROD",
         "CUMSUM", "CURSOR", "CVDATE", "D", "DATE$", "DATE.PARTS",
@@ -923,7 +924,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "TURTLE.PENDOWN", "TURTLE.PENUP", "TURTLE.RIGHT",
         "TURTLE.SETHEADING", "TURTLE.SETPOS", "TURTLE.SET_COLOR",
         "TXTREADER$", "TXTWRITER", "TYPEOF", "UNIQUE", "UNPACK", "UNREACT",
-        "VARIANCE", "VARS", "WAITKEY$", "XSORT", "YIELD", "ZEROS", "ZIP",
+        "VARIANCE", "VARS", "WAITKEY$", "XSORT", "YIELD", "ZEROS", "ZIP", "ZIP.LIST", "ZIP.READ", "ZIP.WRITE",
         "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
         "__MAKE_UDT_ARRAY__",
     };
@@ -4507,6 +4508,193 @@ static std::string hmac_sha256_hex(const std::string& key, const std::string& ms
     uint8_t out_digest[32];
     sha256_digest(outer.data(), outer.size(), out_digest);
     return bytes_to_hex(out_digest, 32);
+}
+
+// ── ZIP archives ────────────────────────────────────────────
+// Writing produces stored (uncompressed) entries, which every unpacker
+// accepts. Reading handles stored and deflated entries; the deflate side
+// borrows the tinfl decoder that FlateDecode in pdf_extract already uses.
+
+static uint32_t crc32_bytes(const uint8_t* data, size_t len) {
+    static uint32_t table[256];
+    static bool built = false;
+    if (!built) {
+        for (uint32_t i = 0; i < 256; i++) {
+            uint32_t c = i;
+            for (int k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+            table[i] = c;
+        }
+        built = true;
+    }
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < len; i++) c = table[(c ^ data[i]) & 0xFF] ^ (c >> 8);
+    return c ^ 0xFFFFFFFFu;
+}
+
+static void put16(std::string& out, uint16_t v) {
+    out += (char)(v & 0xFF);
+    out += (char)((v >> 8) & 0xFF);
+}
+
+static void put32(std::string& out, uint32_t v) {
+    out += (char)(v & 0xFF);
+    out += (char)((v >> 8) & 0xFF);
+    out += (char)((v >> 16) & 0xFF);
+    out += (char)((v >> 24) & 0xFF);
+}
+
+static uint16_t get16(const std::string& b, size_t at) {
+    return (uint16_t)((uint8_t)b[at] | ((uint8_t)b[at+1] << 8));
+}
+
+static uint32_t get32(const std::string& b, size_t at) {
+    return (uint32_t)((uint8_t)b[at]) | ((uint32_t)(uint8_t)b[at+1] << 8) |
+           ((uint32_t)(uint8_t)b[at+2] << 16) | ((uint32_t)(uint8_t)b[at+3] << 24);
+}
+
+// Current local time in the MS-DOS packing the format has used since 1989.
+static void dos_stamp(uint16_t& dos_time, uint16_t& dos_date) {
+    time_t now = time(nullptr);
+    struct tm t;
+#if defined(_WIN32)
+    localtime_s(&t, &now);
+#else
+    localtime_r(&now, &t);
+#endif
+    dos_time = (uint16_t)((t.tm_hour << 11) | (t.tm_min << 5) | (t.tm_sec / 2));
+    dos_date = (uint16_t)(((t.tm_year - 80) << 9) | ((t.tm_mon + 1) << 5) | t.tm_mday);
+}
+
+static std::string zip_build(const std::vector<std::pair<std::string, std::string>>& entries) {
+    uint16_t dos_time = 0, dos_date = 0;
+    dos_stamp(dos_time, dos_date);
+
+    std::string body;
+    std::string central;
+    for (auto& [name, content] : entries) {
+        uint32_t crc = crc32_bytes((const uint8_t*)content.data(), content.size());
+        uint32_t size = (uint32_t)content.size();
+        uint32_t offset = (uint32_t)body.size();
+
+        put32(body, 0x04034b50);
+        put16(body, 20);        // version needed
+        put16(body, 0x0800);    // UTF-8 names
+        put16(body, 0);         // stored
+        put16(body, dos_time);
+        put16(body, dos_date);
+        put32(body, crc);
+        put32(body, size);
+        put32(body, size);
+        put16(body, (uint16_t)name.size());
+        put16(body, 0);
+        body += name;
+        body += content;
+
+        put32(central, 0x02014b50);
+        put16(central, 20);     // version made by
+        put16(central, 20);
+        put16(central, 0x0800);
+        put16(central, 0);
+        put16(central, dos_time);
+        put16(central, dos_date);
+        put32(central, crc);
+        put32(central, size);
+        put32(central, size);
+        put16(central, (uint16_t)name.size());
+        put16(central, 0);      // extra
+        put16(central, 0);      // comment
+        put16(central, 0);      // disk
+        put16(central, 0);      // internal attrs
+        put32(central, 0);      // external attrs
+        put32(central, offset);
+        central += name;
+    }
+
+    std::string out = body;
+    uint32_t central_offset = (uint32_t)out.size();
+    out += central;
+    put32(out, 0x06054b50);
+    put16(out, 0);
+    put16(out, 0);
+    put16(out, (uint16_t)entries.size());
+    put16(out, (uint16_t)entries.size());
+    put32(out, (uint32_t)central.size());
+    put32(out, central_offset);
+    put16(out, 0);
+    return out;
+}
+
+struct ZipEntry {
+    std::string name;
+    uint16_t method = 0;
+    uint32_t comp_size = 0;
+    uint32_t size = 0;
+    uint32_t local_offset = 0;
+};
+
+static std::string zip_slurp(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) throw std::runtime_error("ZIP: cannot open '" + path + "'");
+    std::stringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+// The end-of-central-directory record sits at the tail, after a comment of
+// unknown length, so it is found by scanning backwards for its signature.
+static std::vector<ZipEntry> zip_scan(const std::string& buf) {
+    if (buf.size() < 22) throw std::runtime_error("ZIP: file is too small to be an archive");
+    size_t eocd = std::string::npos;
+    size_t lowest = buf.size() >= 65557 ? buf.size() - 65557 : 0;
+    for (size_t i = buf.size() - 22; ; i--) {
+        if (get32(buf, i) == 0x06054b50) { eocd = i; break; }
+        if (i == lowest) break;
+    }
+    if (eocd == std::string::npos)
+        throw std::runtime_error("ZIP: no end-of-central-directory record - not a zip archive");
+
+    uint16_t count = get16(buf, eocd + 10);
+    uint32_t cd_offset = get32(buf, eocd + 16);
+
+    std::vector<ZipEntry> entries;
+    size_t p = cd_offset;
+    for (uint16_t i = 0; i < count; i++) {
+        if (p + 46 > buf.size() || get32(buf, p) != 0x02014b50)
+            throw std::runtime_error("ZIP: damaged central directory");
+        ZipEntry e;
+        e.method = get16(buf, p + 10);
+        e.comp_size = get32(buf, p + 20);
+        e.size = get32(buf, p + 24);
+        uint16_t name_len = get16(buf, p + 28);
+        uint16_t extra_len = get16(buf, p + 30);
+        uint16_t comment_len = get16(buf, p + 32);
+        e.local_offset = get32(buf, p + 42);
+        e.name = buf.substr(p + 46, name_len);
+        entries.push_back(e);
+        p += 46 + name_len + extra_len + comment_len;
+    }
+    return entries;
+}
+
+static std::string zip_extract(const std::string& buf, const ZipEntry& e) {
+    size_t p = e.local_offset;
+    if (p + 30 > buf.size() || get32(buf, p) != 0x04034b50)
+        throw std::runtime_error("ZIP: damaged local header for '" + e.name + "'");
+    uint16_t name_len = get16(buf, p + 26);
+    uint16_t extra_len = get16(buf, p + 28);
+    size_t data = p + 30 + name_len + extra_len;
+    if (data + e.comp_size > buf.size())
+        throw std::runtime_error("ZIP: entry '" + e.name + "' runs past the end of the file");
+
+    if (e.method == 0) return buf.substr(data, e.comp_size);
+    if (e.method == 8) {
+        std::vector<uint8_t> out;
+        if (!pdf_extract::tinfl::inflate((const uint8_t*)buf.data() + data, e.comp_size, out, false))
+            throw std::runtime_error("ZIP: cannot inflate '" + e.name + "'");
+        return std::string(out.begin(), out.end());
+    }
+    throw std::runtime_error("ZIP: entry '" + e.name + "' uses unsupported method " +
+                             std::to_string(e.method));
 }
 
 void VM::register_builtins() {
@@ -8123,6 +8311,13 @@ void VM::register_builtins() {
         return Value::make_string(sha256_hex(args[0].as_string()->data));
     });
 
+    register_native("CODEC.CRC32$", [](const std::vector<Value>& args) -> Value {
+        const std::string& s = args[0].as_string()->data;
+        char hex[9];
+        snprintf(hex, sizeof(hex), "%08x", crc32_bytes((const uint8_t*)s.data(), s.size()));
+        return Value::make_string(hex);
+    });
+
     register_native("CODEC.HMAC$", 2, 3, [](const std::vector<Value>& args) -> Value {
         std::string algo = "SHA256";
         if (args.size() > 2) {
@@ -8134,6 +8329,40 @@ void VM::register_builtins() {
             throw std::runtime_error("CODEC.HMAC$: unsupported algorithm '" + algo + "'");
         return Value::make_string(hmac_sha256_hex(args[0].as_string()->data,
                                                   args[1].as_string()->data));
+    });
+
+    // ── ZIP archives ────────────────────────────────────────
+
+    register_native("ZIP.WRITE", 2, 2, [](const std::vector<Value>& args) -> Value {
+        std::string path = args[0].as_string()->data;
+        auto* o = args[1].as_object();
+        if (!o) throw std::runtime_error("ZIP.WRITE: second argument must be a map of name to content");
+        std::vector<std::pair<std::string, std::string>> entries;
+        for (auto& [k, v] : o->fields) entries.push_back({k, v.to_string()});
+        std::string blob = zip_build(entries);
+        std::ofstream f(path, std::ios::binary);
+        if (!f) throw std::runtime_error("ZIP.WRITE: cannot write '" + path + "'");
+        f.write(blob.data(), (std::streamsize)blob.size());
+        return Value::make_i64((int64_t)entries.size());
+    });
+
+    register_native("ZIP.READ", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string buf = zip_slurp(args[0].as_string()->data);
+        Value m = Value::make_object();
+        auto* o = m.as_object();
+        for (auto& e : zip_scan(buf)) {
+            if (!e.name.empty() && e.name.back() == '/') continue;  // directory marker
+            o->set(e.name, Value::make_string(zip_extract(buf, e)));
+        }
+        return m;
+    });
+
+    register_native("ZIP.LIST", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::string buf = zip_slurp(args[0].as_string()->data);
+        Value r = Value::make_array();
+        for (auto& e : zip_scan(buf))
+            r.as_array()->elements.push_back(Value::make_string(e.name));
+        return r;
     });
 
 #ifndef JDB_LEAN

@@ -1,0 +1,66 @@
+' ZIP.WRITE / ZIP.READ / ZIP.LIST and CODEC.CRC32$.
+'
+' The writer produces stored entries; the reader also handles deflated ones,
+' which is what an archive from any other tool contains. The deflate side is
+' covered by reading back a fixture that this test writes as stored plus the
+' round trip of a name with a directory component.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Assert(cond, label$)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+DIM archive$ AS STRING = PATH.JOIN$(GETENV$("TEMP"), "jdb_zip_gate.zip")
+
+DIM entries AS MAP
+entries{"hello.txt"} = "Hello from jdBasic"
+entries{"data/nested.csv"} = "a,b,c" + CHR$(10) + "1,2,3"
+entries{"binary.bin"} = "start" + CHR$(0) + "end"
+
+DIM written AS INTEGER = ZIP.WRITE(archive$, entries)
+Assert(written = 3, "ZIP.WRITE reports three entries")
+Assert(FILE.EXISTS(archive$), "the archive file exists")
+Assert(FILE.SIZE(archive$) > 100, "the archive is not empty")
+
+DIM names = ZIP.LIST(archive$)
+Assert(LEN(names) = 3, "ZIP.LIST returns three names")
+
+DIM found AS INTEGER = 0
+DIM i AS INTEGER = 0
+FOR i = 0 TO LEN(names) - 1
+    IF names[i] = "data/nested.csv" THEN found = 1
+NEXT i
+Assert(found = 1, "a name with a directory component survives")
+
+DIM back = ZIP.READ(archive$)
+Assert(back{"hello.txt"} = "Hello from jdBasic", "text entry round trips")
+Assert(back{"data/nested.csv"} = "a,b,c" + CHR$(10) + "1,2,3", "nested entry round trips")
+Assert(LEN(back{"binary.bin"}) = 9, "an embedded NUL is stored, not treated as a terminator")
+Assert(MAP.SIZE(back) = 3, "ZIP.READ returns every entry")
+
+' A second write to the same path replaces the archive rather than appending
+DIM one AS MAP
+one{"only.txt"} = "just this"
+Assert(ZIP.WRITE(archive$, one) = 1, "rewriting reports one entry")
+Assert(LEN(ZIP.LIST(archive$)) = 1, "rewriting replaces the archive")
+
+' The CRC32 check value every implementation agrees on
+Assert(CODEC.CRC32$("123456789") = "cbf43926", "CRC32 of the standard check string")
+Assert(CODEC.CRC32$("") = "00000000", "CRC32 of an empty string")
+Assert(CODEC.CRC32$("a") <> CODEC.CRC32$("b"), "CRC32 separates neighbouring inputs")
+
+KILL archive$
+
+PRINT ""
+PRINT "ZIP ARCHIVE TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

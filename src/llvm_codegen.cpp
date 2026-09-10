@@ -38,7 +38,7 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
     "GFX.HSV_RGB", "GFX.TEXTSIZE",
     "SPRITE.COLLISIONS",
     "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE",
-    "DIR$",
+    "DIR$", "ZIP.LIST",
     // APL-style array primitives that lack a dedicated native runtime function.
     "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
     "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
@@ -2581,7 +2581,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "LINES", "WORDS", "CHARS", "UNPACK",
                             "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
                             "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS",
-                            "DIR$", "SCAN", "CUMSUM", "CUMPROD"
+                            "DIR$", "SCAN", "CUMSUM", "CUMPROD", "ZIP.LIST"
                         };
                         if (arr_returners.count(upper) ||
                             kBridgeArrayReturners.count(upper)) return JD_TAG_ARR;
@@ -2614,6 +2614,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         static const std::unordered_set<std::string> obj_returners = {
                             "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                             "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
+                            "ZIP.READ",
                             "HTTP.REQUEST",
                             // FORM.GET's result type depends on the property
                             // (TEXT is a string, CHECKED a bool, SELINDEX a
@@ -9601,7 +9602,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "SPLIT", "FORMAT$", "FRMV$", "INSERT$", "REPLACE$", "REVERSE$",
         "PACK$", "UNPACK", "JOIN",
         "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
-        "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.UUID$",
+        "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$", "CODEC.UUID$",
+        "ZIP.WRITE", "ZIP.READ", "ZIP.LIST",
         // Regex (produce arrays)
         "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
         // Diagnostics take their arguments as a payload to render, so an
@@ -10412,6 +10414,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             static const std::unordered_set<std::string> object_returners = {
                 "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
                 "MAP.FROM", "MAP.COPY", "GROUPBY",
+                "ZIP.READ",
                 "FILE.STAT", "DATE.PARTS",
                 "HTTP.REQUEST",
                 "OS.EXEC",

@@ -36,6 +36,13 @@ static std::unordered_map<const void*, size_t>& bin_lens() {
 }
 static std::mutex& bin_mx() { static std::mutex m; return m; }
 
+// Defined next to jdrt_strlen below; declared here because the array and map
+// converters above it need the length-aware char* to Value conversion. The
+// linkage has to match the definition, which sits inside the extern "C" block.
+extern "C" { JDRT_API void jdrt_register_binary(const char* s, int64_t n); }
+extern "C" { static Value value_from_native_str(const char* s); }
+extern "C" { static char* native_str_from_string(const std::string& s); }
+
 // Forward declarations for module registrations
 extern void register_sound_builtins(VM& vm);
 extern void register_audiofx_builtins(VM& vm);
@@ -273,7 +280,7 @@ JDRT_API char* jdrt_call_str(JdRT handle, const char* name,
         auto vargs = args_to_values(args, nargs);
         Value result = rt->vm.call_function(name, vargs);
         rt->last_error.clear();
-        return _strdup(result.to_string().c_str());
+        return native_str_from_string(result.to_string());
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return _strdup("");
@@ -361,7 +368,7 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
             union { double d; int64_t i; } u; u.d = d;
             if (t == jd_tag(JdTag::STR)) {
                 const char* p = (const char*)(intptr_t)u.i;
-                out->elements.push_back(p ? Value::make_string(p) : Value::make_none());
+                out->elements.push_back(p ? value_from_native_str(p) : Value::make_none());
             } else if (t == jd_tag(JdTag::ARR)) {
                 JdbArrayFwd* inner = (JdbArrayFwd*)(intptr_t)u.i;
                 out->elements.push_back(inner ? jdbarray_to_value(inner) : Value::make_none());
@@ -512,6 +519,27 @@ JDRT_API int64_t jdrt_strlen(const char* s) {
     return -1;
 }
 
+// A char* crossing into a VM Value: take the registered byte length when
+// the buffer holds an interior NUL, so binary content (PACK$, BINREADER$,
+// a ZIP entry) keeps every byte instead of stopping at the first zero.
+static Value value_from_native_str(const char* s) {
+    if (!s) return Value::make_string("");
+    int64_t n = jdrt_strlen(s);
+    if (n >= 0) return Value::make_string(std::string(s, (size_t)n));
+    return Value::make_string(s);
+}
+
+// The way back: a VM string handed to compiled code as a char*. Copies the
+// whole std::string and registers the length when it holds an interior NUL,
+// so LEN and the next concat on the native side still see all of it.
+static char* native_str_from_string(const std::string& s) {
+    char* r = (char*)malloc(s.size() + 1);
+    if (!s.empty()) memcpy(r, s.data(), s.size());
+    r[s.size()] = '\0';
+    if (s.size() != strlen(r)) jdrt_register_binary(r, (int64_t)s.size());
+    return r;
+}
+
 // Exposed so the jdb_runtime helpers (MID$, LEFT$, RIGHT$, REPLACE$, ...)
 // can record their own result lengths when they produce buffers that
 // contain embedded NULs. Without this, slicing a binary buffer (BINREADER$
@@ -544,7 +572,7 @@ JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
             register_binary_string(buf, s.size());
             return buf;
         }
-        return _strdup(result.to_string().c_str());
+        return native_str_from_string(result.to_string());
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         return _strdup("");
@@ -637,8 +665,8 @@ JDRT_API const char* jdrt_obj_get_str(JdRT handle, int64_t h, const char* key) {
     auto* rt = resolve_rt(handle);
     const Value* v = obj_field(rt, h, key);
     if (!v) return _strdup("");
-    if (v->type == ValueType::STRING) return _strdup(v->as_string()->data.c_str());
-    return _strdup(v->to_string().c_str());
+    if (v->type == ValueType::STRING) return native_str_from_string(v->as_string()->data);
+    return native_str_from_string(v->to_string());
 }
 
 JDRT_API int64_t jdrt_obj_get_obj(JdRT handle, int64_t h, const char* key) {
@@ -762,7 +790,7 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
                 int64_t bits;
                 memcpy(&bits, &d, sizeof(bits));
                 const char* s = (const char*)(intptr_t)bits;
-                cell = Value::make_string(s ? s : "");
+                cell = value_from_native_str(s);
                 break;
             }
             case JdTag::ARR: {
@@ -845,7 +873,7 @@ JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
                     break;
                 case JD_TAG_STR: {
                     const char* s = (const char*)(intptr_t)bits;
-                    result = Value::make_string(s ? s : "");
+                    result = value_from_native_str(s);
                     break;
                 }
                 case JD_TAG_ARR: {
@@ -889,8 +917,8 @@ JDRT_API const char* jdrt_val_to_str(JdRT handle, int64_t h) {
     auto it = rt->value_store.find(h);
     if (it == rt->value_store.end()) return _strdup("");
     if (it->second.type == ValueType::STRING)
-        return _strdup(it->second.as_string()->data.c_str());
-    return _strdup(it->second.to_string().c_str());
+        return native_str_from_string(it->second.as_string()->data);
+    return native_str_from_string(it->second.to_string());
 }
 
 // TYPEOF of a stored Value. A JD_TAG_VM_HANDLE only says that a handle is in
@@ -962,7 +990,7 @@ JDRT_API int32_t jdrt_obj_get_tagged(JdRT handle, int64_t h, const char* key, in
     union { double d; int64_t i; } u;
     switch (v->type) {
         case ValueType::STRING:
-            *out_val = (int64_t)(intptr_t)_strdup(v->as_string()->data.c_str());
+            *out_val = (int64_t)(intptr_t)native_str_from_string(v->as_string()->data);
             return jd_tag(JdTag::STR);
         case ValueType::ARRAY: {
             // Pure-numeric arrays convert cheaply to a flat JdbArray; mixed

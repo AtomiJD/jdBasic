@@ -46,6 +46,7 @@ tests/ffi/test_ffi_string_param.jdb	OK	CFAIL	GAP
 tests/forms_events_test.jdb	FAIL:1	CFAIL	BOTH_RED
 tests/forms_jdform_test.jdb	FAIL:1	CFAIL	BOTH_RED
 tests/forms_props_test.jdb	FAIL:1	CFAIL	BOTH_RED
+tests/gate/codec_hmac_test.jdb	PASS	PASS	OK
 tests/gate/comprehensive_test.jdb	PASS	PASS	OK
 tests/gate/native_test.jdb	PASS	CFAIL	GAP
 tests/gate/native_test.strict.jdb	PASS	PASS	OK

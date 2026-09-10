@@ -279,6 +279,19 @@ char* jdb_str_concat(const char* a, const char* b) {
     return r;
 }
 
+// _strdup for values that may carry an interior NUL: copies the registered
+// byte length and re-registers the copy, so the duplicate reports the same
+// LEN as the original instead of the strlen prefix.
+static char* jdb_str_dup_binary(const char* s) {
+    if (!s) return _strdup("");
+    int64_t n = jdb_str_blen(s);
+    char* r = (char*)malloc((size_t)n + 1);
+    if (n) memcpy(r, s, (size_t)n);
+    r[n] = '\0';
+    if (n != (int64_t)strlen(r)) jdrt_register_binary(r, n);
+    return r;
+}
+
 // Locale state: 0 = C (default), 1 = de_DE (dot thousand sep, comma decimal)
 static int g_locale = 0;
 
@@ -504,7 +517,7 @@ char* jdb_array_pop_str(JdbArray* arr) {
     u.d = arr->data[arr->length - 1];
     arr->length--;
     const char* s = (const char*)(intptr_t)u.i;
-    return _strdup(s ? s : "");
+    return jdb_str_dup_binary(s);
 }
 
 // Statistics walk leaves, not cells: on a matrix the top-level cells are
@@ -1755,7 +1768,7 @@ void jdb_map_set_str(JdbMap* m, const char* key, const char* val) {
         idx = m->count++;
         m->keys[idx] = _strdup(key);
     }
-    union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)_strdup(val ? val : "");
+    union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)jdb_str_dup_binary(val);
     m->values[idx] = u.d;
     m->tags[idx] = JD_TAG_STR;
 }
@@ -1778,7 +1791,7 @@ void jdb_map_set_tagged(JdbMap* m, const char* key, double val, int32_t tag) {
     if (tag == JD_TAG_STR) {
         union { double d; int64_t i; } u; u.d = val;
         const char* s = (const char*)(intptr_t)u.i;
-        union { int64_t i; double d; } out; out.i = (int64_t)(intptr_t)_strdup(s ? s : "");
+        union { int64_t i; double d; } out; out.i = (int64_t)(intptr_t)jdb_str_dup_binary(s);
         m->values[idx] = out.d;
     } else {
         m->values[idx] = val;
@@ -1803,7 +1816,7 @@ char* jdb_map_get_str(JdbMap* m, const char* key) {
     if (m->tags[idx] == JD_TAG_STR) {
         union { double d; int64_t i; } u; u.d = m->values[idx];
         const char* s = (const char*)(intptr_t)u.i;
-        return _strdup(s ? s : "");
+        return jdb_str_dup_binary(s);
     }
     // A truth value reads back as TRUE/FALSE, matching how it prints.
     if (m->tags[idx] == JD_TAG_BOOL)
@@ -1870,7 +1883,7 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
     int32_t t = m->tags[idx];
     if (t == JD_TAG_STR) {
         const char* s = (const char*)(intptr_t)u.i;
-        *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
+        *out_val = (int64_t)(intptr_t)jdb_str_dup_binary(s);
         return JD_TAG_STR;
     }
     // Convention: out_val carries the natural i64 representation for the
@@ -2738,7 +2751,7 @@ char* jdb_str_bool(int64_t val) {
 char* jdb_str_str(const char* s) {
     // STR$(string) - pass-through. Returns a fresh copy because callers
     // own (and may free) the result.
-    return _strdup(s ? s : "");
+    return jdb_str_dup_binary(s);
 }
 
 char* jdb_space(int64_t n) {

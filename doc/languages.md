@@ -1793,6 +1793,32 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`PDF.TEXT$(filename$) -> string$`**: Extracts the text of a PDF file with the built-in PDF extractor (uncompressed streams, FlateDecode, ASCIIHex/ASCII85). Encrypted or image-only PDFs yield only what is decodable. Interpreter runtime (native `-c` rejects it). The same extractor backs `AI.RAG_ADD_FILE` for `.pdf` sources.
 * **`BINWRITER filename$, data$`**: Writes a raw string of bytes to a file, overwriting it.
 
+#### ZIP archives
+
+A ZIP file is a map from entry name to content, so that is the shape both
+directions use.
+
+* **`ZIP.WRITE(path$, entries) -> number`**: Writes `entries`, a map of name to content, as a ZIP archive and returns how many entries were written. A name may carry a directory component (`"data/rows.csv"`); the directories are created on extraction. Content is a byte string, so `CHR$(0)` inside it is data. An existing file at `path$` is replaced, not appended to.
+* **`ZIP.READ(path$) -> map`**: Reads every entry into a map of name to content. Directory markers are skipped. Entries stored either uncompressed or deflated are both handled, which covers archives written by any other tool.
+* **`ZIP.LIST(path$) -> array`**: The entry names, without reading the content. Use it to look inside a large archive cheaply.
+
+Entries are written uncompressed. That is a valid archive - Windows Explorer,
+7-Zip and every library open it - but the file is as large as its contents, so
+it suits data exchange and document formats (`.xlsx`, `.docx`) rather than
+shipping a compressed download.
+
+```basic
+DIM book AS MAP
+book{"[Content_Types].xml"} = content_types$
+book{"xl/workbook.xml"} = workbook$
+PRINT ZIP.WRITE("report.xlsx", book)
+
+DIM back = ZIP.READ("report.xlsx")
+FOR EACH name$ IN ZIP.LIST("report.xlsx")
+    PRINT name$ + ": " + STR$(LEN(back{name$})) + " bytes"
+NEXT name$
+```
+
 #### SQLite (build flag `SQLITE`)
 
 The `SQLITE` build flag links the SQLite engine statically into the binary - no DLL, no installation, every `.db` file just works. Check availability with `OS.FEATURE("SQLITE")`. Handles are plain integers.
@@ -1917,6 +1943,7 @@ These three natives redirect `PRINT`/all script output to an in-memory string bu
 * **`CODEC.BASE64_ENCODE$(string$) -> string$`**: Encodes a string into Base64 format. Useful for API authentication headers.
 * **`CODEC.BASE64_DECODE$(string$) -> string$`**: Decodes a Base64 encoded string back to its original format.
 * **`CODEC.SHA256$(string$) -> string$`**: Calculates the SHA256 hash of a string and returns it as a 64-character hex string.
+* **`CODEC.CRC32$(string$) -> string$`**: CRC-32 checksum as an 8-character hex string, the variant ZIP and PNG use. `CODEC.CRC32$("123456789")` is `"cbf43926"`, the check value every implementation agrees on.
 * **`CODEC.HMAC$(key$, message$, [algo$]) -> string$`**: Keyed hash (RFC 2104) of `message$` under `key$`, as a 64-character hex string. `algo$` defaults to `"SHA256"`, which is the only algorithm; anything else raises an error. A key longer than the 64-byte block is hashed first, a shorter one is zero padded, exactly as the standard prescribes, so the RFC 4231 vectors match. Both arguments are byte strings: an embedded `CHR$(0)` is data, not a terminator, which is what webhook signatures over binary payloads need.
 
 ```basic
