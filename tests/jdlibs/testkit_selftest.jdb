@@ -1,0 +1,30 @@
+' TESTKIT testing itself. Runs in both backends.
+
+IMPORT TESTKIT
+
+TESTKIT.SUITE("equality")
+TESTKIT.EQ(1 + 1, 2, "integers")
+TESTKIT.EQ("ab" + "c", "abc", "strings")
+TESTKIT.EQARRAY([1, 2, 3], [1, 2, 3], "arrays element by element")
+TESTKIT.NE(1, "1", "a number is not its own spelling")
+TESTKIT.NEARRAY([1, 2], [2, 1], "order matters")
+
+TESTKIT.SUITE("truthiness")
+TESTKIT.ISTRUE(3 > 2, "greater than")
+TESTKIT.ISFALSE(2 > 3, "less than")
+TESTKIT.ISTRUE(LEN("abc") = 3, "string length")
+
+TESTKIT.SUITE("tolerance")
+TESTKIT.NEAR(2.0 / 3.0, 0.66667, 0.001, "two thirds")
+TESTKIT.NEAR(SQR(2), 1.41421356, 0.000001, "root of two")
+
+TESTKIT.SUITE("missing values")
+DIM empty AS MAP
+TESTKIT.EQ(empty{"nope"}, empty{"also nope"}, "two absent keys are the same")
+TESTKIT.NE(empty{"nope"}, 0, "an absent key is not zero")
+TESTKIT.NE(empty{"nope"}, "", "an absent key is not an empty string")
+
+TESTKIT.SUITE("skipping")
+TESTKIT.SKIP("a case that needs a network")
+
+PRINT TESTKIT.REPORT()

@@ -1,0 +1,322 @@
+' testkit.jdb - assertions, suites and machine readable test reports.
+'
+'   IMPORT TESTKIT
+'   TESTKIT.SUITE("string helpers")
+'   TESTKIT.EQ(UCASE$("ab"), "AB", "upper case")
+'   TESTKIT.NEAR(2.0 / 3.0, 0.6667, 0.001, "two thirds")
+'   TESTKIT.REPORT()
+'
+' REPORT prints the summary and, when anything failed, throws - which ends
+' the program with exit code 1 so a build gate can read the result.
+'
+' Output format is picked by TESTKIT.MODE:
+'   "human"  coloured one line per assertion (default)
+'   "tap"    TAP version 13 on stdout
+'   "junit"  a JUnit XML document on stdout
+'
+' THROWS takes a function reference and its argument:
+'   TESTKIT.THROWS(Parse@, "{", "bad json is rejected")
+' It is interpreter-only: a compiled program does not catch an error raised
+' inside a called function, so the error escapes and ends the run.
+'
+' Arrays use EQARRAY and NEARRAY. EQ and NE refuse them, because a compiled
+' parameter that also carries scalars arrives empty when handed an array.
+
+EXPORT MODULE TESTKIT
+
+CONST MODE_HUMAN = 0
+CONST MODE_TAP = 1
+CONST MODE_JUNIT = 2
+
+CONST ST_OK = 0
+CONST ST_FAIL = 1
+CONST ST_SKIP = 2
+
+DIM gMode = 0
+DIM gSuite$ = "default"
+DIM gCases = 0
+DIM gFails = 0
+DIM gSkips = 0
+DIM gMark = 0            ' TICK() at the end of the previous assertion
+DIM gRunStart = 0
+DIM gStarted = 0
+DIM gSuiteNames$ = []
+DIM gMessages$ = []
+DIM gStatus = []
+DIM gDetails$ = []
+DIM gMillis = []
+
+' ANSI colours, blanked when output is redirected or a machine format is on.
+FUNC Paint$(code$, s$)
+    IF gMode <> MODE_HUMAN THEN RETURN s$
+    RETURN CHR$(27) + "[" + code$ + "m" + s$ + CHR$(27) + "[0m"
+ENDFUNC
+
+' Elements joined one by one. Kept apart from Show$ so this parameter is
+' always an array: the native compiler gives a slot a single LLVM type.
+FUNC ShowArray$(arr)
+    DIM parts$ = []
+    DIM i
+    FOR i = 0 TO LEN(arr) - 1
+        parts$ = APPEND(parts$, ShowScalar$(arr[i]))
+    NEXT i
+    RETURN "[" + JOIN(parts$, ", ") + "]"
+ENDFUNC
+
+FUNC ShowScalar$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "STRING" THEN RETURN CHR$(34) + v + CHR$(34)
+    IF t$ = "NONE" THEN RETURN "NONE"
+    IF t$ = "BOOLEAN" THEN
+        IF v THEN RETURN "TRUE"
+        RETURN "FALSE"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+' A printable form of any value, including arrays and maps.
+FUNC Show$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "ARRAY" THEN RETURN ShowArray$(v)
+    IF t$ = "OBJECT" THEN RETURN "{" + JOIN(MAP.KEYS(v), ", ") + "}"
+    RETURN ShowScalar$(v)
+ENDFUNC
+
+' Equality that does not fall into the NONE comparison trap: a NONE is only
+' equal to another NONE, and values of different kinds never match.
+FUNC Same(a, b)
+    DIM ta$ = TYPEOF(a)
+    DIM tb$ = TYPEOF(b)
+    IF ta$ = "NONE" ORELSE tb$ = "NONE" THEN RETURN (ta$ = "NONE") AND (tb$ = "NONE")
+    IF ta$ = "STRING" ORELSE tb$ = "STRING" THEN
+        IF ta$ <> tb$ THEN RETURN FALSE
+        RETURN a = b
+    ENDIF
+    RETURN a = b
+ENDFUNC
+
+' Both parameters stay array-typed all the way down, which is what keeps the
+' comparison intact under the native compiler.
+FUNC SameArray(a, b)
+    IF LEN(a) <> LEN(b) THEN RETURN FALSE
+    DIM i
+    FOR i = 0 TO LEN(a) - 1
+        IF ShowScalar$(a[i]) <> ShowScalar$(b[i]) THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+SUB Record(status, message$, detail$)
+    IF gStarted = 0 THEN
+        gRunStart = TICK()
+        gMark = gRunStart
+        gStarted = 1
+    ENDIF
+    DIM now = TICK()
+    DIM elapsed = now - gMark
+    gCases = gCases + 1
+    gSuiteNames$ = APPEND(gSuiteNames$, gSuite$)
+    gMessages$ = APPEND(gMessages$, message$)
+    gStatus = APPEND(gStatus, status)
+    gDetails$ = APPEND(gDetails$, detail$)
+    gMillis = APPEND(gMillis, elapsed)
+    gMark = now
+    IF status = ST_FAIL THEN gFails = gFails + 1
+    IF status = ST_SKIP THEN gSkips = gSkips + 1
+    IF gMode = MODE_HUMAN THEN EmitHuman(status, message$, detail$, elapsed)
+    IF gMode = MODE_TAP THEN EmitTap(status, message$, detail$)
+ENDSUB
+
+SUB EmitHuman(status, message$, detail$, ms)
+    DIM head$ = ""
+    IF status = ST_OK THEN head$ = Paint$("32", "  ok  ")
+    IF status = ST_FAIL THEN head$ = Paint$("31", " FAIL ")
+    IF status = ST_SKIP THEN head$ = Paint$("33", " skip ")
+    PRINT head$ + RPAD$(STR$(gCases), 4, " ") + message$ + Paint$("90", "  (" + STR$(ms) + " ms)")
+    IF detail$ <> "" THEN PRINT "       " + Paint$("90", detail$)
+ENDSUB
+
+SUB EmitTap(status, message$, detail$)
+    DIM head$ = "ok "
+    IF status = ST_FAIL THEN head$ = "not ok "
+    DIM tail$ = ""
+    IF status = ST_SKIP THEN tail$ = " # SKIP"
+    PRINT head$ + STR$(gCases) + " - " + gSuite$ + ": " + message$ + tail$
+    IF detail$ <> "" AND status = ST_FAIL THEN PRINT "  ---" + CHR$(10) + "  " + detail$ + CHR$(10) + "  ..."
+ENDSUB
+
+FUNC XmlEsc$(s$)
+    DIM r$ = REPLACE$(s$, "&", "&amp;")
+    r$ = REPLACE$(r$, "<", "&lt;")
+    r$ = REPLACE$(r$, ">", "&gt;")
+    r$ = REPLACE$(r$, CHR$(34), "&quot;")
+    RETURN r$
+ENDFUNC
+
+SUB EmitJunit()
+    DIM total_ms = TICK() - gRunStart
+    PRINT "<?xml version=" + CHR$(34) + "1.0" + CHR$(34) + " encoding=" + CHR$(34) + "UTF-8" + CHR$(34) + "?>"
+    PRINT "<testsuites tests=" + CHR$(34) + STR$(gCases) + CHR$(34) + " failures=" + CHR$(34) + STR$(gFails) + CHR$(34) + " skipped=" + CHR$(34) + STR$(gSkips) + CHR$(34) + " time=" + CHR$(34) + STR$(total_ms / 1000.0) + CHR$(34) + ">"
+    PRINT "  <testsuite name=" + CHR$(34) + "jdBasic" + CHR$(34) + " tests=" + CHR$(34) + STR$(gCases) + CHR$(34) + ">"
+    DIM i
+    FOR i = 0 TO gCases - 1
+        DIM head$ = "    <testcase classname=" + CHR$(34) + XmlEsc$(gSuiteNames$[i]) + CHR$(34) + " name=" + CHR$(34) + XmlEsc$(gMessages$[i]) + CHR$(34) + " time=" + CHR$(34) + STR$(gMillis[i] / 1000.0) + CHR$(34)
+        IF gStatus[i] = ST_OK THEN
+            PRINT head$ + "/>"
+        ELSE
+            PRINT head$ + ">"
+            IF gStatus[i] = ST_FAIL THEN
+                PRINT "      <failure message=" + CHR$(34) + XmlEsc$(gDetails$[i]) + CHR$(34) + "/>"
+            ELSE
+                PRINT "      <skipped/>"
+            ENDIF
+            PRINT "    </testcase>"
+        ENDIF
+    NEXT i
+    PRINT "  </testsuite>"
+    PRINT "</testsuites>"
+ENDSUB
+
+' Selects the output format: "human", "tap" or "junit".
+EXPORT SUB MODE(name$)
+    DIM n$ = LCASE$(name$)
+    IF n$ = "tap" THEN
+        gMode = MODE_TAP
+        PRINT "TAP version 13"
+    ELSEIF n$ = "junit" THEN
+        gMode = MODE_JUNIT
+    ELSE
+        gMode = MODE_HUMAN
+    ENDIF
+ENDSUB
+
+' Starts a named group. Every later assertion is filed under it.
+EXPORT SUB SUITE(name$)
+    gSuite$ = name$
+    IF gMode = MODE_HUMAN THEN PRINT CHR$(10) + Paint$("1;36", name$)
+ENDSUB
+
+' The TYPEOF reads on both parameters are load bearing: they tell the native
+' compiler these slots are runtime-typed, which is what lets one assertion
+' take a number in one call and an array in the next.
+EXPORT SUB EQ(actual, expected, message$)
+    DIM ta$ = TYPEOF(actual)
+    DIM te$ = TYPEOF(expected)
+    IF ta$ = "ARRAY" ORELSE te$ = "ARRAY" THEN
+        Record(ST_FAIL, message$, "EQ takes scalars and strings - use EQARRAY for arrays")
+    ELSEIF Same(actual, expected) THEN
+        Record(ST_OK, message$, "")
+    ELSE
+        Record(ST_FAIL, message$, "expected " + Show$(expected) + " (" + te$ + "), got " + Show$(actual) + " (" + ta$ + ")")
+    ENDIF
+ENDSUB
+
+EXPORT SUB NE(actual, unwanted, message$)
+    DIM ta$ = TYPEOF(actual)
+    DIM tu$ = TYPEOF(unwanted)
+    IF ta$ = "ARRAY" ORELSE tu$ = "ARRAY" THEN
+        Record(ST_FAIL, message$, "NE takes scalars and strings - use NEARRAY for arrays")
+    ELSEIF Same(actual, unwanted) THEN
+        Record(ST_FAIL, message$, "expected anything but " + Show$(unwanted) + " (" + tu$ + ")")
+    ELSE
+        Record(ST_OK, message$, "")
+    ENDIF
+ENDSUB
+
+' Arrays get their own pair: the parameters never hold anything else, so the
+' contents survive the native compiler's single-type parameter slots.
+EXPORT SUB EQARRAY(actual, expected, message$)
+    IF SameArray(actual, expected) THEN
+        Record(ST_OK, message$, "")
+    ELSE
+        Record(ST_FAIL, message$, "expected " + ShowArray$(expected) + ", got " + ShowArray$(actual))
+    ENDIF
+ENDSUB
+
+EXPORT SUB NEARRAY(actual, unwanted, message$)
+    IF SameArray(actual, unwanted) THEN
+        Record(ST_FAIL, message$, "expected anything but " + ShowArray$(unwanted))
+    ELSE
+        Record(ST_OK, message$, "")
+    ENDIF
+ENDSUB
+
+EXPORT SUB ISTRUE(cond, message$)
+    IF cond THEN
+        Record(ST_OK, message$, "")
+    ELSE
+        Record(ST_FAIL, message$, "expected a true value, got " + Show$(cond))
+    ENDIF
+ENDSUB
+
+EXPORT SUB ISFALSE(cond, message$)
+    IF cond THEN
+        Record(ST_FAIL, message$, "expected a false value, got " + Show$(cond))
+    ELSE
+        Record(ST_OK, message$, "")
+    ENDIF
+ENDSUB
+
+EXPORT SUB NEAR(actual, expected, epsilon, message$)
+    DIM gap = ABS(actual - expected)
+    IF gap <= epsilon THEN
+        Record(ST_OK, message$, "")
+    ELSE
+        Record(ST_FAIL, message$, "expected " + Show$(expected) + " within " + Show$(epsilon) + ", got " + Show$(actual) + " (off by " + Show$(gap) + ")")
+    ENDIF
+ENDSUB
+
+' Passes when calling fn with arg raises an error.
+EXPORT SUB THROWS(fn, arg, message$)
+    DIM raised = 0
+    TRY
+        DIM ignored = fn(arg)
+    CATCH
+        raised = 1
+    ENDTRY
+    IF raised THEN
+        Record(ST_OK, message$, "")
+    ELSE
+        Record(ST_FAIL, message$, "expected an error, the call returned normally")
+    ENDIF
+ENDSUB
+
+EXPORT SUB SKIP(message$)
+    Record(ST_SKIP, message$, "")
+ENDSUB
+
+' Prints the summary in the selected format and returns the failure count.
+' Throws when anything failed so the process exits non-zero.
+EXPORT FUNC REPORT()
+    IF gMode = MODE_JUNIT THEN
+        EmitJunit()
+    ELSEIF gMode = MODE_TAP THEN
+        PRINT "1.." + STR$(gCases)
+    ELSE
+        DIM total_ms = TICK() - gRunStart
+        DIM passed = gCases - gFails - gSkips
+        DIM summary$ = STR$(passed) + " passed, " + STR$(gFails) + " failed, " + STR$(gSkips) + " skipped in " + STR$(total_ms) + " ms"
+        PRINT ""
+        IF gFails > 0 THEN
+            PRINT Paint$("1;31", summary$)
+        ELSE
+            PRINT Paint$("1;32", summary$)
+        ENDIF
+    ENDIF
+    IF gFails > 0 THEN THROW "TESTKIT: " + STR$(gFails) + " of " + STR$(gCases) + " assertions failed"
+    RETURN gFails
+ENDFUNC
+
+' Drops every recorded result. Useful when one program runs several reports.
+EXPORT SUB RESET()
+    gCases = 0
+    gFails = 0
+    gSkips = 0
+    gStarted = 0
+    gSuite$ = "default"
+    gSuiteNames$ = []
+    gMessages$ = []
+    gStatus = []
+    gDetails$ = []
+    gMillis = []
+ENDSUB
