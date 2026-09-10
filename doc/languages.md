@@ -1257,6 +1257,33 @@ If `rc.exe` (the Windows resource compiler) is unavailable or fails, the
 linker continues without the version resource and a warning is printed to
 stderr - compilation never fails because of a bad props file.
 
+
+### Memory in a compiled program
+
+The interpreter hands its strings to C++ and forgets about them. A compiled
+program has no such collector, so the backend releases what it can prove is
+safe to release:
+
+* A **top-level string variable** owns what it holds, and the previous buffer
+  is released when it is overwritten. This is what keeps a loop like
+  `s$ = "row " + STR$(i)` at a flat memory size.
+* A **temporary** a string expression just built is released once the
+  surrounding concatenation has copied out of it.
+
+Both need proof of exclusive ownership, so the analysis stands down whenever
+it cannot get it: a variable that is also a loop variable, a parameter, a
+destructuring target or an indexed assignment target keeps the older
+never-release behaviour, as does every variable in a program that uses `ASYNC`.
+The same goes for a value that some other slot may still hold, such as the
+result of a user `FUNC` or a read out of an array.
+
+What is still lost: a temporary consumed by something other than a
+concatenation, and every string a `FUNC` allocates in a local.
+
+`JDB_NO_STROWN=1` in the environment compiles with the whole mechanism off,
+which is the first thing to try if a compiled program misbehaves in a way that
+smells like memory.
+
 ### What `-c` will not compile
 
 The native compiler covers the language, not the whole REPL. Everything below

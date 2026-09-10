@@ -245,6 +245,8 @@ void LLVMCodegen::declare_runtime_functions() {
 
     // String operations
     reg("jdb_str_concat",   "__str_concat",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_str_own",      "__str_own",       i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_str_drop",     "__str_drop",      void_type,   {i8_ptr_type}, -1);
     reg("jdb_int_to_str",   "__int_to_str",    i8_ptr_type, {i64_type}, 2);
     reg("jdb_double_to_str","__double_to_str", i8_ptr_type, {f64_type}, 2);
 
@@ -2381,6 +2383,7 @@ bool LLVMCodegen::emit_ir(const std::vector<StmtPtr>& program) {
 // ── Program / Statement Codegen ─────────────────────────────
 
 void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
+    scan_owned_str_globals(program);
     // Pre-scan: declare all global variables used in top-level code
     // so that FUNC/SUB bodies can reference them
     // Pre-scan TYPE_DECL names so we can recognize DIM x AS TypeName
@@ -4325,6 +4328,13 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 LLVMBuildStore(builder, rhs.val, vi->alloca_val);
                 return;
             }
+        }
+        if (rhs.tag == JD_TAG_STR && scopes.size() == 1 &&
+            owned_str_globals.count(stmt.var_name)) {
+            bool fresh = rhs.owned ||
+                         (stmt.expr && expr_yields_fresh_string(*stmt.expr));
+            LLVMBuildStore(builder, take_string_ownership(stmt.var_name, rhs, fresh), vi->alloca_val);
+            return;
         }
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
@@ -6827,7 +6837,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     if (leaf_hint == 2) {
                         auto& gs = runtime_funcs["__map_get_str"];
                         LLVMValueRef args[] = { arr_tv.val, idx_tv.val };
-                        return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), JD_TAG_STR };
+                        { TypedValue mv{ LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), JD_TAG_STR }; mv.owned = true; return mv; }
                     }
                     // No hint → TAGGED getter. Runtime tells us the type.
                     auto& gtag = runtime_funcs["__map_get_tagged"];
@@ -6855,7 +6865,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     if (leaf_hint == 2) {
                         auto& gs = runtime_funcs["__jdrt_obj_get_str"];
                         LLVMValueRef args[] = { rt, arr_tv.val, idx_tv.val };
-                        return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 3, "ogets"), JD_TAG_STR };
+                        { TypedValue ov{ LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 3, "ogets"), JD_TAG_STR }; ov.owned = true; return ov; }
                     }
                     // No hint → TAGGED getter.
                     {
@@ -6899,7 +6909,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     if (leaf_hint == 2) {
                         auto& gs = runtime_funcs["__map_get_str"];
                         LLVMValueRef args[] = { obj_ptr, idx_tv.val };
-                        return { LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), JD_TAG_STR };
+                        { TypedValue mv{ LLVMBuildCall2(builder, gs.fn_type, gs.fn, args, 2, "mget"), JD_TAG_STR }; mv.owned = true; return mv; }
                     }
                     if (leaf_hint == 0 || leaf_hint == 1) {
                         auto& gf = runtime_funcs["__map_get_f64"];
@@ -7270,24 +7280,44 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         // Convert non-string operand to string. Use to_string_ptr for
         // ptr/handle-typed operands (tag 3/4/6) so they materialise via
         // the appropriate bridge instead of bit-punning into an f64.
-        auto to_str = [&](TypedValue tv) -> LLVMValueRef {
+        // Whether the pointer handed to the concat is a buffer this
+        // expression owns, and can therefore drop once the concat has copied
+        // out of it. A conversion always allocates; a string operand only
+        // owns its buffer if it came straight out of a string builtin.
+        bool own_l = lhs.owned || (expr.left && expr_yields_fresh_string(*expr.left));
+        bool own_r = rhs.owned || (expr.right && expr_yields_fresh_string(*expr.right));
+        auto to_str = [&](TypedValue tv, bool& owns) -> LLVMValueRef {
             if (tv.tag == JD_TAG_STR) return tv.val;
             if (tv.tag == JD_TAG_I64) {
+                owns = true;
                 auto& fn = runtime_funcs["__int_to_str"];
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "itostr");
             }
             if (tv.tag == JD_TAG_F64) {
+                owns = true;
                 auto& fn = runtime_funcs["__double_to_str"];
                 LLVMValueRef args[] = { tv.val };
                 return LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "ftostr");
             }
+            // A runtime-tagged value that is already a string comes back as
+            // the very pointer its slot holds, so this one is borrowed.
+            owns = false;
             return to_string_ptr(tv);
         };
         auto& concat = runtime_funcs["__str_concat"];
-        LLVMValueRef args[] = { to_str(lhs), to_str(rhs) };
+        LLVMValueRef args[] = { to_str(lhs, own_l), to_str(rhs, own_r) };
         LLVMValueRef result = LLVMBuildCall2(builder, concat.fn_type, concat.fn, args, 2, "concat");
-        return { result, JD_TAG_STR };
+        // jdb_str_concat copies both operands into a new buffer and keeps no
+        // reference, so an operand this expression owns dies here. This is
+        // what keeps `s$ = "row " + STR$(i)` in a loop from growing.
+        auto& drop = runtime_funcs["__str_drop"];
+        if (std::getenv("JDB_NO_STROWN")) { own_l = false; own_r = false; }
+        if (own_l) { LLVMValueRef d[] = { args[0] }; LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, ""); }
+        if (own_r) { LLVMValueRef d[] = { args[1] }; LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, ""); }
+        TypedValue out{ result, JD_TAG_STR };
+        out.owned = true;
+        return out;
     }
 
     // String comparison with array element: arr[i] = "str" means arr[i]
@@ -10219,7 +10249,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     }
                 }
             }
-            return { result, rf.return_tag };
+            TypedValue out{ result, rf.return_tag };
+            // A string builtin hands back a buffer it just allocated for this
+            // one call, so a slot may take it over and a consumer may drop it.
+            if (rf.return_tag == JD_TAG_STR && !returns_shared_string(upper))
+                out.owned = true;
+            return out;
         }
     }
 
@@ -10879,6 +10914,135 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
     return false;
 }
 
+
+
+// A top-level string variable qualifies when every write to it is a plain
+// assignment and no read can hand its raw buffer to another slot. Anything
+// unclear disqualifies the name: the cost of being wrong here is a double
+// free, while the cost of being conservative is the leak we already have.
+void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
+    // Escape hatch while the analysis earns trust: compiling with
+    // JDB_NO_STROWN set falls back to never releasing, which always works.
+    if (std::getenv("JDB_NO_STROWN")) return;
+    std::unordered_set<std::string> candidates;
+    std::unordered_set<std::string> banned;
+    bool concurrent = false;
+
+    // Can this expression evaluate to the raw buffer some variable owns,
+    // rather than to a fresh copy? Only a bare read and the arms of a
+    // conditional pass a pointer through; every call and operator builds a
+    // new buffer.
+    auto passthrough_names = [&](const Expr& e, std::unordered_set<std::string>& out) {
+        if (e.kind == ExprKind::VARIABLE) out.insert(e.str_val);
+    };
+
+    std::function<void(const Stmt&, bool)> walk = [&](const Stmt& s, bool in_function) {
+        if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
+            if (s.is_async_func) concurrent = true;
+            // Parameters and anything written inside a body are out of scope
+            // for this analysis, and a name shadowed there is ambiguous.
+            for (auto& p : s.params()) banned.insert(p.name);
+            for (auto& b : s.body) if (b) walk(*b, true);
+            return;
+        }
+        if (s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN || s.kind == StmtKind::DIM) {
+            if (!s.var_name.empty()) {
+                if (in_function) banned.insert(s.var_name);
+                else if (s.var_name.back() == '$') candidates.insert(s.var_name);
+            }
+            // A bare read on the right of an assignment aliases the buffer
+            // into a second slot, and that slot frees on its own schedule.
+            if (s.expr) {
+                std::unordered_set<std::string> aliased;
+                passthrough_names(*s.expr, aliased);
+                for (auto& a : aliased) banned.insert(a);
+            }
+        }
+        // Every other way a name can be written.
+        if (s.kind == StmtKind::FOR_LOOP || s.kind == StmtKind::FOR_EACH)
+            if (!s.var_name.empty()) banned.insert(s.var_name);
+        if (s.kind == StmtKind::REACT_ASSIGN && !s.var_name.empty())
+            banned.insert(s.var_name);
+        if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty())
+            banned.insert(s.var_name);
+        for (auto& n : s.destruct_vars()) banned.insert(n);
+
+        for (auto& b : s.body)           if (b) walk(*b, in_function);
+        for (auto& c : s.catch_body())   if (c) walk(*c, in_function);
+        for (auto& f : s.finally_body()) if (f) walk(*f, in_function);
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b) walk(*b, in_function);
+    };
+
+    for (auto& stmt : program) if (stmt) walk(*stmt, false);
+
+    // A second thread can read a global while the main line overwrites it,
+    // and the release would pull the buffer out from under it.
+    if (!concurrent) {
+        for (auto& name : candidates)
+            if (!banned.count(name)) owned_str_globals.insert(name);
+    }
+}
+
+LLVMValueRef LLVMCodegen::owned_shadow_for(const std::string& var_name) {
+    auto it = owned_str_shadow.find(var_name);
+    if (it != owned_str_shadow.end()) return it->second;
+    std::string sym = "__own_" + var_name;
+    for (auto& c : sym) if (!isalnum((unsigned char)c) && c != '_') c = '_';
+    LLVMValueRef g = LLVMAddGlobal(module, i8_ptr_type, sym.c_str());
+    LLVMSetInitializer(g, LLVMConstNull(i8_ptr_type));
+    LLVMSetLinkage(g, LLVMInternalLinkage);
+    owned_str_shadow[var_name] = g;
+    return g;
+}
+
+LLVMValueRef LLVMCodegen::take_string_ownership(const std::string& var_name, TypedValue rhs, bool rhs_is_fresh) {
+    // Copy first: `s$ = s$` and `s$ = LEFT$(s$, 3)` both still need the old
+    // buffer while the new value is being built.
+    LLVMValueRef value = rhs.val;
+    if (!rhs_is_fresh) {
+        auto& own = runtime_funcs["__str_own"];
+        LLVMValueRef a[] = { value };
+        value = LLVMBuildCall2(builder, own.fn_type, own.fn, a, 1, "strown");
+    }
+    LLVMValueRef shadow = owned_shadow_for(var_name);
+    auto& drop = runtime_funcs["__str_drop"];
+    LLVMValueRef prev = LLVMBuildLoad2(builder, i8_ptr_type, shadow, "ownprev");
+    LLVMValueRef d[] = { prev };
+    LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+    LLVMBuildStore(builder, value, shadow);
+    return value;
+}
+// TYPEOF answers with one of ten interned words, so its result is shared for
+// the life of the process and must never be dropped or taken over by a slot.
+bool LLVMCodegen::returns_shared_string(const std::string& fn_name) {
+    return fn_name == "TYPEOF";
+}
+
+// Does evaluating this expression produce a string buffer allocated for this
+// one evaluation, with nothing else holding it? Only a builtin call and a
+// concatenation do; a bare read, an index and a user function all hand back
+// something another slot may still own.
+bool LLVMCodegen::expr_yields_fresh_string(const Expr& e) const {
+    if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
+    if (e.kind != ExprKind::CALL) return false;
+    // An allowlist, not "every string builtin": several hand back a pointer
+    // into something they do not own, and freeing one of those is a crash
+    // rather than the leak this is trying to close. Each name here was read
+    // in jdb_runtime.cpp and builds its result with a fresh allocation.
+    static const std::unordered_set<std::string> fresh_builtins = {
+        "STR$", "STR", "CHR$", "CHR", "HEX$", "OCT$", "BIN$",
+        "MID$", "MID", "LEFT$", "LEFT", "RIGHT$", "RIGHT",
+        "UPPER$", "UCASE$", "LOWER$", "LCASE$",
+        "TRIM$", "LTRIM$", "RTRIM$", "SPACE$", "REPEAT$",
+        "LPAD$", "RPAD$", "REVERSE$", "REPLACE$", "INSERT$",
+        "JOIN", "FORMAT$", "FRMV$"
+    };
+    std::string upper = e.func_name;
+    for (auto& c : upper) c = (char)toupper((unsigned char)c);
+    if (user_functions.count(upper) || user_functions.count(e.func_name)) return false;
+    return fresh_builtins.count(upper) != 0;
+}
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     // Runtime-tagged value (tag 7): branch on runtime tag to pick the
     // right conversion. Three cases matter:

@@ -2,6 +2,7 @@ tests/array_move_test.jdb	OK	CFAIL	GAP
 tests/async/test_async.jdb	PASS	PASS	OK
 tests/async/test_async2.jdb	OK	OK	OK
 tests/bench_globals.jdb	OK	CFAIL	GAP
+tests/bench_native_string_memory.jdb	OK	OK	OK
 tests/bridge_flag_reach.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/bridge_tag_fidelity.jdb	PASS	PASS	OK
 tests/channels/test_channels.jdb	PASS	FAIL	GAP

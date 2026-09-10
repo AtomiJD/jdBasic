@@ -330,7 +330,33 @@ private:
         LLVMValueRef val;
         int tag;  // JdTag (see jdb_tags.h)
         LLVMValueRef runtime_tag = nullptr;  // i32 runtime type when tag == JD_TAG_RUNTIME
+        // Set only for a string this expression has just allocated through a
+        // runtime call, with no other holder: it may be handed to a slot that
+        // takes ownership, or dropped once consumed. Default false, because a
+        // value wrongly marked owned is a double free while one wrongly left
+        // unowned is only the leak we already have.
+        bool owned = false;
     };
+
+    // Runtime string functions whose result is NOT a fresh allocation, so it
+    // must never be dropped or taken over by a slot.
+    static bool returns_shared_string(const std::string& fn_name);
+    bool expr_yields_fresh_string(const Expr& e) const;
+
+    // Top-level string variables the program only ever writes by plain
+    // assignment and never lets alias. Their slots take ownership of what
+    // they hold, so the previous buffer is released on overwrite instead of
+    // being lost. Computed by scan_owned_str_globals; empty means the older
+    // never-free behaviour, which is always safe.
+    std::unordered_set<std::string> owned_str_globals;
+    void scan_owned_str_globals(const std::vector<StmtPtr>& program);
+    // The shadow global holding what a slot currently owns. The release
+    // targets this rather than the slot, so a write through any path this
+    // analysis did not model can lose a buffer but never free a foreign one.
+    std::unordered_map<std::string, LLVMValueRef> owned_str_shadow;
+    LLVMValueRef owned_shadow_for(const std::string& var_name);
+    // Emits the release-and-take-over sequence. Returns the pointer to store.
+    LLVMValueRef take_string_ownership(const std::string& var_name, TypedValue rhs, bool rhs_is_fresh);
 
     std::string dim_funcref_name(const TypedValue& tv);
 

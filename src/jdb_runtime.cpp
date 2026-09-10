@@ -256,6 +256,11 @@ __declspec(dllimport)
 #endif
 void jdrt_register_binary(const char* s, int64_t n);
 
+#ifdef _WIN32
+__declspec(dllimport)
+#endif
+void jdrt_forget_binary(const char* s);
+
 // Honours the binary-length registry so buffers carrying embedded 0x00
 // (CHR$(0), BINREADER$ / PACK$ content and anything sliced out of them)
 // report their real size instead of stopping at the first NUL.
@@ -290,6 +295,25 @@ static char* jdb_str_dup_binary(const char* s) {
     r[n] = '\0';
     if (n != (int64_t)strlen(r)) jdrt_register_binary(r, n);
     return r;
+}
+
+// ── String ownership ────────────────────────────────────────
+//
+// Codegen owns a runtime string in exactly two places: a variable slot it
+// has proved is written only by plain assignment, and an expression
+// temporary it has just produced and is about to consume. Both hand the
+// buffer here when they are done with it. Everything else keeps the older
+// behaviour of never freeing, so a pointer this file did not allocate can
+// never reach jdb_str_drop.
+
+char* jdb_str_own(const char* s) {
+    return jdb_str_dup_binary(s);
+}
+
+void jdb_str_drop(char* s) {
+    if (!s) return;
+    jdrt_forget_binary(s);
+    free(s);
 }
 
 // Locale state: 0 = C (default), 1 = de_DE (dot thousand sep, comma decimal)

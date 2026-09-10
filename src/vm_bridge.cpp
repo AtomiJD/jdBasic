@@ -553,6 +553,15 @@ JDRT_API void jdrt_register_binary(const char* s, int64_t n) {
     bin_lens()[(const void*)s] = (size_t)n;
 }
 
+// Called just before a buffer is freed. Without this the entry outlives the
+// allocation, and the next malloc that lands on the same address inherits a
+// byte length that has nothing to do with it.
+JDRT_API void jdrt_forget_binary(const char* s) {
+    if (!s) return;
+    std::lock_guard<std::mutex> lk(bin_mx());
+    bin_lens().erase((const void*)s);
+}
+
 JDRT_API char* jdrt_call_typed_str(JdRT handle, const char* name,
                                     const int64_t* args, const int32_t* tags, int nargs) {
     auto* rt = resolve_rt(handle);
