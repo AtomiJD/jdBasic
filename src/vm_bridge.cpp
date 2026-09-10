@@ -8,6 +8,7 @@
 #include "parser.h"
 #include "compiler.h"
 #include "async_task.h"
+#include "jdb_module_path.h"
 #include <cstring>
 #include <cstdlib>
 #include <fstream>
@@ -80,19 +81,8 @@ std::string g_base_dir = ".";
 static void setup_parser_modules(Parser& parser) {
     // Minimal module reader for EVAL/EXECUTE
     parser.file_reader = [](const std::string& module_name) -> std::pair<std::string, std::string> {
-        std::string lower = module_name;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        std::vector<std::string> candidates = {
-            g_base_dir + "/" + module_name + ".jdb",
-            g_base_dir + "/" + lower + ".jdb",
-            module_name + ".jdb",
-            lower + ".jdb"
-        };
-        // Exactly one level down into a sibling "modules/" subdir.
-        // Mirror main.cpp's resolver - no walk-up. The script's own dir
-        // (or a direct `modules/` subdir) is the only place we look.
-        candidates.push_back(g_base_dir + "/modules/" + module_name + ".jdb");
-        candidates.push_back(g_base_dir + "/modules/" + lower + ".jdb");
+        std::vector<std::string> candidates =
+            jdb_modpath::candidates(module_name, g_base_dir);
         for (auto& cand : candidates) {
             std::ifstream f(cand);
             if (f.is_open()) {

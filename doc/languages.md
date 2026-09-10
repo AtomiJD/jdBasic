@@ -924,6 +924,27 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, about 15.6 ms on Windows and under a millisecond elsewhere.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
 * **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
+
+  The module name is matched against `NAME.jdb` and `name.jdb` in each of these
+  places, in order, and the first hit wins:
+
+  | # | Location | Purpose |
+  |---|----------|---------|
+  | 1 | the importing script's own directory | project-local module |
+  | 2 | a `modules/` subdirectory of it | project-local module collection |
+  | 3 | the working directory, then `modules/` under it | REPL and MCP evaluation |
+  | 4 | every directory in `JDBASIC_PATH` | per-project or per-shell override |
+  | 5 | `<user home>/.jdbasic/lib` | modules installed for this user |
+  | 6 | `<directory of jdBasic.exe>/lib` | modules shipped with the installation |
+
+  `JDBASIC_PATH` is separated by `;` on Windows and by `:` elsewhere. There is no
+  walk-up into parent directories, so a sibling project's module can never be
+  picked up by accident, and a project-local file always shadows an installed one
+  of the same name.
+
+  Imports are resolved when the program is parsed. For a program compiled with
+  `-c` that means at compile time: the module is baked into the executable, and
+  changing `JDBASIC_PATH` afterwards has no effect on it.
 * **`EXPORT MODULE [module]`**: Marks a file as EXPORT for importing with IMPORT
 * **`DECLARE FUNC name LIB "lib" ALIAS "export_name" (params) AS rettype`**: Declares a foreign function from a shared library so it can be called from jdBasic. See the **Foreign Function Interface** section below.
 * **`CLIPBOARD.SET text$`**: Sets the system clipboard text.

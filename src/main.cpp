@@ -17,6 +17,7 @@
 #include "editor.h"
 #include "errors.h"
 #include "natives_list.h"
+#include "jdb_module_path.h"
 #include <cstdio>
 #include <cctype>
 
@@ -294,32 +295,11 @@ std::string g_base_dir;
 
 static Parser::FileReader make_module_reader() {
     return [](const std::string& module_name) -> std::pair<std::string, std::string> {
-        // Try: base_dir/MODULE.jdb, base_dir/module.jdb, ./MODULE.jdb, ./module.jdb
-        std::string upper = module_name;
-        std::string lower = module_name;
-        std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-
-        std::vector<std::string> candidates;
-        if (!g_base_dir.empty()) {
-            candidates.push_back(g_base_dir + "/" + upper + ".jdb");
-            candidates.push_back(g_base_dir + "/" + lower + ".jdb");
-            candidates.push_back(g_base_dir + "\\" + upper + ".jdb");
-            candidates.push_back(g_base_dir + "\\" + lower + ".jdb");
-            // Exactly one level down into a sibling "modules/" subdir.
-            // No walk-up - modules must live in the script's own dir, or
-            // in a `modules/` subdir of it. This is unambiguous (you
-            // can't accidentally pick up a module from a sibling project)
-            // and matches the post-2026-05-25 layout where reusable
-            // libraries are duplicated into each subdir that needs them.
-            candidates.push_back(g_base_dir + "/modules/" + upper + ".jdb");
-            candidates.push_back(g_base_dir + "/modules/" + lower + ".jdb");
-        }
-        candidates.push_back(upper + ".jdb");
-        candidates.push_back(lower + ".jdb");
-        // CWD-anchored execution (REPL, MCP evals) has no base_dir - give
-        // it the same one-level "modules/" lookup the script dir gets.
-        candidates.push_back("modules/" + upper + ".jdb");
-        candidates.push_back("modules/" + lower + ".jdb");
+        // Project-local first (script dir, then a `modules/` subdir of it, then
+        // the working directory), installed locations last. No walk-up, so a
+        // sibling project's module can never be picked up by accident.
+        std::vector<std::string> candidates =
+            jdb_modpath::candidates(module_name, g_base_dir);
 
         for (auto& cand : candidates) {
             std::ifstream f(cand);
