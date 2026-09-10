@@ -1,0 +1,55 @@
+' Measures how much memory a compiled program loses per string operation.
+'
+' The native backend allocates every runtime string and never frees it, so
+' resident size grows linearly with the number of string operations while a
+' purely numeric loop stays flat. Run through bench_native_string_memory.sh,
+' which compiles this and samples the resident size for several loop counts.
+'
+'   jdBasic bench_native_string_memory.jdb <mode> <iterations>
+'
+' mode: "concat" builds a fresh string each pass, "map" reads one out of a
+' map, "number" does the same amount of arithmetic and touches no string.
+
+OPTION "EXPLICIT"
+
+' A compiled program sees its own path as the first argument, the interpreter
+' does not, so the two arguments are read from the end.
+DIM cli = OS.ARGS()
+DIM mode$ AS STRING = "concat"
+DIM rounds AS INTEGER = 2000000
+IF LEN(cli) >= 2 THEN
+    mode$ = cli[LEN(cli) - 2]
+    rounds = CINT(VAL(cli[LEN(cli) - 1]))
+ENDIF
+
+DIM i AS INTEGER = 0
+DIM sink$ AS STRING = ""
+DIM total AS DOUBLE = 0.0
+DIM started AS DOUBLE = TICK()
+
+IF mode$ = "concat" THEN
+    FOR i = 1 TO rounds
+        sink$ = "row " + STR$(i)
+    NEXT i
+ELSEIF mode$ = "map" THEN
+    DIM bag AS MAP
+    bag{"k"} = "value"
+    FOR i = 1 TO rounds
+        sink$ = bag{"k"}
+    NEXT i
+ELSEIF mode$ = "typeof" THEN
+    ' TYPEOF answers with one of ten fixed words and hands out a shared
+    ' buffer, so this column must stay flat. It used to allocate once per
+    ' call, which is what made the 6502 emulator grow by 40 MB a second.
+    DIM probe = 42
+    FOR i = 1 TO rounds
+        sink$ = TYPEOF(probe)
+    NEXT i
+ELSE
+    FOR i = 1 TO rounds
+        total = total + i * 0.5
+    NEXT i
+ENDIF
+
+PRINT mode$ + " " + STR$(rounds) + " rounds in " + STR$(TICK() - started) + " ms"
+PRINT "sink " + sink$ + " total " + STR$(total)

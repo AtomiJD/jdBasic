@@ -3812,6 +3812,19 @@ char* jdb_hmac_sha256(const char* key, const char* message, const char* algo) {
     return hex_of(out_digest, 32);
 }
 
+// TYPEOF answers with one of ten fixed words, so it hands out a shared buffer
+// rather than a fresh copy. Nothing in the runtime frees or mutates a string it
+// was given, and a TYPEOF in a hot loop otherwise allocates once per pass -
+// which is most of what a compiled emulator loop loses to memory.
+static char* interned_word(const char* w) {
+    static std::unordered_map<std::string, char*> words;
+    auto it = words.find(w);
+    if (it != words.end()) return it->second;
+    char* copy = _strdup(w);
+    words[w] = copy;
+    return copy;
+}
+
 // TYPEOF on compiled code: the type is usually known at compile time and
 // codegen picks the matching stub. NaN on an f64 means the EXITFUNC
 // sentinel was returned, which surfaces as "NONE".
@@ -3822,25 +3835,25 @@ char* jdb_typeof_f64(double v) {
     // The cost is that a genuine NaN answers NONE here while the
     // interpreter calls SQR(-1) a FLOAT64. Telling the two apart needs
     // a runtime-tagged return, not a wider tag on the value.
-    if (v != v) return _strdup("NONE");
-    return _strdup("FLOAT64");
+    if (v != v) return interned_word("NONE");
+    return interned_word("FLOAT64");
 }
 
 // Both NATIVE_MAP and VM_HANDLE surface as "OBJECT" - user-facing type
 // language doesn't distinguish native-runtime maps from VM Values.
 char* jdb_typeof_tag(int64_t tag) {
     switch ((JdTag)tag) {
-        case JdTag::I64:        return _strdup("INT64");
-        case JdTag::F64:        return _strdup("FLOAT64");
-        case JdTag::STR:        return _strdup("STRING");
-        case JdTag::ARR:        return _strdup("ARRAY");
-        case JdTag::NATIVE_MAP: return _strdup("OBJECT");
-        case JdTag::FUNCREF:    return _strdup("FUNCREF");
-        case JdTag::VM_HANDLE:  return _strdup("OBJECT");
-        case JdTag::BOOL:       return _strdup("BOOLEAN");
-        case JdTag::NONE:       return _strdup("NONE");
+        case JdTag::I64:        return interned_word("INT64");
+        case JdTag::F64:        return interned_word("FLOAT64");
+        case JdTag::STR:        return interned_word("STRING");
+        case JdTag::ARR:        return interned_word("ARRAY");
+        case JdTag::NATIVE_MAP: return interned_word("OBJECT");
+        case JdTag::FUNCREF:    return interned_word("FUNCREF");
+        case JdTag::VM_HANDLE:  return interned_word("OBJECT");
+        case JdTag::BOOL:       return interned_word("BOOLEAN");
+        case JdTag::NONE:       return interned_word("NONE");
         case JdTag::RUNTIME:
-        default:                return _strdup("UNKNOWN");
+        default:                return interned_word("UNKNOWN");
     }
 }
 

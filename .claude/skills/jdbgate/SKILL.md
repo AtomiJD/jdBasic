@@ -116,6 +116,16 @@ cp build/jdbrt.dll jdb/emu/jdbrt.dll
 
 `exit 124` from `timeout` = process killed at deadline, that's the **good** signal for graphical apps. Exit 0 / 1 also fine. **`exit 139` = segfault**, anything else likely a regression.
 
+**Sweep up after both smokes** - `timeout` reports 124 but does not reliably kill a native GUI process on Windows, so the window can survive the gate and keep running:
+
+```bash
+taskkill //F //IM rpg_demo.exe 2>/dev/null; taskkill //F //IM emu_run.exe 2>/dev/null; true
+```
+
+An orphan matters here because a compiled GUI program grows by roughly 40 MB
+per second (trakr jdbasic #365), so one left behind reaches tens of gigabytes
+within the hour.
+
 If the build has the FORMS flag, also run the native forms smoke - it closes
 itself, so here the pass signal is **exit 0 + "ALL NATIVE FORMS TESTS PASSED!"**
 (a 124 here means the event chain broke and the window never closed):
