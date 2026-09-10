@@ -1,0 +1,86 @@
+' CODEC.HMAC$ against the RFC 4231 test vectors for HMAC-SHA-256.
+' Cases 1 to 4: a 20-byte key, a short text key, a 20-byte key with a
+' 50-byte message, and a 25-byte key with a 50-byte message.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+' Case 1: key = 0x0b x 20, data = "Hi There"
+DIM key1$ = REPEAT$(CHR$(11), 20)
+Check("rfc4231 case 1", CODEC.HMAC$(key1$, "Hi There"), "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7")
+
+' Case 2: a key shorter than one block, an ASCII message
+Check("rfc4231 case 2", CODEC.HMAC$("Jefe", "what do ya want for nothing?"), "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843")
+
+' Case 3: key = 0xaa x 20, data = 0xdd x 50
+DIM key3$ = REPEAT$(CHR$(170), 20)
+DIM data3$ = REPEAT$(CHR$(221), 50)
+Check("rfc4231 case 3", CODEC.HMAC$(key3$, data3$), "773ea91e36800e46854db8ebd09181a72959098b3ef8c122d9635514ced565fe")
+
+' Case 4: key = 0x01..0x19, data = 0xcd x 50
+DIM key4$ AS STRING = ""
+DIM i AS INTEGER = 0
+FOR i = 1 TO 25
+    key4$ = key4$ + CHR$(i)
+NEXT i
+DIM data4$ = REPEAT$(CHR$(205), 50)
+Check("rfc4231 case 4", CODEC.HMAC$(key4$, data4$), "82558a389a443c0ea4cc819899f2083a85f0faa3e578f8077a2e3ff46729665b")
+
+' A key longer than the 64-byte block is hashed down first (RFC 4231 case 5
+' uses a 131-byte key)
+DIM key5$ = REPEAT$(CHR$(170), 131)
+Check("long key is hashed first", CODEC.HMAC$(key5$, "Test Using Larger Than Block-Size Key - Hash Key First"), "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54")
+
+' The algorithm argument is optional and case insensitive
+Check("explicit algorithm", CODEC.HMAC$("Jefe", "what do ya want for nothing?", "sha256"), CODEC.HMAC$("Jefe", "what do ya want for nothing?"))
+
+' An empty key and an empty message still produce a digest
+Check("empty key and message", CODEC.HMAC$("", ""), "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad")
+
+' A one-bit change in the message changes the digest
+DIM a$ = CODEC.HMAC$("secret", "message")
+DIM b$ = CODEC.HMAC$("secret", "messagf")
+IF a$ = b$ THEN
+    failed = failed + 1
+    PRINT "FAIL neighbouring messages collide"
+ELSE
+    passed = passed + 1
+ENDIF
+
+' An embedded NUL is part of the data, not the end of it
+DIM knul$ = "ab" + CHR$(0) + "cd"
+DIM mnul$ = "xy" + CHR$(0) + "zw"
+IF CODEC.HMAC$(knul$, mnul$) = CODEC.HMAC$("ab", "xy") THEN
+    failed = failed + 1
+    PRINT "FAIL a NUL byte truncates the HMAC input"
+ELSE
+    passed = passed + 1
+ENDIF
+IF CODEC.SHA256$(mnul$) = CODEC.SHA256$("xy") THEN
+    failed = failed + 1
+    PRINT "FAIL a NUL byte truncates the SHA256 input"
+ELSE
+    passed = passed + 1
+ENDIF
+
+' SHA256 still answers its own known vector after the refactor
+Check("sha256 of abc", CODEC.SHA256$("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+Check("sha256 of empty", CODEC.SHA256$(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+
+PRINT ""
+PRINT "CODEC HMAC TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

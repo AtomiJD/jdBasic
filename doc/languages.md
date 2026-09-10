@@ -1917,6 +1917,12 @@ These three natives redirect `PRINT`/all script output to an in-memory string bu
 * **`CODEC.BASE64_ENCODE$(string$) -> string$`**: Encodes a string into Base64 format. Useful for API authentication headers.
 * **`CODEC.BASE64_DECODE$(string$) -> string$`**: Decodes a Base64 encoded string back to its original format.
 * **`CODEC.SHA256$(string$) -> string$`**: Calculates the SHA256 hash of a string and returns it as a 64-character hex string.
+* **`CODEC.HMAC$(key$, message$, [algo$]) -> string$`**: Keyed hash (RFC 2104) of `message$` under `key$`, as a 64-character hex string. `algo$` defaults to `"SHA256"`, which is the only algorithm; anything else raises an error. A key longer than the 64-byte block is hashed first, a shorter one is zero padded, exactly as the standard prescribes, so the RFC 4231 vectors match. Both arguments are byte strings: an embedded `CHR$(0)` is data, not a terminator, which is what webhook signatures over binary payloads need.
+
+```basic
+' Signing a webhook payload the way GitHub and Stripe do
+DIM signature$ = "sha256=" + CODEC.HMAC$(secret$, request{"BODY"})
+```
 * **`CODEC.UUID$() -> string$`**: Generates a random Version 4 UUID (e.g., `"550e8400-e29b-41d4-a716-446655440000"`).
 
 ### Building a Web Server & API

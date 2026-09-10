@@ -2764,6 +2764,14 @@ DIM vse_hashes = [vse_sa, vse_sb, vse_sc]
 DIM vse_huniq = UNIQUE(vse_hashes)
 Assert(LEN(vse_huniq) = 2, "UNIQUE on SHA256$ results dedupes by hash text")
 
+' HMAC-SHA256 against RFC 4231. Case 2 is the ASCII pair, case 1 the
+' 20-byte binary key; the full vector set lives in codec_hmac_test.jdb.
+DIM vse_hk AS STRING = REPEAT$(CHR$(11), 20)
+Assert(CODEC.HMAC$(vse_hk, "Hi There") = "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7", "HMAC$ matches RFC 4231 case 1")
+Assert(CODEC.HMAC$("Jefe", "what do ya want for nothing?") = "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843", "HMAC$ matches RFC 4231 case 2")
+Assert(CODEC.HMAC$("k", "m", "SHA256") = CODEC.HMAC$("k", "m"), "HMAC$ algorithm argument is optional")
+Assert(CODEC.SHA256$("ab" + CHR$(0) + "cd") <> CODEC.SHA256$("ab"), "an embedded NUL is hashed, not treated as a terminator")
+
 ' ══════════════════════════════════════════════════════════════════
 ' Array-transformer flag propagation audit
 '

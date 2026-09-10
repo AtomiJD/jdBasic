@@ -802,7 +802,8 @@ bool jdb_no_vectorize(const std::string& name) {
         "CHAN.OPEN", "CHAN.RECV", "CHAN.SEND", "CHUNK", "CIRCLE",
         "CIRCLE_SECTOR", "CLEAR_RECUR", "CLIPBOARD.GET$", "CLIPBOARD.SET",
         "CLS", "CODEC.BASE64_DECODE$", "CODEC.BASE64_ENCODE$",
-        "CODEC.SHA256$", "CODEC.UUID$", "COLOR", "CONVOLVE", "COPYV",
+        "CODEC.HMAC$", "CODEC.SHA256$", "CODEC.UUID$", "COLOR", "CONVOLVE",
+        "COPYV",
         "COUNT", "CROSS", "CSVHEADER", "CSVREADER", "CSVWRITER", "CUMPROD",
         "CUMSUM", "CURSOR", "CVDATE", "D", "DATE$", "DATE.PARTS",
         "DATE.UTC", "DATERANGE", "DEBUG.ASSERT", "DEBUG.PRINT", "DET",
@@ -4412,6 +4413,100 @@ static int array_rank(const Value& v) {
         cur = &cur->as_array()->elements[0];
     }
     return rank;
+}
+
+// ── SHA-256 (FIPS 180-4) ────────────────────────────────────
+// Byte oriented, so a key or message carrying a NUL is hashed in full.
+
+static void sha256_digest(const uint8_t* input, size_t len, uint8_t out[32]) {
+    static const uint32_t K[64] = {
+        0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+        0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+        0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+        0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+        0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+        0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+        0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+        0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    };
+    auto ror = [](uint32_t x, int n) -> uint32_t { return (x >> n) | (x << (32 - n)); };
+
+    std::vector<uint8_t> data(input, input + len);
+    uint64_t bitlen = (uint64_t)len * 8;
+    data.push_back(0x80);
+    while (data.size() % 64 != 56) data.push_back(0);
+    for (int i = 7; i >= 0; i--) data.push_back((uint8_t)(bitlen >> (i * 8)));
+
+    uint32_t h[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,
+                     0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
+
+    for (size_t chunk = 0; chunk < data.size(); chunk += 64) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++)
+            w[i] = (data[chunk+i*4]<<24) | (data[chunk+i*4+1]<<16) | (data[chunk+i*4+2]<<8) | data[chunk+i*4+3];
+        for (int i = 16; i < 64; i++) {
+            uint32_t s0 = ror(w[i-15],7) ^ ror(w[i-15],18) ^ (w[i-15]>>3);
+            uint32_t s1 = ror(w[i-2],17) ^ ror(w[i-2],19) ^ (w[i-2]>>10);
+            w[i] = w[i-16] + s0 + w[i-7] + s1;
+        }
+        uint32_t a=h[0],b=h[1],c=h[2],d=h[3],e=h[4],f=h[5],g=h[6],hh=h[7];
+        for (int i = 0; i < 64; i++) {
+            uint32_t S1 = ror(e,6)^ror(e,11)^ror(e,25);
+            uint32_t ch = (e&f)^(~e&g);
+            uint32_t t1 = hh+S1+ch+K[i]+w[i];
+            uint32_t S0 = ror(a,2)^ror(a,13)^ror(a,22);
+            uint32_t maj = (a&b)^(a&c)^(b&c);
+            uint32_t t2 = S0+maj;
+            hh=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
+        }
+        h[0]+=a; h[1]+=b; h[2]+=c; h[3]+=d; h[4]+=e; h[5]+=f; h[6]+=g; h[7]+=hh;
+    }
+    for (int i = 0; i < 8; i++) {
+        out[i*4]   = (uint8_t)(h[i] >> 24);
+        out[i*4+1] = (uint8_t)(h[i] >> 16);
+        out[i*4+2] = (uint8_t)(h[i] >> 8);
+        out[i*4+3] = (uint8_t)(h[i]);
+    }
+}
+
+static std::string bytes_to_hex(const uint8_t* b, size_t n) {
+    static const char* d = "0123456789abcdef";
+    std::string out;
+    out.reserve(n * 2);
+    for (size_t i = 0; i < n; i++) { out += d[b[i] >> 4]; out += d[b[i] & 0x0F]; }
+    return out;
+}
+
+static std::string sha256_hex(const std::string& msg) {
+    uint8_t digest[32];
+    sha256_digest((const uint8_t*)msg.data(), msg.size(), digest);
+    return bytes_to_hex(digest, 32);
+}
+
+// HMAC per RFC 2104: a key longer than the 64-byte block is hashed first,
+// a shorter one is zero padded.
+static std::string hmac_sha256_hex(const std::string& key, const std::string& msg) {
+    const size_t BLOCK = 64;
+    uint8_t k[BLOCK];
+    memset(k, 0, BLOCK);
+    if (key.size() > BLOCK) {
+        sha256_digest((const uint8_t*)key.data(), key.size(), k);
+    } else {
+        memcpy(k, key.data(), key.size());
+    }
+
+    std::vector<uint8_t> inner(BLOCK + msg.size());
+    for (size_t i = 0; i < BLOCK; i++) inner[i] = k[i] ^ 0x36;
+    memcpy(inner.data() + BLOCK, msg.data(), msg.size());
+    uint8_t inner_digest[32];
+    sha256_digest(inner.data(), inner.size(), inner_digest);
+
+    std::vector<uint8_t> outer(BLOCK + 32);
+    for (size_t i = 0; i < BLOCK; i++) outer[i] = k[i] ^ 0x5c;
+    memcpy(outer.data() + BLOCK, inner_digest, 32);
+    uint8_t out_digest[32];
+    sha256_digest(outer.data(), outer.size(), out_digest);
+    return bytes_to_hex(out_digest, 32);
 }
 
 void VM::register_builtins() {
@@ -8025,54 +8120,20 @@ void VM::register_builtins() {
     });
 
     register_native("CODEC.SHA256$", [](const std::vector<Value>& args) -> Value {
-        // SHA-256 implementation (FIPS 180-4)
-        const std::string& msg = args[0].as_string()->data;
-        static const uint32_t K[64] = {
-            0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
-            0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
-            0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
-            0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
-            0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
-            0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
-            0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
-            0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
-        };
-        auto ror = [](uint32_t x, int n) -> uint32_t { return (x >> n) | (x << (32 - n)); };
+        return Value::make_string(sha256_hex(args[0].as_string()->data));
+    });
 
-        // Pre-processing: padding
-        std::vector<uint8_t> data(msg.begin(), msg.end());
-        uint64_t bitlen = data.size() * 8;
-        data.push_back(0x80);
-        while (data.size() % 64 != 56) data.push_back(0);
-        for (int i = 7; i >= 0; i--) data.push_back((uint8_t)(bitlen >> (i * 8)));
-
-        uint32_t h0=0x6a09e667, h1=0xbb67ae85, h2=0x3c6ef372, h3=0xa54ff53a;
-        uint32_t h4=0x510e527f, h5=0x9b05688c, h6=0x1f83d9ab, h7=0x5be0cd19;
-
-        for (size_t chunk = 0; chunk < data.size(); chunk += 64) {
-            uint32_t w[64];
-            for (int i = 0; i < 16; i++)
-                w[i] = (data[chunk+i*4]<<24) | (data[chunk+i*4+1]<<16) | (data[chunk+i*4+2]<<8) | data[chunk+i*4+3];
-            for (int i = 16; i < 64; i++) {
-                uint32_t s0 = ror(w[i-15],7) ^ ror(w[i-15],18) ^ (w[i-15]>>3);
-                uint32_t s1 = ror(w[i-2],17) ^ ror(w[i-2],19) ^ (w[i-2]>>10);
-                w[i] = w[i-16] + s0 + w[i-7] + s1;
-            }
-            uint32_t a=h0,b=h1,c=h2,d=h3,e=h4,f=h5,g=h6,h=h7;
-            for (int i = 0; i < 64; i++) {
-                uint32_t S1 = ror(e,6)^ror(e,11)^ror(e,25);
-                uint32_t ch = (e&f)^(~e&g);
-                uint32_t t1 = h+S1+ch+K[i]+w[i];
-                uint32_t S0 = ror(a,2)^ror(a,13)^ror(a,22);
-                uint32_t maj = (a&b)^(a&c)^(b&c);
-                uint32_t t2 = S0+maj;
-                h=g; g=f; f=e; e=d+t1; d=c; c=b; b=a; a=t1+t2;
-            }
-            h0+=a; h1+=b; h2+=c; h3+=d; h4+=e; h5+=f; h6+=g; h7+=h;
+    register_native("CODEC.HMAC$", 2, 3, [](const std::vector<Value>& args) -> Value {
+        std::string algo = "SHA256";
+        if (args.size() > 2) {
+            algo = args[2].as_string()->data;
+            for (auto& ch : algo) ch = (char)toupper((unsigned char)ch);
+            if (algo == "SHA-256") algo = "SHA256";
         }
-        char hex[65];
-        snprintf(hex, sizeof(hex), "%08x%08x%08x%08x%08x%08x%08x%08x", h0,h1,h2,h3,h4,h5,h6,h7);
-        return Value::make_string(hex);
+        if (algo != "SHA256")
+            throw std::runtime_error("CODEC.HMAC$: unsupported algorithm '" + algo + "'");
+        return Value::make_string(hmac_sha256_hex(args[0].as_string()->data,
+                                                  args[1].as_string()->data));
     });
 
 #ifndef JDB_LEAN

@@ -570,6 +570,10 @@ Description: Decodes a Base64 encoded string.
 Syntax: CODEC.BASE64_ENCODE$(string$)
 Description: Encodes a string into Base64 format.
 
+[CODEC.HMAC$]
+Syntax: CODEC.HMAC$(key$, message$, [algo$])
+Description: Returns the HMAC of message$ under key$ as a 64-char hex string. Only "SHA256" (the default) is supported. Binary safe.
+
 [CODEC.SHA256$]
 Syntax: CODEC.SHA256$(string$)
 Description: Returns the SHA256 hash of a string (64-char hex).

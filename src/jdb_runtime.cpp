@@ -3701,7 +3701,7 @@ static uint32_t sha_sig1(uint32_t x) { return sha_rotr(x,6)^sha_rotr(x,11)^sha_r
 static uint32_t sha_gam0(uint32_t x) { return sha_rotr(x,7)^sha_rotr(x,18)^(x>>3); }
 static uint32_t sha_gam1(uint32_t x) { return sha_rotr(x,17)^sha_rotr(x,19)^(x>>10); }
 
-char* jdb_sha256(const char* input) {
+static void sha256_digest(const uint8_t* input, size_t len, uint8_t out[32]) {
     static const uint32_t K[64] = {
         0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
         0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
@@ -3714,11 +3714,10 @@ char* jdb_sha256(const char* input) {
     };
     uint32_t h[8] = {0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19};
 
-    size_t len = input ? strlen(input) : 0;
     // Pad message
     size_t padded_len = ((len + 8) / 64 + 1) * 64;
     uint8_t* msg = (uint8_t*)calloc(padded_len, 1);
-    if (input) memcpy(msg, input, len);
+    if (input && len) memcpy(msg, input, len);
     msg[len] = 0x80;
     uint64_t bits = len * 8;
     for (int i = 0; i < 8; i++) msg[padded_len - 1 - i] = (uint8_t)(bits >> (i * 8));
@@ -3740,9 +3739,64 @@ char* jdb_sha256(const char* input) {
     }
     free(msg);
 
-    char* result = (char*)malloc(65);
-    for (int i = 0; i < 8; i++) snprintf(result + i*8, 9, "%08x", h[i]);
-    return result;
+    for (int i = 0; i < 8; i++) {
+        out[i*4]   = (uint8_t)(h[i] >> 24);
+        out[i*4+1] = (uint8_t)(h[i] >> 16);
+        out[i*4+2] = (uint8_t)(h[i] >> 8);
+        out[i*4+3] = (uint8_t)(h[i]);
+    }
+}
+
+static char* hex_of(const uint8_t* b, size_t n) {
+    static const char* d = "0123456789abcdef";
+    char* out = (char*)malloc(n * 2 + 1);
+    for (size_t i = 0; i < n; i++) { out[i*2] = d[b[i] >> 4]; out[i*2+1] = d[b[i] & 0x0F]; }
+    out[n*2] = 0;
+    return out;
+}
+
+char* jdb_sha256(const char* input) {
+    uint8_t digest[32];
+    sha256_digest((const uint8_t*)input, (size_t)jdb_str_blen(input), digest);
+    return hex_of(digest, 32);
+}
+
+// HMAC per RFC 2104. algo is optional at the call site, so it arrives null
+// for a two-argument call; SHA256 is the only algorithm.
+char* jdb_hmac_sha256(const char* key, const char* message, const char* algo) {
+    if (algo && *algo) {
+        std::string want(algo);
+        for (auto& ch : want) ch = (char)toupper((unsigned char)ch);
+        if (want != "SHA256" && want != "SHA-256") {
+            jdb_err_set(("CODEC.HMAC$: unsupported algorithm '" + want + "'").c_str(), 5);
+            return _strdup("");
+        }
+    }
+    const size_t BLOCK = 64;
+    size_t key_len = (size_t)jdb_str_blen(key);
+    size_t msg_len = (size_t)jdb_str_blen(message);
+
+    uint8_t k[BLOCK];
+    memset(k, 0, BLOCK);
+    if (key_len > BLOCK) {
+        sha256_digest((const uint8_t*)key, key_len, k);
+    } else if (key_len) {
+        memcpy(k, key, key_len);
+    }
+
+    uint8_t* inner = (uint8_t*)malloc(BLOCK + msg_len);
+    for (size_t i = 0; i < BLOCK; i++) inner[i] = k[i] ^ 0x36;
+    if (msg_len) memcpy(inner + BLOCK, message, msg_len);
+    uint8_t inner_digest[32];
+    sha256_digest(inner, BLOCK + msg_len, inner_digest);
+    free(inner);
+
+    uint8_t outer[BLOCK + 32];
+    for (size_t i = 0; i < BLOCK; i++) outer[i] = k[i] ^ 0x5c;
+    memcpy(outer + BLOCK, inner_digest, 32);
+    uint8_t out_digest[32];
+    sha256_digest(outer, sizeof(outer), out_digest);
+    return hex_of(out_digest, 32);
 }
 
 // TYPEOF on compiled code: the type is usually known at compile time and

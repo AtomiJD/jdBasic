@@ -596,6 +596,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_base64_decode", "CODEC.BASE64_DECODE$", i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_uuid",          "CODEC.UUID$",          i8_ptr_type, {}, 2);
     reg("jdb_sha256",        "CODEC.SHA256$",        i8_ptr_type, {i8_ptr_type}, 2);
+    // 3-arg binding; a 2-arg call pads null and the runtime defaults to SHA256
+    reg("jdb_hmac_sha256",   "CODEC.HMAC$",          i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
 
     // UDT (User-Defined Types)
     reg("jdb_udt_new",     "__udt_new",     i8_ptr_type, {i8_ptr_type}, 3);
@@ -9599,7 +9601,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "SPLIT", "FORMAT$", "FRMV$", "INSERT$", "REPLACE$", "REVERSE$",
         "PACK$", "UNPACK", "JOIN",
         "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
-        "CODEC.SHA256$", "CODEC.UUID$",
+        "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.UUID$",
         // Regex (produce arrays)
         "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
         // Diagnostics take their arguments as a payload to render, so an
