@@ -169,7 +169,7 @@ Exit `/jdvibe` mode (back to normal Claude behaviour) when:
 
 Not your job during the take, but if any of these is missing the loop will stutter - flag it once at session start if you can tell from context:
 
-- [ ] Wallpaper: `tmp/jdbasic_logo_4k.png`
+- [ ] Wallpaper: `jdb/tv/brand/wallpaper_4k.png` (3840x2160, the green jdBasic frame)
 - [ ] OBS scene: 1920x1080, Display Capture, 60 fps
 - [ ] Claude terminal positioned on the clean monitor, project window will land via `CLAUDE_LIVE.MOVE_WINDOW_FROM_JSON` based on `jdb/winpos.json` (gitignored, per-user)
 - [ ] Project script's F6-pause-resume loop pre-tested once

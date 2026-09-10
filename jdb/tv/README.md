@@ -34,7 +34,8 @@ voice/                 Pre-rendered WAVs per script (gitignored).
 raw/                   OBS recordings + manifest (gitignored).
 final/                 Muxed MP4s + per-lesson thumbnail PNGs + uploaded-marker
                        JSONs (gitignored).
-avatar/                JayDee.vrm (gitignored, future Phase 4 work).
+avatar/                JayDee.vrm (gitignored), the VRoid model VSeeFace shows.
+brand/                 wallpaper_4k.png, the desktop behind every video (3840x2160).
 .env                   Local config (OBS, voice, YouTube paths). Gitignored.
 ```
 
