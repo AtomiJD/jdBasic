@@ -1400,6 +1400,32 @@ PRINT "captured line"
 DIM rfcap$ = OUTPUT.CAPTURE_END$()
 Assert(356, INSTR(rfcap$, "captured line") >= 0)
 
+' A FUNC releases its string locals when it returns; one handed back by
+' RETURN reaches the caller, one stored elsewhere stays alive.
+FUNC own_build$(n)
+    DIM body$ = "row " + STR$(n)
+    DIM framed$ = "[" + body$ + "]"
+    RETURN framed$
+ENDFUNC
+FUNC own_collect(n)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 1 TO n
+        DIM piece$ = "p" + STR$(i)
+        parts = APPEND(parts, piece$)
+    NEXT i
+    RETURN parts
+ENDFUNC
+DIM own_s$ = ""
+DIM own_i = 0
+FOR own_i = 1 TO 3
+    own_s$ = own_build$(own_i)
+NEXT own_i
+Assert(357, own_s$ = "[row 3]")
+DIM own_parts = own_collect(3)
+Assert(358, own_parts[2] = "p3")
+Assert(359, LEN(own_build$(7)) = 7)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

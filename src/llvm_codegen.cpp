@@ -2453,6 +2453,8 @@ bool LLVMCodegen::emit_ir(const std::vector<StmtPtr>& program) {
 
 void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     scan_owned_str_globals(program);
+    scan_owned_str_locals(program);
+    scan_fresh_string_funcs(program);
     // Pre-scan: declare all global variables used in top-level code
     // so that FUNC/SUB bodies can reference them
     // Pre-scan TYPE_DECL names so we can recognize DIM x AS TypeName
@@ -3582,6 +3584,14 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     dispose_locals.clear();
     auto saved_labels = std::move(label_blocks);
     label_blocks.clear();
+    auto saved_owned_locals = std::move(owned_str_locals);
+    auto saved_owned_shadow = std::move(owned_local_shadow);
+    owned_str_locals.clear();
+    owned_local_shadow.clear();
+    {
+        auto oit = owned_locals_by_fn.find(fn_name);
+        if (oit != owned_locals_by_fn.end()) owned_str_locals = oit->second;
+    }
     current_fn = fit->second.fn;
     current_fn_source_file = stmt.source_file();
 
@@ -3676,8 +3686,10 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
         LLVMBuildBr(builder, current_exit_bb);
     }
 
-    // exit_bb: dispose tracked UDT locals → recursion_leave → ret.
+    // exit_bb: release owned string locals, dispose tracked UDT locals,
+    // recursion_leave, ret.
     LLVMPositionBuilderAtEnd(builder, current_exit_bb);
+    emit_owned_local_release();
     emit_dispose_cleanup();
     auto& rl = runtime_funcs["__rec_leave"];
     LLVMBuildCall2(builder, rl.fn_type, rl.fn, nullptr, 0, "");
@@ -3696,6 +3708,8 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     current_retval_alloca = saved_retval;
     dispose_locals = std::move(saved_dispose);
     label_blocks = std::move(saved_labels);
+    owned_str_locals = std::move(saved_owned_locals);
+    owned_local_shadow = std::move(saved_owned_shadow);
 
     // Position builder back at the end of the saved function's last block
     LLVMBasicBlockRef last_bb = LLVMGetLastBasicBlock(saved_fn);
@@ -3708,6 +3722,14 @@ void LLVMCodegen::codegen_return(const Stmt& stmt) {
     LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
     if (stmt.expr && ret_ty != void_type) {
         TypedValue rv = codegen_expr(*stmt.expr);
+        // An owned local handed back as the result leaves the frame with
+        // the caller; its shadow is cleared so the exit block keeps it.
+        if (ret_ty == i8_ptr_type && stmt.expr->kind == ExprKind::VARIABLE &&
+            owns_local_string(stmt.expr->str_val)) {
+            auto sh = owned_local_shadow.find(stmt.expr->str_val);
+            if (sh != owned_local_shadow.end())
+                LLVMBuildStore(builder, LLVMConstNull(i8_ptr_type), sh->second);
+        }
         // An i64-returning function hands objects back as VM handles. A
         // native map built locally has none yet: box it, so the caller's
         // handle reads (jdrt_obj_get_tagged & co) see the entries instead
@@ -4439,8 +4461,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 return;
             }
         }
-        if (rhs.tag == JD_TAG_STR && scopes.size() == 1 &&
-            owned_str_globals.count(stmt.var_name)) {
+        if (rhs.tag == JD_TAG_STR &&
+            ((scopes.size() == 1 && owned_str_globals.count(stmt.var_name)) ||
+             (owns_local_string(stmt.var_name) && scopes.back().vars.count(stmt.var_name)))) {
             bool fresh = rhs.owned ||
                          (stmt.expr && expr_yields_fresh_string(*stmt.expr));
             LLVMBuildStore(builder, take_string_ownership(stmt.var_name, rhs, fresh), vi->alloca_val);
@@ -5369,6 +5392,12 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     // is a BOOLEAN-into-INTEGER assignment.
     bool untyped_bool_init = stmt.var_type == VarType::NONE &&
                              rhs.tag == JD_TAG_BOOL;
+    // A DIM that runs again (in a loop, or on the next call) releases what
+    // the slot held; the owned local tracks the buffer it is given here.
+    if (rhs.tag == JD_TAG_STR && owns_local_string(stmt.var_name)) {
+        bool fresh = rhs.owned || expr_yields_fresh_string(*stmt.expr);
+        rhs.val = take_string_ownership(stmt.var_name, rhs, fresh);
+    }
     if (vi) {
         if (rhs.tag == JD_TAG_F64 && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
         if (untyped_bool_init && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_BOOL;
@@ -8715,7 +8744,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, fn_type, fi.fn,
                                                   args.empty() ? nullptr : args.data(),
                                                   (unsigned)args.size(), "call");
-            return { result, fi.return_tag };
+            TypedValue out{ result, fi.return_tag };
+            // A FUNC that always allocates its result hands it over.
+            if (fi.return_tag == JD_TAG_STR && fresh_string_funcs.count(name))
+                out.owned = true;
+            return out;
         }
     }
 
@@ -11403,13 +11436,202 @@ LLVMValueRef LLVMCodegen::take_string_ownership(const std::string& var_name, Typ
         LLVMValueRef a[] = { value };
         value = LLVMBuildCall2(builder, own.fn_type, own.fn, a, 1, "strown");
     }
-    LLVMValueRef shadow = owned_shadow_for(var_name);
+    LLVMValueRef shadow = owns_local_string(var_name) ? owned_local_shadow_for(var_name)
+                                                      : owned_shadow_for(var_name);
     auto& drop = runtime_funcs["__str_drop"];
     LLVMValueRef prev = LLVMBuildLoad2(builder, i8_ptr_type, shadow, "ownprev");
     LLVMValueRef d[] = { prev };
     LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
     LLVMBuildStore(builder, value, shadow);
     return value;
+}
+
+void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
+    if (std::getenv("JDB_NO_STROWN")) return;
+
+    // A lambda compiles as its own function while the enclosing scope is
+    // still open, so any local it reaches would outlive the frame.
+    std::function<bool(const Expr&)> has_lambda = [&](const Expr& e) -> bool {
+        if (e.kind == ExprKind::LAMBDA_EXPR) return true;
+        if (e.left && has_lambda(*e.left)) return true;
+        if (e.right && has_lambda(*e.right)) return true;
+        for (auto& a : e.args) if (a && has_lambda(*a)) return true;
+        return false;
+    };
+
+    // Builtins that only read a string argument and build their result in
+    // a new buffer. Every other call may keep the pointer it is given (an
+    // APPEND, a user SUB storing it), so a local passed bare to one of
+    // those stays unowned.
+    static const std::unordered_set<std::string> reads_only = {
+        "LEN", "INSTR", "VAL", "ASC", "STARTSWITH", "ENDSWITH", "ISNUMERIC",
+        "UCASE$", "LCASE$", "UPPER$", "LOWER$", "TRIM$", "LTRIM$", "RTRIM$",
+        "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
+        "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
+        "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
+        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$"
+    };
+
+    auto analyse = [&](const Stmt& fn) {
+        if (fn.is_async_func) return;
+        std::unordered_set<std::string> candidates;
+        std::unordered_set<std::string> banned;
+        bool unsafe = false;
+        for (auto& p : fn.params()) banned.insert(p.name);
+
+        std::function<void(const Expr&)> scan_calls = [&](const Expr& e) {
+            if (e.kind == ExprKind::CALL && !reads_only.count(e.func_name))
+                for (auto& a : e.args)
+                    if (a && a->kind == ExprKind::VARIABLE) banned.insert(a->str_val);
+            if (e.left) scan_calls(*e.left);
+            if (e.right) scan_calls(*e.right);
+            for (auto& a : e.args) if (a) scan_calls(*a);
+        };
+
+        std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) { unsafe = true; return; }
+            if (s.expr && has_lambda(*s.expr)) unsafe = true;
+            if (s.loop_cond && has_lambda(*s.loop_cond)) unsafe = true;
+            for (auto& pe : s.print_exprs) if (pe && has_lambda(*pe)) unsafe = true;
+            for (auto& br : s.branches)
+                if (br.condition && has_lambda(*br.condition)) unsafe = true;
+            if (s.expr) scan_calls(*s.expr);
+            if (s.loop_cond) scan_calls(*s.loop_cond);
+            if (s.end_expr) scan_calls(*s.end_expr);
+            if (s.step_expr) scan_calls(*s.step_expr);
+            for (auto& pe : s.print_exprs) if (pe) scan_calls(*pe);
+            for (auto& ie : s.index_chain) if (ie) scan_calls(*ie);
+            for (auto& br : s.branches)
+                if (br.condition) scan_calls(*br.condition);
+
+            if (s.kind == StmtKind::DIM && !s.var_name.empty()) {
+                if (s.is_static) banned.insert(s.var_name);
+                else if (s.var_name.back() == '$') candidates.insert(s.var_name);
+            }
+            // A bare read on the right of an assignment or an element
+            // store aliases the buffer.
+            if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
+                 s.kind == StmtKind::DIM || s.kind == StmtKind::INDEX_ASSIGN) &&
+                s.expr && s.expr->kind == ExprKind::VARIABLE)
+                banned.insert(s.expr->str_val);
+            if (s.kind == StmtKind::FOR_LOOP || s.kind == StmtKind::FOR_EACH)
+                if (!s.var_name.empty()) banned.insert(s.var_name);
+            if (s.kind == StmtKind::REACT_ASSIGN && !s.var_name.empty())
+                banned.insert(s.var_name);
+            if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty())
+                banned.insert(s.var_name);
+            for (auto& n : s.destruct_vars()) banned.insert(n);
+
+            for (auto& b : s.body)           if (b) walk(*b);
+            for (auto& c : s.catch_body())   if (c) walk(*c);
+            for (auto& f : s.finally_body()) if (f) walk(*f);
+            for (auto& br : s.branches)
+                for (auto& b : br.body) if (b) walk(*b);
+        };
+        for (auto& b : fn.body) if (b) walk(*b);
+        if (unsafe) return;
+
+        std::unordered_set<std::string> owned;
+        for (auto& c : candidates)
+            if (!banned.count(c)) owned.insert(c);
+        if (!owned.empty()) owned_locals_by_fn[fn.func_name] = owned;
+    };
+
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::FUNCTION || stmt->kind == StmtKind::SUB)
+            analyse(*stmt);
+        if (stmt->kind == StmtKind::TYPE_DECL)
+            for (auto& m : stmt->body)
+                if (m && (m->kind == StmtKind::FUNCTION || m->kind == StmtKind::SUB))
+                    analyse(*m);
+    }
+}
+
+bool LLVMCodegen::owns_local_string(const std::string& var_name) const {
+    return scopes.size() > 1 && owned_str_locals.count(var_name) > 0;
+}
+
+LLVMValueRef LLVMCodegen::owned_local_shadow_for(const std::string& var_name) {
+    auto it = owned_local_shadow.find(var_name);
+    if (it != owned_local_shadow.end()) return it->second;
+    // The shadow starts empty on every call, so it lives in the entry block.
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+    LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(current_fn);
+    LLVMValueRef first = LLVMGetFirstInstruction(entry);
+    if (first) LLVMPositionBuilderBefore(builder, first);
+    else LLVMPositionBuilderAtEnd(builder, entry);
+    std::string sym = "__own_" + var_name;
+    LLVMValueRef a = LLVMBuildAlloca(builder, i8_ptr_type, sym.c_str());
+    LLVMBuildStore(builder, LLVMConstNull(i8_ptr_type), a);
+    LLVMPositionBuilderAtEnd(builder, cur);
+    owned_local_shadow[var_name] = a;
+    return a;
+}
+
+void LLVMCodegen::emit_owned_local_release() {
+    if (owned_local_shadow.empty()) return;
+    auto& drop = runtime_funcs["__str_drop"];
+    for (auto& [name, shadow] : owned_local_shadow) {
+        LLVMValueRef prev = LLVMBuildLoad2(builder, i8_ptr_type, shadow, "ownprev");
+        LLVMValueRef d[] = { prev };
+        LLVMBuildCall2(builder, drop.fn_type, drop.fn, d, 1, "");
+    }
+}
+
+void LLVMCodegen::scan_fresh_string_funcs(const std::vector<StmtPtr>& program) {
+    if (std::getenv("JDB_NO_STROWN")) return;
+    std::vector<const Stmt*> fns;
+    for (auto& stmt : program) {
+        if (!stmt) continue;
+        if (stmt->kind == StmtKind::FUNCTION) fns.push_back(stmt.get());
+        if (stmt->kind == StmtKind::TYPE_DECL)
+            for (auto& m : stmt->body)
+                if (m && m->kind == StmtKind::FUNCTION) fns.push_back(m.get());
+    }
+
+    // What a RETURN may hand back: a concatenation or a number (both
+    // become a new buffer), a call that allocates, or an owned local of
+    // this function. A literal, a parameter, a global, an element read or
+    // a map value is somebody else's buffer.
+    auto fresh_expr = [&](const Expr& e, const std::unordered_set<std::string>& owned) -> bool {
+        if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
+        if (e.kind == ExprKind::LITERAL_INT || e.kind == ExprKind::LITERAL_FLOAT) return true;
+        if (e.kind == ExprKind::VARIABLE) return owned.count(e.str_val) > 0;
+        if (e.kind == ExprKind::CALL) return expr_yields_fresh_string(e);
+        return false;
+    };
+
+    bool changed = true;
+    int guard = 0;
+    while (changed && guard++ < 8) {
+        changed = false;
+        for (const Stmt* fn : fns) {
+            if (fresh_string_funcs.count(fn->func_name)) continue;
+            auto uit = user_functions.find(fn->func_name);
+            if (uit == user_functions.end() || uit->second.return_tag != JD_TAG_STR) continue;
+            if (fn->is_async_func) continue;
+            const std::unordered_set<std::string>* owned = nullptr;
+            auto oit = owned_locals_by_fn.find(fn->func_name);
+            static const std::unordered_set<std::string> none;
+            owned = oit == owned_locals_by_fn.end() ? &none : &oit->second;
+
+            bool ok = !fn->body.empty() && fn->body.back() &&
+                      fn->body.back()->kind == StmtKind::RETURN;
+            std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+                if (!ok) return;
+                if (s.kind == StmtKind::EXIT_LOOP && s.is_while) ok = false;
+                if (s.kind == StmtKind::RETURN && (!s.expr || !fresh_expr(*s.expr, *owned))) ok = false;
+                for (auto& b : s.body)           if (b) walk(*b);
+                for (auto& c : s.catch_body())   if (c) walk(*c);
+                for (auto& f : s.finally_body()) if (f) walk(*f);
+                for (auto& br : s.branches)
+                    for (auto& b : br.body) if (b) walk(*b);
+            };
+            for (auto& b : fn->body) if (b) walk(*b);
+            if (ok) { fresh_string_funcs.insert(fn->func_name); changed = true; }
+        }
+    }
 }
 // TYPEOF answers with one of ten interned words, so its result is shared for
 // the life of the process and must never be dropped or taken over by a slot.
@@ -11424,6 +11646,7 @@ bool LLVMCodegen::returns_shared_string(const std::string& fn_name) {
 bool LLVMCodegen::expr_yields_fresh_string(const Expr& e) const {
     if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
     if (e.kind != ExprKind::CALL) return false;
+    if (fresh_string_funcs.count(e.func_name)) return true;
     // An allowlist, not "every string builtin": several hand back a pointer
     // into something they do not own, and freeing one of those is a crash
     // rather than the leak this is trying to close. Each name here was read

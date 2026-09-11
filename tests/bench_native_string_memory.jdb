@@ -1,8 +1,8 @@
 ' Measures how much memory a compiled program loses per string operation.
 '
-' The native backend allocates every runtime string and never frees it, so
-' resident size grows linearly with the number of string operations while a
-' purely numeric loop stays flat. Run through bench_native_string_memory.sh,
+' Every mode must stay flat: a slot that owns its string releases the old
+' buffer on overwrite, a FUNC releases its string locals on return, and the
+' numeric loop allocates nothing. Run through bench_native_string_memory.sh,
 ' which compiles this and samples the resident size for several loop counts.
 '
 '   jdBasic bench_native_string_memory.jdb <mode> <iterations>

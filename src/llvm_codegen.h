@@ -357,6 +357,22 @@ private:
     LLVMValueRef owned_shadow_for(const std::string& var_name);
     // Emits the release-and-take-over sequence. Returns the pointer to store.
     LLVMValueRef take_string_ownership(const std::string& var_name, TypedValue rhs, bool rhs_is_fresh);
+    // The same for the $ locals a FUNC/SUB declares with DIM and only ever
+    // writes by plain assignment. owned_locals_by_fn holds every function's
+    // set; owned_str_locals and owned_local_shadow belong to the function
+    // being compiled and are released in its exit block. A local handed back
+    // by RETURN leaves its shadow empty so the caller takes it over.
+    std::unordered_map<std::string, std::unordered_set<std::string>> owned_locals_by_fn;
+    std::unordered_set<std::string> owned_str_locals;
+    std::unordered_map<std::string, LLVMValueRef> owned_local_shadow;
+    void scan_owned_str_locals(const std::vector<StmtPtr>& program);
+    bool owns_local_string(const std::string& var_name) const;
+    LLVMValueRef owned_local_shadow_for(const std::string& var_name);
+    void emit_owned_local_release();
+    // User FUNCs whose every RETURN hands back a buffer allocated for the
+    // caller, so the result is dropped or taken over like a builtin's.
+    std::unordered_set<std::string> fresh_string_funcs;
+    void scan_fresh_string_funcs(const std::vector<StmtPtr>& program);
 
     std::string dim_funcref_name(const TypedValue& tv);
 
