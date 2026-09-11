@@ -1,0 +1,127 @@
+' testkit_demo.jdb - what a test file written with TESTKIT looks like.
+'
+'   jdBasic testkit_demo.jdb           coloured, one line per assertion
+'   jdBasic testkit_demo.jdb tap       TAP version 13, for a CI runner
+'   jdBasic testkit_demo.jdb junit     JUnit XML, for a build server
+'   jdBasic testkit_demo.jdb fail      one deliberate failure, exit code 1
+'
+' TESTKIT lives in the module library. IMPORT finds it next to the script,
+' in JDBASIC_PATH, in ~/.jdbasic/lib, or in the lib folder beside jdBasic
+' itself - see "IMPORT" in doc/languages.md.
+'
+' This one is for the interpreter: the THROWS assertion relies on catching an
+' error raised inside a called function, which a compiled program does not do.
+
+IMPORT TESTKIT
+
+' ── the code under test ─────────────────────────────────────
+' Three helpers of the kind every program grows: a slug for URLs, a
+' thousands separator for report columns, and a tolerant price parser.
+
+FUNC Slug$(title$)
+    DIM out$ = ""
+    DIM lowered$ = LCASE$(TRIM$(title$))
+    DIM chars = -lowered$
+    DIM ch$
+    FOR EACH ch$ IN chars
+        IF (ch$ >= "a" AND ch$ <= "z") ORELSE (ch$ >= "0" AND ch$ <= "9") THEN
+            out$ = out$ + ch$
+        ELSEIF ch$ = " " ORELSE ch$ = "-" ORELSE ch$ = "_" THEN
+            IF LEN(out$) > 0 AND RIGHT$(out$, 1) <> "-" THEN out$ = out$ + "-"
+        ENDIF
+    NEXT ch$
+    IF LEN(out$) > 0 AND RIGHT$(out$, 1) = "-" THEN out$ = LEFT$(out$, LEN(out$) - 1)
+    RETURN out$
+ENDFUNC
+
+FUNC Grouped$(amount)
+    DIM whole$ = STR$(INT(ABS(amount)))
+    DIM out$ = ""
+    DIM i
+    FOR i = LEN(whole$) - 1 TO 0 STEP -1
+        out$ = MID$(whole$, i, 1) + out$
+        DIM taken = LEN(whole$) - i
+        IF taken MOD 3 = 0 AND i > 0 THEN out$ = "." + out$
+    NEXT i
+    IF amount < 0 THEN RETURN "-" + out$
+    RETURN out$
+ENDFUNC
+
+' Accepts "12,50", "12.50" and " 12 " alike. A price that makes no sense
+' comes back as -1 rather than a silent zero.
+FUNC ParsePrice(text$)
+    DIM cleaned$ = TRIM$(text$)
+    IF LEN(cleaned$) = 0 THEN RETURN -1
+    cleaned$ = REPLACE$(cleaned$, ",", ".")
+    DIM digits = 0
+    DIM dots = 0
+    DIM ch$
+    FOR EACH ch$ IN -cleaned$
+        IF ch$ >= "0" AND ch$ <= "9" THEN digits = digits + 1
+        IF ch$ = "." THEN dots = dots + 1
+    NEXT ch$
+    IF digits = 0 ORELSE dots > 1 THEN RETURN -1
+    RETURN VAL(cleaned$)
+ENDFUNC
+
+FUNC MustBePositive(amount)
+    IF amount <= 0 THEN THROW "amount must be positive"
+    RETURN amount
+ENDFUNC
+
+' ── the tests ───────────────────────────────────────────────
+
+DIM cli = OS.ARGS()
+DIM mode$ = ""
+IF LEN(cli) > 0 THEN mode$ = LCASE$(cli[LEN(cli) - 1])
+IF mode$ = "tap" ORELSE mode$ = "junit" THEN TESTKIT.MODE(mode$)
+
+TESTKIT.SUITE("Slug$")
+TESTKIT.EQ(Slug$("Hello World"), "hello-world", "spaces become hyphens")
+TESTKIT.EQ(Slug$("  Trim me  "), "trim-me", "surrounding space is dropped")
+TESTKIT.EQ(Slug$("A -- B"), "a-b", "runs of separators collapse")
+TESTKIT.EQ(Slug$("Release 2.0!"), "release-20", "punctuation disappears")
+TESTKIT.EQ(Slug$(""), "", "an empty title stays empty")
+TESTKIT.NE(Slug$("Alpha"), "Alpha", "the result is lower case")
+
+TESTKIT.SUITE("Grouped$")
+TESTKIT.EQ(Grouped$(1), "1", "a single digit needs no separator")
+TESTKIT.EQ(Grouped$(999), "999", "three digits need no separator")
+TESTKIT.EQ(Grouped$(1000), "1.000", "the first separator")
+TESTKIT.EQ(Grouped$(1234567), "1.234.567", "two separators")
+TESTKIT.EQ(Grouped$(-4321), "-4.321", "the sign survives")
+
+TESTKIT.SUITE("ParsePrice")
+TESTKIT.NEAR(ParsePrice("12.50"), 12.5, 0.001, "a dot decimal")
+TESTKIT.NEAR(ParsePrice("12,50"), 12.5, 0.001, "a comma decimal")
+TESTKIT.NEAR(ParsePrice("  7 "), 7.0, 0.001, "surrounding space")
+TESTKIT.EQ(ParsePrice(""), -1, "an empty string is rejected")
+TESTKIT.EQ(ParsePrice("abc"), -1, "letters alone are rejected")
+TESTKIT.EQ(ParsePrice("1.2.3"), -1, "two decimal points are rejected")
+
+TESTKIT.SUITE("arrays and absence")
+DIM titles$ = ["Hello World", "  Trim me  ", "A -- B"]
+DIM slugs$ = SELECT(Slug$@, titles$)
+TESTKIT.EQARRAY(slugs$, ["hello-world", "trim-me", "a-b"], "the whole column at once")
+
+DIM lookup AS MAP
+lookup{"eur"} = "Euro"
+TESTKIT.EQ(lookup{"eur"}, "Euro", "a key that is there")
+TESTKIT.EQ(TYPEOF(lookup{"chf"}), "NONE", "a key that is not there reads NONE")
+TESTKIT.NE(lookup{"chf"}, 0, "an absent key is not the number zero")
+
+TESTKIT.SUITE("errors")
+' THROWS calls the function for you and passes when it raises. It is an
+' interpreter-only assertion: a compiled program does not catch an error
+' raised inside a called function.
+TESTKIT.THROWS(MustBePositive@, -1, "a negative amount is refused")
+
+TESTKIT.SUITE("not yet")
+TESTKIT.SKIP("rounding rules for the Swiss five centime step")
+
+IF mode$ = "fail" THEN
+    TESTKIT.SUITE("a deliberate failure")
+    TESTKIT.EQ(Slug$("Hello World"), "hello_world", "underscores instead of hyphens")
+ENDIF
+
+PRINT TESTKIT.REPORT()

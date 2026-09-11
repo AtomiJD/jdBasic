@@ -1,0 +1,110 @@
+' zip_bundle.jdb - packing, listing and unpacking archives with ZIP.*.
+'
+' An archive is a map from entry name to content in both directions, so
+' building one is building a map. Names may carry directory components,
+' and content is a byte string, which is what lets an archive hold an
+' image or a binary record as readily as a CSV.
+'
+' Entries are written uncompressed, which every unpacker opens, and the
+' reader also inflates deflated entries, so an archive from any other tool
+' reads back the same way.
+'
+'   jdBasic zip_bundle.jdb
+'
+' Compiles and runs the same way under -c.
+'
+' Everything is written under the system temp directory and removed again.
+
+DIM work$ = PATH.JOIN$(GETENV$("TEMP"), "jdb_zip_demo")
+IF NOT FILE.EXISTS(work$) THEN MKDIR work$
+DIM archive$ = PATH.JOIN$(work$, "report.zip")
+
+' ── 1. build an archive from values in memory ───────────────
+
+DIM sales$ = "region,quarter,revenue" + CHR$(10) + _
+             "north,Q1,128400" + CHR$(10) + _
+             "south,Q1,96750" + CHR$(10) + _
+             "north,Q2,141200"
+
+DIM meta AS MAP
+meta{"generated"} = DATE$()
+meta{"rows"} = 3
+meta{"currency"} = "EUR"
+
+DIM bundle AS MAP
+bundle{"README.txt"} = "Quarterly figures. Revenue is net, in whole euros."
+bundle{"data/sales.csv"} = sales$
+bundle{"data/meta.json"} = JSON.STRINGIFY$(meta)
+
+' A four-byte record with a zero in the middle, to show that an entry is
+' bytes and not text: a NUL is content, not a terminator.
+bundle{"raw/marker.bin"} = PACK$("bbbb", 0, 255, 0, 128)
+
+PRINT "written " + STR$(ZIP.WRITE(archive$, bundle)) + " entries to " + PATH.BASENAME$(archive$)
+PRINT "archive size " + STR$(FILE.SIZE(archive$)) + " bytes"
+PRINT ""
+
+' ── 2. look inside without unpacking ────────────────────────
+
+PRINT "entries"
+DIM names$ = ZIP.LIST(archive$)
+DIM name$ AS STRING = ""
+FOR EACH name$ IN names$
+    PRINT "  " + name$
+NEXT name$
+PRINT ""
+
+' ── 3. read it back and prove nothing changed ───────────────
+
+DIM back = ZIP.READ(archive$)
+PRINT RPAD$("entry", 18, " ") + RPAD$("bytes", 8, " ") + "crc32"
+FOR EACH name$ IN names$
+    DIM content$ = back{name$}
+    PRINT RPAD$(name$, 18, " ") + RPAD$(STR$(LEN(content$)), 8, " ") + CODEC.CRC32$(content$)
+NEXT name$
+PRINT ""
+
+DIM marker$ = back{"raw/marker.bin"}
+PRINT "the binary entry survives its zero bytes"
+PRINT "  length " + STR$(LEN(marker$)) + ", bytes " + _
+      STR$(BYTEAT(marker$, 0)) + " " + STR$(BYTEAT(marker$, 1)) + " " + _
+      STR$(BYTEAT(marker$, 2)) + " " + STR$(BYTEAT(marker$, 3))
+PRINT ""
+
+' The CSV came back as text, so it parses without a detour through a file.
+DIM lines$ = SPLIT(back{"data/sales.csv"}, CHR$(10))
+PRINT "the CSV parses straight out of the archive"
+PRINT "  " + STR$(LEN(lines$) - 1) + " data rows, header: " + lines$[0]
+DIM restored = JSON.PARSE$(back{"data/meta.json"})
+PRINT "  meta says " + STR$(restored{"rows"}) + " rows in " + restored{"currency"}
+PRINT ""
+
+' ── 4. pack a directory off disk ────────────────────────────
+
+DIM export_dir$ = PATH.JOIN$(work$, "export")
+IF NOT FILE.EXISTS(export_dir$) THEN MKDIR export_dir$
+TXTWRITER PATH.JOIN$(export_dir$, "notes.txt"), "Figures approved on " + DATE$()
+TXTWRITER PATH.JOIN$(export_dir$, "totals.csv"), "quarter,total" + CHR$(10) + "Q1,225150" + CHR$(10) + "Q2,141200"
+
+DIM folder AS MAP
+DIM found$ = DIR$(PATH.JOIN$(export_dir$, "*"))
+DIM entry$ AS STRING = ""
+FOR EACH entry$ IN found$
+    DIM full$ = PATH.JOIN$(export_dir$, entry$)
+    IF NOT FILE.ISDIR(full$) THEN folder{"export/" + entry$} = BINREADER$(full$)
+NEXT entry$
+
+DIM folder_zip$ = PATH.JOIN$(work$, "export.zip")
+PRINT "packed " + STR$(ZIP.WRITE(folder_zip$, folder)) + " files from " + PATH.BASENAME$(export_dir$)
+PRINT "  " + JOIN(ZIP.LIST(folder_zip$), ", ")
+PRINT ""
+
+' ── 5. clean up ─────────────────────────────────────────────
+
+KILL archive$
+KILL folder_zip$
+KILL PATH.JOIN$(export_dir$, "notes.txt")
+KILL PATH.JOIN$(export_dir$, "totals.csv")
+RMDIR export_dir$
+RMDIR work$
+PRINT "temporary files removed"

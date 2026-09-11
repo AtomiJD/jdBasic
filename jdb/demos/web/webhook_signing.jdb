@@ -1,0 +1,120 @@
+' webhook_signing.jdb - signing and checking a webhook with CODEC.HMAC$.
+'
+' A webhook receiver cannot trust a request just because it arrived. The
+' sender and the receiver share a secret, the sender signs the exact bytes
+' it sends, and the receiver recomputes the same signature over the body it
+' actually read. This is the scheme GitHub, Stripe, Slack and Shopify all
+' use, differing only in how the header is spelled.
+'
+'   jdBasic webhook_signing.jdb
+'
+' Compiles and runs the same way under -c.
+
+CONST SECRET$ = "whsec_3f9a1c7d20e84b6f"
+CONST TOLERANCE_SECONDS = 300
+
+' ── the sender's side ───────────────────────────────────────
+
+' GitHub spells it "sha256=" followed by the hex digest of the raw body.
+FUNC SignBody$(secret$, body$)
+    RETURN "sha256=" + CODEC.HMAC$(secret$, body$)
+ENDFUNC
+
+' Stripe signs a timestamp together with the body, so an intercepted request
+' cannot be replayed tomorrow. The dot between them matters: without a
+' separator, a different split of the same characters produces the same
+' signature.
+FUNC SignTimestamped$(secret$, stamp, body$)
+    DIM signed$ = STR$(stamp) + "." + body$
+    RETURN "t=" + STR$(stamp) + ",v1=" + CODEC.HMAC$(secret$, signed$)
+ENDFUNC
+
+' ── the receiver's side ─────────────────────────────────────
+
+' String equality in jdBasic stops at the first differing byte, so the time
+' it takes leaks how much of a guess was right. For a secret that an attacker
+' can probe repeatedly, compare every byte regardless.
+FUNC EqualFixedTime(a$, b$)
+    IF LEN(a$) <> LEN(b$) THEN RETURN FALSE
+    DIM diff = 0
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(a$) - 1
+        IF MID$(a$, i, 1) <> MID$(b$, i, 1) THEN diff = diff + 1
+    NEXT i
+    RETURN diff = 0
+ENDFUNC
+
+FUNC AcceptBody(secret$, body$, header$)
+    RETURN EqualFixedTime(SignBody$(secret$, body$), header$)
+ENDFUNC
+
+' Returns "ok", or the reason the request was turned away.
+FUNC CheckTimestamped$(secret$, body$, header$, now_epoch)
+    DIM parts$ = SPLIT(header$, ",")
+    IF LEN(parts$) <> 2 THEN RETURN "malformed header"
+    DIM stamp_text$ = REPLACE$(parts$[0], "t=", "")
+    DIM sent$ = REPLACE$(parts$[1], "v1=", "")
+    DIM stamp = VAL(stamp_text$)
+    IF stamp = 0 THEN RETURN "malformed timestamp"
+    DIM age = ABS(now_epoch - stamp)
+    IF age > TOLERANCE_SECONDS THEN RETURN "too old: " + STR$(age) + " seconds"
+    DIM expected$ = CODEC.HMAC$(secret$, stamp_text$ + "." + body$)
+    IF NOT EqualFixedTime(expected$, sent$) THEN RETURN "signature mismatch"
+    RETURN "ok"
+ENDFUNC
+
+SUB Report(label$, accepted, expected)
+    DIM verdict$ = "accepted"
+    IF NOT accepted THEN verdict$ = "rejected"
+    DIM mark$ = "  <- as intended"
+    IF accepted <> expected THEN mark$ = "  <- WRONG"
+    PRINT RPAD$(label$, 42, " ") + verdict$ + mark$
+ENDSUB
+
+' ── what a receiver actually faces ──────────────────────────
+
+DIM body$ = "{" + CHR$(34) + "event" + CHR$(34) + ":" + CHR$(34) + "invoice.paid" + CHR$(34) + "," + CHR$(34) + "amount" + CHR$(34) + ":4250}"
+DIM header$ = SignBody$(SECRET$, body$)
+
+PRINT "body      " + body$
+PRINT "signature " + header$
+PRINT ""
+
+Report("the body that was signed", AcceptBody(SECRET$, body$, header$), TRUE)
+
+' One digit changed in the amount. The digest shares nothing with the
+' original, which is the whole point of a keyed hash.
+DIM tampered$ = REPLACE$(body$, "4250", "9250")
+Report("a body altered in transit", AcceptBody(SECRET$, tampered$, header$), FALSE)
+
+Report("a sender without the secret", AcceptBody("whsec_guessed", body$, header$), FALSE)
+
+' A byte appended to the signature, which a length check alone would miss
+' if the comparison stopped early.
+Report("a signature with a byte added", AcceptBody(SECRET$, body$, header$ + "0"), FALSE)
+
+PRINT ""
+PRINT "with a timestamp against replay"
+DIM now_stamp = INT(NOW_EPOCH())
+DIM stamped$ = SignTimestamped$(SECRET$, now_stamp, body$)
+PRINT "  header  " + stamped$
+PRINT "  fresh   " + CheckTimestamped$(SECRET$, body$, stamped$, now_stamp)
+PRINT "  replayed " + CheckTimestamped$(SECRET$, body$, stamped$, now_stamp + 3600)
+PRINT "  altered " + CheckTimestamped$(SECRET$, tampered$, stamped$, now_stamp)
+
+PRINT ""
+PRINT "why not a plain hash of secret and body"
+' A plain SHA256 of secret + body is vulnerable to length extension: from a
+' digest alone an attacker can compute the digest of the body with more
+' appended, without ever learning the secret. HMAC's two nested passes over
+' the padded key are what close that.
+PRINT "  SHA256(secret + body) = " + LEFT$(CODEC.SHA256$(SECRET$ + body$), 24) + "..."
+PRINT "  HMAC(secret, body)    = " + LEFT$(CODEC.HMAC$(SECRET$, body$), 24) + "..."
+PRINT "  the two are unrelated, and only the second resists length extension"
+
+PRINT ""
+PRINT "the published test vector, so the implementation can be checked"
+PRINT "  HMAC(" + CHR$(34) + "Jefe" + CHR$(34) + ", " + CHR$(34) + "what do ya want for nothing?" + CHR$(34) + ")"
+PRINT "  " + CODEC.HMAC$("Jefe", "what do ya want for nothing?")
+PRINT "  RFC 4231 case 2 expects"
+PRINT "  5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
