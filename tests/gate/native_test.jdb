@@ -1423,6 +1423,26 @@ DIM own_parts = own_collect(3)
 Assert(358, own_parts[2] = "p3")
 Assert(359, LEN(own_build$(7)) = 7)
 
+' Elements of two untyped array parameters compare by content.
+FUNC cmp_same(actual, expected)
+    IF LEN(actual) <> LEN(expected) THEN RETURN FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(actual) - 1
+        IF actual[i] <> expected[i] THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+FUNC cmp_less(items, i, j)
+    RETURN items[i] < items[j]
+ENDFUNC
+DIM cmp_words = ["a", "b"]
+DIM cmp_nums = [3, 7]
+Assert(360, cmp_same(cmp_words, ["a", "b"]))
+Assert(361, NOT cmp_same(cmp_words, ["a", "c"]))
+Assert(362, cmp_same(cmp_nums, [3, 7]))
+Assert(363, cmp_less(cmp_words, 0, 1))
+Assert(364, cmp_less(cmp_nums, 0, 1))
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

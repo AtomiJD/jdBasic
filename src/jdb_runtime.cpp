@@ -2884,6 +2884,20 @@ int64_t jdb_str_ne(const char* a, const char* b) {
 
 // Binary-safe 3-way compare: <0 if a<b, 0 if equal, >0 if a>b. Powers the
 // native string ordering operators (<,>,<=,>=) and string-array compares.
+// Three-way compare of two tagged values: two strings compare by content,
+// anything else as numbers (a string operand counts by its numeric value).
+int64_t jdb_dyn_cmp(int64_t a, int32_t ta, int64_t b, int32_t tb) {
+    if (ta == JD_TAG_STR && tb == JD_TAG_STR)
+        return jdb_str_cmp((const char*)(intptr_t)a, (const char*)(intptr_t)b);
+    auto as_num = [](int64_t v, int32_t t) -> double {
+        if (t == JD_TAG_I64 || t == JD_TAG_BOOL) return (double)v;
+        if (t == JD_TAG_STR) { const char* s = (const char*)(intptr_t)v; return s ? strtod(s, nullptr) : 0.0; }
+        double d; memcpy(&d, &v, sizeof d); return d;
+    };
+    double x = as_num(a, ta), y = as_num(b, tb);
+    return x < y ? -1 : (x > y ? 1 : 0);
+}
+
 int64_t jdb_str_cmp(const char* a, const char* b) {
     if (a == b) return 0;
     if (!a) return -1;

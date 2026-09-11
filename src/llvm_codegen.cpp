@@ -518,6 +518,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_space",    "SPACE$",   i8_ptr_type, {i64_type}, 2);
     reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_str_cmp",  "__str_cmp", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdb_dyn_cmp",  "__dyn_cmp", i64_type, {i64_type, i32_type, i64_type, i32_type}, 0);
     reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
     reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
@@ -7575,8 +7576,51 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         } // end scalar short-circuit block
     }
 
-    TypedValue lhs = codegen_expr(*expr.left);
-    TypedValue rhs = codegen_expr(*expr.right);
+    // A comparison reads an element of an array whose cell type is not
+    // known statically with the cell's own tag, so two string cells
+    // compare by content rather than by their bits.
+    bool is_compare = expr.op == TokenType::EQ || expr.op == TokenType::ASSIGN ||
+                      expr.op == TokenType::NE || expr.op == TokenType::LT ||
+                      expr.op == TokenType::LE || expr.op == TokenType::GT ||
+                      expr.op == TokenType::GE;
+    auto cell_hint = [&](const Expr& e) -> int {
+        if (!is_compare || e.kind != ExprKind::INDEX || !e.left ||
+            e.left->kind != ExprKind::VARIABLE) return -1;
+        // An array whose cells are tracked (string, mixed, nested) answers
+        // typed before the hint is consulted; every other one is read
+        // with the cell's own tag.
+        return lookup_var(e.left->str_val) ? JD_TAG_RUNTIME : -1;
+    };
+    TypedValue lhs, rhs;
+    {
+        ScopedLeafTag _ll(this, cell_hint(*expr.left));
+        lhs = codegen_expr(*expr.left);
+    }
+    {
+        ScopedLeafTag _lr(this, cell_hint(*expr.right));
+        rhs = codegen_expr(*expr.right);
+    }
+    if (is_compare && lhs.tag != JD_TAG_STR && rhs.tag != JD_TAG_STR &&
+        ((lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag) ||
+         (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag))) {
+        LLVMValueRef lb, lt, rb, rt;
+        to_bits_tag(lhs, lb, lt);
+        to_bits_tag(rhs, rb, rt);
+        auto& fn = runtime_funcs["__dyn_cmp"];
+        LLVMValueRef args[] = { lb, lt, rb, rt };
+        LLVMValueRef c = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 4, "dyncmp");
+        LLVMIntPredicate p = LLVMIntEQ;
+        switch (expr.op) {
+            case TokenType::NE: p = LLVMIntNE;  break;
+            case TokenType::LT: p = LLVMIntSLT; break;
+            case TokenType::LE: p = LLVMIntSLE; break;
+            case TokenType::GT: p = LLVMIntSGT; break;
+            case TokenType::GE: p = LLVMIntSGE; break;
+            default: break;
+        }
+        LLVMValueRef cmp = LLVMBuildICmp(builder, p, c, LLVMConstInt(i64_type, 0, 0), "dcmp");
+        return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), JD_TAG_BOOL };
+    }
 
     // VM_HANDLE materialisation for binary ops. A handle on either side
     // (e.g. a value pulled out of CHAN.RECV or a MAP-stored map field)
