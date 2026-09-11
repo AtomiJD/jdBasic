@@ -1626,6 +1626,13 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             s.var_type == VarType::ARRAY) {
             local_kinds[s.var_name] = JD_TAG_ARR;
         }
+        // `DIM m AS MAP` then `RETURN m`. Without this the function came back
+        // tagged f64, the caller's slot held the map pointer as a number, and
+        // every later write to it was dropped on the floor.
+        if (s.kind == StmtKind::DIM && !s.var_name.empty() &&
+            s.var_type == VarType::OBJECT && s.label.empty()) {
+            local_kinds[s.var_name] = JD_TAG_NATIVE_MAP;
+        }
         if (s.kind == StmtKind::RETURN && s.expr) {
             const Expr& e = *s.expr;
             if (e.kind == ExprKind::MAP_LITERAL) return JD_TAG_NATIVE_MAP;
@@ -5304,14 +5311,27 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     }
 
     VarInfo* vi = lookup_var(stmt.var_name);
+    // A map handed to an untyped parameter lands in an f64 slot with the
+    // pointer bit-punned into it. The read path already decodes that shape;
+    // without the same here, every write through such a parameter was
+    // dropped without a word.
+    bool punned_map_slot = false;
+    // An array never lands in an f64 slot, so a single index on one is a map
+    // key whatever shape it has. An integer literal is left alone: that is
+    // someone indexing a number, and the old path already refuses it.
+    if (vi && vi->tag == JD_TAG_F64 && stmt.index_chain.size() == 1 &&
+        stmt.index_chain[0]->kind != ExprKind::LITERAL_INT) {
+        punned_map_slot = true;
+    }
+
     if (!vi || (vi->tag != JD_TAG_ARR && vi->tag != JD_TAG_NATIVE_MAP &&
-                vi->tag != JD_TAG_RUNTIME)) return;
+                vi->tag != JD_TAG_RUNTIME && !punned_map_slot)) return;
 
     // A map key is a string, whether it is spelled out or worked out. Only a
     // literal used to reach the map setters below; anything else fell through
     // to the array path and wrote nothing at all.
-    bool key_is_string_expr = false;
-    if (stmt.index_chain.size() == 1 &&
+    bool key_is_string_expr = punned_map_slot;
+    if (!key_is_string_expr && stmt.index_chain.size() == 1 &&
         stmt.index_chain[0]->kind != ExprKind::LITERAL_INT) {
         // On a declared map the single index is a key whatever shape the
         // expression has. A RUNTIME slot may still turn out to be an array,
@@ -5327,6 +5347,13 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         LLVMValueRef obj_ptr;
         if (vi->tag == JD_TAG_RUNTIME) {
             LLVMValueRef bits = LLVMBuildLoad2(builder, i64_type, vi->alloca_val, "obj_i64");
+            obj_ptr = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "obj");
+        } else if (punned_map_slot) {
+            // The slot is an f64 carrying the pointer bit for bit.
+            LLVMValueRef d = LLVMBuildLoad2(builder, f64_type, vi->alloca_val, "obj_f64");
+            LLVMValueRef pun = LLVMBuildAlloca(builder, f64_type, "objpun");
+            LLVMBuildStore(builder, d, pun);
+            LLVMValueRef bits = LLVMBuildLoad2(builder, i64_type, pun, "obj_bits");
             obj_ptr = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "obj");
         } else {
             obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "obj");
@@ -5347,7 +5374,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         }
         TypedValue val_tv = codegen_expr(*stmt.expr);
 
-        if (vi->tag == JD_TAG_NATIVE_MAP || vi->tag == JD_TAG_RUNTIME) {
+        if (vi->tag == JD_TAG_NATIVE_MAP || vi->tag == JD_TAG_RUNTIME || punned_map_slot) {
             // Map: route to native __map_set_*
             if (val_tv.tag == JD_TAG_STR) {
                 auto& set_fn = runtime_funcs["__map_set_str"];
