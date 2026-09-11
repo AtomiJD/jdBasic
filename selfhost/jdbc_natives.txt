@@ -271,6 +271,8 @@ __udt_set_f64	jdb_udt_set_f64	V	PPD	-1
 __udt_get_f64	jdb_udt_get_f64	D	PP	1
 __udt_set_str	jdb_udt_set_str	V	PPP	-1
 __udt_get_str	jdb_udt_get_str	P	PP	2
+__udt_set_obj	jdb_udt_set_obj	V	PPP	-1
+__udt_get_obj	jdb_udt_get_obj	P	PP	3
 __select_fn	jdb_select_fn	P	PP	3
 __filter_fn	jdb_filter_fn	P	PP	3
 __take_while_fn	jdb_take_while_fn	P	PP	3

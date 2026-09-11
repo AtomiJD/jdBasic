@@ -1328,6 +1328,41 @@ DIM urarr = [urp]
 DIM urq2 = urarr[0]
 Assert(345, urq2.ux = 3)
 
+' User types are references on both backends: a SUB writes through its
+' parameter, a member declared AS <user type> holds the instance itself,
+' and assigning that member shares the instance instead of copying it.
+TYPE RefPt
+    rx AS INTEGER
+ENDTYPE
+TYPE RefBox
+    rp AS RefPt
+    rn AS INTEGER
+ENDTYPE
+SUB ref_set_x(o AS RefPt)
+    o.rx = 7
+ENDSUB
+FUNC ref_read_box(o AS RefBox) AS INTEGER
+    RETURN o.rn * 10 + o.rp.rx
+ENDFUNC
+DIM rfp AS RefPt
+rfp.rx = 1
+ref_set_x(rfp)
+Assert(346, rfp.rx = 7)
+DIM rfb AS RefBox
+rfb.rn = 4
+rfb.rp.rx = 3
+Assert(347, ref_read_box(rfb) = 43)
+DIM rfq AS RefPt
+rfq.rx = 9
+rfb.rp = rfq
+Assert(348, rfb.rp.rx = 9)
+ref_set_x(rfb.rp)
+Assert(349, rfq.rx = 7)
+DIM rfinner AS RefPt
+rfinner = rfb.rp
+rfinner.rx = 11
+Assert(350, rfb.rp.rx = 11)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

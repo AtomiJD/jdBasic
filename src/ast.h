@@ -245,7 +245,9 @@ struct Param {
 };
 
 // TYPE_DECL member: name and type.
-struct StmtTypeMember { std::string name; VarType type; };
+// The user type named after AS, when the member is itself a user type;
+// OBJECT alone does not say which.
+struct StmtTypeMember { std::string name; VarType type; std::string type_name; };
 
 // The payloads only some kinds of statement carry.
 struct StmtExtra {

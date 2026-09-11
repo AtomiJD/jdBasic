@@ -4047,6 +4047,9 @@ char* jdb_os_hostname() {
 struct JdbObject {
     std::unordered_map<std::string, double> num_fields;
     std::unordered_map<std::string, char*> str_fields;
+    // A member declared AS <user type> holds the instance itself, so two
+    // objects can share one nested instance.
+    std::unordered_map<std::string, JdbObject*> obj_fields;
     char* type_name;
 };
 
@@ -4072,6 +4075,18 @@ double jdb_udt_get_f64(JdbObject* obj, const char* field) {
 
 void jdb_udt_set_str(JdbObject* obj, const char* field, const char* val) {
     if (obj) obj->str_fields[field] = _strdup(val ? val : "");
+}
+
+void jdb_udt_set_obj(JdbObject* obj, const char* field, JdbObject* val) {
+    if (obj && field) obj->obj_fields[field] = val;
+}
+
+JdbObject* jdb_udt_get_obj(JdbObject* obj, const char* field) {
+    if (obj && field) {
+        auto it = obj->obj_fields.find(field);
+        if (it != obj->obj_fields.end()) return it->second;
+    }
+    return nullptr;
 }
 
 const char* jdb_udt_get_str(JdbObject* obj, const char* field) {

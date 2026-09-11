@@ -333,6 +333,7 @@ StmtPtr Parser::parse_statement() {
                     mem.name = advance().value;
                     if (match(TokenType::AS)) {
                         mem.type = parse_type();
+                        mem.type_name = last_udt_name;
                     } else {
                         mem.type = VarType::NONE;
                     }

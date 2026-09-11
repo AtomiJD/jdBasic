@@ -608,6 +608,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_udt_get_f64", "__udt_get_f64", f64_type, {i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_udt_set_str", "__udt_set_str", void_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_udt_get_str", "__udt_get_str", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_udt_set_obj", "__udt_set_obj", void_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
+    reg("jdb_udt_get_obj", "__udt_get_obj", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
 
     // Higher-order functions (take function pointers)
     // jdb_select_fn(fn_ptr, array) -> array
@@ -2457,6 +2459,13 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             type_names.insert(stmt->func_name);
     }
 
+    // Field lists are needed before the type declarations are compiled, so
+    // `lhs = obj.member` below can name the member's type.
+    for (auto& stmt : program) {
+        if (stmt && stmt->kind == StmtKind::TYPE_DECL)
+            register_udt_fields(*stmt);
+    }
+
     // Pre-scan DIM AS TypeName to know which variables are UDT objects
     std::unordered_set<std::string> udt_var_names;
     for (auto& stmt : program) {
@@ -2525,10 +2534,12 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             if (slot != it->second) { slot = it->second; changed = true; }
                         }
                     } else if (s->expr->kind == ExprKind::VARIABLE) {
-                        auto it = var_udt_type.find(s->expr->str_val);
-                        if (it != var_udt_type.end()) {
+                        // A plain variable or a dotted path ending in a
+                        // member declared AS <user type>.
+                        std::string t = dotted_udt_type(s->expr->str_val);
+                        if (!t.empty()) {
                             auto& slot = var_udt_type[s->var_name];
-                            if (slot != it->second) { slot = it->second; changed = true; }
+                            if (slot != t) { slot = t; changed = true; }
                         }
                     } else if (s->expr->kind == ExprKind::ARRAY_LITERAL) {
                         // DIM arr = [udt_var, ...] → register the element UDT
@@ -3838,10 +3849,27 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
                 } else {
                     obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "obj");
                 }
-                LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
+                // Nested instances are followed field by field; the last
+                // segment is the field written.
+                std::vector<std::string> segs;
+                for (size_t st = 0;;) {
+                    size_t nd = field_name.find('.', st);
+                    segs.push_back(field_name.substr(st, nd == std::string::npos ? std::string::npos : nd - st));
+                    if (nd == std::string::npos) break;
+                    st = nd + 1;
+                }
+                std::string holder_type, leaf;
+                obj_ptr = udt_walk_path(obj_ptr, tit->second, segs, holder_type, leaf);
+                const UDTField* leaf_fld = udt_field(holder_type, leaf);
+                LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, leaf.c_str(), ".fld");
                 TypedValue val = codegen_expr(*stmt.expr);
-                bool is_str = val.tag == JD_TAG_STR || is_udt_string_field(obj_name, field_name);
-                if (is_str) {
+                bool is_obj = leaf_fld && !leaf_fld->udt_type.empty();
+                bool is_str = !is_obj && (val.tag == JD_TAG_STR || (leaf_fld && leaf_fld->is_string));
+                if (is_obj) {
+                    auto& set_fn = runtime_funcs["__udt_set_obj"];
+                    LLVMValueRef args[] = { obj_ptr, field_str, udt_ptr_from(val) };
+                    LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+                } else if (is_str) {
                     auto& set_fn = runtime_funcs["__udt_set_str"];
                     LLVMValueRef args[] = { obj_ptr, field_str, to_string_ptr(val) };
                     LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
@@ -3867,9 +3895,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             if (it != var_udt_type.end())
                 var_udt_type[stmt.var_name] = it->second;
         } else if (stmt.expr->kind == ExprKind::VARIABLE) {
-            auto it = var_udt_type.find(stmt.expr->str_val);
-            if (it != var_udt_type.end())
-                var_udt_type[stmt.var_name] = it->second;
+            std::string t = dotted_udt_type(stmt.expr->str_val);
+            if (!t.empty())
+                var_udt_type[stmt.var_name] = t;
         }
     }
 
@@ -5348,6 +5376,18 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
             obj_ptr = LLVMBuildIntToPtr(builder, obj.val, i8_ptr_type, "itoptr");
         }
 
+        // A member declared AS <user type> takes the instance itself.
+        {
+            std::string owner = expr_udt_type(*stmt.print_exprs[0]);
+            const UDTField* fld = owner.empty() ? nullptr : udt_field(owner, stmt.label);
+            if (fld && !fld->udt_type.empty()) {
+                auto& set_fn = runtime_funcs["__udt_set_obj"];
+                LLVMValueRef args[] = { obj_ptr, field_str, udt_ptr_from(val) };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+                return;
+            }
+        }
+
         // Determine field type
         bool is_str = (!stmt.label.empty() && stmt.label.back() == '$') || val.tag == JD_TAG_STR;
         // Also check UDT registry for all known types
@@ -5510,6 +5550,16 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         }
 
         // UDT field assignment
+        {
+            auto tit = var_udt_type.find(stmt.var_name);
+            const UDTField* fld = tit == var_udt_type.end() ? nullptr : udt_field(tit->second, field_name);
+            if (fld && !fld->udt_type.empty()) {
+                auto& set_fn = runtime_funcs["__udt_set_obj"];
+                LLVMValueRef args[] = { obj_ptr, field_str, udt_ptr_from(val_tv) };
+                LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+                return;
+            }
+        }
         bool is_str = (!field_name.empty() && field_name.back() == '$') || val_tv.tag == JD_TAG_STR;
         if (!is_str)
             is_str = is_udt_string_field(stmt.var_name, field_name);
@@ -6231,21 +6281,37 @@ void LLVMCodegen::codegen_enum(const Stmt& stmt) {
 
 // ── TYPE_DECL ───────────────────────────────────────────────
 
-void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
-    // Register type fields for member access resolution
+void LLVMCodegen::register_udt_fields(const Stmt& stmt) {
     // String if: explicitly AS STRING, or name ends with $ (convention)
     std::vector<UDTField> fields;
     for (auto& mem : stmt.type_members()) {
         bool is_str = (mem.type == VarType::STRING) ||
                       (!mem.name.empty() && mem.name.back() == '$');
-        fields.push_back({ mem.name, is_str });
+        std::string nested = (mem.type == VarType::OBJECT) ? mem.type_name : std::string();
+        fields.push_back({ mem.name, is_str, nested });
     }
     udt_types[stmt.func_name] = fields;
+}
 
-    // Create constructor function: TYPENAME() → returns new object (ptr)
+const LLVMCodegen::UDTField* LLVMCodegen::udt_field(const std::string& type_name,
+                                                    const std::string& field_name) {
+    auto uit = udt_types.find(type_name);
+    if (uit == udt_types.end()) return nullptr;
+    for (auto& f : uit->second)
+        if (f.name == field_name) return &f;
+    return nullptr;
+}
+
+void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
+    register_udt_fields(stmt);
+
+    // Create constructor function: TYPENAME() → returns new object (ptr).
+    // A nested type's constructor may already have been declared by an
+    // enclosing type compiled earlier; reuse that declaration.
     std::string ctor_name = stmt.func_name;
     LLVMTypeRef ctor_ft = LLVMFunctionType(i8_ptr_type, nullptr, 0, 0);
-    LLVMValueRef ctor_fn = LLVMAddFunction(module, ctor_name.c_str(), ctor_ft);
+    LLVMValueRef ctor_fn = LLVMGetNamedFunction(module, ctor_name.c_str());
+    if (!ctor_fn) ctor_fn = LLVMAddFunction(module, ctor_name.c_str(), ctor_ft);
 
     LLVMValueRef saved_fn = current_fn;
     LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
@@ -6260,13 +6326,24 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
     LLVMValueRef new_args[] = { type_str };
     LLVMValueRef obj = LLVMBuildCall2(builder, new_fn.fn_type, new_fn.fn, new_args, 1, "obj");
 
-    // Set default values for each field
+    // Set default values for each field. A member declared AS <user type>
+    // starts as a fresh instance of that type; a member of the type's own
+    // kind stays empty so construction terminates.
     for (auto& mem : stmt.type_members()) {
         LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, mem.name.c_str(), ".field");
         bool is_str = (mem.type == VarType::STRING) ||
                       (!mem.name.empty() && mem.name.back() == '$');
+        bool is_nested = mem.type == VarType::OBJECT && !mem.type_name.empty() &&
+                         mem.type_name != stmt.func_name;
 
-        if (is_str) {
+        if (is_nested) {
+            LLVMValueRef nested_fn = LLVMGetNamedFunction(module, mem.type_name.c_str());
+            if (!nested_fn) nested_fn = LLVMAddFunction(module, mem.type_name.c_str(), ctor_ft);
+            LLVMValueRef inner = LLVMBuildCall2(builder, ctor_ft, nested_fn, nullptr, 0, "inner");
+            auto& set_fn = runtime_funcs["__udt_set_obj"];
+            LLVMValueRef args[] = { obj, field_str, inner };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 3, "");
+        } else if (is_str) {
             auto& set_fn = runtime_funcs["__udt_set_str"];
             LLVMValueRef empty = LLVMBuildGlobalStringPtr(builder, "", ".empty");
             LLVMValueRef args[] = { obj, field_str, empty };
@@ -6539,9 +6616,26 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     if (obj_vi && var_udt_type.count(obj_name)) {
                         LLVMValueRef obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type,
                                                                obj_vi->alloca_val, "obj");
+                        std::vector<std::string> segs;
+                        for (size_t st = 0;;) {
+                            size_t nd = field_name.find('.', st);
+                            segs.push_back(field_name.substr(st, nd == std::string::npos ? std::string::npos : nd - st));
+                            if (nd == std::string::npos) break;
+                            st = nd + 1;
+                        }
+                        std::string holder_type, leaf;
+                        obj_ptr = udt_walk_path(obj_ptr, var_udt_type[obj_name], segs, holder_type, leaf);
+                        const UDTField* leaf_fld = udt_field(holder_type, leaf);
                         LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder,
-                                                    field_name.c_str(), ".fld");
-                        bool is_str = is_udt_string_field(obj_name, field_name);
+                                                    leaf.c_str(), ".fld");
+                        if (leaf_fld && !leaf_fld->udt_type.empty()) {
+                            auto& get_fn = runtime_funcs["__udt_get_obj"];
+                            LLVMValueRef args[] = { obj_ptr, field_str };
+                            LLVMValueRef result = LLVMBuildCall2(builder, get_fn.fn_type,
+                                                    get_fn.fn, args, 2, "fget");
+                            return { result, JD_TAG_ARR };
+                        }
+                        bool is_str = leaf_fld && leaf_fld->is_string;
                         if (is_str) {
                             auto& get_fn = runtime_funcs["__udt_get_str"];
                             LLVMValueRef args[] = { obj_ptr, field_str };
@@ -6628,6 +6722,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 obj_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
             } else if (obj.tag == JD_TAG_I64) {
                 obj_ptr = LLVMBuildIntToPtr(builder, obj.val, i8_ptr_type, "itoptr");
+            }
+
+            // A member declared AS <user type> hands back the nested instance.
+            {
+                std::string owner = expr.left ? expr_udt_type(*expr.left) : std::string();
+                const UDTField* fld = owner.empty() ? nullptr : udt_field(owner, field_name);
+                if (fld && !fld->udt_type.empty()) {
+                    LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
+                    auto& get_fn = runtime_funcs["__udt_get_obj"];
+                    LLVMValueRef args[] = { obj_ptr, field_str };
+                    return { LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, args, 2, "fget"), JD_TAG_ARR };
+                }
             }
 
             // Determine if field is string-typed: check name convention AND UDT registry
@@ -7059,6 +7165,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 bool is_str_field = false;
                 if (expr.right->kind == ExprKind::LITERAL_STRING) {
                     const std::string& fname = expr.right->str_val;
+                    {
+                        std::string owner = expr_udt_type(*expr.left);
+                        const UDTField* fld = owner.empty() ? nullptr : udt_field(owner, fname);
+                        if (fld && !fld->udt_type.empty()) {
+                            auto& go = runtime_funcs["__udt_get_obj"];
+                            LLVMValueRef args[] = { obj_ptr, idx_tv.val };
+                            return { LLVMBuildCall2(builder, go.fn_type, go.fn, args, 2, "ugeto"), JD_TAG_ARR };
+                        }
+                    }
                     if (fname == "__TYPE__") is_str_field = true;
                     if (!fname.empty() && fname.back() == '$') is_str_field = true;
                     if (!is_str_field) {
@@ -11021,6 +11136,86 @@ LLVMValueRef LLVMCodegen::pun_f64_to_i64(LLVMValueRef f64_val) {
     LLVMPositionBuilderAtEnd(builder, cur);
     LLVMBuildStore(builder, f64_val, alloca);
     return LLVMBuildLoad2(builder, i64_type, alloca, "pi");
+}
+
+std::string LLVMCodegen::dotted_udt_type(const std::string& dotted) {
+    std::string cur;
+    size_t start = 0;
+    while (true) {
+        size_t dot = dotted.find('.', start);
+        std::string seg = dotted.substr(start, dot == std::string::npos ? std::string::npos : dot - start);
+        if (start == 0) {
+            auto it = var_udt_type.find(seg);
+            if (it == var_udt_type.end()) return std::string();
+            cur = it->second;
+        } else {
+            const UDTField* f = udt_field(cur, seg);
+            if (!f || f->udt_type.empty()) return std::string();
+            cur = f->udt_type;
+        }
+        if (dot == std::string::npos) return cur;
+        start = dot + 1;
+    }
+}
+
+std::string LLVMCodegen::expr_udt_type(const Expr& e) {
+    switch (e.kind) {
+        case ExprKind::VARIABLE:
+            return dotted_udt_type(e.str_val);
+        case ExprKind::MEMBER_ACCESS: {
+            if (!e.left) return std::string();
+            std::string owner = expr_udt_type(*e.left);
+            if (owner.empty()) return std::string();
+            const UDTField* f = udt_field(owner, e.str_val);
+            return f ? f->udt_type : std::string();
+        }
+        case ExprKind::INDEX: {
+            if (e.left && e.left->kind == ExprKind::VARIABLE) {
+                auto it = var_udt_type.find(e.left->str_val + "[]");
+                if (it != var_udt_type.end()) return it->second;
+            }
+            return std::string();
+        }
+        default:
+            return std::string();
+    }
+}
+
+LLVMValueRef LLVMCodegen::udt_walk_path(LLVMValueRef root_ptr, const std::string& root_type,
+                                        const std::vector<std::string>& segs,
+                                        std::string& holder_type, std::string& leaf_field) {
+    LLVMValueRef ptr = root_ptr;
+    std::string cur = root_type;
+    auto& get_fn = runtime_funcs["__udt_get_obj"];
+    for (size_t i = 0; i + 1 < segs.size(); i++) {
+        const UDTField* f = udt_field(cur, segs[i]);
+        if (!f || f->udt_type.empty()) {
+            // Not a nested instance: the rest of the path is one flat
+            // field name, as in the dotted form the flattened layout used.
+            std::string rest = segs[i];
+            for (size_t j = i + 1; j < segs.size(); j++) rest += "." + segs[j];
+            holder_type = cur;
+            leaf_field = rest;
+            return ptr;
+        }
+        LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, segs[i].c_str(), ".fld");
+        LLVMValueRef args[] = { ptr, field_str };
+        ptr = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, args, 2, "inner");
+        cur = f->udt_type;
+    }
+    holder_type = cur;
+    leaf_field = segs.back();
+    return ptr;
+}
+
+LLVMValueRef LLVMCodegen::udt_ptr_from(TypedValue tv) {
+    if (tv.tag == JD_TAG_F64) {
+        LLVMValueRef as_i64 = pun_f64_to_i64(tv.val);
+        return LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+    }
+    if (tv.tag == JD_TAG_I64 || tv.tag == JD_TAG_RUNTIME)
+        return LLVMBuildIntToPtr(builder, tv.val, i8_ptr_type, "itoptr");
+    return tv.val;
 }
 
 bool LLVMCodegen::is_udt_string_field(const std::string& var_name, const std::string& field_name) {

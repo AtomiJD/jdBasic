@@ -391,9 +391,24 @@ private:
     void codegen_enum(const Stmt& stmt);
     void codegen_type_decl(const Stmt& stmt);
 
-    // UDT type registry: type_name → list of {field_name, is_string}
-    struct UDTField { std::string name; bool is_string; };
+    // UDT type registry: type_name → list of {field_name, is_string, udt_type}
+    // udt_type names the user type of a member declared AS <user type>,
+    // empty for every other member.
+    struct UDTField { std::string name; bool is_string; std::string udt_type; };
     std::unordered_map<std::string, std::vector<UDTField>> udt_types;
+    void register_udt_fields(const Stmt& type_decl);
+    const UDTField* udt_field(const std::string& type_name, const std::string& field_name);
+    // Static user type of an expression, empty when unknown.
+    std::string expr_udt_type(const Expr& e);
+    // Static user type named by a dotted path: root variable, then fields.
+    std::string dotted_udt_type(const std::string& dotted);
+    // Follows a dotted path through nested instances. Returns the pointer
+    // of the object that holds the last field; holder_type receives that
+    // object's type and leaf_field the remaining field name.
+    LLVMValueRef udt_walk_path(LLVMValueRef root_ptr, const std::string& root_type,
+                               const std::vector<std::string>& segs,
+                               std::string& holder_type, std::string& leaf_field);
+    LLVMValueRef udt_ptr_from(TypedValue tv);
 
     // Variable-to-UDT-type mapping: var_name → UDT type name
     std::unordered_map<std::string, std::string> var_udt_type;
