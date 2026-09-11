@@ -1,0 +1,116 @@
+' SCHEMA: declarations in both forms, every type, defaults, coercion,
+' strict mode, nesting, and the JSON Schema it emits.
+
+IMPORT TESTKIT
+IMPORT SCHEMA
+
+DIM person = SCHEMA.NEW({ _
+    "name": "string!", _
+    "age": {"type": "integer", "min": 0, "max": 150}, _
+    "role": {"type": "string", "enum": ["admin", "user"], "default": "user"}, _
+    "tags": "string[]", _
+    "score": "number", _
+    "active": "boolean", _
+    "email": {"type": "string", "pattern": "^[^@]+@[^@]+$", "description": "where to write"}, _
+    "address": {"type": "map", "fields": {"city": "string!", "zip": {"type": "string", "min": 4, "max": 5}}} _
+})
+
+FUNC Errors$(r)
+    RETURN JOIN(r{"errors"}, " | ")
+ENDFUNC
+
+FUNC BadDecl(decl)
+    RETURN SCHEMA.NEW({"x": decl})
+ENDFUNC
+
+TESTKIT.SUITE("a valid payload")
+DIM good = SCHEMA.CHECK(person, {"name": "Ann", "age": 41, "tags": ["a", "b"], "score": 9.5, "active": TRUE, "email": "ann@example.org", "address": {"city": "Bonn", "zip": "53111"}})
+TESTKIT.ISTRUE(good{"ok"}, "passes")
+TESTKIT.EQ(LEN(good{"errors"}), 0, "with no errors")
+TESTKIT.EQ(good{"value"}{"role"}, "user", "the default is filled in")
+TESTKIT.EQ(good{"value"}{"name"}, "Ann", "declared values are kept")
+TESTKIT.EQ(good{"value"}{"address"}{"city"}, "Bonn", "nested values too")
+TESTKIT.EQARRAY(good{"value"}{"tags"}, ["a", "b"], "and arrays")
+
+TESTKIT.SUITE("what it rejects")
+DIM missing = SCHEMA.CHECK(person, {"age": 3})
+TESTKIT.ISFALSE(missing{"ok"}, "a missing required field")
+TESTKIT.EQ(Errors$(missing), "name: required", "is named")
+DIM wrong = SCHEMA.CHECK(person, {"name": 7})
+TESTKIT.EQ(Errors$(wrong), "name: expected string, got number", "a wrong type says what it got")
+DIM fraction = SCHEMA.CHECK(person, {"name": "x", "age": 2.5})
+TESTKIT.EQ(Errors$(fraction), "age: expected integer, got 2.5", "a fraction is not an integer")
+DIM old = SCHEMA.CHECK(person, {"name": "x", "age": 200})
+TESTKIT.EQ(Errors$(old), "age: above maximum 150", "above the maximum")
+DIM young = SCHEMA.CHECK(person, {"name": "x", "age": -1})
+TESTKIT.EQ(Errors$(young), "age: below minimum 0", "below the minimum")
+DIM role = SCHEMA.CHECK(person, {"name": "x", "role": "root"})
+TESTKIT.EQ(Errors$(role), "role: not one of admin, user", "outside the enum")
+DIM mail = SCHEMA.CHECK(person, {"name": "x", "email": "nope"})
+TESTKIT.EQ(Errors$(mail), "email: does not match ^[^@]+@[^@]+$", "the pattern")
+DIM items = SCHEMA.CHECK(person, {"name": "x", "tags": ["a", 2]})
+TESTKIT.EQ(Errors$(items), "tags[1]: expected string, got number", "an element with its index")
+DIM notarr = SCHEMA.CHECK(person, {"name": "x", "tags": "a"})
+TESTKIT.EQ(Errors$(notarr), "tags: expected array, got string", "a scalar where an array was declared")
+DIM nested = SCHEMA.CHECK(person, {"name": "x", "address": {"zip": "123"}})
+TESTKIT.EQ(Errors$(nested), "address.city: required | address.zip: shorter than 4", "nested paths, several errors")
+DIM notbool = SCHEMA.CHECK(person, {"name": "x", "active": "yes"})
+TESTKIT.EQ(Errors$(notbool), "active: expected boolean, got string", "a boolean")
+DIM notmap = SCHEMA.CHECK(person, "text")
+TESTKIT.EQ(Errors$(notmap), "expected a map, got string", "a payload that is no map")
+TESTKIT.ISFALSE(SCHEMA.VALID(person, {}), "VALID is the short form")
+
+TESTKIT.SUITE("coercion")
+DIM opts = {"coerce": TRUE}
+DIM loose = SCHEMA.CHECK(person, {"name": 42, "age": " 7 ", "score": "1.5", "active": "TRUE"}, opts)
+TESTKIT.ISTRUE(loose{"ok"}, "numeric and boolean strings pass")
+TESTKIT.EQ(loose{"value"}{"name"}, "42", "a number becomes the string")
+TESTKIT.EQ(loose{"value"}{"age"}, 7, "a numeric string becomes the number")
+TESTKIT.EQ(loose{"value"}{"score"}, 1.5, "with a fraction")
+TESTKIT.EQ(loose{"value"}{"active"}, TRUE, "and true/false becomes a boolean")
+DIM still = SCHEMA.CHECK(person, {"name": "x", "age": "seven"}, opts)
+TESTKIT.EQ(Errors$(still), "age: expected integer, got string", "a word is still no number")
+DIM untouched = SCHEMA.CHECK(person, {"name": "x", "age": "7"})
+TESTKIT.EQ(Errors$(untouched), "age: expected integer, got string", "without the option nothing is coerced")
+
+TESTKIT.SUITE("strict mode")
+DIM extra = SCHEMA.CHECK(person, {"name": "x", "shoe": 44}, {"strict": TRUE})
+TESTKIT.EQ(Errors$(extra), "shoe: not declared", "an undeclared key")
+DIM lenient = SCHEMA.CHECK(person, {"name": "x", "shoe": 44})
+TESTKIT.ISTRUE(lenient{"ok"}, "is fine without strict")
+TESTKIT.ISFALSE(MAP.EXISTS(lenient{"value"}, "shoe"), "but does not reach the value")
+
+TESTKIT.SUITE("declarations")
+DIM inner = SCHEMA.NEW({"x": "number!", "y": "number!"})
+DIM outer = SCHEMA.NEW({"origin": inner, "points": {"type": "array", "items": inner, "min": 1}})
+DIM shape = SCHEMA.CHECK(outer, {"origin": {"x": 0, "y": 0}, "points": [{"x": 1, "y": 2}, {"x": 3}]})
+TESTKIT.EQ(Errors$(shape), "points[1].y: required", "a schema nests as a field and as an item")
+DIM empty = SCHEMA.CHECK(outer, {"origin": {"x": 0, "y": 0}, "points": []})
+TESTKIT.EQ(Errors$(empty), "points: fewer than 1 items", "array length limits")
+TESTKIT.THROWS(BadDecl@, "widget", "an unknown type name is refused")
+TESTKIT.THROWS(BadDecl@, 5, "a number is no declaration")
+DIM anything = SCHEMA.NEW({"blob": "any", "count": {"required": TRUE}})
+TESTKIT.EQ(Errors$(SCHEMA.CHECK(anything, {"blob": [1, {"k": 2}]})), "count: required", "any accepts everything, a bare map form is any")
+
+TESTKIT.SUITE("JSON Schema")
+DIM js = SCHEMA.JSONSCHEMA(person)
+TESTKIT.EQ(js{"type"}, "object", "an object")
+TESTKIT.EQARRAY(js{"required"}, ["name"], "with its required list")
+TESTKIT.EQ(js{"properties"}{"age"}{"type"}, "integer", "integer stays integer")
+TESTKIT.EQ(js{"properties"}{"age"}{"minimum"}, 0, "min becomes minimum")
+TESTKIT.EQ(js{"properties"}{"age"}{"maximum"}, 150, "max becomes maximum")
+TESTKIT.EQARRAY(js{"properties"}{"role"}{"enum"}, ["admin", "user"], "the enum")
+TESTKIT.EQ(js{"properties"}{"role"}{"default"}, "user", "the default")
+TESTKIT.EQ(js{"properties"}{"tags"}{"type"}, "array", "an array")
+TESTKIT.EQ(js{"properties"}{"tags"}{"items"}{"type"}, "string", "of strings")
+TESTKIT.EQ(js{"properties"}{"email"}{"pattern"}, "^[^@]+@[^@]+$", "the pattern")
+TESTKIT.EQ(js{"properties"}{"email"}{"description"}, "where to write", "the description")
+TESTKIT.EQ(js{"properties"}{"address"}{"type"}, "object", "a nested object")
+TESTKIT.EQARRAY(js{"properties"}{"address"}{"required"}, ["city"], "with its own required list")
+TESTKIT.EQ(js{"properties"}{"address"}{"properties"}{"zip"}{"minLength"}, 4, "string min becomes minLength")
+TESTKIT.EQ(js{"additionalProperties"}, FALSE, "closed for extra keys")
+DIM text$ = SCHEMA.JSONSCHEMA$(person)
+TESTKIT.ISTRUE(STARTSWITH(text$, "{"), "the string form is JSON")
+TESTKIT.EQ(JSON.PARSE$(text$){"type"}, "object", "and parses back")
+
+PRINT TESTKIT.REPORT()

@@ -1,0 +1,335 @@
+' schema.jdb - validation for maps, and the JSON Schema an LLM needs for
+' structured output, from one declaration.
+'
+'   IMPORT SCHEMA
+'   DIM s = SCHEMA.NEW({ _
+'       "name": "string!", _
+'       "age": {"type": "integer", "min": 0, "max": 150}, _
+'       "role": {"type": "string", "enum": ["admin", "user"], "default": "user"}, _
+'       "tags": "string[]", _
+'       "address": {"type": "map", "fields": {"city": "string!", "zip": "string"}} _
+'   })
+'   DIM r = SCHEMA.CHECK(s, payload)
+'   IF NOT r{"ok"} THEN PRINT JOIN(r{"errors"}, CHR$(10))
+'   PRINT r{"value"}{"role"}
+'   PRINT SCHEMA.JSONSCHEMA$(s)
+'
+' A field is declared by a short form or a map. The short forms are
+' "string", "number", "integer", "boolean", "array", "map" and "any";
+' a trailing "!" makes the field required, a trailing "[]" makes it an
+' array of that type. The map form takes "type", "required", "default",
+' "enum", "min" and "max" (value for numbers, length for strings and
+' arrays), "pattern" (a regular expression the whole string must match),
+' "items" (the element declaration of an array), "fields" (the field map
+' of a nested map) and "description".
+'
+' CHECK answers {"ok", "errors", "value"}: "value" is a copy of the payload
+' with defaults filled in and, in coercion mode, numeric strings turned
+' into numbers, "true"/"false" into booleans and numbers into strings
+' where a string was declared. Options: {"coerce": TRUE, "strict": TRUE};
+' strict rejects keys the schema does not declare. A missing key is
+' detected with TYPEOF, since comparing a value to NONE proves nothing.
+
+EXPORT MODULE SCHEMA
+
+CONST TYPES = ["string", "number", "integer", "boolean", "array", "map", "any"]
+
+EXPORT FUNC NEW(fields)
+    DIM s AS MAP
+    s{"kind"} = "schema"
+    s{"fields"} = Canon(fields)
+    RETURN s
+ENDFUNC
+
+' Turns every declaration into the map form, recursively.
+FUNC Canon(fields)
+    DIM out AS MAP
+    DIM names = MAP.KEYS(fields)
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        out{names[i]} = NormalizeOne(fields{names[i]}, names[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC NormalizeOne(decl, name$)
+    DIM d AS MAP
+    IF TYPEOF(decl) = "STRING" THEN
+        DIM text$ = decl
+        d{"required"} = FALSE
+        IF ENDSWITH(text$, "!") THEN
+            d{"required"} = TRUE
+            text$ = LEFT$(text$, LEN(text$) - 1)
+        ENDIF
+        IF ENDSWITH(text$, "[]") THEN
+            d{"type"} = "array"
+            d{"items"} = NormalizeOne(LEFT$(text$, LEN(text$) - 2), name$ + "[]")
+        ELSE
+            d{"type"} = text$
+        ENDIF
+    ELSEIF TYPEOF(decl) = "OBJECT" THEN
+        IF MAP.EXISTS(decl, "kind") ANDALSO decl{"kind"} = "schema" THEN
+            d{"type"} = "map"
+            d{"fields"} = decl{"fields"}
+            d{"required"} = FALSE
+        ELSE
+            DIM keys = MAP.KEYS(decl)
+            DIM i = 0
+            FOR i = 0 TO LEN(keys) - 1
+                d{keys[i]} = decl{keys[i]}
+            NEXT i
+            IF NOT MAP.EXISTS(d, "type") THEN d{"type"} = "any"
+            IF NOT MAP.EXISTS(d, "required") THEN d{"required"} = FALSE
+            IF MAP.EXISTS(d, "items") THEN d{"items"} = NormalizeOne(d{"items"}, name$ + "[]")
+            IF MAP.EXISTS(d, "fields") THEN
+                IF TYPEOF(d{"fields"}) = "OBJECT" ANDALSO MAP.EXISTS(d{"fields"}, "kind") THEN
+                    d{"fields"} = d{"fields"}{"fields"}
+                ELSE
+                    d{"fields"} = Canon(d{"fields"})
+                ENDIF
+            ENDIF
+        ENDIF
+    ELSE
+        THROW "SCHEMA: field " + name$ + " needs a type name or a map"
+    ENDIF
+    IF NOT (d{"type"} IN TYPES) THEN THROW "SCHEMA: field " + name$ + " has unknown type " + d{"type"}
+    RETURN d
+ENDFUNC
+
+EXPORT FUNC CHECK(s, payload, opts = 0)
+    DIM coerce = FALSE
+    DIM strict = FALSE
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "coerce") THEN coerce = opts{"coerce"}
+        IF MAP.EXISTS(opts, "strict") THEN strict = opts{"strict"}
+    ENDIF
+    DIM errors = []
+    DIM value = CheckFields(s{"fields"}, payload, "", errors, coerce, strict)
+    RETURN {"ok": LEN(errors) = 0, "errors": errors, "value": value}
+ENDFUNC
+
+EXPORT FUNC VALID(s, payload)
+    RETURN CHECK(s, payload){"ok"}
+ENDFUNC
+
+FUNC Join$(path$, name$)
+    IF LEN(path$) = 0 THEN RETURN name$
+    RETURN path$ + "." + name$
+ENDFUNC
+
+FUNC CheckFields(fields, payload, path$, errors, coerce, strict)
+    DIM out AS MAP
+    IF TYPEOF(payload) <> "OBJECT" THEN
+        PUSH(errors, Where$(path$) + "expected a map, got " + Kind$(payload))
+        RETURN out
+    ENDIF
+    DIM names = MAP.KEYS(fields)
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM name$ = names[i]
+        DIM d = fields{name$}
+        DIM here$ = Join$(path$, name$)
+        IF MAP.EXISTS(payload, name$) ANDALSO TYPEOF(payload{name$}) <> "NONE" THEN
+            out{name$} = CheckValue(d, payload{name$}, here$, errors, coerce, strict)
+        ELSEIF MAP.EXISTS(d, "default") THEN
+            out{name$} = d{"default"}
+        ELSEIF d{"required"} THEN
+            PUSH(errors, here$ + ": required")
+        ENDIF
+    NEXT i
+    IF strict THEN
+        DIM given = MAP.KEYS(payload)
+        FOR i = 0 TO LEN(given) - 1
+            IF NOT MAP.EXISTS(fields, given[i]) THEN
+                PUSH(errors, Join$(path$, given[i]) + ": not declared")
+            ENDIF
+        NEXT i
+    ENDIF
+    RETURN out
+ENDFUNC
+
+FUNC Where$(path$)
+    IF LEN(path$) = 0 THEN RETURN ""
+    RETURN path$ + ": "
+ENDFUNC
+
+' The type name the way a message should read it.
+FUNC Kind$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "INT64" OR t$ = "FLOAT64" THEN RETURN "number"
+    IF t$ = "OBJECT" THEN RETURN "map"
+    RETURN LCASE$(t$)
+ENDFUNC
+
+FUNC IsNumber(v)
+    DIM t$ = TYPEOF(v)
+    RETURN t$ = "INT64" OR t$ = "FLOAT64"
+ENDFUNC
+
+FUNC IsWhole(v)
+    RETURN IsNumber(v) ANDALSO v = INT(v)
+ENDFUNC
+
+FUNC LooksNumeric(text$)
+    RETURN REGEX.MATCH("^-?[0-9]+(?:\.[0-9]+)?$", text$)
+ENDFUNC
+
+' Validates one value against its declaration and returns the value to
+' keep, coerced where allowed. Every complaint is pushed onto errors,
+' which the caller owns.
+FUNC CheckValue(d, v, path$, errors, coerce, strict)
+    DIM type$ = d{"type"}
+    DIM t$ = TYPEOF(v)
+    DIM keep = v
+
+    IF type$ = "string" THEN
+        IF t$ <> "STRING" THEN
+            IF coerce ANDALSO (IsNumber(v) OR t$ = "BOOLEAN") THEN
+                keep = AsText$(v)
+            ELSE
+                PUSH(errors, path$ + ": expected string, got " + Kind$(v))
+                RETURN v
+            ENDIF
+        ENDIF
+        IF MAP.EXISTS(d, "min") ANDALSO LEN(keep) < d{"min"} THEN PUSH(errors, path$ + ": shorter than " + STR$(d{"min"}))
+        IF MAP.EXISTS(d, "max") ANDALSO LEN(keep) > d{"max"} THEN PUSH(errors, path$ + ": longer than " + STR$(d{"max"}))
+        IF MAP.EXISTS(d, "pattern") ANDALSO NOT REGEX.MATCH(d{"pattern"}, keep) THEN PUSH(errors, path$ + ": does not match " + d{"pattern"})
+    ELSEIF type$ = "number" OR type$ = "integer" THEN
+        IF NOT IsNumber(v) THEN
+            IF coerce ANDALSO t$ = "STRING" ANDALSO LooksNumeric(TRIM$(v)) THEN
+                keep = VAL(TRIM$(v))
+            ELSEIF coerce ANDALSO t$ = "BOOLEAN" THEN
+                keep = 0
+                IF v THEN keep = 1
+            ELSE
+                PUSH(errors, path$ + ": expected " + type$ + ", got " + Kind$(v))
+                RETURN v
+            ENDIF
+        ENDIF
+        IF type$ = "integer" ANDALSO NOT IsWhole(keep) THEN
+            PUSH(errors, path$ + ": expected integer, got " + STR$(keep))
+            RETURN keep
+        ENDIF
+        IF MAP.EXISTS(d, "min") ANDALSO keep < d{"min"} THEN PUSH(errors, path$ + ": below minimum " + STR$(d{"min"}))
+        IF MAP.EXISTS(d, "max") ANDALSO keep > d{"max"} THEN PUSH(errors, path$ + ": above maximum " + STR$(d{"max"}))
+    ELSEIF type$ = "boolean" THEN
+        IF t$ <> "BOOLEAN" THEN
+            DIM lowered$ = ""
+            IF t$ = "STRING" THEN lowered$ = LCASE$(TRIM$(v))
+            IF coerce ANDALSO (lowered$ = "true" OR lowered$ = "false") THEN
+                keep = (lowered$ = "true")
+            ELSEIF coerce ANDALSO IsNumber(v) THEN
+                keep = v <> 0
+            ELSE
+                PUSH(errors, path$ + ": expected boolean, got " + Kind$(v))
+                RETURN v
+            ENDIF
+        ENDIF
+    ELSEIF type$ = "array" THEN
+        IF t$ <> "ARRAY" THEN
+            PUSH(errors, path$ + ": expected array, got " + Kind$(v))
+            RETURN v
+        ENDIF
+        IF MAP.EXISTS(d, "min") ANDALSO LEN(v) < d{"min"} THEN PUSH(errors, path$ + ": fewer than " + STR$(d{"min"}) + " items")
+        IF MAP.EXISTS(d, "max") ANDALSO LEN(v) > d{"max"} THEN PUSH(errors, path$ + ": more than " + STR$(d{"max"}) + " items")
+        IF MAP.EXISTS(d, "items") THEN
+            DIM kept = []
+            DIM i = 0
+            FOR i = 0 TO LEN(v) - 1
+                PUSH(kept, CheckValue(d{"items"}, v[i], path$ + "[" + STR$(i) + "]", errors, coerce, strict))
+            NEXT i
+            keep = kept
+        ENDIF
+    ELSEIF type$ = "map" THEN
+        IF t$ <> "OBJECT" THEN
+            PUSH(errors, path$ + ": expected map, got " + Kind$(v))
+            RETURN v
+        ENDIF
+        IF MAP.EXISTS(d, "fields") THEN keep = CheckFields(d{"fields"}, v, path$, errors, coerce, strict)
+    ENDIF
+
+    IF MAP.EXISTS(d, "enum") THEN
+        IF NOT InList(keep, d{"enum"}) THEN
+            PUSH(errors, path$ + ": not one of " + JOIN(d{"enum"}, ", "))
+        ENDIF
+    ENDIF
+    RETURN keep
+ENDFUNC
+
+FUNC InList(v, allowed)
+    DIM i = 0
+    FOR i = 0 TO LEN(allowed) - 1
+        IF TYPEOF(allowed[i]) = TYPEOF(v) ORELSE (IsNumber(allowed[i]) ANDALSO IsNumber(v)) THEN
+            IF allowed[i] = v THEN RETURN TRUE
+        ENDIF
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+FUNC AsText$(v)
+    IF TYPEOF(v) = "BOOLEAN" THEN
+        IF v THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+' JSON Schema (draft 2020-12 vocabulary) for the whole declaration, the
+' form the structured-output modes of the LLM APIs take.
+EXPORT FUNC JSONSCHEMA$(s)
+    RETURN JSON.STRINGIFY$(ObjectSchema(s{"fields"}))
+ENDFUNC
+
+EXPORT FUNC JSONSCHEMA(s)
+    RETURN ObjectSchema(s{"fields"})
+ENDFUNC
+
+FUNC ObjectSchema(fields)
+    DIM props AS MAP
+    DIM required = []
+    DIM names = MAP.KEYS(fields)
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        props{names[i]} = FieldSchema(fields{names[i]})
+        IF fields{names[i]}{"required"} THEN required = APPEND(required, names[i])
+    NEXT i
+    DIM out AS MAP
+    out{"type"} = "object"
+    out{"properties"} = props
+    IF LEN(required) > 0 THEN out{"required"} = required
+    out{"additionalProperties"} = FALSE
+    RETURN out
+ENDFUNC
+
+FUNC FieldSchema(d)
+    DIM out AS MAP
+    DIM type$ = d{"type"}
+    IF type$ = "map" THEN
+        IF MAP.EXISTS(d, "fields") THEN
+            out = ObjectSchema(d{"fields"})
+        ELSE
+            out{"type"} = "object"
+        ENDIF
+    ELSEIF type$ = "any" THEN
+        DIM none AS MAP
+        out = none
+    ELSE
+        out{"type"} = type$
+        IF type$ = "array" ANDALSO MAP.EXISTS(d, "items") THEN out{"items"} = FieldSchema(d{"items"})
+    ENDIF
+    IF MAP.EXISTS(d, "description") THEN out{"description"} = d{"description"}
+    IF MAP.EXISTS(d, "enum") THEN out{"enum"} = d{"enum"}
+    IF MAP.EXISTS(d, "default") THEN out{"default"} = d{"default"}
+    IF MAP.EXISTS(d, "pattern") THEN out{"pattern"} = d{"pattern"}
+    IF MAP.EXISTS(d, "min") THEN
+        IF type$ = "string" THEN out{"minLength"} = d{"min"}
+        IF type$ = "array" THEN out{"minItems"} = d{"min"}
+        IF type$ = "number" OR type$ = "integer" THEN out{"minimum"} = d{"min"}
+    ENDIF
+    IF MAP.EXISTS(d, "max") THEN
+        IF type$ = "string" THEN out{"maxLength"} = d{"max"}
+        IF type$ = "array" THEN out{"maxItems"} = d{"max"}
+        IF type$ = "number" OR type$ = "integer" THEN out{"maximum"} = d{"max"}
+    ENDIF
+    RETURN out
+ENDFUNC

@@ -1,0 +1,140 @@
+' REQ driven against an HTTP.SERVER fixture in the same process: query
+' strings, JSON and form bodies, an upload, cookies, and a route that fails
+' twice before it answers.
+
+IMPORT TESTKIT
+IMPORT REQ
+
+DIM gFlaky = 0
+
+FUNC HANDLE_ECHO(request)
+    DIM headers = request{"HEADERS"}
+    DIM auth$ = ""
+    DIM cookie$ = ""
+    IF MAP.EXISTS(headers, "authorization") THEN auth$ = headers{"authorization"}
+    IF MAP.EXISTS(headers, "cookie") THEN cookie$ = headers{"cookie"}
+    RETURN {"params": request{"PARAMS"}, "auth": auth$, "cookie": cookie$}
+ENDFUNC
+
+FUNC HANDLE_JSON(request)
+    DIM sent = JSON.PARSE$(request{"BODY"})
+    RETURN {"got": sent{"name"}, "ct": request{"HEADERS"}{"content-type"}}
+ENDFUNC
+
+FUNC HANDLE_FORM(request)
+    RETURN {"body": request{"BODY"}, "ct": request{"HEADERS"}{"content-type"}}
+ENDFUNC
+
+FUNC HANDLE_UPLOAD(request)
+    RETURN {"ct": request{"HEADERS"}{"content-type"}}
+ENDFUNC
+
+FUNC HANDLE_FLAKY(request)
+    gFlaky = gFlaky + 1
+    IF gFlaky <= 2 THEN RETURN {"__http_status": 500, "__http_body": "boom"}
+    RETURN "fine after " + STR$(gFlaky)
+ENDFUNC
+
+FUNC HANDLE_LOGIN(request)
+    RETURN {"__http_status": 200, "__http_body": "welcome", "__http_headers": {"Set-Cookie": "sid=abc123; Path=/"}}
+ENDFUNC
+
+FUNC HANDLE_TEAPOT(request)
+    RETURN {"__http_status": 418, "__http_body": "short and stout"}
+ENDFUNC
+
+FUNC Raiser(r)
+    RETURN REQ.RAISE_FOR_STATUS(r)
+ENDFUNC
+
+TESTKIT.SUITE("encoding")
+TESTKIT.EQ(REQ.ENCODE$("jd basic"), "jd%20basic", "a space")
+TESTKIT.EQ(REQ.ENCODE$("a&b=c/d"), "a%26b%3Dc%2Fd", "the reserved characters")
+TESTKIT.EQ(REQ.ENCODE$("safe-_.~09AZaz"), "safe-_.~09AZaz", "the unreserved set passes through")
+TESTKIT.EQ(REQ.ENCODE$("ä"), "%C3%A4", "a multibyte character byte by byte")
+TESTKIT.EQ(REQ.QUERY$({"page": 2, "q": "jd basic", "on": TRUE}), "page=2&q=jd%20basic&on=true", "a query string")
+
+TESTKIT.SUITE("session state")
+DIM s = REQ.NEW("http://127.0.0.1:9977")
+REQ.BASIC(s, "ann", "secret")
+TESTKIT.EQ(s{"headers"}{"Authorization"}, "Basic YW5uOnNlY3JldA==", "basic auth is base64 of user:pass")
+REQ.BEARER(s, "tok")
+TESTKIT.EQ(s{"headers"}{"Authorization"}, "Bearer tok", "bearer replaces it")
+REQ.TIMEOUT(s, 5)
+TESTKIT.EQ(s{"timeout"}, 5, "the timeout is kept")
+
+HTTP.SERVER.ON_GET("/echo", "HANDLE_ECHO")
+HTTP.SERVER.ON_POST("/json", "HANDLE_JSON")
+HTTP.SERVER.ON_POST("/form", "HANDLE_FORM")
+HTTP.SERVER.ON_POST("/upload", "HANDLE_UPLOAD")
+HTTP.SERVER.ON_GET("/flaky", "HANDLE_FLAKY")
+HTTP.SERVER.ON_GET("/login", "HANDLE_LOGIN")
+HTTP.SERVER.ON_GET("/teapot", "HANDLE_TEAPOT")
+
+IF NOT HTTP.SERVER.START(9977) THEN
+    PRINT "could not start the fixture server on 9977"
+    END 1
+ENDIF
+
+TESTKIT.SUITE("GET with a query")
+DIM r = REQ.GET(s, "/echo", {"page": 2, "q": "jd basic"})
+TESTKIT.EQ(r{"status"}, 200, "the status")
+TESTKIT.ISTRUE(r{"ok"}, "ok for a 2xx")
+DIM echoed = REQ.JSON(r)
+TESTKIT.EQ(echoed{"params"}{"page"}, "2", "a numeric query value arrives as text")
+TESTKIT.EQ(echoed{"params"}{"q"}, "jd basic", "a space survives the round trip")
+TESTKIT.EQ(echoed{"auth"}, "Bearer tok", "the session header is sent")
+TESTKIT.ISTRUE(MAP.EXISTS(r{"headers"}, "content-type"), "response headers are lowercase")
+
+TESTKIT.SUITE("POST JSON")
+DIM posted = REQ.POST(s, "/json", {"name": "Ann", "tags": ["a", "b"]})
+DIM seen = REQ.JSON(posted)
+TESTKIT.EQ(seen{"got"}, "Ann", "a map body goes out as JSON")
+TESTKIT.EQ(seen{"ct"}, "application/json", "with the JSON content type")
+
+TESTKIT.SUITE("POST form")
+DIM formed = REQ.FORM(s, "/form", {"user": "ann", "pass": "s&cret"})
+DIM form_seen = REQ.JSON(formed)
+TESTKIT.EQ(form_seen{"body"}, "user=ann&pass=s%26cret", "urlencoded body")
+TESTKIT.EQ(form_seen{"ct"}, "application/x-www-form-urlencoded", "with the form content type")
+
+TESTKIT.SUITE("upload")
+DIM part = REQ.MULTIPART({"note": "scan"}, {"file": {"filename": "note.txt", "content": "hello file", "type": "text/plain"}})
+DIM marker = INSTR(part{"type"}, "boundary=")
+DIM boundary$ = MID$(part{"type"}, marker + 9, LEN(part{"type"}) - marker - 9)
+TESTKIT.ISTRUE(STARTSWITH(part{"type"}, "multipart/form-data; boundary="), "the content type names the boundary")
+TESTKIT.ISTRUE(STARTSWITH(part{"body"}, "--" + boundary$ + CHR$(13) + CHR$(10)), "the body opens with it")
+TESTKIT.ISTRUE(ENDSWITH(part{"body"}, "--" + boundary$ + "--" + CHR$(13) + CHR$(10)), "and closes with it")
+TESTKIT.ISTRUE(INSTR(part{"body"}, "Content-Disposition: form-data; name=" + CHR$(34) + "note" + CHR$(34) + CHR$(13) + CHR$(10) + CHR$(13) + CHR$(10) + "scan") >= 0, "the text field is a part")
+TESTKIT.ISTRUE(INSTR(part{"body"}, "; filename=" + CHR$(34) + "note.txt" + CHR$(34)) >= 0, "the file part carries its name")
+TESTKIT.ISTRUE(INSTR(part{"body"}, "Content-Type: text/plain" + CHR$(13) + CHR$(10) + CHR$(13) + CHR$(10) + "hello file") >= 0, "its type and its content")
+DIM up = REQ.UPLOAD(s, "/upload", {"note": "scan"}, {"file": {"filename": "note.txt", "content": "hello file"}})
+TESTKIT.EQ(up{"status"}, 200, "the upload reaches the server")
+TESTKIT.ISTRUE(STARTSWITH(REQ.JSON(up){"ct"}, "multipart/form-data; boundary="), "as multipart")
+
+TESTKIT.SUITE("cookies")
+DIM login = REQ.GET(s, "/login")
+TESTKIT.EQ(s{"cookies"}{"sid"}, "abc123", "Set-Cookie lands in the jar")
+DIM back = REQ.JSON(REQ.GET(s, "/echo"))
+TESTKIT.EQ(back{"cookie"}, "sid=abc123", "and goes out on the next request")
+
+TESTKIT.SUITE("retries")
+REQ.RETRIES(s, 3, 20)
+DIM flaky = REQ.GET(s, "/flaky")
+TESTKIT.EQ(flaky{"status"}, 200, "two 500s and then a 200")
+TESTKIT.EQ(REQ.TEXT$(flaky), "fine after 3", "the third attempt answered")
+REQ.RETRIES(s, 1, 20)
+
+TESTKIT.SUITE("errors")
+DIM teapot = REQ.GET(s, "/teapot")
+TESTKIT.EQ(teapot{"status"}, 418, "a 418 comes back as a status")
+TESTKIT.ISFALSE(teapot{"ok"}, "and is not ok")
+TESTKIT.THROWS(Raiser@, teapot, "RAISE_FOR_STATUS raises on it")
+DIM nowhere = REQ.NEW("http://127.0.0.1:9")
+REQ.TIMEOUT(nowhere, 2)
+DIM dead = REQ.GET(nowhere, "/")
+TESTKIT.EQ(dead{"status"}, 0, "a transport failure is status 0")
+TESTKIT.ISTRUE(LEN(dead{"error"}) > 0, "with the reason")
+
+HTTP.SERVER.STOP()
+PRINT TESTKIT.REPORT()

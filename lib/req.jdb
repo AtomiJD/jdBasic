@@ -1,0 +1,333 @@
+' req.jdb - HTTP sessions on top of the HTTP builtins: base URL, default
+' headers, auth, cookies, query building, JSON and form bodies, uploads,
+' retries with backoff, and a response map that knows how to parse itself.
+'
+'   IMPORT REQ
+'   DIM api = REQ.NEW("https://api.example.com")
+'   REQ.BEARER(api, token$)
+'   REQ.TIMEOUT(api, 120)
+'   REQ.RETRIES(api, 3, 500)
+'
+'   DIM r = REQ.GET(api, "/users", {"page": 2, "q": "jd basic"})
+'   IF r{"ok"} THEN PRINT REQ.JSON(r){"total"}
+'
+'   DIM created = REQ.POST(api, "/users", {"name": "Ann"})
+'   DIM sent = REQ.FORM(api, "/login", {"user": "ann", "pass": "secret"})
+'   DIM up = REQ.UPLOAD(api, "/files", {"note": "scan"}, {"file": "scan.png"})
+'
+' A response is a map: "status", "ok" (TRUE for 2xx), "body", "headers" with
+' lowercase names. REQ.JSON(r) parses the body, REQ.TEXT$(r) hands it back.
+'
+' A map or array body is sent as JSON, a string as it is. Retries repeat a
+' request on a transport failure or on a status in the session's retry list
+' (429, 500, 502, 503, 504 by default), waiting base, 2*base, 4*base ms.
+'
+' The HTTP builtins keep one global header, cookie and timeout state; every
+' call here installs the session's state and clears it afterwards.
+
+EXPORT MODULE REQ
+
+CONST CRLF = CHR$(13) + CHR$(10)
+
+EXPORT FUNC NEW(base_url$)
+    DIM s AS MAP
+    s{"base"} = base_url$
+    s{"headers"} = {}
+    s{"cookies"} = {}
+    s{"timeout"} = 30
+    s{"attempts"} = 1
+    s{"backoff_ms"} = 500
+    s{"retry_on"} = [429, 500, 502, 503, 504]
+    RETURN s
+ENDFUNC
+
+EXPORT SUB HEADER(s, name$, value$)
+    DIM h = s{"headers"}
+    h{name$} = value$
+    s{"headers"} = h
+ENDSUB
+
+EXPORT SUB BEARER(s, token$)
+    HEADER(s, "Authorization", "Bearer " + token$)
+ENDSUB
+
+EXPORT SUB BASIC(s, user$, pass$)
+    HEADER(s, "Authorization", "Basic " + CODEC.BASE64_ENCODE$(user$ + ":" + pass$))
+ENDSUB
+
+EXPORT SUB TIMEOUT(s, seconds)
+    s{"timeout"} = seconds
+ENDSUB
+
+' attempts counts the first try; 3 means one call and two retries.
+EXPORT SUB RETRIES(s, attempts, base_ms)
+    s{"attempts"} = attempts
+    s{"backoff_ms"} = base_ms
+ENDSUB
+
+EXPORT SUB RETRY_ON(s, statuses)
+    s{"retry_on"} = statuses
+ENDSUB
+
+EXPORT SUB COOKIE(s, name$, value$)
+    DIM jar = s{"cookies"}
+    jar{name$} = value$
+    s{"cookies"} = jar
+ENDSUB
+
+' Percent-encodes every byte outside the unreserved set of RFC 3986.
+EXPORT FUNC ENCODE$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM b = BYTEAT(text$, i)
+        IF (b >= 48 AND b <= 57) OR (b >= 65 AND b <= 90) OR (b >= 97 AND b <= 122) OR b = 45 OR b = 95 OR b = 46 OR b = 126 THEN
+            out$ = out$ + CHR$(b)
+        ELSE
+            DIM hex$ = HEX$(b)
+            IF LEN(hex$) < 2 THEN hex$ = "0" + hex$
+            out$ = out$ + "%" + hex$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' A query string without the leading "?", keys in the map's order.
+EXPORT FUNC QUERY$(params)
+    DIM parts$ = []
+    DIM keys = MAP.KEYS(params)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM k$ = keys[i]
+        parts$ = APPEND(parts$, ENCODE$(k$) + "=" + ENCODE$(AsText$(params{k$})))
+    NEXT i
+    RETURN JOIN(parts$, "&")
+ENDFUNC
+
+FUNC AsText$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "STRING" THEN RETURN v
+    IF t$ = "BOOLEAN" THEN
+        IF v THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    IF t$ = "NONE" THEN RETURN ""
+    RETURN STR$(v)
+ENDFUNC
+
+FUNC FullUrl$(s, path$, query)
+    DIM url$ = path$
+    IF NOT STARTSWITH(path$, "http://") AND NOT STARTSWITH(path$, "https://") THEN
+        url$ = s{"base"} + path$
+    ENDIF
+    IF TYPEOF(query) = "OBJECT" THEN
+        DIM q$ = QUERY$(query)
+        IF LEN(q$) > 0 THEN
+            IF INSTR(url$, "?") >= 0 THEN
+                url$ = url$ + "&" + q$
+            ELSE
+                url$ = url$ + "?" + q$
+            ENDIF
+        ENDIF
+    ENDIF
+    RETURN url$
+ENDFUNC
+
+' Sends the request with the session's headers, cookies and timeout in
+' place, repeating it as the retry settings allow. Returns the response map.
+EXPORT FUNC SEND(s, method$, path$, body$ = "", content_type$ = "application/json", query = 0)
+    DIM url$ = FullUrl$(s, path$, query)
+    DIM attempts = s{"attempts"}
+    IF attempts < 1 THEN attempts = 1
+    DIM wait_ms = s{"backoff_ms"}
+    DIM r = 0
+    DIM attempt = 1
+    DO
+        r = Once(s, method$, url$, body$, content_type$)
+        IF NOT ShouldRetry(s, r) THEN EXITDO
+        IF attempt >= attempts THEN EXITDO
+        SLEEP wait_ms
+        wait_ms = wait_ms * 2
+        attempt = attempt + 1
+    LOOP
+    RETURN r
+ENDFUNC
+
+FUNC ShouldRetry(s, r)
+    IF r{"status"} = 0 THEN RETURN TRUE
+    DIM retry_on = s{"retry_on"}
+    DIM i = 0
+    FOR i = 0 TO LEN(retry_on) - 1
+        IF r{"status"} = retry_on[i] THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+FUNC Once(s, method$, url$, body$, content_type$)
+    HTTP.CLEARHEADERS()
+    HTTP.CLEARPARAMS()
+    HTTP.CLEARCOOKIES()
+    HTTP.SETTIMEOUT(s{"timeout"})
+    DIM h = s{"headers"}
+    DIM names = MAP.KEYS(h)
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        HTTP.SETHEADER(names[i], h{names[i]})
+    NEXT i
+    DIM jar = s{"cookies"}
+    DIM cookie_names = MAP.KEYS(jar)
+    FOR i = 0 TO LEN(cookie_names) - 1
+        HTTP.SETCOOKIE(cookie_names[i], jar{cookie_names[i]})
+    NEXT i
+
+    DIM r AS MAP
+    r{"status"} = 0
+    r{"ok"} = FALSE
+    r{"body"} = ""
+    r{"headers"} = {}
+    r{"error"} = ""
+    r{"url"} = url$
+    TRY
+        DIM raw = HTTP.REQUEST(method$, url$, body$, content_type$)
+        r{"status"} = raw{"status"}
+        r{"body"} = raw{"body"}
+        r{"headers"} = LowerKeys(raw{"headers"})
+        r{"ok"} = raw{"status"} >= 200 AND raw{"status"} <= 299
+        Remember(s, r{"headers"})
+    CATCH
+        r{"error"} = ERRMSG$
+    ENDTRY
+    HTTP.CLEARHEADERS()
+    HTTP.CLEARCOOKIES()
+    RETURN r
+ENDFUNC
+
+FUNC LowerKeys(headers)
+    DIM out AS MAP
+    DIM names = MAP.KEYS(headers)
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        out{LCASE$(names[i])} = headers{names[i]}
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Keeps the name and value of a Set-Cookie header in the session jar.
+SUB Remember(s, headers)
+    IF NOT MAP.EXISTS(headers, "set-cookie") THEN RETURN
+    DIM header$ = headers{"set-cookie"}
+    DIM semi = INSTR(header$, ";")
+    IF semi >= 0 THEN header$ = LEFT$(header$, semi)
+    DIM eq = INSTR(header$, "=")
+    IF eq < 0 THEN RETURN
+    COOKIE(s, TRIM$(LEFT$(header$, eq)), TRIM$(MID$(header$, eq + 1, LEN(header$) - eq - 1)))
+ENDSUB
+
+FUNC BodyOf$(body)
+    DIM t$ = TYPEOF(body)
+    IF t$ = "OBJECT" OR t$ = "ARRAY" THEN RETURN JSON.STRINGIFY$(body)
+    IF t$ = "NONE" THEN RETURN ""
+    RETURN AsText$(body)
+ENDFUNC
+
+EXPORT FUNC GET(s, path$, query = 0)
+    RETURN SEND(s, "GET", path$, "", "application/json", query)
+ENDFUNC
+
+EXPORT FUNC DEL(s, path$, query = 0)
+    RETURN SEND(s, "DELETE", path$, "", "application/json", query)
+ENDFUNC
+
+EXPORT FUNC POST(s, path$, body = "", content_type$ = "application/json")
+    RETURN SEND(s, "POST", path$, BodyOf$(body), content_type$)
+ENDFUNC
+
+EXPORT FUNC PUT(s, path$, body = "", content_type$ = "application/json")
+    RETURN SEND(s, "PUT", path$, BodyOf$(body), content_type$)
+ENDFUNC
+
+EXPORT FUNC PATCH(s, path$, body = "", content_type$ = "application/json")
+    RETURN SEND(s, "PATCH", path$, BodyOf$(body), content_type$)
+ENDFUNC
+
+' application/x-www-form-urlencoded from a map of fields.
+EXPORT FUNC FORM(s, path$, fields)
+    RETURN SEND(s, "POST", path$, QUERY$(fields), "application/x-www-form-urlencoded")
+ENDFUNC
+
+' multipart/form-data: fields is a map of text parts, files a map of part
+' name to a path, or to {"filename": ..., "content": ..., "type": ...}.
+' Returns {"body", "type"}, the body and the content type with its boundary.
+EXPORT FUNC MULTIPART(fields, files)
+    DIM boundary$ = "----jdBasicReq" + HEX$(INT(RND() * 2147483647)) + HEX$(INT(RND() * 2147483647))
+    DIM body$ = ""
+    DIM names = MAP.KEYS(fields)
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        body$ = body$ + "--" + boundary$ + CRLF
+        body$ = body$ + "Content-Disposition: form-data; name=" + Quoted$(names[i]) + CRLF + CRLF
+        body$ = body$ + AsText$(fields{names[i]}) + CRLF
+    NEXT i
+    DIM parts = MAP.KEYS(files)
+    FOR i = 0 TO LEN(parts) - 1
+        DIM spec = files{parts[i]}
+        DIM filename$ = ""
+        DIM content$ = ""
+        DIM type$ = "application/octet-stream"
+        IF TYPEOF(spec) = "OBJECT" THEN
+            filename$ = spec{"filename"}
+            content$ = spec{"content"}
+            IF MAP.EXISTS(spec, "type") THEN type$ = spec{"type"}
+        ELSE
+            filename$ = BaseName$(spec)
+            content$ = BINREADER$(spec)
+        ENDIF
+        body$ = body$ + "--" + boundary$ + CRLF
+        body$ = body$ + "Content-Disposition: form-data; name=" + Quoted$(parts[i]) + "; filename=" + Quoted$(filename$) + CRLF
+        body$ = body$ + "Content-Type: " + type$ + CRLF + CRLF
+        body$ = body$ + content$ + CRLF
+    NEXT i
+    body$ = body$ + "--" + boundary$ + "--" + CRLF
+    RETURN {"body": body$, "type": "multipart/form-data; boundary=" + boundary$}
+ENDFUNC
+
+EXPORT FUNC UPLOAD(s, path$, fields, files)
+    DIM part = MULTIPART(fields, files)
+    RETURN SEND(s, "POST", path$, part{"body"}, part{"type"})
+ENDFUNC
+
+FUNC Quoted$(text$)
+    RETURN CHR$(34) + text$ + CHR$(34)
+ENDFUNC
+
+FUNC BaseName$(path$)
+    DIM name$ = path$
+    DIM i = 0
+    FOR i = LEN(path$) - 1 TO 0 STEP -1
+        DIM ch$ = MID$(path$, i, 1)
+        IF ch$ = "/" OR ch$ = CHR$(92) THEN
+            name$ = MID$(path$, i + 1, LEN(path$) - i - 1)
+            EXITFOR
+        ENDIF
+    NEXT i
+    RETURN name$
+ENDFUNC
+
+' The body parsed as JSON. Raises when the body is not JSON.
+EXPORT FUNC JSON(r)
+    DIM parsed = JSON.PARSE$(r{"body"})
+    IF TYPEOF(parsed) = "NONE" THEN THROW "REQ.JSON: the body is not JSON: " + LEFT$(r{"body"}, 120)
+    RETURN parsed
+ENDFUNC
+
+EXPORT FUNC TEXT$(r)
+    RETURN r{"body"}
+ENDFUNC
+
+' Raises with the status and the start of the body when the response is
+' not a success, so a caller can lean on TRY instead of checking "ok".
+EXPORT FUNC RAISE_FOR_STATUS(r)
+    IF r{"ok"} THEN RETURN r
+    IF r{"status"} = 0 THEN THROW "REQ: " + r{"error"}
+    THROW "REQ: HTTP " + STR$(r{"status"}) + " for " + r{"url"} + ": " + LEFT$(r{"body"}, 200)
+ENDFUNC

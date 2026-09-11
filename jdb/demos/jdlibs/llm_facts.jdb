@@ -1,0 +1,66 @@
+' llm_facts.jdb - a structured answer from a language model, checked.
+'
+' SCHEMA declares the shape, LLMAPI asks the model for exactly that shape,
+' SCHEMA checks what came back, and REQ underneath carries the HTTP. The
+' provider is picked by an environment variable:
+'
+'   set LLM_PROVIDER=openai      (needs OPENAI_API_KEY)
+'   set LLM_PROVIDER=anthropic   (needs ANTHROPIC_API_KEY)
+'   set LLM_PROVIDER=local       (LLM_MODEL points at a GGUF file)
+'   jdBasic llm_facts.jdb Bonn
+'
+' Without a provider it prints the JSON Schema and the messages it would
+' send, so the shape of the exchange is visible offline.
+
+IMPORT SCHEMA
+IMPORT LLMAPI
+IMPORT CLI
+
+DIM argv = CLI.ARGV()
+DIM city$ = "Bonn"
+IF LEN(argv) > 0 THEN city$ = argv[0]
+
+DIM shape = SCHEMA.NEW({ _
+    "city": "string!", _
+    "country": "string!", _
+    "population": {"type": "integer", "required": TRUE, "min": 0, "description": "inhabitants, rounded"}, _
+    "river": {"type": "string", "default": "none"}, _
+    "landmarks": {"type": "array", "items": "string", "max": 3} _
+})
+
+DIM provider$ = LCASE$(GETENV$("LLM_PROVIDER"))
+DIM prompt$ = "Facts about " + city$ + "."
+
+IF LEN(provider$) = 0 THEN
+    PRINT "No LLM_PROVIDER set. This is what would go out:"
+    PRINT
+    PRINT "JSON Schema:"
+    PRINT SCHEMA.JSONSCHEMA$(shape)
+    PRINT
+    PRINT "Messages:"
+    PRINT JSON.STRINGIFY$([LLMAPI.USER(prompt$)])
+    END 0
+ENDIF
+
+DIM model$ = GETENV$("LLM_MODEL")
+IF LEN(model$) = 0 THEN
+    IF provider$ = "openai" THEN model$ = "gpt-4o-mini"
+    IF provider$ = "anthropic" THEN model$ = "claude-sonnet-5"
+ENDIF
+
+DIM ai = LLMAPI.NEW(provider$, model$)
+LLMAPI.SYSTEM(ai, "You are a concise geography reference.")
+
+DIM answer = LLMAPI.JSON(ai, prompt$, shape)
+DIM checked = SCHEMA.CHECK(shape, answer, {"coerce": TRUE})
+IF NOT checked{"ok"} THEN
+    PRINT "The model's answer does not fit the shape:"
+    PRINT JOIN(checked{"errors"}, CHR$(10))
+    END 1
+ENDIF
+
+DIM facts = checked{"value"}
+PRINT facts{"city"}; ", "; facts{"country"}
+PRINT "population "; facts{"population"}
+PRINT "river      "; facts{"river"}
+IF MAP.EXISTS(facts, "landmarks") THEN PRINT "landmarks  "; JOIN(facts{"landmarks"}, ", ")

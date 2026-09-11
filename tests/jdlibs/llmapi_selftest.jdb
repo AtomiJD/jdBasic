@@ -1,0 +1,179 @@
+' LLMAPI against two stub endpoints in the same process: what the module
+' sends to each vendor, and what it makes of their answers.
+
+IMPORT TESTKIT
+IMPORT SCHEMA
+IMPORT LLMAPI
+
+DIM gOpenAi = {}
+DIM gOpenAiHeaders = {}
+DIM gClaude = {}
+DIM gClaudeHeaders = {}
+
+FUNC HasToolResult(messages)
+    DIM i = 0
+    FOR i = 0 TO LEN(messages) - 1
+        IF messages[i]{"role"} = "tool" THEN RETURN TRUE
+        IF TYPEOF(messages[i]{"content"}) = "ARRAY" THEN
+            IF LEN(messages[i]{"content"}) > 0 ANDALSO messages[i]{"content"}[0]{"type"} = "tool_result" THEN RETURN TRUE
+        ENDIF
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+FUNC HANDLE_OPENAI(request)
+    gOpenAi = JSON.PARSE$(request{"BODY"})
+    gOpenAiHeaders = request{"HEADERS"}
+    DIM msg AS MAP
+    msg{"role"} = "assistant"
+    IF MAP.EXISTS(gOpenAi, "response_format") THEN
+        msg{"content"} = JSON.STRINGIFY$({"city": "Berlin", "population": 3600000})
+    ELSEIF MAP.EXISTS(gOpenAi, "tools") ANDALSO NOT HasToolResult(gOpenAi{"messages"}) THEN
+        msg{"content"} = ""
+        msg{"tool_calls"} = [{"id": "call_1", "type": "function", "function": {"name": "weather", "arguments": JSON.STRINGIFY$({"city": "Bonn"})}}]
+    ELSE
+        msg{"content"} = "hello from openai"
+    ENDIF
+    RETURN {"id": "chatcmpl-1", "choices": [{"index": 0, "message": msg, "finish_reason": "stop"}], "usage": {"prompt_tokens": 12, "completion_tokens": 5}}
+ENDFUNC
+
+FUNC HANDLE_CLAUDE(request)
+    gClaude = JSON.PARSE$(request{"BODY"})
+    gClaudeHeaders = request{"HEADERS"}
+    DIM blocks = []
+    IF MAP.EXISTS(gClaude, "tool_choice") THEN
+        blocks = [{"type": "tool_use", "id": "toolu_1", "name": "answer", "input": {"city": "Berlin", "population": 3600000}}]
+    ELSEIF MAP.EXISTS(gClaude, "tools") ANDALSO NOT HasToolResult(gClaude{"messages"}) THEN
+        blocks = [{"type": "text", "text": "Let me check."}, {"type": "tool_use", "id": "toolu_2", "name": "weather", "input": {"city": "Bonn"}}]
+    ELSE
+        blocks = [{"type": "text", "text": "hello from "}, {"type": "text", "text": "claude"}]
+    ENDIF
+    RETURN {"id": "msg_1", "role": "assistant", "content": blocks, "stop_reason": "end_turn", "usage": {"input_tokens": 20, "output_tokens": 7}}
+ENDFUNC
+
+FUNC HANDLE_DENIED(request)
+    RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": {"message": "bad key"}})}
+ENDFUNC
+
+FUNC Denied(c)
+    RETURN LLMAPI.ASK$(c, "hi")
+ENDFUNC
+
+FUNC Unknown(name$)
+    RETURN LLMAPI.NEW(name$, "m")
+ENDFUNC
+
+HTTP.SERVER.ON_POST("/v1/chat/completions", "HANDLE_OPENAI")
+HTTP.SERVER.ON_POST("/v1/messages", "HANDLE_CLAUDE")
+HTTP.SERVER.ON_POST("/denied/chat/completions", "HANDLE_DENIED")
+IF NOT HTTP.SERVER.START(9978) THEN
+    PRINT "could not start the stub server on 9978"
+    END 1
+ENDIF
+
+DIM base$ = "http://127.0.0.1:9978"
+
+TESTKIT.SUITE("clients")
+DIM ai = LLMAPI.NEW("openai", "gpt-4o-mini", "sk-test", base$ + "/v1")
+TESTKIT.EQ(ai{"provider"}, "openai", "the provider")
+TESTKIT.EQ(ai{"base"}, base$ + "/v1", "a base URL override")
+DIM claude = LLMAPI.NEW("anthropic", "claude-sonnet-5", "ak-test", base$)
+TESTKIT.EQ(claude{"base"}, base$, "for anthropic too")
+TESTKIT.EQ(LLMAPI.NEW("openai", "m", "k"){"base"}, "https://api.openai.com/v1", "the default OpenAI base")
+TESTKIT.EQ(LLMAPI.NEW("anthropic", "m", "k"){"base"}, "https://api.anthropic.com", "the default Anthropic base")
+TESTKIT.THROWS(Unknown@, "cohere", "an unknown provider is refused")
+TESTKIT.EQ(LLMAPI.USER("hi"){"role"}, "user", "a user message")
+TESTKIT.EQ(LLMAPI.ASSISTANT("yo"){"content"}, "yo", "an assistant message")
+
+TESTKIT.SUITE("OpenAI: a plain chat")
+LLMAPI.SYSTEM(ai, "Be brief.")
+LLMAPI.SET(ai, "temperature", 0.2)
+DIM reply = LLMAPI.CHAT(ai, "Say hi.")
+TESTKIT.EQ(reply{"text"}, "hello from openai", "the text")
+TESTKIT.EQ(reply{"finish"}, "stop", "the finish reason")
+TESTKIT.EQ(reply{"usage"}{"input"}, 12, "input tokens")
+TESTKIT.EQ(reply{"usage"}{"output"}, 5, "output tokens")
+TESTKIT.EQ(LEN(reply{"tool_calls"}), 0, "no tool calls")
+TESTKIT.EQ(gOpenAiHeaders{"authorization"}, "Bearer sk-test", "the bearer header")
+TESTKIT.EQ(gOpenAi{"model"}, "gpt-4o-mini", "the model")
+TESTKIT.EQ(gOpenAi{"temperature"}, 0.2, "the temperature")
+TESTKIT.EQ(gOpenAi{"max_tokens"}, 1024, "the default max_tokens")
+TESTKIT.EQ(LEN(gOpenAi{"messages"}), 2, "system plus user")
+TESTKIT.EQ(gOpenAi{"messages"}[0]{"role"}, "system", "the system prompt leads")
+TESTKIT.EQ(gOpenAi{"messages"}[0]{"content"}, "Be brief.", "with its text")
+TESTKIT.EQ(gOpenAi{"messages"}[1]{"content"}, "Say hi.", "then the prompt")
+TESTKIT.EQ(LLMAPI.ASK$(ai, "again"), "hello from openai", "ASK$ is the short form")
+
+TESTKIT.SUITE("OpenAI: structured output")
+DIM shape = SCHEMA.NEW({"city": "string!", "population": "integer!"})
+DIM facts = LLMAPI.JSON(ai, "Berlin, please.", shape)
+TESTKIT.EQ(facts{"population"}, 3600000, "the parsed answer")
+TESTKIT.EQ(gOpenAi{"response_format"}{"type"}, "json_schema", "asked for a JSON schema response")
+TESTKIT.EQ(gOpenAi{"response_format"}{"json_schema"}{"schema"}{"properties"}{"city"}{"type"}, "string", "carrying the schema")
+TESTKIT.ISTRUE(gOpenAi{"response_format"}{"json_schema"}{"strict"}, "strictly")
+DIM facts2 = LLMAPI.JSON(ai, "Berlin, please.", {"city": "string!"})
+TESTKIT.EQ(facts2{"city"}, "Berlin", "a bare declaration map works as the shape")
+
+TESTKIT.SUITE("OpenAI: tools")
+LLMAPI.TOOL(ai, "weather", "Current weather for a city", {"city": "string!"})
+DIM turn = LLMAPI.CHAT(ai, [LLMAPI.USER("How warm is Bonn?")])
+TESTKIT.EQ(gOpenAi{"tools"}[0]{"type"}, "function", "tools are functions")
+TESTKIT.EQ(gOpenAi{"tools"}[0]{"function"}{"name"}, "weather", "by name")
+TESTKIT.EQ(gOpenAi{"tools"}[0]{"function"}{"parameters"}{"required"}[0], "city", "with the parameter schema")
+TESTKIT.EQ(LEN(turn{"tool_calls"}), 1, "the model asked for the tool")
+DIM wanted = turn{"tool_calls"}[0]
+TESTKIT.EQ(wanted{"name"}, "weather", "which one")
+TESTKIT.EQ(wanted{"arguments"}{"city"}, "Bonn", "arguments arrive parsed")
+TESTKIT.EQ(wanted{"id"}, "call_1", "with the id")
+DIM answered = LLMAPI.CHAT(ai, [LLMAPI.USER("How warm is Bonn?"), turn, LLMAPI.TOOL_RESULT(wanted, "21 degrees")])
+TESTKIT.EQ(answered{"text"}, "hello from openai", "the follow-up completes")
+TESTKIT.EQ(LEN(gOpenAi{"messages"}), 4, "system, user, assistant, tool")
+TESTKIT.EQ(gOpenAi{"messages"}[2]{"role"}, "assistant", "the reply goes back as an assistant turn")
+TESTKIT.EQ(gOpenAi{"messages"}[2]{"tool_calls"}[0]{"function"}{"arguments"}, JSON.STRINGIFY$({"city": "Bonn"}), "with its call re-encoded as a string")
+TESTKIT.EQ(gOpenAi{"messages"}[3]{"role"}, "tool", "the tool answer is a tool turn")
+TESTKIT.EQ(gOpenAi{"messages"}[3]{"tool_call_id"}, "call_1", "bound to the call")
+LLMAPI.CLEAR_TOOLS(ai)
+TESTKIT.EQ(LEN(ai{"tools"}), 0, "tools can be cleared")
+
+TESTKIT.SUITE("Anthropic: a plain chat")
+LLMAPI.SYSTEM(claude, "Be brief.")
+DIM creply = LLMAPI.CHAT(claude, [LLMAPI.USER("Say hi."), LLMAPI.ASSISTANT("hi"), LLMAPI.USER("again")])
+TESTKIT.EQ(creply{"text"}, "hello from claude", "text blocks are joined")
+TESTKIT.EQ(creply{"finish"}, "end_turn", "the stop reason")
+TESTKIT.EQ(creply{"usage"}{"input"}, 20, "input tokens")
+TESTKIT.EQ(creply{"usage"}{"output"}, 7, "output tokens")
+TESTKIT.EQ(gClaudeHeaders{"x-api-key"}, "ak-test", "the key header")
+TESTKIT.EQ(gClaudeHeaders{"anthropic-version"}, "2023-06-01", "the version header")
+TESTKIT.EQ(gClaude{"system"}, "Be brief.", "the system prompt is a top-level field")
+TESTKIT.EQ(LEN(gClaude{"messages"}), 3, "and not a message")
+TESTKIT.EQ(gClaude{"messages"}[1]{"role"}, "assistant", "turns keep their roles")
+TESTKIT.EQ(gClaude{"max_tokens"}, 1024, "max_tokens is always sent")
+
+TESTKIT.SUITE("Anthropic: structured output")
+DIM cfacts = LLMAPI.JSON(claude, "Berlin, please.", shape)
+TESTKIT.EQ(cfacts{"population"}, 3600000, "the tool input is the answer")
+TESTKIT.EQ(gClaude{"tool_choice"}{"name"}, "answer", "the answer tool is forced")
+TESTKIT.EQ(gClaude{"tools"}[0]{"input_schema"}{"properties"}{"population"}{"type"}, "integer", "its input schema is the shape")
+
+TESTKIT.SUITE("Anthropic: tools")
+LLMAPI.TOOL(claude, "weather", "Current weather for a city", {"city": "string!"})
+DIM cturn = LLMAPI.CHAT(claude, [LLMAPI.USER("How warm is Bonn?")])
+TESTKIT.EQ(gClaude{"tools"}[0]{"name"}, "weather", "tools go out by name")
+TESTKIT.EQ(cturn{"text"}, "Let me check.", "the text before the call")
+TESTKIT.EQ(LEN(cturn{"tool_calls"}), 1, "one call")
+DIM cwanted = cturn{"tool_calls"}[0]
+TESTKIT.EQ(cwanted{"arguments"}{"city"}, "Bonn", "with its input")
+DIM canswered = LLMAPI.CHAT(claude, [LLMAPI.USER("How warm is Bonn?"), cturn, LLMAPI.TOOL_RESULT(cwanted, "21 degrees")])
+TESTKIT.EQ(canswered{"text"}, "hello from claude", "the follow-up completes")
+TESTKIT.EQ(gClaude{"messages"}[1]{"content"}[0]{"type"}, "text", "the assistant turn keeps its text block")
+TESTKIT.EQ(gClaude{"messages"}[1]{"content"}[1]{"type"}, "tool_use", "and its tool_use block")
+TESTKIT.EQ(gClaude{"messages"}[2]{"role"}, "user", "the tool answer is a user turn")
+TESTKIT.EQ(gClaude{"messages"}[2]{"content"}[0]{"type"}, "tool_result", "with a tool_result block")
+TESTKIT.EQ(gClaude{"messages"}[2]{"content"}[0]{"tool_use_id"}, "toolu_2", "bound to the call")
+
+TESTKIT.SUITE("errors")
+DIM denied = LLMAPI.NEW("openai", "gpt-4o-mini", "bad", base$ + "/denied")
+TESTKIT.THROWS(Denied@, denied, "a 401 raises")
+
+HTTP.SERVER.STOP()
+PRINT TESTKIT.REPORT()

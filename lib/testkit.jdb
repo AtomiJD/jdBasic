@@ -277,7 +277,7 @@ EXPORT SUB THROWS(fn, arg, message$)
     IF raised THEN
         Record(ST_OK, message$, "")
     ELSE
-        Record(ST_FAIL, message$, "expected an error, the call returned normally")
+        Record(ST_FAIL, message$, "expected an error, the call returned normally for a " + LCASE$(TYPEOF(arg)) + " argument")
     ENDIF
 ENDSUB
 

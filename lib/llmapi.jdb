@@ -1,0 +1,402 @@
+' llmapi.jdb - one chat client for OpenAI, Anthropic, any OpenAI-compatible
+' server (llama-server, vLLM, Ollama) and the local AI.* model, behind one
+' message shape.
+'
+'   IMPORT LLMAPI
+'   DIM ai = LLMAPI.NEW("openai", "gpt-4o-mini")
+'   LLMAPI.SYSTEM(ai, "You answer in one sentence.")
+'   PRINT LLMAPI.ASK$(ai, "Why is the sky blue?")
+'
+'   DIM claude = LLMAPI.NEW("anthropic", "claude-sonnet-5")
+'   DIM reply = LLMAPI.CHAT(claude, [LLMAPI.USER("Name three rivers.")])
+'   PRINT reply{"text"}; " ("; reply{"usage"}{"output"}; " tokens)"
+'
+'   DIM shape = SCHEMA.NEW({"city": "string!", "population": "integer!"})
+'   DIM facts = LLMAPI.JSON(ai, "Berlin, please.", shape)
+'   PRINT facts{"population"}
+'
+'   LLMAPI.TOOL(ai, "weather", "Current weather for a city", {"city": "string!"})
+'   DIM turn = LLMAPI.CHAT(ai, [LLMAPI.USER("How warm is Bonn?")])
+'   IF LEN(turn{"tool_calls"}) > 0 THEN
+'       DIM wanted = turn{"tool_calls"}[0]
+'       PRINT wanted{"name"}; " "; wanted{"arguments"}{"city"}
+'       DIM followup = LLMAPI.CHAT(ai, [LLMAPI.USER("How warm is Bonn?"), turn, LLMAPI.TOOL_RESULT(wanted, "21 degrees")])
+'   ENDIF
+'
+' Providers: "openai" (also any server that speaks its chat API; give the
+' base URL), "anthropic", and "local" for a GGUF model through AI.LOAD_LLM,
+' where the model argument is the file path. The key comes from the call or
+' from OPENAI_API_KEY / ANTHROPIC_API_KEY.
+'
+' Messages are maps with "role" and "content"; an assistant turn may carry
+' "tool_calls", a tool answer has role "tool" and "tool_call_id". CHAT
+' returns {"role", "text", "tool_calls", "usage": {"input", "output"},
+' "finish", "raw"}, which is itself a message and can go back into the
+' next call. A reply that failed at the HTTP level raises.
+'
+' The HTTP timeout is set per client (120 seconds by default); the local
+' model has none. Streaming is not part of this module.
+
+IMPORT REQ
+IMPORT SCHEMA
+
+EXPORT MODULE LLMAPI
+
+CONST OPENAI_BASE = "https://api.openai.com/v1"
+CONST ANTHROPIC_BASE = "https://api.anthropic.com"
+CONST ANTHROPIC_VERSION = "2023-06-01"
+
+EXPORT FUNC NEW(provider$, model$, api_key$ = "", base_url$ = "")
+    DIM c AS MAP
+    c{"provider"} = LCASE$(provider$)
+    c{"model"} = model$
+    c{"system"} = ""
+    c{"temperature"} = -1
+    c{"max_tokens"} = 1024
+    c{"timeout"} = 120
+    c{"tools"} = []
+    c{"llm"} = -1
+    IF c{"provider"} = "openai" THEN
+        IF LEN(api_key$) = 0 THEN api_key$ = GETENV$("OPENAI_API_KEY")
+        IF LEN(base_url$) = 0 THEN base_url$ = OPENAI_BASE
+    ELSEIF c{"provider"} = "anthropic" THEN
+        IF LEN(api_key$) = 0 THEN api_key$ = GETENV$("ANTHROPIC_API_KEY")
+        IF LEN(base_url$) = 0 THEN base_url$ = ANTHROPIC_BASE
+    ELSEIF c{"provider"} <> "local" THEN
+        THROW "LLMAPI: unknown provider " + provider$ + " (openai, anthropic, local)"
+    ENDIF
+    c{"key"} = api_key$
+    c{"base"} = base_url$
+    RETURN c
+ENDFUNC
+
+EXPORT SUB SYSTEM(c, text$)
+    c{"system"} = text$
+ENDSUB
+
+' Keys: "temperature", "max_tokens", "timeout".
+EXPORT SUB SET(c, key$, value)
+    c{key$} = value
+ENDSUB
+
+' Registers a tool the model may call. params is a SCHEMA declaration map,
+' a schema built with SCHEMA.NEW, or a ready JSON Schema object.
+EXPORT SUB TOOL(c, name$, description$, params)
+    DIM tools = c{"tools"}
+    PUSH(tools, {"name": name$, "description": description$, "parameters": AsJsonSchema(params)})
+    c{"tools"} = tools
+ENDSUB
+
+EXPORT SUB CLEAR_TOOLS(c)
+    c{"tools"} = []
+ENDSUB
+
+EXPORT FUNC USER(text$)
+    RETURN {"role": "user", "content": text$}
+ENDFUNC
+
+EXPORT FUNC ASSISTANT(text$)
+    RETURN {"role": "assistant", "content": text$}
+ENDFUNC
+
+' The message that answers a tool call from a CHAT reply.
+EXPORT FUNC TOOL_RESULT(tool_call, content$)
+    RETURN {"role": "tool", "tool_call_id": tool_call{"id"}, "name": tool_call{"name"}, "content": content$}
+ENDFUNC
+
+EXPORT FUNC ASK$(c, prompt$)
+    RETURN CHAT(c, prompt$){"text"}
+ENDFUNC
+
+' A prompt string or a message array; the reply as a normalized map.
+EXPORT FUNC CHAT(c, messages)
+    DIM turns = AsMessages(messages)
+    IF c{"provider"} = "openai" THEN RETURN OpenAiChat(c, turns, 0)
+    IF c{"provider"} = "anthropic" THEN RETURN AnthropicChat(c, turns, 0)
+    RETURN LocalChat(c, turns, 0)
+ENDFUNC
+
+' Structured output: the reply parsed against the schema. shape is a SCHEMA
+' declaration map, a schema from SCHEMA.NEW, or a JSON Schema object.
+EXPORT FUNC JSON(c, messages, shape)
+    DIM turns = AsMessages(messages)
+    DIM js = AsJsonSchema(shape)
+    DIM reply = 0
+    IF c{"provider"} = "openai" THEN
+        reply = OpenAiChat(c, turns, js)
+    ELSEIF c{"provider"} = "anthropic" THEN
+        reply = AnthropicChat(c, turns, js)
+    ELSE
+        reply = LocalChat(c, turns, js)
+    ENDIF
+    IF TYPEOF(reply{"json"}) = "OBJECT" THEN RETURN reply{"json"}
+    DIM parsed = JSON.PARSE$(reply{"text"})
+    IF TYPEOF(parsed) = "NONE" THEN THROW "LLMAPI: the model did not answer with JSON: " + LEFT$(reply{"text"}, 200)
+    RETURN parsed
+ENDFUNC
+
+FUNC AsMessages(messages)
+    IF TYPEOF(messages) = "STRING" THEN RETURN [USER(messages)]
+    IF TYPEOF(messages) = "ARRAY" THEN RETURN messages
+    IF TYPEOF(messages) = "OBJECT" THEN RETURN [messages]
+    THROW "LLMAPI: messages must be a prompt string or an array of messages"
+ENDFUNC
+
+FUNC AsJsonSchema(shape)
+    IF TYPEOF(shape) <> "OBJECT" THEN THROW "LLMAPI: a schema must be a map"
+    IF MAP.EXISTS(shape, "kind") ANDALSO shape{"kind"} = "schema" THEN RETURN SCHEMA.JSONSCHEMA(shape)
+    IF MAP.EXISTS(shape, "type") ANDALSO shape{"type"} = "object" ANDALSO MAP.EXISTS(shape, "properties") THEN RETURN shape
+    RETURN SCHEMA.JSONSCHEMA(SCHEMA.NEW(shape))
+ENDFUNC
+
+FUNC Session(c)
+    DIM s = REQ.NEW(c{"base"})
+    REQ.TIMEOUT(s, c{"timeout"})
+    RETURN s
+ENDFUNC
+
+FUNC Failed(c, r)
+    DIM detail$ = LEFT$(r{"body"}, 300)
+    IF r{"status"} = 0 THEN detail$ = r{"error"}
+    THROW "LLMAPI: " + c{"provider"} + " answered " + STR$(r{"status"}) + ": " + detail$
+ENDFUNC
+
+FUNC Reply(text$, calls, usage_in, usage_out, finish$, raw)
+    RETURN {"role": "assistant", "text": text$, "tool_calls": calls, "usage": {"input": usage_in, "output": usage_out}, "finish": finish$, "raw": raw, "json": 0}
+ENDFUNC
+
+' ── OpenAI chat completions ─────────────────────────────────────
+
+FUNC OpenAiChat(c, turns, js)
+    DIM body AS MAP
+    body{"model"} = c{"model"}
+    body{"messages"} = OpenAiMessages(c, turns)
+    body{"max_tokens"} = c{"max_tokens"}
+    IF c{"temperature"} >= 0 THEN body{"temperature"} = c{"temperature"}
+    IF LEN(c{"tools"}) > 0 THEN
+        DIM tools = []
+        DIM i = 0
+        FOR i = 0 TO LEN(c{"tools"}) - 1
+            DIM t = c{"tools"}[i]
+            PUSH(tools, {"type": "function", "function": {"name": t{"name"}, "description": t{"description"}, "parameters": t{"parameters"}}})
+        NEXT i
+        body{"tools"} = tools
+    ENDIF
+    IF TYPEOF(js) = "OBJECT" THEN
+        body{"response_format"} = {"type": "json_schema", "json_schema": {"name": "answer", "schema": StrictSchema(js), "strict": TRUE}}
+    ENDIF
+    DIM s = Session(c)
+    IF LEN(c{"key"}) > 0 THEN REQ.BEARER(s, c{"key"})
+    DIM r = REQ.POST(s, "/chat/completions", body)
+    IF NOT r{"ok"} THEN Failed(c, r)
+    DIM raw = REQ.JSON(r)
+    DIM choice = raw{"choices"}[0]
+    DIM msg = choice{"message"}
+    DIM text$ = ""
+    IF MAP.EXISTS(msg, "content") ANDALSO TYPEOF(msg{"content"}) = "STRING" THEN text$ = msg{"content"}
+    DIM calls = []
+    IF MAP.EXISTS(msg, "tool_calls") ANDALSO TYPEOF(msg{"tool_calls"}) = "ARRAY" THEN
+        DIM k = 0
+        FOR k = 0 TO LEN(msg{"tool_calls"}) - 1
+            DIM tc = msg{"tool_calls"}[k]
+            DIM args = JSON.PARSE$(tc{"function"}{"arguments"})
+            IF TYPEOF(args) = "NONE" THEN args = {}
+            PUSH(calls, {"id": tc{"id"}, "name": tc{"function"}{"name"}, "arguments": args})
+        NEXT k
+    ENDIF
+    DIM used_in = 0
+    DIM used_out = 0
+    IF MAP.EXISTS(raw, "usage") THEN
+        used_in = raw{"usage"}{"prompt_tokens"}
+        used_out = raw{"usage"}{"completion_tokens"}
+    ENDIF
+    DIM finish$ = ""
+    IF MAP.EXISTS(choice, "finish_reason") THEN finish$ = choice{"finish_reason"}
+    RETURN Reply(text$, calls, used_in, used_out, finish$, raw)
+ENDFUNC
+
+' OpenAI's strict mode takes only type, properties, required, items, enum
+' and description, wants every property required and no extra keys, so
+' the schema is reduced to that before it goes out. SCHEMA.CHECK on the
+' answer still applies the full declaration.
+FUNC StrictSchema(js)
+    DIM out AS MAP
+    IF MAP.EXISTS(js, "type") THEN out{"type"} = js{"type"}
+    DIM about$ = ""
+    IF MAP.EXISTS(js, "description") THEN about$ = js{"description"}
+    ' Limits the strict mode cannot carry are spelled out for the model.
+    DIM notes$ = []
+    IF MAP.EXISTS(js, "minimum") THEN PUSH(notes$, "at least " + STR$(js{"minimum"}))
+    IF MAP.EXISTS(js, "maximum") THEN PUSH(notes$, "at most " + STR$(js{"maximum"}))
+    IF MAP.EXISTS(js, "minLength") THEN PUSH(notes$, "at least " + STR$(js{"minLength"}) + " characters")
+    IF MAP.EXISTS(js, "maxLength") THEN PUSH(notes$, "at most " + STR$(js{"maxLength"}) + " characters")
+    IF MAP.EXISTS(js, "minItems") THEN PUSH(notes$, "at least " + STR$(js{"minItems"}) + " items")
+    IF MAP.EXISTS(js, "maxItems") THEN PUSH(notes$, "at most " + STR$(js{"maxItems"}) + " items")
+    IF MAP.EXISTS(js, "pattern") THEN PUSH(notes$, "matching " + js{"pattern"})
+    IF LEN(notes$) > 0 THEN
+        IF LEN(about$) > 0 THEN about$ = about$ + " "
+        about$ = about$ + "(" + JOIN(notes$, ", ") + ")"
+    ENDIF
+    IF LEN(about$) > 0 THEN out{"description"} = about$
+    IF MAP.EXISTS(js, "enum") THEN out{"enum"} = js{"enum"}
+    IF MAP.EXISTS(js, "properties") THEN
+        DIM props AS MAP
+        DIM names = MAP.KEYS(js{"properties"})
+        DIM i = 0
+        FOR i = 0 TO LEN(names) - 1
+            props{names[i]} = StrictSchema(js{"properties"}{names[i]})
+        NEXT i
+        out{"properties"} = props
+        out{"required"} = names
+        out{"additionalProperties"} = FALSE
+    ENDIF
+    IF MAP.EXISTS(js, "items") THEN out{"items"} = StrictSchema(js{"items"})
+    RETURN out
+ENDFUNC
+
+FUNC OpenAiMessages(c, turns)
+    DIM out = []
+    IF LEN(c{"system"}) > 0 THEN PUSH(out, {"role": "system", "content": c{"system"}})
+    DIM i = 0
+    FOR i = 0 TO LEN(turns) - 1
+        DIM m = turns[i]
+        IF m{"role"} = "tool" THEN
+            PUSH(out, {"role": "tool", "tool_call_id": m{"tool_call_id"}, "content": m{"content"}})
+        ELSEIF m{"role"} = "assistant" ANDALSO MAP.EXISTS(m, "tool_calls") ANDALSO LEN(m{"tool_calls"}) > 0 THEN
+            DIM calls = []
+            DIM k = 0
+            FOR k = 0 TO LEN(m{"tool_calls"}) - 1
+                DIM tc = m{"tool_calls"}[k]
+                PUSH(calls, {"id": tc{"id"}, "type": "function", "function": {"name": tc{"name"}, "arguments": JSON.STRINGIFY$(tc{"arguments"})}})
+            NEXT k
+            PUSH(out, {"role": "assistant", "content": TextOf$(m), "tool_calls": calls})
+        ELSE
+            PUSH(out, {"role": m{"role"}, "content": TextOf$(m)})
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC TextOf$(m)
+    IF MAP.EXISTS(m, "text") ANDALSO TYPEOF(m{"text"}) = "STRING" THEN RETURN m{"text"}
+    IF MAP.EXISTS(m, "content") ANDALSO TYPEOF(m{"content"}) = "STRING" THEN RETURN m{"content"}
+    RETURN ""
+ENDFUNC
+
+' ── Anthropic messages ──────────────────────────────────────────
+
+FUNC AnthropicChat(c, turns, js)
+    DIM body AS MAP
+    body{"model"} = c{"model"}
+    body{"max_tokens"} = c{"max_tokens"}
+    body{"messages"} = AnthropicMessages(turns)
+    IF LEN(c{"system"}) > 0 THEN body{"system"} = c{"system"}
+    IF c{"temperature"} >= 0 THEN body{"temperature"} = c{"temperature"}
+    DIM tools = []
+    DIM i = 0
+    FOR i = 0 TO LEN(c{"tools"}) - 1
+        DIM t = c{"tools"}[i]
+        PUSH(tools, {"name": t{"name"}, "description": t{"description"}, "input_schema": t{"parameters"}})
+    NEXT i
+    ' Structured output is a forced call of a tool whose input is the schema.
+    IF TYPEOF(js) = "OBJECT" THEN
+        PUSH(tools, {"name": "answer", "description": "The answer in the requested shape.", "input_schema": js})
+        body{"tool_choice"} = {"type": "tool", "name": "answer"}
+    ENDIF
+    IF LEN(tools) > 0 THEN body{"tools"} = tools
+    DIM s = Session(c)
+    REQ.HEADER(s, "x-api-key", c{"key"})
+    REQ.HEADER(s, "anthropic-version", ANTHROPIC_VERSION)
+    DIM r = REQ.POST(s, "/v1/messages", body)
+    IF NOT r{"ok"} THEN Failed(c, r)
+    DIM raw = REQ.JSON(r)
+    DIM text$ = ""
+    DIM calls = []
+    DIM answer = 0
+    DIM blocks = raw{"content"}
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        IF b{"type"} = "text" THEN
+            text$ = text$ + b{"text"}
+        ELSEIF b{"type"} = "tool_use" THEN
+            IF TYPEOF(js) = "OBJECT" ANDALSO b{"name"} = "answer" THEN
+                answer = b{"input"}
+            ELSE
+                PUSH(calls, {"id": b{"id"}, "name": b{"name"}, "arguments": b{"input"}})
+            ENDIF
+        ENDIF
+    NEXT k
+    DIM used_in = 0
+    DIM used_out = 0
+    IF MAP.EXISTS(raw, "usage") THEN
+        used_in = raw{"usage"}{"input_tokens"}
+        used_out = raw{"usage"}{"output_tokens"}
+    ENDIF
+    DIM finish$ = ""
+    IF MAP.EXISTS(raw, "stop_reason") ANDALSO TYPEOF(raw{"stop_reason"}) = "STRING" THEN finish$ = raw{"stop_reason"}
+    DIM reply = Reply(text$, calls, used_in, used_out, finish$, raw)
+    IF TYPEOF(answer) = "OBJECT" THEN reply{"json"} = answer
+    RETURN reply
+ENDFUNC
+
+' Anthropic takes only user and assistant turns; a tool answer is a user
+' turn with a tool_result block, an assistant turn with calls carries
+' tool_use blocks.
+FUNC AnthropicMessages(turns)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(turns) - 1
+        DIM m = turns[i]
+        IF m{"role"} = "tool" THEN
+            PUSH(out, {"role": "user", "content": [{"type": "tool_result", "tool_use_id": m{"tool_call_id"}, "content": m{"content"}}]})
+        ELSEIF m{"role"} = "assistant" ANDALSO MAP.EXISTS(m, "tool_calls") ANDALSO LEN(m{"tool_calls"}) > 0 THEN
+            DIM blocks = []
+            DIM text$ = TextOf$(m)
+            IF LEN(text$) > 0 THEN PUSH(blocks, {"type": "text", "text": text$})
+            DIM k = 0
+            FOR k = 0 TO LEN(m{"tool_calls"}) - 1
+                DIM tc = m{"tool_calls"}[k]
+                PUSH(blocks, {"type": "tool_use", "id": tc{"id"}, "name": tc{"name"}, "input": tc{"arguments"}})
+            NEXT k
+            PUSH(out, {"role": "assistant", "content": blocks})
+        ELSEIF m{"role"} = "system" THEN
+            PUSH(out, {"role": "user", "content": TextOf$(m)})
+        ELSE
+            PUSH(out, {"role": m{"role"}, "content": TextOf$(m)})
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── Local model through AI.* ────────────────────────────────────
+
+FUNC LocalChat(c, turns, js)
+    IF c{"llm"} < 0 THEN
+        c{"llm"} = AI.LOAD_LLM(c{"model"})
+        IF LEN(c{"system"}) > 0 THEN AI.SET(c{"llm"}, "system", c{"system"})
+        IF c{"temperature"} >= 0 THEN AI.SET(c{"llm"}, "temperature", c{"temperature"})
+        AI.SET(c{"llm"}, "max_tokens", c{"max_tokens"})
+    ENDIF
+    IF LEN(c{"tools"}) > 0 THEN THROW "LLMAPI: the local provider has no tool calling"
+    ' The model keeps its own history, so only the last user turn is sent;
+    ' earlier turns of a fresh conversation are folded into that prompt.
+    DIM prompt$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(turns) - 1
+        DIM m = turns[i]
+        IF i = LEN(turns) - 1 THEN
+            prompt$ = prompt$ + TextOf$(m)
+        ELSE
+            prompt$ = prompt$ + m{"role"} + ": " + TextOf$(m) + CHR$(10)
+        ENDIF
+    NEXT i
+    IF TYPEOF(js) = "OBJECT" THEN
+        DIM obj = AI.CHAT_JSON(c{"llm"}, prompt$ + CHR$(10) + "Answer as JSON matching this schema: " + JSON.STRINGIFY$(js))
+        DIM reply = Reply(JSON.STRINGIFY$(obj), [], 0, 0, "stop", obj)
+        reply{"json"} = obj
+        RETURN reply
+    ENDIF
+    DIM text$ = AI.CHAT(c{"llm"}, prompt$)
+    RETURN Reply(text$, [], 0, 0, "stop", text$)
+ENDFUNC

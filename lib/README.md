@@ -32,5 +32,8 @@ without copying anything.
 |--------|---------------|-------|
 | `testkit.jdb` | pytest | assertions, suites, TAP and JUnit output, non-zero exit on failure |
 | `cli.jdb` | argparse, click | flags, options with defaults, positionals, subcommands, generated help |
+| `req.jdb` | requests | sessions with base URL, headers, auth and cookies; query building, JSON and form bodies, multipart upload, retries with backoff |
+| `schema.jdb` | pydantic | map validation with defaults, coercion, nesting and enums; JSON Schema output for structured LLM answers |
+| `llmapi.jdb` | openai, anthropic SDKs | one chat client for OpenAI, Anthropic, OpenAI-compatible servers and the local AI.* model: tools, structured output, token usage |
 
 Tests for these modules live in `tests/jdlibs`.
