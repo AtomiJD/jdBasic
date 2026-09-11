@@ -1,0 +1,86 @@
+' cli_demo.jdb - a small tool with two subcommands, built with CLI.
+'
+' The point of the module is that the shape below is all there is: declare
+' the options, hand it the command line, and read the answers off a map with
+' every default already filled in.
+'
+'   jdBasic cli_demo.jdb --help
+'   jdBasic cli_demo.jdb build --help
+'   jdBasic cli_demo.jdb --verbose build --release --target arm64 src/main.jdb
+'   jdBasic cli_demo.jdb ship --to live -t urgent -t nightly
+'   jdBasic cli_demo.jdb --nope
+'
+' With no arguments it runs the same four examples itself, so the file is
+' worth running as it stands.
+
+IMPORT CLI
+
+DIM spec AS MAP
+CLI.INIT(spec, "packer", "build a thing and send it somewhere")
+CLI.VERSION(spec, "0.3.1")
+CLI.FLAG(spec, "verbose", "v", "say what is happening")
+CLI.OPT(spec, "config", "c", "settings file", "packer.json")
+
+DIM build_cmd AS MAP
+CLI.CMD(spec, build_cmd, "build", "compile the thing")
+CLI.FLAG(build_cmd, "release", "R", "optimise, and strip the symbols")
+CLI.OPT(build_cmd, "target", "T", "what to build for", "host")
+CLI.NUM(build_cmd, "jobs", "j", "how many at once", 4)
+CLI.ARG(build_cmd, "source", "the file to build", TRUE)
+
+DIM ship_cmd AS MAP
+CLI.CMD(spec, ship_cmd, "ship", "send the result out")
+CLI.OPT(ship_cmd, "to", "", "where to send it", "staging")
+CLI.MANY(ship_cmd, "tag", "t", "label the release, repeatable")
+
+' What the tool would actually do, once the command line is understood.
+SUB Run(got)
+    IF got{"verbose"} THEN PRINT "reading " + got{"config"}
+
+    IF got{"command"} = "build" THEN
+        DIM how$ = "debug"
+        IF got{"release"} THEN how$ = "release"
+        PRINT "building " + got{"args"}[0] + " for " + got{"target"} + _
+              " in " + how$ + " with " + STR$(got{"jobs"}) + " jobs"
+        RETURN
+    ENDIF
+
+    IF got{"command"} = "ship" THEN
+        PRINT "shipping to " + got{"to"}
+        DIM tags = got{"tag"}
+        IF LEN(tags) > 0 THEN PRINT "  tagged " + JOIN(tags, ", ")
+        RETURN
+    ENDIF
+ENDSUB
+
+DIM cli_args = CLI.ARGV()
+
+IF LEN(cli_args) > 0 THEN
+    DIM got = CLI.PARSE(spec, cli_args)
+    IF CLI.DONE(spec, got) THEN END
+    Run(got)
+    END
+ENDIF
+
+' ── run without arguments: four command lines, start to finish ──
+
+SUB Show(title$, argv)
+    PRINT ""
+    PRINT "$ packer " + JOIN(argv, " ")
+    DIM got = CLI.PARSE(spec, argv)
+    IF CLI.DONE(spec, got) THEN RETURN
+    Run(got)
+ENDSUB
+
+PRINT "packer, four command lines"
+
+Show("a build", ["--verbose", "build", "--release", "--target", "arm64", "src/main.jdb"])
+Show("a ship", ["ship", "--to", "live", "-t", "urgent", "-t", "nightly"])
+Show("a typo", ["--nope"])
+Show("a missing argument", ["build"])
+
+PRINT ""
+PRINT "and the help text it generates by itself"
+PRINT ""
+PRINT CLI.HELP$(spec)
+PRINT CLI.HELP$(build_cmd)

@@ -32,7 +32,7 @@ jdb/
 │   ├── audio/   FX.* effect chains - FX rack, live guitar FX, tone designer
 │   ├── apl/     vectorised idioms - Game of Life, primes, OUTER, one-liners
 │   ├── data/    vectors / matrices / dates - AGG, TALLY, EOMONTH, DATERANGE, MVINS, ZIP archives
-│   ├── jdlibs/  the module library by example - TESTKIT
+│   ├── jdlibs/  the module library by example - TESTKIT, CLI
 │   ├── tui/     terminal UI, FTXUI, markdown browser, cowsay
 │   ├── web/     HTTP server + client - jdTrakr kanban, JDWEB framework, dashboards
 │   ├── bridges/ FFI, COM (Excel/Word/Access/Outlook), SQLite, serial
@@ -79,6 +79,7 @@ Where the main libraries live now:
 | Module | Home | What it gives you |
 |---|---|---|
 | `testkit.jdb`               | `lib/` (repo root) | assertions, suites, TAP and JUnit output, non-zero exit on failure |
+| `cli.jdb`                   | `lib/` (repo root) | command line parsing - flags, options, positionals, subcommands, generated help |
 | `MATH.jdb` / `MLAB.jdb`      | `tutorials/`      | math constants + matrix / statistical / financial helpers |
 | `sys_paths.jdb`             | `tutorials/`      | OS-agnostic path joining |
 | `PLOTTER.jdb`               | `demos/graphics/` | 2D chart routine (`DATA_PLOTTER`) for the graphics demos |
@@ -181,6 +182,7 @@ See [`doc/howto-vector-matrix-data.md`](../doc/howto-vector-matrix-data.md) for 
 ### Testing (the module library)
 
 * **`demos/jdlibs/testkit_demo.jdb`** - a slug builder, a thousands separator and a price parser, with the test file that holds them to it. Shows every assertion, and takes an argument: `tap` and `junit` switch the report format, `fail` injects one wrong expectation so the failure line and the exit code can be seen.
+* **`demos/jdlibs/cli_demo.jdb`** - a tool called `packer` with two subcommands, built with `CLI`: flags, options with defaults, a repeatable option, a required positional, and the help text it generates for the tool and for each command. Run it with no arguments and it walks four command lines itself.
 
 ### TUI
 

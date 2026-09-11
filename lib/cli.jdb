@@ -1,0 +1,511 @@
+' cli.jdb - command line parsing: flags, options, positionals, subcommands.
+'
+'   IMPORT CLI
+'   DIM spec AS MAP
+'   CLI.INIT(spec, "mytool", "does a thing")
+'   CLI.VERSION(spec, "1.2.0")
+'   CLI.FLAG(spec, "verbose", "v", "chatty output")
+'   CLI.OPT(spec, "out", "o", "output file", "out.txt")
+'   CLI.NUM(spec, "retries", "r", "how often to try again", 3)
+'   CLI.MANY(spec, "tag", "t", "may be given more than once")
+'   CLI.ARG(spec, "source", "the file to read", TRUE)
+'
+'   DIM build_cmd AS MAP
+'   CLI.CMD(spec, build_cmd, "build", "compile the thing")
+'   CLI.FLAG(build_cmd, "release", "R", "optimise")
+'
+'   DIM got = CLI.PARSE(spec, CLI.ARGV())
+'   IF CLI.DONE(spec, got) THEN END
+'   PRINT got{"out"}
+'
+' CLI.DONE prints what the run cannot continue without - the help text, the
+' version, or an error with the usage line - and answers TRUE when the caller
+' should stop. Everything it prints goes to stdout.
+'
+' Accepted on the command line:
+'   --name value    --name=value    -n value    -n
+'   -abc            clustered short flags
+'   --              stop reading options, the rest are positionals
+'
+' A parse never ends the program by itself, so a test can drive it.
+'
+' Interpreter for now. A parser stores its results under names it only learns
+' while reading the command line, and a map write with a computed key is
+' dropped by the native compiler (jdBasic ticket #369), which leaves every
+' parsed value unset in a compiled program.
+
+EXPORT MODULE CLI
+
+CONST KIND_FLAG = "flag"
+CONST KIND_STR = "str"
+CONST KIND_NUM = "num"
+CONST KIND_MANY = "many"
+
+' The caller declares the map and hands it in, rather than receiving one.
+' A map that comes back out of a module function does not carry later
+' mutations to the caller once the program is compiled, so every spec here
+' is owned by the script that declared it.
+EXPORT SUB INIT(spec, name$, about$)
+    spec{"name"} = name$
+    spec{"about"} = about$
+    spec{"version"} = ""
+    spec{"opts"} = []
+    spec{"args"} = []
+    spec{"cmds"} = []
+    spec{"cmdname"} = ""
+ENDSUB
+
+EXPORT SUB VERSION(spec, text$)
+    spec{"version"} = text$
+ENDSUB
+
+' Each kind carries its default in its own call rather than through one
+' shared parameter: a slot that takes a string in one call and an array in
+' the next has no single type for the native compiler to give it.
+FUNC NewOpt(long_name$, short_name$, help$, kind$)
+    DIM o AS MAP
+    o{"long"} = long_name$
+    o{"short"} = short_name$
+    o{"help"} = help$
+    o{"kind"} = kind$
+    RETURN o
+ENDFUNC
+
+' A switch. Present means TRUE, absent means FALSE.
+EXPORT SUB FLAG(spec, long_name$, short_name$, help$)
+    DIM o = NewOpt(long_name$, short_name$, help$, KIND_FLAG)
+    o{"default"} = FALSE
+    spec{"opts"} = APPEND(spec{"opts"}, o)
+ENDSUB
+
+EXPORT SUB OPT(spec, long_name$, short_name$, help$, fallback$)
+    DIM o = NewOpt(long_name$, short_name$, help$, KIND_STR)
+    o{"default"} = fallback$
+    spec{"opts"} = APPEND(spec{"opts"}, o)
+ENDSUB
+
+EXPORT SUB NUM(spec, long_name$, short_name$, help$, fallback)
+    DIM o = NewOpt(long_name$, short_name$, help$, KIND_NUM)
+    o{"default"} = fallback
+    spec{"opts"} = APPEND(spec{"opts"}, o)
+ENDSUB
+
+' Collects every occurrence into an array, empty when never given.
+EXPORT SUB MANY(spec, long_name$, short_name$, help$)
+    DIM o = NewOpt(long_name$, short_name$, help$, KIND_MANY)
+    o{"default"} = []
+    spec{"opts"} = APPEND(spec{"opts"}, o)
+ENDSUB
+
+EXPORT SUB ARG(spec, name$, help$, required)
+    DIM a AS MAP
+    a{"name"} = name$
+    a{"help"} = help$
+    a{"required"} = required
+    spec{"args"} = APPEND(spec{"args"}, a)
+ENDSUB
+
+' sub_spec is a map the caller declared. It takes options the same way the
+' root spec does, and may be filled in before or after this call.
+EXPORT SUB CMD(spec, sub_spec, name$, about$)
+    INIT(sub_spec, spec{"name"} + " " + name$, about$)
+    sub_spec{"cmdname"} = name$
+    spec{"cmds"} = APPEND(spec{"cmds"}, sub_spec)
+ENDSUB
+
+FUNC FindOpt(spec, long_name$, short_name$)
+    DIM opts = spec{"opts"}
+    DIM i
+    FOR i = 0 TO LEN(opts) - 1
+        DIM o = opts[i]
+        IF LEN(long_name$) > 0 AND o{"long"} = long_name$ THEN RETURN o
+        IF LEN(short_name$) > 0 AND o{"short"} = short_name$ THEN RETURN o
+    NEXT i
+    DIM missing AS MAP
+    RETURN missing
+ENDFUNC
+
+FUNC IsOpt(o)
+    RETURN TYPEOF(o) = "OBJECT" ANDALSO MAP.EXISTS(o, "long")
+ENDFUNC
+
+FUNC IsCmd(c)
+    RETURN TYPEOF(c) = "OBJECT" ANDALSO MAP.EXISTS(c, "cmdname")
+ENDFUNC
+
+FUNC FindCmd(spec, name$)
+    DIM cmds = spec{"cmds"}
+    DIM i
+    FOR i = 0 TO LEN(cmds) - 1
+        IF cmds[i]{"cmdname"} = name$ THEN RETURN cmds[i]
+    NEXT i
+    DIM missing AS MAP
+    RETURN missing
+ENDFUNC
+
+' Every option starts at its default, so a caller never has to test presence.
+SUB SeedDefaults(spec, got)
+    DIM opts = spec{"opts"}
+    DIM i
+    FOR i = 0 TO LEN(opts) - 1
+        got{opts[i]{"long"}} = opts[i]{"default"}
+    NEXT i
+ENDSUB
+
+SUB Fail(got, message$)
+    got{"ok"} = FALSE
+    IF LEN(got{"error"}) = 0 THEN got{"error"} = message$
+ENDSUB
+
+' Reads one option and returns how many argv entries it consumed.
+FUNC TakeValue(o, got, argv, at, inline_value$, has_inline)
+    DIM kind$ = o{"kind"}
+    IF kind$ = KIND_FLAG THEN
+        IF has_inline THEN
+            Fail(got, "--" + o{"long"} + " is a switch and takes no value")
+            RETURN 1
+        ENDIF
+        got{o{"long"}} = TRUE
+        RETURN 1
+    ENDIF
+
+    DIM raw$ = ""
+    DIM used = 1
+    IF has_inline THEN
+        raw$ = inline_value$
+    ELSE
+        IF at + 1 > LEN(argv) - 1 THEN
+            Fail(got, "--" + o{"long"} + " needs a value")
+            RETURN 1
+        ENDIF
+        raw$ = argv[at + 1]
+        used = 2
+    ENDIF
+
+    IF kind$ = KIND_NUM THEN
+        IF NOT LooksNumeric(raw$) THEN
+            Fail(got, "--" + o{"long"} + " wants a number, got " + CHR$(34) + raw$ + CHR$(34))
+            RETURN used
+        ENDIF
+        got{o{"long"}} = VAL(raw$)
+    ELSEIF kind$ = KIND_MANY THEN
+        got{o{"long"}} = APPEND(got{o{"long"}}, raw$)
+    ELSE
+        got{o{"long"}} = raw$
+    ENDIF
+    RETURN used
+ENDFUNC
+
+FUNC LooksNumeric(text$)
+    IF LEN(text$) = 0 THEN RETURN FALSE
+    DIM digits = 0
+    DIM dots = 0
+    DIM i
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ >= "0" AND ch$ <= "9" THEN
+            digits = digits + 1
+        ELSEIF ch$ = "." THEN
+            dots = dots + 1
+        ELSEIF (ch$ = "-" ORELSE ch$ = "+") AND i = 0 THEN
+            digits = digits
+        ELSE
+            RETURN FALSE
+        ENDIF
+    NEXT i
+    RETURN digits > 0 AND dots <= 1
+ENDFUNC
+
+' Parses one spec's options out of argv starting at `from`, stopping at the
+' first bare word when the spec has subcommands. Returns the result map.
+FUNC ParseInto(spec, got, argv, from, stop_at_word)
+    DIM i = from
+    DIM only_positionals = 0
+    DIM positionals = []
+
+    DO WHILE i <= LEN(argv) - 1
+        DIM token$ = argv[i]
+
+        IF only_positionals = 1 THEN
+            positionals = APPEND(positionals, token$)
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+
+        IF token$ = "--" THEN
+            only_positionals = 1
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+
+        IF STARTSWITH(token$, "--") THEN
+            DIM body$ = MID$(token$, 2, LEN(token$) - 2)
+            DIM eq = INSTR(body$, "=")
+            DIM name$ = body$
+            DIM inline$ = ""
+            DIM has_inline = FALSE
+            IF eq >= 0 THEN
+                name$ = LEFT$(body$, eq)
+                inline$ = MID$(body$, eq + 1, LEN(body$) - eq - 1)
+                has_inline = TRUE
+            ENDIF
+            IF name$ = "help" THEN
+                got{"help"} = TRUE
+                i = i + 1
+                CONTINUEDO
+            ENDIF
+            IF name$ = "version" THEN
+                got{"wantversion"} = TRUE
+                i = i + 1
+                CONTINUEDO
+            ENDIF
+            DIM o = FindOpt(spec, name$, "")
+            IF NOT IsOpt(o) THEN
+                Fail(got, "unknown option --" + name$)
+                i = i + 1
+                CONTINUEDO
+            ENDIF
+            i = i + TakeValue(o, got, argv, i, inline$, has_inline)
+            CONTINUEDO
+        ENDIF
+
+        IF STARTSWITH(token$, "-") AND LEN(token$) > 1 THEN
+            DIM letters$ = MID$(token$, 1, LEN(token$) - 1)
+            DIM k
+            DIM consumed = 1
+            FOR k = 0 TO LEN(letters$) - 1
+                DIM letter$ = MID$(letters$, k, 1)
+                IF letter$ = "h" THEN
+                    got{"help"} = TRUE
+                    CONTINUEFOR
+                ENDIF
+                DIM so = FindOpt(spec, "", letter$)
+                IF NOT IsOpt(so) THEN
+                    Fail(got, "unknown option -" + letter$)
+                    CONTINUEFOR
+                ENDIF
+                ' Only the last letter of a cluster may take a value.
+                IF so{"kind"} <> KIND_FLAG AND k < LEN(letters$) - 1 THEN
+                    Fail(got, "-" + letter$ + " takes a value and cannot sit inside " + token$)
+                    CONTINUEFOR
+                ENDIF
+                consumed = TakeValue(so, got, argv, i, "", FALSE)
+            NEXT k
+            i = i + consumed
+            CONTINUEDO
+        ENDIF
+
+        IF stop_at_word = 1 THEN
+            got{"command"} = token$
+            got{"rest_at"} = i + 1
+            got{"args"} = positionals
+            RETURN got
+        ENDIF
+
+        positionals = APPEND(positionals, token$)
+        i = i + 1
+    LOOP
+
+    got{"args"} = positionals
+    got{"rest_at"} = -1
+    RETURN got
+ENDFUNC
+
+' A compiled program sees its own path as the first argument, the interpreter
+' does not. Only an entry that carries a directory separator or an .exe suffix
+' counts as that path - a bare word is a command or a positional, even when a
+' directory of the same name happens to exist.
+FUNC LooksLikeProgramPath(text$)
+    IF LEN(text$) = 0 ORELSE STARTSWITH(text$, "-") THEN RETURN FALSE
+    IF ENDSWITH(LCASE$(text$), ".exe") THEN RETURN TRUE
+    IF INSTR(text$, "/") >= 0 ORELSE INSTR(text$, CHR$(92)) >= 0 THEN RETURN FILE.EXISTS(text$)
+    RETURN FALSE
+ENDFUNC
+
+' What the user actually typed: OS.ARGS without the leading program path,
+' which both backends put there. Useful for asking whether any argument was
+' given at all before handing the rest to PARSE.
+EXPORT FUNC ARGV()
+    DIM raw = OS.ARGS()
+    DIM out = []
+    DIM i
+    DIM start = 0
+    IF LEN(raw) > 0 THEN
+        IF LooksLikeProgramPath(raw[0]) THEN start = 1
+    ENDIF
+    FOR i = start TO LEN(raw) - 1
+        out = APPEND(out, raw[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC PARSE(spec, argv)
+    DIM got AS MAP
+    got{"ok"} = TRUE
+    got{"error"} = ""
+    got{"command"} = ""
+    got{"help"} = FALSE
+    got{"wantversion"} = FALSE
+    got{"args"} = []
+    SeedDefaults(spec, got)
+
+    DIM start = 0
+    IF LEN(argv) > 0 THEN
+        IF LooksLikeProgramPath(argv[0]) THEN start = 1
+    ENDIF
+
+    DIM has_cmds = 0
+    IF LEN(spec{"cmds"}) > 0 THEN has_cmds = 1
+
+    got = ParseInto(spec, got, argv, start, has_cmds)
+
+    IF LEN(got{"command"}) > 0 THEN
+        DIM sub_spec = FindCmd(spec, got{"command"})
+        IF NOT IsCmd(sub_spec) THEN
+            Fail(got, "unknown command " + got{"command"})
+            RETURN got
+        ENDIF
+        SeedDefaults(sub_spec, got)
+        got = ParseInto(sub_spec, got, argv, got{"rest_at"}, 0)
+        CheckRequired(sub_spec, got)
+        RETURN got
+    ENDIF
+
+    IF has_cmds = 1 AND got{"help"} = FALSE AND got{"wantversion"} = FALSE THEN
+        Fail(got, "no command given")
+        RETURN got
+    ENDIF
+
+    CheckRequired(spec, got)
+    RETURN got
+ENDFUNC
+
+SUB CheckRequired(spec, got)
+    IF got{"help"} ORELSE got{"wantversion"} THEN RETURN
+    DIM wanted = spec{"args"}
+    DIM given = got{"args"}
+    DIM i
+    FOR i = 0 TO LEN(wanted) - 1
+        IF wanted[i]{"required"} AND i > LEN(given) - 1 THEN
+            Fail(got, "missing argument " + wanted[i]{"name"})
+        ENDIF
+    NEXT i
+ENDSUB
+
+FUNC UsageLine$(spec)
+    DIM parts$ = "usage: " + spec{"name"}
+    IF LEN(spec{"opts"}) > 0 THEN parts$ = parts$ + " [options]"
+    IF LEN(spec{"cmds"}) > 0 THEN parts$ = parts$ + " <command>"
+    DIM wanted = spec{"args"}
+    DIM i
+    FOR i = 0 TO LEN(wanted) - 1
+        IF wanted[i]{"required"} THEN
+            parts$ = parts$ + " <" + wanted[i]{"name"} + ">"
+        ELSE
+            parts$ = parts$ + " [" + wanted[i]{"name"} + "]"
+        ENDIF
+    NEXT i
+    RETURN parts$
+ENDFUNC
+
+FUNC OptLabel$(o)
+    DIM label$ = "  "
+    IF LEN(o{"short"}) > 0 THEN
+        label$ = label$ + "-" + o{"short"} + ", "
+    ELSE
+        label$ = label$ + "    "
+    ENDIF
+    label$ = label$ + "--" + o{"long"}
+    IF o{"kind"} = KIND_NUM THEN label$ = label$ + " <n>"
+    IF o{"kind"} = KIND_STR THEN label$ = label$ + " <value>"
+    IF o{"kind"} = KIND_MANY THEN label$ = label$ + " <value>"
+    RETURN label$
+ENDFUNC
+
+' Left column width, so options, arguments and commands line up together.
+FUNC ColumnWidth(spec)
+    DIM widest = 12
+    DIM opts = spec{"opts"}
+    DIM i
+    FOR i = 0 TO LEN(opts) - 1
+        DIM w = LEN(OptLabel$(opts[i]))
+        IF w > widest THEN widest = w
+    NEXT i
+    DIM cmds = spec{"cmds"}
+    FOR i = 0 TO LEN(cmds) - 1
+        DIM cw = LEN(cmds[i]{"cmdname"}) + 2
+        IF cw > widest THEN widest = cw
+    NEXT i
+    DIM wanted = spec{"args"}
+    FOR i = 0 TO LEN(wanted) - 1
+        DIM aw = LEN(wanted[i]{"name"}) + 2
+        IF aw > widest THEN widest = aw
+    NEXT i
+    RETURN widest + 2
+ENDFUNC
+
+EXPORT FUNC HELP$(spec)
+    DIM nl$ = CHR$(10)
+    DIM width = ColumnWidth(spec)
+    DIM out$ = UsageLine$(spec) + nl$
+    IF LEN(spec{"about"}) > 0 THEN out$ = out$ + nl$ + spec{"about"} + nl$
+
+    DIM wanted = spec{"args"}
+    DIM i
+    IF LEN(wanted) > 0 THEN
+        out$ = out$ + nl$ + "arguments:" + nl$
+        FOR i = 0 TO LEN(wanted) - 1
+            out$ = out$ + RPAD$("  " + wanted[i]{"name"}, width, " ") + wanted[i]{"help"} + nl$
+        NEXT i
+    ENDIF
+
+    DIM opts = spec{"opts"}
+    out$ = out$ + nl$ + "options:" + nl$
+    FOR i = 0 TO LEN(opts) - 1
+        DIM line_text$ = RPAD$(OptLabel$(opts[i]), width, " ") + opts[i]{"help"}
+        IF opts[i]{"kind"} = KIND_STR THEN line_text$ = line_text$ + " (default " + opts[i]{"default"} + ")"
+        IF opts[i]{"kind"} = KIND_NUM THEN line_text$ = line_text$ + " (default " + STR$(opts[i]{"default"}) + ")"
+        out$ = out$ + line_text$ + nl$
+    NEXT i
+    out$ = out$ + RPAD$("  -h, --help", width, " ") + "show this text" + nl$
+    IF LEN(spec{"version"}) > 0 THEN
+        out$ = out$ + RPAD$("      --version", width, " ") + "show the version" + nl$
+    ENDIF
+
+    DIM cmds = spec{"cmds"}
+    IF LEN(cmds) > 0 THEN
+        out$ = out$ + nl$ + "commands:" + nl$
+        FOR i = 0 TO LEN(cmds) - 1
+            out$ = out$ + RPAD$("  " + cmds[i]{"cmdname"}, width, " ") + cmds[i]{"about"} + nl$
+        NEXT i
+    ENDIF
+    RETURN out$
+ENDFUNC
+
+' TRUE when the program should stop: help or version was asked for, or the
+' command line did not parse. The message goes to stdout either way.
+EXPORT FUNC DONE(spec, got)
+    IF got{"help"} THEN
+        ' `tool build --help` is a question about build, not about tool.
+        IF LEN(got{"command"}) > 0 THEN
+            DIM chosen = FindCmd(spec, got{"command"})
+            IF IsCmd(chosen) THEN
+                PRINT HELP$(chosen)
+                RETURN TRUE
+            ENDIF
+        ENDIF
+        PRINT HELP$(spec)
+        RETURN TRUE
+    ENDIF
+    IF got{"wantversion"} THEN
+        PRINT spec{"name"} + " " + spec{"version"}
+        RETURN TRUE
+    ENDIF
+    IF NOT got{"ok"} THEN
+        PRINT spec{"name"} + ": " + got{"error"}
+        PRINT UsageLine$(spec)
+        PRINT "try --help"
+        RETURN TRUE
+    ENDIF
+    RETURN FALSE
+ENDFUNC

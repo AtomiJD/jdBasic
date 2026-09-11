@@ -1,0 +1,164 @@
+' CLI parsed against hand-written argument vectors, plus a snapshot of the
+' generated help text.
+
+IMPORT TESTKIT
+IMPORT CLI
+
+FUNC Tool()
+    DIM spec AS MAP
+    CLI.INIT(spec, "mytool", "does a thing")
+    CLI.VERSION(spec, "1.2.0")
+    CLI.FLAG(spec, "verbose", "v", "chatty output")
+    CLI.FLAG(spec, "quiet", "q", "say nothing")
+    CLI.OPT(spec, "out", "o", "output file", "out.txt")
+    CLI.NUM(spec, "retries", "r", "how often to try again", 3)
+    CLI.MANY(spec, "tag", "t", "may be given more than once")
+    RETURN spec
+ENDFUNC
+
+FUNC WithArgs()
+    DIM spec AS MAP
+    CLI.INIT(spec, "copy", "copy a file")
+    CLI.OPT(spec, "mode", "m", "how to copy", "fast")
+    CLI.ARG(spec, "source", "the file to read", TRUE)
+    CLI.ARG(spec, "target", "where to put it", FALSE)
+    RETURN spec
+ENDFUNC
+
+FUNC WithCommands()
+    DIM spec AS MAP
+    CLI.INIT(spec, "pack", "build and ship")
+    CLI.FLAG(spec, "verbose", "v", "chatty output")
+    DIM build_cmd AS MAP
+    CLI.CMD(spec, build_cmd, "build", "compile the thing")
+    CLI.FLAG(build_cmd, "release", "R", "optimise")
+    CLI.OPT(build_cmd, "target", "T", "what to build for", "host")
+    DIM ship_cmd AS MAP
+    CLI.CMD(spec, ship_cmd, "ship", "send it out")
+    CLI.OPT(ship_cmd, "to", "", "where to send it", "staging")
+    RETURN spec
+ENDFUNC
+
+TESTKIT.SUITE("defaults")
+DIM empty_argv = []
+DIM got = CLI.PARSE(Tool(), empty_argv)
+TESTKIT.ISTRUE(got{"ok"}, "an empty command line parses")
+TESTKIT.ISFALSE(got{"verbose"}, "a switch defaults to false")
+TESTKIT.EQ(got{"out"}, "out.txt", "an option keeps its default")
+TESTKIT.EQ(got{"retries"}, 3, "a number keeps its default")
+TESTKIT.EQ(LEN(got{"tag"}), 0, "a repeated option starts empty")
+
+TESTKIT.SUITE("long options")
+got = CLI.PARSE(Tool(), ["--verbose", "--out", "build.log"])
+TESTKIT.ISTRUE(got{"verbose"}, "a long switch is seen")
+TESTKIT.EQ(got{"out"}, "build.log", "a value in the next entry")
+got = CLI.PARSE(Tool(), ["--out=inline.log"])
+TESTKIT.EQ(got{"out"}, "inline.log", "a value after an equals sign")
+got = CLI.PARSE(Tool(), ["--retries=7"])
+TESTKIT.EQ(got{"retries"}, 7, "a number is converted")
+
+TESTKIT.SUITE("short options")
+got = CLI.PARSE(Tool(), ["-v", "-o", "short.log"])
+TESTKIT.ISTRUE(got{"verbose"}, "a short switch is seen")
+TESTKIT.EQ(got{"out"}, "short.log", "a short option takes the next entry")
+got = CLI.PARSE(Tool(), ["-vq"])
+TESTKIT.ISTRUE(got{"verbose"}, "the first letter of a cluster")
+TESTKIT.ISTRUE(got{"quiet"}, "the second letter of a cluster")
+got = CLI.PARSE(Tool(), ["-vo", "clustered.log"])
+TESTKIT.EQ(got{"out"}, "clustered.log", "a value-taking letter may end a cluster")
+
+TESTKIT.SUITE("repeated options")
+got = CLI.PARSE(Tool(), ["--tag", "alpha", "-t", "beta", "--tag=gamma"])
+TESTKIT.EQ(LEN(got{"tag"}), 3, "every occurrence is collected")
+TESTKIT.EQARRAY(got{"tag"}, ["alpha", "beta", "gamma"], "in the order given")
+
+TESTKIT.SUITE("positionals")
+got = CLI.PARSE(WithArgs(), ["--mode", "safe", "a.txt", "b.txt"])
+TESTKIT.EQ(got{"mode"}, "safe", "an option before the positionals")
+TESTKIT.EQARRAY(got{"args"}, ["a.txt", "b.txt"], "both positionals arrive")
+got = CLI.PARSE(WithArgs(), ["only.txt"])
+TESTKIT.ISTRUE(got{"ok"}, "the optional positional may be left out")
+got = CLI.PARSE(WithArgs(), [])
+TESTKIT.ISFALSE(got{"ok"}, "a required positional is enforced")
+TESTKIT.EQ(got{"error"}, "missing argument source", "and it says which")
+got = CLI.PARSE(WithArgs(), ["--", "--not-an-option"])
+TESTKIT.EQARRAY(got{"args"}, ["--not-an-option"], "a double dash stops option reading")
+
+TESTKIT.SUITE("subcommands")
+got = CLI.PARSE(WithCommands(), ["build", "--release"])
+TESTKIT.EQ(got{"command"}, "build", "the command is picked out")
+TESTKIT.ISTRUE(got{"release"}, "a flag of that command")
+TESTKIT.EQ(got{"target"}, "host", "an option of that command keeps its default")
+got = CLI.PARSE(WithCommands(), ["--verbose", "ship", "--to", "live"])
+TESTKIT.EQ(got{"command"}, "ship", "a root option may come first")
+TESTKIT.ISTRUE(got{"verbose"}, "the root flag is still read")
+TESTKIT.EQ(got{"to"}, "live", "and the command option too")
+got = CLI.PARSE(WithCommands(), [])
+TESTKIT.ISFALSE(got{"ok"}, "a tool with commands needs one")
+got = CLI.PARSE(WithCommands(), ["deploy"])
+TESTKIT.EQ(got{"error"}, "unknown command deploy", "an unknown command is named")
+
+TESTKIT.SUITE("rejections")
+got = CLI.PARSE(Tool(), ["--nope"])
+TESTKIT.EQ(got{"error"}, "unknown option --nope", "an unknown long option")
+got = CLI.PARSE(Tool(), ["-z"])
+TESTKIT.EQ(got{"error"}, "unknown option -z", "an unknown short option")
+got = CLI.PARSE(Tool(), ["--out"])
+TESTKIT.EQ(got{"error"}, "--out needs a value", "a value that never came")
+got = CLI.PARSE(Tool(), ["--retries", "many"])
+TESTKIT.ISFALSE(got{"ok"}, "a number that is not one")
+got = CLI.PARSE(Tool(), ["--verbose=loud"])
+TESTKIT.EQ(got{"error"}, "--verbose is a switch and takes no value", "a value on a switch")
+got = CLI.PARSE(Tool(), ["-ov", "x"])
+TESTKIT.ISFALSE(got{"ok"}, "a value-taking letter inside a cluster")
+
+TESTKIT.SUITE("help and version")
+got = CLI.PARSE(Tool(), ["--help"])
+TESTKIT.ISTRUE(got{"help"}, "the long form")
+got = CLI.PARSE(Tool(), ["-h"])
+TESTKIT.ISTRUE(got{"help"}, "the short form")
+got = CLI.PARSE(Tool(), ["--version"])
+TESTKIT.ISTRUE(got{"wantversion"}, "the version is asked for")
+got = CLI.PARSE(WithArgs(), ["--help"])
+TESTKIT.ISTRUE(got{"ok"}, "help outranks a missing required argument")
+
+TESTKIT.SUITE("the generated help text")
+DIM expected$ = "usage: mytool [options]" + CHR$(10) + _
+    CHR$(10) + _
+    "does a thing" + CHR$(10) + _
+    CHR$(10) + _
+    "options:" + CHR$(10) + _
+    "  -v, --verbose      chatty output" + CHR$(10) + _
+    "  -q, --quiet        say nothing" + CHR$(10) + _
+    "  -o, --out <value>  output file (default out.txt)" + CHR$(10) + _
+    "  -r, --retries <n>  how often to try again (default 3)" + CHR$(10) + _
+    "  -t, --tag <value>  may be given more than once" + CHR$(10) + _
+    "  -h, --help         show this text" + CHR$(10) + _
+    "      --version      show the version" + CHR$(10)
+TESTKIT.EQ(CLI.HELP$(Tool()), expected$, "every column lines up")
+
+DIM cmd_help$ = CLI.HELP$(WithCommands())
+TESTKIT.ISTRUE(INSTR(cmd_help$, "usage: pack [options] <command>") >= 0, "the usage line names the command slot")
+TESTKIT.ISTRUE(INSTR(cmd_help$, "commands:") >= 0, "commands get their own section")
+TESTKIT.ISTRUE(INSTR(cmd_help$, "build") >= 0, "and are listed")
+
+TESTKIT.SUITE("what DONE prints")
+OUTPUT.CAPTURE_BEGIN
+DIM stopped = CLI.DONE(WithCommands(), CLI.PARSE(WithCommands(), ["build", "--help"]))
+DIM shown$ = OUTPUT.CAPTURE_END$()
+TESTKIT.ISTRUE(stopped, "asking for help stops the run")
+TESTKIT.ISTRUE(INSTR(shown$, "usage: pack build") >= 0, "a command's help is the command's, not the tool's")
+TESTKIT.ISTRUE(INSTR(shown$, "--release") >= 0, "and lists that command's options")
+
+OUTPUT.CAPTURE_BEGIN
+DIM refused = CLI.DONE(Tool(), CLI.PARSE(Tool(), ["--nope"]))
+DIM complaint$ = OUTPUT.CAPTURE_END$()
+TESTKIT.ISTRUE(refused, "a bad command line stops the run")
+TESTKIT.ISTRUE(INSTR(complaint$, "unknown option --nope") >= 0, "the reason is named")
+TESTKIT.ISTRUE(INSTR(complaint$, "usage: mytool") >= 0, "with the usage line")
+
+DIM arg_help$ = CLI.HELP$(WithArgs())
+TESTKIT.ISTRUE(INSTR(arg_help$, "usage: copy [options] <source> [target]") >= 0, "required and optional read differently")
+TESTKIT.ISTRUE(INSTR(arg_help$, "arguments:") >= 0, "arguments get their own section")
+
+PRINT TESTKIT.REPORT()
