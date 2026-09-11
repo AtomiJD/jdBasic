@@ -5307,8 +5307,22 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     if (!vi || (vi->tag != JD_TAG_ARR && vi->tag != JD_TAG_NATIVE_MAP &&
                 vi->tag != JD_TAG_RUNTIME)) return;
 
-    if (!stmt.index_chain.empty() && stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING) {
-        std::string field_name = stmt.index_chain[0]->str_val;
+    // A map key is a string, whether it is spelled out or worked out. Only a
+    // literal used to reach the map setters below; anything else fell through
+    // to the array path and wrote nothing at all.
+    bool key_is_string_expr = false;
+    if (stmt.index_chain.size() == 1 &&
+        stmt.index_chain[0]->kind != ExprKind::LITERAL_INT) {
+        // On a declared map the single index is a key whatever shape the
+        // expression has. A RUNTIME slot may still turn out to be an array,
+        // so there the expression has to look like a string.
+        if (vi->tag == JD_TAG_NATIVE_MAP) key_is_string_expr = true;
+        else if (vi->tag == JD_TAG_RUNTIME)
+            key_is_string_expr = expr_involves_strings(*stmt.index_chain[0]);
+    }
+
+    if (!stmt.index_chain.empty() &&
+        (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING || key_is_string_expr)) {
         // RUNTIME alloca is i64 (the JdbMap* punned); NATIVE_MAP/ARR is i8_ptr.
         LLVMValueRef obj_ptr;
         if (vi->tag == JD_TAG_RUNTIME) {
@@ -5317,7 +5331,20 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         } else {
             obj_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "obj");
         }
-        LLVMValueRef field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
+        // Only a literal names a UDT field; a computed key is always a map
+        // key, and that path returns before the UDT branch below.
+        std::string field_name;
+        LLVMValueRef field_str;
+        if (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING) {
+            field_name = stmt.index_chain[0]->str_val;
+            field_str = LLVMBuildGlobalStringPtr(builder, field_name.c_str(), ".fld");
+        } else {
+            // The hint makes an INDEX leaf hand back a real string rather
+            // than the default stringified-or-punned shape.
+            ScopedLeafTag _lt(this, JD_TAG_STR);
+            TypedValue key_tv = codegen_expr(*stmt.index_chain[0]);
+            field_str = to_string_ptr(key_tv);
+        }
         TypedValue val_tv = codegen_expr(*stmt.expr);
 
         if (vi->tag == JD_TAG_NATIVE_MAP || vi->tag == JD_TAG_RUNTIME) {
