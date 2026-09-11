@@ -17,6 +17,8 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <cstdlib>
+#include <thread>
 #include <memory>
 #include <iostream>
 #include "async_task.h"
@@ -36,6 +38,11 @@ static std::mutex g_http_mutex;
 static std::unique_ptr<httplib::Server> g_server;
 static std::thread g_server_thread;
 static std::mutex g_server_mutex;
+// The thread that called START. Only it may join the listen thread: a
+// handler runs on a worker the listen thread waits for, so a STOP from a
+// handler signals and leaves the join to WAIT or to process exit.
+static std::thread::id g_server_owner;
+static bool g_http_exit_hook = false;
 // Serialises every HTTP handler's access to g_server_vm. httplib spawns a
 // thread per accepted request, but the embedded VM is single-threaded -
 // without this lock two concurrent POSTs would race on the shared bytecode
@@ -222,10 +229,31 @@ static Value request_to_map(const httplib::Request& req) {
     return m;
 }
 
+// Stops the server and, when called on the thread that started it, joins
+// the listen thread before the Server object is released. A handler
+// thread only signals; the release then happens in HTTP.SERVER.WAIT or
+// at process exit. g_server_mutex must be held by the caller.
+static void shutdown_server_locked() {
+    if (g_server) g_server->stop();
+    if (g_server_thread.joinable()) {
+        if (std::this_thread::get_id() == g_server_thread.get_id()) return;
+        if (std::this_thread::get_id() != g_server_owner) return;
+        g_server_thread.join();
+    }
+    g_server.reset();
+}
+
 // ── Register HTTP natives ────────────────────────────────────
 
 void register_http_builtins(VM& vm) {
     g_server_vm = &vm;
+    if (!g_http_exit_hook) {
+        g_http_exit_hook = true;
+        std::atexit([]() {
+            std::lock_guard<std::mutex> lock(g_server_mutex);
+            shutdown_server_locked();
+        });
+    }
 
     // ── Client functions ─────────────────────────────────────
 
@@ -659,12 +687,14 @@ void register_http_builtins(VM& vm) {
             });
         }
 
-        // Start server in background thread
+        // Start server in background thread. The thread stays joinable:
+        // stop() returns while listen() is still unwinding inside the
+        // Server, so the object may only go away after the join.
         auto* srv = g_server.get();
         g_server_thread = std::thread([srv, port, host]() {
             srv->listen(host.c_str(), port);
         });
-        g_server_thread.detach();
+        g_server_owner = std::this_thread::get_id();
 
         // Wait a moment for the server to start
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -674,10 +704,7 @@ void register_http_builtins(VM& vm) {
     vm.register_native("HTTP.SERVER.STOP", [](const std::vector<Value>& args) -> Value {
         (void)args;
         std::lock_guard<std::mutex> lock(g_server_mutex);
-        if (g_server) {
-            g_server->stop();
-            g_server.reset();
-        }
+        shutdown_server_locked();
         return Value::make_none();
     });
 
@@ -693,7 +720,10 @@ void register_http_builtins(VM& vm) {
         for (;;) {
             {
                 std::lock_guard<std::mutex> lock(g_server_mutex);
-                if (!g_server || !g_server->is_running()) break;
+                if (!g_server || !g_server->is_running()) {
+                    shutdown_server_locked();
+                    break;
+                }
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(150));
         }

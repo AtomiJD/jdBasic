@@ -1012,8 +1012,13 @@ Value VM::call_function(const std::string& name, const std::vector<Value>& args)
 
     // User-defined?
     auto fit = func_map.find(name);
-    if (fit == func_map.end())
+    if (fit == func_map.end()) {
+        if (compiled_call_hook) {
+            Value out;
+            if (compiled_call_hook(name, args, out)) return out;
+        }
         throw jdError(ErrCode::UNDEFINED_FUNCTION, "Undefined function: " + name);
+    }
 
     return call_function_idx((int32_t)fit->second, args);
 }

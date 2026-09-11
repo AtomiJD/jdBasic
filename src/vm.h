@@ -155,6 +155,13 @@ public:
     std::function<void(const std::string&, const std::vector<Value>&)>
         user_event_dispatch;
 
+    // Native-mode call-by-name hook. The bridge installs this so a
+    // function whose body lives as LLVM-IR in the .exe can be called by
+    // name from a builtin, the way an HTTP handler is. Answers false when
+    // the name is not a compiled function.
+    std::function<bool(const std::string&, const std::vector<Value>&, Value&)>
+        compiled_call_hook;
+
     // Call a function by name (native or user-defined) from within native code
     Value call_function(const std::string& name, const std::vector<Value>& args);
     // Same call, target already resolved to a user-function index. Used by the

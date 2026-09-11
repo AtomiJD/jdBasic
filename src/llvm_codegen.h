@@ -182,6 +182,13 @@ private:
     // Wrapper is generated lazily on first reference.
     std::unordered_map<std::string, LLVMValueRef> funcref_wrappers;
     LLVMValueRef build_funcref_wrapper(const std::string& fn_name, int arity);
+    LLVMValueRef funcref_arg_channel();
+    LLVMValueRef funcref_ret_channel();
+    LLVMValueRef funcref_arg_slot(unsigned idx);
+    void funcref_put_arg_tag(unsigned idx, LLVMValueRef tag);
+    LLVMValueRef funcref_take_arg_tag(unsigned idx);
+    LLVMValueRef funcref_wire_tag(LLVMValueRef t);
+    void emit_scalar_step_check(LLVMValueRef map_ptr, LLVMValueRef key, LLVMValueRef tag);
     LLVMValueRef build_builtin_funcref_wrapper(const std::string& fn_name, int arity);
     LLVMValueRef builtin_funcref_by_name(const std::string& fn_name);
 
@@ -216,6 +223,11 @@ private:
     // first parameter is forced to tag=3 (JdbArray*) so RAISEEVENT can
     // pass a packed args array.
     std::unordered_set<std::string> event_handler_subs;
+    // Functions a builtin calls by name (HTTP.SERVER handlers): their first
+    // parameter is a VM handle, their result is runtime-typed, and a
+    // wrapper of the uniform tagged shape is registered with the bridge.
+    std::unordered_set<std::string> http_handler_subs;
+    LLVMValueRef build_compiled_call_wrapper(const std::string& fn_name);
 
     // Functions declared via `DECLARE FUNC ... AS <ret_type>` - populated
     // by a pre-pass in declare_functions(). The bridge dispatch site uses
@@ -364,6 +376,13 @@ private:
     // by RETURN leaves its shadow empty so the caller takes it over.
     std::unordered_map<std::string, std::unordered_set<std::string>> owned_locals_by_fn;
     std::unordered_set<std::string> owned_str_locals;
+    // Locals of the function being generated that a later assignment feeds
+    // from an index read or a runtime-typed call; their slots are
+    // runtime-typed from the declaration on, so every read asks the tag.
+    std::unordered_set<std::string> runtime_later_locals;
+    // The same for top-level variables, over the whole program: a SUB body
+    // may assign a global long after the main body has read it statically.
+    std::unordered_set<std::string> runtime_later_globals;
     std::unordered_map<std::string, LLVMValueRef> owned_local_shadow;
     void scan_owned_str_locals(const std::vector<StmtPtr>& program);
     bool owns_local_string(const std::string& var_name) const;
@@ -427,6 +446,12 @@ private:
     LLVMValueRef udt_ptr_from(TypedValue tv);
     // A runtime-tagged value in the shape an untyped (f64) parameter takes.
     LLVMValueRef runtime_to_untyped_param(TypedValue tv);
+    LLVMValueRef funcref_wire_bits(TypedValue tv);
+    // A FUNC whose result kind is only known at run time returns this pair
+    // of value bits and JdTag, the shape a tagged map read has.
+    LLVMTypeRef dyn_ret_ty();
+    LLVMValueRef pack_dyn_ret(TypedValue tv);
+    TypedValue unpack_dyn_ret(LLVMValueRef pair);
 
     // Variable-to-UDT-type mapping: var_name → UDT type name
     std::unordered_map<std::string, std::string> var_udt_type;

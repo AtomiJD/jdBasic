@@ -231,6 +231,8 @@ static JdRTImpl* thread_rt() {
         // Events raised on a worker still reach the program's handlers.
         if (g_primary_rt && g_primary_rt->user_event_dispatch)
             tls->vm.user_event_dispatch = g_primary_rt->vm.user_event_dispatch;
+        if (g_primary_rt && g_primary_rt->vm.compiled_call_hook)
+            tls->vm.compiled_call_hook = g_primary_rt->vm.compiled_call_hook;
     }
     return tls;
 }
@@ -238,9 +240,24 @@ static JdRTImpl* thread_rt() {
 // Entry points take the handle the compiled code holds; on the thread that
 // created it that IS the right state, on any other thread it is shared
 // mutable state and gets replaced by the caller's own.
+// Set while a compiled function runs on behalf of a builtin (an HTTP
+// handler on a worker thread): the program's own state is the one it
+// reads and writes, so the values it stores stay reachable afterwards.
+static thread_local bool tls_use_primary = false;
+
+// The bridge state of the calling thread: the program's own on its main
+// thread and while a compiled function runs for a builtin, a worker's
+// otherwise.
+static inline JdRTImpl* current_rt() {
+    if (g_primary_rt && (tls_use_primary || std::this_thread::get_id() == g_primary_thread))
+        return g_primary_rt;
+    return thread_rt();
+}
+
 static inline JdRTImpl* resolve_rt(JdRT handle) {
     auto* rt = (JdRTImpl*)handle;
-    if (rt == g_primary_rt && std::this_thread::get_id() != g_primary_thread)
+    if (rt == g_primary_rt && std::this_thread::get_id() != g_primary_thread &&
+        !tls_use_primary)
         return thread_rt();
     return rt;
 }
@@ -329,6 +346,7 @@ struct JdbArrayFwd {
     int64_t length;
     int32_t flags;
     int8_t* elem_tags;
+    int64_t capacity;
 };
 
 // flags bit 0: element doubles are pointers punned as f64.
@@ -451,13 +469,13 @@ static std::vector<Value> typed_args_to_values(JdRTImpl* rt, const int64_t* args
                 vargs.push_back(jdbarray_to_value(arr));
                 break;
             }
-            case JdTag::NATIVE_MAP:
-                // Wire isn't supposed to carry NATIVE_MAP - codegen
-                // downgrades it to I64 on the way out. A runtime-tagged
-                // value produced by jdrt_tagged_get off a native JdbMap*
-                // can still leak one through, so fall through to VM_HANDLE
-                // lookup: miss→NONE keeps the call surviving instead of
-                // punning a pointer through make_f64.
+            case JdTag::NATIVE_MAP: {
+                // A runtime-tagged value read off a native JdbMap* carries
+                // the map pointer itself; it becomes a Value the way a
+                // statically typed map argument does.
+                vargs.push_back(jdbmap_to_value((JdbMapFwd*)(intptr_t)args[i]));
+                break;
+            }
             case JdTag::VM_HANDLE: {
                 auto it = rt->value_store.find(args[i]);
                 if (it != rt->value_store.end())
@@ -698,6 +716,19 @@ JDRT_API int64_t jdrt_obj_exists(JdRT handle, int64_t h, const char* key) {
     return m->get(std::string(key ? key : "")) ? 1 : 0;
 }
 
+JDRT_API int64_t jdrt_obj_delete(JdRT handle, int64_t h, const char* key) {
+    auto* rt = resolve_rt(handle);
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT)
+        return 0;
+    auto* m = it->second.as_object();
+    std::string k(key ? key : "");
+    for (auto f = m->fields.begin(); f != m->fields.end(); ++f) {
+        if (f->first == k) { m->fields.erase(f); return 1; }
+    }
+    return 0;
+}
+
 // Must stay layout-compatible with JdbArray in jdb_runtime.cpp.
 // elem_tags added 2026-05-04 - non-null when flags & 8.
 struct JdbArray {
@@ -705,6 +736,7 @@ struct JdbArray {
     int64_t length;
     int32_t flags;
     int8_t* elem_tags;
+    int64_t capacity;
 };
 
 // Inverse of jdbarray_to_value: walk a VM array, copy its numeric cells
@@ -716,10 +748,12 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     r->length = 0;
     r->flags = 0;
     r->elem_tags = nullptr;
+    r->capacity = 0;
     if (v.type != ValueType::ARRAY) return r;
     auto* arr = v.as_array();
     r->length = (int64_t)arr->elements.size();
     r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
+    r->capacity = r->length > 0 ? r->length : 1;
     bool has_ptr = false, has_string = false, has_other = false;
     std::vector<int8_t> cell_tags((size_t)(r->length > 0 ? r->length : 1), 1);
     for (int64_t i = 0; i < r->length; i++) {
@@ -814,6 +848,17 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
                 cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits);
                 break;
             }
+            case JdTag::VM_HANDLE: {
+                int64_t bits;
+                memcpy(&bits, &d, sizeof(bits));
+                auto* rt = current_rt();
+                auto it = rt->value_store.find(bits);
+                cell = it != rt->value_store.end() ? it->second : Value::make_none();
+                break;
+            }
+            case JdTag::NONE:
+                cell = Value::make_none();
+                break;
             case JdTag::F64:
             default:
                 cell = Value::make_f64(d);
@@ -1076,9 +1121,16 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
         *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
         return jd_tag(JdTag::STR);
     }
+    // An integer or a boolean is stored as a double and travels as the
+    // real integer with its own tag, the way jdb_map_get_tagged answers.
+    if (t == jd_tag(JdTag::I64) || t == jd_tag(JdTag::BOOL)) {
+        *out_val = (int64_t)u.d;
+        return t;
+    }
     *out_val = u.i;
     // Preserve pointer-ish tags; anything else is treated as f64-in-bits.
-    return (t == jd_tag(JdTag::ARR) || t == jd_tag(JdTag::NATIVE_MAP))
+    return (t == jd_tag(JdTag::ARR) || t == jd_tag(JdTag::NATIVE_MAP) ||
+            t == jd_tag(JdTag::VM_HANDLE))
                ? t : jd_tag(JdTag::F64);
 }
 
@@ -1118,8 +1170,39 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
     if ((arr->flags & 8) && arr->elem_tags) {
         return (int32_t)arr->elem_tags[idx];
     }
-    if (arr->flags & 1) return jd_tag(JdTag::STR);
+    if (arr->flags & 2) return jd_tag(JdTag::STR);
+    if (arr->flags & 4) return jd_tag(JdTag::BOOL);
+    if (arr->flags & 1) return jd_tag(JdTag::ARR);
     return jd_tag(JdTag::F64);
+}
+
+// Tag-7 INDEX dispatch when the key is tagged too: a string key reads the
+// base as a map, a number reads a VM or native array, and a number on a
+// map is the map key spelled as text.
+JDRT_API int32_t jdrt_tagged_index(JdRT handle, int64_t val_bits, int32_t val_tag,
+                                    int64_t key_bits, int32_t key_tag, int64_t* out_val) {
+    *out_val = 0;
+    if (key_tag == jd_tag(JdTag::STR)) {
+        const char* key = (const char*)(intptr_t)key_bits;
+        return jdrt_tagged_get(handle, val_bits, val_tag, key ? key : "", out_val);
+    }
+    int64_t idx;
+    if (key_tag == jd_tag(JdTag::I64) || key_tag == jd_tag(JdTag::BOOL)) {
+        idx = key_bits;
+    } else {
+        union { double d; int64_t i; } u;
+        u.i = key_bits;
+        idx = (int64_t)u.d;
+    }
+    if (val_tag == jd_tag(JdTag::ARR)) return jdrt_tagged_arr_get(handle, val_bits, val_tag, idx, out_val);
+    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+        auto* rt = resolve_rt(handle);
+        auto it = rt->value_store.find(val_bits);
+        if (it != rt->value_store.end() && it->second.type == ValueType::ARRAY)
+            return jdrt_tagged_arr_get(handle, val_bits, val_tag, idx, out_val);
+    }
+    std::string key = std::to_string(idx);
+    return jdrt_tagged_get(handle, val_bits, val_tag, key.c_str(), out_val);
 }
 
 // Deferred from the obj_get_* block because value_to_jdbarray and the
@@ -1129,7 +1212,7 @@ JDRT_API void* jdrt_obj_get_arr(JdRT handle, int64_t h, const char* key) {
     const Value* v = obj_field(rt, h, key);
     if (!v) {
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
-        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr;
+        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0;
         return r;
     }
     return value_to_jdbarray(*v);
@@ -1147,7 +1230,7 @@ JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
     } catch (const std::exception& e) {
         rt->last_error = e.what();
         auto* r = (JdbArray*)malloc(sizeof(JdbArray));
-        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr;
+        r->data = nullptr; r->length = 0; r->flags = 0; r->elem_tags = nullptr; r->capacity = 0;
         return r;
     }
 }
@@ -1155,6 +1238,72 @@ JDRT_API void* jdrt_call_typed_arr(JdRT handle, const char* name,
 JDRT_API const char* jdrt_last_error(JdRT handle) {
     auto* rt = resolve_rt(handle);
     return rt->last_error.empty() ? nullptr : rt->last_error.c_str();
+}
+
+// Compiled functions the VM reaches by name. One process-wide table: a
+// handler registered on the main thread is called on whichever thread the
+// builtin runs on, with that thread's own bridge state for the values.
+static std::mutex g_compiled_fns_mutex;
+static std::unordered_map<std::string, JdrtCompiledFn> g_compiled_fns;
+
+static bool call_compiled_fn(const std::string& name, const std::vector<Value>& args, Value& out) {
+    JdrtCompiledFn fn = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(g_compiled_fns_mutex);
+        auto it = g_compiled_fns.find(name);
+        if (it == g_compiled_fns.end()) return false;
+        fn = it->second;
+    }
+    bool saved_primary = tls_use_primary;
+    tls_use_primary = g_primary_rt != nullptr;
+    JdRTImpl* rt = g_primary_rt ? g_primary_rt : thread_rt();
+    std::vector<int64_t> bits;
+    std::vector<int32_t> tags;
+    std::vector<std::string> keep;
+    keep.reserve(args.size());
+    for (const Value& v : args) {
+        switch (v.type) {
+            case ValueType::INT64: case ValueType::INT32: case ValueType::INT16:
+            case ValueType::BYTE:
+                bits.push_back(v.to_int()); tags.push_back(JD_TAG_I64); break;
+            case ValueType::BOOLEAN:
+                bits.push_back(v.to_int()); tags.push_back(JD_TAG_BOOL); break;
+            case ValueType::FLOAT64: case ValueType::FLOAT32: case ValueType::FLOAT16: {
+                double d = v.to_double(); int64_t b; memcpy(&b, &d, sizeof(double));
+                bits.push_back(b); tags.push_back(JD_TAG_F64); break;
+            }
+            case ValueType::STRING:
+                keep.push_back(v.as_string() ? v.as_string()->data : std::string());
+                bits.push_back((int64_t)(intptr_t)keep.back().c_str());
+                tags.push_back(JD_TAG_STR); break;
+            default:
+                bits.push_back(rt->store_value(v)); tags.push_back(JD_TAG_VM_HANDLE); break;
+        }
+    }
+    int64_t ob = 0;
+    int32_t ot = JD_TAG_NONE;
+    fn(bits.data(), tags.data(), (int32_t)bits.size(), &ob, &ot);
+    if (ot == JD_TAG_NONE) {
+        tls_use_primary = saved_primary;
+        out = Value::make_none();
+        return true;
+    }
+    auto vals = typed_args_to_values(rt, &ob, &ot, 1);
+    tls_use_primary = saved_primary;
+    out = vals.empty() ? Value::make_none() : vals[0];
+    return true;
+}
+
+JDRT_API void jdrt_register_compiled_fn(JdRT handle, const char* name, JdrtCompiledFn fn) {
+    if (!name || !fn) return;
+    {
+        std::lock_guard<std::mutex> lock(g_compiled_fns_mutex);
+        g_compiled_fns[name] = fn;
+    }
+    auto* rt = resolve_rt(handle);
+    if (!rt->vm.compiled_call_hook) rt->vm.compiled_call_hook = call_compiled_fn;
+    if (g_primary_rt && !g_primary_rt->vm.compiled_call_hook)
+        g_primary_rt->vm.compiled_call_hook = call_compiled_fn;
 }
 
 JDRT_API void jdrt_set_event_dispatcher(JdRT handle, JdrtEventDispatch fn) {

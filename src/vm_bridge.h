@@ -66,6 +66,7 @@ JDRT_API const char* jdrt_obj_get_str(JdRT rt, int64_t h, const char* key);
 JDRT_API int64_t     jdrt_obj_get_obj(JdRT rt, int64_t h, const char* key);
 JDRT_API void*       jdrt_obj_get_arr(JdRT rt, int64_t h, const char* key);
 JDRT_API int64_t     jdrt_obj_exists (JdRT rt, int64_t h, const char* key);
+JDRT_API int64_t     jdrt_obj_delete (JdRT rt, int64_t h, const char* key);
 
 // Dereference a VM Value handle - used when compiled code needs a
 // concrete scalar (passing to a runtime function expecting f64/str).
@@ -126,6 +127,13 @@ typedef void (*JdrtEventDispatch)(const char* event_name,
                                    const int32_t* tags,
                                    int nargs);
 JDRT_API void jdrt_set_event_dispatcher(JdRT rt, JdrtEventDispatch fn);
+
+// A compiled function the VM may call by name: takes tagged argument slots
+// and answers one tagged value. Registered by the .exe for the functions a
+// builtin reaches by name, such as HTTP.SERVER handlers.
+typedef void (*JdrtCompiledFn)(const int64_t* args, const int32_t* tags, int32_t nargs,
+                               int64_t* out_bits, int32_t* out_tag);
+JDRT_API void jdrt_register_compiled_fn(JdRT rt, const char* name, JdrtCompiledFn fn);
 
 // Get last error message (NULL if no error)
 JDRT_API const char* jdrt_last_error(JdRT rt);
