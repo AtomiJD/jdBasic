@@ -1,0 +1,143 @@
+' xlsx_demo.jdb - an inventory workbook built, written, read back and
+' printed.
+'
+' The stock list becomes a formatted sheet with a bold header, column
+' widths, number formats, a frozen top row and a totals row of formulas.
+' A second sheet is the same data grouped by category with AGG, a third
+' holds a few facts about the run. The file is then read back with
+' XLSX.READ and shown as a table, and a CSV file makes the round trip to
+' xlsx and back too.
+'
+'   jdBasic xlsx_demo.jdb
+
+IMPORT XLSX
+
+DIM work$ = MKTEMP$("jdbxlsxdemo")
+MKDIR work$
+DIM path$ = work$ + "/inventory.xlsx"
+
+' ── the data ───────────────────────────────────────────────────
+
+DIM stock = [ _
+    ["Bolt M6", "fasteners", 400, 0.15, TRUE], _
+    ["Nut M6", "fasteners", 380, 0.05, TRUE], _
+    ["Washer", "fasteners", 900, 0.02, FALSE], _
+    ["Bracket", "hardware", 12, 4.9, TRUE], _
+    ["Hinge", "hardware", 30, 2.4, TRUE], _
+    ["Paint 1l", "finish", 8, 12.5, FALSE], _
+    ["Brush", "finish", 25, 3.1, TRUE] _
+]
+
+' ── sheet 1: the list with formats and formulas ────────────────
+
+DIM wb = XLSX.NEW()
+DIM rows = [["Item", "Category", "Qty", "Unit price", "Value", "Reorder"]]
+DIM i = 0
+FOR i = 0 TO LEN(stock) - 1
+    DIM r = stock[i]
+    DIM excel_row = i + 2
+    PUSH(rows, [r[0], r[1], r[2], r[3], "=C" + STR$(excel_row) + "*D" + STR$(excel_row), r[4]])
+NEXT i
+DIM last = LEN(stock) + 1
+PUSH(rows, ["Total", "", "=SUM(C2:C" + STR$(last) + ")", "", "=SUM(E2:E" + STR$(last) + ")", ""])
+
+DIM sheet = XLSX.SHEET(wb, "Stock", rows)
+XLSX.COLUMN(sheet, "A", {"width": 14})
+XLSX.COLUMN(sheet, "B", {"width": 12})
+XLSX.COLUMN(sheet, "D", {"width": 11, "format": "#,##0.00"})
+XLSX.COLUMN(sheet, "E", {"width": 11, "format": "#,##0.00"})
+XLSX.FREEZE(sheet, 1)
+
+' ── sheet 2: grouped by category ───────────────────────────────
+
+DIM categories = []
+DIM values = []
+DIM counts = []
+FOR i = 0 TO LEN(stock) - 1
+    PUSH(categories, stock[i][1])
+    PUSH(values, stock[i][2] * stock[i][3])
+    PUSH(counts, 1)
+NEXT i
+DIM value_by_cat = AGG(categories, values, SUM@)
+DIM count_by_cat = AGG(categories, counts, SUM@)
+DIM grouped = [["Category", "Items", "Stock value"]]
+FOR i = 0 TO LEN(value_by_cat) - 1
+    PUSH(grouped, [value_by_cat[i][0], count_by_cat[i][1], value_by_cat[i][1]])
+NEXT i
+DIM by_cat = XLSX.SHEET(wb, "By category", grouped)
+XLSX.COLUMN(by_cat, "A", {"width": 12})
+XLSX.COLUMN(by_cat, "C", {"width": 12, "format": "#,##0.00"})
+
+' ── sheet 3: facts about the run ───────────────────────────────
+
+XLSX.SHEET(wb, "Meta", [["written", FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")], ["rows", LEN(stock)], ["tool", "jdBasic XLSX"]], FALSE)
+
+DIM entries = XLSX.WRITE(path$, wb)
+PRINT "wrote "; path$; " ("; entries; " parts, "; FILE.SIZE(path$); " bytes)"
+
+' ── reading it back ────────────────────────────────────────────
+
+SUB ShowTable(title$, table)
+    PRINT
+    PRINT title$
+    DIM widths = []
+    DIM c = 0
+    DIM r = 0
+    FOR c = 0 TO LEN(table[0]) - 1
+        DIM w = 0
+        FOR r = 0 TO LEN(table) - 1
+            DIM cell$ = Shown$(table[r][c])
+            IF LEN(cell$) > w THEN w = LEN(cell$)
+        NEXT r
+        PUSH(widths, w)
+    NEXT c
+    FOR r = 0 TO LEN(table) - 1
+        DIM out$ = "  "
+        FOR c = 0 TO LEN(table[r]) - 1
+            out$ = out$ + RPAD$(Shown$(table[r][c]), widths[c] + 2)
+        NEXT c
+        PRINT out$
+    NEXT r
+ENDSUB
+
+FUNC Shown$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "STRING" THEN RETURN v
+    IF t$ = "BOOLEAN" THEN
+        IF v THEN RETURN "yes"
+        RETURN "no"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+PRINT "sheets: "; JOIN(XLSX.SHEETS(path$), ", ")
+DIM book = XLSX.READ(path$)
+ShowTable("Stock (formula cells read back empty, the values live in Excel):", book{"Stock"})
+ShowTable("By category:", book{"By category"})
+DIM total = 0
+FOR i = 1 TO LEN(book{"Stock"}) - 2
+    total = total + book{"Stock"}[i][2] * book{"Stock"}[i][3]
+NEXT i
+PRINT
+PRINT "stock value from the cells read back: "; total
+
+' ── a CSV makes the round trip ─────────────────────────────────
+
+DIM csv$ = "name,qty,price" + CHR$(10) + "Screw,1000,0.01" + CHR$(10) + "Anchor,200,0.2" + CHR$(10)
+TXTWRITER work$ + "/extra.csv", csv$
+DIM lines = SPLIT(TRIM$(TXTREADER$(work$ + "/extra.csv")), CHR$(10))
+DIM table = []
+FOR i = 0 TO LEN(lines) - 1
+    DIM fields = SPLIT(lines[i], ",")
+    IF i > 0 THEN
+        fields[1] = VAL(fields[1])
+        fields[2] = VAL(fields[2])
+    ENDIF
+    PUSH(table, fields)
+NEXT i
+DIM csv_wb = XLSX.NEW()
+XLSX.SHEET(csv_wb, "extra", table)
+XLSX.WRITE(work$ + "/extra.xlsx", csv_wb)
+DIM back = XLSX.READ(work$ + "/extra.xlsx"){"extra"}
+PRINT
+PRINT "extra.csv -> extra.xlsx -> back: "; back[1][0]; " x "; back[1][1]; " at "; back[1][2]; " ("; TYPEOF(back[1][1]); ")"

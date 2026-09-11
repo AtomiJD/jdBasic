@@ -1,0 +1,106 @@
+' jwt_demo.jdb - a login that hands out tokens, and an endpoint that
+' checks them, both in this process.
+'
+' The service keeps no session state at all: the token carries who you
+' are, what you may do and when it stops being valid, and its signature
+' proves the service wrote it. The client logs in with REQ, calls the
+' protected endpoint with the token, and then tries what an attacker
+' would: an expired token, a token with an edited payload, a token for
+' another service, and no token.
+'
+'   jdBasic jwt_demo.jdb
+
+IMPORT JWT, REQ
+
+DIM PORT = 9983
+DIM SECRET$ = "rotate-me-in-production"
+DIM ISSUER$ = "inventory"
+
+' ── the service ────────────────────────────────────────────────
+
+FUNC HANDLE_LOGIN(request)
+    DIM body$ = request{"BODY"}
+    DIM role$ = ""
+    IF INSTR(body$, "user=ann") >= 0 ANDALSO INSTR(body$, "pass=secret") >= 0 THEN role$ = "admin"
+    IF INSTR(body$, "user=bob") >= 0 ANDALSO INSTR(body$, "pass=hunter2") >= 0 THEN role$ = "viewer"
+    IF LEN(role$) = 0 THEN RETURN {"__http_status": 403, "__http_body": JSON.STRINGIFY$({"error": "wrong credentials"})}
+    DIM user$ = MID$(body$, INSTR(body$, "user=") + 5, 3)
+    DIM claims = {"iss": ISSUER$, "aud": "inventory-api", "sub": user$, "role": role$, "iat": NOW_EPOCH(), "exp": NOW_EPOCH() + 3600}
+    RETURN {"token": JWT.SIGN$(claims, SECRET$), "expires_in": 3600}
+ENDFUNC
+
+FUNC HANDLE_STOCK(request)
+    DIM headers = request{"HEADERS"}
+    IF NOT MAP.EXISTS(headers, "authorization") THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "no token"})}
+    DIM auth$ = headers{"authorization"}
+    IF NOT STARTSWITH(auth$, "Bearer ") THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "not a bearer token"})}
+    DIM check = JWT.VERIFY(MID$(auth$, 7, LEN(auth$) - 7), SECRET$, {"iss": ISSUER$, "aud": "inventory-api", "skew": 30})
+    IF NOT check{"ok"} THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": check{"error"}})}
+    DIM claims = check{"claims"}
+    DIM stock = {"bolt": 40, "nut": 12}
+    IF claims{"role"} = "admin" THEN stock{"cost_price"} = {"bolt": 0.09, "nut": 0.03}
+    RETURN {"user": claims{"sub"}, "role": claims{"role"}, "stock": stock}
+ENDFUNC
+
+HTTP.SERVER.ON_POST("/login", "HANDLE_LOGIN")
+HTTP.SERVER.ON_GET("/stock", "HANDLE_STOCK")
+IF NOT HTTP.SERVER.START(PORT) THEN
+    PRINT "port "; PORT; " is taken"
+    END 1
+ENDIF
+
+' ── the client ─────────────────────────────────────────────────
+
+DIM api = REQ.NEW("http://127.0.0.1:" + STR$(PORT))
+REQ.TIMEOUT(api, 5)
+
+SUB TryStock(label$, token$)
+    DIM s = REQ.NEW("http://127.0.0.1:" + STR$(PORT))
+    IF LEN(token$) > 0 THEN REQ.BEARER(s, token$)
+    DIM r = REQ.GET(s, "/stock")
+    DIM body = REQ.JSON(r)
+    IF r{"ok"} THEN
+        DIM extra$ = ""
+        IF MAP.EXISTS(body{"stock"}, "cost_price") THEN extra$ = ", cost prices visible"
+        PRINT "  "; label$; ": "; body{"user"}; " as "; body{"role"}; ", "; body{"stock"}{"bolt"}; " bolts"; extra$
+    ELSE
+        PRINT "  "; label$; ": "; r{"status"}; " "; body{"error"}
+    ENDIF
+ENDSUB
+
+PRINT "1. log in"
+DIM ann = REQ.JSON(REQ.FORM(api, "/login", {"user": "ann", "pass": "secret"}))
+DIM bob = REQ.JSON(REQ.FORM(api, "/login", {"user": "bob", "pass": "hunter2"}))
+DIM nope = REQ.FORM(api, "/login", {"user": "ann", "pass": "guess"})
+PRINT "  ann: token of "; LEN(ann{"token"}); " characters, valid "; ann{"expires_in"}; " s"
+PRINT "  bob: token of "; LEN(bob{"token"}); " characters"
+PRINT "  a wrong password: "; nope{"status"}
+
+PRINT "2. what is inside (no secret needed to read it)"
+DIM peek = JWT.DECODE(ann{"token"})
+PRINT "  header "; JSON.STRINGIFY$(peek{"header"})
+PRINT "  claims sub="; peek{"claims"}{"sub"}; " role="; peek{"claims"}{"role"}; " iss="; peek{"claims"}{"iss"}; " exp in "; peek{"claims"}{"exp"} - NOW_EPOCH(); " s"
+
+PRINT "3. calling the protected endpoint"
+TryStock("ann", ann{"token"})
+TryStock("bob", bob{"token"})
+TryStock("no token", "")
+
+PRINT "4. what an attacker might try"
+DIM parts = SPLIT(ann{"token"}, ".")
+DIM edited$ = parts[0] + "." + JWT.B64URL$(JSON.STRINGIFY$({"iss": ISSUER$, "aud": "inventory-api", "sub": "bob", "role": "admin", "exp": NOW_EPOCH() + 3600})) + "." + parts[2]
+TryStock("bob promoted himself in the payload", edited$)
+DIM expired$ = JWT.SIGN$({"iss": ISSUER$, "aud": "inventory-api", "sub": "ann", "role": "admin", "exp": NOW_EPOCH() - 120}, SECRET$)
+TryStock("a token from two minutes ago", expired$)
+DIM elsewhere$ = JWT.SIGN$({"iss": "other-service", "aud": "inventory-api", "sub": "ann", "role": "admin", "exp": NOW_EPOCH() + 3600}, SECRET$)
+TryStock("a token another service issued", elsewhere$)
+DIM guessed$ = JWT.SIGN$({"iss": ISSUER$, "aud": "inventory-api", "sub": "ann", "role": "admin", "exp": NOW_EPOCH() + 3600}, "password123")
+TryStock("a token signed with a guessed secret", guessed$)
+DIM none$ = JWT.B64URL$(JSON.STRINGIFY$({"alg": "none", "typ": "JWT"})) + "." + parts[1] + "."
+TryStock("alg none", none$)
+
+PRINT "5. a token thirty seconds past exp still passes, the skew allows it"
+DIM late$ = JWT.SIGN$({"iss": ISSUER$, "aud": "inventory-api", "sub": "ann", "role": "viewer", "exp": NOW_EPOCH() - 20}, SECRET$)
+TryStock("ann, 20 s late", late$)
+
+HTTP.SERVER.STOP()

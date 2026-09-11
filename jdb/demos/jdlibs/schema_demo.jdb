@@ -1,0 +1,85 @@
+' schema_demo.jdb - validating what arrives before it reaches the code.
+'
+' An order is declared once. The demo then pushes a series of payloads
+' through it: a clean one, one with holes, one with the wrong types, one
+' typed as strings the way a form or a CSV delivers them, and one with a
+' key nobody asked for. At the end it prints the JSON Schema that the
+' same declaration produces for a language model.
+'
+'   jdBasic schema_demo.jdb
+
+IMPORT SCHEMA
+
+DIM address = SCHEMA.NEW({ _
+    "street": "string!", _
+    "city": "string!", _
+    "zip": {"type": "string", "pattern": "^[0-9]{5}$", "description": "five digits"}, _
+    "country": {"type": "string", "default": "DE", "enum": ["DE", "AT", "CH"]} _
+})
+
+DIM line_item = SCHEMA.NEW({ _
+    "sku": {"type": "string", "required": TRUE, "pattern": "^[A-Z]{2}-[0-9]{4}$"}, _
+    "qty": {"type": "integer", "required": TRUE, "min": 1, "max": 999}, _
+    "price": {"type": "number", "required": TRUE, "min": 0} _
+})
+
+DIM order = SCHEMA.NEW({ _
+    "id": "string!", _
+    "customer": {"type": "map", "required": TRUE, "fields": {"name": "string!", "email": {"type": "string", "pattern": "^[^@]+@[^@]+$"}, "vip": "boolean"}}, _
+    "ship_to": address, _
+    "items": {"type": "array", "items": line_item, "min": 1, "max": 50}, _
+    "notes": {"type": "string", "max": 200}, _
+    "priority": {"type": "string", "enum": ["low", "normal", "high"], "default": "normal"} _
+})
+
+SUB Show(title$, payload, opts)
+    PRINT title$
+    DIM r = SCHEMA.CHECK(order, payload, opts)
+    IF r{"ok"} THEN
+        DIM v = r{"value"}
+        DIM total = 0
+        DIM i = 0
+        FOR i = 0 TO LEN(v{"items"}) - 1
+            total = total + v{"items"}[i]{"qty"} * v{"items"}[i]{"price"}
+        NEXT i
+        DIM country$ = "an address still to come"
+        IF MAP.EXISTS(v, "ship_to") THEN country$ = v{"ship_to"}{"country"}
+        PRINT "   ok: "; v{"id"}; " for "; v{"customer"}{"name"}; ", "; LEN(v{"items"}); " line(s), priority "; v{"priority"}; ", ships to "; country$; ", total "; total
+    ELSE
+        PRINT "   rejected with "; LEN(r{"errors"}); " error(s):"
+        DIM k = 0
+        FOR k = 0 TO LEN(r{"errors"}) - 1
+            PRINT "     - "; r{"errors"}[k]
+        NEXT k
+    ENDIF
+ENDSUB
+
+DIM clean = { _
+    "id": "ORD-1001", _
+    "customer": {"name": "Ann Example", "email": "ann@example.org", "vip": TRUE}, _
+    "ship_to": {"street": "Am Hof 1", "city": "Bonn", "zip": "53113"}, _
+    "items": [{"sku": "BO-0001", "qty": 40, "price": 0.15}, {"sku": "NU-0002", "qty": 12, "price": 0.05}], _
+    "priority": "high" _
+}
+Show("1. a clean order", clean, 0)
+
+DIM holes = {"id": "ORD-1002", "customer": {"email": "nobody"}, "ship_to": {"city": "Bonn", "zip": "5311"}, "items": []}
+Show("2. an order with holes", holes, 0)
+
+DIM wrong = {"id": 1002, "customer": {"name": "Bob", "vip": "yes"}, "items": [{"sku": "bolt", "qty": 2.5, "price": -1}], "priority": "urgent", "notes": 7}
+Show("3. the wrong types", wrong, 0)
+
+DIM from_form = {"id": "ORD-1003", "customer": {"name": "Cid", "vip": "true"}, "ship_to": {"street": "Ring 2", "city": "Wien", "zip": "01010", "country": "AT"}, "items": [{"sku": "WA-0003", "qty": " 900 ", "price": "0.02"}]}
+Show("4. numbers and booleans that arrived as strings, without coercion", from_form, 0)
+Show("5. the same with coercion", from_form, {"coerce": TRUE})
+
+DIM extra = {"id": "ORD-1004", "customer": {"name": "Dee"}, "items": [{"sku": "HI-0004", "qty": 1, "price": 2.4}], "gift_wrap": TRUE}
+Show("6. a key nobody declared, in strict mode", extra, {"strict": TRUE})
+Show("7. the same, lenient", extra, 0)
+
+PRINT "8. the JSON Schema for a language model"
+DIM js = SCHEMA.JSONSCHEMA(order)
+PRINT "   required at the top: "; JOIN(js{"required"}, ", ")
+PRINT "   items are "; js{"properties"}{"items"}{"type"}; " of objects with "; JOIN(MAP.KEYS(js{"properties"}{"items"}{"items"}{"properties"}), ", ")
+PRINT "   zip: "; JSON.STRINGIFY$(js{"properties"}{"ship_to"}{"properties"}{"zip"})
+PRINT "   "; LEN(SCHEMA.JSONSCHEMA$(order)); " bytes as text"

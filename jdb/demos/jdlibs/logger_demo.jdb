@@ -1,0 +1,82 @@
+' logger_demo.jdb - one logger, four sinks, and what the files look like.
+'
+' A worker processes a batch of jobs and logs as it goes. The console
+' shows the coloured lines, a text file and a JSON lines file keep them,
+' a tiny size limit makes the text file rotate in front of your eyes,
+' and a fourth sink is built by hand on LOGGER.RECORD: it keeps every
+' WARN and ERROR in memory for the summary at the end. Afterwards the
+' JSON lines file is read back and counted per level.
+'
+'   jdBasic logger_demo.jdb
+
+IMPORT LOGGER
+
+DIM work$ = MKTEMP$("jdblogdemo")
+MKDIR work$
+
+DIM lg = LOGGER.NEW("worker")
+LOGGER.LEVEL(lg, "DEBUG")
+LOGGER.TO_CONSOLE(lg)
+LOGGER.TO_FILE(lg, work$ + "/worker.log", 600, 3)
+LOGGER.TO_JSONL(lg, work$ + "/worker.jsonl")
+LOGGER.CONTEXT(lg, {"host": "cortex", "batch": 7})
+
+' A sink of our own: the record is the same map the built-in sinks see.
+DIM gProblems = []
+SUB Remember(rec)
+    IF rec{"level"} = "WARN" OR rec{"level"} = "ERROR" THEN PUSH(gProblems, rec)
+ENDSUB
+
+SUB Emit(level$, message$, fields)
+    LOGGER.LOG(lg, level$, message$, fields)
+    Remember(LOGGER.RECORD(lg, level$, message$, fields))
+ENDSUB
+
+DIM jobs = ["resize", "encode", "upload", "encode", "notify", "archive", "upload", "index"]
+Emit("INFO", "batch started", {"jobs": LEN(jobs)})
+DIM i = 0
+DIM failed = 0
+FOR i = 0 TO LEN(jobs) - 1
+    DIM job$ = jobs[i]
+    DIM ms = 20 + (i * 37) MOD 90
+    Emit("DEBUG", "job picked", {"job": job$, "slot": i})
+    IF job$ = "upload" ANDALSO i > 3 THEN
+        Emit("ERROR", "job failed", {"job": job$, "reason": "connection reset"})
+        failed = failed + 1
+    ELSEIF ms > 80 THEN
+        Emit("WARN", "job slow", {"job": job$, "ms": ms})
+    ELSE
+        Emit("INFO", "job done", {"job": job$, "ms": ms})
+    ENDIF
+NEXT i
+Emit("INFO", "batch finished", {"failed": failed})
+
+PRINT
+PRINT "problems kept by the custom sink:"
+FOR i = 0 TO LEN(gProblems) - 1
+    PRINT "  "; gProblems[i]{"level"}; " "; gProblems[i]{"message"}; " ("; gProblems[i]{"fields"}{"job"}; ")"
+NEXT i
+
+PRINT
+PRINT "the text file rotated at 600 bytes:"
+DIM names = ["worker.log", "worker.log.1", "worker.log.2", "worker.log.3"]
+FOR i = 0 TO LEN(names) - 1
+    DIM p$ = work$ + "/" + names[i]
+    IF FILE.EXISTS(p$) THEN PRINT "  "; names[i]; ": "; FILE.SIZE(p$); " bytes"
+NEXT i
+
+PRINT
+PRINT "the JSON lines file, counted per level:"
+DIM text$ = TXTREADER$(work$ + "/worker.jsonl")
+DIM rows = SPLIT(TRIM$(text$), CHR$(10))
+DIM levels = []
+FOR i = 0 TO LEN(rows) - 1
+    PUSH(levels, JSON.PARSE$(rows[i]){"level"})
+NEXT i
+DIM counts = TALLY(levels)
+FOR i = 0 TO LEN(counts) - 1
+    PRINT "  "; counts[i][0]; ": "; counts[i][1]
+NEXT i
+PRINT "  last record: "; rows[LEN(rows) - 1]
+PRINT
+PRINT "files are in "; work$

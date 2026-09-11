@@ -1409,6 +1409,36 @@ IF OS.FEATURE("PYTHON") THEN
 ENDIF
 ```
 
+## The module library
+
+The modules under `lib/` are written in jdBasic and reached with `IMPORT`.
+Each one is a single file that starts with `EXPORT MODULE NAME`; its public
+functions are called as `NAME.FUNCTION(...)`. The page for each module, with
+its API and notes, is linked from [`lib/README.md`](../lib/README.md).
+
+| Module | What it is for |
+|--------|----------------|
+| `TESTKIT` | assertions, suites, TAP and JUnit reports, non-zero exit on failure |
+| `CLI` | flags, options, positionals, subcommands and generated help from the argument vector |
+| `REQ` | HTTP sessions: base URL, headers, auth, cookies, query strings, JSON and form bodies, uploads, retries |
+| `SCHEMA` | validation of maps from one declaration, and the JSON Schema for structured LLM answers |
+| `LLMAPI` | one chat client for OpenAI, Anthropic, OpenAI-compatible servers and the local `AI.*` model |
+| `LOGGER` | levels, console, file and JSON lines sinks, rotation |
+| `CONF` | dotenv, INI and a TOML subset into one map shape |
+| `JWT` | HS256 tokens: sign, decode, verify |
+| `XLSX` | Excel workbooks written and read without Excel |
+
+```basic
+IMPORT CONF, LOGGER, XLSX
+DIM cfg = CONF.TOML("service.toml")
+DIM lg = LOGGER.NEW("report")
+LOGGER.TO_FILE(lg, CONF.GET(cfg, "log.path", "report.log"))
+```
+
+The modules are found through the `IMPORT` search path; during development
+`JDBASIC_PATH` can point at the repository's `lib/` directory. A compiled
+program bakes the modules it imports into the executable.
+
 ## Functions
 
 **Reserved names:** every built-in function name is reserved. Defining a `FUNC` or `SUB` whose name matches a builtin (e.g. `SUB Outer()` vs the APL builtin `OUTER`) is rejected at load time with `collides with the builtin function ... - choose another name`, because call dispatch always resolves builtins first and the user definition could never be reached.

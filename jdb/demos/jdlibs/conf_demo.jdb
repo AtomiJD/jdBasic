@@ -1,0 +1,143 @@
+' conf_demo.jdb - one program, its settings from four places.
+'
+' The service reads a TOML file for its defaults, an INI file an operator
+' edits, a .env file for the secrets, and the command line for the run at
+' hand. Each layer overrides the one before. The demo writes the three
+' files into a scratch folder, loads them with CONF, resolves the layers
+' and prints where every value came from.
+'
+'   jdBasic conf_demo.jdb
+'   jdBasic conf_demo.jdb --port 9000 --workers 8
+
+IMPORT CONF, CLI
+
+DIM Q$ = CHR$(34)
+DIM NL$ = CHR$(10)
+DIM work$ = MKTEMP$("jdbconfdemo")
+MKDIR work$
+
+' ── the files an installation would carry ──────────────────────
+
+DIM toml$ = "# shipped defaults" + NL$ + _
+    "title = " + Q$ + "inventory service" + Q$ + NL$ + _
+    "[server]" + NL$ + _
+    "host = " + Q$ + "127.0.0.1" + Q$ + NL$ + _
+    "port = 8080" + NL$ + _
+    "workers = 2" + NL$ + _
+    "tls = false" + NL$ + _
+    "[limits]" + NL$ + _
+    "upload_mb = 25" + NL$ + _
+    "rate = { burst = 20, per_minute = 600 }" + NL$ + _
+    "[[routes]]" + NL$ + _
+    "path = " + Q$ + "/items" + Q$ + NL$ + _
+    "cache_s = 30" + NL$ + _
+    "[[routes]]" + NL$ + _
+    "path = " + Q$ + "/report" + Q$ + NL$ + _
+    "cache_s = 0" + NL$
+TXTWRITER work$ + "/defaults.toml", toml$
+
+DIM ini$ = "; the operator's overrides" + NL$ + _
+    "[server]" + NL$ + _
+    "port = 8443" + NL$ + _
+    "tls = true" + NL$ + _
+    "[limits]" + NL$ + _
+    "upload_mb = 100" + NL$
+TXTWRITER work$ + "/site.ini", ini$
+
+DIM env$ = "# secrets, never in git" + NL$ + _
+    "export DB_URL=" + Q$ + "postgres://inv:s3cret@db/inventory" + Q$ + NL$ + _
+    "API_TOKEN='tok-with-#-inside'" + NL$ + _
+    "WORKERS=4 # a hint for this box" + NL$
+TXTWRITER work$ + "/.env", env$
+
+' ── loading and layering ───────────────────────────────────────
+
+DIM defaults = CONF.TOML(work$ + "/defaults.toml")
+DIM site = CONF.INI(work$ + "/site.ini")
+DIM secrets = CONF.ENV(work$ + "/.env", TRUE)
+
+DIM spec = CLI.NEW("conf_demo", "show how settings are layered")
+CLI.NUM(spec, "port", "p", "listen port", 0)
+CLI.NUM(spec, "workers", "w", "worker count", 0)
+DIM args = CLI.PARSE(spec, CLI.ARGV())
+IF CLI.DONE(spec, args) THEN END CLI.STATUS(args)
+
+' An INI value is text; it is read into the type the default has.
+FUNC Typed(text$, like)
+    DIM t$ = TYPEOF(like)
+    IF t$ = "BOOLEAN" THEN RETURN LCASE$(text$) = "true"
+    IF t$ = "INT64" THEN RETURN CINT(VAL(text$))
+    IF t$ = "FLOAT64" THEN RETURN VAL(text$)
+    RETURN text$
+ENDFUNC
+
+DIM resolved AS MAP
+DIM origin AS MAP
+
+SUB Resolve(name$, path$, ini_section$, ini_key$, env_key$, cli_key$)
+    DIM v = CONF.GET(defaults, path$)
+    DIM from$ = "defaults.toml"
+    DIM ini_v = CONF.GET(site, ini_section$ + "." + ini_key$, "")
+    IF LEN(ini_v) > 0 THEN
+        v = Typed(ini_v, v)
+        from$ = "site.ini"
+    ENDIF
+    IF LEN(env_key$) > 0 ANDALSO LEN(GETENV$(env_key$)) > 0 THEN
+        v = Typed(GETENV$(env_key$), v)
+        from$ = "environment (" + env_key$ + ")"
+    ENDIF
+    IF LEN(cli_key$) > 0 ANDALSO args{cli_key$} > 0 THEN
+        v = args{cli_key$}
+        from$ = "command line (--" + cli_key$ + ")"
+    ENDIF
+    resolved{name$} = v
+    origin{name$} = from$
+ENDSUB
+
+Resolve("title", "title", "", "", "", "")
+Resolve("host", "server.host", "server", "host", "", "")
+Resolve("port", "server.port", "server", "port", "", "port")
+Resolve("workers", "server.workers", "server", "workers", "WORKERS", "workers")
+Resolve("tls", "server.tls", "server", "tls", "", "")
+Resolve("upload_mb", "limits.upload_mb", "limits", "upload_mb", "", "")
+
+PRINT "resolved settings"
+DIM names = MAP.KEYS(resolved)
+DIM i = 0
+FOR i = 0 TO LEN(names) - 1
+    DIM shown$ = ""
+    DIM v = resolved{names[i]}
+    IF TYPEOF(v) = "BOOLEAN" THEN
+        IF v THEN shown$ = "true" ELSE shown$ = "false"
+    ELSEIF TYPEOF(v) = "STRING" THEN
+        shown$ = v
+    ELSE
+        shown$ = STR$(v)
+    ENDIF
+    PRINT "  "; LPAD$(names[i], 10); " = "; LPAD$(shown$, 18); "  from "; origin{names[i]}
+NEXT i
+
+PRINT
+PRINT "values only TOML can express"
+PRINT "  rate limit: "; CONF.GET(defaults, "limits.rate.burst"); " burst, "; CONF.GET(defaults, "limits.rate.per_minute"); " per minute"
+DIM routes = CONF.GET(defaults, "routes", [])
+FOR i = 0 TO LEN(routes) - 1
+    PRINT "  route "; routes[i]{"path"}; " cached "; routes[i]{"cache_s"}; " s"
+NEXT i
+
+PRINT
+PRINT "secrets from .env"
+PRINT "  DB_URL host part: "; MID$(secrets{"DB_URL"}, INSTR(secrets{"DB_URL"}, "@") + 1, 12)
+PRINT "  API_TOKEN keeps its #: "; secrets{"API_TOKEN"}
+PRINT "  pushed into the process: WORKERS="; GETENV$("WORKERS")
+
+PRINT
+PRINT "missing keys fall back"
+PRINT "  limits.download_mb -> "; CONF.GET(defaults, "limits.download_mb", "not set")
+PRINT "  server.port.deeper -> "; CONF.GET(defaults, "server.port.deeper", "not a table")
+
+SETENV "DB_URL", ""
+SETENV "API_TOKEN", ""
+SETENV "WORKERS", ""
+PRINT
+PRINT "files are in "; work$

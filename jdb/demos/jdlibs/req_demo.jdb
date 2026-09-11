@@ -1,0 +1,144 @@
+' req_demo.jdb - an API client and the API it talks to, in one process.
+'
+' The lower half of the file is a small JSON service on HTTP.SERVER: a
+' list of items, a login that sets a cookie, an upload, and an endpoint
+' that fails twice before it answers. The upper half drives it with REQ
+' the way a script would drive a real service: a session with a base
+' URL and a bearer token, a query string, JSON and form bodies, the
+' cookie jar, retries with backoff, and errors that raise.
+'
+'   jdBasic req_demo.jdb
+
+IMPORT REQ
+
+DIM PORT = 9981
+DIM gItems = [{"id": 1, "name": "bolt", "qty": 40}, {"id": 2, "name": "nut", "qty": 12}]
+DIM gFlaky = 0
+DIM gUploads = 0
+
+' ── the service ────────────────────────────────────────────────
+
+FUNC Authorised(request)
+    DIM headers = request{"HEADERS"}
+    IF NOT MAP.EXISTS(headers, "authorization") THEN RETURN FALSE
+    RETURN headers{"authorization"} = "Bearer demo-token"
+ENDFUNC
+
+FUNC HANDLE_ITEMS(request)
+    IF NOT Authorised(request) THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "no token"})}
+    DIM params = request{"PARAMS"}
+    DIM min_qty = 0
+    IF MAP.EXISTS(params, "min_qty") THEN min_qty = VAL(params{"min_qty"})
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gItems) - 1
+        IF gItems[i]{"qty"} >= min_qty THEN PUSH(out, gItems[i])
+    NEXT i
+    RETURN {"items": out, "total": LEN(out)}
+ENDFUNC
+
+FUNC HANDLE_CREATE(request)
+    IF NOT Authorised(request) THEN RETURN {"__http_status": 401, "__http_body": JSON.STRINGIFY$({"error": "no token"})}
+    DIM body = JSON.PARSE$(request{"BODY"})
+    IF TYPEOF(body) <> "OBJECT" ORELSE NOT MAP.EXISTS(body, "name") THEN
+        RETURN {"__http_status": 400, "__http_body": JSON.STRINGIFY$({"error": "name is required"})}
+    ENDIF
+    DIM item = {"id": LEN(gItems) + 1, "name": body{"name"}, "qty": body{"qty"}}
+    PUSH(gItems, item)
+    RETURN {"__http_status": 201, "__http_body": JSON.STRINGIFY$(item), "__http_content_type": "application/json"}
+ENDFUNC
+
+FUNC HANDLE_LOGIN(request)
+    DIM fields = REQ.QUERY$({})
+    DIM body$ = request{"BODY"}
+    IF INSTR(body$, "user=ann") >= 0 ANDALSO INSTR(body$, "pass=secret") >= 0 THEN
+        RETURN {"__http_status": 200, "__http_body": "welcome ann", "__http_headers": {"Set-Cookie": "session=s3ss10n; Path=/; HttpOnly"}}
+    ENDIF
+    RETURN {"__http_status": 403, "__http_body": "wrong password"}
+ENDFUNC
+
+FUNC HANDLE_PROFILE(request)
+    DIM headers = request{"HEADERS"}
+    DIM cookie$ = ""
+    IF MAP.EXISTS(headers, "cookie") THEN cookie$ = headers{"cookie"}
+    IF INSTR(cookie$, "session=s3ss10n") < 0 THEN RETURN {"__http_status": 401, "__http_body": "log in first"}
+    RETURN {"user": "ann", "role": "buyer"}
+ENDFUNC
+
+FUNC HANDLE_UPLOAD(request)
+    gUploads = gUploads + 1
+    DIM ct$ = request{"HEADERS"}{"content-type"}
+    RETURN {"received": gUploads, "content_type": LEFT$(ct$, 19)}
+ENDFUNC
+
+FUNC HANDLE_FLAKY(request)
+    gFlaky = gFlaky + 1
+    IF gFlaky < 3 THEN RETURN {"__http_status": 503, "__http_body": "warming up"}
+    RETURN {"ready": TRUE, "after": gFlaky}
+ENDFUNC
+
+HTTP.SERVER.ON_GET("/items", "HANDLE_ITEMS")
+HTTP.SERVER.ON_POST("/items", "HANDLE_CREATE")
+HTTP.SERVER.ON_POST("/login", "HANDLE_LOGIN")
+HTTP.SERVER.ON_GET("/profile", "HANDLE_PROFILE")
+HTTP.SERVER.ON_POST("/upload", "HANDLE_UPLOAD")
+HTTP.SERVER.ON_GET("/flaky", "HANDLE_FLAKY")
+IF NOT HTTP.SERVER.START(PORT) THEN
+    PRINT "port "; PORT; " is taken"
+    END 1
+ENDIF
+
+' ── the client ─────────────────────────────────────────────────
+
+DIM api = REQ.NEW("http://127.0.0.1:" + STR$(PORT))
+REQ.TIMEOUT(api, 5)
+
+PRINT "1. without a token"
+DIM denied = REQ.GET(api, "/items")
+DIM denied_body = REQ.JSON(denied)
+PRINT "   status "; denied{"status"}; ", "; denied_body{"error"}
+
+PRINT "2. with a bearer token and a query"
+REQ.BEARER(api, "demo-token")
+DIM listed = REQ.JSON(REQ.GET(api, "/items", {"min_qty": 20}))
+PRINT "   "; listed{"total"}; " item(s) with at least 20 in stock: "; listed{"items"}[0]{"name"}
+
+PRINT "3. a JSON body"
+DIM created = REQ.POST(api, "/items", {"name": "washer", "qty": 900})
+DIM created_body = REQ.JSON(created)
+PRINT "   status "; created{"status"}; ", id "; created_body{"id"}
+DIM rejected = REQ.POST(api, "/items", {"qty": 1})
+DIM rejected_body = REQ.JSON(rejected)
+PRINT "   status "; rejected{"status"}; ", "; rejected_body{"error"}
+
+PRINT "4. a form login that sets a cookie"
+DIM login = REQ.FORM(api, "/login", {"user": "ann", "pass": "secret"})
+PRINT "   "; REQ.TEXT$(login); ", jar holds session="; api{"cookies"}{"session"}
+DIM profile = REQ.JSON(REQ.GET(api, "/profile"))
+PRINT "   profile: "; profile{"role"}
+
+PRINT "5. a multipart upload"
+DIM up = REQ.UPLOAD(api, "/upload", {"note": "invoice"}, {"file": {"filename": "invoice.txt", "content": "total 12.50", "type": "text/plain"}})
+DIM up_body = REQ.JSON(up)
+PRINT "   "; up_body{"content_type"}; ", received "; up_body{"received"}
+
+PRINT "6. retries with backoff"
+REQ.RETRIES(api, 4, 50)
+DIM t0 = TICK()
+DIM ready = REQ.JSON(REQ.GET(api, "/flaky"))
+PRINT "   ready after attempt "; ready{"after"}; " ("; STR$(INT(TICK() - t0)); " ms with 50, 100 ms waits)"
+REQ.RETRIES(api, 1, 50)
+
+PRINT "7. errors that raise"
+TRY
+    REQ.RAISE_FOR_STATUS(REQ.GET(api, "/nowhere"))
+CATCH
+    PRINT "   caught: "; ERRMSG$
+ENDTRY
+DIM dead = REQ.NEW("http://127.0.0.1:9")
+REQ.TIMEOUT(dead, 1)
+DIM gone = REQ.GET(dead, "/")
+PRINT "   a dead host is status "; gone{"status"}; ": "; LEFT$(gone{"error"}, 40)
+
+HTTP.SERVER.STOP()
+PRINT "done"

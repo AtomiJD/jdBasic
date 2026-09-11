@@ -1,0 +1,131 @@
+' llm_tools_demo.jdb - a tool-calling loop with LLMAPI.
+'
+' Two tools are declared as plain jdBasic functions: a weather lookup
+' and a unit conversion. The model is asked a question that needs both,
+' the loop runs every call the model asks for, hands the results back,
+' and stops when the model answers in words. A second part asks for a
+' structured answer and reads it as a map.
+'
+' Without LLM_PROVIDER the demo talks to a stand-in served from this
+' same process, so it runs offline and shows the exact exchange. With
+' LLM_PROVIDER=openai or anthropic (and the key in the environment) it
+' talks to the real vendor.
+'
+'   jdBasic llm_tools_demo.jdb
+'   set LLM_PROVIDER=anthropic
+'   jdBasic llm_tools_demo.jdb
+
+IMPORT LLMAPI, SCHEMA
+
+DIM PORT = 9982
+DIM gCalls = 0
+
+' ── the tools ──────────────────────────────────────────────────
+
+FUNC Weather(city$)
+    DIM known = {"bonn": 21.5, "wien": 24, "oslo": 12}
+    DIM key$ = LCASE$(city$)
+    IF MAP.EXISTS(known, key$) THEN RETURN {"city": city$, "celsius": known{key$}, "sky": "clear"}
+    RETURN {"city": city$, "error": "no station"}
+ENDFUNC
+
+FUNC Convert(value, from$, to$)
+    IF from$ = "C" ANDALSO to$ = "F" THEN RETURN {"value": value * 9 / 5 + 32, "unit": "F"}
+    IF from$ = "F" ANDALSO to$ = "C" THEN RETURN {"value": (value - 32) * 5 / 9, "unit": "C"}
+    RETURN {"error": "cannot convert " + from$ + " to " + to$}
+ENDFUNC
+
+FUNC RunTool(name$, args)
+    IF name$ = "weather" THEN RETURN JSON.STRINGIFY$(Weather(args{"city"}))
+    IF name$ = "convert" THEN RETURN JSON.STRINGIFY$(Convert(args{"value"}, args{"from"}, args{"to"}))
+    RETURN JSON.STRINGIFY$({"error": "unknown tool " + name$})
+ENDFUNC
+
+' ── a stand-in for the vendor, used when no provider is set ─────
+
+FUNC HANDLE_STANDIN(request)
+    gCalls = gCalls + 1
+    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM messages = body{"messages"}
+    DIM last = messages[LEN(messages) - 1]
+    DIM msg AS MAP
+    msg{"role"} = "assistant"
+    IF MAP.EXISTS(body, "response_format") THEN
+        msg{"content"} = JSON.STRINGIFY$({"city": "Bonn", "celsius": 21.5, "fahrenheit": 70.7, "advice": "a light jacket"})
+    ELSEIF last{"role"} = "user" THEN
+        msg{"content"} = ""
+        msg{"tool_calls"} = [{"id": "call_w", "type": "function", "function": {"name": "weather", "arguments": JSON.STRINGIFY$({"city": "Bonn"})}}]
+    ELSEIF last{"role"} = "tool" ANDALSO INSTR(last{"content"}, "celsius") >= 0 THEN
+        msg{"content"} = ""
+        msg{"tool_calls"} = [{"id": "call_c", "type": "function", "function": {"name": "convert", "arguments": JSON.STRINGIFY$({"value": 21.5, "from": "C", "to": "F"})}}]
+    ELSE
+        msg{"content"} = "It is 21.5 C in Bonn, which is 70.7 F. Clear skies."
+    ENDIF
+    RETURN {"choices": [{"message": msg, "finish_reason": "stop"}], "usage": {"prompt_tokens": 30 * gCalls, "completion_tokens": 12}}
+ENDFUNC
+
+' ── the client ─────────────────────────────────────────────────
+
+DIM provider$ = LCASE$(GETENV$("LLM_PROVIDER"))
+DIM ai = 0
+IF LEN(provider$) = 0 THEN
+    HTTP.SERVER.ON_POST("/v1/chat/completions", "HANDLE_STANDIN")
+    IF NOT HTTP.SERVER.START(PORT) THEN
+        PRINT "port "; PORT; " is taken"
+        END 1
+    ENDIF
+    ai = LLMAPI.NEW("openai", "stand-in", "none", "http://127.0.0.1:" + STR$(PORT) + "/v1")
+    PRINT "offline: a stand-in answers on port "; PORT
+ELSE
+    DIM model$ = GETENV$("LLM_MODEL")
+    IF LEN(model$) = 0 THEN
+        IF provider$ = "openai" THEN model$ = "gpt-4o-mini"
+        IF provider$ = "anthropic" THEN model$ = "claude-sonnet-5"
+    ENDIF
+    ai = LLMAPI.NEW(provider$, model$)
+    PRINT "live: "; provider$; " / "; model$
+ENDIF
+
+LLMAPI.SYSTEM(ai, "You are a terse assistant. Use the tools for facts and conversions; never guess numbers.")
+LLMAPI.TOOL(ai, "weather", "Current weather for a city", {"city": "string!"})
+LLMAPI.TOOL(ai, "convert", "Convert a temperature between C and F", {"value": "number!", "from": {"type": "string", "enum": ["C", "F"], "required": TRUE}, "to": {"type": "string", "enum": ["C", "F"], "required": TRUE}})
+
+DIM history = [LLMAPI.USER("How warm is it in Bonn right now, in Fahrenheit?")]
+DIM rounds = 0
+DIM tokens_out = 0
+DO
+    rounds = rounds + 1
+    DIM turn = LLMAPI.CHAT(ai, history)
+    tokens_out = tokens_out + turn{"usage"}{"output"}
+    PUSH(history, turn)
+    IF LEN(turn{"tool_calls"}) = 0 THEN
+        PRINT "answer: "; turn{"text"}
+        EXITDO
+    ENDIF
+    DIM i = 0
+    FOR i = 0 TO LEN(turn{"tool_calls"}) - 1
+        DIM wanted = turn{"tool_calls"}[i]
+        DIM result$ = RunTool(wanted{"name"}, wanted{"arguments"})
+        PRINT "tool "; wanted{"name"}; "("; JSON.STRINGIFY$(wanted{"arguments"}); ") -> "; result$
+        PUSH(history, LLMAPI.TOOL_RESULT(wanted, result$))
+    NEXT i
+    IF rounds >= 6 THEN
+        PRINT "giving up after six rounds"
+        EXITDO
+    ENDIF
+LOOP
+PRINT rounds; " round(s), "; tokens_out; " output tokens, "; LEN(history); " messages in the transcript"
+
+PRINT
+PRINT "a structured answer:"
+LLMAPI.CLEAR_TOOLS(ai)
+DIM shape = SCHEMA.NEW({"city": "string!", "celsius": "number!", "fahrenheit": "number!", "advice": {"type": "string", "description": "what to wear, five words at most"}})
+DIM facts = LLMAPI.JSON(ai, "Bonn is at 21.5 C. Fill in the shape.", shape)
+DIM checked = SCHEMA.CHECK(shape, facts)
+IF checked{"ok"} THEN
+    PRINT "   "; facts{"city"}; ": "; facts{"celsius"}; " C = "; facts{"fahrenheit"}; " F, "; facts{"advice"}
+ELSE
+    PRINT "   the answer did not fit: "; JOIN(checked{"errors"}, "; ")
+ENDIF
+
+IF LEN(provider$) = 0 THEN HTTP.SERVER.STOP()
