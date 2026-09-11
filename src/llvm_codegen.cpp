@@ -3199,6 +3199,13 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
 
             if (!try_stack.empty()) {
                 LLVMBuildBr(builder, try_stack.back());
+            } else if (current_exit_bb) {
+                // No TRY in this function, but the caller may have one. Return
+                // with the error set and let the per-statement check at the
+                // call site carry it outwards, the way a raised runtime error
+                // already travels. Aborting here instead is what made a THROW
+                // from a called function uncatchable.
+                emit_fn_return(nullptr);
             } else {
                 auto& uc = runtime_funcs["__throw_uncaught"];
                 LLVMBuildCall2(builder, uc.fn_type, uc.fn, nullptr, 0, "");
