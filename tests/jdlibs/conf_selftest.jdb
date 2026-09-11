@@ -1,0 +1,125 @@
+' CONF: dotenv, INI and the TOML subset from text and from files, and
+' the dotted GET over the map they all produce.
+
+IMPORT TESTKIT, CONF
+
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM BS$ = CHR$(92)
+
+FUNC Dup(text$)
+    RETURN CONF.INI_TEXT(text$, "error")
+ENDFUNC
+
+FUNC BadToml(text$)
+    RETURN CONF.TOML_TEXT(text$)
+ENDFUNC
+
+TESTKIT.SUITE("dotenv")
+DIM env_text$ = "# database" + NL$ + _
+    "DB_URL=postgres://localhost/app" + NL$ + _
+    "export API_KEY=abc123" + NL$ + _
+    "GREETING=" + Q$ + "hello" + BS$ + "nworld" + Q$ + NL$ + _
+    "RAW='a # not a comment'" + NL$ + _
+    "NOTE=value # a comment" + NL$ + _
+    "EMPTY=" + NL$ + _
+    "QUOTED_HASH=" + Q$ + "a#b" + Q$ + NL$ + _
+    "  SPACED  =  padded  " + NL$ + _
+    "garbage line" + NL$
+DIM env = CONF.ENV_TEXT(env_text$)
+TESTKIT.EQ(env{"DB_URL"}, "postgres://localhost/app", "a plain value")
+TESTKIT.EQ(env{"API_KEY"}, "abc123", "the export prefix is tolerated")
+TESTKIT.EQ(env{"GREETING"}, "hello" + NL$ + "world", "double quotes with an escape")
+TESTKIT.EQ(env{"RAW"}, "a # not a comment", "single quotes keep a hash")
+TESTKIT.EQ(env{"NOTE"}, "value", "an unquoted trailing comment is dropped")
+TESTKIT.EQ(env{"EMPTY"}, "", "an empty value")
+TESTKIT.EQ(env{"QUOTED_HASH"}, "a#b", "a hash inside quotes stays")
+TESTKIT.EQ(env{"SPACED"}, "padded", "whitespace around key and value goes")
+TESTKIT.ISFALSE(MAP.EXISTS(env, "garbage line"), "a line without = is skipped")
+TESTKIT.EQ(LEN(MAP.KEYS(env)), 8, "eight keys")
+SETENV "JDB_CONF_PROBE", ""
+DIM applied = CONF.ENV_TEXT("JDB_CONF_PROBE=live", TRUE)
+TESTKIT.EQ(GETENV$("JDB_CONF_PROBE"), "live", "apply pushes into the environment")
+SETENV "JDB_CONF_PROBE", ""
+
+TESTKIT.SUITE("INI")
+DIM ini_text$ = "; top" + NL$ + _
+    "name = demo" + NL$ + _
+    "[server]" + NL$ + _
+    "host = 0.0.0.0" + NL$ + _
+    "port: 8080" + NL$ + _
+    "# comment" + NL$ + _
+    "[server]" + NL$ + _
+    "port = 9090" + NL$ + _
+    "[paths]" + NL$ + _
+    "data = C:" + BS$ + "data" + NL$
+DIM ini = CONF.INI_TEXT(ini_text$)
+TESTKIT.EQ(ini{""}{"name"}, "demo", "a key before the first section lands in the empty section")
+TESTKIT.EQ(ini{"server"}{"host"}, "0.0.0.0", "a section key")
+TESTKIT.EQ(ini{"server"}{"port"}, "9090", "the last duplicate wins by default")
+TESTKIT.EQ(ini{"paths"}{"data"}, "C:" + BS$ + "data", "values are kept as written")
+TESTKIT.EQ(CONF.INI_TEXT(ini_text$, "first"){"server"}{"port"}, "8080", "or the first, by policy")
+TESTKIT.THROWS(Dup@, ini_text$, "or a duplicate raises")
+TESTKIT.EQ(LEN(MAP.KEYS(CONF.INI_TEXT("[a]" + NL$ + "x=1"))), 1, "no empty section when nothing precedes")
+
+TESTKIT.SUITE("TOML")
+DIM toml_text$ = "title = " + Q$ + "demo" + Q$ + NL$ + _
+    "debug = false" + NL$ + _
+    "ratio = 0.75" + NL$ + _
+    "big = 1_000_000" + NL$ + _
+    "when = 2026-09-11T15:00:00Z" + NL$ + _
+    "path = 'C:" + BS$ + "tmp'" + NL$ + _
+    "escaped = " + Q$ + "a" + BS$ + "tb" + Q$ + NL$ + _
+    "tags = [" + Q$ + "a" + Q$ + ", " + Q$ + "b, c" + Q$ + ", 3]" + NL$ + _
+    "nested = [[1, 2], [3]]" + NL$ + _
+    "point = { x = 1, y = " + Q$ + "two" + Q$ + " }" + NL$ + _
+    "" + NL$ + _
+    "[server]" + NL$ + _
+    "port = 8080 # inline comment" + NL$ + _
+    "hosts = [" + Q$ + "a" + Q$ + ", " + Q$ + "b" + Q$ + "]" + NL$ + _
+    "[server.tls]" + NL$ + _
+    "enabled = true" + NL$ + _
+    "[[jobs]]" + NL$ + _
+    "name = " + Q$ + "first" + Q$ + NL$ + _
+    "[[jobs]]" + NL$ + _
+    "name = " + Q$ + "second" + Q$ + NL$ + _
+    "[jobs.opts]" + NL$ + _
+    "retries = 2" + NL$
+DIM toml = CONF.TOML_TEXT(toml_text$)
+TESTKIT.EQ(toml{"title"}, "demo", "a basic string")
+TESTKIT.EQ(toml{"debug"}, FALSE, "a boolean")
+TESTKIT.EQ(toml{"ratio"}, 0.75, "a float")
+TESTKIT.EQ(toml{"big"}, 1000000, "an integer with underscores")
+TESTKIT.EQ(TYPEOF(toml{"big"}), "INT64", "as an integer")
+TESTKIT.EQ(toml{"when"}, "2026-09-11T15:00:00Z", "a datetime is kept as text")
+TESTKIT.EQ(toml{"path"}, "C:" + BS$ + "tmp", "a literal string keeps its backslash")
+TESTKIT.EQ(toml{"escaped"}, "a" + CHR$(9) + "b", "a basic string unescapes")
+TESTKIT.EQARRAY(toml{"tags"}, ["a", "b, c", 3], "an array with a comma inside a string")
+TESTKIT.EQ(toml{"nested"}[1][0], 3, "nested arrays")
+TESTKIT.EQ(toml{"point"}{"y"}, "two", "an inline table")
+TESTKIT.EQ(toml{"server"}{"port"}, 8080, "a table key with a trailing comment")
+TESTKIT.EQARRAY(toml{"server"}{"hosts"}, ["a", "b"], "an array in a table")
+TESTKIT.EQ(toml{"server"}{"tls"}{"enabled"}, TRUE, "a dotted table header nests")
+TESTKIT.EQ(LEN(toml{"jobs"}), 2, "an array of tables")
+TESTKIT.EQ(toml{"jobs"}[1]{"name"}, "second", "in order")
+TESTKIT.EQ(toml{"jobs"}[1]{"opts"}{"retries"}, 2, "a table under the last array entry")
+TESTKIT.THROWS(BadToml@, "no equals here", "a line that is no assignment raises")
+
+TESTKIT.SUITE("GET")
+TESTKIT.EQ(CONF.GET(toml, "server.tls.enabled", FALSE), TRUE, "a dotted path")
+TESTKIT.EQ(CONF.GET(toml, "server.port"), 8080, "two levels")
+TESTKIT.EQ(CONF.GET(toml, "server.missing", 42), 42, "the fallback for a missing key")
+TESTKIT.EQ(CONF.GET(toml, "title.deeper", "x"), "x", "the fallback when the path runs through a scalar")
+TESTKIT.EQ(CONF.GET(ini, "server.host", ""), "0.0.0.0", "the same read on an INI map")
+
+TESTKIT.SUITE("files")
+DIM work$ = MKTEMP$("jdbconf")
+MKDIR work$
+TXTWRITER work$ + "/.env", env_text$
+TXTWRITER work$ + "/app.ini", ini_text$
+TXTWRITER work$ + "/app.toml", toml_text$
+TESTKIT.EQ(CONF.ENV(work$ + "/.env"){"API_KEY"}, "abc123", "ENV reads a file")
+TESTKIT.EQ(CONF.INI(work$ + "/app.ini"){"server"}{"port"}, "9090", "INI reads a file")
+TESTKIT.EQ(CONF.TOML(work$ + "/app.toml"){"server"}{"port"}, 8080, "TOML reads a file")
+
+PRINT TESTKIT.REPORT()

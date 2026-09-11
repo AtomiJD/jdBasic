@@ -32,7 +32,7 @@ jdb/
 │   ├── audio/   FX.* effect chains - FX rack, live guitar FX, tone designer
 │   ├── apl/     vectorised idioms - Game of Life, primes, OUTER, one-liners
 │   ├── data/    vectors / matrices / dates - AGG, TALLY, EOMONTH, DATERANGE, MVINS, ZIP archives
-│   ├── jdlibs/  the module library by example - TESTKIT, CLI, SCHEMA, LLMAPI
+│   ├── jdlibs/  the module library by example - TESTKIT, CLI, SCHEMA, LLMAPI, CONF, LOGGER, XLSX, JWT
 │   ├── tui/     terminal UI, FTXUI, markdown browser, cowsay
 │   ├── web/     HTTP server + client - jdTrakr kanban, JDWEB framework, dashboards
 │   ├── bridges/ FFI, COM (Excel/Word/Access/Outlook), SQLite, serial
@@ -184,6 +184,7 @@ See [`doc/howto-vector-matrix-data.md`](../doc/howto-vector-matrix-data.md) for 
 * **`demos/jdlibs/testkit_demo.jdb`** - a slug builder, a thousands separator and a price parser, with the test file that holds them to it. Shows every assertion, and takes an argument: `tap` and `junit` switch the report format, `fail` injects one wrong expectation so the failure line and the exit code can be seen.
 * **`demos/jdlibs/cli_demo.jdb`** - a tool called `packer` with two subcommands, built with `CLI`: flags, options with defaults, a repeatable option, a required positional, and the help text it generates for the tool and for each command. Run it with no arguments and it walks four command lines itself.
 * **`demos/jdlibs/llm_facts.jdb`** - a structured answer from a language model, checked: `SCHEMA` declares the shape, `LLMAPI` asks OpenAI, Anthropic or a local GGUF model for exactly that shape, `SCHEMA` validates the reply, `REQ` carries the HTTP. `LLM_PROVIDER` picks the backend; without it the demo prints the JSON Schema and the messages it would send.
+* **`demos/jdlibs/service_report.jdb`** - a service run end to end: `CONF` reads the TOML settings, `LOGGER` writes to the console and a rotating file, `XLSX` writes the sales report with a bold header, widths, number formats and a frozen pane, `JWT` signs the download link and verifies it, `CLI` takes a `--quiet` flag.
 
 ### TUI
 

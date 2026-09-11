@@ -1,0 +1,71 @@
+' JWT: a token that matches a reference built with Python's hmac and
+' base64 modules, verification of the signature and of every claim, and
+' the base64url round trip.
+
+IMPORT TESTKIT, JWT
+
+DIM secret$ = "top-secret"
+DIM reference$ = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhbm4iLCJyb2xlIjoiYWRtaW4iLCJleHAiOjE4MDAwMDAwMDB9.LxPe_S18W4yHTbuWL0BtMBIthTGEW_K2IzWd8T3KVKQ"
+
+FUNC Rs256(claims)
+    RETURN JWT.SIGN$(claims, "x", "RS256")
+ENDFUNC
+
+FUNC Broken(text$)
+    RETURN JWT.DECODE(text$)
+ENDFUNC
+
+TESTKIT.SUITE("signing")
+DIM token$ = JWT.SIGN$({"sub": "ann", "role": "admin", "exp": 1800000000}, secret$)
+TESTKIT.EQ(token$, reference$, "byte for byte the reference token")
+DIM parts = SPLIT(token$, ".")
+TESTKIT.EQ(LEN(parts), 3, "three parts")
+TESTKIT.EQ(parts[0], "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9", "the HS256 header")
+TESTKIT.THROWS(Rs256@, {"a": 1}, "RS256 is refused")
+
+TESTKIT.SUITE("decoding")
+DIM peek = JWT.DECODE(token$)
+TESTKIT.EQ(peek{"header"}{"alg"}, "HS256", "the header")
+TESTKIT.EQ(peek{"claims"}{"sub"}, "ann", "the claims, unverified")
+TESTKIT.EQ(peek{"claims"}{"exp"}, 1800000000, "numbers stay numbers")
+TESTKIT.THROWS(Broken@, "not.a.token.at.all", "the wrong number of parts")
+TESTKIT.THROWS(Broken@, "a.b", "too few parts")
+
+TESTKIT.SUITE("verifying")
+DIM clock = {"now": 1700000000}
+DIM good = JWT.VERIFY(token$, secret$, clock)
+TESTKIT.ISTRUE(good{"ok"}, "the right secret")
+TESTKIT.EQ(good{"claims"}{"role"}, "admin", "hands back the claims")
+DIM wrong = JWT.VERIFY(token$, "other", clock)
+TESTKIT.ISFALSE(wrong{"ok"}, "the wrong secret")
+TESTKIT.EQ(wrong{"error"}, "bad signature", "is a bad signature")
+DIM tampered$ = parts[0] + "." + JWT.B64URL$(JSON.STRINGIFY$({"sub": "ann", "role": "root", "exp": 1800000000})) + "." + parts[2]
+DIM forged = JWT.VERIFY(tampered$, secret$, clock)
+TESTKIT.ISFALSE(forged{"ok"}, "a tampered payload")
+TESTKIT.EQ(forged{"error"}, "bad signature", "fails the signature")
+TESTKIT.EQ(JWT.VERIFY("garbage", secret$){"error"}, "malformed token", "garbage is malformed")
+DIM none$ = JWT.B64URL$(JSON.STRINGIFY$({"alg": "none"})) + "." + parts[1] + "."
+TESTKIT.EQ(JWT.VERIFY(none$, secret$, clock){"error"}, "unsupported algorithm", "alg none is refused")
+
+TESTKIT.SUITE("claims")
+TESTKIT.EQ(JWT.VERIFY(token$, secret$, {"now": 1800000001}){"error"}, "token expired", "past exp")
+TESTKIT.ISTRUE(JWT.VERIFY(token$, secret$, {"now": 1800000020, "skew": 30}){"ok"}, "within the skew")
+DIM early$ = JWT.SIGN$({"sub": "ann", "nbf": 1800000000}, secret$)
+TESTKIT.EQ(JWT.VERIFY(early$, secret$, {"now": 1799999000}){"error"}, "token not yet valid", "before nbf")
+TESTKIT.ISTRUE(JWT.VERIFY(early$, secret$, {"now": 1799999990, "skew": 15}){"ok"}, "nbf within the skew")
+DIM issued$ = JWT.SIGN$({"iss": "jdbasic", "aud": ["web", "api"]}, secret$)
+TESTKIT.ISTRUE(JWT.VERIFY(issued$, secret$, {"iss": "jdbasic"}){"ok"}, "the expected issuer")
+TESTKIT.EQ(JWT.VERIFY(issued$, secret$, {"iss": "other"}){"error"}, "wrong issuer", "another issuer")
+TESTKIT.ISTRUE(JWT.VERIFY(issued$, secret$, {"aud": "api"}){"ok"}, "an audience in the list")
+TESTKIT.EQ(JWT.VERIFY(issued$, secret$, {"aud": "mobile"}){"error"}, "wrong audience", "an audience not in it")
+DIM single$ = JWT.SIGN$({"aud": "web"}, secret$)
+TESTKIT.ISTRUE(JWT.VERIFY(single$, secret$, {"aud": "web"}){"ok"}, "a single audience string")
+TESTKIT.EQ(JWT.VERIFY(token$, secret$, {"now": 1700000000, "iss": "jdbasic"}){"error"}, "wrong issuer", "a required issuer that is absent")
+
+TESTKIT.SUITE("base64url")
+DIM raw$ = CHR$(251) + CHR$(255) + CHR$(0) + "a"
+TESTKIT.EQ(JWT.B64URL$(raw$), "-_8AYQ", "the url alphabet without padding")
+TESTKIT.EQ(JWT.UNB64URL$("-_8AYQ"), raw$, "and back")
+TESTKIT.EQ(JWT.UNB64URL$(JWT.B64URL$("any carnal pleas")), "any carnal pleas", "a round trip with two padding characters")
+
+PRINT TESTKIT.REPORT()

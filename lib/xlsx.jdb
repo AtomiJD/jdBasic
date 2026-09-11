@@ -1,0 +1,455 @@
+' xlsx.jdb - Excel workbooks read and written without Excel.
+'
+'   IMPORT XLSX
+'   DIM wb = XLSX.NEW()
+'   DIM s = XLSX.SHEET(wb, "Sales", [["Item", "Qty", "Price"], ["Bolt", 40, 0.15], ["Nut", 12, 0.05]])
+'   XLSX.COLUMN(s, "A", {"width": 18})
+'   XLSX.COLUMN(s, "C", {"width": 10, "format": "#,##0.00"})
+'   XLSX.FREEZE(s, 1)
+'   XLSX.WRITE("sales.xlsx", wb)
+'
+'   DIM book = XLSX.READ("sales.xlsx")        ' {"Sales": [[...], ...]}
+'   PRINT book{"Sales"}[1][2]
+'   PRINT JOIN(XLSX.SHEETS("sales.xlsx"), ", ")
+'
+' A sheet is a 2D array of rows. A string cell goes to the shared strings
+' table, a number is a number, a boolean a boolean, a string starting
+' with = is a formula, NONE leaves the cell empty. The first row of a
+' sheet is bold unless the sheet is created with header FALSE. COLUMN
+' takes a letter or a 1-based index and sets "width" (characters) and
+' "format" (an Excel number format code). FREEZE keeps the first rows
+' and columns in view.
+'
+' READ returns every sheet as a 2D array, rows padded to the widest,
+' with numbers, booleans and strings typed; a formula cell yields its
+' cached value. Dates arrive as the serial number Excel stores.
+'
+' The archive is written with stored entries through ZIP.WRITE.
+
+EXPORT MODULE XLSX
+
+CONST XML_HEAD = "<?xml version=" + CHR$(34) + "1.0" + CHR$(34) + " encoding=" + CHR$(34) + "UTF-8" + CHR$(34) + " standalone=" + CHR$(34) + "yes" + CHR$(34) + "?>" + CHR$(10)
+CONST NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+CONST NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+CONST NS_PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
+CONST NS_TYPES = "http://schemas.openxmlformats.org/package/2006/content-types"
+CONST REL_OFFICE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+CONST REL_SHEET = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet"
+CONST REL_STYLES = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles"
+CONST REL_STRINGS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings"
+CONST CT_SHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"
+CONST CT_WORKSHEET = "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"
+CONST CT_STYLES = "application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"
+CONST CT_STRINGS = "application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"
+CONST CT_RELS = "application/vnd.openxmlformats-package.relationships+xml"
+CONST CT_XML = "application/xml"
+
+' ── building ─────────────────────────────────────────────────
+
+EXPORT FUNC NEW()
+    RETURN {"sheets": []}
+ENDFUNC
+
+EXPORT FUNC SHEET(wb, name$, rows, header = TRUE)
+    DIM s AS MAP
+    s{"name"} = name$
+    s{"rows"} = rows
+    s{"header"} = header
+    s{"columns"} = {}
+    s{"freeze_rows"} = 0
+    s{"freeze_cols"} = 0
+    DIM sheets = wb{"sheets"}
+    PUSH(sheets, s)
+    wb{"sheets"} = sheets
+    RETURN s
+ENDFUNC
+
+' col is a letter ("C") or a 1-based index; opts carries "width" and "format".
+EXPORT SUB COLUMN(s, col, opts)
+    DIM index = col
+    IF TYPEOF(col) = "STRING" THEN index = COL_INDEX(col)
+    DIM columns = s{"columns"}
+    DIM key$ = STR$(index)
+    DIM entry = {}
+    IF MAP.EXISTS(columns, key$) THEN entry = columns{key$}
+    IF MAP.EXISTS(opts, "width") THEN entry{"width"} = opts{"width"}
+    IF MAP.EXISTS(opts, "format") THEN entry{"format"} = opts{"format"}
+    columns{key$} = entry
+    s{"columns"} = columns
+ENDSUB
+
+EXPORT SUB FREEZE(s, rows, cols = 0)
+    s{"freeze_rows"} = rows
+    s{"freeze_cols"} = cols
+ENDSUB
+
+' "A" is 1, "Z" 26, "AA" 27.
+EXPORT FUNC COL_INDEX(letters$)
+    DIM n = 0
+    DIM i = 0
+    DIM up$ = UCASE$(letters$)
+    FOR i = 0 TO LEN(up$) - 1
+        DIM c = ASC(MID$(up$, i, 1))
+        IF c < 65 OR c > 90 THEN EXITFOR
+        n = n * 26 + (c - 64)
+    NEXT i
+    RETURN n
+ENDFUNC
+
+EXPORT FUNC COL_LETTERS$(index)
+    DIM out$ = ""
+    DIM n = index
+    DO WHILE n > 0
+        DIM r = (n - 1) MOD 26
+        out$ = CHR$(65 + r) + out$
+        n = INT((n - 1) / 26)
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC Escape$(text$)
+    DIM out$ = REPLACE$(text$, "&", "&amp;")
+    out$ = REPLACE$(out$, "<", "&lt;")
+    out$ = REPLACE$(out$, ">", "&gt;")
+    out$ = REPLACE$(out$, CHR$(34), "&quot;")
+    RETURN out$
+ENDFUNC
+
+FUNC Attr$(name$, value$)
+    RETURN " " + name$ + "=" + CHR$(34) + Escape$(value$) + CHR$(34)
+ENDFUNC
+
+FUNC Unescape$(text$)
+    DIM out$ = REPLACE$(text$, "&lt;", "<")
+    out$ = REPLACE$(out$, "&gt;", ">")
+    out$ = REPLACE$(out$, "&quot;", CHR$(34))
+    out$ = REPLACE$(out$, "&apos;", "'")
+    out$ = REPLACE$(out$, "&#10;", CHR$(10))
+    out$ = REPLACE$(out$, "&amp;", "&")
+    RETURN out$
+ENDFUNC
+
+' Writes the workbook; answers the number of archive entries.
+EXPORT FUNC WRITE(path$, wb)
+    DIM strings = []
+    DIM string_index AS MAP
+    DIM formats = []
+    DIM entries AS MAP
+    DIM sheets = wb{"sheets"}
+    IF LEN(sheets) = 0 THEN THROW "XLSX.WRITE: a workbook needs at least one sheet"
+
+    ' Styles are numbered as the sheets ask for them: 0 plain, 1 bold,
+    ' then one per distinct number format.
+    DIM sheet_xml = []
+    DIM i = 0
+    FOR i = 0 TO LEN(sheets) - 1
+        PUSH(sheet_xml, SheetXml$(sheets[i], strings, string_index, formats))
+    NEXT i
+
+    entries{"[Content_Types].xml"} = ContentTypes$(LEN(sheets))
+    entries{"_rels/.rels"} = XML_HEAD + "<Relationships" + Attr$("xmlns", NS_PKG_REL) + ">" + _
+        "<Relationship" + Attr$("Id", "rId1") + Attr$("Type", REL_OFFICE) + Attr$("Target", "xl/workbook.xml") + "/>" + _
+        "</Relationships>"
+    entries{"xl/workbook.xml"} = WorkbookXml$(sheets)
+    entries{"xl/_rels/workbook.xml.rels"} = WorkbookRels$(LEN(sheets))
+    entries{"xl/styles.xml"} = StylesXml$(formats)
+    entries{"xl/sharedStrings.xml"} = SharedStrings$(strings)
+    FOR i = 0 TO LEN(sheets) - 1
+        entries{"xl/worksheets/sheet" + STR$(i + 1) + ".xml"} = sheet_xml[i]
+    NEXT i
+    RETURN ZIP.WRITE(path$, entries)
+ENDFUNC
+
+FUNC ContentTypes$(n)
+    DIM out$ = XML_HEAD + "<Types" + Attr$("xmlns", NS_TYPES) + ">"
+    out$ = out$ + "<Default" + Attr$("Extension", "rels") + Attr$("ContentType", CT_RELS) + "/>"
+    out$ = out$ + "<Default" + Attr$("Extension", "xml") + Attr$("ContentType", CT_XML) + "/>"
+    out$ = out$ + "<Override" + Attr$("PartName", "/xl/workbook.xml") + Attr$("ContentType", CT_SHEET) + "/>"
+    out$ = out$ + "<Override" + Attr$("PartName", "/xl/styles.xml") + Attr$("ContentType", CT_STYLES) + "/>"
+    out$ = out$ + "<Override" + Attr$("PartName", "/xl/sharedStrings.xml") + Attr$("ContentType", CT_STRINGS) + "/>"
+    DIM i = 0
+    FOR i = 1 TO n
+        out$ = out$ + "<Override" + Attr$("PartName", "/xl/worksheets/sheet" + STR$(i) + ".xml") + Attr$("ContentType", CT_WORKSHEET) + "/>"
+    NEXT i
+    RETURN out$ + "</Types>"
+ENDFUNC
+
+FUNC WorkbookXml$(sheets)
+    DIM out$ = XML_HEAD + "<workbook" + Attr$("xmlns", NS_MAIN) + Attr$("xmlns:r", NS_REL) + "><sheets>"
+    DIM i = 0
+    FOR i = 0 TO LEN(sheets) - 1
+        out$ = out$ + "<sheet" + Attr$("name", sheets[i]{"name"}) + Attr$("sheetId", STR$(i + 1)) + Attr$("r:id", "rId" + STR$(i + 1)) + "/>"
+    NEXT i
+    RETURN out$ + "</sheets></workbook>"
+ENDFUNC
+
+FUNC WorkbookRels$(n)
+    DIM out$ = XML_HEAD + "<Relationships" + Attr$("xmlns", NS_PKG_REL) + ">"
+    DIM i = 0
+    FOR i = 1 TO n
+        out$ = out$ + "<Relationship" + Attr$("Id", "rId" + STR$(i)) + Attr$("Type", REL_SHEET) + Attr$("Target", "worksheets/sheet" + STR$(i) + ".xml") + "/>"
+    NEXT i
+    out$ = out$ + "<Relationship" + Attr$("Id", "rId" + STR$(n + 1)) + Attr$("Type", REL_STYLES) + Attr$("Target", "styles.xml") + "/>"
+    out$ = out$ + "<Relationship" + Attr$("Id", "rId" + STR$(n + 2)) + Attr$("Type", REL_STRINGS) + Attr$("Target", "sharedStrings.xml") + "/>"
+    RETURN out$ + "</Relationships>"
+ENDFUNC
+
+FUNC StylesXml$(formats)
+    DIM out$ = XML_HEAD + "<styleSheet" + Attr$("xmlns", NS_MAIN) + ">"
+    DIM i = 0
+    IF LEN(formats) > 0 THEN
+        out$ = out$ + "<numFmts" + Attr$("count", STR$(LEN(formats))) + ">"
+        FOR i = 0 TO LEN(formats) - 1
+            out$ = out$ + "<numFmt" + Attr$("numFmtId", STR$(164 + i)) + Attr$("formatCode", formats[i]) + "/>"
+        NEXT i
+        out$ = out$ + "</numFmts>"
+    ENDIF
+    out$ = out$ + "<fonts count=" + CHR$(34) + "2" + CHR$(34) + ">"
+    out$ = out$ + "<font><sz val=" + CHR$(34) + "11" + CHR$(34) + "/><name val=" + CHR$(34) + "Calibri" + CHR$(34) + "/></font>"
+    out$ = out$ + "<font><b/><sz val=" + CHR$(34) + "11" + CHR$(34) + "/><name val=" + CHR$(34) + "Calibri" + CHR$(34) + "/></font>"
+    out$ = out$ + "</fonts>"
+    out$ = out$ + "<fills count=" + CHR$(34) + "2" + CHR$(34) + "><fill><patternFill patternType=" + CHR$(34) + "none" + CHR$(34) + "/></fill><fill><patternFill patternType=" + CHR$(34) + "gray125" + CHR$(34) + "/></fill></fills>"
+    out$ = out$ + "<borders count=" + CHR$(34) + "1" + CHR$(34) + "><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
+    out$ = out$ + "<cellStyleXfs count=" + CHR$(34) + "1" + CHR$(34) + "><xf numFmtId=" + CHR$(34) + "0" + CHR$(34) + " fontId=" + CHR$(34) + "0" + CHR$(34) + " fillId=" + CHR$(34) + "0" + CHR$(34) + " borderId=" + CHR$(34) + "0" + CHR$(34) + "/></cellStyleXfs>"
+    out$ = out$ + "<cellXfs" + Attr$("count", STR$(2 + LEN(formats))) + ">"
+    out$ = out$ + Xf$(0, 0)
+    out$ = out$ + Xf$(0, 1)
+    FOR i = 0 TO LEN(formats) - 1
+        out$ = out$ + Xf$(164 + i, 0)
+    NEXT i
+    out$ = out$ + "</cellXfs>"
+    out$ = out$ + "<cellStyles count=" + CHR$(34) + "1" + CHR$(34) + "><cellStyle name=" + CHR$(34) + "Normal" + CHR$(34) + " xfId=" + CHR$(34) + "0" + CHR$(34) + " builtinId=" + CHR$(34) + "0" + CHR$(34) + "/></cellStyles>"
+    RETURN out$ + "</styleSheet>"
+ENDFUNC
+
+FUNC Xf$(num_fmt, font)
+    DIM out$ = "<xf" + Attr$("numFmtId", STR$(num_fmt)) + Attr$("fontId", STR$(font)) + Attr$("fillId", "0") + Attr$("borderId", "0") + Attr$("xfId", "0")
+    IF num_fmt > 0 THEN out$ = out$ + Attr$("applyNumberFormat", "1")
+    IF font > 0 THEN out$ = out$ + Attr$("applyFont", "1")
+    RETURN out$ + "/>"
+ENDFUNC
+
+FUNC SharedStrings$(strings)
+    DIM out$ = XML_HEAD + "<sst" + Attr$("xmlns", NS_MAIN) + Attr$("count", STR$(LEN(strings))) + Attr$("uniqueCount", STR$(LEN(strings))) + ">"
+    DIM i = 0
+    FOR i = 0 TO LEN(strings) - 1
+        out$ = out$ + "<si><t" + Attr$("xml:space", "preserve") + ">" + Escape$(strings[i]) + "</t></si>"
+    NEXT i
+    RETURN out$ + "</sst>"
+ENDFUNC
+
+' The style index of a column's number format, adding it on first use.
+FUNC FormatStyle(formats, code$)
+    DIM i = 0
+    FOR i = 0 TO LEN(formats) - 1
+        IF formats[i] = code$ THEN RETURN 2 + i
+    NEXT i
+    PUSH(formats, code$)
+    RETURN 2 + LEN(formats) - 1
+ENDFUNC
+
+FUNC StringIndex(strings, string_index, text$)
+    IF MAP.EXISTS(string_index, text$) THEN RETURN string_index{text$}
+    PUSH(strings, text$)
+    string_index{text$} = LEN(strings) - 1
+    RETURN LEN(strings) - 1
+ENDFUNC
+
+FUNC SheetXml$(s, strings, string_index, formats)
+    DIM rows = s{"rows"}
+    DIM columns = s{"columns"}
+    DIM col_style AS MAP
+    DIM keys = MAP.KEYS(columns)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        IF MAP.EXISTS(columns{keys[i]}, "format") THEN col_style{keys[i]} = FormatStyle(formats, columns{keys[i]}{"format"})
+    NEXT i
+
+    DIM out$ = XML_HEAD + "<worksheet" + Attr$("xmlns", NS_MAIN) + Attr$("xmlns:r", NS_REL) + ">"
+    IF s{"freeze_rows"} > 0 OR s{"freeze_cols"} > 0 THEN
+        DIM top_left$ = COL_LETTERS$(s{"freeze_cols"} + 1) + STR$(s{"freeze_rows"} + 1)
+        DIM pane$ = "<pane"
+        IF s{"freeze_cols"} > 0 THEN pane$ = pane$ + Attr$("xSplit", STR$(s{"freeze_cols"}))
+        IF s{"freeze_rows"} > 0 THEN pane$ = pane$ + Attr$("ySplit", STR$(s{"freeze_rows"}))
+        pane$ = pane$ + Attr$("topLeftCell", top_left$) + Attr$("activePane", "bottomRight") + Attr$("state", "frozen") + "/>"
+        out$ = out$ + "<sheetViews><sheetView" + Attr$("workbookViewId", "0") + ">" + pane$ + "</sheetView></sheetViews>"
+    ENDIF
+    IF LEN(keys) > 0 THEN
+        DIM widths$ = ""
+        FOR i = 0 TO LEN(keys) - 1
+            DIM spec = columns{keys[i]}
+            IF MAP.EXISTS(spec, "width") THEN
+                widths$ = widths$ + "<col" + Attr$("min", keys[i]) + Attr$("max", keys[i]) + Attr$("width", STR$(spec{"width"})) + Attr$("customWidth", "1") + "/>"
+            ENDIF
+        NEXT i
+        IF LEN(widths$) > 0 THEN out$ = out$ + "<cols>" + widths$ + "</cols>"
+    ENDIF
+    out$ = out$ + "<sheetData>"
+    DIM r = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM row = rows[r]
+        DIM cells$ = ""
+        DIM c = 0
+        FOR c = 0 TO LEN(row) - 1
+            DIM style = 0
+            IF r = 0 ANDALSO s{"header"} THEN
+                style = 1
+            ELSEIF MAP.EXISTS(col_style, STR$(c + 1)) THEN
+                style = col_style{STR$(c + 1)}
+            ENDIF
+            cells$ = cells$ + Cell$(COL_LETTERS$(c + 1) + STR$(r + 1), row[c], style, strings, string_index)
+        NEXT c
+        out$ = out$ + "<row" + Attr$("r", STR$(r + 1)) + ">" + cells$ + "</row>"
+    NEXT r
+    RETURN out$ + "</sheetData></worksheet>"
+ENDFUNC
+
+FUNC Cell$(ref$, v, style, strings, string_index)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "NONE" THEN RETURN ""
+    DIM open$ = "<c" + Attr$("r", ref$)
+    IF style > 0 THEN open$ = open$ + Attr$("s", STR$(style))
+    IF t$ = "STRING" THEN
+        IF STARTSWITH(v, "=") THEN RETURN open$ + "><f>" + Escape$(MID$(v, 1, LEN(v) - 1)) + "</f></c>"
+        RETURN open$ + Attr$("t", "s") + "><v>" + STR$(StringIndex(strings, string_index, v)) + "</v></c>"
+    ENDIF
+    IF t$ = "BOOLEAN" THEN
+        DIM b$ = "0"
+        IF v THEN b$ = "1"
+        RETURN open$ + Attr$("t", "b") + "><v>" + b$ + "</v></c>"
+    ENDIF
+    RETURN open$ + "><v>" + STR$(v) + "</v></c>"
+ENDFUNC
+
+' ── reading ──────────────────────────────────────────────────
+
+EXPORT FUNC SHEETS(path$)
+    DIM parts = ZIP.READ(path$)
+    DIM names = []
+    DIM found = SheetList(parts)
+    DIM i = 0
+    FOR i = 0 TO LEN(found) - 1
+        PUSH(names, found[i]{"name"})
+    NEXT i
+    RETURN names
+ENDFUNC
+
+EXPORT FUNC READ(path$)
+    DIM parts = ZIP.READ(path$)
+    DIM strings = SharedStringList(parts)
+    DIM out AS MAP
+    DIM found = SheetList(parts)
+    DIM i = 0
+    FOR i = 0 TO LEN(found) - 1
+        DIM entry$ = found[i]{"entry"}
+        IF NOT MAP.EXISTS(parts, entry$) THEN THROW "XLSX.READ: missing " + entry$
+        out{found[i]{"name"}} = SheetRows(parts{entry$}, strings)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Sheet names with the archive entry each points to, in workbook order.
+FUNC SheetList(parts)
+    IF NOT MAP.EXISTS(parts, "xl/workbook.xml") THEN THROW "XLSX: not a workbook (xl/workbook.xml is missing)"
+    DIM rels AS MAP
+    IF MAP.EXISTS(parts, "xl/_rels/workbook.xml.rels") THEN
+        DIM rel_tags = REGEX.FINDALL("<Relationship\b([^>]*)/?>", parts{"xl/_rels/workbook.xml.rels"})
+        DIM k = 0
+        FOR k = 0 TO LEN(rel_tags) - 1
+            DIM attrs$ = rel_tags[k][0]
+            DIM id$ = AttrOf$(attrs$, "Id")
+            DIM target$ = AttrOf$(attrs$, "Target")
+            IF STARTSWITH(target$, "/") THEN
+                target$ = MID$(target$, 1, LEN(target$) - 1)
+            ELSE
+                target$ = "xl/" + target$
+            ENDIF
+            rels{id$} = target$
+        NEXT k
+    ENDIF
+    DIM out = []
+    DIM tags = REGEX.FINDALL("<sheet\b([^>]*)/?>", parts{"xl/workbook.xml"})
+    DIM i = 0
+    FOR i = 0 TO LEN(tags) - 1
+        DIM a$ = tags[i][0]
+        DIM name$ = Unescape$(AttrOf$(a$, "name"))
+        DIM rid$ = AttrOf$(a$, "r:id")
+        DIM entry$ = "xl/worksheets/sheet" + STR$(i + 1) + ".xml"
+        IF MAP.EXISTS(rels, rid$) THEN entry$ = rels{rid$}
+        PUSH(out, {"name": name$, "entry": entry$})
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC AttrOf$(attrs$, name$)
+    DIM found = REGEX.FINDALL("\s" + name$ + "=" + CHR$(34) + "([^" + CHR$(34) + "]*)" + CHR$(34), attrs$)
+    IF LEN(found) = 0 THEN RETURN ""
+    RETURN found[0][0]
+ENDFUNC
+
+FUNC SharedStringList(parts)
+    DIM out = []
+    IF NOT MAP.EXISTS(parts, "xl/sharedStrings.xml") THEN RETURN out
+    DIM items = REGEX.FINDALL("<si>([\s\S]*?)</si>", parts{"xl/sharedStrings.xml"})
+    DIM i = 0
+    FOR i = 0 TO LEN(items) - 1
+        PUSH(out, TextOf$(items[i][0]))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The text of one shared string: every <t> run joined, rich text included.
+FUNC TextOf$(si$)
+    DIM runs = REGEX.FINDALL("<t(?:\s[^>]*)?>([\s\S]*?)</t>", si$)
+    DIM text$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(runs) - 1
+        text$ = text$ + runs[i][0]
+    NEXT i
+    RETURN Unescape$(text$)
+ENDFUNC
+
+FUNC SheetRows(xml$, strings)
+    DIM rows = []
+    DIM width = 0
+    DIM row_tags = REGEX.FINDALL("<row\b([^>]*)>([\s\S]*?)</row>", xml$)
+    DIM r = 0
+    FOR r = 0 TO LEN(row_tags) - 1
+        ' A row the writer skipped is an empty row in the result.
+        DIM row_no = CINT(VAL(AttrOf$(row_tags[r][0], "r")))
+        DO WHILE row_no > 0 ANDALSO LEN(rows) < row_no - 1
+            PUSH(rows, [])
+        LOOP
+        DIM cells = REGEX.FINDALL("<c\s+r=" + CHR$(34) + "([A-Z]+)([0-9]+)" + CHR$(34) + "([^>]*?)(?:/>|>([\s\S]*?)</c>)", row_tags[r][1])
+        DIM row = []
+        DIM c = 0
+        FOR c = 0 TO LEN(cells) - 1
+            DIM col = COL_INDEX(cells[c][0])
+            DO WHILE LEN(row) < col - 1
+                PUSH(row, "")
+            LOOP
+            PUSH(row, CellValue(cells[c][2], cells[c][3], strings))
+        NEXT c
+        IF LEN(row) > width THEN width = LEN(row)
+        PUSH(rows, row)
+    NEXT r
+    FOR r = 0 TO LEN(rows) - 1
+        DIM padded = rows[r]
+        DO WHILE LEN(padded) < width
+            PUSH(padded, "")
+        LOOP
+    NEXT r
+    RETURN rows
+ENDFUNC
+
+FUNC CellValue(attrs$, inner$, strings)
+    DIM t$ = AttrOf$(attrs$, "t")
+    IF t$ = "inlineStr" THEN RETURN TextOf$(inner$)
+    DIM v = REGEX.FINDALL("<v>([\s\S]*?)</v>", inner$)
+    IF LEN(v) = 0 THEN RETURN ""
+    DIM raw$ = v[0][0]
+    IF t$ = "s" THEN RETURN strings[CINT(VAL(raw$))]
+    IF t$ = "b" THEN RETURN raw$ = "1"
+    IF t$ = "str" OR t$ = "e" THEN RETURN Unescape$(raw$)
+    RETURN VAL(raw$)
+ENDFUNC

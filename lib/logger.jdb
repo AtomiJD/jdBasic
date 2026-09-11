@@ -1,0 +1,226 @@
+' logger.jdb - levels, sinks and rotation for scripts and services.
+'
+'   IMPORT LOGGER
+'   DIM lg = LOGGER.NEW("packer")
+'   LOGGER.LEVEL(lg, "INFO")
+'   LOGGER.TO_CONSOLE(lg)
+'   LOGGER.TO_FILE(lg, "packer.log", 1000000, 3)
+'   LOGGER.TO_JSONL(lg, "packer.jsonl")
+'   LOGGER.CONTEXT(lg, {"host": "cortex", "run": 42})
+'
+'   LOGGER.INFO(lg, "build started", {"target": "arm64"})
+'   LOGGER.WARN(lg, "slow disk")
+'   LOGGER.ERROR(lg, "link failed", {"exit": 2})
+'   LOGGER.DEBUG(lg, "not shown below INFO")
+'
+' Levels are DEBUG, INFO, WARN and ERROR; a record below the logger's
+' level is dropped before any sink sees it. The console sink colours the
+' level, the file sink writes one line per record, the JSON lines sink
+' writes one JSON object per line with the fields time, epoch, level,
+' logger, message and every context and record field.
+'
+' A file or JSON lines sink with a size limit rotates: when the next line
+' would push the file past max_bytes, the file becomes name.1, name.1
+' becomes name.2 and so on up to keep, and the oldest is dropped.
+'
+' The module is named LOGGER because LOG is the natural logarithm.
+
+EXPORT MODULE LOGGER
+
+CONST LEVEL_NAMES = ["DEBUG", "INFO", "WARN", "ERROR"]
+
+EXPORT FUNC NEW(name$)
+    DIM lg AS MAP
+    lg{"name"} = name$
+    lg{"level"} = 1
+    lg{"sinks"} = []
+    lg{"context"} = {}
+    RETURN lg
+ENDFUNC
+
+FUNC Rank(level$)
+    DIM up$ = UCASE$(level$)
+    DIM i = 0
+    FOR i = 0 TO LEN(LEVEL_NAMES) - 1
+        IF LEVEL_NAMES[i] = up$ THEN RETURN i
+    NEXT i
+    THROW "LOGGER: unknown level " + level$ + " (DEBUG, INFO, WARN, ERROR)"
+ENDFUNC
+
+EXPORT SUB LEVEL(lg, level$)
+    lg{"level"} = Rank(level$)
+ENDSUB
+
+EXPORT SUB CONTEXT(lg, fields)
+    DIM ctx = lg{"context"}
+    DIM keys = MAP.KEYS(fields)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        ctx{keys[i]} = fields{keys[i]}
+    NEXT i
+    lg{"context"} = ctx
+ENDSUB
+
+EXPORT SUB TO_CONSOLE(lg, colour = TRUE)
+    AddSink(lg, {"kind": "console", "colour": colour})
+ENDSUB
+
+EXPORT SUB TO_FILE(lg, path$, max_bytes = 0, keep = 3)
+    AddSink(lg, {"kind": "file", "path": path$, "max": max_bytes, "keep": keep})
+ENDSUB
+
+EXPORT SUB TO_JSONL(lg, path$, max_bytes = 0, keep = 3)
+    AddSink(lg, {"kind": "jsonl", "path": path$, "max": max_bytes, "keep": keep})
+ENDSUB
+
+SUB AddSink(lg, sink)
+    DIM sinks = lg{"sinks"}
+    PUSH(sinks, sink)
+    lg{"sinks"} = sinks
+ENDSUB
+
+EXPORT SUB DEBUG(lg, message$, fields = 0)
+    LOG(lg, "DEBUG", message$, fields)
+ENDSUB
+
+EXPORT SUB INFO(lg, message$, fields = 0)
+    LOG(lg, "INFO", message$, fields)
+ENDSUB
+
+EXPORT SUB WARN(lg, message$, fields = 0)
+    LOG(lg, "WARN", message$, fields)
+ENDSUB
+
+EXPORT SUB ERROR(lg, message$, fields = 0)
+    LOG(lg, "ERROR", message$, fields)
+ENDSUB
+
+EXPORT SUB LOG(lg, level$, message$, fields = 0)
+    DIM rank = Rank(level$)
+    IF rank < lg{"level"} THEN RETURN
+    DIM rec = RECORD(lg, LEVEL_NAMES[rank], message$, fields)
+    DIM sinks = lg{"sinks"}
+    DIM i = 0
+    FOR i = 0 TO LEN(sinks) - 1
+        Emit(sinks[i], rec)
+    NEXT i
+ENDSUB
+
+' The record a sink receives, with the context and the call's fields
+' merged in. Exposed so a custom sink can be built on it.
+EXPORT FUNC RECORD(lg, level$, message$, fields = 0)
+    DIM rec AS MAP
+    rec{"time"} = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+    rec{"epoch"} = NOW_EPOCH()
+    rec{"level"} = level$
+    rec{"logger"} = lg{"name"}
+    rec{"message"} = message$
+    DIM extra AS MAP
+    Merge(extra, lg{"context"})
+    IF TYPEOF(fields) = "OBJECT" THEN Merge(extra, fields)
+    rec{"fields"} = extra
+    RETURN rec
+ENDFUNC
+
+SUB Merge(target, source)
+    DIM keys = MAP.KEYS(source)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        target{keys[i]} = source{keys[i]}
+    NEXT i
+ENDSUB
+
+' One text line: time, level padded to five, the logger in brackets, the
+' message, then key=value pairs.
+EXPORT FUNC LINE$(rec)
+    DIM level$ = rec{"level"}
+    DO WHILE LEN(level$) < 5
+        level$ = level$ + " "
+    LOOP
+    DIM out$ = rec{"time"} + " " + level$ + " [" + rec{"logger"} + "] " + rec{"message"}
+    DIM keys = MAP.KEYS(rec{"fields"})
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        out$ = out$ + " " + keys[i] + "=" + Shown$(rec{"fields"}{keys[i]})
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC Shown$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "STRING" THEN
+        IF INSTR(v, " ") >= 0 THEN RETURN CHR$(34) + v + CHR$(34)
+        RETURN v
+    ENDIF
+    IF t$ = "BOOLEAN" THEN
+        IF v THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    IF t$ = "OBJECT" OR t$ = "ARRAY" THEN RETURN JSON.STRINGIFY$(v)
+    RETURN STR$(v)
+ENDFUNC
+
+' The JSON lines form: the record flattened to one object.
+EXPORT FUNC JSON$(rec)
+    DIM flat AS MAP
+    flat{"time"} = rec{"time"}
+    flat{"epoch"} = rec{"epoch"}
+    flat{"level"} = rec{"level"}
+    flat{"logger"} = rec{"logger"}
+    flat{"message"} = rec{"message"}
+    Merge(flat, rec{"fields"})
+    RETURN JSON.STRINGIFY$(flat)
+ENDFUNC
+
+SUB Emit(sink, rec)
+    DIM kind$ = sink{"kind"}
+    IF kind$ = "console" THEN
+        PRINT Coloured$(rec, sink{"colour"})
+    ELSEIF kind$ = "file" THEN
+        Write(sink, LINE$(rec) + CHR$(10))
+    ELSEIF kind$ = "jsonl" THEN
+        Write(sink, JSON$(rec) + CHR$(10))
+    ENDIF
+ENDSUB
+
+FUNC Coloured$(rec, colour)
+    DIM text$ = LINE$(rec)
+    IF NOT colour THEN RETURN text$
+    DIM esc$ = CHR$(27) + "["
+    DIM level$ = rec{"level"}
+    DIM code$ = "0"
+    IF level$ = "DEBUG" THEN code$ = "90"
+    IF level$ = "INFO" THEN code$ = "36"
+    IF level$ = "WARN" THEN code$ = "33"
+    IF level$ = "ERROR" THEN code$ = "31"
+    RETURN esc$ + code$ + "m" + text$ + esc$ + "0m"
+ENDFUNC
+
+SUB Write(sink, text$)
+    DIM path$ = sink{"path"}
+    IF sink{"max"} > 0 THEN
+        DIM have = FILE.SIZE(path$)
+        IF have > 0 ANDALSO have + LEN(text$) > sink{"max"} THEN Roll(path$, sink{"keep"})
+    ENDIF
+    TXTWRITER path$, text$, TRUE
+ENDSUB
+
+' name.keep is dropped, every name.n moves to name.n+1, name becomes name.1.
+SUB Roll(path$, keep)
+    IF keep < 1 THEN
+        KILL path$
+        RETURN
+    ENDIF
+    DIM n = keep
+    IF FILE.EXISTS(path$ + "." + STR$(keep)) THEN KILL path$ + "." + STR$(keep)
+    FOR n = keep - 1 TO 1 STEP -1
+        DIM older$ = path$ + "." + STR$(n)
+        IF FILE.EXISTS(older$) THEN Move(older$, path$ + "." + STR$(n + 1))
+    NEXT n
+    Move(path$, path$ + ".1")
+ENDSUB
+
+SUB Move(from$, to$)
+    BINWRITER to$, BINREADER$(from$)
+    KILL from$
+ENDSUB

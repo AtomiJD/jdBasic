@@ -1,0 +1,82 @@
+' LOGGER: levels, the line and JSON forms, context and record fields,
+' the file and JSON lines sinks, and rotation across three files.
+
+IMPORT TESTKIT, LOGGER
+
+DIM work$ = MKTEMP$("jdblog")
+MKDIR work$
+DIM log_path$ = work$ + "/app.log"
+DIM json_path$ = work$ + "/app.jsonl"
+DIM small_path$ = work$ + "/small.log"
+
+FUNC Unknown(lg)
+    LOGGER.LOG(lg, "LOUD", "x")
+ENDFUNC
+
+FUNC LinesOf(path$)
+    DIM text$ = TXTREADER$(path$)
+    IF ENDSWITH(text$, CHR$(10)) THEN text$ = LEFT$(text$, LEN(text$) - 1)
+    RETURN SPLIT(text$, CHR$(10))
+ENDFUNC
+
+TESTKIT.SUITE("records")
+DIM lg = LOGGER.NEW("packer")
+LOGGER.CONTEXT(lg, {"host": "cortex"})
+DIM rec = LOGGER.RECORD(lg, "INFO", "build started", {"target": "arm64", "n": 3, "ok": TRUE})
+TESTKIT.EQ(rec{"level"}, "INFO", "the level")
+TESTKIT.EQ(rec{"logger"}, "packer", "the logger name")
+TESTKIT.EQ(rec{"message"}, "build started", "the message")
+TESTKIT.EQ(rec{"fields"}{"host"}, "cortex", "context is merged in")
+TESTKIT.EQ(rec{"fields"}{"target"}, "arm64", "record fields too")
+TESTKIT.EQ(LEN(rec{"time"}), 19, "a timestamp in YYYY-MM-DD HH:MM:SS")
+TESTKIT.ISTRUE(rec{"epoch"} > 1700000000, "and the epoch")
+DIM shown$ = LOGGER.LINE$(rec)
+TESTKIT.ISTRUE(ENDSWITH(shown$, "INFO  [packer] build started host=cortex target=arm64 n=3 ok=true"), "the text line")
+DIM json = JSON.PARSE$(LOGGER.JSON$(rec))
+TESTKIT.EQ(json{"level"}, "INFO", "the JSON form parses back")
+TESTKIT.EQ(json{"target"}, "arm64", "with the fields flattened in")
+TESTKIT.EQ(json{"n"}, 3, "numbers stay numbers")
+DIM spaced = LOGGER.RECORD(lg, "WARN", "x", {"path": "a b"})
+TESTKIT.ISTRUE(ENDSWITH(LOGGER.LINE$(spaced), "path=" + CHR$(34) + "a b" + CHR$(34)), "a value with a space is quoted")
+TESTKIT.THROWS(Unknown@, lg, "an unknown level is refused")
+
+TESTKIT.SUITE("levels and sinks")
+LOGGER.TO_FILE(lg, log_path$)
+LOGGER.TO_JSONL(lg, json_path$)
+LOGGER.LEVEL(lg, "INFO")
+LOGGER.DEBUG(lg, "hidden")
+LOGGER.INFO(lg, "one")
+LOGGER.WARN(lg, "two", {"slow": TRUE})
+LOGGER.ERROR(lg, "three")
+DIM written = LinesOf(log_path$)
+TESTKIT.EQ(LEN(written), 3, "DEBUG is dropped below INFO")
+TESTKIT.ISTRUE(INSTR(written[0], "INFO  [packer] one") >= 0, "the first line")
+TESTKIT.ISTRUE(INSTR(written[1], "WARN  [packer] two host=cortex slow=true") >= 0, "the second with its fields")
+TESTKIT.ISTRUE(INSTR(written[2], "ERROR [packer] three") >= 0, "the third")
+DIM jl = LinesOf(json_path$)
+TESTKIT.EQ(LEN(jl), 3, "the JSON lines sink has the same three")
+TESTKIT.EQ(JSON.PARSE$(jl[1]){"message"}, "two", "each line is one JSON object")
+TESTKIT.EQ(JSON.PARSE$(jl[1]){"slow"}, TRUE, "with the record fields")
+LOGGER.LEVEL(lg, "ERROR")
+LOGGER.WARN(lg, "quiet now")
+TESTKIT.EQ(LEN(LinesOf(log_path$)), 3, "raising the level drops WARN")
+
+TESTKIT.SUITE("rotation")
+DIM small = LOGGER.NEW("tiny")
+LOGGER.TO_FILE(small, small_path$, 120, 3)
+DIM i = 0
+FOR i = 1 TO 12
+    LOGGER.INFO(small, "entry " + STR$(i))
+NEXT i
+TESTKIT.ISTRUE(FILE.EXISTS(small_path$), "the live file")
+TESTKIT.ISTRUE(FILE.EXISTS(small_path$ + ".1"), "the first rotated file")
+TESTKIT.ISTRUE(FILE.EXISTS(small_path$ + ".2"), "the second")
+TESTKIT.ISTRUE(FILE.EXISTS(small_path$ + ".3"), "the third")
+TESTKIT.ISFALSE(FILE.EXISTS(small_path$ + ".4"), "and no fourth")
+TESTKIT.ISTRUE(FILE.SIZE(small_path$ + ".1") <= 120, "each stays under the limit")
+DIM newest = LinesOf(small_path$)
+DIM older = LinesOf(small_path$ + ".1")
+TESTKIT.ISTRUE(INSTR(newest[LEN(newest) - 1], "entry 12") >= 0, "the newest entry is in the live file")
+TESTKIT.ISTRUE(VAL(MID$(older[0], INSTR(older[0], "entry ") + 6, 2)) < 12, "older entries moved down")
+
+PRINT TESTKIT.REPORT()

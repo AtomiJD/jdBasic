@@ -1,0 +1,96 @@
+' XLSX: column arithmetic, a workbook written and read back with every
+' cell type, the parts Excel needs, and a workbook from another writer.
+
+IMPORT TESTKIT, XLSX
+
+DIM work$ = MKTEMP$("jdbxlsx")
+MKDIR work$
+DIM path$ = work$ + "/sales.xlsx"
+
+FUNC Empty(wb)
+    RETURN XLSX.WRITE(work$ + "/none.xlsx", wb)
+ENDFUNC
+
+TESTKIT.SUITE("columns")
+TESTKIT.EQ(XLSX.COL_INDEX("A"), 1, "A is 1")
+TESTKIT.EQ(XLSX.COL_INDEX("Z"), 26, "Z is 26")
+TESTKIT.EQ(XLSX.COL_INDEX("AA"), 27, "AA is 27")
+TESTKIT.EQ(XLSX.COL_INDEX("AZ12"), 52, "a cell reference reads the letters only")
+TESTKIT.EQ(XLSX.COL_LETTERS$(1), "A", "1 is A")
+TESTKIT.EQ(XLSX.COL_LETTERS$(28), "AB", "28 is AB")
+TESTKIT.EQ(XLSX.COL_LETTERS$(702), "ZZ", "702 is ZZ")
+
+TESTKIT.SUITE("writing")
+DIM wb = XLSX.NEW()
+DIM rows = [["Item", "Qty", "Price", "In stock", "Note"], _
+            ["Bolt <M6>", 40, 0.15, TRUE, "a & b"], _
+            ["Nut", 12, 0.05, FALSE, ""], _
+            ["Total", "=SUM(B2:B3)", 2.5, TRUE, "ok"]]
+DIM s = XLSX.SHEET(wb, "Sales", rows)
+XLSX.COLUMN(s, "A", {"width": 18})
+XLSX.COLUMN(s, 3, {"width": 10, "format": "#,##0.00"})
+XLSX.FREEZE(s, 1)
+DIM extra = XLSX.SHEET(wb, "Notes", [["only", "text"], ["", 7]], FALSE)
+DIM n = XLSX.WRITE(path$, wb)
+TESTKIT.EQ(n, 8, "eight archive entries for two sheets")
+TESTKIT.ISTRUE(FILE.SIZE(path$) > 1000, "the file has content")
+DIM parts = ZIP.READ(path$)
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "[Content_Types].xml"), "content types")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "_rels/.rels"), "package relationships")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "xl/workbook.xml"), "the workbook")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "xl/_rels/workbook.xml.rels"), "its relationships")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "xl/styles.xml"), "styles")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "xl/sharedStrings.xml"), "shared strings")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "xl/worksheets/sheet2.xml"), "the second sheet")
+DIM sheet1$ = parts{"xl/worksheets/sheet1.xml"}
+TESTKIT.ISTRUE(INSTR(sheet1$, "<pane") >= 0 ANDALSO INSTR(sheet1$, "ySplit=" + CHR$(34) + "1" + CHR$(34)) >= 0, "the frozen pane")
+TESTKIT.ISTRUE(INSTR(sheet1$, "<col min=" + CHR$(34) + "1" + CHR$(34) + " max=" + CHR$(34) + "1" + CHR$(34) + " width=" + CHR$(34) + "18" + CHR$(34)) >= 0, "the column width")
+TESTKIT.ISTRUE(INSTR(sheet1$, "<c r=" + CHR$(34) + "A1" + CHR$(34) + " s=" + CHR$(34) + "1" + CHR$(34)) >= 0, "the header row is bold")
+TESTKIT.ISTRUE(INSTR(sheet1$, "<c r=" + CHR$(34) + "C2" + CHR$(34) + " s=" + CHR$(34) + "2" + CHR$(34)) >= 0, "a formatted column has its style")
+TESTKIT.ISTRUE(INSTR(sheet1$, "<f>SUM(B2:B3)</f>") >= 0, "a formula")
+TESTKIT.ISTRUE(INSTR(sheet1$, "<sheetViews>") < INSTR(sheet1$, "<cols>") ANDALSO INSTR(sheet1$, "<cols>") < INSTR(sheet1$, "<sheetData>"), "the parts in the order the schema wants")
+TESTKIT.ISTRUE(INSTR(parts{"xl/styles.xml"}, "formatCode=" + CHR$(34) + "#,##0.00" + CHR$(34)) >= 0, "the number format")
+TESTKIT.ISTRUE(INSTR(parts{"xl/sharedStrings.xml"}, "Bolt &lt;M6&gt;") >= 0, "strings are escaped")
+TESTKIT.THROWS(Empty@, XLSX.NEW(), "a workbook without sheets is refused")
+
+TESTKIT.SUITE("reading back")
+TESTKIT.EQARRAY(XLSX.SHEETS(path$), ["Sales", "Notes"], "sheet names in order")
+DIM book = XLSX.READ(path$)
+DIM sales = book{"Sales"}
+TESTKIT.EQ(LEN(sales), 4, "four rows")
+TESTKIT.EQARRAY(sales[0], ["Item", "Qty", "Price", "In stock", "Note"], "the header")
+TESTKIT.EQ(sales[1][0], "Bolt <M6>", "a string with markup characters")
+TESTKIT.EQ(sales[1][1], 40, "an integer")
+TESTKIT.EQ(sales[1][2], 0.15, "a fraction")
+TESTKIT.EQ(sales[1][3], TRUE, "a boolean")
+TESTKIT.EQ(sales[1][4], "a & b", "an ampersand")
+TESTKIT.EQ(sales[2][3], FALSE, "false")
+TESTKIT.EQ(sales[2][4], "", "an empty string")
+TESTKIT.EQ(sales[3][1], "", "a formula without a cached value reads empty")
+DIM notes = book{"Notes"}
+TESTKIT.EQ(notes[1][1], 7, "the second sheet")
+TESTKIT.EQ(LEN(notes[1]), 2, "rows are padded to the width")
+
+TESTKIT.SUITE("a workbook from another writer")
+' fixtures/from_openpyxl.xlsx: openpyxl 3.1, two sheets, a date, a
+' datetime, a negative number, booleans, a string with a line break,
+' and a row the writer skipped.
+DIM fixture$ = "tests/jdlibs/fixtures/from_openpyxl.xlsx"
+IF NOT FILE.EXISTS(fixture$) THEN fixture$ = "fixtures/from_openpyxl.xlsx"
+IF FILE.EXISTS(fixture$) THEN
+    TESTKIT.EQARRAY(XLSX.SHEETS(fixture$), ["Data", "Second"], "its sheets")
+    DIM other = XLSX.READ(fixture$){"Data"}
+    TESTKIT.EQ(LEN(other), 5, "five rows, the skipped one included")
+    TESTKIT.EQARRAY(other[0], ["Name", "When", "Amount", "Flag", "Text"], "the header")
+    TESTKIT.EQ(other[1][1], 46276, "a date as its serial number")
+    TESTKIT.NEAR(other[2][1], 46276.645833, 0.000001, "a datetime as its serial number")
+    TESTKIT.EQ(other[2][2], -7, "a negative number")
+    TESTKIT.EQ(other[1][3], TRUE, "a boolean")
+    TESTKIT.EQ(other[2][4], "line" + CHR$(10) + "break", "a string with a line break")
+    TESTKIT.EQARRAY(other[3], ["", "", "", "", ""], "the skipped row is empty")
+    TESTKIT.EQ(other[4][3], 9, "a sparse row keeps its column")
+ELSE
+    TESTKIT.SKIP("fixture not found")
+ENDIF
+
+PRINT TESTKIT.REPORT()

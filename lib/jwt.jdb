@@ -1,0 +1,134 @@
+' jwt.jdb - JSON Web Tokens signed with HS256.
+'
+'   IMPORT JWT
+'   DIM token$ = JWT.SIGN$({"sub": "ann", "role": "admin", "exp": NOW_EPOCH() + 3600}, secret$)
+'   DIM check = JWT.VERIFY(token$, secret$, {"iss": "jdbasic", "skew": 30})
+'   IF check{"ok"} THEN PRINT check{"claims"}{"sub"} ELSE PRINT check{"error"}
+'   DIM peek = JWT.DECODE(token$)          ' header and claims, unverified
+'
+' SIGN$ takes the claims map and the shared secret; the only algorithm is
+' HS256, and the header is {"alg": "HS256", "typ": "JWT"}. VERIFY checks
+' the signature first, then the claims: exp and nbf against the clock
+' with an optional skew in seconds, iss and aud against the expected
+' values when the options name them. The options map may carry "skew",
+' "iss", "aud" and "now" (seconds since 1970, for a test clock). The
+' answer is {"ok", "claims", "header", "error"}.
+'
+' Base64url is the standard alphabet with + and / swapped for - and _
+' and the padding dropped; the module converts both ways.
+
+EXPORT MODULE JWT
+
+CONST HEX_DIGITS = "0123456789abcdef"
+
+EXPORT FUNC SIGN$(claims, secret$, alg$ = "HS256")
+    IF UCASE$(alg$) <> "HS256" THEN THROW "JWT: only HS256 is supported"
+    DIM head$ = B64URL$(JSON.STRINGIFY$({"alg": "HS256", "typ": "JWT"}))
+    DIM body$ = B64URL$(JSON.STRINGIFY$(claims))
+    DIM signing$ = head$ + "." + body$
+    RETURN signing$ + "." + Signature$(signing$, secret$)
+ENDFUNC
+
+FUNC Signature$(signing$, secret$)
+    RETURN B64URL$(HexBytes$(CODEC.HMAC$(secret$, signing$)))
+ENDFUNC
+
+EXPORT FUNC DECODE(token$)
+    DIM parts = SPLIT(token$, ".")
+    IF LEN(parts) <> 3 THEN THROW "JWT: a token has three parts"
+    DIM header = JSON.PARSE$(UNB64URL$(parts[0]))
+    DIM claims = JSON.PARSE$(UNB64URL$(parts[1]))
+    IF TYPEOF(header) <> "OBJECT" ORELSE TYPEOF(claims) <> "OBJECT" THEN THROW "JWT: header or claims are not JSON"
+    RETURN {"header": header, "claims": claims, "signature": parts[2]}
+ENDFUNC
+
+EXPORT FUNC VERIFY(token$, secret$, opts = 0)
+    DIM skew = 0
+    DIM now = NOW_EPOCH()
+    DIM want_iss$ = ""
+    DIM want_aud$ = ""
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "skew") THEN skew = opts{"skew"}
+        IF MAP.EXISTS(opts, "now") THEN now = opts{"now"}
+        IF MAP.EXISTS(opts, "iss") THEN want_iss$ = opts{"iss"}
+        IF MAP.EXISTS(opts, "aud") THEN want_aud$ = opts{"aud"}
+    ENDIF
+    DIM parts = SPLIT(token$, ".")
+    IF LEN(parts) <> 3 THEN RETURN Rejected("malformed token")
+    DIM decoded = 0
+    TRY
+        decoded = DECODE(token$)
+    CATCH
+        RETURN Rejected("malformed token")
+    ENDTRY
+    DIM header = decoded{"header"}
+    IF NOT MAP.EXISTS(header, "alg") ORELSE header{"alg"} <> "HS256" THEN RETURN Rejected("unsupported algorithm")
+    IF NOT SameText(Signature$(parts[0] + "." + parts[1], secret$), parts[2]) THEN RETURN Rejected("bad signature")
+    DIM claims = decoded{"claims"}
+    IF MAP.EXISTS(claims, "exp") ANDALSO now > claims{"exp"} + skew THEN RETURN Rejected("token expired")
+    IF MAP.EXISTS(claims, "nbf") ANDALSO now + skew < claims{"nbf"} THEN RETURN Rejected("token not yet valid")
+    IF LEN(want_iss$) > 0 THEN
+        IF NOT MAP.EXISTS(claims, "iss") ORELSE claims{"iss"} <> want_iss$ THEN RETURN Rejected("wrong issuer")
+    ENDIF
+    IF LEN(want_aud$) > 0 THEN
+        IF NOT MAP.EXISTS(claims, "aud") ORELSE NOT HasAudience(claims{"aud"}, want_aud$) THEN RETURN Rejected("wrong audience")
+    ENDIF
+    RETURN {"ok": TRUE, "claims": claims, "header": header, "error": ""}
+ENDFUNC
+
+FUNC Rejected(why$)
+    RETURN {"ok": FALSE, "claims": {}, "header": {}, "error": why$}
+ENDFUNC
+
+' aud may be one string or a list of them.
+FUNC HasAudience(aud, want$)
+    IF TYPEOF(aud) = "STRING" THEN RETURN aud = want$
+    IF TYPEOF(aud) = "ARRAY" THEN
+        DIM i = 0
+        FOR i = 0 TO LEN(aud) - 1
+            IF aud[i] = want$ THEN RETURN TRUE
+        NEXT i
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+' Compares every byte regardless of the first difference, so the time a
+' comparison takes does not tell where two signatures part.
+FUNC SameText(a$, b$)
+    IF LEN(a$) <> LEN(b$) THEN RETURN FALSE
+    DIM diff = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(a$) - 1
+        IF BYTEAT(a$, i) <> BYTEAT(b$, i) THEN diff = diff + 1
+    NEXT i
+    RETURN diff = 0
+ENDFUNC
+
+FUNC HexBytes$(hex$)
+    DIM out$ = ""
+    DIM i = 0
+    DIM lower$ = LCASE$(hex$)
+    FOR i = 0 TO LEN(lower$) - 2 STEP 2
+        DIM hi = INSTR(HEX_DIGITS, MID$(lower$, i, 1))
+        DIM lo = INSTR(HEX_DIGITS, MID$(lower$, i + 1, 1))
+        out$ = out$ + CHR$(hi * 16 + lo)
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+EXPORT FUNC B64URL$(bytes$)
+    DIM text$ = CODEC.BASE64_ENCODE$(bytes$)
+    text$ = REPLACE$(REPLACE$(text$, "+", "-"), "/", "_")
+    DO WHILE ENDSWITH(text$, "=")
+        text$ = LEFT$(text$, LEN(text$) - 1)
+    LOOP
+    RETURN text$
+ENDFUNC
+
+EXPORT FUNC UNB64URL$(text$)
+    DIM std$ = REPLACE$(REPLACE$(text$, "-", "+"), "_", "/")
+    DO WHILE LEN(std$) MOD 4 <> 0
+        std$ = std$ + "="
+    LOOP
+    RETURN CODEC.BASE64_DECODE$(std$)
+ENDFUNC

@@ -1,0 +1,356 @@
+' conf.jdb - dotenv, INI and a TOML subset, one map shape for all three.
+'
+'   IMPORT CONF
+'   DIM env = CONF.ENV(".env")              ' {"DB_URL": "...", ...}
+'   CONF.ENV(".env", TRUE)                  ' and pushed into the process environment
+'   DIM ini = CONF.INI("app.ini")           ' {"section": {"key": "value"}}
+'   DIM toml = CONF.TOML("app.toml")        ' {"server": {"port": 8080, "hosts": [...]}}
+'   PRINT CONF.GET(toml, "server.port", 80)
+'
+' The text parsers behind the file loaders are exported too: ENV_TEXT,
+' INI_TEXT and TOML_TEXT take the content as a string.
+'
+' dotenv: KEY=value per line, an optional "export " prefix, # comments,
+' single quotes literal, double quotes with \n \t \r \" \\ escapes,
+' unquoted values trimmed with a trailing # comment removed. INI:
+' [section] headers, key=value or key: value, ; and # comments, values
+' kept as strings; keys before the first section land in the "" section;
+' a duplicate key keeps the last value, or the first, or raises,
+' according to the policy argument ("last", "first", "error"). TOML: the
+' subset that configuration files use - [table] and [a.b] headers,
+' [[array.of.tables]], basic and literal strings, integers, floats,
+' booleans, arrays, inline tables, and date or time values kept as the
+' string that was written. Multi-line strings and every escape beyond
+' the dotenv set are not supported.
+
+EXPORT MODULE CONF
+
+CONST WHITESPACE = " " + CHR$(9) + CHR$(13)
+
+EXPORT FUNC ENV(path$, apply = FALSE)
+    RETURN ENV_TEXT(TXTREADER$(path$), apply)
+ENDFUNC
+
+EXPORT FUNC INI(path$, policy$ = "last")
+    RETURN INI_TEXT(TXTREADER$(path$), policy$)
+ENDFUNC
+
+EXPORT FUNC TOML(path$)
+    RETURN TOML_TEXT(TXTREADER$(path$))
+ENDFUNC
+
+' A nested read with a dotted path and a fallback for a missing key.
+EXPORT FUNC GET(cfg, path$, fallback = 0)
+    DIM here = cfg
+    DIM parts = SPLIT(path$, ".")
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        IF TYPEOF(here) <> "OBJECT" THEN RETURN fallback
+        IF NOT MAP.EXISTS(here, parts[i]) THEN RETURN fallback
+        here = here{parts[i]}
+    NEXT i
+    RETURN here
+ENDFUNC
+
+FUNC Lines(text$)
+    RETURN SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+ENDFUNC
+
+FUNC Strip$(text$)
+    DIM a = 0
+    DIM b = LEN(text$)
+    DO WHILE a < b ANDALSO INSTR(WHITESPACE, MID$(text$, a, 1)) >= 0
+        a = a + 1
+    LOOP
+    DO WHILE b > a ANDALSO INSTR(WHITESPACE, MID$(text$, b - 1, 1)) >= 0
+        b = b - 1
+    LOOP
+    RETURN MID$(text$, a, b - a)
+ENDFUNC
+
+' ── dotenv ─────────────────────────────────────────────────────
+
+EXPORT FUNC ENV_TEXT(text$, apply = FALSE)
+    DIM out AS MAP
+    DIM rows = Lines(text$)
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row$ = Strip$(rows[i])
+        IF LEN(row$) = 0 ORELSE STARTSWITH(row$, "#") THEN CONTINUEFOR
+        IF STARTSWITH(row$, "export ") THEN row$ = Strip$(MID$(row$, 7, LEN(row$) - 7))
+        DIM eq = INSTR(row$, "=")
+        IF eq < 0 THEN CONTINUEFOR
+        DIM key$ = Strip$(LEFT$(row$, eq))
+        DIM raw$ = Strip$(MID$(row$, eq + 1, LEN(row$) - eq - 1))
+        out{key$} = EnvValue$(raw$)
+        IF apply THEN SETENV key$, out{key$}
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC EnvValue$(raw$)
+    IF LEN(raw$) = 0 THEN RETURN ""
+    DIM first$ = LEFT$(raw$, 1)
+    IF first$ = CHR$(34) THEN
+        DIM close = INSTR(1, raw$, CHR$(34))
+        DO WHILE close > 0 ANDALSO MID$(raw$, close - 1, 1) = CHR$(92)
+            close = INSTR(close + 1, raw$, CHR$(34))
+        LOOP
+        IF close < 0 THEN close = LEN(raw$)
+        RETURN Unescape$(MID$(raw$, 1, close - 1))
+    ENDIF
+    IF first$ = "'" THEN
+        DIM close2 = INSTR(1, raw$, "'")
+        IF close2 < 0 THEN close2 = LEN(raw$)
+        RETURN MID$(raw$, 1, close2 - 1)
+    ENDIF
+    DIM hash = INSTR(raw$, " #")
+    IF hash >= 0 THEN raw$ = Strip$(LEFT$(raw$, hash))
+    RETURN raw$
+ENDFUNC
+
+' The escapes a double quoted value may carry.
+FUNC Unescape$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    DIM bs$ = CHR$(92)
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ = bs$ ANDALSO i + 1 < LEN(text$) THEN
+            DIM nx$ = MID$(text$, i + 1, 1)
+            IF nx$ = "n" THEN
+                out$ = out$ + CHR$(10)
+            ELSEIF nx$ = "t" THEN
+                out$ = out$ + CHR$(9)
+            ELSEIF nx$ = "r" THEN
+                out$ = out$ + CHR$(13)
+            ELSE
+                out$ = out$ + nx$
+            ENDIF
+            i = i + 2
+        ELSE
+            out$ = out$ + ch$
+            i = i + 1
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' ── INI ────────────────────────────────────────────────────────
+
+EXPORT FUNC INI_TEXT(text$, policy$ = "last")
+    DIM out AS MAP
+    DIM section$ = ""
+    out{""} = {}
+    DIM rows = Lines(text$)
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row$ = Strip$(rows[i])
+        IF LEN(row$) = 0 ORELSE STARTSWITH(row$, ";") ORELSE STARTSWITH(row$, "#") THEN CONTINUEFOR
+        IF STARTSWITH(row$, "[") ANDALSO ENDSWITH(row$, "]") THEN
+            section$ = Strip$(MID$(row$, 1, LEN(row$) - 2))
+            IF NOT MAP.EXISTS(out, section$) THEN out{section$} = {}
+            CONTINUEFOR
+        ENDIF
+        DIM eq = INSTR(row$, "=")
+        DIM colon = INSTR(row$, ":")
+        IF eq < 0 ORELSE (colon >= 0 ANDALSO colon < eq) THEN eq = colon
+        IF eq < 0 THEN CONTINUEFOR
+        DIM key$ = Strip$(LEFT$(row$, eq))
+        DIM value$ = Strip$(MID$(row$, eq + 1, LEN(row$) - eq - 1))
+        DIM sec = out{section$}
+        IF MAP.EXISTS(sec, key$) THEN
+            IF policy$ = "error" THEN THROW "CONF.INI: duplicate key " + key$ + " in [" + section$ + "]"
+            IF policy$ = "first" THEN CONTINUEFOR
+        ENDIF
+        sec{key$} = value$
+        out{section$} = sec
+    NEXT i
+    IF LEN(MAP.KEYS(out{""})) = 0 THEN MAP.DELETE(out, "")
+    RETURN out
+ENDFUNC
+
+' ── TOML subset ────────────────────────────────────────────────
+
+EXPORT FUNC TOML_TEXT(text$)
+    DIM root AS MAP
+    DIM current = root
+    DIM rows = Lines(text$)
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row$ = Strip$(rows[i])
+        IF LEN(row$) = 0 ORELSE STARTSWITH(row$, "#") THEN CONTINUEFOR
+        IF STARTSWITH(row$, "[[") ANDALSO ENDSWITH(row$, "]]") THEN
+            DIM list_path$ = Strip$(MID$(row$, 2, LEN(row$) - 4))
+            current = NewTableEntry(root, list_path$)
+            CONTINUEFOR
+        ENDIF
+        IF STARTSWITH(row$, "[") ANDALSO ENDSWITH(row$, "]") THEN
+            DIM table_path$ = Strip$(MID$(row$, 1, LEN(row$) - 2))
+            current = Table(root, table_path$)
+            CONTINUEFOR
+        ENDIF
+        DIM eq = KeyEnd(row$)
+        IF eq < 0 THEN THROW "CONF.TOML: cannot read line " + STR$(i + 1) + ": " + row$
+        DIM key$ = BareKey$(Strip$(LEFT$(row$, eq)))
+        DIM rest$ = Strip$(MID$(row$, eq + 1, LEN(row$) - eq - 1))
+        DIM parsed = ReadValue(rest$, 0)
+        current{key$} = parsed{"value"}
+    NEXT i
+    RETURN root
+ENDFUNC
+
+' The position of the = that separates key and value, outside quotes.
+FUNC KeyEnd(row$)
+    DIM i = 0
+    DIM quote$ = ""
+    FOR i = 0 TO LEN(row$) - 1
+        DIM ch$ = MID$(row$, i, 1)
+        IF LEN(quote$) > 0 THEN
+            IF ch$ = quote$ THEN quote$ = ""
+        ELSEIF ch$ = CHR$(34) OR ch$ = "'" THEN
+            quote$ = ch$
+        ELSEIF ch$ = "=" THEN
+            RETURN i
+        ENDIF
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC BareKey$(key$)
+    IF LEN(key$) >= 2 THEN
+        DIM q$ = LEFT$(key$, 1)
+        IF (q$ = CHR$(34) OR q$ = "'") ANDALSO ENDSWITH(key$, q$) THEN RETURN MID$(key$, 1, LEN(key$) - 2)
+    ENDIF
+    RETURN key$
+ENDFUNC
+
+' Walks or creates the nested tables of a dotted path and returns the last.
+FUNC Table(root, path$)
+    DIM here = root
+    DIM parts = SPLIT(path$, ".")
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        DIM name$ = BareKey$(Strip$(parts[i]))
+        IF NOT MAP.EXISTS(here, name$) THEN here{name$} = {}
+        DIM nxt = here{name$}
+        IF TYPEOF(nxt) = "ARRAY" THEN
+            nxt = nxt[LEN(nxt) - 1]
+        ENDIF
+        here = nxt
+    NEXT i
+    RETURN here
+ENDFUNC
+
+' [[path]]: appends a fresh table to the array at path and returns it.
+FUNC NewTableEntry(root, path$)
+    DIM parts = SPLIT(path$, ".")
+    DIM parent = root
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 2
+        DIM name$ = BareKey$(Strip$(parts[i]))
+        IF NOT MAP.EXISTS(parent, name$) THEN parent{name$} = {}
+        DIM nxt = parent{name$}
+        IF TYPEOF(nxt) = "ARRAY" THEN nxt = nxt[LEN(nxt) - 1]
+        parent = nxt
+    NEXT i
+    DIM last$ = BareKey$(Strip$(parts[LEN(parts) - 1]))
+    IF NOT MAP.EXISTS(parent, last$) THEN parent{last$} = []
+    DIM entries = parent{last$}
+    DIM fresh AS MAP
+    PUSH(entries, fresh)
+    parent{last$} = entries
+    RETURN fresh
+ENDFUNC
+
+' Reads one value starting at pos; answers {"value", "end"} where end is
+' the position after the value.
+FUNC ReadValue(text$, pos)
+    DIM i = SkipSpace(text$, pos)
+    IF i >= LEN(text$) THEN THROW "CONF.TOML: a value is missing"
+    DIM ch$ = MID$(text$, i, 1)
+    IF ch$ = CHR$(34) THEN RETURN ReadBasicString(text$, i)
+    IF ch$ = "'" THEN
+        DIM close = INSTR(i + 1, text$, "'")
+        IF close < 0 THEN THROW "CONF.TOML: unterminated string"
+        RETURN {"value": MID$(text$, i + 1, close - i - 1), "end": close + 1}
+    ENDIF
+    IF ch$ = "[" THEN RETURN ReadArray(text$, i)
+    IF ch$ = "{" THEN RETURN ReadInline(text$, i)
+    DIM tail = i
+    DO WHILE tail < LEN(text$)
+        DIM c$ = MID$(text$, tail, 1)
+        IF c$ = "," OR c$ = "]" OR c$ = "}" OR c$ = "#" THEN EXITDO
+        tail = tail + 1
+    LOOP
+    DIM token$ = Strip$(MID$(text$, i, tail - i))
+    RETURN {"value": Scalar(token$), "end": tail}
+ENDFUNC
+
+FUNC SkipSpace(text$, pos)
+    DIM i = pos
+    DO WHILE i < LEN(text$) ANDALSO INSTR(WHITESPACE, MID$(text$, i, 1)) >= 0
+        i = i + 1
+    LOOP
+    RETURN i
+ENDFUNC
+
+FUNC ReadBasicString(text$, pos)
+    DIM i = pos + 1
+    DIM raw$ = ""
+    DIM bs$ = CHR$(92)
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ = bs$ ANDALSO i + 1 < LEN(text$) THEN
+            raw$ = raw$ + ch$ + MID$(text$, i + 1, 1)
+            i = i + 2
+        ELSEIF ch$ = CHR$(34) THEN
+            RETURN {"value": Unescape$(raw$), "end": i + 1}
+        ELSE
+            raw$ = raw$ + ch$
+            i = i + 1
+        ENDIF
+    LOOP
+    THROW "CONF.TOML: unterminated string"
+ENDFUNC
+
+FUNC ReadArray(text$, pos)
+    DIM items = []
+    DIM i = pos + 1
+    DO
+        i = SkipSpace(text$, i)
+        IF i >= LEN(text$) THEN THROW "CONF.TOML: unterminated array"
+        IF MID$(text$, i, 1) = "]" THEN RETURN {"value": items, "end": i + 1}
+        DIM item = ReadValue(text$, i)
+        PUSH(items, item{"value"})
+        i = SkipSpace(text$, item{"end"})
+        IF i < LEN(text$) ANDALSO MID$(text$, i, 1) = "," THEN i = i + 1
+    LOOP
+ENDFUNC
+
+FUNC ReadInline(text$, pos)
+    DIM table AS MAP
+    DIM i = pos + 1
+    DO
+        i = SkipSpace(text$, i)
+        IF i >= LEN(text$) THEN THROW "CONF.TOML: unterminated inline table"
+        IF MID$(text$, i, 1) = "}" THEN RETURN {"value": table, "end": i + 1}
+        DIM eq = INSTR(i, text$, "=")
+        IF eq < 0 THEN THROW "CONF.TOML: inline table without ="
+        DIM key$ = BareKey$(Strip$(MID$(text$, i, eq - i)))
+        DIM item = ReadValue(text$, eq + 1)
+        table{key$} = item{"value"}
+        i = SkipSpace(text$, item{"end"})
+        IF i < LEN(text$) ANDALSO MID$(text$, i, 1) = "," THEN i = i + 1
+    LOOP
+ENDFUNC
+
+' A bare token: boolean, integer, float, or a date or time kept as text.
+FUNC Scalar(token$)
+    IF token$ = "true" THEN RETURN TRUE
+    IF token$ = "false" THEN RETURN FALSE
+    DIM plain$ = REPLACE$(token$, "_", "")
+    IF REGEX.MATCH("^[+-]?[0-9]+$", plain$) THEN RETURN CINT(VAL(plain$))
+    IF REGEX.MATCH("^[+-]?[0-9]+(?:[.][0-9]+)?(?:[eE][+-]?[0-9]+)?$", plain$) THEN RETURN VAL(plain$)
+    RETURN token$
+ENDFUNC

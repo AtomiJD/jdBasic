@@ -1,0 +1,71 @@
+' service_report.jdb - a small service run end to end with the library.
+'
+' CONF reads the settings, LOGGER writes what happens to the console and
+' to a rotating file, XLSX writes the report the run produces, and JWT
+' signs the download link for it. Everything lands in a scratch folder
+' that the program names at the end.
+'
+'   jdBasic service_report.jdb
+'   jdBasic service_report.jdb --quiet
+
+IMPORT CONF, LOGGER, XLSX, JWT, CLI
+
+DIM spec = CLI.NEW("service_report", "run the nightly report")
+CLI.FLAG(spec, "quiet", "q", "no console output")
+DIM got = CLI.PARSE(spec, CLI.ARGV())
+IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
+
+DIM work$ = MKTEMP$("jdbservice")
+MKDIR work$
+
+' Settings as they would sit in a file next to the service.
+DIM settings$ = "[report]" + CHR$(10) + _
+    "title = " + CHR$(34) + "Nightly sales" + CHR$(34) + CHR$(10) + _
+    "currency = " + CHR$(34) + "EUR" + CHR$(34) + CHR$(10) + _
+    "top = 3" + CHR$(10) + _
+    "[auth]" + CHR$(10) + _
+    "secret = " + CHR$(34) + "change-me" + CHR$(34) + CHR$(10) + _
+    "link_hours = 24" + CHR$(10)
+TXTWRITER work$ + "/service.toml", settings$
+DIM cfg = CONF.TOML(work$ + "/service.toml")
+
+DIM lg = LOGGER.NEW("report")
+IF NOT got{"quiet"} THEN LOGGER.TO_CONSOLE(lg)
+LOGGER.TO_FILE(lg, work$ + "/service.log", 4000, 2)
+LOGGER.CONTEXT(lg, {"currency": CONF.GET(cfg, "report.currency", "EUR")})
+LOGGER.INFO(lg, "run started", {"title": CONF.GET(cfg, "report.title", "")})
+
+' The data a real run would query.
+DIM sales = [["Item", "Qty", "Price", "Total"]]
+DIM items = [["Bolt M6", 400, 0.15], ["Nut M6", 380, 0.05], ["Washer", 900, 0.02], ["Bracket", 12, 4.9], ["Hinge", 30, 2.4]]
+DIM i = 0
+FOR i = 0 TO LEN(items) - 1
+    DIM row = items[i]
+    PUSH(sales, [row[0], row[1], row[2], row[1] * row[2]])
+    LOGGER.DEBUG(lg, "line added", {"item": row[0]})
+NEXT i
+PUSH(sales, ["Total", "=SUM(B2:B6)", "", "=SUM(D2:D6)"])
+
+DIM wb = XLSX.NEW()
+DIM sheet = XLSX.SHEET(wb, "Sales", sales)
+XLSX.COLUMN(sheet, "A", {"width": 16})
+XLSX.COLUMN(sheet, "C", {"width": 10, "format": "#,##0.00"})
+XLSX.COLUMN(sheet, "D", {"width": 12, "format": "#,##0.00"})
+XLSX.FREEZE(sheet, 1)
+DIM report$ = work$ + "/sales.xlsx"
+DIM entries = XLSX.WRITE(report$, wb)
+LOGGER.INFO(lg, "report written", {"path": report$, "entries": entries, "rows": LEN(sales)})
+
+DIM hours = CONF.GET(cfg, "auth.link_hours", 1)
+DIM token$ = JWT.SIGN$({"sub": "report", "file": "sales.xlsx", "exp": NOW_EPOCH() + hours * 3600}, CONF.GET(cfg, "auth.secret", ""))
+LOGGER.INFO(lg, "download link signed", {"hours": hours, "token_length": LEN(token$)})
+
+DIM check = JWT.VERIFY(token$, CONF.GET(cfg, "auth.secret", ""))
+IF NOT check{"ok"} THEN
+    LOGGER.ERROR(lg, "the link does not verify", {"reason": check{"error"}})
+    END 1
+ENDIF
+
+DIM back = XLSX.READ(report$)
+LOGGER.INFO(lg, "run finished", {"read_back_rows": LEN(back{"Sales"})})
+PRINT "written to " + work$
