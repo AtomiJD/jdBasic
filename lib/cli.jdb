@@ -147,7 +147,14 @@ SUB SeedDefaults(spec, got)
     DIM i
     FOR i = 0 TO LEN(opts) - 1
         DIM name$ = opts[i]{"long"}
-        got{name$} = opts[i]{"default"}
+        ' A repeatable option needs a fresh array per parse. Handing out the
+        ' one stored in the spec would let a second parse of the same spec
+        ' keep collecting into the first one's results.
+        IF opts[i]{"kind"} = KIND_MANY THEN
+            got{name$} = []
+        ELSE
+            got{name$} = opts[i]{"default"}
+        ENDIF
     NEXT i
 ENDSUB
 

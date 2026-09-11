@@ -7125,6 +7125,30 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 return { gres, JD_TAG_ARR };
             }
 
+            // A declared map read with a key this path could not type ends up
+            // here, and turning the key into a number reads the map as an
+            // array. Consult the base variable's own kind before that happens.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE) {
+                VarInfo* base_vi = lookup_var(expr.left->str_val);
+                bool base_is_map = base_vi &&
+                    (base_vi->tag == JD_TAG_NATIVE_MAP ||
+                     // A map handed to an untyped parameter sits in an f64
+                     // slot with the pointer punned in. An array never does,
+                     // so an index on one is a key.
+                     base_vi->tag == JD_TAG_F64);
+                if (base_is_map &&
+                    idx_tv.tag != JD_TAG_I64 && idx_tv.tag != JD_TAG_F64) {
+                    LLVMValueRef key = to_string_ptr(idx_tv);
+                    auto& gtag = runtime_funcs["__map_get_tagged"];
+                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                    LLVMValueRef targs[] = { arr_ptr, key, out };
+                    LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn,
+                                                         targs, 3, "mtag");
+                    LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
+                    return { tv_val, JD_TAG_RUNTIME, tv_tag };
+                }
+            }
+
             LLVMValueRef idx = idx_tv.val;
             if (idx_tv.tag == JD_TAG_F64)
                 idx = LLVMBuildFPToSI(builder, idx, i64_type, "ftoi");
