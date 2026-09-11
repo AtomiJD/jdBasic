@@ -5,8 +5,7 @@ IMPORT TESTKIT
 IMPORT CLI
 
 FUNC Tool()
-    DIM spec AS MAP
-    CLI.INIT(spec, "mytool", "does a thing")
+    DIM spec = CLI.NEW("mytool", "does a thing")
     CLI.VERSION(spec, "1.2.0")
     CLI.FLAG(spec, "verbose", "v", "chatty output")
     CLI.FLAG(spec, "quiet", "q", "say nothing")
@@ -17,8 +16,7 @@ FUNC Tool()
 ENDFUNC
 
 FUNC WithArgs()
-    DIM spec AS MAP
-    CLI.INIT(spec, "copy", "copy a file")
+    DIM spec = CLI.NEW("copy", "copy a file")
     CLI.OPT(spec, "mode", "m", "how to copy", "fast")
     CLI.ARG(spec, "source", "the file to read", TRUE)
     CLI.ARG(spec, "target", "where to put it", FALSE)
@@ -26,15 +24,12 @@ FUNC WithArgs()
 ENDFUNC
 
 FUNC WithCommands()
-    DIM spec AS MAP
-    CLI.INIT(spec, "pack", "build and ship")
+    DIM spec = CLI.NEW("pack", "build and ship")
     CLI.FLAG(spec, "verbose", "v", "chatty output")
-    DIM build_cmd AS MAP
-    CLI.CMD(spec, build_cmd, "build", "compile the thing")
+    DIM build_cmd = CLI.CMD(spec, "build", "compile the thing")
     CLI.FLAG(build_cmd, "release", "R", "optimise")
     CLI.OPT(build_cmd, "target", "T", "what to build for", "host")
-    DIM ship_cmd AS MAP
-    CLI.CMD(spec, ship_cmd, "ship", "send it out")
+    DIM ship_cmd = CLI.CMD(spec, "ship", "send it out")
     CLI.OPT(ship_cmd, "to", "", "where to send it", "staging")
     RETURN spec
 ENDFUNC
@@ -156,6 +151,11 @@ DIM complaint$ = OUTPUT.CAPTURE_END$()
 TESTKIT.ISTRUE(refused, "a bad command line stops the run")
 TESTKIT.ISTRUE(INSTR(complaint$, "unknown option --nope") >= 0, "the reason is named")
 TESTKIT.ISTRUE(INSTR(complaint$, "usage: mytool") >= 0, "with the usage line")
+
+TESTKIT.SUITE("the exit status")
+TESTKIT.EQ(CLI.STATUS(CLI.PARSE(Tool(), ["--nope"])), 2, "a wrong command line is a 2")
+TESTKIT.EQ(CLI.STATUS(CLI.PARSE(Tool(), ["--help"])), 0, "asking for help is not an error")
+TESTKIT.EQ(CLI.STATUS(CLI.PARSE(Tool(), ["-v"])), 0, "a clean parse is a 0")
 
 DIM arg_help$ = CLI.HELP$(WithArgs())
 TESTKIT.ISTRUE(INSTR(arg_help$, "usage: copy [options] <source> [target]") >= 0, "required and optional read differently")

@@ -15,21 +15,18 @@
 
 IMPORT CLI
 
-DIM spec AS MAP
-CLI.INIT(spec, "packer", "build a thing and send it somewhere")
+DIM spec = CLI.NEW("packer", "build a thing and send it somewhere")
 CLI.VERSION(spec, "0.3.1")
 CLI.FLAG(spec, "verbose", "v", "say what is happening")
 CLI.OPT(spec, "config", "c", "settings file", "packer.json")
 
-DIM build_cmd AS MAP
-CLI.CMD(spec, build_cmd, "build", "compile the thing")
+DIM build_cmd = CLI.CMD(spec, "build", "compile the thing")
 CLI.FLAG(build_cmd, "release", "R", "optimise, and strip the symbols")
 CLI.OPT(build_cmd, "target", "T", "what to build for", "host")
 CLI.NUM(build_cmd, "jobs", "j", "how many at once", 4)
 CLI.ARG(build_cmd, "source", "the file to build", TRUE)
 
-DIM ship_cmd AS MAP
-CLI.CMD(spec, ship_cmd, "ship", "send the result out")
+DIM ship_cmd = CLI.CMD(spec, "ship", "send the result out")
 CLI.OPT(ship_cmd, "to", "", "where to send it", "staging")
 CLI.MANY(ship_cmd, "tag", "t", "label the release, repeatable")
 
@@ -57,7 +54,7 @@ DIM cli_args = CLI.ARGV()
 
 IF LEN(cli_args) > 0 THEN
     DIM got = CLI.PARSE(spec, cli_args)
-    IF CLI.DONE(spec, got) THEN END
+    IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
     Run(got)
     END
 ENDIF

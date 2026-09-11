@@ -1,8 +1,7 @@
 ' cli.jdb - command line parsing: flags, options, positionals, subcommands.
 '
 '   IMPORT CLI
-'   DIM spec AS MAP
-'   CLI.INIT(spec, "mytool", "does a thing")
+'   DIM spec = CLI.NEW("mytool", "does a thing")
 '   CLI.VERSION(spec, "1.2.0")
 '   CLI.FLAG(spec, "verbose", "v", "chatty output")
 '   CLI.OPT(spec, "out", "o", "output file", "out.txt")
@@ -10,12 +9,11 @@
 '   CLI.MANY(spec, "tag", "t", "may be given more than once")
 '   CLI.ARG(spec, "source", "the file to read", TRUE)
 '
-'   DIM build_cmd AS MAP
-'   CLI.CMD(spec, build_cmd, "build", "compile the thing")
+'   DIM build_cmd = CLI.CMD(spec, "build", "compile the thing")
 '   CLI.FLAG(build_cmd, "release", "R", "optimise")
 '
 '   DIM got = CLI.PARSE(spec, CLI.ARGV())
-'   IF CLI.DONE(spec, got) THEN END
+'   IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
 '   PRINT got{"out"}
 '
 ' CLI.DONE prints what the run cannot continue without - the help text, the
@@ -27,12 +25,13 @@
 '   -abc            clustered short flags
 '   --              stop reading options, the rest are positionals
 '
-' A parse never ends the program by itself, so a test can drive it.
+' A parse never ends the program by itself, so a test can drive it. CLI.STATUS
+' gives the exit status a shell expects: 0 when the run simply had nothing to
+' do, 2 when the command line was wrong.
 '
-' Interpreter for now. A parser stores its results under names it only learns
-' while reading the command line, and a map write with a computed key is
-' dropped by the native compiler (jdBasic ticket #369), which leaves every
-' parsed value unset in a compiled program.
+' Interpreter for now. A result map travels through several untyped parameters
+' on its way down, and an array read back out of one that far along arrives
+' empty when compiled (jdBasic ticket #373).
 
 EXPORT MODULE CLI
 
@@ -41,10 +40,13 @@ CONST KIND_STR = "str"
 CONST KIND_NUM = "num"
 CONST KIND_MANY = "many"
 
-' The caller declares the map and hands it in, rather than receiving one.
-' A map that comes back out of a module function does not carry later
-' mutations to the caller once the program is compiled, so every spec here
-' is owned by the script that declared it.
+EXPORT FUNC NEW(name$, about$)
+    DIM spec AS MAP
+    INIT(spec, name$, about$)
+    RETURN spec
+ENDFUNC
+
+' Fills a map the caller already has. NEW is the usual way in.
 EXPORT SUB INIT(spec, name$, about$)
     spec{"name"} = name$
     spec{"about"} = about$
@@ -105,42 +107,38 @@ EXPORT SUB ARG(spec, name$, help$, required)
     spec{"args"} = APPEND(spec{"args"}, a)
 ENDSUB
 
-' sub_spec is a map the caller declared. It takes options the same way the
-' root spec does, and may be filled in before or after this call.
-EXPORT SUB CMD(spec, sub_spec, name$, about$)
+' Returns the subcommand's own spec, which takes options the same way the root
+' one does. It stays live after being attached, so options may be added to it
+' before or after this call.
+EXPORT FUNC CMD(spec, name$, about$)
+    DIM sub_spec AS MAP
     INIT(sub_spec, spec{"name"} + " " + name$, about$)
     sub_spec{"cmdname"} = name$
     spec{"cmds"} = APPEND(spec{"cmds"}, sub_spec)
-ENDSUB
+    RETURN sub_spec
+ENDFUNC
 
-FUNC FindOpt(spec, long_name$, short_name$)
+' The lookups answer with a position, not with the entry or an empty stand-in.
+' A function that returns a map on one path and something else on the other
+' has no single shape for the native compiler to give it.
+FUNC FindOptAt(spec, long_name$, short_name$)
     DIM opts = spec{"opts"}
     DIM i
     FOR i = 0 TO LEN(opts) - 1
         DIM o = opts[i]
-        IF LEN(long_name$) > 0 AND o{"long"} = long_name$ THEN RETURN o
-        IF LEN(short_name$) > 0 AND o{"short"} = short_name$ THEN RETURN o
+        IF LEN(long_name$) > 0 AND o{"long"} = long_name$ THEN RETURN i
+        IF LEN(short_name$) > 0 AND o{"short"} = short_name$ THEN RETURN i
     NEXT i
-    DIM missing AS MAP
-    RETURN missing
+    RETURN -1
 ENDFUNC
 
-FUNC IsOpt(o)
-    RETURN TYPEOF(o) = "OBJECT" ANDALSO MAP.EXISTS(o, "long")
-ENDFUNC
-
-FUNC IsCmd(c)
-    RETURN TYPEOF(c) = "OBJECT" ANDALSO MAP.EXISTS(c, "cmdname")
-ENDFUNC
-
-FUNC FindCmd(spec, name$)
+FUNC FindCmdAt(spec, name$)
     DIM cmds = spec{"cmds"}
     DIM i
     FOR i = 0 TO LEN(cmds) - 1
-        IF cmds[i]{"cmdname"} = name$ THEN RETURN cmds[i]
+        IF cmds[i]{"cmdname"} = name$ THEN RETURN i
     NEXT i
-    DIM missing AS MAP
-    RETURN missing
+    RETURN -1
 ENDFUNC
 
 ' Every option starts at its default, so a caller never has to test presence.
@@ -148,7 +146,8 @@ SUB SeedDefaults(spec, got)
     DIM opts = spec{"opts"}
     DIM i
     FOR i = 0 TO LEN(opts) - 1
-        got{opts[i]{"long"}} = opts[i]{"default"}
+        DIM name$ = opts[i]{"long"}
+        got{name$} = opts[i]{"default"}
     NEXT i
 ENDSUB
 
@@ -160,12 +159,13 @@ ENDSUB
 ' Reads one option and returns how many argv entries it consumed.
 FUNC TakeValue(o, got, argv, at, inline_value$, has_inline)
     DIM kind$ = o{"kind"}
+    DIM key$ = o{"long"}
     IF kind$ = KIND_FLAG THEN
         IF has_inline THEN
-            Fail(got, "--" + o{"long"} + " is a switch and takes no value")
+            Fail(got, "--" + key$ + " is a switch and takes no value")
             RETURN 1
         ENDIF
-        got{o{"long"}} = TRUE
+        got{key$} = TRUE
         RETURN 1
     ENDIF
 
@@ -175,7 +175,7 @@ FUNC TakeValue(o, got, argv, at, inline_value$, has_inline)
         raw$ = inline_value$
     ELSE
         IF at + 1 > LEN(argv) - 1 THEN
-            Fail(got, "--" + o{"long"} + " needs a value")
+            Fail(got, "--" + key$ + " needs a value")
             RETURN 1
         ENDIF
         raw$ = argv[at + 1]
@@ -184,14 +184,14 @@ FUNC TakeValue(o, got, argv, at, inline_value$, has_inline)
 
     IF kind$ = KIND_NUM THEN
         IF NOT LooksNumeric(raw$) THEN
-            Fail(got, "--" + o{"long"} + " wants a number, got " + CHR$(34) + raw$ + CHR$(34))
+            Fail(got, "--" + key$ + " wants a number, got " + CHR$(34) + raw$ + CHR$(34))
             RETURN used
         ENDIF
-        got{o{"long"}} = VAL(raw$)
+        got{key$} = VAL(raw$)
     ELSEIF kind$ = KIND_MANY THEN
-        got{o{"long"}} = APPEND(got{o{"long"}}, raw$)
+        got{key$} = APPEND(got{key$}, raw$)
     ELSE
-        got{o{"long"}} = raw$
+        got{key$} = raw$
     ENDIF
     RETURN used
 ENDFUNC
@@ -259,13 +259,13 @@ FUNC ParseInto(spec, got, argv, from, stop_at_word)
                 i = i + 1
                 CONTINUEDO
             ENDIF
-            DIM o = FindOpt(spec, name$, "")
-            IF NOT IsOpt(o) THEN
+            DIM at = FindOptAt(spec, name$, "")
+            IF at < 0 THEN
                 Fail(got, "unknown option --" + name$)
                 i = i + 1
                 CONTINUEDO
             ENDIF
-            i = i + TakeValue(o, got, argv, i, inline$, has_inline)
+            i = i + TakeValue(spec{"opts"}[at], got, argv, i, inline$, has_inline)
             CONTINUEDO
         ENDIF
 
@@ -279,17 +279,17 @@ FUNC ParseInto(spec, got, argv, from, stop_at_word)
                     got{"help"} = TRUE
                     CONTINUEFOR
                 ENDIF
-                DIM so = FindOpt(spec, "", letter$)
-                IF NOT IsOpt(so) THEN
+                DIM sat = FindOptAt(spec, "", letter$)
+                IF sat < 0 THEN
                     Fail(got, "unknown option -" + letter$)
                     CONTINUEFOR
                 ENDIF
                 ' Only the last letter of a cluster may take a value.
-                IF so{"kind"} <> KIND_FLAG AND k < LEN(letters$) - 1 THEN
+                IF spec{"opts"}[sat]{"kind"} <> KIND_FLAG AND k < LEN(letters$) - 1 THEN
                     Fail(got, "-" + letter$ + " takes a value and cannot sit inside " + token$)
                     CONTINUEFOR
                 ENDIF
-                consumed = TakeValue(so, got, argv, i, "", FALSE)
+                consumed = TakeValue(spec{"opts"}[sat], got, argv, i, "", FALSE)
             NEXT k
             i = i + consumed
             CONTINUEDO
@@ -360,14 +360,15 @@ EXPORT FUNC PARSE(spec, argv)
     got = ParseInto(spec, got, argv, start, has_cmds)
 
     IF LEN(got{"command"}) > 0 THEN
-        DIM sub_spec = FindCmd(spec, got{"command"})
-        IF NOT IsCmd(sub_spec) THEN
+        DIM cat = FindCmdAt(spec, got{"command"})
+        IF cat < 0 THEN
             Fail(got, "unknown command " + got{"command"})
             RETURN got
         ENDIF
-        SeedDefaults(sub_spec, got)
-        got = ParseInto(sub_spec, got, argv, got{"rest_at"}, 0)
-        CheckRequired(sub_spec, got)
+        DIM chosen = spec{"cmds"}[cat]
+        SeedDefaults(chosen, got)
+        got = ParseInto(chosen, got, argv, got{"rest_at"}, 0)
+        CheckRequired(chosen, got)
         RETURN got
     ENDIF
 
@@ -482,15 +483,23 @@ EXPORT FUNC HELP$(spec)
     RETURN out$
 ENDFUNC
 
+' The exit status to leave behind after DONE said to stop: 2 when the command
+' line was wrong, which is what a shell expects from a tool called incorrectly,
+' and 0 when help or the version was all that was wanted.
+EXPORT FUNC STATUS(got)
+    IF NOT got{"ok"} THEN RETURN 2
+    RETURN 0
+ENDFUNC
+
 ' TRUE when the program should stop: help or version was asked for, or the
 ' command line did not parse. The message goes to stdout either way.
 EXPORT FUNC DONE(spec, got)
     IF got{"help"} THEN
         ' `tool build --help` is a question about build, not about tool.
         IF LEN(got{"command"}) > 0 THEN
-            DIM chosen = FindCmd(spec, got{"command"})
-            IF IsCmd(chosen) THEN
-                PRINT HELP$(chosen)
+            DIM cat = FindCmdAt(spec, got{"command"})
+            IF cat >= 0 THEN
+                PRINT HELP$(spec{"cmds"}[cat])
                 RETURN TRUE
             ENDIF
         ENDIF
