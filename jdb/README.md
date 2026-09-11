@@ -31,7 +31,8 @@ jdb/
 │   ├── sound/   SOUND.* synth, sequencer parts, APL additive synth
 │   ├── audio/   FX.* effect chains - FX rack, live guitar FX, tone designer
 │   ├── apl/     vectorised idioms - Game of Life, primes, OUTER, one-liners
-│   ├── data/    vectors / matrices / dates - AGG, TALLY, EOMONTH, DATERANGE, MVINS
+│   ├── data/    vectors / matrices / dates - AGG, TALLY, EOMONTH, DATERANGE, MVINS, ZIP archives
+│   ├── jdlibs/  the module library by example - TESTKIT
 │   ├── tui/     terminal UI, FTXUI, markdown browser, cowsay
 │   ├── web/     HTTP server + client - jdTrakr kanban, JDWEB framework, dashboards
 │   ├── bridges/ FFI, COM (Excel/Word/Access/Outlook), SQLite, serial
@@ -60,16 +61,24 @@ jdb/
 
 ## Modules - reusable libraries
 
-There is no central `modules/` folder: each `IMPORT`-able library lives **next to
-the scripts that use it**. jdBasic's `IMPORT` resolves a module from the importing
-script's own directory first (then walks up), so co-locating a library with its
-consumers just works - a demo in `demos/sound/` can `IMPORT SQ` and pick up
-`demos/sound/SQ.jdb` transparently.
+Most `IMPORT`-able libraries here live **next to the scripts that use them**.
+`IMPORT` looks in the importing script's own directory first, then in a
+`modules/` subdirectory of it, then in the working directory. There is no
+walk-up into parent directories, so a demo in `demos/sound/` picks up
+`demos/sound/SQ.jdb` and can never accidentally reach into a sibling project.
+
+A library meant for every project instead of one folder goes into the shared
+library at the repo's `lib/`, and is installed by copying it to
+`~/.jdbasic/lib` or to the `lib` folder beside `jdBasic.exe`. `JDBASIC_PATH`
+points at a directory without copying anything, which is the convenient form
+while developing. The full search order is under `IMPORT` in
+[`doc/languages.md`](../doc/languages.md).
 
 Where the main libraries live now:
 
 | Module | Home | What it gives you |
 |---|---|---|
+| `testkit.jdb`               | `lib/` (repo root) | assertions, suites, TAP and JUnit output, non-zero exit on failure |
 | `MATH.jdb` / `MLAB.jdb`      | `tutorials/`      | math constants + matrix / statistical / financial helpers |
 | `sys_paths.jdb`             | `tutorials/`      | OS-agnostic path joining |
 | `PLOTTER.jdb`               | `demos/graphics/` | 2D chart routine (`DATA_PLOTTER`) for the graphics demos |
@@ -144,6 +153,7 @@ A short curated list - the demos most likely to make a "wait, that's nice" impre
 * **`demos/web/jdtrakr.jdb`** - a complete kanban board (sessions, login, SQLite, templates) - the deployed reference app; see [`doc/WebDev.md`](../doc/WebDev.md) and `demos/web/deploy/DEPLOY.md` for putting it on a real server.
 * **`demos/web/wm_dashboard.jdb`** - live sports dashboard pulling real data.
 * **`demos/web/weather.jdb`** - tiny HTTP-client starter.
+* **`demos/web/webhook_signing.jdb`** - `CODEC.HMAC$`: sign a payload the way GitHub and Stripe do, then walk a receiver through the four requests it has to turn away, with a timestamp against replay and the RFC 4231 vector to check the implementation against.
 
 ### MCP
 
@@ -164,8 +174,13 @@ A short curated list - the demos most likely to make a "wait, that's nice" impre
 * **`demos/data/tally.jdb`** - `TALLY` value-counts and descending sort via `GRADE`.
 * **`demos/data/daterange.jdb`** - `DATERANGE` / `EOMONTH` date vectors and leap-safe days-in-month.
 * **`demos/data/mvins.jdb`** - insert rows / columns into a matrix with `MVINS`.
+* **`demos/data/zip_bundle.jdb`** - `ZIP.WRITE` / `ZIP.READ` / `ZIP.LIST`: pack a report from values in memory, check every entry with `CODEC.CRC32$`, keep a NUL inside a binary entry intact, then pack a directory off disk.
 
 See [`doc/howto-vector-matrix-data.md`](../doc/howto-vector-matrix-data.md) for the full field guide.
+
+### Testing (the module library)
+
+* **`demos/jdlibs/testkit_demo.jdb`** - a slug builder, a thousands separator and a price parser, with the test file that holds them to it. Shows every assertion, and takes an argument: `tap` and `junit` switch the report format, `fail` injects one wrong expectation so the failure line and the exit code can be seen.
 
 ### TUI
 
