@@ -42,7 +42,7 @@ peak_of() {
 }
 
 printf '%-8s %12s %10s %10s\n' mode rounds peakMB bytes/round
-for mode in concat map typeof number; do
+for mode in concat map func typeof number; do
     for rounds in 5000000 10000000 20000000; do
         peak=$(peak_of "bench.exe" "$work/bench.exe" "$mode" "$rounds")
         printf '%-8s %12s %10s %10s\n' \

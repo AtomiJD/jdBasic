@@ -37,6 +37,12 @@ ELSEIF mode$ = "map" THEN
     FOR i = 1 TO rounds
         sink$ = bag{"k"}
     NEXT i
+ELSEIF mode$ = "func" THEN
+    ' A string built inside a called function. The buffer belongs to a local
+    ' slot that goes out of scope on return, so nothing else can be holding it.
+    FOR i = 1 TO rounds
+        sink$ = Decorate$(i)
+    NEXT i
 ELSEIF mode$ = "typeof" THEN
     ' TYPEOF answers with one of ten fixed words and hands out a shared
     ' buffer, so this column must stay flat. It used to allocate once per
@@ -53,3 +59,9 @@ ENDIF
 
 PRINT mode$ + " " + STR$(rounds) + " rounds in " + STR$(TICK() - started) + " ms"
 PRINT "sink " + sink$ + " total " + STR$(total)
+
+FUNC Decorate$(n)
+    DIM body$ = "row " + STR$(n)
+    DIM framed$ = "[" + body$ + "]"
+    RETURN framed$
+ENDFUNC
