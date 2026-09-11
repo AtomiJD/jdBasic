@@ -525,6 +525,10 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             current_chunk().emit(OpCode::STOP_OP, stmt.line);
             break;
         case StmtKind::END_STMT:
+            // END_PROGRAM always takes its exit status off the stack, so a
+            // bare END pushes the zero itself rather than needing an operand.
+            if (stmt.expr) compile_expr(*stmt.expr);
+            else emit_constant(Value::make_i64(0), stmt.line);
             current_chunk().emit(OpCode::END_PROGRAM, stmt.line);
             break;
         case StmtKind::EXIT_LOOP: {

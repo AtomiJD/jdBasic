@@ -207,6 +207,15 @@ std::vector<StmtPtr> Parser::parse() {
 
 // ── Statements ───────────────────────────────────────────────
 
+
+// The keywords that can follow END as a block terminator. Each of those forms
+// is consumed by the parser for that block, so seeing one here is an error
+// rather than the start of an exit-status expression.
+static bool is_block_closer(TokenType t) {
+    return t == TokenType::IF || t == TokenType::SUB || t == TokenType::FUNCTION ||
+           t == TokenType::TYPE_KW || t == TokenType::SWITCH || t == TokenType::TRY ||
+           t == TokenType::ENUM;
+}
 StmtPtr Parser::parse_statement() {
     // A statement never comes back to a position before its own start.
     hold = (size_t)-1;
@@ -529,6 +538,15 @@ StmtPtr Parser::parse_statement() {
                 peek_at(1).type == TokenType::COLON) {
                 int ln = current().line; advance();
                 auto s = std::make_unique<Stmt>(); s->kind = StmtKind::END_STMT; s->line = ln;
+                expect_newline(); return s;
+            }
+            // END <expr> - the process exit status. A block-closing keyword
+            // never reaches here (those are consumed by their own parser), so
+            // anything else on the line is the status expression.
+            if (!is_block_closer(peek_at(1).type)) {
+                int ln = current().line; advance();
+                auto s = std::make_unique<Stmt>(); s->kind = StmtKind::END_STMT; s->line = ln;
+                s->expr = parse_expr();
                 expect_newline(); return s;
             }
             throw std::runtime_error("Parse error at line " + std::to_string(current().line) +

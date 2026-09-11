@@ -949,7 +949,7 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`DECLARE FUNC name LIB "lib" ALIAS "export_name" (params) AS rettype`**: Declares a foreign function from a shared library so it can be called from jdBasic. See the **Foreign Function Interface** section below.
 * **`CLIPBOARD.SET text$`**: Sets the system clipboard text.
 * **`CLIPBOARD.GET$() -> string$`**: Returns the text currently in the system clipboard.
-* **`END`**: Immediately terminates the program execution (unlike `STOP` which pauses for debugging).
+* **`END [exit_code]`**: Immediately terminates the program (unlike `STOP`, which pauses for debugging), from wherever it stands - inside a `FUNC` or `SUB` too. The optional expression becomes the process exit status, so a tool can follow the shell convention of 0 for success, 1 for a failure of the work and 2 for being called wrongly. Without it the status is 0.
 * **`YIELD`**: Pauses execution and yields to the host environment's event loop for one frame (critical for Web/WASM environments to prevent freezing).
 * **`ON event_name$ func_name$`**: Registers a subroutine to handle system or custom events. The handler must be a `SUB`. For `ON "ERROR"`, the function must accept exactly one argument.
 * **`RAISEEVENT event_name$, [event_data]`**: Triggers a custom event, passing optional data to the registered event handler.

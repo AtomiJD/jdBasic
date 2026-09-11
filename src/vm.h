@@ -288,6 +288,8 @@ private:
     // from the empty stack ("Stack underflow").
 public:
     bool is_halted = false;
+    // Process exit status set by `END <code>`; 0 unless a program asked otherwise.
+    int exit_code = 0;
     std::atomic<bool> is_waiting_input{false};  // true while blocking on INPUT/std::cin
     // External STOP request - set from another thread (e.g. the MCP reader
     // thread when the client sends a jdb_stop tool call). The VM's dispatch

@@ -149,6 +149,15 @@ int64_t jdb_err_code_visible() {
 
 // Called when a THROW escapes all TRY handlers - mirrors the
 // interpreter's unhandled exception behavior.
+// `END <code>`: the program asked for this exit status, from wherever it
+// stands. Matches the interpreter, which halts the whole run rather than
+// returning from the enclosing FUNC.
+void jdb_end_program(int64_t code) {
+    fflush(stdout);
+    fflush(stderr);
+    exit((int)code);
+}
+
 void jdb_throw_uncaught() {
     fprintf(stderr, "Unhandled exception: %s\n", g_err_msg);
     fflush(stderr);

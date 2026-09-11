@@ -2899,6 +2899,8 @@ void VM::run() {
             // unwinding any nested call_function() (e.g. an event handler
             // calling END from inside the main DO loop) and any sub-run
             // (REPL `run` command goes through run_code()).
+            // The compiler always leaves the exit status on the stack.
+            exit_code = (int)stack[--sp].to_double();
             is_stopped = false;
             is_halted = true;
             if (debug && debug->dap) debug->dap->send_program_ended_message();

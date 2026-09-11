@@ -247,6 +247,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_str_concat",   "__str_concat",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_str_own",      "__str_own",       i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_str_drop",     "__str_drop",      void_type,   {i8_ptr_type}, -1);
+    reg("jdb_end_program",  "__end_program",   void_type,   {i64_type}, -1);
     reg("jdb_int_to_str",   "__int_to_str",    i8_ptr_type, {i64_type}, 2);
     reg("jdb_double_to_str","__double_to_str", i8_ptr_type, {f64_type}, 2);
 
@@ -3240,9 +3241,17 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
             break;
         }
         case StmtKind::END_STMT: {
-            // END exits the program - in main that's a real exit; inside a
-            // SUB/FUNC it returns a default value. emit_fn_return chooses
-            // the common exit block (user FUNC) or a direct ret (main).
+            // END ends the whole program with the status it was given,
+            // wherever it stands, which is what the interpreter does.
+            LLVMValueRef code = LLVMConstInt(i64_type, 0, 0);
+            if (stmt.expr) {
+                TypedValue tv = codegen_expr(*stmt.expr);
+                code = coerce_to(tv, i64_type);
+            }
+            auto& fn = runtime_funcs["__end_program"];
+            LLVMValueRef args[] = { code };
+            LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 1, "");
+            // exit() never returns, but the block still needs a terminator.
             emit_fn_return(nullptr);
             break;
         }

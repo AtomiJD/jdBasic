@@ -815,8 +815,8 @@ Syntax: IF condition THEN ... ELSEIF condition THEN ...
 Description: A subsequent condition to test if a prior IF or ELSEIF was false.
 
 [END]
-END
-Immediately terminates the program execution.
+END [exit_code]
+Immediately terminates the program, from wherever it stands. The optional expression becomes the process exit status (0 when omitted).
 
 [ENDENUM]
 Syntax: ENUM ... ENDENUM

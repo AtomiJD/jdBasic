@@ -334,7 +334,7 @@ static std::unordered_map<std::string, std::string> g_help_topics;
 static void load_help_file();
 
 // Run source with a fresh VM (for file execution)
-static void run_source(const std::string& source, bool show_timing) {
+static int run_source(const std::string& source, bool show_timing) {
     auto t0 = std::chrono::high_resolution_clock::now();
 
     Lexer lexer(source);
@@ -388,6 +388,7 @@ static void run_source(const std::string& source, bool show_timing) {
         std::cerr << "VM:       " << exec_ms << " ms\n";
         std::cerr << "Total:    " << total_ms << " ms\n";
     }
+    return vm.exit_code;
 }
 
 // Run source on an existing VM (keeps state)
@@ -2566,7 +2567,7 @@ int main(int argc, char* argv[]) {
             return 0;
         }
         std::string source = read_file(filename);
-        run_source(source, timing);
+        return run_source(source, timing);
     } catch (const jdError& e) {
         print_error(e.code, e.what(), e.line);
         return 1;
