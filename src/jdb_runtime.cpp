@@ -17,6 +17,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <io.h>
 #else
 #include <sys/stat.h>
 #include <unistd.h>
@@ -92,6 +93,77 @@ void jdb_trace(const char* file, int64_t line) {
 
 void jdb_print_space() {
     printf(" ");
+}
+
+// ── Output capture ──────────────────────────────────────────
+// OUTPUT.CAPTURE_BEGIN routes stdout into a temporary file until the
+// matching OUTPUT.CAPTURE_END$ hands the text back. Captures nest.
+void jdb_err_set(const char* msg, int64_t code);
+
+struct JdbCapture { int saved_fd; FILE* file; std::string path; };
+static std::vector<JdbCapture> g_captures;
+
+static char* capture_text(FILE* f) {
+    fflush(f);
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    if (n < 0) n = 0;
+    fseek(f, 0, SEEK_SET);
+    char* out = (char*)malloc((size_t)n + 1);
+    size_t got = n ? fread(out, 1, (size_t)n, f) : 0;
+    out[got] = '\0';
+    fseek(f, 0, SEEK_END);
+    return out;
+}
+
+void jdb_output_capture_begin() {
+    fflush(stdout);
+    JdbCapture c;
+#ifdef _WIN32
+    char* tmp = _tempnam(nullptr, "jdbcap");
+    c.path = tmp ? tmp : "jdbcap.tmp";
+    free(tmp);
+    c.file = fopen(c.path.c_str(), "w+b");
+    if (!c.file) return;
+    c.saved_fd = _dup(_fileno(stdout));
+    _dup2(_fileno(c.file), _fileno(stdout));
+#else
+    c.file = tmpfile();
+    if (!c.file) return;
+    c.saved_fd = dup(fileno(stdout));
+    dup2(fileno(c.file), fileno(stdout));
+#endif
+    g_captures.push_back(c);
+}
+
+char* jdb_output_capture_end() {
+    fflush(stdout);
+    if (g_captures.empty()) {
+        jdb_err_set("OUTPUT.CAPTURE_END$: no capture is active", 1);
+        return _strdup("");
+    }
+    JdbCapture c = g_captures.back();
+    g_captures.pop_back();
+#ifdef _WIN32
+    _dup2(c.saved_fd, _fileno(stdout));
+    _close(c.saved_fd);
+#else
+    dup2(c.saved_fd, fileno(stdout));
+    close(c.saved_fd);
+#endif
+    char* text = capture_text(c.file);
+    fclose(c.file);
+    if (!c.path.empty()) remove(c.path.c_str());
+    return text;
+}
+
+char* jdb_output_capture_peek() {
+    fflush(stdout);
+    if (g_captures.empty()) {
+        jdb_err_set("OUTPUT.CAPTURE_PEEK$: no capture is active", 1);
+        return _strdup("");
+    }
+    return capture_text(g_captures.back().file);
 }
 
 // ── Exception state (THROW/TRY/CATCH) ───────────────────────

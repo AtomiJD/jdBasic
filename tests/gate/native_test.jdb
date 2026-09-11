@@ -1363,6 +1363,40 @@ rfinner = rfb.rp
 rfinner.rx = 11
 Assert(350, rfb.rp.rx = 11)
 
+' Untyped parameters carry a punned pointer: an element read through one
+' keeps its type, a map entry written from it keeps that type, and a DIM
+' inside a FUNC never reaches a global of the same name.
+FUNC ref_first$(items)
+    DIM head$ = items[0]
+    RETURN head$
+ENDFUNC
+FUNC ref_stash(bag, items)
+    bag{"first"} = items[0]
+    RETURN bag
+ENDFUNC
+FUNC ref_kind$(items)
+    RETURN TYPEOF(items[1])
+ENDFUNC
+FUNC ref_local_dim()
+    DIM rfshadow AS MAP
+    rfshadow{"k"} = 2
+    RETURN rfshadow{"k"}
+ENDFUNC
+DIM rfwords = ["alpha", "beta"]
+Assert(351, ref_first$(rfwords) = "alpha")
+DIM rfbag AS MAP
+rfbag = ref_stash(rfbag, rfwords)
+Assert(352, rfbag{"first"} = "alpha")
+Assert(353, ref_kind$(rfwords) = "STRING")
+DIM rfshadow AS MAP
+rfshadow{"k"} = 1
+Assert(354, ref_local_dim() = 2)
+Assert(355, rfshadow{"k"} = 1)
+OUTPUT.CAPTURE_BEGIN
+PRINT "captured line"
+DIM rfcap$ = OUTPUT.CAPTURE_END$()
+Assert(356, INSTR(rfcap$, "captured line") >= 0)
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

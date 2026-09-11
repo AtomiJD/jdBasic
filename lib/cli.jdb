@@ -28,10 +28,6 @@
 ' A parse never ends the program by itself, so a test can drive it. CLI.STATUS
 ' gives the exit status a shell expects: 0 when the run simply had nothing to
 ' do, 2 when the command line was wrong.
-'
-' Interpreter for now. A result map travels through several untyped parameters
-' on its way down, and an array read back out of one that far along arrives
-' empty when compiled (jdBasic ticket #373).
 
 EXPORT MODULE CLI
 

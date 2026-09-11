@@ -31,6 +31,6 @@ without copying anything.
 | Module | Stands in for | Notes |
 |--------|---------------|-------|
 | `testkit.jdb` | pytest | assertions, suites, TAP and JUnit output, non-zero exit on failure |
-| `cli.jdb` | argparse, click | flags, options with defaults, positionals, subcommands, generated help. Interpreter only for now, see the note in its header |
+| `cli.jdb` | argparse, click | flags, options with defaults, positionals, subcommands, generated help |
 
 Tests for these modules live in `tests/jdlibs`.

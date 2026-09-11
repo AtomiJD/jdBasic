@@ -273,6 +273,9 @@ __udt_set_str	jdb_udt_set_str	V	PPP	-1
 __udt_get_str	jdb_udt_get_str	P	PP	2
 __udt_set_obj	jdb_udt_set_obj	V	PPP	-1
 __udt_get_obj	jdb_udt_get_obj	P	PP	3
+OUTPUT.CAPTURE_BEGIN	jdb_output_capture_begin	V		-1
+OUTPUT.CAPTURE_END$	jdb_output_capture_end	P		2
+OUTPUT.CAPTURE_PEEK$	jdb_output_capture_peek	P		2
 __select_fn	jdb_select_fn	P	PP	3
 __filter_fn	jdb_filter_fn	P	PP	3
 __take_while_fn	jdb_take_while_fn	P	PP	3

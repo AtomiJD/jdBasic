@@ -409,6 +409,8 @@ private:
                                const std::vector<std::string>& segs,
                                std::string& holder_type, std::string& leaf_field);
     LLVMValueRef udt_ptr_from(TypedValue tv);
+    // A runtime-tagged value in the shape an untyped (f64) parameter takes.
+    LLVMValueRef runtime_to_untyped_param(TypedValue tv);
 
     // Variable-to-UDT-type mapping: var_name → UDT type name
     std::unordered_map<std::string, std::string> var_udt_type;
