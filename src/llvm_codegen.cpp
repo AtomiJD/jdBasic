@@ -1900,6 +1900,62 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 }
             }
         }
+
+        // A parameter that is handed another function's runtime-typed
+        // parameter has to be runtime-typed too. Passing the tagged value to
+        // an f64 slot converts it as a number, which destroys the pointer an
+        // ARRAY, MAP or STRING payload rides on - the value arrives empty.
+        bool rt_spread = true;
+        for (int round = 0; rt_spread && round < 8; round++) {
+            rt_spread = false;
+            for (auto& [fname, fdecl] : decls) {
+                if (!fdecl.stmt) continue;
+                std::unordered_map<std::string, size_t> pidx;
+                for (size_t i = 0; i < fdecl.stmt->params().size(); i++)
+                    pidx[fdecl.stmt->params()[i].name] = i;
+
+                std::function<void(const Expr&)> scan = [&](const Expr& e) {
+                    if (e.kind == ExprKind::CALL) {
+                        auto cit = decls.find(e.func_name);
+                        if (cit != decls.end() && cit->second.stmt) {
+                            for (size_t ai = 0; ai < e.args.size() &&
+                                 ai < cit->second.tags.size() &&
+                                 ai < cit->second.stmt->params().size(); ai++) {
+                                const Expr* a = e.args[ai].get();
+                                if (!a || a->kind != ExprKind::VARIABLE) continue;
+                                auto pit = pidx.find(a->str_val);
+                                if (pit == pidx.end()) continue;
+                                if (pit->second >= fdecl.tags.size()) continue;
+                                if (fdecl.tags[pit->second] != JD_TAG_RUNTIME) continue;
+                                const auto& cp = cit->second.stmt->params()[ai];
+                                if (!cp.name.empty() && cp.name.back() == '$') continue;
+                                if (cp.type != VarType::NONE) continue;
+                                if (cit->second.tags[ai] == JD_TAG_RUNTIME) continue;
+                                cit->second.tags[ai] = JD_TAG_RUNTIME;
+                                rt_spread = true;
+                            }
+                        }
+                    }
+                    for (auto& a : e.args) if (a) scan(*a);
+                    if (e.left) scan(*e.left);
+                    if (e.right) scan(*e.right);
+                };
+
+                std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+                    if (s.expr) scan(*s.expr);
+                    for (auto& pe : s.print_exprs) if (pe) scan(*pe);
+                    for (auto& ic : s.index_chain) if (ic) scan(*ic);
+                    for (auto& b : s.body) if (b) walk(*b);
+                    for (auto& br : s.branches) {
+                        if (br.condition) scan(*br.condition);
+                        for (auto& b : br.body) if (b) walk(*b);
+                    }
+                    for (auto& c : s.catch_body()) if (c) walk(*c);
+                    for (auto& f : s.finally_body()) if (f) walk(*f);
+                };
+                walk(*fdecl.stmt);
+            }
+        }
         // A parameter that different call sites pass a pointer and a number
         // to cannot have one LLVM type. The signature used to keep whichever
         // came first and the other call passed its value through the wrong
