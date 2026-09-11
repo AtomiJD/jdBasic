@@ -1,0 +1,13 @@
+OPTION "EXPLICIT"
+OPTION "STRICT"
+' A bool inside an array literal keeps its type, nested or flat, and
+' survives a row read and a push.
+DIM rows = [["c", 1, TRUE]]
+PRINT JSON.STRINGIFY$(rows)
+DIM flat = ["c", 1, TRUE]
+PRINT JSON.STRINGIFY$(flat); " "; TYPEOF(flat[2])
+DIM row = rows[0]
+PRINT TYPEOF(row[2]); " "; row[2]
+DIM more = []
+PUSH(more, ["x", FALSE])
+PRINT JSON.STRINGIFY$(more); " "; TYPEOF(more[0][1])

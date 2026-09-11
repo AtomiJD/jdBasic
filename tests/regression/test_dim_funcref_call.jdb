@@ -1,0 +1,15 @@
+OPTION "EXPLICIT"
+OPTION "STRICT"
+' A funcref bound by DIM is callable through the variable.
+FUNC Twice(x)
+    RETURN x * 2
+ENDFUNC
+FUNC Hello$(n$)
+    RETURN "hi " + n$
+ENDFUNC
+DIM f = Twice@
+PRINT f(3)
+DIM g = Hello$@
+PRINT g("bob")
+DIM h = SQR@
+PRINT h(16)

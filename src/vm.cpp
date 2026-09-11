@@ -990,9 +990,24 @@ Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
     if (frames.size() >= JDB_MAX_FRAMES)
         throw jdError(ErrCode::STACK_OVERFLOW, "Call stack overflow (max " + std::to_string(JDB_MAX_FRAMES) + " frames)");
     size_t saved_min = min_frame_depth;
+    size_t saved_frames = frames.size();
+    // The caller's TRY entries belong to the caller's run loop: hidden here,
+    // an error inside the callee leaves this run instead of jumping the
+    // nested loop into the caller's CATCH block.
+    auto saved_try_handlers = std::move(try_handlers);
+    try_handlers.clear();
     min_frame_depth = frames.size();
     frames.push_back({&proto.chunk, 0, new_base});
-    run();
+    try {
+        run();
+    } catch (...) {
+        if (frames.size() > saved_frames) frames.resize(saved_frames);
+        try_handlers = std::move(saved_try_handlers);
+        sp = new_base;
+        min_frame_depth = saved_min;
+        throw;
+    }
+    try_handlers = std::move(saved_try_handlers);
     min_frame_depth = saved_min;
     // If the called function (or anything it triggered) ran END, the
     // VM has no return value to pop - bail out cleanly. The is_halted

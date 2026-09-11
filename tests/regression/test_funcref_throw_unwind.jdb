@@ -1,0 +1,20 @@
+' A FUNC that throws, reached through a funcref variable and through a
+' higher-order call, is caught by the caller's TRY and the program ends
+' cleanly afterwards.
+FUNC Boom(x)
+    THROW "nope"
+ENDFUNC
+DIM f = Boom@
+TRY
+    DIM r = f(2)
+    PRINT "funcref: no error"
+CATCH
+    PRINT "funcref: "; ERRMSG$
+ENDTRY
+TRY
+    DIM s = SELECT(Boom@, [1])
+    PRINT "select: no error"
+CATCH
+    PRINT "select: "; ERRMSG$
+ENDTRY
+PRINT "done"

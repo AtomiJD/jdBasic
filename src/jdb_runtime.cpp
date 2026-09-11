@@ -983,6 +983,12 @@ double jdb_array_get_tagged(JdbArray* arr, int64_t idx, int32_t* out_tag) {
             extern int32_t jdb_array_classify_elem(JdbArray*, double);
             *out_tag = jdb_array_classify_elem(arr, v);
         }
+        // An integer or bool cell holds a real double; the caller reads the
+        // returned bits as the integer its tag names.
+        if (*out_tag == JD_TAG_I64 || *out_tag == JD_TAG_BOOL) {
+            int64_t iv = (int64_t)v;
+            memcpy(&v, &iv, sizeof v);
+        }
     }
     return v;
 }
@@ -1985,6 +1991,10 @@ char* jdb_map_get_str(JdbMap* m, const char* key) {
     char buf[64];
     snprintf(buf, sizeof(buf), "%g", m->values[idx]);
     return _strdup(buf);
+}
+
+char* jdb_bool_to_str(int64_t v) {
+    return _strdup(v ? "TRUE" : "FALSE");
 }
 
 int64_t jdb_map_has(JdbMap* m, const char* key) {

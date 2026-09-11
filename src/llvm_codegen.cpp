@@ -4492,6 +4492,27 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
             u == "WORDS" || u == "CHARS" || u == "MAP.KEYS")
             string_array_vars.insert(stmt.var_name);
+    }
+    // A literal of literals is an array of arrays.
+    if (stmt.expr && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        for (auto& a : stmt.expr->args)
+            if (a && a->kind == ExprKind::ARRAY_LITERAL) {
+                array_array_vars.insert(stmt.var_name);
+                break;
+            }
+    }
+    // A row taken out of an array of arrays holds cells of unknown kind;
+    // reading it per cell keeps a string or bool cell what it is.
+    if (stmt.expr && stmt.expr->kind == ExprKind::INDEX && stmt.expr->left &&
+        stmt.expr->left->kind == ExprKind::VARIABLE &&
+        array_array_vars.count(stmt.expr->left->str_val) &&
+        !(!stmt.var_name.empty() && stmt.var_name.back() == '$')) {
+        mixed_array_vars.insert(stmt.var_name);
+    }
+    if (stmt.expr && stmt.expr->kind == ExprKind::CALL &&
+        !stmt.expr->func_name.empty()) {
+        std::string u = stmt.expr->func_name;
+        std::transform(u.begin(), u.end(), u.begin(), ::toupper);
         // STR$(arr) returns an array of strings - mark so arr[i] reads
         // back as STRING instead of the default-punned f64.
         if (u == "STR$" && !stmt.expr->args.empty()) {
@@ -5427,6 +5448,27 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (u == "SPLIT" || u == "TILED.LAYERS$" || u == "LINES" ||
             u == "WORDS" || u == "CHARS" || u == "MAP.KEYS")
             string_array_vars.insert(stmt.var_name);
+    }
+    // A literal of literals is an array of arrays.
+    if (stmt.expr && stmt.expr->kind == ExprKind::ARRAY_LITERAL) {
+        for (auto& a : stmt.expr->args)
+            if (a && a->kind == ExprKind::ARRAY_LITERAL) {
+                array_array_vars.insert(stmt.var_name);
+                break;
+            }
+    }
+    // A row taken out of an array of arrays holds cells of unknown kind;
+    // reading it per cell keeps a string or bool cell what it is.
+    if (stmt.expr && stmt.expr->kind == ExprKind::INDEX && stmt.expr->left &&
+        stmt.expr->left->kind == ExprKind::VARIABLE &&
+        array_array_vars.count(stmt.expr->left->str_val) &&
+        !(!stmt.var_name.empty() && stmt.var_name.back() == '$')) {
+        mixed_array_vars.insert(stmt.var_name);
+    }
+    if (stmt.expr && stmt.expr->kind == ExprKind::CALL &&
+        !stmt.expr->func_name.empty()) {
+        std::string u = stmt.expr->func_name;
+        std::transform(u.begin(), u.end(), u.begin(), ::toupper);
         if (u == "STR$" && !stmt.expr->args.empty()) {
             string_array_vars.insert(stmt.var_name);
         }
@@ -5747,9 +5789,26 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
 
     // Check if the expression produces an array (e.g. IOTA)
     TypedValue rhs{ nullptr, JD_TAG_F64 };
+    int fr_ret_tag = -1;
     {
         ScopedLeafTag _lt(this, dim_leaf_hint);
-        rhs = codegen_expr(*stmt.expr);
+        // `DIM f = Name@` binds the uniform wrapper of the referenced FUNC or
+        // builtin, so a call through the variable has a function to reach.
+        bool bound = false;
+        if (stmt.expr->kind == ExprKind::LITERAL_STRING) {
+            auto fit = user_functions.find(stmt.expr->str_val);
+            if (fit != user_functions.end()) {
+                LLVMValueRef w = build_funcref_wrapper(stmt.expr->str_val,
+                                                       (int)fit->second.param_tags.size());
+                rhs = { w ? w : fit->second.fn, JD_TAG_FUNCREF };
+                fr_ret_tag = fit->second.return_tag;
+                bound = true;
+            } else if (stmt.expr->is_funcref_lit) {
+                LLVMValueRef bw = builtin_funcref_by_name(stmt.expr->str_val);
+                if (bw) { rhs = { bw, JD_TAG_FUNCREF }; bound = true; }
+            }
+        }
+        if (!bound) rhs = codegen_expr(*stmt.expr);
     }
     // A local that a later assignment feeds from an index read holds its
     // value with a tag from the start, so a read placed before that
@@ -5904,10 +5963,13 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (rhs.tag == JD_TAG_F64 && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_F64;
         if (untyped_bool_init && vi->tag == JD_TAG_I64) vi->tag = JD_TAG_BOOL;
         vi->funcref_name = dim_funcref_name(rhs);
+        vi->funcref_return_tag = fr_ret_tag;
+        if (rhs.tag == JD_TAG_FUNCREF) vi->tag = JD_TAG_FUNCREF;
         LLVMBuildStore(builder, rhs.val, vi->alloca_val);
     } else {
         VarInfo& nv = create_var(stmt.var_name, rhs.tag);
         nv.funcref_name = dim_funcref_name(rhs);
+        nv.funcref_return_tag = fr_ret_tag;
         LLVMBuildStore(builder, rhs.val, nv.alloca_val);
     }
 }
@@ -7090,7 +7152,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     int store_tag = elem.tag;
                     if (elem.tag == JD_TAG_I64 || elem.tag == JD_TAG_BOOL) {
                         fval = LLVMBuildSIToFP(builder, fval, f64_type, "itof");
-                        store_tag = JD_TAG_F64;  // f64-shaped after coerce
+                        // A bool cell keeps its tag; an integer is a number.
+                        store_tag = elem.tag == JD_TAG_BOOL ? JD_TAG_BOOL : JD_TAG_F64;
+                        if (elem.tag == JD_TAG_BOOL) any_runtime = true;
                     }
                     else if (elem.tag == JD_TAG_STR || elem.tag == JD_TAG_ARR) {
                         // ptr (string or array) → encode as f64
@@ -7109,8 +7173,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         // untagged read of the cell is right too.
                         LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, elem.runtime_tag,
                             LLVMConstInt(i32_type, JD_TAG_I64, 0), "lit_isint");
+                        LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, elem.runtime_tag,
+                            LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "lit_isbool");
+                        LLVMValueRef intish = LLVMBuildOr(builder, is_int, is_bool, "lit_intish");
                         LLVMValueRef as_real = LLVMBuildSIToFP(builder, elem.val, f64_type, "lit_i2f");
-                        fval = LLVMBuildSelect(builder, is_int, as_real, pun_i64_to_f64(elem.val), "lit_f");
+                        fval = LLVMBuildSelect(builder, intish, as_real, pun_i64_to_f64(elem.val), "lit_f");
                         has_ptr_elems = true;
                     }
                     if (any_runtime) {
@@ -9315,8 +9382,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // it is, everything else as its bits with its own tag.
             LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, b.runtime_tag,
                 LLVMConstInt(i32_type, JD_TAG_I64, 0), "app_isint");
+            LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, b.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "app_isbool");
+            LLVMValueRef intish = LLVMBuildOr(builder, is_int, is_bool, "app_intish");
             LLVMValueRef as_real = LLVMBuildSIToFP(builder, b.val, f64_type, "app_i2f");
-            LLVMValueRef fval = LLVMBuildSelect(builder, is_int, as_real,
+            LLVMValueRef fval = LLVMBuildSelect(builder, intish, as_real,
                                                 pun_i64_to_f64(b.val), "app_f");
             LLVMValueRef tag_v = LLVMBuildSelect(builder, is_int,
                 LLVMConstInt(i32_type, JD_TAG_F64, 0), b.runtime_tag, "app_tag");
@@ -10370,8 +10440,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // number it is, so an untagged read of the cell is right too.
             LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, val_tv.runtime_tag,
                 LLVMConstInt(i32_type, JD_TAG_I64, 0), "push_isint");
+            LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, val_tv.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "push_isbool");
+            LLVMValueRef intish = LLVMBuildOr(builder, is_int, is_bool, "push_intish");
             LLVMValueRef as_real = LLVMBuildSIToFP(builder, val_tv.val, f64_type, "push_i2f");
-            fval = LLVMBuildSelect(builder, is_int, as_real, pun_i64_to_f64(val_tv.val), "push_f");
+            fval = LLVMBuildSelect(builder, intish, as_real, pun_i64_to_f64(val_tv.val), "push_f");
             tag_v = LLVMBuildSelect(builder, is_int, LLVMConstInt(i32_type, JD_TAG_F64, 0),
                                     val_tv.runtime_tag, "push_tag");
         } else if (val_tv.tag == JD_TAG_I64 || val_tv.tag == JD_TAG_BOOL) {
@@ -12949,6 +13022,11 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             LLVMValueRef f      = LLVMBuildSelect(builder, is_intish_s, f_real, f_pun, "str_oth_f");
             auto& d2s = runtime_funcs["__double_to_str"];
             LLVMValueRef fstr = LLVMBuildCall2(builder, d2s.fn_type, d2s.fn, &f, 1, "f2s");
+            // A bool renders as TRUE/FALSE rather than as its number.
+            if (auto* b2s = get_runtime_func("__bool_to_str")) {
+                LLVMValueRef bstr = LLVMBuildCall2(builder, b2s->fn_type, b2s->fn, &tv.val, 1, "b2s");
+                fstr = LLVMBuildSelect(builder, is_bool_s, bstr, fstr, "str_oth");
+            }
             LLVMBuildBr(builder, bb_merge);
             LLVMBasicBlockRef bb_other_end = LLVMGetInsertBlock(builder);
 

@@ -1165,15 +1165,18 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
     *out_val = u.i;
     // Per-element tags (flags bit 3) win - they're set by the tagged
     // ARRAY_LITERAL path for `[m{"name"}, m{"age"}, ...]` so each cell
-    // carries its real JdTag. Falls back to the all-elements-string flag
-    // (bit 1) and finally to F64 for pure-numeric arrays.
-    if ((arr->flags & 8) && arr->elem_tags) {
-        return (int32_t)arr->elem_tags[idx];
-    }
-    if (arr->flags & 2) return jd_tag(JdTag::STR);
-    if (arr->flags & 4) return jd_tag(JdTag::BOOL);
-    if (arr->flags & 1) return jd_tag(JdTag::ARR);
-    return jd_tag(JdTag::F64);
+    // carries its real JdTag. Falls back to the array-wide kind bits and
+    // finally to F64 for pure-numeric arrays.
+    int32_t t;
+    if ((arr->flags & 8) && arr->elem_tags) t = (int32_t)arr->elem_tags[idx];
+    else if (arr->flags & 2) t = jd_tag(JdTag::STR);
+    else if (arr->flags & 4) t = jd_tag(JdTag::BOOL);
+    else if (arr->flags & 1) t = jd_tag(JdTag::ARR);
+    else t = jd_tag(JdTag::F64);
+    // An integer or bool cell holds a real double and travels as the
+    // integer its tag names.
+    if (t == jd_tag(JdTag::I64) || t == jd_tag(JdTag::BOOL)) *out_val = (int64_t)u.d;
+    return t;
 }
 
 // Tag-7 INDEX dispatch when the key is tagged too: a string key reads the
