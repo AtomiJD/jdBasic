@@ -923,7 +923,7 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
     * Disable with `OPTION "NOEXPLICIT"` or `OPTION "EXPLICITOFF"`.
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, about 15.6 ms on Windows and under a millisecond elsewhere.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
-* **`IMPORT [module]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb
+* **`IMPORT module [, module ...]`**: Loads the jdBasic module. Ex. IMPORT MATH imports the file math.jdb; `IMPORT SCHEMA, LLMAPI, CLI` imports three modules in that order, exactly as three IMPORT lines would.
 
   The module name is matched against `NAME.jdb` and `name.jdb` in each of these
   places, in order, and the first hit wins:

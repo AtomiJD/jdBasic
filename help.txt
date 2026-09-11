@@ -1943,8 +1943,8 @@ Syntax: IF condition THEN ...
 Description: Begins a block of code that executes conditionally.
 
 [IMPORT]
-Syntax: IMPORT module_name
-Description: Loads a jdBasic module file.
+Syntax: IMPORT module_name [, module_name ...]
+Description: Loads one or more jdBasic module files, in the order given.
 
 [IN]
 Syntax: FOR EACH ... IN collection

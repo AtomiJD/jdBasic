@@ -134,6 +134,7 @@ private:
 
     // Module support
     std::vector<StmtPtr> parse_import();
+    std::vector<StmtPtr> import_module(const std::string& module_name, int ln);
 
     // AST rewriting for modules
     static void module_rename_expr(Expr& expr,

@@ -2474,12 +2474,21 @@ ExprPtr Parser::parse_primary() {
 
 #include "lexer.h"
 
+// IMPORT A, B, C imports each module in turn, as three IMPORT lines would.
 std::vector<StmtPtr> Parser::parse_import() {
     int ln = current().line;
     advance(); // IMPORT
-    std::string module_name = expect(TokenType::IDENTIFIER, "module name").value;
+    std::vector<StmtPtr> all;
+    do {
+        std::string module_name = expect(TokenType::IDENTIFIER, "module name").value;
+        auto part = import_module(module_name, ln);
+        for (auto& s : part) all.push_back(std::move(s));
+    } while (match(TokenType::COMMA));
     expect_newline();
+    return all;
+}
 
+std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int ln) {
     // Circular import check
     if (imported_modules.count(module_name))
         return {}; // already imported, skip

@@ -1,9 +1,7 @@
 ' LLMAPI against two stub endpoints in the same process: what the module
 ' sends to each vendor, and what it makes of their answers.
 
-IMPORT TESTKIT
-IMPORT SCHEMA
-IMPORT LLMAPI
+IMPORT TESTKIT, SCHEMA, LLMAPI
 
 DIM gOpenAi = {}
 DIM gOpenAiHeaders = {}

@@ -12,9 +12,7 @@
 ' Without a provider it prints the JSON Schema and the messages it would
 ' send, so the shape of the exchange is visible offline.
 
-IMPORT SCHEMA
-IMPORT LLMAPI
-IMPORT CLI
+IMPORT SCHEMA, LLMAPI, CLI
 
 DIM argv = CLI.ARGV()
 DIM city$ = "Bonn"
