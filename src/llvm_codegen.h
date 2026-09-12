@@ -380,6 +380,9 @@ private:
     // from an index read or a runtime-typed call; their slots are
     // runtime-typed from the declaration on, so every read asks the tag.
     std::unordered_set<std::string> runtime_later_locals;
+    // Parameter names of the function being generated: an element read
+    // out of an untyped array parameter asks the cell for its kind.
+    std::unordered_set<std::string> current_param_names;
     // The same for top-level variables, over the whole program: a SUB body
     // may assign a global long after the main body has read it statically.
     std::unordered_set<std::string> runtime_later_globals;

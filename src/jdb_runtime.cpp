@@ -1004,7 +1004,22 @@ JdbArray* jdb_array_append_arr(JdbArray* a, JdbArray* b) {
     // PRINT / INDEX paths that consult the runtime flag still see strings.
     int32_t fa = a ? a->flags : 0;
     int32_t fb = b ? b->flags : 0;
-    r->flags |= (fa | fb);
+    r->flags |= (fa | fb) & 7;
+    // When either side carries per-cell tags, or the two sides hold
+    // different kinds, every cell of the result gets its own tag.
+    bool tagged = ((fa & 8) && a && a->elem_tags) || ((fb & 8) && b && b->elem_tags) ||
+                  (alen > 0 && blen > 0 && (fa & 7) != (fb & 7));
+    if (tagged) {
+        extern int32_t jdb_array_classify_elem(JdbArray*, double);
+        r->elem_tags = (int8_t*)malloc((size_t)(alen + blen > 0 ? alen + blen : 1));
+        for (int64_t i = 0; i < alen; i++)
+            r->elem_tags[i] = (a->elem_tags && (fa & 8)) ? a->elem_tags[i]
+                                                        : (int8_t)jdb_array_classify_elem(a, a->data[i]);
+        for (int64_t i = 0; i < blen; i++)
+            r->elem_tags[alen + i] = (b->elem_tags && (fb & 8)) ? b->elem_tags[i]
+                                                               : (int8_t)jdb_array_classify_elem(b, b->data[i]);
+        r->flags |= 8;
+    }
     return r;
 }
 

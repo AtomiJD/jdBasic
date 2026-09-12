@@ -1086,6 +1086,21 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (it == pre_var_tags.end() ||
                 (it->second == JD_TAG_F64 && t != JD_TAG_F64))
                 pre_var_tags[s.var_name] = t;
+            // A top-level literal of strings is a string array for every
+            // function body generated before the main body registers it;
+            // a literal of mixed cells reads per cell.
+            if (s.kind == StmtKind::DIM && s.expr &&
+                s.expr->kind == ExprKind::ARRAY_LITERAL && !s.expr->args.empty()) {
+                bool all_str = true, any_str = false, any_nested = false;
+                for (auto& a : s.expr->args) {
+                    if (!a) continue;
+                    bool is_s = a->kind == ExprKind::LITERAL_STRING;
+                    if (a->kind == ExprKind::ARRAY_LITERAL) any_nested = true;
+                    if (is_s) any_str = true; else all_str = false;
+                }
+                if (all_str) string_array_vars.insert(s.var_name);
+                else if (any_str && !any_nested) mixed_array_vars.insert(s.var_name);
+            }
         }
     };
     for (auto& stmt : program) {
@@ -1470,10 +1485,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     }
                 }
             }
+            // The right-hand side is scanned with the kinds as they were:
+            // `w = Shrink(w)` hands the old w on.
+            if (s.expr) scan_expr(*s.expr);
             if (k > 0) cur_local_kinds[s.var_name] = k;
             else cur_local_kinds.erase(s.var_name);
-        }
-        if (s.expr) scan_expr(*s.expr);
+        } else if (s.expr) scan_expr(*s.expr);
         if (s.loop_cond) scan_expr(*s.loop_cond);
         if (s.end_expr) scan_expr(*s.end_expr);
         if (s.step_expr) scan_expr(*s.step_expr);
@@ -1750,6 +1767,20 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 local_kinds[s.var_name] = JD_TAG_NATIVE_MAP;
             else if (s.expr->kind == ExprKind::ARRAY_LITERAL)
                 local_kinds[s.var_name] = JD_TAG_ARR;
+            else if (s.expr->kind == ExprKind::BINARY) {
+                // Arithmetic with an array operand yields an array.
+                auto side_is_arr = [&](const Expr* x) {
+                    if (!x) return false;
+                    if (x->kind == ExprKind::ARRAY_LITERAL) return true;
+                    if (x->kind == ExprKind::VARIABLE) {
+                        auto lit = local_kinds.find(x->str_val);
+                        return lit != local_kinds.end() && lit->second == JD_TAG_ARR;
+                    }
+                    return false;
+                };
+                if (side_is_arr(s.expr->left.get()) || side_is_arr(s.expr->right.get()))
+                    local_kinds[s.var_name] = JD_TAG_ARR;
+            }
             else if (s.expr->kind == ExprKind::CALL) {
                 auto cit = decls.find(s.expr->func_name);
                 if (cit != decls.end() &&
@@ -2296,6 +2327,11 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     auto it = local_kind.find(e.str_val);
                     if (it != local_kind.end()) return it->second;
                     if (!e.str_val.empty() && e.str_val.back() == '$') return JD_TAG_STR;
+                    // The absent value is its own kind, so a FUNC answering
+                    // NONE on one path and a map on another is runtime-typed.
+                    std::string u = e.str_val;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    if (u == "NONE") return JD_TAG_NONE;
                     return 0;
                 }
                 case ExprKind::INDEX:
@@ -2327,6 +2363,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         bool dynamic = false;
         std::vector<int> kinds;
         std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
+            // A declared type names the kind even without an initialiser.
+            if (s.kind == StmtKind::DIM && !s.var_name.empty()) {
+                int declared = 0;
+                if (s.var_type == VarType::OBJECT && s.label.empty()) declared = JD_TAG_NATIVE_MAP;
+                else if (s.var_type == VarType::ARRAY) declared = JD_TAG_ARR;
+                else if (s.var_type == VarType::STRING) declared = JD_TAG_STR;
+                if (declared != 0) local_kind[s.var_name] = declared;
+            }
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
                  s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
                 int k = kind_of(*s.expr);
@@ -4002,12 +4046,30 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     }
     auto saved_runtime_later = std::move(runtime_later_locals);
     runtime_later_locals.clear();
+    auto saved_param_names = std::move(current_param_names);
+    current_param_names.clear();
+    for (auto& pn : stmt.params()) current_param_names.insert(pn.name);
+    // The element-kind sets are keyed by name; what this body registers
+    // for its locals must not describe a same-named local elsewhere.
+    auto saved_array_array = array_array_vars;
+    auto saved_string_array = string_array_vars;
+    auto saved_mixed_array = mixed_array_vars;
+    auto saved_map_array = map_array_vars;
+    auto saved_vm_array = vm_array_vars;
     {
         std::unordered_set<std::string> dyn_dims;
+        // Parameters that arrive runtime-typed feed the same rule.
+        for (size_t pi = 0; pi < stmt.params().size() && pi < fit->second.param_tags.size(); pi++)
+            if (fit->second.param_tags[pi] == JD_TAG_RUNTIME ||
+                fit->second.param_tags[pi] == JD_TAG_VM_HANDLE)
+                dyn_dims.insert(stmt.params()[pi].name);
         std::function<void(const Stmt&)> scan_later = [&](const Stmt& s) {
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
                  s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
                 bool dyn = s.expr->kind == ExprKind::INDEX;
+                if (s.expr->kind == ExprKind::VARIABLE &&
+                    (dyn_dims.count(s.expr->str_val) || runtime_later_locals.count(s.expr->str_val)))
+                    dyn = true;
                 if (s.expr->kind == ExprKind::CALL) {
                     auto cit = user_functions.find(s.expr->func_name);
                     if (cit != user_functions.end() &&
@@ -4163,6 +4225,12 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     label_blocks = std::move(saved_labels);
     owned_str_locals = std::move(saved_owned_locals);
     runtime_later_locals = std::move(saved_runtime_later);
+    current_param_names = std::move(saved_param_names);
+    array_array_vars = std::move(saved_array_array);
+    string_array_vars = std::move(saved_string_array);
+    mixed_array_vars = std::move(saved_mixed_array);
+    map_array_vars = std::move(saved_map_array);
+    vm_array_vars = std::move(saved_vm_array);
     owned_local_shadow = std::move(saved_owned_shadow);
 
     // Position builder back at the end of the saved function's last block
@@ -4561,6 +4629,24 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             stmt.expr->args[0]->kind == ExprKind::VARIABLE &&
             string_array_vars.count(stmt.expr->args[0]->str_val)) {
             string_array_vars.insert(stmt.var_name);
+        }
+        // Cells of mixed kind stay mixed through the functions that hand
+        // them on whole: a read of the result asks the cell.
+        if (u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
+            u == "DROP" || u == "APPEND" || u == "SLICE") {
+            for (auto& a : stmt.expr->args) {
+                if (!a) continue;
+                if (a->kind == ExprKind::VARIABLE &&
+                    (mixed_array_vars.count(a->str_val) || array_array_vars.count(a->str_val) ||
+                     vm_array_vars.count(a->str_val) || map_array_vars.count(a->str_val))) {
+                    mixed_array_vars.insert(stmt.var_name);
+                    break;
+                }
+                if (a->kind == ExprKind::ARRAY_LITERAL) {
+                    for (auto& el : a->args)
+                        if (el && el->kind == ExprKind::INDEX) { mixed_array_vars.insert(stmt.var_name); break; }
+                }
+            }
         }
         // APPEND(arr, val) / APPEND(arr_a, arr_b) - propagates the element
         // tag from its inputs. The runtime memcpy-merges the bits regardless,
@@ -5503,6 +5589,24 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             stmt.expr->args[0]->kind == ExprKind::VARIABLE &&
             string_array_vars.count(stmt.expr->args[0]->str_val)) {
             string_array_vars.insert(stmt.var_name);
+        }
+        // Cells of mixed kind stay mixed through the functions that hand
+        // them on whole: a read of the result asks the cell.
+        if (u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
+            u == "DROP" || u == "APPEND" || u == "SLICE") {
+            for (auto& a : stmt.expr->args) {
+                if (!a) continue;
+                if (a->kind == ExprKind::VARIABLE &&
+                    (mixed_array_vars.count(a->str_val) || array_array_vars.count(a->str_val) ||
+                     vm_array_vars.count(a->str_val) || map_array_vars.count(a->str_val))) {
+                    mixed_array_vars.insert(stmt.var_name);
+                    break;
+                }
+                if (a->kind == ExprKind::ARRAY_LITERAL) {
+                    for (auto& el : a->args)
+                        if (el && el->kind == ExprKind::INDEX) { mixed_array_vars.insert(stmt.var_name); break; }
+                }
+            }
         }
         // APPEND(arr_a, arr_b) - propagate string-element tag if both args
         // resolve to known string arrays. Mirror codegen_let_or_assign.
@@ -7344,6 +7448,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 // Bare-identifier constants like PI, E - call the 0-arg native fn.
                 std::string upper = expr.str_val;
                 std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+                // NONE is the absent value: a runtime-typed zero with the
+                // NONE tag, so a slot, a map cell or TYPEOF sees the absence.
+                if (upper == "NONE") {
+                    TypedValue none;
+                    none.val = LLVMConstInt(i64_type, 0, 0);
+                    none.tag = JD_TAG_RUNTIME;
+                    none.runtime_tag = LLVMConstInt(i32_type, JD_TAG_NONE, 0);
+                    return none;
+                }
                 auto rit = runtime_funcs.find(upper);
                 if (rit != runtime_funcs.end()) {
                     unsigned pc = LLVMCountParamTypes(rit->second.fn_type);
@@ -8148,6 +8261,21 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(val);
                 return { as_i64, JD_TAG_RUNTIME, tag_v };
             }
+            // An array handed in as a parameter carries cells of unknown
+            // kind; the cell answers with its own tag. A numeric leaf hint
+            // keeps the plain read for arithmetic.
+            if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
+                current_param_names.count(expr.left->str_val) &&
+                m_want_leaf_tag != JD_TAG_F64 && m_want_leaf_tag != JD_TAG_I64) {
+                auto& gtg = runtime_funcs["__arr_get_tagged"];
+                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "prm_gt_tag");
+                LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
+                LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
+                    getargs, 3, "prm_gt");
+                LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "prm_gt_tagv");
+                LLVMValueRef as_i64 = pun_f64_to_i64(val);
+                return { as_i64, JD_TAG_RUNTIME, tag_v };
+            }
             // Plain numeric / untyped array: legacy f64 element.
             return { result, JD_TAG_F64 };
         }
@@ -8445,6 +8573,75 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
 
     // IN operator
     if (expr.op == TokenType::IN) {
+        // A runtime-typed haystack: a map answers by key, a string by
+        // substring, anything else is read as an array.
+        if (rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+            LLVMValueRef needle_s = to_string_ptr(lhs);
+            LLVMValueRef needle_n = (lhs.tag == JD_TAG_STR)
+                ? LLVMConstReal(f64_type, 0.0) : coerce_to(lhs, f64_type);
+            LLVMValueRef hay = LLVMBuildIntToPtr(builder, rhs.val, i8_ptr_type, "in_hay");
+            LLVMValueRef is_map = LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_NATIVE_MAP, 0), "inh_ismap");
+            LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
+                LLVMConstInt(i32_type, JD_TAG_STR, 0), "inh_isstr");
+            LLVMBasicBlockRef bb_map = LLVMAppendBasicBlock(current_fn, "inh.map");
+            LLVMBasicBlockRef bb_chk = LLVMAppendBasicBlock(current_fn, "inh.chk");
+            LLVMBasicBlockRef bb_str = LLVMAppendBasicBlock(current_fn, "inh.str");
+            LLVMBasicBlockRef bb_arr = LLVMAppendBasicBlock(current_fn, "inh.arr");
+            LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "inh.join");
+            LLVMBuildCondBr(builder, is_map, bb_map, bb_chk);
+            LLVMPositionBuilderAtEnd(builder, bb_chk);
+            LLVMBuildCondBr(builder, is_str, bb_str, bb_arr);
+
+            LLVMPositionBuilderAtEnd(builder, bb_map);
+            auto& mh = runtime_funcs["__map_has"];
+            LLVMValueRef margs[] = { hay, needle_s };
+            LLVMValueRef r_map = LLVMBuildCall2(builder, mh.fn_type, mh.fn, margs, 2, "inh_mhas");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_map_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_str);
+            auto& instr = runtime_funcs["INSTR"];
+            LLVMValueRef iargs[] = { hay, needle_s };
+            LLVMValueRef pos = LLVMBuildCall2(builder, instr.fn_type, instr.fn, iargs, 2, "inh_instr");
+            LLVMValueRef r_str = LLVMBuildZExt(builder,
+                LLVMBuildICmp(builder, LLVMIntSGE, pos, LLVMConstInt(i64_type, 0, 0), "inh_found"),
+                i64_type, "inh_str");
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_str_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_arr);
+            LLVMValueRef r_arr;
+            bool needle_is_str = lhs.tag == JD_TAG_STR;
+            if (lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag) {
+                LLVMValueRef n_isstr = LLVMBuildICmp(builder, LLVMIntEQ, lhs.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_STR, 0), "inh_nstr");
+                auto& has_str = runtime_funcs["__arr_has_str"];
+                auto& has_num = runtime_funcs["__arr_has_num"];
+                LLVMValueRef sargs[] = { hay, LLVMBuildIntToPtr(builder, lhs.val, i8_ptr_type, "inh_sptr") };
+                LLVMValueRef by_str = LLVMBuildCall2(builder, has_str.fn_type, has_str.fn, sargs, 2, "inh_ahs");
+                LLVMValueRef nargs[] = { hay, runtime_to_untyped_param(lhs) };
+                LLVMValueRef by_num = LLVMBuildCall2(builder, has_num.fn_type, has_num.fn, nargs, 2, "inh_ahn");
+                r_arr = LLVMBuildSelect(builder, n_isstr, by_str, by_num, "inh_arr");
+            } else if (needle_is_str) {
+                auto& has_str = runtime_funcs["__arr_has_str"];
+                LLVMValueRef sargs[] = { hay, lhs.val };
+                r_arr = LLVMBuildCall2(builder, has_str.fn_type, has_str.fn, sargs, 2, "inh_ahs");
+            } else {
+                auto& has_num = runtime_funcs["__arr_has_num"];
+                LLVMValueRef nargs[] = { hay, needle_n };
+                r_arr = LLVMBuildCall2(builder, has_num.fn_type, has_num.fn, nargs, 2, "inh_ahn");
+            }
+            LLVMBuildBr(builder, bb_join);
+            LLVMBasicBlockRef bb_arr_end = LLVMGetInsertBlock(builder);
+
+            LLVMPositionBuilderAtEnd(builder, bb_join);
+            LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "inh_found");
+            LLVMValueRef vals[] = { r_map, r_str, r_arr };
+            LLVMBasicBlockRef bbs[] = { bb_map_end, bb_str_end, bb_arr_end };
+            LLVMAddIncoming(phi, vals, bbs, 3);
+            return { phi, JD_TAG_I64 };
+        }
         // A runtime-tagged needle: a string reads the array by content,
         // anything else as a number; the branch is taken at runtime.
         if (lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag && rhs.tag == JD_TAG_ARR) {
@@ -9377,6 +9574,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { a.val, b.val };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "appa"), JD_TAG_ARR };
         }
+        // The first argument is an array by definition; a runtime-typed
+        // holder hands its pointer over.
+        if (a.tag == JD_TAG_RUNTIME && a.runtime_tag)
+            a = { coerce_to(a, i8_ptr_type), JD_TAG_ARR };
         if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_RUNTIME && b.runtime_tag) {
             // Stored the way PUSH stores a cell: an integer as the number
             // it is, everything else as its bits with its own tag.
@@ -10496,7 +10697,13 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         if (expr.args[0]->kind == ExprKind::VARIABLE) {
             VarInfo* vi = lookup_var(expr.args[0]->str_val);
-            if (vi) {
+            if (vi && vi->tag == JD_TAG_RUNTIME && vi->runtime_tag_alloca) {
+                // A runtime-typed holder keeps its shape: the array pointer
+                // goes in as bits with the ARR tag.
+                LLVMBuildStore(builder, LLVMBuildPtrToInt(builder, result, i64_type, "push_bits"),
+                               vi->alloca_val);
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_ARR, 0), vi->runtime_tag_alloca);
+            } else if (vi) {
                 LLVMBuildStore(builder, result, vi->alloca_val);
                 vi->tag = JD_TAG_ARR;  // ensure var is tracked as array
             }

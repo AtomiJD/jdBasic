@@ -985,6 +985,7 @@ Value VM::call_function_idx(int32_t idx, const std::vector<Value>& args) {
     for (auto& a : args) push(a);
     size_t needed = new_base + proto.chunk.name_count();
     while (needed >= stack.size()) stack.resize(stack.size() * 2);
+    for (size_t i = sp; i < needed; i++) stack[i] = Value::make_none();
     if (sp < needed) sp = needed;
 
     if (frames.size() >= JDB_MAX_FRAMES)
@@ -2037,6 +2038,9 @@ void VM::run() {
                         size_t new_base = sp - argc;
                         size_t needed = new_base + proto.chunk.name_count();
                         while (needed >= stack.size()) stack.resize(stack.size() * 2);
+                        // The callee's locals start absent, whatever an
+                        // earlier call left in these slots.
+                        for (size_t i = sp; i < needed; i++) stack[i] = Value::make_none();
                         if (sp < needed) sp = needed;
                         // NOTE: push_back may reallocate and invalidate cf.
                         // We `break` immediately afterwards so the next
@@ -2368,6 +2372,7 @@ void VM::run() {
             // Ensure enough stack space for locals
             size_t needed = new_base + proto.chunk.name_count();
             while (needed >= stack.size()) stack.resize(stack.size() * 2);
+            for (size_t i = sp; i < needed; i++) stack[i] = Value::make_none();
             if (sp < needed) sp = needed;
             break;
         }
