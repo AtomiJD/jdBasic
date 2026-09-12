@@ -52,9 +52,13 @@ static const unsigned char g_base[48] = {
 };
 
 // Fn turns the arrows into the far-movement keys, delete into a forward
-// delete, tab into a back tab, h into help, and every other letter into
-// its control code - so Ctrl-C to break and Ctrl-S to save are reachable
-// on a keyboard that has no control key.
+// delete, tab into a back tab, 1 and h into help, and every other letter
+// into its control code - so Ctrl-C to break and Ctrl-S to save are
+// reachable on a keyboard that has no control key.
+//
+// Fn is not held down. The CardKB latches it for the next key and its
+// firmware waits out the release before reading one, so holding both at
+// once produces nothing at all.
 static int fn_key(int code) {
     int i = code - 128;
     if (i < 0 || i >= 48) return -1;
@@ -66,6 +70,7 @@ static int fn_key(int code) {
         case K_DOWN:  return K_PGDN;
         case 8:       return K_DEL;
         case 9:       return K_STAB;
+        case '1':     return K_F1;
         case 'h':     return K_F1;
     }
     if (base >= 'a' && base <= 'z') return base - 'a' + 1;

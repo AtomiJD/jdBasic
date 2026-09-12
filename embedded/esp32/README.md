@@ -429,13 +429,25 @@ GPIO 15, black is GND, red is the supply and goes to the connector's
 3.3 V. The ATmega8A is specified from 2.7 V as long as it stays under
 8 MHz, which the internal oscillator does.
 
-What the CardKB has no key for is control, so Fn carries it: Fn with a
+Its modifiers are tapped, not held. Shift, Sym and Fn each latch for the
+next key and the firmware waits out the release before it reads one, so
+holding a modifier and a key together produces nothing at all - the one
+thing everybody tries first. Tapping a modifier twice locks it until it
+is tapped again, and the LED says which: blinking for armed, steady for
+locked, red for shift, green for sym, blue for fn, dark for none.
+
+Sym is the punctuation layer, and jdBasic needs it more than most: a
+double quote is Sym-P, an apostrophe Sym-O, a slash Sym-T, a minus Sym-G,
+an equals Sym-J. Shift only gives capitals.
+
+What the CardKB has no key for is control, so Fn carries it: Fn then a
 letter is that letter's control code, which is how Ctrl-C breaks and
-Ctrl-S saves. Fn with the arrows gives Home, End and the two page keys,
-Fn with delete deletes forwards, Fn with tab is a back tab, and Fn-H
-lists the editor's keys. Shift with an arrow is the one thing missing -
-the keyboard sends the same code either way, so selecting with the
-keys is a terminal-only move.
+Ctrl-S saves, and Fn then Q is the way out of the editor. Fn then an
+arrow gives Home, End and the two page keys, Fn then delete deletes
+forwards, Fn then tab is a back tab, and Fn then 1 or H lists the
+editor's keys. Shift with an arrow is the one thing missing - the
+keyboard sends the same code either way, so selecting with the keys is
+a terminal-only move.
 
 The keyboard is probed rather than assumed, and probed again while it is
 absent, so one plugged in after boot starts working without a reset -
