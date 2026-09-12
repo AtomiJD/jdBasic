@@ -48,6 +48,7 @@ and SCHEMA) finds it through the same search.
 | `dt.jdb` | dateutil, arrow | dates as epoch numbers with their own calendar: ISO, RFC 2822 and German parsing, fixed offsets, calendar arithmetic, rounding, ranges, relative text in English and German | [dt_lib_readme.md](dt_lib_readme.md) |
 | `md.jdb` | markdown | the CommonMark subset to HTML: headings, lists, fences, quotes, tables, links, images, escaping with a raw switch | [md_lib_readme.md](md_lib_readme.md) |
 | `df.jdb` | pandas | data frames as named columns: CSV in and out, computed columns, filters, sorting, group by with aggregates, joins, pivots, summaries, console tables | [df_lib_readme.md](df_lib_readme.md) |
+| `yaml.jdb` | PyYAML | the block subset of YAML: mappings, sequences, implicit types, block scalars, documents, flow collections, a dotted path, and writing it back | [yaml_lib_readme.md](yaml_lib_readme.md) |
 
 ## Tests and demos
 

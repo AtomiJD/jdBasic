@@ -1,0 +1,52 @@
+# The gate, on every push and pull request.
+name: gate
+on:
+  push:
+    branches: [main, release]
+    paths-ignore:
+      - "doc/**"
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 3 * * 1"
+
+env:
+  BUILD_FLAGS: HTTP GFX IMGUI NATIVEC
+  RETRIES: 3
+  VERBOSE: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [interpreter, native]
+        include:
+          - backend: native
+            flags: -c
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build
+        run: |
+          build.bat %BUILD_FLAGS%
+          build_rt.bat %BUILD_FLAGS%
+      - name: Suites
+        run: >
+          jdBasic tests/gate/comprehensive_test.jdb
+          && jdBasic tests/gate/native_test.jdb
+      - name: Upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs
+          path: build/*.log
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "nothing to do"

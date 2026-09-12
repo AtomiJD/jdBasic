@@ -1,0 +1,170 @@
+' yaml_demo.jdb - a deployment described in YAML, read, checked and rewritten.
+'
+' The demo writes a compose file and a workflow file into a scratch
+' folder, reads them with YAML, reports the services and the pipeline as
+' tables, runs a handful of checks over the tree, then changes the
+' deployment (a new image tag, another environment entry, one more port)
+' and writes it back as YAML. The rewritten file is read again to show
+' that the tree survives the round trip.
+'
+'   jdBasic yaml_demo.jdb
+
+IMPORT YAML, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM NL$ = CHR$(10)
+DIM folder$ = MKTEMP$("yamldemo")
+MKDIR folder$
+
+' ── the files ──────────────────────────────────────────────────
+
+DIM compose = []
+PUSH(compose, "# The appliance, as it runs today.")
+PUSH(compose, "version: " + CHR$(34) + "3.9" + CHR$(34))
+PUSH(compose, "services:")
+PUSH(compose, "  web:")
+PUSH(compose, "    image: jdbasic/web:1.0.31")
+PUSH(compose, "    command: jdBasic serve.jdb --port 8080")
+PUSH(compose, "    ports:")
+PUSH(compose, "      - " + CHR$(34) + "8080:8080" + CHR$(34))
+PUSH(compose, "    environment:")
+PUSH(compose, "      LOG_LEVEL: info")
+PUSH(compose, "      WORKERS: 4")
+PUSH(compose, "      DEBUG: no")
+PUSH(compose, "    depends_on: [store]")
+PUSH(compose, "    healthcheck:")
+PUSH(compose, "      test: [CMD, curl, -f, " + CHR$(34) + "http://localhost:8080/health" + CHR$(34) + "]")
+PUSH(compose, "      interval: 30s")
+PUSH(compose, "    restart: unless-stopped")
+PUSH(compose, "  worker:")
+PUSH(compose, "    image: jdbasic/worker:1.0.31")
+PUSH(compose, "    entrypoint: >")
+PUSH(compose, "      jdBasic worker.jdb")
+PUSH(compose, "      --queue default")
+PUSH(compose, "    restart: unless-stopped")
+PUSH(compose, "  store:")
+PUSH(compose, "    image: postgres:16")
+PUSH(compose, "    volumes:")
+PUSH(compose, "      - store-data:/var/lib/postgresql/data")
+PUSH(compose, "volumes:")
+PUSH(compose, "  store-data: {}")
+DIM compose_path$ = folder$ + "/compose.yml"
+TXTWRITER compose_path$, JOIN(compose, NL$)
+
+DIM pipeline = []
+PUSH(pipeline, "name: release")
+PUSH(pipeline, "on:")
+PUSH(pipeline, "  push:")
+PUSH(pipeline, "    branches: [main]")
+PUSH(pipeline, "  workflow_dispatch:")
+PUSH(pipeline, "jobs:")
+PUSH(pipeline, "  build:")
+PUSH(pipeline, "    runs-on: windows-latest")
+PUSH(pipeline, "    steps:")
+PUSH(pipeline, "      - uses: actions/checkout@v4")
+PUSH(pipeline, "      - name: Build and test")
+PUSH(pipeline, "        run: |")
+PUSH(pipeline, "          build.bat HTTP GFX IMGUI NATIVEC")
+PUSH(pipeline, "          jdBasic tests/gate/comprehensive_test.jdb")
+PUSH(pipeline, "  publish:")
+PUSH(pipeline, "    needs: build")
+PUSH(pipeline, "    runs-on: ubuntu-latest")
+PUSH(pipeline, "    steps:")
+PUSH(pipeline, "      - run: echo publishing")
+DIM pipeline_path$ = folder$ + "/release.yml"
+TXTWRITER pipeline_path$, JOIN(pipeline, NL$)
+
+' ── reading ────────────────────────────────────────────────────
+
+DIM stack = YAML.PARSEFILE(compose_path$)
+DIM flow = YAML.PARSEFILE(pipeline_path$)
+
+CONSOLE.RULE("the deployment, compose version " + YAML.GET(stack, "version"), "=")
+DIM names = MAP.KEYS(stack{"services"})
+DIM rows = []
+DIM i = 0
+FOR i = 0 TO LEN(names) - 1
+    DIM service = stack{"services"}{names[i]}
+    DIM ports = YAML.GET(stack, "services." + names[i] + ".ports", [])
+    DIM checked$ = "no"
+    IF TYPEOF(YAML.GET(stack, "services." + names[i] + ".healthcheck")) = "OBJECT" THEN checked$ = YAML.GET(stack, "services." + names[i] + ".healthcheck.interval")
+    PUSH(rows, [names[i], service{"image"}, JOIN(ports, ", "), YAML.GET(stack, "services." + names[i] + ".restart", "-"), checked$])
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["service", "image", "ports", "restart", "health"], "title": "services"})
+PRINT ""
+
+CONSOLE.RULE("the pipeline: " + flow{"name"})
+DIM jobs = MAP.KEYS(flow{"jobs"})
+DIM job_rows = []
+DIM j = 0
+FOR j = 0 TO LEN(jobs) - 1
+    DIM steps = YAML.GET(flow, "jobs." + jobs[j] + ".steps", [])
+    PUSH(job_rows, [jobs[j], YAML.GET(flow, "jobs." + jobs[j] + ".runs-on"), YAML.GET(flow, "jobs." + jobs[j] + ".needs", "-"), LEN(steps)])
+NEXT j
+CONSOLE.TABLE(job_rows, {"headers": ["job", "runner", "after", "steps"], "align": ["l", "l", "l", "r"]})
+DIM script$ = YAML.GET(flow, "jobs.build.steps.1.run")
+CONSOLE.PANEL(RTRIM$(script$), "the build script, from a block scalar")
+PRINT ""
+
+' ── checks over the tree ───────────────────────────────────────
+
+CONSOLE.RULE("checks")
+DIM findings = []
+FOR i = 0 TO LEN(names) - 1
+    DIM name$ = names[i]
+    DIM image$ = YAML.GET(stack, "services." + name$ + ".image", "")
+    IF image$ = "" THEN PUSH(findings, [CONSOLE.RED$("error"), name$, "no image"])
+    IF INSTR(image$, ":") < 0 THEN PUSH(findings, [CONSOLE.YELLOW$("warn"), name$, "image without a tag"])
+    IF TYPEOF(YAML.GET(stack, "services." + name$ + ".healthcheck")) <> "OBJECT" THEN PUSH(findings, [CONSOLE.YELLOW$("warn"), name$, "no health check"])
+    IF YAML.GET(stack, "services." + name$ + ".restart", "") = "" THEN PUSH(findings, [CONSOLE.YELLOW$("warn"), name$, "no restart policy"])
+    DIM published = YAML.GET(stack, "services." + name$ + ".ports", [])
+    DIM p = 0
+    FOR p = 0 TO LEN(published) - 1
+        IF TYPEOF(published[p]) <> "STRING" THEN PUSH(findings, [CONSOLE.RED$("error"), name$, "an unquoted port reads as a number"])
+    NEXT p
+NEXT i
+IF LEN(findings) = 0 THEN
+    PRINT "  nothing to report"
+ELSE
+    CONSOLE.TABLE(findings, {"headers": ["level", "service", "finding"], "border": "plain"})
+ENDIF
+PRINT ""
+
+' ── changing the deployment ────────────────────────────────────
+
+DIM web = stack{"services"}{"web"}
+web{"image"} = "jdbasic/web:1.0.32"
+DIM ports = web{"ports"}
+PUSH(ports, "8443:443")
+web{"ports"} = ports
+DIM env = web{"environment"}
+env{"JDBASIC_PATH"} = "/srv/lib"
+env{"WORKERS"} = 8
+web{"environment"} = env
+DIM services = stack{"services"}
+services{"web"} = web
+stack{"services"} = services
+
+DIM written$ = folder$ + "/compose.next.yml"
+TXTWRITER written$, YAML.DUMP$(stack, {"document": TRUE})
+CONSOLE.RULE("the rewritten web service")
+DIM out_lines = SPLIT(TXTREADER$(written$), NL$)
+DIM k = 0
+FOR k = 0 TO LEN(out_lines) - 1
+    IF k >= 24 THEN EXITFOR
+    DIM text$ = out_lines[k]
+    PRINT "  "; text$
+NEXT k
+PRINT "  ... "; LEN(out_lines) - 24; " more lines"
+PRINT ""
+
+' ── reading it back ────────────────────────────────────────────
+
+DIM again = YAML.PARSEFILE(written$)
+CONSOLE.KV([["image", YAML.GET(again, "services.web.image")], ["ports", JOIN(YAML.GET(again, "services.web.ports"), ", ")], ["workers", STR$(YAML.GET(again, "services.web.environment.WORKERS"))], ["module path", YAML.GET(again, "services.web.environment.JDBASIC_PATH")], ["debug", "" + YAML.GET(again, "services.web.environment.DEBUG")], ["entrypoint", RTRIM$(YAML.GET(again, "services.worker.entrypoint"))], ["tree unchanged otherwise", "" + (JSON.STRINGIFY$(YAML.GET(again, "services.store")) = JSON.STRINGIFY$(YAML.GET(stack, "services.store")))]], 2)
+PRINT ""
+PRINT "written "; written$
+KILL compose_path$
+KILL pipeline_path$
+KILL written$
+RMDIR folder$

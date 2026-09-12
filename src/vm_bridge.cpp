@@ -1129,6 +1129,8 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
         *out_val = (int64_t)u.d;
         return t;
     }
+    // A stored absent value reads back as absent, like a missing key.
+    if (t == jd_tag(JdTag::NONE)) return jd_tag(JdTag::NONE);
     *out_val = u.i;
     // Preserve pointer-ish tags; anything else is treated as f64-in-bits.
     return (t == jd_tag(JdTag::ARR) || t == jd_tag(JdTag::NATIVE_MAP) ||

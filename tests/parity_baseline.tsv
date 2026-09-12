@@ -68,6 +68,7 @@ tests/jdlibs/req_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/schema_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/testkit_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/xlsx_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/yaml_selftest.jdb	PASS	PASS	OK
 tests/jdplot_range.jdb	PASS	CFAIL	GAP
 tests/jdvoid/arena_rules.jdb	OK	OK	OK
 tests/line_table.jdb	PASS	CFAIL	GAP

@@ -1,0 +1,696 @@
+' yaml.jdb - the YAML subset that configuration files are written in.
+'
+'   IMPORT YAML
+'   DIM cfg = YAML.PARSEFILE("docker-compose.yml")
+'   PRINT cfg{"services"}{"web"}{"image"}
+'   PRINT YAML.GET(cfg, "services.web.ports.0")
+'   PRINT YAML.DUMP$(cfg)
+'
+' Block mappings and sequences nested by indentation, plain and quoted
+' scalars with implicit typing, block scalars with folding and chomping,
+' comments, document markers, and single line flow collections.
+' Anchors, aliases, tags and merge keys raise an error naming the line.
+
+EXPORT MODULE YAML
+
+DIM gLines = []
+DIM gPos = 0
+DIM gFlow$ = ""
+DIM gAt = 0
+
+' ── reading ────────────────────────────────────────────────────
+
+' The first document of the text.
+EXPORT FUNC PARSE(text$)
+    DIM docs = PARSE_ALL(text$)
+    IF LEN(docs) = 0 THEN RETURN NONE
+    RETURN docs[0]
+ENDFUNC
+
+' Every document of the text, in order.
+EXPORT FUNC PARSE_ALL(text$)
+    Source(text$)
+    DIM out = []
+    DO
+        DIM at = Significant()
+        IF at < 0 THEN EXITDO
+        DIM body$ = Body$(at)
+        IF body$ = "..." THEN
+            gPos = at + 1
+            CONTINUEDO
+        ENDIF
+        IF body$ = "---" ORELSE STARTSWITH(body$, "--- ") THEN
+            gPos = at + 1
+            IF LEN(body$) > 4 THEN
+                gLines[at] = MID$(body$, 4)
+                gPos = at
+            ENDIF
+        ENDIF
+        IF Significant() < 0 THEN EXITDO
+        PUSH(out, Node(0))
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The first document of a file.
+EXPORT FUNC PARSEFILE(path$)
+    RETURN PARSE(TXTREADER$(path$))
+ENDFUNC
+
+' The value at a dotted path, or the default when a step is missing.
+' A number selects an element of a sequence: "services.web.ports.0".
+EXPORT FUNC GET(root, path$, fallback = 0)
+    DIM steps = SPLIT(path$, ".")
+    DIM node = root
+    DIM i = 0
+    FOR i = 0 TO LEN(steps) - 1
+        DIM part$ = steps[i]
+        DIM kind$ = TYPEOF(node)
+        IF kind$ = "OBJECT" THEN
+            IF NOT MAP.EXISTS(node, part$) THEN RETURN fallback
+            node = node{part$}
+        ELSEIF kind$ = "ARRAY" THEN
+            IF NOT LooksNumeric(part$) THEN RETURN fallback
+            DIM at = VAL(part$)
+            IF at < 0 ORELSE at >= LEN(node) THEN RETURN fallback
+            node = node[at]
+        ELSE
+            RETURN fallback
+        ENDIF
+    NEXT i
+    RETURN node
+ENDFUNC
+
+' ── the source, line by line ───────────────────────────────────
+
+SUB Source(text$)
+    gLines = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    gPos = 0
+ENDSUB
+
+' The index of the next line that carries something, or -1.
+FUNC Significant()
+    DO WHILE gPos < LEN(gLines)
+        DIM text$ = gLines[gPos]
+        DIM body$ = TRIM$(StripComment$(text$))
+        IF LEN(body$) > 0 THEN RETURN gPos
+        gPos = gPos + 1
+    LOOP
+    RETURN -1
+ENDFUNC
+
+' The content of a line without its indentation or trailing comment.
+FUNC Body$(at)
+    RETURN RTRIM$(LTRIM$(StripComment$(gLines[at])))
+ENDFUNC
+
+FUNC IndentOf(text$)
+    DIM n = 0
+    DO WHILE n < LEN(text$) ANDALSO MID$(text$, n, 1) = " "
+        n = n + 1
+    LOOP
+    RETURN n
+ENDFUNC
+
+' The line without an unquoted comment. A hash that follows a space or
+' opens the line starts one; one inside a word, as in a URL fragment,
+' does not.
+FUNC StripComment$(text$)
+    DIM i = 0
+    DIM quote$ = ""
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        IF quote$ <> "" THEN
+            IF ch$ = CHR$(92) ANDALSO quote$ = CHR$(34) THEN
+                i = i + 1
+            ELSEIF ch$ = quote$ THEN
+                quote$ = ""
+            ENDIF
+        ELSEIF ch$ = CHR$(34) ORELSE ch$ = "'" THEN
+            quote$ = ch$
+        ELSEIF ch$ = "#" THEN
+            IF i = 0 THEN RETURN ""
+            IF MID$(text$, i - 1, 1) = " " THEN RETURN LEFT$(text$, i)
+        ENDIF
+        i = i + 1
+    LOOP
+    RETURN text$
+ENDFUNC
+
+' ── the tree ───────────────────────────────────────────────────
+
+' The value that starts at the cursor and is indented by at least indent.
+FUNC Node(indent)
+    DIM at = Significant()
+    IF at < 0 THEN RETURN NONE
+    DIM ind = IndentOf(gLines[at])
+    IF ind < indent THEN RETURN NONE
+    DIM body$ = Body$(at)
+    IF body$ = "---" ORELSE body$ = "..." THEN RETURN NONE
+    IF body$ = "-" ORELSE STARTSWITH(body$, "- ") THEN RETURN Sequence(ind)
+    IF LEN(SplitKey(body$)) > 0 THEN RETURN Mapping(ind)
+    gPos = at + 1
+    IF IsBlockHeader(body$) THEN RETURN BlockScalar$(body$, ind)
+    RETURN ScalarOf(body$, at)
+ENDFUNC
+
+FUNC Mapping(indent)
+    DIM out AS MAP
+    DO
+        DIM at = Significant()
+        IF at < 0 THEN EXITDO
+        DIM ind = IndentOf(gLines[at])
+        IF ind < indent THEN EXITDO
+        DIM body$ = Body$(at)
+        IF body$ = "---" ORELSE body$ = "..." THEN EXITDO
+        IF body$ = "-" ORELSE STARTSWITH(body$, "- ") THEN EXITDO
+        IF ind > indent THEN Fail("unexpected indentation", at)
+        DIM pair = SplitKey(body$)
+        IF LEN(pair) = 0 THEN Fail("expected a key", at)
+        DIM key$ = pair[0]
+        DIM rest$ = pair[1]
+        gPos = at + 1
+        IF rest$ = "" THEN
+            DIM nxt = Significant()
+            DIM nested = NONE
+            IF nxt >= 0 THEN
+                DIM nind = IndentOf(gLines[nxt])
+                DIM nbody$ = Body$(nxt)
+                IF nind > indent THEN
+                    nested = Node(nind)
+                ELSEIF nind = indent ANDALSO (nbody$ = "-" ORELSE STARTSWITH(nbody$, "- ")) THEN
+                    nested = Sequence(indent)
+                ENDIF
+            ENDIF
+            out{key$} = nested
+        ELSEIF IsBlockHeader(rest$) THEN
+            out{key$} = BlockScalar$(rest$, indent)
+        ELSE
+            out{key$} = ScalarOf(rest$, at)
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+FUNC Sequence(indent)
+    DIM out = []
+    DO
+        DIM at = Significant()
+        IF at < 0 THEN EXITDO
+        DIM ind = IndentOf(gLines[at])
+        IF ind < indent THEN EXITDO
+        DIM body$ = Body$(at)
+        IF body$ <> "-" ANDALSO NOT STARTSWITH(body$, "- ") THEN EXITDO
+        IF ind > indent THEN Fail("unexpected indentation", at)
+        gPos = at + 1
+        DIM item$ = ""
+        IF body$ <> "-" THEN item$ = LTRIM$(MID$(body$, 1))
+        IF item$ = "" THEN
+            DIM nxt = Significant()
+            DIM nested = NONE
+            IF nxt >= 0 ANDALSO IndentOf(gLines[nxt]) > ind THEN nested = Node(IndentOf(gLines[nxt]))
+            PUSH(out, nested)
+        ELSE
+            ' The item continues on the following lines at the column its
+            ' own content starts in, so the line is read again from there.
+            DIM col = ind + LEN(body$) - LEN(item$)
+            gLines[at] = SPACE$(col) + item$
+            gPos = at
+            PUSH(out, Node(col))
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+' ── scalars ────────────────────────────────────────────────────
+
+FUNC IsBlockHeader(text$)
+    IF LEN(text$) = 0 THEN RETURN FALSE
+    DIM head$ = LEFT$(text$, 1)
+    IF head$ <> "|" ANDALSO head$ <> ">" THEN RETURN FALSE
+    DIM i = 1
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ <> "-" ANDALSO ch$ <> "+" ANDALSO (ch$ < "0" ORELSE ch$ > "9") THEN RETURN FALSE
+        i = i + 1
+    LOOP
+    RETURN TRUE
+ENDFUNC
+
+' The lines under a | or > header, folded and chomped as the header asks.
+FUNC BlockScalar$(header$, indent)
+    DIM fold = LEFT$(header$, 1) = ">"
+    DIM chomp$ = "clip"
+    DIM forced = 0
+    DIM i = 1
+    DO WHILE i < LEN(header$)
+        DIM ch$ = MID$(header$, i, 1)
+        IF ch$ = "-" THEN chomp$ = "strip"
+        IF ch$ = "+" THEN chomp$ = "keep"
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN forced = indent + VAL(ch$)
+        i = i + 1
+    LOOP
+    DIM body = []
+    DIM block_indent = forced
+    DO WHILE gPos < LEN(gLines)
+        DIM text$ = RTRIM$(gLines[gPos])
+        IF LEN(TRIM$(text$)) = 0 THEN
+            PUSH(body, "")
+            gPos = gPos + 1
+            CONTINUEDO
+        ENDIF
+        DIM ind = IndentOf(text$)
+        IF ind <= indent THEN EXITDO
+        IF block_indent = 0 THEN block_indent = ind
+        IF ind < block_indent THEN EXITDO
+        PUSH(body, MID$(text$, block_indent))
+        gPos = gPos + 1
+    LOOP
+    DO WHILE LEN(body) > 0 ANDALSO body[LEN(body) - 1] = ""
+        body = Shorter(body)
+    LOOP
+    DIM out$ = ""
+    IF fold THEN
+        DIM k = 0
+        FOR k = 0 TO LEN(body) - 1
+            DIM piece$ = body[k]
+            IF k = 0 THEN
+                out$ = piece$
+            ELSEIF piece$ = "" THEN
+                out$ = out$ + CHR$(10)
+            ELSEIF ENDSWITH(out$, CHR$(10)) ORELSE STARTSWITH(piece$, " ") THEN
+                out$ = out$ + piece$
+            ELSE
+                out$ = out$ + " " + piece$
+            ENDIF
+        NEXT k
+    ELSE
+        out$ = JOIN(body, CHR$(10))
+    ENDIF
+    IF chomp$ = "clip" ANDALSO LEN(out$) > 0 THEN out$ = out$ + CHR$(10)
+    IF chomp$ = "keep" THEN out$ = out$ + CHR$(10)
+    RETURN out$
+ENDFUNC
+
+FUNC Shorter(arr)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(arr) - 2
+        PUSH(out, arr[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' A plain, quoted or flow scalar with the type it implies.
+FUNC ScalarOf(text$, at)
+    DIM body$ = TRIM$(text$)
+    IF LEN(body$) = 0 THEN RETURN NONE
+    DIM head$ = LEFT$(body$, 1)
+    IF head$ = "&" ORELSE head$ = "*" THEN Fail("anchors and aliases are not supported", at)
+    IF head$ = "!" THEN Fail("tags are not supported", at)
+    IF STARTSWITH(body$, "<<") THEN Fail("merge keys are not supported", at)
+    IF head$ = "[" ORELSE head$ = "{" THEN RETURN Flow(body$, at)
+    IF head$ = CHR$(34) ORELSE head$ = "'" THEN RETURN Unquote$(body$)
+    RETURN Implicit(body$)
+ENDFUNC
+
+' The type a plain scalar carries.
+FUNC Implicit(text$)
+    DIM low$ = LCASE$(text$)
+    IF text$ = "~" ORELSE low$ = "null" THEN RETURN NONE
+    IF low$ = "true" ORELSE low$ = "yes" ORELSE low$ = "on" THEN RETURN TRUE
+    IF low$ = "false" ORELSE low$ = "no" ORELSE low$ = "off" THEN RETURN FALSE
+    IF LooksNumeric(text$) THEN RETURN VAL(text$)
+    RETURN text$
+ENDFUNC
+
+' TRUE for an integer, a decimal or a hexadecimal literal.
+FUNC LooksNumeric(text$)
+    IF LEN(text$) = 0 THEN RETURN FALSE
+    DIM i = 0
+    DIM head$ = LEFT$(text$, 1)
+    IF head$ = "-" ORELSE head$ = "+" THEN i = 1
+    IF i >= LEN(text$) THEN RETURN FALSE
+    IF LCASE$(MID$(text$, i, 2)) = "0x" THEN
+        i = i + 2
+        IF i >= LEN(text$) THEN RETURN FALSE
+        DO WHILE i < LEN(text$)
+            DIM hx$ = LCASE$(MID$(text$, i, 1))
+            IF (hx$ < "0" ORELSE hx$ > "9") ANDALSO (hx$ < "a" ORELSE hx$ > "f") THEN RETURN FALSE
+            i = i + 1
+        LOOP
+        RETURN TRUE
+    ENDIF
+    DIM digits = 0
+    DIM dots = 0
+    DIM exponents = 0
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
+            digits = digits + 1
+        ELSEIF ch$ = "." THEN
+            dots = dots + 1
+            IF dots > 1 ORELSE exponents > 0 THEN RETURN FALSE
+        ELSEIF LCASE$(ch$) = "e" THEN
+            exponents = exponents + 1
+            IF exponents > 1 ORELSE digits = 0 THEN RETURN FALSE
+            IF i + 1 < LEN(text$) THEN
+                DIM sign$ = MID$(text$, i + 1, 1)
+                IF sign$ = "-" ORELSE sign$ = "+" THEN i = i + 1
+            ENDIF
+            digits = 0
+        ELSE
+            RETURN FALSE
+        ENDIF
+        i = i + 1
+    LOOP
+    RETURN digits > 0
+ENDFUNC
+
+' The text of a quoted scalar. Single quotes are literal, a doubled one
+' stands for itself; double quotes take the usual escapes.
+FUNC Unquote$(text$)
+    DIM quote$ = LEFT$(text$, 1)
+    DIM out$ = ""
+    DIM i = 1
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ = quote$ THEN
+            IF quote$ = "'" ANDALSO MID$(text$, i + 1, 1) = "'" THEN
+                out$ = out$ + "'"
+                i = i + 2
+                CONTINUEDO
+            ENDIF
+            RETURN out$
+        ENDIF
+        IF ch$ = CHR$(92) ANDALSO quote$ = CHR$(34) THEN
+            DIM esc$ = MID$(text$, i + 1, 1)
+            IF esc$ = "n" THEN out$ = out$ + CHR$(10)
+            IF esc$ = "t" THEN out$ = out$ + CHR$(9)
+            IF esc$ = "r" THEN out$ = out$ + CHR$(13)
+            IF esc$ = "0" THEN out$ = out$ + CHR$(0)
+            IF esc$ = CHR$(34) THEN out$ = out$ + CHR$(34)
+            IF esc$ = "/" THEN out$ = out$ + "/"
+            IF esc$ = CHR$(92) THEN out$ = out$ + CHR$(92)
+            IF esc$ = "u" THEN
+                out$ = out$ + CHR$(VAL("0x" + MID$(text$, i + 2, 4)))
+                i = i + 4
+            ENDIF
+            i = i + 2
+            CONTINUEDO
+        ENDIF
+        out$ = out$ + ch$
+        i = i + 1
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' ── keys ───────────────────────────────────────────────────────
+
+' [key, rest] for a mapping line, an empty array for anything else.
+FUNC SplitKey(body$)
+    DIM i = 0
+    DIM quote$ = ""
+    DIM depth = 0
+    DO WHILE i < LEN(body$)
+        DIM ch$ = MID$(body$, i, 1)
+        IF quote$ <> "" THEN
+            IF ch$ = CHR$(92) ANDALSO quote$ = CHR$(34) THEN
+                i = i + 1
+            ELSEIF ch$ = quote$ THEN
+                quote$ = ""
+            ENDIF
+        ELSEIF ch$ = CHR$(34) ORELSE ch$ = "'" THEN
+            IF i > 0 THEN RETURN []
+            quote$ = ch$
+        ELSEIF ch$ = "[" ORELSE ch$ = "{" THEN
+            IF i = 0 THEN RETURN []
+            depth = depth + 1
+        ELSEIF ch$ = "]" ORELSE ch$ = "}" THEN
+            depth = depth - 1
+        ELSEIF ch$ = ":" ANDALSO depth = 0 THEN
+            DIM after$ = MID$(body$, i + 1, 1)
+            IF after$ = "" ORELSE after$ = " " THEN
+                DIM key$ = RTRIM$(LEFT$(body$, i))
+                IF LEN(key$) = 0 THEN RETURN []
+                DIM lead$ = LEFT$(key$, 1)
+                IF lead$ = CHR$(34) ORELSE lead$ = "'" THEN key$ = Unquote$(key$)
+                RETURN [key$, LTRIM$(MID$(body$, i + 1))]
+            ENDIF
+        ENDIF
+        i = i + 1
+    LOOP
+    RETURN []
+ENDFUNC
+
+' ── flow collections ───────────────────────────────────────────
+
+' A one line [a, b] or {k: v} collection.
+FUNC Flow(text$, at)
+    gFlow$ = text$
+    gAt = 0
+    DIM value = FlowValue(at)
+    RETURN value
+ENDFUNC
+
+FUNC FlowValue(at)
+    FlowSkip()
+    IF gAt >= LEN(gFlow$) THEN RETURN NONE
+    DIM ch$ = MID$(gFlow$, gAt, 1)
+    IF ch$ = "[" THEN
+        gAt = gAt + 1
+        DIM items = []
+        DO
+            FlowSkip()
+            IF gAt >= LEN(gFlow$) THEN EXITDO
+            IF MID$(gFlow$, gAt, 1) = "]" THEN
+                gAt = gAt + 1
+                EXITDO
+            ENDIF
+            PUSH(items, FlowValue(at))
+            FlowSkip()
+            IF MID$(gFlow$, gAt, 1) = "," THEN gAt = gAt + 1
+        LOOP
+        RETURN items
+    ENDIF
+    IF ch$ = "{" THEN
+        gAt = gAt + 1
+        DIM entries AS MAP
+        DO
+            FlowSkip()
+            IF gAt >= LEN(gFlow$) THEN EXITDO
+            IF MID$(gFlow$, gAt, 1) = "}" THEN
+                gAt = gAt + 1
+                EXITDO
+            ENDIF
+            DIM key$ = FlowToken$("::,}")
+            FlowSkip()
+            DIM entry = NONE
+            IF MID$(gFlow$, gAt, 1) = ":" THEN
+                gAt = gAt + 1
+                entry = FlowValue(at)
+            ENDIF
+            entries{key$} = entry
+            FlowSkip()
+            IF MID$(gFlow$, gAt, 1) = "," THEN gAt = gAt + 1
+        LOOP
+        RETURN entries
+    ENDIF
+    IF ch$ = CHR$(34) ORELSE ch$ = "'" THEN
+        DIM quoted$ = FlowQuoted$()
+        RETURN Unquote$(quoted$)
+    ENDIF
+    RETURN Implicit(FlowToken$(",]}"))
+ENDFUNC
+
+SUB FlowSkip()
+    DO WHILE gAt < LEN(gFlow$) ANDALSO MID$(gFlow$, gAt, 1) = " "
+        gAt = gAt + 1
+    LOOP
+ENDSUB
+
+' The text up to the next delimiter, trimmed.
+FUNC FlowToken$(stops$)
+    DIM start = gAt
+    DO WHILE gAt < LEN(gFlow$)
+        DIM ch$ = MID$(gFlow$, gAt, 1)
+        IF INSTR(stops$, ch$) >= 0 THEN EXITDO
+        gAt = gAt + 1
+    LOOP
+    RETURN TRIM$(MID$(gFlow$, start, gAt - start))
+ENDFUNC
+
+FUNC FlowQuoted$()
+    DIM quote$ = MID$(gFlow$, gAt, 1)
+    DIM start = gAt
+    gAt = gAt + 1
+    DO WHILE gAt < LEN(gFlow$)
+        DIM ch$ = MID$(gFlow$, gAt, 1)
+        IF ch$ = CHR$(92) ANDALSO quote$ = CHR$(34) THEN
+            gAt = gAt + 2
+            CONTINUEDO
+        ENDIF
+        gAt = gAt + 1
+        IF ch$ = quote$ THEN EXITDO
+    LOOP
+    RETURN MID$(gFlow$, start, gAt - start)
+ENDFUNC
+
+SUB Fail(reason$, at)
+    THROW "YAML line " + STR$(at + 1) + ": " + reason$
+ENDSUB
+
+' ── writing ────────────────────────────────────────────────────
+
+' The value as YAML text, two spaces per level, with a trailing newline.
+' opts: "indent" (2), "document" (FALSE) for a leading ---.
+EXPORT FUNC DUMP$(value, opts = 0)
+    DIM step_width = 2
+    DIM marker = FALSE
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "indent") THEN step_width = opts{"indent"}
+        IF MAP.EXISTS(opts, "document") THEN marker = opts{"document"}
+    ENDIF
+    DIM out$ = ""
+    IF marker THEN out$ = "---" + CHR$(10)
+    DIM lines = []
+    Emit(lines, value, 0, step_width)
+    RETURN out$ + JOIN(lines, CHR$(10)) + CHR$(10)
+ENDFUNC
+
+SUB Emit(lines, value, depth, step_width)
+    DIM pad$ = SPACE$(depth * step_width)
+    DIM kind$ = TYPEOF(value)
+    IF kind$ = "OBJECT" THEN
+        DIM keys = MAP.KEYS(value)
+        IF LEN(keys) = 0 THEN
+            PUSH(lines, pad$ + "{}")
+        ELSE
+            DIM k = 0
+            FOR k = 0 TO LEN(keys) - 1
+                DIM key$ = Scalar$(keys[k])
+                DIM entry = value{keys[k]}
+                IF Nested(entry) THEN
+                    PUSH(lines, pad$ + key$ + ":")
+                    Emit(lines, entry, depth + 1, step_width)
+                ELSEIF Multiline(entry) THEN
+                    PUSH(lines, pad$ + key$ + ": |")
+                    Block(lines, entry, depth + 1, step_width)
+                ELSE
+                    PUSH(lines, pad$ + key$ + ": " + Scalar$(entry))
+                ENDIF
+            NEXT k
+        ENDIF
+    ELSEIF kind$ = "ARRAY" THEN
+        IF LEN(value) = 0 THEN
+            PUSH(lines, pad$ + "[]")
+        ELSE
+            DIM i = 0
+            FOR i = 0 TO LEN(value) - 1
+                DIM item = value[i]
+                IF Nested(item) THEN
+                    ' The first line of the item shares the dash, the rest
+                    ' lines up under it.
+                    DIM inner = []
+                    Emit(inner, item, depth + 1, step_width)
+                    DIM head$ = inner[0]
+                    PUSH(lines, pad$ + "-" + SPACE$(step_width - 1) + LTRIM$(head$))
+                    DIM j = 1
+                    FOR j = 1 TO LEN(inner) - 1
+                        DIM tail$ = inner[j]
+                        PUSH(lines, tail$)
+                    NEXT j
+                ELSEIF Multiline(item) THEN
+                    PUSH(lines, pad$ + "- |")
+                    Block(lines, item, depth + 1, step_width)
+                ELSE
+                    PUSH(lines, pad$ + "- " + Scalar$(item))
+                ENDIF
+            NEXT i
+        ENDIF
+    ELSE
+        PUSH(lines, pad$ + Scalar$(value))
+    ENDIF
+ENDSUB
+
+' TRUE for a value that needs lines of its own.
+FUNC Nested(value)
+    DIM kind$ = TYPEOF(value)
+    IF kind$ = "OBJECT" THEN RETURN LEN(MAP.KEYS(value)) > 0
+    IF kind$ = "ARRAY" THEN RETURN LEN(value) > 0
+    RETURN FALSE
+ENDFUNC
+
+' TRUE for a string that has to go into a block scalar.
+FUNC Multiline(value)
+    IF TYPEOF(value) <> "STRING" THEN RETURN FALSE
+    RETURN INSTR(value, CHR$(10)) >= 0
+ENDFUNC
+
+' The lines of a block scalar under its header.
+SUB Block(lines, text$, depth, step_width)
+    DIM pad$ = SPACE$(depth * step_width)
+    DIM body = SPLIT(RTRIM$(text$), CHR$(10))
+    DIM i = 0
+    FOR i = 0 TO LEN(body) - 1
+        PUSH(lines, pad$ + RTRIM$(body[i]))
+    NEXT i
+ENDSUB
+
+' The text for one scalar, quoted when it would otherwise read as
+' another type or break the line.
+FUNC Scalar$(value)
+    DIM kind$ = TYPEOF(value)
+    IF kind$ = "NONE" THEN RETURN "null"
+    IF kind$ = "OBJECT" THEN RETURN "{}"
+    IF kind$ = "ARRAY" THEN RETURN "[]"
+    IF kind$ = "BOOLEAN" THEN
+        IF value THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    IF kind$ <> "STRING" THEN RETURN STR$(value)
+    IF NeedsQuote(value) THEN
+        RETURN CHR$(34) + Escape$(value) + CHR$(34)
+    ENDIF
+    RETURN value
+ENDFUNC
+
+FUNC NeedsQuote(text$)
+    IF LEN(text$) = 0 THEN RETURN TRUE
+    IF text$ <> TRIM$(text$) THEN RETURN TRUE
+    IF LooksNumeric(text$) THEN RETURN TRUE
+    DIM low$ = LCASE$(text$)
+    IF low$ = "true" ORELSE low$ = "false" ORELSE low$ = "null" ORELSE low$ = "yes" ORELSE low$ = "no" ORELSE low$ = "on" ORELSE low$ = "off" ORELSE text$ = "~" THEN RETURN TRUE
+    IF INSTR(text$, ": ") >= 0 ORELSE ENDSWITH(text$, ":") THEN RETURN TRUE
+    ' A port mapping or a clock time keeps its quotes: a reader that
+    ' follows the older rules would take it for a number.
+    DIM colon = INSTR(text$, ":")
+    IF colon > 0 ANDALSO LooksNumeric(LEFT$(text$, colon)) THEN RETURN TRUE
+    IF INSTR(text$, " #") >= 0 THEN RETURN TRUE
+    IF INSTR(text$, CHR$(10)) >= 0 ORELSE INSTR(text$, CHR$(9)) >= 0 THEN RETURN TRUE
+    DIM head$ = LEFT$(text$, 1)
+    IF INSTR("-?:,[]{}#&*!|>'" + CHR$(34) + "%@`", head$) >= 0 THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+FUNC Escape$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ = CHR$(92) THEN
+            out$ = out$ + CHR$(92) + CHR$(92)
+        ELSEIF ch$ = CHR$(34) THEN
+            out$ = out$ + CHR$(92) + CHR$(34)
+        ELSEIF ch$ = CHR$(10) THEN
+            out$ = out$ + CHR$(92) + "n"
+        ELSEIF ch$ = CHR$(9) THEN
+            out$ = out$ + CHR$(92) + "t"
+        ELSEIF ch$ = CHR$(13) THEN
+            out$ = out$ + CHR$(92) + "r"
+        ELSE
+            out$ = out$ + ch$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC

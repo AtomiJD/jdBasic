@@ -1300,10 +1300,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             VarInfo* v = lookup_var(a.str_val);
                             if (v && (v->tag == JD_TAG_ARR || v->tag == JD_TAG_NATIVE_MAP ||
                                       v->tag == JD_TAG_VM_HANDLE || v->tag == JD_TAG_RUNTIME))
-                                // Callee expects a concrete kind, not RUNTIME -
-                                // pass tagged values as VM_HANDLE so the
-                                // callee's INDEX dispatch works uniformly.
-                                it->second.tags[i] = (v->tag == JD_TAG_RUNTIME) ? JD_TAG_VM_HANDLE : v->tag;
+                                // A tagged argument keeps its tag across the
+                                // call: the kind it holds is decided at run
+                                // time, and a native map is not a VM handle.
+                                it->second.tags[i] = v->tag;
                             else {
                                 // Fall back to the static pre-pass: if we
                                 // statically inferred the global as ARR/MAP,
@@ -2327,6 +2327,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         }
     }
 
+    // Return kinds and argument tags decide each other: a tagged argument
+    // makes a parameter tagged, and a parameter's kind decides what the
+    // body hands back. Two rounds settle the pair.
+    for (int settle = 0; settle < 2; settle++) {
     // A FUNC whose RETURN statements hand back different kinds, or a value
     // whose kind is only known at run time (a runtime-typed parameter, a
     // map entry, another such FUNC), returns a tagged pair instead of one
@@ -2337,7 +2341,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (!decl.stmt || decl.return_tag == -1 || decl.is_async) continue;
         if (decl.return_tag == JD_TAG_RUNTIME) continue;
         if (decl.stmt->return_type != VarType::NONE) continue;
+        // A name that ends in $ answers with a string by its own
+        // declaration, whatever the body assigns on the way.
+        if (!name.empty() && name.back() == '$') continue;
         std::unordered_map<std::string, int> local_kind;
+        bool dynamic = false;
+        // An element read is the weakest evidence: it only overrides a
+        // return type that no earlier phase could name.
+        bool index_dynamic = false;
+        bool index_hit = false;
         for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++)
             local_kind[decl.stmt->params()[pi].name] = decl.tags[pi];
         auto kind_of = [&](const Expr& e) -> int {
@@ -2359,6 +2371,17 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     return 0;
                 }
                 case ExprKind::INDEX:
+                    // A cell answers with its own kind, whether the index is
+                    // a key or a position: an array of maps hands back a map.
+                    if (e.left && e.left->kind == ExprKind::VARIABLE) {
+                        auto lit = local_kind.find(e.left->str_val);
+                        if (lit != local_kind.end() &&
+                            (lit->second == JD_TAG_ARR || lit->second == JD_TAG_NATIVE_MAP ||
+                             lit->second == JD_TAG_VM_HANDLE || lit->second == JD_TAG_RUNTIME)) {
+                            index_hit = true;
+                            return JD_TAG_RUNTIME;
+                        }
+                    }
                     if (e.right && e.right->kind == ExprKind::LITERAL_STRING) return JD_TAG_RUNTIME;
                     return 0;
                 case ExprKind::CALL: {
@@ -2384,7 +2407,6 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             auto norm = [](int t) { return (t == JD_TAG_I64 || t == JD_TAG_BOOL) ? JD_TAG_F64 : t; };
             return norm(a) == norm(b);
         };
-        bool dynamic = false;
         std::vector<int> kinds;
         std::function<void(const Stmt&)> walk = [&](const Stmt& s) {
             // A declared type names the kind even without an initialiser.
@@ -2397,6 +2419,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             }
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
                  s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
+                if (s.var_name.back() == '$') {
+                    local_kind[s.var_name] = JD_TAG_STR;
+                    for (auto& b2 : s.body) if (b2) walk(*b2);
+                    for (auto& c2 : s.catch_body()) if (c2) walk(*c2);
+                    for (auto& f2 : s.finally_body()) if (f2) walk(*f2);
+                    for (auto& br2 : s.branches)
+                        for (auto& b2 : br2.body) if (b2) walk(*b2);
+                    return;
+                }
                 int k = kind_of(*s.expr);
                 if (k != 0) {
                     auto it = local_kind.find(s.var_name);
@@ -2407,8 +2438,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 }
             }
             if (s.kind == StmtKind::RETURN && s.expr) {
+                index_hit = false;
                 int k = kind_of(*s.expr);
-                if (k == JD_TAG_RUNTIME) dynamic = true;
+                if (k == JD_TAG_RUNTIME && index_hit) index_dynamic = true;
+                else if (k == JD_TAG_RUNTIME) dynamic = true;
                 else if (k != 0) {
                     bool seen = false;
                     for (int have : kinds) if (same_kind(have, k)) seen = true;
@@ -2422,7 +2455,79 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 for (auto& b : br.body) if (b) walk(*b);
         };
         for (auto& b : decl.stmt->body) if (b) walk(*b);
-        if (dynamic || kinds.size() > 1) decl.return_tag = JD_TAG_RUNTIME;
+        bool named = decl.return_tag == JD_TAG_ARR || decl.return_tag == JD_TAG_NATIVE_MAP ||
+                     decl.return_tag == JD_TAG_STR || decl.return_tag == JD_TAG_VM_HANDLE;
+        if (dynamic || kinds.size() > 1 || (index_dynamic && !named))
+            decl.return_tag = JD_TAG_RUNTIME;
+    }
+
+    // Return tags are final here, so the names that hold a value of a kind
+    // only known at run time can be read again. Such a value keeps its tag
+    // across a call: the parameter is tagged too, and a native map no
+    // longer arrives through a slot shaped for something else.
+    {
+        std::unordered_map<std::string, int> dyn_names;
+        auto call_kind = [&](const Expr& e) -> int {
+            if (e.kind != ExprKind::CALL) return 0;
+            auto cit = decls.find(e.func_name);
+            if (cit == decls.end()) return 0;
+            return cit->second.return_tag;
+        };
+        std::function<void(const Stmt&)> collect_dyn = [&](const Stmt& st) {
+            if (st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB) return;
+            if ((st.kind == StmtKind::DIM || st.kind == StmtKind::LET ||
+                 st.kind == StmtKind::ASSIGN) && !st.var_name.empty() && st.expr &&
+                st.var_type == VarType::NONE && st.var_name.back() != '$' &&
+                call_kind(*st.expr) == JD_TAG_RUNTIME)
+                dyn_names[st.var_name] = JD_TAG_RUNTIME;
+            for (auto& b : st.body) if (b) collect_dyn(*b);
+            for (auto& br : st.branches) for (auto& b : br.body) if (b) collect_dyn(*b);
+            for (auto& c : st.catch_body()) if (c) collect_dyn(*c);
+            for (auto& f : st.finally_body()) if (f) collect_dyn(*f);
+        };
+        for (auto& st : program) if (st) collect_dyn(*st);
+
+        std::function<void(const Expr&)> scan_dyn = [&](const Expr& e) {
+            if (e.kind == ExprKind::CALL) {
+                auto cit = decls.find(e.func_name);
+                if (cit != decls.end() && cit->second.stmt) {
+                    auto& callee = cit->second;
+                    for (size_t ai = 0; ai < e.args.size() && ai < callee.tags.size() &&
+                         ai < callee.stmt->params().size(); ai++) {
+                        const Expr* a = e.args[ai].get();
+                        if (!a) continue;
+                        bool tagged = (a->kind == ExprKind::VARIABLE &&
+                                       dyn_names.count(a->str_val) > 0) ||
+                                      call_kind(*a) == JD_TAG_RUNTIME;
+                        if (!tagged) continue;
+                        const auto& cp = callee.stmt->params()[ai];
+                        if (!cp.name.empty() && cp.name.back() == '$') continue;
+                        if (cp.type != VarType::NONE) continue;
+                        callee.tags[ai] = JD_TAG_RUNTIME;
+                    }
+                }
+            }
+            for (auto& a : e.args) if (a) scan_dyn(*a);
+            if (e.left) scan_dyn(*e.left);
+            if (e.right) scan_dyn(*e.right);
+        };
+        std::function<void(const Stmt&)> walk_dyn = [&](const Stmt& st) {
+            if (st.expr) scan_dyn(*st.expr);
+            if (st.loop_cond) scan_dyn(*st.loop_cond);
+            if (st.end_expr) scan_dyn(*st.end_expr);
+            if (st.step_expr) scan_dyn(*st.step_expr);
+            for (auto& pe : st.print_exprs) if (pe) scan_dyn(*pe);
+            for (auto& ic : st.index_chain) if (ic) scan_dyn(*ic);
+            for (auto& b : st.body) if (b) walk_dyn(*b);
+            for (auto& br : st.branches) {
+                if (br.condition) scan_dyn(*br.condition);
+                for (auto& b : br.body) if (b) walk_dyn(*b);
+            }
+            for (auto& c : st.catch_body()) if (c) walk_dyn(*c);
+            for (auto& f : st.finally_body()) if (f) walk_dyn(*f);
+        };
+        for (auto& st : program) if (st) walk_dyn(*st);
+    }
     }
 
     // A handler a builtin calls by name answers through the tagged wrapper,
@@ -4267,7 +4372,13 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
 void LLVMCodegen::codegen_return(const Stmt& stmt) {
     LLVMTypeRef ret_ty = LLVMGetReturnType(LLVMGlobalGetValueType(current_fn));
     if (stmt.expr && ret_ty != void_type) {
-        TypedValue rv = codegen_expr(*stmt.expr);
+        // A function that answers with a tag asks the value for its own
+        // kind, so a cell of an array of maps is handed back as a map.
+        TypedValue rv;
+        {
+            ScopedLeafTag _lt(this, ret_ty == dyn_ret_ty() ? JD_TAG_RUNTIME : -1);
+            rv = codegen_expr(*stmt.expr);
+        }
         // An owned local handed back as the result leaves the frame with
         // the caller; its shadow is cleared so the exit block keeps it.
         if (ret_ty == i8_ptr_type && stmt.expr->kind == ExprKind::VARIABLE &&
@@ -8535,6 +8646,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         bool own_r = rhs.owned || (expr.right && expr_yields_fresh_string(*expr.right));
         auto to_str = [&](TypedValue tv, bool& owns) -> LLVMValueRef {
             if (tv.tag == JD_TAG_STR) return tv.val;
+            if (tv.tag == JD_TAG_BOOL) {
+                // A truth value reads as TRUE or FALSE, the way PRINT
+                // renders it, rather than as its number.
+                if (auto* b2s = get_runtime_func("__str_bool")) {
+                    owns = true;
+                    LLVMValueRef args[] = { tv.val };
+                    return LLVMBuildCall2(builder, b2s->fn_type, b2s->fn, args, 1, "btostr");
+                }
+            }
             if (tv.tag == JD_TAG_I64) {
                 owns = true;
                 auto& fn = runtime_funcs["__int_to_str"];
@@ -13344,7 +13464,7 @@ LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
             auto& d2s = runtime_funcs["__double_to_str"];
             LLVMValueRef fstr = LLVMBuildCall2(builder, d2s.fn_type, d2s.fn, &f, 1, "f2s");
             // A bool renders as TRUE/FALSE rather than as its number.
-            if (auto* b2s = get_runtime_func("__bool_to_str")) {
+            if (auto* b2s = get_runtime_func("__str_bool")) {
                 LLVMValueRef bstr = LLVMBuildCall2(builder, b2s->fn_type, b2s->fn, &tv.val, 1, "b2s");
                 fstr = LLVMBuildSelect(builder, is_bool_s, bstr, fstr, "str_oth");
             }

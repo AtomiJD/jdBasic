@@ -2121,6 +2121,9 @@ int32_t jdb_map_get_tagged(JdbMap* m, const char* key, int64_t* out_val) {
         *out_val = (int64_t)u.d;  // stored as f64; convert back to int
         return t;
     }
+    // A stored absent value is absent when it is read back, the way a
+    // missing key is.
+    if (t == JD_TAG_NONE) return JD_TAG_NONE;
     *out_val = u.i;
     return (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP || t == JD_TAG_VM_HANDLE) ? t : JD_TAG_F64;
 }

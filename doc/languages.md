@@ -1431,6 +1431,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `DT` | dates as epoch numbers: parsing, fixed offsets, calendar arithmetic, ranges, relative text |
 | `MD` | Markdown to HTML |
 | `DF` | data frames: CSV in and out, computed columns, filters, group by, joins, pivots |
+| `YAML` | the block subset of YAML: read a pipeline or a compose file, change it, write it back |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

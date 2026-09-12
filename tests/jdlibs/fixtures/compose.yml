@@ -1,0 +1,44 @@
+# The appliance: web, worker, store.
+services:
+  web:
+    image: jdbasic/web:1.0.32
+    command: jdBasic serve.jdb --port 8080
+    ports:
+      - "8080:8080"
+      - "8443:443"
+    environment:
+      JDBASIC_PATH: /srv/lib
+      LOG_LEVEL: info
+      WORKERS: 4
+      DEBUG: no
+    depends_on:
+      - store
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+  worker:
+    image: jdbasic/worker:1.0.32
+    entrypoint: >
+      jdBasic worker.jdb
+      --queue default
+    restart: unless-stopped
+    volumes:
+      - ./data:/srv/data:ro
+  store:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - store-data:/var/lib/postgresql/data
+
+volumes:
+  store-data: {}
+
+networks:
+  default:
+    name: appliance
