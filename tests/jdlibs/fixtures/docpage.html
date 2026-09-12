@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Arrays &amp; matrices &mdash; jdBasic docs</title>
+<link rel="stylesheet" href="/static/doc.css">
+<style>
+.toc a { color: #06c; }
+pre > code { display: block; }
+</style>
+<script>
+var search = {"index": "/static/search.json", "min": 3 < 4};
+if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+  document.documentElement.dataset.theme = "dark";
+}
+</script>
+</head>
+<body class="doc wide" data-version=1.0.33>
+<!-- generated, do not edit -->
+<header id=top>
+  <a class="brand" href="/">jdBasic</a>
+  <nav class="crumbs"><a href="/docs/">Docs</a> &rsaquo; <span>Arrays</span></nav>
+</header>
+
+<div class="page">
+<nav class="toc side" aria-label="On this page">
+<p class="toc-title">On this page
+<ul>
+  <li><a href="#shapes">Shapes and ranks</a>
+  <li><a href="#slicing">Slicing</a>
+    <ul>
+      <li><a href="#slicing-rows">Rows</a>
+      <li><a href="#slicing-cells">Cells</a>
+    </ul>
+  <li><a href="#reducers">Reducers</a>
+  <li><a href="#pitfalls">Pitfalls</a>
+</ul>
+</nav>
+
+<main class="content">
+<h1 id="arrays">Arrays &amp; matrices</h1>
+<p class="lead">An array is a value, not a container you walk. Whole-array
+operations are the shortest path and usually the fastest one.
+
+<h2 id="shapes">Shapes and ranks</h2>
+<p>Every array carries its shape. <code>IOTA(5)</code> is a vector of five
+elements, <code>RESHAPE</code> turns it into a matrix. Ranks above two work
+the same way; nothing is special-cased for 1 &lt; rank &lt; 4.
+<pre><code class="language-basic">DIM v = IOTA(5)
+DIM m = RESHAPE(v, [5, 1])
+PRINT SHAPE(m)          ' [5, 1]
+</code></pre>
+<p>An index that is out of bounds is an error, never a silent zero.
+
+<h2 id="slicing">Slicing</h2>
+<h3 id="slicing-rows">Rows</h3>
+<p>A row comes out as an array of its own:
+<pre><code class="language-basic">DIM row = m[1]
+PRINT row[0] &lt;= row[1]
+</code></pre>
+<h3 id="slicing-cells">Cells</h3>
+<p>A cell reads with two indices. Mixing the two forms is allowed
+<em>inside one expression</em>, which is why <code>m[1][0]</code> and
+<code>m[1, 0]</code> mean the same thing.
+<table class="grid">
+<thead><tr><th>Form<th>Reads<th>Writes
+<tbody>
+<tr><td><code>m[i]</code><td>a row<td>yes
+<tr><td><code>m[i, j]</code><td>a cell<td>yes
+<tr><td><code>m[ , j]</code><td>a column<td>no
+</table>
+
+<h2 id="reducers">Reducers</h2>
+<p>Reducers take an array and answer one value: <code>SUM</code>,
+<code>MEAN</code>, <code>MIN</code>, <code>MAX</code>. They are not
+two-argument functions &mdash; <code>MAX(a, b)</code> reads the second
+argument as an axis.
+<pre><code class="language-basic">PRINT SUM([1, 2, 3])    ' 6
+PRINT MAX([a, b])       ' the larger of the two
+</code></pre>
+<blockquote>
+<p>A loop over an array is the fallback, not the first move.
+</blockquote>
+
+<h2 id="pitfalls">Pitfalls</h2>
+<dl>
+  <dt>Copying
+  <dd>A bare assignment may share storage; force a copy element by element.
+  <dt>Growing
+  <dd>Use <code>PUSH</code> for one element and <code>APPEND</code> for many.
+</dl>
+<p><img src=/static/shape.png alt="A 5 by 1 matrix" width=320 height=120>
+<p>Report a mistake in this page in the <a href="/issues?q=is:open+label:docs"
+   rel="noopener">tracker</a>, or read the <a href="../reference/">reference</a>.
+<form class="feedback" action="/feedback" method=post>
+  <label for=note>Was this useful?
+  <input id=note name=note type=text placeholder="One line is enough">
+  <input type=checkbox name=contact checked disabled>
+  <button type=submit>Send</button>
+</form>
+</main>
+</div>
+
+<footer>
+<p>&copy; 2026 jdBasic &mdash; the docs are CC BY 4.0. Built 12.09.2026.
+<p>5 &lt; 6 and 6 &gt; 5 are both true.
+</footer>
+<script src="/static/doc.js"></script>
+</body>
+</html>

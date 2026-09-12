@@ -3029,6 +3029,81 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         }
     }
     scan_owned_str_globals(program);
+
+    // A name that is handed a string by PUSH anywhere in the program
+    // holds strings, whichever function does the pushing. Without this a
+    // module that fills a global array inside a SUB read its cells back
+    // as numbers.
+    {
+        std::unordered_set<std::string> pushed_str, pushed_num;
+        std::function<bool(const Expr&)> is_str_val = [&](const Expr& e) -> bool {
+            if (e.kind == ExprKind::LITERAL_STRING) return !e.is_funcref_lit;
+            if (e.kind == ExprKind::VARIABLE)
+                return !e.str_val.empty() && e.str_val.back() == '$';
+            if (e.kind == ExprKind::CALL)
+                return !e.func_name.empty() && e.func_name.back() == '$';
+            if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS)
+                return (e.left && is_str_val(*e.left)) || (e.right && is_str_val(*e.right));
+            return false;
+        };
+
+        std::function<void(const Expr&)> scan_push = [&](const Expr& e) {
+            if (e.kind == ExprKind::CALL && e.args.size() >= 2 && e.args[0] && e.args[1] &&
+                e.args[0]->kind == ExprKind::VARIABLE) {
+                std::string u = e.func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                if (u == "PUSH") {
+                    if (is_str_val(*e.args[1])) pushed_str.insert(e.args[0]->str_val);
+                    else pushed_num.insert(e.args[0]->str_val);
+                }
+            }
+            for (auto& a : e.args) if (a) scan_push(*a);
+            if (e.left) scan_push(*e.left);
+            if (e.right) scan_push(*e.right);
+        };
+        std::function<void(const Stmt&)> walk_push = [&](const Stmt& st) {
+            if (st.expr) scan_push(*st.expr);
+            if (st.loop_cond) scan_push(*st.loop_cond);
+            if (st.end_expr) scan_push(*st.end_expr);
+            if (st.step_expr) scan_push(*st.step_expr);
+            for (auto& pe : st.print_exprs) if (pe) scan_push(*pe);
+            for (auto& ic : st.index_chain) if (ic) scan_push(*ic);
+            for (auto& b : st.body) if (b) walk_push(*b);
+            for (auto& br : st.branches) {
+                if (br.condition) scan_push(*br.condition);
+                for (auto& b : br.body) if (b) walk_push(*b);
+            }
+            for (auto& c : st.catch_body()) if (c) walk_push(*c);
+            for (auto& f : st.finally_body()) if (f) walk_push(*f);
+        };
+        for (auto& st : program) if (st) walk_push(*st);
+        // A name that is also a parameter or a local somewhere means two
+        // different variables in one program; only an unambiguous name is
+        // decided here.
+        std::unordered_set<std::string> ambiguous;
+        std::function<void(const Stmt&, bool)> collect_locals = [&](const Stmt& st, bool inside) {
+            bool body_inside = inside;
+            if (st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB) {
+                for (auto& pm : st.params()) ambiguous.insert(pm.name);
+                body_inside = true;
+            }
+            if (body_inside && st.kind == StmtKind::DIM && !st.var_name.empty())
+                ambiguous.insert(st.var_name);
+            for (auto& b : st.body) if (b) collect_locals(*b, body_inside);
+            for (auto& br : st.branches) for (auto& b : br.body) if (b) collect_locals(*b, body_inside);
+            for (auto& c : st.catch_body()) if (c) collect_locals(*c, body_inside);
+            for (auto& f : st.finally_body()) if (f) collect_locals(*f, body_inside);
+        };
+        for (auto& st : program) if (st) collect_locals(*st, false);
+        // Only a name that was handed a string is decided here: all
+        // strings makes a string array, a string among other kinds makes
+        // the cells answer with their own tag.
+        for (auto& name : pushed_str) {
+            if (ambiguous.count(name)) continue;
+            if (pushed_num.count(name)) mixed_array_vars.insert(name);
+            else string_array_vars.insert(name);
+        }
+    }
     scan_owned_str_locals(program);
     scan_fresh_string_funcs(program);
     // Pre-scan: declare all global variables used in top-level code

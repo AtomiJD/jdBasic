@@ -1,0 +1,177 @@
+' htmldom_demo.jdb - a saved documentation page read, audited and mined.
+'
+' The demo writes a page the way a generator would leave it, with
+' unclosed paragraphs, unquoted attributes, entities, a script and a
+' style block. HTMLDOM parses it, and the demo builds the outline, lists
+' the code blocks, lifts the HTML table into a DF frame, and audits the
+' links, the anchors and the images. CONSOLE prints the result.
+'
+'   jdBasic htmldom_demo.jdb
+
+IMPORT HTMLDOM, DF, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("htmldemo")
+MKDIR folder$
+
+' ── the page, as a generator leaves it ─────────────────────────
+
+DIM page = []
+PUSH(page, "<!DOCTYPE html>")
+PUSH(page, "<html lang=en><head><meta charset=utf-8>")
+PUSH(page, "<title>Modules &amp; imports &mdash; jdBasic</title>")
+PUSH(page, "<style>.toc a { color: #06c }</style>")
+PUSH(page, "<script>var ok = 3 < 4;</script>")
+PUSH(page, "</head><body class=" + Q$ + "doc wide" + Q$ + " data-build=1033>")
+PUSH(page, "<!-- generated, do not edit -->")
+PUSH(page, "<nav class='toc side'><ul>")
+PUSH(page, "  <li><a href=#install>Installing</a>")
+PUSH(page, "  <li><a href=#writing>Writing one</a>")
+PUSH(page, "    <ul><li><a href=#exports>Exports</a><li><a href=#tests>Tests</a></ul>")
+PUSH(page, "  <li><a href=#ship>Shipping</a>")
+PUSH(page, "</ul></nav>")
+PUSH(page, "<main>")
+PUSH(page, "<h1 id=top>Modules &amp; imports</h1>")
+PUSH(page, "<p class=lead>A module is one file under <code>lib/</code>. Import it, call it")
+PUSH(page, "through its namespace, read its page.")
+PUSH(page, "<h2 id=install>Installing</h2>")
+PUSH(page, "<p>Copy it into <code>~/.jdbasic/lib</code>, or point")
+PUSH(page, "<code>JDBASIC_PATH</code> at the repository while you work on it.")
+PUSH(page, "<pre><code class=language-basic>IMPORT YAML, DF")
+PUSH(page, "DIM cfg = YAML.PARSEFILE(" + Q$ + "service.yml" + Q$ + ")</code></pre>")
+PUSH(page, "<h2 id=writing>Writing one</h2>")
+PUSH(page, "<h3 id=exports>Exports</h3>")
+PUSH(page, "<p>Public names carry <code>EXPORT</code>; everything else stays inside.")
+PUSH(page, "<pre><code class=language-basic>EXPORT MODULE GREET")
+PUSH(page, "EXPORT FUNC HELLO$(name$)")
+PUSH(page, "    RETURN " + Q$ + "Hi " + Q$ + " + name$")
+PUSH(page, "ENDFUNC</code></pre>")
+PUSH(page, "<h3 id=tests>Tests</h3>")
+PUSH(page, "<p>A module is finished when its self test is green in both backends.")
+PUSH(page, "<table class=grid>")
+PUSH(page, "<thead><tr><th>Module<th>Stands in for<th>Assertions<th>Backends")
+PUSH(page, "<tbody>")
+PUSH(page, "<tr><td>TESTKIT<td>pytest<td>13<td>2")
+PUSH(page, "<tr><td>DF<td>pandas<td>100<td>2")
+PUSH(page, "<tr><td>YAML<td>PyYAML<td>120<td>2")
+PUSH(page, "<tr><td>HTMLDOM<td>beautifulsoup<td>116<td>2")
+PUSH(page, "<tr><td>CONSOLE<td>rich<td>69<td>2")
+PUSH(page, "</table>")
+PUSH(page, "<h2 id=ship>Shipping</h2>")
+PUSH(page, "<p>Write the page, add the row, package the grammar. See the")
+PUSH(page, "<a href=#nowhere>checklist</a> and the <a href='/reference/'>reference</a>,")
+PUSH(page, "or the <a href=" + Q$ + "https://jdbasic.org" + Q$ + ">site</a>.")
+PUSH(page, "<p><img src=lib.png alt=" + Q$ + "The library layout" + Q$ + " width=480>")
+PUSH(page, "<p><img src=flow.png width=320>")
+PUSH(page, "<p><a href=#install></a> and <a href=#exports>exports</a> again.")
+PUSH(page, "</main>")
+PUSH(page, "<footer><p>&copy; 2026 &mdash; 5 &lt; 6.</footer>")
+PUSH(page, "</body></html>")
+DIM path$ = folder$ + "/modules.html"
+TXTWRITER path$, JOIN(page, NL$)
+
+DIM doc = HTMLDOM.PARSEFILE(path$)
+CONSOLE.RULE(HTMLDOM.PICK$(doc, "title"), "=")
+CONSOLE.KV([["file", path$], ["bytes", STR$(LEN(JOIN(page, NL$)))], ["nodes", STR$(HTMLDOM.SIZE(doc))], ["elements", STR$(LEN(HTMLDOM.FINDALL(doc, "*")))], ["build", HTMLDOM.ATTR$(doc, HTMLDOM.FIND(doc, "body"), "data-build")], ["heading", HTMLDOM.PICK$(doc, "main h1")]], 2)
+PRINT ""
+
+' ── the outline ────────────────────────────────────────────────
+
+CONSOLE.RULE("outline")
+DIM heads = HTMLDOM.FINDALL(doc, "main h1, main h2, main h3")
+DIM outline = []
+DIM i = 0
+FOR i = 0 TO LEN(heads) - 1
+    DIM tag$ = HTMLDOM.TAG$(doc, heads[i])
+    DIM depth = VAL(MID$(tag$, 1)) - 1
+    PUSH(outline, [SPACE$(depth * 2) + HTMLDOM.FLAT$(doc, heads[i]), "#" + HTMLDOM.ATTR$(doc, heads[i], "id"), tag$])
+NEXT i
+CONSOLE.TABLE(outline, {"headers": ["heading", "anchor", "level"], "border": "plain"})
+PRINT ""
+
+' ── the code blocks ────────────────────────────────────────────
+
+CONSOLE.RULE("code blocks")
+DIM blocks = HTMLDOM.FINDALL(doc, "pre > code")
+FOR i = 0 TO LEN(blocks) - 1
+    DIM source$ = TRIM$(HTMLDOM.TEXT$(doc, blocks[i]))
+    DIM lang$ = HTMLDOM.ATTR$(doc, blocks[i], "class", "plain")
+    DIM source_lines = SPLIT(source$, NL$)
+    PRINT "  "; CONSOLE.BOLD$(STR$(i + 1) + " of " + STR$(LEN(blocks))); "  "; lang$; ", "; LEN(source_lines); " lines"
+    DIM k = 0
+    FOR k = 0 TO LEN(source_lines) - 1
+        DIM code$ = source_lines[k]
+        PRINT "    | "; code$
+    NEXT k
+NEXT i
+PRINT ""
+
+' ── the table, lifted into a frame ─────────────────────────────
+
+CONSOLE.RULE("the table as a frame")
+DIM head_cells = HTMLDOM.FINDALL(doc, "table.grid thead th")
+DIM names = []
+FOR i = 0 TO LEN(head_cells) - 1
+    PUSH(names, LCASE$(HTMLDOM.FLAT$(doc, head_cells[i])))
+NEXT i
+DIM rows = HTMLDOM.FINDALL(doc, "table.grid tbody tr")
+DIM matrix = []
+FOR i = 0 TO LEN(rows) - 1
+    DIM cells = HTMLDOM.FINDALL(doc, "td", rows[i])
+    DIM row = []
+    DIM c = 0
+    FOR c = 0 TO LEN(cells) - 1
+        DIM cell$ = HTMLDOM.FLAT$(doc, cells[c])
+        IF c >= 2 THEN
+            PUSH(row, VAL(cell$))
+        ELSE
+            PUSH(row, cell$)
+        ENDIF
+    NEXT c
+    PUSH(matrix, row)
+NEXT i
+DIM frame = DF.FROM(matrix, names)
+DF.SHOW(DF.SORT(frame, "assertions", TRUE))
+PRINT "  " ; DF.NROWS(frame); " modules, "; SUM(DF.COL(frame, "assertions")); " assertions, "; LEN(DF.DISTINCT(frame, "stands in for")); " libraries stood in for"
+PRINT ""
+
+' ── the audit ──────────────────────────────────────────────────
+
+CONSOLE.RULE("audit")
+DIM findings = []
+DIM anchors = []
+DIM targets = HTMLDOM.FINDALL(doc, "[id]")
+FOR i = 0 TO LEN(targets) - 1
+    PUSH(anchors, HTMLDOM.ATTR$(doc, targets[i], "id"))
+NEXT i
+DIM links = HTMLDOM.FINDALL(doc, "a[href]")
+FOR i = 0 TO LEN(links) - 1
+    DIM href$ = HTMLDOM.ATTR$(doc, links[i], "href")
+    DIM label$ = HTMLDOM.FLAT$(doc, links[i])
+    IF label$ = "" THEN PUSH(findings, [CONSOLE.RED$("error"), "a[href=" + href$ + "]", "link without text"])
+    IF STARTSWITH(href$, "#") THEN
+        IF NOT (MID$(href$, 1) IN anchors) THEN PUSH(findings, [CONSOLE.RED$("error"), href$, "anchor has no target"])
+    ENDIF
+NEXT i
+DIM images = HTMLDOM.FINDALL(doc, "img")
+FOR i = 0 TO LEN(images) - 1
+    IF NOT HTMLDOM.HAS(doc, images[i], "alt") THEN PUSH(findings, [CONSOLE.YELLOW$("warn"), HTMLDOM.ATTR$(doc, images[i], "src"), "image without a description"])
+NEXT i
+IF LEN(findings) = 0 THEN
+    PRINT "  nothing to report"
+ELSE
+    CONSOLE.TABLE(findings, {"headers": ["level", "where", "finding"], "border": "plain"})
+ENDIF
+PRINT ""
+CONSOLE.KV([["links", STR$(LEN(links))], ["internal", STR$(LEN(HTMLDOM.FINDALL(doc, "a[href^=#]")))], ["outward", STR$(LEN(HTMLDOM.FINDALL(doc, "a[href^=http]")))], ["images", STR$(LEN(images))], ["words in the text", STR$(LEN(SPLIT(HTMLDOM.FLAT$(doc, HTMLDOM.FIND(doc, "main")), " ")))], ["script and style kept", "" + (INSTR(HTMLDOM.TEXT$(doc, HTMLDOM.FIND(doc, "script")), "3 < 4") >= 0)], ["footer", HTMLDOM.PICK$(doc, "footer")]], 2)
+PRINT ""
+
+' ── the page, written back ─────────────────────────────────────
+
+CONSOLE.RULE("the first list item, as markup")
+PRINT "  "; HTMLDOM.HTML$(doc, HTMLDOM.FIND(doc, "nav.toc li"))
+PRINT ""
+KILL path$
+RMDIR folder$

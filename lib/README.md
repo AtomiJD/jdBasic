@@ -49,6 +49,7 @@ and SCHEMA) finds it through the same search.
 | `md.jdb` | markdown | the CommonMark subset to HTML: headings, lists, fences, quotes, tables, links, images, escaping with a raw switch | [md_lib_readme.md](md_lib_readme.md) |
 | `df.jdb` | pandas | data frames as named columns: CSV in and out, computed columns, filters, sorting, group by with aggregates, joins, pivots, summaries, console tables | [df_lib_readme.md](df_lib_readme.md) |
 | `yaml.jdb` | PyYAML | the block subset of YAML: mappings, sequences, implicit types, block scalars, documents, flow collections, a dotted path, and writing it back | [yaml_lib_readme.md](yaml_lib_readme.md) |
+| `htmldom.jdb` | beautifulsoup | HTML as it is served into a tree: unclosed tags, implicit closes, raw text, entities; CSS selectors, text and markup of a node | [htmldom_lib_readme.md](htmldom_lib_readme.md) |
 
 ## Tests and demos
 

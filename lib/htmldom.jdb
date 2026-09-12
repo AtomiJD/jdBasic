@@ -1,0 +1,886 @@
+' htmldom.jdb - a tolerant HTML parser and CSS selectors over the tree.
+'
+'   IMPORT HTMLDOM
+'   DIM page = HTMLDOM.PARSEFILE("guide.html")
+'   DIM links = HTMLDOM.FINDALL(page, "nav.toc a")
+'   FOR i = 0 TO LEN(links) - 1
+'       PRINT HTMLDOM.ATTR$(page, links[i], "href"); "  "; HTMLDOM.FLAT$(page, links[i])
+'   NEXT i
+'
+' The parser takes what browsers take: unclosed tags, implicit closes,
+' unquoted attribute values, comments, raw text in script and style,
+' entities, stray markup. A document is an array of nodes and every call
+' takes the document and a node number, so the tree holds no cycles.
+
+EXPORT MODULE HTMLDOM
+
+DIM gSrc$ = ""
+DIM gAt = 0
+DIM gKind = []
+DIM gTag = []
+DIM gBody = []
+DIM gAttrs = []
+DIM gKids = []
+DIM gUp = []
+DIM gStack = []
+
+CONST VOID_TAGS$ = " area base br col embed hr img input link meta param source track wbr "
+CONST RAW_TAGS$ = " script style "
+CONST BLOCK_TAGS$ = " address article aside blockquote details div dl fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 header hr main nav ol p pre section table ul "
+
+' ── reading ────────────────────────────────────────────────────
+
+' The document tree of an HTML text. Node 0 is the document itself.
+EXPORT FUNC PARSE(html$)
+    Reset(html$)
+    DO WHILE gAt < LEN(gSrc$)
+        DIM ch$ = MID$(gSrc$, gAt, 1)
+        IF ch$ <> "<" THEN
+            DIM upto = INSTR(gAt, gSrc$, "<")
+            IF upto < 0 THEN upto = LEN(gSrc$)
+            DIM chunk$ = MID$(gSrc$, gAt, upto - gAt)
+            gAt = upto
+            IF LEN(chunk$) > 0 THEN Leaf(1, UNESCAPE$(chunk$))
+            CONTINUEDO
+        ENDIF
+        IF MID$(gSrc$, gAt, 4) = "<!--" THEN
+            DIM ends = INSTR(gAt, gSrc$, "-->")
+            IF ends < 0 THEN ends = LEN(gSrc$)
+            Leaf(2, MID$(gSrc$, gAt + 4, ends - gAt - 4))
+            gAt = ends + 3
+            CONTINUEDO
+        ENDIF
+        IF MID$(gSrc$, gAt, 2) = "<!" ORELSE MID$(gSrc$, gAt, 2) = "<?" THEN
+            DIM decl = INSTR(gAt, gSrc$, ">")
+            IF decl < 0 THEN decl = LEN(gSrc$)
+            gAt = decl + 1
+            CONTINUEDO
+        ENDIF
+        IF MID$(gSrc$, gAt, 2) = "</" THEN
+            DIM shut = INSTR(gAt, gSrc$, ">")
+            IF shut < 0 THEN shut = LEN(gSrc$)
+            DIM shut$ = LCASE$(TRIM$(MID$(gSrc$, gAt + 2, shut - gAt - 2)))
+            gAt = shut + 1
+            Unwind(shut$)
+            CONTINUEDO
+        ENDIF
+        DIM name$ = TagNameAt(gAt + 1)
+        IF name$ = "" THEN
+            Leaf(1, "<")
+            gAt = gAt + 1
+            CONTINUEDO
+        ENDIF
+        DIM open = OpenTag(name$)
+        IF INSTR(RAW_TAGS$, " " + name$ + " ") >= 0 THEN RawText(name$, open)
+    LOOP
+    DIM doc AS MAP
+    doc{"kind"} = gKind
+    doc{"tag"} = gTag
+    doc{"body"} = gBody
+    doc{"attrs"} = gAttrs
+    doc{"children"} = gKids
+    doc{"parent"} = gUp
+    RETURN doc
+ENDFUNC
+
+EXPORT FUNC PARSEFILE(path$)
+    RETURN PARSE(TXTREADER$(path$))
+ENDFUNC
+
+SUB Reset(html$)
+    gSrc$ = REPLACE$(html$, CHR$(13), "")
+    gAt = 0
+    gKind = []
+    gTag = []
+    gBody = []
+    gAttrs = []
+    gKids = []
+    gUp = []
+    gStack = []
+    DIM root = Node(0, "", -1, "")
+    PUSH(gStack, root)
+ENDSUB
+
+' A new node: kind 0 document, 1 text, 2 comment, 3 element.
+FUNC Node(kind, tag$, up, body$)
+    PUSH(gKind, kind)
+    PUSH(gTag, tag$)
+    PUSH(gBody, body$)
+    DIM empty AS MAP
+    PUSH(gAttrs, empty)
+    PUSH(gKids, [])
+    PUSH(gUp, up)
+    RETURN LEN(gKind) - 1
+ENDFUNC
+
+' A text or comment node under the element that is open.
+SUB Leaf(kind, body$)
+    DIM up = Top()
+    DIM id = Node(kind, "", up, body$)
+    Adopt(up, id)
+ENDSUB
+
+SUB Adopt(up, id)
+    IF up >= 0 THEN
+        DIM kids = gKids[up]
+        PUSH(kids, id)
+        gKids[up] = kids
+    ENDIF
+ENDSUB
+
+FUNC Top()
+    RETURN gStack[LEN(gStack) - 1]
+ENDFUNC
+
+SUB Close()
+    IF LEN(gStack) > 1 THEN gStack = Shorter(gStack)
+ENDSUB
+
+FUNC Shorter(arr)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(arr) - 2
+        PUSH(out, arr[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Closes the nearest open element of that name and everything left open
+' inside it. A close tag for nothing open is dropped.
+SUB Unwind(name$)
+    DIM at = -1
+    DIM i = 0
+    FOR i = LEN(gStack) - 1 TO 1 STEP -1
+        IF gTag[gStack[i]] = name$ THEN
+            at = i
+            EXITFOR
+        ENDIF
+    NEXT i
+    IF at > 0 THEN
+        DIM out = []
+        FOR i = 0 TO at - 1
+            PUSH(out, gStack[i])
+        NEXT i
+        gStack = out
+    ENDIF
+ENDSUB
+
+' Reads the tag and its attributes, adds the element and returns it.
+FUNC OpenTag(name$)
+    gAt = gAt + 1 + LEN(name$)
+    DIM attrs AS MAP
+    DIM shut = FALSE
+    DO WHILE gAt < LEN(gSrc$)
+        SkipSpace()
+        DIM ch$ = MID$(gSrc$, gAt, 1)
+        IF ch$ = ">" THEN
+            gAt = gAt + 1
+            EXITDO
+        ENDIF
+        IF ch$ = "/" THEN
+            shut = TRUE
+            gAt = gAt + 1
+            CONTINUEDO
+        ENDIF
+        DIM key$ = AttrName$()
+        IF key$ = "" THEN
+            gAt = gAt + 1
+            CONTINUEDO
+        ENDIF
+        SkipSpace()
+        DIM value$ = ""
+        IF MID$(gSrc$, gAt, 1) = "=" THEN
+            gAt = gAt + 1
+            SkipSpace()
+            value$ = AttrValue$()
+        ENDIF
+        attrs{key$} = value$
+    LOOP
+    ' An element ends the ones it cannot sit inside: a second <li> ends
+    ' the first, a <tr> ends the cell and the row before it, and any
+    ' block ends an open paragraph.
+    DIM closes$ = Implicit$(name$)
+    IF closes$ <> "" THEN
+        DO WHILE LEN(gStack) > 1
+            IF INSTR(closes$, " " + gTag[Top()] + " ") < 0 THEN EXITDO
+            Close()
+        LOOP
+    ENDIF
+    IF INSTR(BLOCK_TAGS$, " " + name$ + " ") >= 0 THEN
+        DO WHILE LEN(gStack) > 1
+            IF gTag[Top()] <> "p" THEN EXITDO
+            Close()
+        LOOP
+    ENDIF
+    DIM up = Top()
+    DIM id = Node(3, name$, up, "")
+    gAttrs[id] = attrs
+    Adopt(up, id)
+    IF NOT shut ANDALSO INSTR(VOID_TAGS$, " " + name$ + " ") < 0 THEN PUSH(gStack, id)
+    RETURN id
+ENDFUNC
+
+' The elements an opening tag closes before it starts.
+FUNC Implicit$(name$)
+    IF name$ = "li" THEN RETURN " li "
+    IF name$ = "p" THEN RETURN " p "
+    IF name$ = "option" THEN RETURN " option "
+    IF name$ = "dt" ORELSE name$ = "dd" THEN RETURN " dt dd "
+    IF name$ = "td" ORELSE name$ = "th" THEN RETURN " td th "
+    IF name$ = "tr" THEN RETURN " td th tr "
+    IF name$ = "thead" ORELSE name$ = "tbody" ORELSE name$ = "tfoot" THEN RETURN " td th tr thead tbody tfoot "
+    RETURN ""
+ENDFUNC
+
+' The content of a script or style element, taken as it stands.
+SUB RawText(name$, id)
+    DIM raw = INSTR(gAt, gSrc$, "</" + name$)
+    IF raw < 0 THEN raw = LEN(gSrc$)
+    DIM raw$ = MID$(gSrc$, gAt, raw - gAt)
+    IF LEN(raw$) > 0 THEN
+        DIM leaf = Node(1, "", id, raw$)
+        Adopt(id, leaf)
+    ENDIF
+    gAt = raw
+    IF raw < LEN(gSrc$) THEN
+        DIM done = INSTR(gAt, gSrc$, ">")
+        IF done < 0 THEN done = LEN(gSrc$)
+        gAt = done + 1
+    ENDIF
+    Close()
+ENDSUB
+
+FUNC TagNameAt(at)
+    DIM out$ = ""
+    DIM i = at
+    DO WHILE i < LEN(gSrc$)
+        DIM ch$ = MID$(gSrc$, i, 1)
+        DIM low$ = LCASE$(ch$)
+        IF (low$ >= "a" ANDALSO low$ <= "z") ORELSE (ch$ >= "0" ANDALSO ch$ <= "9") THEN
+            out$ = out$ + low$
+        ELSE
+            EXITDO
+        ENDIF
+        i = i + 1
+    LOOP
+    RETURN out$
+ENDFUNC
+
+SUB SkipSpace()
+    DO WHILE gAt < LEN(gSrc$)
+        DIM ch$ = MID$(gSrc$, gAt, 1)
+        IF ch$ <> " " ANDALSO ch$ <> CHR$(9) ANDALSO ch$ <> CHR$(10) THEN EXITDO
+        gAt = gAt + 1
+    LOOP
+ENDSUB
+
+FUNC AttrName$()
+    DIM out$ = ""
+    DO WHILE gAt < LEN(gSrc$)
+        DIM ch$ = MID$(gSrc$, gAt, 1)
+        IF ch$ = "=" ORELSE ch$ = ">" ORELSE ch$ = " " ORELSE ch$ = CHR$(9) ORELSE ch$ = CHR$(10) ORELSE ch$ = "/" THEN EXITDO
+        out$ = out$ + LCASE$(ch$)
+        gAt = gAt + 1
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' A quoted value, or an unquoted one up to the next space or ">".
+FUNC AttrValue$()
+    DIM quote$ = MID$(gSrc$, gAt, 1)
+    IF quote$ = CHR$(34) ORELSE quote$ = "'" THEN
+        gAt = gAt + 1
+        DIM ends = INSTR(gAt, gSrc$, quote$)
+        IF ends < 0 THEN ends = LEN(gSrc$)
+        DIM quoted$ = MID$(gSrc$, gAt, ends - gAt)
+        gAt = ends + 1
+        RETURN UNESCAPE$(quoted$)
+    ENDIF
+    DIM bare$ = ""
+    DO WHILE gAt < LEN(gSrc$)
+        DIM ch$ = MID$(gSrc$, gAt, 1)
+        IF ch$ = " " ORELSE ch$ = ">" ORELSE ch$ = CHR$(9) ORELSE ch$ = CHR$(10) THEN EXITDO
+        bare$ = bare$ + ch$
+        gAt = gAt + 1
+    LOOP
+    RETURN UNESCAPE$(bare$)
+ENDFUNC
+
+' ── the tree ───────────────────────────────────────────────────
+
+' The number of nodes, the document itself included.
+EXPORT FUNC SIZE(doc)
+    RETURN LEN(doc{"kind"})
+ENDFUNC
+
+' "document", "text", "comment" or "element".
+EXPORT FUNC KIND$(doc, id)
+    DIM kinds = doc{"kind"}
+    IF id < 0 ORELSE id >= LEN(kinds) THEN RETURN ""
+    DIM k = kinds[id]
+    IF k = 0 THEN RETURN "document"
+    IF k = 1 THEN RETURN "text"
+    IF k = 2 THEN RETURN "comment"
+    RETURN "element"
+ENDFUNC
+
+EXPORT FUNC TAG$(doc, id)
+    DIM tags = doc{"tag"}
+    IF id < 0 ORELSE id >= LEN(tags) THEN RETURN ""
+    DIM out$ = tags[id]
+    RETURN out$
+ENDFUNC
+
+EXPORT FUNC PARENT(doc, id)
+    DIM ups = doc{"parent"}
+    IF id < 0 ORELSE id >= LEN(ups) THEN RETURN -1
+    RETURN ups[id]
+ENDFUNC
+
+' The child nodes of a node, elements and text alike.
+EXPORT FUNC CHILDREN(doc, id)
+    DIM kids = doc{"children"}
+    IF id < 0 ORELSE id >= LEN(kids) THEN RETURN []
+    RETURN kids[id]
+ENDFUNC
+
+' The child elements only.
+EXPORT FUNC ELEMENTS(doc, id)
+    DIM out = []
+    DIM kids = CHILDREN(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        IF KIND$(doc, kids[i]) = "element" THEN PUSH(out, kids[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Every attribute of an element as a map.
+EXPORT FUNC ATTRS(doc, id)
+    DIM all = doc{"attrs"}
+    DIM empty AS MAP
+    IF id < 0 ORELSE id >= LEN(all) THEN RETURN empty
+    RETURN all[id]
+ENDFUNC
+
+' One attribute, or the fallback when it is not there.
+EXPORT FUNC ATTR$(doc, id, name$, fallback$ = "")
+    DIM attrs = ATTRS(doc, id)
+    DIM key$ = LCASE$(name$)
+    IF NOT MAP.EXISTS(attrs, key$) THEN RETURN fallback$
+    DIM out$ = attrs{key$}
+    RETURN out$
+ENDFUNC
+
+EXPORT FUNC HAS(doc, id, name$)
+    RETURN MAP.EXISTS(ATTRS(doc, id), LCASE$(name$))
+ENDFUNC
+
+' The text of the subtree, entities already decoded.
+EXPORT FUNC TEXT$(doc, id)
+    DIM kind$ = KIND$(doc, id)
+    IF kind$ = "text" THEN
+        DIM bodies = doc{"body"}
+        DIM leaf$ = bodies[id]
+        RETURN leaf$
+    ENDIF
+    IF kind$ = "comment" ORELSE kind$ = "" THEN RETURN ""
+    DIM out$ = ""
+    DIM kids = CHILDREN(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        out$ = out$ + TEXT$(doc, kids[i])
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' The same text with every run of whitespace squeezed to one space and
+' the ends trimmed, the way a heading or a link reads.
+EXPORT FUNC FLAT$(doc, id)
+    RETURN Squeeze$(TEXT$(doc, id))
+ENDFUNC
+
+FUNC Squeeze$(raw$)
+    DIM out$ = ""
+    DIM gap = FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(raw$) - 1
+        DIM ch$ = MID$(raw$, i, 1)
+        IF ch$ = " " ORELSE ch$ = CHR$(9) ORELSE ch$ = CHR$(10) THEN
+            gap = TRUE
+        ELSE
+            IF gap ANDALSO LEN(out$) > 0 THEN out$ = out$ + " "
+            gap = FALSE
+            out$ = out$ + ch$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' The markup of the subtree.
+EXPORT FUNC HTML$(doc, id)
+    DIM kind$ = KIND$(doc, id)
+    DIM bodies = doc{"body"}
+    IF kind$ = "text" THEN
+        DIM leaf$ = bodies[id]
+        RETURN ESCAPE$(leaf$)
+    ENDIF
+    IF kind$ = "comment" THEN
+        DIM note$ = bodies[id]
+        RETURN "<!--" + note$ + "-->"
+    ENDIF
+    IF kind$ = "" THEN RETURN ""
+    DIM inside$ = INNER$(doc, id)
+    IF kind$ = "document" THEN RETURN inside$
+    DIM tag$ = TAG$(doc, id)
+    DIM out$ = "<" + tag$
+    DIM attrs = ATTRS(doc, id)
+    DIM keys = MAP.KEYS(attrs)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        DIM value$ = attrs{key$}
+        out$ = out$ + " " + key$ + "=" + CHR$(34) + ESCAPE$(value$) + CHR$(34)
+    NEXT i
+    IF INSTR(VOID_TAGS$, " " + tag$ + " ") >= 0 THEN RETURN out$ + " />"
+    RETURN out$ + ">" + inside$ + "</" + tag$ + ">"
+ENDFUNC
+
+' The markup inside a node.
+EXPORT FUNC INNER$(doc, id)
+    DIM out$ = ""
+    DIM kids = CHILDREN(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        out$ = out$ + HTML$(doc, kids[i])
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' ── selectors ──────────────────────────────────────────────────
+
+' Every element under root that matches, in document order. Several
+' selectors are separated by a comma.
+EXPORT FUNC FINDALL(doc, selector$, root = 0)
+    DIM groups = SPLIT(selector$, ",")
+    DIM out = []
+    DIM order = Walk(doc, root)
+    DIM g = 0
+    FOR g = 0 TO LEN(groups) - 1
+        DIM steps = Chain(groups[g])
+        IF LEN(steps) > 0 THEN
+            DIM i = 0
+            FOR i = 0 TO LEN(order) - 1
+                DIM id = order[i]
+                IF NOT (id IN out) THEN
+                    IF MatchFrom(doc, id, steps, LEN(steps) - 1) THEN PUSH(out, id)
+                ENDIF
+            NEXT i
+        ENDIF
+    NEXT g
+    IF LEN(groups) > 1 THEN RETURN Ordered(out)
+    RETURN out
+ENDFUNC
+
+' The first match, or -1.
+EXPORT FUNC FIND(doc, selector$, root = 0)
+    DIM hits = FINDALL(doc, selector$, root)
+    IF LEN(hits) = 0 THEN RETURN -1
+    RETURN hits[0]
+ENDFUNC
+
+' The squeezed text of the first match, or the fallback.
+EXPORT FUNC PICK$(doc, selector$, fallback$ = "")
+    DIM at = FIND(doc, selector$)
+    IF at < 0 THEN RETURN fallback$
+    RETURN FLAT$(doc, at)
+ENDFUNC
+
+' Whether one node matches a selector.
+EXPORT FUNC MATCHES(doc, id, selector$)
+    DIM groups = SPLIT(selector$, ",")
+    DIM g = 0
+    FOR g = 0 TO LEN(groups) - 1
+        DIM steps = Chain(groups[g])
+        IF LEN(steps) > 0 THEN
+            IF MatchFrom(doc, id, steps, LEN(steps) - 1) THEN RETURN TRUE
+        ENDIF
+    NEXT g
+    RETURN FALSE
+ENDFUNC
+
+' The elements under a node, in document order, the node included.
+FUNC Walk(doc, root)
+    DIM out = []
+    IF KIND$(doc, root) = "element" THEN PUSH(out, root)
+    DIM pending = [root]
+    DO WHILE LEN(pending) > 0
+        DIM id = pending[LEN(pending) - 1]
+        pending = Shorter(pending)
+        DIM kids = CHILDREN(doc, id)
+        DIM taken = []
+        DIM i = 0
+        FOR i = 0 TO LEN(kids) - 1
+            IF KIND$(doc, kids[i]) = "element" THEN
+                PUSH(out, kids[i])
+                PUSH(taken, kids[i])
+            ENDIF
+        NEXT i
+        FOR i = LEN(taken) - 1 TO 0 STEP -1
+            PUSH(pending, taken[i])
+        NEXT i
+    LOOP
+    RETURN Ordered(out)
+ENDFUNC
+
+FUNC Ordered(ids)
+    DIM seen = Copy(ids)
+    DIM out = []
+    DIM n = 0
+    FOR n = 0 TO LEN(seen) - 1
+        DIM lowest = -1
+        DIM at = -1
+        DIM i = 0
+        FOR i = 0 TO LEN(seen) - 1
+            IF seen[i] >= 0 THEN
+                IF lowest < 0 ORELSE seen[i] < lowest THEN
+                    lowest = seen[i]
+                    at = i
+                ENDIF
+            ENDIF
+        NEXT i
+        IF at < 0 THEN EXITFOR
+        PUSH(out, lowest)
+        seen[at] = -1
+    NEXT n
+    RETURN out
+ENDFUNC
+
+FUNC Copy(arr)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(arr) - 1
+        PUSH(out, arr[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The selector as a list of steps, each with the combinator that leads
+' to it: "" for a descendant, ">" for a direct child.
+FUNC Chain(selector$)
+    DIM out = []
+    DIM piece$ = ""
+    DIM comb$ = ""
+    DIM raw$ = TRIM$(selector$)
+    DIM i = 0
+    FOR i = 0 TO LEN(raw$) - 1
+        DIM ch$ = MID$(raw$, i, 1)
+        IF ch$ = " " ORELSE ch$ = ">" THEN
+            IF LEN(piece$) > 0 THEN
+                PUSH(out, Part(piece$, comb$))
+                piece$ = ""
+                comb$ = ""
+            ENDIF
+            IF ch$ = ">" THEN comb$ = ">"
+        ELSE
+            piece$ = piece$ + ch$
+        ENDIF
+    NEXT i
+    IF LEN(piece$) > 0 THEN PUSH(out, Part(piece$, comb$))
+    RETURN out
+ENDFUNC
+
+' One step of a chain: tag, id, classes, attribute tests, position.
+FUNC Part(piece$, comb$)
+    DIM tag$ = ""
+    DIM ident$ = ""
+    DIM classes = []
+    DIM tests = []
+    DIM nth = 0
+    DIM nth_type = 0
+    DIM last = FALSE
+    DIM mode$ = "tag"
+    DIM word$ = ""
+    DIM i = 0
+    DO WHILE i <= LEN(piece$)
+        DIM ch$ = ""
+        IF i < LEN(piece$) THEN ch$ = MID$(piece$, i, 1)
+        DIM keep = FALSE
+        IF ch$ = "[" ORELSE ch$ = ":" ORELSE ch$ = "#" ORELSE ch$ = "." ORELSE ch$ = "" THEN keep = TRUE
+        IF keep ANDALSO LEN(word$) > 0 THEN
+            IF mode$ = "id" THEN ident$ = word$
+            IF mode$ = "class" THEN PUSH(classes, word$)
+            IF mode$ = "tag" THEN tag$ = LCASE$(word$)
+            word$ = ""
+        ENDIF
+        IF ch$ = "[" THEN
+            DIM shut = INSTR(i, piece$, "]")
+            IF shut < 0 THEN shut = LEN(piece$)
+            PUSH(tests, AttrTest(MID$(piece$, i + 1, shut - i - 1)))
+            i = shut + 1
+            mode$ = "none"
+            CONTINUEDO
+        ENDIF
+        IF ch$ = ":" THEN
+            DIM rest$ = MID$(piece$, i + 1)
+            DIM stop_at = INSTR(rest$, ":")
+            IF stop_at >= 0 THEN rest$ = LEFT$(rest$, stop_at)
+            DIM low$ = LCASE$(rest$)
+            IF low$ = "first-child" THEN nth = 1
+            IF low$ = "last-child" THEN last = TRUE
+            IF low$ = "first-of-type" THEN nth_type = 1
+            IF STARTSWITH(low$, "nth-child(") THEN nth = VAL(MID$(low$, 10))
+            IF STARTSWITH(low$, "nth-of-type(") THEN nth_type = VAL(MID$(low$, 12))
+            i = i + 1 + LEN(rest$)
+            mode$ = "none"
+            CONTINUEDO
+        ENDIF
+        IF ch$ = "#" THEN mode$ = "id"
+        IF ch$ = "." THEN mode$ = "class"
+        IF ch$ <> "#" ANDALSO ch$ <> "." ANDALSO ch$ <> "" THEN word$ = word$ + ch$
+        i = i + 1
+    LOOP
+    DIM out AS MAP
+    out{"tag"} = tag$
+    out{"id"} = ident$
+    out{"classes"} = classes
+    out{"attrs"} = tests
+    out{"nth"} = nth
+    out{"nth_of_type"} = nth_type
+    out{"last"} = last
+    out{"combinator"} = comb$
+    RETURN out
+ENDFUNC
+
+' [name], [name=value], [name^=value], [name$=value], [name*=value]
+' and [name~=word].
+FUNC AttrTest(text$)
+    DIM name$ = TRIM$(text$)
+    DIM op$ = ""
+    DIM value$ = ""
+    DIM at = INSTR(text$, "=")
+    IF at >= 0 THEN
+        name$ = LEFT$(text$, at)
+        DIM tail$ = RIGHT$(name$, 1)
+        IF tail$ = "^" ORELSE tail$ = "$" ORELSE tail$ = "*" ORELSE tail$ = "~" THEN
+            op$ = tail$
+            name$ = LEFT$(name$, LEN(name$) - 1)
+        ENDIF
+        value$ = TRIM$(MID$(text$, at + 1))
+        IF LEN(value$) > 1 THEN
+            DIM quote$ = LEFT$(value$, 1)
+            IF quote$ = CHR$(34) ORELSE quote$ = "'" THEN
+                IF ENDSWITH(value$, quote$) THEN value$ = MID$(value$, 1, LEN(value$) - 2)
+            ENDIF
+        ENDIF
+    ENDIF
+    DIM out AS MAP
+    out{"name"} = LCASE$(TRIM$(name$))
+    out{"op"} = op$
+    out{"value"} = value$
+    RETURN out
+ENDFUNC
+
+' Does the node match the steps up to and including this one?
+FUNC MatchFrom(doc, id, steps, at)
+    IF NOT MatchStep(doc, id, steps[at]) THEN RETURN FALSE
+    IF at = 0 THEN RETURN TRUE
+    DIM here = steps[at]
+    DIM up = PARENT(doc, id)
+    DIM comb$ = here{"combinator"}
+    IF comb$ = ">" THEN
+        IF up < 0 THEN RETURN FALSE
+        RETURN MatchFrom(doc, up, steps, at - 1)
+    ENDIF
+    DO WHILE up >= 0
+        IF MatchFrom(doc, up, steps, at - 1) THEN RETURN TRUE
+        up = PARENT(doc, up)
+    LOOP
+    RETURN FALSE
+ENDFUNC
+
+FUNC MatchStep(doc, id, item)
+    IF KIND$(doc, id) <> "element" THEN RETURN FALSE
+    DIM want$ = item{"tag"}
+    IF want$ <> "" ANDALSO want$ <> "*" THEN
+        IF want$ <> TAG$(doc, id) THEN RETURN FALSE
+    ENDIF
+    DIM want_id$ = item{"id"}
+    IF want_id$ <> "" THEN
+        IF ATTR$(doc, id, "id") <> want_id$ THEN RETURN FALSE
+    ENDIF
+    DIM classes = item{"classes"}
+    DIM i = 0
+    IF LEN(classes) > 0 THEN
+        DIM has = SPLIT(Squeeze$(ATTR$(doc, id, "class")), " ")
+        FOR i = 0 TO LEN(classes) - 1
+            IF NOT (classes[i] IN has) THEN RETURN FALSE
+        NEXT i
+    ENDIF
+    DIM tests = item{"attrs"}
+    FOR i = 0 TO LEN(tests) - 1
+        IF NOT MatchAttr(doc, id, tests[i]) THEN RETURN FALSE
+    NEXT i
+    DIM nth = item{"nth"}
+    DIM nth_type = item{"nth_of_type"}
+    DIM last = item{"last"}
+    IF nth > 0 ORELSE nth_type > 0 ORELSE last THEN
+        DIM siblings = ELEMENTS(doc, PARENT(doc, id))
+        DIM place = 0
+        DIM typed = 0
+        DIM my_place = 0
+        DIM my_typed = 0
+        FOR i = 0 TO LEN(siblings) - 1
+            place = place + 1
+            IF TAG$(doc, siblings[i]) = TAG$(doc, id) THEN typed = typed + 1
+            IF siblings[i] = id THEN
+                my_place = place
+                my_typed = typed
+            ENDIF
+        NEXT i
+        IF nth > 0 ANDALSO my_place <> nth THEN RETURN FALSE
+        IF nth_type > 0 ANDALSO my_typed <> nth_type THEN RETURN FALSE
+        IF last ANDALSO my_place <> LEN(siblings) THEN RETURN FALSE
+    ENDIF
+    RETURN TRUE
+ENDFUNC
+
+FUNC MatchAttr(doc, id, test)
+    DIM name$ = test{"name"}
+    IF NOT HAS(doc, id, name$) THEN RETURN FALSE
+    DIM op$ = test{"op"}
+    DIM want$ = test{"value"}
+    IF want$ = "" ANDALSO op$ = "" THEN RETURN TRUE
+    DIM have$ = ATTR$(doc, id, name$)
+    IF op$ = "^" THEN RETURN STARTSWITH(have$, want$)
+    IF op$ = "$" THEN RETURN ENDSWITH(have$, want$)
+    IF op$ = "*" THEN RETURN INSTR(have$, want$) >= 0
+    IF op$ = "~" THEN RETURN want$ IN SPLIT(Squeeze$(have$), " ")
+    RETURN have$ = want$
+ENDFUNC
+
+' ── entities ───────────────────────────────────────────────────
+
+' The named and numeric entities that turn up in text.
+EXPORT FUNC UNESCAPE$(text$)
+    IF INSTR(text$, "&") < 0 THEN RETURN text$
+    DIM out$ = ""
+    DIM i = 0
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ <> "&" THEN
+            out$ = out$ + ch$
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM shut = INSTR(i, text$, ";")
+        IF shut < 0 ORELSE shut - i > 10 THEN
+            out$ = out$ + ch$
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM piece$ = Entity$(MID$(text$, i + 1, shut - i - 1))
+        IF piece$ = "" THEN
+            out$ = out$ + ch$
+            i = i + 1
+        ELSE
+            out$ = out$ + piece$
+            i = shut + 1
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' An entity as text. The ones with a plain equivalent get it, so a
+' report or a CSV stays readable; everything else becomes UTF-8.
+FUNC Entity$(name$)
+    DIM low$ = LCASE$(name$)
+    IF low$ = "amp" THEN RETURN "&"
+    IF low$ = "lt" THEN RETURN "<"
+    IF low$ = "gt" THEN RETURN ">"
+    IF low$ = "quot" THEN RETURN CHR$(34)
+    IF low$ = "apos" THEN RETURN "'"
+    IF low$ = "nbsp" THEN RETURN " "
+    IF low$ = "ensp" ORELSE low$ = "emsp" ORELSE low$ = "thinsp" THEN RETURN " "
+    IF low$ = "mdash" ORELSE low$ = "ndash" ORELSE low$ = "minus" THEN RETURN "-"
+    IF low$ = "hellip" THEN RETURN "..."
+    IF low$ = "copy" THEN RETURN "(c)"
+    IF low$ = "reg" THEN RETURN "(r)"
+    IF low$ = "trade" THEN RETURN "(tm)"
+    IF low$ = "times" THEN RETURN "x"
+    IF low$ = "lsquo" ORELSE low$ = "rsquo" THEN RETURN "'"
+    IF low$ = "ldquo" ORELSE low$ = "rdquo" THEN RETURN CHR$(34)
+    IF LEFT$(low$, 2) = "#x" THEN RETURN Utf8$(VAL("0x" + MID$(low$, 2)))
+    IF LEFT$(low$, 1) = "#" THEN RETURN Utf8$(VAL(MID$(low$, 1)))
+    DIM code = Named(low$)
+    IF code > 0 THEN RETURN Utf8$(code)
+    RETURN ""
+ENDFUNC
+
+' The code point of the named entities a page is likely to carry.
+FUNC Named(name$)
+    IF name$ = "laquo" THEN RETURN 171
+    IF name$ = "raquo" THEN RETURN 187
+    IF name$ = "lsaquo" THEN RETURN 8249
+    IF name$ = "rsaquo" THEN RETURN 8250
+    IF name$ = "bull" THEN RETURN 8226
+    IF name$ = "middot" THEN RETURN 183
+    IF name$ = "sect" THEN RETURN 167
+    IF name$ = "para" THEN RETURN 182
+    IF name$ = "dagger" THEN RETURN 8224
+    IF name$ = "deg" THEN RETURN 176
+    IF name$ = "plusmn" THEN RETURN 177
+    IF name$ = "euro" THEN RETURN 8364
+    IF name$ = "pound" THEN RETURN 163
+    IF name$ = "yen" THEN RETURN 165
+    IF name$ = "cent" THEN RETURN 162
+    IF name$ = "larr" THEN RETURN 8592
+    IF name$ = "uarr" THEN RETURN 8593
+    IF name$ = "rarr" THEN RETURN 8594
+    IF name$ = "darr" THEN RETURN 8595
+    IF name$ = "harr" THEN RETURN 8596
+    IF name$ = "frac12" THEN RETURN 189
+    IF name$ = "frac14" THEN RETURN 188
+    IF name$ = "sup2" THEN RETURN 178
+    IF name$ = "sup3" THEN RETURN 179
+    IF name$ = "auml" THEN RETURN 228
+    IF name$ = "ouml" THEN RETURN 246
+    IF name$ = "uuml" THEN RETURN 252
+    IF name$ = "Auml" THEN RETURN 196
+    IF name$ = "szlig" THEN RETURN 223
+    IF name$ = "eacute" THEN RETURN 233
+    IF name$ = "egrave" THEN RETURN 232
+    IF name$ = "agrave" THEN RETURN 224
+    IF name$ = "ccedil" THEN RETURN 231
+    IF name$ = "ntilde" THEN RETURN 241
+    RETURN 0
+ENDFUNC
+
+' One code point as its UTF-8 bytes, the encoding a jdBasic string holds.
+FUNC Utf8$(code)
+    IF code < 128 THEN RETURN CHR$(code)
+    IF code < 2048 THEN RETURN CHR$(192 + code \ 64) + CHR$(128 + (code MOD 64))
+    IF code < 65536 THEN RETURN CHR$(224 + code \ 4096) + CHR$(128 + ((code \ 64) MOD 64)) + CHR$(128 + (code MOD 64))
+    RETURN CHR$(240 + code \ 262144) + CHR$(128 + ((code \ 4096) MOD 64)) + CHR$(128 + ((code \ 64) MOD 64)) + CHR$(128 + (code MOD 64))
+ENDFUNC
+
+' The characters that cannot stand for themselves in markup.
+EXPORT FUNC ESCAPE$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ = "&" THEN
+            out$ = out$ + "&amp;"
+        ELSEIF ch$ = "<" THEN
+            out$ = out$ + "&lt;"
+        ELSEIF ch$ = ">" THEN
+            out$ = out$ + "&gt;"
+        ELSEIF ch$ = CHR$(34) THEN
+            out$ = out$ + "&quot;"
+        ELSE
+            out$ = out$ + ch$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
