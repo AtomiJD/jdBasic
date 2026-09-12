@@ -320,7 +320,9 @@ FUNC Row$(cells, widths, align, border$, is_header)
         DIM a$ = align[c]
         IF is_header THEN
             IF a$ = "r" THEN a$ = "r" ELSE a$ = "l"
-            text$ = BOLD$(text$)
+            ' A markdown table is written to a file; its reader marks the
+            ' header itself, and an escape would show up as text.
+            IF border$ <> "markdown" THEN text$ = BOLD$(text$)
         ENDIF
         DIM piece$ = FIT$(text$, widths[c], a$)
         IF c = 0 ANDALSO (border$ = "plain" ORELSE border$ = "none") THEN

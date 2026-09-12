@@ -56,7 +56,9 @@ CONSOLE.FINISH(bar)
 | `title` | A line above the table. |
 
 Cells render numbers with `STR$`, booleans as `TRUE`/`FALSE`, arrays and
-maps as JSON, `NONE` as an empty cell.
+maps as JSON, `NONE` as an empty cell. The header is bold in the `box`,
+`plain` and `none` styles; a `markdown` table stays free of escapes, so
+it can go straight into a file, and its reader marks the header.
 
 ## Plain mode
 

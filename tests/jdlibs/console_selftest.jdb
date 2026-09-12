@@ -58,6 +58,12 @@ DIM bare = SPLIT(CONSOLE.TABLE$(rows, {"border": "none"}), NL$)
 TESTKIT.EQ(LEN(bare), 2, "no borders, no header")
 TESTKIT.EQ(bare[0], "Widget   3   9.5", "bare row")
 TESTKIT.EQ(CONSOLE.TABLE$([]), "", "an empty table is an empty string")
+CONSOLE.PLAIN(FALSE)
+DIM styled_md$ = CONSOLE.TABLE$(rows, {"headers": ["Item", "Qty", "Price"], "border": "markdown"})
+TESTKIT.EQ(INSTR(styled_md$, ESC$), -1, "a markdown table carries no escapes with styling on")
+DIM styled_box$ = CONSOLE.TABLE$(rows, {"headers": ["Item", "Qty", "Price"], "border": "box"})
+TESTKIT.ISTRUE(INSTR(styled_box$, ESC$ + "[1mItem") >= 0, "a box header is bold with styling on")
+CONSOLE.PLAIN(TRUE)
 
 TESTKIT.SUITE("map rows")
 DIM people = [{"name": "ann", "age": 41}, {"name": "bob", "age": 7, "city": "Bonn"}]
