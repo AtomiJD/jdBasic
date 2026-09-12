@@ -95,6 +95,7 @@ const std::unordered_set<std::string> kBridgeBoolReturners = {
     "FILE.AT_EOF",
     "THREAD.ISDONE",
     "OS.FEATURE",
+    "MAP.EXISTS", "FILE.EXISTS", "STARTSWITH", "ENDSWITH",
     "MIDI.SEND",
     "GFX.KEYSTATE", "GFX.MOUSEBUTTON", "MOUSEB", "JOY.BUTTON",
     "SPRITE.COLLISION", "SPRITE.ON_GROUND", "SPRITE.PLAYING",
@@ -2088,6 +2089,70 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // codegen_let_or_assign) can mark `DIM x = func(...)` as a string array.
     for (auto& [name, decl] : decls)
         if (decl.returns_string_array) string_array_returning_funcs.insert(name);
+
+    // A function that answers an array it pushed arrays into: the caller
+    // reads a cell as the array it holds. Without this the cell comes back
+    // as the bits of the pointer and reads as a number.
+    {
+        auto builds_nested = [&](const Stmt& body) -> bool {
+            std::unordered_set<std::string> holders;
+            std::unordered_set<std::string> nested;
+            bool answer = false;
+            std::function<bool(const Expr&)> is_arr_expr = [&](const Expr& e) -> bool {
+                if (e.kind == ExprKind::ARRAY_LITERAL) return true;
+                if (e.kind == ExprKind::VARIABLE) return holders.count(e.str_val) > 0;
+                if (e.kind == ExprKind::CALL) {
+                    std::string u = e.func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    if (u == "SPLIT") return true;
+                    auto cit = decls.find(e.func_name);
+                    if (cit != decls.end()) return cit->second.return_tag == JD_TAG_ARR;
+                }
+                return false;
+            };
+            std::function<void(const Expr&)> scan = [&](const Expr& e) {
+                if (e.kind == ExprKind::CALL) {
+                    std::string u = e.func_name;
+                    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                    if ((u == "PUSH" || u == "APPEND") && e.args.size() >= 2 &&
+                        e.args[0] && e.args[1] &&
+                        e.args[0]->kind == ExprKind::VARIABLE &&
+                        is_arr_expr(*e.args[1]))
+                        nested.insert(e.args[0]->str_val);
+                }
+                for (auto& a : e.args) if (a) scan(*a);
+                if (e.left) scan(*e.left);
+                if (e.right) scan(*e.right);
+            };
+            std::function<void(const Stmt&)> rec = [&](const Stmt& s2) {
+                if ((s2.kind == StmtKind::LET || s2.kind == StmtKind::ASSIGN ||
+                     s2.kind == StmtKind::DIM) && !s2.var_name.empty() && s2.expr) {
+                    if (is_arr_expr(*s2.expr)) holders.insert(s2.var_name);
+                }
+                if (s2.expr) scan(*s2.expr);
+                for (auto& pe : s2.print_exprs) if (pe) scan(*pe);
+                if (s2.kind == StmtKind::RETURN && s2.expr &&
+                    s2.expr->kind == ExprKind::VARIABLE &&
+                    nested.count(s2.expr->str_val))
+                    answer = true;
+                for (auto& b : s2.body) if (b) rec(*b);
+                for (auto& br : s2.branches) {
+                    if (br.condition) scan(*br.condition);
+                    for (auto& b : br.body) if (b) rec(*b);
+                }
+                for (auto& c : s2.catch_body()) if (c) rec(*c);
+                for (auto& f : s2.finally_body()) if (f) rec(*f);
+            };
+            rec(body);
+            rec(body);
+            return answer;
+        };
+        for (auto& [name, decl] : decls) {
+            if (decl.return_tag != JD_TAG_ARR || !decl.stmt) continue;
+            if (decl.returns_string_array) continue;
+            if (builds_nested(*decl.stmt)) nested_array_returning_funcs.insert(name);
+        }
+    }
 
     // Pre-Phase-4: tag-aware FUNC ABI promotion. A FUNC param that the
     // body passes to TYPEOF (and hasn't already been promoted to a more
@@ -4978,6 +5043,8 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
             u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
             array_array_vars.insert(stmt.var_name);
+        if (nested_array_returning_funcs.count(stmt.expr->func_name))
+            array_array_vars.insert(stmt.var_name);
         if (u == "DIR$") {
             bool extended = false;
             if (stmt.expr->args.size() >= 2 && stmt.expr->args[1]) {
@@ -5959,6 +6026,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         // their cells per kind.
         if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
             u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
+            array_array_vars.insert(stmt.var_name);
+        if (nested_array_returning_funcs.count(stmt.expr->func_name))
             array_array_vars.insert(stmt.var_name);
         if (u == "DIR$") {
             bool extended = false;

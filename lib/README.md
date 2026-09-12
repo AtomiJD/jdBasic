@@ -53,6 +53,7 @@ and SCHEMA) finds it through the same search.
 | `stats.jdb` | scipy.stats | the sample forms, shape, correlation and regression, t, chi square and rank sum tests, the normal, t and chi square distributions | [stats_lib_readme.md](stats_lib_readme.md) |
 | `cache.jdb` | functools.lru_cache, cachetools | a computed read that is answered once: a size limit that throws out the entry read longest ago, a lifetime per entry, keys built from parts, counters, and a file on disk | [cache_lib_readme.md](cache_lib_readme.md) |
 | `retry.jdb` | tenacity, backoff | a call made again with a growing wait: a random share, a ceiling on the run, a predicate for which errors are worth another try, and a callback for each one | [retry_lib_readme.md](retry_lib_readme.md) |
+| `graph.jdb` | networkx | nodes and links: traversal, components, cycles, topological order, Dijkstra and A star, all the ways between two nodes, and Graphviz output | [graph_lib_readme.md](graph_lib_readme.md) |
 
 ## Tests and demos
 

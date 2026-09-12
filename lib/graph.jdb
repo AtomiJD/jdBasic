@@ -1,0 +1,781 @@
+' graph.jdb - nodes, the links between them, and the questions that follow.
+'
+'   IMPORT GRAPH
+'   DIM g = GRAPH.NEW({"directed": TRUE})
+'   GRAPH.LINK(g, "lexer", "parser")
+'   PRINT JOIN(GRAPH.TOPO(g), " then ")
+'
+'   DIM road = GRAPH.FROMEDGES([["a", "b", 7], ["b", "c", 3]])
+'   DIM route = GRAPH.PATH(road, "a", "c")
+'   PRINT route{"cost"}; " through "; JOIN(route{"nodes"}, " ")
+'
+' A graph is a map the calls change in place. Nodes are named by strings
+' and keep the order they were added in, so every answer here comes out
+' the same on every run.
+
+EXPORT MODULE GRAPH
+
+CONST EDGE_SEP$ = CHR$(31)
+CONST WALK_SEP$ = CHR$(30)
+
+' ── making one ─────────────────────────────────────────────────
+
+' opts: "directed" (FALSE, so a link goes both ways).
+EXPORT FUNC NEW(opts = 0)
+    RETURN Blank(Directed(opts))
+ENDFUNC
+
+' A graph from an array of links, each [from, to] or [from, to, weight].
+EXPORT FUNC FROMEDGES(edges, opts = 0)
+    DIM g = Blank(Directed(opts))
+    DIM i = 0
+    FOR i = 0 TO LEN(edges) - 1
+        DIM row = edges[i]
+        DIM weight = 1
+        IF LEN(row) > 2 THEN weight = row[2]
+        LINK(g, row[0], row[1], weight)
+    NEXT i
+    RETURN g
+ENDFUNC
+
+' A graph from names and a square matrix of weights, where a zero means
+' there is no link.
+EXPORT FUNC FROMADJ(names, matrix, opts = 0)
+    DIM g = Blank(Directed(opts))
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        ADD(g, names[i])
+    NEXT i
+    FOR i = 0 TO LEN(names) - 1
+        DIM row = matrix[i]
+        DIM j = 0
+        FOR j = 0 TO LEN(row) - 1
+            IF row[j] <> 0 THEN LINK(g, names[i], names[j], row[j])
+        NEXT j
+    NEXT i
+    RETURN g
+ENDFUNC
+
+' ── changing one ───────────────────────────────────────────────
+
+' Adds a node on its own. A link adds its ends by itself.
+EXPORT SUB ADD(g, name$)
+    Ensure(g, name$)
+ENDSUB
+
+' Links two nodes. In a graph that is not directed the link goes both
+' ways. Linking the same pair again only changes the weight.
+EXPORT SUB LINK(g, a$, b$, weight = 1)
+    DIM added = Attach(g, a$, b$, weight)
+    IF NOT g{"directed"} ANDALSO a$ <> b$ THEN
+        DIM mirrored = Attach(g, b$, a$, weight)
+    ENDIF
+    IF added THEN g{"edges"} = g{"edges"} + 1
+ENDSUB
+
+' Takes the link out again.
+EXPORT SUB UNLINK(g, a$, b$)
+    DIM cut = Part(g, a$, b$)
+    IF NOT g{"directed"} ANDALSO a$ <> b$ THEN
+        DIM mirrored = Part(g, b$, a$)
+    ENDIF
+    IF cut THEN g{"edges"} = g{"edges"} - 1
+ENDSUB
+
+' Takes a node and every link that touches it out.
+EXPORT SUB DROP(g, name$)
+    DIM going = g{"out"}
+    IF NOT MAP.EXISTS(going, name$) THEN RETURN
+    DIM leaving = NEIGHBOURS(g, name$)
+    DIM i = 0
+    FOR i = 0 TO LEN(leaving) - 1
+        UNLINK(g, name$, leaving[i])
+    NEXT i
+    DIM arriving = SOURCES(g, name$)
+    FOR i = 0 TO LEN(arriving) - 1
+        UNLINK(g, arriving[i], name$)
+    NEXT i
+    DIM coming = g{"in"}
+    MAP.DELETE(going, name$)
+    MAP.DELETE(coming, name$)
+    DIM names = g{"names"}
+    DIM kept = []
+    FOR i = 0 TO LEN(names) - 1
+        IF names[i] <> name$ THEN PUSH(kept, names[i])
+    NEXT i
+    g{"names"} = kept
+ENDSUB
+
+' ── asking about one ───────────────────────────────────────────
+
+' The nodes, in the order they were added.
+EXPORT FUNC NODES(g)
+    RETURN Copied(g{"names"})
+ENDFUNC
+
+' The links as [from, to, weight]. A graph that is not directed names
+' each pair once.
+EXPORT FUNC EDGES(g)
+    DIM names = g{"names"}
+    DIM going = g{"out"}
+    DIM w = g{"w"}
+    DIM directed = g{"directed"}
+    DIM seen AS MAP
+    DIM rows = []
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM a$ = names[i]
+        DIM list = going{a$}
+        DIM n = 0
+        FOR n = 0 TO LEN(list) - 1
+            DIM b$ = list[n]
+            DIM key$ = a$ + EDGE_SEP$ + b$
+            IF NOT MAP.EXISTS(seen, key$) THEN
+                seen{key$} = TRUE
+                IF NOT directed THEN seen{b$ + EDGE_SEP$ + a$} = TRUE
+                PUSH(rows, [a$, b$, w{key$}])
+            ENDIF
+        NEXT n
+    NEXT i
+    RETURN rows
+ENDFUNC
+
+EXPORT FUNC HAS(g, name$)
+    DIM going = g{"out"}
+    RETURN MAP.EXISTS(going, name$)
+ENDFUNC
+
+EXPORT FUNC LINKED(g, a$, b$)
+    DIM w = g{"w"}
+    RETURN MAP.EXISTS(w, a$ + EDGE_SEP$ + b$)
+ENDFUNC
+
+' The weight of a link, or zero when there is none.
+EXPORT FUNC WEIGHT(g, a$, b$)
+    DIM w = g{"w"}
+    DIM key$ = a$ + EDGE_SEP$ + b$
+    IF NOT MAP.EXISTS(w, key$) THEN RETURN 0
+    RETURN w{key$}
+ENDFUNC
+
+' The nodes a link leads to.
+EXPORT FUNC NEIGHBOURS(g, name$)
+    RETURN Listed(g{"out"}, name$)
+ENDFUNC
+
+' The nodes a link comes from.
+EXPORT FUNC SOURCES(g, name$)
+    RETURN Listed(g{"in"}, name$)
+ENDFUNC
+
+' How many links touch the node.
+EXPORT FUNC DEGREE(g, name$)
+    DIM leaving = LEN(NEIGHBOURS(g, name$))
+    IF NOT g{"directed"} THEN RETURN leaving
+    RETURN leaving + LEN(SOURCES(g, name$))
+ENDFUNC
+
+EXPORT FUNC OUTDEGREE(g, name$)
+    RETURN LEN(NEIGHBOURS(g, name$))
+ENDFUNC
+
+EXPORT FUNC INDEGREE(g, name$)
+    RETURN LEN(SOURCES(g, name$))
+ENDFUNC
+
+' How many nodes there are.
+EXPORT FUNC ORDER(g)
+    RETURN LEN(g{"names"})
+ENDFUNC
+
+' How many links there are.
+EXPORT FUNC SIZE(g)
+    RETURN g{"edges"}
+ENDFUNC
+
+EXPORT FUNC ISDIRECTED(g)
+    RETURN g{"directed"}
+ENDFUNC
+
+' The share of the links that could exist that do, from zero to one.
+EXPORT FUNC DENSITY(g)
+    DIM n = LEN(g{"names"})
+    IF n < 2 THEN RETURN 0
+    DIM room = n * (n - 1)
+    IF NOT g{"directed"} THEN room = room / 2
+    RETURN g{"edges"} / room
+ENDFUNC
+
+' The weights as a square matrix in the order NODES gives, with a zero
+' where there is no link.
+EXPORT FUNC ADJ(g)
+    DIM names = g{"names"}
+    DIM w = g{"w"}
+    DIM rows = []
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM row = []
+        DIM j = 0
+        FOR j = 0 TO LEN(names) - 1
+            DIM key$ = names[i] + EDGE_SEP$ + names[j]
+            IF MAP.EXISTS(w, key$) THEN
+                PUSH(row, w{key$})
+            ELSE
+                PUSH(row, 0)
+            ENDIF
+        NEXT j
+        PUSH(rows, row)
+    NEXT i
+    RETURN rows
+ENDFUNC
+
+' ── walking it ─────────────────────────────────────────────────
+
+' The nodes reached from the start, nearest first, each once.
+EXPORT FUNC BFS(g, start$)
+    DIM out = []
+    IF NOT HAS(g, start$) THEN RETURN out
+    DIM seen AS MAP
+    DIM queue = [start$]
+    seen{start$} = TRUE
+    DIM head = 0
+    DO
+        IF head >= LEN(queue) THEN EXITDO
+        DIM here$ = queue[head]
+        head = head + 1
+        PUSH(out, here$)
+        DIM list = NEIGHBOURS(g, here$)
+        DIM i = 0
+        FOR i = 0 TO LEN(list) - 1
+            DIM to$ = list[i]
+            IF NOT MAP.EXISTS(seen, to$) THEN
+                seen{to$} = TRUE
+                PUSH(queue, to$)
+            ENDIF
+        NEXT i
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The nodes reached from the start, following each branch to its end
+' before taking the next.
+EXPORT FUNC DFS(g, start$)
+    DIM out = []
+    IF NOT HAS(g, start$) THEN RETURN out
+    DIM seen AS MAP
+    DIM stack = [start$]
+    DO
+        IF LEN(stack) = 0 THEN EXITDO
+        DIM here$ = stack[LEN(stack) - 1]
+        stack = Trimmed(stack)
+        IF NOT MAP.EXISTS(seen, here$) THEN
+            seen{here$} = TRUE
+            PUSH(out, here$)
+            DIM list = NEIGHBOURS(g, here$)
+            DIM i = 0
+            FOR i = LEN(list) - 1 TO 0 STEP -1
+                IF NOT MAP.EXISTS(seen, list[i]) THEN PUSH(stack, list[i])
+            NEXT i
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+' Whether a walk leads from one node to the other.
+EXPORT FUNC REACHES(g, a$, b$)
+    IF NOT HAS(g, a$) THEN RETURN FALSE
+    IF a$ = b$ THEN RETURN TRUE
+    DIM walked = BFS(g, a$)
+    RETURN b$ IN walked
+ENDFUNC
+
+' The groups of nodes that are joined to each other, ignoring which way
+' a link points.
+EXPORT FUNC COMPONENTS(g)
+    DIM names = g{"names"}
+    DIM seen AS MAP
+    DIM groups = []
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM start$ = names[i]
+        IF NOT MAP.EXISTS(seen, start$) THEN
+            DIM group = []
+            DIM queue = [start$]
+            seen{start$} = TRUE
+            DIM head = 0
+            DO
+                IF head >= LEN(queue) THEN EXITDO
+                DIM here$ = queue[head]
+                head = head + 1
+                PUSH(group, here$)
+                DIM touching = Both(g, here$)
+                DIM n = 0
+                FOR n = 0 TO LEN(touching) - 1
+                    DIM to$ = touching[n]
+                    IF NOT MAP.EXISTS(seen, to$) THEN
+                        seen{to$} = TRUE
+                        PUSH(queue, to$)
+                    ENDIF
+                NEXT n
+            LOOP
+            PUSH(groups, group)
+        ENDIF
+    NEXT i
+    RETURN groups
+ENDFUNC
+
+' The nodes of one cycle, the first repeated at the end, or an empty
+' array when there is none.
+EXPORT FUNC CYCLE(g)
+    DIM names = g{"names"}
+    DIM colour AS MAP
+    DIM parent AS MAP
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        IF NOT MAP.EXISTS(colour, names[i]) THEN
+            DIM hit = Loops(g, names[i], "", colour, parent)
+            IF LEN(hit) > 0 THEN RETURN hit
+        ENDIF
+    NEXT i
+    DIM none = []
+    RETURN none
+ENDFUNC
+
+' Whether the graph is directed and has no cycle.
+EXPORT FUNC ISDAG(g)
+    IF NOT g{"directed"} THEN RETURN FALSE
+    RETURN LEN(CYCLE(g)) = 0
+ENDFUNC
+
+' The nodes in an order where every link points forwards. Raises when
+' the graph is not directed or has a cycle, naming the nodes on it.
+EXPORT FUNC TOPO(g)
+    IF NOT g{"directed"} THEN THROW "GRAPH.TOPO needs a directed graph"
+    DIM names = g{"names"}
+    DIM waiting AS MAP
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        waiting{names[i]} = LEN(SOURCES(g, names[i]))
+    NEXT i
+    DIM out = []
+    DIM placed AS MAP
+    DO
+        DIM pick$ = ""
+        DIM got = FALSE
+        FOR i = 0 TO LEN(names) - 1
+            DIM name$ = names[i]
+            IF NOT MAP.EXISTS(placed, name$) ANDALSO waiting{name$} = 0 THEN
+                pick$ = name$
+                got = TRUE
+                EXITFOR
+            ENDIF
+        NEXT i
+        IF NOT got THEN EXITDO
+        placed{pick$} = TRUE
+        PUSH(out, pick$)
+        DIM list = NEIGHBOURS(g, pick$)
+        DIM n = 0
+        FOR n = 0 TO LEN(list) - 1
+            DIM to$ = list[n]
+            waiting{to$} = waiting{to$} - 1
+        NEXT n
+    LOOP
+    IF LEN(out) < LEN(names) THEN
+        DIM ring = CYCLE(g)
+        THROW "GRAPH.TOPO: the graph has a cycle through " + JOIN(ring, " -> ")
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' ── the way through ────────────────────────────────────────────
+
+' The cheapest walk from one node to the other: found, nodes, cost,
+' hops. Weights must not be negative.
+EXPORT FUNC PATH(g, a$, b$)
+    DIM plan = Routes(g, a$, b$, 0, FALSE)
+    RETURN Walked(plan, a$, b$)
+ENDFUNC
+
+' The same, with a guess of what is left to pay. The guess is called
+' with the node and the target and must never ask for more than the
+' real remainder.
+EXPORT FUNC ASTAR(g, a$, b$, guess)
+    DIM plan = Routes(g, a$, b$, guess, TRUE)
+    RETURN Walked(plan, a$, b$)
+ENDFUNC
+
+' The cost of reaching every node from the one named, as a map. A node
+' nothing leads to is left out.
+EXPORT FUNC DIST(g, from$)
+    DIM plan = Routes(g, from$, "", 0, FALSE)
+    RETURN plan{"cost"}
+ENDFUNC
+
+' Every walk from one node to the other that visits no node twice, the
+' shortest first. A max_hops of zero means no limit.
+EXPORT FUNC ALLPATHS(g, a$, b$, max_hops = 0)
+    DIM out = []
+    IF NOT HAS(g, a$) ORELSE NOT HAS(g, b$) THEN RETURN out
+    DIM seen AS MAP
+    seen{a$} = TRUE
+    DIM found$ = Shortest$(Wander$(g, a$, b$, max_hops, seen, a$))
+    IF LEN(found$) = 0 THEN RETURN out
+    DIM walks = SPLIT(found$, WALK_SEP$)
+    DIM i = 0
+    FOR i = 0 TO LEN(walks) - 1
+        PUSH(out, SPLIT(walks[i], EDGE_SEP$))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── writing it out ─────────────────────────────────────────────
+
+' The graph as Graphviz text. opts: "name", "weights" (TRUE to write
+' them on the links), "rankdir".
+EXPORT FUNC DOT$(g, opts = 0)
+    DIM title$ = "G"
+    DIM weights = TRUE
+    DIM rankdir$ = ""
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "name") THEN title$ = opts{"name"}
+        IF MAP.EXISTS(opts, "weights") THEN weights = opts{"weights"}
+        IF MAP.EXISTS(opts, "rankdir") THEN rankdir$ = opts{"rankdir"}
+    ENDIF
+    DIM arrow$ = " -- "
+    DIM opener$ = "graph "
+    IF g{"directed"} THEN
+        arrow$ = " -> "
+        opener$ = "digraph "
+    ENDIF
+    DIM lines = []
+    PUSH(lines, opener$ + Quoted$(title$) + " {")
+    IF LEN(rankdir$) > 0 THEN PUSH(lines, "  rankdir=" + rankdir$ + ";")
+    DIM names = g{"names"}
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        IF DEGREE(g, names[i]) = 0 THEN PUSH(lines, "  " + Quoted$(names[i]) + ";")
+    NEXT i
+    DIM rows = EDGES(g)
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row = rows[i]
+        DIM text$ = "  " + Quoted$(row[0]) + arrow$ + Quoted$(row[1])
+        IF weights THEN text$ = text$ + " [label=" + Quoted$(STR$(row[2])) + "]"
+        PUSH(lines, text$ + ";")
+    NEXT i
+    PUSH(lines, "}")
+    RETURN JOIN(lines, CHR$(10))
+ENDFUNC
+
+' ── underneath ─────────────────────────────────────────────────
+
+FUNC Blank(directed)
+    DIM g AS MAP
+    DIM going AS MAP
+    DIM coming AS MAP
+    DIM weights AS MAP
+    g{"directed"} = directed
+    g{"names"} = []
+    g{"out"} = going
+    g{"in"} = coming
+    g{"w"} = weights
+    g{"edges"} = 0
+    RETURN g
+ENDFUNC
+
+FUNC Directed(opts)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN FALSE
+    IF NOT MAP.EXISTS(opts, "directed") THEN RETURN FALSE
+    RETURN opts{"directed"}
+ENDFUNC
+
+SUB Ensure(g, name$)
+    DIM going = g{"out"}
+    IF MAP.EXISTS(going, name$) THEN RETURN
+    going{name$} = []
+    DIM coming = g{"in"}
+    coming{name$} = []
+    DIM names = g{"names"}
+    PUSH(names, name$)
+    g{"names"} = names
+ENDSUB
+
+' Adds one direction and says whether it was not there before.
+FUNC Attach(g, a$, b$, weight)
+    Ensure(g, a$)
+    Ensure(g, b$)
+    DIM w = g{"w"}
+    DIM key$ = a$ + EDGE_SEP$ + b$
+    DIM fresh = NOT MAP.EXISTS(w, key$)
+    w{key$} = weight
+    IF fresh THEN
+        DIM going = g{"out"}
+        DIM list = going{a$}
+        PUSH(list, b$)
+        going{a$} = list
+        DIM coming = g{"in"}
+        DIM sources = coming{b$}
+        PUSH(sources, a$)
+        coming{b$} = sources
+    ENDIF
+    RETURN fresh
+ENDFUNC
+
+' Takes one direction out and says whether there was one.
+FUNC Part(g, a$, b$)
+    DIM w = g{"w"}
+    DIM key$ = a$ + EDGE_SEP$ + b$
+    IF NOT MAP.EXISTS(w, key$) THEN RETURN FALSE
+    MAP.DELETE(w, key$)
+    DIM going = g{"out"}
+    going{a$} = Without(going{a$}, b$)
+    DIM coming = g{"in"}
+    coming{b$} = Without(coming{b$}, a$)
+    RETURN TRUE
+ENDFUNC
+
+FUNC Without(list, name$)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 1
+        IF list[i] <> name$ THEN PUSH(out, list[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Copied(list)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 1
+        PUSH(out, list[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The list without its last entry.
+FUNC Trimmed(list)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 2
+        PUSH(out, list[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Listed(holder, name$)
+    DIM out = []
+    IF NOT MAP.EXISTS(holder, name$) THEN RETURN out
+    RETURN Copied(holder{name$})
+ENDFUNC
+
+' Every node a link joins to this one, whichever way it points.
+FUNC Both(g, name$)
+    DIM out = NEIGHBOURS(g, name$)
+    IF NOT g{"directed"} THEN RETURN out
+    DIM coming = SOURCES(g, name$)
+    DIM i = 0
+    FOR i = 0 TO LEN(coming) - 1
+        IF NOT (coming[i] IN out) THEN PUSH(out, coming[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Colours a node while its branches are walked: 1 on the way down, 2
+' once it is done. A link back to a node still on the way down closes a
+' cycle.
+FUNC Loops(g, here$, came$, colour, parent)
+    colour{here$} = 1
+    DIM list = NEIGHBOURS(g, here$)
+    DIM directed = g{"directed"}
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 1
+        DIM to$ = list[i]
+        DIM skip = FALSE
+        IF NOT directed ANDALSO to$ = came$ THEN skip = TRUE
+        IF NOT skip THEN
+            IF NOT MAP.EXISTS(colour, to$) THEN
+                parent{to$} = here$
+                DIM deeper = Loops(g, to$, here$, colour, parent)
+                IF LEN(deeper) > 0 THEN RETURN deeper
+            ELSE
+                IF colour{to$} = 1 THEN RETURN Ring(parent, here$, to$)
+            ENDIF
+        ENDIF
+    NEXT i
+    colour{here$} = 2
+    DIM none = []
+    RETURN none
+ENDFUNC
+
+' The nodes from the one the cycle closes on down to the one that found
+' it, with the first repeated at the end.
+FUNC Ring(parent, from$, to$)
+    DIM backwards = [from$]
+    DIM here$ = from$
+    DO
+        IF here$ = to$ THEN EXITDO
+        IF NOT MAP.EXISTS(parent, here$) THEN EXITDO
+        here$ = parent{here$}
+        PUSH(backwards, here$)
+    LOOP
+    DIM out = []
+    DIM i = 0
+    FOR i = LEN(backwards) - 1 TO 0 STEP -1
+        PUSH(out, backwards[i])
+    NEXT i
+    PUSH(out, to$)
+    RETURN out
+ENDFUNC
+
+' Dijkstra, or A star when a guess is given. Stops as soon as the
+' target is settled.
+FUNC Routes(g, from$, target$, guess, guided)
+    DIM cost AS MAP
+    DIM prev AS MAP
+    DIM settled AS MAP
+    DIM plan AS MAP
+    plan{"cost"} = cost
+    plan{"prev"} = prev
+    IF NOT HAS(g, from$) THEN RETURN plan
+    cost{from$} = 0
+    DIM w = g{"w"}
+    DO
+        DIM pick$ = ""
+        DIM got = FALSE
+        DIM lowest = 0.0
+        DIM keys = MAP.KEYS(cost)
+        DIM i = 0
+        FOR i = 0 TO LEN(keys) - 1
+            DIM k$ = keys[i]
+            IF NOT MAP.EXISTS(settled, k$) THEN
+                DIM rank = cost{k$}
+                IF guided THEN rank = rank + guess(k$, target$)
+                IF NOT got ORELSE rank < lowest THEN
+                    pick$ = k$
+                    lowest = rank
+                    got = TRUE
+                ENDIF
+            ENDIF
+        NEXT i
+        IF NOT got THEN EXITDO
+        settled{pick$} = TRUE
+        IF LEN(target$) > 0 ANDALSO pick$ = target$ THEN EXITDO
+        DIM here = cost{pick$}
+        DIM list = NEIGHBOURS(g, pick$)
+        DIM n = 0
+        FOR n = 0 TO LEN(list) - 1
+            DIM to$ = list[n]
+            DIM total = here + w{pick$ + EDGE_SEP$ + to$}
+            IF NOT MAP.EXISTS(cost, to$) THEN
+                cost{to$} = total
+                prev{to$} = pick$
+            ELSE
+                IF total < cost{to$} THEN
+                    cost{to$} = total
+                    prev{to$} = pick$
+                ENDIF
+            ENDIF
+        NEXT n
+    LOOP
+    RETURN plan
+ENDFUNC
+
+' The walk a plan leads back along, as the report PATH answers.
+FUNC Walked(plan, a$, b$)
+    DIM out AS MAP
+    DIM cost = plan{"cost"}
+    DIM prev = plan{"prev"}
+    DIM empty = []
+    out{"found"} = FALSE
+    out{"nodes"} = empty
+    out{"cost"} = 0
+    out{"hops"} = 0
+    IF NOT MAP.EXISTS(cost, b$) THEN RETURN out
+    DIM backwards = []
+    DIM here$ = b$
+    DO
+        PUSH(backwards, here$)
+        IF here$ = a$ THEN EXITDO
+        IF NOT MAP.EXISTS(prev, here$) THEN EXITDO
+        here$ = prev{here$}
+    LOOP
+    DIM nodes = []
+    DIM i = 0
+    FOR i = LEN(backwards) - 1 TO 0 STEP -1
+        PUSH(nodes, backwards[i])
+    NEXT i
+    out{"found"} = TRUE
+    out{"nodes"} = nodes
+    out{"cost"} = cost{b$}
+    out{"hops"} = LEN(nodes) - 1
+    RETURN out
+ENDFUNC
+
+' Every walk on from here: the names of one walk joined by the node
+' separator, the walks by the walk separator, so the recursion carries
+' one string and nothing has to be read back out of an array.
+FUNC Wander$(g, here$, target$, max_hops, seen, sofar$)
+    IF here$ = target$ THEN RETURN sofar$
+    IF max_hops > 0 ANDALSO Hops(sofar$) >= max_hops THEN RETURN ""
+    DIM out$ = ""
+    DIM list = NEIGHBOURS(g, here$)
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 1
+        DIM to$ = list[i]
+        IF NOT MAP.EXISTS(seen, to$) THEN
+            seen{to$} = TRUE
+            DIM deeper$ = Wander$(g, to$, target$, max_hops, seen, sofar$ + EDGE_SEP$ + to$)
+            MAP.DELETE(seen, to$)
+            IF LEN(deeper$) > 0 THEN
+                IF LEN(out$) > 0 THEN out$ = out$ + WALK_SEP$
+                out$ = out$ + deeper$
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' How many links a joined walk has taken.
+FUNC Hops(walk$)
+    RETURN LEN(SPLIT(walk$, EDGE_SEP$)) - 1
+ENDFUNC
+
+' The same walks with the fewest nodes first, ties in the order they
+' were found.
+FUNC Shortest$(all$)
+    IF LEN(all$) = 0 THEN RETURN ""
+    DIM walks = SPLIT(all$, WALK_SEP$)
+    DIM taken AS MAP
+    DIM out$ = ""
+    DIM placed = 0
+    FOR placed = 0 TO LEN(walks) - 1
+        DIM pick = -1
+        DIM fewest = 0
+        DIM i = 0
+        FOR i = 0 TO LEN(walks) - 1
+            IF NOT MAP.EXISTS(taken, STR$(i)) THEN
+                DIM length = Hops(walks[i])
+                IF pick < 0 ORELSE length < fewest THEN
+                    pick = i
+                    fewest = length
+                ENDIF
+            ENDIF
+        NEXT i
+        IF pick < 0 THEN EXITFOR
+        taken{STR$(pick)} = TRUE
+        IF LEN(out$) > 0 THEN out$ = out$ + WALK_SEP$
+        out$ = out$ + walks[pick]
+    NEXT placed
+    RETURN out$
+ENDFUNC
+
+FUNC Quoted$(text$)
+    DIM q$ = CHR$(34)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ = q$ THEN out$ = out$ + CHR$(92)
+        out$ = out$ + ch$
+    NEXT i
+    RETURN q$ + out$ + q$
+ENDFUNC

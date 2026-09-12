@@ -1,0 +1,160 @@
+' graph_demo.jdb - a build pipeline, a road map, and a room full of people.
+'
+' Three graphs and the questions each one answers: what order the parts
+' of a build have to be made in and what a change to one of them costs,
+' the cheapest way across a map by weight and with a straight line
+' distance to guide the search, and who in a room is connected to whom.
+' The last section writes the pipeline out as Graphviz text.
+'
+'   jdBasic graph_demo.jdb
+
+IMPORT GRAPH, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+
+' ── a build pipeline ───────────────────────────────────────────
+
+CONSOLE.RULE("what has to be made before what", "=")
+DIM build = GRAPH.NEW({"directed": TRUE})
+GRAPH.LINK(build, "grammar", "lexer")
+GRAPH.LINK(build, "lexer", "parser")
+GRAPH.LINK(build, "parser", "ast")
+GRAPH.LINK(build, "ast", "checker")
+GRAPH.LINK(build, "ast", "codegen")
+GRAPH.LINK(build, "checker", "codegen")
+GRAPH.LINK(build, "codegen", "runtime")
+GRAPH.LINK(build, "runtime", "binary")
+GRAPH.LINK(build, "checker", "docs")
+
+DIM order = GRAPH.TOPO(build)
+PRINT "  " + JOIN(order, "  ->  ")
+PRINT ""
+DIM rows = []
+DIM i = 0
+FOR i = 0 TO LEN(order) - 1
+    DIM part$ = order[i]
+    DIM after = GRAPH.BFS(build, part$)
+    DIM downstream = LEN(after) - 1
+    DIM mark$ = STR$(downstream)
+    IF downstream >= 4 THEN mark$ = CONSOLE.RED$(mark$)
+    PUSH(rows, [STR$(i + 1), part$, JOIN(GRAPH.SOURCES(build, part$), ", "), JOIN(GRAPH.NEIGHBOURS(build, part$), ", "), mark$])
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["step", "part", "needs", "feeds", "parts after it"], "align": ["r", "l", "l", "l", "r"], "max_width": 78})
+PRINT "  a change to a part with many parts after it is the expensive one"
+PRINT ""
+
+CONSOLE.KV([["parts", STR$(GRAPH.ORDER(build))], ["dependencies", STR$(GRAPH.SIZE(build))], ["without cycles", STR$(GRAPH.ISDAG(build))], ["ways from grammar to binary", STR$(LEN(GRAPH.ALLPATHS(build, "grammar", "binary")))], ["docs needs the binary", STR$(GRAPH.REACHES(build, "docs", "binary"))]], 2)
+PRINT ""
+
+' ── the same pipeline with a mistake in it ─────────────────────
+
+CONSOLE.RULE("a dependency that loops back")
+GRAPH.LINK(build, "docs", "grammar")
+DIM ring = GRAPH.CYCLE(build)
+PRINT "  the cycle: " + CONSOLE.RED$(JOIN(ring, " -> "))
+TRY
+    DIM broken = GRAPH.TOPO(build)
+    PRINT "  sorted after all"
+CATCH
+    PRINT "  " + CONSOLE.YELLOW$(ERRMSG$)
+ENDTRY
+GRAPH.UNLINK(build, "docs", "grammar")
+PRINT "  with the link taken out again it sorts: " + STR$(GRAPH.ISDAG(build))
+PRINT ""
+
+' ── a road map ─────────────────────────────────────────────────
+
+CONSOLE.RULE("the cheapest way across a map")
+DIM towns AS MAP
+towns{"harbour"} = [0, 0]
+towns{"mill"} = [2, 1]
+towns{"bridge"} = [4, 0]
+towns{"quarry"} = [3, 4]
+towns{"abbey"} = [6, 3]
+towns{"market"} = [8, 1]
+
+DIM roads = GRAPH.NEW()
+GRAPH.LINK(roads, "harbour", "mill", 3)
+GRAPH.LINK(roads, "harbour", "bridge", 9)
+GRAPH.LINK(roads, "mill", "bridge", 3)
+GRAPH.LINK(roads, "mill", "quarry", 5)
+GRAPH.LINK(roads, "bridge", "abbey", 4)
+GRAPH.LINK(roads, "quarry", "abbey", 3)
+GRAPH.LINK(roads, "abbey", "market", 3)
+GRAPH.LINK(roads, "bridge", "market", 9)
+
+FUNC AsCrow(here$, goal$)
+    DIM a = towns{here$}
+    DIM b = towns{goal$}
+    RETURN SQR((a[0] - b[0]) ^ 2 + (a[1] - b[1]) ^ 2)
+ENDFUNC
+
+DIM plain = GRAPH.PATH(roads, "harbour", "market")
+DIM guided = GRAPH.ASTAR(roads, "harbour", "market", AsCrow@)
+CONSOLE.KV([["by weight alone", JOIN(plain{"nodes"}, " -> ") + "   " + STR$(plain{"cost"}) + " miles"], ["with a straight line guess", JOIN(guided{"nodes"}, " -> ") + "   " + STR$(guided{"cost"}) + " miles"], ["hops", STR$(plain{"hops"}) + " roads"]], 2)
+PRINT "  the guess never claims more than the road can cost, so it finds the same way"
+PRINT ""
+
+DIM reach = GRAPH.DIST(roads, "harbour")
+DIM cost_rows = []
+DIM names = GRAPH.NODES(roads)
+FOR i = 0 TO LEN(names) - 1
+    DIM town$ = names[i]
+    PUSH(cost_rows, [town$, STR$(reach{town$}), FORMAT$("{:.2f}", AsCrow("harbour", town$)), STR$(GRAPH.DEGREE(roads, town$))])
+NEXT i
+CONSOLE.TABLE(cost_rows, {"headers": ["town", "by road", "as the crow flies", "roads"], "align": ["l", "r", "r", "r"]})
+PRINT ""
+DIM ways = GRAPH.ALLPATHS(roads, "harbour", "market", 4)
+PRINT "  ways from the harbour to the market in four roads or fewer:"
+FOR i = 0 TO LEN(ways) - 1
+    DIM way = ways[i]
+    DIM miles = 0.0
+    DIM n = 0
+    FOR n = 0 TO LEN(way) - 2
+        miles = miles + GRAPH.WEIGHT(roads, way[n], way[n + 1])
+    NEXT n
+    DIM label$ = JOIN(way, " -> ") + "   " + STR$(miles) + " miles"
+    IF miles = plain{"cost"} THEN label$ = CONSOLE.GREEN$(label$)
+    PRINT "    " + label$
+NEXT i
+PRINT ""
+
+' ── a room full of people ──────────────────────────────────────
+
+CONSOLE.RULE("who knows whom")
+DIM room = GRAPH.FROMEDGES([["ada", "grace"], ["grace", "alan"], ["ada", "alan"], _
+                            ["edsger", "tony"], ["tony", "niklaus"], _
+                            ["barbara", "john"], ["john", "kathleen"], ["kathleen", "barbara"], _
+                            ["john", "grace"]])
+GRAPH.ADD(room, "quiet one")
+DIM groups = GRAPH.COMPONENTS(room)
+DIM group_rows = []
+FOR i = 0 TO LEN(groups) - 1
+    DIM group = groups[i]
+    PUSH(group_rows, [STR$(i + 1), STR$(LEN(group)), JOIN(group, ", ")])
+NEXT i
+CONSOLE.TABLE(group_rows, {"headers": ["group", "people", "who"], "align": ["r", "r", "l"], "max_width": 78})
+DIM busiest$ = ""
+DIM most = -1.0
+FOR i = 0 TO LEN(GRAPH.NODES(room)) - 1
+    DIM who$ = GRAPH.NODES(room)[i]
+    IF GRAPH.DEGREE(room, who$) > most THEN
+        most = GRAPH.DEGREE(room, who$)
+        busiest$ = who$
+    ENDIF
+NEXT i
+CONSOLE.KV([["people", STR$(GRAPH.ORDER(room))], ["acquaintances", STR$(GRAPH.SIZE(room))], ["groups", STR$(LEN(groups))], ["knows the most", busiest$ + " with " + STR$(most)], ["how full the room is", FORMAT$("{:.1f} % of every possible pair", GRAPH.DENSITY(room) * 100)]], 2)
+PRINT ""
+
+' ── written out for rendering ──────────────────────────────────
+
+CONSOLE.RULE("the pipeline as Graphviz")
+DIM work$ = MKTEMP$("graphdemo")
+MKDIR work$
+DIM path$ = work$ + "/pipeline.dot"
+DIM text$ = GRAPH.DOT$(build, {"name": "build", "rankdir": "LR", "weights": FALSE})
+TXTWRITER path$, text$
+PRINT text$
+PRINT ""
+PRINT "  written to " + path$
+PRINT "  render it with: dot -Tpng " + path$ + " -o pipeline.png"

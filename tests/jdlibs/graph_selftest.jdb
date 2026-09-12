@@ -1,0 +1,266 @@
+' GRAPH: nodes and links, the counts that follow from them, the walks,
+' cycles, the order of work, the cheapest way through against a graph
+' whose distances are known, and the Graphviz text.
+
+IMPORT TESTKIT, GRAPH
+
+' The graph the textbooks use for Dijkstra: six nodes, nine links, and
+' the distances from a are 0, 7, 9, 20, 20, 11.
+FUNC Reference()
+    RETURN GRAPH.FROMEDGES([["a", "b", 7], ["a", "c", 9], ["a", "f", 14], _
+                            ["b", "c", 10], ["b", "d", 15], ["c", "d", 11], _
+                            ["c", "f", 2], ["d", "e", 6], ["e", "f", 9]])
+ENDFUNC
+
+' What the library itself builds in what order: every module needs
+' TESTKIT for its self test, DF prints through CONSOLE, and LLMAPI is
+' written on REQ and SCHEMA.
+FUNC Library()
+    DIM g = GRAPH.NEW({"directed": TRUE})
+    DIM parts = ["CLI", "REQ", "SCHEMA", "CONSOLE", "DF", "LLMAPI"]
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        GRAPH.LINK(g, "TESTKIT", parts[i])
+    NEXT i
+    GRAPH.LINK(g, "CONSOLE", "DF")
+    GRAPH.LINK(g, "REQ", "LLMAPI")
+    GRAPH.LINK(g, "SCHEMA", "LLMAPI")
+    RETURN g
+ENDFUNC
+
+FUNC Guess(here$, goal$)
+    IF here$ = goal$ THEN RETURN 0
+    RETURN 1
+ENDFUNC
+
+FUNC Overshoot(here$, goal$)
+    RETURN 0
+ENDFUNC
+
+TESTKIT.SUITE("making one")
+DIM plain = GRAPH.NEW()
+TESTKIT.EQ(GRAPH.ORDER(plain), 0, "a new graph has no nodes")
+TESTKIT.EQ(GRAPH.SIZE(plain), 0, "and no links")
+TESTKIT.ISFALSE(GRAPH.ISDIRECTED(plain), "it is not directed by default")
+DIM aimed = GRAPH.NEW({"directed": TRUE})
+TESTKIT.ISTRUE(GRAPH.ISDIRECTED(aimed), "asking for directed gives a directed one")
+DIM listed = GRAPH.FROMEDGES([["a", "b"], ["b", "c", 5]])
+TESTKIT.EQ(GRAPH.ORDER(listed), 3, "links name their own nodes")
+TESTKIT.EQ(GRAPH.SIZE(listed), 2, "two links")
+TESTKIT.EQ(GRAPH.WEIGHT(listed, "a", "b"), 1, "a link without a weight weighs one")
+TESTKIT.EQ(GRAPH.WEIGHT(listed, "b", "c"), 5, "a link with one keeps it")
+DIM square = GRAPH.FROMADJ(["p", "q", "r"], [[0, 4, 0], [0, 0, 5], [2, 0, 0]], {"directed": TRUE})
+TESTKIT.EQ(GRAPH.ORDER(square), 3, "the names became the nodes")
+TESTKIT.EQ(GRAPH.SIZE(square), 3, "a number that is not zero became a link")
+TESTKIT.EQ(GRAPH.WEIGHT(square, "q", "r"), 5, "with the weight from the matrix")
+TESTKIT.ISFALSE(GRAPH.LINKED(square, "r", "q"), "and only the way the matrix points")
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.ADJ(square)), JSON.STRINGIFY$([[0, 4, 0], [0, 0, 5], [2, 0, 0]]), "the matrix comes back as it went in")
+
+TESTKIT.SUITE("nodes and links")
+DIM g = GRAPH.NEW()
+GRAPH.ADD(g, "alone")
+TESTKIT.EQ(GRAPH.ORDER(g), 1, "a node can stand on its own")
+TESTKIT.EQ(GRAPH.DEGREE(g, "alone"), 0, "with nothing touching it")
+GRAPH.LINK(g, "a", "b", 3)
+TESTKIT.ISTRUE(GRAPH.HAS(g, "a"), "a link brings its ends with it")
+TESTKIT.ISTRUE(GRAPH.LINKED(g, "a", "b"), "the link is there")
+TESTKIT.ISTRUE(GRAPH.LINKED(g, "b", "a"), "and in a graph that is not directed it goes both ways")
+TESTKIT.EQ(GRAPH.WEIGHT(g, "b", "a"), 3, "with the same weight")
+TESTKIT.EQ(GRAPH.SIZE(g), 1, "counted once")
+GRAPH.LINK(g, "a", "b", 8)
+TESTKIT.EQ(GRAPH.SIZE(g), 1, "linking the same pair again adds nothing")
+TESTKIT.EQ(GRAPH.WEIGHT(g, "a", "b"), 8, "but the weight is the new one")
+TESTKIT.EQ(GRAPH.WEIGHT(g, "a", "nowhere"), 0, "a link that is not there weighs nothing")
+TESTKIT.ISFALSE(GRAPH.LINKED(g, "a", "nowhere"), "and says so")
+GRAPH.LINK(g, "a", "c", 2)
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.NEIGHBOURS(g, "a")), JSON.STRINGIFY$(["b", "c"]), "the neighbours in the order they were linked")
+TESTKIT.EQ(GRAPH.DEGREE(g, "a"), 2, "two links touch it")
+GRAPH.UNLINK(g, "a", "b")
+TESTKIT.ISFALSE(GRAPH.LINKED(g, "a", "b"), "unlinking takes it out")
+TESTKIT.ISFALSE(GRAPH.LINKED(g, "b", "a"), "both ways")
+TESTKIT.EQ(GRAPH.SIZE(g), 1, "and the count follows")
+TESTKIT.ISTRUE(GRAPH.HAS(g, "b"), "the node stays behind")
+GRAPH.DROP(g, "b")
+TESTKIT.ISFALSE(GRAPH.HAS(g, "b"), "dropping takes the node too")
+TESTKIT.EQ(GRAPH.ORDER(g), 3, "one node fewer")
+
+TESTKIT.SUITE("which way a link points")
+DIM one_way = GRAPH.NEW({"directed": TRUE})
+GRAPH.LINK(one_way, "up", "down", 4)
+TESTKIT.ISTRUE(GRAPH.LINKED(one_way, "up", "down"), "the link is there the way it was made")
+TESTKIT.ISFALSE(GRAPH.LINKED(one_way, "down", "up"), "and not the other way")
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.NEIGHBOURS(one_way, "up")), JSON.STRINGIFY$(["down"]), "down is where up leads")
+TESTKIT.EQ(LEN(GRAPH.NEIGHBOURS(one_way, "down")), 0, "down leads nowhere")
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.SOURCES(one_way, "down")), JSON.STRINGIFY$(["up"]), "but up comes to it")
+TESTKIT.EQ(GRAPH.OUTDEGREE(one_way, "up"), 1, "one link out")
+TESTKIT.EQ(GRAPH.INDEGREE(one_way, "up"), 0, "none in")
+TESTKIT.EQ(GRAPH.DEGREE(one_way, "up"), 1, "so one in all")
+GRAPH.LINK(one_way, "down", "up", 9)
+TESTKIT.EQ(GRAPH.SIZE(one_way), 2, "the way back is a link of its own")
+TESTKIT.EQ(GRAPH.WEIGHT(one_way, "down", "up"), 9, "with its own weight")
+
+TESTKIT.SUITE("counting")
+DIM ref = Reference()
+TESTKIT.EQ(GRAPH.ORDER(ref), 6, "six nodes")
+TESTKIT.EQ(GRAPH.SIZE(ref), 9, "nine links")
+TESTKIT.EQ(LEN(GRAPH.EDGES(ref)), 9, "each named once")
+TESTKIT.NEAR(GRAPH.DENSITY(ref), 0.6, 0.000001, "nine of the fifteen that could exist")
+TESTKIT.EQ(GRAPH.DENSITY(GRAPH.NEW()), 0, "an empty graph has no density")
+DIM full = GRAPH.FROMEDGES([["a", "b"], ["b", "c"], ["a", "c"]])
+TESTKIT.NEAR(GRAPH.DENSITY(full), 1, 0.000001, "a triangle is as dense as it gets")
+DIM aimed_pair = GRAPH.FROMEDGES([["a", "b"]], {"directed": TRUE})
+TESTKIT.NEAR(GRAPH.DENSITY(aimed_pair), 0.5, 0.000001, "one of the two links a pair could have")
+DIM rows = GRAPH.EDGES(ref)
+DIM first = rows[0]
+TESTKIT.EQ(first[0], "a", "an edge names where it starts")
+TESTKIT.EQ(first[1], "b", "where it ends")
+TESTKIT.EQ(first[2], 7, "and what it weighs")
+
+TESTKIT.SUITE("walking")
+DIM walk = GRAPH.NEW()
+GRAPH.LINK(walk, "root", "left")
+GRAPH.LINK(walk, "root", "right")
+GRAPH.LINK(walk, "left", "leaf1")
+GRAPH.LINK(walk, "left", "leaf2")
+GRAPH.LINK(walk, "right", "leaf3")
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.BFS(walk, "root")), JSON.STRINGIFY$(["root", "left", "right", "leaf1", "leaf2", "leaf3"]), "breadth first takes a whole level at a time")
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.DFS(walk, "root")), JSON.STRINGIFY$(["root", "left", "leaf1", "leaf2", "right", "leaf3"]), "depth first follows one branch to its end")
+TESTKIT.EQ(LEN(GRAPH.BFS(walk, "nowhere")), 0, "a start that is not there reaches nothing")
+TESTKIT.ISTRUE(GRAPH.REACHES(walk, "root", "leaf3"), "the leaf is reachable")
+TESTKIT.ISTRUE(GRAPH.REACHES(walk, "root", "root"), "a node reaches itself")
+DIM apart = GRAPH.NEW({"directed": TRUE})
+GRAPH.LINK(apart, "a", "b")
+GRAPH.LINK(apart, "c", "d")
+TESTKIT.ISFALSE(GRAPH.REACHES(apart, "b", "a"), "a directed link is no way back")
+TESTKIT.EQ(LEN(GRAPH.COMPONENTS(apart)), 2, "two groups")
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.COMPONENTS(apart)), JSON.STRINGIFY$([["a", "b"], ["c", "d"]]), "each with its own nodes, whichever way the links point")
+GRAPH.ADD(apart, "lonely")
+TESTKIT.EQ(LEN(GRAPH.COMPONENTS(apart)), 3, "a node on its own is a group of one")
+
+TESTKIT.SUITE("cycles")
+DIM tree = GRAPH.FROMEDGES([["a", "b"], ["b", "c"], ["b", "d"]])
+TESTKIT.EQ(LEN(GRAPH.CYCLE(tree)), 0, "a tree has no cycle")
+DIM ring = GRAPH.FROMEDGES([["a", "b"], ["b", "c"], ["c", "a"]])
+DIM found = GRAPH.CYCLE(ring)
+TESTKIT.EQ(JSON.STRINGIFY$(found), JSON.STRINGIFY$(["a", "b", "c", "a"]), "a ring names its nodes, the first again at the end")
+DIM aimed_ring = GRAPH.FROMEDGES([["x", "y"], ["y", "z"], ["z", "x"]], {"directed": TRUE})
+TESTKIT.EQ(LEN(GRAPH.CYCLE(aimed_ring)), 4, "a directed ring closes as well")
+DIM diamond = GRAPH.FROMEDGES([["a", "b"], ["a", "c"], ["b", "d"], ["c", "d"]], {"directed": TRUE})
+TESTKIT.EQ(LEN(GRAPH.CYCLE(diamond)), 0, "two ways to the same place are not a cycle when they point one way")
+TESTKIT.ISTRUE(GRAPH.ISDAG(diamond), "so it is a directed graph without cycles")
+TESTKIT.ISFALSE(GRAPH.ISDAG(aimed_ring), "the ring is not")
+TESTKIT.ISFALSE(GRAPH.ISDAG(tree), "and neither is a graph that is not directed")
+
+TESTKIT.SUITE("the order of work")
+DIM lib = Library()
+DIM plan = GRAPH.TOPO(lib)
+TESTKIT.EQ(LEN(plan), 6 + 1, "every part is placed once")
+TESTKIT.EQ(plan[0], "TESTKIT", "what everything else needs comes first")
+TESTKIT.ISTRUE(Before(plan, "CONSOLE", "DF"), "CONSOLE is built before DF")
+TESTKIT.ISTRUE(Before(plan, "REQ", "LLMAPI"), "REQ before LLMAPI")
+TESTKIT.ISTRUE(Before(plan, "SCHEMA", "LLMAPI"), "and SCHEMA too")
+TESTKIT.EQ(JSON.STRINGIFY$(plan), JSON.STRINGIFY$(["TESTKIT", "CLI", "REQ", "SCHEMA", "CONSOLE", "DF", "LLMAPI"]), "the whole order, which is the same on every run")
+TESTKIT.EQ(JSON.STRINGIFY$(GRAPH.TOPO(Library())), JSON.STRINGIFY$(plan), "and the same graph gives it again")
+GRAPH.LINK(lib, "LLMAPI", "TESTKIT")
+TESTKIT.THROWS(GRAPH.TOPO@, lib, "a cycle stops the sort")
+TESTKIT.ISTRUE(INSTR(Complaint$(lib), "cycle") >= 0, "the complaint says so")
+TESTKIT.ISTRUE(INSTR(Complaint$(lib), "LLMAPI") >= 0, "and names a node that is on it")
+TESTKIT.THROWS(GRAPH.TOPO@, GRAPH.FROMEDGES([["a", "b"]]), "a graph that is not directed has no such order")
+
+FUNC Before(order, a$, b$)
+    DIM at_a = -1
+    DIM at_b = -1
+    DIM i = 0
+    FOR i = 0 TO LEN(order) - 1
+        IF order[i] = a$ THEN at_a = i
+        IF order[i] = b$ THEN at_b = i
+    NEXT i
+    RETURN at_a >= 0 ANDALSO at_b >= 0 ANDALSO at_a < at_b
+ENDFUNC
+
+FUNC Complaint$(g)
+    DIM said$ = ""
+    TRY
+        DIM ignored = GRAPH.TOPO(g)
+    CATCH
+        said$ = ERRMSG$
+    ENDTRY
+    RETURN said$
+ENDFUNC
+
+TESTKIT.SUITE("the cheapest way through")
+DIM route = GRAPH.PATH(ref, "a", "e")
+TESTKIT.ISTRUE(route{"found"}, "there is a way from a to e")
+TESTKIT.EQ(route{"cost"}, 20, "it costs 20, as the reference says")
+TESTKIT.EQ(JSON.STRINGIFY$(route{"nodes"}), JSON.STRINGIFY$(["a", "c", "f", "e"]), "through c and f, not the shorter looking way")
+TESTKIT.EQ(route{"hops"}, 3, "in three links")
+DIM reach = GRAPH.DIST(ref, "a")
+TESTKIT.EQ(reach{"a"}, 0, "a costs nothing to reach from a")
+TESTKIT.EQ(reach{"b"}, 7, "b costs 7")
+TESTKIT.EQ(reach{"c"}, 9, "c costs 9")
+TESTKIT.EQ(reach{"d"}, 20, "d costs 20")
+TESTKIT.EQ(reach{"e"}, 20, "e costs 20")
+TESTKIT.EQ(reach{"f"}, 11, "f costs 11, through c rather than straight")
+DIM same = GRAPH.PATH(ref, "a", "a")
+TESTKIT.EQ(same{"cost"}, 0, "a way to where you already are costs nothing")
+TESTKIT.EQ(same{"hops"}, 0, "and takes no links")
+DIM cut = GRAPH.NEW()
+GRAPH.LINK(cut, "a", "b")
+GRAPH.ADD(cut, "island")
+DIM nowhere = GRAPH.PATH(cut, "a", "island")
+TESTKIT.ISFALSE(nowhere{"found"}, "there is no way to a node nothing links to")
+TESTKIT.EQ(LEN(nowhere{"nodes"}), 0, "so there are no nodes to name")
+TESTKIT.EQ(LEN(MAP.KEYS(GRAPH.DIST(cut, "a"))), 2, "and it is left out of the costs")
+
+TESTKIT.SUITE("the way through with a guess")
+DIM guided = GRAPH.ASTAR(ref, "a", "e", Guess@)
+TESTKIT.EQ(guided{"cost"}, 20, "a guess that never overshoots finds the same cost")
+TESTKIT.EQ(JSON.STRINGIFY$(guided{"nodes"}), JSON.STRINGIFY$(route{"nodes"}), "and the same way")
+DIM flat = GRAPH.ASTAR(ref, "a", "e", Overshoot@)
+TESTKIT.EQ(flat{"cost"}, 20, "a guess of nothing is plain Dijkstra")
+DIM far = GRAPH.ASTAR(ref, "b", "f", Guess@)
+TESTKIT.EQ(far{"cost"}, 12, "another pair, through c")
+TESTKIT.EQ(GRAPH.PATH(ref, "b", "f"){"cost"}, 12, "which is what the plain search says too")
+
+TESTKIT.SUITE("every way through")
+DIM many = GRAPH.NEW()
+GRAPH.LINK(many, "s", "a", 1)
+GRAPH.LINK(many, "s", "b", 4)
+GRAPH.LINK(many, "a", "b", 2)
+GRAPH.LINK(many, "a", "t", 5)
+GRAPH.LINK(many, "b", "t", 1)
+DIM walks = GRAPH.ALLPATHS(many, "s", "t")
+TESTKIT.EQ(LEN(walks), 4, "four ways that visit nothing twice")
+TESTKIT.EQ(JSON.STRINGIFY$(walks[0]), JSON.STRINGIFY$(["s", "a", "t"]), "the fewest links first")
+TESTKIT.EQ(LEN(walks[3]), 4, "the longest last")
+DIM capped = GRAPH.ALLPATHS(many, "s", "t", 2)
+TESTKIT.EQ(LEN(capped), 2, "a limit of two links leaves two of them")
+TESTKIT.EQ(LEN(GRAPH.ALLPATHS(many, "s", "gone")), 0, "no ways to a node that is not there")
+DIM cheapest = GRAPH.PATH(many, "s", "t")
+TESTKIT.EQ(cheapest{"cost"}, 4, "the cheapest is not the shortest")
+TESTKIT.EQ(cheapest{"hops"}, 3, "it takes a link more")
+
+TESTKIT.SUITE("writing it out")
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM pair = GRAPH.FROMEDGES([["a", "b", 3]])
+DIM text$ = GRAPH.DOT$(pair)
+TESTKIT.ISTRUE(STARTSWITH(text$, "graph " + Q$ + "G" + Q$ + " {"), "a graph that is not directed opens as a graph")
+TESTKIT.ISTRUE(INSTR(text$, Q$ + "a" + Q$ + " -- " + Q$ + "b" + Q$) >= 0, "with a plain line between the nodes")
+TESTKIT.ISTRUE(INSTR(text$, "label=" + Q$ + "3" + Q$) >= 0, "and the weight on it")
+TESTKIT.ISTRUE(ENDSWITH(text$, "}"), "and it closes")
+DIM aimed_text$ = GRAPH.DOT$(GRAPH.FROMEDGES([["a", "b"]], {"directed": TRUE}), {"name": "flow", "rankdir": "LR"})
+TESTKIT.ISTRUE(STARTSWITH(aimed_text$, "digraph " + Q$ + "flow" + Q$), "a directed one opens as a digraph, under the name it was given")
+TESTKIT.ISTRUE(INSTR(aimed_text$, "rankdir=LR;") >= 0, "the direction of the layout is carried over")
+TESTKIT.ISTRUE(INSTR(aimed_text$, " -> ") >= 0, "and the line has an arrow")
+DIM bare$ = GRAPH.DOT$(pair, {"weights": FALSE})
+TESTKIT.ISTRUE(INSTR(bare$, "label=") < 0, "the weights can be left off")
+DIM lone = GRAPH.NEW()
+GRAPH.ADD(lone, "island")
+TESTKIT.ISTRUE(INSTR(GRAPH.DOT$(lone), Q$ + "island" + Q$ + ";") >= 0, "a node nothing touches is written on its own")
+DIM odd = GRAPH.NEW()
+GRAPH.LINK(odd, "say " + Q$ + "hi" + Q$, "plain")
+TESTKIT.ISTRUE(INSTR(GRAPH.DOT$(odd), CHR$(92) + Q$ + "hi" + CHR$(92) + Q$) >= 0, "a quote in a name is escaped")
+TESTKIT.EQ(LEN(SPLIT(GRAPH.DOT$(Reference()), NL$)), 11, "the reference graph writes a line per link between the braces")
+
+TESTKIT.REPORT()

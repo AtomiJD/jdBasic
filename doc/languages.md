@@ -1436,6 +1436,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `STATS` | description, correlation and regression, significance tests, the three distributions |
 | `CACHE` | a computed read answered once: a size limit, a lifetime per entry, keys from parts, counters, a file on disk |
 | `RETRY` | a call made again with a growing wait: a random share, a ceiling on the run, a predicate and a callback |
+| `GRAPH` | nodes and links: traversal, components, cycles, topological order, Dijkstra and A star, Graphviz output |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

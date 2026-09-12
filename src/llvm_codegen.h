@@ -254,6 +254,9 @@ private:
     // (codegen_dim / codegen_let_or_assign) consults this set so
     // `DIM files = walk(root)` adds `files` to string_array_vars.
     std::unordered_set<std::string> string_array_returning_funcs;
+    // Functions that answer an array whose cells are arrays, so a caller
+    // reading a cell gets the array rather than the bits of one.
+    std::unordered_set<std::string> nested_array_returning_funcs;
 
     // Top-level vars that hold a scalar string (DIM x AS STRING / DIM x$ /
     // assigned a LITERAL_STRING). Lets ARRAY_LITERAL tracking recognise
