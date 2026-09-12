@@ -1,0 +1,114 @@
+' cache_demo.jdb - a price service that is slow, asked the same things twice.
+'
+' A lookup that takes real time is put behind a cache. The demo shows
+' what the second question costs, what happens when more keys arrive
+' than the cache holds, how a key is built from several parts, what a
+' lifetime does to an entry, and what survives a restart through the
+' file on disk.
+'
+'   jdBasic cache_demo.jdb
+
+IMPORT CACHE, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+
+DIM lookups = 0
+
+' Stands in for a call over the network: it costs time and it counts.
+FUNC Price(sku$)
+    lookups = lookups + 1
+    SLEEP 40
+    RETURN 100 + LEN(sku$) * 7
+ENDFUNC
+
+FUNC Report$(name$)
+    lookups = lookups + 1
+    SLEEP 25
+    RETURN "report for " + name$
+ENDFUNC
+
+' ── the second question ────────────────────────────────────────
+
+CONSOLE.RULE("asking the same thing twice", "=")
+DIM prices = CACHE.NEW({"max": 4})
+DIM asked = ["A-100", "B-22", "A-100", "C-7", "B-22", "A-100"]
+DIM rows = []
+DIM i = 0
+FOR i = 0 TO LEN(asked) - 1
+    DIM before = TICK()
+    DIM value = CACHE.GET(prices, asked[i], Price@, asked[i])
+    DIM spent = TICK() - before
+    DIM how$ = CONSOLE.GREEN$("from the cache")
+    IF spent > 20 THEN how$ = CONSOLE.YELLOW$("looked up")
+    PUSH(rows, [asked[i], value, STR$(ROUND(spent)) + " ms", how$])
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["key", "price", "took", "where from"], "align": ["l", "r", "r", "l"]})
+PRINT "  " + STR$(LEN(asked)) + " questions, " + STR$(lookups) + " lookups"
+PRINT ""
+
+DIM numbers = CACHE.STATS(prices)
+CONSOLE.KV([["hits", STR$(numbers{"hits"})], ["misses", STR$(numbers{"misses"})], ["hit rate", FORMAT$("{:.1f} %", numbers{"hit_rate"} * 100)], ["held", STR$(numbers{"size"}) + " of " + STR$(numbers{"max"})]], 2)
+PRINT ""
+
+' ── when more keys arrive than fit ─────────────────────────────
+
+CONSOLE.RULE("a cache that holds three")
+DIM small = CACHE.NEW({"max": 3})
+DIM steps = []
+CACHE.PUT(small, "alpha", 1)
+CACHE.PUT(small, "beta", 2)
+CACHE.PUT(small, "gamma", 3)
+PUSH(steps, ["put a, b, g", JOIN(CACHE.KEYS(small), ", "), ""])
+DIM seen = CACHE.FETCH(small, "alpha")
+PUSH(steps, ["read alpha", JOIN(CACHE.KEYS(small), ", "), "it moves to the back"])
+CACHE.PUT(small, "delta", 4)
+PUSH(steps, ["put delta", JOIN(CACHE.KEYS(small), ", "), CONSOLE.RED$("beta") + " left, oldest read"])
+seen = CACHE.FETCH(small, "gamma")
+CACHE.PUT(small, "epsilon", 5)
+PUSH(steps, ["read g, put epsilon", JOIN(CACHE.KEYS(small), ", "), CONSOLE.RED$("alpha") + " went next"])
+CONSOLE.TABLE(steps, {"headers": ["what happened", "keys, oldest read first", "who left"], "align": ["l", "l", "l"], "max_width": 78})
+PRINT "  the order follows the reads, not the writes"
+PRINT ""
+
+' ── one key from several parts ─────────────────────────────────
+
+CONSOLE.RULE("a key from several parts")
+DIM reports = CACHE.NEW()
+lookups = 0
+DIM one$ = CACHE.KEY$(["report", "monthly", {"region": "north", "year": 2026}])
+DIM two$ = CACHE.KEY$(["report", "monthly", {"region": "north", "year": 2026}])
+DIM other$ = CACHE.KEY$(["report", "monthly", {"region": "south", "year": 2026}])
+DIM first = CACHE.GET(reports, one$, Report$@, "north")
+DIM again = CACHE.GET(reports, two$, Report$@, "north")
+DIM south = CACHE.GET(reports, other$, Report$@, "south")
+CONSOLE.KV([["the same parts", "give the same key: " + STR$(one$ = two$)], ["another region", "gives another key: " + STR$(one$ <> other$)], ["lookups", STR$(lookups) + " for three questions"], ["answer", first]], 2)
+PRINT ""
+
+' ── how long an entry is worth keeping ─────────────────────────
+
+CONSOLE.RULE("an entry with a lifetime")
+DIM brief = CACHE.NEW({"ttl": 0.3})
+CACHE.PUT(brief, "rate", 1.0845)
+DIM checks = []
+PUSH(checks, ["at once", STR$(CACHE.HAS(brief, "rate")), STR$(CACHE.FETCH(brief, "rate", "gone"))])
+SLEEP 120
+PUSH(checks, ["after 120 ms", STR$(CACHE.HAS(brief, "rate")), STR$(CACHE.FETCH(brief, "rate", "gone"))])
+SLEEP 300
+PUSH(checks, ["after 420 ms", STR$(CACHE.HAS(brief, "rate")), STR$(CACHE.FETCH(brief, "rate", "gone"))])
+CONSOLE.TABLE(checks, {"headers": ["when", "still there", "what a read gives"], "align": ["l", "l", "l"]})
+PRINT "  the entry is thrown out when it is asked for, not by a clock of its own"
+PRINT "  expiries counted: "; CACHE.STATS(brief){"expired"}
+PRINT ""
+
+' ── what survives a restart ────────────────────────────────────
+
+CONSOLE.RULE("the file on disk")
+DIM work$ = MKTEMP$("cachedemo")
+MKDIR work$
+DIM path$ = work$ + "/prices.json"
+CACHE.SAVE(prices, path$)
+DIM back = CACHE.LOAD(path$)
+CONSOLE.KV([["written to", path$], ["entries back", STR$(CACHE.SIZE(back)) + " of " + STR$(CACHE.SIZE(prices))], ["a value", STR$(CACHE.FETCH(back, "A-100", "missing"))], ["with a tighter limit", STR$(CACHE.SIZE(CACHE.LOAD(path$, {"max": 2}))) + " entries"]], 2)
+PRINT ""
+PRINT "  each entry is written with the time it had left, so a cache that is"
+PRINT "  loaded again starts where it stopped"

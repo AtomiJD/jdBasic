@@ -1434,6 +1434,8 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `YAML` | the block subset of YAML: read a pipeline or a compose file, change it, write it back |
 | `HTMLDOM` | HTML into a tree with CSS selectors: scraping, link audits, tables out of pages |
 | `STATS` | description, correlation and regression, significance tests, the three distributions |
+| `CACHE` | a computed read answered once: a size limit, a lifetime per entry, keys from parts, counters, a file on disk |
+| `RETRY` | a call made again with a growing wait: a random share, a ceiling on the run, a predicate and a callback |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

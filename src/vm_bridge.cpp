@@ -873,6 +873,76 @@ static Value jdbmap_to_value(JdbMapFwd* m) {
 
 // Box a native JdbMap* into a Value::OBJECT, store it in value_store,
 // return the new handle. Caller retains ownership of the JdbMap.
+// The other direction: a VM object becomes a native map, so a compiled
+// function whose parameter is a map can be called by name. The map is
+// built here rather than through the runtime helpers, which live in the
+// executable and not in this library.
+static JdbMapFwd* new_jdbmap(int64_t room) {
+    auto* m = (JdbMapFwd*)malloc(sizeof(JdbMapFwd));
+    m->count = 0;
+    m->capacity = room > 0 ? room : 1;
+    m->keys = (char**)malloc(sizeof(char*) * m->capacity);
+    m->values = (double*)malloc(sizeof(double) * m->capacity);
+    m->tags = (int32_t*)malloc(sizeof(int32_t) * m->capacity);
+    return m;
+}
+
+static void put_jdbmap(JdbMapFwd* m, const std::string& key, double val, int32_t tag) {
+    if (!m || m->count >= m->capacity) return;
+    int64_t at = m->count++;
+    m->keys[at] = _strdup(key.c_str());
+    m->values[at] = val;
+    m->tags[at] = tag;
+}
+
+static JdbMapFwd* value_to_jdbmap(const Value& v) {
+    const auto* obj = (v.type == ValueType::OBJECT) ? v.as_object() : nullptr;
+    JdbMapFwd* m = new_jdbmap(obj ? (int64_t)obj->fields.size() : 1);
+    if (!obj) return m;
+    for (const auto& entry : obj->fields) {
+        const Value& cell = entry.second;
+        union { double d; int64_t i; } u; u.d = 0.0;
+        switch (cell.type) {
+            case ValueType::STRING: {
+                const std::string& text = cell.as_string() ? cell.as_string()->data
+                                                           : std::string();
+                u.i = (int64_t)(intptr_t)_strdup(text.c_str());
+                put_jdbmap(m, entry.first, u.d, jd_tag(JdTag::STR));
+                break;
+            }
+            case ValueType::BOOLEAN:
+                put_jdbmap(m, entry.first, cell.to_double(), jd_tag(JdTag::BOOL));
+                break;
+            case ValueType::INT64: case ValueType::INT32: case ValueType::INT16:
+            case ValueType::BYTE:
+                put_jdbmap(m, entry.first, (double)cell.to_int(), jd_tag(JdTag::I64));
+                break;
+            case ValueType::ARRAY:
+                u.i = (int64_t)(intptr_t)value_to_jdbarray(cell);
+                put_jdbmap(m, entry.first, u.d, jd_tag(JdTag::ARR));
+                break;
+            case ValueType::OBJECT:
+                u.i = (int64_t)(intptr_t)value_to_jdbmap(cell);
+                put_jdbmap(m, entry.first, u.d, jd_tag(JdTag::NATIVE_MAP));
+                break;
+            case ValueType::NONE:
+                put_jdbmap(m, entry.first, 0.0, jd_tag(JdTag::NONE));
+                break;
+            default:
+                put_jdbmap(m, entry.first, cell.to_double(), jd_tag(JdTag::F64));
+                break;
+        }
+    }
+    return m;
+}
+
+JDRT_API void* jdrt_handle_to_map(JdRT handle, int64_t val_handle) {
+    auto* rt = resolve_rt(handle);
+    auto it = rt->value_store.find(val_handle);
+    if (it == rt->value_store.end()) return new_jdbmap(1);
+    return value_to_jdbmap(it->second);
+}
+
 JDRT_API int64_t jdrt_map_to_handle(JdRT handle, void* m_ptr) {
     auto* rt = resolve_rt(handle);
     Value v = jdbmap_to_value(m_ptr ? (JdbMapFwd*)m_ptr : nullptr);

@@ -1,0 +1,180 @@
+' CACHE: the computed read, the counters, the order entries are thrown
+' out in when the cache is full, the time an entry has left, the key
+' built from parts, and the file written and read back.
+
+IMPORT TESTKIT, CACHE
+
+DIM work$ = MKTEMP$("jdbcache")
+MKDIR work$
+DIM store_path$ = work$ + "/cache.json"
+
+DIM calls = 0
+
+FUNC Square(n)
+    calls = calls + 1
+    RETURN n * n
+ENDFUNC
+
+FUNC Greeting$(name$)
+    calls = calls + 1
+    RETURN "hello " + name$
+ENDFUNC
+
+TESTKIT.SUITE("making one")
+DIM plain = CACHE.NEW()
+TESTKIT.EQ(CACHE.SIZE(plain), 0, "a new cache is empty")
+TESTKIT.EQ(CACHE.STATS(plain){"max"}, 0, "no limit by default")
+TESTKIT.EQ(CACHE.STATS(plain){"ttl"}, 0, "no expiry by default")
+TESTKIT.EQ(CACHE.STATS(plain){"hit_rate"}, 0, "no reads, no rate")
+DIM bounded = CACHE.NEW({"max": 3, "ttl": 30})
+TESTKIT.EQ(CACHE.STATS(bounded){"max"}, 3, "the limit that was asked for")
+TESTKIT.EQ(CACHE.STATS(bounded){"ttl"}, 30, "the lifetime that was asked for")
+
+TESTKIT.SUITE("the computed read")
+DIM c = CACHE.NEW()
+calls = 0
+TESTKIT.EQ(CACHE.GET(c, "4", Square@, 4), 16, "the first read answers")
+TESTKIT.EQ(calls, 1, "and it called the function")
+TESTKIT.EQ(CACHE.GET(c, "4", Square@, 4), 16, "the second read answers the same")
+TESTKIT.EQ(calls, 1, "without calling again")
+TESTKIT.EQ(CACHE.GET(c, "5", Square@, 5), 25, "another key")
+TESTKIT.EQ(calls, 2, "called once more")
+TESTKIT.EQ(CACHE.SIZE(c), 2, "two entries")
+TESTKIT.EQ(CACHE.GET(c, "ann", Greeting$@, "ann"), "hello ann", "a string value")
+TESTKIT.EQ(CACHE.FETCH(c, "ann"), "hello ann", "read back without the function")
+
+TESTKIT.SUITE("the counters")
+DIM counted = CACHE.NEW()
+calls = 0
+DIM ignored = CACHE.GET(counted, "a", Square@, 2)
+ignored = CACHE.GET(counted, "a", Square@, 2)
+ignored = CACHE.GET(counted, "a", Square@, 2)
+ignored = CACHE.GET(counted, "b", Square@, 3)
+DIM numbers = CACHE.STATS(counted)
+TESTKIT.EQ(numbers{"hits"}, 2, "two reads were answered from the cache")
+TESTKIT.EQ(numbers{"misses"}, 2, "two had to be computed")
+TESTKIT.EQ(numbers{"size"}, 2, "two entries are held")
+TESTKIT.NEAR(numbers{"hit_rate"}, 0.5, 0.000001, "half the reads were hits")
+TESTKIT.EQ(numbers{"evictions"}, 0, "nothing was thrown out")
+TESTKIT.EQ(numbers{"expired"}, 0, "nothing ran out of time")
+
+TESTKIT.SUITE("reading without computing")
+DIM few = CACHE.NEW()
+CACHE.PUT(few, "k", "value")
+TESTKIT.EQ(CACHE.FETCH(few, "k"), "value", "what was put in")
+TESTKIT.EQ(CACHE.FETCH(few, "nothing", "spare"), "spare", "the fallback for a key that is not there")
+TESTKIT.EQ(CACHE.FETCH(few, "nothing"), 0, "the fallback is zero when none is named")
+TESTKIT.ISTRUE(CACHE.HAS(few, "k"), "the key is there")
+TESTKIT.ISFALSE(CACHE.HAS(few, "other"), "the other one is not")
+CACHE.PUT(few, "k", "replaced")
+TESTKIT.EQ(CACHE.FETCH(few, "k"), "replaced", "putting again replaces")
+TESTKIT.EQ(CACHE.SIZE(few), 1, "and holds one entry still")
+
+TESTKIT.SUITE("throwing out the oldest read")
+DIM lru = CACHE.NEW({"max": 3})
+CACHE.PUT(lru, "a", 1)
+CACHE.PUT(lru, "b", 2)
+CACHE.PUT(lru, "c", 3)
+TESTKIT.EQ(JSON.STRINGIFY$(CACHE.KEYS(lru)), JSON.STRINGIFY$(["a", "b", "c"]), "three keys, the oldest read first")
+DIM seen = CACHE.FETCH(lru, "a")
+TESTKIT.EQ(JSON.STRINGIFY$(CACHE.KEYS(lru)), JSON.STRINGIFY$(["b", "c", "a"]), "reading one moves it to the back")
+CACHE.PUT(lru, "d", 4)
+TESTKIT.EQ(CACHE.SIZE(lru), 3, "the cache stays at its limit")
+TESTKIT.ISFALSE(CACHE.HAS(lru, "b"), "the entry read longest ago is gone")
+TESTKIT.EQ(JSON.STRINGIFY$(CACHE.KEYS(lru)), JSON.STRINGIFY$(["c", "a", "d"]), "the rest keep their order")
+TESTKIT.EQ(CACHE.STATS(lru){"evictions"}, 1, "one entry was thrown out")
+seen = CACHE.FETCH(lru, "c")
+CACHE.PUT(lru, "e", 5)
+TESTKIT.ISFALSE(CACHE.HAS(lru, "a"), "the next to go is the one read longest ago now")
+TESTKIT.EQ(JSON.STRINGIFY$(CACHE.KEYS(lru)), JSON.STRINGIFY$(["d", "c", "e"]), "and the order follows the reads, not the writes")
+TESTKIT.EQ(CACHE.STATS(lru){"evictions"}, 2, "two were thrown out in all")
+
+TESTKIT.SUITE("running out of time")
+DIM timed = CACHE.NEW({"ttl": 0.25})
+CACHE.PUT(timed, "k", "fresh")
+TESTKIT.ISTRUE(CACHE.HAS(timed, "k"), "it is there at once")
+SLEEP 80
+TESTKIT.ISTRUE(CACHE.HAS(timed, "k"), "and still there well inside its time")
+TESTKIT.EQ(CACHE.FETCH(timed, "k"), "fresh", "with its value")
+SLEEP 300
+TESTKIT.ISFALSE(CACHE.HAS(timed, "k"), "it is gone once its time ran out")
+TESTKIT.EQ(CACHE.FETCH(timed, "k", "spare"), "spare", "and the read falls back")
+TESTKIT.EQ(CACHE.STATS(timed){"expired"}, 1, "the expiry was counted once")
+TESTKIT.EQ(CACHE.SIZE(timed), 0, "the entry no longer takes a place")
+calls = 0
+DIM again = CACHE.GET(timed, "n", Square@, 7)
+TESTKIT.EQ(again, 49, "a computed read after the expiry")
+TESTKIT.EQ(calls, 1, "called the function again")
+DIM forever = CACHE.NEW()
+CACHE.PUT(forever, "k", "kept")
+SLEEP 60
+TESTKIT.ISTRUE(CACHE.HAS(forever, "k"), "without a lifetime nothing runs out")
+
+TESTKIT.SUITE("dropping entries")
+DIM dropped = CACHE.NEW()
+CACHE.PUT(dropped, "a", 1)
+CACHE.PUT(dropped, "b", 2)
+CACHE.PUT(dropped, "c", 3)
+CACHE.INVALIDATE(dropped, "b")
+TESTKIT.EQ(CACHE.SIZE(dropped), 2, "one key fewer")
+TESTKIT.ISFALSE(CACHE.HAS(dropped, "b"), "that key is gone")
+TESTKIT.ISTRUE(CACHE.HAS(dropped, "a"), "the others stay")
+CACHE.INVALIDATE(dropped, "never there")
+TESTKIT.EQ(CACHE.SIZE(dropped), 2, "dropping a key that is not there changes nothing")
+CACHE.PUT(dropped, "d", 4)
+TESTKIT.EQ(CACHE.SIZE(dropped), 3, "the freed place is used again")
+TESTKIT.EQ(CACHE.FETCH(dropped, "d"), 4, "with the right value")
+TESTKIT.EQ(CACHE.FETCH(dropped, "a"), 1, "and the old entry is untouched")
+DIM before = CACHE.STATS(dropped){"hits"}
+CACHE.CLEAR(dropped)
+TESTKIT.EQ(CACHE.SIZE(dropped), 0, "clearing empties the cache")
+TESTKIT.EQ(LEN(CACHE.KEYS(dropped)), 0, "no keys are left")
+TESTKIT.EQ(CACHE.STATS(dropped){"hits"}, before, "the counters survive it")
+
+TESTKIT.SUITE("the key from parts")
+TESTKIT.EQ(CACHE.KEY$(["user", 42]), CACHE.KEY$(["user", 42]), "the same parts give the same key")
+TESTKIT.NE(CACHE.KEY$(["user", 42]), CACHE.KEY$(["user", 43]), "a different number gives another")
+TESTKIT.NE(CACHE.KEY$(["user", 42]), CACHE.KEY$(["group", 42]), "so does a different word")
+TESTKIT.EQ(CACHE.KEY$([[1, 2], [3]]), CACHE.KEY$([[1, 2], [3]]), "nested arrays")
+TESTKIT.NE(CACHE.KEY$([[1, 2], [3]]), CACHE.KEY$([[1], [2, 3]]), "and where the nesting falls matters")
+TESTKIT.EQ(CACHE.KEY$([{"b": 1, "a": 2}]), CACHE.KEY$([{"b": 1, "a": 2}]), "a map")
+TESTKIT.NE(CACHE.KEY$([{"a": 1}]), CACHE.KEY$([{"a": 2}]), "a map with another value")
+TESTKIT.EQ(CACHE.KEY$([TRUE]), CACHE.KEY$([TRUE]), "a truth value")
+TESTKIT.NE(CACHE.KEY$([TRUE]), CACHE.KEY$([FALSE]), "and its opposite differs")
+TESTKIT.NE(CACHE.KEY$(["a", "b"]), CACHE.KEY$(["ab"]), "two parts are not one")
+DIM keyed = CACHE.NEW()
+calls = 0
+DIM k1$ = CACHE.KEY$(["square", 9])
+DIM answer = CACHE.GET(keyed, k1$, Square@, 9)
+answer = CACHE.GET(keyed, CACHE.KEY$(["square", 9]), Square@, 9)
+TESTKIT.EQ(answer, 81, "a key built twice reads the same entry")
+TESTKIT.EQ(calls, 1, "so the function ran once")
+
+TESTKIT.SUITE("the file")
+DIM saved = CACHE.NEW({"max": 10, "ttl": 60})
+CACHE.PUT(saved, "one", 1)
+CACHE.PUT(saved, "two", "second")
+CACHE.PUT(saved, "three", [1, 2, 3])
+CACHE.SAVE(saved, store_path$)
+TESTKIT.ISTRUE(LEN(TXTREADER$(store_path$)) > 0, "the file was written")
+DIM back = CACHE.LOAD(store_path$)
+TESTKIT.EQ(CACHE.SIZE(back), 3, "every entry came back")
+TESTKIT.EQ(CACHE.FETCH(back, "one"), 1, "a number")
+TESTKIT.EQ(CACHE.FETCH(back, "two"), "second", "a string")
+TESTKIT.EQ(JSON.STRINGIFY$(CACHE.FETCH(back, "three")), JSON.STRINGIFY$([1, 2, 3]), "an array")
+TESTKIT.EQ(CACHE.STATS(back){"max"}, 10, "the limit came back")
+TESTKIT.EQ(CACHE.STATS(back){"ttl"}, 60, "so did the lifetime")
+DIM tighter = CACHE.LOAD(store_path$, {"max": 2})
+TESTKIT.EQ(CACHE.STATS(tighter){"max"}, 2, "a limit given at load wins")
+TESTKIT.EQ(CACHE.SIZE(tighter), 2, "and the file is cut down to it")
+DIM briefly = CACHE.NEW({"ttl": 0.4})
+CACHE.PUT(briefly, "k", "value")
+CACHE.SAVE(briefly, store_path$)
+DIM carried = CACHE.LOAD(store_path$)
+TESTKIT.ISTRUE(CACHE.HAS(carried, "k"), "an entry still inside its time comes back")
+SLEEP 500
+CACHE.SAVE(briefly, store_path$)
+DIM stale = CACHE.LOAD(store_path$)
+TESTKIT.EQ(CACHE.SIZE(stale), 0, "an entry whose time had run out is dropped")
+
+TESTKIT.REPORT()

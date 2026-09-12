@@ -1,0 +1,374 @@
+' cache.jdb - remember what a call answered, for a while and for so many keys.
+'
+'   IMPORT CACHE
+'   DIM c = CACHE.NEW({"max": 500, "ttl": 60})
+'   DIM answer = CACHE.GET(c, "user:" + id$, Fetch@, id$)
+'   PRINT CACHE.STATS(c){"hits"}
+'
+' A cache is a map the calls change in place. It holds at most "max"
+' entries, throwing out the one that was read longest ago, and an entry
+' older than "ttl" seconds is gone when it is asked for. Both are off
+' when they are zero.
+
+EXPORT MODULE CACHE
+
+CONST PART_SEP$ = CHR$(31)
+
+' ── making one ─────────────────────────────────────────────────
+
+' opts: "max" (0 for no limit), "ttl" in seconds (0 for no expiry).
+EXPORT FUNC NEW(opts = 0)
+    DIM c AS MAP
+    DIM limit = 0
+    DIM ttl = 0.0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "max") THEN limit = opts{"max"}
+        IF MAP.EXISTS(opts, "ttl") THEN ttl = opts{"ttl"}
+    ENDIF
+    DIM slots AS MAP
+    c{"max"} = limit
+    c{"ttl"} = ttl
+    c{"slots"} = slots
+    c{"keys"} = []
+    c{"values"} = []
+    c{"stamps"} = []
+    c{"used"} = []
+    c{"free"} = []
+    c{"clock"} = 0
+    c{"size"} = 0
+    c{"hits"} = 0
+    c{"misses"} = 0
+    c{"evictions"} = 0
+    c{"expired"} = 0
+    RETURN c
+ENDFUNC
+
+' ── reading and writing ────────────────────────────────────────
+
+' The value for the key, computed by the function when it is not there
+' or no longer fresh.
+EXPORT FUNC GET(c, key$, fn, arg = 0)
+    DIM at = Live(c, key$)
+    IF at >= 0 THEN
+        c{"hits"} = c{"hits"} + 1
+        Touch(c, at)
+        DIM values = c{"values"}
+        RETURN values[at]
+    ENDIF
+    c{"misses"} = c{"misses"} + 1
+    DIM fresh = fn(arg)
+    Store(c, key$, fresh)
+    RETURN fresh
+ENDFUNC
+
+' The value for the key, or the fallback. Counts as a read.
+EXPORT FUNC FETCH(c, key$, fallback = 0)
+    DIM at = Live(c, key$)
+    IF at < 0 THEN
+        c{"misses"} = c{"misses"} + 1
+        RETURN fallback
+    ENDIF
+    c{"hits"} = c{"hits"} + 1
+    Touch(c, at)
+    DIM values = c{"values"}
+    RETURN values[at]
+ENDFUNC
+
+' Puts a value in, replacing what was there.
+EXPORT SUB PUT(c, key$, value)
+    Store(c, key$, value)
+ENDSUB
+
+' Whether the key is there and still fresh. Counts as nothing.
+EXPORT FUNC HAS(c, key$)
+    RETURN Live(c, key$) >= 0
+ENDFUNC
+
+' Throws one key out.
+EXPORT SUB INVALIDATE(c, key$)
+    DIM slots = c{"slots"}
+    IF MAP.EXISTS(slots, key$) THEN Release(c, slots{key$})
+ENDSUB
+
+' Throws everything out, keeping the counts.
+EXPORT SUB CLEAR(c)
+    DIM slots AS MAP
+    c{"slots"} = slots
+    c{"keys"} = []
+    c{"values"} = []
+    c{"stamps"} = []
+    c{"used"} = []
+    c{"free"} = []
+    c{"size"} = 0
+ENDSUB
+
+EXPORT FUNC SIZE(c)
+    RETURN c{"size"}
+ENDFUNC
+
+' The keys that are still fresh, the one read longest ago first.
+EXPORT FUNC KEYS(c)
+    DIM keys = c{"keys"}
+    DIM used = c{"used"}
+    DIM order = []
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        IF Alive(c, i) THEN PUSH(order, i)
+    NEXT i
+    DIM out = []
+    DIM n = 0
+    FOR n = 0 TO LEN(order) - 1
+        DIM pick = -1
+        DIM oldest = 0.0
+        DIM k = 0
+        FOR k = 0 TO LEN(order) - 1
+            IF order[k] >= 0 THEN
+                IF pick < 0 ORELSE used[order[k]] < oldest THEN
+                    pick = k
+                    oldest = used[order[k]]
+                ENDIF
+            ENDIF
+        NEXT k
+        IF pick < 0 THEN EXITFOR
+        DIM key$ = keys[order[pick]]
+        PUSH(out, key$)
+        order[pick] = -1
+    NEXT n
+    RETURN out
+ENDFUNC
+
+' hits, misses, evictions, expired, size, max, ttl, and the share of
+' reads that were answered from the cache.
+EXPORT FUNC STATS(c)
+    DIM out AS MAP
+    out{"hits"} = c{"hits"}
+    out{"misses"} = c{"misses"}
+    out{"evictions"} = c{"evictions"}
+    out{"expired"} = c{"expired"}
+    out{"size"} = c{"size"}
+    out{"max"} = c{"max"}
+    out{"ttl"} = c{"ttl"}
+    DIM reads = c{"hits"} + c{"misses"}
+    IF reads = 0 THEN
+        out{"hit_rate"} = 0
+    ELSE
+        out{"hit_rate"} = c{"hits"} / reads
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' ── keys ───────────────────────────────────────────────────────
+
+' One key from several parts, whatever shape they have. The same parts
+' always give the same key.
+EXPORT FUNC KEY$(parts)
+    RETURN Part$(parts)
+ENDFUNC
+
+FUNC Part$(value)
+    DIM kind$ = TYPEOF(value)
+    IF kind$ = "ARRAY" THEN
+        DIM pieces = []
+        DIM i = 0
+        FOR i = 0 TO LEN(value) - 1
+            PUSH(pieces, Part$(value[i]))
+        NEXT i
+        RETURN "[" + JOIN(pieces, PART_SEP$) + "]"
+    ENDIF
+    IF kind$ = "OBJECT" THEN
+        DIM keys = MAP.KEYS(value)
+        DIM entries = []
+        DIM k = 0
+        FOR k = 0 TO LEN(keys) - 1
+            DIM name$ = keys[k]
+            PUSH(entries, name$ + ":" + Part$(value{name$}))
+        NEXT k
+        RETURN "{" + JOIN(entries, PART_SEP$) + "}"
+    ENDIF
+    IF kind$ = "NONE" THEN RETURN "~"
+    IF kind$ = "BOOLEAN" THEN
+        IF value THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    IF kind$ = "STRING" THEN RETURN value
+    RETURN STR$(value)
+ENDFUNC
+
+' ── the file on disk ───────────────────────────────────────────
+
+' Writes what is in the cache, with how long each entry has left.
+EXPORT SUB SAVE(c, path$)
+    DIM entries = []
+    DIM keys = c{"keys"}
+    DIM values = c{"values"}
+    DIM stamps = c{"stamps"}
+    DIM ttl = c{"ttl"}
+    DIM now = Seconds()
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        IF Alive(c, i) THEN
+            DIM entry AS MAP
+            DIM key$ = keys[i]
+            entry{"key"} = key$
+            entry{"value"} = values[i]
+            DIM left = 0.0
+            IF ttl > 0 THEN left = ttl - (now - stamps[i])
+            entry{"left"} = left
+            PUSH(entries, entry)
+        ENDIF
+    NEXT i
+    DIM out AS MAP
+    out{"max"} = c{"max"}
+    out{"ttl"} = ttl
+    out{"entries"} = entries
+    TXTWRITER path$, JSON.STRINGIFY$(out)
+ENDSUB
+
+' Reads one back, each entry with the time it had left when it was
+' written. An entry that had already run out is dropped.
+EXPORT FUNC LOAD(path$, opts = 0)
+    DIM raw = JSON.PARSE$(TXTREADER$(path$))
+    DIM settings AS MAP
+    settings{"max"} = raw{"max"}
+    settings{"ttl"} = raw{"ttl"}
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "max") THEN settings{"max"} = opts{"max"}
+        IF MAP.EXISTS(opts, "ttl") THEN settings{"ttl"} = opts{"ttl"}
+    ENDIF
+    DIM c = NEW(settings)
+    DIM entries = raw{"entries"}
+    DIM ttl = c{"ttl"}
+    DIM now = Seconds()
+    DIM i = 0
+    FOR i = 0 TO LEN(entries) - 1
+        DIM entry = entries[i]
+        DIM left = entry{"left"}
+        IF ttl <= 0 ORELSE left > 0 THEN
+            DIM key$ = entry{"key"}
+            Store(c, key$, entry{"value"})
+            IF ttl > 0 THEN
+                DIM stamps = c{"stamps"}
+                DIM at = Live(c, key$)
+                IF at >= 0 THEN stamps[at] = now - (ttl - left)
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN c
+ENDFUNC
+
+' ── the slots underneath ───────────────────────────────────────
+
+' Seconds that count up evenly, whatever the wall clock does.
+FUNC Seconds()
+    RETURN TICK() / 1000
+ENDFUNC
+
+FUNC Alive(c, at)
+    DIM keys = c{"keys"}
+    IF at < 0 ORELSE at >= LEN(keys) THEN RETURN FALSE
+    DIM used = c{"used"}
+    RETURN used[at] > 0
+ENDFUNC
+
+' The slot of a key that is there and fresh, or -1. An entry whose time
+' ran out is thrown away here.
+FUNC Live(c, key$)
+    DIM slots = c{"slots"}
+    IF NOT MAP.EXISTS(slots, key$) THEN RETURN -1
+    DIM at = slots{key$}
+    IF NOT Alive(c, at) THEN RETURN -1
+    DIM ttl = c{"ttl"}
+    IF ttl > 0 THEN
+        DIM stamps = c{"stamps"}
+        IF Seconds() - stamps[at] > ttl THEN
+            Release(c, at)
+            c{"expired"} = c{"expired"} + 1
+            RETURN -1
+        ENDIF
+    ENDIF
+    RETURN at
+ENDFUNC
+
+SUB Touch(c, at)
+    c{"clock"} = c{"clock"} + 1
+    DIM used = c{"used"}
+    used[at] = c{"clock"}
+ENDSUB
+
+SUB Release(c, at)
+    DIM keys = c{"keys"}
+    DIM values = c{"values"}
+    DIM used = c{"used"}
+    DIM slots = c{"slots"}
+    DIM key$ = keys[at]
+    MAP.DELETE(slots, key$)
+    keys[at] = ""
+    values[at] = NONE
+    used[at] = 0
+    DIM free = c{"free"}
+    PUSH(free, at)
+    c{"size"} = c{"size"} - 1
+ENDSUB
+
+' Throws out the entry that was read longest ago.
+SUB Evict(c)
+    DIM used = c{"used"}
+    DIM pick = -1
+    DIM oldest = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(used) - 1
+        IF used[i] > 0 THEN
+            IF pick < 0 ORELSE used[i] < oldest THEN
+                pick = i
+                oldest = used[i]
+            ENDIF
+        ENDIF
+    NEXT i
+    IF pick >= 0 THEN
+        Release(c, pick)
+        c{"evictions"} = c{"evictions"} + 1
+    ENDIF
+ENDSUB
+
+SUB Store(c, key$, value)
+    DIM slots = c{"slots"}
+    DIM keys = c{"keys"}
+    DIM values = c{"values"}
+    DIM stamps = c{"stamps"}
+    DIM used = c{"used"}
+    DIM at = -1
+    IF MAP.EXISTS(slots, key$) THEN
+        at = slots{key$}
+        IF NOT Alive(c, at) THEN at = -1
+    ENDIF
+    IF at < 0 THEN
+        DIM limit = c{"max"}
+        IF limit > 0 ANDALSO c{"size"} >= limit THEN Evict(c)
+        DIM free = c{"free"}
+        IF LEN(free) > 0 THEN
+            at = free[LEN(free) - 1]
+            c{"free"} = Shorter(free)
+        ELSE
+            at = LEN(keys)
+            PUSH(keys, "")
+            PUSH(values, NONE)
+            PUSH(stamps, 0)
+            PUSH(used, 0)
+        ENDIF
+        keys[at] = key$
+        slots{key$} = at
+        c{"size"} = c{"size"} + 1
+    ENDIF
+    values[at] = value
+    stamps[at] = Seconds()
+    Touch(c, at)
+ENDSUB
+
+FUNC Shorter(arr)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(arr) - 2
+        PUSH(out, arr[i])
+    NEXT i
+    RETURN out
+ENDFUNC

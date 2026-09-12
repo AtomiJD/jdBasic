@@ -228,6 +228,9 @@ private:
     // parameter is a VM handle, their result is runtime-typed, and a
     // wrapper of the uniform tagged shape is registered with the bridge.
     std::unordered_set<std::string> http_handler_subs;
+    // Functions whose name is taken with @ anywhere: they may travel as
+    // their name through a map or an array and be called from there.
+    std::unordered_set<std::string> funcref_named;
     LLVMValueRef build_compiled_call_wrapper(const std::string& fn_name);
 
     // Functions declared via `DECLARE FUNC ... AS <ret_type>` - populated
@@ -289,6 +292,10 @@ private:
     // survives downstream native calls (PLOTRAW, vector arithmetic, etc.)
     // that look for an ARR-tagged argument.
     std::unordered_set<std::string> array_array_vars;
+    // Names whose map fields were seen holding an array or a map. Kept
+    // apart from array_array_vars: these sets are keyed by name alone, and
+    // a field of a map says nothing about a cell of a same-named array.
+    std::unordered_set<std::string> field_array_vars;
 
     // Maps a top-level-DIM'd global name to the source file it came from.
     // Used by codegen_let_or_assign to decide whether an implicit assignment
@@ -471,6 +478,9 @@ private:
     }
     void emit_dispose_cleanup(); // called before LLVMBuildRet/main-end
 
+    // Calls a function the runtime knows by name, with its arguments
+    // packed the way the bridge takes them.
+    TypedValue emit_named_call(LLVMValueRef name_ptr, const Expr& expr);
     TypedValue codegen_expr(const Expr& expr);
     TypedValue codegen_binary(const Expr& expr);
     TypedValue codegen_unary(const Expr& expr);

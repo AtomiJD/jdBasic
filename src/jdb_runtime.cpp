@@ -976,6 +976,26 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
 // Used by ARRAY_LITERAL codegen when an element is RUNTIME-tagged
 // (e.g. `[m{"name"}, m{"age"}, m{"email"}]` from map-of-mixed-types) -
 // without per-cell tags the consumer can't tell strings from numbers.
+// Writes a cell together with the kind it holds, so an array whose
+// cells are of different kinds can be read back one cell at a time.
+void jdb_array_set_tagged(JdbArray* arr, int64_t idx, double val, int32_t tag) {
+    if (!arr || idx < 0 || idx >= arr->length) {
+        jdb_index_out_of_bounds(idx);
+        return;
+    }
+    if (!arr->elem_tags) {
+        arr->elem_tags = (int8_t*)malloc((size_t)(arr->length > 0 ? arr->length : 1));
+        for (int64_t i = 0; i < arr->length; i++)
+            arr->elem_tags[i] = jdb_tag_from_flags(arr->flags, arr->data[i]);
+    }
+    arr->flags |= 8;  // bit 3: per-element tags present
+    if (tag == JD_TAG_STR || tag == JD_TAG_ARR || tag == JD_TAG_NATIVE_MAP)
+        arr->flags |= 1;
+    if (tag == JD_TAG_STR) arr->flags |= 2;
+    arr->data[idx] = val;
+    arr->elem_tags[idx] = (int8_t)tag;
+}
+
 JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
     int64_t newlen = arr ? arr->length + 1 : 1;
     auto* r = jdb_array_new(newlen);

@@ -1,0 +1,146 @@
+' RETRY: the value a flaky call answers in the end, the report that
+' never raises, the waits that grow, the ceiling on the whole run, the
+' predicate that stops a hopeless error, the callback, and the time a
+' run really takes measured against the waits it planned.
+
+IMPORT TESTKIT, RETRY
+
+DIM tries = 0
+DIM notices = []
+
+FUNC Flaky(n)
+    tries = tries + 1
+    IF tries <= 2 THEN THROW "connection reset on attempt " + STR$(tries)
+    RETURN "fine on attempt " + STR$(tries)
+ENDFUNC
+
+FUNC Doomed(n)
+    tries = tries + 1
+    THROW "bad request"
+ENDFUNC
+
+FUNC Steady(n)
+    tries = tries + 1
+    RETURN n * 2
+ENDFUNC
+
+FUNC Watcher(news)
+    PUSH(notices, STR$(news{"attempt"}) + ":" + news{"error"})
+    RETURN 0
+ENDFUNC
+
+TESTKIT.SUITE("the value in the end")
+tries = 0
+DIM answer = RETRY.RUN(Flaky@, 0, {"attempts": 4, "delay": 10})
+TESTKIT.EQ(answer, "fine on attempt 3", "the third attempt answered")
+TESTKIT.EQ(tries, 3, "and it took three attempts")
+tries = 0
+TESTKIT.EQ(RETRY.RUN(Steady@, 21, {"attempts": 3}), 42, "a call that works the first time")
+TESTKIT.EQ(tries, 1, "is made once")
+tries = 0
+TESTKIT.THROWS(RETRY.RUN@, Doomed@, "a call that never works raises in the end")
+TESTKIT.EQ(tries, 3, "after the three attempts of the default")
+
+TESTKIT.SUITE("the report")
+tries = 0
+DIM good = RETRY.ATTEMPT(Flaky@, 0, {"attempts": 4, "delay": 10})
+TESTKIT.ISTRUE(good{"ok"}, "the run came good")
+TESTKIT.EQ(good{"value"}, "fine on attempt 3", "with the value")
+TESTKIT.EQ(good{"attempts"}, 3, "in three attempts")
+TESTKIT.EQ(good{"error"}, "", "and no error left over")
+TESTKIT.EQ(LEN(good{"waits"}), 2, "two waits were taken")
+tries = 0
+DIM bad = RETRY.ATTEMPT(Flaky@, 0, {"attempts": 2, "delay": 10})
+TESTKIT.ISFALSE(bad{"ok"}, "two attempts are not enough")
+TESTKIT.EQ(bad{"attempts"}, 2, "both were made")
+TESTKIT.EQ(bad{"error"}, "connection reset on attempt 2", "the last error is kept")
+TESTKIT.EQ(TYPEOF(bad{"value"}), "NONE", "and there is no value")
+TESTKIT.EQ(LEN(bad{"waits"}), 1, "one wait between them")
+tries = 0
+DIM once = RETRY.ATTEMPT(Doomed@, 0, {"attempts": 1, "delay": 10})
+TESTKIT.EQ(once{"attempts"}, 1, "a single attempt is made once")
+TESTKIT.EQ(LEN(once{"waits"}), 0, "with nothing to wait for")
+tries = 0
+DIM floored = RETRY.ATTEMPT(Doomed@, 0, {"attempts": 0})
+TESTKIT.EQ(floored{"attempts"}, 1, "fewer than one attempt is still one")
+
+TESTKIT.SUITE("the waits that grow")
+TESTKIT.EQ(JSON.STRINGIFY$(RETRY.DELAYS()), JSON.STRINGIFY$([100, 200]), "the default plan")
+TESTKIT.EQ(JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 5, "delay": 100})), JSON.STRINGIFY$([100, 200, 400, 800]), "four waits before the fifth attempt")
+TESTKIT.EQ(JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 4, "delay": 50, "factor": 3})), JSON.STRINGIFY$([50, 150, 450]), "another factor")
+TESTKIT.EQ(JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 4, "delay": 30, "factor": 1})), JSON.STRINGIFY$([30, 30, 30]), "a factor of one keeps the wait")
+TESTKIT.EQ(JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 5, "delay": 100, "max_ms": 250})), JSON.STRINGIFY$([100, 150]), "a ceiling cuts the last wait and ends the plan")
+TESTKIT.EQ(LEN(RETRY.DELAYS({"attempts": 1})), 0, "a single attempt waits for nothing")
+DIM plan = RETRY.DELAYS({"attempts": 4, "delay": 20})
+DIM planned = 0.0
+DIM i = 0
+FOR i = 0 TO LEN(plan) - 1
+    planned = planned + plan[i]
+NEXT i
+TESTKIT.EQ(planned, 140, "the plan adds up to what the run will wait")
+
+TESTKIT.SUITE("the run inside its window")
+tries = 0
+DIM started = TICK()
+DIM timed = RETRY.ATTEMPT(Flaky@, 0, {"attempts": 4, "delay": 60})
+DIM elapsed = TICK() - started
+TESTKIT.ISTRUE(timed{"ok"}, "the flaky call came good")
+TESTKIT.EQ(JSON.STRINGIFY$(timed{"waits"}), JSON.STRINGIFY$([60, 120]), "it waited 60 then 120 milliseconds")
+TESTKIT.ISTRUE(elapsed >= 170, "so the run took at least the two waits")
+TESTKIT.ISTRUE(elapsed < 900, "and nothing like the whole of a third")
+TESTKIT.ISTRUE(timed{"elapsed"} >= 170, "the report agrees on the lower edge")
+TESTKIT.ISTRUE(timed{"elapsed"} <= elapsed + 5, "and does not claim more than the clock outside")
+
+TESTKIT.SUITE("the ceiling on a run")
+tries = 0
+DIM capped = RETRY.ATTEMPT(Doomed@, 0, {"attempts": 6, "delay": 40, "max_ms": 100})
+DIM waits = capped{"waits"}
+DIM total = 0.0
+FOR i = 0 TO LEN(waits) - 1
+    total = total + waits[i]
+NEXT i
+TESTKIT.ISTRUE(total <= 100, "the waits together stay inside the ceiling")
+TESTKIT.ISTRUE(capped{"attempts"} < 6, "so the run gives up before its last attempt")
+TESTKIT.ISFALSE(capped{"ok"}, "and it never came good")
+
+TESTKIT.SUITE("which errors are worth another try")
+TESTKIT.ISTRUE(RETRY.TRANSIENT("read timeout"), "a timeout")
+TESTKIT.ISTRUE(RETRY.TRANSIENT("the request timed out"), "one that timed out")
+TESTKIT.ISTRUE(RETRY.TRANSIENT("Connection reset by peer"), "a reset connection, whatever its case")
+TESTKIT.ISTRUE(RETRY.TRANSIENT("connection refused"), "a refused one")
+TESTKIT.ISTRUE(RETRY.TRANSIENT("service temporarily unavailable"), "a service that is away for a moment")
+TESTKIT.ISTRUE(RETRY.TRANSIENT("HTTP 503 from the gateway"), "a 503")
+TESTKIT.ISTRUE(RETRY.TRANSIENT("got 429 too many requests"), "too many requests")
+TESTKIT.ISFALSE(RETRY.TRANSIENT("bad request"), "a wrong request is not worth another try")
+TESTKIT.ISFALSE(RETRY.TRANSIENT("HTTP 404 not found"), "neither is something that is not there")
+TESTKIT.ISFALSE(RETRY.TRANSIENT("unauthorized"), "nor a refused key")
+tries = 0
+DIM filtered = RETRY.ATTEMPT(Doomed@, 0, {"attempts": 5, "delay": 10, "retry_if": RETRY.TRANSIENT@})
+TESTKIT.EQ(filtered{"attempts"}, 1, "a hopeless error stops the run at once")
+TESTKIT.EQ(tries, 1, "so the call was made once")
+TESTKIT.EQ(LEN(filtered{"waits"}), 0, "and nothing was waited for")
+tries = 0
+DIM allowed = RETRY.ATTEMPT(Flaky@, 0, {"attempts": 4, "delay": 10, "retry_if": RETRY.TRANSIENT@})
+TESTKIT.ISTRUE(allowed{"ok"}, "an error worth another try lets the run go on")
+TESTKIT.EQ(allowed{"attempts"}, 3, "to the attempt that worked")
+
+TESTKIT.SUITE("watching the retries")
+tries = 0
+notices = []
+DIM watched = RETRY.ATTEMPT(Flaky@, 0, {"attempts": 4, "delay": 10, "on_retry": Watcher@})
+TESTKIT.ISTRUE(watched{"ok"}, "the run came good")
+TESTKIT.EQ(LEN(notices), 2, "the callback saw both retries")
+TESTKIT.EQ(notices[0], "1:connection reset on attempt 1", "the first, with its attempt and its error")
+TESTKIT.EQ(notices[1], "2:connection reset on attempt 2", "and the second")
+
+TESTKIT.SUITE("the random share")
+tries = 0
+DIM spread = RETRY.ATTEMPT(Flaky@, 0, {"attempts": 4, "delay": 40, "jitter": 0.5})
+DIM taken = spread{"waits"}
+TESTKIT.ISTRUE(spread{"ok"}, "a run with a random share still comes good")
+TESTKIT.EQ(LEN(taken), 2, "and takes its two waits")
+TESTKIT.ISTRUE(taken[0] >= 20 ANDALSO taken[0] <= 60, "the first wait stays within half of 40")
+TESTKIT.ISTRUE(taken[1] >= 40 ANDALSO taken[1] <= 120, "the second within half of 80")
+TESTKIT.ISTRUE(taken[0] <> taken[1], "and the two are not the same number")
+
+TESTKIT.REPORT()

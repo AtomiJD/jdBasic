@@ -1,0 +1,162 @@
+' retry.jdb - call something again when it fails, with a growing wait.
+'
+'   IMPORT RETRY
+'   DIM answer = RETRY.RUN(Fetch@, url$, {"attempts": 4, "delay": 200})
+'
+'   DIM report = RETRY.ATTEMPT(Fetch@, url$, {"attempts": 3})
+'   IF report{"ok"} THEN PRINT report{"value"} ELSE PRINT report{"error"}
+'
+' The wait doubles after every failure and can carry a random share so
+' many callers do not come back at the same moment. A predicate decides
+' which errors are worth another attempt; a callback sees each one.
+
+EXPORT MODULE RETRY
+
+' ── calling ────────────────────────────────────────────────────
+
+' The value the function answers. When every attempt fails the last
+' error is raised again.
+EXPORT FUNC RUN(fn, arg = 0, opts = 0)
+    DIM report = ATTEMPT(fn, arg, opts)
+    IF report{"ok"} THEN RETURN report{"value"}
+    DIM reason$ = report{"error"}
+    THROW reason$
+ENDFUNC
+
+' The same, as a report that never raises: ok, value, error, attempts,
+' elapsed in milliseconds, and the waits that were taken.
+EXPORT FUNC ATTEMPT(fn, arg = 0, opts = 0)
+    DIM attempts = 3
+    DIM delay = 100.0
+    DIM factor = 2.0
+    DIM jitter = 0.0
+    DIM max_ms = 0.0
+    DIM has_filter = FALSE
+    DIM has_notice = FALSE
+    DIM decider = 0
+    DIM notice = 0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "attempts") THEN attempts = opts{"attempts"}
+        IF MAP.EXISTS(opts, "delay") THEN delay = opts{"delay"}
+        IF MAP.EXISTS(opts, "factor") THEN factor = opts{"factor"}
+        IF MAP.EXISTS(opts, "jitter") THEN jitter = opts{"jitter"}
+        IF MAP.EXISTS(opts, "max_ms") THEN max_ms = opts{"max_ms"}
+        IF MAP.EXISTS(opts, "retry_if") THEN
+            decider = opts{"retry_if"}
+            has_filter = TRUE
+        ENDIF
+        IF MAP.EXISTS(opts, "on_retry") THEN
+            notice = opts{"on_retry"}
+            has_notice = TRUE
+        ENDIF
+    ENDIF
+    IF attempts < 1 THEN attempts = 1
+    DIM out AS MAP
+    DIM waits = []
+    DIM started = TICK()
+    DIM reason$ = ""
+    DIM value = NONE
+    DIM ok = FALSE
+    DIM tries = 0
+    DIM wait = delay
+    DIM i = 0
+    FOR i = 1 TO attempts
+        tries = i
+        reason$ = ""
+        TRY
+            value = fn(arg)
+            ok = TRUE
+        CATCH
+            reason$ = ERRMSG$
+        ENDTRY
+        IF ok THEN EXITFOR
+        IF i >= attempts THEN EXITFOR
+        DIM again = TRUE
+        IF has_filter THEN again = decider(reason$)
+        IF NOT again THEN EXITFOR
+        DIM pause = Spread(wait, jitter)
+        IF max_ms > 0 THEN
+            DIM spent = TICK() - started
+            IF spent + pause > max_ms THEN pause = max_ms - spent
+            ' Less than a millisecond left is no wait at all, and another
+            ' attempt without one would run the ceiling out on tries.
+            IF pause < 1 THEN EXITFOR
+        ENDIF
+        IF has_notice THEN
+            DIM news AS MAP
+            news{"attempt"} = i
+            news{"delay"} = pause
+            news{"error"} = reason$
+            DIM ignored = notice(news)
+        ENDIF
+        PUSH(waits, pause)
+        SLEEP pause
+        wait = wait * factor
+    NEXT i
+    out{"ok"} = ok
+    out{"value"} = value
+    out{"error"} = reason$
+    out{"attempts"} = tries
+    out{"waits"} = waits
+    out{"elapsed"} = TICK() - started
+    RETURN out
+ENDFUNC
+
+' The waits a run would take, without taking them: useful to show a
+' plan or to check one.
+EXPORT FUNC DELAYS(opts = 0)
+    DIM attempts = 3
+    DIM delay = 100.0
+    DIM factor = 2.0
+    DIM max_ms = 0.0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "attempts") THEN attempts = opts{"attempts"}
+        IF MAP.EXISTS(opts, "delay") THEN delay = opts{"delay"}
+        IF MAP.EXISTS(opts, "factor") THEN factor = opts{"factor"}
+        IF MAP.EXISTS(opts, "max_ms") THEN max_ms = opts{"max_ms"}
+    ENDIF
+    DIM out = []
+    DIM wait = delay
+    DIM total = 0.0
+    DIM i = 1
+    FOR i = 1 TO attempts - 1
+        DIM pause = wait
+        IF max_ms > 0 THEN
+            IF total + pause > max_ms THEN pause = max_ms - total
+            IF pause < 1 THEN EXITFOR
+        ENDIF
+        PUSH(out, pause)
+        total = total + pause
+        wait = wait * factor
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' A predicate for RETRY: TRUE when the message names something that
+' passes, a timeout or a busy server rather than a wrong request.
+EXPORT FUNC TRANSIENT(message$)
+    DIM low$ = LCASE$(message$)
+    IF INSTR(low$, "timeout") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, "timed out") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, "temporarily") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, "connection") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, "reset") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, "refused") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, "unavailable") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, "too many requests") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, " 429") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, " 500") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, " 502") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, " 503") >= 0 THEN RETURN TRUE
+    IF INSTR(low$, " 504") >= 0 THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+' The wait with its random share added, never below zero.
+FUNC Spread(wait, jitter)
+    IF jitter <= 0 THEN RETURN wait
+    DIM shift = wait * jitter * (2 * RND(1) - 1)
+    DIM out = wait + shift
+    IF out < 0 THEN RETURN 0
+    RETURN out
+ENDFUNC

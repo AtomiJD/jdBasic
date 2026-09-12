@@ -1,0 +1,132 @@
+' retry_demo.jdb - an upload that fails for a while, and what to do about it.
+'
+' A call that sometimes fails is put behind a growing wait. The demo
+' plans the waits before taking any, runs a flaky upload and watches
+' each retry, tells a passing error from a permanent one, holds a whole
+' run inside a deadline, and shows what a random share does to the
+' moment many callers come back.
+'
+'   jdBasic retry_demo.jdb
+
+IMPORT RETRY, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+
+DIM calls = 0
+DIM watched = []
+
+' Fails twice with a passing error, then works.
+FUNC Upload(name$)
+    calls = calls + 1
+    IF calls <= 2 THEN THROW "connection reset while sending " + name$
+    RETURN "stored " + name$ + " on attempt " + STR$(calls)
+ENDFUNC
+
+' Fails the same way every time.
+FUNC Rejected(name$)
+    calls = calls + 1
+    THROW "HTTP 400 bad request: " + name$ + " has no content type"
+ENDFUNC
+
+FUNC Note(news)
+    PUSH(watched, [STR$(news{"attempt"}), STR$(ROUND(news{"delay"})) + " ms", news{"error"}])
+    RETURN 0
+ENDFUNC
+
+' ── the waits before any are taken ─────────────────────────────
+
+CONSOLE.RULE("what a run would wait", "=")
+DIM plans = []
+PUSH(plans, ["the default", JSON.STRINGIFY$(RETRY.DELAYS())])
+PUSH(plans, ["five attempts from 100", JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 5, "delay": 100}))])
+PUSH(plans, ["tripling instead of doubling", JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 4, "delay": 50, "factor": 3}))])
+PUSH(plans, ["a flat wait", JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 4, "delay": 30, "factor": 1}))])
+PUSH(plans, ["inside a quarter second", JSON.STRINGIFY$(RETRY.DELAYS({"attempts": 5, "delay": 100, "max_ms": 250}))])
+CONSOLE.TABLE(plans, {"headers": ["the plan", "milliseconds"], "align": ["l", "l"]})
+PRINT "  nothing was waited for here: this is the plan, not the run"
+PRINT ""
+
+' ── the run ────────────────────────────────────────────────────
+
+CONSOLE.RULE("an upload that comes good")
+calls = 0
+watched = []
+DIM started = TICK()
+DIM answer$ = RETRY.RUN(Upload@, "invoice.pdf", {"attempts": 4, "delay": 60, "on_retry": Note@})
+DIM spent = TICK() - started
+CONSOLE.TABLE(watched, {"headers": ["attempt", "then waited", "what went wrong"], "align": ["r", "r", "l"], "max_width": 78})
+CONSOLE.KV([["answer", CONSOLE.GREEN$(answer$)], ["calls made", STR$(calls)], ["waited", "60 + 120 = 180 ms"], ["run took", STR$(ROUND(spent)) + " ms"]], 2)
+PRINT ""
+
+' ── the same run as a report ───────────────────────────────────
+
+CONSOLE.RULE("the report that never raises")
+calls = 0
+DIM good = RETRY.ATTEMPT(Upload@, "invoice.pdf", {"attempts": 4, "delay": 20})
+calls = 0
+DIM cut = RETRY.ATTEMPT(Upload@, "invoice.pdf", {"attempts": 2, "delay": 20})
+DIM reports = []
+PUSH(reports, ["four attempts allowed", STR$(good{"ok"}), STR$(good{"attempts"}), STR$(LEN(good{"waits"})), Outcome$(good)])
+PUSH(reports, ["two attempts allowed", STR$(cut{"ok"}), STR$(cut{"attempts"}), STR$(LEN(cut{"waits"})), Outcome$(cut)])
+CONSOLE.TABLE(reports, {"headers": ["run", "ok", "attempts", "waits", "what came back"], "align": ["l", "l", "r", "r", "l"], "max_width": 78})
+PRINT "  a report carries the last error instead of raising it"
+PRINT ""
+
+FUNC Rounded$(ms)
+    RETURN STR$(ROUND(ms)) + " ms"
+ENDFUNC
+
+FUNC Outcome$(report)
+    IF report{"ok"} THEN RETURN CONSOLE.GREEN$(report{"value"})
+    RETURN CONSOLE.RED$(report{"error"})
+ENDFUNC
+
+' ── which errors are worth another try ─────────────────────────
+
+CONSOLE.RULE("passing trouble against a wrong request")
+DIM messages = ["read timeout after 30s", "connection refused", "HTTP 503 service unavailable", "429 too many requests", "HTTP 400 bad request", "404 not found", "unauthorized"]
+DIM verdicts = []
+DIM i = 0
+FOR i = 0 TO LEN(messages) - 1
+    DIM worth$ = CONSOLE.RED$("give up")
+    IF RETRY.TRANSIENT(messages[i]) THEN worth$ = CONSOLE.GREEN$("try again")
+    PUSH(verdicts, [messages[i], worth$])
+NEXT i
+CONSOLE.TABLE(verdicts, {"headers": ["the error", "what RETRY.TRANSIENT says"], "align": ["l", "l"]})
+PRINT ""
+calls = 0
+started = TICK()
+DIM hopeless = RETRY.ATTEMPT(Rejected@, "note.txt", {"attempts": 5, "delay": 200, "retry_if": RETRY.TRANSIENT@})
+CONSOLE.KV([["with the predicate", STR$(hopeless{"attempts"}) + " attempt in " + STR$(ROUND(TICK() - started)) + " ms"], ["without it", "5 attempts and 1.5 seconds of waiting"], ["the error", CONSOLE.RED$(hopeless{"error"})]], 2)
+PRINT ""
+
+' ── a deadline over the whole run ──────────────────────────────
+
+CONSOLE.RULE("a run inside a deadline")
+calls = 0
+started = TICK()
+DIM capped = RETRY.ATTEMPT(Rejected@, "big.iso", {"attempts": 6, "delay": 50, "max_ms": 150})
+DIM taken = capped{"waits"}
+DIM total = 0.0
+FOR i = 0 TO LEN(taken) - 1
+    total = total + taken[i]
+NEXT i
+CONSOLE.KV([["attempts allowed", "6"], ["attempts made", STR$(capped{"attempts"})], ["waits taken", JOIN(SELECT(Rounded$@, taken), " then ")], ["waited in all", STR$(ROUND(total)) + " ms of the 150 allowed"], ["run took", STR$(ROUND(TICK() - started)) + " ms"]], 2)
+PRINT "  the last wait is cut to what the deadline still allows, and the run"
+PRINT "  stops once nothing is left"
+PRINT ""
+
+' ── the random share ───────────────────────────────────────────
+
+CONSOLE.RULE("spreading the moment callers come back")
+DIM rows = []
+DIM n = 0
+FOR n = 1 TO 5
+    calls = 0
+    DIM spread = RETRY.ATTEMPT(Upload@, "a.bin", {"attempts": 3, "delay": 100, "jitter": 0.4})
+    DIM waits = spread{"waits"}
+    PUSH(rows, ["caller " + STR$(n), STR$(ROUND(waits[0])) + " ms", STR$(ROUND(waits[1])) + " ms"])
+NEXT n
+CONSOLE.TABLE(rows, {"headers": ["", "first wait", "second wait"], "align": ["l", "r", "r"]})
+PRINT "  without a share every caller would wait 100 then 200 and hit the same"
+PRINT "  moment again; a jitter of 0.4 spreads each wait by up to two fifths"
