@@ -3390,6 +3390,93 @@ static void rt_epoch_to_civil_utc(double epoch, int64_t& y, int64_t& mo, int64_t
     if (wd < 0) wd += 7;
 }
 
+static int64_t rt_days_from_civil(int64_t y, int64_t m, int64_t d) {
+    y -= m <= 2;
+    const int64_t era = (y >= 0 ? y : y - 399) / 400;
+    const int64_t yoe = y - era * 400;
+    const int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + doe - 719468;
+}
+
+// Seconds east of UTC for a civil date in the machine's own zone. The CRT
+// cannot answer for a year outside its range, so the question is asked about
+// the same date moved by whole 400 year cycles, which the Gregorian calendar
+// repeats exactly.
+static int64_t rt_utc_offset_at(int64_t y, int64_t mo, int64_t d,
+                                int64_t h, int64_t mi, int64_t se) {
+    // The rules are asked about a year the CRT does cover, of the same
+    // leapness so a 29 February stays a real date. Daylight rules are
+    // political and did not exist for most of the years this reaches, so
+    // the ones in force now are the only answer available.
+    int64_t py = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 2000 : 2001;
+    struct tm probe;
+    memset(&probe, 0, sizeof(probe));
+    probe.tm_year = (int)(py - 1900);
+    probe.tm_mon  = (int)(mo - 1);
+    probe.tm_mday = (int)d;
+    probe.tm_hour = (int)h;
+    probe.tm_min  = (int)mi;
+    probe.tm_sec  = (int)se;
+    probe.tm_isdst = -1;
+    time_t t = mktime(&probe);
+    if (t == (time_t)-1) return 0;
+    int64_t as_utc = rt_days_from_civil(py, mo, d) * 86400 + h * 3600 + mi * 60 + se;
+    return as_utc - (int64_t)t;
+}
+
+static double rt_local_civil_to_epoch(int64_t y, int64_t mo, int64_t d,
+                                      int64_t h, int64_t mi, int64_t se) {
+    int64_t as_utc = rt_days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se;
+    return (double)(as_utc - rt_utc_offset_at(y, mo, d, h, mi, se));
+}
+
+static void rt_epoch_to_civil_local(double epoch, int64_t& y, int64_t& mo, int64_t& d,
+                                    int64_t& h, int64_t& mi, int64_t& se, int64_t& wd) {
+    rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    int64_t off = rt_utc_offset_at(y, mo, d, h, mi, se);
+    rt_epoch_to_civil_utc(epoch + (double)off, y, mo, d, h, mi, se, wd);
+}
+
+// Fills a tm from an epoch without the CRT, so strftime is never handed a
+// struct the conversion left untouched.
+static void rt_fill_tm(double epoch, bool local, struct tm* out) {
+    int64_t y, mo, d, h, mi, se, wd;
+    if (local) rt_epoch_to_civil_local(epoch, y, mo, d, h, mi, se, wd);
+    else       rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
+    memset(out, 0, sizeof(*out));
+    out->tm_year = (int)(y - 1900);
+    out->tm_mon  = (int)(mo - 1);
+    out->tm_mday = (int)d;
+    out->tm_hour = (int)h;
+    out->tm_min  = (int)mi;
+    out->tm_sec  = (int)se;
+    out->tm_wday = (int)wd;
+    out->tm_yday = (int)(rt_days_from_civil(y, mo, d) - rt_days_from_civil(y, 1, 1));
+    out->tm_isdst = 0;
+}
+
+static int rt_days_in_month(int64_t y, int64_t m) {
+    static const int len[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    if (m == 2) {
+        bool leap = (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);
+        return leap ? 29 : 28;
+    }
+    if (m < 1 || m > 12) return 30;
+    return len[m - 1];
+}
+
+// Whole calendar months from a civil date, the day clamped to the length of
+// the month it lands in.
+static void rt_add_months(int64_t& y, int64_t& mo, int64_t& d, int64_t months) {
+    int64_t index = y * 12 + (mo - 1) + months;
+    int64_t ny = index >= 0 ? index / 12 : -((-index + 11) / 12);
+    int64_t nm = index - ny * 12 + 1;
+    int64_t last = rt_days_in_month(ny, nm);
+    if (d > last) d = last;
+    y = ny; mo = nm;
+}
+
 char* jdb_date_str(double epoch) {
     time_t t = (time_t)epoch;
     char buf[32];
@@ -3505,8 +3592,8 @@ int64_t jdb_second_str(const char* s) {
 }
 
 // Native dates are ISO strings in LOCAL time (matching NOW(), CVDATE(), etc.).
-// Parse the string as local wall-clock → convert to UTC epoch via mktime.
-// If tz_hours is NaN (2-arg form), use localtime for backward compatibility.
+// Parse the string as local wall-clock, then convert through the calendar.
+// If tz_hours is NaN (2-arg form), the wall clock stays local.
 // Otherwise shift the epoch by tz_hours and format via gmtime so the wall
 // clock reflects the chosen zone (tz_hours == 0 → UTC wall clock).
 char* jdb_format_date(const char* date_str, const char* fmt, double tz_hours) {
@@ -3525,24 +3612,12 @@ char* jdb_format_date(const char* date_str, const char* fmt, double tz_hours) {
     local_tm.tm_hour = hr;
     local_tm.tm_min  = mn;
     local_tm.tm_sec  = sc;
-    local_tm.tm_isdst = -1;
-    time_t epoch = mktime(&local_tm);
+    double epoch = rt_local_civil_to_epoch(y, m, d, hr, mn, sc);
     struct tm out_tm;
     if (tz_hours != tz_hours) {
-#ifdef _WIN32
-        localtime_s(&out_tm, &epoch);
-#else
-        struct tm* g = localtime(&epoch);
-        if (g) out_tm = *g; else memset(&out_tm, 0, sizeof(out_tm));
-#endif
+        rt_fill_tm(epoch, true, &out_tm);
     } else {
-        epoch += (time_t)(tz_hours * 3600.0);
-#ifdef _WIN32
-        gmtime_s(&out_tm, &epoch);
-#else
-        struct tm* g = gmtime(&epoch);
-        if (g) out_tm = *g; else memset(&out_tm, 0, sizeof(out_tm));
-#endif
+        rt_fill_tm(epoch + tz_hours * 3600.0, false, &out_tm);
     }
     char buf[256];
     strftime(buf, sizeof(buf), fmt, &out_tm);
@@ -3550,6 +3625,19 @@ char* jdb_format_date(const char* date_str, const char* fmt, double tz_hours) {
 }
 
 // ── System ──────────────────────────────────────────────────
+
+// FORMAT_DATE of an epoch rather than a timestamp. A date that came
+// through the bridge inside an array is a number on this side, and the
+// string form would read those bits as an address.
+char* jdb_format_date_num(double epoch, const char* fmt, double tz_hours) {
+    if (!fmt || !*fmt) fmt = "%Y-%m-%d %H:%M:%S";
+    struct tm out_tm;
+    if (tz_hours != tz_hours) rt_fill_tm(epoch, true, &out_tm);
+    else                      rt_fill_tm(epoch + tz_hours * 3600.0, false, &out_tm);
+    char buf[256];
+    strftime(buf, sizeof(buf), fmt, &out_tm);
+    return _strdup(buf);
+}
 
 char* jdb_getenv(const char* name) {
     const char* val = getenv(name);
@@ -3871,13 +3959,8 @@ char* jdb_cvdate(const char* datestr) {
 // CVDATE for numeric input - interpret as Unix epoch seconds and format
 // as a local-time ISO string (matches the interpreter's behaviour).
 char* jdb_cvdate_num(double epoch_secs) {
-    time_t t = (time_t)epoch_secs;
     struct tm tm;
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    rt_fill_tm(epoch_secs, true, &tm);
     return format_iso_date(&tm, true);
 }
 
@@ -3909,25 +3992,38 @@ JdbArray* jdb_cvdate_arr(JdbArray* in) {
 char* jdb_dateadd(const char* part, double amount, const char* date_str) {
     struct tm tm = {0};
     if (!parse_iso_date(date_str, &tm)) return _strdup("");
-    int64_t n = (int64_t)amount;
-    char p = part ? toupper((unsigned char)part[0]) : 'D';
-    switch (p) {
-        case 'Y': tm.tm_year += (int)n; break;
-        case 'M': tm.tm_mon  += (int)n; break;
-        case 'D': tm.tm_mday += (int)n; break;
-        case 'H': tm.tm_hour += (int)n; break;
-        case 'N': tm.tm_min  += (int)n; break;
-        case 'S': tm.tm_sec  += (int)n; break;
+    int64_t y = tm.tm_year + 1900, mo = tm.tm_mon + 1, d = tm.tm_mday;
+    int64_t h = tm.tm_hour, mi = tm.tm_min, se = tm.tm_sec;
+    char p = part ? (char)toupper((unsigned char)part[0]) : 'D';
+    double epoch;
+    if (p == 'Y' || p == 'M') {
+        rt_add_months(y, mo, d, (int64_t)amount * (p == 'Y' ? 12 : 1));
+        epoch = rt_local_civil_to_epoch(y, mo, d, h, mi, se);
+    } else {
+        epoch = rt_local_civil_to_epoch(y, mo, d, h, mi, se);
+        switch (p) {
+            case 'W': epoch += amount * 604800.0; break;
+            case 'D': epoch += amount * 86400.0;  break;
+            case 'H': epoch += amount * 3600.0;   break;
+            case 'N': epoch += amount * 60.0;     break;
+            case 'S': epoch += amount;            break;
+            default:  epoch += amount * 86400.0;  break;
+        }
     }
-    mktime(&tm);  // normalize
-    return format_iso_date(&tm, true);
+    struct tm out;
+    rt_fill_tm(epoch, true, &out);
+    return format_iso_date(&out, true);
 }
 
 // DATEDIFF: difference between two ISO date strings in units of part.
 double jdb_datediff(const char* part, const char* date1, const char* date2) {
     struct tm tm1 = {0}, tm2 = {0};
     if (!parse_iso_date(date1, &tm1) || !parse_iso_date(date2, &tm2)) return 0;
-    double diff = difftime(mktime(&tm2), mktime(&tm1));
+    double e1 = rt_local_civil_to_epoch(tm1.tm_year + 1900, tm1.tm_mon + 1, tm1.tm_mday,
+                                        tm1.tm_hour, tm1.tm_min, tm1.tm_sec);
+    double e2 = rt_local_civil_to_epoch(tm2.tm_year + 1900, tm2.tm_mon + 1, tm2.tm_mday,
+                                        tm2.tm_hour, tm2.tm_min, tm2.tm_sec);
+    double diff = e2 - e1;
     char p = part ? toupper((unsigned char)part[0]) : 'S';
     switch (p) {
         case 'S': return diff;

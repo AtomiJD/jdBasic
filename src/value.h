@@ -15,6 +15,65 @@
 // Global locale for number formatting (set by SETLOCALE)
 inline std::locale g_jd_locale("C");
 
+// A timestamp built from the proleptic Gregorian calendar, for the dates
+// the CRT cannot represent. Local time, matching what strftime gives for
+// the years it does cover.
+inline std::string jdb_civil_timestamp(double epoch) {
+    // Split an epoch into civil components, proleptic Gregorian.
+    auto split = [](double e, int64_t& y, int64_t& m, int64_t& d,
+                    int64_t& h, int64_t& mi, int64_t& se) {
+        int64_t t = (int64_t)std::floor(e);
+        int64_t days = t / 86400;
+        int64_t rem = t % 86400;
+        if (rem < 0) { rem += 86400; days -= 1; }
+        h = rem / 3600; mi = (rem % 3600) / 60; se = rem % 60;
+        int64_t z = days + 719468;
+        int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+        int64_t doe = z - era * 146097;
+        int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        int64_t yy = yoe + era * 400;
+        int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        int64_t mp = (5 * doy + 2) / 153;
+        d = doy - (153 * mp + 2) / 5 + 1;
+        m = mp < 10 ? mp + 3 : mp - 9;
+        y = yy + (m <= 2);
+    };
+    // The zone offset for that date, asked about a year the CRT covers,
+    // of the same leapness. Daylight rules are political and did not
+    // exist for most of the years this reaches, so the ones in force now
+    // are the only answer available.
+    int64_t y, m, d, h, mi, se;
+    split(epoch, y, m, d, h, mi, se);
+    std::tm probe{};
+    probe.tm_year = ((y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 2000 : 2001) - 1900;
+    probe.tm_mon = (int)(m - 1);
+    probe.tm_mday = (int)d;
+    probe.tm_hour = (int)h;
+    probe.tm_min = (int)mi;
+    probe.tm_sec = (int)se;
+    probe.tm_isdst = -1;
+    std::time_t local = std::mktime(&probe);
+    if (local != (std::time_t)-1) {
+        std::tm asked{};
+        asked.tm_year = probe.tm_year;  // mktime normalised the copy, not these
+        int64_t py = (int64_t)probe.tm_year + 1900;
+        // The same wall clock read as UTC, to measure how far local sits.
+        int64_t yy = py - (m <= 2 ? 1 : 0);
+        int64_t era = (yy >= 0 ? yy : yy - 399) / 400;
+        int64_t yoe = yy - era * 400;
+        int64_t doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+        int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+        int64_t as_utc = (era * 146097 + doe - 719468) * 86400 + h * 3600 + mi * 60 + se;
+        epoch += (double)(as_utc - (int64_t)local);
+        split(epoch, y, m, d, h, mi, se);
+    }
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "%04lld-%02lld-%02lld %02lld:%02lld:%02lld",
+                  (long long)y, (long long)m, (long long)d,
+                  (long long)h, (long long)mi, (long long)se);
+    return std::string(buf);
+}
+
 enum class ValueType : uint8_t {
     NONE, BOOLEAN, BYTE, INT16, INT32, INT64,
     FLOAT16, FLOAT32, FLOAT64,
@@ -389,11 +448,15 @@ struct Value {
             case ValueType::FLOAT64:
                 if (subtype == ValueSubtype::DATE) {
                     std::time_t t = static_cast<std::time_t>(f64);
-                    auto* tm = std::localtime(&t);
-                    if (!tm) return format_float_locale(f64);
-                    char buf[32];
-                    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
-                    return std::string(buf);
+                    if (auto* tm = std::localtime(&t)) {
+                        char buf[32];
+                        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", tm);
+                        return std::string(buf);
+                    }
+                    // Before 1970 the CRT answers nothing, so the timestamp
+                    // is built from the calendar. A date prints as a date
+                    // whatever year it falls in.
+                    return jdb_civil_timestamp(f64);
                 }
                 return format_float_locale(f64);
             case ValueType::STRING:  return as_string() ? as_string()->data : "";

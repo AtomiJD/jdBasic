@@ -657,7 +657,7 @@ Description: Returns the current system date as a string in "YYYY-MM-DD" format.
 
 [DATEADD]
 Syntax: DATEADD(part$, number, date [, tz_hours])
-Description: Adds a specified time interval to a date. Optional tz_hours (numeric UTC offset in hours) is accepted for symmetry but has no effect on the arithmetic.
+Description: Adds a time interval to a date. part$ is Y, M, W, D, H, N or S. Y and M are whole calendar units counted from the date given, the day of the month clamped to the length of the month it lands in; the rest are exact seconds and take a fraction. Optional tz_hours (numeric UTC offset in hours) is accepted for symmetry but has no effect on the arithmetic.
 
 [DATEDIFF]
 Syntax: DATEDIFF(part$, date1, date2 [, tz_hours])

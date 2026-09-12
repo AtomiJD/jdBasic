@@ -1,4 +1,5 @@
 #ifdef LLVM_CODEGEN
+#include <limits>
 #include "llvm_codegen.h"
 #include "jdb_tags.h"
 #include "llvm-c/Core.h"
@@ -611,6 +612,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_minute_str",  "__minute_str", i64_type, {i8_ptr_type}, 0);
     reg("jdb_second_str",  "__second_str", i64_type, {i8_ptr_type}, 0);
     reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, 2);
+    reg("jdb_format_date_num", "__format_date_num", i8_ptr_type, {f64_type, i8_ptr_type, f64_type}, 2);
 
     // System
     reg("jdb_getenv",  "GETENV$",  i8_ptr_type, {i8_ptr_type}, 2);
@@ -3678,7 +3680,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         if (!e->func_name.empty() && e->func_name.back() == '$') return JD_TAG_STR;
                         // VM-bridged functions whose result is stored as an
                         // ISO string in native (dates without a $ suffix).
-                        if (upper == "DATE.UTC") return JD_TAG_STR;
+                        if (upper == "DATE.UTC" || upper == "EOMONTH") return JD_TAG_STR;
                         auto rit = runtime_funcs.find(upper);
                         if (rit != runtime_funcs.end()) return rit->second.return_tag;
                         auto uit = user_functions.find(e->func_name);
@@ -11706,6 +11708,32 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
+    // FORMAT_DATE - a date is a timestamp here, but one that came out of
+    // an array crossed the bridge as an epoch, so the argument decides.
+    if (upper == "FORMAT_DATE" && !expr.args.empty()) {
+        TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == JD_TAG_F64 || av.tag == JD_TAG_I64) {
+            LLVMValueRef fmt = expr.args.size() >= 2
+                ? coerce_to(codegen_expr(*expr.args[1]), i8_ptr_type)
+                : LLVMConstNull(i8_ptr_type);
+            LLVMValueRef tz = expr.args.size() >= 3
+                ? coerce_to(codegen_expr(*expr.args[2]), f64_type)
+                : LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN());
+            auto& fn = runtime_funcs["__format_date_num"];
+            LLVMValueRef args[] = { coerce_to(av, f64_type), fmt, tz };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "fdn"), JD_TAG_STR };
+        }
+        LLVMValueRef fmt = expr.args.size() >= 2
+            ? coerce_to(codegen_expr(*expr.args[1]), i8_ptr_type)
+            : LLVMConstNull(i8_ptr_type);
+        LLVMValueRef tz = expr.args.size() >= 3
+            ? coerce_to(codegen_expr(*expr.args[2]), f64_type)
+            : LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN());
+        auto& fn = runtime_funcs["FORMAT_DATE"];
+        LLVMValueRef args[] = { coerce_to(av, i8_ptr_type), fmt, tz };
+        return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "fds"), JD_TAG_STR };
+    }
+
     // CVDATE - dispatch by argument type (string parses ISO, number is
     // epoch seconds, array is element-wise vectorized).
     if ((upper == "CVDATE" || upper == "CDATE") && expr.args.size() == 1) {
@@ -13060,7 +13088,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // VM returns DATE Values which the bridge stringifies. These
                 // have direct bindings too, but the bridge path is taken when
                 // the user supplies the optional tz arg (n>direct arity).
-                "CVDATE", "CDATE", "DATEADD", "FORMAT_DATE",
+                "CVDATE", "CDATE", "DATEADD", "FORMAT_DATE", "EOMONTH",
                 // GUI.INPUT returns the (possibly edited) text-field content
                 // as a string; without this it gets routed through
                 // jdrt_call_typed_f64 and the result comes back as 0.0 -

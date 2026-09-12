@@ -1933,6 +1933,27 @@ SQL.CLOSE(db)
 * **`EOMONTH(date [, offset_months]) -> DateTime`**: Returns the last day (midnight, local) of the month `offset_months` away from `date` (Excel-style; `offset` defaults to 0). Days-in-month is then just `DAY(EOMONTH(d))` - leap years handled, no lookup table. Vectorises element-wise over a date array.
 * **`DATERANGE(start, end [, unit$="D"] [, step=1]) -> array`**: Array of `DateTime`s from `start` to `end` **inclusive**, stepping by `step` units. Calendar units `D`/`W`/`M`/`Y` advance by whole local calendar days/weeks/months/years (DST-safe - a "day" never drifts by an hour); clock units `H`/`N`/`S` advance by fixed seconds. A negative `step` counts down. Example: `DATERANGE(checkin, checkout, "D")`.
 
+**Months and years are counted from the start, not from the step before.**
+`DATEADD("M", 1, ...)` and a `"M"` range keep the day of the month where the
+month it lands in is long enough, and clamp it to that month's last day where
+it is not. So a range from the 31st reads 01-31, 02-28, 03-31, 04-30: it comes
+back on the months that have a 31st rather than walking forward through the
+short ones.
+
+**Dates before 1970 work.** Parsing, formatting, the component accessors and
+the arithmetic all go through the proleptic Gregorian calendar rather than the
+C runtime, whose range starts at 1970 and which answers -1 or nothing for
+anything earlier. Daylight saving for such a date is read from the rules in
+force now, because the rules of the time are not in the machine.
+
+**What a date is, in each backend.** Interpreted, a `DateTime` is a number
+tagged as a date: it prints as a timestamp and `TYPEOF` says `DATE`. Compiled,
+it is the timestamp itself, an ISO string, and `TYPEOF` says `STRING`. The
+verbs above take either, so the difference only shows when a program asks a
+date what type it is, or prints a date that it read out of an array a builtin
+gave it: interpreted that cell is still a date, compiled it is the epoch
+number. `FORMAT_DATE` accepts both and is the portable way to render one.
+
 ### Type Inspection
 
 * **`TYPEOF(value) -> string$`**: Returns the type name as a string: `"NUMBER"`, `"STRING"`, `"ARRAY"`, `"OBJECT"`, `"FUNCREF"`, `"NONE"`, etc.
