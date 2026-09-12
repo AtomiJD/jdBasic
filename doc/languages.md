@@ -1433,6 +1433,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `DF` | data frames: CSV in and out, computed columns, filters, group by, joins, pivots |
 | `YAML` | the block subset of YAML: read a pipeline or a compose file, change it, write it back |
 | `HTMLDOM` | HTML into a tree with CSS selectors: scraping, link audits, tables out of pages |
+| `STATS` | description, correlation and regression, significance tests, the three distributions |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

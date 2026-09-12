@@ -7455,7 +7455,16 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 elems.reserve(expr.args.size());
                 bool saw_ptr_elem = false, saw_plain_elem = false;
                 for (size_t i = 0; i < expr.args.size(); i++) {
-                    TypedValue e = codegen_expr(*expr.args[i]);
+                    // An element read asks the cell for its own kind, so a
+                    // string taken out of an array whose element type is
+                    // not known stays a string inside the literal.
+                    TypedValue e;
+                    {
+                        ScopedLeafTag _lt(this, expr.args[i] &&
+                                                expr.args[i]->kind == ExprKind::INDEX
+                                                ? JD_TAG_RUNTIME : -1);
+                        e = codegen_expr(*expr.args[i]);
+                    }
                     if (e.tag == JD_TAG_NATIVE_MAP) any_runtime = true;
                     if (e.tag == JD_TAG_ARR || e.tag == JD_TAG_STR ||
                         e.tag == JD_TAG_NATIVE_MAP || e.tag == JD_TAG_VM_HANDLE)

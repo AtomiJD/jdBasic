@@ -60,12 +60,14 @@ tests/jdlibs/conf_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/console_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/df_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/dt_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/htmldom_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/jwt_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/llmapi_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/logger_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/md_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/req_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/schema_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/stats_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/testkit_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/xlsx_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/yaml_selftest.jdb	PASS	PASS	OK

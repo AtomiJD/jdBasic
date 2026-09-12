@@ -1,0 +1,134 @@
+' stats_demo.jdb - a week of measurements, read the way a report reads them.
+'
+' Two variants of a page were measured for a week: response times, the
+' visitors who converted, and the money spent on ads against the revenue
+' that followed. The demo describes each sample, asks whether the two
+' variants really differ (three ways), tests the conversion table, fits
+' the spend against the revenue, prints the correlation of every metric
+' with every other, and names the critical values it used.
+'
+'   jdBasic stats_demo.jdb
+
+IMPORT STATS, DF, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+
+' ── the measurements ───────────────────────────────────────────
+
+DIM control = [182.0, 176.5, 193.2, 188.0, 179.4, 201.6, 185.3, 190.1, 177.8, 184.6, 196.3, 181.2]
+DIM variant = [171.4, 168.2, 179.9, 174.6, 166.8, 188.2, 172.1, 176.0, 165.3, 170.7, 183.4, 169.9]
+DIM days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed", "Thu", "Fri"]
+DIM spend = [120.0, 150.0, 95.0, 210.0, 180.0, 75.0, 60.0, 165.0, 140.0, 200.0, 110.0, 130.0]
+DIM revenue = [980.0, 1180.0, 820.0, 1520.0, 1340.0, 690.0, 610.0, 1260.0, 1120.0, 1460.0, 900.0, 1030.0]
+DIM visitors = [420.0, 470.0, 390.0, 610.0, 560.0, 330.0, 300.0, 520.0, 450.0, 590.0, 410.0, 440.0]
+
+CONSOLE.RULE("response time, two variants", "=")
+DIM rows = []
+DIM samples = [control, variant]
+DIM names = ["control", "variant"]
+DIM i = 0
+FOR i = 0 TO 1
+    DIM d = STATS.DESCRIBE(samples[i])
+    PUSH(rows, [names[i], d{"n"}, ROUND(d{"mean"}, 2), ROUND(d{"sd"}, 2), ROUND(d{"min"}, 1), ROUND(d{"q1"}, 2), ROUND(d{"median"}, 2), ROUND(d{"q3"}, 2), ROUND(d{"max"}, 1)])
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["sample", "n", "mean", "sd", "min", "q1", "median", "q3", "max"], "max_width": 78})
+PRINT ""
+
+DIM shape = STATS.DESCRIBE(control)
+CONSOLE.KV([["skew", STR$(ROUND(shape{"skew"}, 4)) + "  (a lopsided sample is far from zero)"], ["kurtosis", STR$(ROUND(shape{"kurtosis"}, 4)) + "  (heavy tails are far above zero)"], ["standard error", STR$(ROUND(shape{"sem"}, 4))], ["95 percent interval", STR$(ROUND(shape{"mean"} - STATS.TPPF(0.975, shape{"n"} - 1) * shape{"sem"}, 2)) + " to " + STR$(ROUND(shape{"mean"} + STATS.TPPF(0.975, shape{"n"} - 1) * shape{"sem"}, 2))]], 2)
+PRINT ""
+
+' ── does the difference hold up ────────────────────────────────
+
+CONSOLE.RULE("is the variant really faster")
+DIM pooled = STATS.TTEST2(control, variant)
+DIM welch = STATS.TTEST2(control, variant, FALSE)
+DIM ranks = STATS.MANNWHITNEY(control, variant)
+DIM verdicts = []
+PUSH(verdicts, ["t test, pooled", ROUND(pooled{"t"}, 4), ROUND(pooled{"df"}, 2), Verdict$(pooled{"p"})])
+PUSH(verdicts, ["t test, Welch", ROUND(welch{"t"}, 4), ROUND(welch{"df"}, 2), Verdict$(welch{"p"})])
+PUSH(verdicts, ["rank sum", ROUND(ranks{"z"}, 4), "-", Verdict$(ranks{"p"})])
+CONSOLE.TABLE(verdicts, {"headers": ["test", "statistic", "df", "p value"], "align": ["l", "r", "r", "l"]})
+PRINT "  the three agree, so the shape of the samples is not carrying the result"
+PRINT ""
+
+FUNC Verdict$(p)
+    DIM text$ = FORMAT$("{:.6f}", p)
+    IF p < 0.001 THEN RETURN CONSOLE.GREEN$(text$ + "  (far below a thousandth)")
+    IF p < 0.05 THEN RETURN CONSOLE.GREEN$(text$ + "  (below five percent)")
+    RETURN CONSOLE.YELLOW$(text$ + "  (not below five percent)")
+ENDFUNC
+
+' ── the conversion table ───────────────────────────────────────
+
+CONSOLE.RULE("conversions")
+DIM table = [[212, 3888], [266, 3834]]
+DIM test = STATS.CHISQTABLE(table)
+DIM table_rows = []
+FOR i = 0 TO 1
+    DIM seen = table[i]
+    DIM want = test{"expected"}[i]
+    PUSH(table_rows, [names[i], seen[0], ROUND(want[0], 1), seen[1], ROUND(want[1], 1), FORMAT$("{:.2f} %", seen[0] / (seen[0] + seen[1]) * 100)])
+NEXT i
+CONSOLE.TABLE(table_rows, {"headers": ["sample", "converted", "expected", "left", "expected", "rate"], "align": ["l", "r", "r", "r", "r", "r"]})
+CONSOLE.KV([["chi square", STR$(ROUND(test{"chi2"}, 4)) + " on " + STR$(test{"df"}) + " degree"], ["p value", Verdict$(test{"p"})], ["critical value", "a table this size needs " + STR$(ROUND(STATS.CHI2PPF(0.95, test{"df"}), 4)) + " to reach five percent"]], 2)
+PRINT ""
+
+' ── spend against revenue ──────────────────────────────────────
+
+CONSOLE.RULE("what an advertising euro brought back")
+DIM fit = STATS.LINREGRESS(spend, revenue)
+CONSOLE.KV([["line", "revenue = " + STR$(ROUND(fit{"slope"}, 4)) + " * spend + " + STR$(ROUND(fit{"intercept"}, 2))], ["r", STR$(ROUND(fit{"r"}, 6)) + ", so r squared is " + STR$(ROUND(fit{"r2"}, 6))], ["slope error", STR$(ROUND(fit{"stderr"}, 4)) + ", t " + STR$(ROUND(fit{"t"}, 3)) + " on " + STR$(fit{"df"}) + " degrees"], ["p value", Verdict$(fit{"p"})], ["at 250 euro", STR$(ROUND(fit{"slope"} * 250 + fit{"intercept"}, 2)) + " euro of revenue"]], 2)
+PRINT ""
+DIM residuals = []
+FOR i = 0 TO LEN(spend) - 1
+    PUSH(residuals, revenue[i] - (fit{"slope"} * spend[i] + fit{"intercept"}))
+NEXT i
+DIM far = STATS.OUTLIERS(residuals)
+PRINT "  residual spread "; ROUND(STATS.SD(residuals), 2); ", skew "; ROUND(STATS.SKEW(residuals), 4)
+IF LEN(far) = 0 THEN
+    PRINT "  no day sits outside the box rule"
+ELSE
+    FOR i = 0 TO LEN(far) - 1
+        PRINT "  "; days[far[i]]; " is off the line by "; ROUND(residuals[far[i]], 1)
+    NEXT i
+ENDIF
+PRINT ""
+
+' ── every metric against every other ───────────────────────────
+
+CONSOLE.RULE("how the metrics move together")
+DIM metrics = DF.FROMCOLS({"spend": spend, "revenue": revenue, "visitors": visitors, "response": control})
+DIM columns = []
+DIM labels = DF.NAMES(metrics)
+FOR i = 0 TO LEN(labels) - 1
+    PUSH(columns, DF.COL(metrics, labels[i]))
+NEXT i
+DIM matrix = STATS.CORRMATRIX(columns)
+DIM corr_rows = []
+FOR i = 0 TO LEN(labels) - 1
+    DIM row = [labels[i]]
+    DIM j = 0
+    FOR j = 0 TO LEN(labels) - 1
+        DIM cell$ = FORMAT$("{:.4f}", matrix[i][j])
+        IF i <> j ANDALSO ABS(matrix[i][j]) > 0.9 THEN cell$ = CONSOLE.BOLD$(cell$)
+        PUSH(row, cell$)
+    NEXT j
+    PUSH(corr_rows, row)
+NEXT i
+CONSOLE.TABLE(corr_rows, {"headers": ["", "spend", "revenue", "visitors", "response"], "align": ["l", "r", "r", "r", "r"]})
+PRINT "  spend and revenue move together; the response time does not follow either"
+PRINT ""
+
+' ── the numbers behind the verdicts ────────────────────────────
+
+CONSOLE.RULE("the critical values used")
+DIM critical = []
+PUSH(critical, ["t, two sided, 5 percent, 22 degrees", ROUND(STATS.TPPF(0.975, 22), 4)])
+PUSH(critical, ["t, two sided, 5 percent, 10 degrees", ROUND(STATS.TPPF(0.975, 10), 4)])
+PUSH(critical, ["normal, two sided, 5 percent", ROUND(STATS.NORMPPF(0.975), 4)])
+PUSH(critical, ["chi square, 5 percent, 1 degree", ROUND(STATS.CHI2PPF(0.95, 1), 4)])
+PUSH(critical, ["chi square, 1 percent, 1 degree", ROUND(STATS.CHI2PPF(0.99, 1), 4)])
+CONSOLE.TABLE(critical, {"headers": ["value", "at"], "align": ["l", "r"], "border": "plain"})
+PRINT ""
+PRINT "  a t of "; ROUND(pooled{"t"}, 2); " against a critical "; ROUND(STATS.TPPF(0.975, 22), 2); " is why the difference stands"

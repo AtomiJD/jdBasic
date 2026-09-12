@@ -1,0 +1,750 @@
+' stats.jdb - the layer above the array reducers: description, association,
+' significance tests and the three distributions they need.
+'
+'   IMPORT STATS
+'   DIM d = STATS.DESCRIBE(sample)
+'   PRINT d{"mean"}; " +- "; d{"sd"}; "  skew "; d{"skew"}
+'   DIM fit = STATS.LINREGRESS(x, y)
+'   PRINT fit{"slope"}; " r "; fit{"r"}; " p "; fit{"p"}
+'   PRINT STATS.TTEST2(before, after){"p"}
+'
+' Variance and standard deviation are the sample forms (ddof 1) unless
+' asked otherwise; the STDEV and VARIANCE builtins are the population
+' forms. Every function answers the same as scipy.stats to six decimals;
+' the self test carries the comparison.
+
+EXPORT MODULE STATS
+
+CONST TINY_STEP = 1e-300
+CONST FIT_EPS = 3e-16
+
+' ── describing one sample ──────────────────────────────────────
+
+' The variance; ddof 1 is the sample form, 0 the population form.
+EXPORT FUNC VAR(v, ddof = 1)
+    RETURN Spread(v, ddof)
+ENDFUNC
+
+EXPORT FUNC SD(v, ddof = 1)
+    RETURN SQR(Spread(v, ddof))
+ENDFUNC
+
+' The standard error of the mean.
+EXPORT FUNC SEM(v)
+    DIM n = LEN(v)
+    IF n < 2 THEN RETURN 0
+    RETURN SQR(Spread(v, 1) / n)
+ENDFUNC
+
+' The value at a share of the sorted sample, interpolated between the
+' two neighbours the share falls between.
+EXPORT FUNC QUANTILE(v, share)
+    DIM ranked = SORT(v)
+    DIM n = LEN(ranked)
+    IF n = 0 THEN RETURN 0
+    IF n = 1 THEN RETURN ranked[0]
+    DIM at = (n - 1) * share
+    IF at <= 0 THEN RETURN ranked[0]
+    IF at >= n - 1 THEN RETURN ranked[n - 1]
+    DIM lower = INT(at)
+    DIM part = at - lower
+    RETURN ranked[lower] + part * (ranked[lower + 1] - ranked[lower])
+ENDFUNC
+
+' The spread of the middle half.
+EXPORT FUNC IQR(v)
+    RETURN QUANTILE(v, 0.75) - QUANTILE(v, 0.25)
+ENDFUNC
+
+' The lopsidedness of the sample, the biased estimator.
+EXPORT FUNC SKEW(v)
+    DIM n = LEN(v)
+    IF n < 3 THEN RETURN 0
+    DIM second = Moment(v, 2)
+    IF second <= 0 THEN RETURN 0
+    RETURN Moment(v, 3) / (second ^ 1.5)
+ENDFUNC
+
+' How heavy the tails are, as the excess over the normal curve.
+EXPORT FUNC KURTOSIS(v)
+    DIM n = LEN(v)
+    IF n < 4 THEN RETURN 0
+    DIM second = Moment(v, 2)
+    IF second <= 0 THEN RETURN 0
+    RETURN Moment(v, 4) / (second * second) - 3
+ENDFUNC
+
+' Everything above in one map: n, mean, variance, sd, sem, min, q1,
+' median, q3, max, range, iqr, skew, kurtosis.
+EXPORT FUNC DESCRIBE(v)
+    DIM out AS MAP
+    DIM n = LEN(v)
+    out{"n"} = n
+    IF n = 0 THEN RETURN out
+    out{"mean"} = MEAN(v)
+    out{"variance"} = Spread(v, 1)
+    out{"sd"} = SQR(Spread(v, 1))
+    out{"sem"} = SEM(v)
+    out{"min"} = MIN(v)
+    out{"q1"} = QUANTILE(v, 0.25)
+    out{"median"} = MEDIAN(v)
+    out{"q3"} = QUANTILE(v, 0.75)
+    out{"max"} = MAX(v)
+    out{"range"} = MAX(v) - MIN(v)
+    out{"iqr"} = IQR(v)
+    out{"skew"} = SKEW(v)
+    out{"kurtosis"} = KURTOSIS(v)
+    RETURN out
+ENDFUNC
+
+' Every value as its distance from the mean in standard deviations.
+EXPORT FUNC ZSCORES(v, ddof = 0)
+    DIM spread = SQR(Spread(v, ddof))
+    DIM m = MEAN(v)
+    DIM out = []
+    DIM i = 0
+    IF spread = 0 THEN
+        FOR i = 0 TO LEN(v) - 1
+            PUSH(out, 0)
+        NEXT i
+        RETURN out
+    ENDIF
+    FOR i = 0 TO LEN(v) - 1
+        PUSH(out, (v[i] - m) / spread)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The positions of the values that lie outside the fence. opts:
+' "method" is "iqr" (default) or "z", "factor" the multiplier (1.5 for
+' the box rule, 3 for the z rule).
+EXPORT FUNC OUTLIERS(v, opts = 0)
+    DIM method$ = "iqr"
+    DIM factor = 0.0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "method") THEN method$ = LCASE$(opts{"method"})
+        IF MAP.EXISTS(opts, "factor") THEN factor = opts{"factor"}
+    ENDIF
+    DIM out = []
+    DIM i = 0
+    IF method$ = "z" THEN
+        IF factor = 0 THEN factor = 3
+        DIM scores = ZSCORES(v, 0)
+        FOR i = 0 TO LEN(scores) - 1
+            IF ABS(scores[i]) > factor THEN PUSH(out, i)
+        NEXT i
+        RETURN out
+    ENDIF
+    IF factor = 0 THEN factor = 1.5
+    DIM low = QUANTILE(v, 0.25)
+    DIM high = QUANTILE(v, 0.75)
+    DIM fence = factor * (high - low)
+    FOR i = 0 TO LEN(v) - 1
+        IF v[i] < low - fence ORELSE v[i] > high + fence THEN PUSH(out, i)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The rank of every value, ties sharing the average of their places.
+EXPORT FUNC RANKS(v)
+    DIM order = GRADE(v)
+    DIM n = LEN(v)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        PUSH(out, 0)
+    NEXT i
+    i = 0
+    DO WHILE i < n
+        DIM j = i
+        DO WHILE j + 1 < n ANDALSO v[order[j + 1]] = v[order[i]]
+            j = j + 1
+        LOOP
+        DIM place = (i + j + 2) / 2
+        DIM k = i
+        FOR k = i TO j
+            out[order[k]] = place
+        NEXT k
+        i = j + 1
+    LOOP
+    RETURN out
+ENDFUNC
+
+' ── two samples together ───────────────────────────────────────
+
+' The covariance; ddof 1 is the sample form.
+EXPORT FUNC COV(x, y, ddof = 1)
+    DIM n = LEN(x)
+    IF n <> LEN(y) THEN THROW "STATS.COV: " + STR$(n) + " and " + STR$(LEN(y)) + " values"
+    IF n - ddof <= 0 THEN RETURN 0
+    DIM mx = MEAN(x)
+    DIM my = MEAN(y)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        total = total + (x[i] - mx) * (y[i] - my)
+    NEXT i
+    RETURN total / (n - ddof)
+ENDFUNC
+
+' The straight-line correlation of two samples, and its p value.
+EXPORT FUNC CORR(x, y)
+    RETURN Pearson(x, y)
+ENDFUNC
+
+' The correlation of the ranks, which sees any rising relation.
+EXPORT FUNC SPEARMAN(x, y)
+    RETURN Pearson(RANKS(x), RANKS(y))
+ENDFUNC
+
+' The p value of a correlation, two sided.
+EXPORT FUNC CORRTEST(x, y)
+    DIM r = Pearson(x, y)
+    DIM n = LEN(x)
+    DIM out AS MAP
+    out{"r"} = r
+    out{"n"} = n
+    IF n < 3 ORELSE ABS(r) >= 1 THEN
+        out{"t"} = 0
+        out{"df"} = n - 2
+        out{"p"} = 0
+        RETURN out
+    ENDIF
+    DIM df = n - 2
+    DIM t = r * SQR(df / (1 - r * r))
+    out{"t"} = t
+    out{"df"} = df
+    out{"p"} = 2 * TCDF(-ABS(t), df)
+    RETURN out
+ENDFUNC
+
+' The correlation of every column with every other, as a matrix.
+EXPORT FUNC CORRMATRIX(columns)
+    DIM n = LEN(columns)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM row = []
+        DIM j = 0
+        FOR j = 0 TO n - 1
+            IF i = j THEN
+                PUSH(row, 1)
+            ELSE
+                PUSH(row, Pearson(columns[i], columns[j]))
+            ENDIF
+        NEXT j
+        PUSH(out, row)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The least squares line through the points: slope, intercept, r, the
+' two sided p value of the slope, and the standard errors.
+EXPORT FUNC LINREGRESS(x, y)
+    DIM n = LEN(x)
+    IF n <> LEN(y) THEN THROW "STATS.LINREGRESS: " + STR$(n) + " and " + STR$(LEN(y)) + " values"
+    DIM out AS MAP
+    out{"n"} = n
+    IF n < 3 THEN THROW "STATS.LINREGRESS: at least three points"
+    DIM mx = MEAN(x)
+    DIM my = MEAN(y)
+    DIM sxx = 0.0
+    DIM syy = 0.0
+    DIM sxy = 0.0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM dx = x[i] - mx
+        DIM dy = y[i] - my
+        sxx = sxx + dx * dx
+        syy = syy + dy * dy
+        sxy = sxy + dx * dy
+    NEXT i
+    IF sxx = 0 THEN THROW "STATS.LINREGRESS: every x is the same"
+    DIM slope = sxy / sxx
+    DIM intercept = my - slope * mx
+    DIM r = 0.0
+    IF syy > 0 THEN r = sxy / SQR(sxx * syy)
+    DIM df = n - 2
+    DIM resid = syy - slope * sxy
+    IF resid < 0 THEN resid = 0
+    DIM s2 = resid / df
+    DIM stderr = SQR(s2 / sxx)
+    out{"slope"} = slope
+    out{"intercept"} = intercept
+    out{"r"} = r
+    out{"r2"} = r * r
+    out{"df"} = df
+    out{"stderr"} = stderr
+    out{"intercept_stderr"} = SQR(s2 * (1 / n + mx * mx / sxx))
+    IF stderr = 0 THEN
+        out{"t"} = 0
+        out{"p"} = 0
+    ELSE
+        DIM t = slope / stderr
+        out{"t"} = t
+        out{"p"} = 2 * TCDF(-ABS(t), df)
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' ── tests ──────────────────────────────────────────────────────
+
+' Is the mean of one sample the value it should be?
+EXPORT FUNC TTEST1(v, mu)
+    DIM n = LEN(v)
+    DIM out AS MAP
+    DIM df = n - 1
+    out{"n"} = n
+    out{"df"} = df
+    IF n < 2 THEN
+        out{"t"} = 0
+        out{"p"} = 1
+        RETURN out
+    ENDIF
+    DIM t = (MEAN(v) - mu) / SQR(Spread(v, 1) / n)
+    out{"t"} = t
+    out{"p"} = 2 * TCDF(-ABS(t), df)
+    RETURN out
+ENDFUNC
+
+' Do two samples have the same mean? The pooled test by default, the
+' Welch test when the spreads differ.
+EXPORT FUNC TTEST2(a, b, equal_var = TRUE)
+    DIM na = LEN(a)
+    DIM nb = LEN(b)
+    DIM va = Spread(a, 1)
+    DIM vb = Spread(b, 1)
+    DIM out AS MAP
+    DIM df = 0.0
+    DIM t = 0.0
+    IF equal_var THEN
+        df = na + nb - 2
+        DIM pooled = ((na - 1) * va + (nb - 1) * vb) / df
+        t = (MEAN(a) - MEAN(b)) / SQR(pooled * (1 / na + 1 / nb))
+    ELSE
+        DIM ea = va / na
+        DIM eb = vb / nb
+        t = (MEAN(a) - MEAN(b)) / SQR(ea + eb)
+        df = (ea + eb) * (ea + eb) / (ea * ea / (na - 1) + eb * eb / (nb - 1))
+    ENDIF
+    out{"t"} = t
+    out{"df"} = df
+    out{"p"} = 2 * TCDF(-ABS(t), df)
+    RETURN out
+ENDFUNC
+
+' The same measurement twice on the same subjects.
+EXPORT FUNC TTESTPAIRED(a, b)
+    DIM n = LEN(a)
+    IF n <> LEN(b) THEN THROW "STATS.TTESTPAIRED: " + STR$(n) + " and " + STR$(LEN(b)) + " values"
+    DIM gaps = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        PUSH(gaps, a[i] - b[i])
+    NEXT i
+    RETURN TTEST1(gaps, 0)
+ENDFUNC
+
+' Do the counts follow the share they should? Without an expectation
+' every class is expected to hold the same share.
+EXPORT FUNC CHISQ(observed, expected = 0)
+    DIM k = LEN(observed)
+    DIM want = []
+    DIM i = 0
+    IF TYPEOF(expected) = "ARRAY" THEN
+        want = expected
+    ELSE
+        DIM share = SUM(observed) / k
+        FOR i = 0 TO k - 1
+            PUSH(want, share)
+        NEXT i
+    ENDIF
+    DIM total = 0.0
+    FOR i = 0 TO k - 1
+        IF want[i] > 0 THEN
+            DIM gap = observed[i] - want[i]
+            total = total + gap * gap / want[i]
+        ENDIF
+    NEXT i
+    DIM out AS MAP
+    DIM df = k - 1
+    out{"chi2"} = total
+    out{"df"} = df
+    out{"p"} = 1 - CHI2CDF(total, df)
+    out{"expected"} = want
+    RETURN out
+ENDFUNC
+
+' Are the rows and the columns of a table independent? A two by two
+' table is corrected for continuity unless that is switched off.
+EXPORT FUNC CHISQTABLE(table, correction = TRUE)
+    DIM rows = LEN(table)
+    DIM cols = LEN(table[0])
+    DIM row_totals = []
+    DIM col_totals = []
+    DIM total = 0.0
+    DIM i = 0
+    DIM j = 0
+    FOR j = 0 TO cols - 1
+        PUSH(col_totals, 0)
+    NEXT j
+    FOR i = 0 TO rows - 1
+        DIM row_sum = 0.0
+        DIM row = table[i]
+        FOR j = 0 TO cols - 1
+            row_sum = row_sum + row[j]
+            col_totals[j] = col_totals[j] + row[j]
+        NEXT j
+        PUSH(row_totals, row_sum)
+        total = total + row_sum
+    NEXT i
+    DIM df = (rows - 1) * (cols - 1)
+    DIM yates = FALSE
+    IF df = 1 ANDALSO correction THEN yates = TRUE
+    DIM expected = []
+    DIM stat = 0.0
+    FOR i = 0 TO rows - 1
+        DIM want_row = []
+        DIM seen = table[i]
+        FOR j = 0 TO cols - 1
+            DIM want = row_totals[i] * col_totals[j] / total
+            PUSH(want_row, want)
+            IF want > 0 THEN
+                DIM gap = ABS(seen[j] - want)
+                IF yates THEN
+                    gap = gap - 0.5
+                    IF gap < 0 THEN gap = 0
+                ENDIF
+                stat = stat + gap * gap / want
+            ENDIF
+        NEXT j
+        PUSH(expected, want_row)
+    NEXT i
+    DIM out AS MAP
+    out{"chi2"} = stat
+    out{"df"} = df
+    out{"p"} = 1 - CHI2CDF(stat, df)
+    out{"expected"} = expected
+    RETURN out
+ENDFUNC
+
+' Do two samples come from the same distribution, without assuming a
+' shape? The rank sum test, read through the normal approximation.
+EXPORT FUNC MANNWHITNEY(a, b, continuity = TRUE)
+    DIM na = LEN(a)
+    DIM nb = LEN(b)
+    DIM both = []
+    DIM i = 0
+    FOR i = 0 TO na - 1
+        PUSH(both, a[i])
+    NEXT i
+    FOR i = 0 TO nb - 1
+        PUSH(both, b[i])
+    NEXT i
+    DIM places = RANKS(both)
+    DIM rank_sum = 0.0
+    FOR i = 0 TO na - 1
+        rank_sum = rank_sum + places[i]
+    NEXT i
+    DIM u = rank_sum - na * (na + 1) / 2
+    DIM n = na + nb
+    DIM ties = 0.0
+    DIM sorted = SORT(both)
+    i = 0
+    DO WHILE i < n
+        DIM j = i
+        DO WHILE j + 1 < n ANDALSO sorted[j + 1] = sorted[i]
+            j = j + 1
+        LOOP
+        DIM run = j - i + 1
+        IF run > 1 THEN ties = ties + run * run * run - run
+        i = j + 1
+    LOOP
+    DIM centre = na * nb / 2
+    DIM spread = SQR((na * nb / 12) * ((n + 1) - ties / (n * (n - 1))))
+    DIM out AS MAP
+    out{"u"} = u
+    out{"n1"} = na
+    out{"n2"} = nb
+    IF spread = 0 THEN
+        out{"z"} = 0
+        out{"p"} = 1
+        RETURN out
+    ENDIF
+    DIM gap = u - centre
+    IF continuity THEN
+        IF gap > 0 THEN
+            gap = gap - 0.5
+        ELSEIF gap < 0 THEN
+            gap = gap + 0.5
+        ENDIF
+    ENDIF
+    DIM z = gap / spread
+    out{"z"} = z
+    out{"p"} = 2 * NORMCDF(-ABS(z))
+    RETURN out
+ENDFUNC
+
+' ── distributions ──────────────────────────────────────────────
+
+EXPORT FUNC NORMPDF(x, mu = 0, sd = 1)
+    DIM z = (x - mu) / sd
+    RETURN EXP(-0.5 * z * z) / (sd * SQR(2 * PI))
+ENDFUNC
+
+EXPORT FUNC NORMCDF(x, mu = 0, sd = 1)
+    DIM z = (x - mu) / sd
+    DIM half = 0.5 * GammaQ(0.5, z * z / 2)
+    IF z < 0 THEN RETURN half
+    RETURN 1 - half
+ENDFUNC
+
+EXPORT FUNC NORMPPF(p, mu = 0, sd = 1)
+    IF p <= 0 THEN RETURN -1 / 0
+    IF p >= 1 THEN RETURN 1 / 0
+    DIM lo = -40.0
+    DIM hi = 40.0
+    DIM i = 0
+    FOR i = 1 TO 200
+        DIM mid = (lo + hi) / 2
+        IF NORMCDF(mid, 0, 1) < p THEN
+            lo = mid
+        ELSE
+            hi = mid
+        ENDIF
+    NEXT i
+    RETURN mu + sd * (lo + hi) / 2
+ENDFUNC
+
+EXPORT FUNC TPDF(x, df)
+    DIM lead = LnGamma((df + 1) / 2) - LnGamma(df / 2) - 0.5 * LOG(df * PI)
+    RETURN EXP(lead - (df + 1) / 2 * LOG(1 + x * x / df))
+ENDFUNC
+
+EXPORT FUNC TCDF(x, df)
+    DIM split = df / (df + x * x)
+    DIM half = 0.5 * BetaI(df / 2, 0.5, split)
+    IF x > 0 THEN RETURN 1 - half
+    RETURN half
+ENDFUNC
+
+EXPORT FUNC TPPF(p, df)
+    IF p <= 0 THEN RETURN -1 / 0
+    IF p >= 1 THEN RETURN 1 / 0
+    DIM hi = 1.0
+    DO WHILE TCDF(hi, df) < p ANDALSO hi < 1e12
+        hi = hi * 2
+    LOOP
+    DIM lo = -1.0
+    DO WHILE TCDF(lo, df) > p ANDALSO lo > -1e12
+        lo = lo * 2
+    LOOP
+    DIM i = 0
+    FOR i = 1 TO 200
+        DIM mid = (lo + hi) / 2
+        IF TCDF(mid, df) < p THEN
+            lo = mid
+        ELSE
+            hi = mid
+        ENDIF
+    NEXT i
+    RETURN (lo + hi) / 2
+ENDFUNC
+
+EXPORT FUNC CHI2PDF(x, df)
+    IF x <= 0 THEN RETURN 0
+    DIM half = df / 2
+    RETURN EXP((half - 1) * LOG(x) - x / 2 - half * LOG(2) - LnGamma(half))
+ENDFUNC
+
+EXPORT FUNC CHI2CDF(x, df)
+    IF x <= 0 THEN RETURN 0
+    RETURN GammaP(df / 2, x / 2)
+ENDFUNC
+
+EXPORT FUNC CHI2PPF(p, df)
+    IF p <= 0 THEN RETURN 0
+    IF p >= 1 THEN RETURN 1 / 0
+    DIM hi = 1.0
+    DO WHILE CHI2CDF(hi, df) < p ANDALSO hi < 1e12
+        hi = hi * 2
+    LOOP
+    DIM lo = 0.0
+    DIM i = 0
+    FOR i = 1 TO 200
+        DIM mid = (lo + hi) / 2
+        IF CHI2CDF(mid, df) < p THEN
+            lo = mid
+        ELSE
+            hi = mid
+        ENDIF
+    NEXT i
+    RETURN (lo + hi) / 2
+ENDFUNC
+
+' The error function, the integral the normal curve is built from.
+EXPORT FUNC ERF(x)
+    IF x = 0 THEN RETURN 0
+    IF x < 0 THEN RETURN -GammaP(0.5, x * x)
+    RETURN GammaP(0.5, x * x)
+ENDFUNC
+
+EXPORT FUNC ERFC(x)
+    IF x < 0 THEN RETURN 1 + GammaP(0.5, x * x)
+    RETURN GammaQ(0.5, x * x)
+ENDFUNC
+
+' ── the arithmetic underneath ──────────────────────────────────
+
+FUNC Spread(v, ddof)
+    DIM n = LEN(v)
+    IF n - ddof <= 0 THEN RETURN 0
+    DIM m = MEAN(v)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM gap = v[i] - m
+        total = total + gap * gap
+    NEXT i
+    RETURN total / (n - ddof)
+ENDFUNC
+
+' The average power of the distance from the mean.
+FUNC Moment(v, power)
+    DIM n = LEN(v)
+    DIM m = MEAN(v)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        total = total + (v[i] - m) ^ power
+    NEXT i
+    RETURN total / n
+ENDFUNC
+
+FUNC Pearson(x, y)
+    DIM n = LEN(x)
+    IF n <> LEN(y) THEN THROW "STATS: " + STR$(n) + " and " + STR$(LEN(y)) + " values"
+    IF n < 2 THEN RETURN 0
+    DIM mx = MEAN(x)
+    DIM my = MEAN(y)
+    DIM sxx = 0.0
+    DIM syy = 0.0
+    DIM sxy = 0.0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM dx = x[i] - mx
+        DIM dy = y[i] - my
+        sxx = sxx + dx * dx
+        syy = syy + dy * dy
+        sxy = sxy + dx * dy
+    NEXT i
+    IF sxx <= 0 ORELSE syy <= 0 THEN RETURN 0
+    RETURN sxy / SQR(sxx * syy)
+ENDFUNC
+
+' The logarithm of the gamma function, by the Lanczos series.
+FUNC LnGamma(z)
+    IF z < 0.5 THEN RETURN LOG(PI / SIN(PI * z)) - LnGamma(1 - z)
+    DIM c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 0.0000099843695780195716, 0.00000015056327351493116]
+    DIM x = z - 1
+    DIM a = c[0]
+    DIM i = 0
+    FOR i = 1 TO 8
+        a = a + c[i] / (x + i)
+    NEXT i
+    DIM t = x + 7.5
+    RETURN 0.5 * LOG(2 * PI) + (x + 0.5) * LOG(t) - t + LOG(a)
+ENDFUNC
+
+' The regularised lower incomplete gamma: the share of the gamma
+' distribution below x.
+FUNC GammaP(a, x)
+    IF x <= 0 ORELSE a <= 0 THEN RETURN 0
+    IF x < a + 1 THEN RETURN GammaSeries(a, x)
+    RETURN 1 - GammaFraction(a, x)
+ENDFUNC
+
+FUNC GammaQ(a, x)
+    IF x <= 0 ORELSE a <= 0 THEN RETURN 1
+    IF x < a + 1 THEN RETURN 1 - GammaSeries(a, x)
+    RETURN GammaFraction(a, x)
+ENDFUNC
+
+FUNC GammaSeries(a, x)
+    DIM ap = a
+    DIM term = 1 / a
+    DIM total = term
+    DIM i = 0
+    FOR i = 1 TO 500
+        ap = ap + 1
+        term = term * x / ap
+        total = total + term
+        IF ABS(term) < ABS(total) * FIT_EPS THEN EXITFOR
+    NEXT i
+    RETURN total * EXP(-x + a * LOG(x) - LnGamma(a))
+ENDFUNC
+
+' The continued fraction for the upper tail, by the modified Lentz
+' method.
+FUNC GammaFraction(a, x)
+    DIM b = x + 1 - a
+    DIM c = 1 / TINY_STEP
+    DIM d = 1 / b
+    DIM h = d
+    DIM i = 0
+    FOR i = 1 TO 500
+        DIM an = -i * (i - a)
+        b = b + 2
+        d = an * d + b
+        IF ABS(d) < TINY_STEP THEN d = TINY_STEP
+        c = b + an / c
+        IF ABS(c) < TINY_STEP THEN c = TINY_STEP
+        d = 1 / d
+        DIM step_size = d * c
+        h = h * step_size
+        IF ABS(step_size - 1) < FIT_EPS THEN EXITFOR
+    NEXT i
+    RETURN EXP(-x + a * LOG(x) - LnGamma(a)) * h
+ENDFUNC
+
+' The regularised incomplete beta, which carries the t distribution.
+FUNC BetaI(a, b, x)
+    IF x <= 0 THEN RETURN 0
+    IF x >= 1 THEN RETURN 1
+    DIM lead = LnGamma(a + b) - LnGamma(a) - LnGamma(b) + a * LOG(x) + b * LOG(1 - x)
+    DIM front = EXP(lead)
+    IF x < (a + 1) / (a + b + 2) THEN RETURN front * BetaFraction(a, b, x) / a
+    RETURN 1 - front * BetaFraction(b, a, 1 - x) / b
+ENDFUNC
+
+FUNC BetaFraction(a, b, x)
+    DIM qab = a + b
+    DIM qap = a + 1
+    DIM qam = a - 1
+    DIM c = 1.0
+    DIM d = 1 - qab * x / qap
+    IF ABS(d) < TINY_STEP THEN d = TINY_STEP
+    d = 1 / d
+    DIM h = d
+    DIM m = 0
+    FOR m = 1 TO 300
+        DIM m2 = 2 * m
+        DIM aa = m * (b - m) * x / ((qam + m2) * (a + m2))
+        d = 1 + aa * d
+        IF ABS(d) < TINY_STEP THEN d = TINY_STEP
+        c = 1 + aa / c
+        IF ABS(c) < TINY_STEP THEN c = TINY_STEP
+        d = 1 / d
+        h = h * d * c
+        aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2))
+        d = 1 + aa * d
+        IF ABS(d) < TINY_STEP THEN d = TINY_STEP
+        c = 1 + aa / c
+        IF ABS(c) < TINY_STEP THEN c = TINY_STEP
+        d = 1 / d
+        DIM step_size = d * c
+        h = h * step_size
+        IF ABS(step_size - 1) < FIT_EPS THEN EXITFOR
+    NEXT m
+    RETURN h
+ENDFUNC
