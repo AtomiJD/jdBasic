@@ -37,8 +37,11 @@ int es3c28p_i2c_up(void) {
 int es3c28p_i2c_ready(void) { return g_bus != NULL; }
 
 // One handle per address, kept, because adding and removing a device for
-// every register write would cost more than the transfer.
-static i2c_master_dev_handle_t dev_for(int addr) {
+// every register write would cost more than the transfer. Speed is per
+// device on this chip, so the first caller for an address sets it: the
+// panel's own parts run at 400 kHz, an AVR keeping up as a slave does
+// not.
+static i2c_master_dev_handle_t dev_for(int addr, uint32_t hz) {
     if (es3c28p_i2c_up() != 0) return NULL;
     for (int i = 0; i < g_n; i++)
         if (g_addr[i] == addr) return g_dev[i];
@@ -46,23 +49,40 @@ static i2c_master_dev_handle_t dev_for(int addr) {
     i2c_device_config_t dc = {0};
     dc.dev_addr_length = I2C_ADDR_BIT_LEN_7;
     dc.device_address = (uint16_t)addr;
-    dc.scl_speed_hz = 400000;
+    dc.scl_speed_hz = hz;
     if (i2c_master_bus_add_device(g_bus, &dc, &g_dev[g_n]) != ESP_OK) return NULL;
     g_addr[g_n] = addr;
     return g_dev[g_n++];
 }
 
 esp_err_t es3c28p_i2c_write(int addr, const uint8_t* data, int n) {
-    i2c_master_dev_handle_t d = dev_for(addr);
+    i2c_master_dev_handle_t d = dev_for(addr, 400000);
     if (!d) return ESP_FAIL;
     return i2c_master_transmit(d, data, (size_t)n, 100);
 }
 
 esp_err_t es3c28p_i2c_read(int addr, uint8_t reg, uint8_t* out, int n) {
-    i2c_master_dev_handle_t d = dev_for(addr);
+    i2c_master_dev_handle_t d = dev_for(addr, 400000);
     if (!d) return ESP_FAIL;
     return i2c_master_transmit_receive(d, &reg, 1, out, (size_t)n, 100);
 }
+
+// A read with no register byte in front of it, which is how a device
+// that has only one thing to say is asked for it.
+esp_err_t es3c28p_i2c_recv(int addr, uint8_t* out, int n, int hz) {
+    i2c_master_dev_handle_t d = dev_for(addr, (uint32_t)hz);
+    if (!d) return ESP_FAIL;
+    return i2c_master_receive(d, out, (size_t)n, 100);
+}
+
+// The S3 has two I2C ports and this is port 0, so jdBasic's own verbs
+// share this bus rather than opening a second one on the same port -
+// which fails, and would take touch and sound with it.
+i2c_master_bus_handle_t es3c28p_i2c_bus(void) {
+    return es3c28p_i2c_up() == 0 ? g_bus : NULL;
+}
+
+void es3c28p_i2c_pins(int* sda, int* scl) { *sda = PIN_SDA; *scl = PIN_SCL; }
 
 int es3c28p_i2c_read_reg(int addr, uint8_t reg, uint8_t* out, int n) {
     return es3c28p_i2c_read(addr, reg, out, n) == ESP_OK ? 0 : -2;

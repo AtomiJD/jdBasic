@@ -103,12 +103,19 @@ static int taken(int c) {
 
 extern "C" int jdb_break_pending(void) { return g_break; }
 
+// Every reader on this board comes through here - the prompt, the
+// editor, INKEY$, KEY.GET, the event poll - so a keyboard on the I2C
+// connector only has to arrive at this one place to reach all of them.
+extern "C" int es3c28p_kbd_poll(void);
+
 extern "C" int jdb_stdin_getc(int timeout_us) {
     if (g_pushback >= 0) { int c = g_pushback; g_pushback = -1; return c; }
     int64_t end = esp_timer_get_time() + timeout_us;
     for (;;) {
         int c = getchar();
         if (c != EOF) return taken(c);
+        c = es3c28p_kbd_poll();
+        if (c >= 0) return taken(c);
         if (timeout_us >= 0 && esp_timer_get_time() >= end) return -1;
         vTaskDelay(pdMS_TO_TICKS(5));
     }
@@ -124,7 +131,8 @@ extern "C" int jdb_break_poll(void) {
     last = now;
     if (g_pushback >= 0) return 0;
     int c = getchar();
-    if (c == EOF) return 0;
+    if (c == EOF) c = es3c28p_kbd_poll();
+    if (c < 0) return 0;
     if (c == 3) return 1;
     g_pushback = c;
     return 0;

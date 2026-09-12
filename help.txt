@@ -4420,6 +4420,14 @@ Description: Writes a pattern at each end of the PSRAM window and reads it back,
 Syntax: KEY.NOW -> code | -1
 Description: One key code if one is waiting, -1 if none is. Boards only. The one a game loop needs, where KEY.GET waits. Reads whatever console the board has, so the same loop works on the board's own keyboard and over the serial line.
 
+[KEY.LOCAL]
+Syntax: KEY.LOCAL -> TRUE | FALSE
+Description: Whether a keyboard on the board's I2C connector answered. ES3C28P only, for an M5Stack CardKB at 0x5F. It is probed again every two seconds while absent, so one plugged in after boot turns this true without a reset.
+
+[KEY.RAW]
+Syntax: KEY.RAW -> [code, ...]
+Description: The codes the I2C keyboard sent, before the Fn layer was folded into control codes and editor keys. ES3C28P only, and the reading empties it. For settling what a key actually sends rather than trusting a table.
+
 [SYS.PSRAMLARGEST]
 Syntax: SYS.PSRAMLARGEST -> bytes
 Description: The biggest single block the PSRAM heap will hand over. Fruit Jam only. The companion to SYS.LARGEST, and the number that matters when a program grows one large array.

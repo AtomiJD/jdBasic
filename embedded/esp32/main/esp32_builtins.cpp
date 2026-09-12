@@ -5,6 +5,7 @@
 
 #include "../../../src/vm.h"
 #include <stdio.h>
+#include <stdint.h>
 #include "esp_heap_caps.h"
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
@@ -12,6 +13,8 @@
 
 #define CAP_INT (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 extern "C" int jdb_stdin_getc(int timeout_us);
+extern "C" int es3c28p_kbd_ready(void);
+extern "C" int es3c28p_kbd_rawget(uint8_t* out, int cap);
 
 void register_esp32_fs(VM& vm);
 void register_esp32_wifi(VM& vm);
@@ -73,6 +76,21 @@ void register_esp32_builtins(VM& vm) {
     });
     vm.register_native("KEY.NOW", 0, 0, [](const std::vector<Value>&) -> Value {
         return Value::make_i64(jdb_stdin_getc(0));
+    });
+
+    // Whether a keyboard on the I2C connector answered, and what its raw
+    // codes were before the Fn layer was folded in. A key whose meaning
+    // is in doubt gets held down and read back here rather than guessed
+    // at from a datasheet.
+    vm.register_native("KEY.LOCAL", 0, 0, [](const std::vector<Value>&) -> Value {
+        return Value::make_bool(es3c28p_kbd_ready() != 0);
+    });
+    vm.register_native("KEY.RAW", 0, 0, [](const std::vector<Value>&) -> Value {
+        uint8_t buf[16];
+        int n = es3c28p_kbd_rawget(buf, (int)sizeof buf);
+        Value a = Value::make_array();
+        for (int i = 0; i < n; i++) a.as_array()->elements.push_back(Value::make_i64(buf[i]));
+        return a;
     });
 
     // [size, deepest use so far] of the main task's stack, in bytes.

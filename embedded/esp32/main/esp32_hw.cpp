@@ -15,6 +15,8 @@
 #include "../../../src/vm.h"
 
 extern "C" int es3c28p_lcd_uses_pin(int pin);
+extern "C" i2c_master_bus_handle_t es3c28p_i2c_bus(void);
+extern "C" void es3c28p_i2c_pins(int* sda, int* scl);
 
 // GPIO 26 to 32 carry the SPI flash and 33 to 37 the octal PSRAM. The
 // board works because nobody touches them, and a program that does
@@ -194,6 +196,28 @@ void register_esp32_hw(VM& vm) {
         int scl = (int)args[2].to_double();
         need_pin(sda);
         need_pin(scl);
+
+        // Port 0 is the board's own: the touch controller and the audio
+        // codec are already on it, and a second master bus on a port
+        // that is open fails. Naming its pins adopts that bus, which is
+        // what reaching an external device on the I2C connector needs,
+        // since the connector is wired to the same two lines. Naming
+        // any other pins on port 0 is the mistake worth catching.
+        if (bus == 0) {
+            int board_sda = 0, board_scl = 0;
+            es3c28p_i2c_pins(&board_sda, &board_scl);
+            if (sda != board_sda || scl != board_scl) {
+                char msg[96];
+                snprintf(msg, sizeof msg,
+                         "I2C.SETUP: bus 0 is the board bus on %d and %d - use bus 1 for other pins",
+                         board_sda, board_scl);
+                throw std::runtime_error(msg);
+            }
+            s_i2c[0] = es3c28p_i2c_bus();
+            if (!s_i2c[0]) throw std::runtime_error("I2C.SETUP: the board bus would not open");
+            return Value::make_i64(0);
+        }
+
         if (s_i2c[bus]) { i2c_del_master_bus(s_i2c[bus]); s_i2c[bus] = nullptr; }
         i2c_master_bus_config_t cfg = {};
         cfg.i2c_port = bus;

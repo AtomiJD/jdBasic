@@ -192,6 +192,18 @@ Speed is per device on this chip rather than per bus, so `I2C.WRITE` and
 select alone: drive it with `GPIO.WRITE`, which is what a display or a
 card needs anyway.
 
+Bus 0 is the board's own, on GPIO 16 and 15, with the touch controller
+and the audio codec already on it. It is also what the four-pin I2C
+connector is wired to, so an external device goes there rather than on
+pins of its own, and `I2C.SETUP(0, 16, 15)` adopts that bus instead of
+opening a second one - which the chip refuses, having only two ports
+and this one already open. Any other pair of pins on bus 0 is a
+mistake and says so; bus 1 is free for pins of your choosing.
+
+The connector gives 3.3 V, not the 5 V a Grove port would. That is the
+right way round: a device fed 5 V pulls the bus to 5 V, and these pins
+do not tolerate it.
+
 ### Events
 
 The interrupts only record what happened; the VM drains the record
@@ -386,9 +398,44 @@ keys arrive as a terminal's escape sequences and fold into the same
 codes the PicoCalc's keyboard controller sends, so the editor cannot
 tell the two apart.
 
-There is still no keyboard on this board. The keys come over the serial
-line, which means the editor works in a terminal today and will work on
-the panel the moment there is something to type on.
+### A keyboard on the connector
+
+The board has no keys of its own, but an M5Stack CardKB v1.1 on the I2C
+connector gives it some. It is an ATmega8A at 0x5F that answers a
+one-byte read with a key and zero when it has none, and its codes are
+already the ones the editor speaks - 27 escape, 8 delete, 9 tab, 13
+enter, 180 to 183 for the arrows, the same values the PicoCalc's
+controller sends.
+
+Wiring is four wires, and the Grove cable it ships with has to be cut
+and joined to a 1.25 mm four-pin one, because the two connectors differ
+in pitch. Yellow is SDA and goes to GPIO 16, white is SCL and goes to
+GPIO 15, black is GND, red is the supply and goes to the connector's
+3.3 V. The ATmega8A is specified from 2.7 V as long as it stays under
+8 MHz, which the internal oscillator does.
+
+What the CardKB has no key for is control, so Fn carries it: Fn with a
+letter is that letter's control code, which is how Ctrl-C breaks and
+Ctrl-S saves. Fn with the arrows gives Home, End and the two page keys,
+Fn with delete deletes forwards, Fn with tab is a back tab, and Fn-H
+lists the editor's keys. Shift with an arrow is the one thing missing -
+the keyboard sends the same code either way, so selecting with the
+keys is a terminal-only move.
+
+The keyboard is probed rather than assumed, and probed again every two
+seconds while it is absent, so one plugged in after boot starts working
+without a reset. `KEY.LOCAL` says whether it answered. `KEY.RAW` gives
+back the last codes it sent before the Fn layer was folded in, which is
+how a key whose meaning is in doubt gets settled - hold it down and
+read it, rather than trust a table.
+
+It arrives in `jdb_stdin_getc`, the one place every reader on this board
+comes through, so the prompt, the editor, `INKEY$`, `KEY.GET` and the
+event poll all see it without knowing it exists. The serial line keeps
+working alongside it; whichever has a byte first wins.
+
+Because the driver holds 0x5F on the board bus, `I2C.READ` on that
+address will not also open it. The keyboard owns it.
 
 ## Touch
 

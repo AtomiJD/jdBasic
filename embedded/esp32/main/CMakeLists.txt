@@ -14,6 +14,7 @@ idf_component_register(
         "es3c28p_con.c"
         "es3c28p_touch.c"
         "es3c28p_i2c.c"
+        "es3c28p_kbd.c"
         "es3c28p_snd.c"
         "es3c28p_sd.c"
         "es8311_vendor.c"
