@@ -61,6 +61,7 @@ tests/jdlibs/conf_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/console_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/df_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/dt_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/fake_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/graph_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/htmldom_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/jwt_selftest.jdb	PASS	PASS	OK

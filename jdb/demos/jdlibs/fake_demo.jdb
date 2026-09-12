@@ -1,0 +1,110 @@
+' fake_demo.jdb - a fixture set for a company that does not exist.
+'
+' Everything below is made up, and made up the same way every time: the
+' seed decides it, not the clock and not the machine. The demo builds a
+' customer list, shows what the German locale changes, writes a table
+' out as CSV, and proves that the same seed gives the same rows twice.
+'
+'   jdBasic fake_demo.jdb
+
+IMPORT FAKE, DF, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+
+' ── one of everything ──────────────────────────────────────────
+
+CONSOLE.RULE("one of everything, from seed 2026", "=")
+FAKE.SEED(2026)
+FAKE.LOCALE("en")
+CONSOLE.KV([["name", FAKE.FULLNAME$()], ["email", FAKE.EMAIL$()], ["company", FAKE.COMPANY$()], ["job", FAKE.JOBTITLE$()], ["address", FAKE.ADDRESSLINE$()], ["phone", FAKE.PHONE$() + "   mobile " + FAKE.MOBILE$()], ["account", FAKE.IBAN$() + "   " + FAKE.BIC$()], ["signed", FAKE.ISODATE$("2024-01-01", "2026-09-01")], ["reference", FAKE.ID$("INV-", 6)], ["identifier", FAKE.UUID$()]], 2)
+PRINT ""
+PRINT "  " + CONSOLE.FAINT$(FAKE.SENTENCE$(12))
+PRINT ""
+
+' ── a customer list ────────────────────────────────────────────
+
+CONSOLE.RULE("a customer list a report can be tried on")
+FAKE.SEED(7)
+DIM spec = {"id": "seq", "customer": "name", "city": "city", "tier": "pick:bronze|silver|gold", "signed": "date:2024-01-01..2024-12-31", "spend": "price:80..2400"}
+DIM rows = FAKE.ROWS(200, spec)
+DIM book = DF.FROM(rows, FAKE.FIELDS(spec))
+DF.SHOW(DF.HEAD(book, 6))
+PRINT ""
+CONSOLE.KV([["rows", STR$(DF.NROWS(book))], ["columns", JOIN(DF.NAMES(book), ", ")], ["total spend", FORMAT$("{:.2f}", SUM(DF.COL(book, "spend")))], ["towns", STR$(LEN(DF.DISTINCT(book, "city")))]], 2)
+PRINT ""
+DIM by_tier = DF.GROUPBY(book, "tier", {"customers": ["count", "id"], "spend": ["sum", "spend"], "typical": ["mean", "spend"]})
+DF.SHOW(DF.SORT(by_tier, "spend", TRUE))
+PRINT ""
+
+' ── the same seed, the same rows ───────────────────────────────
+
+CONSOLE.RULE("the same seed gives the same rows")
+FAKE.SEED(7)
+DIM again = FAKE.ROWS(200, spec)
+DIM same = TRUE
+DIM i = 0
+FOR i = 0 TO LEN(rows) - 1
+    IF JOIN(rows[i], "|") <> JOIN(again[i], "|") THEN same = FALSE
+NEXT i
+FAKE.SEED(8)
+DIM other = FAKE.ROWS(200, spec)
+DIM differs = JOIN(other[0], "|") <> JOIN(rows[0], "|")
+CONSOLE.KV([["seed 7 twice", Verdict$(same, "every one of the 200 rows matches", "they came out different")], ["seed 8 once", Verdict$(differs, "gives another set", "gives the same set")], ["first row of 7", JOIN(rows[0], "  ")], ["first row of 8", JOIN(other[0], "  ")]], 2)
+PRINT ""
+PRINT "  a fixture written against these rows keeps working, on this machine and"
+PRINT "  on the build server, because no clock and no system generator is asked"
+PRINT ""
+
+FUNC Verdict$(ok, good$, bad$)
+    IF ok THEN RETURN CONSOLE.GREEN$(good$)
+    RETURN CONSOLE.RED$(bad$)
+ENDFUNC
+
+' ── the German set ─────────────────────────────────────────────
+
+CONSOLE.RULE("the German locale, for invoice fixtures")
+FAKE.SEED(31)
+FAKE.LOCALE("de")
+DIM parties = []
+FOR i = 1 TO 5
+    PUSH(parties, [FAKE.COMPANY$(), FAKE.ADDRESSLINE$(), FAKE.IBAN$()])
+NEXT i
+CONSOLE.TABLE(parties, {"headers": ["Firma", "Anschrift", "IBAN"], "align": ["l", "l", "l"], "max_width": 78})
+PRINT "  the check digits of every account number above are right, so a form"
+PRINT "  that validates one takes these"
+PRINT ""
+CONSOLE.KV([["Ansprechpartner", FAKE.FULLNAME$()], ["Abteilung", FAKE.DEPARTMENT$()], ["Position", FAKE.JOBTITLE$()], ["Telefon", FAKE.PHONE$()], ["Postleitzahl", FAKE.POSTCODE$() + " " + FAKE.CITY$()]], 2)
+PRINT ""
+
+' ── an invoice out of it ───────────────────────────────────────
+
+CONSOLE.RULE("an invoice, lines and all")
+FAKE.SEED(88)
+FAKE.LOCALE("de")
+DIM item_spec = {"pos": "seq", "Artikel": "words:3", "Menge": "int:1..12", "Einzelpreis": "price:4..180"}
+DIM items = FAKE.ROWS(6, item_spec)
+DIM net = 0.0
+DIM shown = []
+FOR i = 0 TO LEN(items) - 1
+    DIM item = items[i]
+    DIM total = ROUND(item[2] * item[3], 2)
+    net = net + total
+    PUSH(shown, [item[0], item[1], item[2], FORMAT$("{:.2f}", item[3]), FORMAT$("{:.2f}", total)])
+NEXT i
+CONSOLE.TABLE(shown, {"headers": ["Pos", "Artikel", "Menge", "Einzel", "Summe"], "align": ["r", "l", "r", "r", "r"]})
+DIM tax = ROUND(net * 0.19, 2)
+CONSOLE.KV([["Rechnungsnummer", FAKE.ID$("RE-2026-", 5)], ["Datum", FAKE.ISODATE$("2026-01-01", "2026-09-12")], ["Netto", FORMAT$("{:.2f} EUR", net)], ["Umsatzsteuer 19 %", FORMAT$("{:.2f} EUR", tax)], ["Brutto", FORMAT$("{:.2f} EUR", net + tax)]], 2)
+PRINT ""
+
+' ── written out for the next run ───────────────────────────────
+
+CONSOLE.RULE("a fixture file")
+DIM work$ = MKTEMP$("fakedemo")
+MKDIR work$
+DIM path$ = work$ + "/customers.csv"
+DF.WRITECSV(book, path$)
+DIM back = DF.READCSV(path$)
+CONSOLE.KV([["written to", path$], ["rows read back", STR$(DF.NROWS(back))], ["columns", JOIN(DF.NAMES(back), ", ")], ["first customer", DF.COL(back, "customer")[0]]], 2)
+PRINT ""
+PRINT "  the file is the same on every machine, so it can be checked in as a"
+PRINT "  fixture and compared byte for byte"

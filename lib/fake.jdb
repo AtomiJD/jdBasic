@@ -1,0 +1,581 @@
+' fake.jdb - made up data that comes out the same every time you ask.
+'
+'   IMPORT FAKE
+'   FAKE.SEED(42)
+'   PRINT FAKE.FULLNAME$(); "  "; FAKE.EMAIL$()
+'
+'   FAKE.LOCALE("de")
+'   DIM spec = {"name": "name", "city": "city", "spend": "price:10..500"}
+'   DIM rows = FAKE.ROWS(1000, spec)
+'
+' The numbers come from a generator written here rather than from the
+' one the machine offers, so the same seed gives the same rows on every
+' computer. Two locales, "en" and "de".
+
+EXPORT MODULE FAKE
+
+CONST TWO32 = 4294967296.0
+CONST LETTERS$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+DIM gState = 1
+DIM gLocale$ = "en"
+
+DIM gFirstEn = ["Alice", "Oliver", "Grace", "Henry", "Maya", "Felix", "Nora", "Arthur", _
+                "Iris", "Leo", "Clara", "Hugo", "Ruby", "Milo", "Edith", "Jasper", _
+                "Sylvia", "Rowan", "Agnes", "Theo", "Lydia", "Caspar", "Nell", "Otto"]
+DIM gLastEn = ["Mercer", "Whitfield", "Alder", "Bramley", "Cobb", "Drummond", "Ellery", _
+               "Fenwick", "Garrick", "Hollis", "Inchbold", "Jarrow", "Kemp", "Lockhart", _
+               "Marsden", "Noakes", "Oakley", "Pettigrew", "Quill", "Rutherford", _
+               "Stanhope", "Thorne", "Underhill", "Vance"]
+DIM gFirstDe = ["Annika", "Bastian", "Carla", "Dieter", "Elke", "Florian", "Gudrun", _
+                "Hartmut", "Ilse", "Jonas", "Katrin", "Lukas", "Martina", "Niklas", _
+                "Ottilie", "Philipp", "Rike", "Sebastian", "Theresa", "Ulrich", _
+                "Vera", "Wolfgang", "Xenia", "Yannick"]
+DIM gLastDe = ["Albrecht", "Brandtner", "Coels", "Dettmer", "Ehrlich", "Faber", _
+               "Gerlach", "Hartwig", "Imhoff", "Junghans", "Kellermann", "Lindner", _
+               "Marquardt", "Neuhaus", "Oswald", "Pflueger", "Quandt", "Rothmann", _
+               "Sauerbier", "Terhaag", "Uhlig", "Vollmer", "Wegener", "Ziegler"]
+
+DIM gCityEn = ["Bristol", "Leeds", "Norwich", "Dundee", "Bath", "York", "Exeter", _
+               "Carlisle", "Galway", "Cork", "Portland", "Boulder", "Savannah", _
+               "Duluth", "Halifax", "Kingston", "Geelong", "Hobart"]
+DIM gCityDe = ["Aachen", "Bamberg", "Cottbus", "Detmold", "Emden", "Flensburg", _
+               "Goerlitz", "Hameln", "Ingolstadt", "Jena", "Kempten", "Landshut", _
+               "Marburg", "Nordhorn", "Osnabrueck", "Passau", "Rosenheim", "Siegen"]
+
+DIM gStreetEn = ["Alder", "Bakers", "Chapel", "Dover", "Elm", "Foundry", "Granary", _
+                 "Harbour", "Ivy", "Kiln", "Lantern", "Mill", "Orchard", "Pier", _
+                 "Quarry", "Rope", "Saltern", "Tanner"]
+DIM gStreetSuffixEn = ["Street", "Lane", "Road", "Walk", "Row", "Close", "Yard", "Rise"]
+DIM gStreetDe = ["Ahorn", "Birken", "Brunnen", "Domhof", "Eichen", "Fischer", "Garten", _
+                 "Hafen", "Kirch", "Lindenhof", "Muehlen", "Nordwall", "Obst", _
+                 "Pfarr", "Rosen", "Schmiede", "Tuchmacher", "Weiden"]
+DIM gStreetSuffixDe = ["strasse", "weg", "gasse", "allee", "platz", "ring"]
+
+DIM gCountryEn = ["United Kingdom", "Ireland", "United States", "Canada", "Australia"]
+DIM gCountryDe = ["Deutschland", "Oesterreich", "Schweiz"]
+
+DIM gCompanyEn = ["Northwind", "Blackwater", "Meridian", "Ravenscourt", "Halcyon", _
+                  "Pennine", "Silverbeck", "Ashgrove", "Kestrel", "Thornbury", _
+                  "Lantern Bay", "Ironbridge"]
+DIM gCompanyTailEn = ["Logistics", "Trading", "Works", "Systems", "Foundry", "Supplies", _
+                      "Partners", "Mills", "Instruments", "Joinery"]
+DIM gCompanyFormEn = ["Ltd", "PLC", "LLP", "and Sons", "Group"]
+DIM gCompanyDe = ["Nordwind", "Schwarzwasser", "Meridian", "Rabenhof", "Sonnenberg", _
+                  "Westfalen", "Silberbach", "Eschenhof", "Falkenstein", "Dornbusch", _
+                  "Laternenbucht", "Eisenbruecke"]
+DIM gCompanyTailDe = ["Logistik", "Handel", "Werke", "Systeme", "Giesserei", "Bedarf", _
+                      "Partner", "Muehlen", "Instrumente", "Tischlerei"]
+DIM gCompanyFormDe = ["GmbH", "AG", "KG", "GmbH und Co. KG", "eG"]
+
+DIM gJobEn = ["Warehouse Supervisor", "Cost Accountant", "Field Engineer", _
+              "Buyer", "Quality Inspector", "Dispatch Planner", "Systems Analyst", _
+              "Bookkeeper", "Maintenance Fitter", "Account Manager", _
+              "Production Scheduler", "Technical Writer"]
+DIM gJobDe = ["Lagerleiter", "Kostenrechner", "Aussendiensttechniker", _
+              "Einkaeufer", "Qualitaetspruefer", "Versandplaner", "Systemanalytiker", _
+              "Buchhalter", "Instandhalter", "Kundenbetreuer", _
+              "Fertigungsplaner", "Technischer Redakteur"]
+DIM gDeptEn = ["Sales", "Purchasing", "Production", "Logistics", "Finance", _
+               "Engineering", "Support", "Quality"]
+DIM gDeptDe = ["Vertrieb", "Einkauf", "Fertigung", "Logistik", "Finanzen", _
+               "Technik", "Support", "Qualitaet"]
+
+DIM gDomains = ["example.com", "example.net", "example.org", "test.example"]
+DIM gBanksDe = ["DEUT", "COBA", "GENO", "SOLA", "PBNK", "HYVE"]
+DIM gBanksEn = ["BARC", "LOYD", "NWBK", "HBUK", "MIDL", "ABBY"]
+
+DIM gLorem = ["lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", _
+              "elit", "sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", _
+              "et", "dolore", "magna", "aliqua", "enim", "ad", "minim", "veniam", _
+              "quis", "nostrud", "exercitation", "ullamco", "laboris", "nisi", _
+              "aliquip", "ex", "ea", "commodo", "consequat", "duis", "aute", "irure", _
+              "reprehenderit", "voluptate", "velit", "esse", "cillum", "fugiat", _
+              "nulla", "pariatur", "excepteur", "sint", "occaecat", "cupidatat"]
+
+' ── the generator ──────────────────────────────────────────────
+
+' Sets where the run starts. The same seed gives the same values in the
+' same order, on any machine and in either backend.
+EXPORT SUB SEED(n)
+    DIM start = INT(ABS(n)) MOD TWO32
+    IF start = 0 THEN start = 1
+    gState = start
+    DIM i = 0
+    FOR i = 1 TO 8
+        DIM ignored = Advance()
+    NEXT i
+ENDSUB
+
+' "en" or "de". Anything else is read as "en".
+EXPORT SUB LOCALE(name$)
+    DIM want$ = LCASE$(name$)
+    IF want$ <> "de" THEN want$ = "en"
+    gLocale$ = want$
+ENDSUB
+
+EXPORT FUNC LOCALE$()
+    RETURN gLocale$
+ENDFUNC
+
+' A whole number from low to high, both ends included.
+EXPORT FUNC NUMBER(low, high)
+    IF high <= low THEN RETURN low
+    RETURN low + INT(Unit() * (high - low + 1))
+ENDFUNC
+
+' A number between low and high, rounded to so many places.
+EXPORT FUNC DECIMAL(low, high, places = 2)
+    RETURN ROUND(low + Unit() * (high - low), places)
+ENDFUNC
+
+' TRUE that share of the time: CHANCE(0.25) is true one time in four.
+EXPORT FUNC CHANCE(share)
+    RETURN Unit() < share
+ENDFUNC
+
+' One entry of a list, whatever it holds.
+EXPORT FUNC PICK(list)
+    IF LEN(list) = 0 THEN RETURN NONE
+    RETURN list[NUMBER(0, LEN(list) - 1)]
+ENDFUNC
+
+' The same entries in another order.
+EXPORT FUNC SHUFFLE(list)
+    DIM out = Copied(list)
+    DIM i = 0
+    FOR i = LEN(out) - 1 TO 1 STEP -1
+        DIM j = NUMBER(0, i)
+        DIM keep = out[i]
+        out[i] = out[j]
+        out[j] = keep
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' So many entries of the list, none of them twice.
+EXPORT FUNC SAMPLE(list, n)
+    DIM mixed = SHUFFLE(list)
+    DIM out = []
+    DIM want = n
+    IF want > LEN(mixed) THEN want = LEN(mixed)
+    DIM i = 0
+    FOR i = 0 TO want - 1
+        PUSH(out, mixed[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── people ─────────────────────────────────────────────────────
+
+EXPORT FUNC FIRSTNAME$()
+    IF gLocale$ = "de" THEN RETURN PICK(gFirstDe)
+    RETURN PICK(gFirstEn)
+ENDFUNC
+
+EXPORT FUNC LASTNAME$()
+    IF gLocale$ = "de" THEN RETURN PICK(gLastDe)
+    RETURN PICK(gLastEn)
+ENDFUNC
+
+EXPORT FUNC FULLNAME$()
+    RETURN FIRSTNAME$() + " " + LASTNAME$()
+ENDFUNC
+
+' A name in the shape a login takes, all lower case.
+EXPORT FUNC USERNAME$()
+    DIM first$ = LCASE$(FIRSTNAME$())
+    DIM last$ = LCASE$(LASTNAME$())
+    DIM shape = NUMBER(0, 2)
+    IF shape = 0 THEN RETURN first$ + "." + last$
+    IF shape = 1 THEN RETURN LEFT$(first$, 1) + last$
+    RETURN last$ + STR$(NUMBER(10, 99))
+ENDFUNC
+
+' An address at one of the example domains, which never reach anyone.
+EXPORT FUNC EMAIL$()
+    RETURN USERNAME$() + "@" + PICK(gDomains)
+ENDFUNC
+
+' ── places ─────────────────────────────────────────────────────
+
+EXPORT FUNC STREET$()
+    IF gLocale$ = "de" THEN RETURN PICK(gStreetDe) + PICK(gStreetSuffixDe) + " " + STR$(NUMBER(1, 148))
+    RETURN STR$(NUMBER(1, 148)) + " " + PICK(gStreetEn) + " " + PICK(gStreetSuffixEn)
+ENDFUNC
+
+EXPORT FUNC CITY$()
+    IF gLocale$ = "de" THEN RETURN PICK(gCityDe)
+    RETURN PICK(gCityEn)
+ENDFUNC
+
+EXPORT FUNC POSTCODE$()
+    IF gLocale$ = "de" THEN RETURN STR$(NUMBER(10115, 99998))
+    RETURN Letter$() + Letter$() + STR$(NUMBER(1, 19)) + " " + STR$(NUMBER(1, 9)) + Letter$() + Letter$()
+ENDFUNC
+
+EXPORT FUNC COUNTRY$()
+    IF gLocale$ = "de" THEN RETURN PICK(gCountryDe)
+    RETURN PICK(gCountryEn)
+ENDFUNC
+
+' street, postcode, city and country as a map.
+EXPORT FUNC ADDRESS()
+    DIM out AS MAP
+    out{"street"} = STREET$()
+    out{"postcode"} = POSTCODE$()
+    out{"city"} = CITY$()
+    out{"country"} = COUNTRY$()
+    RETURN out
+ENDFUNC
+
+' The same on one line, in the order the locale writes it.
+EXPORT FUNC ADDRESSLINE$()
+    DIM where = ADDRESS()
+    IF gLocale$ = "de" THEN RETURN where{"street"} + ", " + where{"postcode"} + " " + where{"city"}
+    RETURN where{"street"} + ", " + where{"city"} + " " + where{"postcode"}
+ENDFUNC
+
+' ── business ───────────────────────────────────────────────────
+
+EXPORT FUNC COMPANY$()
+    IF gLocale$ = "de" THEN RETURN PICK(gCompanyDe) + " " + PICK(gCompanyTailDe) + " " + PICK(gCompanyFormDe)
+    RETURN PICK(gCompanyEn) + " " + PICK(gCompanyTailEn) + " " + PICK(gCompanyFormEn)
+ENDFUNC
+
+EXPORT FUNC JOBTITLE$()
+    IF gLocale$ = "de" THEN RETURN PICK(gJobDe)
+    RETURN PICK(gJobEn)
+ENDFUNC
+
+EXPORT FUNC DEPARTMENT$()
+    IF gLocale$ = "de" THEN RETURN PICK(gDeptDe)
+    RETURN PICK(gDeptEn)
+ENDFUNC
+
+' ── getting hold of someone ────────────────────────────────────
+
+EXPORT FUNC PHONE$()
+    IF gLocale$ = "de" THEN RETURN "+49 30 5550" + Digits$(3)
+    RETURN "+44 20 7946 0" + Digits$(3)
+ENDFUNC
+
+EXPORT FUNC MOBILE$()
+    IF gLocale$ = "de" THEN RETURN "+49 151 5550" + Digits$(4)
+    RETURN "+44 7700 900" + Digits$(3)
+ENDFUNC
+
+' ── banking ────────────────────────────────────────────────────
+
+' An account number whose check digits are right, so a form that
+' validates one takes it. The bank and the account are made up.
+EXPORT FUNC IBAN$()
+    IF gLocale$ = "de" THEN
+        DIM bban$ = Digits$(8) + Digits$(10)
+        RETURN "DE" + Checked$("DE", bban$) + bban$
+    ENDIF
+    DIM uk$ = PICK(gBanksEn) + Digits$(6) + Digits$(8)
+    RETURN "GB" + Checked$("GB", uk$) + uk$
+ENDFUNC
+
+EXPORT FUNC BIC$()
+    DIM where$ = "GB"
+    DIM bank$ = PICK(gBanksEn)
+    IF gLocale$ = "de" THEN
+        where$ = "DE"
+        bank$ = PICK(gBanksDe)
+    ENDIF
+    RETURN bank$ + where$ + Letter$() + Letter$()
+ENDFUNC
+
+' ── when ───────────────────────────────────────────────────────
+
+' A date between the two given, both written as YYYY-MM-DD and both
+' included.
+EXPORT FUNC ISODATE$(from$, to$)
+    DIM first = DayOf(from$)
+    DIM last = DayOf(to$)
+    IF last < first THEN
+        DIM keep = first
+        first = last
+        last = keep
+    ENDIF
+    RETURN DateOf(NUMBER(first, last))
+ENDFUNC
+
+' The same with a time of day, as YYYY-MM-DD HH:MM:SS.
+EXPORT FUNC ISOTIME$(from$, to$)
+    RETURN ISODATE$(from$, to$) + " " + Pad$(NUMBER(0, 23), 2) + ":" + Pad$(NUMBER(0, 59), 2) + ":" + Pad$(NUMBER(0, 59), 2)
+ENDFUNC
+
+' ── text ───────────────────────────────────────────────────────
+
+EXPORT FUNC WORD$()
+    RETURN PICK(gLorem)
+ENDFUNC
+
+EXPORT FUNC WORDS$(n)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 1 TO n
+        PUSH(parts, WORD$())
+    NEXT i
+    RETURN JOIN(parts, " ")
+ENDFUNC
+
+' A sentence of so many words, capitalised and closed with a full stop.
+EXPORT FUNC SENTENCE$(words = 0)
+    DIM n = words
+    IF n <= 0 THEN n = NUMBER(6, 14)
+    DIM body$ = WORDS$(n)
+    RETURN UCASE$(LEFT$(body$, 1)) + MID$(body$, 1) + "."
+ENDFUNC
+
+EXPORT FUNC PARAGRAPH$(sentences = 0)
+    DIM n = sentences
+    IF n <= 0 THEN n = NUMBER(3, 6)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 1 TO n
+        PUSH(parts, SENTENCE$(0))
+    NEXT i
+    RETURN JOIN(parts, " ")
+ENDFUNC
+
+' ── marks of identity ──────────────────────────────────────────
+
+' Sixteen bytes in the shape of a version 4 identifier.
+EXPORT FUNC UUID$()
+    DIM out$ = HexRun$(8) + "-" + HexRun$(4) + "-4" + HexRun$(3) + "-"
+    DIM variant$ = MID$("89ab", NUMBER(0, 3), 1)
+    RETURN out$ + variant$ + HexRun$(3) + "-" + HexRun$(12)
+ENDFUNC
+
+' A reference of the shape a system hands out: a prefix and a number.
+EXPORT FUNC ID$(prefix$, digits = 6)
+    RETURN prefix$ + Digits$(digits)
+ENDFUNC
+
+' ── tables ─────────────────────────────────────────────────────
+
+' The column names a spec asks for, in the order it names them.
+EXPORT FUNC FIELDS(spec)
+    RETURN MAP.KEYS(spec)
+ENDFUNC
+
+' One row: the value for each field of the spec, in the same order.
+EXPORT FUNC ROW(spec, at = 1)
+    DIM names = MAP.KEYS(spec)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM kind$ = spec{names[i]}
+        PUSH(out, Value(kind$, at))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' A matrix of n rows, ready for DF.FROM(rows, FAKE.FIELDS(spec)).
+EXPORT FUNC ROWS(n, spec)
+    DIM out = []
+    DIM i = 1
+    FOR i = 1 TO n
+        PUSH(out, ROW(spec, i))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── underneath ─────────────────────────────────────────────────
+
+FUNC Advance()
+    gState = (1664525 * gState + 1013904223) MOD TWO32
+    RETURN gState
+ENDFUNC
+
+FUNC Unit()
+    RETURN Advance() / TWO32
+ENDFUNC
+
+FUNC Letter$()
+    RETURN MID$(LETTERS$, NUMBER(0, 25), 1)
+ENDFUNC
+
+FUNC Digits$(n)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 1 TO n
+        out$ = out$ + STR$(NUMBER(0, 9))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC HexRun$(n)
+    DIM signs$ = "0123456789abcdef"
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 1 TO n
+        out$ = out$ + MID$(signs$, NUMBER(0, 15), 1)
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC Pad$(value, width)
+    DIM out$ = STR$(value)
+    DO
+        IF LEN(out$) >= width THEN EXITDO
+        out$ = "0" + out$
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC Copied(list)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 1
+        PUSH(out, list[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Letters count as their place in the alphabet plus ten, which is how an
+' account number is read when its check digits are worked out.
+FUNC Numeric$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = UCASE$(MID$(text$, i, 1))
+        DIM at = INSTR(LETTERS$, ch$)
+        IF at >= 0 THEN
+            out$ = out$ + STR$(at + 10)
+        ELSE
+            out$ = out$ + ch$
+        ENDIF
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC Mod97(digits$)
+    DIM rest = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(digits$) - 1
+        rest = (rest * 10 + VAL(MID$(digits$, i, 1))) MOD 97
+    NEXT i
+    RETURN rest
+ENDFUNC
+
+FUNC Checked$(country$, bban$)
+    DIM rest = Mod97(Numeric$(bban$ + country$ + "00"))
+    RETURN Pad$(98 - rest, 2)
+ENDFUNC
+
+' Days since 1970-01-01 for a date written as YYYY-MM-DD.
+FUNC DayOf(text$)
+    DIM parts = SPLIT(text$, "-")
+    DIM y = VAL(parts[0])
+    DIM m = 1
+    DIM d = 1
+    IF LEN(parts) > 1 THEN m = VAL(parts[1])
+    IF LEN(parts) > 2 THEN d = VAL(parts[2])
+    DIM shifted = y
+    IF m <= 2 THEN shifted = y - 1
+    DIM era = INT(shifted / 400)
+    IF shifted < 0 THEN era = INT((shifted - 399) / 400)
+    DIM yoe = shifted - era * 400
+    DIM mp = (m + 9) MOD 12
+    DIM doy = INT((153 * mp + 2) / 5) + d - 1
+    DIM doe = yoe * 365 + INT(yoe / 4) - INT(yoe / 100) + doy
+    RETURN era * 146097 + doe - 719468
+ENDFUNC
+
+' The other way round.
+FUNC DateOf(days)
+    DIM shifted = days + 719468
+    DIM era = INT(shifted / 146097)
+    IF shifted < 0 THEN era = INT((shifted - 146096) / 146097)
+    DIM doe = shifted - era * 146097
+    DIM yoe = INT((doe - INT(doe / 1460) + INT(doe / 36524) - INT(doe / 146096)) / 365)
+    DIM y = yoe + era * 400
+    DIM doy = doe - (365 * yoe + INT(yoe / 4) - INT(yoe / 100))
+    DIM mp = INT((5 * doy + 2) / 153)
+    DIM d = doy - INT((153 * mp + 2) / 5) + 1
+    DIM m = mp + 3
+    IF mp >= 10 THEN m = mp - 9
+    IF m <= 2 THEN y = y + 1
+    RETURN STR$(y) + "-" + Pad$(m, 2) + "-" + Pad$(d, 2)
+ENDFUNC
+
+' One value for a field of a spec. A kind may carry its bounds after a
+' colon: "int:1..100", "price:5..500", "date:2024-01-01..2024-12-31",
+' "words:8", "pick:north|south|east".
+FUNC Value(kind$, at)
+    DIM name$ = kind$
+    DIM arg$ = ""
+    DIM colon = INSTR(kind$, ":")
+    IF colon >= 0 THEN
+        name$ = LEFT$(kind$, colon)
+        arg$ = MID$(kind$, colon + 1)
+    ENDIF
+    name$ = LCASE$(name$)
+    IF name$ = "seq" THEN RETURN at
+    IF name$ = "first" THEN RETURN FIRSTNAME$()
+    IF name$ = "last" THEN RETURN LASTNAME$()
+    IF name$ = "name" THEN RETURN FULLNAME$()
+    IF name$ = "username" THEN RETURN USERNAME$()
+    IF name$ = "email" THEN RETURN EMAIL$()
+    IF name$ = "company" THEN RETURN COMPANY$()
+    IF name$ = "job" THEN RETURN JOBTITLE$()
+    IF name$ = "department" THEN RETURN DEPARTMENT$()
+    IF name$ = "street" THEN RETURN STREET$()
+    IF name$ = "city" THEN RETURN CITY$()
+    IF name$ = "postcode" THEN RETURN POSTCODE$()
+    IF name$ = "country" THEN RETURN COUNTRY$()
+    IF name$ = "address" THEN RETURN ADDRESSLINE$()
+    IF name$ = "phone" THEN RETURN PHONE$()
+    IF name$ = "mobile" THEN RETURN MOBILE$()
+    IF name$ = "iban" THEN RETURN IBAN$()
+    IF name$ = "bic" THEN RETURN BIC$()
+    IF name$ = "uuid" THEN RETURN UUID$()
+    IF name$ = "word" THEN RETURN WORD$()
+    IF name$ = "sentence" THEN RETURN SENTENCE$(0)
+    IF name$ = "paragraph" THEN RETURN PARAGRAPH$(0)
+    IF name$ = "bool" THEN RETURN CHANCE(0.5)
+    IF name$ = "words" THEN
+        DIM howmany = 5
+        IF LEN(arg$) > 0 THEN howmany = VAL(arg$)
+        RETURN WORDS$(howmany)
+    ENDIF
+    IF name$ = "id" THEN
+        DIM mark$ = "ID-"
+        IF LEN(arg$) > 0 THEN mark$ = arg$
+        RETURN ID$(mark$, 6)
+    ENDIF
+    IF name$ = "pick" THEN RETURN PICK(SPLIT(arg$, "|"))
+    IF name$ = "int" THEN
+        DIM bounds = Bounds(arg$, "1", "100")
+        RETURN NUMBER(VAL(bounds[0]), VAL(bounds[1]))
+    ENDIF
+    IF name$ = "price" ORELSE name$ = "decimal" THEN
+        DIM span = Bounds(arg$, "1", "1000")
+        RETURN DECIMAL(VAL(span[0]), VAL(span[1]), 2)
+    ENDIF
+    IF name$ = "date" THEN
+        DIM days = Bounds(arg$, "2020-01-01", "2026-12-31")
+        RETURN ISODATE$(days[0], days[1])
+    ENDIF
+    IF name$ = "datetime" THEN
+        DIM moment = Bounds(arg$, "2020-01-01", "2026-12-31")
+        RETURN ISOTIME$(moment[0], moment[1])
+    ENDIF
+    RETURN kind$
+ENDFUNC
+
+' The two ends of a "low..high" argument, or the fallbacks.
+FUNC Bounds(arg$, low, high)
+    DIM out = [low, high]
+    DIM at = INSTR(arg$, "..")
+    IF at < 0 THEN RETURN out
+    DIM pair = []
+    PUSH(pair, LEFT$(arg$, at))
+    PUSH(pair, MID$(arg$, at + 2))
+    RETURN pair
+ENDFUNC

@@ -1,0 +1,306 @@
+' FAKE: the generator and its seed, the shapes of every made up value,
+' the two locales, the table a spec builds, and the digest of a thousand
+' rows that says the same seed gives the same data everywhere.
+
+IMPORT TESTKIT, FAKE
+
+DIM DIGITS$ = "0123456789"
+DIM LETTERS$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+' A thousand rows joined the way the acceptance measures them.
+FUNC Digest$(seed, locale$)
+    FAKE.SEED(seed)
+    FAKE.LOCALE(locale$)
+    DIM spec = {"id": "seq", "customer": "name", "city": "city", "email": "email", _
+                "signed": "date:2020-01-01..2026-12-31", "spend": "price:10..500", _
+                "active": "bool", "tier": "pick:bronze|silver|gold", "iban": "iban"}
+    DIM rows = FAKE.ROWS(1000, spec)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        PUSH(parts, JOIN(rows[i], "|"))
+    NEXT i
+    RETURN CODEC.SHA256$(JOIN(parts, CHR$(10)))
+ENDFUNC
+
+' TRUE when every character of the text is in the set.
+FUNC AllFrom(text$, set$)
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        IF INSTR(set$, MID$(text$, i, 1)) < 0 THEN RETURN FALSE
+    NEXT i
+    RETURN LEN(text$) > 0
+ENDFUNC
+
+' The check an account number carries: read the letters as numbers, move
+' the country and the check digits to the end, and the whole thing must
+' leave one when divided by 97.
+FUNC IbanHolds(iban$)
+    DIM moved$ = MID$(iban$, 4) + LEFT$(iban$, 4)
+    DIM plain$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(moved$) - 1
+        DIM ch$ = MID$(moved$, i, 1)
+        DIM at = INSTR(LETTERS$, ch$)
+        IF at >= 0 THEN
+            plain$ = plain$ + STR$(at + 10)
+        ELSE
+            plain$ = plain$ + ch$
+        ENDIF
+    NEXT i
+    DIM rest = 0.0
+    FOR i = 0 TO LEN(plain$) - 1
+        rest = (rest * 10 + VAL(MID$(plain$, i, 1))) MOD 97
+    NEXT i
+    RETURN rest = 1
+ENDFUNC
+
+FUNC Counted(text$, mark$)
+    DIM seen = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        IF MID$(text$, i, 1) = mark$ THEN seen = seen + 1
+    NEXT i
+    RETURN seen
+ENDFUNC
+
+TESTKIT.SUITE("the seed")
+FAKE.SEED(42)
+DIM firstrun = []
+DIM i = 0
+FOR i = 1 TO 20
+    PUSH(firstrun, FAKE.NUMBER(0, 1000000))
+NEXT i
+FAKE.SEED(42)
+DIM secondrun = []
+FOR i = 1 TO 20
+    PUSH(secondrun, FAKE.NUMBER(0, 1000000))
+NEXT i
+TESTKIT.EQ(JSON.STRINGIFY$(secondrun), JSON.STRINGIFY$(firstrun), "the same seed gives the same numbers")
+FAKE.SEED(43)
+DIM thirdrun = []
+FOR i = 1 TO 20
+    PUSH(thirdrun, FAKE.NUMBER(0, 1000000))
+NEXT i
+TESTKIT.NE(JSON.STRINGIFY$(thirdrun), JSON.STRINGIFY$(firstrun), "the next seed gives other numbers")
+TESTKIT.EQ(LEN(UNIQUE(firstrun)), 20, "twenty draws out of a million rarely repeat")
+FAKE.SEED(0)
+DIM zeroed = FAKE.NUMBER(0, 1000000)
+FAKE.SEED(0)
+TESTKIT.EQ(FAKE.NUMBER(0, 1000000), zeroed, "a seed of zero is a seed like any other")
+FAKE.SEED(-9)
+DIM negative = FAKE.NUMBER(0, 1000000)
+FAKE.SEED(9)
+TESTKIT.EQ(FAKE.NUMBER(0, 1000000), negative, "the sign of the seed does not matter")
+
+TESTKIT.SUITE("numbers and choices")
+FAKE.SEED(1)
+DIM lowest = 999.0
+DIM highest = -999.0
+FOR i = 1 TO 400
+    DIM drawn = FAKE.NUMBER(1, 6)
+    IF drawn < lowest THEN lowest = drawn
+    IF drawn > highest THEN highest = drawn
+NEXT i
+TESTKIT.EQ(lowest, 1, "a draw from one to six reaches the bottom")
+TESTKIT.EQ(highest, 6, "and the top")
+TESTKIT.EQ(FAKE.NUMBER(5, 5), 5, "a range of one gives that number")
+TESTKIT.EQ(FAKE.NUMBER(9, 2), 9, "a range the wrong way round gives the first")
+DIM money = FAKE.DECIMAL(10, 20, 2)
+TESTKIT.ISTRUE(money >= 10 ANDALSO money <= 20, "a decimal stays inside its bounds")
+TESTKIT.EQ(money, ROUND(money, 2), "and keeps the places it was asked for")
+TESTKIT.EQ(ROUND(FAKE.DECIMAL(1, 2, 0), 6), ROUND(FAKE.DECIMAL(1, 2, 0), 0), "no places means a whole number")
+DIM ever = FALSE
+DIM never = FALSE
+FOR i = 1 TO 50
+    IF FAKE.CHANCE(1) THEN ever = TRUE
+    IF FAKE.CHANCE(0) THEN never = TRUE
+NEXT i
+TESTKIT.ISTRUE(ever, "a chance of one always happens")
+TESTKIT.ISFALSE(never, "a chance of nothing never does")
+DIM lone = FAKE.PICK(["only"])
+TESTKIT.EQ(lone, "only", "a list of one always gives that one")
+TESTKIT.EQ(TYPEOF(FAKE.PICK([])), "NONE", "an empty list gives nothing")
+DIM numbers = FAKE.PICK([10, 20, 30])
+TESTKIT.ISTRUE(numbers = 10 ORELSE numbers = 20 ORELSE numbers = 30, "a list of numbers gives one of them")
+
+TESTKIT.SUITE("rearranging")
+FAKE.SEED(5)
+DIM source = [1, 2, 3, 4, 5, 6, 7, 8]
+DIM mixed = FAKE.SHUFFLE(source)
+TESTKIT.EQ(LEN(mixed), 8, "a shuffle keeps the length")
+TESTKIT.EQ(SUM(mixed), SUM(source), "and every entry")
+TESTKIT.EQ(LEN(UNIQUE(mixed)), 8, "each of them once")
+TESTKIT.NE(JSON.STRINGIFY$(mixed), JSON.STRINGIFY$(source), "in another order")
+TESTKIT.EQ(JSON.STRINGIFY$(source), JSON.STRINGIFY$([1, 2, 3, 4, 5, 6, 7, 8]), "the list it was given is untouched")
+DIM few = FAKE.SAMPLE(source, 3)
+TESTKIT.EQ(LEN(few), 3, "a sample is as long as it was asked to be")
+TESTKIT.EQ(LEN(UNIQUE(few)), 3, "with nothing twice in it")
+TESTKIT.EQ(LEN(FAKE.SAMPLE(source, 99)), 8, "asking for more than there is gives all of it")
+
+TESTKIT.SUITE("people")
+FAKE.SEED(11)
+FAKE.LOCALE("en")
+DIM whole$ = FAKE.FULLNAME$()
+TESTKIT.EQ(Counted(whole$, " "), 1, "a name is two words")
+TESTKIT.ISTRUE(LEN(FAKE.FIRSTNAME$()) > 1, "a first name has letters in it")
+DIM login$ = FAKE.USERNAME$()
+TESTKIT.EQ(login$, LCASE$(login$), "a login name is lower case")
+TESTKIT.EQ(Counted(login$, " "), 0, "with no spaces")
+DIM post$ = FAKE.EMAIL$()
+TESTKIT.EQ(Counted(post$, "@"), 1, "an address has one at sign")
+TESTKIT.ISTRUE(INSTR(post$, "example") >= 0, "and a domain that reaches nobody")
+TESTKIT.EQ(post$, LCASE$(post$), "all of it lower case")
+
+TESTKIT.SUITE("places")
+FAKE.SEED(12)
+FAKE.LOCALE("en")
+DIM where = FAKE.ADDRESS()
+TESTKIT.EQ(JSON.STRINGIFY$(MAP.KEYS(where)), JSON.STRINGIFY$(["street", "postcode", "city", "country"]), "an address has its four parts")
+TESTKIT.ISTRUE(LEN(where{"city"}) > 2, "the town is named")
+DIM oneline$ = FAKE.ADDRESSLINE$()
+TESTKIT.EQ(Counted(oneline$, ","), 1, "one line carries one comma")
+FAKE.LOCALE("de")
+DIM plz$ = FAKE.POSTCODE$()
+TESTKIT.EQ(LEN(plz$), 5, "a German postcode is five digits")
+TESTKIT.ISTRUE(AllFrom(plz$, DIGITS$), "all of them digits")
+TESTKIT.ISTRUE(VAL(plz$) >= 10000, "and it does not start with a zero")
+FAKE.LOCALE("en")
+TESTKIT.ISTRUE(INSTR(FAKE.POSTCODE$(), " ") >= 0, "a British one has a space in the middle")
+
+TESTKIT.SUITE("the two locales")
+FAKE.LOCALE("de")
+TESTKIT.EQ(FAKE.LOCALE$(), "de", "the locale is remembered")
+FAKE.LOCALE("DE")
+TESTKIT.EQ(FAKE.LOCALE$(), "de", "however it is written")
+FAKE.LOCALE("klingon")
+TESTKIT.EQ(FAKE.LOCALE$(), "en", "a locale that is not there falls back to English")
+FAKE.SEED(20)
+FAKE.LOCALE("de")
+DIM german = []
+FOR i = 1 TO 30
+    PUSH(german, FAKE.CITY$())
+NEXT i
+FAKE.SEED(20)
+FAKE.LOCALE("en")
+DIM english = []
+FOR i = 1 TO 30
+    PUSH(english, FAKE.CITY$())
+NEXT i
+TESTKIT.NE(JSON.STRINGIFY$(german), JSON.STRINGIFY$(english), "the two locales draw from different towns")
+FAKE.LOCALE("de")
+TESTKIT.ISTRUE(INSTR(FAKE.COMPANY$(), " ") >= 0, "a German company name has its parts")
+TESTKIT.ISTRUE(STARTSWITH(FAKE.PHONE$(), "+49"), "a German number starts with its country code")
+FAKE.LOCALE("en")
+TESTKIT.ISTRUE(STARTSWITH(FAKE.PHONE$(), "+44"), "and a British one with its own")
+TESTKIT.ISTRUE(STARTSWITH(FAKE.MOBILE$(), "+44 7"), "a mobile is told apart from a landline")
+
+TESTKIT.SUITE("banking")
+FAKE.SEED(31)
+FAKE.LOCALE("de")
+DIM account$ = FAKE.IBAN$()
+TESTKIT.EQ(LEN(account$), 22, "a German account number is 22 characters")
+TESTKIT.ISTRUE(STARTSWITH(account$, "DE"), "and starts with the country")
+TESTKIT.ISTRUE(IbanHolds(account$), "its check digits are right")
+TESTKIT.ISTRUE(AllFrom(MID$(account$, 2), DIGITS$), "the rest of it is digits")
+DIM twenty_ok = TRUE
+FOR i = 1 TO 20
+    IF NOT IbanHolds(FAKE.IBAN$()) THEN twenty_ok = FALSE
+NEXT i
+TESTKIT.ISTRUE(twenty_ok, "and so are the next twenty")
+FAKE.LOCALE("en")
+DIM british$ = FAKE.IBAN$()
+TESTKIT.EQ(LEN(british$), 22, "a British one is 22 characters as well")
+TESTKIT.ISTRUE(STARTSWITH(british$, "GB"), "under its own country")
+TESTKIT.ISTRUE(IbanHolds(british$), "and it holds too")
+DIM code$ = FAKE.BIC$()
+TESTKIT.EQ(LEN(code$), 8, "a bank code is eight characters")
+TESTKIT.ISTRUE(AllFrom(code$, LETTERS$), "all of them letters")
+TESTKIT.EQ(MID$(code$, 4, 2), "GB", "with the country in the middle")
+
+TESTKIT.SUITE("when")
+FAKE.SEED(41)
+DIM picked$ = FAKE.ISODATE$("2024-03-01", "2024-03-31")
+TESTKIT.EQ(LEN(picked$), 10, "a date is ten characters")
+TESTKIT.ISTRUE(STARTSWITH(picked$, "2024-03-"), "and inside the month it was asked for")
+TESTKIT.EQ(FAKE.ISODATE$("2024-07-04", "2024-07-04"), "2024-07-04", "one day to itself is that day")
+TESTKIT.EQ(FAKE.ISODATE$("2024-07-04", "2024-07-04"), FAKE.ISODATE$("2024-07-04", "2024-07-04"), "however often it is asked")
+DIM swapped$ = FAKE.ISODATE$("2024-12-31", "2024-01-01")
+TESTKIT.EQ(LEN(swapped$), 10, "the ends may come the wrong way round")
+TESTKIT.ISTRUE(STARTSWITH(swapped$, "2024-"), "and the year still holds")
+DIM leap$ = FAKE.ISODATE$("2024-02-29", "2024-02-29")
+TESTKIT.EQ(leap$, "2024-02-29", "a leap day survives the arithmetic")
+TESTKIT.EQ(FAKE.ISODATE$("1970-01-01", "1970-01-01"), "1970-01-01", "so does the day the count starts on")
+TESTKIT.EQ(FAKE.ISODATE$("1969-12-31", "1969-12-31"), "1969-12-31", "and the one before it")
+DIM stamp$ = FAKE.ISOTIME$("2024-03-01", "2024-03-01")
+TESTKIT.EQ(LEN(stamp$), 19, "a moment is nineteen characters")
+TESTKIT.EQ(LEFT$(stamp$, 11), "2024-03-01 ", "the date, then a space")
+TESTKIT.EQ(Counted(stamp$, ":"), 2, "and two colons in the time")
+
+TESTKIT.SUITE("text")
+FAKE.SEED(51)
+TESTKIT.EQ(Counted(FAKE.WORDS$(7), " "), 6, "seven words carry six spaces")
+TESTKIT.ISTRUE(LEN(FAKE.WORD$()) > 1, "a word has letters in it")
+DIM said$ = FAKE.SENTENCE$(5)
+TESTKIT.ISTRUE(ENDSWITH(said$, "."), "a sentence is closed")
+TESTKIT.EQ(LEFT$(said$, 1), UCASE$(LEFT$(said$, 1)), "and opened with a capital")
+TESTKIT.EQ(Counted(said$, " "), 4, "five words in it")
+DIM block$ = FAKE.PARAGRAPH$(3)
+TESTKIT.EQ(Counted(block$, "."), 3, "a paragraph of three sentences has three full stops")
+
+TESTKIT.SUITE("marks of identity")
+FAKE.SEED(61)
+DIM mark$ = FAKE.UUID$()
+TESTKIT.EQ(LEN(mark$), 36, "an identifier is 36 characters")
+TESTKIT.EQ(Counted(mark$, "-"), 4, "with four dashes")
+TESTKIT.EQ(MID$(mark$, 8, 1), "-", "the first in its place")
+TESTKIT.EQ(MID$(mark$, 23, 1), "-", "and the last in its")
+TESTKIT.EQ(MID$(mark$, 14, 1), "4", "it says which kind it is")
+TESTKIT.ISTRUE(INSTR("89ab", MID$(mark$, 19, 1)) >= 0, "and carries the mark that goes with it")
+TESTKIT.NE(FAKE.UUID$(), mark$, "the next one differs")
+DIM reference$ = FAKE.ID$("INV-", 6)
+TESTKIT.ISTRUE(STARTSWITH(reference$, "INV-"), "a reference keeps its prefix")
+TESTKIT.EQ(LEN(reference$), 10, "and has the digits asked for")
+TESTKIT.ISTRUE(AllFrom(MID$(reference$, 4), DIGITS$), "which are digits")
+
+TESTKIT.SUITE("a table from a spec")
+FAKE.SEED(71)
+FAKE.LOCALE("en")
+DIM spec = {"id": "seq", "who": "name", "town": "city", "when": "date:2024-01-01..2024-01-31", "paid": "price:5..50", "tier": "pick:bronze|silver|gold", "ok": "bool"}
+TESTKIT.EQ(JSON.STRINGIFY$(FAKE.FIELDS(spec)), JSON.STRINGIFY$(["id", "who", "town", "when", "paid", "tier", "ok"]), "the fields come back in the order the spec names them")
+DIM rows = FAKE.ROWS(40, spec)
+TESTKIT.EQ(LEN(rows), 40, "forty rows")
+DIM one = rows[0]
+TESTKIT.EQ(LEN(one), 7, "each as wide as the spec")
+TESTKIT.EQ(one[0], 1, "the counter starts at one")
+DIM last = rows[39]
+TESTKIT.EQ(last[0], 40, "and ends at the row count")
+DIM tiers_ok = TRUE
+DIM dates_ok = TRUE
+DIM money_ok = TRUE
+FOR i = 0 TO LEN(rows) - 1
+    DIM row = rows[i]
+    IF NOT (row[5] IN ["bronze", "silver", "gold"]) THEN tiers_ok = FALSE
+    IF NOT STARTSWITH(row[3], "2024-01-") THEN dates_ok = FALSE
+    IF row[4] < 5 ORELSE row[4] > 50 THEN money_ok = FALSE
+NEXT i
+TESTKIT.ISTRUE(tiers_ok, "a chosen column only holds what it was offered")
+TESTKIT.ISTRUE(dates_ok, "a date column stays inside its bounds")
+TESTKIT.ISTRUE(money_ok, "and a price column inside its own")
+DIM alone = FAKE.ROW(spec, 5)
+TESTKIT.EQ(alone[0], 5, "one row takes the number it is given")
+DIM plain = FAKE.ROWS(3, {"a": "int:7..7", "b": "words:4"})
+DIM plain_row = plain[0]
+TESTKIT.EQ(plain_row[0], 7, "a range of one gives that number every time")
+TESTKIT.EQ(Counted(plain_row[1], " "), 3, "and four words carry three spaces")
+DIM unknown = FAKE.ROWS(1, {"x": "no such kind"})
+DIM unknown_row = unknown[0]
+TESTKIT.EQ(unknown_row[0], "no such kind", "a kind that is not known is written out as it stands")
+
+TESTKIT.SUITE("a thousand rows, everywhere the same")
+TESTKIT.EQ(Digest$(1000, "en"), "a37d03396c6b9ce7102db0b9095dcdfdc99a263d030e777886d7f906a263d3ec", "the English thousand hashes to what it hashed to when this was written")
+TESTKIT.EQ(Digest$(1000, "de"), "c3c041954de1fb9a85c25c7bb92d3b43f4edb05d289867a1d5ba46500f40d758", "and the German thousand to its own")
+TESTKIT.EQ(Digest$(1000, "en"), Digest$(1000, "en"), "asking twice gives the same")
+TESTKIT.NE(Digest$(1001, "en"), Digest$(1000, "en"), "the next seed gives another thousand")
+
+TESTKIT.REPORT()

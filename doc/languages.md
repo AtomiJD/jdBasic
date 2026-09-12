@@ -1437,6 +1437,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `CACHE` | a computed read answered once: a size limit, a lifetime per entry, keys from parts, counters, a file on disk |
 | `RETRY` | a call made again with a growing wait: a random share, a ceiling on the run, a predicate and a callback |
 | `GRAPH` | nodes and links: traversal, components, cycles, topological order, Dijkstra and A star, Graphviz output |
+| `FAKE` | made up names, addresses, companies, IBANs, dates and text, seeded so every machine gets the same rows |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

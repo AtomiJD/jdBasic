@@ -9258,6 +9258,52 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
         return { result, JD_TAG_ARR };
     }
 
+    // Two runtime-typed operands joined with +: a string on either side
+    // makes it a join, anything else a sum. Without this the bits of two
+    // pointers were added as numbers and the answer was nothing.
+    if (expr.op == TokenType::PLUS &&
+        lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag &&
+        rhs.tag == JD_TAG_RUNTIME && rhs.runtime_tag) {
+        LLVMValueRef l_str = LLVMBuildICmp(builder, LLVMIntEQ, lhs.runtime_tag,
+            LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_lstr");
+        LLVMValueRef r_str = LLVMBuildICmp(builder, LLVMIntEQ, rhs.runtime_tag,
+            LLVMConstInt(i32_type, JD_TAG_STR, 0), "dyy_rstr");
+        LLVMValueRef any_str = LLVMBuildOr(builder, l_str, r_str, "dyy_str");
+        LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "dyy.join");
+        LLVMBasicBlockRef bb_sum = LLVMAppendBasicBlock(current_fn, "dyy.sum");
+        LLVMBasicBlockRef bb_end = LLVMAppendBasicBlock(current_fn, "dyy.end");
+        LLVMBuildCondBr(builder, any_str, bb_join, bb_sum);
+
+        LLVMPositionBuilderAtEnd(builder, bb_join);
+        LLVMValueRef ls = runtime_to_str(lhs.val, lhs.runtime_tag);
+        LLVMValueRef rs = runtime_to_str(rhs.val, rhs.runtime_tag);
+        auto& cat = runtime_funcs["__str_concat"];
+        LLVMValueRef cargs[] = { ls, rs };
+        LLVMValueRef joined = LLVMBuildCall2(builder, cat.fn_type, cat.fn, cargs, 2, "dyy_cat");
+        LLVMValueRef jbits = LLVMBuildPtrToInt(builder, joined, i64_type, "dyy_jbits");
+        LLVMBuildBr(builder, bb_end);
+        LLVMBasicBlockRef bb_join_end = LLVMGetInsertBlock(builder);
+
+        LLVMPositionBuilderAtEnd(builder, bb_sum);
+        LLVMValueRef lf = coerce_to(lhs, f64_type);
+        LLVMValueRef rf = coerce_to(rhs, f64_type);
+        LLVMValueRef sum = LLVMBuildFAdd(builder, lf, rf, "dyy_add");
+        LLVMValueRef sbits = pun_f64_to_i64(sum);
+        LLVMBuildBr(builder, bb_end);
+        LLVMBasicBlockRef bb_sum_end = LLVMGetInsertBlock(builder);
+
+        LLVMPositionBuilderAtEnd(builder, bb_end);
+        LLVMValueRef pv = LLVMBuildPhi(builder, i64_type, "dyy_v");
+        LLVMValueRef pt = LLVMBuildPhi(builder, i32_type, "dyy_t");
+        LLVMValueRef vals[] = { jbits, sbits };
+        LLVMValueRef tags[] = { LLVMConstInt(i32_type, JD_TAG_STR, 0),
+                                LLVMConstInt(i32_type, JD_TAG_F64, 0) };
+        LLVMBasicBlockRef bbs[] = { bb_join_end, bb_sum_end };
+        LLVMAddIncoming(pv, vals, bbs, 2);
+        LLVMAddIncoming(pt, tags, bbs, 2);
+        return { pv, JD_TAG_RUNTIME, pt };
+    }
+
     // One runtime-typed operand and one number: an array behind the tag is
     // operated on element-wise, anything else as a number.
     {
