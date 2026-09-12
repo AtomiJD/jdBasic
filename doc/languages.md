@@ -3946,6 +3946,17 @@ otherwise.
 `TOUCH` answers `[count, x, y]` in screen coordinates, `TOUCH.RAW` the
 controller's own numbers before the mapping, and `TOUCH.ID` its identity.
 
+An M5Stack CardKB on the four-pin I2C connector gives the board keys of
+its own. It arrives where every reader on the board already looks, so
+the prompt, the editor, `INKEY$`, `KEY.GET` and the event poll all see
+it without knowing it is there, and the serial line keeps working
+alongside. `KEY.LOCAL` says whether it answered and `KEY.LOCAL(1)` asks
+again now; `KEY.RAW` gives its codes untranslated, for settling what a
+key sends by pressing it. Its modifiers are tapped rather than held:
+Sym carries the punctuation, so a double quote is Sym then P, and Fn
+carries the control codes a keyboard with no control key cannot
+otherwise reach, so Fn then Q leaves the editor.
+
 `BEEP freq, ms` and `TONE freq` make a sound; `PLAY score` plays a
 melody in the background while the program keeps running, in the classic
 notation - A-G with `#` `+` `-`, `O` for the octave, `<` and `>` to step
