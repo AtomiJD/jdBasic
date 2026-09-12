@@ -20,7 +20,7 @@ tests/demos/demo_group_a.jdb	OK	OK	OK
 tests/demos/demo_group_b.jdb	OK	OK	OK
 tests/demos/demo_group_c.jdb	OK	OK	OK
 tests/demos/demo_group_d.jdb	OK	OK	OK
-tests/demos/dupfinder.jdb	TIMEOUT	TIMEOUT	BOTH_RED
+tests/demos/dupfinder.jdb	FAIL:1	TIMEOUT	BOTH_RED
 tests/dim_multiname_block.jdb	PASS	CFAIL	GAP
 tests/dir_of_directory.jdb	PASS	PASS	OK
 tests/eval/test_eval.jdb	OK	CFAIL	GAP
@@ -55,7 +55,18 @@ tests/gate/test_apl_complete.jdb	PASS	PASS	OK
 tests/gate/test_apl_pipelines.jdb	PASS	PASS	OK
 tests/gate/zip_archive_test.jdb	PASS	PASS	OK
 tests/interp_string.jdb	PASS	PASS	OK
+tests/jdlibs/cli_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/conf_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/console_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/dt_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/jwt_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/llmapi_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/logger_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/md_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/req_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/schema_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/testkit_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/xlsx_selftest.jdb	PASS	PASS	OK
 tests/jdplot_range.jdb	PASS	CFAIL	GAP
 tests/jdvoid/arena_rules.jdb	OK	OK	OK
 tests/line_table.jdb	PASS	CFAIL	GAP
@@ -124,6 +135,7 @@ tests/regression/test_date_dim_works.jdb	OK	OK	OK
 tests/regression/test_datetime.jdb	OK	OK	OK
 tests/regression/test_debug.jdb	PASS	PASS	OK
 tests/regression/test_destruct.jdb	OK	OK	OK
+tests/regression/test_dim_funcref_call.jdb	OK	OK	OK
 tests/regression/test_dollar_coerce.jdb	PASS	CFAIL	GAP
 tests/regression/test_dump_run.jdb	OK	OK	OK
 tests/regression/test_env_neg.jdb	OK	OK	OK
@@ -140,6 +152,7 @@ tests/regression/test_fs.jdb	FAIL:1	FAIL:1	BOTH_RED
 tests/regression/test_func_array_param.jdb	OK	OK	OK
 tests/regression/test_func_local_array.jdb	OK	OK	OK
 tests/regression/test_funcref.jdb	OK	OK	OK
+tests/regression/test_funcref_throw_unwind.jdb	OK	OK	OK
 tests/regression/test_funcref_untyped_param.jdb	PASS	PASS	OK
 tests/regression/test_functional.jdb	OK	CFAIL	GAP
 tests/regression/test_getos.jdb	OK	OK	OK
@@ -157,6 +170,7 @@ tests/regression/test_multi_idx.jdb	OK	OK	OK
 tests/regression/test_native_funcref_builtin.jdb	PASS	PASS	OK
 tests/regression/test_native_ragged_array.jdb	PASS	PASS	OK
 tests/regression/test_native_str_tags.jdb	PASS	PASS	OK
+tests/regression/test_nested_literal_bool.jdb	OK	OK	OK
 tests/regression/test_new_array_ops.jdb	OK	CFAIL	GAP
 tests/regression/test_newfuncs.jdb	PASS	PASS	OK
 tests/regression/test_noparens.jdb	PASS	PASS	OK

@@ -398,6 +398,8 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
             } else if (t == jd_tag(JdTag::I64)) {
                 // Same convention as the map cells: stored as a real double.
                 out->elements.push_back(Value::make_i64((int64_t)d));
+            } else if (t == jd_tag(JdTag::NONE)) {
+                out->elements.push_back(Value::make_none());
             } else {
                 // F64 - numeric.
                 out->elements.push_back(Value::make_f64(d));

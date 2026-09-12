@@ -47,6 +47,7 @@ and SCHEMA) finds it through the same search.
 | `console.jdb` | tabulate, rich, tqdm | tables from arrays or maps in four border styles, styled text that degrades to plain, rules, panels, key and value blocks, progress bars, spinners | [console_lib_readme.md](console_lib_readme.md) |
 | `dt.jdb` | dateutil, arrow | dates as epoch numbers with their own calendar: ISO, RFC 2822 and German parsing, fixed offsets, calendar arithmetic, rounding, ranges, relative text in English and German | [dt_lib_readme.md](dt_lib_readme.md) |
 | `md.jdb` | markdown | the CommonMark subset to HTML: headings, lists, fences, quotes, tables, links, images, escaping with a raw switch | [md_lib_readme.md](md_lib_readme.md) |
+| `df.jdb` | pandas | data frames as named columns: CSV in and out, computed columns, filters, sorting, group by with aggregates, joins, pivots, summaries, console tables | [df_lib_readme.md](df_lib_readme.md) |
 
 ## Tests and demos
 

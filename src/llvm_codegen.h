@@ -160,6 +160,7 @@ private:
 
     VarInfo* lookup_var(const std::string& name);
     VarInfo& create_var(const std::string& name, int tag);
+    LLVMValueRef scratch_alloca(LLVMTypeRef ty, const char* name);
     LLVMTypeRef param_slot_type(int tag) const;
 
     // User-defined functions: name -> {LLVMValueRef, return_tag, param_tags}

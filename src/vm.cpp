@@ -5324,12 +5324,20 @@ void VM::register_builtins() {
     });
 
     // ── GRADE ────────────────────────────────────────────────
+    // Strings order lexicographically after every number; equal keys
+    // keep their original order.
     register_native("GRADE", [](const std::vector<Value>& args) -> Value {
         auto* arr = args[0].as_array();
         std::vector<int64_t> idx(arr->elements.size());
         for (size_t i = 0; i < idx.size(); i++) idx[i] = i;
-        std::sort(idx.begin(), idx.end(), [&](int64_t a, int64_t b) {
-            return arr->elements[a].to_double() < arr->elements[b].to_double();
+        std::stable_sort(idx.begin(), idx.end(), [&](int64_t a, int64_t b) {
+            const Value& va = arr->elements[a];
+            const Value& vb = arr->elements[b];
+            bool a_str = (va.type == ValueType::STRING);
+            bool b_str = (vb.type == ValueType::STRING);
+            if (a_str != b_str) return !a_str;
+            if (a_str) return va.as_string()->data < vb.as_string()->data;
+            return va.to_double() < vb.to_double();
         });
         Value r = Value::make_array();
         for (auto i : idx) r.as_array()->elements.push_back(Value::make_i64(i));

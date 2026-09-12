@@ -211,6 +211,19 @@ LLVMCodegen::VarInfo& LLVMCodegen::create_var(const std::string& name, int tag) 
     return vi;
 }
 
+// A temporary slot in the entry block, so a read inside a loop body does
+// not grow the stack on every pass.
+LLVMValueRef LLVMCodegen::scratch_alloca(LLVMTypeRef ty, const char* name) {
+    LLVMBasicBlockRef cur = LLVMGetInsertBlock(builder);
+    LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(current_fn);
+    LLVMValueRef first = LLVMGetFirstInstruction(entry);
+    if (first) LLVMPositionBuilderBefore(builder, first);
+    else LLVMPositionBuilderAtEnd(builder, entry);
+    LLVMValueRef a = LLVMBuildAlloca(builder, ty, name);
+    LLVMPositionBuilderAtEnd(builder, cur);
+    return a;
+}
+
 // ── Setup ───────────────────────────────────────────────────
 
 void LLVMCodegen::init_module() {
@@ -3603,7 +3616,7 @@ void LLVMCodegen::codegen_stmt(const Stmt& stmt) {
                 if (rd != runtime_funcs.end()) {
                     LLVMValueRef cur = LLVMBuildCall2(builder, rd->second.fn_type,
                                                      rd->second.fn, nullptr, 0, "rdepth");
-                    saved_depth = LLVMBuildAlloca(builder, i64_type, "saved_depth");
+                    saved_depth = scratch_alloca(i64_type, "saved_depth");
                     LLVMBuildStore(builder, cur, saved_depth);
                 }
             }
@@ -3998,7 +4011,7 @@ void LLVMCodegen::emit_dispose_cleanup() {
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dsp.loop");
         LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dsp.body");
         LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "dsp.end");
-        LLVMValueRef i_alloca = LLVMBuildAlloca(builder, i64_type, "dsp.i");
+        LLVMValueRef i_alloca = scratch_alloca(i64_type, "dsp.i");
         LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), i_alloca);
         LLVMBuildBr(builder, loop_bb);
 
@@ -4599,6 +4612,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (u == "REGEX.FINDALL" || u == "REGEX.MATCH" || u == "REGEX_FINDALL" ||
             u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS")
             mixed_array_vars.insert(stmt.var_name);
+        // Builtins that answer a table: rows taken out of the result read
+        // their cells per kind.
+        if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
+            u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
+            array_array_vars.insert(stmt.var_name);
         if (u == "DIR$") {
             bool extended = false;
             if (stmt.expr->args.size() >= 2 && stmt.expr->args[1]) {
@@ -5565,6 +5583,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         if (u == "REGEX.FINDALL" || u == "REGEX.MATCH" || u == "REGEX_FINDALL" ||
             u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS")
             mixed_array_vars.insert(stmt.var_name);
+        // Builtins that answer a table: rows taken out of the result read
+        // their cells per kind.
+        if (u == "CSVREADER" || u == "ZIP" || u == "TRANSPOSE" || u == "OUTER" ||
+            u == "TILED.OBJECTS" || u == "SQL.QUERY" || u == "SQLITE.QUERY")
+            array_array_vars.insert(stmt.var_name);
         if (u == "DIR$") {
             bool extended = false;
             if (stmt.expr->args.size() >= 2 && stmt.expr->args[1]) {
@@ -5700,7 +5723,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                     break;
                 }
                 TypedValue v = codegen_expr(*stmt.expr->args[k]);
-                LLVMValueRef vec_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "ctor_vec");
+                LLVMValueRef vec_alloca = scratch_alloca(i8_ptr_type, "ctor_vec");
                 LLVMBuildStore(builder, v.val, vec_alloca);
                 ctor_vec_allocas.push_back(vec_alloca);
                 int want_tag = (k - 1 < init_it->second.param_tags.size())
@@ -5720,7 +5743,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
 
             LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt_arr.loop");
             LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "udt_arr.end");
-            LLVMValueRef idx_alloca = LLVMBuildAlloca(builder, i64_type, "udt_i");
+            LLVMValueRef idx_alloca = scratch_alloca(i64_type, "udt_i");
             LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
             LLVMBuildBr(builder, loop_bb);
 
@@ -5826,8 +5849,8 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 LLVMBasicBlockRef end_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "dim2d.end");
 
                 // Alloca for loop var and outer array accumulator
-                LLVMValueRef idx_alloca = LLVMBuildAlloca(builder, i64_type, "dim_i");
-                LLVMValueRef outer_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "dim_outer");
+                LLVMValueRef idx_alloca = scratch_alloca(i64_type, "dim_i");
+                LLVMValueRef outer_alloca = scratch_alloca(i8_ptr_type, "dim_outer");
                 LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
                 LLVMBuildStore(builder, outer, outer_alloca);
                 LLVMBuildBr(builder, loop_bb);
@@ -6185,7 +6208,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         } else if (punned_map_slot) {
             // The slot is an f64 carrying the pointer bit for bit.
             LLVMValueRef d = LLVMBuildLoad2(builder, f64_type, vi->alloca_val, "obj_f64");
-            LLVMValueRef pun = LLVMBuildAlloca(builder, f64_type, "objpun");
+            LLVMValueRef pun = scratch_alloca(f64_type, "objpun");
             LLVMBuildStore(builder, d, pun);
             LLVMValueRef bits = LLVMBuildLoad2(builder, i64_type, pun, "obj_bits");
             obj_ptr = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "obj");
@@ -7846,7 +7869,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         auto& gtag = runtime_funcs["__jdrt_tagged_get"];
                         LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
                         LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
-                        LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv7out");
+                        LLVMValueRef out = scratch_alloca(i64_type, "tv7out");
                         LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag,
                                                  idx_tv.val, out };
                         LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type,
@@ -7873,7 +7896,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         // The field may hold a native map, an array or a VM
                         // object; its tag decides how the next step reads it.
                         auto& gtag = runtime_funcs["__map_get_tagged"];
-                        LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "mgo_out");
+                        LLVMValueRef out = scratch_alloca(i64_type, "mgo_out");
                         LLVMValueRef args[] = { arr_tv.val, idx_tv.val, out };
                         LLVMValueRef t = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, args, 3, "mgo_tag");
                         LLVMValueRef v = LLVMBuildLoad2(builder, i64_type, out, "mgo_val");
@@ -7893,7 +7916,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     }
                     // No hint → TAGGED getter. Runtime tells us the type.
                     auto& gtag = runtime_funcs["__map_get_tagged"];
-                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                    LLVMValueRef out = scratch_alloca(i64_type, "tv_out");
                     LLVMValueRef targs[] = { arr_tv.val, idx_tv.val, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, targs, 3, "mtag");
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
@@ -7922,7 +7945,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     // No hint → TAGGED getter.
                     {
                         auto& gtag = runtime_funcs["__jdrt_obj_get_tagged"];
-                        LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                        LLVMValueRef out = scratch_alloca(i64_type, "tv_out");
                         LLVMValueRef targs[] = { rt, arr_tv.val, idx_tv.val, out };
                         LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, targs, 4, "otag");
                         LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
@@ -7957,7 +7980,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         // The field may hold a native map, an array or a VM
                         // object; its tag decides how the next step reads it.
                         auto& gtag = runtime_funcs["__map_get_tagged"];
-                        LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "mgo_out");
+                        LLVMValueRef out = scratch_alloca(i64_type, "mgo_out");
                         LLVMValueRef args[] = { obj_ptr, idx_tv.val, out };
                         LLVMValueRef t = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, args, 3, "mgo_tag");
                         LLVMValueRef v = LLVMBuildLoad2(builder, i64_type, out, "mgo_val");
@@ -7979,7 +8002,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     // an explicit $-var round-trip (matches the tag=4
                     // and tag=6 default paths above).
                     auto& gtag = runtime_funcs["__map_get_tagged"];
-                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                    LLVMValueRef out = scratch_alloca(i64_type, "tv_out");
                     LLVMValueRef targs[] = { obj_ptr, idx_tv.val, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, targs, 3, "mtag");
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "tv_val");
@@ -8028,7 +8051,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     auto& gi = runtime_funcs["__jdrt_tagged_index"];
                     LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
                     LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
-                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "ti7out");
+                    LLVMValueRef out = scratch_alloca(i64_type, "ti7out");
                     LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag,
                                              idx_tv.val, idx_tv.runtime_tag, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, gi.fn_type, gi.fn, targs, 6, "ti7tag");
@@ -8044,7 +8067,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     auto& ga = runtime_funcs["__jdrt_tagged_arr_get"];
                     LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
                     LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
-                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "ia7out");
+                    LLVMValueRef out = scratch_alloca(i64_type, "ia7out");
                     LLVMValueRef targs[] = { rt, arr_tv.val, arr_tv.runtime_tag, idx, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, ga.fn_type, ga.fn, targs, 5, "ia7tag");
                     LLVMValueRef tv_val = LLVMBuildLoad2(builder, i64_type, out, "ia7val");
@@ -8109,7 +8132,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMPositionBuilderAtEnd(builder, bb_map);
                     LLVMValueRef key = LLVMBuildIntToPtr(builder, idx_tv.val, i8_ptr_type, "pidx_key");
                     auto& gtag = runtime_funcs["__map_get_tagged"];
-                    LLVMValueRef mout = LLVMBuildAlloca(builder, i64_type, "pidx_mout");
+                    LLVMValueRef mout = scratch_alloca(i64_type, "pidx_mout");
                     LLVMValueRef margs[] = { arr_ptr, key, mout };
                     LLVMValueRef mtag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn, margs, 3, "pidx_mtag");
                     LLVMValueRef mval = LLVMBuildLoad2(builder, i64_type, mout, "pidx_mval");
@@ -8119,7 +8142,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                     LLVMPositionBuilderAtEnd(builder, bb_arr);
                     auto& gtg = runtime_funcs["__arr_get_tagged"];
                     LLVMValueRef aidx = coerce_to(idx_tv, i64_type);
-                    LLVMValueRef atag_out = LLVMBuildAlloca(builder, i32_type, "pidx_atag");
+                    LLVMValueRef atag_out = scratch_alloca(i32_type, "pidx_atag");
                     LLVMValueRef aargs[] = { arr_ptr, aidx, atag_out };
                     LLVMValueRef aval_f = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn, aargs, 3, "pidx_aval");
                     LLVMValueRef atag = LLVMBuildLoad2(builder, i32_type, atag_out, "pidx_atagv");
@@ -8145,7 +8168,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                      (idx_tv.tag != JD_TAG_I64 && idx_tv.tag != JD_TAG_F64))) {
                     LLVMValueRef key = to_string_ptr(idx_tv);
                     auto& gtag = runtime_funcs["__map_get_tagged"];
-                    LLVMValueRef out = LLVMBuildAlloca(builder, i64_type, "tv_out");
+                    LLVMValueRef out = scratch_alloca(i64_type, "tv_out");
                     LLVMValueRef targs[] = { arr_ptr, key, out };
                     LLVMValueRef tv_tag = LLVMBuildCall2(builder, gtag.fn_type, gtag.fn,
                                                          targs, 3, "mtag");
@@ -8171,7 +8194,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             if (expr.left && expr.left->kind == ExprKind::VARIABLE &&
                 mixed_array_vars.count(expr.left->str_val)) {
                 auto& gtg = runtime_funcs["__arr_get_tagged"];
-                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "mix_gt_tag");
+                LLVMValueRef out_tag = scratch_alloca(i32_type, "mix_gt_tag");
                 LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
                 LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
                     getargs, 3, "mix_gt");
@@ -8220,7 +8243,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // about what the element actually holds.
             if (m_want_leaf_tag == JD_TAG_RUNTIME) {
                 auto& gtg = runtime_funcs["__arr_get_tagged"];
-                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "leaf_gt_tag");
+                LLVMValueRef out_tag = scratch_alloca(i32_type, "leaf_gt_tag");
                 LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
                 LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
                     getargs, 3, "leaf_gt");
@@ -8253,7 +8276,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // printing a string/array cell as the f64 bit-pattern (→ 0).
             if (expr.left && expr.left->kind == ExprKind::INDEX) {
                 auto& gtg = runtime_funcs["__arr_get_tagged"];
-                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "nest_gt_tag");
+                LLVMValueRef out_tag = scratch_alloca(i32_type, "nest_gt_tag");
                 LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
                 LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
                     getargs, 3, "nest_gt");
@@ -8268,7 +8291,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                 current_param_names.count(expr.left->str_val) &&
                 m_want_leaf_tag != JD_TAG_F64 && m_want_leaf_tag != JD_TAG_I64) {
                 auto& gtg = runtime_funcs["__arr_get_tagged"];
-                LLVMValueRef out_tag = LLVMBuildAlloca(builder, i32_type, "prm_gt_tag");
+                LLVMValueRef out_tag = scratch_alloca(i32_type, "prm_gt_tag");
                 LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
                 LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
                     getargs, 3, "prm_gt");
@@ -9595,6 +9618,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef args[] = { a.val, fval, tag_v };
             return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "appt"), JD_TAG_ARR };
         }
+        if (a.tag == JD_TAG_ARR && b.tag == JD_TAG_STR) {
+            // The cell carries its own tag, so a name list that started
+            // out per-cell tagged keeps reading the new cell as a string.
+            LLVMValueRef bits = LLVMBuildPtrToInt(builder, b.val, i64_type, "app_s2i");
+            auto& fn = runtime_funcs["__arr_append_tagged"];
+            LLVMValueRef args[] = { a.val, pun_i64_to_f64(bits),
+                                    LLVMConstInt(i32_type, JD_TAG_STR, 0) };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "apps"), JD_TAG_ARR };
+        }
         if (a.tag == JD_TAG_ARR) {
             LLVMValueRef bf = b.tag == JD_TAG_I64
                 ? LLVMBuildSIToFP(builder, b.val, f64_type, "itof")
@@ -9660,8 +9692,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.loop");
             LLVMBasicBlockRef end_bb  = LLVMAppendBasicBlockInContext(ctx, current_fn, "z2d.end");
-            LLVMValueRef idx_alloca   = LLVMBuildAlloca(builder, i64_type,    "z2d_i");
-            LLVMValueRef outer_alloca = LLVMBuildAlloca(builder, i8_ptr_type, "z2d_outer");
+            LLVMValueRef idx_alloca   = scratch_alloca(i64_type, "z2d_i");
+            LLVMValueRef outer_alloca = scratch_alloca(i8_ptr_type, "z2d_outer");
             LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_alloca);
             LLVMBuildStore(builder, outer, outer_alloca);
             LLVMBuildBr(builder, loop_bb);
@@ -9809,11 +9841,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // bits back to a ptr. Uniform signature is (double, double, ...) → double.
     if (!user_functions.count(name) && !runtime_funcs.count(name)) {
         VarInfo* vi_fn = lookup_var(name);
-        if (vi_fn && (vi_fn->tag == JD_TAG_FUNCREF || vi_fn->tag == JD_TAG_F64)) {
+        if (vi_fn && (vi_fn->tag == JD_TAG_FUNCREF || vi_fn->tag == JD_TAG_F64 ||
+                      vi_fn->tag == JD_TAG_RUNTIME)) {
             LLVMValueRef fn_ptr;
             if (vi_fn->tag == JD_TAG_FUNCREF) {
                 fn_ptr = LLVMBuildLoad2(builder, i8_ptr_type,
                                          vi_fn->alloca_val, name.c_str());
+            } else if (vi_fn->tag == JD_TAG_RUNTIME) {
+                // A runtime-typed holder keeps the wrapper pointer as bits.
+                LLVMValueRef bits = LLVMBuildLoad2(builder, i64_type,
+                                                   vi_fn->alloca_val, name.c_str());
+                fn_ptr = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "fn_as_ptr");
             } else {
                 LLVMValueRef f64v = LLVMBuildLoad2(builder, f64_type,
                                                     vi_fn->alloca_val, name.c_str());
@@ -9985,13 +10023,22 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // parameter count (was hardcoded to 1, so a 2-arg target such as a
             // comparator/reducer passed as `fn@` was miscalled). Fall back to 1
             // only when the function is unknown.
-            if (expected_tag == JD_TAG_FUNCREF && call_args[i] &&
-                call_args[i]->kind == ExprKind::LITERAL_STRING &&
+            if ((expected_tag == JD_TAG_FUNCREF || expected_tag == JD_TAG_RUNTIME) &&
+                call_args[i] && call_args[i]->kind == ExprKind::LITERAL_STRING &&
                 call_args[i]->is_funcref_lit) {
                 auto uf = user_functions.find(call_args[i]->str_val);
                 int arity = (uf != user_functions.end() && !uf->second.param_tags.empty())
                     ? (int)uf->second.param_tags.size() : 1;
                 LLVMValueRef wrap = build_funcref_wrapper(call_args[i]->str_val, arity);
+                if (!wrap && expected_tag == JD_TAG_RUNTIME)
+                    wrap = builtin_funcref_by_name(call_args[i]->str_val);
+                if (wrap && expected_tag == JD_TAG_RUNTIME) {
+                    // A runtime-typed parameter takes the wrapper as bits
+                    // with the funcref tag, so a call through it finds it.
+                    args.push_back(LLVMBuildPtrToInt(builder, wrap, i64_type, "av_pti"));
+                    args.push_back(LLVMConstInt(i32_type, JD_TAG_FUNCREF, 0));
+                    continue;
+                }
                 if (wrap) {
                     args.push_back(wrap);
                     continue;
@@ -10246,7 +10293,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // that. The buffer is nargs+1 bytes (+1 for NUL terminator).
                 LLVMTypeRef i8_ty = LLVMInt8TypeInContext(ctx);
                 LLVMTypeRef tbuf_ty = LLVMArrayType(i8_ty, nargs + 1);
-                LLVMValueRef tbuf = LLVMBuildAlloca(builder, tbuf_ty, "fmt_tbuf");
+                LLVMValueRef tbuf = scratch_alloca(tbuf_ty, "fmt_tbuf");
                 auto tbuf_slot = [&](int i) -> LLVMValueRef {
                     LLVMValueRef gep[] = {
                         LLVMConstInt(i32_type, 0, 0),
@@ -10570,9 +10617,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // the f64 group ptr back to an array.
                 std::string bu = fe.str_val;
                 std::transform(bu.begin(), bu.end(), bu.begin(), ::toupper);
-                const char* rt = (bu == "SUM")  ? "SUM"  :
-                                 (bu == "MEAN") ? "MEAN" :
-                                 (bu == "LEN")  ? "LEN"  : nullptr;
+                const char* rt = (bu == "SUM")      ? "SUM"       :
+                                 (bu == "MEAN")     ? "MEAN"      :
+                                 (bu == "LEN")      ? "LEN"       :
+                                 (bu == "MIN")      ? "__arr_min" :
+                                 (bu == "MAX")      ? "__arr_max" :
+                                 (bu == "MEDIAN")   ? "MEDIAN"    :
+                                 (bu == "STDEV")    ? "STDEV"     :
+                                 (bu == "VARIANCE") ? "VARIANCE"  :
+                                 (bu == "PRODUCT")  ? "PRODUCT"   : nullptr;
                 if (rt) {
                     static int agg_blt_counter = 0;
                     std::string nm = "__agg_blt_" + bu + "_" + std::to_string(agg_blt_counter++);
@@ -11768,6 +11821,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             if (av.tag == JD_TAG_F64) {
                 LLVMValueRef as_i64 = pun_f64_to_i64(av.val);
                 arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
+            } else if (av.tag == JD_TAG_RUNTIME) {
+                arr_ptr = coerce_to(av, i8_ptr_type);
             }
             LLVMValueRef args[] = { arr_ptr };
             LLVMValueRef result = LLVMBuildCall2(builder, ait->second.fn_type, ait->second.fn, args, 1, "call");

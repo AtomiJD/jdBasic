@@ -10,6 +10,7 @@
 #include <chrono>
 #include <string>
 #include <regex>
+#include <algorithm>
 #include <vector>
 
 #include "jdb_tags.h"
@@ -438,7 +439,7 @@ char* jdb_double_to_str(double val) {
         if (g_locale == 1) format_int_grouped((int64_t)val, '.', buf, sizeof(buf));
         else snprintf(buf, sizeof(buf), "%lld", (long long)(int64_t)val);
     } else {
-        snprintf(buf, sizeof(buf), "%g", val);
+        jdb_format_double(buf, sizeof(buf), val);
         if (g_locale == 1) {
             // Replace dot decimal with comma
             for (char* p = buf; *p; p++) if (*p == '.') { *p = ','; break; }
@@ -903,23 +904,55 @@ JdbArray* jdb_array_reverse(JdbArray* arr) {
     return r;
 }
 
+// Orders indices by the cells they name: strings by content, numbers by
+// value, a string after every number. Used by SORT and GRADE.
+static void jdb_order_indices(JdbArray* arr, std::vector<int64_t>& idx) {
+    idx.resize((size_t)arr->length);
+    for (int64_t i = 0; i < arr->length; i++) idx[(size_t)i] = i;
+    bool tagged = (arr->flags & 8) && arr->elem_tags;
+    bool all_str = (arr->flags & 2) != 0;
+    auto is_str = [&](int64_t i) {
+        if (tagged) return arr->elem_tags[i] == JD_TAG_STR;
+        return all_str;
+    };
+    auto str_at = [&](int64_t i) -> const char* {
+        union { double d; int64_t b; } u; u.d = arr->data[i];
+        const char* p = (const char*)(intptr_t)u.b;
+        return p ? p : "";
+    };
+    std::stable_sort(idx.begin(), idx.end(), [&](int64_t a, int64_t b) {
+        bool sa = is_str(a), sb = is_str(b);
+        if (sa && sb) return strcmp(str_at(a), str_at(b)) < 0;
+        if (sa != sb) return !sa;
+        return arr->data[a] < arr->data[b];
+    });
+}
+
 JdbArray* jdb_array_sort(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
+    std::vector<int64_t> idx;
+    jdb_order_indices(arr, idx);
     auto* r = jdb_array_new(arr->length);
-    memcpy(r->data, arr->data, arr->length * sizeof(double));
-    // Simple insertion sort. NB: when called on a string-array the sort
-    // key becomes the punned-pointer bits, which is effectively random.
-    // Codegen should route string sorts to a dedicated _str variant when
-    // we add one - for now we still preserve the flag so reads after the
-    // sort still see strings.
-    for (int64_t i = 1; i < r->length; i++) {
-        double key = r->data[i];
-        int64_t j = i - 1;
-        while (j >= 0 && r->data[j] > key) { r->data[j+1] = r->data[j]; j--; }
-        r->data[j+1] = key;
-    }
+    for (int64_t i = 0; i < arr->length; i++) r->data[i] = arr->data[idx[(size_t)i]];
     r->flags = arr->flags;
+    if ((arr->flags & 8) && arr->elem_tags) {
+        r->elem_tags = (int8_t*)malloc((size_t)(arr->length > 0 ? arr->length : 1));
+        for (int64_t i = 0; i < arr->length; i++) r->elem_tags[i] = arr->elem_tags[idx[(size_t)i]];
+    } else {
+        r->flags &= ~8;
+    }
     return r;
+}
+
+// The tag a cell carries when the array keeps none per cell: the
+// array-wide flags say whether a pointer-looking value is a string or
+// a nested array.
+static int8_t jdb_tag_from_flags(int32_t flags, double d) {
+    union { double d; uint64_t u; } u; u.d = d;
+    bool looks_ptr = (u.u != 0 && u.u < (1ULL << 47));
+    if (looks_ptr && (flags & 1)) return (flags & 2) ? JD_TAG_STR : JD_TAG_ARR;
+    if (flags & 4) return JD_TAG_BOOL;
+    return JD_TAG_F64;
 }
 
 JdbArray* jdb_array_append(JdbArray* arr, double val) {
@@ -932,7 +965,7 @@ JdbArray* jdb_array_append(JdbArray* arr, double val) {
         if (arr->elem_tags) {
             r->elem_tags = (int8_t*)malloc(newlen);
             memcpy(r->elem_tags, arr->elem_tags, arr->length);
-            r->elem_tags[newlen - 1] = 0;  // unknown / inherit-from-flags
+            r->elem_tags[newlen - 1] = jdb_tag_from_flags(arr->flags, val);
         }
     }
     return r;
@@ -953,8 +986,9 @@ JdbArray* jdb_array_append_tagged(JdbArray* arr, double val, int32_t tag) {
     r->elem_tags = (int8_t*)malloc(newlen);
     if (arr && arr->elem_tags)
         memcpy(r->elem_tags, arr->elem_tags, arr->length);
-    else
-        memset(r->elem_tags, 0, arr ? arr->length : 0);
+    else if (arr)
+        for (int64_t i = 0; i < arr->length; i++)
+            r->elem_tags[i] = jdb_tag_from_flags(arr->flags, arr->data[i]);
     r->elem_tags[newlen - 1] = (int8_t)tag;
     auto keep_kind = [&](int32_t bit, bool cell_is) {
         if (cell_is) { if (newlen == 1 || (base_flags & bit)) r->flags |= bit; else r->flags &= ~bit; }
@@ -1385,19 +1419,10 @@ JdbArray* jdb_range(int64_t start, int64_t stop, int64_t step) {
 
 JdbArray* jdb_grade(JdbArray* arr) {
     if (!arr) return jdb_array_new(0);
+    std::vector<int64_t> idx;
+    jdb_order_indices(arr, idx);
     auto* r = jdb_array_new(arr->length);
-    // Fill with indices
-    for (int64_t i = 0; i < arr->length; i++) r->data[i] = (double)i;
-    // Sort indices by arr values (insertion sort)
-    for (int64_t i = 1; i < r->length; i++) {
-        double key_idx = r->data[i];
-        double key_val = arr->data[(int64_t)key_idx];
-        int64_t j = i - 1;
-        while (j >= 0 && arr->data[(int64_t)r->data[j]] > key_val) {
-            r->data[j+1] = r->data[j]; j--;
-        }
-        r->data[j+1] = key_idx;
-    }
+    for (int64_t i = 0; i < arr->length; i++) r->data[i] = (double)idx[(size_t)i];
     return r;
 }
 

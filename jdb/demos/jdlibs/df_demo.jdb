@@ -1,0 +1,84 @@
+' df_demo.jdb - a sales file worked through the frame operations.
+'
+' The demo writes a small CSV next to the script, loads it into a frame,
+' adds a revenue column, filters, sorts, groups by region and by region
+' and product, joins a colour table, pivots, summarises the numeric
+' columns and writes the grouped result back to CSV. Every result goes
+' to the console as a table.
+'
+'   jdBasic df_demo.jdb
+
+IMPORT DF, CONSOLE
+
+DIM regions = ["north", "south", "east", "west"]
+DIM products = ["widget", "gadget", "gizmo"]
+DIM rows = []
+DIM i = 0
+FOR i = 0 TO 59
+    PUSH(rows, [regions[i MOD 4], products[(i * 7) MOD 3], (i MOD 9) + 1, ((i * 37) MOD 500) / 10 + 5, "2026-" + LPAD$(STR$((i MOD 12) + 1), 2, "0") + "-15"])
+NEXT i
+CSVWRITER "df_demo_sales.csv", rows, ",", ["region", "product", "qty", "price", "date"]
+
+' ── load and look ─────────────────────────────────────────────
+
+DIM sales = DF.READCSV("df_demo_sales.csv")
+CONSOLE.RULE("the file: " + STR$(DF.NROWS(sales)) + " rows, " + STR$(DF.NCOLS(sales)) + " columns")
+DF.SHOW(sales, 5)
+PRINT ""
+
+' ── a computed column, a filter, a sort ───────────────────────
+
+sales = DF.WITH(sales, "revenue", DF.COL(sales, "qty") * DF.COL(sales, "price"))
+sales = DF.WITH(sales, "month", MonthOf@)
+
+FUNC MonthOf(row)
+    RETURN VAL(MID$(row{"date"}, 5, 2))
+ENDFUNC
+
+FUNC Large(row)
+    RETURN row{"revenue"} >= 300
+ENDFUNC
+
+CONSOLE.RULE("orders of 300 or more, biggest first")
+DF.SHOW(DF.SORT(DF.FILTER(sales, Large@), "revenue", TRUE), 5)
+PRINT ""
+
+' ── groups ────────────────────────────────────────────────────
+
+CONSOLE.RULE("by region")
+DIM by_region = DF.GROUPBY(sales, "region", {"orders": ["count"], "units": ["sum", "qty"], "revenue": ["sum", "revenue"], "avg_price": ["mean", "price"]})
+DF.SHOW(DF.SORT(by_region, "revenue", TRUE))
+PRINT ""
+
+CONSOLE.RULE("by region and product")
+DF.SHOW(DF.GROUPBY(sales, ["region", "product"], {"revenue": ["sum", "revenue"]}), 0)
+PRINT ""
+
+' ── a join and a pivot ────────────────────────────────────────
+
+DIM colours = DF.FROM([["widget", "blue", 2.5], ["gadget", "red", 4], ["gizmo", "green", 1]], ["product", "colour", "cost"])
+DIM joined = DF.JOIN(sales, colours, "product")
+joined = DF.WITH(joined, "margin", DF.COL(joined, "revenue") - DF.COL(joined, "qty") * DF.COL(joined, "cost"))
+CONSOLE.RULE("margin per colour")
+DF.SHOW(DF.GROUPBY(joined, "colour", {"margin": ["sum", "margin"]}))
+PRINT ""
+
+CONSOLE.RULE("revenue by region and product")
+DF.SHOW(DF.PIVOT(sales, "region", "product", "revenue"))
+PRINT ""
+
+CONSOLE.RULE("orders per month and region")
+DF.SHOW(DF.PIVOT(sales, "month", "region", "qty", "count"), 0)
+PRINT ""
+
+' ── a summary, and back to disk ───────────────────────────────
+
+CONSOLE.RULE("the numeric columns")
+DF.SHOW(DF.DESCRIBE(DF.DROP(sales, "month")))
+PRINT ""
+
+DF.WRITECSV(DF.SORT(by_region, "region"), "df_demo_by_region.csv")
+PRINT "written df_demo_by_region.csv:"
+PRINT TXTREADER$("df_demo_by_region.csv")
+KILL "df_demo_sales.csv"
+KILL "df_demo_by_region.csv"

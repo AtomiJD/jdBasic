@@ -1,0 +1,648 @@
+' df.jdb - a dataframe: named columns over plain arrays.
+'
+'   IMPORT DF
+'   DIM sales = DF.READCSV("sales.csv")
+'   sales = DF.WITH(sales, "revenue", DF.COL(sales, "qty") * DF.COL(sales, "price"))
+'   DIM by_region = DF.GROUPBY(sales, "region", {"revenue": ["sum", "revenue"], "orders": ["count"]})
+'   DF.SHOW(DF.SORT(by_region, "revenue", TRUE))
+'
+' A frame is a map: "names" holds the column names, "cols" one array per
+' column, all of the same length. Columns are ordinary arrays, so the
+' array builtins do the work: SUM, MEAN, GRADE, AGG, UNIQUE and the
+' element-wise operators run over a whole column at once. DF.COL answers
+' the column array itself; add 0 for a copy before changing it in place.
+' Every function returns a new frame and leaves its input alone.
+
+EXPORT MODULE DF
+
+IMPORT CONSOLE
+
+CONST KEY_SEP$ = CHR$(31)
+
+' A fresh array with the same elements.
+FUNC Copy(arr)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(arr) - 1
+        PUSH(out, arr[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── construction ───────────────────────────────────────────────
+
+' A frame from a 2D array of rows and the column names.
+EXPORT FUNC FROM(matrix, names)
+    DIM cols = []
+    DIM c = 0
+    FOR c = 0 TO LEN(names) - 1
+        DIM col = []
+        DIM r = 0
+        FOR r = 0 TO LEN(matrix) - 1
+            DIM row = matrix[r]
+            IF c < LEN(row) THEN
+                PUSH(col, row[c])
+            ELSE
+                PUSH(col, NONE)
+            ENDIF
+        NEXT r
+        PUSH(cols, col)
+    NEXT c
+    RETURN Frame(Copy(names), cols)
+ENDFUNC
+
+' A frame from an array of maps; the columns are the union of the keys.
+EXPORT FUNC FROMROWS(rows)
+    DIM names = []
+    DIM r = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM keys = MAP.KEYS(rows[r])
+        DIM k = 0
+        FOR k = 0 TO LEN(keys) - 1
+            IF NOT (keys[k] IN names) THEN names = APPEND(names, keys[k])
+        NEXT k
+    NEXT r
+    DIM cols = []
+    DIM c = 0
+    FOR c = 0 TO LEN(names) - 1
+        DIM col = []
+        FOR r = 0 TO LEN(rows) - 1
+            DIM row = rows[r]
+            IF MAP.EXISTS(row, names[c]) THEN
+                PUSH(col, row{names[c]})
+            ELSE
+                PUSH(col, NONE)
+            ENDIF
+        NEXT r
+        PUSH(cols, col)
+    NEXT c
+    RETURN Frame(names, cols)
+ENDFUNC
+
+' A frame from columns given as a map of name to array.
+EXPORT FUNC FROMCOLS(columns)
+    DIM names = MAP.KEYS(columns)
+    DIM cols = []
+    DIM c = 0
+    FOR c = 0 TO LEN(names) - 1
+        PUSH(cols, Copy(columns{names[c]}))
+    NEXT c
+    RETURN Frame(names, cols)
+ENDFUNC
+
+' A CSV file with a header line; the optional types list is handed to
+' CSVREADER ("STRING", "INTEGER", "DOUBLE", "DATE", "BOOLEAN", "AUTO").
+EXPORT FUNC READCSV(path$, delim$ = ",", types = 0)
+    DIM names = CSVHEADER(path$, delim$)
+    DIM matrix = []
+    IF TYPEOF(types) = "ARRAY" THEN
+        matrix = CSVREADER(path$, delim$, TRUE, types)
+    ELSE
+        matrix = CSVREADER(path$, delim$, TRUE)
+    ENDIF
+    RETURN FROM(matrix, names)
+ENDFUNC
+
+FUNC Frame(names, cols)
+    DIM f AS MAP
+    f{"names"} = names
+    f{"cols"} = cols
+    RETURN f
+ENDFUNC
+
+' ── shape and access ───────────────────────────────────────────
+
+EXPORT FUNC NAMES(df)
+    RETURN Copy(df{"names"})
+ENDFUNC
+
+EXPORT FUNC NROWS(df)
+    DIM cols = df{"cols"}
+    IF LEN(cols) = 0 THEN RETURN 0
+    RETURN LEN(cols[0])
+ENDFUNC
+
+EXPORT FUNC NCOLS(df)
+    RETURN LEN(df{"names"})
+ENDFUNC
+
+EXPORT FUNC SHAPE(df)
+    RETURN [NROWS(df), NCOLS(df)]
+ENDFUNC
+
+EXPORT FUNC HAS(df, name$)
+    RETURN name$ IN df{"names"}
+ENDFUNC
+
+FUNC IndexOfName(df, name$)
+    DIM names = df{"names"}
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        IF names[i] = name$ THEN RETURN i
+    NEXT i
+    THROW "DF: no column named " + name$
+ENDFUNC
+
+' The column array itself.
+EXPORT FUNC COL(df, name$)
+    DIM cols = df{"cols"}
+    RETURN cols[IndexOfName(df, name$)]
+ENDFUNC
+
+' One row as a map.
+EXPORT FUNC ROW(df, i)
+    IF i < 0 ORELSE i >= NROWS(df) THEN THROW "DF: row " + STR$(i) + " is out of range"
+    DIM names = df{"names"}
+    DIM cols = df{"cols"}
+    DIM m AS MAP
+    DIM c = 0
+    FOR c = 0 TO LEN(names) - 1
+        DIM col = cols[c]
+        m{names[c]} = col[i]
+    NEXT c
+    RETURN m
+ENDFUNC
+
+' Every row as a map.
+EXPORT FUNC ROWS(df)
+    DIM out = []
+    DIM n = NROWS(df)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        PUSH(out, ROW(df, i))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The rows as a 2D array.
+EXPORT FUNC MATRIX(df)
+    DIM out = []
+    DIM cols = df{"cols"}
+    DIM n = NROWS(df)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM row = []
+        DIM c = 0
+        FOR c = 0 TO LEN(cols) - 1
+            DIM col = cols[c]
+            PUSH(row, col[i])
+        NEXT c
+        PUSH(out, row)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Rows from the index, as many as asked; a count of 0 takes to the end.
+EXPORT FUNC SLICE(df, start, n_rows = 0)
+    RETURN RowsFrom(df, start, n_rows)
+ENDFUNC
+
+FUNC RowsFrom(df, start, n_rows)
+    DIM n = NROWS(df)
+    IF start < 0 THEN start = 0
+    DIM last = n
+    IF n_rows > 0 ANDALSO start + n_rows < n THEN last = start + n_rows
+    DIM idx = []
+    DIM i = 0
+    FOR i = start TO last - 1
+        PUSH(idx, i)
+    NEXT i
+    RETURN Gather(df, idx)
+ENDFUNC
+
+EXPORT FUNC HEAD(df, n_rows = 5)
+    RETURN RowsFrom(df, 0, n_rows)
+ENDFUNC
+
+EXPORT FUNC TAIL(df, n_rows = 5)
+    DIM n = NROWS(df)
+    IF n_rows > n THEN n_rows = n
+    RETURN RowsFrom(df, n - n_rows, n_rows)
+ENDFUNC
+
+' The frame with the rows named by an index array, in that order.
+FUNC Gather(df, idx)
+    DIM cols = df{"cols"}
+    DIM out = []
+    DIM c = 0
+    FOR c = 0 TO LEN(cols) - 1
+        DIM col = cols[c]
+        DIM picked = []
+        DIM i = 0
+        FOR i = 0 TO LEN(idx) - 1
+            PUSH(picked, col[idx[i]])
+        NEXT i
+        PUSH(out, picked)
+    NEXT c
+    RETURN Frame(Copy(df{"names"}), out)
+ENDFUNC
+
+' ── columns ────────────────────────────────────────────────────
+
+' The frame with a column added or replaced: source is an array of the
+' frame's length, or a function of the row map.
+EXPORT FUNC WITH(df, name$, source)
+    DIM n = NROWS(df)
+    DIM col = []
+    IF TYPEOF(source) = "ARRAY" THEN
+        IF LEN(source) <> n THEN THROW "DF.WITH: " + STR$(LEN(source)) + " values for " + STR$(n) + " rows"
+        col = Copy(source)
+    ELSE
+        DIM i = 0
+        FOR i = 0 TO n - 1
+            PUSH(col, source(ROW(df, i)))
+        NEXT i
+    ENDIF
+    DIM names = Copy(df{"names"})
+    DIM cols = Copy(df{"cols"})
+    IF name$ IN names THEN
+        cols[IndexOfName(df, name$)] = col
+    ELSE
+        names = APPEND(names, name$)
+        PUSH(cols, col)
+    ENDIF
+    RETURN Frame(names, cols)
+ENDFUNC
+
+' The frame with only the named columns, in that order.
+EXPORT FUNC SELECT(df, names)
+    RETURN Keep(df, names)
+ENDFUNC
+
+FUNC Keep(df, names)
+    DIM want = []
+    IF TYPEOF(names) = "STRING" THEN
+        PUSH(want, names)
+    ELSE
+        want = Copy(names)
+    ENDIF
+    DIM cols = df{"cols"}
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(want) - 1
+        PUSH(out, cols[IndexOfName(df, want[i])])
+    NEXT i
+    RETURN Frame(Copy(want), out)
+ENDFUNC
+
+' The frame without the named columns.
+EXPORT FUNC DROP(df, names)
+    DIM gone = names
+    IF TYPEOF(names) = "STRING" THEN gone = [names]
+    DIM keep = []
+    DIM all = df{"names"}
+    DIM i = 0
+    FOR i = 0 TO LEN(all) - 1
+        IF NOT (all[i] IN gone) THEN keep = APPEND(keep, all[i])
+    NEXT i
+    RETURN Keep(df, keep)
+ENDFUNC
+
+EXPORT FUNC RENAME(df, old$, new$)
+    DIM names = Copy(df{"names"})
+    names[IndexOfName(df, old$)] = new$
+    RETURN Frame(names, Copy(df{"cols"}))
+ENDFUNC
+
+' ── rows ───────────────────────────────────────────────────────
+
+' The rows for which the mask (an array of truth values) is true.
+EXPORT FUNC WHERE(df, mask)
+    DIM idx = []
+    DIM i = 0
+    FOR i = 0 TO LEN(mask) - 1
+        IF mask[i] THEN PUSH(idx, i)
+    NEXT i
+    RETURN Gather(df, idx)
+ENDFUNC
+
+' The rows for which the predicate on the row map is true.
+EXPORT FUNC FILTER(df, pred)
+    DIM idx = []
+    DIM n = NROWS(df)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        IF pred(ROW(df, i)) THEN PUSH(idx, i)
+    NEXT i
+    RETURN Gather(df, idx)
+ENDFUNC
+
+' The rows ordered by a column, ascending unless desc is set.
+EXPORT FUNC SORT(df, name$, desc = FALSE)
+    DIM order = GRADE(COL(df, name$))
+    IF desc THEN order = REVERSE(order)
+    RETURN Gather(df, order)
+ENDFUNC
+
+' The distinct values of a column in first-seen order.
+EXPORT FUNC DISTINCT(df, name$)
+    RETURN UNIQUE(COL(df, name$))
+ENDFUNC
+
+' ── grouping ───────────────────────────────────────────────────
+
+' One key string per row from one or several key columns.
+FUNC KeyStrings(df, keys)
+    DIM cols = []
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        PUSH(cols, COL(df, keys[k]))
+    NEXT k
+    DIM n = NROWS(df)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM key$ = ""
+        FOR k = 0 TO LEN(cols) - 1
+            DIM col = cols[k]
+            IF k > 0 THEN key$ = key$ + KEY_SEP$
+            key$ = key$ + Cell$(col[i])
+        NEXT k
+        PUSH(out, key$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Cell$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "NONE" THEN RETURN ""
+    IF t$ = "STRING" THEN RETURN v
+    IF t$ = "BOOLEAN" THEN
+        IF v THEN RETURN "TRUE"
+        RETURN "FALSE"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+' The groups of a key list in first-seen order: "keys" holds one key
+' string per group, "rows" the row indices of each group.
+FUNC Groups(key_strings)
+    DIM slot AS MAP
+    DIM keys = []
+    DIM rows = []
+    DIM i = 0
+    FOR i = 0 TO LEN(key_strings) - 1
+        DIM key$ = key_strings[i]
+        IF MAP.EXISTS(slot, key$) THEN
+            DIM members = rows[slot{key$}]
+            PUSH(members, i)
+        ELSE
+            slot{key$} = LEN(keys)
+            PUSH(keys, key$)
+            PUSH(rows, [i])
+        ENDIF
+    NEXT i
+    DIM g AS MAP
+    g{"keys"} = keys
+    g{"rows"} = rows
+    RETURN g
+ENDFUNC
+
+' The elements of a column at the given indices.
+FUNC Pick(col, idx)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(idx) - 1
+        PUSH(out, col[idx[i]])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' One value per group: the named reduction of the column over the
+' group's rows.
+FUNC Aggregate(groups, col, how$)
+    DIM h$ = LCASE$(how$)
+    DIM rows = groups{"rows"}
+    DIM out = []
+    DIM g = 0
+    FOR g = 0 TO LEN(rows) - 1
+        DIM members = rows[g]
+        IF h$ = "count" THEN
+            PUSH(out, LEN(members))
+        ELSEIF h$ = "first" THEN
+            PUSH(out, col[members[0]])
+        ELSEIF h$ = "last" THEN
+            PUSH(out, col[members[LEN(members) - 1]])
+        ELSE
+            DIM vals = Pick(col, members)
+            IF h$ = "sum" THEN
+                PUSH(out, SUM(vals))
+            ELSEIF h$ = "mean" ORELSE h$ = "avg" THEN
+                PUSH(out, MEAN(vals))
+            ELSEIF h$ = "min" THEN
+                PUSH(out, MIN(vals))
+            ELSEIF h$ = "max" THEN
+                PUSH(out, MAX(vals))
+            ELSEIF h$ = "median" THEN
+                PUSH(out, MEDIAN(vals))
+            ELSEIF h$ = "stdev" THEN
+                IF LEN(vals) > 1 THEN
+                    PUSH(out, STDEV(vals))
+                ELSE
+                    PUSH(out, 0)
+                ENDIF
+            ELSE
+                THROW "DF.GROUPBY: unknown aggregation " + how$
+            ENDIF
+        ENDIF
+    NEXT g
+    RETURN out
+ENDFUNC
+
+' One row per distinct key, the keys first: keys is a column name or a
+' list of names; aggs maps an output name to [how, column], where how is
+' sum, mean, min, max, median, stdev, first, last or count (no column).
+EXPORT FUNC GROUPBY(df, keys, aggs)
+    DIM key_names = []
+    IF TYPEOF(keys) = "STRING" THEN
+        PUSH(key_names, keys)
+    ELSE
+        key_names = Copy(keys)
+    ENDIF
+    DIM groups = Groups(KeyStrings(df, key_names))
+    DIM names = []
+    DIM cols = []
+    DIM k = 0
+    FOR k = 0 TO LEN(key_names) - 1
+        names = APPEND(names, key_names[k])
+        PUSH(cols, Aggregate(groups, COL(df, key_names[k]), "first"))
+    NEXT k
+    DIM outs = MAP.KEYS(aggs)
+    DIM a = 0
+    FOR a = 0 TO LEN(outs) - 1
+        DIM spec = aggs{outs[a]}
+        DIM how$ = spec[0]
+        DIM source = groups{"keys"}
+        IF LEN(spec) > 1 THEN source = COL(df, spec[1])
+        names = APPEND(names, outs[a])
+        PUSH(cols, Aggregate(groups, source, how$))
+    NEXT a
+    RETURN Frame(names, cols)
+ENDFUNC
+
+' ── combining ──────────────────────────────────────────────────
+
+' Rows of a joined with the matching rows of b: keys is a column name in
+' both, or [a_name, b_name]; how is "inner" (default) or "left". A name
+' b shares with a gets the suffix "_b".
+EXPORT FUNC JOIN(a, b, keys, how$ = "inner")
+    DIM a_key$ = ""
+    DIM b_key$ = ""
+    IF TYPEOF(keys) = "STRING" THEN
+        a_key$ = keys
+        b_key$ = keys
+    ELSE
+        a_key$ = keys[0]
+        b_key$ = keys[1]
+    ENDIF
+    DIM b_keys = KeyStrings(b, [b_key$])
+    DIM lookup AS MAP
+    DIM i = 0
+    FOR i = 0 TO LEN(b_keys) - 1
+        DIM hits = []
+        IF MAP.EXISTS(lookup, b_keys[i]) THEN hits = lookup{b_keys[i]}
+        PUSH(hits, i)
+        lookup{b_keys[i]} = hits
+    NEXT i
+    DIM a_keys = KeyStrings(a, [a_key$])
+    DIM a_idx = []
+    DIM b_idx = []
+    FOR i = 0 TO LEN(a_keys) - 1
+        IF MAP.EXISTS(lookup, a_keys[i]) THEN
+            DIM matches = lookup{a_keys[i]}
+            DIM m = 0
+            FOR m = 0 TO LEN(matches) - 1
+                PUSH(a_idx, i)
+                PUSH(b_idx, matches[m])
+            NEXT m
+        ELSEIF LCASE$(how$) = "left" THEN
+            PUSH(a_idx, i)
+            PUSH(b_idx, -1)
+        ENDIF
+    NEXT i
+    DIM left = Gather(a, a_idx)
+    DIM names = left{"names"}
+    DIM cols = left{"cols"}
+    DIM b_names = b{"names"}
+    DIM b_cols = b{"cols"}
+    DIM c = 0
+    FOR c = 0 TO LEN(b_names) - 1
+        IF b_names[c] = b_key$ THEN CONTINUEFOR
+        DIM name$ = b_names[c]
+        IF name$ IN names THEN name$ = name$ + "_b"
+        DIM src = b_cols[c]
+        DIM col = []
+        FOR i = 0 TO LEN(b_idx) - 1
+            IF b_idx[i] < 0 THEN
+                PUSH(col, NONE)
+            ELSE
+                PUSH(col, src[b_idx[i]])
+            ENDIF
+        NEXT i
+        names = APPEND(names, name$)
+        PUSH(cols, col)
+    NEXT c
+    RETURN Frame(names, cols)
+ENDFUNC
+
+' A wide table: one row per value of rows$, one column per value of
+' cols$, each cell the aggregate of value$ (sum by default, or count,
+' mean, min, max); an empty cell is NONE.
+EXPORT FUNC PIVOT(df, rows$, cols$, value$, how$ = "sum")
+    DIM grouped = GROUPBY(df, [rows$, cols$], {"v": [how$, value$]})
+    DIM row_keys = UNIQUE(COL(df, rows$))
+    DIM col_keys = UNIQUE(COL(df, cols$))
+    DIM lookup AS MAP
+    DIM g_rows = COL(grouped, rows$)
+    DIM g_cols = COL(grouped, cols$)
+    DIM g_vals = COL(grouped, "v")
+    DIM i = 0
+    FOR i = 0 TO LEN(g_vals) - 1
+        lookup{Cell$(g_rows[i]) + KEY_SEP$ + Cell$(g_cols[i])} = g_vals[i]
+    NEXT i
+    DIM names = [rows$]
+    DIM cols = [Copy(row_keys)]
+    DIM c = 0
+    FOR c = 0 TO LEN(col_keys) - 1
+        DIM col = []
+        DIM r = 0
+        FOR r = 0 TO LEN(row_keys) - 1
+            DIM k$ = Cell$(row_keys[r]) + KEY_SEP$ + Cell$(col_keys[c])
+            IF MAP.EXISTS(lookup, k$) THEN
+                PUSH(col, lookup{k$})
+            ELSE
+                PUSH(col, NONE)
+            ENDIF
+        NEXT r
+        names = APPEND(names, Cell$(col_keys[c]))
+        PUSH(cols, col)
+    NEXT c
+    RETURN Frame(names, cols)
+ENDFUNC
+
+' ── statistics ─────────────────────────────────────────────────
+
+FUNC IsNumberColumn(col)
+    DIM i = 0
+    FOR i = 0 TO LEN(col) - 1
+        DIM t$ = TYPEOF(col[i])
+        IF t$ = "STRING" ORELSE t$ = "BOOLEAN" ORELSE t$ = "ARRAY" ORELSE t$ = "OBJECT" THEN RETURN FALSE
+    NEXT i
+    RETURN LEN(col) > 0
+ENDFUNC
+
+' One row per numeric column: count, mean, min, max, stdev.
+EXPORT FUNC DESCRIBE(df)
+    DIM names = df{"names"}
+    DIM cols = df{"cols"}
+    DIM column = []
+    DIM counts = []
+    DIM mean = []
+    DIM low = []
+    DIM high = []
+    DIM spread = []
+    DIM c = 0
+    FOR c = 0 TO LEN(names) - 1
+        DIM col = cols[c]
+        IF NOT IsNumberColumn(col) THEN CONTINUEFOR
+        PUSH(column, names[c])
+        PUSH(counts, LEN(col))
+        PUSH(mean, MEAN(col))
+        PUSH(low, MIN(col))
+        PUSH(high, MAX(col))
+        IF LEN(col) > 1 THEN
+            PUSH(spread, STDEV(col))
+        ELSE
+            PUSH(spread, 0)
+        ENDIF
+    NEXT c
+    RETURN Frame(["column", "count", "mean", "min", "max", "stdev"], [column, counts, mean, low, high, spread])
+ENDFUNC
+
+' ── output ─────────────────────────────────────────────────────
+
+EXPORT SUB WRITECSV(df, path$, delim$ = ",")
+    CSVWRITER path$, MATRIX(df), delim$, df{"names"}
+ENDSUB
+
+' The first rows as a CONSOLE table; n_rows 0 prints every row.
+EXPORT FUNC TEXT$(df, n_rows = 10, opts = 0)
+    DIM shown = df
+    IF n_rows > 0 ANDALSO NROWS(df) > n_rows THEN shown = HEAD(df, n_rows)
+    DIM table_opts AS MAP
+    IF TYPEOF(opts) = "OBJECT" THEN
+        DIM given = MAP.KEYS(opts)
+        DIM i = 0
+        FOR i = 0 TO LEN(given) - 1
+            table_opts{given[i]} = opts{given[i]}
+        NEXT i
+    ENDIF
+    table_opts{"headers"} = df{"names"}
+    DIM text$ = CONSOLE.TABLE$(MATRIX(shown), table_opts)
+    IF NROWS(shown) < NROWS(df) THEN text$ = text$ + CHR$(10) + STR$(NROWS(df) - NROWS(shown)) + " more rows"
+    RETURN text$
+ENDFUNC
+
+EXPORT SUB SHOW(df, n_rows = 10, opts = 0)
+    PRINT TEXT$(df, n_rows, opts)
+ENDSUB
