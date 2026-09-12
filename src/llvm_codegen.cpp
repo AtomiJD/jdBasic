@@ -745,9 +745,10 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_cvdate_arr", "__cvdate_arr", i8_ptr_type, {i8_ptr_type}, 3);
 
     // Regex
-    reg("jdb_regex_match",   "REGEX.MATCH",   i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    // Note: REGEX_MATCH (legacy name) returns an array in the VM, so it must
-    // go through the VM bridge - don't register it as the boolean native fn.
+    // REGEX.MATCH answers the captured groups when the pattern has any, and
+    // a truth value when it has none, so it goes through the VM bridge like
+    // the legacy REGEX_MATCH. Registered as a plain boolean native call it
+    // answered 1 where the interpreter handed back the groups.
     reg("jdb_regex_replace", "REGEX.REPLACE",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_regex_replace", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
     reg("jdb_regex_findall", "REGEX.FINDALL",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
@@ -1757,9 +1758,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     for (auto& [name, decl] : decls) {
         if (decl.return_tag != JD_TAG_F64 || !decl.stmt) continue;
         for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
-            if (decl.tags[pi] == JD_TAG_STR &&
+            // An array or a map handed back is the same case as a string:
+            // the answer is whatever kind the parameter holds. Without this
+            // a function called only from inside its own module answers a
+            // number, since no outside call site says otherwise.
+            int pt = decl.tags[pi];
+            if ((pt == JD_TAG_STR || pt == JD_TAG_ARR || pt == JD_TAG_NATIVE_MAP) &&
                 returns_param(*decl.stmt, decl.stmt->params()[pi].name)) {
-                decl.return_tag = JD_TAG_STR;
+                decl.return_tag = pt;
                 break;
             }
         }
@@ -2746,6 +2752,75 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     }
     }
 
+    // A function that hands a parameter straight back answers that
+    // parameter's kind. This runs again here because the parameter tags
+    // only settle after the call-site work above, and a function called
+    // only from inside its own module has no outside site to name them.
+    {
+        std::function<bool(const Stmt&, const std::string&)> hands_back =
+            [&](const Stmt& s2, const std::string& pname) -> bool {
+            if (s2.kind == StmtKind::RETURN && s2.expr &&
+                s2.expr->kind == ExprKind::VARIABLE && s2.expr->str_val == pname)
+                return true;
+            for (auto& b : s2.body)          if (b && hands_back(*b, pname)) return true;
+            for (auto& c : s2.catch_body())  if (c && hands_back(*c, pname)) return true;
+            for (auto& f : s2.finally_body())if (f && hands_back(*f, pname)) return true;
+            for (auto& br : s2.branches)
+                for (auto& b : br.body)      if (b && hands_back(*b, pname)) return true;
+            return false;
+        };
+        for (auto& [name, decl] : decls) {
+            if (decl.return_tag != JD_TAG_F64 || !decl.stmt) continue;
+            for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
+                int pt = decl.tags[pi];
+                if ((pt == JD_TAG_STR || pt == JD_TAG_ARR || pt == JD_TAG_NATIVE_MAP) &&
+                    hands_back(*decl.stmt, decl.stmt->params()[pi].name)) {
+                    decl.return_tag = pt;
+                    break;
+                }
+            }
+        }
+        // A function whose every answer is a call to another one answers
+        // what that one answers. Repeated so a chain of them settles.
+        std::function<void(const Stmt&, std::vector<const Expr*>&)> gather_returns =
+            [&](const Stmt& s2, std::vector<const Expr*>& out) {
+            if (s2.kind == StmtKind::RETURN && s2.expr) out.push_back(s2.expr.get());
+            for (auto& b : s2.body)          if (b) gather_returns(*b, out);
+            for (auto& c : s2.catch_body())  if (c) gather_returns(*c, out);
+            for (auto& f : s2.finally_body())if (f) gather_returns(*f, out);
+            for (auto& br : s2.branches)
+                for (auto& b : br.body)      if (b) gather_returns(*b, out);
+        };
+        for (int round = 0; round < 4; round++) {
+            bool moved = false;
+            for (auto& [name, decl] : decls) {
+                if (decl.return_tag != JD_TAG_F64 || !decl.stmt) continue;
+                std::vector<const Expr*> rets;
+                gather_returns(*decl.stmt, rets);
+                if (rets.empty()) continue;
+                int want = -1;
+                bool all_same = true;
+                for (const Expr* e : rets) {
+                    if (!e || e->kind != ExprKind::CALL) { all_same = false; break; }
+                    auto cit = decls.find(e->func_name);
+                    if (cit == decls.end()) { all_same = false; break; }
+                    int rt = cit->second.return_tag;
+                    if (rt != JD_TAG_STR && rt != JD_TAG_ARR && rt != JD_TAG_NATIVE_MAP) {
+                        all_same = false;
+                        break;
+                    }
+                    if (want == -1) want = rt;
+                    else if (want != rt) { all_same = false; break; }
+                }
+                if (all_same && want != -1) {
+                    decl.return_tag = want;
+                    moved = true;
+                }
+            }
+            if (!moved) break;
+        }
+    }
+
     // A handler a builtin calls by name answers through the tagged wrapper,
     // so its result is runtime-typed whatever the body returns.
     for (auto& [fname, fdecl] : decls)
@@ -3577,6 +3652,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             // (TEXT is a string, CHECKED a bool, SELINDEX a
                             // number) - only the VM-handle path keeps the tag.
                             "FORM.GET",
+                            // REGEX.MATCH answers the captured groups when the
+                            // pattern has any and a truth value when it has
+                            // none, so the same applies.
+                            "REGEX.MATCH", "REGEX_MATCH",
                             "SVD", "QR", "EIG",
                             // MAT4.* returns a TENSOR Value; flat-array path
                             // can't carry the shape, so route through VM handle.
@@ -7733,6 +7812,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
                         e = codegen_expr(*expr.args[i]);
                     }
                     if (e.tag == JD_TAG_NATIVE_MAP) any_runtime = true;
+                    // An element whose kind is only known at run time has to
+                    // carry that kind into the cell. The array-wide nested
+                    // bit would claim it is an array, and a string cell read
+                    // back as one is dereferenced as a pointer to nothing.
+                    if (e.tag == JD_TAG_RUNTIME && e.runtime_tag) any_runtime = true;
                     if (e.tag == JD_TAG_ARR || e.tag == JD_TAG_STR ||
                         e.tag == JD_TAG_NATIVE_MAP || e.tag == JD_TAG_VM_HANDLE)
                         saw_ptr_elem = true;
@@ -10792,6 +10876,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // arithmetic reading coerce_to gives a string or an array.
             if (pt == f64_type && av.tag == JD_TAG_RUNTIME && av.runtime_tag)
                 args.push_back(runtime_to_untyped_param(av));
+            else if (pt == i8_ptr_type && expected_tag != JD_TAG_STR &&
+                     av.tag == JD_TAG_RUNTIME && av.runtime_tag)
+                // An array or a map rides on the pointer in the bits. Only a
+                // string parameter wants the value written out as text, which
+                // is what coercing to a pointer would do to all of them.
+                args.push_back(LLVMBuildIntToPtr(builder, av.val, i8_ptr_type, "av_itop"));
             else
                 args.push_back(coerce_to(av, pt));
         }
@@ -13000,6 +13090,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // FORM.GET returns whatever type the property has (string,
                 // bool, number) - VM_HANDLE keeps the tag intact.
                 "FORM.GET",
+                // REGEX.MATCH hands back the captured groups when the pattern
+                // has any, and a truth value when it has none.
+                "REGEX.MATCH", "REGEX_MATCH",
                 "SVD", "QR", "EIG",
                 // Channel RECV returns whatever Value the producer sent -
                 // could be i64, f64, string, array, map, or the EOF marker.
@@ -13111,6 +13204,14 @@ LLVMValueRef LLVMCodegen::to_i1(TypedValue tv) {
         LLVMValueRef as_i64 = LLVMBuildPtrToInt(builder, tv.val, i64_type, "ptoi");
         return LLVMBuildICmp(builder, LLVMIntNE, as_i64,
                              LLVMConstInt(i64_type, 0, 0), "tobool");
+    }
+    if (tv.tag == JD_TAG_VM_HANDLE) {
+        // The handle is a key into the value store, and every key is a
+        // number that is not zero. The truth of a handle is the truth of
+        // the value it stands for.
+        LLVMValueRef f = coerce_to(tv, f64_type);
+        return LLVMBuildFCmp(builder, LLVMRealONE, f,
+                             LLVMConstReal(f64_type, 0.0), "vmh_tobool");
     }
     return LLVMBuildICmp(builder, LLVMIntNE, tv.val,
                          LLVMConstInt(i64_type, 0, 0), "tobool");
