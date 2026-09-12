@@ -307,12 +307,13 @@ void register_esp32_hw(VM& vm) {
     });
 
     // A one-byte read rather than i2c_master_probe, which wants both
-    // lines idle before it will start and, held up by nothing but the
-    // chip's internal pull-ups, never finds them so: it calls the bus
-    // busy for every address, the touch controller included, while a
-    // transfer to that same address goes through. Most of a scan is
-    // addresses nobody answers, so it says nothing about the ones that
-    // do not.
+    // lines idle before it will start: one device miswired on the
+    // connector makes it call the bus busy for every address, the touch
+    // controller included, while a transfer to that same address goes
+    // through. A scan is what you reach for when something is wrong
+    // with the bus, so it cannot be the thing that gives up first.
+    // Most of a scan is addresses nobody answers, so it says nothing
+    // about the ones that do not.
     vm.register_native("I2C.SCAN", 1, 1, [](const std::vector<Value>& args) -> Value {
         int bus = (int)args[0].to_double();
         if (bus < 0 || bus >= I2C_BUSES || !s_i2c[bus])

@@ -76,11 +76,10 @@ static int g_present = 0;
 static int64_t g_next_try = 0;
 static int64_t g_gap = TRY_MIN_US;
 
-// The read is its own presence test, because on this bus that is the
-// only test there is: i2c_master_probe wants both lines idle before it
-// will start, and pulled up by nothing but the chip itself they never
-// look idle enough, so it calls a bus busy that a transfer crosses
-// without trouble.
+// The read is its own presence test. i2c_master_probe wants both lines
+// idle before it will start, which is exactly what a keyboard wired
+// wrong takes away, so it fails in the one case the test exists for
+// while a plain transfer still crosses the bus.
 //
 // An expected failure has no business printing over the prompt, and an
 // absent keyboard fails on every single poll.

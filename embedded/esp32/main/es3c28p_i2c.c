@@ -89,12 +89,15 @@ static i2c_master_dev_handle_t dev_cached(int addr) {
 }
 
 // Whether an address answers a one-byte read, and no handle kept for
-// one that does not. i2c_master_probe is no use on this bus: it refuses
-// to start unless it already sees both lines idle, and held up by
-// nothing but the chip's internal pull-ups they are not, so it reports
-// a busy bus even for the touch controller a transfer reaches in the
-// same breath. A read is also the safest question to ask a device whose
-// registers are unknown, a write being the alternative.
+// one that does not. i2c_master_probe is the obvious way and is not
+// usable, because it refuses to start unless it already sees both lines
+// idle: one device miswired on the connector is enough to make it
+// report a busy bus for every address, the touch controller included,
+// while a transfer to that same controller goes through in the next
+// breath. Finding what is on a bus that has something wrong with it is
+// the whole point, so the test has to be one that still runs then.
+// A read is also the safest question to ask a device whose registers
+// are unknown, a write being the alternative.
 int es3c28p_i2c_answers(int addr, int hz) {
     if (es3c28p_i2c_up() != 0) return 0;
     uint8_t b = 0;

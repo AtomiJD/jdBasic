@@ -205,13 +205,19 @@ right way round: a device fed 5 V pulls the bus to 5 V, and these pins
 do not tolerate it.
 
 `I2C.SCAN` asks each address for one byte rather than calling
-`i2c_master_probe`, which is no use here. The probe refuses to start
-unless it already sees both lines idle, and held up by nothing but the
-chip's internal pull-ups they never look so: it reports a busy bus for
-every address on the board bus, the touch controller included, while a
-transfer to that same address goes through in the next breath. On a
-healthy board the scan answers `[24, 40, 56]`, and with a keyboard on
-the connector, 95 as well.
+`i2c_master_probe`. The probe refuses to start unless it already sees
+both lines idle, so one device miswired on the connector makes it report
+a busy bus for every address, the touch controller included, while a
+transfer to that same controller goes through in the next breath. A scan
+is what you reach for when something is wrong with the bus, so it cannot
+be the thing that gives up first. A bare board answers `[56]`, the touch
+controller alone; the codec joins it at 24 once `SOUND` has started, and
+a keyboard on the connector shows as 95.
+
+A device that answers on an address it should not is worth reading as
+what it is. A CardKB wired with SDA and SCL crossed came up as 24 and 40
+rather than 95: the AVR samples the address bits on the wrong edges and
+acknowledges the aliases that fall out of it.
 
 ### Events
 
