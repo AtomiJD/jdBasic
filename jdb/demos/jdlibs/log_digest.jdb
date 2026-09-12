@@ -1,0 +1,191 @@
+' log_digest.jdb - a day of server log lines digested into a report.
+'
+' The log mixes three timestamp formats, the way a service with several
+' components does. DT reads them all, DF turns the lines into a frame
+' and groups by hour, level and endpoint, and CONSOLE prints the digest:
+' requests per hour as a bar chart, error rates per endpoint, the
+' slowest requests, latency percentiles, and the quarter hours that
+' carried the errors.
+'
+'   jdBasic log_digest.jdb
+
+IMPORT DT, DF, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM berlin = 2
+DIM digest_at = DT.MAKE(2026, 9, 12, 9, 15, 0, berlin)
+DIM day_start = DT.STARTOF(DT.ADD(digest_at, "-1 day"), "day", berlin)
+
+' ── the log, as three components write it ──────────────────────
+
+DIM endpoints = ["/api/orders", "/api/orders", "/api/orders", "/api/customers", "/api/invoices", "/health", "/health", "/api/reports"]
+DIM verbs = ["GET", "GET", "POST", "GET", "GET", "GET", "GET", "POST"]
+DIM lines = []
+DIM i = 0
+FOR i = 0 TO 1439
+    DIM at = DT.ADD(day_start, STR$(i) + " minutes " + STR$((i * 17) MOD 60) + " seconds")
+    DIM at_hour = DT.PARTS(at, berlin){"hour"}
+    DIM busy = 1
+    IF at_hour >= 8 ANDALSO at_hour <= 18 THEN busy = 3
+    ' The order service fails for half an hour in the morning.
+    DIM incident = 0
+    IF i >= 605 ANDALSO i <= 635 THEN incident = 1
+    DIM k = 0
+    FOR k = 0 TO busy - 1
+        DIM n = i * 3 + k
+        DIM route = (n * 7 + k) MOD 8
+        DIM latency = 20 + (n * 37) MOD 180
+        IF route = 7 THEN latency = latency + 400 + (n * 11) MOD 900
+        DIM status_code = 200
+        DIM level$ = "INFO"
+        IF incident = 1 ANDALSO route <= 2 THEN
+            status_code = 500
+            level$ = "ERROR"
+            latency = latency + 250
+        ELSEIF (n MOD 53) = 7 THEN
+            status_code = 500
+            level$ = "ERROR"
+        ELSEIF (n MOD 29) = 3 THEN
+            status_code = 404
+            level$ = "WARN"
+        ELSEIF latency > 800 THEN
+            level$ = "WARN"
+        ENDIF
+        DIM stamp$ = DT.ISO$(at, berlin)
+        IF (k MOD 3) = 1 THEN stamp$ = DT.RFC$(at, berlin)
+        IF (k MOD 3) = 2 THEN stamp$ = DT.FMT$(at, "%d.%m.%Y %H:%M:%S", berlin)
+        PUSH(lines, stamp$ + " | " + level$ + " | " + verbs[route] + " " + endpoints[route] + " | " + STR$(status_code) + " | " + STR$(latency) + "ms")
+    NEXT k
+NEXT i
+
+CONSOLE.RULE("the log", "=")
+PRINT LEN(lines); " lines from three components, the first four:"
+FOR i = 0 TO 3
+    PRINT "  "; lines[i]
+NEXT i
+PRINT ""
+
+' ── parsing ────────────────────────────────────────────────────
+
+DIM spinner = CONSOLE.SPINNER("parsing")
+DIM records = []
+DIM unreadable = 0
+FOR i = 0 TO LEN(lines) - 1
+    DIM fields = SPLIT(lines[i], " | ")
+    DIM t = DT.PARSE(fields[0], berlin)
+    IF TYPEOF(t) = "NONE" THEN
+        unreadable = unreadable + 1
+    ELSE
+        DIM request = SPLIT(fields[2], " ")
+        PUSH(records, {"t": t, "level": fields[1], "verb": request[0], "path": request[1], "status": VAL(fields[3]), "ms": VAL(LEFT$(fields[4], LEN(fields[4]) - 2))})
+    ENDIF
+    IF (i MOD 250) = 0 THEN CONSOLE.SPIN(spinner)
+NEXT i
+CONSOLE.DONE(spinner, STR$(LEN(records)) + " records read, " + STR$(unreadable) + " unreadable")
+DIM entries = DF.FROMROWS(records)
+
+FUNC HourOf(row)
+    RETURN DT.PARTS(row{"t"}, 2){"hour"}
+ENDFUNC
+
+FUNC Failed(row)
+    IF row{"status"} >= 500 THEN RETURN 1
+    RETURN 0
+ENDFUNC
+
+entries = DF.WITH(entries, "hour", HourOf@)
+entries = DF.WITH(entries, "failed", Failed@)
+PRINT ""
+
+' ── the day in figures ─────────────────────────────────────────
+
+DIM latencies = DF.COL(entries, "ms")
+DIM failures = DF.WHERE(entries, DF.COL(entries, "failed") = 1)
+DIM last_error = MAX(DF.COL(failures, "t"))
+DIM ranked_ms = SORT(latencies)
+
+' The value below which the given share of the sorted samples lies.
+FUNC Percentile(ranked, share)
+    RETURN ranked[INT((LEN(ranked) - 1) * share + 0.5)]
+ENDFUNC
+
+CONSOLE.RULE(DT.FMT$(day_start, "%A, %d %B %Y", berlin), "=")
+CONSOLE.KV([["window", DT.FMT$(day_start, "%H:%M", berlin) + " to " + DT.FMT$(DT.ENDOF(day_start, "day", berlin), "%H:%M", berlin) + " (" + CONSOLE.DURATION$(86400) + ")"], ["requests", STR$(DF.NROWS(entries))], ["errors", CONSOLE.RED$(STR$(DF.NROWS(failures))) + " (" + FORMAT$("{:.2f} %", DF.NROWS(failures) / DF.NROWS(entries) * 100) + ")"], ["last error", DT.FMT$(last_error, "%H:%M:%S", berlin) + ", " + DT.HUMANIZE$(last_error, digest_at)], ["latency p50", STR$(Percentile(ranked_ms, 0.5)) + " ms"], ["latency p95", STR$(Percentile(ranked_ms, 0.95)) + " ms"], ["latency p99", STR$(Percentile(ranked_ms, 0.99)) + " ms"], ["slowest", STR$(MAX(latencies)) + " ms"]], 2)
+PRINT ""
+
+' ── requests per hour ──────────────────────────────────────────
+
+DIM by_hour = DF.SORT(DF.GROUPBY(entries, "hour", {"requests": ["count"], "errors": ["sum", "failed"], "avg_ms": ["mean", "ms"]}), "hour")
+DIM busiest = MAX(DF.COL(by_hour, "requests"))
+CONSOLE.RULE("requests per hour, errors marked")
+DIM h = 0
+FOR h = 0 TO DF.NROWS(by_hour) - 1
+    DIM slot = DF.ROW(by_hour, h)
+    DIM filled = ROUND(slot{"requests"} / busiest * 40)
+    DIM marks = slot{"errors"}
+    IF marks > 10 THEN marks = 10
+    DIM bar$ = CONSOLE.GREEN$("#" * filled) + CONSOLE.RED$("!" * marks)
+    PRINT "  "; LPAD$(STR$(slot{"hour"}), 2, "0"); ":00 "; CONSOLE.FIT$(bar$, 52, "l"); LPAD$(STR$(slot{"requests"}), 4, " "); "  "; LPAD$(STR$(ROUND(slot{"avg_ms"})), 4, " "); " ms"
+NEXT h
+PRINT ""
+
+' ── by level and by endpoint ───────────────────────────────────
+
+DIM by_level = DF.SORT(DF.GROUPBY(entries, "level", {"lines": ["count"], "slowest": ["max", "ms"]}), "lines", TRUE)
+DIM level_rows = []
+DIM v = 0
+FOR v = 0 TO DF.NROWS(by_level) - 1
+    DIM seen = DF.ROW(by_level, v)
+    DIM name$ = seen{"level"}
+    IF name$ = "ERROR" THEN name$ = CONSOLE.RED$(name$)
+    IF name$ = "WARN" THEN name$ = CONSOLE.YELLOW$(name$)
+    PUSH(level_rows, [name$, seen{"lines"}, FORMAT$("{:.1f} %", seen{"lines"} / DF.NROWS(entries) * 100), seen{"slowest"}])
+NEXT v
+CONSOLE.TABLE(level_rows, {"headers": ["level", "lines", "share", "slowest ms"], "align": ["l", "r", "r", "r"], "title": "by level"})
+PRINT ""
+
+DIM by_path = DF.SORT(DF.GROUPBY(entries, ["verb", "path"], {"requests": ["count"], "errors": ["sum", "failed"], "mean_ms": ["mean", "ms"], "median_ms": ["median", "ms"], "max_ms": ["max", "ms"]}), "requests", TRUE)
+DIM path_rows = []
+DIM p = 0
+FOR p = 0 TO DF.NROWS(by_path) - 1
+    DIM ep = DF.ROW(by_path, p)
+    DIM rate = ep{"errors"} / ep{"requests"} * 100
+    DIM rate$ = FORMAT$("{:.2f} %", rate)
+    IF rate > 2 THEN rate$ = CONSOLE.RED$(rate$)
+    DIM mean$ = STR$(ROUND(ep{"mean_ms"}))
+    IF ep{"mean_ms"} > 500 THEN mean$ = CONSOLE.YELLOW$(mean$)
+    PUSH(path_rows, [ep{"verb"}, ep{"path"}, ep{"requests"}, ep{"errors"}, rate$, mean$, ep{"median_ms"}, ep{"max_ms"}])
+NEXT p
+CONSOLE.TABLE(path_rows, {"headers": ["verb", "path", "requests", "errors", "error rate", "mean ms", "median ms", "max ms"], "align": ["l", "l", "r", "r", "r", "r", "r", "r"], "max_width": 78, "title": "by endpoint"})
+PRINT ""
+
+' ── the slowest requests ───────────────────────────────────────
+
+DIM slowest = DF.HEAD(DF.SORT(entries, "ms", TRUE), 6)
+DIM slow_rows = []
+DIM s = 0
+FOR s = 0 TO DF.NROWS(slowest) - 1
+    DIM req = DF.ROW(slowest, s)
+    PUSH(slow_rows, [DT.FMT$(req{"t"}, "%H:%M:%S", berlin), req{"verb"} + " " + req{"path"}, req{"status"}, req{"ms"}, DT.HUMANIZE$(req{"t"}, digest_at)])
+NEXT s
+CONSOLE.TABLE(slow_rows, {"headers": ["time", "request", "status", "ms", "when"], "title": "slowest requests"})
+PRINT ""
+
+' ── where the errors sit ───────────────────────────────────────
+
+FUNC QuarterOf$(row)
+    DIM minutes = INT(DT.PARTS(row{"t"}, 2){"minute"} / 15) * 15
+    RETURN DT.FMT$(DT.ADD(DT.STARTOF(row{"t"}, "hour", 2), STR$(minutes) + " minutes"), "%H:%M", 2)
+ENDFUNC
+
+failures = DF.WITH(failures, "quarter", QuarterOf$@)
+DIM by_quarter = DF.SORT(DF.GROUPBY(failures, "quarter", {"errors": ["count"], "first": ["min", "t"], "last": ["max", "t"], "slowest": ["max", "ms"]}), "errors", TRUE)
+DIM worst = DF.HEAD(by_quarter, 5)
+DIM quarter_rows = []
+DIM q = 0
+FOR q = 0 TO DF.NROWS(worst) - 1
+    DIM window = DF.ROW(worst, q)
+    PUSH(quarter_rows, [window{"quarter"}, window{"errors"}, DT.FMT$(window{"first"}, "%H:%M:%S", berlin), DT.FMT$(window{"last"}, "%H:%M:%S", berlin), CONSOLE.DURATION$(window{"last"} - window{"first"}), window{"slowest"}])
+NEXT q
+CONSOLE.TABLE(quarter_rows, {"headers": ["quarter hour", "errors", "first", "last", "spread", "slowest ms"], "title": "the quarter hours with the most errors"})
+CONSOLE.PANEL(STR$(DF.NROWS(failures)) + " errors spread over " + STR$(DF.NROWS(by_quarter)) + " quarter hours; the five worst hold " + STR$(SUM(DF.COL(worst, "errors"))) + " of them. The last error was logged " + DT.HUMANIZE$(last_error, digest_at) + " at " + DT.ISO$(last_error, berlin) + ". This digest covers " + CONSOLE.DURATION$(DT.DIFF(day_start, digest_at, "seconds")) + " up to " + DT.FMT$(digest_at, "%d.%m.%Y %H:%M", berlin) + ".", "summary")

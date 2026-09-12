@@ -1,0 +1,228 @@
+' report_site.jdb - a small documentation site built from data and Markdown.
+'
+' Three pages are written as Markdown: a release report whose tables
+' come out of DF frames, a changelog whose dates DT reads from the
+' formats the entries were typed in, and a module index. MD turns each
+' page into HTML, the program adds a navigation bar, a table of
+' contents from the headings, and a footer with the build time, and
+' writes the site into a scratch folder. CONSOLE reports what was built.
+'
+'   jdBasic report_site.jdb
+
+IMPORT MD, DF, DT, CONSOLE
+
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM built = DT.MAKE(2026, 9, 12, 10, 30, 0, 2)
+DIM site$ = MKTEMP$("site")
+MKDIR site$
+
+' ── the data behind the report ─────────────────────────────────
+
+DIM suites = DF.FROM([["CONSOLE", 67, 2.7, 2.8], ["DT", 120, 5.8, 4.9], ["MD", 51, 11.6, 9.0], ["DF", 100, 498.2, 289.1], ["XLSX", 48, 16.2, 16.7], ["REQ", 35, 2273.4, 2158.3]], ["module", "assertions", "interpreted_ms", "compiled_ms"])
+suites = DF.WITH(suites, "speedup", DF.COL(suites, "interpreted_ms") / DF.COL(suites, "compiled_ms"))
+
+DIM timings = DF.FROM([["READCSV", 180, 136], ["revenue column", 6, 0], ["GROUPBY region", 38, 7], ["SORT 20000 rows", 44, 5]], ["step", "interpreted_ms", "compiled_ms"])
+
+' A frame as a Markdown table, numbers with one decimal at most.
+FUNC Table$(df)
+    RETURN DF.TEXT$(df, 0, {"border": "markdown"})
+ENDFUNC
+
+' ── page one: the release report ───────────────────────────────
+
+DIM report = []
+PUSH(report, "# Module library, wave 3")
+PUSH(report, "")
+PUSH(report, "Four modules join the library: `CONSOLE`, `DT`, `MD` and `DF`. Every")
+PUSH(report, "module runs interpreted and compiled with `-c`; the self tests cover")
+PUSH(report, "both backends and the numbers below come from the same machine.")
+PUSH(report, "")
+PUSH(report, "## Self tests")
+PUSH(report, "")
+PUSH(report, Table$(DF.SORT(suites, "assertions", TRUE)))
+PUSH(report, "")
+PUSH(report, "The total is **" + STR$(SUM(DF.COL(suites, "assertions"))) + " assertions** across " + STR$(DF.NROWS(suites)) + " modules.")
+PUSH(report, "")
+PUSH(report, "## The sales set")
+PUSH(report, "")
+PUSH(report, "20000 rows by 5 columns through `DF`:")
+PUSH(report, "")
+PUSH(report, Table$(timings))
+PUSH(report, "")
+PUSH(report, "> The reductions run on whole columns, so the grouping loop only gathers.")
+PUSH(report, "")
+PUSH(report, "## Reading a frame")
+PUSH(report, "")
+PUSH(report, "```basic")
+PUSH(report, "IMPORT DF")
+PUSH(report, "DIM sales = DF.READCSV(" + Q$ + "sales.csv" + Q$ + ")")
+PUSH(report, "sales = DF.WITH(sales, " + Q$ + "revenue" + Q$ + ", DF.COL(sales, " + Q$ + "qty" + Q$ + ") * DF.COL(sales, " + Q$ + "price" + Q$ + "))")
+PUSH(report, "DF.SHOW(DF.GROUPBY(sales, " + Q$ + "region" + Q$ + ", {" + Q$ + "revenue" + Q$ + ": [" + Q$ + "sum" + Q$ + ", " + Q$ + "revenue" + Q$ + "]}))")
+PUSH(report, "```")
+PUSH(report, "")
+PUSH(report, "A frame is a plain map of `names` and `cols`, so `<any>` array function reads a column directly & nothing is hidden.")
+
+' ── page two: the changelog ────────────────────────────────────
+
+DIM entries = [["2026-09-12T07:10:00+02:00", "DF", "data frames as named columns, GROUPBY, JOIN, PIVOT"], ["11.09.2026 22:40", "MD", "Markdown to HTML with tables and fences"], ["Fri, 11 Sep 2026 18:05:00 +0200", "DT", "dates as numbers with their own calendar"], ["2026-09-11", "CONSOLE", "tables, styled text, progress bars, spinners"], ["1789050000", "XLSX", "workbooks written and read without Excel"]]
+DIM changelog = []
+PUSH(changelog, "# Changelog")
+PUSH(changelog, "")
+PUSH(changelog, "Newest first. Every entry was typed the way its author writes dates; `DT.PARSE` reads them all.")
+PUSH(changelog, "")
+DIM stamped = []
+DIM i = 0
+FOR i = 0 TO LEN(entries) - 1
+    DIM entry = entries[i]
+    PUSH(stamped, {"when": DT.PARSE(entry[0], 2), "module": entry[1], "note": entry[2], "typed": entry[0]})
+NEXT i
+DIM changes = DF.SORT(DF.FROMROWS(stamped), "when", TRUE)
+DIM current_day$ = ""
+DIM r = 0
+FOR r = 0 TO DF.NROWS(changes) - 1
+    DIM row = DF.ROW(changes, r)
+    DIM heading_day$ = DT.FMT$(row{"when"}, "%A, %d %B %Y", 2)
+    IF heading_day$ <> current_day$ THEN
+        IF current_day$ <> "" THEN PUSH(changelog, "")
+        PUSH(changelog, "## " + heading_day$)
+        PUSH(changelog, "")
+        current_day$ = heading_day$
+    ENDIF
+    PUSH(changelog, "- **" + row{"module"} + "** " + row{"note"} + " *(" + DT.FMT$(row{"when"}, "%H:%M", 2) + ", " + DT.HUMANIZE$(row{"when"}, built) + "; typed as `" + row{"typed"} + "`)*")
+NEXT r
+PUSH(changelog, "")
+PUSH(changelog, "---")
+PUSH(changelog, "")
+PUSH(changelog, "The next release is planned for " + DT.FMT$(DT.STARTOF(DT.ADD(built, "1 month"), "month", 2), "%d.%m.%Y", 2) + ", " + DT.HUMANIZE$(DT.STARTOF(DT.ADD(built, "1 month"), "month", 2), built) + ".")
+
+' ── page three: the module index ───────────────────────────────
+
+DIM modules = DF.FROM([["CONSOLE", "tabulate, rich, tqdm", "console_lib_readme.md"], ["DT", "dateutil, arrow", "dt_lib_readme.md"], ["MD", "markdown", "md_lib_readme.md"], ["DF", "pandas", "df_lib_readme.md"]], ["module", "stands in for", "page"])
+DIM index = []
+PUSH(index, "# Modules")
+PUSH(index, "")
+PUSH(index, "1. Import one with `IMPORT NAME`")
+PUSH(index, "2. Call it as `NAME.FUNCTION`")
+PUSH(index, "3. Read its page")
+PUSH(index, "   - the API table")
+PUSH(index, "   - the notes on both backends")
+PUSH(index, "")
+DIM m = 0
+FOR m = 0 TO DF.NROWS(modules) - 1
+    DIM module_row = DF.ROW(modules, m)
+    PUSH(index, "- [" + module_row{"module"} + "](" + module_row{"page"} + " " + Q$ + "The " + module_row{"module"} + " page" + Q$ + ") stands in for " + module_row{"stands in for"})
+NEXT m
+PUSH(index, "")
+PUSH(index, "Questions go to <https://jdbasic.org>.")
+
+' ── rendering ──────────────────────────────────────────────────
+
+DIM pages = [["index.html", "Report", JOIN(report, NL$)], ["changelog.html", "Changelog", JOIN(changelog, NL$)], ["modules.html", "Modules", JOIN(index, NL$)]]
+
+' The navigation bar with the current page marked.
+FUNC Nav$(all_pages, current$)
+    DIM items = []
+    DIM k = 0
+    FOR k = 0 TO LEN(all_pages) - 1
+        DIM page = all_pages[k]
+        IF page[0] = current$ THEN
+            PUSH(items, "<strong>" + page[1] + "</strong>")
+        ELSE
+            PUSH(items, "<a href=" + Q$ + page[0] + Q$ + ">" + page[1] + "</a>")
+        ENDIF
+    NEXT k
+    RETURN "<nav>" + JOIN(items, " | ") + "</nav>"
+ENDFUNC
+
+' Anchors for the second level headings, and the list that links them.
+FUNC Toc$(markdown$)
+    DIM lines = SPLIT(markdown$, NL$)
+    DIM items = []
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM text$ = lines[k]
+        IF STARTSWITH(text$, "## ") THEN
+            DIM title$ = MID$(text$, 3)
+            PUSH(items, "<li><a href=" + Q$ + "#" + Slug$(title$) + Q$ + ">" + MD.INLINE$(title$) + "</a></li>")
+        ENDIF
+    NEXT k
+    IF LEN(items) = 0 THEN RETURN ""
+    RETURN "<ul class=" + Q$ + "toc" + Q$ + ">" + JOIN(items, "") + "</ul>"
+ENDFUNC
+
+FUNC Slug$(title$)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(title$) - 1
+        DIM ch$ = LCASE$(MID$(title$, k, 1))
+        IF (ch$ >= "a" ANDALSO ch$ <= "z") ORELSE (ch$ >= "0" ANDALSO ch$ <= "9") THEN
+            out$ = out$ + ch$
+        ELSEIF NOT ENDSWITH(out$, "-") THEN
+            out$ = out$ + "-"
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The second level headings get an id so the table of contents can reach them.
+FUNC WithAnchors$(html$)
+    DIM lines = SPLIT(html$, NL$)
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM text$ = lines[k]
+        IF STARTSWITH(text$, "<h2>") THEN
+            DIM inner$ = MID$(text$, 4, LEN(text$) - 9)
+            lines[k] = "<h2 id=" + Q$ + Slug$(inner$) + Q$ + ">" + inner$ + "</h2>"
+        ENDIF
+    NEXT k
+    RETURN JOIN(lines, NL$)
+ENDFUNC
+
+DIM style$ = "body{font:15px/1.5 system-ui,sans-serif;max-width:48em;margin:2em auto;padding:0 1em;color:#222}nav{border-bottom:1px solid #ccc;padding-bottom:.5em;margin-bottom:1em}code{background:#f3f3f3;padding:0 .25em}pre{background:#f3f3f3;padding:.75em;overflow:auto}table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:.25em .6em}blockquote{border-left:3px solid #ccc;margin:0;padding:0 1em;color:#555}.toc{background:#fafafa;padding:.5em 2em}footer{color:#777;margin-top:2em;font-size:90%}"
+
+DIM summary = []
+DIM spinner = CONSOLE.SPINNER("rendering")
+DIM p = 0
+FOR p = 0 TO LEN(pages) - 1
+    DIM page = pages[p]
+    DIM file$ = page[0]
+    DIM markdown$ = page[2]
+    DIM body$ = WithAnchors$(MD.RENDER$(markdown$))
+    DIM html = []
+    PUSH(html, "<!doctype html>")
+    PUSH(html, "<html lang=" + Q$ + "en" + Q$ + "><head><meta charset=" + Q$ + "utf-8" + Q$ + "><title>" + page[1] + "</title><style>" + style$ + "</style></head><body>")
+    PUSH(html, Nav$(pages, file$))
+    PUSH(html, Toc$(markdown$))
+    PUSH(html, body$)
+    PUSH(html, "<footer>Built " + DT.RFC$(built, 2) + " by report_site.jdb</footer>")
+    PUSH(html, "</body></html>")
+    DIM text$ = JOIN(html, NL$)
+    TXTWRITER site$ + "/" + file$, text$
+    PUSH(summary, {"page": file$, "markdown lines": LEN(SPLIT(markdown$, NL$)), "headings": LEN(SPLIT(body$, "<h")) - 1, "links": LEN(SPLIT(body$, "<a ")) - 1, "bytes": LEN(text$)})
+    CONSOLE.SPIN(spinner)
+NEXT p
+CONSOLE.DONE(spinner, STR$(LEN(pages)) + " pages rendered")
+PRINT ""
+
+CONSOLE.TABLE(summary, {"headers": ["page", "markdown lines", "headings", "links", "bytes"], "title": "the site in " + site$})
+PRINT ""
+
+' ── what came out ──────────────────────────────────────────────
+
+CONSOLE.RULE("changelog.md, as written")
+PRINT JOIN(changelog, NL$)
+PRINT ""
+CONSOLE.RULE("the report's table of contents and the first table")
+DIM report_html$ = TXTREADER$(site$ + "/index.html")
+DIM toc_at = INSTR(report_html$, "<ul class=")
+PRINT MID$(report_html$, toc_at, INSTR(report_html$, "</ul>") - toc_at + 5)
+DIM table_at = INSTR(report_html$, "<table>")
+PRINT MID$(report_html$, table_at, INSTR(report_html$, "</thead>") - table_at + 8)
+PRINT ""
+CONSOLE.RULE("the raw switch")
+DIM widget$ = "<details><summary>Timings</summary>" + NL$ + NL$ + Table$(timings) + NL$ + NL$ + "</details>"
+PRINT "escaped by default: "; LEFT$(MD.RENDER$(widget$), 60)
+PRINT "with raw: "; LEFT$(MD.RENDER$(widget$, {"raw": TRUE}), 60)
+PRINT ""
+PRINT "open "; site$; "\index.html in a browser; the pages link each other."

@@ -1455,13 +1455,24 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         // it again here only to walk inner CALL expressions.
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
             std::vector<std::pair<std::string, int>> saved;
-            for (auto& p : s.params()) {
-                auto it = pre_var_tags.find(p.name);
+            auto hide = [&](const std::string& name) {
+                auto it = pre_var_tags.find(name);
                 if (it != pre_var_tags.end()) {
-                    saved.push_back({p.name, it->second});
+                    saved.push_back({name, it->second});
                     pre_var_tags.erase(it);
                 }
-            }
+            };
+            for (auto& p : s.params()) hide(p.name);
+            // A local declared anywhere in the body shadows a global of
+            // the same name for the whole body.
+            std::function<void(const Stmt&)> hide_locals = [&](const Stmt& b) {
+                if (b.kind == StmtKind::DIM && !b.var_name.empty()) hide(b.var_name);
+                for (auto& n : b.body) if (n) hide_locals(*n);
+                for (auto& br : b.branches) for (auto& n : br.body) if (n) hide_locals(*n);
+                for (auto& n : b.catch_body()) if (n) hide_locals(*n);
+                for (auto& n : b.finally_body()) if (n) hide_locals(*n);
+            };
+            for (auto& b : s.body) if (b) hide_locals(*b);
             cur_local_kinds.clear();
             in_fn_body = true;
             for (auto& b : s.body) if (b) scan_stmt(*b);
@@ -9538,22 +9549,28 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
         (unsigned)inner_args.size(),
         fi.return_tag == -1 ? "" : "wcall");
 
+    // The result's tag goes into the channel for a caller that cannot
+    // know the function at compile time.
     LLVMValueRef ret_val;
     if (fi.return_tag == -1) {
         ret_val = LLVMConstReal(f64_type, 0.0);
+        LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_F64, 0), funcref_ret_channel());
     } else if (fi.return_tag == JD_TAG_I64 || fi.return_tag == JD_TAG_BOOL) {
         ret_val = LLVMBuildSIToFP(builder, call, f64_type, "itof");
+        LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_F64, 0), funcref_ret_channel());
     } else if (fi.return_tag == JD_TAG_STR || fi.return_tag == JD_TAG_ARR ||
                fi.return_tag == JD_TAG_NATIVE_MAP) {
         // Pun ptr → i64 → f64 so the value survives transit.
         LLVMValueRef as_i = LLVMBuildPtrToInt(builder, call, i64_type, "ptoi");
         ret_val = pun_i64_to_f64(as_i);
+        LLVMBuildStore(builder, LLVMConstInt(i32_type, fi.return_tag, 0), funcref_ret_channel());
     } else if (fi.return_tag == JD_TAG_RUNTIME) {
         TypedValue r = unpack_dyn_ret(call);
         LLVMBuildStore(builder, r.runtime_tag, funcref_ret_channel());
         ret_val = funcref_wire_bits(r);
     } else {
         ret_val = call;
+        LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_F64, 0), funcref_ret_channel());
     }
     LLVMBuildRet(builder, ret_val);
 
@@ -9568,6 +9585,10 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
 
 LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     std::string name = expr.func_name;
+    // An argument is its own scope: the enclosing index step asked for a
+    // container, and an argument that reads a field would otherwise be
+    // taken for the base of that step and rejected as a scalar.
+    ScopedPtrResult _args_no_ptr(this, false);
 
     // CHAN.* and the FILE.* streaming primitives route through the generic
     // VM-bridge dispatch (jdrt_call_typed_*), so the runtime DLL serves them
@@ -9885,6 +9906,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMTypeRef fn_ty = LLVMFunctionType(f64_type,
                 arg_types.empty() ? nullptr : arg_types.data(),
                 (unsigned)arg_types.size(), 0);
+            // A holder whose function is only known at runtime reads the
+            // result's tag from the channel every wrapper writes; the
+            // channel is cleared first so a wrapper that writes nothing
+            // reads as a number.
+            int rt = vi_fn->funcref_return_tag;
+            bool ask_channel = (rt == JD_TAG_RUNTIME) ||
+                               (rt == -1 && vi_fn->tag == JD_TAG_RUNTIME);
+            if (ask_channel)
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, -1, 1), funcref_ret_channel());
             LLVMValueRef result = LLVMBuildCall2(builder, fn_ty, fn_ptr,
                 args.empty() ? nullptr : args.data(),
                 (unsigned)args.size(), "icall");
@@ -9894,12 +9924,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             // The wrapper hands ptr-shaped results back as punned f64 bits.
             // When the referenced FUNC's return tag is known, pun them back
             // so the caller sees a string/array instead of a float.
-            int rt = vi_fn->funcref_return_tag;
             if (rt == JD_TAG_STR || rt == JD_TAG_ARR || rt == JD_TAG_NATIVE_MAP) {
                 LLVMValueRef as_i = pun_f64_to_i64(result);
                 return { LLVMBuildIntToPtr(builder, as_i, i8_ptr_type, "itoptr"), rt };
             }
-            if (rt == JD_TAG_RUNTIME) {
+            if (ask_channel) {
                 LLVMValueRef chan = funcref_ret_channel();
                 LLVMValueRef t = LLVMBuildLoad2(builder, i32_type, chan, "fr_rtag");
                 LLVMBuildStore(builder, LLVMConstInt(i32_type, -1, 1), chan);
@@ -12860,6 +12889,25 @@ void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
     auto passthrough_names = [&](const Expr& e, std::unordered_set<std::string>& out) {
         if (e.kind == ExprKind::VARIABLE) out.insert(e.str_val);
     };
+    // Builtins that only read a string argument; every other call, and an
+    // array or map literal, may keep the pointer it is given.
+    static const std::unordered_set<std::string> reads_only = {
+        "LEN", "INSTR", "VAL", "ASC", "STARTSWITH", "ENDSWITH", "ISNUMERIC",
+        "UCASE$", "LCASE$", "UPPER$", "LOWER$", "TRIM$", "LTRIM$", "RTRIM$",
+        "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
+        "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
+        "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
+        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$", "PRINT"
+    };
+    std::function<void(const Expr&)> scan_escapes = [&](const Expr& e) {
+        if ((e.kind == ExprKind::CALL && !reads_only.count(e.func_name)) ||
+            e.kind == ExprKind::ARRAY_LITERAL || e.kind == ExprKind::MAP_LITERAL)
+            for (auto& a : e.args)
+                if (a && a->kind == ExprKind::VARIABLE) banned.insert(a->str_val);
+        if (e.left) scan_escapes(*e.left);
+        if (e.right) scan_escapes(*e.right);
+        for (auto& a : e.args) if (a) scan_escapes(*a);
+    };
 
     std::function<void(const Stmt&, bool)> walk = [&](const Stmt& s, bool in_function) {
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
@@ -12882,6 +12930,14 @@ void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
                 passthrough_names(*s.expr, aliased);
                 for (auto& a : aliased) banned.insert(a);
             }
+        }
+        if (!in_function) {
+            if (s.expr) scan_escapes(*s.expr);
+            if (s.loop_cond) scan_escapes(*s.loop_cond);
+            for (auto& pe : s.print_exprs) if (pe) scan_escapes(*pe);
+            for (auto& ie : s.index_chain) if (ie) scan_escapes(*ie);
+            for (auto& br : s.branches)
+                if (br.condition) scan_escapes(*br.condition);
         }
         // Every other way a name can be written.
         if (s.kind == StmtKind::FOR_LOOP || s.kind == StmtKind::FOR_EACH)
@@ -12973,8 +13029,11 @@ void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
         bool unsafe = false;
         for (auto& p : fn.params()) banned.insert(p.name);
 
+        // A bare read handed to a call that may keep it, or placed into
+        // an array or map literal, aliases the buffer.
         std::function<void(const Expr&)> scan_calls = [&](const Expr& e) {
-            if (e.kind == ExprKind::CALL && !reads_only.count(e.func_name))
+            if ((e.kind == ExprKind::CALL && !reads_only.count(e.func_name)) ||
+                e.kind == ExprKind::ARRAY_LITERAL || e.kind == ExprKind::MAP_LITERAL)
                 for (auto& a : e.args)
                     if (a && a->kind == ExprKind::VARIABLE) banned.insert(a->str_val);
             if (e.left) scan_calls(*e.left);

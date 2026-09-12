@@ -1,0 +1,217 @@
+' sales_dashboard.jdb - a quarter of orders read, enriched and reported.
+'
+' DF holds the orders, DT reads and writes the dates, CONSOLE draws the
+' result: a key and value block with the figures of the quarter, revenue
+' by month and by region, the customers that matter, the weekday
+' profile as a bar chart, the invoices still open with how overdue they
+' are, and the week by week trend. The summaries go back to disk as CSV.
+'
+'   jdBasic sales_dashboard.jdb
+'   NO_COLOR=1 jdBasic sales_dashboard.jdb > dashboard.txt
+
+IMPORT DF, DT, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM berlin = 2
+DIM today = DT.MAKE(2026, 9, 12, 8, 0, 0, berlin)
+DIM quarter_start = DT.MAKE(2026, 7, 1, 0, 0, 0, berlin)
+
+' ── the orders, written as the shop would export them ──────────
+
+DIM customers = ["Baumann GmbH", "Cortex Labs", "Delta Retail", "Eisenhart AG", "Fjord Design", "Grob & Sohn", "Helix Media", "Ida's Kitchen"]
+DIM regions = ["north", "south", "east", "west"]
+DIM products = ["widget", "gadget", "gizmo", "sprocket"]
+DIM prices = [9.5, 24, 61.25, 3.75]
+
+DIM rows = []
+DIM i = 0
+FOR i = 0 TO 359
+    DIM ordered = DT.ADD(quarter_start, STR$((i * 11) MOD 73) + " days " + STR$(6 + (i * 5) MOD 12) + " hours " + STR$((i * 13) MOD 60) + " minutes")
+    DIM p = (i * 5) MOD 4
+    DIM qty = (i * 3) MOD 9 + 1
+    DIM paid = 1
+    IF (i MOD 7) = 3 ORELSE (i MOD 11) = 5 THEN paid = 0
+    PUSH(rows, ["O-" + LPAD$(STR$(1000 + i), 5, "0"), DT.ISO$(ordered, berlin), customers[(i MOD 3 + i MOD 5 + i MOD 7) MOD 8], regions[i MOD 4], products[p], qty, prices[p], paid])
+NEXT i
+
+DIM folder$ = MKTEMP$("dashboard")
+MKDIR folder$
+DIM orders_path$ = folder$ + "/orders.csv"
+CSVWRITER orders_path$, rows, ",", ["id", "ordered", "customer", "region", "product", "qty", "price", "paid"]
+
+' ── load and enrich ────────────────────────────────────────────
+
+' An amount with two decimals and a thousands separator.
+FUNC Money$(amount)
+    DIM whole = INT(amount)
+    DIM cents$ = RIGHT$(FORMAT$("{:.2f}", amount - whole), 3)
+    DIM digits$ = STR$(whole)
+    DIM out$ = ""
+    DO WHILE LEN(digits$) > 3
+        out$ = "," + RIGHT$(digits$, 3) + out$
+        digits$ = LEFT$(digits$, LEN(digits$) - 3)
+    LOOP
+    RETURN digits$ + out$ + cents$
+ENDFUNC
+
+DIM orders = DF.READCSV(orders_path$)
+
+FUNC Instant(row)
+    RETURN DT.PARSE(row{"ordered"})
+ENDFUNC
+
+FUNC Revenue(row)
+    RETURN row{"qty"} * row{"price"}
+ENDFUNC
+
+FUNC MonthKey$(row)
+    RETURN DT.FMT$(row{"t"}, "%Y-%m", 2)
+ENDFUNC
+
+FUNC Weekday$(row)
+    RETURN DT.WEEKDAY$(row{"t"}, "en", 2)
+ENDFUNC
+
+FUNC WeekKey$(row)
+    DIM w = DT.ISOWEEK(row{"t"}, 2)
+    RETURN STR$(w{"year"}) + "-W" + LPAD$(STR$(w{"week"}), 2, "0")
+ENDFUNC
+
+FUNC DueDate(row)
+    RETURN DT.ADD(row{"t"}, "30 days", 2)
+ENDFUNC
+
+DIM steps = ["instant", "revenue", "month", "weekday", "week", "due"]
+DIM bar = CONSOLE.PROGRESS(LEN(steps), "enriching")
+orders = DF.WITH(orders, "t", Instant@)
+CONSOLE.ADVANCE(bar)
+orders = DF.WITH(orders, "revenue", Revenue@)
+CONSOLE.ADVANCE(bar)
+orders = DF.WITH(orders, "month", MonthKey$@)
+CONSOLE.ADVANCE(bar)
+orders = DF.WITH(orders, "weekday", Weekday$@)
+CONSOLE.ADVANCE(bar)
+orders = DF.WITH(orders, "week", WeekKey$@)
+CONSOLE.ADVANCE(bar)
+orders = DF.WITH(orders, "due", DueDate@)
+CONSOLE.FINISH(bar)
+PRINT ""
+
+' ── the quarter in figures ─────────────────────────────────────
+
+DIM revenue = DF.COL(orders, "revenue")
+DIM instants = DF.COL(orders, "t")
+DIM first_order = MIN(instants)
+DIM last_order = MAX(instants)
+DIM total = SUM(revenue)
+
+CONSOLE.RULE("Q3 2026 - " + STR$(DF.NROWS(orders)) + " orders", "=")
+CONSOLE.KV([["period", DT.FMT$(first_order, "%d %b %Y", berlin) + " to " + DT.FMT$(last_order, "%d %b %Y", berlin) + " (" + STR$(DT.DIFF(DT.STARTOF(first_order, "day", berlin), DT.STARTOF(last_order, "day", berlin), "days") + 1) + " days)"], ["revenue", CONSOLE.BOLD$(Money$(total) + " EUR")], ["average order", Money$(total / DF.NROWS(orders)) + " EUR"], ["largest order", Money$(MAX(revenue)) + " EUR"], ["customers", STR$(LEN(DF.DISTINCT(orders, "customer")))], ["last order", DT.HUMANIZE$(last_order, today)]], 2)
+PRINT ""
+
+' ── by month, by region ────────────────────────────────────────
+
+DIM by_month = DF.SORT(DF.GROUPBY(orders, "month", {"orders": ["count"], "units": ["sum", "qty"], "revenue": ["sum", "revenue"], "avg_order": ["mean", "revenue"]}), "month")
+CONSOLE.TABLE(DF.MATRIX(by_month), {"headers": DF.NAMES(by_month), "title": "revenue by month"})
+PRINT ""
+
+DIM by_region = DF.PIVOT(orders, "region", "month", "revenue")
+CONSOLE.TABLE(DF.MATRIX(by_region), {"headers": DF.NAMES(by_region), "title": "revenue by region and month"})
+PRINT ""
+
+' ── the customers that matter ──────────────────────────────────
+
+DIM by_customer = DF.SORT(DF.GROUPBY(orders, "customer", {"orders": ["count"], "revenue": ["sum", "revenue"], "last": ["max", "t"]}), "revenue", TRUE)
+DIM top = DF.HEAD(by_customer, 5)
+DIM top_rows = []
+DIM r = 0
+FOR r = 0 TO DF.NROWS(top) - 1
+    DIM c = DF.ROW(top, r)
+    DIM name$ = c{"customer"}
+    IF r = 0 THEN name$ = CONSOLE.BOLD$(name$)
+    PUSH(top_rows, [r + 1, name$, c{"orders"}, Money$(c{"revenue"}), FORMAT$("{:.1f} %", c{"revenue"} / total * 100), DT.HUMANIZE$(c{"last"}, today)])
+NEXT r
+CONSOLE.TABLE(top_rows, {"headers": ["#", "customer", "orders", "revenue", "share", "last order"], "align": ["r", "l", "r", "r", "r", "l"], "title": "top five customers"})
+PRINT ""
+
+' ── the weekday profile ────────────────────────────────────────
+
+DIM weekdays = DF.GROUPBY(orders, "weekday", {"orders": ["count"], "revenue": ["sum", "revenue"]})
+DIM names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+DIM most = MAX(DF.COL(weekdays, "orders"))
+DIM per_day AS MAP
+DIM w = 0
+FOR w = 0 TO DF.NROWS(weekdays) - 1
+    DIM weekday_row = DF.ROW(weekdays, w)
+    per_day{weekday_row{"weekday"}} = weekday_row{"orders"}
+NEXT w
+CONSOLE.RULE("orders per weekday")
+DIM d = 0
+FOR d = 0 TO 6
+    DIM n = 0
+    IF MAP.EXISTS(per_day, names[d]) THEN n = per_day{names[d]}
+    DIM filled = ROUND(n / most * 40)
+    PRINT "  "; CONSOLE.FIT$(names[d], 10, "l"); CONSOLE.GREEN$("#" * filled); " " * (41 - filled); n
+NEXT d
+PRINT ""
+
+' ── open invoices ──────────────────────────────────────────────
+
+FUNC Unpaid(row)
+    RETURN row{"paid"} = 0
+ENDFUNC
+
+FUNC Overdue(row)
+    RETURN row{"due"} < today
+ENDFUNC
+
+DIM open_invoices = DF.SORT(DF.FILTER(orders, Unpaid@), "due")
+DIM overdue = DF.FILTER(open_invoices, Overdue@)
+DIM outstanding = SUM(DF.COL(open_invoices, "revenue"))
+DIM late_rows = []
+FOR r = 0 TO DF.NROWS(overdue) - 1
+    IF r >= 8 THEN EXITFOR
+    DIM inv = DF.ROW(overdue, r)
+    DIM days_late = DT.DIFF(inv{"due"}, today, "days")
+    DIM late$ = DT.HUMANIZE$(inv{"due"}, today)
+    IF days_late > 14 THEN late$ = CONSOLE.RED$(late$)
+    PUSH(late_rows, [inv{"id"}, inv{"customer"}, DT.FMT$(inv{"due"}, "%d.%m.%Y", berlin), Money$(inv{"revenue"}), late$])
+NEXT r
+CONSOLE.TABLE(late_rows, {"headers": ["invoice", "customer", "due", "amount", "overdue"], "title": "overdue, oldest first"})
+CONSOLE.PANEL(STR$(DF.NROWS(open_invoices)) + " invoices open, " + Money$(outstanding) + " EUR outstanding; " + STR$(DF.NROWS(overdue)) + " of them past their due date with " + Money$(SUM(DF.COL(overdue, "revenue"))) + " EUR. The next reminder run is " + DT.FMT$(DT.STARTOF(DT.ADD(today, "1 week"), "week", berlin), "%A, %d %B", berlin) + ".", "collections")
+PRINT ""
+
+' ── week by week ───────────────────────────────────────────────
+
+DIM weeks = DF.SORT(DF.GROUPBY(orders, "week", {"orders": ["count"], "revenue": ["sum", "revenue"], "from": ["min", "t"]}), "week")
+DIM week_rows = []
+DIM previous = 0
+FOR r = 0 TO DF.NROWS(weeks) - 1
+    DIM wk = DF.ROW(weeks, r)
+    DIM change$ = "-"
+    IF previous > 0 THEN
+        DIM pct = (wk{"revenue"} - previous) / previous * 100
+        change$ = FORMAT$("{:.1f} %", pct)
+        IF pct < 0 THEN change$ = CONSOLE.RED$(change$)
+        IF pct > 0 THEN change$ = CONSOLE.GREEN$("+" + change$)
+    ENDIF
+    PUSH(week_rows, [wk{"week"}, DT.FMT$(DT.STARTOF(wk{"from"}, "week", berlin), "%d.%m.", berlin), wk{"orders"}, Money$(wk{"revenue"}), change$])
+    previous = wk{"revenue"}
+NEXT r
+CONSOLE.TABLE(week_rows, {"headers": ["week", "from", "orders", "revenue", "change"], "align": ["l", "l", "r", "r", "r"], "title": "week by week"})
+PRINT ""
+
+' ── back to disk ───────────────────────────────────────────────
+
+DF.WRITECSV(by_month, folder$ + "/by_month.csv")
+DF.WRITECSV(DF.SELECT(open_invoices, ["id", "customer", "ordered", "revenue"]), folder$ + "/open_invoices.csv")
+PRINT "written to "; folder$; ":"
+PRINT "  by_month.csv       "; DF.NROWS(by_month); " rows"
+PRINT "  open_invoices.csv  "; DF.NROWS(open_invoices); " rows"
+PRINT ""
+PRINT "by_month.csv reads:"
+PRINT TXTREADER$(folder$ + "/by_month.csv")
+KILL orders_path$
+KILL folder$ + "/by_month.csv"
+KILL folder$ + "/open_invoices.csv"
+RMDIR folder$

@@ -56,4 +56,6 @@ offset. There is no time zone database.
 - The core `DateTime` starts at 1970; before that use DT alone.
 - Everything works compiled with `-c`.
 
-Self test: `tests/jdlibs/dt_selftest.jdb`. Demo: `jdb/demos/jdlibs/dt_demo.jdb`.
+Self test: `tests/jdlibs/dt_selftest.jdb`. Demos: `jdb/demos/jdlibs/dt_demo.jdb`,
+and with DF and CONSOLE in `sales_dashboard.jdb`, `log_digest.jdb` and
+`report_site.jdb`.

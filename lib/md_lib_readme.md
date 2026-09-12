@@ -55,4 +55,5 @@ nested blockquotes inside list items, and raw HTML unless `raw` is set.
 `tests/jdlibs/fixtures/md_fixture.md` renders byte for byte to
 `md_fixture.html`; the self test checks it on both backends.
 
-Self test: `tests/jdlibs/md_selftest.jdb`. Demo: `jdb/demos/jdlibs/md_demo.jdb`.
+Self test: `tests/jdlibs/md_selftest.jdb`. Demos: `jdb/demos/jdlibs/md_demo.jdb`,
+and the three page site in `report_site.jdb`.

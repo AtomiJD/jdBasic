@@ -62,6 +62,16 @@ jdBasic tests/jdlibs/req_selftest.jdb
 jdBasic jdb/demos/jdlibs/req_demo.jdb
 ```
 
+Three demos put several modules to work on one task:
+
+| Demo | What it builds |
+|------|----------------|
+| `sales_dashboard.jdb` | a quarter of orders loaded with DF, dated with DT and reported with CONSOLE: figures, revenue by month and region, top customers, a weekday bar chart, overdue invoices, the weekly trend |
+| `log_digest.jdb` | a day of server log lines in three timestamp formats, parsed by DT and digested by DF into hourly, level, endpoint and error-window tables |
+| `report_site.jdb` | a three page HTML site: DF frames become Markdown tables, DT writes the changelog dates, MD renders each page and the demo adds navigation and a table of contents |
+
+`service_report.jdb` does the same for CONF, LOGGER, XLSX and JWT.
+
 ## Conventions
 
 - A module is one file, English identifiers, comments that say what the

@@ -89,4 +89,6 @@ interpreted and 140 ms compiled; group by region 40 ms and 7 ms; sort
 45 ms and 5 ms. The reductions run on whole columns, so the grouping
 loop only gathers.
 
-Self test: `tests/jdlibs/df_selftest.jdb`. Demo: `jdb/demos/jdlibs/df_demo.jdb`.
+Self test: `tests/jdlibs/df_selftest.jdb`. Demos: `jdb/demos/jdlibs/df_demo.jdb`,
+and with DT and CONSOLE in `sales_dashboard.jdb`, `log_digest.jdb` and
+`report_site.jdb`.

@@ -74,4 +74,6 @@ environment, when `TERM` is `dumb`, or after `CONSOLE.PLAIN(TRUE)`.
   or newline, the way `PRINT` with a trailing semicolon behaves there.
 - Everything works compiled with `-c`.
 
-Self test: `tests/jdlibs/console_selftest.jdb`. Demo: `jdb/demos/jdlibs/console_demo.jdb`.
+Self test: `tests/jdlibs/console_selftest.jdb`. Demos:
+`jdb/demos/jdlibs/console_demo.jdb`, and reporting DF frames in
+`sales_dashboard.jdb` and `log_digest.jdb`.
