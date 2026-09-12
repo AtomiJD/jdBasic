@@ -1,0 +1,83 @@
+' md_demo.jdb - a release note written in Markdown, served as a page.
+'
+' The note lives as Markdown in this file, MD turns it into HTML, the
+' demo wraps it in a small page with a stylesheet, writes it next to the
+' script and prints the path together with a few facts about the
+' rendering: how a table, a code fence and an escaped tag came out, and
+' what the raw switch changes for a block of hand-written HTML.
+'
+'   jdBasic md_demo.jdb
+'   start md_demo.html
+
+IMPORT MD
+
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+
+DIM note = []
+PUSH(note, "# jdBasic 1.0.31")
+PUSH(note, "")
+PUSH(note, "The **module library** grows by four: `CONSOLE`, `DT`, `MD` and `DF`.")
+PUSH(note, "Every module runs interpreted and compiled with `-c`; the self tests")
+PUSH(note, "cover both backends.")
+PUSH(note, "")
+PUSH(note, "## Highlights")
+PUSH(note, "")
+PUSH(note, "- Tables, styled text and progress bars on stdout")
+PUSH(note, "- Dates before 1970 and after 2038, with fixed offsets")
+PUSH(note, "  - `DT.PARSE` reads ISO 8601, RFC 2822 and `12.09.2026`")
+PUSH(note, "  - `DT.HUMANIZE$` speaks English and German")
+PUSH(note, "- Markdown to HTML, this page included")
+PUSH(note, "")
+PUSH(note, "> A module is one file under `lib/`. Import it, call it, read its page.")
+PUSH(note, "")
+PUSH(note, "## Fixed")
+PUSH(note, "")
+PUSH(note, "1. Compiled HTTP handlers are reached by name")
+PUSH(note, "2. A funcref keeps its argument types")
+PUSH(note, "3. `NONE` is a value on both backends")
+PUSH(note, "")
+PUSH(note, "| Module | Stands in for | Self test |")
+PUSH(note, "|:-------|:--------------|----------:|")
+PUSH(note, "| `CONSOLE` | tabulate, rich | 67 |")
+PUSH(note, "| `DT` | dateutil, arrow | 120 |")
+PUSH(note, "| `MD` | markdown | 60 |")
+PUSH(note, "")
+PUSH(note, "```basic")
+PUSH(note, "IMPORT MD")
+PUSH(note, "PRINT MD.RENDER$(" + Q$ + "# Hello <world>" + Q$ + ")")
+PUSH(note, "```")
+PUSH(note, "")
+PUSH(note, "Questions go to <https://jdbasic.org>; the tag `<b>` above is text, not markup,")
+PUSH(note, "and so is this ampersand: &.")
+DIM markdown$ = JOIN(note, NL$)
+
+DIM body$ = MD.RENDER$(markdown$)
+
+DIM page = []
+PUSH(page, "<!doctype html>")
+PUSH(page, "<html lang=" + Q$ + "en" + Q$ + "><head><meta charset=" + Q$ + "utf-8" + Q$ + "><title>jdBasic 1.0.31</title>")
+PUSH(page, "<style>body{font:15px/1.5 system-ui,sans-serif;max-width:46em;margin:2em auto;padding:0 1em;color:#222}")
+PUSH(page, "code{background:#f3f3f3;padding:0 .25em;border-radius:3px}pre{background:#f3f3f3;padding:.75em;overflow:auto}")
+PUSH(page, "table{border-collapse:collapse}th,td{border:1px solid #ccc;padding:.25em .6em}blockquote{border-left:3px solid #ccc;margin:0;padding:0 1em;color:#555}</style>")
+PUSH(page, "</head><body>")
+PUSH(page, body$)
+PUSH(page, "</body></html>")
+
+DIM here$ = "md_demo.html"
+TXTWRITER here$, JOIN(page, NL$)
+PRINT "written "; here$; " ("; LEN(JOIN(page, NL$)); " bytes)"
+PRINT ""
+PRINT "the table header:   "; MID$(body$, INSTR(body$, "<thead>"), 60)
+PRINT "the code fence:     "; MID$(body$, INSTR(body$, "<pre>"), 46)
+PRINT "an escaped tag:     "; MID$(body$, INSTR(body$, "&lt;b&gt;") - 9, 30)
+PRINT ""
+
+' ── the raw switch ─────────────────────────────────────────────
+
+DIM widget$ = "<details><summary>More</summary>" + NL$ + "hidden text" + NL$ + "</details>" + NL$ + NL$ + "A <kbd>Ctrl</kbd> key."
+PRINT "escaped by default:"
+PRINT MD.RENDER$(widget$)
+PRINT ""
+PRINT "with the raw option:"
+PRINT MD.RENDER$(widget$, {"raw": TRUE})

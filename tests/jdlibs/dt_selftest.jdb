@@ -1,0 +1,160 @@
+' DT: the parse table, the calendar before and after 1970, offsets,
+' arithmetic in calendar and clock units, rounding, ranges and the
+' relative text in two languages.
+
+IMPORT TESTKIT, DT
+
+TESTKIT.SUITE("parse table")
+DIM table = [ _
+    ["2026-09-12", 1789171200], _
+    ["2026-09-12T15:00:00Z", 1789225200], _
+    ["2026-09-12 15:00:00+02:00", 1789218000], _
+    ["2026-09-12T15:00:00.250-05:30", 1789245000.25], _
+    ["2026-09-12T15:00+01:00", 1789221600], _
+    ["  2026-09-12T15:00:00z  ", 1789225200], _
+    ["2000-02-29T23:59:59+00:00", 951868799], _
+    ["1969-07-20T20:17:00Z", -14182980], _
+    ["1969-12-31T23:59:59Z", -1], _
+    ["1900-02-28", -2203977600], _
+    ["1899-12-31T00:00:00Z", -2209075200], _
+    ["0001-01-01", -62135596800], _
+    ["12.09.2026", 1789171200], _
+    ["12.9.2026 15:00", 1789225200], _
+    ["24.12.1969 18:30:15", -624585], _
+    ["1.1.1900", -2208988800], _
+    ["Sat, 12 Sep 2026 15:00:00 +0200", 1789218000], _
+    ["12 Sep 2026 15:00 GMT", 1789225200], _
+    ["1 Jan 1970 00:00:00 UTC", 0], _
+    ["Mon, 20 Jul 1969 20:17:00 +0000", -14182980], _
+    ["20 Juli 1969 20:17", -14182980], _
+    ["1789139288", 1789139288], _
+    ["-86400", -86400], _
+    ["0", 0]]
+DIM i = 0
+FOR i = 0 TO LEN(table) - 1
+    TESTKIT.EQ(DT.PARSE(table[i][0]), table[i][1], "parses " + TRIM$(table[i][0]))
+NEXT i
+TESTKIT.EQ(DT.PARSE("2026-09-12 15:00", 2), 1789218000, "a time without an offset is read in the offset given")
+TESTKIT.EQ(TYPEOF(DT.PARSE("not a date")), "NONE", "words are NONE")
+TESTKIT.EQ(TYPEOF(DT.PARSE("2026-13-40")), "NONE", "a month 13 is NONE")
+TESTKIT.EQ(TYPEOF(DT.PARSE("31.02.2026")), "NONE", "a day that does not exist is NONE")
+TESTKIT.EQ(TYPEOF(DT.PARSE("")), "NONE", "an empty string is NONE")
+
+TESTKIT.SUITE("calendar")
+TESTKIT.EQ(DT.MAKE(1970, 1, 1), 0, "the epoch")
+TESTKIT.EQ(DT.MAKE(2026, 9, 12, 15, 0, 0, 2), 1789218000, "a wall clock in UTC+2")
+TESTKIT.EQ(DT.MAKE(1969, 12, 31, 23, 59, 59), -1, "the second before the epoch")
+DIM p = DT.PARTS(DT.MAKE(1969, 7, 20, 20, 17, 0))
+TESTKIT.EQ(p{"year"}, 1969, "year before 1970")
+TESTKIT.EQ(p{"month"}, 7, "month")
+TESTKIT.EQ(p{"day"}, 20, "day")
+TESTKIT.EQ(p{"hour"}, 20, "hour")
+TESTKIT.EQ(p{"minute"}, 17, "minute")
+TESTKIT.EQ(p{"weekday"}, 0, "a Sunday")
+TESTKIT.EQ(p{"yday"}, 201, "day of the year")
+DIM q = DT.PARTS(1789218000, 2)
+TESTKIT.EQ(q{"hour"}, 15, "the hour in UTC+2")
+TESTKIT.EQ(DT.PARTS(1789218000, -5.5){"hour"}, 7, "the hour in UTC-5:30")
+TESTKIT.EQ(DT.PARTS(1789218000, -5.5){"minute"}, 30, "and its minute")
+TESTKIT.EQ(DT.PARTS(1789245000.25){"fraction"}, 0.25, "the fraction of a second")
+TESTKIT.ISTRUE(DT.IS_LEAP(2000), "2000 is a leap year")
+TESTKIT.ISTRUE(NOT DT.IS_LEAP(1900), "1900 is not")
+TESTKIT.ISTRUE(DT.IS_LEAP(2024), "2024 is")
+TESTKIT.EQ(DT.DAYS_IN(2024, 2), 29, "February in a leap year")
+TESTKIT.EQ(DT.DAYS_IN(2026, 2), 28, "February otherwise")
+TESTKIT.EQ(DT.DAYS_IN(2026, 4), 30, "April")
+
+TESTKIT.SUITE("format")
+DIM t = DT.MAKE(2026, 9, 12, 15, 4, 5)
+TESTKIT.EQ(DT.ISO$(t), "2026-09-12T15:04:05Z", "ISO in UTC")
+TESTKIT.EQ(DT.ISO$(t, 2), "2026-09-12T17:04:05+02:00", "ISO in UTC+2")
+TESTKIT.EQ(DT.ISO$(t, -5.5), "2026-09-12T09:34:05-05:30", "ISO with a half hour offset")
+TESTKIT.EQ(DT.RFC$(t, 2), "Sat, 12 Sep 2026 17:04:05 +0200", "RFC 2822")
+TESTKIT.EQ(DT.FMT$(t, "%d.%m.%Y %H:%M"), "12.09.2026 15:04", "German order")
+TESTKIT.EQ(DT.FMT$(t, "%A %B %e %j %y %I %p %%"), "Saturday September 12 255 26 03 PM %", "names, day of year, 12 hour clock")
+TESTKIT.EQ(DT.FMT$(DT.MAKE(2026, 9, 12, 0, 30), "%I %p"), "12 AM", "midnight on the 12 hour clock")
+TESTKIT.EQ(DT.FMT$(t, "%F %T %z", 2), "2026-09-12 17:04:05 +0200", "the short forms and the offset")
+TESTKIT.EQ(DT.FMT$(DT.MAKE(1, 1, 1), "%Y"), "0001", "a four digit year")
+TESTKIT.EQ(DT.FMT$(t, "%s"), "1789225445", "the epoch")
+TESTKIT.EQ(DT.WEEKDAY$(t), "Saturday", "the weekday name")
+TESTKIT.EQ(DT.WEEKDAY$(t, "de"), "Samstag", "in German")
+TESTKIT.EQ(DT.MONTHNAME$(DT.MAKE(2026, 3, 1), "de"), "Maerz", "a month name in German")
+TESTKIT.EQ(DT.ISO$(DT.PARSE(DT.ISO$(t, 2))), DT.ISO$(t), "ISO round trips through PARSE")
+TESTKIT.EQ(DT.PARSE(DT.RFC$(t, -3)), t, "RFC round trips through PARSE")
+
+TESTKIT.SUITE("arithmetic")
+DIM jan31 = DT.MAKE(2026, 1, 31, 12, 0, 0)
+TESTKIT.EQ(DT.ISO$(DT.ADD(jan31, "+1 month")), "2026-02-28T12:00:00Z", "a month later clamps to February")
+TESTKIT.EQ(DT.ISO$(DT.ADD(jan31, "1 month -2 days 3h")), "2026-02-26T15:00:00Z", "several steps in one spec")
+TESTKIT.EQ(DT.ISO$(DT.ADD(jan31, "-1 year")), "2025-01-31T12:00:00Z", "a year back")
+TESTKIT.EQ(DT.ISO$(DT.ADD(DT.MAKE(2024, 2, 29), "1 year")), "2025-02-28T00:00:00Z", "a leap day a year later")
+TESTKIT.EQ(DT.ISO$(DT.ADD(jan31, "2w")), "2026-02-14T12:00:00Z", "short units")
+TESTKIT.EQ(DT.ADD(jan31, "90 seconds"), jan31 + 90, "seconds are exact")
+TESTKIT.EQ(DT.ADD(jan31, "1.5 hours"), jan31 + 5400, "a fractional amount")
+TESTKIT.EQ(DT.ISO$(DT.ADD(DT.MAKE(2026, 3, 31, 1, 0, 0, 2), "1 month", 2), 2), "2026-04-30T01:00:00+02:00", "calendar steps use the offset's wall clock")
+TESTKIT.EQ(DT.DIFF(jan31, DT.MAKE(2026, 3, 31, 12), "months"), 2, "whole months")
+TESTKIT.EQ(DT.DIFF(jan31, DT.MAKE(2026, 3, 30), "months"), 1, "a day short is one month less")
+TESTKIT.EQ(DT.DIFF(DT.MAKE(2026, 3, 30), jan31, "months"), -1, "negative the other way")
+TESTKIT.EQ(DT.DIFF(jan31, DT.MAKE(2026, 2, 1), "days"), 0.5, "days as an exact number")
+TESTKIT.EQ(DT.DIFF(DT.MAKE(2020, 5, 1), jan31, "years"), 5, "whole years")
+TESTKIT.EQ(DT.DIFF(jan31, DT.MAKE(2026, 2, 14, 12), "weeks"), 2, "weeks")
+TESTKIT.EQ(DT.DIFF(jan31, jan31 + 7200, "h"), 2, "hours")
+TESTKIT.THROWS(BadUnit@, "1 fortnight", "an unknown unit raises")
+
+FUNC BadUnit(spec$)
+    RETURN DT.ADD(0, spec$)
+ENDFUNC
+
+TESTKIT.SUITE("rounding")
+TESTKIT.EQ(DT.ISO$(DT.STARTOF(jan31, "week")), "2026-01-26T00:00:00Z", "the Monday of the week")
+TESTKIT.EQ(DT.ISO$(DT.STARTOF(DT.MAKE(2026, 1, 26, 8), "week")), "2026-01-26T00:00:00Z", "a Monday stays")
+TESTKIT.EQ(DT.ISO$(DT.STARTOF(DT.MAKE(2026, 2, 1), "week")), "2026-01-26T00:00:00Z", "a Sunday belongs to the week before")
+TESTKIT.EQ(DT.ISO$(DT.ENDOF(jan31, "month")), "2026-01-31T23:59:59Z", "the end of the month")
+TESTKIT.EQ(DT.ISO$(DT.STARTOF(DT.MAKE(2026, 8, 15), "quarter")), "2026-07-01T00:00:00Z", "the quarter")
+TESTKIT.EQ(DT.ISO$(DT.ENDOF(DT.MAKE(2026, 8, 15), "quarter")), "2026-09-30T23:59:59Z", "the end of the quarter")
+TESTKIT.EQ(DT.ISO$(DT.ENDOF(jan31, "year")), "2026-12-31T23:59:59Z", "the end of the year")
+TESTKIT.EQ(DT.ISO$(DT.STARTOF(jan31, "hour")), "2026-01-31T12:00:00Z", "the hour")
+TESTKIT.EQ(DT.ISO$(DT.STARTOF(DT.MAKE(2026, 1, 31, 23, 30, 0, 2), "day", 2), 2), "2026-01-31T00:00:00+02:00", "the day in an offset")
+TESTKIT.EQ(DT.ISOWEEK(DT.MAKE(2027, 1, 1)){"week"}, 53, "January 1st 2027 is in week 53")
+TESTKIT.EQ(DT.ISOWEEK(DT.MAKE(2027, 1, 1)){"year"}, 2026, "of the ISO year 2026")
+TESTKIT.EQ(DT.ISOWEEK(DT.MAKE(2024, 12, 30)){"week"}, 1, "December 30th 2024 opens week 1")
+TESTKIT.EQ(DT.ISOWEEK(DT.MAKE(2026, 9, 12)){"week"}, 37, "a plain week")
+
+TESTKIT.SUITE("ranges")
+DIM months = DT.RANGE(DT.MAKE(2026, 1, 31), DT.MAKE(2026, 5, 31), "1 month")
+TESTKIT.EQ(LEN(months), 5, "five month ends")
+TESTKIT.EQ(DT.FMT$(months[1], "%F"), "2026-02-28", "February clamps")
+TESTKIT.EQ(DT.FMT$(months[4], "%F"), "2026-05-28", "and the clamp sticks to the day reached")
+DIM weeks = DT.RANGE(DT.MAKE(2026, 9, 29), DT.MAKE(2026, 9, 1), "1 week")
+TESTKIT.EQ(LEN(weeks), 5, "counting down")
+TESTKIT.EQ(DT.FMT$(weeks[4], "%F"), "2026-09-01", "down to the start")
+TESTKIT.EQ(LEN(DT.RANGE(0, 3600, "15 min")), 5, "a clock unit")
+TESTKIT.EQ(LEN(DT.RANGE(10, 0, "1 day")), 1, "a range that cannot step twice holds its start")
+
+TESTKIT.SUITE("relative text")
+DIM ref = DT.MAKE(2026, 9, 12, 12, 0, 0)
+TESTKIT.EQ(DT.HUMANIZE$(ref - 30, ref), "just now", "seconds")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 60, ref), "a minute ago", "a minute")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 600, ref), "10 minutes ago", "minutes")
+TESTKIT.EQ(DT.HUMANIZE$(ref + 3600, ref), "in an hour", "an hour ahead")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 3 * 3600, ref), "3 hours ago", "hours")
+TESTKIT.EQ(DT.HUMANIZE$(ref + 2 * 86400, ref), "in 2 days", "days ahead")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 40 * 86400, ref), "a month ago", "a month")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 400 * 86400, ref), "a year ago", "a year")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 3 * 365 * 86400, ref), "3 years ago", "years")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 30, ref, "de"), "gerade eben", "German: seconds")
+TESTKIT.EQ(DT.HUMANIZE$(ref + 3600, ref, "de"), "in einer Stunde", "German: an hour ahead")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 86400 * 20, ref, "de"), "vor 20 Tagen", "German: days")
+TESTKIT.EQ(DT.HUMANIZE$(ref - 400 * 86400, ref, "de"), "vor einem Jahr", "German: a year")
+TESTKIT.EQ(DT.HUMANIZE$(ref + 5 * 30.5 * 86400, ref, "de"), "in 5 Monaten", "German: months ahead")
+TESTKIT.EQ(TYPEOF(DT.HUMANIZE$(DT.NOW() - 10)), "STRING", "the default reference is now")
+
+TESTKIT.SUITE("core interop")
+DIM core = DT.TODATE(t)
+TESTKIT.ISTRUE(TYPEOF(core) = "DATE" ORELSE TYPEOF(core) = "STRING", "a core DateTime (a string under -c)")
+TESTKIT.EQ(FORMAT_DATE(core, "%Y-%m-%d %H:%M:%S", 0), "2026-09-12 15:04:05", "with the same instant")
+TESTKIT.EQ(DT.FROMDATE(core), t, "and back")
+TESTKIT.EQ(TYPEOF(DT.NOW()), "FLOAT64", "now is a number")
+TESTKIT.ISTRUE(ABS(DT.LOCAL_OFFSET()) <= 14, "the local offset is a plausible number of hours")
+
+TESTKIT.REPORT()

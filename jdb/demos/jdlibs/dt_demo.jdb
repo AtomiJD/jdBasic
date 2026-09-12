@@ -1,0 +1,62 @@
+' dt_demo.jdb - invoices with due dates, in three formats and two languages.
+'
+' A billing run: invoices carry their date the way each source wrote it
+' (ISO with an offset, German, RFC 2822, an epoch from a log). DT reads
+' them all, adds the payment terms in calendar months, rounds to the end
+' of the month where the contract says so, tells how overdue each one
+' is today, and lists the reminder dates week by week.
+'
+'   jdBasic dt_demo.jdb
+
+IMPORT DT, CONSOLE
+
+CONSOLE.PLAIN(TRUE)
+DIM today = DT.MAKE(2026, 9, 12, 9, 0, 0, 2)
+DIM berlin = 2
+
+DIM invoices = []
+PUSH(invoices, {"no": "A-1041", "customer": "Nordlicht GmbH", "issued": "2026-06-30T16:45:00+02:00", "terms": "1 month", "eom": TRUE, "amount": 1840.5})
+PUSH(invoices, {"no": "A-1042", "customer": "Bauer & Sohn", "issued": "14.07.2026 11:20", "terms": "30 days", "eom": FALSE, "amount": 420})
+PUSH(invoices, {"no": "A-1043", "customer": "Riverside Ltd", "issued": "Tue, 04 Aug 2026 09:00:00 +0100", "terms": "2 weeks", "eom": FALSE, "amount": 9975})
+PUSH(invoices, {"no": "A-1044", "customer": "Kaiku Labs", "issued": "1788858000", "terms": "1 month", "eom": TRUE, "amount": 275.25})
+
+CONSOLE.RULE("billing run " + DT.FMT$(today, "%d.%m.%Y", berlin))
+
+DIM rows = []
+DIM i = 0
+FOR i = 0 TO LEN(invoices) - 1
+    DIM inv = invoices[i]
+    DIM issued = DT.PARSE(inv{"issued"})
+    DIM due = DT.ADD(issued, inv{"terms"}, berlin)
+    IF inv{"eom"} THEN due = DT.ENDOF(due, "month", berlin)
+    DIM overdue = DT.DIFF(due, today, "days")
+    DIM state$ = "open"
+    IF overdue > 0 THEN state$ = "overdue " + DT.HUMANIZE$(due, today, "de")
+    PUSH(rows, [inv{"no"}, inv{"customer"}, DT.FMT$(issued, "%d.%m.%Y %H:%M", berlin), DT.FMT$(due, "%a %d.%m.%Y", berlin), inv{"amount"}, state$])
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["no", "customer", "issued (Berlin)", "due", "amount", "state"], "align": ["l", "l", "l", "l", "r", "l"]})
+PRINT ""
+
+' ── the same due date around the world ─────────────────────────
+
+DIM sample = DT.PARSE(invoices[0]{"issued"})
+CONSOLE.KV([["ISO, UTC", DT.ISO$(sample)], ["ISO, Berlin", DT.ISO$(sample, berlin)], ["RFC 2822, New York", DT.RFC$(sample, -4)], ["German", DT.FMT$(sample, "%A, %d. %B %Y %H:%M", berlin)], ["ISO week", "W" + STR$(DT.ISOWEEK(sample, berlin){"week"})], ["epoch", STR$(sample)]])
+PRINT ""
+
+' ── reminder dates ─────────────────────────────────────────────
+
+DIM first = DT.STARTOF(DT.ADD(today, "1 week"), "week", berlin)
+DIM reminders = DT.RANGE(first, DT.ADD(first, "6 weeks"), "2 weeks")
+DIM texts = []
+DIM r = 0
+FOR r = 0 TO LEN(reminders) - 1
+    PUSH(texts, [DT.FMT$(reminders[r], "%a %d.%m.%Y", berlin), DT.HUMANIZE$(reminders[r], today), DT.HUMANIZE$(reminders[r], today, "de")])
+NEXT r
+CONSOLE.TABLE(texts, {"headers": ["reminder", "in English", "auf Deutsch"], "border": "plain"})
+PRINT ""
+
+' ── dates before 1970 are ordinary dates ───────────────────────
+
+DIM founded = DT.PARSE("Mon, 20 Jul 1969 20:17:00 +0000")
+PRINT "The company was founded "; DT.FMT$(founded, "%A, %d %B %Y", 0); ", that is "; DT.HUMANIZE$(founded, today); "."
+PRINT "Its 60th anniversary falls on a "; DT.WEEKDAY$(DT.ADD(founded, "60 years"), "en"); "."

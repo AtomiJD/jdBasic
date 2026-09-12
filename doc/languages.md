@@ -1427,6 +1427,9 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `CONF` | dotenv, INI and a TOML subset into one map shape |
 | `JWT` | HS256 tokens: sign, decode, verify |
 | `XLSX` | Excel workbooks written and read without Excel |
+| `CONSOLE` | tables, styled text, rules, panels, progress bars and spinners on stdout |
+| `DT` | dates as epoch numbers: parsing, fixed offsets, calendar arithmetic, ranges, relative text |
+| `MD` | Markdown to HTML |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

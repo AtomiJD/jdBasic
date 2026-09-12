@@ -44,6 +44,9 @@ and SCHEMA) finds it through the same search.
 | `conf.jdb` | python-dotenv, configparser, tomllib | dotenv, INI and a TOML subset into one map shape; dotted GET | [conf_lib_readme.md](conf_lib_readme.md) |
 | `jwt.jdb` | PyJWT | HS256 sign, decode and verify with exp, nbf, iss, aud and clock skew | [jwt_lib_readme.md](jwt_lib_readme.md) |
 | `xlsx.jdb` | openpyxl | workbooks written with bold headers, widths, number formats and frozen panes; read back as typed 2D arrays | [xlsx_lib_readme.md](xlsx_lib_readme.md) |
+| `console.jdb` | tabulate, rich, tqdm | tables from arrays or maps in four border styles, styled text that degrades to plain, rules, panels, key and value blocks, progress bars, spinners | [console_lib_readme.md](console_lib_readme.md) |
+| `dt.jdb` | dateutil, arrow | dates as epoch numbers with their own calendar: ISO, RFC 2822 and German parsing, fixed offsets, calendar arithmetic, rounding, ranges, relative text in English and German | [dt_lib_readme.md](dt_lib_readme.md) |
+| `md.jdb` | markdown | the CommonMark subset to HTML: headings, lists, fences, quotes, tables, links, images, escaping with a raw switch | [md_lib_readme.md](md_lib_readme.md) |
 
 ## Tests and demos
 

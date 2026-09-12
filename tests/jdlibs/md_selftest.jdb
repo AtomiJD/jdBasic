@@ -1,0 +1,82 @@
+' MD: inline spans, every block kind, escaping and the raw switch, and
+' the fixture document against its checked-in expectation.
+
+IMPORT TESTKIT, MD
+
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+
+TESTKIT.SUITE("inline")
+TESTKIT.EQ(MD.INLINE$("plain"), "plain", "plain text")
+TESTKIT.EQ(MD.INLINE$("a *b* c"), "a <em>b</em> c", "emphasis with stars")
+TESTKIT.EQ(MD.INLINE$("a _b_ c"), "a <em>b</em> c", "emphasis with underscores")
+TESTKIT.EQ(MD.INLINE$("**bold** __too__"), "<strong>bold</strong> <strong>too</strong>", "strong")
+TESTKIT.EQ(MD.INLINE$("***both***"), "<em><strong>both</strong></em>", "nested strong in emphasis")
+TESTKIT.EQ(MD.INLINE$("~~gone~~"), "<del>gone</del>", "strikethrough")
+TESTKIT.EQ(MD.INLINE$("x `co*de` y"), "x <code>co*de</code> y", "a code span keeps its stars")
+TESTKIT.EQ(MD.INLINE$("`` a`b ``"), "<code>a`b</code>", "double backticks around a backtick")
+TESTKIT.EQ(MD.INLINE$("[link](http://x.y/z)"), "<a href=" + Q$ + "http://x.y/z" + Q$ + ">link</a>", "a link")
+TESTKIT.EQ(MD.INLINE$("[t](u " + Q$ + "T" + Q$ + ")"), "<a href=" + Q$ + "u" + Q$ + " title=" + Q$ + "T" + Q$ + ">t</a>", "a link with a title")
+TESTKIT.EQ(MD.INLINE$("[*em* [x]](u)"), "<a href=" + Q$ + "u" + Q$ + "><em>em</em> [x]</a>", "brackets and spans inside a link")
+TESTKIT.EQ(MD.INLINE$("![alt](i.png)"), "<img src=" + Q$ + "i.png" + Q$ + " alt=" + Q$ + "alt" + Q$ + " />", "an image")
+TESTKIT.EQ(MD.INLINE$("<https://a.b/c?d=1>"), "<a href=" + Q$ + "https://a.b/c?d=1" + Q$ + ">https://a.b/c?d=1</a>", "an autolink")
+TESTKIT.EQ(MD.INLINE$("a <b>tag</b> & co"), "a &lt;b&gt;tag&lt;/b&gt; &amp; co", "tags and ampersands are escaped")
+TESTKIT.EQ(MD.INLINE$("a <b>tag</b> & co", TRUE), "a <b>tag</b> &amp; co", "raw keeps the tag")
+TESTKIT.EQ(MD.INLINE$("\*not\* \`x\`"), "*not* `x`", "backslash escapes")
+TESTKIT.EQ(MD.INLINE$("snake_case_name and 2 * 3 * 4"), "snake_case_name and 2 * 3 * 4", "underscores in words and spaced stars stay")
+TESTKIT.EQ(MD.INLINE$("[not a link]"), "[not a link]", "brackets alone stay")
+TESTKIT.EQ(MD.ESCAPE$("<a href=" + Q$ + "x" + Q$ + ">&</a>"), "&lt;a href=&quot;x&quot;&gt;&amp;&lt;/a&gt;", "the escape helper")
+
+TESTKIT.SUITE("blocks")
+TESTKIT.EQ(MD.RENDER$("# Title"), "<h1>Title</h1>", "a heading")
+TESTKIT.EQ(MD.RENDER$("### Three ###"), "<h3>Three</h3>", "closing hashes are dropped")
+TESTKIT.EQ(MD.RENDER$("####### seven"), "<p>####### seven</p>", "seven hashes are text")
+TESTKIT.EQ(MD.RENDER$("one" + NL$ + "two"), "<p>one" + NL$ + "two</p>", "lines join in a paragraph")
+TESTKIT.EQ(MD.RENDER$("one  " + NL$ + "two"), "<p>one<br />" + NL$ + "two</p>", "two spaces make a hard break")
+TESTKIT.EQ(MD.RENDER$("one" + CHR$(92) + NL$ + "two"), "<p>one<br />" + NL$ + "two</p>", "a backslash makes a hard break")
+TESTKIT.EQ(MD.RENDER$("a" + NL$ + NL$ + "b"), "<p>a</p>" + NL$ + "<p>b</p>", "a blank line separates paragraphs")
+TESTKIT.EQ(MD.RENDER$("---"), "<hr />", "a rule")
+TESTKIT.EQ(MD.RENDER$("* * *"), "<hr />", "a spaced rule")
+TESTKIT.EQ(MD.RENDER$("> a" + NL$ + "> b"), "<blockquote>" + NL$ + "<p>a" + NL$ + "b</p>" + NL$ + "</blockquote>", "a blockquote")
+TESTKIT.EQ(MD.RENDER$("> # h" + NL$ + ">" + NL$ + "> p"), "<blockquote>" + NL$ + "<h1>h</h1>" + NL$ + "<p>p</p>" + NL$ + "</blockquote>", "blocks inside a quote")
+TESTKIT.EQ(MD.RENDER$("```" + NL$ + "a <b>" + NL$ + "```"), "<pre><code>a &lt;b&gt;" + NL$ + "</code></pre>", "a fence escapes its content")
+TESTKIT.EQ(MD.RENDER$("```basic" + NL$ + "PRINT 1" + NL$ + "```"), "<pre><code class=" + Q$ + "language-basic" + Q$ + ">PRINT 1" + NL$ + "</code></pre>", "a fence with a language")
+TESTKIT.EQ(MD.RENDER$("~~~" + NL$ + "*x*" + NL$ + "~~~"), "<pre><code>*x*" + NL$ + "</code></pre>", "tildes fence too, no inline inside")
+TESTKIT.EQ(MD.RENDER$("para" + NL$ + "# h"), "<p>para</p>" + NL$ + "<h1>h</h1>", "a heading ends a paragraph")
+
+TESTKIT.SUITE("lists")
+TESTKIT.EQ(MD.RENDER$("- a" + NL$ + "- b"), "<ul>" + NL$ + "<li>a</li>" + NL$ + "<li>b</li>" + NL$ + "</ul>", "a bullet list")
+TESTKIT.EQ(MD.RENDER$("+ a" + NL$ + "* b"), "<ul>" + NL$ + "<li>a</li>" + NL$ + "<li>b</li>" + NL$ + "</ul>", "any bullet marker")
+TESTKIT.EQ(MD.RENDER$("1. a" + NL$ + "2. b"), "<ol>" + NL$ + "<li>a</li>" + NL$ + "<li>b</li>" + NL$ + "</ol>", "a numbered list")
+TESTKIT.EQ(MD.RENDER$("3) a"), "<ol start=" + Q$ + "3" + Q$ + ">" + NL$ + "<li>a</li>" + NL$ + "</ol>", "a list starting at three")
+TESTKIT.EQ(MD.RENDER$("- a" + NL$ + "  - b" + NL$ + "- c"), "<ul>" + NL$ + "<li>a" + NL$ + "<ul>" + NL$ + "<li>b</li>" + NL$ + "</ul></li>" + NL$ + "<li>c</li>" + NL$ + "</ul>", "a nested list")
+TESTKIT.EQ(MD.RENDER$("- a" + NL$ + "  continued"), "<ul>" + NL$ + "<li>a" + NL$ + "continued</li>" + NL$ + "</ul>", "a continuation line")
+TESTKIT.EQ(MD.RENDER$("- a" + NL$ + NL$ + "1. b"), "<ul>" + NL$ + "<li>a</li>" + NL$ + "</ul>" + NL$ + "<ol>" + NL$ + "<li>b</li>" + NL$ + "</ol>", "a different kind starts a new list")
+TESTKIT.EQ(MD.RENDER$("- *a* and `b`"), "<ul>" + NL$ + "<li><em>a</em> and <code>b</code></li>" + NL$ + "</ul>", "inline inside an item")
+TESTKIT.EQ(MD.RENDER$("- a" + NL$ + NL$ + "text"), "<ul>" + NL$ + "<li>a</li>" + NL$ + "</ul>" + NL$ + "<p>text</p>", "a paragraph after a list")
+
+TESTKIT.SUITE("tables")
+DIM t$ = "| a | b |" + NL$ + "|---|--:|" + NL$ + "| 1 | *2* |"
+DIM want$ = "<table>" + NL$ + "<thead>" + NL$ + "<tr>" + NL$ + "<th>a</th>" + NL$ + "<th style=" + Q$ + "text-align:right" + Q$ + ">b</th>" + NL$ + "</tr>" + NL$ + "</thead>" + NL$ + "<tbody>" + NL$ + "<tr>" + NL$ + "<td>1</td>" + NL$ + "<td style=" + Q$ + "text-align:right" + Q$ + "><em>2</em></td>" + NL$ + "</tr>" + NL$ + "</tbody>" + NL$ + "</table>"
+TESTKIT.EQ(MD.RENDER$(t$), want$, "a table with a right aligned column")
+TESTKIT.EQ(MD.RENDER$("a | b" + NL$ + ":-:|-"), "<table>" + NL$ + "<thead>" + NL$ + "<tr>" + NL$ + "<th style=" + Q$ + "text-align:center" + Q$ + ">a</th>" + NL$ + "<th>b</th>" + NL$ + "</tr>" + NL$ + "</thead>" + NL$ + "</table>", "a header only table without outer pipes")
+TESTKIT.EQ(MD.RENDER$("| a |" + NL$ + "|---|" + NL$ + "| x " + CHR$(92) + "| y |"), "<table>" + NL$ + "<thead>" + NL$ + "<tr>" + NL$ + "<th>a</th>" + NL$ + "</tr>" + NL$ + "</thead>" + NL$ + "<tbody>" + NL$ + "<tr>" + NL$ + "<td>x | y</td>" + NL$ + "</tr>" + NL$ + "</tbody>" + NL$ + "</table>", "an escaped pipe inside a cell")
+TESTKIT.EQ(MD.RENDER$("| a | b"), "<p>| a | b</p>", "a pipe line without a delimiter row is text")
+
+TESTKIT.SUITE("raw")
+DIM html$ = "<div class=" + Q$ + "x" + Q$ + ">" + NL$ + "inside" + NL$ + "</div>"
+TESTKIT.EQ(MD.RENDER$(html$, {"raw": TRUE}), html$, "a raw block passes through")
+TESTKIT.EQ(MD.RENDER$(html$), "<p>&lt;div class=&quot;x&quot;&gt;" + NL$ + "inside" + NL$ + "&lt;/div&gt;</p>", "and is escaped by default")
+
+TESTKIT.SUITE("fixture")
+DIM fixture$ = "tests/jdlibs/fixtures/md_fixture"
+IF NOT FILE.EXISTS(fixture$ + ".md") THEN fixture$ = "fixtures/md_fixture"
+DIM expected$ = REPLACE$(TXTREADER$(fixture$ + ".html"), CHR$(13), "")
+DO WHILE ENDSWITH(expected$, NL$)
+    expected$ = LEFT$(expected$, LEN(expected$) - 1)
+LOOP
+DIM rendered$ = MD.FILE$(fixture$ + ".md")
+TESTKIT.EQ(LEN(rendered$), LEN(expected$), "the fixture renders to the expected length")
+TESTKIT.EQ(rendered$, expected$, "the fixture renders byte for byte as checked in")
+
+TESTKIT.REPORT()

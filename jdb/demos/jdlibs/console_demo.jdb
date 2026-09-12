@@ -1,0 +1,86 @@
+' console_demo.jdb - a release build report on stdout.
+'
+' Styled headings, a table of build jobs (an array of maps), a key and
+' value summary, a progress bar over the packaging steps, a spinner
+' while the upload runs, a panel with the notes, and the same table
+' once more as Markdown for the changelog.
+'
+'   jdBasic console_demo.jdb
+'   NO_COLOR=1 jdBasic console_demo.jdb > report.txt
+
+IMPORT CONSOLE
+
+CONSOLE.SET_WIDTH(72)
+
+CONSOLE.RULE("release 1.0.31", "=")
+PRINT CONSOLE.BOLD$("jdBasic release build") + " " + CONSOLE.FAINT$("(three targets, two packages)")
+PRINT ""
+
+' ── the jobs ───────────────────────────────────────────────────
+
+DIM jobs = []
+PUSH(jobs, {"target": "windows-x64", "flags": "HTTP GFX IMGUI NATIVEC", "seconds": 184.2, "ok": TRUE})
+PUSH(jobs, {"target": "linux-x64", "flags": "HTTP GFX", "seconds": 121.7, "ok": TRUE})
+PUSH(jobs, {"target": "macos-arm64", "flags": "HTTP", "seconds": 97.4, "ok": FALSE, "note": "SDL3 missing"})
+
+DIM shown = []
+DIM j = 0
+FOR j = 0 TO LEN(jobs) - 1
+    DIM row = jobs[j]
+    DIM status$ = CONSOLE.GREEN$("ok")
+    IF NOT row{"ok"} THEN status$ = CONSOLE.RED$("failed")
+    DIM note$ = ""
+    IF MAP.EXISTS(row, "note") THEN note$ = row{"note"}
+    PUSH(shown, [row{"target"}, row{"flags"}, CONSOLE.DURATION$(row{"seconds"}), status$, note$])
+NEXT j
+CONSOLE.TABLE(shown, {"headers": ["target", "flags", "time", "status", "note"], "align": ["l", "l", "r", "l", "l"]})
+PRINT ""
+
+' ── the summary ────────────────────────────────────────────────
+
+DIM total = 0
+DIM good = 0
+FOR j = 0 TO LEN(jobs) - 1
+    total = total + jobs[j]{"seconds"}
+    IF jobs[j]{"ok"} THEN good = good + 1
+NEXT j
+CONSOLE.KV({"targets": LEN(jobs), "succeeded": good, "build time": CONSOLE.DURATION$(total), "artifacts": "release/"}, 2)
+PRINT ""
+
+' ── packaging with a progress bar ──────────────────────────────
+
+DIM files = ["jdBasic.exe", "jdbrt.dll", "help.txt", "lib/", "doc/", "SDL3.dll", "jdbasic_default.ttf", "README.md"]
+DIM bar = CONSOLE.PROGRESS(LEN(files), "packing", 24)
+DIM f = 0
+FOR f = 0 TO LEN(files) - 1
+    SLEEP 60
+    CONSOLE.ADVANCE(bar)
+NEXT f
+CONSOLE.FINISH(bar)
+
+' ── the upload with a spinner ──────────────────────────────────
+
+DIM sp = CONSOLE.SPINNER("uploading jdbasic-1.0.31-win64.zip")
+DIM t = 0
+FOR t = 1 TO 12
+    SLEEP 50
+    CONSOLE.SPIN(sp)
+NEXT t
+CONSOLE.DONE(sp, CONSOLE.GREEN$("uploaded") + " (12.4 MB)")
+PRINT ""
+
+' ── notes ──────────────────────────────────────────────────────
+
+CONSOLE.PANEL("The macOS build needs the SDL3 framework in libs/ before the release can be signed; the Windows and Linux packages are ready. Run the gate on both backends before tagging.", "notes")
+PRINT ""
+
+' ── the same table for the changelog ───────────────────────────
+
+CONSOLE.PLAIN(TRUE)
+DIM md = []
+FOR j = 0 TO LEN(jobs) - 1
+    DIM outcome$ = "ok"
+    IF NOT jobs[j]{"ok"} THEN outcome$ = "failed"
+    PUSH(md, [jobs[j]{"target"}, CONSOLE.DURATION$(jobs[j]{"seconds"}), outcome$])
+NEXT j
+PRINT CONSOLE.TABLE$(md, {"headers": ["target", "time", "status"], "border": "markdown"})

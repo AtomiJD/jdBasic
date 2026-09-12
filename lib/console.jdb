@@ -1,0 +1,576 @@
+' console.jdb - tables, styled text, progress bars and spinners for stdout.
+'
+'   IMPORT CONSOLE
+'   CONSOLE.TABLE(rows, {"headers": ["name", "qty"], "align": ["l", "r"]})
+'   PRINT CONSOLE.STYLE$("done", "bold green")
+'   DIM bar = CONSOLE.PROGRESS(200, "packing")
+'   FOR i = 1 TO 200 : CONSOLE.ADVANCE(bar) : NEXT i
+'   CONSOLE.FINISH(bar)
+'
+' Colours and cursor movement are ANSI escapes. They are switched off when
+' NO_COLOR is set, when TERM is "dumb", or after CONSOLE.PLAIN(TRUE); a
+' progress bar then prints one line per ten percent instead of redrawing.
+' The width comes from COLUMNS, or CONSOLE.SET_WIDTH, or defaults to 80.
+
+EXPORT MODULE CONSOLE
+
+CONST ESC$ = CHR$(27)
+CONST CR$ = CHR$(13)
+
+DIM gPlain = -1
+DIM gWidth = 0
+DIM gSpinFrames = ["|", "/", "-", CHR$(92)]
+
+' ── output mode ───────────────────────────────────────────────
+
+' Switches escapes off (TRUE) or on (FALSE).
+EXPORT SUB PLAIN(flag)
+    IF flag THEN
+        gPlain = 1
+    ELSE
+        gPlain = 0
+    ENDIF
+ENDSUB
+
+EXPORT FUNC IS_PLAIN()
+    IF gPlain < 0 THEN
+        gPlain = 0
+        IF LEN(GETENV$("NO_COLOR")) > 0 THEN gPlain = 1
+        IF GETENV$("TERM") = "dumb" THEN gPlain = 1
+    ENDIF
+    RETURN gPlain = 1
+ENDFUNC
+
+EXPORT SUB SET_WIDTH(columns)
+    gWidth = columns
+ENDSUB
+
+EXPORT FUNC WIDTH()
+    IF gWidth > 0 THEN RETURN gWidth
+    DIM env$ = GETENV$("COLUMNS")
+    IF LEN(env$) > 0 ANDALSO VAL(env$) > 0 THEN RETURN CINT(VAL(env$))
+    RETURN 80
+ENDFUNC
+
+' ── styles ────────────────────────────────────────────────────
+
+' Wraps text in the escapes for a space separated spec such as
+' "bold red on_blue"; plain mode returns the text unchanged.
+EXPORT FUNC STYLE$(text$, spec$)
+    IF IS_PLAIN() THEN RETURN text$
+    DIM codes$ = ""
+    DIM words = SPLIT(LCASE$(spec$), " ")
+    DIM i = 0
+    FOR i = 0 TO LEN(words) - 1
+        DIM code = StyleCode(words[i])
+        IF code >= 0 THEN
+            IF LEN(codes$) > 0 THEN codes$ = codes$ + ";"
+            codes$ = codes$ + STR$(code)
+        ENDIF
+    NEXT i
+    IF LEN(codes$) = 0 THEN RETURN text$
+    RETURN ESC$ + "[" + codes$ + "m" + text$ + ESC$ + "[0m"
+ENDFUNC
+
+FUNC StyleCode(word$)
+    DIM names = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"]
+    DIM i = 0
+    FOR i = 0 TO 7
+        IF word$ = names[i] THEN RETURN 30 + i
+        IF word$ = "bright_" + names[i] THEN RETURN 90 + i
+        IF word$ = "on_" + names[i] THEN RETURN 40 + i
+        IF word$ = "on_bright_" + names[i] THEN RETURN 100 + i
+    NEXT i
+    IF word$ = "bold" THEN RETURN 1
+    IF word$ = "faint" THEN RETURN 2
+    IF word$ = "italic" THEN RETURN 3
+    IF word$ = "underline" THEN RETURN 4
+    IF word$ = "blink" THEN RETURN 5
+    IF word$ = "inverse" THEN RETURN 7
+    IF word$ = "strike" THEN RETURN 9
+    RETURN -1
+ENDFUNC
+
+EXPORT FUNC BOLD$(text$)
+    RETURN STYLE$(text$, "bold")
+ENDFUNC
+
+EXPORT FUNC FAINT$(text$)
+    RETURN STYLE$(text$, "faint")
+ENDFUNC
+
+EXPORT FUNC RED$(text$)
+    RETURN STYLE$(text$, "red")
+ENDFUNC
+
+EXPORT FUNC GREEN$(text$)
+    RETURN STYLE$(text$, "green")
+ENDFUNC
+
+EXPORT FUNC YELLOW$(text$)
+    RETURN STYLE$(text$, "yellow")
+ENDFUNC
+
+EXPORT FUNC BLUE$(text$)
+    RETURN STYLE$(text$, "blue")
+ENDFUNC
+
+EXPORT FUNC CYAN$(text$)
+    RETURN STYLE$(text$, "cyan")
+ENDFUNC
+
+EXPORT FUNC MAGENTA$(text$)
+    RETURN STYLE$(text$, "magenta")
+ENDFUNC
+
+' The text without its escapes.
+EXPORT FUNC STRIP$(text$)
+    IF INSTR(text$, ESC$) < 0 THEN RETURN text$
+    RETURN REGEX.REPLACE(ESC$ + "\[[0-9;]*[A-Za-z]", text$, "")
+ENDFUNC
+
+' The number of visible characters.
+EXPORT FUNC VISIBLE(text$)
+    RETURN LEN(STRIP$(text$))
+ENDFUNC
+
+' Pads or cuts to a width, counting visible characters only.
+EXPORT FUNC FIT$(text$, width, align$ = "l")
+    DIM shown = VISIBLE(text$)
+    IF shown > width THEN
+        DIM plain$ = STRIP$(text$)
+        IF width <= 1 THEN RETURN LEFT$(plain$, width)
+        RETURN LEFT$(plain$, width - 1) + "~"
+    ENDIF
+    DIM gap = width - shown
+    IF align$ = "r" THEN RETURN SPACE$(gap) + text$
+    IF align$ = "c" THEN RETURN SPACE$(gap \ 2) + text$ + SPACE$(gap - gap \ 2)
+    RETURN text$ + SPACE$(gap)
+ENDFUNC
+
+' ── cells ─────────────────────────────────────────────────────
+
+' A cell as text: numbers through STR$, booleans as TRUE/FALSE, maps
+' and arrays through JSON, NONE as an empty string.
+FUNC Cell$(v)
+    DIM t$ = TYPEOF(v)
+    IF t$ = "NONE" THEN RETURN ""
+    IF t$ = "STRING" THEN RETURN v
+    IF t$ = "BOOLEAN" THEN
+        IF v THEN RETURN "TRUE"
+        RETURN "FALSE"
+    ENDIF
+    IF t$ = "ARRAY" ORELSE t$ = "OBJECT" THEN RETURN JSON.STRINGIFY$(v)
+    RETURN STR$(v)
+ENDFUNC
+
+FUNC IsNumeric(v)
+    DIM t$ = TYPEOF(v)
+    RETURN t$ = "FLOAT64" ORELSE t$ = "INT64" ORELSE t$ = "NUMBER" ORELSE t$ = "INTEGER" ORELSE t$ = "DOUBLE"
+ENDFUNC
+
+' Rows as a 2D array of strings plus the headers, from a 2D array or
+' from an array of maps (headers are the union of the keys).
+FUNC Shape(rows, opts)
+    DIM headers = []
+    IF MAP.EXISTS(opts, "headers") THEN headers = opts{"headers"}
+    DIM out = []
+    DIM numeric = []
+    IF LEN(rows) = 0 THEN RETURN {"headers": headers, "rows": out, "numeric": numeric}
+    IF TYPEOF(rows[0]) = "OBJECT" THEN
+        IF LEN(headers) = 0 THEN
+            DIM r = 0
+            FOR r = 0 TO LEN(rows) - 1
+                DIM keys = MAP.KEYS(rows[r])
+                DIM k = 0
+                FOR k = 0 TO LEN(keys) - 1
+                    IF NOT (keys[k] IN headers) THEN headers = APPEND(headers, keys[k])
+                NEXT k
+            NEXT r
+        ENDIF
+        DIM r2 = 0
+        FOR r2 = 0 TO LEN(rows) - 1
+            DIM cells = []
+            DIM c = 0
+            FOR c = 0 TO LEN(headers) - 1
+                DIM v = NONE
+                IF MAP.EXISTS(rows[r2], headers[c]) THEN v = rows[r2]{headers[c]}
+                PUSH(cells, Cell$(v))
+                IF r2 = 0 THEN PUSH(numeric, IsNumeric(v))
+            NEXT c
+            PUSH(out, cells)
+        NEXT r2
+        RETURN {"headers": headers, "rows": out, "numeric": numeric}
+    ENDIF
+    DIM r3 = 0
+    FOR r3 = 0 TO LEN(rows) - 1
+        DIM src = rows[r3]
+        DIM cells2 = []
+        DIM c2 = 0
+        FOR c2 = 0 TO LEN(src) - 1
+            PUSH(cells2, Cell$(src[c2]))
+            IF r3 = 0 THEN PUSH(numeric, IsNumeric(src[c2]))
+        NEXT c2
+        PUSH(out, cells2)
+    NEXT r3
+    RETURN {"headers": headers, "rows": out, "numeric": numeric}
+ENDFUNC
+
+' ── tables ────────────────────────────────────────────────────
+
+' The table as text. Options: "headers", "align" (one of l r c per
+' column, numbers default to r), "border" ("box", "plain", "markdown",
+' "none"), "widths" (a maximum per column), "max_width" (the whole table,
+' the widest column gives way), "title".
+EXPORT FUNC TABLE$(rows, opts = 0)
+    IF TYPEOF(opts) <> "OBJECT" THEN opts = {}
+    DIM data = Shape(rows, opts)
+    DIM headers = data{"headers"}
+    DIM body = data{"rows"}
+    DIM numeric = data{"numeric"}
+    DIM cols = LEN(headers)
+    DIM r = 0
+    FOR r = 0 TO LEN(body) - 1
+        IF LEN(body[r]) > cols THEN cols = LEN(body[r])
+    NEXT r
+    IF cols = 0 THEN RETURN ""
+    DIM border$ = "box"
+    IF MAP.EXISTS(opts, "border") THEN border$ = opts{"border"}
+    DIM align = []
+    DIM widths = []
+    DIM c = 0
+    FOR c = 0 TO cols - 1
+        DIM a$ = "l"
+        IF c < LEN(numeric) ANDALSO numeric[c] THEN a$ = "r"
+        IF MAP.EXISTS(opts, "align") ANDALSO c < LEN(opts{"align"}) THEN a$ = opts{"align"}[c]
+        PUSH(align, a$)
+        DIM w = 0
+        IF c < LEN(headers) THEN w = VISIBLE(headers[c])
+        FOR r = 0 TO LEN(body) - 1
+            IF c < LEN(body[r]) ANDALSO VISIBLE(body[r][c]) > w THEN w = VISIBLE(body[r][c])
+        NEXT r
+        IF MAP.EXISTS(opts, "widths") ANDALSO c < LEN(opts{"widths"}) ANDALSO opts{"widths"}[c] > 0 ANDALSO w > opts{"widths"}[c] THEN w = opts{"widths"}[c]
+        PUSH(widths, w)
+    NEXT c
+    IF MAP.EXISTS(opts, "max_width") THEN widths = Shrink(widths, opts{"max_width"}, border$)
+    IF border$ = "markdown" THEN
+        FOR c = 0 TO cols - 1
+            IF widths[c] < 3 THEN widths[c] = 3
+        NEXT c
+    ENDIF
+    DIM lines = []
+    IF MAP.EXISTS(opts, "title") THEN PUSH(lines, opts{"title"})
+    IF border$ = "box" THEN PUSH(lines, Edge$(widths, "+", "-"))
+    IF LEN(headers) > 0 THEN
+        PUSH(lines, Row$(headers, widths, align, border$, TRUE))
+        IF border$ = "box" THEN PUSH(lines, Edge$(widths, "+", "-"))
+        IF border$ = "markdown" THEN PUSH(lines, MarkdownRule$(widths, align))
+        IF border$ = "plain" THEN PUSH(lines, PlainRule$(widths))
+    ENDIF
+    FOR r = 0 TO LEN(body) - 1
+        PUSH(lines, Row$(body[r], widths, align, border$, FALSE))
+    NEXT r
+    IF border$ = "box" THEN PUSH(lines, Edge$(widths, "+", "-"))
+    RETURN JOIN(lines, CHR$(10))
+ENDFUNC
+
+EXPORT SUB TABLE(rows, opts = 0)
+    PRINT TABLE$(rows, opts)
+ENDSUB
+
+FUNC Edge$(widths, corner$, fill$)
+    DIM out$ = corner$
+    DIM c = 0
+    FOR c = 0 TO LEN(widths) - 1
+        out$ = out$ + (fill$ * (widths[c] + 2)) + corner$
+    NEXT c
+    RETURN out$
+ENDFUNC
+
+FUNC PlainRule$(widths)
+    DIM parts = []
+    DIM c = 0
+    FOR c = 0 TO LEN(widths) - 1
+        PUSH(parts, "-" * widths[c])
+    NEXT c
+    RETURN JOIN(parts, "  ")
+ENDFUNC
+
+FUNC MarkdownRule$(widths, align)
+    DIM out$ = "|"
+    DIM c = 0
+    FOR c = 0 TO LEN(widths) - 1
+        DIM dashes$ = ("-" * (widths[c]))
+        IF align[c] = "r" THEN dashes$ = LEFT$(dashes$, LEN(dashes$) - 1) + ":"
+        IF align[c] = "c" THEN dashes$ = ":" + MID$(dashes$, 1, LEN(dashes$) - 2) + ":"
+        out$ = out$ + " " + dashes$ + " |"
+    NEXT c
+    RETURN out$
+ENDFUNC
+
+FUNC Row$(cells, widths, align, border$, is_header)
+    DIM sep$ = "|"
+    IF border$ = "plain" ORELSE border$ = "none" THEN sep$ = " "
+    DIM out$ = ""
+    IF border$ = "box" ORELSE border$ = "markdown" THEN out$ = "|"
+    DIM c = 0
+    FOR c = 0 TO LEN(widths) - 1
+        DIM text$ = ""
+        IF c < LEN(cells) THEN text$ = cells[c]
+        DIM a$ = align[c]
+        IF is_header THEN
+            IF a$ = "r" THEN a$ = "r" ELSE a$ = "l"
+            text$ = BOLD$(text$)
+        ENDIF
+        DIM piece$ = FIT$(text$, widths[c], a$)
+        IF c = 0 ANDALSO (border$ = "plain" ORELSE border$ = "none") THEN
+            out$ = out$ + piece$
+        ELSEIF border$ = "plain" ORELSE border$ = "none" THEN
+            out$ = out$ + "  " + piece$
+        ELSE
+            out$ = out$ + " " + piece$ + " " + sep$
+        ENDIF
+    NEXT c
+    RETURN RTRIM$(out$)
+ENDFUNC
+
+' Takes columns down until the table fits, widest first.
+FUNC Shrink(widths, max_width, border$)
+    DIM out = widths + 0
+    DIM overhead = 0
+    IF border$ = "box" ORELSE border$ = "markdown" THEN
+        overhead = 3 * LEN(out) + 1
+    ELSE
+        overhead = 2 * (LEN(out) - 1)
+    ENDIF
+    DO
+        DIM total = SUM(out) + overhead
+        IF total <= max_width THEN EXITDO
+        DIM widest = 0
+        DIM c = 0
+        FOR c = 1 TO LEN(out) - 1
+            IF out[c] > out[widest] THEN widest = c
+        NEXT c
+        IF out[widest] <= 3 THEN EXITDO
+        out[widest] = out[widest] - 1
+    LOOP
+    RETURN out
+ENDFUNC
+
+' ── blocks ────────────────────────────────────────────────────
+
+' A horizontal rule across the width, with an optional centred title.
+EXPORT FUNC RULE$(title$ = "", fill$ = "-")
+    DIM w = WIDTH()
+    IF LEN(title$) = 0 THEN RETURN (fill$ * (w))
+    DIM label$ = " " + title$ + " "
+    DIM left = (w - LEN(label$)) \ 2
+    IF left < 1 THEN left = 1
+    DIM right = w - left - LEN(label$)
+    IF right < 1 THEN right = 1
+    RETURN (fill$ * (left)) + BOLD$(label$) + (fill$ * (right))
+ENDFUNC
+
+EXPORT SUB RULE(title$ = "", fill$ = "-")
+    PRINT RULE$(title$, fill$)
+ENDSUB
+
+' Text in a box, wrapped to the width, with an optional title on the
+' top edge.
+EXPORT FUNC PANEL$(text$, title$ = "", width = 0)
+    IF width <= 0 THEN width = WIDTH()
+    DIM inner = width - 4
+    IF inner < 8 THEN inner = 8
+    DIM lines = WrapWords(text$, inner)
+    DIM top$ = "+" + ("-" * (inner + 2)) + "+"
+    IF LEN(title$) > 0 THEN top$ = "+-" + BOLD$(" " + title$ + " ") + ("-" * (inner - LEN(title$) - 1)) + "+"
+    DIM out = [top$]
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        PUSH(out, "| " + FIT$(lines[i], inner, "l") + " |")
+    NEXT i
+    PUSH(out, "+" + ("-" * (inner + 2)) + "+")
+    RETURN JOIN(out, CHR$(10))
+ENDFUNC
+
+EXPORT SUB PANEL(text$, title$ = "", width = 0)
+    PRINT PANEL$(text$, title$, width)
+ENDSUB
+
+' Key and value lines, keys padded to the longest; a map or an array
+' of [key, value] pairs.
+EXPORT FUNC KV$(items, indent = 0)
+    DIM pairs = []
+    IF TYPEOF(items) = "OBJECT" THEN
+        DIM keys = MAP.KEYS(items)
+        DIM k = 0
+        FOR k = 0 TO LEN(keys) - 1
+            PUSH(pairs, [keys[k], items{keys[k]}])
+        NEXT k
+    ELSE
+        pairs = items
+    ENDIF
+    DIM w = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(pairs) - 1
+        IF LEN(Cell$(pairs[i][0])) > w THEN w = LEN(Cell$(pairs[i][0]))
+    NEXT i
+    DIM lines = []
+    FOR i = 0 TO LEN(pairs) - 1
+        PUSH(lines, SPACE$(indent) + FAINT$(FIT$(Cell$(pairs[i][0]), w, "l")) + "  " + Cell$(pairs[i][1]))
+    NEXT i
+    RETURN JOIN(lines, CHR$(10))
+ENDFUNC
+
+EXPORT SUB KV(items, indent = 0)
+    PRINT KV$(items, indent)
+ENDSUB
+
+' Words onto lines no longer than width; a word longer than the width
+' is cut.
+EXPORT FUNC WRAP(text$, width)
+    RETURN WrapWords(text$, width)
+ENDFUNC
+
+FUNC WrapWords(text$, width)
+    DIM out = []
+    DIM paragraphs = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM p = 0
+    FOR p = 0 TO LEN(paragraphs) - 1
+        DIM words = SPLIT(paragraphs[p], " ")
+        DIM current$ = ""
+        DIM i = 0
+        FOR i = 0 TO LEN(words) - 1
+            DIM word$ = words[i]
+            IF LEN(word$) = 0 THEN CONTINUEFOR
+            DO WHILE LEN(word$) > width
+                IF LEN(current$) > 0 THEN
+                    PUSH(out, current$)
+                    current$ = ""
+                ENDIF
+                PUSH(out, LEFT$(word$, width))
+                word$ = MID$(word$, width, LEN(word$) - width)
+            LOOP
+            IF LEN(current$) = 0 THEN
+                current$ = word$
+            ELSEIF LEN(current$) + 1 + LEN(word$) <= width THEN
+                current$ = current$ + " " + word$
+            ELSE
+                PUSH(out, current$)
+                current$ = word$
+            ENDIF
+        NEXT i
+        PUSH(out, current$)
+    NEXT p
+    RETURN out
+ENDFUNC
+
+' ── progress ──────────────────────────────────────────────────
+
+' A bar over total steps. Redrawn in place on a terminal; in plain
+' mode one line per ten percent.
+EXPORT FUNC PROGRESS(total, label$ = "", width = 30)
+    DIM p AS MAP
+    p{"total"} = total
+    p{"done"} = 0
+    p{"label"} = label$
+    p{"width"} = width
+    p{"started"} = TICK()
+    p{"last_step"} = -1
+    p{"finished"} = FALSE
+    p{"final_shown"} = FALSE
+    Draw(p)
+    RETURN p
+ENDFUNC
+
+EXPORT SUB ADVANCE(p, steps = 1)
+    p{"done"} = p{"done"} + steps
+    IF p{"done"} > p{"total"} THEN p{"done"} = p{"total"}
+    Draw(p)
+ENDSUB
+
+EXPORT SUB FINISH(p)
+    p{"done"} = p{"total"}
+    p{"finished"} = TRUE
+    Draw(p)
+    PRINT ""
+ENDSUB
+
+' The bar line as text, for a log or a test.
+EXPORT FUNC PROGRESS$(p)
+    DIM total = p{"total"}
+    DIM done = p{"done"}
+    DIM ratio = 0.0
+    IF total > 0 THEN ratio = done / total
+    DIM filled = CINT(ratio * p{"width"})
+    DIM bar$ = ("#" * (filled)) + ("." * (p{"width"} - filled))
+    DIM pct$ = RPAD$(STR$(CINT(ratio * 100)) + "%", 4)
+    DIM out$ = ""
+    IF LEN(p{"label"}) > 0 THEN out$ = p{"label"} + " "
+    out$ = out$ + "[" + bar$ + "] " + pct$ + " " + STR$(done) + "/" + STR$(total)
+    DIM elapsed = (TICK() - p{"started"}) / 1000
+    IF done > 0 ANDALSO done < total ANDALSO elapsed >= 1 THEN
+        DIM remaining = elapsed * (total - done) / done
+        out$ = out$ + " eta " + Span$(remaining)
+    ELSEIF p{"finished"} ORELSE done = total THEN
+        out$ = out$ + " in " + Span$(elapsed)
+    ENDIF
+    RETURN out$
+ENDFUNC
+
+SUB Draw(p)
+    IF IS_PLAIN() THEN
+        DIM tenth = 0
+        IF p{"total"} > 0 THEN tenth = (p{"done"} * 10) \ p{"total"}
+        DIM final = p{"finished"} ANDALSO NOT p{"final_shown"}
+        IF tenth <> p{"last_step"} ORELSE final THEN
+            p{"last_step"} = tenth
+            IF p{"done"} = p{"total"} THEN p{"final_shown"} = TRUE
+            PRINT PROGRESS$(p)
+        ENDIF
+        RETURN
+    ENDIF
+    PRINT CR$ + ESC$ + "[2K" + PROGRESS$(p);
+ENDSUB
+
+' Seconds as 3s, 2m05s or 1h02m.
+EXPORT FUNC DURATION$(seconds)
+    RETURN Span$(seconds)
+ENDFUNC
+
+FUNC Span$(seconds)
+    DIM s = CINT(seconds)
+    IF s < 60 THEN RETURN STR$(s) + "s"
+    IF s < 3600 THEN RETURN STR$(s \ 60) + "m" + LPAD$(STR$(s MOD 60), 2, "0") + "s"
+    RETURN STR$(s \ 3600) + "h" + LPAD$(STR$((s MOD 3600) \ 60), 2, "0") + "m"
+ENDFUNC
+
+' ── spinner ───────────────────────────────────────────────────
+
+' A spinner with a label; SPIN advances one frame, DONE ends the line
+' with a final text. Plain mode prints the label once and the final text.
+EXPORT FUNC SPINNER(label$)
+    DIM s AS MAP
+    s{"label"} = label$
+    s{"frame"} = 0
+    IF IS_PLAIN() THEN
+        PRINT label$ + " ...";
+    ELSE
+        PRINT CR$ + gSpinFrames[0] + " " + label$;
+    ENDIF
+    RETURN s
+ENDFUNC
+
+EXPORT SUB SPIN(s)
+    s{"frame"} = (s{"frame"} + 1) MOD LEN(gSpinFrames)
+    IF IS_PLAIN() THEN RETURN
+    PRINT CR$ + gSpinFrames[s{"frame"}] + " " + s{"label"};
+ENDSUB
+
+EXPORT SUB DONE(s, final$ = "done")
+    IF IS_PLAIN() THEN
+        PRINT " " + final$
+    ELSE
+        PRINT CR$ + ESC$ + "[2K" + s{"label"} + " " + final$
+    ENDIF
+ENDSUB

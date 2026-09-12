@@ -1,0 +1,55 @@
+<h1>The jdBasic Module Library</h1>
+<p>A <em>small</em> library of <strong>pure jdBasic</strong> modules, each a single file under <code>lib/</code>.
+Import one with <code>IMPORT NAME</code>, or several at once: <code>IMPORT CONF, LOGGER</code>.</p>
+<h2>What is in it</h2>
+<ul>
+<li>TESTKIT for assertions and reports</li>
+<li>CLI for flags, options and subcommands
+<ul>
+<li>flags such as <code>--verbose</code></li>
+<li>options with defaults</li>
+</ul></li>
+<li>REQ, the HTTP client
+with a continuation line</li>
+</ul>
+<ol>
+<li>Write the module</li>
+<li>Write its self test</li>
+<li>Write the demo</li>
+</ol>
+<blockquote>
+<p>Every module works interpreted and compiled with <code>-c</code>.
+The self tests run on both backends.</p>
+</blockquote>
+<h3>A code sample</h3>
+<pre><code class="language-basic">IMPORT CONSOLE
+CONSOLE.TABLE([[&quot;widget&quot;, 3]], {&quot;headers&quot;: [&quot;item&quot;, &quot;qty&quot;]})
+PRINT &quot;&lt;done&gt;&quot; &amp; TRUE
+</code></pre>
+<table>
+<thead>
+<tr>
+<th style="text-align:left">Module</th>
+<th style="text-align:center">Stands in for</th>
+<th style="text-align:right">Lines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align:left"><code>testkit.jdb</code></td>
+<td style="text-align:center">pytest</td>
+<td style="text-align:right">320</td>
+</tr>
+<tr>
+<td style="text-align:left"><code>req.jdb</code></td>
+<td style="text-align:center">requests</td>
+<td style="text-align:right">340</td>
+</tr>
+</tbody>
+</table>
+<p>Links and images: <a href="../doc/languages.md" title="The language reference">the reference</a>, <a href="https://jdbasic.org">https://jdbasic.org</a>,
+<img src="logo.png" alt="a logo" title="The logo" />.</p>
+<p>Hard break here<br />
+and the second line, then <del>struck</del> text, a snake_case_name, 2 * 3 = 6, and a literal *star*.</p>
+<hr />
+<p>Final paragraph with an ampersand &amp; an angle &lt;bracket&gt; that must be escaped.</p>

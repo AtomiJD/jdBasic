@@ -1,0 +1,560 @@
+' md.jdb - Markdown to HTML, the CommonMark subset documents actually use.
+'
+'   IMPORT MD
+'   PRINT MD.RENDER$("# Title" + CHR$(10) + "Some *text* with `code`.")
+'   DIM page$ = MD.FILE$("README.md")
+'   PRINT MD.RENDER$(text$, {"raw": TRUE})     ' raw HTML blocks and tags pass through
+'
+' Blocks: ATX headings, paragraphs, hard line breaks (two trailing spaces
+' or a backslash), bullet and numbered lists nested by indentation, code
+' fences with a language class, blockquotes, horizontal rules, tables
+' with column alignment. Inline: emphasis, strong, strikethrough, code
+' spans, links, images, autolinks, backslash escapes. Text is HTML
+' escaped; a raw HTML block or an inline tag is escaped too unless the
+' "raw" option is set.
+
+EXPORT MODULE MD
+
+CONST NL$ = CHR$(10)
+
+' ── entry points ───────────────────────────────────────────────
+
+EXPORT FUNC RENDER$(text$, opts = 0)
+    DIM raw = FALSE
+    IF TYPEOF(opts) = "OBJECT" ANDALSO MAP.EXISTS(opts, "raw") THEN raw = opts{"raw"}
+    DIM lines = SPLIT(REPLACE$(text$, CHR$(13), ""), NL$)
+    RETURN Blocks$(lines, raw)
+ENDFUNC
+
+EXPORT FUNC FILE$(path$, opts = 0)
+    RETURN RENDER$(TXTREADER$(path$), opts)
+ENDFUNC
+
+' The five characters HTML needs escaped.
+EXPORT FUNC ESCAPE$(text$)
+    DIM s$ = REPLACE$(text$, "&", "&amp;")
+    s$ = REPLACE$(s$, "<", "&lt;")
+    s$ = REPLACE$(s$, ">", "&gt;")
+    s$ = REPLACE$(s$, CHR$(34), "&quot;")
+    RETURN s$
+ENDFUNC
+
+' ── block structure ────────────────────────────────────────────
+
+FUNC IsBlank(row$)
+    RETURN LEN(TRIM$(row$)) = 0
+ENDFUNC
+
+FUNC IsRule(row$)
+    DIM t$ = REPLACE$(TRIM$(row$), " ", "")
+    IF LEN(t$) < 3 THEN RETURN FALSE
+    RETURN t$ = "-" * LEN(t$) ORELSE t$ = "*" * LEN(t$) ORELSE t$ = "_" * LEN(t$)
+ENDFUNC
+
+FUNC FenceOf$(row$)
+    DIM t$ = TRIM$(row$)
+    IF STARTSWITH(t$, "```") THEN RETURN "```"
+    IF STARTSWITH(t$, "~~~") THEN RETURN "~~~"
+    RETURN ""
+ENDFUNC
+
+' The indentation and marker of a list item line, or NONE.
+FUNC ListItem(row$)
+    DIM m = REGEX.FINDALL("^( *)([-*+]|\d+[.)]) +(.*)$", row$)
+    IF LEN(m) = 0 THEN
+        DIM bare = REGEX.FINDALL("^( *)([-*+]|\d+[.)])$", row$)
+        IF LEN(bare) = 0 THEN RETURN NONE
+        RETURN {"indent": LEN(bare[0][0]), "marker": bare[0][1], "text": "", "width": LEN(bare[0][0]) + LEN(bare[0][1]) + 1}
+    ENDIF
+    DIM g = m[0]
+    RETURN {"indent": LEN(g[0]), "marker": g[1], "text": g[2], "width": LEN(g[0]) + LEN(g[1]) + 1}
+ENDFUNC
+
+FUNC IsOrdered(marker$)
+    RETURN REGEX.MATCH("^\d+[.)]$", marker$)
+ENDFUNC
+
+FUNC IsTableRow(row$)
+    RETURN INSTR(row$, "|") >= 0
+ENDFUNC
+
+FUNC IsDelimiterRow(row$)
+    DIM t$ = TRIM$(row$)
+    IF INSTR(t$, "-") < 0 THEN RETURN FALSE
+    RETURN REGEX.MATCH("^\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?$", t$)
+ENDFUNC
+
+FUNC StartsBlock(row$)
+    IF IsBlank(row$) THEN RETURN TRUE
+    IF LEN(FenceOf$(row$)) > 0 THEN RETURN TRUE
+    IF REGEX.MATCH("^ {0,3}#{1,6}(?: .*)?$", row$) THEN RETURN TRUE
+    IF IsRule(row$) THEN RETURN TRUE
+    IF STARTSWITH(LTRIM$(row$), ">") THEN RETURN TRUE
+    IF TYPEOF(ListItem(row$)) <> "NONE" THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+' Renders a run of lines; the recursion point for blockquotes and items.
+FUNC Blocks$(lines, raw)
+    DIM out = []
+    DIM i = 0
+    DIM n = LEN(lines)
+    DO WHILE i < n
+        DIM row$ = lines[i]
+        IF IsBlank(row$) THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        ' code fence
+        DIM fence$ = FenceOf$(row$)
+        IF LEN(fence$) > 0 THEN
+            DIM lang$ = TRIM$(MID$(TRIM$(row$), 3, LEN(TRIM$(row$)) - 3))
+            DIM code = []
+            i = i + 1
+            DO WHILE i < n
+                IF STARTSWITH(TRIM$(lines[i]), fence$) THEN EXITDO
+                PUSH(code, ESCAPE$(lines[i]))
+                i = i + 1
+            LOOP
+            i = i + 1
+            DIM open$ = "<pre><code>"
+            IF LEN(lang$) > 0 THEN open$ = "<pre><code class=" + CHR$(34) + "language-" + ESCAPE$(lang$) + CHR$(34) + ">"
+            PUSH(out, open$ + JOIN(code, NL$) + NL$ + "</code></pre>")
+            CONTINUEDO
+        ENDIF
+        ' heading
+        DIM h = REGEX.FINDALL("^ {0,3}(#{1,6})(?: +(.*?))?(?: +#+)? *$", row$)
+        IF LEN(h) = 1 THEN
+            DIM level = LEN(h[0][0])
+            PUSH(out, "<h" + STR$(level) + ">" + Spans$(TRIM$(h[0][1]), raw) + "</h" + STR$(level) + ">")
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        ' rule
+        IF IsRule(row$) THEN
+            PUSH(out, "<hr />")
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        ' blockquote
+        IF STARTSWITH(LTRIM$(row$), ">") THEN
+            DIM quoted = []
+            DO WHILE i < n
+                DIM q$ = LTRIM$(lines[i])
+                IF STARTSWITH(q$, ">") THEN
+                    q$ = MID$(q$, 1, LEN(q$) - 1)
+                    IF STARTSWITH(q$, " ") THEN q$ = MID$(q$, 1, LEN(q$) - 1)
+                    PUSH(quoted, q$)
+                ELSEIF IsBlank(q$) ORELSE StartsBlock(lines[i]) THEN
+                    EXITDO
+                ELSE
+                    PUSH(quoted, lines[i])
+                ENDIF
+                i = i + 1
+            LOOP
+            PUSH(out, "<blockquote>" + NL$ + Blocks$(quoted, raw) + NL$ + "</blockquote>")
+            CONTINUEDO
+        ENDIF
+        ' list
+        DIM item = ListItem(row$)
+        IF TYPEOF(item) <> "NONE" THEN
+            DIM block = []
+            DIM ordered = IsOrdered(item{"marker"})
+            DO WHILE i < n
+                DIM cur$ = lines[i]
+                DIM next_item = ListItem(cur$)
+                IF IsBlank(cur$) THEN
+                    ' a blank line ends the list unless an item of the same
+                    ' kind or an indented line follows
+                    IF i + 1 < n THEN
+                        DIM after = ListItem(lines[i + 1])
+                        DIM same = FALSE
+                        IF TYPEOF(after) <> "NONE" THEN same = (IsOrdered(after{"marker"}) = ordered) ORELSE after{"indent"} > item{"indent"}
+                        IF same ORELSE (TYPEOF(after) = "NONE" ANDALSO STARTSWITH(lines[i + 1], "  ")) THEN
+                            PUSH(block, cur$)
+                            i = i + 1
+                            CONTINUEDO
+                        ENDIF
+                    ENDIF
+                    EXITDO
+                ENDIF
+                IF TYPEOF(next_item) <> "NONE" ANDALSO next_item{"indent"} <= item{"indent"} ANDALSO IsOrdered(next_item{"marker"}) <> ordered THEN EXITDO
+                IF TYPEOF(next_item) = "NONE" ANDALSO NOT STARTSWITH(cur$, " ") ANDALSO StartsBlock(cur$) THEN EXITDO
+                PUSH(block, cur$)
+                i = i + 1
+            LOOP
+            PUSH(out, List$(block, raw))
+            CONTINUEDO
+        ENDIF
+        ' table
+        IF IsTableRow(row$) ANDALSO i + 1 < n ANDALSO IsDelimiterRow(lines[i + 1]) THEN
+            DIM rows = [row$]
+            i = i + 2
+            DO WHILE i < n
+                IF IsBlank(lines[i]) ORELSE NOT IsTableRow(lines[i]) THEN EXITDO
+                PUSH(rows, lines[i])
+                i = i + 1
+            LOOP
+            PUSH(out, Table$(rows, lines[i - LEN(rows)], raw))
+            CONTINUEDO
+        ENDIF
+        ' raw HTML block
+        IF raw ANDALSO REGEX.MATCH("^ {0,3}<[A-Za-z!/?].*$", row$) THEN
+            DIM html = []
+            DO WHILE i < n
+                IF IsBlank(lines[i]) THEN EXITDO
+                PUSH(html, lines[i])
+                i = i + 1
+            LOOP
+            PUSH(out, JOIN(html, NL$))
+            CONTINUEDO
+        ENDIF
+        ' paragraph
+        DIM para = []
+        DO WHILE i < n
+            IF LEN(para) > 0 ANDALSO StartsBlock(lines[i]) THEN EXITDO
+            IF LEN(para) > 0 ANDALSO IsTableRow(lines[i]) ANDALSO i + 1 < n ANDALSO IsDelimiterRow(lines[i + 1]) THEN EXITDO
+            PUSH(para, lines[i])
+            i = i + 1
+        LOOP
+        PUSH(out, "<p>" + Paragraph$(para, raw) + "</p>")
+    LOOP
+    RETURN JOIN(out, NL$)
+ENDFUNC
+
+' The lines of a paragraph joined, with hard breaks kept.
+FUNC Paragraph$(para, raw)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(para) - 1
+        DIM t$ = TRIM$(para[i])
+        DIM hard = FALSE
+        IF i < LEN(para) - 1 THEN
+            IF ENDSWITH(para[i], "  ") THEN hard = TRUE
+            IF ENDSWITH(t$, CHR$(92)) THEN
+                hard = TRUE
+                t$ = LEFT$(t$, LEN(t$) - 1)
+            ENDIF
+        ENDIF
+        DIM piece$ = Spans$(t$, raw)
+        IF hard THEN piece$ = piece$ + "<br />"
+        PUSH(parts, piece$)
+    NEXT i
+    RETURN JOIN(parts, NL$)
+ENDFUNC
+
+' ── lists ──────────────────────────────────────────────────────
+
+' Items at the indentation of the first line; deeper lines belong to
+' the item above them and are rendered again as blocks.
+FUNC List$(block, raw)
+    DIM first = ListItem(block[0])
+    DIM base = first{"indent"}
+    DIM ordered = IsOrdered(first{"marker"})
+    DIM items = []
+    DIM current = NONE
+    DIM i = 0
+    FOR i = 0 TO LEN(block) - 1
+        DIM row$ = block[i]
+        DIM item = ListItem(row$)
+        IF TYPEOF(item) <> "NONE" ANDALSO item{"indent"} <= base THEN
+            IF TYPEOF(current) <> "NONE" THEN PUSH(items, current)
+            current = {"text": item{"text"}, "rest": [], "width": item{"width"}}
+        ELSEIF TYPEOF(current) <> "NONE" THEN
+            DIM strip = current{"width"}
+            DIM body$ = row$
+            IF LEN(body$) >= strip ANDALSO LEFT$(body$, strip) = " " * strip THEN
+                body$ = MID$(body$, strip, LEN(body$) - strip)
+            ELSE
+                body$ = LTRIM$(body$)
+            ENDIF
+            DIM rest = current{"rest"}
+            PUSH(rest, body$)
+            current{"rest"} = rest
+        ENDIF
+    NEXT i
+    IF TYPEOF(current) <> "NONE" THEN PUSH(items, current)
+    DIM loose = FALSE
+    DIM out = []
+    DIM tag$ = "ul"
+    IF ordered THEN tag$ = "ol"
+    DIM open$ = "<" + tag$ + ">"
+    IF ordered THEN
+        DIM start = VAL(LEFT$(first{"marker"}, LEN(first{"marker"}) - 1))
+        IF start <> 1 THEN open$ = "<ol start=" + CHR$(34) + STR$(start) + CHR$(34) + ">"
+    ENDIF
+    PUSH(out, open$)
+    FOR i = 0 TO LEN(items) - 1
+        DIM rest2 = items[i]{"rest"}
+        DIM inner$ = Spans$(TRIM$(items[i]{"text"}), raw)
+        DIM k = 0
+        DIM tail = []
+        FOR k = 0 TO LEN(rest2) - 1
+            IF NOT (IsBlank(rest2[k]) ANDALSO LEN(tail) = 0) THEN PUSH(tail, rest2[k])
+        NEXT k
+        DO WHILE LEN(tail) > 0 ANDALSO IsBlank(tail[LEN(tail) - 1])
+            tail = TAKE(LEN(tail) - 1, tail)
+        LOOP
+        IF LEN(tail) > 0 THEN
+            IF TYPEOF(ListItem(tail[0])) <> "NONE" ORELSE StartsBlock(tail[0]) THEN
+                inner$ = inner$ + NL$ + Blocks$(tail, raw)
+            ELSE
+                ' continuation lines stay in the item's own text
+                DIM lead = [items[i]{"text"}]
+                DIM head_lines = APPEND(lead, tail)
+                DIM own = []
+                DIM more = []
+                DIM q = 0
+                FOR q = 0 TO LEN(head_lines) - 1
+                    IF LEN(more) > 0 ORELSE IsBlank(head_lines[q]) ORELSE (q > 0 ANDALSO StartsBlock(head_lines[q])) THEN
+                        PUSH(more, head_lines[q])
+                    ELSE
+                        PUSH(own, head_lines[q])
+                    ENDIF
+                NEXT q
+                inner$ = Paragraph$(own, raw)
+                IF LEN(more) > 0 THEN inner$ = inner$ + NL$ + Blocks$(more, raw)
+            ENDIF
+        ENDIF
+        PUSH(out, "<li>" + inner$ + "</li>")
+    NEXT i
+    PUSH(out, "</" + tag$ + ">")
+    RETURN JOIN(out, NL$)
+ENDFUNC
+
+' ── tables ─────────────────────────────────────────────────────
+
+FUNC Cells(row$)
+    DIM t$ = TRIM$(row$)
+    IF STARTSWITH(t$, "|") THEN t$ = MID$(t$, 1, LEN(t$) - 1)
+    IF ENDSWITH(t$, "|") THEN t$ = LEFT$(t$, LEN(t$) - 1)
+    DIM parts = SPLIT(REPLACE$(t$, CHR$(92) + "|", CHR$(1)), "|")
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        PUSH(out, TRIM$(REPLACE$(parts[i], CHR$(1), "|")))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Table$(rows, delimiter$, raw)
+    DIM aligns = []
+    DIM spec = Cells(delimiter$)
+    DIM c = 0
+    FOR c = 0 TO LEN(spec) - 1
+        DIM a$ = ""
+        DIM left = STARTSWITH(spec[c], ":")
+        DIM right = ENDSWITH(spec[c], ":")
+        IF left ANDALSO right THEN
+            a$ = "center"
+        ELSEIF right THEN
+            a$ = "right"
+        ELSEIF left THEN
+            a$ = "left"
+        ENDIF
+        PUSH(aligns, a$)
+    NEXT c
+    DIM out = ["<table>", "<thead>", "<tr>"]
+    DIM head = Cells(rows[0])
+    FOR c = 0 TO LEN(head) - 1
+        PUSH(out, "<th" + AlignAttr$(aligns, c) + ">" + Spans$(head[c], raw) + "</th>")
+    NEXT c
+    PUSH(out, "</tr>")
+    PUSH(out, "</thead>")
+    IF LEN(rows) > 1 THEN
+        PUSH(out, "<tbody>")
+        DIM r = 1
+        FOR r = 1 TO LEN(rows) - 1
+            DIM cells = Cells(rows[r])
+            PUSH(out, "<tr>")
+            FOR c = 0 TO LEN(head) - 1
+                DIM text$ = ""
+                IF c < LEN(cells) THEN text$ = cells[c]
+                PUSH(out, "<td" + AlignAttr$(aligns, c) + ">" + Spans$(text$, raw) + "</td>")
+            NEXT c
+            PUSH(out, "</tr>")
+        NEXT r
+        PUSH(out, "</tbody>")
+    ENDIF
+    PUSH(out, "</table>")
+    RETURN JOIN(out, NL$)
+ENDFUNC
+
+FUNC AlignAttr$(aligns, c)
+    IF c >= LEN(aligns) ORELSE LEN(aligns[c]) = 0 THEN RETURN ""
+    RETURN " style=" + CHR$(34) + "text-align:" + aligns[c] + CHR$(34)
+ENDFUNC
+
+' ── inline ─────────────────────────────────────────────────────
+
+' Text with code spans, emphasis, links, images, autolinks and escapes
+' turned into HTML; everything else HTML escaped.
+EXPORT FUNC INLINE$(text$, raw = FALSE)
+    RETURN Spans$(text$, raw)
+ENDFUNC
+
+FUNC Spans$(text$, raw)
+    DIM out$ = ""
+    DIM i = 0
+    DIM n = LEN(text$)
+    DIM plain$ = ""
+    DO WHILE i < n
+        DIM c$ = MID$(text$, i, 1)
+        ' backslash escape
+        IF c$ = CHR$(92) ANDALSO i + 1 < n THEN
+            DIM nx$ = MID$(text$, i + 1, 1)
+            IF INSTR("\`*_{}[]()#+-.!|<>~", nx$) >= 0 THEN
+                plain$ = plain$ + nx$
+                i = i + 2
+                CONTINUEDO
+            ENDIF
+        ENDIF
+        ' code span
+        IF c$ = "`" THEN
+            DIM ticks = 0
+            DO WHILE i + ticks < n ANDALSO MID$(text$, i + ticks, 1) = "`"
+                ticks = ticks + 1
+            LOOP
+            DIM close = INSTR(i + ticks, text$, "`" * ticks)
+            IF close >= 0 THEN
+                DIM code$ = MID$(text$, i + ticks, close - i - ticks)
+                IF LEN(code$) > 1 ANDALSO STARTSWITH(code$, " ") ANDALSO ENDSWITH(code$, " ") THEN code$ = MID$(code$, 1, LEN(code$) - 2)
+                out$ = out$ + Flush$(plain$, raw) + "<code>" + ESCAPE$(code$) + "</code>"
+                plain$ = ""
+                i = close + ticks
+                CONTINUEDO
+            ENDIF
+            plain$ = plain$ + ("`" * ticks)
+            i = i + ticks
+            CONTINUEDO
+        ENDIF
+        ' image
+        IF c$ = "!" ANDALSO MID$(text$, i + 1, 1) = "[" THEN
+            DIM img = LinkAt(text$, i + 1)
+            IF TYPEOF(img) <> "NONE" THEN
+                out$ = out$ + Flush$(plain$, raw) + "<img src=" + CHR$(34) + ESCAPE$(img{"url"}) + CHR$(34) + " alt=" + CHR$(34) + ESCAPE$(img{"text"}) + CHR$(34) + TitleAttr$(img) + " />"
+                plain$ = ""
+                i = img{"end"}
+                CONTINUEDO
+            ENDIF
+        ENDIF
+        ' link
+        IF c$ = "[" THEN
+            DIM lnk = LinkAt(text$, i)
+            IF TYPEOF(lnk) <> "NONE" THEN
+                out$ = out$ + Flush$(plain$, raw) + "<a href=" + CHR$(34) + ESCAPE$(lnk{"url"}) + CHR$(34) + TitleAttr$(lnk) + ">" + Spans$(lnk{"text"}, raw) + "</a>"
+                plain$ = ""
+                i = lnk{"end"}
+                CONTINUEDO
+            ENDIF
+        ENDIF
+        ' autolink
+        IF c$ = "<" THEN
+            DIM auto = REGEX.FINDALL("^<((?:https?|ftp|mailto):[^ >]+)>", MID$(text$, i, n - i))
+            IF LEN(auto) = 1 THEN
+                DIM url$ = auto[0][0]
+                out$ = out$ + Flush$(plain$, raw) + "<a href=" + CHR$(34) + ESCAPE$(url$) + CHR$(34) + ">" + ESCAPE$(url$) + "</a>"
+                plain$ = ""
+                i = i + LEN(url$) + 2
+                CONTINUEDO
+            ENDIF
+        ENDIF
+        ' strong, emphasis, strikethrough
+        DIM span = SpanAt(text$, i)
+        IF TYPEOF(span) <> "NONE" THEN
+            out$ = out$ + Flush$(plain$, raw) + "<" + span{"tag"} + ">" + Spans$(span{"text"}, raw) + "</" + span{"tag"} + ">"
+            plain$ = ""
+            i = span{"end"}
+            CONTINUEDO
+        ENDIF
+        plain$ = plain$ + c$
+        i = i + 1
+    LOOP
+    RETURN out$ + Flush$(plain$, raw)
+ENDFUNC
+
+' Plain text escaped, or kept when raw HTML is allowed and it holds a tag.
+FUNC Flush$(plain$, raw)
+    IF LEN(plain$) = 0 THEN RETURN ""
+    IF raw THEN RETURN REPLACE$(REPLACE$(plain$, "&", "&amp;"), "&amp;amp;", "&amp;")
+    RETURN ESCAPE$(plain$)
+ENDFUNC
+
+' The delimiter run at i and its closing partner: {"tag", "text", "end"}.
+FUNC SpanAt(text$, i)
+    DIM n = LEN(text$)
+    DIM two$ = MID$(text$, i, 2)
+    DIM one$ = MID$(text$, i, 1)
+    ' three stars or underscores: emphasis around strong
+    DIM three$ = MID$(text$, i, 3)
+    IF three$ = "***" ORELSE three$ = "___" THEN
+        DIM shut = INSTR(i + 3, text$, three$)
+        IF shut > i + 3 ANDALSO MID$(text$, i + 3, 1) <> " " THEN
+            RETURN {"tag": "em", "text": LEFT$(three$, 2) + MID$(text$, i + 3, shut - i - 3) + LEFT$(three$, 2), "end": shut + 3}
+        ENDIF
+    ENDIF
+    DIM marks = ["**", "__", "~~", "*", "_"]
+    DIM tags = ["strong", "strong", "del", "em", "em"]
+    DIM k = 0
+    FOR k = 0 TO 4
+        DIM m$ = marks[k]
+        DIM w = LEN(m$)
+        DIM here$ = one$
+        IF w = 2 THEN here$ = two$
+        IF here$ <> m$ THEN CONTINUEFOR
+        IF i + w >= n THEN CONTINUEFOR
+        IF MID$(text$, i + w, 1) = " " THEN CONTINUEFOR
+        IF m$ = "_" ANDALSO i > 0 ANDALSO REGEX.MATCH("[A-Za-z0-9]", MID$(text$, i - 1, 1)) THEN CONTINUEFOR
+        DIM close = INSTR(i + w, text$, m$)
+        DO WHILE close >= 0
+            IF MID$(text$, close - 1, 1) <> " " ANDALSO close > i + w THEN
+                IF m$ = "*" ANDALSO MID$(text$, close, 2) = "**" ANDALSO close + 2 < n ANDALSO MID$(text$, close + 2, 1) <> " " THEN
+                    close = INSTR(close + 2, text$, m$)
+                    CONTINUEDO
+                ENDIF
+                RETURN {"tag": tags[k], "text": MID$(text$, i + w, close - i - w), "end": close + w}
+            ENDIF
+            close = INSTR(close + 1, text$, m$)
+        LOOP
+    NEXT k
+    RETURN NONE
+ENDFUNC
+
+' A link starting with the bracket at i: {"text", "url", "title", "end"}.
+FUNC LinkAt(text$, i)
+    DIM n = LEN(text$)
+    DIM depth = 0
+    DIM j = i
+    DO WHILE j < n
+        DIM c$ = MID$(text$, j, 1)
+        IF c$ = CHR$(92) THEN
+            j = j + 2
+            CONTINUEDO
+        ENDIF
+        IF c$ = "[" THEN depth = depth + 1
+        IF c$ = "]" THEN
+            depth = depth - 1
+            IF depth = 0 THEN EXITDO
+        ENDIF
+        j = j + 1
+    LOOP
+    IF j >= n ORELSE MID$(text$, j + 1, 1) <> "(" THEN RETURN NONE
+    DIM close = INSTR(j + 1, text$, ")")
+    IF close < 0 THEN RETURN NONE
+    DIM inside$ = TRIM$(MID$(text$, j + 2, close - j - 2))
+    DIM url$ = inside$
+    DIM title$ = ""
+    DIM sp = INSTR(inside$, " ")
+    IF sp >= 0 THEN
+        url$ = LEFT$(inside$, sp)
+        title$ = TRIM$(MID$(inside$, sp + 1, LEN(inside$) - sp - 1))
+        IF LEN(title$) >= 2 ANDALSO (STARTSWITH(title$, CHR$(34)) ORELSE STARTSWITH(title$, "'")) THEN title$ = MID$(title$, 1, LEN(title$) - 2)
+    ENDIF
+    IF STARTSWITH(url$, "<") ANDALSO ENDSWITH(url$, ">") THEN url$ = MID$(url$, 1, LEN(url$) - 2)
+    RETURN {"text": MID$(text$, i + 1, j - i - 1), "url": url$, "title": title$, "end": close + 1}
+ENDFUNC
+
+FUNC TitleAttr$(lnk)
+    IF LEN(lnk{"title"}) = 0 THEN RETURN ""
+    RETURN " title=" + CHR$(34) + ESCAPE$(lnk{"title"}) + CHR$(34)
+ENDFUNC

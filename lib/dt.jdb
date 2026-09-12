@@ -1,0 +1,550 @@
+' dt.jdb - dates as seconds since 1970 with their own calendar arithmetic.
+'
+'   IMPORT DT
+'   DIM t = DT.PARSE("2026-09-12T15:00:00+02:00")     ' seconds since the epoch, UTC
+'   PRINT DT.ISO$(t, 2)                               ' 2026-09-12T15:00:00+02:00
+'   PRINT DT.FMT$(DT.ADD(t, "+1 month -2 days"), "%d.%m.%Y")
+'   PRINT DT.HUMANIZE$(t, DT.NOW(), "de")             ' vor 3 Stunden
+'   DIM days = DT.RANGE(DT.MAKE(2026, 1, 1), DT.MAKE(2026, 1, 31), "1 week")
+'
+' A DT value is a plain number: seconds since 1970-01-01 00:00:00 UTC,
+' negative before it, fractional below the second. Every function takes
+' an optional fixed offset in hours (2 for UTC+2, -5.5 for UTC-5:30) that
+' says which wall clock to read or write; without it the clock is UTC.
+' The calendar is proleptic Gregorian and works for any year, so 1969
+' and 1900 are ordinary dates here. There is no time zone database:
+' DT.LOCAL_OFFSET() answers the machine's current offset and nothing
+' more. DT.TODATE and DT.FROMDATE convert to and from the core DateTime
+' when a builtin wants one.
+
+EXPORT MODULE DT
+
+CONST DAY_SECONDS = 86400
+
+DIM gMonthsEn = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
+DIM gMonthsDe = ["Januar", "Februar", "Maerz", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
+DIM gDaysEn = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
+DIM gDaysDe = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"]
+
+' ── integer helpers ────────────────────────────────────────────
+
+FUNC FloorDiv(a, b)
+    DIM q = a \ b
+    DIM r = a - q * b
+    IF r <> 0 ANDALSO ((r < 0) <> (b < 0)) THEN q = q - 1
+    RETURN q
+ENDFUNC
+
+FUNC FloorMod(a, b)
+    RETURN a - FloorDiv(a, b) * b
+ENDFUNC
+
+FUNC Two$(n)
+    RETURN LPAD$(STR$(CINT(n)), 2, "0")
+ENDFUNC
+
+' Four digits, a minus sign in front for years before 1.
+FUNC Year$(yy)
+    IF yy < 0 THEN RETURN "-" + LPAD$(STR$(-yy), 4, "0")
+    RETURN LPAD$(STR$(yy), 4, "0")
+ENDFUNC
+
+' TRUE for a date and time that exist on the calendar.
+FUNC Valid(yy, mm, dd, hh, mi, ss)
+    IF mm < 1 ORELSE mm > 12 THEN RETURN FALSE
+    IF dd < 1 ORELSE dd > DAYS_IN(yy, mm) THEN RETURN FALSE
+    IF hh < 0 ORELSE hh > 23 THEN RETURN FALSE
+    IF mi < 0 ORELSE mi > 59 THEN RETURN FALSE
+    IF ss < 0 ORELSE ss >= 61 THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
+' ── the calendar ───────────────────────────────────────────────
+
+' Days since 1970-01-01 for a civil date, any year.
+FUNC DaysFromCivil(yy, mm, dd)
+    DIM y = yy
+    IF mm <= 2 THEN y = y - 1
+    DIM era = FloorDiv(y, 400)
+    DIM yoe = y - era * 400
+    DIM mp = mm - 3
+    IF mm <= 2 THEN mp = mm + 9
+    DIM doy = (153 * mp + 2) \ 5 + dd - 1
+    DIM doe = yoe * 365 + yoe \ 4 - yoe \ 100 + doy
+    RETURN era * 146097 + doe - 719468
+ENDFUNC
+
+' [year, month, day] for a day count since 1970-01-01.
+FUNC CivilFromDays(days)
+    DIM z = days + 719468
+    DIM era = FloorDiv(z, 146097)
+    DIM doe = z - era * 146097
+    DIM yoe = (doe - doe \ 1460 + doe \ 36524 - doe \ 146096) \ 365
+    DIM y = yoe + era * 400
+    DIM doy = doe - (365 * yoe + yoe \ 4 - yoe \ 100)
+    DIM mp = (5 * doy + 2) \ 153
+    DIM dd = doy - (153 * mp + 2) \ 5 + 1
+    DIM mm = mp + 3
+    IF mp >= 10 THEN mm = mp - 9
+    IF mm <= 2 THEN y = y + 1
+    RETURN [y, mm, dd]
+ENDFUNC
+
+EXPORT FUNC IS_LEAP(yy)
+    IF yy MOD 400 = 0 THEN RETURN TRUE
+    IF yy MOD 100 = 0 THEN RETURN FALSE
+    RETURN yy MOD 4 = 0
+ENDFUNC
+
+EXPORT FUNC DAYS_IN(yy, mm)
+    IF mm = 2 THEN
+        IF IS_LEAP(yy) THEN RETURN 29
+        RETURN 28
+    ENDIF
+    IF mm = 4 ORELSE mm = 6 ORELSE mm = 9 ORELSE mm = 11 THEN RETURN 30
+    RETURN 31
+ENDFUNC
+
+' The instant for a wall-clock date and time in the given offset.
+EXPORT FUNC MAKE(yy, mm, dd, hh = 0, mi = 0, ss = 0, offset = 0)
+    DIM days = DaysFromCivil(yy, mm, dd)
+    RETURN days * DAY_SECONDS + hh * 3600 + mi * 60 + ss - offset * 3600
+ENDFUNC
+
+' The wall-clock fields of an instant: year, month, day, hour, minute,
+' second (whole), fraction, weekday (0 = Sunday), yday (1 = January 1st).
+EXPORT FUNC PARTS(t, offset = 0)
+    DIM local = t + offset * 3600
+    DIM days = INT(local / DAY_SECONDS)
+    IF days * DAY_SECONDS > local THEN days = days - 1
+    DIM rest = local - days * DAY_SECONDS
+    DIM ymd = CivilFromDays(days)
+    DIM hh = INT(rest / 3600)
+    rest = rest - hh * 3600
+    DIM mi = INT(rest / 60)
+    rest = rest - mi * 60
+    DIM ss = INT(rest)
+    DIM p AS MAP
+    p{"year"} = ymd[0]
+    p{"month"} = ymd[1]
+    p{"day"} = ymd[2]
+    p{"hour"} = hh
+    p{"minute"} = mi
+    p{"second"} = ss
+    p{"fraction"} = rest - ss
+    p{"weekday"} = FloorMod(days + 4, 7)
+    p{"yday"} = days - DaysFromCivil(ymd[0], 1, 1) + 1
+    RETURN p
+ENDFUNC
+
+EXPORT FUNC NOW()
+    RETURN NOW_EPOCH()
+ENDFUNC
+
+' The machine's current offset from UTC in hours.
+EXPORT FUNC LOCAL_OFFSET()
+    DIM here = DATE.PARTS(NOW_EPOCH())
+    DIM utc = DATE.PARTS(NOW_EPOCH(), 0)
+    DIM a = MAKE(here{"year"}, here{"month"}, here{"day"}, here{"hour"}, here{"minute"}, 0)
+    DIM b = MAKE(utc{"year"}, utc{"month"}, utc{"day"}, utc{"hour"}, utc{"minute"}, 0)
+    RETURN (a - b) / 3600
+ENDFUNC
+
+' ── parsing ────────────────────────────────────────────────────
+
+' Seconds since the epoch for ISO 8601 (date, date and time, fraction,
+' Z or an offset), RFC 2822, German day.month.year and a plain epoch
+' number; NONE for anything else. A time without an offset is read in
+' the offset given, UTC by default.
+EXPORT FUNC PARSE(text$, offset = 0)
+    DIM s$ = TRIM$(text$)
+    IF LEN(s$) = 0 THEN RETURN NONE
+    DIM iso = REGEX.FINDALL("^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:[.,](\d+))?)?)?\s*(Z|z|[+-]\d{2}:?\d{2}|[+-]\d{2})?$", s$)
+    IF LEN(iso) = 1 THEN
+        DIM g = iso[0]
+        DIM off = offset
+        IF LEN(g[7]) > 0 THEN off = OffsetOf(g[7])
+        DIM ss = 0.0
+        IF LEN(g[5]) > 0 THEN ss = VAL(g[5])
+        IF LEN(g[6]) > 0 THEN ss = ss + VAL("0." + g[6])
+        IF NOT Valid(VAL(g[0]), VAL(g[1]), VAL(g[2]), VAL(g[3]), VAL(g[4]), ss) THEN RETURN NONE
+        RETURN MAKE(VAL(g[0]), VAL(g[1]), VAL(g[2]), VAL(g[3]), VAL(g[4]), ss, off)
+    ENDIF
+    DIM de = REGEX.FINDALL("^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$", s$)
+    IF LEN(de) = 1 THEN
+        DIM h = de[0]
+        IF NOT Valid(VAL(h[2]), VAL(h[1]), VAL(h[0]), VAL(h[3]), VAL(h[4]), VAL(h[5])) THEN RETURN NONE
+        RETURN MAKE(VAL(h[2]), VAL(h[1]), VAL(h[0]), VAL(h[3]), VAL(h[4]), VAL(h[5]), offset)
+    ENDIF
+    DIM rfc = REGEX.FINDALL("^(?:[A-Za-z]{3},\s*)?(\d{1,2})\s+([A-Za-z]{3,9})\.?\s+(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?\s*(GMT|UTC|Z|[+-]\d{4}|[+-]\d{2}:\d{2})?$", s$)
+    IF LEN(rfc) = 1 THEN
+        DIM r = rfc[0]
+        DIM mm = MonthNumber(r[1])
+        IF mm = 0 THEN RETURN NONE
+        DIM off2 = offset
+        IF LEN(r[6]) > 0 THEN off2 = OffsetOf(r[6])
+        IF NOT Valid(VAL(r[2]), mm, VAL(r[0]), VAL(r[3]), VAL(r[4]), VAL(r[5])) THEN RETURN NONE
+        RETURN MAKE(VAL(r[2]), mm, VAL(r[0]), VAL(r[3]), VAL(r[4]), VAL(r[5]), off2)
+    ENDIF
+    IF REGEX.MATCH("^[+-]?\d+(?:\.\d+)?$", s$) THEN RETURN VAL(s$)
+    RETURN NONE
+ENDFUNC
+
+' Hours for "Z", "+02:00", "+0200", "+02", "GMT", "UTC".
+FUNC OffsetOf(text$)
+    DIM u$ = UCASE$(text$)
+    IF u$ = "Z" ORELSE u$ = "GMT" ORELSE u$ = "UTC" THEN RETURN 0
+    DIM sign = 1
+    IF LEFT$(u$, 1) = "-" THEN sign = -1
+    DIM digits$ = REPLACE$(MID$(u$, 1, LEN(u$) - 1), ":", "")
+    DIM hours = VAL(LEFT$(digits$, 2))
+    DIM minutes = 0
+    IF LEN(digits$) >= 4 THEN minutes = VAL(MID$(digits$, 2, 2))
+    RETURN sign * (hours + minutes / 60)
+ENDFUNC
+
+' 1..12 for an English or German month name or its first three letters.
+FUNC MonthNumber(name$)
+    DIM key$ = LCASE$(LEFT$(name$, 3))
+    DIM extra = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+    DIM i = 0
+    FOR i = 0 TO 11
+        IF key$ = extra[i] THEN RETURN i + 1
+        IF key$ = LCASE$(LEFT$(gMonthsDe[i], 3)) THEN RETURN i + 1
+    NEXT i
+    IF key$ = "mrz" ORELSE key$ = "mär" THEN RETURN 3
+    RETURN 0
+ENDFUNC
+
+' ── formatting ─────────────────────────────────────────────────
+
+' strftime style: %Y %y %m %d %e %H %I %M %S %p %j %a %A %b %B %z %s %F %T %%.
+EXPORT FUNC FMT$(t, fmt$, offset = 0)
+    DIM p = PARTS(t, offset)
+    DIM out$ = ""
+    DIM i = 0
+    DIM n = LEN(fmt$)
+    DO WHILE i < n
+        DIM c$ = MID$(fmt$, i, 1)
+        IF c$ <> "%" ORELSE i = n - 1 THEN
+            out$ = out$ + c$
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM k$ = MID$(fmt$, i + 1, 1)
+        i = i + 2
+        IF k$ = "Y" THEN
+            out$ = out$ + Year$(p{"year"})
+        ELSEIF k$ = "y" THEN
+            out$ = out$ + Two$(FloorMod(p{"year"}, 100))
+        ELSEIF k$ = "m" THEN
+            out$ = out$ + Two$(p{"month"})
+        ELSEIF k$ = "d" THEN
+            out$ = out$ + Two$(p{"day"})
+        ELSEIF k$ = "e" THEN
+            out$ = out$ + LPAD$(STR$(p{"day"}), 2)
+        ELSEIF k$ = "H" THEN
+            out$ = out$ + Two$(p{"hour"})
+        ELSEIF k$ = "I" THEN
+            DIM h12 = p{"hour"} MOD 12
+            IF h12 = 0 THEN h12 = 12
+            out$ = out$ + Two$(h12)
+        ELSEIF k$ = "M" THEN
+            out$ = out$ + Two$(p{"minute"})
+        ELSEIF k$ = "S" THEN
+            out$ = out$ + Two$(p{"second"})
+        ELSEIF k$ = "p" THEN
+            IF p{"hour"} < 12 THEN out$ = out$ + "AM" ELSE out$ = out$ + "PM"
+        ELSEIF k$ = "j" THEN
+            out$ = out$ + LPAD$(STR$(p{"yday"}), 3, "0")
+        ELSEIF k$ = "a" THEN
+            out$ = out$ + LEFT$(gDaysEn[p{"weekday"}], 3)
+        ELSEIF k$ = "A" THEN
+            out$ = out$ + gDaysEn[p{"weekday"}]
+        ELSEIF k$ = "b" THEN
+            out$ = out$ + LEFT$(gMonthsEn[p{"month"} - 1], 3)
+        ELSEIF k$ = "B" THEN
+            out$ = out$ + gMonthsEn[p{"month"} - 1]
+        ELSEIF k$ = "z" THEN
+            out$ = out$ + OffsetText$(offset, FALSE)
+        ELSEIF k$ = "s" THEN
+            out$ = out$ + STR$(INT(t))
+        ELSEIF k$ = "F" THEN
+            out$ = out$ + Year$(p{"year"}) + "-" + Two$(p{"month"}) + "-" + Two$(p{"day"})
+        ELSEIF k$ = "T" THEN
+            out$ = out$ + Two$(p{"hour"}) + ":" + Two$(p{"minute"}) + ":" + Two$(p{"second"})
+        ELSEIF k$ = "%" THEN
+            out$ = out$ + "%"
+        ELSE
+            out$ = out$ + "%" + k$
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' "+0200" or, with the colon, "+02:00"; "Z" for zero when asked.
+FUNC OffsetText$(offset, colon)
+    DIM total = CINT(ROUND(ABS(offset) * 60))
+    DIM sign$ = "+"
+    IF offset < 0 THEN sign$ = "-"
+    DIM text$ = sign$ + Two$(total \ 60)
+    IF colon THEN text$ = text$ + ":"
+    RETURN text$ + Two$(total MOD 60)
+ENDFUNC
+
+' 2026-09-12T15:00:00+02:00, Z at offset zero.
+EXPORT FUNC ISO$(t, offset = 0)
+    DIM tail$ = "Z"
+    IF offset <> 0 THEN tail$ = OffsetText$(offset, TRUE)
+    RETURN FMT$(t, "%FT%T", offset) + tail$
+ENDFUNC
+
+' Sat, 12 Sep 2026 15:00:00 +0200
+EXPORT FUNC RFC$(t, offset = 0)
+    RETURN FMT$(t, "%a, %d %b %Y %T ", offset) + OffsetText$(offset, FALSE)
+ENDFUNC
+
+EXPORT FUNC WEEKDAY$(t, lang$ = "en", offset = 0)
+    DIM p = PARTS(t, offset)
+    IF lang$ = "de" THEN RETURN gDaysDe[p{"weekday"}]
+    RETURN gDaysEn[p{"weekday"}]
+ENDFUNC
+
+EXPORT FUNC MONTHNAME$(t, lang$ = "en", offset = 0)
+    DIM p = PARTS(t, offset)
+    IF lang$ = "de" THEN RETURN gMonthsDe[p{"month"} - 1]
+    RETURN gMonthsEn[p{"month"} - 1]
+ENDFUNC
+
+' ── arithmetic ─────────────────────────────────────────────────
+
+' Seconds for one unit word: s, sec, second(s), min, minute(s), h, hour(s),
+' d, day(s), w, week(s); 0 for a calendar unit (month, year).
+FUNC UnitSeconds(unit$)
+    DIM u$ = LCASE$(unit$)
+    IF u$ = "s" ORELSE u$ = "sec" ORELSE u$ = "secs" ORELSE u$ = "second" ORELSE u$ = "seconds" THEN RETURN 1
+    IF u$ = "min" ORELSE u$ = "mins" ORELSE u$ = "minute" ORELSE u$ = "minutes" THEN RETURN 60
+    IF u$ = "h" ORELSE u$ = "hr" ORELSE u$ = "hrs" ORELSE u$ = "hour" ORELSE u$ = "hours" THEN RETURN 3600
+    IF u$ = "d" ORELSE u$ = "day" ORELSE u$ = "days" THEN RETURN DAY_SECONDS
+    IF u$ = "w" ORELSE u$ = "week" ORELSE u$ = "weeks" THEN RETURN 7 * DAY_SECONDS
+    RETURN 0
+ENDFUNC
+
+FUNC IsMonthUnit(unit$)
+    DIM u$ = LCASE$(unit$)
+    RETURN u$ = "mo" ORELSE u$ = "mon" ORELSE u$ = "month" ORELSE u$ = "months"
+ENDFUNC
+
+FUNC IsYearUnit(unit$)
+    DIM u$ = LCASE$(unit$)
+    RETURN u$ = "y" ORELSE u$ = "yr" ORELSE u$ = "year" ORELSE u$ = "years"
+ENDFUNC
+
+' The instant moved by whole calendar months in the given offset; the
+' day is clamped to the month it lands in, the time of day is kept.
+FUNC AddMonths(t, months, offset)
+    DIM p = PARTS(t, offset)
+    DIM index = p{"year"} * 12 + (p{"month"} - 1) + months
+    DIM yy = FloorDiv(index, 12)
+    DIM mm = FloorMod(index, 12) + 1
+    DIM dd = p{"day"}
+    IF dd > DAYS_IN(yy, mm) THEN dd = DAYS_IN(yy, mm)
+    RETURN MAKE(yy, mm, dd, p{"hour"}, p{"minute"}, p{"second"} + p{"fraction"}, offset)
+ENDFUNC
+
+' Moves by a spec such as "+1 month -2 days 3 hours" or "2w". Calendar
+' units use the offset's wall clock; the rest are exact seconds.
+EXPORT FUNC ADD(t, spec$, offset = 0)
+    DIM steps = REGEX.FINDALL("([+-]?\d+(?:\.\d+)?)\s*([A-Za-z]+)", spec$)
+    IF LEN(steps) = 0 THEN THROW "DT.ADD: no amount in '" + spec$ + "'"
+    DIM out = t
+    DIM i = 0
+    FOR i = 0 TO LEN(steps) - 1
+        DIM amount = VAL(steps[i][0])
+        DIM unit$ = steps[i][1]
+        IF IsYearUnit(unit$) THEN
+            out = AddMonths(out, CINT(amount * 12), offset)
+        ELSEIF IsMonthUnit(unit$) THEN
+            out = AddMonths(out, CINT(amount), offset)
+        ELSE
+            DIM per = UnitSeconds(unit$)
+            IF per = 0 THEN THROW "DT.ADD: unknown unit '" + unit$ + "'"
+            out = out + amount * per
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' From a to b in a unit: seconds, minutes, hours, days and weeks as an
+' exact number; months and years as whole calendar units, negative when
+' b lies before a.
+EXPORT FUNC DIFF(a, b, unit$, offset = 0)
+    IF IsMonthUnit(unit$) THEN RETURN WholeMonths(a, b, offset)
+    IF IsYearUnit(unit$) THEN RETURN WholeMonths(a, b, offset) \ 12
+    DIM per = UnitSeconds(unit$)
+    IF per = 0 THEN THROW "DT.DIFF: unknown unit '" + unit$ + "'"
+    RETURN (b - a) / per
+ENDFUNC
+
+FUNC WholeMonths(a, b, offset)
+    IF b < a THEN RETURN -WholeMonths(b, a, offset)
+    DIM pa = PARTS(a, offset)
+    DIM pb = PARTS(b, offset)
+    DIM months = (pb{"year"} - pa{"year"}) * 12 + (pb{"month"} - pa{"month"})
+    IF months > 0 ANDALSO AddMonths(a, months, offset) > b THEN months = months - 1
+    RETURN months
+ENDFUNC
+
+' ── rounding to a unit ─────────────────────────────────────────
+
+' The first instant of the unit (minute, hour, day, week, month,
+' quarter, year) that contains t; weeks start on Monday.
+EXPORT FUNC STARTOF(t, unit$, offset = 0)
+    DIM u$ = LCASE$(unit$)
+    DIM p = PARTS(t, offset)
+    IF u$ = "minute" THEN RETURN MAKE(p{"year"}, p{"month"}, p{"day"}, p{"hour"}, p{"minute"}, 0, offset)
+    IF u$ = "hour" THEN RETURN MAKE(p{"year"}, p{"month"}, p{"day"}, p{"hour"}, 0, 0, offset)
+    IF u$ = "day" THEN RETURN MAKE(p{"year"}, p{"month"}, p{"day"}, 0, 0, 0, offset)
+    IF u$ = "week" THEN
+        DIM back = FloorMod(p{"weekday"} - 1, 7)
+        RETURN MAKE(p{"year"}, p{"month"}, p{"day"}, 0, 0, 0, offset) - back * DAY_SECONDS
+    ENDIF
+    IF u$ = "month" THEN RETURN MAKE(p{"year"}, p{"month"}, 1, 0, 0, 0, offset)
+    IF u$ = "quarter" THEN RETURN MAKE(p{"year"}, ((p{"month"} - 1) \ 3) * 3 + 1, 1, 0, 0, 0, offset)
+    IF u$ = "year" THEN RETURN MAKE(p{"year"}, 1, 1, 0, 0, 0, offset)
+    THROW "DT.STARTOF: unknown unit '" + unit$ + "'"
+ENDFUNC
+
+' The last whole second of the unit that contains t.
+EXPORT FUNC ENDOF(t, unit$, offset = 0)
+    DIM start = STARTOF(t, unit$, offset)
+    DIM u$ = LCASE$(unit$)
+    IF u$ = "quarter" THEN RETURN AddMonths(start, 3, offset) - 1
+    IF u$ = "month" ORELSE u$ = "year" THEN RETURN ADD(start, "1 " + u$, offset) - 1
+    RETURN ADD(start, "1 " + u$, offset) - 1
+ENDFUNC
+
+' The ISO week: {"year", "week"}; weeks start on Monday, week 1 holds
+' January 4th.
+EXPORT FUNC ISOWEEK(t, offset = 0)
+    DIM p = PARTS(t, offset)
+    DIM days = DaysFromCivil(p{"year"}, p{"month"}, p{"day"})
+    DIM wd = FloorMod(p{"weekday"} + 6, 7)
+    DIM thursday = days - wd + 3
+    DIM ymd = CivilFromDays(thursday)
+    DIM week = (thursday - DaysFromCivil(ymd[0], 1, 1)) \ 7 + 1
+    RETURN {"year": ymd[0], "week": week}
+ENDFUNC
+
+' ── ranges ─────────────────────────────────────────────────────
+
+' Every instant from a to b inclusive, stepping by a spec such as
+' "1 day", "2 weeks" or "1 month"; counts down when b lies before a.
+EXPORT FUNC RANGE(a, b, step$ = "1 day", offset = 0)
+    DIM out = []
+    DIM spec$ = step$
+    IF b < a ANDALSO LEFT$(TRIM$(spec$), 1) <> "-" THEN spec$ = "-" + TRIM$(spec$)
+    DIM cur = a
+    DIM guard = 0
+    DO
+        IF (b >= a ANDALSO cur > b) ORELSE (b < a ANDALSO cur < b) THEN EXITDO
+        PUSH(out, cur)
+        DIM nxt = ADD(cur, spec$, offset)
+        IF nxt = cur THEN THROW "DT.RANGE: the step does not move"
+        cur = nxt
+        guard = guard + 1
+        IF guard > 1000000 THEN EXITDO
+    LOOP
+    RETURN out
+ENDFUNC
+
+' ── relative text ──────────────────────────────────────────────
+
+' "in 3 hours", "2 days ago", "just now"; German with lang$ = "de".
+EXPORT FUNC HUMANIZE$(t, ref = "now", lang$ = "en")
+    DIM origin = 0
+    IF TYPEOF(ref) = "STRING" THEN origin = NOW_EPOCH() ELSE origin = ref
+    DIM delta = t - origin
+    DIM future = delta >= 0
+    DIM seconds = ABS(delta)
+    DIM de = (lang$ = "de")
+    IF seconds < 45 THEN
+        IF de THEN RETURN "gerade eben"
+        RETURN "just now"
+    ENDIF
+    DIM minutes = seconds / 60
+    DIM hours = seconds / 3600
+    DIM days = seconds / DAY_SECONDS
+    DIM months = days / 30.4375
+    DIM years = days / 365.25
+    DIM phrase$ = ""
+    IF seconds < 90 THEN
+        phrase$ = Unit$(1, "minute", de)
+    ELSEIF minutes < 45 THEN
+        phrase$ = Unit$(ROUND(minutes), "minute", de)
+    ELSEIF minutes < 90 THEN
+        phrase$ = Unit$(1, "hour", de)
+    ELSEIF hours < 22 THEN
+        phrase$ = Unit$(ROUND(hours), "hour", de)
+    ELSEIF hours < 36 THEN
+        phrase$ = Unit$(1, "day", de)
+    ELSEIF days < 26 THEN
+        phrase$ = Unit$(ROUND(days), "day", de)
+    ELSEIF days < 45 THEN
+        phrase$ = Unit$(1, "month", de)
+    ELSEIF months < 11 THEN
+        phrase$ = Unit$(ROUND(months), "month", de)
+    ELSEIF months < 18 THEN
+        phrase$ = Unit$(1, "year", de)
+    ELSE
+        phrase$ = Unit$(ROUND(years), "year", de)
+    ENDIF
+    IF de THEN
+        IF future THEN RETURN "in " + phrase$
+        RETURN "vor " + phrase$
+    ENDIF
+    IF future THEN RETURN "in " + phrase$
+    RETURN phrase$ + " ago"
+ENDFUNC
+
+' "3 hours" or "3 Stunden"; the German dative form suits both "in" and "vor".
+FUNC Unit$(n, unit$, de)
+    IF NOT de THEN
+        IF n = 1 THEN
+            IF unit$ = "hour" THEN RETURN "an hour"
+            RETURN "a " + unit$
+        ENDIF
+        RETURN STR$(n) + " " + unit$ + "s"
+    ENDIF
+    IF unit$ = "minute" THEN
+        IF n = 1 THEN RETURN "einer Minute"
+        RETURN STR$(n) + " Minuten"
+    ENDIF
+    IF unit$ = "hour" THEN
+        IF n = 1 THEN RETURN "einer Stunde"
+        RETURN STR$(n) + " Stunden"
+    ENDIF
+    IF unit$ = "day" THEN
+        IF n = 1 THEN RETURN "einem Tag"
+        RETURN STR$(n) + " Tagen"
+    ENDIF
+    IF unit$ = "month" THEN
+        IF n = 1 THEN RETURN "einem Monat"
+        RETURN STR$(n) + " Monaten"
+    ENDIF
+    IF n = 1 THEN RETURN "einem Jahr"
+    RETURN STR$(n) + " Jahren"
+ENDFUNC
+
+' ── the core DateTime ──────────────────────────────────────────
+
+' The core DateTime for an instant from 1970 on, for builtins that want
+' one (FORMAT_DATE, DATERANGE, CSV columns declared AS DATE).
+EXPORT FUNC TODATE(t)
+    RETURN CVDATE(FMT$(t, "%F %T", 0), 0)
+ENDFUNC
+
+' Seconds since the epoch for a core DateTime.
+EXPORT FUNC FROMDATE(d)
+    RETURN DATEDIFF("S", CVDATE("1970-01-01 00:00:00", 0), d)
+ENDFUNC
