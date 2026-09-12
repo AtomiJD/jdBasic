@@ -911,7 +911,7 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`FOR EACH variable IN collection`**: This command provides a simple way to iterate over every element in a collection, such as an Array or a Map.
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
-* **`EXITFUNC`, `EXITDO`, `EXITFOR`**: Exiting functions and loops.
+* **`EXITFUNC`, `EXITDO`, `EXITFOR`, `EXIT SWITCH`**: Exiting functions, loops and a `SWITCH` block.
 * **`CONTINUEFOR`, `CONTINUEDO`, `CONTINUELOOP`**: Skips the rest of the current loop iteration and continues with the next one.
 * **`OPTION option$`**: Sets a VM option.
   * `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
@@ -962,6 +962,7 @@ Provides a clear way to execute one of several blocks of code based on the value
 * **`CASE value_expression[, value_expression]...`**: Compares each value to the main switch expression. If any match, the body runs. Each value can also be a range `lo TO hi` (inclusive both ends), and you may mix singletons and ranges in one `CASE`: `CASE 1, 5 TO 9, 12`.
 * **`DEFAULT`**: An optional block that executes if no preceding `CASE` statement matches.
 * **`ENDSWITCH`**: Marks the end of the `SWITCH` block.
+* **`EXIT SWITCH`**: Leaves the block at once, from inside a `CASE` body.
 
 **Note**: The interpreter does not "fall through" cases. Once a `CASE` or `DEFAULT` block is executed, control jumps immediately to the statement following `ENDSWITCH`.
 
@@ -3834,6 +3835,13 @@ One consequence of the platform worth knowing: ESP-IDF has no working
 directory at all, so `"."` never resolves, `DIR$` starts its listing at
 the root there, and there is no `CD`.
 
+Two RP2350 verbs reach past the store to the flash itself. `FS.ATRANS`
+reports the four address-translation registers as they stand, which is
+what a uf2 booted through translation reads its own flash through.
+`FS.NUKEPT` erases the partition table at the physical start of flash
+and drops to BOOTSEL, so the next uf2 lands at zero and boots without
+translation. That one is one-way.
+
 Ctrl-C on the console ends a running program, whatever it is doing: in
 a loop, inside a `SLEEP`, while `HTTP.SERVER.WAIT` serves. The program
 ends with `Break at line N` and the prompt comes back. A program never
@@ -3879,6 +3887,12 @@ WIFI.OFF()
 which is set up once and stays. Bluetooth is Low Energy only - the chip
 has no classic BR/EDR - and its stack and the WiFi one do not
 comfortably fit together in 512 KB.
+
+`WIFI.CLIENTS` counts the stations connected to a board's own network,
+which is how a program knows whether anyone is there to serve. On the
+RP2350 W boards `WIFI.DNS$` names the server currently in use and
+`WIFI.DNS` sets one by address, for a network whose DHCP hands out a
+name server that does not answer.
 
 `HTTP.GET$` and `HTTP.POST$` fetch over http and https alike, with
 `HTTP.STATUS` holding the last answer's code, and `NTP.SYNC` sets the
@@ -3945,7 +3959,8 @@ same file parses the score for both; only what moves the air differs.
 happened and mean how loud it is now.
 
 `SD.MOUNT` puts the card at `/sd` and answers its size; `SD.INFO` gives
-name, size and the bus width it negotiated. A bare filename still means
+name, size and the bus width it negotiated, and `SD.UNMOUNT` lets go of
+it again. A bare filename still means
 the flash store, so the two live side by side without a working
 directory to confuse them: `COPY hello.jdb /sd/hello.jdb` and
 `RUN "/sd/hello.jdb"` both do what they look like.
@@ -3954,7 +3969,9 @@ For when something answers strangely there are `GFX.DIAG`, which counts
 what the panel transport sent and what it refused, `GFX.PANELSTATE`,
 which asks the panel whether it is awake and displaying, `GFX.READBACK`,
 which reads one pixel back off the glass, and `GFX.PANELREG`, which hands
-over the raw bytes of any read command. The last one is the useful one:
+over the raw bytes of any read command; `GFX.PANELREGAT` does the same
+after pointing the panel at one pixel. The read commands are the useful
+ones:
 reading a table of bytes settles in minutes what reasoning about a
 protocol does not settle in days.
 
@@ -3971,6 +3988,11 @@ console off the panel while a program draws and `GFX.CONSOLE 1` puts it
 back. The keyboard controller sends its own codes: ESC is 177 and the
 arrows are 180 to 183, and `keycode.jdb` in the demos prints what any
 key sends.
+
+Four verbs read the panel back rather than write to it: `LCD.ROW$(y)`
+gives one row of the text console as it stands on the glass, `LCD.STAT$`
+the scroll offset and the cursor position, and `LCD.TAPARM` then
+`LCD.TAP$` arm the display bus and report the bytes it last carried.
 
 ### The Fruit Jam
 
@@ -3989,8 +4011,19 @@ The console and a drawing program share that one framebuffer, so
 `GFX.CONSOLE 0` takes the screen for the program and `GFX.CONSOLE 1`
 gives it back; the prompt keeps running over USB either way.
 `DVI.FRAMES`, `DVI.FRAMEUS` and `DVI.CLOCK` say what the signal is doing,
-and `DVI.DIAG$` puts the scanout's registers on one line. `GFX.PEEK`
+and `DVI.DIAG$` puts the scanout's registers on one line. `DVI.IRQS`
+counts how often the scanout interrupt has run, one per field, so more
+than that means the command list is restarting early, and `DVI.CACHE$`
+reports the scanline cache that feeds the display from PSRAM. `GFX.PEEK`
 reads a pixel back, which here is the glass as well as the memory.
+
+`PSRAM.TEST$` writes a pattern at each end of the PSRAM window and reads
+it back, answering with the size, the address it is mapped at and
+whether it survived. `PSRAM.TORTURE$([rounds])` allocates, fills,
+verifies and frees blocks in the pool while the scanout and the USB host
+are running, and says how many it got through and whether anything came
+back changed. The desktop cannot reproduce the part that matters there,
+which is the traffic on the same memory controller.
 
 The board comes up with a page saying what it is: chip and clock, free
 memory, the screen and its refresh rate, what enumerated on the USB
@@ -4181,6 +4214,14 @@ internal=163247/422787 largest=90112 psram=8361576/8388608 largest=8257536
 
 An array costs about 24 bytes an element on both boards, so 8 MB of PSRAM
 holds roughly 340000 of them and the PicoCalc's 351720 about 14000.
+
+On the RP2350 boards `SYS.HEAP$` says where the heap stands in the
+allocator's own terms: arena is what it has taken off the break so far,
+used and free divide that, frags counts the free pieces, and ground is
+the stretch below the stack that nobody has claimed. `SYS.FREE` adds the
+last two together; this says which of them a program is short of. On the
+Fruit Jam `SYS.PSRAMLARGEST` is the companion to `SYS.LARGEST` for the
+PSRAM heap, and the number that matters when one large array grows.
 
 `SYS.STACK` answers `[size, deepest use]` of the C stack in bytes, which
 is what a deep recursion runs into before the heap does. `SYS.NATIVES`
