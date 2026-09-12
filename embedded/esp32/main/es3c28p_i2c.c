@@ -82,6 +82,35 @@ i2c_master_bus_handle_t es3c28p_i2c_bus(void) {
     return es3c28p_i2c_up() == 0 ? g_bus : NULL;
 }
 
+static i2c_master_dev_handle_t dev_cached(int addr) {
+    for (int i = 0; i < g_n; i++)
+        if (g_addr[i] == addr) return g_dev[i];
+    return NULL;
+}
+
+// Whether an address answers a one-byte read, and no handle kept for
+// one that does not. i2c_master_probe is no use on this bus: it refuses
+// to start unless it already sees both lines idle, and held up by
+// nothing but the chip's internal pull-ups they are not, so it reports
+// a busy bus even for the touch controller a transfer reaches in the
+// same breath. A read is also the safest question to ask a device whose
+// registers are unknown, a write being the alternative.
+int es3c28p_i2c_answers(int addr, int hz) {
+    if (es3c28p_i2c_up() != 0) return 0;
+    uint8_t b = 0;
+    i2c_master_dev_handle_t d = dev_cached(addr);
+    if (d) return i2c_master_receive(d, &b, 1, 20) == ESP_OK;
+    i2c_device_config_t dc = {0};
+    dc.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dc.device_address = (uint16_t)addr;
+    dc.scl_speed_hz = (uint32_t)hz;
+    i2c_master_dev_handle_t t = NULL;
+    if (i2c_master_bus_add_device(g_bus, &dc, &t) != ESP_OK) return 0;
+    int ok = i2c_master_receive(t, &b, 1, 20) == ESP_OK;
+    i2c_master_bus_rm_device(t);
+    return ok;
+}
+
 void es3c28p_i2c_pins(int* sda, int* scl) { *sda = PIN_SDA; *scl = PIN_SCL; }
 
 int es3c28p_i2c_read_reg(int addr, uint8_t reg, uint8_t* out, int n) {

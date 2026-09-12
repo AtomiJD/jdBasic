@@ -19,11 +19,13 @@
 #include <stdint.h>
 #include "driver/i2c_master.h"
 #include "esp_err.h"
+#include "esp_log.h"
 #include "esp_timer.h"
 
 #define KBD_ADDR 0x5F
 #define KBD_HZ   100000
-#define PROBE_US 2000000
+#define TRY_MIN_US  2000000
+#define TRY_MAX_US 30000000
 
 #define K_LEFT  0xB4
 #define K_UP    0xB5
@@ -71,21 +73,34 @@ static int fn_key(int code) {
 }
 
 static int g_present = 0;
-static int64_t g_next_probe = 0;
+static int64_t g_next_try = 0;
+static int64_t g_gap = TRY_MIN_US;
 
-// Probed rather than assumed, and probed again every couple of seconds
-// while it is missing, so a keyboard plugged in after boot starts
-// working without a reset. Between probes an absent keyboard costs
-// nothing, which matters because the poll below sits in the read path.
-static int ready(void) {
-    if (g_present) return 1;
-    int64_t now = esp_timer_get_time();
-    if (now < g_next_probe) return 0;
-    g_next_probe = now + PROBE_US;
-    i2c_master_bus_handle_t bus = es3c28p_i2c_bus();
-    if (!bus) return 0;
-    g_present = i2c_master_probe(bus, KBD_ADDR, 20) == ESP_OK;
-    return g_present;
+// The read is its own presence test, because on this bus that is the
+// only test there is: i2c_master_probe wants both lines idle before it
+// will start, and pulled up by nothing but the chip itself they never
+// look idle enough, so it calls a bus busy that a transfer crosses
+// without trouble.
+//
+// An expected failure has no business printing over the prompt, and an
+// absent keyboard fails on every single poll.
+static esp_err_t quiet_read(uint8_t* b) {
+    esp_log_level_set("i2c.master", ESP_LOG_NONE);
+    esp_err_t rc = es3c28p_i2c_recv(KBD_ADDR, b, 1, KBD_HZ);
+    esp_log_level_set("i2c.master", ESP_LOG_ERROR);
+    return rc;
+}
+
+// Backing off matters more than it looks: this sits in the read path,
+// and an address nobody answers costs milliseconds every time it is
+// asked. Two seconds while a keyboard might be arriving, doubling to
+// half a minute when none does, so a board wired wrong stays a board
+// you can still type at.
+static void missed(void) {
+    g_gap = g_present ? TRY_MIN_US : g_gap * 2;
+    if (g_gap > TRY_MAX_US) g_gap = TRY_MAX_US;
+    g_next_try = esp_timer_get_time() + g_gap;
+    g_present = 0;
 }
 
 int es3c28p_kbd_ready(void) { return g_present; }
@@ -105,14 +120,21 @@ int es3c28p_kbd_rawget(uint8_t* out, int cap) {
 
 // One key, or -1 when the keyboard has none or is not there.
 int es3c28p_kbd_poll(void) {
-    if (!ready()) return -1;
+    if (!g_present && esp_timer_get_time() < g_next_try) return -1;
     uint8_t b = 0;
-    if (es3c28p_i2c_recv(KBD_ADDR, &b, 1, KBD_HZ) != ESP_OK) {
-        g_present = 0;
-        return -1;
-    }
+    if (quiet_read(&b) != ESP_OK) { missed(); return -1; }
+    g_present = 1;
+    g_gap = TRY_MIN_US;
     if (b == 0) return -1;
     if (g_rawn < (int)sizeof g_raw) g_raw[g_rawn++] = b;
     if (b >= 128 && b < 176) return fn_key(b);
     return b;
+}
+
+// Ask now rather than wait out the backoff. It costs whatever key was
+// waiting, which is a fair price for a question asked from the prompt.
+int es3c28p_kbd_probe(void) {
+    g_next_try = 0;
+    es3c28p_kbd_poll();
+    return g_present;
 }

@@ -11,12 +11,14 @@
 #include "driver/spi_master.h"
 #include "driver/temperature_sensor.h"
 #include "esp_adc/adc_oneshot.h"
+#include "esp_log.h"
 
 #include "../../../src/vm.h"
 
 extern "C" int es3c28p_lcd_uses_pin(int pin);
 extern "C" i2c_master_bus_handle_t es3c28p_i2c_bus(void);
 extern "C" void es3c28p_i2c_pins(int* sda, int* scl);
+extern "C" int es3c28p_i2c_answers(int addr, int hz);
 
 // GPIO 26 to 32 carry the SPI flash and 33 to 37 the octal PSRAM. The
 // board works because nobody touches them, and a program that does
@@ -74,6 +76,23 @@ static i2c_master_bus_handle_t s_i2c[I2C_BUSES];
 #define SPI_BUSES 2
 static spi_device_handle_t s_spi[SPI_BUSES];
 static bool s_spi_up[SPI_BUSES];
+
+// Bus 0 is the board's, where three addresses already hold a device
+// handle; asking for a second one at the same address fails, so those
+// go through the owner of the handle rather than around it.
+static bool addr_answers(int bus, int addr) {
+    if (bus == 0) return es3c28p_i2c_answers(addr, 100000) != 0;
+    i2c_device_config_t dc = {};
+    dc.dev_addr_length = I2C_ADDR_BIT_LEN_7;
+    dc.device_address = (uint16_t)addr;
+    dc.scl_speed_hz = 100000;
+    i2c_master_dev_handle_t dev = nullptr;
+    if (i2c_master_bus_add_device(s_i2c[bus], &dc, &dev) != ESP_OK) return false;
+    uint8_t b = 0;
+    esp_err_t rc = i2c_master_receive(dev, &b, 1, 20);
+    i2c_master_bus_rm_device(dev);
+    return rc == ESP_OK;
+}
 
 static spi_host_device_t spi_host_of(int bus) {
     return bus == 1 ? SPI3_HOST : SPI2_HOST;
@@ -287,14 +306,23 @@ void register_esp32_hw(VM& vm) {
         return out;
     });
 
+    // A one-byte read rather than i2c_master_probe, which wants both
+    // lines idle before it will start and, held up by nothing but the
+    // chip's internal pull-ups, never finds them so: it calls the bus
+    // busy for every address, the touch controller included, while a
+    // transfer to that same address goes through. Most of a scan is
+    // addresses nobody answers, so it says nothing about the ones that
+    // do not.
     vm.register_native("I2C.SCAN", 1, 1, [](const std::vector<Value>& args) -> Value {
         int bus = (int)args[0].to_double();
         if (bus < 0 || bus >= I2C_BUSES || !s_i2c[bus])
             throw std::runtime_error("I2C.SCAN: call I2C.SETUP first");
         Value out = Value::make_array();
+        esp_log_level_set("i2c.master", ESP_LOG_NONE);
         for (int a = 1; a < 127; a++)
-            if (i2c_master_probe(s_i2c[bus], a, 50) == ESP_OK)
+            if (addr_answers(bus, a))
                 out.as_array()->elements.push_back(Value::make_i64(a));
+        esp_log_level_set("i2c.master", ESP_LOG_ERROR);
         return out;
     });
 

@@ -4421,8 +4421,8 @@ Syntax: KEY.NOW -> code | -1
 Description: One key code if one is waiting, -1 if none is. Boards only. The one a game loop needs, where KEY.GET waits. Reads whatever console the board has, so the same loop works on the board's own keyboard and over the serial line.
 
 [KEY.LOCAL]
-Syntax: KEY.LOCAL -> TRUE | FALSE
-Description: Whether a keyboard on the board's I2C connector answered. ES3C28P only, for an M5Stack CardKB at 0x5F. It is probed again every two seconds while absent, so one plugged in after boot turns this true without a reset.
+Syntax: KEY.LOCAL [(now)] -> TRUE | FALSE
+Description: Whether a keyboard on the board's I2C connector answered. ES3C28P only, for an M5Stack CardKB at 0x5F. While absent it is probed again after two seconds, then at doubling intervals up to half a minute, so one plugged in after boot turns this true on its own. A true argument probes now instead of waiting out that backoff.
 
 [KEY.RAW]
 Syntax: KEY.RAW -> [code, ...]

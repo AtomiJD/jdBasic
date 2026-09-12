@@ -14,6 +14,7 @@
 #define CAP_INT (MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT)
 extern "C" int jdb_stdin_getc(int timeout_us);
 extern "C" int es3c28p_kbd_ready(void);
+extern "C" int es3c28p_kbd_probe(void);
 extern "C" int es3c28p_kbd_rawget(uint8_t* out, int cap);
 
 void register_esp32_fs(VM& vm);
@@ -82,8 +83,9 @@ void register_esp32_builtins(VM& vm) {
     // codes were before the Fn layer was folded in. A key whose meaning
     // is in doubt gets held down and read back here rather than guessed
     // at from a datasheet.
-    vm.register_native("KEY.LOCAL", 0, 0, [](const std::vector<Value>&) -> Value {
-        return Value::make_bool(es3c28p_kbd_ready() != 0);
+    vm.register_native("KEY.LOCAL", 0, 1, [](const std::vector<Value>& args) -> Value {
+        bool force = !args.empty() && args[0].to_double() != 0;
+        return Value::make_bool((force ? es3c28p_kbd_probe() : es3c28p_kbd_ready()) != 0);
     });
     vm.register_native("KEY.RAW", 0, 0, [](const std::vector<Value>&) -> Value {
         uint8_t buf[16];

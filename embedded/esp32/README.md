@@ -182,7 +182,7 @@ them by name, and `PIN.FREE` lists what is left. On this build that is
     I2C.SETUP(bus, sda, scl)   bus 0 or 1
     I2C.WRITE(bus, addr, data [, hz])
     I2C.READ(bus, addr, n [, hz])
-    I2C.SCAN(bus)              the addresses that answered
+    I2C.SCAN(bus)              the addresses that answered a read
 
     SPI.SETUP(bus, sck, mosi, miso [, hz])
     SPI.XFER(bus, data)        full duplex, same length back
@@ -203,6 +203,15 @@ mistake and says so; bus 1 is free for pins of your choosing.
 The connector gives 3.3 V, not the 5 V a Grove port would. That is the
 right way round: a device fed 5 V pulls the bus to 5 V, and these pins
 do not tolerate it.
+
+`I2C.SCAN` asks each address for one byte rather than calling
+`i2c_master_probe`, which is no use here. The probe refuses to start
+unless it already sees both lines idle, and held up by nothing but the
+chip's internal pull-ups they never look so: it reports a busy bus for
+every address on the board bus, the touch controller included, while a
+transfer to that same address goes through in the next breath. On a
+healthy board the scan answers `[24, 40, 56]`, and with a keyboard on
+the connector, 95 as well.
 
 ### Events
 
@@ -422,12 +431,20 @@ lists the editor's keys. Shift with an arrow is the one thing missing -
 the keyboard sends the same code either way, so selecting with the
 keys is a terminal-only move.
 
-The keyboard is probed rather than assumed, and probed again every two
-seconds while it is absent, so one plugged in after boot starts working
-without a reset. `KEY.LOCAL` says whether it answered. `KEY.RAW` gives
-back the last codes it sent before the Fn layer was folded in, which is
-how a key whose meaning is in doubt gets settled - hold it down and
-read it, rather than trust a table.
+The keyboard is probed rather than assumed, and probed again while it is
+absent, so one plugged in after boot starts working without a reset -
+after two seconds at first, then doubling to half a minute. The backoff
+is not politeness: the probe sits in the read path, and a bus held down
+by miswiring answers neither yes nor no for tens of milliseconds at a
+time, which is enough to make the prompt itself feel dead. For the same
+reason the probe and the read are silent, since IDF logs a failed
+transfer straight over the prompt.
+
+`KEY.LOCAL` says whether it answered, and `KEY.LOCAL(1)` probes again
+now rather than waiting out the backoff. `KEY.RAW` gives back the last
+codes it sent before the Fn layer was folded in, which is how a key
+whose meaning is in doubt gets settled - hold it down and read it,
+rather than trust a table.
 
 It arrives in `jdb_stdin_getc`, the one place every reader on this board
 comes through, so the prompt, the editor, `INKEY$`, `KEY.GET` and the
