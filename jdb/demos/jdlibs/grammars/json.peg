@@ -1,0 +1,14 @@
+# JSON as RFC 8259 writes it.
+?value   <- object / array / STRING / NUMBER / TRUE / FALSE / NULL
+object   <- "{" (pair ("," pair)*)? "}"
+pair     <- STRING ":" value
+array    <- "[" (value ("," value)*)? "]"
+
+STRING   <- '\x22' ([^\x22\\\x00-\x1f] / '\\' _ESCAPE)* '\x22'
+_ESCAPE  <- [\x22\\/bfnrt] / "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]
+NUMBER   <- "-"? ("0" / [1-9] [0-9]*) ("." [0-9]+)? ([eE] [+\-]? [0-9]+)?
+TRUE     <- "true"
+FALSE    <- "false"
+NULL     <- "null"
+_WS      <- [ \t\r\n]+
+%ignore _WS

@@ -1,0 +1,15 @@
+# Arithmetic with precedence: + and - bind loosest, then * and /, then a
+# sign, then ^ (right to left).
+?sum     <- product (ADDOP product)*
+?product <- unary (MULOP unary)*
+?unary   <- NEG unary / power
+?power   <- atom (POW unary)?
+?atom    <- NUMBER / "(" sum ")"
+
+NUMBER   <- [0-9]+ ("." [0-9]+)?
+ADDOP    <- "+" / "-"
+MULOP    <- "*" / "/"
+POW      <- "^"
+NEG      <- "-"
+_WS      <- [ \t]+
+%ignore _WS

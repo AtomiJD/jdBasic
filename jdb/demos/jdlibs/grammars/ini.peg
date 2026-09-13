@@ -1,0 +1,14 @@
+# An INI dialect: [sections], key = value, ; and # comments, blank lines.
+# Newlines matter, so nothing is ignored and spaces are written out.
+ini      <- (_BLANK / _COMMENT / section / entry)*
+section  <- _SP? "[" _SP? NAME _SP? "]" _EOL
+entry    <- _SP? KEY _SP? "=" _SP? VALUE? _EOL
+
+NAME     <- [A-Za-z0-9_.\-]+ ([ ]+ [A-Za-z0-9_.\-]+)*
+KEY      <- [A-Za-z0-9_.\-]+
+VALUE    <- (!(_SP? _EOL) .)+
+_COMMENT <- _SP? [;#] [^\n]* _EOL
+_BLANK   <- _SP? _NL
+_SP      <- [ \t]+
+_NL      <- "\r"? "\n"
+_EOL     <- _SP? (_NL / !.)

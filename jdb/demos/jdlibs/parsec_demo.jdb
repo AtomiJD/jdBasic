@@ -1,0 +1,196 @@
+' parsec_demo.jdb - small languages parsed without a hand-written lexer: a
+' calculator from a PEG grammar that evaluates expressions and points at
+' the column where a malformed one goes wrong, a JSON document as a tree,
+' an INI file read into sections and keys, and a CSV row with quoted fields
+' parsed by combinators.
+'
+'   jdBasic jdb/demos/jdlibs/parsec_demo.jdb
+
+IMPORT PARSEC
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM grammars$ = "jdb/demos/jdlibs/grammars/"
+IF NOT FILE.EXISTS(grammars$ + "arith.peg") THEN grammars$ = "grammars/"
+DIM i = 0
+
+FUNC Indented$(block$, pad$)
+    DIM rows = SPLIT(block$, CHR$(10))
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM one$ = rows[k]
+        IF one$ <> "" THEN out$ = out$ + pad$ + one$ + CHR$(10)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC Padded$(s$, width_to)
+    DIM out$ = s$
+    DO WHILE LEN(out$) < width_to
+        out$ = out$ + " "
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' ── actions of the calculator ──────────────────────────────────
+
+FUNC NumberValue(tree)
+    RETURN VAL(tree{"text"})
+ENDFUNC
+
+FUNC ChainValue(tree)
+    DIM kids = tree{"children"}
+    DIM first = kids[0]
+    DIM acc = first{"value"}
+    DIM k = 1
+    DO WHILE k < LEN(kids)
+        DIM op_node = kids[k]
+        DIM rhs = kids[k + 1]
+        DIM op$ = op_node{"text"}
+        DIM rv = rhs{"value"}
+        IF op$ = "+" THEN acc = acc + rv
+        IF op$ = "-" THEN acc = acc - rv
+        IF op$ = "*" THEN acc = acc * rv
+        IF op$ = "/" THEN acc = acc / rv
+        k = k + 2
+    LOOP
+    RETURN acc
+ENDFUNC
+
+FUNC NegValue(tree)
+    DIM kids = tree{"children"}
+    DIM inner = kids[1]
+    DIM iv = inner{"value"}
+    RETURN 0 - iv
+ENDFUNC
+
+FUNC PowValue(tree)
+    DIM kids = tree{"children"}
+    DIM lower = kids[0]
+    DIM upper = kids[2]
+    DIM lv = lower{"value"}
+    DIM uv = upper{"value"}
+    RETURN lv ^ uv
+ENDFUNC
+
+' ── actions of the CSV row ─────────────────────────────────────
+
+FUNC FieldValue$(tree)
+    DIM own$ = tree{"text"}
+    RETURN own$
+ENDFUNC
+
+FUNC QuotedValue$(tree)
+    DIM own$ = tree{"text"}
+    DIM qq$ = CHR$(34)
+    DIM inner$ = MID$(own$, 1, LEN(own$) - 2)
+    RETURN REPLACE$(inner$, qq$ + qq$, qq$)
+ENDFUNC
+
+' ── a calculator ───────────────────────────────────────────────
+
+PRINT "A calculator from grammars/arith.peg"
+DIM calc = PARSEC.GRAMMAR(TXTREADER$(grammars$ + "arith.peg"))
+PARSEC.ACTION(calc, "NUMBER", NumberValue@)
+PARSEC.ACTION(calc, "sum", ChainValue@)
+PARSEC.ACTION(calc, "product", ChainValue@)
+PARSEC.ACTION(calc, "unary", NegValue@)
+PARSEC.ACTION(calc, "power", PowValue@)
+DIM exprs = ["1 + 2 * 3", "(1 + 2) * 3", "2 ^ 3 ^ 2", "-(4 - 10) / 4", "3.5 * (2 + 0.25)", "8 / 2 / 2"]
+FOR i = 0 TO LEN(exprs) - 1
+    DIM ex$ = exprs[i]
+    DIM t_ex = PARSEC.PARSE(calc, ex$)
+    DIM ex_value = t_ex{"value"}
+    PRINT "  "; Padded$(ex$, 20); "= "; ex_value
+NEXT i
+PRINT
+PRINT "  The tree of 1 + 2 * 3, * below + as precedence says:"
+DIM t_tree = PARSEC.PARSE(calc, "1 + 2 * 3")
+PRINT Indented$(PARSEC.OUTLINE$(t_tree), "    ");
+PRINT "  Malformed input:"
+DIM broken = ["2 * (3 + 4", "1 + * 2", "4 4"]
+FOR i = 0 TO LEN(broken) - 1
+    DIM bad$ = broken[i]
+    DIM bad_ok = PARSEC.MATCHES(calc, bad$)
+    IF NOT bad_ok THEN
+        PRINT Indented$(PARSEC.ERRCONTEXT$(), "    ");
+        PRINT "    "; MID$(PARSEC.ERROR$(), 8, 200)
+    ENDIF
+NEXT i
+PRINT
+
+' ── JSON ───────────────────────────────────────────────────────
+
+PRINT "JSON from grammars/json.peg"
+DIM json = PARSEC.GRAMMAR(TXTREADER$(grammars$ + "json.peg"))
+DIM doc$ = "{" + Q$ + "invoice" + Q$ + ": " + Q$ + "2026-0413" + Q$ + ", " + Q$ + "paid" + Q$ + ": false," + LF$
+doc$ = doc$ + " " + Q$ + "lines" + Q$ + ": [{" + Q$ + "item" + Q$ + ": " + Q$ + "paper" + Q$ + ", " + Q$ + "qty" + Q$ + ": 10}, {" + Q$ + "item" + Q$ + ": " + Q$ + "toner" + Q$ + ", " + Q$ + "qty" + Q$ + ": 2}]}"
+DIM t_doc = PARSEC.PARSE(json, doc$)
+PRINT Indented$(PARSEC.OUTLINE$(t_doc), "  ");
+DIM quantities = PARSEC.COLLECT(t_doc, "NUMBER")
+DIM qty_texts = ""
+FOR i = 0 TO LEN(quantities) - 1
+    DIM qty_node = quantities[i]
+    DIM qty_text$ = qty_node{"text"}
+    IF i > 0 THEN qty_texts = qty_texts + " and "
+    qty_texts = qty_texts + qty_text$
+NEXT i
+PRINT "  COLLECT finds the numbers "; qty_texts
+DIM doc_bad$ = "{" + Q$ + "a" + Q$ + ": 1," + LF$ + " " + Q$ + "b" + Q$ + ": [1, 2" + LF$ + "}"
+DIM doc_bad_ok = PARSEC.MATCHES(json, doc_bad$)
+PRINT "  A bracket left open:"
+PRINT Indented$(PARSEC.ERRCONTEXT$(), "    ");
+PRINT "    "; MID$(PARSEC.ERROR$(), 8, 200)
+PRINT
+
+' ── INI ────────────────────────────────────────────────────────
+
+PRINT "INI from grammars/ini.peg"
+DIM ini = PARSEC.GRAMMAR(TXTREADER$(grammars$ + "ini.peg"))
+DIM ini$ = "; shop settings" + LF$ + "[database]" + LF$ + "host = db.local" + LF$ + "port = 5432" + LF$ + LF$ + "[mail]" + LF$ + "sender = shop@example.com   " + LF$ + "# no password here" + LF$ + "tls="
+DIM t_ini = PARSEC.PARSE(ini, ini$)
+DIM ini_kids = t_ini{"children"}
+DIM section$ = ""
+FOR i = 0 TO LEN(ini_kids) - 1
+    DIM part = ini_kids[i]
+    DIM part_type$ = part{"type"}
+    IF part_type$ = "section" THEN
+        DIM section_names = PARSEC.CHILDREN(part, "NAME")
+        DIM section_node = section_names[0]
+        section$ = section_node{"text"}
+    ELSE
+        DIM keys = PARSEC.CHILDREN(part, "KEY")
+        DIM vals = PARSEC.CHILDREN(part, "VALUE")
+        DIM key_node = keys[0]
+        DIM key_text$ = key_node{"text"}
+        DIM val_text$ = "(empty)"
+        IF LEN(vals) > 0 THEN
+            DIM val_node = vals[0]
+            val_text$ = val_node{"text"}
+        ENDIF
+        DIM entry_line = part{"line"}
+        PRINT "  line "; entry_line; ": "; section$; "."; key_text$; " = "; val_text$
+    ENDIF
+NEXT i
+PRINT
+
+' ── a CSV row with combinators ─────────────────────────────────
+
+PRINT "A CSV row with combinators"
+DIM plain = PARSEC.TOKEN("FIELD", PARSEC.MANY(PARSEC.CHARSET("^,\x22\n")))
+DIM quoted = PARSEC.TOKEN("QUOTED", PARSEC.SEQUENCE([PARSEC.LIT(Q$), PARSEC.MANY(PARSEC.CHOICE([PARSEC.LIT(Q$ + Q$), PARSEC.CHARSET("^\x22")])), PARSEC.LIT(Q$)]))
+DIM row = PARSEC.NAMED("row", PARSEC.SEPBY(PARSEC.CHOICE([quoted, plain]), PARSEC.HIDE(PARSEC.LIT(","))))
+PARSEC.ACTION(row, "FIELD", FieldValue$@)
+PARSEC.ACTION(row, "QUOTED", QuotedValue$@)
+DIM csv$ = "42," + Q$ + "Smith, John" + Q$ + "," + Q$ + "said " + Q$ + Q$ + "hi" + Q$ + Q$ + Q$ + ",,end"
+PRINT "  "; csv$
+DIM t_row = PARSEC.PARSE(row, csv$)
+DIM fields = t_row{"children"}
+FOR i = 0 TO LEN(fields) - 1
+    DIM field = fields[i]
+    DIM field_value$ = field{"value"}
+    PRINT "  field "; i + 1; ": ["; field_value$; "]"
+NEXT i
+DIM csv_bad_ok = PARSEC.MATCHES(row, "1," + Q$ + "open")
+PRINT "  "; MID$(PARSEC.ERROR$(), 8, 200)

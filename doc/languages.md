@@ -1450,6 +1450,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `TEXTDIFF` | differences: difflib's opcodes and ratio, unified diffs written and applied, inline word diffs, snapshots |
 | `JDWEB` | web apps: routes with parameters, middleware, sessions, static files, JSON, a test client, themed pages and cookie login |
 | `DOCX` | Word files: written with headings, lists, tables, header and footer; templates filled; paragraphs and tables read |
+| `PARSEC` | parsers: combinators and PEG grammars, trees with line and column, actions, errors naming what was expected |
 | `PKG` | modules installed from an index, git or ZIP into `~/.jdbasic/lib` with their requirements by semver range; list, remove, update, lock files |
 
 ```basic

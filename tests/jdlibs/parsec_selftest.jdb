@@ -1,0 +1,467 @@
+' PARSEC: the combinators on their own, errors with line, column and what
+' was expected, the grammar notation and its faults, and the three example
+' grammars of the demo folder: arithmetic evaluated through actions, JSON
+' written back and compared through JSON.PARSE$, and an INI dialect.
+
+IMPORT TESTKIT, PARSEC
+
+DIM gram$ = "jdb/demos/jdlibs/grammars/"
+IF NOT FILE.EXISTS(gram$ + "arith.peg") THEN gram$ = "../../jdb/demos/jdlibs/grammars/"
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM i = 0
+
+FUNC KidTexts$(tree)
+    DIM kids = tree{"children"}
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM kid_text$ = kid{"text"}
+        IF k > 0 THEN out$ = out$ + ","
+        out$ = out$ + kid_text$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC KidTypes$(tree)
+    DIM kids = tree{"children"}
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM kid_type$ = kid{"type"}
+        IF k > 0 THEN out$ = out$ + ","
+        out$ = out$ + kid_type$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC Expecting$()
+    DIM wanted = PARSEC.EXPECTED()
+    RETURN JOIN(wanted, " ")
+ENDFUNC
+
+FUNC GrammarError$(src$)
+    DIM msg$ = "no error"
+    TRY
+        DIM g = PARSEC.GRAMMAR(src$)
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+FUNC ParseError$(handle, src$)
+    DIM msg$ = "no error"
+    TRY
+        DIM t = PARSEC.PARSE(handle, src$)
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+FUNC Has(haystack$, needle$)
+    RETURN INSTR(haystack$, needle$) >= 0
+ENDFUNC
+
+' ── actions ────────────────────────────────────────────────────
+
+FUNC IntValue(tree)
+    RETURN VAL(tree{"text"})
+ENDFUNC
+
+FUNC ListSum(tree)
+    DIM kids = tree{"children"}
+    DIM total_sum = 0.0
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM kv = kid{"value"}
+        total_sum = total_sum + kv
+    NEXT k
+    RETURN total_sum
+ENDFUNC
+
+FUNC ChainValue(tree)
+    DIM kids = tree{"children"}
+    DIM first = kids[0]
+    DIM acc = first{"value"}
+    DIM k = 1
+    DO WHILE k < LEN(kids)
+        DIM op_node = kids[k]
+        DIM rhs = kids[k + 1]
+        DIM op$ = op_node{"text"}
+        DIM rv = rhs{"value"}
+        IF op$ = "+" THEN acc = acc + rv
+        IF op$ = "-" THEN acc = acc - rv
+        IF op$ = "*" THEN acc = acc * rv
+        IF op$ = "/" THEN acc = acc / rv
+        k = k + 2
+    LOOP
+    RETURN acc
+ENDFUNC
+
+FUNC NegValue(tree)
+    DIM kids = tree{"children"}
+    DIM inner = kids[1]
+    DIM iv = inner{"value"}
+    RETURN 0 - iv
+ENDFUNC
+
+FUNC PowValue(tree)
+    DIM kids = tree{"children"}
+    DIM lower = kids[0]
+    DIM upper = kids[2]
+    DIM lv = lower{"value"}
+    DIM uv = upper{"value"}
+    RETURN lv ^ uv
+ENDFUNC
+
+FUNC TextValue$(tree)
+    DIM own$ = tree{"text"}
+    RETURN own$
+ENDFUNC
+
+FUNC JoinedValues$(tree, open$, close$)
+    DIM kids = tree{"children"}
+    DIM out$ = open$
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM kv$ = kid{"value"}
+        IF k > 0 THEN out$ = out$ + ","
+        out$ = out$ + kv$
+    NEXT k
+    RETURN out$ + close$
+ENDFUNC
+
+FUNC ObjectValue$(tree)
+    RETURN JoinedValues$(tree, "{", "}")
+ENDFUNC
+
+FUNC ArrayValue$(tree)
+    RETURN JoinedValues$(tree, "[", "]")
+ENDFUNC
+
+FUNC PairValue$(tree)
+    DIM kids = tree{"children"}
+    DIM key_node = kids[0]
+    DIM val_node = kids[1]
+    DIM k$ = key_node{"value"}
+    DIM v$ = val_node{"value"}
+    RETURN k$ + ":" + v$
+ENDFUNC
+
+FUNC IniPairs$(tree)
+    DIM kids = tree{"children"}
+    DIM out$ = ""
+    DIM section$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM kid_type$ = kid{"type"}
+        IF kid_type$ = "section" THEN
+            DIM names = PARSEC.CHILDREN(kid, "NAME")
+            DIM name_node = names[0]
+            section$ = name_node{"text"}
+        ELSE
+            DIM keys = PARSEC.CHILDREN(kid, "KEY")
+            DIM vals = PARSEC.CHILDREN(kid, "VALUE")
+            DIM key_node = keys[0]
+            DIM entry$ = section$ + "." + key_node{"text"} + "="
+            IF LEN(vals) > 0 THEN
+                DIM val_node = vals[0]
+                entry$ = entry$ + val_node{"text"}
+            ENDIF
+            IF out$ <> "" THEN out$ = out$ + ";"
+            out$ = out$ + entry$
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' ── combinators ────────────────────────────────────────────────
+
+TESTKIT.SUITE("combinators")
+DIM digit = PARSEC.CHARSET("0-9")
+DIM int_tok = PARSEC.TOKEN("INT", PARSEC.MANY1(digit))
+DIM t_int = PARSEC.PARSE(int_tok, "2026")
+DIM t_int_type$ = t_int{"type"}
+DIM t_int_text$ = t_int{"text"}
+DIM t_int_kids = t_int{"children"}
+TESTKIT.EQ(t_int_type$, "INT", "a token is a node of its type")
+TESTKIT.EQ(t_int_text$, "2026", "holding the text it matched")
+TESTKIT.EQ(LEN(t_int_kids), 0, "and no children")
+DIM nocase_ok = PARSEC.MATCHES(PARSEC.LIT("select", 1), "SeLeCT")
+TESTKIT.ISTRUE(nocase_ok, "a literal in any case")
+DIM case_ok = PARSEC.MATCHES(PARSEC.LIT("select"), "SELECT")
+TESTKIT.ISTRUE(NOT case_ok, "and one in its own case")
+DIM sign = PARSEC.CHOICE([PARSEC.LIT("+"), PARSEC.LIT("-")])
+DIM signed = PARSEC.TOKEN("SIGNED", PARSEC.SEQUENCE([PARSEC.OPT(sign), PARSEC.MANY1(digit)]))
+DIM signed1 = PARSEC.MATCHES(signed, "-17")
+DIM signed2 = PARSEC.MATCHES(signed, "17")
+DIM signed3 = PARSEC.MATCHES(signed, "--17")
+TESTKIT.ISTRUE(signed1, "CHOICE and OPT: a sign")
+TESTKIT.ISTRUE(signed2, "left out")
+TESTKIT.ISTRUE(NOT signed3, "but only one")
+
+DIM item_list = PARSEC.NAMED("list", PARSEC.SEQUENCE([PARSEC.HIDE(PARSEC.LIT("[")), PARSEC.SEPBY(int_tok, PARSEC.HIDE(PARSEC.LIT(","))), PARSEC.HIDE(PARSEC.LIT("]"))]))
+PARSEC.IGNORE(item_list, PARSEC.CHARSET(" \t"))
+DIM t_list = PARSEC.PARSE(item_list, "[ 1, 22 ,333 ]")
+TESTKIT.EQ(KidTexts$(t_list), "1,22,333", "SEPBY with the spaces IGNORE skips")
+DIM t_list_start = t_list{"start"}
+DIM t_list_end = t_list{"end"}
+TESTKIT.EQ(t_list_start, 0, "a node starts where its first piece does")
+TESTKIT.EQ(t_list_end, 14, "and ends after its last")
+DIM t_empty = PARSEC.PARSE(item_list, "[]")
+TESTKIT.EQ(KidTexts$(t_empty), "", "an empty list")
+DIM trailing_ok = PARSEC.MATCHES(item_list, "[1,]")
+TESTKIT.ISTRUE(NOT trailing_ok, "a separator needs an item after it")
+DIM one_or_more = PARSEC.SEPBY1(int_tok, PARSEC.LIT(";"))
+DIM none_ok = PARSEC.MATCHES(one_or_more, "")
+DIM more_ok = PARSEC.MATCHES(one_or_more, "1;2;3")
+TESTKIT.ISTRUE(NOT none_ok, "SEPBY1 wants an item")
+TESTKIT.ISTRUE(more_ok, "and takes more")
+
+DIM ident = PARSEC.TOKEN("ID", PARSEC.PATTERN("[A-Za-z_][A-Za-z0-9_]*"))
+DIM t_id = PARSEC.PARSE(ident, "snake_case42")
+DIM t_id_text$ = t_id{"text"}
+TESTKIT.EQ(t_id_text$, "snake_case42", "PATTERN matches a regular expression")
+DIM id_bad = PARSEC.MATCHES(ident, "42abc")
+TESTKIT.ISTRUE(NOT id_bad, "at the position, not later")
+DIM keyword = PARSEC.SEQUENCE([PARSEC.LIT("if"), PARSEC.NOTAHEAD(PARSEC.CHARSET("a-z"))])
+DIM kw1 = PARSEC.MATCHES(keyword, "if")
+DIM kw2 = PARSEC.MATCHES(keyword, "iffy")
+TESTKIT.ISTRUE(kw1, "NOTAHEAD lets a keyword end")
+TESTKIT.ISTRUE(NOT kw2, "and refuses a longer word")
+DIM digit_first = PARSEC.SEQUENCE([PARSEC.AHEAD(digit), PARSEC.ANYCHAR()])
+DIM ahead1 = PARSEC.MATCHES(digit_first, "7")
+DIM ahead2 = PARSEC.MATCHES(digit_first, "x")
+TESTKIT.ISTRUE(ahead1, "AHEAD consumes nothing")
+TESTKIT.ISTRUE(NOT ahead2, "and fails where its parser fails")
+
+DIM nest = PARSEC.DEFINE("nest", PARSEC.NAMED("nest", PARSEC.SEQUENCE([PARSEC.HIDE(PARSEC.LIT("(")), PARSEC.MANY(PARSEC.REF("nest")), PARSEC.HIDE(PARSEC.LIT(")"))])))
+DIM t_nest = PARSEC.PARSE(nest, "(()(()))")
+DIM all_nests = PARSEC.COLLECT(t_nest, "nest")
+DIM top_nests = PARSEC.CHILDREN(t_nest, "nest")
+TESTKIT.EQ(LEN(all_nests), 4, "REF and DEFINE recurse; COLLECT finds every node")
+TESTKIT.EQ(LEN(top_nests), 2, "CHILDREN one level")
+DIM undefined_ref = PARSEC.REF("nowhere")
+TESTKIT.ISTRUE(Has(ParseError$(undefined_ref, "x"), "no parser defined as nowhere"), "a REF nobody defined throws")
+
+DIM e_acute$ = CHR$(195) + CHR$(169)
+DIM n_tilde$ = CHR$(195) + CHR$(177)
+DIM euro$ = CHR$(226) + CHR$(130) + CHR$(172)
+DIM letters = PARSEC.TOKEN("WORD", PARSEC.MANY1(PARSEC.CHARSET("a-z" + e_acute$ + n_tilde$)))
+DIM word1 = PARSEC.MATCHES(letters, "caf" + e_acute$)
+DIM word2 = PARSEC.MATCHES(letters, "ni" + n_tilde$ + "o")
+DIM word3 = PARSEC.MATCHES(letters, "caf" + euro$ + "s")
+TESTKIT.ISTRUE(word1, "a set holds letters beyond ASCII")
+TESTKIT.ISTRUE(word2, "any of them")
+TESTKIT.ISTRUE(NOT word3, "and nothing else")
+TESTKIT.EQ(PARSEC.ERRCOL(), 4, "columns count characters, not bytes")
+DIM t_word = PARSEC.PARSE(letters, "ni" + n_tilde$ + "o")
+DIM t_word_end = t_word{"end"}
+DIM t_word_text$ = t_word{"text"}
+TESTKIT.EQ(t_word_end, 4, "and so do offsets")
+TESTKIT.EQ(t_word_text$, "ni" + n_tilde$ + "o", "while the text is the text")
+
+PARSEC.ACTION(item_list, "INT", IntValue@)
+PARSEC.ACTION(item_list, "list", ListSum@)
+DIM t_sum = PARSEC.PARSE(item_list, "[1, 22, 333]")
+DIM sum_value = t_sum{"value"}
+TESTKIT.EQ(sum_value, 356, "actions compute values bottom-up")
+
+' ── errors ─────────────────────────────────────────────────────
+
+TESTKIT.SUITE("errors")
+DIM stray_ok = PARSEC.MATCHES(item_list, "[1, 2 x]")
+TESTKIT.ISTRUE(NOT stray_ok, "a list with a stray word fails")
+TESTKIT.EQ(PARSEC.ERRLINE(), 1, "on line 1")
+TESTKIT.EQ(PARSEC.ERRCOL(), 7, "at the column of the word")
+TESTKIT.EQ(Expecting$(), Q$ + "," + Q$ + " " + Q$ + "]" + Q$, "expecting a comma or the bracket")
+TESTKIT.EQ(PARSEC.ERROR$(), "PARSEC: line 1, column 7: expected " + Q$ + "," + Q$ + " or " + Q$ + "]" + Q$ + ", found " + Q$ + "x" + Q$, "the message says all of it")
+TESTKIT.EQ(PARSEC.ERRCONTEXT$(), "[1, 2 x]" + LF$ + "      ^", "the context points at it")
+TESTKIT.EQ(ParseError$(item_list, "[1, 2 x]"), PARSEC.ERROR$(), "PARSE throws the same message")
+DIM short_ok = PARSEC.MATCHES(item_list, "[1, 2")
+TESTKIT.EQ(PARSEC.ERROR$(), "PARSEC: line 1, column 6: expected " + Q$ + "," + Q$ + " or " + Q$ + "]" + Q$ + ", found end of input", "the end of the input is named")
+DIM token_ok = PARSEC.MATCHES(item_list, "[1, x]")
+TESTKIT.EQ(Expecting$(), "INT", "a token is expected by its name")
+DIM tail_ok = PARSEC.MATCHES(int_tok, "12 ")
+TESTKIT.EQ(Expecting$(), "end of input", "text after a whole match is refused")
+
+' ── arithmetic ─────────────────────────────────────────────────
+
+TESTKIT.SUITE("arithmetic")
+DIM calc = PARSEC.GRAMMAR(TXTREADER$(gram$ + "arith.peg"))
+PARSEC.ACTION(calc, "NUMBER", IntValue@)
+PARSEC.ACTION(calc, "sum", ChainValue@)
+PARSEC.ACTION(calc, "product", ChainValue@)
+PARSEC.ACTION(calc, "unary", NegValue@)
+PARSEC.ACTION(calc, "power", PowValue@)
+DIM exprs = ["1 + 2 * 3", "(1 + 2) * 3", "2 ^ 3 ^ 2", "-2 ^ 2", "10 / 4 - 1", "1 - 2 - 3", "  42  ", "2 * (3 + 4) * 5", "8 / 2 / 2", "3.5 * 2", "--1", "((((17))))", "1 / 2 / 2", "2^2^3", "-(2 + 3) * 2", "1.5+2.25*4"]
+DIM wants = [7, 9, 512, -4, 1.5, -4, 42, 70, 2, 7, 1, 17, 0.25, 256, -10, 10.5]
+FOR i = 0 TO LEN(exprs) - 1
+    DIM ex$ = exprs[i]
+    DIM t_ex = PARSEC.PARSE(calc, ex$)
+    DIM got_value = t_ex{"value"}
+    DIM want_value = wants[i]
+    TESTKIT.NEAR(got_value, want_value, 0.000001, ex$ + " = " + STR$(want_value))
+NEXT i
+DIM t_outline = PARSEC.PARSE(calc, "1 + 2 * 3")
+DIM outline_want$ = "sum" + LF$ + "  NUMBER " + Q$ + "1" + Q$ + LF$ + "  ADDOP " + Q$ + "+" + Q$ + LF$ + "  product" + LF$ + "    NUMBER " + Q$ + "2" + Q$ + LF$ + "    MULOP " + Q$ + "*" + Q$ + LF$ + "    NUMBER " + Q$ + "3" + Q$ + LF$
+TESTKIT.EQ(PARSEC.OUTLINE$(t_outline), outline_want$, "?rules collapse to the tree precedence gives")
+DIM t_col = PARSEC.PARSE(calc, "1 +  22")
+DIM col_kids = t_col{"children"}
+DIM col_last = col_kids[2]
+DIM col_last_col = col_last{"column"}
+TESTKIT.EQ(col_last_col, 6, "a node knows its column")
+DIM bad1 = PARSEC.MATCHES(calc, "1 + * 2")
+TESTKIT.EQ(PARSEC.ERRCOL(), 5, "a malformed expression names the column")
+TESTKIT.EQ(Expecting$(), "NEG NUMBER " + Q$ + "(" + Q$, "and what could have stood there")
+TESTKIT.EQ(PARSEC.ERRCONTEXT$(), "1 + * 2" + LF$ + "    ^", "with a caret under it")
+DIM bad2 = PARSEC.MATCHES(calc, "(1 + 2")
+TESTKIT.EQ(PARSEC.ERRCOL(), 7, "an open parenthesis at the end")
+TESTKIT.EQ(Expecting$(), "POW MULOP ADDOP " + Q$ + ")" + Q$, "wants an operator or the closing one")
+DIM bad3 = PARSEC.MATCHES(calc, "1 2")
+TESTKIT.EQ(PARSEC.ERRCOL(), 3, "two numbers in a row")
+TESTKIT.EQ(Expecting$(), "POW MULOP ADDOP end of input", "want an operator between them")
+DIM bad4 = PARSEC.MATCHES(calc, "2 * ")
+TESTKIT.EQ(PARSEC.ERRCOL(), 5, "a missing operand after skipped spaces")
+DIM t_part = PARSEC.PARSE(PARSEC.RULE(calc, "product"), "6 * 7")
+DIM part_value = t_part{"value"}
+TESTKIT.EQ(part_value, 42, "RULE parses with another rule, with the grammar's actions")
+DIM part_bad = PARSEC.MATCHES(PARSEC.RULE(calc, "product"), "6 + 7")
+TESTKIT.ISTRUE(NOT part_bad, "and only that rule")
+DIM deep$ = ""
+FOR i = 1 TO 15
+    deep$ = deep$ + "("
+NEXT i
+deep$ = deep$ + "1"
+FOR i = 1 TO 15
+    deep$ = deep$ + " + 1)"
+NEXT i
+DIM t_deep = PARSEC.PARSE(calc, deep$)
+DIM deep_value = t_deep{"value"}
+TESTKIT.EQ(deep_value, 16, "fifteen nested parentheses")
+
+' ── grammar notation ───────────────────────────────────────────
+
+TESTKIT.SUITE("grammar notation")
+DIM g_plain = PARSEC.GRAMMAR("assign <- NAME '=' NAME" + LF$ + "NAME <- [a-z]+" + LF$ + "_WS <- ' '*" + LF$ + "%ignore _WS")
+DIM t_plain = PARSEC.PARSE(g_plain, "a = b")
+TESTKIT.EQ(KidTypes$(t_plain), "NAME,NAME", "literals leave no nodes")
+DIM g_keep = PARSEC.GRAMMAR("!assign <- NAME '=' NAME" + LF$ + "NAME <- [a-z]+" + LF$ + "_WS <- ' '*" + LF$ + "%ignore _WS")
+DIM t_keep = PARSEC.PARSE(g_keep, "a = b")
+TESTKIT.EQ(KidTexts$(t_keep), "a,=,b", "!rule keeps them")
+DIM g_inline = PARSEC.GRAMMAR("list <- _items" + LF$ + "_items <- NAME (',' NAME)*" + LF$ + "NAME <- [a-z]+")
+DIM t_inline = PARSEC.PARSE(g_inline, "x,y,z")
+TESTKIT.EQ(KidTypes$(t_inline), "NAME,NAME,NAME", "an _rule hands its children up")
+DIM g_collapse = PARSEC.GRAMMAR("?wrap <- NAME" + LF$ + "NAME <- [a-z]+")
+DIM t_collapse = PARSEC.PARSE(g_collapse, "solo")
+DIM t_collapse_type$ = t_collapse{"type"}
+TESTKIT.EQ(t_collapse_type$, "NAME", "a ?rule with one child is that child")
+DIM g_lark = PARSEC.GRAMMAR("greeting: HELLO | BYE" + LF$ + "HELLO = " + Q$ + "hello" + Q$ + "i" + LF$ + "BYE = /bye+/")
+DIM lark1 = PARSEC.MATCHES(g_lark, "HeLLo")
+DIM lark2 = PARSEC.MATCHES(g_lark, "byeee")
+TESTKIT.ISTRUE(lark1, ": and | as in lark, " + Q$ + "text" + Q$ + "i in any case")
+TESTKIT.ISTRUE(lark2, "/regex/ in a grammar")
+DIM g_escape = PARSEC.GRAMMAR("t <- '\t' [\x41-\x43] '\x44'")
+DIM esc_ok = PARSEC.MATCHES(g_escape, CHR$(9) + "BD")
+TESTKIT.ISTRUE(esc_ok, "\t and \xHH in strings and classes")
+DIM g_pred = PARSEC.GRAMMAR("ident <- !KW NAME" + LF$ + "KW <- 'if' ![a-z]" + LF$ + "NAME <- [a-z]+")
+DIM pred1 = PARSEC.MATCHES(g_pred, "iffy")
+DIM pred2 = PARSEC.MATCHES(g_pred, "if")
+TESTKIT.ISTRUE(pred1, "!e in a rule body")
+TESTKIT.ISTRUE(NOT pred2, "refuses what e matches")
+DIM g_start = PARSEC.GRAMMAR("# comments" + LF$ + "a <- 'x'   // either kind" + LF$ + "b <- 'y'" + LF$ + "%start b")
+DIM start_ok = PARSEC.MATCHES(g_start, "y")
+TESTKIT.ISTRUE(start_ok, "%start and comments")
+DIM g_multi = PARSEC.GRAMMAR("pair <- KEY" + LF$ + "        '='" + LF$ + "        KEY?" + LF$ + "KEY <- [a-z]+")
+DIM multi_ok = PARSEC.MATCHES(g_multi, "k=")
+TESTKIT.ISTRUE(multi_ok, "a rule over several lines, ? at a line end")
+
+TESTKIT.EQ(GrammarError$("a <- b"), "PARSEC: grammar line 1: no rule called b", "an unknown rule")
+TESTKIT.EQ(GrammarError$("a <- 'x"), "PARSEC: grammar line 1: a string is not closed", "an open string")
+TESTKIT.EQ(GrammarError$("a <- 'x'" + LF$ + "a <- 'y'"), "PARSEC: grammar line 2: a is defined twice", "a rule defined twice")
+TESTKIT.EQ(GrammarError$("a <- 'x' $"), "PARSEC: grammar line 1: unexpected " + Q$ + "$" + Q$, "a stray character")
+TESTKIT.EQ(GrammarError$("a <- 'x' (b"), "PARSEC: grammar line 1: expected )", "an open group")
+TESTKIT.EQ(GrammarError$("<- 'x'"), "PARSEC: grammar line 1: expected a rule: name <- expression", "a rule without a name")
+DIM g_left = PARSEC.GRAMMAR("expr <- expr '+' NUM / NUM" + LF$ + "NUM <- [0-9]+")
+TESTKIT.ISTRUE(Has(ParseError$(g_left, "1+2"), "left recursion"), "left recursion is reported, not looped")
+TESTKIT.ISTRUE(Has(ParseError$(PARSEC.GRAMMAR("s <- ('a'?)*"), "b"), "column 1"), "a repetition of nothing ends")
+
+' ── JSON ───────────────────────────────────────────────────────
+
+TESTKIT.SUITE("json")
+DIM json = PARSEC.GRAMMAR(TXTREADER$(gram$ + "json.peg"))
+PARSEC.ACTION(json, "STRING", TextValue$@)
+PARSEC.ACTION(json, "NUMBER", TextValue$@)
+PARSEC.ACTION(json, "TRUE", TextValue$@)
+PARSEC.ACTION(json, "FALSE", TextValue$@)
+PARSEC.ACTION(json, "NULL", TextValue$@)
+PARSEC.ACTION(json, "pair", PairValue$@)
+PARSEC.ACTION(json, "object", ObjectValue$@)
+PARSEC.ACTION(json, "array", ArrayValue$@)
+DIM json_src$ = "{" + LF$ + "  " + Q$ + "name" + Q$ + ": " + Q$ + "PARSEC \" + Q$ + "demo\" + Q$ + Q$ + "," + LF$
+json_src$ = json_src$ + "  " + Q$ + "sizes" + Q$ + ": [1, -2.5, 3e2, 0.25E-1]," + LF$
+json_src$ = json_src$ + "  " + Q$ + "flags" + Q$ + ": {" + Q$ + "on" + Q$ + ": true, " + Q$ + "off" + Q$ + ": false, " + Q$ + "none" + Q$ + ": null}," + LF$
+json_src$ = json_src$ + "  " + Q$ + "empty" + Q$ + ": [ ], " + Q$ + "text" + Q$ + ": " + Q$ + "caf" + e_acute$ + "\n" + Q$ + LF$ + "}"
+DIM json_min$ = "{" + Q$ + "name" + Q$ + ":" + Q$ + "PARSEC \" + Q$ + "demo\" + Q$ + Q$ + "," + Q$ + "sizes" + Q$ + ":[1,-2.5,3e2,0.25E-1]," + Q$ + "flags" + Q$ + ":{" + Q$ + "on" + Q$ + ":true," + Q$ + "off" + Q$ + ":false," + Q$ + "none" + Q$ + ":null}," + Q$ + "empty" + Q$ + ":[]," + Q$ + "text" + Q$ + ":" + Q$ + "caf" + e_acute$ + "\n" + Q$ + "}"
+DIM t_json = PARSEC.PARSE(json, json_src$)
+DIM json_value$ = t_json{"value"}
+TESTKIT.EQ(json_value$, json_min$, "a document written back without its spaces")
+DIM parsed_ours = JSON.PARSE$(json_value$)
+DIM parsed_orig = JSON.PARSE$(json_src$)
+TESTKIT.EQ(JSON.STRINGIFY$(parsed_ours), JSON.STRINGIFY$(parsed_orig), "means what JSON.PARSE$ reads in the source")
+DIM strings_found = PARSEC.COLLECT(t_json, "STRING")
+TESTKIT.EQ(LEN(strings_found), 10, "every string found, keys and values")
+DIM json_bad$ = "{" + LF$ + "  " + Q$ + "a" + Q$ + ": 1" + LF$ + "  " + Q$ + "b" + Q$ + ": 2" + LF$ + "}"
+DIM json_bad_ok = PARSEC.MATCHES(json, json_bad$)
+TESTKIT.ISTRUE(NOT json_bad_ok, "a missing comma")
+TESTKIT.EQ(PARSEC.ERRLINE(), 3, "is found on its line")
+TESTKIT.EQ(PARSEC.ERRCOL(), 3, "and column")
+TESTKIT.EQ(Expecting$(), Q$ + "," + Q$ + " " + Q$ + "}" + Q$, "with what belongs there")
+DIM esc_bad = PARSEC.MATCHES(json, "[" + Q$ + "a\q" + Q$ + "]")
+TESTKIT.ISTRUE(NOT esc_bad, "an unknown escape is refused")
+DIM big$ = "["
+FOR i = 0 TO 499
+    IF i > 0 THEN big$ = big$ + ", "
+    big$ = big$ + STR$(i * 3)
+NEXT i
+big$ = big$ + "]"
+DIM t_big = PARSEC.PARSE(json, big$)
+DIM big_kids = t_big{"children"}
+TESTKIT.EQ(LEN(big_kids), 500, "an array of 500 numbers")
+DIM deep_json$ = ""
+FOR i = 1 TO 30
+    deep_json$ = deep_json$ + "["
+NEXT i
+FOR i = 1 TO 30
+    deep_json$ = deep_json$ + "]"
+NEXT i
+DIM deep_ok = PARSEC.MATCHES(json, deep_json$)
+TESTKIT.ISTRUE(deep_ok, "arrays thirty deep")
+
+' ── INI ────────────────────────────────────────────────────────
+
+TESTKIT.SUITE("ini")
+DIM ini = PARSEC.GRAMMAR(TXTREADER$(gram$ + "ini.peg"))
+DIM CRLF$ = CHR$(13) + LF$
+DIM ini_src$ = "; database settings" + LF$ + "[db]" + LF$ + "host = localhost" + LF$ + "port=5432   " + LF$ + LF$ + "  # web" + CRLF$ + "[ web server ]" + CRLF$ + "root = /var/www/site one" + CRLF$ + "empty =" + LF$ + "last=1"
+DIM t_ini = PARSEC.PARSE(ini, ini_src$)
+TESTKIT.EQ(IniPairs$(t_ini), "db.host=localhost;db.port=5432;web server.root=/var/www/site one;web server.empty=;web server.last=1", "sections, entries, comments, blank lines and CRLF")
+DIM ini_sections = PARSEC.COLLECT(t_ini, "section")
+DIM second_section = ini_sections[1]
+DIM second_line = second_section{"line"}
+TESTKIT.EQ(second_line, 7, "a section knows its line")
+DIM ini_bad1 = PARSEC.MATCHES(ini, "[db" + LF$ + "x=1")
+TESTKIT.EQ(PARSEC.ERRLINE() * 100 + PARSEC.ERRCOL(), 104, "an open section at line 1, column 4")
+TESTKIT.EQ(Expecting$(), Q$ + "]" + Q$, "wants the bracket, not the hidden spaces")
+DIM ini_bad2 = PARSEC.MATCHES(ini, "[s]" + LF$ + "novalue")
+TESTKIT.EQ(PARSEC.ERRLINE() * 100 + PARSEC.ERRCOL(), 208, "a key without = at line 2, column 8")
+TESTKIT.EQ(Expecting$(), Q$ + "=" + Q$, "wants the =")
+
+TESTKIT.REPORT()

@@ -1,0 +1,1481 @@
+' parsec.jdb - parsers without a hand-written lexer, the ground of
+' pyparsing and lark. Combinators build parsers from literals, character
+' sets, regular expressions, sequences, choices, repetition, look-ahead and
+' separated lists; a PEG grammar text compiles into the same parsers. A
+' parse answers a tree of maps with type, text, line and column, carrying
+' the values that actions compute bottom-up; a failed parse names the line,
+' the column and everything that was expected there.
+'
+'   IMPORT PARSEC
+'   DIM calc = PARSEC.GRAMMAR(TXTREADER$("arith.peg"))
+'   PARSEC.ACTION(calc, "NUMBER", Num@)
+'   DIM tree = PARSEC.PARSE(calc, "2 * (3 + 4)")
+'   PRINT tree{"value"}
+
+EXPORT MODULE PARSEC
+
+DIM K_LIT = 1
+DIM K_SET = 2
+DIM K_ANY = 3
+DIM K_PAT = 4
+DIM K_SEQ = 5
+DIM K_ALT = 6
+DIM K_STAR = 7
+DIM K_PLUS = 8
+DIM K_OPT = 9
+DIM K_AND = 10
+DIM K_NOT = 11
+DIM K_HIDE = 12
+DIM K_SEP = 13
+DIM K_REF = 14
+DIM K_RULE = 15
+
+' One row per parser. A and B: literal chars, ranges or kids (first, count),
+' the child, item and separator, or a rule's body. O1: keep the leaf, or a
+' rule's mode (1 token). O2: no case, negated set, at least one, or a rule's
+' shape (1 inline, 2 collapse).
+DIM gPKind = []
+DIM gPA = []
+DIM gPB = []
+DIM gPO1 = []
+DIM gPO2 = []
+DIM gPText = []
+DIM gPLeft = []
+DIM gKidList = []
+DIM gLitChars = []
+DIM gRangeLo = []
+DIM gRangeHi = []
+DIM gNamed AS MAP
+DIM gScopeOf AS MAP
+DIM gIgnoreOf AS MAP
+DIM gActions AS MAP
+DIM gGrammars = 0
+DIM gEscCode = 0
+DIM gEscNext = 0
+
+DIM gSource$ = ""
+DIM gChars = []
+DIM gCode = []
+DIM gByte = []
+DIM gLineStarts = []
+DIM gN = 0
+
+' Nodes of a parse, every child before its parent.
+DIM gNType = []
+DIM gNStart = []
+DIM gNEnd = []
+DIM gNParent = []
+DIM gNCount = 0
+DIM gKidHead = []
+DIM gKidNext = []
+
+DIM gFailAt = -1
+DIM gExpect = []
+DIM gExpCount = 0
+DIM gQuiet = 0
+DIM gInToken = 0
+DIM gIgnore = -1
+DIM gSkipFrom = -1
+DIM gSkipTo = -1
+
+DIM gErrMsg$ = ""
+DIM gErrLine = 0
+DIM gErrCol = 0
+DIM gErrContext$ = ""
+DIM gErrExpected = []
+
+DIM gTokKind = []
+DIM gTokText = []
+DIM gTokLine = []
+DIM gTokFlag = []
+DIM gT = 0
+DIM gCurKeep = 0
+DIM gRefs = []
+
+' ── characters ─────────────────────────────────────────────────
+
+FUNC CodeOf(c$)
+    DIM b0 = ASC(c$)
+    DIM nb = LEN(c$)
+    IF nb <= 1 THEN RETURN b0
+    DIM b1 = ASC(MID$(c$, 1, 1))
+    IF nb = 2 THEN RETURN (b0 - 192) * 64 + (b1 - 128)
+    DIM b2 = ASC(MID$(c$, 2, 1))
+    IF nb = 3 THEN RETURN (b0 - 224) * 4096 + (b1 - 128) * 64 + (b2 - 128)
+    DIM b3 = ASC(MID$(c$, 3, 1))
+    RETURN (b0 - 240) * 262144 + (b1 - 128) * 4096 + (b2 - 128) * 64 + (b3 - 128)
+ENDFUNC
+
+FUNC HexDigit(c$)
+    RETURN CINT(INSTR("0123456789abcdef", LCASE$(c$)))
+ENDFUNC
+
+' Reads one character of a set or string at k of cs, resolving \n \t \r
+' \xHH and \<char>; leaves the code in gEscCode and the next index in
+' gEscNext.
+SUB ReadEsc(cs, k)
+    DIM c$ = cs[k]
+    gEscNext = k + 1
+    gEscCode = CodeOf(c$)
+    IF c$ = CHR$(92) ANDALSO k + 1 < LEN(cs) THEN
+        DIM d$ = cs[k + 1]
+        gEscNext = k + 2
+        IF d$ = "n" THEN
+            gEscCode = 10
+        ELSEIF d$ = "t" THEN
+            gEscCode = 9
+        ELSEIF d$ = "r" THEN
+            gEscCode = 13
+        ELSEIF d$ = "x" ANDALSO k + 3 < LEN(cs) THEN
+            DIM h1$ = cs[k + 2]
+            DIM h2$ = cs[k + 3]
+            gEscCode = HexDigit(h1$) * 16 + HexDigit(h2$)
+            gEscNext = k + 4
+        ELSE
+            gEscCode = CodeOf(d$)
+        ENDIF
+    ENDIF
+ENDSUB
+
+FUNC Shown$(c$)
+    IF c$ = CHR$(10) THEN RETURN "\n"
+    IF c$ = CHR$(13) THEN RETURN "\r"
+    IF c$ = CHR$(9) THEN RETURN "\t"
+    RETURN c$
+ENDFUNC
+
+FUNC Quoted$(s$)
+    DIM cs = -s$
+    DIM out$ = CHR$(34)
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        out$ = out$ + Shown$(c$)
+    NEXT k
+    RETURN out$ + CHR$(34)
+ENDFUNC
+
+' ── building parsers ───────────────────────────────────────────
+
+FUNC NewParser(kind, a, b, o1, o2, desc$)
+    PUSH(gPKind, kind)
+    PUSH(gPA, a)
+    PUSH(gPB, b)
+    PUSH(gPO1, o1)
+    PUSH(gPO2, o2)
+    PUSH(gPText, desc$)
+    PUSH(gPLeft, -1)
+    RETURN LEN(gPKind) - 1
+ENDFUNC
+
+FUNC LitParser(lit$, keep, nocase)
+    DIM first_at = LEN(gLitChars)
+    DIM n_chars = 0
+    IF lit$ <> "" THEN
+        DIM cs = -lit$
+        n_chars = LEN(cs)
+        DIM k = 0
+        FOR k = 0 TO n_chars - 1
+            DIM c$ = cs[k]
+            IF nocase = 1 THEN c$ = LCASE$(c$)
+            PUSH(gLitChars, c$)
+        NEXT k
+    ENDIF
+    RETURN NewParser(K_LIT, first_at, n_chars, keep, nocase, lit$)
+ENDFUNC
+
+FUNC SetParser(spec$, keep)
+    DIM first_at = LEN(gRangeLo)
+    DIM negate = 0
+    IF spec$ <> "" THEN
+        DIM cs = -spec$
+        DIM n_chars = LEN(cs)
+        DIM k = 0
+        DIM c0$ = cs[0]
+        IF c0$ = "^" ANDALSO n_chars > 1 THEN
+            negate = 1
+            k = 1
+        ENDIF
+        DO WHILE k < n_chars
+            ReadEsc(cs, k)
+            DIM lo = gEscCode
+            DIM hi = lo
+            k = gEscNext
+            IF k + 1 < n_chars THEN
+                DIM dash$ = cs[k]
+                IF dash$ = "-" THEN
+                    ReadEsc(cs, k + 1)
+                    hi = gEscCode
+                    k = gEscNext
+                ENDIF
+            ENDIF
+            PUSH(gRangeLo, lo)
+            PUSH(gRangeHi, hi)
+        LOOP
+    ENDIF
+    RETURN NewParser(K_SET, first_at, LEN(gRangeLo) - first_at, keep, negate, spec$)
+ENDFUNC
+
+FUNC ListParser(kind, parsers)
+    DIM first_at = LEN(gKidList)
+    DIM k = 0
+    FOR k = 0 TO LEN(parsers) - 1
+        DIM one = parsers[k]
+        PUSH(gKidList, CINT(one))
+    NEXT k
+    RETURN NewParser(kind, first_at, LEN(parsers), 0, 0, "")
+ENDFUNC
+
+FUNC RuleName$(p)
+    DIM desc$ = gPText[p]
+    DIM cut = CINT(INSTR(desc$, ":"))
+    IF gPKind[p] = K_REF ANDALSO cut >= 0 THEN RETURN MID$(desc$, cut + 1, LEN(desc$))
+    RETURN desc$
+ENDFUNC
+
+' What a parser is called in an error message.
+FUNC LabelOf$(p)
+    DIM kind = gPKind[p]
+    DIM desc$ = gPText[p]
+    IF kind = K_LIT THEN RETURN Quoted$(desc$)
+    IF kind = K_SET THEN RETURN "[" + desc$ + "]"
+    IF kind = K_ANY THEN RETURN "any character"
+    IF kind = K_PAT THEN RETURN "/" + desc$ + "/"
+    IF kind = K_RULE THEN RETURN desc$
+    IF kind = K_REF THEN RETURN RuleName$(p)
+    IF kind = K_HIDE THEN
+        DIM hidden = gPA[p]
+        RETURN LabelOf$(hidden)
+    ENDIF
+    RETURN "the text here"
+ENDFUNC
+
+' ── combinators ────────────────────────────────────────────────
+
+' Matches the text exactly; with nocase (1) in any case.
+EXPORT FUNC LIT(lit$, nocase = 0)
+    RETURN LitParser(lit$, 1, CINT(nocase))
+ENDFUNC
+
+' One character of a set written as between brackets: "a-z0-9_", "^,\n".
+EXPORT FUNC CHARSET(spec$)
+    RETURN SetParser(spec$, 1)
+ENDFUNC
+
+EXPORT FUNC ANYCHAR()
+    RETURN NewParser(K_ANY, 0, 0, 1, 0, "")
+ENDFUNC
+
+' A regular expression matched at the current position.
+EXPORT FUNC PATTERN(re$)
+    RETURN NewParser(K_PAT, 0, 0, 1, 0, re$)
+ENDFUNC
+
+EXPORT FUNC SEQUENCE(parsers)
+    RETURN ListParser(K_SEQ, parsers)
+ENDFUNC
+
+' The first of the parsers that matches.
+EXPORT FUNC CHOICE(parsers)
+    RETURN ListParser(K_ALT, parsers)
+ENDFUNC
+
+EXPORT FUNC MANY(p)
+    RETURN NewParser(K_STAR, CINT(p), 0, 0, 0, "")
+ENDFUNC
+
+EXPORT FUNC MANY1(p)
+    RETURN NewParser(K_PLUS, CINT(p), 0, 0, 0, "")
+ENDFUNC
+
+EXPORT FUNC OPT(p)
+    RETURN NewParser(K_OPT, CINT(p), 0, 0, 0, "")
+ENDFUNC
+
+' Zero or more items with a separator between them.
+EXPORT FUNC SEPBY(item, sep)
+    RETURN NewParser(K_SEP, CINT(item), CINT(sep), 0, 0, "")
+ENDFUNC
+
+EXPORT FUNC SEPBY1(item, sep)
+    RETURN NewParser(K_SEP, CINT(item), CINT(sep), 0, 1, "")
+ENDFUNC
+
+' Succeeds where p matches, consuming nothing.
+EXPORT FUNC AHEAD(p)
+    RETURN NewParser(K_AND, CINT(p), 0, 0, 0, "")
+ENDFUNC
+
+' Succeeds where p does not match, consuming nothing.
+EXPORT FUNC NOTAHEAD(p)
+    RETURN NewParser(K_NOT, CINT(p), 0, 0, 0, "")
+ENDFUNC
+
+' Matches p and leaves no nodes.
+EXPORT FUNC HIDE(p)
+    RETURN NewParser(K_HIDE, CINT(p), 0, 0, 0, "")
+ENDFUNC
+
+' A node of that type with the nodes of p as its children.
+EXPORT FUNC NAMED(type_name$, p)
+    RETURN NewParser(K_RULE, CINT(p), 0, 0, 0, type_name$)
+ENDFUNC
+
+' A node of that type holding the text p matched: no children, no skipped
+' text inside, and the type as the name in error messages.
+EXPORT FUNC TOKEN(type_name$, p)
+    RETURN NewParser(K_RULE, CINT(p), 0, 1, 0, type_name$)
+ENDFUNC
+
+' A parser defined later by DEFINE, for recursion.
+EXPORT FUNC REF(ref_name$)
+    RETURN NewParser(K_REF, -1, 0, 0, 0, "c:" + ref_name$)
+ENDFUNC
+
+EXPORT FUNC DEFINE(ref_name$, p)
+    gNamed{"c:" + ref_name$} = CINT(p)
+    RETURN CINT(p)
+ENDFUNC
+
+' Text p matches is skipped before every literal, set, pattern and token
+' when parsing with handle.
+EXPORT SUB IGNORE(handle, p)
+    gIgnoreOf{STR$(CINT(handle))} = CINT(p)
+ENDSUB
+
+FUNC ScopeOf$(handle)
+    DIM hk$ = STR$(CINT(handle))
+    IF MAP.EXISTS(gScopeOf, hk$) THEN
+        DIM scope_name$ = gScopeOf{hk$}
+        RETURN scope_name$
+    ENDIF
+    RETURN "p" + hk$
+ENDFUNC
+
+' fn(node) is called for every node of that type once its children are
+' built; what it answers becomes the node's "value".
+EXPORT SUB ACTION(handle, type_name$, fn)
+    gActions{ScopeOf$(handle) + ":" + type_name$} = fn
+ENDSUB
+
+' ── matching ───────────────────────────────────────────────────
+
+SUB LoadText(src$)
+    gSource$ = src$
+    gChars = []
+    gCode = []
+    gByte = []
+    gLineStarts = []
+    PUSH(gLineStarts, 0)
+    gN = 0
+    DIM b = 0
+    IF src$ <> "" THEN
+        gChars = -src$
+        gN = LEN(gChars)
+        DIM k = 0
+        FOR k = 0 TO gN - 1
+            DIM c$ = gChars[k]
+            PUSH(gByte, b)
+            PUSH(gCode, CodeOf(c$))
+            b = b + LEN(c$)
+            IF c$ = CHR$(10) THEN PUSH(gLineStarts, k + 1)
+        NEXT k
+    ENDIF
+    PUSH(gByte, b)
+    gNCount = 0
+    gFailAt = -1
+    gExpCount = 0
+    gQuiet = 0
+    gInToken = 0
+    gSkipFrom = -1
+    gSkipTo = -1
+ENDSUB
+
+FUNC AddNode(type_name$, s, fin)
+    DIM nid = gNCount
+    IF nid < LEN(gNStart) THEN
+        gNType[nid] = type_name$
+        gNStart[nid] = s
+        gNEnd[nid] = fin
+        gNParent[nid] = -1
+    ELSE
+        PUSH(gNType, type_name$)
+        PUSH(gNStart, s)
+        PUSH(gNEnd, fin)
+        PUSH(gNParent, -1)
+    ENDIF
+    gNCount = nid + 1
+    RETURN nid
+ENDFUNC
+
+SUB Adopt(c0, nid)
+    DIM j = 0
+    FOR j = c0 TO nid - 1
+        DIM up = gNParent[j]
+        IF up = -1 THEN gNParent[j] = nid
+    NEXT j
+ENDSUB
+
+FUNC CountDirect(c0)
+    DIM n_direct = 0
+    DIM j = 0
+    FOR j = c0 TO gNCount - 1
+        DIM up = gNParent[j]
+        IF up = -1 THEN n_direct = n_direct + 1
+    NEXT j
+    RETURN n_direct
+ENDFUNC
+
+SUB Fail(at, what$)
+    IF gQuiet = 0 THEN
+        IF at > gFailAt THEN
+            gFailAt = at
+            gExpCount = 0
+        ENDIF
+        IF at = gFailAt THEN
+            DIM seen = 0
+            DIM k = 0
+            FOR k = 0 TO gExpCount - 1
+                DIM ex$ = gExpect[k]
+                IF ex$ = what$ THEN seen = 1
+            NEXT k
+            IF seen = 0 THEN
+                IF gExpCount < LEN(gExpect) THEN
+                    gExpect[gExpCount] = what$
+                ELSE
+                    PUSH(gExpect, what$)
+                ENDIF
+                gExpCount = gExpCount + 1
+            ENDIF
+        ENDIF
+    ENDIF
+ENDSUB
+
+' The position after the ignored text at `at`.
+FUNC Skip(at)
+    IF gIgnore < 0 ORELSE gInToken > 0 THEN RETURN at
+    IF at = gSkipFrom THEN RETURN gSkipTo
+    DIM c0 = gNCount
+    gInToken = gInToken + 1
+    gQuiet = gQuiet + 1
+    DIM cur = at
+    DIM going = 1
+    DO WHILE going = 1
+        DIM nxt = MatchP(gIgnore, cur)
+        IF nxt > cur THEN
+            cur = nxt
+        ELSE
+            going = 0
+        ENDIF
+    LOOP
+    gInToken = gInToken - 1
+    gQuiet = gQuiet - 1
+    gNCount = c0
+    gSkipFrom = at
+    gSkipTo = cur
+    RETURN cur
+ENDFUNC
+
+SUB Leaf(p, s, fin)
+    IF gPO1[p] = 1 ANDALSO gInToken = 0 THEN
+        DIM leaf_id = AddNode("", s, fin)
+    ENDIF
+ENDSUB
+
+FUNC MatchLit(p, at)
+    DIM s = Skip(at)
+    DIM first_at = gPA[p]
+    DIM n_chars = gPB[p]
+    DIM nocase = gPO2[p]
+    IF s + n_chars > gN THEN
+        Fail(s, LabelOf$(p))
+        RETURN -1
+    ENDIF
+    DIM k = 0
+    FOR k = 0 TO n_chars - 1
+        DIM want$ = gLitChars[first_at + k]
+        DIM have$ = gChars[s + k]
+        IF nocase = 1 THEN have$ = LCASE$(have$)
+        IF have$ <> want$ THEN
+            Fail(s, LabelOf$(p))
+            RETURN -1
+        ENDIF
+    NEXT k
+    Leaf(p, s, s + n_chars)
+    RETURN s + n_chars
+ENDFUNC
+
+FUNC MatchSet(p, at)
+    DIM s = Skip(at)
+    IF s >= gN THEN
+        Fail(s, LabelOf$(p))
+        RETURN -1
+    ENDIF
+    DIM cp = gCode[s]
+    DIM inside = 0
+    DIM first_at = gPA[p]
+    DIM k = 0
+    FOR k = first_at TO first_at + gPB[p] - 1
+        DIM lo = gRangeLo[k]
+        DIM hi = gRangeHi[k]
+        IF cp >= lo ANDALSO cp <= hi THEN inside = 1
+    NEXT k
+    IF gPO2[p] = 1 THEN inside = 1 - inside
+    IF inside = 0 THEN
+        Fail(s, LabelOf$(p))
+        RETURN -1
+    ENDIF
+    Leaf(p, s, s + 1)
+    RETURN s + 1
+ENDFUNC
+
+FUNC MatchAny(p, at)
+    DIM s = Skip(at)
+    IF s >= gN THEN
+        Fail(s, LabelOf$(p))
+        RETURN -1
+    ENDIF
+    Leaf(p, s, s + 1)
+    RETURN s + 1
+ENDFUNC
+
+FUNC MatchPat(p, at)
+    DIM s = Skip(at)
+    DIM re$ = gPText[p]
+    DIM b = gByte[s]
+    DIM rest_len = gByte[gN] - b
+    DIM piece$ = MID$(gSource$, b, 2048)
+    DIM got = REGEX.MATCH("(" + re$ + ")[\s\S]*", piece$)
+    IF TYPEOF(got) = "ARRAY" ANDALSO rest_len > 2048 THEN
+        DIM first_hit$ = got[0]
+        IF LEN(first_hit$) > 1792 THEN
+            piece$ = MID$(gSource$, b, rest_len)
+            got = REGEX.MATCH("(" + re$ + ")[\s\S]*", piece$)
+        ENDIF
+    ENDIF
+    IF TYPEOF(got) <> "ARRAY" THEN
+        Fail(s, LabelOf$(p))
+        RETURN -1
+    ENDIF
+    DIM hit$ = got[0]
+    DIM blen = LEN(hit$)
+    DIM fin = s
+    DO WHILE fin < gN ANDALSO gByte[fin] - b < blen
+        fin = fin + 1
+    LOOP
+    Leaf(p, s, fin)
+    RETURN fin
+ENDFUNC
+
+' Matches parser p0 at character `at`; answers the position after the match
+' or -1. The composite parsers are handled here rather than in helpers, so
+' each level of nesting in the text costs as few call frames as possible.
+FUNC MatchP(p0, at)
+    DIM p = p0
+    DIM kind = gPKind[p]
+    DO WHILE kind = K_REF
+        DIM target = gPA[p]
+        IF target < 0 THEN
+            DIM ref_key$ = gPText[p]
+            IF NOT MAP.EXISTS(gNamed, ref_key$) THEN THROW "PARSEC: no parser defined as " + RuleName$(p)
+            target = gNamed{ref_key$}
+            gPA[p] = target
+        ENDIF
+        p = target
+        kind = gPKind[p]
+    LOOP
+    IF kind = K_LIT THEN RETURN MatchLit(p, at)
+    IF kind = K_SET THEN RETURN MatchSet(p, at)
+    IF kind = K_ANY THEN RETURN MatchAny(p, at)
+    IF kind = K_PAT THEN RETURN MatchPat(p, at)
+    DIM c0 = gNCount
+    DIM cur = at
+    DIM kid = gPA[p]
+    DIM k = 0
+    IF kind = K_SEQ THEN
+        FOR k = kid TO kid + gPB[p] - 1
+            DIM seq_kid = gKidList[k]
+            cur = MatchP(seq_kid, cur)
+            IF cur < 0 THEN
+                gNCount = c0
+                RETURN -1
+            ENDIF
+        NEXT k
+        RETURN cur
+    ENDIF
+    IF kind = K_ALT THEN
+        FOR k = kid TO kid + gPB[p] - 1
+            DIM alt_kid = gKidList[k]
+            DIM alt_at = MatchP(alt_kid, at)
+            IF alt_at >= 0 THEN RETURN alt_at
+            gNCount = c0
+        NEXT k
+        RETURN -1
+    ENDIF
+    IF kind = K_RULE THEN
+        DIM rule_mode = gPO1[p]
+        DIM rule_shape = gPO2[p]
+        DIM rule_name$ = gPText[p]
+        DIM s = at
+        IF gInToken = 0 THEN s = Skip(at)
+        DIM before = gPLeft[p]
+        IF before = s THEN THROW "PARSEC: " + rule_name$ + " calls itself without consuming input (left recursion)"
+        gPLeft[p] = s
+        DIM fin = -1
+        IF rule_mode = 1 THEN
+            gInToken = gInToken + 1
+            gQuiet = gQuiet + 1
+            fin = MatchP(kid, s)
+            gQuiet = gQuiet - 1
+            gInToken = gInToken - 1
+            gNCount = c0
+            IF fin < 0 THEN
+                IF gInToken = 0 THEN Fail(s, rule_name$)
+            ELSEIF rule_shape <> 1 ANDALSO gInToken = 0 THEN
+                DIM tok_id = AddNode(rule_name$, s, fin)
+            ENDIF
+        ELSE
+            fin = MatchP(kid, s)
+            IF fin < 0 THEN
+                gNCount = c0
+            ELSEIF gInToken = 0 THEN
+                DIM make_node = 0
+                IF rule_shape = 0 THEN make_node = 1
+                IF rule_shape = 2 THEN
+                    DIM direct = CountDirect(c0)
+                    IF direct <> 1 THEN make_node = 1
+                ENDIF
+                IF make_node = 1 THEN
+                    DIM nid = AddNode(rule_name$, s, fin)
+                    Adopt(c0, nid)
+                ENDIF
+            ENDIF
+        ENDIF
+        gPLeft[p] = before
+        RETURN fin
+    ENDIF
+    IF kind = K_STAR ORELSE kind = K_PLUS THEN
+        DIM hits = 0
+        DIM going = 1
+        DO WHILE going = 1
+            DIM c1 = gNCount
+            DIM nxt = MatchP(kid, cur)
+            IF nxt < 0 THEN
+                gNCount = c1
+                going = 0
+            ELSEIF nxt = cur THEN
+                hits = hits + 1
+                going = 0
+            ELSE
+                cur = nxt
+                hits = hits + 1
+            ENDIF
+        LOOP
+        IF kind = K_PLUS ANDALSO hits = 0 THEN RETURN -1
+        RETURN cur
+    ENDIF
+    IF kind = K_OPT THEN
+        DIM opt_at = MatchP(kid, at)
+        IF opt_at >= 0 THEN RETURN opt_at
+        gNCount = c0
+        RETURN at
+    ENDIF
+    IF kind = K_HIDE THEN
+        DIM hide_at = MatchP(kid, at)
+        gNCount = c0
+        RETURN hide_at
+    ENDIF
+    IF kind = K_AND THEN
+        DIM and_at = MatchP(kid, at)
+        gNCount = c0
+        IF and_at < 0 THEN RETURN -1
+        RETURN at
+    ENDIF
+    IF kind = K_NOT THEN
+        gQuiet = gQuiet + 1
+        DIM not_at = MatchP(kid, at)
+        gQuiet = gQuiet - 1
+        gNCount = c0
+        IF not_at < 0 THEN RETURN at
+        DIM not_here = Skip(at)
+        IF gPKind[kid] = K_ANY THEN
+            Fail(not_here, "end of input")
+        ELSE
+            DIM not_label$ = "anything but " + LabelOf$(kid)
+            Fail(not_here, not_label$)
+        ENDIF
+        RETURN -1
+    ENDIF
+    DIM sep_p = gPB[p]
+    cur = MatchP(kid, at)
+    IF cur < 0 THEN
+        gNCount = c0
+        IF gPO2[p] = 1 THEN RETURN -1
+        RETURN at
+    ENDIF
+    DIM more = 1
+    DO WHILE more = 1
+        DIM c2 = gNCount
+        DIM after_sep = MatchP(sep_p, cur)
+        DIM after_item = -1
+        IF after_sep >= 0 THEN after_item = MatchP(kid, after_sep)
+        IF after_item < 0 ORELSE after_item = cur THEN
+            gNCount = c2
+            more = 0
+        ELSE
+            cur = after_item
+        ENDIF
+    LOOP
+    RETURN cur
+ENDFUNC
+
+' ── running a parse ────────────────────────────────────────────
+
+FUNC LineIndex(at)
+    DIM lo = 0
+    DIM hi = LEN(gLineStarts) - 1
+    DO WHILE lo < hi
+        DIM mid_i = (lo + hi + 1) \ 2
+        DIM ls = gLineStarts[mid_i]
+        IF ls <= at THEN
+            lo = mid_i
+        ELSE
+            hi = mid_i - 1
+        ENDIF
+    LOOP
+    RETURN lo
+ENDFUNC
+
+FUNC SpanText$(s, fin)
+    DIM b0 = gByte[s]
+    DIM b1 = gByte[fin]
+    IF b1 <= b0 THEN RETURN ""
+    RETURN MID$(gSource$, b0, b1 - b0)
+ENDFUNC
+
+FUNC JoinExpect$()
+    DIM out$ = ""
+    DIM n_exp = LEN(gErrExpected)
+    DIM k = 0
+    FOR k = 0 TO n_exp - 1
+        DIM ex$ = gErrExpected[k]
+        IF k > 0 THEN
+            IF k = n_exp - 1 THEN
+                out$ = out$ + " or "
+            ELSE
+                out$ = out$ + ", "
+            ENDIF
+        ENDIF
+        out$ = out$ + ex$
+    NEXT k
+    IF out$ = "" THEN out$ = "something else"
+    RETURN out$
+ENDFUNC
+
+SUB MakeError()
+    DIM at = gFailAt
+    IF at < 0 THEN at = 0
+    IF at > gN THEN at = gN
+    DIM li = LineIndex(at)
+    DIM line_at = gLineStarts[li]
+    gErrLine = li + 1
+    gErrCol = at - line_at + 1
+    DIM found$ = "end of input"
+    IF at < gN THEN
+        DIM here$ = gChars[at]
+        found$ = Quoted$(here$)
+    ENDIF
+    DIM visible = 0
+    DIM k = 0
+    FOR k = 0 TO gExpCount - 1
+        DIM seen$ = gExpect[k]
+        IF LEFT$(seen$, 1) <> "_" THEN visible = visible + 1
+    NEXT k
+    gErrExpected = []
+    FOR k = 0 TO gExpCount - 1
+        DIM ex$ = gExpect[k]
+        IF visible = 0 ORELSE LEFT$(ex$, 1) <> "_" THEN PUSH(gErrExpected, ex$)
+    NEXT k
+    gErrMsg$ = "PARSEC: line " + STR$(gErrLine) + ", column " + STR$(gErrCol) + ": expected " + JoinExpect$() + ", found " + found$
+    DIM line_end = line_at
+    DO WHILE line_end < gN ANDALSO gCode[line_end] <> 10 ANDALSO gCode[line_end] <> 13
+        line_end = line_end + 1
+    LOOP
+    DIM caret$ = ""
+    FOR k = line_at TO at - 1
+        IF gCode[k] = 9 THEN
+            caret$ = caret$ + CHR$(9)
+        ELSE
+            caret$ = caret$ + " "
+        ENDIF
+    NEXT k
+    gErrContext$ = SpanText$(line_at, line_end) + CHR$(10) + caret$ + "^"
+ENDSUB
+
+FUNC RunParse(handle, src$)
+    DIM h = CINT(handle)
+    IF h < 0 ORELSE h >= LEN(gPKind) THEN THROW "PARSEC: not a parser: " + STR$(h)
+    LoadText(src$)
+    DIM hk$ = STR$(h)
+    gIgnore = -1
+    IF MAP.EXISTS(gIgnoreOf, hk$) THEN gIgnore = gIgnoreOf{hk$}
+    DIM k = 0
+    FOR k = 0 TO LEN(gPLeft) - 1
+        gPLeft[k] = -1
+    NEXT k
+    DIM fin = MatchP(h, 0)
+    IF fin >= 0 THEN
+        DIM tail_at = Skip(fin)
+        IF tail_at < gN THEN
+            Fail(tail_at, "end of input")
+            fin = -1
+        ENDIF
+    ENDIF
+    IF fin >= 0 THEN RETURN 1
+    MakeError()
+    RETURN 0
+ENDFUNC
+
+SUB LinkKids()
+    gKidHead = []
+    gKidNext = []
+    DIM j = 0
+    FOR j = 0 TO gNCount - 1
+        PUSH(gKidHead, -1)
+        PUSH(gKidNext, -1)
+    NEXT j
+    FOR j = gNCount - 1 TO 0 STEP -1
+        DIM up = gNParent[j]
+        IF up >= 0 THEN
+            gKidNext[j] = gKidHead[up]
+            gKidHead[up] = j
+        ENDIF
+    NEXT j
+ENDSUB
+
+FUNC TreeOf(scope_name$, nid)
+    DIM tree AS MAP
+    DIM s = gNStart[nid]
+    DIM fin = gNEnd[nid]
+    DIM kind$ = gNType[nid]
+    DIM li = LineIndex(s)
+    DIM line_at = gLineStarts[li]
+    tree{"type"} = kind$
+    tree{"text"} = SpanText$(s, fin)
+    tree{"line"} = li + 1
+    tree{"column"} = s - line_at + 1
+    tree{"start"} = s
+    tree{"end"} = fin
+    DIM kids = []
+    DIM kid = gKidHead[nid]
+    DO WHILE kid >= 0
+        DIM kid_tree = TreeOf(scope_name$, kid)
+        PUSH(kids, kid_tree)
+        kid = gKidNext[kid]
+    LOOP
+    tree{"children"} = kids
+    DIM act_key$ = scope_name$ + ":" + kind$
+    IF MAP.EXISTS(gActions, act_key$) THEN
+        DIM fn = gActions{act_key$}
+        DIM got = fn(tree)
+        tree{"value"} = got
+    ENDIF
+    RETURN tree
+ENDFUNC
+
+FUNC BuildTree(handle)
+    LinkKids()
+    DIM scope_name$ = ScopeOf$(handle)
+    DIM roots = []
+    DIM j = 0
+    FOR j = 0 TO gNCount - 1
+        DIM up = gNParent[j]
+        IF up < 0 THEN PUSH(roots, j)
+    NEXT j
+    IF LEN(roots) = 1 THEN
+        DIM only = roots[0]
+        RETURN TreeOf(scope_name$, only)
+    ENDIF
+    DIM wrapper AS MAP
+    wrapper{"type"} = ""
+    wrapper{"text"} = gSource$
+    wrapper{"line"} = 1
+    wrapper{"column"} = 1
+    wrapper{"start"} = 0
+    wrapper{"end"} = gN
+    DIM kids = []
+    FOR j = 0 TO LEN(roots) - 1
+        DIM rid = roots[j]
+        DIM one = TreeOf(scope_name$, rid)
+        PUSH(kids, one)
+    NEXT j
+    wrapper{"children"} = kids
+    RETURN wrapper
+ENDFUNC
+
+' The tree of the whole text. A node is a map with "type" (the rule or
+' token, "" for a literal or an unnamed piece), "text", "line" and "column"
+' (from 1, in characters), "start" and "end" (character offsets) and
+' "children"; "value" when an action ran on it. Throws when the text does
+' not match, naming the line, the column and what was expected.
+EXPORT FUNC PARSE(handle, src$)
+    DIM ok = RunParse(handle, src$)
+    IF ok = 0 THEN THROW gErrMsg$
+    RETURN BuildTree(handle)
+ENDFUNC
+
+' Whether the whole text matches; ERROR$ and the rest describe a failure.
+EXPORT FUNC MATCHES(handle, src$)
+    DIM ok = RunParse(handle, src$)
+    RETURN ok = 1
+ENDFUNC
+
+EXPORT FUNC ERROR$()
+    RETURN gErrMsg$
+ENDFUNC
+
+EXPORT FUNC ERRLINE()
+    RETURN gErrLine
+ENDFUNC
+
+EXPORT FUNC ERRCOL()
+    RETURN gErrCol
+ENDFUNC
+
+' What was expected at the failure, in the order the parsers tried it.
+EXPORT FUNC EXPECTED()
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(gErrExpected) - 1
+        DIM ex$ = gErrExpected[k]
+        PUSH(out, ex$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The line of the failure and a caret under its column.
+EXPORT FUNC ERRCONTEXT$()
+    RETURN gErrContext$
+ENDFUNC
+
+' ── grammars ───────────────────────────────────────────────────
+
+SUB AddTok(kind$, tok$, ln, tok_flag)
+    PUSH(gTokKind, kind$)
+    PUSH(gTokText, tok$)
+    PUSH(gTokLine, ln)
+    PUSH(gTokFlag, tok_flag)
+ENDSUB
+
+FUNC IsNameChar(c$, first)
+    IF LEN(c$) <> 1 THEN RETURN FALSE
+    DIM b = ASC(c$)
+    IF b = 95 THEN RETURN TRUE
+    IF b >= 65 ANDALSO b <= 90 THEN RETURN TRUE
+    IF b >= 97 ANDALSO b <= 122 THEN RETURN TRUE
+    IF first = 0 ANDALSO b >= 48 ANDALSO b <= 57 THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+SUB GrammarFail(ln, why$)
+    THROW "PARSEC: grammar line " + STR$(ln) + ": " + why$
+ENDSUB
+
+SUB SplitGrammar(src$)
+    gTokKind = []
+    gTokText = []
+    gTokLine = []
+    gTokFlag = []
+    DIM cs = -(src$ + CHR$(10))
+    DIM n_chars = LEN(cs)
+    DIM bs$ = CHR$(92)
+    DIM k = 0
+    DIM ln = 1
+    DO WHILE k < n_chars
+        DIM c$ = cs[k]
+        DIM nx$ = ""
+        IF k + 1 < n_chars THEN nx$ = cs[k + 1]
+        IF c$ = CHR$(10) THEN
+            ln = ln + 1
+            k = k + 1
+        ELSEIF c$ = " " ORELSE c$ = CHR$(9) ORELSE c$ = CHR$(13) THEN
+            k = k + 1
+        ELSEIF c$ = "#" ORELSE (c$ = "/" ANDALSO nx$ = "/") THEN
+            DIM in_comment = 1
+            DO WHILE in_comment = 1
+                DIM cc$ = cs[k]
+                IF cc$ = CHR$(10) THEN
+                    in_comment = 0
+                ELSE
+                    k = k + 1
+                ENDIF
+            LOOP
+        ELSEIF c$ = CHR$(34) ORELSE c$ = "'" THEN
+            DIM quote$ = c$
+            DIM acc$ = ""
+            DIM closed = 0
+            k = k + 1
+            DO WHILE closed = 0
+                IF k >= n_chars THEN GrammarFail(ln, "a string is not closed")
+                DIM sc$ = cs[k]
+                IF sc$ = CHR$(10) THEN GrammarFail(ln, "a string is not closed")
+                IF sc$ = quote$ THEN
+                    closed = 1
+                    k = k + 1
+                ELSEIF sc$ = bs$ THEN
+                    ReadEsc(cs, k)
+                    acc$ = acc$ + CodeChar$(gEscCode)
+                    k = gEscNext
+                ELSE
+                    acc$ = acc$ + sc$
+                    k = k + 1
+                ENDIF
+            LOOP
+            DIM nocase = 0
+            IF k + 1 < n_chars THEN
+                DIM suffix$ = cs[k]
+                DIM after$ = cs[k + 1]
+                IF suffix$ = "i" ANDALSO NOT IsNameChar(after$, 0) THEN
+                    nocase = 1
+                    k = k + 1
+                ENDIF
+            ENDIF
+            AddTok("str", acc$, ln, nocase)
+        ELSEIF c$ = "[" THEN
+            DIM spec$ = ""
+            DIM ended = 0
+            k = k + 1
+            DO WHILE ended = 0
+                IF k >= n_chars THEN GrammarFail(ln, "a character class is not closed")
+                DIM kc$ = cs[k]
+                IF kc$ = CHR$(10) THEN GrammarFail(ln, "a character class is not closed")
+                IF kc$ = "]" THEN
+                    ended = 1
+                    k = k + 1
+                ELSEIF kc$ = bs$ ANDALSO k + 1 < n_chars THEN
+                    DIM kn$ = cs[k + 1]
+                    spec$ = spec$ + kc$ + kn$
+                    k = k + 2
+                ELSE
+                    spec$ = spec$ + kc$
+                    k = k + 1
+                ENDIF
+            LOOP
+            AddTok("class", spec$, ln, 0)
+        ELSEIF c$ = "/" ANDALSO nx$ <> " " ANDALSO nx$ <> CHR$(9) ANDALSO nx$ <> CHR$(10) ANDALSO nx$ <> CHR$(13) THEN
+            DIM re$ = ""
+            DIM re_done = 0
+            k = k + 1
+            DO WHILE re_done = 0
+                IF k >= n_chars THEN GrammarFail(ln, "a regular expression is not closed")
+                DIM rc$ = cs[k]
+                IF rc$ = CHR$(10) THEN GrammarFail(ln, "a regular expression is not closed")
+                IF rc$ = "/" THEN
+                    re_done = 1
+                    k = k + 1
+                ELSEIF rc$ = bs$ ANDALSO k + 1 < n_chars THEN
+                    DIM rn$ = cs[k + 1]
+                    IF rn$ = "/" THEN
+                        re$ = re$ + "/"
+                    ELSE
+                        re$ = re$ + rc$ + rn$
+                    ENDIF
+                    k = k + 2
+                ELSE
+                    re$ = re$ + rc$
+                    k = k + 1
+                ENDIF
+            LOOP
+            AddTok("re", re$, ln, 0)
+        ELSEIF IsNameChar(c$, 1) THEN
+            DIM word$ = ""
+            DIM more = 1
+            DO WHILE more = 1
+                DIM wc$ = cs[k]
+                IF IsNameChar(wc$, 0) THEN
+                    word$ = word$ + wc$
+                    k = k + 1
+                ELSE
+                    more = 0
+                ENDIF
+            LOOP
+            AddTok("id", word$, ln, 0)
+        ELSEIF c$ = "%" THEN
+            DIM directive$ = ""
+            k = k + 1
+            DIM more_dir = 1
+            DO WHILE more_dir = 1
+                DIM dc$ = cs[k]
+                IF IsNameChar(dc$, 0) THEN
+                    directive$ = directive$ + dc$
+                    k = k + 1
+                ELSE
+                    more_dir = 0
+                ENDIF
+            LOOP
+            AddTok("dir", LCASE$(directive$), ln, 0)
+        ELSEIF c$ = "<" ANDALSO nx$ = "-" THEN
+            AddTok("arrow", "<-", ln, 0)
+            k = k + 2
+        ELSEIF c$ = ":" ORELSE c$ = "=" THEN
+            AddTok("arrow", c$, ln, 0)
+            k = k + 1
+        ELSEIF c$ = "/" ORELSE c$ = "|" THEN
+            AddTok("alt", c$, ln, 0)
+            k = k + 1
+        ELSEIF INSTR("()*+?&!.", c$) >= 0 THEN
+            DIM head_mark = 0
+            IF (c$ = "?" ORELSE c$ = "!") ANDALSO IsNameChar(nx$, 1) THEN
+                head_mark = 1
+                IF LEN(gTokLine) > 0 THEN
+                    DIM last_ln = gTokLine[LEN(gTokLine) - 1]
+                    IF last_ln = ln THEN head_mark = 0
+                ENDIF
+            ENDIF
+            AddTok(c$, c$, ln, head_mark)
+            k = k + 1
+        ELSE
+            GrammarFail(ln, "unexpected " + Quoted$(c$))
+        ENDIF
+    LOOP
+    DIM last_line = ln
+    IF last_line > 1 THEN last_line = last_line - 1
+    AddTok("end", "", last_line, 0)
+ENDSUB
+
+FUNC CodeChar$(code)
+    IF code < 128 THEN RETURN CHR$(code)
+    IF code < 2048 THEN RETURN CHR$(192 + code \ 64) + CHR$(128 + code MOD 64)
+    IF code < 65536 THEN RETURN CHR$(224 + code \ 4096) + CHR$(128 + (code \ 64) MOD 64) + CHR$(128 + code MOD 64)
+    RETURN CHR$(240 + code \ 262144) + CHR$(128 + (code \ 4096) MOD 64) + CHR$(128 + (code \ 64) MOD 64) + CHR$(128 + code MOD 64)
+ENDFUNC
+
+FUNC TokKind$(t)
+    IF t >= LEN(gTokKind) THEN RETURN "end"
+    DIM kind$ = gTokKind[t]
+    RETURN kind$
+ENDFUNC
+
+FUNC TokText$(t)
+    DIM tok$ = gTokText[t]
+    RETURN tok$
+ENDFUNC
+
+FUNC TokLine(t)
+    IF t >= LEN(gTokLine) THEN t = LEN(gTokLine) - 1
+    DIM ln = gTokLine[t]
+    RETURN ln
+ENDFUNC
+
+' Whether a rule definition starts at token t: name <- or, first on its
+' line, ?name <- or !name <-.
+FUNC RuleHeadAt(t)
+    DIM k0$ = TokKind$(t)
+    DIM k1$ = TokKind$(t + 1)
+    IF k0$ = "id" ANDALSO k1$ = "arrow" THEN RETURN TRUE
+    IF k0$ = "?" ORELSE k0$ = "!" THEN
+        DIM head_mark = gTokFlag[t]
+        IF head_mark = 1 ANDALSO k1$ = "id" ANDALSO TokKind$(t + 2) = "arrow" THEN RETURN TRUE
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+FUNC SeqGoesOn(t)
+    DIM kind$ = TokKind$(t)
+    IF RuleHeadAt(t) THEN RETURN FALSE
+    IF kind$ = "id" ORELSE kind$ = "str" ORELSE kind$ = "class" ORELSE kind$ = "re" THEN RETURN TRUE
+    IF kind$ = "." ORELSE kind$ = "(" ORELSE kind$ = "&" ORELSE kind$ = "!" THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+FUNC CompilePrimary(scope_name$)
+    DIM kind$ = TokKind$(gT)
+    DIM tok$ = ""
+    IF kind$ <> "end" THEN tok$ = TokText$(gT)
+    DIM ln = TokLine(gT)
+    IF kind$ = "id" THEN
+        gT = gT + 1
+        DIM ref_p = NewParser(K_REF, -1, ln, 0, 0, scope_name$ + ":" + tok$)
+        PUSH(gRefs, ref_p)
+        RETURN ref_p
+    ENDIF
+    IF kind$ = "str" THEN
+        DIM nocase = gTokFlag[gT]
+        gT = gT + 1
+        RETURN LitParser(tok$, gCurKeep, nocase)
+    ENDIF
+    IF kind$ = "class" THEN
+        gT = gT + 1
+        RETURN SetParser(tok$, gCurKeep)
+    ENDIF
+    IF kind$ = "re" THEN
+        gT = gT + 1
+        RETURN NewParser(K_PAT, 0, 0, gCurKeep, 0, tok$)
+    ENDIF
+    IF kind$ = "." THEN
+        gT = gT + 1
+        RETURN NewParser(K_ANY, 0, 0, gCurKeep, 0, "")
+    ENDIF
+    IF kind$ = "(" THEN
+        gT = gT + 1
+        DIM inner = CompileAlt(scope_name$)
+        IF TokKind$(gT) <> ")" THEN GrammarFail(TokLine(gT), "expected )")
+        gT = gT + 1
+        RETURN inner
+    ENDIF
+    GrammarFail(ln, "expected a rule name, a string, a character class, a regular expression, . or (")
+    RETURN -1
+ENDFUNC
+
+FUNC CompileSuffixed(scope_name$)
+    DIM p = CompilePrimary(scope_name$)
+    DIM going = 1
+    DO WHILE going = 1
+        DIM kind$ = TokKind$(gT)
+        IF kind$ = "*" THEN
+            p = NewParser(K_STAR, p, 0, 0, 0, "")
+            gT = gT + 1
+        ELSEIF kind$ = "+" THEN
+            p = NewParser(K_PLUS, p, 0, 0, 0, "")
+            gT = gT + 1
+        ELSEIF kind$ = "?" ANDALSO NOT RuleHeadAt(gT) THEN
+            p = NewParser(K_OPT, p, 0, 0, 0, "")
+            gT = gT + 1
+        ELSE
+            going = 0
+        ENDIF
+    LOOP
+    RETURN p
+ENDFUNC
+
+FUNC CompilePrefixed(scope_name$)
+    DIM kind$ = TokKind$(gT)
+    IF kind$ = "&" THEN
+        gT = gT + 1
+        DIM ahead_p = CompileSuffixed(scope_name$)
+        RETURN NewParser(K_AND, ahead_p, 0, 0, 0, "")
+    ENDIF
+    IF kind$ = "!" THEN
+        gT = gT + 1
+        DIM not_p = CompileSuffixed(scope_name$)
+        RETURN NewParser(K_NOT, not_p, 0, 0, 0, "")
+    ENDIF
+    RETURN CompileSuffixed(scope_name$)
+ENDFUNC
+
+FUNC CompileSeq(scope_name$)
+    DIM seq_items = []
+    DO WHILE SeqGoesOn(gT)
+        DIM one = CompilePrefixed(scope_name$)
+        PUSH(seq_items, one)
+    LOOP
+    IF LEN(seq_items) = 0 THEN GrammarFail(TokLine(gT), "expected an expression")
+    IF LEN(seq_items) = 1 THEN
+        DIM only = seq_items[0]
+        RETURN only
+    ENDIF
+    RETURN ListParser(K_SEQ, seq_items)
+ENDFUNC
+
+FUNC CompileAlt(scope_name$)
+    DIM options = []
+    DIM first_p = CompileSeq(scope_name$)
+    PUSH(options, first_p)
+    DO WHILE TokKind$(gT) = "alt"
+        gT = gT + 1
+        DIM next_p = CompileSeq(scope_name$)
+        PUSH(options, next_p)
+    LOOP
+    IF LEN(options) = 1 THEN
+        DIM only = options[0]
+        RETURN only
+    ENDIF
+    RETURN ListParser(K_ALT, options)
+ENDFUNC
+
+FUNC IsUpperName(word$)
+    DIM has_upper = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(word$) - 1
+        DIM b = ASC(MID$(word$, k, 1))
+        IF b >= 97 ANDALSO b <= 122 THEN RETURN FALSE
+        IF b >= 65 ANDALSO b <= 90 THEN has_upper = 1
+    NEXT k
+    RETURN has_upper = 1
+ENDFUNC
+
+' A parser from a PEG grammar:
+'   rule  <- expression      (":" and "=" work as the arrow too)
+' Sequences are written with spaces, choices with / or |, e* e+ e? repeat,
+' &e and !e look ahead, "text" and 'text' match literally ("text"i in any
+' case), [a-z] is a character class, /regex/ a regular expression and . any
+' character. An UPPERCASE rule is a token, a rule starting with _ leaves no
+' node of its own, ?rule stands for its only child when it has one, and
+' !rule keeps the literals it matches. %ignore NAME skips that rule's text
+' between the pieces of every rule that is not a token; %start NAME picks
+' the rule to parse with, the first rule by default.
+EXPORT FUNC GRAMMAR(grammar_src$)
+    gGrammars = gGrammars + 1
+    DIM scope_name$ = "g" + STR$(gGrammars)
+    SplitGrammar(grammar_src$)
+    gT = 0
+    gRefs = []
+    DIM first_rule = -1
+    DIM start_rule$ = ""
+    DIM ignores = []
+    DO WHILE TokKind$(gT) <> "end"
+        DIM kind$ = TokKind$(gT)
+        IF kind$ = "dir" THEN
+            DIM directive$ = TokText$(gT)
+            DIM dir_line = TokLine(gT)
+            gT = gT + 1
+            IF directive$ = "ignore" THEN
+                IF TokKind$(gT) <> "id" THEN GrammarFail(dir_line, "%ignore needs a rule name")
+                DO WHILE TokKind$(gT) = "id" ANDALSO NOT RuleHeadAt(gT)
+                    DIM ign_name$ = TokText$(gT)
+                    DIM ign_p = NewParser(K_REF, -1, dir_line, 0, 0, scope_name$ + ":" + ign_name$)
+                    PUSH(gRefs, ign_p)
+                    PUSH(ignores, ign_p)
+                    gT = gT + 1
+                LOOP
+            ELSEIF directive$ = "start" THEN
+                IF TokKind$(gT) <> "id" THEN GrammarFail(dir_line, "%start needs a rule name")
+                start_rule$ = TokText$(gT)
+                gT = gT + 1
+            ELSE
+                GrammarFail(dir_line, "unknown directive %" + directive$)
+            ENDIF
+        ELSE
+            DIM prefix$ = ""
+            IF kind$ = "?" ORELSE kind$ = "!" THEN
+                prefix$ = kind$
+                gT = gT + 1
+            ENDIF
+            DIM head_line = TokLine(gT)
+            IF TokKind$(gT) <> "id" ORELSE TokKind$(gT + 1) <> "arrow" THEN GrammarFail(head_line, "expected a rule: name <- expression")
+            DIM rule_name$ = TokText$(gT)
+            gT = gT + 2
+            gCurKeep = 0
+            IF prefix$ = "!" THEN gCurKeep = 1
+            DIM body = CompileAlt(scope_name$)
+            DIM after$ = TokKind$(gT)
+            IF after$ <> "end" ANDALSO after$ <> "dir" ANDALSO NOT RuleHeadAt(gT) THEN GrammarFail(TokLine(gT), "unexpected " + Quoted$(TokText$(gT)))
+            DIM rule_mode = 0
+            IF IsUpperName(rule_name$) THEN rule_mode = 1
+            DIM rule_shape = 0
+            IF LEFT$(rule_name$, 1) = "_" THEN rule_shape = 1
+            IF prefix$ = "?" ANDALSO rule_shape = 0 THEN rule_shape = 2
+            DIM rule_key$ = scope_name$ + ":" + rule_name$
+            IF MAP.EXISTS(gNamed, rule_key$) THEN GrammarFail(head_line, rule_name$ + " is defined twice")
+            DIM rule_p = NewParser(K_RULE, body, 0, rule_mode, rule_shape, rule_name$)
+            gNamed{rule_key$} = rule_p
+            IF first_rule < 0 THEN first_rule = rule_p
+        ENDIF
+    LOOP
+    IF first_rule < 0 THEN GrammarFail(1, "no rules")
+    DIM k = 0
+    FOR k = 0 TO LEN(gRefs) - 1
+        DIM ref_p = gRefs[k]
+        DIM ref_key$ = gPText[ref_p]
+        IF NOT MAP.EXISTS(gNamed, ref_key$) THEN GrammarFail(gPB[ref_p], "no rule called " + RuleName$(ref_p))
+        DIM target = gNamed{ref_key$}
+        gPA[ref_p] = target
+    NEXT k
+    DIM start_p = first_rule
+    IF start_rule$ <> "" THEN
+        IF NOT MAP.EXISTS(gNamed, scope_name$ + ":" + start_rule$) THEN GrammarFail(1, "%start names no rule: " + start_rule$)
+        start_p = gNamed{scope_name$ + ":" + start_rule$}
+    ENDIF
+    DIM ignore_p = -1
+    IF LEN(ignores) = 1 THEN
+        ignore_p = ignores[0]
+    ELSEIF LEN(ignores) > 1 THEN
+        ignore_p = ListParser(K_ALT, ignores)
+    ENDIF
+    DIM start_key$ = STR$(CINT(start_p))
+    gScopeOf{start_key$} = scope_name$
+    IF ignore_p >= 0 THEN gIgnoreOf{start_key$} = CINT(ignore_p)
+    RETURN start_p
+ENDFUNC
+
+' A handle that parses with another rule of the grammar.
+EXPORT FUNC RULE(grammar, rule_name$)
+    DIM scope_name$ = ScopeOf$(grammar)
+    DIM rule_key$ = scope_name$ + ":" + rule_name$
+    IF NOT MAP.EXISTS(gNamed, rule_key$) THEN THROW "PARSEC: no rule called " + rule_name$
+    DIM rule_p = gNamed{rule_key$}
+    DIM rule_key_id$ = STR$(CINT(rule_p))
+    gScopeOf{rule_key_id$} = scope_name$
+    DIM gk$ = STR$(CINT(grammar))
+    IF MAP.EXISTS(gIgnoreOf, gk$) THEN
+        DIM ignore_p = gIgnoreOf{gk$}
+        gIgnoreOf{rule_key_id$} = CINT(ignore_p)
+    ENDIF
+    RETURN rule_p
+ENDFUNC
+
+' ── trees ──────────────────────────────────────────────────────
+
+FUNC OutlineOf$(tree, depth)
+    DIM kind$ = tree{"type"}
+    DIM tree_text$ = tree{"text"}
+    DIM kids = tree{"children"}
+    DIM pad$ = ""
+    DIM k = 0
+    FOR k = 1 TO depth
+        pad$ = pad$ + "  "
+    NEXT k
+    DIM row$ = pad$ + kind$
+    IF kind$ = "" THEN
+        row$ = pad$ + Quoted$(tree_text$)
+    ELSEIF LEN(kids) = 0 THEN
+        row$ = row$ + " " + Quoted$(tree_text$)
+    ENDIF
+    DIM out$ = row$ + CHR$(10)
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        out$ = out$ + OutlineOf$(kid, depth + 1)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The tree as indented lines: a type per node, the text of leaves in quotes.
+EXPORT FUNC OUTLINE$(tree)
+    RETURN OutlineOf$(tree, 0)
+ENDFUNC
+
+' The children of a node, only those of a type when one is given.
+EXPORT FUNC CHILDREN(tree, type_name$ = "")
+    DIM out = []
+    DIM kids = tree{"children"}
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM kind$ = kid{"type"}
+        IF type_name$ = "" ORELSE kind$ = type_name$ THEN PUSH(out, kid)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC CollectFrom(tree, type_name$)
+    DIM found = []
+    DIM kind$ = tree{"type"}
+    IF kind$ = type_name$ THEN PUSH(found, tree)
+    DIM kids = tree{"children"}
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM kid = kids[k]
+        DIM below = CollectFrom(kid, type_name$)
+        FOR j = 0 TO LEN(below) - 1
+            DIM hit = below[j]
+            PUSH(found, hit)
+        NEXT j
+    NEXT k
+    RETURN found
+ENDFUNC
+
+' Every node of a type in the tree, in the order of the text.
+EXPORT FUNC COLLECT(tree, type_name$)
+    RETURN CollectFrom(tree, type_name$)
+ENDFUNC
