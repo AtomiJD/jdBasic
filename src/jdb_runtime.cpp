@@ -27,6 +27,14 @@
 #define _strdup strdup
 #endif
 
+// Keeping a cold helper out of its caller is spelled differently by the
+// two compilers.
+#ifdef _MSC_VER
+#define JDB_NOINLINE __declspec(noinline)
+#else
+#define JDB_NOINLINE __attribute__((noinline))
+#endif
+
 static auto g_start_time = std::chrono::steady_clock::now();
 
 // Forward declare JdbArray for use in C++ functions
@@ -603,7 +611,7 @@ char* jdb_input_line(void) {
 
 // The cold half of every bounds check, kept out of the getters so their
 // hot path stays a compare and a load.
-static __declspec(noinline) void jdb_index_out_of_bounds(int64_t idx) {
+static JDB_NOINLINE void jdb_index_out_of_bounds(int64_t idx) {
     char msg[64];
     snprintf(msg, sizeof msg, "Array index out of bounds: %lld", (long long)idx);
     jdb_err_set(msg, 13);
