@@ -26,6 +26,13 @@ if [ -z "${CXX:-}" ]; then
 fi
 JOBS=${JOBS:-$(default_jobs)}
 CXXFLAGS="-std=c++17 -O2 -DNDEBUG -Isrc -Ilibs/eigen"
+# BUILD_NUM stamps the binary the way build.bat does, so a distribution
+# tarball can say which build it is instead of "Build 0, dev". Left
+# unset for a development build, which is what most runs are.
+if [ -n "$BUILD_NUM" ]; then
+    BUILD_DATE="${BUILD_DATE:-$(date +%Y/%m/%d-%H:%M)}"
+    CXXFLAGS="$CXXFLAGS -DJDBASIC_BUILD_NUM=\"$BUILD_NUM\" -DJDBASIC_BUILD_DATE=\"$BUILD_DATE\""
+fi
 LDFLAGS="-ldl -lpthread"
 
 # Homebrew on Apple Silicon installs to /opt/homebrew; on Intel to /usr/local.
