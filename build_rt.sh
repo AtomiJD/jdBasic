@@ -30,6 +30,11 @@ fi
 JOBS=${JOBS:-$(default_jobs)}
 CXXFLAGS="-std=c++17 -O2 -DNDEBUG -fPIC -DJDRT_EXPORTS -Isrc -Ilibs/eigen"
 LDFLAGS="-shared -ldl -lpthread -lm"
+# See build.sh: a Darwin library records where it expects to be found,
+# and @rpath leaves that to the program that loads it.
+if [ "$(uname -s)" = "Darwin" ]; then
+    LDFLAGS="$LDFLAGS -Wl,-install_name,@rpath/libjdbrt.so"
+fi
 
 # Homebrew (freetype, harfbuzz, libpng, openssl etc.) lives under brew's prefix
 # on macOS and needs explicit -I/-L paths. Mirrors build.sh.

@@ -393,6 +393,15 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     # macOS dlopen wants .dylib (cc -shared still produces a .so-looking
     # file on Darwin; the loader doesn't care about the extension, but
     # we keep .so for cross-platform path-consistency with build/jdbrt).
-    $CXX -shared -o build/libjdbrt.so "${RT_OBJS[@]}" $LDFLAGS
+    # On Darwin a library records the path it expects to be found at.
+    # Left as the relative build/libjdbrt.so, a program compiled from an
+    # unpacked distribution looks for a build directory that is not
+    # there. @rpath defers the question to the program, which carries
+    # the answer.
+    RT_LDEXTRA=""
+    if [ "$(uname -s)" = "Darwin" ]; then
+        RT_LDEXTRA="-Wl,-install_name,@rpath/libjdbrt.so"
+    fi
+    $CXX -shared -o build/libjdbrt.so "${RT_OBJS[@]}" $LDFLAGS $RT_LDEXTRA
     echo "OK: build/libjdbrt.so"
 fi

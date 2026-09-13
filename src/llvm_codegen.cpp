@@ -14828,8 +14828,13 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         + sh_quote(obj_path) + " "
         + sh_quote(runtime_obj) + " "
         + "-L" + sh_quote(rt_dir) + " -Lbuild -ljdbrt "
+#ifdef __APPLE__
+        + "-Wl,-rpath,@loader_path "
+        + "-Wl,-rpath,@loader_path/build "
+#else
         + "-Wl,-rpath,'$ORIGIN' "
         + "-Wl,-rpath,'$ORIGIN/build' "
+#endif
         + "-Wl,-rpath," + sh_quote(abs_build) + " "
         + "-Wl,-rpath," + sh_quote(rt_dir) + " "
         + "-lm -lpthread -ldl";
