@@ -1,0 +1,919 @@
+' mail.jdb - e-mail messages built, sent through curl and read back.
+'
+'   IMPORT MAIL
+'   DIM msg = MAIL.MESSAGE("Papier & Toner <billing@example.com>", "buyer@example.org", "Invoice RE-2026-0413")
+'   MAIL.PLAIN(msg, "Please find the invoice attached.")
+'   MAIL.HTMLBODY(msg, "<p>Please find the invoice <b>attached</b>.</p>")
+'   MAIL.ATTACH(msg, "RE-2026-0413.pdf")
+'   MAIL.WRITEEML(msg, "invoice.eml")
+'   DIM sent = MAIL.SEND(msg, {"url": "smtps://smtp.example.com:465", "user": "billing", "password": secret$})
+'
+' A message is a map. BUILD$ turns it into the text of an RFC 5322 message
+' with MIME parts: quoted-printable text, base64 attachments, RFC 2047
+' encoded headers. PARSE turns such a text back into a map.
+
+EXPORT MODULE MAIL
+
+DIM gCRLF$ = CHR$(13) + CHR$(10)
+DIM gLF$ = CHR$(10)
+DIM gQ$ = CHR$(34)
+DIM gHexDigits$ = "0123456789ABCDEF"
+
+' ── building a message ─────────────────────────────────────────
+
+' A new message. recipients is one address, several separated by commas,
+' or an array; an address may carry a name: "Ann Example <ann@example.org>".
+EXPORT FUNC MESSAGE(from$, recipients, subject$)
+    DIM msg AS MAP
+    msg{"from"} = from$
+    msg{"to"} = ADDRESSES(recipients)
+    msg{"cc"} = []
+    msg{"bcc"} = []
+    msg{"reply_to"} = ""
+    msg{"subject"} = subject$
+    msg{"text"} = ""
+    msg{"html"} = ""
+    msg{"att_names"} = []
+    msg{"att_mimes"} = []
+    msg{"att_data"} = []
+    msg{"att_cids"} = []
+    msg{"extra_names"} = []
+    msg{"extra_values"} = []
+    msg{"date"} = ""
+    msg{"id"} = ""
+    RETURN msg
+ENDFUNC
+
+EXPORT SUB PLAIN(msg, text$)
+    msg{"text"} = text$
+ENDSUB
+
+EXPORT SUB HTMLBODY(msg, html$)
+    msg{"html"} = html$
+ENDSUB
+
+EXPORT SUB CC(msg, recipients)
+    msg{"cc"} = AppendAll(msg{"cc"}, ADDRESSES(recipients))
+ENDSUB
+
+EXPORT SUB BCC(msg, recipients)
+    msg{"bcc"} = AppendAll(msg{"bcc"}, ADDRESSES(recipients))
+ENDSUB
+
+EXPORT SUB REPLYTO(msg, address$)
+    msg{"reply_to"} = address$
+ENDSUB
+
+' Any other header; a value with characters beyond ASCII is encoded.
+EXPORT SUB HEADER(msg, name$, value$)
+    DIM names = msg{"extra_names"}
+    PUSH(names, name$)
+    msg{"extra_names"} = names
+    DIM values = msg{"extra_values"}
+    PUSH(values, value$)
+    msg{"extra_values"} = values
+ENDSUB
+
+' The Date header as written, instead of the time of building.
+EXPORT SUB SETDATE(msg, date$)
+    msg{"date"} = date$
+ENDSUB
+
+' The Message-ID as written, angle brackets included, instead of a new one.
+EXPORT SUB SETID(msg, id$)
+    msg{"id"} = id$
+ENDSUB
+
+' Attaches a file. The name shown defaults to the file's name, the MIME
+' type to the one its extension stands for.
+EXPORT SUB ATTACH(msg, path$, name$ = "", mime$ = "")
+    IF NOT FILE.EXISTS(path$) THEN THROW "MAIL: no such file " + path$
+    DIM shown$ = name$
+    IF shown$ = "" THEN shown$ = PATH.BASENAME$(path$)
+    DIM kind$ = mime$
+    IF kind$ = "" THEN kind$ = MIMETYPE$(shown$)
+    AddAttachment(msg, shown$, kind$, CODEC.BASE64_ENCODE$(BINREADER$(path$)), "")
+ENDSUB
+
+' Attaches bytes held in a string.
+EXPORT SUB ATTACHDATA(msg, name$, data$, mime$ = "")
+    DIM kind$ = mime$
+    IF kind$ = "" THEN kind$ = MIMETYPE$(name$)
+    AddAttachment(msg, name$, kind$, CODEC.BASE64_ENCODE$(data$), "")
+ENDSUB
+
+' An image the HTML part shows with <img src="cid:...">.
+EXPORT SUB INLINE(msg, path$, cid$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "MAIL: no such file " + path$
+    DIM shown$ = PATH.BASENAME$(path$)
+    AddAttachment(msg, shown$, MIMETYPE$(shown$), CODEC.BASE64_ENCODE$(BINREADER$(path$)), cid$)
+ENDSUB
+
+SUB AddAttachment(msg, name$, mime$, data64$, cid$)
+    DIM names = msg{"att_names"}
+    PUSH(names, name$)
+    msg{"att_names"} = names
+    DIM mimes = msg{"att_mimes"}
+    PUSH(mimes, mime$)
+    msg{"att_mimes"} = mimes
+    DIM datas = msg{"att_data"}
+    PUSH(datas, data64$)
+    msg{"att_data"} = datas
+    DIM cids = msg{"att_cids"}
+    PUSH(cids, cid$)
+    msg{"att_cids"} = cids
+ENDSUB
+
+FUNC AppendAll(head_list, tail_list)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(head_list) - 1
+        DIM a$ = head_list[i]
+        PUSH(out, a$)
+    NEXT i
+    FOR i = 0 TO LEN(tail_list) - 1
+        DIM b$ = tail_list[i]
+        PUSH(out, b$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The MIME type a file name's extension stands for.
+EXPORT FUNC MIMETYPE$(name$)
+    DIM ext$ = LCASE$(PATH.EXT$(name$))
+    IF ext$ = ".pdf" THEN RETURN "application/pdf"
+    IF ext$ = ".jpg" ORELSE ext$ = ".jpeg" THEN RETURN "image/jpeg"
+    IF ext$ = ".png" THEN RETURN "image/png"
+    IF ext$ = ".gif" THEN RETURN "image/gif"
+    IF ext$ = ".svg" THEN RETURN "image/svg+xml"
+    IF ext$ = ".txt" THEN RETURN "text/plain"
+    IF ext$ = ".csv" THEN RETURN "text/csv"
+    IF ext$ = ".html" ORELSE ext$ = ".htm" THEN RETURN "text/html"
+    IF ext$ = ".xml" THEN RETURN "application/xml"
+    IF ext$ = ".json" THEN RETURN "application/json"
+    IF ext$ = ".ics" THEN RETURN "text/calendar"
+    IF ext$ = ".zip" THEN RETURN "application/zip"
+    IF ext$ = ".xlsx" THEN RETURN "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    IF ext$ = ".docx" THEN RETURN "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    IF ext$ = ".eml" THEN RETURN "message/rfc822"
+    RETURN "application/octet-stream"
+ENDFUNC
+
+' ── addresses ──────────────────────────────────────────────────
+
+' Addresses from a comma separated text or an array. A comma inside quotes
+' or angle brackets belongs to the address.
+EXPORT FUNC ADDRESSES(recipients)
+    DIM out = []
+    IF TYPEOF(recipients) = "ARRAY" THEN
+        DIM i = 0
+        FOR i = 0 TO LEN(recipients) - 1
+            DIM given$ = recipients[i]
+            IF TRIM$(given$) <> "" THEN PUSH(out, TRIM$(given$))
+        NEXT i
+        RETURN out
+    ENDIF
+    DIM text$ = recipients
+    DIM current$ = ""
+    DIM quoted = FALSE
+    DIM angled = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, k, 1)
+        IF ch$ = gQ$ THEN quoted = NOT quoted
+        IF ch$ = "<" THEN angled = TRUE
+        IF ch$ = ">" THEN angled = FALSE
+        IF ch$ = "," ANDALSO NOT quoted ANDALSO NOT angled THEN
+            IF TRIM$(current$) <> "" THEN PUSH(out, TRIM$(current$))
+            current$ = ""
+        ELSE
+            current$ = current$ + ch$
+        ENDIF
+    NEXT k
+    IF TRIM$(current$) <> "" THEN PUSH(out, TRIM$(current$))
+    RETURN out
+ENDFUNC
+
+' The bare address of "Name <address>", or the text itself.
+EXPORT FUNC BAREADDRESS$(address$)
+    DIM open_at = INSTR(address$, "<")
+    DIM close_at = INSTR(address$, ">")
+    IF open_at >= 0 ANDALSO close_at > open_at THEN RETURN TRIM$(MID$(address$, open_at + 1, close_at - open_at - 1))
+    RETURN TRIM$(address$)
+ENDFUNC
+
+' The name part of "Name <address>", without quotes, or "".
+EXPORT FUNC ADDRESSNAME$(address$)
+    DIM open_at = INSTR(address$, "<")
+    IF open_at < 0 THEN RETURN ""
+    DIM shown$ = TRIM$(LEFT$(address$, open_at))
+    IF LEN(shown$) >= 2 ANDALSO LEFT$(shown$, 1) = gQ$ ANDALSO RIGHT$(shown$, 1) = gQ$ THEN shown$ = MID$(shown$, 1, LEN(shown$) - 2)
+    RETURN shown$
+ENDFUNC
+
+' An address as it goes into a header: the name encoded or quoted as
+' needed, the address in angle brackets.
+FUNC HeaderAddress$(address$)
+    DIM shown$ = ADDRESSNAME$(address$)
+    DIM bare$ = BAREADDRESS$(address$)
+    IF shown$ = "" THEN RETURN bare$
+    IF NOT IsPlainAscii(shown$) THEN RETURN ENCODEHEADER$(shown$) + " <" + bare$ + ">"
+    DIM specials$ = "()<>[]:;@\,." + gQ$
+    DIM i = 0
+    FOR i = 0 TO LEN(shown$) - 1
+        IF INSTR(specials$, MID$(shown$, i, 1)) >= 0 THEN RETURN gQ$ + REPLACE$(REPLACE$(shown$, "\", "\\"), gQ$, "\" + gQ$) + gQ$ + " <" + bare$ + ">"
+    NEXT i
+    RETURN shown$ + " <" + bare$ + ">"
+ENDFUNC
+
+FUNC DomainOf$(address$)
+    DIM bare$ = BAREADDRESS$(address$)
+    DIM at = INSTR(bare$, "@")
+    IF at < 0 THEN RETURN "localhost"
+    RETURN MID$(bare$, at + 1)
+ENDFUNC
+
+FUNC IsPlainAscii(text$)
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM code = BYTEAT(text$, i)
+        IF code < 32 ORELSE code > 126 THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+' ── encodings ──────────────────────────────────────────────────
+
+' A header value with characters beyond ASCII as RFC 2047 encoded words in
+' UTF-8 and base64, at most 75 characters each, cut between characters,
+' folded onto continuation lines. A plain ASCII value stays as it is.
+EXPORT FUNC ENCODEHEADER$(text$)
+    IF IsPlainAscii(text$) THEN RETURN text$
+    DIM words = []
+    DIM piece$ = ""
+    DIM i = 0
+    DO WHILE i < LEN(text$)
+        DIM step_len = CharLen(text$, i)
+        IF LEN(piece$) + step_len > 45 THEN
+            PUSH(words, "=?UTF-8?B?" + CODEC.BASE64_ENCODE$(piece$) + "?=")
+            piece$ = ""
+        ENDIF
+        piece$ = piece$ + MID$(text$, i, step_len)
+        i = i + step_len
+    LOOP
+    IF piece$ <> "" THEN PUSH(words, "=?UTF-8?B?" + CODEC.BASE64_ENCODE$(piece$) + "?=")
+    RETURN JOIN(words, gCRLF$ + " ")
+ENDFUNC
+
+FUNC CharLen(text$, at)
+    DIM lead = BYTEAT(text$, at)
+    IF lead >= 240 THEN RETURN 4
+    IF lead >= 224 THEN RETURN 3
+    IF lead >= 192 THEN RETURN 2
+    RETURN 1
+ENDFUNC
+
+' A header value with its RFC 2047 encoded words decoded to UTF-8, the
+' space between two encoded words dropped and folded lines joined. Base64
+' and Q words in UTF-8, ISO-8859-1 and windows-1252 are understood.
+EXPORT FUNC DECODEHEADER$(text$)
+    DIM src$ = REPLACE$(REPLACE$(text$, gCRLF$ + " ", " "), gCRLF$ + CHR$(9), " ")
+    src$ = REPLACE$(REPLACE$(src$, gLF$ + " ", " "), gLF$ + CHR$(9), " ")
+    IF INSTR(src$, "=?") < 0 THEN RETURN src$
+    DIM parts = []
+    DIM pending$ = ""
+    DIM last_was_word = FALSE
+    DIM at = 0
+    DO WHILE at < LEN(src$)
+        DIM start = INSTR(at, src$, "=?")
+        IF start < 0 THEN
+            PUSH(parts, pending$ + MID$(src$, at))
+            EXITDO
+        ENDIF
+        DIM q1 = INSTR(start + 2, src$, "?")
+        DIM q2 = -1
+        IF q1 >= 0 THEN q2 = INSTR(q1 + 1, src$, "?")
+        DIM finish = -1
+        IF q2 >= 0 THEN finish = INSTR(q2 + 1, src$, "?=")
+        IF finish < 0 THEN
+            PUSH(parts, pending$ + MID$(src$, at))
+            EXITDO
+        ENDIF
+        DIM between$ = MID$(src$, at, start - at)
+        IF NOT (last_was_word ANDALSO TRIM$(between$) = "") THEN PUSH(parts, between$)
+        DIM charset$ = LCASE$(MID$(src$, start + 2, q1 - start - 2))
+        DIM method$ = UCASE$(MID$(src$, q1 + 1, q2 - q1 - 1))
+        DIM payload$ = MID$(src$, q2 + 1, finish - q2 - 1)
+        DIM raw$ = ""
+        IF method$ = "B" THEN
+            raw$ = CODEC.BASE64_DECODE$(payload$)
+        ELSE
+            raw$ = QPDECODE$(REPLACE$(payload$, "_", " "))
+        ENDIF
+        PUSH(parts, ToUtf8$(raw$, charset$))
+        last_was_word = TRUE
+        at = finish + 2
+    LOOP
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' Bytes in a charset as UTF-8: ISO-8859-1 and windows-1252 are converted,
+' anything else is taken as UTF-8 already.
+FUNC ToUtf8$(raw$, charset$)
+    DIM cs$ = LCASE$(charset$)
+    IF cs$ <> "iso-8859-1" ANDALSO cs$ <> "latin1" ANDALSO cs$ <> "windows-1252" ANDALSO cs$ <> "cp1252" ANDALSO cs$ <> "us-ascii" THEN RETURN raw$
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(raw$) - 1
+        DIM code = BYTEAT(raw$, i)
+        IF code < 128 THEN
+            PUSH(parts, CHR$(code))
+        ELSEIF code = 128 THEN
+            PUSH(parts, CHR$(226) + CHR$(130) + CHR$(172))
+        ELSE
+            PUSH(parts, CHR$(192 + code \ 64) + CHR$(128 + (code MOD 64)))
+        ENDIF
+    NEXT i
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' Text as quoted-printable (RFC 2045): lines of at most 76 characters with
+' soft breaks, every byte outside printable ASCII and "=" as =XX, a space
+' or tab at the end of a line encoded, CRLF line ends.
+EXPORT FUNC QPENCODE$(text$)
+    DIM src$ = REPLACE$(REPLACE$(text$, gCRLF$, gLF$), CHR$(13), gLF$)
+    DIM ends_with_break = RIGHT$(src$, 1) = gLF$
+    IF ends_with_break THEN src$ = LEFT$(src$, LEN(src$) - 1)
+    DIM lines = SPLIT(src$, gLF$)
+    DIM out = []
+    DIM n = 0
+    FOR n = 0 TO LEN(lines) - 1
+        DIM line_in$ = lines[n]
+        DIM enc$ = QpBytes$(line_in$)
+        DIM start = 0
+        DIM last_start = LEN(enc$) - 1 - 76
+        DO WHILE start <= last_start
+            DIM stop_at = start + 75
+            IF MID$(enc$, stop_at - 2, 1) = "=" THEN
+                PUSH(out, MID$(enc$, start, stop_at - 2 - start) + "=")
+                start = stop_at - 2
+            ELSEIF MID$(enc$, stop_at - 1, 1) = "=" THEN
+                PUSH(out, MID$(enc$, start, stop_at - 1 - start) + "=")
+                start = stop_at - 1
+            ELSE
+                PUSH(out, MID$(enc$, start, stop_at - start) + "=")
+                start = stop_at
+            ENDIF
+        LOOP
+        DIM last_ch$ = RIGHT$(enc$, 1)
+        IF LEN(enc$) > 0 ANDALSO (last_ch$ = " " ORELSE last_ch$ = CHR$(9)) THEN
+            DIM room = start - last_start
+            DIM quoted$ = "=20"
+            IF last_ch$ = CHR$(9) THEN quoted$ = "=09"
+            DIM body$ = MID$(enc$, start, LEN(enc$) - 1 - start)
+            IF room >= 3 THEN
+                PUSH(out, body$ + quoted$)
+            ELSEIF room = 2 THEN
+                PUSH(out, body$ + last_ch$ + "=")
+                PUSH(out, "")
+            ELSE
+                PUSH(out, body$ + "=")
+                PUSH(out, quoted$)
+            ENDIF
+        ELSE
+            PUSH(out, MID$(enc$, start))
+        ENDIF
+    NEXT n
+    IF ends_with_break THEN PUSH(out, "")
+    RETURN JOIN(out, gCRLF$)
+ENDFUNC
+
+FUNC QpBytes$(line$)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(line$) - 1
+        DIM code = BYTEAT(line$, i)
+        IF code = 61 ORELSE code > 126 ORELSE (code < 32 ANDALSO code <> 9) THEN
+            PUSH(parts, "=" + MID$(gHexDigits$, code \ 16, 1) + MID$(gHexDigits$, code MOD 16, 1))
+        ELSE
+            PUSH(parts, CHR$(code))
+        ENDIF
+    NEXT i
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' Quoted-printable back to its bytes: soft breaks removed, =XX decoded.
+EXPORT FUNC QPDECODE$(text$)
+    DIM src$ = REPLACE$(REPLACE$(text$, "=" + gCRLF$, ""), "=" + gLF$, "")
+    IF INSTR(src$, "=") < 0 THEN RETURN src$
+    DIM parts = []
+    DIM i = 0
+    DO WHILE i < LEN(src$)
+        DIM eq = INSTR(i, src$, "=")
+        IF eq < 0 THEN
+            PUSH(parts, MID$(src$, i))
+            EXITDO
+        ENDIF
+        IF eq > i THEN PUSH(parts, MID$(src$, i, eq - i))
+        DIM hi = INSTR(gHexDigits$, UCASE$(MID$(src$, eq + 1, 1)))
+        DIM lo = INSTR(gHexDigits$, UCASE$(MID$(src$, eq + 2, 1)))
+        IF eq + 2 < LEN(src$) ANDALSO hi >= 0 ANDALSO lo >= 0 THEN
+            PUSH(parts, CHR$(hi * 16 + lo))
+            i = eq + 3
+        ELSE
+            PUSH(parts, "=")
+            i = eq + 1
+        ENDIF
+    LOOP
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' Base64 text in lines of 76 characters.
+FUNC Wrap76$(data64$)
+    DIM parts = []
+    DIM at = 0
+    DO WHILE at < LEN(data64$)
+        PUSH(parts, MID$(data64$, at, 76))
+        at = at + 76
+    LOOP
+    RETURN JOIN(parts, gCRLF$)
+ENDFUNC
+
+' ── the message text ───────────────────────────────────────────
+
+' The message as the text of an RFC 5322 message with CRLF line ends.
+EXPORT FUNC BUILD$(msg)
+    DIM from$ = msg{"from"}
+    DIM id$ = msg{"id"}
+    IF id$ = "" THEN id$ = "<" + CODEC.UUID$() + "@" + DomainOf$(from$) + ">"
+    DIM msg_date$ = msg{"date"}
+    IF msg_date$ = "" THEN msg_date$ = DATENOW$()
+    DIM lines = []
+    PUSH(lines, "Date: " + msg_date$)
+    PUSH(lines, "From: " + HeaderAddress$(from$))
+    PUSH(lines, "To: " + AddressLine$(msg{"to"}))
+    DIM cc_list = msg{"cc"}
+    IF LEN(cc_list) > 0 THEN PUSH(lines, "Cc: " + AddressLine$(cc_list))
+    DIM reply$ = msg{"reply_to"}
+    IF reply$ <> "" THEN PUSH(lines, "Reply-To: " + HeaderAddress$(reply$))
+    DIM subject$ = msg{"subject"}
+    PUSH(lines, "Subject: " + ENCODEHEADER$(subject$))
+    PUSH(lines, "Message-ID: " + id$)
+    DIM extra_names = msg{"extra_names"}
+    DIM extra_values = msg{"extra_values"}
+    DIM i = 0
+    FOR i = 0 TO LEN(extra_names) - 1
+        DIM extra_name$ = extra_names[i]
+        DIM extra_value$ = extra_values[i]
+        PUSH(lines, extra_name$ + ": " + ENCODEHEADER$(extra_value$))
+    NEXT i
+    PUSH(lines, "MIME-Version: 1.0")
+    RETURN JOIN(lines, gCRLF$) + gCRLF$ + Body$(msg, id$)
+ENDFUNC
+
+FUNC AddressLine$(list)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 1
+        DIM one$ = list[i]
+        PUSH(parts, HeaderAddress$(one$))
+    NEXT i
+    RETURN JOIN(parts, ", ")
+ENDFUNC
+
+' The Content headers and the body: the text and HTML parts, inline images
+' beside the HTML, attachments after both.
+FUNC Body$(msg, id$)
+    DIM text$ = msg{"text"}
+    DIM html$ = msg{"html"}
+    DIM names = msg{"att_names"}
+    DIM mimes = msg{"att_mimes"}
+    DIM datas = msg{"att_data"}
+    DIM cids = msg{"att_cids"}
+    DIM inline_parts = []
+    DIM file_parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        DIM att_name$ = names[i]
+        DIM att_mime$ = mimes[i]
+        DIM att_data$ = datas[i]
+        DIM att_cid$ = cids[i]
+        DIM part$ = AttachmentPart$(att_name$, att_mime$, att_data$, att_cid$)
+        IF att_cid$ <> "" ANDALSO html$ <> "" THEN
+            PUSH(inline_parts, part$)
+        ELSE
+            PUSH(file_parts, part$)
+        ENDIF
+    NEXT i
+    DIM content$ = ""
+    IF html$ <> "" THEN
+        DIM html_part$ = TextPart$(html$, "html")
+        IF LEN(inline_parts) > 0 THEN
+            DIM related = []
+            PUSH(related, html_part$)
+            FOR i = 0 TO LEN(inline_parts) - 1
+                DIM inline_part$ = inline_parts[i]
+                PUSH(related, inline_part$)
+            NEXT i
+            html_part$ = Multipart$("related", Boundary$(id$, "related"), related)
+        ENDIF
+        IF text$ <> "" THEN
+            DIM alternatives = []
+            PUSH(alternatives, TextPart$(text$, "plain"))
+            PUSH(alternatives, html_part$)
+            content$ = Multipart$("alternative", Boundary$(id$, "alternative"), alternatives)
+        ELSE
+            content$ = html_part$
+        ENDIF
+    ELSE
+        content$ = TextPart$(text$, "plain")
+    ENDIF
+    IF LEN(file_parts) = 0 THEN RETURN content$
+    DIM mixed = []
+    PUSH(mixed, content$)
+    FOR i = 0 TO LEN(file_parts) - 1
+        DIM file_part$ = file_parts[i]
+        PUSH(mixed, file_part$)
+    NEXT i
+    RETURN Multipart$("mixed", Boundary$(id$, "mixed"), mixed)
+ENDFUNC
+
+FUNC Boundary$(id$, level$)
+    RETURN "=_jdb_" + level$ + "_" + LEFT$(CODEC.SHA256$(id$ + level$), 20)
+ENDFUNC
+
+FUNC TextPart$(text$, subtype$)
+    DIM head$ = "Content-Type: text/" + subtype$ + "; charset=utf-8" + gCRLF$ + "Content-Transfer-Encoding: quoted-printable" + gCRLF$ + gCRLF$
+    RETURN head$ + QPENCODE$(text$)
+ENDFUNC
+
+FUNC AttachmentPart$(name$, mime$, data64$, cid$)
+    DIM lines = []
+    PUSH(lines, "Content-Type: " + mime$ + "; " + NameParam$("name", name$))
+    PUSH(lines, "Content-Transfer-Encoding: base64")
+    IF cid$ <> "" THEN
+        PUSH(lines, "Content-Disposition: inline; " + NameParam$("filename", name$))
+        PUSH(lines, "Content-ID: <" + cid$ + ">")
+    ELSE
+        PUSH(lines, "Content-Disposition: attachment; " + NameParam$("filename", name$))
+    ENDIF
+    RETURN JOIN(lines, gCRLF$) + gCRLF$ + gCRLF$ + Wrap76$(data64$)
+ENDFUNC
+
+' A file name parameter: quoted when it is plain ASCII, otherwise both an
+' RFC 2231 value (name*=UTF-8''...) and an encoded word for older readers.
+FUNC NameParam$(key$, value$)
+    IF IsPlainAscii(value$) ANDALSO INSTR(value$, gQ$) < 0 ANDALSO INSTR(value$, "\") < 0 THEN RETURN key$ + "=" + gQ$ + value$ + gQ$
+    DIM pct = []
+    DIM i = 0
+    FOR i = 0 TO LEN(value$) - 1
+        DIM code = BYTEAT(value$, i)
+        DIM ch$ = CHR$(code)
+        IF (ch$ >= "A" ANDALSO ch$ <= "Z") ORELSE (ch$ >= "a" ANDALSO ch$ <= "z") ORELSE (ch$ >= "0" ANDALSO ch$ <= "9") ORELSE INSTR("-._~", ch$) >= 0 THEN
+            PUSH(pct, ch$)
+        ELSE
+            PUSH(pct, "%" + MID$(gHexDigits$, code \ 16, 1) + MID$(gHexDigits$, code MOD 16, 1))
+        ENDIF
+    NEXT i
+    RETURN key$ + "*=UTF-8''" + JOIN(pct, "")
+ENDFUNC
+
+FUNC Multipart$(subtype$, boundary$, parts)
+    DIM out = []
+    PUSH(out, "Content-Type: multipart/" + subtype$ + "; boundary=" + gQ$ + boundary$ + gQ$)
+    PUSH(out, "")
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        DIM part$ = parts[i]
+        PUSH(out, "--" + boundary$)
+        PUSH(out, part$)
+    NEXT i
+    PUSH(out, "--" + boundary$ + "--")
+    PUSH(out, "")
+    RETURN JOIN(out, gCRLF$)
+ENDFUNC
+
+' The current time as an RFC 5322 date: "Sun, 13 Sep 2026 08:15:36 +0200".
+EXPORT FUNC DATENOW$()
+    DIM stamp = NOW()
+    DIM here = DATE.PARTS(stamp)
+    DIM utc = DATE.PARTS(stamp, 0)
+    DIM day_shift = CLNG(here{"yday"}) - CLNG(utc{"yday"})
+    IF CLNG(here{"year"}) > CLNG(utc{"year"}) THEN day_shift = 1
+    IF CLNG(here{"year"}) < CLNG(utc{"year"}) THEN day_shift = -1
+    DIM offset = day_shift * 1440 + (CLNG(here{"hour"}) - CLNG(utc{"hour"})) * 60 + CLNG(here{"minute"}) - CLNG(utc{"minute"})
+    RETURN DATETEXT$(CLNG(here{"year"}), CLNG(here{"month"}), CLNG(here{"day"}), CLNG(here{"hour"}), CLNG(here{"minute"}), CLNG(here{"second"}), offset)
+ENDFUNC
+
+' An RFC 5322 date from its parts and the offset from UTC in minutes.
+EXPORT FUNC DATETEXT$(year, month, day, hour, minute, second, offset_minutes)
+    DIM day_names = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    DIM month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    DIM stamp = DATE.UTC(year, month, day, 12, 0, 0)
+    DIM parts = DATE.PARTS(stamp, 0)
+    DIM wd = CLNG(parts{"weekday"})
+    DIM day_name$ = day_names[wd]
+    DIM month_name$ = month_names[month - 1]
+    DIM sign_char$ = "+"
+    DIM off = offset_minutes
+    IF off < 0 THEN
+        sign_char$ = "-"
+        off = -off
+    ENDIF
+    DIM zone$ = sign_char$ + LPAD$(STR$(off \ 60), 2, "0") + LPAD$(STR$(off MOD 60), 2, "0")
+    RETURN day_name$ + ", " + LPAD$(STR$(day), 2, "0") + " " + month_name$ + " " + STR$(year) + " " + LPAD$(STR$(hour), 2, "0") + ":" + LPAD$(STR$(minute), 2, "0") + ":" + LPAD$(STR$(second), 2, "0") + " " + zone$
+ENDFUNC
+
+' Writes the message to an .eml file.
+EXPORT SUB WRITEEML(msg, path$)
+    TXTWRITER path$, BUILD$(msg)
+ENDSUB
+
+' ── sending ────────────────────────────────────────────────────
+
+' The arguments curl is called with to send a message file. server:
+' "url" (smtp://host:587 or smtps://host:465), "starttls" (TRUE demands
+' TLS on a smtp:// connection), "timeout" in seconds (30). Credentials go
+' into a config file, never onto the command line.
+EXPORT FUNC COMMAND(msg, server, eml_path$ = "message.eml", config_path$ = "")
+    DIM args = []
+    PUSH(args, "--silent")
+    PUSH(args, "--show-error")
+    PUSH(args, "--url")
+    DIM url$ = server{"url"}
+    PUSH(args, url$)
+    IF MAP.EXISTS(server, "starttls") THEN
+        IF server{"starttls"} THEN PUSH(args, "--ssl-reqd")
+    ENDIF
+    PUSH(args, "--max-time")
+    DIM seconds = 30
+    IF MAP.EXISTS(server, "timeout") THEN seconds = CLNG(server{"timeout"})
+    PUSH(args, STR$(seconds))
+    PUSH(args, "--mail-from")
+    DIM from$ = msg{"from"}
+    PUSH(args, BAREADDRESS$(from$))
+    DIM everyone = AppendAll(AppendAll(msg{"to"}, msg{"cc"}), msg{"bcc"})
+    DIM i = 0
+    FOR i = 0 TO LEN(everyone) - 1
+        DIM rcpt$ = everyone[i]
+        PUSH(args, "--mail-rcpt")
+        PUSH(args, BAREADDRESS$(rcpt$))
+    NEXT i
+    PUSH(args, "--upload-file")
+    PUSH(args, eml_path$)
+    IF config_path$ <> "" THEN
+        PUSH(args, "--config")
+        PUSH(args, config_path$)
+    ENDIF
+    RETURN args
+ENDFUNC
+
+' Sends the message through curl. server: "url", "user", "password",
+' "starttls", "timeout". Answers a map with "ok", "exit_code" and "output".
+EXPORT FUNC SEND(msg, server)
+    IF NOT MAP.EXISTS(server, "url") THEN THROW "MAIL: the server map needs a url"
+    DIM eml_path$ = MKTEMP$("mail") + ".eml"
+    TXTWRITER eml_path$, BUILD$(msg)
+    DIM config_path$ = ""
+    IF MAP.EXISTS(server, "user") THEN
+        config_path$ = MKTEMP$("mailcfg") + ".txt"
+        DIM user$ = server{"user"}
+        DIM password$ = ""
+        IF MAP.EXISTS(server, "password") THEN password$ = server{"password"}
+        DIM secret$ = REPLACE$(REPLACE$(user$ + ":" + password$, "\", "\\"), gQ$, "\" + gQ$)
+        TXTWRITER config_path$, "user = " + gQ$ + secret$ + gQ$ + gLF$
+    ENDIF
+    DIM result = OS.EXEC("curl", COMMAND(msg, server, eml_path$, config_path$))
+    IF FILE.EXISTS(eml_path$) THEN KILL eml_path$
+    IF config_path$ <> "" ANDALSO FILE.EXISTS(config_path$) THEN KILL config_path$
+    DIM out AS MAP
+    DIM code = CLNG(result{"EXIT_CODE"})
+    DIM out_text$ = result{"OUTPUT"}
+    out{"ok"} = code = 0
+    out{"exit_code"} = code
+    out{"output"} = out_text$
+    RETURN out
+ENDFUNC
+
+' ── reading a message ──────────────────────────────────────────
+
+' A message text read back: "headers" (a map, names in small letters,
+' values decoded), "from", "to" and "cc" (arrays), "subject", "date",
+' "message_id", "text", "html", and the attachments as "att_names",
+' "att_mimes", "att_cids" and "att_sizes", in order.
+EXPORT FUNC PARSE(eml$)
+    DIM parsed AS MAP
+    DIM empty_headers AS MAP
+    parsed{"headers"} = empty_headers
+    parsed{"text"} = ""
+    parsed{"html"} = ""
+    parsed{"att_names"} = []
+    parsed{"att_mimes"} = []
+    parsed{"att_cids"} = []
+    parsed{"att_sizes"} = []
+    parsed{"att_base64"} = []
+    DIM src$ = REPLACE$(eml$, gCRLF$, gLF$)
+    DIM split_at = INSTR(src$, gLF$ + gLF$)
+    DIM head$ = src$
+    DIM body$ = ""
+    IF split_at >= 0 THEN
+        head$ = LEFT$(src$, split_at)
+        body$ = MID$(src$, split_at + 2)
+    ENDIF
+    DIM headers = HeaderMap(head$)
+    parsed{"headers"} = headers
+    parsed{"from"} = HeaderOf$(headers, "from")
+    parsed{"to"} = ADDRESSES(HeaderOf$(headers, "to"))
+    parsed{"cc"} = ADDRESSES(HeaderOf$(headers, "cc"))
+    parsed{"subject"} = HeaderOf$(headers, "subject")
+    parsed{"date"} = HeaderOf$(headers, "date")
+    parsed{"message_id"} = HeaderOf$(headers, "message-id")
+    ReadPart(parsed, headers, body$)
+    RETURN parsed
+ENDFUNC
+
+EXPORT FUNC PARSEFILE(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "MAIL: no such file " + path$
+    RETURN PARSE(TXTREADER$(path$))
+ENDFUNC
+
+' One header of a parsed message by its name in any case, or "".
+EXPORT FUNC HEADERVALUE$(parsed, name$)
+    DIM headers = parsed{"headers"}
+    RETURN HeaderOf$(headers, LCASE$(name$))
+ENDFUNC
+
+' The decoded bytes of an attachment of a parsed message.
+EXPORT FUNC ATTACHMENTDATA$(parsed, index)
+    DIM all = parsed{"att_base64"}
+    DIM data64$ = all[index]
+    RETURN CODEC.BASE64_DECODE$(data64$)
+ENDFUNC
+
+' Writes an attachment of a parsed message to a file.
+EXPORT SUB SAVEATTACHMENT(parsed, index, path$)
+    DIM all = parsed{"att_base64"}
+    DIM data64$ = all[index]
+    BINWRITER path$, CODEC.BASE64_DECODE$(data64$)
+ENDSUB
+
+FUNC HeaderMap(head$)
+    DIM out AS MAP
+    DIM lines = SPLIT(head$, gLF$)
+    DIM name$ = ""
+    DIM value$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        DIM row$ = lines[i]
+        IF LEN(row$) > 0 ANDALSO (LEFT$(row$, 1) = " " ORELSE LEFT$(row$, 1) = CHR$(9)) THEN
+            value$ = value$ + " " + TRIM$(row$)
+        ELSE
+            IF name$ <> "" ANDALSO NOT MAP.EXISTS(out, name$) THEN out{name$} = DECODEHEADER$(TRIM$(value$))
+            DIM colon = INSTR(row$, ":")
+            IF colon > 0 THEN
+                name$ = LCASE$(TRIM$(LEFT$(row$, colon)))
+                value$ = MID$(row$, colon + 1)
+            ELSE
+                name$ = ""
+            ENDIF
+        ENDIF
+    NEXT i
+    IF name$ <> "" ANDALSO NOT MAP.EXISTS(out, name$) THEN out{name$} = DECODEHEADER$(TRIM$(value$))
+    RETURN out
+ENDFUNC
+
+FUNC HeaderOf$(headers, name$)
+    IF NOT MAP.EXISTS(headers, name$) THEN RETURN ""
+    DIM value$ = headers{name$}
+    RETURN value$
+ENDFUNC
+
+' A parameter of a header value like: text/plain; charset="utf-8".
+FUNC Param$(value$, key$)
+    DIM pieces = SPLIT(value$, ";")
+    DIM i = 0
+    FOR i = 1 TO LEN(pieces) - 1
+        DIM piece$ = TRIM$(pieces[i])
+        DIM eq = INSTR(piece$, "=")
+        IF eq > 0 THEN
+            DIM this_key$ = LCASE$(TRIM$(LEFT$(piece$, eq)))
+            DIM this_value$ = TRIM$(MID$(piece$, eq + 1))
+            IF LEN(this_value$) >= 2 ANDALSO LEFT$(this_value$, 1) = gQ$ ANDALSO RIGHT$(this_value$, 1) = gQ$ THEN this_value$ = MID$(this_value$, 1, LEN(this_value$) - 2)
+            IF this_key$ = key$ THEN RETURN DECODEHEADER$(this_value$)
+            IF this_key$ = key$ + "*" THEN
+                DIM quote_at = INSTR(this_value$, "''")
+                IF quote_at >= 0 THEN this_value$ = MID$(this_value$, quote_at + 2)
+                RETURN PctDecode$(this_value$)
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+FUNC PctDecode$(text$)
+    DIM parts = []
+    DIM i = 0
+    DO WHILE i < LEN(text$)
+        DIM ch$ = MID$(text$, i, 1)
+        DIM hi = -1
+        DIM lo = -1
+        IF ch$ = "%" ANDALSO i + 2 < LEN(text$) + 0 THEN
+            hi = INSTR(gHexDigits$, UCASE$(MID$(text$, i + 1, 1)))
+            lo = INSTR(gHexDigits$, UCASE$(MID$(text$, i + 2, 1)))
+        ENDIF
+        IF hi >= 0 ANDALSO lo >= 0 THEN
+            PUSH(parts, CHR$(hi * 16 + lo))
+            i = i + 3
+        ELSE
+            PUSH(parts, ch$)
+            i = i + 1
+        ENDIF
+    LOOP
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' One MIME entity: a multipart is split at its boundary and each part
+' read in turn; a text part fills text or html once; everything with a
+' file name, or a disposition of attachment, is an attachment.
+SUB ReadPart(parsed, headers, body$)
+    DIM content_type$ = HeaderOf$(headers, "content-type")
+    IF content_type$ = "" THEN content_type$ = "text/plain"
+    DIM type_parts = SPLIT(content_type$, ";")
+    DIM first_part$ = type_parts[0]
+    DIM mime$ = LCASE$(TRIM$(first_part$))
+    IF LEFT$(mime$, 10) = "multipart/" THEN
+        DIM boundary$ = Param$(content_type$, "boundary")
+        IF boundary$ <> "" THEN
+            DIM marker$ = "--" + boundary$
+            DIM pieces = SPLIT(gLF$ + body$, gLF$ + marker$)
+            DIM i = 0
+            FOR i = 1 TO LEN(pieces) - 1
+                DIM piece$ = pieces[i]
+                IF LEFT$(piece$, 2) <> "--" THEN
+                    IF LEFT$(piece$, 1) = gLF$ THEN piece$ = MID$(piece$, 1)
+                    DIM split_at = INSTR(piece$, gLF$ + gLF$)
+                    DIM part_head$ = piece$
+                    DIM part_body$ = ""
+                    IF LEFT$(piece$, 1) = gLF$ THEN
+                        part_head$ = ""
+                        part_body$ = MID$(piece$, 1)
+                    ELSEIF split_at >= 0 THEN
+                        part_head$ = LEFT$(piece$, split_at)
+                        part_body$ = MID$(piece$, split_at + 2)
+                    ENDIF
+                    ReadPart(parsed, HeaderMap(part_head$), part_body$)
+                ENDIF
+            NEXT i
+        ENDIF
+        RETURN
+    ENDIF
+    DIM transfer$ = LCASE$(HeaderOf$(headers, "content-transfer-encoding"))
+    DIM disposition$ = HeaderOf$(headers, "content-disposition")
+    DIM file_name$ = Param$(disposition$, "filename")
+    IF file_name$ = "" THEN file_name$ = Param$(content_type$, "name")
+    DIM cid$ = HeaderOf$(headers, "content-id")
+    cid$ = REPLACE$(REPLACE$(TRIM$(cid$), "<", ""), ">", "")
+    DIM is_attachment = file_name$ <> "" ORELSE LEFT$(LCASE$(TRIM$(disposition$)), 10) = "attachment"
+    IF NOT is_attachment ANDALSO (mime$ = "text/plain" ORELSE mime$ = "text/html") THEN
+        DIM decoded$ = body$
+        IF transfer$ = "quoted-printable" THEN decoded$ = QPDECODE$(REPLACE$(body$, gLF$, gCRLF$))
+        IF transfer$ = "base64" THEN decoded$ = CODEC.BASE64_DECODE$(StripSpace$(body$))
+        decoded$ = ToUtf8$(REPLACE$(decoded$, gCRLF$, gLF$), Param$(content_type$, "charset"))
+        IF mime$ = "text/plain" THEN
+            DIM plain_text$ = parsed{"text"}
+            IF plain_text$ = "" THEN parsed{"text"} = decoded$
+        ELSEIF mime$ = "text/html" THEN
+            DIM html_text$ = parsed{"html"}
+            IF html_text$ = "" THEN parsed{"html"} = decoded$
+        ENDIF
+        RETURN
+    ENDIF
+    DIM data64$ = ""
+    IF transfer$ = "base64" THEN
+        data64$ = StripSpace$(body$)
+    ELSEIF transfer$ = "quoted-printable" THEN
+        data64$ = CODEC.BASE64_ENCODE$(QPDECODE$(REPLACE$(body$, gLF$, gCRLF$)))
+    ELSE
+        data64$ = CODEC.BASE64_ENCODE$(body$)
+    ENDIF
+    IF file_name$ = "" THEN file_name$ = "part" + STR$(LEN(parsed{"att_names"}) + 1)
+    DIM names = parsed{"att_names"}
+    PUSH(names, file_name$)
+    parsed{"att_names"} = names
+    DIM mimes = parsed{"att_mimes"}
+    PUSH(mimes, mime$)
+    parsed{"att_mimes"} = mimes
+    DIM cids = parsed{"att_cids"}
+    PUSH(cids, cid$)
+    parsed{"att_cids"} = cids
+    DIM sizes = parsed{"att_sizes"}
+    PUSH(sizes, LEN(CODEC.BASE64_DECODE$(data64$)))
+    parsed{"att_sizes"} = sizes
+    DIM datas = parsed{"att_base64"}
+    PUSH(datas, data64$)
+    parsed{"att_base64"} = datas
+ENDSUB
+
+FUNC StripSpace$(text$)
+    RETURN REPLACE$(REPLACE$(REPLACE$(REPLACE$(text$, gCRLF$, ""), gLF$, ""), " ", ""), CHR$(9), "")
+ENDFUNC

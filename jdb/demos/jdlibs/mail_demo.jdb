@@ -1,0 +1,144 @@
+' mail_demo.jdb - an invoice sent as an e-mail: text, HTML, a logo inside
+' the HTML and the PDF attached.
+'
+' The demo writes a small invoice PDF with PDFGEN, builds the message a
+' billing system sends with it (a plain text and an HTML version, the
+' company logo shown inside the HTML, the PDF attached, a German subject
+' with umlauts), writes it as an .eml file and reads that file back the
+' way a mail client would. It shows the curl command that would send it;
+' with MAIL_DEMO_SMTP set to a server URL (and MAIL_DEMO_USER and
+' MAIL_DEMO_PASSWORD when the server wants them) it sends it for real.
+'
+'   jdBasic mail_demo.jdb
+
+IMPORT MAIL, PDFGEN, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM NL$ = CHR$(10)
+DIM folder$ = MKTEMP$("maildemo")
+MKDIR folder$
+
+' ── the invoice to send ────────────────────────────────────────
+
+DIM pdf_path$ = folder$ + "/RE-2026-0413.pdf"
+DIM pdf = PDFGEN.DOC()
+PDFGEN.ADDPAGE(pdf)
+PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+PDFGEN.TEXTAT(pdf, 20, 30, "Rechnung RE-2026-0413")
+PDFGEN.USEFONT(pdf, "helvetica", "", 11)
+PDFGEN.TEXTAT(pdf, 20, 40, "Büromaterial September 2026: 209,80 €")
+PDFGEN.WRITEFILE(pdf, pdf_path$)
+
+DIM logo$ = "tests/jdlibs/fixtures/pdfgen_logo.jpg"
+
+' ── the message ────────────────────────────────────────────────
+
+DIM msg = MAIL.MESSAGE("Papier & Toner GmbH <rechnung@papier-toner.example>", "Stadtverwaltung Musterstadt <einkauf@musterstadt.example>", "Ihre Rechnung RE-2026-0413 für September – bitte prüfen")
+MAIL.CC(msg, "Jürgen Müller <j.mueller@musterstadt.example>")
+MAIL.BCC(msg, "archiv@papier-toner.example")
+MAIL.REPLYTO(msg, "Buchhaltung <buchhaltung@papier-toner.example>")
+MAIL.HEADER(msg, "X-Invoice-Number", "RE-2026-0413")
+
+DIM text_lines = []
+PUSH(text_lines, "Sehr geehrte Damen und Herren,")
+PUSH(text_lines, "")
+PUSH(text_lines, "anbei erhalten Sie unsere Rechnung RE-2026-0413 über 209,80 € für die Lieferungen im September 2026.")
+PUSH(text_lines, "Bitte überweisen Sie den Betrag innerhalb von 14 Tagen.")
+PUSH(text_lines, "")
+PUSH(text_lines, "Mit freundlichen Grüßen")
+PUSH(text_lines, "Papier & Toner GmbH")
+MAIL.PLAIN(msg, JOIN(text_lines, NL$))
+
+DIM html_lines = []
+PUSH(html_lines, "<html><body style='font-family: sans-serif'>")
+IF FILE.EXISTS(logo$) THEN PUSH(html_lines, "<p><img src='cid:logo@papier-toner' width='64' alt='Papier &amp; Toner'></p>")
+PUSH(html_lines, "<p>Sehr geehrte Damen und Herren,</p>")
+PUSH(html_lines, "<p>anbei erhalten Sie unsere Rechnung <b>RE-2026-0413</b> über <b>209,80&nbsp;€</b> für die Lieferungen im September 2026.</p>")
+PUSH(html_lines, "<p>Mit freundlichen Grüßen<br>Papier &amp; Toner GmbH</p>")
+PUSH(html_lines, "</body></html>")
+MAIL.HTMLBODY(msg, JOIN(html_lines, NL$))
+IF FILE.EXISTS(logo$) THEN MAIL.INLINE(msg, logo$, "logo@papier-toner")
+MAIL.ATTACH(msg, pdf_path$)
+
+DIM eml_path$ = folder$ + "/RE-2026-0413.eml"
+MAIL.WRITEEML(msg, eml_path$)
+DIM raw$ = TXTREADER$(eml_path$)
+
+CONSOLE.RULE("the message as written", "=")
+DIM raw_lines = SPLIT(REPLACE$(raw$, CHR$(13), ""), NL$)
+DIM i = 0
+FOR i = 0 TO LEN(raw_lines) - 1
+    DIM shown$ = raw_lines[i]
+    IF shown$ = "" THEN EXITFOR
+    PRINT "  "; LEFT$(shown$, 74)
+NEXT i
+PRINT "  ... "; LEN(raw_lines); " lines, "; LEN(raw$); " bytes"
+PRINT ""
+
+' ── read back ──────────────────────────────────────────────────
+
+DIM back = MAIL.PARSEFILE(eml_path$)
+CONSOLE.RULE("read back")
+DIM to_list = back{"to"}
+DIM cc_list = back{"cc"}
+DIM to_first$ = to_list[0]
+DIM cc_first$ = cc_list[0]
+DIM subject_back$ = back{"subject"}
+DIM text_back$ = back{"text"}
+DIM html_back$ = back{"html"}
+CONSOLE.KV([["from", back{"from"}], ["to", to_first$], ["cc", cc_first$], ["subject", subject_back$], ["text lines", STR$(LEN(SPLIT(text_back$, NL$)))], ["html bytes", STR$(LEN(html_back$))], ["invoice header", MAIL.HEADERVALUE$(back, "x-invoice-number")]], 2)
+PRINT ""
+DIM att_rows = []
+DIM names = back{"att_names"}
+DIM mimes = back{"att_mimes"}
+DIM sizes = back{"att_sizes"}
+DIM cids = back{"att_cids"}
+FOR i = 0 TO LEN(names) - 1
+    DIM att_name$ = names[i]
+    DIM att_mime$ = mimes[i]
+    DIM att_cid$ = cids[i]
+    DIM row = []
+    PUSH(row, att_name$)
+    PUSH(row, att_mime$)
+    PUSH(row, STR$(sizes[i]))
+    IF att_cid$ = "" THEN
+        PUSH(row, "attachment")
+    ELSE
+        PUSH(row, "inline, cid:" + att_cid$)
+    ENDIF
+    PUSH(att_rows, row)
+NEXT i
+CONSOLE.TABLE(att_rows, {"headers": ["file", "type", "bytes", "shown"], "border": "plain"})
+DIM copy_path$ = folder$ + "/copy.pdf"
+DIM pdf_index = LEN(names) - 1
+MAIL.SAVEATTACHMENT(back, pdf_index, copy_path$)
+DIM same$ = "no"
+IF CODEC.SHA256$(BINREADER$(copy_path$)) = CODEC.SHA256$(BINREADER$(pdf_path$)) THEN same$ = "yes"
+PRINT "  the PDF saved from the message is the one attached: "; same$
+PRINT ""
+
+' ── sending ────────────────────────────────────────────────────
+
+CONSOLE.RULE("sending")
+DIM server AS MAP
+DIM smtp$ = GETENV$("MAIL_DEMO_SMTP")
+IF smtp$ = "" THEN
+    server{"url"} = "smtps://smtp.example.com:465"
+    PRINT "  curl "; JOIN(MAIL.COMMAND(msg, server, "RE-2026-0413.eml"), " ")
+    PRINT "  Set MAIL_DEMO_SMTP (and MAIL_DEMO_USER, MAIL_DEMO_PASSWORD) to send it."
+ELSE
+    server{"url"} = smtp$
+    IF GETENV$("MAIL_DEMO_USER") <> "" THEN
+        server{"user"} = GETENV$("MAIL_DEMO_USER")
+        server{"password"} = GETENV$("MAIL_DEMO_PASSWORD")
+    ENDIF
+    DIM sent = MAIL.SEND(msg, server)
+    DIM sent_out$ = sent{"output"}
+    PRINT "  sent: "; sent{"ok"}; " (curl exit "; sent{"exit_code"}; ") "; sent_out$
+ENDIF
+PRINT ""
+
+KILL copy_path$
+KILL eml_path$
+KILL pdf_path$
+RMDIR folder$

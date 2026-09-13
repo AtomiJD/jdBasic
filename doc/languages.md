@@ -1175,7 +1175,7 @@ The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Stan
     PRINT "Launched with " + LEN(CmdArgs) + " arguments."
     ```
 
-* **`OS.EXEC(command$, [args_array$]) -> map`**: Executes an external program or shell command. It returns a `Map` containing two keys: `"output"` (the captured standard output and error text) and `"exit_code"` (the integer return code from the program).
+* **`OS.EXEC(command$, [args_array$]) -> map`**: Executes an external program or shell command. It returns a `Map` containing two keys, written in capitals: `"OUTPUT"` (the captured standard output and error text) and `"EXIT_CODE"` (the integer return code from the program).
 
     > **Note on Windows**: Internal commands like `dir` or `cls` are not standalone programs. To run them, you must execute the command shell `cmd.exe` with the `/c` flag, like this: `OS.EXEC("cmd /c dir")`.
 
@@ -1186,9 +1186,9 @@ The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Stan
     ' On Windows
     Result = OS.EXEC("ping", ["-n", "4", "google.com"])
 
-    PRINT "Exit Code: " + Result{"exit_code"}
+    PRINT "Exit Code: " + Result{"EXIT_CODE"}
     PRINT "--- Output ---"
-    PRINT Result{"output"}
+    PRINT Result{"OUTPUT"}
     ```
 
 * **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
@@ -1439,6 +1439,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `RETRY` | a call made again with a growing wait: a random share, a ceiling on the run, a predicate and a callback |
 | `GRAPH` | nodes and links: traversal, components, cycles, topological order, Dijkstra and A star, Graphviz output |
 | `FAKE` | made up names, addresses, companies, IBANs, dates and text, seeded so every machine gets the same rows |
+| `MAIL` | e-mail: MIME messages with attachments built, sent through curl over SMTP, .eml files read back |
 | `NUMFMT` | numbers, money and percentages per locale, read back, in words; IBAN, VAT id, German tax numbers |
 | `PDFGEN` | PDF files: standard fonts, text and paragraphs, lines, boxes, JPEG images, tables across pages, footers |
 | `TMPL` | HTML templates: holes, conditions, loops, includes, layouts, filters; the view layer of jdweb |

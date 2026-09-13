@@ -1,0 +1,195 @@
+' MAIL: addresses, RFC 2047 headers, quoted-printable with the soft breaks
+' Python's email package writes, a message with every kind of part built
+' and read back, a message written by another program, the curl command
+' and dates. Sending to a real server runs only with MAIL_TEST_SMTP set.
+
+IMPORT TESTKIT, MAIL
+
+DIM CRLF$ = CHR$(13) + CHR$(10)
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+
+TESTKIT.SUITE("addresses")
+DIM found = MAIL.ADDRESSES("ann@example.org, " + Q$ + "Doe, John" + Q$ + " <john@example.org>, Bob <bob@example.org>")
+TESTKIT.EQ(LEN(found), 3, "three addresses, the comma inside quotes kept")
+DIM john$ = found[1]
+TESTKIT.EQ(MAIL.BAREADDRESS$(john$), "john@example.org", "the bare address")
+TESTKIT.EQ(MAIL.ADDRESSNAME$(john$), "Doe, John", "the name without its quotes")
+TESTKIT.EQ(MAIL.ADDRESSNAME$("ann@example.org"), "", "no name")
+TESTKIT.EQ(MAIL.BAREADDRESS$(" ann@example.org "), "ann@example.org", "a bare address trimmed")
+TESTKIT.EQ(LEN(MAIL.ADDRESSES(["a@x.org", " ", "b@x.org"])), 2, "an array, blanks dropped")
+TESTKIT.EQ(MAIL.MIMETYPE$("Rechnung.PDF"), "application/pdf", "a MIME type by extension, in any case")
+TESTKIT.EQ(MAIL.MIMETYPE$("data.bin"), "application/octet-stream", "and the fallback")
+
+TESTKIT.SUITE("headers")
+TESTKIT.EQ(MAIL.ENCODEHEADER$("Invoice 4711"), "Invoice 4711", "plain ASCII stays")
+TESTKIT.EQ(MAIL.ENCODEHEADER$("Grüße"), "=?UTF-8?B?R3LDvMOfZQ==?=", "UTF-8 in base64")
+DIM long$ = "Ihre Rechnung für Grüße & Söhne – März 2026, Nummer RE-2026-0413 mit einem langen Betreff"
+DIM enc$ = MAIL.ENCODEHEADER$(long$)
+TESTKIT.ISTRUE(INSTR(enc$, CRLF$ + " ") >= 0, "a long value is folded")
+DIM encoded_words = SPLIT(REPLACE$(enc$, CRLF$ + " ", NL$), NL$)
+DIM short_enough = TRUE
+DIM i = 0
+FOR i = 0 TO LEN(encoded_words) - 1
+    DIM word$ = encoded_words[i]
+    IF LEN(word$) > 75 THEN short_enough = FALSE
+NEXT i
+TESTKIT.ISTRUE(short_enough, "no encoded word is longer than 75")
+TESTKIT.EQ(MAIL.DECODEHEADER$(enc$), long$, "and it decodes back with umlauts and the dash whole")
+TESTKIT.EQ(MAIL.DECODEHEADER$("=?iso-8859-1?q?Gr=FC=DFe_aus_K=F6ln?= und =?utf-8?b?4oKs?="), "Grüße aus Köln und €", "a Q word in ISO-8859-1 and a base64 word")
+TESTKIT.EQ(MAIL.DECODEHEADER$("=?UTF-8?B?R3LDvA==?= =?UTF-8?B?w59l?="), "Grüße", "the space between two encoded words is dropped")
+TESTKIT.EQ(MAIL.DECODEHEADER$("plain text"), "plain text", "a plain value stays")
+
+TESTKIT.SUITE("quoted-printable")
+TESTKIT.EQ(MAIL.QPENCODE$("Grüße"), "Gr=C3=BC=C3=9Fe", "UTF-8 bytes as =XX")
+TESTKIT.EQ(MAIL.QPENCODE$("a=b"), "a=3Db", "an equals sign is encoded")
+TESTKIT.EQ(MAIL.QPENCODE$("one" + NL$ + "two" + NL$), "one" + CRLF$ + "two" + CRLF$, "line breaks become CRLF, a final one kept")
+DIM edge$ = REPEAT$("x", 74) + " " + NL$ + REPEAT$("y", 75) + CHR$(9) + NL$ + REPEAT$("z", 73) + "=abc"
+DIM want_edge$ = REPEAT$("x", 74) + " =" + CRLF$ + CRLF$ + REPEAT$("y", 75) + "=" + CRLF$ + "=09" + CRLF$ + REPEAT$("z", 73) + "=" + CRLF$ + "=3Dabc"
+TESTKIT.EQ(MAIL.QPENCODE$(edge$), want_edge$, "trailing space and tab and a break before an escape, as Python's email package writes them")
+TESTKIT.EQ(MAIL.QPDECODE$(want_edge$), REPLACE$(edge$, NL$, CRLF$), "and back")
+DIM prose$ = REPEAT$("Grüße und 1.234,50 € fällig. ", 12)
+DIM qp$ = MAIL.QPENCODE$(prose$)
+DIM qp_lines = SPLIT(qp$, CRLF$)
+DIM fits = TRUE
+FOR i = 0 TO LEN(qp_lines) - 1
+    DIM qp_line$ = qp_lines[i]
+    IF LEN(qp_line$) > 76 THEN fits = FALSE
+NEXT i
+TESTKIT.ISTRUE(LEN(qp_lines) > 4, "a long paragraph is broken into lines")
+TESTKIT.ISTRUE(fits, "none longer than 76")
+TESTKIT.EQ(MAIL.QPDECODE$(qp$), prose$, "and it decodes to the paragraph")
+TESTKIT.EQ(MAIL.QPDECODE$("50% =ZZ"), "50% =ZZ", "a broken escape stays")
+
+TESTKIT.SUITE("a message with every part")
+DIM logo$ = "tests/jdlibs/fixtures/pdfgen_logo.jpg"
+IF NOT FILE.EXISTS(logo$) THEN logo$ = "fixtures/pdfgen_logo.jpg"
+DIM html$ = "<p>Anbei die Rechnung über <b>209,80 €</b></p><img src='cid:logo'>"
+DIM msg = MAIL.MESSAGE("Papier & Toner GmbH <rechnung@papier-toner.example>", "Stadtverwaltung <einkauf@musterstadt.example>", "Ihre Rechnung für September")
+MAIL.CC(msg, "Jürgen Müller <jm@musterstadt.example>")
+MAIL.BCC(msg, "archiv@papier-toner.example")
+MAIL.REPLYTO(msg, "buchhaltung@papier-toner.example")
+MAIL.HEADER(msg, "X-Invoice-Number", "RE-2026-0413")
+MAIL.SETID(msg, "<re-2026-0413@papier-toner.example>")
+MAIL.SETDATE(msg, "Sun, 13 Sep 2026 07:30:00 +0200")
+MAIL.PLAIN(msg, "Anbei die Rechnung über 209,80 €." + NL$ + "Grüße")
+MAIL.HTMLBODY(msg, html$)
+MAIL.INLINE(msg, logo$, "logo")
+MAIL.ATTACH(msg, logo$, "Beleg März.jpg")
+MAIL.ATTACHDATA(msg, "notes.txt", "line one" + NL$ + "line two")
+DIM eml$ = MAIL.BUILD$(msg)
+TESTKIT.ISTRUE(STARTSWITH(eml$, "Date: Sun, 13 Sep 2026 07:30:00 +0200" + CRLF$), "the fixed date first")
+TESTKIT.ISTRUE(INSTR(eml$, CRLF$ + "From: Papier & Toner GmbH <rechnung@papier-toner.example>" + CRLF$) >= 0, "the sender")
+TESTKIT.ISTRUE(INSTR(eml$, CRLF$ + "Cc: =?UTF-8?B?") >= 0, "a name with umlauts is encoded")
+TESTKIT.EQ(INSTR(LCASE$(eml$), "bcc"), -1, "Bcc appears nowhere in the message")
+TESTKIT.ISTRUE(INSTR(eml$, CRLF$ + "Message-ID: <re-2026-0413@papier-toner.example>" + CRLF$) >= 0, "the fixed Message-ID")
+TESTKIT.ISTRUE(INSTR(eml$, CRLF$ + "X-Invoice-Number: RE-2026-0413" + CRLF$) >= 0, "an extra header")
+TESTKIT.ISTRUE(INSTR(eml$, "Content-Type: multipart/mixed; boundary=") >= 0, "a mixed part around everything")
+TESTKIT.ISTRUE(INSTR(eml$, "Content-Type: multipart/alternative; boundary=") >= 0, "text and HTML as alternatives")
+TESTKIT.ISTRUE(INSTR(eml$, "Content-Type: multipart/related; boundary=") >= 0, "the HTML related to its image")
+TESTKIT.ISTRUE(INSTR(eml$, "Content-ID: <logo>") >= 0, "the image's content id")
+TESTKIT.ISTRUE(INSTR(eml$, "filename*=UTF-8''Beleg%20M%C3%A4rz.jpg") >= 0, "a file name with an umlaut in RFC 2231 form")
+TESTKIT.EQ(MAIL.BUILD$(msg), eml$, "the same message builds to the same text")
+DIM all_lines = SPLIT(eml$, CRLF$)
+DIM longest = 0
+FOR i = 0 TO LEN(all_lines) - 1
+    DIM one_line$ = all_lines[i]
+    IF LEN(one_line$) > longest THEN longest = LEN(one_line$)
+NEXT i
+TESTKIT.ISTRUE(longest <= 998, "no line longer than RFC 5322 allows")
+
+DIM back = MAIL.PARSE(eml$)
+TESTKIT.EQ(back{"subject"}, "Ihre Rechnung für September", "the subject read back")
+TESTKIT.EQ(back{"from"}, "Papier & Toner GmbH <rechnung@papier-toner.example>", "the sender")
+DIM cc_back = back{"cc"}
+DIM cc_first$ = cc_back[0]
+TESTKIT.EQ(cc_first$, "Jürgen Müller <jm@musterstadt.example>", "the copy recipient decoded")
+TESTKIT.EQ(back{"text"}, "Anbei die Rechnung über 209,80 €." + NL$ + "Grüße", "the plain text")
+TESTKIT.EQ(back{"html"}, html$, "the HTML")
+TESTKIT.EQ(JOIN(back{"att_names"}, "|"), "pdfgen_logo.jpg|Beleg März.jpg|notes.txt", "the inline image and both attachments, names decoded")
+TESTKIT.EQ(JOIN(back{"att_cids"}, "|"), "logo||", "only the inline image has a content id")
+DIM sizes = back{"att_sizes"}
+TESTKIT.EQ(sizes[1], FILE.SIZE(logo$), "the size of an attachment")
+TESTKIT.EQ(MAIL.ATTACHMENTDATA$(back, 2), "line one" + NL$ + "line two", "the bytes of an attachment")
+TESTKIT.EQ(MAIL.HEADERVALUE$(back, "X-Invoice-Number"), "RE-2026-0413", "a header by its name in any case")
+TESTKIT.EQ(back{"message_id"}, "<re-2026-0413@papier-toner.example>", "the Message-ID")
+DIM folder$ = MKTEMP$("mailtest")
+MKDIR folder$
+DIM copy_path$ = folder$ + "/copy.jpg"
+MAIL.SAVEATTACHMENT(back, 1, copy_path$)
+TESTKIT.EQ(CODEC.SHA256$(BINREADER$(copy_path$)), CODEC.SHA256$(BINREADER$(logo$)), "an attachment saved is the file attached")
+DIM eml_path$ = folder$ + "/message.eml"
+MAIL.WRITEEML(msg, eml_path$)
+TESTKIT.EQ(FILE.SIZE(eml_path$), LEN(eml$), "WRITEEML writes the built text")
+DIM from_file = MAIL.PARSEFILE(eml_path$)
+TESTKIT.EQ(from_file{"subject"}, "Ihre Rechnung für September", "and PARSEFILE reads it")
+KILL copy_path$
+KILL eml_path$
+RMDIR folder$
+
+TESTKIT.SUITE("simple messages")
+DIM plain_msg = MAIL.MESSAGE("a@example.org", "b@example.org", "Hi")
+MAIL.PLAIN(plain_msg, "hello")
+DIM plain_eml$ = MAIL.BUILD$(plain_msg)
+TESTKIT.ISTRUE(INSTR(plain_eml$, "Content-Type: text/plain; charset=utf-8") >= 0, "a text message is one text part")
+TESTKIT.EQ(INSTR(plain_eml$, "multipart"), -1, "without any multipart")
+TESTKIT.ISTRUE(INSTR(plain_eml$, "Message-ID: <") >= 0 ANDALSO INSTR(plain_eml$, "@example.org>") >= 0, "a new Message-ID at the sender's domain")
+DIM plain_back = MAIL.PARSE(plain_eml$)
+TESTKIT.EQ(plain_back{"text"}, "hello", "read back")
+DIM html_msg = MAIL.MESSAGE("a@example.org", "b@example.org", "Hi")
+MAIL.HTMLBODY(html_msg, "<b>hello</b>")
+TESTKIT.ISTRUE(INSTR(MAIL.BUILD$(html_msg), "Content-Type: text/html; charset=utf-8") >= 0, "an HTML message is one HTML part")
+
+TESTKIT.SUITE("a message from another program")
+DIM foreign = []
+PUSH(foreign, "From: =?iso-8859-1?q?J=FCrgen?= <j@example.org>")
+PUSH(foreign, "To: ann@example.org")
+PUSH(foreign, "Subject: =?iso-8859-1?q?Gr=FC=DFe?=")
+PUSH(foreign, "MIME-Version: 1.0")
+PUSH(foreign, "Content-Type: multipart/mixed; boundary=" + Q$ + "XYZ" + Q$)
+PUSH(foreign, "")
+PUSH(foreign, "--XYZ")
+PUSH(foreign, "Content-Type: text/plain; charset=iso-8859-1")
+PUSH(foreign, "Content-Transfer-Encoding: quoted-printable")
+PUSH(foreign, "")
+PUSH(foreign, "Sch=F6ne Gr=FC=DFe")
+PUSH(foreign, "--XYZ")
+PUSH(foreign, "Content-Type: application/pdf; name=" + Q$ + "a.pdf" + Q$)
+PUSH(foreign, "Content-Disposition: attachment; filename=" + Q$ + "a.pdf" + Q$)
+PUSH(foreign, "Content-Transfer-Encoding: base64")
+PUSH(foreign, "")
+PUSH(foreign, "JVBERi0xLjQK")
+PUSH(foreign, "--XYZ--")
+DIM other = MAIL.PARSE(JOIN(foreign, CRLF$))
+TESTKIT.EQ(other{"from"}, "Jürgen <j@example.org>", "an ISO-8859-1 name decoded to UTF-8")
+TESTKIT.EQ(other{"subject"}, "Grüße", "the subject")
+TESTKIT.EQ(other{"text"}, "Schöne Grüße", "a quoted-printable ISO-8859-1 body")
+TESTKIT.EQ(JOIN(other{"att_names"}, "|"), "a.pdf", "its attachment")
+TESTKIT.EQ(MAIL.ATTACHMENTDATA$(other, 0), "%PDF-1.4" + NL$, "decoded from base64")
+
+TESTKIT.SUITE("sending")
+DIM server AS MAP
+server{"url"} = "smtps://smtp.example.com:465"
+server{"timeout"} = 12
+DIM args = MAIL.COMMAND(msg, server, "out.eml", "cfg.txt")
+TESTKIT.EQ(JOIN(args, " "), "--silent --show-error --url smtps://smtp.example.com:465 --max-time 12 --mail-from rechnung@papier-toner.example --mail-rcpt einkauf@musterstadt.example --mail-rcpt jm@musterstadt.example --mail-rcpt archiv@papier-toner.example --upload-file out.eml --config cfg.txt", "every recipient on the envelope, Bcc included, credentials in a config file")
+server{"url"} = "smtp://smtp.example.com:587"
+server{"starttls"} = TRUE
+TESTKIT.ISTRUE(INSTR(JOIN(MAIL.COMMAND(msg, server), " "), "--ssl-reqd") >= 0, "STARTTLS is demanded when asked for")
+DIM smtp$ = GETENV$("MAIL_TEST_SMTP")
+IF smtp$ = "" THEN
+    TESTKIT.SKIP("MAIL_TEST_SMTP is not set, nothing is sent")
+ELSE
+    DIM live AS MAP
+    live{"url"} = smtp$
+    DIM sent = MAIL.SEND(msg, live)
+    TESTKIT.ISTRUE(sent{"ok"}, "sent to " + smtp$)
+ENDIF
+
+TESTKIT.SUITE("dates")
+TESTKIT.EQ(MAIL.DATETEXT$(2026, 9, 13, 7, 30, 0, 120), "Sun, 13 Sep 2026 07:30:00 +0200", "as Python's email.utils writes it")
+TESTKIT.EQ(MAIL.DATETEXT$(2024, 2, 29, 23, 5, 9, -330), "Thu, 29 Feb 2024 23:05:09 -0530", "a leap day and a negative offset")
+TESTKIT.EQ(LEN(MAIL.DATENOW$()), 31, "the current date has its fixed length")
+TESTKIT.ISTRUE(REGEX.MATCH("(?:Sun|Mon|Tue|Wed|Thu|Fri|Sat), [0-9]{2} [A-Z][a-z]{2} [0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2} [+-][0-9]{4}", MAIL.DATENOW$()), "and its form")
+
+TESTKIT.REPORT()
