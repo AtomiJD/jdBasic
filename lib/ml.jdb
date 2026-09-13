@@ -1,0 +1,1369 @@
+' ml.jdb - the scikit-learn essentials on jdBasic arrays: a seeded train and
+' test split, standard and min-max scaling and one-hot encoding; linear and
+' ridge regression, logistic regression, k nearest neighbours, k-means and
+' a decision tree behind one FIT, PREDICT and SCORE; the usual metrics. A
+' model is a map that TOJSON$ stores and FROMJSON reads back.
+'
+'   IMPORT ML
+'   DIM parts = ML.TRAINTEST(rows, labels, 0.2, 7)
+'   DIM model = ML.FIT("logistic", parts{"x_train"}, parts{"y_train"})
+'   PRINT ML.ACCURACY(parts{"y_test"}, ML.PREDICT(model, parts{"x_test"}))
+
+EXPORT MODULE ML
+
+' ── values and labels ──────────────────────────────────────────
+
+FUNC NumCell(v)
+    DIM kind$ = TYPEOF(v)
+    RETURN kind$ = "INT64" ORELSE kind$ = "FLOAT64" ORELSE kind$ = "NUMBER"
+ENDFUNC
+
+FUNC KeyOf$(v)
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "STRING" THEN
+        DIM s$ = v
+        RETURN s$
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+FUNC OptNum(opts, opt_name$, fallback)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback
+    IF NOT MAP.EXISTS(opts, opt_name$) THEN RETURN fallback
+    DIM v = opts{opt_name$}
+    RETURN v * 1.0
+ENDFUNC
+
+FUNC OptText$(opts, opt_name$, fallback$)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback$
+    IF NOT MAP.EXISTS(opts, opt_name$) THEN RETURN fallback$
+    DIM v = opts{opt_name$}
+    DIM s$ = v
+    RETURN s$
+ENDFUNC
+
+' The distinct labels, sorted: numbers by value, text by its characters.
+FUNC ClassesOf(y_vals)
+    DIM seen AS MAP
+    DIM nums = []
+    DIM texts = []
+    DIM all_numbers = 1
+    DIM i = 0
+    FOR i = 0 TO LEN(y_vals) - 1
+        DIM v = y_vals[i]
+        DIM key_text$ = KeyOf$(v)
+        IF NOT MAP.EXISTS(seen, key_text$) THEN
+            seen{key_text$} = 1
+            IF NumCell(v) THEN
+                PUSH(nums, v * 1.0)
+            ELSE
+                all_numbers = 0
+                DIM t$ = v
+                PUSH(texts, t$)
+            ENDIF
+        ENDIF
+    NEXT i
+    IF all_numbers = 1 THEN RETURN SORT(nums)
+    RETURN SORT(texts)
+ENDFUNC
+
+FUNC ClassKeys(class_list)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(class_list) - 1
+        DIM c = class_list[i]
+        PUSH(out, KeyOf$(c))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The position of each label among the class keys, -1 for an unknown one.
+FUNC LabelIndexes(y_vals, class_keys)
+    DIM lookup AS MAP
+    DIM i = 0
+    FOR i = 0 TO LEN(class_keys) - 1
+        DIM ck$ = class_keys[i]
+        lookup{ck$} = i
+    NEXT i
+    DIM out = []
+    FOR i = 0 TO LEN(y_vals) - 1
+        DIM v = y_vals[i]
+        DIM key_text$ = KeyOf$(v)
+        IF MAP.EXISTS(lookup, key_text$) THEN
+            DIM at = lookup{key_text$}
+            PUSH(out, at)
+        ELSE
+            PUSH(out, -1)
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC ColCount(x_rows)
+    IF LEN(x_rows) = 0 THEN RETURN 0
+    DIM first = x_rows[0]
+    RETURN LEN(first)
+ENDFUNC
+
+FUNC ZeroList(n_items)
+    DIM out = []
+    DIM i = 0
+    FOR i = 1 TO n_items
+        PUSH(out, 0.0)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC CopyNums(v)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(v) - 1
+        DIM xv = v[i]
+        PUSH(out, xv * 1.0)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── splitting ──────────────────────────────────────────────────
+
+' Rows and labels shuffled with a seed and cut into a training and a test
+' part; the test part holds test_share of the rows, rounded up. Answers a
+' map with x_train, x_test, y_train and y_test.
+EXPORT FUNC TRAINTEST(x_rows, y_vals, test_share = 0.25, seed = 42)
+    DIM n_rows = LEN(x_rows)
+    RANDOMSEED(seed)
+    DIM idx = []
+    DIM i = 0
+    FOR i = 0 TO n_rows - 1
+        PUSH(idx, i)
+    NEXT i
+    FOR i = n_rows - 1 TO 1 STEP -1
+        DIM j = INT(RANDOM() * (i + 1))
+        IF j > i THEN j = i
+        DIM held = idx[i]
+        idx[i] = idx[j]
+        idx[j] = held
+    NEXT i
+    DIM n_test = CEIL(n_rows * test_share)
+    IF n_test > n_rows THEN n_test = n_rows
+    DIM x_train = []
+    DIM x_test = []
+    DIM y_train = []
+    DIM y_test = []
+    FOR i = 0 TO n_rows - 1
+        DIM at = idx[i]
+        DIM r = x_rows[at]
+        DIM label_value = y_vals[at]
+        IF i < n_test THEN
+            PUSH(x_test, r)
+            PUSH(y_test, label_value)
+        ELSE
+            PUSH(x_train, r)
+            PUSH(y_train, label_value)
+        ENDIF
+    NEXT i
+    DIM split_parts AS MAP
+    split_parts{"x_train"} = x_train
+    split_parts{"x_test"} = x_test
+    split_parts{"y_train"} = y_train
+    split_parts{"y_test"} = y_test
+    RETURN split_parts
+ENDFUNC
+
+' ── preprocessing ──────────────────────────────────────────────
+
+FUNC FitScaler(kind$, x_rows)
+    DIM n_rows = LEN(x_rows)
+    DIM n_cols = ColCount(x_rows)
+    DIM first_stat = ZeroList(n_cols)
+    DIM second_stat = ZeroList(n_cols)
+    DIM i = 0
+    DIM j = 0
+    IF kind$ = "minmax" THEN
+        DIM first_row = x_rows[0]
+        first_stat = CopyNums(first_row)
+        second_stat = CopyNums(first_row)
+    ENDIF
+    FOR i = 0 TO n_rows - 1
+        DIM r = x_rows[i]
+        FOR j = 0 TO n_cols - 1
+            DIM v = r[j]
+            IF kind$ = "minmax" THEN
+                IF v < first_stat[j] THEN first_stat[j] = v
+                IF v > second_stat[j] THEN second_stat[j] = v
+            ELSE
+                first_stat[j] = first_stat[j] + v
+                second_stat[j] = second_stat[j] + v * v
+            ENDIF
+        NEXT j
+    NEXT i
+    DIM model AS MAP
+    model{"kind"} = kind$
+    IF kind$ = "minmax" THEN
+        model{"min"} = first_stat
+        model{"max"} = second_stat
+    ELSE
+        DIM means = ZeroList(n_cols)
+        DIM scales = ZeroList(n_cols)
+        FOR j = 0 TO n_cols - 1
+            DIM mean_j = first_stat[j] / n_rows
+            DIM var_j = second_stat[j] / n_rows - mean_j * mean_j
+            IF var_j < 0 THEN var_j = 0.0
+            means[j] = mean_j
+            scales[j] = SQR(var_j)
+            IF scales[j] = 0 THEN scales[j] = 1.0
+        NEXT j
+        model{"mean"} = means
+        model{"scale"} = scales
+    ENDIF
+    RETURN model
+ENDFUNC
+
+FUNC ScaleRows(model, x_rows)
+    DIM kind$ = model{"kind"}
+    DIM lows = []
+    DIM spans = []
+    DIM j = 0
+    IF kind$ = "minmax" THEN
+        DIM mins = model{"min"}
+        DIM maxs = model{"max"}
+        FOR j = 0 TO LEN(mins) - 1
+            DIM lo = mins[j]
+            DIM hi = maxs[j]
+            PUSH(lows, lo)
+            IF hi - lo = 0 THEN
+                PUSH(spans, 1.0)
+            ELSE
+                PUSH(spans, hi - lo)
+            ENDIF
+        NEXT j
+    ELSE
+        lows = model{"mean"}
+        spans = model{"scale"}
+    ENDIF
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(x_rows) - 1
+        DIM r = x_rows[i]
+        DIM scaled = []
+        FOR j = 0 TO LEN(lows) - 1
+            DIM v = r[j]
+            DIM base_j = lows[j]
+            DIM span_j = spans[j]
+            PUSH(scaled, (v - base_j) / span_j)
+        NEXT j
+        PUSH(out, scaled)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC FitOneHot(leaf_values)
+    DIM model AS MAP
+    model{"kind"} = "onehot"
+    model{"categories"} = ClassesOf(leaf_values)
+    RETURN model
+ENDFUNC
+
+FUNC OneHotRows(model, leaf_values)
+    DIM cats = model{"categories"}
+    DIM idx = LabelIndexes(leaf_values, ClassKeys(cats))
+    DIM out = []
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(idx) - 1
+        DIM at = idx[i]
+        DIM hot = []
+        FOR j = 0 TO LEN(cats) - 1
+            IF j = at THEN
+                PUSH(hot, 1.0)
+            ELSE
+                PUSH(hot, 0.0)
+            ENDIF
+        NEXT j
+        PUSH(out, hot)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── linear models ──────────────────────────────────────────────
+
+FUNC FitLinear(kind$, x_rows, y_vals, ridge_alpha)
+    DIM n_rows = LEN(x_rows)
+    DIM p = ColCount(x_rows)
+    DIM xbar = ZeroList(p)
+    DIM ybar = 0.0
+    DIM i = 0
+    DIM a = 0
+    DIM b = 0
+    FOR i = 0 TO n_rows - 1
+        DIM r = x_rows[i]
+        DIM yi = y_vals[i]
+        ybar = ybar + yi
+        FOR a = 0 TO p - 1
+            DIM va = r[a]
+            xbar[a] = xbar[a] + va
+        NEXT a
+    NEXT i
+    ybar = ybar / n_rows
+    FOR a = 0 TO p - 1
+        xbar[a] = xbar[a] / n_rows
+    NEXT a
+    DIM gram = ZeroList(p * p)
+    DIM rhs = ZeroList(p)
+    FOR i = 0 TO n_rows - 1
+        DIM row_i = x_rows[i]
+        DIM yc = y_vals[i] - ybar
+        DIM centered = []
+        FOR a = 0 TO p - 1
+            DIM ca = row_i[a]
+            PUSH(centered, ca - xbar[a])
+        NEXT a
+        FOR a = 0 TO p - 1
+            DIM xa = centered[a]
+            rhs[a] = rhs[a] + xa * yc
+            FOR b = a TO p - 1
+                DIM xb = centered[b]
+                gram[a * p + b] = gram[a * p + b] + xa * xb
+            NEXT b
+        NEXT a
+    NEXT i
+    FOR a = 0 TO p - 1
+        FOR b = 0 TO a - 1
+            gram[a * p + b] = gram[b * p + a]
+        NEXT b
+        gram[a * p + a] = gram[a * p + a] + ridge_alpha
+    NEXT a
+    DIM coef = SOLVE(RESHAPE(gram, [p, p]), rhs)
+    DIM intercept = ybar
+    FOR a = 0 TO p - 1
+        DIM coef_a = coef[a]
+        intercept = intercept - coef_a * xbar[a]
+    NEXT a
+    DIM model AS MAP
+    model{"kind"} = kind$
+    model{"coef"} = CopyNums(coef)
+    model{"intercept"} = intercept
+    model{"alpha"} = ridge_alpha
+    RETURN model
+ENDFUNC
+
+FUNC PredictLinear(model, x_rows)
+    DIM coef = model{"coef"}
+    DIM intercept = model{"intercept"}
+    DIM out = []
+    DIM i = 0
+    DIM a = 0
+    FOR i = 0 TO LEN(x_rows) - 1
+        DIM r = x_rows[i]
+        DIM s = intercept * 1.0
+        FOR a = 0 TO LEN(coef) - 1
+            DIM ca = coef[a]
+            DIM va = r[a]
+            s = s + ca * va
+        NEXT a
+        PUSH(out, s)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── logistic regression ────────────────────────────────────────
+
+' The class probabilities of every row as one flat array, row by row.
+FUNC SoftmaxRows(theta, n_classes, p, x_rows)
+    DIM d = p + 1
+    DIM out = []
+    DIM i = 0
+    DIM k = 0
+    DIM a = 0
+    FOR i = 0 TO LEN(x_rows) - 1
+        DIM r = x_rows[i]
+        DIM logits = []
+        DIM top = -1E+300
+        FOR k = 0 TO n_classes - 1
+            DIM z = theta[k * d + p]
+            FOR a = 0 TO p - 1
+                DIM va = r[a]
+                z = z + theta[k * d + a] * va
+            NEXT a
+            PUSH(logits, z)
+            IF z > top THEN top = z
+        NEXT k
+        DIM total = 0.0
+        FOR k = 0 TO n_classes - 1
+            total = total + EXP(logits[k] - top)
+        NEXT k
+        FOR k = 0 TO n_classes - 1
+            PUSH(out, EXP(logits[k] - top) / total)
+        NEXT k
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC LogisticObjective(theta, n_classes, p, x_rows, yidx, c_value)
+    DIM probs = SoftmaxRows(theta, n_classes, p, x_rows)
+    DIM d = p + 1
+    DIM loss = 0.0
+    DIM i = 0
+    DIM k = 0
+    DIM a = 0
+    FOR i = 0 TO LEN(x_rows) - 1
+        DIM yk = yidx[i]
+        DIM pk = probs[i * n_classes + yk]
+        IF pk < 1E-300 THEN pk = 1E-300
+        loss = loss - LOG(pk)
+    NEXT i
+    DIM penalty = 0.0
+    FOR k = 0 TO n_classes - 1
+        FOR a = 0 TO p - 1
+            DIM w = theta[k * d + a]
+            penalty = penalty + w * w
+        NEXT a
+    NEXT k
+    RETURN loss + penalty / (2 * c_value)
+ENDFUNC
+
+' Multinomial logistic regression with an L2 penalty, minimising
+' C * log loss + |W|^2 / 2 as scikit-learn does, by Newton's method with a
+' backtracking line search.
+FUNC FitLogistic(x_rows, y_vals, c_value, max_iter, tol)
+    DIM class_list = ClassesOf(y_vals)
+    DIM n_classes = LEN(class_list)
+    DIM yidx = LabelIndexes(y_vals, ClassKeys(class_list))
+    DIM n_rows = LEN(x_rows)
+    DIM p = ColCount(x_rows)
+    DIM d = p + 1
+    DIM dim_all = n_classes * d
+    DIM theta = ZeroList(dim_all)
+    DIM iter = 0
+    DIM i = 0
+    DIM k = 0
+    DIM l = 0
+    DIM a = 0
+    DIM c = 0
+    DIM going = 1
+    DIM objective = LogisticObjective(theta, n_classes, p, x_rows, yidx, c_value)
+    DO WHILE going = 1 ANDALSO iter < max_iter
+        iter = iter + 1
+        DIM probs = SoftmaxRows(theta, n_classes, p, x_rows)
+        DIM grad = ZeroList(dim_all)
+        DIM hess = ZeroList(dim_all * dim_all)
+        FOR i = 0 TO n_rows - 1
+            DIM r = x_rows[i]
+            DIM ext_row = []
+            FOR a = 0 TO p - 1
+                DIM va = r[a]
+                PUSH(ext_row, va * 1.0)
+            NEXT a
+            PUSH(ext_row, 1.0)
+            DIM yk = yidx[i]
+            FOR k = 0 TO n_classes - 1
+                DIM pk = probs[i * n_classes + k]
+                DIM resid = pk
+                IF k = yk THEN resid = pk - 1
+                FOR a = 0 TO d - 1
+                    grad[k * d + a] = grad[k * d + a] + resid * ext_row[a]
+                NEXT a
+                FOR l = 0 TO n_classes - 1
+                    DIM pl = probs[i * n_classes + l]
+                    DIM weight = 0 - pk * pl
+                    IF k = l THEN weight = pk * (1 - pk)
+                    FOR a = 0 TO d - 1
+                        DIM wa = weight * ext_row[a]
+                        DIM row_at = (k * d + a) * dim_all + l * d
+                        FOR c = 0 TO d - 1
+                            hess[row_at + c] = hess[row_at + c] + wa * ext_row[c]
+                        NEXT c
+                    NEXT a
+                NEXT l
+            NEXT k
+        NEXT i
+        FOR k = 0 TO n_classes - 1
+            FOR a = 0 TO d - 1
+                DIM at = k * d + a
+                IF a < p THEN
+                    grad[at] = grad[at] + theta[at] / c_value
+                    hess[at * dim_all + at] = hess[at * dim_all + at] + 1 / c_value
+                ELSE
+                    hess[at * dim_all + at] = hess[at * dim_all + at] + 0.000000001
+                ENDIF
+            NEXT a
+        NEXT k
+        DIM newton_step = SOLVE(RESHAPE(hess, [dim_all, dim_all]), grad)
+        DIM t = 1.0
+        DIM accepted = 0
+        DIM tries = 0
+        DIM trial = ZeroList(dim_all)
+        DO WHILE accepted = 0 ANDALSO tries < 30
+            FOR a = 0 TO dim_all - 1
+                trial[a] = theta[a] - t * newton_step[a]
+            NEXT a
+            DIM trial_objective = LogisticObjective(trial, n_classes, p, x_rows, yidx, c_value)
+            IF trial_objective <= objective + 1E-12 THEN
+                accepted = 1
+                objective = trial_objective
+            ELSE
+                t = t / 2
+                tries = tries + 1
+            ENDIF
+        LOOP
+        DIM biggest = 0.0
+        FOR a = 0 TO dim_all - 1
+            IF ABS(trial[a] - theta[a]) > biggest THEN biggest = ABS(trial[a] - theta[a])
+            theta[a] = trial[a]
+        NEXT a
+        IF biggest < tol ORELSE accepted = 0 THEN going = 0
+    LOOP
+    DIM coef_rows = []
+    DIM intercepts = []
+    FOR k = 0 TO n_classes - 1
+        DIM coef_row = []
+        FOR a = 0 TO p - 1
+            PUSH(coef_row, theta[k * d + a])
+        NEXT a
+        PUSH(coef_rows, coef_row)
+        PUSH(intercepts, theta[k * d + p])
+    NEXT k
+    DIM model AS MAP
+    model{"kind"} = "logistic"
+    model{"classes"} = class_list
+    model{"coef"} = coef_rows
+    model{"intercept"} = intercepts
+    model{"C"} = c_value
+    model{"n_iter"} = iter
+    RETURN model
+ENDFUNC
+
+FUNC ThetaOf(model)
+    DIM coef_rows = model{"coef"}
+    DIM intercepts = model{"intercept"}
+    DIM theta = []
+    DIM k = 0
+    DIM a = 0
+    FOR k = 0 TO LEN(coef_rows) - 1
+        DIM coef_row = coef_rows[k]
+        FOR a = 0 TO LEN(coef_row) - 1
+            DIM w = coef_row[a]
+            PUSH(theta, w * 1.0)
+        NEXT a
+        DIM b = intercepts[k]
+        PUSH(theta, b * 1.0)
+    NEXT k
+    RETURN theta
+ENDFUNC
+
+' ── nearest neighbours ─────────────────────────────────────────
+
+FUNC FitKnn(x_rows, y_vals, k_near)
+    DIM class_list = ClassesOf(y_vals)
+    DIM model AS MAP
+    model{"kind"} = "knn"
+    model{"k"} = k_near
+    model{"classes"} = class_list
+    model{"x"} = x_rows
+    model{"y_index"} = LabelIndexes(y_vals, ClassKeys(class_list))
+    RETURN model
+ENDFUNC
+
+' The vote shares of the k nearest training rows for every row, flat.
+FUNC KnnShares(model, x_rows)
+    DIM train = model{"x"}
+    DIM yidx = model{"y_index"}
+    DIM class_list = model{"classes"}
+    DIM n_classes = LEN(class_list)
+    DIM k_near = CINT(model{"k"})
+    DIM n_train = LEN(train)
+    IF k_near > n_train THEN k_near = n_train
+    DIM out = []
+    DIM i = 0
+    DIM t = 0
+    DIM a = 0
+    DIM m = 0
+    FOR i = 0 TO LEN(x_rows) - 1
+        DIM q = x_rows[i]
+        DIM dists = []
+        FOR t = 0 TO n_train - 1
+            DIM tr = train[t]
+            DIM dist = 0.0
+            FOR a = 0 TO LEN(q) - 1
+                DIM qa = q[a]
+                DIM ta = tr[a]
+                dist = dist + (qa - ta) * (qa - ta)
+            NEXT a
+            PUSH(dists, dist)
+        NEXT t
+        DIM taken = ZeroList(n_train)
+        DIM votes = ZeroList(n_classes)
+        FOR m = 1 TO k_near
+            DIM best = -1
+            DIM best_dist = 1E+300
+            FOR t = 0 TO n_train - 1
+                IF taken[t] = 0 ANDALSO dists[t] < best_dist THEN
+                    best = t
+                    best_dist = dists[t]
+                ENDIF
+            NEXT t
+            taken[best] = 1
+            DIM label_at = yidx[best]
+            votes[label_at] = votes[label_at] + 1
+        NEXT m
+        FOR a = 0 TO n_classes - 1
+            PUSH(out, votes[a] / k_near)
+        NEXT a
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── k-means ────────────────────────────────────────────────────
+
+FUNC NearestCenter(r, centers)
+    DIM best = 0
+    DIM best_dist = 1E+300
+    DIM c = 0
+    DIM a = 0
+    FOR c = 0 TO LEN(centers) - 1
+        DIM center = centers[c]
+        DIM dist = 0.0
+        FOR a = 0 TO LEN(center) - 1
+            DIM ra = r[a]
+            DIM ca = center[a]
+            dist = dist + (ra - ca) * (ra - ca)
+        NEXT a
+        IF dist < best_dist THEN
+            best = c
+            best_dist = dist
+        ENDIF
+    NEXT c
+    RETURN best
+ENDFUNC
+
+FUNC SqDist(r, center)
+    DIM dist = 0.0
+    DIM a = 0
+    FOR a = 0 TO LEN(center) - 1
+        DIM ra = r[a]
+        DIM ca = center[a]
+        dist = dist + (ra - ca) * (ra - ca)
+    NEXT a
+    RETURN dist
+ENDFUNC
+
+FUNC FitKmeans(x_rows, opts)
+    DIM n_rows = LEN(x_rows)
+    DIM p = ColCount(x_rows)
+    DIM centers = []
+    DIM i = 0
+    DIM c = 0
+    DIM a = 0
+    IF TYPEOF(opts) = "OBJECT" ANDALSO MAP.EXISTS(opts, "init") THEN
+        DIM init_rows = opts{"init"}
+        FOR c = 0 TO LEN(init_rows) - 1
+            DIM init_row = init_rows[c]
+            PUSH(centers, CopyNums(init_row))
+        NEXT c
+    ELSE
+        DIM k_clusters = CINT(OptNum(opts, "k", 3))
+        RANDOMSEED(CINT(OptNum(opts, "seed", 42)))
+        DIM first_at = INT(RANDOM() * n_rows)
+        IF first_at >= n_rows THEN first_at = n_rows - 1
+        DIM first_row = x_rows[first_at]
+        PUSH(centers, CopyNums(first_row))
+        DO WHILE LEN(centers) < k_clusters
+            DIM weights = []
+            DIM total = 0.0
+            FOR i = 0 TO n_rows - 1
+                DIM ri = x_rows[i]
+                DIM nearest = centers[NearestCenter(ri, centers)]
+                DIM dw = SqDist(ri, nearest)
+                PUSH(weights, dw)
+                total = total + dw
+            NEXT i
+            DIM pick = RANDOM() * total
+            DIM chosen = n_rows - 1
+            DIM run_sum = 0.0
+            FOR i = 0 TO n_rows - 1
+                run_sum = run_sum + weights[i]
+                IF run_sum >= pick ANDALSO chosen = n_rows - 1 ANDALSO weights[i] > 0 THEN chosen = i
+            NEXT i
+            DIM chosen_row = x_rows[chosen]
+            PUSH(centers, CopyNums(chosen_row))
+        LOOP
+    ENDIF
+    DIM n_clusters = LEN(centers)
+    DIM max_iter = CINT(OptNum(opts, "max_iter", 300))
+    DIM labels = []
+    FOR i = 0 TO n_rows - 1
+        PUSH(labels, -1)
+    NEXT i
+    DIM iter = 0
+    DIM changed = 1
+    DO WHILE changed = 1 ANDALSO iter < max_iter
+        iter = iter + 1
+        changed = 0
+        FOR i = 0 TO n_rows - 1
+            DIM row_i = x_rows[i]
+            DIM near = NearestCenter(row_i, centers)
+            IF near <> labels[i] THEN
+                labels[i] = near
+                changed = 1
+            ENDIF
+        NEXT i
+        DIM sums = ZeroList(n_clusters * p)
+        DIM counts = ZeroList(n_clusters)
+        FOR i = 0 TO n_rows - 1
+            DIM row_s = x_rows[i]
+            DIM li = labels[i]
+            counts[li] = counts[li] + 1
+            FOR a = 0 TO p - 1
+                DIM va = row_s[a]
+                sums[li * p + a] = sums[li * p + a] + va
+            NEXT a
+        NEXT i
+        DIM moved = []
+        FOR c = 0 TO n_clusters - 1
+            DIM old_center = centers[c]
+            DIM new_center = []
+            FOR a = 0 TO p - 1
+                IF counts[c] > 0 THEN
+                    PUSH(new_center, sums[c * p + a] / counts[c])
+                ELSE
+                    DIM keep_a = old_center[a]
+                    PUSH(new_center, keep_a)
+                ENDIF
+            NEXT a
+            PUSH(moved, new_center)
+        NEXT c
+        centers = moved
+    LOOP
+    DIM inertia = 0.0
+    FOR i = 0 TO n_rows - 1
+        DIM row_f = x_rows[i]
+        DIM lf = NearestCenter(row_f, centers)
+        labels[i] = lf
+        DIM cf = centers[lf]
+        inertia = inertia + SqDist(row_f, cf)
+    NEXT i
+    DIM model AS MAP
+    model{"kind"} = "kmeans"
+    model{"centers"} = centers
+    model{"labels"} = labels
+    model{"inertia"} = inertia
+    model{"n_iter"} = iter
+    RETURN model
+ENDFUNC
+
+' ── decision tree ──────────────────────────────────────────────
+
+' A CART classification tree: at every node the split of one feature at
+' the midpoint between two neighbouring values that lowers the Gini
+' impurity most, until max_depth, min_samples_split or a pure node.
+FUNC FitTree(x_rows, y_vals, max_depth, min_split)
+    DIM class_list = ClassesOf(y_vals)
+    DIM n_classes = LEN(class_list)
+    DIM yidx = LabelIndexes(y_vals, ClassKeys(class_list))
+    DIM n_rows = LEN(x_rows)
+    DIM p = ColCount(x_rows)
+    DIM order = []
+    DIM i = 0
+    DIM s = 0
+    DIM f = 0
+    DIM c = 0
+    FOR i = 0 TO n_rows - 1
+        PUSH(order, i)
+    NEXT i
+    DIM t_feature = []
+    DIM t_threshold = []
+    DIM t_left = []
+    DIM t_right = []
+    DIM t_value = []
+    DIM t_counts = []
+    DIM q_node = []
+    DIM q_lo = []
+    DIM q_hi = []
+    DIM q_depth = []
+    PUSH(t_feature, -1)
+    PUSH(t_threshold, 0.0)
+    PUSH(t_left, -1)
+    PUSH(t_right, -1)
+    PUSH(t_value, 0)
+    PUSH(q_node, 0)
+    PUSH(q_lo, 0)
+    PUSH(q_hi, n_rows)
+    PUSH(q_depth, 0)
+    DIM q_at = 0
+    DO WHILE q_at < LEN(q_node)
+        DIM node_id = q_node[q_at]
+        DIM lo = q_lo[q_at]
+        DIM hi = q_hi[q_at]
+        DIM depth = q_depth[q_at]
+        q_at = q_at + 1
+        DIM m = hi - lo
+        DIM counts = ZeroList(n_classes)
+        FOR i = lo TO hi - 1
+            DIM oi = order[i]
+            DIM yi = yidx[oi]
+            counts[yi] = counts[yi] + 1
+        NEXT i
+        DIM majority = 0
+        DIM gini = 1.0
+        FOR c = 0 TO n_classes - 1
+            IF counts[c] > counts[majority] THEN majority = c
+            gini = gini - (counts[c] / m) * (counts[c] / m)
+        NEXT c
+        t_value[node_id] = majority
+        FOR c = 0 TO n_classes - 1
+            PUSH(t_counts, counts[c])
+        NEXT c
+        DIM best_f = -1
+        DIM best_t = 0.0
+        DIM best_score = gini - 0.0000001
+        IF depth < max_depth ANDALSO m >= min_split ANDALSO gini > 0 THEN
+            FOR f = 0 TO p - 1
+                DIM vals = []
+                DIM labs = []
+                FOR i = lo TO hi - 1
+                    DIM o2 = order[i]
+                    DIM row_o = x_rows[o2]
+                    DIM vf = row_o[f]
+                    PUSH(vals, vf * 1.0)
+                    PUSH(labs, yidx[o2])
+                NEXT i
+                DIM sorted_at = GRADE(vals)
+                DIM left_counts = ZeroList(n_classes)
+                DIM right_counts = CopyNums(counts)
+                FOR s = 0 TO m - 2
+                    DIM si = sorted_at[s]
+                    DIM sn = sorted_at[s + 1]
+                    DIM moved_label = labs[si]
+                    left_counts[moved_label] = left_counts[moved_label] + 1
+                    right_counts[moved_label] = right_counts[moved_label] - 1
+                    DIM v_here = vals[si]
+                    DIM v_next = vals[sn]
+                    IF v_next > v_here THEN
+                        DIM n_left = s + 1
+                        DIM n_right = m - n_left
+                        DIM gini_left = 1.0
+                        DIM gini_right = 1.0
+                        FOR c = 0 TO n_classes - 1
+                            gini_left = gini_left - (left_counts[c] / n_left) * (left_counts[c] / n_left)
+                            gini_right = gini_right - (right_counts[c] / n_right) * (right_counts[c] / n_right)
+                        NEXT c
+                        DIM split_score = (n_left * gini_left + n_right * gini_right) / m
+                        IF split_score < best_score - 0.000000000001 THEN
+                            best_score = split_score
+                            best_f = f
+                            best_t = (v_here + v_next) / 2
+                        ENDIF
+                    ENDIF
+                NEXT s
+            NEXT f
+        ENDIF
+        IF best_f >= 0 THEN
+            DIM left_part = []
+            DIM right_part = []
+            FOR i = lo TO hi - 1
+                DIM o3 = order[i]
+                DIM row_p = x_rows[o3]
+                DIM vp = row_p[best_f]
+                IF vp <= best_t THEN
+                    PUSH(left_part, o3)
+                ELSE
+                    PUSH(right_part, o3)
+                ENDIF
+            NEXT i
+            FOR i = 0 TO LEN(left_part) - 1
+                order[lo + i] = left_part[i]
+            NEXT i
+            FOR i = 0 TO LEN(right_part) - 1
+                order[lo + LEN(left_part) + i] = right_part[i]
+            NEXT i
+            DIM left_id = LEN(t_feature)
+            DIM right_id = left_id + 1
+            FOR c = 0 TO 1
+                PUSH(t_feature, -1)
+                PUSH(t_threshold, 0.0)
+                PUSH(t_left, -1)
+                PUSH(t_right, -1)
+                PUSH(t_value, 0)
+            NEXT c
+            t_feature[node_id] = best_f
+            t_threshold[node_id] = best_t
+            t_left[node_id] = left_id
+            t_right[node_id] = right_id
+            PUSH(q_node, left_id)
+            PUSH(q_lo, lo)
+            PUSH(q_hi, lo + LEN(left_part))
+            PUSH(q_depth, depth + 1)
+            PUSH(q_node, right_id)
+            PUSH(q_lo, lo + LEN(left_part))
+            PUSH(q_hi, hi)
+            PUSH(q_depth, depth + 1)
+        ENDIF
+    LOOP
+    DIM model AS MAP
+    model{"kind"} = "tree"
+    model{"classes"} = class_list
+    model{"feature"} = t_feature
+    model{"threshold"} = t_threshold
+    model{"left"} = t_left
+    model{"right"} = t_right
+    model{"value"} = t_value
+    model{"max_depth"} = max_depth
+    RETURN model
+ENDFUNC
+
+FUNC TreeLeaves(model, x_rows)
+    DIM feat_idx = model{"feature"}
+    DIM threshold = model{"threshold"}
+    DIM left_ids = model{"left"}
+    DIM right_ids = model{"right"}
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(x_rows) - 1
+        DIM r = x_rows[i]
+        DIM node_id = 0
+        DIM f = feat_idx[node_id]
+        DO WHILE f >= 0
+            DIM v = r[CINT(f)]
+            DIM limit = threshold[node_id]
+            IF v <= limit THEN
+                node_id = CINT(left_ids[node_id])
+            ELSE
+                node_id = CINT(right_ids[node_id])
+            ENDIF
+            f = feat_idx[node_id]
+        LOOP
+        PUSH(out, node_id)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── one interface ──────────────────────────────────────────────
+
+' Fits a model of a kind to rows and, for the supervised kinds, labels or
+' targets; y is [] for the others. Kinds and their options:
+'   standard, minmax, onehot (rows are the values of one column)
+'   linear, ridge {"alpha": 1}
+'   logistic {"C": 1, "max_iter": 100, "tol": 1e-10}
+'   knn {"k": 5}
+'   kmeans {"k": 3, "init": rows, "seed": 42, "max_iter": 300}
+'   tree {"max_depth": 1000, "min_samples_split": 2}
+EXPORT FUNC FIT(kind$, x_rows, y_vals, opts = 0)
+    DIM k$ = LCASE$(kind$)
+    DIM opts_kind$ = TYPEOF(opts)
+    IF k$ = "standard" ORELSE k$ = "minmax" THEN RETURN FitScaler(k$, x_rows)
+    IF k$ = "onehot" THEN RETURN FitOneHot(x_rows)
+    IF k$ = "linear" THEN RETURN FitLinear("linear", x_rows, y_vals, 0.0)
+    IF k$ = "ridge" THEN RETURN FitLinear("ridge", x_rows, y_vals, OptNum(opts, "alpha", 1.0))
+    IF k$ = "logistic" THEN RETURN FitLogistic(x_rows, y_vals, OptNum(opts, "C", 1.0), CINT(OptNum(opts, "max_iter", 100)), OptNum(opts, "tol", 0.0000000001))
+    IF k$ = "knn" THEN RETURN FitKnn(x_rows, y_vals, CINT(OptNum(opts, "k", 5)))
+    IF k$ = "kmeans" THEN RETURN FitKmeans(x_rows, opts)
+    IF k$ = "tree" THEN RETURN FitTree(x_rows, y_vals, CINT(OptNum(opts, "max_depth", 1000)), CINT(OptNum(opts, "min_samples_split", 2)))
+    THROW "ML: no model kind " + kind$
+    RETURN 0
+ENDFUNC
+
+' Scaled rows for a standard or minmax model; one-hot rows for onehot.
+EXPORT FUNC TRANSFORM(model, x_rows)
+    DIM kind$ = model{"kind"}
+    IF kind$ = "standard" ORELSE kind$ = "minmax" THEN RETURN ScaleRows(model, x_rows)
+    IF kind$ = "onehot" THEN RETURN OneHotRows(model, x_rows)
+    THROW "ML: a " + kind$ + " model does not transform, it predicts"
+    RETURN 0
+ENDFUNC
+
+FUNC ArgmaxRows(shares, n_classes, class_list)
+    DIM out = []
+    DIM n_rows = LEN(shares) \ n_classes
+    DIM i = 0
+    DIM k = 0
+    FOR i = 0 TO n_rows - 1
+        DIM best = 0
+        FOR k = 1 TO n_classes - 1
+            IF shares[i * n_classes + k] > shares[i * n_classes + best] THEN best = k
+        NEXT k
+        DIM label_value = class_list[best]
+        PUSH(out, label_value)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The predictions for rows: labels, targets, or the cluster of each row.
+EXPORT FUNC PREDICT(model, x_rows)
+    DIM kind$ = model{"kind"}
+    IF kind$ = "linear" ORELSE kind$ = "ridge" THEN RETURN PredictLinear(model, x_rows)
+    IF kind$ = "logistic" THEN
+        DIM class_list = model{"classes"}
+        DIM p = LEN(ThetaOf(model)) \ LEN(class_list) - 1
+        RETURN ArgmaxRows(SoftmaxRows(ThetaOf(model), LEN(class_list), p, x_rows), LEN(class_list), class_list)
+    ENDIF
+    IF kind$ = "knn" THEN
+        DIM knn_classes = model{"classes"}
+        RETURN ArgmaxRows(KnnShares(model, x_rows), LEN(knn_classes), knn_classes)
+    ENDIF
+    IF kind$ = "kmeans" THEN
+        DIM centers = model{"centers"}
+        DIM clusters = []
+        DIM i = 0
+        FOR i = 0 TO LEN(x_rows) - 1
+            DIM r = x_rows[i]
+            PUSH(clusters, NearestCenter(r, centers))
+        NEXT i
+        RETURN clusters
+    ENDIF
+    IF kind$ = "tree" THEN
+        DIM tree_classes = model{"classes"}
+        DIM leaf_values = model{"value"}
+        DIM leaves = TreeLeaves(model, x_rows)
+        DIM labels = []
+        DIM j = 0
+        FOR j = 0 TO LEN(leaves) - 1
+            DIM leaf = leaves[j]
+            DIM class_at = leaf_values[CINT(leaf)]
+            DIM label_value = tree_classes[CINT(class_at)]
+            PUSH(labels, label_value)
+        NEXT j
+        RETURN labels
+    ENDIF
+    THROW "ML: a " + kind$ + " model transforms, it does not predict"
+    RETURN 0
+ENDFUNC
+
+' The class probabilities of every row, one row per input row in the order
+' of CLASSES: the softmax of a logistic model, the vote shares of knn.
+EXPORT FUNC PROBA(model, x_rows)
+    DIM kind$ = model{"kind"}
+    DIM class_list = model{"classes"}
+    DIM n_classes = LEN(class_list)
+    DIM flat = []
+    IF kind$ = "logistic" THEN
+        DIM theta = ThetaOf(model)
+        flat = SoftmaxRows(theta, n_classes, LEN(theta) \ n_classes - 1, x_rows)
+    ELSEIF kind$ = "knn" THEN
+        flat = KnnShares(model, x_rows)
+    ELSE
+        THROW "ML: a " + kind$ + " model has no probabilities"
+    ENDIF
+    DIM out = []
+    DIM i = 0
+    DIM k = 0
+    FOR i = 0 TO LEN(flat) \ n_classes - 1
+        DIM row_p = []
+        FOR k = 0 TO n_classes - 1
+            PUSH(row_p, flat[i * n_classes + k])
+        NEXT k
+        PUSH(out, row_p)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC CLASSES(model)
+    IF NOT MAP.EXISTS(model, "classes") THEN THROW "ML: the model has no classes"
+    DIM class_list = model{"classes"}
+    RETURN class_list
+ENDFUNC
+
+' ── metrics ────────────────────────────────────────────────────
+
+FUNC AccuracyOf(y_true, y_pred)
+    IF LEN(y_true) = 0 THEN RETURN 0.0
+    DIM hits = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(y_true) - 1
+        DIM a = y_true[i]
+        DIM b = y_pred[i]
+        IF KeyOf$(a) = KeyOf$(b) THEN hits = hits + 1
+    NEXT i
+    RETURN hits / LEN(y_true)
+ENDFUNC
+
+FUNC R2Of(y_true, y_pred)
+    DIM n_items = LEN(y_true)
+    DIM mean_y = 0.0
+    DIM i = 0
+    FOR i = 0 TO n_items - 1
+        mean_y = mean_y + y_true[i]
+    NEXT i
+    mean_y = mean_y / n_items
+    DIM ss_res = 0.0
+    DIM ss_tot = 0.0
+    FOR i = 0 TO n_items - 1
+        DIM yt = y_true[i]
+        DIM yp = y_pred[i]
+        ss_res = ss_res + (yt - yp) * (yt - yp)
+        ss_tot = ss_tot + (yt - mean_y) * (yt - mean_y)
+    NEXT i
+    IF ss_tot = 0 THEN RETURN 0.0
+    RETURN 1 - ss_res / ss_tot
+ENDFUNC
+
+' The share of rows whose predicted label is the true one.
+EXPORT FUNC ACCURACY(y_true, y_pred)
+    RETURN AccuracyOf(y_true, y_pred)
+ENDFUNC
+
+' Rows of counts: row i is the true label, column j the predicted one,
+' the labels of both sorted.
+EXPORT FUNC CONFUSION(y_true, y_pred)
+    DIM both = []
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(y_true) - 1
+        DIM a = y_true[i]
+        PUSH(both, a)
+    NEXT i
+    FOR i = 0 TO LEN(y_pred) - 1
+        DIM b = y_pred[i]
+        PUSH(both, b)
+    NEXT i
+    DIM key_list = ClassKeys(ClassesOf(both))
+    DIM n_labels = LEN(key_list)
+    DIM ti = LabelIndexes(y_true, key_list)
+    DIM pi_ = LabelIndexes(y_pred, key_list)
+    DIM counts = ZeroList(n_labels * n_labels)
+    FOR i = 0 TO LEN(ti) - 1
+        DIM r = ti[i]
+        DIM c = pi_[i]
+        counts[r * n_labels + c] = counts[r * n_labels + c] + 1
+    NEXT i
+    DIM out = []
+    FOR i = 0 TO n_labels - 1
+        DIM row_c = []
+        FOR j = 0 TO n_labels - 1
+            PUSH(row_c, counts[i * n_labels + j])
+        NEXT j
+        PUSH(out, row_c)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' precision, recall or f1 by average: binary (the positive label 1, the
+' default when the labels are 0 and 1), macro (the default otherwise),
+' weighted (by support) or micro.
+FUNC ClassMetric(which$, y_true, y_pred, average$)
+    DIM both = []
+    DIM i = 0
+    FOR i = 0 TO LEN(y_true) - 1
+        DIM a = y_true[i]
+        PUSH(both, a)
+    NEXT i
+    FOR i = 0 TO LEN(y_pred) - 1
+        DIM b = y_pred[i]
+        PUSH(both, b)
+    NEXT i
+    DIM class_list = ClassesOf(both)
+    DIM key_list = ClassKeys(class_list)
+    DIM n_labels = LEN(key_list)
+    DIM how$ = LCASE$(average$)
+    IF how$ = "" THEN
+        how$ = "macro"
+        IF n_labels <= 2 THEN
+            DIM k0$ = key_list[0]
+            DIM k1$ = "1"
+            IF n_labels = 2 THEN k1$ = key_list[1]
+            IF (k0$ = "0" ORELSE k0$ = "1") ANDALSO (k1$ = "1") THEN how$ = "binary"
+        ENDIF
+    ENDIF
+    DIM ti = LabelIndexes(y_true, key_list)
+    DIM pi_ = LabelIndexes(y_pred, key_list)
+    DIM tp = ZeroList(n_labels)
+    DIM fp = ZeroList(n_labels)
+    DIM fn = ZeroList(n_labels)
+    DIM support = ZeroList(n_labels)
+    FOR i = 0 TO LEN(ti) - 1
+        DIM t = ti[i]
+        DIM p = pi_[i]
+        support[t] = support[t] + 1
+        IF t = p THEN
+            tp[t] = tp[t] + 1
+        ELSE
+            fp[p] = fp[p] + 1
+            fn[t] = fn[t] + 1
+        ENDIF
+    NEXT i
+    IF how$ = "micro" THEN
+        RETURN AccuracyOf(y_true, y_pred)
+    ENDIF
+    DIM total = 0.0
+    DIM weight_sum = 0.0
+    DIM c = 0
+    FOR c = 0 TO n_labels - 1
+        DIM prec = 0.0
+        DIM rec = 0.0
+        IF tp[c] + fp[c] > 0 THEN prec = tp[c] / (tp[c] + fp[c])
+        IF tp[c] + fn[c] > 0 THEN rec = tp[c] / (tp[c] + fn[c])
+        DIM value = prec
+        IF which$ = "recall" THEN value = rec
+        IF which$ = "f1" THEN
+            value = 0.0
+            IF prec + rec > 0 THEN value = 2 * prec * rec / (prec + rec)
+        ENDIF
+        IF how$ = "binary" THEN
+            DIM ck$ = key_list[c]
+            IF ck$ = "1" THEN RETURN value
+        ELSEIF how$ = "weighted" THEN
+            total = total + value * support[c]
+            weight_sum = weight_sum + support[c]
+        ELSE
+            total = total + value
+            weight_sum = weight_sum + 1
+        ENDIF
+    NEXT c
+    IF weight_sum = 0 THEN RETURN 0.0
+    RETURN total / weight_sum
+ENDFUNC
+
+EXPORT FUNC PRECISION(y_true, y_pred, average$ = "")
+    RETURN ClassMetric("precision", y_true, y_pred, average$)
+ENDFUNC
+
+EXPORT FUNC RECALL(y_true, y_pred, average$ = "")
+    RETURN ClassMetric("recall", y_true, y_pred, average$)
+ENDFUNC
+
+EXPORT FUNC F1(y_true, y_pred, average$ = "")
+    RETURN ClassMetric("f1", y_true, y_pred, average$)
+ENDFUNC
+
+' The coefficient of determination.
+EXPORT FUNC R2(y_true, y_pred)
+    RETURN R2Of(y_true, y_pred)
+ENDFUNC
+
+EXPORT FUNC MSE(y_true, y_pred)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(y_true) - 1
+        DIM d = y_true[i] - y_pred[i]
+        total = total + d * d
+    NEXT i
+    RETURN total / LEN(y_true)
+ENDFUNC
+
+EXPORT FUNC MAE(y_true, y_pred)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(y_true) - 1
+        total = total + ABS(y_true[i] - y_pred[i])
+    NEXT i
+    RETURN total / LEN(y_true)
+ENDFUNC
+
+' The accuracy of a classifier, the R squared of a regression, the inertia
+' of k-means on the rows.
+EXPORT FUNC SCORE(model, x_rows, y_vals)
+    DIM kind$ = model{"kind"}
+    IF kind$ = "linear" ORELSE kind$ = "ridge" THEN RETURN R2Of(y_vals, PredictLinear(model, x_rows))
+    IF kind$ = "kmeans" THEN
+        DIM centers = model{"centers"}
+        DIM inertia = 0.0
+        DIM i = 0
+        FOR i = 0 TO LEN(x_rows) - 1
+            DIM r = x_rows[i]
+            DIM c = centers[NearestCenter(r, centers)]
+            inertia = inertia + SqDist(r, c)
+        NEXT i
+        RETURN inertia
+    ENDIF
+    RETURN AccuracyOf(y_vals, PREDICT(model, x_rows))
+ENDFUNC
+
+' ── storing ────────────────────────────────────────────────────
+
+FUNC NumText$(v)
+    RETURN FORMAT$("{:.17e}", v)
+ENDFUNC
+
+FUNC QuotedText$(s$)
+    DIM out$ = REPLACE$(s$, CHR$(92), CHR$(92) + CHR$(92))
+    out$ = REPLACE$(out$, CHR$(34), CHR$(92) + CHR$(34))
+    out$ = REPLACE$(out$, CHR$(10), CHR$(92) + "n")
+    RETURN CHR$(34) + out$ + CHR$(34)
+ENDFUNC
+
+' The model as JSON text, every number with all 17 significant digits so
+' it reads back to the same double.
+EXPORT FUNC TOJSON$(model)
+    DIM field_names = MAP.KEYS(model)
+    DIM pieces = []
+    DIM k = 0
+    DIM i = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(field_names) - 1
+        DIM field$ = field_names[k]
+        DIM v = model{field$}
+        DIM kind$ = TYPEOF(v)
+        DIM text$ = ""
+        IF kind$ = "STRING" THEN
+            DIM plain$ = v
+            text$ = QuotedText$(plain$)
+        ELSEIF kind$ = "ARRAY" THEN
+            DIM items = []
+            FOR i = 0 TO LEN(v) - 1
+                DIM item = v[i]
+                DIM item_kind$ = TYPEOF(item)
+                IF item_kind$ = "ARRAY" THEN
+                    DIM inner = []
+                    FOR j = 0 TO LEN(item) - 1
+                        DIM cell = item[j]
+                        PUSH(inner, NumText$(cell))
+                    NEXT j
+                    PUSH(items, "[" + JOIN(inner, ",") + "]")
+                ELSEIF item_kind$ = "STRING" THEN
+                    DIM item_text$ = item
+                    PUSH(items, QuotedText$(item_text$))
+                ELSE
+                    PUSH(items, NumText$(item))
+                ENDIF
+            NEXT i
+            text$ = "[" + JOIN(items, ",") + "]"
+        ELSE
+            text$ = NumText$(v)
+        ENDIF
+        PUSH(pieces, QuotedText$(field$) + ":" + text$)
+    NEXT k
+    RETURN "{" + JOIN(pieces, ",") + "}"
+ENDFUNC
+
+' A model from the JSON TOJSON$ wrote.
+EXPORT FUNC FROMJSON(text_in$)
+    DIM parsed = JSON.PARSE$(text_in$)
+    DIM parsed_kind$ = TYPEOF(parsed)
+    IF parsed_kind$ = "STRING" ORELSE parsed_kind$ = "NONE" ORELSE parsed_kind$ = "ARRAY" THEN THROW "ML: the text is not a model"
+    DIM model AS MAP
+    DIM names = MAP.KEYS(parsed)
+    DIM k = 0
+    DIM i = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM field$ = names[k]
+        DIM v = parsed{field$}
+        DIM kind$ = TYPEOF(v)
+        IF kind$ = "ARRAY" THEN
+            DIM copied = []
+            FOR i = 0 TO LEN(v) - 1
+                DIM item = v[i]
+                DIM item_kind$ = TYPEOF(item)
+                IF item_kind$ = "ARRAY" THEN
+                    DIM inner = []
+                    FOR j = 0 TO LEN(item) - 1
+                        DIM cell = item[j]
+                        PUSH(inner, cell * 1.0)
+                    NEXT j
+                    PUSH(copied, inner)
+                ELSEIF item_kind$ = "STRING" THEN
+                    DIM item_text$ = item
+                    PUSH(copied, item_text$)
+                ELSE
+                    PUSH(copied, item * 1.0)
+                ENDIF
+            NEXT i
+            model{field$} = copied
+        ELSEIF kind$ = "STRING" THEN
+            DIM text_value$ = v
+            model{field$} = text_value$
+        ELSE
+            model{field$} = v * 1.0
+        ENDIF
+    NEXT k
+    RETURN model
+ENDFUNC

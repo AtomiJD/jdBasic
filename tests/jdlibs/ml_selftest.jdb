@@ -1,0 +1,298 @@
+' ML against scikit-learn 1.9.1: iris and the diabetes set from
+' tests/jdlibs/fixtures, split into training and test rows by index (every
+' fifth row is a test row), and the values scikit-learn computed on the same
+' rows in ml_reference.tsv: scalers, linear and ridge coefficients, the
+' logistic regression's coefficients and probabilities, k nearest
+' neighbours, k-means from given centres, a decision tree, and the metrics.
+
+IMPORT TESTKIT, ML
+
+DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(fixture_dir$ + "ml_iris.csv") THEN fixture_dir$ = "fixtures/"
+DIM ref AS MAP
+DIM i = 0
+DIM j = 0
+
+FUNC Nums(text_in$)
+    DIM out = []
+    DIM pieces = SPLIT(text_in$, ",")
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM piece$ = pieces[k]
+        PUSH(out, VAL(piece$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Flat(rows)
+    DIM out = []
+    DIM k = 0
+    DIM m = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        FOR m = 0 TO LEN(r) - 1
+            DIM v = r[m]
+            PUSH(out, v * 1.0)
+        NEXT m
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC MaxGap(a, b)
+    DIM worst = 0.0
+    DIM k = 0
+    IF LEN(a) <> LEN(b) THEN RETURN 1E+300
+    FOR k = 0 TO LEN(a) - 1
+        DIM va = a[k]
+        DIM vb = b[k]
+        IF ABS(va - vb) > worst THEN worst = ABS(va - vb)
+    NEXT k
+    RETURN worst
+ENDFUNC
+
+FUNC SameText(a, b)
+    IF LEN(a) <> LEN(b) THEN RETURN FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(a) - 1
+        DIM sa$ = a[k]
+        DIM sb$ = b[k]
+        IF sa$ <> sb$ THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+FUNC Ref(key_name$)
+    RETURN Nums(ref{key_name$})
+ENDFUNC
+
+FUNC RefOne(key_name$)
+    DIM v = Nums(ref{key_name$})
+    DIM first = v[0]
+    RETURN first
+ENDFUNC
+
+FUNC KindBack$(model)
+    DIM back = ML.FROMJSON(ML.TOJSON$(model))
+    DIM back_kind$ = back{"kind"}
+    RETURN back_kind$
+ENDFUNC
+
+FUNC BadKind(kind$)
+    RETURN ML.FIT(kind$, [[1.0]], [1])
+ENDFUNC
+
+FUNC ScalerPredict(model)
+    RETURN ML.PREDICT(model, [[1.0, 2.0, 3.0, 4.0]])
+ENDFUNC
+
+DIM ref_rows = SPLIT(REPLACE$(TXTREADER$(fixture_dir$ + "ml_reference.tsv"), CHR$(13), ""), CHR$(10))
+FOR i = 1 TO LEN(ref_rows) - 1
+    DIM rr$ = ref_rows[i]
+    IF rr$ <> "" THEN
+        DIM tab_at = INSTR(rr$, CHR$(9))
+        ref{LEFT$(rr$, tab_at)} = MID$(rr$, tab_at + 1, LEN(rr$))
+    ENDIF
+NEXT i
+
+' ── the data ───────────────────────────────────────────────────
+
+DIM iris_lines = SPLIT(REPLACE$(TXTREADER$(fixture_dir$ + "ml_iris.csv"), CHR$(13), ""), CHR$(10))
+DIM iris_x = []
+DIM iris_y = []
+DIM iris_names = []
+FOR i = 1 TO LEN(iris_lines) - 1
+    DIM line_text$ = iris_lines[i]
+    IF line_text$ <> "" THEN
+        DIM cells = SPLIT(line_text$, ",")
+        DIM row_values = []
+        FOR j = 0 TO 3
+            DIM cell$ = cells[j]
+            PUSH(row_values, VAL(cell$))
+        NEXT j
+        PUSH(iris_x, row_values)
+        DIM name_cell$ = cells[4]
+        PUSH(iris_names, name_cell$)
+        DIM label_id = 0
+        IF name_cell$ = "versicolor" THEN label_id = 1
+        IF name_cell$ = "virginica" THEN label_id = 2
+        PUSH(iris_y, label_id)
+    ENDIF
+NEXT i
+DIM xtr = []
+DIM xte = []
+DIM ytr = []
+DIM yte = []
+DIM ntr = []
+DIM nte = []
+FOR i = 0 TO LEN(iris_x) - 1
+    DIM row_i = iris_x[i]
+    DIM yi = iris_y[i]
+    DIM ni$ = iris_names[i]
+    IF i MOD 5 = 0 THEN
+        PUSH(xte, row_i)
+        PUSH(yte, yi)
+        PUSH(nte, ni$)
+    ELSE
+        PUSH(xtr, row_i)
+        PUSH(ytr, yi)
+        PUSH(ntr, ni$)
+    ENDIF
+NEXT i
+
+DIM dia_lines = SPLIT(REPLACE$(TXTREADER$(fixture_dir$ + "ml_diabetes.csv"), CHR$(13), ""), CHR$(10))
+DIM dtr = []
+DIM dte = []
+DIM ttr = []
+DIM tte = []
+DIM row_no = 0
+FOR i = 1 TO LEN(dia_lines) - 1
+    DIM dl$ = dia_lines[i]
+    IF dl$ <> "" THEN
+        DIM dc = SPLIT(dl$, ",")
+        DIM drow = []
+        FOR j = 0 TO 9
+            DIM dcell$ = dc[j]
+            PUSH(drow, VAL(dcell$))
+        NEXT j
+        DIM target$ = dc[10]
+        IF row_no MOD 5 = 0 THEN
+            PUSH(dte, drow)
+            PUSH(tte, VAL(target$))
+        ELSE
+            PUSH(dtr, drow)
+            PUSH(ttr, VAL(target$))
+        ENDIF
+        row_no = row_no + 1
+    ENDIF
+NEXT i
+
+' ── preprocessing ──────────────────────────────────────────────
+
+TESTKIT.SUITE("preprocessing")
+TESTKIT.EQ(LEN(xtr) * 1000 + LEN(dtr), 120353, "120 iris and 353 diabetes training rows")
+DIM std = ML.FIT("standard", xtr, [])
+TESTKIT.ISTRUE(MaxGap(std{"mean"}, Ref("standard_mean")) < 1E-9, "standard scaler means as StandardScaler.mean_")
+TESTKIT.ISTRUE(MaxGap(std{"scale"}, Ref("standard_scale")) < 1E-9, "and its scales, the population deviation")
+DIM s_tr = ML.TRANSFORM(std, xtr)
+DIM s_te = ML.TRANSFORM(std, xte)
+DIM col_means = [0.0, 0.0, 0.0, 0.0]
+FOR i = 0 TO LEN(s_tr) - 1
+    DIM sr = s_tr[i]
+    FOR j = 0 TO 3
+        DIM sv = sr[j]
+        col_means[j] = col_means[j] + sv / LEN(s_tr)
+    NEXT j
+NEXT i
+TESTKIT.ISTRUE(MaxGap(col_means, [0.0, 0.0, 0.0, 0.0]) < 1E-9, "the scaled training columns have mean 0")
+DIM mm = ML.FIT("minmax", xtr, [])
+TESTKIT.ISTRUE(MaxGap(mm{"min"}, Ref("minmax_min")) < 1E-9 ANDALSO MaxGap(mm{"max"}, Ref("minmax_max")) < 1E-9, "min-max scaler bounds as MinMaxScaler")
+DIM first_test = [xte[0]]
+TESTKIT.ISTRUE(MaxGap(Flat(ML.TRANSFORM(mm, first_test)), Ref("minmax_first_test_row")) < 1E-9, "and a scaled row")
+DIM hot = ML.FIT("onehot", ["red", "green", "blue", "green"], [])
+TESTKIT.EQ(JOIN(hot{"categories"}, ","), "blue,green,red", "one-hot categories sorted")
+TESTKIT.EQ(JOIN(Flat(ML.TRANSFORM(hot, ["green", "purple"])), ""), "010000", "a known category one hot, an unknown one all zero")
+DIM split_a = ML.TRAINTEST(iris_x, iris_names, 0.2, 7)
+DIM split_b = ML.TRAINTEST(iris_x, iris_names, 0.2, 7)
+DIM split_c = ML.TRAINTEST(iris_x, iris_names, 0.2, 8)
+DIM a_test = split_a{"x_test"}
+DIM a_train = split_a{"x_train"}
+TESTKIT.EQ(LEN(a_test) * 1000 + LEN(a_train), 30120, "TRAINTEST cuts 30 test and 120 training rows")
+TESTKIT.ISTRUE(MaxGap(Flat(split_a{"x_test"}), Flat(split_b{"x_test"})) = 0, "the same seed gives the same split")
+TESTKIT.ISTRUE(MaxGap(Flat(split_a{"x_test"}), Flat(split_c{"x_test"})) > 0, "another seed another one")
+DIM a_names = split_a{"y_test"}
+DIM a_first = a_test[0]
+DIM a_label$ = a_names[0]
+DIM found_same = 0
+FOR i = 0 TO LEN(iris_x) - 1
+    DIM candidate = iris_x[i]
+    DIM candidate_name$ = iris_names[i]
+    IF MaxGap(candidate, a_first) = 0 ANDALSO candidate_name$ = a_label$ THEN found_same = 1
+NEXT i
+TESTKIT.EQ(found_same, 1, "rows keep their labels")
+
+' ── regression ─────────────────────────────────────────────────
+
+TESTKIT.SUITE("linear and ridge regression")
+DIM lin = ML.FIT("linear", dtr, ttr)
+TESTKIT.ISTRUE(MaxGap(lin{"coef"}, Ref("linear_coef")) < 1E-6, "coefficients as LinearRegression.coef_")
+TESTKIT.NEAR(lin{"intercept"}, RefOne("linear_intercept"), 1E-6, "the intercept")
+DIM lp = ML.PREDICT(lin, dte)
+TESTKIT.NEAR(ML.R2(tte, lp), RefOne("linear_r2_test"), 1E-9, "R squared on the test rows")
+TESTKIT.NEAR(ML.SCORE(lin, dte, tte), RefOne("linear_r2_test"), 1E-9, "SCORE of a regression is R squared")
+TESTKIT.NEAR(ML.MSE(tte, lp), RefOne("linear_mse_test"), 1E-6, "mean squared error")
+TESTKIT.NEAR(ML.MAE(tte, lp), RefOne("linear_mae_test"), 1E-6, "mean absolute error")
+DIM rid = ML.FIT("ridge", dtr, ttr, {"alpha": 1.0})
+TESTKIT.ISTRUE(MaxGap(rid{"coef"}, Ref("ridge_coef")) < 1E-6, "ridge coefficients as Ridge(alpha=1)")
+TESTKIT.NEAR(rid{"intercept"}, RefOne("ridge_intercept"), 1E-6, "its intercept")
+TESTKIT.NEAR(ML.SCORE(rid, dte, tte), RefOne("ridge_r2_test"), 1E-9, "its R squared")
+
+' ── classification ─────────────────────────────────────────────
+
+TESTKIT.SUITE("classification on iris")
+DIM logit = ML.FIT("logistic", s_tr, ytr)
+TESTKIT.ISTRUE(MaxGap(Flat(logit{"coef"}), Ref("logistic_coef")) < 1E-4, "logistic coefficients as LogisticRegression(C=1)")
+TESTKIT.ISTRUE(MaxGap(logit{"intercept"}, Ref("logistic_intercept")) < 1E-4, "its intercepts")
+TESTKIT.ISTRUE(MaxGap(ML.PREDICT(logit, s_te), Ref("logistic_pred_test")) = 0, "its predictions")
+TESTKIT.ISTRUE(MaxGap(Flat(ML.PROBA(logit, [s_te[0], s_te[1]])), Ref("logistic_proba_test_first2")) < 1E-5, "its probabilities")
+TESTKIT.NEAR(ML.SCORE(logit, s_te, yte), RefOne("logistic_acc_test"), 1E-9, "its accuracy")
+DIM knn = ML.FIT("knn", xtr, ytr, {"k": 5})
+TESTKIT.ISTRUE(MaxGap(ML.PREDICT(knn, xte), Ref("knn_pred_test")) = 0, "k nearest neighbours predict as KNeighborsClassifier(5)")
+DIM shares = ML.PROBA(knn, [xte[0]])
+DIM share_row = shares[0]
+TESTKIT.EQ(JOIN(share_row, ","), "1,0,0", "its vote shares")
+DIM tree = ML.FIT("tree", xtr, ytr, {"max_depth": 3})
+TESTKIT.ISTRUE(MaxGap(ML.PREDICT(tree, xte), Ref("tree_pred_test")) = 0, "a depth-3 tree predicts as DecisionTreeClassifier")
+TESTKIT.NEAR(ML.SCORE(tree, xtr, ytr), RefOne("tree_acc_train"), 1E-9, "with its training accuracy")
+DIM name_tree = ML.FIT("tree", xtr, ntr, {"max_depth": 3})
+DIM name_pred = ML.PREDICT(name_tree, xte)
+TESTKIT.EQ(name_pred[0] + " " + name_pred[29], "setosa virginica", "text labels come back as text")
+TESTKIT.EQ(JOIN(ML.CLASSES(name_tree), ","), "setosa,versicolor,virginica", "CLASSES sorted")
+DIM name_logit = ML.FIT("logistic", s_tr, ntr)
+TESTKIT.NEAR(ML.SCORE(name_logit, s_te, nte), RefOne("logistic_acc_test"), 1E-9, "a logistic regression on text labels scores the same")
+
+' ── clustering ─────────────────────────────────────────────────
+
+TESTKIT.SUITE("k-means")
+DIM start_centers = [iris_x[0], iris_x[50], iris_x[100]]
+DIM km = ML.FIT("kmeans", iris_x, [], {"init": start_centers})
+TESTKIT.ISTRUE(MaxGap(Flat(km{"centers"}), Ref("kmeans_centers")) < 1E-9, "centres from given starts as KMeans")
+TESTKIT.ISTRUE(MaxGap(km{"labels"}, Ref("kmeans_labels")) = 0, "the same cluster for every row")
+TESTKIT.NEAR(km{"inertia"}, RefOne("kmeans_inertia"), 1E-6, "the inertia")
+TESTKIT.NEAR(ML.SCORE(km, iris_x, []), RefOne("kmeans_inertia"), 1E-6, "SCORE of k-means is the inertia")
+DIM km_seeded = ML.FIT("kmeans", iris_x, [], {"k": 3, "seed": 5})
+DIM km_again = ML.FIT("kmeans", iris_x, [], {"k": 3, "seed": 5})
+TESTKIT.ISTRUE(MaxGap(Flat(km_seeded{"centers"}), Flat(km_again{"centers"})) = 0, "k-means++ with a seed repeats itself")
+TESTKIT.ISTRUE(km_seeded{"inertia"} < 100, "and finds a sensible clustering")
+
+' ── metrics ────────────────────────────────────────────────────
+
+TESTKIT.SUITE("metrics")
+DIM kp = ML.PREDICT(knn, xte)
+TESTKIT.NEAR(ML.ACCURACY(yte, kp), RefOne("metric_accuracy"), 1E-12, "accuracy")
+TESTKIT.NEAR(ML.PRECISION(yte, kp), RefOne("metric_precision_macro"), 1E-12, "precision, macro average")
+TESTKIT.NEAR(ML.RECALL(yte, kp), RefOne("metric_recall_macro"), 1E-12, "recall, macro average")
+TESTKIT.NEAR(ML.F1(yte, kp), RefOne("metric_f1_macro"), 1E-12, "F1, macro average")
+TESTKIT.NEAR(ML.F1(yte, kp, "weighted"), RefOne("metric_f1_weighted"), 1E-12, "F1, weighted")
+TESTKIT.NEAR(ML.F1(yte, kp, "micro"), RefOne("metric_accuracy"), 1E-12, "F1, micro, is accuracy for single labels")
+TESTKIT.ISTRUE(MaxGap(Flat(ML.CONFUSION(yte, kp)), Ref("metric_confusion")) = 0, "the confusion matrix")
+DIM yb_true = [1, 0, 1, 1, 0, 1, 0, 0, 1, 1]
+DIM yb_pred = [1, 0, 0, 1, 0, 1, 1, 0, 1, 0]
+TESTKIT.NEAR(ML.PRECISION(yb_true, yb_pred), RefOne("binary_precision"), 1E-12, "binary precision of label 1")
+TESTKIT.NEAR(ML.RECALL(yb_true, yb_pred), RefOne("binary_recall"), 1E-12, "binary recall")
+TESTKIT.NEAR(ML.F1(yb_true, yb_pred), RefOne("binary_f1"), 1E-12, "binary F1")
+
+' ── storing and faults ─────────────────────────────────────────
+
+TESTKIT.SUITE("models as JSON")
+DIM kinds_back$ = KindBack$(logit) + "," + KindBack$(knn) + "," + KindBack$(tree) + "," + KindBack$(km) + "," + KindBack$(lin) + "," + KindBack$(std) + "," + KindBack$(mm)
+TESTKIT.EQ(kinds_back$, "logistic,knn,tree,kmeans,linear,standard,minmax", "every model reads back as its kind")
+DIM logit_back = ML.FROMJSON(ML.TOJSON$(logit))
+TESTKIT.ISTRUE(MaxGap(Flat(ML.PROBA(logit_back, s_te)), Flat(ML.PROBA(logit, s_te))) < 1E-12, "a logistic model predicts the same after the round trip")
+DIM tree_back = ML.FROMJSON(ML.TOJSON$(name_tree))
+TESTKIT.ISTRUE(SameText(ML.PREDICT(tree_back, xte), name_pred), "a tree with text labels too")
+DIM std_back = ML.FROMJSON(ML.TOJSON$(std))
+TESTKIT.ISTRUE(MaxGap(Flat(ML.TRANSFORM(std_back, xte)), Flat(s_te)) < 1E-12, "and a scaler")
+TESTKIT.THROWS(BadKind@, "forest", "an unknown kind is refused")
+TESTKIT.THROWS(ScalerPredict@, std, "a scaler does not predict")
+
+TESTKIT.REPORT()

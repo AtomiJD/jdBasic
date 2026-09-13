@@ -1,0 +1,149 @@
+' ml_demo.jdb - three everyday models on made-up but reproducible data:
+' house prices from size, rooms, age and distance with linear and ridge
+' regression; customers who stay or leave with a logistic regression, k
+' nearest neighbours and a decision tree, compared by their metrics; the
+' same customers grouped by k-means; and a model stored as JSON and
+' used again.
+'
+'   jdBasic jdb/demos/jdlibs/ml_demo.jdb
+
+IMPORT ML
+
+DIM i = 0
+DIM j = 0
+
+FUNC Wobble(n_seed, amount)
+    RETURN SIN(n_seed * 12.9898 + 78.233) * amount
+ENDFUNC
+
+FUNC Fmt$(v, digits)
+    RETURN FORMAT$("{:." + STR$(digits) + "f}", v)
+ENDFUNC
+
+FUNC RowText$(nums, digits)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(nums) - 1
+        DIM v = nums[k]
+        IF k > 0 THEN out$ = out$ + "  "
+        out$ = out$ + Fmt$(v, digits)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC MetricLine$(model_name$, truth, guessed)
+    RETURN "  " + LEFT$(model_name$ + "          ", 10) + " " + Fmt$(ML.ACCURACY(truth, guessed), 3) + "     " + Fmt$(ML.PRECISION(truth, guessed), 3) + "      " + Fmt$(ML.RECALL(truth, guessed), 3) + "   " + Fmt$(ML.F1(truth, guessed), 3)
+ENDFUNC
+
+' ── house prices ───────────────────────────────────────────────
+
+DIM houses = []
+DIM prices = []
+FOR i = 0 TO 239
+    DIM size_m2 = 45 + (i * 37) MOD 140
+    DIM rooms = 1 + (i * 7) MOD 5
+    DIM age_years = (i * 13) MOD 60
+    DIM distance_km = 1 + ((i * 11) MOD 25) / 2
+    DIM price = 1800 * size_m2 + 12000 * rooms - 900 * age_years - 4000 * distance_km + Wobble(i, 15000)
+    PUSH(houses, [size_m2 * 1.0, rooms * 1.0, age_years * 1.0, distance_km])
+    PUSH(prices, price)
+NEXT i
+DIM house_split = ML.TRAINTEST(houses, prices, 0.25, 11)
+DIM h_train = house_split{"x_train"}
+DIM h_test = house_split{"x_test"}
+DIM p_train = house_split{"y_train"}
+DIM p_test = house_split{"y_test"}
+PRINT "House prices: "; LEN(h_train); " to learn from, "; LEN(h_test); " to test"
+DIM lin = ML.FIT("linear", h_train, p_train)
+PRINT "  linear  EUR per m2, room, year, km: "; RowText$(lin{"coef"}, 0)
+PRINT "          R squared "; Fmt$(ML.SCORE(lin, h_test, p_test), 4); ", typical error "; Fmt$(SQR(ML.MSE(p_test, ML.PREDICT(lin, h_test))), 0); " EUR"
+DIM rid = ML.FIT("ridge", h_train, p_train, {"alpha": 5000})
+PRINT "  ridge   (alpha 5000):               "; RowText$(rid{"coef"}, 0)
+PRINT "          R squared "; Fmt$(ML.SCORE(rid, h_test, p_test), 4)
+DIM offer = ML.PREDICT(lin, [[80.0, 3.0, 20.0, 4.0]])
+PRINT "  an 80 m2 flat, 3 rooms, 20 years, 4 km out: "; Fmt$(offer[0], 0); " EUR"
+PRINT
+
+' ── customers who leave ────────────────────────────────────────
+
+DIM customers = []
+DIM outcome = []
+FOR i = 0 TO 299
+    DIM months = 1 + (i * 17) MOD 48
+    DIM calls = (i * 7) MOD 9
+    DIM spend = 20 + (i * 29) MOD 80
+    DIM risk = 1.5 - 0.08 * months + 0.45 * calls - 0.01 * spend + Wobble(i + 500, 1.2)
+    PUSH(customers, [months * 1.0, calls * 1.0, spend * 1.0])
+    IF risk > 0 THEN
+        PUSH(outcome, "leaves")
+    ELSE
+        PUSH(outcome, "stays")
+    ENDIF
+NEXT i
+DIM cust_split = ML.TRAINTEST(customers, outcome, 0.3, 3)
+DIM c_train = cust_split{"x_train"}
+DIM c_test = cust_split{"x_test"}
+DIM o_train = cust_split{"y_train"}
+DIM o_test = cust_split{"y_test"}
+DIM scaler = ML.FIT("standard", c_train, [])
+DIM sc_train = ML.TRANSFORM(scaler, c_train)
+DIM sc_test = ML.TRANSFORM(scaler, c_test)
+PRINT "Customers: "; LEN(c_train); " to learn from, "; LEN(c_test); " to test"
+PRINT "  model      accuracy  precision  recall  F1"
+DIM logit = ML.FIT("logistic", sc_train, o_train)
+DIM knn = ML.FIT("knn", sc_train, o_train, {"k": 7})
+DIM tree = ML.FIT("tree", sc_train, o_train, {"max_depth": 4})
+DIM logit_guess = ML.PREDICT(logit, sc_test)
+DIM knn_guess = ML.PREDICT(knn, sc_test)
+DIM tree_guess = ML.PREDICT(tree, sc_test)
+PRINT MetricLine$("logistic", o_test, logit_guess)
+PRINT MetricLine$("knn", o_test, knn_guess)
+PRINT MetricLine$("tree", o_test, tree_guess)
+DIM confusion = ML.CONFUSION(o_test, logit_guess)
+DIM c_leaves = confusion[0]
+DIM c_stays = confusion[1]
+PRINT "  logistic confusion (rows true, columns predicted, leaves/stays): "; RowText$(c_leaves, 0); " / "; RowText$(c_stays, 0)
+DIM logit_coef = logit{"coef"}
+DIM leaves_coef = logit_coef[0]
+PRINT "  what pushes towards leaving (months, calls, spend): "; RowText$(leaves_coef, 2)
+PRINT
+
+' ── segments ───────────────────────────────────────────────────
+
+DIM all_scaled = ML.TRANSFORM(scaler, customers)
+DIM km = ML.FIT("kmeans", all_scaled, [], {"k": 3, "seed": 1})
+DIM seg_labels = km{"labels"}
+PRINT "Three customer segments by k-means (inertia "; Fmt$(km{"inertia"}, 1); ")"
+DIM centers = km{"centers"}
+DIM means = scaler{"mean"}
+DIM scales = scaler{"scale"}
+FOR i = 0 TO 2
+    DIM members = 0
+    FOR j = 0 TO LEN(seg_labels) - 1
+        IF seg_labels[j] = i THEN members = members + 1
+    NEXT j
+    DIM center = centers[i]
+    DIM back = []
+    FOR j = 0 TO 2
+        DIM cj = center[j]
+        DIM mj = means[j]
+        DIM sj = scales[j]
+        PUSH(back, cj * sj + mj)
+    NEXT j
+    PRINT "  segment "; i; ": "; members; " customers, typically "; Fmt$(back[0], 0); " months, "; Fmt$(back[1], 1); " calls, "; Fmt$(back[2], 0); " EUR a month"
+NEXT i
+PRINT
+
+' ── a stored model ─────────────────────────────────────────────
+
+DIM stored$ = ML.TOJSON$(logit)
+DIM restored = ML.FROMJSON(stored$)
+DIM newcomer = ML.TRANSFORM(scaler, [[2.0, 6.0, 30.0]])
+DIM odds = ML.PROBA(restored, newcomer)
+DIM odds_row = odds[0]
+DIM verdict = ML.PREDICT(restored, newcomer)
+PRINT "The logistic model as JSON: "; LEN(stored$); " bytes; read back it says a 2-month customer with 6 calls "; verdict[0]
+DIM restored_classes = ML.CLASSES(restored)
+DIM first_class$ = restored_classes[0]
+DIM second_class$ = restored_classes[1]
+PRINT "  ("; first_class$; " "; Fmt$(odds_row[0], 3); ", "; second_class$; " "; Fmt$(odds_row[1], 3); ")"
