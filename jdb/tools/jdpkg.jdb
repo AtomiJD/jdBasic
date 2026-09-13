@@ -1,0 +1,104 @@
+' jdpkg.jdb - installs jdBasic modules from the command line.
+'
+'   jdBasic jdb/tools/jdpkg.jdb install TESTKIT LLMAPI
+'   jdBasic jdb/tools/jdpkg.jdb install "LLMAPI ^1" --index https://example.com/jdbasic/index.json
+'   jdBasic jdb/tools/jdpkg.jdb install https://github.com/someone/somemodule.git
+'   jdBasic jdb/tools/jdpkg.jdb list
+'   jdBasic jdb/tools/jdpkg.jdb remove TESTKIT
+'   jdBasic jdb/tools/jdpkg.jdb update
+'   jdBasic jdb/tools/jdpkg.jdb sync myproject
+'   jdBasic jdb/tools/jdpkg.jdb index lib
+'
+' The modules come from --index, else from JDBASIC_INDEX, else from the lib
+' folder of this repository. They go into --target, else ~/.jdbasic/lib,
+' where IMPORT finds them. A name that is a git or ZIP URL is itself the
+' source and installs every module it holds.
+
+IMPORT PKG, CLI
+
+DIM spec = CLI.NEW("jdpkg", "installs jdBasic modules")
+CLI.VERSION(spec, "jdpkg 1.0.0")
+DIM c_install = CLI.CMD(spec, "install", "install modules and what they require")
+CLI.ARG(c_install, "names", "module names with optional ranges, or a git or ZIP URL", TRUE)
+CLI.OPT(c_install, "index", "i", "the index to install from", "")
+CLI.OPT(c_install, "target", "t", "the folder to install into", "")
+DIM c_list = CLI.CMD(spec, "list", "the modules installed")
+CLI.OPT(c_list, "target", "t", "the folder to look in", "")
+DIM c_remove = CLI.CMD(spec, "remove", "remove installed modules")
+CLI.ARG(c_remove, "names", "module names", TRUE)
+CLI.OPT(c_remove, "target", "t", "the folder to remove from", "")
+DIM c_update = CLI.CMD(spec, "update", "install the newest versions of what is installed")
+CLI.OPT(c_update, "index", "i", "the index to update from", "")
+CLI.OPT(c_update, "target", "t", "the folder to update", "")
+DIM c_sync = CLI.CMD(spec, "sync", "install a project's modules from jdbasic.json or jdbasic.lock")
+CLI.ARG(c_sync, "project", "the project folder", TRUE)
+CLI.OPT(c_sync, "index", "i", "the index to install from", "")
+DIM c_index = CLI.CMD(spec, "index", "write index.json for a folder of modules")
+CLI.ARG(c_index, "folder", "the folder", TRUE)
+
+DIM got = CLI.PARSE(spec, CLI.ARGV())
+IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
+
+FUNC Text$(opts, opt_key$)
+    IF NOT MAP.EXISTS(opts, opt_key$) THEN RETURN ""
+    DIM v = opts{opt_key$}
+    IF TYPEOF(v) = "NONE" THEN RETURN ""
+    RETURN "" + v
+ENDFUNC
+
+FUNC IndexFrom$(opts)
+    DIM given$ = Text$(opts, "index")
+    IF given$ <> "" THEN RETURN given$
+    IF GETENV$("JDBASIC_INDEX") <> "" THEN RETURN GETENV$("JDBASIC_INDEX")
+    DIM script$ = OS.ARGS()[0]
+    RETURN PATH.JOIN$(PATH.DIRNAME$(script$), "../../lib")
+ENDFUNC
+
+SUB PrintVersions(result)
+    DIM names = MAP.KEYS(result)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM n$ = names[k]
+        DIM v$ = result{n$}
+        PRINT "  "; n$; " "; v$
+    NEXT k
+ENDSUB
+
+DIM command$ = Text$(got, "command")
+DIM positional = got{"args"}
+DIM target$ = Text$(got, "target")
+TRY
+    IF command$ = "install" THEN
+        DIM names$ = JOIN(positional, ", ")
+        DIM first$ = positional[0]
+        DIM source$ = IndexFrom$(got)
+        IF LCASE$(RIGHT$(first$, 4)) = ".git" ORELSE LCASE$(RIGHT$(first$, 4)) = ".zip" THEN
+            source$ = first$
+            names$ = ""
+        ENDIF
+        DIM done = PKG.INSTALL(source$, names$, target$)
+        PRINT "installed:"
+        PrintVersions(done)
+    ELSEIF command$ = "list" THEN
+        DIM listed = PKG.INSTALLED(target$)
+        PrintVersions(listed)
+    ELSEIF command$ = "remove" THEN
+        PRINT "removed "; PKG.REMOVE(JOIN(positional, ", "), target$)
+    ELSEIF command$ = "update" THEN
+        DIM updated = PKG.UPDATE(IndexFrom$(got), target$)
+        PRINT "updated:"
+        PrintVersions(updated)
+    ELSEIF command$ = "sync" THEN
+        DIM project$ = positional[0]
+        DIM synced = PKG.SYNC(IndexFrom$(got), project$)
+        PRINT "synced:"
+        PrintVersions(synced)
+    ELSEIF command$ = "index" THEN
+        DIM folder$ = positional[0]
+        PKG.WRITEINDEX(folder$)
+        PRINT "wrote "; PATH.JOIN$(folder$, "index.json")
+    ENDIF
+CATCH
+    PRINT "jdpkg: "; ERRMSG$
+    END 1
+ENDTRY

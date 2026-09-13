@@ -1,0 +1,140 @@
+' pkg_demo.jdb - modules installed the way pip installs packages: semver
+' ranges, a small index with two versions of a module and one that requires
+' it, an install into a lib folder with a pin and an update, and a project
+' synced from its jdbasic.json into modules/ with a lock file that keeps its
+' versions when the index moves on.
+'
+'   jdBasic pkg_demo.jdb
+
+IMPORT PKG
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("pkgdemo")
+MKDIR folder$
+DIM i = 0
+
+FUNC Pairs$(versions_by_name)
+    DIM names = MAP.KEYS(versions_by_name)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM n$ = names[k]
+        DIM v$ = versions_by_name{n$}
+        IF out$ <> "" THEN out$ = out$ + ", "
+        out$ = out$ + n$ + " " + v$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC ModuleSource$(mod$, ver$, needs$, body$)
+    DIM nl$ = CHR$(10)
+    DIM src$ = "' " + LCASE$(mod$) + " - a module of the PKG demo." + nl$
+    src$ = src$ + "' version: " + ver$ + nl$
+    IF needs$ <> "" THEN src$ = src$ + "' requires: " + needs$ + nl$
+    src$ = src$ + nl$ + "EXPORT MODULE " + mod$ + nl$
+    IF needs$ <> "" THEN src$ = src$ + "IMPORT " + LEFT$(needs$, INSTR(needs$, " ")) + nl$
+    RETURN src$ + nl$ + body$ + nl$
+ENDFUNC
+
+FUNC GreetBody$(greeting$)
+    DIM nl$ = CHR$(10)
+    DIM qt$ = CHR$(34)
+    RETURN "EXPORT FUNC HELLO$()" + nl$ + "    RETURN " + qt$ + greeting$ + qt$ + nl$ + "ENDFUNC"
+ENDFUNC
+
+' ── ranges ─────────────────────────────────────────────────────
+
+PRINT "Ranges"
+DIM vers = ["1.4.2", "2.0.0", "1.2.9", "1.3.0", "0.2.5", "0.3.0", "1.5.0", "3.1.0"]
+DIM wants = ["^1.2", "^1.2", "~1.2.3", "~1.2.3", "^0.2", "^0.2", ">=1.0 <2", "^1 || ^3"]
+FOR i = 0 TO LEN(vers) - 1
+    DIM v$ = vers[i]
+    DIM w$ = wants[i]
+    DIM verdict$ = "no"
+    IF PKG.SATISFIES(v$, w$) THEN verdict$ = "yes"
+    PRINT "  "; LEFT$(v$ + "          ", 8); LEFT$(w$ + "            ", 12); verdict$
+NEXT i
+DIM newest$ = PKG.BEST$(["1.0.0", "1.2.0", "1.2.7", "1.3.1"], "~1.2")
+PRINT "  the newest of 1.0.0 1.2.0 1.2.7 1.3.1 in ~1.2: "; newest$
+PRINT
+
+' ── an index ───────────────────────────────────────────────────
+
+DIM index_dir$ = folder$ + "/index"
+MKDIR index_dir$
+MKDIR index_dir$ + "/greet-1.0.0"
+MKDIR index_dir$ + "/greet-1.1.0"
+MKDIR index_dir$ + "/banner-1.0.0"
+TXTWRITER index_dir$ + "/greet-1.0.0/greet.jdb", ModuleSource$("GREET", "1.0.0", "", GreetBody$("Hi"))
+TXTWRITER index_dir$ + "/greet-1.1.0/greet.jdb", ModuleSource$("GREET", "1.1.0", "", GreetBody$("Hello"))
+DIM banner_body$ = "EXPORT FUNC SHOW$(who$)" + LF$ + "    RETURN " + Q$ + "*** " + Q$ + " + GREET.HELLO$() + " + Q$ + ", " + Q$ + " + who$" + LF$ + "ENDFUNC"
+DIM banner_src$ = ModuleSource$("BANNER", "1.0.0", "GREET ^1.0", banner_body$)
+TXTWRITER index_dir$ + "/banner-1.0.0/banner.jdb", banner_src$
+
+DIM banner_manifest = PKG.MANIFEST(banner_src$)
+DIM banner_needs = banner_manifest{"requires"}
+PRINT "BANNER's source says: version "; banner_manifest{"version"}; ", requires GREET "; banner_needs{"GREET"}
+
+DIM no_needs AS MAP
+DIM greet_versions AS MAP
+greet_versions{"1.0.0"} = {"files": ["greet-1.0.0/greet.jdb"], "requires": no_needs}
+greet_versions{"1.1.0"} = {"files": ["greet-1.1.0/greet.jdb"], "requires": no_needs}
+DIM banner_versions AS MAP
+banner_versions{"1.0.0"} = {"files": ["banner-1.0.0/banner.jdb"], "requires": banner_needs}
+DIM index_modules AS MAP
+index_modules{"GREET"} = {"versions": greet_versions}
+index_modules{"BANNER"} = {"versions": banner_versions}
+DIM index_doc = {"format": 1, "modules": index_modules}
+TXTWRITER index_dir$ + "/index.json", JSON.STRINGIFY$(index_doc)
+PRINT "index: GREET 1.0.0 and 1.1.0, BANNER 1.0.0"
+PRINT
+
+' ── installing ─────────────────────────────────────────────────
+
+PRINT "Installing"
+DIM user_lib$ = folder$ + "/lib"
+DIM got = PKG.INSTALL(index_dir$, "BANNER", user_lib$)
+PRINT "  install BANNER        -> "; Pairs$(got)
+DIM pinned = PKG.INSTALL(index_dir$, "GREET =1.0.0", user_lib$)
+DIM listed = PKG.INSTALLED(user_lib$)
+PRINT "  install GREET =1.0.0  -> "; Pairs$(listed)
+DIM updated = PKG.UPDATE(index_dir$, user_lib$)
+DIM relisted = PKG.INSTALLED(user_lib$)
+PRINT "  update                -> "; Pairs$(relisted)
+DIM greet_file$ = user_lib$ + "/greet.jdb"
+DIM greet_text$ = TXTREADER$(greet_file$)
+DIM greet_now = PKG.MANIFEST(greet_text$)
+PRINT "  greet.jdb in the lib folder is version "; greet_now{"version"}
+DIM removed = PKG.REMOVE("BANNER", user_lib$)
+DIM after_remove = PKG.INSTALLED(user_lib$)
+PRINT "  remove BANNER         -> "; Pairs$(after_remove)
+PRINT
+
+' ── a project ──────────────────────────────────────────────────
+
+PRINT "A project"
+DIM project$ = folder$ + "/myproject"
+MKDIR project$
+TXTWRITER project$ + "/jdbasic.json", "{" + Q$ + "requires" + Q$ + ": {" + Q$ + "BANNER" + Q$ + ": " + Q$ + "^1" + Q$ + "}}"
+DIM synced = PKG.SYNC(index_dir$, project$)
+PRINT "  sync from jdbasic.json -> "; Pairs$(synced)
+DIM lock_text$ = TXTREADER$(project$ + "/jdbasic.lock")
+DIM locked = JSON.PARSE$(lock_text$)
+DIM locked_greet = locked{"GREET"}
+PRINT "  jdbasic.lock pins GREET "; locked_greet{"version"}; " with sha256 "; LEFT$(locked_greet{"sha256"}, 16); "..."
+
+MKDIR index_dir$ + "/greet-1.2.0"
+TXTWRITER index_dir$ + "/greet-1.2.0/greet.jdb", ModuleSource$("GREET", "1.2.0", "", GreetBody$("Good day"))
+greet_versions{"1.2.0"} = {"files": ["greet-1.2.0/greet.jdb"], "requires": no_needs}
+DIM grown_modules AS MAP
+grown_modules{"GREET"} = {"versions": greet_versions}
+grown_modules{"BANNER"} = {"versions": banner_versions}
+DIM grown_doc = {"format": 1, "modules": grown_modules}
+TXTWRITER index_dir$ + "/index.json", JSON.STRINGIFY$(grown_doc)
+PRINT "  the index gains GREET 1.2.0"
+DIM resynced = PKG.SYNC(index_dir$, project$)
+PRINT "  sync with the lock     -> "; Pairs$(resynced)
+KILL project$ + "/jdbasic.lock"
+DIM fresh = PKG.SYNC(index_dir$, project$)
+PRINT "  sync without the lock  -> "; Pairs$(fresh)

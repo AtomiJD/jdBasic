@@ -1,0 +1,18 @@
+{
+  "format": 1,
+  "modules": {
+    "HELLOPKG": {
+      "versions": {
+        "1.0.0": {"files": ["hellopkg-1.0.0/hellopkg.jdb"], "requires": {"GREETPKG": "^1.0"}},
+        "1.2.0": {"files": ["hellopkg-1.2.0/hellopkg.jdb"], "requires": {"GREETPKG": "~1.1"}},
+        "2.0.0": {"files": ["hellopkg-2.0.0/hellopkg.jdb"], "requires": {"GREETPKG": ">=2.0"}}
+      }
+    },
+    "GREETPKG": {
+      "versions": {
+        "1.0.0": {"files": ["greetpkg-1.0.0/greetpkg.jdb"], "requires": {}},
+        "1.1.4": {"files": ["greetpkg-1.1.4/greetpkg.jdb"], "requires": {}}
+      }
+    }
+  }
+}

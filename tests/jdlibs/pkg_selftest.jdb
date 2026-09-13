@@ -1,0 +1,202 @@
+' PKG: version ranges, manifests read from module sources, dependency
+' resolution against a fixture index, TESTKIT and LLMAPI installed with REQ
+' and SCHEMA into a fresh user folder and imported by a new process, a
+' project synced from its manifest and then from its lock file, and
+' modules installed from a ZIP archive and a git repository.
+
+IMPORT TESTKIT, PKG
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "pkg_index/index.json") THEN base$ = "fixtures/"
+DIM index$ = base$ + "pkg_index"
+DIM libdir$ = "lib"
+IF NOT FILE.EXISTS(libdir$ + "/testkit.jdb") THEN libdir$ = "../../lib"
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("pkgtest")
+MKDIR folder$
+
+FUNC Missing(source$)
+    RETURN PKG.RESOLVE(source$, "NOSUCHPKG")
+ENDFUNC
+
+FUNC Unmatched(source$)
+    RETURN PKG.RESOLVE(source$, "HELLOPKG ^3")
+ENDFUNC
+
+FUNC VersionOf$(plan, mod_name$)
+    IF NOT MAP.EXISTS(plan, mod_name$) THEN RETURN ""
+    DIM entry = plan{mod_name$}
+    DIM v$ = entry{"version"}
+    RETURN v$
+ENDFUNC
+
+FUNC ExeFor$()
+    IF FILE.EXISTS("build/jdBasic.exe") THEN RETURN "build\jdBasic.exe"
+    IF FILE.EXISTS("build/jdbasic") THEN RETURN "build/jdbasic"
+    RETURN ""
+ENDFUNC
+
+TESTKIT.SUITE("versions")
+TESTKIT.EQ(PKG.COMPARE("1.2.3", "1.2.10"), -1, "patch numbers compare as numbers")
+TESTKIT.EQ(PKG.COMPARE("2.0", "1.9.9"), 1, "a missing part is 0")
+TESTKIT.EQ(PKG.COMPARE("v1.0.0", "1"), 0, "a leading v is ignored")
+TESTKIT.EQ(PKG.COMPARE("1.0.0-beta.2", "1.0.0"), 0, "and a pre-release suffix")
+DIM cases = []
+PUSH(cases, ["1.4.2", "^1.2", 1])
+PUSH(cases, ["2.0.0", "^1.2", 0])
+PUSH(cases, ["1.1.9", "^1.2", 0])
+PUSH(cases, ["0.2.5", "^0.2", 1])
+PUSH(cases, ["0.3.0", "^0.2", 0])
+PUSH(cases, ["0.0.3", "^0.0.3", 1])
+PUSH(cases, ["0.0.4", "^0.0.3", 0])
+PUSH(cases, ["1.2.9", "~1.2.3", 1])
+PUSH(cases, ["1.3.0", "~1.2.3", 0])
+PUSH(cases, ["1.2.2", "~1.2.3", 0])
+PUSH(cases, ["1.9.0", "~1", 1])
+PUSH(cases, ["2.0.0", "~1", 0])
+PUSH(cases, ["1.5.0", ">=1.0 <2", 1])
+PUSH(cases, ["2.0.0", ">=1.0 <2", 0])
+PUSH(cases, ["0.9.0", ">=1.0 <2", 0])
+PUSH(cases, ["1.5.0", ">= 1.0, < 2", 1])
+PUSH(cases, ["1.2.3", "1.2.3", 1])
+PUSH(cases, ["1.2.4", "1.2.3", 0])
+PUSH(cases, ["1.2.7", "1.2", 1])
+PUSH(cases, ["1.3.0", "1.2", 0])
+PUSH(cases, ["3.0.0", "*", 1])
+PUSH(cases, ["3.0.0", "", 1])
+PUSH(cases, ["1.0.0", "<1.0.0 || >=2.0", 0])
+PUSH(cases, ["2.1.0", "<1.0.0 || >=2.0", 1])
+PUSH(cases, ["1.0.0", "=1.0.0", 1])
+DIM i = 0
+FOR i = 0 TO LEN(cases) - 1
+    DIM cs = cases[i]
+    DIM cv$ = cs[0]
+    DIM cr$ = cs[1]
+    DIM want = cs[2]
+    DIM got = 0
+    IF PKG.SATISFIES(cv$, cr$) THEN got = 1
+    TESTKIT.EQ(got, want, cv$ + " in " + Q$ + cr$ + Q$)
+NEXT i
+DIM versions = ["1.0.0", "1.2.0", "2.0.0", "1.10.1"]
+TESTKIT.EQ(PKG.BEST$(versions, "^1"), "1.10.1", "BEST$ takes the newest in the range")
+TESTKIT.EQ(PKG.BEST$(versions, "~1.2"), "1.2.0", "within ~1.2")
+TESTKIT.EQ(PKG.BEST$(versions, "^3"), "", "and nothing when none fits")
+
+TESTKIT.SUITE("manifests")
+DIM hello = PKG.MANIFEST(TXTREADER$(index$ + "/hellopkg-1.2.0/hellopkg.jdb"))
+TESTKIT.EQ(hello{"name"}, "HELLOPKG", "the name from EXPORT MODULE")
+TESTKIT.EQ(hello{"version"}, "1.2.0", "the version comment")
+DIM hello_req = hello{"requires"}
+TESTKIT.EQ(hello_req{"GREETPKG"}, "~1.1", "the range the requires comment gives")
+DIM llm = PKG.MANIFEST(TXTREADER$(libdir$ + "/llmapi.jdb"))
+DIM llm_req = llm{"requires"}
+TESTKIT.ISTRUE(MAP.EXISTS(llm_req, "REQ") ANDALSO MAP.EXISTS(llm_req, "SCHEMA"), "LLMAPI requires what it imports")
+TESTKIT.EQ(llm{"version"}, "1.0.0", "a module without a version comment is 1.0.0")
+DIM lib_index = PKG.INDEX(libdir$)
+DIM lib_mods = lib_index{"modules"}
+TESTKIT.ISTRUE(MAP.EXISTS(lib_mods, "TESTKIT") ANDALSO MAP.EXISTS(lib_mods, "LLMAPI"), "lib/ indexes as a source")
+TESTKIT.ISTRUE(LEN(MAP.KEYS(lib_mods)) >= 30, "with every module in it")
+
+TESTKIT.SUITE("resolving")
+DIM plan = PKG.RESOLVE(index$, "HELLOPKG ^1")
+TESTKIT.EQ(VersionOf$(plan, "HELLOPKG"), "1.2.0", "the newest HELLOPKG below 2")
+TESTKIT.EQ(VersionOf$(plan, "GREETPKG"), "1.1.4", "and the GREETPKG its ~1.1 asks for")
+TESTKIT.EQ(LEN(MAP.KEYS(plan)), 2, "nothing else")
+DIM plan_any = PKG.RESOLVE(index$, "HELLOPKG")
+TESTKIT.EQ(VersionOf$(plan_any, "HELLOPKG"), "1.2.0", "2.0.0 is passed over, its GREETPKG >=2.0 does not exist")
+DIM plan_pinned = PKG.RESOLVE(index$, "HELLOPKG =1.0.0, GREETPKG")
+TESTKIT.EQ(VersionOf$(plan_pinned, "HELLOPKG"), "1.0.0", "an exact version")
+TESTKIT.EQ(VersionOf$(plan_pinned, "GREETPKG"), "1.1.4", "with the newest GREETPKG in ^1.0")
+DIM plan_at = PKG.RESOLVE(index$, "hellopkg@~1.0")
+TESTKIT.EQ(VersionOf$(plan_at, "HELLOPKG"), "1.0.0", "name@range, any case")
+TESTKIT.THROWS(Missing@, index$, "an unknown module is refused")
+TESTKIT.THROWS(Unmatched@, index$, "and a range nothing matches")
+
+TESTKIT.SUITE("installing")
+DIM user_lib$ = folder$ + "/user/.jdbasic/lib"
+DIM installed = PKG.INSTALL(libdir$, "TESTKIT, LLMAPI", user_lib$)
+TESTKIT.EQ(LEN(MAP.KEYS(installed)), 4, "TESTKIT and LLMAPI bring REQ and SCHEMA")
+DIM wanted_files = ["testkit.jdb", "llmapi.jdb", "req.jdb", "schema.jdb"]
+FOR i = 0 TO LEN(wanted_files) - 1
+    DIM wf$ = wanted_files[i]
+    DIM copy_path$ = user_lib$ + "/" + wf$
+    TESTKIT.ISTRUE(FILE.EXISTS(copy_path$), wf$ + " is installed")
+    TESTKIT.EQ(CODEC.SHA256$(TXTREADER$(copy_path$)), CODEC.SHA256$(TXTREADER$(libdir$ + "/" + wf$)), wf$ + " is the module's own text")
+NEXT i
+DIM listed = PKG.INSTALLED(user_lib$)
+TESTKIT.EQ(LEN(MAP.KEYS(listed)), 4, "INSTALLED lists them")
+TESTKIT.EQ(listed{"LLMAPI"}, "1.0.0", "with their versions")
+DIM app_dir$ = folder$ + "/app"
+MKDIR app_dir$
+PKG.INSTALL(libdir$, "TESTKIT, LLMAPI", app_dir$ + "/modules")
+TXTWRITER app_dir$ + "/app.jdb", "IMPORT TESTKIT, LLMAPI" + LF$ + "PRINT " + Q$ + "imports ok" + Q$ + LF$
+DIM exe$ = ExeFor$()
+IF exe$ <> "" THEN
+    SETENV "JDBASIC_PATH", ""
+    DIM child = OS.EXEC(exe$, [app_dir$ + "/app.jdb"])
+    DIM run_code = child{"EXIT_CODE"}
+    DIM run_out$ = child{"OUTPUT"}
+    TESTKIT.EQ(run_code, 0, "a new process imports the installed modules: " + LEFT$(run_out$, 300))
+    TESTKIT.ISTRUE(INSTR(run_out$, "imports ok") >= 0, "and runs")
+ELSE
+    TESTKIT.SKIP("no interpreter at build/ to start a process with")
+ENDIF
+DIM hello_got = PKG.INSTALL(index$, "HELLOPKG ^1", user_lib$)
+TESTKIT.EQ(hello_got{"HELLOPKG"}, "1.2.0", "a package from another index into the same folder")
+TESTKIT.ISTRUE(INSTR(TXTREADER$(user_lib$ + "/hellopkg.jdb"), "hello 1.2.0") >= 0, "its file is the version chosen")
+TESTKIT.EQ(LEN(MAP.KEYS(PKG.INSTALLED(user_lib$))), 6, "six installed now")
+TESTKIT.EQ(PKG.REMOVE("TESTKIT", user_lib$), 1, "REMOVE takes one out")
+TESTKIT.ISFALSE(FILE.EXISTS(user_lib$ + "/testkit.jdb"), "its file is gone")
+TESTKIT.EQ(LEN(MAP.KEYS(PKG.INSTALLED(user_lib$))), 5, "and so is its entry")
+DIM up_dir$ = folder$ + "/update"
+PKG.INSTALL(index$, "HELLOPKG =1.0.0", up_dir$)
+TESTKIT.ISTRUE(INSTR(TXTREADER$(up_dir$ + "/hellopkg.jdb"), "hello 1.0.0") >= 0, "an old version installed")
+DIM updated = PKG.UPDATE(index$, up_dir$)
+TESTKIT.EQ(updated{"HELLOPKG"}, "1.2.0", "UPDATE moves it to the newest it can")
+TESTKIT.ISTRUE(INSTR(TXTREADER$(up_dir$ + "/hellopkg.jdb"), "hello 1.2.0") >= 0, "and replaces the file")
+
+TESTKIT.SUITE("projects")
+DIM proj$ = folder$ + "/project"
+MKDIR proj$
+TXTWRITER proj$ + "/jdbasic.json", "{" + Q$ + "requires" + Q$ + ": {" + Q$ + "HELLOPKG" + Q$ + ": " + Q$ + "^1" + Q$ + "}}"
+DIM synced = PKG.SYNC(index$, proj$)
+TESTKIT.EQ(synced{"HELLOPKG"}, "1.2.0", "SYNC installs the manifest's ranges")
+TESTKIT.ISTRUE(FILE.EXISTS(proj$ + "/modules/greetpkg.jdb"), "into the project's modules folder")
+TESTKIT.ISTRUE(FILE.EXISTS(proj$ + "/jdbasic.lock"), "and writes a lock file")
+DIM lock = JSON.PARSE$(TXTREADER$(proj$ + "/jdbasic.lock"))
+DIM lock_hello = lock{"HELLOPKG"}
+TESTKIT.EQ(lock_hello{"version"}, "1.2.0", "the lock names the version")
+TESTKIT.EQ(LEN(lock_hello{"sha256"}), 64, "and the file's hash")
+TXTWRITER proj$ + "/jdbasic.lock", "{" + Q$ + "HELLOPKG" + Q$ + ": {" + Q$ + "version" + Q$ + ": " + Q$ + "1.0.0" + Q$ + "}, " + Q$ + "GREETPKG" + Q$ + ": {" + Q$ + "version" + Q$ + ": " + Q$ + "1.0.0" + Q$ + "}}"
+DIM relocked = PKG.SYNC(index$, proj$)
+TESTKIT.EQ(relocked{"HELLOPKG"}, "1.0.0", "with a lock file the locked versions are installed")
+TESTKIT.ISTRUE(INSTR(TXTREADER$(proj$ + "/modules/greetpkg.jdb"), "Hi") >= 0, "down to the dependencies")
+
+TESTKIT.SUITE("archives and repositories")
+DIM bundle AS MAP
+bundle{"greetpkg.jdb"} = TXTREADER$(index$ + "/greetpkg-1.1.4/greetpkg.jdb")
+DIM bundle_path$ = folder$ + "/bundle.zip"
+ZIP.WRITE(bundle_path$, bundle)
+DIM zip_dir$ = folder$ + "/fromzip"
+DIM from_zip = PKG.INSTALL(bundle_path$, "", zip_dir$)
+TESTKIT.EQ(from_zip{"GREETPKG"}, "1.1.4", "every module of a ZIP archive")
+TESTKIT.ISTRUE(FILE.EXISTS(zip_dir$ + "/greetpkg.jdb"), "is installed")
+DIM git_check = OS.EXEC("git", ["--version"])
+DIM git_code = git_check{"EXIT_CODE"}
+IF git_code = 0 THEN
+    DIM repo$ = folder$ + "/repo"
+    MKDIR repo$
+    TXTWRITER repo$ + "/greetpkg.jdb", TXTREADER$(index$ + "/greetpkg-1.0.0/greetpkg.jdb")
+    DIM g1 = OS.EXEC("git", ["-C", repo$, "init", "--quiet"])
+    DIM g2 = OS.EXEC("git", ["-C", repo$, "add", "greetpkg.jdb"])
+    DIM g3 = OS.EXEC("git", ["-C", repo$, "-c", "user.email=pkg@example.com", "-c", "user.name=pkg", "commit", "--quiet", "-m", "module"])
+    DIM git_dir$ = folder$ + "/fromgit"
+    DIM from_git = PKG.INSTALL(repo$ + "/.git", "", git_dir$)
+    TESTKIT.EQ(from_git{"GREETPKG"}, "1.0.0", "every module of a git repository")
+    TESTKIT.ISTRUE(INSTR(TXTREADER$(git_dir$ + "/greetpkg.jdb"), "Hi") >= 0, "is installed from its clone")
+ELSE
+    TESTKIT.SKIP("git is not installed")
+ENDIF
+
+TESTKIT.REPORT()

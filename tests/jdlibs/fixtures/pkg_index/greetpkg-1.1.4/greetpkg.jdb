@@ -1,0 +1,8 @@
+' greetpkg - a package for the PKG self test.
+' version: 1.1.4
+
+EXPORT MODULE GREETPKG
+
+EXPORT FUNC GREETING$()
+    RETURN "Hello"
+ENDFUNC

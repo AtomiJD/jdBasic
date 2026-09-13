@@ -1,0 +1,11 @@
+' hellopkg - a package for the PKG self test.
+' version: 1.2.0
+' requires: GREETPKG ~1.1
+
+EXPORT MODULE HELLOPKG
+
+IMPORT GREETPKG
+
+EXPORT FUNC HELLO$(name$)
+    RETURN GREETPKG.GREETING$() + ", " + name$ + " (hello 1.2.0)"
+ENDFUNC

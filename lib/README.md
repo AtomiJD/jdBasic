@@ -66,6 +66,7 @@ and SCHEMA) finds it through the same search.
 | `textdiff.jdb` | difflib, patch | the matching runs, edit steps and similarity of lines, words or characters, unified diffs written and applied back, word and character diffs inline, snapshots for tests | [textdiff_lib_readme.md](textdiff_lib_readme.md) |
 | `jdweb.jdb` | Flask, the Werkzeug test client | web apps on HTTP.SERVER: routes with path parameters for any method, middleware before and after, in-memory sessions, static files, JSON and error responses, a test client for the running app, and the themed page chrome and cookie login jdTrakr runs on | [jdweb_lib_readme.md](jdweb_lib_readme.md) |
 | `docx.jdb` | python-docx, docxtpl | Word documents written with headings, bold and italic runs, lists, tables, page breaks, a header and a footer; templates filled where Word split the placeholders across runs; paragraphs and tables read back | [docx_lib_readme.md](docx_lib_readme.md) |
+| `pkg.jdb` | pip, requirements.txt, pip-tools | modules installed into `~/.jdbasic/lib` from an index, a folder, a git repository or a ZIP archive, with what they require chosen by semver ranges (`^`, `~`, comparisons, `\|\|`); list, remove and update; a project's `jdbasic.json` and `jdbasic.lock`; `jdb/tools/jdpkg.jdb` on the command line | [pkg_lib_readme.md](pkg_lib_readme.md) |
 
 ## Tests and demos
 

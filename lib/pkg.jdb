@@ -1,0 +1,681 @@
+' pkg.jdb - modules installed the way pip installs packages: from an index
+' of names, versions and sources into a lib folder, together with what they
+' require, chosen by semver ranges; a list of what is installed; and a lock
+' file that gives a project the same versions on every checkout.
+'
+'   IMPORT PKG
+'   DIM got = PKG.INSTALL("lib", "TESTKIT, LLMAPI")      ' into ~/.jdbasic/lib
+'   PRINT PKG.SATISFIES("1.4.2", "^1.2")                ' TRUE
+'   PKG.SYNC("lib", "myproject")                        ' modules/ and jdbasic.lock
+'
+' A module describes itself: its EXPORT MODULE line names it, its IMPORT
+' lines are what it requires, and two optional comment lines give its
+' version (1.0.0 without one) and the ranges it accepts:
+'
+'   ' version: 1.2.0
+'   ' requires: REQ ^1.0, SCHEMA ~1.1
+
+EXPORT MODULE PKG
+
+DIM gLF$ = CHR$(10)
+
+' ── versions ───────────────────────────────────────────────────
+
+FUNC CleanVersion$(v$)
+    DIM s$ = TRIM$(v$)
+    IF LCASE$(LEFT$(s$, 1)) = "v" THEN s$ = MID$(s$, 1, LEN(s$))
+    DIM cut = CINT(INSTR(s$, "-"))
+    IF cut >= 0 THEN s$ = LEFT$(s$, cut)
+    cut = CINT(INSTR(s$, "+"))
+    IF cut >= 0 THEN s$ = LEFT$(s$, cut)
+    RETURN s$
+ENDFUNC
+
+FUNC PartCount(v$)
+    DIM s$ = CleanVersion$(v$)
+    IF s$ = "" THEN RETURN 0
+    RETURN LEN(SPLIT(s$, "."))
+ENDFUNC
+
+' The major, minor and patch numbers of a version, 0 where one is missing.
+FUNC VersionNums(v$)
+    DIM out = [0, 0, 0]
+    DIM s$ = CleanVersion$(v$)
+    IF s$ = "" THEN RETURN out
+    DIM pieces = SPLIT(s$, ".")
+    DIM k = 0
+    FOR k = 0 TO 2
+        IF k < LEN(pieces) THEN
+            DIM p$ = pieces[k]
+            out[k] = CINT(VAL(p$))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Joined$(major, minor, patch)
+    RETURN STR$(major) + "." + STR$(minor) + "." + STR$(patch)
+ENDFUNC
+
+' -1, 0 or 1 as version a$ is older than, the same as or newer than b$;
+' a leading v and a pre-release or build suffix are ignored.
+EXPORT FUNC COMPARE(a$, b$)
+    DIM xs = VersionNums(a$)
+    DIM ys = VersionNums(b$)
+    DIM k = 0
+    FOR k = 0 TO 2
+        DIM xa = xs[k]
+        DIM yb = ys[k]
+        IF xa < yb THEN RETURN -1
+        IF xa > yb THEN RETURN 1
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+FUNC TokenOk(ver$, token$)
+    DIM t$ = TRIM$(token$)
+    IF t$ = "" ORELSE t$ = "*" ORELSE LCASE$(t$) = "latest" ORELSE LCASE$(t$) = "x" THEN RETURN TRUE
+    DIM op$ = ""
+    IF LEFT$(t$, 2) = ">=" ORELSE LEFT$(t$, 2) = "<=" THEN
+        op$ = LEFT$(t$, 2)
+        t$ = TRIM$(MID$(t$, 2, LEN(t$)))
+    ELSEIF LEFT$(t$, 1) = ">" ORELSE LEFT$(t$, 1) = "<" ORELSE LEFT$(t$, 1) = "=" ORELSE LEFT$(t$, 1) = "^" ORELSE LEFT$(t$, 1) = "~" THEN
+        op$ = LEFT$(t$, 1)
+        t$ = TRIM$(MID$(t$, 1, LEN(t$)))
+    ENDIF
+    DIM n = VersionNums(t$)
+    DIM major = n[0]
+    DIM minor = n[1]
+    DIM patch = n[2]
+    DIM given = PartCount(t$)
+    DIM c = COMPARE(ver$, Joined$(major, minor, patch))
+    IF op$ = ">=" THEN RETURN c >= 0
+    IF op$ = ">" THEN RETURN c > 0
+    IF op$ = "<=" THEN RETURN c <= 0
+    IF op$ = "<" THEN RETURN c < 0
+    IF c < 0 THEN RETURN FALSE
+    DIM top$ = ""
+    IF op$ = "^" THEN
+        IF major > 0 ORELSE given = 1 THEN
+            top$ = Joined$(major + 1, 0, 0)
+        ELSEIF minor > 0 ORELSE given = 2 THEN
+            top$ = Joined$(0, minor + 1, 0)
+        ELSE
+            top$ = Joined$(0, 0, patch + 1)
+        ENDIF
+    ELSEIF op$ = "~" THEN
+        top$ = Joined$(major, minor + 1, 0)
+        IF given = 1 THEN top$ = Joined$(major + 1, 0, 0)
+    ELSE
+        IF given >= 3 THEN RETURN c = 0
+        top$ = Joined$(major, minor + 1, 0)
+        IF given <= 1 THEN top$ = Joined$(major + 1, 0, 0)
+    ENDIF
+    RETURN COMPARE(ver$, top$) < 0
+ENDFUNC
+
+' Whether a version is in a range: ^1.2 (below 2.0.0), ~1.2.3 (below
+' 1.3.0), comparisons joined by spaces or commas (>=1.0 <2), an exact or a
+' partial version (1.2 for every 1.2.x), * for any, and alternatives
+' separated by ||.
+EXPORT FUNC SATISFIES(ver$, want$)
+    DIM r$ = REPLACE$(want$, ",", " ")
+    r$ = REPLACE$(REPLACE$(r$, ">= ", ">="), "<= ", "<=")
+    r$ = REPLACE$(REPLACE$(REPLACE$(r$, "> ", ">"), "< ", "<"), "= ", "=")
+    r$ = REPLACE$(REPLACE$(r$, "^ ", "^"), "~ ", "~")
+    DIM alternatives = SPLIT(r$, "||")
+    DIM a = 0
+    DIM k = 0
+    FOR a = 0 TO LEN(alternatives) - 1
+        DIM alt$ = alternatives[a]
+        DIM tokens = SPLIT(TRIM$(alt$), " ")
+        DIM all_ok = TRUE
+        FOR k = 0 TO LEN(tokens) - 1
+            DIM tok$ = tokens[k]
+            IF tok$ <> "" THEN
+                DIM ok = TokenOk(ver$, tok$)
+                IF ok THEN
+                    all_ok = all_ok
+                ELSE
+                    all_ok = FALSE
+                ENDIF
+            ENDIF
+        NEXT k
+        IF all_ok THEN RETURN TRUE
+    NEXT a
+    RETURN FALSE
+ENDFUNC
+
+' The newest version of a list that is in the range, or "".
+EXPORT FUNC BEST$(versions, want$)
+    DIM best$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(versions) - 1
+        DIM v$ = versions[k]
+        IF SATISFIES(v$, want$) THEN
+            IF best$ = "" ORELSE COMPARE(v$, best$) > 0 THEN best$ = v$
+        ENDIF
+    NEXT k
+    RETURN best$
+ENDFUNC
+
+' ── manifests and indexes ──────────────────────────────────────
+
+' What a module's source says about it, as a map with "name", "version" and
+' "requires" (module name to range).
+EXPORT FUNC MANIFEST(source$)
+    DIM mod_name$ = ""
+    DIM ver$ = "1.0.0"
+    DIM requires AS MAP
+    DIM ranges AS MAP
+    DIM rows = SPLIT(REPLACE$(source$, CHR$(13), ""), gLF$)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM raw_row$ = rows[k]
+        DIM row_text$ = TRIM$(raw_row$)
+        IF LEFT$(row_text$, 1) = "'" THEN
+            DIM comment_text$ = TRIM$(MID$(row_text$, 1, LEN(row_text$)))
+            IF LCASE$(LEFT$(comment_text$, 8)) = "version:" THEN ver$ = TRIM$(MID$(comment_text$, 8, LEN(comment_text$)))
+            IF LCASE$(LEFT$(comment_text$, 9)) = "requires:" THEN
+                DIM item_list = SPLIT(MID$(comment_text$, 9, LEN(comment_text$)), ",")
+                FOR j = 0 TO LEN(item_list) - 1
+                    DIM item_raw$ = item_list[j]
+                    DIM item$ = TRIM$(item_raw$)
+                    IF item$ <> "" THEN
+                        DIM sp = CINT(INSTR(item$, " "))
+                        IF sp < 0 THEN
+                            ranges{UCASE$(item$)} = "*"
+                        ELSE
+                            ranges{UCASE$(LEFT$(item$, sp))} = TRIM$(MID$(item$, sp + 1, LEN(item$)))
+                        ENDIF
+                    ENDIF
+                NEXT j
+            ENDIF
+        ELSEIF UCASE$(LEFT$(row_text$, 14)) = "EXPORT MODULE " THEN
+            mod_name$ = UCASE$(TRIM$(MID$(row_text$, 14, LEN(row_text$))))
+        ELSEIF UCASE$(LEFT$(row_text$, 7)) = "IMPORT " THEN
+            DIM deps = SPLIT(MID$(row_text$, 7, LEN(row_text$)), ",")
+            FOR j = 0 TO LEN(deps) - 1
+                DIM dep_raw$ = deps[j]
+                DIM dep$ = UCASE$(TRIM$(dep_raw$))
+                DIM cut = CINT(INSTR(dep$, " "))
+                IF cut >= 0 THEN dep$ = LEFT$(dep$, cut)
+                IF dep$ <> "" THEN requires{dep$} = "*"
+            NEXT j
+        ENDIF
+    NEXT k
+    DIM rkeys = MAP.KEYS(ranges)
+    FOR k = 0 TO LEN(rkeys) - 1
+        DIM rk$ = rkeys[k]
+        DIM rv$ = ranges{rk$}
+        requires{rk$} = rv$
+    NEXT k
+    RETURN {"name": mod_name$, "version": ver$, "requires": requires}
+ENDFUNC
+
+' An index of the modules in a folder: a map with "format" and "modules",
+' each module with its version, its file and what it requires.
+EXPORT FUNC INDEX(folder$)
+    DIM modules AS MAP
+    DIM found = DIR$(REPLACE$(folder$, "\", "/") + "/*.jdb")
+    DIM k = 0
+    FOR k = 0 TO LEN(found) - 1
+        DIM f$ = found[k]
+        DIM base$ = PATH.BASENAME$(f$)
+        DIM source_text$ = TXTREADER$(PATH.JOIN$(folder$, base$))
+        DIM m = MANIFEST(source_text$)
+        DIM mname$ = m{"name"}
+        IF mname$ <> "" THEN
+            DIM mver$ = m{"version"}
+            DIM mreq = m{"requires"}
+            DIM files = []
+            PUSH(files, base$)
+            DIM entry = {"files": files, "requires": mreq}
+            DIM versions AS MAP
+            versions{mver$} = entry
+            DIM holder = {"versions": versions}
+            modules{mname$} = holder
+        ENDIF
+    NEXT k
+    RETURN {"format": 1, "modules": modules}
+ENDFUNC
+
+' Writes the index of a folder as index.json inside it.
+EXPORT SUB WRITEINDEX(folder$)
+    DIM idx = INDEX(folder$)
+    TXTWRITER PATH.JOIN$(folder$, "index.json"), JSON.STRINGIFY$(idx)
+ENDSUB
+
+FUNC IsUrl(s$)
+    DIM low$ = LCASE$(s$)
+    RETURN LEFT$(low$, 7) = "http://" ORELSE LEFT$(low$, 8) = "https://"
+ENDFUNC
+
+FUNC IsGit(s$)
+    DIM low$ = LCASE$(s$)
+    RETURN RIGHT$(low$, 4) = ".git" ORELSE LEFT$(low$, 4) = "git@" ORELSE LEFT$(low$, 6) = "git://"
+ENDFUNC
+
+FUNC IsZip(s$)
+    RETURN LCASE$(RIGHT$(s$, 4)) = ".zip"
+ENDFUNC
+
+' The index of a source: a folder with an index.json, a folder of modules,
+' an index file or its URL.
+EXPORT FUNC OPENINDEX(source$)
+    IF IsUrl(source$) THEN
+        DIM body$ = HTTP.GET$(source$)
+        DIM remote = JSON.PARSE$(body$)
+        RETURN remote
+    ENDIF
+    IF FILE.ISDIR(source$) THEN
+        DIM idx_path$ = PATH.JOIN$(source$, "index.json")
+        IF FILE.EXISTS(idx_path$) THEN
+            DIM stored = JSON.PARSE$(TXTREADER$(idx_path$))
+            RETURN stored
+        ENDIF
+        DIM built = INDEX(source$)
+        RETURN built
+    ENDIF
+    IF FILE.EXISTS(source$) THEN
+        DIM from_file = JSON.PARSE$(TXTREADER$(source$))
+        RETURN from_file
+    ENDIF
+    THROW "PKG: no index at " + source$
+    RETURN 0
+ENDFUNC
+
+FUNC BaseOf$(source$)
+    IF IsUrl(source$) THEN
+        DIM k = LEN(source$) - 1
+        DO WHILE k >= 0 ANDALSO MID$(source$, k, 1) <> "/"
+            k = k - 1
+        LOOP
+        RETURN LEFT$(source$, k + 1)
+    ENDIF
+    IF FILE.ISDIR(source$) THEN RETURN source$
+    RETURN PATH.DIRNAME$(source$)
+ENDFUNC
+
+' ── resolving ──────────────────────────────────────────────────
+
+' "NAME range, NAME" or "NAME@range" as a map of module name to range.
+FUNC ParseWanted(spec$)
+    DIM out AS MAP
+    DIM item_list = SPLIT(spec$, ",")
+    DIM k = 0
+    FOR k = 0 TO LEN(item_list) - 1
+        DIM item_raw$ = item_list[k]
+        DIM item$ = TRIM$(REPLACE$(item_raw$, "@", " "))
+        IF item$ <> "" THEN
+            DIM sp = CINT(INSTR(item$, " "))
+            IF sp < 0 THEN
+                out{UCASE$(item$)} = "*"
+            ELSE
+                out{UCASE$(LEFT$(item$, sp))} = TRIM$(MID$(item$, sp + 1, LEN(item$)))
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC AllRanges(ver$, ranges$)
+    DIM pieces = SPLIT(ranges$, ";;")
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM r$ = pieces[k]
+        IF NOT SATISFIES(ver$, r$) THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+' The modules to install for a request against an index: a map of module
+' name to a map with "version", "files" and "requires". Each module gets the
+' newest version in every range asked of it whose own requirements the index
+' can meet.
+EXPORT FUNC RESOLVE(source$, spec$)
+    DIM idx = OPENINDEX(source$)
+    DIM modules = idx{"modules"}
+    DIM wanted = ParseWanted(spec$)
+    DIM constraints AS MAP
+    DIM chosen AS MAP
+    DIM queue = []
+    DIM names = MAP.KEYS(wanted)
+    DIM k = 0
+    DIM j = 0
+    DIM d = 0
+    DIM w = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM wn$ = names[k]
+        DIM wr$ = wanted{wn$}
+        constraints{wn$} = wr$
+        PUSH(queue, wn$)
+    NEXT k
+    DIM qi = 0
+    DO WHILE qi < LEN(queue) ANDALSO qi < 10000
+        DIM mod_name$ = queue[qi]
+        qi = qi + 1
+        IF NOT MAP.EXISTS(modules, mod_name$) THEN THROW "PKG: no module called " + mod_name$ + " in the index"
+        DIM holder = modules{mod_name$}
+        DIM versions = holder{"versions"}
+        DIM vnames = MAP.KEYS(versions)
+        DIM ranges$ = constraints{mod_name$}
+        DIM pick$ = ""
+        FOR j = 0 TO LEN(vnames) - 1
+            DIM v$ = vnames[j]
+            IF AllRanges(v$, ranges$) THEN
+                DIM cand = versions{v$}
+                DIM cand_req = cand{"requires"}
+                DIM deps_ok = TRUE
+                DIM cand_deps = MAP.KEYS(cand_req)
+                FOR d = 0 TO LEN(cand_deps) - 1
+                    DIM need$ = cand_deps[d]
+                    IF MAP.EXISTS(modules, need$) THEN
+                        DIM need_range$ = cand_req{need$}
+                        DIM need_holder = modules{need$}
+                        DIM need_versions = need_holder{"versions"}
+                        DIM need_names = MAP.KEYS(need_versions)
+                        DIM need_ok = FALSE
+                        FOR w = 0 TO LEN(need_names) - 1
+                            DIM nv$ = need_names[w]
+                            IF SATISFIES(nv$, need_range$) THEN need_ok = TRUE
+                        NEXT w
+                        IF NOT need_ok THEN deps_ok = FALSE
+                    ELSE
+                        deps_ok = FALSE
+                    ENDIF
+                NEXT d
+                IF deps_ok THEN
+                    IF pick$ = "" ORELSE COMPARE(v$, pick$) > 0 THEN pick$ = v$
+                ENDIF
+            ENDIF
+        NEXT j
+        IF pick$ = "" THEN THROW "PKG: no version of " + mod_name$ + " matches " + REPLACE$(ranges$, ";;", " and ")
+        DIM before$ = ""
+        IF MAP.EXISTS(chosen, mod_name$) THEN before$ = chosen{mod_name$}
+        IF before$ <> pick$ THEN
+            chosen{mod_name$} = pick$
+            DIM entry = versions{pick$}
+            DIM reqs = entry{"requires"}
+            DIM rnames = MAP.KEYS(reqs)
+            FOR j = 0 TO LEN(rnames) - 1
+                DIM dep$ = rnames[j]
+                DIM dr$ = reqs{dep$}
+                IF MAP.EXISTS(constraints, dep$) THEN
+                    DIM old$ = constraints{dep$}
+                    IF INSTR(";;" + old$ + ";;", ";;" + dr$ + ";;") < 0 THEN constraints{dep$} = old$ + ";;" + dr$
+                ELSE
+                    constraints{dep$} = dr$
+                ENDIF
+                PUSH(queue, dep$)
+            NEXT j
+        ENDIF
+    LOOP
+    DIM out AS MAP
+    DIM picked = MAP.KEYS(chosen)
+    FOR k = 0 TO LEN(picked) - 1
+        DIM pn$ = picked[k]
+        DIM pv$ = chosen{pn$}
+        DIM ph = modules{pn$}
+        DIM pvs = ph{"versions"}
+        DIM pe = pvs{pv$}
+        DIM pfiles = pe{"files"}
+        DIM preq = pe{"requires"}
+        DIM planned = {"version": pv$, "files": pfiles, "requires": preq}
+        out{pn$} = planned
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ── installing ─────────────────────────────────────────────────
+
+' <user home>/.jdbasic/lib, the folder IMPORT searches for installed modules.
+EXPORT FUNC LIBDIR$()
+    DIM home_dir$ = GETENV$("USERPROFILE")
+    IF home_dir$ = "" ANDALSO GETENV$("HOMEDRIVE") <> "" THEN home_dir$ = GETENV$("HOMEDRIVE") + GETENV$("HOMEPATH")
+    IF home_dir$ = "" THEN home_dir$ = GETENV$("HOME")
+    RETURN PATH.JOIN$(PATH.JOIN$(home_dir$, ".jdbasic"), "lib")
+ENDFUNC
+
+SUB MakeDirs(file_path$)
+    DIM p$ = REPLACE$(file_path$, "\", "/")
+    DIM pieces = SPLIT(p$, "/")
+    DIM acc$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM part$ = pieces[k]
+        IF k = 0 THEN
+            acc$ = part$
+        ELSE
+            acc$ = acc$ + "/" + part$
+        ENDIF
+        IF part$ <> "" ANDALSO acc$ <> "" ANDALSO RIGHT$(acc$, 1) <> ":" THEN
+            IF NOT FILE.EXISTS(acc$) THEN MKDIR acc$
+        ENDIF
+    NEXT k
+ENDSUB
+
+FUNC FetchFile$(base$, rel$)
+    IF IsUrl(rel$) THEN RETURN HTTP.GET$(rel$)
+    IF IsUrl(base$) THEN RETURN HTTP.GET$(base$ + rel$)
+    DIM file_path$ = PATH.JOIN$(base$, rel$)
+    IF NOT FILE.EXISTS(file_path$) THEN THROW "PKG: missing file " + file_path$
+    RETURN TXTREADER$(file_path$)
+ENDFUNC
+
+FUNC ReadRegistry(folder$)
+    DIM out AS MAP
+    DIM file_path$ = PATH.JOIN$(folder$, "pkg.json")
+    IF NOT FILE.EXISTS(file_path$) THEN RETURN out
+    DIM parsed = JSON.PARSE$(TXTREADER$(file_path$))
+    DIM names = MAP.KEYS(parsed)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM n$ = names[k]
+        DIM entry = parsed{n$}
+        out{n$} = entry
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A local folder to install from: a git repository is cloned and a ZIP
+' archive unpacked into a temporary folder; anything else is used as it is.
+FUNC LocalSource$(source$)
+    IF IsGit(source$) THEN
+        DIM clone$ = MKTEMP$("pkggit")
+        DIM res = OS.EXEC("git", ["clone", "--depth", "1", "--quiet", source$, clone$])
+        DIM code = res{"EXIT_CODE"}
+        IF code <> 0 THEN
+            DIM why$ = res{"OUTPUT"}
+            THROW "PKG: git clone failed: " + TRIM$(why$)
+        ENDIF
+        DIM in_lib$ = PATH.JOIN$(clone$, "lib")
+        IF FILE.ISDIR(in_lib$) THEN RETURN in_lib$
+        RETURN clone$
+    ENDIF
+    IF IsZip(source$) THEN
+        DIM zip_path$ = source$
+        IF IsUrl(source$) THEN
+            zip_path$ = MKTEMP$("pkgzip") + ".zip"
+            DIM dl = OS.EXEC("curl", ["-sSL", "-o", zip_path$, source$])
+            DIM dl_code = dl{"EXIT_CODE"}
+            IF dl_code <> 0 THEN THROW "PKG: download failed: " + source$
+        ENDIF
+        DIM unpacked$ = MKTEMP$("pkgunzip")
+        MKDIR unpacked$
+        DIM entries = ZIP.READ(zip_path$)
+        DIM names = MAP.KEYS(entries)
+        DIM k = 0
+        FOR k = 0 TO LEN(names) - 1
+            DIM en$ = names[k]
+            IF LCASE$(RIGHT$(en$, 4)) = ".jdb" ORELSE LCASE$(RIGHT$(en$, 10)) = "index.json" THEN
+                DIM target$ = PATH.JOIN$(unpacked$, en$)
+                MakeDirs(PATH.DIRNAME$(target$))
+                DIM data$ = entries{en$}
+                TXTWRITER target$, data$
+            ENDIF
+        NEXT k
+        RETURN unpacked$
+    ENDIF
+    RETURN source$
+ENDFUNC
+
+' Installs modules and everything they require from an index, a folder of
+' modules, a git repository or a ZIP archive, into target$ (the user's
+' ~/.jdbasic/lib when it is ""). spec$ names them with optional ranges,
+' "LLMAPI ^1, TESTKIT"; "" takes every module of the source. Answers a map
+' of module name to the version installed.
+EXPORT FUNC INSTALL(source$, spec$, target$ = "")
+    DIM folder$ = target$
+    IF folder$ = "" THEN folder$ = LIBDIR$()
+    MakeDirs(folder$)
+    DIM local$ = LocalSource$(source$)
+    DIM wanted_spec$ = spec$
+    IF TRIM$(wanted_spec$) = "" THEN
+        DIM all_idx = OPENINDEX(local$)
+        DIM all_mods = all_idx{"modules"}
+        DIM all_names = MAP.KEYS(all_mods)
+        IF LEN(all_names) > 0 THEN wanted_spec$ = JOIN(all_names, ", ")
+    ENDIF
+    DIM plan = RESOLVE(local$, wanted_spec$)
+    DIM base$ = BaseOf$(local$)
+    DIM reg = ReadRegistry(folder$)
+    DIM out AS MAP
+    DIM names = MAP.KEYS(plan)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM mod_name$ = names[k]
+        DIM planned = plan{mod_name$}
+        DIM ver$ = planned{"version"}
+        DIM files = planned{"files"}
+        DIM written = []
+        DIM digest$ = ""
+        FOR j = 0 TO LEN(files) - 1
+            DIM rel$ = files[j]
+            DIM content$ = FetchFile$(base$, rel$)
+            DIM file_name$ = PATH.BASENAME$(REPLACE$(rel$, "\", "/"))
+            TXTWRITER PATH.JOIN$(folder$, file_name$), content$
+            PUSH(written, file_name$)
+            digest$ = digest$ + CODEC.SHA256$(content$)
+        NEXT j
+        IF LEN(files) > 1 THEN digest$ = CODEC.SHA256$(digest$)
+        DIM entry = {"version": ver$, "files": written, "sha256": digest$, "source": source$}
+        reg{mod_name$} = entry
+        out{mod_name$} = ver$
+    NEXT k
+    TXTWRITER PATH.JOIN$(folder$, "pkg.json"), JSON.STRINGIFY$(reg)
+    RETURN out
+ENDFUNC
+
+' The modules installed in target$ (~/.jdbasic/lib when ""), as a map of
+' name to version.
+EXPORT FUNC INSTALLED(target$ = "")
+    DIM folder$ = target$
+    IF folder$ = "" THEN folder$ = LIBDIR$()
+    DIM reg = ReadRegistry(folder$)
+    DIM out AS MAP
+    DIM names = MAP.KEYS(reg)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM n$ = names[k]
+        DIM entry = reg{n$}
+        DIM v$ = entry{"version"}
+        out{n$} = v$
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Removes installed modules by name ("TESTKIT, CLI"); answers how many were
+' removed. Modules others require are not checked.
+EXPORT FUNC REMOVE(spec$, target$ = "")
+    DIM folder$ = target$
+    IF folder$ = "" THEN folder$ = LIBDIR$()
+    DIM reg = ReadRegistry(folder$)
+    DIM gone = ParseWanted(spec$)
+    DIM kept AS MAP
+    DIM removed = 0
+    DIM names = MAP.KEYS(reg)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM n$ = names[k]
+        DIM entry = reg{n$}
+        IF MAP.EXISTS(gone, n$) THEN
+            DIM files = entry{"files"}
+            FOR j = 0 TO LEN(files) - 1
+                DIM f$ = files[j]
+                DIM file_path$ = PATH.JOIN$(folder$, f$)
+                IF FILE.EXISTS(file_path$) THEN KILL file_path$
+            NEXT j
+            removed = removed + 1
+        ELSE
+            kept{n$} = entry
+        ENDIF
+    NEXT k
+    TXTWRITER PATH.JOIN$(folder$, "pkg.json"), JSON.STRINGIFY$(kept)
+    RETURN removed
+ENDFUNC
+
+' Installs the newest versions of everything installed in target$ that the
+' source has; answers the map INSTALL answers.
+EXPORT FUNC UPDATE(source$, target$ = "")
+    DIM current = INSTALLED(target$)
+    DIM names = MAP.KEYS(current)
+    DIM empty AS MAP
+    IF LEN(names) = 0 THEN RETURN empty
+    RETURN INSTALL(source$, JOIN(names, ", "), target$)
+ENDFUNC
+
+' ── projects ───────────────────────────────────────────────────
+
+' Installs what a project needs into its modules folder. The first time the
+' ranges come from jdbasic.json ({"requires": {"LLMAPI": "^1"}}) and the
+' versions chosen are written to jdbasic.lock; once the lock file is there,
+' exactly its versions are installed. Answers the map INSTALL answers.
+EXPORT FUNC SYNC(source$, project_dir$)
+    DIM lock_path$ = PATH.JOIN$(project_dir$, "jdbasic.lock")
+    DIM pieces = []
+    DIM k = 0
+    IF FILE.EXISTS(lock_path$) THEN
+        DIM locked = JSON.PARSE$(TXTREADER$(lock_path$))
+        DIM lnames = MAP.KEYS(locked)
+        FOR k = 0 TO LEN(lnames) - 1
+            DIM ln$ = lnames[k]
+            DIM lentry = locked{ln$}
+            DIM lv$ = lentry{"version"}
+            PUSH(pieces, ln$ + " =" + lv$)
+        NEXT k
+    ELSE
+        DIM manifest_path$ = PATH.JOIN$(project_dir$, "jdbasic.json")
+        IF NOT FILE.EXISTS(manifest_path$) THEN THROW "PKG: " + project_dir$ + " has neither jdbasic.lock nor jdbasic.json"
+        DIM manifest = JSON.PARSE$(TXTREADER$(manifest_path$))
+        DIM req = manifest{"requires"}
+        DIM rnames = MAP.KEYS(req)
+        FOR k = 0 TO LEN(rnames) - 1
+            DIM rn$ = rnames[k]
+            DIM rr$ = req{rn$}
+            PUSH(pieces, rn$ + " " + rr$)
+        NEXT k
+    ENDIF
+    DIM modules_dir$ = PATH.JOIN$(project_dir$, "modules")
+    DIM got AS MAP
+    IF LEN(pieces) = 0 THEN RETURN got
+    got = INSTALL(source$, JOIN(pieces, ", "), modules_dir$)
+    DIM reg = ReadRegistry(modules_dir$)
+    DIM lock AS MAP
+    DIM gnames = MAP.KEYS(got)
+    FOR k = 0 TO LEN(gnames) - 1
+        DIM gn$ = gnames[k]
+        DIM gentry = reg{gn$}
+        DIM gv$ = gentry{"version"}
+        DIM gsha$ = gentry{"sha256"}
+        DIM lock_entry AS MAP
+        lock_entry{"version"} = gv$
+        lock_entry{"sha256"} = gsha$
+        lock{gn$} = lock_entry
+    NEXT k
+    TXTWRITER lock_path$, JSON.STRINGIFY$(lock)
+    RETURN got
+ENDFUNC
