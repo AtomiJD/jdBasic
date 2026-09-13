@@ -1,0 +1,631 @@
+' sched.jdb - jobs on a clock: cron expressions with five fields, ranges,
+' steps, lists, names and L for the last day of the month, the @hourly
+' family, plain intervals and daily times, next and previous run times in
+' a fixed offset, and a job loop that runs what is due through RETRY, logs
+' through LOGGER, never starts a job while it still runs, can hold a lock
+' file, and follows a policy for missed runs. The schedule and croniter
+' ground.
+'
+'   IMPORT SCHED, DT
+'   PRINT DT.ISO$(SCHED.NEXTRUN("30 7 * * mon-fri", DT.NOW(), 2), 2)
+'   SCHED.JOB("report", "daily 06:00", NightlyReport@, {"offset": 2, "attempts": 3})
+'   SCHED.JOB("ping", "every 5 minutes", CheckService@)
+'   DIM runs = SCHED.SERVE(0)
+
+EXPORT MODULE SCHED
+IMPORT DT, RETRY, LOGGER
+
+' Layout of an expanded expression: one "0"/"1" per value of each field.
+DIM MINUTE_AT = 0
+DIM HOUR_AT = 60
+DIM DOM_AT = 84
+DIM MONTH_AT = 116
+DIM DOW_AT = 129
+DIM DOM_STAR_AT = 136
+DIM DOW_STAR_AT = 137
+DIM SEARCH_DAYS = 10235
+DIM MONTH_NAMES$ = "JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC"
+DIM DOW_NAMES$ = "SUNMONTUEWEDTHUFRISAT"
+DIM DIGIT_CHARS$ = "0123456789"
+
+DIM gJobNames = []
+DIM gJobWhens = []
+DIM gFns = []
+DIM gNext = []
+DIM gOffsets = []
+DIM gPolicyNames = []
+DIM gGraces = []
+DIM gAttempts = []
+DIM gDelays = []
+DIM gLockPaths = []
+DIM gLockTtls = []
+DIM gActive = []
+DIM gBusy = []
+DIM gRuns = []
+DIM gFails = []
+DIM gSkips = []
+DIM gLastDue = []
+DIM gLastErrors = []
+DIM gLogger AS MAP
+DIM gHasLogger = FALSE
+DIM gHalt = FALSE
+
+' ------------------------------------------------------------------ numbers
+
+FUNC FloorOf(value_in)
+    DIM q = INT(value_in)
+    IF q > value_in THEN q = q - 1
+    RETURN q
+ENDFUNC
+
+FUNC CeilOf(value_in)
+    RETURN -FloorOf(-value_in)
+ENDFUNC
+
+FUNC AllDigits(text_in$)
+    IF text_in$ = "" THEN RETURN FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(text_in$) - 1
+        IF INSTR(DIGIT_CHARS$, MID$(text_in$, k, 1)) < 0 THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+' ------------------------------------------------------------------ parsing
+
+FUNC ValueOf(tok$, low, high, names$, name_base, field$)
+    DIM up$ = UCASE$(TRIM$(tok$))
+    IF names$ <> "" ANDALSO LEN(up$) = 3 THEN
+        DIM at = INSTR(names$, up$)
+        IF at >= 0 ANDALSO at MOD 3 = 0 THEN RETURN at \ 3 + name_base
+    ENDIF
+    IF NOT AllDigits(up$) THEN THROW "SCHED: " + field$ + " value " + CHR$(34) + tok$ + CHR$(34) + " is not a number or a name"
+    DIM v = CINT(VAL(up$))
+    IF v < low ORELSE v > high THEN THROW "SCHED: " + field$ + " value " + up$ + " is outside " + FORMAT$("{}", low) + "-" + FORMAT$("{}", high)
+    RETURN v
+ENDFUNC
+
+' One mark per value from 0 to high; index 0 of the day field marks L.
+FUNC FieldFlags$(text_in$, low, high, names$, name_base, field$, allow_last)
+    DIM marks = []
+    DIM k = 0
+    FOR k = 0 TO high
+        PUSH(marks, 0)
+    NEXT k
+    DIM pieces = SPLIT(text_in$, ",")
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM part$ = pieces[k]
+        IF part$ = "" THEN THROW "SCHED: an empty list entry in the " + field$ + " field"
+        IF allow_last ANDALSO UCASE$(part$) = "L" THEN
+            marks[0] = 1
+            CONTINUEFOR
+        ENDIF
+        DIM stride = 1
+        DIM base$ = part$
+        DIM slash = INSTR(part$, "/")
+        IF slash >= 0 THEN
+            DIM stride$ = MID$(part$, slash + 1, LEN(part$))
+            IF NOT AllDigits(stride$) THEN THROW "SCHED: step " + CHR$(34) + stride$ + CHR$(34) + " in the " + field$ + " field is not a number"
+            stride = CINT(VAL(stride$))
+            IF stride < 1 THEN THROW "SCHED: a step of 0 in the " + field$ + " field"
+            base$ = LEFT$(part$, slash)
+        ENDIF
+        DIM first_v = low
+        DIM last_v = high
+        IF base$ <> "*" THEN
+            DIM dash = INSTR(base$, "-")
+            IF dash > 0 THEN
+                first_v = ValueOf(LEFT$(base$, dash), low, high, names$, name_base, field$)
+                last_v = ValueOf(MID$(base$, dash + 1, LEN(base$)), low, high, names$, name_base, field$)
+                IF first_v > last_v THEN THROW "SCHED: the range " + base$ + " in the " + field$ + " field runs backwards"
+            ELSE
+                first_v = ValueOf(base$, low, high, names$, name_base, field$)
+                IF slash < 0 THEN last_v = first_v
+            ENDIF
+        ENDIF
+        DIM v = first_v
+        DO WHILE v <= last_v
+            marks[v] = 1
+            v = v + stride
+        LOOP
+    NEXT k
+    DIM out$ = ""
+    FOR k = 0 TO high
+        IF marks[k] = 1 THEN
+            out$ = out$ + "1"
+        ELSE
+            out$ = out$ + "0"
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC AtTime$(time_in$, tail$)
+    DIM tt$ = TRIM$(time_in$)
+    DIM colon = INSTR(tt$, ":")
+    IF colon < 1 THEN THROW "SCHED: a time is written HH:MM, got " + CHR$(34) + tt$ + CHR$(34)
+    DIM hh$ = LEFT$(tt$, colon)
+    DIM mi$ = MID$(tt$, colon + 1, LEN(tt$))
+    IF NOT AllDigits(hh$) ORELSE NOT AllDigits(mi$) THEN THROW "SCHED: a time is written HH:MM, got " + CHR$(34) + tt$ + CHR$(34)
+    DIM hh = CINT(VAL(hh$))
+    DIM mi = CINT(VAL(mi$))
+    IF hh > 23 ORELSE mi > 59 THEN THROW "SCHED: " + tt$ + " is not a time of day"
+    RETURN FORMAT$("{}", mi) + " " + FORMAT$("{}", hh) + " " + tail$
+ENDFUNC
+
+' The five-field form of the named shapes: @hourly and friends, "daily HH:MM",
+' "weekdays HH:MM", "weekends HH:MM", "weekly DAY HH:MM".
+FUNC CronText$(when$)
+    DIM w$ = TRIM$(REPLACE$(when$, CHR$(9), " "))
+    DIM low$ = LCASE$(w$)
+    IF low$ = "@hourly" THEN RETURN "0 * * * *"
+    IF low$ = "@daily" ORELSE low$ = "@midnight" THEN RETURN "0 0 * * *"
+    IF low$ = "@weekly" THEN RETURN "0 0 * * 0"
+    IF low$ = "@monthly" THEN RETURN "0 0 1 * *"
+    IF low$ = "@yearly" ORELSE low$ = "@annually" THEN RETURN "0 0 1 1 *"
+    IF LEFT$(low$, 6) = "daily " THEN RETURN AtTime$(MID$(w$, 6, LEN(w$)), "* * *")
+    IF LEFT$(low$, 9) = "weekdays " THEN RETURN AtTime$(MID$(w$, 9, LEN(w$)), "* * 1-5")
+    IF LEFT$(low$, 9) = "weekends " THEN RETURN AtTime$(MID$(w$, 9, LEN(w$)), "* * 0,6")
+    IF LEFT$(low$, 7) = "weekly " THEN
+        DIM rest$ = TRIM$(MID$(w$, 7, LEN(w$)))
+        DIM gap = INSTR(rest$, " ")
+        IF gap < 1 THEN THROW "SCHED: weekly needs a day and a time, got " + CHR$(34) + when$ + CHR$(34)
+        RETURN AtTime$(MID$(rest$, gap + 1, LEN(rest$)), "* * " + LEFT$(rest$, gap))
+    ENDIF
+    RETURN w$
+ENDFUNC
+
+FUNC Expand$(when$)
+    DIM words = SPLIT(CronText$(when$), " ")
+    DIM fields$ = []
+    DIM k = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM piece$ = words[k]
+        IF piece$ <> "" THEN PUSH(fields$, piece$)
+    NEXT k
+    IF LEN(fields$) <> 5 THEN THROW "SCHED: a cron expression has five fields (minute hour day month weekday), got " + CHR$(34) + when$ + CHR$(34)
+    DIM minute_text$ = fields$[0]
+    DIM hour_text$ = fields$[1]
+    DIM dom_text$ = fields$[2]
+    DIM month_text$ = fields$[3]
+    DIM dow_text$ = fields$[4]
+    DIM out$ = FieldFlags$(minute_text$, 0, 59, "", 0, "minute", FALSE)
+    out$ = out$ + FieldFlags$(hour_text$, 0, 23, "", 0, "hour", FALSE)
+    out$ = out$ + FieldFlags$(dom_text$, 1, 31, "", 0, "day", TRUE)
+    out$ = out$ + FieldFlags$(month_text$, 1, 12, MONTH_NAMES$, 1, "month", FALSE)
+    DIM dow_marks$ = FieldFlags$(dow_text$, 0, 7, DOW_NAMES$, 0, "weekday", FALSE)
+    IF MID$(dow_marks$, 7, 1) = "1" THEN dow_marks$ = "1" + MID$(dow_marks$, 1, 6)
+    out$ = out$ + LEFT$(dow_marks$, 7)
+    IF dom_text$ = "*" THEN
+        out$ = out$ + "1"
+    ELSE
+        out$ = out$ + "0"
+    ENDIF
+    IF dow_text$ = "*" THEN
+        out$ = out$ + "1"
+    ELSE
+        out$ = out$ + "0"
+    ENDIF
+    RETURN out$
+ENDFUNC
+
+' Seconds between runs of "every <length>", 0 for any other shape.
+FUNC EverySeconds(when$)
+    DIM low$ = LCASE$(TRIM$(when$))
+    IF LEFT$(low$, 6) <> "every " THEN RETURN 0
+    DIM spec$ = TRIM$(MID$(low$, 6, LEN(low$)))
+    DIM length_a = DT.ADD(0, spec$)
+    DIM length_b = DT.ADD(3888000, spec$) - 3888000
+    DIM length_c = DT.ADD(44582400, spec$) - 44582400
+    DIM length_d = DT.ADD(68256000, spec$) - 68256000
+    IF length_a <= 0 ORELSE length_a <> length_b ORELSE length_a <> length_c ORELSE length_a <> length_d THEN
+        THROW "SCHED: an interval needs a fixed length from seconds to weeks, got " + CHR$(34) + when$ + CHR$(34)
+    ENDIF
+    RETURN length_a
+ENDFUNC
+
+' ---------------------------------------------------------------- searching
+
+FUNC DayMatches(flags$, yy, mm, dd, wd)
+    DIM dom_ok = MID$(flags$, DOM_AT + dd, 1) = "1"
+    IF NOT dom_ok ANDALSO MID$(flags$, DOM_AT, 1) = "1" ANDALSO dd = DT.DAYS_IN(yy, mm) THEN dom_ok = TRUE
+    DIM dow_ok = MID$(flags$, DOW_AT + wd, 1) = "1"
+    IF MID$(flags$, DOM_STAR_AT, 1) = "1" ORELSE MID$(flags$, DOW_STAR_AT, 1) = "1" THEN RETURN dom_ok ANDALSO dow_ok
+    RETURN dom_ok ORELSE dow_ok
+ENDFUNC
+
+FUNC NextCron(flags$, t, offset)
+    DIM shift_s = offset * 3600.0
+    DIM first_min = FloorOf((t + shift_s) / 60) * 60 + 60
+    DIM day_no = FloorOf(first_min / 86400)
+    DIM rest = first_min - day_no * 86400
+    DIM start_hour = FloorOf(rest / 3600)
+    DIM start_minute = FloorOf((rest - start_hour * 3600) / 60)
+    DIM last_day = day_no + SEARCH_DAYS
+    DO WHILE day_no <= last_day
+        DIM p = DT.PARTS(day_no * 86400)
+        DIM yy = p{"year"}
+        DIM mm = p{"month"}
+        DIM dd = p{"day"}
+        DIM wd = p{"weekday"}
+        IF MID$(flags$, MONTH_AT + mm, 1) <> "1" THEN
+            day_no = day_no + DT.DAYS_IN(yy, mm) - dd + 1
+            start_hour = 0
+            start_minute = 0
+            CONTINUEDO
+        ENDIF
+        IF DayMatches(flags$, yy, mm, dd, wd) THEN
+            DIM hh = 0
+            DIM mi = 0
+            FOR hh = start_hour TO 23
+                IF MID$(flags$, HOUR_AT + hh, 1) = "1" THEN
+                    DIM mi_from = 0
+                    IF hh = start_hour THEN mi_from = start_minute
+                    FOR mi = mi_from TO 59
+                        IF MID$(flags$, MINUTE_AT + mi, 1) = "1" THEN RETURN day_no * 86400 + hh * 3600 + mi * 60 - shift_s
+                    NEXT mi
+                ENDIF
+            NEXT hh
+        ENDIF
+        day_no = day_no + 1
+        start_hour = 0
+        start_minute = 0
+    LOOP
+    THROW "SCHED: no run time within 28 years"
+ENDFUNC
+
+FUNC PrevCron(flags$, t, offset)
+    DIM shift_s = offset * 3600.0
+    DIM last_min = CeilOf((t + shift_s) / 60) * 60 - 60
+    DIM day_no = FloorOf(last_min / 86400)
+    DIM rest = last_min - day_no * 86400
+    DIM start_hour = FloorOf(rest / 3600)
+    DIM start_minute = FloorOf((rest - start_hour * 3600) / 60)
+    DIM first_day = day_no - SEARCH_DAYS
+    DO WHILE day_no >= first_day
+        DIM p = DT.PARTS(day_no * 86400)
+        DIM yy = p{"year"}
+        DIM mm = p{"month"}
+        DIM dd = p{"day"}
+        DIM wd = p{"weekday"}
+        IF MID$(flags$, MONTH_AT + mm, 1) <> "1" THEN
+            day_no = day_no - dd
+            start_hour = 23
+            start_minute = 59
+            CONTINUEDO
+        ENDIF
+        IF DayMatches(flags$, yy, mm, dd, wd) THEN
+            DIM hh = 0
+            DIM mi = 0
+            FOR hh = start_hour TO 0 STEP -1
+                IF MID$(flags$, HOUR_AT + hh, 1) = "1" THEN
+                    DIM mi_from = 59
+                    IF hh = start_hour THEN mi_from = start_minute
+                    FOR mi = mi_from TO 0 STEP -1
+                        IF MID$(flags$, MINUTE_AT + mi, 1) = "1" THEN RETURN day_no * 86400 + hh * 3600 + mi * 60 - shift_s
+                    NEXT mi
+                ENDIF
+            NEXT hh
+        ENDIF
+        day_no = day_no - 1
+        start_hour = 23
+        start_minute = 59
+    LOOP
+    THROW "SCHED: no run time within 28 years"
+ENDFUNC
+
+FUNC NextOf(when$, t, offset)
+    DIM stride = EverySeconds(when$)
+    IF stride > 0 THEN RETURN FloorOf((t + offset * 3600.0) / stride) * stride + stride - offset * 3600.0
+    RETURN NextCron(Expand$(when$), t, offset)
+ENDFUNC
+
+FUNC PrevOf(when$, t, offset)
+    DIM stride = EverySeconds(when$)
+    IF stride > 0 THEN RETURN CeilOf((t + offset * 3600.0) / stride) * stride - stride - offset * 3600.0
+    RETURN PrevCron(Expand$(when$), t, offset)
+ENDFUNC
+
+' ------------------------------------------------------------ run times
+
+' The first run time strictly after t, in seconds since the epoch; offset
+' names the wall clock (hours east of UTC) the expression is read in.
+EXPORT FUNC NEXTRUN(when$, t, offset = 0)
+    RETURN NextOf(when$, t, offset)
+ENDFUNC
+
+' The last run time strictly before t.
+EXPORT FUNC PREVRUN(when$, t, offset = 0)
+    RETURN PrevOf(when$, t, offset)
+ENDFUNC
+
+EXPORT FUNC UPCOMING(when$, t, n, offset = 0)
+    DIM out = []
+    DIM stride = EverySeconds(when$)
+    DIM flags$ = ""
+    IF stride = 0 THEN flags$ = Expand$(when$)
+    DIM at = t
+    DIM k = 0
+    FOR k = 1 TO n
+        IF stride > 0 THEN
+            at = FloorOf((at + offset * 3600.0) / stride) * stride + stride - offset * 3600.0
+        ELSE
+            at = NextCron(flags$, at, offset)
+        ENDIF
+        PUSH(out, at)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' TRUE when t falls in a run minute (a run second for an interval).
+EXPORT FUNC MATCHES(when$, t, offset = 0)
+    DIM stride = EverySeconds(when$)
+    IF stride > 0 THEN
+        DIM whole = FloorOf(t)
+        RETURN NextOf(when$, whole - 1, offset) = whole
+    ENDIF
+    DIM shift_s = offset * 3600.0
+    DIM minute_start = FloorOf((t + shift_s) / 60) * 60 - shift_s
+    RETURN NextCron(Expand$(when$), minute_start - 1, offset) = minute_start
+ENDFUNC
+
+EXPORT FUNC PROBLEM$(when$)
+    DIM msg$ = ""
+    TRY
+        DIM stride = EverySeconds(when$)
+        IF stride = 0 THEN
+            DIM flags$ = Expand$(when$)
+        ENDIF
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+EXPORT FUNC VALID(when$)
+    RETURN PROBLEM$(when$) = ""
+ENDFUNC
+
+' ---------------------------------------------------------------- job loop
+
+FUNC SlotOf(name$)
+    DIM k = 0
+    FOR k = 0 TO LEN(gJobNames) - 1
+        IF gActive[k] = 1 ANDALSO gJobNames[k] = name$ THEN RETURN k
+    NEXT k
+    RETURN -1
+ENDFUNC
+
+FUNC KnownSlot(name$)
+    DIM k = SlotOf(name$)
+    IF k < 0 THEN THROW "SCHED: no job named " + name$
+    RETURN k
+ENDFUNC
+
+SUB LogNote(lvl$, message$, name$, due_at, tries, error_text$)
+    IF NOT gHasLogger THEN RETURN
+    DIM fields AS MAP
+    fields{"job"} = name$
+    fields{"due"} = DT.ISO$(due_at)
+    IF tries > 0 THEN fields{"attempts"} = tries
+    IF error_text$ <> "" THEN fields{"error"} = error_text$
+    LOGGER.LOG(gLogger, lvl$, message$, fields)
+ENDSUB
+
+' Adds a job, or replaces the job of that name. fn is called with the run
+' time it is due for. Options: offset (hours, 0), policy ("once", "all",
+' "skip"), grace (seconds a "skip" run may be late, 60), attempts (1),
+' delay (ms before the first retry, 1000), lock (a file path), lock_ttl
+' (seconds after which a lock counts as stale, 3600), start (the first run
+' is the first run time after it, default now).
+EXPORT SUB JOB(name$, when$, fn, opts = 0)
+    DIM offset = 0.0
+    DIM policy$ = "once"
+    DIM grace = 60.0
+    DIM attempts = 1
+    DIM delay_ms = 1000.0
+    DIM lock$ = ""
+    DIM lock_ttl = 3600.0
+    DIM start_at = DT.NOW()
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "offset") THEN offset = opts{"offset"}
+        IF MAP.EXISTS(opts, "policy") THEN policy$ = opts{"policy"}
+        IF MAP.EXISTS(opts, "grace") THEN grace = opts{"grace"}
+        IF MAP.EXISTS(opts, "attempts") THEN attempts = opts{"attempts"}
+        IF MAP.EXISTS(opts, "delay") THEN delay_ms = opts{"delay"}
+        IF MAP.EXISTS(opts, "lock") THEN lock$ = opts{"lock"}
+        IF MAP.EXISTS(opts, "lock_ttl") THEN lock_ttl = opts{"lock_ttl"}
+        IF MAP.EXISTS(opts, "start") THEN start_at = opts{"start"}
+    ENDIF
+    policy$ = LCASE$(policy$)
+    IF policy$ <> "once" ANDALSO policy$ <> "all" ANDALSO policy$ <> "skip" THEN THROW "SCHED: policy is once, all or skip, got " + policy$
+    DIM first_due = NextOf(when$, start_at, offset)
+    DIM old = SlotOf(name$)
+    IF old >= 0 THEN gActive[old] = 0
+    PUSH(gJobNames, name$)
+    PUSH(gJobWhens, when$)
+    PUSH(gFns, fn)
+    PUSH(gNext, first_due)
+    PUSH(gOffsets, offset)
+    PUSH(gPolicyNames, policy$)
+    PUSH(gGraces, grace)
+    PUSH(gAttempts, attempts)
+    PUSH(gDelays, delay_ms)
+    PUSH(gLockPaths, lock$)
+    PUSH(gLockTtls, lock_ttl)
+    PUSH(gActive, 1)
+    PUSH(gBusy, 0)
+    PUSH(gRuns, 0)
+    PUSH(gFails, 0)
+    PUSH(gSkips, 0)
+    PUSH(gLastDue, 0)
+    PUSH(gLastErrors, "")
+ENDSUB
+
+EXPORT FUNC CANCEL(name$)
+    DIM k = SlotOf(name$)
+    IF k < 0 THEN RETURN FALSE
+    gActive[k] = 0
+    RETURN TRUE
+ENDFUNC
+
+EXPORT SUB CANCELALL()
+    DIM k = 0
+    FOR k = 0 TO LEN(gActive) - 1
+        gActive[k] = 0
+    NEXT k
+ENDSUB
+
+EXPORT FUNC JOBS()
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(gJobNames) - 1
+        IF gActive[k] = 1 THEN
+            DIM name$ = gJobNames[k]
+            PUSH(out, name$)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The next run time of a job.
+EXPORT FUNC DUE(name$)
+    RETURN gNext[KnownSlot(name$)]
+ENDFUNC
+
+' runs, fails, skips, next, last_due, last_error, when and policy of a job.
+EXPORT FUNC STATE(name$)
+    DIM k = KnownSlot(name$)
+    DIM out AS MAP
+    DIM when$ = gJobWhens[k]
+    DIM policy$ = gPolicyNames[k]
+    DIM last_error$ = gLastErrors[k]
+    out{"name"} = name$
+    out{"when"} = when$
+    out{"policy"} = policy$
+    out{"next"} = gNext[k]
+    out{"runs"} = gRuns[k]
+    out{"fails"} = gFails[k]
+    out{"skips"} = gSkips[k]
+    out{"last_due"} = gLastDue[k]
+    out{"last_error"} = last_error$
+    RETURN out
+ENDFUNC
+
+EXPORT SUB LOGTO(lg)
+    gLogger = lg
+    gHasLogger = TRUE
+ENDSUB
+
+' Ends SERVE after the runs in progress.
+EXPORT SUB HALT()
+    gHalt = TRUE
+ENDSUB
+
+' One run through RETRY, under the job's lock file when it has one. Answers
+' 0 when a live lock kept it from starting.
+FUNC RunOnce(k, due_at)
+    DIM name$ = gJobNames[k]
+    DIM lock$ = gLockPaths[k]
+    IF lock$ <> "" THEN
+        IF FILE.EXISTS(lock$) THEN
+            DIM held$ = TXTREADER$(lock$)
+            IF DT.NOW() - VAL(held$) < gLockTtls[k] THEN
+                gSkips[k] = gSkips[k] + 1
+                LogNote("WARN", "job skipped, lock held", name$, due_at, 0, "")
+                RETURN 0
+            ENDIF
+        ENDIF
+        TXTWRITER lock$, FORMAT$("{}", DT.NOW())
+    ENDIF
+    DIM retry_opts AS MAP
+    retry_opts{"attempts"} = gAttempts[k]
+    retry_opts{"delay"} = gDelays[k]
+    gBusy[k] = 1
+    DIM fn = gFns[k]
+    DIM rep = RETRY.ATTEMPT(fn, due_at, retry_opts)
+    gBusy[k] = 0
+    IF lock$ <> "" ANDALSO FILE.EXISTS(lock$) THEN KILL lock$
+    gRuns[k] = gRuns[k] + 1
+    gLastDue[k] = due_at
+    DIM tries = rep{"attempts"}
+    IF rep{"ok"} THEN
+        gLastErrors[k] = ""
+        LogNote("INFO", "job ran", name$, due_at, tries, "")
+    ELSE
+        DIM reason$ = rep{"error"}
+        gFails[k] = gFails[k] + 1
+        gLastErrors[k] = reason$
+        LogNote("ERROR", "job failed", name$, due_at, tries, reason$)
+    ENDIF
+    RETURN 1
+ENDFUNC
+
+FUNC RunJob(k, now_t)
+    DIM when$ = gJobWhens[k]
+    DIM policy$ = gPolicyNames[k]
+    DIM offset = gOffsets[k]
+    DIM due_at = gNext[k]
+    DIM ran = 0
+    IF policy$ = "all" THEN
+        DIM guard = 0
+        DO WHILE due_at <= now_t ANDALSO guard < 1000 ANDALSO gActive[k] = 1
+            ran = ran + RunOnce(k, due_at)
+            due_at = NextOf(when$, due_at, offset)
+            guard = guard + 1
+        LOOP
+        IF due_at <= now_t THEN due_at = NextOf(when$, now_t, offset)
+    ELSE
+        DIM latest = PrevOf(when$, FloorOf(now_t) + 1, offset)
+        IF latest < due_at THEN latest = due_at
+        IF policy$ = "skip" ANDALSO now_t - latest > gGraces[k] THEN
+            gSkips[k] = gSkips[k] + 1
+            LogNote("WARN", "job skipped, run missed", gJobNames[k], latest, 0, "")
+        ELSE
+            IF latest > due_at THEN gSkips[k] = gSkips[k] + 1
+            ran = RunOnce(k, latest)
+        ENDIF
+        due_at = NextOf(when$, now_t, offset)
+    ENDIF
+    gNext[k] = due_at
+    RETURN ran
+ENDFUNC
+
+FUNC RunAllDue(now_t)
+    DIM ran = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(gJobNames) - 1
+        IF gActive[k] = 1 ANDALSO gBusy[k] = 0 ANDALSO gNext[k] <= now_t THEN ran = ran + RunJob(k, now_t)
+    NEXT k
+    RETURN ran
+ENDFUNC
+
+' Runs every job that is due at the instant now and answers how many runs
+' started. A job that is still running is left alone.
+EXPORT FUNC RUNDUE(now_t)
+    RETURN RunAllDue(now_t)
+ENDFUNC
+
+' Runs jobs on the real clock until end_at (0 for no end) or HALT, sleeping
+' until the next job is due. Answers the runs started.
+EXPORT FUNC SERVE(end_at)
+    gHalt = FALSE
+    DIM total = 0
+    DO
+        DIM now_t = DT.NOW()
+        total = total + RunAllDue(now_t)
+        IF gHalt THEN EXITDO
+        IF end_at > 0 ANDALSO now_t >= end_at THEN EXITDO
+        DIM wake = now_t + 60
+        DIM k = 0
+        FOR k = 0 TO LEN(gJobNames) - 1
+            IF gActive[k] = 1 ANDALSO gNext[k] < wake THEN wake = gNext[k]
+        NEXT k
+        IF end_at > 0 ANDALSO end_at < wake THEN wake = end_at
+        DIM wait_ms = (wake - DT.NOW()) * 1000
+        IF wait_ms < 10 THEN wait_ms = 10
+        IF wait_ms > 60000 THEN wait_ms = 60000
+        SLEEP wait_ms
+    LOOP
+    RETURN total
+ENDFUNC

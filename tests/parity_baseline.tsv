@@ -82,6 +82,7 @@ tests/jdlibs/pdfgen_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/pkg_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/req_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/retry_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/sched_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/schema_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/stats_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/svg_selftest.jdb	PASS	PASS	OK

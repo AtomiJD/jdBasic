@@ -1456,6 +1456,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `ICAL` | calendars: .ics read and written, recurrence rules expanded into occurrences, named zones with summer time |
 | `OAUTH` | OAuth 2 clients: client credentials, code flow with PKCE, device code, refresh; REQ sessions that refresh; Google and Microsoft |
 | `DB` | SQLite through a query builder with bound values: rows as maps, insert, upsert, update, delete from maps, tables from rows, migrations |
+| `SCHED` | cron expressions and intervals: next and previous run times; a job loop with retries, logging, a lock file and missed-run policies |
 | `PKG` | modules installed from an index, git or ZIP into `~/.jdbasic/lib` with their requirements by semver range; list, remove, update, lock files |
 
 ```basic

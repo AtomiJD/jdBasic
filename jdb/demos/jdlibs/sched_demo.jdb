@@ -1,0 +1,68 @@
+' SCHED demo: run times of cron expressions and named shapes, and a job
+' loop driven through a made-up morning, including a laptop that sleeps
+' through an hour and a service that fails twice before it answers.
+
+IMPORT SCHED, DT
+
+DIM gBusyAnswers = 2
+
+FUNC Ping(due_at)
+    PRINT "  "; DT.FMT$(due_at, "%H:%M"); "  ping"
+    RETURN 1
+ENDFUNC
+
+FUNC Digest(due_at)
+    PRINT "  "; DT.FMT$(due_at, "%H:%M"); "  digest mailed"
+    RETURN 1
+ENDFUNC
+
+FUNC Backup(due_at)
+    IF gBusyAnswers > 0 THEN
+        gBusyAnswers = gBusyAnswers - 1
+        PRINT "  "; DT.FMT$(due_at, "%H:%M"); "  backup target busy"
+        THROW "backup target busy"
+    ENDIF
+    PRINT "  "; DT.FMT$(due_at, "%H:%M"); "  backup done"
+    RETURN 1
+ENDFUNC
+
+DIM now_t = DT.PARSE("2026-09-18T08:00:00+02:00")
+PRINT "From "; DT.ISO$(now_t, 2); ", Berlin summer time:"
+DIM shapes = ["30 7 * * mon-fri", "0 */6 * * *", "0 18 L * *", "@weekly", "weekly fri 16:00", "every 45 minutes"]
+DIM k = 0
+FOR k = 0 TO LEN(shapes) - 1
+    DIM shape$ = shapes[k]
+    DIM coming = SCHED.UPCOMING(shape$, now_t, 3, 2)
+    DIM line_text$ = LEFT$(shape$ + "                    ", 20)
+    DIM m = 0
+    FOR m = 0 TO 2
+        line_text$ = line_text$ + "  " + DT.FMT$(coming[m], "%a %d.%m. %H:%M", 2)
+    NEXT m
+    PRINT "  "; line_text$
+NEXT k
+PRINT "  last run of 30 7 * * mon-fri: "; DT.FMT$(SCHED.PREVRUN("30 7 * * mon-fri", now_t, 2), "%a %d.%m. %H:%M", 2)
+PRINT "  0 25 * * * is refused: "; SCHED.PROBLEM$("0 25 * * *")
+PRINT
+
+DIM t0 = DT.PARSE("2026-09-18T08:00:00Z")
+SCHED.JOB("ping", "every 30 minutes", Ping@, {"start": t0})
+SCHED.JOB("digest", "0 10 * * *", Digest@, {"start": t0})
+SCHED.JOB("backup", "15 * * * *", Backup@, {"start": t0, "attempts": 3, "delay": 1, "policy": "skip", "grace": 120})
+PRINT "A morning on a made-up clock (UTC), checked once a minute:"
+DIM clock = t0
+DO WHILE clock <= t0 + 4 * 3600
+    IF clock = t0 + 2 * 3600 + 5 * 60 THEN
+        PRINT "  10:05  laptop sleeps until 11:40"
+        clock = t0 + 3 * 3600 + 40 * 60
+    ENDIF
+    DIM ran = SCHED.RUNDUE(clock)
+    clock = clock + 60
+LOOP
+PRINT
+DIM names = SCHED.JOBS()
+FOR k = 0 TO LEN(names) - 1
+    DIM job_name$ = names[k]
+    DIM info = SCHED.STATE(job_name$)
+    PRINT "  "; LEFT$(job_name$ + "        ", 8); info{"runs"}; " runs, "; info{"skips"}; " skips, next "; DT.FMT$(info{"next"}, "%a %H:%M")
+NEXT k
+SCHED.CANCELALL()

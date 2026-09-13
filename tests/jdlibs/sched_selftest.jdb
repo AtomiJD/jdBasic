@@ -1,0 +1,261 @@
+' SCHED: next and previous run times of cron expressions against croniter
+' 6.2.4 (tests/jdlibs/fixtures/sched_croniter.tsv: five run times after
+' and three before each start, in UTC and in fixed offsets), the named
+' shapes and intervals, refused expressions, and the job loop on a made-up
+' clock: missed runs under each policy, retries, a job that never starts
+' twice, a lock file, logging, and SERVE on the real clock.
+
+IMPORT TESTKIT, SCHED, DT, LOGGER
+
+DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(fixture_dir$ + "sched_croniter.tsv") THEN fixture_dir$ = "fixtures/"
+
+DIM gCalls = []
+DIM gAllCalls = []
+DIM gLateCalls = []
+DIM gFlakyTries = 0
+DIM gNestedRuns = 0
+DIM gNestedInner = -1
+DIM gQuickRuns = 0
+
+FUNC OnTick(due)
+    PUSH(gCalls, due)
+    RETURN 1
+ENDFUNC
+
+FUNC TickAll(due)
+    PUSH(gAllCalls, due)
+    RETURN 1
+ENDFUNC
+
+FUNC TickLate(due)
+    PUSH(gLateCalls, due)
+    RETURN 1
+ENDFUNC
+
+FUNC Flaky(due)
+    gFlakyTries = gFlakyTries + 1
+    IF gFlakyTries < 3 THEN THROW "flaky service"
+    RETURN 1
+ENDFUNC
+
+FUNC Broken(due)
+    THROW "broken service"
+    RETURN 0
+ENDFUNC
+
+FUNC Nested(due)
+    gNestedRuns = gNestedRuns + 1
+    gNestedInner = CINT(SCHED.RUNDUE(due + 3600))
+    RETURN 1
+ENDFUNC
+
+FUNC Quick(due)
+    gQuickRuns = gQuickRuns + 1
+    IF gQuickRuns >= 2 THEN SCHED.HALT()
+    RETURN 1
+ENDFUNC
+
+FUNC NeverRuns(unused_arg)
+    RETURN SCHED.NEXTRUN("0 0 30 2 *", 0)
+ENDFUNC
+
+FUNC BadNext(unused_arg)
+    RETURN SCHED.NEXTRUN("61 * * * *", 0)
+ENDFUNC
+
+FUNC UnknownDue(unused_arg)
+    RETURN SCHED.DUE("nobody")
+ENDFUNC
+
+FUNC CsvNums(text_in$)
+    DIM out = []
+    DIM pieces = SPLIT(text_in$, ",")
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM piece$ = pieces[k]
+        PUSH(out, VAL(piece$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ------------------------------------------------------- croniter reference
+DIM lines = SPLIT(TXTREADER$(fixture_dir$ + "sched_croniter.tsv"), CHR$(10))
+DIM exprs$ = []
+DIM bad_counts = []
+DIM first_bad$ = []
+DIM rows_checked = 0
+DIM i = 0
+DIM j = 0
+FOR i = 0 TO LEN(lines) - 1
+    DIM row_text$ = lines[i]
+    IF row_text$ = "" ORELSE LEFT$(row_text$, 1) = "#" THEN CONTINUEFOR
+    DIM cells = SPLIT(row_text$, CHR$(9))
+    DIM expr$ = cells[0]
+    DIM start_text$ = cells[1]
+    DIM offset_text$ = cells[2]
+    DIM next_text$ = cells[3]
+    DIM prev_text$ = cells[4]
+    DIM start_t = VAL(start_text$)
+    DIM offset = VAL(offset_text$)
+    DIM want_next = CsvNums(next_text$)
+    DIM want_prev = CsvNums(prev_text$)
+    DIM slot = -1
+    FOR j = 0 TO LEN(exprs$) - 1
+        IF exprs$[j] = expr$ THEN slot = j
+    NEXT j
+    IF slot < 0 THEN
+        PUSH(exprs$, expr$)
+        PUSH(bad_counts, 0)
+        PUSH(first_bad$, "")
+        slot = LEN(exprs$) - 1
+    ENDIF
+    DIM at = start_t
+    DIM got$ = ""
+    DIM wrong = FALSE
+    FOR j = 0 TO 4
+        at = SCHED.NEXTRUN(expr$, at, offset)
+        got$ = got$ + FORMAT$("{}", at) + " "
+        IF at <> want_next[j] THEN wrong = TRUE
+    NEXT j
+    at = start_t
+    FOR j = 0 TO 2
+        at = SCHED.PREVRUN(expr$, at, offset)
+        got$ = got$ + FORMAT$("{}", at) + " "
+        IF at <> want_prev[j] THEN wrong = TRUE
+    NEXT j
+    IF wrong THEN
+        bad_counts[slot] = bad_counts[slot] + 1
+        IF first_bad$[slot] = "" THEN first_bad$[slot] = "start " + start_text$ + " offset " + offset_text$ + " got " + got$ + "want " + next_text$ + " / " + prev_text$
+    ENDIF
+    rows_checked = rows_checked + 1
+NEXT i
+TESTKIT.EQ(rows_checked, 245, "the croniter table has every row")
+FOR j = 0 TO LEN(exprs$) - 1
+    DIM expr_label$ = exprs$[j]
+    DIM bad_note$ = first_bad$[j]
+    IF bad_counts[j] = 0 THEN
+        TESTKIT.ISTRUE(TRUE, "next and previous runs of " + expr_label$ + " match croniter")
+    ELSE
+        TESTKIT.ISTRUE(FALSE, "next and previous runs of " + expr_label$ + " match croniter: " + bad_note$)
+    ENDIF
+NEXT j
+
+' ------------------------------------------------------------ named shapes
+DIM t_fri = DT.PARSE("2026-09-18T08:00:00+02:00")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("daily 07:30", t_fri, 2), 2), "2026-09-19T07:30:00+02:00", "daily 07:30 in UTC+2")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("weekdays 07:30", t_fri, 2), 2), "2026-09-21T07:30:00+02:00", "weekdays skips the weekend")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("weekends 10:00", t_fri, 2), 2), "2026-09-19T10:00:00+02:00", "weekends")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("weekly sun 18:45", t_fri, 2), 2), "2026-09-20T18:45:00+02:00", "weekly with a day name")
+TESTKIT.EQ(DT.ISO$(SCHED.PREVRUN("daily 07:30", t_fri, 2), 2), "2026-09-18T07:30:00+02:00", "PREVRUN of a daily time")
+DIM t_odd = DT.PARSE("2026-09-18T10:07:13Z")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("every 15 minutes", t_odd)), "2026-09-18T10:15:00Z", "every 15 minutes on the quarter hours")
+TESTKIT.EQ(DT.ISO$(SCHED.PREVRUN("every 15 minutes", t_odd)), "2026-09-18T10:00:00Z", "and back")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("every 90s", t_odd)), "2026-09-18T10:07:30Z", "every 90s")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("every 6 hours", t_odd, 2), 2), "2026-09-18T18:00:00+02:00", "every 6 hours from midnight of the offset")
+DIM t_quarter = DT.PARSE("2026-09-18T10:15:00Z")
+TESTKIT.EQ(DT.ISO$(SCHED.NEXTRUN("every 15 minutes", t_quarter)), "2026-09-18T10:30:00Z", "a run time itself is not the next run")
+DIM coming = SCHED.UPCOMING("0 9 * * mon", t_fri, 3, 2)
+TESTKIT.EQ(LEN(coming), 3, "UPCOMING answers n run times")
+TESTKIT.EQ(DT.ISO$(coming[2], 2), "2026-10-05T09:00:00+02:00", "the third Monday")
+TESTKIT.ISTRUE(SCHED.MATCHES("*/15 9-17 * * 1-5", DT.PARSE("2026-09-18T10:30:42Z")), "MATCHES a run minute")
+TESTKIT.ISFALSE(SCHED.MATCHES("*/15 9-17 * * 1-5", DT.PARSE("2026-09-18T10:31:00Z")), "and not the minute after")
+TESTKIT.ISFALSE(SCHED.MATCHES("*/15 9-17 * * 1-5", DT.PARSE("2026-09-19T10:30:00Z")), "nor on Saturday")
+TESTKIT.ISTRUE(SCHED.MATCHES("every 2 hours", DT.PARSE("2026-09-18T10:00:00Z")), "MATCHES an interval at its second")
+
+' ----------------------------------------------------------------- refused
+TESTKIT.ISTRUE(SCHED.VALID("0 0 L * *"), "VALID for L")
+TESTKIT.ISFALSE(SCHED.VALID("61 * * * *"), "a minute of 61 is refused")
+TESTKIT.ISFALSE(SCHED.VALID("* * * *"), "four fields are refused")
+TESTKIT.ISFALSE(SCHED.VALID("0 0 * * funday"), "an unknown day name is refused")
+TESTKIT.ISFALSE(SCHED.VALID("5-2 * * * *"), "a backwards range is refused")
+TESTKIT.ISFALSE(SCHED.VALID("*/0 * * * *"), "a step of 0 is refused")
+TESTKIT.ISFALSE(SCHED.VALID("every 1 month"), "an interval of a month is refused")
+TESTKIT.ISFALSE(SCHED.VALID("daily 25:00"), "a time of 25:00 is refused")
+TESTKIT.ISTRUE(INSTR(SCHED.PROBLEM$("0 99 * * *"), "hour") >= 0, "PROBLEM$ names the field")
+TESTKIT.EQ(SCHED.PROBLEM$("@weekly"), "", "and is empty for a good expression")
+TESTKIT.THROWS(BadNext@, 0, "NEXTRUN throws for a bad expression")
+TESTKIT.THROWS(NeverRuns@, 0, "and for a date that never comes")
+
+' ---------------------------------------------------------------- job loop
+DIM t0 = DT.PARSE("2026-09-14T08:00:00Z")
+DIM log_file$ = MKTEMP$("schedlog") + ".jsonl"
+DIM lg = LOGGER.NEW("sched")
+LOGGER.TO_JSONL(lg, log_file$)
+SCHED.LOGTO(lg)
+
+SCHED.JOB("tick", "every 5 minutes", OnTick@, {"start": t0})
+TESTKIT.EQ(SCHED.DUE("tick"), t0 + 300, "a job is due at its first run time after start")
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 299), 0, "nothing runs early")
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 300), 1, "RUNDUE runs a due job")
+TESTKIT.EQARRAY(gCalls, [t0 + 300], "with its run time")
+TESTKIT.EQ(SCHED.DUE("tick"), t0 + 600, "and moves it on")
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 1510), 1, "policy once: four missed runs make one run")
+TESTKIT.EQARRAY(gCalls, [t0 + 300, t0 + 1500], "for the latest run time")
+TESTKIT.EQ(SCHED.DUE("tick"), t0 + 1800, "then the next one after now")
+DIM tick_state = SCHED.STATE("tick")
+TESTKIT.EQ(tick_state{"runs"}, 2, "STATE counts the runs")
+TESTKIT.EQ(tick_state{"skips"}, 1, "and the time runs were collapsed")
+SCHED.CANCELALL()
+
+SCHED.JOB("all", "every 5 minutes", TickAll@, {"start": t0, "policy": "all"})
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 1200), 4, "policy all: every missed run runs")
+TESTKIT.EQARRAY(gAllCalls, [t0 + 300, t0 + 600, t0 + 900, t0 + 1200], "oldest first")
+SCHED.JOB("late", "every 10 minutes", TickLate@, {"start": t0, "policy": "skip", "grace": 30})
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 650), 0, "policy skip: a run later than the grace is dropped")
+TESTKIT.EQ(SCHED.DUE("late"), t0 + 1200, "and the job waits for the next one")
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 1220), 1, "a run within the grace runs")
+TESTKIT.EQARRAY(gLateCalls, [t0 + 1200], "once")
+DIM late_state = SCHED.STATE("late")
+TESTKIT.EQ(late_state{"skips"}, 1, "STATE counts the dropped run")
+SCHED.CANCELALL()
+TESTKIT.EQ(LEN(SCHED.JOBS()), 0, "CANCELALL leaves no jobs")
+
+SCHED.JOB("flaky", "every 1 minute", Flaky@, {"start": t0, "attempts": 3, "delay": 1})
+SCHED.JOB("broken", "@hourly", Broken@, {"start": t0, "attempts": 2, "delay": 1})
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 3600), 2, "two jobs due")
+DIM flaky_state = SCHED.STATE("flaky")
+TESTKIT.EQ(gFlakyTries, 3, "RETRY tries a failing job again")
+TESTKIT.EQ(flaky_state{"fails"}, 0, "and a job that succeeds in the end is no failure")
+DIM broken_state = SCHED.STATE("broken")
+TESTKIT.EQ(broken_state{"fails"}, 1, "a job failing every attempt counts as failed")
+TESTKIT.EQ(broken_state{"last_error"}, "broken service", "with its error")
+TESTKIT.EQ(broken_state{"last_due"}, t0 + 3600, "and its run time")
+TESTKIT.EQARRAY(SCHED.JOBS(), ["flaky", "broken"], "JOBS names the jobs")
+TESTKIT.ISTRUE(SCHED.CANCEL("broken"), "CANCEL removes a job")
+TESTKIT.ISFALSE(SCHED.CANCEL("broken"), "and answers FALSE the second time")
+TESTKIT.THROWS(UnknownDue@, 0, "DUE throws for an unknown job")
+SCHED.CANCELALL()
+
+SCHED.JOB("nested", "every 1 minute", Nested@, {"start": t0})
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 60), 1, "a job that calls RUNDUE while it runs")
+TESTKIT.EQ(gNestedRuns, 1, "is not started a second time")
+TESTKIT.EQ(gNestedInner, 0, "the inner call runs nothing")
+SCHED.CANCELALL()
+
+DIM lock_file$ = MKTEMP$("schedlock") + ".lock"
+gCalls = []
+SCHED.JOB("locked", "every 1 minute", OnTick@, {"start": t0, "lock": lock_file$, "lock_ttl": 600})
+TXTWRITER lock_file$, FORMAT$("{}", DT.NOW())
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 60), 0, "a live lock file keeps a job from starting")
+DIM locked_state = SCHED.STATE("locked")
+TESTKIT.EQ(locked_state{"skips"}, 1, "and counts as a skip")
+TXTWRITER lock_file$, "0"
+TESTKIT.EQ(SCHED.RUNDUE(t0 + 120), 1, "a stale lock is taken over")
+TESTKIT.ISFALSE(FILE.EXISTS(lock_file$), "and removed after the run")
+SCHED.CANCELALL()
+
+DIM log_text$ = TXTREADER$(log_file$)
+TESTKIT.ISTRUE(INSTR(log_text$, "job ran") >= 0, "LOGGER gets the runs")
+TESTKIT.ISTRUE(INSTR(log_text$, "broken service") >= 0, "and the failures with their error")
+TESTKIT.ISTRUE(INSTR(log_text$, "lock held") >= 0, "and the skips")
+KILL log_file$
+
+DIM serve_start = TICK()
+SCHED.JOB("quick", "every 1 second", Quick@)
+DIM served = SCHED.SERVE(DT.NOW() + 10)
+TESTKIT.EQ(served, 2, "SERVE runs jobs on the real clock until HALT")
+TESTKIT.ISTRUE(TICK() - serve_start < 5000, "and stops right after it")
+SCHED.CANCELALL()
+
+TESTKIT.REPORT()
