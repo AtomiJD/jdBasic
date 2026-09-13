@@ -129,9 +129,32 @@ EXPORT FUNC STRIP$(text$)
     RETURN REGEX.REPLACE(ESC$ + "\[[0-9;]*[A-Za-z]", text$, "")
 ENDFUNC
 
-' The number of visible characters.
+' The number of visible characters: escapes left out, and a UTF-8
+' character counted once however many bytes it takes.
 EXPORT FUNC VISIBLE(text$)
-    RETURN LEN(STRIP$(text$))
+    DIM plain$ = STRIP$(text$)
+    DIM n = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(plain$) - 1
+        DIM code = BYTEAT(plain$, i)
+        IF code < 128 ORELSE code >= 192 THEN n = n + 1
+    NEXT i
+    RETURN n
+ENDFUNC
+
+' The first count characters of a plain text, whole UTF-8 characters only.
+FUNC LeftChars$(text$, count)
+    DIM seen = 0
+    DIM i = 0
+    DO WHILE i < LEN(text$)
+        DIM code = BYTEAT(text$, i)
+        IF code < 128 ORELSE code >= 192 THEN
+            IF seen = count THEN EXITDO
+            seen = seen + 1
+        ENDIF
+        i = i + 1
+    LOOP
+    RETURN LEFT$(text$, i)
 ENDFUNC
 
 ' Pads or cuts to a width, counting visible characters only.
@@ -139,8 +162,8 @@ EXPORT FUNC FIT$(text$, width, align$ = "l")
     DIM shown = VISIBLE(text$)
     IF shown > width THEN
         DIM plain$ = STRIP$(text$)
-        IF width <= 1 THEN RETURN LEFT$(plain$, width)
-        RETURN LEFT$(plain$, width - 1) + "~"
+        IF width <= 1 THEN RETURN LeftChars$(plain$, width)
+        RETURN LeftChars$(plain$, width - 1) + "~"
     ENDIF
     DIM gap = width - shown
     IF align$ = "r" THEN RETURN SPACE$(gap) + text$
@@ -366,9 +389,9 @@ EXPORT FUNC RULE$(title$ = "", fill$ = "-")
     DIM w = WIDTH()
     IF LEN(title$) = 0 THEN RETURN (fill$ * (w))
     DIM label$ = " " + title$ + " "
-    DIM left = (w - LEN(label$)) \ 2
+    DIM left = (w - VISIBLE(label$)) \ 2
     IF left < 1 THEN left = 1
-    DIM right = w - left - LEN(label$)
+    DIM right = w - left - VISIBLE(label$)
     IF right < 1 THEN right = 1
     RETURN (fill$ * (left)) + BOLD$(label$) + (fill$ * (right))
 ENDFUNC
@@ -385,7 +408,7 @@ EXPORT FUNC PANEL$(text$, title$ = "", width = 0)
     IF inner < 8 THEN inner = 8
     DIM lines = WrapWords(text$, inner)
     DIM top$ = "+" + ("-" * (inner + 2)) + "+"
-    IF LEN(title$) > 0 THEN top$ = "+-" + BOLD$(" " + title$ + " ") + ("-" * (inner - LEN(title$) - 1)) + "+"
+    IF LEN(title$) > 0 THEN top$ = "+-" + BOLD$(" " + title$ + " ") + ("-" * (inner - VISIBLE(title$) - 1)) + "+"
     DIM out = [top$]
     DIM i = 0
     FOR i = 0 TO LEN(lines) - 1
@@ -415,7 +438,7 @@ EXPORT FUNC KV$(items, indent = 0)
     DIM w = 0
     DIM i = 0
     FOR i = 0 TO LEN(pairs) - 1
-        IF LEN(Cell$(pairs[i][0])) > w THEN w = LEN(Cell$(pairs[i][0]))
+        IF VISIBLE(Cell$(pairs[i][0])) > w THEN w = VISIBLE(Cell$(pairs[i][0]))
     NEXT i
     DIM lines = []
     FOR i = 0 TO LEN(pairs) - 1
@@ -445,17 +468,18 @@ FUNC WrapWords(text$, width)
         FOR i = 0 TO LEN(words) - 1
             DIM word$ = words[i]
             IF LEN(word$) = 0 THEN CONTINUEFOR
-            DO WHILE LEN(word$) > width
+            DO WHILE VISIBLE(word$) > width
                 IF LEN(current$) > 0 THEN
                     PUSH(out, current$)
                     current$ = ""
                 ENDIF
-                PUSH(out, LEFT$(word$, width))
-                word$ = MID$(word$, width, LEN(word$) - width)
+                DIM head$ = LeftChars$(word$, width)
+                PUSH(out, head$)
+                word$ = MID$(word$, LEN(head$))
             LOOP
             IF LEN(current$) = 0 THEN
                 current$ = word$
-            ELSEIF LEN(current$) + 1 + LEN(word$) <= width THEN
+            ELSEIF VISIBLE(current$) + 1 + VISIBLE(word$) <= width THEN
                 current$ = current$ + " " + word$
             ELSE
                 PUSH(out, current$)
