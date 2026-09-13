@@ -14813,15 +14813,25 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     //   $ORIGIN/build    - exe sits at the project root
     //   <abs-build-path> - absolute path of the build/ dir at compile
     //                      time, lets the generated exe run from any cwd
+    // The runtime object was just found by probing build/ and then the
+    // current directory; libjdbrt.so lives beside it. An unpacked
+    // distribution has no build/ at all, so the linker is told where
+    // that object came from and the exe carries the same path as an
+    // rpath, which is what lets it run without a library path set.
+    std::string rt_dir = std::filesystem::absolute(
+        std::filesystem::path(runtime_obj).parent_path().empty()
+            ? std::filesystem::path(".")
+            : std::filesystem::path(runtime_obj).parent_path()).string();
     std::string abs_build = std::filesystem::absolute("build").string();
     std::string link_cmd =
         "g++ -O2 -no-pie -o " + sh_quote(exe_path) + " "
         + sh_quote(obj_path) + " "
         + sh_quote(runtime_obj) + " "
-        + "-Lbuild -ljdbrt "
+        + "-L" + sh_quote(rt_dir) + " -Lbuild -ljdbrt "
         + "-Wl,-rpath,'$ORIGIN' "
         + "-Wl,-rpath,'$ORIGIN/build' "
         + "-Wl,-rpath," + sh_quote(abs_build) + " "
+        + "-Wl,-rpath," + sh_quote(rt_dir) + " "
         + "-lm -lpthread -ldl";
     int ret = std::system(link_cmd.c_str());
     if (ret != 0) {
