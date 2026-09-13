@@ -64,7 +64,7 @@ SRC="src/vm_bridge.cpp src/vm.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp 
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/audio_fx.cpp src/midi.cpp src/audio_io.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
-     src/jdb_embed_api.cpp src/numerics.cpp src/screencap.cpp src/pybridge.cpp"
+     src/jdb_embed_api.cpp src/numerics.cpp src/screencap.cpp src/pybridge.cpp src/pcode.cpp"
 
 if [ "$WANT_HTTP" = "1" ]; then
     CXXFLAGS="$CXXFLAGS -DHTTP -DCPPHTTPLIB_OPENSSL_SUPPORT"
