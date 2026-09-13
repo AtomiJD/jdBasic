@@ -1,0 +1,292 @@
+' JDWEB: routes with parameters, method dispatch and 405, middleware before
+' and after, error and missing pages, in-memory sessions, static files and
+' JSON, driven through JDWEB.FETCH against a server in this process; the
+' dispatcher called directly with request maps; then the page and
+' cookie-login helpers jdTrakr is built on.
+'
+' The served suites run interpreted, and compiled when JDWEB_TEST_SERVER is
+' set.
+
+IMPORT TESTKIT, JDWEB
+
+DIM PORT = 9983
+DIM Q$ = CHR$(34)
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "jdweb_static/hello.txt") THEN base$ = "fixtures/"
+DIM tpl$ = "jdb/demos/web/jdweb_tpl"
+IF NOT FILE.EXISTS(tpl$ + "/layout.html") THEN tpl$ = "../../jdb/demos/web/jdweb_tpl"
+DIM gArgs = OS.ARGS()
+DIM gScript$ = gArgs[0]
+DIM gServed = (LCASE$(RIGHT$(gScript$, 4)) = ".jdb") ORELSE GETENV$("JDWEB_TEST_SERVER") <> ""
+
+FUNC ShowUser(request)
+    DIM id$ = JDWEB.PARAM$(request, "id")
+    RETURN {"id": id$}
+ENDFUNC
+
+FUNC CreateUser(request)
+    DIM sent = JSON.PARSE$(request{"BODY"})
+    DIM name$ = sent{"name"}
+    RETURN JDWEB.REPLY_JSON({"created": name$}, 201)
+ENDFUNC
+
+FUNC DeleteUser(request)
+    RETURN JDWEB.REPLY("", 204, "text/plain")
+ENDFUNC
+
+FUNC Files(request)
+    RETURN "path=" + JDWEB.PARAM$(request, "path")
+ENDFUNC
+
+FUNC Hello(request)
+    RETURN "<h1>hello " + JDWEB.PARAM$(request, "name") + "</h1>"
+ENDFUNC
+
+FUNC Boom(request)
+    THROW "broken on purpose"
+    RETURN ""
+ENDFUNC
+
+FUNC Counter(request)
+    DIM sess = JDWEB.SESSION(request)
+    DIM n = 0
+    IF MAP.EXISTS(sess, "count") THEN n = sess{"count"}
+    n = n + 1
+    sess{"count"} = n
+    RETURN {"count": n}
+ENDFUNC
+
+FUNC Logout(request)
+    JDWEB.SESSION_END(request)
+    RETURN {"ok": TRUE}
+ENDFUNC
+
+FUNC Admin(request)
+    RETURN "admin area"
+ENDFUNC
+
+FUNC Anything(request)
+    DIM method$ = request{"METHOD"}
+    RETURN "any " + method$
+ENDFUNC
+
+FUNC Guard(request)
+    DIM p$ = request{"PATH"}
+    IF LEFT$(p$, 6) = "/admin" THEN
+        DIM hs = request{"HEADERS"}
+        IF NOT MAP.EXISTS(hs, "x-key") THEN RETURN JDWEB.REPLY("no key", 401, "text/plain")
+    ENDIF
+    RETURN JDWEB.PASS()
+ENDFUNC
+
+FUNC Stamp(request)
+    RETURN {"X-Served-By": "jdweb", "X-Status": STR$(JDWEB.CURRENT_STATUS())}
+ENDFUNC
+
+FUNC Missing(request)
+    DIM p$ = request{"PATH"}
+    RETURN "<p>nothing at " + p$ + "</p>"
+ENDFUNC
+
+FUNC Failed(request)
+    DIM message$ = JDWEB.ERROR_MESSAGE$()
+    RETURN JDWEB.REPLY_JSON({"error": message$}, 500)
+ENDFUNC
+
+FUNC HeaderOf$(response, name$)
+    DIM hs = response{"headers"}
+    IF NOT MAP.EXISTS(hs, name$) THEN RETURN ""
+    DIM v$ = hs{name$}
+    RETURN v$
+ENDFUNC
+
+JDWEB.GET("/users/:id", ShowUser@)
+JDWEB.POST("/users", CreateUser@)
+JDWEB.DELETE("/users/:id", DeleteUser@)
+JDWEB.GET("/files/*path", Files@)
+JDWEB.GET("/hello", Hello@)
+JDWEB.GET("/boom", Boom@)
+JDWEB.GET("/count", Counter@)
+JDWEB.POST("/logout", Logout@)
+JDWEB.GET("/admin", Admin@)
+JDWEB.ANY("/any", Anything@)
+JDWEB.BEFORE(Guard@)
+JDWEB.AFTER(Stamp@)
+JDWEB.ON_MISSING(Missing@)
+JDWEB.ON_ERROR(Failed@)
+JDWEB.ASSETS("/static", base$ + "jdweb_static")
+JDWEB.ASSETS("/img", base$)
+
+TESTKIT.SUITE("responses")
+DIM reply = JDWEB.REPLY("hi", 202, "text/plain")
+TESTKIT.EQ(reply{"__http_status"}, 202, "REPLY sets the status")
+TESTKIT.EQ(reply{"__http_content_type"}, "text/plain", "and the content type")
+DIM with_header = JDWEB.HEADER(reply, "X-One", "1")
+DIM wh = with_header{"__http_headers"}
+TESTKIT.EQ(wh{"X-One"}, "1", "HEADER adds a header")
+TESTKIT.EQ(with_header{"__http_body"}, "hi", "to a copy that keeps the body")
+DIM js = JDWEB.REPLY_JSON({"a": 1}, 201)
+TESTKIT.EQ(js{"__http_body"}, "{" + Q$ + "a" + Q$ + ":1}", "REPLY_JSON writes the value as JSON")
+TESTKIT.EQ(js{"__http_status"}, 201, "with its status")
+DIM passing = JDWEB.PASS()
+TESTKIT.ISTRUE(MAP.EXISTS(passing, "__jdweb_pass"), "PASS is recognisable")
+
+TESTKIT.SUITE("dispatch")
+DIM no_headers AS MAP
+DIM no_params AS MAP
+DIM req_user = {"METHOD": "GET", "PATH": "/users/42", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM d = JDWEB.DISPATCH(req_user)
+TESTKIT.EQ(d{"__http_status"}, 200, "DISPATCH answers a request map without a server")
+DIM d_body$ = d{"__http_body"}
+TESTKIT.ISTRUE(INSTR(d_body$, "42") >= 0, "with the route's answer")
+DIM d_headers = d{"__http_headers"}
+TESTKIT.ISTRUE(MAP.EXISTS(d_headers, "X-Served-By"), "and the after middleware's header")
+DIM req_put = {"METHOD": "PUT", "PATH": "/users/7", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM d2 = JDWEB.DISPATCH(req_put)
+TESTKIT.EQ(d2{"__http_status"}, 405, "a known path with another method is 405")
+DIM req_none = {"METHOD": "GET", "PATH": "/nowhere", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM d3 = JDWEB.DISPATCH(req_none)
+TESTKIT.EQ(d3{"__http_status"}, 404, "an unknown path is 404")
+DIM req_admin = {"METHOD": "GET", "PATH": "/admin", "HEADERS": no_headers, "PARAMS": no_params, "BODY": ""}
+DIM d4 = JDWEB.DISPATCH(req_admin)
+TESTKIT.EQ(d4{"__http_status"}, 401, "a before middleware answers")
+
+IF gServed THEN
+    IF NOT JDWEB.LISTEN(PORT) THEN
+        PRINT "could not start the server on " + STR$(PORT)
+        END 1
+    ENDIF
+
+    TESTKIT.SUITE("routes")
+    DIM r = JDWEB.FETCH(PORT, "GET", "/users/42")
+    TESTKIT.EQ(r{"status"}, 200, "a path parameter route answers")
+    DIM user = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(user{"id"}, "42", "and hands the parameter over")
+    TESTKIT.EQ(HeaderOf$(r, "x-served-by"), "jdweb", "the after middleware added its header")
+    TESTKIT.EQ(HeaderOf$(r, "x-status"), "200", "knowing the status")
+    TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "content-type"), "application/json") >= 0, "a map goes out as JSON")
+    r = JDWEB.FETCH(PORT, "GET", "/users/J%C3%BCrgen")
+    user = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(user{"id"}, "Jürgen", "a parameter is percent-decoded")
+    r = JDWEB.FETCH(PORT, "GET", "/users/42/")
+    TESTKIT.EQ(r{"status"}, 200, "a trailing slash matches too")
+    r = JDWEB.FETCH(PORT, "POST", "/users", "{" + Q$ + "name" + Q$ + ":" + Q$ + "Ann" + Q$ + "}")
+    TESTKIT.EQ(r{"status"}, 201, "POST with a status of its own")
+    DIM made = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(made{"created"}, "Ann", "reads the JSON body")
+    r = JDWEB.FETCH(PORT, "DELETE", "/users/7")
+    TESTKIT.EQ(r{"status"}, 204, "DELETE")
+    r = JDWEB.FETCH(PORT, "PUT", "/users/7")
+    TESTKIT.EQ(r{"status"}, 405, "a known path with another method is 405")
+    TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "allow"), "GET") >= 0 ANDALSO INSTR(HeaderOf$(r, "allow"), "DELETE") >= 0, "and names the methods allowed")
+    r = JDWEB.FETCH(PORT, "GET", "/files/a/b/c.txt")
+    TESTKIT.EQ(r{"body"}, "path=a/b/c.txt", "a star segment takes the rest of the path")
+    r = JDWEB.FETCH(PORT, "GET", "/hello?name=Ann")
+    TESTKIT.EQ(r{"body"}, "<h1>hello Ann</h1>", "a query parameter through PARAM$")
+    TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "content-type"), "text/html") >= 0, "a string goes out as HTML")
+    r = JDWEB.FETCH(PORT, "PATCH", "/any")
+    TESTKIT.EQ(r{"body"}, "any PATCH", "ANY takes every method")
+    r = JDWEB.FETCH(PORT, "GET", "/nowhere")
+    TESTKIT.EQ(r{"status"}, 404, "an unknown path is 404")
+    TESTKIT.EQ(r{"body"}, "<p>nothing at /nowhere</p>", "rendered by the missing handler")
+    TESTKIT.EQ(HeaderOf$(r, "x-status"), "404", "and the after middleware sees the 404")
+    r = JDWEB.FETCH(PORT, "GET", "/boom")
+    TESTKIT.EQ(r{"status"}, 500, "a handler that throws is 500")
+    DIM failure = JSON.PARSE$(r{"body"})
+    TESTKIT.ISTRUE(INSTR(failure{"error"}, "broken on purpose") >= 0, "the error handler gets the message")
+
+    TESTKIT.SUITE("middleware")
+    r = JDWEB.FETCH(PORT, "GET", "/admin")
+    TESTKIT.EQ(r{"status"}, 401, "a before middleware can answer instead of the route")
+    TESTKIT.EQ(r{"body"}, "no key", "with its own body")
+    TESTKIT.EQ(HeaderOf$(r, "x-served-by"), "jdweb", "and the after middleware still runs")
+    r = JDWEB.FETCH(PORT, "GET", "/admin", "", {"X-Key": "secret"})
+    TESTKIT.EQ(r{"status"}, 200, "or let the request through")
+    TESTKIT.EQ(r{"body"}, "admin area", "to the route")
+
+    TESTKIT.SUITE("sessions")
+    r = JDWEB.FETCH(PORT, "GET", "/count")
+    DIM counted = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(counted{"count"}, 1, "a new visitor starts at one")
+    DIM sid$ = JDWEB.COOKIE_OF$(r, "jdwsid")
+    TESTKIT.ISTRUE(LEN(sid$) > 10, "and gets a session cookie")
+    DIM jar = {"Cookie": "jdwsid=" + sid$}
+    r = JDWEB.FETCH(PORT, "GET", "/count", "", jar)
+    counted = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(counted{"count"}, 2, "the session remembers")
+    TESTKIT.EQ(JDWEB.COOKIE_OF$(r, "jdwsid"), "", "without setting the cookie again")
+    r = JDWEB.FETCH(PORT, "GET", "/count", "", jar)
+    counted = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(counted{"count"}, 3, "and counts on")
+    r = JDWEB.FETCH(PORT, "GET", "/count")
+    counted = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(counted{"count"}, 1, "another visitor has a session of their own")
+    r = JDWEB.FETCH(PORT, "POST", "/logout", "", jar)
+    TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "set-cookie"), "Max-Age=0") >= 0, "SESSION_END clears the cookie")
+    r = JDWEB.FETCH(PORT, "GET", "/count", "", jar)
+    counted = JSON.PARSE$(r{"body"})
+    TESTKIT.EQ(counted{"count"}, 1, "and forgets the session")
+
+    TESTKIT.SUITE("static files")
+    r = JDWEB.FETCH(PORT, "GET", "/static/hello.txt")
+    TESTKIT.EQ(r{"status"}, 200, "a file under the prefix")
+    TESTKIT.EQ(r{"body"}, TXTREADER$(base$ + "jdweb_static/hello.txt"), "with its content")
+    TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "content-type"), "text/plain") >= 0, "and the type of its extension")
+    r = JDWEB.FETCH(PORT, "GET", "/static/css/site.css")
+    TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "content-type"), "text/css") >= 0, "a file in a subfolder")
+    r = JDWEB.FETCH(PORT, "GET", "/static/")
+    TESTKIT.EQ(r{"body"}, "<h1>index</h1>" + CHR$(10), "a folder serves its index.html")
+    r = JDWEB.FETCH(PORT, "GET", "/static/%2e%2e/jdweb_selftest.jdb")
+    TESTKIT.EQ(r{"status"}, 403, "a way out of the folder is refused")
+    r = JDWEB.FETCH(PORT, "GET", "/static/none.txt")
+    TESTKIT.EQ(r{"status"}, 404, "a missing file falls through to 404")
+    r = JDWEB.FETCH(PORT, "GET", "/img/pdfgen_logo.jpg")
+    TESTKIT.EQ(LEN(r{"body"}), LEN(BINREADER$(base$ + "pdfgen_logo.jpg")), "a binary file arrives whole")
+    TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "content-type"), "image/jpeg") >= 0, "as image/jpeg")
+
+    HTTP.SERVER.STOP()
+ELSE
+    TESTKIT.SUITE("served routes")
+    TESTKIT.SKIP("routes served from a compiled program: #412")
+ENDIF
+
+TESTKIT.SUITE("pages and login")
+JDWEB.TEMPLATES(tpl$)
+DIM cfg = {"app": "Selftest", "sub": "checks", "nav": [{"path": "/", "label": "Home"}], "cookies": FALSE}
+DIM page$ = JDWEB.PAGE$(cfg, "Selftest - Home", JDWEB.NAV_HTML$(cfg, "/"), "<p>body</p>")
+TESTKIT.ISTRUE(INSTR(page$, "<title>Selftest - Home</title>") >= 0, "PAGE$ writes the title")
+TESTKIT.ISTRUE(INSTR(page$, "<p>body</p>") >= 0, "and the content")
+TESTKIT.ISTRUE(INSTR(page$, "Home") >= 0, "and the navigation")
+DIM missing = JDWEB.NOT_FOUND$(cfg)
+TESTKIT.EQ(missing{"__http_status"}, 404, "NOT_FOUND$ is a 404")
+DIM moved = JDWEB.REDIRECT_TO("/login")
+TESTKIT.EQ(moved{"__http_status"}, 302, "REDIRECT_TO is a 302")
+DIM denied = JDWEB.UNAUTH()
+TESTKIT.EQ(denied{"__http_status"}, 401, "UNAUTH is a 401")
+TESTKIT.EQ(JDWEB.HASH_PW$("salt", "pw"), CODEC.SHA256$("salt:pw"), "HASH_PW$ is a salted SHA-256")
+DIM cookie_req = {"HEADERS": {"cookie": "a=1; jdwsession=tok123; b=2"}}
+TESTKIT.EQ(JDWEB.COOKIE_VAL$(cookie_req, "jdwsession"), "tok123", "COOKIE_VAL$ finds a cookie between others")
+TESTKIT.EQ(JDWEB.COOKIE_VAL$(cookie_req, "zzz"), "", "and nothing for an absent one")
+IF OS.FEATURE("SQLITE") THEN
+    DIM db = SQL.OPEN(":memory:")
+    JDWEB.AUTH_INIT(db)
+    DIM login_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "owner" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "pw1" + Q$ + "}", "HEADERS": {}}
+    DIM login = JDWEB.AUTH_LOGIN(db, login_req, FALSE)
+    TESTKIT.EQ(login{"__http_status"}, 200, "the first login creates the owner")
+    DIM login_headers = login{"__http_headers"}
+    DIM set_cookie$ = login_headers{"Set-Cookie"}
+    TESTKIT.ISTRUE(LEFT$(set_cookie$, 11) = "jdwsession=", "and sets the session cookie")
+    DIM token$ = MID$(set_cookie$, 11, CINT(INSTR(set_cookie$, ";")) - 11)
+    DIM me_req = {"HEADERS": {"cookie": "jdwsession=" + token$}}
+    TESTKIT.EQ(JDWEB.AUTH_USER$(db, me_req), "owner", "AUTH_USER$ knows the signed-in user")
+    DIM wrong_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "owner" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "nope" + Q$ + "}", "HEADERS": {}}
+    DIM wrong = JDWEB.AUTH_LOGIN(db, wrong_req, FALSE)
+    TESTKIT.EQ(wrong{"error"}, "wrong password", "a wrong password is refused")
+    DIM out = JDWEB.AUTH_LOGOUT(db, me_req)
+    TESTKIT.EQ(out{"__http_status"}, 200, "logout answers")
+    TESTKIT.EQ(JDWEB.AUTH_USER$(db, me_req), "", "and ends the session")
+ELSE
+    TESTKIT.SKIP("cookie login needs a build with SQLITE")
+ENDIF
+
+TESTKIT.REPORT()

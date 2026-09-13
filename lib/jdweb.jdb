@@ -1,0 +1,770 @@
+' jdweb - the jdBasic web framework: routes with path parameters, method
+' dispatch, middleware before and after, in-memory sessions, static files,
+' JSON and error responses, a test client for the running app, and the page
+' chrome and cookie-login stack of the terminal "Hot Phosphor" theme.
+'
+'   IMPORT JDWEB
+'   FUNC ShowUser(request)
+'       RETURN {"id": JDWEB.PARAM$(request, "id")}
+'   ENDFUNC
+'   JDWEB.GET("/users/:id", ShowUser@)
+'   JDWEB.SERVE(8080)
+'
+' Routes answer through HTTP.SERVER.ON_NOTFOUND, so apps that register their
+' paths with HTTP.SERVER.ON_GET and ON_POST keep working beside them.
+'
+' Pages render through TMPL (lib/tmpl.jdb), which has to sit where IMPORT
+' finds it: next to this file on a server, or on JDBASIC_PATH. The page
+' templates (layout, theme) are read from jdweb_tpl/ next to the app script
+' unless TEMPLATES names another folder.
+EXPORT MODULE JDWEB
+
+IMPORT TMPL
+
+DIM gConf AS MAP
+DIM gArgs = OS.ARGS()
+DIM gAppScript$ = gArgs[0]
+gConf{"tpl"} = PATH.JOIN$(PATH.DIRNAME$(gAppScript$), "jdweb_tpl")
+gConf{"theme"} = ""
+DIM gEmptyModel AS MAP
+
+DIM gRouteMethods = []
+DIM gRoutePatterns = []
+DIM gRouteFns AS MAP
+DIM gBeforeIds = []
+DIM gBeforeFns AS MAP
+DIM gAfterIds = []
+DIM gAfterFns AS MAP
+DIM gHooks AS MAP
+DIM gStaticPrefixes = []
+DIM gStaticDirs = []
+DIM gSessions AS MAP
+' The route parameters and session changes of the request being answered;
+' the server hands one request at a time to the VM.
+DIM gCurrent AS MAP
+
+' ---- small internal helpers ----
+
+FUNC ESC$(s$)
+    RETURN REPLACE$(s$, "'", "''")
+ENDFUNC
+
+FUNC FIELD$(obj, key$)
+    DIM v = obj{key$}
+    IF TYPEOF(v) = "NONE" THEN RETURN ""
+    RETURN TRIM$("" + v)
+ENDFUNC
+
+FUNC TplDir$()
+    DIM dir$ = gConf{"tpl"}
+    RETURN dir$
+ENDFUNC
+
+' The folder the page templates are read from.
+EXPORT SUB TEMPLATES(dir$)
+    gConf{"tpl"} = dir$
+    gConf{"theme"} = ""
+ENDSUB
+
+' ---- theme (all design tokens live in :root) ----
+
+EXPORT FUNC THEME$()
+    DIM cached$ = gConf{"theme"}
+    IF LEN(cached$) = 0 THEN
+        cached$ = TXTREADER$(PATH.JOIN$(TplDir$(), "theme.html"))
+        gConf{"theme"} = cached$
+    ENDIF
+    RETURN cached$
+ENDFUNC
+
+' ---- template rendering ----
+
+EXPORT FUNC RENDER$(tpl$, vars)
+    DIM out$ = REPLACE$(tpl$, "##theme##", THEME$())
+    DIM keys = MAP.KEYS(vars)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        DIM v = vars{key$}
+        out$ = REPLACE$(out$, "##" + key$ + "##", "" + v)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+EXPORT FUNC COOKIE_BANNER$()
+    RETURN TMPL.RENDER$(PATH.JOIN$(TplDir$(), "cookiebar.html"), gEmptyModel)
+ENDFUNC
+
+EXPORT FUNC NAV_HTML$(cfg, active$)
+    DIM model AS MAP
+    DIM app = cfg{"app"}
+    DIM sub_title = cfg{"sub"}
+    model{"app"} = "" + app
+    model{"sub"} = "" + sub_title
+    model{"nav"} = cfg{"nav"}
+    model{"active"} = active$
+    RETURN TMPL.RENDER$(PATH.JOIN$(TplDir$(), "nav.html"), model)
+ENDFUNC
+
+' Full HTML document. navHtml$ may be "" (e.g. the login page). The EU cookie
+' banner is appended only when the app config has "cookies": true.
+EXPORT FUNC PAGE$(cfg, title$, navHtml$, content$)
+    DIM bar$ = ""
+    DIM ck = cfg{"cookies"}
+    IF TYPEOF(ck) <> "NONE" ANDALSO ck = TRUE THEN bar$ = COOKIE_BANNER$()
+    DIM model AS MAP
+    model{"title"} = title$
+    model{"theme"} = THEME$()
+    model{"nav"} = navHtml$
+    model{"content"} = content$
+    model{"cookiebar"} = bar$
+    DIM desc = cfg{"meta_desc"}
+    IF TYPEOF(desc) <> "NONE" THEN model{"meta_desc"} = "" + desc
+    DIM app = cfg{"app"}
+    model{"site_name"} = "" + app
+    RETURN TMPL.RENDER$(PATH.JOIN$(TplDir$(), "layout.html"), model)
+ENDFUNC
+
+' Themed 404. Returns a rich-response map so the server sends status 404.
+' Wire it with ON_MISSING, or with HTTP.SERVER.ON_NOTFOUND and a thin wrapper
+' that returns JDWEB.NOT_FOUND$(cfg).
+EXPORT FUNC NOT_FOUND$(cfg)
+    DIM app = cfg{"app"}
+    DIM app$ = "" + app
+    DIM c$ = TMPL.RENDER$(PATH.JOIN$(TplDir$(), "notfound.html"), gEmptyModel)
+    DIM html$ = PAGE$(cfg, app$ + " - 404", "", c$)
+    RETURN { "__http_status": 404, "__http_content_type": "text/html", "__http_body": html$ }
+ENDFUNC
+
+EXPORT FUNC LOGIN_PAGE$(cfg)
+    DIM app = cfg{"app"}
+    DIM app$ = "" + app
+    DIM lm AS MAP
+    lm{"app"} = app$
+    DIM c$ = TMPL.RENDER$(PATH.JOIN$(TplDir$(), "login.html"), lm)
+    RETURN PAGE$(cfg, app$ + " - Sign in", "", c$)
+ENDFUNC
+
+' ---- cookie-session auth (cookie name: jdwsession) ----
+
+EXPORT FUNC HASH_PW$(salt$, pw$)
+    RETURN CODEC.SHA256$(salt$ + ":" + pw$)
+ENDFUNC
+
+EXPORT FUNC COOKIE_VAL$(request, name$)
+    DIM reqHdrs = request{"HEADERS"}
+    IF TYPEOF(reqHdrs) = "NONE" THEN RETURN ""
+    DIM raw = reqHdrs{"cookie"}
+    IF TYPEOF(raw) = "NONE" THEN RETURN ""
+    DIM s$ = "; " + ("" + raw)
+    DIM key$ = "; " + name$ + "="
+    DIM p = CINT(INSTR(s$, key$))
+    IF p < 0 THEN RETURN ""
+    DIM rest$ = MID$(s$, p + LEN(key$), LEN(s$))
+    DIM cut = CINT(INSTR(rest$, ";"))
+    IF cut < 0 THEN RETURN rest$
+    RETURN LEFT$(rest$, cut)
+ENDFUNC
+
+EXPORT FUNC AUTH_USER$(db, request)
+    DIM token$ = COOKIE_VAL$(request, "jdwsession")
+    IF LEN(token$) = 0 THEN RETURN ""
+    DIM rows = SQL.TABLE(db, "SELECT username FROM sessions WHERE token = '" + ESC$(token$) + "'")
+    IF LEN(rows) = 0 THEN RETURN ""
+    DIM who$ = rows[0, 0]
+    RETURN who$
+ENDFUNC
+
+EXPORT FUNC UNAUTH()
+    RETURN { "__http_status": 401, "__http_content_type": "application/json", _
+        "__http_body": JSON.STRINGIFY$({ "error": "unauthorized" }) }
+ENDFUNC
+
+EXPORT FUNC REDIRECT_TO(loc$)
+    RETURN { "__http_status": 302, "__http_headers": { "Location": loc$ }, "__http_body": "" }
+ENDFUNC
+
+EXPORT SUB AUTH_INIT(db)
+    SQL.EXEC(db, "CREATE TABLE IF NOT EXISTS users (" + _
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, " + _
+        "salt TEXT, pass_hash TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    SQL.EXEC(db, "CREATE TABLE IF NOT EXISTS sessions (" + _
+        "token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
+    SQL.EXEC(db, "ALTER TABLE users ADD COLUMN salt TEXT")
+    SQL.EXEC(db, "ALTER TABLE users ADD COLUMN pass_hash TEXT")
+ENDSUB
+
+EXPORT FUNC AUTH_LOGIN(db, request, secure)
+    DIM raw_body = request{"BODY"}
+    DIM body = JSON.PARSE$(raw_body)
+    DIM name$ = FIELD$(body, "name")
+    DIM pw$ = FIELD$(body, "password")
+    IF LEN(name$) = 0 ORELSE LEN(pw$) = 0 THEN RETURN { "error": "name and password required" }
+
+    ' A password not set yet is NULL; the query reports it as a flag, so the
+    ' cells read the same in both backends.
+    DIM pick$ = "SELECT id, name, COALESCE(salt, ''), COALESCE(pass_hash, ''), pass_hash IS NULL FROM users WHERE name = '" + ESC$(name$) + "'"
+    DIM known = SQL.TABLE(db, pick$)
+    IF LEN(known) = 0 THEN
+        DIM cnt = SQL.TABLE(db, "SELECT COUNT(*) FROM users")
+        DIM n_users = cnt[0, 0]
+        IF n_users > 0 THEN RETURN { "error": "unknown user" }
+        SQL.EXEC(db, "INSERT INTO users (name) VALUES ('" + ESC$(name$) + "')")
+    ENDIF
+    DIM rows = SQL.TABLE(db, pick$)
+    DIM uid = rows[0, 0]
+    DIM name2$ = rows[0, 1]
+    DIM stored_salt$ = rows[0, 2]
+    DIM stored_hash$ = rows[0, 3]
+    DIM no_hash = rows[0, 4]
+
+    DIM salt$ = ""
+    IF no_hash <> 0 THEN
+        salt$ = CODEC.UUID$()
+        SQL.EXEC(db, "UPDATE users SET salt='" + salt$ + "', pass_hash='" + HASH_PW$(salt$, pw$) + _
+            "' WHERE id = " + STR$(INT(uid)))
+    ELSE
+        salt$ = stored_salt$
+        IF HASH_PW$(salt$, pw$) <> stored_hash$ THEN RETURN { "error": "wrong password" }
+    ENDIF
+
+    DIM token$ = CODEC.UUID$()
+    SQL.EXEC(db, "INSERT INTO sessions (token, username) VALUES ('" + token$ + "', '" + ESC$(name2$) + "')")
+
+    DIM cookie$ = "jdwsession=" + token$ + "; HttpOnly; Path=/; SameSite=Lax"
+    IF secure = TRUE THEN cookie$ = cookie$ + "; Secure"
+    RETURN { "__http_status": 200, "__http_headers": { "Set-Cookie": cookie$ }, _
+        "__http_content_type": "application/json", _
+        "__http_body": JSON.STRINGIFY$({ "ok": TRUE, "name": name2$ }) }
+ENDFUNC
+
+EXPORT FUNC AUTH_LOGOUT(db, request)
+    DIM token$ = COOKIE_VAL$(request, "jdwsession")
+    IF LEN(token$) > 0 THEN SQL.EXEC(db, "DELETE FROM sessions WHERE token = '" + ESC$(token$) + "'")
+    RETURN { "__http_status": 200, "__http_headers": { "Set-Cookie": "jdwsession=; Path=/; Max-Age=0" }, _
+        "__http_content_type": "application/json", "__http_body": "{}" }
+ENDFUNC
+
+EXPORT FUNC AUTH_ME(db, request)
+    DIM u$ = AUTH_USER$(db, request)
+    IF LEN(u$) = 0 THEN RETURN UNAUTH()
+    RETURN { "name": u$ }
+ENDFUNC
+
+' ---- responses ----
+
+' A response with a body, a status (200) and a content type (HTML).
+EXPORT FUNC REPLY(body$, status = 200, content_type$ = "text/html; charset=utf-8")
+    DIM hs AS MAP
+    RETURN {"__http_status": status, "__http_content_type": content_type$, "__http_body": body$, "__http_headers": hs}
+ENDFUNC
+
+' A value sent as JSON with a status (200).
+EXPORT FUNC REPLY_JSON(value, status = 200)
+    RETURN REPLY(JSON.STRINGIFY$(value), status, "application/json; charset=utf-8")
+ENDFUNC
+
+' A copy of the response with one more header.
+EXPORT FUNC HEADER(response, name$, value$)
+    DIM out AS MAP
+    DIM fresh AS MAP
+    DIM keys = MAP.KEYS(response)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        IF key$ = "__http_headers" THEN
+            DIM old = response{key$}
+            DIM names = MAP.KEYS(old)
+            FOR j = 0 TO LEN(names) - 1
+                DIM hn$ = names[j]
+                DIM hv = old{hn$}
+                fresh{hn$} = hv
+            NEXT j
+        ELSE
+            DIM kv = response{key$}
+            out{key$} = kv
+        ENDIF
+    NEXT k
+    fresh{name$} = value$
+    out{"__http_headers"} = fresh
+    RETURN out
+ENDFUNC
+
+' What a before middleware returns to let the request go on.
+EXPORT FUNC PASS()
+    RETURN {"__jdweb_pass": 1}
+ENDFUNC
+
+FUNC IsPass(value)
+    IF TYPEOF(value) <> "OBJECT" THEN RETURN FALSE
+    RETURN MAP.EXISTS(value, "__jdweb_pass")
+ENDFUNC
+
+' Any handler answer as a rich response: a string is HTML, a map or an array
+' without __http_status is JSON, both with the given status.
+FUNC Normalize(value, status)
+    DIM kind$ = TYPEOF(value)
+    IF kind$ = "OBJECT" THEN
+        IF MAP.EXISTS(value, "__http_status") THEN RETURN value
+        RETURN REPLY_JSON(value, status)
+    ENDIF
+    IF kind$ = "ARRAY" THEN RETURN REPLY_JSON(value, status)
+    IF kind$ = "NONE" THEN RETURN REPLY("", status, "text/plain; charset=utf-8")
+    RETURN REPLY("" + value, status, "text/html; charset=utf-8")
+ENDFUNC
+
+' ---- requests ----
+
+FUNC HexNibble(c$)
+    DIM code_n = ASC(UCASE$(c$))
+    IF code_n >= 48 ANDALSO code_n <= 57 THEN RETURN code_n - 48
+    IF code_n >= 65 ANDALSO code_n <= 70 THEN RETURN code_n - 55
+    RETURN -1
+ENDFUNC
+
+FUNC PercentDecode$(s$)
+    IF INSTR(s$, "%") < 0 THEN RETURN s$
+    DIM out$ = ""
+    DIM k = 0
+    DIM n = LEN(s$)
+    DO WHILE k < n
+        DIM c$ = MID$(s$, k, 1)
+        IF c$ = "%" ANDALSO k + 2 < n ANDALSO HexNibble(MID$(s$, k + 1, 1)) >= 0 ANDALSO HexNibble(MID$(s$, k + 2, 1)) >= 0 THEN
+            out$ = out$ + CHR$(HexNibble(MID$(s$, k + 1, 1)) * 16 + HexNibble(MID$(s$, k + 2, 1)))
+            k = k + 3
+        ELSE
+            out$ = out$ + c$
+            k = k + 1
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' A route parameter (":id" in the pattern) or, when there is none of that
+' name, a query parameter; "" when neither is there.
+EXPORT FUNC PARAM$(request, name$)
+    IF MAP.EXISTS(gCurrent, "route") THEN
+        DIM route = gCurrent{"route"}
+        IF MAP.EXISTS(route, name$) THEN
+            DIM rv$ = route{name$}
+            RETURN rv$
+        ENDIF
+    ENDIF
+    IF MAP.EXISTS(request, "PARAMS") THEN
+        DIM query = request{"PARAMS"}
+        IF TYPEOF(query) = "OBJECT" THEN
+            IF MAP.EXISTS(query, name$) THEN
+                DIM qv = query{name$}
+                RETURN "" + qv
+            ENDIF
+        ENDIF
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' ---- routing ----
+
+' A handler for method$ and a path pattern: "/users/:id" takes one segment
+' as the parameter id, "/files/*path" the rest of the path as path.
+EXPORT SUB ROUTE(method$, pattern$, handler)
+    DIM key$ = "r" + STR$(LEN(gRoutePatterns))
+    gRouteFns{key$} = handler
+    PUSH(gRouteMethods, UCASE$(method$))
+    PUSH(gRoutePatterns, pattern$)
+ENDSUB
+
+EXPORT SUB GET(pattern$, handler)
+    ROUTE("GET", pattern$, handler)
+ENDSUB
+
+EXPORT SUB POST(pattern$, handler)
+    ROUTE("POST", pattern$, handler)
+ENDSUB
+
+EXPORT SUB PUT(pattern$, handler)
+    ROUTE("PUT", pattern$, handler)
+ENDSUB
+
+EXPORT SUB DELETE(pattern$, handler)
+    ROUTE("DELETE", pattern$, handler)
+ENDSUB
+
+EXPORT SUB PATCH(pattern$, handler)
+    ROUTE("PATCH", pattern$, handler)
+ENDSUB
+
+' A handler for every method.
+EXPORT SUB ANY(pattern$, handler)
+    ROUTE("*", pattern$, handler)
+ENDSUB
+
+' A function run before every route: it returns PASS() to go on or a
+' response to answer at once.
+EXPORT SUB BEFORE(handler)
+    DIM key$ = "b" + STR$(LEN(gBeforeIds))
+    gBeforeFns{key$} = handler
+    PUSH(gBeforeIds, key$)
+ENDSUB
+
+' A function run on every response: it gets the request and returns a map
+' of headers to add, or a response with __http_status to send instead.
+' CURRENT_STATUS() tells the status of the response so far.
+EXPORT SUB AFTER(handler)
+    DIM key$ = "a" + STR$(LEN(gAfterIds))
+    gAfterFns{key$} = handler
+    PUSH(gAfterIds, key$)
+ENDSUB
+
+' The handler for paths no route and no static folder answers (status 404).
+EXPORT SUB ON_MISSING(handler)
+    gHooks{"missing"} = handler
+ENDSUB
+
+' The handler for a route that throws: it gets the request and reads the
+' error message with ERROR_MESSAGE$() (status 500).
+EXPORT SUB ON_ERROR(handler)
+    gHooks{"error"} = handler
+ENDSUB
+
+' The status of the response an AFTER function is called for.
+EXPORT FUNC CURRENT_STATUS()
+    DIM st = gCurrent{"status"}
+    RETURN st
+ENDFUNC
+
+' The message of the error an ON_ERROR handler answers.
+EXPORT FUNC ERROR_MESSAGE$()
+    DIM m$ = gCurrent{"error"}
+    RETURN m$
+ENDFUNC
+
+FUNC Segments(path$)
+    DIM parts = SPLIT(path$, "/")
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM p$ = parts[k]
+        IF p$ <> "" THEN PUSH(out, p$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The parameters of a path matched against a pattern, with the key
+' __matched when it matches.
+FUNC MatchRoute(pattern$, path$)
+    DIM got AS MAP
+    DIM ps = Segments(pattern$)
+    DIM xs = Segments(path$)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(ps) - 1
+        DIM seg$ = ps[k]
+        IF LEFT$(seg$, 1) = "*" THEN
+            DIM rest$ = ""
+            FOR j = k TO LEN(xs) - 1
+                DIM part_r$ = xs[j]
+                IF rest$ <> "" THEN rest$ = rest$ + "/"
+                rest$ = rest$ + part_r$
+            NEXT j
+            DIM star$ = MID$(seg$, 1, LEN(seg$))
+            IF star$ = "" THEN star$ = "rest"
+            got{star$} = PercentDecode$(rest$)
+            got{"__matched"} = 1
+            RETURN got
+        ENDIF
+        IF k >= LEN(xs) THEN RETURN got
+        DIM part$ = xs[k]
+        IF LEFT$(seg$, 1) = ":" THEN
+            got{MID$(seg$, 1, LEN(seg$))} = PercentDecode$(part$)
+        ELSEIF seg$ <> part$ THEN
+            RETURN got
+        ENDIF
+    NEXT k
+    IF LEN(xs) <> LEN(ps) THEN RETURN got
+    got{"__matched"} = 1
+    RETURN got
+ENDFUNC
+
+FUNC CallHandler(handler, request)
+    DIM result = REPLY("", 500, "text/plain; charset=utf-8")
+    DIM failed = FALSE
+    DIM msg$ = ""
+    TRY
+        DIM answer = handler(request)
+        result = Normalize(answer, 200)
+    CATCH
+        failed = TRUE
+        msg$ = ERRMSG$
+    ENDTRY
+    IF NOT failed THEN RETURN result
+    IF MAP.EXISTS(gHooks, "error") THEN
+        DIM efn = gHooks{"error"}
+        gCurrent{"error"} = msg$
+        DIM error_value = efn(request)
+        RETURN Normalize(error_value, 500)
+    ENDIF
+    RETURN REPLY("Internal Server Error", 500, "text/plain; charset=utf-8")
+ENDFUNC
+
+FUNC MimeOf$(name$)
+    DIM dot = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(name$) - 1
+        IF MID$(name$, k, 1) = "." THEN dot = k
+    NEXT k
+    IF dot < 0 THEN RETURN "application/octet-stream"
+    DIM ext$ = LCASE$(MID$(name$, dot + 1, LEN(name$)))
+    IF ext$ = "html" ORELSE ext$ = "htm" THEN RETURN "text/html; charset=utf-8"
+    IF ext$ = "css" THEN RETURN "text/css; charset=utf-8"
+    IF ext$ = "js" ORELSE ext$ = "mjs" THEN RETURN "application/javascript; charset=utf-8"
+    IF ext$ = "json" THEN RETURN "application/json; charset=utf-8"
+    IF ext$ = "txt" THEN RETURN "text/plain; charset=utf-8"
+    IF ext$ = "md" THEN RETURN "text/markdown; charset=utf-8"
+    IF ext$ = "xml" THEN RETURN "application/xml"
+    IF ext$ = "svg" THEN RETURN "image/svg+xml"
+    IF ext$ = "png" THEN RETURN "image/png"
+    IF ext$ = "jpg" ORELSE ext$ = "jpeg" THEN RETURN "image/jpeg"
+    IF ext$ = "gif" THEN RETURN "image/gif"
+    IF ext$ = "webp" THEN RETURN "image/webp"
+    IF ext$ = "ico" THEN RETURN "image/x-icon"
+    IF ext$ = "pdf" THEN RETURN "application/pdf"
+    IF ext$ = "woff2" THEN RETURN "font/woff2"
+    RETURN "application/octet-stream"
+ENDFUNC
+
+' Files of a folder served under a path prefix: "/static/app.css" from
+' dir$ + "/app.css", a folder by its index.html.
+EXPORT SUB ASSETS(prefix$, dir$)
+    DIM pre$ = prefix$
+    DO WHILE LEN(pre$) > 1 ANDALSO RIGHT$(pre$, 1) = "/"
+        pre$ = LEFT$(pre$, LEN(pre$) - 1)
+    LOOP
+    PUSH(gStaticPrefixes, pre$)
+    PUSH(gStaticDirs, dir$)
+ENDSUB
+
+FUNC StaticFile(path$)
+    DIM none AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(gStaticPrefixes) - 1
+        DIM pre$ = gStaticPrefixes[k]
+        DIM dir$ = gStaticDirs[k]
+        DIM rel$ = ""
+        DIM hit = FALSE
+        IF pre$ = "/" ORELSE pre$ = "" THEN
+            rel$ = MID$(path$, 1, LEN(path$))
+            hit = TRUE
+        ELSEIF path$ = pre$ THEN
+            hit = TRUE
+        ELSEIF LEFT$(path$, LEN(pre$) + 1) = pre$ + "/" THEN
+            rel$ = MID$(path$, LEN(pre$) + 1, LEN(path$))
+            hit = TRUE
+        ENDIF
+        IF hit THEN
+            rel$ = PercentDecode$(rel$)
+            IF INSTR(rel$, "..") >= 0 ORELSE INSTR(rel$, "\") >= 0 ORELSE INSTR(rel$, ":") >= 0 THEN RETURN REPLY("Forbidden", 403, "text/plain; charset=utf-8")
+            IF rel$ = "" ORELSE RIGHT$(rel$, 1) = "/" THEN rel$ = rel$ + "index.html"
+            DIM file$ = PATH.JOIN$(dir$, rel$)
+            IF FILE.EXISTS(file$) THEN RETURN REPLY(BINREADER$(file$), 200, MimeOf$(rel$))
+        ENDIF
+    NEXT k
+    RETURN none
+ENDFUNC
+
+' ---- sessions (in memory, cookie name: jdwsid) ----
+
+' The session map of the visitor. A new visitor gets one, and the response
+' sets its cookie; what is stored in the map stays for the next request.
+EXPORT FUNC SESSION(request)
+    DIM sid$ = COOKIE_VAL$(request, "jdwsid")
+    IF sid$ <> "" ANDALSO MAP.EXISTS(gSessions, sid$) THEN
+        DIM have = gSessions{sid$}
+        RETURN have
+    ENDIF
+    DIM made$ = ""
+    IF MAP.EXISTS(gCurrent, "sid_new") THEN made$ = gCurrent{"sid_new"}
+    IF made$ <> "" ANDALSO MAP.EXISTS(gSessions, made$) THEN
+        DIM same = gSessions{made$}
+        RETURN same
+    ENDIF
+    DIM fresh_sid$ = CODEC.UUID$()
+    DIM fresh AS MAP
+    gSessions{fresh_sid$} = fresh
+    gCurrent{"sid_new"} = fresh_sid$
+    DIM stored = gSessions{fresh_sid$}
+    RETURN stored
+ENDFUNC
+
+' The visitor's session forgotten and its cookie cleared.
+EXPORT SUB SESSION_END(request)
+    DIM sid$ = COOKIE_VAL$(request, "jdwsid")
+    IF sid$ <> "" ANDALSO MAP.EXISTS(gSessions, sid$) THEN MAP.DELETE(gSessions, sid$)
+    gCurrent{"sid_end"} = 1
+ENDSUB
+
+' ---- dispatch ----
+
+FUNC Finish(request, response)
+    DIM out = response
+    DIM k = 0
+    FOR k = 0 TO LEN(gAfterIds) - 1
+        DIM akey$ = gAfterIds[k]
+        DIM afn = gAfterFns{akey$}
+        DIM status_now = out{"__http_status"}
+        gCurrent{"status"} = status_now
+        DIM after_value = afn(request)
+        IF TYPEOF(after_value) = "OBJECT" THEN
+            IF MAP.EXISTS(after_value, "__http_status") THEN
+                out = after_value
+            ELSE
+                DIM extra = MAP.KEYS(after_value)
+                DIM j = 0
+                FOR j = 0 TO LEN(extra) - 1
+                    DIM en$ = extra[j]
+                    DIM ev = after_value{en$}
+                    out = HEADER(out, en$, "" + ev)
+                NEXT j
+            ENDIF
+        ENDIF
+    NEXT k
+    DIM ended = 0
+    IF MAP.EXISTS(gCurrent, "sid_end") THEN ended = gCurrent{"sid_end"}
+    DIM sid$ = ""
+    IF MAP.EXISTS(gCurrent, "sid_new") THEN sid$ = gCurrent{"sid_new"}
+    IF ended <> 0 THEN
+        out = HEADER(out, "Set-Cookie", "jdwsid=; Path=/; Max-Age=0")
+    ELSEIF sid$ <> "" THEN
+        out = HEADER(out, "Set-Cookie", "jdwsid=" + sid$ + "; HttpOnly; Path=/; SameSite=Lax")
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' The answer to one request: before middleware, the first route whose
+' pattern and method match, the static folders, the missing handler, then
+' the after middleware. MOUNT wires it to the server.
+EXPORT FUNC DISPATCH(request)
+    DIM m = request{"METHOD"}
+    DIM method$ = UCASE$("" + m)
+    DIM pth = request{"PATH"}
+    DIM path$ = "" + pth
+    DIM no_route AS MAP
+    gCurrent{"route"} = no_route
+    gCurrent{"sid_new"} = ""
+    gCurrent{"sid_end"} = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(gBeforeIds) - 1
+        DIM bkey$ = gBeforeIds[k]
+        DIM bfn = gBeforeFns{bkey$}
+        DIM early = bfn(request)
+        IF NOT IsPass(early) THEN RETURN Finish(request, Normalize(early, 200))
+    NEXT k
+    DIM allowed$ = ""
+    FOR k = 0 TO LEN(gRoutePatterns) - 1
+        DIM pat$ = gRoutePatterns[k]
+        DIM got = MatchRoute(pat$, path$)
+        IF MAP.EXISTS(got, "__matched") THEN
+            DIM rmethod$ = gRouteMethods[k]
+            IF rmethod$ = method$ ORELSE rmethod$ = "*" ORELSE (method$ = "HEAD" ANDALSO rmethod$ = "GET") THEN
+                gCurrent{"route"} = got
+                DIM rkey$ = "r" + STR$(k)
+                DIM handler = gRouteFns{rkey$}
+                RETURN Finish(request, CallHandler(handler, request))
+            ENDIF
+            IF INSTR(", " + allowed$ + ",", ", " + rmethod$ + ",") < 0 THEN
+                IF allowed$ <> "" THEN allowed$ = allowed$ + ", "
+                allowed$ = allowed$ + rmethod$
+            ENDIF
+        ENDIF
+    NEXT k
+    IF allowed$ <> "" THEN
+        DIM refused = REPLY("Method Not Allowed", 405, "text/plain; charset=utf-8")
+        RETURN Finish(request, HEADER(refused, "Allow", allowed$))
+    ENDIF
+    IF method$ = "GET" ORELSE method$ = "HEAD" THEN
+        DIM served = StaticFile(path$)
+        IF MAP.EXISTS(served, "__http_status") THEN RETURN Finish(request, served)
+    ENDIF
+    IF MAP.EXISTS(gHooks, "missing") THEN
+        DIM mfn = gHooks{"missing"}
+        DIM missing_value = mfn(request)
+        RETURN Finish(request, Normalize(missing_value, 404))
+    ENDIF
+    RETURN Finish(request, REPLY("Not Found", 404, "text/plain; charset=utf-8"))
+ENDFUNC
+
+' ---- serving ----
+
+' The routes put on the server; call before HTTP.SERVER.START.
+EXPORT SUB MOUNT()
+    HTTP.SERVER.ON_NOTFOUND("JDWEB.DISPATCH")
+ENDSUB
+
+' The server started on port with the routes mounted; TRUE when it runs.
+EXPORT FUNC LISTEN(port, host$ = "127.0.0.1")
+    MOUNT()
+    RETURN HTTP.SERVER.START(port, host$)
+ENDFUNC
+
+' The app served until a handler stops the server.
+EXPORT SUB SERVE(port, host$ = "127.0.0.1")
+    IF LISTEN(port, host$) THEN HTTP.SERVER.WAIT
+    HTTP.SERVER.STOP
+ENDSUB
+
+' ---- testing ----
+
+FUNC LowerKeys(headers)
+    DIM out AS MAP
+    IF TYPEOF(headers) <> "OBJECT" THEN RETURN out
+    DIM names = MAP.KEYS(headers)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM hn$ = names[k]
+        DIM hv = headers{hn$}
+        out{LCASE$(hn$)} = hv
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A request to the app running in this process on port, as a map with
+' "status", "body" and "headers" (lower-case names). headers is a map of
+' request headers; a Content-Type among them sets the body's type.
+EXPORT FUNC FETCH(port, method$, path$, body$ = "", headers = 0)
+    HTTP.CLEARHEADERS()
+    HTTP.CLEARCOOKIES()
+    DIM ct$ = "application/json"
+    IF TYPEOF(headers) = "OBJECT" THEN
+        DIM names = MAP.KEYS(headers)
+        DIM k = 0
+        FOR k = 0 TO LEN(names) - 1
+            DIM hn$ = names[k]
+            DIM hv = headers{hn$}
+            IF LCASE$(hn$) = "content-type" THEN
+                ct$ = "" + hv
+            ELSE
+                HTTP.SETHEADER(hn$, "" + hv)
+            ENDIF
+        NEXT k
+    ENDIF
+    DIM raw = HTTP.REQUEST(UCASE$(method$), "http://127.0.0.1:" + STR$(port) + path$, body$, ct$)
+    HTTP.CLEARHEADERS()
+    DIM out AS MAP
+    out{"status"} = raw{"status"}
+    out{"body"} = raw{"body"}
+    out{"headers"} = LowerKeys(raw{"headers"})
+    RETURN out
+ENDFUNC
+
+' The value a response from FETCH sets for a cookie, or "".
+EXPORT FUNC COOKIE_OF$(response, name$)
+    DIM hs = response{"headers"}
+    IF NOT MAP.EXISTS(hs, "set-cookie") THEN RETURN ""
+    DIM raw = hs{"set-cookie"}
+    DIM header$ = "" + raw
+    IF LEFT$(header$, LEN(name$) + 1) <> name$ + "=" THEN RETURN ""
+    DIM rest$ = MID$(header$, LEN(name$) + 1, LEN(header$))
+    DIM semi = CINT(INSTR(rest$, ";"))
+    IF semi >= 0 THEN rest$ = LEFT$(rest$, semi)
+    RETURN rest$
+ENDFUNC

@@ -325,7 +325,6 @@ jdb/demos/turtle/turtle_start.jdb	ok	ok	ok
 jdb/demos/turtle/turtle_tree.jdb	ok	ok	ok
 jdb/demos/web/http_get.jdb	ok	ok	ok
 jdb/demos/web/jdtrakr.jdb	ok	ok	ok
-jdb/demos/web/jdweb.jdb	ok	ok	ok
 jdb/demos/web/jdweb_tpl_proof.jdb	ok	ok	ok
 jdb/demos/web/stock_plot.jdb	ok	ok	ok
 jdb/demos/web/tmpl.jdb	ok	ok	ok

@@ -8,7 +8,7 @@ database. It uses three pieces:
 |---|---|---|
 | **HTTP.SERVER** | the web server itself (routing, requests, responses) | built into jdBasic (the `HTTP` build flag) |
 | **TMPL** (`tmpl.jdb`) | an HTML template engine (the "views") | `IMPORT TMPL` |
-| **JDWEB** (`jdweb.jdb`) | a small framework: page chrome, theme CSS, nav, cookie-session auth | `IMPORT JDWEB` |
+| **JDWEB** (`jdweb.jdb`) | a small framework: routes with parameters, middleware, sessions, static files, page chrome, theme CSS, nav, cookie-session auth | `IMPORT JDWEB` |
 
 **Mental model:** `HTTP.SERVER` maps a URL to one of your handler functions ->
 your handler builds an HTML string (with `TMPL`/`JDWEB`) or returns a map (which
@@ -33,7 +33,7 @@ finds them next to your script first, so keep them in the same folder:
 myapp/
   myapp.jdb
   tmpl.jdb            # copy from lib/
-  jdweb.jdb           # copy from jdb/demos/web/  (only if you use JDWEB)
+  jdweb.jdb           # copy from lib/             (only if you use JDWEB)
   jdweb_tpl/          # copy the whole folder      (JDWEB reads its HTML/CSS from here)
     layout.html  theme.html  nav.html  login.html  notfound.html  cookiebar.html
 ```
@@ -485,6 +485,44 @@ returns the logged-in name or `""` - guard every protected handler with it.
 | `JDWEB.UNAUTH()` | 401 JSON response |
 | `JDWEB.REDIRECT_TO(loc$)` | 302 redirect |
 
+### Routes, middleware and sessions
+
+JDWEB can also do the routing itself: routes with path parameters for any
+method, middleware before and after every handler, an in-memory session per
+visitor, a folder of static files, and a handler's map sent as JSON.
+
+```basic
+IMPORT JDWEB
+
+FUNC ShowNote(request)
+    DIM id$ = JDWEB.PARAM$(request, "id")          ' from /notes/:id
+    RETURN {"id": id$}                             ' a map goes out as JSON
+ENDFUNC
+
+FUNC AddNote(request)
+    DIM note = JSON.PARSE$(request{"BODY"})
+    RETURN JDWEB.REPLY_JSON(note, 201)
+ENDFUNC
+
+FUNC NeedKey(request)
+    DIM hs = request{"HEADERS"}
+    IF MAP.EXISTS(hs, "x-api-key") THEN RETURN JDWEB.PASS()
+    RETURN JDWEB.REPLY_JSON({"error": "no key"}, 401)
+ENDFUNC
+
+JDWEB.GET("/notes/:id", ShowNote@)
+JDWEB.POST("/notes", AddNote@)
+JDWEB.BEFORE(NeedKey@)
+JDWEB.ASSETS("/static", PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "static"))
+JDWEB.SERVE(8080)
+```
+
+The routes answer through `HTTP.SERVER.ON_NOTFOUND`, so paths registered with
+`HTTP.SERVER.ON_GET` keep working beside them. `JDWEB.FETCH(port, method$,
+path$)` calls the running app from the same program, which is how its self
+test drives every route without a browser. The whole API is on
+`lib/jdweb_lib_readme.md`.
+
 ---
 
 ## Deployment
@@ -527,9 +565,11 @@ returns the logged-in name or `""` - guard every protected handler with it.
 - **Header keys are lowercase** in `request{"HEADERS"}` (`"cookie"`,
   `"x-api-key"`). The request path is `request{"PATH"}` (uppercase key, like
   `METHOD`/`BODY`/`PARAMS`).
-- **No wildcard routes.** Registration is exact-match only. To serve a family
-  of URLs, register each path explicitly (a `FOR EACH` over discovered routes,
-  see Level 3.5) and dispatch inside the handler on `request{"PATH"}`.
+- **No wildcard routes in HTTP.SERVER.** `ON_GET` and `ON_POST` register exact
+  paths only. To serve a family of URLs, use JDWEB routes (`/users/:id`,
+  `/files/*path`), or register each path explicitly (a `FOR EACH` over
+  discovered routes, see Level 3.5) and dispatch inside the handler on
+  `request{"PATH"}`.
 - **Reserved names** still apply in handlers: don't name variables `LINE`, `VAL`,
   `LEN`, `MAP`, `E`, `PI`, etc.
 
@@ -539,7 +579,8 @@ returns the logged-in name or `""` - guard every protected handler with it.
 
 - `lib/tmpl.jdb` - the template engine; its page is `lib/tmpl_lib_readme.md`,
   its self test `tests/jdlibs/tmpl_selftest.jdb`
-- `jdb/demos/web/jdweb.jdb` - the framework module
+- `lib/jdweb.jdb` - the framework module; its page is `lib/jdweb_lib_readme.md`,
+  its self test `tests/jdlibs/jdweb_selftest.jdb`
 - `jdb/demos/web/jdtrakr.jdb` - a full app (kanban board) built on both
 - `jdb/demos/web/tmpl_demo.jdb`, `tmpl_server.jdb` - smaller worked examples.
   Inside the repository they find `tmpl.jdb` through the module path:

@@ -53,12 +53,13 @@ sudo cp build/jdBasic /opt/jdtrakr/
 ```
 
 jdTrakr is a set of files that must sit together: the app `jdtrakr.jdb`, the
-framework module `jdweb.jdb`, the template engine `tmpl.jdb` (it lives in the
-module library, `lib/tmpl.jdb`), the config `jdtrakr.json`, and the template
-folders `jdweb_tpl/` and `jdtrakr_tpl/`. Upload them (from your machine):
+framework module `jdweb.jdb` and the template engine `tmpl.jdb` (both live in
+the module library, `lib/jdweb.jdb` and `lib/tmpl.jdb`), the config
+`jdtrakr.json`, and the template folders `jdweb_tpl/` and `jdtrakr_tpl/`.
+Upload them (from your machine):
 
 ```bash
-scp jdb/demos/web/jdtrakr.jdb jdb/demos/web/jdweb.jdb lib/tmpl.jdb jdb/demos/web/jdtrakr.json you@your-vps:/tmp/
+scp jdb/demos/web/jdtrakr.jdb lib/jdweb.jdb lib/tmpl.jdb jdb/demos/web/jdtrakr.json you@your-vps:/tmp/
 scp -r jdb/demos/web/jdweb_tpl jdb/demos/web/jdtrakr_tpl you@your-vps:/tmp/
 ```
 
@@ -133,7 +134,7 @@ Open `https://YOUR.DOMAIN`. The board is empty and there are no users yet.
 ## Operating notes
 
 - **Backup:** `sudo cp /opt/jdtrakr/jdtrakr.db ~/jdtrakr-$(date +%F).db`
-- **Update the app:** upload the changed file(s) (`jdtrakr.jdb`, `jdweb.jdb`,
+- **Update the app:** upload the changed file(s) (`jdtrakr.jdb`, `lib/jdweb.jdb`,
   `lib/tmpl.jdb` and/or `jdtrakr.json`) into `/opt/jdtrakr/`, then `sudo systemctl restart
   jdtrakr`. The `.db` is untouched by a restart. `"secure": true` already lives
   in the installed `jdtrakr.json`, so no per-update edit is needed.

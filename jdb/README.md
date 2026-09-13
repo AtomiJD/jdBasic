@@ -34,7 +34,7 @@ jdb/
 │   ├── data/    vectors / matrices / dates - AGG, TALLY, EOMONTH, DATERANGE, MVINS, ZIP archives
 │   ├── jdlibs/  the module library by example - TESTKIT, CLI, SCHEMA, LLMAPI, CONF, LOGGER, XLSX, JWT
 │   ├── tui/     terminal UI, FTXUI, markdown browser, cowsay
-│   ├── web/     HTTP server + client - jdTrakr kanban, JDWEB framework, dashboards
+│   ├── web/     HTTP server + client - jdTrakr kanban on JDWEB, dashboards
 │   ├── bridges/ FFI, COM (Excel/Word/Access/Outlook), SQLite, serial
 │   ├── async/   ASYNC / AWAIT, threads, task queue
 │   ├── turtle/  classic turtle graphics (dragon, Koch, fib, tree)

@@ -1,0 +1,145 @@
+' jdweb_demo.jdb - a small notes API on JDWEB: routes with parameters, a
+' JSON body, an API key checked by a middleware, a header added to every
+' answer, a visit counter in a session, a static page and a themed 404. The
+' demo starts the server, calls it through JDWEB.FETCH and prints what came
+' back, so it runs without a browser.
+'
+'   jdBasic jdweb_demo.jdb
+
+IMPORT JDWEB, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM PORT = 9984
+DIM Q$ = CHR$(34)
+DIM gNotes AS MAP
+
+FUNC ListNotes(request)
+    DIM ids = MAP.KEYS(gNotes)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(ids) - 1
+        DIM id$ = ids[k]
+        DIM text$ = gNotes{id$}
+        PUSH(out, {"id": id$, "text": text$})
+    NEXT k
+    RETURN {"notes": out}
+ENDFUNC
+
+FUNC ShowNote(request)
+    DIM id$ = JDWEB.PARAM$(request, "id")
+    IF NOT MAP.EXISTS(gNotes, id$) THEN RETURN JDWEB.REPLY_JSON({"error": "no note " + id$}, 404)
+    DIM text$ = gNotes{id$}
+    RETURN {"id": id$, "text": text$}
+ENDFUNC
+
+FUNC AddNote(request)
+    DIM sent = JSON.PARSE$(request{"BODY"})
+    DIM text$ = sent{"text"}
+    DIM id$ = STR$(LEN(MAP.KEYS(gNotes)) + 1)
+    gNotes{id$} = text$
+    RETURN JDWEB.REPLY_JSON({"id": id$, "text": text$}, 201)
+ENDFUNC
+
+FUNC DropNote(request)
+    DIM id$ = JDWEB.PARAM$(request, "id")
+    IF NOT MAP.EXISTS(gNotes, id$) THEN RETURN JDWEB.REPLY_JSON({"error": "no note " + id$}, 404)
+    MAP.DELETE(gNotes, id$)
+    RETURN JDWEB.REPLY("", 204, "text/plain")
+ENDFUNC
+
+FUNC Visits(request)
+    DIM sess = JDWEB.SESSION(request)
+    DIM n = 0
+    IF MAP.EXISTS(sess, "visits") THEN n = sess{"visits"}
+    n = n + 1
+    sess{"visits"} = n
+    RETURN "<p>visit number " + STR$(n) + "</p>"
+ENDFUNC
+
+FUNC NeedKey(request)
+    DIM method$ = request{"METHOD"}
+    IF method$ = "GET" THEN RETURN JDWEB.PASS()
+    DIM hs = request{"HEADERS"}
+    IF MAP.EXISTS(hs, "x-api-key") THEN
+        DIM key$ = hs{"x-api-key"}
+        IF key$ = "demo-key" THEN RETURN JDWEB.PASS()
+    ENDIF
+    RETURN JDWEB.REPLY_JSON({"error": "an API key is needed to change notes"}, 401)
+ENDFUNC
+
+FUNC Served(request)
+    RETURN {"X-App": "notes-demo"}
+ENDFUNC
+
+FUNC Nothing(request)
+    DIM p$ = request{"PATH"}
+    RETURN JDWEB.REPLY_JSON({"error": "nothing at " + p$}, 404)
+ENDFUNC
+
+JDWEB.GET("/notes", ListNotes@)
+JDWEB.GET("/notes/:id", ShowNote@)
+JDWEB.POST("/notes", AddNote@)
+JDWEB.DELETE("/notes/:id", DropNote@)
+JDWEB.GET("/visits", Visits@)
+JDWEB.BEFORE(NeedKey@)
+JDWEB.AFTER(Served@)
+JDWEB.ON_MISSING(Nothing@)
+
+DIM folder$ = MKTEMP$("jdwebdemo")
+MKDIR folder$
+TXTWRITER folder$ + "/about.html", "<h1>About the notes demo</h1>"
+JDWEB.ASSETS("/pages", folder$)
+
+IF NOT JDWEB.LISTEN(PORT) THEN
+    PRINT "could not start the server on port " + STR$(PORT)
+    END 1
+ENDIF
+
+DIM rows = []
+DIM call_headers AS MAP
+DIM calls = []
+PUSH(calls, ["POST", "/notes", "{" + Q$ + "text" + Q$ + ":" + Q$ + "buy milk" + Q$ + "}", "key"])
+PUSH(calls, ["POST", "/notes", "{" + Q$ + "text" + Q$ + ":" + Q$ + "call the office" + Q$ + "}", "key"])
+PUSH(calls, ["POST", "/notes", "{" + Q$ + "text" + Q$ + ":" + Q$ + "no key" + Q$ + "}", ""])
+PUSH(calls, ["GET", "/notes", "", ""])
+PUSH(calls, ["GET", "/notes/2", "", ""])
+PUSH(calls, ["DELETE", "/notes/1", "", "key"])
+PUSH(calls, ["GET", "/notes/1", "", ""])
+PUSH(calls, ["PUT", "/notes/2", "", "key"])
+PUSH(calls, ["GET", "/pages/about.html", "", ""])
+PUSH(calls, ["GET", "/nothing/here", "", ""])
+DIM i = 0
+FOR i = 0 TO LEN(calls) - 1
+    DIM c = calls[i]
+    DIM method$ = c[0]
+    DIM path$ = c[1]
+    DIM body$ = c[2]
+    DIM use_key$ = c[3]
+    call_headers{"X-Api-Key"} = ""
+    IF use_key$ = "key" THEN call_headers{"X-Api-Key"} = "demo-key"
+    DIM r = JDWEB.FETCH(PORT, method$, path$, body$, call_headers)
+    DIM got$ = r{"body"}
+    DIM row = []
+    PUSH(row, method$)
+    PUSH(row, path$)
+    PUSH(row, STR$(r{"status"}))
+    PUSH(row, LEFT$(got$, 44))
+    PUSH(rows, row)
+NEXT i
+CONSOLE.RULE("requests")
+CONSOLE.TABLE(rows, {"headers": ["method", "path", "status", "answer"], "border": "plain"})
+PRINT ""
+
+CONSOLE.RULE("a session")
+DIM first = JDWEB.FETCH(PORT, "GET", "/visits")
+DIM sid$ = JDWEB.COOKIE_OF$(first, "jdwsid")
+PRINT "  "; first{"body"}; "   (the server set a session cookie: "; LEN(sid$) > 0; ")"
+DIM again = JDWEB.FETCH(PORT, "GET", "/visits", "", {"Cookie": "jdwsid=" + sid$})
+PRINT "  "; again{"body"}; "   (sent the cookie back)"
+DIM hs = again{"headers"}
+PRINT "  every answer carries X-App: "; hs{"x-app"}
+PRINT ""
+
+HTTP.SERVER.STOP()
+KILL folder$ + "/about.html"
+RMDIR folder$
