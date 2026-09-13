@@ -1,0 +1,223 @@
+' PROPTEST: properties that fail shrink to their minimal inputs (a sort that
+' drops duplicates to two equal elements, a sort that skips the last
+' element to two elements out of order, numbers, text, floats, maps, lists
+' of text, booleans, oneof and pick), the same seed replays a failure, a
+' property that throws fails with its error, holding properties pass, the
+' generator strings the builders write, refused generators, and a failing
+' FORALL run in its own process that TESTKIT reports as a failure.
+
+IMPORT TESTKIT, PROPTEST
+
+DIM Q$ = CHR$(34)
+DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(fixture_dir$ + "proptest_failing.jdb") THEN fixture_dir$ = "fixtures/"
+
+FUNC Dedupe(xs)
+    DIM out = []
+    DIM k = 0
+    DIM m = 0
+    FOR k = 0 TO LEN(xs) - 1
+        DIM seen = FALSE
+        FOR m = 0 TO LEN(out) - 1
+            IF out[m] = xs[k] THEN seen = TRUE
+        NEXT m
+        IF NOT seen THEN PUSH(out, xs[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC KeepsLength(xs)
+    RETURN LEN(Dedupe(xs)) = LEN(xs)
+ENDFUNC
+
+' An insertion sort that leaves the last element where it was.
+FUNC SortButLast(xs)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(xs) - 1
+        PUSH(out, xs[k])
+    NEXT k
+    DIM i = 0
+    DIM j = 0
+    FOR i = 1 TO LEN(out) - 2
+        j = i
+        DO WHILE j > 0
+            IF out[j - 1] <= out[j] THEN EXITDO
+            DIM keep = out[j]
+            out[j] = out[j - 1]
+            out[j - 1] = keep
+            j = j - 1
+        LOOP
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC SortAll(xs)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(xs) - 1
+        PUSH(out, xs[k])
+    NEXT k
+    DIM i = 0
+    DIM j = 0
+    FOR i = 1 TO LEN(out) - 1
+        j = i
+        DO WHILE j > 0
+            IF out[j - 1] <= out[j] THEN EXITDO
+            DIM keep = out[j]
+            out[j] = out[j - 1]
+            out[j - 1] = keep
+            j = j - 1
+        LOOP
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC InOrder(ys)
+    DIM k = 0
+    FOR k = 0 TO LEN(ys) - 2
+        IF ys[k] > ys[k + 1] THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+FUNC SortedButLast(xs)
+    RETURN InOrder(SortButLast(xs))
+ENDFUNC
+
+FUNC SortedAll(xs)
+    DIM ys = SortAll(xs)
+    RETURN InOrder(ys) ANDALSO LEN(ys) = LEN(xs)
+ENDFUNC
+
+FUNC BelowTen(x)
+    RETURN x < 10
+ENDFUNC
+
+FUNC NoX(s$)
+    RETURN INSTR(s$, "x") < 0
+ENDFUNC
+
+FUNC BelowHalf(v)
+    RETURN v < 0.5
+ENDFUNC
+
+FUNC Adult(rec)
+    RETURN rec{"age"} >= 18
+ENDFUNC
+
+FUNC Explodes(x)
+    IF x > 3 THEN THROW "too big: " + FORMAT$("{}", x)
+    RETURN TRUE
+ENDFUNC
+
+FUNC FewWords(ws)
+    RETURN LEN(ws) < 3
+ENDFUNC
+
+FUNC IsFalse(b)
+    RETURN b = 0
+ENDFUNC
+
+FUNC BelowFifty(x)
+    RETURN x < 50
+ENDFUNC
+
+FUNC NotBlue(s$)
+    RETURN s$ <> "blue"
+ENDFUNC
+
+FUNC HasAt(s$)
+    RETURN INSTR(s$, "@") > 0
+ENDFUNC
+
+FUNC UnknownGen(x)
+    RETURN PROPTEST.EXAMPLES("frob:1..2", 1, 1)
+ENDFUNC
+
+FUNC MixedOneOf(x)
+    RETURN PROPTEST.EXAMPLES("oneof(int:0..3,text:0..3)", 1, 1)
+ENDFUNC
+
+FUNC ListOfMaps(x)
+    RETURN PROPTEST.EXAMPLES("list(map(a=int:0..1),0..3)", 1, 1)
+ENDFUNC
+
+' ---------------------------------------------------------------- shrinking
+DIM rep = PROPTEST.FALSIFY("list(int:0..100,0..10)", KeepsLength@, {"seed": 7})
+TESTKIT.ISFALSE(rep{"ok"}, "a sort that drops duplicates is falsified")
+TESTKIT.EQ(rep{"shown"}, "[0, 0]", "and shrinks to two equal elements")
+DIM again = PROPTEST.FALSIFY("list(int:0..100,0..10)", KeepsLength@, {"seed": 7})
+TESTKIT.EQ(again{"case"}, rep{"case"}, "the same seed fails on the same case")
+TESTKIT.EQ(again{"first"}, rep{"first"}, "with the same input")
+TESTKIT.EQ(again{"shown"}, "[0, 0]", "and the same minimal input")
+TESTKIT.ISTRUE(rep{"shrinks"} > 0, "shrinking took steps")
+
+DIM rep_sort = PROPTEST.FALSIFY("list(int:-50..50,0..20)", SortedButLast@, {"seed": 11})
+TESTKIT.EQ(rep_sort{"shown"}, "[1, 0]", "a sort that skips the last element shrinks to two elements out of order")
+DIM rep_good = PROPTEST.FALSIFY("list(int:-50..50,0..20)", SortedAll@, {"seed": 11})
+TESTKIT.ISTRUE(rep_good{"ok"}, "a correct sort holds")
+TESTKIT.EQ(rep_good{"runs"}, 100, "for 100 cases")
+
+DIM rep_int = PROPTEST.FALSIFY("int:-1000..1000", BelowTen@, {"seed": 1})
+TESTKIT.EQ(rep_int{"shown"}, "10", "a number shrinks to the boundary")
+DIM rep_text = PROPTEST.FALSIFY("text:0..20", NoX@, {"seed": 5, "runs": 500})
+TESTKIT.EQ(rep_text{"shown"}, Q$ + "x" + Q$, "text shrinks to the one character that matters")
+DIM rep_float = PROPTEST.FALSIFY("float:0..1", BelowHalf@, {"seed": 2})
+TESTKIT.EQ(rep_float{"shown"}, "0.5", "a float shrinks to the boundary")
+DIM rep_map = PROPTEST.FALSIFY("map(name=letters:1..5,age=int:0..120)", Adult@, {"seed": 3})
+TESTKIT.EQ(rep_map{"shown"}, "{" + Q$ + "name" + Q$ + ": " + Q$ + "a" + Q$ + ", " + Q$ + "age" + Q$ + ": 0}", "a map shrinks field by field")
+DIM rep_words = PROPTEST.FALSIFY("list(letters:1..5,0..10)", FewWords@, {"seed": 4})
+TESTKIT.EQ(rep_words{"shown"}, "[" + Q$ + "a" + Q$ + ", " + Q$ + "a" + Q$ + ", " + Q$ + "a" + Q$ + "]", "a list of text shrinks to its shortest failing form")
+DIM rep_bool = PROPTEST.FALSIFY("bool", IsFalse@, {"seed": 6})
+TESTKIT.EQ(rep_bool{"shown"}, "TRUE", "a boolean shows as TRUE or FALSE")
+DIM rep_oneof = PROPTEST.FALSIFY("oneof(int:0..5,int:100..200)", BelowFifty@, {"seed": 8})
+TESTKIT.EQ(rep_oneof{"shown"}, "100", "oneof shrinks within the failing branch")
+DIM colours$ = PROPTEST.PICK$(["red", "green", "blue"])
+DIM rep_pick = PROPTEST.FALSIFY(colours$, NotBlue@, {"seed": 9})
+TESTKIT.EQ(rep_pick{"shown"}, Q$ + "blue" + Q$, "PICK$ draws the entries of a list")
+DIM rep_throw = PROPTEST.FALSIFY("int:0..100", Explodes@, {"seed": 10})
+TESTKIT.EQ(rep_throw{"shown"}, "4", "a property that throws fails")
+TESTKIT.ISTRUE(INSTR(rep_throw{"error"}, "too big: 4") >= 0, "with the error of the minimal input")
+DIM rep_fake = PROPTEST.FALSIFY("fake:email", HasAt@, {"seed": 12, "runs": 50})
+TESTKIT.ISTRUE(rep_fake{"ok"}, "FAKE e-mail addresses all hold an @")
+DIM rep_capped = PROPTEST.FALSIFY("list(int:0..100,0..10)", KeepsLength@, {"seed": 7, "max_shrinks": 5})
+TESTKIT.ISTRUE(rep_capped{"calls"} <= 5, "max_shrinks caps the property calls while shrinking")
+
+' ------------------------------------------------------------------- inputs
+DIM dice = PROPTEST.EXAMPLES("int:1..6", 20, 3)
+TESTKIT.EQ(LEN(dice), 20, "EXAMPLES draws n inputs")
+TESTKIT.EQARRAY(PROPTEST.EXAMPLES("int:1..6", 20, 3), dice, "the same seed draws the same inputs")
+DIM all_dice = TRUE
+DIM k = 0
+FOR k = 0 TO LEN(dice) - 1
+    DIM face = VAL(dice[k])
+    IF face < 1 ORELSE face > 6 THEN all_dice = FALSE
+NEXT k
+TESTKIT.ISTRUE(all_dice, "within the range")
+TESTKIT.EQARRAY(PROPTEST.EXAMPLES("fake:name", 3, 9), PROPTEST.EXAMPLES("fake:name", 3, 9), "FAKE inputs replay too")
+
+TESTKIT.EQ(PROPTEST.INTS$(-5, 5), "int:-5..5", "INTS$")
+TESTKIT.EQ(PROPTEST.FLOATS$(0, 2.5), "float:0..2.5", "FLOATS$")
+TESTKIT.EQ(PROPTEST.LISTOF$(PROPTEST.INTS$(0, 9), 1, 3), "list(int:0..9,1..3)", "LISTOF$")
+TESTKIT.EQ(PROPTEST.MAPOF$(["a", "b"], [PROPTEST.BOOLS$(), PROPTEST.TEXTS$(0, 4)]), "map(a=bool,b=text:0..4)", "MAPOF$")
+TESTKIT.EQ(PROPTEST.ONEOF$([PROPTEST.LETTERS$(1, 3), PROPTEST.DIGITS$(2, 2), PROPTEST.FAKED$("city")]), "oneof(letters:1..3,digits:2..2,fake:city)", "ONEOF$, LETTERS$, DIGITS$ and FAKED$")
+TESTKIT.THROWS(UnknownGen@, 0, "an unknown generator is refused")
+TESTKIT.THROWS(MixedOneOf@, 0, "oneof over different kinds is refused")
+TESTKIT.THROWS(ListOfMaps@, 0, "a list of maps is refused")
+
+' ------------------------------------------------------------------ TESTKIT
+PROPTEST.FORALL("a correct sort holds through FORALL", "list(int:-50..50,0..20)", SortedAll@, {"seed": 13})
+DIM exe$ = "build\jdBasic.exe"
+IF NOT FILE.EXISTS(exe$) THEN exe$ = "..\..\build\jdBasic.exe"
+IF FILE.EXISTS(exe$) THEN
+    DIM child = OS.EXEC(exe$, [fixture_dir$ + "proptest_failing.jdb"])
+    DIM child_out$ = child{"OUTPUT"}
+    TESTKIT.ISTRUE(INSTR(child_out$, " FAIL ") >= 0, "a failing FORALL is a TESTKIT failure")
+    TESTKIT.ISTRUE(INSTR(child_out$, "falsified by [0, 0] (seed 7") >= 0, "whose message names the minimal input and the seed")
+    TESTKIT.ISTRUE(child{"EXIT_CODE"} <> 0, "and the run exits non-zero")
+ELSE
+    TESTKIT.SKIP("no build\jdBasic.exe to run the failing FORALL with")
+ENDIF
+
+TESTKIT.REPORT()

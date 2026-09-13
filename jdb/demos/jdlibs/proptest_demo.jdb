@@ -1,0 +1,91 @@
+' PROPTEST demo: what generators draw, and three small bugs that a property
+' finds and shrinks to the input that shows them best.
+
+IMPORT PROPTEST
+
+FUNC Shorten$(s$, width)
+    IF LEN(s$) <= width THEN RETURN s$
+    RETURN LEFT$(s$, width) + "..."
+ENDFUNC
+
+FUNC FitsFive(s$)
+    RETURN LEN(Shorten$(s$, 5)) <= 5
+ENDFUNC
+
+FUNC Dedupe(xs)
+    DIM out = []
+    DIM k = 0
+    DIM m = 0
+    FOR k = 0 TO LEN(xs) - 1
+        DIM seen = FALSE
+        FOR m = 0 TO LEN(out) - 1
+            IF out[m] = xs[k] THEN seen = TRUE
+        NEXT m
+        IF NOT seen THEN PUSH(out, xs[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC KeepsLength(xs)
+    RETURN LEN(Dedupe(xs)) = LEN(xs)
+ENDFUNC
+
+FUNC GrossCents(net, rate)
+    RETURN net + (net * rate) \ 100
+ENDFUNC
+
+FUNC NeverUndercharges(rec)
+    DIM net = rec{"net"}
+    DIM rate = rec{"rate"}
+    RETURN GrossCents(net, rate) * 100 >= net * (100 + rate)
+ENDFUNC
+
+FUNC GrossRoundedUp(net, rate)
+    RETURN net + (net * rate + 99) \ 100
+ENDFUNC
+
+FUNC RoundsUp(rec)
+    DIM net = rec{"net"}
+    DIM rate = rec{"rate"}
+    RETURN GrossRoundedUp(net, rate) * 100 >= net * (100 + rate)
+ENDFUNC
+
+SUB Show(title$, rep)
+    PRINT title$
+    IF rep{"ok"} THEN
+        PRINT "  holds for "; rep{"runs"}; " cases"
+    ELSE
+        PRINT "  falsified in case "; rep{"case"}; " of seed "; rep{"seed"}
+        PRINT "  first failing input: "; rep{"first"}
+        PRINT "  after "; rep{"shrinks"}; " shrinking steps:  "; rep{"shown"}
+    ENDIF
+ENDSUB
+
+PRINT "What generators draw:"
+DIM samples = PROPTEST.EXAMPLES("list(int:-9..9,0..6)", 4, 1)
+DIM k = 0
+FOR k = 0 TO LEN(samples) - 1
+    PRINT "  "; samples[k]
+NEXT k
+samples = PROPTEST.EXAMPLES("map(user=fake:user,age=int:18..99)", 3, 2)
+FOR k = 0 TO LEN(samples) - 1
+    PRINT "  "; samples[k]
+NEXT k
+samples = PROPTEST.EXAMPLES("oneof(digits:4..4,letters:2..3)", 4, 3)
+FOR k = 0 TO LEN(samples) - 1
+    PRINT "  "; samples[k]
+NEXT k
+PRINT
+
+Show("Shorten$ keeps text within five characters:", PROPTEST.FALSIFY("text:0..30", FitsFive@, {"seed": 21}))
+PRINT
+Show("Removing duplicates keeps the length:", PROPTEST.FALSIFY("list(int:0..100,0..10)", KeepsLength@, {"seed": 7}))
+DIM replay = PROPTEST.FALSIFY("list(int:0..100,0..10)", KeepsLength@, {"seed": 7})
+PRINT "  the same seed again: case "; replay{"case"}; ", "; replay{"shown"}
+PRINT
+
+DIM rates$ = PROPTEST.PICK$([0, 7, 19])
+DIM prices$ = PROPTEST.MAPOF$(["net", "rate"], [PROPTEST.INTS$(0, 100000), rates$])
+Show("Gross in cents never undercharges the tax:", PROPTEST.FALSIFY(prices$, NeverUndercharges@, {"seed": 5}))
+PRINT
+Show("The same with rounding up:", PROPTEST.FALSIFY(prices$, RoundsUp@, {"seed": 5, "runs": 500}))

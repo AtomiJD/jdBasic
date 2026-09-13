@@ -1457,6 +1457,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `OAUTH` | OAuth 2 clients: client credentials, code flow with PKCE, device code, refresh; REQ sessions that refresh; Google and Microsoft |
 | `DB` | SQLite through a query builder with bound values: rows as maps, insert, upsert, update, delete from maps, tables from rows, migrations |
 | `SCHED` | cron expressions and intervals: next and previous run times; a job loop with retries, logging, a lock file and missed-run policies |
+| `PROPTEST` | property based tests: generators and combinators, seeded runs, shrinking to a minimal failing input, FORALL on TESTKIT |
 | `PKG` | modules installed from an index, git or ZIP into `~/.jdbasic/lib` with their requirements by semver range; list, remove, update, lock files |
 
 ```basic

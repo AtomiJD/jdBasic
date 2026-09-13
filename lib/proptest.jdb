@@ -1,0 +1,801 @@
+' proptest.jdb - property based tests: generators for numbers, text, FAKE
+' data, lists and maps and their combinations; a property run against many
+' drawn inputs from a seed; a failing input shrunk to a minimal one; and a
+' TESTKIT assertion that names it together with the seed that replays it.
+' The hypothesis ground.
+'
+'   IMPORT TESTKIT, PROPTEST
+'   FUNC SortKeepsLength(xs)
+'       RETURN LEN(MySort(xs)) = LEN(xs)
+'   ENDFUNC
+'   PROPTEST.FORALL("sort keeps the length", "list(int:-50..50,0..20)", SortKeepsLength@)
+'   TESTKIT.REPORT()
+'
+' A generator is a string. Every draw takes whole numbers from a choice
+' sequence; shrinking deletes and lowers entries of that sequence and draws
+' again, so every generator and combination shrinks the same way.
+
+EXPORT MODULE PROPTEST
+IMPORT TESTKIT, FAKE
+
+DIM TEXT_CHARS$ = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,;:!?'-_()[]{}<>/\@#$%&*+=~^|`"
+DIM LETTER_CHARS$ = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+DIM DIGIT_CHARS$ = "0123456789"
+DIM RNG_MOD = 2147483647
+
+DIM gMode = 0
+DIM gRng = 1
+DIM gChoices = []
+DIM gPos = 0
+DIM gUsed = []
+DIM gBest = []
+DIM gShrinks = 0
+DIM gCalls = 0
+DIM gMaxCalls = 2000
+DIM gShownText$ = ""
+DIM gErrorText$ = ""
+
+DIM gPickTexts = []
+DIM gPickNums = []
+DIM gPickStart = []
+DIM gPickCount = []
+DIM gPickKinds = []
+
+' ------------------------------------------------------------------ choices
+
+FUNC NextUnit()
+    gRng = (gRng * 16807) MOD RNG_MOD
+    RETURN (gRng - 1) / 2147483646.0
+ENDFUNC
+
+' A whole number from 0 to n - 1: drawn at random, or read back from the
+' sequence being replayed, where a missing entry reads as 0.
+FUNC Choice(n)
+    DIM c = 0
+    IF gMode = 0 THEN
+        c = INT(NextUnit() * n)
+    ELSEIF gPos < LEN(gChoices) THEN
+        c = gChoices[gPos]
+    ENDIF
+    IF c > n - 1 THEN c = n - 1
+    IF c < 0 THEN c = 0
+    gPos = gPos + 1
+    PUSH(gUsed, c)
+    RETURN c
+ENDFUNC
+
+' 1 to go on with a list or a text, 0 to stop; at random it goes on three
+' times in four.
+FUNC GoOn()
+    DIM c = 0
+    IF gMode = 0 THEN
+        IF NextUnit() < 0.75 THEN c = 1
+    ELSEIF gPos < LEN(gChoices) THEN
+        c = gChoices[gPos]
+    ENDIF
+    IF c > 1 THEN c = 1
+    IF c < 0 THEN c = 0
+    gPos = gPos + 1
+    PUSH(gUsed, c)
+    RETURN c
+ENDFUNC
+
+FUNC CaseSeed(seed, case_no)
+    DIM base = seed MOD 2147483646
+    RETURN (base * 7919 + case_no * 104729) MOD 2147483646 + 1
+ENDFUNC
+
+FUNC CopyNums(arr)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(arr) - 1
+        PUSH(out, arr[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ------------------------------------------------------------------ parsing
+
+FUNC HeadOf$(spec$)
+    DIM s$ = TRIM$(spec$)
+    DIM k = 0
+    FOR k = 0 TO LEN(s$) - 1
+        DIM ch$ = MID$(s$, k, 1)
+        IF ch$ = ":" ORELSE ch$ = "(" ORELSE ch$ = "#" THEN RETURN LCASE$(LEFT$(s$, k))
+    NEXT k
+    RETURN LCASE$(s$)
+ENDFUNC
+
+FUNC ArgOf$(spec$)
+    DIM s$ = TRIM$(spec$)
+    DIM colon = INSTR(s$, ":")
+    IF colon < 0 THEN RETURN ""
+    RETURN TRIM$(MID$(s$, colon + 1, LEN(s$)))
+ENDFUNC
+
+FUNC InsideOf$(spec$)
+    DIM s$ = TRIM$(spec$)
+    DIM open_at = INSTR(s$, "(")
+    IF open_at < 0 ORELSE RIGHT$(s$, 1) <> ")" THEN THROW "PROPTEST: " + CHR$(34) + spec$ + CHR$(34) + " needs its arguments in parentheses"
+    RETURN MID$(s$, open_at + 1, LEN(s$) - open_at - 2)
+ENDFUNC
+
+' The arguments of a combinator, split at the commas outside parentheses.
+FUNC SplitTop(text_in$)
+    DIM out = []
+    DIM depth = 0
+    DIM piece$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(text_in$) - 1
+        DIM ch$ = MID$(text_in$, k, 1)
+        IF ch$ = "(" THEN depth = depth + 1
+        IF ch$ = ")" THEN depth = depth - 1
+        IF ch$ = "," ANDALSO depth = 0 THEN
+            PUSH(out, TRIM$(piece$))
+            piece$ = ""
+        ELSE
+            piece$ = piece$ + ch$
+        ENDIF
+    NEXT k
+    PUSH(out, TRIM$(piece$))
+    RETURN out
+ENDFUNC
+
+FUNC RangeLow(range_text$, fallback)
+    DIM r$ = TRIM$(range_text$)
+    IF r$ = "" THEN RETURN fallback
+    DIM dots = INSTR(r$, "..")
+    IF dots < 0 THEN THROW "PROPTEST: a range is written low..high, got " + CHR$(34) + r$ + CHR$(34)
+    RETURN VAL(LEFT$(r$, dots))
+ENDFUNC
+
+FUNC RangeHigh(range_text$, fallback)
+    DIM r$ = TRIM$(range_text$)
+    IF r$ = "" THEN RETURN fallback
+    DIM dots = INSTR(r$, "..")
+    IF dots < 0 THEN THROW "PROPTEST: a range is written low..high, got " + CHR$(34) + r$ + CHR$(34)
+    RETURN VAL(MID$(r$, dots + 2, LEN(r$)))
+ENDFUNC
+
+FUNC PickIndex(spec$)
+    DIM s$ = TRIM$(spec$)
+    DIM hash = INSTR(s$, "#")
+    DIM idx = CINT(VAL(MID$(s$, hash + 1, LEN(s$))))
+    IF idx < 0 ORELSE idx >= LEN(gPickKinds) THEN THROW "PROPTEST: no pick list " + s$
+    RETURN idx
+ENDFUNC
+
+' "num", "text", "list:num", "list:text" or "map".
+FUNC KindOf$(spec$)
+    DIM head$ = HeadOf$(spec$)
+    IF head$ = "int" ORELSE head$ = "float" ORELSE head$ = "bool" THEN RETURN "num"
+    IF head$ = "text" ORELSE head$ = "letters" ORELSE head$ = "digits" ORELSE head$ = "fake" THEN RETURN "text"
+    IF head$ = "pick" THEN
+        DIM pick_kind$ = gPickKinds[PickIndex(spec$)]
+        RETURN pick_kind$
+    ENDIF
+    DIM pieces = SplitTop(InsideOf$(spec$))
+    DIM k = 0
+    IF head$ = "oneof" THEN
+        DIM first_part$ = pieces[0]
+        DIM first_kind$ = KindOf$(first_part$)
+        FOR k = 1 TO LEN(pieces) - 1
+            DIM branch$ = pieces[k]
+            IF KindOf$(branch$) <> first_kind$ THEN THROW "PROPTEST: the branches of oneof draw different kinds in " + spec$
+        NEXT k
+        RETURN first_kind$
+    ENDIF
+    IF head$ = "list" THEN
+        DIM item$ = pieces[0]
+        DIM item_kind$ = KindOf$(item$)
+        IF item_kind$ <> "num" ANDALSO item_kind$ <> "text" THEN THROW "PROPTEST: a list holds numbers or text, not " + item$
+        RETURN "list:" + item_kind$
+    ENDIF
+    IF head$ = "map" THEN
+        FOR k = 0 TO LEN(pieces) - 1
+            DIM field$ = pieces[k]
+            DIM eq_at = INSTR(field$, "=")
+            IF eq_at < 1 THEN THROW "PROPTEST: a map field is written key=generator, got " + field$
+            DIM field_kind$ = KindOf$(MID$(field$, eq_at + 1, LEN(field$)))
+            IF field_kind$ <> "num" ANDALSO field_kind$ <> "text" THEN THROW "PROPTEST: a map field holds a number or text, not " + field$
+        NEXT k
+        RETURN "map"
+    ENDIF
+    THROW "PROPTEST: unknown generator " + CHR$(34) + spec$ + CHR$(34)
+ENDFUNC
+
+' ------------------------------------------------------------------ drawing
+
+' Whole numbers from lo to hi; choice 0 is the one nearest zero, then they
+' alternate outwards: 0, 1, -1, 2, -2, ...
+FUNC IntDraw(lo_in, hi_in)
+    DIM lo = CINT(lo_in)
+    DIM hi = CINT(hi_in)
+    IF hi < lo THEN THROW "PROPTEST: the range " + FORMAT$("{}", lo) + ".." + FORMAT$("{}", hi) + " is empty"
+    DIM c = Choice(hi - lo + 1)
+    IF lo >= 0 THEN RETURN lo + c
+    IF hi <= 0 THEN RETURN hi - c
+    IF c = 0 THEN RETURN 0
+    DIM side = hi
+    IF -lo < side THEN side = -lo
+    IF c <= 2 * side THEN
+        IF c MOD 2 = 1 THEN RETURN (c + 1) \ 2
+        RETURN -(c \ 2)
+    ENDIF
+    DIM rest = c - 2 * side
+    IF hi > -lo THEN RETURN side + rest
+    RETURN -(side + rest)
+ENDFUNC
+
+FUNC FloatDraw(lo, hi)
+    DIM bound = ABS(lo)
+    IF ABS(hi) > bound THEN bound = ABS(hi)
+    DIM negative = Choice(2)
+    DIM v = Choice(1073741825) / 1073741824.0 * bound
+    IF negative = 1 THEN v = -v
+    IF v < lo THEN v = lo
+    IF v > hi THEN v = hi
+    RETURN v
+ENDFUNC
+
+FUNC DrawNum(spec$)
+    DIM head$ = HeadOf$(spec$)
+    DIM arg$ = ArgOf$(spec$)
+    IF head$ = "int" THEN RETURN IntDraw(RangeLow(arg$, -1000), RangeHigh(arg$, 1000))
+    IF head$ = "float" THEN RETURN FloatDraw(RangeLow(arg$, -1000), RangeHigh(arg$, 1000))
+    IF head$ = "bool" THEN RETURN Choice(2)
+    IF head$ = "pick" THEN
+        DIM idx = PickIndex(spec$)
+        RETURN gPickNums[gPickStart[idx] + Choice(gPickCount[idx])]
+    ENDIF
+    IF head$ = "oneof" THEN
+        DIM pieces = SplitTop(InsideOf$(spec$))
+        DIM branch$ = pieces[Choice(LEN(pieces))]
+        RETURN DrawNum(branch$)
+    ENDIF
+    THROW "PROPTEST: " + spec$ + " does not draw a number"
+ENDFUNC
+
+FUNC CharsDraw$(alphabet$, range_text$, lo_default, hi_default)
+    DIM lo = RangeLow(range_text$, lo_default)
+    DIM hi = RangeHigh(range_text$, hi_default)
+    DIM out$ = ""
+    DIM n_chars = 0
+    DO WHILE n_chars < hi
+        IF n_chars >= lo THEN
+            IF GoOn() = 0 THEN EXITDO
+        ENDIF
+        out$ = out$ + MID$(alphabet$, Choice(LEN(alphabet$)), 1)
+        n_chars = n_chars + 1
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC FakeDraw$(kind$)
+    FAKE.SEED(Choice(1000000) + 1)
+    IF kind$ = "name" THEN RETURN FAKE.FULLNAME$()
+    IF kind$ = "first" THEN RETURN FAKE.FIRSTNAME$()
+    IF kind$ = "last" THEN RETURN FAKE.LASTNAME$()
+    IF kind$ = "user" THEN RETURN FAKE.USERNAME$()
+    IF kind$ = "email" THEN RETURN FAKE.EMAIL$()
+    IF kind$ = "street" THEN RETURN FAKE.STREET$()
+    IF kind$ = "city" THEN RETURN FAKE.CITY$()
+    IF kind$ = "postcode" THEN RETURN FAKE.POSTCODE$()
+    IF kind$ = "country" THEN RETURN FAKE.COUNTRY$()
+    IF kind$ = "company" THEN RETURN FAKE.COMPANY$()
+    IF kind$ = "phone" THEN RETURN FAKE.PHONE$()
+    IF kind$ = "iban" THEN RETURN FAKE.IBAN$()
+    IF kind$ = "uuid" THEN RETURN FAKE.UUID$()
+    IF kind$ = "word" THEN RETURN FAKE.WORD$()
+    IF kind$ = "sentence" THEN RETURN FAKE.SENTENCE$()
+    THROW "PROPTEST: FAKE has no " + CHR$(34) + kind$ + CHR$(34) + " generator here"
+ENDFUNC
+
+FUNC DrawText$(spec$)
+    DIM head$ = HeadOf$(spec$)
+    DIM arg$ = ArgOf$(spec$)
+    IF head$ = "text" THEN RETURN CharsDraw$(TEXT_CHARS$, arg$, 0, 10)
+    IF head$ = "letters" THEN RETURN CharsDraw$(LETTER_CHARS$, arg$, 1, 10)
+    IF head$ = "digits" THEN RETURN CharsDraw$(DIGIT_CHARS$, arg$, 1, 10)
+    IF head$ = "fake" THEN RETURN FakeDraw$(LCASE$(arg$))
+    IF head$ = "pick" THEN
+        DIM idx = PickIndex(spec$)
+        DIM picked$ = gPickTexts[gPickStart[idx] + Choice(gPickCount[idx])]
+        RETURN picked$
+    ENDIF
+    IF head$ = "oneof" THEN
+        DIM pieces = SplitTop(InsideOf$(spec$))
+        DIM branch$ = pieces[Choice(LEN(pieces))]
+        RETURN DrawText$(branch$)
+    ENDIF
+    THROW "PROPTEST: " + spec$ + " does not draw text"
+ENDFUNC
+
+FUNC DrawNumList(spec$)
+    DIM pieces = SplitTop(InsideOf$(spec$))
+    DIM item$ = pieces[0]
+    DIM range_text$ = ""
+    IF LEN(pieces) > 1 THEN range_text$ = pieces[1]
+    DIM lo = RangeLow(range_text$, 0)
+    DIM hi = RangeHigh(range_text$, 10)
+    DIM out = []
+    DO WHILE LEN(out) < hi
+        IF LEN(out) >= lo THEN
+            IF GoOn() = 0 THEN EXITDO
+        ENDIF
+        PUSH(out, DrawNum(item$))
+    LOOP
+    RETURN out
+ENDFUNC
+
+FUNC DrawTextList(spec$)
+    DIM pieces = SplitTop(InsideOf$(spec$))
+    DIM item$ = pieces[0]
+    DIM range_text$ = ""
+    IF LEN(pieces) > 1 THEN range_text$ = pieces[1]
+    DIM lo = RangeLow(range_text$, 0)
+    DIM hi = RangeHigh(range_text$, 10)
+    DIM out = []
+    DO WHILE LEN(out) < hi
+        IF LEN(out) >= lo THEN
+            IF GoOn() = 0 THEN EXITDO
+        ENDIF
+        PUSH(out, DrawText$(item$))
+    LOOP
+    RETURN out
+ENDFUNC
+
+FUNC DrawMap(spec$)
+    DIM out AS MAP
+    DIM pieces = SplitTop(InsideOf$(spec$))
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM field$ = pieces[k]
+        DIM eq_at = INSTR(field$, "=")
+        DIM key$ = TRIM$(LEFT$(field$, eq_at))
+        DIM gen$ = TRIM$(MID$(field$, eq_at + 1, LEN(field$)))
+        IF KindOf$(gen$) = "num" THEN
+            out{key$} = DrawNum(gen$)
+        ELSE
+            DIM s$ = DrawText$(gen$)
+            out{key$} = s$
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ------------------------------------------------------------------ showing
+
+FUNC ShowNum$(spec$, v)
+    IF HeadOf$(spec$) = "bool" THEN
+        IF v = 1 THEN RETURN "TRUE"
+        RETURN "FALSE"
+    ENDIF
+    RETURN FORMAT$("{}", v)
+ENDFUNC
+
+FUNC ShowText$(s$)
+    DIM out$ = REPLACE$(s$, CHR$(10), "\n")
+    out$ = REPLACE$(out$, CHR$(13), "\r")
+    out$ = REPLACE$(out$, CHR$(9), "\t")
+    RETURN CHR$(34) + out$ + CHR$(34)
+ENDFUNC
+
+FUNC ShowNumList$(spec$, xs)
+    DIM pieces = SplitTop(InsideOf$(spec$))
+    DIM item$ = pieces[0]
+    DIM out$ = "["
+    DIM k = 0
+    FOR k = 0 TO LEN(xs) - 1
+        IF k > 0 THEN out$ = out$ + ", "
+        out$ = out$ + ShowNum$(item$, xs[k])
+    NEXT k
+    RETURN out$ + "]"
+ENDFUNC
+
+FUNC ShowTextList$(xs)
+    DIM out$ = "["
+    DIM k = 0
+    FOR k = 0 TO LEN(xs) - 1
+        DIM s$ = xs[k]
+        IF k > 0 THEN out$ = out$ + ", "
+        out$ = out$ + ShowText$(s$)
+    NEXT k
+    RETURN out$ + "]"
+ENDFUNC
+
+FUNC ShowMap$(spec$, rec)
+    DIM pieces = SplitTop(InsideOf$(spec$))
+    DIM out$ = "{"
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM field$ = pieces[k]
+        DIM eq_at = INSTR(field$, "=")
+        DIM key$ = TRIM$(LEFT$(field$, eq_at))
+        DIM gen$ = TRIM$(MID$(field$, eq_at + 1, LEN(field$)))
+        IF k > 0 THEN out$ = out$ + ", "
+        out$ = out$ + CHR$(34) + key$ + CHR$(34) + ": "
+        IF KindOf$(gen$) = "num" THEN
+            out$ = out$ + ShowNum$(gen$, rec{key$})
+        ELSE
+            DIM s$ = rec{key$}
+            out$ = out$ + ShowText$(s$)
+        ENDIF
+    NEXT k
+    RETURN out$ + "}"
+ENDFUNC
+
+' ---------------------------------------------------------------- the engine
+
+' Draws one input, shows it in gShownText$, and answers whether the
+' property held; a property that throws does not hold.
+FUNC Holds(prop, spec$, kind$)
+    DIM held = FALSE
+    gErrorText$ = ""
+    IF kind$ = "num" THEN
+        DIM v = DrawNum(spec$)
+        gShownText$ = ShowNum$(spec$, v)
+        TRY
+            held = prop(v)
+        CATCH
+            held = FALSE
+            gErrorText$ = ERRMSG$
+        ENDTRY
+    ELSEIF kind$ = "text" THEN
+        DIM s$ = DrawText$(spec$)
+        gShownText$ = ShowText$(s$)
+        TRY
+            held = prop(s$)
+        CATCH
+            held = FALSE
+            gErrorText$ = ERRMSG$
+        ENDTRY
+    ELSEIF kind$ = "list:num" THEN
+        DIM xs = DrawNumList(spec$)
+        gShownText$ = ShowNumList$(spec$, xs)
+        TRY
+            held = prop(xs)
+        CATCH
+            held = FALSE
+            gErrorText$ = ERRMSG$
+        ENDTRY
+    ELSEIF kind$ = "list:text" THEN
+        DIM ts = DrawTextList(spec$)
+        gShownText$ = ShowTextList$(ts)
+        TRY
+            held = prop(ts)
+        CATCH
+            held = FALSE
+            gErrorText$ = ERRMSG$
+        ENDTRY
+    ELSE
+        DIM rec = DrawMap(spec$)
+        gShownText$ = ShowMap$(spec$, rec)
+        TRY
+            held = prop(rec)
+        CATCH
+            held = FALSE
+            gErrorText$ = ERRMSG$
+        ENDTRY
+    ENDIF
+    IF held THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+FUNC ShowDraw$(spec$, kind$)
+    IF kind$ = "num" THEN RETURN ShowNum$(spec$, DrawNum(spec$))
+    IF kind$ = "text" THEN RETURN ShowText$(DrawText$(spec$))
+    IF kind$ = "list:num" THEN RETURN ShowNumList$(spec$, DrawNumList(spec$))
+    IF kind$ = "list:text" THEN RETURN ShowTextList$(DrawTextList(spec$))
+    RETURN ShowMap$(spec$, DrawMap(spec$))
+ENDFUNC
+
+FUNC Fails(prop, spec$, kind$, cand)
+    gMode = 1
+    gChoices = cand
+    gPos = 0
+    gUsed = []
+    gCalls = gCalls + 1
+    RETURN NOT Holds(prop, spec$, kind$)
+ENDFUNC
+
+' TRUE when a is the simpler sequence: shorter, or as long and smaller at
+' the first entry where they differ.
+FUNC Simpler(a, b)
+    IF LEN(a) <> LEN(b) THEN RETURN LEN(a) < LEN(b)
+    DIM k = 0
+    FOR k = 0 TO LEN(a) - 1
+        IF a[k] <> b[k] THEN RETURN a[k] < b[k]
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+FUNC Accepts(prop, spec$, kind$, cand)
+    IF gCalls >= gMaxCalls THEN RETURN FALSE
+    IF NOT Fails(prop, spec$, kind$, cand) THEN RETURN FALSE
+    DIM used = CopyNums(gUsed)
+    IF NOT Simpler(used, gBest) THEN RETURN FALSE
+    gBest = used
+    gShrinks = gShrinks + 1
+    RETURN TRUE
+ENDFUNC
+
+FUNC Without(arr, at, block)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(arr) - 1
+        IF k < at ORELSE k >= at + block THEN PUSH(out, arr[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC WithValue(arr, at, v)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(arr) - 1
+        IF k = at THEN
+            PUSH(out, v)
+        ELSE
+            PUSH(out, arr[k])
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC WithPair(arr, at_a, at_b, v)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(arr) - 1
+        IF k = at_a ORELSE k = at_b THEN
+            PUSH(out, v)
+        ELSE
+            PUSH(out, arr[k])
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Lowers entry at (and at_b, when it is 0 or more, to the same value) as far
+' as the property keeps failing.
+FUNC LowerEntry(prop, spec$, kind$, at, at_b)
+    IF at >= LEN(gBest) ORELSE at_b >= LEN(gBest) THEN RETURN FALSE
+    DIM hi_v = gBest[at]
+    IF hi_v <= 0 THEN RETURN FALSE
+    DIM moved = FALSE
+    DIM lo_v = -1
+    DO WHILE hi_v - lo_v > 1 ANDALSO gCalls < gMaxCalls
+        DIM mid_v = (lo_v + hi_v) \ 2
+        IF lo_v < 0 THEN mid_v = 0
+        DIM cand = []
+        IF at_b >= 0 THEN
+            cand = WithPair(gBest, at, at_b, mid_v)
+        ELSE
+            cand = WithValue(gBest, at, mid_v)
+        ENDIF
+        IF Accepts(prop, spec$, kind$, cand) THEN
+            moved = TRUE
+            IF at >= LEN(gBest) THEN EXITDO
+            hi_v = gBest[at]
+        ELSE
+            lo_v = mid_v
+        ENDIF
+    LOOP
+    RETURN moved
+ENDFUNC
+
+SUB Shrink(prop, spec$, kind$, start_choices, max_calls)
+    gBest = CopyNums(start_choices)
+    gShrinks = 0
+    gCalls = 0
+    gMaxCalls = max_calls
+    DIM improved = TRUE
+    DO WHILE improved ANDALSO gCalls < gMaxCalls
+        improved = FALSE
+        DIM block = 8
+        DO WHILE block >= 1
+            DIM at = LEN(gBest) - block
+            DO WHILE at >= 0 ANDALSO gCalls < gMaxCalls
+                IF Accepts(prop, spec$, kind$, Without(gBest, at, block)) THEN improved = TRUE
+                at = at - 1
+                IF at > LEN(gBest) - block THEN at = LEN(gBest) - block
+            LOOP
+            block = block \ 2
+        LOOP
+        DIM i = 0
+        DO WHILE i < LEN(gBest) ANDALSO gCalls < gMaxCalls
+            IF LowerEntry(prop, spec$, kind$, i, -1) THEN improved = TRUE
+            i = i + 1
+        LOOP
+        i = 0
+        DO WHILE i < LEN(gBest) ANDALSO gCalls < gMaxCalls
+            DIM j = i + 1
+            DO WHILE j < LEN(gBest) ANDALSO gCalls < gMaxCalls
+                IF i < LEN(gBest) ANDALSO gBest[i] > 0 ANDALSO gBest[i] = gBest[j] THEN
+                    IF LowerEntry(prop, spec$, kind$, i, j) THEN improved = TRUE
+                ENDIF
+                j = j + 1
+            LOOP
+            i = i + 1
+        LOOP
+    LOOP
+ENDSUB
+
+FUNC OptNumber(opts, key$, fallback)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback
+    IF NOT MAP.EXISTS(opts, key$) THEN RETURN fallback
+    RETURN opts{key$}
+ENDFUNC
+
+FUNC RunProperty(gen$, prop, opts)
+    DIM kind$ = KindOf$(gen$)
+    DIM runs = CINT(OptNumber(opts, "runs", 100))
+    DIM seed = OptNumber(opts, "seed", (TIMER * 1000.0 + TICK()) MOD 2147483646 + 1)
+    seed = CINT(seed)
+    DIM max_calls = CINT(OptNumber(opts, "max_shrinks", 2000))
+    DIM report AS MAP
+    report{"ok"} = TRUE
+    report{"runs"} = runs
+    report{"seed"} = seed
+    report{"case"} = -1
+    report{"shown"} = ""
+    report{"first"} = ""
+    report{"shrinks"} = 0
+    report{"calls"} = 0
+    report{"error"} = ""
+    DIM case_no = 0
+    FOR case_no = 0 TO runs - 1
+        gMode = 0
+        gRng = CaseSeed(seed, case_no)
+        gPos = 0
+        gUsed = []
+        IF NOT Holds(prop, gen$, kind$) THEN
+            DIM first_shown$ = gShownText$
+            DIM failing = CopyNums(gUsed)
+            Shrink(prop, gen$, kind$, failing, max_calls)
+            DIM shrink_calls = gCalls
+            DIM replayed = Fails(prop, gen$, kind$, gBest)
+            DIM shown$ = gShownText$
+            DIM error_text$ = gErrorText$
+            report{"ok"} = FALSE
+            report{"runs"} = case_no + 1
+            report{"case"} = case_no
+            report{"first"} = first_shown$
+            report{"shown"} = shown$
+            report{"shrinks"} = gShrinks
+            report{"calls"} = shrink_calls
+            report{"error"} = error_text$
+            RETURN report
+        ENDIF
+    NEXT case_no
+    RETURN report
+ENDFUNC
+
+' -------------------------------------------------------------------- running
+
+' Runs the property against drawn inputs and answers a report: ok, runs,
+' seed, case (the failing case, -1), first (the input that failed), shown
+' (the input after shrinking), shrinks, calls and error (the message when the
+' minimal input made the property throw). Options: runs (100), seed (from
+' the clock), max_shrinks (2000 property calls while shrinking).
+EXPORT FUNC FALSIFY(gen$, prop, opts = 0)
+    RETURN RunProperty(gen$, prop, opts)
+ENDFUNC
+
+' The same as one TESTKIT assertion: it passes when the property holds for
+' every input, and fails with the minimal input and the seed that replays it.
+EXPORT SUB FORALL(name$, gen$, prop, opts = 0)
+    DIM rep = RunProperty(gen$, prop, opts)
+    DIM runs = rep{"runs"}
+    DIM seed = rep{"seed"}
+    IF rep{"ok"} THEN
+        TESTKIT.ISTRUE(TRUE, name$ + " (" + FORMAT$("{}", runs) + " cases)")
+    ELSE
+        DIM shown$ = rep{"shown"}
+        DIM first_shown$ = rep{"first"}
+        DIM error_text$ = rep{"error"}
+        DIM msg$ = name$ + ": falsified by " + shown$ + " (seed " + FORMAT$("{}", seed) + ", case " + FORMAT$("{}", rep{"case"}) + ", shrunk from " + first_shown$ + ")"
+        IF error_text$ <> "" THEN msg$ = msg$ + ", error: " + error_text$
+        TESTKIT.ISTRUE(FALSE, msg$)
+    ENDIF
+ENDSUB
+
+' n inputs a generator draws from a seed, shown as text.
+EXPORT FUNC EXAMPLES(gen$, n, seed)
+    DIM kind$ = KindOf$(gen$)
+    DIM out = []
+    DIM case_no = 0
+    FOR case_no = 0 TO n - 1
+        gMode = 0
+        gRng = CaseSeed(CINT(seed), case_no)
+        gPos = 0
+        gUsed = []
+        PUSH(out, ShowDraw$(gen$, kind$))
+    NEXT case_no
+    RETURN out
+ENDFUNC
+
+' ---------------------------------------------------------------- generators
+
+FUNC Num$(v)
+    RETURN FORMAT$("{}", v)
+ENDFUNC
+
+EXPORT FUNC INTS$(lo, hi)
+    RETURN "int:" + Num$(lo) + ".." + Num$(hi)
+ENDFUNC
+
+EXPORT FUNC FLOATS$(lo, hi)
+    RETURN "float:" + Num$(lo) + ".." + Num$(hi)
+ENDFUNC
+
+EXPORT FUNC BOOLS$()
+    RETURN "bool"
+ENDFUNC
+
+EXPORT FUNC TEXTS$(min_len, max_len)
+    RETURN "text:" + Num$(min_len) + ".." + Num$(max_len)
+ENDFUNC
+
+EXPORT FUNC LETTERS$(min_len, max_len)
+    RETURN "letters:" + Num$(min_len) + ".." + Num$(max_len)
+ENDFUNC
+
+EXPORT FUNC DIGITS$(min_len, max_len)
+    RETURN "digits:" + Num$(min_len) + ".." + Num$(max_len)
+ENDFUNC
+
+EXPORT FUNC FAKED$(kind$)
+    RETURN "fake:" + kind$
+ENDFUNC
+
+EXPORT FUNC LISTOF$(gen$, min_len, max_len)
+    RETURN "list(" + gen$ + "," + Num$(min_len) + ".." + Num$(max_len) + ")"
+ENDFUNC
+
+EXPORT FUNC ONEOF$(gens)
+    DIM out$ = "oneof("
+    DIM k = 0
+    FOR k = 0 TO LEN(gens) - 1
+        DIM g$ = gens[k]
+        IF k > 0 THEN out$ = out$ + ","
+        out$ = out$ + g$
+    NEXT k
+    RETURN out$ + ")"
+ENDFUNC
+
+EXPORT FUNC MAPOF$(keys_in, gens)
+    DIM out$ = "map("
+    DIM k = 0
+    FOR k = 0 TO LEN(keys_in) - 1
+        DIM key$ = keys_in[k]
+        DIM g$ = gens[k]
+        IF k > 0 THEN out$ = out$ + ","
+        out$ = out$ + key$ + "=" + g$
+    NEXT k
+    RETURN out$ + ")"
+ENDFUNC
+
+' One of the entries of a list of text or of numbers; the first entry is the
+' simplest.
+EXPORT FUNC PICK$(entries)
+    DIM idx = LEN(gPickKinds)
+    DIM kind$ = "num"
+    IF LEN(entries) > 0 THEN
+        IF TYPEOF(entries[0]) = "STRING" THEN kind$ = "text"
+    ENDIF
+    PUSH(gPickStart, LEN(gPickTexts))
+    PUSH(gPickCount, LEN(entries))
+    PUSH(gPickKinds, kind$)
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        IF kind$ = "text" THEN
+            DIM s$ = entries[k]
+            PUSH(gPickTexts, s$)
+            PUSH(gPickNums, 0)
+        ELSE
+            PUSH(gPickTexts, "")
+            PUSH(gPickNums, entries[k])
+        ENDIF
+    NEXT k
+    RETURN "pick#" + FORMAT$("{}", idx)
+ENDFUNC

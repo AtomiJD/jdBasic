@@ -1,0 +1,25 @@
+' Run by proptest_selftest.jdb in its own process: a property that does not
+' hold, reported through TESTKIT, so the run prints a FAIL line and exits 1.
+
+IMPORT TESTKIT, PROPTEST
+
+FUNC Dedupe(xs)
+    DIM out = []
+    DIM k = 0
+    DIM m = 0
+    FOR k = 0 TO LEN(xs) - 1
+        DIM seen = FALSE
+        FOR m = 0 TO LEN(out) - 1
+            IF out[m] = xs[k] THEN seen = TRUE
+        NEXT m
+        IF NOT seen THEN PUSH(out, xs[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC KeepsLength(xs)
+    RETURN LEN(Dedupe(xs)) = LEN(xs)
+ENDFUNC
+
+PROPTEST.FORALL("a sort that drops duplicates keeps the length", "list(int:0..100,0..10)", KeepsLength@, {"seed": 7})
+TESTKIT.REPORT()
