@@ -2524,7 +2524,8 @@ int main(int argc, char* argv[]) {
                 // Ship the message first so exceptionInfoRequest (sent by the
                 // client after the stopped event) has the details ready.
                 dap.send_exception_message(e.what());
-                dap.send_stopped_message("exception", e.line, filename);
+                const std::string err_file = vm.debug_current_file();
+                dap.send_stopped_message("exception", e.line, err_file.empty() ? filename : err_file);
                 dap.send_output_message(std::string("Runtime error: ") + e.what() + "\n");
                 std::cerr << "\033[91mRuntime error:\033[0m " << e.what();
                 if (e.line > 0) std::cerr << " at line " << e.line;

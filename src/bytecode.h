@@ -178,6 +178,16 @@ struct Chunk {
     std::vector<LineEntry> line_table;
     std::string source_file;                 // originating source file path (for debugger)
 
+    // The file each stretch of code came from, one entry per change. An
+    // IMPORT puts the module's top-level code into the importing chunk with
+    // the module's own line numbers; code before the first entry, and every
+    // chunk without imports, belongs to source_file.
+    struct FileSpan {
+        uint32_t    offset;
+        std::string file;
+    };
+    std::vector<FileSpan> file_spans;
+
     // Per-chunk inline cache for CALL dispatch. Each entry packs a 32-bit
     // generation counter (high) and a 32-bit resolved user-function index
     // (low). The generation counter lets us invalidate the cache lazily when
@@ -226,6 +236,7 @@ struct Chunk {
     void shrink() {
         code.shrink_to_fit();
         line_table.shrink_to_fit();
+        file_spans.shrink_to_fit();
         constants.shrink_to_fit();
         name_blob.shrink_to_fit();
         name_offsets.shrink_to_fit();
@@ -253,14 +264,41 @@ struct Chunk {
         return line_table[lo].line;
     }
 
-    // The first offset belonging to `line`, or code.size() when that line
-    // emitted no code. Entries are the transitions, so the first match is the
-    // opcode boundary a debugger wants to land on.
-    size_t first_ip_of_line(int line) const {
+    // Note that the bytes about to be appended come from `file`. A note that
+    // no code followed is overwritten by the next one at the same offset.
+    void note_file(const std::string& file) {
+        const uint32_t at = static_cast<uint32_t>(code.size());
+        if (!file_spans.empty() && file_spans.back().offset == at) {
+            file_spans.back().file = file;
+            return;
+        }
+        const std::string& cur = file_spans.empty() ? source_file : file_spans.back().file;
+        if (cur != file) file_spans.push_back({ at, file });
+    }
+
+    // The source file an offset came from.
+    const std::string& file_at(size_t ip) const {
+        if (file_spans.empty() || ip < file_spans[0].offset) return source_file;
+        size_t lo = 0, hi = file_spans.size();
+        while (lo + 1 < hi) {
+            size_t mid = lo + (hi - lo) / 2;
+            if (file_spans[mid].offset <= ip) lo = mid; else hi = mid;
+        }
+        return file_spans[lo].file;
+    }
+
+    // The first offset belonging to `line` of `file`, or code.size() when
+    // that line emitted no code. Entries are the transitions, so the first
+    // match is the opcode boundary a debugger wants to land on. A file change
+    // onto the same line number starts no line entry, only a file span.
+    size_t first_ip_of_line(int line, const std::string& file) const {
         if (line <= 0) return code.size();
+        size_t best = code.size();
         for (const auto& e : line_table)
-            if (e.line == line) return e.offset;
-        return code.size();
+            if (e.line == line && file_at(e.offset) == file) { best = e.offset; break; }
+        for (const auto& s : file_spans)
+            if (s.offset < best && s.file == file && line_at(s.offset) == line) { best = s.offset; break; }
+        return best;
     }
 
     // Emit helpers

@@ -306,6 +306,7 @@ void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& m
     // Pass 2: compile main code
     for (auto& stmt : program) {
         if (stmt->kind != StmtKind::SUB && stmt->kind != StmtKind::FUNCTION) {
+            current_chunk().note_file(stmt->source_file().empty() ? main_source_file : stmt->source_file());
             compile_stmt(*stmt);
         }
     }
@@ -326,6 +327,8 @@ void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& m
 // ── Statements ───────────────────────────────────────────────
 
 void Compiler::compile_stmt(const Stmt& stmt) {
+    if (!stmt.source_file().empty() && stmt.kind != StmtKind::SUB && stmt.kind != StmtKind::FUNCTION)
+        current_chunk().note_file(stmt.source_file());
     switch (stmt.kind) {
         case StmtKind::LET:          compile_let(stmt); break;
         case StmtKind::DIM:          compile_dim(stmt); break;

@@ -3970,11 +3970,14 @@ void VM::debug_check(int line) {
     // _process / _input callback is a jdb_embed_eval), so the hook path must
     // debug them.
     if (!debug->host_hook && subrun_depth > 0) return;
-    if (line == debug->last_debug_line) return;
+    if (frames.empty()) return;
+    const Chunk* cur_chunk = frames.back().chunk;
+    const std::string& cur_file_ref = cur_chunk->file_at(frames.back().ip > 0 ? frames.back().ip - 1 : 0);
+    if (line == debug->last_debug_line && &cur_file_ref == debug->last_debug_file) return;
     debug->last_debug_line = line;
+    debug->last_debug_file = &cur_file_ref;
 
-    // Determine current source file from the active chunk
-    std::string cur_file = debug_current_file();
+    std::string cur_file = cur_file_ref;
     std::string cur_file_norm = normalize_path(cur_file);
 
     bool should_pause = false;
@@ -4040,7 +4043,10 @@ void VM::debug_check(int line) {
     if (!should_pause) {
         switch (debug->state) {
             case DebugState::PAUSED:
-                should_pause = true;
+                // The entry stop waits for the program's own file, past the
+                // top-level code of its imports.
+                should_pause = !(!debug->host_hook && debug->is_entry &&
+                                 cur_file != cur_chunk->source_file);
                 break;
             case DebugState::STEP_IN:
                 should_pause = true;
@@ -4053,7 +4059,14 @@ void VM::debug_check(int line) {
                 }
                 break;
             case DebugState::STEP_OVER:
-                if (frames.size() <= debug->step_over_depth) {
+                // At the same depth, the top-level code of an imported module
+                // is stepped over like a call: pause only back in the file of
+                // the last pause or in the chunk's own file, and not on the
+                // line of the last pause, which a returning call lands on.
+                if (frames.size() < debug->step_over_depth ||
+                    (frames.size() == debug->step_over_depth &&
+                     (cur_file == debug->pause_file || cur_file == cur_chunk->source_file) &&
+                     !(line == debug->pause_line && cur_file == debug->pause_file))) {
                     should_pause = true;
                     pause_reason = "step";
                 }
@@ -4065,14 +4078,18 @@ void VM::debug_check(int line) {
 
     if (should_pause) {
         debug->state = DebugState::PAUSED;
+        debug->pause_file = cur_file;
+        debug->pause_line = line;
         if (debug->host_hook) {
             // Synchronous host break: the hook inspects the VM and sets the
             // next action (state) via the embed control ABI, then returns.
             // (No "entry" stop - that's a DAP-only concept.)
             debug->host_hook(debug->host_ud, line, pause_reason.c_str());
         } else {
+            // A breakpoint on the entry line keeps its reason: a client
+            // that skips the entry stop must still halt there.
             if (debug->is_entry) {
-                pause_reason = "entry";
+                if (pause_reason != "breakpoint") pause_reason = "entry";
                 debug->is_entry = false;
             }
             // Fresh variable handles for this stop; the client re-requests
@@ -4095,7 +4112,8 @@ int VM::debug_current_line() const {
 
 std::string VM::debug_current_file() const {
     if (frames.empty()) return "";
-    return frames.back().chunk->source_file;
+    auto& f = frames.back();
+    return f.chunk->file_at(f.ip > 0 ? f.ip - 1 : 0);
 }
 
 size_t VM::debug_call_depth() const {
@@ -4108,7 +4126,7 @@ bool VM::debug_goto_line(int target_line) {
     // The first bytecode offset where the line transitions TO target_line -
     // an opcode boundary, never the middle of an operand. The line table
     // stores exactly those transitions.
-    size_t at = f.chunk->first_ip_of_line(target_line);
+    size_t at = f.chunk->first_ip_of_line(target_line, debug_current_file());
     if (at >= f.chunk->code.size()) return false;
     f.ip = at;
     // Reset stack to frame base and clear exception handlers
@@ -4161,7 +4179,7 @@ bool VM::debug_reload_main(Chunk& new_main, std::vector<FuncProto>& new_funcs, i
     CallFrame& f = frames[0];
     f.chunk = &new_main;
 
-    size_t at = new_main.first_ip_of_line(target_line);
+    size_t at = new_main.first_ip_of_line(target_line, new_main.source_file);
     if (at < new_main.code.size()) {
         f.ip = at;
         sp = f.stack_base;
@@ -4191,7 +4209,7 @@ std::vector<VM::DebugFrame> VM::debug_get_stack_frames() const {
                 if (&fp.chunk == frames[i].chunk) { name = fp.name; break; }
             }
         }
-        std::string file = frames[i].chunk->source_file;
+        std::string file = frames[i].chunk->file_at(ip);
         result.push_back({line, name, file});
     }
     return result;

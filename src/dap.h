@@ -120,6 +120,9 @@ struct DebugInfo {
     size_t step_over_depth = 0;
     size_t step_out_depth = 0;
     int last_debug_line = -1;
+    const std::string* last_debug_file = nullptr;  // file of last_debug_line, compared by identity
+    std::string pause_file;                        // file of the last pause
+    int pause_line = -1;                           // line of the last pause
     bool is_entry = true; // first pause sends "entry" reason
 
     // Pause/resume synchronization
