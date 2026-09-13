@@ -1449,6 +1449,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `TEXTX` | text helpers: wrap, shorten, dedent, character cuts, slugs, ASCII transliteration, sizes, numbers and durations in words |
 | `TEXTDIFF` | differences: difflib's opcodes and ratio, unified diffs written and applied, inline word diffs, snapshots |
 | `JDWEB` | web apps: routes with parameters, middleware, sessions, static files, JSON, a test client, themed pages and cookie login |
+| `DOCX` | Word files: written with headings, lists, tables, header and footer; templates filled; paragraphs and tables read |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

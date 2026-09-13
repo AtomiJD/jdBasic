@@ -1,0 +1,85 @@
+' docx_demo.jdb - an offer as a Word document: written with a heading,
+' formatted text, lists, a table, a header and a footer with page numbers;
+' then a letter template filled with a customer's data, and both read back.
+'
+'   jdBasic docx_demo.jdb
+
+IMPORT DOCX, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("docxdemo")
+MKDIR folder$
+
+' ── an offer ───────────────────────────────────────────────────
+
+DIM offer = DOCX.NEW()
+DOCX.TITLE(offer, "Angebot 2026-0413")
+DOCX.HEADER(offer, "Papier & Toner GmbH")
+DOCX.FOOTER(offer, "Angebot 2026-0413 - Seite {page} von {pages}")
+DOCX.HEADING(offer, "Angebot 2026-0413")
+DOCX.PARAGRAPH(offer, "Sehr geehrte Damen und Herren,")
+DOCX.PARAGRAPH(offer, "wir bieten Ihnen die folgenden Artikel zu einem Gesamtpreis von **209,80 €** an, gültig *bis zum 31. Oktober 2026*.")
+DOCX.HEADING(offer, "Positionen", 2)
+DIM lines = []
+PUSH(lines, ["Pos", "Artikel", "Menge", "Betrag"])
+PUSH(lines, ["1", "Kopierpapier A4, 80 g", "10", "45,90"])
+PUSH(lines, ["2", "Toner schwarz", "2", "143,90"])
+PUSH(lines, ["3", "Heftklammern", "5", "20,00"])
+DOCX.TABLE(offer, lines)
+DOCX.HEADING(offer, "Lieferung", 2)
+DOCX.BULLETS(offer, ["frei Haus ab 100 €", "innerhalb von drei Werktagen"])
+DOCX.HEADING(offer, "So geht es weiter", 2)
+DOCX.NUMBERED(offer, ["Angebot prüfen", "Bestellung per E-Mail senden", "Lieferung abwarten"])
+DOCX.PARAGRAPH(offer, "Mit freundlichen Grüßen" + LF$ + "Papier & Toner GmbH")
+DIM offer_path$ = folder$ + "/angebot.docx"
+DIM part_count = DOCX.WRITE(offer, offer_path$)
+
+CONSOLE.RULE("the offer")
+PRINT "  written as a package of "; part_count; " parts, read back:"
+DIM back = DOCX.READ(offer_path$)
+DIM paras = back{"paragraphs"}
+DIM i = 0
+FOR i = 0 TO LEN(paras) - 1
+    DIM p$ = paras[i]
+    PRINT "  | "; REPLACE$(p$, LF$, " / ")
+NEXT i
+PRINT ""
+DIM tables = back{"tables"}
+DIM first_table = tables[0]
+CONSOLE.TABLE(first_table, {"border": "plain"})
+PRINT ""
+
+' ── a letter template ──────────────────────────────────────────
+
+DIM template = DOCX.NEW()
+DOCX.PARAGRAPH(template, "{{company}}" + LF$ + "{{street}}" + LF$ + "{{city}}")
+DOCX.PARAGRAPH(template, "Sehr geehrte{{salutation}},")
+DOCX.PARAGRAPH(template, "vielen Dank für Ihre Bestellung **{{order}}** vom {{date}}. Die Lieferung erreicht Sie *voraussichtlich am {{delivery}}*.")
+DOCX.TABLE(template, [["Bestellung", "Betrag"], ["{{order}}", "{{amount}}"]])
+DIM template_path$ = folder$ + "/vorlage.docx"
+DOCX.WRITE(template, template_path$)
+
+CONSOLE.RULE("a letter from a template")
+PRINT "  placeholders: "; JOIN(DOCX.PLACEHOLDERS(template_path$), ", ")
+DIM customer = {"company": "Stadtverwaltung Musterstadt", "street": "Rathausplatz 1", "city": "12345 Musterstadt", "salutation": " Frau Müller", "order": "B-2026-0815", "date": "13.09.2026", "delivery": "16.09.2026", "amount": "209,80 €"}
+DIM letter_path$ = folder$ + "/brief.docx"
+DIM replaced = DOCX.FILL(template_path$, letter_path$, customer)
+PRINT "  replaced: "; replaced
+PRINT ""
+DIM letter = DOCX.READ(letter_path$)
+DIM letter_paras = letter{"paragraphs"}
+FOR i = 0 TO LEN(letter_paras) - 1
+    DIM lp$ = letter_paras[i]
+    PRINT "  | "; REPLACE$(lp$, LF$, " / ")
+NEXT i
+DIM letter_tables = letter{"tables"}
+DIM letter_table = letter_tables[0]
+PRINT ""
+CONSOLE.TABLE(letter_table, {"border": "plain"})
+PRINT ""
+
+KILL offer_path$
+KILL template_path$
+KILL letter_path$
+RMDIR folder$

@@ -1,0 +1,692 @@
+' docx.jdb - Word documents without Word: written with headings, bold and
+' italic runs, bullet and numbered lists, tables, page breaks, a header and
+' a footer; templates filled by replacing {{name}} placeholders, also where
+' Word split one across several runs; paragraphs and tables read back.
+'
+'   IMPORT DOCX
+'   DIM doc = DOCX.NEW()
+'   DOCX.HEADING(doc, "Invoice RE-2026-0413")
+'   DOCX.PARAGRAPH(doc, "Total: **209.80 EUR**, due *within 14 days*")
+'   DOCX.TABLE(doc, [["Item", "Amount"], ["Paper", "12.50"]])
+'   DOCX.WRITE(doc, "invoice.docx")
+'   PRINT DOCX.FILL("letter_template.docx", "letter.docx", {"name": "Ann"})
+'
+' The parts are written with single-quoted XML attributes and stored
+' uncompressed through ZIP.WRITE, the way XLSX writes its workbooks.
+
+EXPORT MODULE DOCX
+
+IMPORT XML
+
+DIM gTB$ = CHR$(9)
+DIM gLF$ = CHR$(10)
+DIM gHead$ = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>" + CHR$(13) + CHR$(10)
+DIM gNsW$ = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'"
+DIM gRelNs$ = "http://schemas.openxmlformats.org/package/2006/relationships"
+DIM gRelOffice$ = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+DIM gCtWord$ = "application/vnd.openxmlformats-officedocument.wordprocessingml."
+' The values FILL puts into the placeholders, as text under the key
+' "<generation>|<name>"; "#gen" holds the generation of the current call.
+DIM gFillValues AS MAP
+
+' ── text ───────────────────────────────────────────────────────
+
+FUNC Esc$(s$)
+    RETURN REPLACE$(REPLACE$(REPLACE$(s$, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+ENDFUNC
+
+' The runs of one piece of text: tabs and line breaks become their own
+' elements.
+FUNC TextXml$(t$)
+    DIM out$ = ""
+    DIM lines = SPLIT(t$, gLF$)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(lines) - 1
+        IF k > 0 THEN out$ = out$ + "<w:br/>"
+        DIM line_text$ = lines[k]
+        DIM cells = SPLIT(line_text$, gTB$)
+        FOR j = 0 TO LEN(cells) - 1
+            IF j > 0 THEN out$ = out$ + "<w:tab/>"
+            DIM piece$ = cells[j]
+            IF piece$ <> "" THEN out$ = out$ + "<w:t xml:space='preserve'>" + Esc$(piece$) + "</w:t>"
+        NEXT j
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC RunXml$(t$, bold, italic)
+    IF t$ = "" THEN RETURN ""
+    DIM rpr$ = ""
+    IF bold THEN rpr$ = rpr$ + "<w:b/>"
+    IF italic THEN rpr$ = rpr$ + "<w:i/>"
+    IF rpr$ <> "" THEN rpr$ = "<w:rPr>" + rpr$ + "</w:rPr>"
+    RETURN "<w:r>" + rpr$ + TextXml$(t$) + "</w:r>"
+ENDFUNC
+
+' Runs from text with **bold** and *italic* marks.
+FUNC Runs$(text$)
+    DIM out$ = ""
+    DIM bold = FALSE
+    DIM italic = FALSE
+    DIM cur$ = ""
+    DIM k = 0
+    DIM n = LEN(text$)
+    DO WHILE k < n
+        IF MID$(text$, k, 2) = "**" THEN
+            out$ = out$ + RunXml$(cur$, bold, italic)
+            cur$ = ""
+            bold = NOT bold
+            k = k + 2
+        ELSEIF MID$(text$, k, 1) = "*" THEN
+            out$ = out$ + RunXml$(cur$, bold, italic)
+            cur$ = ""
+            italic = NOT italic
+            k = k + 1
+        ELSE
+            cur$ = cur$ + MID$(text$, k, 1)
+            k = k + 1
+        ENDIF
+    LOOP
+    RETURN out$ + RunXml$(cur$, bold, italic)
+ENDFUNC
+
+' Text with {page} and {pages} turned into page number fields.
+FUNC FieldRuns$(text$)
+    DIM out$ = ""
+    DIM rest$ = text$
+    DO WHILE rest$ <> ""
+        DIM at_page = CINT(INSTR(rest$, "{page}"))
+        DIM at_pages = CINT(INSTR(rest$, "{pages}"))
+        DIM at_n = at_page
+        DIM code$ = "PAGE"
+        DIM mark_len = 6
+        IF at_pages >= 0 ANDALSO (at_page < 0 ORELSE at_pages < at_page) THEN
+            at_n = at_pages
+            code$ = "NUMPAGES"
+            mark_len = 7
+        ENDIF
+        IF at_n < 0 THEN
+            out$ = out$ + Runs$(rest$)
+            rest$ = ""
+        ELSE
+            out$ = out$ + Runs$(LEFT$(rest$, at_n))
+            out$ = out$ + "<w:r><w:fldChar w:fldCharType='begin'/></w:r><w:r><w:instrText xml:space='preserve'> " + code$ + " </w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType='end'/></w:r>"
+            rest$ = MID$(rest$, at_n + mark_len, LEN(rest$))
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' ── building ───────────────────────────────────────────────────
+
+' A new, empty document.
+EXPORT FUNC NEW()
+    DIM body = []
+    DIM lists = []
+    RETURN {"body": body, "lists": lists, "header": "", "footer": "", "title": "", "last": ""}
+ENDFUNC
+
+SUB AddBlock(doc, xml$, kind$)
+    DIM body = doc{"body"}
+    PUSH(body, xml$)
+    doc{"last"} = kind$
+ENDSUB
+
+' The title in the document properties.
+EXPORT SUB TITLE(doc, text$)
+    doc{"title"} = text$
+ENDSUB
+
+' A heading of level 1, 2 or 3.
+EXPORT SUB HEADING(doc, text$, level = 1)
+    DIM lvl = level
+    IF lvl < 1 THEN lvl = 1
+    IF lvl > 3 THEN lvl = 3
+    AddBlock(doc, "<w:p><w:pPr><w:pStyle w:val='Heading" + STR$(lvl) + "'/></w:pPr>" + Runs$(text$) + "</w:p>", "p")
+ENDSUB
+
+FUNC JcOf$(align$)
+    DIM a$ = LCASE$(align$)
+    IF a$ = "left" ORELSE a$ = "center" ORELSE a$ = "right" THEN RETURN a$
+    IF a$ = "justify" THEN RETURN "both"
+    THROW "DOCX: no alignment called " + align$
+    RETURN ""
+ENDFUNC
+
+' A paragraph; **bold** and *italic* marks, tabs and line breaks in the text
+' are kept. align$ is "left", "center", "right" or "justify".
+EXPORT SUB PARAGRAPH(doc, text$, align$ = "")
+    DIM ppr$ = ""
+    IF align$ <> "" THEN ppr$ = "<w:pPr><w:jc w:val='" + JcOf$(align$) + "'/></w:pPr>"
+    AddBlock(doc, "<w:p>" + ppr$ + Runs$(text$) + "</w:p>", "p")
+ENDSUB
+
+FUNC ListItem$(text$, num_id)
+    RETURN "<w:p><w:pPr><w:pStyle w:val='ListParagraph'/><w:numPr><w:ilvl w:val='0'/><w:numId w:val='" + STR$(num_id) + "'/></w:numPr></w:pPr>" + Runs$(text$) + "</w:p>"
+ENDFUNC
+
+' A bullet list, one paragraph per item.
+EXPORT SUB BULLETS(doc, items)
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM item$ = items[k]
+        AddBlock(doc, ListItem$(item$, 1), "p")
+    NEXT k
+ENDSUB
+
+' A numbered list that starts at 1.
+EXPORT SUB NUMBERED(doc, items)
+    DIM lists = doc{"lists"}
+    PUSH(lists, 1)
+    DIM num_id = LEN(lists) + 1
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM item$ = items[k]
+        AddBlock(doc, ListItem$(item$, num_id), "p")
+    NEXT k
+ENDSUB
+
+' A table with grid lines from rows of text; with header true the first row
+' is bold and repeats on every page.
+EXPORT SUB TABLE(doc, rows, header = TRUE)
+    DIM cols = 0
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM row_w = rows[r]
+        IF LEN(row_w) > cols THEN cols = LEN(row_w)
+    NEXT r
+    IF cols = 0 THEN cols = 1
+    DIM width = FLOOR(9072 / cols)
+    DIM out$ = "<w:tbl><w:tblPr><w:tblStyle w:val='TableGrid'/><w:tblW w:w='0' w:type='auto'/><w:tblLook w:val='04A0' w:firstRow='1' w:lastRow='0' w:firstColumn='1' w:lastColumn='0' w:noHBand='0' w:noVBand='1'/></w:tblPr><w:tblGrid>"
+    FOR c = 0 TO cols - 1
+        out$ = out$ + "<w:gridCol w:w='" + STR$(width) + "'/>"
+    NEXT c
+    out$ = out$ + "</w:tblGrid>"
+    FOR r = 0 TO LEN(rows) - 1
+        DIM row = rows[r]
+        DIM is_head = (r = 0 ANDALSO header)
+        out$ = out$ + "<w:tr>"
+        IF is_head THEN out$ = out$ + "<w:trPr><w:tblHeader/></w:trPr>"
+        FOR c = 0 TO cols - 1
+            DIM cell$ = ""
+            IF c < LEN(row) THEN
+                DIM v = row[c]
+                cell$ = "" + v
+            ENDIF
+            DIM runs$ = Runs$(cell$)
+            IF is_head THEN runs$ = RunXml$(cell$, TRUE, FALSE)
+            out$ = out$ + "<w:tc><w:tcPr><w:tcW w:w='" + STR$(width) + "' w:type='dxa'/></w:tcPr><w:p>" + runs$ + "</w:p></w:tc>"
+        NEXT c
+        out$ = out$ + "</w:tr>"
+    NEXT r
+    AddBlock(doc, out$ + "</w:tbl>", "tbl")
+ENDSUB
+
+' Starts a new page.
+EXPORT SUB PAGEBREAK(doc)
+    AddBlock(doc, "<w:p><w:r><w:br w:type='page'/></w:r></w:p>", "p")
+ENDSUB
+
+' The text at the top of every page; {page} and {pages} are page numbers.
+EXPORT SUB HEADER(doc, text$)
+    doc{"header"} = text$
+ENDSUB
+
+' The text at the bottom of every page; {page} and {pages} are page numbers.
+EXPORT SUB FOOTER(doc, text$)
+    doc{"footer"} = text$
+ENDSUB
+
+' ── writing ────────────────────────────────────────────────────
+
+FUNC ContentTypes$(has_header, has_footer)
+    DIM out$ = gHead$ + "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'>"
+    out$ = out$ + "<Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/>"
+    out$ = out$ + "<Default Extension='xml' ContentType='application/xml'/>"
+    out$ = out$ + "<Override PartName='/word/document.xml' ContentType='" + gCtWord$ + "document.main+xml'/>"
+    out$ = out$ + "<Override PartName='/word/styles.xml' ContentType='" + gCtWord$ + "styles+xml'/>"
+    out$ = out$ + "<Override PartName='/word/numbering.xml' ContentType='" + gCtWord$ + "numbering+xml'/>"
+    out$ = out$ + "<Override PartName='/word/settings.xml' ContentType='" + gCtWord$ + "settings+xml'/>"
+    IF has_header THEN out$ = out$ + "<Override PartName='/word/header1.xml' ContentType='" + gCtWord$ + "header+xml'/>"
+    IF has_footer THEN out$ = out$ + "<Override PartName='/word/footer1.xml' ContentType='" + gCtWord$ + "footer+xml'/>"
+    out$ = out$ + "<Override PartName='/docProps/core.xml' ContentType='application/vnd.openxmlformats-package.core-properties+xml'/>"
+    out$ = out$ + "<Override PartName='/docProps/app.xml' ContentType='application/vnd.openxmlformats-officedocument.extended-properties+xml'/>"
+    RETURN out$ + "</Types>"
+ENDFUNC
+
+FUNC Rel$(id$, kind$, target$)
+    RETURN "<Relationship Id='" + id$ + "' Type='" + kind$ + "' Target='" + target$ + "'/>"
+ENDFUNC
+
+FUNC RootRels$()
+    DIM out$ = gHead$ + "<Relationships xmlns='" + gRelNs$ + "'>"
+    out$ = out$ + Rel$("rId1", gRelOffice$ + "officeDocument", "word/document.xml")
+    out$ = out$ + Rel$("rId2", "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties", "docProps/core.xml")
+    out$ = out$ + Rel$("rId3", gRelOffice$ + "extended-properties", "docProps/app.xml")
+    RETURN out$ + "</Relationships>"
+ENDFUNC
+
+FUNC DocRels$(has_header, has_footer)
+    DIM out$ = gHead$ + "<Relationships xmlns='" + gRelNs$ + "'>"
+    out$ = out$ + Rel$("rId1", gRelOffice$ + "styles", "styles.xml")
+    out$ = out$ + Rel$("rId2", gRelOffice$ + "numbering", "numbering.xml")
+    out$ = out$ + Rel$("rId3", gRelOffice$ + "settings", "settings.xml")
+    IF has_header THEN out$ = out$ + Rel$("rId4", gRelOffice$ + "header", "header1.xml")
+    IF has_footer THEN out$ = out$ + Rel$("rId5", gRelOffice$ + "footer", "footer1.xml")
+    RETURN out$ + "</Relationships>"
+ENDFUNC
+
+FUNC CoreXml$(title$)
+    DIM out$ = gHead$ + "<cp:coreProperties xmlns:cp='http://schemas.openxmlformats.org/package/2006/metadata/core-properties' xmlns:dc='http://purl.org/dc/elements/1.1/'>"
+    IF title$ <> "" THEN out$ = out$ + "<dc:title>" + Esc$(title$) + "</dc:title>"
+    RETURN out$ + "<dc:creator>jdBasic</dc:creator></cp:coreProperties>"
+ENDFUNC
+
+FUNC AppXml$()
+    RETURN gHead$ + "<Properties xmlns='http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'><Application>jdBasic DOCX</Application></Properties>"
+ENDFUNC
+
+FUNC SettingsXml$()
+    RETURN gHead$ + "<w:settings " + gNsW$ + "><w:defaultTabStop w:val='708'/><w:characterSpacingControl w:val='doNotCompress'/><w:compat><w:compatSetting w:name='compatibilityMode' w:uri='http://schemas.microsoft.com/office/word' w:val='15'/></w:compat></w:settings>"
+ENDFUNC
+
+FUNC HeadingStyle$(level, size$)
+    DIM id$ = "Heading" + STR$(level)
+    RETURN "<w:style w:type='paragraph' w:styleId='" + id$ + "'><w:name w:val='heading " + STR$(level) + "'/><w:basedOn w:val='Normal'/><w:next w:val='Normal'/><w:uiPriority w:val='9'/><w:qFormat/><w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before='240' w:after='80'/><w:outlineLvl w:val='" + STR$(level - 1) + "'/></w:pPr><w:rPr><w:b/><w:color w:val='1F3864'/><w:sz w:val='" + size$ + "'/><w:szCs w:val='" + size$ + "'/></w:rPr></w:style>"
+ENDFUNC
+
+FUNC StylesXml$()
+    DIM out$ = gHead$ + "<w:styles " + gNsW$ + ">"
+    out$ = out$ + "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri' w:eastAsia='Calibri' w:cs='Calibri'/><w:sz w:val='22'/><w:szCs w:val='22'/><w:lang w:val='de-DE'/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after='160' w:line='259' w:lineRule='auto'/></w:pPr></w:pPrDefault></w:docDefaults>"
+    out$ = out$ + "<w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/><w:qFormat/></w:style>"
+    out$ = out$ + HeadingStyle$(1, "32") + HeadingStyle$(2, "28") + HeadingStyle$(3, "24")
+    out$ = out$ + "<w:style w:type='paragraph' w:styleId='ListParagraph'><w:name w:val='List Paragraph'/><w:basedOn w:val='Normal'/><w:uiPriority w:val='34'/><w:qFormat/><w:pPr><w:ind w:left='720'/><w:contextualSpacing/></w:pPr></w:style>"
+    out$ = out$ + "<w:style w:type='character' w:default='1' w:styleId='DefaultParagraphFont'><w:name w:val='Default Paragraph Font'/><w:uiPriority w:val='1'/><w:semiHidden/><w:unhideWhenUsed/></w:style>"
+    out$ = out$ + "<w:style w:type='table' w:default='1' w:styleId='TableNormal'><w:name w:val='Normal Table'/><w:uiPriority w:val='99'/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w='0' w:type='dxa'/><w:tblCellMar><w:top w:w='0' w:type='dxa'/><w:left w:w='108' w:type='dxa'/><w:bottom w:w='0' w:type='dxa'/><w:right w:w='108' w:type='dxa'/></w:tblCellMar></w:tblPr></w:style>"
+    out$ = out$ + "<w:style w:type='table' w:styleId='TableGrid'><w:name w:val='Table Grid'/><w:basedOn w:val='TableNormal'/><w:uiPriority w:val='39'/><w:pPr><w:spacing w:after='0' w:line='240' w:lineRule='auto'/></w:pPr><w:tblPr><w:tblBorders><w:top w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:left w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:bottom w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:right w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:insideH w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:insideV w:val='single' w:sz='4' w:space='0' w:color='auto'/></w:tblBorders></w:tblPr></w:style>"
+    RETURN out$ + "</w:styles>"
+ENDFUNC
+
+FUNC Level$(format$, text$)
+    RETURN "<w:lvl w:ilvl='0'><w:start w:val='1'/><w:numFmt w:val='" + format$ + "'/><w:lvlText w:val='" + text$ + "'/><w:lvlJc w:val='left'/><w:pPr><w:ind w:left='720' w:hanging='360'/></w:pPr></w:lvl>"
+ENDFUNC
+
+FUNC NumberingXml$(n_lists)
+    DIM out$ = gHead$ + "<w:numbering " + gNsW$ + ">"
+    out$ = out$ + "<w:abstractNum w:abstractNumId='0'><w:multiLevelType w:val='hybridMultilevel'/>" + Level$("bullet", "•") + "</w:abstractNum>"
+    out$ = out$ + "<w:abstractNum w:abstractNumId='1'><w:multiLevelType w:val='hybridMultilevel'/>" + Level$("decimal", "%1.") + "</w:abstractNum>"
+    out$ = out$ + "<w:num w:numId='1'><w:abstractNumId w:val='0'/></w:num>"
+    DIM k = 0
+    FOR k = 1 TO n_lists
+        out$ = out$ + "<w:num w:numId='" + STR$(k + 1) + "'><w:abstractNumId w:val='1'/><w:lvlOverride w:ilvl='0'><w:startOverride w:val='1'/></w:lvlOverride></w:num>"
+    NEXT k
+    RETURN out$ + "</w:numbering>"
+ENDFUNC
+
+FUNC DocumentXml$(doc, has_header, has_footer)
+    DIM body = doc{"body"}
+    DIM last$ = doc{"last"}
+    DIM out$ = gHead$ + "<w:document " + gNsW$ + "><w:body>"
+    IF LEN(body) > 0 THEN out$ = out$ + JOIN(body, "")
+    IF last$ = "tbl" ORELSE LEN(body) = 0 THEN out$ = out$ + "<w:p/>"
+    out$ = out$ + "<w:sectPr>"
+    IF has_header THEN out$ = out$ + "<w:headerReference w:type='default' r:id='rId4'/>"
+    IF has_footer THEN out$ = out$ + "<w:footerReference w:type='default' r:id='rId5'/>"
+    out$ = out$ + "<w:pgSz w:w='11906' w:h='16838'/><w:pgMar w:top='1417' w:right='1417' w:bottom='1134' w:left='1417' w:header='708' w:footer='708' w:gutter='0'/></w:sectPr>"
+    RETURN out$ + "</w:body></w:document>"
+ENDFUNC
+
+FUNC PartXml$(tag$, text$)
+    RETURN gHead$ + "<w:" + tag$ + " " + gNsW$ + "><w:p>" + FieldRuns$(text$) + "</w:p></w:" + tag$ + ">"
+ENDFUNC
+
+' Writes the document; answers the number of parts in the file.
+EXPORT FUNC WRITE(doc, path$)
+    DIM header$ = doc{"header"}
+    DIM footer$ = doc{"footer"}
+    DIM title$ = doc{"title"}
+    DIM lists = doc{"lists"}
+    DIM has_header = header$ <> ""
+    DIM has_footer = footer$ <> ""
+    DIM entries AS MAP
+    entries{"[Content_Types].xml"} = ContentTypes$(has_header, has_footer)
+    entries{"_rels/.rels"} = RootRels$()
+    entries{"docProps/core.xml"} = CoreXml$(title$)
+    entries{"docProps/app.xml"} = AppXml$()
+    entries{"word/_rels/document.xml.rels"} = DocRels$(has_header, has_footer)
+    entries{"word/styles.xml"} = StylesXml$()
+    entries{"word/numbering.xml"} = NumberingXml$(LEN(lists))
+    entries{"word/settings.xml"} = SettingsXml$()
+    entries{"word/document.xml"} = DocumentXml$(doc, has_header, has_footer)
+    IF has_header THEN entries{"word/header1.xml"} = PartXml$("hdr", header$)
+    IF has_footer THEN entries{"word/footer1.xml"} = PartXml$("ftr", footer$)
+    RETURN ZIP.WRITE(path$, entries)
+ENDFUNC
+
+' ── templates ──────────────────────────────────────────────────
+
+FUNC IsNameChar(c$)
+    DIM code_n = ASC(c$)
+    IF code_n >= 48 ANDALSO code_n <= 57 THEN RETURN TRUE
+    IF code_n >= 65 ANDALSO code_n <= 90 THEN RETURN TRUE
+    IF code_n >= 97 ANDALSO code_n <= 122 THEN RETURN TRUE
+    RETURN c$ = "_" ORELSE c$ = "." ORELSE c$ = "-"
+ENDFUNC
+
+FUNC PlaceholderName$(inner$)
+    DIM name$ = TRIM$(inner$)
+    IF name$ = "" THEN RETURN ""
+    DIM k = 0
+    FOR k = 0 TO LEN(name$) - 1
+        IF NOT IsNameChar(MID$(name$, k, 1)) THEN RETURN ""
+    NEXT k
+    RETURN name$
+ENDFUNC
+
+' An XML part with its {{name}} placeholders replaced by the values in
+' gFillValues, read paragraph by paragraph across the text of all runs.
+' Every name found is pushed to names, every replacement to done.
+FUNC FillPart$(xml$, names, done)
+    DIM fill_gen$ = "0"
+    IF MAP.EXISTS(gFillValues, "#gen") THEN fill_gen$ = gFillValues{"#gen"}
+    DIM t_open = []
+    DIM t_start = []
+    DIM t_end = []
+    DIM t_text = []
+    DIM t_para = []
+    DIM para = 0
+    DIM at_i = 0
+    DIM n = LEN(xml$)
+    DO WHILE at_i < n
+        DIM lt = CINT(INSTR(at_i, xml$, "<"))
+        IF lt < 0 THEN EXITDO
+        DIM head5$ = MID$(xml$, lt, 5)
+        IF head5$ = "<w:t>" ORELSE head5$ = "<w:t " THEN
+            DIM gt = CINT(INSTR(lt, xml$, ">"))
+            IF gt < 0 THEN EXITDO
+            IF MID$(xml$, gt - 1, 1) = "/" THEN
+                at_i = gt + 1
+            ELSE
+                DIM close_at = CINT(INSTR(gt, xml$, "</w:t>"))
+                IF close_at < 0 THEN EXITDO
+                PUSH(t_open, lt)
+                PUSH(t_start, gt + 1)
+                PUSH(t_end, close_at)
+                PUSH(t_text, MID$(xml$, gt + 1, close_at - gt - 1))
+                PUSH(t_para, para)
+                at_i = close_at + 6
+            ENDIF
+        ELSE
+            IF MID$(xml$, lt, 6) = "</w:p>" THEN para = para + 1
+            at_i = lt + 1
+        ENDIF
+    LOOP
+    DIM total = LEN(t_text)
+    IF total = 0 THEN RETURN xml$
+    DIM g0 = 0
+    DIM k = 0
+    DO WHILE g0 < total
+        DIM this_para = t_para[g0]
+        DIM g1 = g0
+        DO WHILE g1 < total
+            DIM gp = t_para[g1]
+            IF gp <> this_para THEN EXITDO
+            g1 = g1 + 1
+        LOOP
+        DIM search_from = 0
+        DO WHILE TRUE
+            DIM joined$ = ""
+            FOR k = g0 TO g1 - 1
+                DIM part$ = t_text[k]
+                joined$ = joined$ + part$
+            NEXT k
+            DIM open_at = CINT(INSTR(search_from, joined$, "{{"))
+            IF open_at < 0 THEN EXITDO
+            DIM shut_at = CINT(INSTR(open_at + 2, joined$, "}}"))
+            IF shut_at < 0 THEN EXITDO
+            DIM name$ = PlaceholderName$(MID$(joined$, open_at + 2, shut_at - open_at - 2))
+            IF name$ = "" THEN
+                search_from = open_at + 1
+                CONTINUEDO
+            ENDIF
+            PUSH(names, name$)
+            DIM value_key$ = fill_gen$ + "|" + name$
+            IF NOT MAP.EXISTS(gFillValues, value_key$) THEN
+                search_from = shut_at + 2
+                CONTINUEDO
+            ENDIF
+            DIM raw_value$ = gFillValues{value_key$}
+            DIM value$ = Esc$(raw_value$)
+            DIM stop_at = shut_at + 2
+            ' Find the pieces that hold the first and the last character.
+            DIM offset = 0
+            DIM first_k = -1
+            DIM first_off = 0
+            DIM last_k = -1
+            DIM last_off = 0
+            FOR k = g0 TO g1 - 1
+                DIM seg$ = t_text[k]
+                DIM seg_len = LEN(seg$)
+                IF first_k < 0 ANDALSO open_at < offset + seg_len THEN
+                    first_k = k
+                    first_off = offset
+                ENDIF
+                IF last_k < 0 ANDALSO stop_at - 1 < offset + seg_len THEN
+                    last_k = k
+                    last_off = offset
+                ENDIF
+                offset = offset + seg_len
+            NEXT k
+            DIM first_text$ = t_text[first_k]
+            IF first_k = last_k THEN
+                t_text[first_k] = LEFT$(first_text$, open_at - first_off) + value$ + MID$(first_text$, stop_at - first_off, LEN(first_text$))
+            ELSE
+                t_text[first_k] = LEFT$(first_text$, open_at - first_off) + value$
+                FOR k = first_k + 1 TO last_k - 1
+                    t_text[k] = ""
+                NEXT k
+                DIM last_text$ = t_text[last_k]
+                t_text[last_k] = MID$(last_text$, stop_at - last_off, LEN(last_text$))
+            ENDIF
+            PUSH(done, name$)
+            search_from = open_at + LEN(value$)
+        LOOP
+        g0 = g1
+    LOOP
+    DIM out$ = ""
+    DIM last_at = 0
+    FOR k = 0 TO total - 1
+        DIM o = t_open[k]
+        DIM s = t_start[k]
+        DIM e_at = t_end[k]
+        DIM new_text$ = t_text[k]
+        DIM tag$ = MID$(xml$, o, s - o)
+        IF tag$ = "<w:t>" ANDALSO (LEFT$(new_text$, 1) = " " ORELSE RIGHT$(new_text$, 1) = " ") THEN tag$ = "<w:t xml:space='preserve'>"
+        out$ = out$ + MID$(xml$, last_at, o - last_at) + tag$ + new_text$
+        last_at = e_at
+    NEXT k
+    RETURN out$ + MID$(xml$, last_at, n - last_at)
+ENDFUNC
+
+' A new generation for the values of one call; the values of earlier calls
+' are dropped.
+FUNC NextGeneration$()
+    DIM prev$ = "0"
+    IF MAP.EXISTS(gFillValues, "#gen") THEN prev$ = gFillValues{"#gen"}
+    MAP.CLEAR(gFillValues)
+    DIM gen$ = STR$(VAL(prev$) + 1)
+    gFillValues{"#gen"} = gen$
+    RETURN gen$
+ENDFUNC
+
+FUNC IsTextPart(name$)
+    IF name$ = "word/document.xml" THEN RETURN TRUE
+    IF RIGHT$(name$, 4) <> ".xml" THEN RETURN FALSE
+    RETURN LEFT$(name$, 11) = "word/header" ORELSE LEFT$(name$, 11) = "word/footer"
+ENDFUNC
+
+' The placeholder names in a document, its header and footer, each once, in
+' the order they first appear.
+EXPORT FUNC PLACEHOLDERS(path$)
+    DIM parts = ZIP.READ(path$)
+    DIM gen$ = NextGeneration$()
+    DIM names = []
+    DIM done = []
+    DIM keys = MAP.KEYS(parts)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        IF IsTextPart(key$) THEN
+            DIM xml$ = parts{key$}
+            DIM ignored$ = FillPart$(xml$, names, done)
+        ENDIF
+    NEXT k
+    DIM seen AS MAP
+    DIM out = []
+    FOR k = 0 TO LEN(names) - 1
+        DIM nm$ = names[k]
+        IF NOT MAP.EXISTS(seen, nm$) THEN
+            seen{nm$} = 1
+            PUSH(out, nm$)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A copy of a document with its {{name}} placeholders replaced by the values
+' of the map, in the body, the headers and the footers; answers how many
+' were replaced. Placeholders without a value stay as they are.
+EXPORT FUNC FILL(src_path$, dst_path$, values)
+    DIM parts = ZIP.READ(src_path$)
+    DIM gen$ = NextGeneration$()
+    DIM value_keys = MAP.KEYS(values)
+    DIM k = 0
+    FOR k = 0 TO LEN(value_keys) - 1
+        DIM vk$ = value_keys[k]
+        DIM vv = values{vk$}
+        gFillValues{gen$ + "|" + vk$} = "" + vv
+    NEXT k
+    DIM names = []
+    DIM done = []
+    DIM out_parts AS MAP
+    DIM keys = MAP.KEYS(parts)
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        DIM content$ = parts{key$}
+        IF IsTextPart(key$) THEN
+            DIM filled$ = FillPart$(content$, names, done)
+            out_parts{key$} = filled$
+        ELSE
+            out_parts{key$} = content$
+        ENDIF
+    NEXT k
+    ZIP.WRITE(dst_path$, out_parts)
+    RETURN LEN(done)
+ENDFUNC
+
+' ── reading ────────────────────────────────────────────────────
+
+' The text of a paragraph: runs, tabs and line breaks, without field codes
+' and deleted text.
+FUNC NodeText$(xdoc, id)
+    DIM kids = XML.CHILDREN(xdoc, id)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(kids) - 1
+        DIM c = kids[k]
+        IF XML.KIND$(xdoc, c) = "element" THEN
+            DIM nm$ = XML.NAME$(xdoc, c)
+            IF nm$ = "w:t" THEN
+                out$ = out$ + XML.TEXT$(xdoc, c)
+            ELSEIF nm$ = "w:tab" THEN
+                out$ = out$ + gTB$
+            ELSEIF nm$ = "w:br" ORELSE nm$ = "w:cr" THEN
+                IF XML.ATTR$(xdoc, c, "w:type") <> "page" THEN out$ = out$ + gLF$
+            ELSEIF nm$ <> "w:instrText" ANDALSO nm$ <> "w:delText" ANDALSO nm$ <> "w:pPr" ANDALSO nm$ <> "w:rPr" THEN
+                out$ = out$ + NodeText$(xdoc, c)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The paragraphs of the body as texts and its tables as arrays of rows of
+' cell texts, in a map with "paragraphs" and "tables". Paragraphs inside
+' tables belong to their cells, joined by line breaks.
+EXPORT FUNC READ(path$)
+    DIM parts = ZIP.READ(path$)
+    IF NOT MAP.EXISTS(parts, "word/document.xml") THEN THROW "DOCX.READ: not a Word document (word/document.xml is missing)"
+    DIM xml$ = parts{"word/document.xml"}
+    DIM xdoc = XML.PARSE(xml$)
+    DIM body = XML.FIND(xdoc, "/w:document/w:body")
+    DIM paragraphs = []
+    DIM tables = []
+    IF body < 0 THEN RETURN {"paragraphs": paragraphs, "tables": tables}
+    DIM blocks = []
+    DIM top = XML.ELEMENTS(xdoc, body)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(top) - 1
+        DIM e_id = top[k]
+        IF XML.NAME$(xdoc, e_id) = "w:sdt" THEN
+            DIM inner = XML.FIND(xdoc, "w:sdtContent", e_id)
+            IF inner >= 0 THEN
+                DIM inner_kids = XML.ELEMENTS(xdoc, inner)
+                FOR j = 0 TO LEN(inner_kids) - 1
+                    DIM ik = inner_kids[j]
+                    PUSH(blocks, ik)
+                NEXT j
+            ENDIF
+        ELSE
+            PUSH(blocks, e_id)
+        ENDIF
+    NEXT k
+    DIM r = 0
+    DIM c = 0
+    DIM p = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        DIM bname$ = XML.NAME$(xdoc, b)
+        IF bname$ = "w:p" THEN
+            PUSH(paragraphs, NodeText$(xdoc, b))
+        ELSEIF bname$ = "w:tbl" THEN
+            DIM table = []
+            DIM trs = XML.ELEMENTS(xdoc, b, "w:tr")
+            FOR r = 0 TO LEN(trs) - 1
+                DIM tr = trs[r]
+                DIM row = []
+                DIM tcs = XML.ELEMENTS(xdoc, tr, "w:tc")
+                FOR c = 0 TO LEN(tcs) - 1
+                    DIM tc = tcs[c]
+                    DIM ps = XML.ELEMENTS(xdoc, tc, "w:p")
+                    DIM cell$ = ""
+                    FOR p = 0 TO LEN(ps) - 1
+                        DIM pid = ps[p]
+                        IF p > 0 THEN cell$ = cell$ + gLF$
+                        cell$ = cell$ + NodeText$(xdoc, pid)
+                    NEXT p
+                    PUSH(row, cell$)
+                NEXT c
+                PUSH(table, row)
+            NEXT r
+            PUSH(tables, table)
+        ENDIF
+    NEXT k
+    RETURN {"paragraphs": paragraphs, "tables": tables}
+ENDFUNC
+
+' The paragraphs of the body as texts.
+EXPORT FUNC PARAGRAPHS(path$)
+    DIM got = READ(path$)
+    DIM out = got{"paragraphs"}
+    RETURN out
+ENDFUNC
+
+' The tables of the body, each an array of rows of cell texts.
+EXPORT FUNC TABLES(path$)
+    DIM got = READ(path$)
+    DIM out = got{"tables"}
+    RETURN out
+ENDFUNC

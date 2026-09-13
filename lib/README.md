@@ -65,6 +65,7 @@ and SCHEMA) finds it through the same search.
 | `textx.jdb` | textwrap, python-slugify, Unidecode, humanize | paragraphs wrapped, shortened, dedented and indented, cuts that count characters, slugs and ASCII transliteration, file sizes, grouped numbers, large numbers in words, ordinals and durations in English and German | [textx_lib_readme.md](textx_lib_readme.md) |
 | `textdiff.jdb` | difflib, patch | the matching runs, edit steps and similarity of lines, words or characters, unified diffs written and applied back, word and character diffs inline, snapshots for tests | [textdiff_lib_readme.md](textdiff_lib_readme.md) |
 | `jdweb.jdb` | Flask, the Werkzeug test client | web apps on HTTP.SERVER: routes with path parameters for any method, middleware before and after, in-memory sessions, static files, JSON and error responses, a test client for the running app, and the themed page chrome and cookie login jdTrakr runs on | [jdweb_lib_readme.md](jdweb_lib_readme.md) |
+| `docx.jdb` | python-docx, docxtpl | Word documents written with headings, bold and italic runs, lists, tables, page breaks, a header and a footer; templates filled where Word split the placeholders across runs; paragraphs and tables read back | [docx_lib_readme.md](docx_lib_readme.md) |
 
 ## Tests and demos
 

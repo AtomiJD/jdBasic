@@ -1,0 +1,188 @@
+' DOCX: a document written with every block the module builds and read
+' back, its parts checked as XML; placeholders filled in a Word-style file
+' where they are split across runs, in the body and the header; and that
+' file read with its table.
+
+IMPORT TESTKIT, DOCX, XML
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "docx_word_style.docx") THEN base$ = "fixtures/"
+DIM word_file$ = base$ + "docx_word_style.docx"
+DIM LF$ = CHR$(10)
+DIM TB$ = CHR$(9)
+DIM folder$ = MKTEMP$("docxtest")
+MKDIR folder$
+
+FUNC BadAlign(x)
+    DIM d = DOCX.NEW()
+    DOCX.PARAGRAPH(d, "x", "middle")
+    RETURN 0
+ENDFUNC
+
+FUNC NotWord(path$)
+    RETURN DOCX.READ(path$)
+ENDFUNC
+
+FUNC HasAll(items, wanted)
+    DIM seen AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM s$ = items[k]
+        seen{s$} = 1
+    NEXT k
+    FOR k = 0 TO LEN(wanted) - 1
+        DIM w$ = wanted[k]
+        IF NOT MAP.EXISTS(seen, w$) THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+TESTKIT.SUITE("write and read back")
+DIM doc = DOCX.NEW()
+DOCX.TITLE(doc, "Angebot 2026-0413")
+DOCX.HEADING(doc, "Angebot 2026-0413")
+DOCX.HEADING(doc, "Positionen", 2)
+DOCX.PARAGRAPH(doc, "Sehr geehrte Frau **Müller**, wie *besprochen*:")
+DOCX.BULLETS(doc, ["Papier", "Toner"])
+DOCX.NUMBERED(doc, ["erst", "dann"])
+DOCX.NUMBERED(doc, ["neu", "wieder"])
+DOCX.TABLE(doc, [["Pos", "Artikel", "Betrag"], ["1", "Kopierpapier A4", "12,50"], ["2", "Toner", "89,90"]])
+DOCX.PAGEBREAK(doc)
+DOCX.PARAGRAPH(doc, "Zeile eins" + LF$ + "Zeile zwei" + TB$ + "nach Tab", "right")
+DOCX.PARAGRAPH(doc, "A & B < C > D")
+DOCX.HEADER(doc, "Papier & Toner GmbH")
+DOCX.FOOTER(doc, "Seite {page} von {pages}")
+DIM written$ = folder$ + "/written.docx"
+TESTKIT.EQ(DOCX.WRITE(doc, written$), 11, "eleven parts with a header and a footer")
+DIM back = DOCX.READ(written$)
+DIM paras = back{"paragraphs"}
+DIM want_paras = ["Angebot 2026-0413", "Positionen", "Sehr geehrte Frau Müller, wie besprochen:", "Papier", "Toner", "erst", "dann", "neu", "wieder", "", "Zeile eins" + LF$ + "Zeile zwei" + TB$ + "nach Tab", "A & B < C > D"]
+TESTKIT.EQ(LEN(paras), LEN(want_paras), "every paragraph comes back")
+DIM i = 0
+FOR i = 0 TO LEN(want_paras) - 1
+    DIM got_p$ = ""
+    IF i < LEN(paras) THEN got_p$ = paras[i]
+    DIM want_p$ = want_paras[i]
+    TESTKIT.EQ(got_p$, want_p$, "paragraph " + STR$(i + 1))
+NEXT i
+DIM tables = back{"tables"}
+TESTKIT.EQ(LEN(tables), 1, "one table")
+DIM t0 = tables[0]
+TESTKIT.EQ(LEN(t0), 3, "with three rows")
+DIM row1 = t0[1]
+TESTKIT.EQ(LEN(row1), 3, "of three cells")
+DIM cell12$ = row1[1]
+TESTKIT.EQ(cell12$, "Kopierpapier A4", "and their text")
+DIM parts = ZIP.READ(written$)
+DIM body$ = parts{"word/document.xml"}
+TESTKIT.ISTRUE(INSTR(body$, "<w:pStyle w:val='Heading2'/>") >= 0, "a heading has its style")
+TESTKIT.ISTRUE(INSTR(body$, "<w:b/>") >= 0 ANDALSO INSTR(body$, "<w:i/>") >= 0, "bold and italic runs")
+TESTKIT.ISTRUE(INSTR(body$, "<w:numId w:val='1'/>") >= 0, "bullets use list 1")
+TESTKIT.ISTRUE(INSTR(body$, "<w:numId w:val='3'/>") >= 0, "the second numbered list has its own number")
+TESTKIT.ISTRUE(INSTR(body$, "<w:tblHeader/>") >= 0, "the table header repeats")
+TESTKIT.ISTRUE(INSTR(body$, "<w:br w:type='page'/>") >= 0, "a page break")
+TESTKIT.ISTRUE(INSTR(body$, "<w:jc w:val='right'/>") >= 0, "an aligned paragraph")
+TESTKIT.ISTRUE(INSTR(body$, "A &amp; B &lt; C &gt; D") >= 0, "text is escaped")
+DIM numbering$ = parts{"word/numbering.xml"}
+TESTKIT.ISTRUE(INSTR(numbering$, "<w:startOverride w:val='1'/>") >= 0, "numbered lists restart at 1")
+DIM header$ = parts{"word/header1.xml"}
+TESTKIT.ISTRUE(INSTR(header$, "Papier &amp; Toner GmbH") >= 0, "the header")
+DIM footer$ = parts{"word/footer1.xml"}
+TESTKIT.ISTRUE(INSTR(footer$, " PAGE ") >= 0 ANDALSO INSTR(footer$, " NUMPAGES ") >= 0, "the footer has page number fields")
+DIM core$ = parts{"docProps/core.xml"}
+TESTKIT.ISTRUE(INSTR(core$, "<dc:title>Angebot 2026-0413</dc:title>") >= 0, "the title property")
+DIM part_names = MAP.KEYS(parts)
+DIM well_formed = 0
+FOR i = 0 TO LEN(part_names) - 1
+    DIM pn$ = part_names[i]
+    DIM content$ = parts{pn$}
+    DIM parsed = XML.PARSE(content$)
+    IF XML.ROOT(parsed) >= 0 THEN well_formed = well_formed + 1
+NEXT i
+TESTKIT.EQ(well_formed, 11, "every part is well-formed XML")
+DIM plain = DOCX.NEW()
+DIM plain$ = folder$ + "/plain.docx"
+TESTKIT.EQ(DOCX.WRITE(plain, plain$), 9, "an empty document has no header or footer part")
+DIM plain_paras = DOCX.PARAGRAPHS(plain$)
+TESTKIT.EQ(LEN(plain_paras), 1, "and one empty paragraph")
+TESTKIT.THROWS(BadAlign@, 1, "an unknown alignment is refused")
+
+TESTKIT.SUITE("templates")
+DIM names = DOCX.PLACEHOLDERS(word_file$)
+TESTKIT.EQ(LEN(names), 5, "five placeholders in the Word-style file")
+TESTKIT.ISTRUE(HasAll(names, ["offer_no", "customer", "total", "valid_until", "company"]), "found although Word split them across runs")
+DIM filled$ = folder$ + "/filled.docx"
+DIM values = {"offer_no": "2026-0413", "customer": "Frau Müller", "total": "209,80", "valid_until": "31.10.2026", "company": "Papier & Toner GmbH"}
+TESTKIT.EQ(DOCX.FILL(word_file$, filled$, values), 5, "all five are replaced")
+DIM filled_paras = DOCX.PARAGRAPHS(filled$)
+DIM fp0$ = filled_paras[0]
+DIM fp1$ = filled_paras[1]
+DIM fp2$ = filled_paras[2]
+TESTKIT.EQ(fp0$, "Angebot Nr. 2026-0413", "a placeholder split over three runs")
+TESTKIT.EQ(fp1$, "Sehr geehrte Frau Müller, vielen Dank für Ihre Anfrage.", "one with spaces inside the braces, split into a bold run")
+TESTKIT.EQ(fp2$, "Gesamt: 209,80 EUR, gültig bis 31.10.2026.", "and one whose braces sit in runs of their own")
+DIM filled_parts = ZIP.READ(filled$)
+DIM filled_header$ = filled_parts{"word/header1.xml"}
+TESTKIT.ISTRUE(INSTR(filled_header$, "Papier &amp; Toner GmbH") >= 0, "the header is filled and escaped")
+TESTKIT.EQ(LEN(DOCX.PLACEHOLDERS(filled$)), 0, "nothing is left")
+DIM filled_tables = DOCX.TABLES(filled$)
+DIM ft = filled_tables[0]
+DIM ft_row = ft[2]
+DIM ft_cell$ = ft_row[1]
+TESTKIT.EQ(ft_cell$, "Toner schwarz", "the table is untouched")
+DIM partial$ = folder$ + "/partial.docx"
+TESTKIT.EQ(DOCX.FILL(word_file$, partial$, {"total": "1"}), 1, "a map with one value fills one")
+TESTKIT.EQ(LEN(DOCX.PLACEHOLDERS(partial$)), 4, "and leaves the others")
+DIM own = DOCX.NEW()
+DOCX.PARAGRAPH(own, "Hallo {{name}}!")
+DOCX.TABLE(own, [["Summe"], ["{{sum}}"]])
+DIM own$ = folder$ + "/own.docx"
+DIM own_out$ = folder$ + "/own_filled.docx"
+DOCX.WRITE(own, own$)
+TESTKIT.EQ(DOCX.FILL(own$, own_out$, {"name": "Ann", "sum": 42}), 2, "a written document works as a template")
+DIM own_back = DOCX.READ(own_out$)
+DIM own_paras = own_back{"paragraphs"}
+DIM own_p0$ = own_paras[0]
+TESTKIT.EQ(own_p0$, "Hallo Ann!", "in a paragraph")
+DIM own_tables = own_back{"tables"}
+DIM own_t = own_tables[0]
+DIM own_row = own_t[1]
+DIM own_cell$ = own_row[0]
+TESTKIT.EQ(own_cell$, "42", "and in a table cell, a number as text")
+
+TESTKIT.SUITE("reading a Word-style file")
+DIM word_back = DOCX.READ(word_file$)
+DIM word_paras = word_back{"paragraphs"}
+DIM want_word = ["Angebot Nr. {{offer_no}}", "Sehr geehrte {{ customer }}, vielen Dank für Ihre Anfrage.", "Gesamt: {{total}} EUR, gültig bis {{valid_until}}.", "Zeile eins" + LF$ + "Zeile zwei" + TB$ + "nach Tab", "13.09.2026"]
+TESTKIT.EQ(LEN(word_paras), LEN(want_word), "five paragraphs outside the table")
+FOR i = 0 TO LEN(want_word) - 1
+    DIM wp$ = ""
+    IF i < LEN(word_paras) THEN wp$ = word_paras[i]
+    DIM ww$ = want_word[i]
+    TESTKIT.EQ(wp$, ww$, "Word paragraph " + STR$(i + 1))
+NEXT i
+DIM word_tables = word_back{"tables"}
+DIM wt = word_tables[0]
+TESTKIT.EQ(LEN(wt), 3, "the table has three rows")
+DIM wt_head = wt[0]
+DIM wt_h2$ = wt_head[2]
+TESTKIT.EQ(wt_h2$, "Betrag", "with its header")
+DIM wt_last = wt[2]
+DIM wt_l2$ = wt_last[2]
+TESTKIT.EQ(wt_l2$, "89,90", "and its last cell")
+DIM no_doc$ = folder$ + "/not_word.zip"
+DIM junk AS MAP
+junk{"hello.txt"} = "hello"
+ZIP.WRITE(no_doc$, junk)
+TESTKIT.THROWS(NotWord@, no_doc$, "an archive without word/document.xml is refused")
+
+KILL written$
+KILL plain$
+KILL filled$
+KILL partial$
+KILL own$
+KILL own_out$
+KILL no_doc$
+RMDIR folder$
+
+TESTKIT.REPORT()
