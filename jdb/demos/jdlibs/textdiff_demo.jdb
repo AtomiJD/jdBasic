@@ -1,0 +1,91 @@
+' textdiff_demo.jdb - what changed between two versions: a configuration
+' file as a unified diff and that patch applied to the old file, a contract
+' clause as a word diff, names as character diffs, and the edit steps
+' between two versions of a list.
+'
+'   jdBasic textdiff_demo.jdb
+
+IMPORT TEXTDIFF, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM LF$ = CHR$(10)
+
+' ── a configuration file ───────────────────────────────────────
+
+CONSOLE.RULE("configuration file")
+DIM old_conf$ = JOIN(["[server]", "host = localhost", "port = 8080", "", "[log]", "level = info", "file = app.log"], LF$) + LF$
+DIM new_conf$ = JOIN(["[server]", "host = 0.0.0.0", "port = 8080", "workers = 4", "", "[log]", "level = debug"], LF$) + LF$
+DIM patch$ = TEXTDIFF.UNIFIED$(old_conf$, new_conf$, "app.ini", "app.ini (new)")
+PRINT patch$
+DIM rebuilt$ = TEXTDIFF.APPLY$(old_conf$, patch$)
+DIM same$ = "no"
+IF rebuilt$ = new_conf$ THEN same$ = "yes"
+PRINT "  the patch applied to the old file gives the new one: "; same$
+PRINT ""
+
+' ── a contract clause ──────────────────────────────────────────
+
+CONSOLE.RULE("contract clause")
+DIM clause_old$ = "The invoice is payable within 14 days of receipt without deduction."
+DIM clause_new$ = "The invoice is payable within 30 days of receipt, less a 2% discount."
+PRINT "  "; TEXTDIFF.WORDDIFF$(clause_old$, clause_new$)
+PRINT ""
+
+' ── names ──────────────────────────────────────────────────────
+
+CONSOLE.RULE("names")
+DIM olds = ["Müller", "Stadtverwaltung Musterstadt", "Schmidt & Söhne", "Meier"]
+DIM news = ["Mueller", "Stadtverw. Musterstadt", "Schmitt und Söhne", "Meyer"]
+DIM name_rows = []
+DIM i = 0
+FOR i = 0 TO LEN(olds) - 1
+    DIM before$ = olds[i]
+    DIM after$ = news[i]
+    DIM name_row = []
+    PUSH(name_row, before$)
+    PUSH(name_row, TEXTDIFF.CHARDIFF$(before$, after$))
+    PUSH(name_row, FORMAT$("{:.2f}", TEXTDIFF.RATIO(TEXTDIFF.CHARS(before$), TEXTDIFF.CHARS(after$))))
+    PUSH(name_rows, name_row)
+NEXT i
+CONSOLE.TABLE(name_rows, {"headers": ["before", "change", "ratio"], "border": "plain"})
+PRINT ""
+
+' ── a list ─────────────────────────────────────────────────────
+
+CONSOLE.RULE("attendee list")
+DIM list_old = ["Anna", "Bernd", "Clara", "Dieter", "Emil", "Frieda"]
+DIM list_new = ["Anna", "Clara", "Dora", "Dieter", "Frieda", "Gustav"]
+DIM steps = TEXTDIFF.OPCODES(list_old, list_new)
+DIM step_rows = []
+FOR i = 0 TO LEN(steps) - 1
+    DIM st = steps[i]
+    DIM tag$ = st{"tag"}
+    DIM a1 = st{"a1"}
+    DIM a2 = st{"a2"}
+    DIM b1 = st{"b1"}
+    DIM b2 = st{"b2"}
+    DIM from_part = []
+    DIM k = 0
+    FOR k = a1 TO a2 - 1
+        DIM fp$ = list_old[k]
+        PUSH(from_part, fp$)
+    NEXT k
+    DIM to_part = []
+    FOR k = b1 TO b2 - 1
+        DIM tp$ = list_new[k]
+        PUSH(to_part, tp$)
+    NEXT k
+    DIM from_text$ = ""
+    IF LEN(from_part) > 0 THEN from_text$ = JOIN(from_part, ", ")
+    DIM to_text$ = ""
+    IF LEN(to_part) > 0 THEN to_text$ = JOIN(to_part, ", ")
+    DIM step_row = []
+    PUSH(step_row, tag$)
+    PUSH(step_row, from_text$)
+    PUSH(step_row, to_text$)
+    PUSH(step_rows, step_row)
+NEXT i
+CONSOLE.TABLE(step_rows, {"headers": ["step", "old", "new"], "border": "plain"})
+PRINT ""
+PRINT "  similarity of the two lists: "; FORMAT$("{:.2f}", TEXTDIFF.RATIO(list_old, list_new))
+PRINT ""

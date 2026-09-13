@@ -1,0 +1,665 @@
+' textdiff.jdb - the differences between texts: the matching blocks and
+' edit operations of Python's difflib.SequenceMatcher on lines, words or
+' characters, unified diffs written and applied back, word and character
+' diffs inline, and a snapshot check for tests.
+'
+'   IMPORT TEXTDIFF
+'   PRINT TEXTDIFF.UNIFIED$(old$, new$, "old.txt", "new.txt")
+'   DIM again$ = TEXTDIFF.APPLY$(old$, patch$)
+'   PRINT TEXTDIFF.WORDDIFF$("the quick brown fox", "the quick red fox")
+'   ' the quick [-brown-]{+red+} fox
+
+EXPORT MODULE TEXTDIFF
+
+DIM gLF$ = CHR$(10)
+DIM gNoEol$ = CHR$(1)
+
+' ── sequences ──────────────────────────────────────────────────
+
+' The lines of a text; a line break at the very end starts no extra line.
+EXPORT FUNC LINES(text$)
+    DIM out = []
+    IF text$ = "" THEN RETURN out
+    DIM parts = SPLIT(text$, gLF$)
+    DIM n = LEN(parts)
+    IF RIGHT$(text$, 1) = gLF$ THEN n = n - 1
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM p$ = parts[k]
+        PUSH(out, p$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC IsWs(c$)
+    RETURN c$ = " " ORELSE c$ = CHR$(9) ORELSE c$ = CHR$(10) ORELSE c$ = CHR$(13) ORELSE c$ = CHR$(11) ORELSE c$ = CHR$(12)
+ENDFUNC
+
+' The words of a text and the whitespace between them, in order: joined
+' they give the text back.
+EXPORT FUNC TOKENS(text$)
+    DIM cs = -text$
+    DIM out = []
+    DIM cur$ = ""
+    DIM cur_ws = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        DIM ws = IsWs(c$)
+        IF cur$ <> "" ANDALSO ws <> cur_ws THEN
+            PUSH(out, cur$)
+            cur$ = ""
+        ENDIF
+        cur$ = cur$ + c$
+        cur_ws = ws
+    NEXT k
+    IF cur$ <> "" THEN PUSH(out, cur$)
+    RETURN out
+ENDFUNC
+
+' The characters of a text.
+EXPORT FUNC CHARS(text$)
+    DIM out = []
+    IF text$ = "" THEN RETURN out
+    DIM cs = -text$
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        PUSH(out, c$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC MinOf(x, y)
+    IF x < y THEN RETURN x
+    RETURN y
+ENDFUNC
+
+FUNC MaxOf(x, y)
+    IF x > y THEN RETURN x
+    RETURN y
+ENDFUNC
+
+' ── matching ───────────────────────────────────────────────────
+
+' SequenceMatcher's matching blocks as a flat array of (i, j, size)
+' triples, ending with (LEN(a), LEN(b), 0). The longest junk-free matching
+' run is found first, then the parts left and right of it; with autojunk,
+' an element that makes up more than 1% of a sequence of 200 or more
+' cannot start a match.
+FUNC MatchBlocks(a, b, autojunk)
+    DIM la = LEN(a)
+    DIM lb = LEN(b)
+    DIM width = lb + 1
+    DIM head AS MAP
+    DIM counts AS MAP
+    DIM nxt = IOTA(width, 0) * 0 - 1
+    DIM j = 0
+    FOR j = lb - 1 TO 0 STEP -1
+        DIM bj$ = b[j]
+        IF MAP.EXISTS(head, bj$) THEN
+            DIM older = head{bj$}
+            nxt[j] = older
+            DIM seen = counts{bj$}
+            counts{bj$} = seen + 1
+        ELSE
+            counts{bj$} = 1
+        ENDIF
+        head{bj$} = j
+    NEXT j
+    DIM popular AS MAP
+    IF autojunk ANDALSO lb >= 200 THEN
+        DIM ntest = FLOOR(lb / 100) + 1
+        FOR j = 0 TO lb - 1
+            DIM pj$ = b[j]
+            DIM cnt = counts{pj$}
+            IF cnt > ntest THEN popular{pj$} = 1
+        NEXT j
+    ENDIF
+    ' Run lengths of the previous and the current row of a, alternating
+    ' between the two halves; a stamp tells a value of the previous row
+    ' from an older one.
+    DIM run_len = IOTA(2 * width, 0) * 0
+    DIM run_mark = IOTA(2 * width, 0) * 0 - 5
+    DIM q_alo = [0]
+    DIM q_ahi = [la]
+    DIM q_blo = [0]
+    DIM q_bhi = [lb]
+    DIM top = 1
+    DIM found_i = []
+    DIM found_j = []
+    DIM found_k = []
+    DIM stamp = 0
+    DIM i = 0
+    DO WHILE top > 0
+        top = top - 1
+        DIM alo = q_alo[top]
+        DIM ahi = q_ahi[top]
+        DIM blo = q_blo[top]
+        DIM bhi = q_bhi[top]
+        DIM besti = alo
+        DIM bestj = blo
+        DIM bestsize = 0
+        stamp = stamp + 3
+        FOR i = alo TO ahi - 1
+            DIM ai$ = a[i]
+            DIM here_stamp = stamp + (i - alo)
+            DIM w_off = 0
+            IF (i - alo) - 2 * FLOOR((i - alo) / 2) = 1 THEN w_off = width
+            DIM r_off = width - w_off
+            IF MAP.EXISTS(head, ai$) ANDALSO NOT MAP.EXISTS(popular, ai$) THEN
+                DIM jj = head{ai$}
+                DO WHILE jj >= 0 ANDALSO jj < bhi
+                    IF jj >= blo THEN
+                        DIM kk = 1
+                        IF jj > 0 THEN
+                            IF run_mark[r_off + jj - 1] = here_stamp - 1 THEN kk = run_len[r_off + jj - 1] + 1
+                        ENDIF
+                        run_len[w_off + jj] = kk
+                        run_mark[w_off + jj] = here_stamp
+                        IF kk > bestsize THEN
+                            besti = i - kk + 1
+                            bestj = jj - kk + 1
+                            bestsize = kk
+                        ENDIF
+                    ENDIF
+                    jj = nxt[jj]
+                LOOP
+            ENDIF
+        NEXT i
+        stamp = stamp + (ahi - alo)
+        DO WHILE besti > alo ANDALSO bestj > blo
+            DIM x1$ = a[besti - 1]
+            DIM y1$ = b[bestj - 1]
+            IF x1$ <> y1$ THEN EXITDO
+            besti = besti - 1
+            bestj = bestj - 1
+            bestsize = bestsize + 1
+        LOOP
+        DO WHILE besti + bestsize < ahi ANDALSO bestj + bestsize < bhi
+            DIM x2$ = a[besti + bestsize]
+            DIM y2$ = b[bestj + bestsize]
+            IF x2$ <> y2$ THEN EXITDO
+            bestsize = bestsize + 1
+        LOOP
+        IF bestsize > 0 THEN
+            PUSH(found_i, besti)
+            PUSH(found_j, bestj)
+            PUSH(found_k, bestsize)
+            IF alo < besti ANDALSO blo < bestj THEN
+                IF top < LEN(q_alo) THEN
+                    q_alo[top] = alo
+                    q_ahi[top] = besti
+                    q_blo[top] = blo
+                    q_bhi[top] = bestj
+                ELSE
+                    PUSH(q_alo, alo)
+                    PUSH(q_ahi, besti)
+                    PUSH(q_blo, blo)
+                    PUSH(q_bhi, bestj)
+                ENDIF
+                top = top + 1
+            ENDIF
+            IF besti + bestsize < ahi ANDALSO bestj + bestsize < bhi THEN
+                IF top < LEN(q_alo) THEN
+                    q_alo[top] = besti + bestsize
+                    q_ahi[top] = ahi
+                    q_blo[top] = bestj + bestsize
+                    q_bhi[top] = bhi
+                ELSE
+                    PUSH(q_alo, besti + bestsize)
+                    PUSH(q_ahi, ahi)
+                    PUSH(q_blo, bestj + bestsize)
+                    PUSH(q_bhi, bhi)
+                ENDIF
+                top = top + 1
+            ENDIF
+        ENDIF
+    LOOP
+    DIM nb = LEN(found_i)
+    DIM taken = IOTA(nb + 1, 0) * 0
+    DIM out = []
+    DIM i1 = 0
+    DIM j1 = 0
+    DIM k1 = 0
+    DIM r = 0
+    DIM t = 0
+    FOR r = 0 TO nb - 1
+        DIM pick = -1
+        FOR t = 0 TO nb - 1
+            IF taken[t] = 0 THEN
+                IF pick < 0 THEN
+                    pick = t
+                ELSEIF found_i[t] < found_i[pick] THEN
+                    pick = t
+                ENDIF
+            ENDIF
+        NEXT t
+        taken[pick] = 1
+        DIM i2 = found_i[pick]
+        DIM j2 = found_j[pick]
+        DIM k2 = found_k[pick]
+        IF i1 + k1 = i2 ANDALSO j1 + k1 = j2 THEN
+            k1 = k1 + k2
+        ELSE
+            IF k1 > 0 THEN
+                PUSH(out, i1)
+                PUSH(out, j1)
+                PUSH(out, k1)
+            ENDIF
+            i1 = i2
+            j1 = j2
+            k1 = k2
+        ENDIF
+    NEXT r
+    IF k1 > 0 THEN
+        PUSH(out, i1)
+        PUSH(out, j1)
+        PUSH(out, k1)
+    ENDIF
+    PUSH(out, la)
+    PUSH(out, lb)
+    PUSH(out, 0)
+    RETURN out
+ENDFUNC
+
+' The edit operations as a flat array of (tag, i1, i2, j1, j2): tag 0 equal,
+' 1 replace, 2 delete, 3 insert.
+FUNC OpsFlat(a, b, autojunk)
+    DIM blocks = MatchBlocks(a, b, autojunk)
+    DIM ops = []
+    DIM i = 0
+    DIM j = 0
+    DIM t = 0
+    FOR t = 0 TO FLOOR(LEN(blocks) / 3) - 1
+        DIM ai = blocks[3 * t]
+        DIM bj = blocks[3 * t + 1]
+        DIM size_n = blocks[3 * t + 2]
+        DIM tag = -1
+        IF i < ai ANDALSO j < bj THEN
+            tag = 1
+        ELSEIF i < ai THEN
+            tag = 2
+        ELSEIF j < bj THEN
+            tag = 3
+        ENDIF
+        IF tag >= 0 THEN
+            PUSH(ops, tag)
+            PUSH(ops, i)
+            PUSH(ops, ai)
+            PUSH(ops, j)
+            PUSH(ops, bj)
+        ENDIF
+        i = ai + size_n
+        j = bj + size_n
+        IF size_n > 0 THEN
+            PUSH(ops, 0)
+            PUSH(ops, ai)
+            PUSH(ops, i)
+            PUSH(ops, bj)
+            PUSH(ops, j)
+        ENDIF
+    NEXT t
+    RETURN ops
+ENDFUNC
+
+FUNC TagName$(tag)
+    IF tag = 1 THEN RETURN "replace"
+    IF tag = 2 THEN RETURN "delete"
+    IF tag = 3 THEN RETURN "insert"
+    RETURN "equal"
+ENDFUNC
+
+' The runs two sequences share, as maps with "a", "b" and "size": a[a] to
+' a[a + size - 1] equal b[b] to b[b + size - 1]. The last map is always
+' (LEN(a), LEN(b), 0).
+EXPORT FUNC MATCHES(a, b, autojunk = 1)
+    DIM blocks = MatchBlocks(a, b, autojunk)
+    DIM out = []
+    DIM t = 0
+    FOR t = 0 TO FLOOR(LEN(blocks) / 3) - 1
+        DIM ai = blocks[3 * t]
+        DIM bj = blocks[3 * t + 1]
+        DIM size_n = blocks[3 * t + 2]
+        PUSH(out, {"a": ai, "b": bj, "size": size_n})
+    NEXT t
+    RETURN out
+ENDFUNC
+
+' How to turn a into b, as maps with "tag" ("equal", "replace", "delete" or
+' "insert"), "a1", "a2", "b1" and "b2": a[a1] to a[a2 - 1] becomes b[b1] to
+' b[b2 - 1].
+EXPORT FUNC OPCODES(a, b, autojunk = 1)
+    DIM ops = OpsFlat(a, b, autojunk)
+    DIM out = []
+    DIM t = 0
+    FOR t = 0 TO FLOOR(LEN(ops) / 5) - 1
+        DIM tag$ = TagName$(ops[5 * t])
+        DIM a1 = ops[5 * t + 1]
+        DIM a2 = ops[5 * t + 2]
+        DIM b1 = ops[5 * t + 3]
+        DIM b2 = ops[5 * t + 4]
+        PUSH(out, {"tag": tag$, "a1": a1, "a2": a2, "b1": b1, "b2": b2})
+    NEXT t
+    RETURN out
+ENDFUNC
+
+' Similarity from 0 to 1: twice the matched elements over all elements.
+EXPORT FUNC RATIO(a, b, autojunk = 1)
+    DIM total = LEN(a) + LEN(b)
+    IF total = 0 THEN RETURN 1.0
+    DIM blocks = MatchBlocks(a, b, autojunk)
+    DIM matched = 0
+    DIM t = 0
+    FOR t = 0 TO FLOOR(LEN(blocks) / 3) - 1
+        matched = matched + blocks[3 * t + 2]
+    NEXT t
+    RETURN 2.0 * matched / total
+ENDFUNC
+
+' ── unified diffs ──────────────────────────────────────────────
+
+FUNC DropTail(items, count_n)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - count_n - 1
+        DIM v = items[k]
+        PUSH(out, v)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The edit operations cut into hunks with n equal elements of context, as a
+' flat array of (group, tag, i1, i2, j1, j2).
+FUNC GroupedOps(ops, n)
+    DIM codes = []
+    DIM k = 0
+    FOR k = 0 TO LEN(ops) - 1
+        DIM v = ops[k]
+        PUSH(codes, v)
+    NEXT k
+    IF LEN(codes) = 0 THEN
+        PUSH(codes, 0)
+        PUSH(codes, 0)
+        PUSH(codes, 1)
+        PUSH(codes, 0)
+        PUSH(codes, 1)
+    ENDIF
+    DIM nc = FLOOR(LEN(codes) / 5)
+    IF codes[0] = 0 THEN
+        codes[1] = MaxOf(codes[1], codes[2] - n)
+        codes[3] = MaxOf(codes[3], codes[4] - n)
+    ENDIF
+    DIM last_at = 5 * (nc - 1)
+    IF codes[last_at] = 0 THEN
+        codes[last_at + 2] = MinOf(codes[last_at + 2], codes[last_at + 1] + n)
+        codes[last_at + 4] = MinOf(codes[last_at + 4], codes[last_at + 3] + n)
+    ENDIF
+    DIM groups = []
+    DIM gid = 0
+    DIM gsize = 0
+    DIM last_tag = 0
+    DIM t = 0
+    FOR t = 0 TO nc - 1
+        DIM tag = codes[5 * t]
+        DIM i1 = codes[5 * t + 1]
+        DIM i2 = codes[5 * t + 2]
+        DIM j1 = codes[5 * t + 3]
+        DIM j2 = codes[5 * t + 4]
+        IF tag = 0 ANDALSO i2 - i1 > n + n THEN
+            PUSH(groups, gid)
+            PUSH(groups, 0)
+            PUSH(groups, i1)
+            PUSH(groups, MinOf(i2, i1 + n))
+            PUSH(groups, j1)
+            PUSH(groups, MinOf(j2, j1 + n))
+            gid = gid + 1
+            gsize = 0
+            i1 = MaxOf(i1, i2 - n)
+            j1 = MaxOf(j1, j2 - n)
+        ENDIF
+        PUSH(groups, gid)
+        PUSH(groups, tag)
+        PUSH(groups, i1)
+        PUSH(groups, i2)
+        PUSH(groups, j1)
+        PUSH(groups, j2)
+        gsize = gsize + 1
+        last_tag = tag
+    NEXT t
+    IF gsize = 1 ANDALSO last_tag = 0 THEN groups = DropTail(groups, 6)
+    RETURN groups
+ENDFUNC
+
+FUNC RangeText$(start, stop_n)
+    DIM beginning = start + 1
+    DIM length_n = stop_n - start
+    IF length_n = 1 THEN RETURN STR$(beginning)
+    IF length_n = 0 THEN beginning = beginning - 1
+    RETURN STR$(beginning) + "," + STR$(length_n)
+ENDFUNC
+
+' The lines of a text, the last one marked when the text does not end with
+' a line break, so that the missing break counts as a difference.
+FUNC MarkedLines(text$)
+    DIM out = LINES(text$)
+    IF text$ <> "" ANDALSO RIGHT$(text$, 1) <> gLF$ THEN
+        DIM last$ = out[LEN(out) - 1]
+        out[LEN(out) - 1] = last$ + gNoEol$
+    ENDIF
+    RETURN out
+ENDFUNC
+
+FUNC LineOut$(prefix$, seq, x)
+    DIM s$ = seq[x]
+    IF RIGHT$(s$, 1) = gNoEol$ THEN RETURN prefix$ + LEFT$(s$, LEN(s$) - 1) + gLF$ + "\ No newline at end of file" + gLF$
+    RETURN prefix$ + s$ + gLF$
+ENDFUNC
+
+' A unified diff of two texts, line by line, with context lines around each
+' change (3), the way diff -u and difflib.unified_diff write it; empty when
+' the texts are equal. A text without a line break at its end gets the
+' "\ No newline at end of file" line.
+EXPORT FUNC UNIFIED$(old$, new$, from$ = "a", to$ = "b", context = 3)
+    DIM a = MarkedLines(old$)
+    DIM b = MarkedLines(new$)
+    DIM groups = GroupedOps(OpsFlat(a, b, 1), context)
+    IF LEN(groups) = 0 THEN RETURN ""
+    DIM out$ = "--- " + from$ + gLF$ + "+++ " + to$ + gLF$
+    DIM ng = FLOOR(LEN(groups) / 6)
+    DIM t = 0
+    DIM u = 0
+    DIM x = 0
+    DO WHILE t < ng
+        DIM g = groups[6 * t]
+        DIM stop_t = t
+        DO WHILE stop_t + 1 < ng
+            DIM next_g = groups[6 * (stop_t + 1)]
+            IF next_g <> g THEN EXITDO
+            stop_t = stop_t + 1
+        LOOP
+        out$ = out$ + "@@ -" + RangeText$(groups[6 * t + 2], groups[6 * stop_t + 3]) + " +" + RangeText$(groups[6 * t + 4], groups[6 * stop_t + 5]) + " @@" + gLF$
+        FOR u = t TO stop_t
+            DIM tag = groups[6 * u + 1]
+            DIM i1 = groups[6 * u + 2]
+            DIM i2 = groups[6 * u + 3]
+            DIM j1 = groups[6 * u + 4]
+            DIM j2 = groups[6 * u + 5]
+            IF tag = 0 THEN
+                FOR x = i1 TO i2 - 1
+                    out$ = out$ + LineOut$(" ", a, x)
+                NEXT x
+            ENDIF
+            IF tag = 1 ORELSE tag = 2 THEN
+                FOR x = i1 TO i2 - 1
+                    out$ = out$ + LineOut$("-", a, x)
+                NEXT x
+            ENDIF
+            IF tag = 1 ORELSE tag = 3 THEN
+                FOR x = j1 TO j2 - 1
+                    out$ = out$ + LineOut$("+", b, x)
+                NEXT x
+            ENDIF
+        NEXT u
+        t = stop_t + 1
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' The start and the count of a hunk range "12,3" or "12".
+FUNC ParseRange(spec$)
+    DIM out = []
+    DIM comma = CINT(INSTR(spec$, ","))
+    IF comma < 0 THEN
+        PUSH(out, CINT(VAL(spec$)))
+        PUSH(out, 1)
+    ELSE
+        PUSH(out, CINT(VAL(LEFT$(spec$, comma))))
+        PUSH(out, CINT(VAL(MID$(spec$, comma + 1, LEN(spec$)))))
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' The new text from the old one and a unified diff. Every context and
+' removed line must match the old text, or the call throws.
+EXPORT FUNC APPLY$(old$, patch$)
+    DIM src = LINES(old$)
+    DIM old_eol = TRUE
+    IF old$ <> "" ANDALSO RIGHT$(old$, 1) <> gLF$ THEN old_eol = FALSE
+    DIM plines = LINES(patch$)
+    DIM np = LEN(plines)
+    DIM out = []
+    DIM pos_old = 0
+    DIM no_eol = FALSE
+    DIM p = 0
+    DIM k = 0
+    DO WHILE p < np
+        DIM pl$ = plines[p]
+        IF LEFT$(pl$, 4) <> "@@ -" THEN
+            p = p + 1
+            CONTINUEDO
+        ENDIF
+        DIM rest$ = MID$(pl$, 4, LEN(pl$))
+        DIM gap = CINT(INSTR(rest$, " +"))
+        IF gap < 0 THEN THROW "TEXTDIFF: a broken hunk header: " + pl$
+        DIM old_range = ParseRange(LEFT$(rest$, gap))
+        DIM rest2$ = MID$(rest$, gap + 2, LEN(rest$))
+        DIM gap2 = CINT(INSTR(rest2$, " "))
+        IF gap2 < 0 THEN gap2 = LEN(rest2$)
+        DIM new_range = ParseRange(LEFT$(rest2$, gap2))
+        DIM old_count = old_range[1]
+        DIM new_count = new_range[1]
+        DIM old_start = old_range[0] - 1
+        IF old_count = 0 THEN old_start = old_range[0]
+        IF old_start < pos_old ORELSE old_start > LEN(src) THEN THROW "TEXTDIFF: a hunk out of place: " + pl$
+        FOR k = pos_old TO old_start - 1
+            DIM copy$ = src[k]
+            PUSH(out, copy$)
+        NEXT k
+        pos_old = old_start
+        p = p + 1
+        DIM seen_old = 0
+        DIM seen_new = 0
+        DIM prev_kind$ = ""
+        DO WHILE p < np
+            DIM hl$ = plines[p]
+            DIM kind$ = LEFT$(hl$, 1)
+            IF hl$ = "" THEN kind$ = " "
+            IF kind$ = "\" THEN
+                IF prev_kind$ = "+" ORELSE prev_kind$ = " " THEN no_eol = TRUE
+                p = p + 1
+                CONTINUEDO
+            ENDIF
+            IF seen_old >= old_count ANDALSO seen_new >= new_count THEN EXITDO
+            DIM body$ = MID$(hl$, 1, LEN(hl$))
+            IF kind$ = " " ORELSE kind$ = "-" THEN
+                IF pos_old >= LEN(src) THEN THROW "TEXTDIFF: the patch runs past the end of the text"
+                DIM have$ = src[pos_old]
+                IF have$ <> body$ THEN THROW "TEXTDIFF: the patch does not apply at line " + STR$(pos_old + 1)
+                pos_old = pos_old + 1
+                seen_old = seen_old + 1
+                IF kind$ = " " THEN
+                    PUSH(out, body$)
+                    seen_new = seen_new + 1
+                ENDIF
+            ELSEIF kind$ = "+" THEN
+                PUSH(out, body$)
+                seen_new = seen_new + 1
+            ELSE
+                THROW "TEXTDIFF: an unexpected line in a hunk: " + hl$
+            ENDIF
+            prev_kind$ = kind$
+            p = p + 1
+        LOOP
+    LOOP
+    DIM tail_n = LEN(src) - pos_old
+    FOR k = pos_old TO LEN(src) - 1
+        DIM rest_line$ = src[k]
+        PUSH(out, rest_line$)
+    NEXT k
+    IF LEN(out) = 0 THEN RETURN ""
+    DIM text$ = JOIN(out, gLF$)
+    IF tail_n > 0 THEN
+        IF old_eol THEN text$ = text$ + gLF$
+    ELSEIF NOT no_eol THEN
+        text$ = text$ + gLF$
+    ENDIF
+    RETURN text$
+ENDFUNC
+
+' ── inline diffs ───────────────────────────────────────────────
+
+FUNC JoinPart$(seq, from_i, to_i)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = from_i TO to_i - 1
+        DIM s$ = seq[k]
+        out$ = out$ + s$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC InlineDiff$(xa, xb)
+    DIM ops = OpsFlat(xa, xb, 1)
+    DIM out$ = ""
+    DIM t = 0
+    FOR t = 0 TO FLOOR(LEN(ops) / 5) - 1
+        DIM tag = ops[5 * t]
+        DIM i1 = ops[5 * t + 1]
+        DIM i2 = ops[5 * t + 2]
+        DIM j1 = ops[5 * t + 3]
+        DIM j2 = ops[5 * t + 4]
+        IF tag = 0 THEN out$ = out$ + JoinPart$(xa, i1, i2)
+        IF tag = 1 ORELSE tag = 2 THEN out$ = out$ + "[-" + JoinPart$(xa, i1, i2) + "-]"
+        IF tag = 1 ORELSE tag = 3 THEN out$ = out$ + "{+" + JoinPart$(xb, j1, j2) + "+}"
+    NEXT t
+    RETURN out$
+ENDFUNC
+
+' The new text with removed words in [-...-] and added ones in {+...+}, the
+' way git diff --word-diff=plain marks them.
+EXPORT FUNC WORDDIFF$(old$, new$)
+    RETURN InlineDiff$(TOKENS(old$), TOKENS(new$))
+ENDFUNC
+
+' The same marks on single characters.
+EXPORT FUNC CHARDIFF$(old$, new$)
+    RETURN InlineDiff$(CHARS(old$), CHARS(new$))
+ENDFUNC
+
+' ── snapshots ──────────────────────────────────────────────────
+
+' Whether a text equals the snapshot stored at path$. A missing snapshot is
+' written and counts as equal; with the environment variable TEXTDIFF_UPDATE
+' set every snapshot is written again. A differing text prints the unified
+' diff from the snapshot to the text.
+EXPORT FUNC SNAPSHOT(actual$, path$)
+    IF GETENV$("TEXTDIFF_UPDATE") <> "" ORELSE NOT FILE.EXISTS(path$) THEN
+        TXTWRITER path$, actual$
+        RETURN TRUE
+    ENDIF
+    DIM stored$ = TXTREADER$(path$)
+    IF stored$ = actual$ THEN RETURN TRUE
+    PRINT UNIFIED$(stored$, actual$, path$, "actual")
+    RETURN FALSE
+ENDFUNC

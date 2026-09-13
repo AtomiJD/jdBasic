@@ -1,0 +1,223 @@
+' TEXTDIFF: opcodes, ratios and unified diffs against Python's difflib on a
+' reference table of lines, words and characters, inline diffs built from
+' the reference opcodes, patches written and applied back to 60 seeded
+' random pairs with three context widths, and snapshots.
+
+IMPORT TESTKIT, TEXTDIFF
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "textdiff_reference.tsv") THEN base$ = "fixtures/"
+DIM TB$ = CHR$(9)
+DIM LF$ = CHR$(10)
+
+FUNC RowsOf(path$)
+    DIM out = []
+    DIM rows = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r$ = rows[k]
+        IF r$ <> "" ANDALSO LEFT$(r$, 1) <> "#" THEN PUSH(out, r$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Unescape$(s$)
+    DIM bs$ = CHR$(92)
+    RETURN REPLACE$(REPLACE$(REPLACE$(s$, bs$ + "t", CHR$(9)), bs$ + "n", CHR$(10)), bs$ + "r", CHR$(13))
+ENDFUNC
+
+FUNC FieldOf$(cols, i)
+    IF i >= LEN(cols) THEN RETURN ""
+    DIM f$ = cols[i]
+    RETURN Unescape$(f$)
+ENDFUNC
+
+FUNC SeqOf(kind$, text$)
+    IF kind$ = "lines" THEN RETURN TEXTDIFF.LINES(text$)
+    IF kind$ = "words" THEN RETURN TEXTDIFF.TOKENS(text$)
+    RETURN TEXTDIFF.CHARS(text$)
+ENDFUNC
+
+FUNC OpsText$(ops)
+    DIM parts = []
+    DIM k = 0
+    FOR k = 0 TO LEN(ops) - 1
+        DIM op = ops[k]
+        DIM tag$ = op{"tag"}
+        DIM a1 = op{"a1"}
+        DIM a2 = op{"a2"}
+        DIM b1 = op{"b1"}
+        DIM b2 = op{"b2"}
+        PUSH(parts, tag$ + " " + STR$(a1) + " " + STR$(a2) + " " + STR$(b1) + " " + STR$(b2))
+    NEXT k
+    IF LEN(parts) = 0 THEN RETURN ""
+    RETURN JOIN(parts, ";")
+ENDFUNC
+
+' The inline diff that reference opcodes describe.
+FUNC InlineFromOps$(sa, sb, ops$)
+    IF ops$ = "" THEN RETURN ""
+    DIM out$ = ""
+    DIM items = SPLIT(ops$, ";")
+    DIM k = 0
+    DIM x = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM item$ = items[k]
+        DIM f = SPLIT(item$, " ")
+        DIM tag$ = f[0]
+        DIM i1 = CINT(VAL(f[1]))
+        DIM i2 = CINT(VAL(f[2]))
+        DIM j1 = CINT(VAL(f[3]))
+        DIM j2 = CINT(VAL(f[4]))
+        DIM old_part$ = ""
+        FOR x = i1 TO i2 - 1
+            DIM oa$ = sa[x]
+            old_part$ = old_part$ + oa$
+        NEXT x
+        DIM new_part$ = ""
+        FOR x = j1 TO j2 - 1
+            DIM nb$ = sb[x]
+            new_part$ = new_part$ + nb$
+        NEXT x
+        IF tag$ = "equal" THEN out$ = out$ + old_part$
+        IF tag$ = "replace" ORELSE tag$ = "delete" THEN out$ = out$ + "[-" + old_part$ + "-]"
+        IF tag$ = "replace" ORELSE tag$ = "insert" THEN out$ = out$ + "{+" + new_part$ + "+}"
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC BadPatch(x)
+    DIM old$ = "one" + CHR$(10) + "two" + CHR$(10)
+    DIM patch$ = "@@ -1,2 +1,2 @@" + CHR$(10) + " uno" + CHR$(10) + "-two" + CHR$(10) + "+three" + CHR$(10)
+    RETURN TEXTDIFF.APPLY$(old$, patch$)
+ENDFUNC
+
+TESTKIT.SUITE("difflib reference")
+DIM ref_rows = RowsOf(base$ + "textdiff_reference.tsv")
+TESTKIT.EQ(LEN(ref_rows), 26, "26 reference cases")
+DIM i = 0
+FOR i = 0 TO LEN(ref_rows) - 1
+    DIM row_text$ = ref_rows[i]
+    DIM cols = SPLIT(row_text$, TB$)
+    DIM kind$ = FieldOf$(cols, 0)
+    DIM a$ = FieldOf$(cols, 1)
+    DIM b$ = FieldOf$(cols, 2)
+    DIM ops$ = FieldOf$(cols, 3)
+    DIM ratio$ = FieldOf$(cols, 4)
+    DIM u3$ = FieldOf$(cols, 5)
+    DIM u1$ = FieldOf$(cols, 6)
+    DIM label$ = kind$ + " " + STR$(i + 1) + " '" + LEFT$(REPLACE$(a$, LF$, "|"), 24) + "': "
+    DIM sa = SeqOf(kind$, a$)
+    DIM sb = SeqOf(kind$, b$)
+    TESTKIT.EQ(OpsText$(TEXTDIFF.OPCODES(sa, sb)), ops$, label$ + "opcodes")
+    TESTKIT.NEAR(TEXTDIFF.RATIO(sa, sb), VAL(ratio$), 0.000000001, label$ + "ratio")
+    IF kind$ = "lines" THEN
+        IF u3$ <> "" THEN u3$ = u3$ + LF$
+        IF u1$ <> "" THEN u1$ = u1$ + LF$
+        TESTKIT.EQ(TEXTDIFF.UNIFIED$(a$, b$), u3$, label$ + "unified diff")
+        TESTKIT.EQ(TEXTDIFF.UNIFIED$(a$, b$, "a", "b", 1), u1$, label$ + "unified diff, one line of context")
+        TESTKIT.EQ(TEXTDIFF.APPLY$(a$, u3$), b$, label$ + "the patch applied")
+    ELSEIF kind$ = "words" THEN
+        TESTKIT.EQ(TEXTDIFF.WORDDIFF$(a$, b$), InlineFromOps$(sa, sb, ops$), label$ + "word diff")
+    ELSE
+        TESTKIT.EQ(TEXTDIFF.CHARDIFF$(a$, b$), InlineFromOps$(sa, sb, ops$), label$ + "character diff")
+    ENDIF
+NEXT i
+
+TESTKIT.SUITE("sequences and blocks")
+DIM toks = TEXTDIFF.TOKENS("a  b" + TB$ + "c")
+TESTKIT.EQ(LEN(toks), 5, "words and the whitespace between them")
+TESTKIT.EQ(JOIN(toks, ""), "a  b" + TB$ + "c", "joined they give the text back")
+TESTKIT.EQ(LEN(TEXTDIFF.LINES("x" + LF$ + "y" + LF$)), 2, "a final line break starts no line")
+TESTKIT.EQ(LEN(TEXTDIFF.LINES("x" + LF$ + LF$)), 2, "an empty line before it does")
+TESTKIT.EQ(LEN(TEXTDIFF.CHARS("Grüße")), 5, "characters, not bytes")
+DIM blocks = TEXTDIFF.MATCHES(TEXTDIFF.CHARS("abxcd"), TEXTDIFF.CHARS("abcd"))
+TESTKIT.EQ(LEN(blocks), 3, "two matching runs and the end")
+DIM second = blocks[1]
+DIM second_a = second{"a"}
+DIM second_b = second{"b"}
+DIM second_size = second{"size"}
+TESTKIT.EQ(CINT(second_a), 3, "cd starts at 3 in the first")
+TESTKIT.EQ(CINT(second_b), 2, "and at 2 in the second")
+TESTKIT.EQ(CINT(second_size), 2, "two characters long")
+DIM ending = blocks[2]
+DIM ending_size = ending{"size"}
+TESTKIT.EQ(CINT(ending_size), 0, "the last block is empty")
+TESTKIT.EQ(TEXTDIFF.WORDDIFF$("the quick brown fox", "the quick red fox jumps"), "the quick [-brown-]{+red+} fox{+ jumps+}", "a word diff")
+TESTKIT.EQ(TEXTDIFF.CHARDIFF$("Müller", "Mueller"), "M[-ü-]{+ue+}ller", "a character diff counts characters")
+TESTKIT.EQ(TEXTDIFF.UNIFIED$("same" + LF$, "same" + LF$), "", "no diff between equal texts")
+DIM no_eol$ = TEXTDIFF.UNIFIED$("a" + LF$ + "b", "a" + LF$ + "b" + LF$)
+TESTKIT.EQ(no_eol$, "--- a" + LF$ + "+++ b" + LF$ + "@@ -1,2 +1,2 @@" + LF$ + " a" + LF$ + "-b" + LF$ + "\ No newline at end of file" + LF$ + "+b" + LF$, "a missing final line break is a change")
+TESTKIT.EQ(TEXTDIFF.APPLY$("a" + LF$ + "b", no_eol$), "a" + LF$ + "b" + LF$, "and applying it adds the break")
+TESTKIT.EQ(TEXTDIFF.APPLY$("a" + LF$ + "b" + LF$, TEXTDIFF.UNIFIED$("a" + LF$ + "b" + LF$, "a" + LF$ + "c")), "a" + LF$ + "c", "or takes it away")
+TESTKIT.EQ(TEXTDIFF.APPLY$("keep" + LF$, ""), "keep" + LF$, "an empty patch changes nothing")
+TESTKIT.THROWS(BadPatch@, 1, "a patch that does not match the text is refused")
+
+TESTKIT.SUITE("patches round trip")
+DIM vocab = ["alpha", "beta", "gamma", "delta", "", "Grüße", "  indented", "--- a", "+++ b", "@@ -1 +1 @@", "\ marker", "-minus", "+plus", " space"]
+DIM seed = 20260913
+DIM pair = 0
+DIM round_trips = 0
+FOR pair = 1 TO 60
+    seed = (seed * 48271) MOD 2147483647
+    DIM n_old = seed MOD 25
+    DIM old_lines = []
+    DIM k = 0
+    FOR k = 1 TO n_old
+        seed = (seed * 48271) MOD 2147483647
+        DIM pick_old$ = vocab[seed MOD LEN(vocab)]
+        PUSH(old_lines, pick_old$)
+    NEXT k
+    DIM new_lines = []
+    FOR k = 0 TO n_old - 1
+        seed = (seed * 48271) MOD 2147483647
+        DIM action = seed MOD 10
+        DIM kept$ = old_lines[k]
+        seed = (seed * 48271) MOD 2147483647
+        DIM pick_new$ = vocab[seed MOD LEN(vocab)]
+        IF action = 1 THEN
+            PUSH(new_lines, pick_new$)
+        ELSEIF action = 2 THEN
+            PUSH(new_lines, pick_new$)
+            PUSH(new_lines, kept$)
+        ELSEIF action <> 0 THEN
+            PUSH(new_lines, kept$)
+        ENDIF
+    NEXT k
+    seed = (seed * 48271) MOD 2147483647
+    IF seed MOD 3 = 0 THEN PUSH(new_lines, "appended")
+    DIM old$ = ""
+    IF LEN(old_lines) > 0 THEN old$ = JOIN(old_lines, LF$)
+    DIM new$ = ""
+    IF LEN(new_lines) > 0 THEN new$ = JOIN(new_lines, LF$)
+    seed = (seed * 48271) MOD 2147483647
+    IF old$ <> "" ANDALSO seed MOD 4 <> 0 THEN old$ = old$ + LF$
+    seed = (seed * 48271) MOD 2147483647
+    IF new$ <> "" ANDALSO seed MOD 4 <> 0 THEN new$ = new$ + LF$
+    DIM ctx_list = [3, 1, 0]
+    DIM c = 0
+    FOR c = 0 TO 2
+        DIM ctx = ctx_list[c]
+        DIM patch$ = TEXTDIFF.UNIFIED$(old$, new$, "a", "b", ctx)
+        TESTKIT.EQ(TEXTDIFF.APPLY$(old$, patch$), new$, "pair " + STR$(pair) + " with " + STR$(ctx) + " lines of context")
+        round_trips = round_trips + 1
+    NEXT c
+    TESTKIT.EQ(TEXTDIFF.UNIFIED$(old$, new$) = "", old$ = new$, "pair " + STR$(pair) + ": a diff exactly when the texts differ")
+NEXT pair
+TESTKIT.EQ(round_trips, 180, "180 patches applied")
+
+TESTKIT.SUITE("snapshots")
+DIM folder$ = MKTEMP$("textdiff")
+MKDIR folder$
+DIM snap$ = folder$ + "/report.txt"
+DIM report$ = "total: 3" + LF$ + "open: 1" + LF$
+TESTKIT.ISTRUE(TEXTDIFF.SNAPSHOT(report$, snap$), "a missing snapshot is written")
+TESTKIT.ISTRUE(FILE.EXISTS(snap$), "the snapshot file exists")
+TESTKIT.EQ(TXTREADER$(snap$), report$, "and holds the text")
+TESTKIT.ISTRUE(TEXTDIFF.SNAPSHOT(report$, snap$), "the same text matches it")
+TESTKIT.ISFALSE(TEXTDIFF.SNAPSHOT("total: 3" + LF$ + "open: 2" + LF$, snap$), "a changed text does not")
+TESTKIT.EQ(TXTREADER$(snap$), report$, "and leaves the snapshot alone")
+KILL snap$
+RMDIR folder$
+
+TESTKIT.REPORT()

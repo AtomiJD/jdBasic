@@ -1447,6 +1447,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `XML` | XML into a tree: namespaces, XPath paths, a map view, building and writing; reads XRechnung in UBL and CII |
 | `FUZZY` | near matches: edit distances, similarity ratios, best matches from a list, Koelner Phonetik and Soundex |
 | `TEXTX` | text helpers: wrap, shorten, dedent, character cuts, slugs, ASCII transliteration, sizes, numbers and durations in words |
+| `TEXTDIFF` | differences: difflib's opcodes and ratio, unified diffs written and applied, inline word diffs, snapshots |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX
