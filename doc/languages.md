@@ -1439,6 +1439,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `RETRY` | a call made again with a growing wait: a random share, a ceiling on the run, a predicate and a callback |
 | `GRAPH` | nodes and links: traversal, components, cycles, topological order, Dijkstra and A star, Graphviz output |
 | `FAKE` | made up names, addresses, companies, IBANs, dates and text, seeded so every machine gets the same rows |
+| `TMPL` | HTML templates: holes, conditions, loops, includes, layouts, filters; the view layer of jdweb |
 | `URL` | URLs split and built, encoded, query strings as maps, parameters changed, links resolved by RFC 3986, a canonical form |
 | `XML` | XML into a tree: namespaces, XPath paths, a map view, building and writing; reads XRechnung in UBL and CII |
 

@@ -56,6 +56,7 @@ and SCHEMA) finds it through the same search.
 | `graph.jdb` | networkx | nodes and links: traversal, components, cycles, topological order, Dijkstra and A star, all the ways between two nodes, and Graphviz output | [graph_lib_readme.md](graph_lib_readme.md) |
 | `fake.jdb` | Faker | made up names, addresses, companies, account numbers, dates and text in English and German, from a seeded generator that answers the same on every machine, plus a table built from a spec | [fake_lib_readme.md](fake_lib_readme.md) |
 | `url.jdb` | urllib.parse, furl | URLs split into parts and built back, percent and form encoding, query strings as maps, one parameter changed in place, RFC 3986 resolution and a canonical form | [url_lib_readme.md](url_lib_readme.md) |
+| `tmpl.jdb` | Jinja2 | HTML templates: escaped and raw holes, paths into the model, conditions, loops, includes, layouts with blocks, filters and custom filters, a cache per file | [tmpl_lib_readme.md](tmpl_lib_readme.md) |
 | `xml.jdb` | lxml, ElementTree, xmltodict | XML into a tree with line and column on every fault: namespaces, a subset of XPath, a map view, documents built from nothing and written back | [xml_lib_readme.md](xml_lib_readme.md) |
 
 ## Tests and demos

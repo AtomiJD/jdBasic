@@ -6,6 +6,9 @@
 ' An app supplies a JSON config (app name, db, nav, flags) plus its own domain
 ' handlers, and wires pages through JDWEB.PAGE$ / JDWEB.RENDER$.
 '
+' Pages render through TMPL (lib/tmpl.jdb), which has to sit where IMPORT
+' finds it: next to this file on a server, or on JDBASIC_PATH.
+'
 ' Tokens understood by RENDER$: ##theme## (the stylesheet) plus one ##key## per
 ' entry in the vars map.
 EXPORT MODULE JDWEB

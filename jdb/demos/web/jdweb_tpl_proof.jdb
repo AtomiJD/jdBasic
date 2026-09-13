@@ -1,7 +1,7 @@
 ' jdweb_tpl_proof.jdb - prove a tmpl.jdb layout reproduces JDWEB.PAGE$ exactly.
 ' Renders the same shell two ways (jdweb's ##token## renderer vs tmpl.jdb) and
-' compares byte-for-byte. Run from the repo root:
-'   jdBasic jdb/demos/web/jdweb_tpl_proof.jdb
+' compares byte-for-byte. Run from the repo root, with lib/ on the module path:
+'   JDBASIC_PATH=lib jdBasic jdb/demos/web/jdweb_tpl_proof.jdb
 
 IMPORT JDWEB
 IMPORT TMPL

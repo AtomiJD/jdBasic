@@ -5,7 +5,7 @@
 ' uses interpolation, a for-loop, an include partial, and an if-badge; the
 ' fourth card carries markup in its title to show HTML auto-escaping.
 '
-' Run from the repo root:  jdBasic jdb/demos/web/tmpl_demo.jdb
+' Run from the repo root:  JDBASIC_PATH=lib jdBasic jdb/demos/web/tmpl_demo.jdb
 
 IMPORT TMPL
 

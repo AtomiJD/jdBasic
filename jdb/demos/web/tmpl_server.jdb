@@ -6,8 +6,8 @@
 '
 ' The template cache is warmed once before the server starts, so every
 ' request after that renders from cache (read-only) - safe under the
-' handler thread pool. Run from the repo root:
-'   jdBasic jdb/demos/web/tmpl_server.jdb        (stop with Ctrl-C / kill)
+' handler thread pool. Run from the repo root, with lib/ on the module path:
+'   JDBASIC_PATH=lib jdBasic jdb/demos/web/tmpl_server.jdb   (stop with Ctrl-C / kill)
 
 IMPORT TMPL
 

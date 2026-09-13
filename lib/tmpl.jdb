@@ -143,55 +143,92 @@ ENDFUNC
 
 DIM gFilters AS MAP      ' name -> custom filter funcref (value, arg$) -> value
 
-FUNC Zp2$(n)
-    DIM s$ = FORMAT$("{}", INT(n))
-    IF LEN(s$) < 2 THEN RETURN "0" + s$
-    RETURN s$
-ENDFUNC
-
-FUNC FilterLen(vv)
-    DIM ty$ = TYPEOF(vv)
-    IF ty$ = "ARRAY" ORELSE ty$ = "STRING" THEN RETURN LEN(vv)
-    RETURN 0
-ENDFUNC
-
-FUNC FilterMoney$(vv, arg$)
-    DIM s$ = FORMAT$("{:.2f}", VAL(AsText$(vv)))
+FUNC FilterMoney$(text$, arg$)
+    DIM s$ = FORMAT$("{:.2f}", VAL(text$))
     s$ = REPLACE$(s$, ".", ",")
     DIM cur$ = arg$
     IF cur$ = "" THEN cur$ = "EUR"
     RETURN s$ + " " + cur$
 ENDFUNC
 
+' A date written as YYYY-MM-DD, with HH:MM after a space or a T when there
+' is a time, put into the arrangement fmt$ names with YYYY, MM, DD, HH and
+' mm. The fields are taken as written, so no time zone moves them. Any
+' other text is left as it is.
 FUNC FilterDate$(s$, fmt$)
-    IF LEN(s$) < 8 THEN RETURN s$
-    DIM dt = CVDATE(s$, 0)
+    DIM d$ = TRIM$(s$)
+    IF LEN(d$) < 10 THEN RETURN s$
+    IF MID$(d$, 4, 1) <> "-" ORELSE MID$(d$, 7, 1) <> "-" THEN RETURN s$
+    DIM hh$ = "00"
+    DIM mi$ = "00"
+    IF LEN(d$) >= 16 THEN
+        hh$ = MID$(d$, 11, 2)
+        mi$ = MID$(d$, 14, 2)
+    ENDIF
     DIM f$ = fmt$
     IF f$ = "" THEN f$ = "DD.MM.YYYY"
-    f$ = REPLACE$(f$, "YYYY", FORMAT$("{}", YEAR(dt)))
-    f$ = REPLACE$(f$, "MM", Zp2$(MONTH(dt)))
-    f$ = REPLACE$(f$, "DD", Zp2$(DAY(dt)))
-    f$ = REPLACE$(f$, "HH", Zp2$(HOUR(dt)))
-    f$ = REPLACE$(f$, "mm", Zp2$(MINUTE(dt)))
+    f$ = REPLACE$(f$, "YYYY", LEFT$(d$, 4))
+    f$ = REPLACE$(f$, "MM", MID$(d$, 5, 2))
+    f$ = REPLACE$(f$, "DD", MID$(d$, 8, 2))
+    f$ = REPLACE$(f$, "HH", hh$)
+    f$ = REPLACE$(f$, "mm", mi$)
     RETURN f$
 ENDFUNC
 
-FUNC ApplyFilter(name$, vv, arg$)
-    IF name$ = "upper" THEN RETURN UCASE$(AsText$(vv))
-    IF name$ = "lower" THEN RETURN LCASE$(AsText$(vv))
-    IF name$ = "trim" THEN RETURN TRIM$(AsText$(vv))
-    IF name$ = "length" THEN RETURN FilterLen(vv)
-    IF name$ = "money" THEN RETURN FilterMoney$(vv, arg$)
-    IF name$ = "date" THEN RETURN FilterDate$(AsText$(vv), arg$)
-    IF name$ = "default" THEN
-        IF Truthy(vv) THEN RETURN vv
-        RETURN arg$
-    ENDIF
-    IF MAP.EXISTS(gFilters, name$) THEN
-        DIM fn = gFilters{name$}
-        RETURN fn(vv, arg$)
-    ENDIF
-    RETURN vv
+' The text of a value run through its filters. vv is the model value and
+' text$ its text; while no filter has turned the value into text, length
+' and default still look at the value itself, so an array keeps its size.
+' A custom filter receives the text and gives text back.
+FUNC Filtered$(vv, text0$, fl)
+    DIM text$ = text0$
+    DIM whole = TRUE
+    DIM fi = 0
+    FOR fi = 0 TO LEN(fl) - 1
+        DIM f = fl[fi]
+        DIM name$ = f{"name"}
+        DIM arg$ = f{"arg"}
+        IF name$ = "upper" THEN
+            text$ = UCASE$(text$)
+            whole = FALSE
+        ELSEIF name$ = "lower" THEN
+            text$ = LCASE$(text$)
+            whole = FALSE
+        ELSEIF name$ = "trim" THEN
+            text$ = TRIM$(text$)
+            whole = FALSE
+        ELSEIF name$ = "length" THEN
+            DIM n = LEN(text$)
+            IF whole THEN
+                DIM kind$ = TYPEOF(vv)
+                IF kind$ = "ARRAY" THEN
+                    n = LEN(vv)
+                ELSEIF kind$ <> "STRING" THEN
+                    n = 0
+                ENDIF
+            ENDIF
+            text$ = STR$(n)
+            whole = FALSE
+        ELSEIF name$ = "money" THEN
+            text$ = FilterMoney$(text$, arg$)
+            whole = FALSE
+        ELSEIF name$ = "date" THEN
+            text$ = FilterDate$(text$, arg$)
+            whole = FALSE
+        ELSEIF name$ = "default" THEN
+            DIM present = text$ <> ""
+            IF whole THEN present = Truthy(vv)
+            IF NOT present THEN
+                text$ = arg$
+                whole = FALSE
+            ENDIF
+        ELSEIF MAP.EXISTS(gFilters, name$) THEN
+            DIM fn = gFilters{name$}
+            DIM got$ = fn(text$, arg$)
+            text$ = got$
+            whole = FALSE
+        ENDIF
+    NEXT fi
+    RETURN text$
 ENDFUNC
 
 FUNC ParseFilter(seg$)
@@ -531,11 +568,8 @@ FUNC EmitOps$(ops, scope, blocks)
         ELSEIF ty$ = "var" THEN
             DIM vv = PathGet(op{"x"}, scope)
             DIM fl = op{"filters"}
-            DIM fi
-            FOR fi = 0 TO LEN(fl) - 1
-                vv = ApplyFilter(fl[fi]{"name"}, vv, fl[fi]{"arg"})
-            NEXT fi
             DIM s$ = AsText$(vv)
+            IF LEN(fl) > 0 THEN s$ = Filtered$(vv, s$, fl)
             IF op{"raw"} THEN
                 out$ = out$ + s$
             ELSE

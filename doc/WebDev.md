@@ -27,12 +27,12 @@ build.bat HTTP GFX IMGUI NATIVEC SQLITE        # Windows (GFX/IMGUI/NATIVEC opti
 ```
 
 **Files next to your app.** `TMPL` and `JDWEB` are jdBasic modules - `IMPORT`
-resolves them relative to your script, so keep them in the same folder:
+finds them next to your script first, so keep them in the same folder:
 
 ```
 myapp/
   myapp.jdb
-  tmpl.jdb            # copy from jdb/demos/web/
+  tmpl.jdb            # copy from lib/
   jdweb.jdb           # copy from jdb/demos/web/  (only if you use JDWEB)
   jdweb_tpl/          # copy the whole folder      (JDWEB reads its HTML/CSS from here)
     layout.html  theme.html  nav.html  login.html  notfound.html  cookiebar.html
@@ -537,10 +537,13 @@ returns the logged-in name or `""` - guard every protected handler with it.
 
 ## See also
 
-- `jdb/demos/web/tmpl.jdb` - the template engine (+ `tmpl_test.jdb`, 28 checks)
+- `lib/tmpl.jdb` - the template engine; its page is `lib/tmpl_lib_readme.md`,
+  its self test `tests/jdlibs/tmpl_selftest.jdb`
 - `jdb/demos/web/jdweb.jdb` - the framework module
 - `jdb/demos/web/jdtrakr.jdb` - a full app (kanban board) built on both
-- `jdb/demos/web/tmpl_demo.jdb`, `tmpl_server.jdb` - smaller worked examples
+- `jdb/demos/web/tmpl_demo.jdb`, `tmpl_server.jdb` - smaller worked examples.
+  Inside the repository they find `tmpl.jdb` through the module path:
+  `JDBASIC_PATH=lib jdBasic jdb/demos/web/tmpl_demo.jdb`
 - <https://github.com/AtomiJD/jderg> - jdeRG "E-Rechnung Studio"
   (profi-rg.de): the largest production app on this stack - accounts + tiers,
   CSRF double-submit, Stripe billing, transactional mail, static-page

@@ -1,0 +1,146 @@
+' tmpl_demo.jdb - a service report rendered from a layout, a page and a partial.
+'
+' The demo writes three template files the way a web app keeps them: a
+' layout with blocks, a page that extends it and a partial for one row.
+' TMPL renders the page against a model of tickets and invoices, with
+' loops, conditions, filters, a custom filter and the escaping of what a
+' user typed into a ticket. It prints the page, renders it again from the
+' cache, and picks up a changed partial.
+'
+'   jdBasic tmpl_demo.jdb
+
+IMPORT TMPL, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM NL$ = CHR$(10)
+DIM folder$ = MKTEMP$("tmpldemo")
+MKDIR folder$
+DIM base$ = folder$ + "/"
+
+' Five places, filled as far as the rating reaches.
+FUNC Stars(text$, arg$)
+    DIM filled = CLAMP(VAL(text$), 0, 5)
+    RETURN REPEAT$("*", filled) + REPEAT$(".", 5 - filled)
+ENDFUNC
+
+FUNC Ticket(id, title$, severity$, state$, opened$, hours, rating)
+    DIM t AS MAP
+    t{"id"} = id
+    t{"title"} = title$
+    t{"severity"} = severity$
+    t{"state"} = state$
+    t{"opened"} = opened$
+    t{"hours"} = hours
+    t{"rating"} = rating
+    RETURN t
+ENDFUNC
+
+FUNC Invoice(number$, amount, paid, issued$)
+    DIM inv AS MAP
+    inv{"number"} = number$
+    inv{"amount"} = amount
+    inv{"paid"} = paid
+    inv{"issued"} = issued$
+    RETURN inv
+ENDFUNC
+
+' ── the templates ──────────────────────────────────────────────
+
+DIM layout = []
+PUSH(layout, "<!doctype html>")
+PUSH(layout, "<html lang='en'>")
+PUSH(layout, "<head><title>{% block title %}Report{% endblock %} - {{ company }}</title></head>")
+PUSH(layout, "<body>")
+PUSH(layout, "<header><h1>{{ company }}</h1><p>{{ period }}</p></header>")
+PUSH(layout, "<main>{% block content %}{% endblock %}</main>")
+PUSH(layout, "<footer>Generated {{ generated | date:'DD.MM.YYYY HH:mm' }}{% if contact %}, questions to {{ contact }}{% endif %}</footer>")
+PUSH(layout, "</body>")
+PUSH(layout, "</html>")
+TXTWRITER base$ + "layout.html", JOIN(layout, NL$)
+
+DIM row = []
+PUSH(row, "<tr class='{{ t.state }}'><td>#{{ t.id }}</td><td>{{ t.title }}</td>")
+PUSH(row, "<td>{% if t.severity == 'critical' %}<b>{{ t.severity | upper }}</b>{% elseif t.severity == 'major' %}{{ t.severity | upper }}{% else %}{{ t.severity }}{% endif %}</td>")
+PUSH(row, "<td>{{ t.opened | date }}</td><td>{{ t.hours }} h</td><td>{{ t.rating | stars }}</td></tr>")
+TXTWRITER base$ + "row.html", JOIN(row, "")
+
+DIM page = []
+PUSH(page, "{% extends 'layout.html' %}")
+PUSH(page, "{% block title %}Service report {{ period }}{% endblock %}")
+PUSH(page, "{% block content %}")
+PUSH(page, "<h2>{{ tickets | length }} tickets</h2>")
+PUSH(page, "<table>")
+PUSH(page, "{% for t in tickets %}{% include 'row.html' %}")
+PUSH(page, "{% endfor %}</table>")
+PUSH(page, "<h2>Invoices</h2>")
+PUSH(page, "<ul>")
+PUSH(page, "{% for inv in invoices %}<li>{{ inv.number }}: {{ inv.amount | money }}{% if inv.paid %} (paid){% else %} <em>open since {{ inv.issued | date }}</em>{% endif %}</li>")
+PUSH(page, "{% endfor %}</ul>")
+PUSH(page, "<p>Notes: {{ notes | default:'none' }}</p>")
+PUSH(page, "{% endblock %}")
+TXTWRITER base$ + "page.html", JOIN(page, NL$)
+
+' ── the model ──────────────────────────────────────────────────
+
+DIM tickets = []
+PUSH(tickets, Ticket(412, "Export fails on <script>alert(1)</script> in a title", "critical", "open", "2026-09-02 08:15", 6.5, 2))
+PUSH(tickets, Ticket(415, "Umlauts & quotes in PDF file names", "major", "doing", "2026-09-05 13:40", 3, 4))
+PUSH(tickets, Ticket(419, "Typo on the login page", "minor", "done", "2026-09-09 17:05", 0.5, 5))
+DIM invoices = []
+PUSH(invoices, Invoice("RE-2026-0398", 1180.5, TRUE, "2026-08-31"))
+PUSH(invoices, Invoice("RE-2026-0413", 209.8, FALSE, "2026-09-13"))
+DIM model AS MAP
+model{"company"} = "Papier & Toner GmbH"
+model{"period"} = "September 2026"
+model{"generated"} = "2026-09-13T07:30:00"
+model{"contact"} = "support@example.com"
+model{"tickets"} = tickets
+model{"invoices"} = invoices
+model{"notes"} = ""
+
+TMPL.ADDFILTER("stars", Stars@)
+
+' ── rendered ───────────────────────────────────────────────────
+
+DIM parses_before = TMPL.COMPILES()
+DIM html$ = TMPL.RENDER$(base$ + "page.html", model)
+DIM parses_first = TMPL.COMPILES() - parses_before
+
+CONSOLE.RULE("the rendered page", "=")
+DIM lines = SPLIT(html$, NL$)
+DIM i = 0
+FOR i = 0 TO LEN(lines) - 1
+    DIM shown$ = lines[i]
+    IF TRIM$(shown$) <> "" THEN PRINT "  "; shown$
+NEXT i
+PRINT ""
+
+DIM again$ = TMPL.RENDER$(base$ + "page.html", model)
+DIM parses_second = TMPL.COMPILES() - parses_before - parses_first
+DIM escaped$ = "no"
+IF INSTR(html$, "&lt;script&gt;") >= 0 ANDALSO INSTR(html$, "<script>") < 0 THEN escaped$ = "yes"
+CONSOLE.RULE("what happened")
+CONSOLE.KV([["bytes", STR$(LEN(html$))], ["files parsed on the first render", STR$(parses_first)], ["files parsed on the second render", STR$(parses_second)], ["second render the same", "" + (again$ = html$)], ["script tag in a title escaped", escaped$]], 2)
+PRINT ""
+
+' ── a changed partial ──────────────────────────────────────────
+
+SLEEP 1100
+TXTWRITER base$ + "row.html", "<tr><td>#{{ t.id }}</td><td>{{ t.title | upper }}</td><td>{{ t.state }}</td></tr>"
+DIM parses_before_change = TMPL.COMPILES()
+DIM changed$ = TMPL.RENDER$(base$ + "page.html", model)
+CONSOLE.RULE("after the partial changed")
+DIM changed_lines = SPLIT(changed$, NL$)
+FOR i = 0 TO LEN(changed_lines) - 1
+    DIM changed_line$ = changed_lines[i]
+    IF INSTR(changed_line$, "<tr>") >= 0 THEN PRINT "  "; changed_line$
+NEXT i
+PRINT "  files parsed again: "; TMPL.COMPILES() - parses_before_change
+PRINT ""
+
+DIM names = ["layout.html", "row.html", "page.html"]
+FOR i = 0 TO LEN(names) - 1
+    DIM file_name$ = names[i]
+    KILL base$ + file_name$
+NEXT i
+RMDIR folder$

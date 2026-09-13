@@ -1,0 +1,160 @@
+' TMPL: interpolation and escaping, paths into the model, conditions and
+' loops, includes and layouts, every filter, custom filters, and the
+' cache that parses a file once until it changes.
+
+IMPORT TESTKIT, TMPL
+
+DIM Q$ = CHR$(34)
+
+FUNC Exclaim(text$, arg$)
+    RETURN text$ + arg$ + "!"
+ENDFUNC
+
+DIM kat AS MAP
+kat{"name"} = "<b>Kat</b>"
+kat{"quote"} = "a & b " + Q$ + "c" + Q$ + " 'd'"
+kat{"zero"} = 0
+kat{"blank"} = ""
+
+TESTKIT.SUITE("interpolation")
+TESTKIT.EQ(TMPL.RENDERSTR$("Hi {{ name }}!", kat), "Hi &lt;b&gt;Kat&lt;/b&gt;!", "a hole is escaped")
+TESTKIT.EQ(TMPL.RENDERSTR$("X {{{ name }}} Y", kat), "X <b>Kat</b> Y", "a triple brace is raw")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ quote }}", kat), "a &amp; b &quot;c&quot; &#39;d&#39;", "ampersand and both quotes")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{name}}|{{  name  }}", kat), "&lt;b&gt;Kat&lt;/b&gt;|&lt;b&gt;Kat&lt;/b&gt;", "spaces inside the braces do not matter")
+TESTKIT.EQ(TMPL.RENDERSTR$("no holes here", kat), "no holes here", "a text without holes")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ zero }}", kat), "0", "a number")
+TESTKIT.EQ(TMPL.RENDERSTR$("a {{ name", kat), "a {{ name", "an unclosed hole stays as text")
+TESTKIT.EQ(TMPL.RENDERSTR$("a {% if name", kat), "a {% if name", "and an unclosed tag")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% frobnicate %}", kat), "{% frobnicate %}", "an unknown tag is written back")
+
+TESTKIT.SUITE("paths")
+DIM usr AS MAP
+usr{"name"} = "Kaiku"
+DIM first AS MAP
+first{"title"} = "first"
+first{"tags"} = ["red", "blue"]
+DIM second_item AS MAP
+second_item{"title"} = "second"
+second_item{"tags"} = []
+DIM model AS MAP
+model{"user"} = usr
+model{"items"} = [first, second_item]
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ user.name }}", model), "Kaiku", "a nested map")
+TESTKIT.EQ(TMPL.RENDERSTR$("[{{ items[0].title }}]", model), "[first]", "an index and then a key")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ items[0].tags[1] }}", model), "blue", "an index inside an index")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ items.1.title }}", model), "second", "a dotted index")
+TESTKIT.EQ(TMPL.RENDERSTR$("a{{ nope.x }}b", model), "ab", "a missing path is empty")
+TESTKIT.EQ(TMPL.RENDERSTR$("a{{ items[9].title }}b", model), "ab", "and an index out of range")
+TESTKIT.EQ(TMPL.RENDERSTR$("a{{ user }}b", model), "ab", "a map on its own writes nothing")
+
+TESTKIT.SUITE("conditions")
+DIM t1 AS MAP
+t1{"title"} = "Alpha"
+t1{"done"} = TRUE
+t1{"state"} = "doing"
+DIM t2 AS MAP
+t2{"title"} = "Beta & <C>"
+t2{"done"} = FALSE
+t2{"state"} = "todo"
+DIM board AS MAP
+board{"tickets"} = [t1, t2]
+board{"title"} = "Board"
+board{"wanted"} = "Board"
+board{"none"} = []
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if title %}has{% endif %}", board), "has", "a value that is there")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if missing %}x{% else %}none{% endif %}", board), "none", "else for one that is not")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if title == " + Q$ + "Board" + Q$ + " %}y{% else %}n{% endif %}", board), "y", "equal to a double quoted text")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if title != 'X' %}y{% else %}n{% endif %}", board), "y", "not equal to a single quoted one")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if title == wanted %}same{% endif %}", board), "same", "equal to another path")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if not missing %}y{% endif %}", board), "y", "not")
+DIM st AS MAP
+st{"s"} = "doing"
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if s == 'todo' %}T{% elseif s == 'doing' %}DO{% else %}?{% endif %}", st), "DO", "elseif")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if zero %}a{% elseif blank %}b{% else %}c{% endif %}", kat), "c", "zero and an empty text are false")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if none %}a{% else %}b{% endif %}", board), "b", "an empty array is false")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% if tickets %}a{% endif %}{% if tickets[0] %}b{% endif %}", board), "ab", "a filled array and a map are true")
+
+TESTKIT.SUITE("loops")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% for t in tickets %}[{{ t.title }}]{% endfor %}", board), "[Alpha][Beta &amp; &lt;C&gt;]", "every item, escaped")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% for t in tickets %}{% if t.done %}D{% else %}o{% endif %}{% endfor %}", board), "Do", "a condition inside a loop")
+TESTKIT.EQ(TMPL.RENDERSTR$("<{% for t in none %}x{% endfor %}>", board), "<>", "an empty array")
+TESTKIT.EQ(TMPL.RENDERSTR$("<{% for t in missing %}x{% endfor %}>", board), "<>", "a missing one")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% for t in tickets %}{% endfor %}[{{ t.title }}]{{ title }}", board), "[]Board", "the loop name does not outlive the loop, the model is untouched")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% for t in tickets %}{% for g in t.tags %}{% endfor %}{{ title }}:{{ t.state }} {% endfor %}", board), "Board:doing Board:todo ", "the outer names are seen inside")
+TESTKIT.EQ(TMPL.RENDERSTR$("{% for it in items %}{{ it.title }}({% for tag in it.tags %}{{ tag }};{% endfor %}){% endfor %}", model), "first(red;blue;)second()", "a loop inside a loop")
+
+TESTKIT.SUITE("filters")
+board{"created"} = "2026-06-26 10:11:55"
+board{"price"} = 3.5
+board{"padded"} = "  x  "
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | upper }}", board), "BOARD", "upper")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | lower }}", board), "board", "lower")
+TESTKIT.EQ(TMPL.RENDERSTR$("[{{ padded | trim }}]", board), "[x]", "trim")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | upper | lower }}", board), "board", "a chain")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ tickets | length }}", board), "2", "the length of an array")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | length }}", board), "5", "of a text")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ price | length }}", board), "0", "and of a number, which has none")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ missing | default:" + Q$ + "n/a" + Q$ + " }}", board), "n/a", "default for a missing value")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ blank | default:'-' }}|{{ zero | default:'-' }}", kat), "-|-", "for an empty text and a zero")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | default:'-' }}", board), "Board", "not for a value that is there")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ tickets | default:'-' | length }}", board), "2", "and the value goes on unchanged")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ created | date:" + Q$ + "DD.MM.YYYY" + Q$ + " }}", board), "26.06.2026", "date")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ created | date:'YYYY-MM-DD HH:mm' }}", board), "2026-06-26 10:11", "date with the time")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ created | date }}", board), "26.06.2026", "date in its default form")
+board{"late"} = "2026-06-26T23:30:00"
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ late | date:'DD.MM.YYYY HH:mm' }}", board), "26.06.2026 23:30", "a late evening stays on its day, T or not")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | date }}|{{ price | date }}", board), "Board|3.5", "a text that is no date is left alone")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ price | money:" + Q$ + "EUR" + Q$ + " }}", board), "3,50 EUR", "money")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ price | money:'CHF' }}|{{ price | money }}", board), "3,50 CHF|3,50 EUR", "money in another currency and in its default")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | nosuchfilter }}", board), "Board", "an unknown filter changes nothing")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{{ name | upper }}}", kat), "<B>KAT</B>", "a raw hole takes filters too")
+TMPL.ADDFILTER("exclaim", Exclaim@)
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | exclaim }}", board), "Board!", "a custom filter")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ title | upper | exclaim:'?' }}", board), "BOARD?!", "gets the text so far and its argument")
+
+TESTKIT.SUITE("files, includes and layouts")
+DIM folder$ = MKTEMP$("tmpltest")
+MKDIR folder$
+DIM base$ = folder$ + "/"
+TXTWRITER base$ + "row.html", "<li>{{ t.title }}</li>"
+TXTWRITER base$ + "list.html", "<ul>{% for t in tickets %}{% include " + Q$ + "row.html" + Q$ + " %}{% endfor %}</ul>"
+TESTKIT.EQ(TMPL.RENDER$(base$ + "list.html", board), "<ul><li>Alpha</li><li>Beta &amp; &lt;C&gt;</li></ul>", "an include is found next to the file that names it")
+TXTWRITER base$ + "broken.html", "a{% include 'gone.html' %}b"
+TESTKIT.ISTRUE(INSTR(TMPL.RENDER$(base$ + "broken.html", board), "tmpl: not found") >= 0, "a missing include leaves a comment in the page")
+TESTKIT.ISTRUE(INSTR(TMPL.RENDER$(base$ + "nothing.html", board), "tmpl: not found") >= 0, "and so does a missing file")
+TESTKIT.EQ(TMPL.RENDERSTR$("[{% block x %}inner{% endblock %}]", board), "[inner]", "a block on its own writes its content")
+TXTWRITER base$ + "lay.html", "<h1>{% block title %}Default{% endblock %}</h1><main>{% block content %}none{% endblock %}</main>"
+TXTWRITER base$ + "pageA.html", "{% extends " + Q$ + "lay.html" + Q$ + " %}{% block title %}{{ title }}{% endblock %}{% block content %}Body A{% endblock %}"
+TXTWRITER base$ + "pageB.html", "{% extends 'lay.html' %}{% block content %}Body B{% endblock %}"
+TESTKIT.EQ(TMPL.RENDER$(base$ + "pageA.html", board), "<h1>Board</h1><main>Body A</main>", "a page fills both blocks of its layout")
+TESTKIT.EQ(TMPL.RENDER$(base$ + "pageB.html", board), "<h1>Default</h1><main>Body B</main>", "a block it leaves out keeps the default")
+
+TESTKIT.SUITE("the cache")
+TXTWRITER base$ + "cached.html", "Hello {{ name }}"
+DIM before = TMPL.COMPILES()
+DIM r1$ = TMPL.RENDER$(base$ + "cached.html", kat)
+DIM mid = TMPL.COMPILES()
+DIM r2$ = TMPL.RENDER$(base$ + "cached.html", kat)
+DIM after = TMPL.COMPILES()
+TESTKIT.EQ(r1$, "Hello &lt;b&gt;Kat&lt;/b&gt;", "a file renders")
+TESTKIT.EQ(r2$, r1$, "twice the same")
+TESTKIT.EQ(mid - before, 1, "the first render parses")
+TESTKIT.EQ(after - mid, 0, "the second one does not")
+SLEEP 1100
+TXTWRITER base$ + "cached.html", "Bye {{ name }}"
+TESTKIT.EQ(TMPL.RENDER$(base$ + "cached.html", kat), "Bye &lt;b&gt;Kat&lt;/b&gt;", "a changed file is read again")
+TESTKIT.EQ(TMPL.COMPILES() - after, 1, "and parsed once more")
+DIM strings_before = TMPL.COMPILES()
+DIM s1$ = TMPL.RENDERSTR$("x", kat)
+DIM s2$ = TMPL.RENDERSTR$("x", kat)
+TESTKIT.EQ(TMPL.COMPILES() - strings_before, 2, "a template string is parsed every time")
+
+DIM names = ["row.html", "list.html", "broken.html", "lay.html", "pageA.html", "pageB.html", "cached.html"]
+DIM i = 0
+FOR i = 0 TO LEN(names) - 1
+    DIM file_name$ = names[i]
+    KILL base$ + file_name$
+NEXT i
+RMDIR folder$
+
+TESTKIT.REPORT()

@@ -52,26 +52,30 @@ sudo mkdir -p /opt/jdtrakr
 sudo cp build/jdBasic /opt/jdtrakr/
 ```
 
-jdTrakr is three files that must sit together: the app `jdtrakr.jdb`, the shared
-framework module `jdweb.jdb`, and the config `jdtrakr.json`. Upload all three
-(from your machine):
+jdTrakr is a set of files that must sit together: the app `jdtrakr.jdb`, the
+framework module `jdweb.jdb`, the template engine `tmpl.jdb` (it lives in the
+module library, `lib/tmpl.jdb`), the config `jdtrakr.json`, and the template
+folders `jdweb_tpl/` and `jdtrakr_tpl/`. Upload them (from your machine):
 
 ```bash
-scp jdb/demos/web/jdtrakr.jdb jdb/demos/web/jdweb.jdb jdb/demos/web/jdtrakr.json you@your-vps:/tmp/
+scp jdb/demos/web/jdtrakr.jdb jdb/demos/web/jdweb.jdb lib/tmpl.jdb jdb/demos/web/jdtrakr.json you@your-vps:/tmp/
+scp -r jdb/demos/web/jdweb_tpl jdb/demos/web/jdtrakr_tpl you@your-vps:/tmp/
 ```
 
 On the box, turn on secure cookies (served over HTTPS) in the JSON config, then
-install all three:
+install them:
 
 ```bash
 sudo sed -i 's/"secure": false/"secure": true/' /tmp/jdtrakr.json
-sudo cp /tmp/jdtrakr.jdb /tmp/jdweb.jdb /tmp/jdtrakr.json /opt/jdtrakr/
+sudo cp /tmp/jdtrakr.jdb /tmp/jdweb.jdb /tmp/tmpl.jdb /tmp/jdtrakr.json /opt/jdtrakr/
+sudo cp -r /tmp/jdweb_tpl /tmp/jdtrakr_tpl /opt/jdtrakr/
 sudo chown -R jdtrakr:jdtrakr /opt/jdtrakr
 ```
 
-`IMPORT JDWEB` and the config load resolve relative to the app file, so all
-three living in `/opt/jdtrakr` is all it takes. To restyle every future app at
-once, edit `jdweb.jdb` (the `THEME$` design tokens) and restart.
+`IMPORT JDWEB`, jdweb's own `IMPORT TMPL`, the templates and the config load
+all resolve relative to the app file, so everything living in `/opt/jdtrakr` is
+all it takes. To restyle every future app at once, edit `jdweb.jdb` (the
+`THEME$` design tokens) and restart.
 
 ---
 
@@ -129,8 +133,8 @@ Open `https://YOUR.DOMAIN`. The board is empty and there are no users yet.
 ## Operating notes
 
 - **Backup:** `sudo cp /opt/jdtrakr/jdtrakr.db ~/jdtrakr-$(date +%F).db`
-- **Update the app:** upload the changed file(s) (`jdtrakr.jdb`, `jdweb.jdb`
-  and/or `jdtrakr.json`) into `/opt/jdtrakr/`, then `sudo systemctl restart
+- **Update the app:** upload the changed file(s) (`jdtrakr.jdb`, `jdweb.jdb`,
+  `lib/tmpl.jdb` and/or `jdtrakr.json`) into `/opt/jdtrakr/`, then `sudo systemctl restart
   jdtrakr`. The `.db` is untouched by a restart. `"secure": true` already lives
   in the installed `jdtrakr.json`, so no per-update edit is needed.
 - **Updated a template with an inline `<script>`?** (e.g. `jdtrakr_tpl/board.html`,

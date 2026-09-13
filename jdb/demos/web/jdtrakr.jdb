@@ -1,6 +1,7 @@
 ' jdTrakr - a kanban ticket board. A thin app on the JDWEB framework.
-' Run from this folder (needs jdweb.jdb + jdtrakr.json alongside):
-'   build\jdBasic.exe jdtrakr.jdb
+' Run from this folder (needs jdweb.jdb + jdtrakr.json alongside, and tmpl.jdb
+' from lib/ either alongside or on the module path):
+'   JDBASIC_PATH=../../../lib jdBasic jdtrakr.jdb
 IMPORT JDWEB
 
 ' --- config (resolved relative to this script, so it works from any cwd) ---
