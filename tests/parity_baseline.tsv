@@ -74,6 +74,7 @@ tests/jdlibs/logger_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/mail_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/md_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/numfmt_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/oauth_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/parsec_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/pdfgen_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/pkg_selftest.jdb	PASS	PASS	OK

@@ -1,0 +1,163 @@
+' oauth_demo.jdb - OAuth 2 end to end in one process: a small provider on
+' HTTP.SERVER with a sign-in page, a token endpoint and an orders API; a
+' service that signs in with client credentials; an app that runs the
+' authorization code flow with PKCE (the browser's redirect followed by
+' hand); a REQ session that refreshes a token that has run out; and the
+' tokens kept in a CACHE file for the next start.
+'
+'   jdBasic jdb/demos/jdlibs/oauth_demo.jdb
+
+IMPORT OAUTH, CACHE, REQ, URL
+
+DIM PORT = 9989
+DIM BASE$ = "http://127.0.0.1:" + STR$(PORT)
+
+' ── the provider ───────────────────────────────────────────────
+
+DIM gIssued = 0
+DIM gLive = []
+DIM gRefreshable = []
+DIM gCodes = []
+DIM gChallenges = []
+
+FUNC Answer(code, body$)
+    RETURN {"__http_status": code, "__http_body": body$, "__http_content_type": "application/json"}
+ENDFUNC
+
+FUNC Quote$(s$)
+    RETURN CHR$(34) + s$ + CHR$(34)
+ENDFUNC
+
+FUNC Tokens(with_refresh)
+    gIssued = gIssued + 1
+    DIM access$ = "at-" + STR$(gIssued)
+    PUSH(gLive, access$)
+    DIM body$ = "{" + Quote$("access_token") + ":" + Quote$(access$) + "," + Quote$("token_type") + ":" + Quote$("Bearer") + "," + Quote$("expires_in") + ":3600"
+    IF with_refresh = 1 THEN
+        DIM refresh$ = "rt-" + STR$(gIssued)
+        PUSH(gRefreshable, refresh$)
+        body$ = body$ + "," + Quote$("refresh_token") + ":" + Quote$(refresh$)
+    ENDIF
+    RETURN Answer(200, body$ + "}")
+ENDFUNC
+
+FUNC Field$(fields, name_of$)
+    IF NOT MAP.EXISTS(fields, name_of$) THEN RETURN ""
+    DIM v = fields{name_of$}
+    DIM v$ = v
+    RETURN v$
+ENDFUNC
+
+FUNC PROVIDER_AUTHORIZE(req_map)
+    DIM params = req_map{"PARAMS"}
+    DIM back$ = params{"redirect_uri"}
+    DIM state_given$ = params{"state"}
+    DIM challenge$ = params{"code_challenge"}
+    gIssued = gIssued + 1
+    DIM code$ = "code-" + STR$(gIssued)
+    PUSH(gCodes, code$)
+    PUSH(gChallenges, challenge$)
+    DIM hdrs AS MAP
+    hdrs{"Location"} = back$ + "?code=" + code$ + "&state=" + URL.ENCODE$(state_given$)
+    RETURN {"__http_status": 302, "__http_body": "", "__http_headers": hdrs}
+ENDFUNC
+
+FUNC PROVIDER_TOKEN(req_map)
+    DIM fields = URL.QUERYMAP(req_map{"BODY"})
+    DIM grant$ = Field$(fields, "grant_type")
+    DIM k = 0
+    IF grant$ = "client_credentials" ANDALSO Field$(fields, "client_secret") = "demo-secret" THEN RETURN Tokens(0)
+    IF grant$ = "authorization_code" THEN
+        FOR k = 0 TO LEN(gCodes) - 1
+            DIM known$ = gCodes[k]
+            DIM wanted$ = gChallenges[k]
+            IF known$ = Field$(fields, "code") ANDALSO OAUTH.CHALLENGE$(Field$(fields, "code_verifier")) = wanted$ THEN
+                gCodes[k] = ""
+                RETURN Tokens(1)
+            ENDIF
+        NEXT k
+    ENDIF
+    IF grant$ = "refresh_token" THEN
+        FOR k = 0 TO LEN(gRefreshable) - 1
+            DIM live$ = gRefreshable[k]
+            IF live$ = Field$(fields, "refresh_token") THEN
+                gRefreshable[k] = ""
+                RETURN Tokens(1)
+            ENDIF
+        NEXT k
+    ENDIF
+    RETURN Answer(400, "{" + Quote$("error") + ":" + Quote$("invalid_grant") + "}")
+ENDFUNC
+
+FUNC PROVIDER_ORDERS(req_map)
+    DIM hdrs = req_map{"HEADERS"}
+    DIM auth$ = ""
+    IF MAP.EXISTS(hdrs, "authorization") THEN auth$ = hdrs{"authorization"}
+    DIM k = 0
+    FOR k = 0 TO LEN(gLive) - 1
+        DIM token$ = gLive[k]
+        IF "Bearer " + token$ = auth$ THEN RETURN Answer(200, "{" + Quote$("orders") + ":3," + Quote$("seen_with") + ":" + Quote$(token$) + "}")
+    NEXT k
+    RETURN Answer(401, "{" + Quote$("error") + ":" + Quote$("invalid_token") + "}")
+ENDFUNC
+
+HTTP.SERVER.ON_GET("/authorize", "PROVIDER_AUTHORIZE")
+HTTP.SERVER.ON_POST("/token", "PROVIDER_TOKEN")
+HTTP.SERVER.ON_GET("/api/orders", "PROVIDER_ORDERS")
+OAUTH.MOUNT("/callback")
+IF NOT HTTP.SERVER.START(PORT) THEN
+    PRINT "port " + STR$(PORT) + " is taken"
+    END 1
+ENDIF
+
+' ── a service with client credentials ──────────────────────────
+
+PRINT "A service signs in as itself"
+DIM service = OAUTH.NEW("billing", "demo-secret", BASE$ + "/authorize", BASE$ + "/token")
+DIM service_token$ = OAUTH.CLIENTCREDENTIALS(service, "orders.read")
+PRINT "  client credentials -> "; service_token$
+DIM service_api = OAUTH.SESSION(service, BASE$)
+DIM service_orders = OAUTH.GET(service, service_api, "/api/orders")
+PRINT "  GET /api/orders    -> "; service_orders{"status"}; " "; service_orders{"body"}
+PRINT
+
+' ── an app with the authorization code flow ────────────────────
+
+PRINT "An app signs a user in"
+PRINT "  PKCE challenge of the RFC 7636 verifier: "; OAUTH.CHALLENGE$("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk")
+DIM app = OAUTH.NEW("desk-app", "", BASE$ + "/authorize", BASE$ + "/token")
+DIM sign_in$ = OAUTH.AUTHURL$(app, "orders.read", BASE$ + "/callback")
+PRINT "  sign-in address carries: "; URL.PARAM$(sign_in$, "response_type"); ", "; URL.PARAM$(sign_in$, "code_challenge_method"); ", redirect "; URL.PARAM$(sign_in$, "redirect_uri")
+HTTP.FOLLOWREDIRECTS(FALSE)
+DIM approved = HTTP.REQUEST("GET", sign_in$)
+HTTP.FOLLOWREDIRECTS(TRUE)
+DIM approved_headers = approved{"headers"}
+DIM back$ = ""
+IF MAP.EXISTS(approved_headers, "Location") THEN back$ = approved_headers{"Location"}
+PRINT "  the provider sends the browser back with code "; URL.PARAM$(back$, "code")
+DIM landing = HTTP.REQUEST("GET", back$)
+PRINT "  the local redirect page says: "; MID$(landing{"body"}, INSTR(landing{"body"}, "<p>") + 3, 10)
+DIM app_token$ = OAUTH.REDIRECTED(app, back$)
+PRINT "  the code traded for "; app_token$; " and refresh token "; app{"refresh_token"}
+PRINT
+
+' ── a session that refreshes ───────────────────────────────────
+
+PRINT "The app calls the API"
+DIM tokens = CACHE.NEW()
+OAUTH.STORE(app, tokens, "user@demo")
+DIM api = OAUTH.SESSION(app, BASE$)
+DIM first_call = OAUTH.GET(app, api, "/api/orders")
+PRINT "  with "; app{"access_token"}; ": "; first_call{"status"}
+OAUTH.EXPIRE(app)
+DIM second_call = OAUTH.GET(app, api, "/api/orders")
+PRINT "  after the token ran out: "; second_call{"status"}; ", refreshed on the way to "; app{"access_token"}
+DIM cache_file$ = MKTEMP$("oauthdemo") + ".json"
+CACHE.SAVE(OAUTH.CACHEOF(app), cache_file$)
+DIM next_start = OAUTH.NEW("desk-app", "", BASE$ + "/authorize", BASE$ + "/token")
+OAUTH.STORE(next_start, CACHE.LOAD(cache_file$), "user@demo")
+DIM next_api = OAUTH.SESSION(next_start, BASE$)
+DIM third_call = OAUTH.GET(next_start, next_api, "/api/orders")
+PRINT "  the next start loads "; next_start{"access_token"}; " from the cache file: "; third_call{"status"}
+KILL cache_file$
+HTTP.SERVER.STOP

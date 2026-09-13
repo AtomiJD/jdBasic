@@ -1,0 +1,390 @@
+' OAUTH against a fake authorization server in the same process: PKCE by
+' RFC 7636, the authorization code flow with its redirect, client
+' credentials with the secret in the form and in a header, refresh tokens
+' that rotate, a REQ session that refreshes an expired or refused token on
+' its own, tokens kept in a CACHE and loaded from a file, the device code
+' flow, and LOGIN with a browser run as a second process.
+
+IMPORT TESTKIT, OAUTH, URL, CACHE, REQ
+
+DIM PORT = 9988
+DIM BASE$ = "http://127.0.0.1:" + STR$(PORT)
+DIM Q$ = CHR$(34)
+
+' ── the fake authorization server ──────────────────────────────
+
+DIM gCounter = 0
+DIM gLifetime = 3600
+DIM gCodes = []
+DIM gChallenges = []
+DIM gRedirects = []
+DIM gAccess = []
+DIM gAccessUntil = []
+DIM gRefresh = []
+DIM gRevoked$ = ""
+DIM gDevicePolls = 0
+DIM gRefreshCalls = 0
+DIM gApiCalls = 0
+DIM gLastClientAuth$ = ""
+
+FUNC Reply(http_status, body$)
+    DIM hdrs AS MAP
+    hdrs{"Cache-Control"} = "no-store"
+    RETURN {"__http_status": http_status, "__http_body": body$, "__http_content_type": "application/json", "__http_headers": hdrs}
+ENDFUNC
+
+FUNC Pair$(field$, value$)
+    RETURN CHR$(34) + field$ + CHR$(34) + ":" + CHR$(34) + value$ + CHR$(34)
+ENDFUNC
+
+FUNC Issue(with_refresh)
+    gCounter = gCounter + 1
+    DIM access$ = "at-" + STR$(gCounter)
+    PUSH(gAccess, access$)
+    PUSH(gAccessUntil, NOW_EPOCH() + gLifetime)
+    DIM body$ = "{" + Pair$("access_token", access$) + "," + Pair$("token_type", "Bearer") + "," + CHR$(34) + "expires_in" + CHR$(34) + ":" + STR$(gLifetime)
+    IF with_refresh = 1 THEN
+        DIM refresh$ = "rt-" + STR$(gCounter)
+        PUSH(gRefresh, refresh$)
+        body$ = body$ + "," + Pair$("refresh_token", refresh$)
+    ENDIF
+    RETURN Reply(200, body$ + "," + Pair$("scope", "profile") + "}")
+ENDFUNC
+
+FUNC Refuse(error$)
+    RETURN Reply(400, "{" + Pair$("error", error$) + "," + Pair$("error_description", "the fake server says no") + "}")
+ENDFUNC
+
+FUNC FormValue$(form_map, field$)
+    IF NOT MAP.EXISTS(form_map, field$) THEN RETURN ""
+    DIM v = form_map{field$}
+    DIM v$ = v
+    RETURN v$
+ENDFUNC
+
+FUNC AS_AUTHORIZE(req_map)
+    DIM params = req_map{"PARAMS"}
+    DIM redirect$ = params{"redirect_uri"}
+    DIM state$ = params{"state"}
+    DIM client$ = params{"client_id"}
+    DIM method$ = params{"code_challenge_method"}
+    DIM location$ = ""
+    IF client$ <> "app-1" ORELSE method$ <> "S256" THEN
+        location$ = redirect$ + "?error=unauthorized_client&state=" + URL.ENCODE$(state$)
+    ELSE
+        gCounter = gCounter + 1
+        DIM code$ = "code-" + STR$(gCounter)
+        DIM challenge$ = params{"code_challenge"}
+        PUSH(gCodes, code$)
+        PUSH(gChallenges, challenge$)
+        PUSH(gRedirects, redirect$)
+        location$ = redirect$ + "?code=" + code$ + "&state=" + URL.ENCODE$(state$)
+    ENDIF
+    DIM hdrs AS MAP
+    hdrs{"Location"} = location$
+    RETURN {"__http_status": 302, "__http_body": "", "__http_headers": hdrs}
+ENDFUNC
+
+FUNC AS_TOKEN(req_map)
+    DIM form_map = URL.QUERYMAP(req_map{"BODY"})
+    DIM headers = req_map{"HEADERS"}
+    gLastClientAuth$ = "form"
+    DIM client_id$ = FormValue$(form_map, "client_id")
+    DIM secret$ = FormValue$(form_map, "client_secret")
+    IF MAP.EXISTS(headers, "authorization") THEN
+        DIM auth$ = headers{"authorization"}
+        IF LEFT$(auth$, 6) = "Basic " THEN
+            DIM pair$ = CODEC.BASE64_DECODE$(MID$(auth$, 6, LEN(auth$)))
+            DIM colon = CINT(INSTR(pair$, ":"))
+            client_id$ = URL.FORMDECODE$(LEFT$(pair$, colon))
+            secret$ = URL.FORMDECODE$(MID$(pair$, colon + 1, LEN(pair$)))
+            gLastClientAuth$ = "basic"
+        ENDIF
+    ENDIF
+    DIM grant$ = FormValue$(form_map, "grant_type")
+    DIM k = 0
+    IF grant$ = "authorization_code" THEN
+        DIM code$ = FormValue$(form_map, "code")
+        FOR k = 0 TO LEN(gCodes) - 1
+            DIM known$ = gCodes[k]
+            IF known$ = code$ THEN
+                DIM challenge$ = gChallenges[k]
+                DIM redirect$ = gRedirects[k]
+                gCodes[k] = "used"
+                IF OAUTH.CHALLENGE$(FormValue$(form_map, "code_verifier")) <> challenge$ THEN RETURN Refuse("invalid_grant")
+                IF FormValue$(form_map, "redirect_uri") <> redirect$ THEN RETURN Refuse("invalid_grant")
+                RETURN Issue(1)
+            ENDIF
+        NEXT k
+        RETURN Refuse("invalid_grant")
+    ENDIF
+    IF grant$ = "refresh_token" THEN
+        gRefreshCalls = gRefreshCalls + 1
+        DIM refresh$ = FormValue$(form_map, "refresh_token")
+        FOR k = 0 TO LEN(gRefresh) - 1
+            DIM live$ = gRefresh[k]
+            IF live$ = refresh$ THEN
+                gRefresh[k] = "rotated"
+                RETURN Issue(1)
+            ENDIF
+        NEXT k
+        RETURN Refuse("invalid_grant")
+    ENDIF
+    IF grant$ = "client_credentials" THEN
+        IF client_id$ <> "service-1" ORELSE secret$ <> "s3cret&more" THEN RETURN Reply(401, "{" + Pair$("error", "invalid_client") + "}")
+        RETURN Issue(0)
+    ENDIF
+    IF grant$ = "urn:ietf:params:oauth:grant-type:device_code" THEN
+        gDevicePolls = gDevicePolls + 1
+        IF FormValue$(form_map, "device_code") <> "dev-1" THEN RETURN Refuse("expired_token")
+        IF gDevicePolls = 1 THEN RETURN Refuse("authorization_pending")
+        RETURN Issue(1)
+    ENDIF
+    RETURN Refuse("unsupported_grant_type")
+ENDFUNC
+
+FUNC AS_DEVICE(req_map)
+    DIM body$ = "{" + Pair$("device_code", "dev-1") + "," + Pair$("user_code", "WDJB-MJHT") + "," + Pair$("verification_uri", BASE$ + "/device")
+    body$ = body$ + "," + CHR$(34) + "expires_in" + CHR$(34) + ":600," + CHR$(34) + "interval" + CHR$(34) + ":1}"
+    RETURN Reply(200, body$)
+ENDFUNC
+
+FUNC API_ME(req_map)
+    gApiCalls = gApiCalls + 1
+    DIM headers = req_map{"HEADERS"}
+    DIM auth$ = ""
+    IF MAP.EXISTS(headers, "authorization") THEN auth$ = headers{"authorization"}
+    DIM token$ = MID$(auth$, 7, LEN(auth$))
+    DIM k = 0
+    FOR k = 0 TO LEN(gAccess) - 1
+        DIM issued$ = gAccess[k]
+        DIM valid_until = gAccessUntil[k]
+        IF issued$ = token$ ANDALSO token$ <> gRevoked$ ANDALSO NOW_EPOCH() < valid_until THEN RETURN Reply(200, "{" + Pair$("user", "ann") + "," + Pair$("token", token$) + "}")
+    NEXT k
+    RETURN Reply(401, "{" + Pair$("error", "invalid_token") + "}")
+ENDFUNC
+
+FUNC FlowError$(client, address$)
+    DIM msg$ = "no error"
+    TRY
+        DIM t$ = OAUTH.REDIRECTED(client, address$)
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+FUNC TokenError$(client)
+    DIM msg$ = "no error"
+    TRY
+        DIM t$ = OAUTH.TOKEN$(client)
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+FUNC CredentialsError$(client)
+    DIM msg$ = "no error"
+    TRY
+        DIM t$ = OAUTH.CLIENTCREDENTIALS(client, "reports")
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+' The address a browser is sent to next, without following it.
+FUNC Location$(address$)
+    HTTP.FOLLOWREDIRECTS(FALSE)
+    DIM r = HTTP.REQUEST("GET", address$)
+    HTTP.FOLLOWREDIRECTS(TRUE)
+    DIM hdrs = r{"headers"}
+    IF MAP.EXISTS(hdrs, "Location") THEN
+        DIM loc$ = hdrs{"Location"}
+        RETURN loc$
+    ENDIF
+    IF MAP.EXISTS(hdrs, "location") THEN
+        DIM low$ = hdrs{"location"}
+        RETURN low$
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+FUNC Has(haystack$, part$)
+    RETURN INSTR(haystack$, part$) >= 0
+ENDFUNC
+
+' ── PKCE and addresses ─────────────────────────────────────────
+
+TESTKIT.SUITE("PKCE and the sign-in address")
+TESTKIT.EQ(OAUTH.CHALLENGE$("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"), "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM", "the S256 challenge of RFC 7636 appendix B")
+DIM app = OAUTH.NEW("app-1", "", BASE$ + "/authorize", BASE$ + "/token", BASE$ + "/device")
+DIM address$ = OAUTH.AUTHURL$(app, "profile email", BASE$ + "/callback")
+DIM verifier$ = app{"verifier"}
+DIM state$ = app{"state"}
+TESTKIT.EQ(URL.PARAM$(address$, "response_type"), "code", "response_type=code")
+TESTKIT.EQ(URL.PARAM$(address$, "client_id"), "app-1", "the client id")
+TESTKIT.EQ(URL.PARAM$(address$, "redirect_uri"), BASE$ + "/callback", "the redirect, encoded in the address")
+TESTKIT.EQ(URL.PARAM$(address$, "scope"), "profile email", "the scope")
+TESTKIT.EQ(URL.PARAM$(address$, "state"), state$, "the state kept in the client")
+TESTKIT.EQ(URL.PARAM$(address$, "code_challenge"), OAUTH.CHALLENGE$(verifier$), "the challenge of the kept verifier")
+TESTKIT.EQ(URL.PARAM$(address$, "code_challenge_method"), "S256", "S256")
+TESTKIT.ISTRUE(LEN(verifier$) >= 43 ANDALSO LEN(verifier$) <= 128, "a verifier of 43 to 128 characters")
+DIM again$ = OAUTH.AUTHURL$(app)
+TESTKIT.ISTRUE(URL.PARAM$(again$, "state") <> state$, "every address gets a new state")
+DIM google = OAUTH.GOOGLE("g-id", "g-secret")
+DIM google_url$ = OAUTH.AUTHURL$(google, "openid email", "http://127.0.0.1:8765/callback")
+TESTKIT.ISTRUE(LEFT$(google_url$, 45) = "https://accounts.google.com/o/oauth2/v2/auth?", "Google's endpoints")
+TESTKIT.ISTRUE(Has(google_url$, "&access_type=offline&prompt=consent"), "asking Google for a refresh token")
+DIM ms = OAUTH.MICROSOFT("m-id", "", "contoso.onmicrosoft.com")
+TESTKIT.EQ(ms{"token_url"}, "https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/token", "Microsoft's endpoints for a tenant")
+TESTKIT.EQ(ms{"device_url"}, "https://login.microsoftonline.com/contoso.onmicrosoft.com/oauth2/v2.0/devicecode", "with the device endpoint")
+TESTKIT.EQ(TokenError$(app), "OAUTH: no token yet, run a flow first", "no token before a flow")
+
+HTTP.SERVER.ON_GET("/authorize", "AS_AUTHORIZE")
+HTTP.SERVER.ON_POST("/token", "AS_TOKEN")
+HTTP.SERVER.ON_POST("/device", "AS_DEVICE")
+HTTP.SERVER.ON_GET("/api/me", "API_ME")
+OAUTH.MOUNT("/callback")
+IF NOT HTTP.SERVER.START(PORT) THEN
+    PRINT "could not start the fake authorization server on " + STR$(PORT)
+    END 1
+ENDIF
+
+' ── the authorization code flow ────────────────────────────────
+
+TESTKIT.SUITE("authorization code")
+address$ = OAUTH.AUTHURL$(app, "profile email", BASE$ + "/callback")
+DIM back$ = Location$(address$)
+TESTKIT.ISTRUE(LEFT$(back$, LEN(BASE$ + "/callback?code=")) = BASE$ + "/callback?code=", "the server sends the browser back with a code")
+DIM callback_page = HTTP.REQUEST("GET", back$)
+TESTKIT.ISTRUE(Has(callback_page{"body"}, "Signed in"), "the redirect handler answers the browser")
+DIM token$ = OAUTH.REDIRECTED(app, back$)
+TESTKIT.EQ(LEFT$(token$, 3), "at-", "the code is traded for an access token")
+TESTKIT.EQ(LEFT$(app{"refresh_token"}, 3), "rt-", "and a refresh token")
+TESTKIT.EQ(app{"token_type"}, "Bearer", "of type Bearer")
+DIM life = app{"expires_at"} - NOW_EPOCH()
+TESTKIT.ISTRUE(life > 3590 ANDALSO life <= 3600, "expiring in the hour the server gave")
+TESTKIT.ISTRUE(Has(FlowError$(app, back$), "OAUTH: invalid_grant (the fake server says no)"), "a code is good for one exchange")
+TESTKIT.EQ(FlowError$(app, BASE$ + "/callback?code=x&state=forged"), "OAUTH: the state in the redirect does not match", "a forged state is refused")
+DIM denied_url$ = OAUTH.AUTHURL$(OAUTH.NEW("intruder", "", BASE$ + "/authorize", BASE$ + "/token"), "", BASE$ + "/callback")
+DIM denied_back$ = Location$(denied_url$)
+DIM intruder = OAUTH.NEW("intruder", "", BASE$ + "/authorize", BASE$ + "/token")
+intruder{"state"} = URL.PARAM$(denied_back$, "state")
+TESTKIT.EQ(FlowError$(intruder, denied_back$), "OAUTH: authorization failed: unauthorized_client", "an error in the redirect is named")
+
+' ── sessions ───────────────────────────────────────────────────
+
+TESTKIT.SUITE("a REQ session that refreshes")
+DIM api = OAUTH.SESSION(app, BASE$)
+DIM me = OAUTH.GET(app, api, "/api/me")
+TESTKIT.EQ(me{"status"}, 200, "the API accepts the token")
+DIM me_json = REQ.JSON(me)
+TESTKIT.EQ(me_json{"token"}, token$, "the session sends it as Bearer")
+OAUTH.EXPIRE(app)
+TESTKIT.ISTRUE(OAUTH.EXPIRED(app), "a token marked as run out")
+DIM refresh_before = gRefreshCalls
+DIM me2 = OAUTH.GET(app, api, "/api/me")
+DIM me2_json = REQ.JSON(me2)
+TESTKIT.EQ(me2{"status"}, 200, "the next call still succeeds")
+TESTKIT.EQ(gRefreshCalls - refresh_before, 1, "after one refresh on the way")
+TESTKIT.ISTRUE(me2_json{"token"} <> token$, "with the new token")
+TESTKIT.ISTRUE(app{"refresh_token"} <> "rt-1" ANDALSO LEFT$(app{"refresh_token"}, 3) = "rt-", "and the rotated refresh token kept")
+gLifetime = 2
+OAUTH.SETOPT(app, "skew", 0)
+DIM short$ = OAUTH.REFRESH(app)
+SLEEP 2200
+TESTKIT.ISTRUE(OAUTH.EXPIRED(app), "a token whose seconds ran out")
+DIM me3 = OAUTH.GET(app, api, "/api/me")
+DIM me3_json = REQ.JSON(me3)
+TESTKIT.EQ(me3{"status"}, 200, "is refreshed before the call, no 401 seen")
+TESTKIT.ISTRUE(me3_json{"token"} <> short$, "the session got a fresh one")
+gLifetime = 3600
+DIM fresh$ = OAUTH.REFRESH(app)
+gRevoked$ = fresh$
+DIM calls_before = gApiCalls
+DIM me4 = OAUTH.GET(app, api, "/api/me")
+TESTKIT.EQ(me4{"status"}, 200, "a token the API refuses with 401 is refreshed and the call repeated")
+TESTKIT.EQ(gApiCalls - calls_before, 2, "in exactly one more call")
+DIM posted = OAUTH.POST(app, api, "/api/me", {"x": 1})
+TESTKIT.EQ(posted{"status"}, 404, "POST goes out with the token too (the fake API has no POST route)")
+
+' ── client credentials ─────────────────────────────────────────
+
+TESTKIT.SUITE("client credentials")
+DIM service = OAUTH.NEW("service-1", "s3cret&more", BASE$ + "/authorize", BASE$ + "/token")
+DIM service_token$ = OAUTH.CLIENTCREDENTIALS(service, "reports")
+TESTKIT.EQ(LEFT$(service_token$, 3), "at-", "a token for the client itself")
+TESTKIT.EQ(gLastClientAuth$, "form", "with the secret in the form")
+TESTKIT.EQ(service{"refresh_token"}, "", "and no refresh token")
+OAUTH.SETOPT(service, "auth_method", "basic")
+DIM basic_token$ = OAUTH.CLIENTCREDENTIALS(service)
+TESTKIT.EQ(gLastClientAuth$, "basic", "or in a Basic header, form-encoded")
+TESTKIT.ISTRUE(basic_token$ <> service_token$, "a new token each time")
+OAUTH.EXPIRE(service)
+DIM renewed$ = OAUTH.TOKEN$(service)
+TESTKIT.ISTRUE(renewed$ <> basic_token$ ANDALSO LEFT$(renewed$, 3) = "at-", "an expired client token is fetched again")
+DIM wrong = OAUTH.NEW("service-1", "guess", BASE$ + "/authorize", BASE$ + "/token")
+TESTKIT.EQ(CredentialsError$(wrong), "OAUTH: invalid_client", "a wrong secret is refused")
+
+' ── the token store ────────────────────────────────────────────
+
+TESTKIT.SUITE("tokens in a CACHE")
+DIM tokens = CACHE.NEW()
+OAUTH.STORE(app, tokens, "ann@fake")
+DIM stored$ = OAUTH.REFRESH(app)
+DIM held = OAUTH.CACHEOF(app)
+DIM entry = CACHE.FETCH(held, "ann@fake", 0)
+TESTKIT.EQ(entry{"access_token"}, stored$, "a new token is put in the cache")
+TESTKIT.EQ(entry{"refresh_token"}, app{"refresh_token"}, "with its refresh token")
+DIM cache_file$ = MKTEMP$("oauth") + ".json"
+CACHE.SAVE(held, cache_file$)
+DIM later = OAUTH.NEW("app-1", "", BASE$ + "/authorize", BASE$ + "/token")
+OAUTH.STORE(later, CACHE.LOAD(cache_file$), "ann@fake")
+TESTKIT.EQ(OAUTH.TOKEN$(later), stored$, "a client loaded from the saved cache has the token without a flow")
+DIM later_api = OAUTH.SESSION(later, BASE$)
+DIM later_me = OAUTH.GET(later, later_api, "/api/me")
+TESTKIT.EQ(later_me{"status"}, 200, "and uses it")
+KILL cache_file$
+
+' ── the device code flow ───────────────────────────────────────
+
+TESTKIT.SUITE("device code")
+DIM tv = OAUTH.NEW("app-1", "", BASE$ + "/authorize", BASE$ + "/token", BASE$ + "/device")
+DIM shown = OAUTH.DEVICESTART(tv, "profile")
+TESTKIT.EQ(shown{"user_code"}, "WDJB-MJHT", "a code to show the user")
+TESTKIT.EQ(shown{"verification_uri"}, BASE$ + "/device", "and where to enter it")
+TESTKIT.EQ(shown{"interval"}, 1, "with the polling interval")
+DIM tv_token$ = OAUTH.DEVICEPOLL(tv, 30)
+TESTKIT.EQ(LEFT$(tv_token$, 3), "at-", "the token once the user approved")
+TESTKIT.EQ(gDevicePolls, 2, "after waiting through authorization_pending")
+
+' ── LOGIN with a browser ───────────────────────────────────────
+
+TESTKIT.SUITE("LOGIN with a browser")
+DIM exe$ = "build\jdBasic.exe"
+DIM browser_script$ = "tests\jdlibs\fixtures\oauth_browser.jdb"
+IF NOT FILE.EXISTS(browser_script$) THEN
+    exe$ = "..\..\build\jdBasic.exe"
+    browser_script$ = "fixtures\oauth_browser.jdb"
+ENDIF
+IF NOT FILE.EXISTS(exe$) THEN
+    TESTKIT.SKIP("no build\jdBasic.exe to run the browser with")
+    HTTP.SERVER.STOP
+ELSE
+    DIM desk = OAUTH.NEW("app-1", "", BASE$ + "/authorize", BASE$ + "/token")
+    OAUTH.SETOPT(desk, "opener", Browser@)
+    DIM login_token$ = OAUTH.LOGIN(desk, "profile", PORT, "/callback", 0)
+    TESTKIT.EQ(LEFT$(login_token$, 3), "at-", "the whole flow: browser, redirect handler, exchange")
+    TESTKIT.EQ(desk{"refresh_token"} <> "", TRUE, "with a refresh token")
+ENDIF
+
+FUNC Browser(address$)
+    DIM url_file$ = MKTEMP$("oauthurl") + ".txt"
+    TXTWRITER url_file$, address$
+    DIM browser_run = OS.EXEC(exe$, [browser_script$, url_file$])
+    RETURN 1
+ENDFUNC
+
+TESTKIT.REPORT()

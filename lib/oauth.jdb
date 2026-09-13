@@ -1,0 +1,575 @@
+' oauth.jdb - OAuth 2 clients on REQ: client credentials, the authorization
+' code flow with PKCE and a local redirect on HTTP.SERVER, the device code
+' flow and refresh tokens; tokens kept in a CACHE and put on REQ sessions,
+' refreshed on the way when they run out; presets for Google and Microsoft.
+' The client side of authlib.
+'
+'   IMPORT OAUTH
+'   DIM app = OAUTH.GOOGLE(client_id$, client_secret$)
+'   DIM token$ = OAUTH.LOGIN(app, "openid email", 8765)
+'   DIM api = OAUTH.SESSION(app, "https://www.googleapis.com")
+'   DIM me = OAUTH.GET(app, api, "/oauth2/v3/userinfo")
+
+EXPORT MODULE OAUTH
+IMPORT REQ, URL, CACHE
+
+DIM gCallbackCode$ = ""
+DIM gCallbackState$ = ""
+DIM gCallbackError$ = ""
+DIM gCallbackHits = 0
+DIM gWaiting = 0
+DIM gMounted$ = ""
+
+' ── helpers ────────────────────────────────────────────────────
+
+FUNC HexNibble(c$)
+    RETURN CINT(INSTR("0123456789abcdef", LCASE$(c$)))
+ENDFUNC
+
+' The PKCE S256 challenge of a verifier: BASE64URL(SHA256(verifier)).
+EXPORT FUNC CHALLENGE$(verifier$)
+    DIM digest_hex$ = CODEC.SHA256$(verifier$)
+    DIM digest_raw$ = ""
+    DIM k = 0
+    FOR k = 0 TO 31
+        digest_raw$ = digest_raw$ + CHR$(HexNibble(MID$(digest_hex$, k * 2, 1)) * 16 + HexNibble(MID$(digest_hex$, k * 2 + 1, 1)))
+    NEXT k
+    DIM b64$ = CODEC.BASE64_ENCODE$(digest_raw$)
+    b64$ = REPLACE$(REPLACE$(b64$, "+", "-"), "/", "_")
+    RETURN REPLACE$(b64$, "=", "")
+ENDFUNC
+
+FUNC RandomHex$()
+    RETURN REPLACE$(CODEC.UUID$(), "-", "") + REPLACE$(CODEC.UUID$(), "-", "")
+ENDFUNC
+
+FUNC AsText$(v)
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "STRING" THEN
+        DIM s$ = v
+        RETURN s$
+    ENDIF
+    IF kind$ = "NONE" THEN RETURN ""
+    IF kind$ = "BOOLEAN" THEN
+        IF v THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+FUNC OptText$(client, opt_name$)
+    IF NOT MAP.EXISTS(client, opt_name$) THEN RETURN ""
+    DIM v = client{opt_name$}
+    RETURN AsText$(v)
+ENDFUNC
+
+' ── clients ────────────────────────────────────────────────────
+
+FUNC NewClient(client_id$, client_secret$, auth_url$, token_url$, device_url$)
+    DIM client AS MAP
+    client{"client_id"} = client_id$
+    client{"client_secret"} = client_secret$
+    client{"auth_url"} = auth_url$
+    client{"token_url"} = token_url$
+    client{"device_url"} = device_url$
+    client{"scope"} = ""
+    client{"redirect_uri"} = ""
+    client{"auth_method"} = "post"
+    client{"extra_auth"} = ""
+    client{"skew"} = 30
+    client{"state"} = ""
+    client{"verifier"} = ""
+    client{"grant"} = ""
+    client{"access_token"} = ""
+    client{"refresh_token"} = ""
+    client{"token_type"} = ""
+    client{"id_token"} = ""
+    client{"token_scope"} = ""
+    client{"expires_at"} = 0
+    client{"store_key"} = ""
+    RETURN client
+ENDFUNC
+
+' A client of an authorization server by its endpoints. A public client
+' (a desktop or command line app with PKCE) has no secret.
+EXPORT FUNC NEW(client_id$, client_secret$, auth_url$, token_url$, device_url$ = "")
+    RETURN NewClient(client_id$, client_secret$, auth_url$, token_url$, device_url$)
+ENDFUNC
+
+' A Google client: the authorization code flow asks for a refresh token
+' (access_type=offline, prompt=consent).
+EXPORT FUNC GOOGLE(client_id$, client_secret$ = "")
+    DIM client = NewClient(client_id$, client_secret$, "https://accounts.google.com/o/oauth2/v2/auth", "https://oauth2.googleapis.com/token", "https://oauth2.googleapis.com/device/code")
+    client{"extra_auth"} = "access_type=offline&prompt=consent"
+    RETURN client
+ENDFUNC
+
+' A Microsoft identity platform client (Entra ID, Microsoft Graph) for a
+' tenant: common, organizations, consumers or a tenant id.
+EXPORT FUNC MICROSOFT(client_id$, client_secret$ = "", tenant$ = "common")
+    DIM root$ = "https://login.microsoftonline.com/" + tenant$ + "/oauth2/v2.0/"
+    RETURN NewClient(client_id$, client_secret$, root$ + "authorize", root$ + "token", root$ + "devicecode")
+ENDFUNC
+
+' Sets an option: scope, redirect_uri, auth_method ("post" sends the
+' secret in the form, "basic" in an Authorization header), skew (seconds
+' a token counts as run out before it does), extra_auth (more query text
+' for the authorization address), opener (a function that opens an
+' address in a browser for LOGIN).
+EXPORT SUB SETOPT(client, opt_name$, value)
+    client{LCASE$(opt_name$)} = value
+ENDSUB
+
+' ── tokens ─────────────────────────────────────────────────────
+
+SUB SaveToStore(client)
+    IF MAP.EXISTS(client, "store") THEN
+        DIM store = client{"store"}
+        DIM saved AS MAP
+        saved{"access_token"} = OptText$(client, "access_token")
+        saved{"refresh_token"} = OptText$(client, "refresh_token")
+        saved{"token_type"} = OptText$(client, "token_type")
+        saved{"id_token"} = OptText$(client, "id_token")
+        saved{"token_scope"} = OptText$(client, "token_scope")
+        saved{"expires_at"} = client{"expires_at"}
+        saved{"grant"} = OptText$(client, "grant")
+        CACHE.PUT(store, OptText$(client, "store_key"), saved)
+        client{"store"} = store
+    ENDIF
+ENDSUB
+
+' Takes the tokens of a token endpoint's answer into the client; throws
+' the error the endpoint names.
+SUB TakeTokens(client, body$, grant$)
+    DIM parsed = 0
+    TRY
+        parsed = JSON.PARSE$(body$)
+    CATCH
+        THROW "OAUTH: the token endpoint answered no JSON: " + LEFT$(body$, 200)
+    ENDTRY
+    IF TYPEOF(parsed) <> "OBJECT" THEN THROW "OAUTH: the token endpoint answered no JSON: " + LEFT$(body$, 200)
+    IF MAP.EXISTS(parsed, "error") THEN
+        DIM err_value = parsed{"error"}
+        DIM message$ = "OAUTH: " + AsText$(err_value)
+        IF MAP.EXISTS(parsed, "error_description") THEN
+            DIM desc_value = parsed{"error_description"}
+            message$ = message$ + " (" + AsText$(desc_value) + ")"
+        ENDIF
+        THROW message$
+    ENDIF
+    IF NOT MAP.EXISTS(parsed, "access_token") THEN THROW "OAUTH: the token endpoint answered no access_token"
+    DIM access_value = parsed{"access_token"}
+    client{"access_token"} = AsText$(access_value)
+    IF MAP.EXISTS(parsed, "refresh_token") THEN
+        DIM refresh_value = parsed{"refresh_token"}
+        client{"refresh_token"} = AsText$(refresh_value)
+    ENDIF
+    IF MAP.EXISTS(parsed, "token_type") THEN
+        DIM type_value = parsed{"token_type"}
+        client{"token_type"} = AsText$(type_value)
+    ENDIF
+    IF MAP.EXISTS(parsed, "id_token") THEN
+        DIM id_value = parsed{"id_token"}
+        client{"id_token"} = AsText$(id_value)
+    ENDIF
+    IF MAP.EXISTS(parsed, "scope") THEN
+        DIM scope_value = parsed{"scope"}
+        client{"token_scope"} = AsText$(scope_value)
+    ENDIF
+    client{"expires_at"} = 0
+    IF MAP.EXISTS(parsed, "expires_in") THEN
+        DIM life = VAL(AsText$(parsed{"expires_in"}))
+        client{"expires_at"} = NOW_EPOCH() + life
+    ENDIF
+    client{"grant"} = grant$
+    SaveToStore(client)
+ENDSUB
+
+' Posts a form to the token endpoint with the client's credentials.
+FUNC TokenPost(client, url$, fields)
+    DIM sess = REQ.NEW("")
+    REQ.TIMEOUT(sess, 30)
+    DIM secret$ = OptText$(client, "client_secret")
+    IF OptText$(client, "auth_method") = "basic" ANDALSO secret$ <> "" THEN
+        REQ.BASIC(sess, URL.FORMENCODE$(OptText$(client, "client_id")), URL.FORMENCODE$(secret$))
+    ELSE
+        fields{"client_id"} = OptText$(client, "client_id")
+        IF secret$ <> "" THEN fields{"client_secret"} = secret$
+    ENDIF
+    DIM r = REQ.FORM(sess, url$, fields)
+    DIM http_status = r{"status"}
+    IF http_status = 0 THEN
+        DIM why = r{"error"}
+        THROW "OAUTH: " + AsText$(why)
+    ENDIF
+    RETURN r
+ENDFUNC
+
+FUNC ClientCredentialsNow$(client, scope_text$)
+    DIM fields AS MAP
+    fields{"grant_type"} = "client_credentials"
+    DIM want$ = scope_text$
+    IF want$ = "" THEN want$ = OptText$(client, "scope")
+    IF want$ <> "" THEN fields{"scope"} = want$
+    client{"scope"} = want$
+    DIM r = TokenPost(client, OptText$(client, "token_url"), fields)
+    DIM body = r{"body"}
+    TakeTokens(client, AsText$(body), "client_credentials")
+    RETURN OptText$(client, "access_token")
+ENDFUNC
+
+' The client credentials flow: a token for the client itself; answers the
+' access token.
+EXPORT FUNC CLIENTCREDENTIALS(client, scope_text$ = "")
+    RETURN ClientCredentialsNow$(client, scope_text$)
+ENDFUNC
+
+FUNC RefreshNow$(client)
+    DIM refresh$ = OptText$(client, "refresh_token")
+    IF refresh$ = "" THEN
+        IF OptText$(client, "grant") = "client_credentials" THEN RETURN ClientCredentialsNow$(client, OptText$(client, "scope"))
+        THROW "OAUTH: no refresh token"
+    ENDIF
+    DIM fields AS MAP
+    fields{"grant_type"} = "refresh_token"
+    fields{"refresh_token"} = refresh$
+    DIM r = TokenPost(client, OptText$(client, "token_url"), fields)
+    DIM body = r{"body"}
+    DIM grant$ = OptText$(client, "grant")
+    TakeTokens(client, AsText$(body), grant$)
+    RETURN OptText$(client, "access_token")
+ENDFUNC
+
+' A new access token from the refresh token (a client credentials client
+' asks again); answers it.
+EXPORT FUNC REFRESH(client)
+    RETURN RefreshNow$(client)
+ENDFUNC
+
+FUNC ExpiredNow(client)
+    DIM at = client{"expires_at"}
+    IF at <= 0 THEN RETURN FALSE
+    DIM skew = client{"skew"}
+    RETURN NOW_EPOCH() + skew >= at
+ENDFUNC
+
+' Whether the access token has run out, or will within the skew.
+EXPORT FUNC EXPIRED(client)
+    RETURN ExpiredNow(client)
+ENDFUNC
+
+' Marks the access token as run out, so the next use refreshes it.
+EXPORT SUB EXPIRE(client)
+    client{"expires_at"} = 1
+    SaveToStore(client)
+ENDSUB
+
+FUNC TokenNow$(client)
+    DIM token$ = OptText$(client, "access_token")
+    IF token$ = "" THEN THROW "OAUTH: no token yet, run a flow first"
+    IF ExpiredNow(client) THEN token$ = RefreshNow$(client)
+    RETURN token$
+ENDFUNC
+
+' A valid access token, refreshed first when it has run out.
+EXPORT FUNC TOKEN$(client)
+    RETURN TokenNow$(client)
+ENDFUNC
+
+' Keeps the client's tokens in a CACHE under a key: tokens already there
+' are taken now, and every new token is put there. CACHEOF answers the
+' cache with the latest tokens, for CACHE.SAVE.
+EXPORT SUB STORE(client, store, opt_name$)
+    client{"store"} = store
+    client{"store_key"} = opt_name$
+    DIM saved = CACHE.FETCH(store, opt_name$, 0)
+    IF TYPEOF(saved) = "OBJECT" THEN
+        DIM names = ["access_token", "refresh_token", "token_type", "id_token", "token_scope", "grant"]
+        DIM k = 0
+        FOR k = 0 TO LEN(names) - 1
+            DIM field$ = names[k]
+            IF MAP.EXISTS(saved, field$) THEN
+                DIM field_value = saved{field$}
+                client{field$} = AsText$(field_value)
+            ENDIF
+        NEXT k
+        IF MAP.EXISTS(saved, "expires_at") THEN
+            DIM saved_at = saved{"expires_at"}
+            client{"expires_at"} = saved_at
+        ENDIF
+    ENDIF
+ENDSUB
+
+EXPORT FUNC CACHEOF(client)
+    IF NOT MAP.EXISTS(client, "store") THEN THROW "OAUTH: the client has no store"
+    DIM store = client{"store"}
+    RETURN store
+ENDFUNC
+
+' ── the authorization code flow ────────────────────────────────
+
+FUNC BuildAuthUrl$(client, scope_text$, redirect_uri$)
+    IF scope_text$ <> "" THEN client{"scope"} = scope_text$
+    IF redirect_uri$ <> "" THEN client{"redirect_uri"} = redirect_uri$
+    DIM state$ = LEFT$(RandomHex$(), 32)
+    DIM verifier$ = RandomHex$()
+    client{"state"} = state$
+    client{"verifier"} = verifier$
+    DIM params AS MAP
+    params{"response_type"} = "code"
+    params{"client_id"} = OptText$(client, "client_id")
+    params{"redirect_uri"} = OptText$(client, "redirect_uri")
+    IF OptText$(client, "scope") <> "" THEN params{"scope"} = OptText$(client, "scope")
+    params{"state"} = state$
+    params{"code_challenge"} = CHALLENGE$(verifier$)
+    params{"code_challenge_method"} = "S256"
+    DIM base$ = OptText$(client, "auth_url")
+    DIM glue$ = "?"
+    IF INSTR(base$, "?") >= 0 THEN glue$ = "&"
+    DIM address$ = base$ + glue$ + URL.QUERY$(params)
+    DIM extra$ = OptText$(client, "extra_auth")
+    IF extra$ <> "" THEN address$ = address$ + "&" + extra$
+    RETURN address$
+ENDFUNC
+
+' The address that asks the user to sign in, with a fresh state and PKCE
+' verifier kept in the client.
+EXPORT FUNC AUTHURL$(client, scope_text$ = "", redirect_uri$ = "")
+    RETURN BuildAuthUrl$(client, scope_text$, redirect_uri$)
+ENDFUNC
+
+FUNC CodeExchange$(client, code$)
+    DIM fields AS MAP
+    fields{"grant_type"} = "authorization_code"
+    fields{"code"} = code$
+    fields{"redirect_uri"} = OptText$(client, "redirect_uri")
+    fields{"code_verifier"} = OptText$(client, "verifier")
+    DIM r = TokenPost(client, OptText$(client, "token_url"), fields)
+    DIM body = r{"body"}
+    TakeTokens(client, AsText$(body), "authorization_code")
+    RETURN OptText$(client, "access_token")
+ENDFUNC
+
+' Trades an authorization code for tokens; answers the access token.
+EXPORT FUNC EXCHANGE(client, code$)
+    RETURN CodeExchange$(client, code$)
+ENDFUNC
+
+FUNC FinishRedirect$(client, code$, state$, err$)
+    IF err$ <> "" THEN THROW "OAUTH: authorization failed: " + err$
+    IF state$ <> OptText$(client, "state") THEN THROW "OAUTH: the state in the redirect does not match"
+    IF code$ = "" THEN THROW "OAUTH: the redirect carries no code"
+    RETURN CodeExchange$(client, code$)
+ENDFUNC
+
+' Finishes the flow from the address the browser was sent back to: checks
+' its state, takes an error it names, trades its code; answers the access
+' token.
+EXPORT FUNC REDIRECTED(client, address$)
+    RETURN FinishRedirect$(client, URL.PARAM$(address$, "code", ""), URL.PARAM$(address$, "state", ""), URL.PARAM$(address$, "error", ""))
+ENDFUNC
+
+' The HTTP.SERVER handler of the local redirect: it keeps the code for
+' LOGIN and answers the browser.
+EXPORT FUNC CALLBACK(req_map)
+    DIM params = req_map{"PARAMS"}
+    gCallbackCode$ = ""
+    gCallbackState$ = ""
+    gCallbackError$ = ""
+    IF MAP.EXISTS(params, "code") THEN
+        DIM code_value = params{"code"}
+        gCallbackCode$ = AsText$(code_value)
+    ENDIF
+    IF MAP.EXISTS(params, "state") THEN
+        DIM state_value = params{"state"}
+        gCallbackState$ = AsText$(state_value)
+    ENDIF
+    IF MAP.EXISTS(params, "error") THEN
+        DIM error_value = params{"error"}
+        gCallbackError$ = AsText$(error_value)
+    ENDIF
+    gCallbackHits = gCallbackHits + 1
+    IF gWaiting = 1 THEN HTTP.SERVER.STOP
+    DIM page$ = "<!doctype html><title>Signed in</title><p>Signed in. You can close this window.</p>"
+    IF gCallbackError$ <> "" THEN page$ = "<!doctype html><title>Sign-in failed</title><p>Sign-in failed: " + REPLACE$(gCallbackError$, "<", "&lt;") + "</p>"
+    RETURN page$
+ENDFUNC
+
+' Puts the redirect handler on a path of the server; LOGIN does it itself.
+EXPORT SUB MOUNT(route$ = "/callback")
+    IF gMounted$ <> route$ THEN
+        HTTP.SERVER.ON_GET(route$, "OAUTH.CALLBACK")
+        gMounted$ = route$
+    ENDIF
+ENDSUB
+
+SUB OpenBrowser(client, address$)
+    IF MAP.EXISTS(client, "opener") THEN
+        DIM fn = client{"opener"}
+        DIM opened = fn(address$)
+    ELSE
+        PRINT "Sign in at: " + address$
+        DIM os_name$ = OS.GETOS$()
+        TRY
+            IF os_name$ = "WINDOWS" THEN
+                DIM res_win = OS.EXEC("rundll32", ["url.dll,FileProtocolHandler", address$])
+            ELSEIF os_name$ = "MACOS" THEN
+                DIM res_mac = OS.EXEC("open", [address$])
+            ELSE
+                DIM res_lin = OS.EXEC("xdg-open", [address$])
+            ENDIF
+        CATCH
+            PRINT "Open the address above in a browser."
+        ENDTRY
+    ENDIF
+ENDSUB
+
+' The whole authorization code flow for a desktop or command line app: a
+' redirect handler on http://127.0.0.1:port/callback, the browser opened
+' at the sign-in address, the code traded for tokens once it comes back;
+' answers the access token. With start_server 0 the server is already
+' running with MOUNT done.
+EXPORT FUNC LOGIN(client, scope_text$, port, route$ = "/callback", start_server = 1)
+    DIM redirect$ = "http://127.0.0.1:" + STR$(CINT(port)) + route$
+    DIM address$ = BuildAuthUrl$(client, scope_text$, redirect$)
+    gCallbackHits = 0
+    gCallbackCode$ = ""
+    gCallbackState$ = ""
+    gCallbackError$ = ""
+    IF start_server = 1 THEN
+        MOUNT(route$)
+        IF NOT HTTP.SERVER.START(CINT(port)) THEN THROW "OAUTH: cannot listen on port " + STR$(CINT(port))
+    ENDIF
+    OpenBrowser(client, address$)
+    IF gCallbackHits = 0 THEN
+        gWaiting = 1
+        IF gCallbackHits = 0 THEN HTTP.SERVER.WAIT
+        gWaiting = 0
+    ENDIF
+    IF start_server = 1 THEN HTTP.SERVER.STOP
+    RETURN FinishRedirect$(client, gCallbackCode$, gCallbackState$, gCallbackError$)
+ENDFUNC
+
+' ── the device code flow ───────────────────────────────────────
+
+' Starts the device flow: answers a map with user_code, verification_uri,
+' verification_uri_complete, expires_in and interval to show the user.
+EXPORT FUNC DEVICESTART(client, scope_text$ = "")
+    IF OptText$(client, "device_url") = "" THEN THROW "OAUTH: the client has no device endpoint"
+    DIM fields AS MAP
+    IF scope_text$ <> "" THEN client{"scope"} = scope_text$
+    IF OptText$(client, "scope") <> "" THEN fields{"scope"} = OptText$(client, "scope")
+    DIM r = TokenPost(client, OptText$(client, "device_url"), fields)
+    DIM body = r{"body"}
+    DIM body$ = AsText$(body)
+    DIM parsed = 0
+    TRY
+        parsed = JSON.PARSE$(body$)
+    CATCH
+        THROW "OAUTH: the device endpoint answered no JSON: " + LEFT$(body$, 200)
+    ENDTRY
+    IF MAP.EXISTS(parsed, "error") THEN
+        DIM err_value = parsed{"error"}
+        THROW "OAUTH: " + AsText$(err_value)
+    ENDIF
+    DIM shown_info AS MAP
+    DIM field_names = ["device_code", "user_code", "verification_uri", "verification_url", "verification_uri_complete", "message"]
+    DIM k = 0
+    FOR k = 0 TO LEN(field_names) - 1
+        DIM key_name$ = field_names[k]
+        shown_info{key_name$} = ""
+        IF MAP.EXISTS(parsed, key_name$) THEN
+            DIM got_value = parsed{key_name$}
+            shown_info{key_name$} = AsText$(got_value)
+        ENDIF
+    NEXT k
+    IF shown_info{"verification_uri"} = "" THEN shown_info{"verification_uri"} = shown_info{"verification_url"}
+    shown_info{"interval"} = 5
+    shown_info{"expires_in"} = 900
+    IF MAP.EXISTS(parsed, "interval") THEN shown_info{"interval"} = VAL(AsText$(parsed{"interval"}))
+    IF MAP.EXISTS(parsed, "expires_in") THEN shown_info{"expires_in"} = VAL(AsText$(parsed{"expires_in"}))
+    client{"device_code"} = shown_info{"device_code"}
+    client{"device_interval"} = shown_info{"interval"}
+    client{"device_until"} = NOW_EPOCH() + shown_info{"expires_in"}
+    RETURN shown_info
+ENDFUNC
+
+' Asks the token endpoint until the user has approved the device, waiting
+' the interval between tries (longer when told to slow down), at most
+' max_seconds; answers the access token.
+EXPORT FUNC DEVICEPOLL(client, max_seconds = 900)
+    DIM interval = client{"device_interval"}
+    DIM give_up = NOW_EPOCH() + max_seconds
+    DIM device_until = client{"device_until"}
+    IF device_until < give_up THEN give_up = device_until
+    DO
+        SLEEP interval * 1000
+        DIM fields AS MAP
+        fields{"grant_type"} = "urn:ietf:params:oauth:grant-type:device_code"
+        fields{"device_code"} = OptText$(client, "device_code")
+        DIM r = TokenPost(client, OptText$(client, "token_url"), fields)
+        DIM body = r{"body"}
+        DIM body$ = AsText$(body)
+        DIM http_status = r{"status"}
+        IF http_status >= 200 ANDALSO http_status < 300 THEN
+            TakeTokens(client, body$, "device")
+            RETURN OptText$(client, "access_token")
+        ENDIF
+        DIM reason$ = ""
+        TRY
+            DIM parsed = JSON.PARSE$(body$)
+            IF MAP.EXISTS(parsed, "error") THEN
+                DIM err_value = parsed{"error"}
+                reason$ = AsText$(err_value)
+            ENDIF
+        CATCH
+            reason$ = "status " + STR$(http_status)
+        ENDTRY
+        IF reason$ = "slow_down" THEN
+            interval = interval + 5
+        ELSEIF reason$ <> "authorization_pending" THEN
+            THROW "OAUTH: " + reason$
+        ENDIF
+        IF NOW_EPOCH() + interval > give_up THEN THROW "OAUTH: the device code expired"
+    LOOP
+    RETURN ""
+ENDFUNC
+
+' ── REQ sessions ───────────────────────────────────────────────
+
+' A REQ session for an API the client's tokens open.
+EXPORT FUNC SESSION(client, base_url$)
+    RETURN REQ.NEW(base_url$)
+ENDFUNC
+
+FUNC SendAuthed(client, sess, method$, route$, body$, content_type$, query_map)
+    REQ.BEARER(sess, TokenNow$(client))
+    DIM r = REQ.SEND(sess, method$, route$, body$, content_type$, query_map)
+    DIM http_status = r{"status"}
+    IF http_status = 401 ANDALSO (OptText$(client, "refresh_token") <> "" ORELSE OptText$(client, "grant") = "client_credentials") THEN
+        REQ.BEARER(sess, RefreshNow$(client))
+        r = REQ.SEND(sess, method$, route$, body$, content_type$, query_map)
+    ENDIF
+    RETURN r
+ENDFUNC
+
+' A REQ call with a valid token: refreshed before the call when it has run
+' out, and once more when the API answers 401.
+EXPORT FUNC SEND(client, sess, method$, route$, body$ = "", content_type$ = "application/json", query_map = 0)
+    RETURN SendAuthed(client, sess, method$, route$, body$, content_type$, query_map)
+ENDFUNC
+
+EXPORT FUNC GET(client, sess, route$, query_map = 0)
+    RETURN SendAuthed(client, sess, "GET", route$, "", "application/json", query_map)
+ENDFUNC
+
+' A map or array body goes out as JSON, a string as it is.
+EXPORT FUNC POST(client, sess, route$, body = "", content_type$ = "application/json")
+    DIM body$ = ""
+    IF TYPEOF(body) = "STRING" THEN
+        body$ = body
+    ELSE
+        body$ = JSON.STRINGIFY$(body)
+    ENDIF
+    RETURN SendAuthed(client, sess, "POST", route$, body$, content_type$, 0)
+ENDFUNC

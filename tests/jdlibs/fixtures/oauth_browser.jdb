@@ -1,0 +1,17 @@
+' oauth_browser.jdb - stands in for a browser in the OAUTH self test: it
+' waits a moment, opens the address in the file named last on the command
+' line, follows the redirects the way a browser signs in, and leaves the
+' final status in the same file name with .done appended.
+
+DIM cli_args = OS.ARGS()
+DIM url_file$ = cli_args[LEN(cli_args) - 1]
+SLEEP 500
+DIM address$ = TRIM$(TXTREADER$(url_file$))
+DIM final_status = 0
+TRY
+    DIM r = HTTP.REQUEST("GET", address$)
+    final_status = r{"status"}
+CATCH
+    final_status = -1
+ENDTRY
+TXTWRITER url_file$ + ".done", STR$(final_status)
