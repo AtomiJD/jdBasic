@@ -1,0 +1,195 @@
+' xml_demo.jdb - an XRechnung invoice written, read back, checked and changed.
+'
+' The demo builds a UBL invoice in the XRechnung 3.0 shape from three
+' order lines and writes it to a file. It then reads the file the way a
+' received invoice is read: by the written names, by local names and by
+' namespace. It checks the totals the way the business rules do, lists
+' the lines, turns the seller into a map, changes the payment terms and
+' shows what a damaged file reports.
+'
+'   jdBasic xml_demo.jdb
+
+IMPORT XML, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM NL$ = CHR$(10)
+DIM folder$ = MKTEMP$("xmldemo")
+MKDIR folder$
+
+CONST UBL_INV$ = "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"
+CONST UBL_CAC$ = "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"
+CONST UBL_CBC$ = "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"
+CONST VAT_RATE = 19
+
+' An amount element with two decimals and its currency.
+FUNC Amount(doc, parent, tag$, value)
+    DIM id = XML.ELEMENT(doc, parent, tag$, FORMAT$("{:.2f}", value))
+    XML.SETATTR(doc, id, "currencyID", "EUR")
+    RETURN id
+ENDFUNC
+
+FUNC Party(doc, parent, role$, party_name$, street$, city$, zip$, vat_id$)
+    DIM holder = XML.ELEMENT(doc, parent, role$)
+    DIM party = XML.ELEMENT(doc, holder, "cac:Party")
+    DIM named = XML.ELEMENT(doc, party, "cac:PartyName")
+    DIM label = XML.ELEMENT(doc, named, "cbc:Name", party_name$)
+    DIM address = XML.ELEMENT(doc, party, "cac:PostalAddress")
+    DIM street_el = XML.ELEMENT(doc, address, "cbc:StreetName", street$)
+    DIM city_el = XML.ELEMENT(doc, address, "cbc:CityName", city$)
+    DIM zip_el = XML.ELEMENT(doc, address, "cbc:PostalZone", zip$)
+    DIM country = XML.ELEMENT(doc, address, "cac:Country")
+    DIM country_code = XML.ELEMENT(doc, country, "cbc:IdentificationCode", "DE")
+    IF vat_id$ <> "" THEN
+        DIM scheme = XML.ELEMENT(doc, party, "cac:PartyTaxScheme")
+        DIM company = XML.ELEMENT(doc, scheme, "cbc:CompanyID", vat_id$)
+        DIM tax_scheme = XML.ELEMENT(doc, scheme, "cac:TaxScheme")
+        DIM vat_code = XML.ELEMENT(doc, tax_scheme, "cbc:ID", "VAT")
+    ENDIF
+    RETURN holder
+ENDFUNC
+
+FUNC Check(code$, what$, have, want)
+    DIM verdict$ = CONSOLE.GREEN$("ok")
+    IF ABS(have - want) > 0.005 THEN verdict$ = CONSOLE.RED$("mismatch")
+    DIM row = []
+    PUSH(row, code$)
+    PUSH(row, what$)
+    PUSH(row, FORMAT$("{:.2f} = {:.2f}", have, want))
+    PUSH(row, verdict$)
+    RETURN row
+ENDFUNC
+
+' ── the invoice, built ─────────────────────────────────────────
+
+DIM item_names = ["Paper A4, 500 sheets", "Toner cartridge", "Delivery"]
+DIM item_qty = [10, 2, 1]
+DIM item_price = [4.5, 61.9, 7.5]
+
+DIM net = 0.0
+DIM i = 0
+FOR i = 0 TO LEN(item_names) - 1
+    net = net + item_qty[i] * item_price[i]
+NEXT i
+DIM vat_total = ROUND(net * VAT_RATE / 100, 2)
+DIM gross = net + vat_total
+
+DIM inv = XML.DOCUMENT("ubl:Invoice")
+DIM top = XML.ROOT(inv)
+XML.SETATTR(inv, top, "xmlns:ubl", UBL_INV$)
+XML.SETATTR(inv, top, "xmlns:cac", UBL_CAC$)
+XML.SETATTR(inv, top, "xmlns:cbc", UBL_CBC$)
+DIM spec_el = XML.ELEMENT(inv, top, "cbc:CustomizationID", "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0")
+DIM number_el = XML.ELEMENT(inv, top, "cbc:ID", "RE-2026-0413")
+DIM issued_el = XML.ELEMENT(inv, top, "cbc:IssueDate", "2026-09-13")
+DIM type_el = XML.ELEMENT(inv, top, "cbc:InvoiceTypeCode", "380")
+DIM note_el = XML.ELEMENT(inv, top, "cbc:Note", "Lieferung & Leistung im September, Bürobedarf")
+DIM currency_el = XML.ELEMENT(inv, top, "cbc:DocumentCurrencyCode", "EUR")
+DIM reference_el = XML.ELEMENT(inv, top, "cbc:BuyerReference", "04011000-12345-03")
+DIM seller = Party(inv, top, "cac:AccountingSupplierParty", "Papier & Toner GmbH", "Hafenstraße 4", "Bremen", "28195", "DE123456789")
+DIM buyer = Party(inv, top, "cac:AccountingCustomerParty", "Stadtverwaltung Musterstadt", "Rathausplatz 1", "Musterstadt", "12345", "")
+DIM terms_el = XML.ELEMENT(inv, top, "cac:PaymentTerms")
+DIM terms_note = XML.ELEMENT(inv, terms_el, "cbc:Note", "Zahlbar innerhalb von 14 Tagen ohne Abzug")
+DIM tax_total = XML.ELEMENT(inv, top, "cac:TaxTotal")
+DIM tax_amount = Amount(inv, tax_total, "cbc:TaxAmount", vat_total)
+DIM monetary = XML.ELEMENT(inv, top, "cac:LegalMonetaryTotal")
+DIM line_total = Amount(inv, monetary, "cbc:LineExtensionAmount", net)
+DIM exclusive = Amount(inv, monetary, "cbc:TaxExclusiveAmount", net)
+DIM inclusive = Amount(inv, monetary, "cbc:TaxInclusiveAmount", gross)
+DIM payable = Amount(inv, monetary, "cbc:PayableAmount", gross)
+FOR i = 0 TO LEN(item_names) - 1
+    DIM line_el = XML.ELEMENT(inv, top, "cac:InvoiceLine")
+    DIM line_id = XML.ELEMENT(inv, line_el, "cbc:ID", STR$(i + 1))
+    DIM qty_el = XML.ELEMENT(inv, line_el, "cbc:InvoicedQuantity", STR$(item_qty[i]))
+    XML.SETATTR(inv, qty_el, "unitCode", "H87")
+    DIM line_amount = Amount(inv, line_el, "cbc:LineExtensionAmount", item_qty[i] * item_price[i])
+    DIM item_el = XML.ELEMENT(inv, line_el, "cac:Item")
+    DIM item_name$ = item_names[i]
+    DIM item_label = XML.ELEMENT(inv, item_el, "cbc:Name", item_name$)
+    DIM price_el = XML.ELEMENT(inv, line_el, "cac:Price")
+    DIM price_amount = Amount(inv, price_el, "cbc:PriceAmount", item_price[i])
+NEXT i
+
+DIM path$ = folder$ + "/RE-2026-0413.xml"
+XML.WRITEFILE(inv, path$)
+
+CONSOLE.RULE("the file", "=")
+DIM file_lines = SPLIT(TXTREADER$(path$), NL$)
+FOR i = 0 TO 11
+    DIM shown$ = file_lines[i]
+    PRINT "  "; shown$
+NEXT i
+PRINT "  ... "; LEN(file_lines); " lines, "; FILE.SIZE(path$); " bytes"
+PRINT ""
+
+' ── read back, as a received invoice ───────────────────────────
+
+DIM got = XML.PARSEFILE(path$)
+CONSOLE.RULE("read back")
+CONSOLE.KV([["invoice", XML.VALUE$(got, "/ubl:Invoice/cbc:ID")], ["issued", XML.VALUE$(got, "//cbc:IssueDate")], ["note", XML.VALUE$(got, "/ubl:Invoice/cbc:Note")], ["seller", XML.VALUE$(got, "//cac:AccountingSupplierParty//cbc:Name")], ["buyer", XML.VALUE$(got, "//AccountingCustomerParty//Name")], ["seller VAT id", XML.VALUE$(got, "//AccountingSupplierParty//CompanyID", "none")], ["buyer VAT id", XML.VALUE$(got, "//AccountingCustomerParty//CompanyID", "none")], ["amount due", XML.VALUE$(got, "//cbc:PayableAmount") + " " + XML.VALUE$(got, "//cbc:PayableAmount/@currencyID")], ["nodes", STR$(XML.SIZE(got))]], 2)
+PRINT ""
+
+CONSOLE.RULE("the lines")
+DIM rows = []
+DIM lines = XML.FINDALL(got, "//cac:InvoiceLine")
+FOR i = 0 TO LEN(lines) - 1
+    DIM ln = lines[i]
+    DIM row = []
+    PUSH(row, XML.VALUE$(got, "cbc:ID", "", ln))
+    PUSH(row, XML.VALUE$(got, "cac:Item/cbc:Name", "", ln))
+    PUSH(row, XML.VALUE$(got, "cbc:InvoicedQuantity", "", ln) + " " + XML.VALUE$(got, "cbc:InvoicedQuantity/@unitCode", "", ln))
+    PUSH(row, XML.VALUE$(got, "cac:Price/cbc:PriceAmount", "", ln))
+    PUSH(row, XML.VALUE$(got, "cbc:LineExtensionAmount", "", ln))
+    PUSH(rows, row)
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["#", "item", "quantity", "price", "amount"], "border": "plain"})
+PRINT ""
+
+CONSOLE.RULE("the totals, checked")
+DIM sum_lines = 0.0
+DIM amounts = XML.VALUES(got, "//cac:InvoiceLine/cbc:LineExtensionAmount")
+FOR i = 0 TO LEN(amounts) - 1
+    DIM amount$ = amounts[i]
+    sum_lines = sum_lines + VAL(amount$)
+NEXT i
+DIM read_net = VAL(XML.VALUE$(got, "//cac:LegalMonetaryTotal/cbc:TaxExclusiveAmount"))
+DIM read_tax = VAL(XML.VALUE$(got, "//cac:TaxTotal/cbc:TaxAmount"))
+DIM read_gross = VAL(XML.VALUE$(got, "//cac:LegalMonetaryTotal/cbc:TaxInclusiveAmount"))
+DIM checks = []
+PUSH(checks, Check("BR-CO-10", "the lines add up to the line total", sum_lines, VAL(XML.VALUE$(got, "//cac:LegalMonetaryTotal/cbc:LineExtensionAmount"))))
+PUSH(checks, Check("BR-CO-15", "net and VAT add up to the gross amount", read_net + read_tax, read_gross))
+PUSH(checks, Check("VAT", "the VAT is 19 percent of the net amount", ROUND(read_net * VAT_RATE / 100, 2), read_tax))
+CONSOLE.TABLE(checks, {"headers": ["rule", "what", "values", "result"], "border": "plain"})
+PRINT ""
+
+CONSOLE.RULE("three ways to the amount due")
+CONSOLE.KV([["by the written name", XML.VALUE$(got, "/ubl:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount")], ["by the local name", XML.VALUE$(got, "//PayableAmount")], ["by the namespace", XML.VALUE$(got, "//{" + UBL_CBC$ + "}PayableAmount")], ["namespace of the root", XML.URI$(got, XML.ROOT(got))]], 2)
+PRINT ""
+
+CONSOLE.RULE("the seller as a map")
+DIM seller_map = XML.TOMAP(got, XML.FIND(got, "//cac:AccountingSupplierParty/cac:Party"))
+PRINT "  "; JSON.STRINGIFY$(seller_map)
+PRINT ""
+
+' ── changed and written again ──────────────────────────────────
+
+CONSOLE.RULE("the payment terms, changed")
+DIM terms = XML.FIND(got, "//cac:PaymentTerms")
+PRINT "  before: "; XML.MARKUP$(got, terms, "")
+XML.SETTEXT(got, XML.FIND(got, "cbc:Note", terms), "Zahlbar innerhalb von 30 Tagen, 2 % Skonto bei Zahlung in 10 Tagen")
+PRINT "  after:  "; XML.MARKUP$(got, terms, "")
+XML.WRITEFILE(got, path$)
+PRINT "  in the file again: "; XML.VALUE$(XML.PARSEFILE(path$), "//cac:PaymentTerms/cbc:Note")
+PRINT ""
+
+CONSOLE.RULE("a damaged file")
+DIM damaged$ = REPLACE$(TXTREADER$(path$), "</cac:Price>", "</cac:Prize>")
+TRY
+    DIM broken = XML.PARSE(damaged$)
+    PRINT "  parsed, which it should not have"
+CATCH
+    PRINT "  "; ERRMSG$
+ENDTRY
+PRINT ""
+
+KILL path$
+RMDIR folder$

@@ -1,0 +1,1385 @@
+' xml.jdb - XML into a tree, queried with a path subset, built and written back.
+'
+'   IMPORT XML
+'   DIM inv = XML.PARSEFILE("invoice.xml")
+'   PRINT XML.VALUE$(inv, "/ubl:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount")
+'   PRINT XML.VALUE$(inv, "//cbc:PayableAmount/@currencyID")
+'   XML.WRITEFILE(inv, "copy.xml")
+'
+' A document is a map of parallel arrays and every call takes the document
+' and a node number, as in HTMLDOM. Node 0 is the document itself. The
+' parser is strict about structure and names the line and column of the
+' first thing that is not well-formed.
+
+EXPORT MODULE XML
+
+DIM gFull$ = ""
+DIM gBase = 0
+DIM gSrc$ = ""
+DIM gAt = 0
+DIM gKeepSpace = FALSE
+DIM gRoot = -1
+DIM gKind = []
+DIM gName = []
+DIM gBody = []
+DIM gKeys = []
+DIM gVals = []
+DIM gKids = []
+DIM gUp = []
+DIM gStack = []
+DIM gWalkKids = []
+DIM gWalkKinds = []
+DIM gOut = []
+
+DIM gNL$ = CHR$(10)
+DIM gQ$ = CHR$(34)
+DIM gNameStop$ = " /<>=&;!?[]'" + CHR$(9) + CHR$(10) + CHR$(34)
+
+CONST K_DOCUMENT = 0
+CONST K_ELEMENT = 1
+CONST K_TEXT = 2
+CONST K_CDATA = 3
+CONST K_COMMENT = 4
+CONST K_PI = 5
+
+' ── reading ────────────────────────────────────────────────────
+
+' The document tree of an XML text. Whitespace between elements is
+' dropped unless opts{"keep_space"} is TRUE.
+EXPORT FUNC PARSE(xml$, opts = 0)
+    Reset(xml$, opts)
+    ' The text is cut at every "<" once, and each piece (one piece of
+    ' markup and the text after it) is scanned on its own, so no call
+    ' ever walks the whole document. A comment, CDATA section, processing
+    ' instruction or document type subset may hold a "<" and is joined
+    ' back up to its terminator first.
+    DIM pieces = SPLIT(gFull$, "<")
+    DIM cursor_at = 0
+    DIM k = 0
+    DO WHILE k < LEN(pieces)
+        DIM group$ = pieces[k]
+        IF k = 0 THEN
+            gBase = 0
+            gSrc$ = group$
+        ELSE
+            DIM ender$ = Terminator$(group$)
+            DO WHILE ender$ <> "" ANDALSO INSTR(group$, ender$) < 0 ANDALSO k + 1 < LEN(pieces)
+                k = k + 1
+                DIM more$ = pieces[k]
+                group$ = group$ + "<" + more$
+            LOOP
+            gBase = cursor_at
+            gSrc$ = "<" + group$
+        ENDIF
+        cursor_at = cursor_at + LEN(gSrc$)
+        gAt = 0
+        Scan()
+        k = k + 1
+    LOOP
+    gSrc$ = ""
+    gAt = 0
+    gBase = LEN(gFull$)
+    IF LEN(gStack) > 1 THEN
+        DIM left_open$ = gName[Top()]
+        Fail("<" + left_open$ + "> is never closed")
+    ENDIF
+    IF gRoot < 0 THEN Fail("there is no root element")
+    RETURN Bundle()
+ENDFUNC
+
+FUNC Terminator$(piece$)
+    IF LEFT$(piece$, 3) = "!--" THEN RETURN "-->"
+    IF LEFT$(piece$, 8) = "![CDATA[" THEN RETURN "]]>"
+    IF LEFT$(piece$, 1) = "?" THEN RETURN "?>"
+    IF LEFT$(piece$, 8) = "!DOCTYPE" THEN
+        DIM bracket = INSTR(piece$, "[")
+        DIM shut = INSTR(piece$, ">")
+        IF bracket >= 0 ANDALSO (shut < 0 ORELSE bracket < shut) THEN RETURN "]"
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' The markup at the start of gSrc$ and the text after it.
+SUB Scan()
+    DO WHILE gAt < LEN(gSrc$)
+        IF MID$(gSrc$, gAt, 1) <> "<" THEN
+            TextRun()
+        ELSEIF MID$(gSrc$, gAt, 4) = "<!--" THEN
+            DIM note_end = Expect(INSTR(gAt + 4, gSrc$, "-->"), "a comment is never closed")
+            Leaf(K_COMMENT, "", MID$(gSrc$, gAt + 4, note_end - gAt - 4))
+            gAt = note_end + 3
+        ELSEIF MID$(gSrc$, gAt, 9) = "<![CDATA[" THEN
+            IF Top() = 0 THEN Fail("character data outside the root element")
+            DIM data_end = Expect(INSTR(gAt + 9, gSrc$, "]]>"), "a CDATA section is never closed")
+            Leaf(K_CDATA, "", MID$(gSrc$, gAt + 9, data_end - gAt - 9))
+            gAt = data_end + 3
+        ELSEIF MID$(gSrc$, gAt, 2) = "<!" THEN
+            Doctype()
+        ELSEIF MID$(gSrc$, gAt, 2) = "<?" THEN
+            Instruction()
+        ELSEIF MID$(gSrc$, gAt, 2) = "</" THEN
+            CloseTag()
+        ELSE
+            OpenTag()
+        ENDIF
+    LOOP
+ENDSUB
+
+' The same from a file. A declared ISO-8859-1 or windows-1252 file is
+' decoded to UTF-8; UTF-16 is recognised by its byte order mark.
+EXPORT FUNC PARSEFILE(path$, opts = 0)
+    IF NOT FILE.EXISTS(path$) THEN THROW "XML: no such file " + path$
+    DIM raw$ = TXTREADER$(path$)
+    DIM head$ = LCASE$(LEFT$(raw$, 200))
+    DIM decl = INSTR(head$, "encoding=")
+    IF decl >= 0 THEN
+        DIM enc$ = MID$(head$, decl + 10, 12)
+        IF STARTSWITH(enc$, "iso-8859-1") ORELSE STARTSWITH(enc$, "latin1") ORELSE STARTSWITH(enc$, "windows-1252") ORELSE STARTSWITH(enc$, "cp1252") THEN raw$ = TXTREADER$(path$, "cp1252")
+    ENDIF
+    RETURN PARSE(raw$, opts)
+ENDFUNC
+
+SUB Reset(xml$, opts)
+    gFull$ = REPLACE$(xml$, CHR$(13), "")
+    IF LEFT$(gFull$, 3) = CHR$(239) + CHR$(187) + CHR$(191) THEN gFull$ = MID$(gFull$, 3)
+    gSrc$ = ""
+    gBase = 0
+    gAt = 0
+    gKeepSpace = FALSE
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "keep_space") THEN gKeepSpace = opts{"keep_space"}
+    ENDIF
+    gRoot = -1
+    gKind = []
+    gName = []
+    gBody = []
+    gKeys = []
+    gVals = []
+    gKids = []
+    gUp = []
+    gStack = []
+    DIM doc_node = Node(K_DOCUMENT, "", -1, "")
+    PUSH(gStack, doc_node)
+ENDSUB
+
+FUNC Bundle()
+    DIM doc AS MAP
+    doc{"kind"} = gKind
+    doc{"name"} = gName
+    doc{"body"} = gBody
+    doc{"keys"} = gKeys
+    doc{"vals"} = gVals
+    doc{"children"} = gKids
+    doc{"parent"} = gUp
+    RETURN doc
+ENDFUNC
+
+FUNC Node(kind, tag$, up, body$)
+    PUSH(gKind, kind)
+    PUSH(gName, tag$)
+    PUSH(gBody, body$)
+    PUSH(gKeys, [])
+    PUSH(gVals, [])
+    PUSH(gKids, [])
+    PUSH(gUp, up)
+    RETURN LEN(gKind) - 1
+ENDFUNC
+
+SUB Leaf(kind, tag$, body$)
+    DIM up = Top()
+    DIM id = Node(kind, tag$, up, body$)
+    Adopt(up, id)
+ENDSUB
+
+SUB Adopt(up, id)
+    DIM kids = gKids[up]
+    PUSH(kids, id)
+ENDSUB
+
+FUNC Top()
+    RETURN gStack[LEN(gStack) - 1]
+ENDFUNC
+
+FUNC Shorter(arr)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(arr) - 2
+        PUSH(out, arr[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Throws with the line and column of the current position.
+SUB Fail(reason$)
+    DIM before = SPLIT(LEFT$(gFull$, gBase + gAt) + "x", gNL$)
+    DIM last$ = before[LEN(before) - 1]
+    THROW "XML line " + STR$(LEN(before)) + ", column " + STR$(LEN(last$)) + ": " + reason$
+ENDSUB
+
+FUNC Expect(found, reason$)
+    IF found < 0 THEN Fail(reason$)
+    RETURN found
+ENDFUNC
+
+FUNC Blank(content$)
+    DIM squeezed$ = REPLACE$(REPLACE$(content$, gNL$, ""), CHR$(9), "")
+    RETURN TRIM$(squeezed$) = ""
+ENDFUNC
+
+SUB TextRun()
+    DIM upto = INSTR(gAt, gSrc$, "<")
+    IF upto < 0 THEN upto = LEN(gSrc$)
+    DIM raw$ = MID$(gSrc$, gAt, upto - gAt)
+    IF Top() = 0 THEN
+        IF NOT Blank(raw$) THEN Fail("text outside the root element")
+    ELSEIF gKeepSpace ORELSE NOT Blank(raw$) THEN
+        Leaf(K_TEXT, "", UNESCAPE$(raw$))
+    ENDIF
+    gAt = upto
+ENDSUB
+
+' A document type declaration is skipped, internal subset included.
+SUB Doctype()
+    IF MID$(gSrc$, gAt, 9) <> "<!DOCTYPE" THEN Fail("markup that is not a comment, CDATA or a document type")
+    DIM shut = INSTR(gAt, gSrc$, ">")
+    DIM bracket = INSTR(gAt, gSrc$, "[")
+    IF bracket >= 0 ANDALSO (shut < 0 ORELSE bracket < shut) THEN
+        DIM subset_end = Expect(INSTR(bracket, gSrc$, "]"), "the document type is never closed")
+        shut = INSTR(subset_end, gSrc$, ">")
+    ENDIF
+    gAt = Expect(shut, "the document type is never closed") + 1
+ENDSUB
+
+' A processing instruction becomes a node; the XML declaration does not.
+SUB Instruction()
+    DIM shut = Expect(INSTR(gAt + 2, gSrc$, "?>"), "a processing instruction is never closed")
+    DIM inner$ = MID$(gSrc$, gAt + 2, shut - gAt - 2)
+    DIM target$ = inner$
+    DIM body$ = ""
+    DIM gap = FirstGap(inner$)
+    IF gap >= 0 THEN
+        target$ = LEFT$(inner$, gap)
+        body$ = TRIM$(MID$(inner$, gap + 1))
+    ENDIF
+    IF LCASE$(target$) = "xml" THEN
+        IF LEN(gKind) > 1 THEN Fail("the XML declaration must come first")
+    ELSE
+        Leaf(K_PI, target$, body$)
+    ENDIF
+    gAt = shut + 2
+ENDSUB
+
+FUNC FirstGap(piece$)
+    DIM best = -1
+    DIM marks = [" ", CHR$(9), gNL$]
+    DIM i = 0
+    FOR i = 0 TO LEN(marks) - 1
+        DIM mark$ = marks[i]
+        DIM at = INSTR(piece$, mark$)
+        IF at >= 0 ANDALSO (best < 0 ORELSE at < best) THEN best = at
+    NEXT i
+    RETURN best
+ENDFUNC
+
+SUB CloseTag()
+    DIM shut = Expect(INSTR(gAt, gSrc$, ">"), "a closing tag is never finished")
+    DIM tag$ = TRIM$(REPLACE$(REPLACE$(MID$(gSrc$, gAt + 2, shut - gAt - 2), gNL$, " "), CHR$(9), " "))
+    IF Top() = 0 THEN Fail("</" + tag$ + "> closes nothing")
+    DIM open$ = gName[Top()]
+    IF tag$ <> open$ THEN Fail("</" + tag$ + "> found where </" + open$ + "> was expected")
+    gStack = Shorter(gStack)
+    gAt = shut + 1
+ENDSUB
+
+SUB OpenTag()
+    DIM tag$ = NameAt$(gAt + 1)
+    IF tag$ = "" THEN Fail("a tag name was expected after <")
+    IF Top() = 0 ANDALSO gRoot >= 0 THEN Fail("a second root element <" + tag$ + ">")
+    DIM start = gAt
+    gAt = gAt + 1 + LEN(tag$)
+    DIM keys = []
+    DIM vals = []
+    DIM closed = FALSE
+    DO
+        SkipSpace()
+        IF gAt >= LEN(gSrc$) THEN
+            gAt = start
+            Fail("the tag <" + tag$ + "> is never finished")
+        ENDIF
+        IF MID$(gSrc$, gAt, 1) = ">" THEN
+            gAt = gAt + 1
+            EXITDO
+        ENDIF
+        IF MID$(gSrc$, gAt, 2) = "/>" THEN
+            gAt = gAt + 2
+            closed = TRUE
+            EXITDO
+        ENDIF
+        DIM key$ = NameAt$(gAt)
+        IF key$ = "" THEN Fail("an attribute name was expected in <" + tag$ + ">")
+        IF key$ IN keys THEN Fail("the attribute " + key$ + " appears twice in <" + tag$ + ">")
+        gAt = gAt + LEN(key$)
+        SkipSpace()
+        IF MID$(gSrc$, gAt, 1) <> "=" THEN Fail("the attribute " + key$ + " has no value")
+        gAt = gAt + 1
+        SkipSpace()
+        DIM quote$ = MID$(gSrc$, gAt, 1)
+        IF quote$ <> gQ$ ANDALSO quote$ <> "'" THEN Fail("the value of " + key$ + " is not quoted")
+        DIM ends = Expect(INSTR(gAt + 1, gSrc$, quote$), "the value of " + key$ + " is never closed")
+        DIM raw$ = MID$(gSrc$, gAt + 1, ends - gAt - 1)
+        IF INSTR(raw$, "<") >= 0 THEN Fail("the value of " + key$ + " contains <")
+        DIM spaced$ = REPLACE$(REPLACE$(raw$, gNL$, " "), CHR$(9), " ")
+        PUSH(keys, key$)
+        PUSH(vals, UNESCAPE$(spaced$))
+        gAt = ends + 1
+    LOOP
+    DIM up = Top()
+    DIM id = Node(K_ELEMENT, tag$, up, "")
+    DIM key_slot = gKeys[id]
+    DIM val_slot = gVals[id]
+    DIM a = 0
+    FOR a = 0 TO LEN(keys) - 1
+        DIM got_key$ = keys[a]
+        DIM got_val$ = vals[a]
+        PUSH(key_slot, got_key$)
+        PUSH(val_slot, got_val$)
+    NEXT a
+    Adopt(up, id)
+    IF up = 0 THEN gRoot = id
+    IF NOT closed THEN PUSH(gStack, id)
+ENDSUB
+
+' The name that starts at a position, or "" when none does.
+FUNC NameAt$(at)
+    IF at >= LEN(gSrc$) THEN RETURN ""
+    IF INSTR("0123456789-.", MID$(gSrc$, at, 1)) >= 0 THEN RETURN ""
+    DIM i = at
+    DO WHILE i < LEN(gSrc$)
+        IF INSTR(gNameStop$, MID$(gSrc$, i, 1)) >= 0 THEN EXITDO
+        i = i + 1
+    LOOP
+    RETURN MID$(gSrc$, at, i - at)
+ENDFUNC
+
+SUB SkipSpace()
+    DO WHILE gAt < LEN(gSrc$)
+        DIM ch$ = MID$(gSrc$, gAt, 1)
+        IF ch$ <> " " ANDALSO ch$ <> CHR$(9) ANDALSO ch$ <> gNL$ THEN EXITDO
+        gAt = gAt + 1
+    LOOP
+ENDSUB
+
+' ── the tree ───────────────────────────────────────────────────
+
+' The number of nodes, the document itself included.
+EXPORT FUNC SIZE(doc)
+    RETURN LEN(doc{"kind"})
+ENDFUNC
+
+' The root element, or -1 in a document that has none yet.
+EXPORT FUNC ROOT(doc)
+    DIM kids = CHILDREN(doc, 0)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        IF KindOf(doc, kids[i]) = K_ELEMENT THEN RETURN kids[i]
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC KindOf(doc, id)
+    DIM kinds = doc{"kind"}
+    IF id < 0 ORELSE id >= LEN(kinds) THEN RETURN -1
+    RETURN kinds[id]
+ENDFUNC
+
+' "document", "element", "text", "cdata", "comment" or "pi".
+EXPORT FUNC KIND$(doc, id)
+    DIM k = KindOf(doc, id)
+    IF k = K_DOCUMENT THEN RETURN "document"
+    IF k = K_ELEMENT THEN RETURN "element"
+    IF k = K_TEXT THEN RETURN "text"
+    IF k = K_CDATA THEN RETURN "cdata"
+    IF k = K_COMMENT THEN RETURN "comment"
+    IF k = K_PI THEN RETURN "pi"
+    RETURN ""
+ENDFUNC
+
+' The name as written, prefix included; the target of a processing
+' instruction.
+EXPORT FUNC NAME$(doc, id)
+    DIM names = doc{"name"}
+    IF id < 0 ORELSE id >= LEN(names) THEN RETURN ""
+    DIM out$ = names[id]
+    RETURN out$
+ENDFUNC
+
+EXPORT FUNC LOCAL$(doc, id)
+    RETURN LocalOf$(NAME$(doc, id))
+ENDFUNC
+
+EXPORT FUNC PREFIX$(doc, id)
+    RETURN PrefixOf$(NAME$(doc, id))
+ENDFUNC
+
+FUNC LocalOf$(qname$)
+    DIM colon = INSTR(qname$, ":")
+    IF colon < 0 THEN RETURN qname$
+    RETURN MID$(qname$, colon + 1)
+ENDFUNC
+
+FUNC PrefixOf$(qname$)
+    DIM colon = INSTR(qname$, ":")
+    IF colon < 0 THEN RETURN ""
+    RETURN LEFT$(qname$, colon)
+ENDFUNC
+
+' The namespace an element is in, from the nearest declaration of its
+' prefix, or "" when there is none.
+EXPORT FUNC URI$(doc, id)
+    IF KindOf(doc, id) <> K_ELEMENT THEN RETURN ""
+    DIM pfx$ = PREFIX$(doc, id)
+    IF pfx$ = "xml" THEN RETURN "http://www.w3.org/XML/1998/namespace"
+    DIM decl$ = "xmlns"
+    IF pfx$ <> "" THEN decl$ = "xmlns:" + pfx$
+    DIM at = id
+    DO WHILE at > 0
+        IF HAS(doc, at, decl$) THEN RETURN ATTR$(doc, at, decl$)
+        at = PARENT(doc, at)
+    LOOP
+    RETURN ""
+ENDFUNC
+
+EXPORT FUNC PARENT(doc, id)
+    DIM ups = doc{"parent"}
+    IF id < 0 ORELSE id >= LEN(ups) THEN RETURN -1
+    RETURN ups[id]
+ENDFUNC
+
+' Every child node, in order.
+EXPORT FUNC CHILDREN(doc, id)
+    DIM kids = doc{"children"}
+    IF id < 0 ORELSE id >= LEN(kids) THEN RETURN []
+    RETURN kids[id]
+ENDFUNC
+
+' The child elements, or only those that match a name test.
+EXPORT FUNC ELEMENTS(doc, id, test$ = "*")
+    RETURN Named(doc, id, test$)
+ENDFUNC
+
+FUNC Named(doc, owner, test$)
+    DIM out = []
+    DIM kids = CHILDREN(doc, owner)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        IF Fits(doc, kids[i], test$) THEN PUSH(out, kids[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC KeysOf(doc, id)
+    DIM every_keys = doc{"keys"}
+    IF id < 0 ORELSE id >= LEN(every_keys) THEN RETURN []
+    RETURN every_keys[id]
+ENDFUNC
+
+FUNC ValsOf(doc, id)
+    DIM every_vals = doc{"vals"}
+    IF id < 0 ORELSE id >= LEN(every_vals) THEN RETURN []
+    RETURN every_vals[id]
+ENDFUNC
+
+' The attribute names in the order they were written.
+EXPORT FUNC ATTRNAMES(doc, id)
+    DIM keys = KeysOf(doc, id)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        PUSH(out, key$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Every attribute as a map.
+EXPORT FUNC ATTRS(doc, id)
+    DIM out AS MAP
+    DIM keys = KeysOf(doc, id)
+    DIM vals = ValsOf(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        DIM attr_val$ = vals[i]
+        out{key$} = attr_val$
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' One attribute, or the fallback when it is not there. Names are
+' compared as written, prefix included.
+EXPORT FUNC ATTR$(doc, id, key$, fallback$ = "")
+    DIM at = AttrIndex(doc, id, key$)
+    IF at < 0 THEN RETURN fallback$
+    DIM vals = ValsOf(doc, id)
+    DIM out$ = vals[at]
+    RETURN out$
+ENDFUNC
+
+EXPORT FUNC HAS(doc, id, key$)
+    RETURN AttrIndex(doc, id, key$) >= 0
+ENDFUNC
+
+FUNC AttrIndex(doc, id, key$)
+    DIM keys = KeysOf(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM have$ = keys[i]
+        IF have$ = key$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC BodyOf$(doc, id)
+    DIM bodies = doc{"body"}
+    DIM out$ = bodies[id]
+    RETURN out$
+ENDFUNC
+
+' The text of an element or the document: every text and CDATA node
+' below it, joined. For a text, CDATA, comment or processing instruction
+' node, its own content.
+EXPORT FUNC TEXT$(doc, id)
+    DIM k = KindOf(doc, id)
+    IF k < 0 THEN RETURN ""
+    IF k >= K_TEXT THEN RETURN BodyOf$(doc, id)
+    DIM parts = []
+    DIM kids = CHILDREN(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        DIM kk = KindOf(doc, kids[i])
+        IF kk = K_ELEMENT ORELSE kk = K_TEXT ORELSE kk = K_CDATA THEN
+            DIM piece$ = TEXT$(doc, kids[i])
+            PUSH(parts, piece$)
+        ENDIF
+    NEXT i
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+FUNC OwnText$(doc, id)
+    DIM parts = []
+    DIM kids = CHILDREN(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        DIM kk = KindOf(doc, kids[i])
+        IF kk = K_TEXT ORELSE kk = K_CDATA THEN
+            DIM piece$ = BodyOf$(doc, kids[i])
+            PUSH(parts, piece$)
+        ENDIF
+    NEXT i
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' ── paths ──────────────────────────────────────────────────────
+
+' Every element the path reaches, in document order. A path that starts
+' with / is taken from the document, any other one from root.
+EXPORT FUNC FINDALL(doc, path$, root = 0)
+    DIM steps = Steps(path$)
+    DIM ids = Reach(doc, steps, path$, root)
+    DIM tail$ = TailKind$(steps)
+    IF tail$ = "" THEN RETURN ids
+    DIM test$ = TailTest$(steps)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(ids) - 1
+        IF tail$ = "attr" THEN
+            IF test$ = "*" THEN
+                IF LEN(KeysOf(doc, ids[i])) > 0 THEN PUSH(out, ids[i])
+            ELSEIF HAS(doc, ids[i], test$) THEN
+                PUSH(out, ids[i])
+            ENDIF
+        ELSEIF OwnText$(doc, ids[i]) <> "" THEN
+            PUSH(out, ids[i])
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The first element the path reaches, or -1.
+EXPORT FUNC FIND(doc, path$, root = 0)
+    DIM hits = FINDALL(doc, path$, root)
+    IF LEN(hits) = 0 THEN RETURN -1
+    RETURN hits[0]
+ENDFUNC
+
+' The text of every element the path reaches, or the attribute values
+' when it ends in @name, or the direct text when it ends in text().
+EXPORT FUNC VALUES(doc, path$, root = 0)
+    DIM steps = Steps(path$)
+    DIM ids = Reach(doc, steps, path$, root)
+    DIM tail$ = TailKind$(steps)
+    DIM test$ = TailTest$(steps)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(ids) - 1
+        IF tail$ = "attr" THEN
+            DIM vals = ValsOf(doc, ids[i])
+            IF test$ = "*" THEN
+                DIM v = 0
+                FOR v = 0 TO LEN(vals) - 1
+                    DIM one_val$ = vals[v]
+                    PUSH(out, one_val$)
+                NEXT v
+            ELSE
+                DIM at = AttrIndex(doc, ids[i], test$)
+                IF at >= 0 THEN
+                    DIM found$ = vals[at]
+                    PUSH(out, found$)
+                ENDIF
+            ENDIF
+        ELSEIF tail$ = "text" THEN
+            DIM own$ = OwnText$(doc, ids[i])
+            IF own$ <> "" THEN PUSH(out, own$)
+        ELSE
+            DIM all$ = TEXT$(doc, ids[i])
+            PUSH(out, all$)
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The first of VALUES, or the fallback.
+EXPORT FUNC VALUE$(doc, path$, fallback$ = "", root = 0)
+    DIM got = VALUES(doc, path$, root)
+    IF LEN(got) = 0 THEN RETURN fallback$
+    DIM out$ = got[0]
+    RETURN out$
+ENDFUNC
+
+FUNC TailKind$(steps)
+    IF LEN(steps) = 0 THEN RETURN ""
+    DIM last = steps[LEN(steps) - 1]
+    DIM k$ = last{"kind"}
+    IF k$ = "attr" ORELSE k$ = "text" THEN RETURN k$
+    RETURN ""
+ENDFUNC
+
+FUNC TailTest$(steps)
+    IF LEN(steps) = 0 THEN RETURN ""
+    DIM last = steps[LEN(steps) - 1]
+    DIM t$ = last{"test"}
+    RETURN t$
+ENDFUNC
+
+FUNC Reach(doc, steps, path$, root)
+    DIM start = root
+    IF LEFT$(TRIM$(path$), 1) = "/" THEN start = 0
+    DIM context = []
+    PUSH(context, start)
+    DIM upward = FALSE
+    DIM last_step = LEN(steps) - 1
+    IF TailKind$(steps) <> "" THEN last_step = last_step - 1
+    DIM s = 0
+    FOR s = 0 TO last_step
+        DIM here = steps[s]
+        DIM sk$ = here{"kind"}
+        IF sk$ = "parent" THEN upward = TRUE
+        context = StepIds(doc, context, here)
+    NEXT s
+    IF LEN(context) < 2 THEN RETURN context
+    IF upward THEN start = 0
+    RETURN InOrder(doc, start, context)
+ENDFUNC
+
+' One step taken from every node of the context. Positions in a
+' predicate count among the matching children of one parent.
+FUNC StepIds(doc, context, here)
+    DIM sk$ = here{"kind"}
+    DIM axis$ = here{"axis"}
+    DIM test$ = here{"test"}
+    DIM preds = here{"preds"}
+    DIM seen AS MAP
+    DIM out = []
+    DIM c = 0
+    FOR c = 0 TO LEN(context) - 1
+        DIM owners = []
+        IF axis$ = "desc" THEN
+            owners = Subtree(doc, context[c])
+        ELSE
+            PUSH(owners, context[c])
+        ENDIF
+        DIM p = 0
+        FOR p = 0 TO LEN(owners) - 1
+            DIM owner = owners[p]
+            DIM found = []
+            IF sk$ = "self" THEN
+                PUSH(found, owner)
+            ELSEIF sk$ = "parent" THEN
+                IF PARENT(doc, owner) >= 0 THEN PUSH(found, PARENT(doc, owner))
+            ELSE
+                found = Named(doc, owner, test$)
+            ENDIF
+            found = Filtered(doc, found, preds)
+            DIM f = 0
+            FOR f = 0 TO LEN(found) - 1
+                DIM key$ = STR$(found[f])
+                IF NOT MAP.EXISTS(seen, key$) THEN
+                    seen{key$} = TRUE
+                    PUSH(out, found[f])
+                ENDIF
+            NEXT f
+        NEXT p
+    NEXT c
+    RETURN out
+ENDFUNC
+
+FUNC Fits(doc, id, test$)
+    IF KindOf(doc, id) <> K_ELEMENT THEN RETURN FALSE
+    IF test$ = "*" THEN RETURN TRUE
+    DIM qname$ = NAME$(doc, id)
+    IF LEFT$(test$, 1) = "{" THEN
+        DIM shut = INSTR(test$, "}")
+        IF shut < 0 THEN RETURN FALSE
+        DIM want_local$ = MID$(test$, shut + 1)
+        IF want_local$ <> "*" ANDALSO want_local$ <> LocalOf$(qname$) THEN RETURN FALSE
+        RETURN URI$(doc, id) = MID$(test$, 1, shut - 1)
+    ENDIF
+    IF INSTR(test$, ":") >= 0 THEN
+        IF RIGHT$(test$, 2) = ":*" THEN RETURN PrefixOf$(qname$) = LEFT$(test$, LEN(test$) - 2)
+        RETURN qname$ = test$
+    ENDIF
+    RETURN LocalOf$(qname$) = test$
+ENDFUNC
+
+FUNC Filtered(doc, ids, preds)
+    DIM current = ids
+    DIM p = 0
+    FOR p = 0 TO LEN(preds) - 1
+        DIM pred = preds[p]
+        DIM pk$ = pred{"kind"}
+        DIM kept = []
+        IF pk$ = "pos" THEN
+            DIM wanted = pred{"n"}
+            IF wanted >= 1 ANDALSO wanted <= LEN(current) THEN PUSH(kept, current[wanted - 1])
+        ELSEIF pk$ = "last" THEN
+            IF LEN(current) > 0 THEN PUSH(kept, current[LEN(current) - 1])
+        ELSE
+            DIM i = 0
+            FOR i = 0 TO LEN(current) - 1
+                IF Holds(doc, current[i], pred) THEN PUSH(kept, current[i])
+            NEXT i
+        ENDIF
+        current = kept
+    NEXT p
+    RETURN current
+ENDFUNC
+
+FUNC Holds(doc, id, pred)
+    DIM pk$ = pred{"kind"}
+    DIM key$ = pred{"name"}
+    DIM op$ = pred{"op"}
+    DIM want$ = pred{"want"}
+    IF pk$ = "attr" THEN
+        IF NOT HAS(doc, id, key$) THEN RETURN FALSE
+        IF op$ = "" THEN RETURN TRUE
+        RETURN Compare(ATTR$(doc, id, key$), op$, want$)
+    ENDIF
+    IF pk$ = "text" THEN
+        IF op$ = "" THEN RETURN OwnText$(doc, id) <> ""
+        RETURN Compare(OwnText$(doc, id), op$, want$)
+    ENDIF
+    DIM kids = Named(doc, id, key$)
+    IF op$ = "" THEN RETURN LEN(kids) > 0
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        IF Compare(TEXT$(doc, kids[i]), op$, want$) THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+FUNC Compare(have$, op$, want$)
+    IF op$ = "!=" THEN RETURN have$ <> want$
+    RETURN have$ = want$
+ENDFUNC
+
+' The path as steps: axis "child" or "desc", kind "node", "self",
+' "parent", "attr" or "text", the name test and the predicates.
+FUNC Steps(path$)
+    DIM out = []
+    DIM src$ = TRIM$(path$)
+    DIM piece$ = ""
+    DIM axis$ = "child"
+    DIM depth = 0
+    DIM quote$ = ""
+    DIM i = 0
+    IF LEFT$(src$, 2) = "//" THEN
+        axis$ = "desc"
+        i = 2
+    ELSEIF LEFT$(src$, 1) = "/" THEN
+        i = 1
+    ENDIF
+    DO WHILE i < LEN(src$)
+        DIM ch$ = MID$(src$, i, 1)
+        IF quote$ <> "" THEN
+            IF ch$ = quote$ THEN quote$ = ""
+            piece$ = piece$ + ch$
+        ELSEIF ch$ = "'" ORELSE ch$ = gQ$ THEN
+            quote$ = ch$
+            piece$ = piece$ + ch$
+        ELSEIF ch$ = "[" ORELSE ch$ = "{" THEN
+            depth = depth + 1
+            piece$ = piece$ + ch$
+        ELSEIF ch$ = "]" ORELSE ch$ = "}" THEN
+            depth = depth - 1
+            piece$ = piece$ + ch$
+        ELSEIF ch$ = "/" ANDALSO depth = 0 THEN
+            IF piece$ <> "" THEN PUSH(out, StepOf(piece$, axis$))
+            piece$ = ""
+            axis$ = "child"
+            IF MID$(src$, i + 1, 1) = "/" THEN
+                axis$ = "desc"
+                i = i + 1
+            ENDIF
+        ELSE
+            piece$ = piece$ + ch$
+        ENDIF
+        i = i + 1
+    LOOP
+    IF piece$ <> "" THEN PUSH(out, StepOf(piece$, axis$))
+    RETURN out
+ENDFUNC
+
+FUNC StepOf(piece$, axis$)
+    DIM head$ = TRIM$(piece$)
+    DIM preds = []
+    DIM bracket = INSTR(head$, "[")
+    DIM brace = INSTR(head$, "}")
+    IF brace >= 0 ANDALSO bracket >= 0 ANDALSO bracket < brace THEN bracket = INSTR(brace, head$, "[")
+    IF bracket >= 0 THEN
+        preds = Predicates(MID$(head$, bracket))
+        head$ = TRIM$(LEFT$(head$, bracket))
+    ENDIF
+    DIM kind$ = "node"
+    IF head$ = "." THEN kind$ = "self"
+    IF head$ = ".." THEN kind$ = "parent"
+    IF head$ = "text()" THEN kind$ = "text"
+    IF LEFT$(head$, 1) = "@" THEN
+        kind$ = "attr"
+        head$ = MID$(head$, 1)
+    ENDIF
+    DIM out AS MAP
+    out{"axis"} = axis$
+    out{"kind"} = kind$
+    out{"test"} = head$
+    out{"preds"} = preds
+    RETURN out
+ENDFUNC
+
+FUNC Predicates(src$)
+    DIM out = []
+    DIM i = 0
+    DO WHILE i < LEN(src$)
+        IF MID$(src$, i, 1) <> "[" THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM j = i + 1
+        DIM quote$ = ""
+        DO WHILE j < LEN(src$)
+            DIM ch$ = MID$(src$, j, 1)
+            IF quote$ <> "" THEN
+                IF ch$ = quote$ THEN quote$ = ""
+            ELSEIF ch$ = "'" ORELSE ch$ = gQ$ THEN
+                quote$ = ch$
+            ELSEIF ch$ = "]" THEN
+                EXITDO
+            ENDIF
+            j = j + 1
+        LOOP
+        PUSH(out, PredOf(MID$(src$, i + 1, j - i - 1)))
+        i = j + 1
+    LOOP
+    RETURN out
+ENDFUNC
+
+' [n], [last()], [@name], [@name='v'], [child], [child='v'],
+' [text()='v'], each comparison also with !=.
+FUNC PredOf(expr$)
+    DIM body$ = TRIM$(expr$)
+    DIM op$ = ""
+    DIM want$ = ""
+    DIM eq = INSTR(body$, "=")
+    IF eq >= 0 THEN
+        op$ = "="
+        DIM lhs$ = LEFT$(body$, eq)
+        IF RIGHT$(lhs$, 1) = "!" THEN
+            op$ = "!="
+            lhs$ = LEFT$(lhs$, LEN(lhs$) - 1)
+        ENDIF
+        want$ = Unquote$(TRIM$(MID$(body$, eq + 1)))
+        body$ = TRIM$(lhs$)
+    ENDIF
+    DIM kind$ = "child"
+    IF body$ = "last()" THEN kind$ = "last"
+    IF body$ = "text()" THEN kind$ = "text"
+    IF LEFT$(body$, 1) = "@" THEN
+        kind$ = "attr"
+        body$ = MID$(body$, 1)
+    ENDIF
+    IF op$ = "" ANDALSO IsDigits(body$) THEN kind$ = "pos"
+    DIM out AS MAP
+    out{"kind"} = kind$
+    out{"name"} = body$
+    out{"op"} = op$
+    out{"want"} = want$
+    out{"n"} = 0
+    IF kind$ = "pos" THEN out{"n"} = VAL(body$)
+    RETURN out
+ENDFUNC
+
+FUNC IsDigits(piece$)
+    IF LEN(piece$) = 0 THEN RETURN FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(piece$) - 1
+        IF INSTR("0123456789", MID$(piece$, i, 1)) < 0 THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+FUNC Unquote$(piece$)
+    IF LEN(piece$) < 2 THEN RETURN piece$
+    DIM head$ = LEFT$(piece$, 1)
+    IF (head$ = "'" ORELSE head$ = gQ$) ANDALSO RIGHT$(piece$, 1) = head$ THEN RETURN MID$(piece$, 1, LEN(piece$) - 2)
+    RETURN piece$
+ENDFUNC
+
+SUB Prime(doc)
+    gWalkKids = doc{"children"}
+    gWalkKinds = doc{"kind"}
+    gOut = []
+ENDSUB
+
+' The node and every element below it, in document order.
+FUNC Subtree(doc, from)
+    Prime(doc)
+    GatherAll(from)
+    RETURN Copy(gOut)
+ENDFUNC
+
+SUB GatherAll(id)
+    PUSH(gOut, id)
+    DIM kids = gWalkKids[id]
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        DIM kid = kids[i]
+        IF gWalkKinds[kid] = K_ELEMENT THEN GatherAll(kid)
+    NEXT i
+ENDSUB
+
+' The ids put back in document order by walking the tree below start.
+FUNC InOrder(doc, start, ids)
+    DIM bag AS MAP
+    DIM i = 0
+    FOR i = 0 TO LEN(ids) - 1
+        bag{STR$(ids[i])} = TRUE
+    NEXT i
+    Prime(doc)
+    GatherSome(start, bag)
+    RETURN Copy(gOut)
+ENDFUNC
+
+SUB GatherSome(id, bag)
+    IF MAP.EXISTS(bag, STR$(id)) THEN PUSH(gOut, id)
+    DIM kids = gWalkKids[id]
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        DIM kid = kids[i]
+        IF gWalkKinds[kid] = K_ELEMENT THEN GatherSome(kid, bag)
+    NEXT i
+ENDSUB
+
+FUNC Copy(arr)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(arr) - 1
+        PUSH(out, arr[i])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' An array of arrays with one cell replaced.
+FUNC WithCell(outer, at, cell)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(outer) - 1
+        IF i = at THEN
+            PUSH(out, cell)
+        ELSE
+            DIM kept_cell = outer[i]
+            PUSH(out, kept_cell)
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── the map view ───────────────────────────────────────────────
+
+' The xmltodict shape, as a map with the name of the element (or of the
+' root, for the document) as its one key. An element without attributes
+' or child elements is its text; any other one is a map with "@name" for
+' attributes, "#text" for its own text and one key per child name, an
+' array when the name repeats.
+EXPORT FUNC TOMAP(doc, id = 0)
+    DIM wrapped AS MAP
+    DIM el = id
+    IF KindOf(doc, id) = K_DOCUMENT THEN el = ROOT(doc)
+    IF KindOf(doc, el) <> K_ELEMENT THEN RETURN wrapped
+    DIM el_name$ = NAME$(doc, el)
+    IF IsLeaf(doc, el) THEN
+        DIM el_text$ = TEXT$(doc, el)
+        wrapped{el_name$} = el_text$
+    ELSE
+        wrapped{el_name$} = MapOf(doc, el)
+    ENDIF
+    RETURN wrapped
+ENDFUNC
+
+FUNC IsLeaf(doc, id)
+    RETURN LEN(KeysOf(doc, id)) = 0 ANDALSO LEN(Named(doc, id, "*")) = 0
+ENDFUNC
+
+' The map of an element that is not a leaf.
+FUNC MapOf(doc, id)
+    DIM out AS MAP
+    DIM keys = KeysOf(doc, id)
+    DIM vals = ValsOf(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        DIM attr_val$ = vals[i]
+        out{"@" + key$} = attr_val$
+    NEXT i
+    DIM own$ = OwnText$(doc, id)
+    IF NOT Blank(own$) THEN out{"#text"} = own$
+    DIM leafy AS MAP
+    DIM many AS MAP
+    DIM elems = Named(doc, id, "*")
+    FOR i = 0 TO LEN(elems) - 1
+        DIM kid = elems[i]
+        DIM kid_name$ = NAME$(doc, kid)
+        DIM kid_leaf = IsLeaf(doc, kid)
+        IF NOT MAP.EXISTS(out, kid_name$) THEN
+            IF kid_leaf THEN
+                DIM first_text$ = TEXT$(doc, kid)
+                out{kid_name$} = first_text$
+            ELSE
+                out{kid_name$} = MapOf(doc, kid)
+            ENDIF
+            leafy{kid_name$} = kid_leaf
+        ELSE
+            DIM bucket = []
+            IF MAP.EXISTS(many, kid_name$) THEN
+                bucket = out{kid_name$}
+            ELSEIF leafy{kid_name$} THEN
+                DIM prev_text$ = out{kid_name$}
+                PUSH(bucket, prev_text$)
+            ELSE
+                DIM prev_map = out{kid_name$}
+                PUSH(bucket, prev_map)
+            ENDIF
+            many{kid_name$} = TRUE
+            IF kid_leaf THEN
+                DIM next_text$ = TEXT$(doc, kid)
+                PUSH(bucket, next_text$)
+            ELSE
+                DIM next_map = MapOf(doc, kid)
+                PUSH(bucket, next_map)
+            ENDIF
+            out{kid_name$} = bucket
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── building ───────────────────────────────────────────────────
+
+' The per-node lists (children, attribute names and values) grow by PUSH
+' into the array read out of their cell. Taking something out builds the
+' outer array again, because assigning an array to a cell of an array of
+' arrays is element-wise.
+
+' A new document with a root element of that name.
+EXPORT FUNC DOCUMENT(tag$)
+    Reset("", 0)
+    DIM doc = Bundle()
+    DIM top = ELEMENT(doc, 0, tag$)
+    RETURN doc
+ENDFUNC
+
+' A new element under parent, with an optional text inside it.
+EXPORT FUNC ELEMENT(doc, parent, tag$, content$ = "")
+    IF tag$ = "" THEN THROW "XML: an element needs a name"
+    IF parent = 0 ANDALSO ROOT(doc) >= 0 THEN THROW "XML: the document already has a root element"
+    DIM id = Attach(doc,K_ELEMENT, tag$, parent, "")
+    IF content$ <> "" THEN
+        DIM leaf = Attach(doc,K_TEXT, "", id, content$)
+    ENDIF
+    RETURN id
+ENDFUNC
+
+EXPORT FUNC ADDTEXT(doc, parent, content$)
+    RETURN Attach(doc,K_TEXT, "", parent, content$)
+ENDFUNC
+
+EXPORT FUNC ADDCDATA(doc, parent, content$)
+    RETURN Attach(doc,K_CDATA, "", parent, content$)
+ENDFUNC
+
+EXPORT FUNC ADDCOMMENT(doc, parent, content$)
+    RETURN Attach(doc,K_COMMENT, "", parent, content$)
+ENDFUNC
+
+FUNC Attach(doc,kind, tag$, parent, body$)
+    DIM parent_kind = KindOf(doc, parent)
+    IF parent_kind <> K_ELEMENT ANDALSO parent_kind <> K_DOCUMENT THEN THROW "XML: node " + STR$(parent) + " cannot hold children"
+    IF parent_kind = K_DOCUMENT ANDALSO (kind = K_TEXT ORELSE kind = K_CDATA) THEN THROW "XML: text cannot stand outside the root element"
+    DIM kinds = doc{"kind"}
+    PUSH(kinds, kind)
+    doc{"kind"} = kinds
+    DIM names = doc{"name"}
+    PUSH(names, tag$)
+    doc{"name"} = names
+    DIM bodies = doc{"body"}
+    PUSH(bodies, body$)
+    doc{"body"} = bodies
+    DIM all_keys = doc{"keys"}
+    PUSH(all_keys, [])
+    doc{"keys"} = all_keys
+    DIM all_vals = doc{"vals"}
+    PUSH(all_vals, [])
+    doc{"vals"} = all_vals
+    DIM ups = doc{"parent"}
+    PUSH(ups, parent)
+    doc{"parent"} = ups
+    DIM id = LEN(kinds) - 1
+    DIM all_kids = doc{"children"}
+    PUSH(all_kids, [])
+    DIM mine = all_kids[parent]
+    PUSH(mine, id)
+    doc{"children"} = all_kids
+    RETURN id
+ENDFUNC
+
+' Sets an attribute, keeping its place when it is already there.
+EXPORT SUB SETATTR(doc, id, key$, content$)
+    DIM all_keys = doc{"keys"}
+    DIM all_vals = doc{"vals"}
+    DIM keys = all_keys[id]
+    DIM vals = all_vals[id]
+    DIM at = AttrIndex(doc, id, key$)
+    IF at < 0 THEN
+        PUSH(keys, key$)
+        PUSH(vals, content$)
+    ELSE
+        vals[at] = content$
+    ENDIF
+ENDSUB
+
+EXPORT SUB DELATTR(doc, id, key$)
+    DIM all_keys = doc{"keys"}
+    DIM all_vals = doc{"vals"}
+    DIM keys = all_keys[id]
+    DIM vals = all_vals[id]
+    DIM kept_keys = []
+    DIM kept_vals = []
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM have$ = keys[i]
+        IF have$ <> key$ THEN
+            DIM have_attr_val$ = vals[i]
+            PUSH(kept_keys, have$)
+            PUSH(kept_vals, have_attr_val$)
+        ENDIF
+    NEXT i
+    doc{"keys"} = WithCell(all_keys, id, kept_keys)
+    doc{"vals"} = WithCell(all_vals, id, kept_vals)
+ENDSUB
+
+' Replaces everything inside an element with one text.
+EXPORT SUB SETTEXT(doc, id, content$)
+    DIM all_kids = doc{"children"}
+    DIM old = all_kids[id]
+    DIM ups = doc{"parent"}
+    DIM i = 0
+    FOR i = 0 TO LEN(old) - 1
+        ups[old[i]] = -1
+    NEXT i
+    doc{"parent"} = ups
+    DIM nothing = []
+    doc{"children"} = WithCell(all_kids, id, nothing)
+    IF content$ <> "" THEN
+        DIM leaf = Attach(doc,K_TEXT, "", id, content$)
+    ENDIF
+ENDSUB
+
+' Takes a node out of its parent. It stays in the arrays, unreachable.
+EXPORT SUB DETACH(doc, id)
+    DIM up = PARENT(doc, id)
+    IF up >= 0 THEN
+        DIM all_kids = doc{"children"}
+        DIM old = all_kids[up]
+        DIM kept = []
+        DIM i = 0
+        FOR i = 0 TO LEN(old) - 1
+            IF old[i] <> id THEN PUSH(kept, old[i])
+        NEXT i
+        doc{"children"} = WithCell(all_kids, up, kept)
+        DIM ups = doc{"parent"}
+        ups[id] = -1
+        doc{"parent"} = ups
+    ENDIF
+ENDSUB
+
+' ── writing ────────────────────────────────────────────────────
+
+' The markup of a node. The document starts with the XML declaration.
+' indent$ is repeated per level; "" writes everything on one line. An
+' element holding text keeps its children on its own line, so no
+' whitespace is added to the text.
+EXPORT FUNC MARKUP$(doc, id = 0, indent$ = "  ")
+    RETURN Emit$(doc, id, indent$, 0)
+ENDFUNC
+
+EXPORT SUB WRITEFILE(doc, path$, indent$ = "  ")
+    TXTWRITER path$, MARKUP$(doc, 0, indent$) + gNL$
+ENDSUB
+
+FUNC Emit$(doc, id, indent$, depth)
+    DIM k = KindOf(doc, id)
+    IF k = K_TEXT THEN RETURN ESCAPE$(BodyOf$(doc, id))
+    IF k = K_CDATA THEN RETURN "<![CDATA[" + BodyOf$(doc, id) + "]]>"
+    IF k = K_COMMENT THEN RETURN "<!--" + BodyOf$(doc, id) + "-->"
+    IF k = K_PI THEN
+        DIM pi_body$ = BodyOf$(doc, id)
+        IF pi_body$ = "" THEN RETURN "<?" + NAME$(doc, id) + "?>"
+        RETURN "<?" + NAME$(doc, id) + " " + pi_body$ + "?>"
+    ENDIF
+    IF k < 0 THEN RETURN ""
+    DIM kids = CHILDREN(doc, id)
+    DIM parts = []
+    DIM i = 0
+    IF k = K_DOCUMENT THEN
+        DIM head$ = "<?xml version=" + gQ$ + "1.0" + gQ$ + " encoding=" + gQ$ + "UTF-8" + gQ$ + "?>"
+        PUSH(parts, head$)
+        FOR i = 0 TO LEN(kids) - 1
+            DIM top$ = Emit$(doc, kids[i], indent$, 0)
+            PUSH(parts, top$)
+        NEXT i
+        IF indent$ = "" THEN RETURN JOIN(parts, "")
+        RETURN JOIN(parts, gNL$)
+    ENDIF
+    DIM qname$ = NAME$(doc, id)
+    DIM open$ = "<" + qname$ + AttrText$(doc, id)
+    IF LEN(kids) = 0 THEN RETURN open$ + "/>"
+    DIM inline = FALSE
+    IF indent$ = "" ORELSE HasText(doc, id) THEN inline = TRUE
+    PUSH(parts, open$ + ">")
+    DIM pad$ = REPEAT$(indent$, depth + 1)
+    FOR i = 0 TO LEN(kids) - 1
+        DIM piece$ = Emit$(doc, kids[i], indent$, depth + 1)
+        IF inline THEN
+            PUSH(parts, piece$)
+        ELSE
+            PUSH(parts, gNL$ + pad$ + piece$)
+        ENDIF
+    NEXT i
+    IF NOT inline THEN PUSH(parts, gNL$ + REPEAT$(indent$, depth))
+    PUSH(parts, "</" + qname$ + ">")
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+FUNC HasText(doc, id)
+    DIM kids = CHILDREN(doc, id)
+    DIM i = 0
+    FOR i = 0 TO LEN(kids) - 1
+        DIM kk = KindOf(doc, kids[i])
+        IF kk = K_TEXT ORELSE kk = K_CDATA THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+FUNC AttrText$(doc, id)
+    DIM keys = KeysOf(doc, id)
+    DIM vals = ValsOf(doc, id)
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        DIM attr_val$ = vals[i]
+        PUSH(parts, " " + key$ + "=" + gQ$ + AttrEscape$(attr_val$) + gQ$)
+    NEXT i
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' ── entities ───────────────────────────────────────────────────
+
+' The five predefined entities and the numeric references. An entity
+' that is not one of those stays as it was written.
+EXPORT FUNC UNESCAPE$(content$)
+    IF INSTR(content$, "&") < 0 THEN RETURN content$
+    DIM parts = []
+    DIM i = 0
+    DO WHILE i < LEN(content$)
+        DIM amp = INSTR(i, content$, "&")
+        IF amp < 0 THEN
+            PUSH(parts, MID$(content$, i))
+            EXITDO
+        ENDIF
+        IF amp > i THEN PUSH(parts, MID$(content$, i, amp - i))
+        DIM semi = INSTR(amp, content$, ";")
+        DIM piece$ = ""
+        IF semi > amp ANDALSO semi - amp <= 10 THEN piece$ = Entity$(MID$(content$, amp + 1, semi - amp - 1))
+        IF piece$ = "" THEN
+            PUSH(parts, "&")
+            i = amp + 1
+        ELSE
+            PUSH(parts, piece$)
+            i = semi + 1
+        ENDIF
+    LOOP
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+FUNC Entity$(ref$)
+    IF ref$ = "amp" THEN RETURN "&"
+    IF ref$ = "lt" THEN RETURN "<"
+    IF ref$ = "gt" THEN RETURN ">"
+    IF ref$ = "quot" THEN RETURN gQ$
+    IF ref$ = "apos" THEN RETURN "'"
+    DIM code = 0
+    IF LEFT$(ref$, 2) = "#x" THEN
+        code = VAL("0x" + MID$(ref$, 2))
+    ELSEIF LEFT$(ref$, 1) = "#" ANDALSO IsDigits(MID$(ref$, 1)) THEN
+        code = VAL(MID$(ref$, 1))
+    ENDIF
+    IF code <= 0 ORELSE code > 1114111 THEN RETURN ""
+    RETURN Utf8$(code)
+ENDFUNC
+
+FUNC Utf8$(code)
+    IF code < 128 THEN RETURN CHR$(code)
+    IF code < 2048 THEN RETURN CHR$(192 + code \ 64) + CHR$(128 + (code MOD 64))
+    IF code < 65536 THEN RETURN CHR$(224 + code \ 4096) + CHR$(128 + ((code \ 64) MOD 64)) + CHR$(128 + (code MOD 64))
+    RETURN CHR$(240 + code \ 262144) + CHR$(128 + ((code \ 4096) MOD 64)) + CHR$(128 + ((code \ 64) MOD 64)) + CHR$(128 + (code MOD 64))
+ENDFUNC
+
+' Text as it may stand between tags.
+EXPORT FUNC ESCAPE$(content$)
+    RETURN REPLACE$(REPLACE$(REPLACE$(content$, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+ENDFUNC
+
+FUNC AttrEscape$(content$)
+    DIM out$ = REPLACE$(ESCAPE$(content$), gQ$, "&quot;")
+    out$ = REPLACE$(out$, CHR$(9), "&#9;")
+    RETURN REPLACE$(out$, gNL$, "&#10;")
+ENDFUNC

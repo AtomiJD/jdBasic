@@ -1,0 +1,270 @@
+' XML: parsing and its errors with their positions, entities, namespaces,
+' the path subset, the map view, building and writing, and the two
+' XRechnung 3.0 invoices the acceptance asks for, in UBL and in CII.
+
+IMPORT TESTKIT, XML
+
+DIM NL$ = CHR$(10)
+DIM Q$ = CHR$(34)
+
+FUNC Broken(src$)
+    RETURN XML.PARSE(src$)
+ENDFUNC
+
+FUNC SecondRoot(doc)
+    RETURN XML.ELEMENT(doc, 0, "again")
+ENDFUNC
+
+FUNC ErrorOf$(src$)
+    DIM msg$ = ""
+    TRY
+        DIM parsed = XML.PARSE(src$)
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+TESTKIT.SUITE("parsing")
+DIM one = XML.PARSE("<a x=" + Q$ + "1" + Q$ + " y='2'><b>t</b><c/></a>")
+TESTKIT.EQ(XML.SIZE(one), 5, "document, three elements and a text")
+TESTKIT.EQ(XML.ROOT(one), 1, "the root element")
+TESTKIT.EQ(XML.KIND$(one, 0), "document", "node zero is the document")
+TESTKIT.EQ(XML.KIND$(one, 1), "element", "an element")
+TESTKIT.EQ(XML.KIND$(one, 3), "text", "a text")
+TESTKIT.EQ(XML.NAME$(one, 1), "a", "the name")
+TESTKIT.EQ(XML.ATTR$(one, 1, "x"), "1", "a double quoted attribute")
+TESTKIT.EQ(XML.ATTR$(one, 1, "y"), "2", "a single quoted one")
+TESTKIT.EQ(XML.ATTR$(one, 1, "z", "none"), "none", "the fallback of a missing one")
+TESTKIT.ISTRUE(XML.HAS(one, 1, "x"), "HAS of one that is there")
+TESTKIT.ISFALSE(XML.HAS(one, 1, "X"), "names are case sensitive")
+TESTKIT.EQ(JOIN(XML.ATTRNAMES(one, 1), ","), "x,y", "the names in written order")
+DIM one_attrs = XML.ATTRS(one, 1)
+TESTKIT.EQ(one_attrs{"y"}, "2", "the attributes as a map")
+TESTKIT.EQ(LEN(XML.CHILDREN(one, 1)), 2, "two children")
+TESTKIT.EQ(XML.PARENT(one, 3), 2, "the text hangs under b")
+TESTKIT.EQ(XML.TEXT$(one, 1), "t", "the text of the root")
+TESTKIT.EQ(LEN(XML.CHILDREN(one, 4)), 0, "an empty element has no children")
+DIM spaced$ = "<list>" + NL$ + "  <item>1</item>" + NL$ + "  <item> 2 </item>" + NL$ + "</list>"
+DIM tight = XML.PARSE(spaced$)
+TESTKIT.EQ(LEN(XML.CHILDREN(tight, 1)), 2, "whitespace between elements is dropped")
+TESTKIT.EQ(XML.TEXT$(tight, XML.FIND(tight, "list/item[2]")), " 2 ", "text inside an element is kept as it is")
+DIM opts AS MAP
+opts{"keep_space"} = TRUE
+DIM loose = XML.PARSE(spaced$, opts)
+TESTKIT.EQ(LEN(XML.CHILDREN(loose, 1)), 5, "unless keep_space is set")
+DIM mixed = XML.PARSE("<p>one <b>two</b> three</p>")
+TESTKIT.EQ(XML.TEXT$(mixed, 1), "one two three", "mixed content keeps its spaces")
+DIM misc = XML.PARSE("<?xml version='1.0'?>" + NL$ + "<!DOCTYPE note [<!ENTITY x 'y'>]>" + NL$ + "<!-- head -->" + NL$ + "<?style href='a.css'?>" + NL$ + "<note><![CDATA[a < b & c]]></note>")
+TESTKIT.EQ(XML.KIND$(misc, 1), "comment", "the declaration and the doctype leave no node, a comment does")
+TESTKIT.EQ(XML.TEXT$(misc, 1), " head ", "the content of the comment")
+TESTKIT.EQ(XML.KIND$(misc, 2), "pi", "a processing instruction")
+TESTKIT.EQ(XML.NAME$(misc, 2), "style", "its target")
+TESTKIT.EQ(XML.TEXT$(misc, 2), "href='a.css'", "and its content")
+TESTKIT.EQ(XML.ROOT(misc), 3, "the root after them")
+TESTKIT.EQ(XML.KIND$(misc, 4), "cdata", "a CDATA section")
+TESTKIT.EQ(XML.TEXT$(misc, 3), "a < b & c", "its text is taken as it stands")
+DIM crlf = XML.PARSE(CHR$(239) + CHR$(187) + CHR$(191) + "<a>" + CHR$(13) + NL$ + "x</a>")
+TESTKIT.EQ(XML.TEXT$(crlf, 1), NL$ + "x", "a byte order mark is skipped and CR LF becomes LF")
+TESTKIT.EQ(XML.ATTR$(XML.PARSE("<a v='one" + NL$ + "two" + CHR$(9) + "three'/>"), 1, "v"), "one two three", "line breaks and tabs in a value become spaces")
+
+TESTKIT.SUITE("errors")
+TESTKIT.THROWS(Broken@, "<a><b></a>", "a closing tag that does not match")
+TESTKIT.THROWS(Broken@, "<a>", "an element never closed")
+TESTKIT.THROWS(Broken@, "<a/><b/>", "a second root")
+TESTKIT.THROWS(Broken@, "text<a/>", "text before the root")
+TESTKIT.THROWS(Broken@, "<a x='1' x='2'/>", "an attribute twice")
+TESTKIT.THROWS(Broken@, "<a x=1/>", "an unquoted value")
+TESTKIT.THROWS(Broken@, "<a x/>", "an attribute without a value")
+TESTKIT.THROWS(Broken@, "<a x='<'/>", "a < inside a value")
+TESTKIT.THROWS(Broken@, "<a><!-- open</a>", "a comment never closed")
+TESTKIT.THROWS(Broken@, "<!-- only -->", "no root element")
+TESTKIT.THROWS(Broken@, "</a>", "a closing tag with nothing open")
+TESTKIT.THROWS(Broken@, "<1a/>", "a name that starts with a digit")
+TESTKIT.THROWS(Broken@, "", "an empty text")
+DIM where$ = ErrorOf$("<root>" + NL$ + "  <item>" + NL$ + "  </itme>" + NL$ + "</root>")
+TESTKIT.ISTRUE(INSTR(where$, "XML line 3, column 3: </itme> found where </item> was expected") >= 0, "the message names line, column and both names")
+TESTKIT.ISTRUE(INSTR(ErrorOf$("<a>" + NL$ + "<b>"), "<b> is never closed") >= 0, "the element left open is named")
+TESTKIT.ISTRUE(INSTR(ErrorOf$("<a x='1' x='2'/>"), "column 10:") >= 0, "the column of a repeated attribute")
+
+TESTKIT.SUITE("entities")
+TESTKIT.EQ(XML.UNESCAPE$("&lt;a&gt; &amp; &quot;q&quot; &apos;s&apos;"), "<a> & " + Q$ + "q" + Q$ + " 's'", "the five predefined ones")
+TESTKIT.EQ(XML.UNESCAPE$("&#65;&#x42;&#x63;"), "ABc", "decimal and hexadecimal references")
+TESTKIT.EQ(XML.UNESCAPE$("&#228;"), CHR$(195) + CHR$(164), "a code point above ASCII comes out as UTF-8")
+TESTKIT.EQ(LEN(XML.UNESCAPE$("&#x20AC;")), 3, "the euro sign as three bytes")
+TESTKIT.EQ(LEN(XML.UNESCAPE$("&#x1F600;")), 4, "a four byte one")
+TESTKIT.EQ(XML.UNESCAPE$("&nbsp; &copy; a & b"), "&nbsp; &copy; a & b", "an entity from a DTD and a bare ampersand stay")
+TESTKIT.EQ(XML.TEXT$(XML.PARSE("<a>5 &lt; 6</a>"), 1), "5 < 6", "text is decoded while parsing")
+TESTKIT.EQ(XML.ATTR$(XML.PARSE("<a t='x &amp; y&#10;z'/>"), 1, "t"), "x & y" + NL$ + "z", "a value too, where a reference keeps its line break")
+TESTKIT.EQ(XML.ESCAPE$("a < b & c > d"), "a &lt; b &amp; c &gt; d", "ESCAPE$ for text")
+
+TESTKIT.SUITE("namespaces")
+DIM ns = XML.PARSE("<r xmlns='urn:default' xmlns:p='urn:p'><p:a><b/><p:c xmlns:p='urn:inner'/></p:a><q:d xmlns:q='urn:q' xml:lang='de'/></r>")
+TESTKIT.EQ(XML.URI$(ns, 1), "urn:default", "the default namespace of the root")
+DIM pa = XML.FIND(ns, "/r/p:a")
+TESTKIT.EQ(XML.PREFIX$(ns, pa), "p", "the prefix")
+TESTKIT.EQ(XML.LOCAL$(ns, pa), "a", "the local name")
+TESTKIT.EQ(XML.NAME$(ns, pa), "p:a", "the name as written")
+TESTKIT.EQ(XML.URI$(ns, pa), "urn:p", "a prefix declared above")
+TESTKIT.EQ(XML.URI$(ns, XML.FIND(ns, "//b")), "urn:default", "an unprefixed child inherits the default")
+TESTKIT.EQ(XML.URI$(ns, XML.FIND(ns, "//p:c")), "urn:inner", "a prefix declared again on the element wins")
+TESTKIT.EQ(XML.URI$(ns, XML.FIND(ns, "//d")), "urn:q", "a prefix declared on the element itself")
+TESTKIT.EQ(XML.ATTR$(ns, XML.FIND(ns, "//d"), "xml:lang"), "de", "a prefixed attribute is read by its written name")
+TESTKIT.EQ(XML.URI$(XML.PARSE("<plain/>"), 1), "", "no namespace at all")
+TESTKIT.EQ(LEN(XML.FINDALL(ns, "//{urn:p}a")), 1, "a name in braces is matched by namespace")
+TESTKIT.EQ(LEN(XML.FINDALL(ns, "//{urn:p}*")), 1, "every element of one namespace")
+TESTKIT.EQ(LEN(XML.FINDALL(ns, "//p:*")), 2, "every element written with one prefix")
+TESTKIT.EQ(LEN(XML.FINDALL(ns, "//{urn:default}*")), 2, "the default namespace in braces")
+
+TESTKIT.SUITE("paths")
+DIM lib = XML.PARSE("<library><shelf id='s1' room='a'><book lang='en'><title>Dune</title><year>1965</year></book><book lang='de'><title>Momo</title><year>1973</year></book></shelf><shelf id='s2' room='b'><book lang='en'><title>Emma</title><year>1815</year><book lang='fr'><title>Nested</title></book></book></shelf></library>")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "/library/shelf")), 2, "an absolute path")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "library/shelf/book")), 3, "a relative one from the document")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "//book")), 4, "every book at any depth")
+TESTKIT.EQ(JOIN(XML.VALUES(lib, "//book/title"), ","), "Dune,Momo,Emma,Nested", "their titles in document order")
+TESTKIT.EQ(JOIN(XML.VALUES(lib, "//shelf//title"), ","), "Dune,Momo,Emma,Nested", "a descendant step in the middle")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "//book//title")), 4, "a title reached from two books is counted once")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "/library/*")), 2, "any element")
+TESTKIT.EQ(XML.VALUE$(lib, "//shelf[2]/book/title"), "Emma", "a position")
+TESTKIT.EQ(XML.VALUE$(lib, "/library/shelf[1]/book[last()]/title"), "Momo", "the last one")
+TESTKIT.EQ(JOIN(XML.VALUES(lib, "//book[1]/title"), ","), "Dune,Emma,Nested", "a position counts among the children of one parent")
+TESTKIT.EQ(XML.VALUE$(lib, "//shelf[@room='b']/@id"), "s2", "an attribute test and an attribute value")
+TESTKIT.EQ(JOIN(XML.VALUES(lib, "//book[@lang='en']/title"), ","), "Dune,Emma", "every book in one language")
+TESTKIT.EQ(JOIN(XML.VALUES(lib, "//book[@lang!='en']/title"), ","), "Momo,Nested", "and every other one")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "//shelf[@id]")), 2, "an attribute that is there")
+TESTKIT.EQ(XML.VALUE$(lib, "//book[year='1973']/title"), "Momo", "a child with a value")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "//book[book]")), 1, "a child that is there")
+TESTKIT.EQ(XML.VALUE$(lib, "//title[text()='Emma']/../year"), "1815", "a text test and the parent step")
+TESTKIT.EQ(XML.VALUE$(lib, "/library/shelf[1]/book[2][@lang='de']/title"), "Momo", "predicates apply one after the other")
+TESTKIT.EQ(XML.VALUE$(lib, "/library/shelf[1]/book[2][@lang='en']/title", "none"), "none", "so a position and then a test can miss")
+TESTKIT.EQ(JOIN(XML.VALUES(lib, "//book/@lang"), ","), "en,de,en,fr", "attribute values")
+TESTKIT.EQ(LEN(XML.VALUES(lib, "/library/shelf[1]/@*")), 2, "every attribute value")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, "//book/@lang")), 4, "FINDALL with an attribute gives the elements that have it")
+DIM shelf2 = XML.FIND(lib, "/library/shelf[2]")
+TESTKIT.EQ(XML.VALUE$(lib, "book/title", "", shelf2), "Emma", "a path from a node")
+TESTKIT.EQ(LEN(XML.FINDALL(lib, ".//title", shelf2)), 2, "a descendant search under a node")
+TESTKIT.EQ(XML.VALUE$(lib, "@room", "", shelf2), "b", "an attribute of the node itself")
+TESTKIT.EQ(XML.VALUE$(lib, ".", "", XML.FIND(lib, "//year")), "1965", "the node itself")
+TESTKIT.EQ(XML.VALUE$(lib, "//book[1]/text()", "none"), "none", "text() gives only the direct text")
+TESTKIT.EQ(LEN(XML.ELEMENTS(lib, shelf2, "book")), 1, "ELEMENTS with a name test")
+TESTKIT.EQ(XML.FIND(lib, "//magazine"), -1, "nothing found is -1")
+TESTKIT.EQ(XML.VALUE$(lib, "//magazine", "none"), "none", "and VALUE$ answers its fallback")
+
+TESTKIT.SUITE("the map view")
+DIM order_map = XML.TOMAP(XML.PARSE("<order id='7'><item>a</item><item>b</item><note>hi</note><total cur='EUR'>9.5</total></order>"))
+DIM order = order_map{"order"}
+TESTKIT.EQ(order{"@id"}, "7", "an attribute under @")
+DIM items = order{"item"}
+TESTKIT.EQ(LEN(items), 2, "a repeated name becomes an array")
+TESTKIT.EQ(items[1], "b", "in order")
+TESTKIT.EQ(order{"note"}, "hi", "a plain element is its text")
+DIM total = order{"total"}
+TESTKIT.EQ(total{"#text"}, "9.5", "an element with attributes keeps its text under #text")
+TESTKIT.EQ(total{"@cur"}, "EUR", "and its attributes under @")
+
+TESTKIT.SUITE("building and writing")
+DIM made = XML.DOCUMENT("invoice")
+DIM top = XML.ROOT(made)
+XML.SETATTR(made, top, "xmlns", "urn:example")
+XML.SETATTR(made, top, "number", "R-1")
+DIM who = XML.ELEMENT(made, top, "customer", "Müller & Söhne")
+XML.SETATTR(made, who, "id", "C" + Q$ + "7")
+DIM lines = XML.ELEMENT(made, top, "lines")
+DIM l1 = XML.ELEMENT(made, lines, "line", "Widget")
+XML.SETATTR(made, l1, "qty", "2")
+DIM l2 = XML.ELEMENT(made, lines, "line", "Gadget")
+DIM remark = XML.ADDCOMMENT(made, lines, " two lines ")
+XML.SETATTR(made, top, "number", "R-2")
+TESTKIT.EQ(JOIN(XML.ATTRNAMES(made, top), ","), "xmlns,number", "setting an attribute again keeps its place")
+TESTKIT.EQ(XML.ATTR$(made, top, "number"), "R-2", "and changes its value")
+TESTKIT.EQ(XML.VALUE$(made, "/invoice/lines/line[2]"), "Gadget", "a built tree answers paths")
+TESTKIT.EQ(XML.URI$(made, l1), "urn:example", "and knows its namespaces")
+DIM expected = []
+PUSH(expected, "<?xml version=" + Q$ + "1.0" + Q$ + " encoding=" + Q$ + "UTF-8" + Q$ + "?>")
+PUSH(expected, "<invoice xmlns=" + Q$ + "urn:example" + Q$ + " number=" + Q$ + "R-2" + Q$ + ">")
+PUSH(expected, "  <customer id=" + Q$ + "C&quot;7" + Q$ + ">Müller &amp; Söhne</customer>")
+PUSH(expected, "  <lines>")
+PUSH(expected, "    <line qty=" + Q$ + "2" + Q$ + ">Widget</line>")
+PUSH(expected, "    <line>Gadget</line>")
+PUSH(expected, "    <!-- two lines -->")
+PUSH(expected, "  </lines>")
+PUSH(expected, "</invoice>")
+TESTKIT.EQ(XML.MARKUP$(made), JOIN(expected, NL$), "written with two spaces per level, values escaped")
+TESTKIT.EQ(XML.MARKUP$(made, lines, ""), "<lines><line qty=" + Q$ + "2" + Q$ + ">Widget</line><line>Gadget</line><!-- two lines --></lines>", "one node on one line")
+XML.DELATTR(made, l1, "qty")
+XML.SETTEXT(made, l2, "Gizmo")
+XML.DETACH(made, remark)
+TESTKIT.EQ(XML.MARKUP$(made, lines, ""), "<lines><line>Widget</line><line>Gizmo</line></lines>", "an attribute deleted, a text replaced, a comment taken out")
+DIM hollow = XML.ELEMENT(made, top, "empty")
+TESTKIT.EQ(XML.MARKUP$(made, hollow), "<empty/>", "an element without children closes itself")
+DIM para = XML.ELEMENT(made, top, "p", "one ")
+DIM bold = XML.ELEMENT(made, para, "b", "two")
+DIM tail_text = XML.ADDTEXT(made, para, " three")
+DIM raw_part = XML.ADDCDATA(made, para, "<raw>")
+TESTKIT.EQ(XML.MARKUP$(made, para), "<p>one <b>two</b> three<![CDATA[<raw>]]></p>", "mixed content stays on one line")
+TESTKIT.THROWS(SecondRoot@, made, "a second root is refused")
+DIM again = XML.PARSE(XML.MARKUP$(made))
+TESTKIT.EQ(XML.MARKUP$(again), XML.MARKUP$(made), "written, read and written again gives the same text")
+
+DIM folder$ = MKTEMP$("xmltest")
+MKDIR folder$
+DIM out_path$ = folder$ + "/built.xml"
+XML.WRITEFILE(made, out_path$)
+TESTKIT.EQ(XML.MARKUP$(XML.PARSEFILE(out_path$)), XML.MARKUP$(made), "WRITEFILE and PARSEFILE round trip")
+IF OS.GETOS() = "WINDOWS" THEN
+    DIM latin_path$ = folder$ + "/latin.xml"
+    TXTWRITER latin_path$, "<?xml version='1.0' encoding='ISO-8859-1'?><n>Grüße</n>", FALSE, "cp1252"
+    TESTKIT.EQ(XML.VALUE$(XML.PARSEFILE(latin_path$), "/n"), "Grüße", "a declared ISO-8859-1 file is decoded to UTF-8")
+    KILL latin_path$
+ELSE
+    TESTKIT.SKIP("codepage decoding is Windows-only")
+ENDIF
+KILL out_path$
+RMDIR folder$
+
+TESTKIT.SUITE("XRechnung 3.0 in UBL")
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "xrechnung_ubl.xml") THEN base$ = "fixtures/"
+DIM inv = XML.PARSEFILE(base$ + "xrechnung_ubl.xml")
+DIM inv_root = XML.ROOT(inv)
+TESTKIT.EQ(XML.NAME$(inv, inv_root), "ubl:Invoice", "the root element")
+TESTKIT.EQ(XML.URI$(inv, inv_root), "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2", "in the UBL invoice namespace")
+TESTKIT.EQ(XML.VALUE$(inv, "/ubl:Invoice/cac:LegalMonetaryTotal/cbc:PayableAmount"), "336.9", "the amount due, by its full path")
+TESTKIT.EQ(XML.VALUE$(inv, "//cbc:PayableAmount/@currencyID"), "EUR", "its currency")
+TESTKIT.EQ(XML.VALUE$(inv, "//{urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2}TaxExclusiveAmount"), "314.86", "the net total by namespace, whatever the prefix")
+TESTKIT.EQ(XML.VALUE$(inv, "//TaxAmount"), "22.04", "the tax by its local name")
+TESTKIT.EQ(XML.VALUE$(inv, "/ubl:Invoice/cbc:CustomizationID"), "urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0", "the XRechnung 3.0 specification id")
+TESTKIT.EQ(LEN(XML.FINDALL(inv, "//cac:InvoiceLine")), 2, "two invoice lines")
+TESTKIT.EQ(JOIN(XML.VALUES(inv, "//cac:InvoiceLine/cbc:LineExtensionAmount"), " + "), "288.79 + 26.07", "their amounts")
+TESTKIT.EQ(XML.VALUE$(inv, "//cac:InvoiceLine[cbc:ID='Porto + Versandkosten']/cac:Price/cbc:PriceAmount"), "26.07", "a line picked by its id")
+TESTKIT.EQ(XML.VALUE$(inv, "//cac:AccountingSupplierParty//cbc:CityName"), "[Seller city]", "the city of the seller")
+TESTKIT.EQ(XML.VALUE$(inv, "//cac:AccountingSupplierParty//cbc:EndpointID[@schemeID='EM']"), "seller@email.de", "the electronic address of the seller")
+TESTKIT.ISTRUE(INSTR(XML.VALUE$(inv, "/ubl:Invoice/cbc:Note"), "Geschäftsbedingungen") >= 0, "a note with an umlaut, as UTF-8")
+TESTKIT.EQ(XML.VALUE$(inv, "//cac:PayeeFinancialAccount/cbc:ID"), "DE79000000001234567890", "the account next to a comment")
+DIM amounts = XML.VALUES(inv, "//cac:InvoiceLine/cbc:LineExtensionAmount")
+DIM line_sum = 0.0
+DIM i = 0
+FOR i = 0 TO LEN(amounts) - 1
+    DIM amount$ = amounts[i]
+    line_sum = line_sum + VAL(amount$)
+NEXT i
+TESTKIT.NEAR(line_sum, VAL(XML.VALUE$(inv, "//cac:LegalMonetaryTotal/cbc:LineExtensionAmount")), 0.001, "the lines add up to the total")
+DIM written$ = XML.MARKUP$(inv)
+DIM reread = XML.PARSE(written$)
+TESTKIT.EQ(XML.SIZE(reread), XML.SIZE(inv), "written back, it parses to as many nodes")
+TESTKIT.EQ(XML.MARKUP$(reread), written$, "and to the same tree")
+DIM inv_map = XML.TOMAP(inv)
+DIM inv_body = inv_map{"ubl:Invoice"}
+DIM inv_total = inv_body{"cac:LegalMonetaryTotal"}
+DIM payable = inv_total{"cbc:PayableAmount"}
+TESTKIT.EQ(payable{"#text"}, "336.9", "the amount through the map view")
+TESTKIT.EQ(LEN(inv_body{"cac:InvoiceLine"}), 2, "the lines as an array there")
+
+TESTKIT.SUITE("XRechnung 3.0 in CII")
+DIM cii = XML.PARSEFILE(base$ + "xrechnung_cii.xml")
+TESTKIT.EQ(XML.NAME$(cii, XML.ROOT(cii)), "rsm:CrossIndustryInvoice", "the root element")
+TESTKIT.EQ(XML.VALUE$(cii, "//ram:DuePayableAmount"), "336.9", "the amount due in the other syntax")
+TESTKIT.EQ(XML.VALUE$(cii, "//udt:DateTimeString/@format"), "102", "a date format attribute")
+TESTKIT.EQ(XML.MARKUP$(XML.PARSE(XML.MARKUP$(cii))), XML.MARKUP$(cii), "it round trips too")
+
+TESTKIT.REPORT()
