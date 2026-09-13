@@ -1,0 +1,79 @@
+' DB demo: a small shop database built by migrations, filled from maps and
+' from a table of rows, and asked questions through the query builder.
+
+IMPORT DB
+
+FUNC Pad$(text_in$, width)
+    RETURN LEFT$(text_in$ + "                        ", width)
+ENDFUNC
+
+DIM h = DB.OPEN(":memory:")
+
+DIM steps = []
+PUSH(steps, "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, city TEXT)")
+PUSH(steps, "CREATE TABLE orders (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id), amount REAL NOT NULL, placed TEXT NOT NULL)")
+PUSH(steps, "CREATE INDEX orders_by_customer ON orders (customer_id)")
+DIM applied = DB.MIGRATESQL(h, steps)
+PRINT "Migrations applied: "; applied; ", database version "; DB.VERSION(h)
+PRINT "Running them again applies "; DB.MIGRATESQL(h, steps)
+PRINT
+
+DIM added = DB.INSERTMANY(h, "customers", ["name", "city"], [["Ada", "London"], ["Bob", "Berlin"], ["Cy", "Paris"], ["Dee", "Berlin"]])
+PRINT "Customers from a table of rows: "; added
+DIM placed = DB.INSERTMANY(h, "orders", ["customer_id", "amount", "placed"], [[1, 120.5, "2026-09-01"], [1, 80, "2026-09-03"], [2, 45.25, "2026-09-02"], [3, 310, "2026-09-04"], [4, 9.99, "2026-09-05"], [2, 99.5, "2026-09-06"]])
+PRINT "Orders: "; placed
+
+DIM odd_id = DB.INSERT(h, "customers", {"name": "O'Brien'); DROP TABLE orders; --", "city": "Dublin"})
+PRINT "A customer from a map, id "; odd_id; ", written as "; DB.QUOTE$("O'Brien'); DROP TABLE orders; --")
+PRINT "Tables still there: "; DB.TABLES(h)
+DIM eve_id = DB.INSERT(h, "customers", {"name": "Eve"})
+PRINT
+
+DIM q = DB.FROM("customers c")
+DB.SELECT(q, "c.name, c.city, count(o.id) AS n_orders, total(o.amount) AS spent")
+DB.JOIN(q, "orders o", "o.customer_id = c.id")
+DB.WHERE(q, "o.placed >= ?", ["2026-09-02"])
+DB.GROUPBY(q, "c.id")
+DB.HAVING(q, "total(o.amount) > ?", [50])
+DB.ORDERBY(q, "spent DESC")
+PRINT "Best customers since 2 September:"
+PRINT "  "; DB.SQL$(q)
+DIM best = DB.ROWS(h, q)
+DIM k = 0
+FOR k = 0 TO LEN(best) - 1
+    DIM rec = best[k]
+    DIM name$ = rec{"name"}
+    DIM city$ = rec{"city"}
+    PRINT "  "; Pad$(name$, 6); Pad$(city$, 8); rec{"n_orders"}; " orders  "; FORMAT$("{:8.2f}", rec{"spent"})
+NEXT k
+PRINT
+
+DIM moved = DB.UPSERT(h, "customers", {"name": "Bob", "city": "Hamburg"}, "name")
+DIM q_bob = DB.FROM("customers")
+DB.WHERE(q_bob, "name = ?", ["Bob"])
+DIM bob = DB.FIRST(h, q_bob)
+PRINT "UPSERT moved Bob to "; bob{"city"}; " and kept id "; bob{"id"}
+DIM raised = DB.EXEC(h, "UPDATE orders SET amount = round(amount * ?, 2) WHERE placed < ?", [1.1, "2026-09-03"])
+PRINT "Orders repriced: "; raised
+DIM small = DB.DELETE(h, "orders", "amount < ?", [10])
+PRINT "Small orders removed: "; small
+
+DIM q_eve = DB.FROM("customers")
+DB.WHERE(q_eve, "id = ?", [eve_id])
+DIM eve = DB.FIRST(h, q_eve)
+IF MAP.EXISTS(eve, "city") THEN
+    PRINT "Eve lives in "; eve{"city"}
+ELSE
+    PRINT "Eve has no city on record (NULL)"
+ENDIF
+PRINT
+
+DB.BEGIN(h)
+DIM wiped = DB.DELETE(h, "orders", "1", [])
+PRINT "Inside a transaction "; wiped; " orders deleted, "; DB.COUNT(h, DB.FROM("orders")); " left"
+DB.ROLLBACK(h)
+PRINT "After ROLLBACK "; DB.COUNT(h, DB.FROM("orders")); " orders"
+DIM revenue = DB.VALUE(h, DB.STMT("SELECT total(amount) FROM orders", []))
+PRINT "Revenue: "; FORMAT$("{:.2f}", revenue)
+
+DB.CLOSE(h)

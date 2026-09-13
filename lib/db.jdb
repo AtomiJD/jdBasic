@@ -1,0 +1,633 @@
+' db.jdb - SQLite without hand-written SQL strings: a query builder whose
+' values always become quoted literals, rows as maps, inserts, upserts,
+' updates and deletes from maps, tables created from a column map or an
+' example row, and numbered migrations recorded in a version table. Built
+' on SQL.EXEC, SQL.TABLE and SQL.COLUMNS, so it runs under -c. The
+' sqlalchemy core and dataset ground.
+'
+'   IMPORT DB
+'   DIM h = DB.OPEN("shop.db")
+'   DIM applied = DB.MIGRATE(h, "migrations")
+'   DIM id = DB.INSERT(h, "customers", {"name": "Ada", "city": "London"})
+'   DIM q = DB.FROM("customers")
+'   DB.WHERE(q, "city = ? AND age > ?", ["London", 30])
+'   DB.ORDERBY(q, "name")
+'   DIM found = DB.ROWS(h, q)
+
+EXPORT MODULE DB
+
+DIM LF$ = CHR$(10)
+DIM DIGIT_CHARS$ = "0123456789"
+
+FUNC Literal$(v)
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "STRING" THEN
+        DIM s$ = v
+        IF INSTR(s$, CHR$(0)) >= 0 THEN THROW "DB: a text value holds a NUL character"
+        RETURN "'" + REPLACE$(s$, "'", "''") + "'"
+    ENDIF
+    IF kind$ = "NONE" THEN RETURN "NULL"
+    IF kind$ = "BOOLEAN" THEN
+        IF v THEN RETURN "1"
+        RETURN "0"
+    ENDIF
+    IF kind$ <> "INT64" ANDALSO kind$ <> "FLOAT64" ANDALSO kind$ <> "INTEGER" ANDALSO kind$ <> "DOUBLE" THEN
+        THROW "DB: cannot store a value of type " + kind$
+    ENDIF
+    DIM n = v * 1.0
+    IF n <> n ORELSE ABS(n) > 1.7976931348623157E308 THEN THROW "DB: a number is not finite"
+    DIM digits$ = FORMAT$("{}", v)
+    IF n < 0 THEN RETURN "(" + digits$ + ")"
+    RETURN digits$
+ENDFUNC
+
+FUNC QuoteName$(name$)
+    IF INSTR(name$, CHR$(0)) >= 0 THEN THROW "DB: a name holds a NUL character"
+    RETURN CHR$(34) + REPLACE$(name$, CHR$(34), CHR$(34) + CHR$(34)) + CHR$(34)
+ENDFUNC
+
+' Replaces each ? outside quoted text and quoted names with the next value.
+FUNC FillIn$(template$, bound)
+    DIM out$ = ""
+    DIM open_quote$ = ""
+    DIM used = 0
+    DIM n_values = LEN(bound)
+    DIM k = 0
+    FOR k = 0 TO LEN(template$) - 1
+        DIM ch$ = MID$(template$, k, 1)
+        IF open_quote$ <> "" THEN
+            IF ch$ = open_quote$ THEN open_quote$ = ""
+            out$ = out$ + ch$
+        ELSEIF ch$ = "'" ORELSE ch$ = CHR$(34) THEN
+            open_quote$ = ch$
+            out$ = out$ + ch$
+        ELSEIF ch$ = "?" THEN
+            IF used >= n_values THEN THROW "DB: more ? than values in: " + template$
+            out$ = out$ + Literal$(bound[used])
+            used = used + 1
+        ELSE
+            out$ = out$ + ch$
+        ENDIF
+    NEXT k
+    IF used < n_values THEN THROW "DB: more values than ? in: " + template$
+    RETURN out$
+ENDFUNC
+
+FUNC RunSql(h, sql_text$)
+    DIM rc = SQL.EXEC(h, sql_text$)
+    IF rc < 0 THEN THROW "DB: " + SQL.ERRMSG$(h) + " in: " + LEFT$(sql_text$, 300)
+    RETURN rc
+ENDFUNC
+
+FUNC ChangedRows(h)
+    DIM t = SQL.TABLE(h, "SELECT changes()")
+    RETURN CINT(t[0, 0])
+ENDFUNC
+
+FUNC NewQuery(table$)
+    DIM q AS MAP
+    q{"from"} = table$
+    q{"cols"} = "*"
+    q{"joins"} = ""
+    q{"where"} = ""
+    q{"group"} = ""
+    q{"having"} = ""
+    q{"order"} = ""
+    q{"limit"} = ""
+    q{"offset"} = ""
+    q{"raw"} = ""
+    RETURN q
+ENDFUNC
+
+FUNC SqlOf$(q)
+    DIM raw_text$ = q{"raw"}
+    IF raw_text$ <> "" THEN RETURN raw_text$
+    DIM cols$ = q{"cols"}
+    DIM clause_from$ = q{"from"}
+    DIM joins$ = q{"joins"}
+    DIM clause_where$ = q{"where"}
+    DIM clause_group$ = q{"group"}
+    DIM clause_having$ = q{"having"}
+    DIM order$ = q{"order"}
+    DIM clause_limit$ = q{"limit"}
+    DIM clause_offset$ = q{"offset"}
+    DIM out$ = "SELECT " + cols$ + " FROM " + clause_from$ + joins$
+    IF clause_where$ <> "" THEN out$ = out$ + " WHERE " + clause_where$
+    IF clause_group$ <> "" THEN out$ = out$ + " GROUP BY " + clause_group$
+    IF clause_having$ <> "" THEN out$ = out$ + " HAVING " + clause_having$
+    IF order$ <> "" THEN out$ = out$ + " ORDER BY " + order$
+    IF clause_limit$ <> "" THEN
+        out$ = out$ + " LIMIT " + clause_limit$
+    ELSEIF clause_offset$ <> "" THEN
+        out$ = out$ + " LIMIT -1"
+    ENDIF
+    IF clause_offset$ <> "" THEN out$ = out$ + " OFFSET " + clause_offset$
+    RETURN out$
+ENDFUNC
+
+SUB AddCondition(q, key$, cond$, bound)
+    DIM raw_text$ = q{"raw"}
+    IF raw_text$ <> "" THEN THROW "DB: a STMT query takes no further clauses"
+    DIM filled$ = "(" + FillIn$(cond$, bound) + ")"
+    DIM prev$ = q{key$}
+    IF prev$ = "" THEN
+        q{key$} = filled$
+    ELSE
+        q{key$} = prev$ + " AND " + filled$
+    ENDIF
+ENDSUB
+
+SUB SetClause(q, key$, text_in$)
+    DIM raw_text$ = q{"raw"}
+    IF raw_text$ <> "" THEN THROW "DB: a STMT query takes no further clauses"
+    q{key$} = text_in$
+ENDSUB
+
+' Selects every column of the query next to its SQLite storage class, so a
+' NULL is told from 0 and an integer from a real in both backends.
+FUNC Typed$(h, sql_text$)
+    DIM col_names = SQL.COLUMNS(h, sql_text$)
+    DIM n_cols = LEN(col_names)
+    IF n_cols = 0 THEN RETURN ""
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO n_cols - 1
+        DIM col$ = col_names[k]
+        DIM ref$ = "db_q." + QuoteName$(col$)
+        IF k > 0 THEN out$ = out$ + ", "
+        out$ = out$ + ref$ + ", typeof(" + ref$ + ")"
+    NEXT k
+    RETURN "SELECT " + out$ + " FROM (" + sql_text$ + ") AS db_q"
+ENDFUNC
+
+SUB PutCell(row_map, col$, v, kind$)
+    IF kind$ = "null" THEN
+    ELSEIF kind$ = "text" ORELSE kind$ = "blob" THEN
+        DIM s$ = v
+        row_map{col$} = s$
+    ELSE
+        DIM n = v
+        row_map{col$} = n
+    ENDIF
+ENDSUB
+
+FUNC Trimmed$(text_in$)
+    DIM out$ = TRIM$(text_in$)
+    DO WHILE RIGHT$(out$, 1) = ";"
+        out$ = TRIM$(LEFT$(out$, LEN(out$) - 1))
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' ---------------------------------------------------------------- connection
+
+EXPORT FUNC OPEN(path$)
+    DIM h = SQL.OPEN(path$)
+    IF h = 0 THEN THROW "DB: cannot open " + path$ + ": " + SQL.ERRMSG$(h)
+    RETURN h
+ENDFUNC
+
+EXPORT SUB CLOSE(h)
+    SQL.CLOSE(h)
+ENDSUB
+
+EXPORT FUNC EXEC(h, sql_text$, bound)
+    DIM rc = RunSql(h, FillIn$(sql_text$, bound))
+    RETURN ChangedRows(h)
+ENDFUNC
+
+EXPORT SUB BEGIN(h)
+    DIM rc = RunSql(h, "BEGIN")
+ENDSUB
+
+EXPORT SUB COMMIT(h)
+    DIM rc = RunSql(h, "COMMIT")
+ENDSUB
+
+EXPORT SUB ROLLBACK(h)
+    DIM rc = SQL.EXEC(h, "ROLLBACK")
+ENDSUB
+
+EXPORT FUNC QUOTE$(v)
+    RETURN Literal$(v)
+ENDFUNC
+
+EXPORT FUNC IDENT$(name$)
+    RETURN QuoteName$(name$)
+ENDFUNC
+
+' ------------------------------------------------------------------- builder
+
+EXPORT FUNC FROM(table$)
+    RETURN NewQuery(table$)
+ENDFUNC
+
+EXPORT FUNC STMT(sql_text$, bound)
+    DIM q = NewQuery("")
+    q{"raw"} = FillIn$(Trimmed$(sql_text$), bound)
+    RETURN q
+ENDFUNC
+
+EXPORT SUB SELECT(q, cols$)
+    SetClause(q, "cols", cols$)
+ENDSUB
+
+EXPORT SUB JOIN(q, table$, on_cond$)
+    DIM prev$ = q{"joins"}
+    SetClause(q, "joins", prev$ + " JOIN " + table$ + " ON " + on_cond$)
+ENDSUB
+
+EXPORT SUB LEFTJOIN(q, table$, on_cond$)
+    DIM prev$ = q{"joins"}
+    SetClause(q, "joins", prev$ + " LEFT JOIN " + table$ + " ON " + on_cond$)
+ENDSUB
+
+EXPORT SUB WHERE(q, cond$, bound)
+    AddCondition(q, "where", cond$, bound)
+ENDSUB
+
+EXPORT SUB GROUPBY(q, cols$)
+    SetClause(q, "group", cols$)
+ENDSUB
+
+EXPORT SUB HAVING(q, cond$, bound)
+    AddCondition(q, "having", cond$, bound)
+ENDSUB
+
+EXPORT SUB ORDERBY(q, cols$)
+    SetClause(q, "order", cols$)
+ENDSUB
+
+EXPORT SUB LIMIT(q, n)
+    SetClause(q, "limit", FORMAT$("{}", CINT(n)))
+ENDSUB
+
+EXPORT SUB OFFSET(q, n)
+    SetClause(q, "offset", FORMAT$("{}", CINT(n)))
+ENDSUB
+
+EXPORT FUNC SQL$(q)
+    RETURN SqlOf$(q)
+ENDFUNC
+
+' ------------------------------------------------------------------- reading
+
+EXPORT FUNC ROWS(h, q)
+    DIM sql_text$ = SqlOf$(q)
+    DIM out = []
+    DIM typed$ = Typed$(h, sql_text$)
+    IF typed$ = "" THEN RETURN out
+    DIM col_names = SQL.COLUMNS(h, sql_text$)
+    DIM t = SQL.TABLE(h, typed$)
+    DIM r = 0
+    DIM k = 0
+    FOR r = 0 TO LEN(t) - 1
+        DIM row_map AS MAP
+        FOR k = 0 TO LEN(col_names) - 1
+            DIM col$ = col_names[k]
+            PutCell(row_map, col$, t[r, k * 2], t[r, k * 2 + 1])
+        NEXT k
+        PUSH(out, row_map)
+    NEXT r
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC FIRST(h, q)
+    DIM sql_text$ = SqlOf$(q)
+    DIM row_map AS MAP
+    DIM typed$ = Typed$(h, sql_text$)
+    IF typed$ = "" THEN RETURN row_map
+    DIM col_names = SQL.COLUMNS(h, sql_text$)
+    DIM t = SQL.TABLE(h, typed$ + " LIMIT 1")
+    IF LEN(t) = 0 THEN RETURN row_map
+    DIM k = 0
+    FOR k = 0 TO LEN(col_names) - 1
+        DIM col$ = col_names[k]
+        PutCell(row_map, col$, t[0, k * 2], t[0, k * 2 + 1])
+    NEXT k
+    RETURN row_map
+ENDFUNC
+
+EXPORT FUNC VALUE(h, q)
+    DIM sql_text$ = SqlOf$(q)
+    DIM cell_map AS MAP
+    DIM typed$ = Typed$(h, sql_text$)
+    IF typed$ = "" THEN RETURN NONE
+    DIM col_names = SQL.COLUMNS(h, sql_text$)
+    DIM col$ = col_names[0]
+    DIM t = SQL.TABLE(h, typed$ + " LIMIT 1")
+    IF LEN(t) = 0 THEN RETURN NONE
+    PutCell(cell_map, col$, t[0, 0], t[0, 1])
+    IF NOT MAP.EXISTS(cell_map, col$) THEN RETURN NONE
+    RETURN cell_map{col$}
+ENDFUNC
+
+EXPORT FUNC COUNT(h, q)
+    DIM t = SQL.TABLE(h, "SELECT count(*) FROM (" + SqlOf$(q) + ")")
+    RETURN CINT(t[0, 0])
+ENDFUNC
+
+EXPORT FUNC MATRIX(h, q)
+    RETURN SQL.TABLE(h, SqlOf$(q))
+ENDFUNC
+
+EXPORT FUNC COLUMNS(h, q)
+    RETURN SQL.COLUMNS(h, SqlOf$(q))
+ENDFUNC
+
+EXPORT FUNC TABLES(h)
+    DIM t = SQL.TABLE(h, "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
+    DIM out = []
+    DIM r = 0
+    FOR r = 0 TO LEN(t) - 1
+        DIM name$ = t[r, 0]
+        PUSH(out, name$)
+    NEXT r
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC HASTABLE(h, table$)
+    DIM t = SQL.TABLE(h, "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = " + Literal$(table$))
+    RETURN CINT(t[0, 0]) > 0
+ENDFUNC
+
+' ------------------------------------------------------------------- writing
+
+EXPORT FUNC INSERT(h, table$, row_in)
+    DIM key_list = MAP.KEYS(row_in)
+    DIM sql_text$ = "INSERT INTO " + QuoteName$(table$)
+    IF LEN(key_list) = 0 THEN
+        sql_text$ = sql_text$ + " DEFAULT VALUES"
+    ELSE
+        DIM names$ = ""
+        DIM literals$ = ""
+        DIM k = 0
+        FOR k = 0 TO LEN(key_list) - 1
+            DIM key$ = key_list[k]
+            IF k > 0 THEN
+                names$ = names$ + ", "
+                literals$ = literals$ + ", "
+            ENDIF
+            names$ = names$ + QuoteName$(key$)
+            literals$ = literals$ + Literal$(row_in{key$})
+        NEXT k
+        sql_text$ = sql_text$ + " (" + names$ + ") VALUES (" + literals$ + ")"
+    ENDIF
+    DIM rc = RunSql(h, sql_text$)
+    DIM t = SQL.TABLE(h, "SELECT last_insert_rowid()")
+    RETURN CINT(t[0, 0])
+ENDFUNC
+
+' Inserts the rows of a table (one row per line, one column per name) in one
+' savepoint: either every row lands or none.
+EXPORT FUNC INSERTMANY(h, table$, col_names, data)
+    DIM n_rows = LEN(data)
+    IF n_rows = 0 THEN RETURN 0
+    DIM n_cols = LEN(col_names)
+    DIM head$ = "INSERT INTO " + QuoteName$(table$) + " ("
+    DIM k = 0
+    FOR k = 0 TO n_cols - 1
+        DIM col$ = col_names[k]
+        IF k > 0 THEN head$ = head$ + ", "
+        head$ = head$ + QuoteName$(col$)
+    NEXT k
+    head$ = head$ + ") VALUES "
+    DIM batch$ = "SAVEPOINT db_many;"
+    DIM r = 0
+    FOR r = 0 TO n_rows - 1
+        IF r MOD 200 = 0 THEN
+            IF r > 0 THEN batch$ = batch$ + ";"
+            batch$ = batch$ + LF$ + head$
+        ELSE
+            batch$ = batch$ + ", "
+        ENDIF
+        DIM tuple$ = "("
+        FOR k = 0 TO n_cols - 1
+            IF k > 0 THEN tuple$ = tuple$ + ", "
+            tuple$ = tuple$ + Literal$(data[r, k])
+        NEXT k
+        batch$ = batch$ + tuple$ + ")"
+    NEXT r
+    batch$ = batch$ + ";" + LF$ + "RELEASE db_many;"
+    IF SQL.EXEC(h, batch$) < 0 THEN
+        DIM msg$ = SQL.ERRMSG$(h)
+        DIM undone = SQL.EXEC(h, "ROLLBACK TO db_many; RELEASE db_many")
+        THROW "DB: " + msg$ + " while inserting into " + table$
+    ENDIF
+    RETURN n_rows
+ENDFUNC
+
+' Inserts the row, or updates the other columns of the row whose key columns
+' (comma separated) already hold these values.
+EXPORT FUNC UPSERT(h, table$, row_in, key_cols$)
+    DIM key_list = MAP.KEYS(row_in)
+    DIM key_parts = SPLIT(key_cols$, ",")
+    DIM target$ = ""
+    DIM key_set$ = ","
+    DIM k = 0
+    FOR k = 0 TO LEN(key_parts) - 1
+        DIM part$ = key_parts[k]
+        part$ = TRIM$(part$)
+        IF k > 0 THEN target$ = target$ + ", "
+        target$ = target$ + QuoteName$(part$)
+        key_set$ = key_set$ + UCASE$(part$) + ","
+    NEXT k
+    DIM names$ = ""
+    DIM literals$ = ""
+    DIM updates$ = ""
+    FOR k = 0 TO LEN(key_list) - 1
+        DIM key$ = key_list[k]
+        DIM quoted$ = QuoteName$(key$)
+        IF k > 0 THEN
+            names$ = names$ + ", "
+            literals$ = literals$ + ", "
+        ENDIF
+        names$ = names$ + quoted$
+        literals$ = literals$ + Literal$(row_in{key$})
+        IF INSTR(key_set$, "," + UCASE$(key$) + ",") < 0 THEN
+            IF updates$ <> "" THEN updates$ = updates$ + ", "
+            updates$ = updates$ + quoted$ + " = excluded." + quoted$
+        ENDIF
+    NEXT k
+    DIM sql_text$ = "INSERT INTO " + QuoteName$(table$) + " (" + names$ + ") VALUES (" + literals$ + ") ON CONFLICT (" + target$ + ") DO "
+    IF updates$ = "" THEN
+        sql_text$ = sql_text$ + "NOTHING"
+    ELSE
+        sql_text$ = sql_text$ + "UPDATE SET " + updates$
+    ENDIF
+    DIM rc = RunSql(h, sql_text$)
+    RETURN ChangedRows(h)
+ENDFUNC
+
+EXPORT FUNC UPDATE(h, table$, set_map, cond$, bound)
+    IF TRIM$(cond$) = "" THEN THROW "DB: UPDATE needs a condition; pass " + CHR$(34) + "1" + CHR$(34) + " to change every row"
+    DIM key_list = MAP.KEYS(set_map)
+    IF LEN(key_list) = 0 THEN RETURN 0
+    DIM assigns$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(key_list) - 1
+        DIM key$ = key_list[k]
+        IF k > 0 THEN assigns$ = assigns$ + ", "
+        assigns$ = assigns$ + QuoteName$(key$) + " = " + Literal$(set_map{key$})
+    NEXT k
+    DIM rc = RunSql(h, "UPDATE " + QuoteName$(table$) + " SET " + assigns$ + " WHERE " + FillIn$(cond$, bound))
+    RETURN ChangedRows(h)
+ENDFUNC
+
+EXPORT FUNC DELETE(h, table$, cond$, bound)
+    IF TRIM$(cond$) = "" THEN THROW "DB: DELETE needs a condition; pass " + CHR$(34) + "1" + CHR$(34) + " to remove every row"
+    DIM rc = RunSql(h, "DELETE FROM " + QuoteName$(table$) + " WHERE " + FillIn$(cond$, bound))
+    RETURN ChangedRows(h)
+ENDFUNC
+
+' Creates the table unless it exists; the map names each column and its SQL
+' type and constraints, e.g. {"id": "INTEGER PRIMARY KEY", "name": "TEXT NOT NULL"}.
+EXPORT SUB CREATE(h, table$, col_types)
+    DIM key_list = MAP.KEYS(col_types)
+    DIM defs$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(key_list) - 1
+        DIM key$ = key_list[k]
+        DIM type$ = col_types{key$}
+        IF k > 0 THEN defs$ = defs$ + ", "
+        defs$ = defs$ + QuoteName$(key$) + " " + type$
+    NEXT k
+    DIM rc = RunSql(h, "CREATE TABLE IF NOT EXISTS " + QuoteName$(table$) + " (" + defs$ + ")")
+ENDSUB
+
+' Creates the table unless it exists, with the columns of an example row:
+' text as TEXT, whole numbers as INTEGER, other numbers as REAL, and an
+' "id INTEGER PRIMARY KEY" first when the row has no id.
+EXPORT SUB CREATELIKE(h, table$, row_in)
+    DIM key_list = MAP.KEYS(row_in)
+    DIM defs$ = ""
+    DIM has_id = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(key_list) - 1
+        DIM key$ = key_list[k]
+        IF UCASE$(key$) = "ID" THEN has_id = TRUE
+    NEXT k
+    IF NOT has_id THEN defs$ = QuoteName$("id") + " INTEGER PRIMARY KEY"
+    FOR k = 0 TO LEN(key_list) - 1
+        DIM key$ = key_list[k]
+        IF defs$ <> "" THEN defs$ = defs$ + ", "
+        defs$ = defs$ + QuoteName$(key$) + " " + TypeOfValue$(row_in{key$})
+    NEXT k
+    DIM rc = RunSql(h, "CREATE TABLE IF NOT EXISTS " + QuoteName$(table$) + " (" + defs$ + ")")
+ENDSUB
+
+FUNC TypeOfValue$(v)
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "STRING" THEN RETURN "TEXT"
+    IF kind$ = "NONE" THEN RETURN "BLOB"
+    IF kind$ = "BOOLEAN" THEN RETURN "INTEGER"
+    DIM n = v * 1.0
+    IF n = INT(n) ANDALSO ABS(n) < 9007199254740992.0 THEN RETURN "INTEGER"
+    RETURN "REAL"
+ENDFUNC
+
+' ---------------------------------------------------------------- migrations
+
+SUB EnsureVersionTable(h)
+    DIM rc = RunSql(h, "CREATE TABLE IF NOT EXISTS db_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')))")
+ENDSUB
+
+FUNC CurrentVersion(h)
+    EnsureVersionTable(h)
+    DIM t = SQL.TABLE(h, "SELECT coalesce(max(version), 0) FROM db_migrations")
+    RETURN CINT(t[0, 0])
+ENDFUNC
+
+FUNC IsRecorded(h, step_no)
+    DIM t = SQL.TABLE(h, "SELECT count(*) FROM db_migrations WHERE version = " + FORMAT$("{}", step_no))
+    RETURN CINT(t[0, 0]) > 0
+ENDFUNC
+
+' Runs one step and records it in one savepoint; the version row goes first,
+' so a second process applying the same step fails before the step runs.
+SUB ApplyStep(h, step_no, name$, body$)
+    DIM batch$ = "SAVEPOINT db_migrate;" + LF$
+    batch$ = batch$ + "INSERT INTO db_migrations (version, name) VALUES (" + FORMAT$("{}", step_no) + ", " + Literal$(name$) + ");" + LF$
+    batch$ = batch$ + body$ + LF$ + ";" + LF$ + "RELEASE db_migrate;"
+    IF SQL.EXEC(h, batch$) < 0 THEN
+        DIM msg$ = SQL.ERRMSG$(h)
+        DIM undone = SQL.EXEC(h, "ROLLBACK TO db_migrate; RELEASE db_migrate")
+        THROW "DB: migration " + FORMAT$("{}", step_no) + " (" + name$ + ") failed: " + msg$
+    ENDIF
+ENDSUB
+
+FUNC LeadingDigits$(name$)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(name$) - 1
+        DIM ch$ = MID$(name$, k, 1)
+        IF INSTR(DIGIT_CHARS$, ch$) < 0 THEN EXITFOR
+        out$ = out$ + ch$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' Applies the files NNN_name.sql in a directory whose number is above the
+' database version, in number order, each in its own savepoint. Answers how
+' many ran; a second call answers 0.
+EXPORT FUNC MIGRATE(h, dir_path$)
+    DIM current = CurrentVersion(h)
+    DIM listing = DIR$(dir_path$ + "/*.sql")
+    DIM step_nos = []
+    DIM file_names = []
+    DIM k = 0
+    DIM m = 0
+    FOR k = 0 TO LEN(listing) - 1
+        DIM file_name$ = listing[k]
+        DIM digits$ = LeadingDigits$(file_name$)
+        IF digits$ <> "" THEN
+            DIM step_no = CINT(VAL(digits$))
+            FOR m = 0 TO LEN(step_nos) - 1
+                IF step_nos[m] = step_no THEN THROW "DB: two migrations carry number " + digits$ + " in " + dir_path$
+            NEXT m
+            IF step_no <= current ANDALSO NOT IsRecorded(h, step_no) THEN
+                THROW "DB: migration " + file_name$ + " is not above the database version " + FORMAT$("{}", current) + " but was never applied"
+            ENDIF
+            PUSH(step_nos, step_no)
+            PUSH(file_names, file_name$)
+        ENDIF
+    NEXT k
+    DIM applied = 0
+    DIM last_no = current
+    DO
+        DIM best = -1
+        FOR k = 0 TO LEN(step_nos) - 1
+            IF step_nos[k] > last_no THEN
+                IF best < 0 THEN
+                    best = k
+                ELSEIF step_nos[k] < step_nos[best] THEN
+                    best = k
+                ENDIF
+            ENDIF
+        NEXT k
+        IF best < 0 THEN EXITDO
+        DIM chosen$ = file_names[best]
+        DIM body$ = TXTREADER$(dir_path$ + "/" + chosen$)
+        ApplyStep(h, step_nos[best], chosen$, body$)
+        last_no = step_nos[best]
+        applied = applied + 1
+    LOOP
+    RETURN applied
+ENDFUNC
+
+' Applies the steps of an array of SQL texts; step k (0-based) is version k + 1.
+EXPORT FUNC MIGRATESQL(h, steps)
+    DIM current = CurrentVersion(h)
+    DIM applied = 0
+    DIM k = 0
+    FOR k = current TO LEN(steps) - 1
+        DIM body$ = steps[k]
+        ApplyStep(h, k + 1, "step " + FORMAT$("{}", k + 1), body$)
+        applied = applied + 1
+    NEXT k
+    RETURN applied
+ENDFUNC
+
+EXPORT FUNC VERSION(h)
+    RETURN CurrentVersion(h)
+ENDFUNC

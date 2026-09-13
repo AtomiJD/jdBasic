@@ -1,0 +1,294 @@
+' DB on SQLite: literals and names quoted so hostile text stays a value, the
+' query builder's SQL, rows as maps with NULL told from 0, inserts, bulk
+' inserts in one savepoint, upserts, updates, deletes, transactions, tables
+' from a column map or an example row, and migrations from the numbered
+' files in tests/jdlibs/fixtures/db_migrations*. Skips without SQLITE.
+
+IMPORT TESTKIT, DB
+
+DIM Q$ = CHR$(34)
+
+FUNC QuoteNul(x)
+    RETURN DB.QUOTE$("a" + CHR$(0) + "b")
+ENDFUNC
+
+FUNC TooFewValues(x)
+    DIM q = DB.FROM("t")
+    DB.WHERE(q, "a = ? AND b = ?", [1])
+    RETURN 0
+ENDFUNC
+
+FUNC TooManyValues(x)
+    DIM q = DB.FROM("t")
+    DB.WHERE(q, "a = ?", [1, 2])
+    RETURN 0
+ENDFUNC
+
+FUNC ClauseOnStmt(x)
+    DIM q = DB.STMT("SELECT 1", [])
+    DB.WHERE(q, "1 = ?", [1])
+    RETURN 0
+ENDFUNC
+
+FUNC OpenBad(x)
+    RETURN DB.OPEN("Z:/no/such/dir/at/all/x.db")
+ENDFUNC
+
+FUNC ExecBad(h)
+    RETURN DB.EXEC(h, "SELECT * FROM nowhere", [])
+ENDFUNC
+
+FUNC UpdateAll(h)
+    RETURN DB.UPDATE(h, "customers", {"city": "Nowhere"}, "", [])
+ENDFUNC
+
+FUNC DeleteAll(h)
+    RETURN DB.DELETE(h, "customers", " ", [])
+ENDFUNC
+
+FUNC ManyDuplicate(h)
+    RETURN DB.INSERTMANY(h, "customers", ["name", "city", "age"], [["Fay", "Lima", 50], ["Ada", "Again", 1]])
+ENDFUNC
+
+FUNC FailingSteps(h)
+    RETURN DB.MIGRATESQL(h, ["CREATE TABLE a (x INTEGER)", "CREATE TABLE b (y INTEGER); INSERT INTO nowhere VALUES (1)"])
+ENDFUNC
+
+FUNC MigrateFull(h)
+    DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+    IF NOT FILE.EXISTS(fixture_dir$ + "db_migrations/001_customers.sql") THEN fixture_dir$ = "fixtures/"
+    RETURN DB.MIGRATE(h, fixture_dir$ + "db_migrations")
+ENDFUNC
+
+FUNC MigrateDup(h)
+    DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+    IF NOT FILE.EXISTS(fixture_dir$ + "db_migrations/001_customers.sql") THEN fixture_dir$ = "fixtures/"
+    RETURN DB.MIGRATE(h, fixture_dir$ + "db_migrations_dup")
+ENDFUNC
+
+IF NOT OS.FEATURE("SQLITE") THEN
+    TESTKIT.SKIP("DB needs a build with SQLITE")
+    TESTKIT.REPORT()
+    END
+ENDIF
+
+DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(fixture_dir$ + "db_migrations/001_customers.sql") THEN fixture_dir$ = "fixtures/"
+DIM k = 0
+
+' ---------------------------------------------------------------- literals
+TESTKIT.EQ(DB.QUOTE$("O'Brien"), "'O''Brien'", "QUOTE$ doubles a single quote")
+TESTKIT.EQ(DB.QUOTE$(""), "''", "and quotes empty text")
+TESTKIT.EQ(DB.QUOTE$(42), "42", "a whole number is written as digits")
+TESTKIT.EQ(DB.QUOTE$(0.1), "0.1", "a real at its shortest exact form")
+TESTKIT.EQ(DB.QUOTE$(-2.5), "(-2.5)", "a negative number in parentheses")
+TESTKIT.EQ(DB.IDENT$("we" + Q$ + "ird col"), Q$ + "we" + Q$ + Q$ + "ird col" + Q$, "IDENT$ doubles a double quote")
+TESTKIT.THROWS(QuoteNul@, 0, "text with a NUL character is refused")
+
+' ----------------------------------------------------------------- builder
+DIM q = DB.FROM("customers c")
+DB.SELECT(q, "c.name, count(o.id) AS n")
+DB.LEFTJOIN(q, "orders o", "o.customer_id = c.id")
+DB.WHERE(q, "c.city = ?", ["London"])
+DB.WHERE(q, "c.age >= ?", [30])
+DB.GROUPBY(q, "c.id")
+DB.HAVING(q, "count(o.id) > ?", [0])
+DB.ORDERBY(q, "n DESC, c.name")
+DB.LIMIT(q, 5)
+DB.OFFSET(q, 1)
+TESTKIT.EQ(DB.SQL$(q), "SELECT c.name, count(o.id) AS n FROM customers c LEFT JOIN orders o ON o.customer_id = c.id WHERE (c.city = 'London') AND (c.age >= 30) GROUP BY c.id HAVING (count(o.id) > 0) ORDER BY n DESC, c.name LIMIT 5 OFFSET 1", "the builder writes every clause in SQL order")
+DIM q_quoted = DB.FROM("t")
+DB.WHERE(q_quoted, "a <> '?' AND " + Q$ + "b?" + Q$ + " = ?", ["x"])
+TESTKIT.EQ(DB.SQL$(q_quoted), "SELECT * FROM t WHERE (a <> '?' AND " + Q$ + "b?" + Q$ + " = 'x')", "a ? inside quoted text or a quoted name stays")
+DIM q_off = DB.FROM("t")
+DB.JOIN(q_off, "u", "u.id = t.id")
+DB.OFFSET(q_off, 10)
+TESTKIT.EQ(DB.SQL$(q_off), "SELECT * FROM t JOIN u ON u.id = t.id LIMIT -1 OFFSET 10", "OFFSET without LIMIT")
+TESTKIT.THROWS(TooFewValues@, 0, "more ? than values is refused")
+TESTKIT.THROWS(TooManyValues@, 0, "more values than ? is refused")
+TESTKIT.THROWS(ClauseOnStmt@, 0, "a STMT query takes no clauses")
+TESTKIT.THROWS(OpenBad@, 0, "OPEN throws for a path it cannot open")
+
+DIM h = DB.OPEN(":memory:")
+TESTKIT.EQ(DB.VALUE(h, DB.STMT("SELECT 5 -?", [-2])), 7, "a negative value after a minus is no comment")
+TESTKIT.EQ(DB.VALUE(h, DB.STMT("SELECT ? || ?;", ["a", "b"])), "ab", "STMT drops a trailing semicolon")
+
+' ------------------------------------------------------------ tables, rows
+DB.CREATE(h, "customers", {"id": "INTEGER PRIMARY KEY", "name": "TEXT NOT NULL UNIQUE", "city": "TEXT", "age": "INTEGER", "balance": "REAL"})
+DB.CREATE(h, "customers", {"id": "INTEGER PRIMARY KEY"})
+TESTKIT.ISTRUE(DB.HASTABLE(h, "customers"), "CREATE makes the table and a second CREATE leaves it")
+TESTKIT.ISFALSE(DB.HASTABLE(h, "nowhere"), "HASTABLE is false for a missing table")
+TESTKIT.EQ(DB.INSERT(h, "customers", {"name": "Ada", "city": "London", "age": 36, "balance": 12.5}), 1, "INSERT answers the new row id")
+TESTKIT.EQ(DB.INSERT(h, "customers", {"name": "Bob", "age": 41, "balance": 0}), 2, "and counts on")
+TESTKIT.EQ(DB.INSERT(h, "customers", {"name": "Cy", "city": "Paris", "age": 29, "balance": -3.25}), 3, "a third row")
+
+DIM q_all = DB.FROM("customers")
+DB.ORDERBY(q_all, "id")
+DIM found = DB.ROWS(h, q_all)
+TESTKIT.EQ(LEN(found), 3, "ROWS answers one map per row")
+DIM rec_ada = found[0]
+DIM rec_bob = found[1]
+DIM rec_cy = found[2]
+TESTKIT.EQ(rec_ada{"name"}, "Ada", "text comes back as text")
+TESTKIT.EQ(rec_ada{"age"}, 36, "an integer as a number")
+TESTKIT.EQ(rec_ada{"balance"}, 12.5, "a real as a number")
+TESTKIT.ISFALSE(MAP.EXISTS(rec_bob, "city"), "a NULL leaves the column out of the row")
+TESTKIT.EQ(rec_bob{"balance"}, 0, "while a stored 0 is kept")
+TESTKIT.ISTRUE(MAP.EXISTS(rec_bob, "balance"), "and present")
+TESTKIT.EQ(rec_cy{"city"}, "Paris", "a row after a NULL row has its own value")
+TESTKIT.EQ(rec_cy{"balance"}, -3.25, "and a negative real")
+
+DIM q_paris = DB.FROM("customers")
+DB.WHERE(q_paris, "city = ?", ["Paris"])
+DIM rec_first = DB.FIRST(h, q_paris)
+TESTKIT.EQ(rec_first{"name"}, "Cy", "FIRST answers the first row")
+DIM q_none = DB.FROM("customers")
+DB.WHERE(q_none, "age > ?", [100])
+DIM rec_empty = DB.FIRST(h, q_none)
+TESTKIT.EQ(LEN(MAP.KEYS(rec_empty)), 0, "and an empty map when nothing matches")
+TESTKIT.EQ(LEN(DB.ROWS(h, q_none)), 0, "ROWS answers an empty array")
+TESTKIT.EQ(DB.COUNT(h, q_all), 3, "COUNT counts the rows of a query")
+TESTKIT.EQ(DB.COUNT(h, q_none), 0, "and zero")
+TESTKIT.EQ(DB.VALUE(h, DB.STMT("SELECT name FROM customers WHERE age = ?", [41])), "Bob", "VALUE answers the first cell")
+TESTKIT.EQARRAY(DB.COLUMNS(h, q_all), ["id", "name", "city", "age", "balance"], "COLUMNS names the columns")
+DIM grid = DB.MATRIX(h, q_all)
+TESTKIT.EQ(LEN(grid), 3, "MATRIX answers the SQL.TABLE grid")
+TESTKIT.EQARRAY(DB.TABLES(h), ["customers"], "TABLES lists the tables")
+DIM q_alias = DB.STMT("SELECT a.id AS left_id, b.id AS right_id FROM customers a JOIN customers b ON b.age > a.age WHERE a.name = ? ORDER BY b.age", ["Cy"])
+DIM pairs = DB.ROWS(h, q_alias)
+DIM pair_first = pairs[0]
+TESTKIT.EQ(pair_first{"right_id"}, 1, "ROWS reads a join through STMT")
+DB.CREATE(h, "customers_copy", {"id": "INTEGER PRIMARY KEY", "name": "TEXT NOT NULL UNIQUE", "city": "TEXT", "age": "INTEGER", "balance": "REAL"})
+DIM copied_id = DB.INSERT(h, "customers_copy", rec_cy)
+DIM q_copy = DB.FROM("customers_copy")
+DB.WHERE(q_copy, "id = ? AND name = ? AND city = ? AND balance = ?", [3, "Cy", "Paris", -3.25])
+TESTKIT.EQ(DB.COUNT(h, q_copy), 1, "a row map out of ROWS inserts as a whole")
+DIM dropped = DB.EXEC(h, "DROP TABLE customers_copy", [])
+
+' ----------------------------------------------------------------- hostile
+DB.CREATE(h, "hostile", {"id": "INTEGER PRIMARY KEY", "t": "TEXT"})
+DIM hostile = ["Robert'); DROP TABLE customers; --", "' OR '1'='1", "a''b", "''", "'", "\'", "\", Q$ + "; DELETE FROM customers; " + Q$, "?", "? ?", "line1" + CHR$(10) + "line2", CHR$(13) + CHR$(10), "--", "/*", "*/", "Grüße 😀", CHR$(9), "%_", "NULL", "0x41", "'||(SELECT name FROM customers)||'", "x' ; ATTACH DATABASE 'evil.db' AS evil; --"]
+DIM all_back = TRUE
+DIM all_found = TRUE
+FOR k = 0 TO LEN(hostile) - 1
+    DIM s$ = hostile[k]
+    DIM new_id = DB.INSERT(h, "hostile", {"t": s$})
+    DIM q_back = DB.FROM("hostile")
+    DB.SELECT(q_back, "t")
+    DB.WHERE(q_back, "id = ?", [new_id])
+    DIM back$ = DB.VALUE(h, q_back)
+    IF back$ <> s$ THEN all_back = FALSE
+    DIM q_match = DB.FROM("hostile")
+    DB.WHERE(q_match, "t = ?", [s$])
+    IF DB.COUNT(h, q_match) <> 1 THEN all_found = FALSE
+NEXT k
+TESTKIT.ISTRUE(all_back, "every hostile string reads back unchanged")
+TESTKIT.ISTRUE(all_found, "and is matched exactly once as a bound value")
+TESTKIT.EQ(DB.COUNT(h, DB.FROM("hostile")), LEN(hostile), "no hostile string added or removed rows")
+TESTKIT.EQ(DB.COUNT(h, q_all), 3, "the customers are untouched")
+TESTKIT.EQARRAY(DB.TABLES(h), ["customers", "hostile"], "and no table was dropped or attached")
+DIM odd_name$ = "we" + Q$ + "ird; col"
+DIM odd_cols AS MAP
+odd_cols{odd_name$} = "TEXT"
+DB.CREATE(h, "odd " + Q$ + "table", odd_cols)
+DIM odd_row AS MAP
+odd_row{odd_name$} = "v"
+DIM odd_id = DB.INSERT(h, "odd " + Q$ + "table", odd_row)
+TESTKIT.EQARRAY(DB.COLUMNS(h, DB.FROM(DB.IDENT$("odd " + Q$ + "table"))), [odd_name$], "hostile table and column names stay names")
+TESTKIT.EQ(DB.DELETE(h, "hostile", "t = ?", ["' OR '1'='1"]), 1, "DELETE with a hostile value removes one row")
+
+' ------------------------------------------------------------------ writing
+TESTKIT.EQ(DB.INSERTMANY(h, "customers", ["name", "city", "age"], [["Dee", "Rome", 52], ["Eve", "Oslo", 23]]), 2, "INSERTMANY answers the rows inserted")
+TESTKIT.EQ(DB.COUNT(h, q_all), 5, "and they are there")
+TESTKIT.THROWS(ManyDuplicate@, h, "INSERTMANY throws on a duplicate")
+DIM q_fay = DB.FROM("customers")
+DB.WHERE(q_fay, "name = ?", ["Fay"])
+TESTKIT.EQ(DB.COUNT(h, q_fay), 0, "and keeps none of the batch")
+
+TESTKIT.EQ(DB.UPSERT(h, "customers", {"name": "Ada", "city": "Oslo", "age": 37}, "name"), 1, "UPSERT on an existing key updates")
+DIM q_ada = DB.FROM("customers")
+DB.WHERE(q_ada, "name = ?", ["Ada"])
+DIM rec_up = DB.FIRST(h, q_ada)
+TESTKIT.EQ(rec_up{"city"}, "Oslo", "the other columns")
+TESTKIT.EQ(rec_up{"balance"}, 12.5, "and leaves columns not given")
+TESTKIT.EQ(rec_up{"id"}, 1, "on the same row")
+DIM up_new = DB.UPSERT(h, "customers", {"name": "Gus", "city": "Bern"}, "name")
+TESTKIT.EQ(DB.COUNT(h, q_all), 6, "UPSERT on a new key inserts")
+TESTKIT.EQ(DB.UPSERT(h, "customers", {"name": "Gus"}, "name"), 0, "with only key columns it leaves a conflict alone")
+
+TESTKIT.EQ(DB.UPDATE(h, "customers", {"city": "Berlin", "balance": 1.5}, "age > ?", [40]), 2, "UPDATE answers the rows changed")
+DIM q_berlin = DB.FROM("customers")
+DB.WHERE(q_berlin, "city = ?", ["Berlin"])
+TESTKIT.EQ(DB.COUNT(h, q_berlin), 2, "and changed them")
+TESTKIT.THROWS(UpdateAll@, h, "UPDATE without a condition is refused")
+TESTKIT.EQ(DB.EXEC(h, "UPDATE customers SET balance = balance + ? WHERE name = ?", [10.25, "Ada"]), 1, "EXEC binds values and answers the rows changed")
+TESTKIT.EQ(DB.VALUE(h, DB.STMT("SELECT balance FROM customers WHERE name = 'Ada'", [])), 22.75, "and ran")
+TESTKIT.THROWS(ExecBad@, h, "EXEC throws the SQLite error")
+TESTKIT.EQ(DB.DELETE(h, "customers", "name = ?", ["Gus"]), 1, "DELETE answers the rows removed")
+TESTKIT.THROWS(DeleteAll@, h, "DELETE without a condition is refused")
+
+DB.BEGIN(h)
+DIM tx_id = DB.INSERT(h, "customers", {"name": "Hal"})
+DIM tx_many = DB.INSERTMANY(h, "customers", ["name"], [["Ivy"], ["Jo"]])
+DB.ROLLBACK(h)
+TESTKIT.EQ(DB.COUNT(h, q_all), 5, "ROLLBACK undoes inserts, a nested INSERTMANY included")
+DB.BEGIN(h)
+tx_id = DB.INSERT(h, "customers", {"name": "Hal"})
+DB.COMMIT(h)
+TESTKIT.EQ(DB.COUNT(h, q_all), 6, "COMMIT keeps them")
+
+DB.CREATELIKE(h, "people", {"name": "ada", "age": 36, "height": 1.72})
+DB.CREATELIKE(h, "people", {"name": "again"})
+TESTKIT.EQARRAY(DB.COLUMNS(h, DB.FROM("people")), ["id", "name", "age", "height"], "CREATELIKE adds an id before the row's columns")
+DIM type_grid = DB.MATRIX(h, DB.STMT("SELECT type FROM pragma_table_info('people') ORDER BY cid", []))
+DIM types = []
+FOR k = 0 TO LEN(type_grid) - 1
+    DIM type_name$ = type_grid[k, 0]
+    PUSH(types, type_name$)
+NEXT k
+TESTKIT.EQARRAY(types, ["INTEGER", "TEXT", "INTEGER", "REAL"], "and types text, whole numbers and reals")
+DB.CREATELIKE(h, "tagged", {"id": "a1", "label": "x"})
+TESTKIT.EQARRAY(DB.COLUMNS(h, DB.FROM("tagged")), ["id", "label"], "a row with an id keeps its own")
+DB.CLOSE(h)
+
+' --------------------------------------------------------------- migrations
+DIM db_file$ = MKTEMP$("dbselftest") + ".db"
+DIM hm = DB.OPEN(db_file$)
+TESTKIT.EQ(DB.VERSION(hm), 0, "a new database is at version 0")
+TESTKIT.EQ(DB.MIGRATE(hm, fixture_dir$ + "db_migrations"), 3, "MIGRATE applies the numbered files")
+TESTKIT.EQ(DB.VERSION(hm), 3, "and records the version")
+TESTKIT.EQ(DB.MIGRATE(hm, fixture_dir$ + "db_migrations"), 0, "a second MIGRATE applies nothing")
+DB.CLOSE(hm)
+hm = DB.OPEN(db_file$)
+TESTKIT.EQ(DB.MIGRATE(hm, fixture_dir$ + "db_migrations"), 0, "nor after reopening the file")
+TESTKIT.EQ(DB.COUNT(hm, DB.FROM("customers")), 2, "the seed ran once")
+TESTKIT.EQ(DB.VALUE(hm, DB.STMT("SELECT sum(amount) FROM orders", [])), 22.75, "with its orders")
+TESTKIT.EQ(DB.VALUE(hm, DB.STMT("SELECT city FROM customers WHERE name = ?", ["Semi; colon?"])), "O'Hare", "text with ; and ? inside a file survives")
+DIM step_grid = DB.MATRIX(hm, DB.STMT("SELECT name FROM db_migrations ORDER BY version", []))
+DIM step_names = []
+FOR k = 0 TO LEN(step_grid) - 1
+    DIM step_name$ = step_grid[k, 0]
+    PUSH(step_names, step_name$)
+NEXT k
+TESTKIT.EQARRAY(step_names, ["001_customers.sql", "002_orders.sql", "003_seed.sql"], "db_migrations names each file")
+TESTKIT.ISTRUE(DB.VALUE(hm, DB.STMT("SELECT count(*) FROM sqlite_master WHERE name = 'orders_by_customer'", [])) = 1, "a statement ending in a comment ran")
+DB.CLOSE(hm)
+KILL db_file$
+
+DIM hs = DB.OPEN(":memory:")
+TESTKIT.THROWS(FailingSteps@, hs, "a failing step throws")
+TESTKIT.EQ(DB.VERSION(hs), 1, "the steps before it stay applied")
+TESTKIT.ISFALSE(DB.HASTABLE(hs, "b"), "and the failing step left nothing")
+TESTKIT.EQ(DB.MIGRATESQL(hs, ["CREATE TABLE a (x INTEGER)", "CREATE TABLE b (y INTEGER)"]), 1, "MIGRATESQL applies only the steps above the version")
+TESTKIT.EQ(DB.MIGRATESQL(hs, ["CREATE TABLE a (x INTEGER)", "CREATE TABLE b (y INTEGER)"]), 0, "and nothing a second time")
+TESTKIT.EQ(DB.VERSION(hs), 2, "at version 2")
+DB.CLOSE(hs)
+
+DIM hk = DB.OPEN(":memory:")
+TESTKIT.EQ(DB.MIGRATE(hk, fixture_dir$ + "db_migrations_skip"), 2, "a directory with a gap applies what it has")
+TESTKIT.THROWS(MigrateFull@, hk, "a file below the version that never ran is refused")
+TESTKIT.EQ(DB.VERSION(hk), 3, "and changes nothing")
+TESTKIT.THROWS(MigrateDup@, hk, "two files with one number are refused")
+DB.CLOSE(hk)
+
+TESTKIT.REPORT()

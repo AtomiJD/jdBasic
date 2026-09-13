@@ -59,6 +59,7 @@ tests/jdlibs/cache_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/cli_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/conf_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/console_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/db_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/df_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/docx_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/dt_selftest.jdb	PASS	PASS	OK
