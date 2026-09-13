@@ -1,0 +1,927 @@
+' pdfgen.jdb - PDF documents written from jdBasic: pages, the standard fonts,
+' text, wrapped paragraphs, lines, boxes, tables and JPEG images.
+'
+'   IMPORT PDFGEN
+'   DIM pdf = PDFGEN.DOC()
+'   PDFGEN.ADDPAGE(pdf)
+'   PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+'   PDFGEN.TEXTAT(pdf, 20, 30, "Rechnung 4711")
+'   PDFGEN.WRITEFILE(pdf, "rechnung.pdf")
+'
+' Positions and sizes are millimetres from the top left corner of the page.
+' Text is UTF-8 in jdBasic and is written in WinAnsi, the encoding the
+' standard fonts carry: umlauts, the euro sign and typographic quotes come
+' out, and a character outside it becomes "?".
+
+EXPORT MODULE PDFGEN
+
+DIM gNL$ = CHR$(10)
+DIM gWidths AS MAP
+CONST PT_PER_MM = 2.834645669291339
+
+' ── the document ───────────────────────────────────────────────
+
+' A new document. opts: "size" (A4, A5, A3, Letter or Legal; A4 when not
+' given), "landscape" (FALSE) and "margin" in mm (20).
+EXPORT FUNC DOC(opts = 0)
+    DIM size$ = "A4"
+    DIM landscape = FALSE
+    DIM margin_mm = 20.0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "size") THEN
+            DIM asked$ = opts{"size"}
+            size$ = UCASE$(asked$)
+        ENDIF
+        IF MAP.EXISTS(opts, "landscape") THEN
+            IF opts{"landscape"} THEN landscape = TRUE
+        ENDIF
+        IF MAP.EXISTS(opts, "margin") THEN margin_mm = CDBL(opts{"margin"})
+    ENDIF
+    DIM page_w = 210.0
+    DIM page_h = 297.0
+    IF size$ = "A5" THEN
+        page_w = 148.0
+        page_h = 210.0
+    ELSEIF size$ = "A3" THEN
+        page_w = 297.0
+        page_h = 420.0
+    ELSEIF size$ = "LETTER" THEN
+        page_w = 215.9
+        page_h = 279.4
+    ELSEIF size$ = "LEGAL" THEN
+        page_w = 215.9
+        page_h = 355.6
+    ELSEIF size$ <> "A4" THEN
+        THROW "PDFGEN: no page size called " + size$
+    ENDIF
+    IF landscape THEN
+        DIM turned = page_w
+        page_w = page_h
+        page_h = turned
+    ENDIF
+    DIM doc AS MAP
+    doc{"w"} = page_w
+    doc{"h"} = page_h
+    doc{"margin"} = margin_mm
+    doc{"ops"} = []
+    doc{"page"} = 0
+    doc{"x"} = margin_mm
+    doc{"y"} = margin_mm
+    doc{"family"} = "helvetica"
+    doc{"style"} = ""
+    doc{"font"} = "helvetica"
+    doc{"size"} = 11.0
+    doc{"fonts"} = []
+    doc{"img_paths"} = []
+    doc{"img_data"} = []
+    doc{"img_w"} = []
+    doc{"img_h"} = []
+    doc{"img_comps"} = []
+    doc{"text_rgb"} = "0.000 0.000 0.000"
+    doc{"fill_rgb"} = Rgb$(235, 235, 235)
+    doc{"draw_rgb"} = "0.000 0.000 0.000"
+    doc{"line_mm"} = 0.2
+    doc{"footer"} = ""
+    doc{"footer_align"} = "C"
+    doc{"footer_font"} = "helvetica"
+    doc{"footer_size"} = 9.0
+    doc{"title"} = ""
+    doc{"author"} = ""
+    doc{"subject"} = ""
+    RETURN doc
+ENDFUNC
+
+' Starts a new page and puts the position at the top left margin.
+EXPORT SUB ADDPAGE(doc)
+    DIM ops = doc{"ops"}
+    PUSH(ops, [])
+    doc{"ops"} = ops
+    doc{"page"} = LEN(ops)
+    doc{"x"} = doc{"margin"}
+    doc{"y"} = doc{"margin"}
+ENDSUB
+
+SUB EnsurePage(doc)
+    IF doc{"page"} = 0 THEN ADDPAGE(doc)
+ENDSUB
+
+' The number of the page being written, from 1.
+EXPORT FUNC PAGENO(doc)
+    RETURN doc{"page"}
+ENDFUNC
+
+EXPORT FUNC PAGECOUNT(doc)
+    RETURN LEN(doc{"ops"})
+ENDFUNC
+
+EXPORT FUNC PAGEWIDTH(doc)
+    RETURN CDBL(doc{"w"})
+ENDFUNC
+
+EXPORT FUNC PAGEHEIGHT(doc)
+    RETURN CDBL(doc{"h"})
+ENDFUNC
+
+EXPORT FUNC POSX(doc)
+    RETURN CDBL(doc{"x"})
+ENDFUNC
+
+EXPORT FUNC POSY(doc)
+    RETURN CDBL(doc{"y"})
+ENDFUNC
+
+EXPORT SUB SETXY(doc, x, y)
+    doc{"x"} = CDBL(x)
+    doc{"y"} = CDBL(y)
+ENDSUB
+
+' Moves to the left margin, h mm further down.
+EXPORT SUB LN(doc, h)
+    doc{"x"} = doc{"margin"}
+    doc{"y"} = CDBL(doc{"y"}) + CDBL(h)
+ENDSUB
+
+' Title, author and subject in the document properties.
+EXPORT SUB SETINFO(doc, title$, author$ = "", subject$ = "")
+    doc{"title"} = title$
+    doc{"author"} = author$
+    doc{"subject"} = subject$
+ENDSUB
+
+' A line written at the bottom of every page, in the font that is current
+' now. {page} becomes the page number and {pages} the number of pages.
+EXPORT SUB SETFOOTER(doc, text$, align$ = "C")
+    doc{"footer"} = text$
+    doc{"footer_align"} = UCASE$(align$)
+    DIM key$ = doc{"font"}
+    doc{"footer_font"} = key$
+    doc{"footer_size"} = doc{"size"}
+    DIM ref$ = FontRefOf$(doc, key$)
+ENDSUB
+
+' ── fonts and colours ──────────────────────────────────────────
+
+' Chooses a standard font: helvetica (or arial, sans), times (serif),
+' courier (mono), symbol or zapfdingbats, with a style of "", "B", "I" or
+' "BI", and a size in points when size is above 0.
+EXPORT SUB USEFONT(doc, family$, style$ = "", size = 0)
+    DIM fam$ = LCASE$(TRIM$(family$))
+    IF fam$ = "arial" ORELSE fam$ = "sans" THEN fam$ = "helvetica"
+    IF fam$ = "serif" THEN fam$ = "times"
+    IF fam$ = "mono" ORELSE fam$ = "monospace" THEN fam$ = "courier"
+    IF fam$ <> "helvetica" ANDALSO fam$ <> "times" ANDALSO fam$ <> "courier" ANDALSO fam$ <> "symbol" ANDALSO fam$ <> "zapfdingbats" THEN THROW "PDFGEN: no standard font called " + family$
+    DIM up$ = UCASE$(style$)
+    DIM st$ = ""
+    IF INSTR(up$, "B") >= 0 THEN st$ = "B"
+    IF INSTR(up$, "I") >= 0 THEN st$ = st$ + "I"
+    IF fam$ = "symbol" ORELSE fam$ = "zapfdingbats" THEN st$ = ""
+    doc{"family"} = fam$
+    doc{"style"} = st$
+    doc{"font"} = fam$ + st$
+    IF size > 0 THEN doc{"size"} = CDBL(size)
+ENDSUB
+
+EXPORT SUB SETCOLOR(doc, r, g, b)
+    doc{"text_rgb"} = Rgb$(r, g, b)
+ENDSUB
+
+EXPORT SUB SETFILL(doc, r, g, b)
+    doc{"fill_rgb"} = Rgb$(r, g, b)
+ENDSUB
+
+EXPORT SUB SETDRAW(doc, r, g, b)
+    doc{"draw_rgb"} = Rgb$(r, g, b)
+ENDSUB
+
+EXPORT SUB SETLINEWIDTH(doc, mm)
+    doc{"line_mm"} = CDBL(mm)
+ENDSUB
+
+FUNC Rgb$(r, g, b)
+    RETURN Frac$(r) + " " + Frac$(g) + " " + Frac$(b)
+ENDFUNC
+
+FUNC Frac$(c)
+    DIM v = CLAMP(CDBL(c) / 255.0, 0.0, 1.0)
+    RETURN FORMAT$("{:.3f}", v)
+ENDFUNC
+
+FUNC FontRefOf$(doc, key$)
+    DIM fonts = doc{"fonts"}
+    DIM i = 0
+    FOR i = 0 TO LEN(fonts) - 1
+        DIM have$ = fonts[i]
+        IF have$ = key$ THEN RETURN "/F" + STR$(i + 1)
+    NEXT i
+    PUSH(fonts, key$)
+    doc{"fonts"} = fonts
+    RETURN "/F" + STR$(LEN(fonts))
+ENDFUNC
+
+FUNC BaseFont$(key$)
+    IF key$ = "helvetica" THEN RETURN "Helvetica"
+    IF key$ = "helveticaB" THEN RETURN "Helvetica-Bold"
+    IF key$ = "helveticaI" THEN RETURN "Helvetica-Oblique"
+    IF key$ = "helveticaBI" THEN RETURN "Helvetica-BoldOblique"
+    IF key$ = "times" THEN RETURN "Times-Roman"
+    IF key$ = "timesB" THEN RETURN "Times-Bold"
+    IF key$ = "timesI" THEN RETURN "Times-Italic"
+    IF key$ = "timesBI" THEN RETURN "Times-BoldItalic"
+    IF key$ = "courier" THEN RETURN "Courier"
+    IF key$ = "courierB" THEN RETURN "Courier-Bold"
+    IF key$ = "courierI" THEN RETURN "Courier-Oblique"
+    IF key$ = "courierBI" THEN RETURN "Courier-BoldOblique"
+    IF key$ = "symbol" THEN RETURN "Symbol"
+    RETURN "ZapfDingbats"
+ENDFUNC
+
+FUNC GlyphWidths(key$)
+    IF MAP.EXISTS(gWidths, key$) THEN RETURN gWidths{key$}
+    DIM table = []
+    DIM raw$ = WidthTable$(key$)
+    DIM i = 0
+    IF raw$ = "" THEN
+        FOR i = 0 TO 223
+            PUSH(table, 600)
+        NEXT i
+    ELSE
+        DIM cells = SPLIT(raw$, ",")
+        FOR i = 0 TO LEN(cells) - 1
+            DIM cell$ = cells[i]
+            PUSH(table, VAL(cell$))
+        NEXT i
+    ENDIF
+    gWidths{key$} = table
+    RETURN table
+ENDFUNC
+
+FUNC BytesWidth(key$, bytes$)
+    DIM table = GlyphWidths(key$)
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(bytes$) - 1
+        DIM code = BYTEAT(bytes$, i)
+        IF code >= 32 THEN total = total + table[code - 32]
+    NEXT i
+    RETURN total
+ENDFUNC
+
+' The width of a text in the current font, in mm.
+EXPORT FUNC STRWIDTH(doc, text$)
+    DIM key$ = doc{"font"}
+    DIM size = CDBL(doc{"size"})
+    RETURN BytesWidth(key$, Encoded$(key$, text$)) * size / 1000.0 / PT_PER_MM
+ENDFUNC
+
+' ── text encoding ──────────────────────────────────────────────
+
+FUNC Encoded$(key$, text$)
+    IF key$ = "symbol" ORELSE key$ = "zapfdingbats" THEN RETURN text$
+    RETURN WINANSI$(text$)
+ENDFUNC
+
+' A UTF-8 text as WinAnsi bytes. A character WinAnsi has no place for
+' becomes "?", a line break or tab a space.
+EXPORT FUNC WINANSI$(text$)
+    DIM ascii = TRUE
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM probe = BYTEAT(text$, i)
+        IF probe >= 128 ORELSE probe < 32 THEN
+            ascii = FALSE
+            EXITFOR
+        ENDIF
+    NEXT i
+    IF ascii THEN RETURN text$
+    DIM parts = []
+    i = 0
+    DO WHILE i < LEN(text$)
+        DIM lead = BYTEAT(text$, i)
+        DIM code = lead
+        DIM more = 0
+        IF lead >= 240 THEN
+            code = lead - 240
+            more = 3
+        ELSEIF lead >= 224 THEN
+            code = lead - 224
+            more = 2
+        ELSEIF lead >= 192 THEN
+            code = lead - 192
+            more = 1
+        ELSEIF lead >= 128 THEN
+            code = 63
+        ENDIF
+        DIM k = 0
+        FOR k = 1 TO more
+            IF i + k < LEN(text$) THEN code = code * 64 + (BYTEAT(text$, i + k) - 128)
+        NEXT k
+        i = i + 1 + more
+        PUSH(parts, CHR$(AnsiByte(code)))
+    LOOP
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+FUNC AnsiByte(code)
+    IF code = 9 ORELSE code = 10 ORELSE code = 13 THEN RETURN 32
+    IF code >= 32 ANDALSO code < 127 THEN RETURN code
+    IF code >= 160 ANDALSO code <= 255 THEN RETURN code
+    IF code = 8364 THEN RETURN 128
+    IF code = 8218 THEN RETURN 130
+    IF code = 402 THEN RETURN 131
+    IF code = 8222 THEN RETURN 132
+    IF code = 8230 THEN RETURN 133
+    IF code = 8224 THEN RETURN 134
+    IF code = 8225 THEN RETURN 135
+    IF code = 710 THEN RETURN 136
+    IF code = 8240 THEN RETURN 137
+    IF code = 352 THEN RETURN 138
+    IF code = 8249 THEN RETURN 139
+    IF code = 338 THEN RETURN 140
+    IF code = 381 THEN RETURN 142
+    IF code = 8216 THEN RETURN 145
+    IF code = 8217 THEN RETURN 146
+    IF code = 8220 THEN RETURN 147
+    IF code = 8221 THEN RETURN 148
+    IF code = 8226 THEN RETURN 149
+    IF code = 8211 THEN RETURN 150
+    IF code = 8212 THEN RETURN 151
+    IF code = 732 THEN RETURN 152
+    IF code = 8482 THEN RETURN 153
+    IF code = 353 THEN RETURN 154
+    IF code = 8250 THEN RETURN 155
+    IF code = 339 THEN RETURN 156
+    IF code = 382 THEN RETURN 158
+    IF code = 376 THEN RETURN 159
+    RETURN 63
+ENDFUNC
+
+' A byte string as the inside of a PDF literal string.
+FUNC Literal$(bytes$)
+    DIM out$ = REPLACE$(bytes$, "\", "\\")
+    out$ = REPLACE$(out$, "(", "\(")
+    out$ = REPLACE$(out$, ")", "\)")
+    RETURN REPLACE$(out$, CHR$(13), "\r")
+ENDFUNC
+
+FUNC Num$(v)
+    DIM d = CDBL(v)
+    DIM out$ = FORMAT$("{:.2f}", d)
+    IF out$ = "-0.00" THEN out$ = "0.00"
+    RETURN out$
+ENDFUNC
+
+FUNC Pt$(mm)
+    RETURN Num$(CDBL(mm) * PT_PER_MM)
+ENDFUNC
+
+FUNC Ypt$(doc, mm)
+    RETURN Num$((CDBL(doc{"h"}) - CDBL(mm)) * PT_PER_MM)
+ENDFUNC
+
+SUB Emit(doc, op$)
+    EnsurePage(doc)
+    DIM ops = doc{"ops"}
+    DIM page_ops = ops[LEN(ops) - 1]
+    PUSH(page_ops, op$)
+ENDSUB
+
+' ── drawing text ───────────────────────────────────────────────
+
+FUNC TextOp$(doc, x, y, text$)
+    DIM key$ = doc{"font"}
+    DIM ref$ = FontRefOf$(doc, key$)
+    DIM rgb$ = doc{"text_rgb"}
+    RETURN "BT " + ref$ + " " + Num$(doc{"size"}) + " Tf " + rgb$ + " rg " + Pt$(x) + " " + Ypt$(doc, y) + " Td (" + Literal$(Encoded$(key$, text$)) + ") Tj ET"
+ENDFUNC
+
+' A text with its baseline at x, y. {page} becomes the page number and
+' {pages} the number of pages.
+EXPORT SUB TEXTAT(doc, x, y, text$)
+    EnsurePage(doc)
+    DIM shown$ = REPLACE$(text$, "{page}", STR$(PAGENO(doc)))
+    Emit(doc, TextOp$(doc, CDBL(x), CDBL(y), shown$))
+ENDSUB
+
+' A cell of w by h mm at the current position, with the text on one line
+' aligned "L", "R" or "C", an optional frame and fill. A width of 0 reaches
+' the right margin. The position moves to the right of the cell; a cell
+' that does not fit above the bottom margin starts a new page.
+EXPORT SUB CELL(doc, w, h, text$, align$ = "L", border = 0, fill = 0)
+    EnsurePage(doc)
+    DIM x = CDBL(doc{"x"})
+    DIM y = CDBL(doc{"y"})
+    DIM cell_w = CDBL(w)
+    DIM cell_h = CDBL(h)
+    DIM margin_mm = CDBL(doc{"margin"})
+    IF cell_w <= 0 THEN cell_w = CDBL(doc{"w"}) - margin_mm - x
+    IF y + cell_h > CDBL(doc{"h"}) - margin_mm ANDALSO y > margin_mm + 0.01 THEN
+        ADDPAGE(doc)
+        doc{"x"} = x
+        y = CDBL(doc{"y"})
+    ENDIF
+    IF fill <> 0 THEN
+        DIM fill_rgb$ = doc{"fill_rgb"}
+        Emit(doc, fill_rgb$ + " rg " + Pt$(x) + " " + Ypt$(doc, y + cell_h) + " " + Pt$(cell_w) + " " + Pt$(cell_h) + " re f")
+    ENDIF
+    IF border <> 0 THEN Emit(doc, StrokeSetup$(doc) + Pt$(x) + " " + Ypt$(doc, y + cell_h) + " " + Pt$(cell_w) + " " + Pt$(cell_h) + " re S")
+    IF text$ <> "" THEN
+        DIM shown$ = REPLACE$(text$, "{page}", STR$(PAGENO(doc)))
+        DIM text_w = STRWIDTH(doc, shown$)
+        DIM tx = x + 1.0
+        DIM al$ = UCASE$(align$)
+        IF al$ = "R" THEN tx = x + cell_w - 1.0 - text_w
+        IF al$ = "C" THEN tx = x + (cell_w - text_w) / 2.0
+        DIM ty = y + cell_h / 2.0 + CDBL(doc{"size"}) / PT_PER_MM * 0.35
+        Emit(doc, TextOp$(doc, tx, ty, shown$))
+    ENDIF
+    doc{"x"} = x + cell_w
+ENDSUB
+
+' A paragraph wrapped into lines of lineh mm inside a width of w mm (0
+' reaches the right margin), each line a cell. The position ends at the
+' left edge of the paragraph, below it.
+EXPORT SUB MULTICELL(doc, w, lineh, text$, align$ = "L")
+    EnsurePage(doc)
+    DIM start_x = CDBL(doc{"x"})
+    DIM box_w = CDBL(w)
+    IF box_w <= 0 THEN box_w = CDBL(doc{"w"}) - CDBL(doc{"margin"}) - start_x
+    DIM rows = SPLITLINES(doc, text$, box_w - 2.0)
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM one$ = rows[i]
+        doc{"x"} = start_x
+        CELL(doc, box_w, lineh, one$, align$)
+        doc{"x"} = start_x
+        doc{"y"} = CDBL(doc{"y"}) + CDBL(lineh)
+    NEXT i
+ENDSUB
+
+' The lines a text breaks into at a width of w mm in the current font:
+' at spaces, at every line break, and inside a word too long for a line.
+EXPORT FUNC SPLITLINES(doc, text$, w)
+    DIM out = []
+    DIM limit = CDBL(w)
+    DIM paras = SPLIT(REPLACE$(text$, CHR$(13), ""), gNL$)
+    DIM p = 0
+    FOR p = 0 TO LEN(paras) - 1
+        DIM para$ = paras[p]
+        DIM words = SPLIT(para$, " ")
+        DIM row$ = ""
+        DIM k = 0
+        FOR k = 0 TO LEN(words) - 1
+            DIM word$ = words[k]
+            IF word$ <> "" THEN
+                DIM trial$ = word$
+                IF row$ <> "" THEN trial$ = row$ + " " + word$
+                IF STRWIDTH(doc, trial$) <= limit THEN
+                    row$ = trial$
+                ELSE
+                    IF row$ <> "" THEN PUSH(out, row$)
+                    row$ = word$
+                    DO WHILE STRWIDTH(doc, row$) > limit ANDALSO CharCount(row$) > 1
+                        DIM cut = FitBytes(doc, row$, limit)
+                        DIM head$ = LEFT$(row$, cut)
+                        PUSH(out, head$)
+                        row$ = MID$(row$, cut)
+                    LOOP
+                ENDIF
+            ENDIF
+        NEXT k
+        PUSH(out, row$)
+    NEXT p
+    RETURN out
+ENDFUNC
+
+' The text cut to fit w mm, with "..." when something was cut.
+EXPORT FUNC FIT$(doc, text$, w)
+    DIM limit = CDBL(w)
+    IF STRWIDTH(doc, text$) <= limit THEN RETURN text$
+    DIM keep = FitBytes(doc, text$, limit - STRWIDTH(doc, "..."))
+    DIM i = 0
+    DO WHILE keep > 0 ANDALSO STRWIDTH(doc, LEFT$(text$, keep) + "...") > limit
+        keep = PrevBoundary(text$, keep)
+    LOOP
+    IF keep <= 0 THEN RETURN ""
+    RETURN LEFT$(text$, keep) + "..."
+ENDFUNC
+
+FUNC CharLen(text$, at)
+    DIM lead = BYTEAT(text$, at)
+    IF lead >= 240 THEN RETURN 4
+    IF lead >= 224 THEN RETURN 3
+    IF lead >= 192 THEN RETURN 2
+    RETURN 1
+ENDFUNC
+
+FUNC CharCount(text$)
+    DIM n = 0
+    DIM at = 0
+    DO WHILE at < LEN(text$)
+        at = at + CharLen(text$, at)
+        n = n + 1
+    LOOP
+    RETURN n
+ENDFUNC
+
+FUNC PrevBoundary(text$, at)
+    DIM back = at - 1
+    DO WHILE back > 0 ANDALSO BYTEAT(text$, back) >= 128 ANDALSO BYTEAT(text$, back) < 192
+        back = back - 1
+    LOOP
+    RETURN back
+ENDFUNC
+
+' The longest start of the text, in whole characters and at least one,
+' that fits w mm.
+FUNC FitBytes(doc, text$, w)
+    DIM best = CharLen(text$, 0)
+    DIM at = best
+    DO WHILE at < LEN(text$)
+        DIM nxt = at + CharLen(text$, at)
+        IF STRWIDTH(doc, LEFT$(text$, nxt)) > w THEN EXITDO
+        best = nxt
+        at = nxt
+    LOOP
+    RETURN best
+ENDFUNC
+
+' ── lines, boxes and images ────────────────────────────────────
+
+FUNC StrokeSetup$(doc)
+    DIM rgb$ = doc{"draw_rgb"}
+    RETURN rgb$ + " RG " + Pt$(doc{"line_mm"}) + " w "
+ENDFUNC
+
+EXPORT SUB DRAWLINE(doc, x1, y1, x2, y2)
+    Emit(doc, StrokeSetup$(doc) + Pt$(x1) + " " + Ypt$(doc, y1) + " m " + Pt$(x2) + " " + Ypt$(doc, y2) + " l S")
+ENDSUB
+
+' A rectangle: style "D" draws the frame, "F" fills it, "DF" does both.
+EXPORT SUB BOX(doc, x, y, w, h, style$ = "D")
+    DIM st$ = UCASE$(style$)
+    DIM frame$ = Pt$(x) + " " + Ypt$(doc, CDBL(y) + CDBL(h)) + " " + Pt$(w) + " " + Pt$(h) + " re"
+    DIM fill_rgb$ = doc{"fill_rgb"}
+    IF st$ = "F" THEN
+        Emit(doc, fill_rgb$ + " rg " + frame$ + " f")
+    ELSEIF st$ = "DF" ORELSE st$ = "FD" THEN
+        Emit(doc, fill_rgb$ + " rg " + StrokeSetup$(doc) + frame$ + " B")
+    ELSE
+        Emit(doc, StrokeSetup$(doc) + frame$ + " S")
+    ENDIF
+ENDSUB
+
+' A JPEG image with its top left corner at x, y. With w or h at 0 the
+' other one follows from the picture's proportions; with both at 0 it is
+' drawn at 96 dots per inch. A file drawn twice is embedded once.
+EXPORT SUB IMAGE(doc, path$, x, y, w = 0, h = 0)
+    DIM index = ImageIndex(doc, path$)
+    DIM all_w = doc{"img_w"}
+    DIM all_h = doc{"img_h"}
+    DIM px_w = CDBL(all_w[index])
+    DIM px_h = CDBL(all_h[index])
+    DIM draw_w = CDBL(w)
+    DIM draw_h = CDBL(h)
+    IF draw_w <= 0 ANDALSO draw_h <= 0 THEN
+        draw_w = px_w * 25.4 / 96.0
+        draw_h = px_h * 25.4 / 96.0
+    ELSEIF draw_w <= 0 THEN
+        draw_w = draw_h * px_w / px_h
+    ELSEIF draw_h <= 0 THEN
+        draw_h = draw_w * px_h / px_w
+    ENDIF
+    Emit(doc, "q " + Pt$(draw_w) + " 0 0 " + Pt$(draw_h) + " " + Pt$(x) + " " + Ypt$(doc, CDBL(y) + draw_h) + " cm /Im" + STR$(index + 1) + " Do Q")
+ENDSUB
+
+FUNC ImageIndex(doc, path$)
+    DIM paths = doc{"img_paths"}
+    DIM i = 0
+    FOR i = 0 TO LEN(paths) - 1
+        DIM have$ = paths[i]
+        IF have$ = path$ THEN RETURN i
+    NEXT i
+    IF NOT FILE.EXISTS(path$) THEN THROW "PDFGEN: no such image " + path$
+    DIM data$ = BINREADER$(path$)
+    DIM info = JpegInfo(data$)
+    PUSH(paths, path$)
+    doc{"img_paths"} = paths
+    DIM datas = doc{"img_data"}
+    PUSH(datas, HexOf$(data$))
+    doc{"img_data"} = datas
+    DIM widths = doc{"img_w"}
+    PUSH(widths, info[0])
+    doc{"img_w"} = widths
+    DIM heights = doc{"img_h"}
+    PUSH(heights, info[1])
+    doc{"img_h"} = heights
+    DIM comps = doc{"img_comps"}
+    PUSH(comps, info[2])
+    doc{"img_comps"} = comps
+    RETURN LEN(paths) - 1
+ENDFUNC
+
+' Width, height and colour components from the frame header of a JPEG.
+FUNC JpegInfo(data$)
+    IF LEN(data$) < 4 ORELSE BYTEAT(data$, 0) <> 255 ORELSE BYTEAT(data$, 1) <> 216 THEN THROW "PDFGEN: not a JPEG file"
+    DIM at = 2
+    DO WHILE at + 9 < LEN(data$)
+        IF BYTEAT(data$, at) <> 255 THEN THROW "PDFGEN: a damaged JPEG file"
+        DIM marker = BYTEAT(data$, at + 1)
+        IF marker = 255 THEN
+            at = at + 1
+            CONTINUEDO
+        ENDIF
+        DIM seg_len = BYTEAT(data$, at + 2) * 256 + BYTEAT(data$, at + 3)
+        IF marker >= 192 ANDALSO marker <= 207 ANDALSO marker <> 196 ANDALSO marker <> 200 ANDALSO marker <> 204 THEN
+            DIM info = []
+            PUSH(info, BYTEAT(data$, at + 7) * 256 + BYTEAT(data$, at + 8))
+            PUSH(info, BYTEAT(data$, at + 5) * 256 + BYTEAT(data$, at + 6))
+            PUSH(info, BYTEAT(data$, at + 9))
+            RETURN info
+        ENDIF
+        at = at + 2 + seg_len
+    LOOP
+    THROW "PDFGEN: no frame header in the JPEG file"
+    RETURN []
+ENDFUNC
+
+' The bytes of a file as ASCII hex, 80 digits a line, ended by ">". The
+' image stream is kept in this form, so the document never holds binary
+' bytes and every backend writes the same file.
+FUNC HexOf$(data$)
+    DIM digits$ = "0123456789ABCDEF"
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(data$) - 1
+        DIM code = BYTEAT(data$, i)
+        PUSH(parts, MID$(digits$, code \ 16, 1) + MID$(digits$, code MOD 16, 1))
+        IF i MOD 40 = 39 THEN PUSH(parts, gNL$)
+    NEXT i
+    PUSH(parts, ">")
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' ── tables ─────────────────────────────────────────────────────
+
+' Rows of cells from the current position down, a new page whenever a row
+' no longer fits, with the header row drawn again at the top of it.
+' opts: "headers" (an array), "widths" in mm (the rest of the width is
+' shared out), "align" ("L", "R" or "C" per column), "lineh" (7 mm) and
+' "zebra" (every second row in the fill colour).
+EXPORT SUB TABLE(doc, rows, opts = 0)
+    EnsurePage(doc)
+    DIM usable = CDBL(doc{"w"}) - 2.0 * CDBL(doc{"margin"})
+    DIM headers = []
+    DIM given_w = []
+    DIM given_al = []
+    DIM row_h = 7.0
+    DIM zebra = FALSE
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "headers") THEN headers = opts{"headers"}
+        IF MAP.EXISTS(opts, "widths") THEN given_w = opts{"widths"}
+        IF MAP.EXISTS(opts, "align") THEN given_al = opts{"align"}
+        IF MAP.EXISTS(opts, "lineh") THEN row_h = CDBL(opts{"lineh"})
+        IF MAP.EXISTS(opts, "zebra") THEN
+            IF opts{"zebra"} THEN zebra = TRUE
+        ENDIF
+    ENDIF
+    DIM n_cols = LEN(headers)
+    DIM r = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM probe_row = rows[r]
+        IF LEN(probe_row) > n_cols THEN n_cols = LEN(probe_row)
+    NEXT r
+    IF n_cols = 0 THEN RETURN
+    DIM taken = 0.0
+    DIM open_cols = 0
+    DIM c = 0
+    FOR c = 0 TO n_cols - 1
+        DIM asked_w = 0.0
+        IF c < LEN(given_w) THEN asked_w = CDBL(given_w[c])
+        IF asked_w > 0 THEN
+            taken = taken + asked_w
+        ELSE
+            open_cols = open_cols + 1
+        ENDIF
+    NEXT c
+    DIM col_w = []
+    DIM col_al = []
+    FOR c = 0 TO n_cols - 1
+        DIM this_w = 0.0
+        IF c < LEN(given_w) THEN this_w = CDBL(given_w[c])
+        IF this_w > 0 THEN
+            PUSH(col_w, this_w)
+        ELSE
+            PUSH(col_w, (usable - taken) / open_cols)
+        ENDIF
+        DIM al$ = "L"
+        IF c < LEN(given_al) THEN
+            DIM asked_al$ = given_al[c]
+            al$ = asked_al$
+        ENDIF
+        PUSH(col_al, al$)
+    NEXT c
+    IF LEN(headers) > 0 THEN TableHeader(doc, headers, col_w, row_h)
+    FOR r = 0 TO LEN(rows) - 1
+        IF CDBL(doc{"y"}) + row_h > CDBL(doc{"h"}) - CDBL(doc{"margin"}) THEN
+            ADDPAGE(doc)
+            IF LEN(headers) > 0 THEN TableHeader(doc, headers, col_w, row_h)
+        ENDIF
+        DIM cells = rows[r]
+        doc{"x"} = doc{"margin"}
+        FOR c = 0 TO n_cols - 1
+            DIM cell_text$ = ""
+            IF c < LEN(cells) THEN cell_text$ = AsText$(cells[c])
+            DIM cw = CDBL(col_w[c])
+            DIM ca$ = col_al[c]
+            DIM shade = 0
+            IF zebra ANDALSO r MOD 2 = 1 THEN shade = 1
+            CELL(doc, cw, row_h, FIT$(doc, cell_text$, cw - 2.0), ca$, 1, shade)
+        NEXT c
+        LN(doc, row_h)
+    NEXT r
+ENDSUB
+
+SUB TableHeader(doc, headers, col_w, row_h)
+    DIM fam$ = doc{"family"}
+    DIM old_style$ = doc{"style"}
+    USEFONT(doc, fam$, "B")
+    doc{"x"} = doc{"margin"}
+    DIM c = 0
+    FOR c = 0 TO LEN(col_w) - 1
+        DIM title$ = ""
+        IF c < LEN(headers) THEN title$ = AsText$(headers[c])
+        DIM cw = CDBL(col_w[c])
+        CELL(doc, cw, row_h, FIT$(doc, title$, cw - 2.0), "L", 1, 1)
+    NEXT c
+    LN(doc, row_h)
+    USEFONT(doc, fam$, old_style$)
+ENDSUB
+
+FUNC AsText$(raw)
+    DIM kind$ = TYPEOF(raw)
+    IF kind$ = "STRING" THEN
+        DIM text$ = raw
+        RETURN text$
+    ENDIF
+    IF kind$ = "NONE" THEN RETURN ""
+    IF kind$ = "BOOLEAN" THEN
+        IF raw THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    RETURN STR$(raw)
+ENDFUNC
+
+' ── writing the file ───────────────────────────────────────────
+
+' The document as the bytes of a PDF file.
+EXPORT FUNC BUILD$(doc)
+    EnsurePage(doc)
+    DIM footer$ = doc{"footer"}
+    IF footer$ <> "" THEN
+        DIM footer_key$ = doc{"footer_font"}
+        DIM footer_ref$ = FontRefOf$(doc, footer_key$)
+    ENDIF
+    IF LEN(doc{"fonts"}) = 0 THEN
+        DIM default_ref$ = FontRefOf$(doc, "helvetica")
+    ENDIF
+    DIM fonts = doc{"fonts"}
+    DIM ops = doc{"ops"}
+    DIM datas = doc{"img_data"}
+    DIM n_pages = LEN(ops)
+    DIM n_fonts = LEN(fonts)
+    DIM n_images = LEN(datas)
+    DIM first_font = 4
+    DIM first_image = first_font + n_fonts
+    DIM first_page = first_image + n_images
+    DIM bodies = []
+    PUSH(bodies, "<< /Type /Catalog /Pages 2 0 R >>")
+    DIM kids = []
+    DIM p = 0
+    FOR p = 0 TO n_pages - 1
+        PUSH(kids, STR$(first_page + 2 * p) + " 0 R")
+    NEXT p
+    PUSH(bodies, "<< /Type /Pages /Kids [" + JOIN(kids, " ") + "] /Count " + STR$(n_pages) + " >>")
+    PUSH(bodies, InfoDict$(doc))
+    DIM font_refs = []
+    DIM f = 0
+    FOR f = 0 TO n_fonts - 1
+        DIM key$ = fonts[f]
+        PUSH(bodies, FontDict$(key$))
+        PUSH(font_refs, "/F" + STR$(f + 1) + " " + STR$(first_font + f) + " 0 R")
+    NEXT f
+    DIM image_refs = []
+    DIM m = 0
+    FOR m = 0 TO n_images - 1
+        PUSH(bodies, ImageObj$(doc, m))
+        PUSH(image_refs, "/Im" + STR$(m + 1) + " " + STR$(first_image + m) + " 0 R")
+    NEXT m
+    DIM resources$ = "<< /Font << " + JOIN(font_refs, " ") + " >>"
+    IF n_images > 0 THEN resources$ = resources$ + " /XObject << " + JOIN(image_refs, " ") + " >>"
+    resources$ = resources$ + " >>"
+    DIM media$ = "[0 0 " + Pt$(doc{"w"}) + " " + Pt$(doc{"h"}) + "]"
+    FOR p = 0 TO n_pages - 1
+        DIM page_ops = ops[p]
+        DIM stream$ = JOIN(page_ops, gNL$)
+        IF footer$ <> "" THEN stream$ = stream$ + gNL$ + FooterOp$(doc, p + 1, n_pages)
+        stream$ = REPLACE$(stream$, "{pages}", STR$(n_pages))
+        PUSH(bodies, "<< /Type /Page /Parent 2 0 R /MediaBox " + media$ + " /Resources " + resources$ + " /Contents " + STR$(first_page + 2 * p + 1) + " 0 R >>")
+        PUSH(bodies, "<< /Length " + STR$(LEN(stream$)) + " >>" + gNL$ + "stream" + gNL$ + stream$ + gNL$ + "endstream")
+    NEXT p
+    DIM parts = []
+    DIM head$ = "%PDF-1.4" + gNL$ + "%" + CHR$(226) + CHR$(227) + CHR$(207) + CHR$(211) + gNL$
+    PUSH(parts, head$)
+    DIM offset = LEN(head$)
+    DIM offsets = []
+    DIM o = 0
+    FOR o = 0 TO LEN(bodies) - 1
+        PUSH(offsets, offset)
+        DIM body$ = bodies[o]
+        DIM obj$ = STR$(o + 1) + " 0 obj" + gNL$ + body$ + gNL$ + "endobj" + gNL$
+        PUSH(parts, obj$)
+        offset = offset + LEN(obj$)
+    NEXT o
+    DIM xref = []
+    PUSH(xref, "xref")
+    PUSH(xref, "0 " + STR$(LEN(bodies) + 1))
+    PUSH(xref, "0000000000 65535 f ")
+    FOR o = 0 TO LEN(offsets) - 1
+        DIM off = CLNG(offsets[o])
+        PUSH(xref, LPAD$(STR$(off), 10, "0") + " 00000 n ")
+    NEXT o
+    PUSH(parts, JOIN(xref, gNL$) + gNL$)
+    PUSH(parts, "trailer" + gNL$ + "<< /Size " + STR$(LEN(bodies) + 1) + " /Root 1 0 R /Info 3 0 R >>" + gNL$ + "startxref" + gNL$ + STR$(offset) + gNL$ + "%%EOF" + gNL$)
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' Writes the PDF file.
+EXPORT SUB WRITEFILE(doc, path$)
+    BINWRITER path$, BUILD$(doc)
+ENDSUB
+
+FUNC InfoDict$(doc)
+    DIM parts = []
+    PUSH(parts, "<< /Producer (jdBasic PDFGEN)")
+    DIM title$ = doc{"title"}
+    DIM author$ = doc{"author"}
+    DIM subject$ = doc{"subject"}
+    IF title$ <> "" THEN PUSH(parts, "/Title (" + Literal$(WINANSI$(title$)) + ")")
+    IF author$ <> "" THEN PUSH(parts, "/Author (" + Literal$(WINANSI$(author$)) + ")")
+    IF subject$ <> "" THEN PUSH(parts, "/Subject (" + Literal$(WINANSI$(subject$)) + ")")
+    PUSH(parts, ">>")
+    RETURN JOIN(parts, " ")
+ENDFUNC
+
+FUNC FontDict$(key$)
+    DIM base$ = BaseFont$(key$)
+    IF key$ = "symbol" ORELSE key$ = "zapfdingbats" THEN RETURN "<< /Type /Font /Subtype /Type1 /BaseFont /" + base$ + " >>"
+    RETURN "<< /Type /Font /Subtype /Type1 /BaseFont /" + base$ + " /Encoding /WinAnsiEncoding >>"
+ENDFUNC
+
+FUNC ImageObj$(doc, index)
+    DIM datas = doc{"img_data"}
+    DIM data$ = datas[index]
+    DIM all_w = doc{"img_w"}
+    DIM all_h = doc{"img_h"}
+    DIM all_c = doc{"img_comps"}
+    DIM comps = all_c[index]
+    DIM color_space$ = "/DeviceRGB"
+    IF comps = 1 THEN color_space$ = "/DeviceGray"
+    IF comps = 4 THEN color_space$ = "/DeviceCMYK"
+    DIM head$ = "<< /Type /XObject /Subtype /Image /Width " + STR$(all_w[index]) + " /Height " + STR$(all_h[index]) + " /ColorSpace " + color_space$ +" /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode] /Length " + STR$(LEN(data$)) + " >>"
+    RETURN head$ + gNL$ + "stream" + gNL$ + data$ + gNL$ + "endstream"
+ENDFUNC
+
+FUNC FooterOp$(doc, page_no, n_pages)
+    DIM text$ = doc{"footer"}
+    text$ = REPLACE$(REPLACE$(text$, "{page}", STR$(page_no)), "{pages}", STR$(n_pages))
+    DIM key$ = doc{"footer_font"}
+    DIM size = CDBL(doc{"footer_size"})
+    DIM bytes$ = Encoded$(key$, text$)
+    DIM text_w = BytesWidth(key$, bytes$) * size / 1000.0 / PT_PER_MM
+    DIM margin_mm = CDBL(doc{"margin"})
+    DIM x = margin_mm
+    DIM al$ = doc{"footer_align"}
+    IF al$ = "R" THEN x = CDBL(doc{"w"}) - margin_mm - text_w
+    IF al$ = "C" THEN x = (CDBL(doc{"w"}) - text_w) / 2.0
+    DIM y = CDBL(doc{"h"}) - margin_mm / 2.0
+    RETURN "BT " + FontRefOf$(doc, key$) + " " + Num$(size) + " Tf 0 g " + Pt$(x) + " " + Ypt$(doc, y) + " Td (" + Literal$(bytes$) + ") Tj ET"
+ENDFUNC
+
+' ── font metrics ───────────────────────────────────────────────
+
+' The glyph widths of a standard font, in 1/1000 of the font size, for the
+' bytes 32 to 255 of its encoding: WinAnsi for Helvetica and Times, the
+' font's own for Symbol and ZapfDingbats. Courier is 600 throughout.
+FUNC WidthTable$(key$)
+    IF key$ = "helvetica" THEN RETURN "278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,350,556,350,222,556,333,1000,556,556,333,1000,667,333,1000,350,611,350,350,222,222,333,333,350,556,1000,333,1000,500,333,944,350,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500"
+    IF key$ = "helveticaB" THEN RETURN "278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584,350,556,350,278,556,500,1000,556,556,333,1000,667,333,1000,350,611,350,350,278,278,500,500,350,556,1000,333,1000,556,333,944,350,500,667,278,333,556,556,556,556,280,556,333,737,370,556,584,333,737,333,400,584,333,333,333,611,556,278,333,333,365,556,834,834,834,611,722,722,722,722,722,722,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,556,556,556,556,556,278,278,278,278,611,611,611,611,611,611,611,584,611,611,611,611,611,556,611,556"
+    IF key$ = "helveticaI" THEN RETURN "278,278,355,556,556,889,667,191,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,278,278,584,584,584,556,1015,667,667,722,722,667,611,778,722,278,500,667,556,833,722,778,667,778,722,667,611,722,667,944,667,667,611,278,278,278,469,556,333,556,556,500,556,556,278,556,556,222,222,500,222,833,556,556,556,556,333,500,278,556,500,722,500,500,500,334,260,334,584,350,556,350,222,556,333,1000,556,556,333,1000,667,333,1000,350,611,350,350,222,222,333,333,350,556,1000,333,1000,500,333,944,350,500,667,278,333,556,556,556,556,260,556,333,737,370,556,584,333,737,333,400,584,333,333,333,556,537,278,333,333,365,556,834,834,834,611,667,667,667,667,667,667,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,500,556,556,556,556,278,278,278,278,556,556,556,556,556,556,556,584,611,556,556,556,556,500,556,500"
+    IF key$ = "helveticaBI" THEN RETURN "278,333,474,556,556,889,722,238,333,333,389,584,278,333,278,278,556,556,556,556,556,556,556,556,556,556,333,333,584,584,584,611,975,722,722,722,722,667,611,778,722,278,556,722,611,833,722,778,667,778,722,667,611,722,667,944,667,667,611,333,278,333,584,556,333,556,611,556,611,556,333,611,611,278,278,556,278,889,611,611,611,611,389,556,333,611,556,778,556,556,500,389,280,389,584,350,556,350,278,556,500,1000,556,556,333,1000,667,333,1000,350,611,350,350,278,278,500,500,350,556,1000,333,1000,556,333,944,350,500,667,278,333,556,556,556,556,280,556,333,737,370,556,584,333,737,333,400,584,333,333,333,611,556,278,333,333,365,556,834,834,834,611,722,722,722,722,722,722,1000,722,667,667,667,667,278,278,278,278,722,722,778,778,778,778,778,584,778,722,722,722,722,667,667,611,556,556,556,556,556,556,889,556,556,556,556,556,278,278,278,278,611,611,611,611,611,611,611,584,611,611,611,611,611,556,611,556"
+    IF key$ = "times" THEN RETURN "250,333,408,500,500,833,778,180,333,333,500,564,250,333,250,278,500,500,500,500,500,500,500,500,500,500,278,278,564,564,564,444,921,722,667,667,722,611,556,722,722,333,389,722,611,889,722,722,556,722,667,556,611,722,722,944,722,722,611,333,278,333,469,500,333,444,500,444,500,444,333,500,500,278,278,500,278,778,500,500,500,500,333,389,278,500,500,722,500,500,444,480,200,480,541,350,500,350,333,500,444,1000,500,500,333,1000,556,333,889,350,611,350,350,333,333,444,444,350,500,1000,333,980,389,333,722,350,444,722,250,333,500,500,500,500,200,500,333,760,276,500,564,333,760,333,400,564,300,300,333,500,453,250,333,300,310,500,750,750,750,444,722,722,722,722,722,722,889,667,611,611,611,611,333,333,333,333,722,722,722,722,722,722,722,564,722,722,722,722,722,722,556,500,444,444,444,444,444,444,667,444,444,444,444,444,278,278,278,278,500,500,500,500,500,500,500,564,500,500,500,500,500,500,500,500"
+    IF key$ = "timesB" THEN RETURN "250,333,555,500,500,1000,833,278,333,333,500,570,250,333,250,278,500,500,500,500,500,500,500,500,500,500,333,333,570,570,570,500,930,722,667,722,722,667,611,778,778,389,500,778,667,944,722,778,611,778,722,556,667,722,722,1000,722,722,667,333,278,333,581,500,333,500,556,444,556,444,333,500,556,278,333,556,278,833,556,500,556,556,444,389,333,556,500,722,500,500,444,394,220,394,520,350,500,350,333,500,500,1000,500,500,333,1000,556,333,1000,350,667,350,350,333,333,500,500,350,500,1000,333,1000,389,333,722,350,444,722,250,333,500,500,500,500,220,500,333,747,300,500,570,333,747,333,400,570,300,300,333,556,540,250,333,300,330,500,750,750,750,500,722,722,722,722,722,722,1000,722,667,667,667,667,389,389,389,389,722,722,778,778,778,778,778,570,778,722,722,722,722,722,611,556,500,500,500,500,500,500,722,444,444,444,444,444,278,278,278,278,500,556,500,500,500,500,500,570,500,556,556,556,556,500,556,500"
+    IF key$ = "timesI" THEN RETURN "250,333,420,500,500,833,778,214,333,333,500,675,250,333,250,278,500,500,500,500,500,500,500,500,500,500,333,333,675,675,675,500,920,611,611,667,722,611,611,722,722,333,444,667,556,833,667,722,611,722,611,500,556,722,611,833,611,556,556,389,278,389,422,500,333,500,500,444,500,444,278,500,500,278,278,444,278,722,500,500,500,500,389,389,278,500,444,667,444,444,389,400,275,400,541,350,500,350,333,500,556,889,500,500,333,1000,500,333,944,350,556,350,350,333,333,556,556,350,500,889,333,980,389,333,667,350,389,556,250,389,500,500,500,500,275,500,333,760,276,500,675,333,760,333,400,675,300,300,333,500,523,250,333,300,310,500,750,750,750,500,611,611,611,611,611,611,889,667,611,611,611,611,333,333,333,333,722,667,722,722,722,722,722,675,722,722,722,722,722,556,611,500,500,500,500,500,500,500,667,444,444,444,444,444,278,278,278,278,500,500,500,500,500,500,500,675,500,500,500,500,500,444,500,444"
+    IF key$ = "timesBI" THEN RETURN "250,389,555,500,500,833,778,278,333,333,500,570,250,333,250,278,500,500,500,500,500,500,500,500,500,500,333,333,570,570,570,500,832,667,667,667,722,667,667,722,778,389,500,667,611,889,722,722,611,722,667,556,611,722,667,889,667,611,611,333,278,333,570,500,333,500,500,444,500,444,333,500,556,278,278,500,278,778,556,500,500,500,389,389,278,556,444,667,500,444,389,348,220,348,570,350,500,350,333,500,500,1000,500,500,333,1000,556,333,944,350,611,350,350,333,333,500,500,350,500,1000,333,1000,389,333,722,350,389,611,250,389,500,500,500,500,220,500,333,747,266,500,606,333,747,333,400,570,300,300,333,576,500,250,333,300,300,500,750,750,750,500,667,667,667,667,667,667,944,667,667,667,667,667,389,389,389,389,722,722,722,722,722,722,722,570,722,722,722,722,722,611,611,500,500,500,500,500,500,500,722,444,444,444,444,444,278,278,278,278,500,556,500,500,500,500,500,570,500,556,556,556,556,444,500,444"
+    IF key$ = "symbol" THEN RETURN "250,333,713,500,549,833,778,439,333,333,500,549,250,549,250,278,500,500,500,500,500,500,500,500,500,500,278,278,549,549,549,444,549,722,667,722,612,611,763,603,722,333,631,722,686,889,722,722,768,741,556,592,611,690,439,768,645,795,611,333,863,333,658,500,500,631,549,549,494,439,521,411,603,329,603,549,549,576,521,549,549,521,549,603,439,576,713,686,493,686,494,480,200,480,549,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,750,620,247,549,167,713,500,753,753,753,753,1042,987,603,987,603,400,549,411,549,549,713,494,460,549,549,549,549,1000,603,1000,658,823,686,795,987,768,768,823,768,768,713,713,713,713,713,713,713,768,713,790,790,890,823,549,250,713,603,603,1042,987,603,987,603,494,329,790,790,786,713,384,384,384,384,384,384,494,494,494,494,0,329,274,686,686,686,384,384,384,384,384,384,494,494,494,0"
+    IF key$ = "zapfdingbats" THEN RETURN "278,974,961,974,980,719,789,790,791,690,960,939,549,855,911,933,911,945,974,755,846,762,761,571,677,763,760,759,754,494,552,537,577,692,786,788,788,790,793,794,816,823,789,841,823,833,816,831,923,744,723,749,790,792,695,776,768,792,759,707,708,682,701,826,815,789,789,707,687,696,689,786,787,713,791,785,791,873,761,762,762,759,759,892,892,788,784,438,138,277,415,392,392,668,668,0,390,390,317,317,276,276,509,509,410,410,234,234,334,334,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,732,544,544,910,667,760,760,776,595,694,626,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,788,894,838,1016,458,748,924,748,918,927,928,928,834,873,828,924,924,917,930,931,463,883,836,836,867,867,696,696,874,0,874,760,946,771,865,771,888,967,888,831,873,927,970,918,0"
+    RETURN ""
+ENDFUNC

@@ -1,0 +1,157 @@
+' pdfgen_demo.jdb - an invoice written as a PDF file.
+'
+' The demo lays out a German invoice the way an office program would: a
+' logo and a letterhead, the address window, the invoice details, forty
+' order lines in a table that continues on a second page with its header,
+' a totals box with VAT, the payment terms as a paragraph and a page
+' number in every footer. It writes the file and reports what is in it.
+'
+'   jdBasic pdfgen_demo.jdb
+
+IMPORT PDFGEN, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM folder$ = MKTEMP$("pdfgendemo")
+MKDIR folder$
+DIM path$ = folder$ + "/RE-2026-0413.pdf"
+
+FUNC Euro$(amount)
+    RETURN REPLACE$(FORMAT$("{:.2f}", amount), ".", ",") + " €"
+ENDFUNC
+
+DIM article_names = ["Kopierpapier A4, 500 Blatt", "Toner schwarz", "Toner cyan", "Heftklammern 24/6", "Ordner breit", "Klarsichthüllen, 100 Stück", "Haftnotizen gelb", "Kugelschreiber blau"]
+DIM article_prices = [4.5, 61.9, 58.4, 1.95, 2.8, 5.25, 3.1, 0.85]
+
+' ── the page ───────────────────────────────────────────────────
+
+DIM pdf = PDFGEN.DOC()
+PDFGEN.SETINFO(pdf, "Rechnung RE-2026-0413", "Papier & Toner GmbH", "Büromaterial September 2026")
+PDFGEN.ADDPAGE(pdf)
+PDFGEN.USEFONT(pdf, "helvetica", "", 8)
+PDFGEN.SETFOOTER(pdf, "Papier & Toner GmbH · Hafenstraße 4 · 28195 Bremen · Seite {page} von {pages}", "C")
+
+DIM logo$ = "tests/jdlibs/fixtures/pdfgen_logo.jpg"
+IF FILE.EXISTS(logo$) THEN PDFGEN.IMAGE(pdf, logo$, 170, 12, 20)
+PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+PDFGEN.SETCOLOR(pdf, 20, 60, 120)
+PDFGEN.TEXTAT(pdf, 20, 22, "Papier & Toner GmbH")
+PDFGEN.USEFONT(pdf, "helvetica", "", 9)
+PDFGEN.SETCOLOR(pdf, 90, 90, 90)
+PDFGEN.TEXTAT(pdf, 20, 28, "Hafenstraße 4 · 28195 Bremen · USt-IdNr. DE123456789")
+PDFGEN.SETDRAW(pdf, 20, 60, 120)
+PDFGEN.SETLINEWIDTH(pdf, 0.4)
+PDFGEN.DRAWLINE(pdf, 20, 34, 190, 34)
+
+PDFGEN.SETCOLOR(pdf, 0, 0, 0)
+PDFGEN.USEFONT(pdf, "helvetica", "", 7)
+PDFGEN.TEXTAT(pdf, 20, 45, "Papier & Toner GmbH, Hafenstraße 4, 28195 Bremen")
+PDFGEN.USEFONT(pdf, "helvetica", "", 11)
+PDFGEN.SETXY(pdf, 20, 49)
+PDFGEN.MULTICELL(pdf, 85, 5, "Stadtverwaltung Musterstadt" + CHR$(10) + "Zentraler Einkauf" + CHR$(10) + "Rathausplatz 1" + CHR$(10) + "12345 Musterstadt")
+
+PDFGEN.USEFONT(pdf, "helvetica", "", 10)
+DIM details = [["Rechnungsnummer", "RE-2026-0413"], ["Rechnungsdatum", "13.09.2026"], ["Leitweg-ID", "04011000-12345-03"], ["Kundennummer", "K-10233"]]
+DIM i = 0
+FOR i = 0 TO LEN(details) - 1
+    DIM pair = details[i]
+    DIM label$ = pair[0]
+    DIM value$ = pair[1]
+    PDFGEN.SETXY(pdf, 120, 49 + i * 5)
+    PDFGEN.CELL(pdf, 35, 5, label$)
+    PDFGEN.CELL(pdf, 35, 5, value$, "R")
+NEXT i
+
+PDFGEN.USEFONT(pdf, "helvetica", "B", 14)
+PDFGEN.TEXTAT(pdf, 20, 86, "Rechnung")
+PDFGEN.USEFONT(pdf, "helvetica", "", 10)
+PDFGEN.SETXY(pdf, 20, 90)
+PDFGEN.MULTICELL(pdf, 0, 5, "Sehr geehrte Damen und Herren, für die Lieferungen im September 2026 berechnen wir Ihnen die folgenden Positionen.")
+PDFGEN.LN(pdf, 3)
+
+' ── the order lines ────────────────────────────────────────────
+
+DIM rows = []
+DIM net = 0.0
+FOR i = 1 TO 40
+    DIM pick = (i * 7) MOD LEN(article_names)
+    DIM article$ = article_names[pick]
+    DIM price = article_prices[pick]
+    DIM qty = (i * 3) MOD 9 + 1
+    DIM amount = qty * price
+    net = net + amount
+    DIM row = []
+    PUSH(row, STR$(i))
+    PUSH(row, article$)
+    PUSH(row, STR$(qty))
+    PUSH(row, Euro$(price))
+    PUSH(row, Euro$(amount))
+    PUSH(rows, row)
+NEXT i
+PDFGEN.USEFONT(pdf, "helvetica", "", 9)
+PDFGEN.TABLE(pdf, rows, {"headers": ["Pos.", "Artikel", "Menge", "Einzelpreis", "Betrag"], "widths": [12, 0, 16, 28, 28], "align": ["R", "L", "R", "R", "R"], "zebra": TRUE, "lineh": 6})
+
+' ── the totals and the terms ───────────────────────────────────
+
+DIM vat = ROUND(net * 0.19, 2)
+DIM gross = net + vat
+DIM box_y = PDFGEN.POSY(pdf) + 4
+IF box_y + 26 > PDFGEN.PAGEHEIGHT(pdf) - 20 THEN
+    PDFGEN.ADDPAGE(pdf)
+    box_y = PDFGEN.POSY(pdf)
+ENDIF
+PDFGEN.SETFILL(pdf, 235, 242, 250)
+PDFGEN.BOX(pdf, 110, box_y, 80, 22, "DF")
+PDFGEN.USEFONT(pdf, "helvetica", "", 10)
+PDFGEN.SETXY(pdf, 112, box_y + 1)
+PDFGEN.CELL(pdf, 40, 6, "Nettobetrag")
+PDFGEN.CELL(pdf, 36, 6, Euro$(net), "R")
+PDFGEN.SETXY(pdf, 112, box_y + 7)
+PDFGEN.CELL(pdf, 40, 6, "Umsatzsteuer 19 %")
+PDFGEN.CELL(pdf, 36, 6, Euro$(vat), "R")
+PDFGEN.USEFONT(pdf, "helvetica", "B", 11)
+PDFGEN.SETXY(pdf, 112, box_y + 14)
+PDFGEN.CELL(pdf, 40, 7, "Rechnungsbetrag")
+PDFGEN.CELL(pdf, 36, 7, Euro$(gross), "R")
+
+PDFGEN.USEFONT(pdf, "helvetica", "", 9)
+PDFGEN.SETXY(pdf, 20, box_y + 30)
+PDFGEN.MULTICELL(pdf, 0, 4.5, "Zahlbar innerhalb von 14 Tagen ohne Abzug auf das Konto DE79 0000 0000 1234 5678 90. Bitte geben Sie die Rechnungsnummer als Verwendungszweck an." + CHR$(10) + "Es gelten unsere „Allgemeinen Geschäftsbedingungen“.")
+
+PDFGEN.WRITEFILE(pdf, path$)
+
+' ── what was written ───────────────────────────────────────────
+
+DIM bytes$ = BINREADER$(path$)
+CONSOLE.RULE("the invoice", "=")
+CONSOLE.KV([["file", path$], ["pages", STR$(PDFGEN.PAGECOUNT(pdf))], ["bytes", STR$(LEN(bytes$))], ["order lines", STR$(LEN(rows))], ["net", Euro$(net)], ["VAT 19 %", Euro$(vat)], ["total", Euro$(gross)]], 2)
+PRINT ""
+
+CONSOLE.RULE("inside the file")
+DIM facts = []
+DIM fonts = ["Helvetica", "Helvetica-Bold"]
+FOR i = 0 TO LEN(fonts) - 1
+    DIM font$ = fonts[i]
+    DIM found$ = "no"
+    IF INSTR(bytes$, "/BaseFont /" + font$ + " ") >= 0 THEN found$ = "yes"
+    DIM fact = []
+    PUSH(fact, "font " + font$)
+    PUSH(fact, found$)
+    PUSH(facts, fact)
+NEXT i
+DIM checks = [["image embedded as JPEG", "/DCTDecode]"], ["footer on page 1", "von 2) Tj"], ["table header repeated", "(Einzelpreis) Tj"], ["euro sign as WinAnsi byte", " " + CHR$(128) + ") Tj"], ["document title", "/Title (Rechnung RE-2026-0413)"]]
+FOR i = 0 TO LEN(checks) - 1
+    DIM check = checks[i]
+    DIM what$ = check[0]
+    DIM needle$ = check[1]
+    DIM seen$ = "no"
+    IF INSTR(bytes$, needle$) >= 0 THEN seen$ = "yes"
+    DIM entry = []
+    PUSH(entry, what$)
+    PUSH(entry, seen$)
+    PUSH(facts, entry)
+NEXT i
+CONSOLE.TABLE(facts, {"headers": ["what", "found"], "border": "plain"})
+PRINT ""
+PRINT "  Open "; path$; " in a viewer to see it; the demo deletes it now."
+KILL path$
+RMDIR folder$

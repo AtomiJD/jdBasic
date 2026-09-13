@@ -1,0 +1,204 @@
+' PDFGEN: page sizes, WinAnsi encoding, text widths against fpdf2, line
+' breaking, and a two page invoice with a line table, an image and a
+' footer, checked in the file itself: every xref offset, every stream
+' length, the page count, the fonts and the embedded JPEG. Interpreted,
+' the built-in PDF text extractor reads the text back.
+
+IMPORT TESTKIT, PDFGEN
+
+DIM NL$ = CHR$(10)
+
+' The byte offset of the Nth "k 0 obj" as the xref table records it.
+FUNC XrefOffset(pdf$, obj_no)
+    DIM table_at = INSTR(pdf$, "xref" + CHR$(10))
+    IF table_at < 0 THEN RETURN -1
+    DIM line_at = INSTR(table_at, pdf$, "0000000000 65535 f ")
+    IF line_at < 0 THEN RETURN -1
+    DIM entry$ = MID$(pdf$, line_at + 20 * obj_no, 10)
+    RETURN VAL(entry$)
+ENDFUNC
+
+FUNC CountOf(hay$, needle$)
+    DIM n = 0
+    DIM at = INSTR(hay$, needle$)
+    DO WHILE at >= 0
+        n = n + 1
+        at = CINT(INSTR(at + LEN(needle$), hay$, needle$))
+    LOOP
+    RETURN n
+ENDFUNC
+
+TESTKIT.SUITE("pages")
+DIM a4 = PDFGEN.DOC()
+TESTKIT.NEAR(PDFGEN.PAGEWIDTH(a4), 210, 0.001, "A4 is 210 mm wide")
+TESTKIT.NEAR(PDFGEN.PAGEHEIGHT(a4), 297, 0.001, "and 297 mm high")
+TESTKIT.EQ(PDFGEN.PAGECOUNT(a4), 0, "a new document has no page")
+TESTKIT.NEAR(PDFGEN.PAGEWIDTH(PDFGEN.DOC({"size": "letter"})), 215.9, 0.001, "Letter")
+DIM wide = PDFGEN.DOC({"size": "A5", "landscape": TRUE, "margin": 10})
+TESTKIT.NEAR(PDFGEN.PAGEWIDTH(wide), 210, 0.001, "A5 landscape is 210 mm wide")
+TESTKIT.NEAR(PDFGEN.PAGEHEIGHT(wide), 148, 0.001, "and 148 mm high")
+PDFGEN.ADDPAGE(wide)
+TESTKIT.EQ(PDFGEN.PAGENO(wide), 1, "the first page")
+TESTKIT.NEAR(PDFGEN.POSX(wide), 10, 0.001, "starts at the left margin")
+TESTKIT.NEAR(PDFGEN.POSY(wide), 10, 0.001, "and the top one")
+PDFGEN.SETXY(wide, 50, 60)
+PDFGEN.LN(wide, 5)
+TESTKIT.NEAR(PDFGEN.POSX(wide), 10, 0.001, "LN goes back to the margin")
+TESTKIT.NEAR(PDFGEN.POSY(wide), 65, 0.001, "and down")
+DIM a5_pdf$ = PDFGEN.BUILD$(wide)
+TESTKIT.ISTRUE(INSTR(a5_pdf$, "/MediaBox [0 0 595.28 419.53]") >= 0, "the media box in points")
+
+TESTKIT.SUITE("encoding")
+TESTKIT.EQ(PDFGEN.WINANSI$("plain"), "plain", "ASCII stays")
+TESTKIT.EQ(PDFGEN.WINANSI$("Grüße"), "Gr" + CHR$(252) + CHR$(223) + "e", "umlauts and sharp s become one byte each")
+TESTKIT.EQ(PDFGEN.WINANSI$("12,50 €"), "12,50 " + CHR$(128), "the euro sign is byte 128")
+TESTKIT.EQ(PDFGEN.WINANSI$(CHR$(226) + CHR$(128) + CHR$(158) + "quoted" + CHR$(226) + CHR$(128) + CHR$(156)), CHR$(132) + "quoted" + CHR$(147), "German quotation marks")
+TESTKIT.EQ(PDFGEN.WINANSI$("a" + CHR$(226) + CHR$(128) + CHR$(147) + "b"), "a" + CHR$(150) + "b", "the en dash")
+TESTKIT.EQ(PDFGEN.WINANSI$("snow " + CHR$(226) + CHR$(152) + CHR$(131)), "snow ?", "a character outside WinAnsi becomes ?")
+TESTKIT.EQ(PDFGEN.WINANSI$("a" + NL$ + "b" + CHR$(9) + "c"), "a b c", "a line break and a tab become spaces")
+
+TESTKIT.SUITE("widths")
+DIM m = PDFGEN.DOC()
+PDFGEN.USEFONT(m, "helvetica", "", 12)
+TESTKIT.NEAR(PDFGEN.STRWIDTH(m, "Hello World"), 21.873633, 0.00001, "Helvetica 12, the value fpdf2 gives")
+PDFGEN.USEFONT(m, "arial", "b", 10)
+TESTKIT.NEAR(PDFGEN.STRWIDTH(m, "Grüße aus Köln"), 26.267833, 0.00001, "Helvetica Bold 10 with umlauts, arial as its other name")
+PDFGEN.USEFONT(m, "times", "I", 14)
+TESTKIT.NEAR(PDFGEN.STRWIDTH(m, "The quick brown fox"), 40.469256, 0.00001, "Times Italic 14")
+PDFGEN.USEFONT(m, "serif", "B", 9)
+TESTKIT.NEAR(PDFGEN.STRWIDTH(m, "Invoice No. 4711 (final)"), 31.5722, 0.00001, "Times Bold 9")
+PDFGEN.USEFONT(m, "mono", "", 9)
+TESTKIT.NEAR(PDFGEN.STRWIDTH(m, "0123456789"), 19.05, 0.00001, "Courier 9, 600 per glyph")
+PDFGEN.USEFONT(m, "helvetica", "", 12)
+TESTKIT.NEAR(PDFGEN.STRWIDTH(m, "Summe 12,50 €"), 29.8831, 0.0001, "the euro sign has its own width")
+FUNC NoSuchFont(doc)
+    PDFGEN.USEFONT(doc, "comic sans")
+    RETURN 0
+ENDFUNC
+TESTKIT.THROWS(NoSuchFont@, m, "only the standard fonts")
+
+TESTKIT.SUITE("line breaks")
+PDFGEN.USEFONT(m, "helvetica", "", 10)
+DIM lines = PDFGEN.SPLITLINES(m, "one two three four five six seven eight nine ten", 30)
+TESTKIT.ISTRUE(LEN(lines) > 1, "a sentence wider than 30 mm breaks")
+DIM fits = TRUE
+DIM i = 0
+FOR i = 0 TO LEN(lines) - 1
+    DIM got$ = lines[i]
+    IF PDFGEN.STRWIDTH(m, got$) > 30 THEN fits = FALSE
+NEXT i
+TESTKIT.ISTRUE(fits, "and every line fits")
+TESTKIT.EQ(JOIN(lines, " "), "one two three four five six seven eight nine ten", "no word is lost")
+DIM paras = PDFGEN.SPLITLINES(m, "first" + NL$ + NL$ + "third", 100)
+TESTKIT.EQ(JOIN(paras, "|"), "first||third", "line breaks and an empty line are kept")
+DIM long_word = PDFGEN.SPLITLINES(m, "Donaudampfschifffahrtsgesellschaftskapitän", 20)
+TESTKIT.ISTRUE(LEN(long_word) > 1, "a word too long for a line is cut")
+TESTKIT.EQ(JOIN(long_word, ""), "Donaudampfschifffahrtsgesellschaftskapitän", "without losing a letter, the umlaut whole")
+TESTKIT.EQ(PDFGEN.FIT$(m, "short", 50), "short", "FIT$ leaves a text that fits")
+DIM cut$ = PDFGEN.FIT$(m, "a rather long description of an item", 25)
+TESTKIT.ISTRUE(ENDSWITH(cut$, "..."), "and cuts one that does not")
+TESTKIT.ISTRUE(PDFGEN.STRWIDTH(m, cut$) <= 25, "to the width")
+
+TESTKIT.SUITE("a two page invoice")
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "pdfgen_logo.jpg") THEN base$ = "fixtures/"
+DIM logo$ = base$ + "pdfgen_logo.jpg"
+DIM inv = PDFGEN.DOC()
+PDFGEN.SETINFO(inv, "Rechnung RE-2026-0413", "Papier & Toner GmbH", "Invoice (test)")
+PDFGEN.ADDPAGE(inv)
+PDFGEN.USEFONT(inv, "helvetica", "", 8)
+PDFGEN.SETFOOTER(inv, "Page {page} of {pages}", "R")
+PDFGEN.IMAGE(inv, logo$, 20, 15, 25)
+PDFGEN.USEFONT(inv, "helvetica", "B", 18)
+PDFGEN.TEXTAT(inv, 50, 25, "Rechnung RE-2026-0413")
+PDFGEN.USEFONT(inv, "helvetica", "", 10)
+PDFGEN.TEXTAT(inv, 50, 31, "Papier & Toner GmbH (Bremen) \ Grüße")
+PDFGEN.SETDRAW(inv, 200, 0, 0)
+PDFGEN.SETLINEWIDTH(inv, 0.5)
+PDFGEN.DRAWLINE(inv, 20, 42, 190, 42)
+PDFGEN.SETXY(inv, 20, 48)
+PDFGEN.MULTICELL(inv, 0, 5, "Vielen Dank für Ihren Auftrag. Wir berechnen die folgenden Leistungen und bitten um Zahlung innerhalb von 14 Tagen ohne Abzug.")
+PDFGEN.LN(inv, 4)
+DIM rows = []
+DIM n = 0
+FOR n = 1 TO 60
+    DIM line_row = []
+    PUSH(line_row, STR$(n))
+    PUSH(line_row, "Item number " + STR$(n) + " for the office")
+    PUSH(line_row, STR$(n MOD 5 + 1))
+    PUSH(line_row, FORMAT$("{:.2f} €", n * 1.25))
+    PUSH(rows, line_row)
+NEXT n
+PDFGEN.TABLE(inv, rows, {"headers": ["#", "Description", "Qty", "Amount"], "widths": [12, 0, 20, 30], "align": ["R", "L", "R", "R"], "zebra": TRUE, "lineh": 6})
+PDFGEN.SETFILL(inv, 255, 240, 200)
+PDFGEN.BOX(inv, 120, PDFGEN.POSY(inv) + 4, 70, 10, "DF")
+PDFGEN.CELL(inv, 0, 8, "")
+DIM pages = PDFGEN.PAGECOUNT(inv)
+TESTKIT.EQ(pages, 2, "sixty rows run onto a second page")
+DIM pdf$ = PDFGEN.BUILD$(inv)
+TESTKIT.EQ(LEFT$(pdf$, 8), "%PDF-1.4", "a PDF header")
+TESTKIT.ISTRUE(ENDSWITH(pdf$, "%%EOF" + NL$), "and its end")
+DIM size_at = INSTR(pdf$, "/Size ")
+DIM n_objects = VAL(MID$(pdf$, size_at + 6, 6)) - 1
+TESTKIT.ISTRUE(n_objects >= 8, "catalog, pages, info, fonts, the image, two pages and their contents")
+DIM offsets_ok = TRUE
+FOR i = 1 TO n_objects
+    DIM off = XrefOffset(pdf$, i)
+    IF MID$(pdf$, off, LEN(STR$(i) + " 0 obj")) <> STR$(i) + " 0 obj" THEN offsets_ok = FALSE
+NEXT i
+TESTKIT.ISTRUE(offsets_ok, "every xref offset points at its object")
+DIM first_entry_at = INSTR(pdf$, "0000000000 65535 f ") + 20
+TESTKIT.EQ(MID$(pdf$, first_entry_at, 20), "0000000015 00000 n " + NL$, "an xref entry is ten digits with leading zeros, twenty bytes long")
+DIM start_at = INSTR(pdf$, "startxref" + NL$)
+DIM xref_at = VAL(MID$(pdf$, start_at + 10, 12))
+TESTKIT.EQ(MID$(pdf$, xref_at, 4), "xref", "startxref points at the table")
+DIM lengths_ok = TRUE
+DIM streams = 0
+DIM at = INSTR(pdf$, "/Length ")
+DO WHILE at >= 0
+    DIM declared = VAL(MID$(pdf$, at + 8, 10))
+    DIM body_at = INSTR(at, pdf$, "stream" + NL$) + 7
+    IF MID$(pdf$, body_at + declared, 10) <> NL$ + "endstream" THEN lengths_ok = FALSE
+    streams = streams + 1
+    at = CINT(INSTR(CINT(body_at + declared), pdf$, "/Length "))
+LOOP
+TESTKIT.ISTRUE(lengths_ok, "every stream is as long as its /Length says")
+TESTKIT.EQ(streams, 3, "two page contents and one image")
+TESTKIT.ISTRUE(INSTR(pdf$, "/Count 2") >= 0, "the page tree counts two")
+TESTKIT.EQ(CountOf(pdf$, "/Type /Page "), 2, "two page objects")
+TESTKIT.ISTRUE(INSTR(pdf$, "/BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding") >= 0, "the bold font in WinAnsi")
+DIM image_at = INSTR(pdf$, "/Width 224 /Height 224 /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode]")
+TESTKIT.ISTRUE(image_at >= 0, "the image with its size from the JPEG header, hex over DCT")
+DIM image_body_at = INSTR(image_at, pdf$, "stream" + NL$) + 7
+DIM image_end_at = INSTR(image_body_at, pdf$, NL$ + "endstream")
+DIM image_hex$ = REPLACE$(MID$(pdf$, image_body_at, image_end_at - image_body_at), NL$, "")
+TESTKIT.EQ(LEFT$(image_hex$, 8), "FFD8FFE0", "the stream starts with the JPEG signature")
+TESTKIT.EQ(LEN(image_hex$), FILE.SIZE(logo$) * 2 + 1, "two digits for every byte of the file and the end mark")
+DIM logo_bytes$ = BINREADER$(logo$)
+DIM last_code = BYTEAT(logo_bytes$, LEN(logo_bytes$) - 1)
+TESTKIT.EQ(RIGHT$(image_hex$, 3), MID$("0123456789ABCDEF", last_code \ 16, 1) + MID$("0123456789ABCDEF", last_code MOD 16, 1) + ">", "and ends with its last byte")
+TESTKIT.ISTRUE(INSTR(pdf$, "(Page 1 of 2) Tj") >= 0 ANDALSO INSTR(pdf$, "(Page 2 of 2) Tj") >= 0, "a footer on each page with the page count")
+TESTKIT.EQ(CountOf(pdf$, "(Description) Tj"), 2, "the table header on both pages")
+TESTKIT.ISTRUE(INSTR(pdf$, "(Item number 60 for the office) Tj") >= 0, "the last row")
+TESTKIT.ISTRUE(INSTR(pdf$, "(Papier & Toner GmbH \(Bremen\) \\ Gr" + CHR$(252) + CHR$(223) + "e) Tj") >= 0, "parentheses and a backslash escaped, umlauts as bytes")
+TESTKIT.ISTRUE(INSTR(pdf$, "/Title (Rechnung RE-2026-0413)") >= 0, "the title in the document info")
+TESTKIT.ISTRUE(INSTR(pdf$, "0.784 0.000 0.000 RG 1.42 w") >= 0, "a red line half a millimetre wide")
+TESTKIT.ISTRUE(INSTR(pdf$, "7.50 " + CHR$(128) + ") Tj") >= 0, "an amount with the euro sign")
+
+DIM folder$ = MKTEMP$("pdfgentest")
+MKDIR folder$
+DIM out_path$ = folder$ + "/invoice.pdf"
+PDFGEN.WRITEFILE(inv, out_path$)
+TESTKIT.EQ(FILE.SIZE(out_path$), LEN(pdf$), "WRITEFILE writes the same bytes")
+IF OS.FEATURE("NATIVEC") THEN
+    TESTKIT.SKIP("the PDF text extractor is interpreter-only")
+ELSE
+    DIM text$ = PDF.TEXT$(out_path$)
+    TESTKIT.ISTRUE(INSTR(text$, "Rechnung RE-2026-0413") >= 0, "the extractor reads the heading back")
+    TESTKIT.ISTRUE(INSTR(text$, "Item number 37 for the office") >= 0, "a row of the table")
+    TESTKIT.ISTRUE(INSTR(text$, "Page 2 of 2") >= 0, "and the footer of the second page")
+ENDIF
+KILL out_path$
+RMDIR folder$
+
+TESTKIT.REPORT()
