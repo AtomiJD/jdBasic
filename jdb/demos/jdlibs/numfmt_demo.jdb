@@ -1,0 +1,111 @@
+' numfmt_demo.jdb - one invoice total in six locales, a cheque, and the
+' bank and tax details of a customer list checked.
+'
+' An invoice goes to customers in Germany, Austria, Switzerland, the US,
+' Britain and France: the demo prints its lines, VAT and total the way
+' each of them writes money, and reads the totals back. It writes the
+' amount out for a cheque in German and English, checks a customer list
+' for broken IBANs, VAT ids and tax numbers, and reads amounts a user
+' typed in four different ways.
+'
+'   jdBasic numfmt_demo.jdb
+
+IMPORT NUMFMT, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+
+DIM prices = [45.0, 123.8, 7.5]
+DIM net = 0.0
+DIM i = 0
+FOR i = 0 TO LEN(prices) - 1
+    net = net + prices[i]
+NEXT i
+DIM vat = NUMFMT.ROUNDTO(net * 0.19, 2)
+DIM gross = net + vat
+
+' ── one invoice, six locales ───────────────────────────────────
+
+CONSOLE.RULE("one invoice, six locales", "=")
+DIM rows = []
+DIM locs = NUMFMT.LOCALES()
+DIM currencies = ["EUR", "EUR", "CHF", "USD", "GBP", "EUR"]
+FOR i = 0 TO LEN(locs) - 1
+    DIM loc$ = locs[i]
+    DIM cur$ = currencies[i]
+    DIM total$ = NUMFMT.CURRENCY$(gross, cur$, loc$)
+    DIM row = []
+    PUSH(row, loc$)
+    PUSH(row, NUMFMT.CURRENCY$(net, cur$, loc$))
+    PUSH(row, NUMFMT.PERCENT$(0.19, 0, loc$))
+    PUSH(row, NUMFMT.CURRENCY$(vat, cur$, loc$))
+    PUSH(row, total$)
+    PUSH(row, NUMFMT.CURRENCY$(-gross, cur$, loc$))
+    PUSH(row, STR$(NUMFMT.PARSENUMBER(total$, loc$)))
+    PUSH(rows, row)
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["locale", "net", "VAT", "VAT amount", "total", "credit note", "read back"], "border": "plain"})
+PRINT ""
+
+' ── a cheque ───────────────────────────────────────────────────
+
+CONSOLE.RULE("the total written out")
+CONSOLE.KV([["amount", NUMFMT.CURRENCY$(gross, "EUR", "de-DE")], ["in German", NUMFMT.AMOUNTWORDS$(gross, "EUR", "de")], ["in English", NUMFMT.AMOUNTWORDS$(gross, "EUR", "en")], ["a year", NUMFMT.WORDS$(2026, "de") + " / " + NUMFMT.WORDS$(2026, "en")], ["a big number", NUMFMT.WORDS$(1234567, "de")]], 2)
+PRINT ""
+
+' ── a customer list checked ────────────────────────────────────
+
+CONSOLE.RULE("customer details checked")
+DIM customers = []
+PUSH(customers, ["Papier & Toner GmbH", "de89 3704 0044 0532 0130 00", "DE136695976", "181/815/08155", "Bayern"])
+PUSH(customers, ["Stadtwerke Musterstadt", "DE89370400440532013001", "DE 136 695 976", "013 815 08153", "Hessen"])
+PUSH(customers, ["Bürobedarf Nord KG", "DE8937040044053201300", "DE136695978", "24/815/08151", "NI"])
+PUSH(customers, ["West Supplies Ltd", "GB82 WEST 1234 5698 7654 32", "", "", ""])
+DIM checked = []
+FOR i = 0 TO LEN(customers) - 1
+    DIM c = customers[i]
+    DIM name$ = c[0]
+    DIM iban_in$ = c[1]
+    DIM vat_in$ = c[2]
+    DIM tax_in$ = c[3]
+    DIM state$ = c[4]
+    DIM iban_out$ = NUMFMT.IBAN$(iban_in$)
+    IF NOT NUMFMT.ISIBAN(iban_in$) THEN iban_out$ = CONSOLE.RED$(iban_out$ + " (wrong)")
+    DIM vat_out$ = "-"
+    IF vat_in$ <> "" THEN
+        vat_out$ = NUMFMT.VATID$(vat_in$)
+        IF NOT NUMFMT.ISVATID(vat_in$) THEN vat_out$ = CONSOLE.RED$(vat_out$ + " (wrong)")
+    ENDIF
+    DIM tax_out$ = "-"
+    IF tax_in$ <> "" THEN
+        DIM federal$ = NUMFMT.FEDERALTAXNUMBER$(tax_in$, state$)
+        tax_out$ = federal$ + " (" + NUMFMT.TAXREGION$(federal$) + ")"
+    ENDIF
+    DIM line_out = []
+    PUSH(line_out, name$)
+    PUSH(line_out, iban_out$)
+    PUSH(line_out, vat_out$)
+    PUSH(line_out, tax_out$)
+    PUSH(checked, line_out)
+NEXT i
+CONSOLE.TABLE(checked, {"headers": ["customer", "IBAN", "VAT id", "tax number, nationwide"], "border": "plain"})
+PRINT ""
+
+' ── what a user typed ──────────────────────────────────────────
+
+CONSOLE.RULE("amounts as typed")
+DIM typed = [["1.234,50", "de-DE"], ["1234,5 EUR", "de-DE"], ["$ 1,234.50", "en-US"], ["(1’234.50)", "de-CH"]]
+DIM read_rows = []
+FOR i = 0 TO LEN(typed) - 1
+    DIM t = typed[i]
+    DIM text$ = t[0]
+    DIM where$ = t[1]
+    DIM amount = NUMFMT.PARSENUMBER(text$, where$)
+    DIM r = []
+    PUSH(r, text$)
+    PUSH(r, where$)
+    PUSH(r, STR$(amount))
+    PUSH(r, NUMFMT.CURRENCY$(amount, "EUR", "de-DE"))
+    PUSH(read_rows, r)
+NEXT i
+CONSOLE.TABLE(read_rows, {"headers": ["typed", "locale", "number", "as a German amount"], "border": "plain"})
+PRINT ""

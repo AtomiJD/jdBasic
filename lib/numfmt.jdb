@@ -1,0 +1,745 @@
+' numfmt.jdb - numbers, money and percentages in the form a locale writes
+' them, read back, written out in words, and the German account and tax
+' identifiers with their check digits.
+'
+'   IMPORT NUMFMT
+'   PRINT NUMFMT.CURRENCY$(1234.5, "EUR", "de-DE")     ' 1.234,50 €
+'   PRINT NUMFMT.CURRENCY$(1234.5, "EUR", "en-US")     ' €1,234.50
+'   PRINT NUMFMT.PARSENUMBER("1.234,50 €", "de-DE")    ' 1234.5
+'   PRINT NUMFMT.AMOUNTWORDS$(209.8, "EUR", "en")      ' two hundred and nine euros and eighty cents
+'   PRINT NUMFMT.IBAN$("de89370400440532013000")       ' DE89 3704 0044 0532 0130 00
+'
+' The separators and the place of the currency sign follow the Unicode
+' CLDR data for each locale, including the non-breaking spaces it uses.
+' Rounding is commercial: a half goes away from zero.
+
+EXPORT MODULE NUMFMT
+
+DIM gNBSP$ = CHR$(194) + CHR$(160)
+DIM gNNBSP$ = CHR$(226) + CHR$(128) + CHR$(175)
+DIM gRSQUO$ = CHR$(226) + CHR$(128) + CHR$(153)
+DIM gEURO$ = CHR$(226) + CHR$(130) + CHR$(172)
+DIM gPOUND$ = CHR$(194) + CHR$(163)
+
+' ── locales ────────────────────────────────────────────────────
+
+' The locales this module knows.
+EXPORT FUNC LOCALES()
+    DIM out = []
+    PUSH(out, "de-DE")
+    PUSH(out, "de-AT")
+    PUSH(out, "de-CH")
+    PUSH(out, "en-US")
+    PUSH(out, "en-GB")
+    PUSH(out, "fr-FR")
+    RETURN out
+ENDFUNC
+
+' de_DE, DE-de and de-DE all name the same locale.
+FUNC LocaleKey$(locale$)
+    DIM key$ = UCASE$(REPLACE$(TRIM$(locale$), "_", "-"))
+    IF key$ = "DE" THEN key$ = "DE-DE"
+    IF key$ = "EN" THEN key$ = "EN-US"
+    IF key$ = "FR" THEN key$ = "FR-FR"
+    IF key$ = "DE-DE" ORELSE key$ = "DE-AT" ORELSE key$ = "DE-CH" ORELSE key$ = "EN-US" ORELSE key$ = "EN-GB" ORELSE key$ = "FR-FR" THEN RETURN key$
+    THROW "NUMFMT: no locale called " + locale$
+    RETURN ""
+ENDFUNC
+
+FUNC DecimalMark$(key$)
+    IF key$ = "DE-CH" ORELSE key$ = "EN-US" ORELSE key$ = "EN-GB" THEN RETURN "."
+    RETURN ","
+ENDFUNC
+
+FUNC GroupMark$(key$)
+    IF key$ = "DE-CH" THEN RETURN gRSQUO$
+    IF key$ = "EN-US" ORELSE key$ = "EN-GB" THEN RETURN ","
+    IF key$ = "FR-FR" THEN RETURN gNNBSP$
+    RETURN "."
+ENDFUNC
+
+' The decimal mark and the group separator of a locale, as a two item array.
+EXPORT FUNC SEPARATORS(locale$)
+    DIM key$ = LocaleKey$(locale$)
+    DIM out = []
+    PUSH(out, DecimalMark$(key$))
+    PUSH(out, GroupMark$(key$))
+    RETURN out
+ENDFUNC
+
+' ── numbers ────────────────────────────────────────────────────
+
+' Rounds to a number of decimals, a half away from zero.
+EXPORT FUNC ROUNDTO(value, decimals = 2)
+    DIM scale = 10 ^ decimals
+    DIM scaled = ABS(CDBL(value)) * scale
+    ' a tiny nudge keeps 1.005 from rounding down, as its binary form would
+    DIM whole = FLOOR(scaled + 0.5 + 1e-9)
+    DIM out = whole / scale
+    IF value < 0 THEN out = -out
+    RETURN out
+ENDFUNC
+
+' The value with grouped thousands and a fixed number of decimals.
+EXPORT FUNC NUMBER$(value, decimals = 2, locale$ = "de-DE")
+    DIM key$ = LocaleKey$(locale$)
+    DIM body$ = Digits$(ABS(ROUNDTO(value, decimals)), decimals, key$)
+    IF ROUNDTO(value, decimals) < 0 THEN RETURN "-" + body$
+    RETURN body$
+ENDFUNC
+
+' The unsigned value rounded already: groups of three and the decimals.
+FUNC Digits$(amount, decimals, key$)
+    DIM whole = FLOOR(amount + 1e-9)
+    DIM int_part$ = STR$(CLNG(whole))
+    DIM grouped$ = Grouped$(int_part$, GroupMark$(key$))
+    IF decimals <= 0 THEN RETURN grouped$
+    DIM frac = amount - whole
+    DIM frac_digits = CLNG(FLOOR(frac * (10 ^ decimals) + 0.5))
+    IF frac_digits >= 10 ^ decimals THEN
+        frac_digits = 0
+        grouped$ = Grouped$(STR$(CLNG(whole) + 1), GroupMark$(key$))
+    ENDIF
+    RETURN grouped$ + DecimalMark$(key$) + LPAD$(STR$(frac_digits), decimals, "0")
+ENDFUNC
+
+FUNC Grouped$(digits$, mark$)
+    IF LEN(digits$) <= 3 THEN RETURN digits$
+    DIM parts = []
+    DIM head = LEN(digits$) MOD 3
+    IF head > 0 THEN PUSH(parts, LEFT$(digits$, head))
+    DIM at = head
+    DO WHILE at < LEN(digits$)
+        PUSH(parts, MID$(digits$, at, 3))
+        at = at + 3
+    LOOP
+    RETURN JOIN(parts, mark$)
+ENDFUNC
+
+' The currency sign a locale writes for a currency code.
+EXPORT FUNC SYMBOL$(code$, locale$ = "de-DE")
+    DIM key$ = LocaleKey$(locale$)
+    DIM cur$ = UCASE$(TRIM$(code$))
+    IF cur$ = "EUR" THEN
+        IF key$ = "DE-CH" THEN RETURN "EUR"
+        RETURN gEURO$
+    ENDIF
+    IF cur$ = "USD" THEN
+        IF key$ = "EN-GB" THEN RETURN "US$"
+        IF key$ = "FR-FR" THEN RETURN "$US"
+        RETURN "$"
+    ENDIF
+    IF cur$ = "GBP" THEN
+        IF key$ = "FR-FR" THEN RETURN gPOUND$ + "GB"
+        RETURN gPOUND$
+    ENDIF
+    RETURN cur$
+ENDFUNC
+
+' A money amount the way the locale writes it, sign and symbol in place.
+EXPORT FUNC CURRENCY$(value, code$ = "EUR", locale$ = "de-DE", decimals = 2)
+    DIM key$ = LocaleKey$(locale$)
+    DIM rounded = ROUNDTO(value, decimals)
+    DIM body$ = Digits$(ABS(rounded), decimals, key$)
+    DIM sym$ = SYMBOL$(code$, key$)
+    DIM minus = rounded < 0
+    IF key$ = "DE-DE" ORELSE key$ = "FR-FR" THEN
+        IF minus THEN RETURN "-" + body$ + gNBSP$ + sym$
+        RETURN body$ + gNBSP$ + sym$
+    ENDIF
+    IF key$ = "DE-AT" THEN
+        IF minus THEN RETURN "-" + sym$ + gNBSP$ + body$
+        RETURN sym$ + gNBSP$ + body$
+    ENDIF
+    IF key$ = "DE-CH" THEN
+        IF minus THEN RETURN sym$ + "-" + body$
+        RETURN sym$ + gNBSP$ + body$
+    ENDIF
+    IF minus THEN RETURN "-" + sym$ + body$
+    RETURN sym$ + body$
+ENDFUNC
+
+' A fraction as a percentage: 0.256 is 26 %. German and French put a
+' non-breaking space before the sign.
+EXPORT FUNC PERCENT$(fraction, decimals = 0, locale$ = "de-DE")
+    DIM key$ = LocaleKey$(locale$)
+    DIM text$ = NUMBER$(CDBL(fraction) * 100.0, decimals, key$)
+    IF key$ = "DE-DE" ORELSE key$ = "DE-AT" ORELSE key$ = "FR-FR" THEN RETURN text$ + gNBSP$ + "%"
+    RETURN text$ + "%"
+ENDFUNC
+
+' A number read back from how the locale writes it: group separators,
+' spaces, currency signs and codes and a percent sign are ignored, the
+' locale's decimal mark decides. A text without a digit gives 0.
+EXPORT FUNC PARSENUMBER(text$, locale$ = "de-DE")
+    DIM key$ = LocaleKey$(locale$)
+    DIM dec$ = DecimalMark$(key$)
+    DIM kept = []
+    DIM minus = FALSE
+    DIM seen_digit = FALSE
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
+            PUSH(kept, ch$)
+            seen_digit = TRUE
+        ELSEIF ch$ = dec$ THEN
+            PUSH(kept, ".")
+        ELSEIF ch$ = "-" ORELSE ch$ = "(" THEN
+            minus = TRUE
+        ENDIF
+    NEXT i
+    IF NOT seen_digit THEN RETURN 0
+    DIM out = VAL(JOIN(kept, ""))
+    IF minus THEN out = -out
+    RETURN out
+ENDFUNC
+
+' ── numbers in words ───────────────────────────────────────────
+
+' A whole number in words, German ("de") or English ("en"), up to
+' 999,999,999,999,999. German writes a number below a million as one word;
+' English uses "and" and commas the British way ("two thousand and
+' twenty-six").
+EXPORT FUNC WORDS$(n, lang$ = "de")
+    DIM value = CLNG(ROUNDTO(n, 0))
+    DIM language$ = LCASE$(LEFT$(TRIM$(lang$), 2))
+    IF language$ <> "de" ANDALSO language$ <> "en" THEN THROW "NUMFMT: no words for the language " + lang$
+    IF value = 0 THEN
+        IF language$ = "de" THEN RETURN "null"
+        RETURN "zero"
+    ENDIF
+    IF value < 0 THEN RETURN "minus " + WORDS$(-value, language$)
+    IF language$ = "de" THEN RETURN German$(value)
+    RETURN English$(value)
+ENDFUNC
+
+FUNC GermanUnit$(d)
+    DIM names = ["", "eins", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn", "elf", "zwölf", "dreizehn", "vierzehn", "fünfzehn", "sechzehn", "siebzehn", "achtzehn", "neunzehn"]
+    DIM word$ = names[d]
+    RETURN word$
+ENDFUNC
+
+FUNC GermanTen$(d)
+    DIM names = ["", "", "zwanzig", "dreißig", "vierzig", "fünfzig", "sechzig", "siebzig", "achtzig", "neunzig"]
+    DIM word$ = names[d]
+    RETURN word$
+ENDFUNC
+
+' 1 to 999 as one German word. One takes its short form before the word
+' for a hundred, before a tens ending and before the word for a thousand.
+FUNC GermanSmall$(n, final)
+    DIM out$ = ""
+    DIM hundreds = n \ 100
+    DIM rest = n MOD 100
+    IF hundreds > 0 THEN
+        IF hundreds = 1 THEN
+            out$ = "einhundert"
+        ELSE
+            out$ = GermanUnit$(hundreds) + "hundert"
+        ENDIF
+    ENDIF
+    IF rest = 0 THEN RETURN out$
+    IF rest = 1 THEN
+        IF final THEN RETURN out$ + "eins"
+        RETURN out$ + "ein"
+    ENDIF
+    IF rest < 20 THEN RETURN out$ + GermanUnit$(rest)
+    DIM ones = rest MOD 10
+    DIM tens = rest \ 10
+    IF ones = 0 THEN RETURN out$ + GermanTen$(tens)
+    DIM one_word$ = GermanUnit$(ones)
+    IF ones = 1 THEN one_word$ = "ein"
+    RETURN out$ + one_word$ + "und" + GermanTen$(tens)
+ENDFUNC
+
+FUNC German$(n)
+    DIM parts = []
+    DIM rest = n
+    DIM scales = [1000000000000, 1000000000, 1000000]
+    DIM singular = ["eine Billion", "eine Milliarde", "eine Million"]
+    DIM plural = [" Billionen", " Milliarden", " Millionen"]
+    DIM s = 0
+    FOR s = 0 TO 2
+        DIM unit = scales[s]
+        DIM count_of = rest \ unit
+        IF count_of > 0 THEN
+            IF count_of = 1 THEN
+                DIM one$ = singular[s]
+                PUSH(parts, one$)
+            ELSE
+                DIM many$ = plural[s]
+                PUSH(parts, GermanSmallThousands$(count_of) + many$)
+            ENDIF
+            rest = rest - count_of * unit
+        ENDIF
+    NEXT s
+    IF rest > 0 THEN PUSH(parts, GermanSmallThousands$(rest))
+    RETURN JOIN(parts, " ")
+ENDFUNC
+
+' 1 to 999999 as one German word.
+FUNC GermanSmallThousands$(n)
+    DIM thousands = n \ 1000
+    DIM rest = n MOD 1000
+    DIM out$ = ""
+    IF thousands > 0 THEN out$ = GermanSmall$(thousands, FALSE) + "tausend"
+    IF rest > 0 THEN out$ = out$ + GermanSmall$(rest, TRUE)
+    RETURN out$
+ENDFUNC
+
+FUNC EnglishUnit$(d)
+    DIM names = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    DIM word$ = names[d]
+    RETURN word$
+ENDFUNC
+
+FUNC EnglishTen$(d)
+    DIM names = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+    DIM word$ = names[d]
+    RETURN word$
+ENDFUNC
+
+' 1 to 99.
+FUNC EnglishTens$(n)
+    IF n < 20 THEN RETURN EnglishUnit$(n)
+    DIM ones = n MOD 10
+    IF ones = 0 THEN RETURN EnglishTen$(n \ 10)
+    RETURN EnglishTen$(n \ 10) + "-" + EnglishUnit$(ones)
+ENDFUNC
+
+' 1 to 999: "one hundred and twenty-one".
+FUNC EnglishSmall$(n)
+    DIM hundreds = n \ 100
+    DIM rest = n MOD 100
+    IF hundreds = 0 THEN RETURN EnglishTens$(rest)
+    IF rest = 0 THEN RETURN EnglishUnit$(hundreds) + " hundred"
+    RETURN EnglishUnit$(hundreds) + " hundred and " + EnglishTens$(rest)
+ENDFUNC
+
+FUNC English$(n)
+    DIM parts = []
+    DIM rest = n
+    DIM scales = [1000000000000, 1000000000, 1000000, 1000]
+    DIM names = [" trillion", " billion", " million", " thousand"]
+    DIM s = 0
+    FOR s = 0 TO 3
+        DIM unit = scales[s]
+        DIM count_of = rest \ unit
+        IF count_of > 0 THEN
+            DIM scale_name$ = names[s]
+            PUSH(parts, EnglishSmall$(count_of) + scale_name$)
+            rest = rest - count_of * unit
+        ENDIF
+    NEXT s
+    IF rest > 0 THEN
+        IF LEN(parts) > 0 ANDALSO rest < 100 THEN
+            DIM joined$ = JOIN(parts, ", ")
+            RETURN joined$ + " and " + EnglishTens$(rest)
+        ENDIF
+        PUSH(parts, EnglishSmall$(rest))
+    ENDIF
+    RETURN JOIN(parts, ", ")
+ENDFUNC
+
+' A money amount in words, the way it is written on a cheque or in a
+' contract, in German or in English ("two hundred and nine euros and
+' eighty cents"). Cents are left out when there are none.
+EXPORT FUNC AMOUNTWORDS$(amount, code$ = "EUR", lang$ = "de")
+    DIM language$ = LCASE$(LEFT$(TRIM$(lang$), 2))
+    DIM rounded = ROUNDTO(ABS(CDBL(amount)), 2)
+    DIM whole = CLNG(FLOOR(rounded + 1e-9))
+    DIM cents = CLNG(FLOOR((rounded - whole) * 100 + 0.5))
+    DIM names = CurrencyWords(UCASE$(code$), language$)
+    DIM major_one$ = names[0]
+    DIM major_many$ = names[1]
+    DIM minor_one$ = names[2]
+    DIM minor_many$ = names[3]
+    DIM out$ = ""
+    IF language$ = "de" THEN
+        DIM whole_words$ = WORDS$(whole, "de")
+        IF whole = 1 THEN whole_words$ = "ein"
+        out$ = whole_words$ + " " + major_many$
+        IF whole = 1 THEN out$ = whole_words$ + " " + major_one$
+        IF cents > 0 THEN
+            DIM cent_words$ = WORDS$(cents, "de")
+            IF cents = 1 THEN cent_words$ = "ein"
+            IF cents = 1 THEN
+                out$ = out$ + " und " + cent_words$ + " " + minor_one$
+            ELSE
+                out$ = out$ + " und " + cent_words$ + " " + minor_many$
+            ENDIF
+        ENDIF
+    ELSE
+        out$ = WORDS$(whole, "en") + " " + major_many$
+        IF whole = 1 THEN out$ = "one " + major_one$
+        IF cents > 0 THEN
+            IF cents = 1 THEN
+                out$ = out$ + " and one " + minor_one$
+            ELSE
+                out$ = out$ + " and " + WORDS$(cents, "en") + " " + minor_many$
+            ENDIF
+        ENDIF
+    ENDIF
+    IF CDBL(amount) < 0 THEN out$ = "minus " + out$
+    RETURN out$
+ENDFUNC
+
+' The names of a currency and its hundredth: one and many of each.
+FUNC CurrencyWords(code$, language$)
+    DIM out = []
+    IF language$ = "de" THEN
+        IF code$ = "EUR" THEN
+            PUSH(out, "Euro")
+            PUSH(out, "Euro")
+            PUSH(out, "Cent")
+            PUSH(out, "Cent")
+        ELSEIF code$ = "CHF" THEN
+            PUSH(out, "Franken")
+            PUSH(out, "Franken")
+            PUSH(out, "Rappen")
+            PUSH(out, "Rappen")
+        ELSEIF code$ = "USD" THEN
+            PUSH(out, "US-Dollar")
+            PUSH(out, "US-Dollar")
+            PUSH(out, "Cent")
+            PUSH(out, "Cent")
+        ELSEIF code$ = "GBP" THEN
+            PUSH(out, "Pfund")
+            PUSH(out, "Pfund")
+            PUSH(out, "Penny")
+            PUSH(out, "Pence")
+        ELSE
+            PUSH(out, code$)
+            PUSH(out, code$)
+            PUSH(out, "Hundertstel")
+            PUSH(out, "Hundertstel")
+        ENDIF
+    ELSE
+        IF code$ = "EUR" THEN
+            PUSH(out, "euro")
+            PUSH(out, "euros")
+            PUSH(out, "cent")
+            PUSH(out, "cents")
+        ELSEIF code$ = "CHF" THEN
+            PUSH(out, "franc")
+            PUSH(out, "francs")
+            PUSH(out, "rappen")
+            PUSH(out, "rappen")
+        ELSEIF code$ = "USD" THEN
+            PUSH(out, "dollar")
+            PUSH(out, "dollars")
+            PUSH(out, "cent")
+            PUSH(out, "cents")
+        ELSEIF code$ = "GBP" THEN
+            PUSH(out, "pound")
+            PUSH(out, "pounds")
+            PUSH(out, "penny")
+            PUSH(out, "pence")
+        ELSE
+            PUSH(out, code$)
+            PUSH(out, code$)
+            PUSH(out, "hundredth")
+            PUSH(out, "hundredths")
+        ENDIF
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' ── account and tax identifiers ────────────────────────────────
+
+FUNC Compact$(text$)
+    DIM kept = []
+    DIM i = 0
+    DIM up$ = UCASE$(text$)
+    FOR i = 0 TO LEN(up$) - 1
+        DIM ch$ = MID$(up$, i, 1)
+        IF (ch$ >= "0" ANDALSO ch$ <= "9") ORELSE (ch$ >= "A" ANDALSO ch$ <= "Z") THEN PUSH(kept, ch$)
+    NEXT i
+    RETURN JOIN(kept, "")
+ENDFUNC
+
+' An IBAN in capitals and groups of four, the way it is printed.
+EXPORT FUNC IBAN$(text$)
+    DIM compact$ = Compact$(text$)
+    DIM parts = []
+    DIM at = 0
+    DO WHILE at < LEN(compact$)
+        PUSH(parts, MID$(compact$, at, 4))
+        at = at + 4
+    LOOP
+    RETURN JOIN(parts, " ")
+ENDFUNC
+
+' Whether an IBAN has the length of its country and correct check digits
+' (ISO 13616, the remainder 1 modulo 97).
+EXPORT FUNC ISIBAN(text$)
+    DIM compact$ = Compact$(text$)
+    IF LEN(compact$) < 15 ORELSE LEN(compact$) > 34 THEN RETURN FALSE
+    DIM country$ = LEFT$(compact$, 2)
+    IF country$ < "AA" ORELSE country$ > "ZZ" THEN RETURN FALSE
+    DIM want = IbanLength(country$)
+    IF want > 0 ANDALSO LEN(compact$) <> want THEN RETURN FALSE
+    RETURN Mod97(MID$(compact$, 4) + LEFT$(compact$, 4)) = 1
+ENDFUNC
+
+FUNC IbanLength(country$)
+    DIM codes = ["AD", "AT", "BE", "BG", "CH", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GB", "GR", "HR", "HU", "IE", "IS", "IT", "LI", "LT", "LU", "LV", "MC", "MT", "NL", "NO", "PL", "PT", "RO", "SE", "SI", "SK", "SM"]
+    DIM lengths = [24, 20, 16, 22, 21, 28, 24, 22, 18, 20, 24, 18, 27, 22, 27, 21, 28, 22, 26, 27, 21, 20, 20, 21, 27, 31, 18, 15, 28, 25, 24, 24, 19, 24, 27]
+    DIM i = 0
+    FOR i = 0 TO LEN(codes) - 1
+        DIM code$ = codes[i]
+        IF code$ = country$ THEN RETURN lengths[i]
+    NEXT i
+    RETURN 0
+ENDFUNC
+
+' The remainder modulo 97 of letters and digits read as a number, letters
+' counting 10 to 35, taken a few digits at a time.
+FUNC Mod97(text$)
+    DIM remainder = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
+            remainder = (remainder * 10 + (ASC(ch$) - 48)) MOD 97
+        ELSE
+            DIM letter = ASC(ch$) - 55
+            remainder = (remainder * 100 + letter) MOD 97
+        ENDIF
+    NEXT i
+    RETURN remainder
+ENDFUNC
+
+' A German VAT identification number written compact: DE and nine digits.
+EXPORT FUNC VATID$(text$)
+    DIM compact$ = Compact$(text$)
+    IF LEFT$(compact$, 2) <> "DE" THEN compact$ = "DE" + compact$
+    RETURN compact$
+ENDFUNC
+
+' Whether a German VAT identification number has nine digits and the
+' check digit of ISO 7064 MOD 11,10.
+EXPORT FUNC ISVATID(text$)
+    DIM compact$ = VATID$(text$)
+    IF LEN(compact$) <> 11 THEN RETURN FALSE
+    DIM digits$ = MID$(compact$, 2)
+    DIM i = 0
+    FOR i = 0 TO 8
+        DIM ch$ = MID$(digits$, i, 1)
+        IF ch$ < "0" ORELSE ch$ > "9" THEN RETURN FALSE
+    NEXT i
+    IF LEFT$(digits$, 1) = "0" THEN RETURN FALSE
+    DIM product = 10
+    FOR i = 0 TO 7
+        DIM total = (VAL(MID$(digits$, i, 1)) + product) MOD 10
+        IF total = 0 THEN total = 10
+        product = (2 * total) MOD 11
+    NEXT i
+    DIM check = 11 - product
+    IF check = 10 THEN check = 0
+    RETURN check = VAL(MID$(digits$, 8, 1))
+ENDFUNC
+
+' ── German tax numbers ─────────────────────────────────────────
+
+' Every state with its short code, the layout of its own tax numbers and
+' the layout of the nationwide 13 digit form. F is the tax office, B the
+' district, U the distinguishing digits and P the check digit; any other
+' digit is fixed.
+FUNC TaxFormats()
+    DIM out = []
+    PUSH(out, ["Baden-Württemberg", "BW", "FFBBBUUUUP", "28FF0BBBUUUUP"])
+    PUSH(out, ["Bayern", "BY", "FFFBBBUUUUP", "9FFF0BBBUUUUP"])
+    PUSH(out, ["Berlin", "BE", "FFBBBUUUUP", "11FF0BBBUUUUP"])
+    PUSH(out, ["Brandenburg", "BB", "0FFBBBUUUUP", "30FF0BBBUUUUP"])
+    PUSH(out, ["Bremen", "HB", "FFBBBUUUUP", "24FF0BBBUUUUP"])
+    PUSH(out, ["Hamburg", "HH", "FFBBBUUUUP", "22FF0BBBUUUUP"])
+    PUSH(out, ["Hessen", "HE", "0FFBBBUUUUP", "26FF0BBBUUUUP"])
+    PUSH(out, ["Mecklenburg-Vorpommern", "MV", "0FFBBBUUUUP", "40FF0BBBUUUUP"])
+    PUSH(out, ["Niedersachsen", "NI", "FFBBBUUUUP", "23FF0BBBUUUUP"])
+    PUSH(out, ["Nordrhein-Westfalen", "NW", "FFFBBBBUUUP", "5FFF0BBBBUUUP"])
+    PUSH(out, ["Rheinland-Pfalz", "RP", "FFBBBUUUUP", "27FF0BBBUUUUP"])
+    PUSH(out, ["Saarland", "SL", "0FFBBBUUUUP", "10FF0BBBUUUUP"])
+    PUSH(out, ["Sachsen", "SN", "2FFBBBUUUUP", "32FF0BBBUUUUP"])
+    PUSH(out, ["Sachsen-Anhalt", "ST", "1FFBBBUUUUP", "31FF0BBBUUUUP"])
+    PUSH(out, ["Schleswig-Holstein", "SH", "FFBBBUUUUP", "21FF0BBBUUUUP"])
+    PUSH(out, ["Thüringen", "TH", "1FFBBBUUUUP", "41FF0BBBUUUUP"])
+    RETURN out
+ENDFUNC
+
+FUNC OnlyDigits$(text$)
+    DIM kept = []
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN PUSH(kept, ch$)
+    NEXT i
+    RETURN JOIN(kept, "")
+ENDFUNC
+
+' A state name reduced to plain small letters, the u with diaeresis as ue.
+FUNC RegionKey$(name$)
+    DIM low$ = LCASE$(REPLACE$(REPLACE$(name$, CHR$(195) + CHR$(188), "ue"), CHR$(195) + CHR$(156), "ue"))
+    DIM kept = []
+    DIM i = 0
+    FOR i = 0 TO LEN(low$) - 1
+        DIM ch$ = MID$(low$, i, 1)
+        IF ch$ >= "a" ANDALSO ch$ <= "z" THEN PUSH(kept, ch$)
+    NEXT i
+    RETURN JOIN(kept, "")
+ENDFUNC
+
+' The row of a state named by its name or its short code, or -1.
+FUNC TaxRowIndex(region$)
+    DIM want$ = RegionKey$(region$)
+    DIM rows = TaxFormats()
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row = rows[i]
+        DIM name$ = row[0]
+        DIM code$ = row[1]
+        IF RegionKey$(name$) = want$ ORELSE LCASE$(code$) = want$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' The digits a layout gives each of F, B, U and P, as a four item array,
+' or an empty array when the digits do not fit the layout.
+FUNC TaxGroups(layout$, digits$)
+    DIM out = []
+    IF LEN(layout$) <> LEN(digits$) THEN RETURN out
+    DIM f$ = ""
+    DIM b$ = ""
+    DIM u$ = ""
+    DIM p$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(layout$) - 1
+        DIM mark$ = MID$(layout$, i, 1)
+        DIM digit$ = MID$(digits$, i, 1)
+        IF mark$ = "F" THEN
+            f$ = f$ + digit$
+        ELSEIF mark$ = "B" THEN
+            b$ = b$ + digit$
+        ELSEIF mark$ = "U" THEN
+            u$ = u$ + digit$
+        ELSEIF mark$ = "P" THEN
+            p$ = p$ + digit$
+        ELSEIF mark$ <> digit$ THEN
+            RETURN out
+        ENDIF
+    NEXT i
+    PUSH(out, f$)
+    PUSH(out, b$)
+    PUSH(out, u$)
+    PUSH(out, p$)
+    RETURN out
+ENDFUNC
+
+' A layout filled with the digits of F, B, U and P.
+FUNC TaxPlace$(layout$, groups)
+    DIM f$ = groups[0]
+    DIM b$ = groups[1]
+    DIM u$ = groups[2]
+    DIM p$ = groups[3]
+    DIM parts = []
+    DIM i = 0
+    FOR i = 0 TO LEN(layout$) - 1
+        DIM mark$ = MID$(layout$, i, 1)
+        IF mark$ = "F" THEN
+            PUSH(parts, LEFT$(f$, 1))
+            f$ = MID$(f$, 1)
+        ELSEIF mark$ = "B" THEN
+            PUSH(parts, LEFT$(b$, 1))
+            b$ = MID$(b$, 1)
+        ELSEIF mark$ = "U" THEN
+            PUSH(parts, LEFT$(u$, 1))
+            u$ = MID$(u$, 1)
+        ELSEIF mark$ = "P" THEN
+            PUSH(parts, LEFT$(p$, 1))
+            p$ = MID$(p$, 1)
+        ELSE
+            PUSH(parts, mark$)
+        ENDIF
+    NEXT i
+    RETURN JOIN(parts, "")
+ENDFUNC
+
+' The nationwide 13 digit form of a tax number written the way its state
+' writes it. A number that already has 13 digits is returned as it is.
+EXPORT FUNC FEDERALTAXNUMBER$(text$, region$ = "")
+    DIM digits$ = OnlyDigits$(text$)
+    IF LEN(digits$) = 13 THEN RETURN digits$
+    DIM index = TaxRowIndex(region$)
+    IF index < 0 THEN THROW "NUMFMT: no German state called " + region$
+    DIM rows = TaxFormats()
+    DIM row = rows[index]
+    DIM regional$ = row[2]
+    DIM nationwide$ = row[3]
+    DIM groups = TaxGroups(regional$, digits$)
+    IF LEN(groups) = 0 THEN THROW "NUMFMT: " + text$ + " is not written the way that state writes tax numbers"
+    RETURN TaxPlace$(nationwide$, groups)
+ENDFUNC
+
+' The state a nationwide 13 digit tax number belongs to, or "".
+EXPORT FUNC TAXREGION$(text$)
+    DIM digits$ = OnlyDigits$(text$)
+    DIM rows = TaxFormats()
+    DIM i = 0
+    FOR i = 0 TO LEN(rows) - 1
+        DIM row = rows[i]
+        DIM nationwide$ = row[3]
+        IF LEN(TaxGroups(nationwide$, digits$)) > 0 THEN
+            DIM name$ = row[0]
+            RETURN name$
+        ENDIF
+    NEXT i
+    RETURN ""
+ENDFUNC
+
+' A tax number the way its state prints it, with its separators. It takes
+' the nationwide 13 digit form, or the state's own digits together with
+' the name or short code of the state.
+EXPORT FUNC TAXNUMBER$(text$, region$ = "")
+    DIM digits$ = OnlyDigits$(text$)
+    DIM rows = TaxFormats()
+    DIM index = -1
+    DIM groups = []
+    IF LEN(digits$) = 13 THEN
+        DIM i = 0
+        FOR i = 0 TO LEN(rows) - 1
+            DIM probe_row = rows[i]
+            DIM probe_layout$ = probe_row[3]
+            DIM found = TaxGroups(probe_layout$, digits$)
+            IF LEN(found) > 0 THEN
+                index = i
+                groups = found
+                EXITFOR
+            ENDIF
+        NEXT i
+    ELSE
+        index = TaxRowIndex(region$)
+        IF index >= 0 THEN
+            DIM own_row = rows[index]
+            DIM own_layout$ = own_row[2]
+            groups = TaxGroups(own_layout$, digits$)
+        ENDIF
+    ENDIF
+    IF index < 0 ORELSE LEN(groups) = 0 THEN THROW "NUMFMT: " + text$ + " is not a German tax number"
+    DIM row = rows[index]
+    DIM code$ = row[1]
+    DIM layout$ = row[2]
+    DIM lead$ = ""
+    DIM k = 0
+    DO WHILE k < LEN(layout$) ANDALSO MID$(layout$, k, 1) >= "0" ANDALSO MID$(layout$, k, 1) <= "9"
+        lead$ = lead$ + MID$(layout$, k, 1)
+        k = k + 1
+    LOOP
+    DIM f$ = groups[0]
+    DIM b$ = groups[1]
+    DIM u$ = groups[2]
+    DIM p$ = groups[3]
+    IF code$ = "BW" THEN RETURN f$ + b$ + "/" + u$ + p$
+    IF code$ = "HE" THEN RETURN lead$ + f$ + " " + b$ + " " + u$ + p$
+    RETURN lead$ + f$ + "/" + b$ + "/" + u$ + p$
+ENDFUNC

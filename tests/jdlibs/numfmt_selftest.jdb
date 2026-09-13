@@ -1,0 +1,169 @@
+' NUMFMT: numbers, money and percentages in six locales against the CLDR
+' output of Babel, reading them back, commercial rounding, numbers in words
+' against num2words, amounts in words, IBAN and VAT id check digits, and
+' German tax numbers against python-stdnum.
+
+IMPORT TESTKIT, NUMFMT
+
+DIM NB$ = CHR$(194) + CHR$(160)
+DIM NN$ = CHR$(226) + CHR$(128) + CHR$(175)
+DIM RS$ = CHR$(226) + CHR$(128) + CHR$(153)
+
+FUNC NoLocale(v)
+    RETURN NUMFMT.NUMBER$(v, 2, "xx-YY")
+ENDFUNC
+
+TESTKIT.SUITE("locales")
+TESTKIT.EQ(LEN(NUMFMT.LOCALES()), 6, "six locales")
+DIM seps = NUMFMT.SEPARATORS("de_CH")
+DIM mark$ = seps[0]
+DIM group$ = seps[1]
+TESTKIT.EQ(mark$, ".", "Swiss German writes a decimal point")
+TESTKIT.EQ(group$, RS$, "and groups with a right single quotation mark")
+TESTKIT.EQ(NUMFMT.NUMBER$(1234.5, 2, "DE-de"), "1.234,50", "a locale in any spelling")
+TESTKIT.THROWS(NoLocale@, 1, "an unknown locale is refused")
+
+TESTKIT.SUITE("numbers")
+DIM values = [0, 7, -7.5, 1234.5, 1234567.891, -1234567.891]
+DIM want_de = ["0,00", "7,00", "-7,50", "1.234,50", "1.234.567,89", "-1.234.567,89"]
+DIM want_ch = ["0.00", "7.00", "-7.50", "1" + RS$ + "234.50", "1" + RS$ + "234" + RS$ + "567.89", "-1" + RS$ + "234" + RS$ + "567.89"]
+DIM want_us = ["0.00", "7.00", "-7.50", "1,234.50", "1,234,567.89", "-1,234,567.89"]
+DIM want_fr = ["0,00", "7,00", "-7,50", "1" + NN$ + "234,50", "1" + NN$ + "234" + NN$ + "567,89", "-1" + NN$ + "234" + NN$ + "567,89"]
+DIM i = 0
+FOR i = 0 TO LEN(values) - 1
+    DIM v = values[i]
+    DIM w1$ = want_de[i]
+    DIM w2$ = want_ch[i]
+    DIM w3$ = want_us[i]
+    DIM w4$ = want_fr[i]
+    TESTKIT.EQ(NUMFMT.NUMBER$(v, 2, "de-DE"), w1$, "de-DE " + w1$)
+    TESTKIT.EQ(NUMFMT.NUMBER$(v, 2, "de-CH"), w2$, "de-CH " + STR$(v))
+    TESTKIT.EQ(NUMFMT.NUMBER$(v, 2, "en-GB"), w3$, "en-GB " + w3$)
+    TESTKIT.EQ(NUMFMT.NUMBER$(v, 2, "fr-FR"), w4$, "fr-FR " + STR$(v))
+NEXT i
+TESTKIT.EQ(NUMFMT.NUMBER$(1234567, 0, "en-US"), "1,234,567", "no decimals")
+TESTKIT.EQ(NUMFMT.NUMBER$(999, 0, "de-DE"), "999", "no group below a thousand")
+TESTKIT.EQ(NUMFMT.NUMBER$(3.14159, 4, "de-AT"), "3,1416", "four decimals")
+
+TESTKIT.SUITE("rounding")
+TESTKIT.NEAR(NUMFMT.ROUNDTO(1.005, 2), 1.01, 0.0000001, "1.005 rounds up although its binary form is below")
+TESTKIT.NEAR(NUMFMT.ROUNDTO(2.5, 0), 3, 0.0000001, "a half goes up")
+TESTKIT.NEAR(NUMFMT.ROUNDTO(-2.5, 0), -3, 0.0000001, "and away from zero below it")
+TESTKIT.EQ(NUMFMT.NUMBER$(2.675, 2, "en-US"), "2.68", "commercial rounding in the text")
+TESTKIT.EQ(NUMFMT.NUMBER$(999.995, 2, "de-DE"), "1.000,00", "a carry into a new group")
+TESTKIT.EQ(NUMFMT.NUMBER$(-0.004, 2, "de-DE"), "0,00", "no minus sign on a zero")
+TESTKIT.EQ(NUMFMT.NUMBER$(-0.005, 2, "de-DE"), "-0,01", "but on what rounds away from it")
+
+TESTKIT.SUITE("money")
+TESTKIT.EQ(NUMFMT.CURRENCY$(1234.5, "EUR", "de-DE"), "1.234,50" + NB$ + "€", "de-DE EUR")
+TESTKIT.EQ(NUMFMT.CURRENCY$(-1234.5, "EUR", "de-DE"), "-1.234,50" + NB$ + "€", "de-DE EUR negative")
+TESTKIT.EQ(NUMFMT.CURRENCY$(0.99, "GBP", "de-DE"), "0,99" + NB$ + "£", "de-DE GBP")
+TESTKIT.EQ(NUMFMT.CURRENCY$(1234.5, "EUR", "de-AT"), "€" + NB$ + "1.234,50", "de-AT EUR before the amount")
+TESTKIT.EQ(NUMFMT.CURRENCY$(-1234.5, "USD", "de-AT"), "-$" + NB$ + "1.234,50", "de-AT USD negative")
+TESTKIT.EQ(NUMFMT.CURRENCY$(1234.5, "CHF", "de-CH"), "CHF" + NB$ + "1" + RS$ + "234.50", "de-CH CHF")
+TESTKIT.EQ(NUMFMT.CURRENCY$(-1234.5, "CHF", "de-CH"), "CHF-1" + RS$ + "234.50", "de-CH CHF negative")
+TESTKIT.EQ(NUMFMT.CURRENCY$(0, "EUR", "de-CH"), "EUR" + NB$ + "0.00", "de-CH writes EUR for the euro")
+TESTKIT.EQ(NUMFMT.CURRENCY$(1234.5, "USD", "en-US"), "$1,234.50", "en-US USD")
+TESTKIT.EQ(NUMFMT.CURRENCY$(-1234.5, "EUR", "en-US"), "-€1,234.50", "en-US EUR negative")
+TESTKIT.EQ(NUMFMT.CURRENCY$(1234.5, "USD", "en-GB"), "US$1,234.50", "en-GB USD")
+TESTKIT.EQ(NUMFMT.CURRENCY$(0.99, "CHF", "en-GB"), "CHF0.99", "en-GB CHF")
+TESTKIT.EQ(NUMFMT.CURRENCY$(1234.5, "EUR", "fr-FR"), "1" + NN$ + "234,50" + NB$ + "€", "fr-FR EUR")
+TESTKIT.EQ(NUMFMT.CURRENCY$(-1234.5, "USD", "fr-FR"), "-1" + NN$ + "234,50" + NB$ + "$US", "fr-FR USD negative")
+TESTKIT.EQ(NUMFMT.CURRENCY$(0, "GBP", "fr-FR"), "0,00" + NB$ + "£GB", "fr-FR GBP")
+TESTKIT.EQ(NUMFMT.CURRENCY$(12, "JPY", "de-DE", 0), "12" + NB$ + "JPY", "an unknown currency by its code, without decimals")
+TESTKIT.EQ(NUMFMT.SYMBOL$("usd", "en-GB"), "US$", "SYMBOL$")
+
+TESTKIT.SUITE("percentages")
+TESTKIT.EQ(NUMFMT.PERCENT$(0.256, 0, "de-DE"), "26" + NB$ + "%", "de-DE")
+TESTKIT.EQ(NUMFMT.PERCENT$(0.075, 0, "de-AT"), "8" + NB$ + "%", "de-AT")
+TESTKIT.EQ(NUMFMT.PERCENT$(-0.5, 0, "de-CH"), "-50%", "de-CH without a space")
+TESTKIT.EQ(NUMFMT.PERCENT$(1, 0, "en-US"), "100%", "en-US")
+TESTKIT.EQ(NUMFMT.PERCENT$(0.256, 1, "de-DE"), "25,6" + NB$ + "%", "de-DE with a decimal")
+TESTKIT.EQ(NUMFMT.PERCENT$(12.3456, 1, "fr-FR"), "1" + NN$ + "234,6" + NB$ + "%", "fr-FR with a group and a decimal")
+TESTKIT.EQ(NUMFMT.PERCENT$(0.256, 1, "en-GB"), "25.6%", "en-GB with a decimal")
+
+TESTKIT.SUITE("reading back")
+TESTKIT.NEAR(NUMFMT.PARSENUMBER("1.234,56 €", "de-DE"), 1234.56, 0.000001, "de-DE with a currency sign")
+TESTKIT.NEAR(NUMFMT.PARSENUMBER("CHF-1" + RS$ + "234.50", "de-CH"), -1234.5, 0.000001, "de-CH negative with its quote mark")
+TESTKIT.NEAR(NUMFMT.PARSENUMBER("1" + NN$ + "234,56", "fr-FR"), 1234.56, 0.000001, "fr-FR with a narrow space")
+TESTKIT.NEAR(NUMFMT.PARSENUMBER("$1,234.56", "en-US"), 1234.56, 0.000001, "en-US")
+TESTKIT.NEAR(NUMFMT.PARSENUMBER("(12.50)", "en-US"), -12.5, 0.000001, "an amount in brackets is negative")
+TESTKIT.NEAR(NUMFMT.PARSENUMBER("26" + NB$ + "%", "de-DE"), 26, 0.000001, "a percentage gives its number")
+TESTKIT.NEAR(NUMFMT.PARSENUMBER("1,5", "en-US"), 15, 0.000001, "a comma is a group separator in English")
+TESTKIT.EQ(NUMFMT.PARSENUMBER("none", "de-DE"), 0, "a text without a digit is 0")
+DIM round_trip = TRUE
+DIM locs = NUMFMT.LOCALES()
+DIM l = 0
+FOR l = 0 TO LEN(locs) - 1
+    DIM loc$ = locs[l]
+    IF ABS(NUMFMT.PARSENUMBER(NUMFMT.CURRENCY$(-98765.43, "EUR", loc$), loc$) + 98765.43) > 0.001 THEN round_trip = FALSE
+NEXT l
+TESTKIT.ISTRUE(round_trip, "every locale reads its own money back")
+
+TESTKIT.SUITE("numbers in words")
+DIM nums = [0, 1, 7, 11, 16, 17, 21, 30, 99, 100, 101, 110, 121, 999, 1000, 1001, 1100, 2026, 100000, 123456, 1000000, 1000001, 2000000, 1234567, 1000000000, 2500000000, -42, 1000000000001]
+DIM words_de = ["null", "eins", "sieben", "elf", "sechzehn", "siebzehn", "einundzwanzig", "dreißig", "neunundneunzig", "einhundert", "einhunderteins", "einhundertzehn", "einhunderteinundzwanzig", "neunhundertneunundneunzig", "eintausend", "eintausendeins", "eintausendeinhundert", "zweitausendsechsundzwanzig", "einhunderttausend", "einhundertdreiundzwanzigtausendvierhundertsechsundfünfzig", "eine Million", "eine Million eins", "zwei Millionen", "eine Million zweihundertvierunddreißigtausendfünfhundertsiebenundsechzig", "eine Milliarde", "zwei Milliarden fünfhundert Millionen", "minus zweiundvierzig", "eine Billion eins"]
+DIM words_en = ["zero", "one", "seven", "eleven", "sixteen", "seventeen", "twenty-one", "thirty", "ninety-nine", "one hundred", "one hundred and one", "one hundred and ten", "one hundred and twenty-one", "nine hundred and ninety-nine", "one thousand", "one thousand and one", "one thousand, one hundred", "two thousand and twenty-six", "one hundred thousand", "one hundred and twenty-three thousand, four hundred and fifty-six", "one million", "one million and one", "two million", "one million, two hundred and thirty-four thousand, five hundred and sixty-seven", "one billion", "two billion, five hundred million", "minus forty-two", "one trillion and one"]
+DIM all_de = TRUE
+DIM all_en = TRUE
+FOR i = 0 TO LEN(nums) - 1
+    DIM num = nums[i]
+    DIM want_word_de$ = words_de[i]
+    DIM want_word_en$ = words_en[i]
+    IF NUMFMT.WORDS$(num, "de") <> want_word_de$ THEN
+        all_de = FALSE
+        PRINT "  de "; num; ": "; NUMFMT.WORDS$(num, "de")
+    ENDIF
+    IF NUMFMT.WORDS$(num, "en") <> want_word_en$ THEN
+        all_en = FALSE
+        PRINT "  en "; num; ": "; NUMFMT.WORDS$(num, "en")
+    ENDIF
+NEXT i
+TESTKIT.ISTRUE(all_de, "28 numbers in German, as num2words writes them")
+TESTKIT.ISTRUE(all_en, "and in English")
+
+TESTKIT.SUITE("amounts in words")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(209.8, "EUR", "de"), "zweihundertneun Euro und achtzig Cent", "German euros and cents")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(1234.5, "EUR", "de"), "eintausendzweihundertvierunddreißig Euro und fünfzig Cent", "a thousand and more")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(1, "EUR", "de"), "ein Euro", "one euro without cents")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(0.01, "EUR", "de"), "null Euro und ein Cent", "one cent")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(1000000.99, "EUR", "de"), "eine Million Euro und neunundneunzig Cent", "a million")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(5.05, "CHF", "de"), "fünf Franken und fünf Rappen", "Swiss francs")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(-3, "EUR", "de"), "minus drei Euro", "a negative amount")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(209.8, "EUR", "en"), "two hundred and nine euros and eighty cents", "English euros and cents")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(1, "EUR", "en"), "one euro", "one euro")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(21.01, "USD", "en"), "twenty-one dollars and one cent", "one cent")
+TESTKIT.EQ(NUMFMT.AMOUNTWORDS$(2.01, "GBP", "en"), "two pounds and one penny", "pounds and a penny")
+
+TESTKIT.SUITE("IBAN and VAT id")
+TESTKIT.EQ(NUMFMT.IBAN$("de89370400440532013000"), "DE89 3704 0044 0532 0130 00", "an IBAN in groups of four")
+TESTKIT.ISTRUE(NUMFMT.ISIBAN("DE89 3704 0044 0532 0130 00"), "a German IBAN with its spaces")
+TESTKIT.ISTRUE(NUMFMT.ISIBAN("GB82WEST12345698765432"), "a British one with letters inside")
+TESTKIT.ISFALSE(NUMFMT.ISIBAN("DE89370400440532013001"), "a wrong check")
+TESTKIT.ISFALSE(NUMFMT.ISIBAN("DE8937040044053201300"), "a German IBAN one digit short")
+TESTKIT.ISFALSE(NUMFMT.ISIBAN("hello"), "no IBAN at all")
+TESTKIT.EQ(NUMFMT.VATID$("de 136 695 976"), "DE136695976", "a VAT id compact")
+TESTKIT.ISTRUE(NUMFMT.ISVATID("DE136695976"), "a valid VAT id")
+TESTKIT.ISTRUE(NUMFMT.ISVATID("DE 136 695 976"), "with spaces")
+TESTKIT.ISTRUE(NUMFMT.ISVATID("136695976"), "without its country")
+TESTKIT.ISFALSE(NUMFMT.ISVATID("DE136695978"), "a wrong check digit")
+TESTKIT.ISFALSE(NUMFMT.ISVATID("DE12345"), "too short")
+
+TESTKIT.SUITE("German tax numbers")
+DIM regions = ["Berlin", "Bayern", "Brandenburg", "Hessen", "Nordrhein-Westfalen", "Sachsen", "Hamburg", "Niedersachsen", "Saarland"]
+DIM regional = ["21/815/08150", "181/815/08155", "048/815/08155", "013 815 08153", "133/8150/8159", "201/123/12340", "02/815/08156", "24/815/08151", "010/815/08182"]
+DIM federal = ["1121081508150", "9181081508155", "3048081508155", "2613081508153", "5133081508159", "3201012312340", "2202081508156", "2324081508151", "1010081508182"]
+FOR i = 0 TO LEN(regions) - 1
+    DIM region$ = regions[i]
+    DIM own$ = regional[i]
+    DIM nation$ = federal[i]
+    TESTKIT.EQ(NUMFMT.FEDERALTAXNUMBER$(own$, region$), nation$, region$ + " to 13 digits")
+    TESTKIT.EQ(NUMFMT.TAXREGION$(nation$), region$, "and the state from them")
+    TESTKIT.EQ(NUMFMT.TAXNUMBER$(nation$), own$, "and back the way the state prints it")
+NEXT i
+TESTKIT.EQ(NUMFMT.FEDERALTAXNUMBER$("9381508152", "BW"), "2893081508152", "a state by its short code")
+TESTKIT.EQ(NUMFMT.TAXNUMBER$("2893081508152"), "93815/08152", "Baden-Wuerttemberg prints office and district together")
+TESTKIT.EQ(NUMFMT.TAXNUMBER$("15181508156", "Thueringen"), "151/815/08156", "a state named without its umlaut")
+TESTKIT.EQ(NUMFMT.TAXREGION$("0000000000000"), "", "no state for a number that fits none")
+
+TESTKIT.REPORT()
