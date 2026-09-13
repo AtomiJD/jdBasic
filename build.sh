@@ -364,6 +364,7 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     mkdir -p build/obj_pic
     RT_SRC="src/vm_bridge.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
             src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
+            src/audio_fx.cpp src/midi.cpp src/audio_io.cpp src/pybridge.cpp \
             src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
             src/numerics.cpp src/screencap.cpp src/pcode.cpp \
             $HTTP_SRC $GFX_SRC $IMGUI_SRC $TUI_SRC $SQL_SRC"
