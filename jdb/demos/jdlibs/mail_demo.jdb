@@ -5,9 +5,15 @@
 ' billing system sends with it (a plain text and an HTML version, the
 ' company logo shown inside the HTML, the PDF attached, a German subject
 ' with umlauts), writes it as an .eml file and reads that file back the
-' way a mail client would. It shows the curl command that would send it;
-' with MAIL_DEMO_SMTP set to a server URL (and MAIL_DEMO_USER and
-' MAIL_DEMO_PASSWORD when the server wants them) it sends it for real.
+' way a mail client would. It shows the curl command that would send it.
+'
+' To send it for real, set
+'   MAIL_DEMO_SMTP      the server, e.g. smtps://smtp.example.com:465
+'   MAIL_DEMO_USER      and MAIL_DEMO_PASSWORD, when the server wants a login
+'   MAIL_DEMO_FROM      the sender, the address the login belongs to
+'   MAIL_DEMO_TO        the recipient
+' With MAIL_DEMO_TO set the made-up Cc, Bcc and Reply-To addresses are left
+' out; without it nothing is sent.
 '
 '   jdBasic mail_demo.jdb
 
@@ -33,10 +39,17 @@ DIM logo$ = "tests/jdlibs/fixtures/pdfgen_logo.jpg"
 
 ' ── the message ────────────────────────────────────────────────
 
-DIM msg = MAIL.MESSAGE("Papier & Toner GmbH <rechnung@papier-toner.example>", "Stadtverwaltung Musterstadt <einkauf@musterstadt.example>", "Ihre Rechnung RE-2026-0413 für September – bitte prüfen")
-MAIL.CC(msg, "Jürgen Müller <j.mueller@musterstadt.example>")
-MAIL.BCC(msg, "archiv@papier-toner.example")
-MAIL.REPLYTO(msg, "Buchhaltung <buchhaltung@papier-toner.example>")
+DIM sender$ = "Papier & Toner GmbH <rechnung@papier-toner.example>"
+DIM recipient$ = "Stadtverwaltung Musterstadt <einkauf@musterstadt.example>"
+DIM live_to$ = GETENV$("MAIL_DEMO_TO")
+IF GETENV$("MAIL_DEMO_FROM") <> "" THEN sender$ = GETENV$("MAIL_DEMO_FROM")
+IF live_to$ <> "" THEN recipient$ = live_to$
+DIM msg = MAIL.MESSAGE(sender$, recipient$, "Ihre Rechnung RE-2026-0413 für September – bitte prüfen")
+IF live_to$ = "" THEN
+    MAIL.CC(msg, "Jürgen Müller <j.mueller@musterstadt.example>")
+    MAIL.BCC(msg, "archiv@papier-toner.example")
+    MAIL.REPLYTO(msg, "Buchhaltung <buchhaltung@papier-toner.example>")
+ENDIF
 MAIL.HEADER(msg, "X-Invoice-Number", "RE-2026-0413")
 
 DIM text_lines = []
@@ -82,7 +95,8 @@ CONSOLE.RULE("read back")
 DIM to_list = back{"to"}
 DIM cc_list = back{"cc"}
 DIM to_first$ = to_list[0]
-DIM cc_first$ = cc_list[0]
+DIM cc_first$ = "-"
+IF LEN(cc_list) > 0 THEN cc_first$ = cc_list[0]
 DIM subject_back$ = back{"subject"}
 DIM text_back$ = back{"text"}
 DIM html_back$ = back{"html"}
@@ -122,10 +136,10 @@ PRINT ""
 CONSOLE.RULE("sending")
 DIM server AS MAP
 DIM smtp$ = GETENV$("MAIL_DEMO_SMTP")
-IF smtp$ = "" THEN
+IF smtp$ = "" ORELSE live_to$ = "" THEN
     server{"url"} = "smtps://smtp.example.com:465"
     PRINT "  curl "; JOIN(MAIL.COMMAND(msg, server, "RE-2026-0413.eml"), " ")
-    PRINT "  Set MAIL_DEMO_SMTP (and MAIL_DEMO_USER, MAIL_DEMO_PASSWORD) to send it."
+    PRINT "  Set MAIL_DEMO_SMTP, MAIL_DEMO_USER, MAIL_DEMO_PASSWORD, MAIL_DEMO_FROM and MAIL_DEMO_TO to send it."
 ELSE
     server{"url"} = smtp$
     IF GETENV$("MAIL_DEMO_USER") <> "" THEN
