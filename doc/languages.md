@@ -1452,6 +1452,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `DOCX` | Word files: written with headings, lists, tables, header and footer; templates filled; paragraphs and tables read |
 | `PARSEC` | parsers: combinators and PEG grammars, trees with line and column, actions, errors naming what was expected |
 | `SVG` | drawings and charts as SVG without a window: shapes, gradients, transforms; line, bar, stacked, scatter, pie from DF frames; sparklines |
+| `ICAL` | calendars: .ics read and written, recurrence rules expanded into occurrences, named zones with summer time |
 | `PKG` | modules installed from an index, git or ZIP into `~/.jdbasic/lib` with their requirements by semver range; list, remove, update, lock files |
 
 ```basic

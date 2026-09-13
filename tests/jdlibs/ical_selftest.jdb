@@ -1,0 +1,272 @@
+' ICAL: a Google and an Outlook export read back property by property and
+' expanded into the occurrences Python's icalendar and
+' recurring_ical_events find (ical_reference.tsv); recurrence rules against
+' dateutil.rrule (ical_rrules.tsv); named zone offsets against zoneinfo
+' (ical_zones.tsv); and calendars written, folded, escaped and read again.
+
+IMPORT TESTKIT, ICAL, DT
+
+DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(fixture_dir$ + "ical_google.ics") THEN fixture_dir$ = "fixtures/"
+DIM TB$ = CHR$(9)
+DIM LF$ = CHR$(10)
+DIM CRLF$ = CHR$(13) + CHR$(10)
+DIM e_acute$ = CHR$(195) + CHR$(169)
+DIM range_from = DT.MAKE(2026, 9, 1)
+DIM range_to = DT.MAKE(2027, 1, 1)
+DIM i = 0
+DIM j = 0
+
+FUNC RowsOf(file_path$)
+    DIM out = []
+    DIM rows = SPLIT(REPLACE$(TXTREADER$(file_path$), CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r$ = rows[k]
+        IF r$ <> "" ANDALSO LEFT$(r$, 1) <> "#" THEN PUSH(out, r$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC ParseError$(src$)
+    DIM msg$ = "no error"
+    TRY
+        DIM cal = ICAL.PARSE(src$)
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
+ENDFUNC
+
+FUNC BadZone(zone_name$)
+    RETURN ICAL.ZONEOFFSET(zone_name$, 0)
+ENDFUNC
+
+' The occurrences of a calendar as reference rows: file, start, end, uid, summary.
+FUNC OccurrenceRows(cal, file_name$, t_from, t_to)
+    DIM out = []
+    DIM occ = ICAL.EXPAND(cal, t_from, t_to)
+    DIM cols = occ{"cols"}
+    DIM starts = cols[0]
+    DIM ends = cols[1]
+    DIM summaries = cols[2]
+    DIM uids = cols[3]
+    DIM k = 0
+    FOR k = 0 TO LEN(starts) - 1
+        DIM s = starts[k]
+        DIM e_at = ends[k]
+        DIM su$ = summaries[k]
+        DIM ui$ = uids[k]
+        PUSH(out, file_name$ + CHR$(9) + STR$(s) + CHR$(9) + STR$(e_at) + CHR$(9) + ui$ + CHR$(9) + su$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC SameRows$(mine, wanted)
+    DIM report$ = ""
+    DIM k = 0
+    IF LEN(mine) <> LEN(wanted) THEN report$ = STR$(LEN(mine)) + " rows, want " + STR$(LEN(wanted)) + "; "
+    FOR k = 0 TO LEN(wanted) - 1
+        DIM w$ = wanted[k]
+        DIM m$ = ""
+        IF k < LEN(mine) THEN m$ = mine[k]
+        IF m$ <> w$ ANDALSO LEN(report$) < 400 THEN report$ = report$ + "row " + STR$(k) + ": " + m$ + " <> " + w$ + "; "
+    NEXT k
+    RETURN report$
+ENDFUNC
+
+' ── reading ────────────────────────────────────────────────────
+
+TESTKIT.SUITE("reading a Google export")
+DIM google = ICAL.PARSEFILE(fixture_dir$ + "ical_google.ics")
+DIM g_events = ICAL.EVENTS(google)
+TESTKIT.EQ(LEN(g_events), 6, "six VEVENTs, the moved occurrence included")
+TESTKIT.EQ(LEN(ICAL.COMPONENTS(google, "VTIMEZONE")), 1, "and its VTIMEZONE")
+TESTKIT.EQ(ICAL.KIND$(google, google), "VCALENDAR", "the handle is the calendar")
+TESTKIT.EQ(ICAL.PROP$(google, google, "X-WR-CALNAME"), "Team", "calendar properties")
+DIM standup = g_events[0]
+TESTKIT.EQ(ICAL.PROP$(google, standup, "SUMMARY"), "Stand-up", "SUMMARY")
+DIM desc$ = ICAL.PROP$(google, standup, "DESCRIPTION")
+TESTKIT.ISTRUE(INSTR(desc$, "- blockers, if any." + LF$ + LF$ + "Join:") >= 0, "text unescaped: \n and \,")
+TESTKIT.ISTRUE(INSTR(desc$, "hij; dial in with the code 12345678") >= 0, "folded lines joined, \; unescaped")
+TESTKIT.EQ(ICAL.PROP$(google, standup, "LOCATION"), "Room 3, second floor", "LOCATION")
+TESTKIT.EQ(ICAL.PARAM$(google, standup, "DTSTART", "TZID"), "Europe/Berlin", "a parameter")
+TESTKIT.EQ(ICAL.STARTAT(google, standup), 1789369200, "DTSTART in Europe/Berlin is 07:00 UTC")
+TESTKIT.EQ(ICAL.ENDAT(google, standup), 1789371000, "DTEND")
+TESTKIT.EQ(ICAL.RAW$(google, standup, "RRULE"), "FREQ=WEEKLY;UNTIL=20261030T215959Z;BYDAY=MO,WE,FR", "RAW$ as written")
+DIM alarms = ICAL.CHILDREN(google, standup, "VALARM")
+TESTKIT.EQ(LEN(alarms), 1, "the event's VALARM")
+DIM alarm_id = alarms[0]
+TESTKIT.EQ(ICAL.PROP$(google, alarm_id, "TRIGGER"), "-P0DT0H10M0S", "with its trigger")
+DIM holiday = g_events[2]
+TESTKIT.ISTRUE(ICAL.ALLDAY(google, holiday), "an all-day event")
+TESTKIT.EQ(ICAL.ENDAT(google, holiday) - ICAL.STARTAT(google, holiday), 86400, "lasting its day")
+DIM review = g_events[3]
+TESTKIT.EQ(ICAL.ENDAT(google, review) - ICAL.STARTAT(google, review), 5400, "DURATION instead of DTEND")
+TESTKIT.EQ(ICAL.PROP$(google, review, "SUMMARY"), "Quarterly review: caf" + e_acute$ + " budget", "UTF-8 text")
+DIM attendees = ICAL.VALUES(google, review, "ATTENDEE")
+TESTKIT.EQ(LEN(attendees), 2, "every ATTENDEE")
+TESTKIT.EQ(ICAL.PARAM$(google, review, "ATTENDEE", "CN"), "Ann Example", "a parameter folded across lines")
+TESTKIT.EQ(ICAL.PARAM$(google, review, "ORGANIZER", "CN"), "Bob Example", "ORGANIZER")
+TESTKIT.ISTRUE(NOT ICAL.HAS(google, review, "RRULE"), "HAS")
+TESTKIT.EQ(ICAL.PROP$(google, review, "COMMENT", "none"), "none", "a missing property gives the fallback")
+TESTKIT.EQ(ICAL.TIMEOF(google, standup, "DTSTAMP"), DT.PARSE("2026-09-13T12:00:00Z"), "TIMEOF any date-time property")
+
+TESTKIT.SUITE("reading an Outlook export")
+DIM outlook = ICAL.PARSEFILE(fixture_dir$ + "ical_outlook.ics")
+DIM o_events = ICAL.EVENTS(outlook)
+TESTKIT.EQ(LEN(o_events), 5, "five VEVENTs")
+DIM rollout = o_events[0]
+TESTKIT.EQ(ICAL.PARAM$(outlook, rollout, "DTSTART", "TZID"), "W. Europe Standard Time", "a quoted TZID")
+TESTKIT.EQ(ICAL.STARTAT(outlook, rollout), DT.PARSE("2026-09-15T08:00:00Z"), "read through the file's own VTIMEZONE")
+TESTKIT.EQ(ICAL.PARAM$(outlook, rollout, "SUMMARY", "LANGUAGE"), "en-us", "SUMMARY;LANGUAGE")
+TESTKIT.EQ(LEN(ICAL.RAW$(outlook, rollout, "UID")), 100, "a long UID folded over two lines")
+TESTKIT.ISTRUE(INSTR(ICAL.PROP$(outlook, rollout, "X-ALT-DESC"), "<BODY>" + LF$ + "<P>Hello team,</P>") >= 0, "the HTML description")
+TESTKIT.EQ(ICAL.PARAM$(outlook, outlook, "X-OWNER", "CN"), "Example User", "calendar parameters")
+DIM ny_call = o_events[1]
+TESTKIT.EQ(ICAL.STARTAT(outlook, ny_call), DT.PARSE("2026-10-29T13:00:00Z"), "Eastern Standard Time before the change")
+DIM lf_text$ = REPLACE$(TXTREADER$(fixture_dir$ + "ical_outlook.ics"), CRLF$, LF$)
+DIM lf_cal = ICAL.PARSE(lf_text$)
+TESTKIT.EQ(LEN(ICAL.EVENTS(lf_cal)), 5, "a file with bare LF reads the same")
+TESTKIT.EQ(ParseError$("hello"), "ICAL: no VCALENDAR in the text", "text without a calendar is refused")
+
+' ── occurrences ────────────────────────────────────────────────
+
+TESTKIT.SUITE("occurrences against icalendar")
+DIM reference = RowsOf(fixture_dir$ + "ical_reference.tsv")
+DIM files = ["ical_google.ics", "ical_outlook.ics"]
+DIM cals = [google, outlook]
+FOR i = 0 TO 1
+    DIM file_name$ = files[i]
+    DIM wanted = []
+    FOR j = 0 TO LEN(reference) - 1
+        DIM ref$ = reference[j]
+        IF LEFT$(ref$, LEN(file_name$) + 1) = file_name$ + TB$ THEN PUSH(wanted, ref$)
+    NEXT j
+    DIM mine = OccurrenceRows(cals[i], file_name$, range_from, range_to)
+    TESTKIT.EQ(SameRows$(mine, wanted), "", file_name$ + ": all " + STR$(LEN(wanted)) + " occurrences, starts, ends, UIDs and summaries")
+NEXT i
+DIM standup_starts = ICAL.OCCURRENCES(google, standup, range_from, range_to)
+TESTKIT.EQ(LEN(standup_starts), 19, "the stand-up without its EXDATE and its moved occurrence")
+DIM last_standup = standup_starts[LEN(standup_starts) - 1]
+TESTKIT.EQ(last_standup, DT.PARSE("2026-10-30T08:00:00Z"), "keeping 09:00 in Berlin after the clocks change, up to UNTIL")
+DIM month_end = g_events[4]
+DIM close_starts = ICAL.OCCURRENCES(google, month_end, range_from, range_to)
+TESTKIT.EQ(LEN(close_starts), 4, "BYMONTHDAY=-1 with COUNT")
+DIM week_only = ICAL.EXPAND(outlook, DT.MAKE(2026, 11, 1), DT.MAKE(2026, 11, 8))
+DIM week_cols = week_only{"cols"}
+DIM week_starts = week_cols[0]
+TESTKIT.EQ(LEN(week_starts), 5, "EXPAND over one week")
+DIM week_names = week_only{"names"}
+TESTKIT.EQ(JOIN(week_names, ","), "start,end,summary,uid,event", "as a DF frame")
+
+' ── rules ──────────────────────────────────────────────────────
+
+TESTKIT.SUITE("rules against dateutil")
+DIM rule_rows = RowsOf(fixture_dir$ + "ical_rrules.tsv")
+FOR i = 0 TO LEN(rule_rows) - 1
+    DIM rr$ = rule_rows[i]
+    DIM rc = SPLIT(rr$, TB$)
+    DIM rule$ = rc[0]
+    DIM r_start = VAL(rc[1])
+    DIM r_from = VAL(rc[2])
+    DIM r_to = VAL(rc[3])
+    DIM want$ = rc[4]
+    DIM got = ICAL.RRULE(rule$, r_start, r_from, r_to + 1)
+    DIM got_text = []
+    FOR j = 0 TO LEN(got) - 1
+        DIM g = got[j]
+        PUSH(got_text, STR$(g))
+    NEXT j
+    TESTKIT.EQ(JOIN(got_text, ","), want$, rule$)
+NEXT i
+DIM berlin_weekly = ICAL.RRULE("FREQ=WEEKLY;COUNT=3", DT.PARSE("2026-10-19T08:00:00Z"), 0, DT.MAKE(2027, 1, 1), "Europe/Berlin")
+TESTKIT.EQ(berlin_weekly[1] - berlin_weekly[0], 7 * 86400 + 3600, "a zone keeps the wall clock across a change")
+
+' ── zones ──────────────────────────────────────────────────────
+
+TESTKIT.SUITE("zones against zoneinfo")
+DIM zone_rows = RowsOf(fixture_dir$ + "ical_zones.tsv")
+DIM zone_bad$ = ""
+DIM zone_ok = 0
+FOR i = 0 TO LEN(zone_rows) - 1
+    DIM zr$ = zone_rows[i]
+    DIM zc = SPLIT(zr$, TB$)
+    DIM zname$ = zc[0]
+    DIM zt = VAL(zc[1])
+    DIM zwant = VAL(zc[2])
+    DIM zgot = ICAL.ZONEOFFSET(zname$, zt) * 3600
+    IF ABS(zgot - zwant) < 0.5 THEN
+        zone_ok = zone_ok + 1
+    ELSEIF LEN(zone_bad$) < 300 THEN
+        zone_bad$ = zone_bad$ + zname$ + "@" + STR$(zt) + " "
+    ENDIF
+NEXT i
+TESTKIT.EQ(zone_bad$, "", STR$(zone_ok) + " offsets of 22 zones around their changes, 2025 to 2027")
+TESTKIT.EQ(ICAL.ZONEOFFSET("Europe/Berlin", DT.PARSE("2026-07-01T12:00:00Z")), 2, "offsets in hours, as DT takes them")
+TESTKIT.ISTRUE(LEN(ICAL.ZONES()) > 80, "ZONES lists IANA and Windows names")
+TESTKIT.THROWS(BadZone@, "Mars/Olympus", "an unknown zone is refused")
+
+' ── writing ────────────────────────────────────────────────────
+
+TESTKIT.SUITE("writing")
+DIM cal = ICAL.NEW()
+DIM sync_start = DT.PARSE("2026-10-19T08:00:00Z")
+DIM sync_ev = ICAL.ADDEVENT(cal, "Team sync; notes, agenda", sync_start, sync_start + 2700, "Europe/Berlin")
+ICAL.SETPROP(cal, sync_ev, "RRULE", "FREQ=WEEKLY;BYDAY=MO,TH;COUNT=6")
+ICAL.ADDPROP(cal, sync_ev, "EXDATE", ICAL.DATETIME$(DT.PARSE("2026-10-22T08:00:00Z"), "Europe/Berlin"), "TZID=Europe/Berlin")
+DIM long_desc$ = "First line" + LF$ + "Second line, with a comma; a semicolon and a tail long enough to be folded" + REPEAT$(" caf" + e_acute$, 20)
+ICAL.SETTEXT(cal, sync_ev, "DESCRIPTION", long_desc$)
+DIM reminder = ICAL.ADDALARM(cal, sync_ev, 10)
+DIM closed = ICAL.ADDALLDAY(cal, "Office closed", DT.MAKE(2026, 12, 24), 3)
+DIM minutes = ICAL.ADDTODO(cal, "Send minutes", DT.PARSE("2026-10-20T15:00:00Z"))
+ICAL.SETPROP(cal, sync_ev, "DTSTAMP", "20260913T120000Z")
+DIM written$ = ICAL.TEXT$(cal)
+DIM physical = SPLIT(written$, CRLF$)
+DIM too_long = 0
+DIM split_char = 0
+FOR i = 0 TO LEN(physical) - 1
+    DIM pl$ = physical[i]
+    IF LEN(pl$) > 75 THEN too_long = too_long + 1
+    IF LEFT$(pl$, 1) = " " ANDALSO LEN(pl$) > 1 THEN
+        DIM lead = ASC(MID$(pl$, 1, 1))
+        IF lead >= 128 ANDALSO lead < 192 THEN split_char = split_char + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(too_long, 0, "no line longer than 75 octets")
+TESTKIT.EQ(split_char, 0, "and no character cut in two")
+TESTKIT.EQ(RIGHT$(written$, 15), "END:VCALENDAR" + CRLF$, "CRLF line ends")
+TESTKIT.ISTRUE(INSTR(written$, "BEGIN:VTIMEZONE") < INSTR(written$, "BEGIN:VEVENT"), "the zone before the events that use it")
+TESTKIT.ISTRUE(INSTR(written$, "SUMMARY:Team sync\; notes\, agenda") >= 0, "text escaped")
+TESTKIT.ISTRUE(INSTR(written$, "DTSTART;TZID=Europe/Berlin:20261019T100000") >= 0, "the wall clock of the zone")
+TESTKIT.ISTRUE(INSTR(written$, "DTSTART;VALUE=DATE:20261224") >= 0 ANDALSO INSTR(written$, "DTEND;VALUE=DATE:20261227") >= 0, "an all-day event")
+DIM back = ICAL.PARSE(written$)
+DIM back_events = ICAL.EVENTS(back)
+DIM back_sync = back_events[0]
+TESTKIT.EQ(ICAL.PROP$(back, back_sync, "SUMMARY"), "Team sync; notes, agenda", "reads back")
+TESTKIT.EQ(ICAL.PROP$(back, back_sync, "DESCRIPTION"), long_desc$, "the folded description too")
+TESTKIT.EQ(ICAL.STARTAT(back, back_sync), sync_start, "at the same instant")
+TESTKIT.EQ(ICAL.RAW$(back, back_sync, "DTSTAMP"), "20260913T120000Z", "SETPROP replaces")
+DIM sync_starts = ICAL.OCCURRENCES(back, back_sync, range_from, range_to)
+TESTKIT.EQ(LEN(sync_starts), 5, "six by COUNT, less the EXDATE")
+DIM third = sync_starts[2]
+TESTKIT.EQ(third, DT.PARSE("2026-10-29T09:00:00Z"), "10:00 in Berlin after the change is 09:00 UTC")
+DIM back_alarms = ICAL.CHILDREN(back, back_sync, "VALARM")
+DIM back_alarm = back_alarms[0]
+TESTKIT.EQ(ICAL.PROP$(back, back_alarm, "TRIGGER"), "-PT10M", "the alarm")
+DIM back_todos = ICAL.TODOS(back)
+DIM back_todo = back_todos[0]
+TESTKIT.EQ(ICAL.ENDAT(back, back_todo), DT.PARSE("2026-10-20T15:00:00Z"), "a VTODO's DUE")
+DIM back_closed = back_events[1]
+TESTKIT.EQ(ICAL.ENDAT(back, back_closed) - ICAL.STARTAT(back, back_closed), 3 * 86400, "three days closed")
+TESTKIT.EQ(ICAL.DATETIME$(DT.PARSE("2026-07-01T10:00:00Z")), "20260701T100000Z", "DATETIME$ in UTC")
+TESTKIT.EQ(ICAL.DATETIME$(DT.PARSE("2026-07-01T10:00:00Z"), "America/Los_Angeles"), "20260701T030000", "and in a zone")
+DIM round_trip = ICAL.PARSE(ICAL.TEXT$(outlook))
+DIM round_wanted = []
+FOR j = 0 TO LEN(reference) - 1
+    DIM rt$ = reference[j]
+    IF LEFT$(rt$, 17) = "ical_outlook.ics" + TB$ THEN PUSH(round_wanted, rt$)
+NEXT j
+TESTKIT.EQ(SameRows$(OccurrenceRows(round_trip, "ical_outlook.ics", range_from, range_to), round_wanted), "", "the Outlook export written and read again keeps every occurrence")
+
+TESTKIT.REPORT()

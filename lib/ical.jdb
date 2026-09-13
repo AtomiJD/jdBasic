@@ -1,0 +1,1330 @@
+' ical.jdb - calendars in and out: .ics files read into components and
+' properties (VCALENDAR, VEVENT, VTODO, VALARM, VTIMEZONE), with line
+' folding, text escaping and date-times in UTC, in a named zone or in the
+' zone the file defines; recurrence rules expanded into occurrences in a
+' range; and calendars written that Outlook and Google import. The
+' icalendar and dateutil.rrule ground.
+'
+'   IMPORT ICAL, DT
+'   DIM cal = ICAL.PARSEFILE("team.ics")
+'   DIM week = ICAL.EXPAND(cal, DT.PARSE("2026-09-14"), DT.PARSE("2026-09-21"))
+'   DIM out = ICAL.NEW()
+'   DIM ev = ICAL.ADDEVENT(out, "Review", DT.PARSE("2026-10-01T10:00:00+02:00"), DT.PARSE("2026-10-01T11:00:00+02:00"), "Europe/Berlin")
+'   ICAL.WRITEFILE(out, "review.ics")
+
+EXPORT MODULE ICAL
+
+DIM DAY_SECS = 86400
+DIM CRLF$ = CHR$(13) + CHR$(10)
+
+' components: one row per component; properties: one row per property,
+' chained per component
+DIM gCKind = []
+DIM gCParent = []
+DIM gCCal = []
+DIM gCFirstProp = []
+DIM gCLastProp = []
+DIM gPrComp = []
+DIM gPrName = []
+DIM gPrParams = []
+DIM gPrValue = []
+DIM gPrNext = []
+
+' zone rules: one row per transition rule, grouped per zone
+DIM gZoneRules AS MAP
+DIM gRMonth = []
+DIM gROrd = []
+DIM gRWday = []
+DIM gRDay = []
+DIM gRTime = []
+DIM gRFrom = []
+DIM gRTo = []
+DIM gRSince = []
+DIM gNamedZones AS MAP
+DIM gUidCount = 0
+
+' the fields of the last civil date computed
+DIM gYear = 1970
+DIM gMonth = 1
+DIM gDay = 1
+
+' ── the calendar arithmetic ────────────────────────────────────
+
+FUNC FloorDiv(a, b)
+    DIM q = INT(a / b)
+    IF q * b > a THEN q = q - 1
+    RETURN q
+ENDFUNC
+
+FUNC DaysOf(yy, mm, dd)
+    DIM yr = yy
+    IF mm <= 2 THEN yr = yr - 1
+    DIM era = FloorDiv(yr, 400)
+    DIM yoe = yr - era * 400
+    DIM mp = mm - 3
+    IF mm <= 2 THEN mp = mm + 9
+    DIM doy = (153 * mp + 2) \ 5 + dd - 1
+    DIM doe = yoe * 365 + yoe \ 4 - yoe \ 100 + doy
+    RETURN era * 146097 + doe - 719468
+ENDFUNC
+
+' Sets gYear, gMonth and gDay for a day count since 1970-01-01.
+SUB CivilOf(days)
+    DIM z = days + 719468
+    DIM era = FloorDiv(z, 146097)
+    DIM doe = z - era * 146097
+    DIM yoe = (doe - doe \ 1460 + doe \ 36524 - doe \ 146096) \ 365
+    DIM yr = yoe + era * 400
+    DIM doy = doe - (365 * yoe + yoe \ 4 - yoe \ 100)
+    DIM mp = (5 * doy + 2) \ 153
+    gDay = doy - (153 * mp + 2) \ 5 + 1
+    gMonth = mp + 3
+    IF mp >= 10 THEN gMonth = mp - 9
+    IF gMonth <= 2 THEN yr = yr + 1
+    gYear = yr
+ENDSUB
+
+' 0 is Sunday.
+FUNC WeekdayOf(days)
+    DIM w = (days + 4) MOD 7
+    IF w < 0 THEN w = w + 7
+    RETURN w
+ENDFUNC
+
+FUNC MonthLength(yy, mm)
+    RETURN DaysOf(yy + (mm \ 12), (mm MOD 12) + 1, 1) - DaysOf(yy, mm, 1)
+ENDFUNC
+
+FUNC Pad2$(n)
+    DIM s$ = STR$(CINT(n))
+    IF LEN(s$) < 2 THEN s$ = "0" + s$
+    RETURN s$
+ENDFUNC
+
+FUNC Pad4$(n)
+    DIM s$ = STR$(CINT(n))
+    DO WHILE LEN(s$) < 4
+        s$ = "0" + s$
+    LOOP
+    RETURN s$
+ENDFUNC
+
+' YYYYMMDD of a day count.
+FUNC DateText$(days)
+    CivilOf(days)
+    RETURN Pad4$(gYear) + Pad2$(gMonth) + Pad2$(gDay)
+ENDFUNC
+
+' YYYYMMDDTHHMMSS of seconds counted like the epoch.
+FUNC StampText$(secs)
+    DIM days = FloorDiv(secs, DAY_SECS)
+    DIM rest = CINT(secs - days * DAY_SECS)
+    RETURN DateText$(days) + "T" + Pad2$(rest \ 3600) + Pad2$((rest \ 60) MOD 60) + Pad2$(rest MOD 60)
+ENDFUNC
+
+' ── text ───────────────────────────────────────────────────────
+
+FUNC Unescape$(s$)
+    IF INSTR(s$, CHR$(92)) < 0 THEN RETURN s$
+    DIM bs$ = CHR$(92)
+    DIM out$ = REPLACE$(s$, bs$ + bs$, CHR$(1))
+    out$ = REPLACE$(out$, bs$ + "n", CHR$(10))
+    out$ = REPLACE$(out$, bs$ + "N", CHR$(10))
+    out$ = REPLACE$(out$, bs$ + ";", ";")
+    out$ = REPLACE$(out$, bs$ + ",", ",")
+    RETURN REPLACE$(out$, CHR$(1), bs$)
+ENDFUNC
+
+FUNC Escape$(s$)
+    DIM bs$ = CHR$(92)
+    DIM out$ = REPLACE$(s$, bs$, bs$ + bs$)
+    out$ = REPLACE$(out$, ";", bs$ + ";")
+    out$ = REPLACE$(out$, ",", bs$ + ",")
+    out$ = REPLACE$(out$, CHR$(13), "")
+    RETURN REPLACE$(out$, CHR$(10), bs$ + "n")
+ENDFUNC
+
+' Whether a property's value is text that carries escapes.
+FUNC IsTextProp(prop_name$)
+    IF prop_name$ = "RRULE" ORELSE prop_name$ = "EXRULE" ORELSE prop_name$ = "RDATE" ORELSE prop_name$ = "EXDATE" THEN RETURN FALSE
+    IF prop_name$ = "GEO" ORELSE prop_name$ = "DTSTART" ORELSE prop_name$ = "DTEND" ORELSE prop_name$ = "DUE" THEN RETURN FALSE
+    IF prop_name$ = "RECURRENCE-ID" ORELSE prop_name$ = "DTSTAMP" ORELSE prop_name$ = "TRIGGER" ORELSE prop_name$ = "DURATION" THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
+' ── components and properties ──────────────────────────────────
+
+FUNC NewComp(kind$, parent)
+    PUSH(gCKind, UCASE$(kind$))
+    PUSH(gCParent, parent)
+    PUSH(gCFirstProp, -1)
+    PUSH(gCLastProp, -1)
+    DIM comp_id = LEN(gCKind) - 1
+    IF parent < 0 THEN
+        PUSH(gCCal, comp_id)
+    ELSE
+        DIM owner = gCCal[parent]
+        PUSH(gCCal, owner)
+    ENDIF
+    RETURN comp_id
+ENDFUNC
+
+SUB AddPropRow(comp, prop_name$, params$, value$)
+    PUSH(gPrComp, comp)
+    PUSH(gPrName, UCASE$(prop_name$))
+    PUSH(gPrParams, params$)
+    PUSH(gPrValue, value$)
+    PUSH(gPrNext, -1)
+    DIM row_id = LEN(gPrComp) - 1
+    DIM last_row = gCLastProp[comp]
+    IF last_row < 0 THEN
+        gCFirstProp[comp] = row_id
+    ELSE
+        gPrNext[last_row] = row_id
+    ENDIF
+    gCLastProp[comp] = row_id
+ENDSUB
+
+FUNC FindProp(comp, prop_name$)
+    DIM want$ = UCASE$(prop_name$)
+    DIM row_id = gCFirstProp[comp]
+    DO WHILE row_id >= 0
+        DIM have$ = gPrName[row_id]
+        IF have$ = want$ THEN RETURN row_id
+        row_id = gPrNext[row_id]
+    LOOP
+    RETURN -1
+ENDFUNC
+
+' The value of one parameter in a parameter text: TZID="W. Europe Standard Time".
+FUNC ParamIn$(params$, param_name$)
+    DIM want$ = UCASE$(param_name$)
+    DIM rest$ = params$
+    DO WHILE rest$ <> ""
+        DIM piece$ = ""
+        DIM in_quotes = 0
+        DIM k = 0
+        DIM cut = LEN(rest$)
+        FOR k = 0 TO LEN(rest$) - 1
+            DIM ch$ = MID$(rest$, k, 1)
+            IF ch$ = CHR$(34) THEN in_quotes = 1 - in_quotes
+            IF ch$ = ";" ANDALSO in_quotes = 0 THEN
+                cut = k
+                EXITFOR
+            ENDIF
+        NEXT k
+        piece$ = LEFT$(rest$, cut)
+        IF cut < LEN(rest$) THEN
+            rest$ = MID$(rest$, cut + 1, LEN(rest$))
+        ELSE
+            rest$ = ""
+        ENDIF
+        DIM eq_at = CINT(INSTR(piece$, "="))
+        IF eq_at > 0 THEN
+            IF UCASE$(LEFT$(piece$, eq_at)) = want$ THEN
+                DIM found$ = MID$(piece$, eq_at + 1, LEN(piece$))
+                IF LEFT$(found$, 1) = CHR$(34) ANDALSO RIGHT$(found$, 1) = CHR$(34) ANDALSO LEN(found$) >= 2 THEN found$ = MID$(found$, 1, LEN(found$) - 2)
+                RETURN found$
+            ENDIF
+        ENDIF
+    LOOP
+    RETURN ""
+ENDFUNC
+
+' Reads .ics text into components; answers the handle of its first calendar.
+FUNC ParseText(src$)
+    DIM body$ = src$
+    IF LEFT$(body$, 3) = CHR$(239) + CHR$(187) + CHR$(191) THEN body$ = MID$(body$, 3, LEN(body$))
+    body$ = REPLACE$(body$, CHR$(13) + CHR$(10), CHR$(10))
+    body$ = REPLACE$(body$, CHR$(13), CHR$(10))
+    body$ = REPLACE$(body$, CHR$(10) + " ", "")
+    body$ = REPLACE$(body$, CHR$(10) + CHR$(9), "")
+    DIM rows = SPLIT(body$, CHR$(10))
+    DIM current = -1
+    DIM first_cal = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM text_row$ = rows[k]
+        IF TRIM$(text_row$) <> "" THEN
+            DIM colon = CINT(INSTR(text_row$, ":"))
+            DIM quote_at = CINT(INSTR(text_row$, CHR$(34)))
+            IF quote_at >= 0 ANDALSO quote_at < colon THEN
+                DIM in_quotes = 0
+                DIM j = 0
+                colon = -1
+                FOR j = 0 TO LEN(text_row$) - 1
+                    DIM cj$ = MID$(text_row$, j, 1)
+                    IF cj$ = CHR$(34) THEN in_quotes = 1 - in_quotes
+                    IF cj$ = ":" ANDALSO in_quotes = 0 THEN
+                        colon = j
+                        EXITFOR
+                    ENDIF
+                NEXT j
+            ENDIF
+            IF colon > 0 THEN
+                DIM head$ = LEFT$(text_row$, colon)
+                DIM value$ = MID$(text_row$, colon + 1, LEN(text_row$))
+                DIM semi = CINT(INSTR(head$, ";"))
+                DIM prop_name$ = UCASE$(head$)
+                DIM params$ = ""
+                IF semi > 0 THEN
+                    prop_name$ = UCASE$(LEFT$(head$, semi))
+                    params$ = MID$(head$, semi + 1, LEN(head$))
+                ENDIF
+                IF prop_name$ = "BEGIN" THEN
+                    current = NewComp(TRIM$(value$), current)
+                    IF first_cal < 0 ANDALSO UCASE$(TRIM$(value$)) = "VCALENDAR" THEN first_cal = current
+                ELSEIF prop_name$ = "END" THEN
+                    IF current >= 0 THEN current = gCParent[current]
+                ELSEIF current >= 0 THEN
+                    AddPropRow(current, prop_name$, params$, value$)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT k
+    IF first_cal < 0 THEN THROW "ICAL: no VCALENDAR in the text"
+    RETURN first_cal
+ENDFUNC
+
+' ── zones ──────────────────────────────────────────────────────
+
+' name|standard offset in seconds|EU, US or NONE
+SUB LoadNamedZones()
+    IF LEN(MAP.KEYS(gNamedZones)) = 0 THEN
+        DIM zone_table = ["UTC|0|NONE", "Etc/UTC|0|NONE", "GMT|0|NONE", "Z|0|NONE", "UTC Standard Time|0|NONE"]
+        zone_table = APPEND(zone_table, ["Europe/London|0|EU", "Europe/Dublin|0|EU", "Europe/Lisbon|0|EU", "Atlantic/Canary|0|EU", "GMT Standard Time|0|EU"])
+        zone_table = APPEND(zone_table, ["Europe/Berlin|3600|EU", "Europe/Paris|3600|EU", "Europe/Madrid|3600|EU", "Europe/Rome|3600|EU", "Europe/Vienna|3600|EU", "Europe/Zurich|3600|EU"])
+        zone_table = APPEND(zone_table, ["Europe/Amsterdam|3600|EU", "Europe/Brussels|3600|EU", "Europe/Luxembourg|3600|EU", "Europe/Stockholm|3600|EU", "Europe/Oslo|3600|EU", "Europe/Copenhagen|3600|EU"])
+        zone_table = APPEND(zone_table, ["Europe/Warsaw|3600|EU", "Europe/Prague|3600|EU", "Europe/Budapest|3600|EU", "Europe/Bratislava|3600|EU", "Europe/Ljubljana|3600|EU", "Europe/Zagreb|3600|EU"])
+        zone_table = APPEND(zone_table, ["Europe/Belgrade|3600|EU", "Europe/Malta|3600|EU", "W. Europe Standard Time|3600|EU", "Romance Standard Time|3600|EU", "Central Europe Standard Time|3600|EU", "Central European Standard Time|3600|EU"])
+        zone_table = APPEND(zone_table, ["Europe/Helsinki|7200|EU", "Europe/Athens|7200|EU", "Europe/Kiev|7200|EU", "Europe/Kyiv|7200|EU", "Europe/Bucharest|7200|EU", "Europe/Sofia|7200|EU"])
+        zone_table = APPEND(zone_table, ["Europe/Riga|7200|EU", "Europe/Vilnius|7200|EU", "Europe/Tallinn|7200|EU", "FLE Standard Time|7200|EU", "GTB Standard Time|7200|EU", "E. Europe Standard Time|7200|EU"])
+        zone_table = APPEND(zone_table, ["Europe/Moscow|10800|NONE", "Europe/Istanbul|10800|NONE", "Russian Standard Time|10800|NONE", "Turkey Standard Time|10800|NONE"])
+        zone_table = APPEND(zone_table, ["America/New_York|-18000|US", "America/Detroit|-18000|US", "America/Toronto|-18000|US", "US/Eastern|-18000|US", "Eastern Standard Time|-18000|US"])
+        zone_table = APPEND(zone_table, ["America/Chicago|-21600|US", "US/Central|-21600|US", "Central Standard Time|-21600|US", "America/Denver|-25200|US", "US/Mountain|-25200|US", "Mountain Standard Time|-25200|US"])
+        zone_table = APPEND(zone_table, ["America/Phoenix|-25200|NONE", "US Mountain Standard Time|-25200|NONE", "America/Los_Angeles|-28800|US", "America/Vancouver|-28800|US", "US/Pacific|-28800|US", "Pacific Standard Time|-28800|US"])
+        zone_table = APPEND(zone_table, ["America/Anchorage|-32400|US", "Alaskan Standard Time|-32400|US", "America/Halifax|-14400|US", "Atlantic Standard Time|-14400|US", "Pacific/Honolulu|-36000|NONE", "Hawaiian Standard Time|-36000|NONE"])
+        zone_table = APPEND(zone_table, ["Asia/Dubai|14400|NONE", "Arabian Standard Time|14400|NONE", "Asia/Kolkata|19800|NONE", "India Standard Time|19800|NONE", "Asia/Shanghai|28800|NONE", "China Standard Time|28800|NONE"])
+        zone_table = APPEND(zone_table, ["Asia/Singapore|28800|NONE", "Singapore Standard Time|28800|NONE", "Asia/Tokyo|32400|NONE", "Tokyo Standard Time|32400|NONE", "Australia/Brisbane|36000|NONE"])
+        DIM k = 0
+        FOR k = 0 TO LEN(zone_table) - 1
+            DIM entry$ = zone_table[k]
+            DIM bar1 = CINT(INSTR(entry$, "|"))
+            gNamedZones{LEFT$(entry$, bar1)} = MID$(entry$, bar1 + 1, LEN(entry$))
+        NEXT k
+    ENDIF
+ENDSUB
+
+SUB AddRule(month_no, ord, wday, day_no, time_secs, from_secs, to_secs, since_year)
+    PUSH(gRMonth, month_no)
+    PUSH(gROrd, ord)
+    PUSH(gRWday, wday)
+    PUSH(gRDay, day_no)
+    PUSH(gRTime, time_secs)
+    PUSH(gRFrom, from_secs)
+    PUSH(gRTo, to_secs)
+    PUSH(gRSince, since_year)
+ENDSUB
+
+FUNC OffsetSecs(text_in$)
+    DIM t$ = TRIM$(text_in$)
+    IF LEN(t$) < 5 THEN RETURN 0
+    DIM sign_mult = 1
+    IF LEFT$(t$, 1) = "-" THEN sign_mult = -1
+    DIM secs = VAL(MID$(t$, 1, 2)) * 3600 + VAL(MID$(t$, 3, 2)) * 60
+    IF LEN(t$) >= 7 THEN secs = secs + VAL(MID$(t$, 5, 2))
+    RETURN sign_mult * secs
+ENDFUNC
+
+FUNC WeekdayNo(code$)
+    DIM names$ = "SUMOTUWETHFRSA"
+    DIM at = CINT(INSTR(names$, UCASE$(code$)))
+    IF at < 0 THEN RETURN -1
+    RETURN at \ 2
+ENDFUNC
+
+FUNC RulePart$(rule$, part$)
+    DIM pieces = SPLIT(UCASE$(rule$), ";")
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM piece$ = pieces[k]
+        DIM eq_at = CINT(INSTR(piece$, "="))
+        IF eq_at > 0 THEN
+            IF LEFT$(piece$, eq_at) = part$ THEN RETURN MID$(piece$, eq_at + 1, LEN(piece$))
+        ENDIF
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' The rules of a zone as "first,count" in the rule rows, from the calendar's
+' VTIMEZONE when it has one, else from the named zones; "" when unknown.
+FUNC ZoneKey$(cal, tzid$)
+    DIM zone$ = TRIM$(tzid$)
+    IF LEFT$(zone$, 1) = CHR$(34) ANDALSO RIGHT$(zone$, 1) = CHR$(34) ANDALSO LEN(zone$) >= 2 THEN zone$ = MID$(zone$, 1, LEN(zone$) - 2)
+    IF zone$ = "" THEN RETURN ""
+    DIM cache$ = "c" + STR$(CINT(cal)) + ":" + zone$
+    IF MAP.EXISTS(gZoneRules, cache$) THEN
+        DIM cached$ = gZoneRules{cache$}
+        RETURN cached$
+    ENDIF
+    DIM first_rule = LEN(gRMonth)
+    DIM k = 0
+    IF cal >= 0 THEN
+        FOR k = 0 TO LEN(gCKind) - 1
+            DIM kind$ = gCKind[k]
+            DIM kcal = gCCal[k]
+            IF kind$ = "VTIMEZONE" ANDALSO kcal = cal THEN
+                DIM tz_row = FindProp(k, "TZID")
+                DIM tz_have$ = ""
+                IF tz_row >= 0 THEN tz_have$ = gPrValue[tz_row]
+                IF tz_have$ = zone$ ANDALSO LEN(gRMonth) = first_rule THEN
+                    DIM j = 0
+                    FOR j = 0 TO LEN(gCKind) - 1
+                        DIM sub_parent = gCParent[j]
+                        DIM sub_kind$ = gCKind[j]
+                        IF sub_parent = k ANDALSO (sub_kind$ = "STANDARD" ORELSE sub_kind$ = "DAYLIGHT") THEN
+                            DIM start_row = FindProp(j, "DTSTART")
+                            DIM from_row = FindProp(j, "TZOFFSETFROM")
+                            DIM to_row = FindProp(j, "TZOFFSETTO")
+                            IF start_row >= 0 ANDALSO to_row >= 0 THEN
+                                DIM dts$ = gPrValue[start_row]
+                                DIM to_secs = OffsetSecs(gPrValue[to_row])
+                                DIM from_secs = to_secs
+                                IF from_row >= 0 THEN from_secs = OffsetSecs(gPrValue[from_row])
+                                DIM since_year = VAL(LEFT$(dts$, 4))
+                                DIM month_no = VAL(MID$(dts$, 4, 2))
+                                DIM day_no = VAL(MID$(dts$, 6, 2))
+                                DIM time_secs = 0
+                                IF LEN(dts$) >= 15 THEN time_secs = VAL(MID$(dts$, 9, 2)) * 3600 + VAL(MID$(dts$, 11, 2)) * 60 + VAL(MID$(dts$, 13, 2))
+                                DIM ord = 0
+                                DIM wday = 0
+                                DIM rrule_row = FindProp(j, "RRULE")
+                                IF rrule_row >= 0 THEN
+                                    DIM rr$ = gPrValue[rrule_row]
+                                    DIM bymonth$ = RulePart$(rr$, "BYMONTH")
+                                    IF bymonth$ <> "" THEN month_no = VAL(bymonth$)
+                                    DIM byday$ = RulePart$(rr$, "BYDAY")
+                                    IF byday$ <> "" THEN
+                                        wday = WeekdayNo(RIGHT$(byday$, 2))
+                                        ord = VAL(LEFT$(byday$, LEN(byday$) - 2))
+                                        IF ord = 0 THEN ord = 1
+                                    ENDIF
+                                    DIM bymday$ = RulePart$(rr$, "BYMONTHDAY")
+                                    IF bymday$ <> "" ANDALSO byday$ = "" THEN
+                                        ord = 9
+                                        day_no = VAL(bymday$)
+                                    ENDIF
+                                    IF byday$ = "" ANDALSO bymday$ = "" THEN ord = 9
+                                ENDIF
+                                AddRule(month_no, ord, wday, day_no, time_secs, from_secs, to_secs, since_year)
+                            ENDIF
+                        ENDIF
+                    NEXT j
+                ENDIF
+            ENDIF
+        NEXT k
+    ENDIF
+    IF LEN(gRMonth) = first_rule THEN
+        LoadNamedZones()
+        IF MAP.EXISTS(gNamedZones, zone$) THEN
+            DIM spec$ = gNamedZones{zone$}
+            DIM bar1 = CINT(INSTR(spec$, "|"))
+            DIM std = VAL(LEFT$(spec$, bar1))
+            DIM rule_kind$ = MID$(spec$, bar1 + 1, LEN(spec$))
+            IF rule_kind$ = "EU" THEN
+                AddRule(3, -1, 0, 0, 3600 + std, std, std + 3600, 1970)
+                AddRule(10, -1, 0, 0, 7200 + std, std + 3600, std, 1970)
+            ELSEIF rule_kind$ = "US" THEN
+                AddRule(3, 2, 0, 0, 7200, std, std + 3600, 1970)
+                AddRule(11, 1, 0, 0, 7200, std + 3600, std, 1970)
+            ELSE
+                AddRule(1, 0, 0, 1, 0, std, std, 1970)
+            ENDIF
+        ENDIF
+    ENDIF
+    DIM key_text$ = ""
+    IF LEN(gRMonth) > first_rule THEN key_text$ = STR$(first_rule) + "," + STR$(LEN(gRMonth) - first_rule)
+    gZoneRules{cache$} = key_text$
+    RETURN key_text$
+ENDFUNC
+
+' The local second (in the offset before the change) a rule changes the
+' clock in a year, or a very small number when it does not change it then.
+FUNC RuleLocal(r, yy)
+    DIM since_year = gRSince[r]
+    IF yy < since_year THEN RETURN -1E+18
+    DIM ord = gROrd[r]
+    DIM month_no = gRMonth[r]
+    DIM day_no = gRDay[r]
+    IF ord = 0 THEN
+        IF yy <> since_year THEN RETURN -1E+18
+    ELSEIF ord = 9 THEN
+        day_no = gRDay[r]
+    ELSE
+        DIM wday = gRWday[r]
+        DIM first_day = DaysOf(yy, month_no, 1)
+        IF ord > 0 THEN
+            day_no = 1 + ((wday - WeekdayOf(first_day) + 7) MOD 7) + (ord - 1) * 7
+        ELSE
+            DIM last_no = MonthLength(yy, month_no)
+            DIM last_day = first_day + last_no - 1
+            day_no = last_no - ((WeekdayOf(last_day) - wday + 7) MOD 7) + (ord + 1) * 7
+        ENDIF
+    ENDIF
+    RETURN DaysOf(yy, month_no, day_no) * DAY_SECS + gRTime[r]
+ENDFUNC
+
+' The offset in seconds of a zone at a UTC instant (local$ = 0) or at a
+' wall-clock second (from_local = 1).
+FUNC ZoneOffsetAt(zone_key$, secs, from_local)
+    IF zone_key$ = "" THEN RETURN 0
+    DIM comma = CINT(INSTR(zone_key$, ","))
+    DIM first_rule = VAL(LEFT$(zone_key$, comma))
+    DIM n_rules = VAL(MID$(zone_key$, comma + 1, LEN(zone_key$)))
+    CivilOf(FloorDiv(secs, DAY_SECS))
+    DIM yy = gYear
+    DIM best = -1E+19
+    DIM best_to = 0
+    DIM earliest = 1E+19
+    DIM earliest_from = 0
+    DIM yr = 0
+    DIM r = 0
+    FOR yr = yy - 1 TO yy
+        FOR r = first_rule TO first_rule + n_rules - 1
+            DIM at_local = RuleLocal(r, yr)
+            IF at_local > -1E+17 THEN
+                DIM at = at_local
+                IF from_local = 0 THEN at = at_local - gRFrom[r]
+                IF at <= secs ANDALSO at > best THEN
+                    best = at
+                    best_to = gRTo[r]
+                ENDIF
+                IF at < earliest THEN
+                    earliest = at
+                    earliest_from = gRFrom[r]
+                ENDIF
+            ENDIF
+        NEXT r
+    NEXT yr
+    IF best > -1E+18 THEN RETURN best_to
+    IF n_rules = 1 THEN RETURN gRTo[first_rule]
+    IF earliest < 1E+18 THEN RETURN earliest_from
+    RETURN gRTo[first_rule]
+ENDFUNC
+
+' The UTC offset of a named zone at an instant, in hours as DT counts them.
+EXPORT FUNC ZONEOFFSET(zone$, t)
+    DIM zone_key$ = ZoneKey$(-1, zone$)
+    IF zone_key$ = "" ANDALSO UCASE$(zone$) <> "UTC" THEN THROW "ICAL: no zone called " + zone$
+    RETURN ZoneOffsetAt(zone_key$, t, 0) / 3600
+ENDFUNC
+
+' The names of the zones ICAL knows without a VTIMEZONE.
+EXPORT FUNC ZONES()
+    LoadNamedZones()
+    RETURN MAP.KEYS(gNamedZones)
+ENDFUNC
+
+' ── date-times ─────────────────────────────────────────────────
+
+' The wall-clock seconds of a DATE or DATE-TIME value, UTC ones included.
+FUNC LocalSecs(value$)
+    DIM v$ = TRIM$(value$)
+    DIM days = DaysOf(VAL(LEFT$(v$, 4)), VAL(MID$(v$, 4, 2)), VAL(MID$(v$, 6, 2)))
+    IF LEN(v$) < 15 THEN RETURN days * DAY_SECS
+    RETURN days * DAY_SECS + VAL(MID$(v$, 9, 2)) * 3600 + VAL(MID$(v$, 11, 2)) * 60 + VAL(MID$(v$, 13, 2))
+ENDFUNC
+
+' The instant of a value: Z is UTC, a TZID is read in that zone, a date or
+' a floating time counts as UTC.
+FUNC InstantOf(cal, value$, tzid$)
+    DIM v$ = TRIM$(value$)
+    DIM local = LocalSecs(v$)
+    IF LEN(v$) < 15 ORELSE RIGHT$(v$, 1) = "Z" ORELSE tzid$ = "" THEN RETURN local
+    DIM zone_key$ = ZoneKey$(cal, tzid$)
+    RETURN local - ZoneOffsetAt(zone_key$, local, 1)
+ENDFUNC
+
+FUNC DurationSecs(text_in$)
+    DIM t$ = UCASE$(TRIM$(text_in$))
+    DIM sign_mult = 1
+    IF LEFT$(t$, 1) = "-" THEN sign_mult = -1
+    IF LEFT$(t$, 1) = "-" ORELSE LEFT$(t$, 1) = "+" THEN t$ = MID$(t$, 1, LEN(t$))
+    DIM total = 0
+    DIM num$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(t$) - 1
+        DIM ch$ = MID$(t$, k, 1)
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
+            num$ = num$ + ch$
+        ELSE
+            DIM n = VAL(num$)
+            IF ch$ = "W" THEN total = total + n * 604800
+            IF ch$ = "D" THEN total = total + n * DAY_SECS
+            IF ch$ = "H" THEN total = total + n * 3600
+            IF ch$ = "M" THEN total = total + n * 60
+            IF ch$ = "S" THEN total = total + n
+            num$ = ""
+        ENDIF
+    NEXT k
+    RETURN sign_mult * total
+ENDFUNC
+
+' ── reading ────────────────────────────────────────────────────
+
+' Reads .ics text; answers the calendar's handle.
+EXPORT FUNC PARSE(src$)
+    RETURN ParseText(src$)
+ENDFUNC
+
+EXPORT FUNC PARSEFILE(file_path$)
+    RETURN ParseText(TXTREADER$(file_path$))
+ENDFUNC
+
+FUNC ChildrenOf(comp, kind$)
+    DIM out = []
+    DIM want$ = UCASE$(kind$)
+    DIM k = 0
+    FOR k = comp + 1 TO LEN(gCKind) - 1
+        DIM up = gCParent[k]
+        IF up = comp THEN
+            DIM have$ = gCKind[k]
+            IF want$ = "" ORELSE have$ = want$ THEN PUSH(out, k)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The components right inside the calendar, only those of a kind when given.
+EXPORT FUNC COMPONENTS(cal, kind$ = "")
+    RETURN ChildrenOf(CINT(cal), kind$)
+ENDFUNC
+
+EXPORT FUNC EVENTS(cal)
+    RETURN ChildrenOf(CINT(cal), "VEVENT")
+ENDFUNC
+
+EXPORT FUNC TODOS(cal)
+    RETURN ChildrenOf(CINT(cal), "VTODO")
+ENDFUNC
+
+' The components inside another one: the VALARMs of an event.
+EXPORT FUNC CHILDREN(cal, comp, kind$ = "")
+    RETURN ChildrenOf(CINT(comp), kind$)
+ENDFUNC
+
+EXPORT FUNC KIND$(cal, comp)
+    DIM kind$ = gCKind[CINT(comp)]
+    RETURN kind$
+ENDFUNC
+
+EXPORT FUNC HAS(cal, comp, prop_name$)
+    RETURN FindProp(CINT(comp), prop_name$) >= 0
+ENDFUNC
+
+' A property's value, text unescaped (\n, \, and \; resolved).
+EXPORT FUNC PROP$(cal, comp, prop_name$, fallback$ = "")
+    DIM row_id = FindProp(CINT(comp), prop_name$)
+    IF row_id < 0 THEN RETURN fallback$
+    DIM value$ = gPrValue[row_id]
+    IF IsTextProp(UCASE$(prop_name$)) THEN RETURN Unescape$(value$)
+    RETURN value$
+ENDFUNC
+
+FUNC RawOf$(comp, prop_name$)
+    DIM row_id = FindProp(comp, prop_name$)
+    IF row_id < 0 THEN RETURN ""
+    DIM value$ = gPrValue[row_id]
+    RETURN value$
+ENDFUNC
+
+' A property's value as written in the file.
+EXPORT FUNC RAW$(cal, comp, prop_name$)
+    RETURN RawOf$(CINT(comp), prop_name$)
+ENDFUNC
+
+EXPORT FUNC PARAM$(cal, comp, prop_name$, param_name$, fallback$ = "")
+    DIM row_id = FindProp(CINT(comp), prop_name$)
+    IF row_id < 0 THEN RETURN fallback$
+    DIM params$ = gPrParams[row_id]
+    DIM found$ = ParamIn$(params$, param_name$)
+    IF found$ = "" THEN RETURN fallback$
+    RETURN found$
+ENDFUNC
+
+FUNC ValuesOf(comp, prop_name$)
+    DIM out = []
+    DIM want$ = UCASE$(prop_name$)
+    DIM text_prop = IsTextProp(want$)
+    DIM row_id = gCFirstProp[comp]
+    DO WHILE row_id >= 0
+        DIM have$ = gPrName[row_id]
+        IF have$ = want$ THEN
+            DIM value$ = gPrValue[row_id]
+            IF text_prop THEN value$ = Unescape$(value$)
+            PUSH(out, value$)
+        ENDIF
+        row_id = gPrNext[row_id]
+    LOOP
+    RETURN out
+ENDFUNC
+
+' Every value of a property that repeats (ATTENDEE, EXDATE), in order.
+EXPORT FUNC VALUES(cal, comp, prop_name$)
+    RETURN ValuesOf(CINT(comp), prop_name$)
+ENDFUNC
+
+FUNC TimeOfProp(comp, prop_name$)
+    DIM row_id = FindProp(comp, prop_name$)
+    IF row_id < 0 THEN THROW "ICAL: no " + UCASE$(prop_name$) + " in the " + gCKind[comp]
+    DIM params$ = gPrParams[row_id]
+    DIM value$ = gPrValue[row_id]
+    RETURN InstantOf(gCCal[comp], value$, ParamIn$(params$, "TZID"))
+ENDFUNC
+
+' The instant of a date or date-time property (DTSTAMP, DUE, CREATED...).
+EXPORT FUNC TIMEOF(cal, comp, prop_name$)
+    RETURN TimeOfProp(CINT(comp), prop_name$)
+ENDFUNC
+
+FUNC IsAllDay(comp)
+    DIM row_id = FindProp(comp, "DTSTART")
+    IF row_id < 0 THEN RETURN FALSE
+    DIM value$ = gPrValue[row_id]
+    RETURN LEN(TRIM$(value$)) = 8
+ENDFUNC
+
+' Whether a component starts on a date rather than at a time.
+EXPORT FUNC ALLDAY(cal, comp)
+    RETURN IsAllDay(CINT(comp))
+ENDFUNC
+
+EXPORT FUNC STARTAT(cal, comp)
+    RETURN TimeOfProp(CINT(comp), "DTSTART")
+ENDFUNC
+
+FUNC EndOf(comp)
+    IF FindProp(comp, "DTEND") >= 0 THEN RETURN TimeOfProp(comp, "DTEND")
+    IF FindProp(comp, "DUE") >= 0 THEN RETURN TimeOfProp(comp, "DUE")
+    DIM begins = TimeOfProp(comp, "DTSTART")
+    DIM dur_row = FindProp(comp, "DURATION")
+    IF dur_row >= 0 THEN RETURN begins + DurationSecs(gPrValue[dur_row])
+    IF IsAllDay(comp) THEN RETURN begins + DAY_SECS
+    RETURN begins
+ENDFUNC
+
+' DTEND, else DUE, else DTSTART with DURATION; a day after an all-day start.
+EXPORT FUNC ENDAT(cal, comp)
+    RETURN EndOf(CINT(comp))
+ENDFUNC
+
+' ── recurrence ─────────────────────────────────────────────────
+
+FUNC InList(vals, wanted)
+    DIM k = 0
+    FOR k = 0 TO LEN(vals) - 1
+        DIM v = vals[k]
+        IF v = wanted THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+FUNC NumList(text_in$)
+    DIM out = []
+    IF text_in$ = "" THEN RETURN out
+    DIM part_list = SPLIT(text_in$, ",")
+    DIM k = 0
+    FOR k = 0 TO LEN(part_list) - 1
+        DIM piece$ = part_list[k]
+        PUSH(out, VAL(piece$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The days of one month a rule picks: BYMONTHDAY (negative from the end),
+' BYDAY with or without an ordinal, both together, or the start's day.
+FUNC MonthPicks(yy, mm, bymonthday, byday_ord, byday_wday, start_day)
+    DIM out = []
+    DIM first_day = DaysOf(yy, mm, 1)
+    DIM n_days = MonthLength(yy, mm)
+    DIM d = 0
+    DIM k = 0
+    IF LEN(bymonthday) = 0 ANDALSO LEN(byday_wday) = 0 THEN
+        IF start_day <= n_days THEN PUSH(out, first_day + start_day - 1)
+        RETURN out
+    ENDIF
+    FOR d = 1 TO n_days
+        DIM day_id = first_day + d - 1
+        DIM keep = 1
+        IF LEN(bymonthday) > 0 THEN
+            IF NOT (InList(bymonthday, d) ORELSE InList(bymonthday, d - n_days - 1)) THEN keep = 0
+        ENDIF
+        IF keep = 1 ANDALSO LEN(byday_wday) > 0 THEN
+            DIM wd = WeekdayOf(day_id)
+            DIM hit = 0
+            FOR k = 0 TO LEN(byday_wday) - 1
+                DIM want_wd = byday_wday[k]
+                DIM want_ord = byday_ord[k]
+                IF want_wd = wd THEN
+                    IF want_ord = 0 THEN
+                        hit = 1
+                    ELSEIF want_ord > 0 ANDALSO (d - 1) \ 7 + 1 = want_ord THEN
+                        hit = 1
+                    ELSEIF want_ord < 0 ANDALSO (n_days - d) \ 7 + 1 = 0 - want_ord THEN
+                        hit = 1
+                    ENDIF
+                ENDIF
+            NEXT k
+            IF hit = 0 THEN keep = 0
+        ENDIF
+        IF keep = 1 THEN PUSH(out, day_id)
+    NEXT d
+    RETURN out
+ENDFUNC
+
+FUNC PickSetPos(picks, bysetpos)
+    IF LEN(bysetpos) = 0 THEN RETURN picks
+    DIM out = []
+    DIM n_picks = LEN(picks)
+    DIM k = 0
+    FOR k = 0 TO n_picks - 1
+        IF InList(bysetpos, k + 1) ORELSE InList(bysetpos, k - n_picks) THEN
+            DIM one = picks[k]
+            PUSH(out, one)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The wall-clock starts a rule produces from a wall-clock start, up to
+' (not including) the wall-clock second stop_local and at most `limit`
+' of them; DTSTART counts as the first.
+FUNC ExpandLocal(rule$, start_local, stop_local, until_local, limit)
+    DIM out = []
+    DIM freq$ = RulePart$(rule$, "FREQ")
+    DIM interval = 1
+    IF RulePart$(rule$, "INTERVAL") <> "" THEN interval = VAL(RulePart$(rule$, "INTERVAL"))
+    IF interval < 1 THEN interval = 1
+    DIM max_count = limit
+    IF RulePart$(rule$, "COUNT") <> "" THEN max_count = VAL(RulePart$(rule$, "COUNT"))
+    DIM bymonth = NumList(RulePart$(rule$, "BYMONTH"))
+    DIM bymonthday = NumList(RulePart$(rule$, "BYMONTHDAY"))
+    DIM bysetpos = NumList(RulePart$(rule$, "BYSETPOS"))
+    DIM byday_ord = []
+    DIM byday_wday = []
+    DIM byday$ = RulePart$(rule$, "BYDAY")
+    DIM k = 0
+    IF byday$ <> "" THEN
+        DIM day_codes = SPLIT(byday$, ",")
+        FOR k = 0 TO LEN(day_codes) - 1
+            DIM code$ = day_codes[k]
+            PUSH(byday_wday, WeekdayNo(RIGHT$(code$, 2)))
+            PUSH(byday_ord, VAL(LEFT$(code$, LEN(code$) - 2)))
+        NEXT k
+    ENDIF
+    DIM wkst = 1
+    IF RulePart$(rule$, "WKST") <> "" THEN wkst = WeekdayNo(RulePart$(rule$, "WKST"))
+    DIM start_days = FloorDiv(start_local, DAY_SECS)
+    DIM tod = start_local - start_days * DAY_SECS
+    CivilOf(start_days)
+    DIM y0 = gYear
+    DIM m0 = gMonth
+    DIM d0 = gDay
+    DIM wd0 = WeekdayOf(start_days)
+    PUSH(out, start_local)
+    DIM produced = 1
+    DIM period = 0
+    DIM going = 1
+    IF produced >= max_count THEN going = 0
+    DO WHILE going = 1 ANDALSO period < 50000
+        DIM picks = []
+        IF freq$ = "DAILY" THEN
+            DIM day_id = start_days + period * interval
+            CivilOf(day_id)
+            DIM keep = 1
+            IF LEN(bymonth) > 0 ANDALSO NOT InList(bymonth, gMonth) THEN keep = 0
+            IF LEN(bymonthday) > 0 THEN
+                DIM dmonth = MonthLength(gYear, gMonth)
+                IF NOT (InList(bymonthday, gDay) ORELSE InList(bymonthday, gDay - dmonth - 1)) THEN keep = 0
+            ENDIF
+            IF LEN(byday_wday) > 0 ANDALSO NOT InList(byday_wday, WeekdayOf(day_id)) THEN keep = 0
+            IF keep = 1 THEN PUSH(picks, day_id)
+        ELSEIF freq$ = "WEEKLY" THEN
+            DIM week_start = start_days - ((wd0 - wkst + 7) MOD 7) + period * interval * 7
+            IF LEN(byday_wday) = 0 THEN
+                PUSH(picks, week_start + ((wd0 - wkst + 7) MOD 7))
+            ELSE
+                DIM offs = []
+                FOR k = 0 TO LEN(byday_wday) - 1
+                    DIM wdk = byday_wday[k]
+                    PUSH(offs, (wdk - wkst + 7) MOD 7)
+                NEXT k
+                DIM o = 0
+                FOR o = 0 TO 6
+                    IF InList(offs, o) THEN PUSH(picks, week_start + o)
+                NEXT o
+            ENDIF
+            IF LEN(bymonth) > 0 THEN
+                DIM kept = []
+                FOR k = 0 TO LEN(picks) - 1
+                    DIM pk = picks[k]
+                    CivilOf(pk)
+                    IF InList(bymonth, gMonth) THEN PUSH(kept, pk)
+                NEXT k
+                picks = kept
+            ENDIF
+        ELSEIF freq$ = "MONTHLY" THEN
+            DIM month_index = (y0 * 12 + m0 - 1) + period * interval
+            DIM per_year = month_index \ 12
+            DIM pm = month_index MOD 12 + 1
+            IF LEN(bymonth) = 0 ORELSE InList(bymonth, pm) THEN picks = MonthPicks(per_year, pm, bymonthday, byday_ord, byday_wday, d0)
+        ELSE
+            DIM year_no = y0 + period * interval
+            DIM months = bymonth
+            IF LEN(months) = 0 THEN
+                months = []
+                PUSH(months, m0)
+            ENDIF
+            DIM mi = 0
+            FOR mi = 1 TO 12
+                IF InList(months, mi) THEN
+                    DIM month_picks = MonthPicks(year_no, mi, bymonthday, byday_ord, byday_wday, d0)
+                    FOR k = 0 TO LEN(month_picks) - 1
+                        DIM mp = month_picks[k]
+                        PUSH(picks, mp)
+                    NEXT k
+                ENDIF
+            NEXT mi
+        ENDIF
+        IF LEN(bysetpos) > 0 THEN picks = PickSetPos(picks, bysetpos)
+        FOR k = 0 TO LEN(picks) - 1
+            DIM pick = picks[k]
+            DIM when = pick * DAY_SECS + tod
+            IF going = 1 ANDALSO when > start_local THEN
+                IF when >= stop_local ORELSE when > until_local THEN
+                    going = 0
+                ELSE
+                    PUSH(out, when)
+                    produced = produced + 1
+                    IF produced >= max_count THEN going = 0
+                ENDIF
+            ENDIF
+        NEXT k
+        period = period + 1
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The starts of a rule in a range as instants: rule$ is an RRULE value,
+' start the first instant, zone$ the zone whose wall clock repeats (UTC
+' when ""), and the occurrences returned start in [from, to).
+EXPORT FUNC RRULE(rule$, first_start, t_from, t_to, zone$ = "")
+    DIM zone_key$ = ""
+    IF zone$ <> "" THEN zone_key$ = ZoneKey$(-1, zone$)
+    DIM start_local = first_start + ZoneOffsetAt(zone_key$, first_start, 0)
+    DIM until_local = 1E+18
+    DIM until$ = RulePart$(rule$, "UNTIL")
+    IF until$ <> "" THEN
+        IF LEN(until$) = 8 THEN
+            until_local = LocalSecs(until$) + DAY_SECS - 1
+        ELSEIF RIGHT$(until$, 1) = "Z" THEN
+            until_local = LocalSecs(until$) + ZoneOffsetAt(zone_key$, LocalSecs(until$), 0)
+        ELSE
+            until_local = LocalSecs(until$)
+        ENDIF
+    ENDIF
+    DIM stop_local = t_to + 50400
+    DIM locals = ExpandLocal(rule$, start_local, stop_local, until_local, 1000000)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(locals) - 1
+        DIM lk = locals[k]
+        DIM inst = lk - ZoneOffsetAt(zone_key$, lk, 1)
+        IF inst >= t_from ANDALSO inst < t_to THEN PUSH(out, inst)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC OccurrencesOf(comp, t_from, t_to)
+    DIM out = []
+    DIM cal = gCCal[comp]
+    DIM start_row = FindProp(comp, "DTSTART")
+    IF start_row < 0 THEN RETURN out
+    DIM start_value$ = TRIM$(gPrValue[start_row])
+    DIM start_params$ = gPrParams[start_row]
+    DIM tzid$ = ParamIn$(start_params$, "TZID")
+    DIM zone_key$ = ""
+    IF LEN(start_value$) >= 15 ANDALSO RIGHT$(start_value$, 1) <> "Z" ANDALSO tzid$ <> "" THEN zone_key$ = ZoneKey$(cal, tzid$)
+    DIM begins = TimeOfProp(comp, "DTSTART")
+    DIM length = EndOf(comp) - begins
+    DIM start_local = LocalSecs(start_value$)
+    DIM rrule_row = FindProp(comp, "RRULE")
+    DIM starts = []
+    DIM k = 0
+    IF rrule_row < 0 THEN
+        PUSH(starts, begins)
+    ELSE
+        DIM rule$ = gPrValue[rrule_row]
+        DIM until_local = 1E+18
+        DIM until$ = RulePart$(rule$, "UNTIL")
+        IF until$ <> "" THEN
+            IF LEN(until$) = 8 THEN
+                until_local = LocalSecs(until$) + DAY_SECS - 1
+            ELSEIF RIGHT$(until$, 1) = "Z" ANDALSO zone_key$ <> "" THEN
+                until_local = LocalSecs(until$) + ZoneOffsetAt(zone_key$, LocalSecs(until$), 0)
+            ELSE
+                until_local = LocalSecs(until$)
+            ENDIF
+        ENDIF
+        DIM locals = ExpandLocal(rule$, start_local, t_to + 50400, until_local, 1000000)
+        FOR k = 0 TO LEN(locals) - 1
+            DIM lk = locals[k]
+            PUSH(starts, lk - ZoneOffsetAt(zone_key$, lk, 1))
+        NEXT k
+    ENDIF
+    ' dates added by RDATE
+    DIM row_id = gCFirstProp[comp]
+    DO WHILE row_id >= 0
+        DIM row_name$ = gPrName[row_id]
+        IF row_name$ = "RDATE" THEN
+            DIM rd_params$ = gPrParams[row_id]
+            DIM rd_zone$ = ParamIn$(rd_params$, "TZID")
+            DIM rd_values = SPLIT(gPrValue[row_id], ",")
+            DIM r = 0
+            FOR r = 0 TO LEN(rd_values) - 1
+                DIM rd$ = rd_values[r]
+                IF INSTR(rd$, "/") < 0 THEN PUSH(starts, InstantOf(cal, rd$, rd_zone$))
+            NEXT r
+        ENDIF
+        row_id = gPrNext[row_id]
+    LOOP
+    ' instants taken away by EXDATE and by moved occurrences
+    DIM gone = []
+    row_id = gCFirstProp[comp]
+    DO WHILE row_id >= 0
+        DIM ex_name$ = gPrName[row_id]
+        IF ex_name$ = "EXDATE" THEN
+            DIM ex_params$ = gPrParams[row_id]
+            DIM ex_zone$ = ParamIn$(ex_params$, "TZID")
+            DIM ex_values = SPLIT(gPrValue[row_id], ",")
+            DIM xi = 0
+            FOR xi = 0 TO LEN(ex_values) - 1
+                DIM ex$ = ex_values[xi]
+                PUSH(gone, InstantOf(cal, ex$, ex_zone$))
+            NEXT xi
+        ENDIF
+        row_id = gPrNext[row_id]
+    LOOP
+    IF rrule_row >= 0 THEN
+        DIM uid$ = RawOf$(comp, "UID")
+        DIM siblings = ChildrenOf(gCParent[comp], gCKind[comp])
+        FOR k = 0 TO LEN(siblings) - 1
+            DIM sib = siblings[k]
+            IF sib <> comp ANDALSO FindProp(sib, "RECURRENCE-ID") >= 0 THEN
+                IF RawOf$(sib, "UID") = uid$ THEN PUSH(gone, TimeOfProp(sib, "RECURRENCE-ID"))
+            ENDIF
+        NEXT k
+    ENDIF
+    FOR k = 0 TO LEN(starts) - 1
+        DIM s = starts[k]
+        IF NOT InList(gone, s) THEN
+            DIM overlaps = 0
+            IF s < t_to ANDALSO s + length > t_from THEN overlaps = 1
+            IF length = 0 ANDALSO s >= t_from ANDALSO s < t_to THEN overlaps = 1
+            IF overlaps = 1 ANDALSO NOT InList(out, s) THEN PUSH(out, s)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The starts of a component's occurrences that overlap [from, to): its
+' RRULE and RDATE, less EXDATE and the occurrences moved by a component
+' with the same UID and a RECURRENCE-ID.
+EXPORT FUNC OCCURRENCES(cal, comp, t_from, t_to)
+    RETURN OccurrencesOf(CINT(comp), t_from, t_to)
+ENDFUNC
+
+' Every event occurrence overlapping [from, to) as a DF frame with the
+' columns start, end, summary, uid and event (the component), in order of
+' start.
+EXPORT FUNC EXPAND(cal, t_from, t_to)
+    DIM c = CINT(cal)
+    DIM raw_start = []
+    DIM raw_end = []
+    DIM raw_summary = []
+    DIM raw_uid = []
+    DIM raw_event = []
+    DIM sort_keys = []
+    DIM event_ids = ChildrenOf(c, "VEVENT")
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(event_ids) - 1
+        DIM ev = event_ids[k]
+        DIM starts = OccurrencesOf(ev, t_from, t_to)
+        IF LEN(starts) > 0 THEN
+            DIM length = EndOf(ev) - TimeOfProp(ev, "DTSTART")
+            DIM summary$ = Unescape$(RawOf$(ev, "SUMMARY"))
+            DIM uid$ = RawOf$(ev, "UID")
+            FOR j = 0 TO LEN(starts) - 1
+                DIM s = starts[j]
+                PUSH(raw_start, s)
+                PUSH(raw_end, s + length)
+                PUSH(raw_summary, summary$)
+                PUSH(raw_uid, uid$)
+                PUSH(raw_event, ev)
+                PUSH(sort_keys, FORMAT$("{:016.0f}", s + 100000000000) + "|" + uid$ + "|" + STR$(LEN(raw_start) - 1))
+            NEXT j
+        ENDIF
+    NEXT k
+    DIM sorted_keys = SORT(sort_keys)
+    DIM col_start = []
+    DIM col_end = []
+    DIM col_summary = []
+    DIM col_uid = []
+    DIM col_event = []
+    FOR k = 0 TO LEN(sorted_keys) - 1
+        DIM sk$ = sorted_keys[k]
+        DIM bar_at = LEN(sk$) - 1
+        DO WHILE bar_at > 0 ANDALSO MID$(sk$, bar_at, 1) <> "|"
+            bar_at = bar_at - 1
+        LOOP
+        DIM src = VAL(MID$(sk$, bar_at + 1, LEN(sk$)))
+        DIM v_start = raw_start[src]
+        DIM v_end = raw_end[src]
+        DIM v_summary$ = raw_summary[src]
+        DIM v_uid$ = raw_uid[src]
+        DIM v_event = raw_event[src]
+        PUSH(col_start, v_start)
+        PUSH(col_end, v_end)
+        PUSH(col_summary, v_summary$)
+        PUSH(col_uid, v_uid$)
+        PUSH(col_event, v_event)
+    NEXT k
+    DIM out_frame AS MAP
+    out_frame{"names"} = ["start", "end", "summary", "uid", "event"]
+    DIM cols = []
+    PUSH(cols, col_start)
+    PUSH(cols, col_end)
+    PUSH(cols, col_summary)
+    PUSH(cols, col_uid)
+    PUSH(cols, col_event)
+    out_frame{"cols"} = cols
+    RETURN out_frame
+ENDFUNC
+
+' ── writing ────────────────────────────────────────────────────
+
+FUNC NewCal(prodid$)
+    DIM cal = NewComp("VCALENDAR", -1)
+    AddPropRow(cal, "VERSION", "", "2.0")
+    AddPropRow(cal, "PRODID", "", prodid$)
+    AddPropRow(cal, "CALSCALE", "", "GREGORIAN")
+    RETURN cal
+ENDFUNC
+
+' A new, empty calendar; answers its handle.
+EXPORT FUNC NEW(prodid$ = "-//jdBasic//ICAL 1.0//EN")
+    RETURN NewCal(prodid$)
+ENDFUNC
+
+FUNC UtcStamp$(t)
+    RETURN StampText$(t) + "Z"
+ENDFUNC
+
+' A date-time value: UTC with Z, or the wall clock of a zone.
+EXPORT FUNC DATETIME$(t, zone$ = "")
+    IF zone$ = "" THEN RETURN UtcStamp$(t)
+    DIM zone_key$ = ZoneKey$(-1, zone$)
+    RETURN StampText$(t + ZoneOffsetAt(zone_key$, t, 0))
+ENDFUNC
+
+SUB SetPropRow(comp, prop_name$, value$, params$)
+    DIM row_id = FindProp(comp, prop_name$)
+    IF row_id < 0 THEN
+        AddPropRow(comp, prop_name$, params$, value$)
+    ELSE
+        gPrValue[row_id] = value$
+        gPrParams[row_id] = params$
+    ENDIF
+ENDSUB
+
+' Sets a property as written (replacing the first one of that name).
+EXPORT SUB SETPROP(cal, comp, prop_name$, value$, params$ = "")
+    SetPropRow(CINT(comp), prop_name$, value$, params$)
+ENDSUB
+
+' Adds a property even when one of that name is there (ATTENDEE, EXDATE).
+EXPORT SUB ADDPROP(cal, comp, prop_name$, value$, params$ = "")
+    AddPropRow(CINT(comp), prop_name$, params$, value$)
+ENDSUB
+
+' Sets a text property, escaping it.
+EXPORT SUB SETTEXT(cal, comp, prop_name$, text_in$)
+    SetPropRow(CINT(comp), prop_name$, Escape$(text_in$), "")
+ENDSUB
+
+' Adds the zone's VTIMEZONE to the calendar unless it has it.
+SUB EnsureZone(cal, zone$)
+    DIM zone_comps = ChildrenOf(cal, "VTIMEZONE")
+    DIM k = 0
+    DIM present = 0
+    FOR k = 0 TO LEN(zone_comps) - 1
+        DIM z = zone_comps[k]
+        IF RawOf$(z, "TZID") = zone$ THEN present = 1
+    NEXT k
+    IF present = 0 THEN
+        DIM zone_key$ = ZoneKey$(-1, zone$)
+        IF zone_key$ = "" THEN THROW "ICAL: no zone called " + zone$
+        DIM tz = NewComp("VTIMEZONE", cal)
+        AddPropRow(tz, "TZID", "", zone$)
+        DIM comma = CINT(INSTR(zone_key$, ","))
+        DIM first_rule = VAL(LEFT$(zone_key$, comma))
+        DIM n_rules = VAL(MID$(zone_key$, comma + 1, LEN(zone_key$)))
+        FOR k = first_rule TO first_rule + n_rules - 1
+            DIM from_secs = gRFrom[k]
+            DIM to_secs = gRTo[k]
+            DIM kind$ = "STANDARD"
+            IF to_secs > from_secs THEN kind$ = "DAYLIGHT"
+            DIM part = NewComp(kind$, tz)
+            DIM ord = gROrd[k]
+            DIM month_no = gRMonth[k]
+            DIM start_local = RuleLocal(k, 1970)
+            IF start_local < -1E+17 THEN start_local = DaysOf(1970, 1, 1) * DAY_SECS
+            AddPropRow(part, "DTSTART", "", StampText$(start_local))
+            IF ord <> 0 ANDALSO ord <> 9 THEN AddPropRow(part, "RRULE", "", "FREQ=YEARLY;BYMONTH=" + STR$(CINT(month_no)) + ";BYDAY=" + STR$(CINT(ord)) + MID$("SUMOTUWETHFRSA", CINT(gRWday[k]) * 2, 2))
+            AddPropRow(part, "TZOFFSETFROM", "", OffsetText$(from_secs))
+            AddPropRow(part, "TZOFFSETTO", "", OffsetText$(to_secs))
+        NEXT k
+    ENDIF
+ENDSUB
+
+FUNC OffsetText$(secs)
+    DIM sign_mult$ = "+"
+    DIM a = secs
+    IF a < 0 THEN
+        sign_mult$ = "-"
+        a = 0 - a
+    ENDIF
+    RETURN sign_mult$ + Pad2$(a \ 3600) + Pad2$((a \ 60) MOD 60)
+ENDFUNC
+
+FUNC NewUid$(summary$, first_start)
+    gUidCount = gUidCount + 1
+    RETURN LEFT$(CODEC.SHA256$(summary$ + "|" + STR$(first_start) + "|" + STR$(gUidCount)), 24) + "@jdbasic"
+ENDFUNC
+
+SUB SetTimeProp(cal, comp, prop_name$, t, zone$)
+    IF zone$ = "" THEN
+        SetPropRow(comp, prop_name$, UtcStamp$(t), "")
+    ELSE
+        EnsureZone(cal, zone$)
+        DIM zone_key$ = ZoneKey$(-1, zone$)
+        SetPropRow(comp, prop_name$, StampText$(t + ZoneOffsetAt(zone_key$, t, 0)), "TZID=" + zone$)
+    ENDIF
+ENDSUB
+
+' An event from start to finish (instants), with its wall clock in zone$
+' (a VTIMEZONE for it is added) or in UTC; answers the event.
+EXPORT FUNC ADDEVENT(cal, summary$, first_start, finish, zone$ = "")
+    DIM c = CINT(cal)
+    DIM ev = NewComp("VEVENT", c)
+    AddPropRow(ev, "UID", "", NewUid$(summary$, first_start))
+    AddPropRow(ev, "DTSTAMP", "", UtcStamp$(NOW_EPOCH()))
+    SetTimeProp(c, ev, "DTSTART", first_start, zone$)
+    SetTimeProp(c, ev, "DTEND", finish, zone$)
+    AddPropRow(ev, "SUMMARY", "", Escape$(summary$))
+    RETURN ev
+ENDFUNC
+
+' An all-day event over `days` days from the date of day_start (an instant
+' whose UTC date is used); answers the event.
+EXPORT FUNC ADDALLDAY(cal, summary$, day_start, days = 1)
+    DIM c = CINT(cal)
+    DIM ev = NewComp("VEVENT", c)
+    DIM first_day = FloorDiv(day_start, DAY_SECS)
+    AddPropRow(ev, "UID", "", NewUid$(summary$, day_start))
+    AddPropRow(ev, "DTSTAMP", "", UtcStamp$(NOW_EPOCH()))
+    AddPropRow(ev, "DTSTART", "VALUE=DATE", DateText$(first_day))
+    AddPropRow(ev, "DTEND", "VALUE=DATE", DateText$(first_day + days))
+    AddPropRow(ev, "SUMMARY", "", Escape$(summary$))
+    AddPropRow(ev, "TRANSP", "", "TRANSPARENT")
+    RETURN ev
+ENDFUNC
+
+' A to-do due at an instant; answers it.
+EXPORT FUNC ADDTODO(cal, summary$, due, zone$ = "")
+    DIM c = CINT(cal)
+    DIM todo = NewComp("VTODO", c)
+    AddPropRow(todo, "UID", "", NewUid$(summary$, due))
+    AddPropRow(todo, "DTSTAMP", "", UtcStamp$(NOW_EPOCH()))
+    SetTimeProp(c, todo, "DUE", due, zone$)
+    AddPropRow(todo, "SUMMARY", "", Escape$(summary$))
+    AddPropRow(todo, "STATUS", "", "NEEDS-ACTION")
+    RETURN todo
+ENDFUNC
+
+' A reminder that shows minutes_before the start; answers the alarm.
+EXPORT FUNC ADDALARM(cal, comp, minutes_before, text_in$ = "Reminder")
+    DIM alarm = NewComp("VALARM", CINT(comp))
+    AddPropRow(alarm, "ACTION", "", "DISPLAY")
+    AddPropRow(alarm, "TRIGGER", "", "-PT" + STR$(CINT(minutes_before)) + "M")
+    AddPropRow(alarm, "DESCRIPTION", "", Escape$(text_in$))
+    RETURN alarm
+ENDFUNC
+
+' A content line folded at 75 octets, never inside a character.
+FUNC Folded$(text_row$)
+    IF LEN(text_row$) <= 75 THEN RETURN text_row$ + CRLF$
+    DIM cs = -text_row$
+    DIM out$ = ""
+    DIM used = 0
+    DIM limit = 75
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM ch$ = cs[k]
+        IF used + LEN(ch$) > limit THEN
+            out$ = out$ + CRLF$ + " "
+            used = 0
+            limit = 74
+        ENDIF
+        out$ = out$ + ch$
+        used = used + LEN(ch$)
+    NEXT k
+    RETURN out$ + CRLF$
+ENDFUNC
+
+FUNC CompText$(comp)
+    DIM kind$ = gCKind[comp]
+    DIM out$ = "BEGIN:" + kind$ + CRLF$
+    DIM row_id = gCFirstProp[comp]
+    DO WHILE row_id >= 0
+        DIM row_name$ = gPrName[row_id]
+        DIM row_params$ = gPrParams[row_id]
+        DIM row_value$ = gPrValue[row_id]
+        DIM head$ = row_name$
+        IF row_params$ <> "" THEN head$ = head$ + ";" + row_params$
+        out$ = out$ + Folded$(head$ + ":" + row_value$)
+        row_id = gPrNext[row_id]
+    LOOP
+    DIM kids = ChildrenOf(comp, "")
+    DIM k = 0
+    DIM pass = 0
+    FOR pass = 0 TO 1
+        FOR k = 0 TO LEN(kids) - 1
+            DIM kid = kids[k]
+            DIM kid_kind$ = gCKind[kid]
+            IF (pass = 0 ANDALSO kid_kind$ = "VTIMEZONE") ORELSE (pass = 1 ANDALSO kid_kind$ <> "VTIMEZONE") THEN out$ = out$ + CompText$(kid)
+        NEXT k
+    NEXT pass
+    RETURN out$ + "END:" + kind$ + CRLF$
+ENDFUNC
+
+' The calendar as .ics text: CRLF line ends, lines folded at 75 octets,
+' VTIMEZONEs first.
+EXPORT FUNC TEXT$(cal)
+    RETURN CompText$(CINT(cal))
+ENDFUNC
+
+EXPORT SUB WRITEFILE(cal, file_path$)
+    TXTWRITER file_path$, CompText$(CINT(cal))
+ENDSUB

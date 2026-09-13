@@ -1,0 +1,1303 @@
+# zone	epoch	offset_seconds  (zoneinfo with tzdata)
+Europe/Berlin	1736942400	3600
+Europe/Berlin	1739620800	3600
+Europe/Berlin	1742040000	3600
+Europe/Berlin	1743289199	3600
+Europe/Berlin	1743292799	3600
+Europe/Berlin	1743292800	3600
+Europe/Berlin	1743292801	3600
+Europe/Berlin	1743296399	3600
+Europe/Berlin	1744718400	7200
+Europe/Berlin	1747310400	7200
+Europe/Berlin	1749988800	7200
+Europe/Berlin	1752580800	7200
+Europe/Berlin	1755259200	7200
+Europe/Berlin	1757937600	7200
+Europe/Berlin	1760529600	7200
+Europe/Berlin	1761433199	7200
+Europe/Berlin	1761436799	7200
+Europe/Berlin	1761436800	7200
+Europe/Berlin	1761436801	7200
+Europe/Berlin	1761440399	7200
+Europe/Berlin	1763208000	3600
+Europe/Berlin	1765800000	3600
+Europe/Berlin	1768478400	3600
+Europe/Berlin	1771156800	3600
+Europe/Berlin	1773576000	3600
+Europe/Berlin	1774738799	3600
+Europe/Berlin	1774742399	3600
+Europe/Berlin	1774742400	3600
+Europe/Berlin	1774742401	3600
+Europe/Berlin	1774745999	3600
+Europe/Berlin	1776254400	7200
+Europe/Berlin	1778846400	7200
+Europe/Berlin	1781524800	7200
+Europe/Berlin	1784116800	7200
+Europe/Berlin	1786795200	7200
+Europe/Berlin	1789473600	7200
+Europe/Berlin	1792065600	7200
+Europe/Berlin	1792882799	7200
+Europe/Berlin	1792886399	7200
+Europe/Berlin	1792886400	7200
+Europe/Berlin	1792886401	7200
+Europe/Berlin	1792889999	7200
+Europe/Berlin	1794744000	3600
+Europe/Berlin	1797336000	3600
+Europe/Berlin	1800014400	3600
+Europe/Berlin	1802692800	3600
+Europe/Berlin	1805112000	3600
+Europe/Berlin	1806188399	3600
+Europe/Berlin	1806191999	3600
+Europe/Berlin	1806192000	3600
+Europe/Berlin	1806192001	3600
+Europe/Berlin	1806195599	3600
+Europe/Berlin	1807790400	7200
+Europe/Berlin	1810382400	7200
+Europe/Berlin	1813060800	7200
+Europe/Berlin	1815652800	7200
+Europe/Berlin	1818331200	7200
+Europe/Berlin	1821009600	7200
+Europe/Berlin	1823601600	7200
+Europe/Berlin	1824937199	7200
+Europe/Berlin	1824940799	7200
+Europe/Berlin	1824940800	7200
+Europe/Berlin	1824940801	7200
+Europe/Berlin	1824944399	7200
+Europe/Berlin	1826280000	3600
+Europe/Berlin	1828872000	3600
+Europe/London	1736942400	0
+Europe/London	1739620800	0
+Europe/London	1742040000	0
+Europe/London	1743289199	0
+Europe/London	1743292799	0
+Europe/London	1743292800	0
+Europe/London	1743292801	0
+Europe/London	1743296399	0
+Europe/London	1744718400	3600
+Europe/London	1747310400	3600
+Europe/London	1749988800	3600
+Europe/London	1752580800	3600
+Europe/London	1755259200	3600
+Europe/London	1757937600	3600
+Europe/London	1760529600	3600
+Europe/London	1761433199	3600
+Europe/London	1761436799	3600
+Europe/London	1761436800	3600
+Europe/London	1761436801	3600
+Europe/London	1761440399	3600
+Europe/London	1763208000	0
+Europe/London	1765800000	0
+Europe/London	1768478400	0
+Europe/London	1771156800	0
+Europe/London	1773576000	0
+Europe/London	1774738799	0
+Europe/London	1774742399	0
+Europe/London	1774742400	0
+Europe/London	1774742401	0
+Europe/London	1774745999	0
+Europe/London	1776254400	3600
+Europe/London	1778846400	3600
+Europe/London	1781524800	3600
+Europe/London	1784116800	3600
+Europe/London	1786795200	3600
+Europe/London	1789473600	3600
+Europe/London	1792065600	3600
+Europe/London	1792882799	3600
+Europe/London	1792886399	3600
+Europe/London	1792886400	3600
+Europe/London	1792886401	3600
+Europe/London	1792889999	3600
+Europe/London	1794744000	0
+Europe/London	1797336000	0
+Europe/London	1800014400	0
+Europe/London	1802692800	0
+Europe/London	1805112000	0
+Europe/London	1806188399	0
+Europe/London	1806191999	0
+Europe/London	1806192000	0
+Europe/London	1806192001	0
+Europe/London	1806195599	0
+Europe/London	1807790400	3600
+Europe/London	1810382400	3600
+Europe/London	1813060800	3600
+Europe/London	1815652800	3600
+Europe/London	1818331200	3600
+Europe/London	1821009600	3600
+Europe/London	1823601600	3600
+Europe/London	1824937199	3600
+Europe/London	1824940799	3600
+Europe/London	1824940800	3600
+Europe/London	1824940801	3600
+Europe/London	1824944399	3600
+Europe/London	1826280000	0
+Europe/London	1828872000	0
+Europe/Paris	1736942400	3600
+Europe/Paris	1739620800	3600
+Europe/Paris	1742040000	3600
+Europe/Paris	1743289199	3600
+Europe/Paris	1743292799	3600
+Europe/Paris	1743292800	3600
+Europe/Paris	1743292801	3600
+Europe/Paris	1743296399	3600
+Europe/Paris	1744718400	7200
+Europe/Paris	1747310400	7200
+Europe/Paris	1749988800	7200
+Europe/Paris	1752580800	7200
+Europe/Paris	1755259200	7200
+Europe/Paris	1757937600	7200
+Europe/Paris	1760529600	7200
+Europe/Paris	1761433199	7200
+Europe/Paris	1761436799	7200
+Europe/Paris	1761436800	7200
+Europe/Paris	1761436801	7200
+Europe/Paris	1761440399	7200
+Europe/Paris	1763208000	3600
+Europe/Paris	1765800000	3600
+Europe/Paris	1768478400	3600
+Europe/Paris	1771156800	3600
+Europe/Paris	1773576000	3600
+Europe/Paris	1774738799	3600
+Europe/Paris	1774742399	3600
+Europe/Paris	1774742400	3600
+Europe/Paris	1774742401	3600
+Europe/Paris	1774745999	3600
+Europe/Paris	1776254400	7200
+Europe/Paris	1778846400	7200
+Europe/Paris	1781524800	7200
+Europe/Paris	1784116800	7200
+Europe/Paris	1786795200	7200
+Europe/Paris	1789473600	7200
+Europe/Paris	1792065600	7200
+Europe/Paris	1792882799	7200
+Europe/Paris	1792886399	7200
+Europe/Paris	1792886400	7200
+Europe/Paris	1792886401	7200
+Europe/Paris	1792889999	7200
+Europe/Paris	1794744000	3600
+Europe/Paris	1797336000	3600
+Europe/Paris	1800014400	3600
+Europe/Paris	1802692800	3600
+Europe/Paris	1805112000	3600
+Europe/Paris	1806188399	3600
+Europe/Paris	1806191999	3600
+Europe/Paris	1806192000	3600
+Europe/Paris	1806192001	3600
+Europe/Paris	1806195599	3600
+Europe/Paris	1807790400	7200
+Europe/Paris	1810382400	7200
+Europe/Paris	1813060800	7200
+Europe/Paris	1815652800	7200
+Europe/Paris	1818331200	7200
+Europe/Paris	1821009600	7200
+Europe/Paris	1823601600	7200
+Europe/Paris	1824937199	7200
+Europe/Paris	1824940799	7200
+Europe/Paris	1824940800	7200
+Europe/Paris	1824940801	7200
+Europe/Paris	1824944399	7200
+Europe/Paris	1826280000	3600
+Europe/Paris	1828872000	3600
+Europe/Helsinki	1736942400	7200
+Europe/Helsinki	1739620800	7200
+Europe/Helsinki	1742040000	7200
+Europe/Helsinki	1743289199	7200
+Europe/Helsinki	1743292799	7200
+Europe/Helsinki	1743292800	7200
+Europe/Helsinki	1743292801	7200
+Europe/Helsinki	1743296399	7200
+Europe/Helsinki	1744718400	10800
+Europe/Helsinki	1747310400	10800
+Europe/Helsinki	1749988800	10800
+Europe/Helsinki	1752580800	10800
+Europe/Helsinki	1755259200	10800
+Europe/Helsinki	1757937600	10800
+Europe/Helsinki	1760529600	10800
+Europe/Helsinki	1761433199	10800
+Europe/Helsinki	1761436799	10800
+Europe/Helsinki	1761436800	10800
+Europe/Helsinki	1761436801	10800
+Europe/Helsinki	1761440399	10800
+Europe/Helsinki	1763208000	7200
+Europe/Helsinki	1765800000	7200
+Europe/Helsinki	1768478400	7200
+Europe/Helsinki	1771156800	7200
+Europe/Helsinki	1773576000	7200
+Europe/Helsinki	1774738799	7200
+Europe/Helsinki	1774742399	7200
+Europe/Helsinki	1774742400	7200
+Europe/Helsinki	1774742401	7200
+Europe/Helsinki	1774745999	7200
+Europe/Helsinki	1776254400	10800
+Europe/Helsinki	1778846400	10800
+Europe/Helsinki	1781524800	10800
+Europe/Helsinki	1784116800	10800
+Europe/Helsinki	1786795200	10800
+Europe/Helsinki	1789473600	10800
+Europe/Helsinki	1792065600	10800
+Europe/Helsinki	1792882799	10800
+Europe/Helsinki	1792886399	10800
+Europe/Helsinki	1792886400	10800
+Europe/Helsinki	1792886401	10800
+Europe/Helsinki	1792889999	10800
+Europe/Helsinki	1794744000	7200
+Europe/Helsinki	1797336000	7200
+Europe/Helsinki	1800014400	7200
+Europe/Helsinki	1802692800	7200
+Europe/Helsinki	1805112000	7200
+Europe/Helsinki	1806188399	7200
+Europe/Helsinki	1806191999	7200
+Europe/Helsinki	1806192000	7200
+Europe/Helsinki	1806192001	7200
+Europe/Helsinki	1806195599	7200
+Europe/Helsinki	1807790400	10800
+Europe/Helsinki	1810382400	10800
+Europe/Helsinki	1813060800	10800
+Europe/Helsinki	1815652800	10800
+Europe/Helsinki	1818331200	10800
+Europe/Helsinki	1821009600	10800
+Europe/Helsinki	1823601600	10800
+Europe/Helsinki	1824937199	10800
+Europe/Helsinki	1824940799	10800
+Europe/Helsinki	1824940800	10800
+Europe/Helsinki	1824940801	10800
+Europe/Helsinki	1824944399	10800
+Europe/Helsinki	1826280000	7200
+Europe/Helsinki	1828872000	7200
+Europe/Moscow	1736942400	10800
+Europe/Moscow	1739620800	10800
+Europe/Moscow	1742040000	10800
+Europe/Moscow	1744718400	10800
+Europe/Moscow	1747310400	10800
+Europe/Moscow	1749988800	10800
+Europe/Moscow	1752580800	10800
+Europe/Moscow	1755259200	10800
+Europe/Moscow	1757937600	10800
+Europe/Moscow	1760529600	10800
+Europe/Moscow	1763208000	10800
+Europe/Moscow	1765800000	10800
+Europe/Moscow	1768478400	10800
+Europe/Moscow	1771156800	10800
+Europe/Moscow	1773576000	10800
+Europe/Moscow	1776254400	10800
+Europe/Moscow	1778846400	10800
+Europe/Moscow	1781524800	10800
+Europe/Moscow	1784116800	10800
+Europe/Moscow	1786795200	10800
+Europe/Moscow	1789473600	10800
+Europe/Moscow	1792065600	10800
+Europe/Moscow	1794744000	10800
+Europe/Moscow	1797336000	10800
+Europe/Moscow	1800014400	10800
+Europe/Moscow	1802692800	10800
+Europe/Moscow	1805112000	10800
+Europe/Moscow	1807790400	10800
+Europe/Moscow	1810382400	10800
+Europe/Moscow	1813060800	10800
+Europe/Moscow	1815652800	10800
+Europe/Moscow	1818331200	10800
+Europe/Moscow	1821009600	10800
+Europe/Moscow	1823601600	10800
+Europe/Moscow	1826280000	10800
+Europe/Moscow	1828872000	10800
+America/New_York	1736942400	-18000
+America/New_York	1739620800	-18000
+America/New_York	1741496399	-18000
+America/New_York	1741499999	-18000
+America/New_York	1741500000	-18000
+America/New_York	1741500001	-18000
+America/New_York	1741503599	-18000
+America/New_York	1742040000	-14400
+America/New_York	1744718400	-14400
+America/New_York	1747310400	-14400
+America/New_York	1749988800	-14400
+America/New_York	1752580800	-14400
+America/New_York	1755259200	-14400
+America/New_York	1757937600	-14400
+America/New_York	1760529600	-14400
+America/New_York	1762055999	-14400
+America/New_York	1762059599	-14400
+America/New_York	1762059600	-14400
+America/New_York	1762059601	-14400
+America/New_York	1762063199	-14400
+America/New_York	1763208000	-18000
+America/New_York	1765800000	-18000
+America/New_York	1768478400	-18000
+America/New_York	1771156800	-18000
+America/New_York	1772945999	-18000
+America/New_York	1772949599	-18000
+America/New_York	1772949600	-18000
+America/New_York	1772949601	-18000
+America/New_York	1772953199	-18000
+America/New_York	1773576000	-14400
+America/New_York	1776254400	-14400
+America/New_York	1778846400	-14400
+America/New_York	1781524800	-14400
+America/New_York	1784116800	-14400
+America/New_York	1786795200	-14400
+America/New_York	1789473600	-14400
+America/New_York	1792065600	-14400
+America/New_York	1793505599	-14400
+America/New_York	1793509199	-14400
+America/New_York	1793509200	-14400
+America/New_York	1793509201	-14400
+America/New_York	1793512799	-14400
+America/New_York	1794744000	-18000
+America/New_York	1797336000	-18000
+America/New_York	1800014400	-18000
+America/New_York	1802692800	-18000
+America/New_York	1805000399	-18000
+America/New_York	1805003999	-18000
+America/New_York	1805004000	-18000
+America/New_York	1805004001	-18000
+America/New_York	1805007599	-18000
+America/New_York	1805112000	-14400
+America/New_York	1807790400	-14400
+America/New_York	1810382400	-14400
+America/New_York	1813060800	-14400
+America/New_York	1815652800	-14400
+America/New_York	1818331200	-14400
+America/New_York	1821009600	-14400
+America/New_York	1823601600	-14400
+America/New_York	1825559999	-14400
+America/New_York	1825563599	-14400
+America/New_York	1825563600	-14400
+America/New_York	1825563601	-14400
+America/New_York	1825567199	-14400
+America/New_York	1826280000	-18000
+America/New_York	1828872000	-18000
+America/Chicago	1736942400	-21600
+America/Chicago	1739620800	-21600
+America/Chicago	1741499999	-21600
+America/Chicago	1741503599	-21600
+America/Chicago	1741503600	-21600
+America/Chicago	1741503601	-21600
+America/Chicago	1741507199	-21600
+America/Chicago	1742040000	-18000
+America/Chicago	1744718400	-18000
+America/Chicago	1747310400	-18000
+America/Chicago	1749988800	-18000
+America/Chicago	1752580800	-18000
+America/Chicago	1755259200	-18000
+America/Chicago	1757937600	-18000
+America/Chicago	1760529600	-18000
+America/Chicago	1762059599	-18000
+America/Chicago	1762063199	-18000
+America/Chicago	1762063200	-18000
+America/Chicago	1762063201	-18000
+America/Chicago	1762066799	-18000
+America/Chicago	1763208000	-21600
+America/Chicago	1765800000	-21600
+America/Chicago	1768478400	-21600
+America/Chicago	1771156800	-21600
+America/Chicago	1772949599	-21600
+America/Chicago	1772953199	-21600
+America/Chicago	1772953200	-21600
+America/Chicago	1772953201	-21600
+America/Chicago	1772956799	-21600
+America/Chicago	1773576000	-18000
+America/Chicago	1776254400	-18000
+America/Chicago	1778846400	-18000
+America/Chicago	1781524800	-18000
+America/Chicago	1784116800	-18000
+America/Chicago	1786795200	-18000
+America/Chicago	1789473600	-18000
+America/Chicago	1792065600	-18000
+America/Chicago	1793509199	-18000
+America/Chicago	1793512799	-18000
+America/Chicago	1793512800	-18000
+America/Chicago	1793512801	-18000
+America/Chicago	1793516399	-18000
+America/Chicago	1794744000	-21600
+America/Chicago	1797336000	-21600
+America/Chicago	1800014400	-21600
+America/Chicago	1802692800	-21600
+America/Chicago	1805003999	-21600
+America/Chicago	1805007599	-21600
+America/Chicago	1805007600	-21600
+America/Chicago	1805007601	-21600
+America/Chicago	1805011199	-21600
+America/Chicago	1805112000	-18000
+America/Chicago	1807790400	-18000
+America/Chicago	1810382400	-18000
+America/Chicago	1813060800	-18000
+America/Chicago	1815652800	-18000
+America/Chicago	1818331200	-18000
+America/Chicago	1821009600	-18000
+America/Chicago	1823601600	-18000
+America/Chicago	1825563599	-18000
+America/Chicago	1825567199	-18000
+America/Chicago	1825567200	-18000
+America/Chicago	1825567201	-18000
+America/Chicago	1825570799	-18000
+America/Chicago	1826280000	-21600
+America/Chicago	1828872000	-21600
+America/Denver	1736942400	-25200
+America/Denver	1739620800	-25200
+America/Denver	1741503599	-25200
+America/Denver	1741507199	-25200
+America/Denver	1741507200	-25200
+America/Denver	1741507201	-25200
+America/Denver	1741510799	-25200
+America/Denver	1742040000	-21600
+America/Denver	1744718400	-21600
+America/Denver	1747310400	-21600
+America/Denver	1749988800	-21600
+America/Denver	1752580800	-21600
+America/Denver	1755259200	-21600
+America/Denver	1757937600	-21600
+America/Denver	1760529600	-21600
+America/Denver	1762063199	-21600
+America/Denver	1762066799	-21600
+America/Denver	1762066800	-21600
+America/Denver	1762066801	-21600
+America/Denver	1762070399	-21600
+America/Denver	1763208000	-25200
+America/Denver	1765800000	-25200
+America/Denver	1768478400	-25200
+America/Denver	1771156800	-25200
+America/Denver	1772953199	-25200
+America/Denver	1772956799	-25200
+America/Denver	1772956800	-25200
+America/Denver	1772956801	-25200
+America/Denver	1772960399	-25200
+America/Denver	1773576000	-21600
+America/Denver	1776254400	-21600
+America/Denver	1778846400	-21600
+America/Denver	1781524800	-21600
+America/Denver	1784116800	-21600
+America/Denver	1786795200	-21600
+America/Denver	1789473600	-21600
+America/Denver	1792065600	-21600
+America/Denver	1793512799	-21600
+America/Denver	1793516399	-21600
+America/Denver	1793516400	-21600
+America/Denver	1793516401	-21600
+America/Denver	1793519999	-21600
+America/Denver	1794744000	-25200
+America/Denver	1797336000	-25200
+America/Denver	1800014400	-25200
+America/Denver	1802692800	-25200
+America/Denver	1805007599	-25200
+America/Denver	1805011199	-25200
+America/Denver	1805011200	-25200
+America/Denver	1805011201	-25200
+America/Denver	1805014799	-25200
+America/Denver	1805112000	-21600
+America/Denver	1807790400	-21600
+America/Denver	1810382400	-21600
+America/Denver	1813060800	-21600
+America/Denver	1815652800	-21600
+America/Denver	1818331200	-21600
+America/Denver	1821009600	-21600
+America/Denver	1823601600	-21600
+America/Denver	1825567199	-21600
+America/Denver	1825570799	-21600
+America/Denver	1825570800	-21600
+America/Denver	1825570801	-21600
+America/Denver	1825574399	-21600
+America/Denver	1826280000	-25200
+America/Denver	1828872000	-25200
+America/Phoenix	1736942400	-25200
+America/Phoenix	1739620800	-25200
+America/Phoenix	1742040000	-25200
+America/Phoenix	1744718400	-25200
+America/Phoenix	1747310400	-25200
+America/Phoenix	1749988800	-25200
+America/Phoenix	1752580800	-25200
+America/Phoenix	1755259200	-25200
+America/Phoenix	1757937600	-25200
+America/Phoenix	1760529600	-25200
+America/Phoenix	1763208000	-25200
+America/Phoenix	1765800000	-25200
+America/Phoenix	1768478400	-25200
+America/Phoenix	1771156800	-25200
+America/Phoenix	1773576000	-25200
+America/Phoenix	1776254400	-25200
+America/Phoenix	1778846400	-25200
+America/Phoenix	1781524800	-25200
+America/Phoenix	1784116800	-25200
+America/Phoenix	1786795200	-25200
+America/Phoenix	1789473600	-25200
+America/Phoenix	1792065600	-25200
+America/Phoenix	1794744000	-25200
+America/Phoenix	1797336000	-25200
+America/Phoenix	1800014400	-25200
+America/Phoenix	1802692800	-25200
+America/Phoenix	1805112000	-25200
+America/Phoenix	1807790400	-25200
+America/Phoenix	1810382400	-25200
+America/Phoenix	1813060800	-25200
+America/Phoenix	1815652800	-25200
+America/Phoenix	1818331200	-25200
+America/Phoenix	1821009600	-25200
+America/Phoenix	1823601600	-25200
+America/Phoenix	1826280000	-25200
+America/Phoenix	1828872000	-25200
+America/Los_Angeles	1736942400	-28800
+America/Los_Angeles	1739620800	-28800
+America/Los_Angeles	1741507199	-28800
+America/Los_Angeles	1741510799	-28800
+America/Los_Angeles	1741510800	-28800
+America/Los_Angeles	1741510801	-28800
+America/Los_Angeles	1741514399	-28800
+America/Los_Angeles	1742040000	-25200
+America/Los_Angeles	1744718400	-25200
+America/Los_Angeles	1747310400	-25200
+America/Los_Angeles	1749988800	-25200
+America/Los_Angeles	1752580800	-25200
+America/Los_Angeles	1755259200	-25200
+America/Los_Angeles	1757937600	-25200
+America/Los_Angeles	1760529600	-25200
+America/Los_Angeles	1762066799	-25200
+America/Los_Angeles	1762070399	-25200
+America/Los_Angeles	1762070400	-25200
+America/Los_Angeles	1762070401	-25200
+America/Los_Angeles	1762073999	-25200
+America/Los_Angeles	1763208000	-28800
+America/Los_Angeles	1765800000	-28800
+America/Los_Angeles	1768478400	-28800
+America/Los_Angeles	1771156800	-28800
+America/Los_Angeles	1772956799	-28800
+America/Los_Angeles	1772960399	-28800
+America/Los_Angeles	1772960400	-28800
+America/Los_Angeles	1772960401	-28800
+America/Los_Angeles	1772963999	-28800
+America/Los_Angeles	1773576000	-25200
+America/Los_Angeles	1776254400	-25200
+America/Los_Angeles	1778846400	-25200
+America/Los_Angeles	1781524800	-25200
+America/Los_Angeles	1784116800	-25200
+America/Los_Angeles	1786795200	-25200
+America/Los_Angeles	1789473600	-25200
+America/Los_Angeles	1792065600	-25200
+America/Los_Angeles	1793516399	-25200
+America/Los_Angeles	1793519999	-25200
+America/Los_Angeles	1793520000	-25200
+America/Los_Angeles	1793520001	-25200
+America/Los_Angeles	1793523599	-25200
+America/Los_Angeles	1794744000	-28800
+America/Los_Angeles	1797336000	-28800
+America/Los_Angeles	1800014400	-28800
+America/Los_Angeles	1802692800	-28800
+America/Los_Angeles	1805011199	-28800
+America/Los_Angeles	1805014799	-28800
+America/Los_Angeles	1805014800	-28800
+America/Los_Angeles	1805014801	-28800
+America/Los_Angeles	1805018399	-28800
+America/Los_Angeles	1805112000	-25200
+America/Los_Angeles	1807790400	-25200
+America/Los_Angeles	1810382400	-25200
+America/Los_Angeles	1813060800	-25200
+America/Los_Angeles	1815652800	-25200
+America/Los_Angeles	1818331200	-25200
+America/Los_Angeles	1821009600	-25200
+America/Los_Angeles	1823601600	-25200
+America/Los_Angeles	1825570799	-25200
+America/Los_Angeles	1825574399	-25200
+America/Los_Angeles	1825574400	-25200
+America/Los_Angeles	1825574401	-25200
+America/Los_Angeles	1825577999	-25200
+America/Los_Angeles	1826280000	-28800
+America/Los_Angeles	1828872000	-28800
+America/Anchorage	1736942400	-32400
+America/Anchorage	1739620800	-32400
+America/Anchorage	1741510799	-32400
+America/Anchorage	1741514399	-32400
+America/Anchorage	1741514400	-32400
+America/Anchorage	1741514401	-32400
+America/Anchorage	1741517999	-32400
+America/Anchorage	1742040000	-28800
+America/Anchorage	1744718400	-28800
+America/Anchorage	1747310400	-28800
+America/Anchorage	1749988800	-28800
+America/Anchorage	1752580800	-28800
+America/Anchorage	1755259200	-28800
+America/Anchorage	1757937600	-28800
+America/Anchorage	1760529600	-28800
+America/Anchorage	1762070399	-28800
+America/Anchorage	1762073999	-28800
+America/Anchorage	1762074000	-28800
+America/Anchorage	1762074001	-28800
+America/Anchorage	1762077599	-28800
+America/Anchorage	1763208000	-32400
+America/Anchorage	1765800000	-32400
+America/Anchorage	1768478400	-32400
+America/Anchorage	1771156800	-32400
+America/Anchorage	1772960399	-32400
+America/Anchorage	1772963999	-32400
+America/Anchorage	1772964000	-32400
+America/Anchorage	1772964001	-32400
+America/Anchorage	1772967599	-32400
+America/Anchorage	1773576000	-28800
+America/Anchorage	1776254400	-28800
+America/Anchorage	1778846400	-28800
+America/Anchorage	1781524800	-28800
+America/Anchorage	1784116800	-28800
+America/Anchorage	1786795200	-28800
+America/Anchorage	1789473600	-28800
+America/Anchorage	1792065600	-28800
+America/Anchorage	1793519999	-28800
+America/Anchorage	1793523599	-28800
+America/Anchorage	1793523600	-28800
+America/Anchorage	1793523601	-28800
+America/Anchorage	1793527199	-28800
+America/Anchorage	1794744000	-32400
+America/Anchorage	1797336000	-32400
+America/Anchorage	1800014400	-32400
+America/Anchorage	1802692800	-32400
+America/Anchorage	1805014799	-32400
+America/Anchorage	1805018399	-32400
+America/Anchorage	1805018400	-32400
+America/Anchorage	1805018401	-32400
+America/Anchorage	1805021999	-32400
+America/Anchorage	1805112000	-28800
+America/Anchorage	1807790400	-28800
+America/Anchorage	1810382400	-28800
+America/Anchorage	1813060800	-28800
+America/Anchorage	1815652800	-28800
+America/Anchorage	1818331200	-28800
+America/Anchorage	1821009600	-28800
+America/Anchorage	1823601600	-28800
+America/Anchorage	1825574399	-28800
+America/Anchorage	1825577999	-28800
+America/Anchorage	1825578000	-28800
+America/Anchorage	1825578001	-28800
+America/Anchorage	1825581599	-28800
+America/Anchorage	1826280000	-32400
+America/Anchorage	1828872000	-32400
+Pacific/Honolulu	1736942400	-36000
+Pacific/Honolulu	1739620800	-36000
+Pacific/Honolulu	1742040000	-36000
+Pacific/Honolulu	1744718400	-36000
+Pacific/Honolulu	1747310400	-36000
+Pacific/Honolulu	1749988800	-36000
+Pacific/Honolulu	1752580800	-36000
+Pacific/Honolulu	1755259200	-36000
+Pacific/Honolulu	1757937600	-36000
+Pacific/Honolulu	1760529600	-36000
+Pacific/Honolulu	1763208000	-36000
+Pacific/Honolulu	1765800000	-36000
+Pacific/Honolulu	1768478400	-36000
+Pacific/Honolulu	1771156800	-36000
+Pacific/Honolulu	1773576000	-36000
+Pacific/Honolulu	1776254400	-36000
+Pacific/Honolulu	1778846400	-36000
+Pacific/Honolulu	1781524800	-36000
+Pacific/Honolulu	1784116800	-36000
+Pacific/Honolulu	1786795200	-36000
+Pacific/Honolulu	1789473600	-36000
+Pacific/Honolulu	1792065600	-36000
+Pacific/Honolulu	1794744000	-36000
+Pacific/Honolulu	1797336000	-36000
+Pacific/Honolulu	1800014400	-36000
+Pacific/Honolulu	1802692800	-36000
+Pacific/Honolulu	1805112000	-36000
+Pacific/Honolulu	1807790400	-36000
+Pacific/Honolulu	1810382400	-36000
+Pacific/Honolulu	1813060800	-36000
+Pacific/Honolulu	1815652800	-36000
+Pacific/Honolulu	1818331200	-36000
+Pacific/Honolulu	1821009600	-36000
+Pacific/Honolulu	1823601600	-36000
+Pacific/Honolulu	1826280000	-36000
+Pacific/Honolulu	1828872000	-36000
+UTC	1736942400	0
+UTC	1739620800	0
+UTC	1742040000	0
+UTC	1744718400	0
+UTC	1747310400	0
+UTC	1749988800	0
+UTC	1752580800	0
+UTC	1755259200	0
+UTC	1757937600	0
+UTC	1760529600	0
+UTC	1763208000	0
+UTC	1765800000	0
+UTC	1768478400	0
+UTC	1771156800	0
+UTC	1773576000	0
+UTC	1776254400	0
+UTC	1778846400	0
+UTC	1781524800	0
+UTC	1784116800	0
+UTC	1786795200	0
+UTC	1789473600	0
+UTC	1792065600	0
+UTC	1794744000	0
+UTC	1797336000	0
+UTC	1800014400	0
+UTC	1802692800	0
+UTC	1805112000	0
+UTC	1807790400	0
+UTC	1810382400	0
+UTC	1813060800	0
+UTC	1815652800	0
+UTC	1818331200	0
+UTC	1821009600	0
+UTC	1823601600	0
+UTC	1826280000	0
+UTC	1828872000	0
+W. Europe Standard Time	1736942400	3600
+W. Europe Standard Time	1739620800	3600
+W. Europe Standard Time	1742040000	3600
+W. Europe Standard Time	1743289199	3600
+W. Europe Standard Time	1743292799	3600
+W. Europe Standard Time	1743292800	3600
+W. Europe Standard Time	1743292801	3600
+W. Europe Standard Time	1743296399	3600
+W. Europe Standard Time	1744718400	7200
+W. Europe Standard Time	1747310400	7200
+W. Europe Standard Time	1749988800	7200
+W. Europe Standard Time	1752580800	7200
+W. Europe Standard Time	1755259200	7200
+W. Europe Standard Time	1757937600	7200
+W. Europe Standard Time	1760529600	7200
+W. Europe Standard Time	1761433199	7200
+W. Europe Standard Time	1761436799	7200
+W. Europe Standard Time	1761436800	7200
+W. Europe Standard Time	1761436801	7200
+W. Europe Standard Time	1761440399	7200
+W. Europe Standard Time	1763208000	3600
+W. Europe Standard Time	1765800000	3600
+W. Europe Standard Time	1768478400	3600
+W. Europe Standard Time	1771156800	3600
+W. Europe Standard Time	1773576000	3600
+W. Europe Standard Time	1774738799	3600
+W. Europe Standard Time	1774742399	3600
+W. Europe Standard Time	1774742400	3600
+W. Europe Standard Time	1774742401	3600
+W. Europe Standard Time	1774745999	3600
+W. Europe Standard Time	1776254400	7200
+W. Europe Standard Time	1778846400	7200
+W. Europe Standard Time	1781524800	7200
+W. Europe Standard Time	1784116800	7200
+W. Europe Standard Time	1786795200	7200
+W. Europe Standard Time	1789473600	7200
+W. Europe Standard Time	1792065600	7200
+W. Europe Standard Time	1792882799	7200
+W. Europe Standard Time	1792886399	7200
+W. Europe Standard Time	1792886400	7200
+W. Europe Standard Time	1792886401	7200
+W. Europe Standard Time	1792889999	7200
+W. Europe Standard Time	1794744000	3600
+W. Europe Standard Time	1797336000	3600
+W. Europe Standard Time	1800014400	3600
+W. Europe Standard Time	1802692800	3600
+W. Europe Standard Time	1805112000	3600
+W. Europe Standard Time	1806188399	3600
+W. Europe Standard Time	1806191999	3600
+W. Europe Standard Time	1806192000	3600
+W. Europe Standard Time	1806192001	3600
+W. Europe Standard Time	1806195599	3600
+W. Europe Standard Time	1807790400	7200
+W. Europe Standard Time	1810382400	7200
+W. Europe Standard Time	1813060800	7200
+W. Europe Standard Time	1815652800	7200
+W. Europe Standard Time	1818331200	7200
+W. Europe Standard Time	1821009600	7200
+W. Europe Standard Time	1823601600	7200
+W. Europe Standard Time	1824937199	7200
+W. Europe Standard Time	1824940799	7200
+W. Europe Standard Time	1824940800	7200
+W. Europe Standard Time	1824940801	7200
+W. Europe Standard Time	1824944399	7200
+W. Europe Standard Time	1826280000	3600
+W. Europe Standard Time	1828872000	3600
+GMT Standard Time	1736942400	0
+GMT Standard Time	1739620800	0
+GMT Standard Time	1742040000	0
+GMT Standard Time	1743289199	0
+GMT Standard Time	1743292799	0
+GMT Standard Time	1743292800	0
+GMT Standard Time	1743292801	0
+GMT Standard Time	1743296399	0
+GMT Standard Time	1744718400	3600
+GMT Standard Time	1747310400	3600
+GMT Standard Time	1749988800	3600
+GMT Standard Time	1752580800	3600
+GMT Standard Time	1755259200	3600
+GMT Standard Time	1757937600	3600
+GMT Standard Time	1760529600	3600
+GMT Standard Time	1761433199	3600
+GMT Standard Time	1761436799	3600
+GMT Standard Time	1761436800	3600
+GMT Standard Time	1761436801	3600
+GMT Standard Time	1761440399	3600
+GMT Standard Time	1763208000	0
+GMT Standard Time	1765800000	0
+GMT Standard Time	1768478400	0
+GMT Standard Time	1771156800	0
+GMT Standard Time	1773576000	0
+GMT Standard Time	1774738799	0
+GMT Standard Time	1774742399	0
+GMT Standard Time	1774742400	0
+GMT Standard Time	1774742401	0
+GMT Standard Time	1774745999	0
+GMT Standard Time	1776254400	3600
+GMT Standard Time	1778846400	3600
+GMT Standard Time	1781524800	3600
+GMT Standard Time	1784116800	3600
+GMT Standard Time	1786795200	3600
+GMT Standard Time	1789473600	3600
+GMT Standard Time	1792065600	3600
+GMT Standard Time	1792882799	3600
+GMT Standard Time	1792886399	3600
+GMT Standard Time	1792886400	3600
+GMT Standard Time	1792886401	3600
+GMT Standard Time	1792889999	3600
+GMT Standard Time	1794744000	0
+GMT Standard Time	1797336000	0
+GMT Standard Time	1800014400	0
+GMT Standard Time	1802692800	0
+GMT Standard Time	1805112000	0
+GMT Standard Time	1806188399	0
+GMT Standard Time	1806191999	0
+GMT Standard Time	1806192000	0
+GMT Standard Time	1806192001	0
+GMT Standard Time	1806195599	0
+GMT Standard Time	1807790400	3600
+GMT Standard Time	1810382400	3600
+GMT Standard Time	1813060800	3600
+GMT Standard Time	1815652800	3600
+GMT Standard Time	1818331200	3600
+GMT Standard Time	1821009600	3600
+GMT Standard Time	1823601600	3600
+GMT Standard Time	1824937199	3600
+GMT Standard Time	1824940799	3600
+GMT Standard Time	1824940800	3600
+GMT Standard Time	1824940801	3600
+GMT Standard Time	1824944399	3600
+GMT Standard Time	1826280000	0
+GMT Standard Time	1828872000	0
+Romance Standard Time	1736942400	3600
+Romance Standard Time	1739620800	3600
+Romance Standard Time	1742040000	3600
+Romance Standard Time	1743289199	3600
+Romance Standard Time	1743292799	3600
+Romance Standard Time	1743292800	3600
+Romance Standard Time	1743292801	3600
+Romance Standard Time	1743296399	3600
+Romance Standard Time	1744718400	7200
+Romance Standard Time	1747310400	7200
+Romance Standard Time	1749988800	7200
+Romance Standard Time	1752580800	7200
+Romance Standard Time	1755259200	7200
+Romance Standard Time	1757937600	7200
+Romance Standard Time	1760529600	7200
+Romance Standard Time	1761433199	7200
+Romance Standard Time	1761436799	7200
+Romance Standard Time	1761436800	7200
+Romance Standard Time	1761436801	7200
+Romance Standard Time	1761440399	7200
+Romance Standard Time	1763208000	3600
+Romance Standard Time	1765800000	3600
+Romance Standard Time	1768478400	3600
+Romance Standard Time	1771156800	3600
+Romance Standard Time	1773576000	3600
+Romance Standard Time	1774738799	3600
+Romance Standard Time	1774742399	3600
+Romance Standard Time	1774742400	3600
+Romance Standard Time	1774742401	3600
+Romance Standard Time	1774745999	3600
+Romance Standard Time	1776254400	7200
+Romance Standard Time	1778846400	7200
+Romance Standard Time	1781524800	7200
+Romance Standard Time	1784116800	7200
+Romance Standard Time	1786795200	7200
+Romance Standard Time	1789473600	7200
+Romance Standard Time	1792065600	7200
+Romance Standard Time	1792882799	7200
+Romance Standard Time	1792886399	7200
+Romance Standard Time	1792886400	7200
+Romance Standard Time	1792886401	7200
+Romance Standard Time	1792889999	7200
+Romance Standard Time	1794744000	3600
+Romance Standard Time	1797336000	3600
+Romance Standard Time	1800014400	3600
+Romance Standard Time	1802692800	3600
+Romance Standard Time	1805112000	3600
+Romance Standard Time	1806188399	3600
+Romance Standard Time	1806191999	3600
+Romance Standard Time	1806192000	3600
+Romance Standard Time	1806192001	3600
+Romance Standard Time	1806195599	3600
+Romance Standard Time	1807790400	7200
+Romance Standard Time	1810382400	7200
+Romance Standard Time	1813060800	7200
+Romance Standard Time	1815652800	7200
+Romance Standard Time	1818331200	7200
+Romance Standard Time	1821009600	7200
+Romance Standard Time	1823601600	7200
+Romance Standard Time	1824937199	7200
+Romance Standard Time	1824940799	7200
+Romance Standard Time	1824940800	7200
+Romance Standard Time	1824940801	7200
+Romance Standard Time	1824944399	7200
+Romance Standard Time	1826280000	3600
+Romance Standard Time	1828872000	3600
+FLE Standard Time	1736942400	7200
+FLE Standard Time	1739620800	7200
+FLE Standard Time	1742040000	7200
+FLE Standard Time	1743289199	7200
+FLE Standard Time	1743292799	7200
+FLE Standard Time	1743292800	7200
+FLE Standard Time	1743292801	7200
+FLE Standard Time	1743296399	7200
+FLE Standard Time	1744718400	10800
+FLE Standard Time	1747310400	10800
+FLE Standard Time	1749988800	10800
+FLE Standard Time	1752580800	10800
+FLE Standard Time	1755259200	10800
+FLE Standard Time	1757937600	10800
+FLE Standard Time	1760529600	10800
+FLE Standard Time	1761433199	10800
+FLE Standard Time	1761436799	10800
+FLE Standard Time	1761436800	10800
+FLE Standard Time	1761436801	10800
+FLE Standard Time	1761440399	10800
+FLE Standard Time	1763208000	7200
+FLE Standard Time	1765800000	7200
+FLE Standard Time	1768478400	7200
+FLE Standard Time	1771156800	7200
+FLE Standard Time	1773576000	7200
+FLE Standard Time	1774738799	7200
+FLE Standard Time	1774742399	7200
+FLE Standard Time	1774742400	7200
+FLE Standard Time	1774742401	7200
+FLE Standard Time	1774745999	7200
+FLE Standard Time	1776254400	10800
+FLE Standard Time	1778846400	10800
+FLE Standard Time	1781524800	10800
+FLE Standard Time	1784116800	10800
+FLE Standard Time	1786795200	10800
+FLE Standard Time	1789473600	10800
+FLE Standard Time	1792065600	10800
+FLE Standard Time	1792882799	10800
+FLE Standard Time	1792886399	10800
+FLE Standard Time	1792886400	10800
+FLE Standard Time	1792886401	10800
+FLE Standard Time	1792889999	10800
+FLE Standard Time	1794744000	7200
+FLE Standard Time	1797336000	7200
+FLE Standard Time	1800014400	7200
+FLE Standard Time	1802692800	7200
+FLE Standard Time	1805112000	7200
+FLE Standard Time	1806188399	7200
+FLE Standard Time	1806191999	7200
+FLE Standard Time	1806192000	7200
+FLE Standard Time	1806192001	7200
+FLE Standard Time	1806195599	7200
+FLE Standard Time	1807790400	10800
+FLE Standard Time	1810382400	10800
+FLE Standard Time	1813060800	10800
+FLE Standard Time	1815652800	10800
+FLE Standard Time	1818331200	10800
+FLE Standard Time	1821009600	10800
+FLE Standard Time	1823601600	10800
+FLE Standard Time	1824937199	10800
+FLE Standard Time	1824940799	10800
+FLE Standard Time	1824940800	10800
+FLE Standard Time	1824940801	10800
+FLE Standard Time	1824944399	10800
+FLE Standard Time	1826280000	7200
+FLE Standard Time	1828872000	7200
+Eastern Standard Time	1736942400	-18000
+Eastern Standard Time	1739620800	-18000
+Eastern Standard Time	1741496399	-18000
+Eastern Standard Time	1741499999	-18000
+Eastern Standard Time	1741500000	-18000
+Eastern Standard Time	1741500001	-18000
+Eastern Standard Time	1741503599	-18000
+Eastern Standard Time	1742040000	-14400
+Eastern Standard Time	1744718400	-14400
+Eastern Standard Time	1747310400	-14400
+Eastern Standard Time	1749988800	-14400
+Eastern Standard Time	1752580800	-14400
+Eastern Standard Time	1755259200	-14400
+Eastern Standard Time	1757937600	-14400
+Eastern Standard Time	1760529600	-14400
+Eastern Standard Time	1762055999	-14400
+Eastern Standard Time	1762059599	-14400
+Eastern Standard Time	1762059600	-14400
+Eastern Standard Time	1762059601	-14400
+Eastern Standard Time	1762063199	-14400
+Eastern Standard Time	1763208000	-18000
+Eastern Standard Time	1765800000	-18000
+Eastern Standard Time	1768478400	-18000
+Eastern Standard Time	1771156800	-18000
+Eastern Standard Time	1772945999	-18000
+Eastern Standard Time	1772949599	-18000
+Eastern Standard Time	1772949600	-18000
+Eastern Standard Time	1772949601	-18000
+Eastern Standard Time	1772953199	-18000
+Eastern Standard Time	1773576000	-14400
+Eastern Standard Time	1776254400	-14400
+Eastern Standard Time	1778846400	-14400
+Eastern Standard Time	1781524800	-14400
+Eastern Standard Time	1784116800	-14400
+Eastern Standard Time	1786795200	-14400
+Eastern Standard Time	1789473600	-14400
+Eastern Standard Time	1792065600	-14400
+Eastern Standard Time	1793505599	-14400
+Eastern Standard Time	1793509199	-14400
+Eastern Standard Time	1793509200	-14400
+Eastern Standard Time	1793509201	-14400
+Eastern Standard Time	1793512799	-14400
+Eastern Standard Time	1794744000	-18000
+Eastern Standard Time	1797336000	-18000
+Eastern Standard Time	1800014400	-18000
+Eastern Standard Time	1802692800	-18000
+Eastern Standard Time	1805000399	-18000
+Eastern Standard Time	1805003999	-18000
+Eastern Standard Time	1805004000	-18000
+Eastern Standard Time	1805004001	-18000
+Eastern Standard Time	1805007599	-18000
+Eastern Standard Time	1805112000	-14400
+Eastern Standard Time	1807790400	-14400
+Eastern Standard Time	1810382400	-14400
+Eastern Standard Time	1813060800	-14400
+Eastern Standard Time	1815652800	-14400
+Eastern Standard Time	1818331200	-14400
+Eastern Standard Time	1821009600	-14400
+Eastern Standard Time	1823601600	-14400
+Eastern Standard Time	1825559999	-14400
+Eastern Standard Time	1825563599	-14400
+Eastern Standard Time	1825563600	-14400
+Eastern Standard Time	1825563601	-14400
+Eastern Standard Time	1825567199	-14400
+Eastern Standard Time	1826280000	-18000
+Eastern Standard Time	1828872000	-18000
+Central Standard Time	1736942400	-21600
+Central Standard Time	1739620800	-21600
+Central Standard Time	1741499999	-21600
+Central Standard Time	1741503599	-21600
+Central Standard Time	1741503600	-21600
+Central Standard Time	1741503601	-21600
+Central Standard Time	1741507199	-21600
+Central Standard Time	1742040000	-18000
+Central Standard Time	1744718400	-18000
+Central Standard Time	1747310400	-18000
+Central Standard Time	1749988800	-18000
+Central Standard Time	1752580800	-18000
+Central Standard Time	1755259200	-18000
+Central Standard Time	1757937600	-18000
+Central Standard Time	1760529600	-18000
+Central Standard Time	1762059599	-18000
+Central Standard Time	1762063199	-18000
+Central Standard Time	1762063200	-18000
+Central Standard Time	1762063201	-18000
+Central Standard Time	1762066799	-18000
+Central Standard Time	1763208000	-21600
+Central Standard Time	1765800000	-21600
+Central Standard Time	1768478400	-21600
+Central Standard Time	1771156800	-21600
+Central Standard Time	1772949599	-21600
+Central Standard Time	1772953199	-21600
+Central Standard Time	1772953200	-21600
+Central Standard Time	1772953201	-21600
+Central Standard Time	1772956799	-21600
+Central Standard Time	1773576000	-18000
+Central Standard Time	1776254400	-18000
+Central Standard Time	1778846400	-18000
+Central Standard Time	1781524800	-18000
+Central Standard Time	1784116800	-18000
+Central Standard Time	1786795200	-18000
+Central Standard Time	1789473600	-18000
+Central Standard Time	1792065600	-18000
+Central Standard Time	1793509199	-18000
+Central Standard Time	1793512799	-18000
+Central Standard Time	1793512800	-18000
+Central Standard Time	1793512801	-18000
+Central Standard Time	1793516399	-18000
+Central Standard Time	1794744000	-21600
+Central Standard Time	1797336000	-21600
+Central Standard Time	1800014400	-21600
+Central Standard Time	1802692800	-21600
+Central Standard Time	1805003999	-21600
+Central Standard Time	1805007599	-21600
+Central Standard Time	1805007600	-21600
+Central Standard Time	1805007601	-21600
+Central Standard Time	1805011199	-21600
+Central Standard Time	1805112000	-18000
+Central Standard Time	1807790400	-18000
+Central Standard Time	1810382400	-18000
+Central Standard Time	1813060800	-18000
+Central Standard Time	1815652800	-18000
+Central Standard Time	1818331200	-18000
+Central Standard Time	1821009600	-18000
+Central Standard Time	1823601600	-18000
+Central Standard Time	1825563599	-18000
+Central Standard Time	1825567199	-18000
+Central Standard Time	1825567200	-18000
+Central Standard Time	1825567201	-18000
+Central Standard Time	1825570799	-18000
+Central Standard Time	1826280000	-21600
+Central Standard Time	1828872000	-21600
+Mountain Standard Time	1736942400	-25200
+Mountain Standard Time	1739620800	-25200
+Mountain Standard Time	1741503599	-25200
+Mountain Standard Time	1741507199	-25200
+Mountain Standard Time	1741507200	-25200
+Mountain Standard Time	1741507201	-25200
+Mountain Standard Time	1741510799	-25200
+Mountain Standard Time	1742040000	-21600
+Mountain Standard Time	1744718400	-21600
+Mountain Standard Time	1747310400	-21600
+Mountain Standard Time	1749988800	-21600
+Mountain Standard Time	1752580800	-21600
+Mountain Standard Time	1755259200	-21600
+Mountain Standard Time	1757937600	-21600
+Mountain Standard Time	1760529600	-21600
+Mountain Standard Time	1762063199	-21600
+Mountain Standard Time	1762066799	-21600
+Mountain Standard Time	1762066800	-21600
+Mountain Standard Time	1762066801	-21600
+Mountain Standard Time	1762070399	-21600
+Mountain Standard Time	1763208000	-25200
+Mountain Standard Time	1765800000	-25200
+Mountain Standard Time	1768478400	-25200
+Mountain Standard Time	1771156800	-25200
+Mountain Standard Time	1772953199	-25200
+Mountain Standard Time	1772956799	-25200
+Mountain Standard Time	1772956800	-25200
+Mountain Standard Time	1772956801	-25200
+Mountain Standard Time	1772960399	-25200
+Mountain Standard Time	1773576000	-21600
+Mountain Standard Time	1776254400	-21600
+Mountain Standard Time	1778846400	-21600
+Mountain Standard Time	1781524800	-21600
+Mountain Standard Time	1784116800	-21600
+Mountain Standard Time	1786795200	-21600
+Mountain Standard Time	1789473600	-21600
+Mountain Standard Time	1792065600	-21600
+Mountain Standard Time	1793512799	-21600
+Mountain Standard Time	1793516399	-21600
+Mountain Standard Time	1793516400	-21600
+Mountain Standard Time	1793516401	-21600
+Mountain Standard Time	1793519999	-21600
+Mountain Standard Time	1794744000	-25200
+Mountain Standard Time	1797336000	-25200
+Mountain Standard Time	1800014400	-25200
+Mountain Standard Time	1802692800	-25200
+Mountain Standard Time	1805007599	-25200
+Mountain Standard Time	1805011199	-25200
+Mountain Standard Time	1805011200	-25200
+Mountain Standard Time	1805011201	-25200
+Mountain Standard Time	1805014799	-25200
+Mountain Standard Time	1805112000	-21600
+Mountain Standard Time	1807790400	-21600
+Mountain Standard Time	1810382400	-21600
+Mountain Standard Time	1813060800	-21600
+Mountain Standard Time	1815652800	-21600
+Mountain Standard Time	1818331200	-21600
+Mountain Standard Time	1821009600	-21600
+Mountain Standard Time	1823601600	-21600
+Mountain Standard Time	1825567199	-21600
+Mountain Standard Time	1825570799	-21600
+Mountain Standard Time	1825570800	-21600
+Mountain Standard Time	1825570801	-21600
+Mountain Standard Time	1825574399	-21600
+Mountain Standard Time	1826280000	-25200
+Mountain Standard Time	1828872000	-25200
+US Mountain Standard Time	1736942400	-25200
+US Mountain Standard Time	1739620800	-25200
+US Mountain Standard Time	1742040000	-25200
+US Mountain Standard Time	1744718400	-25200
+US Mountain Standard Time	1747310400	-25200
+US Mountain Standard Time	1749988800	-25200
+US Mountain Standard Time	1752580800	-25200
+US Mountain Standard Time	1755259200	-25200
+US Mountain Standard Time	1757937600	-25200
+US Mountain Standard Time	1760529600	-25200
+US Mountain Standard Time	1763208000	-25200
+US Mountain Standard Time	1765800000	-25200
+US Mountain Standard Time	1768478400	-25200
+US Mountain Standard Time	1771156800	-25200
+US Mountain Standard Time	1773576000	-25200
+US Mountain Standard Time	1776254400	-25200
+US Mountain Standard Time	1778846400	-25200
+US Mountain Standard Time	1781524800	-25200
+US Mountain Standard Time	1784116800	-25200
+US Mountain Standard Time	1786795200	-25200
+US Mountain Standard Time	1789473600	-25200
+US Mountain Standard Time	1792065600	-25200
+US Mountain Standard Time	1794744000	-25200
+US Mountain Standard Time	1797336000	-25200
+US Mountain Standard Time	1800014400	-25200
+US Mountain Standard Time	1802692800	-25200
+US Mountain Standard Time	1805112000	-25200
+US Mountain Standard Time	1807790400	-25200
+US Mountain Standard Time	1810382400	-25200
+US Mountain Standard Time	1813060800	-25200
+US Mountain Standard Time	1815652800	-25200
+US Mountain Standard Time	1818331200	-25200
+US Mountain Standard Time	1821009600	-25200
+US Mountain Standard Time	1823601600	-25200
+US Mountain Standard Time	1826280000	-25200
+US Mountain Standard Time	1828872000	-25200
+Pacific Standard Time	1736942400	-28800
+Pacific Standard Time	1739620800	-28800
+Pacific Standard Time	1741507199	-28800
+Pacific Standard Time	1741510799	-28800
+Pacific Standard Time	1741510800	-28800
+Pacific Standard Time	1741510801	-28800
+Pacific Standard Time	1741514399	-28800
+Pacific Standard Time	1742040000	-25200
+Pacific Standard Time	1744718400	-25200
+Pacific Standard Time	1747310400	-25200
+Pacific Standard Time	1749988800	-25200
+Pacific Standard Time	1752580800	-25200
+Pacific Standard Time	1755259200	-25200
+Pacific Standard Time	1757937600	-25200
+Pacific Standard Time	1760529600	-25200
+Pacific Standard Time	1762066799	-25200
+Pacific Standard Time	1762070399	-25200
+Pacific Standard Time	1762070400	-25200
+Pacific Standard Time	1762070401	-25200
+Pacific Standard Time	1762073999	-25200
+Pacific Standard Time	1763208000	-28800
+Pacific Standard Time	1765800000	-28800
+Pacific Standard Time	1768478400	-28800
+Pacific Standard Time	1771156800	-28800
+Pacific Standard Time	1772956799	-28800
+Pacific Standard Time	1772960399	-28800
+Pacific Standard Time	1772960400	-28800
+Pacific Standard Time	1772960401	-28800
+Pacific Standard Time	1772963999	-28800
+Pacific Standard Time	1773576000	-25200
+Pacific Standard Time	1776254400	-25200
+Pacific Standard Time	1778846400	-25200
+Pacific Standard Time	1781524800	-25200
+Pacific Standard Time	1784116800	-25200
+Pacific Standard Time	1786795200	-25200
+Pacific Standard Time	1789473600	-25200
+Pacific Standard Time	1792065600	-25200
+Pacific Standard Time	1793516399	-25200
+Pacific Standard Time	1793519999	-25200
+Pacific Standard Time	1793520000	-25200
+Pacific Standard Time	1793520001	-25200
+Pacific Standard Time	1793523599	-25200
+Pacific Standard Time	1794744000	-28800
+Pacific Standard Time	1797336000	-28800
+Pacific Standard Time	1800014400	-28800
+Pacific Standard Time	1802692800	-28800
+Pacific Standard Time	1805011199	-28800
+Pacific Standard Time	1805014799	-28800
+Pacific Standard Time	1805014800	-28800
+Pacific Standard Time	1805014801	-28800
+Pacific Standard Time	1805018399	-28800
+Pacific Standard Time	1805112000	-25200
+Pacific Standard Time	1807790400	-25200
+Pacific Standard Time	1810382400	-25200
+Pacific Standard Time	1813060800	-25200
+Pacific Standard Time	1815652800	-25200
+Pacific Standard Time	1818331200	-25200
+Pacific Standard Time	1821009600	-25200
+Pacific Standard Time	1823601600	-25200
+Pacific Standard Time	1825570799	-25200
+Pacific Standard Time	1825574399	-25200
+Pacific Standard Time	1825574400	-25200
+Pacific Standard Time	1825574401	-25200
+Pacific Standard Time	1825577999	-25200
+Pacific Standard Time	1826280000	-28800
+Pacific Standard Time	1828872000	-28800

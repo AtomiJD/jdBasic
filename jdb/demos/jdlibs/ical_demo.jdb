@@ -1,0 +1,84 @@
+' ical_demo.jdb - a calendar written and read back: a weekly team meeting
+' in Berlin with a skipped date and a reminder, a call in New York, a race
+' weekend in Singapore, public holidays and a to-do; the .ics file, then
+' the agenda of two weeks in Berlin time and the same call in the
+' other cities' clocks.
+'
+'   jdBasic jdb/demos/jdlibs/ical_demo.jdb
+
+IMPORT ICAL, DT
+
+DIM folder$ = MKTEMP$("icaldemo")
+MKDIR folder$
+DIM ics_path$ = folder$ + "/team.ics"
+
+' ── writing ────────────────────────────────────────────────────
+
+DIM cal = ICAL.NEW("-//Example//Team calendar//EN")
+ICAL.SETPROP(cal, cal, "X-WR-CALNAME", "Team")
+DIM meeting_start = DT.PARSE("2026-10-19T10:00:00+02:00")
+DIM meeting = ICAL.ADDEVENT(cal, "Team meeting", meeting_start, meeting_start + 3600, "Europe/Berlin")
+ICAL.SETPROP(cal, meeting, "RRULE", "FREQ=WEEKLY;BYDAY=MO,TH;UNTIL=20261231T235959Z")
+ICAL.ADDPROP(cal, meeting, "EXDATE", ICAL.DATETIME$(DT.PARSE("2026-10-22T10:00:00+02:00"), "Europe/Berlin"), "TZID=Europe/Berlin")
+ICAL.SETTEXT(cal, meeting, "LOCATION", "Room 3, second floor")
+ICAL.SETTEXT(cal, meeting, "DESCRIPTION", "Agenda:" + CHR$(10) + "- last week" + CHR$(10) + "- this week")
+DIM reminder = ICAL.ADDALARM(cal, meeting, 15, "Team meeting in 15 minutes")
+DIM call_start = DT.PARSE("2026-10-27T09:00:00-04:00")
+DIM call_ev = ICAL.ADDEVENT(cal, "Supplier call", call_start, call_start + 1800, "America/New_York")
+DIM race_start = DT.PARSE("2026-10-25T20:00:00+08:00")
+DIM race = ICAL.ADDEVENT(cal, "Grand Prix, race", race_start, race_start + 7200, "Asia/Singapore")
+DIM holiday = ICAL.ADDALLDAY(cal, "Reformation Day", DT.MAKE(2026, 10, 31))
+DIM todo = ICAL.ADDTODO(cal, "Send the minutes", DT.PARSE("2026-10-20T17:00:00+02:00"), "Europe/Berlin")
+ICAL.WRITEFILE(cal, ics_path$)
+DIM written$ = TXTREADER$(ics_path$)
+DIM physical = SPLIT(written$, CHR$(13) + CHR$(10))
+PRINT "team.ics: "; LEN(physical) - 1; " lines, "; LEN(ICAL.COMPONENTS(cal, "VTIMEZONE")); " time zones, "; LEN(ICAL.EVENTS(cal)); " events, "; LEN(ICAL.TODOS(cal)); " to-do"
+PRINT
+
+' ── reading it back ─────────────────────────────────────────────
+
+DIM back = ICAL.PARSEFILE(ics_path$)
+DIM from_day = DT.MAKE(2026, 10, 19)
+DIM to_day = DT.MAKE(2026, 11, 2)
+DIM agenda = ICAL.EXPAND(back, from_day, to_day)
+DIM cols = agenda{"cols"}
+DIM starts = cols[0]
+DIM ends = cols[1]
+DIM summaries = cols[2]
+DIM events_in = cols[4]
+PRINT "Two weeks in Berlin time"
+DIM k = 0
+FOR k = 0 TO LEN(starts) - 1
+    DIM s = starts[k]
+    DIM fin = ends[k]
+    DIM title$ = summaries[k]
+    DIM ev = events_in[k]
+    DIM berlin_hours = ICAL.ZONEOFFSET("Europe/Berlin", s)
+    DIM when$ = DT.FMT$(s, "%a %d %b %H:%M", berlin_hours) + "-" + DT.FMT$(fin, "%H:%M", berlin_hours)
+    IF ICAL.ALLDAY(back, ev) THEN when$ = DT.FMT$(s, "%a %d %b") + "  all day  "
+    PRINT "  "; when$; "  "; title$
+NEXT k
+PRINT
+DIM back_events = ICAL.EVENTS(back)
+DIM first_ev = back_events[0]
+PRINT "The meeting: "; ICAL.PROP$(back, first_ev, "LOCATION"); ", "; ICAL.RAW$(back, first_ev, "RRULE")
+PRINT "  "; REPLACE$(ICAL.PROP$(back, first_ev, "DESCRIPTION"), CHR$(10), " | ")
+DIM alarms = ICAL.CHILDREN(back, first_ev, "VALARM")
+DIM alarm = alarms[0]
+PRINT "  reminder "; ICAL.PROP$(back, alarm, "TRIGGER"); ": "; ICAL.PROP$(back, alarm, "DESCRIPTION")
+DIM todos = ICAL.TODOS(back)
+DIM todo_back = todos[0]
+PRINT "To do: "; ICAL.PROP$(back, todo_back, "SUMMARY"); ", due "; DT.ISO$(ICAL.ENDAT(back, todo_back), ICAL.ZONEOFFSET("Europe/Berlin", ICAL.ENDAT(back, todo_back)))
+PRINT
+
+PRINT "The supplier call on every clock"
+DIM cities = ["America/New_York", "Europe/London", "Europe/Berlin", "Asia/Singapore", "America/Los_Angeles"]
+DIM call_back = back_events[1]
+DIM call_at = ICAL.STARTAT(back, call_back)
+FOR k = 0 TO LEN(cities) - 1
+    DIM city$ = cities[k]
+    DIM city_off = ICAL.ZONEOFFSET(city$, call_at)
+    DIM sign_text$ = "+"
+    IF city_off < 0 THEN sign_text$ = "-"
+    PRINT "  "; LEFT$(city$ + "                    ", 20); DT.FMT$(call_at, "%a %H:%M", city_off); "  (UTC"; sign_text$; FORMAT$("{:.0f}", ABS(city_off)); ")"
+NEXT k
