@@ -1,0 +1,1380 @@
+' textx.jdb - the small text helpers every project writes again: wrapping
+' and shortening the way textwrap does, cuts that count characters, slugs
+' and ASCII transliteration the way python-slugify and unidecode do, and the
+' human forms of sizes, numbers and durations the way humanize writes them,
+' in English and German.
+'
+'   IMPORT TEXTX
+'   PRINT TEXTX.FILL$(long_text$, 40)
+'   PRINT TEXTX.SLUG$("Hello, World!")                  ' hello-world
+'   PRINT TEXTX.FILESIZE$(1500000)                      ' 1.5 MB
+'   PRINT TEXTX.INTWORD$(1500000)                       ' 1.5 million
+'   PRINT TEXTX.RELATIVE$(180)                          ' 3 minutes ago
+'
+' Every length is a number of characters: an umlaut counts once.
+
+EXPORT MODULE TEXTX
+
+DIM gAscii AS MAP
+DIM gSlugAscii AS MAP
+DIM gTB$ = CHR$(9)
+DIM gLF$ = CHR$(10)
+DIM gCR$ = CHR$(13)
+
+' ── characters ─────────────────────────────────────────────────
+
+FUNC CharLen(s$)
+    IF s$ = "" THEN RETURN 0
+    RETURN LEN(-s$)
+ENDFUNC
+
+FUNC CharAt$(cs, i)
+    IF i < 0 ORELSE i >= LEN(cs) THEN RETURN ""
+    DIM c$ = cs[i]
+    RETURN c$
+ENDFUNC
+
+FUNC JoinRange$(cs, start, count_n)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = start TO start + count_n - 1
+        DIM c$ = cs[k]
+        out$ = out$ + c$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC DropLast(items)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 2
+        DIM s$ = items[k]
+        PUSH(out, s$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC RTrimSpaces$(s$)
+    DIM out$ = s$
+    DO WHILE LEN(out$) > 0 ANDALSO RIGHT$(out$, 1) = " "
+        out$ = LEFT$(out$, LEN(out$) - 1)
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC LTrimSpaces$(s$)
+    DIM out$ = s$
+    DO WHILE LEN(out$) > 0 ANDALSO LEFT$(out$, 1) = " "
+        out$ = MID$(out$, 1, LEN(out$))
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' Letters and digits beyond ASCII, as Python's \w sees the characters that
+' occur in Latin-1 and in general punctuation.
+FUNC IsNonAsciiWord(c$)
+    DIM b0 = ASC(c$)
+    DIM b1 = ASC(MID$(c$, 1, 1))
+    IF b0 = 194 THEN
+        IF b1 = 170 ORELSE b1 = 178 ORELSE b1 = 179 ORELSE b1 = 181 ORELSE b1 = 185 ORELSE b1 = 186 THEN RETURN TRUE
+        IF b1 >= 188 ANDALSO b1 <= 190 THEN RETURN TRUE
+        RETURN FALSE
+    ENDIF
+    IF b0 = 195 ANDALSO (b1 = 151 ORELSE b1 = 183) THEN RETURN FALSE
+    IF b0 = 226 ANDALSO LEN(c$) = 3 THEN
+        IF b1 = 128 THEN RETURN FALSE
+        IF b1 = 130 ANDALSO ASC(MID$(c$, 2, 1)) >= 160 THEN RETURN FALSE
+    ENDIF
+    RETURN TRUE
+ENDFUNC
+
+FUNC IsWordChar(c$)
+    IF c$ = "" THEN RETURN FALSE
+    IF LEN(c$) > 1 THEN RETURN IsNonAsciiWord(c$)
+    DIM b0 = ASC(c$)
+    IF b0 >= 48 ANDALSO b0 <= 57 THEN RETURN TRUE
+    IF b0 >= 65 ANDALSO b0 <= 90 THEN RETURN TRUE
+    IF b0 >= 97 ANDALSO b0 <= 122 THEN RETURN TRUE
+    RETURN b0 = 95
+ENDFUNC
+
+' A letter for textwrap: a word character that is not an ASCII digit.
+FUNC IsLetterChar(c$)
+    IF NOT IsWordChar(c$) THEN RETURN FALSE
+    IF LEN(c$) = 1 ANDALSO ASC(c$) >= 48 ANDALSO ASC(c$) <= 57 THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
+FUNC IsWordPunct(c$)
+    IF IsWordChar(c$) THEN RETURN TRUE
+    RETURN c$ = "!" ORELSE c$ = CHR$(34) ORELSE c$ = "'" ORELSE c$ = "&" ORELSE c$ = "." ORELSE c$ = "," ORELSE c$ = "?"
+ENDFUNC
+
+' Whitespace as Python's str.isspace sees it.
+FUNC IsSpaceChar(c$)
+    IF c$ = "" THEN RETURN FALSE
+    DIM b0 = ASC(c$)
+    IF LEN(c$) = 1 THEN RETURN b0 = 32 ORELSE (b0 >= 9 ANDALSO b0 <= 13) ORELSE (b0 >= 28 ANDALSO b0 <= 31)
+    DIM b1 = ASC(MID$(c$, 1, 1))
+    IF b0 = 194 THEN RETURN b1 = 133 ORELSE b1 = 160
+    IF b0 = 226 ANDALSO LEN(c$) = 3 THEN
+        DIM b2 = ASC(MID$(c$, 2, 1))
+        IF b1 = 128 ANDALSO ((b2 >= 128 ANDALSO b2 <= 138) ORELSE b2 = 168 ORELSE b2 = 169 ORELSE b2 = 175) THEN RETURN TRUE
+        IF b1 = 129 ANDALSO b2 = 159 THEN RETURN TRUE
+    ENDIF
+    IF b0 = 227 ANDALSO LEN(c$) = 3 ANDALSO b1 = 128 ANDALSO ASC(MID$(c$, 2, 1)) = 128 THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+FUNC AllSpace(s$)
+    IF s$ = "" THEN RETURN FALSE
+    DIM cs = -s$
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF NOT IsSpaceChar(c$) THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+' The number of characters.
+EXPORT FUNC LENGTH(text$)
+    RETURN CharLen(text$)
+ENDFUNC
+
+' The first count_n characters.
+EXPORT FUNC HEAD$(text$, count_n)
+    IF count_n <= 0 THEN RETURN ""
+    DIM cs = -text$
+    IF count_n >= LEN(cs) THEN RETURN text$
+    RETURN JoinRange$(cs, 0, count_n)
+ENDFUNC
+
+' The last count_n characters.
+EXPORT FUNC TAIL$(text$, count_n)
+    IF count_n <= 0 THEN RETURN ""
+    DIM cs = -text$
+    IF count_n >= LEN(cs) THEN RETURN text$
+    RETURN JoinRange$(cs, LEN(cs) - count_n, count_n)
+ENDFUNC
+
+' count_n characters from position start, counted from 0.
+EXPORT FUNC SLICE$(text$, start, count_n)
+    DIM cs = -text$
+    DIM from_i = start
+    IF from_i < 0 THEN from_i = 0
+    DIM to_i = start + count_n
+    IF to_i > LEN(cs) THEN to_i = LEN(cs)
+    IF to_i <= from_i THEN RETURN ""
+    RETURN JoinRange$(cs, from_i, to_i - from_i)
+ENDFUNC
+
+' The text cut to width characters with mark$ at the end when it is longer.
+EXPORT FUNC ELLIPSIS$(text$, width, mark$ = "…")
+    IF CharLen(text$) <= width THEN RETURN text$
+    DIM keep_n = width - CharLen(mark$)
+    IF keep_n <= 0 THEN RETURN HEAD$(mark$, width)
+    RETURN RTrimSpaces$(HEAD$(text$, keep_n)) + mark$
+ENDFUNC
+
+' ── wrapping ───────────────────────────────────────────────────
+
+' Tabs expanded to the next multiple of eight, every other ASCII whitespace
+' character a space.
+FUNC MungedChars(text$)
+    DIM cs = -text$
+    DIM out = []
+    DIM column_n = 0
+    DIM k = 0
+    DIM pk = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF c$ = gTB$ THEN
+            DIM pad_n = 8 - (column_n - 8 * FLOOR(column_n / 8))
+            FOR pk = 1 TO pad_n
+                PUSH(out, " ")
+            NEXT pk
+            column_n = column_n + pad_n
+        ELSEIF c$ = gLF$ ORELSE c$ = gCR$ THEN
+            PUSH(out, " ")
+            column_n = 0
+        ELSEIF c$ = CHR$(11) ORELSE c$ = CHR$(12) THEN
+            PUSH(out, " ")
+            column_n = column_n + 1
+        ELSE
+            PUSH(out, c$)
+            column_n = column_n + 1
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The hyphens from position q when two or more of them run into a word
+' character, else 0.
+FUNC DashRun(cs, q)
+    DIM n = LEN(cs)
+    DIM stop_i = q
+    DO WHILE stop_i < n
+        DIM c$ = cs[stop_i]
+        IF c$ <> "-" THEN EXITDO
+        stop_i = stop_i + 1
+    LOOP
+    IF stop_i - q < 2 ORELSE stop_i >= n THEN RETURN 0
+    IF IsWordChar(CharAt$(cs, stop_i)) THEN RETURN stop_i - q
+    RETURN 0
+ENDFUNC
+
+' Whether a line may break after the hyphen at q of a compound word.
+FUNC HyphenBreak(cs, q)
+    DIM behind = FALSE
+    IF IsLetterChar(CharAt$(cs, q - 2)) ANDALSO IsLetterChar(CharAt$(cs, q - 1)) THEN behind = TRUE
+    IF IsLetterChar(CharAt$(cs, q - 3)) ANDALSO CharAt$(cs, q - 2) = "-" ANDALSO IsLetterChar(CharAt$(cs, q - 1)) THEN behind = TRUE
+    IF NOT behind THEN RETURN FALSE
+    IF NOT IsLetterChar(CharAt$(cs, q + 1)) THEN RETURN FALSE
+    IF IsLetterChar(CharAt$(cs, q + 2)) THEN RETURN TRUE
+    RETURN CharAt$(cs, q + 2) = "-" ANDALSO IsLetterChar(CharAt$(cs, q + 3))
+ENDFUNC
+
+' The pieces a line may break between: runs of spaces, dashes between
+' words, and words, split after the hyphens of compound words.
+FUNC SplitChunks(cs)
+    DIM chunks = []
+    DIM n = LEN(cs)
+    DIM at_i = 0
+    DO WHILE at_i < n
+        DIM c$ = cs[at_i]
+        DIM stop_i = at_i
+        IF c$ = " " THEN
+            DO WHILE stop_i < n
+                DIM sp$ = cs[stop_i]
+                IF sp$ <> " " THEN EXITDO
+                stop_i = stop_i + 1
+            LOOP
+        ELSE
+            DIM dashes = 0
+            IF c$ = "-" ANDALSO at_i > 0 THEN
+                IF IsWordPunct(CharAt$(cs, at_i - 1)) THEN dashes = DashRun(cs, at_i)
+            ENDIF
+            IF dashes > 0 THEN
+                stop_i = at_i + dashes
+            ELSE
+                DIM q = at_i + 1
+                DIM found = FALSE
+                DO WHILE NOT found
+                    IF q < n ANDALSO CharAt$(cs, q) = "-" ANDALSO HyphenBreak(cs, q) THEN
+                        stop_i = q + 1
+                        found = TRUE
+                    ELSEIF q >= n ORELSE CharAt$(cs, q) = " " THEN
+                        stop_i = q
+                        found = TRUE
+                    ELSEIF IsWordPunct(CharAt$(cs, q - 1)) ANDALSO DashRun(cs, q) > 0 THEN
+                        stop_i = q
+                        found = TRUE
+                    ELSE
+                        q = q + 1
+                    ENDIF
+                LOOP
+            ENDIF
+        ENDIF
+        PUSH(chunks, JoinRange$(cs, at_i, stop_i - at_i))
+        at_i = stop_i
+    LOOP
+    RETURN chunks
+ENDFUNC
+
+FUNC IsBlank(s$)
+    RETURN TRIM$(s$) = ""
+ENDFUNC
+
+' textwrap's line filling: max_lines 0 for no limit, placeholder$ for the
+' end of a text cut at max_lines.
+FUNC WrapLines(text$, width, max_lines, placeholder$)
+    IF width <= 0 THEN THROW "TEXTX: invalid width " + STR$(width)
+    IF max_lines > 0 ANDALSO CharLen(LTrimSpaces$(placeholder$)) > width THEN THROW "TEXTX: placeholder too large for max width"
+    DIM chunks = SplitChunks(MungedChars(text$))
+    DIM lines = []
+    DIM total = LEN(chunks)
+    DIM ci = 0
+    DIM k = 0
+    DO WHILE ci < total
+        DIM cur = []
+        DIM cur_len = 0
+        IF LEN(lines) > 0 THEN
+            DIM lead$ = chunks[ci]
+            IF IsBlank(lead$) THEN ci = ci + 1
+        ENDIF
+        DO WHILE ci < total
+            DIM piece$ = chunks[ci]
+            DIM piece_len = CharLen(piece$)
+            IF cur_len + piece_len <= width THEN
+                PUSH(cur, piece$)
+                cur_len = cur_len + piece_len
+                ci = ci + 1
+            ELSE
+                EXITDO
+            ENDIF
+        LOOP
+        IF ci < total THEN
+            DIM big_piece$ = chunks[ci]
+            IF CharLen(big_piece$) > width THEN
+                DIM space_left = width - cur_len
+                IF space_left > 0 THEN
+                    DIM lc = -big_piece$
+                    DIM cut_at = space_left
+                    IF LEN(lc) > space_left THEN
+                        DIM hyphen = -1
+                        FOR k = 0 TO space_left - 1
+                            DIM hc$ = lc[k]
+                            IF hc$ = "-" THEN hyphen = k
+                        NEXT k
+                        IF hyphen > 0 THEN
+                            DIM other = FALSE
+                            FOR k = 0 TO hyphen - 1
+                                DIM oc$ = lc[k]
+                                IF oc$ <> "-" THEN other = TRUE
+                            NEXT k
+                            IF other THEN cut_at = hyphen + 1
+                        ENDIF
+                    ENDIF
+                    PUSH(cur, JoinRange$(lc, 0, cut_at))
+                    chunks[ci] = JoinRange$(lc, cut_at, LEN(lc) - cut_at)
+                ELSEIF LEN(cur) = 0 THEN
+                    PUSH(cur, big_piece$)
+                    ci = ci + 1
+                ENDIF
+                cur_len = 0
+                FOR k = 0 TO LEN(cur) - 1
+                    DIM part$ = cur[k]
+                    cur_len = cur_len + CharLen(part$)
+                NEXT k
+            ENDIF
+        ENDIF
+        IF LEN(cur) > 0 THEN
+            DIM tail_piece$ = cur[LEN(cur) - 1]
+            IF IsBlank(tail_piece$) THEN
+                cur_len = cur_len - CharLen(tail_piece$)
+                cur = DropLast(cur)
+            ENDIF
+        ENDIF
+        IF LEN(cur) > 0 THEN
+            DIM fits = FALSE
+            IF max_lines <= 0 ORELSE LEN(lines) + 1 < max_lines THEN fits = TRUE
+            IF NOT fits ANDALSO cur_len <= width THEN
+                IF ci >= total THEN
+                    fits = TRUE
+                ELSEIF ci = total - 1 THEN
+                    DIM last_piece$ = chunks[ci]
+                    IF IsBlank(last_piece$) THEN fits = TRUE
+                ENDIF
+            ENDIF
+            IF fits THEN
+                PUSH(lines, JOIN(cur, ""))
+            ELSE
+                DIM placed = FALSE
+                DO WHILE LEN(cur) > 0
+                    DIM end_piece$ = cur[LEN(cur) - 1]
+                    IF NOT IsBlank(end_piece$) ANDALSO cur_len + CharLen(placeholder$) <= width THEN
+                        PUSH(cur, placeholder$)
+                        PUSH(lines, JOIN(cur, ""))
+                        placed = TRUE
+                        EXITDO
+                    ENDIF
+                    cur_len = cur_len - CharLen(end_piece$)
+                    cur = DropLast(cur)
+                LOOP
+                IF NOT placed THEN
+                    DIM merged = FALSE
+                    IF LEN(lines) > 0 THEN
+                        DIM last_line$ = lines[LEN(lines) - 1]
+                        DIM prev_line$ = RTrimSpaces$(last_line$)
+                        IF CharLen(prev_line$) + CharLen(placeholder$) <= width THEN
+                            lines[LEN(lines) - 1] = prev_line$ + placeholder$
+                            merged = TRUE
+                        ENDIF
+                    ENDIF
+                    IF NOT merged THEN PUSH(lines, LTrimSpaces$(placeholder$))
+                ENDIF
+                EXITDO
+            ENDIF
+        ENDIF
+    LOOP
+    RETURN lines
+ENDFUNC
+
+' The lines of a paragraph no longer than width characters: tabs expanded,
+' line breaks read as spaces, words broken only when longer than a line.
+EXPORT FUNC WRAP(text$, width = 70)
+    RETURN WrapLines(text$, width, 0, "")
+ENDFUNC
+
+' WRAP joined with line breaks.
+EXPORT FUNC FILL$(text$, width = 70)
+    DIM lines = WrapLines(text$, width, 0, "")
+    IF LEN(lines) = 0 THEN RETURN ""
+    RETURN JOIN(lines, gLF$)
+ENDFUNC
+
+FUNC SpaceWords(text$)
+    DIM cs = -text$
+    DIM words = []
+    DIM word$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF IsSpaceChar(c$) THEN
+            IF word$ <> "" THEN PUSH(words, word$)
+            word$ = ""
+        ELSE
+            word$ = word$ + c$
+        ENDIF
+    NEXT k
+    IF word$ <> "" THEN PUSH(words, word$)
+    RETURN words
+ENDFUNC
+
+' The text on one line of at most width characters: whitespace collapsed,
+' and when it is still too long, as many words as fit and the placeholder.
+EXPORT FUNC SHORTEN$(text$, width, placeholder$ = " [...]")
+    DIM words = SpaceWords(text$)
+    DIM flat$ = ""
+    IF LEN(words) > 0 THEN flat$ = JOIN(words, " ")
+    DIM lines = WrapLines(flat$, width, 1, placeholder$)
+    IF LEN(lines) = 0 THEN RETURN ""
+    RETURN JOIN(lines, gLF$)
+ENDFUNC
+
+' The whitespace every line starts with removed; lines of nothing but
+' whitespace become empty.
+EXPORT FUNC DEDENT$(text$)
+    IF text$ = "" THEN RETURN ""
+    DIM rows = SPLIT(text$, gLF$)
+    DIM have = FALSE
+    DIM lo$ = ""
+    DIM hi$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = rows[k]
+        IF row$ <> "" ANDALSO NOT AllSpace(row$) THEN
+            IF NOT have THEN
+                lo$ = row$
+                hi$ = row$
+                have = TRUE
+            ELSE
+                IF row$ < lo$ THEN lo$ = row$
+                IF row$ > hi$ THEN hi$ = row$
+            ENDIF
+        ENDIF
+    NEXT k
+    DIM margin = 0
+    IF have THEN
+        DIM lc = -lo$
+        DIM hc = -hi$
+        FOR k = 0 TO LEN(lc) - 1
+            margin = k
+            DIM a$ = lc[k]
+            DIM b$ = CharAt$(hc, k)
+            IF a$ <> b$ ORELSE (a$ <> " " ANDALSO a$ <> gTB$) THEN EXITFOR
+        NEXT k
+    ENDIF
+    DIM out = []
+    FOR k = 0 TO LEN(rows) - 1
+        DIM src$ = rows[k]
+        IF AllSpace(src$) THEN
+            PUSH(out, "")
+        ELSE
+            PUSH(out, MID$(src$, margin, LEN(src$)))
+        ENDIF
+    NEXT k
+    RETURN JOIN(out, gLF$)
+ENDFUNC
+
+FUNC PrefixRow$(row$, prefix$)
+    IF AllSpace(row$) THEN RETURN row$
+    RETURN prefix$ + row$
+ENDFUNC
+
+' prefix$ put in front of every line that holds more than whitespace.
+EXPORT FUNC INDENT$(text$, prefix$)
+    DIM cs = -text$
+    DIM out$ = ""
+    DIM row$ = ""
+    DIM n = LEN(cs)
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM c$ = cs[k]
+        row$ = row$ + c$
+        DIM ends = FALSE
+        IF c$ = gLF$ ORELSE c$ = CHR$(11) ORELSE c$ = CHR$(12) ORELSE c$ = CHR$(28) ORELSE c$ = CHR$(29) ORELSE c$ = CHR$(30) THEN ends = TRUE
+        IF c$ = CHR$(194) + CHR$(133) ORELSE c$ = CHR$(226) + CHR$(128) + CHR$(168) ORELSE c$ = CHR$(226) + CHR$(128) + CHR$(169) THEN ends = TRUE
+        IF c$ = gCR$ THEN
+            IF CharAt$(cs, k + 1) <> gLF$ THEN ends = TRUE
+        ENDIF
+        IF ends THEN
+            out$ = out$ + PrefixRow$(row$, prefix$)
+            row$ = ""
+        ENDIF
+    NEXT k
+    IF row$ <> "" THEN out$ = out$ + PrefixRow$(row$, prefix$)
+    RETURN out$
+ENDFUNC
+
+' ── transliteration ────────────────────────────────────────────
+
+FUNC GermanFold$(c$)
+    IF c$ = "ä" THEN RETURN "ae"
+    IF c$ = "ö" THEN RETURN "oe"
+    IF c$ = "ü" THEN RETURN "ue"
+    IF c$ = "Ä" THEN RETURN "Ae"
+    IF c$ = "Ö" THEN RETURN "Oe"
+    IF c$ = "Ü" THEN RETURN "Ue"
+    IF c$ = "ß" THEN RETURN "ss"
+    RETURN c$
+ENDFUNC
+
+FUNC AsciiOf$(c$, slug_form)
+    IF LEN(c$) = 1 THEN RETURN c$
+    IF slug_form ANDALSO MAP.EXISTS(gSlugAscii, c$) THEN
+        DIM s$ = gSlugAscii{c$}
+        RETURN s$
+    ENDIF
+    IF MAP.EXISTS(gAscii, c$) THEN
+        DIM a$ = gAscii{c$}
+        RETURN a$
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' The text in ASCII the way unidecode writes it, for Latin-1, Latin
+' Extended-A and common punctuation; other characters beyond ASCII are left
+' out. With german true, umlauts become ae, oe, ue and the sharp s ss.
+EXPORT FUNC ASCII$(text$, german = 0)
+    DIM cs = -text$
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF german THEN
+            DIM folded$ = GermanFold$(c$)
+            IF folded$ <> c$ THEN
+                out$ = out$ + folded$
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        out$ = out$ + AsciiOf$(c$, 0)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC HexValue(digits$)
+    DIM total = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(digits$) - 1
+        DIM d$ = UCASE$(MID$(digits$, k, 1))
+        DIM code_n = ASC(d$)
+        IF code_n >= 48 ANDALSO code_n <= 57 THEN
+            total = total * 16 + code_n - 48
+        ELSEIF code_n >= 65 ANDALSO code_n <= 70 THEN
+            total = total * 16 + code_n - 55
+        ELSE
+            RETURN -1
+        ENDIF
+    NEXT k
+    RETURN total
+ENDFUNC
+
+FUNC IsDigits(s$)
+    IF s$ = "" THEN RETURN FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(s$) - 1
+        DIM code_n = ASC(MID$(s$, k, 1))
+        IF code_n < 48 ORELSE code_n > 57 THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+' HTML entities that stand for an ASCII character decoded; any other
+' numeric entity becomes a space.
+FUNC DecodeEntities$(s$)
+    IF INSTR(s$, "&") < 0 THEN RETURN s$
+    DIM out$ = ""
+    DIM at_i = 0
+    DIM n = LEN(s$)
+    DO WHILE at_i < n
+        DIM c$ = MID$(s$, at_i, 1)
+        DIM done = FALSE
+        IF c$ = "&" THEN
+            DIM semi = CINT(INSTR(at_i + 1, s$, ";"))
+            IF semi > at_i + 1 ANDALSO semi - at_i <= 12 THEN
+                DIM ent$ = MID$(s$, at_i + 1, semi - at_i - 1)
+                DIM got$ = ""
+                DIM known = TRUE
+                IF ent$ = "amp" THEN
+                    got$ = "&"
+                ELSEIF ent$ = "lt" THEN
+                    got$ = "<"
+                ELSEIF ent$ = "gt" THEN
+                    got$ = ">"
+                ELSEIF ent$ = "quot" THEN
+                    got$ = CHR$(34)
+                ELSEIF ent$ = "nbsp" THEN
+                    got$ = " "
+                ELSEIF LEFT$(ent$, 2) = "#x" ANDALSO HexValue(MID$(ent$, 2, LEN(ent$))) >= 0 ANDALSO LEN(ent$) > 2 THEN
+                    DIM hex_n = HexValue(MID$(ent$, 2, LEN(ent$)))
+                    got$ = " "
+                    IF hex_n < 128 THEN got$ = CHR$(hex_n)
+                ELSEIF LEFT$(ent$, 1) = "#" ANDALSO IsDigits(MID$(ent$, 1, LEN(ent$))) THEN
+                    DIM dec_n = VAL(MID$(ent$, 1, LEN(ent$)))
+                    got$ = " "
+                    IF dec_n < 128 THEN got$ = CHR$(dec_n)
+                ELSE
+                    known = FALSE
+                ENDIF
+                IF known THEN
+                    out$ = out$ + got$
+                    at_i = semi + 1
+                    done = TRUE
+                ENDIF
+            ENDIF
+        ENDIF
+        IF NOT done THEN
+            out$ = out$ + c$
+            at_i = at_i + 1
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC IsAsciiAlnum(c$)
+    DIM code_n = ASC(c$)
+    IF code_n >= 48 ANDALSO code_n <= 57 THEN RETURN TRUE
+    IF code_n >= 65 ANDALSO code_n <= 90 THEN RETURN TRUE
+    RETURN code_n >= 97 ANDALSO code_n <= 122
+ENDFUNC
+
+FUNC IsAsciiDigit(c$)
+    IF c$ = "" THEN RETURN FALSE
+    DIM code_n = ASC(c$)
+    RETURN code_n >= 48 ANDALSO code_n <= 57
+ENDFUNC
+
+' A slug the way python-slugify writes it: transliterated, lower case,
+' every run of other characters a single separator, apostrophes and the
+' commas inside numbers dropped. max_len cuts the slug (0 for no limit);
+' german true writes umlauts as ae, oe, ue and the sharp s as ss.
+EXPORT FUNC SLUG$(text$, sep$ = "-", max_len = 0, german = 0)
+    DIM cs = -text$
+    DIM flat$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF german THEN
+            DIM folded$ = GermanFold$(c$)
+            IF folded$ <> c$ THEN
+                flat$ = flat$ + folded$
+                CONTINUEFOR
+            ENDIF
+        ENDIF
+        IF c$ = "'" THEN
+            flat$ = flat$ + "-"
+        ELSE
+            flat$ = flat$ + AsciiOf$(c$, 1)
+        ENDIF
+    NEXT k
+    flat$ = REPLACE$(LCASE$(DecodeEntities$(flat$)), "'", "")
+    DIM clean$ = ""
+    DIM n = LEN(flat$)
+    FOR k = 0 TO n - 1
+        DIM fc$ = MID$(flat$, k, 1)
+        IF fc$ = "," ANDALSO k > 0 ANDALSO k < n - 1 ANDALSO IsAsciiDigit(MID$(flat$, k - 1, 1)) ANDALSO IsAsciiDigit(MID$(flat$, k + 1, 1)) THEN
+            CONTINUEFOR
+        ENDIF
+        IF fc$ = "-" ORELSE IsAsciiAlnum(fc$) THEN
+            clean$ = clean$ + fc$
+        ELSE
+            clean$ = clean$ + "-"
+        ENDIF
+    NEXT k
+    DO WHILE INSTR(clean$, "--") >= 0
+        clean$ = REPLACE$(clean$, "--", "-")
+    LOOP
+    IF LEFT$(clean$, 1) = "-" THEN clean$ = MID$(clean$, 1, LEN(clean$))
+    IF RIGHT$(clean$, 1) = "-" THEN clean$ = LEFT$(clean$, LEN(clean$) - 1)
+    IF max_len > 0 ANDALSO LEN(clean$) >= max_len THEN
+        clean$ = LEFT$(clean$, max_len)
+        DO WHILE LEFT$(clean$, 1) = "-"
+            clean$ = MID$(clean$, 1, LEN(clean$))
+        LOOP
+        DO WHILE RIGHT$(clean$, 1) = "-"
+            clean$ = LEFT$(clean$, LEN(clean$) - 1)
+        LOOP
+    ENDIF
+    IF sep$ <> "-" THEN clean$ = REPLACE$(clean$, "-", sep$)
+    RETURN clean$
+ENDFUNC
+
+' ── numbers ────────────────────────────────────────────────────
+
+FUNC TowardZero(x)
+    IF x < 0 THEN RETURN -FLOOR(-x)
+    RETURN FLOOR(x)
+ENDFUNC
+
+' Python's round: a half goes to the even neighbour.
+FUNC RoundEven(x)
+    DIM low = FLOOR(x)
+    DIM diff = x - low
+    IF diff > 0.5 THEN RETURN low + 1
+    IF diff < 0.5 THEN RETURN low
+    IF low - 2 * FLOOR(low / 2) = 0 THEN RETURN low
+    RETURN low + 1
+ENDFUNC
+
+FUNC IntText$(x)
+    DIM whole = TowardZero(x)
+    IF whole = 0 THEN RETURN "0"
+    RETURN STR$(whole)
+ENDFUNC
+
+FUNC LangKey$(lang$)
+    DIM key$ = LCASE$(LEFT$(TRIM$(lang$), 2))
+    IF key$ = "de" ORELSE key$ = "en" THEN RETURN key$
+    THROW "TEXTX: no language called " + lang$
+    RETURN ""
+ENDFUNC
+
+FUNC Tr$(german, en$, de$)
+    IF german THEN RETURN de$
+    RETURN en$
+ENDFUNC
+
+' Digits in groups of three: a comma and a decimal point in English, a
+' point and a decimal comma in German.
+FUNC GroupDigits$(value, german)
+    DIM text$ = STR$(value)
+    DIM minus$ = ""
+    IF LEFT$(text$, 1) = "-" THEN
+        minus$ = "-"
+        text$ = MID$(text$, 1, LEN(text$))
+    ENDIF
+    DIM whole$ = text$
+    DIM frac$ = ""
+    DIM dot = CINT(INSTR(text$, "."))
+    IF dot >= 0 THEN
+        whole$ = LEFT$(text$, dot)
+        frac$ = MID$(text$, dot + 1, LEN(text$))
+    ENDIF
+    DIM group$ = Tr$(german, ",", ".")
+    DIM out$ = ""
+    DIM placed = 0
+    DIM k = 0
+    FOR k = LEN(whole$) - 1 TO 0 STEP -1
+        IF placed > 0 ANDALSO placed - 3 * FLOOR(placed / 3) = 0 THEN out$ = group$ + out$
+        out$ = MID$(whole$, k, 1) + out$
+        placed = placed + 1
+    NEXT k
+    IF frac$ <> "" THEN out$ = out$ + Tr$(german, ".", ",") + frac$
+    RETURN minus$ + out$
+ENDFUNC
+
+FUNC SizeSuffix$(mode$, expo)
+    DIM names$ = "kB MB GB TB PB EB ZB YB RB QB"
+    IF mode$ = "binary" THEN names$ = "KiB MiB GiB TiB PiB EiB ZiB YiB RiB QiB"
+    IF mode$ = "gnu" THEN names$ = "K M G T P E Z Y R Q"
+    DIM parts = SPLIT(names$, " ")
+    DIM s$ = parts[expo - 1]
+    RETURN s$
+ENDFUNC
+
+' A number of bytes the way humanize's naturalsize writes it: "1.5 MB" with
+' style$ "decimal" (powers of 1000), "1.4 MiB" with "binary", "1.4M" with
+' "gnu" (both powers of 1024).
+EXPORT FUNC FILESIZE$(size_n, style$ = "decimal")
+    DIM mode$ = LCASE$(style$)
+    IF mode$ <> "decimal" ANDALSO mode$ <> "binary" ANDALSO mode$ <> "gnu" THEN THROW "TEXTX: no size style called " + style$
+    DIM base_n = 1000.0
+    IF mode$ <> "decimal" THEN base_n = 1024.0
+    DIM value = CDBL(size_n)
+    DIM mag = ABS(value)
+    IF mag = 1 ANDALSO mode$ <> "gnu" THEN RETURN IntText$(value) + " Byte"
+    IF mag < base_n THEN
+        IF mode$ = "gnu" THEN RETURN IntText$(value) + "B"
+        RETURN IntText$(value) + " Bytes"
+    ENDIF
+    DIM expo = FLOOR(LOG(mag) / LOG(base_n))
+    IF expo > 10 THEN expo = 10
+    IF expo < 10 THEN
+        IF ABS(VAL(FORMAT$("{:.1f}", mag / (base_n ^ expo)))) >= base_n THEN expo = expo + 1
+    ENDIF
+    DIM gap$ = " "
+    IF mode$ = "gnu" THEN gap$ = ""
+    RETURN FORMAT$("{:.1f}", value / (base_n ^ expo)) + gap$ + SizeSuffix$(mode$, expo)
+ENDFUNC
+
+' A whole number with its thousands grouped: 1,234,567 in English,
+' 1.234.567 in German.
+EXPORT FUNC INTCOMMA$(value, lang$ = "en")
+    RETURN GroupDigits$(value, LangKey$(lang$) = "de")
+ENDFUNC
+
+FUNC PowerName$(place, german, count_n)
+    DIM en_names$ = "thousand million billion trillion quadrillion quintillion sextillion"
+    DIM de_one$ = "Tausend Million Milliarde Billion Billiarde Trillion Trilliarde"
+    DIM de_many$ = "Tausend Millionen Milliarden Billionen Billiarden Trillionen Trilliarden"
+    DIM pick$ = en_names$
+    IF german THEN
+        pick$ = de_many$
+        IF count_n = 1 THEN pick$ = de_one$
+    ENDIF
+    DIM parts = SPLIT(pick$, " ")
+    DIM s$ = parts[place]
+    RETURN s$
+ENDFUNC
+
+' A large number in words the way humanize's intword writes it: 1.2
+' million, with a decimal comma in German; below a thousand the number
+' itself.
+EXPORT FUNC INTWORD$(value, lang$ = "en")
+    DIM german = (LangKey$(lang$) = "de")
+    DIM whole = TowardZero(CDBL(value))
+    DIM minus$ = ""
+    IF whole < 0 THEN
+        minus$ = "-"
+        whole = -whole
+    ENDIF
+    IF whole < 1000 THEN RETURN minus$ + IntText$(whole)
+    DIM powers = [1000.0, 1000000.0, 1000000000.0, 1000000000000.0, 1000000000000000.0, 1000000000000000000.0, 1000000000000000000000.0]
+    DIM place = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(powers) - 1
+        DIM pw = powers[k]
+        IF whole >= pw THEN place = k
+    NEXT k
+    DIM here = powers[place]
+    DIM rounded = VAL(FORMAT$("{:.1f}", whole / here))
+    IF place < LEN(powers) - 1 THEN
+        DIM next_pw = powers[place + 1]
+        IF rounded * here = next_pw THEN
+            place = place + 1
+            rounded = 1.0
+        ENDIF
+    ENDIF
+    DIM number$ = FORMAT$("{:.1f}", rounded)
+    IF german THEN number$ = REPLACE$(number$, ".", ",")
+    RETURN minus$ + number$ + " " + PowerName$(place, german, -FLOOR(-rounded))
+ENDFUNC
+
+' 1st, 2nd, 3rd, 11th in English; 1., 2., 3. in German.
+EXPORT FUNC ORDINAL$(value, lang$ = "en")
+    DIM german = (LangKey$(lang$) = "de")
+    DIM whole = TowardZero(CDBL(value))
+    IF german THEN RETURN IntText$(whole) + "."
+    DIM hundred = whole - 100 * FLOOR(whole / 100)
+    DIM digit = whole - 10 * FLOOR(whole / 10)
+    IF hundred = 11 ORELSE hundred = 12 ORELSE hundred = 13 THEN digit = 0
+    DIM suffix$ = "th"
+    IF digit = 1 THEN suffix$ = "st"
+    IF digit = 2 THEN suffix$ = "nd"
+    IF digit = 3 THEN suffix$ = "rd"
+    RETURN IntText$(whole) + suffix$
+ENDFUNC
+
+' ── durations ──────────────────────────────────────────────────
+
+' The days, seconds and microseconds of a number of seconds without its
+' sign, the way a Python timedelta holds them.
+FUNC DeltaParts(secs_in)
+    DIM mag = ABS(CDBL(secs_in))
+    DIM whole = FLOOR(mag)
+    DIM n_usecs = RoundEven((mag - whole) * 1000000.0)
+    IF n_usecs >= 1000000 THEN
+        whole = whole + 1
+        n_usecs = n_usecs - 1000000
+    ENDIF
+    DIM n_days = FLOOR(whole / 86400)
+    DIM parts = []
+    PUSH(parts, n_days)
+    PUSH(parts, whole - n_days * 86400)
+    PUSH(parts, n_usecs)
+    RETURN parts
+ENDFUNC
+
+' The name of a time unit for a count: 0 microsecond up to 7 year.
+FUNC UnitWord$(german, unit, count_n)
+    DIM en_names$ = "microsecond millisecond second minute hour day month year"
+    DIM de_one$ = "Mikrosekunde Millisekunde Sekunde Minute Stunde Tag Monat Jahr"
+    DIM de_many$ = "Mikrosekunden Millisekunden Sekunden Minuten Stunden Tage Monate Jahre"
+    IF german THEN
+        IF count_n = 1 THEN
+            DIM one_parts = SPLIT(de_one$, " ")
+            DIM one$ = one_parts[unit]
+            RETURN one$
+        ENDIF
+        DIM many_parts = SPLIT(de_many$, " ")
+        DIM many$ = many_parts[unit]
+        RETURN many$
+    ENDIF
+    DIM en_parts = SPLIT(en_names$, " ")
+    DIM en$ = en_parts[unit]
+    IF count_n = 1 THEN RETURN en$
+    RETURN en$ + "s"
+ENDFUNC
+
+FUNC CountText$(german, count_n, unit)
+    RETURN IntText$(count_n) + " " + UnitWord$(german, unit, count_n)
+ENDFUNC
+
+' A duration in the words humanize's naturaldelta finds for it: "45
+' seconds", "2 hours", "1 year, 3 months", in English or German. The sign is
+' ignored.
+EXPORT FUNC DURATION$(secs_in, lang$ = "en")
+    DIM german = (LangKey$(lang$) = "de")
+    DIM parts = DeltaParts(secs_in)
+    DIM n_days = parts[0]
+    DIM n_secs = parts[1]
+    DIM n_years = FLOOR(n_days / 365)
+    DIM rest_days = n_days - n_years * 365
+    DIM n_months = RoundEven(rest_days / 30.5)
+    IF n_years = 0 ANDALSO rest_days < 1 THEN
+        IF n_secs = 0 THEN RETURN Tr$(german, "a moment", "ein Moment")
+        IF n_secs = 1 THEN RETURN Tr$(german, "a second", "eine Sekunde")
+        IF n_secs < 60 THEN RETURN CountText$(german, n_secs, 2)
+        IF n_secs < 3600 THEN
+            DIM n_minutes = RoundEven(n_secs / 60)
+            IF n_minutes = 1 THEN RETURN Tr$(german, "a minute", "eine Minute")
+            IF n_minutes = 60 THEN RETURN Tr$(german, "an hour", "eine Stunde")
+            RETURN CountText$(german, n_minutes, 3)
+        ENDIF
+        DIM n_hours = RoundEven(n_secs / 3600)
+        IF n_hours = 1 THEN RETURN Tr$(german, "an hour", "eine Stunde")
+        IF n_hours = 24 THEN RETURN Tr$(german, "a day", "ein Tag")
+        RETURN CountText$(german, n_hours, 4)
+    ENDIF
+    IF n_years = 0 THEN
+        IF rest_days = 1 THEN RETURN Tr$(german, "a day", "ein Tag")
+        IF n_months = 0 THEN RETURN CountText$(german, rest_days, 5)
+        IF n_months = 1 THEN RETURN Tr$(german, "a month", "ein Monat")
+        IF n_months = 12 THEN RETURN Tr$(german, "a year", "ein Jahr")
+        RETURN CountText$(german, n_months, 6)
+    ENDIF
+    IF n_years = 1 THEN
+        IF n_months = 0 ANDALSO rest_days = 0 THEN RETURN Tr$(german, "a year", "ein Jahr")
+        IF n_months = 0 THEN RETURN Tr$(german, "1 year, ", "ein Jahr und ") + CountText$(german, rest_days, 5)
+        IF n_months = 1 THEN RETURN Tr$(german, "1 year, 1 month", "ein Jahr und ein Monat")
+        IF n_months = 12 THEN RETURN CountText$(german, 2, 7)
+        RETURN Tr$(german, "1 year, ", "ein Jahr und ") + CountText$(german, n_months, 6)
+    ENDIF
+    RETURN GroupDigits$(n_years, german) + " " + UnitWord$(german, 7, n_years)
+ENDFUNC
+
+' A number of seconds as a time in the past, the way humanize's naturaltime
+' writes it: "3 minutes ago", or with future true "3 minutes from now", in
+' English or German. Less than half a second is "now".
+EXPORT FUNC RELATIVE$(secs_in, lang$ = "en", future = 0)
+    DIM german = (LangKey$(lang$) = "de")
+    DIM said$ = DURATION$(RoundEven(CDBL(secs_in)), lang$)
+    IF said$ = Tr$(german, "a moment", "ein Moment") THEN RETURN Tr$(german, "now", "jetzt")
+    IF future THEN RETURN said$ + Tr$(german, " from now", " ab jetzt")
+    RETURN Tr$(german, said$ + " ago", "vor " + said$)
+ENDFUNC
+
+FUNC UnitIndex(name$)
+    DIM key$ = LCASE$(name$)
+    IF key$ = "microseconds" THEN RETURN 0
+    IF key$ = "milliseconds" THEN RETURN 1
+    IF key$ = "seconds" THEN RETURN 2
+    IF key$ = "minutes" THEN RETURN 3
+    IF key$ = "hours" THEN RETURN 4
+    IF key$ = "days" THEN RETURN 5
+    IF key$ = "months" THEN RETURN 6
+    IF key$ = "years" THEN RETURN 7
+    THROW "TEXTX: no time unit called " + name$
+    RETURN 0
+ENDFUNC
+
+' The quotient and remainder of one step of precisedelta: the smallest unit
+' shown takes a rounded fraction, the units below it take nothing.
+FUNC QuotRem(value, divisor, unit, min_unit)
+    DIM out = []
+    IF unit = min_unit THEN
+        PUSH(out, VAL(FORMAT$("{:.2f}", value / divisor)))
+        PUSH(out, 0.0)
+    ELSEIF unit < min_unit THEN
+        PUSH(out, 0.0)
+        PUSH(out, CDBL(value))
+    ELSE
+        DIM quot = FLOOR(value / divisor)
+        PUSH(out, quot)
+        PUSH(out, TowardZero(value - quot * divisor))
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' Every unit of a duration down to min_unit$, the way humanize's
+' precisedelta writes it: "1 hour, 2 minutes and 5 seconds", in English or
+' German. min_unit$ is "microseconds", "milliseconds",
+' "seconds", "minutes", "hours", "days", "months" or "years"; the smallest
+' unit may show two decimals.
+EXPORT FUNC PRECISE$(secs_in, lang$ = "en", min_unit$ = "seconds")
+    DIM german = (LangKey$(lang$) = "de")
+    DIM m = UnitIndex(min_unit$)
+    DIM parts = DeltaParts(secs_in)
+    DIM n_days = parts[0]
+    DIM n_secs = parts[1]
+    DIM n_usecs = parts[2]
+    DIM r_years = QuotRem(n_days, 365, 7, m)
+    DIM n_years = r_years[0]
+    n_days = r_years[1]
+    DIM r_months = QuotRem(n_days, 30.5, 6, m)
+    DIM n_months = r_months[0]
+    n_days = r_months[1]
+    n_secs = n_days * 86400 + n_secs
+    DIM r_days = QuotRem(n_secs, 86400, 5, m)
+    n_days = r_days[0]
+    n_secs = r_days[1]
+    DIM r_hours = QuotRem(n_secs, 3600, 4, m)
+    DIM n_hours = r_hours[0]
+    n_secs = r_hours[1]
+    DIM r_minutes = QuotRem(n_secs, 60, 3, m)
+    DIM n_minutes = r_minutes[0]
+    n_secs = r_minutes[1]
+    n_usecs = n_secs * 1000000 + n_usecs
+    DIM r_secs = QuotRem(n_usecs, 1000000, 2, m)
+    n_secs = r_secs[0]
+    n_usecs = r_secs[1]
+    DIM r_msecs = QuotRem(n_usecs, 1000, 1, m)
+    DIM n_msecs = r_msecs[0]
+    n_usecs = r_msecs[1]
+    IF n_msecs >= 1000 ANDALSO m <= 2 THEN
+        n_msecs = n_msecs - 1000
+        n_secs = n_secs + 1
+    ENDIF
+    IF n_secs >= 60 ANDALSO m <= 3 THEN
+        n_secs = n_secs - 60
+        n_minutes = n_minutes + 1
+    ENDIF
+    IF n_minutes >= 60 ANDALSO m <= 4 THEN
+        n_minutes = n_minutes - 60
+        n_hours = n_hours + 1
+    ENDIF
+    IF n_hours >= 24 ANDALSO m <= 5 THEN
+        n_hours = n_hours - 24
+        n_days = n_days + 1
+    ENDIF
+    IF n_days >= 31 ANDALSO m <= 6 THEN
+        n_days = n_days - 31
+        n_months = n_months + 1
+    ENDIF
+    IF n_months >= 12 ANDALSO m <= 7 THEN
+        n_months = n_months - 12
+        n_years = n_years + 1
+    ENDIF
+    DIM amounts = []
+    PUSH(amounts, CDBL(n_years))
+    PUSH(amounts, CDBL(n_months))
+    PUSH(amounts, CDBL(n_days))
+    PUSH(amounts, CDBL(n_hours))
+    PUSH(amounts, CDBL(n_minutes))
+    PUSH(amounts, CDBL(n_secs))
+    PUSH(amounts, CDBL(n_msecs))
+    PUSH(amounts, CDBL(n_usecs))
+    DIM texts = []
+    DIM k = 0
+    FOR k = 0 TO 7
+        DIM unit = 7 - k
+        DIM amount = amounts[k]
+        IF amount > 0 ORELSE (LEN(texts) = 0 ANDALSO unit = m) THEN
+            DIM plural_n = TowardZero(amount)
+            IF amount > 1 ANDALSO amount < 2 THEN plural_n = 2
+            DIM word$ = UnitWord$(german, unit, plural_n)
+            IF unit = m ANDALSO amount - FLOOR(amount) > 0 THEN
+                PUSH(texts, FORMAT$("{:.2f}", amount) + " " + word$)
+            ELSEIF unit = 7 THEN
+                PUSH(texts, GroupDigits$(TowardZero(amount), german) + " " + word$)
+            ELSE
+                PUSH(texts, IntText$(amount) + " " + word$)
+            ENDIF
+        ENDIF
+        IF unit = m THEN EXITFOR
+    NEXT k
+    IF LEN(texts) = 1 THEN
+        DIM only$ = texts[0]
+        RETURN only$
+    ENDIF
+    DIM head = []
+    FOR k = 0 TO LEN(texts) - 2
+        DIM t$ = texts[k]
+        PUSH(head, t$)
+    NEXT k
+    DIM last$ = texts[LEN(texts) - 1]
+    RETURN JOIN(head, ", ") + Tr$(german, " and ", " und ") + last$
+ENDFUNC
+
+' ── tables ─────────────────────────────────────────────────────
+
+' The ASCII text of the characters U+00A0 to U+017F and of common
+' punctuation, as unidecode writes them: the character alone (for ASCII$)
+' and after compatibility decomposition (for SLUG$).
+gAscii{CHR$(194) + CHR$(160)} = " "
+gAscii{CHR$(194) + CHR$(161)} = "!"
+gAscii{CHR$(194) + CHR$(162)} = "C/"
+gAscii{CHR$(194) + CHR$(163)} = "PS"
+gAscii{CHR$(194) + CHR$(164)} = "$?"
+gAscii{CHR$(194) + CHR$(165)} = "Y="
+gAscii{CHR$(194) + CHR$(166)} = "|"
+gAscii{CHR$(194) + CHR$(167)} = "SS"
+gAscii{CHR$(194) + CHR$(168)} = CHR$(34)
+gSlugAscii{CHR$(194) + CHR$(168)} = " "
+gAscii{CHR$(194) + CHR$(169)} = "(c)"
+gAscii{CHR$(194) + CHR$(170)} = "a"
+gAscii{CHR$(194) + CHR$(171)} = "<<"
+gAscii{CHR$(194) + CHR$(172)} = "!"
+gAscii{CHR$(194) + CHR$(173)} = ""
+gAscii{CHR$(194) + CHR$(174)} = "(r)"
+gAscii{CHR$(194) + CHR$(175)} = "-"
+gSlugAscii{CHR$(194) + CHR$(175)} = " "
+gAscii{CHR$(194) + CHR$(176)} = "deg"
+gAscii{CHR$(194) + CHR$(177)} = "+-"
+gAscii{CHR$(194) + CHR$(178)} = "2"
+gAscii{CHR$(194) + CHR$(179)} = "3"
+gAscii{CHR$(194) + CHR$(180)} = "'"
+gSlugAscii{CHR$(194) + CHR$(180)} = " "
+gAscii{CHR$(194) + CHR$(181)} = "u"
+gSlugAscii{CHR$(194) + CHR$(181)} = "m"
+gAscii{CHR$(194) + CHR$(182)} = "P"
+gAscii{CHR$(194) + CHR$(183)} = "*"
+gAscii{CHR$(194) + CHR$(184)} = ","
+gSlugAscii{CHR$(194) + CHR$(184)} = " "
+gAscii{CHR$(194) + CHR$(185)} = "1"
+gAscii{CHR$(194) + CHR$(186)} = "o"
+gAscii{CHR$(194) + CHR$(187)} = ">>"
+gAscii{CHR$(194) + CHR$(188)} = " 1/4"
+gSlugAscii{CHR$(194) + CHR$(188)} = "1/4"
+gAscii{CHR$(194) + CHR$(189)} = " 1/2"
+gSlugAscii{CHR$(194) + CHR$(189)} = "1/2"
+gAscii{CHR$(194) + CHR$(190)} = " 3/4"
+gSlugAscii{CHR$(194) + CHR$(190)} = "3/4"
+gAscii{CHR$(194) + CHR$(191)} = "?"
+gAscii{CHR$(195) + CHR$(128)} = "A"
+gAscii{CHR$(195) + CHR$(129)} = "A"
+gAscii{CHR$(195) + CHR$(130)} = "A"
+gAscii{CHR$(195) + CHR$(131)} = "A"
+gAscii{CHR$(195) + CHR$(132)} = "A"
+gAscii{CHR$(195) + CHR$(133)} = "A"
+gAscii{CHR$(195) + CHR$(134)} = "AE"
+gAscii{CHR$(195) + CHR$(135)} = "C"
+gAscii{CHR$(195) + CHR$(136)} = "E"
+gAscii{CHR$(195) + CHR$(137)} = "E"
+gAscii{CHR$(195) + CHR$(138)} = "E"
+gAscii{CHR$(195) + CHR$(139)} = "E"
+gAscii{CHR$(195) + CHR$(140)} = "I"
+gAscii{CHR$(195) + CHR$(141)} = "I"
+gAscii{CHR$(195) + CHR$(142)} = "I"
+gAscii{CHR$(195) + CHR$(143)} = "I"
+gAscii{CHR$(195) + CHR$(144)} = "D"
+gAscii{CHR$(195) + CHR$(145)} = "N"
+gAscii{CHR$(195) + CHR$(146)} = "O"
+gAscii{CHR$(195) + CHR$(147)} = "O"
+gAscii{CHR$(195) + CHR$(148)} = "O"
+gAscii{CHR$(195) + CHR$(149)} = "O"
+gAscii{CHR$(195) + CHR$(150)} = "O"
+gAscii{CHR$(195) + CHR$(151)} = "x"
+gAscii{CHR$(195) + CHR$(152)} = "O"
+gAscii{CHR$(195) + CHR$(153)} = "U"
+gAscii{CHR$(195) + CHR$(154)} = "U"
+gAscii{CHR$(195) + CHR$(155)} = "U"
+gAscii{CHR$(195) + CHR$(156)} = "U"
+gAscii{CHR$(195) + CHR$(157)} = "Y"
+gAscii{CHR$(195) + CHR$(158)} = "Th"
+gAscii{CHR$(195) + CHR$(159)} = "ss"
+gAscii{CHR$(195) + CHR$(160)} = "a"
+gAscii{CHR$(195) + CHR$(161)} = "a"
+gAscii{CHR$(195) + CHR$(162)} = "a"
+gAscii{CHR$(195) + CHR$(163)} = "a"
+gAscii{CHR$(195) + CHR$(164)} = "a"
+gAscii{CHR$(195) + CHR$(165)} = "a"
+gAscii{CHR$(195) + CHR$(166)} = "ae"
+gAscii{CHR$(195) + CHR$(167)} = "c"
+gAscii{CHR$(195) + CHR$(168)} = "e"
+gAscii{CHR$(195) + CHR$(169)} = "e"
+gAscii{CHR$(195) + CHR$(170)} = "e"
+gAscii{CHR$(195) + CHR$(171)} = "e"
+gAscii{CHR$(195) + CHR$(172)} = "i"
+gAscii{CHR$(195) + CHR$(173)} = "i"
+gAscii{CHR$(195) + CHR$(174)} = "i"
+gAscii{CHR$(195) + CHR$(175)} = "i"
+gAscii{CHR$(195) + CHR$(176)} = "d"
+gAscii{CHR$(195) + CHR$(177)} = "n"
+gAscii{CHR$(195) + CHR$(178)} = "o"
+gAscii{CHR$(195) + CHR$(179)} = "o"
+gAscii{CHR$(195) + CHR$(180)} = "o"
+gAscii{CHR$(195) + CHR$(181)} = "o"
+gAscii{CHR$(195) + CHR$(182)} = "o"
+gAscii{CHR$(195) + CHR$(183)} = "/"
+gAscii{CHR$(195) + CHR$(184)} = "o"
+gAscii{CHR$(195) + CHR$(185)} = "u"
+gAscii{CHR$(195) + CHR$(186)} = "u"
+gAscii{CHR$(195) + CHR$(187)} = "u"
+gAscii{CHR$(195) + CHR$(188)} = "u"
+gAscii{CHR$(195) + CHR$(189)} = "y"
+gAscii{CHR$(195) + CHR$(190)} = "th"
+gAscii{CHR$(195) + CHR$(191)} = "y"
+gAscii{CHR$(196) + CHR$(128)} = "A"
+gAscii{CHR$(196) + CHR$(129)} = "a"
+gAscii{CHR$(196) + CHR$(130)} = "A"
+gAscii{CHR$(196) + CHR$(131)} = "a"
+gAscii{CHR$(196) + CHR$(132)} = "A"
+gAscii{CHR$(196) + CHR$(133)} = "a"
+gAscii{CHR$(196) + CHR$(134)} = "C"
+gAscii{CHR$(196) + CHR$(135)} = "c"
+gAscii{CHR$(196) + CHR$(136)} = "C"
+gAscii{CHR$(196) + CHR$(137)} = "c"
+gAscii{CHR$(196) + CHR$(138)} = "C"
+gAscii{CHR$(196) + CHR$(139)} = "c"
+gAscii{CHR$(196) + CHR$(140)} = "C"
+gAscii{CHR$(196) + CHR$(141)} = "c"
+gAscii{CHR$(196) + CHR$(142)} = "D"
+gAscii{CHR$(196) + CHR$(143)} = "d"
+gAscii{CHR$(196) + CHR$(144)} = "D"
+gAscii{CHR$(196) + CHR$(145)} = "d"
+gAscii{CHR$(196) + CHR$(146)} = "E"
+gAscii{CHR$(196) + CHR$(147)} = "e"
+gAscii{CHR$(196) + CHR$(148)} = "E"
+gAscii{CHR$(196) + CHR$(149)} = "e"
+gAscii{CHR$(196) + CHR$(150)} = "E"
+gAscii{CHR$(196) + CHR$(151)} = "e"
+gAscii{CHR$(196) + CHR$(152)} = "E"
+gAscii{CHR$(196) + CHR$(153)} = "e"
+gAscii{CHR$(196) + CHR$(154)} = "E"
+gAscii{CHR$(196) + CHR$(155)} = "e"
+gAscii{CHR$(196) + CHR$(156)} = "G"
+gAscii{CHR$(196) + CHR$(157)} = "g"
+gAscii{CHR$(196) + CHR$(158)} = "G"
+gAscii{CHR$(196) + CHR$(159)} = "g"
+gAscii{CHR$(196) + CHR$(160)} = "G"
+gAscii{CHR$(196) + CHR$(161)} = "g"
+gAscii{CHR$(196) + CHR$(162)} = "G"
+gAscii{CHR$(196) + CHR$(163)} = "g"
+gAscii{CHR$(196) + CHR$(164)} = "H"
+gAscii{CHR$(196) + CHR$(165)} = "h"
+gAscii{CHR$(196) + CHR$(166)} = "H"
+gAscii{CHR$(196) + CHR$(167)} = "h"
+gAscii{CHR$(196) + CHR$(168)} = "I"
+gAscii{CHR$(196) + CHR$(169)} = "i"
+gAscii{CHR$(196) + CHR$(170)} = "I"
+gAscii{CHR$(196) + CHR$(171)} = "i"
+gAscii{CHR$(196) + CHR$(172)} = "I"
+gAscii{CHR$(196) + CHR$(173)} = "i"
+gAscii{CHR$(196) + CHR$(174)} = "I"
+gAscii{CHR$(196) + CHR$(175)} = "i"
+gAscii{CHR$(196) + CHR$(176)} = "I"
+gAscii{CHR$(196) + CHR$(177)} = "i"
+gAscii{CHR$(196) + CHR$(178)} = "IJ"
+gAscii{CHR$(196) + CHR$(179)} = "ij"
+gAscii{CHR$(196) + CHR$(180)} = "J"
+gAscii{CHR$(196) + CHR$(181)} = "j"
+gAscii{CHR$(196) + CHR$(182)} = "K"
+gAscii{CHR$(196) + CHR$(183)} = "k"
+gAscii{CHR$(196) + CHR$(184)} = "k"
+gAscii{CHR$(196) + CHR$(185)} = "L"
+gAscii{CHR$(196) + CHR$(186)} = "l"
+gAscii{CHR$(196) + CHR$(187)} = "L"
+gAscii{CHR$(196) + CHR$(188)} = "l"
+gAscii{CHR$(196) + CHR$(189)} = "L"
+gAscii{CHR$(196) + CHR$(190)} = "l"
+gAscii{CHR$(196) + CHR$(191)} = "L"
+gSlugAscii{CHR$(196) + CHR$(191)} = "L*"
+gAscii{CHR$(197) + CHR$(128)} = "l"
+gSlugAscii{CHR$(197) + CHR$(128)} = "l*"
+gAscii{CHR$(197) + CHR$(129)} = "L"
+gAscii{CHR$(197) + CHR$(130)} = "l"
+gAscii{CHR$(197) + CHR$(131)} = "N"
+gAscii{CHR$(197) + CHR$(132)} = "n"
+gAscii{CHR$(197) + CHR$(133)} = "N"
+gAscii{CHR$(197) + CHR$(134)} = "n"
+gAscii{CHR$(197) + CHR$(135)} = "N"
+gAscii{CHR$(197) + CHR$(136)} = "n"
+gAscii{CHR$(197) + CHR$(137)} = "'n"
+gAscii{CHR$(197) + CHR$(138)} = "NG"
+gAscii{CHR$(197) + CHR$(139)} = "ng"
+gAscii{CHR$(197) + CHR$(140)} = "O"
+gAscii{CHR$(197) + CHR$(141)} = "o"
+gAscii{CHR$(197) + CHR$(142)} = "O"
+gAscii{CHR$(197) + CHR$(143)} = "o"
+gAscii{CHR$(197) + CHR$(144)} = "O"
+gAscii{CHR$(197) + CHR$(145)} = "o"
+gAscii{CHR$(197) + CHR$(146)} = "OE"
+gAscii{CHR$(197) + CHR$(147)} = "oe"
+gAscii{CHR$(197) + CHR$(148)} = "R"
+gAscii{CHR$(197) + CHR$(149)} = "r"
+gAscii{CHR$(197) + CHR$(150)} = "R"
+gAscii{CHR$(197) + CHR$(151)} = "r"
+gAscii{CHR$(197) + CHR$(152)} = "R"
+gAscii{CHR$(197) + CHR$(153)} = "r"
+gAscii{CHR$(197) + CHR$(154)} = "S"
+gAscii{CHR$(197) + CHR$(155)} = "s"
+gAscii{CHR$(197) + CHR$(156)} = "S"
+gAscii{CHR$(197) + CHR$(157)} = "s"
+gAscii{CHR$(197) + CHR$(158)} = "S"
+gAscii{CHR$(197) + CHR$(159)} = "s"
+gAscii{CHR$(197) + CHR$(160)} = "S"
+gAscii{CHR$(197) + CHR$(161)} = "s"
+gAscii{CHR$(197) + CHR$(162)} = "T"
+gAscii{CHR$(197) + CHR$(163)} = "t"
+gAscii{CHR$(197) + CHR$(164)} = "T"
+gAscii{CHR$(197) + CHR$(165)} = "t"
+gAscii{CHR$(197) + CHR$(166)} = "T"
+gAscii{CHR$(197) + CHR$(167)} = "t"
+gAscii{CHR$(197) + CHR$(168)} = "U"
+gAscii{CHR$(197) + CHR$(169)} = "u"
+gAscii{CHR$(197) + CHR$(170)} = "U"
+gAscii{CHR$(197) + CHR$(171)} = "u"
+gAscii{CHR$(197) + CHR$(172)} = "U"
+gAscii{CHR$(197) + CHR$(173)} = "u"
+gAscii{CHR$(197) + CHR$(174)} = "U"
+gAscii{CHR$(197) + CHR$(175)} = "u"
+gAscii{CHR$(197) + CHR$(176)} = "U"
+gAscii{CHR$(197) + CHR$(177)} = "u"
+gAscii{CHR$(197) + CHR$(178)} = "U"
+gAscii{CHR$(197) + CHR$(179)} = "u"
+gAscii{CHR$(197) + CHR$(180)} = "W"
+gAscii{CHR$(197) + CHR$(181)} = "w"
+gAscii{CHR$(197) + CHR$(182)} = "Y"
+gAscii{CHR$(197) + CHR$(183)} = "y"
+gAscii{CHR$(197) + CHR$(184)} = "Y"
+gAscii{CHR$(197) + CHR$(185)} = "Z"
+gAscii{CHR$(197) + CHR$(186)} = "z"
+gAscii{CHR$(197) + CHR$(187)} = "Z"
+gAscii{CHR$(197) + CHR$(188)} = "z"
+gAscii{CHR$(197) + CHR$(189)} = "Z"
+gAscii{CHR$(197) + CHR$(190)} = "z"
+gAscii{CHR$(197) + CHR$(191)} = "s"
+gAscii{CHR$(226) + CHR$(128) + CHR$(137)} = " "
+gAscii{CHR$(226) + CHR$(128) + CHR$(139)} = " "
+gAscii{CHR$(226) + CHR$(128) + CHR$(144)} = "-"
+gAscii{CHR$(226) + CHR$(128) + CHR$(145)} = "-"
+gAscii{CHR$(226) + CHR$(128) + CHR$(146)} = "-"
+gAscii{CHR$(226) + CHR$(128) + CHR$(147)} = "-"
+gAscii{CHR$(226) + CHR$(128) + CHR$(148)} = "--"
+gAscii{CHR$(226) + CHR$(128) + CHR$(149)} = "--"
+gAscii{CHR$(226) + CHR$(128) + CHR$(152)} = "'"
+gAscii{CHR$(226) + CHR$(128) + CHR$(153)} = "'"
+gAscii{CHR$(226) + CHR$(128) + CHR$(154)} = ","
+gAscii{CHR$(226) + CHR$(128) + CHR$(156)} = CHR$(34)
+gAscii{CHR$(226) + CHR$(128) + CHR$(157)} = CHR$(34)
+gAscii{CHR$(226) + CHR$(128) + CHR$(158)} = ",,"
+gAscii{CHR$(226) + CHR$(128) + CHR$(160)} = "+"
+gAscii{CHR$(226) + CHR$(128) + CHR$(161)} = "++"
+gAscii{CHR$(226) + CHR$(128) + CHR$(162)} = "*"
+gAscii{CHR$(226) + CHR$(128) + CHR$(166)} = "..."
+gAscii{CHR$(226) + CHR$(128) + CHR$(175)} = " "
+gAscii{CHR$(226) + CHR$(128) + CHR$(176)} = "%0"
+gAscii{CHR$(226) + CHR$(128) + CHR$(178)} = "'"
+gAscii{CHR$(226) + CHR$(128) + CHR$(179)} = "''"
+gAscii{CHR$(226) + CHR$(128) + CHR$(185)} = "<"
+gAscii{CHR$(226) + CHR$(128) + CHR$(186)} = ">"
+gAscii{CHR$(226) + CHR$(130) + CHR$(172)} = "EUR"
+gAscii{CHR$(226) + CHR$(132) + CHR$(162)} = "(tm)"
+gSlugAscii{CHR$(226) + CHR$(132) + CHR$(162)} = "TM"
+gAscii{CHR$(226) + CHR$(134) + CHR$(144)} = "-"
+gAscii{CHR$(226) + CHR$(134) + CHR$(146)} = "-"
+gAscii{CHR$(226) + CHR$(136) + CHR$(146)} = "-"

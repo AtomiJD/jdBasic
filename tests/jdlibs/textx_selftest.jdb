@@ -1,0 +1,165 @@
+' TEXTX: wrap, fill, shorten, dedent and indent against Python's textwrap,
+' slugs and transliteration against python-slugify 9 and Unidecode 1.4, and
+' sizes, numbers, ordinals and durations in English and German against
+' humanize 4.16, from the reference tables in fixtures/textx_*.tsv.
+
+IMPORT TESTKIT, TEXTX
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "textx_wrap.tsv") THEN base$ = "fixtures/"
+DIM TB$ = CHR$(9)
+DIM LF$ = CHR$(10)
+
+FUNC RowsOf(path$)
+    DIM out = []
+    DIM rows = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r$ = rows[k]
+        IF r$ <> "" ANDALSO LEFT$(r$, 1) <> "#" THEN PUSH(out, r$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Unescape$(s$)
+    DIM bs$ = CHR$(92)
+    RETURN REPLACE$(REPLACE$(REPLACE$(s$, bs$ + "t", CHR$(9)), bs$ + "n", CHR$(10)), bs$ + "r", CHR$(13))
+ENDFUNC
+
+FUNC FieldOf$(cols, i)
+    IF i >= LEN(cols) THEN RETURN ""
+    DIM f$ = cols[i]
+    RETURN Unescape$(f$)
+ENDFUNC
+
+FUNC BadWidth(x)
+    RETURN TEXTX.WRAP("abc", 0)
+ENDFUNC
+
+FUNC BadPlaceholder(x)
+    RETURN TEXTX.SHORTEN$("abcdef", 3)
+ENDFUNC
+
+FUNC BadLanguage(x)
+    RETURN TEXTX.ORDINAL$(1, "fr")
+ENDFUNC
+
+FUNC BadStyle(x)
+    RETURN TEXTX.FILESIZE$(1, "si")
+ENDFUNC
+
+FUNC BadUnit(x)
+    RETURN TEXTX.PRECISE$(1, "en", "weeks")
+ENDFUNC
+
+TESTKIT.SUITE("textwrap")
+DIM wrap_rows = RowsOf(base$ + "textx_wrap.tsv")
+DIM i = 0
+DIM counted = 0
+FOR i = 0 TO LEN(wrap_rows) - 1
+    DIM wrap_text$ = wrap_rows[i]
+    DIM wc = SPLIT(wrap_text$, TB$)
+    DIM kind$ = FieldOf$(wc, 0)
+    DIM arg$ = FieldOf$(wc, 1)
+    DIM extra$ = FieldOf$(wc, 2)
+    DIM input$ = FieldOf$(wc, 3)
+    DIM want$ = FieldOf$(wc, 4)
+    DIM label$ = kind$ + " " + arg$ + " '" + LEFT$(REPLACE$(input$, LF$, "|"), 30) + "'"
+    IF kind$ = "wrap" THEN
+        DIM got_lines = TEXTX.WRAP(input$, CINT(VAL(arg$)))
+        DIM joined$ = ""
+        IF LEN(got_lines) > 0 THEN joined$ = JOIN(got_lines, LF$)
+        TESTKIT.EQ(joined$, want$, label$)
+        TESTKIT.EQ(TEXTX.FILL$(input$, CINT(VAL(arg$))), want$, label$ + " fill")
+    ELSEIF kind$ = "shorten" THEN
+        TESTKIT.EQ(TEXTX.SHORTEN$(input$, CINT(VAL(arg$)), extra$), want$, label$)
+    ELSEIF kind$ = "dedent" THEN
+        TESTKIT.EQ(TEXTX.DEDENT$(input$), want$, label$)
+    ELSEIF kind$ = "indent" THEN
+        TESTKIT.EQ(TEXTX.INDENT$(input$, arg$), want$, label$)
+    ENDIF
+    counted = counted + 1
+NEXT i
+TESTKIT.EQ(counted, 40, "40 reference rows")
+TESTKIT.EQ(TEXTX.FILL$("one two three"), "one two three", "70 characters by default")
+TESTKIT.THROWS(BadWidth@, 1, "a width of 0 is refused")
+TESTKIT.THROWS(BadPlaceholder@, 1, "a placeholder wider than the line is refused")
+
+TESTKIT.SUITE("characters")
+TESTKIT.EQ(TEXTX.LENGTH("Grüße"), 5, "five characters in seven bytes")
+TESTKIT.EQ(TEXTX.LENGTH(""), 0, "nothing")
+TESTKIT.EQ(TEXTX.HEAD$("Grüße", 3), "Grü", "the first three")
+TESTKIT.EQ(TEXTX.HEAD$("Grüße", 9), "Grüße", "more than there is")
+TESTKIT.EQ(TEXTX.TAIL$("Grüße", 2), "ße", "the last two")
+TESTKIT.EQ(TEXTX.SLICE$("Grüße aus Köln", 10, 4), "Köln", "a slice from position 10")
+TESTKIT.EQ(TEXTX.SLICE$("Grüße", 3, 10), "ße", "a slice running past the end")
+TESTKIT.EQ(TEXTX.ELLIPSIS$("Grüße aus Köln", 10), "Grüße aus…", "cut with an ellipsis")
+TESTKIT.EQ(TEXTX.ELLIPSIS$("Grüße aus Köln", 7, "..."), "Grüß...", "with three dots")
+TESTKIT.EQ(TEXTX.ELLIPSIS$("kurz", 10), "kurz", "short enough")
+
+TESTKIT.SUITE("slugs and ASCII")
+DIM slug_rows = RowsOf(base$ + "textx_slug.tsv")
+DIM slugs = 0
+FOR i = 0 TO LEN(slug_rows) - 1
+    DIM slug_text$ = slug_rows[i]
+    DIM sc = SPLIT(slug_text$, TB$)
+    DIM skind$ = FieldOf$(sc, 0)
+    DIM german = CINT(VAL(FieldOf$(sc, 1)))
+    DIM sep$ = FieldOf$(sc, 2)
+    DIM max_n = CINT(VAL(FieldOf$(sc, 3)))
+    DIM sinput$ = FieldOf$(sc, 4)
+    DIM swant$ = FieldOf$(sc, 5)
+    IF skind$ = "slug" THEN
+        TESTKIT.EQ(TEXTX.SLUG$(sinput$, sep$, max_n, german), swant$, "slug german " + STR$(german) + " '" + sinput$ + "'")
+    ELSE
+        TESTKIT.EQ(TEXTX.ASCII$(sinput$, german), swant$, "ascii german " + STR$(german) + " '" + sinput$ + "'")
+    ENDIF
+    slugs = slugs + 1
+NEXT i
+TESTKIT.EQ(slugs, 45, "45 reference rows")
+
+TESTKIT.SUITE("human forms")
+' Three rows differ from humanize 4.16 where it is wrong: its German
+' catalogue writes one year and one month as if it were one month and leaves
+' milliseconds untranslated, and precisedelta with years as the smallest
+' unit appends the rest as raw microseconds. The rows carry the full phrase,
+' the German unit and the years alone.
+DIM human_rows = RowsOf(base$ + "textx_human.tsv")
+DIM humans = 0
+FOR i = 0 TO LEN(human_rows) - 1
+    DIM human_text$ = human_rows[i]
+    DIM hc = SPLIT(human_text$, TB$)
+    DIM hkind$ = FieldOf$(hc, 0)
+    DIM lang$ = FieldOf$(hc, 1)
+    DIM value$ = FieldOf$(hc, 2)
+    DIM hwant$ = FieldOf$(hc, 3)
+    DIM v = VAL(value$)
+    DIM hlabel$ = hkind$ + " " + lang$ + " " + value$
+    IF hkind$ = "filesize" THEN
+        TESTKIT.EQ(TEXTX.FILESIZE$(v, lang$), hwant$, hlabel$)
+    ELSEIF hkind$ = "intcomma" THEN
+        TESTKIT.EQ(TEXTX.INTCOMMA$(v, lang$), hwant$, hlabel$)
+    ELSEIF hkind$ = "intword" THEN
+        TESTKIT.EQ(TEXTX.INTWORD$(v, lang$), hwant$, hlabel$)
+    ELSEIF hkind$ = "ordinal" THEN
+        TESTKIT.EQ(TEXTX.ORDINAL$(v, lang$), hwant$, hlabel$)
+    ELSEIF hkind$ = "duration" THEN
+        TESTKIT.EQ(TEXTX.DURATION$(v, lang$), hwant$, hlabel$)
+    ELSEIF hkind$ = "relative0" THEN
+        TESTKIT.EQ(TEXTX.RELATIVE$(v, lang$), hwant$, hlabel$)
+    ELSEIF hkind$ = "relative1" THEN
+        TESTKIT.EQ(TEXTX.RELATIVE$(v, lang$, 1), hwant$, hlabel$)
+    ELSE
+        DIM unit$ = MID$(hkind$, 8, LEN(hkind$))
+        TESTKIT.EQ(TEXTX.PRECISE$(v, lang$, unit$), hwant$, hlabel$)
+    ENDIF
+    humans = humans + 1
+NEXT i
+TESTKIT.EQ(humans, 382, "382 reference rows")
+TESTKIT.EQ(TEXTX.RELATIVE$(3600), "an hour ago", "English by default")
+TESTKIT.EQ(TEXTX.PRECISE$(3725, "DE-de"), "1 Stunde, 2 Minuten und 5 Sekunden", "a language in any spelling")
+TESTKIT.THROWS(BadLanguage@, 1, "an unknown language is refused")
+TESTKIT.THROWS(BadStyle@, 1, "an unknown size style is refused")
+TESTKIT.THROWS(BadUnit@, 1, "an unknown time unit is refused")
+
+TESTKIT.REPORT()

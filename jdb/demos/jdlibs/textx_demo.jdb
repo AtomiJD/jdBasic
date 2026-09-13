@@ -1,0 +1,82 @@
+' textx_demo.jdb - the small text jobs of a report: a paragraph wrapped for
+' two widths and shortened for a list, page addresses made from titles, and
+' the sizes, counts, ranks and ages of a backup shown the way people read
+' them, in English and German.
+'
+'   jdBasic textx_demo.jdb
+
+IMPORT TEXTX, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM LF$ = CHR$(10)
+
+' ── wrapping ───────────────────────────────────────────────────
+
+CONSOLE.RULE("wrapping")
+DIM notice$ = "The office stays closed on Friday, 3 October. Orders placed after Wednesday noon ship on Monday; urgent deliveries can be arranged by phone. Straßenbahn-Linie 12 stops right outside."
+PRINT "  40 characters:"
+PRINT TEXTX.INDENT$(TEXTX.FILL$(notice$, 40), "    | ")
+PRINT ""
+PRINT "  24 characters:"
+PRINT TEXTX.INDENT$(TEXTX.FILL$(notice$, 24), "    | ")
+PRINT ""
+PRINT "  for a list: "; TEXTX.SHORTEN$(notice$, 50)
+PRINT "  with an ellipsis: "; TEXTX.SHORTEN$(notice$, 50, " …")
+PRINT "  a hard cut: "; TEXTX.ELLIPSIS$("Straßenbahn-Linie 12 stops right outside", 16)
+PRINT ""
+
+' ── slugs ──────────────────────────────────────────────────────
+
+CONSOLE.RULE("page addresses")
+DIM titles = ["Grüße aus Köln: Äpfel & Öl für 5 €", "It's a dog's life", "Crème brûlée à la française", "Straße 12 – Umbau 2026", "Tom &amp; Jerry"]
+DIM slug_rows = []
+DIM i = 0
+FOR i = 0 TO LEN(titles) - 1
+    DIM title$ = titles[i]
+    DIM slug_row = []
+    PUSH(slug_row, TEXTX.ELLIPSIS$(title$, 30))
+    PUSH(slug_row, TEXTX.SLUG$(title$))
+    PUSH(slug_row, TEXTX.SLUG$(title$, "-", 0, 1))
+    PUSH(slug_rows, slug_row)
+NEXT i
+CONSOLE.TABLE(slug_rows, {"headers": ["title", "slug", "German spelling"], "border": "plain"})
+PRINT ""
+PRINT "  ASCII: "; TEXTX.ASCII$("Łódź, Ærøskøbing, São Paulo, Müller-Lüdenscheidt")
+PRINT ""
+
+' ── human forms ────────────────────────────────────────────────
+
+CONSOLE.RULE("backup report")
+DIM names = ["database.sqlite", "photos.tar", "invoices.zip", "notes.txt"]
+DIM sizes = [734003200, 48318382080, 2400000, 1843]
+DIM file_rows = []
+FOR i = 0 TO LEN(names) - 1
+    DIM file$ = names[i]
+    DIM size_n = sizes[i]
+    DIM file_row = []
+    PUSH(file_row, file$)
+    PUSH(file_row, TEXTX.INTCOMMA$(size_n))
+    PUSH(file_row, TEXTX.FILESIZE$(size_n))
+    PUSH(file_row, TEXTX.FILESIZE$(size_n, "binary"))
+    PUSH(file_rows, file_row)
+NEXT i
+CONSOLE.TABLE(file_rows, {"headers": ["file", "bytes", "size", "binary"], "border": "plain"})
+PRINT ""
+
+DIM langs = ["en", "de"]
+DIM lang_rows = []
+DIM j = 0
+FOR j = 0 TO LEN(langs) - 1
+    DIM lang$ = langs[j]
+    DIM lang_row = []
+    PUSH(lang_row, lang$)
+    PUSH(lang_row, TEXTX.INTWORD$(1234567, lang$) + " rows")
+    PUSH(lang_row, TEXTX.ORDINAL$(3, lang$) + " run")
+    PUSH(lang_row, TEXTX.RELATIVE$(5400, lang$))
+    PUSH(lang_row, TEXTX.DURATION$(40000000, lang$))
+    PUSH(lang_rows, lang_row)
+NEXT j
+CONSOLE.TABLE(lang_rows, {"headers": ["", "rows", "rank", "last run", "kept for"], "border": "plain"})
+PRINT ""
+PRINT "  took "; TEXTX.PRECISE$(3725.5); ", "; TEXTX.PRECISE$(3725.5, "de", "minutes")
+PRINT ""

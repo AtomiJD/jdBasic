@@ -1,0 +1,41 @@
+# kind	arg	extra	input	expected (lines joined by \n)
+wrap	30		The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs, sphinx of black quartz judge my vow.	The quick brown fox jumps over\nthe lazy dog. Pack my box with\nfive dozen liquor jugs, sphinx\nof black quartz judge my vow.
+wrap	70		The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs, sphinx of black quartz judge my vow.	The quick brown fox jumps over the lazy dog. Pack my box with five\ndozen liquor jugs, sphinx of black quartz judge my vow.
+wrap	12		The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs, sphinx of black quartz judge my vow.	The quick\nbrown fox\njumps over\nthe lazy\ndog. Pack my\nbox with\nfive dozen\nliquor jugs,\nsphinx of\nblack quartz\njudge my\nvow.
+wrap	10		Look, goof-ball -- use the -b option!	Look,\ngoof-ball\n-- use the\n-b option!
+wrap	15		Look, goof-ball -- use the -b option!	Look, goof-ball\n-- use the -b\noption!
+wrap	10		supercalifragilisticexpialidocious word	supercalif\nragilistic\nexpialidoc\nious word
+wrap	12		self-contained well-known x-ray a-b-c e-mail --dash-- end	self-\ncontained\nwell-known\nx-ray a-b-c\ne-mail\n--dash-- end
+wrap	20		a\tb\tc  d\ne	a       b       c  d\ne
+wrap	10		   leading spaces and  double  spaces 	   leading\nspaces and\ndouble\nspaces
+wrap	1		ab cd	a\nb\nc\nd
+wrap	10			
+wrap	10		     	
+wrap	20		Grüße aus der Stadtverwaltung Musterstadt an alle Bürgerinnen und Bürger	Grüße aus der\nStadtverwaltung\nMusterstadt an alle\nBürgerinnen und\nBürger
+wrap	14		hyphen-at-the-very-long-end-of-a-word-that-goes-on	hyphen-at-the-\nvery-long-end-\nof-a-word-\nthat-goes-on
+wrap	20		Hello there -- you goof-ball, use the -b option!	Hello there -- you\ngoof-ball, use the\n-b option!
+wrap	9		one two three four five six seven eight nine ten	one two\nthree\nfour five\nsix seven\neight\nnine ten
+wrap	6		x---y long--dash wo--rd	x---y\nlong--\ndash\nwo--rd
+shorten	12	 [...]	Hello  world!	Hello world!
+shorten	11	 [...]	Hello  world!	Hello [...]
+shorten	40	 [...]	The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs, sphinx of black quartz judge my vow.	The quick brown fox jumps over the [...]
+shorten	40	…	The quick brown fox jumps over the lazy dog. Pack my box with five dozen liquor jugs, sphinx of black quartz judge my vow.	The quick brown fox jumps over the lazy…
+shorten	10	 [...]	tiny	tiny
+shorten	14	 [...]	  lots   of\n\tspace   here  	lots of [...]
+shorten	20	…	Grüße aus Köln und Düsseldorf	Grüße aus Köln und…
+shorten	10	 [...]	Supercalifragilistic	[...]
+shorten	9	 [...]	word word word word word 	[...]
+dedent			    a\n      b\n\n    c	a\n  b\n\nc
+dedent			\tx\n\ty	x\ny
+dedent			  a\n\tb	  a\n\tb
+dedent			   \n  hello\n    world\n  	\nhello\n  world\n
+dedent			no indent\n  here	no indent\n  here
+dedent			  x	x
+dedent				
+dedent			\n\n	\n\n
+indent	> 		a\n\nb\n	> a\n\n> b\n
+indent	  		a\r\nb	  a\r\n  b
+indent	# 		  \nx	  \n# x
+indent	-- 		single	-- single
+indent	> 			
+indent	>		x\ry\n	>x\r>y\n

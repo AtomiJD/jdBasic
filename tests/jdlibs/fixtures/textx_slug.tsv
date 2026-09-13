@@ -1,0 +1,46 @@
+# kind	german	sep	max_len	input	expected
+slug	0	-	0	Grüße aus Köln: Äpfel & Öl für 5€ – „Städte“	grusse-aus-koln-apfel-ol-fur-5eur-stadte
+slug	1	-	0	Grüße aus Köln: Äpfel & Öl für 5€ – „Städte“	gruesse-aus-koeln-aepfel-oel-fuer-5eur-staedte
+slug	0	-	0	Hello World	hello-world
+slug	1	-	0	Hello World	hello-world
+slug	0	-	0	It's a dog's life	it-s-a-dog-s-life
+slug	1	-	0	It's a dog's life	it-s-a-dog-s-life
+slug	0	-	0	Tom &amp; Jerry	tom-jerry
+slug	1	-	0	Tom &amp; Jerry	tom-jerry
+slug	0	-	0	1,000,000 Dollars	1000000-dollars
+slug	1	-	0	1,000,000 Dollars	1000000-dollars
+slug	0	-	0	Ærøskøbing Łódź	aeroskobing-lodz
+slug	1	-	0	Ærøskøbing Łódź	aeroskobing-lodz
+slug	0	-	0	  --Foo__Bar--  	foo-bar
+slug	1	-	0	  --Foo__Bar--  	foo-bar
+slug	0	-	0	C'est déjà l'été	c-est-deja-l-ete
+slug	1	-	0	C'est déjà l'été	c-est-deja-l-ete
+slug	0	-	0	Straße 12 – Köln	strasse-12-koln
+slug	1	-	0	Straße 12 – Köln	strasse-12-koeln
+slug	0	-	0	10 € für ½ Kilo	10-eur-fur-1-2-kilo
+slug	1	-	0	10 € für ½ Kilo	10-eur-fuer-1-2-kilo
+slug	0	-	0	™ Brand® ©2024	tm-brand-r-c-2024
+slug	1	-	0	™ Brand® ©2024	tm-brand-r-c-2024
+slug	0	-	0	the quick brown fox jumps	the-quick-brown-fox-jumps
+slug	1	-	0	the quick brown fox jumps	the-quick-brown-fox-jumps
+slug	0	-	0	Über² µ-Meter	uber2-m-meter
+slug	1	-	0	Über² µ-Meter	ueber2-m-meter
+slug	0	-	0	a&#39;b &lt;tag&gt;	ab-tag
+slug	1	-	0	a&#39;b &lt;tag&gt;	ab-tag
+slug	0	-	0		
+slug	1	-	0		
+slug	0	-	12	the quick brown fox jumps	the-quick-br
+slug	0	_	0	the quick brown fox jumps	the_quick_brown_fox_jumps
+slug	0	_	9	the quick brown fox jumps	the_quick
+slug	0	.	0	Grüße aus Köln	grusse.aus.koln
+slug	0		0	Hello World	helloworld
+ascii	0		0	ÄÖÜäöüß æøå œ Łódź € “q” … © ½	AOUaouss aeoa oe Lodz EUR "q" ... (c)  1/2
+ascii	1		0	ÄÖÜäöüß æøå œ Łódź € “q” … © ½	AeOeUeaeoeuess aeoa oe Lodz EUR "q" ... (c)  1/2
+ascii	0		0	Crème brûlée à la française	Creme brulee a la francaise
+ascii	1		0	Crème brûlée à la française	Creme brulee a la francaise
+ascii	0		0	naïve façade Mañana	naive facade Manana
+ascii	1		0	naïve façade Mañana	naive facade Manana
+ascii	0		0	Müller-Lüdenscheidt § 12	Muller-Ludenscheidt SS 12
+ascii	1		0	Müller-Lüdenscheidt § 12	Mueller-Luedenscheidt SS 12
+ascii	0		0	plain ASCII stays	plain ASCII stays
+ascii	1		0	plain ASCII stays	plain ASCII stays

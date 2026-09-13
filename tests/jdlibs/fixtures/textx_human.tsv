@@ -1,0 +1,383 @@
+# kind	lang or style	value	expected
+filesize	decimal	0	0 Bytes
+filesize	binary	0	0 Bytes
+filesize	gnu	0	0B
+filesize	decimal	1	1 Byte
+filesize	binary	1	1 Byte
+filesize	gnu	1	1B
+filesize	decimal	-1	-1 Byte
+filesize	binary	-1	-1 Byte
+filesize	gnu	-1	-1B
+filesize	decimal	999	999 Bytes
+filesize	binary	999	999 Bytes
+filesize	gnu	999	999B
+filesize	decimal	1000	1.0 kB
+filesize	binary	1000	1000 Bytes
+filesize	gnu	1000	1000B
+filesize	decimal	1023	1.0 kB
+filesize	binary	1023	1023 Bytes
+filesize	gnu	1023	1023B
+filesize	decimal	1024	1.0 kB
+filesize	binary	1024	1.0 KiB
+filesize	gnu	1024	1.0K
+filesize	decimal	1234	1.2 kB
+filesize	binary	1234	1.2 KiB
+filesize	gnu	1234	1.2K
+filesize	decimal	999999	1.0 MB
+filesize	binary	999999	976.6 KiB
+filesize	gnu	999999	976.6K
+filesize	decimal	1000000	1.0 MB
+filesize	binary	1000000	976.6 KiB
+filesize	gnu	1000000	976.6K
+filesize	decimal	1500000	1.5 MB
+filesize	binary	1500000	1.4 MiB
+filesize	gnu	1500000	1.4M
+filesize	decimal	3000000000	3.0 GB
+filesize	binary	3000000000	2.8 GiB
+filesize	gnu	3000000000	2.8G
+filesize	decimal	1000000000000000	1.0 PB
+filesize	binary	1000000000000000	909.5 TiB
+filesize	gnu	1000000000000000	909.5T
+filesize	decimal	-4096	-4.1 kB
+filesize	binary	-4096	-4.0 KiB
+filesize	gnu	-4096	-4.0K
+filesize	decimal	1099511627776	1.1 TB
+filesize	binary	1099511627776	1.0 TiB
+filesize	gnu	1099511627776	1.0T
+filesize	decimal	999.9	999 Bytes
+filesize	binary	999.9	999 Bytes
+filesize	gnu	999.9	999B
+intcomma	en	0	0
+intcomma	en	100	100
+intcomma	en	1000	1,000
+intcomma	en	-1234567	-1,234,567
+intcomma	en	3000000000	3,000,000,000
+intcomma	en	999999	999,999
+intword	en	0	0
+intword	en	999	999
+intword	en	1000	1.0 thousand
+intword	en	12400	12.4 thousand
+intword	en	999950	1.0 million
+intword	en	1000000	1.0 million
+intword	en	1234567	1.2 million
+intword	en	1500000	1.5 million
+intword	en	999999999	1.0 billion
+intword	en	1200000000	1.2 billion
+intword	en	3000000000000	3.0 trillion
+intword	en	1000000000000000	1.0 quadrillion
+intword	en	2000000000000000000	2.0 quintillion
+intword	en	-1500000	-1.5 million
+intword	en	1049999	1.0 million
+ordinal	en	0	0th
+ordinal	en	1	1st
+ordinal	en	2	2nd
+ordinal	en	3	3rd
+ordinal	en	4	4th
+ordinal	en	11	11th
+ordinal	en	12	12th
+ordinal	en	13	13th
+ordinal	en	21	21st
+ordinal	en	22	22nd
+ordinal	en	23	23rd
+ordinal	en	101	101st
+ordinal	en	111	111th
+ordinal	en	112	112th
+ordinal	en	1002	1002nd
+ordinal	en	-1	-1th
+duration	en	0	a moment
+duration	en	0.4	a moment
+duration	en	1	a second
+duration	en	2	2 seconds
+duration	en	45	45 seconds
+duration	en	59	59 seconds
+duration	en	60	a minute
+duration	en	89	a minute
+duration	en	90	2 minutes
+duration	en	150	2 minutes
+duration	en	3599	an hour
+duration	en	3600	an hour
+duration	en	5400	2 hours
+duration	en	9000	2 hours
+duration	en	86399	a day
+duration	en	86400	a day
+duration	en	172800	2 days
+duration	en	1296000	15 days
+duration	en	2592000	a month
+duration	en	2678400	a month
+duration	en	15552000	6 months
+duration	en	31536000	a year
+duration	en	31622400	1 year, 1 day
+duration	en	32400000	1 year, 10 days
+duration	en	34128000	1 year, 1 month
+duration	en	39420000	1 year, 3 months
+duration	en	63072000	2 years
+duration	en	94608000	3 years
+duration	en	32000000000.0	1,014 years
+duration	en	-3600	an hour
+relative0	en	0	now
+relative1	en	0	now
+relative0	en	0.4	now
+relative1	en	0.4	now
+relative0	en	0.5	now
+relative1	en	0.5	now
+relative0	en	1.5	2 seconds ago
+relative1	en	1.5	2 seconds from now
+relative0	en	2.5	2 seconds ago
+relative1	en	2.5	2 seconds from now
+relative0	en	45	45 seconds ago
+relative1	en	45	45 seconds from now
+relative0	en	90	2 minutes ago
+relative1	en	90	2 minutes from now
+relative0	en	3600	an hour ago
+relative1	en	3600	an hour from now
+relative0	en	86400	a day ago
+relative1	en	86400	a day from now
+relative0	en	604800	7 days ago
+relative1	en	604800	7 days from now
+relative0	en	31536000	a year ago
+relative1	en	31536000	a year from now
+precise_seconds	en	0	0 seconds
+precise_minutes	en	0	0 minutes
+precise_hours	en	0	0 hours
+precise_days	en	0	0 days
+precise_years	en	0	0 years
+precise_milliseconds	en	0	0 milliseconds
+precise_seconds	en	1	1 second
+precise_minutes	en	1	0.02 minutes
+precise_hours	en	1	0 hours
+precise_days	en	1	0 days
+precise_years	en	1	0 years
+precise_milliseconds	en	1	1 second
+precise_seconds	en	1.5	1.50 seconds
+precise_minutes	en	1.5	0.02 minutes
+precise_hours	en	1.5	0 hours
+precise_days	en	1.5	0 days
+precise_years	en	1.5	0 years
+precise_milliseconds	en	1.5	1 second and 500 milliseconds
+precise_seconds	en	45.123	45.12 seconds
+precise_minutes	en	45.123	0.75 minutes
+precise_hours	en	45.123	0.01 hours
+precise_days	en	45.123	0 days
+precise_years	en	45.123	0 years
+precise_milliseconds	en	45.123	45 seconds and 123 milliseconds
+precise_seconds	en	3725	1 hour, 2 minutes and 5 seconds
+precise_minutes	en	3725	1 hour and 2.08 minutes
+precise_hours	en	3725	1.03 hours
+precise_days	en	3725	0.04 days
+precise_years	en	3725	0 years
+precise_milliseconds	en	3725	1 hour, 2 minutes and 5 seconds
+precise_seconds	en	176433.123	2 days, 1 hour and 33.12 seconds
+precise_minutes	en	176433.123	2 days, 1 hour and 0.55 minutes
+precise_hours	en	176433.123	2 days and 1.01 hours
+precise_days	en	176433.123	2.04 days
+precise_years	en	176433.123	0.01 years
+precise_milliseconds	en	176433.123	2 days, 1 hour, 33 seconds and 123 milliseconds
+precise_seconds	en	90.0001	1 minute and 30 seconds
+precise_minutes	en	90.0001	1.50 minutes
+precise_hours	en	90.0001	0.03 hours
+precise_days	en	90.0001	0 days
+precise_years	en	90.0001	0 years
+precise_milliseconds	en	90.0001	1 minute, 30 seconds and 0.10 milliseconds
+precise_seconds	en	34560000	1 year, 1 month and 4 days
+precise_minutes	en	34560000	1 year, 1 month and 4 days
+precise_hours	en	34560000	1 year, 1 month and 4 days
+precise_days	en	34560000	1 year, 1 month and 4 days
+precise_years	en	34560000	1.10 years
+precise_milliseconds	en	34560000	1 year, 1 month and 4 days
+precise_seconds	en	2678400	1 month
+precise_minutes	en	2678400	1 month
+precise_hours	en	2678400	1 month
+precise_days	en	2678400	1 month
+precise_years	en	2678400	0.08 years
+precise_milliseconds	en	2678400	1 month
+precise_seconds	en	59.999	1 minute
+precise_minutes	en	59.999	0.98 minutes
+precise_hours	en	59.999	0.02 hours
+precise_days	en	59.999	0 days
+precise_years	en	59.999	0 years
+precise_milliseconds	en	59.999	59 seconds and 999 milliseconds
+precise_seconds	en	3599.999	1 hour
+precise_minutes	en	3599.999	59.98 minutes
+precise_hours	en	3599.999	1 hour
+precise_days	en	3599.999	0.04 days
+precise_years	en	3599.999	0 years
+precise_milliseconds	en	3599.999	59 minutes, 59 seconds and 999 milliseconds
+precise_seconds	en	78840000.0	2 years, 5 months, 29 days and 12 hours
+precise_minutes	en	78840000.0	2 years, 5 months, 29 days and 12 hours
+precise_hours	en	78840000.0	2 years, 5 months, 29 days and 12 hours
+precise_days	en	78840000.0	2 years, 5 months and 29.50 days
+precise_years	en	78840000.0	2.50 years
+precise_milliseconds	en	78840000.0	2 years, 5 months, 29 days and 12 hours
+precise_seconds	en	0.0005	0 seconds
+precise_minutes	en	0.0005	0 minutes
+precise_hours	en	0.0005	0 hours
+precise_days	en	0.0005	0 days
+precise_years	en	0.0005	0 years
+precise_milliseconds	en	0.0005	0.50 milliseconds
+intcomma	de	0	0
+intcomma	de	100	100
+intcomma	de	1000	1.000
+intcomma	de	-1234567	-1.234.567
+intcomma	de	3000000000	3.000.000.000
+intcomma	de	999999	999.999
+intword	de	0	0
+intword	de	999	999
+intword	de	1000	1,0 Tausend
+intword	de	12400	12,4 Tausend
+intword	de	999950	1,0 Million
+intword	de	1000000	1,0 Million
+intword	de	1234567	1,2 Millionen
+intword	de	1500000	1,5 Millionen
+intword	de	999999999	1,0 Milliarde
+intword	de	1200000000	1,2 Milliarden
+intword	de	3000000000000	3,0 Billionen
+intword	de	1000000000000000	1,0 Billiarde
+intword	de	2000000000000000000	2,0 Trillionen
+intword	de	-1500000	-1,5 Millionen
+intword	de	1049999	1,0 Million
+ordinal	de	0	0.
+ordinal	de	1	1.
+ordinal	de	2	2.
+ordinal	de	3	3.
+ordinal	de	4	4.
+ordinal	de	11	11.
+ordinal	de	12	12.
+ordinal	de	13	13.
+ordinal	de	21	21.
+ordinal	de	22	22.
+ordinal	de	23	23.
+ordinal	de	101	101.
+ordinal	de	111	111.
+ordinal	de	112	112.
+ordinal	de	1002	1002.
+ordinal	de	-1	-1.
+duration	de	0	ein Moment
+duration	de	0.4	ein Moment
+duration	de	1	eine Sekunde
+duration	de	2	2 Sekunden
+duration	de	45	45 Sekunden
+duration	de	59	59 Sekunden
+duration	de	60	eine Minute
+duration	de	89	eine Minute
+duration	de	90	2 Minuten
+duration	de	150	2 Minuten
+duration	de	3599	eine Stunde
+duration	de	3600	eine Stunde
+duration	de	5400	2 Stunden
+duration	de	9000	2 Stunden
+duration	de	86399	ein Tag
+duration	de	86400	ein Tag
+duration	de	172800	2 Tage
+duration	de	1296000	15 Tage
+duration	de	2592000	ein Monat
+duration	de	2678400	ein Monat
+duration	de	15552000	6 Monate
+duration	de	31536000	ein Jahr
+duration	de	31622400	ein Jahr und 1 Tag
+duration	de	32400000	ein Jahr und 10 Tage
+duration	de	34128000	ein Jahr und ein Monat
+duration	de	39420000	ein Jahr und 3 Monate
+duration	de	63072000	2 Jahre
+duration	de	94608000	3 Jahre
+duration	de	32000000000.0	1.014 Jahre
+duration	de	-3600	eine Stunde
+relative0	de	0	jetzt
+relative1	de	0	jetzt
+relative0	de	0.4	jetzt
+relative1	de	0.4	jetzt
+relative0	de	0.5	jetzt
+relative1	de	0.5	jetzt
+relative0	de	1.5	vor 2 Sekunden
+relative1	de	1.5	2 Sekunden ab jetzt
+relative0	de	2.5	vor 2 Sekunden
+relative1	de	2.5	2 Sekunden ab jetzt
+relative0	de	45	vor 45 Sekunden
+relative1	de	45	45 Sekunden ab jetzt
+relative0	de	90	vor 2 Minuten
+relative1	de	90	2 Minuten ab jetzt
+relative0	de	3600	vor eine Stunde
+relative1	de	3600	eine Stunde ab jetzt
+relative0	de	86400	vor ein Tag
+relative1	de	86400	ein Tag ab jetzt
+relative0	de	604800	vor 7 Tage
+relative1	de	604800	7 Tage ab jetzt
+relative0	de	31536000	vor ein Jahr
+relative1	de	31536000	ein Jahr ab jetzt
+precise_seconds	de	0	0 Sekunden
+precise_minutes	de	0	0 Minuten
+precise_hours	de	0	0 Stunden
+precise_days	de	0	0 Tage
+precise_years	de	0	0 Jahre
+precise_milliseconds	de	0	0 Millisekunden
+precise_seconds	de	1	1 Sekunde
+precise_minutes	de	1	0.02 Minuten
+precise_hours	de	1	0 Stunden
+precise_days	de	1	0 Tage
+precise_years	de	1	0 Jahre
+precise_milliseconds	de	1	1 Sekunde
+precise_seconds	de	1.5	1.50 Sekunden
+precise_minutes	de	1.5	0.02 Minuten
+precise_hours	de	1.5	0 Stunden
+precise_days	de	1.5	0 Tage
+precise_years	de	1.5	0 Jahre
+precise_milliseconds	de	1.5	1 Sekunde und 500 Millisekunden
+precise_seconds	de	45.123	45.12 Sekunden
+precise_minutes	de	45.123	0.75 Minuten
+precise_hours	de	45.123	0.01 Stunden
+precise_days	de	45.123	0 Tage
+precise_years	de	45.123	0 Jahre
+precise_milliseconds	de	45.123	45 Sekunden und 123 Millisekunden
+precise_seconds	de	3725	1 Stunde, 2 Minuten und 5 Sekunden
+precise_minutes	de	3725	1 Stunde und 2.08 Minuten
+precise_hours	de	3725	1.03 Stunden
+precise_days	de	3725	0.04 Tage
+precise_years	de	3725	0 Jahre
+precise_milliseconds	de	3725	1 Stunde, 2 Minuten und 5 Sekunden
+precise_seconds	de	176433.123	2 Tage, 1 Stunde und 33.12 Sekunden
+precise_minutes	de	176433.123	2 Tage, 1 Stunde und 0.55 Minuten
+precise_hours	de	176433.123	2 Tage und 1.01 Stunden
+precise_days	de	176433.123	2.04 Tage
+precise_years	de	176433.123	0.01 Jahre
+precise_milliseconds	de	176433.123	2 Tage, 1 Stunde, 33 Sekunden und 123 Millisekunden
+precise_seconds	de	90.0001	1 Minute und 30 Sekunden
+precise_minutes	de	90.0001	1.50 Minuten
+precise_hours	de	90.0001	0.03 Stunden
+precise_days	de	90.0001	0 Tage
+precise_years	de	90.0001	0 Jahre
+precise_milliseconds	de	90.0001	1 Minute, 30 Sekunden und 0.10 Millisekunden
+precise_seconds	de	34560000	1 Jahr, 1 Monat und 4 Tage
+precise_minutes	de	34560000	1 Jahr, 1 Monat und 4 Tage
+precise_hours	de	34560000	1 Jahr, 1 Monat und 4 Tage
+precise_days	de	34560000	1 Jahr, 1 Monat und 4 Tage
+precise_years	de	34560000	1.10 Jahre
+precise_milliseconds	de	34560000	1 Jahr, 1 Monat und 4 Tage
+precise_seconds	de	2678400	1 Monat
+precise_minutes	de	2678400	1 Monat
+precise_hours	de	2678400	1 Monat
+precise_days	de	2678400	1 Monat
+precise_years	de	2678400	0.08 Jahre
+precise_milliseconds	de	2678400	1 Monat
+precise_seconds	de	59.999	1 Minute
+precise_minutes	de	59.999	0.98 Minuten
+precise_hours	de	59.999	0.02 Stunden
+precise_days	de	59.999	0 Tage
+precise_years	de	59.999	0 Jahre
+precise_milliseconds	de	59.999	59 Sekunden und 999 Millisekunden
+precise_seconds	de	3599.999	1 Stunde
+precise_minutes	de	3599.999	59.98 Minuten
+precise_hours	de	3599.999	1 Stunde
+precise_days	de	3599.999	0.04 Tage
+precise_years	de	3599.999	0 Jahre
+precise_milliseconds	de	3599.999	59 Minuten, 59 Sekunden und 999 Millisekunden
+precise_seconds	de	78840000.0	2 Jahre, 5 Monate, 29 Tage und 12 Stunden
+precise_minutes	de	78840000.0	2 Jahre, 5 Monate, 29 Tage und 12 Stunden
+precise_hours	de	78840000.0	2 Jahre, 5 Monate, 29 Tage und 12 Stunden
+precise_days	de	78840000.0	2 Jahre, 5 Monate und 29.50 Tage
+precise_years	de	78840000.0	2.50 Jahre
+precise_milliseconds	de	78840000.0	2 Jahre, 5 Monate, 29 Tage und 12 Stunden
+precise_seconds	de	0.0005	0 Sekunden
+precise_minutes	de	0.0005	0 Minuten
+precise_hours	de	0.0005	0 Stunden
+precise_days	de	0.0005	0 Tage
+precise_years	de	0.0005	0 Jahre
+precise_milliseconds	de	0.0005	0.50 Millisekunden
