@@ -1,0 +1,127 @@
+' URL: parsing into parts and building back, percent and form encoding,
+' query strings as maps, the parameter helpers, every resolution example
+' of RFC 3986 section 5.4, dot segments and normalisation.
+
+IMPORT TESTKIT, URL
+
+TESTKIT.SUITE("parsing")
+DIM u = URL.PARSE("https://ann:secret@Example.com:8443/a/b%20c?x=1&y=two#frag")
+TESTKIT.EQ(u{"scheme"}, "https", "the scheme")
+TESTKIT.EQ(u{"user"}, "ann", "the user")
+TESTKIT.EQ(u{"password"}, "secret", "the password")
+TESTKIT.EQ(u{"host"}, "Example.com", "the host as written")
+TESTKIT.EQ(u{"port"}, "8443", "the port as text")
+TESTKIT.EQ(u{"path"}, "/a/b%20c", "the path, still encoded")
+TESTKIT.EQ(u{"query"}, "x=1&y=two", "the query without its ?")
+TESTKIT.EQ(u{"fragment"}, "frag", "the fragment without its #")
+TESTKIT.ISTRUE(u{"has_authority"}, "it has an authority")
+TESTKIT.EQ(URL.BUILD$(u), "https://ann:secret@Example.com:8443/a/b%20c?x=1&y=two#frag", "and builds back to the same text")
+DIM mail = URL.PARSE("mailto:someone@example.org")
+TESTKIT.EQ(mail{"scheme"}, "mailto", "a scheme without an authority")
+TESTKIT.EQ(mail{"path"}, "someone@example.org", "keeps the rest as its path")
+TESTKIT.ISFALSE(mail{"has_authority"}, "and has no authority")
+DIM rel = URL.PARSE("../docs/page.html?v=2")
+TESTKIT.EQ(rel{"scheme"}, "", "a relative reference has no scheme")
+TESTKIT.EQ(rel{"path"}, "../docs/page.html", "its path")
+TESTKIT.EQ(rel{"query"}, "v=2", "its query")
+DIM loopback = URL.PARSE("http://[::1]:8080/")
+TESTKIT.EQ(loopback{"host"}, "[::1]", "an IPv6 host in brackets")
+TESTKIT.EQ(loopback{"port"}, "8080", "with a port after it")
+DIM bracketed = URL.PARSE("http://[2001:db8::7]/x")
+TESTKIT.EQ(bracketed{"host"}, "[2001:db8::7]", "a longer IPv6 host")
+TESTKIT.EQ(bracketed{"port"}, "", "without a port")
+DIM hollow = URL.PARSE("http://h/p?#")
+TESTKIT.ISTRUE(hollow{"has_query"}, "an empty query is still there")
+TESTKIT.ISTRUE(hollow{"has_fragment"}, "an empty fragment too")
+TESTKIT.EQ(URL.BUILD$(hollow), "http://h/p?#", "so both are written back")
+DIM local_file = URL.PARSE("file:///etc/hosts")
+TESTKIT.EQ(local_file{"host"}, "", "an empty host")
+TESTKIT.EQ(local_file{"path"}, "/etc/hosts", "before the path")
+TESTKIT.EQ(URL.BUILD$(local_file), "file:///etc/hosts", "and the three slashes come back")
+DIM made AS MAP
+made{"scheme"} = "https"
+made{"host"} = "api.example.com"
+made{"port"} = 8080
+made{"path"} = "v1/items"
+made{"query"} = "limit=5"
+TESTKIT.EQ(URL.BUILD$(made), "https://api.example.com:8080/v1/items?limit=5", "a map with a number for the port and a path without its slash")
+TESTKIT.ISTRUE(URL.ISABSOLUTE("HTTP://x"), "a URL with a scheme is absolute")
+TESTKIT.ISFALSE(URL.ISABSOLUTE("/x"), "a path is not")
+TESTKIT.ISFALSE(URL.ISABSOLUTE("a/b:c"), "a colon after a slash starts no scheme")
+TESTKIT.EQ(URL.ORIGIN$("HTTPS://Example.COM:443/x?y"), "https://example.com", "the origin, lowered, without the default port")
+TESTKIT.EQ(URL.ORIGIN$("http://example.com:8080/"), "http://example.com:8080", "keeps any other port")
+TESTKIT.EQ(URL.ORIGIN$("/relative"), "", "and is empty without a host")
+
+TESTKIT.SUITE("encoding")
+TESTKIT.EQ(URL.ENCODE$("a b&c/d?e=f"), "a%20b%26c%2Fd%3Fe%3Df", "reserved characters are escaped")
+TESTKIT.EQ(URL.ENCODE$("AZaz09-._~"), "AZaz09-._~", "the unreserved set stays")
+TESTKIT.EQ(URL.ENCODE$("Grüße"), "Gr%C3%BC%C3%9Fe", "UTF-8 bytes, upper case hex")
+TESTKIT.EQ(URL.ENCODE$("a/b c", "/"), "a/b%20c", "characters kept on request")
+TESTKIT.EQ(URL.DECODE$("Gr%c3%bc%C3%9Fe%20x"), "Grüße x", "decoding takes either case")
+TESTKIT.EQ(URL.DECODE$("100% sure %zz %4"), "100% sure %zz %4", "a broken escape stays as written")
+TESTKIT.EQ(URL.FORMENCODE$("a b+c"), "a+b%2Bc", "form encoding writes a space as +")
+TESTKIT.EQ(URL.FORMDECODE$("a+b%2Bc"), "a b+c", "and reads it back")
+DIM every$ = ""
+DIM code = 0
+FOR code = 1 TO 255
+    every$ = every$ + CHR$(code)
+NEXT code
+TESTKIT.EQ(URL.DECODE$(URL.ENCODE$(every$)), every$, "every byte round trips")
+TESTKIT.EQ(LEN(URL.ENCODE$(every$)), 66 + 189 * 3, "and only the unreserved ones stay short")
+
+TESTKIT.SUITE("query strings")
+DIM q = URL.QUERYMAP("?tag=a&tag=b&tag=c&name=J%C3%BCrgen+M&empty=&flag")
+DIM tags = q{"tag"}
+TESTKIT.EQ(LEN(tags), 3, "a repeated key becomes an array")
+DIM middle$ = tags[1]
+TESTKIT.EQ(middle$, "b", "in order")
+TESTKIT.EQ(q{"name"}, "Jürgen M", "values are decoded, + as a space")
+TESTKIT.EQ(q{"empty"}, "", "an empty value")
+TESTKIT.ISTRUE(MAP.EXISTS(q, "flag"), "a key without =")
+TESTKIT.EQ(q{"flag"}, "", "has an empty value")
+TESTKIT.EQ(LEN(MAP.KEYS(URL.QUERYMAP(""))), 0, "an empty query gives an empty map")
+DIM params AS MAP
+params{"q"} = "rock & roll"
+params{"page"} = 2
+params{"exact"} = TRUE
+params{"tag"} = ["a b", "c"]
+TESTKIT.EQ(URL.QUERY$(params), "q=rock%20%26%20roll&page=2&exact=true&tag=a%20b&tag=c", "a map written in its order, an array as a repeated key")
+DIM back = URL.QUERYMAP(URL.QUERY$(params))
+TESTKIT.EQ(back{"q"}, "rock & roll", "and read back")
+TESTKIT.EQ(back{"page"}, "2", "a number comes back as text")
+
+TESTKIT.SUITE("parameters")
+DIM search$ = "https://example.com/search?q=old&page=2&q=older#results"
+TESTKIT.EQ(URL.PARAM$(search$, "page"), "2", "one parameter")
+TESTKIT.EQ(URL.PARAM$(search$, "q"), "old", "the first of a repeated one")
+TESTKIT.EQ(JOIN(URL.PARAMS(search$, "q"), ","), "old,older", "all of them")
+TESTKIT.EQ(URL.PARAM$(search$, "sort", "relevance"), "relevance", "the fallback")
+TESTKIT.EQ(URL.SETPARAM$(search$, "q", "new words"), "https://example.com/search?q=new%20words&page=2#results", "set replaces every occurrence, in the place of the first")
+TESTKIT.EQ(URL.SETPARAM$("https://example.com/", "lang", "de"), "https://example.com/?lang=de", "and adds one that was not there")
+TESTKIT.EQ(URL.DROPPARAM$(search$, "q"), "https://example.com/search?page=2#results", "drop takes every occurrence out")
+TESTKIT.EQ(URL.DROPPARAM$("https://example.com/x?only=1", "only"), "https://example.com/x", "and the ? with the last one")
+TESTKIT.EQ(URL.JOINPATH$("https://api.example.com/v1", "users"), "https://api.example.com/v1/users", "a segment joined with one slash")
+TESTKIT.EQ(URL.JOINPATH$("https://api.example.com/v1/?key=k", "a/b c"), "https://api.example.com/v1/a%2Fb%20c?key=k", "encoded as one segment, before the query")
+
+TESTKIT.SUITE("RFC 3986 section 5.4")
+DIM base$ = "http://a/b/c/d;p?q"
+DIM refs = ["g:h", "g", "./g", "g/", "/g", "//g", "?y", "g?y", "#s", "g#s", "g?y#s", ";x", "g;x", "g;x?y#s", "", ".", "./", "..", "../", "../g", "../..", "../../", "../../g", "../../../g", "../../../../g", "/./g", "/../g", "g.", ".g", "g..", "..g", "./../g", "./g/.", "g/./h", "g/../h", "g;x=1/./y", "g;x=1/../y", "g?y/./x", "g?y/../x", "g#s/./x", "g#s/../x", "http:g"]
+DIM wants = ["g:h", "http://a/b/c/g", "http://a/b/c/g", "http://a/b/c/g/", "http://a/g", "http://g", "http://a/b/c/d;p?y", "http://a/b/c/g?y", "http://a/b/c/d;p?q#s", "http://a/b/c/g#s", "http://a/b/c/g?y#s", "http://a/b/c/;x", "http://a/b/c/g;x", "http://a/b/c/g;x?y#s", "http://a/b/c/d;p?q", "http://a/b/c/", "http://a/b/c/", "http://a/b/", "http://a/b/", "http://a/b/g", "http://a/", "http://a/", "http://a/g", "http://a/g", "http://a/g", "http://a/g", "http://a/g", "http://a/b/c/g.", "http://a/b/c/.g", "http://a/b/c/g..", "http://a/b/c/..g", "http://a/b/g", "http://a/b/c/g/", "http://a/b/c/g/h", "http://a/b/c/h", "http://a/b/c/g;x=1/y", "http://a/b/c/y", "http://a/b/c/g?y/./x", "http://a/b/c/g?y/../x", "http://a/b/c/g#s/./x", "http://a/b/c/g#s/../x", "http:g"]
+TESTKIT.EQ(LEN(refs), LEN(wants), "as many answers as references")
+DIM i = 0
+FOR i = 0 TO LEN(refs) - 1
+    DIM ref$ = refs[i]
+    DIM want$ = wants[i]
+    TESTKIT.EQ(URL.RESOLVE$(base$, ref$), want$, "resolves " + CHR$(34) + ref$ + CHR$(34))
+NEXT i
+
+TESTKIT.SUITE("dot segments and normalisation")
+TESTKIT.EQ(URL.REMOVEDOTS$("/a/b/c/./../../g"), "/a/g", "the first example of section 5.2.4")
+TESTKIT.EQ(URL.REMOVEDOTS$("mid/content=5/../6"), "mid/6", "and the second")
+TESTKIT.EQ(URL.REMOVEDOTS$("/plain/path"), "/plain/path", "a path without dots is left alone")
+TESTKIT.EQ(URL.CANONICAL$("HTTP://User@Example.COM:80/a/./b/../c/%7euser/%3a?Q=%4a#F"), "http://User@example.com/a/c/~user/%3A?Q=J#F", "scheme and host lowered, default port dropped, dots removed, escapes tidied")
+TESTKIT.EQ(URL.CANONICAL$("https://example.com"), "https://example.com/", "an empty path with a host becomes /")
+TESTKIT.EQ(URL.CANONICAL$("https://example.com:8443/x"), "https://example.com:8443/x", "another port stays")
+TESTKIT.EQ(URL.CANONICAL$("http://example.com/%7Ea%2fb"), URL.CANONICAL$("http://EXAMPLE.com:80/~a%2Fb"), "two spellings of one URL meet")
+
+TESTKIT.REPORT()

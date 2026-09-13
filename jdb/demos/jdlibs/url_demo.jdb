@@ -1,0 +1,127 @@
+' url_demo.jdb - the links of a page resolved, cleaned and sorted, and API URLs built.
+'
+' A saved page carries links in every form a page uses: relative, root
+' relative, protocol relative, with dot segments, tracking parameters and
+' fragments. HTMLDOM finds them, URL resolves each one against the address
+' of the page, drops the tracking parameters and brings it to its
+' canonical form, and CONSOLE shows which links stay on the site, which
+' leave it and which lead to a page already listed. The second half builds
+' the URL of an API call and reads the answer a login redirect sends back.
+'
+'   jdBasic url_demo.jdb
+
+IMPORT URL, HTMLDOM, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+DIM NL$ = CHR$(10)
+
+' The link without its utm_ parameters.
+FUNC Untracked$(link$)
+    DIM parts = URL.PARSE(link$)
+    DIM query$ = parts{"query"}
+    DIM keys = MAP.KEYS(URL.QUERYMAP(query$))
+    DIM out$ = link$
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        IF STARTSWITH(key$, "utm_") THEN out$ = URL.DROPPARAM$(out$, key$)
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' The URL without its fragment, which never names another page.
+FUNC PageOf$(link$)
+    DIM parts = URL.PARSE(link$)
+    parts{"fragment"} = ""
+    parts{"has_fragment"} = FALSE
+    RETURN URL.BUILD$(parts)
+ENDFUNC
+
+' ── the links of a page ────────────────────────────────────────
+
+DIM page_url$ = "https://docs.example.com/guide/modules/index.html?lang=en"
+DIM html = []
+PUSH(html, "<nav>")
+PUSH(html, "<a href='../'>Guide</a>")
+PUSH(html, "<a href='./install.html#windows'>Installing</a>")
+PUSH(html, "<a href='install.html?utm_source=nav&amp;utm_medium=link'>Installing again</a>")
+PUSH(html, "<a href='HTTPS://Docs.Example.com:443/guide/modules/install.html'>Installing, spelled out</a>")
+PUSH(html, "<a href='/reference/./functions/../modules.html'>Reference</a>")
+PUSH(html, "<a href='//cdn.example.com/assets/logo%2dsmall.svg'>Logo</a>")
+PUSH(html, "<a href='https://github.com/example/jdbasic/issues?q=is%3Aopen+label%3Amodules&amp;utm_campaign=docs'>Issues</a>")
+PUSH(html, "<a href='mailto:docs@example.com?subject=Modules%20page'>Write to us</a>")
+PUSH(html, "<a href='?lang=de'>Deutsch</a>")
+PUSH(html, "<a href='#exports'>Exports</a>")
+PUSH(html, "</nav>")
+DIM doc = HTMLDOM.PARSE(JOIN(html, NL$))
+DIM anchors = HTMLDOM.FINDALL(doc, "a[href]")
+
+CONSOLE.RULE("the links of " + page_url$, "=")
+DIM page_origin$ = URL.ORIGIN$(page_url$)
+DIM page_only$ = PageOf$(URL.CANONICAL$(page_url$))
+DIM seen AS MAP
+DIM rows = []
+DIM i = 0
+FOR i = 0 TO LEN(anchors) - 1
+    DIM href$ = HTMLDOM.ATTR$(doc, anchors[i], "href")
+    DIM target$ = URL.CANONICAL$(Untracked$(URL.RESOLVE$(page_url$, href$)))
+    DIM page$ = PageOf$(target$)
+    DIM kind$ = ""
+    IF URL.ORIGIN$(target$) = "" THEN
+        kind$ = "no web page"
+    ELSEIF page$ = page_only$ THEN
+        kind$ = "this page"
+    ELSEIF URL.ORIGIN$(target$) = page_origin$ THEN
+        kind$ = "on the site"
+    ELSE
+        DIM elsewhere = URL.PARSE(target$)
+        DIM other_host$ = elsewhere{"host"}
+        kind$ = "leaves for " + other_host$
+    ENDIF
+    IF MAP.EXISTS(seen, page$) THEN
+        kind$ = kind$ + ", " + CONSOLE.YELLOW$("listed before")
+    ELSE
+        seen{page$} = TRUE
+    ENDIF
+    DIM row = []
+    PUSH(row, HTMLDOM.FLAT$(doc, anchors[i]))
+    PUSH(row, target$)
+    PUSH(row, kind$)
+    PUSH(rows, row)
+NEXT i
+CONSOLE.TABLE(rows, {"headers": ["link", "leads to", "where"], "border": "plain"})
+PRINT ""
+CONSOLE.KV([["links", STR$(LEN(anchors))], ["different pages", STR$(LEN(MAP.KEYS(seen)))], ["page origin", page_origin$], ["page language", URL.PARAM$(page_url$, "lang", "none")]], 2)
+PRINT ""
+
+' ── an API call ────────────────────────────────────────────────
+
+CONSOLE.RULE("an API call")
+DIM repo_url$ = URL.JOINPATH$(URL.JOINPATH$("https://api.example.com/v2", "repos"), "example/jdbasic")
+DIM filters AS MAP
+filters{"state"} = "open"
+filters{"labels"} = ["bug", "good first issue"]
+filters{"per_page"} = 50
+filters{"since"} = "2026-09-01T00:00:00Z"
+DIM issues_url$ = URL.JOINPATH$(repo_url$, "issues") + "?" + URL.QUERY$(filters)
+DIM next_page$ = URL.SETPARAM$(issues_url$, "page", "2")
+CONSOLE.KV([["repository", repo_url$], ["issues", issues_url$], ["next page", next_page$], ["labels asked for", JOIN(URL.PARAMS(next_page$, "labels"), " | ")], ["without the date", URL.DROPPARAM$(next_page$, "since")]], 2)
+PRINT ""
+
+' ── the answer of a login ──────────────────────────────────────
+
+CONSOLE.RULE("the redirect after a login")
+DIM sent_state$ = "c2f1-77ab"
+DIM redirect$ = "https://app.example.com/auth/callback?code=Sp1x%2FQm%3D%3D&state=c2f1-77ab&scope=read+write#_=_"
+DIM callback = URL.PARSE(redirect$)
+DIM callback_host$ = callback{"host"}
+DIM callback_path$ = callback{"path"}
+DIM state_ok$ = CONSOLE.RED$("no, refuse the login")
+IF URL.PARAM$(redirect$, "state") = sent_state$ THEN state_ok$ = CONSOLE.GREEN$("yes")
+CONSOLE.KV([["arrived at", callback_host$ + callback_path$], ["code", URL.PARAM$(redirect$, "code")], ["scope", URL.PARAM$(redirect$, "scope")], ["state matches what was sent", state_ok$], ["error", URL.PARAM$(redirect$, "error", "none")]], 2)
+PRINT ""
+
+CONSOLE.RULE("one file name, three ways")
+DIM file_name$ = "Rechnung März 2026 (final).pdf"
+CONSOLE.KV([["as written", file_name$], ["in a path", URL.JOINPATH$("https://files.example.com/invoices", file_name$)], ["in a query", "https://files.example.com/get?" + URL.QUERY$({"name": file_name$})], ["in a form", "name=" + URL.FORMENCODE$(file_name$)], ["read back", URL.FORMDECODE$(URL.FORMENCODE$(file_name$))]], 2)
+PRINT ""

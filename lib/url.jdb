@@ -1,0 +1,560 @@
+' url.jdb - URLs taken apart, built, encoded, resolved and changed.
+'
+'   IMPORT URL
+'   DIM u = URL.PARSE("https://user@example.com:8443/a/b?x=1&y=2#top")
+'   PRINT u{"host"}; " "; u{"port"}; " "; u{"path"}
+'   PRINT URL.RESOLVE$("https://example.com/docs/guide/", "../api?v=2")
+'   PRINT URL.SETPARAM$("https://example.com/search?q=old&page=2", "q", "new words")
+'
+' A URL is a string, and PARSE gives the map of its parts. Nothing is
+' kept between calls.
+
+EXPORT MODULE URL
+
+DIM gUnreserved$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~"
+DIM gHexDigits$ = "0123456789ABCDEF"
+DIM gSchemeChars$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-."
+
+' ── parts ──────────────────────────────────────────────────────
+
+' The parts of a URL as written: scheme, user, password, host, port,
+' path, query, fragment, and has_authority, has_query and has_fragment,
+' which tell an empty part from a missing one.
+EXPORT FUNC PARSE(url$)
+    DIM rest$ = url$
+    DIM fragment$ = ""
+    DIM has_fragment = FALSE
+    DIM hash = INSTR(rest$, "#")
+    IF hash >= 0 THEN
+        fragment$ = MID$(rest$, hash + 1)
+        rest$ = LEFT$(rest$, hash)
+        has_fragment = TRUE
+    ENDIF
+    DIM query$ = ""
+    DIM has_query = FALSE
+    DIM qmark = INSTR(rest$, "?")
+    IF qmark >= 0 THEN
+        query$ = MID$(rest$, qmark + 1)
+        rest$ = LEFT$(rest$, qmark)
+        has_query = TRUE
+    ENDIF
+    DIM scheme$ = SchemeOf$(rest$)
+    IF scheme$ <> "" THEN rest$ = MID$(rest$, LEN(scheme$) + 1)
+    DIM user$ = ""
+    DIM password$ = ""
+    DIM host$ = ""
+    DIM port$ = ""
+    DIM has_authority = FALSE
+    IF LEFT$(rest$, 2) = "//" THEN
+        has_authority = TRUE
+        DIM slash = INSTR(2, rest$, "/")
+        IF slash < 0 THEN slash = LEN(rest$)
+        DIM authority$ = MID$(rest$, 2, slash - 2)
+        rest$ = MID$(rest$, slash)
+        DIM at_sign = LastIndex(authority$, "@")
+        IF at_sign >= 0 THEN
+            DIM userinfo$ = LEFT$(authority$, at_sign)
+            authority$ = MID$(authority$, at_sign + 1)
+            DIM colon = INSTR(userinfo$, ":")
+            IF colon >= 0 THEN
+                user$ = LEFT$(userinfo$, colon)
+                password$ = MID$(userinfo$, colon + 1)
+            ELSE
+                user$ = userinfo$
+            ENDIF
+        ENDIF
+        host$ = authority$
+        DIM port_colon = LastIndex(authority$, ":")
+        IF port_colon >= 0 ANDALSO INSTR(port_colon, authority$, "]") < 0 THEN
+            host$ = LEFT$(authority$, port_colon)
+            port$ = MID$(authority$, port_colon + 1)
+        ENDIF
+    ENDIF
+    DIM out AS MAP
+    out{"scheme"} = scheme$
+    out{"user"} = user$
+    out{"password"} = password$
+    out{"host"} = host$
+    out{"port"} = port$
+    out{"path"} = rest$
+    out{"query"} = query$
+    out{"fragment"} = fragment$
+    out{"has_authority"} = has_authority
+    out{"has_query"} = has_query
+    out{"has_fragment"} = has_fragment
+    RETURN out
+ENDFUNC
+
+' The URL of a map of parts. A missing key counts as empty; a port may be
+' a number; a path without its leading slash gets one when there is a host.
+EXPORT FUNC BUILD$(parts)
+    DIM pieces = []
+    DIM scheme$ = Part$(parts, "scheme")
+    IF scheme$ <> "" THEN PUSH(pieces, scheme$ + ":")
+    DIM host$ = Part$(parts, "host")
+    DIM with_authority = FALSE
+    IF host$ <> "" ORELSE Flag(parts, "has_authority") THEN with_authority = TRUE
+    IF with_authority THEN
+        PUSH(pieces, "//")
+        DIM user$ = Part$(parts, "user")
+        DIM password$ = Part$(parts, "password")
+        IF password$ <> "" THEN
+            PUSH(pieces, user$ + ":" + password$ + "@")
+        ELSEIF user$ <> "" THEN
+            PUSH(pieces, user$ + "@")
+        ENDIF
+        PUSH(pieces, host$)
+        DIM port$ = Part$(parts, "port")
+        IF port$ <> "" THEN PUSH(pieces, ":" + port$)
+    ENDIF
+    DIM path$ = Part$(parts, "path")
+    IF with_authority ANDALSO path$ <> "" ANDALSO LEFT$(path$, 1) <> "/" THEN path$ = "/" + path$
+    PUSH(pieces, path$)
+    DIM query$ = Part$(parts, "query")
+    IF query$ <> "" ORELSE Flag(parts, "has_query") THEN PUSH(pieces, "?" + query$)
+    DIM fragment$ = Part$(parts, "fragment")
+    IF fragment$ <> "" ORELSE Flag(parts, "has_fragment") THEN PUSH(pieces, "#" + fragment$)
+    RETURN JOIN(pieces, "")
+ENDFUNC
+
+' Whether the URL starts with a scheme.
+EXPORT FUNC ISABSOLUTE(url$)
+    RETURN SchemeOf$(url$) <> ""
+ENDFUNC
+
+' scheme://host[:port], lowered, without a default port; "" without a host.
+EXPORT FUNC ORIGIN$(url$)
+    DIM u = PARSE(url$)
+    DIM scheme$ = LCASE$(Part$(u, "scheme"))
+    DIM host$ = LCASE$(Part$(u, "host"))
+    IF host$ = "" THEN RETURN ""
+    DIM port$ = Part$(u, "port")
+    IF port$ = DefaultPort$(scheme$) THEN port$ = ""
+    DIM out$ = scheme$ + "://" + host$
+    IF port$ <> "" THEN out$ = out$ + ":" + port$
+    RETURN out$
+ENDFUNC
+
+FUNC SchemeOf$(piece$)
+    DIM colon = INSTR(piece$, ":")
+    IF colon <= 0 THEN RETURN ""
+    DIM candidate$ = LEFT$(piece$, colon)
+    IF INSTR(gSchemeChars$, LEFT$(candidate$, 1)) < 0 ORELSE INSTR("0123456789+-.", LEFT$(candidate$, 1)) >= 0 THEN RETURN ""
+    DIM i = 0
+    FOR i = 1 TO LEN(candidate$) - 1
+        IF INSTR(gSchemeChars$, MID$(candidate$, i, 1)) < 0 THEN RETURN ""
+    NEXT i
+    RETURN candidate$
+ENDFUNC
+
+FUNC LastIndex(piece$, mark$)
+    DIM i = 0
+    FOR i = LEN(piece$) - 1 TO 0 STEP -1
+        IF MID$(piece$, i, 1) = mark$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+FUNC Part$(parts, key$)
+    IF TYPEOF(parts) <> "OBJECT" THEN RETURN ""
+    IF NOT MAP.EXISTS(parts, key$) THEN RETURN ""
+    RETURN AsText$(parts{key$})
+ENDFUNC
+
+FUNC Flag(parts, key$)
+    IF TYPEOF(parts) <> "OBJECT" THEN RETURN FALSE
+    IF NOT MAP.EXISTS(parts, key$) THEN RETURN FALSE
+    DIM raw = parts{key$}
+    IF TYPEOF(raw) = "BOOLEAN" ORELSE TYPEOF(raw) = "NUMBER" THEN RETURN raw <> 0
+    RETURN FALSE
+ENDFUNC
+
+FUNC AsText$(raw)
+    DIM kind$ = TYPEOF(raw)
+    IF kind$ = "STRING" THEN
+        DIM text$ = raw
+        RETURN text$
+    ENDIF
+    IF kind$ = "BOOLEAN" THEN
+        IF raw THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    IF kind$ = "NONE" THEN RETURN ""
+    RETURN STR$(raw)
+ENDFUNC
+
+FUNC DefaultPort$(scheme$)
+    IF scheme$ = "http" ORELSE scheme$ = "ws" THEN RETURN "80"
+    IF scheme$ = "https" ORELSE scheme$ = "wss" THEN RETURN "443"
+    IF scheme$ = "ftp" THEN RETURN "21"
+    RETURN ""
+ENDFUNC
+
+' ── encoding ───────────────────────────────────────────────────
+
+' Percent-encodes every byte outside the unreserved set of RFC 3986 and
+' the characters in keep$.
+EXPORT FUNC ENCODE$(text$, keep$ = "")
+    DIM pieces = []
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, i, 1)
+        IF INSTR(gUnreserved$, ch$) >= 0 THEN
+            PUSH(pieces, ch$)
+        ELSEIF keep$ <> "" ANDALSO INSTR(keep$, ch$) >= 0 THEN
+            PUSH(pieces, ch$)
+        ELSE
+            PUSH(pieces, Escaped$(BYTEAT(text$, i)))
+        ENDIF
+    NEXT i
+    RETURN JOIN(pieces, "")
+ENDFUNC
+
+' Every %XX back to its byte. A % that starts no escape stays.
+EXPORT FUNC DECODE$(text$)
+    IF INSTR(text$, "%") < 0 THEN RETURN text$
+    DIM pieces = []
+    DIM i = 0
+    DO WHILE i < LEN(text$)
+        DIM pct = INSTR(i, text$, "%")
+        IF pct < 0 THEN
+            PUSH(pieces, MID$(text$, i))
+            EXITDO
+        ENDIF
+        IF pct > i THEN PUSH(pieces, MID$(text$, i, pct - i))
+        DIM hi = HexValue(MID$(text$, pct + 1, 1))
+        DIM lo = HexValue(MID$(text$, pct + 2, 1))
+        IF hi >= 0 ANDALSO lo >= 0 THEN
+            PUSH(pieces, CHR$(hi * 16 + lo))
+            i = pct + 3
+        ELSE
+            PUSH(pieces, "%")
+            i = pct + 1
+        ENDIF
+    LOOP
+    RETURN JOIN(pieces, "")
+ENDFUNC
+
+' The encoding of HTML forms: a space is +.
+EXPORT FUNC FORMENCODE$(text$)
+    RETURN REPLACE$(ENCODE$(text$), "%20", "+")
+ENDFUNC
+
+EXPORT FUNC FORMDECODE$(text$)
+    RETURN DECODE$(REPLACE$(text$, "+", " "))
+ENDFUNC
+
+FUNC Escaped$(code)
+    RETURN "%" + MID$(gHexDigits$, code \ 16, 1) + MID$(gHexDigits$, code MOD 16, 1)
+ENDFUNC
+
+FUNC HexValue(ch$)
+    IF LEN(ch$) <> 1 THEN RETURN -1
+    RETURN INSTR(gHexDigits$, UCASE$(ch$))
+ENDFUNC
+
+' ── query strings ──────────────────────────────────────────────
+
+' A query string as a map, a leading ? allowed. Keys and values are
+' decoded with + as a space; a repeated key gives an array of its values
+' in order; a key without = has the value "".
+EXPORT FUNC QUERYMAP(query$)
+    DIM out AS MAP
+    DIM many AS MAP
+    DIM src$ = query$
+    IF LEFT$(src$, 1) = "?" THEN src$ = MID$(src$, 1)
+    IF src$ = "" THEN RETURN out
+    DIM pairs = SPLIT(src$, "&")
+    DIM i = 0
+    FOR i = 0 TO LEN(pairs) - 1
+        DIM pair$ = pairs[i]
+        IF pair$ <> "" THEN
+            DIM key$ = PairKey$(pair$)
+            DIM value$ = PairValue$(pair$)
+            IF NOT MAP.EXISTS(out, key$) THEN
+                out{key$} = value$
+            ELSEIF MAP.EXISTS(many, key$) THEN
+                DIM bucket = out{key$}
+                PUSH(bucket, value$)
+                out{key$} = bucket
+            ELSE
+                DIM first$ = out{key$}
+                DIM both = []
+                PUSH(both, first$)
+                PUSH(both, value$)
+                out{key$} = both
+                many{key$} = TRUE
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' A map as a query string, keys in the map's order. An array value
+' repeats its key; numbers and booleans are written as text.
+EXPORT FUNC QUERY$(params)
+    DIM pieces = []
+    IF TYPEOF(params) <> "OBJECT" THEN RETURN ""
+    DIM keys = MAP.KEYS(params)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        DIM raw = params{key$}
+        IF TYPEOF(raw) = "ARRAY" THEN
+            DIM j = 0
+            FOR j = 0 TO LEN(raw) - 1
+                PUSH(pieces, ENCODE$(key$) + "=" + ENCODE$(AsText$(raw[j])))
+            NEXT j
+        ELSE
+            PUSH(pieces, ENCODE$(key$) + "=" + ENCODE$(AsText$(raw)))
+        ENDIF
+    NEXT i
+    RETURN JOIN(pieces, "&")
+ENDFUNC
+
+FUNC PairKey$(pair$)
+    DIM eq = INSTR(pair$, "=")
+    IF eq < 0 THEN RETURN FORMDECODE$(pair$)
+    RETURN FORMDECODE$(LEFT$(pair$, eq))
+ENDFUNC
+
+FUNC PairValue$(pair$)
+    DIM eq = INSTR(pair$, "=")
+    IF eq < 0 THEN RETURN ""
+    RETURN FORMDECODE$(MID$(pair$, eq + 1))
+ENDFUNC
+
+' ── parameters of a URL ────────────────────────────────────────
+
+' The first value of a query parameter, or the fallback.
+EXPORT FUNC PARAM$(url$, key$, fallback$ = "")
+    DIM found = PARAMS(url$, key$)
+    IF LEN(found) = 0 THEN RETURN fallback$
+    DIM first$ = found[0]
+    RETURN first$
+ENDFUNC
+
+' Every value of a query parameter, in order.
+EXPORT FUNC PARAMS(url$, key$)
+    DIM out = []
+    DIM u = PARSE(url$)
+    DIM pairs = SPLIT(Part$(u, "query"), "&")
+    DIM i = 0
+    FOR i = 0 TO LEN(pairs) - 1
+        DIM pair$ = pairs[i]
+        IF pair$ <> "" ANDALSO PairKey$(pair$) = key$ THEN
+            DIM value$ = PairValue$(pair$)
+            PUSH(out, value$)
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The URL with one value for the parameter: in the place of its first
+' occurrence, or added at the end. Every other parameter stays as written.
+EXPORT FUNC SETPARAM$(url$, key$, value$)
+    DIM u = PARSE(url$)
+    DIM fresh$ = ENCODE$(key$) + "=" + ENCODE$(value$)
+    DIM kept = []
+    DIM placed = FALSE
+    DIM pairs = SPLIT(Part$(u, "query"), "&")
+    DIM i = 0
+    FOR i = 0 TO LEN(pairs) - 1
+        DIM pair$ = pairs[i]
+        IF pair$ <> "" THEN
+            IF PairKey$(pair$) <> key$ THEN
+                PUSH(kept, pair$)
+            ELSEIF NOT placed THEN
+                PUSH(kept, fresh$)
+                placed = TRUE
+            ENDIF
+        ENDIF
+    NEXT i
+    IF NOT placed THEN PUSH(kept, fresh$)
+    u{"query"} = JOIN(kept, "&")
+    u{"has_query"} = TRUE
+    RETURN BUILD$(u)
+ENDFUNC
+
+' The URL without the parameter, and without the ? when nothing is left.
+EXPORT FUNC DROPPARAM$(url$, key$)
+    DIM u = PARSE(url$)
+    DIM kept = []
+    DIM pairs = SPLIT(Part$(u, "query"), "&")
+    DIM i = 0
+    FOR i = 0 TO LEN(pairs) - 1
+        DIM pair$ = pairs[i]
+        IF pair$ <> "" ANDALSO PairKey$(pair$) <> key$ THEN PUSH(kept, pair$)
+    NEXT i
+    IF LEN(kept) = 0 THEN
+        u{"query"} = ""
+        u{"has_query"} = FALSE
+    ELSE
+        u{"query"} = JOIN(kept, "&")
+    ENDIF
+    RETURN BUILD$(u)
+ENDFUNC
+
+' The URL with one more path segment, encoded, joined with one slash.
+EXPORT FUNC JOINPATH$(url$, segment$)
+    DIM u = PARSE(url$)
+    DIM path$ = Part$(u, "path")
+    IF RIGHT$(path$, 1) <> "/" THEN path$ = path$ + "/"
+    u{"path"} = path$ + ENCODE$(segment$)
+    RETURN BUILD$(u)
+ENDFUNC
+
+' ── resolving ──────────────────────────────────────────────────
+
+' A reference resolved against a base URL, RFC 3986 section 5.2.
+EXPORT FUNC RESOLVE$(base$, ref$)
+    DIM r = PARSE(ref$)
+    DIM b = PARSE(base$)
+    DIM ref_path$ = Part$(r, "path")
+    DIM scheme$ = Part$(b, "scheme")
+    DIM path$ = ""
+    DIM authority_from_ref = FALSE
+    DIM query_from_ref = TRUE
+    IF Part$(r, "scheme") <> "" ORELSE Flag(r, "has_authority") THEN
+        IF Part$(r, "scheme") <> "" THEN scheme$ = Part$(r, "scheme")
+        authority_from_ref = Flag(r, "has_authority") ORELSE Part$(r, "scheme") <> ""
+        path$ = REMOVEDOTS$(ref_path$)
+    ELSEIF ref_path$ = "" THEN
+        path$ = Part$(b, "path")
+        IF NOT Flag(r, "has_query") THEN query_from_ref = FALSE
+    ELSEIF LEFT$(ref_path$, 1) = "/" THEN
+        path$ = REMOVEDOTS$(ref_path$)
+    ELSE
+        path$ = REMOVEDOTS$(Merge$(Part$(b, "path"), Flag(b, "has_authority"), ref_path$))
+    ENDIF
+    DIM t AS MAP
+    t{"scheme"} = scheme$
+    IF authority_from_ref THEN
+        t{"user"} = Part$(r, "user")
+        t{"password"} = Part$(r, "password")
+        t{"host"} = Part$(r, "host")
+        t{"port"} = Part$(r, "port")
+        t{"has_authority"} = Flag(r, "has_authority")
+    ELSE
+        t{"user"} = Part$(b, "user")
+        t{"password"} = Part$(b, "password")
+        t{"host"} = Part$(b, "host")
+        t{"port"} = Part$(b, "port")
+        t{"has_authority"} = Flag(b, "has_authority")
+    ENDIF
+    t{"path"} = path$
+    IF query_from_ref THEN
+        t{"query"} = Part$(r, "query")
+        t{"has_query"} = Flag(r, "has_query")
+    ELSE
+        t{"query"} = Part$(b, "query")
+        t{"has_query"} = Flag(b, "has_query")
+    ENDIF
+    t{"fragment"} = Part$(r, "fragment")
+    t{"has_fragment"} = Flag(r, "has_fragment")
+    RETURN BUILD$(t)
+ENDFUNC
+
+' The path of a relative reference appended to the directory of the base
+' path, RFC 3986 section 5.2.3.
+FUNC Merge$(base_path$, base_has_authority, ref_path$)
+    IF base_has_authority ANDALSO base_path$ = "" THEN RETURN "/" + ref_path$
+    DIM last_slash = LastIndex(base_path$, "/")
+    IF last_slash < 0 THEN RETURN ref_path$
+    RETURN LEFT$(base_path$, last_slash + 1) + ref_path$
+ENDFUNC
+
+' The path with its . and .. segments taken out, RFC 3986 section 5.2.4.
+EXPORT FUNC REMOVEDOTS$(path$)
+    IF INSTR(path$, ".") < 0 THEN RETURN path$
+    DIM src$ = path$
+    DIM kept = []
+    DO WHILE LEN(src$) > 0
+        IF LEFT$(src$, 3) = "../" THEN
+            src$ = MID$(src$, 3)
+        ELSEIF LEFT$(src$, 2) = "./" THEN
+            src$ = MID$(src$, 2)
+        ELSEIF LEFT$(src$, 3) = "/./" THEN
+            src$ = MID$(src$, 2)
+        ELSEIF src$ = "/." THEN
+            src$ = "/"
+        ELSEIF LEFT$(src$, 4) = "/../" THEN
+            src$ = MID$(src$, 3)
+            IF LEN(kept) > 0 THEN
+                DIM gone$ = POP(kept)
+            ENDIF
+        ELSEIF src$ = "/.." THEN
+            src$ = "/"
+            IF LEN(kept) > 0 THEN
+                DIM gone_last$ = POP(kept)
+            ENDIF
+        ELSEIF src$ = "." ORELSE src$ = ".." THEN
+            src$ = ""
+        ELSE
+            DIM from = 0
+            IF LEFT$(src$, 1) = "/" THEN from = 1
+            DIM next_slash = INSTR(from, src$, "/")
+            IF next_slash < 0 THEN next_slash = LEN(src$)
+            PUSH(kept, LEFT$(src$, next_slash))
+            src$ = MID$(src$, next_slash)
+        ENDIF
+    LOOP
+    RETURN JOIN(kept, "")
+ENDFUNC
+
+' ── normalisation ──────────────────────────────────────────────
+
+' The URL in the form two equal URLs share: scheme and host lowered, a
+' default port dropped, dot segments removed, an empty path with a host
+' made /, escapes of unreserved characters decoded and every other escape
+' written with upper case hex.
+EXPORT FUNC CANONICAL$(url$)
+    DIM u = PARSE(url$)
+    DIM scheme$ = LCASE$(Part$(u, "scheme"))
+    DIM t AS MAP
+    t{"scheme"} = scheme$
+    t{"user"} = TidyEscapes$(Part$(u, "user"))
+    t{"password"} = TidyEscapes$(Part$(u, "password"))
+    t{"host"} = LCASE$(TidyEscapes$(Part$(u, "host")))
+    DIM port$ = Part$(u, "port")
+    IF port$ = DefaultPort$(scheme$) THEN port$ = ""
+    t{"port"} = port$
+    t{"has_authority"} = Flag(u, "has_authority")
+    DIM path$ = REMOVEDOTS$(TidyEscapes$(Part$(u, "path")))
+    IF Flag(u, "has_authority") ANDALSO path$ = "" THEN path$ = "/"
+    t{"path"} = path$
+    t{"query"} = TidyEscapes$(Part$(u, "query"))
+    t{"has_query"} = Flag(u, "has_query")
+    t{"fragment"} = TidyEscapes$(Part$(u, "fragment"))
+    t{"has_fragment"} = Flag(u, "has_fragment")
+    RETURN BUILD$(t)
+ENDFUNC
+
+FUNC TidyEscapes$(text$)
+    IF INSTR(text$, "%") < 0 THEN RETURN text$
+    DIM pieces = []
+    DIM i = 0
+    DO WHILE i < LEN(text$)
+        DIM pct = INSTR(i, text$, "%")
+        IF pct < 0 THEN
+            PUSH(pieces, MID$(text$, i))
+            EXITDO
+        ENDIF
+        IF pct > i THEN PUSH(pieces, MID$(text$, i, pct - i))
+        DIM hi = HexValue(MID$(text$, pct + 1, 1))
+        DIM lo = HexValue(MID$(text$, pct + 2, 1))
+        IF hi >= 0 ANDALSO lo >= 0 THEN
+            DIM ch$ = CHR$(hi * 16 + lo)
+            IF INSTR(gUnreserved$, ch$) >= 0 THEN
+                PUSH(pieces, ch$)
+            ELSE
+                PUSH(pieces, Escaped$(hi * 16 + lo))
+            ENDIF
+            i = pct + 3
+        ELSE
+            PUSH(pieces, "%")
+            i = pct + 1
+        ENDIF
+    LOOP
+    RETURN JOIN(pieces, "")
+ENDFUNC

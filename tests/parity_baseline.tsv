@@ -73,6 +73,7 @@ tests/jdlibs/retry_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/schema_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/stats_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/testkit_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/url_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/xlsx_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/xml_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/yaml_selftest.jdb	PASS	PASS	OK
