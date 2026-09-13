@@ -1,0 +1,106 @@
+' svg_demo.jdb - a sales report as one HTML page, drawn without a window:
+' a DF frame of orders pivoted by month and region into a line chart, a
+' grouped and a stacked bar chart, a donut of the regions' shares, a
+' scatter of order size against discount, and a table with a sparkline
+' per region. The page follows the reader's light or dark mode.
+'
+'   jdBasic jdb/demos/jdlibs/svg_demo.jdb
+
+IMPORT SVG, DF
+
+DIM LF$ = CHR$(10)
+DIM months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun"]
+DIM regions = ["North", "South", "East", "West"]
+DIM i = 0
+DIM j = 0
+
+' ── the orders ─────────────────────────────────────────────────
+
+DIM col_month = []
+DIM col_region = []
+DIM col_revenue = []
+DIM col_size = []
+DIM col_discount = []
+FOR i = 0 TO LEN(months) - 1
+    FOR j = 0 TO LEN(regions) - 1
+        DIM month_name$ = months[i]
+        DIM region$ = regions[j]
+        DIM revenue = 800 + j * 150 + i * (60 - j * 25) + ((i * 7 + j * 3) MOD 5) * 40
+        PUSH(col_month, month_name$)
+        PUSH(col_region, region$)
+        PUSH(col_revenue, revenue)
+        PUSH(col_size, 20 + ((i * 11 + j * 17) MOD 60))
+        PUSH(col_discount, ((i * 13 + j * 7) MOD 15) + ((i * 11 + j * 17) MOD 60) / 10.0)
+    NEXT j
+NEXT i
+DIM orders = DF.FROMCOLS({"month": col_month, "region": col_region, "revenue": col_revenue, "size": col_size, "discount": col_discount})
+DIM by_month = DF.PIVOT(orders, "month", "region", "revenue", "sum")
+DIM by_region = DF.GROUPBY(orders, "region", {"revenue": ["sum", "revenue"]})
+PRINT "orders: "; DF.NROWS(orders); " rows, "; DF.NROWS(by_month); " months, "; DF.NROWS(by_region); " regions"
+
+' ── the charts ─────────────────────────────────────────────────
+
+DIM trend = SVG.CHART("line", 560, 340)
+SVG.SETOPT(trend, "title", "Revenue per month")
+SVG.SETOPT(trend, "y_title", "EUR")
+SVG.FROMDF(trend, by_month, "month", regions)
+DIM trend$ = SVG.MARKUP$(SVG.RENDER(trend))
+
+DIM grouped = SVG.CHART("bar", 560, 340)
+SVG.SETOPT(grouped, "title", "Months side by side")
+SVG.FROMDF(grouped, by_month, "month", regions)
+DIM grouped$ = SVG.MARKUP$(SVG.RENDER(grouped))
+
+DIM stacked = SVG.CHART("stackedbar", 560, 340)
+SVG.SETOPT(stacked, "title", "Months stacked")
+SVG.FROMDF(stacked, by_month, "month", regions)
+DIM stacked$ = SVG.MARKUP$(SVG.RENDER(stacked))
+
+DIM shares = SVG.CHART("pie", 560, 340)
+SVG.SETOPT(shares, "title", "Share of the half year")
+SVG.SETOPT(shares, "donut", 0.55)
+SVG.LABELS(shares, DF.COL(by_region, "region"))
+SVG.SERIES(shares, "revenue", DF.COL(by_region, "revenue"))
+DIM shares$ = SVG.MARKUP$(SVG.RENDER(shares))
+
+DIM cloud = SVG.CHART("scatter", 560, 340)
+SVG.SETOPT(cloud, "title", "Discount against order size")
+SVG.SETOPT(cloud, "x_title", "items per order")
+SVG.SETOPT(cloud, "y_title", "discount %")
+SVG.SETOPT(cloud, "legend", "none")
+SVG.FROMDF(cloud, orders, "size", "discount")
+DIM cloud$ = SVG.MARKUP$(SVG.RENDER(cloud))
+
+' ── the page ───────────────────────────────────────────────────
+
+DIM rows$ = ""
+FOR j = 0 TO LEN(regions) - 1
+    DIM row_region$ = regions[j]
+    DIM monthly = DF.COL(by_month, row_region$)
+    DIM total = 0.0
+    FOR i = 0 TO LEN(monthly) - 1
+        DIM month_value = monthly[i]
+        total = total + month_value
+    NEXT i
+    rows$ = rows$ + "<tr><td>" + row_region$ + "</td><td class=n>" + FORMAT$("{:.0f}", total) + "</td><td>" + SVG.SPARKLINE$(monthly, 120, 24, "#4e79a7") + "</td></tr>" + LF$
+NEXT j
+
+DIM page$ = "<!doctype html>" + LF$ + "<html lang=en><head><meta charset=utf-8><title>Sales report</title>" + LF$
+page$ = page$ + "<style>body{font-family:system-ui,sans-serif;margin:2rem;background:#fff;color:#222}"
+page$ = page$ + "@media (prefers-color-scheme: dark){body{background:#1d1f21;color:#ddd}}"
+page$ = page$ + ".charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(560px,1fr));gap:1.5rem}"
+page$ = page$ + "table{border-collapse:collapse}td,th{padding:.3rem .8rem;text-align:left}.n{text-align:right}</style></head><body>" + LF$
+page$ = page$ + "<h1>Sales, first half year</h1>" + LF$
+page$ = page$ + "<table><tr><th>Region</th><th class=n>Revenue</th><th>Trend</th></tr>" + LF$ + rows$ + "</table>" + LF$
+page$ = page$ + "<div class=charts>" + LF$ + trend$ + LF$ + grouped$ + LF$ + stacked$ + LF$ + shares$ + LF$ + cloud$ + LF$ + "</div></body></html>" + LF$
+
+DIM folder$ = MKTEMP$("svgdemo")
+MKDIR folder$
+TXTWRITER folder$ + "/report.html", page$
+TXTWRITER folder$ + "/stacked.svg", stacked$
+PRINT "line chart:    "; LEN(trend$); " bytes"
+PRINT "grouped bars:  "; LEN(grouped$); " bytes"
+PRINT "stacked bars:  "; LEN(stacked$); " bytes"
+PRINT "donut:         "; LEN(shares$); " bytes"
+PRINT "scatter:       "; LEN(cloud$); " bytes"
+PRINT "report.html:   "; LEN(page$); " bytes, open it in a browser (also in dark mode)"

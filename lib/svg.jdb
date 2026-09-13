@@ -1,0 +1,1029 @@
+' svg.jdb - drawings and charts as SVG, without a window: documents with
+' shapes, paths, text, groups, transforms and gradients, written as a
+' string or a file; line, bar, stacked bar, scatter and pie charts with
+' axes, ticks, a legend and colours that read on light and dark pages; and
+' sparklines for a table cell. The ground of svgwrite and pygal.
+'
+'   IMPORT SVG
+'   DIM c = SVG.CHART("bar")
+'   SVG.SETOPT(c, "title", "Sales")
+'   SVG.LABELS(c, ["Jan", "Feb", "Mar"])
+'   SVG.SERIES(c, "2026", [120, 95.5, 143])
+'   SVG.WRITEFILE(SVG.RENDER(c), "sales.svg")
+
+EXPORT MODULE SVG
+
+DIM gPalette = ["#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f", "#edc948", "#b07aa1", "#ff9da7", "#9c755f", "#bab0ac"]
+
+' documents: one row per document, one row per piece of markup
+DIM gDocW = []
+DIM gDocH = []
+DIM gDocOpen = []
+DIM gPartDoc = []
+DIM gPart = []
+DIM gDefDoc = []
+DIM gDef = []
+
+' charts: one row per chart, one row per series, the values in long arrays
+DIM gChKind = []
+DIM gChW = []
+DIM gChH = []
+DIM gChLabelFirst = []
+DIM gChLabelCount = []
+DIM gLabels = []
+DIM gOpts AS MAP
+DIM gSeChart = []
+DIM gSeName = []
+DIM gSeFirst = []
+DIM gSeCount = []
+DIM gSeY = []
+DIM gSeX = []
+DIM gSeOk = []
+
+DIM gTickLo = 0.0
+DIM gTickHi = 1.0
+DIM gTickStep = 1.0
+
+' ── text and numbers ───────────────────────────────────────────
+
+FUNC Num$(xv)
+    DIM shown$ = STR$(ROUND(xv, 2))
+    IF shown$ = "-0" THEN shown$ = "0"
+    RETURN shown$
+ENDFUNC
+
+FUNC NumCell(v)
+    DIM kind$ = TYPEOF(v)
+    RETURN kind$ = "INT64" ORELSE kind$ = "FLOAT64" ORELSE kind$ = "NUMBER"
+ENDFUNC
+
+FUNC Esc$(s$)
+    DIM out$ = REPLACE$(s$, "&", "&amp;")
+    out$ = REPLACE$(out$, "<", "&lt;")
+    out$ = REPLACE$(out$, ">", "&gt;")
+    RETURN REPLACE$(out$, CHR$(34), "&quot;")
+ENDFUNC
+
+FUNC Attr$(label_name$, value$)
+    RETURN " " + label_name$ + "=" + CHR$(34) + Esc$(value$) + CHR$(34)
+ENDFUNC
+
+FUNC NumAttr$(label_name$, xv)
+    RETURN " " + label_name$ + "=" + CHR$(34) + Num$(xv) + CHR$(34)
+ENDFUNC
+
+' The attributes of a map as markup: numbers rounded to two decimals, an
+' underscore in a name written as a hyphen (stroke_width).
+FUNC AttrsOf$(attrs)
+    IF TYPEOF(attrs) <> "OBJECT" THEN RETURN ""
+    DIM names = MAP.KEYS(attrs)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM key_name$ = names[k]
+        DIM v = attrs{key_name$}
+        DIM attr_name$ = REPLACE$(key_name$, "_", "-")
+        IF TYPEOF(v) = "STRING" THEN
+            DIM text_value$ = v
+            out$ = out$ + Attr$(attr_name$, text_value$)
+        ELSE
+            out$ = out$ + NumAttr$(attr_name$, v)
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' ── documents ──────────────────────────────────────────────────
+
+' A new drawing of that size in pixels; answers its handle.
+FUNC NewDoc(w_px, h_px)
+    PUSH(gDocW, w_px)
+    PUSH(gDocH, h_px)
+    PUSH(gDocOpen, 0)
+    RETURN LEN(gDocW) - 1
+ENDFUNC
+
+EXPORT FUNC NEW(w_px, h_px)
+    RETURN NewDoc(w_px, h_px)
+ENDFUNC
+
+SUB AddPart(doc, markup$)
+    PUSH(gPartDoc, CINT(doc))
+    PUSH(gPart, markup$)
+ENDSUB
+
+SUB AddDef(doc, markup$)
+    PUSH(gDefDoc, CINT(doc))
+    PUSH(gDef, markup$)
+ENDSUB
+
+EXPORT SUB ADDRECT(doc, xv, yv, w, h, attrs = 0)
+    AddPart(doc, "<rect" + NumAttr$("x", xv) + NumAttr$("y", yv) + NumAttr$("width", w) + NumAttr$("height", h) + AttrsOf$(attrs) + "/>")
+ENDSUB
+
+EXPORT SUB ADDCIRCLE(doc, cx, cy, r, attrs = 0)
+    AddPart(doc, "<circle" + NumAttr$("cx", cx) + NumAttr$("cy", cy) + NumAttr$("r", r) + AttrsOf$(attrs) + "/>")
+ENDSUB
+
+EXPORT SUB ADDELLIPSE(doc, cx, cy, rx, ry, attrs = 0)
+    AddPart(doc, "<ellipse" + NumAttr$("cx", cx) + NumAttr$("cy", cy) + NumAttr$("rx", rx) + NumAttr$("ry", ry) + AttrsOf$(attrs) + "/>")
+ENDSUB
+
+EXPORT SUB ADDLINE(doc, x1, y1, x2, y2, attrs = 0)
+    AddPart(doc, "<line" + NumAttr$("x1", x1) + NumAttr$("y1", y1) + NumAttr$("x2", x2) + NumAttr$("y2", y2) + AttrsOf$(attrs) + "/>")
+ENDSUB
+
+FUNC PointList$(xs, ys)
+    DIM out$ = ""
+    DIM n_points = LEN(xs)
+    IF LEN(ys) < n_points THEN n_points = LEN(ys)
+    DIM k = 0
+    FOR k = 0 TO n_points - 1
+        DIM px = xs[k]
+        DIM py_val = ys[k]
+        IF k > 0 THEN out$ = out$ + " "
+        out$ = out$ + Num$(px) + "," + Num$(py_val)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+EXPORT SUB ADDPOLYLINE(doc, xs, ys, attrs = 0)
+    AddPart(doc, "<polyline" + Attr$("points", PointList$(xs, ys)) + AttrsOf$(attrs) + "/>")
+ENDSUB
+
+EXPORT SUB ADDPOLYGON(doc, xs, ys, attrs = 0)
+    AddPart(doc, "<polygon" + Attr$("points", PointList$(xs, ys)) + AttrsOf$(attrs) + "/>")
+ENDSUB
+
+' A path from its data: "M 10 10 L 90 10 A 40 40 0 0 1 50 50 Z".
+EXPORT SUB ADDPATH(doc, d$, attrs = 0)
+    AddPart(doc, "<path" + Attr$("d", d$) + AttrsOf$(attrs) + "/>")
+ENDSUB
+
+EXPORT SUB ADDTEXT(doc, xv, yv, content$, attrs = 0)
+    AddPart(doc, "<text" + NumAttr$("x", xv) + NumAttr$("y", yv) + AttrsOf$(attrs) + ">" + Esc$(content$) + "</text>")
+ENDSUB
+
+' Opens a group; what is added until ENDGROUP goes inside it, so its
+' attributes (a transform, a fill, an opacity) apply to all of it.
+SUB OpenGroup(doc, attrs = 0)
+    AddPart(doc, "<g" + AttrsOf$(attrs) + ">")
+    DIM d = CINT(doc)
+    gDocOpen[d] = gDocOpen[d] + 1
+ENDSUB
+
+EXPORT SUB GROUP(doc, attrs = 0)
+    OpenGroup(doc, attrs)
+ENDSUB
+
+EXPORT SUB ENDGROUP(doc)
+    DIM d = CINT(doc)
+    IF gDocOpen[d] > 0 THEN
+        AddPart(doc, "</g>")
+        gDocOpen[d] = gDocOpen[d] - 1
+    ENDIF
+ENDSUB
+
+' A title: the tooltip of the group it is in, or of the drawing.
+EXPORT SUB TITLE(doc, content$)
+    AddPart(doc, "<title>" + Esc$(content$) + "</title>")
+ENDSUB
+
+EXPORT SUB STYLE(doc, css$)
+    AddDef(doc, "<style>" + REPLACE$(css$, "<", "&lt;") + "</style>")
+ENDSUB
+
+' Markup written as it is.
+EXPORT SUB RAW(doc, markup$)
+    AddPart(doc, markup$)
+ENDSUB
+
+FUNC Stops$(colors)
+    DIM out$ = ""
+    DIM n_colors = LEN(colors)
+    DIM k = 0
+    FOR k = 0 TO n_colors - 1
+        DIM c$ = colors[k]
+        DIM offset = 0.0
+        IF n_colors > 1 THEN offset = k * 100.0 / (n_colors - 1)
+        out$ = out$ + "<stop" + Attr$("offset", Num$(offset) + "%") + Attr$("stop-color", c$) + "/>"
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' A linear gradient through the colours, evenly spaced, at an angle in
+' degrees (0 left to right, 90 top to bottom); answers "url(#id)" for a
+' fill or a stroke.
+EXPORT FUNC GRADIENT$(doc, grad_id$, colors, angle = 0)
+    DIM rad = angle * PI / 180
+    DIM dx = COS(rad) / 2
+    DIM dy = SIN(rad) / 2
+    DIM head$ = "<linearGradient" + Attr$("id", grad_id$) + NumAttr$("x1", 0.5 - dx) + NumAttr$("y1", 0.5 - dy) + NumAttr$("x2", 0.5 + dx) + NumAttr$("y2", 0.5 + dy) + ">"
+    AddDef(doc, head$ + Stops$(colors) + "</linearGradient>")
+    RETURN "url(#" + grad_id$ + ")"
+ENDFUNC
+
+' A radial gradient from the centre outwards; answers "url(#id)".
+EXPORT FUNC RADIAL$(doc, grad_id$, colors)
+    AddDef(doc, "<radialGradient" + Attr$("id", grad_id$) + ">" + Stops$(colors) + "</radialGradient>")
+    RETURN "url(#" + grad_id$ + ")"
+ENDFUNC
+
+EXPORT FUNC TRANSLATE$(xv, yv)
+    RETURN "translate(" + Num$(xv) + " " + Num$(yv) + ")"
+ENDFUNC
+
+' A rotation in degrees, about the origin or about (cx, cy).
+FUNC RotateBy$(degrees, cx = 0, cy = 0)
+    IF cx = 0 ANDALSO cy = 0 THEN RETURN "rotate(" + Num$(degrees) + ")"
+    RETURN "rotate(" + Num$(degrees) + " " + Num$(cx) + " " + Num$(cy) + ")"
+ENDFUNC
+
+EXPORT FUNC ROTATE$(degrees, cx = 0, cy = 0)
+    RETURN RotateBy$(degrees, cx, cy)
+ENDFUNC
+
+EXPORT FUNC SCALE$(sx, sy = 0)
+    IF sy = 0 THEN RETURN "scale(" + Num$(sx) + ")"
+    RETURN "scale(" + Num$(sx) + " " + Num$(sy) + ")"
+ENDFUNC
+
+' The drawing as SVG markup; groups left open are closed.
+EXPORT FUNC MARKUP$(doc)
+    DIM d = CINT(doc)
+    DIM w = gDocW[d]
+    DIM h = gDocH[d]
+    DIM pieces = []
+    PUSH(pieces, "<svg xmlns=" + CHR$(34) + "http://www.w3.org/2000/svg" + CHR$(34) + NumAttr$("width", w) + NumAttr$("height", h) + Attr$("viewBox", "0 0 " + Num$(w) + " " + Num$(h)) + ">")
+    DIM k = 0
+    DIM has_defs = 0
+    FOR k = 0 TO LEN(gDefDoc) - 1
+        DIM def_doc = gDefDoc[k]
+        IF def_doc = d THEN
+            IF has_defs = 0 THEN PUSH(pieces, "<defs>")
+            has_defs = 1
+            DIM def$ = gDef[k]
+            PUSH(pieces, def$)
+        ENDIF
+    NEXT k
+    IF has_defs = 1 THEN PUSH(pieces, "</defs>")
+    FOR k = 0 TO LEN(gPartDoc) - 1
+        DIM part_doc = gPartDoc[k]
+        IF part_doc = d THEN
+            DIM part$ = gPart[k]
+            PUSH(pieces, part$)
+        ENDIF
+    NEXT k
+    DIM still_open = gDocOpen[d]
+    FOR k = 1 TO still_open
+        PUSH(pieces, "</g>")
+    NEXT k
+    PUSH(pieces, "</svg>")
+    RETURN JOIN(pieces, "")
+ENDFUNC
+
+EXPORT SUB WRITEFILE(doc, file_path$)
+    TXTWRITER file_path$, MARKUP$(doc)
+ENDSUB
+
+' ── charts: data ───────────────────────────────────────────────
+
+' A chart of a kind: line, bar, stackedbar, scatter or pie. Answers its
+' handle; the size is in pixels.
+EXPORT FUNC CHART(kind$, w_px = 640, h_px = 400)
+    DIM k$ = LCASE$(kind$)
+    IF k$ <> "line" ANDALSO k$ <> "bar" ANDALSO k$ <> "stackedbar" ANDALSO k$ <> "scatter" ANDALSO k$ <> "pie" THEN THROW "SVG: no chart kind " + kind$
+    PUSH(gChKind, k$)
+    PUSH(gChW, w_px)
+    PUSH(gChH, h_px)
+    PUSH(gChLabelFirst, 0)
+    PUSH(gChLabelCount, 0)
+    RETURN LEN(gChKind) - 1
+ENDFUNC
+
+' Sets an option of a chart: title, x_title, y_title, y_min, y_max,
+' legend ("top" or "none"), dots (0 or 1), values (1 writes the numbers on
+' the bars), donut (the hole of a pie, 0 to 0.9), background (a colour),
+' colors (a list separated by commas), decimals (of the axis labels).
+EXPORT SUB SETOPT(chart, opt_name$, value)
+    gOpts{STR$(CINT(chart)) + ":" + LCASE$(opt_name$)} = value
+ENDSUB
+
+FUNC HasOpt(chart, opt_name$)
+    RETURN MAP.EXISTS(gOpts, STR$(CINT(chart)) + ":" + opt_name$)
+ENDFUNC
+
+FUNC OptStr$(chart, opt_name$, fallback$)
+    DIM opt_key$ = STR$(CINT(chart)) + ":" + opt_name$
+    IF NOT MAP.EXISTS(gOpts, opt_key$) THEN RETURN fallback$
+    DIM v = gOpts{opt_key$}
+    IF TYPEOF(v) = "STRING" THEN
+        DIM s$ = v
+        RETURN s$
+    ENDIF
+    RETURN Num$(v)
+ENDFUNC
+
+FUNC OptNum(chart, opt_name$, fallback)
+    DIM opt_key$ = STR$(CINT(chart)) + ":" + opt_name$
+    IF NOT MAP.EXISTS(gOpts, opt_key$) THEN RETURN fallback
+    DIM v = gOpts{opt_key$}
+    IF TYPEOF(v) = "STRING" THEN
+        DIM s$ = v
+        RETURN VAL(s$)
+    ENDIF
+    DIM n = v
+    RETURN n
+ENDFUNC
+
+' The category labels along the x axis, or the slices of a pie.
+EXPORT SUB LABELS(chart, labels)
+    DIM c = CINT(chart)
+    gChLabelFirst[c] = LEN(gLabels)
+    gChLabelCount[c] = LEN(labels)
+    DIM k = 0
+    FOR k = 0 TO LEN(labels) - 1
+        DIM v = labels[k]
+        DIM shown$ = ""
+        IF TYPEOF(v) = "STRING" THEN
+            shown$ = v
+        ELSEIF NumCell(v) THEN
+            shown$ = Num$(v)
+        ENDIF
+        PUSH(gLabels, shown$)
+    NEXT k
+ENDSUB
+
+SUB AddSeries(chart, label_name$, xs, ys, has_x)
+    DIM c = CINT(chart)
+    PUSH(gSeChart, c)
+    PUSH(gSeName, label_name$)
+    PUSH(gSeFirst, LEN(gSeY))
+    DIM n_points = LEN(ys)
+    IF has_x = 1 ANDALSO LEN(xs) < n_points THEN n_points = LEN(xs)
+    PUSH(gSeCount, n_points)
+    DIM k = 0
+    FOR k = 0 TO n_points - 1
+        DIM yv = ys[k]
+        DIM ok = 0
+        IF NumCell(yv) THEN ok = 1
+        DIM xv = 0.0
+        IF has_x = 1 THEN
+            DIM xcell = xs[k]
+            IF NumCell(xcell) THEN
+                xv = xcell
+            ELSE
+                ok = 0
+            ENDIF
+        ENDIF
+        IF ok = 1 THEN
+            PUSH(gSeY, yv)
+        ELSE
+            PUSH(gSeY, 0.0)
+        ENDIF
+        PUSH(gSeX, xv)
+        PUSH(gSeOk, ok)
+    NEXT k
+ENDSUB
+
+' A series of values, one per label. A cell that is not a number is a gap.
+EXPORT SUB SERIES(chart, label_name$, vals)
+    DIM no_x = []
+    AddSeries(chart, label_name$, no_x, vals, 0)
+ENDSUB
+
+' A series of points for a scatter chart.
+EXPORT SUB POINTS(chart, label_name$, xs, ys)
+    AddSeries(chart, label_name$, xs, ys, 1)
+ENDSUB
+
+' Takes a DF frame: the x column becomes the labels (the x values of a
+' scatter chart), each column of y_cols (a name or a list) a series.
+EXPORT SUB FROMDF(chart, df_frame, x_col$, y_cols)
+    DIM names = df_frame{"names"}
+    DIM cols = df_frame{"cols"}
+    DIM wanted = []
+    IF TYPEOF(y_cols) = "STRING" THEN
+        DIM only$ = y_cols
+        PUSH(wanted, only$)
+    ELSE
+        DIM k0 = 0
+        FOR k0 = 0 TO LEN(y_cols) - 1
+            DIM one$ = y_cols[k0]
+            PUSH(wanted, one$)
+        NEXT k0
+    ENDIF
+    DIM xi = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM nm$ = names[k]
+        IF nm$ = x_col$ THEN xi = k
+    NEXT k
+    IF xi < 0 THEN THROW "SVG: the frame has no column " + x_col$
+    DIM xs = cols[xi]
+    DIM c = CINT(chart)
+    DIM kind$ = gChKind[c]
+    IF kind$ <> "scatter" THEN LABELS(chart, xs)
+    DIM j = 0
+    FOR j = 0 TO LEN(wanted) - 1
+        DIM want$ = wanted[j]
+        DIM yi = -1
+        FOR k = 0 TO LEN(names) - 1
+            DIM nm2$ = names[k]
+            IF nm2$ = want$ THEN yi = k
+        NEXT k
+        IF yi < 0 THEN THROW "SVG: the frame has no column " + want$
+        DIM ys = cols[yi]
+        IF kind$ = "scatter" THEN
+            AddSeries(chart, want$, xs, ys, 1)
+        ELSE
+            DIM no_x = []
+            AddSeries(chart, want$, no_x, ys, 0)
+        ENDIF
+    NEXT j
+ENDSUB
+
+' ── charts: drawing ────────────────────────────────────────────
+
+FUNC SeriesOf(chart)
+    DIM out = []
+    DIM c = CINT(chart)
+    DIM k = 0
+    FOR k = 0 TO LEN(gSeChart) - 1
+        DIM owner = gSeChart[k]
+        IF owner = c THEN PUSH(out, k)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC ColorOf$(chart, index)
+    DIM custom$ = OptStr$(chart, "colors", "")
+    IF custom$ <> "" THEN
+        DIM own = SPLIT(REPLACE$(custom$, " ", ""), ",")
+        DIM pick_own$ = own[index MOD LEN(own)]
+        RETURN pick_own$
+    ENDIF
+    DIM pick$ = gPalette[index MOD LEN(gPalette)]
+    RETURN pick$
+ENDFUNC
+
+FUNC NiceNum(xv, rounded)
+    IF xv <= 0 THEN RETURN 1.0
+    DIM p = 1.0
+    DO WHILE p * 10 <= xv
+        p = p * 10
+    LOOP
+    DO WHILE p > xv
+        p = p / 10
+    LOOP
+    DIM f = xv / p
+    DIM nice = 10.0
+    IF rounded = 1 THEN
+        IF f < 1.5 THEN
+            nice = 1.0
+        ELSEIF f < 3 THEN
+            nice = 2.0
+        ELSEIF f < 7 THEN
+            nice = 5.0
+        ENDIF
+    ELSE
+        IF f <= 1 THEN
+            nice = 1.0
+        ELSEIF f <= 2 THEN
+            nice = 2.0
+        ELSEIF f <= 5 THEN
+            nice = 5.0
+        ENDIF
+    ENDIF
+    RETURN nice * p
+ENDFUNC
+
+' Rounds a range out to steps of 1, 2 or 5 times a power of ten, about
+' five ticks; leaves gTickLo, gTickHi and gTickStep.
+SUB NiceRange(lo, hi)
+    DIM a = lo
+    DIM b = hi
+    IF b - a < 0.000000001 THEN
+        a = a - 1
+        b = b + 1
+    ENDIF
+    DIM span = NiceNum(b - a, 0)
+    gTickStep = NiceNum(span / 4, 1)
+    gTickLo = FLOOR(a / gTickStep + 0.000000001) * gTickStep
+    gTickHi = CEIL(b / gTickStep - 0.000000001) * gTickStep
+ENDSUB
+
+FUNC Decimals(chart, step_size)
+    IF HasOpt(chart, "decimals") THEN RETURN CINT(OptNum(chart, "decimals", 0))
+    DIM d = 0
+    DIM s = step_size
+    DO WHILE d < 6 ANDALSO ABS(s - ROUND(s, 0)) > 0.000001
+        s = s * 10
+        d = d + 1
+    LOOP
+    RETURN d
+ENDFUNC
+
+FUNC TickText$(v, decimals)
+    DIM shown$ = FORMAT$("{:." + STR$(decimals) + "f}", v)
+    IF VAL(shown$) = 0 THEN shown$ = FORMAT$("{:." + STR$(decimals) + "f}", 0.0)
+    RETURN shown$
+ENDFUNC
+
+FUNC ChartCss$()
+    DIM css$ = ".jdsvg text{font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:12px;fill:#333}"
+    css$ = css$ + ".jdsvg .t{font-size:16px;font-weight:600}.jdsvg .g{stroke:#d6d6d6;stroke-width:1}.jdsvg .a{stroke:#888;stroke-width:1}"
+    css$ = css$ + ".jdsvg .m{stroke:#fff;stroke-width:1}"
+    css$ = css$ + "@media (prefers-color-scheme: dark){.jdsvg text{fill:#ddd}.jdsvg .g{stroke:#474747}.jdsvg .a{stroke:#9a9a9a}.jdsvg .m{stroke:#222}}"
+    RETURN css$
+ENDFUNC
+
+' Text with an anchor (start, middle or end) and a class; extra$ is more
+' attribute markup.
+SUB TextAt(doc, xv, yv, content$, anchor$, class_name$, extra$)
+    DIM more$ = ""
+    IF anchor$ <> "" THEN more$ = more$ + Attr$("text-anchor", anchor$)
+    IF class_name$ <> "" THEN more$ = more$ + Attr$("class", class_name$)
+    AddPart(doc, "<text" + NumAttr$("x", xv) + NumAttr$("y", yv) + more$ + extra$ + ">" + Esc$(content$) + "</text>")
+ENDSUB
+
+' Draws the legend entries in rows from (x0, y0) across width; answers the
+' height it took.
+FUNC Legend(doc, chart, entries, x0, y0, width_avail)
+    DIM xv = x0
+    DIM yv = y0
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM entry$ = entries[k]
+        DIM item_w = 22 + LEN(entry$) * 7
+        IF xv > x0 ANDALSO xv + item_w > x0 + width_avail THEN
+            xv = x0
+            yv = yv + 18
+        ENDIF
+        DIM sw AS MAP
+        sw{"fill"} = ColorOf$(chart, k)
+        sw{"rx"} = 2
+        ADDRECT(doc, xv, yv, 10, 10, sw)
+        TextAt(doc, xv + 14, yv + 9, entry$, "", "", "")
+        xv = xv + item_w
+    NEXT k
+    RETURN yv - y0 + 18
+ENDFUNC
+
+FUNC LabelAt$(chart, index)
+    DIM c = CINT(chart)
+    IF index >= gChLabelCount[c] THEN RETURN ""
+    DIM lab$ = gLabels[gChLabelFirst[c] + index]
+    RETURN lab$
+ENDFUNC
+
+' Draws a chart into a new drawing; answers the drawing's handle.
+EXPORT FUNC RENDER(chart)
+    DIM c = CINT(chart)
+    DIM kind$ = gChKind[c]
+    DIM w = gChW[c]
+    DIM h = gChH[c]
+    DIM doc = NewDoc(w, h)
+    STYLE(doc, ChartCss$())
+    DIM root AS MAP
+    root{"class"} = "jdsvg"
+    OpenGroup(doc, root)
+    DIM bg$ = OptStr$(chart, "background", "")
+    IF bg$ <> "" THEN
+        DIM bga AS MAP
+        bga{"fill"} = bg$
+        ADDRECT(doc, 0, 0, w, h, bga)
+    ENDIF
+    DIM top = 12.0
+    DIM title$ = OptStr$(chart, "title", "")
+    IF title$ <> "" THEN
+        TextAt(doc, w / 2, top + 14, title$, "middle", "t", "")
+        top = top + 30
+    ENDIF
+    DIM series = SeriesOf(chart)
+    DIM entries = []
+    DIM k = 0
+    IF kind$ = "pie" THEN
+        FOR k = 0 TO gChLabelCount[c] - 1
+            PUSH(entries, LabelAt$(chart, k))
+        NEXT k
+    ELSE
+        FOR k = 0 TO LEN(series) - 1
+            DIM sid = series[k]
+            DIM se_name$ = gSeName[sid]
+            PUSH(entries, se_name$)
+        NEXT k
+    ENDIF
+    IF OptStr$(chart, "legend", "top") <> "none" ANDALSO LEN(entries) > 0 THEN
+        DIM legend_h = Legend(doc, chart, entries, 16, top, w - 32)
+        top = top + legend_h + 6
+    ENDIF
+    IF kind$ = "pie" THEN
+        DrawPie(doc, chart, series, 16, top, w - 32, h - top - 16)
+    ELSE
+        DrawAxes(doc, chart, series, kind$, top)
+    ENDIF
+    ENDGROUP(doc)
+    RETURN doc
+ENDFUNC
+
+SUB DrawPie(doc, chart, series, x0, y0, avail_w, avail_h)
+    IF LEN(series) > 0 THEN
+        DIM sid = series[0]
+        DIM first = gSeFirst[sid]
+        DIM n_values = gSeCount[sid]
+        DIM total = 0.0
+        DIM k = 0
+        FOR k = 0 TO n_values - 1
+            DIM okv = gSeOk[first + k]
+            DIM v0 = gSeY[first + k]
+            IF okv = 1 ANDALSO v0 > 0 THEN total = total + v0
+        NEXT k
+        DIM r = avail_w / 2
+        IF avail_h / 2 < r THEN r = avail_h / 2
+        DIM cx = x0 + avail_w / 2
+        DIM cy = y0 + avail_h / 2
+        DIM hole = OptNum(chart, "donut", 0)
+        IF hole > 0.9 THEN hole = 0.9
+        DIM ir = r * hole
+        DIM angle = -PI / 2
+        FOR k = 0 TO n_values - 1
+            DIM ok = gSeOk[first + k]
+            DIM v = gSeY[first + k]
+            IF ok = 1 ANDALSO v > 0 ANDALSO total > 0 THEN
+                DIM sweep = v / total * 2 * PI
+                DIM a1 = angle + sweep
+                DIM pa AS MAP
+                pa{"fill"} = ColorOf$(chart, k)
+                pa{"class"} = "m"
+                pa{"data_label"} = LabelAt$(chart, k)
+                pa{"data_value"} = Num$(v)
+                IF sweep >= 2 * PI - 0.000001 THEN
+                    IF ir > 0 THEN
+                        DIM ring$ = "M " + Num$(cx - r) + " " + Num$(cy) + " A " + Num$(r) + " " + Num$(r) + " 0 1 1 " + Num$(cx + r) + " " + Num$(cy) + " A " + Num$(r) + " " + Num$(r) + " 0 1 1 " + Num$(cx - r) + " " + Num$(cy)
+                        ring$ = ring$ + " M " + Num$(cx - ir) + " " + Num$(cy) + " A " + Num$(ir) + " " + Num$(ir) + " 0 1 0 " + Num$(cx + ir) + " " + Num$(cy) + " A " + Num$(ir) + " " + Num$(ir) + " 0 1 0 " + Num$(cx - ir) + " " + Num$(cy) + " Z"
+                        pa{"fill_rule"} = "evenodd"
+                        ADDPATH(doc, ring$, pa)
+                    ELSE
+                        ADDCIRCLE(doc, cx, cy, r, pa)
+                    ENDIF
+                ELSE
+                    DIM large$ = "0"
+                    IF sweep > PI THEN large$ = "1"
+                    DIM d$ = "M " + Num$(cx + r * COS(angle)) + " " + Num$(cy + r * SIN(angle))
+                    d$ = d$ + " A " + Num$(r) + " " + Num$(r) + " 0 " + large$ + " 1 " + Num$(cx + r * COS(a1)) + " " + Num$(cy + r * SIN(a1))
+                    IF ir > 0 THEN
+                        d$ = d$ + " L " + Num$(cx + ir * COS(a1)) + " " + Num$(cy + ir * SIN(a1))
+                        d$ = d$ + " A " + Num$(ir) + " " + Num$(ir) + " 0 " + large$ + " 0 " + Num$(cx + ir * COS(angle)) + " " + Num$(cy + ir * SIN(angle)) + " Z"
+                    ELSE
+                        d$ = d$ + " L " + Num$(cx) + " " + Num$(cy) + " Z"
+                    ENDIF
+                    ADDPATH(doc, d$, pa)
+                ENDIF
+                DIM share = v / total * 100
+                TITLE(doc, LabelAt$(chart, k) + ": " + Num$(v) + " (" + FORMAT$("{:.1f}", share) + "%)")
+                IF share >= 5 THEN
+                    DIM mid_angle = angle + sweep / 2
+                    DIM lr = (r + ir) / 2
+                    IF ir = 0 THEN lr = r * 0.65
+                    TextAt(doc, cx + lr * COS(mid_angle), cy + lr * SIN(mid_angle) + 4, FORMAT$("{:.0f}", share) + "%", "middle", "", Attr$("fill", "#fff") + Attr$("style", "fill:#fff"))
+                ENDIF
+                angle = a1
+            ENDIF
+        NEXT k
+    ENDIF
+ENDSUB
+
+SUB DrawAxes(doc, chart, series, kind$, top)
+    DIM c = CINT(chart)
+    DIM w = gChW[c]
+    DIM h = gChH[c]
+    DIM n_labels = gChLabelCount[c]
+    DIM k = 0
+    DIM j = 0
+    DIM x_title$ = OptStr$(chart, "x_title", "")
+    DIM y_title$ = OptStr$(chart, "y_title", "")
+    DIM margin_left = 56.0
+    IF y_title$ <> "" THEN margin_left = margin_left + 18
+    DIM bottom = 34.0
+    IF x_title$ <> "" THEN bottom = bottom + 18
+    DIM pl = margin_left
+    DIM pt = top + 6
+    DIM pw = w - margin_left - 20
+    DIM ph = h - pt - bottom
+    ' the y range over every value, stacked when the bars stack
+    DIM lo = 0.0
+    DIM hi = 0.0
+    DIM seen = 0
+    IF kind$ = "stackedbar" THEN
+        FOR k = 0 TO n_labels - 1
+            DIM up = 0.0
+            DIM down = 0.0
+            FOR j = 0 TO LEN(series) - 1
+                DIM sj = series[j]
+                IF k < gSeCount[sj] THEN
+                    DIM sv = gSeY[gSeFirst[sj] + k]
+                    IF gSeOk[gSeFirst[sj] + k] = 1 THEN
+                        IF sv >= 0 THEN
+                            up = up + sv
+                        ELSE
+                            down = down + sv
+                        ENDIF
+                    ENDIF
+                ENDIF
+            NEXT j
+            IF up > hi THEN hi = up
+            IF down < lo THEN lo = down
+        NEXT k
+        seen = 1
+    ELSE
+        FOR j = 0 TO LEN(series) - 1
+            DIM sid = series[j]
+            FOR k = 0 TO gSeCount[sid] - 1
+                DIM at = gSeFirst[sid] + k
+                IF gSeOk[at] = 1 THEN
+                    DIM yv = gSeY[at]
+                    IF seen = 0 THEN
+                        lo = yv
+                        hi = yv
+                        seen = 1
+                    ENDIF
+                    IF yv < lo THEN lo = yv
+                    IF yv > hi THEN hi = yv
+                ENDIF
+            NEXT k
+        NEXT j
+        IF kind$ = "bar" THEN
+            IF lo > 0 THEN lo = 0.0
+            IF hi < 0 THEN hi = 0.0
+        ENDIF
+    ENDIF
+    IF HasOpt(chart, "y_min") THEN lo = OptNum(chart, "y_min", 0)
+    IF HasOpt(chart, "y_max") THEN hi = OptNum(chart, "y_max", 0)
+    NiceRange(lo, hi)
+    DIM ylo = gTickLo
+    DIM yhi = gTickHi
+    DIM ystep = gTickStep
+    IF HasOpt(chart, "y_min") THEN ylo = OptNum(chart, "y_min", 0)
+    IF HasOpt(chart, "y_max") THEN yhi = OptNum(chart, "y_max", 0)
+    DIM ydec = Decimals(chart, ystep)
+    DIM grid AS MAP
+    grid{"class"} = "g"
+    DIM axis_attrs AS MAP
+    axis_attrs{"class"} = "a"
+    DIM ytick = FLOOR(ylo / ystep + 0.000000001) * ystep
+    DO WHILE ytick <= yhi + ystep * 0.000001
+        IF ytick >= ylo - ystep * 0.000001 THEN
+            DIM gy = pt + ph - (ytick - ylo) / (yhi - ylo) * ph
+            ADDLINE(doc, pl, gy, pl + pw, gy, grid)
+            TextAt(doc, pl - 6, gy + 4, TickText$(ytick, ydec), "end", "", "")
+        ENDIF
+        ytick = ytick + ystep
+    LOOP
+    ' the x axis: categories, or numbers for a scatter chart
+    DIM xlo = 0.0
+    DIM xhi = 1.0
+    DIM xstep = 1.0
+    IF kind$ = "scatter" THEN
+        DIM xseen = 0
+        FOR j = 0 TO LEN(series) - 1
+            DIM sx = series[j]
+            FOR k = 0 TO gSeCount[sx] - 1
+                DIM xat = gSeFirst[sx] + k
+                IF gSeOk[xat] = 1 THEN
+                    DIM xv = gSeX[xat]
+                    IF xseen = 0 THEN
+                        xlo = xv
+                        xhi = xv
+                        xseen = 1
+                    ENDIF
+                    IF xv < xlo THEN xlo = xv
+                    IF xv > xhi THEN xhi = xv
+                ENDIF
+            NEXT k
+        NEXT j
+        NiceRange(xlo, xhi)
+        xlo = gTickLo
+        xhi = gTickHi
+        xstep = gTickStep
+        DIM xdec = Decimals(chart, xstep)
+        DIM xt = xlo
+        DO WHILE xt <= xhi + xstep * 0.000001
+            DIM gx = pl + (xt - xlo) / (xhi - xlo) * pw
+            ADDLINE(doc, gx, pt, gx, pt + ph, grid)
+            TextAt(doc, gx, pt + ph + 18, TickText$(xt, xdec), "middle", "", "")
+            xt = xt + xstep
+        LOOP
+    ELSE
+        DIM label_every = 1
+        IF n_labels > 0 THEN
+            DIM longest = 1
+            FOR k = 0 TO n_labels - 1
+                IF LEN(LabelAt$(chart, k)) > longest THEN longest = LEN(LabelAt$(chart, k))
+            NEXT k
+            DIM slot = pw / n_labels
+            DO WHILE slot * label_every < longest * 7 + 8 ANDALSO label_every < n_labels
+                label_every = label_every + 1
+            LOOP
+        ENDIF
+        FOR k = 0 TO n_labels - 1
+            IF k MOD label_every = 0 THEN
+                DIM lx = 0.0
+                IF kind$ = "line" THEN
+                    lx = pl + pw / 2
+                    IF n_labels > 1 THEN lx = pl + pw * k / (n_labels - 1)
+                ELSE
+                    lx = pl + pw * (k + 0.5) / n_labels
+                ENDIF
+                TextAt(doc, lx, pt + ph + 18, LabelAt$(chart, k), "middle", "", "")
+            ENDIF
+        NEXT k
+    ENDIF
+    DIM base_y = pt + ph - (0 - ylo) / (yhi - ylo) * ph
+    IF base_y < pt THEN base_y = pt
+    IF base_y > pt + ph THEN base_y = pt + ph
+    ADDLINE(doc, pl, base_y, pl + pw, base_y, axis_attrs)
+    ADDLINE(doc, pl, pt, pl, pt + ph, axis_attrs)
+    IF x_title$ <> "" THEN
+        TextAt(doc, pl + pw / 2, h - 10, x_title$, "middle", "", "")
+    ENDIF
+    IF y_title$ <> "" THEN
+        TextAt(doc, 16, pt + ph / 2, y_title$, "middle", "", Attr$("transform", RotateBy$(-90, 16, pt + ph / 2)))
+    ENDIF
+    ' the marks
+    DIM show_values = OptNum(chart, "values", 0)
+    DIM dots = OptNum(chart, "dots", 1)
+    DIM n_series = LEN(series)
+    DIM stack_up = []
+    DIM stack_down = []
+    FOR k = 0 TO n_labels - 1
+        PUSH(stack_up, 0.0)
+        PUSH(stack_down, 0.0)
+    NEXT k
+    FOR j = 0 TO n_series - 1
+        DIM s = series[j]
+        DIM series_col$ = ColorOf$(chart, j)
+        DIM s_name$ = gSeName[s]
+        DIM s_first = gSeFirst[s]
+        DIM s_count = gSeCount[s]
+        DIM mark AS MAP
+        mark{"fill"} = series_col$
+        IF kind$ = "line" THEN
+            DIM run_x = []
+            DIM run_y = []
+            FOR k = 0 TO s_count
+                DIM run_ok = 0
+                IF k < s_count ANDALSO k < n_labels THEN run_ok = gSeOk[s_first + k]
+                IF run_ok = 1 THEN
+                    DIM px = pl + pw / 2
+                    IF n_labels > 1 THEN px = pl + pw * k / (n_labels - 1)
+                    DIM lv = gSeY[s_first + k]
+                    PUSH(run_x, px)
+                    PUSH(run_y, pt + ph - (lv - ylo) / (yhi - ylo) * ph)
+                ELSE
+                    IF LEN(run_x) > 1 THEN
+                        DIM la AS MAP
+                        la{"fill"} = "none"
+                        la{"stroke"} = series_col$
+                        la{"stroke_width"} = 2
+                        la{"stroke_linejoin"} = "round"
+                        ADDPOLYLINE(doc, run_x, run_y, la)
+                    ENDIF
+                    run_x = []
+                    run_y = []
+                ENDIF
+            NEXT k
+            IF dots = 1 THEN
+                FOR k = 0 TO s_count - 1
+                    IF k < n_labels ANDALSO gSeOk[s_first + k] = 1 THEN
+                        DIM dx = pl + pw / 2
+                        IF n_labels > 1 THEN dx = pl + pw * k / (n_labels - 1)
+                        DIM dv = gSeY[s_first + k]
+                        DIM dot_attrs AS MAP
+                        dot_attrs{"fill"} = series_col$
+                        dot_attrs{"data_series"} = s_name$
+                        dot_attrs{"data_label"} = LabelAt$(chart, k)
+                        dot_attrs{"data_value"} = Num$(dv)
+                        OpenGroup(doc)
+                        ADDCIRCLE(doc, dx, pt + ph - (dv - ylo) / (yhi - ylo) * ph, 3.5, dot_attrs)
+                        TITLE(doc, s_name$ + ", " + LabelAt$(chart, k) + ": " + Num$(dv))
+                        ENDGROUP(doc)
+                    ENDIF
+                NEXT k
+            ENDIF
+        ELSEIF kind$ = "scatter" THEN
+            FOR k = 0 TO s_count - 1
+                IF gSeOk[s_first + k] = 1 THEN
+                    DIM qx = gSeX[s_first + k]
+                    DIM qy = gSeY[s_first + k]
+                    DIM pnt AS MAP
+                    pnt{"fill"} = series_col$
+                    pnt{"fill_opacity"} = 0.8
+                    pnt{"data_series"} = s_name$
+                    pnt{"data_x"} = Num$(qx)
+                    pnt{"data_value"} = Num$(qy)
+                    OpenGroup(doc)
+                    ADDCIRCLE(doc, pl + (qx - xlo) / (xhi - xlo) * pw, pt + ph - (qy - ylo) / (yhi - ylo) * ph, 4, pnt)
+                    TITLE(doc, s_name$ + ": " + Num$(qx) + ", " + Num$(qy))
+                    ENDGROUP(doc)
+                ENDIF
+            NEXT k
+        ELSE
+            DIM slot_w = pw / n_labels
+            FOR k = 0 TO s_count - 1
+                IF k < n_labels ANDALSO gSeOk[s_first + k] = 1 THEN
+                    DIM bv = gSeY[s_first + k]
+                    DIM bx = 0.0
+                    DIM bw = 0.0
+                    DIM y_from = 0.0
+                    DIM y_to = bv
+                    IF kind$ = "stackedbar" THEN
+                        bw = slot_w * 0.6
+                        bx = pl + slot_w * k + slot_w * 0.2
+                        IF bv >= 0 THEN
+                            y_from = stack_up[k]
+                            stack_up[k] = y_from + bv
+                        ELSE
+                            y_from = stack_down[k]
+                            stack_down[k] = y_from + bv
+                        ENDIF
+                        y_to = y_from + bv
+                    ELSE
+                        bw = slot_w * 0.8 / n_series
+                        bx = pl + slot_w * k + slot_w * 0.1 + bw * j
+                    ENDIF
+                    DIM ya = pt + ph - (y_from - ylo) / (yhi - ylo) * ph
+                    DIM yb = pt + ph - (y_to - ylo) / (yhi - ylo) * ph
+                    DIM ry = ya
+                    IF yb < ry THEN ry = yb
+                    DIM bar AS MAP
+                    bar{"fill"} = series_col$
+                    bar{"data_series"} = s_name$
+                    bar{"data_label"} = LabelAt$(chart, k)
+                    bar{"data_value"} = Num$(bv)
+                    OpenGroup(doc)
+                    ADDRECT(doc, bx, ry, bw, ABS(ya - yb), bar)
+                    TITLE(doc, s_name$ + ", " + LabelAt$(chart, k) + ": " + Num$(bv))
+                    ENDGROUP(doc)
+                    IF show_values = 1 THEN
+                        TextAt(doc, bx + bw / 2, ry - 4, Num$(bv), "middle", "", "")
+                    ENDIF
+                ENDIF
+            NEXT k
+        ENDIF
+    NEXT j
+ENDSUB
+
+' A small line of the values for a table cell or a sentence, as markup.
+EXPORT FUNC SPARKLINE$(vals, w_px = 120, h_px = 24, series_col$ = "#4e79a7")
+    DIM doc = NewDoc(w_px, h_px)
+    DIM n_values = LEN(vals)
+    DIM lo = 0.0
+    DIM hi = 0.0
+    DIM seen = 0
+    DIM k = 0
+    FOR k = 0 TO n_values - 1
+        DIM v = vals[k]
+        IF NumCell(v) THEN
+            IF seen = 0 THEN
+                lo = v
+                hi = v
+                seen = 1
+            ENDIF
+            IF v < lo THEN lo = v
+            IF v > hi THEN hi = v
+        ENDIF
+    NEXT k
+    IF hi - lo < 0.000000001 THEN
+        lo = lo - 1
+        hi = hi + 1
+    ENDIF
+    DIM xs = []
+    DIM ys = []
+    DIM last_x = 0.0
+    DIM last_y = 0.0
+    FOR k = 0 TO n_values - 1
+        DIM cell = vals[k]
+        IF NumCell(cell) THEN
+            DIM px = 2.0
+            IF n_values > 1 THEN px = 2 + (w_px - 4) * k / (n_values - 1)
+            DIM py_val = 2 + (h_px - 4) * (1 - (cell - lo) / (hi - lo))
+            PUSH(xs, px)
+            PUSH(ys, py_val)
+            last_x = px
+            last_y = py_val
+        ENDIF
+    NEXT k
+    DIM la AS MAP
+    la{"fill"} = "none"
+    la{"stroke"} = series_col$
+    la{"stroke_width"} = 1.5
+    la{"stroke_linejoin"} = "round"
+    ADDPOLYLINE(doc, xs, ys, la)
+    IF LEN(xs) > 0 THEN
+        DIM dot_attrs AS MAP
+        dot_attrs{"fill"} = series_col$
+        ADDCIRCLE(doc, last_x, last_y, 2, dot_attrs)
+    ENDIF
+    RETURN MARKUP$(doc)
+ENDFUNC

@@ -1,0 +1,288 @@
+' SVG: drawings read back with XML attribute by attribute, and charts whose
+' marks are measured against their data: a bar chart from a DF frame, a
+' line chart with a gap, stacked bars, a scatter and a pie; ticks, options,
+' faults and sparklines. With Edge or Chrome installed, a chart is also
+' rendered to PNG by the headless browser.
+
+IMPORT TESTKIT, SVG, XML, DF
+
+DIM Q$ = CHR$(34)
+DIM i = 0
+
+FUNC AttrNum(tree, nid, attr$)
+    RETURN VAL(XML.ATTR$(tree, nid, attr$))
+ENDFUNC
+
+FUNC BadKind(kind$)
+    RETURN SVG.CHART(kind$)
+ENDFUNC
+
+FUNC Near(a, b, tolerance)
+    RETURN ABS(a - b) <= tolerance
+ENDFUNC
+
+' ── drawings ───────────────────────────────────────────────────
+
+TESTKIT.SUITE("drawings")
+DIM d = SVG.NEW(200, 100)
+SVG.ADDRECT(d, 10, 20, 30.456, 40, {"fill": "red", "stroke_width": 2})
+SVG.ADDTEXT(d, 5, 15, "a < b & " + Q$ + "c" + Q$, {"font_size": 12})
+SVG.GROUP(d, {"transform": SVG.TRANSLATE$(5, 6)})
+SVG.ADDCIRCLE(d, 1, 2, 3)
+SVG.ADDELLIPSE(d, 4, 5, 6, 7)
+SVG.ENDGROUP(d)
+SVG.ADDLINE(d, 0, 0, 10, -2.004)
+SVG.ADDPOLYLINE(d, [0, 10, 20], [0, 5.5, 1])
+SVG.ADDPOLYGON(d, [0, 10, 5], [0, 0, 8], {"fill": "none"})
+SVG.ADDPATH(d, "M 0 0 L 10 10 Z")
+DIM sky$ = SVG.GRADIENT$(d, "sky", ["#000", "#888", "#fff"], 90)
+DIM glow$ = SVG.RADIAL$(d, "glow", ["#ff0", "#f00"])
+SVG.STYLE(d, "rect{opacity:.5}")
+SVG.TITLE(d, "a drawing")
+SVG.RAW(d, "<desc>raw</desc>")
+DIM markup$ = SVG.MARKUP$(d)
+DIM tree = XML.PARSE(markup$)
+DIM root = XML.ROOT(tree)
+TESTKIT.EQ(XML.NAME$(tree, root), "svg", "the markup is an svg element")
+TESTKIT.EQ(XML.ATTR$(tree, root, "xmlns"), "http://www.w3.org/2000/svg", "in the SVG namespace")
+TESTKIT.EQ(XML.ATTR$(tree, root, "viewBox"), "0 0 200 100", "with its size as the view box")
+DIM r_id = XML.FIND(tree, "//rect")
+TESTKIT.EQ(XML.ATTR$(tree, r_id, "width"), "30.46", "numbers are rounded to two decimals")
+TESTKIT.EQ(XML.ATTR$(tree, r_id, "stroke-width"), "2", "an underscore in a name is a hyphen")
+TESTKIT.EQ(XML.ATTR$(tree, r_id, "fill"), "red", "string attributes as given")
+DIM t_id = XML.FIND(tree, "//text")
+TESTKIT.EQ(XML.TEXT$(tree, t_id), "a < b & " + Q$ + "c" + Q$, "text is escaped and reads back")
+DIM g_circle = XML.FIND(tree, "//g/circle")
+TESTKIT.ISTRUE(g_circle >= 0, "GROUP holds what is added until ENDGROUP")
+DIM g_id = XML.FIND(tree, "//g")
+TESTKIT.EQ(XML.ATTR$(tree, g_id, "transform"), "translate(5 6)", "with its transform")
+DIM outside_line = XML.FIND(tree, "/svg/line")
+TESTKIT.ISTRUE(outside_line >= 0, "and what follows ENDGROUP is outside it")
+TESTKIT.EQ(XML.ATTR$(tree, outside_line, "y2"), "-2", "a rounded negative number")
+DIM poly = XML.FIND(tree, "//polyline")
+TESTKIT.EQ(XML.ATTR$(tree, poly, "points"), "0,0 10,5.5 20,1", "polyline points")
+DIM ellipse_id = XML.FIND(tree, "//ellipse")
+TESTKIT.EQ(XML.ATTR$(tree, ellipse_id, "ry"), "7", "an ellipse")
+TESTKIT.EQ(sky$, "url(#sky)", "GRADIENT$ answers the url to fill with")
+DIM stops = XML.FINDALL(tree, "//defs/linearGradient[@id='sky']/stop")
+TESTKIT.EQ(LEN(stops), 3, "one stop per colour")
+DIM mid_stop = stops[1]
+TESTKIT.EQ(XML.ATTR$(tree, mid_stop, "offset"), "50%", "evenly spaced")
+DIM lin = XML.FIND(tree, "//linearGradient")
+TESTKIT.EQ(XML.ATTR$(tree, lin, "y2"), "1", "90 degrees runs top to bottom")
+TESTKIT.EQ(glow$, "url(#glow)", "RADIAL$ too")
+TESTKIT.EQ(XML.VALUE$(tree, "//defs/style"), "rect{opacity:.5}", "STYLE goes into defs")
+TESTKIT.EQ(XML.VALUE$(tree, "/svg/title"), "a drawing", "TITLE")
+TESTKIT.EQ(XML.VALUE$(tree, "/svg/desc"), "raw", "RAW markup as it is")
+TESTKIT.EQ(SVG.ROTATE$(45), "rotate(45)", "ROTATE$")
+TESTKIT.EQ(SVG.ROTATE$(90, 10, 20), "rotate(90 10 20)", "about a point")
+TESTKIT.EQ(SVG.SCALE$(2) + " " + SVG.SCALE$(1.5, 0.5), "scale(2) scale(1.5 0.5)", "SCALE$")
+DIM open_doc = SVG.NEW(10, 10)
+SVG.GROUP(open_doc)
+SVG.GROUP(open_doc)
+SVG.ADDRECT(open_doc, 0, 0, 1, 1)
+DIM open_markup$ = SVG.MARKUP$(open_doc)
+DIM open_ok = 1
+TRY
+    DIM open_tree = XML.PARSE(open_markup$)
+CATCH
+    open_ok = 0
+ENDTRY
+TESTKIT.EQ(open_ok, 1, "groups left open are closed")
+DIM out_file$ = MKTEMP$("svgtest") + ".svg"
+SVG.WRITEFILE(d, out_file$)
+TESTKIT.EQ(TXTREADER$(out_file$), markup$, "WRITEFILE writes the markup")
+KILL out_file$
+DIM other = SVG.NEW(50, 50)
+DIM other_markup$ = SVG.MARKUP$(other)
+TESTKIT.ISTRUE(INSTR(other_markup$, "rect") < 0, "drawings keep their own pieces")
+
+' ── a bar chart from a DF frame ────────────────────────────────
+
+TESTKIT.SUITE("bar chart from DF")
+DIM regions = ["North", "South", "East", "West"]
+DIM q1 = [120, 95.5, 143, 60]
+DIM q2 = [130, 80, 150, 75]
+DIM sales = DF.FROMCOLS({"region": regions, "q1": q1, "q2": q2})
+DIM bar_chart = SVG.CHART("bar")
+SVG.SETOPT(bar_chart, "title", "Sales")
+SVG.FROMDF(bar_chart, sales, "region", ["q1", "q2"])
+DIM bar_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(bar_chart)))
+DIM q1_bars = XML.FINDALL(bar_tree, "//rect[@data-series='q1']")
+DIM q2_bars = XML.FINDALL(bar_tree, "//rect[@data-series='q2']")
+TESTKIT.EQ(LEN(q1_bars), 4, "a bar per region for q1")
+TESTKIT.EQ(LEN(q2_bars), 4, "and for q2")
+DIM first_bar = q1_bars[0]
+DIM per_unit = AttrNum(bar_tree, first_bar, "height") / 120
+DIM base_line = AttrNum(bar_tree, first_bar, "y") + AttrNum(bar_tree, first_bar, "height")
+DIM values_ok = 1
+DIM labels_ok = 1
+DIM heights_ok = 1
+DIM base_ok = 1
+FOR i = 0 TO 3
+    DIM b1 = q1_bars[i]
+    DIM b2 = q2_bars[i]
+    DIM want1 = q1[i]
+    DIM want2 = q2[i]
+    DIM region$ = regions[i]
+    IF NOT Near(AttrNum(bar_tree, b1, "data-value"), want1, 0.001) THEN values_ok = 0
+    IF NOT Near(AttrNum(bar_tree, b2, "data-value"), want2, 0.001) THEN values_ok = 0
+    IF XML.ATTR$(bar_tree, b1, "data-label") <> region$ THEN labels_ok = 0
+    IF NOT Near(AttrNum(bar_tree, b1, "height"), want1 * per_unit, 0.02) THEN heights_ok = 0
+    IF NOT Near(AttrNum(bar_tree, b2, "height"), want2 * per_unit, 0.02) THEN heights_ok = 0
+    IF NOT Near(AttrNum(bar_tree, b2, "y") + AttrNum(bar_tree, b2, "height"), base_line, 0.02) THEN base_ok = 0
+NEXT i
+TESTKIT.EQ(values_ok, 1, "every bar carries its number from the frame")
+TESTKIT.EQ(labels_ok, 1, "and its region")
+TESTKIT.EQ(heights_ok, 1, "heights are in proportion to the numbers")
+TESTKIT.EQ(base_ok, 1, "on one baseline")
+DIM q1_x1 = AttrNum(bar_tree, q1_bars[1], "x")
+DIM q2_x1 = AttrNum(bar_tree, q2_bars[1], "x")
+TESTKIT.ISTRUE(q2_x1 > q1_x1, "q2 stands right of q1")
+DIM tick_texts = XML.VALUES(bar_tree, "//text[@text-anchor='end']")
+TESTKIT.EQ(JOIN(tick_texts, " "), "0 50 100 150", "ticks run from 0 in round steps to the largest value")
+DIM top_tick = XML.FIND(bar_tree, "//text[@text-anchor='end'][last()]")
+DIM top_grid_y = AttrNum(bar_tree, top_tick, "y") - 4
+DIM east_bar = q2_bars[2]
+TESTKIT.ISTRUE(Near(AttrNum(bar_tree, east_bar, "y"), top_grid_y, 0.02), "150 reaches the 150 grid line")
+TESTKIT.EQ(XML.VALUE$(bar_tree, "//text[@class='t']"), "Sales", "the title")
+DIM swatches = XML.FINDALL(bar_tree, "//rect[@rx='2']")
+TESTKIT.EQ(LEN(swatches), 2, "a legend entry per series")
+DIM bar_titles = XML.VALUES(bar_tree, "//g/g/title")
+TESTKIT.EQ(bar_titles[0], "q1, North: 120", "every bar has a tooltip")
+DIM css$ = XML.VALUE$(bar_tree, "//defs/style")
+TESTKIT.ISTRUE(INSTR(css$, "prefers-color-scheme: dark") >= 0, "the page's dark mode changes text and grid colours")
+
+' ── other charts ───────────────────────────────────────────────
+
+TESTKIT.SUITE("line, stacked, scatter, pie")
+DIM trend = SVG.CHART("line")
+SVG.LABELS(trend, ["Jan", "Feb", "Mar", "Apr", "May"])
+SVG.SERIES(trend, "web", [10, 20, 15, 30, 25])
+SVG.SERIES(trend, "shop", [5, 8, "", 12, 11])
+DIM trend_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(trend)))
+DIM web_dots = XML.FINDALL(trend_tree, "//circle[@data-series='web']")
+DIM shop_dots = XML.FINDALL(trend_tree, "//circle[@data-series='shop']")
+TESTKIT.EQ(LEN(web_dots), 5, "a dot per value")
+TESTKIT.EQ(LEN(shop_dots), 4, "a gap has none")
+TESTKIT.EQ(LEN(XML.FINDALL(trend_tree, "//polyline")), 3, "and splits its line in two")
+DIM d0 = web_dots[0]
+DIM d3 = web_dots[3]
+DIM scale_y = (AttrNum(trend_tree, d0, "cy") - AttrNum(trend_tree, d3, "cy")) / 20
+DIM line_ok = 1
+FOR i = 0 TO 4
+    DIM dot_id = web_dots[i]
+    DIM dv = AttrNum(trend_tree, dot_id, "data-value")
+    IF NOT Near(AttrNum(trend_tree, d0, "cy") - AttrNum(trend_tree, dot_id, "cy"), (dv - 10) * scale_y, 0.02) THEN line_ok = 0
+NEXT i
+TESTKIT.EQ(line_ok, 1, "every dot sits at its value")
+DIM dot_last = web_dots[4]
+TESTKIT.ISTRUE(AttrNum(trend_tree, dot_last, "cx") > AttrNum(trend_tree, d3, "cx"), "in label order")
+
+DIM stack_chart = SVG.CHART("stackedbar")
+SVG.FROMDF(stack_chart, sales, "region", ["q1", "q2"])
+DIM stack_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(stack_chart)))
+DIM s1 = XML.FINDALL(stack_tree, "//rect[@data-series='q1']")
+DIM s2 = XML.FINDALL(stack_tree, "//rect[@data-series='q2']")
+DIM stack_ok = 1
+FOR i = 0 TO 3
+    DIM lower_bar = s1[i]
+    DIM upper_bar = s2[i]
+    IF NOT Near(AttrNum(stack_tree, upper_bar, "y") + AttrNum(stack_tree, upper_bar, "height"), AttrNum(stack_tree, lower_bar, "y"), 0.02) THEN stack_ok = 0
+    IF NOT Near(AttrNum(stack_tree, upper_bar, "x"), AttrNum(stack_tree, lower_bar, "x"), 0.001) THEN stack_ok = 0
+NEXT i
+TESTKIT.EQ(stack_ok, 1, "q2 sits on top of q1 in the same column")
+DIM stack_ticks = XML.VALUES(stack_tree, "//text[@text-anchor='end']")
+DIM stack_top$ = stack_ticks[LEN(stack_ticks) - 1]
+TESTKIT.EQ(stack_top$, "300", "the axis reaches the highest stack_chart, 293")
+
+DIM cloud = SVG.CHART("scatter")
+SVG.POINTS(cloud, "a", [1.5, 3, 2.25], [10, 30, 20])
+DIM cloud_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(cloud)))
+DIM pts = XML.FINDALL(cloud_tree, "//circle[@data-series='a']")
+TESTKIT.EQ(LEN(pts), 3, "a scatter point per pair")
+DIM p0 = pts[0]
+DIM p1 = pts[1]
+DIM p2 = pts[2]
+TESTKIT.ISTRUE(AttrNum(cloud_tree, p0, "cx") < AttrNum(cloud_tree, p2, "cx") ANDALSO AttrNum(cloud_tree, p2, "cx") < AttrNum(cloud_tree, p1, "cx"), "x in the order of the values")
+TESTKIT.EQ(XML.ATTR$(cloud_tree, p2, "data-x"), "2.25", "carrying x")
+DIM x_ticks = XML.VALUES(cloud_tree, "//text[@text-anchor='middle']")
+TESTKIT.EQ(JOIN(x_ticks, " "), "1.5 2.0 2.5 3.0", "x ticks with the decimals the step needs")
+
+DIM share = SVG.CHART("pie")
+SVG.LABELS(share, ["a", "b", "c"])
+SVG.SERIES(share, "n", [50, 30, 20])
+DIM share_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(share)))
+DIM slices = XML.FINDALL(share_tree, "//path[@data-value]")
+TESTKIT.EQ(LEN(slices), 3, "a slice per value")
+DIM slice_titles = XML.VALUES(share_tree, "//title")
+TESTKIT.EQ(JOIN(slice_titles, "|"), "a: 50 (50.0%)|b: 30 (30.0%)|c: 20 (20.0%)", "with its share")
+DIM whole = SVG.CHART("pie")
+SVG.LABELS(whole, ["all"])
+SVG.SERIES(whole, "n", [7])
+SVG.SETOPT(whole, "donut", 0.4)
+DIM whole_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(whole)))
+DIM ring = XML.FIND(whole_tree, "//path[@data-value]")
+TESTKIT.EQ(XML.ATTR$(whole_tree, ring, "fill-rule"), "evenodd", "a single slice of a donut is a ring")
+
+' ── options and faults ─────────────────────────────────────────
+
+TESTKIT.SUITE("options")
+DIM opt_chart = SVG.CHART("bar", 300, 200)
+SVG.LABELS(opt_chart, ["x", "y"])
+SVG.SERIES(opt_chart, "s", [0.2, 0.35])
+SVG.SETOPT(opt_chart, "legend", "none")
+SVG.SETOPT(opt_chart, "colors", "#111111, #222222")
+SVG.SETOPT(opt_chart, "y_max", 0.5)
+SVG.SETOPT(opt_chart, "values", 1)
+SVG.SETOPT(opt_chart, "background", "#fafafa")
+SVG.SETOPT(opt_chart, "x_title", "letters")
+DIM opt_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(opt_chart)))
+DIM opt_root = XML.ROOT(opt_tree)
+TESTKIT.EQ(XML.ATTR$(opt_tree, opt_root, "width"), "300", "a chart of its own size")
+TESTKIT.EQ(LEN(XML.FINDALL(opt_tree, "//rect[@rx='2']")), 0, "legend none")
+DIM opt_bar = XML.FIND(opt_tree, "//rect[@data-series='s']")
+TESTKIT.EQ(XML.ATTR$(opt_tree, opt_bar, "fill"), "#111111", "colors replaces the palette")
+DIM opt_ticks = XML.VALUES(opt_tree, "//text[@text-anchor='end']")
+TESTKIT.EQ(JOIN(opt_ticks, " "), "0.0 0.1 0.2 0.3 0.4 0.5", "y_max ends the axis, ticks with one decimal")
+TESTKIT.ISTRUE(XML.FIND(opt_tree, "//rect[@fill='#fafafa']") >= 0, "a background")
+DIM value_labels = XML.VALUES(opt_tree, "//text[@text-anchor='middle']")
+TESTKIT.EQ(JOIN(value_labels, " "), "x y letters 0.2 0.35", "labels, the x title and the values on the bars")
+TESTKIT.THROWS(BadKind@, "donut", "an unknown chart kind is refused")
+DIM missing_msg$ = ""
+TRY
+    DIM wrong = SVG.CHART("bar")
+    SVG.FROMDF(wrong, sales, "region", ["q3"])
+CATCH
+    missing_msg$ = ERRMSG$
+ENDTRY
+TESTKIT.EQ(missing_msg$, "SVG: the frame has no column q3", "and a column the frame does not have")
+
+DIM spark$ = SVG.SPARKLINE$([3, 5, 4, 8], 100, 20)
+DIM spark_tree = XML.PARSE(spark$)
+DIM spark_line = XML.FIND(spark_tree, "//polyline")
+TESTKIT.EQ(XML.ATTR$(spark_tree, spark_line, "points"), "2,18 34,11.6 66,14.8 98,2", "a sparkline spans its box")
+DIM spark_dot = XML.FIND(spark_tree, "//circle")
+TESTKIT.EQ(XML.ATTR$(spark_tree, spark_dot, "cx"), "98", "and marks its last value")
+
+' ── a browser ──────────────────────────────────────────────────
+
+TESTKIT.SUITE("browser")
+DIM browser$ = ""
+IF FILE.EXISTS("C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe") THEN browser$ = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+IF browser$ = "" ANDALSO FILE.EXISTS("C:\Program Files\Google\Chrome\Application\chrome.exe") THEN browser$ = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+IF browser$ = "" THEN
+    TESTKIT.SKIP("no Edge or Chrome to render with")
+ELSE
+    DIM shot_dir$ = MKTEMP$("svgshot")
+    MKDIR shot_dir$
+    DIM svg_file$ = shot_dir$ + "\bar.svg"
+    DIM png_file$ = shot_dir$ + "\bar.png"
+    DIM profile$ = shot_dir$ + "\profile"
+    SVG.WRITEFILE(SVG.RENDER(bar_chart), svg_file$)
+    DIM browser_run = OS.EXEC(CHR$(34) + browser$ + CHR$(34), ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--user-data-dir=" + profile$, "--window-size=660,420", "--screenshot=" + png_file$, "file:///" + REPLACE$(svg_file$, "\", "/")])
+    TESTKIT.ISTRUE(FILE.EXISTS(png_file$), "the browser renders the chart to PNG")
+    IF FILE.EXISTS(png_file$) THEN TESTKIT.ISTRUE(FILE.SIZE(png_file$) > 3000, "with something drawn on it")
+ENDIF
+
+TESTKIT.REPORT()
