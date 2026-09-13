@@ -1,0 +1,169 @@
+' tasks.jdb - the task list with no screen attached.
+'
+'   IMPORT TASKS
+'   DIM store = TASKS.OPEN("tasks.json")
+'   TASKS.ADD(store, "Buy milk")
+'   TASKS.FLUSH(store)
+'
+' A store is a map the calls change in place: the list, the next id and
+' the file it came from. Every rule about a task lives here, so the two
+' shells beside this file only paint what it hands them.
+
+EXPORT MODULE TASKS
+
+' ── opening and writing back ───────────────────────────────────
+
+' A store for the file at path$, read back when the file is there.
+' An empty path$ keeps the list in memory only.
+EXPORT FUNC OPEN(path$)
+    DIM store AS MAP
+    store{"path"} = path$
+    store{"items"} = []
+    store{"next_id"} = 1
+    IF LEN(path$) > 0 THEN
+        IF FILE.EXISTS(path$) THEN Read(store)
+    ENDIF
+    RETURN store
+ENDFUNC
+
+' Writes the list back. Answers FALSE when the store has no file.
+EXPORT FUNC FLUSH(store)
+    DIM path$ = "" + store{"path"}
+    IF LEN(path$) = 0 THEN RETURN FALSE
+    TXTWRITER path$, JSON.STRINGIFY$(store{"items"}), FALSE
+    RETURN TRUE
+ENDFUNC
+
+FUNC Read(store)
+    DIM raw$ = TXTREADER$("" + store{"path"})
+    IF LEN(TRIM$(raw$)) = 0 THEN RETURN FALSE
+    DIM doc = JSON.PARSE$(raw$)
+    DIM loaded = []
+    DIM top = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(doc) - 1
+        DIM row = doc[i]
+        DIM t AS MAP
+        t{"id"} = INT(row{"id"})
+        t{"title"} = "" + row{"title"}
+        t{"done"} = INT(row{"done"})
+        PUSH(loaded, t)
+        IF t{"id"} > top THEN top = t{"id"}
+    NEXT i
+    store{"items"} = loaded
+    store{"next_id"} = top + 1
+    RETURN TRUE
+ENDFUNC
+
+' ── reading the list ───────────────────────────────────────────
+
+' The tasks in the order they were added, each a map: id, title, done.
+EXPORT FUNC ITEMS(store)
+    RETURN store{"items"}
+ENDFUNC
+
+' Where the task with that id sits, or -1.
+EXPORT FUNC AT(store, id)
+    DIM items = store{"items"}
+    DIM i = 0
+    FOR i = 0 TO LEN(items) - 1
+        IF INT(items[i]{"id"}) = INT(id) THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' How many there are, how many are still open, how many are finished.
+EXPORT FUNC STATS(store)
+    DIM items = store{"items"}
+    DIM finished = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(items) - 1
+        IF INT(items[i]{"done"}) <> 0 THEN finished = finished + 1
+    NEXT i
+    DIM s AS MAP
+    s{"total"} = LEN(items)
+    s{"done"} = finished
+    s{"open"} = LEN(items) - finished
+    RETURN s
+ENDFUNC
+
+' One line for a list that can only hold text.
+EXPORT FUNC LABEL$(t)
+    DIM mark$ = "[ ] "
+    IF INT(t{"done"}) <> 0 THEN mark$ = "[x] "
+    RETURN mark$ + ("" + t{"title"})
+ENDFUNC
+
+' ── changing the list ──────────────────────────────────────────
+
+' Adds a task and answers its id, or 0 when the title is blank.
+EXPORT FUNC ADD(store, title$)
+    DIM clean$ = TRIM$(title$)
+    IF LEN(clean$) = 0 THEN RETURN 0
+    DIM t AS MAP
+    t{"id"} = INT(store{"next_id"})
+    t{"title"} = clean$
+    t{"done"} = 0
+    DIM items = store{"items"}
+    PUSH(items, t)
+    store{"items"} = items
+    store{"next_id"} = INT(store{"next_id"}) + 1
+    RETURN INT(t{"id"})
+ENDFUNC
+
+' Turns one from open to finished and back.
+EXPORT FUNC TOGGLE(store, id)
+    DIM at = AT(store, id)
+    IF at < 0 THEN RETURN FALSE
+    DIM t = store{"items"}[at]
+    IF INT(t{"done"}) <> 0 THEN
+        t{"done"} = 0
+    ELSE
+        t{"done"} = 1
+    ENDIF
+    RETURN TRUE
+ENDFUNC
+
+EXPORT FUNC RENAME(store, id, title$)
+    DIM clean$ = TRIM$(title$)
+    IF LEN(clean$) = 0 THEN RETURN FALSE
+    DIM at = AT(store, id)
+    IF at < 0 THEN RETURN FALSE
+    DIM t = store{"items"}[at]
+    t{"title"} = clean$
+    RETURN TRUE
+ENDFUNC
+
+EXPORT FUNC REMOVE(store, id)
+    DIM at = AT(store, id)
+    IF at < 0 THEN RETURN FALSE
+    DIM items = store{"items"}
+    DIM kept = []
+    DIM i = 0
+    FOR i = 0 TO LEN(items) - 1
+        IF i <> at THEN PUSH(kept, items[i])
+    NEXT i
+    store{"items"} = kept
+    RETURN TRUE
+ENDFUNC
+
+' Drops every finished task and answers how many went.
+EXPORT FUNC SWEEP(store)
+    DIM items = store{"items"}
+    DIM kept = []
+    DIM i = 0
+    FOR i = 0 TO LEN(items) - 1
+        IF INT(items[i]{"done"}) = 0 THEN PUSH(kept, items[i])
+    NEXT i
+    DIM gone = LEN(items) - LEN(kept)
+    store{"items"} = kept
+    RETURN gone
+ENDFUNC
+
+' Three tasks to look at, for a store that has never been used.
+EXPORT SUB SEED(store)
+    IF LEN(store{"items"}) > 0 THEN RETURN
+    ADD(store, "Read the file next door")
+    ADD(store, "Run the same list in a window")
+    ADD(store, "Run it in a browser")
+ENDSUB

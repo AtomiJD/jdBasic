@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Task List - jdBasic</title>
+<style>
+  :root {
+    --bg: #11141a; --panel: #191d26; --line: #2a3140;
+    --ink: #dfe5ee; --dim: #8b97ab; --accent: #5ad1a0; --warn: #e2725b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 32px 16px; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 system-ui, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 620px; margin: 0 auto; }
+  h1 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+  .sub { margin: 0 0 24px; color: var(--dim); font-size: 13px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .addrow { display: flex; gap: 8px; padding: 14px; border-bottom: 1px solid var(--line); }
+  input[type=text] {
+    flex: 1; background: #0d1016; border: 1px solid var(--line); border-radius: 6px;
+    color: var(--ink); padding: 9px 11px; font: inherit;
+  }
+  input[type=text]:focus { outline: none; border-color: var(--accent); }
+  button {
+    background: #232a36; border: 1px solid var(--line); border-radius: 6px;
+    color: var(--ink); padding: 9px 14px; font: inherit; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); color: var(--accent); }
+  button.ghost { background: none; border: none; color: var(--dim); padding: 4px 8px; }
+  button.ghost:hover { color: var(--warn); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  li:last-child { border-bottom: none; }
+  li .title { flex: 1; cursor: text; }
+  li.done .title { color: var(--dim); text-decoration: line-through; }
+  input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; }
+  .foot { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; color: var(--dim); font-size: 13px; }
+  .empty { padding: 28px 14px; text-align: center; color: var(--dim); }
+  .note { margin-top: 18px; color: var(--dim); font-size: 12px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Task List</h1>
+  <p class="sub">Served by a jdBasic process. The rules live in tasks.jdb, shared with the Windows window.</p>
+
+  <div class="panel">
+    <form class="addrow" id="addform">
+      <input type="text" id="newtitle" placeholder="What needs doing?" autocomplete="off" autofocus>
+      <button type="submit">Add</button>
+    </form>
+    <ul id="list"></ul>
+    <div class="foot">
+      <span id="counts"></span>
+      <button class="ghost" id="sweep">Clear finished</button>
+    </div>
+  </div>
+
+  <p class="note">Same list, same file, same code behind it.</p>
+</div>
+
+<script>
+const list = document.getElementById('list');
+const counts = document.getElementById('counts');
+
+async function call(path, payload) {
+  const opts = payload
+    ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }
+    : {};
+  const res = await fetch(path, opts);
+  paint(await res.json());
+}
+
+function paint(data) {
+  list.textContent = '';
+  if (!data.items.length) {
+    const p = document.createElement('li');
+    p.className = 'empty';
+    p.textContent = 'Nothing on the list.';
+    list.appendChild(p);
+  }
+  for (const t of data.items) {
+    const li = document.createElement('li');
+    if (t.done) li.className = 'done';
+
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = !!t.done;
+    box.onchange = () => call('/api/toggle', { id: t.id });
+
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = t.title;
+    title.ondblclick = () => edit(li, title, t);
+
+    const del = document.createElement('button');
+    del.className = 'ghost';
+    del.textContent = 'remove';
+    del.onclick = () => call('/api/remove', { id: t.id });
+
+    li.append(box, title, del);
+    list.appendChild(li);
+  }
+  const s = data.stats;
+  counts.textContent = s.total + ' tasks, ' + s.open + ' open, ' + s.done + ' finished';
+}
+
+function edit(li, title, t) {
+  const field = document.createElement('input');
+  field.type = 'text';
+  field.value = t.title;
+  li.replaceChild(field, title);
+  field.focus();
+  field.select();
+  const commit = () => call('/api/rename', { id: t.id, title: field.value });
+  field.onblur = commit;
+  field.onkeydown = (e) => {
+    if (e.key === 'Enter') commit();
+    if (e.key === 'Escape') call('/api/tasks');
+  };
+}
+
+document.getElementById('addform').onsubmit = (e) => {
+  e.preventDefault();
+  const field = document.getElementById('newtitle');
+  if (!field.value.trim()) return;
+  call('/api/add', { title: field.value });
+  field.value = '';
+  field.focus();
+};
+
+document.getElementById('sweep').onclick = () => call('/api/sweep', {});
+
+call('/api/tasks');
+</script>
+</body>
+</html>

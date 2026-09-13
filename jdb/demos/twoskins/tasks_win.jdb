@@ -1,0 +1,127 @@
+' tasks_win.jdb - the Windows skin of the shared task list.
+'
+'   jdBasic tasks_win.jdb        or  jdBasic -c tasks_win.jdb
+'
+' Real Win32 controls, handlers bound by name. Nothing here decides what
+' a task is or when it is finished: that is tasks.jdb, which the browser
+' skin next door imports unchanged.
+OPTION "EXPLICIT"
+
+IMPORT TASKS
+
+DIM frm AS DOUBLE = 0
+DIM lblPrompt AS DOUBLE = 0
+DIM txtNew AS DOUBLE = 0
+DIM btnAdd AS DOUBLE = 0
+DIM lstTasks AS DOUBLE = 0
+DIM btnToggle AS DOUBLE = 0
+DIM btnEdit AS DOUBLE = 0
+DIM btnRemove AS DOUBLE = 0
+DIM btnSweep AS DOUBLE = 0
+DIM lblCounts AS DOUBLE = 0
+DIM gStore AS MAP
+
+SUB Repaint()
+    DIM items AS ARRAY = TASKS.ITEMS(gStore)
+    DIM rows AS ARRAY = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(items) - 1
+        rows = APPEND(rows, TASKS.LABEL$(items[i]))
+    NEXT
+    FORM.SET(lstTasks, "ITEMS", rows)
+    DIM s AS MAP = TASKS.STATS(gStore)
+    FORM.SET(lblCounts, "TEXT", STR$(s{"total"}) + " tasks, " + STR$(s{"open"}) + " open, " + STR$(s{"done"}) + " finished")
+ENDSUB
+
+' The id of the selected task, or 0 when nothing is selected.
+FUNC Selected()
+    DIM idx AS INTEGER = FORM.GET(lstTasks, "SELINDEX")
+    IF idx < 0 THEN RETURN 0
+    DIM items AS ARRAY = TASKS.ITEMS(gStore)
+    IF idx >= LEN(items) THEN RETURN 0
+    RETURN INT(items[idx]{"id"})
+ENDFUNC
+
+SUB MAIN_LOAD(e)
+    Repaint()
+    FORM.SET(txtNew, "FOCUS")
+ENDSUB
+
+SUB BTNADD_CLICK(e)
+    DIM title AS STRING = FORM.GET(txtNew, "TEXT")
+    IF TASKS.ADD(gStore, title) = 0 THEN
+        MSGBOX("Type a task first.", 48, "Task List")
+        RETURN
+    ENDIF
+    FORM.SET(txtNew, "TEXT", "")
+    FORM.SET(txtNew, "FOCUS")
+    Repaint()
+ENDSUB
+
+SUB BTNTOGGLE_CLICK(e)
+    DIM id AS INTEGER = Selected()
+    IF id = 0 THEN
+        MSGBOX("Select a task first.", 48, "Task List")
+        RETURN
+    ENDIF
+    DIM idx AS INTEGER = FORM.GET(lstTasks, "SELINDEX")
+    TASKS.TOGGLE(gStore, id)
+    Repaint()
+    FORM.SET(lstTasks, "SELINDEX", idx)
+ENDSUB
+
+SUB BTNEDIT_CLICK(e)
+    DIM id AS INTEGER = Selected()
+    IF id = 0 THEN
+        MSGBOX("Select a task first.", 48, "Task List")
+        RETURN
+    ENDIF
+    DIM idx AS INTEGER = FORM.GET(lstTasks, "SELINDEX")
+    DIM current AS STRING = "" + TASKS.ITEMS(gStore)[idx]{"title"}
+    DIM edited AS STRING = INPUTBOX$("Edit the task:", "Task List", current)
+    IF TASKS.RENAME(gStore, id, edited) THEN
+        Repaint()
+        FORM.SET(lstTasks, "SELINDEX", idx)
+    ENDIF
+ENDSUB
+
+SUB BTNREMOVE_CLICK(e)
+    DIM id AS INTEGER = Selected()
+    IF id = 0 THEN
+        MSGBOX("Select a task first.", 48, "Task List")
+        RETURN
+    ENDIF
+    TASKS.REMOVE(gStore, id)
+    Repaint()
+ENDSUB
+
+SUB BTNSWEEP_CLICK(e)
+    DIM gone AS INTEGER = TASKS.SWEEP(gStore)
+    Repaint()
+    IF gone = 0 THEN MSGBOX("Nothing finished yet.", 64, "Task List")
+ENDSUB
+
+SUB LSTTASKS_DBLCLICK(e)
+    BTNTOGGLE_CLICK(e)
+ENDSUB
+
+SUB MAIN_UNLOAD(e)
+    TASKS.FLUSH(gStore)
+ENDSUB
+
+gStore = TASKS.OPEN(PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "tasks.json"))
+TASKS.SEED(gStore)
+
+frm = FORM.CREATE("Task List", 520, 400, "MAIN")
+
+lblPrompt = FORM.LABEL(frm, "lblPrompt", "What needs doing?", 12, 12, 200, 18)
+txtNew    = FORM.TEXTBOX(frm, "txtNew", "", 12, 34, 356, 24)
+btnAdd    = FORM.BUTTON(frm, "btnAdd", "&Add", 378, 33, 118, 26)
+lstTasks  = FORM.LISTBOX(frm, "lstTasks", 12, 70, 356, 262)
+btnToggle = FORM.BUTTON(frm, "btnToggle", "&Done / undone", 378, 70, 118, 26)
+btnEdit   = FORM.BUTTON(frm, "btnEdit", "&Edit...", 378, 102, 118, 26)
+btnRemove = FORM.BUTTON(frm, "btnRemove", "&Remove", 378, 134, 118, 26)
+btnSweep  = FORM.BUTTON(frm, "btnSweep", "&Clear finished", 378, 174, 118, 26)
+lblCounts = FORM.LABEL(frm, "lblCounts", "", 12, 342, 360, 18)
+
+FORM.RUN(frm)

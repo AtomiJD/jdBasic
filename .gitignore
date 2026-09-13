@@ -320,3 +320,5 @@ embedded/pico/demos/parts/
 doc/notes/
 *.jdpb
 embedded/esp32/build-*.stack
+
+jdb/demos/twoskins/tasks.json

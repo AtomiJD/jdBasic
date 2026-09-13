@@ -1,0 +1,100 @@
+' tasks_web.jdb - the browser skin of the shared task list.
+'
+'   jdBasic tasks_web.jdb        then open http://localhost:8099
+'
+' The page is static: it asks the jdBasic process for the list as JSON
+' and posts every change back. All the rules stay in tasks.jdb, which
+' the window skin next door imports unchanged.
+
+IMPORT TASKS
+
+CONST PORT = 8099
+
+DIM gStore = TASKS.OPEN(PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "tasks.json"))
+DIM gStop = FALSE
+
+TASKS.SEED(gStore)
+
+SUB HANDLEKEYS(data)
+    gStop = TRUE
+ENDSUB
+
+ON "KEYDOWN" CALL HANDLEKEYS
+
+' ── the JSON the page runs on ──────────────────────────────────
+
+FUNC Snapshot()
+    TASKS.FLUSH(gStore)
+    DIM out AS MAP
+    out{"items"} = TASKS.ITEMS(gStore)
+    out{"stats"} = TASKS.STATS(gStore)
+    RETURN out
+ENDFUNC
+
+FUNC Field$(body, key$)
+    DIM v = body{key$}
+    IF TYPEOF(v) = "NONE" THEN RETURN ""
+    RETURN "" + v
+ENDFUNC
+
+FUNC HANDLELIST(request)
+    RETURN Snapshot()
+ENDFUNC
+
+FUNC HANDLEADD(request)
+    DIM body = JSON.PARSE$(request{"BODY"})
+    TASKS.ADD(gStore, Field$(body, "title"))
+    RETURN Snapshot()
+ENDFUNC
+
+FUNC HANDLETOGGLE(request)
+    DIM body = JSON.PARSE$(request{"BODY"})
+    TASKS.TOGGLE(gStore, INT(VAL(Field$(body, "id"))))
+    RETURN Snapshot()
+ENDFUNC
+
+FUNC HANDLERENAME(request)
+    DIM body = JSON.PARSE$(request{"BODY"})
+    TASKS.RENAME(gStore, INT(VAL(Field$(body, "id"))), Field$(body, "title"))
+    RETURN Snapshot()
+ENDFUNC
+
+FUNC HANDLEREMOVE(request)
+    DIM body = JSON.PARSE$(request{"BODY"})
+    TASKS.REMOVE(gStore, INT(VAL(Field$(body, "id"))))
+    RETURN Snapshot()
+ENDFUNC
+
+FUNC HANDLESWEEP(request)
+    TASKS.SWEEP(gStore)
+    RETURN Snapshot()
+ENDFUNC
+
+' ── the page ───────────────────────────────────────────────────
+
+FUNC HANDLEROOT(request)
+    RETURN TXTREADER$(PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "tasks_web.html"))
+ENDFUNC
+
+' ── serving ────────────────────────────────────────────────────
+
+HTTP.SERVER.ON_GET "/", "HANDLEROOT"
+HTTP.SERVER.ON_GET "/api/tasks", "HANDLELIST"
+HTTP.SERVER.ON_POST "/api/add", "HANDLEADD"
+HTTP.SERVER.ON_POST "/api/toggle", "HANDLETOGGLE"
+HTTP.SERVER.ON_POST "/api/rename", "HANDLERENAME"
+HTTP.SERVER.ON_POST "/api/remove", "HANDLEREMOVE"
+HTTP.SERVER.ON_POST "/api/sweep", "HANDLESWEEP"
+
+IF HTTP.SERVER.START(PORT, "0.0.0.0") THEN
+    PRINT "Task list on http://localhost:"; PORT
+    PRINT "Press a key in this window to stop."
+    DO
+        SLEEP 100
+    LOOP UNTIL gStop = TRUE
+    HTTP.SERVER.STOP
+    TASKS.FLUSH(gStore)
+    PRINT "Stopped."
+ELSE
+    PRINT "Could not take port "; PORT; ": "; ERRMSG$
+ENDIF
