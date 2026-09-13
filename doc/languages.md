@@ -1445,6 +1445,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `TMPL` | HTML templates: holes, conditions, loops, includes, layouts, filters; the view layer of jdweb |
 | `URL` | URLs split and built, encoded, query strings as maps, parameters changed, links resolved by RFC 3986, a canonical form |
 | `XML` | XML into a tree: namespaces, XPath paths, a map view, building and writing; reads XRechnung in UBL and CII |
+| `FUZZY` | near matches: edit distances, similarity ratios, best matches from a list, Koelner Phonetik and Soundex |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

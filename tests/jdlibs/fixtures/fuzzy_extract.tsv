@@ -1,0 +1,28 @@
+# query/choices, then scorer	prep	limit	cutoff	index:score ...
+query	Müller Papier GmbH
+choice	Papier & Toner GmbH
+choice	Mueller Papierhandel GmbH
+choice	Müller Papier
+choice	Meyer Bürobedarf
+choice	papier müller gmbh
+choice	Stadtverwaltung Musterstadt
+wratio	0	3	0	2:95.0000	1:79.0698	4:73.8889
+wratio	0	6	60	2:95.0000	1:79.0698	4:73.8889	0:72.0690
+wratio	1	3	0	2:95.0000	4:95.0000	1:79.0698
+wratio	1	6	60	2:95.0000	4:95.0000	1:79.0698	0:76.0000
+ratio	0	3	0	2:83.8710	1:79.0698	0:59.4595
+ratio	0	6	60	2:83.8710	1:79.0698
+ratio	1	3	0	2:83.8710	1:79.0698	4:61.1111
+ratio	1	6	60	2:83.8710	1:79.0698	4:61.1111
+token_set	0	3	0	2:100.0000	1:79.0698	4:77.7778
+token_set	0	6	60	2:100.0000	1:79.0698	4:77.7778	0:75.8621
+token_set	1	3	0	2:100.0000	4:100.0000	0:80.0000
+token_set	1	6	60	2:100.0000	4:100.0000	0:80.0000	1:79.0698
+partial	0	3	0	2:100.0000	1:75.0000	0:60.6061
+partial	0	6	60	2:100.0000	1:75.0000	0:60.6061
+partial	1	3	0	2:100.0000	1:78.7879	4:75.8621
+partial	1	6	60	2:100.0000	1:78.7879	4:75.8621	0:60.6061
+token_sort	0	3	0	2:83.8710	1:79.0698	4:77.7778
+token_sort	0	6	60	2:83.8710	1:79.0698	4:77.7778
+token_sort	1	3	0	4:100.0000	2:83.8710	1:79.0698
+token_sort	1	6	60	4:100.0000	2:83.8710	1:79.0698	0:62.8571

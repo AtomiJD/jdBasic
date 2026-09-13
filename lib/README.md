@@ -61,6 +61,7 @@ and SCHEMA) finds it through the same search.
 | `pdfgen.jdb` | fpdf2, reportlab | PDF files without another program: page sizes, the 14 standard fonts with their glyph widths, text, cells and wrapped paragraphs with page breaks, lines, boxes, JPEG images, tables with a repeated header, footers with page numbers | [pdfgen_lib_readme.md](pdfgen_lib_readme.md) |
 | `tmpl.jdb` | Jinja2 | HTML templates: escaped and raw holes, paths into the model, conditions, loops, includes, layouts with blocks, filters and custom filters, a cache per file | [tmpl_lib_readme.md](tmpl_lib_readme.md) |
 | `xml.jdb` | lxml, ElementTree, xmltodict | XML into a tree with line and column on every fault: namespaces, a subset of XPath, a map view, documents built from nothing and written back | [xml_lib_readme.md](xml_lib_readme.md) |
+| `fuzzy.jdb` | rapidfuzz, jellyfish, cologne_phonetics | near matches: Levenshtein, OSA, Damerau and Indel distances, Jaro and Jaro-Winkler, ratio, partial, token and weighted ratios, the best matches from a list, Koelner Phonetik and Soundex, all on characters rather than bytes | [fuzzy_lib_readme.md](fuzzy_lib_readme.md) |
 
 ## Tests and demos
 

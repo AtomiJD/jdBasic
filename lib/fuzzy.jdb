@@ -1,0 +1,879 @@
+' fuzzy.jdb - near matches: edit distances, similarity scores in the
+' manner of rapidfuzz, the best matches from a list, and the phonetic codes
+' of Koelner Phonetik and Soundex for names.
+'
+'   IMPORT FUZZY
+'   PRINT FUZZY.LEVENSHTEIN("Müller", "Mueller")                ' 2
+'   PRINT FUZZY.RATIO("new york mets", "new york meats")        ' 96.29...
+'   PRINT FUZZY.WRATIO("new york mets", "New York Mets!")
+'   DIM best = FUZZY.EXTRACTONE("müller gmbh", names, "wratio", 80, 1)
+'   PRINT FUZZY.KOELNER$("Meier"), FUZZY.KOELNER$("Mayer")     ' 67 67
+'
+' Every function works on characters, not bytes: an umlaut counts once.
+
+EXPORT MODULE FUZZY
+
+' ── characters ─────────────────────────────────────────────────
+
+' A part of a character array: count characters from position start.
+FUNC SliceChars(cs, start, count_n)
+    DIM out = []
+    DIM k = 0
+    FOR k = start TO start + count_n - 1
+        DIM c$ = cs[k]
+        PUSH(out, c$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Lower case for ASCII and for the capitals of Latin-1 (À to Þ).
+FUNC LowerChar$(c$)
+    DIM b0 = ASC(c$)
+    IF LEN(c$) = 1 THEN
+        IF b0 >= 65 ANDALSO b0 <= 90 THEN RETURN CHR$(b0 + 32)
+        RETURN c$
+    ENDIF
+    IF b0 = 195 ANDALSO LEN(c$) = 2 THEN
+        DIM b1 = ASC(MID$(c$, 1, 1))
+        IF b1 >= 128 ANDALSO b1 <= 158 ANDALSO b1 <> 151 THEN RETURN CHR$(195) + CHR$(b1 + 32)
+    ENDIF
+    RETURN c$
+ENDFUNC
+
+' Whether a character counts as a letter or digit for PREP$.
+FUNC IsWordChar(c$)
+    DIM b0 = ASC(c$)
+    IF LEN(c$) = 1 THEN
+        IF b0 >= 48 ANDALSO b0 <= 57 THEN RETURN TRUE
+        IF b0 >= 65 ANDALSO b0 <= 90 THEN RETURN TRUE
+        IF b0 >= 97 ANDALSO b0 <= 122 THEN RETURN TRUE
+        RETURN FALSE
+    ENDIF
+    DIM b1 = ASC(MID$(c$, 1, 1))
+    IF b0 = 194 THEN
+        IF b1 = 170 ORELSE b1 = 178 ORELSE b1 = 179 ORELSE b1 = 181 ORELSE b1 = 185 ORELSE b1 = 186 THEN RETURN TRUE
+        IF b1 >= 188 ANDALSO b1 <= 190 THEN RETURN TRUE
+        RETURN FALSE
+    ENDIF
+    IF b0 = 195 ANDALSO (b1 = 151 ORELSE b1 = 183) THEN RETURN FALSE
+    IF b0 = 226 ANDALSO LEN(c$) = 3 THEN
+        IF b1 = 128 THEN RETURN FALSE
+        IF b1 = 130 ANDALSO ASC(MID$(c$, 2, 1)) >= 160 THEN RETURN FALSE
+    ENDIF
+    RETURN TRUE
+ENDFUNC
+
+' Lower case, every character that is not a letter or a digit turned into a
+' space, spaces at both ends removed: rapidfuzz's default_process.
+EXPORT FUNC PREP$(text$)
+    DIM cs = -text$
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF IsWordChar(c$) THEN
+            out$ = out$ + LowerChar$(c$)
+        ELSE
+            out$ = out$ + " "
+        ENDIF
+    NEXT k
+    RETURN TRIM$(out$)
+ENDFUNC
+
+' The words of a text, split at spaces, tabs and line breaks.
+FUNC WordsOf(text$)
+    DIM flat$ = REPLACE$(REPLACE$(REPLACE$(text$, CHR$(9), " "), CHR$(10), " "), CHR$(13), " ")
+    DIM parts = SPLIT(flat$, " ")
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM w$ = parts[k]
+        IF w$ <> "" THEN PUSH(out, w$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Sorted words without repeats.
+FUNC UniqueSorted(words)
+    DIM out = []
+    IF LEN(words) = 0 THEN RETURN out
+    DIM sorted_w = SORT(words)
+    DIM prev$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(sorted_w) - 1
+        DIM w$ = sorted_w[k]
+        IF k = 0 ORELSE w$ <> prev$ THEN PUSH(out, w$)
+        prev$ = w$
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC SortedJoin$(words)
+    IF LEN(words) = 0 THEN RETURN ""
+    RETURN JOIN(SORT(words), " ")
+ENDFUNC
+
+FUNC JoinWords$(words)
+    IF LEN(words) = 0 THEN RETURN ""
+    RETURN JOIN(words, " ")
+ENDFUNC
+
+' ── edit distances ─────────────────────────────────────────────
+
+FUNC LevenshteinChars(s, t)
+    DIM n = LEN(s)
+    DIM m = LEN(t)
+    IF n = 0 THEN RETURN m
+    IF m = 0 THEN RETURN n
+    DIM prev = IOTA(m + 1, 0)
+    DIM cur = IOTA(m + 1, 0)
+    DIM i = 0
+    DIM j = 0
+    FOR i = 1 TO n
+        DIM si$ = s[i - 1]
+        cur[0] = i
+        FOR j = 1 TO m
+            DIM tj$ = t[j - 1]
+            DIM cost = 1
+            IF si$ = tj$ THEN cost = 0
+            DIM cell = prev[j - 1] + cost
+            DIM from_up = prev[j] + 1
+            DIM from_side = cur[j - 1] + 1
+            IF from_up < cell THEN cell = from_up
+            IF from_side < cell THEN cell = from_side
+            cur[j] = cell
+        NEXT j
+        FOR j = 0 TO m
+            prev[j] = cur[j]
+        NEXT j
+    NEXT i
+    RETURN prev[m]
+ENDFUNC
+
+' Insertions, deletions and substitutions that turn one text into the other.
+EXPORT FUNC LEVENSHTEIN(a$, b$)
+    RETURN LevenshteinChars(-a$, -b$)
+ENDFUNC
+
+FUNC OsaChars(s, t)
+    DIM n = LEN(s)
+    DIM m = LEN(t)
+    IF n = 0 THEN RETURN m
+    IF m = 0 THEN RETURN n
+    DIM older = IOTA(m + 1, 0)
+    DIM prev = IOTA(m + 1, 0)
+    DIM cur = IOTA(m + 1, 0)
+    DIM i = 0
+    DIM j = 0
+    FOR i = 1 TO n
+        DIM si$ = s[i - 1]
+        cur[0] = i
+        FOR j = 1 TO m
+            DIM tj$ = t[j - 1]
+            DIM cost = 1
+            IF si$ = tj$ THEN cost = 0
+            DIM cell = prev[j - 1] + cost
+            DIM from_up = prev[j] + 1
+            DIM from_side = cur[j - 1] + 1
+            IF from_up < cell THEN cell = from_up
+            IF from_side < cell THEN cell = from_side
+            IF i > 1 ANDALSO j > 1 THEN
+                DIM sb$ = s[i - 2]
+                DIM tb$ = t[j - 2]
+                IF si$ = tb$ ANDALSO sb$ = tj$ THEN
+                    DIM swapped = older[j - 2] + 1
+                    IF swapped < cell THEN cell = swapped
+                ENDIF
+            ENDIF
+            cur[j] = cell
+        NEXT j
+        FOR j = 0 TO m
+            older[j] = prev[j]
+            prev[j] = cur[j]
+        NEXT j
+    NEXT i
+    RETURN prev[m]
+ENDFUNC
+
+' Like LEVENSHTEIN, and two neighbouring characters swapped count as one
+' edit, as long as no character is edited twice (optimal string alignment).
+EXPORT FUNC OSA(a$, b$)
+    RETURN OsaChars(-a$, -b$)
+ENDFUNC
+
+' Unrestricted Damerau-Levenshtein after Zhao and Sahni: a swap may also be
+' edited again ("CA" to "ABC" is 2).
+FUNC DamerauChars(s, t)
+    DIM n = LEN(s)
+    DIM m = LEN(t)
+    DIM maxv = n + 1
+    IF m > n THEN maxv = m + 1
+    DIM width = m + 2
+    DIM last_row AS MAP
+    DIM fr = IOTA(width, 0) * 0 + maxv
+    DIM older = IOTA(width, 0) * 0 + maxv
+    DIM prev = IOTA(width, 0)
+    prev[width - 1] = maxv
+    DIM cur = IOTA(width, 0) * 0
+    DIM i = 0
+    DIM j = 0
+    FOR i = 1 TO n
+        FOR j = 0 TO width - 1
+            cur[j] = older[j]
+        NEXT j
+        DIM si$ = s[i - 1]
+        DIM last_col = -1
+        DIM last_i2l1 = cur[0]
+        cur[0] = i
+        DIM tt = maxv
+        FOR j = 1 TO m
+            DIM tj$ = t[j - 1]
+            DIM cost = 1
+            IF si$ = tj$ THEN cost = 0
+            DIM cell = prev[j - 1] + cost
+            DIM from_side = cur[j - 1] + 1
+            DIM from_up = prev[j] + 1
+            IF from_side < cell THEN cell = from_side
+            IF from_up < cell THEN cell = from_up
+            IF cost = 0 THEN
+                last_col = j
+                IF j >= 2 THEN
+                    fr[j] = prev[j - 2]
+                ELSE
+                    fr[j] = prev[width - 1]
+                ENDIF
+                tt = last_i2l1
+            ELSE
+                DIM row_k = -1
+                IF MAP.EXISTS(last_row, tj$) THEN row_k = last_row{tj$}
+                IF j - last_col = 1 THEN
+                    DIM swap_a = fr[j] + (i - row_k)
+                    IF swap_a < cell THEN cell = swap_a
+                ELSEIF i - row_k = 1 THEN
+                    DIM swap_b = tt + (j - last_col)
+                    IF swap_b < cell THEN cell = swap_b
+                ENDIF
+            ENDIF
+            last_i2l1 = cur[j]
+            cur[j] = cell
+        NEXT j
+        last_row{si$} = i
+        FOR j = 0 TO width - 1
+            older[j] = prev[j]
+            prev[j] = cur[j]
+        NEXT j
+    NEXT i
+    RETURN prev[m]
+ENDFUNC
+
+EXPORT FUNC DAMERAU(a$, b$)
+    RETURN DamerauChars(-a$, -b$)
+ENDFUNC
+
+FUNC LcsChars(s, t)
+    DIM n = LEN(s)
+    DIM m = LEN(t)
+    IF n = 0 ORELSE m = 0 THEN RETURN 0
+    DIM prev = IOTA(m + 1, 0) * 0
+    DIM cur = IOTA(m + 1, 0) * 0
+    DIM i = 0
+    DIM j = 0
+    FOR i = 1 TO n
+        DIM si$ = s[i - 1]
+        FOR j = 1 TO m
+            DIM tj$ = t[j - 1]
+            IF si$ = tj$ THEN
+                cur[j] = prev[j - 1] + 1
+            ELSE
+                DIM from_up = prev[j]
+                DIM from_side = cur[j - 1]
+                IF from_up > from_side THEN
+                    cur[j] = from_up
+                ELSE
+                    cur[j] = from_side
+                ENDIF
+            ENDIF
+        NEXT j
+        FOR j = 0 TO m
+            prev[j] = cur[j]
+        NEXT j
+    NEXT i
+    RETURN prev[m]
+ENDFUNC
+
+FUNC IndelChars(s, t)
+    RETURN LEN(s) + LEN(t) - 2 * LcsChars(s, t)
+ENDFUNC
+
+' Insertions and deletions only: a substitution costs two.
+EXPORT FUNC INDEL(a$, b$)
+    RETURN IndelChars(-a$, -b$)
+ENDFUNC
+
+' ── Jaro ───────────────────────────────────────────────────────
+
+FUNC JaroChars(s, t)
+    DIM pl = LEN(s)
+    DIM tl = LEN(t)
+    IF pl = 0 ANDALSO tl = 0 THEN RETURN 1.0
+    IF pl = 0 ORELSE tl = 0 THEN RETURN 0.0
+    IF pl = 1 ANDALSO tl = 1 THEN
+        DIM one_s$ = s[0]
+        DIM one_t$ = t[0]
+        IF one_s$ = one_t$ THEN RETURN 1.0
+        RETURN 0.0
+    ENDIF
+    DIM s_use = pl
+    DIM bound = 0
+    IF tl > pl THEN
+        bound = CINT(FLOOR(tl / 2)) - 1
+    ELSE
+        bound = CINT(FLOOR(pl / 2)) - 1
+        IF pl > tl + bound THEN s_use = tl + bound
+    ENDIF
+    DIM s_flags = IOTA(pl, 0) * 0
+    DIM t_flags = IOTA(tl, 0) * 0
+    DIM common = 0
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO s_use - 1
+        DIM si$ = s[i]
+        DIM lo_j = i - bound
+        IF lo_j < 0 THEN lo_j = 0
+        DIM hi_j = i + bound
+        IF hi_j > tl - 1 THEN hi_j = tl - 1
+        IF lo_j <= hi_j THEN
+            FOR j = lo_j TO hi_j
+                DIM tj$ = t[j]
+                IF t_flags[j] = 0 ANDALSO tj$ = si$ THEN
+                    s_flags[i] = 1
+                    t_flags[j] = 1
+                    common = common + 1
+                    EXITFOR
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT i
+    IF common = 0 THEN RETURN 0.0
+    DIM k = 0
+    DIM trans = 0
+    FOR i = 0 TO pl - 1
+        IF s_flags[i] = 1 THEN
+            DIM hit_j = k
+            FOR j = k TO tl - 1
+                IF t_flags[j] = 1 THEN
+                    hit_j = j
+                    k = j + 1
+                    EXITFOR
+                ENDIF
+            NEXT j
+            DIM sc$ = s[i]
+            DIM tc$ = t[hit_j]
+            IF sc$ <> tc$ THEN trans = trans + 1
+        ENDIF
+    NEXT i
+    DIM half = CINT(FLOOR(trans / 2))
+    DIM sim = (common / pl + common / tl + (common - half) / common) / 3.0
+    RETURN sim
+ENDFUNC
+
+' Jaro similarity between 0 and 1.
+EXPORT FUNC JARO(a$, b$)
+    RETURN JaroChars(-a$, -b$)
+ENDFUNC
+
+FUNC JaroWinklerChars(s, t, weight)
+    DIM sim = JaroChars(s, t)
+    IF sim <= 0.7 THEN RETURN sim
+    DIM limit_n = LEN(s)
+    IF LEN(t) < limit_n THEN limit_n = LEN(t)
+    IF limit_n > 4 THEN limit_n = 4
+    DIM prefix = 0
+    DIM k = 0
+    FOR k = 0 TO limit_n - 1
+        DIM sc$ = s[k]
+        DIM tc$ = t[k]
+        IF sc$ <> tc$ THEN EXITFOR
+        prefix = prefix + 1
+    NEXT k
+    sim = sim + prefix * weight * (1.0 - sim)
+    IF sim > 1.0 THEN sim = 1.0
+    RETURN sim
+ENDFUNC
+
+' Jaro-Winkler similarity between 0 and 1: a common start of up to four
+' characters raises a Jaro score above 0.7.
+EXPORT FUNC JAROWINKLER(a$, b$, weight = 0.1)
+    RETURN JaroWinklerChars(-a$, -b$, weight)
+ENDFUNC
+
+' ── ratios ─────────────────────────────────────────────────────
+
+FUNC NormScore(dist, lensum)
+    IF lensum = 0 THEN RETURN 100.0
+    RETURN 100.0 - 100.0 * dist / lensum
+ENDFUNC
+
+FUNC RatioChars(s, t)
+    RETURN NormScore(IndelChars(s, t), LEN(s) + LEN(t))
+ENDFUNC
+
+' Similarity from 0 to 100 from the insertions and deletions.
+EXPORT FUNC RATIO(a$, b$)
+    RETURN RatioChars(-a$, -b$)
+ENDFUNC
+
+' The best RATIO of the shorter text against every window of the longer
+' one that could hold the best alignment.
+FUNC PartialImpl(shorter, longer)
+    DIM len1 = LEN(shorter)
+    DIM len2 = LEN(longer)
+    DIM seen AS MAP
+    DIM k = 0
+    FOR k = 0 TO len1 - 1
+        DIM ch$ = shorter[k]
+        seen{ch$} = 1
+    NEXT k
+    DIM best = 0.0
+    DIM i = 0
+    FOR i = 1 TO len1 - 1
+        DIM end_a$ = longer[i - 1]
+        IF MAP.EXISTS(seen, end_a$) THEN
+            DIM pts_a = RatioChars(shorter, SliceChars(longer, 0, i))
+            IF pts_a > best THEN best = pts_a
+            IF best >= 100 THEN RETURN 100.0
+        ENDIF
+    NEXT i
+    FOR i = 0 TO len2 - len1 - 1
+        DIM end_b$ = longer[i + len1 - 1]
+        IF MAP.EXISTS(seen, end_b$) THEN
+            DIM pts_b = RatioChars(shorter, SliceChars(longer, i, len1))
+            IF pts_b > best THEN best = pts_b
+            IF best >= 100 THEN RETURN 100.0
+        ENDIF
+    NEXT i
+    FOR i = len2 - len1 TO len2 - 1
+        DIM start_c$ = longer[i]
+        IF MAP.EXISTS(seen, start_c$) THEN
+            DIM pts_c = RatioChars(shorter, SliceChars(longer, i, len2 - i))
+            IF pts_c > best THEN best = pts_c
+            IF best >= 100 THEN RETURN 100.0
+        ENDIF
+    NEXT i
+    RETURN best
+ENDFUNC
+
+FUNC PartialChars(s, t)
+    DIM n = LEN(s)
+    DIM m = LEN(t)
+    IF n = 0 ANDALSO m = 0 THEN RETURN 100.0
+    IF n = 0 ORELSE m = 0 THEN RETURN 0.0
+    DIM best = 0.0
+    IF n <= m THEN
+        best = PartialImpl(s, t)
+    ELSE
+        best = PartialImpl(t, s)
+    ENDIF
+    IF best < 100 ANDALSO n = m THEN
+        DIM other = PartialImpl(t, s)
+        IF other > best THEN best = other
+    ENDIF
+    RETURN best
+ENDFUNC
+
+' The RATIO of the shorter text against the best matching part of the longer.
+EXPORT FUNC PARTIALRATIO(a$, b$)
+    RETURN PartialChars(-a$, -b$)
+ENDFUNC
+
+' RATIO of the two texts with their words sorted.
+EXPORT FUNC TOKENSORTRATIO(a$, b$)
+    DIM sa$ = SortedJoin$(WordsOf(a$))
+    DIM sb$ = SortedJoin$(WordsOf(b$))
+    RETURN RatioChars(-sa$, -sb$)
+ENDFUNC
+
+' The words both texts share compared with each text's own words: 100 when
+' the words of one are all among the words of the other.
+EXPORT FUNC TOKENSETRATIO(a$, b$)
+    DIM wa = UniqueSorted(WordsOf(a$))
+    DIM wb = UniqueSorted(WordsOf(b$))
+    IF LEN(wa) = 0 ORELSE LEN(wb) = 0 THEN RETURN 0.0
+    DIM in_b AS MAP
+    DIM in_a AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(wb) - 1
+        DIM wbk$ = wb[k]
+        in_b{wbk$} = 1
+    NEXT k
+    DIM inter = []
+    DIM only_a = []
+    DIM only_b = []
+    FOR k = 0 TO LEN(wa) - 1
+        DIM wak$ = wa[k]
+        in_a{wak$} = 1
+        IF MAP.EXISTS(in_b, wak$) THEN
+            PUSH(inter, wak$)
+        ELSE
+            PUSH(only_a, wak$)
+        ENDIF
+    NEXT k
+    FOR k = 0 TO LEN(wb) - 1
+        DIM wbo$ = wb[k]
+        IF NOT MAP.EXISTS(in_a, wbo$) THEN PUSH(only_b, wbo$)
+    NEXT k
+    IF LEN(inter) > 0 ANDALSO (LEN(only_a) = 0 ORELSE LEN(only_b) = 0) THEN RETURN 100.0
+    DIM ab$ = JoinWords$(only_a)
+    DIM ba$ = JoinWords$(only_b)
+    DIM ab_chars = -ab$
+    DIM ba_chars = -ba$
+    DIM ab_len = LEN(ab_chars)
+    DIM ba_len = LEN(ba_chars)
+    DIM sect$ = JoinWords$(inter)
+    DIM sect_len = LEN(-sect$)
+    DIM gap = 0
+    IF sect_len > 0 THEN gap = 1
+    DIM sect_ab_len = sect_len + gap + ab_len
+    DIM sect_ba_len = sect_len + gap + ba_len
+    DIM best = NormScore(IndelChars(ab_chars, ba_chars), sect_ab_len + sect_ba_len)
+    IF sect_len = 0 THEN RETURN best
+    DIM with_a = NormScore(gap + ab_len, sect_len + sect_ab_len)
+    DIM with_b = NormScore(gap + ba_len, sect_len + sect_ba_len)
+    IF with_a > best THEN best = with_a
+    IF with_b > best THEN best = with_b
+    RETURN best
+ENDFUNC
+
+' The better of TOKENSORTRATIO and TOKENSETRATIO.
+EXPORT FUNC TOKENRATIO(a$, b$)
+    DIM by_set = TOKENSETRATIO(a$, b$)
+    DIM by_sort = TOKENSORTRATIO(a$, b$)
+    IF by_sort > by_set THEN RETURN by_sort
+    RETURN by_set
+ENDFUNC
+
+' PARTIALRATIO on the sorted words, and on the words the texts do not share.
+EXPORT FUNC PARTIALTOKENRATIO(a$, b$)
+    DIM la = WordsOf(a$)
+    DIM lb = WordsOf(b$)
+    DIM ua = UniqueSorted(la)
+    DIM ub = UniqueSorted(lb)
+    DIM in_b AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(ub) - 1
+        DIM ubk$ = ub[k]
+        in_b{ubk$} = 1
+    NEXT k
+    FOR k = 0 TO LEN(ua) - 1
+        DIM uak$ = ua[k]
+        IF MAP.EXISTS(in_b, uak$) THEN RETURN 100.0
+    NEXT k
+    DIM sa$ = SortedJoin$(la)
+    DIM sb$ = SortedJoin$(lb)
+    DIM best = PartialChars(-sa$, -sb$)
+    IF LEN(la) = LEN(ua) ANDALSO LEN(lb) = LEN(ub) THEN RETURN best
+    DIM ja$ = JoinWords$(ua)
+    DIM jb$ = JoinWords$(ub)
+    DIM other = PartialChars(-ja$, -jb$)
+    IF other > best THEN best = other
+    RETURN best
+ENDFUNC
+
+' A weighted mix of the other ratios, rapidfuzz's WRatio: RATIO, then the
+' word based ratios for texts of similar length, the partial ones when one
+' text is at least half as long again as the other.
+EXPORT FUNC WRATIO(a$, b$)
+    DIM s = -a$
+    DIM t = -b$
+    DIM n = LEN(s)
+    DIM m = LEN(t)
+    IF n = 0 ORELSE m = 0 THEN RETURN 0.0
+    DIM len_ratio = CDBL(m) / n
+    IF n > m THEN len_ratio = CDBL(n) / m
+    DIM best = RatioChars(s, t)
+    IF len_ratio < 1.5 THEN
+        DIM by_token = TOKENRATIO(a$, b$) * 0.95
+        IF by_token > best THEN best = by_token
+        RETURN best
+    ENDIF
+    DIM scale = 0.9
+    IF len_ratio > 8.0 THEN scale = 0.6
+    DIM by_part = PartialChars(s, t) * scale
+    IF by_part > best THEN best = by_part
+    DIM by_part_token = PARTIALTOKENRATIO(a$, b$) * 0.95 * scale
+    IF by_part_token > best THEN best = by_part_token
+    RETURN best
+ENDFUNC
+
+' ── matching against a list ────────────────────────────────────
+
+' The score from 0 to 100 of a scorer named "ratio", "partial",
+' "token_sort", "token_set", "token", "partial_token", "wratio", "jaro" or
+' "jaro_winkler"; with clean true both texts go through PREP$ first.
+EXPORT FUNC SCORE(a$, b$, scorer$ = "wratio", clean = 0)
+    DIM x$ = a$
+    DIM y$ = b$
+    IF clean THEN
+        x$ = PREP$(a$)
+        y$ = PREP$(b$)
+    ENDIF
+    DIM name$ = LCASE$(scorer$)
+    IF name$ = "wratio" THEN RETURN WRATIO(x$, y$)
+    IF name$ = "ratio" THEN RETURN RATIO(x$, y$)
+    IF name$ = "partial" THEN RETURN PARTIALRATIO(x$, y$)
+    IF name$ = "token_sort" THEN RETURN TOKENSORTRATIO(x$, y$)
+    IF name$ = "token_set" THEN RETURN TOKENSETRATIO(x$, y$)
+    IF name$ = "token" THEN RETURN TOKENRATIO(x$, y$)
+    IF name$ = "partial_token" THEN RETURN PARTIALTOKENRATIO(x$, y$)
+    IF name$ = "jaro" THEN RETURN JARO(x$, y$) * 100.0
+    IF name$ = "jaro_winkler" THEN RETURN JAROWINKLER(x$, y$) * 100.0
+    THROW "FUZZY: no scorer called " + scorer$
+    RETURN 0.0
+ENDFUNC
+
+' The best matches of a text in a list, best first, as maps with "choice",
+' "score" and "index"; at most limit_n of them (0 for all), none below
+' cutoff. Equal scores keep the order of the list.
+EXPORT FUNC EXTRACT(query$, choices, limit_n = 5, scorer$ = "wratio", cutoff = 0, clean = 0)
+    DIM q$ = query$
+    IF clean THEN q$ = PREP$(query$)
+    DIM total = LEN(choices)
+    DIM out = []
+    IF total = 0 THEN RETURN out
+    DIM scores = []
+    DIM k = 0
+    FOR k = 0 TO total - 1
+        DIM c$ = choices[k]
+        IF clean THEN c$ = PREP$(c$)
+        DIM pts = SCORE(q$, c$, scorer$, 0)
+        PUSH(scores, CDBL(pts))
+    NEXT k
+    DIM taken = IOTA(total, 0) * 0
+    DIM wanted = limit_n
+    IF wanted <= 0 ORELSE wanted > total THEN wanted = total
+    DIM r = 0
+    FOR r = 0 TO wanted - 1
+        DIM best_i = -1
+        DIM best_pts = 0.0
+        FOR k = 0 TO total - 1
+            DIM here = scores[k]
+            IF taken[k] = 0 ANDALSO here >= cutoff THEN
+                IF best_i < 0 ORELSE here > best_pts THEN
+                    best_i = k
+                    best_pts = here
+                ENDIF
+            ENDIF
+        NEXT k
+        IF best_i < 0 THEN EXITFOR
+        taken[best_i] = 1
+        DIM choice$ = choices[best_i]
+        PUSH(out, {"choice": choice$, "score": best_pts, "index": best_i})
+    NEXT r
+    RETURN out
+ENDFUNC
+
+' The best match of a text in a list as a map with "choice", "score" and
+' "index"; index -1 and an empty choice when nothing reaches the cutoff.
+EXPORT FUNC EXTRACTONE(query$, choices, scorer$ = "wratio", cutoff = 0, clean = 0)
+    DIM found = EXTRACT(query$, choices, 1, scorer$, cutoff, clean)
+    IF LEN(found) > 0 THEN RETURN found[0]
+    RETURN {"choice": "", "score": 0.0, "index": -1}
+ENDFUNC
+
+' ── phonetics ──────────────────────────────────────────────────
+
+' Latin-1 letters with an accent as their base letter, lower case input.
+FUNC BaseLetter$(c$)
+    IF LEN(c$) <> 2 ORELSE ASC(c$) <> 195 THEN RETURN c$
+    DIM b1 = ASC(MID$(c$, 1, 1))
+    IF (b1 >= 160 ANDALSO b1 <= 163) ORELSE b1 = 165 THEN RETURN "a"
+    IF b1 = 167 THEN RETURN "c"
+    IF b1 >= 168 ANDALSO b1 <= 171 THEN RETURN "e"
+    IF b1 >= 172 ANDALSO b1 <= 175 THEN RETURN "i"
+    IF b1 = 177 THEN RETURN "n"
+    IF b1 >= 178 ANDALSO b1 <= 181 THEN RETURN "o"
+    IF b1 >= 185 ANDALSO b1 <= 187 THEN RETURN "u"
+    IF b1 = 189 ORELSE b1 = 191 THEN RETURN "y"
+    RETURN c$
+ENDFUNC
+
+FUNC InSet(c$, set$)
+    IF c$ = "" THEN RETURN FALSE
+    RETURN INSTR(set$, c$) >= 0
+ENDFUNC
+
+FUNC KoelnerWord$(word$)
+    DIM cs = -word$
+    DIM letters = []
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF c$ = "ä" THEN
+            PUSH(letters, "a")
+            PUSH(letters, "e")
+        ELSEIF c$ = "ö" THEN
+            PUSH(letters, "o")
+            PUSH(letters, "e")
+        ELSEIF c$ = "ü" THEN
+            PUSH(letters, "u")
+            PUSH(letters, "e")
+        ELSEIF c$ = "ß" THEN
+            PUSH(letters, "s")
+        ELSE
+            DIM plain$ = BaseLetter$(c$)
+            IF LEN(plain$) = 1 ANDALSO ASC(plain$) >= 97 ANDALSO ASC(plain$) <= 122 THEN PUSH(letters, plain$)
+        ENDIF
+    NEXT k
+    DIM n = LEN(letters)
+    ' d and t, x
+    DIM step1 = []
+    FOR k = 0 TO n - 1
+        DIM c1$ = letters[k]
+        DIM next1$ = ""
+        IF k + 1 < n THEN next1$ = letters[k + 1]
+        DIM prev1$ = ""
+        IF k > 0 THEN prev1$ = letters[k - 1]
+        IF c1$ = "d" ORELSE c1$ = "t" THEN
+            IF InSet(next1$, "csz") THEN
+                PUSH(step1, "8")
+            ELSE
+                PUSH(step1, "2")
+            ENDIF
+        ELSEIF c1$ = "x" THEN
+            IF InSet(prev1$, "ckq") THEN
+                PUSH(step1, "x")
+            ELSE
+                PUSH(step1, "4")
+            ENDIF
+            PUSH(step1, "8")
+        ELSE
+            PUSH(step1, c1$)
+        ENDIF
+    NEXT k
+    ' c, then p and the other lip sounds
+    n = LEN(step1)
+    DIM step2 = []
+    FOR k = 0 TO n - 1
+        DIM c2$ = step1[k]
+        DIM next2$ = ""
+        IF k + 1 < n THEN next2$ = step1[k + 1]
+        DIM prev2$ = ""
+        IF k > 0 THEN prev2$ = step1[k - 1]
+        IF c2$ = "c" THEN
+            IF (k = 0 ANDALSO InSet(next2$, "ahkloqrux")) ORELSE (NOT InSet(prev2$, "sz") ANDALSO InSet(next2$, "ahkoqux")) THEN
+                PUSH(step2, "4")
+            ELSE
+                PUSH(step2, "8")
+            ENDIF
+        ELSEIF c2$ = "p" THEN
+            IF next2$ = "h" THEN
+                PUSH(step2, "3")
+            ELSE
+                PUSH(step2, "1")
+            ENDIF
+        ELSEIF c2$ = "b" THEN
+            PUSH(step2, "1")
+        ELSEIF InSet(c2$, "fvw") THEN
+            PUSH(step2, "3")
+        ELSEIF c2$ = "h" ORELSE c2$ = "x" THEN
+            ' dropped
+        ELSEIF InSet(c2$, "aeijouy") THEN
+            PUSH(step2, "0")
+        ELSEIF InSet(c2$, "gkq") THEN
+            PUSH(step2, "4")
+        ELSEIF c2$ = "l" THEN
+            PUSH(step2, "5")
+        ELSEIF c2$ = "m" ORELSE c2$ = "n" THEN
+            PUSH(step2, "6")
+        ELSEIF c2$ = "r" THEN
+            PUSH(step2, "7")
+        ELSEIF c2$ = "s" ORELSE c2$ = "z" THEN
+            PUSH(step2, "8")
+        ELSE
+            PUSH(step2, c2$)
+        ENDIF
+    NEXT k
+    ' repeated digits collapse, zeros stay only in front
+    n = LEN(step2)
+    DIM code$ = ""
+    DIM kept = 0
+    FOR k = 0 TO n - 1
+        DIM d$ = step2[k]
+        DIM next3$ = ""
+        IF k + 1 < n THEN next3$ = step2[k + 1]
+        IF d$ <> next3$ THEN
+            IF d$ <> "0" ORELSE kept = 0 THEN code$ = code$ + d$
+            kept = kept + 1
+        ENDIF
+    NEXT k
+    RETURN code$
+ENDFUNC
+
+' The Koelner Phonetik code of a text, the words' codes separated by a
+' space; a hyphen separates words too. Names that sound alike in German get
+' the same code: Meier, Mayer and Maier are all 67.
+EXPORT FUNC KOELNER$(text$)
+    DIM cs = -REPLACE$(text$, "-", " ")
+    DIM lower$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        lower$ = lower$ + LowerChar$(c$)
+    NEXT k
+    DIM words = SPLIT(lower$, " ")
+    DIM codes = []
+    FOR k = 0 TO LEN(words) - 1
+        DIM w$ = words[k]
+        PUSH(codes, KoelnerWord$(w$))
+    NEXT k
+    IF LEN(codes) = 0 THEN RETURN ""
+    RETURN JOIN(codes, " ")
+ENDFUNC
+
+FUNC SoundexDigit$(c$)
+    IF InSet(c$, "BFPV") THEN RETURN "1"
+    IF InSet(c$, "CGJKQSXZ") THEN RETURN "2"
+    IF InSet(c$, "DT") THEN RETURN "3"
+    IF c$ = "L" THEN RETURN "4"
+    IF c$ = "M" ORELSE c$ = "N" THEN RETURN "5"
+    IF c$ = "R" THEN RETURN "6"
+    RETURN ""
+ENDFUNC
+
+' The American Soundex code: the first character and three digits. Accented
+' Latin-1 letters and umlauts count as their base letter and ß as s, other
+' characters beyond ASCII are left out.
+EXPORT FUNC SOUNDEX$(name$)
+    DIM cs = -name$
+    DIM plain = []
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        DIM low$ = BaseLetter$(LowerChar$(c$))
+        IF low$ = "ä" THEN low$ = "a"
+        IF low$ = "ö" THEN low$ = "o"
+        IF low$ = "ü" THEN low$ = "u"
+        IF low$ = "ß" THEN low$ = "s"
+        IF LEN(low$) = 1 THEN PUSH(plain, UCASE$(low$))
+    NEXT k
+    IF LEN(plain) = 0 THEN RETURN ""
+    DIM code$ = plain[0]
+    DIM last$ = SoundexDigit$(code$)
+    FOR k = 1 TO LEN(plain) - 1
+        DIM u$ = plain[k]
+        IF ASC(u$) >= 65 ANDALSO ASC(u$) <= 90 THEN
+            DIM digit$ = SoundexDigit$(u$)
+            IF digit$ <> "" THEN
+                IF digit$ <> last$ THEN code$ = code$ + digit$
+                last$ = digit$
+            ELSEIF u$ <> "H" ANDALSO u$ <> "W" THEN
+                last$ = ""
+            ENDIF
+            IF LEN(code$) = 4 THEN EXITFOR
+        ENDIF
+    NEXT k
+    DO WHILE LEN(code$) < 4
+        code$ = code$ + "0"
+    LOOP
+    RETURN code$
+ENDFUNC

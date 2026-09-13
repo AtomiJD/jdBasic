@@ -1,0 +1,122 @@
+' fuzzy_demo.jdb - near matches in four everyday places: duplicate customers
+' in an address list, spoken commands matched to the ones a program knows,
+' a "did you mean" for a mistyped option, and names that sound alike.
+'
+'   jdBasic fuzzy_demo.jdb
+
+IMPORT FUZZY, CONSOLE
+
+CONSOLE.SET_WIDTH(78)
+
+FUNC Rounded$(pts)
+    RETURN STR$(CINT(FLOOR(pts + 0.5)))
+ENDFUNC
+
+' The Koelner codes of the words of a name, sorted: the same words in any
+' order and any spelling that sounds alike give the same key.
+FUNC SoundKey$(name$)
+    DIM codes = SPLIT(FUZZY.KOELNER$(FUZZY.PREP$(name$)), " ")
+    DIM kept = []
+    DIM k = 0
+    FOR k = 0 TO LEN(codes) - 1
+        DIM c$ = codes[k]
+        IF c$ <> "" THEN PUSH(kept, c$)
+    NEXT k
+    IF LEN(kept) = 0 THEN RETURN ""
+    RETURN JOIN(SORT(kept), " ")
+ENDFUNC
+
+' ── duplicate customers ────────────────────────────────────────
+
+CONSOLE.RULE("duplicate customers")
+DIM customers = ["Müller Papier GmbH", "Papier Mueller GmbH", "Meyer Bürobedarf", "Maier Buerobedarf", "Stadtverwaltung Musterstadt", "Stadtverw. Musterstadt", "Schmidt & Söhne", "Schmitt und Soehne", "Becker Druck"]
+DIM dup_rows = []
+DIM i = 0
+DIM j = 0
+FOR i = 0 TO LEN(customers) - 2
+    DIM a$ = customers[i]
+    FOR j = i + 1 TO LEN(customers) - 1
+        DIM b$ = customers[j]
+        DIM pts = FUZZY.SCORE(a$, b$, "wratio", 1)
+        DIM same$ = "-"
+        IF SoundKey$(a$) = SoundKey$(b$) THEN same$ = "yes"
+        IF pts >= 75 ORELSE same$ = "yes" THEN
+            DIM dup_row = []
+            PUSH(dup_row, a$)
+            PUSH(dup_row, b$)
+            PUSH(dup_row, Rounded$(pts))
+            PUSH(dup_row, same$)
+            PUSH(dup_rows, dup_row)
+        ENDIF
+    NEXT j
+NEXT i
+CONSOLE.TABLE(dup_rows, {"headers": ["customer", "looks like", "score", "sounds alike"], "border": "plain"})
+PRINT ""
+
+' ── spoken commands ────────────────────────────────────────────
+
+CONSOLE.RULE("spoken commands")
+DIM commands = ["licht an", "licht aus", "rollladen hoch", "rollladen runter", "heizung wärmer", "heizung kälter", "musik lauter", "musik leiser"]
+DIM heard = ["mach das licht an", "rolladen runter bitte", "heitzung wärmer", "muzik leiser", "wie spät ist es"]
+DIM cmd_rows = []
+FOR i = 0 TO LEN(heard) - 1
+    DIM said$ = heard[i]
+    DIM best = FUZZY.EXTRACTONE(said$, commands, "wratio", 80, 1)
+    DIM best_i = best{"index"}
+    DIM best_c$ = best{"choice"}
+    DIM best_s = best{"score"}
+    DIM cmd_row = []
+    PUSH(cmd_row, said$)
+    IF best_i < 0 THEN
+        PUSH(cmd_row, "(not understood)")
+        PUSH(cmd_row, "")
+    ELSE
+        PUSH(cmd_row, best_c$)
+        PUSH(cmd_row, Rounded$(best_s))
+    ENDIF
+    PUSH(cmd_rows, cmd_row)
+NEXT i
+CONSOLE.TABLE(cmd_rows, {"headers": ["heard", "command", "score"], "border": "plain"})
+PRINT ""
+
+' ── did you mean ───────────────────────────────────────────────
+
+CONSOLE.RULE("did you mean")
+DIM options = ["--output", "--verbose", "--version", "--width", "--locale", "--currency"]
+DIM typed = ["--verbos", "--ouptut", "--curency", "--colour"]
+FOR i = 0 TO LEN(typed) - 1
+    DIM wrong$ = typed[i]
+    DIM near_opts = []
+    DIM best_d = 3
+    FOR j = 0 TO LEN(options) - 1
+        DIM opt$ = options[j]
+        DIM d = CINT(FUZZY.DAMERAU(wrong$, opt$))
+        IF d < best_d THEN
+            best_d = d
+            near_opts = []
+        ENDIF
+        IF d = best_d THEN PUSH(near_opts, opt$)
+    NEXT j
+    IF LEN(near_opts) = 0 THEN
+        PRINT "  "; wrong$; ": unknown option"
+    ELSE
+        PRINT "  "; wrong$; ": unknown option, did you mean "; JOIN(near_opts, " or "); "?"
+    ENDIF
+NEXT i
+PRINT ""
+
+' ── names that sound alike ─────────────────────────────────────
+
+CONSOLE.RULE("names that sound alike")
+DIM names = ["Meier", "Mayer", "Maier", "Meyer", "Schmidt", "Schmitt", "Christoph", "Kristof", "Müller", "Miller"]
+DIM name_rows = []
+FOR i = 0 TO LEN(names) - 1
+    DIM who$ = names[i]
+    DIM name_row = []
+    PUSH(name_row, who$)
+    PUSH(name_row, FUZZY.KOELNER$(who$))
+    PUSH(name_row, FUZZY.SOUNDEX$(who$))
+    PUSH(name_rows, name_row)
+NEXT i
+CONSOLE.TABLE(name_rows, {"headers": ["name", "Koelner Phonetik", "Soundex"], "border": "plain"})
+PRINT ""

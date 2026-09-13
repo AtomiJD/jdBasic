@@ -1,0 +1,164 @@
+' FUZZY: edit distances, Jaro, the ratios and WRatio against rapidfuzz 3.14
+' on a reference table, PREP$ against its default_process, the best matches
+' from a list against process.extract, and the phonetic codes against
+' cologne_phonetics 2.0 and jellyfish.
+
+IMPORT TESTKIT, FUZZY
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "fuzzy_scores.tsv") THEN base$ = "fixtures/"
+DIM TB$ = CHR$(9)
+DIM EPS = 0.0001
+
+FUNC RowsOf(path$)
+    DIM out = []
+    DIM rows = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r$ = rows[k]
+        IF r$ <> "" ANDALSO LEFT$(r$, 1) <> "#" THEN PUSH(out, r$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC BadScorer(x)
+    RETURN FUZZY.SCORE("abc", "abd", "cosine")
+ENDFUNC
+
+TESTKIT.SUITE("reference scores")
+DIM score_rows = RowsOf(base$ + "fuzzy_scores.tsv")
+TESTKIT.EQ(LEN(score_rows), 37, "37 reference pairs")
+DIM i = 0
+FOR i = 0 TO LEN(score_rows) - 1
+    DIM row_text$ = score_rows[i]
+    DIM cols = SPLIT(row_text$, TB$)
+    DIM a$ = cols[0]
+    DIM b$ = cols[1]
+    DIM pair$ = "'" + a$ + "' / '" + b$ + "' "
+    DIM lev$ = cols[2]
+    DIM osa$ = cols[3]
+    DIM dam$ = cols[4]
+    DIM ind$ = cols[5]
+    DIM jaro$ = cols[6]
+    DIM jw$ = cols[7]
+    DIM rat$ = cols[8]
+    DIM part$ = cols[9]
+    DIM tsort$ = cols[10]
+    DIM tset$ = cols[11]
+    DIM wr$ = cols[12]
+    DIM wrp$ = cols[13]
+    TESTKIT.EQ(FUZZY.LEVENSHTEIN(a$, b$), CINT(VAL(lev$)), pair$ + "levenshtein")
+    TESTKIT.EQ(FUZZY.OSA(a$, b$), CINT(VAL(osa$)), pair$ + "osa")
+    TESTKIT.EQ(FUZZY.DAMERAU(a$, b$), CINT(VAL(dam$)), pair$ + "damerau")
+    TESTKIT.EQ(FUZZY.INDEL(a$, b$), CINT(VAL(ind$)), pair$ + "indel")
+    TESTKIT.NEAR(FUZZY.JARO(a$, b$), VAL(jaro$), EPS, pair$ + "jaro")
+    TESTKIT.NEAR(FUZZY.JAROWINKLER(a$, b$), VAL(jw$), EPS, pair$ + "jaro winkler")
+    TESTKIT.NEAR(FUZZY.RATIO(a$, b$), VAL(rat$), EPS, pair$ + "ratio")
+    TESTKIT.NEAR(FUZZY.PARTIALRATIO(a$, b$), VAL(part$), EPS, pair$ + "partial ratio")
+    TESTKIT.NEAR(FUZZY.TOKENSORTRATIO(a$, b$), VAL(tsort$), EPS, pair$ + "token sort ratio")
+    TESTKIT.NEAR(FUZZY.TOKENSETRATIO(a$, b$), VAL(tset$), EPS, pair$ + "token set ratio")
+    TESTKIT.NEAR(FUZZY.WRATIO(a$, b$), VAL(wr$), EPS, pair$ + "wratio")
+    TESTKIT.NEAR(FUZZY.SCORE(a$, b$, "wratio", 1), VAL(wrp$), EPS, pair$ + "wratio after PREP$")
+NEXT i
+
+TESTKIT.SUITE("characters, not bytes")
+TESTKIT.EQ(FUZZY.LEVENSHTEIN("Müller", "Muller"), 1, "an umlaut is one character")
+TESTKIT.EQ(FUZZY.LEVENSHTEIN("", "Straße"), 6, "six characters in seven bytes")
+TESTKIT.NEAR(FUZZY.RATIO("Björn", "Björn"), 100, EPS, "the same name")
+TESTKIT.NEAR(FUZZY.JAROWINKLER("martha", "marhta", 0.2), FUZZY.JARO("martha", "marhta") + 3 * 0.2 * (1 - FUZZY.JARO("martha", "marhta")), EPS, "a heavier prefix weight")
+TESTKIT.NEAR(FUZZY.SCORE("martha", "marhta", "jaro_winkler"), FUZZY.JAROWINKLER("martha", "marhta") * 100, EPS, "SCORE puts Jaro-Winkler on the scale of 100")
+TESTKIT.NEAR(FUZZY.SCORE("fuzzy was a bear", "fuzzy fuzzy was a bear", "token"), 100, EPS, "the better of the two token ratios")
+TESTKIT.THROWS(BadScorer@, 1, "an unknown scorer is refused")
+
+TESTKIT.SUITE("prep")
+TESTKIT.EQ(FUZZY.PREP$("  Ärzte_ohne-Grenzen! "), "ärzte ohne grenzen", "lower case, punctuation to spaces, trimmed")
+TESTKIT.EQ(FUZZY.PREP$("a_b-c Été €5 ½ x×y – ª"), "a b c été  5 ½ x y   ª", "signs become spaces, letters and numbers stay")
+TESTKIT.EQ(FUZZY.PREP$("ÄÖÜ ÀÉ"), "äöü àé", "capitals of Latin-1")
+
+TESTKIT.SUITE("extract")
+DIM ex_rows = RowsOf(base$ + "fuzzy_extract.tsv")
+DIM query$ = ""
+DIM choices = []
+DIM checked = 0
+FOR i = 0 TO LEN(ex_rows) - 1
+    DIM ex_text$ = ex_rows[i]
+    DIM ex = SPLIT(ex_text$, TB$)
+    DIM kind$ = ex[0]
+    DIM value$ = ex[1]
+    IF kind$ = "query" THEN
+        query$ = value$
+    ELSEIF kind$ = "choice" THEN
+        PUSH(choices, value$)
+    ELSE
+        DIM lim$ = ex[2]
+        DIM cut$ = ex[3]
+        DIM clean = CINT(VAL(value$))
+        DIM found = FUZZY.EXTRACT(query$, choices, CINT(VAL(lim$)), kind$, VAL(cut$), clean)
+        DIM label$ = kind$ + " clean " + value$ + " limit " + lim$ + " cutoff " + cut$ + ": "
+        TESTKIT.EQ(LEN(found), LEN(ex) - 4, label$ + "number of matches")
+        DIM h = 0
+        FOR h = 4 TO LEN(ex) - 1
+            DIM hit$ = ex[h]
+            DIM colon = CINT(INSTR(hit$, ":"))
+            DIM want_i = CINT(VAL(LEFT$(hit$, colon)))
+            DIM want_s = VAL(MID$(hit$, colon + 1, LEN(hit$)))
+            IF h - 4 < LEN(found) THEN
+                DIM got = found[h - 4]
+                DIM got_i = got{"index"}
+                DIM got_s = got{"score"}
+                DIM got_c$ = got{"choice"}
+                DIM want_c$ = choices[want_i]
+                TESTKIT.EQ(CINT(got_i), want_i, label$ + "place " + STR$(h - 3))
+                TESTKIT.NEAR(got_s, want_s, EPS, label$ + "score " + STR$(h - 3))
+                TESTKIT.EQ(got_c$, want_c$, label$ + "choice " + STR$(h - 3))
+            ENDIF
+        NEXT h
+        IF LEN(ex) > 4 THEN
+            DIM one = FUZZY.EXTRACTONE(query$, choices, kind$, VAL(cut$), clean)
+            DIM first_hit$ = ex[4]
+            DIM one_i = one{"index"}
+            TESTKIT.EQ(CINT(one_i), CINT(VAL(LEFT$(first_hit$, CINT(INSTR(first_hit$, ":"))))), label$ + "EXTRACTONE")
+        ENDIF
+        checked = checked + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(checked, 20, "five scorers, with and without PREP$, two limits")
+TESTKIT.EQ(LEN(FUZZY.EXTRACT(query$, choices, 0)), LEN(choices), "limit 0 gives every choice")
+DIM nothing = []
+DIM none_hit = FUZZY.EXTRACTONE("Müller", nothing)
+DIM none_i = none_hit{"index"}
+TESTKIT.EQ(CINT(none_i), -1, "an empty list has no best match")
+DIM too_high = FUZZY.EXTRACTONE(query$, choices, "ratio", 99.5)
+DIM high_i = too_high{"index"}
+DIM high_c$ = too_high{"choice"}
+TESTKIT.EQ(CINT(high_i), -1, "nothing reaches the cutoff")
+TESTKIT.EQ(high_c$, "", "and the choice is empty")
+
+TESTKIT.SUITE("phonetics")
+DIM ph_rows = RowsOf(base$ + "fuzzy_phonetics.tsv")
+TESTKIT.EQ(LEN(ph_rows), 40, "40 reference names")
+FOR i = 0 TO LEN(ph_rows) - 1
+    DIM ph_text$ = ph_rows[i]
+    DIM ph = SPLIT(ph_text$, TB$)
+    DIM who$ = ph[0]
+    DIM kc$ = ph[1]
+    DIM sx$ = ph[2]
+    TESTKIT.EQ(FUZZY.KOELNER$(who$), kc$, who$ + " koelner")
+    TESTKIT.EQ(FUZZY.SOUNDEX$(who$), sx$, who$ + " soundex")
+NEXT i
+TESTKIT.EQ(FUZZY.KOELNER$("Ärzte"), "0782", "a capital umlaut in front")
+TESTKIT.EQ(FUZZY.KOELNER$("Émile"), "065", "an accent dropped")
+TESTKIT.EQ(FUZZY.KOELNER$("Tschaikowski"), "84384", "Tschaikowski")
+TESTKIT.EQ(FUZZY.KOELNER$("Gutierrez"), "4278", "Gutierrez")
+TESTKIT.EQ(FUZZY.KOELNER$("ça"), "4", "c with a cedilla")
+TESTKIT.EQ(FUZZY.KOELNER$("123"), "", "no letters, no code")
+TESTKIT.EQ(FUZZY.SOUNDEX$("Ärzte"), "A623", "Soundex reads an umlaut as its base letter")
+TESTKIT.EQ(FUZZY.SOUNDEX$("Émile"), "E540", "and an accent")
+TESTKIT.EQ(FUZZY.SOUNDEX$("Tschaikowski"), "T222", "Tschaikowski")
+TESTKIT.EQ(FUZZY.SOUNDEX$("Burroughs"), "B620", "Burroughs")
+TESTKIT.EQ(FUZZY.SOUNDEX$("Lloyd"), "L300", "a repeated letter")
+TESTKIT.EQ(FUZZY.SOUNDEX$("Hhhh"), "H000", "H does not separate")
+TESTKIT.EQ(FUZZY.SOUNDEX$("123"), "1000", "a leading digit is kept as it is")
+TESTKIT.EQ(FUZZY.SOUNDEX$(""), "", "nothing for nothing")
+
+TESTKIT.REPORT()
