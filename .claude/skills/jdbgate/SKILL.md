@@ -139,7 +139,7 @@ rm -f tests/forms/forms_native_smoke.exe
 It needs `build_rt.bat ... FORMS` too - a DLL without the flag makes every
 FORM.* call fail with "Unknown function".
 
-## Step 3b - parity sweep (optional, ~6 min)
+## Step 3b - parity sweep (optional, ~90 s with the default 8 parallel jobs)
 
 The four suites above are the gate. `tests/parity.sh` is the wider net: it runs
 the tracked regression bank through both backends and compares each test

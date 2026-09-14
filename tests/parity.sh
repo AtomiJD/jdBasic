@@ -13,6 +13,9 @@
 #   parity.sh [-t SECONDS] [-j JOBS] [-o OUTFILE] [--all] [pattern]
 #              [--update-baseline]
 #
+#   -j      tests run in parallel, 8 by default (-j 1 for a serial run); each
+#           test compiles into its own folder under the work directory
+#
 #   --all   include the excluded directories too (needs models, network, a TTY
 #           and a TUI-enabled build; expect reds that say nothing about parity)
 #
@@ -32,7 +35,7 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 JDB="$REPO/build/jdBasic.exe"
 
 TIMEOUT=20
-JOBS=1
+JOBS=8
 OUT=""
 PATTERN=""
 ALL=0
@@ -82,6 +85,11 @@ run_one() {
     local ilog="$WORK/log/$id.interp.txt"
     local clog="$WORK/log/$id.compile.txt"
     local nlog="$WORK/log/$id.native.txt"
+    # Each test gets its own folder: -c copies jdbrt.dll next to the exe, and
+    # a copy landing while another test's exe starts from the same folder
+    # makes that exe fail to load.
+    local exe="$WORK/exe/$id/$id.exe"
+    mkdir -p "$WORK/exe/$id"
 
     # Capture each exit status into a plain variable on its own line: a `local`
     # declaration is itself a command and would overwrite $? before it is read.
@@ -94,13 +102,13 @@ run_one() {
     irc=$?
     istat=$(classify "$irc" "$ilog")
 
-    timeout -k 2 90 "$JDB" -c -o "$WORK/exe/$id.exe" "$abs" >"$clog" 2>&1 </dev/null
+    timeout -k 2 90 "$JDB" -c -o "$exe" "$abs" >"$clog" 2>&1 </dev/null
     crc=$?
-    if [ "$crc" -ne 0 ] || [ ! -f "$WORK/exe/$id.exe" ]; then
+    if [ "$crc" -ne 0 ] || [ ! -f "$exe" ]; then
         nstat="CFAIL"
         : >"$nlog"
     else
-        ( cd "$REPO" && timeout -k 2 "$TIMEOUT" "$WORK/exe/$id.exe" ) >"$nlog" 2>&1 </dev/null
+        ( cd "$REPO" && timeout -k 2 "$TIMEOUT" "$exe" ) >"$nlog" 2>&1 </dev/null
         nrc=$?
         nstat=$(classify "$nrc" "$nlog")
     fi
