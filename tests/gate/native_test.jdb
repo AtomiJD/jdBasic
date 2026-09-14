@@ -1486,7 +1486,10 @@ FUNC D413List(dir$)
     DIM found = DIR$(dir$)
     RETURN LEN(found)
 ENDFUNC
-Assert(369, D413List("*.jdb") > 0)
+DIM d413_file$ = MKTEMP$("d413") + ".txt"
+TXTWRITER d413_file$, "x"
+Assert(369, D413List(d413_file$) = 1)
+KILL d413_file$
 
 ' #414: a map taken out of a parsed map reaches a FUNC's MAP.KEYS.
 FUNC D414Keys(requires)
