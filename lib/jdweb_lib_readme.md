@@ -166,9 +166,11 @@ and an `Allow` header naming them.
   starting with `__`. A database store writes the map as JSON, so what a
   handler keeps in a session there has to be JSON: text, numbers, flags,
   lists and maps.
-- Compiled with `-c`, the page, login and response helpers work; serving
-  routes from a compiled program does not yet, so run a JDWEB app
-  interpreted.
+- Compiled with `-c`, routes, middleware, sessions, CSRF and the page and
+  login helpers work; the self test runs its served suites compiled when
+  `JDWEB_TEST_SERVER` is set. Writing into a JSON-parsed map kept in another
+  map crashes compiled (#453), which is why the database store copies a
+  session into a fresh map.
 
 Self test: `tests/jdlibs/jdweb_selftest.jdb`.
 Demo: `jdb/demos/jdlibs/jdweb_demo.jdb`. A full app on it:

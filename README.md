@@ -46,7 +46,7 @@ You can:
 - talk to local LLMs (llama.cpp) and run ONNX models inline
 - pair-program with an AI agent: the built-in **MCP server** exposes a persistent VM that Claude Code, Cursor & Co. can run, inspect, and live-patch without restarting your program
 - build automation tools, REST clients, and serial-device controllers
-- lean on a **module library** written in jdBasic itself - HTTP sessions, config files, logging, JWT, Excel workbooks, one client for OpenAI, Anthropic and local models - see [`lib/README.md`](lib/README.md)
+- lean on a **module library** written in jdBasic itself - web apps with sessions and CSRF, password hashing, exact money, IBAN and VAT checks, QR and GiroCodes, curve fitting, data frames, PDF and Excel files, one client for OpenAI, Anthropic and local models - see [`lib/README.md`](lib/README.md)
 - extend the language with native modules
 
 ---
@@ -309,7 +309,7 @@ Cloned the repo and built from source instead? Try the pixel-storm:
 | Doc | What it covers |
 |-----|----------------|
 | [doc/languages.md](doc/languages.md) | The full language reference - every statement, function and build-flag-gated API |
-| [lib/README.md](lib/README.md) | The module library written in jdBasic: TESTKIT, CLI, REQ, SCHEMA, LLMAPI, LOGGER, CONF, JWT, XLSX - one page per module |
+| [lib/README.md](lib/README.md) | The module library written in jdBasic, 45 modules with one page each: testing and tools (TESTKIT, CLI, PKG, PROPTEST), web and services (REQ, JDWEB, TMPL, OAUTH, JWT, SECRET, MAIL, LLMAPI, SCHED, RETRY, CACHE, LOGGER, CONF), data and files (DF, DB, XLSX, DOCX, PDFGEN, XML, YAML, HTMLDOM, MD, ICAL, SVG, QR), text (CONSOLE, TEXTX, TEXTDIFF, FUZZY, PARSEC, URL, SCHEMA), numbers and money (MONEY, VALID, NUMFMT, DT, STATS, FIT, ML, GRAPH, FAKE) |
 | [help.txt](help.txt) | Per-command reference, also served by `HELP "topic"` in the REPL |
 | [doc/BUILD.md](doc/BUILD.md) | Building from source: prerequisites, feature flags, packaging (Windows/Linux/macOS) |
 | [doc/MCP.md](doc/MCP.md) | The MCP server: client configs for Claude Code, Cursor, Cline & Co., tool reference |
