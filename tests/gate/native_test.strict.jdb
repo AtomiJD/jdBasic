@@ -1447,6 +1447,122 @@ Assert(363, cmp_less(cmp_words, 0, 1))
 Assert(364, cmp_less(cmp_nums, 0, 1))
 
 ' ══════════════════════════════════════════════════════════════════
+' Native defects #408-#419 (2026-09-14)
+' ══════════════════════════════════════════════════════════════════
+PRINT "── Native defects #408-#419 ──"
+
+' #408: POP through an untyped SUB parameter shrinks the caller's array.
+DIM d408_rows = []
+PUSH(d408_rows, [])
+SUB D408Drain(target)
+    DIM guard = 0
+    DO WHILE LEN(target) > 0 ANDALSO guard < 10
+        DIM dropped = POP(target)
+        guard = guard + 1
+    LOOP
+ENDSUB
+DIM d408_slot = d408_rows[0]
+PUSH(d408_slot, 7)
+PUSH(d408_slot, 8)
+D408Drain(d408_slot)
+Assert(365, LEN(d408_slot) = 0)
+
+' #410: key writes into a map a builtin handed out.
+DIM d410_q$ = CHR$(34)
+DIM d410_m = JSON.PARSE$("{" + d410_q$ + "a" + d410_q$ + ":" + d410_q$ + "x" + d410_q$ + "}")
+d410_m{"a"} = "y"
+d410_m{"b"} = "z"
+DIM d410_a$ = d410_m{"a"}
+DIM d410_b$ = d410_m{"b"}
+Assert(366, d410_a$ = "y")
+Assert(367, d410_b$ = "z")
+
+' #411: RETURN JSON.PARSE$(...) answers the map, not a string.
+FUNC D411Parsed(text$)
+    RETURN JSON.PARSE$(text$)
+ENDFUNC
+DIM d411_src$ = "{" + d410_q$ + "name" + d410_q$ + ":" + d410_q$ + "Ann" + d410_q$ + "}"
+Assert(368, TYPEOF(D411Parsed(d411_src$)) = "OBJECT")
+
+' #413: a parameter named like a builtin leaves the builtin call alone.
+FUNC D413List(dir$)
+    DIM found = DIR$(dir$)
+    RETURN LEN(found)
+ENDFUNC
+Assert(369, D413List("*.jdb") > 0)
+
+' #414: a map taken out of a parsed map reaches a FUNC's MAP.KEYS.
+FUNC D414Keys(requires)
+    DIM names = MAP.KEYS(requires)
+    RETURN LEN(names)
+ENDFUNC
+DIM d414_idx = JSON.PARSE$("{" + d410_q$ + "web" + d410_q$ + ":{" + d410_q$ + "req" + d410_q$ + ":1," + d410_q$ + "url" + d410_q$ + ":2}}")
+DIM d414_web = d414_idx{"web"}
+Assert(370, D414Keys(d414_web) = 2)
+
+' #412: a map handed to an untyped parameter keeps its keys for MAP.KEYS.
+FUNC D412Reply()
+    DIM hs AS MAP
+    RETURN {"status": 200, "body": "hi", "headers": hs}
+ENDFUNC
+FUNC D412CountKeys(response)
+    DIM names = MAP.KEYS(response)
+    RETURN LEN(names)
+ENDFUNC
+Assert(371, D412CountKeys(D412Reply()) = 3)
+
+' A map read out of a map by a computed key and returned from a FUNC stays
+' the same map, so writes through it persist.
+DIM d412_sessions AS MAP
+FUNC D412Session(sid$)
+    IF MAP.EXISTS(d412_sessions, sid$) THEN
+        DIM have = d412_sessions{sid$}
+        RETURN have
+    ENDIF
+    DIM fresh AS MAP
+    d412_sessions{sid$} = fresh
+    DIM stored = d412_sessions{sid$}
+    RETURN stored
+ENDFUNC
+FUNC D412Bump(sid$)
+    DIM sess = D412Session(sid$)
+    DIM n = 0
+    IF MAP.EXISTS(sess, "count") THEN n = sess{"count"}
+    n = n + 1
+    sess{"count"} = n
+    RETURN n
+ENDFUNC
+DIM d412_first = D412Bump("x")
+DIM d412_second = D412Bump("x")
+Assert(372, d412_second = 2)
+
+' #418: a text cell returned from a FUNC stays text; NULL stays NONE.
+FUNC D418Cell(t)
+    RETURN t[0, 0]
+ENDFUNC
+IF OS.FEATURE("SQLITE") THEN
+    DIM d418_h = SQL.OPEN(":memory:")
+    DIM d418_t = SQL.TABLE(d418_h, "SELECT 'Bob', 7, NULL")
+    DIM d418_s$ = D418Cell(d418_t)
+    Assert(373, d418_s$ = "Bob")
+    Assert(374, TYPEOF(d418_t[0, 2]) = "NONE")
+    SQL.CLOSE(d418_h)
+ELSE
+    Assert(373, TRUE)
+    Assert(374, TRUE)
+ENDIF
+
+' #419: a $-named global array read inside a FUNC is an array.
+DIM d419_names$ = []
+FUNC D419Count()
+    RETURN LEN(d419_names$)
+ENDFUNC
+Assert(375, D419Count() = 0)
+PUSH(d419_names$, "a")
+Assert(376, D419Count() = 1)
+
+
+' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
 PRINT ""

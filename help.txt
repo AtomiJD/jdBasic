@@ -3515,7 +3515,7 @@ refcount).
 
 [TYPEOF]
 Syntax: TYPEOF(variable)
-Description: Returns a string representing the data type of a variable.
+Description: Returns the type name of a value: "INT64", "FLOAT64", "STRING", "BOOLEAN", "ARRAY", "OBJECT" (every map), "DATE", "FUNCREF" or "NONE". There is no "NUMBER"; test numbers with ISNUM or against both INT64 and FLOAT64.
 
 [UCASE$]
 Syntax: UCASE$(string$)

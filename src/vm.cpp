@@ -8553,16 +8553,25 @@ void VM::register_builtins() {
 #ifndef JDB_LEAN
     register_native("OS.EXEC", [](const std::vector<Value>& args) -> Value {
         std::string cmd = args[0].as_string()->data;
-        // Append args if provided
+        // A program path or an argument holding spaces is quoted, unless the
+        // caller quoted it already; a command line such as "git status" is
+        // not a file and stays as it is.
+        auto quoted = [](const std::string& s) {
+            if (s.find(' ') == std::string::npos || (!s.empty() && s.front() == '"')) return s;
+            return "\"" + s + "\"";
+        };
+        if (cmd.find(' ') != std::string::npos && std::ifstream(cmd).good())
+            cmd = quoted(cmd);
         if (args.size() >= 2 && args[1].type == ValueType::ARRAY) {
             for (auto& a : args[1].as_array()->elements)
-                cmd += " " + a.to_string();
+                cmd += " " + (a.type == ValueType::STRING ? quoted(a.to_string()) : a.to_string());
         }
         // Execute and capture output
         std::string output;
         int exit_code = -1;
 #if defined(_WIN32)
-        cmd = "cmd /c " + cmd + " 2>&1";
+        // The outer quotes are what cmd /c strips, so quotes inside survive.
+        cmd = "cmd /c \"" + cmd + " 2>&1\"";
 #else
         cmd = cmd + " 2>&1";
 #endif

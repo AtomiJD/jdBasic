@@ -718,6 +718,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 0);
     reg("jdrt_obj_get_tagged", "__jdrt_obj_get_tagged", i32_type,
         {i8_ptr_type, i64_type, i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdrt_obj_set_tagged", "__jdrt_obj_set_tagged", void_type,
+        {i8_ptr_type, i64_type, i8_ptr_type, i64_type, i32_type}, -1);
     // Unified tagged dispatchers (handle both native map + VM handles)
     reg("jdrt_tagged_get",     "__jdrt_tagged_get",     i32_type,
         {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, 0);
@@ -1910,6 +1912,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (array_array_vars.count(e.left->str_val)) return JD_TAG_ARR;
             }
             if (e.kind == ExprKind::CALL) {
+                if (is_handle_returner(e.func_name)) return JD_TAG_VM_HANDLE;
                 auto cit = decls.find(e.func_name);
                 if (cit != decls.end() &&
                     (cit->second.return_tag == JD_TAG_ARR ||
@@ -2222,6 +2225,114 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (p.type != VarType::NONE) continue;
                 if (body_uses_typeof_param(*decl.stmt, p.name)) {
                     decl.tags[pi] = JD_TAG_RUNTIME;
+                }
+            }
+        }
+
+        // A function handed on as a funcref (to a user function, or stored in
+        // a variable or container) is called through the uniform f64 wrapper.
+        // A parameter it reads by key, itself or through the functions it
+        // passes the value to, must carry its tag: the same map may arrive as
+        // a native map or as a VM object such as an HTTP request. Funcrefs given
+        // straight to builtin HOFs are left alone, those callers write no tags.
+        {
+            auto upper_of = [](std::string s) {
+                std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+                return s;
+            };
+            auto find_decl = [&](const std::string& n) {
+                auto it = decls.find(n);
+                if (it == decls.end()) it = decls.find(upper_of(n));
+                return it;
+            };
+            std::unordered_set<std::string> handed_on;
+            std::function<void(const Expr&, bool)> scan_refs = [&](const Expr& x, bool kept) {
+                if (x.is_funcref_lit && kept) handed_on.insert(x.str_val);
+                bool user_call = x.kind == ExprKind::CALL && find_decl(x.func_name) != decls.end();
+                bool container = x.kind == ExprKind::ARRAY_LITERAL || x.kind == ExprKind::MAP_LITERAL;
+                for (auto& a : x.args) if (a) scan_refs(*a, user_call || container);
+                if (x.left) scan_refs(*x.left, false);
+                if (x.right) scan_refs(*x.right, false);
+            };
+            std::function<void(const Stmt&)> scan_stmt_refs = [&](const Stmt& s) {
+                bool store = s.kind == StmtKind::DIM || s.kind == StmtKind::LET ||
+                             s.kind == StmtKind::ASSIGN || s.kind == StmtKind::INDEX_ASSIGN ||
+                             s.kind == StmtKind::RETURN;
+                if (s.expr) scan_refs(*s.expr, store);
+                for (auto& pe : s.print_exprs) if (pe) scan_refs(*pe, false);
+                for (auto& b : s.body) if (b) scan_stmt_refs(*b);
+                for (auto& br : s.branches) {
+                    if (br.condition) scan_refs(*br.condition, false);
+                    for (auto& b : br.body) if (b) scan_stmt_refs(*b);
+                }
+                for (auto& c : s.catch_body()) if (c) scan_stmt_refs(*c);
+                for (auto& f : s.finally_body()) if (f) scan_stmt_refs(*f);
+            };
+            for (auto& st : program) if (st) scan_stmt_refs(*st);
+            for (auto& [dname, d] : decls) if (d.stmt) scan_stmt_refs(*d.stmt);
+
+            auto string_key = [&](const Expr* k) {
+                return k && k->kind != ExprKind::LITERAL_INT &&
+                       (k->kind == ExprKind::LITERAL_STRING || expr_involves_strings(*k));
+            };
+            std::function<bool(const std::string&, size_t, int)> reads_by_key;
+            std::function<bool(const Expr&, const std::string&, int)> expr_reads_by_key =
+                [&](const Expr& x, const std::string& pname, int depth) -> bool {
+                if (x.kind == ExprKind::INDEX && x.left && x.left->kind == ExprKind::VARIABLE &&
+                    x.left->str_val == pname && string_key(x.right.get()))
+                    return true;
+                if (x.kind == ExprKind::CALL) {
+                    bool map_call = upper_of(x.func_name).rfind("MAP.", 0) == 0;
+                    auto cit = find_decl(x.func_name);
+                    for (size_t ai = 0; ai < x.args.size(); ai++) {
+                        const Expr* a = x.args[ai].get();
+                        if (!a || a->kind != ExprKind::VARIABLE || a->str_val != pname) continue;
+                        if (map_call && ai == 0) return true;
+                        if (cit != decls.end() && depth < 4 && reads_by_key(cit->first, ai, depth + 1))
+                            return true;
+                    }
+                }
+                if (x.left && expr_reads_by_key(*x.left, pname, depth)) return true;
+                if (x.right && expr_reads_by_key(*x.right, pname, depth)) return true;
+                for (auto& a : x.args) if (a && expr_reads_by_key(*a, pname, depth)) return true;
+                return false;
+            };
+            std::function<bool(const Stmt&, const std::string&, int)> stmt_reads_by_key =
+                [&](const Stmt& s, const std::string& pname, int depth) -> bool {
+                if (s.kind == StmtKind::INDEX_ASSIGN && s.var_name == pname &&
+                    s.index_chain.size() == 1 && string_key(s.index_chain[0].get()))
+                    return true;
+                if (s.expr && expr_reads_by_key(*s.expr, pname, depth)) return true;
+                if (s.loop_cond && expr_reads_by_key(*s.loop_cond, pname, depth)) return true;
+                for (auto& pe : s.print_exprs) if (pe && expr_reads_by_key(*pe, pname, depth)) return true;
+                for (auto& b : s.body) if (b && stmt_reads_by_key(*b, pname, depth)) return true;
+                for (auto& br : s.branches) {
+                    if (br.condition && expr_reads_by_key(*br.condition, pname, depth)) return true;
+                    for (auto& b : br.body) if (b && stmt_reads_by_key(*b, pname, depth)) return true;
+                }
+                for (auto& c : s.catch_body()) if (c && stmt_reads_by_key(*c, pname, depth)) return true;
+                for (auto& f : s.finally_body()) if (f && stmt_reads_by_key(*f, pname, depth)) return true;
+                return false;
+            };
+            reads_by_key = [&](const std::string& fname, size_t pi, int depth) -> bool {
+                auto it = decls.find(fname);
+                if (it == decls.end() || !it->second.stmt) return false;
+                const auto& params = it->second.stmt->params();
+                if (pi >= params.size()) return false;
+                return stmt_reads_by_key(*it->second.stmt, params[pi].name, depth);
+            };
+
+            for (auto& ref : handed_on) {
+                auto it = find_decl(ref);
+                if (it == decls.end() || !it->second.stmt) continue;
+                auto& d = it->second;
+                for (size_t pi = 0; pi < d.stmt->params().size() && pi < d.tags.size(); pi++) {
+                    const auto& p = d.stmt->params()[pi];
+                    if (!p.name.empty() && p.name.back() == '$') continue;
+                    if (p.type != VarType::NONE) continue;
+                    int t = d.tags[pi];
+                    if (t == JD_TAG_RUNTIME || t == JD_TAG_STR || t == JD_TAG_ARR) continue;
+                    if (reads_by_key(it->first, pi, 0)) d.tags[pi] = JD_TAG_RUNTIME;
                 }
             }
         }
@@ -2590,11 +2701,14 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     if (u == "NONE") return JD_TAG_NONE;
                     return 0;
                 }
-                case ExprKind::INDEX:
+                case ExprKind::INDEX: {
                     // A cell answers with its own kind, whether the index is
                     // a key or a position: an array of maps hands back a map.
-                    if (e.left && e.left->kind == ExprKind::VARIABLE) {
-                        auto lit = local_kind.find(e.left->str_val);
+                    // t[0, 0] and t[0][0] chain INDEX nodes down to the variable.
+                    const Expr* base = e.left.get();
+                    while (base && base->kind == ExprKind::INDEX) base = base->left.get();
+                    if (base && base->kind == ExprKind::VARIABLE) {
+                        auto lit = local_kind.find(base->str_val);
                         if (lit != local_kind.end() &&
                             (lit->second == JD_TAG_ARR || lit->second == JD_TAG_NATIVE_MAP ||
                              lit->second == JD_TAG_VM_HANDLE || lit->second == JD_TAG_RUNTIME)) {
@@ -2602,8 +2716,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             return JD_TAG_RUNTIME;
                         }
                     }
-                    if (e.right && e.right->kind == ExprKind::LITERAL_STRING) return JD_TAG_RUNTIME;
+                    // A string key, spelled out or worked out, reads a map
+                    // cell, whose kind is only known at run time.
+                    if (e.right && (e.right->kind == ExprKind::LITERAL_STRING ||
+                                    expr_involves_strings(*e.right))) return JD_TAG_RUNTIME;
                     return 0;
+                }
                 case ExprKind::CALL: {
                     auto cit = decls.find(e.func_name);
                     if (cit != decls.end()) {
@@ -2611,6 +2729,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         if (t == JD_TAG_RUNTIME || t == JD_TAG_STR || t == JD_TAG_ARR ||
                             t == JD_TAG_NATIVE_MAP) return t;
                         return t == -1 ? 0 : JD_TAG_F64;
+                    }
+                    if (is_handle_returner(e.func_name)) return JD_TAG_VM_HANDLE;
+                    {
+                        std::string up = e.func_name;
+                        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                        if (kBridgeArrayReturners.count(up)) return JD_TAG_ARR;
                     }
                     if (!e.func_name.empty() && e.func_name.back() == '$') return JD_TAG_STR;
                     return 0;
@@ -2697,12 +2821,19 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (cit == decls.end()) return 0;
             return cit->second.return_tag;
         };
+        // A read by string key (m{"k"}, a{"x"}{"y"}) answers whatever the map
+        // holds, so its kind is only known at run time.
+        auto key_read = [](const Expr& x) {
+            for (const Expr* n = &x; n && n->kind == ExprKind::INDEX; n = n->left.get())
+                if (n->right && n->right->kind == ExprKind::LITERAL_STRING) return true;
+            return false;
+        };
         std::function<void(const Stmt&)> collect_dyn = [&](const Stmt& st) {
             if (st.kind == StmtKind::FUNCTION || st.kind == StmtKind::SUB) return;
             if ((st.kind == StmtKind::DIM || st.kind == StmtKind::LET ||
                  st.kind == StmtKind::ASSIGN) && !st.var_name.empty() && st.expr &&
                 st.var_type == VarType::NONE && st.var_name.back() != '$' &&
-                call_kind(*st.expr) == JD_TAG_RUNTIME)
+                (call_kind(*st.expr) == JD_TAG_RUNTIME || key_read(*st.expr)))
                 dyn_names[st.var_name] = JD_TAG_RUNTIME;
             for (auto& b : st.body) if (b) collect_dyn(*b);
             for (auto& br : st.branches) for (auto& b : br.body) if (b) collect_dyn(*b);
@@ -2722,7 +2853,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         if (!a) continue;
                         bool tagged = (a->kind == ExprKind::VARIABLE &&
                                        dyn_names.count(a->str_val) > 0) ||
-                                      call_kind(*a) == JD_TAG_RUNTIME;
+                                      call_kind(*a) == JD_TAG_RUNTIME || key_read(*a);
                         if (!tagged) continue;
                         const auto& cp = callee.stmt->params()[ai];
                         if (!cp.name.empty() && cp.name.back() == '$') continue;
@@ -3278,9 +3409,34 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     runtime_later_globals.clear();
     {
         std::unordered_set<std::string> dyn_dims;
+        // Names a FUNC or SUB declares itself (parameters and DIMs) belong to
+        // its frame: an assignment to them inside the body says nothing
+        // about a global of the same name.
+        std::vector<std::unordered_set<std::string>> shadow_stack;
+        auto shadowed = [&](const std::string& nm) {
+            for (auto& sh : shadow_stack) if (sh.count(nm)) return true;
+            return false;
+        };
         std::function<void(const Stmt&)> scan_later = [&](const Stmt& s) {
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
+                std::unordered_set<std::string> own;
+                for (auto& p : s.params()) own.insert(p.name);
+                std::function<void(const Stmt&)> collect_own = [&](const Stmt& b) {
+                    if (b.kind == StmtKind::DIM && !b.var_name.empty()) own.insert(b.var_name);
+                    for (auto& c : b.body) if (c) collect_own(*c);
+                    for (auto& br : b.branches) for (auto& c : br.body) if (c) collect_own(*c);
+                    for (auto& c : b.catch_body()) if (c) collect_own(*c);
+                    for (auto& c : b.finally_body()) if (c) collect_own(*c);
+                };
+                for (auto& b : s.body) if (b) collect_own(*b);
+                shadow_stack.push_back(std::move(own));
+                for (auto& b : s.body) if (b) scan_later(*b);
+                shadow_stack.pop_back();
+                return;
+            }
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
-                 s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
+                 s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr &&
+                !shadowed(s.var_name)) {
                 bool dyn = s.expr->kind == ExprKind::INDEX;
                 if (s.expr->kind == ExprKind::CALL) {
                     auto cit = user_functions.find(s.expr->func_name);
@@ -3290,6 +3446,30 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         dyn = true;
                     if (is_handle_returner(s.expr->func_name)) dyn = true;
                 }
+                // Arithmetic on a tagged source answers a tagged value too.
+                std::function<bool(const Expr&)> feeds_dyn = [&](const Expr& x) -> bool {
+                    auto tagged_name = [&](const std::string& n) {
+                        return !shadowed(n) && (dyn_dims.count(n) || runtime_later_globals.count(n));
+                    };
+                    if (x.kind == ExprKind::VARIABLE) return tagged_name(x.str_val);
+                    if (x.kind == ExprKind::INDEX) {
+                        const Expr* base = x.left.get();
+                        while (base && base->kind == ExprKind::INDEX) base = base->left.get();
+                        return base && base->kind == ExprKind::VARIABLE && tagged_name(base->str_val);
+                    }
+                    if (x.kind == ExprKind::CALL) {
+                        auto fit2 = user_functions.find(x.func_name);
+                        return fit2 != user_functions.end() &&
+                               (fit2->second.return_tag == JD_TAG_RUNTIME ||
+                                fit2->second.return_tag == JD_TAG_VM_HANDLE);
+                    }
+                    if (x.kind == ExprKind::BINARY || x.kind == ExprKind::UNARY)
+                        return (x.left && feeds_dyn(*x.left)) || (x.right && feeds_dyn(*x.right));
+                    return false;
+                };
+                if ((s.expr->kind == ExprKind::BINARY || s.expr->kind == ExprKind::UNARY) &&
+                    feeds_dyn(*s.expr))
+                    dyn = true;
                 // A declaration fed from a tagged source makes every later
                 // assignment to the name a tagged store as well.
                 if (s.kind == StmtKind::DIM) {
@@ -3859,9 +4039,16 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 // here made codegen_index_assign early-return (its guard
                 // requires tag == ARR/NATIVE_MAP/RUNTIME), silently dropping
                 // every `names$[i] = "..."` write from inside SUB bodies.
-                bool is_array_dim =
-                    stmt->expr && stmt->expr->kind == ExprKind::CALL &&
-                    stmt->expr->func_name == "ZEROS";
+                // An array literal or a builtin that answers an array (SPLIT,
+                // DIR$) keeps its array tag too.
+                bool is_array_dim = false;
+                if (stmt->expr && stmt->expr->kind == ExprKind::ARRAY_LITERAL) {
+                    is_array_dim = true;
+                } else if (stmt->expr && stmt->expr->kind == ExprKind::CALL) {
+                    std::string up = stmt->expr->func_name;
+                    std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+                    is_array_dim = up == "ZEROS" || kBridgeArrayReturners.count(up) != 0;
+                }
                 if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$' &&
                     !is_array_dim) {
                     tag = JD_TAG_STR;
@@ -4580,6 +4767,31 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
                 if (s.expr->kind == ExprKind::VARIABLE &&
                     (dyn_dims.count(s.expr->str_val) || runtime_later_locals.count(s.expr->str_val)))
                     dyn = true;
+                // Arithmetic on a tagged source (`total = total + table[i]`
+                // with `table` tagged) answers a tagged value too.
+                std::function<bool(const Expr&)> feeds_dyn = [&](const Expr& x) -> bool {
+                    auto tagged_name = [&](const std::string& n) {
+                        return dyn_dims.count(n) || runtime_later_locals.count(n);
+                    };
+                    if (x.kind == ExprKind::VARIABLE) return tagged_name(x.str_val);
+                    if (x.kind == ExprKind::INDEX) {
+                        const Expr* base = x.left.get();
+                        while (base && base->kind == ExprKind::INDEX) base = base->left.get();
+                        return base && base->kind == ExprKind::VARIABLE && tagged_name(base->str_val);
+                    }
+                    if (x.kind == ExprKind::CALL) {
+                        auto fit2 = user_functions.find(x.func_name);
+                        return fit2 != user_functions.end() &&
+                               (fit2->second.return_tag == JD_TAG_RUNTIME ||
+                                fit2->second.return_tag == JD_TAG_VM_HANDLE);
+                    }
+                    if (x.kind == ExprKind::BINARY || x.kind == ExprKind::UNARY)
+                        return (x.left && feeds_dyn(*x.left)) || (x.right && feeds_dyn(*x.right));
+                    return false;
+                };
+                if ((s.expr->kind == ExprKind::BINARY || s.expr->kind == ExprKind::UNARY) &&
+                    feeds_dyn(*s.expr))
+                    dyn = true;
                 if (s.expr->kind == ExprKind::CALL) {
                     auto cit = user_functions.find(s.expr->func_name);
                     if (cit != user_functions.end() &&
@@ -5040,7 +5252,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             if (!e) return false;
             if (e->kind == ExprKind::INDEX) return true;
             if (e->kind == ExprKind::MAP_LITERAL) return true;
-            if (e->kind == ExprKind::VARIABLE) return map_scalar_vars.count(e->str_val) != 0;
+            if (e->kind == ExprKind::VARIABLE) {
+                if (map_scalar_vars.count(e->str_val)) return true;
+                VarInfo* ev = lookup_var(e->str_val);
+                return ev && (ev->tag == JD_TAG_RUNTIME || ev->tag == JD_TAG_VM_HANDLE);
+            }
             return false;
         };
         bool has_str = false, has_non_str = false, has_runtime = false;
@@ -6034,7 +6250,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             if (!e) return false;
             if (e->kind == ExprKind::INDEX) return true;
             if (e->kind == ExprKind::MAP_LITERAL) return true;
-            if (e->kind == ExprKind::VARIABLE) return map_scalar_vars.count(e->str_val) != 0;
+            if (e->kind == ExprKind::VARIABLE) {
+                if (map_scalar_vars.count(e->str_val)) return true;
+                VarInfo* ev = lookup_var(e->str_val);
+                return ev && (ev->tag == JD_TAG_RUNTIME || ev->tag == JD_TAG_VM_HANDLE);
+            }
             return false;
         };
         bool has_str = false, has_non_str = false, has_runtime = false;
@@ -6704,6 +6924,56 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     if (vi && vi->tag == JD_TAG_F64 && stmt.index_chain.size() == 1 &&
         stmt.index_chain[0]->kind != ExprKind::LITERAL_INT) {
         punned_map_slot = true;
+    }
+
+    // A map a builtin handed out (JSON.PARSE$, ZIP.READ, a server request)
+    // lives in the VM: the key write goes to that object.
+    if (vi && vi->tag == JD_TAG_VM_HANDLE && stmt.index_chain.size() == 1 &&
+        stmt.index_chain[0]->kind != ExprKind::LITERAL_INT) {
+        LLVMValueRef h = LLVMBuildLoad2(builder, i64_type, vi->alloca_val, "vmh");
+        LLVMValueRef key_ptr;
+        if (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING) {
+            key_ptr = LLVMBuildGlobalStringPtr(builder, stmt.index_chain[0]->str_val.c_str(), ".vkey");
+        } else {
+            TypedValue k;
+            {
+                ScopedLeafTag _lt(this, JD_TAG_STR);
+                k = codegen_expr(*stmt.index_chain[0]);
+            }
+            key_ptr = to_string_ptr(k);
+        }
+        TypedValue v;
+        {
+            ScopedLeafTag _vl(this, stmt.expr->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
+            v = codegen_expr(*stmt.expr);
+        }
+        LLVMValueRef bits;
+        LLVMValueRef tag;
+        if (v.tag == JD_TAG_RUNTIME && v.runtime_tag) {
+            bits = v.val;
+            tag = v.runtime_tag;
+        } else if (v.tag == JD_TAG_F64) {
+            bits = pun_f64_to_i64(v.val);
+            tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+        } else if (v.tag == JD_TAG_I64 || v.tag == JD_TAG_VM_HANDLE) {
+            bits = LLVMBuildIntCast2(builder, v.val, i64_type, 1, "vset_i");
+            tag = LLVMConstInt(i32_type, v.tag, 0);
+        } else if (v.tag == JD_TAG_BOOL) {
+            bits = LLVMBuildIntCast2(builder, v.val, i64_type, 0, "vset_b");
+            tag = LLVMConstInt(i32_type, JD_TAG_BOOL, 0);
+        } else if (v.tag == JD_TAG_STR || v.tag == JD_TAG_ARR || v.tag == JD_TAG_NATIVE_MAP) {
+            bits = LLVMBuildPtrToInt(builder, v.val, i64_type, "vset_p");
+            tag = LLVMConstInt(i32_type, v.tag, 0);
+        } else {
+            bits = pun_f64_to_i64(coerce_to(v, f64_type));
+            tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+        }
+        auto& set_fn = runtime_funcs["__jdrt_obj_set_tagged"];
+        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef sargs[] = { rt, h, key_ptr, bits, tag };
+        LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, sargs, 5, "");
+        return;
     }
 
     if (!vi || (vi->tag != JD_TAG_ARR && vi->tag != JD_TAG_NATIVE_MAP &&
@@ -10552,7 +10822,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // Lambdas and `name@` funcrefs live in vars with tag=5 (ptr storage);
     // a FUNC parameter without type info is tag=1 (f64) and we pun its
     // bits back to a ptr. Uniform signature is (double, double, ...) → double.
-    if (!user_functions.count(name) && !runtime_funcs.count(name)) {
+    std::string name_uc = name;
+    for (auto& c : name_uc) c = (char)toupper((unsigned char)c);
+    if (!user_functions.count(name) && !runtime_funcs.count(name) &&
+        !known_natives.count(name_uc)) {
         VarInfo* vi_fn = lookup_var(name);
         auto indirect_call = [&]() -> TypedValue {
 
@@ -11800,6 +12073,11 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // string-flag (bit 1 of JdbArray::flags). We branch at runtime.
     if (upper == "POP" && expr.args.size() == 1) {
         TypedValue av = codegen_expr(*expr.args[0]);
+        // An untyped parameter carries the array as its pointer bits, as in PUSH.
+        if (av.tag == JD_TAG_F64) {
+            av.val = LLVMBuildIntToPtr(builder, pun_f64_to_i64(av.val), i8_ptr_type, "pop_arr");
+            av.tag = JD_TAG_ARR;
+        }
         if (av.tag == JD_TAG_ARR) {
             auto& fn_str = runtime_funcs["__arr_pop_str"];
             auto& fn_num = runtime_funcs["__arr_pop"];
@@ -12376,6 +12654,18 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             int hint = (i < pc_h && (pts_h[i] == f64_type || pts_h[i] == i64_type)) ? JD_TAG_F64 : -1;
             ScopedLeafTag _lt(this, hint);
             arg_cache.push_back(codegen_expr(*expr.args[i]));
+        }
+        // A map handed to an untyped parameter lands in an f64 slot with the
+        // pointer bit-punned into it, as MAP.EXISTS and key reads already decode.
+        static const std::unordered_set<std::string> map_first_arg = {
+            "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE", "MAP.DELETE", "MAP.CLEAR"
+        };
+        if (map_first_arg.count(upper) && !arg_cache.empty() &&
+            expr.args[0] && expr.args[0]->kind == ExprKind::VARIABLE &&
+            arg_cache[0].tag == JD_TAG_F64) {
+            arg_cache[0].val = LLVMBuildIntToPtr(builder, pun_f64_to_i64(arg_cache[0].val),
+                                                 i8_ptr_type, "map_arg");
+            arg_cache[0].tag = JD_TAG_NATIVE_MAP;
         }
     }
 
@@ -13647,7 +13937,12 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
     // tried to %s-format an int-as-pointer and segfaulted.
     if (e.kind == ExprKind::LITERAL_STRING) return true;
     if (e.kind == ExprKind::VARIABLE && !e.str_val.empty() && e.str_val.back() == '$') return true;
-    if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') return true;
+    if (e.kind == ExprKind::CALL && !e.func_name.empty() && e.func_name.back() == '$') {
+        // JSON.PARSE$ hands back a map and DIR$ an array despite the $.
+        std::string up = e.func_name;
+        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
+        if (!is_handle_returner(up) && !kBridgeArrayReturners.count(up)) return true;
+    }
     // A builtin can return a string without carrying the $ convention (STR
     // is registered alongside STR$). Its registration knows the return tag,
     // so trust that over the spelling. Only JD_TAG_STR counts - the other

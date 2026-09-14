@@ -81,6 +81,7 @@ JDRT_API int64_t     jdrt_val_arr_get(JdRT rt, int64_t h, int64_t idx);
 
 // Tagged field access: writes val to *out_val, returns tag.
 JDRT_API int32_t jdrt_obj_get_tagged(JdRT rt, int64_t h, const char* key, int64_t* out_val);
+JDRT_API void    jdrt_obj_set_tagged(JdRT rt, int64_t h, const char* key, int64_t bits, int32_t tag);
 // Unified dispatchers: auto-detect native map vs VM handle from val_tag.
 JDRT_API int32_t jdrt_tagged_get(JdRT rt, int64_t val, int32_t val_tag,
                                   const char* key, int64_t* out_val);

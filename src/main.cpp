@@ -2195,6 +2195,14 @@ int main(int argc, char* argv[]) {
         try {
             mark("Initializing LLVM codegen...");
             LLVMCodegen codegen;
+            {
+                VM probe;
+                for (auto& n : probe.native_names()) {
+                    std::string up = n;
+                    for (auto& c : up) c = (char)toupper((unsigned char)c);
+                    codegen.known_natives.insert(up);
+                }
+            }
 
             // Check if --trace was used
             for (int j = 1; j < argc; j++) {

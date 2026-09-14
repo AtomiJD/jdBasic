@@ -26,6 +26,9 @@ public:
 
     std::string error_msg;
     bool debug_log = false;  // emit line-by-line runtime trace
+    // Names the VM registers as builtins, upper case; a call by one of these
+    // names is the builtin even when a local of that name exists.
+    std::unordered_set<std::string> known_natives;
 
 #ifdef KERNEL
     // Freestanding target: emit an ELF object for a bare-metal loader instead

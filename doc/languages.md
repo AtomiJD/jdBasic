@@ -89,7 +89,7 @@ PRINT MultiLine$
 
 ### `TYPEOF`
 
-Returns `"INTEGER"` for 64-bit integers and `"DOUBLE"` for floating point values.
+Returns `"INT64"` for 64-bit integers and `"FLOAT64"` for floating point values. There is no `"NUMBER"`: test a number with `ISNUM(v)`, or against both names. Compiled with `-c`, a number read out of an array is `FLOAT64`.
 
 ### Interop (COM)
 
@@ -109,11 +109,11 @@ PRINT 5 MOD 2        ' 1
 ' Mixed numeric types
 PRINT 2 * 3          ' 6     (INTEGER)
 PRINT 2 * 3.0        ' 6     (DOUBLE)
-PRINT TYPEOF(2 * 3), TYPEOF(2 * 3.0)  ' INTEGER, DOUBLE
+PRINT TYPEOF(2 * 3), TYPEOF(2 * 3.0)  ' INT64, FLOAT64
 
 ' Bitwise are integer-only
 PRINT 5 BAND 3       ' 1
-PRINT TYPEOF(5 BAND 3)  ' INTEGER
+PRINT TYPEOF(5 BAND 3)  ' INT64
 PRINT SHL(1, 65)     ' shift count clamped to 63
 
 ' Arrays (element-wise; scalar broadcast)
@@ -1976,7 +1976,7 @@ number. `FORMAT_DATE` accepts both and is the portable way to render one.
 
 ### Type Inspection
 
-* **`TYPEOF(value) -> string$`**: Returns the type name as a string: `"NUMBER"`, `"STRING"`, `"ARRAY"`, `"OBJECT"`, `"FUNCREF"`, `"NONE"`, etc.
+* **`TYPEOF(value) -> string$`**: Returns the type name as a string: `"INT64"`, `"FLOAT64"`, `"STRING"`, `"BOOLEAN"`, `"ARRAY"`, `"OBJECT"` (every map), `"DATE"`, `"FUNCREF"` or `"NONE"`. There is no `"NUMBER"`; use `ISNUM(v)` to test for a number. Compiled with `-c`, a number read out of an array is `FLOAT64`, and a function reference held in a variable is `FUNCREF` (the interpreter answers `STRING`).
 * **`ISNUM(v) -> bool`**: `TRUE` if `v` is a number (integer or double).
 * **`ISSTR(v) -> bool`**: `TRUE` if `v` is a string.
 * **`ISARR(v) -> bool`**: `TRUE` if `v` is an array.

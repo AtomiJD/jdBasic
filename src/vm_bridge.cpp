@@ -731,6 +731,34 @@ JDRT_API int64_t jdrt_obj_delete(JdRT handle, int64_t h, const char* key) {
     return 0;
 }
 
+// Write `key` into the VM object at handle `h` from a native (bits, tag) pair.
+// Arrays and native maps are copied into VM values.
+JDRT_API void jdrt_obj_set_tagged(JdRT handle, int64_t h, const char* key, int64_t bits, int32_t tag) {
+    auto* rt = resolve_rt(handle);
+    auto it = rt->value_store.find(h);
+    if (it == rt->value_store.end() || it->second.type != ValueType::OBJECT) return;
+    Value cell;
+    switch (static_cast<JdTag>(tag)) {
+        case JdTag::I64:  cell = Value::make_i64(bits); break;
+        case JdTag::BOOL: cell = Value::make_bool(bits != 0); break;
+        case JdTag::STR:  cell = value_from_native_str((const char*)(intptr_t)bits); break;
+        case JdTag::ARR:  cell = jdbarray_to_value((JdbArrayFwd*)(intptr_t)bits); break;
+        case JdTag::NATIVE_MAP: cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits); break;
+        case JdTag::VM_HANDLE: {
+            auto f = rt->value_store.find(bits);
+            cell = f != rt->value_store.end() ? f->second : Value::make_none();
+            break;
+        }
+        case JdTag::NONE: cell = Value::make_none(); break;
+        default: {
+            double d;
+            memcpy(&d, &bits, 8);
+            cell = Value::make_f64(d);
+        }
+    }
+    it->second.as_object()->set(std::string(key ? key : ""), std::move(cell));
+}
+
 // Must stay layout-compatible with JdbArray in jdb_runtime.cpp.
 // elem_tags added 2026-05-04 - non-null when flags & 8.
 struct JdbArray {
@@ -756,7 +784,7 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     r->length = (int64_t)arr->elements.size();
     r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
     r->capacity = r->length > 0 ? r->length : 1;
-    bool has_ptr = false, has_string = false, has_other = false;
+    bool has_ptr = false, has_string = false, has_other = false, has_none = false;
     std::vector<int8_t> cell_tags((size_t)(r->length > 0 ? r->length : 1), 1);
     for (int64_t i = 0; i < r->length; i++) {
         const auto& e = arr->elements[i];
@@ -773,6 +801,16 @@ static JdbArray* value_to_jdbarray(const Value& v) {
             char* copy = _strdup(s.c_str());
             union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)copy;
             r->data[i] = u.d;
+        } else if (e.type == ValueType::NONE) {
+            has_other = true;
+            has_none = true;
+            cell_tags[(size_t)i] = 9;  // JD_TAG_NONE
+            r->data[i] = 0.0;
+        } else if (e.type == ValueType::INT64 || e.type == ValueType::INT32 ||
+                   e.type == ValueType::INT16 || e.type == ValueType::BYTE) {
+            has_other = true;
+            cell_tags[(size_t)i] = 0;  // JD_TAG_I64, the cell holds the value as a double
+            r->data[i] = (double)e.to_int();
         } else {
             has_other = true;
             r->data[i] = e.to_double();
@@ -783,8 +821,9 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     // String cells mixed with anything else make flags-only decoding
     // ambiguous (a numeric cell in a string-flagged row would be
     // dereferenced as char*) - per-element tags pin the layout for those.
-    // Uniform arrays keep the plain flags encoding.
-    if (has_string && has_other) {
+    // A NONE cell needs its tag to read back as NONE rather than 0.
+    // Uniform numeric arrays keep the plain flags encoding.
+    if ((has_string && has_other) || has_none) {
         r->elem_tags = (int8_t*)malloc((size_t)(r->length > 0 ? r->length : 1));
         memcpy(r->elem_tags, cell_tags.data(), (size_t)(r->length > 0 ? r->length : 1));
         r->flags |= 8;

@@ -44,9 +44,9 @@ tests/ffi/test_ffi_native_diag.jdb	OK	CFAIL	GAP
 tests/ffi/test_ffi_return.jdb	OK	OK	OK
 tests/ffi/test_ffi_smoke.jdb	OK	CFAIL	GAP
 tests/ffi/test_ffi_string_param.jdb	OK	CFAIL	GAP
-tests/forms_events_test.jdb	FAIL:1	CFAIL	BOTH_RED
-tests/forms_jdform_test.jdb	FAIL:1	CFAIL	BOTH_RED
-tests/forms_props_test.jdb	FAIL:1	CFAIL	BOTH_RED
+tests/forms_events_test.jdb	OK	CFAIL	GAP
+tests/forms_jdform_test.jdb	OK	CFAIL	GAP
+tests/forms_props_test.jdb	OK	CFAIL	GAP
 tests/gate/codec_hmac_test.jdb	PASS	PASS	OK
 tests/gate/comprehensive_test.jdb	PASS	PASS	OK
 tests/gate/native_test.jdb	PASS	CFAIL	GAP
@@ -64,6 +64,8 @@ tests/jdlibs/df_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/docx_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/dt_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/fake_selftest.jdb	PASS	PASS	OK
+tests/jdlibs/fixtures/oauth_browser.jdb	OK	OK	OK
+tests/jdlibs/fixtures/proptest_failing.jdb	FAIL	FAIL	BOTH_RED
 tests/jdlibs/fuzzy_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/graph_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/htmldom_selftest.jdb	PASS	PASS	OK

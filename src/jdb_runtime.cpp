@@ -2056,8 +2056,8 @@ char* jdb_map_get_str(JdbMap* m, const char* key) {
     // A truth value reads back as TRUE/FALSE, matching how it prints.
     if (m->tags[idx] == JD_TAG_BOOL)
         return _strdup(m->values[idx] != 0.0 ? "TRUE" : "FALSE");
-    char buf[64];
-    snprintf(buf, sizeof(buf), "%g", m->values[idx]);
+    char buf[400];
+    jdb_format_double(buf, (int)sizeof(buf), m->values[idx]);
     return _strdup(buf);
 }
 
@@ -2580,7 +2580,7 @@ static int jdb_format_one_arg(char* out, int cap,
     } else if (prec >= 0) {
         raw_len = snprintf(raw, sizeof(raw), "%.*f", prec, val);
     } else {
-        raw_len = snprintf(raw, sizeof(raw), "%g", val);
+        raw_len = jdb_format_double(raw, (int)sizeof(raw), val);
     }
     if (raw_len < 0) raw_len = 0;
     if (raw_len >= (int)sizeof(raw)) raw_len = (int)sizeof(raw) - 1;
@@ -3161,7 +3161,7 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
             const char* s = (const char*)(intptr_t)u.i;
             total += s ? strlen(s) : 0;
         } else {
-            total += 32;  // upper bound for a formatted number
+            total += 400;  // upper bound for a formatted number (%.6f of 1e308)
         }
     }
     char* out = (char*)malloc(total + 1);
@@ -3180,7 +3180,7 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
             memcpy(out + pos, s, sl);
             pos += sl;
         } else {
-            pos += snprintf(out + pos, total + 1 - pos, "%g", arr->data[i]);
+            pos += jdb_format_double(out + pos, (int)(total + 1 - pos), arr->data[i]);
         }
     }
     out[pos] = '\0';
