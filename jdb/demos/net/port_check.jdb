@@ -1,0 +1,56 @@
+' port_check.jdb - which TCP ports answer. Each host:port gets a connect with
+' a short timeout; the table shows open or closed, the time it took and, for a
+' closed port, the reason the system gave. Windows retries a refused connect
+' for about two seconds, so there a closed local port shows up as timed out.
+'
+'   jdBasic port_check.jdb                             common ports on this machine
+'   jdBasic port_check.jdb host:port [host:port ...]
+
+DIM CONNECT_TIMEOUT_MS = 700
+
+DIM services AS MAP
+services{"22"} = "ssh"
+services{"80"} = "http"
+services{"443"} = "https"
+services{"3306"} = "mysql"
+services{"5432"} = "postgres"
+services{"6379"} = "redis"
+services{"7000"} = "chat.jdb"
+services{"8080"} = "http-alt"
+services{"11434"} = "ollama"
+
+DIM targets = ["127.0.0.1:22", "127.0.0.1:80", "127.0.0.1:443", "127.0.0.1:3306", "127.0.0.1:5432", "127.0.0.1:6379", "127.0.0.1:7000", "127.0.0.1:8080", "127.0.0.1:11434"]
+DIM args = OS.ARGS()
+IF LEN(args) > 1 THEN targets = DROP(1, args)
+
+PRINT RPAD$("target", 26); RPAD$("service", 10); RPAD$("state", 8); RPAD$("ms", 6); "detail"
+DIM open_count = 0
+DIM i = 0
+FOR i = 0 TO LEN(targets) - 1
+    DIM target$ = targets[i]
+    DIM pieces = SPLIT(target$, ":")
+    IF LEN(pieces) < 2 THEN
+        PRINT RPAD$(target$, 26); RPAD$("", 10); RPAD$("skipped", 8); RPAD$("", 6); "write it as host:port"
+    ELSE
+        DIM port_text$ = pieces[LEN(pieces) - 1]
+        DIM host$ = LEFT$(target$, LEN(target$) - LEN(port_text$) - 1)
+        DIM service$ = ""
+        IF MAP.EXISTS(services, port_text$) THEN service$ = services{port_text$}
+        DIM started = TICK()
+        DIM sock = NET.CONNECT(host$, VAL(port_text$), CONNECT_TIMEOUT_MS)
+        DIM elapsed$ = STR$(CINT(TICK() - started))
+        IF sock > 0 THEN
+            PRINT RPAD$(target$, 26); RPAD$(service$, 10); RPAD$("open", 8); RPAD$(elapsed$, 6); NET.PEER$(sock)
+            open_count = open_count + 1
+            DIM closed = NET.CLOSE(sock)
+        ELSE
+            ' The message starts with "NET.CONNECT host:port: ", the rest is the reason.
+            DIM reason$ = NET.ERROR$()
+            DIM cut = INSTR(reason$, target$ + ": ")
+            IF cut >= 0 THEN reason$ = MID$(reason$, cut + LEN(target$) + 2)
+            PRINT RPAD$(target$, 26); RPAD$(service$, 10); RPAD$("closed", 8); RPAD$(elapsed$, 6); LEFT$(reason$, 60)
+        ENDIF
+    ENDIF
+NEXT i
+PRINT ""
+PRINT open_count; " of "; LEN(targets); " open"

@@ -2052,7 +2052,7 @@ A socket is an integer handle, `0` means the call failed and `NET.ERROR$()` says
 * **`NET.SEND(handle, data$) -> bytes`**: Sends all of `data$` on a TCP connection. Returns the bytes sent, `-1` when nothing could be sent.
 * **`NET.RECV$(handle, [max_bytes], [timeout_ms]) -> string$`**: Returns what has arrived, at most `max_bytes` (default `65536`). Returns `""` on timeout or once the peer has closed and everything is read.
 * **`NET.RECVLINE$(handle, [timeout_ms]) -> string$`**: Returns the next line without its `LF` or `CR LF`. Returns `""` on timeout; after the peer closes, the rest of an unfinished line.
-* **`NET.UDP([port], [bind$]) -> handle`**: Opens a UDP socket. `port` defaults to `0`, `bind$` to `"0.0.0.0"`.
+* **`NET.UDP([port], [bind$]) -> handle`**: Opens a UDP socket. `port` defaults to `0`, `bind$` to `"0.0.0.0"`. The socket may send to broadcast addresses such as `"255.255.255.255"`.
 * **`NET.SENDTO(handle, host$, port, data$) -> bytes`**: Sends one datagram. Returns `-1` on error.
 * **`NET.RECVFROM(handle, [timeout_ms]) -> map`**: Returns the next datagram as `{"data", "host", "port"}`, or `NONE` on timeout. Test with `TYPEOF(msg) = "NONE"`.
 * **`NET.CLOSE(handle) -> bool`**: Closes the socket. `FALSE` when the handle was not open.
@@ -2061,7 +2061,9 @@ A socket is an integer handle, `0` means the call failed and `NET.ERROR$()` says
 * **`NET.PORT(handle) -> number`**: The local port of any socket.
 * **`NET.ERROR$() -> string$`**: The message of the last failed call.
 
-Open sockets close when the program ends.
+Open sockets close when the program ends. With a timeout of `0`, `NET.RECV$`, `NET.RECVLINE$`, `NET.ACCEPT` and `NET.RECVFROM` answer at once with what is already there, which lets one loop serve many connections.
+
+Demos in `jdb/demos/net/`: `chat.jdb` (a chat room, server and client in one file), `raw_http.jdb` (an HTTP request written by hand), `udp_discovery.jdb` (finding machines by broadcast) and `port_check.jdb` (which ports answer).
 
 ```basic
 ' Line echo server

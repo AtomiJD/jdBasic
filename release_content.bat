@@ -20,7 +20,7 @@ set EXAMPLES=!EXAMPLES! jdb\demos\data\agg.jdb jdb\tutorials\func_factory.jdb jd
 set EXAMPLES=!EXAMPLES! jdb\tutorials\new_syntax_tour.jdb jdb\demos\workflow\re_basics.jdb jdb\demos\tensor\nl_part4.jdb
 set EXAMPLES=!EXAMPLES! jdb\demos\games\tetris_game.jdb jdb\demos\jdlibs\sales_dashboard.jdb jdb\demos\jdlibs\parsec_demo.jdb
 set EXAMPLES=!EXAMPLES! jdb\demos\jdlibs\pdfgen_demo.jdb jdb\demos\jdlibs\svg_demo.jdb jdb\demos\jdlibs\testkit_demo.jdb
-set EXAMPLES=!EXAMPLES! jdb\demos\jdlibs\jdweb_demo.jdb
+set EXAMPLES=!EXAMPLES! jdb\demos\jdlibs\jdweb_demo.jdb jdb\demos\net\chat.jdb
 if /I "%~2"=="GFX" set EXAMPLES=!EXAMPLES! jdb\demos\graphics\mandel_zoom.jdb jdb\demos\graphics\universe.jdb jdb\demos\games\raytracer.jdb jdb\demos\gui\gui_full.jdb
 
 set MISSING=0
@@ -76,6 +76,10 @@ set README=%PACK%\examples\README.txt
 >>"%README%" echo   svg_demo.jdb          SVG charts in an HTML report
 >>"%README%" echo   testkit_demo.jdb      unit tests with TESTKIT
 >>"%README%" echo   jdweb_demo.jdb        a web app with JDWEB that calls itself
+>>"%README%" echo.
+>>"%README%" echo Network
+>>"%README%" echo   chat.jdb              a TCP chat room; join it from a second window with
+>>"%README%" echo                         ..\jdBasic.exe chat.jdb client
 if /I not "%~2"=="GFX" goto readme_done
 >>"%README%" echo.
 >>"%README%" echo Graphics

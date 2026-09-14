@@ -1,0 +1,82 @@
+' raw_http.jdb - an HTTP request written by hand on a TCP socket. It prints the
+' request it sends, the status line and headers as they come back, and the
+' first lines of the body. HTTP.GET$ does all of this in one call; here every
+' step is visible. Plain HTTP only: HTTPS needs TLS, which HTTP.* provides.
+'
+'   jdBasic raw_http.jdb                         example.com, path /
+'   jdBasic raw_http.jdb host [path] [port]
+
+DIM CRLF$ = CHR$(13) + CHR$(10)
+DIM BODY_LINES_SHOWN = 12
+
+DIM args = OS.ARGS()
+DIM host$ = "example.com"
+DIM path$ = "/"
+DIM port = 80
+DIM port_arg$ = ""
+IF LEN(args) > 1 THEN host$ = args[1]
+IF LEN(args) > 2 THEN path$ = args[2]
+IF LEN(args) > 3 THEN
+    port_arg$ = args[3]
+    port = CINT(VAL(port_arg$))
+ENDIF
+
+DIM started = TICK()
+DIM sock = NET.CONNECT(host$, port, 5000)
+IF sock = 0 THEN
+    PRINT "Cannot connect: "; NET.ERROR$()
+    END
+ENDIF
+PRINT "connected to "; NET.PEER$(sock); " in "; CINT(TICK() - started); " ms"
+PRINT ""
+
+' HTTP/1.0 makes the server close the connection after its answer, so the
+' body simply runs until the socket closes.
+DIM request = ["GET " + path$ + " HTTP/1.0", "Host: " + host$, "User-Agent: jdBasic raw_http.jdb", "Accept: */*", "Connection: close"]
+DIM wire$ = ""
+DIM i = 0
+FOR i = 0 TO LEN(request) - 1
+    DIM request_line$ = request[i]
+    PRINT "> "; request_line$
+    wire$ = wire$ + request_line$ + CRLF$
+NEXT i
+PRINT ">"
+DIM sent = NET.SEND(sock, wire$ + CRLF$)
+
+DIM status_line$ = NET.RECVLINE$(sock, 5000)
+IF status_line$ = "" THEN
+    PRINT "The server sent no answer within 5 seconds."
+    END
+ENDIF
+PRINT ""
+PRINT "< "; status_line$
+
+' The headers end at the first empty line.
+DIM n_headers = 0
+DIM header$ = NET.RECVLINE$(sock, 5000)
+DO WHILE header$ <> ""
+    PRINT "< "; header$
+    n_headers = n_headers + 1
+    header$ = NET.RECVLINE$(sock, 5000)
+LOOP
+PRINT "<"
+
+DIM body$ = ""
+DIM deadline = TICK() + 10000
+DO WHILE NET.ALIVE(sock) AND TICK() < deadline
+    body$ = body$ + NET.RECV$(sock, 65536, 1000)
+LOOP
+DIM closed = NET.CLOSE(sock)
+
+DIM body_lines = SPLIT(body$, CHR$(10))
+DIM shown = LEN(body_lines)
+IF shown > BODY_LINES_SHOWN THEN shown = BODY_LINES_SHOWN
+PRINT ""
+PRINT "body: "; LEN(body$); " bytes in "; LEN(body_lines); " lines, the first "; shown; ":"
+FOR i = 0 TO shown - 1
+    DIM body_line$ = body_lines[i]
+    IF RIGHT$(body_line$, 1) = CHR$(13) THEN body_line$ = LEFT$(body_line$, LEN(body_line$) - 1)
+    PRINT "  "; LEFT$(body_line$, 100)
+NEXT i
+PRINT ""
+PRINT n_headers; " headers, "; CINT(TICK() - started); " ms in total"

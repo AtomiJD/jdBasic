@@ -257,7 +257,12 @@ int64_t addr_port(const sockaddr_storage& ss) {
 bool pull(Sock* s, int64_t timeout_ms) {
     if (s->peer_closed) return false;
     int w = wait_fd(s->fd, false, timeout_ms);
-    if (w <= 0) return false;
+    if (w == 0) return false;
+    if (w < 0) {
+        s->peer_closed = true;
+        set_error(code_text(last_code()));
+        return false;
+    }
     char buf[8192];
     int n = (int)::recv(s->fd, buf, sizeof(buf), 0);
     if (n > 0) {
@@ -487,7 +492,6 @@ void register_net_builtins(VM& vm) {
                 return Value::make_string(line);
             }
             int64_t rem = remaining_ms(timeout, start);
-            if (timeout >= 0 && rem == 0) return Value::make_string("");
             if (!pull(s, rem)) {
                 if (s->peer_closed && !s->rx.empty()) {
                     std::string line = s->rx;
@@ -510,6 +514,9 @@ void register_net_builtins(VM& vm) {
         }
         sock_t fd = bound_socket(host, port, SOCK_DGRAM, "NET.UDP");
         if (fd == BAD_SOCK) return Value::make_i64(0);
+        // Lets NET.SENDTO reach 255.255.255.255 and subnet broadcast addresses.
+        int broadcast = 1;
+        setsockopt(fd, SOL_SOCKET, SO_BROADCAST, (const char*)&broadcast, sizeof(broadcast));
 #if defined(_WIN32)
         // Without this a datagram to a closed port makes the next receive fail.
         BOOL report = FALSE;

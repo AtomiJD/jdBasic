@@ -49,6 +49,11 @@ Check(14, NET.ALIVE(client))
 DIM none_waiting = NET.ACCEPT(listener, 100)
 Check(15, none_waiting = 0)
 
+DIM quick_sent = NET.SEND(client, "ping" + CHR$(10))
+SLEEP 100
+DIM quick$ = NET.RECVLINE$(server, 0)
+Check(27, quick$ = "ping")
+
 DIM closed_client = NET.CLOSE(client)
 DIM after$ = NET.RECV$(server, 100, 1000)
 Check(16, after$ = "")

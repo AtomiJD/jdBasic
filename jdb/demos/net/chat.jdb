@@ -1,0 +1,197 @@
+' chat.jdb - a chat room over TCP, server and client in one file. The room
+' takes any number of people, asks each one for a name and passes every line
+' on to everybody else. /who lists who is there, /quit leaves. Any line-based
+' client can join as well, telnet for example.
+'
+'   jdBasic chat.jdb                      open the room on port 7000
+'   jdBasic chat.jdb 7100                 open it on another port
+'   jdBasic chat.jdb client               join the room on this machine
+'   jdBasic chat.jdb client host [port]   join a room elsewhere
+
+DIM DEFAULT_PORT = 7000
+DIM CRLF$ = CHR$(13) + CHR$(10)
+
+' Sends one line to everybody who has a name, except the connection at skip.
+FUNC Broadcast(socks, nicks, line$, skip)
+    DIM k = 0
+    DIM sent = 0
+    FOR k = 0 TO LEN(socks) - 1
+        DIM nick$ = nicks[k]
+        IF k <> skip AND nick$ <> "" THEN sent = CINT(NET.SEND(socks[k], line$ + CRLF$))
+    NEXT k
+    RETURN sent
+ENDFUNC
+
+FUNC WhoIsHere$(nicks)
+    DIM k = 0
+    DIM list$ = ""
+    FOR k = 0 TO LEN(nicks) - 1
+        DIM nick$ = nicks[k]
+        IF nick$ <> "" THEN
+            IF list$ <> "" THEN list$ = list$ + ", "
+            list$ = list$ + nick$
+        ENDIF
+    NEXT k
+    RETURN list$
+ENDFUNC
+
+FUNC RunServer(port)
+    DIM listener = NET.LISTEN(port)
+    IF listener = 0 THEN
+        PRINT "Cannot open the room: "; NET.ERROR$()
+        RETURN 1
+    ENDIF
+    PRINT "The room is open on port "; port; ". Others join with"
+    PRINT "  jdBasic chat.jdb client "; OS.IP$(); " "; port
+    PRINT "Press q here to close the room."
+
+    ' socks and nicks run in parallel: one entry per connection, the nick
+    ' stays empty until the first line arrives.
+    DIM socks = [0]
+    socks = DROP(1, socks)
+    DIM nicks = [""]
+    nicks = DROP(1, nicks)
+    DIM sent = 0
+    DIM i = 0
+    DIM open_room = TRUE
+    DO WHILE open_room
+        ' The accept timeout paces the loop.
+        DIM fresh = NET.ACCEPT(listener, 50)
+        IF fresh > 0 THEN
+            PUSH(socks, fresh)
+            PUSH(nicks, "")
+            sent = CINT(NET.SEND(fresh, "Welcome to the room. What is your name?" + CRLF$))
+            PRINT "connection from "; NET.PEER$(fresh)
+        ENDIF
+
+        DIM leaving = [0]
+        leaving = DROP(1, leaving)
+        FOR i = 0 TO LEN(socks) - 1
+            DIM sock = socks[i]
+            DIM nick$ = nicks[i]
+            DIM quits = 0
+            DIM text$ = NET.RECVLINE$(sock, 0)
+            IF text$ <> "" THEN
+                IF nick$ = "" THEN
+                    nicks[i] = text$
+                    sent = CINT(NET.SEND(sock, "Hello " + text$ + ". /who lists who is here, /quit leaves." + CRLF$))
+                    sent = CINT(Broadcast(socks, nicks, "* " + text$ + " joined", i))
+                    PRINT text$; " joined"
+                ELSEIF text$ = "/who" THEN
+                    sent = CINT(NET.SEND(sock, "Here: " + WhoIsHere$(nicks) + CRLF$))
+                ELSEIF text$ = "/quit" THEN
+                    sent = CINT(NET.SEND(sock, "Bye." + CRLF$))
+                    quits = 1
+                ELSE
+                    sent = CINT(Broadcast(socks, nicks, "[" + nick$ + "] " + text$, i))
+                    PRINT "["; nick$; "] "; text$
+                ENDIF
+            ENDIF
+            IF NOT NET.ALIVE(sock) THEN quits = 1
+            PUSH(leaving, quits)
+        NEXT i
+
+        DIM kept_socks = [0]
+        kept_socks = DROP(1, kept_socks)
+        DIM kept_nicks = [""]
+        kept_nicks = DROP(1, kept_nicks)
+        FOR i = 0 TO LEN(socks) - 1
+            IF leaving[i] = 0 THEN
+                PUSH(kept_socks, socks[i])
+                PUSH(kept_nicks, nicks[i])
+            ENDIF
+        NEXT i
+        FOR i = 0 TO LEN(socks) - 1
+            IF leaving[i] = 1 THEN
+                DIM gone$ = nicks[i]
+                DIM closed = NET.CLOSE(socks[i])
+                IF gone$ <> "" THEN
+                    sent = CINT(Broadcast(kept_socks, kept_nicks, "* " + gone$ + " left", -1))
+                    PRINT gone$; " left"
+                ENDIF
+            ENDIF
+        NEXT i
+        socks = kept_socks
+        nicks = kept_nicks
+
+        DIM pressed$ = INKEY$()
+        IF LCASE$(pressed$) = "q" THEN open_room = FALSE
+    LOOP
+
+    sent = CINT(Broadcast(socks, nicks, "* the room closes", -1))
+    FOR i = 0 TO LEN(socks) - 1
+        DIM closed_sock = NET.CLOSE(socks[i])
+    NEXT i
+    DIM closed_listener = NET.CLOSE(listener)
+    PRINT "The room is closed."
+    RETURN 0
+ENDFUNC
+
+FUNC RunClient(host$, port)
+    DIM sock = NET.CONNECT(host$, port, 3000)
+    IF sock = 0 THEN
+        PRINT "Cannot reach the room: "; NET.ERROR$()
+        RETURN 1
+    ENDIF
+    PRINT "Connected to "; NET.PEER$(sock); ". Enter sends a line, Esc leaves."
+    PRINT "> ";
+    DIM typed$ = ""
+    DIM sent = 0
+    DIM left_room = FALSE
+    DO WHILE NET.ALIVE(sock) AND NOT left_room
+        DIM incoming$ = NET.RECVLINE$(sock, 0)
+        IF incoming$ <> "" THEN
+            ' The message overwrites the input line, which is then shown again.
+            PRINT CHR$(13); RPAD$(incoming$, LEN(typed$) + 2)
+            PRINT "> "; typed$;
+        ENDIF
+        DIM pressed$ = INKEY$()
+        IF pressed$ = CHR$(27) THEN
+            left_room = TRUE
+        ELSEIF pressed$ = CHR$(13) THEN
+            sent = CINT(NET.SEND(sock, typed$ + CRLF$))
+            typed$ = ""
+            PRINT ""
+            PRINT "> ";
+        ELSEIF pressed$ = CHR$(8) THEN
+            IF LEN(typed$) > 0 THEN
+                typed$ = LEFT$(typed$, LEN(typed$) - 1)
+                PRINT CHR$(8); " "; CHR$(8);
+            ENDIF
+        ELSEIF LEN(pressed$) = 1 THEN
+            IF ASC(pressed$) >= 32 THEN
+                typed$ = typed$ + pressed$
+                PRINT pressed$;
+            ENDIF
+        ENDIF
+        SLEEP 20
+    LOOP
+    PRINT ""
+    IF left_room THEN
+        PRINT "You left the room."
+    ELSE
+        PRINT "The room closed the connection."
+    ENDIF
+    DIM closed = NET.CLOSE(sock)
+    RETURN 0
+ENDFUNC
+
+DIM args = OS.ARGS()
+DIM first_arg$ = ""
+DIM host$ = "127.0.0.1"
+DIM port = DEFAULT_PORT
+DIM port_arg$ = ""
+DIM exit_code = 0
+IF LEN(args) > 1 THEN first_arg$ = args[1]
+
+IF LCASE$(first_arg$) = "client" THEN
+    IF LEN(args) > 2 THEN host$ = args[2]
+    IF LEN(args) > 3 THEN
+        port_arg$ = args[3]
+        port = CINT(VAL(port_arg$))
+    ENDIF
+    exit_code = CINT(RunClient(host$, port))
+ELSE
+    IF first_arg$ <> "" THEN port = CINT(VAL(first_arg$))
+    exit_code = CINT(RunServer(port))
+ENDIF

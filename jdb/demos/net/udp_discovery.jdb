@@ -1,0 +1,112 @@
+' udp_discovery.jdb - finds jdBasic machines on the local network without
+' knowing their addresses. One side calls out with a UDP broadcast; every
+' machine that listens answers with its nick and host name, and the caller
+' collects the answers for two seconds.
+'
+'   jdBasic udp_discovery.jdb answer [nick]   listen and answer, q stops
+'   jdBasic udp_discovery.jdb                 ask who is there
+
+DIM DISCOVERY_PORT = 7010
+DIM QUESTION$ = "JDBASIC-DISCOVERY WHO IS THERE"
+DIM ANSWER_TAG$ = "JDBASIC-DISCOVERY HERE"
+
+FUNC Answer(port, nick$)
+    DIM sock = NET.UDP(port)
+    IF sock = 0 THEN
+        PRINT "Cannot listen on UDP port "; port; ": "; NET.ERROR$()
+        RETURN 1
+    ENDIF
+    PRINT "Answering as "; nick$; " on UDP port "; port; ". Press q to stop."
+    DIM listening = TRUE
+    DIM sent = 0
+    DO WHILE listening
+        DIM msg = NET.RECVFROM(sock, 100)
+        IF TYPEOF(msg) <> "NONE" THEN
+            DIM payload$ = msg{"data"}
+            DIM from_host$ = msg{"host"}
+            DIM from_port = msg{"port"}
+            IF payload$ = QUESTION$ THEN
+                sent = CINT(NET.SENDTO(sock, from_host$, from_port, ANSWER_TAG$ + "|" + nick$ + "|" + OS.HOSTNAME$()))
+                PRINT "asked by "; from_host$; ":"; from_port; ", answered"
+            ENDIF
+        ENDIF
+        DIM pressed$ = INKEY$()
+        IF LCASE$(pressed$) = "q" THEN listening = FALSE
+    LOOP
+    DIM closed = NET.CLOSE(sock)
+    RETURN 0
+ENDFUNC
+
+FUNC Ask(port)
+    DIM sock = NET.UDP()
+    IF sock = 0 THEN
+        PRINT "Cannot open a UDP socket: "; NET.ERROR$()
+        RETURN 1
+    ENDIF
+    DIM sent = NET.SENDTO(sock, "255.255.255.255", port, QUESTION$)
+    ' A listener on this computer hears the loopback copy even where the
+    ' broadcast does not come back to the sending machine.
+    sent = CINT(NET.SENDTO(sock, "127.0.0.1", port, QUESTION$))
+    PRINT "Asked the network on UDP port "; port; ", collecting answers for 2 seconds..."
+
+    ' One entry per nick and host name; a LAN address wins over loopback.
+    DIM seen AS MAP
+    DIM deadline = TICK() + 2000
+    DO WHILE TICK() < deadline
+        DIM wait_ms = deadline - TICK()
+        IF wait_ms < 1 THEN wait_ms = 1
+        DIM msg = NET.RECVFROM(sock, wait_ms)
+        IF TYPEOF(msg) <> "NONE" THEN
+            DIM payload$ = msg{"data"}
+            DIM from_host$ = msg{"host"}
+            DIM parts = SPLIT(payload$, "|")
+            IF LEN(parts) = 3 THEN
+                DIM tag$ = parts[0]
+                DIM nick$ = parts[1]
+                DIM machine$ = parts[2]
+                DIM entry$ = nick$ + "|" + machine$
+                IF tag$ = ANSWER_TAG$ THEN
+                    IF NOT MAP.EXISTS(seen, entry$) THEN
+                        seen{entry$} = from_host$
+                    ELSEIF from_host$ <> "127.0.0.1" THEN
+                        seen{entry$} = from_host$
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    LOOP
+    DIM closed = NET.CLOSE(sock)
+
+    DIM entries = MAP.KEYS(seen)
+    IF LEN(entries) = 0 THEN
+        PRINT "Nobody answered. Start 'jdBasic udp_discovery.jdb answer' on another machine or in a second window."
+        RETURN 0
+    ENDIF
+    PRINT ""
+    PRINT RPAD$("nick", 16); RPAD$("address", 18); "host name"
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM one$ = entries[k]
+        DIM fields = SPLIT(one$, "|")
+        DIM who$ = fields[0]
+        DIM host_name$ = fields[1]
+        DIM address$ = seen{one$}
+        PRINT RPAD$(who$, 16); RPAD$(address$, 18); host_name$
+    NEXT k
+    PRINT ""
+    PRINT LEN(entries); " answered"
+    RETURN 0
+ENDFUNC
+
+DIM args = OS.ARGS()
+DIM first_arg$ = ""
+DIM my_nick$ = "jdBasic"
+DIM exit_code = 0
+IF LEN(args) > 1 THEN first_arg$ = args[1]
+IF LEN(args) > 2 THEN my_nick$ = args[2]
+
+IF LCASE$(first_arg$) = "answer" THEN
+    exit_code = CINT(Answer(DISCOVERY_PORT, my_nick$))
+ELSE
+    exit_code = CINT(Ask(DISCOVERY_PORT))
+ENDIF
