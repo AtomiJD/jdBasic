@@ -1,0 +1,20 @@
+' -c must reject FUNC and SUB declarations inside a block: a compiled program
+' has no function for them, so they are refused with the line instead of
+' being compiled into something else. The interpreter runs this file.
+
+DIM enabled = TRUE
+
+IF enabled THEN
+    FUNC Twice(x)
+        RETURN x * 2
+    ENDFUNC
+    PRINT Twice(21)
+ENDIF
+
+DIM i = 0
+FOR i = 1 TO 1
+    SUB Hello(name$)
+        PRINT "hello " + name$
+    ENDSUB
+    Hello("block")
+NEXT i

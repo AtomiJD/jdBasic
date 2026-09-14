@@ -249,6 +249,7 @@ tests/strict/test_strict_dim.jdb	OK	OK	OK
 tests/strict/test_strict_dim2.jdb	OK	OK	OK
 tests/strict/test_strict_explicit_bad.jdb	OK	CFAIL	XFAIL
 tests/strict/test_strict_explicit_good.jdb	OK	OK	OK
+tests/strict/test_strict_func_in_block_bad.jdb	OK	CFAIL	XFAIL
 tests/strict/test_strict_type_bad.jdb	OK	CFAIL	XFAIL
 tests/strict/test_strict_type_good.jdb	OK	OK	OK
 tests/test_dotted_store.jdb	PASS	CFAIL	GAP

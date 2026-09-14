@@ -3253,6 +3253,40 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
     declare_runtime_functions();
     create_main_function();
     declare_functions(program);
+    // A FUNC or SUB declared inside a block (IF, a loop, SELECT, TRY or
+    // another FUNC) gets no compiled function, so its calls would compile
+    // into something else: refuse it with its line. TYPE methods live in the
+    // TYPE's body and are fine.
+    {
+        size_t before = diagnostics.size();
+        std::function<void(const Stmt&)> find_nested = [&](const Stmt& s) {
+            if (s.kind == StmtKind::TYPE_DECL) return;
+            auto visit = [&](const Stmt& b) {
+                if (b.kind == StmtKind::FUNCTION || b.kind == StmtKind::SUB)
+                    report_error(b.source_file(), b.line,
+                        std::string(b.kind == StmtKind::SUB ? "SUB " : "FUNC ") + b.func_name +
+                        " must be declared at top level, not inside a block");
+                find_nested(b);
+            };
+            for (auto& b : s.body) if (b) visit(*b);
+            for (auto& br : s.branches) for (auto& b : br.body) if (b) visit(*b);
+            for (auto& c : s.catch_body()) if (c) visit(*c);
+            for (auto& f : s.finally_body()) if (f) visit(*f);
+        };
+        for (auto& s : program) if (s) find_nested(*s);
+        if (diagnostics.size() > before) {
+            std::ostringstream oss;
+            for (auto& d : diagnostics) {
+                oss << "error at ";
+                if (!d.file.empty()) oss << d.file << ":";
+                oss << d.line << ": " << d.msg << "\n";
+            }
+            oss << (int)diagnostics.size() << " error(s). Compilation aborted.";
+            error_msg = oss.str();
+            std::cerr << error_msg << std::endl;
+            return false;
+        }
+    }
     populate_type_env(program);
     // Pre-scan OPTION directives at top level so explicit_mode / strict_mode
     // are live before codegen_program's globals pre-pass runs (which emits
