@@ -81,7 +81,7 @@ static std::vector<int> outdent_block(std::vector<std::string>& lines, int y1, i
 static const char* const HELP[] = {
     "jdBasic editor",
     "",
-    "Ctrl-S  save                 Ctrl-Q Esc  quit, asks when unsaved",
+    "Ctrl-S  save                 Ctrl-Q Esc  quit, buffer stays in memory",
     "Ctrl-R  save and run; any key returns here, Esc goes to the prompt",
     "F5      run the buffer on the live VM without saving",
     "Ctrl-F  find                 Ctrl-G F3   find next",
@@ -104,7 +104,7 @@ static const char* const HELP[] = {
 // as the Windows version. Keymap chosen to mirror the Win editor where
 // the keys are reachable on a Linux terminal:
 //   arrows, Home/End, PageUp/Down, Backspace/Delete, Enter
-//   Ctrl+S = save     Ctrl+Q = quit (prompts if dirty)
+//   Ctrl+S = save     Ctrl+Q = quit (the buffer stays in memory)
 //   F5     = run (compile + execute current buffer)
 //   Ctrl+Z / Ctrl+Y = undo / redo
 //   Ctrl+C / Ctrl+V = copy line / paste (line-based for simplicity)
@@ -534,19 +534,9 @@ private:
             if (k != PK_NONE) return k;
         }
     }
-    bool confirm_quit() {
-        if (!dirty) return true;
-        std::string ch;
-        for (;;) {
-            int k = prompt_key("save to file? y n esc=back", ch);
-            if (k == PK_ESC) return false;
-            if (k == -1 && !ch.empty()) {
-                char c = (char)std::tolower((unsigned char)ch[0]);
-                if (c == 'y') return save_file();
-                if (c == 'n') return true;
-            }
-        }
-    }
+    // The buffer is the program in memory, so leaving never asks; Ctrl-S is
+    // what writes the file.
+    bool confirm_quit() { return true; }
     void select_hit(int y, int byte, const std::string& q) {
         cy = y;
         sel_active = true;
@@ -908,8 +898,6 @@ void EditorImpl::run() {
         switch (key) {
             case PK_CTRL_Q:
             case PK_ESC:
-                // The buffer stays the live program either way; the
-                // question is only whether the file on disk gets it.
                 if (confirm_quit()) goto done;
                 break;
             case PK_F5:
@@ -1871,16 +1859,10 @@ void EditorImpl::show_help() {
     clear_screen();
 }
 
+// The buffer is the program in memory, so leaving never asks; Ctrl-S is what
+// writes the file.
 bool EditorImpl::confirm_quit() {
-    if (!file_modified) return true;
-    write_status(L"save to file? y n esc=back");
-    for (;;) {
-        KeyIn k = read_key();
-        if (k.vk == VK_ESCAPE) return false;
-        wchar_t c = towlower(k.ch);
-        if (c == L'y') return save_file();
-        if (c == L'n') return true;
-    }
+    return true;
 }
 
 void EditorImpl::paste_from_clipboard() {

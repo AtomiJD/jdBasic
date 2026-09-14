@@ -4297,7 +4297,7 @@ in memory. The same keys work on the boards.
 
 * **Arrow keys, Home, End, PageUp, PageDown**: move; with SHIFT they select. `Ctrl+Left` / `Ctrl+Right` jump by word, `Ctrl+Home` / `Ctrl+End` go to the start and end of the file.
 * **`Ctrl+S`**: save; an unnamed buffer asks for a name.
-* **`Ctrl+Q`, `Esc`**: leave the editor. With unsaved changes it asks `save to file? y n esc`; the buffer stays the program in memory either way.
+* **`Ctrl+Q`, `Esc`**: leave the editor without asking. The buffer stays the program in memory; `Ctrl+S` writes the file.
 * **`Ctrl+R`**: save and run. Afterwards any key reopens the editor on the line of the error, `Esc` returns to the prompt.
 * **`F5`**: run the buffer on the live VM without saving; the editor closes.
 * **`Ctrl+F`**: find, case-blind; the hit becomes the selection. **`Ctrl+G`** and **`F3`** find the next one with the same text.
