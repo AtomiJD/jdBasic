@@ -1,0 +1,1070 @@
+' FIT: least squares, polynomial and nonlinear curve fits, interpolation,
+' roots and a bounded minimum. Each call follows its numpy or scipy
+' counterpart: numpy.linalg.lstsq and pinv, numpy.polyfit and polyval,
+' scipy.optimize.curve_fit, numpy.interp, scipy.interpolate.CubicSpline,
+' scipy.optimize.brentq, bisect, newton and minimize_scalar (bounded).
+'
+'   IMPORT FIT
+'   DIM coeffs = FIT.POLYFIT(x, y, 2)
+'   DIM fitted = FIT.CURVEFIT(Decay@, t, counts, [100.0, 0.5, 0.0])
+'   DIM spl = FIT.SPLINE(knots, values)
+'   PRINT FIT.SPLINEVAL(spl, 2.5); "  "; FIT.BRENT(Level@, 0.0, 10.0)
+'
+' Matrices are arrays of rows. A model for CURVEFIT is a FUNC taking one x
+' and the parameter array; a function for the root finders and MINIMIZE
+' takes one number.
+EXPORT MODULE FIT
+
+DIM gEps = 2.220446049250313E-16
+
+' ── small helpers ──────────────────────────────────────────────
+
+FUNC CopyNums(v)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(v) - 1
+        DIM value = v[i]
+        PUSH(out, value * 1.0)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Filled(n_items, value)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO n_items - 1
+        PUSH(out, value * 1.0)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC SumSq(v)
+    DIM acc = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(v) - 1
+        DIM value = v[i]
+        acc = acc + value * value
+    NEXT i
+    RETURN acc
+ENDFUNC
+
+' 1 for a positive or zero value, -1 for a negative one (numpy's
+' sign(v) + (v == 0)).
+FUNC SignOne(v)
+    IF v < 0 THEN RETURN -1.0
+    RETURN 1.0
+ENDFUNC
+
+' The rows of a flat row-major array.
+FUNC RowsOf(flat, rows_n, cols_n)
+    DIM out = []
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO rows_n - 1
+        DIM row = []
+        FOR c = 0 TO cols_n - 1
+            DIM cell = flat[r * cols_n + c]
+            PUSH(row, cell * 1.0)
+        NEXT c
+        PUSH(out, row)
+    NEXT r
+    RETURN out
+ENDFUNC
+
+' The singular value below which a value counts as zero: rcond times the
+' largest one, rcond defaulting to machine epsilon times the larger
+' dimension.
+FUNC Cutoff(s, rows_n, cols_n, rcond)
+    DIM factor = rcond * 1.0
+    IF factor <= 0 THEN
+        DIM larger = rows_n
+        IF cols_n > larger THEN larger = cols_n
+        factor = gEps * larger
+    ENDIF
+    DIM largest = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(s) - 1
+        DIM si = s[i]
+        IF si > largest THEN largest = si
+    NEXT i
+    RETURN factor * largest
+ENDFUNC
+
+' ── linear least squares ───────────────────────────────────────
+
+' The least squares solution of a x = b with the smallest norm, from the
+' singular value decomposition. Singular values at or below rcond times
+' the largest count as zero; rcond 0 means machine epsilon times the larger
+' dimension, numpy's default. A map with "x", "residual" (the sum of the
+' squared residuals), "rank" and "singular" (the singular values, largest
+' first).
+EXPORT FUNC LSTSQ(a, b, rcond = 0)
+    DIM rows_n = LEN(a)
+    DIM first = a[0]
+    DIM cols_n = LEN(first)
+    IF LEN(b) <> rows_n THEN THROW "FIT.LSTSQ: b needs one value per row of a"
+    DIM parts = SVD(a)
+    DIM u = parts{"U"}
+    DIM s = parts{"S"}
+    DIM v = parts{"V"}
+    DIM k_n = LEN(s)
+    DIM cut = Cutoff(s, rows_n, cols_n, rcond)
+    DIM scaled = Filled(k_n, 0.0)
+    DIM rank_n = 0
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO k_n - 1
+        DIM si = s[i]
+        IF si > cut THEN
+            DIM acc = 0.0
+            FOR j = 0 TO rows_n - 1
+                DIM uji = u[j, i]
+                DIM bj = b[j]
+                acc = acc + uji * bj
+            NEXT j
+            scaled[i] = acc / si
+            rank_n = rank_n + 1
+        ENDIF
+    NEXT i
+    DIM x = Filled(cols_n, 0.0)
+    FOR j = 0 TO cols_n - 1
+        DIM total = 0.0
+        FOR i = 0 TO k_n - 1
+            DIM vji = v[j, i]
+            DIM zi = scaled[i]
+            total = total + vji * zi
+        NEXT i
+        x[j] = total
+    NEXT j
+    DIM resid = 0.0
+    FOR i = 0 TO rows_n - 1
+        DIM row_sum = 0.0
+        FOR j = 0 TO cols_n - 1
+            DIM aij = a[i, j]
+            DIM xj = x[j]
+            row_sum = row_sum + aij * xj
+        NEXT j
+        DIM bi = b[i]
+        resid = resid + (row_sum - bi) * (row_sum - bi)
+    NEXT i
+    DIM out AS MAP
+    out{"x"} = x
+    out{"residual"} = resid
+    out{"rank"} = rank_n
+    out{"singular"} = CopyNums(s)
+    RETURN out
+ENDFUNC
+
+' The Moore-Penrose pseudo-inverse, rows by columns turned around, with the
+' same cutoff as LSTSQ.
+EXPORT FUNC PINV(a, rcond = 0)
+    DIM rows_n = LEN(a)
+    DIM first = a[0]
+    DIM cols_n = LEN(first)
+    DIM parts = SVD(a)
+    DIM u = parts{"U"}
+    DIM s = parts{"S"}
+    DIM v = parts{"V"}
+    DIM k_n = LEN(s)
+    DIM cut = Cutoff(s, rows_n, cols_n, rcond)
+    DIM flat = Filled(cols_n * rows_n, 0.0)
+    DIM i = 0
+    DIM r = 0
+    DIM c = 0
+    FOR i = 0 TO k_n - 1
+        DIM si = s[i]
+        IF si > cut THEN
+            FOR r = 0 TO cols_n - 1
+                DIM vri = v[r, i]
+                FOR c = 0 TO rows_n - 1
+                    DIM uci = u[c, i]
+                    flat[r * rows_n + c] = flat[r * rows_n + c] + vri * uci / si
+                NEXT c
+            NEXT r
+        ENDIF
+    NEXT i
+    RETURN RowsOf(flat, cols_n, rows_n)
+ENDFUNC
+
+' ── polynomials ────────────────────────────────────────────────
+
+' The least squares polynomial of a degree through points, coefficients
+' from the highest power down. weights multiply the residuals, as numpy's
+' w does (one over the standard deviation, not its square). The columns
+' are scaled to unit length before the solve, as numpy.polyfit does.
+EXPORT FUNC POLYFIT(x, y, degree, weights = 0)
+    DIM n_pts = LEN(x)
+    DIM cols_n = CLNG(degree) + 1
+    IF degree < 0 THEN THROW "FIT.POLYFIT: the degree must be 0 or more"
+    IF LEN(y) <> n_pts THEN THROW "FIT.POLYFIT: x and y need the same length"
+    DIM weighted = (TYPEOF(weights) = "ARRAY")
+    DIM wv = Filled(n_pts, 1.0)
+    DIM i = 0
+    DIM c = 0
+    IF weighted THEN
+        IF LEN(weights) <> n_pts THEN THROW "FIT.POLYFIT: one weight per point"
+        FOR i = 0 TO n_pts - 1
+            DIM wi = weights[i]
+            wv[i] = wi * 1.0
+        NEXT i
+    ENDIF
+    DIM powers = Filled(n_pts * cols_n, 0.0)
+    FOR i = 0 TO n_pts - 1
+        DIM xi = x[i]
+        DIM wgt = wv[i]
+        DIM power = 1.0
+        FOR c = cols_n - 1 TO 0 STEP -1
+            powers[i * cols_n + c] = wgt * power
+            power = power * xi
+        NEXT c
+    NEXT i
+    DIM scale = Filled(cols_n, 0.0)
+    FOR c = 0 TO cols_n - 1
+        DIM acc = 0.0
+        FOR i = 0 TO n_pts - 1
+            DIM cell = powers[i * cols_n + c]
+            acc = acc + cell * cell
+        NEXT i
+        IF acc = 0 THEN acc = 1.0
+        scale[c] = SQR(acc)
+    NEXT c
+    DIM lhs = []
+    DIM rhs = []
+    FOR i = 0 TO n_pts - 1
+        DIM row = []
+        FOR c = 0 TO cols_n - 1
+            DIM raw = powers[i * cols_n + c]
+            DIM sc = scale[c]
+            PUSH(row, raw / sc)
+        NEXT c
+        PUSH(lhs, row)
+        DIM yi = y[i]
+        DIM wy = wv[i]
+        PUSH(rhs, wy * yi)
+    NEXT i
+    DIM solved = LSTSQ(lhs, rhs, n_pts * gEps)
+    DIM coef = solved{"x"}
+    DIM out = []
+    FOR c = 0 TO cols_n - 1
+        DIM cv = coef[c]
+        DIM sv = scale[c]
+        PUSH(out, cv / sv)
+    NEXT c
+    RETURN out
+ENDFUNC
+
+' The polynomial at one x, by Horner's rule.
+EXPORT FUNC POLYVAL(coeffs, at_x)
+    DIM acc = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(coeffs) - 1
+        DIM ci = coeffs[i]
+        acc = acc * at_x + ci
+    NEXT i
+    RETURN acc
+ENDFUNC
+
+' The polynomial at every x of an array.
+EXPORT FUNC POLYVALS(coeffs, xs)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        DIM xi = xs[i]
+        PUSH(out, POLYVAL(coeffs, xi))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The coefficients of the derivative, highest power first.
+EXPORT FUNC POLYDER(coeffs)
+    DIM out = []
+    DIM top = LEN(coeffs) - 1
+    IF top < 1 THEN
+        PUSH(out, 0.0)
+        RETURN out
+    ENDIF
+    DIM i = 0
+    FOR i = 0 TO top - 1
+        DIM ci = coeffs[i]
+        PUSH(out, ci * (top - i))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── nonlinear curve fits ───────────────────────────────────────
+
+FUNC Residuals(model, x, y, sig, p)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(x) - 1
+        DIM xi = x[i]
+        DIM yi = y[i]
+        DIM si = sig[i]
+        DIM fi = model(xi, p)
+        PUSH(out, (yi - fi) / si)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The weighted Jacobian of the model by central differences, flat and
+' row-major: one row per point, one column per parameter.
+FUNC Jacobian(model, x, sig, p)
+    DIM rows_n = LEN(x)
+    DIM cols_n = LEN(p)
+    DIM flat = Filled(rows_n * cols_n, 0.0)
+    DIM i = 0
+    DIM j = 0
+    FOR j = 0 TO cols_n - 1
+        DIM pj = p[j]
+        DIM h = 6.0554544523933395E-06 * ABS(pj)
+        IF ABS(pj) < 1 THEN h = 6.0554544523933395E-06
+        DIM up = CopyNums(p)
+        DIM down = CopyNums(p)
+        up[j] = pj + h
+        down[j] = pj - h
+        FOR i = 0 TO rows_n - 1
+            DIM xi = x[i]
+            DIM si = sig[i]
+            DIM f_up = model(xi, up)
+            DIM f_down = model(xi, down)
+            flat[i * cols_n + j] = (f_up - f_down) / (2.0 * h) / si
+        NEXT i
+    NEXT j
+    RETURN flat
+ENDFUNC
+
+' The parameters of model(x, params) that fit y best in the least squares
+' sense, by Levenberg-Marquardt from the start values p0. opts may carry
+' "sigma" (the standard deviation of each y), "absolute_sigma" (TRUE keeps
+' the covariance unscaled) and "maxiter" (500). A map with "params",
+' "errors" (the square roots of the covariance diagonal), "cov", "chi2"
+' (the sum of the squared weighted residuals), "iterations" and
+' "converged". Like curve_fit, the covariance is scaled by chi2 over the
+' degrees of freedom unless absolute_sigma is set.
+EXPORT FUNC CURVEFIT(model, x, y, p0, opts = 0)
+    DIM rows_n = LEN(x)
+    DIM cols_n = LEN(p0)
+    IF LEN(y) <> rows_n THEN THROW "FIT.CURVEFIT: x and y need the same length"
+    IF rows_n <= cols_n THEN THROW "FIT.CURVEFIT: needs more points than parameters"
+    DIM sig = Filled(rows_n, 1.0)
+    DIM absolute = FALSE
+    DIM maxiter = 500
+    DIM i = 0
+    DIM j = 0
+    DIM k = 0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "sigma") THEN
+            DIM given = opts{"sigma"}
+            IF LEN(given) <> rows_n THEN THROW "FIT.CURVEFIT: one sigma per point"
+            FOR i = 0 TO rows_n - 1
+                DIM gi = given[i]
+                sig[i] = gi * 1.0
+            NEXT i
+        ENDIF
+        IF MAP.EXISTS(opts, "absolute_sigma") THEN
+            DIM abs_v = opts{"absolute_sigma"}
+            IF abs_v THEN absolute = TRUE
+        ENDIF
+        IF MAP.EXISTS(opts, "maxiter") THEN
+            DIM mi = opts{"maxiter"}
+            maxiter = CLNG(mi)
+        ENDIF
+    ENDIF
+
+    DIM p = CopyNums(p0)
+    DIM res = Residuals(model, x, y, sig, p)
+    DIM cost = SumSq(res)
+    DIM damping = 0.001
+    DIM iterations = 0
+    DIM converged = FALSE
+    DIM stalled = FALSE
+    DO WHILE iterations < maxiter ANDALSO NOT converged ANDALSO NOT stalled
+        iterations = iterations + 1
+        IF cost = 0 THEN
+            converged = TRUE
+        ELSE
+            DIM jac = Jacobian(model, x, sig, p)
+            DIM normal = Filled(cols_n * cols_n, 0.0)
+            DIM grad = Filled(cols_n, 0.0)
+            FOR j = 0 TO cols_n - 1
+                FOR k = j TO cols_n - 1
+                    DIM acc = 0.0
+                    FOR i = 0 TO rows_n - 1
+                        DIM jij = jac[i * cols_n + j]
+                        DIM jik = jac[i * cols_n + k]
+                        acc = acc + jij * jik
+                    NEXT i
+                    normal[j * cols_n + k] = acc
+                    normal[k * cols_n + j] = acc
+                NEXT k
+                DIM gacc = 0.0
+                FOR i = 0 TO rows_n - 1
+                    DIM jg = jac[i * cols_n + j]
+                    DIM ri = res[i]
+                    gacc = gacc + jg * ri
+                NEXT i
+                grad[j] = gacc
+            NEXT j
+            DIM accepted = FALSE
+            DIM trial = []
+            DIM trial_res = []
+            DIM trial_cost = 0.0
+            DIM biggest_step = 0.0
+            DO WHILE NOT accepted ANDALSO damping < 1E+16
+                DIM aug = []
+                FOR j = 0 TO cols_n - 1
+                    DIM aug_row = []
+                    FOR k = 0 TO cols_n - 1
+                        DIM nv = normal[j * cols_n + k]
+                        IF j = k THEN
+                            IF nv = 0 THEN
+                                nv = damping
+                            ELSE
+                                nv = nv * (1.0 + damping)
+                            ENDIF
+                        ENDIF
+                        PUSH(aug_row, nv)
+                    NEXT k
+                    PUSH(aug, aug_row)
+                NEXT j
+                DIM delta_p = SOLVE(aug, grad)
+                trial = CopyNums(p)
+                biggest_step = 0.0
+                FOR j = 0 TO cols_n - 1
+                    DIM dj = delta_p[j]
+                    DIM pj = p[j]
+                    trial[j] = pj + dj
+                    DIM rel = ABS(dj) / (ABS(pj) + 1E-12)
+                    IF rel > biggest_step THEN biggest_step = rel
+                NEXT j
+                trial_res = Residuals(model, x, y, sig, trial)
+                trial_cost = SumSq(trial_res)
+                IF trial_cost < cost THEN
+                    accepted = TRUE
+                ELSE
+                    damping = damping * 10.0
+                ENDIF
+            LOOP
+            IF NOT accepted THEN
+                stalled = TRUE
+            ELSE
+                DIM gain = cost - trial_cost
+                p = trial
+                res = trial_res
+                IF gain <= 1E-14 * cost ORELSE biggest_step <= 1E-12 THEN converged = TRUE
+                cost = trial_cost
+                damping = damping / 10.0
+                IF damping < 1E-12 THEN damping = 1E-12
+            ENDIF
+        ENDIF
+    LOOP
+    IF stalled THEN converged = TRUE
+
+    DIM final_jac = Jacobian(model, x, sig, p)
+    DIM jac_rows = RowsOf(final_jac, rows_n, cols_n)
+    DIM parts = SVD(jac_rows)
+    DIM s = parts{"S"}
+    DIM v = parts{"V"}
+    DIM cut = Cutoff(s, rows_n, cols_n, 0)
+    DIM cov_flat = Filled(cols_n * cols_n, 0.0)
+    FOR i = 0 TO LEN(s) - 1
+        DIM si = s[i]
+        IF si > cut THEN
+            FOR j = 0 TO cols_n - 1
+                DIM vji = v[j, i]
+                FOR k = 0 TO cols_n - 1
+                    DIM vki = v[k, i]
+                    cov_flat[j * cols_n + k] = cov_flat[j * cols_n + k] + vji * vki / (si * si)
+                NEXT k
+            NEXT j
+        ENDIF
+    NEXT i
+    IF NOT absolute THEN
+        DIM s_sq = cost / (rows_n - cols_n)
+        FOR j = 0 TO cols_n * cols_n - 1
+            cov_flat[j] = cov_flat[j] * s_sq
+        NEXT j
+    ENDIF
+    DIM errors = []
+    FOR j = 0 TO cols_n - 1
+        DIM var_j = cov_flat[j * cols_n + j]
+        IF var_j < 0 THEN var_j = 0.0
+        PUSH(errors, SQR(var_j))
+    NEXT j
+    DIM out AS MAP
+    out{"params"} = p
+    out{"errors"} = errors
+    out{"cov"} = RowsOf(cov_flat, cols_n, cols_n)
+    out{"chi2"} = cost
+    out{"iterations"} = iterations
+    out{"converged"} = converged
+    RETURN out
+ENDFUNC
+
+' ── interpolation ──────────────────────────────────────────────
+
+' The interval of sorted knots a value falls in: the largest i with
+' knots[i] <= t, held between 0 and the second to last knot.
+FUNC IntervalOf(knots, t)
+    DIM last = LEN(knots) - 2
+    DIM second_knot = knots[1]
+    IF t < second_knot THEN RETURN 0
+    DIM top = knots[last]
+    IF t >= top THEN RETURN last
+    DIM lo = 1
+    DIM hi = last
+    DO WHILE hi - lo > 1
+        DIM mid = CLNG((lo + hi) / 2)
+        DIM km = knots[mid]
+        IF km <= t THEN
+            lo = mid
+        ELSE
+            hi = mid
+        ENDIF
+    LOOP
+    RETURN lo
+ENDFUNC
+
+' The piecewise linear interpolant through (xp, fp) at one x; outside the
+' points it keeps the first or the last value, as numpy.interp does.
+EXPORT FUNC INTERP(xp, fp, at_x)
+    DIM n_pts = LEN(xp)
+    IF n_pts = 0 ORELSE LEN(fp) <> n_pts THEN THROW "FIT.INTERP: xp and fp need the same, non-zero length"
+    DIM first_x = xp[0]
+    DIM first_f = fp[0]
+    IF n_pts = 1 ORELSE at_x <= first_x THEN
+        IF at_x < first_x ORELSE n_pts = 1 THEN RETURN first_f * 1.0
+    ENDIF
+    DIM last_x = xp[n_pts - 1]
+    DIM last_f = fp[n_pts - 1]
+    IF at_x >= last_x THEN RETURN last_f * 1.0
+    DIM i = CLNG(IntervalOf(xp, at_x))
+    DIM xa = xp[i]
+    DIM xb = xp[i + 1]
+    DIM fa = fp[i]
+    DIM fb = fp[i + 1]
+    IF at_x = xa THEN RETURN fa * 1.0
+    DIM slope = (fb - fa) / (xb - xa)
+    RETURN slope * (at_x - xa) + fa
+ENDFUNC
+
+' INTERP at every x of an array.
+EXPORT FUNC INTERPS(xp, fp, xs)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        DIM xi = xs[i]
+        PUSH(out, INTERP(xp, fp, xi))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The Gaussian elimination with partial pivoting LAPACK's dgtsv does on a
+' tridiagonal system: lower, diagonal and upper bands and the right side.
+FUNC SolveTridiagonal(lower_in, diag_in, upper_in, rhs_in)
+    DIM n = LEN(diag_in)
+    DIM dl = CopyNums(lower_in)
+    DIM dg = CopyNums(diag_in)
+    DIM du = CopyNums(upper_in)
+    DIM bv = CopyNums(rhs_in)
+    DIM du2 = Filled(n, 0.0)
+    DIM i = 0
+    FOR i = 0 TO n - 2
+        DIM di = dg[i]
+        DIM li = dl[i]
+        IF ABS(di) >= ABS(li) THEN
+            IF di = 0 THEN THROW "FIT.SPLINE: the system is singular"
+            DIM fact = li / di
+            DIM next_d = dg[i + 1]
+            DIM ui = du[i]
+            dg[i + 1] = next_d - fact * ui
+            DIM b_i = bv[i]
+            DIM b_next = bv[i + 1]
+            bv[i + 1] = b_next - fact * b_i
+        ELSE
+            DIM fact2 = di / li
+            dg[i] = li
+            DIM temp = dg[i + 1]
+            DIM u_here = du[i]
+            dg[i + 1] = u_here - fact2 * temp
+            IF i < n - 2 THEN
+                DIM u_next = du[i + 1]
+                du2[i] = u_next
+                du[i + 1] = -fact2 * u_next
+            ENDIF
+            du[i] = temp
+            DIM b_here = bv[i]
+            DIM b_after = bv[i + 1]
+            bv[i] = b_after
+            bv[i + 1] = b_here - fact2 * b_after
+        ENDIF
+    NEXT i
+    DIM last_d = dg[n - 1]
+    IF last_d = 0 THEN THROW "FIT.SPLINE: the system is singular"
+    bv[n - 1] = bv[n - 1] / last_d
+    IF n > 1 THEN
+        DIM b_pen = bv[n - 2]
+        DIM u_pen = du[n - 2]
+        DIM b_top = bv[n - 1]
+        DIM d_pen = dg[n - 2]
+        bv[n - 2] = (b_pen - u_pen * b_top) / d_pen
+    ENDIF
+    i = n - 3
+    DO WHILE i >= 0
+        DIM bi = bv[i]
+        DIM u1 = du[i]
+        DIM u2 = du2[i]
+        DIM b1 = bv[i + 1]
+        DIM b2 = bv[i + 2]
+        DIM dii = dg[i]
+        bv[i] = (bi - u1 * b1 - u2 * b2) / dii
+        i = i - 1
+    LOOP
+    RETURN bv
+ENDFUNC
+
+' A cubic spline through points with strictly increasing x. bc$ is
+' "not-a-knot" (the default: the third derivative is continuous at the
+' second and the second to last point), "natural" (zero second derivative
+' at both ends) or "clamped" (zero slope at both ends), the conditions of
+' scipy's CubicSpline. A map with "x" and the coefficients "c3", "c2", "c1"
+' and "c0" of each interval, a polynomial in (t - x[i]).
+EXPORT FUNC SPLINE(x, y, bc$ = "not-a-knot")
+    DIM kind$ = LCASE$(bc$)
+    IF kind$ <> "not-a-knot" ANDALSO kind$ <> "natural" ANDALSO kind$ <> "clamped" THEN THROW "FIT.SPLINE: unknown boundary condition " + bc$
+    DIM n = LEN(x)
+    IF n < 2 ORELSE LEN(y) <> n THEN THROW "FIT.SPLINE: needs at least two points and one y per x"
+    DIM xs = CopyNums(x)
+    DIM ys = CopyNums(y)
+    DIM dx = Filled(n - 1, 0.0)
+    DIM slope = Filled(n - 1, 0.0)
+    DIM i = 0
+    FOR i = 0 TO n - 2
+        DIM xa = xs[i]
+        DIM xb = xs[i + 1]
+        DIM ya = ys[i]
+        DIM yb = ys[i + 1]
+        IF xb <= xa THEN THROW "FIT.SPLINE: x must increase strictly"
+        dx[i] = xb - xa
+        slope[i] = (yb - ya) / (xb - xa)
+    NEXT i
+    IF n = 2 ANDALSO kind$ = "not-a-knot" THEN kind$ = "natural"
+
+    DIM s = []
+    IF n = 3 ANDALSO kind$ = "not-a-knot" THEN
+        DIM dx0 = dx[0]
+        DIM dx1 = dx[1]
+        DIM sl0 = slope[0]
+        DIM sl1 = slope[1]
+        DIM dense = [[1.0, 1.0, 0.0], [dx1, 2.0 * (dx0 + dx1), dx0], [0.0, 1.0, 1.0]]
+        DIM rhs3 = [2.0 * sl0, 3.0 * (dx0 * sl1 + dx1 * sl0), 2.0 * sl1]
+        s = SOLVE(dense, rhs3)
+    ELSE
+        DIM dl = Filled(n - 1, 0.0)
+        DIM dg = Filled(n, 0.0)
+        DIM du = Filled(n - 1, 0.0)
+        DIM rhs = Filled(n, 0.0)
+        FOR i = 1 TO n - 2
+            DIM dx_before = dx[i - 1]
+            DIM dx_after = dx[i]
+            DIM sl_before = slope[i - 1]
+            DIM sl_after = slope[i]
+            dg[i] = 2.0 * (dx_before + dx_after)
+            du[i] = dx_before
+            dl[i - 1] = dx_after
+            rhs[i] = 3.0 * (dx_after * sl_before + dx_before * sl_after)
+        NEXT i
+        DIM h_first = dx[0]
+        DIM h_last = dx[n - 2]
+        DIM y0 = ys[0]
+        DIM y1 = ys[1]
+        DIM y_last = ys[n - 1]
+        DIM y_before = ys[n - 2]
+        IF kind$ = "clamped" THEN
+            dg[0] = 1.0
+            du[0] = 0.0
+            rhs[0] = 0.0
+            dg[n - 1] = 1.0
+            dl[n - 2] = 0.0
+            rhs[n - 1] = 0.0
+        ELSEIF kind$ = "natural" THEN
+            dg[0] = 2.0 * h_first
+            du[0] = h_first
+            rhs[0] = 3.0 * (y1 - y0)
+            dg[n - 1] = 2.0 * h_last
+            dl[n - 2] = h_last
+            rhs[n - 1] = 3.0 * (y_last - y_before)
+        ELSE
+            DIM h1 = dx[1]
+            DIM x0 = xs[0]
+            DIM x2 = xs[2]
+            DIM span = x2 - x0
+            DIM s0 = slope[0]
+            DIM s1 = slope[1]
+            dg[0] = h1
+            du[0] = span
+            rhs[0] = ((h_first + 2.0 * span) * h1 * s0 + h_first * h_first * s1) / span
+            DIM h_pen = dx[n - 3]
+            DIM x_end = xs[n - 1]
+            DIM x_third = xs[n - 3]
+            DIM span_end = x_end - x_third
+            DIM s_pen = slope[n - 3]
+            DIM s_end = slope[n - 2]
+            dg[n - 1] = h_pen
+            dl[n - 2] = span_end
+            rhs[n - 1] = (h_last * h_last * s_pen + (2.0 * span_end + h_last) * h_pen * s_end) / span_end
+        ENDIF
+        s = SolveTridiagonal(dl, dg, du, rhs)
+    ENDIF
+
+    DIM c3 = []
+    DIM c2 = []
+    DIM c1 = []
+    DIM c0 = []
+    FOR i = 0 TO n - 2
+        DIM sa = s[i]
+        DIM sb = s[i + 1]
+        DIM h = dx[i]
+        DIM m = slope[i]
+        DIM yi = ys[i]
+        DIM tt = (sa + sb - 2.0 * m) / h
+        PUSH(c3, tt / h)
+        PUSH(c2, (m - sa) / h - tt)
+        PUSH(c1, sa * 1.0)
+        PUSH(c0, yi * 1.0)
+    NEXT i
+    DIM out AS MAP
+    out{"x"} = xs
+    out{"c3"} = c3
+    out{"c2"} = c2
+    out{"c1"} = c1
+    out{"c0"} = c0
+    RETURN out
+ENDFUNC
+
+' The spline at one t; beyond the ends the first or last piece goes on.
+EXPORT FUNC SPLINEVAL(spl, at_t)
+    DIM knots = spl{"x"}
+    DIM c3 = spl{"c3"}
+    DIM c2 = spl{"c2"}
+    DIM c1 = spl{"c1"}
+    DIM c0 = spl{"c0"}
+    DIM i = CLNG(IntervalOf(knots, at_t))
+    DIM xi = knots[i]
+    DIM a3 = c3[i]
+    DIM a2 = c2[i]
+    DIM a1 = c1[i]
+    DIM a0 = c0[i]
+    DIM du = at_t - xi
+    RETURN ((a3 * du + a2) * du + a1) * du + a0
+ENDFUNC
+
+' The first derivative of the spline at one t.
+EXPORT FUNC SPLINEDERIV(spl, at_t)
+    DIM knots = spl{"x"}
+    DIM c3 = spl{"c3"}
+    DIM c2 = spl{"c2"}
+    DIM c1 = spl{"c1"}
+    DIM i = CLNG(IntervalOf(knots, at_t))
+    DIM xi = knots[i]
+    DIM a3 = c3[i]
+    DIM a2 = c2[i]
+    DIM a1 = c1[i]
+    DIM du = at_t - xi
+    RETURN (3.0 * a3 * du + 2.0 * a2) * du + a1
+ENDFUNC
+
+' SPLINEVAL at every t of an array.
+EXPORT FUNC SPLINEVALS(spl, ts)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(ts) - 1
+        DIM ti = ts[i]
+        PUSH(out, SPLINEVAL(spl, ti))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' SPLINEDERIV at every t of an array.
+EXPORT FUNC SPLINEDERIVS(spl, ts)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(ts) - 1
+        DIM ti = ts[i]
+        PUSH(out, SPLINEDERIV(spl, ti))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── roots ──────────────────────────────────────────────────────
+
+' A root of fn between a and b, where fn changes sign, by Brent's method as
+' scipy.optimize.brentq does it. xtol 0 means 2e-12; the relative tolerance
+' is four machine epsilons.
+EXPORT FUNC BRENT(fn, a, b, xtol = 0)
+    DIM tol_x = xtol * 1.0
+    IF tol_x <= 0 THEN tol_x = 2E-12
+    DIM tol_r = 4.0 * gEps
+    DIM xpre = a * 1.0
+    DIM xcur = b * 1.0
+    DIM xblk = 0.0
+    DIM fblk = 0.0
+    DIM spre = 0.0
+    DIM scur = 0.0
+    DIM fpre = fn(xpre)
+    DIM fcur = fn(xcur)
+    IF fpre = 0 THEN RETURN xpre
+    IF fcur = 0 THEN RETURN xcur
+    IF (fpre > 0 ANDALSO fcur > 0) ORELSE (fpre < 0 ANDALSO fcur < 0) THEN THROW "FIT.BRENT: fn has the same sign at a and b"
+    DIM i = 0
+    FOR i = 1 TO 100
+        IF fpre <> 0 ANDALSO fcur <> 0 ANDALSO ((fpre > 0) <> (fcur > 0)) THEN
+            xblk = xpre
+            fblk = fpre
+            spre = xcur - xpre
+            scur = spre
+        ENDIF
+        IF ABS(fblk) < ABS(fcur) THEN
+            xpre = xcur
+            xcur = xblk
+            xblk = xpre
+            fpre = fcur
+            fcur = fblk
+            fblk = fpre
+        ENDIF
+        DIM half_tol = (tol_x + tol_r * ABS(xcur)) / 2.0
+        DIM sbis = (xblk - xcur) / 2.0
+        IF fcur = 0 ORELSE ABS(sbis) < half_tol THEN RETURN xcur
+        IF ABS(spre) > half_tol ANDALSO ABS(fcur) < ABS(fpre) THEN
+            DIM stry = 0.0
+            IF xpre = xblk THEN
+                stry = -fcur * (xcur - xpre) / (fcur - fpre)
+            ELSE
+                DIM dpre = (fpre - fcur) / (xpre - xcur)
+                DIM dblk = (fblk - fcur) / (xblk - xcur)
+                stry = -fcur * (fblk * dblk - fpre * dpre) / (dblk * dpre * (fblk - fpre))
+            ENDIF
+            DIM bound = 3.0 * ABS(sbis) - half_tol
+            IF ABS(spre) < bound THEN bound = ABS(spre)
+            IF 2.0 * ABS(stry) < bound THEN
+                spre = scur
+                scur = stry
+            ELSE
+                spre = sbis
+                scur = sbis
+            ENDIF
+        ELSE
+            spre = sbis
+            scur = sbis
+        ENDIF
+        xpre = xcur
+        fpre = fcur
+        IF ABS(scur) > half_tol THEN
+            xcur = xcur + scur
+        ELSEIF sbis > 0 THEN
+            xcur = xcur + half_tol
+        ELSE
+            xcur = xcur - half_tol
+        ENDIF
+        fcur = fn(xcur)
+    NEXT i
+    THROW "FIT.BRENT: no convergence in 100 iterations"
+    RETURN xcur
+ENDFUNC
+
+' A root of fn between a and b by halving the interval, as
+' scipy.optimize.bisect does. xtol 0 means 2e-12.
+EXPORT FUNC BISECT(fn, a, b, xtol = 0)
+    DIM tol_x = xtol * 1.0
+    IF tol_x <= 0 THEN tol_x = 2E-12
+    DIM tol_r = 4.0 * gEps
+    DIM xa = a * 1.0
+    DIM xb = b * 1.0
+    DIM fa = fn(xa)
+    DIM fb = fn(xb)
+    IF fa * fb > 0 THEN THROW "FIT.BISECT: fn has the same sign at a and b"
+    IF fa = 0 THEN RETURN xa
+    IF fb = 0 THEN RETURN xb
+    DIM dm = xb - xa
+    DIM xm = xa
+    DIM i = 0
+    FOR i = 1 TO 100
+        dm = dm * 0.5
+        xm = xa + dm
+        DIM fm = fn(xm)
+        IF fm * fa >= 0 THEN xa = xm
+        IF fm = 0 ORELSE ABS(dm) < tol_x + tol_r * ABS(xm) THEN RETURN xm
+    NEXT i
+    THROW "FIT.BISECT: no convergence in 100 iterations"
+    RETURN xm
+ENDFUNC
+
+' A root of fn near x0 by the secant method, the way scipy.optimize.newton
+' runs without a derivative: the second start point is x0 moved by one part
+' in ten thousand. tol 0 means 1.48e-8.
+EXPORT FUNC NEWTON(fn, x0, tol = 0)
+    DIM tol_x = tol * 1.0
+    IF tol_x <= 0 THEN tol_x = 1.48E-8
+    DIM p0 = x0 * 1.0
+    DIM p1 = p0 * (1.0 + 1E-4)
+    IF p1 >= 0 THEN
+        p1 = p1 + 1E-4
+    ELSE
+        p1 = p1 - 1E-4
+    ENDIF
+    DIM q0 = fn(p0)
+    DIM q1 = fn(p1)
+    IF ABS(q1) < ABS(q0) THEN
+        DIM swap_p = p0
+        p0 = p1
+        p1 = swap_p
+        DIM swap_q = q0
+        q0 = q1
+        q1 = swap_q
+    ENDIF
+    DIM p = p1
+    DIM i = 0
+    FOR i = 1 TO 50
+        IF q1 = q0 THEN
+            RETURN (p1 + p0) / 2.0
+        ENDIF
+        IF ABS(q1) > ABS(q0) THEN
+            p = (-q0 / q1 * p1 + p0) / (1.0 - q0 / q1)
+        ELSE
+            p = (-q1 / q0 * p0 + p1) / (1.0 - q1 / q0)
+        ENDIF
+        IF ABS(p - p1) <= tol_x THEN RETURN p
+        p0 = p1
+        q0 = q1
+        p1 = p
+        q1 = fn(p1)
+    NEXT i
+    THROW "FIT.NEWTON: no convergence in 50 iterations"
+    RETURN p
+ENDFUNC
+
+' A root of fn near x0 by Newton's method with the derivative dfn.
+' tol 0 means 1.48e-8. A zero derivative ends the search where it stands.
+EXPORT FUNC NEWTONDER(fn, dfn, x0, tol = 0)
+    DIM tol_x = tol * 1.0
+    IF tol_x <= 0 THEN tol_x = 1.48E-8
+    DIM p0 = x0 * 1.0
+    DIM i = 0
+    FOR i = 1 TO 50
+        DIM fval = fn(p0)
+        IF fval = 0 THEN RETURN p0
+        DIM fder = dfn(p0)
+        IF fder = 0 THEN RETURN p0
+        DIM p = p0 - fval / fder
+        IF ABS(p - p0) <= tol_x THEN RETURN p
+        p0 = p
+    NEXT i
+    THROW "FIT.NEWTONDER: no convergence in 50 iterations"
+    RETURN p0
+ENDFUNC
+
+' ── minimum ────────────────────────────────────────────────────
+
+' The minimum of fn between a and b by Brent's bounded method, step for step
+' as scipy.optimize.minimize_scalar(method="bounded"). xatol 0 means 1e-5.
+' A map with "x", "fun", "iterations" (the function evaluations) and
+' "converged" (FALSE after 500 evaluations).
+EXPORT FUNC MINIMIZE(fn, a, b, xatol = 0)
+    DIM tol_abs = xatol * 1.0
+    IF tol_abs <= 0 THEN tol_abs = 1E-5
+    IF a > b THEN THROW "FIT.MINIMIZE: a must not be above b"
+    DIM sqrt_eps = SQR(2.2E-16)
+    DIM golden_mean = 0.5 * (3.0 - SQR(5.0))
+    DIM lo = a * 1.0
+    DIM hi = b * 1.0
+    DIM fulc = lo + golden_mean * (hi - lo)
+    DIM nfc = fulc
+    DIM xf = fulc
+    DIM rat = 0.0
+    DIM e_last = 0.0
+    DIM x = xf
+    DIM fx = fn(x)
+    DIM num = 1
+    DIM fu = 0.0
+    DIM ffulc = fx
+    DIM fnfc = fx
+    DIM xm = 0.5 * (lo + hi)
+    DIM tol1 = sqrt_eps * ABS(xf) + tol_abs / 3.0
+    DIM tol2 = 2.0 * tol1
+    DIM converged = TRUE
+    DO WHILE ABS(xf - xm) > (tol2 - 0.5 * (hi - lo))
+        DIM golden = TRUE
+        IF ABS(e_last) > tol1 THEN
+            golden = FALSE
+            DIM r = (xf - nfc) * (fx - ffulc)
+            DIM q = (xf - fulc) * (fx - fnfc)
+            DIM p = (xf - fulc) * q - (xf - nfc) * r
+            q = 2.0 * (q - r)
+            IF q > 0 THEN p = -p
+            q = ABS(q)
+            r = e_last
+            e_last = rat
+            IF ABS(p) < ABS(0.5 * q * r) ANDALSO p > q * (lo - xf) ANDALSO p < q * (hi - xf) THEN
+                rat = p / q
+                x = xf + rat
+                IF (x - lo) < tol2 ORELSE (hi - x) < tol2 THEN rat = tol1 * SignOne(xm - xf)
+            ELSE
+                golden = TRUE
+            ENDIF
+        ENDIF
+        IF golden THEN
+            IF xf >= xm THEN
+                e_last = lo - xf
+            ELSE
+                e_last = hi - xf
+            ENDIF
+            rat = golden_mean * e_last
+        ENDIF
+        DIM reach = ABS(rat)
+        IF reach < tol1 THEN reach = tol1
+        x = xf + SignOne(rat) * reach
+        fu = fn(x)
+        num = num + 1
+        IF fu <= fx THEN
+            IF x >= xf THEN
+                lo = xf
+            ELSE
+                hi = xf
+            ENDIF
+            fulc = nfc
+            ffulc = fnfc
+            nfc = xf
+            fnfc = fx
+            xf = x
+            fx = fu
+        ELSE
+            IF x < xf THEN
+                lo = x
+            ELSE
+                hi = x
+            ENDIF
+            IF fu <= fnfc ORELSE nfc = xf THEN
+                fulc = nfc
+                ffulc = fnfc
+                nfc = x
+                fnfc = fu
+            ELSEIF fu <= ffulc ORELSE fulc = xf ORELSE fulc = nfc THEN
+                fulc = x
+                ffulc = fu
+            ENDIF
+        ENDIF
+        xm = 0.5 * (lo + hi)
+        tol1 = sqrt_eps * ABS(xf) + tol_abs / 3.0
+        tol2 = 2.0 * tol1
+        IF num >= 500 THEN
+            converged = FALSE
+            EXITDO
+        ENDIF
+    LOOP
+    DIM out AS MAP
+    out{"x"} = xf
+    out{"fun"} = fx
+    out{"iterations"} = num
+    out{"converged"} = converged
+    RETURN out
+ENDFUNC

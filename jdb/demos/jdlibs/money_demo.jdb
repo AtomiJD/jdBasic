@@ -70,3 +70,132 @@ PRINT "  en-US  "; MONEY.CURRENCY$(gross, "EUR", "en-US")
 PRINT "  fr-FR  "; MONEY.CURRENCY$(gross, "EUR", "fr-FR")
 PRINT "  in yen at 161.23: "; MONEY.CURRENCY$(MONEY.CONVERT(gross, "EUR", "JPY", "161.23"), "JPY", "en-US")
 PRINT "  cash, rounded to 5 cents: "; MONEY.CURRENCY$(MONEY.ROUNDSTEP(gross, 5), "EUR")
+PRINT
+
+' Each case runs one call; a call that throws shows its message instead.
+FUNC Attempt$(case_fn)
+    DIM shown$ = ""
+    TRY
+        shown$ = case_fn(0)
+    CATCH
+        shown$ = "throws: " + ERRMSG$
+    ENDTRY
+    RETURN shown$
+ENDFUNC
+
+FUNC ParseLimit$(unused)
+    RETURN STR$(MONEY.PARSE("90071992547409.91", "EUR"))
+ENDFUNC
+
+FUNC ParseAbove$(unused)
+    RETURN STR$(MONEY.PARSE("90071992547409.92", "EUR"))
+ENDFUNC
+
+FUNC ParseNegativeLimit$(unused)
+    RETURN STR$(MONEY.PARSE("-90071992547409.91", "EUR"))
+ENDFUNC
+
+FUNC PlusAbove$(unused)
+    RETURN STR$(MONEY.PLUS(MONEY.MAXMINOR(), 1))
+ENDFUNC
+
+FUNC MinusBelow$(unused)
+    RETURN STR$(MONEY.MINUS(0 - MONEY.MAXMINOR(), 1))
+ENDFUNC
+
+FUNC TimesTwo$(unused)
+    RETURN STR$(MONEY.TIMES(MONEY.MAXMINOR(), 2))
+ENDFUNC
+
+FUNC TimesOne$(unused)
+    RETURN MONEY.DECIMAL$(MONEY.TIMES(MONEY.MAXMINOR(), "1.00000000"), "EUR")
+ENDFUNC
+
+FUNC TimesBarelyMore$(unused)
+    RETURN STR$(MONEY.TIMES(MONEY.MAXMINOR(), "1.0000000000000002"))
+ENDFUNC
+
+FUNC HalfCentNoMode$(unused)
+    RETURN STR$(MONEY.PARSE("0.005", "EUR"))
+ENDFUNC
+
+FUNC HalfCentHalfUp$(unused)
+    RETURN STR$(MONEY.PARSE("0.005", "EUR", "half-up"))
+ENDFUNC
+
+FUNC HalfCentHalfEven$(unused)
+    RETURN STR$(MONEY.PARSE("0.005", "EUR", "half-even"))
+ENDFUNC
+
+FUNC GoldDigits$(unused)
+    RETURN STR$(MONEY.DIGITS("XAU"))
+ENDFUNC
+
+FUNC UnknownDigits$(unused)
+    RETURN STR$(MONEY.DIGITS("ABC"))
+ENDFUNC
+
+FUNC DivideFourteen$(unused)
+    RETURN STR$(MONEY.DIVIDE(MONEY.MAXMINOR(), 99999999999999))
+ENDFUNC
+
+FUNC DivideFifteen$(unused)
+    RETURN STR$(MONEY.DIVIDE(MONEY.MAXMINOR(), 999999999999999))
+ENDFUNC
+
+FUNC DivideZero$(unused)
+    RETURN STR$(MONEY.DIVIDE(100, 0))
+ENDFUNC
+
+FUNC AllocateFifteen$(unused)
+    DIM parts = MONEY.ALLOCATE(100, [999999999999999, 1])
+    DIM first = parts[0]
+    RETURN STR$(first)
+ENDFUNC
+
+FUNC PartsOfOneCent$(unused)
+    DIM parts = MONEY.PARTS(1, 3)
+    DIM a = parts[0]
+    DIM b = parts[1]
+    DIM c = parts[2]
+    RETURN STR$(a) + " + " + STR$(b) + " + " + STR$(c)
+ENDFUNC
+
+FUNC FloatSum$(unused)
+    RETURN STR$(MONEY.FROMNUMBER(0.1 + 0.2, "EUR"))
+ENDFUNC
+
+FUNC HugeFloat$(unused)
+    RETURN STR$(MONEY.FROMNUMBER(1e17, "EUR"))
+ENDFUNC
+
+PRINT "Number limits"
+DIM top = MONEY.MAXMINOR()
+PRINT "  the limit                     "; STR$(top); " minor units (2^53 - 1)"
+PRINT "  in euros                      "; MONEY.DECIMAL$(top, "EUR")
+PRINT "  formatted, positive           "; MONEY.CURRENCY$(top, "EUR")
+PRINT "  formatted, negative           "; MONEY.CURRENCY$(0 - top, "EUR")
+PRINT "  in yen (0 digits)             "; MONEY.DECIMAL$(top, "JPY")
+PRINT "  in dinar (3 digits)           "; MONEY.DECIMAL$(top, "KWD")
+PRINT "  in UF (4 digits)              "; MONEY.DECIMAL$(top, "CLF")
+PRINT "  digits EUR JPY KWD CLF        "; MONEY.DIGITS("EUR"); " "; MONEY.DIGITS("JPY"); " "; MONEY.DIGITS("KWD"); " "; MONEY.DIGITS("CLF")
+PRINT "  PARSE of the limit            "; Attempt$(ParseLimit$@)
+PRINT "  PARSE one cent above          "; Attempt$(ParseAbove$@)
+PRINT "  PARSE of the negative limit   "; Attempt$(ParseNegativeLimit$@)
+PRINT "  PLUS one cent above           "; Attempt$(PlusAbove$@)
+PRINT "  MINUS one cent below          "; Attempt$(MinusBelow$@)
+PRINT "  TIMES 2 at the limit          "; Attempt$(TimesTwo$@)
+PRINT "  TIMES 1.00000000 at the limit "; Attempt$(TimesOne$@)
+PRINT "  TIMES a hair above 1          "; Attempt$(TimesBarelyMore$@)
+PRINT "  half a cent, no mode          "; Attempt$(HalfCentNoMode$@)
+PRINT "  half a cent, half-up          "; Attempt$(HalfCentHalfUp$@)
+PRINT "  half a cent, half-even        "; Attempt$(HalfCentHalfEven$@)
+PRINT "  0.1 + 0.2 as a number         "; Attempt$(FloatSum$@)
+PRINT "  1e17 euros as a number        "; Attempt$(HugeFloat$@)
+PRINT "  one cent in three parts       "; Attempt$(PartsOfOneCent$@)
+PRINT "  DIVIDE by a 14-digit divisor  "; Attempt$(DivideFourteen$@)
+PRINT "  DIVIDE by a 15-digit divisor  "; Attempt$(DivideFifteen$@)
+PRINT "  DIVIDE by zero                "; Attempt$(DivideZero$@)
+PRINT "  ALLOCATE, ratios of 15 digits "; Attempt$(AllocateFifteen$@)
+PRINT "  DIGITS of gold (XAU)          "; Attempt$(GoldDigits$@)
+PRINT "  DIGITS of an unknown code     "; Attempt$(UnknownDigits$@)

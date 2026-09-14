@@ -1462,6 +1462,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `MONEY` | exact money as whole minor units with an ISO 4217 code: parsing, rates, division, conversion, seven rounding modes, allocation and installments that add up, locale formatting |
 | `VALID` | identifiers checked: IBAN against the SWIFT registry, BIC, EU VAT ids, EAN, UPC, GTIN, ISBN, Luhn, MOD 97-10; ISO 4217 currencies with minor units, ISO 3166-1 countries; formats for SCHEMA |
 | `SECRET` | password hashes with PBKDF2 and rehash decisions, constant-time comparison, random tokens, API keys kept as hashes |
+| `FIT` | least squares and the pseudo-inverse, polynomial and Levenberg-Marquardt curve fits with parameter errors, interpolation and cubic splines, roots, a bounded minimum |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

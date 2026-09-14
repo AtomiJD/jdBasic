@@ -1,0 +1,393 @@
+' FIT against numpy 2.5 and scipy 1.18.1: the reference values in
+' tests/jdlibs/fixtures/fit_*.tsv come from numpy.linalg.lstsq and pinv,
+' numpy.polyfit and polyval, scipy.optimize.curve_fit, numpy.interp,
+' scipy.interpolate.CubicSpline, scipy.optimize.brentq, bisect, newton and
+' minimize_scalar(method="bounded").
+'
+' Tolerances: 1e-9 relative for the direct linear algebra; results of an
+' ill-conditioned system (condition number 2.4e7) agree to eps times the
+' condition number of their largest entry. Curve fit parameters agree to
+' 1e-6; errors and covariances to 1e-4 of their largest entry, because
+' scipy's MINPACK takes a forward-difference Jacobian and FIT a central one.
+
+IMPORT TESTKIT, FIT
+
+DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(fixture_dir$ + "fit_lstsq.tsv") THEN fixture_dir$ = "fixtures/"
+DIM i = 0
+DIM j = 0
+
+FUNC Nums(text_in$)
+    DIM out = []
+    IF LEN(text_in$) = 0 THEN RETURN out
+    DIM pieces = SPLIT(text_in$, ",")
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM piece$ = pieces[k]
+        PUSH(out, VAL(piece$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Rows(flat, rows_n, cols_n)
+    DIM out = []
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO rows_n - 1
+        DIM row = []
+        FOR c = 0 TO cols_n - 1
+            DIM cell = flat[r * cols_n + c]
+            PUSH(row, cell)
+        NEXT c
+        PUSH(out, row)
+    NEXT r
+    RETURN out
+ENDFUNC
+
+FUNC Flat(rows)
+    DIM out = []
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM row = rows[r]
+        FOR c = 0 TO LEN(row) - 1
+            DIM cell = row[c]
+            PUSH(out, cell * 1.0)
+        NEXT c
+    NEXT r
+    RETURN out
+ENDFUNC
+
+' The largest gap between two arrays, relative to each reference value but
+' never measured against less than least.
+FUNC RelGap(got, want, least)
+    IF LEN(got) <> LEN(want) THEN RETURN 1E+300
+    DIM worst = 0.0
+    DIM k = 0
+    FOR k = 0 TO LEN(got) - 1
+        DIM g = got[k]
+        DIM w = want[k]
+        DIM base = ABS(w)
+        IF base < least THEN base = least
+        DIM gap = ABS(g - w) / base
+        IF gap > worst THEN worst = gap
+    NEXT k
+    RETURN worst
+ENDFUNC
+
+' The largest gap between two arrays relative to the largest reference
+' value.
+FUNC ScaledGap(got, want)
+    IF LEN(got) <> LEN(want) THEN RETURN 1E+300
+    DIM worst = 0.0
+    DIM biggest = 0.0
+    DIM k = 0
+    FOR k = 0 TO LEN(got) - 1
+        DIM g = got[k]
+        DIM w = want[k]
+        IF ABS(g - w) > worst THEN worst = ABS(g - w)
+        IF ABS(w) > biggest THEN biggest = ABS(w)
+    NEXT k
+    IF biggest = 0 THEN RETURN worst
+    RETURN worst / biggest
+ENDFUNC
+
+FUNC DataLines(name$)
+    DIM text$ = TXTREADER$(fixture_dir$ + name$)
+    DIM raw = SPLIT(text$, CHR$(10))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(raw) - 1
+        DIM row_text$ = raw[k]
+        row_text$ = REPLACE$(row_text$, CHR$(13), "")
+        IF LEN(row_text$) > 0 ANDALSO LEFT$(row_text$, 1) <> "#" THEN PUSH(out, row_text$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC ExpDecay(t, p)
+    DIM amp = p[0]
+    DIM rate = p[1]
+    DIM offset = p[2]
+    RETURN amp * EXP(-rate * t) + offset
+ENDFUNC
+
+FUNC Gauss(t, p)
+    DIM amp = p[0]
+    DIM mu = p[1]
+    DIM width = p[2]
+    RETURN amp * EXP(-(t - mu) * (t - mu) / (2.0 * width * width))
+ENDFUNC
+
+FUNC Logistic(t, p)
+    DIM top = p[0]
+    DIM rate = p[1]
+    DIM mid = p[2]
+    RETURN top / (1.0 + EXP(-rate * (t - mid)))
+ENDFUNC
+
+FUNC Line2(t, p)
+    DIM slope = p[0]
+    DIM icpt = p[1]
+    RETURN slope * t + icpt
+ENDFUNC
+
+FUNC CubicF(x)
+    RETURN x * x * x - 2.0 * x - 5.0
+ENDFUNC
+
+FUNC CubicD(x)
+    RETURN 3.0 * x * x - 2.0
+ENDFUNC
+
+FUNC CosX(x)
+    RETURN COS(x) - x
+ENDFUNC
+
+FUNC Exp3(x)
+    RETURN EXP(x) - 3.0
+ENDFUNC
+
+FUNC NoRoot(x)
+    RETURN x * x + 1.0
+ENDFUNC
+
+FUNC Parabola(x)
+    RETURN (x - 2.0) * (x - 2.0) + 1.0
+ENDFUNC
+
+FUNC SineF(x)
+    RETURN SIN(x)
+ENDFUNC
+
+FUNC Quartic(x)
+    RETURN x * x * x * x - 3.0 * x * x * x + 2.0
+ENDFUNC
+
+FUNC BrentNoSign(x)
+    RETURN FIT.BRENT(NoRoot@, 0.0, 1.0)
+ENDFUNC
+
+FUNC SecantNoRoot(x)
+    RETURN FIT.NEWTON(NoRoot@, 3.0)
+ENDFUNC
+
+FUNC BadBoundary(x)
+    DIM spl = FIT.SPLINE([1.0, 2.0, 3.0], [1.0, 4.0, 9.0], "periodic")
+    RETURN 0
+ENDFUNC
+
+FUNC FlatKnots(x)
+    DIM spl = FIT.SPLINE([1.0, 1.0, 3.0], [1.0, 4.0, 9.0])
+    RETURN 0
+ENDFUNC
+
+FUNC TooFewPoints(x)
+    DIM r = FIT.CURVEFIT(ExpDecay@, [1.0, 2.0, 3.0], [1.0, 2.0, 3.0], [1.0, 1.0, 1.0])
+    RETURN 0
+ENDFUNC
+
+TESTKIT.SUITE("least squares")
+DIM lstsq_lines = DataLines("fit_lstsq.tsv")
+FOR i = 0 TO LEN(lstsq_lines) - 1
+    DIM ls_line$ = lstsq_lines[i]
+    DIM ls = SPLIT(ls_line$, CHR$(9))
+    DIM ls_name$ = ls[0]
+    DIM ls_m = VAL(ls[1])
+    DIM ls_n = VAL(ls[2])
+    DIM ls_a = Rows(Nums(ls[3]), ls_m, ls_n)
+    DIM ls_b = Nums(ls[4])
+    DIM ls_x = Nums(ls[5])
+    DIM ls_res$ = ls[6]
+    DIM ls_rank = VAL(ls[7])
+    DIM ls_sv = Nums(ls[8])
+    DIM ls_pinv = Nums(ls[9])
+    DIM got = FIT.LSTSQ(ls_a, ls_b)
+    DIM tol = 1E-9
+    IF ls_name$ = "illcond" THEN tol = 1E-7
+    TESTKIT.ISTRUE(RelGap(got{"x"}, ls_x, 1E-12) <= tol, ls_name$ + ": x as numpy.linalg.lstsq")
+    TESTKIT.EQ(CLNG(got{"rank"}), CLNG(ls_rank), ls_name$ + ": rank")
+    TESTKIT.ISTRUE(ScaledGap(got{"singular"}, ls_sv) <= 1E-12, ls_name$ + ": singular values")
+    IF LEN(ls_res$) > 0 THEN
+        DIM ls_rv = Nums(ls_res$)
+        DIM want_res = ls_rv[0]
+        DIM got_res = got{"residual"}
+        TESTKIT.ISTRUE(ABS(got_res - want_res) <= 1E-9 * ABS(want_res) + 1E-14, ls_name$ + ": residual sum")
+    ENDIF
+    DIM got_pinv = FIT.PINV(ls_a)
+    TESTKIT.ISTRUE(ScaledGap(Flat(got_pinv), ls_pinv) <= tol, ls_name$ + ": pinv")
+NEXT i
+
+TESTKIT.SUITE("polynomials")
+DIM poly_lines = DataLines("fit_poly.tsv")
+FOR i = 0 TO LEN(poly_lines) - 1
+    DIM pl_line$ = poly_lines[i]
+    DIM pl = SPLIT(pl_line$, CHR$(9))
+    DIM pl_name$ = pl[0]
+    DIM pl_deg = VAL(pl[1])
+    DIM pl_x = Nums(pl[2])
+    DIM pl_y = Nums(pl[3])
+    DIM pl_w$ = pl[4]
+    DIM pl_c = Nums(pl[5])
+    DIM pl_ex = Nums(pl[6])
+    DIM pl_ey = Nums(pl[7])
+    DIM coeffs = []
+    IF LEN(pl_w$) > 0 THEN
+        coeffs = FIT.POLYFIT(pl_x, pl_y, pl_deg, Nums(pl_w$))
+    ELSE
+        coeffs = FIT.POLYFIT(pl_x, pl_y, pl_deg)
+    ENDIF
+    ' exact3 lies on x^3, so its lower coefficients are rounding noise near
+    ' zero in both implementations.
+    IF pl_name$ = "exact3" THEN
+        TESTKIT.ISTRUE(ScaledGap(coeffs, pl_c) <= 1E-12, pl_name$ + ": coefficients as numpy.polyfit")
+    ELSE
+        TESTKIT.ISTRUE(RelGap(coeffs, pl_c, 1E-6) <= 1E-8, pl_name$ + ": coefficients as numpy.polyfit")
+    ENDIF
+    TESTKIT.ISTRUE(RelGap(FIT.POLYVALS(coeffs, pl_ex), pl_ey, 1E-9) <= 1E-9, pl_name$ + ": POLYVALS")
+NEXT i
+TESTKIT.NEAR(FIT.POLYVAL([2.0, -3.0, 1.0], 4.0), 21.0, 1E-12, "POLYVAL of 2x^2 - 3x + 1 at 4")
+DIM der = FIT.POLYDER([3.0, -2.0, 1.0, 5.0])
+TESTKIT.ISTRUE(RelGap(der, [9.0, -4.0, 1.0], 1.0) <= 0, "POLYDER as numpy.polyder")
+DIM der0 = FIT.POLYDER([7.0])
+TESTKIT.EQ(LEN(der0), 1, "the derivative of a constant is one zero")
+
+TESTKIT.SUITE("curve fits")
+DIM curve_lines = DataLines("fit_curve.tsv")
+FOR i = 0 TO LEN(curve_lines) - 1
+    DIM cv_line$ = curve_lines[i]
+    DIM cv = SPLIT(cv_line$, CHR$(9))
+    DIM cv_name$ = cv[0]
+    DIM cv_model$ = cv[1]
+    DIM cv_x = Nums(cv[2])
+    DIM cv_y = Nums(cv[3])
+    DIM cv_p0 = Nums(cv[4])
+    DIM cv_sig$ = cv[5]
+    DIM cv_p = Nums(cv[6])
+    DIM cv_err = Nums(cv[7])
+    DIM cv_cov = Nums(cv[8])
+    DIM cv_chi = VAL(cv[9])
+    DIM cv_opts AS MAP
+    IF LEN(cv_sig$) > 0 THEN cv_opts{"sigma"} = Nums(cv_sig$)
+    DIM fitted AS MAP
+    IF cv_model$ = "expdecay" THEN fitted = FIT.CURVEFIT(ExpDecay@, cv_x, cv_y, cv_p0, cv_opts)
+    IF cv_model$ = "gauss" THEN fitted = FIT.CURVEFIT(Gauss@, cv_x, cv_y, cv_p0, cv_opts)
+    IF cv_model$ = "logistic" THEN fitted = FIT.CURVEFIT(Logistic@, cv_x, cv_y, cv_p0, cv_opts)
+    TESTKIT.ISTRUE(fitted{"converged"}, cv_name$ + ": converged")
+    TESTKIT.ISTRUE(RelGap(fitted{"params"}, cv_p, 1E-9) <= 1E-6, cv_name$ + ": parameters as curve_fit")
+    TESTKIT.ISTRUE(RelGap(fitted{"errors"}, cv_err, 1E-12) <= 1E-4, cv_name$ + ": parameter errors")
+    TESTKIT.ISTRUE(ScaledGap(Flat(fitted{"cov"}), cv_cov) <= 1E-4, cv_name$ + ": covariance")
+    DIM got_chi = fitted{"chi2"}
+    TESTKIT.ISTRUE(ABS(got_chi - cv_chi) <= 1E-9 * cv_chi, cv_name$ + ": chi square")
+NEXT i
+DIM line_x = [0.0, 1.0, 2.0, 3.0, 4.0]
+DIM line_y = [1.0, 3.0, 5.0, 7.0, 9.0]
+DIM exact = FIT.CURVEFIT(Line2@, line_x, line_y, [0.5, 0.5])
+TESTKIT.ISTRUE(RelGap(exact{"params"}, [2.0, 1.0], 1.0) <= 1E-9, "an exact line is found")
+TESTKIT.THROWS(TooFewPoints@, 0, "as many parameters as points are refused")
+
+TESTKIT.SUITE("interpolation")
+DIM interp_lines = DataLines("fit_interp.tsv")
+DIM ip_line$ = interp_lines[0]
+DIM ip = SPLIT(ip_line$, CHR$(9))
+DIM ip_xp = Nums(ip[0])
+DIM ip_fp = Nums(ip[1])
+DIM ip_x = Nums(ip[2])
+DIM ip_want = Nums(ip[3])
+TESTKIT.ISTRUE(RelGap(FIT.INTERPS(ip_xp, ip_fp, ip_x), ip_want, 1.0) <= 1E-14, "INTERPS as numpy.interp, clamped at both ends")
+TESTKIT.NEAR(FIT.INTERP(ip_xp, ip_fp, 1.5), 7.0, 1E-14, "INTERP halfway between two points")
+
+TESTKIT.SUITE("cubic splines")
+DIM spline_lines = DataLines("fit_spline.tsv")
+FOR i = 0 TO LEN(spline_lines) - 1
+    DIM sp_line$ = spline_lines[i]
+    DIM sp = SPLIT(sp_line$, CHR$(9))
+    DIM sp_name$ = sp[0]
+    DIM sp_bc$ = sp[1]
+    DIM sp_x = Nums(sp[2])
+    DIM sp_y = Nums(sp[3])
+    DIM sp_ex = Nums(sp[4])
+    DIM sp_val = Nums(sp[5])
+    DIM sp_der = Nums(sp[6])
+    DIM sp_coef = Nums(sp[7])
+    DIM spl = FIT.SPLINE(sp_x, sp_y, sp_bc$)
+    DIM label$ = sp_name$ + " " + sp_bc$
+    TESTKIT.ISTRUE(RelGap(FIT.SPLINEVALS(spl, sp_ex), sp_val, 1E-3) <= 1E-10, label$ + ": values as CubicSpline")
+    TESTKIT.ISTRUE(RelGap(FIT.SPLINEDERIVS(spl, sp_ex), sp_der, 1E-3) <= 1E-10, label$ + ": first derivative")
+    DIM own_coef = []
+    DIM c3 = spl{"c3"}
+    DIM c2 = spl{"c2"}
+    DIM c1 = spl{"c1"}
+    DIM c0 = spl{"c0"}
+    FOR j = 0 TO LEN(c0) - 1
+        DIM k3 = c3[j]
+        DIM k2 = c2[j]
+        DIM k1 = c1[j]
+        DIM k0 = c0[j]
+        PUSH(own_coef, k3)
+        PUSH(own_coef, k2)
+        PUSH(own_coef, k1)
+        PUSH(own_coef, k0)
+    NEXT j
+    TESTKIT.ISTRUE(RelGap(own_coef, sp_coef, 1E-3) <= 1E-10, label$ + ": coefficients")
+NEXT i
+DIM two = FIT.SPLINE([0.0, 2.0], [1.0, 5.0])
+TESTKIT.NEAR(FIT.SPLINEVAL(two, 1.5), 4.0, 1E-12, "two points make a straight line")
+TESTKIT.THROWS(BadBoundary@, 0, "an unknown boundary condition is refused")
+TESTKIT.THROWS(FlatKnots@, 0, "x that does not increase is refused")
+
+TESTKIT.SUITE("roots and minima")
+DIM root_lines = DataLines("fit_roots.tsv")
+FOR i = 0 TO LEN(root_lines) - 1
+    DIM rt_line$ = root_lines[i]
+    DIM rt = SPLIT(rt_line$, CHR$(9))
+    DIM rt_kind$ = rt[0]
+    DIM rt_name$ = rt[1]
+    DIM rt_a = VAL(rt[2])
+    DIM rt_b = VAL(rt[3])
+    IF rt_kind$ = "root" THEN
+        DIM rt_x0 = VAL(rt[4])
+        DIM want_brent = VAL(rt[5])
+        DIM want_bisect = VAL(rt[6])
+        DIM want_newton = VAL(rt[7])
+        DIM got_brent = 0.0
+        DIM got_bisect = 0.0
+        DIM got_newton = 0.0
+        IF rt_name$ = "cubic" THEN
+            got_brent = FIT.BRENT(CubicF@, rt_a, rt_b)
+            got_bisect = FIT.BISECT(CubicF@, rt_a, rt_b)
+            got_newton = FIT.NEWTON(CubicF@, rt_x0)
+        ENDIF
+        IF rt_name$ = "cosx" THEN
+            got_brent = FIT.BRENT(CosX@, rt_a, rt_b)
+            got_bisect = FIT.BISECT(CosX@, rt_a, rt_b)
+            got_newton = FIT.NEWTON(CosX@, rt_x0)
+        ENDIF
+        IF rt_name$ = "exp3" THEN
+            got_brent = FIT.BRENT(Exp3@, rt_a, rt_b)
+            got_bisect = FIT.BISECT(Exp3@, rt_a, rt_b)
+            got_newton = FIT.NEWTON(Exp3@, rt_x0)
+        ENDIF
+        TESTKIT.NEAR(got_brent, want_brent, 1E-12, rt_name$ + ": BRENT as brentq")
+        TESTKIT.NEAR(got_bisect, want_bisect, 1E-12, rt_name$ + ": BISECT as bisect")
+        TESTKIT.NEAR(got_newton, want_newton, 1E-12, rt_name$ + ": NEWTON as newton (secant)")
+    ELSE
+        DIM want_x = VAL(rt[5])
+        DIM want_fun = VAL(rt[6])
+        DIM want_nfev = VAL(rt[7])
+        DIM found AS MAP
+        IF rt_name$ = "parabola" THEN found = FIT.MINIMIZE(Parabola@, rt_a, rt_b)
+        IF rt_name$ = "sine" THEN found = FIT.MINIMIZE(SineF@, rt_a, rt_b)
+        IF rt_name$ = "quartic" THEN found = FIT.MINIMIZE(Quartic@, rt_a, rt_b)
+        DIM fx = found{"x"}
+        DIM ff = found{"fun"}
+        TESTKIT.NEAR(fx, want_x, 1E-9, rt_name$ + ": MINIMIZE x as minimize_scalar bounded")
+        TESTKIT.NEAR(ff, want_fun, 1E-12, rt_name$ + ": the value there")
+        TESTKIT.EQ(CLNG(found{"iterations"}), CLNG(want_nfev), rt_name$ + ": with as many evaluations")
+    ENDIF
+NEXT i
+TESTKIT.NEAR(FIT.NEWTONDER(CubicF@, CubicD@, 2.0), 2.0945514815423265, 1E-12, "NEWTONDER with the derivative")
+TESTKIT.THROWS(BrentNoSign@, 0, "BRENT refuses a bracket without a sign change")
+TESTKIT.THROWS(SecantNoRoot@, 0, "NEWTON gives up on a function without a root")
+
+TESTKIT.REPORT()
