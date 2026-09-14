@@ -1194,7 +1194,7 @@ The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Stan
 * **`OS.HOSTNAME$() -> STRING"`**: Returns the network hostname of the local machine.
 * **`OS.IP$() -> STRING`**: Returns the primary local IPv4 address of the machine.
 * **`OS.LOAD() -> Number`**: Returns the current system-wide CPU load as a percentage (0.0 to 100.0). Accuracy and behavior are OS-dependent.
-* **`OS.FEATURE(name$) -> BOOLEAN`**: Returns `TRUE` when the running binary advertises the named build feature, `FALSE` otherwise. Useful to gate code paths the current backend cannot run - for example, programs that should skip reactive variables or `EXECUTE`/`EVAL` blocks when running from a natively compiled `.exe`. Recognised feature names: `"NATIVEC"` (running from `--compile` output), `"INTERPRETER"` (running in the VM), `"COM"`, `"HTTP"`, `"SERIAL"`, `"GFX"`, `"IMGUI"`, `"LLM"`, `"ONNX"`, `"SQLITE"`, `"PYTHON"`, `"LLVMC"` (compiler available). Unknown names return `FALSE`.
+* **`OS.FEATURE(name$) -> BOOLEAN`**: Returns `TRUE` when the running binary advertises the named build feature, `FALSE` otherwise. Useful to gate code paths the current backend cannot run - for example, programs that should skip reactive variables or `EXECUTE`/`EVAL` blocks when running from a natively compiled `.exe`. Recognised feature names: `"NATIVEC"` (running from `--compile` output), `"INTERPRETER"` (running in the VM), `"COM"`, `"HTTP"`, `"NET"`, `"SERIAL"`, `"GFX"`, `"IMGUI"`, `"LLM"`, `"ONNX"`, `"SQLITE"`, `"PYTHON"`, `"LLVMC"` (compiler available). Unknown names return `FALSE`.
 
     ```basic
     IF NOT OS.FEATURE("NATIVEC") THEN
@@ -2042,7 +2042,7 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 
 ### TCP and UDP Sockets (NET)
 
-Raw sockets for protocols that are not HTTP: line protocols, game servers, device control, broadcasts. Part of every desktop build, no flag needed.
+Raw sockets for protocols that are not HTTP: line protocols, game servers, device control, broadcasts. Available when built with the `NET` flag; `OS.FEATURE("NET")` checks it. The unit needs no external library.
 
 A socket is an integer handle, `0` means the call failed and `NET.ERROR$()` says why. Every call that waits takes `timeout_ms`; `-1` waits until something happens. Strings carry bytes, so `CHR$(0)` and binary payloads pass unchanged. IPv4 and IPv6 host names both resolve.
 

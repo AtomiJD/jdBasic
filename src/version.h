@@ -29,6 +29,10 @@ inline std::string jdbasic_features() {
     if (!f.empty()) f += ", ";
     f += "HTTP";
 #endif
+#ifdef NET
+    if (!f.empty()) f += ", ";
+    f += "NET";
+#endif
 #ifdef USE_SERIAL
     if (!f.empty()) f += ", ";
     f += "Serial";

@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM build_vibe.bat - Vibe-Game-Pack release bundle for Windows.
-REM Wraps build.bat GFX IMGUI HTTP MCPSERVER SQLITE FX RELEASE, then REFRESHES the
+REM Wraps build.bat GFX IMGUI HTTP NET MCPSERVER SQLITE FX RELEASE, then REFRESHES the
 REM redistributable bundle in release\ in place: the binary, the SDL3 / OpenSSL
 REM DLLs, the runtime docs and BUILD_INFO.txt are regenerated, while the curated
 REM content (games\, run-*.bat, start-claude.bat, QUICKSTART.md, setup_guide.md,
@@ -18,8 +18,8 @@ set BUNDLE=jdbasic-vibe-game-pack-windows-x64
 set OUT=release\%BUNDLE%
 set ZIP=release\%BUNDLE%.zip
 
-echo === build_vibe: compile [GFX IMGUI HTTP MCPSERVER SQLITE FX RELEASE] ===
-call .\build.bat GFX IMGUI HTTP MCPSERVER SQLITE FX RELEASE
+echo === build_vibe: compile [GFX IMGUI HTTP NET MCPSERVER SQLITE FX RELEASE] ===
+call .\build.bat GFX IMGUI HTTP NET MCPSERVER SQLITE FX RELEASE
 if errorlevel 1 (
     echo BUILD FAILED - bundle not refreshed.
     exit /b 1

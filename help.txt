@@ -2454,7 +2454,7 @@ Returns the current system-wide CPU load percentage (0.0 - 100.0).
 Syntax: OS.FEATURE(name$) -> BOOLEAN
 Description: TRUE iff the running binary advertises the named build feature.
 Use to gate VM-only paths in programs that may run from a --compile'd .exe.
-Names: NATIVEC, INTERPRETER, COM, HTTP, SERIAL, GFX, IMGUI, LLM, ONNX, LLVMC.
+Names: NATIVEC, INTERPRETER, COM, HTTP, NET, SERIAL, GFX, IMGUI, LLM, ONNX, LLVMC.
 Example: IF NOT OS.FEATURE("NATIVEC") THEN ... ENDIF
 
 [OS.SCREENSHOT]

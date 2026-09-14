@@ -49,6 +49,11 @@ for %%A in (%*) do (
             echo [+] HTTP
         )
     )
+    if /I "%%A"=="NET" (
+        set DEFS=!DEFS! /DNET
+        set EXTRA_SRC=!EXTRA_SRC! src\net.cpp
+        echo [+] NET
+    )
     if /I "%%A"=="GFX" (
         if defined HEADLESS (
             echo [skip] GFX ignored in HEADLESS build
@@ -237,7 +242,7 @@ REM /MP32: full parallel compile (32 threads, ample RAM); see build.bat.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\midi.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\net.cpp src\pcode.cpp src\jdb_embed_api.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp !EXTRA_SRC! ^
+  src\vm_bridge.cpp src\vm.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\midi.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\pcode.cpp src\jdb_embed_api.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp !EXTRA_SRC! ^
   /Fe:build\jdbrt.dll ^
   /Fo:build\ ^
   /link ^

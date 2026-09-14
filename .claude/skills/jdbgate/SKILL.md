@@ -16,11 +16,11 @@ Build only if `src/` is newer than `build/jdBasic.exe` or `build/jdbrt.dll`. Ski
 If a build is needed:
 
 ```bash
-./build.bat HTTP GFX IMGUI NATIVEC 2>&1 | tail -10
-./build_rt.bat HTTP GFX IMGUI NATIVEC 2>&1 | tail -3
+./build.bat HTTP NET GFX IMGUI NATIVEC 2>&1 | tail -10
+./build_rt.bat HTTP NET GFX IMGUI NATIVEC 2>&1 | tail -3
 ```
 
-Both must end with `BUILD OK`. **Always all four flags together** - dropping HTTP silently skips the HTTP slice in the test suites; dropping IMGUI strips SCREEN/RECT/SPRITE from the runtime DLL; dropping NATIVEC means `-c` won't compile.
+Both must end with `BUILD OK`. **Always all five flags together** - dropping HTTP silently skips the HTTP slice in the test suites; dropping NET turns `tests/net/net_test.jdb` red in the parity sweep; dropping IMGUI strips SCREEN/RECT/SPRITE from the runtime DLL; dropping NATIVEC means `-c` won't compile.
 
 If build fails with `LNK1104: cannot open file 'build\jdBasic.exe'`, kill the stale process directly (no need to ask): `taskkill //F //IM jdBasic.exe` - then retry the build.
 
@@ -40,7 +40,7 @@ Run this **before Step 1, every time**, build or no build:
 FEAT=$(./build/jdBasic.exe --version 2>&1 | sed -n 's/^Features: *//p')
 echo "Features: $FEAT"
 MISSING=""
-for f in HTTP GFX ImGui NativeC; do
+for f in HTTP NET GFX ImGui NativeC; do
   case ",${FEAT// /}," in *",$f,"*) ;; *) MISSING="$MISSING $f" ;; esac
 done
 if [ -n "$MISSING" ]; then

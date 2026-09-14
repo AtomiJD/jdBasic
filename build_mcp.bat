@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM build_mcp.bat - Core MCP release bundle for Windows.
-REM Wraps build.bat MCPSERVER HTTP RELEASE, then assembles a redistributable
+REM Wraps build.bat MCPSERVER HTTP NET RELEASE, then assembles a redistributable
 REM zip in release\. Full build (NATIVEC/GFX/IMGUI) uses build.bat directly.
 
 REM Make the script robust against being called from any working directory.
@@ -12,8 +12,8 @@ set BUNDLE=jdbasic-core-windows-x64
 set OUT=release\%BUNDLE%
 set ZIP=release\%BUNDLE%.zip
 
-echo === build_mcp: compile (MCPSERVER HTTP RELEASE) ===
-call .\build.bat MCPSERVER HTTP RELEASE
+echo === build_mcp: compile (MCPSERVER HTTP NET RELEASE) ===
+call .\build.bat MCPSERVER HTTP NET RELEASE
 if errorlevel 1 (
     echo BUILD FAILED - bundle not assembled.
     exit /b 1

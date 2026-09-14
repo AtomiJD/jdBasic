@@ -27,7 +27,9 @@
 #ifdef HTTP
 #include "http.h"
 #endif
+#ifdef NET
 #include "net.h"
+#endif
 
 // Where jdbrt.dll lives, so explicit LLM backend loads can find ggml-*.dll
 // next to our runtime. Defined here (always compiled into jdbrt) rather than
@@ -427,8 +429,10 @@ void setup(JdbEmbedImpl* e) {
     // fetch/serve over the network.
     ::register_http_builtins(e->vm);
 #endif
+#ifdef NET
     // NET.* raw TCP and UDP sockets.
     ::register_net_builtins(e->vm);
+#endif
 }
 
 char* dup_cstr(const std::string& s) {

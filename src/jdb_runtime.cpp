@@ -304,6 +304,9 @@ int64_t jdb_os_feature(const char* name) {
 #ifdef HTTP
     if (strcmp(up, "HTTP")        == 0) return 1;
 #endif
+#ifdef NET
+    if (strcmp(up, "NET")         == 0) return 1;
+#endif
 #ifdef COM
     if (strcmp(up, "COM")         == 0) return 1;
 #endif

@@ -8673,6 +8673,9 @@ void VM::register_builtins() {
 #ifdef HTTP
         if (name == "HTTP") on = true;
 #endif
+#ifdef NET
+        if (name == "NET") on = true;
+#endif
 #ifdef USE_SERIAL
         if (name == "SERIAL") on = true;
 #endif

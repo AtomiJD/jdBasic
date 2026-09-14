@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM build_vb6.bat - VB6-style desktop release bundle for Windows.
-REM Wraps build.bat MCPSERVER HTTP GFX IMGUI COM FORMS SQLITE RELEASE, then
+REM Wraps build.bat MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE RELEASE, then
 REM assembles a redistributable zip in release\. Ships native Win32 forms
 REM (FORM.*), COM automation, embedded SQLite and the MCP server. No NATIVEC -
 REM scripts run interpreted, so there is no jdbrt.dll in this pack.
@@ -14,8 +14,8 @@ set BUNDLE=jdbasic-vb6-windows-x64
 set OUT=release\%BUNDLE%
 set ZIP=release\%BUNDLE%.zip
 
-echo === build_vb6: compile EXE (MCPSERVER HTTP GFX IMGUI COM FORMS SQLITE RELEASE) ===
-call .\build.bat MCPSERVER HTTP GFX IMGUI COM FORMS SQLITE RELEASE
+echo === build_vb6: compile EXE (MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE RELEASE) ===
+call .\build.bat MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE RELEASE
 if errorlevel 1 (
     echo EXE BUILD FAILED - bundle not assembled.
     exit /b 1

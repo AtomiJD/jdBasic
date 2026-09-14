@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM build_mcp_native.bat - MCP-native release bundle for Windows.
-REM Wraps build.bat MCPSERVER HTTP NATIVEC RELEASE, then assembles a
+REM Wraps build.bat MCPSERVER HTTP NET NATIVEC RELEASE, then assembles a
 REM redistributable zip in release\. Includes the LLVM-18 native
 REM backend so jdb_run_native -c can produce EXEs out of the box.
 
@@ -13,8 +13,8 @@ set BUNDLE=jdbasic-mcp-native-windows-x64
 set OUT=release\%BUNDLE%
 set ZIP=release\%BUNDLE%.zip
 
-echo === build_mcp_native: compile EXE (MCPSERVER HTTP GFX IMGUI NATIVEC RELEASE) ===
-call .\build.bat MCPSERVER HTTP GFX IMGUI NATIVEC RELEASE
+echo === build_mcp_native: compile EXE (MCPSERVER HTTP NET GFX IMGUI NATIVEC RELEASE) ===
+call .\build.bat MCPSERVER HTTP NET GFX IMGUI NATIVEC RELEASE
 if errorlevel 1 (
     echo EXE BUILD FAILED - bundle not assembled.
     exit /b 1
@@ -25,8 +25,8 @@ if not exist build\jdBasic.exe (
 )
 
 echo.
-echo === build_mcp_native: build runtime DLL (GFX IMGUI) ===
-call .\build_rt.bat GFX IMGUI
+echo === build_mcp_native: build runtime DLL (NET GFX IMGUI) ===
+call .\build_rt.bat NET GFX IMGUI
 if errorlevel 1 (
     echo RT BUILD FAILED - bundle not assembled.
     exit /b 1

@@ -52,6 +52,7 @@ if [ "$(uname -s)" = "Darwin" ]; then
 fi
 
 WANT_HTTP=${HTTP:-1}
+WANT_NET=${NET:-1}
 WANT_GFX=${GFX:-1}
 WANT_IMGUI=${IMGUI:-0}
 WANT_LLM=${LLM:-0}
@@ -101,6 +102,12 @@ if [ "$WANT_HTTP" = "1" ]; then
     HTTP_SRC="src/http.cpp"
 else
     HTTP_SRC=""
+fi
+
+NET_SRC=""
+if [ "$WANT_NET" = "1" ]; then
+    CXXFLAGS="$CXXFLAGS -DNET"
+    NET_SRC="src/net.cpp"
 fi
 
 GFX_SRC=""
@@ -284,9 +291,9 @@ fi
 
 SRC="src/main.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp src/audio_fx.cpp src/midi.cpp src/audio_io.cpp \
-     src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp src/net.cpp \
+     src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
      src/numerics.cpp src/screencap.cpp src/pybridge.cpp src/pcode.cpp \
-     $HTTP_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC $MIDI_SRC"
+     $HTTP_SRC $NET_SRC $GFX_SRC $IMGUI_SRC $NATIVEC_SRC $MCPSERVER_SRC $SQL_SRC $FTXUI_SRC $TUI_SRC $MIDI_SRC"
 
 # ── Compile in parallel ──────────────────────────────────────
 # Map src/foo.cpp → build/obj/foo.o, libs/imgui/imgui.cpp → build/obj/imgui.o.
@@ -318,6 +325,7 @@ done
 
 features="console"
 [ "$WANT_HTTP"  = "1" ] && features="$features+HTTP"
+[ "$WANT_NET"   = "1" ] && features="$features+NET"
 [ "$WANT_GFX"   = "1" ] && features="$features+GFX"
 [ "$WANT_IMGUI" = "1" ] && features="$features+IMGUI"
 [ "$WANT_LLM"     = "1" ] && features="$features+LLM"
@@ -372,9 +380,9 @@ if [ "$WANT_NATIVEC" = "1" ]; then
     RT_SRC="src/vm_bridge.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
             src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
             src/audio_fx.cpp src/midi.cpp src/audio_io.cpp src/pybridge.cpp \
-            src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp src/net.cpp \
+            src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \
             src/numerics.cpp src/screencap.cpp src/pcode.cpp \
-            $HTTP_SRC $GFX_SRC $IMGUI_SRC $TUI_SRC $SQL_SRC"
+            $HTTP_SRC $NET_SRC $GFX_SRC $IMGUI_SRC $TUI_SRC $SQL_SRC"
     RT_FLAGS_HASH=$(echo "$CXX $CXXFLAGS -fPIC -DJDRT_EXPORTS" | sha1sum | cut -c1-12)
     RT_STAMP="build/obj_pic/.flags-$RT_FLAGS_HASH"
     if [ ! -f "$RT_STAMP" ]; then
