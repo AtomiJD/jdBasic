@@ -334,16 +334,20 @@ bridges/    - optional native bridges (SQLite, Python, ...)
 embed/      - Godot GDExtension (jdb_godot) that embeds the VM in Godot 4
 embedded/   - the microcontroller ports: RP2350/PicoCalc, ESP32-S3, bare metal
 godot/      - Godot projects: rpg-native (LLM RPG), audioviz, livecoder, jd-one
+lib/        - the module library, written in jdBasic (TESTKIT, DF, DB, JDWEB, ...) - lib/README.md
 jdb/        - example .jdb programs - start at the sample gallery, jdb/README.md
 fluppi/     - "Vallys Reise", a complete top-down RPG written in jdBasic
 doc/        - documentation (see the table above) and doc/img/ screenshots
 tests/      - regression suite; tests/gate/ holds the pre-commit gate suites
+selfhost/   - jdbc, the jdBasic compiler written in jdBasic (tokens, parse tree, LLVM IR)
+dataset/    - verified STRICT example sources for training and checking coding models
 modules/    - modules that IMPORT finds by name from the working directory
 resources/  - icon, manifest, version info, the bundled TTF fonts
 tools/      - auxiliary scripts
 wasm/       - the browser build behind jdbasic.org/live
 vscode_extension/ - VS Code extension (.vsix) and install instructions
-libs/       - third-party libraries (not in git, see doc/BUILD.md)
+release/    - release bundles built by build_mcp.bat and friends (archives not in git)
+libs/       - vendored third-party sources (Eigen, FTXUI, miniaudio, RtMidi); SDL3, LLVM and the rest per doc/BUILD.md
 build/      - compile output (not in git)
 ```
 
