@@ -149,10 +149,16 @@ static bool apply_rich_response(const Value& result, RespT& res) {
 
     if (Value* headers_v = obj->get("__http_headers")) {
         if (headers_v->type == ValueType::OBJECT && headers_v->as_object()) {
+            auto text_of = [](const Value& v) {
+                return v.type == ValueType::STRING ? v.as_string()->data : v.to_string();
+            };
+            // An array value sends one header line per element (several Set-Cookie).
             for (auto& [k, v] : headers_v->as_object()->fields) {
-                res.set_header(k, v.type == ValueType::STRING
-                                       ? v.as_string()->data
-                                       : v.to_string());
+                if (v.type == ValueType::ARRAY && v.as_array()) {
+                    for (auto& each : v.as_array()->elements) res.set_header(k, text_of(each));
+                } else {
+                    res.set_header(k, text_of(v));
+                }
             }
         }
     }
@@ -196,8 +202,22 @@ static Value response_to_map(const RespT& res) {
     Value m = Value::make_object();
     m.as_object()->set("status", Value::make_i64(res->status));
     m.as_object()->set("body", Value::make_string(res->body));
+    // A header name that arrives more than once (Set-Cookie) maps to an
+    // array of its values in arrival order.
     Value hdrs = Value::make_object();
-    for (auto& [k, v] : res->headers) hdrs.as_object()->set(k, Value::make_string(v));
+    for (auto& [k, v] : res->headers) {
+        Value* have = hdrs.as_object()->get(k);
+        if (!have) {
+            hdrs.as_object()->set(k, Value::make_string(v));
+        } else if (have->type == ValueType::ARRAY) {
+            have->as_array()->elements.push_back(Value::make_string(v));
+        } else {
+            Value both = Value::make_array();
+            both.as_array()->elements.push_back(*have);
+            both.as_array()->elements.push_back(Value::make_string(v));
+            hdrs.as_object()->set(k, std::move(both));
+        }
+    }
     m.as_object()->set("headers", std::move(hdrs));
     return m;
 }

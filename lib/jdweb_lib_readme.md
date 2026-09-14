@@ -88,7 +88,7 @@ and an `Allow` header naming them.
 |------|--------------|
 | `REPLY(body$, [status], [content_type$])` | A response (200, `text/html; charset=utf-8`). |
 | `REPLY_JSON(value, [status])` | A value sent as JSON (200). |
-| `HEADER(response, name$, value$)` | A copy of the response with one more header. |
+| `HEADER(response, name$, value$)` | A copy of the response with one more header. Another `Set-Cookie` is added beside the ones already there (the value becomes an array and the server sends one line each), so a handler's own cookie and the session cookie both arrive; any other name replaces its value. |
 | `REDIRECT_TO(loc$)` | A 302 to another path. |
 | `UNAUTH()` | A 401 with a JSON error. |
 
@@ -109,7 +109,7 @@ and an `Allow` header naming them.
 | `MOUNT()` | Only puts the routes on the server (through `HTTP.SERVER.ON_NOTFOUND`), for a program that starts the server itself. |
 | `DISPATCH(request)` | The answer to one request map, as MOUNT uses it. |
 | `FETCH(port, method$, path$, [body$], [headers])` | A request to the app running in this process: a map with `status`, `body` and `headers` (lower-case names). `headers` is a map; a `Content-Type` among them sets the body's type (JSON by default). |
-| `COOKIE_OF$(response, name$)` | The value a FETCH response sets for a cookie, or `""`. |
+| `COOKIE_OF$(response, name$)` | The value a FETCH response sets for a cookie, or `""`; it looks through every `Set-Cookie` the response carries. |
 
 ### Pages and login
 

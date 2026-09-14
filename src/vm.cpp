@@ -3,6 +3,7 @@
 #include "errors.h"
 #include "channels.h"
 #include "file_streams.h"
+#include "jdb_crypto.h"
 #include <clocale>
 #include <locale>
 #ifdef COM
@@ -875,7 +876,8 @@ bool jdb_no_vectorize(const std::string& name) {
         "CHAN.OPEN", "CHAN.RECV", "CHAN.SEND", "CHUNK", "CIRCLE",
         "CIRCLE_SECTOR", "CLEAR_RECUR", "CLIPBOARD.GET$", "CLIPBOARD.SET",
         "CLS", "CODEC.BASE64_DECODE$", "CODEC.BASE64_ENCODE$",
-        "CODEC.CRC32$", "CODEC.HMAC$", "CODEC.SHA256$", "CODEC.UUID$",
+        "CODEC.CRC32$", "CODEC.HMAC$", "CODEC.PBKDF2$", "CODEC.RANDOMBYTES$",
+        "CODEC.SHA256$", "CODEC.UUID$",
         "COLOR", "CONVOLVE",
         "COPYV",
         "COUNT", "CROSS", "CSVHEADER", "CSVREADER", "CSVWRITER", "CUMPROD",
@@ -8463,6 +8465,22 @@ void VM::register_builtins() {
                                                   args[1].as_string()->data));
     });
 
+    register_native("CODEC.PBKDF2$", 4, 4, [](const std::vector<Value>& args) -> Value {
+        const std::string& password = args[0].as_string()->data;
+        const std::string& salt = args[1].as_string()->data;
+        int64_t iterations = args[2].to_int();
+        int64_t n_bytes = args[3].to_int();
+        if (iterations < 1)
+            throw std::runtime_error("CODEC.PBKDF2$: iterations must be at least 1");
+        if (n_bytes < 1 || n_bytes > jdb_crypto::PBKDF2_BYTES_MAX)
+            throw std::runtime_error("CODEC.PBKDF2$: bytes must be between 1 and 65536");
+        std::vector<uint8_t> key((size_t)n_bytes);
+        jdb_crypto::pbkdf2_hmac_sha256((const uint8_t*)password.data(), password.size(),
+                                       (const uint8_t*)salt.data(), salt.size(),
+                                       (uint64_t)iterations, key.data(), key.size());
+        return Value::make_string(bytes_to_hex(key.data(), key.size()));
+    });
+
     // ── ZIP archives ────────────────────────────────────────
 
     register_native("ZIP.WRITE", 2, 2, [](const std::vector<Value>& args) -> Value {
@@ -8500,25 +8518,22 @@ void VM::register_builtins() {
 #ifndef JDB_LEAN
     register_native("CODEC.UUID$", 0, -1, [](const std::vector<Value>& args) -> Value {
         (void)args;
-        // Use a properly seeded std::mt19937. The previous implementation
-        // used ungeseeded rand() so the first ~16 UUIDs after process start
-        // were deterministic across runs (the famous RFC-4122 example UUID
-        // came out first every time).
-        static std::mt19937_64 rng{std::random_device{}()};
-        auto rb = [&]() -> uint8_t {
-            return (uint8_t)(rng() & 0xFF);
-        };
         uint8_t bytes[16];
-        for (int i = 0; i < 16; i++) bytes[i] = rb();
-        bytes[6] = (bytes[6] & 0x0F) | 0x40; // version 4
-        bytes[8] = (bytes[8] & 0x3F) | 0x80; // variant 1
+        if (!jdb_crypto::random_bytes(bytes, sizeof(bytes)))
+            throw std::runtime_error("CODEC.UUID$: the system random source failed");
         char buf[37];
-        snprintf(buf, sizeof(buf),
-            "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-            bytes[0],bytes[1],bytes[2],bytes[3], bytes[4],bytes[5],
-            bytes[6],bytes[7], bytes[8],bytes[9],
-            bytes[10],bytes[11],bytes[12],bytes[13],bytes[14],bytes[15]);
+        jdb_crypto::uuid4_format(bytes, buf);
         return Value::make_string(buf);
+    });
+
+    register_native("CODEC.RANDOMBYTES$", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t n = args[0].to_int();
+        if (n < 0 || n > jdb_crypto::RANDOM_BYTES_MAX)
+            throw std::runtime_error("CODEC.RANDOMBYTES$: count must be between 0 and 1048576");
+        std::string out((size_t)n, '\0');
+        if (n > 0 && !jdb_crypto::random_bytes((uint8_t*)&out[0], out.size()))
+            throw std::runtime_error("CODEC.RANDOMBYTES$: the system random source failed");
+        return Value::make_string(std::move(out));
     });
 #endif
 

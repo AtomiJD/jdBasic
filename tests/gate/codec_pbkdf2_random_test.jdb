@@ -1,0 +1,92 @@
+' CODEC.PBKDF2$ against Python hashlib.pbkdf2_hmac("sha256", ...) vectors,
+' CODEC.RANDOMBYTES$ for length, variation and binary safety, and
+' CODEC.UUID$ for the version 4 layout.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+Check("password salt c=1", CODEC.PBKDF2$("password", "salt", 1, 32), "120fb6cffcf8b32c43e7225256c4f837a86548c92ccc35480805987cb70be17b")
+Check("password salt c=2", CODEC.PBKDF2$("password", "salt", 2, 32), "ae4d0c95af6b46d32d0adff928f06dd02a303f8ef3c251dfd6e2d85a95474c43")
+Check("password salt c=4096", CODEC.PBKDF2$("password", "salt", 4096, 32), "c5e478d59288c841aa530db6845c4c8d962893a001ce4e11a4963873aa98134a")
+Check("rfc 7914 c=1 two blocks", CODEC.PBKDF2$("passwd", "salt", 1, 64), "55ac046e56e3089fec1691c22544b605f94185216dde0465e68b9d57c20dacbc49ca9cccf179b645991664b39d77ef317c71b845b1e30bd509112041d3a19783")
+Check("rfc 7914 c=80000", CODEC.PBKDF2$("Password", "NaCl", 80000, 64), "4ddcd8f60b98be21830cee5ef22701f9641a4418d04c0414aeff08876b34ab56a1d425a1225833549adb841b51c9b3176a272bdebba1d078478f62b397f33c8d")
+Check("long salt, 40 bytes", CODEC.PBKDF2$("passwordPASSWORDpassword", "saltSALTsaltSALTsaltSALTsaltSALTsalt", 4096, 40), "348c89dbcbd32b2f32d814b8116e84cf2b17347ebc1800181c4e2a1fb8dd53e1c635518c7dac47e9")
+Check("empty password", CODEC.PBKDF2$("", "salt", 1, 16), "f135c27993baf98773c5cdb40a5706ce")
+Check("empty salt, 33 bytes", CODEC.PBKDF2$("pw", "", 3, 33), "72508a5bfcf14df34dcfcfd2a123ace17fbca71efd70a2a72a82275d270fbf67b3")
+Check("password longer than a block", CODEC.PBKDF2$(REPEAT$("x", 100), "long key", 10, 7), "daef0c88872e24")
+
+DIM pw_nul$ = "pass" + CHR$(0) + "word"
+DIM salt_nul$ = "sa" + CHR$(0) + "lt"
+Check("NUL bytes are data", CODEC.PBKDF2$(pw_nul$, salt_nul$, 4096, 16), "89b69d0516f829893c696226650a8687")
+
+DIM refused AS INTEGER = 0
+TRY
+    DIM zero_iter$ = CODEC.PBKDF2$("a", "b", 0, 32)
+CATCH
+    refused = refused + 1
+ENDTRY
+TRY
+    DIM no_bytes$ = CODEC.PBKDF2$("a", "b", 1, 0)
+CATCH
+    refused = refused + 1
+ENDTRY
+Check("zero iterations and zero bytes are refused", STR$(refused), "2")
+
+DIM r32$ = CODEC.RANDOMBYTES$(32)
+Check("RANDOMBYTES$ length", STR$(LEN(r32$)), "32")
+Check("RANDOMBYTES$ of zero", STR$(LEN(CODEC.RANDOMBYTES$(0))), "0")
+DIM other$ = CODEC.RANDOMBYTES$(32)
+IF r32$ = other$ THEN
+    failed = failed + 1
+    PRINT "FAIL two draws of 32 bytes are equal"
+ELSE
+    passed = passed + 1
+ENDIF
+
+' 4096 random bytes hold a NUL with a probability of 1 - 1e-7.
+DIM big$ = CODEC.RANDOMBYTES$(4096)
+Check("4096 bytes keep their length", STR$(LEN(big$)), "4096")
+IF INSTR(big$, CHR$(0)) >= 0 THEN
+    passed = passed + 1
+ELSE
+    failed = failed + 1
+    PRINT "FAIL no NUL in 4096 random bytes"
+ENDIF
+Check("a hash of the bytes sees all of them", STR$(LEN(CODEC.SHA256$(big$))), "64")
+
+refused = 0
+TRY
+    DIM negative$ = CODEC.RANDOMBYTES$(-1)
+CATCH
+    refused = refused + 1
+ENDTRY
+Check("a negative count is refused", STR$(refused), "1")
+
+DIM u$ = CODEC.UUID$()
+Check("UUID length", STR$(LEN(u$)), "36")
+Check("UUID dashes", MID$(u$, 8, 1) + MID$(u$, 13, 1) + MID$(u$, 18, 1) + MID$(u$, 23, 1), "----")
+Check("UUID version", MID$(u$, 14, 1), "4")
+IF INSTR("89ab", MID$(u$, 19, 1)) >= 0 THEN
+    passed = passed + 1
+ELSE
+    failed = failed + 1
+    PRINT "FAIL UUID variant " + u$
+ENDIF
+
+PRINT ""
+PRINT "CODEC PBKDF2 RANDOM TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

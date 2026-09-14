@@ -578,13 +578,21 @@ Description: Returns the CRC-32 checksum of a string as an 8-char hex string (th
 Syntax: CODEC.HMAC$(key$, message$, [algo$])
 Description: Returns the HMAC of message$ under key$ as a 64-char hex string. Only "SHA256" (the default) is supported. Binary safe.
 
+[CODEC.PBKDF2$]
+Syntax: CODEC.PBKDF2$(password$, salt$, iterations, bytes)
+Description: Derives a key of bytes length (1 to 65536) from password$ and salt$ with PBKDF2-HMAC-SHA256 (RFC 8018) and returns it as hex. Binary safe.
+
+[CODEC.RANDOMBYTES$]
+Syntax: CODEC.RANDOMBYTES$(n)
+Description: Returns n (0 to 1048576) raw bytes from the operating system's secure random source. Not on boards.
+
 [CODEC.SHA256$]
 Syntax: CODEC.SHA256$(string$)
 Description: Returns the SHA256 hash of a string (64-char hex).
 
 [CODEC.UUID$]
 Syntax: CODEC.UUID$()
-Description: Generates a random Version 4 UUID.
+Description: Generates a random Version 4 UUID from the secure random source.
 
 [COLOR]
 Syntax: COLOR foreground, background

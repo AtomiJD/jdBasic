@@ -100,6 +100,14 @@ FUNC HeaderOf$(response, name$)
     RETURN v$
 ENDFUNC
 
+FUNC Themed(request)
+    DIM sess = JDWEB.SESSION(request)
+    sess{"theme"} = "dark"
+    DIM answer = JDWEB.REPLY("themed", 200, "text/plain")
+    RETURN JDWEB.HEADER(answer, "Set-Cookie", "theme=dark; Path=/")
+ENDFUNC
+
+JDWEB.GET("/themed", Themed@)
 JDWEB.GET("/users/:id", ShowUser@)
 JDWEB.POST("/users", CreateUser@)
 JDWEB.DELETE("/users/:id", DeleteUser@)
@@ -125,6 +133,17 @@ DIM with_header = JDWEB.HEADER(reply, "X-One", "1")
 DIM wh = with_header{"__http_headers"}
 TESTKIT.EQ(wh{"X-One"}, "1", "HEADER adds a header")
 TESTKIT.EQ(with_header{"__http_body"}, "hi", "to a copy that keeps the body")
+DIM one_cookie = JDWEB.HEADER(reply, "Set-Cookie", "a=1")
+DIM two_cookies = JDWEB.HEADER(one_cookie, "set-cookie", "b=2")
+DIM tch = two_cookies{"__http_headers"}
+DIM both_cookies = tch{"Set-Cookie"}
+TESTKIT.EQ(TYPEOF(both_cookies), "ARRAY", "a second Set-Cookie is added beside the first")
+TESTKIT.EQ(LEN(both_cookies), 2, "so both are sent")
+DIM second_cookie$ = both_cookies[1]
+TESTKIT.EQ(second_cookie$, "b=2", "in the order they were added")
+DIM replaced = JDWEB.HEADER(with_header, "X-One", "2")
+DIM rh = replaced{"__http_headers"}
+TESTKIT.EQ(rh{"X-One"}, "2", "any other header name is replaced")
 DIM js = JDWEB.REPLY_JSON({"a": 1}, 201)
 TESTKIT.EQ(js{"__http_body"}, "{" + Q$ + "a" + Q$ + ":1}", "REPLY_JSON writes the value as JSON")
 TESTKIT.EQ(js{"__http_status"}, 201, "with its status")
@@ -226,6 +245,10 @@ IF gServed THEN
     r = JDWEB.FETCH(PORT, "GET", "/count", "", jar)
     counted = JSON.PARSE$(r{"body"})
     TESTKIT.EQ(counted{"count"}, 1, "and forgets the session")
+    r = JDWEB.FETCH(PORT, "GET", "/themed")
+    TESTKIT.EQ(r{"body"}, "themed", "a route that sets a cookie of its own in a new session")
+    TESTKIT.EQ(JDWEB.COOKIE_OF$(r, "theme"), "dark", "sends its cookie")
+    TESTKIT.ISTRUE(LEN(JDWEB.COOKIE_OF$(r, "jdwsid")) > 10, "and the session cookie beside it")
 
     TESTKIT.SUITE("static files")
     r = JDWEB.FETCH(PORT, "GET", "/static/hello.txt")

@@ -15,6 +15,7 @@
 
 #include "jdb_tags.h"
 #include "jdb_encoding.h"
+#include "jdb_crypto.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -3919,12 +3920,30 @@ char* jdb_base64_decode(const char* input) {
 }
 
 char* jdb_uuid() {
-    char buf[40];
-    auto r4 = []() -> uint16_t { return (uint16_t)(rand() & 0xFFFF); };
-    snprintf(buf, sizeof(buf), "%04x%04x-%04x-%04x-%04x-%04x%04x%04x",
-        r4(), r4(), r4(), (r4() & 0x0FFF) | 0x4000,
-        (r4() & 0x3FFF) | 0x8000, r4(), r4(), r4());
+    uint8_t bytes[16];
+    if (!jdb_crypto::random_bytes(bytes, sizeof(bytes))) {
+        jdb_err_set("CODEC.UUID$: the system random source failed", 5);
+        return _strdup("");
+    }
+    char buf[37];
+    jdb_crypto::uuid4_format(bytes, buf);
     return _strdup(buf);
+}
+
+char* jdb_randombytes(int64_t n) {
+    if (n < 0 || n > jdb_crypto::RANDOM_BYTES_MAX) {
+        jdb_err_set("CODEC.RANDOMBYTES$: count must be between 0 and 1048576", 5);
+        return _strdup("");
+    }
+    char* out = (char*)malloc((size_t)n + 1);
+    if (!jdb_crypto::random_bytes((uint8_t*)out, (size_t)n)) {
+        free(out);
+        jdb_err_set("CODEC.RANDOMBYTES$: the system random source failed", 5);
+        return _strdup("");
+    }
+    out[n] = '\0';
+    if ((size_t)n != strlen(out)) jdrt_register_binary(out, n);
+    return out;
 }
 
 // ── Date Helpers ────────────────────────────────────────────
@@ -4245,6 +4264,24 @@ char* jdb_hmac_sha256(const char* key, const char* message, const char* algo) {
     uint8_t out_digest[32];
     sha256_digest(outer, sizeof(outer), out_digest);
     return hex_of(out_digest, 32);
+}
+
+char* jdb_pbkdf2(const char* password, const char* salt, int64_t iterations, int64_t n_bytes) {
+    if (iterations < 1) {
+        jdb_err_set("CODEC.PBKDF2$: iterations must be at least 1", 5);
+        return _strdup("");
+    }
+    if (n_bytes < 1 || n_bytes > jdb_crypto::PBKDF2_BYTES_MAX) {
+        jdb_err_set("CODEC.PBKDF2$: bytes must be between 1 and 65536", 5);
+        return _strdup("");
+    }
+    std::vector<uint8_t> key((size_t)n_bytes);
+    jdb_crypto::pbkdf2_hmac_sha256((const uint8_t*)(password ? password : ""),
+                                   (size_t)jdb_str_blen(password),
+                                   (const uint8_t*)(salt ? salt : ""),
+                                   (size_t)jdb_str_blen(salt),
+                                   (uint64_t)iterations, key.data(), key.size());
+    return hex_of(key.data(), key.size());
 }
 
 // TYPEOF answers with one of ten fixed words, so it hands out a shared buffer

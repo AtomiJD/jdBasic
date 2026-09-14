@@ -639,6 +639,8 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_sha256",        "CODEC.SHA256$",        i8_ptr_type, {i8_ptr_type}, 2);
     // 3-arg binding; a 2-arg call pads null and the runtime defaults to SHA256
     reg("jdb_hmac_sha256",   "CODEC.HMAC$",          i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_randombytes",   "CODEC.RANDOMBYTES$",   i8_ptr_type, {i64_type}, 2);
+    reg("jdb_pbkdf2",        "CODEC.PBKDF2$",        i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type}, 2);
 
     // UDT (User-Defined Types)
     reg("jdb_udt_new",     "__udt_new",     i8_ptr_type, {i8_ptr_type}, 3);
@@ -12553,6 +12555,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "PACK$", "UNPACK", "JOIN",
         "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
         "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$", "CODEC.UUID$",
+        "CODEC.RANDOMBYTES$", "CODEC.PBKDF2$",
         "ZIP.WRITE", "ZIP.READ", "ZIP.LIST",
         // Regex (produce arrays)
         "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
@@ -14033,7 +14036,7 @@ void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
         "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
         "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
         "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
-        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$", "PRINT"
+        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$", "PRINT"
     };
     std::function<void(const Expr&)> scan_escapes = [&](const Expr& e) {
         if ((e.kind == ExprKind::CALL && !reads_only.count(e.func_name)) ||
@@ -14155,7 +14158,7 @@ void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
         "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
         "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
         "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
-        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$"
+        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$"
     };
 
     auto analyse = [&](const Stmt& fn) {

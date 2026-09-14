@@ -212,10 +212,24 @@ FUNC LowerKeys(headers)
     RETURN out
 ENDFUNC
 
-' Keeps the name and value of a Set-Cookie header in the session jar.
+' Keeps the name and value of every Set-Cookie header in the session jar; a
+' response with several of them carries an array.
 SUB Remember(s, headers)
     IF NOT MAP.EXISTS(headers, "set-cookie") THEN RETURN
-    DIM header$ = headers{"set-cookie"}
+    DIM raw = headers{"set-cookie"}
+    IF TYPEOF(raw) = "ARRAY" THEN
+        DIM i = 0
+        FOR i = 0 TO LEN(raw) - 1
+            DIM each$ = raw[i]
+            RememberOne(s, each$)
+        NEXT i
+    ELSE
+        DIM one$ = raw
+        RememberOne(s, one$)
+    ENDIF
+ENDSUB
+
+SUB RememberOne(s, header$)
     DIM semi = INSTR(header$, ";")
     IF semi >= 0 THEN header$ = LEFT$(header$, semi)
     DIM eq = INSTR(header$, "=")

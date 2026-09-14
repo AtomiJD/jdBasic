@@ -264,13 +264,19 @@ EXPORT FUNC REPLY_JSON(value, status = 200)
     RETURN REPLY(JSON.STRINGIFY$(value), status, "application/json; charset=utf-8")
 ENDFUNC
 
-' A copy of the response with one more header.
+' A copy of the response with one more header. Another Set-Cookie is added
+' beside the ones already there (the header value becomes an array); any
+' other name replaces its value.
 EXPORT FUNC HEADER(response, name$, value$)
     DIM out AS MAP
     DIM fresh AS MAP
     DIM keys = MAP.KEYS(response)
     DIM k = 0
     DIM j = 0
+    DIM c = 0
+    DIM adding_cookie = (LCASE$(name$) = "set-cookie")
+    DIM cookie_key$ = name$
+    DIM cookies = []
     FOR k = 0 TO LEN(keys) - 1
         DIM key$ = keys[k]
         IF key$ = "__http_headers" THEN
@@ -279,14 +285,32 @@ EXPORT FUNC HEADER(response, name$, value$)
             FOR j = 0 TO LEN(names) - 1
                 DIM hn$ = names[j]
                 DIM hv = old{hn$}
-                fresh{hn$} = hv
+                IF adding_cookie ANDALSO LCASE$(hn$) = "set-cookie" THEN
+                    cookie_key$ = hn$
+                    IF TYPEOF(hv) = "ARRAY" THEN
+                        FOR c = 0 TO LEN(hv) - 1
+                            DIM kept$ = hv[c]
+                            PUSH(cookies, kept$)
+                        NEXT c
+                    ELSE
+                        DIM single$ = hv
+                        PUSH(cookies, single$)
+                    ENDIF
+                ELSE
+                    fresh{hn$} = hv
+                ENDIF
             NEXT j
         ELSE
             DIM kv = response{key$}
             out{key$} = kv
         ENDIF
     NEXT k
-    fresh{name$} = value$
+    IF adding_cookie ANDALSO LEN(cookies) > 0 THEN
+        PUSH(cookies, value$)
+        fresh{cookie_key$} = cookies
+    ELSE
+        fresh{name$} = value$
+    ENDIF
     out{"__http_headers"} = fresh
     RETURN out
 ENDFUNC
@@ -756,12 +780,25 @@ EXPORT FUNC FETCH(port, method$, path$, body$ = "", headers = 0)
     RETURN out
 ENDFUNC
 
-' The value a response from FETCH sets for a cookie, or "".
+' The value a response from FETCH sets for a cookie, or "". A response that
+' sets several cookies carries them as an array.
 EXPORT FUNC COOKIE_OF$(response, name$)
     DIM hs = response{"headers"}
     IF NOT MAP.EXISTS(hs, "set-cookie") THEN RETURN ""
     DIM raw = hs{"set-cookie"}
+    IF TYPEOF(raw) = "ARRAY" THEN
+        DIM i = 0
+        FOR i = 0 TO LEN(raw) - 1
+            DIM each$ = raw[i]
+            IF LEFT$(each$, LEN(name$) + 1) = name$ + "=" THEN RETURN CookieValue$(each$, name$)
+        NEXT i
+        RETURN ""
+    ENDIF
     DIM header$ = "" + raw
+    RETURN CookieValue$(header$, name$)
+ENDFUNC
+
+FUNC CookieValue$(header$, name$)
     IF LEFT$(header$, LEN(name$) + 1) <> name$ + "=" THEN RETURN ""
     DIM rest$ = MID$(header$, LEN(name$) + 1, LEN(header$))
     DIM semi = CINT(INSTR(rest$, ";"))

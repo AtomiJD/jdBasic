@@ -50,7 +50,7 @@ with the status and the start of the body unless `ok`.
 | `NEW(base_url$)` | A session. Paths given to the verbs are appended; a full URL is used as it is. |
 | `HEADER(s, name$, value$)` | A default header. |
 | `BEARER(s, token$)` / `BASIC(s, user$, pass$)` | The `Authorization` header. |
-| `COOKIE(s, name$, value$)` | A cookie in the jar. `Set-Cookie` on a response fills the jar too. |
+| `COOKIE(s, name$, value$)` | A cookie in the jar. Every `Set-Cookie` on a response fills the jar too; a response with several of them has an array under `headers{"set-cookie"}`. |
 | `TIMEOUT(s, seconds)` | Connect, read and write timeout; 30 by default. |
 | `RETRIES(s, attempts, base_ms)` | `attempts` counts the first try; the wait doubles after each one. |
 | `RETRY_ON(s, statuses)` | The status list that triggers a retry; `[429, 500, 502, 503, 504]` by default. A transport failure always does. |

@@ -2030,7 +2030,7 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 * **`HTTP.CLEARCOOKIES()`**: Removes all client-side cookies.
 * **`HTTP.GETCOOKIE$(name$)`**: Returns the stored cookie value, or empty string if the key is unknown.
 * **`HTTP.DELETE$(url$)`**: Performs an HTTP DELETE request and returns the response body. Status is available via `HTTP.STATUSCODE()`.
-* **`HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> map`**: Generic HTTP call. Returns a map with `status`, `body`, and `headers`. Unlike the shortcut forms this does not throw on HTTP-level errors (4xx/5xx) - only on transport failure. `method$` accepts `GET`, `DELETE`, `HEAD`, `POST`, `PUT`, `PATCH`.
+* **`HTTP.REQUEST(method$, url$ [, body$ [, content_type$]]) -> map`**: Generic HTTP call. Returns a map with `status`, `body`, and `headers`. A header name the server sends more than once (several `Set-Cookie` lines) maps to an array of its values in arrival order; every other header is a string. Unlike the shortcut forms this does not throw on HTTP-level errors (4xx/5xx) - only on transport failure. `method$` accepts `GET`, `DELETE`, `HEAD`, `POST`, `PUT`, `PATCH`.
 * **`HTTP.SERVER.START(port [, host$])`**: Starts a non-blocking HTTP server on the specified port, returning `TRUE` on success. `host$` defaults to `"127.0.0.1"` (loopback only); pass `"0.0.0.0"` to expose the server to the LAN.
 * **`HTTP.SERVER.STOP`**: Stops the running HTTP server.
 * **`HTTP.SERVER.ON_GET(path$, function_name$)`**: Registers a `jdBasic` function to handle incoming `GET` requests for a specific URL path.
@@ -2114,7 +2114,15 @@ These three natives redirect `PRINT`/all script output to an in-memory string bu
 ' Signing a webhook payload the way GitHub and Stripe do
 DIM signature$ = "sha256=" + CODEC.HMAC$(secret$, request{"BODY"})
 ```
-* **`CODEC.UUID$() -> string$`**: Generates a random Version 4 UUID (e.g., `"550e8400-e29b-41d4-a716-446655440000"`).
+* **`CODEC.PBKDF2$(password$, salt$, iterations, bytes) -> string$`**: Derives a key from a password with PBKDF2-HMAC-SHA256 (RFC 8018) and returns `bytes` bytes (1 to 65536) as hex. Password and salt are byte strings, so an embedded `CHR$(0)` is data. The results equal Python's `hashlib.pbkdf2_hmac("sha256", ...)`. For stored passwords take a random salt of 16 bytes or more and a high iteration count (OWASP recommends 600000 for SHA-256); the time per call grows linearly with it.
+* **`CODEC.RANDOMBYTES$(n) -> string$`**: `n` raw bytes (0 to 1048576) from the operating system's secure random source: BCryptGenRandom on Windows, getrandom on Linux, getentropy on macOS. Use it for salts, session ids and tokens; `RND` is a statistical generator and predictable. The result is binary and may hold `CHR$(0)`; hex- or Base64-encode it before it goes into text. Not available on boards.
+
+```basic
+DIM salt$ = CODEC.RANDOMBYTES$(16)
+DIM stored$ = CODEC.PBKDF2$(password$, salt$, 600000, 32)
+DIM token$ = CODEC.BASE64_ENCODE$(CODEC.RANDOMBYTES$(32))
+```
+* **`CODEC.UUID$() -> string$`**: A random Version 4 UUID (e.g., `"550e8400-e29b-41d4-a716-446655440000"`) built from `CODEC.RANDOMBYTES$`.
 
 ### Building a Web Server & API
 
@@ -2132,7 +2140,7 @@ The `RETURN` value of the function is sent back to the client as the response.
 * For custom status codes / response headers / body bytes, return a "rich response" map carrying any of these reserved keys (auto-JSON encoding is suppressed when `__http_status` is present):
     * `__http_status` (number) - the HTTP status code (e.g. `202`, `404`).
     * `__http_body` (string) - the raw response body. Omit for an empty body.
-    * `__http_headers` (map) - extra response headers as `{name: value}`.
+    * `__http_headers` (map) - extra response headers as `{name: value}`. An array value sends one header line per element, which is how a response sets several cookies: `{"Set-Cookie": ["sid=..; HttpOnly", "csrf=..; Path=/"]}`.
     * `__http_content_type` (string) - defaults to `application/json` when a body is present.
 
 ```basic

@@ -1,0 +1,57 @@
+' HTTP.SERVER sends one header line per element of an array header value,
+' and HTTP.REQUEST hands a header that arrives several times back as an
+' array in arrival order.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+DIM port AS INTEGER = 9971
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+FUNC THREE_COOKIES(request)
+    DIM cookies = ["a=1; Path=/", "b=2; HttpOnly", "c=3; Max-Age=60"]
+    RETURN {"__http_status": 200, "__http_content_type": "text/plain", "__http_body": "ok", _
+        "__http_headers": {"Set-Cookie": cookies, "X-Single": "one"}}
+ENDFUNC
+
+HTTP.SERVER.ON_GET("/cookies", "THREE_COOKIES")
+IF NOT HTTP.SERVER.START(port) THEN
+    PRINT "could not start the server"
+    END 1
+ENDIF
+
+DIM r = HTTP.REQUEST("GET", "http://127.0.0.1:" + STR$(port) + "/cookies")
+DIM status = r{"status"}
+Check("status", STR$(status), "200")
+DIM body$ = r{"body"}
+Check("body", body$, "ok")
+DIM hs = r{"headers"}
+DIM got = hs{"Set-Cookie"}
+Check("Set-Cookie is an array", TYPEOF(got), "ARRAY")
+Check("with three values", STR$(LEN(got)), "3")
+DIM first$ = got[0]
+DIM second$ = got[1]
+DIM third$ = got[2]
+Check("first cookie", first$, "a=1; Path=/")
+Check("second cookie", second$, "b=2; HttpOnly")
+Check("third cookie", third$, "c=3; Max-Age=60")
+DIM lone = hs{"X-Single"}
+Check("a single header stays a string", TYPEOF(lone), "STRING")
+
+HTTP.SERVER.STOP()
+
+PRINT ""
+PRINT "HTTP SET-COOKIE TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
