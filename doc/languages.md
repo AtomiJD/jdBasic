@@ -3786,45 +3786,35 @@ the `AI.RAG_*` set).
 
 ## On a board: RP2350 and ESP32-S3
 
-jdBasic runs on microcontrollers with the same interpreter that runs on a
-desktop. `embedded/pico/` is the RP2350 - a bare Pico, a PicoCalc, or an
-Adafruit Fruit Jam - and `embedded/esp32/` is the ESP32-S3. All of them
-read the language documented above without exception. All of them are a
-REPL with a flash store behind it, and two are more than that: the 2.8
-inch ES3C28P has a panel, a touch screen, a codec and a card slot, and the
-Fruit Jam puts 320 by 240 out over DVI with a USB keyboard on the front,
-which makes it a computer rather than a thing a PC watches.
+jdBasic runs on microcontrollers with the desktop interpreter and reads the
+language documented above without exception. `embedded/pico/` is the RP2350
+(a bare Pico, a PicoCalc, an Adafruit Fruit Jam), `embedded/esp32/` the
+ESP32-S3 (a DevKitC, the 2.8 inch ES3C28P). Every board is a REPL with a flash
+store behind it; the ES3C28P adds a panel, touch, a codec and a card slot, the
+Fruit Jam puts 320 by 240 out over DVI with a USB keyboard.
 
-What differs is what the machine has, and how little of it there is.
+### Common to every board
 
-### What is the same
+| Area | Verbs |
+|------|-------|
+| Pins | `GPIO.MODE` / `WRITE` / `READ` / `PULLUP`, `GPIO.WATCH`, `ADC.READ`, `ADC.TEMP`, `PWM.SET` / `OFF` |
+| Buses | `I2C.SETUP` / `WRITE` / `READ` / `SCAN`, `SPI.SETUP` / `XFER` |
+| Time and keys | `TIMER.EVERY` / `STOP`, `KEY.WATCH` |
+| Network | `WIFI.*`, the `HTTP.SERVER.*` family |
+| Drawing | `DRAWCOLOR`, `PSET`, `LINE`, `RECT`, `CIRCLE`, `TEXT`, `GFX.CLEAR`, `GFX.PALETTE`, `GFX.WIDTH`, `GFX.HEIGHT`, `GFX.CONSIZE` |
+| Memory and store | `SYS.FREE`, `SYS.LARGEST`, `SYS.DF`, `SYS.FREEDISK` |
+| Sound | `BEEP`, `TONE`, `PLAY` and the `PLAY.*` family |
 
-The verbs are chosen so a program reads alike on any of them:
-`GPIO.MODE` / `WRITE` / `READ` / `PULLUP`, `ADC.READ`, `ADC.TEMP`,
-`PWM.SET` / `OFF`, `I2C.SETUP` / `WRITE` / `READ` / `SCAN`,
-`SPI.SETUP` / `XFER`, `TIMER.EVERY` / `STOP`, `GPIO.WATCH`, `KEY.WATCH`,
-`WIFI.*` and the `HTTP.SERVER.*` family. Drawing is `DRAWCOLOR`, `PSET`,
-`LINE`, `RECT`, `CIRCLE`, `TEXT`, `GFX.CLEAR`, `GFX.PALETTE`, with
-`GFX.WIDTH`, `GFX.HEIGHT` and `GFX.CONSIZE` to ask how much room there
-is. Memory is `SYS.FREE` and `SYS.LARGEST`, the flash store `SYS.DF` and
-`SYS.FREEDISK`. Sound is `BEEP`, `TONE`, `PLAY` and the `PLAY.*` family.
-
-More than the names is shared. `embedded/common/` holds the parts that
-are the same job everywhere and is compiled into every board: the prompt
-with its command set, history and syntax colour, the full-screen editor,
-the score engine behind `PLAY`, and the web server over lwIP. A board
-supplies four things - how a byte arrives with a deadline, how big its
-console is, where the autorun name lives, and whatever command only it
-has - and gets the rest. So a bug fixed at the prompt on one board is
-fixed on all of them, and a board that grows a screen gets `EDIT` for
-nothing.
-
-Events work the same way in both: an interrupt only records what
-happened, and the VM drains the record between statements, so a handler
-never runs inside an ISR and may draw, write files or call anything else.
-Handlers do not nest - a tick arriving while one is still running is
-dropped rather than queued, so a slow handler cannot build a backlog it
-will never work off.
+* **`embedded/common/`** is compiled into every board: the prompt with its
+  command set, history and syntax colour, the full-screen editor, the score
+  engine behind `PLAY`, and the web server over lwIP. A board supplies byte
+  input with a deadline, its console size, where the autorun name lives, and
+  its own commands. A fix in the common part reaches every board; a board with
+  a screen gets `EDIT`.
+* **Events**: an interrupt only records what happened and the VM drains the
+  record between statements, so a handler never runs inside an ISR and may
+  draw, write files or call anything. Handlers do not nest: a tick that
+  arrives while a handler runs is dropped, not queued.
 
 ```basic
 SUB OnTick(d)
@@ -3847,72 +3837,52 @@ TIMER.EVERY(1000)
 | radio | on a W part, and on the Fruit Jam through its ESP32-C6 | always, and it can be an access point |
 | working directory | yes, `CD` | no; IDF has none, so there is no `CD` |
 
-The ESP32-S3 refuses the pins it cannot spare. GPIO 26 to 32 carry the
-SPI flash, 33 to 37 the octal PSRAM, and 43 and 44 the console. Writing
-to one takes the board down with no diagnostic, so every verb refuses
-them by name before the write, and `PIN.FREE` lists what is left.
+* **Reserved pins (ESP32-S3)**: GPIO 26 to 32 carry the SPI flash, 33 to 37
+  the octal PSRAM, 43 and 44 the console. Writing one takes the board down
+  without a diagnostic, so every verb refuses them by name. `PIN.FREE` lists
+  the pins left.
 
-### The flash store
+### The prompt and the flash store
 
-Every board keeps programs in flash and every one answers the same set at
-the prompt, because it is the same code: `DIR`, `TYPE`, `DEL`, `COPY`,
-`REN`, `MD`, `RD`, `CD` where there is a working directory, `LIST`, `NEW`,
-`SAVE`, `LOAD`, `RUN`, `EDIT`, `HELP`, `RECV` and `AUTORUN`. `RECV` takes
-a file straight off the serial line, parsing nothing and echoing nothing,
-which is far faster than typing into the editor. `AUTORUN` names a
-program to start at power-on and leaves a window at boot to cancel it, so
-a misbehaving program never locks the board out. `HELP` on its own lists
-the topics and `HELP GFX` prints one, written for forty columns and paged
-against whatever the console turns out to be.
+| Command | What it does |
+|---------|--------------|
+| `DIR`, `TYPE`, `DEL`, `COPY`, `REN`, `MD`, `RD` | files in the flash store; `DIR` prints name and size only |
+| `CD` | changes the working directory where there is one (not on the ESP32-S3) |
+| `LIST`, `NEW`, `SAVE`, `LOAD`, `RUN`, `EDIT` | the program in memory |
+| `RECV name` | takes a file off the serial line without parsing or echo, much faster than typing into the editor |
+| `RECV name bytes` | takes exactly that many raw bytes, for binary files such as p-code |
+| `AUTORUN name` | starts a program at power-on, with a window at boot to cancel it |
+| `HELP`, `HELP topic`, `HELP MORE` | the topics; one topic, written for forty columns and paged; the families not spelled out |
 
-A name without an extension may mean the `.jdb` of that name: `RUN hello`
-finds `hello.jdb`. What is actually there wins, so a file that really has
-no extension stays reachable. A name may carry a folder: `RUN
-lessons/hello1` runs from the `lessons` folder on any board,
-and a module a program `IMPORT`s is looked for in the program's own
-folder first.
+* **Names**: a name without an extension may mean the `.jdb` of that name
+  (`RUN hello` finds `hello.jdb`); a file that exists under the exact name
+  wins. A name may carry a folder (`RUN lessons/hello1`), and `IMPORT` looks in
+  the program's own folder first.
+* **ESP32-S3**: ESP-IDF has no working directory, so `"."` never resolves,
+  `DIR$` lists from the root, and there is no `CD`.
+* **Ctrl-C** on the console ends a running program in any state (a loop,
+  `SLEEP`, `HTTP.SERVER.WAIT`) with `Break at line N`. A program never
+  receives it: `KEY.GET` waits for a key and answers its code, `KEY.NOW`
+  answers -1 when nothing waits.
+* **`CURSOR 0`** hides the text cursor, **`CURSOR 1`** shows it.
+* **Editor**: the same on every board. F1 lists the keys: Ctrl-S saves, Ctrl-Q
+  leaves, Ctrl-R saves, runs and returns; Ctrl-F finds, Ctrl-G finds the next,
+  Ctrl-T replaces; Ctrl-Z undoes; Ctrl-L goes to a line; Shift with an arrow
+  selects; Ctrl-C, Ctrl-X, Ctrl-V copy, cut, paste; Ctrl-D duplicates a line,
+  Ctrl-K deletes one; Tab and Shift-Tab indent a selection; Ctrl with an arrow
+  moves by a word, Ctrl-Home and Ctrl-End to either end. A line longer than
+  the screen scrolls sideways.
+* **Lessons**: the Train jdBasic lessons are in a `lessons` folder on every
+  board. `TYPE lessons/readme.txt` lists them, `RUN lessons/hello1` starts one.
+  They are `jdb/tutorials/tv/` with a board edition of the graphics, HTTP and
+  native-compile lessons; `embedded/lessons/` holds the pack.
+* **`FS.ATRANS`** (RP2350) reports the four flash address-translation
+  registers, which a uf2 booted through translation reads its flash through.
+* **`FS.NUKEPT`** (RP2350) erases the partition table at the physical start of
+  flash and drops to BOOTSEL, so the next uf2 lands at zero and boots without
+  translation. It cannot be undone.
 
-One consequence of the platform worth knowing: ESP-IDF has no working
-directory at all, so `"."` never resolves, `DIR$` starts its listing at
-the root there, and there is no `CD`.
-
-Two RP2350 verbs reach past the store to the flash itself. `FS.ATRANS`
-reports the four address-translation registers as they stand, which is
-what a uf2 booted through translation reads its own flash through.
-`FS.NUKEPT` erases the partition table at the physical start of flash
-and drops to BOOTSEL, so the next uf2 lands at zero and boots without
-translation. That one is one-way.
-
-Ctrl-C on the console ends a running program, whatever it is doing: in
-a loop, inside a `SLEEP`, while `HTTP.SERVER.WAIT` serves. The program
-ends with `Break at line N` and the prompt comes back. A program never
-sees that byte; `KEY.GET` waits for a key and answers its code, `KEY.NOW`
-answers at once with -1 when nothing is waiting, and neither hands over
-a Ctrl-C. `CURSOR 0` hides the text cursor and `CURSOR 1` shows it, on
-every board's console.
-
-The editor is the same on every board. F1 lists its keys: Ctrl-S saves,
-Ctrl-Q leaves, Ctrl-R saves and runs the file and comes back to the
-editor afterwards; Ctrl-F finds, Ctrl-G finds the next, Ctrl-T replaces;
-Ctrl-Z undoes; Ctrl-L goes to a line; Shift with an arrow selects,
-Ctrl-C, Ctrl-X and Ctrl-V copy, cut and paste; Ctrl-D duplicates a line,
-Ctrl-K deletes one; Tab and Shift-Tab indent and outdent a selection;
-Ctrl with an arrow moves by a word, Ctrl-Home and Ctrl-End to either end
-of the file. A line longer than the screen scrolls sideways with the
-cursor. `HELP` at the prompt is the board's own manual, `HELP MORE` the
-families it does not spell out.
-
-The Train jdBasic lessons sit on every board in a `lessons` folder: `TYPE
-lessons/readme.txt` lists them, `RUN lessons/hello1` starts
-one. The files are those of `jdb/tutorials/tv/`, with a board edition
-of the graphics, HTTP and native-compile lessons; `embedded/lessons/`
-in the repository holds the pack.
-
-### The radio, on the ESP32-S3
-
-It is a mode rather than a state. A started radio costs about a hundred
-kilobytes of internal RAM, which is most of what the interpreter has, so
-it is turned on for the job and off again:
+### The radio on the ESP32-S3
 
 ```basic
 IF WIFI.AP("jdbasic", "plotter123") = 0 THEN
@@ -3924,368 +3894,244 @@ ENDIF
 WIFI.OFF()
 ```
 
-`WIFI.OFF` returns most of it; the rest belongs to the TCP/IP stack,
-which is set up once and stays. Bluetooth is Low Energy only - the chip
-has no classic BR/EDR - and its stack and the WiFi one do not
-comfortably fit together in 512 KB.
+* **Cost**: a started radio takes about 100 KB of internal RAM, most of what
+  the interpreter has, so turn it on for the job and off again. `WIFI.OFF`
+  returns most of it; the rest belongs to the TCP/IP stack, which is set up
+  once and stays.
+* **Bluetooth** is Low Energy only (no classic BR/EDR); its stack and the WiFi
+  stack do not comfortably fit together in 512 KB.
+* **`WIFI.CLIENTS`** counts the stations connected to the board's own network.
+* **`WIFI.DNS$`**, **`WIFI.DNS`** (RP2350 W boards): the DNS server in use; set
+  one by address, for a network whose DHCP hands out one that does not answer.
+* **`HTTP.GET$`**, **`HTTP.POST$`** fetch over http and https, **`HTTP.STATUS`**
+  holds the last code, **`NTP.SYNC`** sets the clock for `DATE$`, `TIME$` and
+  `NOW`. The same verbs on every board with a radio.
 
-`WIFI.CLIENTS` counts the stations connected to a board's own network,
-which is how a program knows whether anyone is there to serve. On the
-RP2350 W boards `WIFI.DNS$` names the server currently in use and
-`WIFI.DNS` sets one by address, for a network whose DHCP hands out a
-name server that does not answer.
+### What the interpreter changes on a controller
 
-`HTTP.GET$` and `HTTP.POST$` fetch over http and https alike, with
-`HTTP.STATUS` holding the last answer's code, and `NTP.SYNC` sets the
-clock from the network so `DATE$`, `TIME$` and `NOW` are real. These are
-the same verbs on every board with a radio.
+All of these are about memory, none about meaning; a `.jdb` file that runs on a
+desktop runs on a board until memory runs out.
 
-### Trades the interpreter makes on a small machine
+* A compiled chunk is shrunk to fit and never appended to afterwards; the room
+  its vectors kept while doubling measured 22 percent of a loaded program.
+* A program is read once, not through a stringstream holding three copies of
+  the source.
+* The lexer reserves its token vector up front, because a doubling near the
+  end needs the old and the new block at once.
+* The VM value stack starts at 1024 slots instead of 65536.
+* `INPUT` reads a character at a time and echoes, since the board's stdio does
+  not echo.
+* `DIR` prints name and size only.
 
-Six things behave differently when the interpreter is built for a
-controller, all of them about memory rather than meaning:
+### The ES3C28P (2.8 inch board)
 
-* A chunk is shrunk to fit once it is compiled. Nothing is appended to it
-  afterwards, and the room its vectors kept while doubling measured 22
-  percent of everything a loaded program keeps.
-* A program is read once rather than through a stringstream, which
-  otherwise holds three copies of the source at the same moment.
-* The lexer reserves its token vector up front. Growing it is what kills
-  a load: a doubling near the end wants the old block and the new one at
-  once, and the heap refuses long before its total runs out.
-* The VM's value stack starts at 1024 slots rather than 65536.
-* `INPUT` reads a character at a time and echoes what arrives, because
-  the board's stdio does not echo.
-* `DIR` prints name and size only, there being forty columns to spend and
-  no clock worth printing.
+ILI9341V panel, FT6336G touch screen, ES8311 codec with speaker and microphone,
+card slot. Where a desktop verb exists, the board uses it.
 
-None of that changes what a program means. A `.jdb` file that runs on a
-desktop runs on a board until it runs out of memory.
+| Verb | What it does |
+|------|--------------|
+| `SCREEN` | starts the panel, 320 by 240; every primitive writes a framebuffer in PSRAM |
+| `SCREENFLIP` | puts the framebuffer on the glass (on the RP2350 drawing goes straight out) |
+| `DRAWCOLOR`, `PSET`, `LINE`, `RECT`, `CIRCLE`, `TEXT`, `GFX.CLEAR`, `GFX.WIDTH`, `GFX.HEIGHT`, `GFX.LIGHT` | drawing |
+| `GFX.CONSOLE 1` | the panel becomes 40 by 30 text; output goes to the serial line and the glass, so `EDIT` and program output appear on both |
+| `GFX.CONSOLE 0` | gives the panel back to a program that draws; the console is on at power-on unless `CONSOLE OFF` at the prompt |
+| `TOUCH` | `[count, x, y]` in screen coordinates |
+| `TOUCH.RAW`, `TOUCH.ID` | the controller's numbers before mapping; its identity |
+| `KEY.LOCAL`, `KEY.LOCAL(1)` | whether an M5Stack CardKB on the I2C connector answered; ask again now |
+| `KEY.RAW` | the CardKB codes untranslated |
+| `BEEP freq, ms`, `TONE freq` | a sound |
+| `PLAY score` | a melody in the background: A-G with `#` `+` `-`, `O` octave, `<` `>` step it, `L` length, `T` tempo, `P` or `R` rest, `.` dots a note |
+| `PLAY.BUSY`, `PLAY.STOP`, `PLAY.VOLUME` | still sounding; stop; loudness |
+| `MIC ms` | `[peak, mean]` from the microphone, both 0 to 100 |
+| `MIC.GAIN` | 0 to 7 in six-decibel steps |
+| `SD.MOUNT` | mounts the card at `/sd` and answers its size |
+| `SD.INFO`, `SD.UNMOUNT` | name, size and negotiated bus width; release the card |
+| `GFX.DIAG` | what the panel transport sent and refused |
+| `GFX.PANELSTATE` | whether the panel is awake and displaying |
+| `GFX.READBACK` | one pixel read back off the glass |
+| `GFX.PANELREG`, `GFX.PANELREGAT` | the raw bytes of any panel read command; the same after pointing the panel at one pixel |
 
-### The 2.8 inch board
-
-The ES3C28P carries an ILI9341V panel, an FT6336G touch screen, an ES8311
-codec with a speaker and a microphone, and a card slot. The verbs are the
-desktop ones wherever one exists, so a program that draws or beeps reads
-the same on a laptop and on the board.
-
-`SCREEN` starts the panel, 320 by 240. Every primitive writes a
-framebuffer in PSRAM and `SCREENFLIP` puts it on the glass, which is the
-one difference a program can feel: on the RP2350 drawing goes straight
-out, because that board has no room to keep a frame. The drawing verbs
-are `DRAWCOLOR`, `PSET`, `LINE`, `RECT`, `CIRCLE`, `TEXT` and
-`GFX.CLEAR`, with `GFX.WIDTH`, `GFX.HEIGHT` and `GFX.LIGHT` beside them.
-
-`GFX.CONSOLE 1` turns the panel into 40 columns by 30 rows of text, the
-grid a listing assumes. While it is on, everything printed goes to both
-the serial line and the glass, so `EDIT` and a program's output appear
-without either of them knowing about the screen. `GFX.CONSOLE 0` gives
-the panel back to a program that wants to draw on it. On this board the
-console starts with the power unless `CONSOLE OFF` at the prompt said
-otherwise.
-
-`TOUCH` answers `[count, x, y]` in screen coordinates, `TOUCH.RAW` the
-controller's own numbers before the mapping, and `TOUCH.ID` its identity.
-
-An M5Stack CardKB on the four-pin I2C connector gives the board keys of
-its own. It arrives where every reader on the board already looks, so
-the prompt, the editor, `INKEY$`, `KEY.GET` and the event poll all see
-it without knowing it is there, and the serial line keeps working
-alongside. `KEY.LOCAL` says whether it answered and `KEY.LOCAL(1)` asks
-again now; `KEY.RAW` gives its codes untranslated, for settling what a
-key sends by pressing it. Its modifiers are tapped rather than held:
-Sym carries the punctuation, so a double quote is Sym then P, and Fn
-carries the control codes a keyboard with no control key cannot
-otherwise reach, so Fn then Q leaves the editor.
-
-`BEEP freq, ms` and `TONE freq` make a sound; `PLAY score` plays a
-melody in the background while the program keeps running, in the classic
-notation - A-G with `#` `+` `-`, `O` for the octave, `<` and `>` to step
-it, `L` for the length, `T` for the tempo, `P` or `R` for a rest, `.` to
-dot a note. `PLAY.BUSY` says whether it still sounds, `PLAY.STOP` ends
-it, `PLAY.VOLUME` sets the loudness. These are the RP2350's verbs and the
-same file parses the score for both; only what moves the air differs.
-
-`MIC ms` answers `[peak, mean]` from the microphone, both 0 to 100, and
-`MIC.GAIN` takes 0 to 7 in six-decibel steps. Peak says whether something
-happened and mean how loud it is now.
-
-`SD.MOUNT` puts the card at `/sd` and answers its size; `SD.INFO` gives
-name, size and the bus width it negotiated, and `SD.UNMOUNT` lets go of
-it again. A bare filename still means
-the flash store, so the two live side by side without a working
-directory to confuse them: `COPY hello.jdb /sd/hello.jdb` and
-`RUN "/sd/hello.jdb"` both do what they look like.
-
-For when something answers strangely there are `GFX.DIAG`, which counts
-what the panel transport sent and what it refused, `GFX.PANELSTATE`,
-which asks the panel whether it is awake and displaying, `GFX.READBACK`,
-which reads one pixel back off the glass, and `GFX.PANELREG`, which hands
-over the raw bytes of any read command; `GFX.PANELREGAT` does the same
-after pointing the panel at one pixel. The read commands are the useful
-ones:
-reading a table of bytes settles in minutes what reasoning about a
-protocol does not settle in days.
+* **CardKB**: its keys arrive where every reader already looks (prompt, editor,
+  `INKEY$`, `KEY.GET`, event poll); the serial line keeps working. Modifiers
+  are tapped, not held: Sym carries punctuation (a double quote is Sym then P),
+  Fn the control codes (Fn then Q leaves the editor).
+* **Scores** are parsed by the same file as on the RP2350.
+* **Card and flash**: a bare filename means the flash store, `/sd/...` the card:
+  `COPY hello.jdb /sd/hello.jdb`, `RUN "/sd/hello.jdb"`.
 
 ### The PicoCalc
 
-The PicoCalc is an RP2350 in a case with a 320 by 320 panel, its own
-keyboard and an SD card at `/sd`. Text is 40 by 40. Drawing goes
-straight to the panel, and `GFX.BUFFER(x, y, w, h)` holds one rectangle
-of it in memory, sixteen colours at four bits a pixel, so `SCREENFLIP`
-sends only what changed; `GFX.BUFFER(0)` frees it and `GFX.BUFFERED`
-says whether one is held. A whole screen does not fit beside a program,
-so a game buffers the strip that moves. `GFX.CONSOLE 0` keeps the
-console off the panel while a program draws and `GFX.CONSOLE 1` puts it
-back. The keyboard controller sends its own codes: ESC is 177 and the
-arrows are 180 to 183, and `keycode.jdb` in the demos prints what any
-key sends.
+RP2350 with a 320 by 320 panel, its own keyboard and an SD card at `/sd`; text
+is 40 by 40. Drawing goes straight to the panel.
 
-Four verbs read the panel back rather than write to it: `LCD.ROW$(y)`
-gives one row of the text console as it stands on the glass, `LCD.STAT$`
-the scroll offset and the cursor position, and `LCD.TAPARM` then
-`LCD.TAP$` arm the display bus and report the bytes it last carried.
+| Verb | What it does |
+|------|--------------|
+| `GFX.BUFFER(x, y, w, h)` | holds one rectangle in memory, sixteen colours at four bits a pixel, so `SCREENFLIP` sends only what changed |
+| `GFX.BUFFER(0)`, `GFX.BUFFERED` | frees it; whether one is held |
+| `GFX.CONSOLE 0`, `GFX.CONSOLE 1` | keeps the console off the panel while a program draws; puts it back |
+| `LCD.ROW$(y)` | one row of the text console as it stands on the glass |
+| `LCD.STAT$` | the scroll offset and the cursor position |
+| `LCD.TAPARM`, `LCD.TAP$` | arms the display bus; the bytes it last carried |
+
+* **Buffering**: a whole screen does not fit beside a program; buffer the strip
+  that moves, and check `SYS.LARGEST` before `GFX.BUFFER`.
+* **Key codes**: ESC is 177, the arrows are 180 to 183; `keycode.jdb` in the
+  demos prints what a key sends.
 
 ### The Fruit Jam
 
-The Adafruit Fruit Jam is an RP2350B with DVI on a socket, a USB host
-port, a TLV320 codec, five addressable LEDs, three buttons, an infrared
-receiver and a card slot. With a monitor and a keyboard it is a computer
-on its own: `EDIT`, `LIST` and `RUN` on the glass, with the USB-CDC port
-still there as a second console for a PC.
+RP2350B with DVI, a USB host port, a TLV320 codec, five addressable LEDs, three
+buttons, an infrared receiver and a card slot. With a monitor and a keyboard it
+is a computer on its own (`EDIT`, `LIST`, `RUN` on the glass); the USB-CDC port
+stays a second console.
 
-The screen is 320 by 240, doubled to 640 by 480 and put out at exactly 60
-Hz. There is no `SCREENFLIP` step to think about - the framebuffer is
-what the wire is reading, so a `PSET` is visible as soon as it is
-written, and `SCREENFLIP` is accepted and does nothing so a program
-written for another board still runs. Text is 40 by 30 in an 8 by 8 font.
-The console and a drawing program share that one framebuffer, so
-`GFX.CONSOLE 0` takes the screen for the program and `GFX.CONSOLE 1`
-gives it back; the prompt keeps running over USB either way.
-`DVI.FRAMES`, `DVI.FRAMEUS` and `DVI.CLOCK` say what the signal is doing,
-and `DVI.DIAG$` puts the scanout's registers on one line. `DVI.IRQS`
-counts how often the scanout interrupt has run, one per field, so more
-than that means the command list is restarting early, and `DVI.CACHE$`
-reports the scanline cache that feeds the display from PSRAM. `GFX.PEEK`
-reads a pixel back, which here is the glass as well as the memory.
+* **Screen**: 320 by 240, doubled to 640 by 480 at exactly 60 Hz; text 40 by 30
+  in an 8 by 8 font. The framebuffer is what the wire reads, so a `PSET` is
+  visible at once; `SCREENFLIP` is accepted and does nothing.
+* **Console and drawing** share the framebuffer: `GFX.CONSOLE 0` takes it for
+  the program, `GFX.CONSOLE 1` gives it back; the prompt keeps running over USB.
+* **Start page**: chip and clock, free memory, screen and refresh rate, the
+  devices on the USB host, the free flash store. Nothing is printed before it.
+* **Sound** starts on the headphone jack; `PLAY.VOLUME` starts at 30 of 100.
+  `BEEP`, `TONE` and `PLAY` are the same verbs as on every board.
+* **Keys** repeat when held, after a short pause; Page Up and Page Down move by
+  a screen.
+* **Game controllers**: a DualShock 4 is decoded by its report layout, sticks on
+  axes 0 to 3, triggers on 4 and 5. XInput controllers (the Xbox family) are not
+  HID and not supported.
+* **USB host polling** happens from the calls a program already makes, at most
+  every half millisecond; without that brake a loop waiting for a key spent a
+  fifth of each frame in the stack.
 
-`PSRAM.TEST$` writes a pattern at each end of the PSRAM window and reads
-it back, answering with the size, the address it is mapped at and
-whether it survived. `PSRAM.TORTURE$([rounds])` allocates, fills,
-verifies and frees blocks in the pool while the scanout and the USB host
-are running, and says how many it got through and whether anything came
-back changed. The desktop cannot reproduce the part that matters there,
-which is the traffic on the same memory controller.
+| Verb | What it does |
+|------|--------------|
+| `DVI.FRAMES`, `DVI.FRAMEUS`, `DVI.CLOCK` | what the signal is doing |
+| `DVI.DIAG$` | the scanout registers on one line |
+| `DVI.IRQS` | scanout interrupts, one per field; more means the command list restarts early |
+| `DVI.CACHE$` | the scanline cache that feeds the display from PSRAM |
+| `DVI.LATE$` | frames longer or shorter than the 16.7 ms the signal expects |
+| `GFX.PEEK` | one pixel read back, which here is the glass as well as the memory |
+| `PSRAM.TEST$` | writes and reads a pattern at each end of PSRAM: size, mapped address, whether it survived |
+| `PSRAM.TORTURE$([rounds])` | allocates, fills, verifies and frees pool blocks while scanout and USB host run |
+| `BUTTON.GET(n)`, `BUTTON.COUNT` | the three buttons (1 is BOOT, a boot function only while the chip starts); how many |
+| `NEOPIXEL.SET(i, r, g, b)`, `NEOPIXEL.SHOW` | sets one of the five LEDs; shows the whole pattern at once |
+| `NEOPIXEL.CLEAR`, `NEOPIXEL.COUNT` | clears the LEDs; how many |
+| `IR.RAW` | the infrared receiver pin level, not a decoded command |
+| `SND.OUT(1)`, `SND.OUT(0)` | speaker amplifier; headphone jack (never both) |
+| `SND.REG(page, reg)` | one codec register |
+| `SND.PROBE`, `SND.STAT`, `SND.PINS` | tell a line carrying nothing from a line nobody hears |
+| `USB.KEYBOARDS`, `USB.DEVICES`, `USB.KEYS`, `USB.PENDING` | what enumerated and what arrived |
+| `KBD.LAYOUT`, `KBD.LAYOUT("DE")` | reports the layout; sets it (DE swaps y and z, the digit row and punctuation). US at every power-on, so set it in an `AUTORUN` program |
+| `GFX.KEYSTATE(code)` | whether a key is down at this instant, instead of taking one off the queue |
+| `JOY.COUNT`, `JOY.AXIS(id, n)`, `JOY.BUTTON`, `JOY.HAT`, `JOY.NAME$` | a USB game controller under the desktop names; axes -1 to 1, the hat as a bitmask |
+| `JOY.RAW$(id)` | the last raw report as hex, for working out another pad's layout |
+| `USB.TIME$` | what the host stack costs: calls, calls over 4 ms, worst, mean |
+| `USB.DIAG$` | enumerated devices with vendor and product ids |
+| `ESP.PROBE$`, `ESP.FW$`, `ESP.RESET` | radio firmware report; version; restart the radio |
 
-The board comes up with a page saying what it is: chip and clock, free
-memory, the screen and its refresh rate, what enumerated on the USB
-host, and how much of the flash store is left. Nothing else is printed
-before it, so that page is the first thing on the screen.
+#### Radio
 
-`BUTTON.GET(n)` reads the three buttons - 1 is the BOOT button, which is
-only a boot function while the chip is coming up - and `BUTTON.COUNT`
-says how many there are. `NEOPIXEL.SET(i, r, g, b)` sets one of the five
-LEDs and nothing lights up until `NEOPIXEL.SHOW`, so a whole pattern
-arrives at once rather than crawling across; `NEOPIXEL.CLEAR` and
-`NEOPIXEL.COUNT` round it off. `IR.RAW` is the infrared receiver's pin as
-it stands, which is a level rather than a decoded command.
+* The radio is an ESP32-C6 on its own SPI bus with Adafruit's nina firmware,
+  which runs the TCP/IP stack itself; there is no lwIP on this board. The first
+  command of a session holds the select line high through reset, so the first
+  use costs about a second.
+* `WIFI.CONNECT`, `WIFI.AUTO` (ssid and password from `/wifi.txt`),
+  `WIFI.STATUS` (3 is a live connection), `WIFI.IP$`, `WIFI.MAC$`, `WIFI.SCAN`
+  (a row per network: name, signal, channel, open), `WIFI.OFF`, `HTTP.GET$`,
+  `HTTP.POST$`, `HTTP.STATUS` and `NTP.SYNC` are the verbs of every other
+  board. The time comes from the radio's own clock once it is online.
+* `ESP.RESET` shares its reset line with the codec, so the codec registers are
+  reprogrammed on the way back; the sound engine keeps running.
 
-Sound goes through the codec and starts on the headphone jack. `SND.OUT(1)`
-switches to the speaker amplifier and `SND.OUT(0)` back to the jack, one or
-the other and never both. `PLAY.VOLUME` starts at 30 of 100. `SND.REG(page,
-reg)` reads one codec register.
-`BEEP`, `TONE` and `PLAY` are then the same verbs as everywhere else -
-the score is parsed by the same file on every board, and only what moves
-the air differs. `SND.PROBE`, `SND.STAT` and `SND.PINS` are there for
-when nothing is heard, and they separate a line carrying nothing from a
-line carrying something nobody hears.
+#### Console colours and graphics characters
 
-The keyboard is a real USB one: `USB.KEYBOARDS`, `USB.DEVICES`,
-`USB.KEYS` and `USB.PENDING` say what enumerated and what has arrived.
-`KBD.LAYOUT` reports the layout and `KBD.LAYOUT("DE")` sets it, which
-swaps y and z, the digit row and the punctuation. It starts as US at
-every power-on, so a one-line program behind `AUTORUN` is what makes
-German stick.
+These work on every board with a console.
 
-The console takes the terminal's colour escapes, on every board and per
-character cell: `ESC[3xm` and the bright `ESC[9xm` set the ink,
-`ESC[4xm` and `ESC[10xm` the paper, `ESC[7m` swaps the two, `ESC[27m`
-swaps them back and `ESC[0m` restores the defaults. So `PRINT CHR$(27) +
-"[97;44m" + " menu " + CHR$(27) + "[0m"` is a white-on-blue bar, and a
-row of spaces on a coloured ground is a bar chart without a drawing
-verb. The Fruit Jam maps the sixteen onto its RGB332 framebuffer, the
-PicoCalc and the ES3C28P onto their palettes.
+* **Colour escapes**, per character cell: `ESC[3xm` and `ESC[9xm` set the ink,
+  `ESC[4xm` and `ESC[10xm` the paper, `ESC[7m` swaps them, `ESC[27m` swaps
+  back, `ESC[0m` restores the defaults. `PRINT CHR$(27) + "[97;44m" + " menu " +
+  CHR$(27) + "[0m"` is a white-on-blue bar. The Fruit Jam maps the sixteen
+  colours onto RGB332, the PicoCalc and the ES3C28P onto their palettes.
+* **Graphics characters**: `CHR$(n)` for n from 152 to 237 in `PRINT` and
+  `TEXT`, on the panel boards and over DVI. `embedded/pico/demos/petscii.jdb`
+  prints them with their numbers; 238 upwards is empty.
 
-The console font is a C64 font and always was, but only its letters
-were filled in. The half above them is there now: `CHR$(n)` for n from
-152 to 237 draws the graphics characters, and they work in `PRINT` and
-in `TEXT` alike, on the panel boards as well as over DVI.
+| Codes | Characters |
+|-------|------------|
+| 152-159 | a line across, one code per row |
+| 160-167 | a line down, one code per column |
+| 168-175 | a bar growing up in eighths; a bar chart is `CHR$(167 + height)` |
+| 176-183 | a bar growing right |
+| 184-191 | a bar growing down |
+| 192-199 | a bar growing left |
+| 200-210 | box pieces: corners, tees and the cross, meeting across cell edges |
+| 211-214 | rounded corners |
+| 215-217 | diagonals |
+| 218-221 | shades |
+| 222-225 | the four card suits |
+| 226-229 | a ball, a circle, a plus, a pi |
+| 230-233 | arrows |
+| 234-237 | wedges |
 
-They are laid out in blocks of eight so a program can compute the one it
-wants. 152 is a line across, one code per row; 160 a line down, one per
-column. 168 is a bar growing up in eighths, 176 one growing right, 184
-down, 192 left - a bar chart is `CHR$(167 + height)`. 200 to 210 are the
-box pieces, corners, tees and the cross, drawn to meet across cell
-edges; 211 rounds those corners off. 215 are the diagonals, 218 the
-shades, 222 the four card suits, 226 a ball, a circle, a plus and a pi,
-230 the arrows and 234 the wedges. 238 upwards is empty and waiting.
+#### The markdown bulletin board
 
-`embedded/pico/demos/petscii.jdb` prints the lot with its numbers.
-
-Keys repeat when held, after a short pause, which is what makes the
-editor bearable; Page Up and Page Down move by a screen. A game wants
-neither. `GFX.KEYSTATE(code)` asks whether a key is down at this instant
-instead of taking one off the queue, so a ship steers as long as the key
-is held rather than once per press.
-
-A USB game controller is a joystick under the same names the desktop
-uses: `JOY.COUNT`, `JOY.AXIS(id, n)` between -1 and 1, `JOY.BUTTON`,
-`JOY.HAT` as a bitmask and `JOY.NAME$`. A program written against a pad
-on a PC therefore runs on the board unchanged. A DualShock 4 is decoded
-by its report layout, with the sticks on axes 0 to 3 and the triggers on
-4 and 5; `JOY.RAW$(id)` hands back the last raw report as hex, which is
-how another pad's layout gets worked out. XInput controllers - the Xbox
-family - are not HID and are not supported.
-
-The host stack is polled from the calls a program already makes, and no
-faster than every half millisecond. Without that brake a program that
-sits waiting for a key calls into the stack thousands of times a frame,
-which measured out at a fifth of the frame spent on nothing.
-`USB.TIME$` reports what the stack costs - calls, calls over 4 ms, worst
-and mean - and `USB.DIAG$` lists what enumerated with vendor and product
-ids. `DVI.LATE$` counts frames that ran long or short against the
-16.7 ms the signal expects, which is what separates a picture the board
-generated badly from one the monitor lost on its own.
-
-The Fruit Jam has no cyw43. Its radio is an ESP32-C6 on its own SPI bus,
-carrying Adafruit's nina firmware, and that firmware runs the TCP/IP
-stack itself. So there is no lwIP on this board: a socket is a number the
-radio hands out, and the host sends commands and reads answers. A
-command is a start byte, the command, its parameters each with a length,
-and an end byte; a busy line says when the chip will listen. The chip
-wants its select line held high while it comes out of reset, which the
-first command of a session arranges, so the radio costs about a second
-the first time it is used and nothing afterwards.
-
-None of that reaches a program. `WIFI.CONNECT`, `WIFI.AUTO` (ssid and
-password from `/wifi.txt`), `WIFI.STATUS` (3 is a live connection here as
-it is on the W boards), `WIFI.IP$`, `WIFI.MAC$`, `WIFI.SCAN`, `WIFI.OFF`,
-`HTTP.GET$`, `HTTP.POST$`, `HTTP.STATUS` and `NTP.SYNC` are the same
-verbs as everywhere else, so a program that fetches a page runs unchanged
-on a Pico W, an ESP32 and here. `WIFI.SCAN` returns a row per network of
-name, signal, channel and whether it is open. The time comes from the
-radio, which keeps its own clock once it is online, rather than from a
-query the host sends.
-
-`ESP.PROBE$` reports the firmware version, `ESP.FW$` just the version and
-`ESP.RESET` restarts the radio. Reset is shared with the audio codec, so
-restarting the radio reprograms the codec's registers on the way back;
-the sound engine itself keeps running.
-
-There is a board to read with it. `jdb/demos/web/mdbbs.jdb` serves
-markdown - the file itself to a client that renders it, the same file as
-HTML to one that does not - and `embedded/pico/demos/bbs.jdb` is the
-reader: forty columns by twenty, links numbered, and a number typed to
-follow one. Line based on purpose, the way a bulletin board was, which
-works on a serial line and before a USB keyboard has enumerated. A link
-to a program is downloaded rather than followed and lands in the flash
-store under its own name.
-
-Those pages carry one addition to markdown. `{cyan}text{/}` colours a
-run, the end of a line ends it whether it was closed or not, and the
-names are the ones a terminal has: red, green, yellow, blue, magenta,
-cyan, white, gray, orange. The HTML side turns them into spans; the
-board side turns them into escapes that take no room in the column
-count, so wrapping still measures what is visible.
+* `jdb/demos/web/mdbbs.jdb` serves markdown: the file to a client that renders
+  it, HTML to one that does not. `embedded/pico/demos/bbs.jdb` is the board
+  reader: 40 by 20, links numbered, a number follows one. It is line based, so
+  it works on a serial line and before a USB keyboard enumerates. A link to a
+  program downloads it into the flash store under its own name.
+* Pages may colour a run with `{cyan}text{/}`; the end of a line ends it. The
+  names are red, green, yellow, blue, magenta, cyan, white, gray and orange. The
+  HTML side makes spans, the board side escapes that take no columns, so
+  wrapping measures what is visible.
 
 ### Compiled programs: p-code on disk
 
-A board that takes fifty seconds to translate sixteen kilobytes of
-source does not have to translate it at all. `jdbasic --pcode prog.jdb`
-writes `prog.jdpb` beside it - the chunk the compiler produced, nothing
-else - and `RUN prog.jdpb` on the board reads it and starts. No lexer,
-no parser, no compiler in the way. Measured on a Fruit Jam with a four
-kilobyte program: 2.53 seconds from source, 0.17 as p-code.
-
-The file begins with `JDPB` and carries the format revision and the
-opcode count it was built against, so a file from a different build is
-refused rather than executed as rubbish. The extension finds it; the
-magic is what is actually checked, and any file starting with it runs
-as p-code whatever it is called.
-
-Getting one onto a board over the serial line needs the length, because
-a compiled program contains every byte there is including the ones that
-used to end the transfer: `RECV prog.jdpb 12788` takes exactly that many
-bytes raw, with no line-ending translation.
-
-The board answers every 256 bytes with a `#`, and only once those bytes
-are stored. A sender has to wait for it. Storing stops the board reading
-the line for as long as a flash erase takes, about fifty milliseconds,
-and the port buffers sixty four bytes: a sender that keeps going loses
-what it sent meanwhile. If a transfer does come up short the board eats
-whatever is still arriving rather than handing it to the prompt, because
-a file read as commands is worse than a file lost - the first two lines
-of a graphics program turn the console off and clear the screen, which
-looks exactly like the board dying.
-
-Building one on a desktop is the whole point, and it needs nothing from
-the board. `jdbasic --pcode prog.jdb` writes `prog.jdpb` beside the
-source with whatever desktop build is at hand; the board's own builtins
-do not have to exist there. A verb the desktop has never heard of, say
-`WIFI.AUTO` or `NEOPIXEL.SET`, compiles to a call resolved by name, and
-the board resolves it when it runs.
-
-What does have to be handled is the opposite case: a builtin both ends
-know. Those are called by slot number, and slots are handed out in
-registration order, so `SIN` is not the same number in a desktop build as
-on a board. The file therefore carries the name of every builtin it
-calls, and the loader rewrites the slots against the target's own
-registry. A file that calls something the target does not have is
-refused at load with that name, rather than calling whatever happens to
-sit at that number.
-
-So the working loop is: write and test on the desktop, `--pcode`, copy
-the file across, `RUN` it. `embedded/pico/demos/mandel.jdb` and
-`bbs.jdb` are built that way - one all arithmetic and graphics, one
-joining the network and fetching pages.
-
-What p-code does not do is make the program smaller in memory. The
-chunk still lives in RAM while it runs, and on the Fruit Jam that is
-now what limits size rather than the time.
+* **`jdbasic --pcode prog.jdb`** writes `prog.jdpb` beside the source, with any
+  desktop build. **`RUN prog.jdpb`** on the board runs it without lexer, parser
+  or compiler. A four kilobyte program on a Fruit Jam: 2.53 s from source,
+  0.17 s as p-code.
+* **Format**: the file begins with `JDPB` and carries the format revision and
+  the opcode count; a file from a different build is refused. The magic, not
+  the extension, decides.
+* **Transfer**: `RECV prog.jdpb 12788` takes exactly that many raw bytes. The
+  board answers every 256 stored bytes with `#` and the sender must wait for
+  it: a flash erase stops reading for about 50 ms and the port buffers 64 bytes.
+  After a short transfer the board discards whatever still arrives instead of
+  running it as commands.
+* **Builtins**: one only the board has (`WIFI.AUTO`, `NEOPIXEL.SET`) compiles to
+  a call resolved by name when it runs. One both ends know is called by slot;
+  the file carries the name of every builtin it calls and the loader rewrites
+  the slots against the target's registry. A file calling something the target
+  lacks is refused at load, with the name.
+* **Working loop**: write and test on the desktop, `--pcode`, copy the file,
+  `RUN` it. `embedded/pico/demos/mandel.jdb` and `bbs.jdb` are built that way.
+* **Memory**: p-code does not make a program smaller in RAM; on the Fruit Jam
+  memory, not load time, now limits program size.
 
 ### Watching the memory
 
-`SYS.FREE` is the total, and the total is not what a single allocation
-can have. `SYS.LARGEST` is the biggest block the heap will actually hand
-over, and that is the number a growing array hits first:
+| Function | Answers |
+|----------|---------|
+| `SYS.FREE` | the total free heap, not what one allocation can get |
+| `SYS.LARGEST` | the biggest block the heap hands over, the number a growing array hits first |
+| `SYS.MEM()` | internal and PSRAM memory, free and total and largest, on one line |
+| `SYS.HEAP$` | RP2350: arena taken from the break, used and free within it, free pieces (frags), unclaimed ground below the stack; `SYS.FREE` is free plus ground |
+| `SYS.PSRAMLARGEST` | Fruit Jam: the biggest PSRAM block |
+| `SYS.STACK` | `[size, deepest use]` of the C stack in bytes |
+| `SYS.NATIVES`, `SYS.NATIVES$` | what the builtin registry costs; every builtin by name |
+| `SYS.CHUNKS` | RP2350: where a loaded program's memory went |
 
 ```
 > PRINT SYS.MEM()
 internal=163247/422787 largest=90112 psram=8361576/8388608 largest=8257536
 ```
 
-An array costs about 24 bytes an element on both boards, so 8 MB of PSRAM
-holds roughly 340000 of them and the PicoCalc's 351720 about 14000.
-
-On the RP2350 boards `SYS.HEAP$` says where the heap stands in the
-allocator's own terms: arena is what it has taken off the break so far,
-used and free divide that, frags counts the free pieces, and ground is
-the stretch below the stack that nobody has claimed. `SYS.FREE` adds the
-last two together; this says which of them a program is short of. On the
-Fruit Jam `SYS.PSRAMLARGEST` is the companion to `SYS.LARGEST` for the
-PSRAM heap, and the number that matters when one large array grows.
-
-`SYS.STACK` answers `[size, deepest use]` of the C stack in bytes, which
-is what a deep recursion runs into before the heap does. `SYS.NATIVES`
-is what the builtin registry costs and `SYS.NATIVES$` lists every
-builtin the board has by name, so a program can ask before it calls. On
-the RP2350 boards `SYS.CHUNKS` says where a loaded program's memory
-went, and `SYS.LARGEST` is the number to watch before `GFX.BUFFER` on a
-PicoCalc.
-
-How much stack, history, network buffer and PSRAM arena a board gets is
-set when its image is built; `embedded/pico/README.md` and
-`embedded/esp32/README.md` list the knobs and the defaults.
+* An array element costs about 24 bytes on both boards: 8 MB of PSRAM holds
+  roughly 340000, the PicoCalc's 351720 bytes about 14000.
+* Stack, history, network buffer and PSRAM arena sizes are set when a board's
+  image is built; `embedded/pico/README.md` and `embedded/esp32/README.md` list
+  the settings and defaults.
 
 ## The Integrated Editor
 
