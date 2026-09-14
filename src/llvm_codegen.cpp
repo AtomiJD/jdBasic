@@ -158,7 +158,7 @@ static bool is_handle_returner(const std::string& fn_name) {
         "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
         "ZIP.READ", "HTTP.REQUEST", "FORM.GET",
         "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-        "MON.DEVICES"
+        "MON.DEVICES", "NET.RECVFROM"
     };
     std::string u = fn_name;
     std::transform(u.begin(), u.end(), u.begin(), ::toupper);
@@ -1542,7 +1542,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
                         "ZIP.READ", "HTTP.REQUEST", "FORM.GET",
                         "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-                        "MON.DEVICES"
+                        "MON.DEVICES", "NET.RECVFROM"
                     };
                     std::string cu = s.expr->func_name;
                     std::transform(cu.begin(), cu.end(), cu.begin(), ::toupper);
@@ -1869,7 +1869,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
                     "ZIP.READ", "HTTP.REQUEST", "FORM.GET",
                     "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-                    "MON.DEVICES"
+                    "MON.DEVICES", "NET.RECVFROM"
                 };
                 std::string cu = s.expr->func_name;
                 std::transform(cu.begin(), cu.end(), cu.begin(), ::toupper);
@@ -3884,7 +3884,9 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             // { samples[], rate, channels, frames }, MON.DEVICES
                             // { playback[], capture[] }.
                             "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-                            "MON.DEVICES"
+                            "MON.DEVICES",
+                            // NET.RECVFROM answers {data, host, port} or NONE.
+                            "NET.RECVFROM"
                         };
                         if (obj_returners.count(upper) ||
                             (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
@@ -12561,6 +12563,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
         "CSVREADER", "CSVWRITER", "CSVHEADER",
         "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
+        // Sockets: the data strings are payloads, never element streams.
+        "NET.CONNECT", "NET.LISTEN", "NET.ACCEPT", "NET.SEND", "NET.RECV$",
+        "NET.RECVLINE$", "NET.UDP", "NET.SENDTO", "NET.RECVFROM", "NET.CLOSE",
+        "NET.ALIVE", "NET.PEER$", "NET.PORT", "NET.ERROR$",
         "SQL.TABLE", "SQL.COLUMNS",
         // Embedded CPython: the code block and the injected value are
         // payloads, not element streams. Mirrors jdb_no_vectorize in vm.cpp -
@@ -13478,6 +13484,8 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // res{"samples"}[i] to drill through jdrt_obj_get.
                 "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
                 "MON.DEVICES",
+                // {data, host, port} from a UDP socket, or NONE on timeout.
+                "NET.RECVFROM",
             };
             bool is_object_fn = object_returners.count(upper);
 

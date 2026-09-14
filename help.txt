@@ -2330,6 +2330,62 @@ The original matrix is not modified.
 Example: m2 = MVINS(m, 1, 6, nights)   ' append a computed 7th column
 Example: m3 = MVINS(m, 1, 0, 0)        ' insert a leading column of zeros
 
+[NET.ACCEPT]
+Syntax: NET.ACCEPT(listener, [timeout_ms]) -> handle
+Description: Takes the next waiting TCP connection on a NET.LISTEN socket. Returns 0 on timeout; timeout_ms defaults to -1 (wait).
+
+[NET.ALIVE]
+Syntax: NET.ALIVE(handle) -> bool
+Description: TRUE while the socket is open and, for TCP, the peer has not closed or unread data is left.
+
+[NET.CLOSE]
+Syntax: NET.CLOSE(handle) -> bool
+Description: Closes a socket. FALSE when the handle was not open.
+
+[NET.CONNECT]
+Syntax: NET.CONNECT(host$, port, [timeout_ms]) -> handle
+Description: Opens a TCP connection. timeout_ms defaults to 5000. Returns 0 on failure, NET.ERROR$() says why.
+
+[NET.ERROR$]
+Syntax: NET.ERROR$() -> string$
+Description: The message of the last failed NET call.
+
+[NET.LISTEN]
+Syntax: NET.LISTEN(port, [bind$]) -> handle
+Description: Opens a listening TCP socket. bind$ defaults to "0.0.0.0". Port 0 picks a free port, read it with NET.PORT. Returns 0 on failure.
+
+[NET.PEER$]
+Syntax: NET.PEER$(handle) -> string$
+Description: "host:port" of the other end of a TCP connection.
+
+[NET.PORT]
+Syntax: NET.PORT(handle) -> number
+Description: The local port of a socket.
+
+[NET.RECV$]
+Syntax: NET.RECV$(handle, [max_bytes], [timeout_ms]) -> string$
+Description: Returns the bytes that have arrived, at most max_bytes (default 65536). "" on timeout or after the peer closed and everything is read.
+
+[NET.RECVFROM]
+Syntax: NET.RECVFROM(handle, [timeout_ms]) -> map
+Description: Returns the next UDP datagram as {"data", "host", "port"}, or NONE on timeout.
+
+[NET.RECVLINE$]
+Syntax: NET.RECVLINE$(handle, [timeout_ms]) -> string$
+Description: Returns the next line without its LF or CR LF. "" on timeout.
+
+[NET.SEND]
+Syntax: NET.SEND(handle, data$) -> bytes
+Description: Sends all of data$ on a TCP connection. Returns the bytes sent, -1 when nothing could be sent.
+
+[NET.SENDTO]
+Syntax: NET.SENDTO(handle, host$, port, data$) -> bytes
+Description: Sends one UDP datagram. Returns -1 on error.
+
+[NET.UDP]
+Syntax: NET.UDP([port], [bind$]) -> handle
+Description: Opens a UDP socket. port defaults to 0, bind$ to "0.0.0.0". Returns 0 on failure.
+
 [NEW]
 Syntax: NEW
 Description: Clears the current source code from memory.

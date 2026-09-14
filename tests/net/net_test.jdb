@@ -1,0 +1,84 @@
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+' NET.* on the loopback interface: a TCP listener, a client and the accepted
+' connection exchanging lines, raw bytes and a close; timeouts; a refused
+' connection; and a UDP datagram between two sockets.
+
+DIM PASS = 0
+DIM FAIL = 0
+
+SUB Check(n, cond)
+    IF cond THEN
+        PASS = PASS + 1
+    ELSE
+        PRINT "FAIL Test #"; n
+        FAIL = FAIL + 1
+    ENDIF
+ENDSUB
+
+DIM listener = NET.LISTEN(0, "127.0.0.1")
+Check(1, listener > 0)
+DIM port = NET.PORT(listener)
+Check(2, port > 0)
+DIM client = NET.CONNECT("127.0.0.1", port, 2000)
+Check(3, client > 0)
+DIM server = NET.ACCEPT(listener, 2000)
+Check(4, server > 0)
+Check(5, INSTR(NET.PEER$(server), "127.0.0.1") = 0)
+
+DIM crlf$ = CHR$(13) + CHR$(10)
+DIM sent = NET.SEND(client, "hello" + CHR$(10) + "second line" + crlf$ + "tail")
+Check(6, sent = 23)
+DIM first$ = NET.RECVLINE$(server, 2000)
+Check(7, first$ = "hello")
+DIM second$ = NET.RECVLINE$(server, 2000)
+Check(8, second$ = "second line")
+DIM rest$ = NET.RECV$(server, 100, 1000)
+Check(9, rest$ = "tail")
+
+DIM raw$ = "a" + CHR$(0) + "b"
+Check(10, NET.SEND(server, raw$) = 3)
+DIM got$ = NET.RECV$(client, 3, 2000)
+Check(11, LEN(got$) = 3)
+Check(12, ASC(MID$(got$, 1, 1)) = 0)
+
+DIM waited$ = NET.RECVLINE$(client, 100)
+Check(13, waited$ = "")
+Check(14, NET.ALIVE(client))
+DIM none_waiting = NET.ACCEPT(listener, 100)
+Check(15, none_waiting = 0)
+
+DIM closed_client = NET.CLOSE(client)
+DIM after$ = NET.RECV$(server, 100, 1000)
+Check(16, after$ = "")
+Check(17, NOT NET.ALIVE(server))
+DIM closed_server = NET.CLOSE(server)
+DIM closed_listener = NET.CLOSE(listener)
+
+DIM refused = NET.CONNECT("127.0.0.1", port, 500)
+Check(18, refused = 0)
+Check(19, LEN(NET.ERROR$()) > 0)
+
+DIM u1 = NET.UDP(0, "127.0.0.1")
+DIM u2 = NET.UDP(0, "127.0.0.1")
+Check(20, u1 > 0)
+Check(21, u2 > 0)
+Check(22, NET.SENDTO(u1, "127.0.0.1", NET.PORT(u2), "ping") = 4)
+DIM msg = NET.RECVFROM(u2, 2000)
+DIM msg_data$ = msg{"data"}
+DIM msg_host$ = msg{"host"}
+Check(23, msg_data$ = "ping")
+Check(24, msg{"port"} = NET.PORT(u1))
+Check(25, msg_host$ = "127.0.0.1")
+DIM quiet = NET.RECVFROM(u2, 100)
+Check(26, TYPEOF(quiet) = "NONE")
+DIM closed_u1 = NET.CLOSE(u1)
+DIM closed_u2 = NET.CLOSE(u2)
+
+PRINT "PASS: "; PASS; "  FAIL: "; FAIL
+IF FAIL = 0 THEN
+    PRINT "ALL TESTS PASSED!"
+ELSE
+    PRINT "SOME TESTS FAILED!"
+ENDIF

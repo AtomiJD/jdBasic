@@ -2040,6 +2040,58 @@ PRINT "There are " + LEN(Topics) + " help topics available."
 
 * **`HTTP.SERVER.WAIT`**: Parks the main thread in C++ until the server stops, and returns when a handler calls `HTTP.SERVER.STOP` (or the process exits). Use this instead of a `DO ... SLEEP ... LOOP` keep-alive: handlers run on httplib worker threads that share the one VM, so a jdBasic loop on the main thread would step the VM concurrently with a running handler and corrupt it. That is fatal for handlers that take seconds, an LLM query for example.
 
+### TCP and UDP Sockets (NET)
+
+Raw sockets for protocols that are not HTTP: line protocols, game servers, device control, broadcasts. Part of every desktop build, no flag needed.
+
+A socket is an integer handle, `0` means the call failed and `NET.ERROR$()` says why. Every call that waits takes `timeout_ms`; `-1` waits until something happens. Strings carry bytes, so `CHR$(0)` and binary payloads pass unchanged. IPv4 and IPv6 host names both resolve.
+
+* **`NET.CONNECT(host$, port, [timeout_ms]) -> handle`**: Opens a TCP connection. `timeout_ms` defaults to `5000`. Returns `0` when the host does not answer or refuses.
+* **`NET.LISTEN(port, [bind$]) -> handle`**: Opens a listening TCP socket. `bind$` defaults to `"0.0.0.0"` (every interface); `"127.0.0.1"` keeps it local. Port `0` lets the system pick one, `NET.PORT` reads it back.
+* **`NET.ACCEPT(listener, [timeout_ms]) -> handle`**: Takes the next waiting connection. Returns `0` on timeout. `timeout_ms` defaults to `-1`.
+* **`NET.SEND(handle, data$) -> bytes`**: Sends all of `data$` on a TCP connection. Returns the bytes sent, `-1` when nothing could be sent.
+* **`NET.RECV$(handle, [max_bytes], [timeout_ms]) -> string$`**: Returns what has arrived, at most `max_bytes` (default `65536`). Returns `""` on timeout or once the peer has closed and everything is read.
+* **`NET.RECVLINE$(handle, [timeout_ms]) -> string$`**: Returns the next line without its `LF` or `CR LF`. Returns `""` on timeout; after the peer closes, the rest of an unfinished line.
+* **`NET.UDP([port], [bind$]) -> handle`**: Opens a UDP socket. `port` defaults to `0`, `bind$` to `"0.0.0.0"`.
+* **`NET.SENDTO(handle, host$, port, data$) -> bytes`**: Sends one datagram. Returns `-1` on error.
+* **`NET.RECVFROM(handle, [timeout_ms]) -> map`**: Returns the next datagram as `{"data", "host", "port"}`, or `NONE` on timeout. Test with `TYPEOF(msg) = "NONE"`.
+* **`NET.CLOSE(handle) -> bool`**: Closes the socket. `FALSE` when the handle was not open.
+* **`NET.ALIVE(handle) -> bool`**: `TRUE` while the socket is open and, for TCP, the peer has not closed or unread data is left.
+* **`NET.PEER$(handle) -> string$`**: `"host:port"` of the other end of a TCP connection.
+* **`NET.PORT(handle) -> number`**: The local port of any socket.
+* **`NET.ERROR$() -> string$`**: The message of the last failed call.
+
+Open sockets close when the program ends.
+
+```basic
+' Line echo server
+DIM listener = NET.LISTEN(7000, "127.0.0.1")
+DIM conn = 0
+DIM text$ = ""
+DIM sent = 0
+DIM closed = FALSE
+DO
+    conn = NET.ACCEPT(listener)
+    DO WHILE NET.ALIVE(conn)
+        text$ = NET.RECVLINE$(conn)
+        IF LEN(text$) > 0 THEN sent = NET.SEND(conn, "echo: " + text$ + CHR$(10))
+    LOOP
+    closed = NET.CLOSE(conn)
+LOOP
+```
+
+```basic
+' UDP request and answer with a timeout
+DIM sock = NET.UDP()
+DIM sent = NET.SENDTO(sock, "192.168.0.50", 4210, "status")
+DIM reply = NET.RECVFROM(sock, 1000)
+IF TYPEOF(reply) = "NONE" THEN
+    PRINT "no answer"
+ELSE
+    PRINT reply{"host"}; ":"; reply{"port"}; " says "; reply{"data"}
+ENDIF
+```
+
 ### Output capture
 
 These three natives redirect `PRINT`/all script output to an in-memory string buffer instead of letting it leak to stdout. Captures are stacked: each `OUTPUT.CAPTURE_BEGIN` saves the previous output handler so nested captures and host-installed routers (e.g. the Console workspace buffer) restore correctly.

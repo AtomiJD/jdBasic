@@ -62,6 +62,7 @@ extern void register_com_builtins(VM& vm);
 #ifdef HTTP
 extern void register_http_builtins(VM& vm);
 #endif
+extern void register_net_builtins(VM& vm);
 #ifdef USE_SERIAL
 extern void register_serial_builtins(VM& vm);
 #endif
@@ -134,6 +135,7 @@ static void setup_all_builtins(VM& vm) {
 #ifdef HTTP
     register_http_builtins(vm);
 #endif
+    register_net_builtins(vm);
 #ifdef USE_SERIAL
     register_serial_builtins(vm);
 #endif

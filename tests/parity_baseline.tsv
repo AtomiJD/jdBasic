@@ -138,6 +138,7 @@ tests/native/test_native_wire_with_sub.jdb	OK	OK	OK
 tests/native/test_split_index_native.jdb	OK	CFAIL	GAP
 tests/native_arity.jdb	PASS	CFAIL	GAP
 tests/native_param_conflict_test.jdb	OK	OK	OK
+tests/net/net_test.jdb	PASS	PASS	OK
 tests/optional_chain.jdb	PASS	CFAIL	GAP
 tests/optional_params.jdb	PASS	CFAIL	GAP
 tests/reducers_on_handles.jdb	PASS	PASS	OK

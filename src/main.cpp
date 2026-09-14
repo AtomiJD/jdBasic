@@ -112,6 +112,7 @@ static std::vector<std::string> pe_imported_dlls(const std::filesystem::path& fi
 #include <objbase.h>
 #endif
 #include "http.h"
+#include "net.h"
 #ifdef USE_SERIAL
 #include "serial.h"
 #endif
@@ -538,6 +539,9 @@ static void setup_dynamic_code(VM& vm) {
     register_http_builtins(vm);
 #elif defined(__EMSCRIPTEN__)
     register_wasm_net(vm);
+#endif
+#ifndef __EMSCRIPTEN__
+    register_net_builtins(vm);
 #endif
 #ifdef USE_SERIAL
     register_serial_builtins(vm);
