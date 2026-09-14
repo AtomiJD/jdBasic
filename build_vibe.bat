@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion
 REM build_vibe.bat - Vibe-Game-Pack release bundle for Windows.
 REM Wraps build.bat GFX IMGUI HTTP NET MCPSERVER SQLITE FX RELEASE, then REFRESHES the
 REM redistributable bundle in release\ in place: the binary, the SDL3 / OpenSSL
-REM DLLs, the runtime docs and BUILD_INFO.txt are regenerated, while the curated
+REM DLLs, the runtime docs, lib\, examples\ and BUILD_INFO.txt are regenerated, while the curated
 REM content (games\, run-*.bat, start-claude.bat, QUICKSTART.md, setup_guide.md,
 REM CLAUDE.md, README.txt) is left untouched. No NATIVEC - the games run
 REM interpreted, so there is no jdbrt.dll in this pack.
@@ -57,6 +57,13 @@ copy /Y doc\languages.md           "%OUT%\doc\" >nul
 REM Ship help.txt so the in-REPL HELP command and --dump-help work next to the exe.
 copy /Y help.txt "%OUT%\" >nul
 
+REM Module library and the examples, graphics and ImGui included.
+call .\release_content.bat "%OUT%" GFX
+if errorlevel 1 (
+    echo CONTENT COPY FAILED - bundle not refreshed.
+    exit /b 1
+)
+
 REM App-local VC++ runtime so the bundle runs on a clean Windows without the redist installed.
 copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
 copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
@@ -68,13 +75,15 @@ set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%
 > "%OUT%\BUILD_INFO.txt" echo jdBasic Vibe-Game Pack - Build !BNUM! - !BDATE!
 >>"%OUT%\BUILD_INFO.txt" echo.
 >>"%OUT%\BUILD_INFO.txt" echo Binary: jdBasic.exe ^(Build !BNUM!, !BDATE!^)
->>"%OUT%\BUILD_INFO.txt" echo Features: HTTP, GFX, ImGui, FX, SQLite, MCP
->>"%OUT%\BUILD_INFO.txt" echo Build flags: GFX IMGUI HTTP MCPSERVER SQLITE FX
+>>"%OUT%\BUILD_INFO.txt" echo Features: HTTP, NET, GFX, ImGui, FX, SQLite, MCP
+>>"%OUT%\BUILD_INFO.txt" echo Build flags: GFX IMGUI HTTP NET MCPSERVER SQLITE FX
 >>"%OUT%\BUILD_INFO.txt" echo.
 >>"%OUT%\BUILD_INFO.txt" echo What's inside:
 >>"%OUT%\BUILD_INFO.txt" echo   games\pacman\   - vibe_game.jdb ^(Pac-clone with sprites, sound, MCP-pause^)
 >>"%OUT%\BUILD_INFO.txt" echo   games\shooter\  - space_shooter.jdb ^(Stellar Drift vector shooter^)
 >>"%OUT%\BUILD_INFO.txt" echo   games\empty\    - empty_game.jdb ^(clean canvas for new games^)
+>>"%OUT%\BUILD_INFO.txt" echo   examples\       - language, module and graphics examples, see examples\README.txt
+>>"%OUT%\BUILD_INFO.txt" echo   lib\            - modules for IMPORT, found next to the EXE
 >>"%OUT%\BUILD_INFO.txt" echo.
 >>"%OUT%\BUILD_INFO.txt" echo For first-time setup see QUICKSTART.md. For the full walkthrough
 >>"%OUT%\BUILD_INFO.txt" echo see setup_guide.md.

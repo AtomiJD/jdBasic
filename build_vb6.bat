@@ -60,6 +60,13 @@ copy /Y jdb\demos\forms\mdi_doc.jdform "%OUT%\demos\" >nul
 copy /Y jdb\demos\forms\tasklist.jdb   "%OUT%\demos\" >nul
 copy /Y jdb\demos\forms\tasklist.jdform "%OUT%\demos\" >nul
 
+REM Module library and the examples, graphics and ImGui included.
+call .\release_content.bat "%OUT%" GFX
+if errorlevel 1 (
+    echo CONTENT COPY FAILED - bundle not assembled.
+    exit /b 1
+)
+
 REM App-local VC++ runtime so the bundle runs on a clean Windows without the redist installed.
 copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
 copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
@@ -71,8 +78,8 @@ set BDATE=%date:~6,4%/%date:~3,2%/%date:~0,2%
 > "%OUT%\BUILD_INFO.txt" echo jdBasic VB6 Pack - Build !BNUM! - !BDATE!
 >>"%OUT%\BUILD_INFO.txt" echo.
 >>"%OUT%\BUILD_INFO.txt" echo Binary: jdBasic.exe ^(Build !BNUM!, !BDATE!^)
->>"%OUT%\BUILD_INFO.txt" echo Features: Forms, COM, SQLite, HTTP, GFX, ImGui, MCP
->>"%OUT%\BUILD_INFO.txt" echo Build flags: MCPSERVER HTTP GFX IMGUI COM FORMS SQLITE
+>>"%OUT%\BUILD_INFO.txt" echo Features: Forms, COM, SQLite, HTTP, NET, GFX, ImGui, MCP
+>>"%OUT%\BUILD_INFO.txt" echo Build flags: MCPSERVER HTTP NET GFX IMGUI COM FORMS SQLITE
 
 REM End-user README inside the bundle.
 > "%OUT%\README.txt" echo jdBasic VB6 Pack ^(Windows x64^)
@@ -90,6 +97,9 @@ REM End-user README inside the bundle.
 >>"%OUT%\README.txt" echo     jdBasic.exe demos\forms_demo.jdb  - forms basics
 >>"%OUT%\README.txt" echo     jdBasic.exe demos\tasklist.jdb    - designer-built app ^(.jdform^)
 >>"%OUT%\README.txt" echo     jdBasic.exe demos\mdi_demo.jdb    - MDI editor
+>>"%OUT%\README.txt" echo.
+>>"%OUT%\README.txt" echo More example programs: see examples\README.txt.
+>>"%OUT%\README.txt" echo Modules for IMPORT live in lib\ and are found next to the EXE.
 >>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo The .jdform layouts are made with the jdBasic VS Code
 >>"%OUT%\README.txt" echo extension's visual form designer.

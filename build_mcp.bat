@@ -43,6 +43,13 @@ copy /Y doc\languages.md "%OUT%\doc\" >nul
 REM Ship help.txt so the in-REPL HELP command and --dump-help work next to the exe.
 copy /Y help.txt "%OUT%\" >nul
 
+REM Module library and the console examples.
+call .\release_content.bat "%OUT%"
+if errorlevel 1 (
+    echo CONTENT COPY FAILED - bundle not assembled.
+    exit /b 1
+)
+
 REM App-local VC++ runtime so the bundle runs on a clean Windows without the redist installed.
 copy /Y "%SystemRoot%\System32\vcruntime140.dll"   "%OUT%\" >nul
 copy /Y "%SystemRoot%\System32\vcruntime140_1.dll" "%OUT%\" >nul
@@ -60,6 +67,9 @@ REM End-user README inside the bundle (kept short on purpose).
 >>"%OUT%\README.txt" echo doc\languages.md ships next to the EXE on purpose -
 >>"%OUT%\README.txt" echo jdb_doc looks there first regardless of working dir,
 >>"%OUT%\README.txt" echo so no "cwd" config is required.
+>>"%OUT%\README.txt" echo.
+>>"%OUT%\README.txt" echo Example programs: see examples\README.txt.
+>>"%OUT%\README.txt" echo Modules for IMPORT live in lib\ and are found next to the EXE.
 >>"%OUT%\README.txt" echo.
 >>"%OUT%\README.txt" echo Full client-config and tool reference: see doc\MCP.md.
 >>"%OUT%\README.txt" echo Source / issues: https://github.com/AtomiJD/jdBasic
