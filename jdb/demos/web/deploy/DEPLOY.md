@@ -139,7 +139,21 @@ Open `https://YOUR.DOMAIN`. The board is empty and there are no users yet.
   jdtrakr`. A jdweb.jdb from 2026-09-14 on imports `secret.jdb`, so upload it
   with the first such update. On start it adds a `last_seen` column to the
   `sessions` table and stamps the existing sign-ins with the start time; a
-  sign-in unused for 30 days after that ends. The `.db` is untouched by a restart. `"secure": true` already lives
+  sign-in unused for 30 days after that ends.
+- **Passwords:** kept as PBKDF2-HMAC-SHA256 hashes with 600000 rounds (about
+  0.3 s per sign-in). A password from the older salted SHA-256 scheme still
+  signs in and is hashed again at that sign-in, so every user moves over on
+  their own; there is nothing to run.
+- **API keys as hashes:** `JDTRAKR_API` and each key in `JDTRAKR_KEYS` may be
+  written as `sha256:<hex>`, the SHA-256 of the key, so the service
+  environment no longer holds the key itself. Clients keep sending the plain
+  key; plain values keep working. On the box:
+
+  ```bash
+  printf '%s' 'THE-KEY' | sha256sum | cut -d' ' -f1   # the hex for sha256:<hex>
+  sudo systemctl edit jdtrakr                          # [Service] Environment=JDTRAKR_API=sha256:<hex>
+  sudo systemctl restart jdtrakr
+  ``` The `.db` is untouched by a restart. `"secure": true` already lives
   in the installed `jdtrakr.json`, so no per-update edit is needed.
 - **Updated a template with an inline `<script>`?** (e.g. `jdtrakr_tpl/board.html`,
   any `jdweb_tpl/*.html`) you MUST refresh the CSP script hashes or the browser

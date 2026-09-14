@@ -564,6 +564,32 @@ IF OS.FEATURE("SQLITE") THEN
     DIM auth_left = SQL.TABLE(db, "SELECT COUNT(*) FROM sessions")
     DIM auth_left_n = auth_left[0, 0]
     TESTKIT.EQ(CINT(auth_left_n), 0, "and its row")
+
+    DIM owner_rows = SQL.TABLE(db, "SELECT salt, pass_hash FROM users WHERE name = 'owner'")
+    DIM owner_salt$ = owner_rows[0, 0]
+    DIM owner_hash$ = owner_rows[0, 1]
+    TESTKIT.EQ(LEFT$(owner_hash$, 21), "pbkdf2-sha256$600000$", "a password is kept as a PBKDF2 hash with 600000 rounds")
+    TESTKIT.EQ(owner_salt$, "", "without a salt column of its own")
+    JDWEB.SESSION_CONFIG({"auth_rounds": 1000})
+    SQL.EXEC(db, "INSERT INTO users (name, salt, pass_hash) VALUES ('legacy', 'abc', '" + CODEC.SHA256$("abc:old pw") + "')")
+    DIM legacy_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "legacy" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "old pw" + Q$ + "}", "HEADERS": {}}
+    DIM legacy_login = JDWEB.AUTH_LOGIN(db, legacy_req, FALSE)
+    TESTKIT.EQ(legacy_login{"__http_status"}, 200, "a password of the salted SHA-256 scheme still signs in")
+    DIM legacy_rows = SQL.TABLE(db, "SELECT salt, pass_hash FROM users WHERE name = 'legacy'")
+    DIM legacy_salt$ = legacy_rows[0, 0]
+    DIM legacy_hash$ = legacy_rows[0, 1]
+    TESTKIT.ISTRUE(LEFT$(legacy_hash$, 19) = "pbkdf2-sha256$1000$" ANDALSO legacy_salt$ = "", "and is hashed again with PBKDF2 at that sign-in")
+    DIM legacy_again = JDWEB.AUTH_LOGIN(db, legacy_req, FALSE)
+    TESTKIT.EQ(legacy_again{"__http_status"}, 200, "the new hash verifies")
+    DIM legacy_bad_req = {"BODY": "{" + Q$ + "name" + Q$ + ":" + Q$ + "legacy" + Q$ + "," + Q$ + "password" + Q$ + ":" + Q$ + "old pv" + Q$ + "}", "HEADERS": {}}
+    DIM legacy_bad = JDWEB.AUTH_LOGIN(db, legacy_bad_req, FALSE)
+    TESTKIT.EQ(legacy_bad{"error"}, "wrong password", "and refuses a wrong password")
+    JDWEB.SESSION_CONFIG({"auth_rounds": 2000})
+    DIM legacy_more = JDWEB.AUTH_LOGIN(db, legacy_req, FALSE)
+    DIM more_rows = SQL.TABLE(db, "SELECT pass_hash FROM users WHERE name = 'legacy'")
+    DIM more_hash$ = more_rows[0, 0]
+    TESTKIT.EQ(LEFT$(more_hash$, 19), "pbkdf2-sha256$2000$", "more auth_rounds renew a hash at the next sign-in")
+    JDWEB.SESSION_CONFIG({"auth_rounds": 600000})
 ELSE
     TESTKIT.SKIP("cookie login needs a build with SQLITE")
 ENDIF

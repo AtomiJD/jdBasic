@@ -1,8 +1,8 @@
 ' jdTrakr - a kanban ticket board. A thin app on the JDWEB framework.
-' Run from this folder (needs jdtrakr.json alongside, and jdweb.jdb and tmpl.jdb
-' from lib/ either alongside or on the module path):
+' Run from this folder (needs jdtrakr.json alongside, and jdweb.jdb, tmpl.jdb
+' and secret.jdb from lib/ either alongside or on the module path):
 '   JDBASIC_PATH=../../../lib jdBasic jdtrakr.jdb
-IMPORT JDWEB
+IMPORT JDWEB, SECRET
 
 ' --- config (resolved relative to this script, so it works from any cwd) ---
 gAppDir$ = PATH.DIRNAME$(OS.ARGS()[0])
@@ -126,21 +126,32 @@ FUNC API_KEY$(request)
     RETURN s$
 ENDFUNC
 
+' Whether a key a client sent is the configured one. A configured value of
+' "sha256:<hex>" is the key's SHA-256 (SECRET.KEYHASH$), so the key itself
+' need not sit in the service environment; any other value is the key.
+' Both are compared in constant time.
+FUNC KEY_OK(k$, configured$)
+    c$ = TRIM$(configured$)
+    IF LEN(c$) = 0 THEN RETURN FALSE
+    IF LEFT$(c$, 7) = "sha256:" THEN RETURN SECRET.KEYMATCH(k$, MID$(c$, 7, LEN(c$)))
+    RETURN SECRET.EQUAL(k$, c$)
+ENDFUNC
+
 ' Machine identities. JDTRAKR_API is the primary key and acts as "Kaiku";
 ' JDTRAKR_KEYS adds named agents as "Name1:key1;Name2:key2" pairs, so each
-' remote Claude writes history under its own name.
+' remote Claude writes history under its own name. Every key may be given as
+' sha256:<hex> instead.
 FUNC API_ACTOR$(request)
     k$ = API_KEY$(request)
     IF LEN(k$) = 0 THEN RETURN ""
-    expected$ = TRIM$(GETENV$("JDTRAKR_API"))
-    IF LEN(expected$) > 0 ANDALSO k$ = expected$ THEN RETURN "Kaiku"
+    IF KEY_OK(k$, GETENV$("JDTRAKR_API")) THEN RETURN "Kaiku"
     multi$ = TRIM$(GETENV$("JDTRAKR_KEYS"))
     IF LEN(multi$) = 0 THEN RETURN ""
     pairs = SPLIT(multi$, ";")
     FOR EACH p$ IN pairs
         i = INSTR(p$, ":")
         IF i > 0 THEN
-            IF TRIM$(MID$(p$, i + 1, LEN(p$))) = k$ THEN RETURN TRIM$(LEFT$(p$, i))
+            IF KEY_OK(k$, MID$(p$, i + 1, LEN(p$))) THEN RETURN TRIM$(LEFT$(p$, i))
         ENDIF
     NEXT
     RETURN ""

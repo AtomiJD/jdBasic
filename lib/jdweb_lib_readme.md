@@ -116,6 +116,7 @@ and an `Allow` header naming them.
 | `secure`, `samesite`, `domain`, `path` | FALSE, `Lax`, none, `/` | The session cookie's attributes. |
 | `db` | 0 | A SQLite handle: sessions are written to table `jdweb_sessions` after each request and read back after a restart. Setting it drops what memory holds. |
 | `auth_ttl` | 2592000 | Seconds a sign-in of `AUTH_LOGIN` lives after its last use (30 days); 0 for no limit. |
+| `auth_rounds` | 600000 | PBKDF2 rounds of a password `AUTH_LOGIN` stores; a stored hash with fewer is renewed at the next sign-in. |
 
 ### Cookies and files
 
@@ -145,7 +146,7 @@ and an `Allow` header naming them.
 | `NAV_HTML$(cfg, active$)` / `THEME$()` / `COOKIE_BANNER$()` | The header with its navigation, the stylesheet, the banner. |
 | `LOGIN_PAGE$(cfg)` / `NOT_FOUND$(cfg)` | The themed sign-in page and 404 page. |
 | `AUTH_INIT(db)` | Creates the `users` and `sessions` tables in a SQLite database. |
-| `AUTH_LOGIN(db, request, secure)` / `AUTH_LOGOUT(db, request)` / `AUTH_ME(db, request)` | The sign-in, sign-out and who-am-I endpoints: the first sign-in on an empty table creates the owner, each user's first sign-in sets the password (salted SHA-256), the `jdwsession` cookie carries a 32-byte random token. |
+| `AUTH_LOGIN(db, request, secure)` / `AUTH_LOGOUT(db, request)` / `AUTH_ME(db, request)` | The sign-in, sign-out and who-am-I endpoints: the first sign-in on an empty table creates the owner, each user's first sign-in sets the password, the `jdwsession` cookie carries a 32-byte random token. Passwords are kept as `SECRET.HASH$` (PBKDF2, `auth_rounds`); a row of the older salted SHA-256 scheme, or one with fewer rounds, still signs in and is hashed again at that sign-in. |
 | `AUTH_USER$(db, request)` | The signed-in user's name, or `""`. A sign-in unused for longer than the `auth_ttl` setting (30 days) is removed; each use keeps it alive. |
 | `AUTH_CLEANUP(db)` | Removes the sign-ins unused for longer than `auth_ttl` and returns how many. |
 | `HASH_PW$(salt$, pw$)` / `COOKIE_VAL$(request, name$)` | The password hash, and a cookie of the request, percent-decoded. |

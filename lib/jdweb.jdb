@@ -267,8 +267,21 @@ ENDFUNC
 
 ' ---- cookie-session auth (cookie name: jdwsession) ----
 
+' The salted SHA-256 of the older password scheme; AUTH_LOGIN only reads it
+' to move such a row to SECRET.HASH$.
 EXPORT FUNC HASH_PW$(salt$, pw$)
     RETURN CODEC.SHA256$(salt$ + ":" + pw$)
+ENDFUNC
+
+FUNC PasswordMatches(pw$, salt$, stored$)
+    IF LEFT$(stored$, 14) = "pbkdf2-sha256$" ORELSE LEFT$(stored$, 14) = "pbkdf2_sha256$" THEN RETURN SECRET.VERIFY(pw$, stored$)
+    RETURN SECRET.EQUAL(HASH_PW$(salt$, pw$), stored$)
+ENDFUNC
+
+FUNC AuthRounds()
+    IF NOT MAP.EXISTS(gSessionConf, "auth_rounds") THEN RETURN 600000
+    DIM rounds = gSessionConf{"auth_rounds"}
+    RETURN rounds
 ENDFUNC
 
 ' The signed-in user's name, or "". A sign-in unused for longer than the
@@ -339,14 +352,17 @@ EXPORT FUNC AUTH_LOGIN(db, request, secure)
     DIM stored_hash$ = rows[0, 3]
     DIM no_hash = rows[0, 4]
 
-    DIM salt$ = ""
-    IF no_hash <> 0 THEN
-        salt$ = CODEC.UUID$()
-        SQL.EXEC(db, "UPDATE users SET salt='" + salt$ + "', pass_hash='" + HASH_PW$(salt$, pw$) + _
+    ' A password is kept as SECRET.HASH$. A row from the older salted SHA-256
+    ' scheme, or one hashed with fewer rounds than auth_rounds, is hashed
+    ' again with the password that just matched.
+    DIM renew = (no_hash <> 0)
+    IF no_hash = 0 THEN
+        IF NOT PasswordMatches(pw$, stored_salt$, stored_hash$) THEN RETURN { "error": "wrong password" }
+        IF LEN(stored_salt$) > 0 ORELSE SECRET.NEEDS_REHASH(stored_hash$, AuthRounds()) THEN renew = TRUE
+    ENDIF
+    IF renew THEN
+        SQL.EXEC(db, "UPDATE users SET salt = '', pass_hash = '" + ESC$(SECRET.HASH$(pw$, AuthRounds())) + _
             "' WHERE id = " + STR$(INT(uid)))
-    ELSE
-        salt$ = stored_salt$
-        IF HASH_PW$(salt$, pw$) <> stored_hash$ THEN RETURN { "error": "wrong password" }
     ENDIF
 
     DIM token$ = SECRET.TOKEN$()
@@ -749,12 +765,12 @@ ENDFUNC
 ' lives after its last use, 86400; 0 for no limit), "lifetime" (seconds
 ' since it was made, 0 for no limit), "cookie" (jdwsid), "secure" (FALSE),
 ' "samesite" (Lax), "domain", "path" (/), "db" (a SQLite handle that keeps
-' the sessions across restarts; 0 keeps them in memory) and "auth_ttl"
-' (seconds a sign-in of AUTH_LOGIN lives after its last use, 2592000).
-' Setting "db" drops the sessions held in memory, so they are read from
-' the database.
+' the sessions across restarts; 0 keeps them in memory), "auth_ttl"
+' (seconds a sign-in of AUTH_LOGIN lives after its last use, 2592000) and
+' "auth_rounds" (PBKDF2 rounds of a stored password, 600000). Setting "db"
+' drops the sessions held in memory, so they are read from the database.
 EXPORT SUB SESSION_CONFIG(opts)
-    DIM known$ = ",ttl,lifetime,cookie,secure,samesite,domain,path,db,auth_ttl,"
+    DIM known$ = ",ttl,lifetime,cookie,secure,samesite,domain,path,db,auth_ttl,auth_rounds,"
     DIM keys = MAP.KEYS(opts)
     DIM k = 0
     FOR k = 0 TO LEN(keys) - 1
