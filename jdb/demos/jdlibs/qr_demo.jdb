@@ -1,0 +1,48 @@
+' qr_demo.jdb - a GiroCode on an invoice: the EPC payment code built from the
+' invoice data, shown in the terminal, written as SVG, and put on a PDF page
+' beside the amount, ready for a banking app to scan.
+'
+'   jdBasic qr_demo.jdb
+
+IMPORT QR, PDFGEN
+
+DIM creditor$ = "Papier & Toner GmbH"
+DIM iban$ = "DE89370400440532013000"
+DIM bic$ = "COBADEFFXXX"
+DIM invoice$ = "RE-2026-0413"
+DIM amount$ = "168.80"
+DIM remittance$ = "Rechnung " + invoice$
+
+DIM payload$ = QR.EPC$(creditor$, iban$, amount$, bic$, remittance$)
+DIM code = QR.EPCMATRIX(creditor$, iban$, amount$, bic$, remittance$)
+DIM info = QR.INFO()
+
+PRINT "EPC payload, " + STR$(LEN(payload$)) + " bytes:"
+PRINT "  " + REPLACE$(payload$, CHR$(10), " | ")
+PRINT "QR version "; info{"version"}; ", level "; info{"ecc"}; ", mask "; info{"mask"}; ", "; info{"size"}; " x "; info{"size"}; " modules"
+PRINT ""
+PRINT QR.TEXT$(code)
+PRINT ""
+
+DIM folder$ = MKTEMP$("qrdemo")
+MKDIR folder$
+DIM svg_path$ = folder$ + "/girocode.svg"
+TXTWRITER svg_path$, QR.SVG$(code, 6)
+PRINT "SVG: " + svg_path$
+
+DIM pdf = PDFGEN.DOC()
+PDFGEN.SETINFO(pdf, remittance$, creditor$)
+PDFGEN.ADDPAGE(pdf)
+PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+PDFGEN.TEXTAT(pdf, 20, 30, remittance$)
+PDFGEN.USEFONT(pdf, "helvetica", "", 11)
+PDFGEN.TEXTAT(pdf, 20, 45, "Betrag: 168,80 EUR")
+PDFGEN.TEXTAT(pdf, 20, 52, "Empfänger: " + creditor$)
+PDFGEN.TEXTAT(pdf, 20, 59, "IBAN: DE89 3704 0044 0532 0130 00")
+PDFGEN.TEXTAT(pdf, 20, 66, "Verwendungszweck: " + remittance$)
+QR.TOPDF(pdf, code, 145, 22, 45, 2)
+PDFGEN.USEFONT(pdf, "helvetica", "", 8)
+PDFGEN.TEXTAT(pdf, 148, 72, "Mit der Banking-App scannen")
+DIM pdf_path$ = folder$ + "/rechnung_girocode.pdf"
+PDFGEN.WRITEFILE(pdf, pdf_path$)
+PRINT "PDF: " + pdf_path$

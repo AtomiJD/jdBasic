@@ -1,0 +1,261 @@
+' QR: matrices checked module for module against Python segno 1.6.6 in the
+' three modes, the four error correction levels, versions 1 to 40, fixed
+' versions and masks, UTF-8 text and EPC payment codes; the EPC payload and
+' its checks, the options, and the terminal, SVG and PDF output.
+'
+' segno writes a zero byte when the data bits already end on a byte
+' boundary, where ISO/IEC 18004 goes straight to the pad codewords; the
+' reference files were made with segno's padding set to the ISO rule.
+
+IMPORT TESTKIT, QR, PDFGEN
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "qr_matrices.tsv") THEN base$ = "fixtures/"
+DIM TAB$ = CHR$(9)
+DIM IBAN_DE$ = "DE89370400440532013000"
+
+FUNC HexText$(hex_text$)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(hex_text$) - 2 STEP 2
+        DIM hi = CINT(INSTR("0123456789abcdef", MID$(hex_text$, k, 1)))
+        DIM lo = CINT(INSTR("0123456789abcdef", MID$(hex_text$, k + 1, 1)))
+        out$ = out$ + CHR$(hi * 16 + lo)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC RowsOf$(m)
+    DIM n = LEN(m)
+    DIM out$ = ""
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO n - 1
+        IF r > 0 THEN out$ = out$ + "/"
+        DIM row$ = ""
+        FOR c = 0 TO n - 1
+            IF m[r, c] = 1 THEN
+                row$ = row$ + "1"
+            ELSE
+                row$ = row$ + "0"
+            ENDIF
+        NEXT c
+        out$ = out$ + row$
+    NEXT r
+    RETURN out$
+ENDFUNC
+
+FUNC EpcWithoutRemittance(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1.00")
+ENDFUNC
+
+FUNC EpcWithBoth(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1.00", "", "order 7", "RF18539007547034")
+ENDFUNC
+
+FUNC EpcBadIban(x)
+    RETURN QR.EPC$("Shop", "DE89370400440532013001", "1.00", "", "order 7")
+ENDFUNC
+
+FUNC EpcBadBic(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1.00", "COBADEFF1", "order 7")
+ENDFUNC
+
+FUNC EpcZero(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "0.00", "", "order 7")
+ENDFUNC
+
+FUNC EpcTooMuch(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1000000000.00", "", "order 7")
+ENDFUNC
+
+FUNC EpcThirdDecimal(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1.005", "", "order 7")
+ENDFUNC
+
+FUNC EpcLongName(x)
+    RETURN QR.EPC$(REPEAT$("N", 71), IBAN_DE$, "1.00", "", "order 7")
+ENDFUNC
+
+FUNC EpcLongText(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1.00", "", REPEAT$("t", 141))
+ENDFUNC
+
+FUNC EpcLongReference(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1.00", "", "", REPEAT$("R", 36))
+ENDFUNC
+
+FUNC EpcBadPurpose(x)
+    RETURN QR.EPC$("Shop", IBAN_DE$, "1.00", "", "order 7", "", "GDD")
+ENDFUNC
+
+FUNC BadEcc(x)
+    DIM o = {"ecc": "X"}
+    RETURN QR.MATRIX("HELLO", o)
+ENDFUNC
+
+FUNC BadVersion(x)
+    DIM o = {"version": 41}
+    RETURN QR.MATRIX("HELLO", o)
+ENDFUNC
+
+FUNC BadMask(x)
+    DIM o = {"mask": 8}
+    RETURN QR.MATRIX("HELLO", o)
+ENDFUNC
+
+FUNC BadOption(x)
+    DIM o = {"level": "H"}
+    RETURN QR.MATRIX("HELLO", o)
+ENDFUNC
+
+FUNC TooLongForVersion(x)
+    DIM o = {"ecc": "H", "version": 1}
+    RETURN QR.MATRIX(REPEAT$("A", 30), o)
+ENDFUNC
+
+TESTKIT.SUITE("matrices from segno")
+DIM ref_rows = SPLIT(TXTREADER$(base$ + "qr_matrices.tsv"), CHR$(10))
+DIM total_refs = 0
+DIM matched = 0
+DIM i = 0
+FOR i = 0 TO LEN(ref_rows) - 1
+    DIM ref_line$ = ref_rows[i]
+    IF LEN(ref_line$) > 0 ANDALSO LEFT$(ref_line$, 1) <> "#" THEN
+        DIM f = SPLIT(ref_line$, TAB$)
+        DIM id$ = f[0]
+        DIM hex_text$ = f[1]
+        DIM ecc$ = f[2]
+        DIM ver_asked$ = f[3]
+        DIM mask_asked$ = f[4]
+        DIM mode$ = f[5]
+        DIM ver$ = f[6]
+        DIM mask$ = f[7]
+        DIM rows$ = f[9]
+        DIM ref_opts = {"ecc": ecc$, "version": CINT(VAL(ver_asked$)), "mask": CINT(VAL(mask_asked$))}
+        DIM m = QR.MATRIX(HexText$(hex_text$), ref_opts)
+        DIM info = QR.INFO()
+        DIM got_mode$ = info{"mode"}
+        TESTKIT.EQ(got_mode$, mode$, id$ + ": " + mode$ + " mode")
+        TESTKIT.EQ(CINT(info{"version"}), CINT(VAL(ver$)), id$ + ": version " + ver$)
+        TESTKIT.EQ(CINT(info{"mask"}), CINT(VAL(mask$)), id$ + ": mask " + mask$)
+        DIM same = (RowsOf$(m) = rows$)
+        TESTKIT.ISTRUE(same, id$ + ": every module as segno sets it")
+        total_refs = total_refs + 1
+        IF same THEN matched = matched + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(matched, total_refs, STR$(total_refs) + " reference matrices match")
+
+TESTKIT.SUITE("EPC payment codes from segno")
+DIM epc_rows = SPLIT(TXTREADER$(base$ + "qr_epc.tsv"), CHR$(10))
+FOR i = 0 TO LEN(epc_rows) - 1
+    DIM epc_line$ = epc_rows[i]
+    IF LEN(epc_line$) > 0 ANDALSO LEFT$(epc_line$, 1) <> "#" THEN
+        DIM cols = SPLIT(epc_line$, TAB$)
+        DIM epc_id$ = cols[0]
+        DIM payee$ = HexText$(cols[1])
+        DIM account$ = cols[2]
+        DIM amount$ = cols[3]
+        DIM bank$ = cols[4]
+        DIM note$ = HexText$(cols[5])
+        DIM ref$ = cols[6]
+        DIM why$ = cols[7]
+        DIM want_payload$ = HexText$(cols[8])
+        DIM epc_ver$ = cols[9]
+        DIM epc_mask$ = cols[10]
+        DIM epc_matrix$ = cols[12]
+        DIM payload$ = QR.EPC$(payee$, account$, amount$, bank$, note$, ref$, why$)
+        TESTKIT.EQ(payload$, want_payload$, epc_id$ + ": the payload segno builds")
+        DIM giro = QR.EPCMATRIX(payee$, account$, amount$, bank$, note$, ref$, why$)
+        DIM giro_info = QR.INFO()
+        TESTKIT.EQ(giro_info{"ecc"}, "M", epc_id$ + ": level M")
+        TESTKIT.EQ(CINT(giro_info{"version"}), CINT(VAL(epc_ver$)), epc_id$ + ": version " + epc_ver$)
+        TESTKIT.EQ(CINT(giro_info{"mask"}), CINT(VAL(epc_mask$)), epc_id$ + ": mask " + epc_mask$)
+        TESTKIT.ISTRUE(RowsOf$(giro) = epc_matrix$, epc_id$ + ": every module as segno sets it")
+    ENDIF
+NEXT i
+
+TESTKIT.SUITE("EPC payload")
+DIM LF$ = CHR$(10)
+DIM by_number$ = QR.EPC$("Shop", IBAN_DE$, 12.3, "", "order 7")
+TESTKIT.ISTRUE(INSTR(by_number$, LF$ + "EUR12.3" + LF$) >= 0, "a number is an amount in euros")
+DIM grouped$ = QR.EPC$("Shop", IBAN_DE$, "1.234,50", "", "order 7")
+TESTKIT.ISTRUE(INSTR(grouped$, LF$ + "EUR1234.5" + LF$) >= 0, "a German amount text is read")
+DIM spaced$ = QR.EPC$(" Shop ", "de89 3704 0044 0532 0130 00", "10.00", "cobadeffxxx", "order 7")
+TESTKIT.EQ(spaced$, "BCD" + LF$ + "002" + LF$ + "1" + LF$ + "SCT" + LF$ + "COBADEFFXXX" + LF$ + "Shop" + LF$ + IBAN_DE$ + LF$ + "EUR10" + LF$ + LF$ + LF$ + "order 7", "IBAN and BIC compacted in capitals, the name trimmed, whole euros without decimals")
+TESTKIT.THROWS(EpcWithoutRemittance@, 0, "a remittance text or a reference is required")
+TESTKIT.THROWS(EpcWithBoth@, 0, "but not both")
+TESTKIT.THROWS(EpcBadIban@, 0, "an IBAN with a wrong check is refused")
+TESTKIT.THROWS(EpcBadBic@, 0, "a malformed BIC is refused")
+TESTKIT.THROWS(EpcZero@, 0, "a zero amount is refused")
+TESTKIT.THROWS(EpcTooMuch@, 0, "an amount above 999999999.99 is refused")
+TESTKIT.THROWS(EpcThirdDecimal@, 0, "a third decimal is refused")
+TESTKIT.THROWS(EpcLongName@, 0, "a name longer than 70 characters is refused")
+TESTKIT.THROWS(EpcLongText@, 0, "a remittance text longer than 140 characters is refused")
+TESTKIT.THROWS(EpcLongReference@, 0, "a reference longer than 35 characters is refused")
+TESTKIT.THROWS(EpcBadPurpose@, 0, "a purpose code of three letters is refused")
+
+TESTKIT.SUITE("options")
+DIM plain = QR.MATRIX("HELLO")
+DIM plain_info = QR.INFO()
+TESTKIT.EQ(plain_info{"ecc"}, "M", "level M by default")
+TESTKIT.EQ(CINT(plain_info{"size"}), 21, "version 1 has 21 modules per side")
+TESTKIT.EQ(LEN(plain), 21, "the matrix has as many rows")
+TESTKIT.THROWS(BadEcc@, 0, "an unknown level is refused")
+TESTKIT.THROWS(BadVersion@, 0, "version 41 is refused")
+TESTKIT.THROWS(BadMask@, 0, "mask 8 is refused")
+TESTKIT.THROWS(BadOption@, 0, "an unknown option is refused")
+TESTKIT.THROWS(TooLongForVersion@, 0, "a text too long for a fixed version is refused")
+
+TESTKIT.SUITE("output")
+DIM hello_opts = {"ecc": "Q"}
+DIM hello = QR.MATRIX("HELLO WORLD", hello_opts)
+DIM shown$ = QR.TEXT$(hello)
+DIM shown_lines = SPLIT(shown$, LF$)
+TESTKIT.EQ(LEN(shown_lines), 25, "TEXT$ has a line per module row and two quiet lines above and below")
+DIM top_line$ = shown_lines[0]
+TESTKIT.EQ(LEN(top_line$), 150, "a quiet line is 25 modules of two full blocks")
+DIM svg$ = QR.SVG$(hello)
+DIM Q$ = CHR$(34)
+TESTKIT.ISTRUE(LEFT$(svg$, 4) = "<svg", "SVG$ is an svg element")
+TESTKIT.ISTRUE(INSTR(svg$, "viewBox=" + Q$ + "0 0 29 29" + Q$) >= 0, "with four quiet modules on each side")
+TESTKIT.ISTRUE(INSTR(svg$, "width=" + Q$ + "116" + Q$) >= 0, "and four pixels per module")
+DIM d$ = QR.SVGPATH$(hello, 0)
+DIM runs = SPLIT(d$, "z")
+DIM painted = 0
+FOR i = 0 TO LEN(runs) - 1
+    DIM run$ = runs[i]
+    IF LEN(run$) > 0 THEN
+        DIM h_at = CINT(INSTR(run$, "h"))
+        DIM v_at = CINT(INSTR(run$, "v"))
+        painted = painted + CINT(VAL(MID$(run$, h_at + 1, v_at - h_at - 1)))
+    ENDIF
+NEXT i
+DIM dark_modules = 0
+DIM r = 0
+DIM c = 0
+FOR r = 0 TO 20
+    FOR c = 0 TO 20
+        IF hello[r, c] = 1 THEN dark_modules = dark_modules + 1
+    NEXT c
+NEXT r
+TESTKIT.EQ(painted, dark_modules, "the path paints exactly the dark modules")
+DIM doc = PDFGEN.DOC()
+PDFGEN.ADDPAGE(doc)
+QR.TOPDF(doc, hello, 20, 20, 42)
+DIM pdf$ = PDFGEN.BUILD$(doc)
+TESTKIT.ISTRUE(LEFT$(pdf$, 5) = "%PDF-", "TOPDF draws into a PDFGEN document")
+TESTKIT.ISTRUE(INSTR(pdf$, " re") >= 0, "as filled rectangles")
+
+TESTKIT.SUITE("the largest EPC code")
+DIM big_opts = {"ecc": "M"}
+DIM t0 = TICK()
+DIM big = QR.MATRIX(REPEAT$("x", 331), big_opts)
+DIM took = TICK() - t0
+DIM big_info = QR.INFO()
+TESTKIT.EQ(CINT(big_info{"version"}), 13, "331 bytes at level M are version 13")
+TESTKIT.EQ(LEN(big), 69, "with 69 modules per side")
+PRINT "  version 13 encoded in "; FORMAT$("{:.0f}", took); " ms"
+
+TESTKIT.REPORT()

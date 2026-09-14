@@ -1,0 +1,908 @@
+' QR: QR codes in jdBasic - numeric, alphanumeric and byte (UTF-8) modes,
+' error correction levels L, M, Q and H, versions 1 to 40 with the smallest
+' chosen by default, Reed-Solomon over GF(256), the eight data masks scored
+' as ISO/IEC 18004 describes, and the EPC payment code (GiroCode). The
+' matrix goes out as text for a terminal, as SVG, or onto a PDFGEN page.
+'
+'   IMPORT QR
+'   DIM code = QR.MATRIX("https://jdbasic.org", {"ecc": "Q"})
+'   PRINT QR.TEXT$(code)
+'   TXTWRITER "code.svg", QR.SVG$(code)
+'
+'   DIM giro = QR.EPCMATRIX("Papier & Toner GmbH", "DE89370400440532013000", "168.80", "COBADEFFXXX", "RE-2026-0413")
+EXPORT MODULE QR
+
+IMPORT VALID, MONEY, PDFGEN
+
+' Per version (1 to 40) and level (L|M|Q|H): the block groups as
+' "blocks,codewords per block,data codewords per block", groups split by ";".
+DIM gEccTable = SPLIT("1,26,19|1,26,16|1,26,13|1,26,9 1,44,34|1,44,28|1,44,22|1,44,16 1,70,55|1,70,44|2,35,17|2,35,13 1,100,80|2,50,32|2,50,24|4,25,9 1,134,108|2,67,43|2,33,15;2,34,16|2,33,11;2,34,12 2,86,68|4,43,27|4,43,19|4,43,15 2,98,78|4,49,31|2,32,14;4,33,15|4,39,13;1,40,14 2,121,97|2,60,38;2,61,39|4,40,18;2,41,19|4,40,14;2,41,15 2,146,116|3,58,36;2,59,37|4,36,16;4,37,17|4,36,12;4,37,13 2,86,68;2,87,69|4,69,43;1,70,44|6,43,19;2,44,20|6,43,15;2,44,16 4,101,81|1,80,50;4,81,51|4,50,22;4,51,23|3,36,12;8,37,13 2,116,92;2,117,93|6,58,36;2,59,37|4,46,20;6,47,21|7,42,14;4,43,15 4,133,107|8,59,37;1,60,38|8,44,20;4,45,21|12,33,11;4,34,12 3,145,115;1,146,116|4,64,40;5,65,41|11,36,16;5,37,17|11,36,12;5,37,13 5,109,87;1,110,88|5,65,41;5,66,42|5,54,24;7,55,25|11,36,12;7,37,13 5,122,98;1,123,99|7,73,45;3,74,46|15,43,19;2,44,20|3,45,15;13,46,16 1,135,107;5,136,108|10,74,46;1,75,47|1,50,22;15,51,23|2,42,14;17,43,15 5,150,120;1,151,121|9,69,43;4,70,44|17,50,22;1,51,23|2,42,14;19,43,15 3,141,113;4,142,114|3,70,44;11,71,45|17,47,21;4,48,22|9,39,13;16,40,14 3,135,107;5,136,108|3,67,41;13,68,42|15,54,24;5,55,25|15,43,15;10,44,16 4,144,116;4,145,117|17,68,42|17,50,22;6,51,23|19,46,16;6,47,17 2,139,111;7,140,112|17,74,46|7,54,24;16,55,25|34,37,13 4,151,121;5,152,122|4,75,47;14,76,48|11,54,24;14,55,25|16,45,15;14,46,16 6,147,117;4,148,118|6,73,45;14,74,46|11,54,24;16,55,25|30,46,16;2,47,17 8,132,106;4,133,107|8,75,47;13,76,48|7,54,24;22,55,25|22,45,15;13,46,16 10,142,114;2,143,115|19,74,46;4,75,47|28,50,22;6,51,23|33,46,16;4,47,17 8,152,122;4,153,123|22,73,45;3,74,46|8,53,23;26,54,24|12,45,15;28,46,16 3,147,117;10,148,118|3,73,45;23,74,46|4,54,24;31,55,25|11,45,15;31,46,16 7,146,116;7,147,117|21,73,45;7,74,46|1,53,23;37,54,24|19,45,15;26,46,16 5,145,115;10,146,116|19,75,47;10,76,48|15,54,24;25,55,25|23,45,15;25,46,16 13,145,115;3,146,116|2,74,46;29,75,47|42,54,24;1,55,25|23,45,15;28,46,16 17,145,115|10,74,46;23,75,47|10,54,24;35,55,25|19,45,15;35,46,16 17,145,115;1,146,116|14,74,46;21,75,47|29,54,24;19,55,25|11,45,15;46,46,16 13,145,115;6,146,116|14,74,46;23,75,47|44,54,24;7,55,25|59,46,16;1,47,17 12,151,121;7,152,122|12,75,47;26,76,48|39,54,24;14,55,25|22,45,15;41,46,16 6,151,121;14,152,122|6,75,47;34,76,48|46,54,24;10,55,25|2,45,15;64,46,16 17,152,122;4,153,123|29,74,46;14,75,47|49,54,24;10,55,25|24,45,15;46,46,16 4,152,122;18,153,123|13,74,46;32,75,47|48,54,24;14,55,25|42,45,15;32,46,16 20,147,117;4,148,118|40,75,47;7,76,48|43,54,24;22,55,25|10,45,15;67,46,16 19,148,118;6,149,119|18,75,47;31,76,48|34,54,24;34,55,25|20,45,15;61,46,16", " ")
+
+' The centres of the alignment patterns per version, from version 2.
+DIM gAlignTable = SPLIT("6,18 6,22 6,26 6,30 6,34 6,22,38 6,24,42 6,26,46 6,28,50 6,30,54 6,32,58 6,34,62 6,26,46,66 6,26,48,70 6,26,50,74 6,30,54,78 6,30,56,82 6,30,58,86 6,34,62,90 6,28,50,72,94 6,26,50,74,98 6,30,54,78,102 6,28,54,80,106 6,32,58,84,110 6,30,58,86,114 6,34,62,90,118 6,26,50,74,98,122 6,30,54,78,102,126 6,26,52,78,104,130 6,30,56,82,108,134 6,34,60,86,112,138 6,30,58,86,114,142 6,34,62,90,118,146 6,30,54,78,102,126,150 6,24,50,76,102,128,154 6,28,54,80,106,132,158 6,32,58,84,110,136,162 6,26,54,82,110,138,166 6,30,58,86,114,142,170", " ")
+
+' The 15 format bits (BCH 15,5 with the mask 101010000010010) for the level
+' bits (M 0, L 8, H 16, Q 24) plus the mask number.
+DIM gFormatBits = [21522, 20773, 24188, 23371, 17913, 16590, 20375, 19104, 30660, 29427, 32170, 30877, 26159, 25368, 27713, 26998, 5769, 5054, 7399, 6608, 1890, 597, 3340, 2107, 13663, 12392, 16177, 14854, 9396, 8579, 11994, 11245]
+
+' The 18 version bits (BCH 18,6) for versions 7 to 40.
+DIM gVersionBits = [31892, 34236, 39577, 42195, 48118, 51042, 55367, 58893, 63784, 68472, 70749, 76311, 79154, 84390, 87683, 92361, 96236, 102084, 102881, 110507, 110734, 117786, 119615, 126325, 127568, 133589, 136944, 141498, 145311, 150283, 152622, 158308, 161089, 167017]
+
+DIM gAlnum$ = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:"
+
+' GF(256) with the primitive polynomial x^8 + x^4 + x^3 + x^2 + 1 (285).
+DIM gExp = ZEROS(512)
+DIM gLog = ZEROS(256)
+SUB FillField()
+    DIM field_value = 1
+    DIM k = 0
+    FOR k = 0 TO 254
+        gExp[k] = field_value
+        gLog[field_value] = k
+        field_value = field_value * 2
+        IF field_value >= 256 THEN field_value = field_value BXOR 285
+    NEXT k
+    FOR k = 255 TO 511
+        gExp[k] = gExp[k - 255]
+    NEXT k
+ENDSUB
+
+DIM gInfo AS MAP
+gInfo{"version"} = 0
+gInfo{"ecc"} = ""
+gInfo{"mode"} = ""
+gInfo{"mask"} = -1
+gInfo{"size"} = 0
+gInfo{"penalty"} = 0
+
+' ── building blocks ────────────────────────────────────────────
+
+FUNC LevelIndex(ecc$)
+    DIM letter$ = UCASE$(TRIM$(ecc$))
+    IF LEN(letter$) <> 1 THEN RETURN -1
+    RETURN CINT(INSTR("LMQH", letter$))
+ENDFUNC
+
+FUNC GroupsOf(version, level)
+    DIM version_line$ = gEccTable[CLNG(version) - 1]
+    DIM levels = SPLIT(version_line$, "|")
+    DIM groups_text$ = levels[CLNG(level)]
+    RETURN SPLIT(groups_text$, ";")
+ENDFUNC
+
+' The number of data codewords of a version at a level.
+FUNC DataWords(version, level)
+    DIM groups = GroupsOf(version, level)
+    DIM total = 0
+    DIM g = 0
+    FOR g = 0 TO LEN(groups) - 1
+        DIM group$ = groups[g]
+        DIM spec = SPLIT(group$, ",")
+        DIM blocks_text$ = spec[0]
+        DIM data_text$ = spec[2]
+        total = total + CLNG(VAL(blocks_text$)) * CLNG(VAL(data_text$))
+    NEXT g
+    RETURN total
+ENDFUNC
+
+' 1 numeric, 2 alphanumeric, 4 byte: the smallest mode the whole text fits.
+FUNC ModeOf(text$)
+    DIM n_len = LEN(text$)
+    IF n_len = 0 THEN RETURN 4
+    DIM numeric = 1
+    DIM alnum = 1
+    DIM k = 0
+    FOR k = 0 TO n_len - 1
+        DIM b = BYTEAT(text$, k)
+        IF b < 48 ORELSE b > 57 THEN numeric = 0
+        IF INSTR(gAlnum$, MID$(text$, k, 1)) < 0 THEN alnum = 0
+    NEXT k
+    IF numeric = 1 THEN RETURN 1
+    IF alnum = 1 THEN RETURN 2
+    RETURN 4
+ENDFUNC
+
+FUNC CountBits(mode, version)
+    DIM size_class = 0
+    IF version > 9 THEN size_class = 1
+    IF version > 26 THEN size_class = 2
+    IF mode = 1 THEN RETURN 10 + 2 * size_class
+    IF mode = 2 THEN RETURN 9 + 2 * size_class
+    IF size_class = 0 THEN RETURN 8
+    RETURN 16
+ENDFUNC
+
+FUNC NeededBits(mode, n_len, version)
+    DIM payload = 8 * CLNG(n_len)
+    IF mode = 1 THEN
+        DIM rest = CLNG(n_len) MOD 3
+        payload = 10 * CLNG(INT(n_len / 3))
+        IF rest = 1 THEN payload = payload + 4
+        IF rest = 2 THEN payload = payload + 7
+    ELSEIF mode = 2 THEN
+        payload = 11 * CLNG(INT(n_len / 2)) + 6 * (CLNG(n_len) MOD 2)
+    ENDIF
+    RETURN 4 + CLNG(CountBits(mode, version)) + payload
+ENDFUNC
+
+FUNC BitsOf$(value, width_bits)
+    DIM out$ = ""
+    DIM whole = CLNG(value)
+    DIM k = 0
+    FOR k = CLNG(width_bits) - 1 TO 0 STEP -1
+        IF (SHR(whole, k) BAND 1) = 1 THEN
+            out$ = out$ + "1"
+        ELSE
+            out$ = out$ + "0"
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC GfMul(a, b)
+    IF a = 0 ORELSE b = 0 THEN RETURN 0
+    RETURN CLNG(gExp[CLNG(gLog[CLNG(a)]) + CLNG(gLog[CLNG(b)])])
+ENDFUNC
+
+' The generator polynomial of ec_len error codewords, highest power first.
+FUNC Generator(ec_len)
+    IF CLNG(gExp[0]) = 0 THEN FillField()
+    DIM gen = ZEROS(ec_len + 1)
+    gen[0] = 1
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO ec_len - 1
+        FOR j = i + 1 TO 1 STEP -1
+            gen[j] = CLNG(gen[j]) BXOR CLNG(GfMul(gen[j - 1], gExp[i]))
+        NEXT j
+    NEXT i
+    RETURN gen
+ENDFUNC
+
+' The error codewords of one block: the remainder of the data polynomial
+' divided by the generator, whose coefficients come in as logarithms.
+FUNC EccOf(words, start, count_words, gen_log, ec_len)
+    DIM res = ZEROS(count_words + ec_len)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO count_words - 1
+        res[k] = words[start + k]
+    NEXT k
+    FOR k = 0 TO count_words - 1
+        DIM coef = CLNG(res[k])
+        IF coef <> 0 THEN
+            DIM lc = CLNG(gLog[coef])
+            FOR j = 1 TO ec_len
+                res[k + j] = CLNG(res[k + j]) BXOR CLNG(gExp[CLNG(gen_log[j]) + lc])
+            NEXT j
+        ENDIF
+    NEXT k
+    DIM out = []
+    FOR k = 0 TO ec_len - 1
+        PUSH(out, CLNG(res[count_words + k]))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC RemainderBits(version)
+    IF version >= 2 ANDALSO version <= 6 THEN RETURN 7
+    IF version >= 14 ANDALSO version <= 20 THEN RETURN 3
+    IF version >= 21 ANDALSO version <= 27 THEN RETURN 4
+    IF version >= 28 ANDALSO version <= 34 THEN RETURN 3
+    RETURN 0
+ENDFUNC
+
+' The final bit stream: mode, count and data bits, terminator, padding to a
+' byte, pad codewords, then the data and error codewords interleaved over
+' the blocks, then the remainder bits.
+FUNC Codewords(text$, mode, version, level)
+    DIM n_len = LEN(text$)
+    DIM bit_pieces = []
+    DIM at = 0
+    DIM q = 0
+    DIM z = 0
+    DIM g = 0
+    DIM b = 0
+    PUSH(bit_pieces, BitsOf$(mode, 4))
+    PUSH(bit_pieces, BitsOf$(n_len, CountBits(mode, version)))
+    IF mode = 1 THEN
+        DO WHILE at < n_len
+            DIM group_len = n_len - at
+            IF group_len > 3 THEN group_len = 3
+            DIM figures$ = MID$(text$, at, group_len)
+            PUSH(bit_pieces, BitsOf$(VAL(figures$), group_len * 3 + 1))
+            at = at + group_len
+        LOOP
+    ELSEIF mode = 2 THEN
+        DO WHILE at < n_len
+            DIM first_v = CINT(INSTR(gAlnum$, MID$(text$, at, 1)))
+            IF at + 1 < n_len THEN
+                DIM second_v = CINT(INSTR(gAlnum$, MID$(text$, at + 1, 1)))
+                PUSH(bit_pieces, BitsOf$(first_v * 45 + second_v, 11))
+                at = at + 2
+            ELSE
+                PUSH(bit_pieces, BitsOf$(first_v, 6))
+                at = at + 1
+            ENDIF
+        LOOP
+    ELSE
+        FOR at = 0 TO n_len - 1
+            PUSH(bit_pieces, BitsOf$(BYTEAT(text$, at), 8))
+        NEXT at
+    ENDIF
+    DIM bits$ = JOIN(bit_pieces, "")
+
+    DIM capacity = CLNG(DataWords(version, level))
+    DIM term = capacity * 8 - LEN(bits$)
+    IF term > 4 THEN term = 4
+    IF term > 0 THEN bits$ = bits$ + REPEAT$("0", term)
+    DIM rem8 = LEN(bits$) MOD 8
+    IF rem8 > 0 THEN bits$ = bits$ + REPEAT$("0", 8 - rem8)
+    DIM words = []
+    FOR q = 0 TO LEN(bits$) - 1 STEP 8
+        DIM word = 0
+        FOR z = 0 TO 7
+            word = word * 2
+            IF MID$(bits$, q + z, 1) = "1" THEN word = word + 1
+        NEXT z
+        PUSH(words, word)
+    NEXT q
+    DIM pad_no = 0
+    DO WHILE LEN(words) < capacity
+        IF pad_no MOD 2 = 0 THEN
+            PUSH(words, 236)
+        ELSE
+            PUSH(words, 17)
+        ENDIF
+        pad_no = pad_no + 1
+    LOOP
+
+    DIM groups = GroupsOf(version, level)
+    DIM starts = []
+    DIM lens = []
+    DIM ec_len = 0
+    DIM word_at = 0
+    FOR g = 0 TO LEN(groups) - 1
+        DIM group$ = groups[g]
+        DIM spec = SPLIT(group$, ",")
+        DIM nb$ = spec[0]
+        DIM nt$ = spec[1]
+        DIM nd$ = spec[2]
+        DIM nb = CLNG(VAL(nb$))
+        DIM nd = CLNG(VAL(nd$))
+        ec_len = CLNG(VAL(nt$)) - nd
+        FOR b = 1 TO nb
+            PUSH(starts, word_at)
+            PUSH(lens, nd)
+            word_at = word_at + nd
+        NEXT b
+    NEXT g
+    DIM gen = Generator(ec_len)
+    DIM gen_log = ZEROS(ec_len + 1)
+    FOR q = 0 TO ec_len
+        gen_log[q] = gLog[CLNG(gen[q])]
+    NEXT q
+    DIM ecc_words = []
+    FOR b = 0 TO LEN(starts) - 1
+        DIM one = EccOf(words, starts[b], lens[b], gen_log, ec_len)
+        FOR q = 0 TO ec_len - 1
+            PUSH(ecc_words, CLNG(one[q]))
+        NEXT q
+    NEXT b
+
+    DIM stream = []
+    DIM longest = 0
+    FOR b = 0 TO LEN(lens) - 1
+        IF lens[b] > longest THEN longest = CLNG(lens[b])
+    NEXT b
+    FOR q = 0 TO longest - 1
+        FOR b = 0 TO LEN(starts) - 1
+            IF q < lens[b] THEN
+                DIM dw = CLNG(words[CLNG(starts[b]) + q])
+                FOR z = 7 TO 0 STEP -1
+                    PUSH(stream, SHR(dw, z) BAND 1)
+                NEXT z
+            ENDIF
+        NEXT b
+    NEXT q
+    FOR q = 0 TO ec_len - 1
+        FOR b = 0 TO LEN(starts) - 1
+            DIM ew = CLNG(ecc_words[b * ec_len + q])
+            FOR z = 7 TO 0 STEP -1
+                PUSH(stream, SHR(ew, z) BAND 1)
+            NEXT z
+        NEXT b
+    NEXT q
+    DIM extra = CLNG(RemainderBits(version))
+    FOR q = 1 TO extra
+        PUSH(stream, 0)
+    NEXT q
+    RETURN stream
+ENDFUNC
+
+' The function patterns of a version on a flat n x n grid: finder patterns
+' with their separators, timing patterns, alignment patterns, and the format
+' and version areas reserved as 0. Every data module is 2.
+FUNC BaseCells(version)
+    DIM n = 17 + 4 * CLNG(version)
+    DIM cells = ZEROS(n * n)
+    DIM i = 0
+    FOR i = 0 TO n * n - 1
+        cells[i] = 2
+    NEXT i
+    DIM r = 0
+    DIM c = 0
+    IF version >= 7 THEN
+        FOR i = 0 TO 5
+            cells[i * n + n - 11] = 0
+            cells[i * n + n - 10] = 0
+            cells[i * n + n - 9] = 0
+            cells[(n - 11) * n + i] = 0
+            cells[(n - 10) * n + i] = 0
+            cells[(n - 9) * n + i] = 0
+        NEXT i
+    ENDIF
+    FOR i = 0 TO 8
+        cells[i * n + 8] = 0
+        cells[8 * n + i] = 0
+        IF i > 0 THEN
+            cells[(n - i) * n + 8] = 0
+            cells[8 * n + n - i] = 0
+        ENDIF
+    NEXT i
+    FOR i = 8 TO n - 9
+        DIM tbit = 1 - (i MOD 2)
+        cells[i * n + 6] = tbit
+        cells[6 * n + i] = tbit
+    NEXT i
+    DIM tops = [0, 0, n - 7]
+    DIM lefts = [0, n - 7, 0]
+    DIM f = 0
+    FOR f = 0 TO 2
+        DIM corner_top = CLNG(tops[f])
+        DIM corner_left = CLNG(lefts[f])
+        FOR r = -1 TO 7
+            FOR c = -1 TO 7
+                DIM rr = corner_top + r
+                DIM cc = corner_left + c
+                IF rr >= 0 ANDALSO rr < n ANDALSO cc >= 0 ANDALSO cc < n THEN
+                    DIM v = 0
+                    IF r >= 0 ANDALSO r <= 6 ANDALSO c >= 0 ANDALSO c <= 6 THEN
+                        IF r = 0 ORELSE r = 6 ORELSE c = 0 ORELSE c = 6 THEN v = 1
+                        IF r >= 2 ANDALSO r <= 4 ANDALSO c >= 2 ANDALSO c <= 4 THEN v = 1
+                    ENDIF
+                    cells[rr * n + cc] = v
+                ENDIF
+            NEXT c
+        NEXT r
+    NEXT f
+    IF version >= 2 THEN
+        DIM align_text$ = gAlignTable[CLNG(version) - 2]
+        DIM centres = SPLIT(align_text$, ",")
+        DIM first$ = centres[0]
+        DIM last$ = centres[LEN(centres) - 1]
+        DIM low = CLNG(VAL(first$))
+        DIM high = CLNG(VAL(last$))
+        DIM a = 0
+        DIM a2 = 0
+        FOR a = 0 TO LEN(centres) - 1
+            FOR a2 = 0 TO LEN(centres) - 1
+                DIM row_c$ = centres[a]
+                DIM col_c$ = centres[a2]
+                DIM cx = CLNG(VAL(row_c$))
+                DIM cy = CLNG(VAL(col_c$))
+                DIM skip = 0
+                IF cx = low ANDALSO cy = low THEN skip = 1
+                IF cx = low ANDALSO cy = high THEN skip = 1
+                IF cx = high ANDALSO cy = low THEN skip = 1
+                IF skip = 0 THEN
+                    FOR r = -2 TO 2
+                        FOR c = -2 TO 2
+                            DIM av = 1
+                            IF ABS(r) <= 1 ANDALSO ABS(c) <= 1 ANDALSO (r <> 0 ORELSE c <> 0) THEN av = 0
+                            cells[(cx + r) * n + cy + c] = av
+                        NEXT c
+                    NEXT r
+                ENDIF
+            NEXT a2
+        NEXT a
+    ENDIF
+    RETURN cells
+ENDFUNC
+
+' 1 when a data mask pattern darkens the module in row i, column j.
+FUNC MaskHit(mask_no, i, j)
+    DIM t = i * j
+    IF mask_no = 0 THEN
+        IF ((i + j) BAND 1) = 0 THEN RETURN 1
+    ELSEIF mask_no = 1 THEN
+        IF (i BAND 1) = 0 THEN RETURN 1
+    ELSEIF mask_no = 2 THEN
+        IF j MOD 3 = 0 THEN RETURN 1
+    ELSEIF mask_no = 3 THEN
+        IF (i + j) MOD 3 = 0 THEN RETURN 1
+    ELSEIF mask_no = 4 THEN
+        IF ((CLNG(INT(i / 2)) + CLNG(INT(j / 3))) BAND 1) = 0 THEN RETURN 1
+    ELSEIF mask_no = 5 THEN
+        IF (t BAND 1) + (t MOD 3) = 0 THEN RETURN 1
+    ELSEIF mask_no = 6 THEN
+        IF (((t BAND 1) + (t MOD 3)) BAND 1) = 0 THEN RETURN 1
+    ELSE
+        IF ((((i + j) BAND 1) + (t MOD 3)) BAND 1) = 0 THEN RETURN 1
+    ENDIF
+    RETURN 0
+ENDFUNC
+
+FUNC Masked(cells, isdata, n, mask_no)
+    DIM out = ZEROS(n * n)
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO n * n - 1
+        out[i] = cells[i]
+    NEXT i
+    FOR i = 0 TO n - 1
+        FOR j = 0 TO n - 1
+            DIM p = i * n + j
+            IF isdata[p] = 1 THEN
+                IF MaskHit(mask_no, i, j) = 1 THEN out[p] = 1 - out[p]
+            ENDIF
+        NEXT j
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Penalty rule 3 on one row (stride 1) or column (stride n): 40 for each
+' 1011101 run that touches the edge or has four light modules before or
+' after it.
+FUNC N3Count(cells, start, stride, n)
+    DIM score = 0
+    DIM from_i = 0
+    DIM k = 0
+    DIM q = 0
+    DO WHILE from_i <= n - 7
+        DIM found = -1
+        k = from_i
+        DO WHILE found < 0 ANDALSO k <= n - 7
+            DIM first_at = start + k * stride
+            IF cells[first_at] = 1 ANDALSO cells[first_at + stride] = 0 ANDALSO cells[first_at + 2 * stride] = 1 ANDALSO cells[first_at + 3 * stride] = 1 ANDALSO cells[first_at + 4 * stride] = 1 ANDALSO cells[first_at + 5 * stride] = 0 ANDALSO cells[first_at + 6 * stride] = 1 THEN
+                found = k
+            ELSE
+                k = k + 1
+            ENDIF
+        LOOP
+        IF found < 0 THEN
+            from_i = n
+        ELSE
+            DIM counted = 0
+            IF found = 0 ORELSE found = n - 7 THEN counted = 1
+            IF counted = 0 THEN
+                DIM lo = found - 4
+                IF lo < 0 THEN lo = 0
+                DIM before_dark = 0
+                FOR q = lo TO found - 1
+                    IF cells[start + q * stride] = 1 THEN before_dark = 1
+                NEXT q
+                IF before_dark = 0 THEN counted = 1
+            ENDIF
+            IF counted = 0 THEN
+                DIM hi = found + 11
+                IF hi > n THEN hi = n
+                DIM after_dark = 0
+                FOR q = found + 7 TO hi - 1
+                    IF cells[start + q * stride] = 1 THEN after_dark = 1
+                NEXT q
+                IF after_dark = 0 THEN counted = 1
+            ENDIF
+            IF counted = 1 THEN
+                score = score + 40
+                from_i = found + 7
+            ELSE
+                from_i = found + 4
+            ENDIF
+        ENDIF
+    LOOP
+    RETURN score
+ENDFUNC
+
+' The penalty score of a masked grid (ISO/IEC 18004 7.8.3): runs of five or
+' more, 2 x 2 blocks, finder-like patterns and the share of dark modules.
+FUNC Penalty(cells, n)
+    DIM s1 = 0
+    DIM s2 = 0
+    DIM s3 = 0
+    DIM dark = 0
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO n - 1
+        DIM row_prev = -1
+        DIM col_prev = -1
+        DIM run_r = 0
+        DIM run_c = 0
+        FOR j = 0 TO n - 1
+            DIM rc = CLNG(cells[i * n + j])
+            DIM cc = CLNG(cells[j * n + i])
+            dark = dark + rc
+            IF rc = row_prev THEN
+                run_r = run_r + 1
+            ELSE
+                IF run_r >= 5 THEN s1 = s1 + run_r - 2
+                run_r = 1
+            ENDIF
+            IF cc = col_prev THEN
+                run_c = run_c + 1
+            ELSE
+                IF run_c >= 5 THEN s1 = s1 + run_c - 2
+                run_c = 1
+            ENDIF
+            IF i > 0 ANDALSO j > 0 THEN
+                IF rc = row_prev ANDALSO rc = CLNG(cells[(i - 1) * n + j]) ANDALSO rc = CLNG(cells[(i - 1) * n + j - 1]) THEN s2 = s2 + 3
+            ENDIF
+            row_prev = rc
+            col_prev = cc
+        NEXT j
+        s3 = s3 + CLNG(N3Count(cells, i * n, 1, n)) + CLNG(N3Count(cells, i, n, n))
+        IF run_r >= 5 THEN s1 = s1 + run_r - 2
+        IF run_c >= 5 THEN s1 = s1 + run_c - 2
+    NEXT i
+    DIM share = CDBL(dark) / CDBL(n * n)
+    DIM s4 = 10 * CLNG(INT(ABS(share * 100 - 50) / 5))
+    RETURN s1 + s2 + s3 + s4
+ENDFUNC
+
+' ── encoding ───────────────────────────────────────────────────
+
+' The QR code of text$ as an n x n array of 0 (light) and 1 (dark), without
+' the quiet zone. opts: "ecc" (L, M, Q or H; M), "version" (1 to 40; 0 picks
+' the smallest that fits) and "mask" (0 to 7; -1 picks the lowest penalty).
+' A text of digits is encoded in numeric mode, one of the 45 alphanumeric
+' characters in alphanumeric mode, anything else as its UTF-8 bytes.
+EXPORT FUNC MATRIX(text$, opts = 0)
+    DIM level = 1
+    DIM want_version = 0
+    DIM want_mask = -1
+    DIM k = 0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        DIM keys = MAP.KEYS(opts)
+        FOR k = 0 TO LEN(keys) - 1
+            DIM key$ = keys[k]
+            IF INSTR(",ecc,version,mask,", "," + key$ + ",") < 0 THEN THROW "QR.MATRIX: unknown option " + key$
+        NEXT k
+        IF MAP.EXISTS(opts, "ecc") THEN
+            DIM ecc_v = opts{"ecc"}
+            level = CINT(LevelIndex("" + ecc_v))
+            IF level < 0 THEN THROW "QR.MATRIX: ecc must be L, M, Q or H"
+        ENDIF
+        IF MAP.EXISTS(opts, "version") THEN
+            DIM version_v = opts{"version"}
+            want_version = CINT(version_v)
+            IF want_version < 0 ORELSE want_version > 40 THEN THROW "QR.MATRIX: version must be 1 to 40, or 0 for the smallest"
+        ENDIF
+        IF MAP.EXISTS(opts, "mask") THEN
+            DIM mask_v = opts{"mask"}
+            want_mask = CINT(mask_v)
+            IF want_mask < -1 ORELSE want_mask > 7 THEN THROW "QR.MATRIX: mask must be 0 to 7, or -1 to choose"
+        ENDIF
+    ENDIF
+
+    DIM mode = CINT(ModeOf(text$))
+    DIM n_len = LEN(text$)
+    DIM version = 0
+    IF want_version > 0 THEN
+        IF CLNG(NeededBits(mode, n_len, want_version)) > CLNG(DataWords(want_version, level)) * 8 THEN THROW "QR.MATRIX: the text does not fit version " + STR$(want_version)
+        version = want_version
+    ELSE
+        DIM v = 0
+        FOR v = 1 TO 40
+            IF version = 0 THEN
+                IF CLNG(NeededBits(mode, n_len, v)) <= CLNG(DataWords(v, level)) * 8 THEN version = v
+            ENDIF
+        NEXT v
+        IF version = 0 THEN THROW "QR.MATRIX: the text is too long for a QR code at this level"
+    ENDIF
+
+    DIM stream = Codewords(text$, mode, version, level)
+    DIM n = 17 + 4 * version
+    DIM pattern_cells = BaseCells(version)
+    DIM cells = ZEROS(n * n)
+    DIM isdata = ZEROS(n * n)
+    DIM p = 0
+    FOR p = 0 TO n * n - 1
+        cells[p] = pattern_cells[p]
+        IF pattern_cells[p] = 2 THEN isdata[p] = 1
+    NEXT p
+
+    DIM idx = 0
+    DIM total_bits = LEN(stream)
+    DIM right = n - 1
+    DIM vertical = 0
+    DIM z = 0
+    DO WHILE right > 0
+        DIM col_r = right
+        IF col_r <= 6 THEN col_r = col_r - 1
+        DIM up = 0
+        IF (col_r BAND 2) = 0 THEN up = 1
+        FOR vertical = 0 TO n - 1
+            FOR z = 0 TO 1
+                DIM j = col_r - z
+                DIM go_up = up
+                IF j < 6 THEN go_up = 1 - up
+                DIM i = vertical
+                IF go_up = 1 THEN i = n - 1 - vertical
+                DIM cell_at = i * n + j
+                IF cells[cell_at] = 2 ANDALSO idx < total_bits THEN
+                    cells[cell_at] = stream[idx]
+                    idx = idx + 1
+                ENDIF
+            NEXT z
+        NEXT vertical
+        right = right - 2
+    LOOP
+
+    DIM best = want_mask
+    DIM best_score = -1
+    IF best < 0 THEN
+        DIM mask_no = 0
+        FOR mask_no = 0 TO 7
+            DIM trial = Masked(cells, isdata, n, mask_no)
+            DIM score = CLNG(Penalty(trial, n))
+            IF best_score < 0 ORELSE score < best_score THEN
+                best_score = score
+                best = mask_no
+            ENDIF
+        NEXT mask_no
+    ENDIF
+    DIM chosen = Masked(cells, isdata, n, best)
+    DIM final = ZEROS(n * n)
+    FOR p = 0 TO n * n - 1
+        final[p] = chosen[p]
+    NEXT p
+    IF best_score < 0 THEN best_score = CLNG(Penalty(final, n))
+
+    DIM offsets = [8, 0, 24, 16]
+    DIM fi = CLNG(gFormatBits[best + CLNG(offsets[level])])
+    DIM voff = 0
+    DIM hoff = 0
+    FOR k = 0 TO 7
+        DIM vbit = SHR(fi, k) BAND 1
+        DIM hbit = SHR(fi, 14 - k) BAND 1
+        IF k = 6 THEN
+            voff = voff + 1
+            hoff = 1
+        ENDIF
+        final[(k + voff) * n + 8] = vbit
+        final[8 * n + k + hoff] = hbit
+        final[8 * n + n - 1 - k] = vbit
+        final[(n - 1 - k) * n + 8] = hbit
+    NEXT k
+    final[(n - 8) * n + 8] = 1
+    IF version >= 7 THEN
+        DIM vi = CLNG(gVersionBits[version - 7])
+        FOR k = 0 TO 5
+            DIM b1 = SHR(vi, k * 3) BAND 1
+            DIM b2 = SHR(vi, k * 3 + 1) BAND 1
+            DIM b3 = SHR(vi, k * 3 + 2) BAND 1
+            final[(n - 11) * n + k] = b1
+            final[(n - 10) * n + k] = b2
+            final[(n - 9) * n + k] = b3
+            final[k * n + n - 11] = b1
+            final[k * n + n - 10] = b2
+            final[k * n + n - 9] = b3
+        NEXT k
+    ENDIF
+
+    gInfo{"version"} = version
+    gInfo{"ecc"} = MID$("LMQH", level, 1)
+    IF mode = 1 THEN
+        gInfo{"mode"} = "numeric"
+    ELSEIF mode = 2 THEN
+        gInfo{"mode"} = "alphanumeric"
+    ELSE
+        gInfo{"mode"} = "byte"
+    ENDIF
+    gInfo{"mask"} = best
+    gInfo{"size"} = n
+    gInfo{"penalty"} = best_score
+    RETURN RESHAPE(final, [n, n])
+ENDFUNC
+
+' What the last MATRIX chose: "version", "ecc", "mode", "mask", "size" (the
+' modules per side) and "penalty".
+EXPORT FUNC INFO()
+    DIM out AS MAP
+    DIM names = MAP.KEYS(gInfo)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM key$ = names[k]
+        DIM v = gInfo{key$}
+        out{key$} = v
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ── output ─────────────────────────────────────────────────────
+
+' The code as lines of text with quiet modules around it, two characters per
+' module. Light modules are full blocks and dark ones spaces, which scans on
+' a dark terminal; on_light swaps them for a light background.
+EXPORT FUNC TEXT$(m, quiet = 2, on_light = FALSE)
+    DIM n = LEN(m)
+    DIM full$ = CHR$(226) + CHR$(150) + CHR$(136)
+    DIM dark$ = "  "
+    DIM light$ = full$ + full$
+    IF on_light THEN
+        dark$ = full$ + full$
+        light$ = "  "
+    ENDIF
+    DIM edge = CLNG(quiet)
+    DIM out$ = ""
+    DIM r = 0
+    DIM c = 0
+    FOR r = -edge TO n - 1 + edge
+        IF r > -edge THEN out$ = out$ + CHR$(10)
+        DIM row$ = ""
+        FOR c = -edge TO n - 1 + edge
+            DIM is_dark = 0
+            IF r >= 0 ANDALSO r < n ANDALSO c >= 0 ANDALSO c < n THEN
+                IF m[r, c] = 1 THEN is_dark = 1
+            ENDIF
+            IF is_dark = 1 THEN
+                row$ = row$ + dark$
+            ELSE
+                row$ = row$ + light$
+            ENDIF
+        NEXT c
+        out$ = out$ + row$
+    NEXT r
+    RETURN out$
+ENDFUNC
+
+' The dark modules as SVG path data in module units, one rectangle per run of
+' dark modules in a row, shifted by quiet modules.
+EXPORT FUNC SVGPATH$(m, quiet = 4)
+    DIM n = LEN(m)
+    DIM edge = CLNG(quiet)
+    DIM path_parts = []
+    DIM r = 0
+    FOR r = 0 TO n - 1
+        DIM c = 0
+        DO WHILE c < n
+            IF m[r, c] = 1 THEN
+                DIM run_start = c
+                DO WHILE c < n ANDALSO m[r, c] = 1
+                    c = c + 1
+                LOOP
+                DIM run_len = c - run_start
+                PUSH(path_parts, "M" + STR$(run_start + edge) + " " + STR$(r + edge) + "h" + STR$(run_len) + "v1h-" + STR$(run_len) + "z")
+            ELSE
+                c = c + 1
+            ENDIF
+        LOOP
+    NEXT r
+    RETURN JOIN(path_parts, "")
+ENDFUNC
+
+' A standalone SVG image: module_px pixels per module, quiet modules of white
+' around the code, the dark modules in one path.
+EXPORT FUNC SVG$(m, module_px = 4, quiet = 4)
+    DIM n = LEN(m)
+    DIM edge = CLNG(quiet)
+    DIM total = n + 2 * edge
+    DIM px = total * CLNG(module_px)
+    DIM q$ = CHR$(34)
+    DIM head$ = "<svg xmlns=" + q$ + "http://www.w3.org/2000/svg" + q$ + " width=" + q$ + STR$(px) + q$ + " height=" + q$ + STR$(px) + q$
+    head$ = head$ + " viewBox=" + q$ + "0 0 " + STR$(total) + " " + STR$(total) + q$ + " shape-rendering=" + q$ + "crispEdges" + q$ + ">"
+    DIM ground$ = "<rect width=" + q$ + STR$(total) + q$ + " height=" + q$ + STR$(total) + q$ + " fill=" + q$ + "#ffffff" + q$ + "/>"
+    DIM ink$ = "<path fill=" + q$ + "#000000" + q$ + " d=" + q$ + SVGPATH$(m, edge) + q$ + "/>"
+    RETURN head$ + ground$ + ink$ + "</svg>"
+ENDFUNC
+
+' The code drawn onto the current page of a PDFGEN document: top left corner
+' at x, y and size millimetres wide including quiet modules, the dark runs as
+' filled boxes. The fill colour is left black.
+EXPORT SUB TOPDF(doc, m, x, y, size, quiet = 0)
+    DIM n = LEN(m)
+    DIM edge = CLNG(quiet)
+    DIM unit = CDBL(size) / CDBL(n + 2 * edge)
+    PDFGEN.SETFILL(doc, 0, 0, 0)
+    DIM r = 0
+    FOR r = 0 TO n - 1
+        DIM c = 0
+        DO WHILE c < n
+            IF m[r, c] = 1 THEN
+                DIM run_start = c
+                DO WHILE c < n ANDALSO m[r, c] = 1
+                    c = c + 1
+                LOOP
+                PDFGEN.BOX(doc, x + (run_start + edge) * unit, y + (r + edge) * unit, (c - run_start) * unit, unit, "F")
+            ELSE
+                c = c + 1
+            ENDIF
+        LOOP
+    NEXT r
+ENDSUB
+
+' ── EPC payment code ───────────────────────────────────────────
+
+FUNC CharCount(text$)
+    DIM chars = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(text$) - 1
+        IF (BYTEAT(text$, k) BAND 192) <> 128 THEN chars = chars + 1
+    NEXT k
+    RETURN chars
+ENDFUNC
+
+' An amount in cents as the EPC code writes it: "12.3", "10", "0.01".
+FUNC AmountText$(cents)
+    DIM shown$ = MONEY.DECIMAL$(cents, "EUR")
+    IF INSTR(shown$, ".") >= 0 THEN
+        DO WHILE RIGHT$(shown$, 1) = "0"
+            shown$ = LEFT$(shown$, LEN(shown$) - 1)
+        LOOP
+        IF RIGHT$(shown$, 1) = "." THEN shown$ = LEFT$(shown$, LEN(shown$) - 1)
+    ENDIF
+    RETURN shown$
+ENDFUNC
+
+' The text of an EPC QR code (EPC069-12, version 002, UTF-8) for a SEPA
+' credit transfer: name$ of the payee (1 to 70 characters), iban$, amount in
+' euros as text ("168.80") or a number, bic$ (optional), and either an
+' unstructured remittance$ (up to 140 characters) or a structured creditor
+' reference$ (up to 35), and an optional four-letter purpose$ code. Invalid
+' input raises.
+EXPORT FUNC EPC$(name$, iban$, amount, bic$ = "", remittance$ = "", reference$ = "", purpose$ = "")
+    DIM who$ = TRIM$(name$)
+    DIM who_chars = CINT(CharCount(who$))
+    IF who_chars < 1 ORELSE who_chars > 70 THEN THROW "QR.EPC$: the name needs 1 to 70 characters"
+    DIM account$ = UCASE$(REPLACE$(TRIM$(iban$), " ", ""))
+    IF NOT VALID.ISIBAN(account$) THEN THROW "QR.EPC$: not a valid IBAN: " + iban$
+    DIM bank$ = UCASE$(REPLACE$(TRIM$(bic$), " ", ""))
+    IF bank$ <> "" ANDALSO NOT VALID.ISBIC(bank$) THEN THROW "QR.EPC$: not a valid BIC: " + bic$
+    DIM cents = 0.0
+    IF TYPEOF(amount) = "STRING" THEN
+        DIM amount_text$ = amount
+        cents = MONEY.PARSE(TRIM$(amount_text$), "EUR")
+    ELSE
+        cents = MONEY.FROMNUMBER(amount, "EUR")
+    ENDIF
+    IF cents < 1 ORELSE cents > 99999999999 THEN THROW "QR.EPC$: the amount must be 0.01 to 999999999.99 EUR"
+    DIM why$ = TRIM$(purpose$)
+    IF why$ <> "" ANDALSO LEN(why$) <> 4 THEN THROW "QR.EPC$: a purpose code has four characters"
+    DIM note$ = RTRIM$(remittance$)
+    DIM ref$ = RTRIM$(reference$)
+    IF note$ = "" ANDALSO ref$ = "" THEN THROW "QR.EPC$: give a remittance text or a creditor reference"
+    IF note$ <> "" ANDALSO ref$ <> "" THEN THROW "QR.EPC$: give a remittance text or a creditor reference, not both"
+    IF CINT(CharCount(note$)) > 140 THEN THROW "QR.EPC$: the remittance text has more than 140 characters"
+    IF CINT(CharCount(ref$)) > 35 THEN THROW "QR.EPC$: the creditor reference has more than 35 characters"
+    DIM epc_lines = []
+    PUSH(epc_lines, "BCD")
+    PUSH(epc_lines, "002")
+    PUSH(epc_lines, "1")
+    PUSH(epc_lines, "SCT")
+    PUSH(epc_lines, bank$)
+    PUSH(epc_lines, who$)
+    PUSH(epc_lines, account$)
+    PUSH(epc_lines, "EUR" + AmountText$(cents))
+    PUSH(epc_lines, why$)
+    PUSH(epc_lines, ref$)
+    IF note$ <> "" THEN PUSH(epc_lines, note$)
+    DIM payload$ = JOIN(epc_lines, CHR$(10))
+    IF LEN(payload$) > 331 THEN THROW "QR.EPC$: the payment code is longer than 331 bytes"
+    RETURN payload$
+ENDFUNC
+
+' The EPC QR code as a matrix, at level M as the EPC guideline requires; the
+' arguments are those of EPC$.
+EXPORT FUNC EPCMATRIX(name$, iban$, amount, bic$ = "", remittance$ = "", reference$ = "", purpose$ = "")
+    DIM payload$ = ""
+    IF TYPEOF(amount) = "STRING" THEN
+        DIM amount_text$ = amount
+        payload$ = EPC$(name$, iban$, amount_text$, bic$, remittance$, reference$, purpose$)
+    ELSE
+        DIM amount_number = CDBL(amount)
+        payload$ = EPC$(name$, iban$, amount_number, bic$, remittance$, reference$, purpose$)
+    ENDIF
+    DIM epc_opts = {"ecc": "M"}
+    DIM code = MATRIX(payload$, epc_opts)
+    RETURN code
+ENDFUNC
