@@ -1,7 +1,9 @@
 ' jdweb - the jdBasic web framework: routes with path parameters, method
-' dispatch, middleware before and after, in-memory sessions, static files,
-' JSON and error responses, a test client for the running app, and the page
-' chrome and cookie-login stack of the terminal "Hot Phosphor" theme.
+' dispatch, middleware before and after, sessions with expiry, rotation, a
+' database store, CSRF protection and flash messages, a cookie builder,
+' static files, JSON and error responses, a test client for the running
+' app, and the page chrome and cookie-login stack of the terminal "Hot
+' Phosphor" theme.
 '
 '   IMPORT JDWEB
 '   FUNC ShowUser(request)
@@ -13,13 +15,14 @@
 ' Routes answer through HTTP.SERVER.ON_NOTFOUND, so apps that register their
 ' paths with HTTP.SERVER.ON_GET and ON_POST keep working beside them.
 '
-' Pages render through TMPL (lib/tmpl.jdb), which has to sit where IMPORT
-' finds it: next to this file on a server, or on JDBASIC_PATH. The page
-' templates (layout, theme) are read from jdweb_tpl/ next to the app script
-' unless TEMPLATES names another folder.
+' Pages render through TMPL (lib/tmpl.jdb) and session ids come from SECRET
+' (lib/secret.jdb); both have to sit where IMPORT finds them: next to this
+' file on a server, or on JDBASIC_PATH. The page templates (layout, theme)
+' are read from jdweb_tpl/ next to the app script unless TEMPLATES names
+' another folder.
 EXPORT MODULE JDWEB
 
-IMPORT TMPL
+IMPORT TMPL, SECRET
 
 DIM gConf AS MAP
 DIM gArgs = OS.ARGS()
@@ -38,7 +41,27 @@ DIM gAfterFns AS MAP
 DIM gHooks AS MAP
 DIM gStaticPrefixes = []
 DIM gStaticDirs = []
+
+' Sessions by id: the map a handler writes, and when it was made and last
+' used, in seconds since 1970.
 DIM gSessions AS MAP
+DIM gSessionCreated AS MAP
+DIM gSessionSeen AS MAP
+DIM gSessionConf AS MAP
+gSessionConf{"ttl"} = 86400
+gSessionConf{"lifetime"} = 0
+gSessionConf{"cookie"} = "jdwsid"
+gSessionConf{"secure"} = FALSE
+gSessionConf{"samesite"} = "Lax"
+gSessionConf{"domain"} = ""
+gSessionConf{"path"} = "/"
+gSessionConf{"db"} = 0
+gSessionConf{"auth_ttl"} = 2592000
+gSessionConf{"clock_shift"} = 0
+gSessionConf{"last_cleanup"} = 0
+gSessionConf{"csrf"} = FALSE
+DIM gCsrfExempt = []
+
 ' The route parameters and session changes of the request being answered;
 ' the server hands one request at a time to the VM.
 DIM gCurrent AS MAP
@@ -145,12 +168,88 @@ EXPORT FUNC LOGIN_PAGE$(cfg)
     RETURN PAGE$(cfg, app$ + " - Sign in", "", c$)
 ENDFUNC
 
-' ---- cookie-session auth (cookie name: jdwsession) ----
+' ---- cookies ----
 
-EXPORT FUNC HASH_PW$(salt$, pw$)
-    RETURN CODEC.SHA256$(salt$ + ":" + pw$)
+' A cookie value with every byte a cookie cannot carry written as %XX: the
+' controls, space, double quote, comma, semicolon, backslash, percent and
+' everything beyond ASCII.
+FUNC CookieEncode$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(text$) - 1
+        DIM b = BYTEAT(text$, i)
+        IF b <= 32 ORELSE b >= 127 ORELSE b = 34 ORELSE b = 44 ORELSE b = 59 ORELSE b = 92 ORELSE b = 37 THEN
+            out$ = out$ + "%" + RIGHT$("0" + HEX$(b), 2)
+        ELSE
+            out$ = out$ + CHR$(b)
+        ENDIF
+    NEXT i
+    RETURN out$
 ENDFUNC
 
+' A Set-Cookie value: name=value, the value percent-encoded where a cookie
+' cannot carry a byte, then the attributes opts names: "max_age" (seconds;
+' 0 deletes the cookie), "path" (/), "domain", "secure" (FALSE), "httponly"
+' (TRUE) and "samesite" (Lax; "" leaves it out). SameSite None always gets
+' Secure, as browsers require.
+EXPORT FUNC COOKIE$(name$, value$, opts = 0)
+    DIM out$ = name$ + "=" + CookieEncode$(value$)
+    DIM path$ = "/"
+    DIM domain$ = ""
+    DIM samesite$ = "Lax"
+    DIM secure = FALSE
+    DIM httponly = TRUE
+    DIM age$ = ""
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "path") THEN
+            DIM pv = opts{"path"}
+            path$ = "" + pv
+        ENDIF
+        IF MAP.EXISTS(opts, "domain") THEN
+            DIM dv = opts{"domain"}
+            domain$ = "" + dv
+        ENDIF
+        IF MAP.EXISTS(opts, "samesite") THEN
+            DIM sv = opts{"samesite"}
+            samesite$ = "" + sv
+        ENDIF
+        IF MAP.EXISTS(opts, "secure") THEN
+            DIM secure_v = opts{"secure"}
+            IF secure_v THEN
+                secure = TRUE
+            ELSE
+                secure = FALSE
+            ENDIF
+        ENDIF
+        IF MAP.EXISTS(opts, "httponly") THEN
+            DIM http_v = opts{"httponly"}
+            IF http_v THEN
+                httponly = TRUE
+            ELSE
+                httponly = FALSE
+            ENDIF
+        ENDIF
+        IF MAP.EXISTS(opts, "max_age") THEN
+            DIM age_v = opts{"max_age"}
+            age$ = STR$(CLNG(age_v))
+        ENDIF
+    ENDIF
+    IF age$ <> "" THEN out$ = out$ + "; Max-Age=" + age$
+    IF path$ <> "" THEN out$ = out$ + "; Path=" + path$
+    IF domain$ <> "" THEN out$ = out$ + "; Domain=" + domain$
+    IF LCASE$(samesite$) = "none" THEN secure = TRUE
+    IF secure THEN out$ = out$ + "; Secure"
+    IF httponly THEN out$ = out$ + "; HttpOnly"
+    IF samesite$ <> "" THEN out$ = out$ + "; SameSite=" + samesite$
+    RETURN out$
+ENDFUNC
+
+' A copy of the response that sets a cookie, built by COOKIE$.
+EXPORT FUNC SET_COOKIE(response, name$, value$, opts = 0)
+    RETURN HEADER(response, "Set-Cookie", COOKIE$(name$, value$, opts))
+ENDFUNC
+
+' A cookie the request carries, percent-decoded, or "".
 EXPORT FUNC COOKIE_VAL$(request, name$)
     DIM reqHdrs = request{"HEADERS"}
     IF TYPEOF(reqHdrs) = "NONE" THEN RETURN ""
@@ -162,16 +261,36 @@ EXPORT FUNC COOKIE_VAL$(request, name$)
     IF p < 0 THEN RETURN ""
     DIM rest$ = MID$(s$, p + LEN(key$), LEN(s$))
     DIM cut = CINT(INSTR(rest$, ";"))
-    IF cut < 0 THEN RETURN rest$
-    RETURN LEFT$(rest$, cut)
+    IF cut >= 0 THEN rest$ = LEFT$(rest$, cut)
+    RETURN PercentDecode$(rest$)
 ENDFUNC
 
+' ---- cookie-session auth (cookie name: jdwsession) ----
+
+EXPORT FUNC HASH_PW$(salt$, pw$)
+    RETURN CODEC.SHA256$(salt$ + ":" + pw$)
+ENDFUNC
+
+' The signed-in user's name, or "". A sign-in unused for longer than the
+' "auth_ttl" setting is removed; each use keeps it alive.
 EXPORT FUNC AUTH_USER$(db, request)
     DIM token$ = COOKIE_VAL$(request, "jdwsession")
     IF LEN(token$) = 0 THEN RETURN ""
-    DIM rows = SQL.TABLE(db, "SELECT username FROM sessions WHERE token = '" + ESC$(token$) + "'")
+    DIM now = SessionNow()
+    DIM now$ = STR$(CLNG(now))
+    DIM rows = SQL.TABLE(db, "SELECT username, COALESCE(last_seen, " + now$ + "), last_seen IS NULL FROM sessions WHERE token = '" + ESC$(token$) + "'")
     IF LEN(rows) = 0 THEN RETURN ""
     DIM who$ = rows[0, 0]
+    DIM seen = rows[0, 1]
+    DIM never = rows[0, 2]
+    DIM ttl = gSessionConf{"auth_ttl"}
+    IF ttl > 0 ANDALSO now - seen > ttl THEN
+        SQL.EXEC(db, "DELETE FROM sessions WHERE token = '" + ESC$(token$) + "'")
+        RETURN ""
+    ENDIF
+    IF never <> 0 ORELSE now - seen >= 60 THEN
+        SQL.EXEC(db, "UPDATE sessions SET last_seen = " + now$ + " WHERE token = '" + ESC$(token$) + "'")
+    ENDIF
     RETURN who$
 ENDFUNC
 
@@ -192,6 +311,8 @@ EXPORT SUB AUTH_INIT(db)
         "token TEXT PRIMARY KEY, username TEXT NOT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP)")
     SQL.EXEC(db, "ALTER TABLE users ADD COLUMN salt TEXT")
     SQL.EXEC(db, "ALTER TABLE users ADD COLUMN pass_hash TEXT")
+    SQL.EXEC(db, "ALTER TABLE sessions ADD COLUMN last_seen INTEGER")
+    SQL.EXEC(db, "UPDATE sessions SET last_seen = " + STR$(CLNG(SessionNow())) + " WHERE last_seen IS NULL")
 ENDSUB
 
 EXPORT FUNC AUTH_LOGIN(db, request, secure)
@@ -228,11 +349,12 @@ EXPORT FUNC AUTH_LOGIN(db, request, secure)
         IF HASH_PW$(salt$, pw$) <> stored_hash$ THEN RETURN { "error": "wrong password" }
     ENDIF
 
-    DIM token$ = CODEC.UUID$()
-    SQL.EXEC(db, "INSERT INTO sessions (token, username) VALUES ('" + token$ + "', '" + ESC$(name2$) + "')")
+    DIM token$ = SECRET.TOKEN$()
+    SQL.EXEC(db, "INSERT INTO sessions (token, username, last_seen) VALUES ('" + token$ + "', '" + ESC$(name2$) + "', " + STR$(CLNG(SessionNow())) + ")")
 
-    DIM cookie$ = "jdwsession=" + token$ + "; HttpOnly; Path=/; SameSite=Lax"
-    IF secure = TRUE THEN cookie$ = cookie$ + "; Secure"
+    DIM copts AS MAP
+    IF secure = TRUE THEN copts{"secure"} = TRUE
+    DIM cookie$ = COOKIE$("jdwsession", token$, copts)
     RETURN { "__http_status": 200, "__http_headers": { "Set-Cookie": cookie$ }, _
         "__http_content_type": "application/json", _
         "__http_body": JSON.STRINGIFY$({ "ok": TRUE, "name": name2$ }) }
@@ -241,7 +363,10 @@ ENDFUNC
 EXPORT FUNC AUTH_LOGOUT(db, request)
     DIM token$ = COOKIE_VAL$(request, "jdwsession")
     IF LEN(token$) > 0 THEN SQL.EXEC(db, "DELETE FROM sessions WHERE token = '" + ESC$(token$) + "'")
-    RETURN { "__http_status": 200, "__http_headers": { "Set-Cookie": "jdwsession=; Path=/; Max-Age=0" }, _
+    DIM gone AS MAP
+    gone{"max_age"} = 0
+    DIM cookie$ = COOKIE$("jdwsession", "", gone)
+    RETURN { "__http_status": 200, "__http_headers": { "Set-Cookie": cookie$ }, _
         "__http_content_type": "application/json", "__http_body": "{}" }
 ENDFUNC
 
@@ -249,6 +374,18 @@ EXPORT FUNC AUTH_ME(db, request)
     DIM u$ = AUTH_USER$(db, request)
     IF LEN(u$) = 0 THEN RETURN UNAUTH()
     RETURN { "name": u$ }
+ENDFUNC
+
+' The sign-ins unused for longer than the "auth_ttl" setting removed; the
+' number removed.
+EXPORT FUNC AUTH_CLEANUP(db)
+    DIM ttl = gSessionConf{"auth_ttl"}
+    IF ttl <= 0 THEN RETURN 0
+    DIM limit$ = STR$(CLNG(SessionNow() - ttl))
+    DIM counted = SQL.TABLE(db, "SELECT COUNT(*) FROM sessions WHERE last_seen < " + limit$)
+    DIM removed = counted[0, 0]
+    SQL.EXEC(db, "DELETE FROM sessions WHERE last_seen < " + limit$)
+    RETURN CLNG(removed)
 ENDFUNC
 
 ' ---- responses ----
@@ -596,36 +733,335 @@ FUNC StaticFile(path$)
     RETURN none
 ENDFUNC
 
-' ---- sessions (in memory, cookie name: jdwsid) ----
+' ---- sessions ----
 
-' The session map of the visitor. A new visitor gets one, and the response
-' sets its cookie; what is stored in the map stays for the next request.
-EXPORT FUNC SESSION(request)
-    DIM sid$ = COOKIE_VAL$(request, "jdwsid")
-    IF sid$ <> "" ANDALSO MAP.EXISTS(gSessions, sid$) THEN
-        DIM have = gSessions{sid$}
-        RETURN have
+FUNC SessionNow()
+    DIM shift = gSessionConf{"clock_shift"}
+    RETURN INT(NOW_EPOCH()) + shift
+ENDFUNC
+
+FUNC SessionCookie$()
+    DIM name$ = gSessionConf{"cookie"}
+    RETURN name$
+ENDFUNC
+
+' Settings for the sessions, as a map with any of: "ttl" (seconds a session
+' lives after its last use, 86400; 0 for no limit), "lifetime" (seconds
+' since it was made, 0 for no limit), "cookie" (jdwsid), "secure" (FALSE),
+' "samesite" (Lax), "domain", "path" (/), "db" (a SQLite handle that keeps
+' the sessions across restarts; 0 keeps them in memory) and "auth_ttl"
+' (seconds a sign-in of AUTH_LOGIN lives after its last use, 2592000).
+' Setting "db" drops the sessions held in memory, so they are read from
+' the database.
+EXPORT SUB SESSION_CONFIG(opts)
+    DIM known$ = ",ttl,lifetime,cookie,secure,samesite,domain,path,db,auth_ttl,"
+    DIM keys = MAP.KEYS(opts)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        IF INSTR(known$, "," + key$ + ",") < 0 THEN THROW "JDWEB.SESSION_CONFIG: unknown setting " + key$
+    NEXT k
+    FOR k = 0 TO LEN(keys) - 1
+        DIM set_key$ = keys[k]
+        DIM v = opts{set_key$}
+        gSessionConf{set_key$} = v
+    NEXT k
+    IF MAP.EXISTS(opts, "db") THEN
+        DIM held = MAP.KEYS(gSessions)
+        FOR k = 0 TO LEN(held) - 1
+            DIM held_sid$ = held[k]
+            DropHeld(held_sid$)
+        NEXT k
+        DIM db = gSessionConf{"db"}
+        IF db <> 0 THEN
+            SQL.EXEC(db, "CREATE TABLE IF NOT EXISTS jdweb_sessions (id TEXT PRIMARY KEY, " + _
+                "data TEXT NOT NULL, created INTEGER NOT NULL, seen INTEGER NOT NULL)")
+        ENDIF
     ENDIF
+ENDSUB
+
+' Moves the session clock by shift_seconds, for tests of expiry.
+EXPORT SUB SESSION_CLOCK(shift_seconds)
+    gSessionConf{"clock_shift"} = shift_seconds
+ENDSUB
+
+SUB DropHeld(sid$)
+    IF MAP.EXISTS(gSessions, sid$) THEN MAP.DELETE(gSessions, sid$)
+    IF MAP.EXISTS(gSessionCreated, sid$) THEN MAP.DELETE(gSessionCreated, sid$)
+    IF MAP.EXISTS(gSessionSeen, sid$) THEN MAP.DELETE(gSessionSeen, sid$)
+ENDSUB
+
+SUB ForgetSession(sid$)
+    DropHeld(sid$)
+    DIM db = gSessionConf{"db"}
+    IF db <> 0 THEN SQL.EXEC(db, "DELETE FROM jdweb_sessions WHERE id = '" + ESC$(sid$) + "'")
+ENDSUB
+
+' Whether the session sid$ is held in memory, reading it from the database
+' store when it is kept there.
+FUNC HeldOrLoaded(sid$)
+    IF MAP.EXISTS(gSessions, sid$) THEN RETURN TRUE
+    DIM db = gSessionConf{"db"}
+    IF db = 0 THEN RETURN FALSE
+    DIM rows = SQL.TABLE(db, "SELECT data, created, seen FROM jdweb_sessions WHERE id = '" + ESC$(sid$) + "'")
+    IF LEN(rows) = 0 THEN RETURN FALSE
+    DIM data$ = rows[0, 0]
+    DIM created = rows[0, 1]
+    DIM seen = rows[0, 2]
+    DIM loaded = JSON.PARSE$(data$)
+    IF TYPEOF(loaded) <> "OBJECT" THEN RETURN FALSE
+    DIM held AS MAP
+    DIM names = MAP.KEYS(loaded)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM key$ = names[k]
+        DIM v = loaded{key$}
+        held{key$} = v
+    NEXT k
+    gSessions{sid$} = held
+    gSessionCreated{sid$} = created
+    gSessionSeen{sid$} = seen
+    RETURN TRUE
+ENDFUNC
+
+SUB SaveSession(sid$)
+    DIM db = gSessionConf{"db"}
+    IF db <> 0 ANDALSO MAP.EXISTS(gSessions, sid$) THEN
+        DIM data = gSessions{sid$}
+        DIM created = gSessionCreated{sid$}
+        DIM seen = gSessionSeen{sid$}
+        SQL.EXEC(db, "INSERT OR REPLACE INTO jdweb_sessions (id, data, created, seen) VALUES ('" + _
+            ESC$(sid$) + "', '" + ESC$(JSON.STRINGIFY$(data)) + "', " + STR$(CLNG(created)) + ", " + STR$(CLNG(seen)) + ")")
+    ENDIF
+ENDSUB
+
+FUNC IsExpired(sid$, now)
+    DIM ttl = gSessionConf{"ttl"}
+    DIM lifetime = gSessionConf{"lifetime"}
+    DIM seen = gSessionSeen{sid$}
+    DIM created = gSessionCreated{sid$}
+    IF ttl > 0 ANDALSO now - seen > ttl THEN RETURN TRUE
+    IF lifetime > 0 ANDALSO now - created > lifetime THEN RETURN TRUE
+    RETURN FALSE
+ENDFUNC
+
+' The id of the live session of this request: one made while answering it,
+' or the one its cookie names when that has not expired. An expired session
+' is forgotten. "" when there is none.
+FUNC LiveSid$(request)
     DIM made$ = ""
     IF MAP.EXISTS(gCurrent, "sid_new") THEN made$ = gCurrent{"sid_new"}
-    IF made$ <> "" ANDALSO MAP.EXISTS(gSessions, made$) THEN
-        DIM same = gSessions{made$}
-        RETURN same
+    IF made$ <> "" ANDALSO MAP.EXISTS(gSessions, made$) THEN RETURN made$
+    DIM sid$ = COOKIE_VAL$(request, SessionCookie$())
+    IF sid$ = "" THEN RETURN ""
+    IF NOT HeldOrLoaded(sid$) THEN RETURN ""
+    DIM now = SessionNow()
+    IF IsExpired(sid$, now) THEN
+        ForgetSession(sid$)
+        RETURN ""
     ENDIF
-    DIM fresh_sid$ = CODEC.UUID$()
-    DIM fresh AS MAP
-    gSessions{fresh_sid$} = fresh
-    gCurrent{"sid_new"} = fresh_sid$
-    DIM stored = gSessions{fresh_sid$}
+    gSessionSeen{sid$} = now
+    gCurrent{"sid_used"} = sid$
+    RETURN sid$
+ENDFUNC
+
+' The session map of the visitor. A new visitor, or one whose session
+' expired, gets an empty one and the response sets its cookie; what is
+' stored in the map stays for the next request.
+EXPORT FUNC SESSION(request)
+    DIM sid$ = LiveSid$(request)
+    IF sid$ = "" THEN
+        sid$ = SECRET.TOKEN$()
+        DIM fresh AS MAP
+        DIM now = SessionNow()
+        gSessions{sid$} = fresh
+        gSessionCreated{sid$} = now
+        gSessionSeen{sid$} = now
+        gCurrent{"sid_new"} = sid$
+    ENDIF
+    DIM stored = gSessions{sid$}
+    RETURN stored
+ENDFUNC
+
+' The visitor's session moved to a new id with what it holds, and the old id
+' forgotten. Call it when a visitor signs in, so an id known before the
+' sign-in is worth nothing after it. The lifetime counts from here.
+EXPORT FUNC SESSION_ROTATE(request)
+    DIM old$ = LiveSid$(request)
+    DIM moved AS MAP
+    IF old$ <> "" THEN
+        DIM kept = gSessions{old$}
+        DIM names = MAP.KEYS(kept)
+        DIM k = 0
+        FOR k = 0 TO LEN(names) - 1
+            DIM key$ = names[k]
+            DIM v = kept{key$}
+            moved{key$} = v
+        NEXT k
+        ForgetSession(old$)
+    ENDIF
+    DIM sid$ = SECRET.TOKEN$()
+    DIM now = SessionNow()
+    gSessions{sid$} = moved
+    gSessionCreated{sid$} = now
+    gSessionSeen{sid$} = now
+    gCurrent{"sid_new"} = sid$
+    gCurrent{"sid_used"} = ""
+    DIM stored = gSessions{sid$}
     RETURN stored
 ENDFUNC
 
 ' The visitor's session forgotten and its cookie cleared.
 EXPORT SUB SESSION_END(request)
-    DIM sid$ = COOKIE_VAL$(request, "jdwsid")
-    IF sid$ <> "" ANDALSO MAP.EXISTS(gSessions, sid$) THEN MAP.DELETE(gSessions, sid$)
+    DIM sid$ = COOKIE_VAL$(request, SessionCookie$())
+    IF sid$ <> "" THEN ForgetSession(sid$)
+    DIM made$ = ""
+    IF MAP.EXISTS(gCurrent, "sid_new") THEN made$ = gCurrent{"sid_new"}
+    IF made$ <> "" THEN ForgetSession(made$)
+    gCurrent{"sid_new"} = ""
+    gCurrent{"sid_used"} = ""
     gCurrent{"sid_end"} = 1
 ENDSUB
+
+' The expired sessions removed from memory and from the database store; the
+' number removed.
+EXPORT FUNC SESSION_CLEANUP()
+    DIM now = SessionNow()
+    DIM ttl = gSessionConf{"ttl"}
+    DIM lifetime = gSessionConf{"lifetime"}
+    DIM removed = 0
+    DIM ids = MAP.KEYS(gSessionSeen)
+    DIM k = 0
+    FOR k = 0 TO LEN(ids) - 1
+        DIM sid$ = ids[k]
+        IF IsExpired(sid$, now) THEN
+            DropHeld(sid$)
+            removed = removed + 1
+        ENDIF
+    NEXT k
+    DIM db = gSessionConf{"db"}
+    IF db <> 0 ANDALSO (ttl > 0 ORELSE lifetime > 0) THEN
+        DIM where$ = "0"
+        IF ttl > 0 THEN where$ = where$ + " OR seen < " + STR$(CLNG(now - ttl))
+        IF lifetime > 0 THEN where$ = where$ + " OR created < " + STR$(CLNG(now - lifetime))
+        DIM counted = SQL.TABLE(db, "SELECT COUNT(*) FROM jdweb_sessions WHERE " + where$)
+        DIM in_db = counted[0, 0]
+        SQL.EXEC(db, "DELETE FROM jdweb_sessions WHERE " + where$)
+        IF in_db > removed THEN removed = in_db
+    ENDIF
+    gSessionConf{"last_cleanup"} = now
+    RETURN CLNG(removed)
+ENDFUNC
+
+' ---- flash messages ----
+
+' A message kept in the visitor's session until FLASHES reads it, usually on
+' the page a redirect leads to. kind$ is free text such as info or error.
+EXPORT SUB FLASH(request, message$, kind$ = "info")
+    DIM sess = SESSION(request)
+    DIM item$ = JSON.STRINGIFY$({"kind": kind$, "text": message$})
+    DIM list$ = "[" + item$ + "]"
+    IF MAP.EXISTS(sess, "__flash") THEN
+        DIM kept$ = sess{"__flash"}
+        list$ = LEFT$(kept$, LEN(kept$) - 1) + "," + item$ + "]"
+    ENDIF
+    sess{"__flash"} = list$
+ENDSUB
+
+' The flash messages of the visitor as an array of maps with "kind" and
+' "text", oldest first; reading them removes them.
+EXPORT FUNC FLASHES(request)
+    DIM sid$ = LiveSid$(request)
+    DIM kept$ = "[]"
+    IF sid$ <> "" THEN
+        DIM sess = gSessions{sid$}
+        IF MAP.EXISTS(sess, "__flash") THEN
+            kept$ = sess{"__flash"}
+            MAP.DELETE(sess, "__flash")
+        ENDIF
+    ENDIF
+    DIM parsed = JSON.PARSE$(kept$)
+    RETURN parsed
+ENDFUNC
+
+' ---- CSRF ----
+
+' The CSRF token of the visitor's session, made on first use. A form sends
+' it in a field named csrf_token, a script in an X-CSRF-Token header.
+EXPORT FUNC CSRF_TOKEN$(request)
+    DIM sess = SESSION(request)
+    IF MAP.EXISTS(sess, "__csrf") THEN
+        DIM have$ = sess{"__csrf"}
+        RETURN have$
+    ENDIF
+    DIM made$ = SECRET.TOKEN$()
+    sess{"__csrf"} = made$
+    RETURN made$
+ENDFUNC
+
+' From here on POST, PUT, PATCH and DELETE need the session's CSRF token,
+' except under the path prefixes CSRF_EXEMPT names; a request without the
+' right token is answered with 403. CSRF_PROTECT(FALSE) turns it off.
+EXPORT SUB CSRF_PROTECT(enabled = TRUE)
+    IF enabled THEN
+        gSessionConf{"csrf"} = TRUE
+    ELSE
+        gSessionConf{"csrf"} = FALSE
+    ENDIF
+ENDSUB
+
+' A path prefix whose requests need no CSRF token, such as an API that
+' checks a key in a header instead of a cookie.
+EXPORT SUB CSRF_EXEMPT(prefix$)
+    PUSH(gCsrfExempt, prefix$)
+ENDSUB
+
+' The CSRF token a request carries: the X-CSRF-Token header, or the
+' csrf_token field of a form body.
+FUNC SentCsrf$(request)
+    DIM hs = request{"HEADERS"}
+    DIM form = FALSE
+    IF TYPEOF(hs) = "OBJECT" THEN
+        IF MAP.EXISTS(hs, "x-csrf-token") THEN
+            DIM hv = hs{"x-csrf-token"}
+            RETURN TRIM$("" + hv)
+        ENDIF
+        IF MAP.EXISTS(hs, "content-type") THEN
+            DIM ct = hs{"content-type"}
+            IF INSTR(LCASE$("" + ct), "application/x-www-form-urlencoded") >= 0 THEN form = TRUE
+        ENDIF
+    ENDIF
+    IF NOT form THEN RETURN ""
+    DIM body = request{"BODY"}
+    IF TYPEOF(body) <> "STRING" THEN RETURN ""
+    DIM body$ = body
+    DIM pairs = SPLIT(body$, "&")
+    DIM k = 0
+    FOR k = 0 TO LEN(pairs) - 1
+        DIM pair$ = pairs[k]
+        IF LEFT$(pair$, 11) = "csrf_token=" THEN RETURN PercentDecode$(REPLACE$(MID$(pair$, 11, LEN(pair$)), "+", " "))
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+FUNC CsrfRefused(request, method$, path$)
+    DIM active = gSessionConf{"csrf"}
+    IF NOT active THEN RETURN FALSE
+    IF method$ = "GET" ORELSE method$ = "HEAD" ORELSE method$ = "OPTIONS" THEN RETURN FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(gCsrfExempt) - 1
+        DIM pre$ = gCsrfExempt[k]
+        IF LEFT$(path$, LEN(pre$)) = pre$ THEN RETURN FALSE
+    NEXT k
+    DIM sent$ = SentCsrf$(request)
+    IF sent$ = "" THEN RETURN TRUE
+    DIM sid$ = LiveSid$(request)
+    IF sid$ = "" THEN RETURN TRUE
+    DIM sess = gSessions{sid$}
+    IF NOT MAP.EXISTS(sess, "__csrf") THEN RETURN TRUE
+    DIM want$ = sess{"__csrf"}
+    RETURN NOT SECRET.EQUAL(sent$, want$)
+ENDFUNC
 
 ' ---- dispatch ----
 
@@ -656,17 +1092,31 @@ FUNC Finish(request, response)
     IF MAP.EXISTS(gCurrent, "sid_end") THEN ended = gCurrent{"sid_end"}
     DIM sid$ = ""
     IF MAP.EXISTS(gCurrent, "sid_new") THEN sid$ = gCurrent{"sid_new"}
-    IF ended <> 0 THEN
-        out = HEADER(out, "Set-Cookie", "jdwsid=; Path=/; Max-Age=0")
-    ELSEIF sid$ <> "" THEN
-        out = HEADER(out, "Set-Cookie", "jdwsid=" + sid$ + "; HttpOnly; Path=/; SameSite=Lax")
+    DIM used$ = ""
+    IF MAP.EXISTS(gCurrent, "sid_used") THEN used$ = gCurrent{"sid_used"}
+    DIM copts AS MAP
+    DIM c_path = gSessionConf{"path"}
+    DIM c_domain = gSessionConf{"domain"}
+    DIM c_secure = gSessionConf{"secure"}
+    DIM c_samesite = gSessionConf{"samesite"}
+    copts{"path"} = c_path
+    copts{"domain"} = c_domain
+    copts{"secure"} = c_secure
+    copts{"samesite"} = c_samesite
+    IF sid$ <> "" THEN
+        out = HEADER(out, "Set-Cookie", COOKIE$(SessionCookie$(), sid$, copts))
+        SaveSession(sid$)
+    ELSEIF ended <> 0 THEN
+        copts{"max_age"} = 0
+        out = HEADER(out, "Set-Cookie", COOKIE$(SessionCookie$(), "", copts))
     ENDIF
+    IF used$ <> "" ANDALSO used$ <> sid$ THEN SaveSession(used$)
     RETURN out
 ENDFUNC
 
-' The answer to one request: before middleware, the first route whose
-' pattern and method match, the static folders, the missing handler, then
-' the after middleware. MOUNT wires it to the server.
+' The answer to one request: before middleware, the CSRF check, the first
+' route whose pattern and method match, the static folders, the missing
+' handler, then the after middleware. MOUNT wires it to the server.
 EXPORT FUNC DISPATCH(request)
     DIM m = request{"METHOD"}
     DIM method$ = UCASE$("" + m)
@@ -675,7 +1125,12 @@ EXPORT FUNC DISPATCH(request)
     DIM no_route AS MAP
     gCurrent{"route"} = no_route
     gCurrent{"sid_new"} = ""
+    gCurrent{"sid_used"} = ""
     gCurrent{"sid_end"} = 0
+    DIM last_sweep = gSessionConf{"last_cleanup"}
+    IF SessionNow() - last_sweep >= 300 THEN
+        DIM swept = SESSION_CLEANUP()
+    ENDIF
     DIM k = 0
     FOR k = 0 TO LEN(gBeforeIds) - 1
         DIM bkey$ = gBeforeIds[k]
@@ -683,6 +1138,7 @@ EXPORT FUNC DISPATCH(request)
         DIM early = bfn(request)
         IF NOT IsPass(early) THEN RETURN Finish(request, Normalize(early, 200))
     NEXT k
+    IF CsrfRefused(request, method$, path$) THEN RETURN Finish(request, REPLY("CSRF token missing or wrong", 403, "text/plain; charset=utf-8"))
     DIM allowed$ = ""
     FOR k = 0 TO LEN(gRoutePatterns) - 1
         DIM pat$ = gRoutePatterns[k]
@@ -803,5 +1259,5 @@ FUNC CookieValue$(header$, name$)
     DIM rest$ = MID$(header$, LEN(name$) + 1, LEN(header$))
     DIM semi = CINT(INSTR(rest$, ";"))
     IF semi >= 0 THEN rest$ = LEFT$(rest$, semi)
-    RETURN rest$
+    RETURN PercentDecode$(rest$)
 ENDFUNC

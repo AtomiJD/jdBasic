@@ -107,7 +107,99 @@ FUNC Themed(request)
     RETURN JDWEB.HEADER(answer, "Set-Cookie", "theme=dark; Path=/")
 ENDFUNC
 
+FUNC Rotated(request)
+    DIM sess = JDWEB.SESSION_ROTATE(request)
+    DIM n = 0
+    IF MAP.EXISTS(sess, "count") THEN n = sess{"count"}
+    RETURN {"count": n}
+ENDFUNC
+
+FUNC FormPage(request)
+    RETURN JDWEB.CSRF_TOKEN$(request)
+ENDFUNC
+
+FUNC Saved(request)
+    RETURN "saved"
+ENDFUNC
+
+FUNC ApiWrite(request)
+    RETURN "api ok"
+ENDFUNC
+
+FUNC SetFlash(request)
+    JDWEB.FLASH(request, "note saved")
+    JDWEB.FLASH(request, "check the date", "warning")
+    RETURN JDWEB.REDIRECT_TO("/shown")
+ENDFUNC
+
+FUNC ShowFlash(request)
+    DIM items = JDWEB.FLASHES(request)
+    DIM texts$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM item = items[k]
+        DIM kind$ = item{"kind"}
+        DIM text$ = item{"text"}
+        texts$ = texts$ + kind$ + ":" + text$ + ";"
+    NEXT k
+    RETURN texts$
+ENDFUNC
+
+FUNC BadSetting(x)
+    JDWEB.SESSION_CONFIG({"tll": 1})
+    RETURN 0
+ENDFUNC
+
+' A request map for DISPATCH: sid$ goes in the session cookie, token$ in the
+' X-CSRF-Token header and form$ is sent as a form body; "" leaves each out.
+FUNC Ask(method$, path$, sid$, token$, form$)
+    DIM hs AS MAP
+    DIM no_params AS MAP
+    IF sid$ <> "" THEN hs{"cookie"} = "jdwsid=" + sid$
+    IF token$ <> "" THEN hs{"x-csrf-token"} = token$
+    IF form$ <> "" THEN hs{"content-type"} = "application/x-www-form-urlencoded"
+    RETURN {"METHOD": method$, "PATH": path$, "HEADERS": hs, "PARAMS": no_params, "BODY": form$}
+ENDFUNC
+
+' The Set-Cookie line a DISPATCH answer carries for a cookie, or "".
+FUNC SetCookieOf$(response, name$)
+    DIM hs = response{"__http_headers"}
+    IF NOT MAP.EXISTS(hs, "Set-Cookie") THEN RETURN ""
+    DIM raw = hs{"Set-Cookie"}
+    IF TYPEOF(raw) = "ARRAY" THEN
+        DIM k = 0
+        FOR k = 0 TO LEN(raw) - 1
+            DIM each$ = raw[k]
+            IF LEFT$(each$, LEN(name$) + 1) = name$ + "=" THEN RETURN each$
+        NEXT k
+        RETURN ""
+    ENDIF
+    DIM one$ = raw
+    IF LEFT$(one$, LEN(name$) + 1) = name$ + "=" THEN RETURN one$
+    RETURN ""
+ENDFUNC
+
+FUNC SidOf$(line$)
+    DIM eq = CINT(INSTR(line$, "="))
+    DIM semi = CINT(INSTR(line$, ";"))
+    IF eq < 0 ORELSE semi < 0 THEN RETURN ""
+    RETURN MID$(line$, eq + 1, semi - eq - 1)
+ENDFUNC
+
+FUNC CountOf(response)
+    DIM body$ = response{"__http_body"}
+    DIM parsed = JSON.PARSE$(body$)
+    DIM n = parsed{"count"}
+    RETURN n
+ENDFUNC
+
 JDWEB.GET("/themed", Themed@)
+JDWEB.GET("/rotate", Rotated@)
+JDWEB.GET("/form", FormPage@)
+JDWEB.POST("/save", Saved@)
+JDWEB.POST("/api/write", ApiWrite@)
+JDWEB.GET("/flash", SetFlash@)
+JDWEB.GET("/shown", ShowFlash@)
 JDWEB.GET("/users/:id", ShowUser@)
 JDWEB.POST("/users", CreateUser@)
 JDWEB.DELETE("/users/:id", DeleteUser@)
@@ -267,10 +359,155 @@ IF gServed THEN
     TESTKIT.EQ(LEN(r{"body"}), LEN(BINREADER$(base$ + "pdfgen_logo.jpg")), "a binary file arrives whole")
     TESTKIT.ISTRUE(INSTR(HeaderOf$(r, "content-type"), "image/jpeg") >= 0, "as image/jpeg")
 
+    TESTKIT.SUITE("CSRF over HTTP")
+    JDWEB.CSRF_PROTECT()
+    r = JDWEB.FETCH(PORT, "GET", "/form")
+    DIM served_token$ = r{"body"}
+    DIM served_sid$ = JDWEB.COOKIE_OF$(r, "jdwsid")
+    r = JDWEB.FETCH(PORT, "POST", "/save", "", {"Cookie": "jdwsid=" + served_sid$})
+    TESTKIT.EQ(r{"status"}, 403, "a POST without the token is refused")
+    r = JDWEB.FETCH(PORT, "POST", "/save", "", {"Cookie": "jdwsid=" + served_sid$, "X-CSRF-Token": served_token$})
+    TESTKIT.EQ(r{"status"}, 200, "and let through with it")
+    JDWEB.CSRF_PROTECT(FALSE)
+
     HTTP.SERVER.STOP()
 ELSE
     TESTKIT.SUITE("served routes")
     TESTKIT.SKIP("routes served from a compiled program: #412")
+ENDIF
+
+TESTKIT.SUITE("cookies")
+TESTKIT.EQ(JDWEB.COOKIE$("a", "1"), "a=1; Path=/; HttpOnly; SameSite=Lax", "COOKIE$ with the defaults")
+DIM prefs = {"max_age": 60, "secure": TRUE, "domain": "example.org"}
+TESTKIT.EQ(JDWEB.COOKIE$("pref", "a b;c", prefs), "pref=a%20b%3Bc; Max-Age=60; Path=/; Domain=example.org; Secure; HttpOnly; SameSite=Lax", "a value a cookie cannot carry is encoded, attributes in order")
+DIM bare = {"max_age": 0, "httponly": FALSE, "samesite": ""}
+TESTKIT.EQ(JDWEB.COOKIE$("x", "", bare), "x=; Max-Age=0; Path=/", "a cookie deleted, without HttpOnly and SameSite")
+DIM cross = {"samesite": "None"}
+TESTKIT.ISTRUE(INSTR(JDWEB.COOKIE$("t", "1", cross), "; Secure") >= 0, "SameSite None always gets Secure")
+DIM jar_req = {"HEADERS": {"cookie": "pref=a%20b%3Bc; z=1"}}
+TESTKIT.EQ(JDWEB.COOKIE_VAL$(jar_req, "pref"), "a b;c", "COOKIE_VAL$ decodes it again")
+DIM with_cookie = JDWEB.SET_COOKIE(JDWEB.REPLY("ok"), "pref", "dark")
+TESTKIT.EQ(SetCookieOf$(with_cookie, "pref"), "pref=dark; Path=/; HttpOnly; SameSite=Lax", "SET_COOKIE puts it on a response")
+
+TESTKIT.SUITE("session lifetime")
+JDWEB.SESSION_CONFIG({"ttl": 600, "lifetime": 3600})
+DIM ask1 = Ask("GET", "/count", "", "", "")
+DIM d_count = JDWEB.DISPATCH(ask1)
+DIM line1$ = SetCookieOf$(d_count, "jdwsid")
+DIM sid1$ = SidOf$(line1$)
+TESTKIT.EQ(LEN(sid1$), 43, "a session id is 43 random characters")
+TESTKIT.ISTRUE(INSTR(line1$, "HttpOnly") >= 0 ANDALSO INSTR(line1$, "SameSite=Lax") >= 0, "in an HttpOnly SameSite=Lax cookie")
+DIM ask2 = Ask("GET", "/count", sid1$, "", "")
+TESTKIT.EQ(CountOf(JDWEB.DISPATCH(ask2)), 2, "the cookie brings the session back")
+JDWEB.SESSION_CLOCK(500)
+TESTKIT.EQ(CountOf(JDWEB.DISPATCH(ask2)), 3, "500 seconds later it is still there")
+JDWEB.SESSION_CLOCK(1000)
+TESTKIT.EQ(CountOf(JDWEB.DISPATCH(ask2)), 4, "each use starts the 600 seconds again")
+JDWEB.SESSION_CLOCK(1700)
+DIM d_late = JDWEB.DISPATCH(ask2)
+TESTKIT.EQ(CountOf(d_late), 1, "700 seconds without use end it")
+DIM sid2$ = SidOf$(SetCookieOf$(d_late, "jdwsid"))
+TESTKIT.ISTRUE(LEN(sid2$) = 43 ANDALSO sid2$ <> sid1$, "and the visitor gets a new id")
+DIM ask3 = Ask("GET", "/count", sid2$, "", "")
+DIM clocks = [2200, 2700, 3200, 3700, 4200, 4700, 5200]
+DIM ci = 0
+FOR ci = 0 TO LEN(clocks) - 1
+    JDWEB.SESSION_CLOCK(clocks[ci])
+    DIM d_step = JDWEB.DISPATCH(ask3)
+NEXT ci
+TESTKIT.EQ(CountOf(d_step), 8, "a session used every 500 seconds lives on")
+JDWEB.SESSION_CLOCK(5400)
+TESTKIT.EQ(CountOf(JDWEB.DISPATCH(ask3)), 1, "until its lifetime of 3600 seconds is over")
+DIM ask_idle = Ask("GET", "/count", "", "", "")
+DIM d_idle = JDWEB.DISPATCH(ask_idle)
+JDWEB.SESSION_CLOCK(9000)
+TESTKIT.ISTRUE(CINT(JDWEB.SESSION_CLEANUP()) >= 1, "SESSION_CLEANUP removes sessions nobody used")
+JDWEB.SESSION_CLOCK(0)
+JDWEB.SESSION_CONFIG({"ttl": 86400, "lifetime": 0})
+TESTKIT.THROWS(BadSetting@, 0, "an unknown setting is refused")
+
+TESTKIT.SUITE("session rotation and settings")
+DIM ask_r = Ask("GET", "/count", "", "", "")
+DIM d_r = JDWEB.DISPATCH(ask_r)
+DIM sid_r$ = SidOf$(SetCookieOf$(d_r, "jdwsid"))
+DIM ask_r2 = Ask("GET", "/count", sid_r$, "", "")
+DIM d_r2 = JDWEB.DISPATCH(ask_r2)
+DIM ask_rot = Ask("GET", "/rotate", sid_r$, "", "")
+DIM d_rot = JDWEB.DISPATCH(ask_rot)
+DIM sid_rot$ = SidOf$(SetCookieOf$(d_rot, "jdwsid"))
+TESTKIT.ISTRUE(LEN(sid_rot$) = 43 ANDALSO sid_rot$ <> sid_r$, "SESSION_ROTATE hands out a new id")
+TESTKIT.EQ(CountOf(d_rot), 2, "with what the session held")
+DIM ask_new = Ask("GET", "/count", sid_rot$, "", "")
+TESTKIT.EQ(CountOf(JDWEB.DISPATCH(ask_new)), 3, "the new id carries on")
+TESTKIT.EQ(CountOf(JDWEB.DISPATCH(ask_r2)), 1, "the old id is worth nothing")
+JDWEB.SESSION_CONFIG({"secure": TRUE, "samesite": "Strict", "cookie": "appsid"})
+DIM d_set = JDWEB.DISPATCH(ask_r)
+DIM line_set$ = SetCookieOf$(d_set, "appsid")
+TESTKIT.ISTRUE(LEN(line_set$) > 0, "the cookie name is a setting")
+TESTKIT.ISTRUE(INSTR(line_set$, "; Secure") >= 0 ANDALSO INSTR(line_set$, "SameSite=Strict") >= 0, "and so are Secure and SameSite")
+JDWEB.SESSION_CONFIG({"secure": FALSE, "samesite": "Lax", "cookie": "jdwsid"})
+
+TESTKIT.SUITE("flash messages")
+DIM ask_f = Ask("GET", "/flash", "", "", "")
+DIM d_f = JDWEB.DISPATCH(ask_f)
+TESTKIT.EQ(d_f{"__http_status"}, 302, "a handler leaves messages and redirects")
+DIM sid_f$ = SidOf$(SetCookieOf$(d_f, "jdwsid"))
+DIM ask_shown = Ask("GET", "/shown", sid_f$, "", "")
+DIM d_shown = JDWEB.DISPATCH(ask_shown)
+TESTKIT.EQ(d_shown{"__http_body"}, "info:note saved;warning:check the date;", "the next page reads them in order with their kinds")
+DIM d_again = JDWEB.DISPATCH(ask_shown)
+TESTKIT.EQ(d_again{"__http_body"}, "", "and they are gone after that")
+
+TESTKIT.SUITE("CSRF")
+JDWEB.CSRF_PROTECT()
+JDWEB.CSRF_EXEMPT("/api/")
+DIM ask_anon = Ask("POST", "/save", "", "", "")
+TESTKIT.EQ(JDWEB.DISPATCH(ask_anon){"__http_status"}, 403, "a POST without a session is refused")
+DIM ask_form = Ask("GET", "/form", "", "", "")
+DIM d_form = JDWEB.DISPATCH(ask_form)
+DIM token$ = d_form{"__http_body"}
+DIM sid_c$ = SidOf$(SetCookieOf$(d_form, "jdwsid"))
+TESTKIT.EQ(LEN(token$), 43, "CSRF_TOKEN$ gives the session a token")
+DIM ask_none = Ask("POST", "/save", sid_c$, "", "")
+TESTKIT.EQ(JDWEB.DISPATCH(ask_none){"__http_status"}, 403, "a session without the token is refused")
+DIM ask_header = Ask("POST", "/save", sid_c$, token$, "")
+DIM d_header = JDWEB.DISPATCH(ask_header)
+TESTKIT.EQ(d_header{"__http_body"}, "saved", "the token in the X-CSRF-Token header lets it through")
+DIM ask_wrong = Ask("POST", "/save", sid_c$, LEFT$(token$, 42) + "x", "")
+TESTKIT.EQ(JDWEB.DISPATCH(ask_wrong){"__http_status"}, 403, "a token one character off is refused")
+DIM ask_field = Ask("POST", "/save", sid_c$, "", "note=hi&csrf_token=" + token$)
+TESTKIT.EQ(JDWEB.DISPATCH(ask_field){"__http_body"}, "saved", "so does the csrf_token field of a form")
+DIM ask_api = Ask("POST", "/api/write", "", "", "")
+TESTKIT.EQ(JDWEB.DISPATCH(ask_api){"__http_body"}, "api ok", "an exempt prefix needs no token")
+DIM ask_get = Ask("GET", "/count", "", "", "")
+TESTKIT.EQ(JDWEB.DISPATCH(ask_get){"__http_status"}, 200, "GET needs none")
+JDWEB.CSRF_PROTECT(FALSE)
+TESTKIT.EQ(JDWEB.DISPATCH(ask_anon){"__http_body"}, "saved", "CSRF_PROTECT(FALSE) turns the check off")
+
+TESTKIT.SUITE("sessions in a database")
+IF OS.FEATURE("SQLITE") THEN
+    DIM sdb = SQL.OPEN(":memory:")
+    JDWEB.SESSION_CONFIG({"db": sdb})
+    DIM ask_s = Ask("GET", "/count", "", "", "")
+    DIM d_s = JDWEB.DISPATCH(ask_s)
+    DIM sid_s$ = SidOf$(SetCookieOf$(d_s, "jdwsid"))
+    DIM ask_s2 = Ask("GET", "/count", sid_s$, "", "")
+    DIM d_s2 = JDWEB.DISPATCH(ask_s2)
+    DIM stored_rows = SQL.TABLE(sdb, "SELECT data FROM jdweb_sessions WHERE id = '" + sid_s$ + "'")
+    TESTKIT.EQ(LEN(stored_rows), 1, "a session is written to jdweb_sessions")
+    DIM stored_data$ = stored_rows[0, 0]
+    TESTKIT.ISTRUE(INSTR(stored_data$, "count") >= 0, "with what it holds as JSON")
+    JDWEB.SESSION_CONFIG({"db": sdb})
+    TESTKIT.EQ(CountOf(JDWEB.DISPATCH(ask_s2)), 3, "and read back once memory is dropped, as after a restart")
+    DIM ask_out = Ask("POST", "/logout", sid_s$, "", "")
+    DIM d_out = JDWEB.DISPATCH(ask_out)
+    DIM left_rows = SQL.TABLE(sdb, "SELECT COUNT(*) FROM jdweb_sessions WHERE id = '" + sid_s$ + "'")
+    DIM left_n = left_rows[0, 0]
+    TESTKIT.EQ(CINT(left_n), 0, "SESSION_END removes its row")
+    JDWEB.SESSION_CONFIG({"db": 0})
+    SQL.CLOSE(sdb)
+ELSE
+    TESTKIT.SKIP("sessions in a database need a build with SQLITE")
 ENDIF
 
 TESTKIT.SUITE("pages and login")
@@ -308,6 +545,25 @@ IF OS.FEATURE("SQLITE") THEN
     DIM out = JDWEB.AUTH_LOGOUT(db, me_req)
     TESTKIT.EQ(out{"__http_status"}, 200, "logout answers")
     TESTKIT.EQ(JDWEB.AUTH_USER$(db, me_req), "", "and ends the session")
+    DIM login2 = JDWEB.AUTH_LOGIN(db, login_req, TRUE)
+    DIM login2_headers = login2{"__http_headers"}
+    DIM cookie2$ = login2_headers{"Set-Cookie"}
+    DIM token2$ = MID$(cookie2$, 11, CINT(INSTR(cookie2$, ";")) - 11)
+    TESTKIT.EQ(LEN(token2$), 43, "a sign-in token is 43 random characters")
+    TESTKIT.ISTRUE(INSTR(cookie2$, "; Secure") >= 0, "a secure sign-in sets a Secure cookie")
+    DIM me2_req = {"HEADERS": {"cookie": "jdwsession=" + token2$}}
+    TESTKIT.EQ(JDWEB.AUTH_USER$(db, me2_req), "owner", "the new sign-in is known")
+    SQL.EXEC(db, "UPDATE sessions SET last_seen = last_seen - 3000000 WHERE token = '" + token2$ + "'")
+    TESTKIT.EQ(JDWEB.AUTH_USER$(db, me2_req), "", "a sign-in unused for longer than auth_ttl ends")
+    DIM login3 = JDWEB.AUTH_LOGIN(db, login_req, FALSE)
+    DIM login3_headers = login3{"__http_headers"}
+    DIM cookie3$ = login3_headers{"Set-Cookie"}
+    DIM token3$ = MID$(cookie3$, 11, CINT(INSTR(cookie3$, ";")) - 11)
+    SQL.EXEC(db, "UPDATE sessions SET last_seen = last_seen - 3000000 WHERE token = '" + token3$ + "'")
+    TESTKIT.EQ(CINT(JDWEB.AUTH_CLEANUP(db)), 1, "AUTH_CLEANUP removes an old sign-in")
+    DIM auth_left = SQL.TABLE(db, "SELECT COUNT(*) FROM sessions")
+    DIM auth_left_n = auth_left[0, 0]
+    TESTKIT.EQ(CINT(auth_left_n), 0, "and its row")
 ELSE
     TESTKIT.SKIP("cookie login needs a build with SQLITE")
 ENDIF

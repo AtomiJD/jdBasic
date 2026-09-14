@@ -53,13 +53,13 @@ sudo cp build/jdBasic /opt/jdtrakr/
 ```
 
 jdTrakr is a set of files that must sit together: the app `jdtrakr.jdb`, the
-framework module `jdweb.jdb` and the template engine `tmpl.jdb` (both live in
-the module library, `lib/jdweb.jdb` and `lib/tmpl.jdb`), the config
+framework module `jdweb.jdb`, the template engine `tmpl.jdb` and the secrets
+module `secret.jdb` (all in the module library, `lib/`), the config
 `jdtrakr.json`, and the template folders `jdweb_tpl/` and `jdtrakr_tpl/`.
 Upload them (from your machine):
 
 ```bash
-scp jdb/demos/web/jdtrakr.jdb lib/jdweb.jdb lib/tmpl.jdb jdb/demos/web/jdtrakr.json you@your-vps:/tmp/
+scp jdb/demos/web/jdtrakr.jdb lib/jdweb.jdb lib/tmpl.jdb lib/secret.jdb jdb/demos/web/jdtrakr.json you@your-vps:/tmp/
 scp -r jdb/demos/web/jdweb_tpl jdb/demos/web/jdtrakr_tpl you@your-vps:/tmp/
 ```
 
@@ -68,12 +68,12 @@ install them:
 
 ```bash
 sudo sed -i 's/"secure": false/"secure": true/' /tmp/jdtrakr.json
-sudo cp /tmp/jdtrakr.jdb /tmp/jdweb.jdb /tmp/tmpl.jdb /tmp/jdtrakr.json /opt/jdtrakr/
+sudo cp /tmp/jdtrakr.jdb /tmp/jdweb.jdb /tmp/tmpl.jdb /tmp/secret.jdb /tmp/jdtrakr.json /opt/jdtrakr/
 sudo cp -r /tmp/jdweb_tpl /tmp/jdtrakr_tpl /opt/jdtrakr/
 sudo chown -R jdtrakr:jdtrakr /opt/jdtrakr
 ```
 
-`IMPORT JDWEB`, jdweb's own `IMPORT TMPL`, the templates and the config load
+`IMPORT JDWEB`, jdweb's own `IMPORT TMPL, SECRET`, the templates and the config load
 all resolve relative to the app file, so everything living in `/opt/jdtrakr` is
 all it takes. To restyle every future app at once, edit `jdweb.jdb` (the
 `THEME$` design tokens) and restart.
@@ -135,8 +135,11 @@ Open `https://YOUR.DOMAIN`. The board is empty and there are no users yet.
 
 - **Backup:** `sudo cp /opt/jdtrakr/jdtrakr.db ~/jdtrakr-$(date +%F).db`
 - **Update the app:** upload the changed file(s) (`jdtrakr.jdb`, `lib/jdweb.jdb`,
-  `lib/tmpl.jdb` and/or `jdtrakr.json`) into `/opt/jdtrakr/`, then `sudo systemctl restart
-  jdtrakr`. The `.db` is untouched by a restart. `"secure": true` already lives
+  `lib/tmpl.jdb`, `lib/secret.jdb` and/or `jdtrakr.json`) into `/opt/jdtrakr/`, then `sudo systemctl restart
+  jdtrakr`. A jdweb.jdb from 2026-09-14 on imports `secret.jdb`, so upload it
+  with the first such update. On start it adds a `last_seen` column to the
+  `sessions` table and stamps the existing sign-ins with the start time; a
+  sign-in unused for 30 days after that ends. The `.db` is untouched by a restart. `"secure": true` already lives
   in the installed `jdtrakr.json`, so no per-update edit is needed.
 - **Updated a template with an inline `<script>`?** (e.g. `jdtrakr_tpl/board.html`,
   any `jdweb_tpl/*.html`) you MUST refresh the CSP script hashes or the browser

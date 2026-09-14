@@ -92,12 +92,37 @@ and an `Allow` header naming them.
 | `REDIRECT_TO(loc$)` | A 302 to another path. |
 | `UNAUTH()` | A 401 with a JSON error. |
 
-### Sessions and files
+### Sessions
 
 | Call | What it does |
 |------|--------------|
-| `SESSION(request)` | The visitor's session map. A new visitor gets an empty one and the response sets the `jdwsid` cookie (HttpOnly, SameSite=Lax); what the handler stores in the map is there on the visitor's next request. Sessions live in memory and end with the program. |
+| `SESSION(request)` | The visitor's session map. A new visitor, or one whose session expired, gets an empty one and the response sets the `jdwsid` cookie; what the handler stores in the map is there on the visitor's next request. Each read keeps the session alive. The id is 32 random bytes from `SECRET.TOKEN$`. |
+| `SESSION_ROTATE(request)` | Moves the session to a new id with what it holds and forgets the old id. Call it at sign-in, so an id someone learned before (session fixation) is worthless after. |
 | `SESSION_END(request)` | Forgets the visitor's session and clears the cookie. |
+| `SESSION_CONFIG(opts)` | The settings, below. An unknown key raises. |
+| `SESSION_CLEANUP()` | Removes expired sessions from memory and the database store and returns how many. DISPATCH runs it on its own at most every five minutes. |
+| `SESSION_CLOCK(shift_seconds)` | Moves the session clock, for tests of expiry. |
+| `FLASH(request, message$, [kind$])` | A message (`kind$` defaults to `info`) kept in the session until it is read, typically across a redirect. |
+| `FLASHES(request)` | The waiting messages as an array of `{kind, text}` maps, oldest first; reading removes them. |
+| `CSRF_TOKEN$(request)` | The session's CSRF token, made on first use. Forms send it in a `csrf_token` field, scripts in an `X-CSRF-Token` header. |
+| `CSRF_PROTECT([enabled])` | From here on POST, PUT, PATCH and DELETE without the right token are answered with 403. `CSRF_PROTECT(FALSE)` turns the check off. |
+| `CSRF_EXEMPT(prefix$)` | A path prefix that needs no token, such as an API that checks a key in a header. |
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `ttl` | 86400 | Seconds a session lives after its last use; 0 for no limit. |
+| `lifetime` | 0 | Seconds since it was made (or rotated), whatever the use; 0 for no limit. |
+| `cookie` | `jdwsid` | The cookie name. |
+| `secure`, `samesite`, `domain`, `path` | FALSE, `Lax`, none, `/` | The session cookie's attributes. |
+| `db` | 0 | A SQLite handle: sessions are written to table `jdweb_sessions` after each request and read back after a restart. Setting it drops what memory holds. |
+| `auth_ttl` | 2592000 | Seconds a sign-in of `AUTH_LOGIN` lives after its last use (30 days); 0 for no limit. |
+
+### Cookies and files
+
+| Call | What it does |
+|------|--------------|
+| `COOKIE$(name$, value$, [opts])` | A `Set-Cookie` value. The value is percent-encoded where a cookie cannot carry a byte; `opts` may set `max_age` (0 deletes), `path` (`/`), `domain`, `secure` (FALSE), `httponly` (TRUE) and `samesite` (`Lax`, `""` leaves it out). `SameSite=None` always gets `Secure`. |
+| `SET_COOKIE(response, name$, value$, [opts])` | A copy of the response that sets the cookie COOKIE$ builds. |
 | `ASSETS(prefix$, dir$)` | Serves the files of a folder under a path prefix to GET and HEAD: `/static/css/site.css` from `dir$/css/site.css`, a folder by its `index.html`, with the content type of the extension. A path that climbs out of the folder is refused with 403. |
 
 ### Serving and testing
@@ -120,9 +145,10 @@ and an `Allow` header naming them.
 | `NAV_HTML$(cfg, active$)` / `THEME$()` / `COOKIE_BANNER$()` | The header with its navigation, the stylesheet, the banner. |
 | `LOGIN_PAGE$(cfg)` / `NOT_FOUND$(cfg)` | The themed sign-in page and 404 page. |
 | `AUTH_INIT(db)` | Creates the `users` and `sessions` tables in a SQLite database. |
-| `AUTH_LOGIN(db, request, secure)` / `AUTH_LOGOUT(db, request)` / `AUTH_ME(db, request)` | The sign-in, sign-out and who-am-I endpoints: the first sign-in on an empty table creates the owner, each user's first sign-in sets the password (salted SHA-256), the `jdwsession` cookie carries the session. |
-| `AUTH_USER$(db, request)` | The signed-in user's name, or `""`. |
-| `HASH_PW$(salt$, pw$)` / `COOKIE_VAL$(request, name$)` | The password hash and a cookie of the request. |
+| `AUTH_LOGIN(db, request, secure)` / `AUTH_LOGOUT(db, request)` / `AUTH_ME(db, request)` | The sign-in, sign-out and who-am-I endpoints: the first sign-in on an empty table creates the owner, each user's first sign-in sets the password (salted SHA-256), the `jdwsession` cookie carries a 32-byte random token. |
+| `AUTH_USER$(db, request)` | The signed-in user's name, or `""`. A sign-in unused for longer than the `auth_ttl` setting (30 days) is removed; each use keeps it alive. |
+| `AUTH_CLEANUP(db)` | Removes the sign-ins unused for longer than `auth_ttl` and returns how many. |
+| `HASH_PW$(salt$, pw$)` / `COOKIE_VAL$(request, name$)` | The password hash, and a cookie of the request, percent-decoded. |
 
 ## Notes
 
@@ -132,8 +158,13 @@ and an `Allow` header naming them.
 - The server hands one request at a time to the program, so the module
   keeps the route parameters and session changes of the current request in
   its own state.
-- A deploy needs `jdweb.jdb`, `tmpl.jdb` and the `jdweb_tpl/` folder next to
-  the app; the module imports only TMPL.
+- A deploy needs `jdweb.jdb`, `tmpl.jdb`, `secret.jdb` and the `jdweb_tpl/`
+  folder next to the app; the module imports TMPL and SECRET.
+- Sessions, flash messages and CSRF tokens live in the session map under
+  keys of their own (`__flash`, `__csrf`); a handler should not use keys
+  starting with `__`. A database store writes the map as JSON, so what a
+  handler keeps in a session there has to be JSON: text, numbers, flags,
+  lists and maps.
 - Compiled with `-c`, the page, login and response helpers work; serving
   routes from a compiled program does not yet, so run a JDWEB app
   interpreted.

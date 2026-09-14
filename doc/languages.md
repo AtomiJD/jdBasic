@@ -1448,7 +1448,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `FUZZY` | near matches: edit distances, similarity ratios, best matches from a list, Koelner Phonetik and Soundex |
 | `TEXTX` | text helpers: wrap, shorten, dedent, character cuts, slugs, ASCII transliteration, sizes, numbers and durations in words |
 | `TEXTDIFF` | differences: difflib's opcodes and ratio, unified diffs written and applied, inline word diffs, snapshots |
-| `JDWEB` | web apps: routes with parameters, middleware, sessions, static files, JSON, a test client, themed pages and cookie login |
+| `JDWEB` | web apps: routes with parameters, middleware, sessions with expiry, rotation and a SQLite store, CSRF, flash messages, cookies, static files, JSON, a test client, themed pages and cookie login |
 | `DOCX` | Word files: written with headings, lists, tables, header and footer; templates filled; paragraphs and tables read |
 | `ML` | scikit-learn essentials: split, scaling, one-hot; linear, ridge, logistic, knn, k-means, decision tree; metrics; models as JSON |
 | `PARSEC` | parsers: combinators and PEG grammars, trees with line and column, actions, errors naming what was expected |
@@ -1461,6 +1461,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `PKG` | modules installed from an index, git or ZIP into `~/.jdbasic/lib` with their requirements by semver range; list, remove, update, lock files |
 | `MONEY` | exact money as whole minor units with an ISO 4217 code: parsing, rates, division, conversion, seven rounding modes, allocation and installments that add up, locale formatting |
 | `VALID` | identifiers checked: IBAN against the SWIFT registry, BIC, EU VAT ids, EAN, UPC, GTIN, ISBN, Luhn, MOD 97-10; ISO 4217 currencies with minor units, ISO 3166-1 countries; formats for SCHEMA |
+| `SECRET` | password hashes with PBKDF2 and rehash decisions, constant-time comparison, random tokens, API keys kept as hashes |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX
