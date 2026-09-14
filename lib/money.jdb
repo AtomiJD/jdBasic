@@ -1,0 +1,651 @@
+' MONEY: exact money on whole numbers of minor units. An amount is a plain
+' number of cents (or yen, fils, ten-thousandths) and its ISO 4217 code
+' travels beside it; the digits of the minor unit come from VALID. Rates,
+' divisions, conversions, cash rounding, allocations and splits run on
+' digit strings and round with a named mode, so no step goes through a
+' binary fraction.
+'
+'   IMPORT MONEY
+'   DIM net = MONEY.PARSE("1.234,50", "EUR")                     ' 123450
+'   DIM vat = MONEY.TIMES(net, "0.19")                           ' 23456
+'   PRINT MONEY.CURRENCY$(MONEY.PLUS(net, vat), "EUR", "de-DE")  ' 1.469,06 €
+
+EXPORT MODULE MONEY
+IMPORT VALID, NUMFMT
+
+' The largest amount every step keeps exact: compiled programs carry
+' numbers through doubles, which hold whole numbers up to 2^53 - 1.
+DIM gLimit = 9007199254740991
+DIM gLimitText$ = "9007199254740991"
+DIM gTooBig$ = "MONEY: the result is beyond 9007199254740991 minor units"
+DIM gModes$ = "|half-up|half-even|half-down|up|down|ceiling|floor|"
+
+' ── checks ─────────────────────────────────────────────────────
+
+FUNC MinorDigits(code$)
+    DIM found = VALID.CURRENCYDIGITS(code$)
+    IF found < 0 THEN THROW "MONEY: " + code$ + " is not an ISO 4217 currency with a minor unit"
+    RETURN CINT(found)
+ENDFUNC
+
+SUB CheckMinor(amount)
+    IF amount <> FLOOR(amount) THEN THROW "MONEY: " + STR$(amount) + " is not a whole number of minor units"
+    IF ABS(amount) > gLimit THEN THROW gTooBig$
+ENDSUB
+
+SUB CheckMode(mode$, exact_allowed)
+    DIM m$ = LCASE$(mode$)
+    IF m$ = "" THEN
+        IF NOT exact_allowed THEN THROW "MONEY: a rounding mode is needed here"
+    ELSEIF INSTR(gModes$, "|" + m$ + "|") < 0 THEN
+        THROW "MONEY: no rounding mode called " + mode$ + " (half-up, half-even, half-down, up, down, ceiling, floor)"
+    ENDIF
+ENDSUB
+
+' ── digit strings ──────────────────────────────────────────────
+
+FUNC WholeText$(amount)
+    RETURN FORMAT$("{:.0f}", ABS(amount))
+ENDFUNC
+
+FUNC AllZero(s$)
+    RETURN LEN(REPLACE$(s$, "0", "")) = 0
+ENDFUNC
+
+FUNC OnlyDigits(s$)
+    DIM i = 0
+    FOR i = 0 TO LEN(s$) - 1
+        DIM ch$ = MID$(s$, i, 1)
+        IF ch$ < "0" ORELSE ch$ > "9" THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+FUNC Trimmed$(s$)
+    IF LEN(s$) = 0 THEN RETURN "0"
+    DIM at = 0
+    DO WHILE at < LEN(s$) - 1 ANDALSO MID$(s$, at, 1) = "0"
+        at = at + 1
+    LOOP
+    RETURN MID$(s$, at, LEN(s$) - at)
+ENDFUNC
+
+' Whether digits without leading zeros stand for more than the limit.
+FUNC Beyond(s$)
+    IF LEN(s$) > 16 THEN RETURN TRUE
+    RETURN LEN(s$) = 16 ANDALSO s$ > gLimitText$
+ENDFUNC
+
+' The digits in groups of six, the lowest group first.
+FUNC Limbs(s$)
+    DIM out = []
+    DIM stop_at = LEN(s$)
+    DO WHILE stop_at > 0
+        DIM start_at = stop_at - 6
+        IF start_at < 0 THEN start_at = 0
+        DIM piece$ = MID$(s$, start_at, stop_at - start_at)
+        PUSH(out, VAL(piece$))
+        stop_at = start_at
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The product of two digit strings. Each group product stays below 10^12,
+' so the column sums and carries are exact in a double.
+FUNC MulDigits$(a$, b$)
+    DIM x = Limbs(a$)
+    DIM y = Limbs(b$)
+    DIM cells = []
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(x) + LEN(y) - 1
+        PUSH(cells, 0.0)
+    NEXT i
+    FOR i = 0 TO LEN(x) - 1
+        DIM xi = x[i]
+        IF xi <> 0 THEN
+            FOR j = 0 TO LEN(y) - 1
+                DIM yj = y[j]
+                cells[i + j] = cells[i + j] + xi * yj
+            NEXT j
+        ENDIF
+    NEXT i
+    DIM carry = 0.0
+    DIM joined$ = ""
+    FOR i = 0 TO LEN(cells) - 1
+        DIM cell = cells[i] + carry
+        DIM low = cell MOD 1000000
+        carry = (cell - low) / 1000000
+        joined$ = LPAD$(FORMAT$("{:.0f}", low), 6, "0") + joined$
+    NEXT i
+    RETURN Trimmed$(joined$)
+ENDFUNC
+
+' A digit string divided by a whole number below 10^14, as "quotient:rest".
+' The running rest times ten stays below 10^15, exact in a double.
+FUNC DivDigits$(a$, divisor)
+    DIM remain = 0.0
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(a$) - 1
+        DIM cur = remain * 10 + VAL(MID$(a$, i, 1))
+        DIM q = FLOOR(cur / divisor)
+        IF q * divisor > cur THEN q = q - 1
+        IF (q + 1) * divisor <= cur THEN q = q + 1
+        remain = cur - q * divisor
+        out$ = out$ + FORMAT$("{:.0f}", q)
+    NEXT i
+    RETURN Trimmed$(out$) + ":" + FORMAT$("{:.0f}", remain)
+ENDFUNC
+
+' ── rounding ───────────────────────────────────────────────────
+
+' What is cut off, told by its digits: 0 nothing, 1 below a half, 2 exactly
+' a half, 3 above a half.
+FUNC FracKind(frac$)
+    IF AllZero(frac$) THEN RETURN 0
+    DIM first$ = LEFT$(frac$, 1)
+    IF first$ < "5" THEN RETURN 1
+    IF first$ > "5" THEN RETURN 3
+    IF AllZero(MID$(frac$, 1, LEN(frac$) - 1)) THEN RETURN 2
+    RETURN 3
+ENDFUNC
+
+' The same, told by the rest of a division.
+FUNC RestKind(remain, divisor)
+    IF remain = 0 THEN RETURN 0
+    DIM twice = remain * 2
+    IF twice < divisor THEN RETURN 1
+    IF twice = divisor THEN RETURN 2
+    RETURN 3
+ENDFUNC
+
+' The whole part as a number, one unit further from zero when the mode
+' says so for what was cut off.
+FUNC Settle(whole$, kind, negative, mode$)
+    DIM m$ = LCASE$(mode$)
+    DIM bump = FALSE
+    IF kind > 0 THEN
+        IF m$ = "" THEN THROW "MONEY: the amount has more decimals than its currency; pass a rounding mode"
+        IF m$ = "up" THEN
+            bump = TRUE
+        ELSEIF m$ = "ceiling" THEN
+            bump = NOT negative
+        ELSEIF m$ = "floor" THEN
+            bump = negative
+        ELSEIF m$ = "half-up" THEN
+            bump = (kind >= 2)
+        ELSEIF m$ = "half-down" THEN
+            bump = (kind = 3)
+        ELSEIF m$ = "half-even" THEN
+            DIM last$ = RIGHT$(whole$, 1)
+            bump = (kind = 3) ORELSE (kind = 2 ANDALSO INSTR("13579", last$) >= 0)
+        ENDIF
+    ENDIF
+    DIM kept$ = Trimmed$(whole$)
+    IF Beyond(kept$) THEN THROW gTooBig$
+    DIM amount = VAL(kept$)
+    IF bump THEN amount = amount + 1
+    IF amount > gLimit THEN THROW gTooBig$
+    IF negative ANDALSO amount <> 0 THEN amount = -amount
+    RETURN amount
+ENDFUNC
+
+' digits / 10^scale rounded to a whole number.
+FUNC RoundDigits(figures$, scale, negative, mode$)
+    DIM shift_by = CINT(scale)
+    IF shift_by <= 0 THEN RETURN Settle(figures$ + REPEAT$("0", -shift_by), 0, negative, mode$)
+    DIM padded$ = figures$
+    IF LEN(padded$) <= shift_by THEN padded$ = REPEAT$("0", shift_by - LEN(padded$) + 1) + padded$
+    DIM cut = LEN(padded$) - shift_by
+    DIM whole$ = LEFT$(padded$, cut)
+    DIM frac$ = MID$(padded$, cut, shift_by)
+    RETURN Settle(whole$, FracKind(frac$), negative, mode$)
+ENDFUNC
+
+' ── reading decimals ───────────────────────────────────────────
+
+' A plain decimal ("-0.19", "1.075", "3") as sign, digits and scale in one
+' text: "-:19:2".
+FUNC PlainDecimal$(source$)
+    DIM s$ = TRIM$(source$)
+    DIM sign_mark$ = "+"
+    IF LEFT$(s$, 1) = "-" ORELSE LEFT$(s$, 1) = "+" THEN
+        IF LEFT$(s$, 1) = "-" THEN sign_mark$ = "-"
+        s$ = MID$(s$, 1, LEN(s$) - 1)
+    ENDIF
+    DIM point = CINT(INSTR(s$, "."))
+    DIM whole$ = s$
+    DIM frac$ = ""
+    IF point >= 0 THEN
+        whole$ = LEFT$(s$, point)
+        frac$ = MID$(s$, point + 1, LEN(s$) - point - 1)
+    ENDIF
+    IF LEN(whole$) + LEN(frac$) = 0 ORELSE NOT OnlyDigits(whole$) ORELSE NOT OnlyDigits(frac$) THEN
+        THROW "MONEY: not a decimal number: " + source$
+    ENDIF
+    RETURN sign_mark$ + ":" + Trimmed$(whole$ + frac$) + ":" + FORMAT$("{:.0f}", LEN(frac$))
+ENDFUNC
+
+FUNC Occurs(s$, ch$)
+    RETURN LEN(s$) - LEN(REPLACE$(s$, ch$, ""))
+ENDFUNC
+
+FUNC LastAt(s$, ch$)
+    DIM i = 0
+    FOR i = LEN(s$) - 1 TO 0 STEP -1
+        IF MID$(s$, i, 1) = ch$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' An amount as people write it, into the form of PlainDecimal$. Spaces,
+' apostrophes and the no-break spaces of the locales are group separators;
+' letters and signs around the number are dropped, a minus or a bracket
+' there makes it negative. With a locale its decimal mark decides; without
+' one the last of "." and "," is the mark when both occur, a single one
+' is the mark, and one that repeats groups thousands.
+FUNC AmountDecimal$(source$, locale$)
+    DIM s$ = source$
+    s$ = REPLACE$(s$, CHR$(194) + CHR$(160), "")
+    s$ = REPLACE$(s$, CHR$(226) + CHR$(128) + CHR$(175), "")
+    s$ = REPLACE$(s$, CHR$(226) + CHR$(128) + CHR$(153), "")
+    s$ = REPLACE$(s$, "'", "")
+    s$ = REPLACE$(s$, " ", "")
+    DIM first = -1
+    DIM last = -1
+    DIM i = 0
+    FOR i = 0 TO LEN(s$) - 1
+        DIM ch$ = MID$(s$, i, 1)
+        IF (ch$ >= "0" ANDALSO ch$ <= "9") ORELSE ch$ = "." ORELSE ch$ = "," THEN
+            IF first < 0 THEN first = i
+            last = i
+        ENDIF
+    NEXT i
+    IF first < 0 THEN THROW "MONEY: no amount in " + CHR$(34) + source$ + CHR$(34)
+    DIM core$ = MID$(s$, first, last - first + 1)
+    DIM outside$ = LEFT$(s$, first) + MID$(s$, last + 1, LEN(s$) - last - 1)
+    DIM negative = (INSTR(outside$, "-") >= 0) ORELSE (INSTR(outside$, "(") >= 0)
+
+    DIM mark$ = ""
+    IF locale$ <> "" THEN
+        DIM seps = NUMFMT.SEPARATORS(locale$)
+        mark$ = seps[0]
+    ELSE
+        DIM last_dot = CINT(LastAt(core$, "."))
+        DIM last_comma = CINT(LastAt(core$, ","))
+        IF last_dot >= 0 ANDALSO last_comma >= 0 THEN
+            mark$ = ","
+            IF last_dot > last_comma THEN mark$ = "."
+        ELSEIF last_dot >= 0 THEN
+            IF CINT(Occurs(core$, ".")) = 1 THEN mark$ = "."
+        ELSEIF last_comma >= 0 THEN
+            IF CINT(Occurs(core$, ",")) = 1 THEN mark$ = ","
+        ENDIF
+    ENDIF
+    DIM grouping$ = ","
+    IF mark$ = "," ORELSE (mark$ = "" ANDALSO INSTR(core$, ".") >= 0) THEN grouping$ = "."
+
+    DIM whole$ = core$
+    DIM frac$ = ""
+    IF mark$ <> "" ANDALSO INSTR(core$, mark$) >= 0 THEN
+        IF CINT(Occurs(core$, mark$)) > 1 THEN THROW "MONEY: two decimal marks in " + source$
+        DIM point = CINT(INSTR(core$, mark$))
+        whole$ = LEFT$(core$, point)
+        frac$ = MID$(core$, point + 1, LEN(core$) - point - 1)
+    ENDIF
+    IF INSTR(frac$, grouping$) >= 0 THEN THROW "MONEY: a group separator after the decimal mark in " + source$
+    IF INSTR(whole$, grouping$) >= 0 THEN
+        DIM groups = SPLIT(whole$, grouping$)
+        DIM g = 0
+        FOR g = 0 TO LEN(groups) - 1
+            DIM group_text$ = groups[g]
+            IF g = 0 ANDALSO (LEN(group_text$) < 1 ORELSE LEN(group_text$) > 3) THEN THROW "MONEY: misplaced group separator in " + source$
+            IF g > 0 ANDALSO LEN(group_text$) <> 3 THEN THROW "MONEY: misplaced group separator in " + source$
+        NEXT g
+        whole$ = REPLACE$(whole$, grouping$, "")
+    ENDIF
+    IF LEN(whole$) + LEN(frac$) = 0 ORELSE NOT OnlyDigits(whole$) ORELSE NOT OnlyDigits(frac$) THEN
+        THROW "MONEY: cannot read an amount from " + source$
+    ENDIF
+    DIM sign_mark$ = "+"
+    IF negative THEN sign_mark$ = "-"
+    RETURN sign_mark$ + ":" + Trimmed$(whole$ + frac$) + ":" + FORMAT$("{:.0f}", LEN(frac$))
+ENDFUNC
+
+' The shortest fixed-point text that reads back as the same double.
+FUNC NumberText$(value)
+    DIM x = CDBL(value)
+    IF x <> x ORELSE ABS(x) > 1e300 THEN THROW "MONEY: not a finite number"
+    DIM n = 0
+    FOR n = 0 TO 17
+        DIM shown$ = FORMAT$("{:." + FORMAT$("{:.0f}", n) + "f}", x)
+        IF VAL(shown$) = x THEN RETURN shown$
+    NEXT n
+    RETURN FORMAT$("{:.17f}", x)
+ENDFUNC
+
+' A decimal in PlainDecimal$ form turned into minor units of a currency.
+FUNC FromDecimal(canon$, places, mode$)
+    DIM c = SPLIT(canon$, ":")
+    DIM sign_part$ = c[0]
+    DIM figures$ = c[1]
+    DIM scale_text$ = c[2]
+    DIM scale = CINT(VAL(scale_text$))
+    DIM negative = (sign_part$ = "-")
+    RETURN RoundDigits(figures$, scale - places, negative, mode$)
+ENDFUNC
+
+' ── reading amounts ────────────────────────────────────────────
+
+' The digits of a currency's minor unit; throws for a code without one.
+EXPORT FUNC DIGITS(code$)
+    RETURN CINT(MinorDigits(code$))
+ENDFUNC
+
+' The largest amount in minor units, 9007199254740991.
+EXPORT FUNC MAXMINOR()
+    RETURN gLimit
+ENDFUNC
+
+' An amount read from text into minor units, exactly. More decimals than
+' the currency has are refused unless a rounding mode is given. locale$
+' ("de-DE", "en-US") fixes the decimal mark; without it the text decides.
+EXPORT FUNC PARSE(source$, code$, mode$ = "", locale$ = "")
+    DIM places = CINT(MinorDigits(code$))
+    CheckMode(mode$, TRUE)
+    DIM canon$ = AmountDecimal$(source$, locale$)
+    RETURN FromDecimal(canon$, places, mode$)
+ENDFUNC
+
+' A double (19.99) into minor units through its shortest decimal text, so
+' 1.005 is 1.005 and rounds to 101 cents half-up.
+EXPORT FUNC FROMNUMBER(value, code$, mode$ = "half-up")
+    DIM places = CINT(MinorDigits(code$))
+    CheckMode(mode$, FALSE)
+    DIM canon$ = PlainDecimal$(NumberText$(value))
+    RETURN FromDecimal(canon$, places, mode$)
+ENDFUNC
+
+' ── writing amounts ────────────────────────────────────────────
+
+FUNC Unsigned$(amount, places)
+    DIM shown$ = WholeText$(amount)
+    IF places <= 0 THEN RETURN shown$
+    IF LEN(shown$) <= places THEN shown$ = REPEAT$("0", places - LEN(shown$) + 1) + shown$
+    RETURN LEFT$(shown$, LEN(shown$) - places) + "." + RIGHT$(shown$, places)
+ENDFUNC
+
+FUNC GroupedDigits$(figures$, group_mark$)
+    IF LEN(figures$) <= 3 THEN RETURN figures$
+    DIM pieces = []
+    DIM head = LEN(figures$) MOD 3
+    IF head > 0 THEN PUSH(pieces, LEFT$(figures$, head))
+    DIM at = head
+    DO WHILE at < LEN(figures$)
+        PUSH(pieces, MID$(figures$, at, 3))
+        at = at + 3
+    LOOP
+    RETURN JOIN(pieces, group_mark$)
+ENDFUNC
+
+' The unsigned amount with the locale's group separator and decimal mark.
+FUNC LocaleBody$(amount, places, locale$)
+    DIM seps = NUMFMT.SEPARATORS(locale$)
+    DIM mark$ = seps[0]
+    DIM group_mark$ = seps[1]
+    DIM plain$ = Unsigned$(amount, places)
+    IF places <= 0 THEN RETURN GroupedDigits$(plain$, group_mark$)
+    DIM point = CINT(INSTR(plain$, "."))
+    RETURN GroupedDigits$(LEFT$(plain$, point), group_mark$) + mark$ + MID$(plain$, point + 1, places)
+ENDFUNC
+
+' The amount as a plain decimal for storage: "1234.50", "-0.05", "12".
+EXPORT FUNC DECIMAL$(amount, code$)
+    DIM places = CINT(MinorDigits(code$))
+    CheckMinor(amount)
+    DIM shown$ = Unsigned$(amount, places)
+    IF amount < 0 THEN shown$ = "-" + shown$
+    RETURN shown$
+ENDFUNC
+
+' The amount in major units as a double, for charts and statistics; not
+' exact beyond 2^53 / 10^digits.
+EXPORT FUNC TOMAJOR(amount, code$)
+    DIM places = CINT(MinorDigits(code$))
+    CheckMinor(amount)
+    RETURN CDBL(amount) / (10 ^ places)
+ENDFUNC
+
+' The amount with grouped thousands the way a locale writes it, without a
+' currency sign: "1.234,50".
+EXPORT FUNC NUMBER$(amount, code$, locale$ = "de-DE")
+    DIM places = CINT(MinorDigits(code$))
+    CheckMinor(amount)
+    DIM body$ = LocaleBody$(amount, places, locale$)
+    IF amount < 0 THEN body$ = "-" + body$
+    RETURN body$
+ENDFUNC
+
+' The amount with sign and currency where NUMFMT puts them for the locale:
+' "1.234,50 €", "CHF-1’234.50". The digits are written from the minor
+' units, so amounts beyond what a double holds stay exact.
+EXPORT FUNC CURRENCY$(amount, code$, locale$ = "de-DE")
+    DIM places = CINT(MinorDigits(code$))
+    CheckMinor(amount)
+    DIM body$ = LocaleBody$(amount, places, locale$)
+    DIM seps = NUMFMT.SEPARATORS(locale$)
+    DIM mark$ = seps[0]
+    DIM probe$ = "9"
+    IF places > 0 THEN probe$ = "9" + mark$ + REPEAT$("0", places)
+    DIM pattern$ = ""
+    IF amount < 0 THEN
+        pattern$ = NUMFMT.CURRENCY$(-9, code$, locale$, places)
+    ELSE
+        pattern$ = NUMFMT.CURRENCY$(9, code$, locale$, places)
+    ENDIF
+    DIM at = CINT(INSTR(pattern$, probe$))
+    DIM after = at + LEN(probe$)
+    RETURN LEFT$(pattern$, at) + body$ + MID$(pattern$, after, LEN(pattern$) - after)
+ENDFUNC
+
+' ── arithmetic ─────────────────────────────────────────────────
+
+' a + b; throws beyond MAXMINOR().
+EXPORT FUNC PLUS(a, b)
+    CheckMinor(a)
+    CheckMinor(b)
+    DIM sum_ab = a + b
+    IF ABS(sum_ab) > gLimit THEN THROW gTooBig$
+    RETURN sum_ab
+ENDFUNC
+
+' a - b; throws beyond MAXMINOR().
+EXPORT FUNC MINUS(a, b)
+    CheckMinor(a)
+    CheckMinor(b)
+    DIM diff_ab = a - b
+    IF ABS(diff_ab) > gLimit THEN THROW gTooBig$
+    RETURN diff_ab
+ENDFUNC
+
+' The sum of an array of amounts; throws beyond MAXMINOR().
+EXPORT FUNC TOTAL(amounts)
+    DIM acc = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(amounts) - 1
+        DIM each_amount = amounts[i]
+        CheckMinor(each_amount)
+        acc = acc + each_amount
+        IF ABS(acc) > gLimit THEN THROW gTooBig$
+    NEXT i
+    RETURN acc
+ENDFUNC
+
+' The amount times a rate, rounded to minor units. The rate is best given
+' as decimal text ("0.19", "1.075"); a number is read through its shortest
+' decimal text.
+EXPORT FUNC TIMES(amount, rate, mode$ = "half-up")
+    CheckMinor(amount)
+    CheckMode(mode$, FALSE)
+    DIM rate_text$ = ""
+    IF TYPEOF(rate) = "STRING" THEN
+        rate_text$ = rate
+    ELSE
+        rate_text$ = NumberText$(rate)
+    ENDIF
+    DIM c = SPLIT(PlainDecimal$(rate_text$), ":")
+    DIM sign_part$ = c[0]
+    DIM figures$ = c[1]
+    DIM scale_text$ = c[2]
+    DIM negative = (amount < 0)
+    IF sign_part$ = "-" THEN negative = NOT negative
+    DIM multiplied$ = MulDigits$(WholeText$(amount), figures$)
+    RETURN RoundDigits(multiplied$, CINT(VAL(scale_text$)), negative, mode$)
+ENDFUNC
+
+' The amount divided by a number or decimal text of at most 14 significant
+' digits, rounded to minor units.
+EXPORT FUNC DIVIDE(amount, divisor, mode$ = "half-up")
+    CheckMinor(amount)
+    CheckMode(mode$, FALSE)
+    DIM divisor_text$ = ""
+    IF TYPEOF(divisor) = "STRING" THEN
+        divisor_text$ = divisor
+    ELSE
+        divisor_text$ = NumberText$(divisor)
+    ENDIF
+    DIM c = SPLIT(PlainDecimal$(divisor_text$), ":")
+    DIM sign_part$ = c[0]
+    DIM figures$ = c[1]
+    DIM scale_text$ = c[2]
+    IF figures$ = "0" THEN THROW "MONEY: division by zero"
+    IF LEN(figures$) > 14 THEN THROW "MONEY: a divisor has at most 14 significant digits"
+    DIM negative = (amount < 0)
+    IF sign_part$ = "-" THEN negative = NOT negative
+    DIM numerator$ = WholeText$(amount) + REPEAT$("0", CINT(VAL(scale_text$)))
+    DIM denominator = VAL(figures$)
+    DIM qr = SPLIT(DivDigits$(numerator$, denominator), ":")
+    DIM q$ = qr[0]
+    DIM remain$ = qr[1]
+    DIM kind = CINT(RestKind(VAL(remain$), denominator))
+    RETURN Settle(q$, kind, negative, mode$)
+ENDFUNC
+
+' An amount in one currency turned into another at a rate (units of the
+' target per unit of the source), each in its own minor units.
+EXPORT FUNC CONVERT(amount, from_code$, to_code$, rate, mode$ = "half-up")
+    DIM source_places = CINT(MinorDigits(from_code$))
+    DIM target_places = CINT(MinorDigits(to_code$))
+    CheckMinor(amount)
+    CheckMode(mode$, FALSE)
+    DIM rate_text$ = ""
+    IF TYPEOF(rate) = "STRING" THEN
+        rate_text$ = rate
+    ELSE
+        rate_text$ = NumberText$(rate)
+    ENDIF
+    DIM c = SPLIT(PlainDecimal$(rate_text$), ":")
+    DIM sign_part$ = c[0]
+    DIM figures$ = c[1]
+    DIM scale_text$ = c[2]
+    DIM negative = (amount < 0)
+    IF sign_part$ = "-" THEN negative = NOT negative
+    DIM multiplied$ = MulDigits$(WholeText$(amount), figures$)
+    DIM scale = CINT(VAL(scale_text$)) + source_places - target_places
+    RETURN RoundDigits(multiplied$, scale, negative, mode$)
+ENDFUNC
+
+' The amount rounded to a multiple of unit minor units: cash rounding to
+' 5 Rappen is ROUNDSTEP(amount, 5).
+EXPORT FUNC ROUNDSTEP(amount, unit, mode$ = "half-up")
+    CheckMinor(amount)
+    CheckMode(mode$, FALSE)
+    IF unit < 1 ORELSE unit <> FLOOR(unit) ORELSE unit > 99999999999999 THEN
+        THROW "MONEY: ROUNDSTEP takes a whole number of minor units from 1"
+    ENDIF
+    DIM qr = SPLIT(DivDigits$(WholeText$(amount), unit), ":")
+    DIM q$ = qr[0]
+    DIM remain$ = qr[1]
+    DIM kind = CINT(RestKind(VAL(remain$), unit))
+    DIM negative = (amount < 0)
+    DIM count_units = Settle(q$, kind, negative, mode$)
+    DIM stepped = count_units * unit
+    IF ABS(stepped) > gLimit THEN THROW gTooBig$
+    RETURN stepped
+ENDFUNC
+
+' ── allocation ─────────────────────────────────────────────────
+
+FUNC Allot(amount, ratios)
+    CheckMinor(amount)
+    DIM count_parts = LEN(ratios)
+    IF count_parts = 0 THEN THROW "MONEY: at least one ratio is needed"
+    DIM ratio_sum = 0.0
+    DIM i = 0
+    FOR i = 0 TO count_parts - 1
+        DIM r = ratios[i]
+        IF r < 0 ORELSE r <> FLOOR(r) THEN THROW "MONEY: ratios are whole numbers from 0"
+        ratio_sum = ratio_sum + r
+    NEXT i
+    IF ratio_sum <= 0 THEN THROW "MONEY: the ratios add up to 0"
+    IF ratio_sum > 99999999999999 THEN THROW "MONEY: the ratios add up to more than 14 digits"
+    DIM amount$ = WholeText$(amount)
+    DIM shares = []
+    DIM remains = []
+    DIM handed = 0.0
+    FOR i = 0 TO count_parts - 1
+        DIM ri = ratios[i]
+        DIM qr = SPLIT(DivDigits$(MulDigits$(amount$, FORMAT$("{:.0f}", ri)), ratio_sum), ":")
+        DIM share$ = qr[0]
+        DIM remain$ = qr[1]
+        DIM share = VAL(share$)
+        PUSH(shares, share)
+        PUSH(remains, VAL(remain$))
+        handed = handed + share
+    NEXT i
+    ' One more unit each for the parts with the largest remainders; of equal
+    ' remainders the earlier part comes first.
+    DIM extra = ABS(amount) - handed
+    DIM k = 0
+    FOR k = 1 TO extra
+        DIM best = 0
+        DIM best_remain = -1.0
+        FOR i = 0 TO count_parts - 1
+            DIM rv = remains[i]
+            IF rv > best_remain THEN
+                best = i
+                best_remain = rv
+            ENDIF
+        NEXT i
+        shares[best] = shares[best] + 1
+        remains[best] = -2.0
+    NEXT k
+    DIM out = []
+    FOR i = 0 TO count_parts - 1
+        DIM part_value = shares[i]
+        IF amount < 0 ANDALSO part_value <> 0 THEN part_value = -part_value
+        PUSH(out, part_value)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The amount shared out by whole-number ratios ([1, 2, 3]) so that the
+' parts add up to it exactly: each part gets its share rounded down, and
+' the units left over go one each to the largest remainders, the earlier
+' part first on a tie. A negative amount gives negative parts.
+EXPORT FUNC ALLOCATE(amount, ratios)
+    RETURN Allot(amount, ratios)
+ENDFUNC
+
+' The amount in n parts as equal as minor units allow, the larger parts
+' first: 100 in 3 is [34, 33, 33].
+EXPORT FUNC PARTS(amount, pieces)
+    IF pieces < 1 ORELSE pieces <> FLOOR(pieces) THEN THROW "MONEY: PARTS takes a whole number of parts from 1"
+    DIM ones = []
+    DIM i = 0
+    FOR i = 1 TO pieces
+        PUSH(ones, 1)
+    NEXT i
+    RETURN Allot(amount, ones)
+ENDFUNC

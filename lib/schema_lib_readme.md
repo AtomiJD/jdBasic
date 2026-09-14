@@ -43,6 +43,7 @@ The map form takes:
 | `enum` | The allowed values. |
 | `min` / `max` | The value for numbers, the length for strings and arrays. |
 | `pattern` | A regular expression the whole string must match. |
+| `format` | A string format checked by `VALID.ISFORMAT`: `iban`, `bic`, `vatid`, `ean`, `upc`, `gtin`, `isbn`, `luhn`, `country`, `currency` (any letter case). An unknown name is refused when the schema is built; a wrong value reads `iban: not a valid iban`. |
 | `items` | The declaration of an array's elements. |
 | `fields` | The field map of a nested map, or a schema from `NEW`. |
 | `description` | Carried into the JSON Schema. |

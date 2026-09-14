@@ -1,0 +1,63 @@
+' VALID demo: the identifiers of an invoice and a product list checked
+' before they go out, an IBAN built from a German account number, VAT ids
+' written compact, ISBNs converted both ways, and the currency and country
+' tables behind the amount and address fields.
+
+IMPORT VALID
+
+SUB Show(kind$, given$)
+    DIM verdict$ = "wrong"
+    IF VALID.ISFORMAT(kind$, given$) THEN verdict$ = "ok"
+    PRINT "  "; RPAD$(kind$, 8); RPAD$(given$, 34); verdict$
+ENDSUB
+
+PRINT "Identifiers on an invoice"
+Show("iban", "DE89 3704 0044 0532 0130 00")
+Show("iban", "DE89 3704 0044 0532 0130 01")
+Show("iban", "NO93 8601 1117 947")
+Show("bic", "COBADEFFXXX")
+Show("bic", "COBAQQFF")
+Show("vatid", "ATU13585627")
+Show("vatid", "BE 0403.019.261")
+Show("vatid", "NL004495445B01")
+Show("vatid", "PL8567346215")
+Show("vatid", "DE136695978")
+PRINT ""
+
+PRINT "Products"
+Show("ean", "4006381333931")
+Show("upc", "036000291452")
+Show("gtin", "00012345600012")
+Show("isbn", "978-3-16-148410-0")
+Show("isbn", "3-16-148410-1")
+PRINT ""
+
+PRINT "An IBAN from a German account number"
+DIM made$ = VALID.MAKEIBAN$("DE", "370400440532013000")
+PRINT "  "; VALID.IBAN$(made$); "  ("; VALID.IBANLENGTH("DE"); " characters, account layout "; VALID.IBANSTRUCTURE$("DE"); ")"
+PRINT ""
+
+PRINT "VAT ids written compact"
+PRINT "  be 403.019.261   -> "; VALID.VATID$("be 403.019.261")
+PRINT "  el 94259216      -> "; VALID.VATID$("el 94259216")
+PRINT ""
+
+PRINT "ISBN both ways"
+PRINT "  0-306-40615-2 -> "; VALID.ISBN13$("0-306-40615-2")
+PRINT "  978-0-306-40615-7 -> "; VALID.ISBN10$("978-0-306-40615-7")
+PRINT ""
+
+PRINT "Minor units of currencies"
+DIM codes = ["EUR", "JPY", "KWD", "CLF", "XAU"]
+DIM i = 0
+FOR i = 0 TO LEN(codes) - 1
+    DIM code$ = codes[i]
+    DIM digits = VALID.CURRENCYDIGITS(code$)
+    DIM unit$ = STR$(digits) + " digits"
+    IF digits < 0 THEN unit$ = "no minor unit"
+    PRINT "  "; code$; " ("; VALID.CURRENCYNUMBER$(code$); "): "; unit$
+NEXT i
+PRINT ""
+
+PRINT "Countries"
+PRINT "  AT -> "; VALID.COUNTRY3$("AT"); ", 756 -> "; VALID.COUNTRY2$("756"); ", DEU -> "; VALID.COUNTRYNUMBER$("DEU")

@@ -66,9 +66,9 @@ breaking across a line; compare with them, not with `" "`.
 | Call | What it does |
 |------|--------------|
 | `IBAN$(text$)` | An IBAN in capitals and groups of four. |
-| `ISIBAN(text$)` | Whether the check digits are right (ISO 13616, remainder 1 modulo 97) and, for the 35 European countries the module knows, the length. |
+| `ISIBAN(text$)` | Whether the IBAN is right: the check digits (ISO 13616), a country of the SWIFT IBAN registry and the length and layout of that country's account number. It is `VALID.ISIBAN`, so a country outside the registry is refused. |
 | `VATID$(text$)` | A German VAT identification number compact: `DE` and nine digits. |
-| `ISVATID(text$)` | Whether it has nine digits and the check digit of ISO 7064 MOD 11,10. |
+| `ISVATID(text$)` | Whether it has nine digits, the first not 0, and the check digit of ISO 7064 MOD 11,10. A number without a country counts as German; the VAT ids of the other EU states are checked by `VALID.ISVATID`. |
 | `FEDERALTAXNUMBER$(text$, [region$])` | A tax number as its state writes it turned into the nationwide 13 digit form; the state is named by its name (`Bayern`, `Thüringen` or `Thueringen`) or its short code (`BY`, `TH`). |
 | `TAXNUMBER$(text$, [region$])` | A tax number the way its state prints it (`181/815/08155`, `013 815 08153` in Hessen, `93815/08152` in Baden-Württemberg), from the 13 digit form or from the state's own digits and the state. |
 | `TAXREGION$(text$)` | The state of a 13 digit tax number, or `""`. |

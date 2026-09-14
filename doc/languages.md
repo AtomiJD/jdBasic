@@ -1459,6 +1459,8 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `SCHED` | cron expressions and intervals: next and previous run times; a job loop with retries, logging, a lock file and missed-run policies |
 | `PROPTEST` | property based tests: generators and combinators, seeded runs, shrinking to a minimal failing input, FORALL on TESTKIT |
 | `PKG` | modules installed from an index, git or ZIP into `~/.jdbasic/lib` with their requirements by semver range; list, remove, update, lock files |
+| `MONEY` | exact money as whole minor units with an ISO 4217 code: parsing, rates, division, conversion, seven rounding modes, allocation and installments that add up, locale formatting |
+| `VALID` | identifiers checked: IBAN against the SWIFT registry, BIC, EU VAT ids, EAN, UPC, GTIN, ISBN, Luhn, MOD 97-10; ISO 4217 currencies with minor units, ISO 3166-1 countries; formats for SCHEMA |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

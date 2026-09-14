@@ -15,6 +15,8 @@
 
 EXPORT MODULE NUMFMT
 
+IMPORT VALID
+
 DIM gNBSP$ = CHR$(194) + CHR$(160)
 DIM gNNBSP$ = CHR$(226) + CHR$(128) + CHR$(175)
 DIM gRSQUO$ = CHR$(226) + CHR$(128) + CHR$(153)
@@ -461,54 +463,14 @@ ENDFUNC
 
 ' An IBAN in capitals and groups of four, the way it is printed.
 EXPORT FUNC IBAN$(text$)
-    DIM compact$ = Compact$(text$)
-    DIM parts = []
-    DIM at = 0
-    DO WHILE at < LEN(compact$)
-        PUSH(parts, MID$(compact$, at, 4))
-        at = at + 4
-    LOOP
-    RETURN JOIN(parts, " ")
+    RETURN VALID.IBAN$(text$)
 ENDFUNC
 
-' Whether an IBAN has the length of its country and correct check digits
-' (ISO 13616, the remainder 1 modulo 97).
+' Whether an IBAN is right: its check digits (ISO 13616), a country of the
+' SWIFT registry and the length and layout of that country's account
+' number (VALID.ISIBAN).
 EXPORT FUNC ISIBAN(text$)
-    DIM compact$ = Compact$(text$)
-    IF LEN(compact$) < 15 ORELSE LEN(compact$) > 34 THEN RETURN FALSE
-    DIM country$ = LEFT$(compact$, 2)
-    IF country$ < "AA" ORELSE country$ > "ZZ" THEN RETURN FALSE
-    DIM want = IbanLength(country$)
-    IF want > 0 ANDALSO LEN(compact$) <> want THEN RETURN FALSE
-    RETURN Mod97(MID$(compact$, 4) + LEFT$(compact$, 4)) = 1
-ENDFUNC
-
-FUNC IbanLength(country$)
-    DIM codes = ["AD", "AT", "BE", "BG", "CH", "CY", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "GB", "GR", "HR", "HU", "IE", "IS", "IT", "LI", "LT", "LU", "LV", "MC", "MT", "NL", "NO", "PL", "PT", "RO", "SE", "SI", "SK", "SM"]
-    DIM lengths = [24, 20, 16, 22, 21, 28, 24, 22, 18, 20, 24, 18, 27, 22, 27, 21, 28, 22, 26, 27, 21, 20, 20, 21, 27, 31, 18, 15, 28, 25, 24, 24, 19, 24, 27]
-    DIM i = 0
-    FOR i = 0 TO LEN(codes) - 1
-        DIM code$ = codes[i]
-        IF code$ = country$ THEN RETURN lengths[i]
-    NEXT i
-    RETURN 0
-ENDFUNC
-
-' The remainder modulo 97 of letters and digits read as a number, letters
-' counting 10 to 35, taken a few digits at a time.
-FUNC Mod97(text$)
-    DIM remainder = 0
-    DIM i = 0
-    FOR i = 0 TO LEN(text$) - 1
-        DIM ch$ = MID$(text$, i, 1)
-        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
-            remainder = (remainder * 10 + (ASC(ch$) - 48)) MOD 97
-        ELSE
-            DIM letter = ASC(ch$) - 55
-            remainder = (remainder * 100 + letter) MOD 97
-        ENDIF
-    NEXT i
-    RETURN remainder
+    RETURN VALID.ISIBAN(text$)
 ENDFUNC
 
 ' A German VAT identification number written compact: DE and nine digits.
@@ -518,27 +480,11 @@ EXPORT FUNC VATID$(text$)
     RETURN compact$
 ENDFUNC
 
-' Whether a German VAT identification number has nine digits and the
-' check digit of ISO 7064 MOD 11,10.
+' Whether a German VAT identification number has nine digits, the first not
+' 0, and the check digit of ISO 7064 MOD 11,10 (VALID.ISVATID).
 EXPORT FUNC ISVATID(text$)
     DIM compact$ = VATID$(text$)
-    IF LEN(compact$) <> 11 THEN RETURN FALSE
-    DIM digits$ = MID$(compact$, 2)
-    DIM i = 0
-    FOR i = 0 TO 8
-        DIM ch$ = MID$(digits$, i, 1)
-        IF ch$ < "0" ORELSE ch$ > "9" THEN RETURN FALSE
-    NEXT i
-    IF LEFT$(digits$, 1) = "0" THEN RETURN FALSE
-    DIM product = 10
-    FOR i = 0 TO 7
-        DIM total = (VAL(MID$(digits$, i, 1)) + product) MOD 10
-        IF total = 0 THEN total = 10
-        product = (2 * total) MOD 11
-    NEXT i
-    DIM check = 11 - product
-    IF check = 10 THEN check = 0
-    RETURN check = VAL(MID$(digits$, 8, 1))
+    RETURN VALID.ISVATID(compact$)
 ENDFUNC
 
 ' ── German tax numbers ─────────────────────────────────────────

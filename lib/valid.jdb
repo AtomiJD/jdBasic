@@ -1,0 +1,1107 @@
+' VALID: the ISO 3166-1 country and ISO 4217 currency tables, and the check
+' digits and formats of identifiers: IBAN against the SWIFT registry, BIC,
+' the VAT identification numbers of the EU member states, EAN, UPC and
+' GTIN, ISBN, and the Luhn and ISO 7064 MOD 97-10 checks.
+'
+'   IMPORT VALID
+'   PRINT VALID.CURRENCYDIGITS("JPY")                   ' 0
+'   PRINT VALID.COUNTRY3$("DE")                         ' DEU
+'   PRINT VALID.ISIBAN("DE89 3704 0044 0532 0130 00")   ' TRUE
+'   PRINT VALID.ISVATID("ATU13585627")                  ' TRUE
+'   PRINT VALID.ISBN13$("3-16-148410-X")                ' 9783161484100
+
+EXPORT MODULE VALID
+
+' ISO 4217, sorted by code. gCurDigits$ has one character per currency:
+' the digits of its minor unit, or "-" where the standard gives none.
+DIM gCurCodes = SPLIT("AED AFN ALL AMD AOA ARS AUD AWG AZN BAM BBD BDT BHD BIF BMD BND BOB BOV BRL BSD BTN BWP BYN BZD CAD CDF CHE CHF CHW CLF CLP CNY COP COU CRC CUP CVE CZK DJF DKK DOP DZD EGP ERN ETB EUR FJD FKP GBP GEL GHS GIP GMD GNF GTQ GYD HKD HNL HTG HUF IDR ILS INR IQD IRR ISK JMD JOD JPY KES KGS KHR KMF KPW KRW KWD KYD KZT LAK LBP LKR LRD LSL LYD MAD MDL MGA MKD MMK MNT MOP MRU MUR MVR MWK MXN MXV MYR MZN NAD NGN NIO NOK NPR NZD OMR PAB PEN PGK PHP PKR PLN PYG QAR RON RSD RUB RWF SAR SBD SCR SDG SEK SGD SHP SLE SOS SRD SSP STN SVC SYP SZL THB TJS TMT TND TOP TRY TTD TWD TZS UAH UGX USD USN UYI UYU UYW UZS VED VES VND VUV WST XAD XAF XAG XAU XBA XBB XBC XBD XCD XCG XDR XOF XPD XPF XPT XSU XTS XUA XXX YER ZAR ZMW ZWG", " ")
+DIM gCurNumbers = SPLIT("784 971 008 051 973 032 036 533 944 977 052 050 048 108 060 096 068 984 986 044 064 072 933 084 124 976 947 756 948 990 152 156 170 970 188 192 132 203 262 208 214 012 818 232 230 978 242 238 826 981 936 292 270 324 320 328 344 340 332 348 360 376 356 368 364 352 388 400 392 404 417 116 174 408 410 414 136 398 418 422 144 430 426 434 504 498 969 807 104 496 446 929 480 462 454 484 979 458 943 516 566 558 578 524 554 512 590 604 598 608 586 985 600 634 946 941 643 646 682 090 690 938 752 702 654 925 706 968 728 930 222 760 748 764 972 934 788 776 949 780 901 834 980 800 840 997 940 858 927 860 926 928 704 548 882 396 950 961 959 955 956 957 958 951 532 960 952 964 953 962 994 963 965 999 886 710 967 924", " ")
+DIM gCurDigits$ = "2222222222223022222222222222240222222202222222222222202222222223202302220203222222232222222222222222222223222222022220222222222222222222322222202202422200220------22-0-0-----2222"
+
+' ISO 3166-1, sorted by the alpha-2 code.
+DIM gCountryA2 = SPLIT("AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW", " ")
+DIM gCountryA3 = SPLIT("AND ARE AFG ATG AIA ALB ARM AGO ATA ARG ASM AUT AUS ABW ALA AZE BIH BRB BGD BEL BFA BGR BHR BDI BEN BLM BMU BRN BOL BES BRA BHS BTN BVT BWA BLR BLZ CAN CCK COD CAF COG CHE CIV COK CHL CMR CHN COL CRI CUB CPV CUW CXR CYP CZE DEU DJI DNK DMA DOM DZA ECU EST EGY ESH ERI ESP ETH FIN FJI FLK FSM FRO FRA GAB GBR GRD GEO GUF GGY GHA GIB GRL GMB GIN GLP GNQ GRC SGS GTM GUM GNB GUY HKG HMD HND HRV HTI HUN IDN IRL ISR IMN IND IOT IRQ IRN ISL ITA JEY JAM JOR JPN KEN KGZ KHM KIR COM KNA PRK KOR KWT CYM KAZ LAO LBN LCA LIE LKA LBR LSO LTU LUX LVA LBY MAR MCO MDA MNE MAF MDG MHL MKD MLI MMR MNG MAC MNP MTQ MRT MSR MLT MUS MDV MWI MEX MYS MOZ NAM NCL NER NFK NGA NIC NLD NOR NPL NRU NIU NZL OMN PAN PER PYF PNG PHL PAK POL SPM PCN PRI PSE PRT PLW PRY QAT REU ROU SRB RUS RWA SAU SLB SYC SDN SWE SGP SHN SVN SJM SVK SLE SMR SEN SOM SUR SSD STP SLV SXM SYR SWZ TCA TCD ATF TGO THA TJK TKL TLS TKM TUN TON TUR TTO TUV TWN TZA UKR UGA UMI USA URY UZB VAT VCT VEN VGB VIR VNM VUT WLF WSM YEM MYT ZAF ZMB ZWE", " ")
+DIM gCountryNumbers = SPLIT("020 784 004 028 660 008 051 024 010 032 016 040 036 533 248 031 070 052 050 056 854 100 048 108 204 652 060 096 068 535 076 044 064 074 072 112 084 124 166 180 140 178 756 384 184 152 120 156 170 188 192 132 531 162 196 203 276 262 208 212 214 012 218 233 818 732 232 724 231 246 242 238 583 234 250 266 826 308 268 254 831 288 292 304 270 324 312 226 300 239 320 316 624 328 344 334 340 191 332 348 360 372 376 833 356 086 368 364 352 380 832 388 400 392 404 417 116 296 174 659 408 410 414 136 398 418 422 662 438 144 430 426 440 442 428 434 504 492 498 499 663 450 584 807 466 104 496 446 580 474 478 500 470 480 462 454 484 458 508 516 540 562 574 566 558 528 578 524 520 570 554 512 591 604 258 598 608 586 616 666 612 630 275 620 585 600 634 638 642 688 643 646 682 090 690 729 752 702 654 705 744 703 694 674 686 706 740 728 678 222 534 760 748 796 148 260 768 764 762 772 626 795 788 776 792 780 798 158 834 804 800 581 840 858 860 336 670 862 092 850 704 548 876 882 887 175 710 894 716", " ")
+
+' The IBAN registry (SWIFT release 101): the countries and the layout of
+' their national account number, n digits, a capitals, c capitals or
+' digits, each run with its length.
+DIM gIbanCodes = SPLIT("AD AE AL AT AZ BA BE BG BH BI BR BY CH CR CY CZ DE DJ DK DO EE EG ES FI FK FO FR GB GE GI GL GR GT HN HR HU IE IL IQ IS IT JO KW KZ LB LC LI LT LU LV LY MC MD ME MK MN MR MT MU NI NL NO OM PK PL PS PT QA RO RS RU SA SC SD SE SI SK SM SO ST SV TL TN TR UA VA VG XK YE", " ")
+DIM gIbanLayouts = SPLIT("4!n4!n12!c 3!n16!n 8!n16!c 5!n11!n 4!a20!c 3!n3!n8!n2!n 3!n7!n2!n 4!a4!n2!n8!c 4!a14!c 5!n5!n11!n2!n 8!n5!n10!n1!a1!c 4!c4!n16!c 5!n12!c 4!n14!n 3!n5!n16!c 4!n16!n 8!n10!n 5!n5!n11!n2!n 4!n9!n1!n 4!c20!n 2!n14!n 4!n4!n17!n 4!n4!n1!n1!n10!n 3!n11!n 2!a12!n 4!n9!n1!n 5!n5!n11!c2!n 4!a6!n8!n 2!a16!n 4!a15!c 4!n9!n1!n 3!n4!n16!c 4!c20!c 4!a20!n 7!n10!n 3!n4!n1!n15!n1!n 4!a6!n8!n 3!n3!n13!n 4!a3!n12!n 4!n2!n6!n10!n 1!a5!n5!n12!c 4!a4!n18!c 4!a22!c 3!n13!c 4!n20!c 4!a24!c 5!n12!c 5!n11!n 3!n13!c 4!a13!c 3!n3!n15!n 5!n5!n11!c2!n 2!c18!c 3!n13!n2!n 3!n10!c2!n 4!n12!n 5!n5!n11!n2!n 4!a5!n18!c 4!a2!n2!n12!n3!n3!a 4!a20!n 4!a10!n 4!n6!n1!n 3!n16!c 4!a16!c 8!n16!n 4!a21!c 4!n4!n11!n2!n 4!a21!c 4!a16!c 3!n13!n2!n 9!n5!n15!c 2!n18!c 4!a2!n2!n16!n3!a 2!n12!n 3!n16!n1!n 5!n8!n2!n 4!n6!n10!n 1!a5!n5!n12!c 4!n3!n12!n 4!n4!n11!n2!n 4!a20!n 3!n14!n2!n 2!n3!n13!n2!n 5!n1!n16!c 6!n19!c 3!n15!n 4!a16!n 4!n10!n2!n 4!a4!n18!c", " ")
+
+DIM gVatCountries = SPLIT("AT BE BG CY CZ DE DK EE EL ES FI FR HR HU IE IT LT LU LV MT NL PL PT RO SE SI SK XI", " ")
+DIM gRoCounties = SPLIT("01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 51 52 70 80 81 82 83", " ")
+DIM gFormats = SPLIT("iban bic vatid ean upc gtin isbn luhn country currency", " ")
+
+' ── ISO 4217 currencies ────────────────────────────────────────
+
+' The position of a currency code in the table, or -1.
+FUNC CurrencyAt(code$)
+    DIM want$ = UCASE$(TRIM$(code$))
+    IF LEN(want$) <> 3 THEN RETURN -1
+    DIM i = 0
+    FOR i = 0 TO LEN(gCurCodes) - 1
+        DIM have$ = gCurCodes[i]
+        IF have$ = want$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' Whether a text is an ISO 4217 currency code, in any letter case.
+EXPORT FUNC ISCURRENCY(code$)
+    RETURN CINT(CurrencyAt(code$)) >= 0
+ENDFUNC
+
+' The digits of a currency's minor unit (EUR 2, JPY 0, KWD 3, CLF 4), or -1
+' for an unknown code and for the units ISO 4217 gives none (gold, XDR).
+EXPORT FUNC CURRENCYDIGITS(code$)
+    DIM at = CINT(CurrencyAt(code$))
+    IF at < 0 THEN RETURN -1
+    DIM digit$ = MID$(gCurDigits$, at, 1)
+    IF digit$ = "-" THEN RETURN -1
+    RETURN CINT(VAL(digit$))
+ENDFUNC
+
+' The three-digit ISO 4217 number of a currency ("978" for EUR), or "".
+EXPORT FUNC CURRENCYNUMBER$(code$)
+    DIM at = CINT(CurrencyAt(code$))
+    IF at < 0 THEN RETURN ""
+    DIM number$ = gCurNumbers[at]
+    RETURN number$
+ENDFUNC
+
+' Every ISO 4217 code, sorted.
+EXPORT FUNC CURRENCIES()
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gCurCodes) - 1
+        DIM code$ = gCurCodes[i]
+        PUSH(out, code$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── ISO 3166-1 countries ───────────────────────────────────────
+
+' The position of a country given by its alpha-2, alpha-3 or numeric code,
+' or -1.
+FUNC CountryAt(code$)
+    DIM want$ = UCASE$(TRIM$(code$))
+    DIM i = 0
+    IF LEN(want$) = 2 THEN
+        FOR i = 0 TO LEN(gCountryA2) - 1
+            DIM a2$ = gCountryA2[i]
+            IF a2$ = want$ THEN RETURN i
+        NEXT i
+    ELSEIF LEN(want$) = 3 THEN
+        FOR i = 0 TO LEN(gCountryA3) - 1
+            DIM a3$ = gCountryA3[i]
+            DIM num$ = gCountryNumbers[i]
+            IF a3$ = want$ ORELSE num$ = want$ THEN RETURN i
+        NEXT i
+    ENDIF
+    RETURN -1
+ENDFUNC
+
+' Whether a text is an ISO 3166-1 country code: alpha-2, alpha-3 or the
+' three-digit number.
+EXPORT FUNC ISCOUNTRY(code$)
+    RETURN CINT(CountryAt(code$)) >= 0
+ENDFUNC
+
+' The alpha-2 code of a country given by any of its codes, or "".
+EXPORT FUNC COUNTRY2$(code$)
+    DIM at = CINT(CountryAt(code$))
+    IF at < 0 THEN RETURN ""
+    DIM a2$ = gCountryA2[at]
+    RETURN a2$
+ENDFUNC
+
+' The alpha-3 code of a country given by any of its codes, or "".
+EXPORT FUNC COUNTRY3$(code$)
+    DIM at = CINT(CountryAt(code$))
+    IF at < 0 THEN RETURN ""
+    DIM a3$ = gCountryA3[at]
+    RETURN a3$
+ENDFUNC
+
+' The three-digit ISO 3166-1 number of a country given by any of its codes,
+' or "".
+EXPORT FUNC COUNTRYNUMBER$(code$)
+    DIM at = CINT(CountryAt(code$))
+    IF at < 0 THEN RETURN ""
+    DIM num$ = gCountryNumbers[at]
+    RETURN num$
+ENDFUNC
+
+' Every ISO 3166-1 alpha-2 code, sorted.
+EXPORT FUNC COUNTRIES()
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gCountryA2) - 1
+        DIM code$ = gCountryA2[i]
+        PUSH(out, code$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── Digit arithmetic ───────────────────────────────────────────
+
+' A text in capitals without the characters in drop$.
+FUNC Strip$(text$, drop$)
+    DIM up$ = UCASE$(TRIM$(text$))
+    DIM kept = []
+    DIM i = 0
+    FOR i = 0 TO LEN(up$) - 1
+        DIM ch$ = MID$(up$, i, 1)
+        IF CINT(INSTR(drop$, ch$)) < 0 THEN PUSH(kept, ch$)
+    NEXT i
+    RETURN JOIN(kept, "")
+ENDFUNC
+
+FUNC IsDigits(text$)
+    IF LEN(text$) = 0 THEN RETURN FALSE
+    RETURN REGEX.MATCH("^[0-9]+$", text$)
+ENDFUNC
+
+FUNC DigitAt(text$, pos)
+    RETURN ASC(MID$(text$, pos, 1)) - 48
+ENDFUNC
+
+FUNC PosMod(value, divisor)
+    RETURN ((value MOD divisor) + divisor) MOD divisor
+ENDFUNC
+
+' The remainder of a long string of digits, taken one digit at a time.
+FUNC DigitsMod(digits$, divisor)
+    DIM remainder = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(digits$) - 1
+        remainder = (remainder * 10 + ASC(MID$(digits$, i, 1)) - 48) MOD divisor
+    NEXT i
+    RETURN remainder
+ENDFUNC
+
+' The digits multiplied by the weights (a space-separated list) and added,
+' as far as both reach.
+FUNC WeightedSum(digits$, weights$)
+    DIM w = SPLIT(weights$, " ")
+    DIM n_terms = LEN(w)
+    IF LEN(digits$) < n_terms THEN n_terms = LEN(digits$)
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO n_terms - 1
+        DIM wt$ = w[i]
+        total = total + CINT(VAL(wt$)) * (ASC(MID$(digits$, i, 1)) - 48)
+    NEXT i
+    RETURN total
+ENDFUNC
+
+FUNC LuhnSum(digits$)
+    DIM total = 0
+    DIM n_digits = LEN(digits$)
+    DIM i = 0
+    FOR i = 0 TO n_digits - 1
+        DIM v = ASC(MID$(digits$, n_digits - 1 - i, 1)) - 48
+        IF i MOD 2 = 1 THEN
+            v = v * 2
+            IF v > 9 THEN v = v - 9
+        ENDIF
+        total = total + v
+    NEXT i
+    RETURN total MOD 10
+ENDFUNC
+
+' ISO 7064 MOD 11,10: a number is right when this is 1.
+FUNC Mod1110(digits$)
+    DIM check = 5
+    DIM i = 0
+    FOR i = 0 TO LEN(digits$) - 1
+        DIM doubled = check
+        IF doubled = 0 THEN doubled = 10
+        check = ((doubled * 2) MOD 11 + ASC(MID$(digits$, i, 1)) - 48) MOD 10
+    NEXT i
+    RETURN check
+ENDFUNC
+
+FUNC IsDate(yr, mo, dy)
+    IF mo < 1 ORELSE mo > 12 ORELSE dy < 1 ORELSE yr < 1 THEN RETURN FALSE
+    DIM last_day = 31
+    IF mo = 4 ORELSE mo = 6 ORELSE mo = 9 ORELSE mo = 11 THEN last_day = 30
+    IF mo = 2 THEN
+        last_day = 28
+        IF (yr MOD 4 = 0 ANDALSO yr MOD 100 <> 0) ORELSE yr MOD 400 = 0 THEN last_day = 29
+    ENDIF
+    RETURN dy <= last_day
+ENDFUNC
+
+FUNC Num(text$)
+    RETURN CINT(VAL(text$))
+ENDFUNC
+
+' The remainder modulo 97 of a text read as one number, letters counting
+' 10 to 35 (ISO 7064 MOD 97-10), or -1 when a character is neither.
+EXPORT FUNC MOD97(text$)
+    DIM up$ = UCASE$(text$)
+    DIM remainder = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(up$) - 1
+        DIM code = ASC(MID$(up$, i, 1))
+        IF code >= 48 ANDALSO code <= 57 THEN
+            remainder = (remainder * 10 + code - 48) MOD 97
+        ELSEIF code >= 65 ANDALSO code <= 90 THEN
+            remainder = (remainder * 100 + code - 55) MOD 97
+        ELSE
+            RETURN -1
+        ENDIF
+    NEXT i
+    RETURN remainder
+ENDFUNC
+
+' Whether a string of digits ends in its Luhn check digit.
+EXPORT FUNC ISLUHN(digits$)
+    IF NOT IsDigits(digits$) THEN RETURN FALSE
+    RETURN CINT(LuhnSum(digits$)) = 0
+ENDFUNC
+
+' The Luhn check digit that completes a string of digits, or "".
+EXPORT FUNC LUHNDIGIT$(digits$)
+    IF NOT IsDigits(digits$) THEN RETURN ""
+    DIM ck = CINT(LuhnSum(digits$ + "0"))
+    RETURN STR$(CINT((10 - ck) MOD 10))
+ENDFUNC
+
+' ── IBAN ───────────────────────────────────────────────────────
+
+FUNC IbanAt(country$)
+    DIM want$ = UCASE$(TRIM$(country$))
+    DIM i = 0
+    FOR i = 0 TO LEN(gIbanCodes) - 1
+        DIM have$ = gIbanCodes[i]
+        IF have$ = want$ THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' Whether a national account number has a registry layout such as "8!n10!n".
+FUNC FitsLayout(bban$, layout$)
+    DIM at = 0
+    DIM run_len = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(layout$) - 1
+        DIM ch$ = MID$(layout$, i, 1)
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
+            run_len = run_len * 10 + ASC(ch$) - 48
+        ELSEIF ch$ = "n" ORELSE ch$ = "a" ORELSE ch$ = "c" THEN
+            IF at + run_len > LEN(bban$) THEN RETURN FALSE
+            DIM piece$ = MID$(bban$, at, run_len)
+            IF ch$ = "n" ANDALSO NOT REGEX.MATCH("^[0-9]+$", piece$) THEN RETURN FALSE
+            IF ch$ = "a" ANDALSO NOT REGEX.MATCH("^[A-Z]+$", piece$) THEN RETURN FALSE
+            IF ch$ = "c" ANDALSO NOT REGEX.MATCH("^[A-Za-z0-9]+$", piece$) THEN RETURN FALSE
+            at = at + run_len
+            run_len = 0
+        ENDIF
+    NEXT i
+    RETURN at = LEN(bban$)
+ENDFUNC
+
+FUNC LayoutLength(layout$)
+    DIM total = 0
+    DIM run_len = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(layout$) - 1
+        DIM ch$ = MID$(layout$, i, 1)
+        IF ch$ >= "0" ANDALSO ch$ <= "9" THEN
+            run_len = run_len * 10 + ASC(ch$) - 48
+        ELSEIF ch$ = "!" THEN
+            total = total + run_len
+            run_len = 0
+        ENDIF
+    NEXT i
+    RETURN total
+ENDFUNC
+
+' Belgium: the last two digits are the first ten modulo 97, 97 for 0.
+FUNC IbanBE(bban$)
+    DIM check = CINT(DigitsMod(LEFT$(bban$, 10), 97))
+    IF check = 0 THEN check = 97
+    RETURN LPAD$(STR$(check), 2, "0") = RIGHT$(bban$, 2)
+ENDFUNC
+
+' Spain: the two check digits of the CCC, one over the bank and branch,
+' one over the account.
+FUNC CccDigit$(digits$)
+    DIM total = 0
+    DIM factor = 1
+    DIM i = 0
+    FOR i = 0 TO LEN(digits$) - 1
+        total = total + (ASC(MID$(digits$, i, 1)) - 48) * factor
+        factor = factor * 2
+    NEXT i
+    DIM check = total MOD 11
+    IF check >= 2 THEN check = 11 - check
+    RETURN STR$(CINT(check))
+ENDFUNC
+
+FUNC IbanES(bban$)
+    DIM want$ = CccDigit$("00" + LEFT$(bban$, 8)) + CccDigit$(MID$(bban$, 10))
+    RETURN MID$(bban$, 8, 2) = want$
+ENDFUNC
+
+' Norway: eleven digits with a weighted check, or seven after four zeros
+' with a Luhn check.
+FUNC IbanNO(bban$)
+    DIM account$ = bban$
+    IF LEFT$(account$, 4) = "0000" THEN account$ = MID$(account$, 4)
+    IF LEN(account$) = 7 THEN RETURN CINT(LuhnSum(account$)) = 0
+    IF LEN(account$) <> 11 THEN RETURN FALSE
+    DIM check = CINT(WeightedSum(account$, "6 7 8 9 4 5 6 7 8 9")) MOD 11
+    RETURN STR$(check) = RIGHT$(account$, 1)
+ENDFUNC
+
+' Whether an IBAN has correct check digits (ISO 13616), a country of the
+' registry, the length and layout of that country's account number, and,
+' for Belgium, Spain, Montenegro and Norway, the national check digits.
+' Spaces, dashes and dots are ignored, letter case too.
+EXPORT FUNC ISIBAN(text$)
+    DIM n$ = Strip$(text$, " -.")
+    IF LEN(n$) < 5 THEN RETURN FALSE
+    IF CINT(MOD97(MID$(n$, 4) + LEFT$(n$, 4))) <> 1 THEN RETURN FALSE
+    DIM at = CINT(IbanAt(LEFT$(n$, 2)))
+    IF at < 0 THEN RETURN FALSE
+    DIM layout$ = gIbanLayouts[at]
+    DIM bban$ = MID$(n$, 4)
+    IF NOT FitsLayout(bban$, layout$) THEN RETURN FALSE
+    DIM cc$ = LEFT$(n$, 2)
+    IF cc$ = "BE" THEN RETURN IbanBE(bban$)
+    IF cc$ = "ES" THEN RETURN IbanES(bban$)
+    IF cc$ = "ME" THEN RETURN CINT(DigitsMod(bban$, 97)) = 1
+    IF cc$ = "NO" THEN RETURN IbanNO(bban$)
+    RETURN TRUE
+ENDFUNC
+
+' An IBAN in capitals and groups of four, the way it is printed.
+EXPORT FUNC IBAN$(text$)
+    DIM n$ = Strip$(text$, " -./")
+    DIM parts = []
+    DIM at = 0
+    DO WHILE at < LEN(n$)
+        PUSH(parts, MID$(n$, at, 4))
+        at = at + 4
+    LOOP
+    RETURN JOIN(parts, " ")
+ENDFUNC
+
+' The IBAN of a national account number, check digits computed, or "" when
+' the country is not in the registry or the number does not fit its layout.
+EXPORT FUNC MAKEIBAN$(country$, bban$)
+    DIM cc$ = UCASE$(TRIM$(country$))
+    DIM at = CINT(IbanAt(cc$))
+    IF at < 0 THEN RETURN ""
+    DIM account$ = Strip$(bban$, " -./")
+    DIM layout$ = gIbanLayouts[at]
+    IF NOT FitsLayout(account$, layout$) THEN RETURN ""
+    DIM check = 98 - CINT(MOD97(account$ + cc$ + "00"))
+    RETURN cc$ + LPAD$(STR$(check), 2, "0") + account$
+ENDFUNC
+
+' The length of a country's IBAN, or 0 for a country without one.
+EXPORT FUNC IBANLENGTH(country$)
+    DIM at = CINT(IbanAt(country$))
+    IF at < 0 THEN RETURN 0
+    DIM layout$ = gIbanLayouts[at]
+    RETURN 4 + CINT(LayoutLength(layout$))
+ENDFUNC
+
+' The registry layout of a country's account number ("8!n10!n"), or "".
+EXPORT FUNC IBANSTRUCTURE$(country$)
+    DIM at = CINT(IbanAt(country$))
+    IF at < 0 THEN RETURN ""
+    DIM layout$ = gIbanLayouts[at]
+    RETURN layout$
+ENDFUNC
+
+' The countries of the IBAN registry, sorted.
+EXPORT FUNC IBANCOUNTRIES()
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gIbanCodes) - 1
+        DIM code$ = gIbanCodes[i]
+        PUSH(out, code$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── BIC ────────────────────────────────────────────────────────
+
+' Whether a BIC (ISO 9362) has 8 or 11 characters: four letters for the
+' bank, an ISO 3166 country or XK, two letters or digits for the place and
+' an optional branch of three. Spaces and dashes are ignored.
+EXPORT FUNC ISBIC(text$)
+    DIM n$ = Strip$(text$, " -")
+    IF LEN(n$) = 8 THEN
+        IF NOT REGEX.MATCH("^[A-Z]{6}[0-9A-Z]{2}$", n$) THEN RETURN FALSE
+    ELSEIF LEN(n$) = 11 THEN
+        IF NOT REGEX.MATCH("^[A-Z]{6}[0-9A-Z]{5}$", n$) THEN RETURN FALSE
+    ELSE
+        RETURN FALSE
+    ENDIF
+    DIM cc$ = MID$(n$, 4, 2)
+    RETURN cc$ = "XK" ORELSE CINT(CountryAt(cc$)) >= 0
+ENDFUNC
+
+' ── EU VAT identification numbers ──────────────────────────────
+
+' The country prefixes of VAT identification numbers in the EU VIES
+' system: the member states with EL for Greece, and XI for Northern Ireland.
+EXPORT FUNC VATCOUNTRIES()
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gVatCountries) - 1
+        DIM code$ = gVatCountries[i]
+        PUSH(out, code$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC IsVatCountry(cc$)
+    IF cc$ = "GR" THEN RETURN TRUE
+    DIM i = 0
+    FOR i = 0 TO LEN(gVatCountries) - 1
+        DIM code$ = gVatCountries[i]
+        IF code$ = cc$ THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+' The national part the way the country writes it compact: Belgium and
+' Greece fill a short number with a leading zero, the Netherlands fill
+' the part before the B to nine digits.
+FUNC VatBody$(cc$, body$)
+    IF cc$ = "BE" ANDALSO LEN(body$) = 9 THEN RETURN "0" + body$
+    IF (cc$ = "EL" ORELSE cc$ = "GR") ANDALSO LEN(body$) = 8 THEN RETURN "0" + body$
+    IF cc$ = "NL" THEN
+        DIM keep = LEN(body$) - 3
+        IF keep < 0 THEN keep = 0
+        DIM head$ = LEFT$(body$, keep)
+        IF LEN(head$) < 9 THEN head$ = LPAD$(head$, 9, "0")
+        RETURN head$ + RIGHT$(body$, LEN(body$) - keep)
+    ENDIF
+    RETURN body$
+ENDFUNC
+
+' A VAT identification number compact: the country prefix and the national
+' number in capitals without spaces, dots, dashes, slashes, commas, colons
+' and brackets; "" when the prefix is no EU VAT prefix (GR is taken for
+' Greece beside EL).
+EXPORT FUNC VATID$(text$)
+    DIM n$ = Strip$(text$, " -./,:()")
+    DIM cc$ = LEFT$(n$, 2)
+    IF LEN(n$) < 2 ORELSE NOT IsVatCountry(cc$) THEN RETURN ""
+    RETURN cc$ + VatBody$(cc$, MID$(n$, 2))
+ENDFUNC
+
+' Whether a VAT identification number with its country prefix has the
+' format and the check digits of that country, the way python-stdnum
+' checks them.
+EXPORT FUNC ISVATID(text$)
+    DIM n$ = VATID$(text$)
+    IF LEN(n$) < 3 THEN RETURN FALSE
+    DIM cc$ = LEFT$(n$, 2)
+    DIM body$ = MID$(n$, 2)
+    IF cc$ = "AT" THEN RETURN VatAT(body$)
+    IF cc$ = "BE" THEN RETURN VatBE(body$)
+    IF cc$ = "BG" THEN RETURN VatBG(body$)
+    IF cc$ = "CY" THEN RETURN VatCY(body$)
+    IF cc$ = "CZ" THEN RETURN VatCZ(body$)
+    IF cc$ = "DE" THEN RETURN VatDE(body$)
+    IF cc$ = "DK" THEN RETURN VatDK(body$)
+    IF cc$ = "EE" THEN RETURN VatEE(body$)
+    IF cc$ = "EL" ORELSE cc$ = "GR" THEN RETURN VatEL(body$)
+    IF cc$ = "ES" THEN RETURN VatES(body$)
+    IF cc$ = "FI" THEN RETURN VatFI(body$)
+    IF cc$ = "FR" THEN RETURN VatFR(body$)
+    IF cc$ = "HR" THEN RETURN VatHR(body$)
+    IF cc$ = "HU" THEN RETURN VatHU(body$)
+    IF cc$ = "IE" THEN RETURN VatIE(body$)
+    IF cc$ = "IT" THEN RETURN VatIT(body$)
+    IF cc$ = "LT" THEN RETURN VatLT(body$)
+    IF cc$ = "LU" THEN RETURN VatLU(body$)
+    IF cc$ = "LV" THEN RETURN VatLV(body$)
+    IF cc$ = "MT" THEN RETURN VatMT(body$)
+    IF cc$ = "NL" THEN RETURN VatNL(body$)
+    IF cc$ = "PL" THEN RETURN VatPL(body$)
+    IF cc$ = "PT" THEN RETURN VatPT(body$)
+    IF cc$ = "RO" THEN RETURN VatRO(body$)
+    IF cc$ = "SE" THEN RETURN VatSE(body$)
+    IF cc$ = "SI" THEN RETURN VatSI(body$)
+    IF cc$ = "SK" THEN RETURN VatSK(body$)
+    IF cc$ = "XI" THEN RETURN VatXI(body$)
+    RETURN FALSE
+ENDFUNC
+
+' Austria: U and eight digits, a Luhn variant over seven of them.
+FUNC VatAT(n$)
+    IF LEN(n$) <> 9 ORELSE LEFT$(n$, 1) <> "U" ORELSE NOT IsDigits(MID$(n$, 1)) THEN RETURN FALSE
+    DIM check = CINT(PosMod(6 - CINT(LuhnSum(MID$(n$, 1, 7))), 10))
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Belgium: ten digits starting 0 or 1, the whole number divisible by 97.
+FUNC VatBE(n$)
+    IF LEN(n$) <> 10 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    IF NOT REGEX.MATCH(".*[1-9].*", n$) THEN RETURN FALSE
+    IF LEFT$(n$, 1) <> "0" ANDALSO LEFT$(n$, 1) <> "1" THEN RETURN FALSE
+    RETURN (CINT(DigitsMod(LEFT$(n$, 8), 97)) + Num(RIGHT$(n$, 2))) MOD 97 = 0
+ENDFUNC
+
+' Bulgaria: nine digits for a company; ten for a person (EGN), a foreigner
+' (PNF) or another body.
+FUNC VatBG(n$)
+    IF NOT IsDigits(n$) THEN RETURN FALSE
+    DIM total = 0
+    DIM check = 0
+    DIM i = 0
+    IF LEN(n$) = 9 THEN
+        FOR i = 0 TO 7
+            total = total + (i + 1) * (ASC(MID$(n$, i, 1)) - 48)
+        NEXT i
+        check = total MOD 11
+        IF check = 10 THEN
+            total = 0
+            FOR i = 0 TO 7
+                total = total + (i + 3) * (ASC(MID$(n$, i, 1)) - 48)
+            NEXT i
+            check = total MOD 11
+        ENDIF
+        RETURN STR$(check MOD 10) = RIGHT$(n$, 1)
+    ENDIF
+    IF LEN(n$) <> 10 THEN RETURN FALSE
+    IF BgPerson(n$) ORELSE BgForeigner(n$) THEN RETURN TRUE
+    check = CINT(PosMod(11 - CINT(WeightedSum(n$, "4 3 2 7 6 5 4 3 2")), 11))
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+FUNC BgPerson(n$)
+    DIM yr = 1900 + Num(LEFT$(n$, 2))
+    DIM mo = Num(MID$(n$, 2, 2))
+    DIM dy = Num(MID$(n$, 4, 2))
+    IF mo > 40 THEN
+        yr = yr + 100
+        mo = mo - 40
+    ELSEIF mo > 20 THEN
+        yr = yr - 100
+        mo = mo - 20
+    ENDIF
+    IF NOT IsDate(yr, mo, dy) THEN RETURN FALSE
+    DIM check = CINT(WeightedSum(n$, "2 4 8 5 10 9 7 3 6")) MOD 11 MOD 10
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+FUNC BgForeigner(n$)
+    DIM check = CINT(WeightedSum(n$, "21 19 17 13 11 9 7 3 1")) MOD 10
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Cyprus: eight digits and a check letter.
+FUNC VatCY(n$)
+    IF LEN(n$) <> 9 ORELSE NOT IsDigits(LEFT$(n$, 8)) THEN RETURN FALSE
+    IF LEFT$(n$, 2) = "12" THEN RETURN FALSE
+    DIM odd_values = SPLIT("1 0 5 7 9 13 15 17 19 21", " ")
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 7
+        DIM d = ASC(MID$(n$, i, 1)) - 48
+        IF i MOD 2 = 0 THEN
+            DIM value$ = odd_values[d]
+            total = total + Num(value$)
+        ELSE
+            total = total + d
+        ENDIF
+    NEXT i
+    RETURN MID$("ABCDEFGHIJKLMNOPQRSTUVWXYZ", total MOD 26, 1) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Czech Republic: eight digits for a company, nine starting 6 for a special
+' case, otherwise a birth number of nine or ten digits.
+FUNC VatCZ(n$)
+    IF NOT IsDigits(n$) THEN RETURN FALSE
+    DIM total = 0
+    DIM check = 0
+    DIM i = 0
+    IF LEN(n$) = 8 THEN
+        IF LEFT$(n$, 1) = "9" THEN RETURN FALSE
+        FOR i = 0 TO 6
+            total = total + (8 - i) * (ASC(MID$(n$, i, 1)) - 48)
+        NEXT i
+        check = CINT(PosMod(11 - total, 11))
+        IF check = 0 THEN check = 1
+        RETURN STR$(check MOD 10) = RIGHT$(n$, 1)
+    ENDIF
+    IF LEN(n$) = 9 ANDALSO LEFT$(n$, 1) = "6" THEN
+        FOR i = 0 TO 6
+            total = total + (8 - i) * (ASC(MID$(n$, i + 1, 1)) - 48)
+        NEXT i
+        check = CINT(PosMod(8 - CINT(PosMod(10 - total MOD 11, 11)), 10))
+        RETURN STR$(check) = RIGHT$(n$, 1)
+    ENDIF
+    IF LEN(n$) = 9 ORELSE LEN(n$) = 10 THEN RETURN BirthNumber(n$)
+    RETURN FALSE
+ENDFUNC
+
+' A Czech or Slovak birth number: a date with 50 added to the month for
+' women (and 20 for late registrations), ten digits since 1954 with the
+' whole number divisible by 11 (the last digit 0 when the rest leaves 10).
+FUNC BirthNumber(n$)
+    IF NOT IsDigits(n$) ORELSE (LEN(n$) <> 9 ANDALSO LEN(n$) <> 10) THEN RETURN FALSE
+    DIM yr = 1900 + Num(LEFT$(n$, 2))
+    DIM mo = Num(MID$(n$, 2, 2)) MOD 50 MOD 20
+    DIM dy = Num(MID$(n$, 4, 2))
+    IF LEN(n$) = 9 THEN
+        IF yr >= 1980 THEN yr = yr - 100
+        IF yr > 1953 THEN RETURN FALSE
+    ELSEIF yr < 1954 THEN
+        yr = yr + 100
+    ENDIF
+    IF NOT IsDate(yr, mo, dy) THEN RETURN FALSE
+    IF LEN(n$) = 9 THEN RETURN TRUE
+    DIM check = CINT(DigitsMod(LEFT$(n$, 9), 11)) MOD 10
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Germany: nine digits, the first not 0, ISO 7064 MOD 11,10.
+FUNC VatDE(n$)
+    IF LEN(n$) <> 9 ORELSE NOT IsDigits(n$) ORELSE LEFT$(n$, 1) = "0" THEN RETURN FALSE
+    RETURN CINT(Mod1110(n$)) = 1
+ENDFUNC
+
+' Denmark: eight digits, the first not 0, weighted modulo 11.
+FUNC VatDK(n$)
+    IF LEN(n$) <> 8 ORELSE NOT IsDigits(n$) ORELSE LEFT$(n$, 1) = "0" THEN RETURN FALSE
+    RETURN CINT(WeightedSum(n$, "2 7 6 5 4 3 2 1")) MOD 11 = 0
+ENDFUNC
+
+' Estonia: nine digits, weighted modulo 10.
+FUNC VatEE(n$)
+    IF LEN(n$) <> 9 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    RETURN CINT(WeightedSum(n$, "3 7 1 3 7 1 3 7 1")) MOD 10 = 0
+ENDFUNC
+
+' Greece: nine digits, the check digit from doubling.
+FUNC VatEL(n$)
+    IF LEN(n$) <> 9 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 7
+        total = total * 2 + ASC(MID$(n$, i, 1)) - 48
+    NEXT i
+    RETURN STR$(total * 2 MOD 11 MOD 10) = RIGHT$(n$, 1)
+ENDFUNC
+
+FUNC DniLetter$(digits$)
+    RETURN MID$("TRWAGMYFPDXBNJZSQVHLCKE", CINT(DigitsMod(digits$, 23)), 1)
+ENDFUNC
+
+' Spain: a DNI (eight digits and a letter), an NIE (X, Y or Z, seven digits,
+' a letter), a K, L or M number, or a CIF (a letter for the kind of body,
+' seven digits, a digit or a letter).
+FUNC VatES(n$)
+    IF LEN(n$) <> 9 ORELSE NOT IsDigits(MID$(n$, 1, 7)) THEN RETURN FALSE
+    DIM first$ = LEFT$(n$, 1)
+    DIM last$ = RIGHT$(n$, 1)
+    IF CINT(INSTR("KLM", first$)) >= 0 THEN RETURN DniLetter$(MID$(n$, 1, 7)) = last$
+    IF first$ >= "0" ANDALSO first$ <= "9" THEN RETURN DniLetter$(LEFT$(n$, 8)) = last$
+    DIM xyz = CINT(INSTR("XYZ", first$))
+    IF xyz >= 0 THEN RETURN DniLetter$(STR$(xyz) + MID$(n$, 1, 7)) = last$
+    IF CINT(INSTR("ABCDEFGHJNPQRSUVW", first$)) < 0 THEN RETURN FALSE
+    DIM check$ = LUHNDIGIT$(MID$(n$, 1, 7))
+    DIM letter$ = MID$("JABCDEFGHI", Num(check$), 1)
+    RETURN last$ = check$ ORELSE last$ = letter$
+ENDFUNC
+
+' Finland: eight digits, weighted modulo 11.
+FUNC VatFI(n$)
+    IF LEN(n$) <> 8 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    RETURN CINT(WeightedSum(n$, "7 9 10 5 8 4 2 1")) MOD 11 = 0
+ENDFUNC
+
+' France: a two character key and the SIREN (nine digits with a Luhn
+' check); a numeric key is the SIREN modulo 97, a key with letters has its
+' own rule.
+FUNC VatFR(n$)
+    DIM alphabet$ = "0123456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    IF LEN(n$) <> 11 THEN RETURN FALSE
+    DIM c0$ = LEFT$(n$, 1)
+    DIM c1$ = MID$(n$, 1, 1)
+    DIM i0 = CINT(INSTR(alphabet$, c0$))
+    DIM i1 = CINT(INSTR(alphabet$, c1$))
+    IF i0 < 0 ORELSE i1 < 0 THEN RETURN FALSE
+    DIM siren$ = MID$(n$, 2)
+    IF NOT IsDigits(siren$) THEN RETURN FALSE
+    IF LEFT$(siren$, 3) <> "000" ANDALSO CINT(LuhnSum(siren$)) <> 0 THEN RETURN FALSE
+    IF IsDigits(n$) THEN RETURN CINT(DigitsMod(siren$ + "12", 97)) = Num(LEFT$(n$, 2))
+    DIM check = 0
+    IF i0 <= 9 THEN
+        check = i0 * 24 + i1 - 10
+    ELSE
+        check = i0 * 34 + i1 - 100
+    ENDIF
+    RETURN (CINT(DigitsMod(siren$, 11)) + 1 + INT(check / 11)) MOD 11 = check MOD 11
+ENDFUNC
+
+' Croatia: the eleven digit OIB, ISO 7064 MOD 11,10.
+FUNC VatHR(n$)
+    IF LEN(n$) <> 11 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    RETURN CINT(Mod1110(n$)) = 1
+ENDFUNC
+
+' Hungary: eight digits, weighted modulo 10.
+FUNC VatHU(n$)
+    IF LEN(n$) <> 8 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    RETURN CINT(WeightedSum(n$, "9 7 3 1 9 7 3 1")) MOD 10 = 0
+ENDFUNC
+
+FUNC IeLetter$(number$)
+    DIM alphabet$ = "WABCDEFGHIJKLMNOPQRSTUV"
+    DIM padded$ = number$
+    IF LEN(padded$) < 7 THEN padded$ = LPAD$(padded$, 7, "0")
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 6
+        total = total + (8 - i) * (ASC(MID$(padded$, i, 1)) - 48)
+    NEXT i
+    IF LEN(padded$) > 7 THEN total = total + 9 * CINT(INSTR(alphabet$, MID$(padded$, 7, 1)))
+    RETURN MID$(alphabet$, total MOD 23, 1)
+ENDFUNC
+
+' Ireland: seven digits and a check letter, optionally a second letter; or
+' the old form of a digit, a letter or + or *, five digits and the check
+' letter.
+FUNC VatIE(n$)
+    DIM alphabet$ = "WABCDEFGHIJKLMNOPQRSTUV"
+    IF LEN(n$) <> 8 ANDALSO LEN(n$) <> 9 THEN RETURN FALSE
+    IF NOT IsDigits(LEFT$(n$, 1)) ORELSE NOT IsDigits(MID$(n$, 2, 5)) THEN RETURN FALSE
+    DIM i = 0
+    FOR i = 7 TO LEN(n$) - 1
+        IF CINT(INSTR(alphabet$, MID$(n$, i, 1))) < 0 THEN RETURN FALSE
+    NEXT i
+    DIM extra$ = ""
+    IF LEN(n$) = 9 THEN extra$ = RIGHT$(n$, 1)
+    IF IsDigits(LEFT$(n$, 7)) THEN RETURN IeLetter$(LEFT$(n$, 7) + extra$) = MID$(n$, 7, 1)
+    IF CINT(INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ+*", MID$(n$, 1, 1))) >= 0 THEN
+        RETURN IeLetter$(MID$(n$, 2, 5) + LEFT$(n$, 1)) = MID$(n$, 7, 1)
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+' Italy: eleven digits, a tax office code at 8 to 10, a Luhn check.
+FUNC VatIT(n$)
+    IF LEN(n$) <> 11 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    IF NOT REGEX.MATCH(".*[1-9].*", LEFT$(n$, 7)) THEN RETURN FALSE
+    DIM office$ = MID$(n$, 7, 3)
+    DIM known = (office$ >= "001" ANDALSO office$ <= "100") ORELSE office$ = "120" ORELSE office$ = "121" ORELSE office$ = "888" ORELSE office$ = "999"
+    IF NOT known THEN RETURN FALSE
+    RETURN CINT(LuhnSum(n$)) = 0
+ENDFUNC
+
+' Lithuania: nine digits for a company, twelve for a temporary payer, with
+' a 1 before the check digit.
+FUNC VatLT(n$)
+    IF NOT IsDigits(n$) THEN RETURN FALSE
+    IF LEN(n$) = 9 THEN
+        IF MID$(n$, 7, 1) <> "1" THEN RETURN FALSE
+    ELSEIF LEN(n$) = 12 THEN
+        IF MID$(n$, 10, 1) <> "1" THEN RETURN FALSE
+    ELSE
+        RETURN FALSE
+    ENDIF
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(n$) - 2
+        total = total + (1 + i MOD 9) * (ASC(MID$(n$, i, 1)) - 48)
+    NEXT i
+    DIM check = total MOD 11
+    IF check = 10 THEN
+        total = 0
+        FOR i = 0 TO LEN(n$) - 2
+            total = total + (1 + (i + 2) MOD 9) * (ASC(MID$(n$, i, 1)) - 48)
+        NEXT i
+        check = total
+    ENDIF
+    RETURN STR$(check MOD 11 MOD 10) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Luxembourg: six digits and their remainder modulo 89 in two digits.
+FUNC VatLU(n$)
+    IF LEN(n$) <> 8 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    RETURN LPAD$(STR$(CINT(DigitsMod(LEFT$(n$, 6), 89))), 2, "0") = RIGHT$(n$, 2)
+ENDFUNC
+
+FUNC LvPerson(n$)
+    DIM check = (1 + CINT(WeightedSum(n$, "10 5 8 4 2 1 6 3 7 9"))) MOD 11 MOD 10
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Latvia: eleven digits; a legal person (first digit above 3), a personal
+' code of the new form (32) or one that starts with the birth date.
+FUNC VatLV(n$)
+    IF LEN(n$) <> 11 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    IF LEFT$(n$, 1) > "3" THEN RETURN CINT(WeightedSum(n$, "9 1 4 8 3 10 2 5 7 6 1")) MOD 11 = 3
+    IF LEFT$(n$, 2) = "32" THEN RETURN LvPerson(n$)
+    DIM dy = Num(LEFT$(n$, 2))
+    DIM mo = Num(MID$(n$, 2, 2))
+    DIM yr = Num(MID$(n$, 4, 2)) + 1800 + Num(MID$(n$, 6, 1)) * 100
+    IF NOT IsDate(yr, mo, dy) THEN RETURN FALSE
+    RETURN LvPerson(n$)
+ENDFUNC
+
+' Malta: eight digits, the first not 0, weighted modulo 37.
+FUNC VatMT(n$)
+    IF LEN(n$) <> 8 ORELSE NOT IsDigits(n$) ORELSE LEFT$(n$, 1) = "0" THEN RETURN FALSE
+    RETURN CINT(WeightedSum(n$, "3 4 6 7 8 9 10 1")) MOD 37 = 0
+ENDFUNC
+
+FUNC BsnOk(b$)
+    IF LEN(b$) <> 9 ORELSE NOT IsDigits(b$) ORELSE NOT REGEX.MATCH(".*[1-9].*", b$) THEN RETURN FALSE
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 7
+        total = total + (9 - i) * (ASC(MID$(b$, i, 1)) - 48)
+    NEXT i
+    RETURN CINT(PosMod(total - (ASC(RIGHT$(b$, 1)) - 48), 11)) = 0
+ENDFUNC
+
+' The Netherlands: nine digits, B and two digits; the nine digits carry a
+' BSN check, or the whole number with NL is right modulo 97.
+FUNC VatNL(n$)
+    IF LEN(n$) <> 12 THEN RETURN FALSE
+    DIM head$ = LEFT$(n$, 9)
+    DIM tail$ = RIGHT$(n$, 2)
+    IF NOT IsDigits(head$) ORELSE NOT REGEX.MATCH(".*[1-9].*", head$) THEN RETURN FALSE
+    IF NOT IsDigits(tail$) ORELSE NOT REGEX.MATCH(".*[1-9].*", tail$) THEN RETURN FALSE
+    IF MID$(n$, 9, 1) <> "B" THEN RETURN FALSE
+    RETURN BsnOk(head$) ORELSE CINT(MOD97("NL" + n$)) = 1
+ENDFUNC
+
+' Poland: ten digits, weighted modulo 11.
+FUNC VatPL(n$)
+    IF LEN(n$) <> 10 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    RETURN CINT(PosMod(CINT(WeightedSum(n$, "6 5 7 2 3 4 5 6 7 -1")), 11)) = 0
+ENDFUNC
+
+' Portugal: nine digits, the first not 0, weighted modulo 11.
+FUNC VatPT(n$)
+    IF LEN(n$) <> 9 ORELSE NOT IsDigits(n$) ORELSE LEFT$(n$, 1) = "0" THEN RETURN FALSE
+    DIM check = CINT(PosMod(11 - CINT(WeightedSum(n$, "9 8 7 6 5 4 3 2")), 11)) MOD 10
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Romania: a CUI of 2 to 10 digits, or a 13 digit personal CNP with sex
+' and century, birth date, county and check digit.
+FUNC VatRO(n$)
+    IF NOT IsDigits(n$) THEN RETURN FALSE
+    DIM check = 0
+    IF LEN(n$) = 13 THEN
+        IF LEFT$(n$, 1) = "0" THEN RETURN FALSE
+        DIM century = 1900
+        DIM sex$ = LEFT$(n$, 1)
+        IF sex$ = "3" ORELSE sex$ = "4" THEN century = 1800
+        IF sex$ = "5" ORELSE sex$ = "6" THEN century = 2000
+        IF NOT IsDate(century + Num(MID$(n$, 1, 2)), Num(MID$(n$, 3, 2)), Num(MID$(n$, 5, 2))) THEN RETURN FALSE
+        DIM county$ = MID$(n$, 7, 2)
+        DIM found = FALSE
+        DIM i = 0
+        FOR i = 0 TO LEN(gRoCounties) - 1
+            DIM known$ = gRoCounties[i]
+            IF known$ = county$ THEN found = TRUE
+        NEXT i
+        IF NOT found THEN RETURN FALSE
+        check = CINT(WeightedSum(n$, "2 7 9 1 4 6 3 5 8 2 7 9")) MOD 11
+        IF check = 10 THEN check = 1
+        RETURN STR$(check) = RIGHT$(n$, 1)
+    ENDIF
+    IF LEN(n$) < 2 ORELSE LEN(n$) > 10 ORELSE LEFT$(n$, 1) = "0" THEN RETURN FALSE
+    DIM padded$ = LPAD$(LEFT$(n$, LEN(n$) - 1), 9, "0")
+    check = 10 * CINT(WeightedSum(padded$, "7 5 3 2 1 7 5 3 2")) MOD 11 MOD 10
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Sweden: a ten digit organisation number with a Luhn check, then 01.
+FUNC VatSE(n$)
+    IF LEN(n$) <> 12 ORELSE NOT IsDigits(n$) ORELSE RIGHT$(n$, 2) <> "01" THEN RETURN FALSE
+    RETURN CINT(LuhnSum(LEFT$(n$, 10))) = 0
+ENDFUNC
+
+' Slovenia: eight digits, the first not 0, weighted modulo 11.
+FUNC VatSI(n$)
+    IF LEN(n$) <> 8 ORELSE NOT IsDigits(n$) ORELSE LEFT$(n$, 1) = "0" THEN RETURN FALSE
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 6
+        total = total + (8 - i) * (ASC(MID$(n$, i, 1)) - 48)
+    NEXT i
+    DIM check = 11 - total MOD 11
+    IF check = 10 THEN check = 0
+    RETURN STR$(check) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Slovakia: a birth number, or ten digits with 2, 3, 4, 7, 8 or 9 in the
+' third place divisible by 11.
+FUNC VatSK(n$)
+    IF LEN(n$) <> 10 ORELSE NOT IsDigits(n$) THEN RETURN FALSE
+    IF BirthNumber(n$) THEN RETURN TRUE
+    IF LEFT$(n$, 1) = "0" ORELSE CINT(INSTR("234789", MID$(n$, 2, 1))) < 0 THEN RETURN FALSE
+    RETURN CINT(DigitsMod(n$, 11)) = 0
+ENDFUNC
+
+' Northern Ireland (the United Kingdom's VAT numbers): nine or twelve
+' digits weighted modulo 97, or a government department (GD) or health
+' authority (HA) of three digits, alone or after 8888 with a check.
+FUNC VatXI(n$)
+    DIM lead$ = LEFT$(n$, 2)
+    DIM k = 0
+    IF LEN(n$) = 5 THEN
+        IF NOT IsDigits(MID$(n$, 2)) THEN RETURN FALSE
+        k = Num(MID$(n$, 2))
+        RETURN (lead$ = "GD" ANDALSO k < 500) ORELSE (lead$ = "HA" ANDALSO k >= 500)
+    ENDIF
+    IF LEN(n$) = 11 ANDALSO (LEFT$(n$, 6) = "GD8888" ORELSE LEFT$(n$, 6) = "HA8888") THEN
+        IF NOT IsDigits(MID$(n$, 6)) THEN RETURN FALSE
+        k = Num(MID$(n$, 6, 3))
+        IF NOT ((lead$ = "GD" ANDALSO k < 500) ORELSE (lead$ = "HA" ANDALSO k >= 500)) THEN RETURN FALSE
+        RETURN k MOD 97 = Num(MID$(n$, 9, 2))
+    ENDIF
+    IF LEN(n$) <> 9 ANDALSO LEN(n$) <> 12 THEN RETURN FALSE
+    IF NOT IsDigits(n$) THEN RETURN FALSE
+    DIM check = CINT(WeightedSum(LEFT$(n$, 9), "8 7 6 5 4 3 2 10 1")) MOD 97
+    IF Num(LEFT$(n$, 3)) >= 100 THEN RETURN check = 0 ORELSE check = 42 ORELSE check = 55
+    RETURN check = 0
+ENDFUNC
+
+' ── EAN, UPC, GTIN, ISBN ───────────────────────────────────────
+
+' The GS1 check digit for the digits of an EAN, UPC or GTIN without it, or "".
+EXPORT FUNC EANDIGIT$(digits$)
+    IF NOT IsDigits(digits$) THEN RETURN ""
+    DIM total = 0
+    DIM n_digits = LEN(digits$)
+    DIM i = 0
+    FOR i = 0 TO n_digits - 1
+        DIM d = ASC(MID$(digits$, n_digits - 1 - i, 1)) - 48
+        IF i MOD 2 = 0 THEN
+            total = total + 3 * d
+        ELSE
+            total = total + d
+        ENDIF
+    NEXT i
+    RETURN STR$(CINT((10 - total MOD 10) MOD 10))
+ENDFUNC
+
+FUNC GtinOk(n$)
+    IF NOT IsDigits(n$) THEN RETURN FALSE
+    IF LEN(n$) <> 8 ANDALSO LEN(n$) <> 12 ANDALSO LEN(n$) <> 13 ANDALSO LEN(n$) <> 14 THEN RETURN FALSE
+    RETURN EANDIGIT$(LEFT$(n$, LEN(n$) - 1)) = RIGHT$(n$, 1)
+ENDFUNC
+
+' Whether a text is a GTIN of 8, 12, 13 or 14 digits with its check digit.
+' Spaces and dashes are ignored.
+EXPORT FUNC ISGTIN(text$)
+    RETURN GtinOk(Strip$(text$, " -"))
+ENDFUNC
+
+' Whether a text is an EAN-8 or EAN-13 with its check digit.
+EXPORT FUNC ISEAN(text$)
+    DIM n$ = Strip$(text$, " -")
+    RETURN (LEN(n$) = 8 ORELSE LEN(n$) = 13) ANDALSO GtinOk(n$)
+ENDFUNC
+
+' Whether a text is a UPC-A of 12 digits with its check digit.
+EXPORT FUNC ISUPC(text$)
+    DIM n$ = Strip$(text$, " -")
+    RETURN LEN(n$) = 12 ANDALSO GtinOk(n$)
+ENDFUNC
+
+FUNC IsbnCompact$(text$)
+    DIM n$ = Strip$(text$, " -")
+    IF LEN(n$) = 9 THEN n$ = "0" + n$
+    RETURN n$
+ENDFUNC
+
+FUNC Isbn10Digit$(nine$)
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 8
+        total = total + (i + 1) * (ASC(MID$(nine$, i, 1)) - 48)
+    NEXT i
+    DIM check = total MOD 11
+    IF check = 10 THEN RETURN "X"
+    RETURN STR$(check)
+ENDFUNC
+
+' Whether a text is an ISBN-10 (check digit 0 to 9 or X) or an ISBN-13
+' (978 or 979 with the EAN check digit). Spaces and dashes are ignored; nine
+' digits are read as an ISBN-10 with a leading zero.
+EXPORT FUNC ISISBN(text$)
+    DIM n$ = IsbnCompact$(text$)
+    IF LEN(n$) = 10 THEN
+        IF NOT IsDigits(LEFT$(n$, 9)) THEN RETURN FALSE
+        RETURN Isbn10Digit$(LEFT$(n$, 9)) = RIGHT$(n$, 1)
+    ENDIF
+    IF LEN(n$) = 13 THEN
+        IF LEFT$(n$, 3) <> "978" ANDALSO LEFT$(n$, 3) <> "979" THEN RETURN FALSE
+        RETURN GtinOk(n$)
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+' An ISBN as its 13 digits, converted from an ISBN-10 under 978, or "".
+EXPORT FUNC ISBN13$(text$)
+    IF NOT ISISBN(text$) THEN RETURN ""
+    DIM n$ = IsbnCompact$(text$)
+    IF LEN(n$) = 13 THEN RETURN n$
+    DIM body$ = "978" + LEFT$(n$, 9)
+    RETURN body$ + EANDIGIT$(body$)
+ENDFUNC
+
+' An ISBN as its 10 characters, converted from an ISBN-13 under 978, or ""
+' (979 numbers have no ISBN-10).
+EXPORT FUNC ISBN10$(text$)
+    IF NOT ISISBN(text$) THEN RETURN ""
+    DIM n$ = IsbnCompact$(text$)
+    IF LEN(n$) = 10 THEN RETURN n$
+    IF LEFT$(n$, 3) <> "978" THEN RETURN ""
+    DIM nine$ = MID$(n$, 3, 9)
+    RETURN nine$ + Isbn10Digit$(nine$)
+ENDFUNC
+
+' ── Formats by name ────────────────────────────────────────────
+
+' The names ISFORMAT knows: iban, bic, vatid, ean, upc, gtin, isbn, luhn,
+' country, currency.
+EXPORT FUNC FORMATS()
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gFormats) - 1
+        DIM name$ = gFormats[i]
+        PUSH(out, name$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Whether a text is valid for a format named by FORMATS; an unknown name
+' throws.
+EXPORT FUNC ISFORMAT(kind$, text$)
+    DIM k$ = LCASE$(TRIM$(kind$))
+    IF k$ = "iban" THEN RETURN ISIBAN(text$)
+    IF k$ = "bic" THEN RETURN ISBIC(text$)
+    IF k$ = "vatid" THEN RETURN ISVATID(text$)
+    IF k$ = "ean" THEN RETURN ISEAN(text$)
+    IF k$ = "upc" THEN RETURN ISUPC(text$)
+    IF k$ = "gtin" THEN RETURN ISGTIN(text$)
+    IF k$ = "isbn" THEN RETURN ISISBN(text$)
+    IF k$ = "luhn" THEN RETURN ISLUHN(Strip$(text$, " -"))
+    IF k$ = "country" THEN RETURN ISCOUNTRY(text$)
+    IF k$ = "currency" THEN RETURN ISCURRENCY(text$)
+    THROW "VALID: unknown format " + kind$
+    RETURN FALSE
+ENDFUNC

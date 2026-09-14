@@ -1,0 +1,72 @@
+' MONEY demo: an invoice whose lines, VAT and total add up to the cent,
+' paid in installments, shared between cost centres, shown in three
+' locales and converted to yen.
+
+IMPORT MONEY
+
+DIM items = ["Keyboard", "USB cable", "Monitor arm", "Coffee beans"]
+DIM prices = ["49,90", "7,99", "129,00", "18,49"]
+DIM quantities = [2, 5, 1, 3]
+DIM rates = ["0.19", "0.19", "0.19", "0.07"]
+
+PRINT "Invoice"
+PRINT REPEAT$("-", 64)
+DIM line_net = []
+DIM vat_full = []
+DIM vat_reduced = []
+DIM i = 0
+FOR i = 0 TO LEN(items) - 1
+    DIM label$ = items[i]
+    DIM price$ = prices[i]
+    DIM rate$ = rates[i]
+    DIM qty = quantities[i]
+    DIM unit_price = MONEY.PARSE(price$, "EUR")
+    DIM line_amount = MONEY.TIMES(unit_price, qty)
+    DIM line_tax = MONEY.TIMES(line_amount, rate$)
+    PUSH(line_net, line_amount)
+    IF rate$ = "0.19" THEN
+        PUSH(vat_full, line_tax)
+    ELSE
+        PUSH(vat_reduced, line_tax)
+    ENDIF
+    PRINT RPAD$(label$, 16); LPAD$(STR$(qty), 3); " x "; LPAD$(MONEY.CURRENCY$(unit_price, "EUR"), 12); LPAD$(MONEY.CURRENCY$(line_amount, "EUR"), 14)
+NEXT i
+PRINT REPEAT$("-", 64)
+DIM net = MONEY.TOTAL(line_net)
+DIM tax_full = MONEY.TOTAL(vat_full)
+DIM tax_reduced = MONEY.TOTAL(vat_reduced)
+DIM gross = MONEY.PLUS(net, MONEY.PLUS(tax_full, tax_reduced))
+PRINT RPAD$("Net", 34); LPAD$(MONEY.CURRENCY$(net, "EUR"), 14)
+PRINT RPAD$("VAT 19 %", 34); LPAD$(MONEY.CURRENCY$(tax_full, "EUR"), 14)
+PRINT RPAD$("VAT 7 %", 34); LPAD$(MONEY.CURRENCY$(tax_reduced, "EUR"), 14)
+PRINT RPAD$("Total", 34); LPAD$(MONEY.CURRENCY$(gross, "EUR"), 14)
+PRINT "Stored as "; MONEY.DECIMAL$(gross, "EUR"); " ("; gross; " cents)"
+PRINT
+
+PRINT "Three installments"
+DIM installments = MONEY.PARTS(gross, 3)
+FOR i = 0 TO LEN(installments) - 1
+    DIM part = installments[i]
+    PRINT "  "; i + 1; ". "; MONEY.CURRENCY$(part, "EUR")
+NEXT i
+PRINT "  sum "; MONEY.CURRENCY$(MONEY.TOTAL(installments), "EUR")
+PRINT
+
+PRINT "Shared by headcount 7 : 5 : 1"
+DIM heads = [7, 5, 1]
+DIM centres = ["Development", "Sales", "Office"]
+DIM shares = MONEY.ALLOCATE(gross, heads)
+FOR i = 0 TO LEN(shares) - 1
+    DIM centre$ = centres[i]
+    DIM share = shares[i]
+    PRINT "  "; RPAD$(centre$, 14); LPAD$(MONEY.CURRENCY$(share, "EUR"), 14)
+NEXT i
+PRINT "  sum "; MONEY.CURRENCY$(MONEY.TOTAL(shares), "EUR")
+PRINT
+
+PRINT "The total in other locales"
+PRINT "  de-CH  "; MONEY.CURRENCY$(gross, "EUR", "de-CH")
+PRINT "  en-US  "; MONEY.CURRENCY$(gross, "EUR", "en-US")
+PRINT "  fr-FR  "; MONEY.CURRENCY$(gross, "EUR", "fr-FR")
+PRINT "  in yen at 161.23: "; MONEY.CURRENCY$(MONEY.CONVERT(gross, "EUR", "JPY", "161.23"), "JPY", "en-US")
+PRINT "  cash, rounded to 5 cents: "; MONEY.CURRENCY$(MONEY.ROUNDSTEP(gross, 5), "EUR")

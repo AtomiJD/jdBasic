@@ -1,0 +1,225 @@
+' VALID: the ISO 4217 and ISO 3166-1 tables against the iso4217 and
+' pycountry packages; IBAN against the SWIFT registry, BIC, the VAT
+' identification numbers of every EU member state, EAN, UPC, GTIN, ISBN
+' and Luhn against python-stdnum 2.2. The reference rows live in
+' tests/jdlibs/fixtures/valid_*.tsv, grouped by country.
+
+IMPORT TESTKIT, VALID
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "valid_iban.tsv") THEN base$ = "fixtures/"
+
+FUNC UnknownFormat(kind$)
+    RETURN VALID.ISFORMAT(kind$, "x")
+ENDFUNC
+
+FUNC Flag$(value)
+    IF value THEN RETURN "1"
+    RETURN "0"
+ENDFUNC
+
+TESTKIT.SUITE("ISO 4217 and ISO 3166-1")
+DIM iso_rows = SPLIT(REPLACE$(TXTREADER$(base$ + "valid_iso.tsv"), CHR$(13), ""), CHR$(10))
+DIM cur_n = 0
+DIM cur_bad = 0
+DIM cty_n = 0
+DIM cty_bad = 0
+DIM r = 0
+FOR r = 0 TO LEN(iso_rows) - 1
+    DIM iso_line$ = iso_rows[r]
+    IF LEN(iso_line$) > 0 THEN
+        DIM iso_cells = SPLIT(iso_line$, CHR$(9))
+        DIM iso_kind$ = iso_cells[0]
+        DIM iso_a$ = iso_cells[1]
+        DIM iso_b$ = iso_cells[2]
+        DIM iso_c$ = iso_cells[3]
+        IF iso_kind$ = "currency" THEN
+            cur_n = cur_n + 1
+            DIM digits_want = CINT(VAL(iso_c$))
+            DIM digits_got = CINT(VALID.CURRENCYDIGITS(iso_a$))
+            IF NOT VALID.ISCURRENCY(iso_a$) ORELSE VALID.CURRENCYNUMBER$(iso_a$) <> iso_b$ ORELSE digits_got <> digits_want THEN
+                cur_bad = cur_bad + 1
+                PRINT "  "; iso_line$
+            ENDIF
+        ELSE
+            cty_n = cty_n + 1
+            IF VALID.COUNTRY3$(iso_a$) <> iso_b$ ORELSE VALID.COUNTRYNUMBER$(iso_a$) <> iso_c$ ORELSE VALID.COUNTRY2$(iso_b$) <> iso_a$ ORELSE VALID.COUNTRY2$(iso_c$) <> iso_a$ THEN
+                cty_bad = cty_bad + 1
+                PRINT "  "; iso_line$
+            ENDIF
+        ENDIF
+    ENDIF
+NEXT r
+TESTKIT.EQ(cur_n, 178, "178 currencies")
+TESTKIT.EQ(cur_bad, 0, "codes, numbers and minor units as iso4217 has them")
+TESTKIT.EQ(cty_n, 249, "249 countries")
+TESTKIT.EQ(cty_bad, 0, "alpha-2, alpha-3 and numbers as pycountry has them, found by each")
+TESTKIT.EQ(LEN(VALID.CURRENCIES()), 178, "CURRENCIES lists them all")
+TESTKIT.EQ(LEN(VALID.COUNTRIES()), 249, "and COUNTRIES")
+TESTKIT.EQ(VALID.CURRENCYDIGITS("xau"), -1, "gold has no minor unit")
+TESTKIT.ISTRUE(VALID.ISCURRENCY("XAU"), "but is a currency")
+TESTKIT.ISFALSE(VALID.ISCURRENCY("EURO"), "a name is no code")
+TESTKIT.ISTRUE(VALID.ISCOUNTRY(" deu "), "a code in any case and with spaces")
+TESTKIT.ISFALSE(VALID.ISCOUNTRY("XK"), "Kosovo has no ISO 3166 code")
+TESTKIT.EQ(VALID.COUNTRY2$("999"), "", "no country for an unknown number")
+
+TESTKIT.SUITE("IBAN")
+DIM iban_rows = SPLIT(REPLACE$(TXTREADER$(base$ + "valid_iban.tsv"), CHR$(13), ""), CHR$(10))
+DIM group$ = ""
+DIM group_n = 0
+DIM group_bad = 0
+DIM groups_seen = 0
+DIM rows_seen = 0
+FOR r = 0 TO LEN(iban_rows) - 1
+    DIM iban_line$ = iban_rows[r]
+    IF LEN(iban_line$) > 0 THEN
+        DIM iban_cells = SPLIT(iban_line$, CHR$(9))
+        DIM iban_given$ = iban_cells[0]
+        DIM iban_want$ = iban_cells[1]
+        DIM iban_printed$ = iban_cells[2]
+        DIM iban_cc$ = UCASE$(LEFT$(iban_given$, 2))
+        IF iban_cc$ <> group$ THEN
+            IF group_n > 0 THEN
+                TESTKIT.EQ(group_bad, 0, "IBAN " + group$ + ": " + STR$(group_n) + " rows")
+                groups_seen = groups_seen + 1
+            ENDIF
+            group$ = iban_cc$
+            group_n = 0
+            group_bad = 0
+        ENDIF
+        group_n = group_n + 1
+        rows_seen = rows_seen + 1
+        DIM iban_row_ok = (Flag$(VALID.ISIBAN(iban_given$)) = iban_want$)
+        IF iban_want$ = "1" THEN
+            DIM iban_compact$ = REPLACE$(iban_printed$, " ", "")
+            IF VALID.IBAN$(iban_given$) <> iban_printed$ THEN iban_row_ok = FALSE
+            IF VALID.MAKEIBAN$(LEFT$(iban_compact$, 2), MID$(iban_compact$, 4)) <> iban_compact$ THEN iban_row_ok = FALSE
+            IF CINT(VALID.IBANLENGTH(LEFT$(iban_compact$, 2))) <> LEN(iban_compact$) THEN iban_row_ok = FALSE
+        ENDIF
+        IF NOT iban_row_ok THEN
+            group_bad = group_bad + 1
+            PRINT "  "; iban_line$
+        ENDIF
+    ENDIF
+NEXT r
+TESTKIT.EQ(group_bad, 0, "IBAN " + group$ + ": " + STR$(group_n) + " rows")
+TESTKIT.EQ(rows_seen, 620, "620 rows over the 89 registry countries")
+TESTKIT.EQ(LEN(VALID.IBANCOUNTRIES()), 89, "IBANCOUNTRIES")
+TESTKIT.EQ(VALID.IBANLENGTH("de"), 22, "IBANLENGTH")
+TESTKIT.EQ(VALID.IBANLENGTH("US"), 0, "0 for a country without IBAN")
+TESTKIT.EQ(VALID.IBANSTRUCTURE$("DE"), "8!n10!n", "IBANSTRUCTURE$")
+TESTKIT.EQ(VALID.MAKEIBAN$("de", "3704 0044 0532 0130 00"), "DE89370400440532013000", "MAKEIBAN$ computes the check digits")
+TESTKIT.EQ(VALID.MAKEIBAN$("DE", "3704004405320130"), "", "and refuses an account number of the wrong length")
+TESTKIT.EQ(VALID.MAKEIBAN$("US", "123"), "", "or a country outside the registry")
+TESTKIT.EQ(VALID.IBAN$("de89370400440532013000"), "DE89 3704 0044 0532 0130 00", "IBAN$ prints groups of four")
+TESTKIT.EQ(VALID.MOD97("WEST12345698765432GB82"), 1, "MOD97 of a rearranged IBAN is 1")
+TESTKIT.EQ(VALID.MOD97("A-1"), -1, "and -1 for another character")
+
+TESTKIT.SUITE("VAT identification numbers")
+DIM vat_rows = SPLIT(REPLACE$(TXTREADER$(base$ + "valid_vat.tsv"), CHR$(13), ""), CHR$(10))
+group$ = ""
+group_n = 0
+group_bad = 0
+rows_seen = 0
+FOR r = 0 TO LEN(vat_rows) - 1
+    DIM vat_line$ = vat_rows[r]
+    IF LEN(vat_line$) > 0 THEN
+        DIM vat_cells = SPLIT(vat_line$, CHR$(9))
+        DIM vat_given$ = vat_cells[0]
+        DIM vat_want$ = vat_cells[1]
+        DIM vat_compact$ = vat_cells[2]
+        IF vat_compact$ = "-" THEN vat_compact$ = ""
+        DIM vat_cc$ = UCASE$(LEFT$(vat_given$, 2))
+        IF vat_cc$ <> group$ THEN
+            IF group_n > 0 THEN TESTKIT.EQ(group_bad, 0, "VAT " + group$ + ": " + STR$(group_n) + " rows")
+            group$ = vat_cc$
+            group_n = 0
+            group_bad = 0
+        ENDIF
+        group_n = group_n + 1
+        rows_seen = rows_seen + 1
+        DIM vat_row_ok = (Flag$(VALID.ISVATID(vat_given$)) = vat_want$)
+        IF VALID.VATID$(vat_given$) <> vat_compact$ THEN vat_row_ok = FALSE
+        IF NOT vat_row_ok THEN
+            group_bad = group_bad + 1
+            PRINT "  "; vat_line$; "  got "; Flag$(VALID.ISVATID(vat_given$)); " "; VALID.VATID$(vat_given$)
+        ENDIF
+    ENDIF
+NEXT r
+TESTKIT.EQ(group_bad, 0, "VAT " + group$ + ": " + STR$(group_n) + " rows")
+TESTKIT.EQ(rows_seen, 224, "224 rows, valid and invalid, for every member state")
+TESTKIT.EQ(LEN(VALID.VATCOUNTRIES()), 28, "VATCOUNTRIES: 27 member states and XI")
+TESTKIT.EQ(VALID.VATID$("be 0403.019.261"), "BE0403019261", "VATID$ writes the number compact")
+TESTKIT.EQ(VALID.VATID$("BE 403 019 261"), "BE0403019261", "with the leading zero Belgium dropped")
+TESTKIT.EQ(VALID.VATID$("US123456789"), "", "and nothing for a prefix outside the EU")
+
+TESTKIT.SUITE("EAN, UPC, GTIN, ISBN, BIC, Luhn")
+DIM code_rows = SPLIT(REPLACE$(TXTREADER$(base$ + "valid_codes.tsv"), CHR$(13), ""), CHR$(10))
+DIM ean_bad = 0
+DIM isbn_bad = 0
+DIM bic_bad = 0
+DIM luhn_bad = 0
+DIM code_n = 0
+FOR r = 0 TO LEN(code_rows) - 1
+    DIM code_line$ = code_rows[r]
+    IF LEN(code_line$) > 0 THEN
+        code_n = code_n + 1
+        DIM code_cells = SPLIT(code_line$, CHR$(9))
+        DIM code_kind$ = code_cells[0]
+        DIM code_given$ = code_cells[1]
+        DIM code_want$ = code_cells[2]
+        DIM code_a$ = code_cells[3]
+        DIM code_b$ = code_cells[4]
+        IF code_kind$ = "ean" THEN
+            DIM ean_len = CINT(VAL(code_a$))
+            DIM ean_ok = (Flag$(VALID.ISGTIN(code_given$)) = code_want$)
+            IF Flag$(VALID.ISEAN(code_given$)) <> Flag$(code_want$ = "1" ANDALSO (ean_len = 8 ORELSE ean_len = 13)) THEN ean_ok = FALSE
+            IF Flag$(VALID.ISUPC(code_given$)) <> Flag$(code_want$ = "1" ANDALSO ean_len = 12) THEN ean_ok = FALSE
+            IF NOT ean_ok THEN
+                ean_bad = ean_bad + 1
+                PRINT "  "; code_line$
+            ENDIF
+        ELSEIF code_kind$ = "isbn" THEN
+            DIM isbn_ok = (Flag$(VALID.ISISBN(code_given$)) = code_want$)
+            IF code_a$ = "-" THEN code_a$ = ""
+            IF code_b$ = "-" THEN code_b$ = ""
+            IF VALID.ISBN13$(code_given$) <> code_a$ ORELSE VALID.ISBN10$(code_given$) <> code_b$ THEN isbn_ok = FALSE
+            IF NOT isbn_ok THEN
+                isbn_bad = isbn_bad + 1
+                PRINT "  "; code_line$; "  got "; VALID.ISBN13$(code_given$); " "; VALID.ISBN10$(code_given$)
+            ENDIF
+        ELSEIF code_kind$ = "bic" THEN
+            IF Flag$(VALID.ISBIC(code_given$)) <> code_want$ THEN
+                bic_bad = bic_bad + 1
+                PRINT "  "; code_line$
+            ENDIF
+        ELSE
+            DIM luhn_ok = (Flag$(VALID.ISLUHN(code_given$)) = code_want$)
+            IF VALID.LUHNDIGIT$(LEFT$(code_given$, LEN(code_given$) - 1)) <> code_a$ THEN luhn_ok = FALSE
+            IF NOT luhn_ok THEN
+                luhn_bad = luhn_bad + 1
+                PRINT "  "; code_line$
+            ENDIF
+        ENDIF
+    ENDIF
+NEXT r
+TESTKIT.EQ(code_n, 80, "80 rows")
+TESTKIT.EQ(ean_bad, 0, "EAN-8, UPC-A, EAN-13 and GTIN-14 as stdnum.ean checks them")
+TESTKIT.EQ(isbn_bad, 0, "ISBN-10 and ISBN-13, and the conversions both ways")
+TESTKIT.EQ(bic_bad, 0, "BIC")
+TESTKIT.EQ(luhn_bad, 0, "Luhn numbers and their check digits")
+TESTKIT.EQ(VALID.EANDIGIT$("400638133393"), "1", "EANDIGIT$")
+TESTKIT.ISTRUE(VALID.ISLUHN("79927398713"), "ISLUHN")
+TESTKIT.EQ(VALID.ISBN13$("3-16-148410-X"), "9783161484100", "ISBN13$ from an ISBN-10")
+TESTKIT.EQ(VALID.ISBN10$("979-10-90636-07-1"), "", "no ISBN-10 for a 979 number")
+
+TESTKIT.SUITE("formats by name")
+TESTKIT.EQ(LEN(VALID.FORMATS()), 10, "ten format names")
+TESTKIT.ISTRUE(VALID.ISFORMAT("IBAN", "DE89 3704 0044 0532 0130 00"), "iban, the name in any case")
+TESTKIT.ISTRUE(VALID.ISFORMAT("vatid", "DE136695976"), "vatid")
+TESTKIT.ISTRUE(VALID.ISFORMAT("currency", "chf"), "currency")
+TESTKIT.ISFALSE(VALID.ISFORMAT("country", "XX"), "country")
+TESTKIT.ISTRUE(VALID.ISFORMAT("luhn", "7992 7398 713"), "luhn with spaces")
+TESTKIT.THROWS(UnknownFormat@, "zip", "an unknown format name throws")
+
+TESTKIT.REPORT()

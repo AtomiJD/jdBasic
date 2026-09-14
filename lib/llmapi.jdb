@@ -233,6 +233,7 @@ FUNC StrictSchema(js)
     IF MAP.EXISTS(js, "minItems") THEN PUSH(notes$, "at least " + STR$(js{"minItems"}) + " items")
     IF MAP.EXISTS(js, "maxItems") THEN PUSH(notes$, "at most " + STR$(js{"maxItems"}) + " items")
     IF MAP.EXISTS(js, "pattern") THEN PUSH(notes$, "matching " + js{"pattern"})
+    IF MAP.EXISTS(js, "format") THEN PUSH(notes$, "a valid " + js{"format"})
     IF LEN(notes$) > 0 THEN
         IF LEN(about$) > 0 THEN about$ = about$ + " "
         about$ = about$ + "(" + JOIN(notes$, ", ") + ")"

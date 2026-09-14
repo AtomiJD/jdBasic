@@ -20,8 +20,9 @@
 ' array of that type. The map form takes "type", "required", "default",
 ' "enum", "min" and "max" (value for numbers, length for strings and
 ' arrays), "pattern" (a regular expression the whole string must match),
-' "items" (the element declaration of an array), "fields" (the field map
-' of a nested map) and "description".
+' "format" (a string format VALID checks: iban, bic, vatid, ean, upc,
+' gtin, isbn, luhn, country, currency), "items" (the element declaration
+' of an array), "fields" (the field map of a nested map) and "description".
 '
 ' CHECK answers {"ok", "errors", "value"}: "value" is a copy of the payload
 ' with defaults filled in and, in coercion mode, numeric strings turned
@@ -31,6 +32,8 @@
 ' detected with TYPEOF, since comparing a value to NONE proves nothing.
 
 EXPORT MODULE SCHEMA
+
+IMPORT VALID
 
 CONST TYPES = ["string", "number", "integer", "boolean", "array", "map", "any"]
 
@@ -93,6 +96,11 @@ FUNC NormalizeOne(decl, name$)
         THROW "SCHEMA: field " + name$ + " needs a type name or a map"
     ENDIF
     IF NOT (d{"type"} IN TYPES) THEN THROW "SCHEMA: field " + name$ + " has unknown type " + d{"type"}
+    IF MAP.EXISTS(d, "format") THEN
+        DIM wanted_format$ = LCASE$(d{"format"})
+        DIM known_formats = VALID.FORMATS()
+        IF NOT (wanted_format$ IN known_formats) THEN THROW "SCHEMA: field " + name$ + " has unknown format " + wanted_format$
+    ENDIF
     RETURN d
 ENDFUNC
 
@@ -194,6 +202,11 @@ FUNC CheckValue(d, v, path$, errors, coerce, strict)
         IF MAP.EXISTS(d, "min") ANDALSO LEN(keep) < d{"min"} THEN PUSH(errors, path$ + ": shorter than " + STR$(d{"min"}))
         IF MAP.EXISTS(d, "max") ANDALSO LEN(keep) > d{"max"} THEN PUSH(errors, path$ + ": longer than " + STR$(d{"max"}))
         IF MAP.EXISTS(d, "pattern") ANDALSO NOT REGEX.MATCH(d{"pattern"}, keep) THEN PUSH(errors, path$ + ": does not match " + d{"pattern"})
+        IF MAP.EXISTS(d, "format") THEN
+            DIM format_name$ = d{"format"}
+            DIM format_text$ = keep
+            IF NOT VALID.ISFORMAT(format_name$, format_text$) THEN PUSH(errors, path$ + ": not a valid " + LCASE$(format_name$))
+        ENDIF
     ELSEIF type$ = "number" OR type$ = "integer" THEN
         IF NOT IsNumber(v) THEN
             IF coerce ANDALSO t$ = "STRING" ANDALSO LooksNumeric(TRIM$(v)) THEN
@@ -321,6 +334,7 @@ FUNC FieldSchema(d)
     IF MAP.EXISTS(d, "enum") THEN out{"enum"} = d{"enum"}
     IF MAP.EXISTS(d, "default") THEN out{"default"} = d{"default"}
     IF MAP.EXISTS(d, "pattern") THEN out{"pattern"} = d{"pattern"}
+    IF MAP.EXISTS(d, "format") THEN out{"format"} = LCASE$(d{"format"})
     IF MAP.EXISTS(d, "min") THEN
         IF type$ = "string" THEN out{"minLength"} = d{"min"}
         IF type$ = "array" THEN out{"minItems"} = d{"min"}

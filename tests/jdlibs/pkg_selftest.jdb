@@ -1,6 +1,6 @@
 ' PKG: version ranges, manifests read from module sources, dependency
-' resolution against a fixture index, TESTKIT and LLMAPI installed with REQ
-' and SCHEMA into a fresh user folder and imported by a new process, a
+' resolution against a fixture index, TESTKIT and LLMAPI installed with REQ,
+' SCHEMA and VALID into a fresh user folder and imported by a new process, a
 ' project synced from its manifest and then from its lock file, and
 ' modules installed from a ZIP archive and a git repository.
 
@@ -116,8 +116,8 @@ TESTKIT.THROWS(Unmatched@, index$, "and a range nothing matches")
 TESTKIT.SUITE("installing")
 DIM user_lib$ = folder$ + "/user/.jdbasic/lib"
 DIM installed = PKG.INSTALL(libdir$, "TESTKIT, LLMAPI", user_lib$)
-TESTKIT.EQ(LEN(MAP.KEYS(installed)), 4, "TESTKIT and LLMAPI bring REQ and SCHEMA")
-DIM wanted_files = ["testkit.jdb", "llmapi.jdb", "req.jdb", "schema.jdb"]
+TESTKIT.EQ(LEN(MAP.KEYS(installed)), 5, "TESTKIT and LLMAPI bring REQ, SCHEMA and VALID")
+DIM wanted_files = ["testkit.jdb", "llmapi.jdb", "req.jdb", "schema.jdb", "valid.jdb"]
 FOR i = 0 TO LEN(wanted_files) - 1
     DIM wf$ = wanted_files[i]
     DIM copy_path$ = user_lib$ + "/" + wf$
@@ -125,7 +125,7 @@ FOR i = 0 TO LEN(wanted_files) - 1
     TESTKIT.EQ(CODEC.SHA256$(TXTREADER$(copy_path$)), CODEC.SHA256$(TXTREADER$(libdir$ + "/" + wf$)), wf$ + " is the module's own text")
 NEXT i
 DIM listed = PKG.INSTALLED(user_lib$)
-TESTKIT.EQ(LEN(MAP.KEYS(listed)), 4, "INSTALLED lists them")
+TESTKIT.EQ(LEN(MAP.KEYS(listed)), 5, "INSTALLED lists them")
 TESTKIT.EQ(listed{"LLMAPI"}, "1.0.0", "with their versions")
 DIM app_dir$ = folder$ + "/app"
 MKDIR app_dir$
@@ -145,10 +145,10 @@ ENDIF
 DIM hello_got = PKG.INSTALL(index$, "HELLOPKG ^1", user_lib$)
 TESTKIT.EQ(hello_got{"HELLOPKG"}, "1.2.0", "a package from another index into the same folder")
 TESTKIT.ISTRUE(INSTR(TXTREADER$(user_lib$ + "/hellopkg.jdb"), "hello 1.2.0") >= 0, "its file is the version chosen")
-TESTKIT.EQ(LEN(MAP.KEYS(PKG.INSTALLED(user_lib$))), 6, "six installed now")
+TESTKIT.EQ(LEN(MAP.KEYS(PKG.INSTALLED(user_lib$))), 7, "seven installed now")
 TESTKIT.EQ(PKG.REMOVE("TESTKIT", user_lib$), 1, "REMOVE takes one out")
 TESTKIT.ISFALSE(FILE.EXISTS(user_lib$ + "/testkit.jdb"), "its file is gone")
-TESTKIT.EQ(LEN(MAP.KEYS(PKG.INSTALLED(user_lib$))), 5, "and so is its entry")
+TESTKIT.EQ(LEN(MAP.KEYS(PKG.INSTALLED(user_lib$))), 6, "and so is its entry")
 DIM up_dir$ = folder$ + "/update"
 PKG.INSTALL(index$, "HELLOPKG =1.0.0", up_dir$)
 TESTKIT.ISTRUE(INSTR(TXTREADER$(up_dir$ + "/hellopkg.jdb"), "hello 1.0.0") >= 0, "an old version installed")

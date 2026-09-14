@@ -1,0 +1,270 @@
+' MONEY: amounts as whole numbers of minor units, checked against 2346
+' reference rows from Python's decimal module (parse, read from a double,
+' multiply by a rate, divide, convert, cash rounding, allocate, split), then
+' locale hints, refused input, text forms, overflow, rates given as numbers,
+' formatting beyond what a double holds, and an invoice that adds up.
+
+IMPORT TESTKIT, MONEY
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "money_reference.tsv") THEN base$ = "fixtures/"
+DIM NB$ = CHR$(194) + CHR$(160)
+DIM NN$ = CHR$(226) + CHR$(128) + CHR$(175)
+DIM RS$ = CHR$(226) + CHR$(128) + CHR$(153)
+DIM EURO$ = CHR$(226) + CHR$(130) + CHR$(172)
+
+FUNC Field$(v$)
+    IF v$ = "_" THEN RETURN ""
+    RETURN v$
+ENDFUNC
+
+FUNC Shown$(v)
+    RETURN FORMAT$("{:.0f}", v)
+ENDFUNC
+
+FUNC ListText$(values)
+    DIM pieces = []
+    DIM i = 0
+    FOR i = 0 TO LEN(values) - 1
+        DIM one = values[i]
+        PUSH(pieces, FORMAT$("{:.0f}", one))
+    NEXT i
+    RETURN JOIN(pieces, ",")
+ENDFUNC
+
+FUNC Numbers(list$)
+    DIM out = []
+    DIM texts = SPLIT(list$, ",")
+    DIM i = 0
+    FOR i = 0 TO LEN(texts) - 1
+        DIM t$ = texts[i]
+        PUSH(out, VAL(t$))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC RunRow$(op$, a$, b$, c$, d$)
+    DIM got$ = "ERROR"
+    TRY
+        IF op$ = "parse" THEN
+            got$ = Shown$(MONEY.PARSE(a$, b$, c$))
+        ELSEIF op$ = "fromnumber" THEN
+            got$ = Shown$(MONEY.FROMNUMBER(VAL(a$), b$, c$))
+        ELSEIF op$ = "times" THEN
+            got$ = Shown$(MONEY.TIMES(VAL(a$), b$, c$))
+        ELSEIF op$ = "divide" THEN
+            got$ = Shown$(MONEY.DIVIDE(VAL(a$), b$, c$))
+        ELSEIF op$ = "convert" THEN
+            DIM arrow = CINT(INSTR(b$, ">"))
+            DIM from_cur$ = LEFT$(b$, arrow)
+            DIM to_cur$ = MID$(b$, arrow + 1, 3)
+            got$ = Shown$(MONEY.CONVERT(VAL(a$), from_cur$, to_cur$, c$, d$))
+        ELSEIF op$ = "roundstep" THEN
+            got$ = Shown$(MONEY.ROUNDSTEP(VAL(a$), VAL(b$), c$))
+        ELSEIF op$ = "allocate" THEN
+            got$ = ListText$(MONEY.ALLOCATE(VAL(a$), Numbers(b$)))
+        ELSEIF op$ = "parts" THEN
+            got$ = ListText$(MONEY.PARTS(VAL(a$), VAL(b$)))
+        ENDIF
+    CATCH
+        got$ = "ERROR"
+    ENDTRY
+    RETURN got$
+ENDFUNC
+
+FUNC DigitsOf(code$)
+    RETURN MONEY.DIGITS(code$)
+ENDFUNC
+
+FUNC ParseEuro(source$)
+    RETURN MONEY.PARSE(source$, "EUR")
+ENDFUNC
+
+FUNC ParseWithMode(mode$)
+    RETURN MONEY.PARSE("1.005", "EUR", mode$)
+ENDFUNC
+
+FUNC PlusBeyond(amount)
+    RETURN MONEY.PLUS(amount, 1)
+ENDFUNC
+
+FUNC MinusBeyond(amount)
+    RETURN MONEY.MINUS(amount, 1)
+ENDFUNC
+
+FUNC NotWhole(amount)
+    RETURN MONEY.PLUS(amount, 1)
+ENDFUNC
+
+FUNC DivideByZero(divisor$)
+    RETURN MONEY.DIVIDE(100, divisor$)
+ENDFUNC
+
+FUNC TimesBeyond(rate$)
+    RETURN MONEY.TIMES(MONEY.MAXMINOR(), rate$)
+ENDFUNC
+
+FUNC AllocateBad(amount)
+    DIM bad = [1, -1]
+    RETURN MONEY.ALLOCATE(amount, bad)
+ENDFUNC
+
+TESTKIT.SUITE("currencies")
+TESTKIT.EQ(MONEY.DIGITS("EUR"), 2, "EUR has cents")
+TESTKIT.EQ(MONEY.DIGITS("jpy"), 0, "JPY has no minor unit, in any letter case")
+TESTKIT.EQ(MONEY.DIGITS("KWD"), 3, "KWD has fils")
+TESTKIT.EQ(MONEY.DIGITS("CLF"), 4, "CLF has four digits")
+TESTKIT.THROWS(DigitsOf@, "XAU", "gold has no minor unit to count in")
+TESTKIT.THROWS(DigitsOf@, "ZZZ", "an unknown code is refused")
+TESTKIT.EQ(Shown$(MONEY.MAXMINOR()), "9007199254740991", "the limit is 2^53 - 1 minor units")
+
+DIM lines = SPLIT(TXTREADER$(base$ + "money_reference.tsv"), CHR$(10))
+DIM ops = ["parse", "fromnumber", "times", "divide", "convert", "roundstep", "allocate", "parts"]
+DIM o = 0
+FOR o = 0 TO LEN(ops) - 1
+    DIM want_op$ = ops[o]
+    TESTKIT.SUITE("reference: " + want_op$)
+    DIM rows_seen = 0
+    DIM rows_bad = 0
+    DIM aggregate = (want_op$ = "times") ORELSE (want_op$ = "divide")
+    DIM li = 0
+    FOR li = 1 TO LEN(lines) - 1
+        DIM row$ = lines[li]
+        IF LEN(row$) > 0 THEN
+            DIM cells = SPLIT(row$, CHR$(9))
+            DIM op$ = cells[0]
+            IF op$ = want_op$ THEN
+                DIM c1$ = cells[1]
+                DIM c2$ = cells[2]
+                DIM c3$ = cells[3]
+                DIM c4$ = cells[4]
+                DIM want$ = cells[5]
+                DIM a$ = Field$(c1$)
+                DIM b$ = Field$(c2$)
+                DIM c$ = Field$(c3$)
+                DIM d$ = Field$(c4$)
+                DIM got$ = RunRow$(op$, a$, b$, c$, d$)
+                rows_seen = rows_seen + 1
+                IF aggregate THEN
+                    IF got$ <> want$ THEN
+                        rows_bad = rows_bad + 1
+                        IF rows_bad <= 5 THEN PRINT "  "; op$; " "; a$; " "; b$; " "; c$; ": got "; got$; ", want "; want$
+                    ENDIF
+                ELSE
+                    TESTKIT.EQ(got$, want$, op$ + " " + a$ + " " + b$ + " " + c$ + " " + d$)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT li
+    IF aggregate THEN
+        TESTKIT.EQ(rows_bad, 0, STR$(rows_seen) + " " + want_op$ + " rows equal Python decimal in seven rounding modes")
+    ENDIF
+NEXT o
+
+TESTKIT.SUITE("reading text")
+TESTKIT.EQ(MONEY.PARSE("1.234", "EUR", "", "de-DE"), 123400, "a German locale reads a dot as thousands")
+TESTKIT.EQ(MONEY.PARSE("1,234", "EUR", "", "en-US"), 123400, "an English one the comma")
+TESTKIT.EQ(MONEY.PARSE("CHF 1" + RS$ + "234.50", "CHF", "", "de-CH"), 123450, "Swiss grouping with its quote mark")
+TESTKIT.EQ(MONEY.PARSE("1" + NN$ + "234,50" + NB$ + EURO$, "EUR", "", "fr-FR"), 123450, "French with narrow no-break spaces and the euro sign")
+TESTKIT.EQ(MONEY.PARSE("-1.234,56 " + EURO$, "EUR"), -123456, "a minus before the number")
+TESTKIT.THROWS(ParseEuro@, "12a4", "a letter inside the number is refused")
+TESTKIT.THROWS(ParseEuro@, "", "an empty text is refused")
+TESTKIT.THROWS(ParseEuro@, "EUR", "a text without digits is refused")
+TESTKIT.THROWS(ParseEuro@, "1.23.4", "groups of other than three digits are refused")
+TESTKIT.THROWS(ParseEuro@, "1,234.5,6", "a group separator after the decimal mark is refused")
+TESTKIT.THROWS(ParseEuro@, "1.234", "1.234 euros has more decimals than cents")
+TESTKIT.THROWS(ParseWithMode@, "bankers", "an unknown rounding mode is refused")
+TESTKIT.EQ(MONEY.PARSE("1.005", "EUR", "HALF-EVEN"), 100, "mode names in any letter case")
+
+TESTKIT.SUITE("decimal text")
+TESTKIT.EQ(MONEY.DECIMAL$(123450, "EUR"), "1234.50", "cents with two decimals")
+TESTKIT.EQ(MONEY.DECIMAL$(-5, "EUR"), "-0.05", "a small negative amount")
+TESTKIT.EQ(MONEY.DECIMAL$(0, "EUR"), "0.00", "zero")
+TESTKIT.EQ(MONEY.DECIMAL$(1234, "JPY"), "1234", "yen without a point")
+TESTKIT.EQ(MONEY.DECIMAL$(1, "KWD"), "0.001", "one fils")
+TESTKIT.EQ(MONEY.DECIMAL$(-9007199254740991, "EUR"), "-90071992547409.91", "the limit")
+DIM trips = [0, 1, -1, 99, 100, 123456789, -9007199254740991, 9007199254740991]
+DIM all_back = TRUE
+DIM ti = 0
+FOR ti = 0 TO LEN(trips) - 1
+    DIM trip = trips[ti]
+    IF Shown$(MONEY.PARSE(MONEY.DECIMAL$(trip, "EUR"), "EUR")) <> Shown$(trip) THEN all_back = FALSE
+    IF Shown$(MONEY.PARSE(MONEY.DECIMAL$(trip, "CLF"), "CLF")) <> Shown$(trip) THEN all_back = FALSE
+NEXT ti
+TESTKIT.ISTRUE(all_back, "DECIMAL$ reads back through PARSE for EUR and CLF")
+TESTKIT.NEAR(MONEY.TOMAJOR(123450, "EUR"), 1234.5, 0.0000001, "TOMAJOR gives a double")
+
+TESTKIT.SUITE("adding")
+DIM top = MONEY.MAXMINOR()
+TESTKIT.EQ(Shown$(MONEY.PLUS(top - 1, 1)), "9007199254740991", "up to the limit")
+TESTKIT.THROWS(PlusBeyond@, top, "one past it throws")
+TESTKIT.THROWS(MinusBeyond@, -top, "and below the negative limit")
+TESTKIT.THROWS(NotWhole@, 1.5, "a fraction of a minor unit is refused")
+TESTKIT.EQ(MONEY.MINUS(1000, 1999), -999, "MINUS")
+DIM amounts = [1999, 4550, -250, 1]
+TESTKIT.EQ(MONEY.TOTAL(amounts), 6300, "TOTAL of an array")
+DIM too_many = [top, 1]
+DIM total_threw = FALSE
+TRY
+    DIM beyond_total = MONEY.TOTAL(too_many)
+CATCH
+    total_threw = TRUE
+ENDTRY
+TESTKIT.ISTRUE(total_threw, "TOTAL throws past the limit")
+TESTKIT.THROWS(TimesBeyond@, "2", "TIMES throws past the limit")
+
+TESTKIT.SUITE("rates as numbers")
+TESTKIT.EQ(MONEY.TIMES(123450, 0.19), 23456, "0.19 as a double reads as 0.19")
+TESTKIT.EQ(MONEY.TIMES(1999, 1.075), 2149, "1.075 as a double")
+TESTKIT.EQ(MONEY.TIMES(250, 0.5, "half-even"), 125, "a double rate with a mode")
+TESTKIT.EQ(MONEY.DIVIDE(100, 3), 33, "DIVIDE by a number")
+TESTKIT.EQ(MONEY.DIVIDE(100, 8, "half-even"), 12, "12.5 to the even neighbour")
+TESTKIT.THROWS(DivideByZero@, "0.00", "division by zero")
+TESTKIT.EQ(MONEY.CONVERT(10000, "EUR", "JPY", 161.23), 16123, "100 euros in yen")
+TESTKIT.EQ(MONEY.FROMNUMBER(19.99, "EUR"), 1999, "FROMNUMBER takes the double as it is written")
+TESTKIT.THROWS(AllocateBad@, 100, "a negative ratio is refused")
+
+TESTKIT.SUITE("formatting")
+TESTKIT.EQ(MONEY.CURRENCY$(123450, "EUR", "de-DE"), "1.234,50" + NB$ + EURO$, "de-DE EUR")
+TESTKIT.EQ(MONEY.CURRENCY$(-123450, "CHF", "de-CH"), "CHF-1" + RS$ + "234.50", "de-CH CHF negative")
+TESTKIT.EQ(MONEY.CURRENCY$(5, "EUR", "de-AT"), EURO$ + NB$ + "0,05", "de-AT with the sign first")
+TESTKIT.EQ(MONEY.CURRENCY$(123450, "USD", "en-US"), "$1,234.50", "en-US USD")
+TESTKIT.EQ(MONEY.CURRENCY$(-123450, "EUR", "en-US"), "-" + EURO$ + "1,234.50", "en-US EUR negative")
+TESTKIT.EQ(MONEY.CURRENCY$(123450, "EUR", "fr-FR"), "1" + NN$ + "234,50" + NB$ + EURO$, "fr-FR EUR")
+TESTKIT.EQ(MONEY.CURRENCY$(1234, "JPY", "de-DE"), "1.234" + NB$ + "JPY", "yen without decimals")
+TESTKIT.EQ(MONEY.CURRENCY$(1234567, "KWD", "en-US"), "KWD1,234.567", "fils with three decimals")
+TESTKIT.EQ(MONEY.CURRENCY$(top, "EUR", "de-DE"), "90.071.992.547.409,91" + NB$ + EURO$, "exact where a double has no cents left")
+TESTKIT.EQ(MONEY.CURRENCY$(-top, "USD", "en-GB"), "-US$90,071,992,547,409.91", "and negative")
+TESTKIT.EQ(MONEY.NUMBER$(-5, "EUR", "en-GB"), "-0.05", "NUMBER$ without a sign")
+TESTKIT.EQ(MONEY.NUMBER$(123456789, "EUR", "de-DE"), "1.234.567,89", "NUMBER$ grouped")
+TESTKIT.EQ(MONEY.NUMBER$(12345678, "CLF", "de-CH"), "1" + RS$ + "234.5678", "NUMBER$ with four decimals")
+
+TESTKIT.SUITE("an invoice")
+DIM net_lines = [MONEY.PARSE("19,99", "EUR"), MONEY.PARSE("45,50", "EUR"), MONEY.PARSE("123,45", "EUR")]
+DIM qty = [3, 1, 7]
+DIM line_net = []
+DIM line_vat = []
+DIM ii = 0
+FOR ii = 0 TO LEN(net_lines) - 1
+    DIM unit_price = net_lines[ii]
+    DIM count_items = qty[ii]
+    DIM amount_line = MONEY.TIMES(unit_price, count_items)
+    PUSH(line_net, amount_line)
+    PUSH(line_vat, MONEY.TIMES(amount_line, "0.19"))
+NEXT ii
+DIM net_sum = MONEY.TOTAL(line_net)
+DIM vat_sum = MONEY.TOTAL(line_vat)
+TESTKIT.EQ(MONEY.DECIMAL$(net_sum, "EUR"), "969.62", "the net lines add up")
+TESTKIT.EQ(MONEY.DECIMAL$(vat_sum, "EUR"), "184.23", "VAT rounded per line")
+TESTKIT.EQ(MONEY.DECIMAL$(MONEY.TIMES(net_sum, "0.19"), "EUR"), "184.23", "the same as VAT on the total here")
+DIM gross = MONEY.PLUS(net_sum, vat_sum)
+DIM installments = MONEY.PARTS(gross, 3)
+TESTKIT.EQ(ListText$(installments), "38462,38462,38461", "three installments, the odd cents first")
+TESTKIT.EQ(MONEY.TOTAL(installments), gross, "which add up to the gross amount")
+DIM ratio_list = [50, 30, 20]
+DIM shares = MONEY.ALLOCATE(gross, ratio_list)
+TESTKIT.EQ(ListText$(shares), "57693,34615,23077", "50 : 30 : 20 with the remainders handed out")
+TESTKIT.EQ(MONEY.TOTAL(shares), gross, "an allocation adds up too")
+TESTKIT.EQ(MONEY.ROUNDSTEP(gross + 3, 5), 115390, "cash rounding to five cents")
+
+TESTKIT.REPORT()
