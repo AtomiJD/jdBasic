@@ -48,7 +48,7 @@ values must match, or the call throws.
 | Value | Literal |
 |-------|---------|
 | text | `'...'` with every `'` doubled; text holding `CHR$(0)` is refused |
-| number | the shortest exact digits; a negative number in parentheses, so `5 -?` never turns into a comment |
+| number | the shortest digits (15 to 17 significant) that read back as the same double: `0.1`, `0.1234567`, `6.02214076e23`; whole numbers below 2^53 as digits; a negative number in parentheses, so `5 -?` never turns into a comment |
 | `NONE` | `NULL` |
 | `TRUE` / `FALSE` | `1` / `0` |
 

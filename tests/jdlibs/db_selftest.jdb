@@ -82,6 +82,12 @@ TESTKIT.EQ(DB.QUOTE$(""), "''", "and quotes empty text")
 TESTKIT.EQ(DB.QUOTE$(42), "42", "a whole number is written as digits")
 TESTKIT.EQ(DB.QUOTE$(0.1), "0.1", "a real at its shortest exact form")
 TESTKIT.EQ(DB.QUOTE$(-2.5), "(-2.5)", "a negative number in parentheses")
+TESTKIT.EQ(DB.QUOTE$(0.1234567), "0.1234567", "seven decimals are kept")
+TESTKIT.EQ(DB.QUOTE$(0.0000001), "0.0000001", "a small number is not rounded to 0")
+TESTKIT.EQ(DB.QUOTE$(6.02214076E23), "6.02214076e23", "a large one gets an exponent")
+TESTKIT.EQ(DB.QUOTE$(1.5E-300), "1.5e-300", "and a tiny one")
+DIM third = 1.0 / 3.0
+TESTKIT.ISTRUE(VAL(DB.QUOTE$(third)) = third, "a third reads back as the same double")
 TESTKIT.EQ(DB.IDENT$("we" + Q$ + "ird col"), Q$ + "we" + Q$ + Q$ + "ird col" + Q$, "IDENT$ doubles a double quote")
 TESTKIT.THROWS(QuoteNul@, 0, "text with a NUL character is refused")
 
@@ -196,6 +202,21 @@ odd_row{odd_name$} = "v"
 DIM odd_id = DB.INSERT(h, "odd " + Q$ + "table", odd_row)
 TESTKIT.EQARRAY(DB.COLUMNS(h, DB.FROM(DB.IDENT$("odd " + Q$ + "table"))), [odd_name$], "hostile table and column names stay names")
 TESTKIT.EQ(DB.DELETE(h, "hostile", "t = ?", ["' OR '1'='1"]), 1, "DELETE with a hostile value removes one row")
+
+DB.CREATE(h, "measures", {"id": "INTEGER PRIMARY KEY", "x": "REAL"})
+DIM exact_values = [0.1234567, 1.0 / 3.0, 0.0000001, 6.02214076E23, 1.5E-300, -2.5E-12, 123456789.125]
+DIM exact_ok = TRUE
+FOR k = 0 TO LEN(exact_values) - 1
+    DIM stored_value = exact_values[k]
+    DIM measure_id = DB.INSERT(h, "measures", {"x": stored_value})
+    DIM q_measure = DB.FROM("measures")
+    DB.SELECT(q_measure, "x")
+    DB.WHERE(q_measure, "id = ?", [measure_id])
+    DIM got = DB.VALUE(h, q_measure)
+    IF got <> stored_value THEN exact_ok = FALSE
+NEXT k
+TESTKIT.ISTRUE(exact_ok, "numbers stored and read back through SQLite are the same doubles")
+DIM dropped_measures = DB.EXEC(h, "DROP TABLE measures", [])
 
 ' ------------------------------------------------------------------ writing
 TESTKIT.EQ(DB.INSERTMANY(h, "customers", ["name", "city", "age"], [["Dee", "Rome", 52], ["Eve", "Oslo", 23]]), 2, "INSERTMANY answers the rows inserted")

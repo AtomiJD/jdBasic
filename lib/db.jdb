@@ -36,9 +36,52 @@ FUNC Literal$(v)
     ENDIF
     DIM n = v * 1.0
     IF n <> n ORELSE ABS(n) > 1.7976931348623157E308 THEN THROW "DB: a number is not finite"
-    DIM digits$ = FORMAT$("{}", v)
-    IF n < 0 THEN RETURN "(" + digits$ + ")"
+    DIM digits$ = NumberDigits$(ABS(n))
+    IF n < 0 THEN RETURN "(-" + digits$ + ")"
     RETURN digits$
+ENDFUNC
+
+FUNC TrimZeros$(text_in$)
+    IF INSTR(text_in$, ".") < 0 THEN RETURN text_in$
+    DIM out$ = text_in$
+    DO WHILE RIGHT$(out$, 1) = "0"
+        out$ = LEFT$(out$, LEN(out$) - 1)
+    LOOP
+    IF RIGHT$(out$, 1) = "." THEN out$ = LEFT$(out$, LEN(out$) - 1)
+    RETURN out$
+ENDFUNC
+
+' The shortest digits, from 15 to 17 significant ones, that read back as the
+' same double: whole numbers below 2^53 as they are, others with decimals,
+' and magnitudes beyond 1e20 or below 1e-20 with an exponent.
+FUNC NumberDigits$(magnitude)
+    IF magnitude = INT(magnitude) ANDALSO magnitude < 9007199254740992.0 THEN RETURN FORMAT$("{:.0f}", magnitude)
+    DIM expo = FLOOR(LOG10(magnitude))
+    DIM p = 15
+    DIM candidate$ = ""
+    IF expo >= -20 ANDALSO expo <= 20 THEN
+        FOR p = 15 TO 17
+            DIM decimals = p - 1 - expo
+            IF decimals < 0 THEN decimals = 0
+            candidate$ = TrimZeros$(FORMAT$("{:." + FORMAT$("{:d}", decimals) + "f}", magnitude))
+            IF VAL(candidate$) = magnitude THEN RETURN candidate$
+        NEXT p
+        RETURN candidate$
+    ENDIF
+    DIM half = INT(expo / 2)
+    DIM scaled = magnitude / (10.0 ^ half) / (10.0 ^ (expo - half))
+    IF scaled >= 10.0 THEN
+        scaled = scaled / 10.0
+        expo = expo + 1
+    ELSEIF scaled < 1.0 THEN
+        scaled = scaled * 10.0
+        expo = expo - 1
+    ENDIF
+    FOR p = 15 TO 17
+        candidate$ = TrimZeros$(FORMAT$("{:." + FORMAT$("{:d}", p - 1) + "f}", scaled)) + "e" + FORMAT$("{:d}", expo)
+        IF VAL(candidate$) = magnitude THEN RETURN candidate$
+    NEXT p
+    RETURN candidate$
 ENDFUNC
 
 FUNC QuoteName$(name$)
