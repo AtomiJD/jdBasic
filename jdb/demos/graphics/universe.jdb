@@ -1,7 +1,7 @@
 OPTION "EXPLICIT"
 
 ' ──────────────────────────────────────────────────────────────────
-' Bubble Universe in jdBasic — APL/vectorized version
+' Bubble Universe in jdBasic - APL/vectorized version
 '
 ' Each shape now has its own (x, y) trail (200 parallel state vectors).
 ' The inner loop becomes 350 vector operations over 200 elements
