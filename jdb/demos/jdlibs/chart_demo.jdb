@@ -1,0 +1,148 @@
+' chart_demo.jdb - the chart kinds for measurements on one HTML page: a
+' histogram of response times with its median, box plots per server, a
+' stacked area of traffic, user growth on a log scale with numbers along
+' x, a scatter with a fitted polynomial and reference lines, and bars with
+' a goal and a note. The page follows the reader's light or dark mode.
+'
+'   jdBasic jdb/demos/jdlibs/chart_demo.jdb [folder]
+
+IMPORT SVG, FIT
+
+DIM LF$ = CHR$(10)
+DIM i = 0
+DIM j = 0
+
+' ── the measurements ───────────────────────────────────────────
+
+DIM times = []
+FOR i = 0 TO 399
+    DIM spin = i * 0.6180339887
+    DIM u = spin - FLOOR(spin)
+    PUSH(times, 40 + 30 * -LOG(1 - u * 0.98))
+NEXT i
+DIM time_stats = SVG.BOXSTATS(times)
+PRINT "response times: "; LEN(times); " requests, median "; FORMAT$("{:.1f}", time_stats{"median"}); " ms, "; LEN(time_stats{"outliers"}); " outliers"
+
+DIM servers = ["alpha", "beta", "gamma"]
+DIM per_server = []
+FOR j = 0 TO LEN(servers) - 1
+    DIM samples = []
+    FOR i = 0 TO 59
+        DIM sample_ms = 60 + j * 15 + (8 + j * 4) * SIN(i * 1.7 + j) + 6 * COS(i * 0.9)
+        IF (i + j * 3) MOD 23 = 0 THEN sample_ms = sample_ms + 55 + j * 10
+        PUSH(samples, sample_ms)
+    NEXT i
+    PUSH(per_server, samples)
+NEXT j
+
+DIM months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+DIM traffic_web = []
+DIM traffic_app = []
+DIM traffic_api = []
+FOR i = 0 TO 11
+    PUSH(traffic_web, 120 + 30 * SIN(i / 2.0))
+    PUSH(traffic_app, 60 + i * 9)
+    PUSH(traffic_api, 20 + i * i * 1.5)
+NEXT i
+
+DIM years = []
+DIM users = []
+FOR i = 0 TO 10
+    PUSH(years, 2016 + i)
+    PUSH(users, ROUND(120 * 2.2 ^ i, 0))
+NEXT i
+
+DIM load_x = []
+DIM load_y = []
+FOR i = 0 TO 30
+    DIM load = i * 1.0
+    PUSH(load_x, load)
+    PUSH(load_y, 0.04 * load * load + 0.6 * load + 12 + 3 * SIN(i * 2.3))
+NEXT i
+DIM curve_coeffs = FIT.POLYFIT(load_x, load_y, 2)
+PRINT "fitted latency: "; FORMAT$("{:.4f}", curve_coeffs[0]); " x^2 + "; FORMAT$("{:.4f}", curve_coeffs[1]); " x + "; FORMAT$("{:.3f}", curve_coeffs[2])
+
+' ── the charts ─────────────────────────────────────────────────
+
+DIM hist = SVG.CHART("histogram", 560, 340)
+SVG.SETOPT(hist, "title", "Response times")
+SVG.SETOPT(hist, "x_title", "ms")
+SVG.SETOPT(hist, "y_title", "requests")
+SVG.SETOPT(hist, "legend", "none")
+SVG.BINS(hist, "requests", times, 24)
+SVG.REFLINE(hist, "x", time_stats{"median"}, "median")
+DIM hist$ = SVG.MARKUP$(SVG.RENDER(hist))
+
+DIM box = SVG.CHART("box", 560, 340)
+SVG.SETOPT(box, "title", "Latency per server")
+SVG.SETOPT(box, "y_title", "ms")
+FOR j = 0 TO LEN(servers) - 1
+    DIM server$ = servers[j]
+    SVG.SERIES(box, server$, per_server[j])
+NEXT j
+SVG.REFLINE(box, "y", 100, "budget")
+DIM box$ = SVG.MARKUP$(SVG.RENDER(box))
+
+DIM area = SVG.CHART("area", 560, 340)
+SVG.SETOPT(area, "title", "Traffic, stacked")
+SVG.SETOPT(area, "stacked", 1)
+SVG.LABELS(area, months)
+SVG.SERIES(area, "web", traffic_web)
+SVG.SERIES(area, "app", traffic_app)
+SVG.SERIES(area, "api", traffic_api)
+DIM area$ = SVG.MARKUP$(SVG.RENDER(area))
+
+DIM growth = SVG.CHART("line", 560, 340)
+SVG.SETOPT(growth, "title", "Users, log scale")
+SVG.SETOPT(growth, "y_log", 1)
+SVG.SETOPT(growth, "legend", "none")
+SVG.SETOPT(growth, "x_min", 2016)
+SVG.SETOPT(growth, "x_max", 2026)
+SVG.POINTS(growth, "users", years, users)
+SVG.NOTE(growth, 2020, users[4], "app launch")
+DIM growth$ = SVG.MARKUP$(SVG.RENDER(growth))
+
+DIM latency = SVG.CHART("scatter", 560, 340)
+SVG.SETOPT(latency, "title", "Latency against load")
+SVG.SETOPT(latency, "x_title", "requests per second")
+SVG.SETOPT(latency, "y_title", "ms")
+SVG.POINTS(latency, "measured", load_x, load_y)
+SVG.FITLINE(latency, "quadratic fit", curve_coeffs)
+SVG.REFLINE(latency, "y", 40, "SLA")
+SVG.REFLINE(latency, "x", 20, "capacity")
+DIM latency$ = SVG.MARKUP$(SVG.RENDER(latency))
+
+DIM goals = SVG.CHART("bar", 560, 340)
+SVG.SETOPT(goals, "title", "Deploys per team")
+SVG.SETOPT(goals, "legend", "none")
+SVG.LABELS(goals, ["core", "web", "data", "ops"])
+SVG.SERIES(goals, "deploys", [14, 22, 9, 17])
+SVG.REFLINE(goals, "y", 15, "goal")
+SVG.NOTE(goals, 1, 22, "record")
+DIM goals$ = SVG.MARKUP$(SVG.RENDER(goals))
+
+' ── the page ───────────────────────────────────────────────────
+
+DIM page$ = "<!doctype html>" + LF$ + "<html lang=en><head><meta charset=utf-8><title>Service charts</title>" + LF$
+page$ = page$ + "<style>body{font-family:system-ui,sans-serif;margin:2rem;background:#fff;color:#222}"
+page$ = page$ + "@media (prefers-color-scheme: dark){body{background:#1d1f21;color:#ddd}}"
+page$ = page$ + ".charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(560px,1fr));gap:1.5rem}</style></head><body>" + LF$
+page$ = page$ + "<h1>Service measurements</h1>" + LF$
+page$ = page$ + "<div class=charts>" + LF$ + hist$ + LF$ + box$ + LF$ + area$ + LF$ + growth$ + LF$ + latency$ + LF$ + goals$ + LF$ + "</div></body></html>" + LF$
+
+DIM args = OS.ARGS()
+DIM folder$ = ""
+IF LEN(args) > 1 THEN
+    folder$ = args[1]
+ELSE
+    folder$ = MKTEMP$("chartdemo")
+    MKDIR folder$
+ENDIF
+TXTWRITER folder$ + "/charts.html", page$
+PRINT "histogram:  "; LEN(hist$); " bytes"
+PRINT "box plots:  "; LEN(box$); " bytes"
+PRINT "area:       "; LEN(area$); " bytes"
+PRINT "log line:   "; LEN(growth$); " bytes"
+PRINT "scatter:    "; LEN(latency$); " bytes"
+PRINT "bars:       "; LEN(goals$); " bytes"
+PRINT "charts.html in "; folder$; ", open it in a browser (also in dark mode)"

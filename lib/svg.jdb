@@ -1,8 +1,9 @@
 ' svg.jdb - drawings and charts as SVG, without a window: documents with
 ' shapes, paths, text, groups, transforms and gradients, written as a
-' string or a file; line, bar, stacked bar, scatter and pie charts with
-' axes, ticks, a legend and colours that read on light and dark pages; and
-' sparklines for a table cell. The ground of svgwrite and pygal.
+' string or a file; line, bar, stacked bar, scatter, pie, area, histogram
+' and box charts with axes, log scales, ticks, reference lines, notes,
+' fitted curves, a legend and colours that read on light and dark pages;
+' and sparklines for a table cell. The ground of svgwrite and pygal.
 '
 '   IMPORT SVG
 '   DIM c = SVG.CHART("bar")
@@ -39,6 +40,49 @@ DIM gSeCount = []
 DIM gSeY = []
 DIM gSeX = []
 DIM gSeOk = []
+DIM gSeX2 = []
+DIM gSeHasX = []
+DIM gSeRole = []
+DIM gSeCoefFirst = []
+DIM gSeCoefCount = []
+DIM gCoef = []
+
+' reference lines and notes: one row each
+DIM gRefChart = []
+DIM gRefAxis = []
+DIM gRefValue = []
+DIM gRefLabel = []
+DIM gNoteChart = []
+DIM gNoteX = []
+DIM gNoteY = []
+DIM gNoteText = []
+
+' the last box computed, its outliers in a long array
+DIM gBxN = 0
+DIM gBxQ1 = 0.0
+DIM gBxMid = 0.0
+DIM gBxQ3 = 0.0
+DIM gBxLo = 0.0
+DIM gBxHi = 0.0
+DIM gBxAvg = 0.0
+DIM gBxOut = []
+DIM gBxOutFirst = 0
+DIM gBxOutCount = 0
+
+' the mapping of the plot being drawn: decades on a log axis
+DIM gPlotPl = 0.0
+DIM gPlotPt = 0.0
+DIM gPlotPw = 1.0
+DIM gPlotPh = 1.0
+DIM gPlotXLo = 0.0
+DIM gPlotXHi = 1.0
+DIM gPlotYLo = 0.0
+DIM gPlotYHi = 1.0
+DIM gPlotXLog = 0
+DIM gPlotYLog = 0
+DIM gRgSeen = 0
+DIM gRgLo = 0.0
+DIM gRgHi = 1.0
 
 DIM gTickLo = 0.0
 DIM gTickHi = 1.0
@@ -288,11 +332,11 @@ ENDSUB
 
 ' ── charts: data ───────────────────────────────────────────────
 
-' A chart of a kind: line, bar, stackedbar, scatter or pie. Answers its
-' handle; the size is in pixels.
+' A chart of a kind: line, bar, stackedbar, scatter, pie, area, histogram
+' or box. Answers its handle; the size is in pixels.
 EXPORT FUNC CHART(kind$, w_px = 640, h_px = 400)
     DIM k$ = LCASE$(kind$)
-    IF k$ <> "line" ANDALSO k$ <> "bar" ANDALSO k$ <> "stackedbar" ANDALSO k$ <> "scatter" ANDALSO k$ <> "pie" THEN THROW "SVG: no chart kind " + kind$
+    IF k$ <> "line" ANDALSO k$ <> "bar" ANDALSO k$ <> "stackedbar" ANDALSO k$ <> "scatter" ANDALSO k$ <> "pie" ANDALSO k$ <> "area" ANDALSO k$ <> "histogram" ANDALSO k$ <> "box" THEN THROW "SVG: no chart kind " + kind$
     PUSH(gChKind, k$)
     PUSH(gChW, w_px)
     PUSH(gChH, h_px)
@@ -304,7 +348,9 @@ ENDFUNC
 ' Sets an option of a chart: title, x_title, y_title, y_min, y_max,
 ' legend ("top" or "none"), dots (0 or 1), values (1 writes the numbers on
 ' the bars), donut (the hole of a pie, 0 to 0.9), background (a colour),
-' colors (a list separated by commas), decimals (of the axis labels).
+' colors (a list separated by commas), decimals (of the axis labels),
+' x_min, x_max (with numbers along x), y_log, x_log (1 for a log scale in
+' decades), stacked (1 stacks the series of an area chart).
 EXPORT SUB SETOPT(chart, opt_name$, value)
     gOpts{STR$(CINT(chart)) + ":" + LCASE$(opt_name$)} = value
 ENDSUB
@@ -354,7 +400,7 @@ EXPORT SUB LABELS(chart, labels)
     NEXT k
 ENDSUB
 
-SUB AddSeries(chart, label_name$, xs, ys, has_x)
+SUB AddSeries(chart, label_name$, xs, ys, has_x, role$ = "data")
     DIM c = CINT(chart)
     PUSH(gSeChart, c)
     PUSH(gSeName, label_name$)
@@ -362,6 +408,10 @@ SUB AddSeries(chart, label_name$, xs, ys, has_x)
     DIM n_points = LEN(ys)
     IF has_x = 1 ANDALSO LEN(xs) < n_points THEN n_points = LEN(xs)
     PUSH(gSeCount, n_points)
+    PUSH(gSeHasX, has_x)
+    PUSH(gSeRole, role$)
+    PUSH(gSeCoefFirst, 0)
+    PUSH(gSeCoefCount, 0)
     DIM k = 0
     FOR k = 0 TO n_points - 1
         DIM yv = ys[k]
@@ -382,6 +432,7 @@ SUB AddSeries(chart, label_name$, xs, ys, has_x)
             PUSH(gSeY, 0.0)
         ENDIF
         PUSH(gSeX, xv)
+        PUSH(gSeX2, 0.0)
         PUSH(gSeOk, ok)
     NEXT k
 ENDSUB
@@ -392,7 +443,8 @@ EXPORT SUB SERIES(chart, label_name$, vals)
     AddSeries(chart, label_name$, no_x, vals, 0)
 ENDSUB
 
-' A series of points for a scatter chart.
+' A series of points for a scatter, line or area chart with numbers
+' along x.
 EXPORT SUB POINTS(chart, label_name$, xs, ys)
     AddSeries(chart, label_name$, xs, ys, 1)
 ENDSUB
@@ -620,6 +672,8 @@ EXPORT FUNC RENDER(chart)
     ENDIF
     IF kind$ = "pie" THEN
         DrawPie(doc, chart, series, 16, top, w - 32, h - top - 16)
+    ELSEIF NeedsPlot(chart, kind$, series) THEN
+        DrawPlot(doc, chart, series, kind$, top)
     ELSE
         DrawAxes(doc, chart, series, kind$, top)
     ENDIF
@@ -972,6 +1026,926 @@ SUB DrawAxes(doc, chart, series, kind$, top)
             NEXT k
         ENDIF
     NEXT j
+    IF HasOverlays(chart) THEN DrawAxesOverlays(doc, chart, kind$, pl, pt, pw, ph, ylo, yhi, n_labels)
+ENDSUB
+
+' ── charts: histograms, curves, reference lines, notes ─────────
+
+' A histogram series from raw values: bins equal-width bins from the
+' smallest to the largest value, the largest in the last bin.
+EXPORT SUB BINS(chart, label_name$, vals, n_bins = 10)
+    DIM counts_in = HISTOGRAM(vals, n_bins)
+    DIM edges_in = HISTEDGES(vals, n_bins)
+    BinSeries(chart, label_name$, counts_in, edges_in)
+ENDSUB
+
+' A histogram series from counts and their edges, one edge more than
+' counts, as HISTOGRAM and HISTEDGES answer them.
+EXPORT SUB BINCOUNTS(chart, label_name$, counts_in, edges_in)
+    BinSeries(chart, label_name$, counts_in, edges_in)
+ENDSUB
+
+SUB BinSeries(chart, label_name$, counts_in, edges_in)
+    IF LEN(edges_in) <> LEN(counts_in) + 1 THEN THROW "SVG: a histogram needs one edge more than counts"
+    PUSH(gSeChart, CINT(chart))
+    PUSH(gSeName, label_name$)
+    PUSH(gSeFirst, LEN(gSeY))
+    PUSH(gSeCount, LEN(counts_in))
+    PUSH(gSeHasX, 1)
+    PUSH(gSeRole, "bins")
+    PUSH(gSeCoefFirst, 0)
+    PUSH(gSeCoefCount, 0)
+    DIM k = 0
+    FOR k = 0 TO LEN(counts_in) - 1
+        DIM cv = counts_in[k]
+        DIM edge_lo = edges_in[k]
+        DIM edge_hi = edges_in[k + 1]
+        PUSH(gSeY, cv + 0.0)
+        PUSH(gSeX, edge_lo + 0.0)
+        PUSH(gSeX2, edge_hi + 0.0)
+        PUSH(gSeOk, 1)
+    NEXT k
+ENDSUB
+
+' A line through points drawn over the chart without dots, such as a
+' model or a trend; it needs numbers along x.
+EXPORT SUB CURVE(chart, label_name$, xs, ys)
+    AddSeries(chart, label_name$, xs, ys, 1, "curve")
+ENDSUB
+
+' A polynomial drawn across the x range, coefficients highest power
+' first as FIT.POLYFIT answers them.
+EXPORT SUB FITLINE(chart, label_name$, coeffs)
+    PUSH(gSeChart, CINT(chart))
+    PUSH(gSeName, label_name$)
+    PUSH(gSeFirst, LEN(gSeY))
+    PUSH(gSeCount, 0)
+    PUSH(gSeHasX, 1)
+    PUSH(gSeRole, "fit")
+    PUSH(gSeCoefFirst, LEN(gCoef))
+    PUSH(gSeCoefCount, LEN(coeffs))
+    DIM k = 0
+    FOR k = 0 TO LEN(coeffs) - 1
+        DIM cf = coeffs[k]
+        PUSH(gCoef, cf + 0.0)
+    NEXT k
+ENDSUB
+
+' A dashed reference line across the plot at a value of the y axis or,
+' with numbers along x, of the x axis; label$ is written beside it.
+EXPORT SUB REFLINE(chart, axis$, value, label$ = "")
+    DIM ax$ = LCASE$(axis$)
+    IF ax$ <> "x" ANDALSO ax$ <> "y" THEN THROW "SVG: a reference line is on axis x or y"
+    PUSH(gRefChart, CINT(chart))
+    PUSH(gRefAxis, ax$)
+    PUSH(gRefValue, value + 0.0)
+    PUSH(gRefLabel, label$)
+ENDSUB
+
+' A marked point with a text; on a chart with categories x is the index
+' of the category.
+EXPORT SUB NOTE(chart, xv, yv, content$)
+    PUSH(gNoteChart, CINT(chart))
+    PUSH(gNoteX, xv + 0.0)
+    PUSH(gNoteY, yv + 0.0)
+    PUSH(gNoteText, content$)
+ENDSUB
+
+' ── charts: box statistics ─────────────────────────────────────
+
+FUNC Quantile(sorted_vals, p)
+    DIM n_vals = LEN(sorted_vals)
+    DIM pos = p * (n_vals - 1)
+    DIM idx = CLNG(FLOOR(pos))
+    DIM frac = pos - idx
+    DIM low_v = sorted_vals[idx]
+    IF idx + 1 >= n_vals THEN RETURN low_v + 0.0
+    DIM high_v = sorted_vals[idx + 1]
+    RETURN low_v + (high_v - low_v) * frac
+ENDFUNC
+
+' The box of a set of numbers: quartiles by linear interpolation (numpy's
+' default percentile), whiskers at the most extreme values within 1.5
+' times the interquartile range, the values beyond as outliers - the rule
+' of matplotlib's boxplot. Leaves the results in gBx*.
+SUB BoxCompute(vals)
+    DIM clean = []
+    DIM k = 0
+    FOR k = 0 TO LEN(vals) - 1
+        DIM v = vals[k]
+        IF NumCell(v) THEN PUSH(clean, v + 0.0)
+    NEXT k
+    IF LEN(clean) = 0 THEN THROW "SVG: a box needs numbers"
+    DIM sorted_vals = SORT(clean)
+    DIM n_vals = LEN(sorted_vals)
+    gBxN = n_vals
+    gBxQ1 = Quantile(sorted_vals, 0.25)
+    gBxMid = Quantile(sorted_vals, 0.5)
+    gBxQ3 = Quantile(sorted_vals, 0.75)
+    DIM spread = gBxQ3 - gBxQ1
+    DIM lo_lim = gBxQ1 - 1.5 * spread
+    DIM hi_lim = gBxQ3 + 1.5 * spread
+    gBxLo = gBxQ1
+    gBxHi = gBxQ3
+    FOR k = 0 TO n_vals - 1
+        DIM low_candidate = sorted_vals[k]
+        IF low_candidate >= lo_lim THEN
+            IF low_candidate <= gBxQ1 THEN gBxLo = low_candidate
+            EXITFOR
+        ENDIF
+    NEXT k
+    FOR k = n_vals - 1 TO 0 STEP -1
+        DIM high_candidate = sorted_vals[k]
+        IF high_candidate <= hi_lim THEN
+            IF high_candidate >= gBxQ3 THEN gBxHi = high_candidate
+            EXITFOR
+        ENDIF
+    NEXT k
+    DIM total = 0.0
+    gBxOutFirst = LEN(gBxOut)
+    FOR k = 0 TO n_vals - 1
+        DIM each_v = sorted_vals[k]
+        total = total + each_v
+        IF each_v < gBxLo ORELSE each_v > gBxHi THEN PUSH(gBxOut, each_v)
+    NEXT k
+    gBxOutCount = LEN(gBxOut) - gBxOutFirst
+    gBxAvg = total / n_vals
+ENDSUB
+
+' The numbers a box plot draws: n, q1, median, q3, iqr, whislo, whishi,
+' mean and outliers (a list), as matplotlib's boxplot_stats computes them.
+EXPORT FUNC BOXSTATS(vals)
+    BoxCompute(vals)
+    DIM outs = []
+    DIM k = 0
+    FOR k = 0 TO gBxOutCount - 1
+        DIM ov = gBxOut[gBxOutFirst + k]
+        PUSH(outs, ov)
+    NEXT k
+    DIM stats AS MAP
+    stats{"n"} = gBxN
+    stats{"q1"} = gBxQ1
+    stats{"median"} = gBxMid
+    stats{"q3"} = gBxQ3
+    stats{"iqr"} = gBxQ3 - gBxQ1
+    stats{"whislo"} = gBxLo
+    stats{"whishi"} = gBxHi
+    stats{"mean"} = gBxAvg
+    stats{"outliers"} = outs
+    RETURN stats
+ENDFUNC
+
+' ── charts: numeric axes, log scales, histograms, areas, boxes ─
+
+FUNC PlotXPix(v)
+    DIM t = v + 0.0
+    IF gPlotXLog = 1 THEN
+        IF t <= 0 THEN RETURN gPlotPl
+        t = LOG10(t)
+    ENDIF
+    RETURN gPlotPl + (t - gPlotXLo) / (gPlotXHi - gPlotXLo) * gPlotPw
+ENDFUNC
+
+FUNC PlotYPix(v)
+    DIM t = v + 0.0
+    IF gPlotYLog = 1 THEN
+        IF t <= 0 THEN RETURN gPlotPt + gPlotPh
+        t = LOG10(t)
+    ENDIF
+    RETURN gPlotPt + gPlotPh - (t - gPlotYLo) / (gPlotYHi - gPlotYLo) * gPlotPh
+ENDFUNC
+
+FUNC PlotCatX(index, n_cats, as_slots)
+    IF as_slots = 1 THEN RETURN gPlotPl + gPlotPw * (index + 0.5) / n_cats
+    IF n_cats < 2 THEN RETURN gPlotPl + gPlotPw / 2
+    RETURN gPlotPl + gPlotPw * index / (n_cats - 1)
+ENDFUNC
+
+SUB RangeStart()
+    gRgSeen = 0
+    gRgLo = 0.0
+    gRgHi = 1.0
+ENDSUB
+
+SUB RangeTake(v, log_scale)
+    DIM fv = v + 0.0
+    IF log_scale = 0 ORELSE fv > 0 THEN
+        IF gRgSeen = 0 THEN
+            gRgLo = fv
+            gRgHi = fv
+            gRgSeen = 1
+        ENDIF
+        IF fv < gRgLo THEN gRgLo = fv
+        IF fv > gRgHi THEN gRgHi = fv
+    ENDIF
+ENDSUB
+
+FUNC LogTick$(ex)
+    DIM e_int = CLNG(ex)
+    IF e_int >= 0 THEN RETURN FORMAT$("{:.0f}", 10 ^ e_int)
+    RETURN FORMAT$("{:." + STR$(-e_int) + "f}", 10 ^ e_int)
+ENDFUNC
+
+FUNC PolyAt(first, n_coef, xv)
+    DIM acc = 0.0
+    DIM k = 0
+    FOR k = 0 TO n_coef - 1
+        acc = acc * xv + gCoef[first + k]
+    NEXT k
+    RETURN acc
+ENDFUNC
+
+' Whether a chart needs the numeric plot: new kinds, log scales, curves,
+' fits, x limits, and reference lines or notes on a scatter chart.
+FUNC NeedsPlot(chart, kind$, series)
+    IF kind$ = "histogram" ORELSE kind$ = "area" ORELSE kind$ = "box" THEN RETURN TRUE
+    DIM logs = 0
+    IF OptNum(chart, "y_log", 0) = 1 ORELSE OptNum(chart, "x_log", 0) = 1 THEN logs = 1
+    IF logs = 1 ANDALSO (kind$ = "bar" ORELSE kind$ = "stackedbar") THEN THROW "SVG: a log scale is for line, area, scatter, histogram and box charts"
+    IF logs = 1 THEN RETURN TRUE
+    DIM c = CINT(chart)
+    DIM k = 0
+    FOR k = 0 TO LEN(series) - 1
+        DIM sid = series[k]
+        DIM role$ = gSeRole[sid]
+        IF role$ <> "data" THEN RETURN TRUE
+        IF kind$ = "line" ANDALSO gSeHasX[sid] = 1 THEN RETURN TRUE
+    NEXT k
+    IF kind$ = "scatter" THEN
+        IF HasOpt(chart, "x_min") ORELSE HasOpt(chart, "x_max") THEN RETURN TRUE
+        FOR k = 0 TO LEN(gRefChart) - 1
+            IF gRefChart[k] = c THEN RETURN TRUE
+        NEXT k
+        FOR k = 0 TO LEN(gNoteChart) - 1
+            IF gNoteChart[k] = c THEN RETURN TRUE
+        NEXT k
+    ENDIF
+    RETURN FALSE
+ENDFUNC
+
+SUB DrawPolyRun(doc, xs, ys, series_col$)
+    IF LEN(xs) > 1 THEN
+        DIM la AS MAP
+        la{"fill"} = "none"
+        la{"stroke"} = series_col$
+        la{"stroke_width"} = 2
+        la{"stroke_linejoin"} = "round"
+        ADDPOLYLINE(doc, xs, ys, la)
+    ENDIF
+ENDSUB
+
+' Reference lines and notes of a chart over a plot whose mapping is in
+' gPlot*; cat_mode gives category positions for note x values.
+SUB DrawOverlays(doc, chart, cat_mode, n_cats, as_slots)
+    DIM c = CINT(chart)
+    DIM k = 0
+    FOR k = 0 TO LEN(gRefChart) - 1
+        IF gRefChart[k] = c THEN
+            DIM ax$ = gRefAxis[k]
+            DIM rv = gRefValue[k]
+            DIM rl$ = gRefLabel[k]
+            DIM ra AS MAP
+            ra{"stroke"} = "#888888"
+            ra{"stroke_width"} = 1.5
+            ra{"stroke_dasharray"} = "5 4"
+            ra{"data_ref"} = Num$(rv)
+            IF ax$ = "y" THEN
+                DIM ry = PlotYPix(rv)
+                IF (gPlotYLog = 0 ORELSE rv > 0) ANDALSO ry >= gPlotPt - 0.5 ANDALSO ry <= gPlotPt + gPlotPh + 0.5 THEN
+                    ADDLINE(doc, gPlotPl, ry, gPlotPl + gPlotPw, ry, ra)
+                    IF rl$ <> "" THEN TextAt(doc, gPlotPl + 4, ry - 5, rl$, "start", "", "")
+                ENDIF
+            ELSE
+                IF cat_mode = 0 ANDALSO (gPlotXLog = 0 ORELSE rv > 0) THEN
+                    DIM rx = PlotXPix(rv)
+                    ADDLINE(doc, rx, gPlotPt, rx, gPlotPt + gPlotPh, ra)
+                    IF rl$ <> "" THEN TextAt(doc, rx + 4, gPlotPt + 12, rl$, "start", "", "")
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT k
+    FOR k = 0 TO LEN(gNoteChart) - 1
+        IF gNoteChart[k] = c THEN
+            DIM nx = gNoteX[k]
+            DIM ny = gNoteY[k]
+            DIM nt$ = gNoteText[k]
+            DIM px = 0.0
+            IF cat_mode = 1 THEN
+                px = PlotCatX(nx, n_cats, as_slots)
+            ELSE
+                px = PlotXPix(nx)
+            ENDIF
+            DIM na AS MAP
+            na{"fill"} = "#888888"
+            na{"data_note"} = nt$
+            ADDCIRCLE(doc, px, PlotYPix(ny), 3, na)
+            TextAt(doc, px + 6, PlotYPix(ny) - 6, nt$, "start", "", "")
+        ENDIF
+    NEXT k
+ENDSUB
+
+' Reference lines and notes over a bar, stacked bar or category line chart
+' drawn by DrawAxes, on its linear y axis.
+SUB DrawAxesOverlays(doc, chart, kind$, pl, pt, pw, ph, ylo, yhi, n_labels)
+    gPlotPl = pl
+    gPlotPt = pt
+    gPlotPw = pw
+    gPlotPh = ph
+    gPlotYLo = ylo
+    gPlotYHi = yhi
+    gPlotYLog = 0
+    gPlotXLog = 0
+    DIM as_slots = 1
+    IF kind$ = "line" THEN as_slots = 0
+    DrawOverlays(doc, chart, 1, n_labels, as_slots)
+ENDSUB
+
+FUNC HasOverlays(chart)
+    DIM c = CINT(chart)
+    DIM k = 0
+    FOR k = 0 TO LEN(gRefChart) - 1
+        IF gRefChart[k] = c THEN RETURN TRUE
+    NEXT k
+    FOR k = 0 TO LEN(gNoteChart) - 1
+        IF gNoteChart[k] = c THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+SUB DrawPlot(doc, chart, series, kind$, top)
+    DIM c = CINT(chart)
+    DIM w = gChW[c]
+    DIM h = gChH[c]
+    DIM k = 0
+    DIM j = 0
+    DIM x_title$ = OptStr$(chart, "x_title", "")
+    DIM y_title$ = OptStr$(chart, "y_title", "")
+    DIM margin_left = 56.0
+    IF y_title$ <> "" THEN margin_left = margin_left + 18
+    DIM bottom = 34.0
+    IF x_title$ <> "" THEN bottom = bottom + 18
+    gPlotPl = margin_left
+    gPlotPt = top + 6
+    gPlotPw = w - margin_left - 20
+    gPlotPh = h - gPlotPt - bottom
+    DIM pl = gPlotPl
+    DIM pt = gPlotPt
+    DIM pw = gPlotPw
+    DIM ph = gPlotPh
+    DIM y_log = 0
+    IF OptNum(chart, "y_log", 0) = 1 THEN y_log = 1
+    DIM x_log = 0
+    IF OptNum(chart, "x_log", 0) = 1 THEN x_log = 1
+    DIM stacked = 0
+    IF OptNum(chart, "stacked", 0) = 1 THEN stacked = 1
+    DIM n_series = LEN(series)
+    ' what runs along x
+    DIM numeric_x = 0
+    IF kind$ = "scatter" ORELSE kind$ = "histogram" THEN numeric_x = 1
+    DIM data_with_x = 0
+    DIM data_without_x = 0
+    DIM overlays_x = 0
+    FOR j = 0 TO n_series - 1
+        DIM sq = series[j]
+        DIM role_q$ = gSeRole[sq]
+        IF role_q$ = "data" THEN
+            IF gSeHasX[sq] = 1 THEN
+                data_with_x = data_with_x + 1
+            ELSE
+                data_without_x = data_without_x + 1
+            ENDIF
+        ELSEIF role_q$ = "curve" ORELSE role_q$ = "fit" THEN
+            overlays_x = overlays_x + 1
+        ENDIF
+    NEXT j
+    IF (kind$ = "line" ORELSE kind$ = "area") ANDALSO (data_with_x > 0 ORELSE overlays_x > 0) THEN numeric_x = 1
+    IF kind$ = "box" THEN numeric_x = 0
+    IF numeric_x = 1 ANDALSO data_without_x > 0 THEN THROW "SVG: a chart with numbers along x takes POINTS, not SERIES"
+    IF numeric_x = 0 ANDALSO overlays_x > 0 THEN THROW "SVG: a curve needs numbers along x"
+    IF x_log = 1 ANDALSO numeric_x = 0 THEN THROW "SVG: x_log needs numbers along x"
+    IF stacked = 1 ANDALSO numeric_x = 1 THEN THROW "SVG: stacked areas take SERIES along categories"
+    DIM n_cats = gChLabelCount[c]
+    DIM as_slots = 0
+    IF kind$ = "box" THEN
+        n_cats = n_series
+        as_slots = 1
+    ENDIF
+    ' the x range
+    gPlotXLog = x_log
+    gPlotXLo = 0.0
+    gPlotXHi = 1.0
+    DIM xstep = 1.0
+    IF numeric_x = 1 THEN
+        RangeStart()
+        FOR j = 0 TO n_series - 1
+            DIM sx = series[j]
+            DIM role_x$ = gSeRole[sx]
+            FOR k = 0 TO gSeCount[sx] - 1
+                DIM at_x = gSeFirst[sx] + k
+                IF gSeOk[at_x] = 1 THEN
+                    RangeTake(gSeX[at_x], x_log)
+                    IF role_x$ = "bins" THEN RangeTake(gSeX2[at_x], x_log)
+                ENDIF
+            NEXT k
+        NEXT j
+        FOR k = 0 TO LEN(gRefChart) - 1
+            IF gRefChart[k] = c ANDALSO gRefAxis[k] = "x" THEN RangeTake(gRefValue[k], x_log)
+        NEXT k
+        FOR k = 0 TO LEN(gNoteChart) - 1
+            IF gNoteChart[k] = c THEN RangeTake(gNoteX[k], x_log)
+        NEXT k
+        IF gRgSeen = 0 THEN
+            RangeTake(1.0, x_log)
+            RangeTake(10.0, x_log)
+        ENDIF
+        DIM xa = gRgLo
+        DIM xb = gRgHi
+        IF HasOpt(chart, "x_min") THEN xa = OptNum(chart, "x_min", 0)
+        IF HasOpt(chart, "x_max") THEN xb = OptNum(chart, "x_max", 0)
+        IF x_log = 1 THEN
+            gPlotXLo = FLOOR(LOG10(xa) + 0.000000001)
+            gPlotXHi = CEIL(LOG10(xb) - 0.000000001)
+            IF gPlotXHi <= gPlotXLo THEN gPlotXHi = gPlotXLo + 1
+        ELSE
+            NiceRange(xa, xb)
+            gPlotXLo = gTickLo
+            gPlotXHi = gTickHi
+            xstep = gTickStep
+            IF HasOpt(chart, "x_min") THEN gPlotXLo = OptNum(chart, "x_min", 0)
+            IF HasOpt(chart, "x_max") THEN gPlotXHi = OptNum(chart, "x_max", 0)
+        ENDIF
+    ENDIF
+    ' fitted polynomials sampled across the x range
+    DIM fit_owner = []
+    DIM fit_x = []
+    DIM fit_y = []
+    IF numeric_x = 1 THEN
+        DIM real_lo = gPlotXLo
+        DIM real_hi = gPlotXHi
+        IF x_log = 1 THEN
+            real_lo = 10 ^ gPlotXLo
+            real_hi = 10 ^ gPlotXHi
+        ENDIF
+        FOR j = 0 TO n_series - 1
+            DIM sf = series[j]
+            DIM role_f$ = gSeRole[sf]
+            IF role_f$ = "fit" THEN
+                FOR k = 0 TO 80
+                    DIM fx = real_lo + (real_hi - real_lo) * k / 80
+                    IF x_log = 1 THEN fx = 10 ^ (gPlotXLo + (gPlotXHi - gPlotXLo) * k / 80)
+                    PUSH(fit_owner, j)
+                    PUSH(fit_x, fx)
+                    PUSH(fit_y, PolyAt(gSeCoefFirst[sf], gSeCoefCount[sf], fx))
+                NEXT k
+            ENDIF
+        NEXT j
+    ENDIF
+    ' box statistics per series
+    DIM box_q1 = []
+    DIM box_mid = []
+    DIM box_q3 = []
+    DIM box_lo = []
+    DIM box_hi = []
+    DIM box_n = []
+    DIM box_out_first = []
+    DIM box_out_count = []
+    IF kind$ = "box" THEN
+        FOR j = 0 TO n_series - 1
+            DIM sb = series[j]
+            DIM box_raw = []
+            FOR k = 0 TO gSeCount[sb] - 1
+                DIM at_b = gSeFirst[sb] + k
+                IF gSeOk[at_b] = 1 THEN
+                    DIM raw_v = gSeY[at_b]
+                    PUSH(box_raw, raw_v)
+                ENDIF
+            NEXT k
+            BoxCompute(box_raw)
+            PUSH(box_q1, gBxQ1)
+            PUSH(box_mid, gBxMid)
+            PUSH(box_q3, gBxQ3)
+            PUSH(box_lo, gBxLo)
+            PUSH(box_hi, gBxHi)
+            PUSH(box_n, gBxN)
+            PUSH(box_out_first, gBxOutFirst)
+            PUSH(box_out_count, gBxOutCount)
+        NEXT j
+    ENDIF
+    ' the y range
+    DIM stack_sum = []
+    IF stacked = 1 THEN
+        FOR k = 0 TO n_cats - 1
+            PUSH(stack_sum, 0.0)
+        NEXT k
+    ENDIF
+    RangeStart()
+    IF (kind$ = "area" ORELSE kind$ = "histogram") ANDALSO y_log = 0 THEN RangeTake(0.0, 0)
+    FOR j = 0 TO n_series - 1
+        DIM sy = series[j]
+        DIM role_y$ = gSeRole[sy]
+        IF role_y$ = "data" ORELSE role_y$ = "curve" ORELSE role_y$ = "bins" THEN
+            IF kind$ <> "box" ORELSE role_y$ <> "data" THEN
+                FOR k = 0 TO gSeCount[sy] - 1
+                    DIM at_y = gSeFirst[sy] + k
+                    IF gSeOk[at_y] = 1 THEN
+                        DIM yv = gSeY[at_y]
+                        IF stacked = 1 ANDALSO role_y$ = "data" THEN
+                            IF k < n_cats ANDALSO yv > 0 THEN
+                                stack_sum[k] = stack_sum[k] + yv
+                                RangeTake(stack_sum[k], y_log)
+                            ENDIF
+                        ELSE
+                            RangeTake(yv, y_log)
+                        ENDIF
+                    ENDIF
+                NEXT k
+            ENDIF
+        ENDIF
+    NEXT j
+    FOR k = 0 TO LEN(fit_y) - 1
+        RangeTake(fit_y[k], y_log)
+    NEXT k
+    FOR j = 0 TO LEN(box_lo) - 1
+        RangeTake(box_lo[j], y_log)
+        RangeTake(box_hi[j], y_log)
+        FOR k = 0 TO box_out_count[j] - 1
+            RangeTake(gBxOut[box_out_first[j] + k], y_log)
+        NEXT k
+    NEXT j
+    FOR k = 0 TO LEN(gRefChart) - 1
+        IF gRefChart[k] = c ANDALSO gRefAxis[k] = "y" THEN RangeTake(gRefValue[k], y_log)
+    NEXT k
+    FOR k = 0 TO LEN(gNoteChart) - 1
+        IF gNoteChart[k] = c THEN RangeTake(gNoteY[k], y_log)
+    NEXT k
+    IF gRgSeen = 0 THEN
+        RangeTake(1.0, y_log)
+        RangeTake(10.0, y_log)
+    ENDIF
+    DIM ya = gRgLo
+    DIM yb = gRgHi
+    IF HasOpt(chart, "y_min") THEN ya = OptNum(chart, "y_min", 0)
+    IF HasOpt(chart, "y_max") THEN yb = OptNum(chart, "y_max", 0)
+    gPlotYLog = y_log
+    DIM ystep = 1.0
+    IF y_log = 1 THEN
+        gPlotYLo = FLOOR(LOG10(ya) + 0.000000001)
+        gPlotYHi = CEIL(LOG10(yb) - 0.000000001)
+        IF gPlotYHi <= gPlotYLo THEN gPlotYHi = gPlotYLo + 1
+    ELSE
+        NiceRange(ya, yb)
+        gPlotYLo = gTickLo
+        gPlotYHi = gTickHi
+        ystep = gTickStep
+        IF HasOpt(chart, "y_min") THEN gPlotYLo = OptNum(chart, "y_min", 0)
+        IF HasOpt(chart, "y_max") THEN gPlotYHi = OptNum(chart, "y_max", 0)
+    ENDIF
+    ' grid and ticks
+    DIM grid AS MAP
+    grid{"class"} = "g"
+    DIM axis_attrs AS MAP
+    axis_attrs{"class"} = "a"
+    IF y_log = 1 THEN
+        FOR k = CLNG(gPlotYLo) TO CLNG(gPlotYHi)
+            DIM gy_log = PlotYPix(10 ^ k)
+            ADDLINE(doc, pl, gy_log, pl + pw, gy_log, grid)
+            TextAt(doc, pl - 6, gy_log + 4, LogTick$(k), "end", "", "")
+        NEXT k
+    ELSE
+        DIM ydec = Decimals(chart, ystep)
+        DIM y_first = CEIL(gPlotYLo / ystep - 0.000001)
+        DIM y_last = FLOOR(gPlotYHi / ystep + 0.000001)
+        FOR k = CLNG(y_first) TO CLNG(y_last)
+            DIM ytick = k * ystep
+            DIM gy = PlotYPix(ytick)
+            ADDLINE(doc, pl, gy, pl + pw, gy, grid)
+            TextAt(doc, pl - 6, gy + 4, TickText$(ytick, ydec), "end", "", "")
+        NEXT k
+    ENDIF
+    IF numeric_x = 1 THEN
+        IF x_log = 1 THEN
+            FOR k = CLNG(gPlotXLo) TO CLNG(gPlotXHi)
+                DIM gx_log = PlotXPix(10 ^ k)
+                ADDLINE(doc, gx_log, pt, gx_log, pt + ph, grid)
+                TextAt(doc, gx_log, pt + ph + 18, LogTick$(k), "middle", "", "")
+            NEXT k
+        ELSE
+            DIM xdec = Decimals(chart, xstep)
+            DIM x_first = CEIL(gPlotXLo / xstep - 0.000001)
+            DIM x_last = FLOOR(gPlotXHi / xstep + 0.000001)
+            FOR k = CLNG(x_first) TO CLNG(x_last)
+                DIM xtick = k * xstep
+                DIM gx = PlotXPix(xtick)
+                ADDLINE(doc, gx, pt, gx, pt + ph, grid)
+                TextAt(doc, gx, pt + ph + 18, TickText$(xtick, xdec), "middle", "", "")
+            NEXT k
+        ENDIF
+    ELSE
+        DIM label_every = 1
+        IF n_cats > 0 THEN
+            DIM longest = 1
+            FOR k = 0 TO n_cats - 1
+                DIM cat_text$ = ""
+                IF kind$ = "box" THEN
+                    cat_text$ = gSeName[series[k]]
+                ELSE
+                    cat_text$ = LabelAt$(chart, k)
+                ENDIF
+                IF LEN(cat_text$) > longest THEN longest = LEN(cat_text$)
+            NEXT k
+            FOR k = 1 TO n_cats
+                label_every = k
+                IF (pw / n_cats) * k >= longest * 7 + 8 THEN EXITFOR
+            NEXT k
+        ENDIF
+        FOR k = 0 TO n_cats - 1
+            IF k MOD label_every = 0 THEN
+                DIM lab$ = ""
+                IF kind$ = "box" THEN
+                    lab$ = gSeName[series[k]]
+                ELSE
+                    lab$ = LabelAt$(chart, k)
+                ENDIF
+                TextAt(doc, PlotCatX(k, n_cats, as_slots), pt + ph + 18, lab$, "middle", "", "")
+            ENDIF
+        NEXT k
+    ENDIF
+    DIM base_y = pt + ph
+    IF y_log = 0 THEN
+        base_y = PlotYPix(0.0)
+        IF base_y < pt THEN base_y = pt
+        IF base_y > pt + ph THEN base_y = pt + ph
+    ENDIF
+    ADDLINE(doc, pl, base_y, pl + pw, base_y, axis_attrs)
+    ADDLINE(doc, pl, pt, pl, pt + ph, axis_attrs)
+    IF x_title$ <> "" THEN TextAt(doc, pl + pw / 2, h - 10, x_title$, "middle", "", "")
+    IF y_title$ <> "" THEN TextAt(doc, 16, pt + ph / 2, y_title$, "middle", "", Attr$("transform", RotateBy$(-90, 16, pt + ph / 2)))
+    ' the marks
+    DIM dots_default = 1
+    IF kind$ = "area" THEN dots_default = 0
+    DIM dots = OptNum(chart, "dots", dots_default)
+    DIM n_bin_series = 0
+    FOR j = 0 TO n_series - 1
+        DIM role_n$ = gSeRole[series[j]]
+        IF role_n$ = "bins" THEN n_bin_series = n_bin_series + 1
+    NEXT j
+    DIM stack_base = []
+    IF stacked = 1 THEN
+        FOR k = 0 TO n_cats - 1
+            PUSH(stack_base, 0.0)
+        NEXT k
+    ENDIF
+    FOR j = 0 TO n_series - 1
+        DIM s = series[j]
+        DIM series_col$ = ColorOf$(chart, j)
+        DIM s_name$ = gSeName[s]
+        DIM s_first = gSeFirst[s]
+        DIM s_count = gSeCount[s]
+        DIM s_role$ = gSeRole[s]
+        IF s_role$ = "bins" THEN
+            FOR k = 0 TO s_count - 1
+                DIM bin_v = gSeY[s_first + k]
+                DIM bin_lo = gSeX[s_first + k]
+                DIM bin_hi = gSeX2[s_first + k]
+                IF (y_log = 0 ORELSE bin_v > 0) ANDALSO (x_log = 0 ORELSE bin_lo > 0) THEN
+                    DIM bx0 = PlotXPix(bin_lo)
+                    DIM bx1 = PlotXPix(bin_hi)
+                    DIM by = PlotYPix(bin_v)
+                    DIM ba AS MAP
+                    ba{"fill"} = series_col$
+                    IF n_bin_series > 1 THEN
+                        ba{"fill_opacity"} = 0.55
+                    ELSE
+                        ba{"fill_opacity"} = 0.85
+                    ENDIF
+                    ba{"class"} = "m"
+                    ba{"data_series"} = s_name$
+                    ba{"data_lo"} = Num$(bin_lo)
+                    ba{"data_hi"} = Num$(bin_hi)
+                    ba{"data_value"} = Num$(bin_v)
+                    OpenGroup(doc)
+                    ADDRECT(doc, bx0, by, bx1 - bx0, base_y - by, ba)
+                    TITLE(doc, s_name$ + ", " + Num$(bin_lo) + " to " + Num$(bin_hi) + ": " + Num$(bin_v))
+                    ENDGROUP(doc)
+                ENDIF
+            NEXT k
+        ELSEIF s_role$ = "curve" THEN
+            DIM cx_run = []
+            DIM cy_run = []
+            FOR k = 0 TO s_count
+                DIM curve_ok = 0
+                IF k < s_count THEN
+                    IF gSeOk[s_first + k] = 1 THEN curve_ok = 1
+                    IF curve_ok = 1 ANDALSO y_log = 1 ANDALSO gSeY[s_first + k] <= 0 THEN curve_ok = 0
+                    IF curve_ok = 1 ANDALSO x_log = 1 ANDALSO gSeX[s_first + k] <= 0 THEN curve_ok = 0
+                ENDIF
+                IF curve_ok = 1 THEN
+                    PUSH(cx_run, PlotXPix(gSeX[s_first + k]))
+                    PUSH(cy_run, PlotYPix(gSeY[s_first + k]))
+                ELSE
+                    DrawPolyRun(doc, cx_run, cy_run, series_col$)
+                    cx_run = []
+                    cy_run = []
+                ENDIF
+            NEXT k
+        ELSEIF s_role$ = "fit" THEN
+            DIM fx_run = []
+            DIM fy_run = []
+            FOR k = 0 TO LEN(fit_x)
+                DIM fit_ok = 0
+                IF k < LEN(fit_x) THEN
+                    IF fit_owner[k] = j THEN
+                        fit_ok = 1
+                        DIM fyv = fit_y[k]
+                        IF y_log = 1 ANDALSO fyv <= 0 THEN fit_ok = 0
+                        IF fyv < -1e300 ORELSE fyv > 1e300 THEN fit_ok = 0
+                    ENDIF
+                ENDIF
+                IF fit_ok = 1 THEN
+                    PUSH(fx_run, PlotXPix(fit_x[k]))
+                    PUSH(fy_run, PlotYPix(fit_y[k]))
+                ELSEIF LEN(fx_run) > 0 THEN
+                    DrawPolyRun(doc, fx_run, fy_run, series_col$)
+                    fx_run = []
+                    fy_run = []
+                ENDIF
+            NEXT k
+        ELSEIF kind$ = "box" THEN
+            DIM box_cx = PlotCatX(j, n_cats, 1)
+            DIM box_w = pw / n_cats * 0.5
+            IF box_w > 60 THEN box_w = 60
+            DIM y_q1 = PlotYPix(box_q1[j])
+            DIM y_q3 = PlotYPix(box_q3[j])
+            DIM y_mid = PlotYPix(box_mid[j])
+            DIM y_lo = PlotYPix(box_lo[j])
+            DIM y_hi = PlotYPix(box_hi[j])
+            DIM wa AS MAP
+            wa{"stroke"} = series_col$
+            wa{"stroke_width"} = 1.5
+            ADDLINE(doc, box_cx, y_q3, box_cx, y_hi, wa)
+            ADDLINE(doc, box_cx, y_q1, box_cx, y_lo, wa)
+            ADDLINE(doc, box_cx - box_w / 4, y_hi, box_cx + box_w / 4, y_hi, wa)
+            ADDLINE(doc, box_cx - box_w / 4, y_lo, box_cx + box_w / 4, y_lo, wa)
+            DIM bxa AS MAP
+            bxa{"fill"} = series_col$
+            bxa{"fill_opacity"} = 0.35
+            bxa{"stroke"} = series_col$
+            bxa{"stroke_width"} = 1.5
+            bxa{"data_series"} = s_name$
+            bxa{"data_n"} = Num$(box_n[j])
+            bxa{"data_q1"} = Num$(box_q1[j])
+            bxa{"data_median"} = Num$(box_mid[j])
+            bxa{"data_q3"} = Num$(box_q3[j])
+            bxa{"data_whislo"} = Num$(box_lo[j])
+            bxa{"data_whishi"} = Num$(box_hi[j])
+            OpenGroup(doc)
+            ADDRECT(doc, box_cx - box_w / 2, y_q3, box_w, y_q1 - y_q3, bxa)
+            TITLE(doc, s_name$ + ": median " + Num$(box_mid[j]) + ", quartiles " + Num$(box_q1[j]) + " to " + Num$(box_q3[j]) + ", whiskers " + Num$(box_lo[j]) + " to " + Num$(box_hi[j]))
+            ENDGROUP(doc)
+            DIM ma AS MAP
+            ma{"stroke"} = series_col$
+            ma{"stroke_width"} = 2.5
+            ma{"data_median"} = Num$(box_mid[j])
+            ADDLINE(doc, box_cx - box_w / 2, y_mid, box_cx + box_w / 2, y_mid, ma)
+            FOR k = 0 TO box_out_count[j] - 1
+                DIM out_v = gBxOut[box_out_first[j] + k]
+                IF y_log = 0 ORELSE out_v > 0 THEN
+                    DIM oa AS MAP
+                    oa{"fill"} = "none"
+                    oa{"stroke"} = series_col$
+                    oa{"stroke_width"} = 1.5
+                    oa{"data_series"} = s_name$
+                    oa{"data_value"} = Num$(out_v)
+                    ADDCIRCLE(doc, box_cx, PlotYPix(out_v), 3.5, oa)
+                ENDIF
+            NEXT k
+        ELSEIF kind$ = "scatter" THEN
+            FOR k = 0 TO s_count - 1
+                IF gSeOk[s_first + k] = 1 THEN
+                    DIM qx = gSeX[s_first + k]
+                    DIM qy = gSeY[s_first + k]
+                    IF (x_log = 0 ORELSE qx > 0) ANDALSO (y_log = 0 ORELSE qy > 0) THEN
+                        DIM pnt AS MAP
+                        pnt{"fill"} = series_col$
+                        pnt{"fill_opacity"} = 0.8
+                        pnt{"data_series"} = s_name$
+                        pnt{"data_x"} = Num$(qx)
+                        pnt{"data_value"} = Num$(qy)
+                        OpenGroup(doc)
+                        ADDCIRCLE(doc, PlotXPix(qx), PlotYPix(qy), 4, pnt)
+                        TITLE(doc, s_name$ + ": " + Num$(qx) + ", " + Num$(qy))
+                        ENDGROUP(doc)
+                    ENDIF
+                ENDIF
+            NEXT k
+        ELSE
+            ' line or area, along categories or numbers
+            DIM run_x = []
+            DIM run_y = []
+            DIM poly_x = []
+            DIM poly_y = []
+            DIM low_x = []
+            DIM low_y = []
+            FOR k = 0 TO s_count
+                DIM pt_ok = 0
+                IF k < s_count THEN
+                    IF gSeOk[s_first + k] = 1 THEN pt_ok = 1
+                    IF numeric_x = 0 ANDALSO k >= n_cats THEN pt_ok = 0
+                    IF pt_ok = 1 ANDALSO y_log = 1 ANDALSO gSeY[s_first + k] <= 0 THEN pt_ok = 0
+                    IF pt_ok = 1 ANDALSO x_log = 1 ANDALSO gSeX[s_first + k] <= 0 THEN pt_ok = 0
+                ENDIF
+                IF pt_ok = 1 THEN
+                    DIM vx = 0.0
+                    IF numeric_x = 1 THEN
+                        vx = PlotXPix(gSeX[s_first + k])
+                    ELSE
+                        vx = PlotCatX(k, n_cats, 0)
+                    ENDIF
+                    DIM vval = gSeY[s_first + k]
+                    DIM lower_val = 0.0
+                    IF stacked = 1 THEN
+                        IF vval > 0 THEN
+                            lower_val = stack_base[k]
+                            vval = lower_val + vval
+                            stack_base[k] = vval
+                        ELSE
+                            lower_val = stack_base[k]
+                            vval = lower_val
+                        ENDIF
+                    ENDIF
+                    PUSH(run_x, vx)
+                    PUSH(run_y, PlotYPix(vval))
+                    IF kind$ = "area" THEN
+                        PUSH(low_x, vx)
+                        IF stacked = 1 THEN
+                            PUSH(low_y, PlotYPix(lower_val))
+                        ELSE
+                            PUSH(low_y, base_y)
+                        ENDIF
+                    ENDIF
+                ELSE
+                    IF LEN(run_x) > 0 THEN
+                        IF kind$ = "area" ANDALSO LEN(run_x) > 1 THEN
+                            DIM m = 0
+                            FOR m = 0 TO LEN(run_x) - 1
+                                PUSH(poly_x, run_x[m])
+                                PUSH(poly_y, run_y[m])
+                            NEXT m
+                            FOR m = LEN(low_x) - 1 TO 0 STEP -1
+                                PUSH(poly_x, low_x[m])
+                                PUSH(poly_y, low_y[m])
+                            NEXT m
+                            DIM fill_a AS MAP
+                            fill_a{"fill"} = series_col$
+                            fill_a{"fill_opacity"} = 0.35
+                            fill_a{"stroke"} = "none"
+                            fill_a{"data_series"} = s_name$
+                            ADDPOLYGON(doc, poly_x, poly_y, fill_a)
+                            poly_x = []
+                            poly_y = []
+                        ENDIF
+                        DrawPolyRun(doc, run_x, run_y, series_col$)
+                    ENDIF
+                    run_x = []
+                    run_y = []
+                    low_x = []
+                    low_y = []
+                ENDIF
+            NEXT k
+            IF dots = 1 THEN
+                FOR k = 0 TO s_count - 1
+                    DIM dot_ok = 0
+                    IF gSeOk[s_first + k] = 1 THEN dot_ok = 1
+                    IF numeric_x = 0 ANDALSO k >= n_cats THEN dot_ok = 0
+                    IF dot_ok = 1 ANDALSO y_log = 1 ANDALSO gSeY[s_first + k] <= 0 THEN dot_ok = 0
+                    IF dot_ok = 1 ANDALSO x_log = 1 ANDALSO gSeX[s_first + k] <= 0 THEN dot_ok = 0
+                    IF dot_ok = 1 THEN
+                        DIM dv = gSeY[s_first + k]
+                        DIM dot_attrs AS MAP
+                        dot_attrs{"fill"} = series_col$
+                        dot_attrs{"data_series"} = s_name$
+                        DIM dx = 0.0
+                        DIM where$ = ""
+                        IF numeric_x = 1 THEN
+                            dx = PlotXPix(gSeX[s_first + k])
+                            dot_attrs{"data_x"} = Num$(gSeX[s_first + k])
+                            where$ = Num$(gSeX[s_first + k])
+                        ELSE
+                            dx = PlotCatX(k, n_cats, 0)
+                            dot_attrs{"data_label"} = LabelAt$(chart, k)
+                            where$ = LabelAt$(chart, k)
+                        ENDIF
+                        dot_attrs{"data_value"} = Num$(dv)
+                        OpenGroup(doc)
+                        ADDCIRCLE(doc, dx, PlotYPix(dv), 3.5, dot_attrs)
+                        TITLE(doc, s_name$ + ", " + where$ + ": " + Num$(dv))
+                        ENDGROUP(doc)
+                    ENDIF
+                NEXT k
+            ENDIF
+        ENDIF
+    NEXT j
+    DrawOverlays(doc, chart, 1 - numeric_x, n_cats, as_slots)
 ENDSUB
 
 ' A small line of the values for a table cell or a sentence, as markup.

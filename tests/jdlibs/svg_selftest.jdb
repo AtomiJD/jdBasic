@@ -1,10 +1,14 @@
 ' SVG: drawings read back with XML attribute by attribute, and charts whose
 ' marks are measured against their data: a bar chart from a DF frame, a
 ' line chart with a gap, stacked bars, a scatter and a pie; ticks, options,
-' faults and sparklines. With Edge or Chrome installed, a chart is also
-' rendered to PNG by the headless browser.
+' faults and sparklines; histograms, box plots, log scales and fitted
+' curves against numpy and matplotlib values in tests/jdlibs/fixtures/
+' svg_chart_*.tsv, areas, numbers along x, reference lines and notes; the
+' classic charts byte for byte against svg_chart_classic_*.svg. With Edge
+' or Chrome installed, a chart is also rendered to PNG by the headless
+' browser.
 
-IMPORT TESTKIT, SVG, XML, DF
+IMPORT TESTKIT, SVG, XML, DF, FIT
 
 DIM Q$ = CHR$(34)
 DIM i = 0
@@ -19,6 +23,108 @@ ENDFUNC
 
 FUNC Near(a, b, tolerance)
     RETURN ABS(a - b) <= tolerance
+ENDFUNC
+
+FUNC FixturePath$(file_name$)
+    DIM fix$ = "tests/jdlibs/fixtures/"
+    IF NOT FILE.EXISTS(fix$ + file_name$) THEN fix$ = "fixtures/"
+    RETURN fix$ + file_name$
+ENDFUNC
+
+FUNC FixtureLines(file_name$)
+    RETURN SPLIT(REPLACE$(TXTREADER$(FixturePath$(file_name$)), CHR$(13), ""), CHR$(10))
+ENDFUNC
+
+FUNC NumsOf(cell$)
+    DIM nums = []
+    IF cell$ = "" THEN RETURN nums
+    DIM parts = SPLIT(cell$, " ")
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM part$ = parts[k]
+        PUSH(nums, VAL(part$))
+    NEXT k
+    RETURN nums
+ENDFUNC
+
+' The pixel of a value on the y axis, from the first and last tick labels.
+FUNC TickY(tree, value)
+    DIM tick_ids = XML.FINDALL(tree, "//text[@text-anchor='end']")
+    DIM lo_id = tick_ids[0]
+    DIM hi_id = tick_ids[LEN(tick_ids) - 1]
+    DIM lo_v = VAL(XML.TEXT$(tree, lo_id))
+    DIM hi_v = VAL(XML.TEXT$(tree, hi_id))
+    DIM lo_y = AttrNum(tree, lo_id, "y") - 4
+    DIM hi_y = AttrNum(tree, hi_id, "y") - 4
+    RETURN lo_y + (value - lo_v) / (hi_v - lo_v) * (hi_y - lo_y)
+ENDFUNC
+
+' The value at a pixel of the y axis.
+FUNC ValueAtY(tree, pixel_y)
+    DIM tick_ids = XML.FINDALL(tree, "//text[@text-anchor='end']")
+    DIM lo_id = tick_ids[0]
+    DIM hi_id = tick_ids[LEN(tick_ids) - 1]
+    DIM lo_v = VAL(XML.TEXT$(tree, lo_id))
+    DIM hi_v = VAL(XML.TEXT$(tree, hi_id))
+    DIM lo_y = AttrNum(tree, lo_id, "y") - 4
+    DIM hi_y = AttrNum(tree, hi_id, "y") - 4
+    RETURN lo_v + (pixel_y - lo_y) / (hi_y - lo_y) * (hi_v - lo_v)
+ENDFUNC
+
+' The pixel of a value on a numeric x axis, from the first and last tick labels.
+FUNC TickX(tree, value)
+    DIM tick_ids = XML.FINDALL(tree, "//text[@text-anchor='middle']")
+    DIM lo_id = tick_ids[0]
+    DIM hi_id = tick_ids[LEN(tick_ids) - 1]
+    DIM lo_v = VAL(XML.TEXT$(tree, lo_id))
+    DIM hi_v = VAL(XML.TEXT$(tree, hi_id))
+    DIM lo_x = AttrNum(tree, lo_id, "x")
+    DIM hi_x = AttrNum(tree, hi_id, "x")
+    RETURN lo_x + (value - lo_v) / (hi_v - lo_v) * (hi_x - lo_x)
+ENDFUNC
+
+' One coordinate of a point of a points attribute: axis 0 is x, 1 is y.
+FUNC PointAt(points$, index, axis)
+    DIM pairs = SPLIT(points$, " ")
+    DIM pair$ = pairs[index]
+    DIM both = SPLIT(pair$, ",")
+    DIM one$ = both[axis]
+    RETURN VAL(one$)
+ENDFUNC
+
+FUNC ChartFault$(kind$, fault$)
+    DIM msg$ = ""
+    TRY
+        DIM fc = SVG.CHART(kind$)
+        IF fault$ = "axis" THEN SVG.REFLINE(fc, "z", 1)
+        IF fault$ = "edges" THEN SVG.BINCOUNTS(fc, "v", [1, 2], [0, 1])
+        IF fault$ = "logbar" THEN
+            SVG.LABELS(fc, ["a"])
+            SVG.SERIES(fc, "v", [1])
+            SVG.SETOPT(fc, "y_log", 1)
+            DIM fd = SVG.RENDER(fc)
+        ENDIF
+        IF fault$ = "xlog" THEN
+            SVG.LABELS(fc, ["a", "b"])
+            SVG.SERIES(fc, "v", [1, 2])
+            SVG.SETOPT(fc, "x_log", 1)
+            DIM fd2 = SVG.RENDER(fc)
+        ENDIF
+        IF fault$ = "mixed" THEN
+            SVG.LABELS(fc, ["a", "b"])
+            SVG.SERIES(fc, "v", [1, 2])
+            SVG.POINTS(fc, "w", [1, 2], [3, 4])
+            DIM fd3 = SVG.RENDER(fc)
+        ENDIF
+        IF fault$ = "curve" THEN
+            SVG.SERIES(fc, "v", [1, 2, 3])
+            SVG.CURVE(fc, "w", [1, 2], [3, 4])
+            DIM fd4 = SVG.RENDER(fc)
+        ENDIF
+    CATCH
+        msg$ = ERRMSG$
+    ENDTRY
+    RETURN msg$
 ENDFUNC
 
 ' ── drawings ───────────────────────────────────────────────────
@@ -264,6 +370,348 @@ DIM spark_line = XML.FIND(spark_tree, "//polyline")
 TESTKIT.EQ(XML.ATTR$(spark_tree, spark_line, "points"), "2,18 34,11.6 66,14.8 98,2", "a sparkline spans its box")
 DIM spark_dot = XML.FIND(spark_tree, "//circle")
 TESTKIT.EQ(XML.ATTR$(spark_tree, spark_dot, "cx"), "98", "and marks its last value")
+
+' ── histograms against numpy ───────────────────────────────────
+
+TESTKIT.SUITE("histogram")
+DIM hist_lines = FixtureLines("svg_chart_hist.tsv")
+DIM hist_sets = 0
+DIM hist_native_ok = 1
+DIM hist_count_ok = 1
+DIM hist_edge_ok = 1
+DIM hist_width_ok = 1
+DIM hist_same_ok = 1
+FOR i = 1 TO LEN(hist_lines) - 1
+    DIM hist_line$ = hist_lines[i]
+    IF hist_line$ <> "" THEN
+        DIM hist_cells = SPLIT(hist_line$, CHR$(9))
+        DIM hist_bins$ = hist_cells[1]
+        DIM hist_vals$ = hist_cells[2]
+        DIM hist_counts$ = hist_cells[3]
+        DIM hist_edges$ = hist_cells[4]
+        DIM n_bins = VAL(hist_bins$)
+        DIM hist_vals = NumsOf(hist_vals$)
+        DIM want_counts = NumsOf(hist_counts$)
+        DIM want_edges = NumsOf(hist_edges$)
+        DIM got_counts = HISTOGRAM(hist_vals, n_bins)
+        DIM got_edges = HISTEDGES(hist_vals, n_bins)
+        DIM hc = SVG.CHART("histogram")
+        SVG.BINS(hc, "v", hist_vals, n_bins)
+        DIM hist_markup$ = SVG.MARKUP$(SVG.RENDER(hc))
+        DIM hc2 = SVG.CHART("histogram")
+        SVG.BINCOUNTS(hc2, "v", got_counts, got_edges)
+        IF SVG.MARKUP$(SVG.RENDER(hc2)) <> hist_markup$ THEN hist_same_ok = 0
+        DIM hist_tree = XML.PARSE(hist_markup$)
+        DIM hist_rects = XML.FINDALL(hist_tree, "//rect[@data-series='v']")
+        IF LEN(hist_rects) <> n_bins THEN hist_count_ok = 0
+        DIM first_rect = hist_rects[0]
+        DIM px_per_unit = AttrNum(hist_tree, first_rect, "width") / (want_edges[1] - want_edges[0])
+        DIM k = 0
+        FOR k = 0 TO n_bins - 1
+            DIM want_c = want_counts[k]
+            DIM want_lo = want_edges[k]
+            DIM want_hi = want_edges[k + 1]
+            DIM got_c = got_counts[k]
+            DIM got_lo = got_edges[k]
+            IF got_c <> want_c ORELSE NOT Near(got_lo, want_lo, 0.000000001) THEN hist_native_ok = 0
+            IF k < LEN(hist_rects) THEN
+                DIM hr = hist_rects[k]
+                IF NOT Near(AttrNum(hist_tree, hr, "data-value"), want_c, 0.000001) THEN hist_count_ok = 0
+                IF NOT Near(AttrNum(hist_tree, hr, "data-lo"), want_lo, 0.006) THEN hist_edge_ok = 0
+                IF NOT Near(AttrNum(hist_tree, hr, "data-hi"), want_hi, 0.006) THEN hist_edge_ok = 0
+                IF NOT Near(AttrNum(hist_tree, hr, "width"), (want_hi - want_lo) * px_per_unit, 0.03) THEN hist_width_ok = 0
+                IF NOT Near(AttrNum(hist_tree, hr, "y"), TickY(hist_tree, want_c), 0.03) THEN hist_count_ok = 0
+            ENDIF
+        NEXT k
+        hist_sets = hist_sets + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(hist_sets, 3, "three reference sets")
+TESTKIT.EQ(hist_native_ok, 1, "HISTOGRAM and HISTEDGES answer numpy.histogram's counts and edges")
+TESTKIT.EQ(hist_count_ok, 1, "a bar per bin, as high as its count")
+TESTKIT.EQ(hist_edge_ok, 1, "carrying the edges of its bin")
+TESTKIT.EQ(hist_width_ok, 1, "as wide as its bin")
+TESTKIT.EQ(hist_same_ok, 1, "BINCOUNTS from HISTOGRAM and HISTEDGES draws what BINS draws")
+TESTKIT.EQ(ChartFault$("histogram", "edges"), "SVG: a histogram needs one edge more than counts", "counts and edges must fit")
+
+' ── box plots against matplotlib ───────────────────────────────
+
+TESTKIT.SUITE("box")
+DIM box_lines = FixtureLines("svg_chart_box.tsv")
+DIM box_sets = 0
+DIM box_stats_ok = 1
+DIM box_outliers_ok = 1
+FOR i = 1 TO LEN(box_lines) - 1
+    DIM box_line$ = box_lines[i]
+    IF box_line$ <> "" THEN
+        DIM box_cells = SPLIT(box_line$, CHR$(9))
+        DIM box_vals$ = box_cells[1]
+        DIM st = SVG.BOXSTATS(NumsOf(box_vals$))
+        DIM want_n$ = box_cells[2]
+        IF st{"n"} <> VAL(want_n$) THEN box_stats_ok = 0
+        DIM stat_names = ["q1", "median", "q3", "whislo", "whishi", "mean"]
+        DIM k = 0
+        FOR k = 0 TO 5
+            DIM stat_name$ = stat_names[k]
+            DIM want_cell$ = box_cells[k + 3]
+            DIM got_stat = st{stat_name$}
+            IF NOT Near(got_stat, VAL(want_cell$), 0.000000001) THEN box_stats_ok = 0
+        NEXT k
+        DIM q1_got = st{"q1"}
+        DIM q3_got = st{"q3"}
+        IF NOT Near(st{"iqr"}, q3_got - q1_got, 0.000000001) THEN box_stats_ok = 0
+        DIM want_out$ = ""
+        IF LEN(box_cells) > 9 THEN want_out$ = box_cells[9]
+        DIM want_out = NumsOf(want_out$)
+        DIM got_out = st{"outliers"}
+        IF LEN(got_out) <> LEN(want_out) THEN
+            box_outliers_ok = 0
+        ELSE
+            FOR k = 0 TO LEN(want_out) - 1
+                DIM got_o = got_out[k]
+                DIM want_o = want_out[k]
+                IF NOT Near(got_o, want_o, 0.000000001) THEN box_outliers_ok = 0
+            NEXT k
+        ENDIF
+        box_sets = box_sets + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(box_sets, 6, "six reference sets")
+TESTKIT.EQ(box_stats_ok, 1, "BOXSTATS: quartiles by numpy's linear percentile, whiskers and mean as matplotlib's boxplot_stats")
+TESTKIT.EQ(box_outliers_ok, 1, "and the values beyond 1.5 IQR as outliers")
+DIM boxes = SVG.CHART("box")
+SVG.SERIES(boxes, "a", [1, 2, 3, 4, 5, 6, 7, 8, 9, 30, -12, 4.5])
+SVG.SERIES(boxes, "b", [12.5, 13.1, 11.9, 14.2, 13.8, 12.2, 25.0, 13.3, 12.9, 13.0])
+DIM box_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(boxes)))
+DIM box_a = XML.FIND(box_tree, "//rect[@data-series='a']")
+TESTKIT.EQ(XML.ATTR$(box_tree, box_a, "data-q1") + " " + XML.ATTR$(box_tree, box_a, "data-median") + " " + XML.ATTR$(box_tree, box_a, "data-q3"), "2.75 4.75 7.25", "a box per series with its quartiles")
+TESTKIT.ISTRUE(Near(AttrNum(box_tree, box_a, "y"), TickY(box_tree, 7.25), 0.03) ANDALSO Near(AttrNum(box_tree, box_a, "y") + AttrNum(box_tree, box_a, "height"), TickY(box_tree, 2.75), 0.03), "spanning q1 to q3")
+DIM whisker_top = XML.FIND(box_tree, "//line[@data-median]")
+TESTKIT.ISTRUE(Near(AttrNum(box_tree, whisker_top, "y1"), TickY(box_tree, 4.75), 0.03), "the median across it")
+DIM outs_a = XML.FINDALL(box_tree, "//circle[@data-series='a']")
+TESTKIT.EQ(LEN(outs_a), 2, "outliers as circles")
+DIM out_a0 = outs_a[0]
+TESTKIT.ISTRUE(Near(AttrNum(box_tree, out_a0, "cy"), TickY(box_tree, -12), 0.03), "at their values")
+DIM box_labels = XML.VALUES(box_tree, "//text[@text-anchor='middle']")
+TESTKIT.EQ(JOIN(box_labels, " "), "a b", "the series names along x")
+
+' ── log scales ─────────────────────────────────────────────────
+
+TESTKIT.SUITE("log scale")
+DIM log_lines = FixtureLines("svg_chart_log.tsv")
+DIM log_sets = 0
+DIM log_ticks_ok = 1
+DIM log_place_ok = 1
+FOR i = 1 TO LEN(log_lines) - 1
+    DIM log_line$ = log_lines[i]
+    IF log_line$ <> "" THEN
+        DIM log_cells = SPLIT(log_line$, CHR$(9))
+        DIM lo_cell$ = log_cells[1]
+        DIM hi_cell$ = log_cells[2]
+        DIM first_cell$ = log_cells[3]
+        DIM last_cell$ = log_cells[4]
+        DIM log_lo = VAL(lo_cell$)
+        DIM log_hi = VAL(hi_cell$)
+        DIM first_dec = VAL(first_cell$)
+        DIM last_dec = VAL(last_cell$)
+        DIM lc = SVG.CHART("line")
+        SVG.SETOPT(lc, "y_log", 1)
+        SVG.POINTS(lc, "v", [1, 2], [log_lo, log_hi])
+        DIM log_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(lc)))
+        DIM log_ticks = XML.FINDALL(log_tree, "//text[@text-anchor='end']")
+        IF LEN(log_ticks) <> last_dec - first_dec + 1 THEN log_ticks_ok = 0
+        DIM tick_lo = log_ticks[0]
+        DIM tick_hi = log_ticks[LEN(log_ticks) - 1]
+        IF NOT Near(VAL(XML.TEXT$(log_tree, tick_lo)), 10 ^ first_dec, 10 ^ first_dec * 0.000001) THEN log_ticks_ok = 0
+        IF NOT Near(VAL(XML.TEXT$(log_tree, tick_hi)), 10 ^ last_dec, 10 ^ last_dec * 0.000001) THEN log_ticks_ok = 0
+        DIM decade_px = (AttrNum(log_tree, tick_lo, "y") - AttrNum(log_tree, tick_hi, "y")) / (last_dec - first_dec)
+        DIM log_dots = XML.FINDALL(log_tree, "//circle[@data-series='v']")
+        DIM dot_lo = log_dots[0]
+        DIM dot_hi = log_dots[1]
+        IF NOT Near(AttrNum(log_tree, dot_lo, "cy") - AttrNum(log_tree, dot_hi, "cy"), (LOG10(log_hi) - LOG10(log_lo)) * decade_px, 0.03) THEN log_place_ok = 0
+        IF NOT Near(AttrNum(log_tree, tick_lo, "y") - 4 - AttrNum(log_tree, dot_lo, "cy"), (LOG10(log_lo) - first_dec) * decade_px, 0.03) THEN log_place_ok = 0
+        log_sets = log_sets + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(log_sets, 4, "four reference ranges")
+TESTKIT.EQ(log_ticks_ok, 1, "y_log ticks every decade from floor(log10(lo)) to ceil(log10(hi))")
+TESTKIT.EQ(log_place_ok, 1, "values sit at their logarithm")
+DIM log_ticks_b = SVG.CHART("line")
+SVG.SETOPT(log_ticks_b, "y_log", 1)
+SVG.POINTS(log_ticks_b, "v", [1, 2], [0.02, 0.9])
+TESTKIT.EQ(JOIN(XML.VALUES(XML.PARSE(SVG.MARKUP$(SVG.RENDER(log_ticks_b))), "//text[@text-anchor='end']"), " "), "0.01 0.1 1", "decades below one")
+DIM xlog = SVG.CHART("scatter")
+SVG.SETOPT(xlog, "x_log", 1)
+SVG.POINTS(xlog, "v", [5, 50, 500, -1], [1, 2, 3, 4])
+DIM xlog_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(xlog)))
+TESTKIT.EQ(JOIN(XML.VALUES(xlog_tree, "//text[@text-anchor='middle']"), " "), "1 10 100 1000", "x_log on numbers along x")
+TESTKIT.EQ(LEN(XML.FINDALL(xlog_tree, "//circle[@data-series='v']")), 3, "a value a log axis cannot show is left out")
+TESTKIT.EQ(ChartFault$("bar", "logbar"), "SVG: a log scale is for line, area, scatter, histogram and box charts", "bars have no log scale")
+TESTKIT.EQ(ChartFault$("line", "xlog"), "SVG: x_log needs numbers along x", "x_log needs numbers")
+
+' ── fitted curves against numpy.polyval ────────────────────────
+
+TESTKIT.SUITE("fitted curves")
+DIM obs_x = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+DIM obs_y = [1.1, 2.9, 5.2, 7.1, 8.8, 11.2]
+DIM poly_lines = FixtureLines("svg_chart_poly.tsv")
+DIM poly_rows = 0
+DIM poly_ok = 1
+DIM coef_ok = 1
+FOR i = 1 TO LEN(poly_lines) - 1
+    DIM poly_line$ = poly_lines[i]
+    IF poly_line$ <> "" THEN
+        DIM poly_cells = SPLIT(poly_line$, CHR$(9))
+        DIM degree_cell$ = poly_cells[0]
+        DIM coef_cell$ = poly_cells[1]
+        DIM px_cell$ = poly_cells[2]
+        DIM py_cell$ = poly_cells[3]
+        DIM want_coefs = NumsOf(coef_cell$)
+        DIM fitted = FIT.POLYFIT(obs_x, obs_y, VAL(degree_cell$))
+        DIM k = 0
+        FOR k = 0 TO LEN(want_coefs) - 1
+            DIM got_cf = fitted[k]
+            DIM want_cf = want_coefs[k]
+            IF NOT Near(got_cf, want_cf, 0.000001) THEN coef_ok = 0
+        NEXT k
+        DIM fc_chart = SVG.CHART("scatter")
+        SVG.POINTS(fc_chart, "obs", obs_x, obs_y)
+        SVG.FITLINE(fc_chart, "fit", want_coefs)
+        DIM fit_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(fc_chart)))
+        DIM fit_line = XML.FIND(fit_tree, "//polyline")
+        DIM fit_points$ = XML.ATTR$(fit_tree, fit_line, "points")
+        DIM x_ticks_f = XML.FINDALL(fit_tree, "//text[@text-anchor='middle']")
+        DIM xt_lo = x_ticks_f[0]
+        DIM xt_hi = x_ticks_f[LEN(x_ticks_f) - 1]
+        DIM range_lo = VAL(XML.TEXT$(fit_tree, xt_lo))
+        DIM range_hi = VAL(XML.TEXT$(fit_tree, xt_hi))
+        DIM want_x = VAL(px_cell$)
+        DIM sample = CLNG(ROUND((want_x - range_lo) / (range_hi - range_lo) * 80, 0))
+        IF NOT Near(PointAt(fit_points$, sample, 0), TickX(fit_tree, want_x), 0.03) THEN poly_ok = 0
+        IF NOT Near(ValueAtY(fit_tree, PointAt(fit_points$, sample, 1)), VAL(py_cell$), 0.02) THEN poly_ok = 0
+        poly_rows = poly_rows + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(poly_rows, 8, "eight reference points of two polynomials")
+TESTKIT.EQ(coef_ok, 1, "FIT.POLYFIT gives numpy.polyfit's coefficients")
+TESTKIT.EQ(poly_ok, 1, "FITLINE draws the polynomial through numpy.polyval's values")
+DIM curve_chart = SVG.CHART("scatter")
+SVG.POINTS(curve_chart, "obs", obs_x, obs_y)
+SVG.CURVE(curve_chart, "model", [0, 2.5, 5], [1, 6, 11])
+DIM curve_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(curve_chart)))
+DIM curve_line = XML.FIND(curve_tree, "//polyline")
+DIM curve_points$ = XML.ATTR$(curve_tree, curve_line, "points")
+TESTKIT.ISTRUE(Near(PointAt(curve_points$, 1, 0), TickX(curve_tree, 2.5), 0.03) ANDALSO Near(PointAt(curve_points$, 1, 1), TickY(curve_tree, 6), 0.03), "CURVE draws a line through its points")
+TESTKIT.EQ(LEN(XML.FINDALL(curve_tree, "//circle[@data-series='model']")), 0, "without dots")
+TESTKIT.EQ(ChartFault$("box", "curve"), "SVG: a curve needs numbers along x", "a curve needs numbers along x")
+
+' ── areas and numbers along x ──────────────────────────────────
+
+TESTKIT.SUITE("area and numeric line")
+DIM area_chart = SVG.CHART("area")
+SVG.LABELS(area_chart, ["Q1", "Q2", "Q3", "Q4"])
+SVG.SERIES(area_chart, "north", [3, 5, 4, 6])
+SVG.SERIES(area_chart, "south", [2, 2, 3, 4])
+DIM area_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(area_chart)))
+DIM area_fills = XML.FINDALL(area_tree, "//polygon[@data-series]")
+TESTKIT.EQ(LEN(area_fills), 2, "a filled area per series")
+DIM south_fill = area_fills[1]
+DIM south_pts$ = XML.ATTR$(area_tree, south_fill, "points")
+TESTKIT.ISTRUE(Near(PointAt(south_pts$, 0, 1), TickY(area_tree, 2), 0.03) ANDALSO Near(PointAt(south_pts$, 7, 1), TickY(area_tree, 0), 0.03), "down to the axis")
+TESTKIT.EQ(LEN(XML.FINDALL(area_tree, "//circle")), 0, "without dots unless asked")
+DIM stack_area = SVG.CHART("area")
+SVG.SETOPT(stack_area, "stacked", 1)
+SVG.LABELS(stack_area, ["Q1", "Q2", "Q3", "Q4"])
+SVG.SERIES(stack_area, "north", [3, 5, 4, 6])
+SVG.SERIES(stack_area, "south", [2, 2, 3, 4])
+DIM stack_area_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(stack_area)))
+DIM stack_fills = XML.FINDALL(stack_area_tree, "//polygon[@data-series]")
+DIM top_fill = stack_fills[1]
+DIM top_pts$ = XML.ATTR$(stack_area_tree, top_fill, "points")
+TESTKIT.ISTRUE(Near(PointAt(top_pts$, 3, 1), TickY(stack_area_tree, 10), 0.03) ANDALSO Near(PointAt(top_pts$, 4, 1), TickY(stack_area_tree, 6), 0.03), "stacked: south from the top of north to their sum")
+DIM num_line = SVG.CHART("line")
+SVG.SETOPT(num_line, "x_min", 0)
+SVG.SETOPT(num_line, "x_max", 20)
+SVG.POINTS(num_line, "v", [2, 3.5, 10], [1, 4, 2])
+DIM num_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(num_line)))
+DIM num_x_ticks = XML.VALUES(num_tree, "//text[@text-anchor='middle']")
+DIM num_first$ = num_x_ticks[0]
+DIM num_last$ = num_x_ticks[LEN(num_x_ticks) - 1]
+TESTKIT.EQ(num_first$ + " " + num_last$, "0 20", "x_min and x_max bound numbers along x")
+DIM num_dot = XML.FIND(num_tree, "//circle[@data-x='3.5']")
+TESTKIT.ISTRUE(num_dot >= 0 ANDALSO Near(AttrNum(num_tree, num_dot, "cx"), TickX(num_tree, 3.5), 0.03), "a line of POINTS places x by its number")
+TESTKIT.EQ(ChartFault$("line", "mixed"), "SVG: a chart with numbers along x takes POINTS, not SERIES", "and does not mix them with SERIES")
+
+' ── reference lines and notes ──────────────────────────────────
+
+TESTKIT.SUITE("reference lines and notes")
+DIM ref_chart = SVG.CHART("scatter")
+SVG.POINTS(ref_chart, "obs", obs_x, obs_y)
+SVG.REFLINE(ref_chart, "y", 14, "limit")
+SVG.REFLINE(ref_chart, "x", 2.5, "change")
+SVG.NOTE(ref_chart, 4, 8.8, "dip")
+DIM ref_tree = XML.PARSE(SVG.MARKUP$(SVG.RENDER(ref_chart)))
+DIM ref_y = XML.FIND(ref_tree, "//line[@data-ref='14']")
+TESTKIT.ISTRUE(ref_y >= 0 ANDALSO Near(AttrNum(ref_tree, ref_y, "y1"), TickY(ref_tree, 14), 0.03), "a horizontal line at its value, the axis reaching it")
+TESTKIT.EQ(XML.ATTR$(ref_tree, ref_y, "stroke-dasharray"), "5 4", "dashed")
+DIM ref_x = XML.FIND(ref_tree, "//line[@data-ref='2.5']")
+TESTKIT.ISTRUE(ref_x >= 0 ANDALSO Near(AttrNum(ref_tree, ref_x, "x1"), TickX(ref_tree, 2.5), 0.03), "a vertical line")
+DIM texts_ref = XML.VALUES(ref_tree, "//text")
+TESTKIT.ISTRUE(INSTR(JOIN(texts_ref, "|"), "|limit|") >= 0 ANDALSO INSTR(JOIN(texts_ref, "|"), "|change|") >= 0, "with their labels")
+DIM note_dot = XML.FIND(ref_tree, "//circle[@data-note='dip']")
+TESTKIT.ISTRUE(note_dot >= 0 ANDALSO Near(AttrNum(ref_tree, note_dot, "cx"), TickX(ref_tree, 4), 0.03) ANDALSO Near(AttrNum(ref_tree, note_dot, "cy"), TickY(ref_tree, 8.8), 0.03), "a note marks its point")
+DIM goal_chart = SVG.CHART("bar")
+SVG.LABELS(goal_chart, ["a", "b", "c"])
+SVG.SERIES(goal_chart, "v", [4, 7, 5])
+DIM plain_goal$ = SVG.MARKUP$(SVG.RENDER(goal_chart))
+SVG.REFLINE(goal_chart, "y", 6, "goal")
+SVG.NOTE(goal_chart, 1, 7, "best")
+DIM goal_markup$ = SVG.MARKUP$(SVG.RENDER(goal_chart))
+DIM goal_tree = XML.PARSE(goal_markup$)
+DIM goal_line = XML.FIND(goal_tree, "//line[@data-ref='6']")
+TESTKIT.ISTRUE(goal_line >= 0 ANDALSO Near(AttrNum(goal_tree, goal_line, "y1"), TickY(goal_tree, 6), 0.03), "on a bar chart too")
+DIM best_dot = XML.FIND(goal_tree, "//circle[@data-note='best']")
+DIM bar_b = XML.FIND(goal_tree, "//rect[@data-label='b']")
+TESTKIT.ISTRUE(Near(AttrNum(goal_tree, best_dot, "cx"), AttrNum(goal_tree, bar_b, "x") + AttrNum(goal_tree, bar_b, "width") / 2, 0.03), "a note on a category chart takes the category's index")
+DIM shared_len = LEN(plain_goal$) - 10
+TESTKIT.EQ(LEFT$(goal_markup$, shared_len), LEFT$(plain_goal$, shared_len), "drawn over the bars, which stay as they were")
+TESTKIT.EQ(ChartFault$("scatter", "axis"), "SVG: a reference line is on axis x or y", "an axis is x or y")
+
+' ── the classic charts, byte for byte ──────────────────────────
+
+TESTKIT.SUITE("classic charts unchanged")
+DIM cl_bar = SVG.CHART("bar")
+SVG.SETOPT(cl_bar, "title", "Sales")
+SVG.FROMDF(cl_bar, sales, "region", ["q1", "q2"])
+TESTKIT.EQ(SVG.MARKUP$(SVG.RENDER(cl_bar)), TXTREADER$(FixturePath$("svg_chart_classic_bar.svg")), "bar")
+DIM cl_line = SVG.CHART("line")
+SVG.LABELS(cl_line, ["Jan", "Feb", "Mar", "Apr", "May"])
+SVG.SERIES(cl_line, "web", [10, 20, 15, 30, 25])
+SVG.SERIES(cl_line, "shop", [5, 8, "", 12, 11])
+SVG.SETOPT(cl_line, "y_title", "visits")
+SVG.SETOPT(cl_line, "x_title", "month")
+TESTKIT.EQ(SVG.MARKUP$(SVG.RENDER(cl_line)), TXTREADER$(FixturePath$("svg_chart_classic_line.svg")), "line")
+DIM cl_stack = SVG.CHART("stackedbar")
+SVG.FROMDF(cl_stack, sales, "region", ["q1", "q2"])
+TESTKIT.EQ(SVG.MARKUP$(SVG.RENDER(cl_stack)), TXTREADER$(FixturePath$("svg_chart_classic_stacked.svg")), "stacked bar")
+DIM cl_scatter = SVG.CHART("scatter")
+SVG.POINTS(cl_scatter, "a", [1.5, 3, 2.25], [10, 30, 20])
+SVG.POINTS(cl_scatter, "b", [0.5, 2, 4], [-5, 12, 40])
+TESTKIT.EQ(SVG.MARKUP$(SVG.RENDER(cl_scatter)), TXTREADER$(FixturePath$("svg_chart_classic_scatter.svg")), "scatter")
+DIM cl_pie = SVG.CHART("pie")
+SVG.LABELS(cl_pie, ["a", "b", "c"])
+SVG.SERIES(cl_pie, "n", [50, 30, 20])
+SVG.SETOPT(cl_pie, "donut", 0.5)
+TESTKIT.EQ(SVG.MARKUP$(SVG.RENDER(cl_pie)), TXTREADER$(FixturePath$("svg_chart_classic_pie.svg")), "donut")
+DIM cl_opt = SVG.CHART("bar", 300, 200)
+SVG.LABELS(cl_opt, ["x", "y"])
+SVG.SERIES(cl_opt, "s", [0.2, 0.35])
+SVG.SETOPT(cl_opt, "legend", "none")
+SVG.SETOPT(cl_opt, "colors", "#111111, #222222")
+SVG.SETOPT(cl_opt, "y_max", 0.5)
+SVG.SETOPT(cl_opt, "values", 1)
+SVG.SETOPT(cl_opt, "background", "#fafafa")
+TESTKIT.EQ(SVG.MARKUP$(SVG.RENDER(cl_opt)), TXTREADER$(FixturePath$("svg_chart_classic_options.svg")), "bar with options")
 
 ' ── a browser ──────────────────────────────────────────────────
 

@@ -1452,7 +1452,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `DOCX` | Word files: written with headings, lists, tables, header and footer; templates filled; paragraphs and tables read |
 | `ML` | scikit-learn essentials: split, scaling, one-hot; linear, ridge, logistic, knn, k-means, decision tree; metrics; models as JSON |
 | `PARSEC` | parsers: combinators and PEG grammars, trees with line and column, actions, errors naming what was expected |
-| `SVG` | drawings and charts as SVG without a window: shapes, gradients, transforms; line, bar, stacked, scatter, pie from DF frames; sparklines |
+| `SVG` | drawings and charts as SVG without a window: shapes, gradients, transforms; line, bar, stacked, scatter, pie, area, histogram and box charts from DF frames; log scales, reference lines, notes, fitted curves; sparklines |
 | `ICAL` | calendars: .ics read and written, recurrence rules expanded into occurrences, named zones with summer time |
 | `OAUTH` | OAuth 2 clients: client credentials, code flow with PKCE, device code, refresh; REQ sessions that refresh; Google and Microsoft |
 | `DB` | SQLite through a query builder with bound values: rows as maps, insert, upsert, update, delete from maps, tables from rows, migrations |

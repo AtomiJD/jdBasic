@@ -62,7 +62,7 @@ fill-opacity="0.5"`.
 ## Charts
 
 ```basic
-DIM c = SVG.CHART("line", 640, 400)      ' line, bar, stackedbar, scatter, pie
+DIM c = SVG.CHART("line", 640, 400)      ' line, bar, stackedbar, scatter, pie, area, histogram, box
 SVG.SETOPT(c, "title", "Visitors")
 SVG.LABELS(c, ["Jan", "Feb", "Mar"])
 SVG.SERIES(c, "web", [120, 135.5, 150])
@@ -75,7 +75,14 @@ DIM page$ = "<div>" + SVG.MARKUP$(SVG.RENDER(c)) + "</div>"
 | `CHART(kind$, [width], [height])` | A chart, 640 by 400 by default. |
 | `LABELS(chart, labels)` | The categories along the x axis; the slices of a pie. |
 | `SERIES(chart, name$, values)` | A series, one value per label; a cell that is not a number is a gap. A pie takes its first series. |
-| `POINTS(chart, name$, xs, ys)` | A series of points for a scatter chart. |
+| `POINTS(chart, name$, xs, ys)` | A series of points for a scatter chart, or for a line or area chart with numbers along x. |
+| `BINS(chart, name$, values, [bins])` | A histogram series: `bins` (10) equal-width bins from the smallest to the largest value, as `HISTOGRAM` and `numpy.histogram` count them. |
+| `BINCOUNTS(chart, name$, counts, edges)` | A histogram series from counts and one edge more, as `HISTOGRAM` and `HISTEDGES` answer them. |
+| `CURVE(chart, name$, xs, ys)` | A line through points without dots, over a chart with numbers along x. |
+| `FITLINE(chart, name$, coeffs)` | A polynomial drawn across the x range, highest power first as `FIT.POLYFIT` answers it. |
+| `REFLINE(chart, axis$, value, [label$])` | A dashed reference line at a value of the `y` axis or, with numbers along x, of the `x` axis. |
+| `NOTE(chart, x, y, text$)` | A marked point with a text; on a chart with categories x is the category's index. |
+| `BOXSTATS(values)` | A map of `n`, `q1`, `median`, `q3`, `iqr`, `whislo`, `whishi`, `mean` and `outliers`, the numbers a box plot draws. |
 | `FROMDF(chart, frame, x_col$, y_cols)` | A DF frame: the x column becomes the labels (the x values of a scatter chart), each column named in `y_cols` (a name or a list) a series. |
 | `SETOPT(chart, key$, value)` | An option, see below. |
 | `RENDER(chart)` | Draws the chart into a new drawing; answers its handle. |
@@ -88,6 +95,9 @@ DIM page$ = "<div>" + SVG.MARKUP$(SVG.RENDER(c)) + "</div>"
 | `stackedbar` | the series on top of each other, negative values below zero |
 | `scatter` | a dot per point on two numeric axes |
 | `pie` | a slice per label from the first series with its share; a donut with `donut` |
+| `area` | a line per series filled down to zero, across the labels or along numbers from `POINTS`; stacked with `stacked` |
+| `histogram` | a bar per bin from `BINS` or `BINCOUNTS`, as wide as the bin, on a numeric x axis |
+| `box` | a box per series from q1 to q3 with the median, whiskers and outliers as circles |
 
 | Option | Means |
 |--------|-------|
@@ -100,13 +110,37 @@ DIM page$ = "<div>" + SVG.MARKUP$(SVG.RENDER(c)) + "</div>"
 | `donut` | the hole of a pie as a part of its radius, up to 0.9 |
 | `colors` | the series colours, a list separated by commas |
 | `background` | a colour behind the chart; transparent by default |
+| `x_min`, `x_max` | the ends of a numeric x axis |
+| `y_log`, `x_log` | `1` for a log scale with a tick every decade; `x_log` needs numbers along x; values of zero or below are left out |
+| `stacked` | `1` stacks the series of an area chart |
 
 The y axis rounds the data range out to steps of 1, 2 or 5 times a power
 of ten, about five ticks, and a bar chart always includes zero. Long
-category labels are thinned out so they do not overlap.
+category labels are thinned out so they do not overlap. A log axis runs
+from the decade at or below the smallest value to the decade at or above
+the largest.
+
+Box plots follow matplotlib's `boxplot` defaults: quartiles by linear
+interpolation (`numpy.percentile`'s default method), whiskers at the most
+extreme values within 1.5 times the interquartile range of the box, the
+values beyond drawn as outliers. Reference lines and notes widen the axes
+to include themselves on the numeric charts; on bar and category line
+charts they are drawn when they fall inside the axis.
+
+```basic
+DIM h = SVG.CHART("histogram")
+SVG.BINS(h, "ms", times, 20)
+SVG.REFLINE(h, "x", SVG.BOXSTATS(times){"median"}, "median")
+DIM s = SVG.CHART("scatter")
+SVG.POINTS(s, "measured", xs, ys)
+SVG.FITLINE(s, "fit", FIT.POLYFIT(xs, ys, 2))
+```
 
 Every mark carries its data as attributes, `data-series`, `data-label`,
-`data-value` (and `data-x` on a scatter point), and a `<title>` tooltip,
+`data-value` (and `data-x` on a scatter point, `data-lo`/`data-hi` on a
+bin, `data-q1`, `data-median`, `data-q3`, `data-whislo`, `data-whishi`
+on a box, `data-ref` and `data-note` on reference lines and notes), and a
+`<title>` tooltip,
 so a chart can be checked or scripted in the page. Text and grid take
 their colours from a style sheet with a `prefers-color-scheme: dark`
 rule, and the series colours (Tableau 10) are mid-toned, so the same
@@ -122,6 +156,11 @@ chart reads on a light and a dark page.
   interpreter's.
 
 Self test: `tests/jdlibs/svg_selftest.jdb` reads every chart back with XML
-and measures its marks against the data; with Edge or Chrome installed it
-also renders one to PNG. Demo: `jdb/demos/jdlibs/svg_demo.jdb` writes a
-report page with five charts and sparklines from a DF frame.
+and measures its marks against the data, histogram bins, box statistics,
+log ticks and fitted polynomials against numpy and matplotlib values in
+`tests/jdlibs/fixtures/svg_chart_*.tsv`, and the classic charts byte for
+byte against `svg_chart_classic_*.svg`; with Edge or Chrome installed it
+also renders one to PNG. Demos: `jdb/demos/jdlibs/svg_demo.jdb` writes a
+report page with five charts and sparklines from a DF frame;
+`jdb/demos/jdlibs/chart_demo.jdb` a page with a histogram, box plots, a
+stacked area, a log scale, a fitted curve and reference lines.
