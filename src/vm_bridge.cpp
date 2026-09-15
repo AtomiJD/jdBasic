@@ -654,17 +654,16 @@ JDRT_API int64_t jdrt_frame_begin(JdRT handle) {
     return rt->next_handle;
 }
 
+// Frame temps are exactly the keys watermark..next_handle-1, so the sweep
+// erases that range and costs the frame's own allocations, not the size of
+// value_store. Negative keys are persistent (jdrt_promote_handle) and are
+// never in the range.
 JDRT_API void jdrt_frame_end(JdRT handle, int64_t watermark) {
     auto* rt = resolve_rt(handle);
-    for (auto it = rt->value_store.begin(); it != rt->value_store.end(); ) {
-        // Negative keys are persistent (promoted via jdrt_promote_handle)
-        // and must survive the per-iteration sweep - they're held by
-        // long-lived containers like vstate{...}.
-        if (it->first >= watermark && it->first > 0)
-            it = rt->value_store.erase(it);
-        else
-            ++it;
-    }
+    if (rt->value_store.empty()) return;
+    int64_t first = watermark > 0 ? watermark : 1;
+    for (int64_t h = first; h < rt->next_handle; ++h)
+        rt->value_store.erase(h);
 }
 
 // Re-store a frame-temp handle's Value at a persistent (negative) key

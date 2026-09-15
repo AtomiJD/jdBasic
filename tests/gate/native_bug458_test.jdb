@@ -1,0 +1,76 @@
+' DO loops sweep their per-iteration bridge temporaries. The sweep has to
+' cost the iteration's own temporaries, not every value the program kept
+' before the loop: after thousands of REGEX.MATCH and MAP.KEYS results
+' outside any DO loop, a DO WHILE loop still runs as fast as before them.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+FUNC Spin(n)
+    DIM k = 0
+    DO WHILE k < n
+        k = k + 1
+    LOOP
+    RETURN k
+ENDFUNC
+
+FUNC KeysInLoop(m, rounds)
+    DIM seen = 0
+    DIM r = 0
+    DO WHILE r < rounds
+        DIM names = MAP.KEYS(m)
+        seen = seen + LEN(names)
+        IF REGEX.MATCH("^[a-z]+$", "abc") THEN seen = seen + 1
+        r = r + 1
+    LOOP
+    RETURN seen
+ENDFUNC
+
+DIM m AS MAP
+m{"one"} = 1
+m{"two"} = 2
+m{"three"} = 3
+DIM kept = MAP.KEYS(m)
+
+DIM t0 = TICK()
+DIM spun_before = Spin(100000)
+DIM t1 = TICK()
+
+DIM hits AS INTEGER = 0
+DIM listed AS INTEGER = 0
+DIM i AS INTEGER = 0
+FOR i = 1 TO 5000
+    IF REGEX.MATCH("[a-z]+", "abc") THEN hits = hits + 1
+    DIM names = MAP.KEYS(m)
+    listed = listed + LEN(names)
+NEXT i
+
+DIM t2 = TICK()
+DIM spun_after = Spin(100000)
+DIM t3 = TICK()
+
+DIM before_ms = t1 - t0
+DIM after_ms = t3 - t2
+Ok("both loops count to the end", spun_before = 100000 ANDALSO spun_after = 100000)
+Ok("the calls outside the loop all answered", hits = 5000 ANDALSO listed = 15000)
+Ok("a DO loop after 10000 bridge results is not slower (" + STR$(INT(before_ms)) + " ms, then " + STR$(INT(after_ms)) + " ms)", after_ms <= 20 * before_ms + 50)
+Ok("temporaries made inside a DO loop are usable in their iteration", KeysInLoop(m, 1000) = 4000)
+Ok("a result kept from before the loops is still readable", LEN(kept) = 3)
+DIM first_key$ = kept[0]
+Ok("and its first key is intact", first_key$ = "one" ORELSE first_key$ = "two" ORELSE first_key$ = "three")
+
+PRINT ""
+PRINT "NATIVE BUG 458 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
