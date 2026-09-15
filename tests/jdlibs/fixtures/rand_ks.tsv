@@ -1,0 +1,18 @@
+name	call	n	seed	test	statistic	p	sample_mean	sample_var	expected_mean	expected_var
+normal	NORMAL(gen, 1.5, 2)	20000	20260915	ks	scipy.stats.norm	0.2951	-	-	1.5	4.0
+lognormal	LOGNORMAL(gen, 0.2, 0.5)	20000	20260915	ks	scipy.stats.lognorm	0.2951	-	-	1.3840	0.5441
+exponential	EXPONENTIAL(gen, 0.7)	20000	20260915	ks	scipy.stats.expon	0.5872	-	-	1.4286	2.0408
+uniform	UNIFORM(gen, -3, 5)	20000	20260915	ks	scipy.stats.uniform	0.5872	-	-	1.0	5.3333
+triangular	TRIANGULAR(gen, 1, 2.5, 7)	20000	20260915	ks	scipy.stats.triang	0.5872	-	-	3.5	1.625
+gamma_small	GAMMA(gen, 0.4, 2)	20000	20260915	ks	scipy.stats.gamma	0.7900	-	-	0.8	1.6
+gamma_large	GAMMA(gen, 7.5, 0.5)	20000	20260915	ks	scipy.stats.gamma	0.5602	-	-	3.75	1.875
+beta	BETA(gen, 2, 5)	20000	20260915	ks	scipy.stats.beta	0.2810	-	-	0.2857	0.0255
+poisson_small	POISSON(gen, 3.2)	20000	20260915	chi2	13.44	0.2653	-	-	3.2	3.2
+poisson_large	POISSON(gen, 57)	20000	20260915	chi2	75.58	0.0087	56.9945	56.4012	57	57
+poisson_12	POISSON(gen, 12)	200000	777	chi2	31.02 (25 df)	0.1882	12.0102	11.9724	12	12
+poisson_57	POISSON(gen, 57)	200000	778	chi2	36.22 (51 df)	0.9415	57.0011	57.0977	57	57
+poisson_150	POISSON(gen, 150)	200000	779	chi2	83.50 (83 df)	0.4639	150.0064	150.5797	150	150
+binomial_small	BINOMIAL(gen, 40, 0.3)	20000	20260915	chi2	-	0.2681	-	-	12	8.4
+binomial_large	BINOMIAL(gen, 500, 0.37)	20000	20260915	chi2	-	0.2706	-	114.92	185	116.55
+binomial_flip	BINOMIAL(gen, 200, 0.9)	20000	20260915	chi2	-	0.2845	-	-	180	18
+int	INTRANGE(gen, -4, 9)	20000	20260915	chi2	-	0.1560	-	-	2.5	16.25

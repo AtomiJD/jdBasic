@@ -1468,6 +1468,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `SEARCH` | full-text search: inverted index, BM25 as rank_bm25 computes it, field weights, phrases, typo-tolerant lookup and suggestions, index files, reciprocal rank fusion |
 | `I18N` | text catalogs with locale fallback and placeholders, CLDR plural rules, Accept-Language negotiation, a current locale for NUMFMT, DT and TMPL filters |
 | `ARCHIVE` | tar (ustar, GNU, pax) and gzip read and written, folders to .tar.gz, safe extraction |
+| `RAND` | random distributions, weighted choice (alias method), sampling, shuffles and reservoirs on seeded RNG generators |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

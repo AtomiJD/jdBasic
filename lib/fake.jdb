@@ -95,9 +95,24 @@ DIM gLorem = ["lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipisci
 
 ' ── the generator ──────────────────────────────────────────────
 
+' When above 0, the RNG handle draws come from instead of the generator
+' written here.
+DIM gRngGen = 0
+
+' Switches to the RNG builtins (xoshiro256**) seeded with n: other values
+' than SEED gives, the same in both backends. SEED switches back.
+EXPORT SUB SEEDRNG(n)
+    IF gRngGen > 0 THEN RNG.FREE(gRngGen)
+    gRngGen = RNG.NEW(n)
+ENDSUB
+
 ' Sets where the run starts. The same seed gives the same values in the
 ' same order, on any machine and in either backend.
 EXPORT SUB SEED(n)
+    IF gRngGen > 0 THEN
+        RNG.FREE(gRngGen)
+        gRngGen = 0
+    ENDIF
     DIM start = INT(ABS(n)) MOD TWO32
     IF start = 0 THEN start = 1
     gState = start
@@ -393,6 +408,10 @@ FUNC Advance()
 ENDFUNC
 
 FUNC Unit()
+    IF gRngGen > 0 THEN
+        DIM u = RNG.NEXT(gRngGen)
+        RETURN u
+    ENDIF
     RETURN Advance() / TWO32
 ENDFUNC
 

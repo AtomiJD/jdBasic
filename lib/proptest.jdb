@@ -21,10 +21,8 @@ IMPORT TESTKIT, FAKE
 DIM TEXT_CHARS$ = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 .,;:!?'-_()[]{}<>/\@#$%&*+=~^|`"
 DIM LETTER_CHARS$ = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
 DIM DIGIT_CHARS$ = "0123456789"
-DIM RNG_MOD = 2147483647
 
 DIM gMode = 0
-DIM gRng = 1
 DIM gChoices = []
 DIM gPos = 0
 DIM gUsed = []
@@ -43,9 +41,18 @@ DIM gPickKinds = []
 
 ' ------------------------------------------------------------------ choices
 
+DIM gCaseGen = 0
+
+' Every case draws from its own RNG generator (xoshiro256**).
+SUB StartCase(seed_value)
+    IF gCaseGen > 0 THEN RNG.FREE(gCaseGen)
+    gCaseGen = RNG.NEW(seed_value)
+ENDSUB
+
 FUNC NextUnit()
-    gRng = (gRng * 16807) MOD RNG_MOD
-    RETURN (gRng - 1) / 2147483646.0
+    IF gCaseGen = 0 THEN StartCase(1)
+    DIM u = RNG.NEXT(gCaseGen)
+    RETURN u
 ENDFUNC
 
 ' A whole number from 0 to n - 1: drawn at random, or read back from the
@@ -645,7 +652,7 @@ FUNC RunProperty(gen$, prop, opts)
     DIM case_no = 0
     FOR case_no = 0 TO runs - 1
         gMode = 0
-        gRng = CaseSeed(seed, case_no)
+        StartCase(CaseSeed(seed, case_no))
         gPos = 0
         gUsed = []
         IF NOT Holds(prop, gen$, kind$) THEN
@@ -706,7 +713,7 @@ EXPORT FUNC EXAMPLES(gen$, n, seed)
     DIM case_no = 0
     FOR case_no = 0 TO n - 1
         gMode = 0
-        gRng = CaseSeed(CINT(seed), case_no)
+        StartCase(CaseSeed(CINT(seed), case_no))
         gPos = 0
         gUsed = []
         PUSH(out, ShowDraw$(gen$, kind$))

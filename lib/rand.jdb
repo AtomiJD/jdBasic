@@ -1,0 +1,575 @@
+' rand.jdb - random numbers on the RNG builtins: generators you seed and
+' pass around, uniform, normal, exponential, lognormal, gamma, beta,
+' triangular, Poisson and binomial draws, weighted choice with alias
+' tables, sampling with and without replacement, reservoir sampling,
+' shuffles and permutations.
+'
+'   IMPORT RAND
+'   DIM gen = RAND.GENERATOR(2026)
+'   PRINT RAND.NORMAL(gen, 170, 8)
+'   PRINT RAND.POISSON(gen, 4.5)
+'   DIM loot = RAND.ALIAS([70, 25, 5])
+'   PRINT RAND.ALIASDRAW(gen, loot)
+'
+' Every call takes the generator first; 0 means the module's own default
+' generator, seeded with SEED. The same seed gives the same draws in both
+' backends: every value is built from RNG.NEXT and RNG.INT (xoshiro256**)
+' with fixed formulas.
+
+EXPORT MODULE RAND
+
+CONST TWO_PI = 6.283185307179586
+CONST LOG_2PI = 1.8378770664093453
+
+DIM gDefault = 0
+
+' Alias tables, laid out one after another: a table is a start and a size.
+DIM gAliasStart = []
+DIM gAliasSize = []
+DIM gAliasProb = []
+DIM gAliasIndex = []
+
+' Reservoirs: k slots each, the items seen so far, and the slot texts.
+DIM gResStart = []
+DIM gResSize = []
+DIM gResSeen = []
+DIM gResItems = []
+
+' ── generators ─────────────────────────────────────────────────
+
+FUNC Gen(gen)
+    IF gen > 0 THEN RETURN gen
+    IF gDefault = 0 THEN gDefault = RNG.NEW(1)
+    RETURN gDefault
+ENDFUNC
+
+' A new generator from a seed. Two generators never share a sequence
+' position; free one with FREE when it is no longer needed.
+EXPORT FUNC GENERATOR(seed)
+    DIM made = RNG.NEW(seed)
+    RETURN made
+ENDFUNC
+
+' The generator back to the RNG builtins.
+EXPORT SUB FREE(gen)
+    IF gen > 0 THEN RNG.FREE(gen)
+ENDSUB
+
+' Seeds the default generator, the one generator 0 stands for.
+EXPORT SUB SEED(n)
+    IF gDefault > 0 THEN RNG.FREE(gDefault)
+    gDefault = RNG.NEW(n)
+ENDSUB
+
+' ── uniform ────────────────────────────────────────────────────
+
+' A number in [0, 1).
+EXPORT FUNC UNIT(gen)
+    DIM u = RNG.NEXT(Gen(gen))
+    RETURN u
+ENDFUNC
+
+' A number in [low, high).
+EXPORT FUNC UNIFORM(gen, low, high)
+    DIM u = RNG.NEXT(Gen(gen))
+    RETURN low + (high - low) * u
+ENDFUNC
+
+' A whole number from low to high, both included, without modulo bias.
+EXPORT FUNC INTRANGE(gen, low, high)
+    DIM v = RNG.INT(Gen(gen), CLNG(low), CLNG(high))
+    RETURN CLNG(v)
+ENDFUNC
+
+' ── continuous distributions ───────────────────────────────────
+
+' The standard normal by Box-Muller, one pair of uniforms per value.
+FUNC StdNormal(g)
+    DIM u1 = 1.0 - RNG.NEXT(g)
+    DIM u2 = RNG.NEXT(g)
+    RETURN SQR(-2.0 * LOG(u1)) * COS(TWO_PI * u2)
+ENDFUNC
+
+EXPORT FUNC NORMAL(gen, mu = 0, sigma = 1)
+    IF sigma < 0 THEN THROW "RAND.NORMAL: sigma must not be negative"
+    RETURN mu + sigma * StdNormal(Gen(gen))
+ENDFUNC
+
+EXPORT FUNC LOGNORMAL(gen, mu = 0, sigma = 1)
+    IF sigma < 0 THEN THROW "RAND.LOGNORMAL: sigma must not be negative"
+    RETURN EXP(mu + sigma * StdNormal(Gen(gen)))
+ENDFUNC
+
+' Waiting times with a rate: the mean is 1 / rate.
+EXPORT FUNC EXPONENTIAL(gen, rate = 1)
+    IF rate <= 0 THEN THROW "RAND.EXPONENTIAL: rate must be positive"
+    DIM u = RNG.NEXT(Gen(gen))
+    RETURN -LOG(1.0 - u) / rate
+ENDFUNC
+
+' low <= x <= high with the peak at mode, by the inverse of its CDF.
+EXPORT FUNC TRIANGULAR(gen, low, mode, high)
+    IF NOT (low <= mode ANDALSO mode <= high ANDALSO low < high) THEN THROW "RAND.TRIANGULAR: needs low <= mode <= high and low < high"
+    DIM u = RNG.NEXT(Gen(gen))
+    DIM cut = (mode - low) / (high - low)
+    IF u < cut THEN RETURN low + SQR(u * (high - low) * (mode - low))
+    RETURN high - SQR((1.0 - u) * (high - low) * (high - mode))
+ENDFUNC
+
+' Gamma with shape 1 or more: Marsaglia and Tsang's rejection from a
+' Wilson-Hilferty transformed normal.
+FUNC GammaLarge(g, shape)
+    DIM d = shape - 1.0 / 3.0
+    DIM root3 = 3.0 * SQR(d)
+    DIM attempt = 0
+    FOR attempt = 1 TO 100000
+        DIM z = StdNormal(g)
+        DIM base = 1.0 + z / root3
+        IF base > 0 THEN
+            DIM x = d * base * base * base
+            DIM lhs = LOG(1.0 - RNG.NEXT(g))
+            IF lhs < 0.5 * z * z + d * LOG(x / d) - x + d THEN RETURN x
+        ENDIF
+    NEXT attempt
+    THROW "RAND.GAMMA: no value accepted"
+ENDFUNC
+
+FUNC GammaStd(g, shape)
+    IF shape >= 1 THEN RETURN GammaLarge(g, shape)
+    DIM boosted = GammaLarge(g, shape + 1.0)
+    DIM u = 1.0 - RNG.NEXT(g)
+    RETURN boosted * EXP(LOG(u) / shape)
+ENDFUNC
+
+' Gamma with shape k and scale theta: the mean is k * theta.
+EXPORT FUNC GAMMA(gen, shape, scale = 1)
+    IF shape <= 0 ORELSE scale <= 0 THEN THROW "RAND.GAMMA: shape and scale must be positive"
+    RETURN scale * GammaStd(Gen(gen), shape)
+ENDFUNC
+
+' Beta(a, b) as X / (X + Y) of two gamma draws.
+EXPORT FUNC BETA(gen, a, b)
+    IF a <= 0 ORELSE b <= 0 THEN THROW "RAND.BETA: a and b must be positive"
+    DIM g = Gen(gen)
+    DIM x = GammaStd(g, a)
+    DIM y = GammaStd(g, b)
+    RETURN x / (x + y)
+ENDFUNC
+
+' ── discrete distributions ─────────────────────────────────────
+
+' log(Gamma(x)) as numpy's random module computes it.
+FUNC LogGamma(x)
+    IF x = 1.0 ORELSE x = 2.0 THEN RETURN 0.0
+    DIM coeff = [0.08333333333333333, -0.002777777777777778, 0.0007936507936507937, -0.0005952380952380952, 0.0008417508417508418, -0.001917526917526918, 0.00641025641025641, -0.02955065359477124, 0.1796443723688307, -1.3924322169059]
+    DIM n = 0
+    IF x < 7.0 THEN n = CLNG(INT(7.0 - x))
+    DIM x0 = x + n
+    DIM x2 = (1.0 / x0) * (1.0 / x0)
+    DIM gl0 = coeff[9]
+    DIM k = 0
+    FOR k = 8 TO 0 STEP -1
+        DIM ck = coeff[k]
+        gl0 = gl0 * x2 + ck
+    NEXT k
+    DIM gl = gl0 / x0 + 0.5 * LOG_2PI + (x0 - 0.5) * LOG(x0) - x0
+    IF x < 7.0 THEN
+        FOR k = 1 TO n
+            gl = gl - LOG(x0 - 1.0)
+            x0 = x0 - 1.0
+        NEXT k
+    ENDIF
+    RETURN gl
+ENDFUNC
+
+' Poisson: multiplying uniforms below 10, Hormann's PTRS from 10 on.
+EXPORT FUNC POISSON(gen, lam)
+    IF lam < 0 THEN THROW "RAND.POISSON: lambda must not be negative"
+    IF lam = 0 THEN RETURN 0
+    DIM g = Gen(gen)
+    DIM attempt = 0
+    IF lam < 10 THEN
+        DIM limit = EXP(-lam)
+        DIM prod = 1.0
+        DIM count_k = 0
+        FOR attempt = 1 TO 100000
+            prod = prod * RNG.NEXT(g)
+            IF prod <= limit THEN EXITFOR
+            count_k = count_k + 1
+        NEXT attempt
+        RETURN CLNG(count_k)
+    ENDIF
+    DIM slam = SQR(lam)
+    DIM loglam = LOG(lam)
+    DIM b = 0.931 + 2.53 * slam
+    DIM a = -0.059 + 0.02483 * b
+    DIM invalpha = 1.1239 + 1.1328 / (b - 3.4)
+    DIM vr = 0.9277 - 3.6224 / (b - 2.0)
+    FOR attempt = 1 TO 100000
+        DIM u = RNG.NEXT(g) - 0.5
+        DIM v = RNG.NEXT(g)
+        DIM us = 0.5 - ABS(u)
+        DIM kk = INT((2.0 * a / us + b) * u + lam + 0.43)
+        IF us >= 0.07 ANDALSO v <= vr THEN RETURN CLNG(kk)
+        IF kk >= 0 ANDALSO NOT (us < 0.013 ANDALSO v > us) THEN
+            IF LOG(v) + LOG(invalpha) - LOG(a / (us * us) + b) <= -lam + kk * loglam - LogGamma(kk + 1.0) THEN RETURN CLNG(kk)
+        ENDIF
+    NEXT attempt
+    THROW "RAND.POISSON: no value accepted"
+ENDFUNC
+
+' Successes in n trials with probability p: inversion while n * min(p, 1-p)
+' is at most 30, Hormann's BTRS above.
+EXPORT FUNC BINOMIAL(gen, n, p)
+    IF n < 0 ORELSE p < 0 ORELSE p > 1 THEN THROW "RAND.BINOMIAL: needs n >= 0 and 0 <= p <= 1"
+    DIM trials = CLNG(n)
+    IF trials = 0 ORELSE p = 0 THEN RETURN 0
+    IF p = 1 THEN RETURN trials
+    DIM g = Gen(gen)
+    DIM flip = FALSE
+    DIM pp = p
+    IF p > 0.5 THEN
+        pp = 1.0 - p
+        flip = TRUE
+    ENDIF
+    DIM q = 1.0 - pp
+    DIM result_k = 0
+    DIM attempt = 0
+    IF trials * pp <= 30 THEN
+        DIM qn = EXP(trials * LOG(q))
+        DIM np = trials * pp
+        DIM bound = np + 10.0 * SQR(np * q + 1.0)
+        IF bound > trials THEN bound = trials
+        DIM x = 0
+        DIM px = qn
+        DIM u = RNG.NEXT(g)
+        FOR attempt = 1 TO 10000000
+            IF u <= px THEN EXITFOR
+            x = x + 1
+            IF x > bound THEN
+                x = 0
+                px = qn
+                u = RNG.NEXT(g)
+            ELSE
+                u = u - px
+                px = ((trials - x + 1) * pp * px) / (x * q)
+            ENDIF
+        NEXT attempt
+        result_k = x
+    ELSE
+        DIM spq = SQR(trials * pp * q)
+        DIM bb = 1.15 + 2.53 * spq
+        DIM aa = -0.0873 + 0.0248 * bb + 0.01 * pp
+        DIM cc = trials * pp + 0.5
+        DIM alpha = (2.83 + 5.1 / bb) * spq
+        DIM vr = 0.92 - 4.2 / bb
+        DIM m = INT((trials + 1) * pp)
+        DIM lpq = LOG(pp / q)
+        DIM h = LogGamma(m + 1.0) + LogGamma(trials - m + 1.0)
+        DIM accepted = FALSE
+        FOR attempt = 1 TO 100000
+            DIM uu = RNG.NEXT(g) - 0.5
+            DIM vv = RNG.NEXT(g)
+            DIM us = 0.5 - ABS(uu)
+            DIM kk = INT((2.0 * aa / us + bb) * uu + cc)
+            IF kk >= 0 ANDALSO kk <= trials THEN
+                IF us >= 0.07 ANDALSO vv <= vr THEN
+                    result_k = kk
+                    accepted = TRUE
+                    EXITFOR
+                ENDIF
+                DIM lv = LOG(vv * alpha / (aa / (us * us) + bb))
+                IF lv <= h - LogGamma(kk + 1.0) - LogGamma(trials - kk + 1.0) + (kk - m) * lpq THEN
+                    result_k = kk
+                    accepted = TRUE
+                    EXITFOR
+                ENDIF
+            ENDIF
+        NEXT attempt
+        IF NOT accepted THEN THROW "RAND.BINOMIAL: no value accepted"
+    ENDIF
+    IF flip THEN RETURN CLNG(trials - result_k)
+    RETURN CLNG(result_k)
+ENDFUNC
+
+' n draws of one kind as an array: "unit", "uniform" (low, high), "int"
+' (low, high), "normal" (mu, sigma), "lognormal" (mu, sigma), "exponential"
+' (rate), "gamma" (shape, scale), "beta" (a, b), "triangular" (low, mode,
+' high), "poisson" (lambda), "binomial" (n, p).
+EXPORT FUNC DRAWS(gen, kind$, n, p1 = 0, p2 = 0, p3 = 0)
+    DIM out = []
+    DIM which$ = LCASE$(kind$)
+    DIM i = 0
+    FOR i = 1 TO CLNG(n)
+        DIM v = 0.0
+        IF which$ = "unit" THEN
+            v = UNIT(gen)
+        ELSEIF which$ = "uniform" THEN
+            v = UNIFORM(gen, p1, p2)
+        ELSEIF which$ = "int" THEN
+            v = INTRANGE(gen, p1, p2)
+        ELSEIF which$ = "normal" THEN
+            v = NORMAL(gen, p1, p2)
+        ELSEIF which$ = "lognormal" THEN
+            v = LOGNORMAL(gen, p1, p2)
+        ELSEIF which$ = "exponential" THEN
+            v = EXPONENTIAL(gen, p1)
+        ELSEIF which$ = "gamma" THEN
+            v = GAMMA(gen, p1, p2)
+        ELSEIF which$ = "beta" THEN
+            v = BETA(gen, p1, p2)
+        ELSEIF which$ = "triangular" THEN
+            v = TRIANGULAR(gen, p1, p2, p3)
+        ELSEIF which$ = "poisson" THEN
+            v = POISSON(gen, p1)
+        ELSEIF which$ = "binomial" THEN
+            v = BINOMIAL(gen, p1, p2)
+        ELSE
+            THROW "RAND.DRAWS: unknown kind " + kind$
+        ENDIF
+        PUSH(out, v)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── weighted choice ────────────────────────────────────────────
+
+' The index of one weight, drawn in proportion to the weights by a walk
+' through their running total. For many draws from the same weights build
+' an ALIAS table instead.
+EXPORT FUNC WEIGHTED(gen, weights)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(weights) - 1
+        DIM w = weights[i]
+        IF w < 0 THEN THROW "RAND.WEIGHTED: weights must not be negative"
+        total = total + w
+    NEXT i
+    IF total <= 0 THEN THROW "RAND.WEIGHTED: the weights add up to nothing"
+    DIM target = RNG.NEXT(Gen(gen)) * total
+    DIM running = 0.0
+    FOR i = 0 TO LEN(weights) - 1
+        DIM wi = weights[i]
+        running = running + wi
+        IF target < running THEN RETURN CLNG(i)
+    NEXT i
+    RETURN CLNG(LEN(weights) - 1)
+ENDFUNC
+
+' An alias table for the weights (Vose's method); ALIASDRAW draws an index
+' from it in constant time.
+EXPORT FUNC ALIAS(weights)
+    DIM n = LEN(weights)
+    IF n = 0 THEN THROW "RAND.ALIAS: no weights"
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM w = weights[i]
+        IF w < 0 THEN THROW "RAND.ALIAS: weights must not be negative"
+        total = total + w
+    NEXT i
+    IF total <= 0 THEN THROW "RAND.ALIAS: the weights add up to nothing"
+    DIM scaled = ZEROS(n) + 0.0
+    DIM small = []
+    DIM large = []
+    FOR i = 0 TO n - 1
+        DIM wv = weights[i]
+        scaled[i] = wv * n / total
+        IF scaled[i] < 1.0 THEN
+            PUSH(small, i)
+        ELSE
+            PUSH(large, i)
+        ENDIF
+    NEXT i
+    DIM start = LEN(gAliasProb)
+    FOR i = 0 TO n - 1
+        PUSH(gAliasProb, 1.0)
+        PUSH(gAliasIndex, i)
+    NEXT i
+    DIM si = 0
+    DIM li = 0
+    DIM guard = 0
+    FOR guard = 1 TO 2 * n + 2
+        IF si >= LEN(small) ORELSE li >= LEN(large) THEN EXITFOR
+        DIM s = CLNG(small[si])
+        DIM l = CLNG(large[li])
+        si = si + 1
+        gAliasProb[start + s] = scaled[s]
+        gAliasIndex[start + s] = l
+        scaled[l] = scaled[l] + scaled[s] - 1.0
+        IF scaled[l] < 1.0 THEN
+            li = li + 1
+            PUSH(small, l)
+        ENDIF
+    NEXT guard
+    PUSH(gAliasStart, start)
+    PUSH(gAliasSize, n)
+    RETURN CLNG(LEN(gAliasStart))
+ENDFUNC
+
+' An index drawn from an ALIAS table: one whole number picks a column, one
+' uniform picks the column's own index or its alias.
+EXPORT FUNC ALIASDRAW(gen, table)
+    DIM t = CLNG(table) - 1
+    IF t < 0 ORELSE t >= LEN(gAliasStart) THEN THROW "RAND.ALIASDRAW: no such table"
+    DIM g = Gen(gen)
+    DIM start = CLNG(gAliasStart[t])
+    DIM n = CLNG(gAliasSize[t])
+    DIM col = CLNG(RNG.INT(g, 0, n - 1))
+    DIM u = RNG.NEXT(g)
+    DIM keep = gAliasProb[start + col]
+    IF u < keep THEN RETURN CLNG(col)
+    DIM other = gAliasIndex[start + col]
+    RETURN CLNG(other)
+ENDFUNC
+
+' ── sampling ───────────────────────────────────────────────────
+
+' One entry of a list.
+EXPORT FUNC CHOICE(gen, list)
+    IF LEN(list) = 0 THEN THROW "RAND.CHOICE: the list is empty"
+    DIM at = CLNG(RNG.INT(Gen(gen), 0, LEN(list) - 1))
+    DIM item = list[at]
+    RETURN item
+ENDFUNC
+
+' k entries drawn with replacement.
+EXPORT FUNC CHOICES(gen, list, k)
+    IF LEN(list) = 0 THEN THROW "RAND.CHOICES: the list is empty"
+    DIM g = Gen(gen)
+    DIM out = []
+    DIM i = 0
+    FOR i = 1 TO CLNG(k)
+        DIM at = CLNG(RNG.INT(g, 0, LEN(list) - 1))
+        PUSH(out, list[at])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The positions 0 to n - 1 in a random order, the first k of them settled
+' by a partial Fisher-Yates shuffle.
+FUNC ShuffledIndex(g, n, k)
+    DIM idx = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        PUSH(idx, i)
+    NEXT i
+    DIM upto = k
+    IF upto > n - 1 THEN upto = n - 1
+    FOR i = 0 TO upto - 1
+        DIM j = CLNG(RNG.INT(g, i, n - 1))
+        DIM keep = idx[i]
+        idx[i] = idx[j]
+        idx[j] = keep
+    NEXT i
+    RETURN idx
+ENDFUNC
+
+' k different entries (without replacement), in the order they were drawn.
+EXPORT FUNC SAMPLE(gen, list, k)
+    DIM n = LEN(list)
+    DIM want = CLNG(k)
+    IF want > n THEN THROW "RAND.SAMPLE: more entries asked for than the list has"
+    DIM order = ShuffledIndex(Gen(gen), n, want)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO want - 1
+        DIM at = CLNG(order[i])
+        PUSH(out, list[at])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' A new array with the entries of the list in a random order.
+EXPORT FUNC SHUFFLED(gen, list)
+    DIM n = LEN(list)
+    DIM order = ShuffledIndex(Gen(gen), n, n)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM at = CLNG(order[i])
+        PUSH(out, list[at])
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The numbers 0 to n - 1 in a random order.
+EXPORT FUNC PERMUTATION(gen, n)
+    DIM order = ShuffledIndex(Gen(gen), CLNG(n), CLNG(n))
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO CLNG(n) - 1
+        DIM v = order[i]
+        PUSH(out, CLNG(v))
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' k entries of a list chosen uniformly by reservoir sampling (Algorithm R),
+' in reservoir order: the same entries SAMPLE-like, in one pass.
+EXPORT FUNC RESERVOIR(gen, list, k)
+    DIM box = RESERVOIR_START(k)
+    DIM i = 0
+    FOR i = 0 TO LEN(list) - 1
+        DIM item$ = "" + list[i]
+        RESERVOIR_OFFER(gen, box, item$)
+    NEXT i
+    RETURN RESERVOIR_ITEMS(box)
+ENDFUNC
+
+' A reservoir of k slots for a stream of texts too long to hold.
+EXPORT FUNC RESERVOIR_START(k)
+    IF k < 1 THEN THROW "RAND.RESERVOIR_START: k must be at least 1"
+    DIM start = LEN(gResItems)
+    DIM i = 0
+    FOR i = 1 TO CLNG(k)
+        PUSH(gResItems, "")
+    NEXT i
+    PUSH(gResStart, start)
+    PUSH(gResSize, CLNG(k))
+    PUSH(gResSeen, 0)
+    RETURN CLNG(LEN(gResStart))
+ENDFUNC
+
+' One more item of the stream: the first k fill the slots, item number i
+' after that replaces a random slot with probability k / i.
+EXPORT SUB RESERVOIR_OFFER(gen, box, item$)
+    DIM r = CLNG(box) - 1
+    IF r < 0 ORELSE r >= LEN(gResStart) THEN THROW "RAND.RESERVOIR_OFFER: no such reservoir"
+    DIM start = CLNG(gResStart[r])
+    DIM k = CLNG(gResSize[r])
+    DIM seen = CLNG(gResSeen[r]) + 1
+    gResSeen[r] = seen
+    IF seen <= k THEN
+        gResItems[start + seen - 1] = item$
+    ELSE
+        DIM j = CLNG(RNG.INT(Gen(gen), 0, seen - 1))
+        IF j < k THEN gResItems[start + j] = item$
+    ENDIF
+ENDSUB
+
+' The items the reservoir holds: k of them, or all seen when fewer came.
+EXPORT FUNC RESERVOIR_ITEMS(box)
+    DIM r = CLNG(box) - 1
+    IF r < 0 ORELSE r >= LEN(gResStart) THEN THROW "RAND.RESERVOIR_ITEMS: no such reservoir"
+    DIM start = CLNG(gResStart[r])
+    DIM k = CLNG(gResSize[r])
+    DIM seen = CLNG(gResSeen[r])
+    DIM held = k
+    IF seen < k THEN held = seen
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO held - 1
+        DIM slot$ = gResItems[start + i]
+        PUSH(out, slot$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' How many items a reservoir has been offered.
+EXPORT FUNC RESERVOIR_SEEN(box)
+    DIM r = CLNG(box) - 1
+    IF r < 0 ORELSE r >= LEN(gResStart) THEN THROW "RAND.RESERVOIR_SEEN: no such reservoir"
+    DIM seen = gResSeen[r]
+    RETURN CLNG(seen)
+ENDFUNC

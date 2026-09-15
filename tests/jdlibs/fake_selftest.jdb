@@ -93,6 +93,34 @@ DIM negative = FAKE.NUMBER(0, 1000000)
 FAKE.SEED(9)
 TESTKIT.EQ(FAKE.NUMBER(0, 1000000), negative, "the sign of the seed does not matter")
 
+TESTKIT.SUITE("the RNG option")
+FAKE.SEEDRNG(42)
+DIM rngrun = []
+FOR i = 1 TO 20
+    PUSH(rngrun, FAKE.NUMBER(0, 1000000))
+NEXT i
+DIM rngname$ = FAKE.FULLNAME$()
+FAKE.SEEDRNG(42)
+DIM rngagain = []
+FOR i = 1 TO 20
+    PUSH(rngagain, FAKE.NUMBER(0, 1000000))
+NEXT i
+TESTKIT.EQ(JSON.STRINGIFY$(rngagain), JSON.STRINGIFY$(rngrun), "SEEDRNG replays its numbers")
+TESTKIT.EQ(FAKE.FULLNAME$(), rngname$, "and its names")
+TESTKIT.NE(JSON.STRINGIFY$(rngrun), JSON.STRINGIFY$(firstrun), "and they differ from the ones SEED gives")
+FAKE.SEEDRNG(43)
+DIM rngother = []
+FOR i = 1 TO 20
+    PUSH(rngother, FAKE.NUMBER(0, 1000000))
+NEXT i
+TESTKIT.NE(JSON.STRINGIFY$(rngother), JSON.STRINGIFY$(rngrun), "another RNG seed gives other numbers")
+FAKE.SEED(42)
+DIM backrun = []
+FOR i = 1 TO 20
+    PUSH(backrun, FAKE.NUMBER(0, 1000000))
+NEXT i
+TESTKIT.EQ(JSON.STRINGIFY$(backrun), JSON.STRINGIFY$(firstrun), "SEED goes back to the classic generator and its numbers")
+
 TESTKIT.SUITE("numbers and choices")
 FAKE.SEED(1)
 DIM lowest = 999.0

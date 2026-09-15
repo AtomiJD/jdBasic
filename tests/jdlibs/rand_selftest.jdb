@@ -1,0 +1,387 @@
+' RAND: the first draws of every function from a fixed seed against a
+' fixture (the same in both backends), the moments of 20000 draws per
+' distribution, chi-square checks for weighted choice, alias tables and
+' reservoirs, sampling properties, independent streams and the default
+' generator, and the refused arguments.
+'
+' RAND_WRITE_FIXTURE=1 writes the sequence fixture instead of checking it.
+
+IMPORT TESTKIT, RAND
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "rand_sequences.tsv") ANDALSO NOT FILE.EXISTS("tests/jdlibs/rand_selftest.jdb") THEN base$ = "fixtures/"
+DIM gWrite = GETENV$("RAND_WRITE_FIXTURE") <> ""
+
+FUNC Num$(v)
+    RETURN FORMAT$("{:.12f}", v)
+ENDFUNC
+
+FUNC Ints$(xs)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        DIM v = xs[i]
+        IF i > 0 THEN out$ = out$ + " "
+        out$ = out$ + STR$(CLNG(v))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC Texts$(xs)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        DIM t$ = xs[i]
+        IF i > 0 THEN out$ = out$ + " "
+        out$ = out$ + t$
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC Six$(kind$, p1, p2, p3)
+    DIM gen = RAND.GENERATOR(99)
+    DIM xs = RAND.DRAWS(gen, kind$, 6, p1, p2, p3)
+    RAND.FREE(gen)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        DIM v = xs[i]
+        IF i > 0 THEN out$ = out$ + " "
+        out$ = out$ + Num$(v)
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC AvgOf(xs)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        DIM v = xs[i]
+        total = total + v
+    NEXT i
+    RETURN total / LEN(xs)
+ENDFUNC
+
+FUNC VarOf(xs)
+    DIM m = AvgOf(xs)
+    DIM total = 0.0
+    DIM i = 0
+    FOR i = 0 TO LEN(xs) - 1
+        DIM v = xs[i]
+        total = total + (v - m) * (v - m)
+    NEXT i
+    RETURN total / LEN(xs)
+ENDFUNC
+
+' ── sequences ────────────────────────────────────────────────────
+
+DIM labels = []
+DIM got = []
+PUSH(labels, "unit")
+PUSH(got, Six$("unit", 0, 0, 0))
+PUSH(labels, "uniform -2 3")
+PUSH(got, Six$("uniform", -2, 3, 0))
+PUSH(labels, "int 1 6")
+PUSH(got, Six$("int", 1, 6, 0))
+PUSH(labels, "normal 10 3")
+PUSH(got, Six$("normal", 10, 3, 0))
+PUSH(labels, "lognormal 0 0.25")
+PUSH(got, Six$("lognormal", 0, 0.25, 0))
+PUSH(labels, "exponential 2")
+PUSH(got, Six$("exponential", 2, 0, 0))
+PUSH(labels, "triangular 0 1 4")
+PUSH(got, Six$("triangular", 0, 1, 4))
+PUSH(labels, "gamma 0.5 1")
+PUSH(got, Six$("gamma", 0.5, 1, 0))
+PUSH(labels, "gamma 3 2")
+PUSH(got, Six$("gamma", 3, 2, 0))
+PUSH(labels, "beta 0.5 0.5")
+PUSH(got, Six$("beta", 0.5, 0.5, 0))
+PUSH(labels, "poisson 2.5")
+PUSH(got, Six$("poisson", 2.5, 0, 0))
+PUSH(labels, "poisson 40")
+PUSH(got, Six$("poisson", 40, 0, 0))
+PUSH(labels, "binomial 10 0.4")
+PUSH(got, Six$("binomial", 10, 0.4, 0))
+PUSH(labels, "binomial 1000 0.2")
+PUSH(got, Six$("binomial", 1000, 0.2, 0))
+PUSH(labels, "binomial 50 0.95")
+PUSH(got, Six$("binomial", 50, 0.95, 0))
+
+DIM gs = RAND.GENERATOR(99)
+DIM picks = []
+DIM i = 0
+FOR i = 1 TO 8
+    PUSH(picks, RAND.WEIGHTED(gs, [1, 2, 3]))
+NEXT i
+PUSH(labels, "weighted 1 2 3")
+PUSH(got, Ints$(picks))
+DIM table = RAND.ALIAS([5, 1, 4])
+DIM apicks = []
+FOR i = 1 TO 8
+    PUSH(apicks, RAND.ALIASDRAW(gs, table))
+NEXT i
+PUSH(labels, "alias 5 1 4")
+PUSH(got, Ints$(apicks))
+DIM letters = ["a", "b", "c", "d", "e"]
+DIM cpicks = []
+FOR i = 1 TO 6
+    DIM letter$ = RAND.CHOICE(gs, letters)
+    PUSH(cpicks, letter$)
+NEXT i
+PUSH(labels, "choice a-e")
+PUSH(got, Texts$(cpicks))
+DIM digits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+PUSH(labels, "sample 4 of 10")
+PUSH(got, Ints$(RAND.SAMPLE(gs, digits, 4)))
+PUSH(labels, "shuffled 0-5")
+PUSH(got, Ints$(RAND.SHUFFLED(gs, [0, 1, 2, 3, 4, 5])))
+PUSH(labels, "permutation 8")
+PUSH(got, Ints$(RAND.PERMUTATION(gs, 8)))
+DIM words = ["oak", "ash", "elm", "fir", "yew", "box", "bay", "fig", "lime", "pine", "palm", "teak"]
+PUSH(labels, "reservoir 3 of 12")
+PUSH(got, Texts$(RAND.RESERVOIR(gs, words, 3)))
+PUSH(labels, "choices 5 with replacement")
+PUSH(got, Texts$(RAND.CHOICES(gs, letters, 5)))
+RAND.FREE(gs)
+
+IF gWrite THEN
+    DIM rows = []
+    FOR i = 0 TO LEN(labels) - 1
+        DIM lw$ = labels[i]
+        DIM gw$ = got[i]
+        PUSH(rows, lw$ + CHR$(9) + gw$)
+    NEXT i
+    TXTWRITER base$ + "rand_sequences.tsv", JOIN(rows, CHR$(10)) + CHR$(10)
+    PRINT "wrote "; base$; "rand_sequences.tsv"
+    END
+ENDIF
+
+TESTKIT.SUITE("the same draws from a seed")
+DIM fixture = SPLIT(TXTREADER$(base$ + "rand_sequences.tsv"), CHR$(10))
+DIM want AS MAP
+FOR i = 0 TO LEN(fixture) - 1
+    DIM row$ = fixture[i]
+    DIM tab = CINT(INSTR(row$, CHR$(9)))
+    IF tab > 0 THEN want{LEFT$(row$, tab)} = MID$(row$, tab + 1, LEN(row$))
+NEXT i
+FOR i = 0 TO LEN(labels) - 1
+    DIM label$ = labels[i]
+    DIM value$ = got[i]
+    DIM expected$ = ""
+    IF MAP.EXISTS(want, label$) THEN expected$ = want{label$}
+    TESTKIT.EQ(value$, expected$, label$)
+NEXT i
+
+' ── moments ──────────────────────────────────────────────────────
+
+TESTKIT.SUITE("moments of 20000 draws")
+DIM gm = RAND.GENERATOR(4242)
+DIM n_draws = 20000
+DIM kinds = ["uniform", "normal", "lognormal", "exponential", "triangular", "gamma", "gamma", "beta", "poisson", "poisson", "binomial", "binomial", "int"]
+DIM p1s = [-3, 1.5, 0.2, 0.7, 1, 0.4, 7.5, 2, 3.2, 57, 40, 500, -4]
+DIM p2s = [5, 2, 0.5, 0, 2.5, 2, 0.5, 5, 0, 0, 0.3, 0.37, 9]
+DIM p3s = [0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0, 0]
+DIM means = [1.0, 1.5, 1.3840254166877414, 1.4285714285714286, 3.5, 0.8, 3.75, 0.2857142857142857, 3.2, 57.0, 12.0, 185.0, 2.5]
+DIM variances = [5.333333333333333, 4.0, 0.5441192440580297, 2.0408163265306123, 1.625, 1.6, 1.875, 0.025510204081632654, 3.2, 57.0, 8.4, 116.55, 16.25]
+DIM k = 0
+FOR k = 0 TO LEN(kinds) - 1
+    DIM kind$ = kinds[k]
+    DIM a1 = p1s[k]
+    DIM a2 = p2s[k]
+    DIM a3 = p3s[k]
+    DIM mu = means[k]
+    DIM var_want = variances[k]
+    DIM xs = RAND.DRAWS(gm, kind$, n_draws, a1, a2, a3)
+    DIM m = AvgOf(xs)
+    DIM s2 = VarOf(xs)
+    DIM se = SQR(var_want / n_draws)
+    DIM name$ = kind$ + " " + STR$(a1) + " " + STR$(a2)
+    TESTKIT.ISTRUE(ABS(m - mu) < 5 * se, name$ + ": mean " + Num$(m) + " near " + Num$(mu))
+    TESTKIT.ISTRUE(ABS(s2 - var_want) < 0.15 * var_want, name$ + ": variance " + Num$(s2) + " near " + Num$(var_want))
+NEXT k
+RAND.FREE(gm)
+
+' ── weighted choice and reservoirs ───────────────────────────────
+
+TESTKIT.SUITE("chi-square")
+DIM gc = RAND.GENERATOR(31337)
+DIM weights = [1, 2, 3, 4]
+DIM alias_table = RAND.ALIAS(weights)
+DIM by_alias = [0, 0, 0, 0]
+DIM by_walk = [0, 0, 0, 0]
+DIM draws_n = 40000
+FOR i = 1 TO draws_n
+    DIM ia = RAND.ALIASDRAW(gc, alias_table)
+    by_alias[ia] = by_alias[ia] + 1
+    DIM iw = RAND.WEIGHTED(gc, weights)
+    by_walk[iw] = by_walk[iw] + 1
+NEXT i
+DIM chi_alias = 0.0
+DIM chi_walk = 0.0
+FOR i = 0 TO 3
+    DIM w = weights[i]
+    DIM expect = draws_n * w / 10.0
+    DIM oa = by_alias[i]
+    DIM ow = by_walk[i]
+    chi_alias = chi_alias + (oa - expect) * (oa - expect) / expect
+    chi_walk = chi_walk + (ow - expect) * (ow - expect) / expect
+NEXT i
+TESTKIT.ISTRUE(chi_alias < 16.27, "alias table frequencies fit the weights (chi-square " + Num$(chi_alias) + " below 16.27, p 0.001, 3 df)")
+TESTKIT.ISTRUE(chi_walk < 16.27, "and so do WEIGHTED's (chi-square " + Num$(chi_walk) + ")")
+DIM skewed = RAND.ALIAS([0, 0, 7])
+DIM always_two = TRUE
+FOR i = 1 TO 200
+    IF RAND.ALIASDRAW(gc, skewed) <> 2 THEN always_two = FALSE
+NEXT i
+TESTKIT.ISTRUE(always_two, "a weight of zero is never drawn")
+
+DIM items = ["i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7", "i8", "i9"]
+DIM hits = ZEROS(10) + 0
+DIM trials = 20000
+FOR i = 1 TO trials
+    DIM kept = RAND.RESERVOIR(gc, items, 3)
+    DIM j = 0
+    FOR j = 0 TO 2
+        DIM item$ = kept[j]
+        DIM at = CINT(VAL(MID$(item$, 1, 1)))
+        hits[at] = hits[at] + 1
+    NEXT j
+NEXT i
+DIM chi_res = 0.0
+FOR i = 0 TO 9
+    DIM oh = hits[i]
+    DIM eh = trials * 3 / 10.0
+    chi_res = chi_res + (oh - eh) * (oh - eh) / eh
+NEXT i
+TESTKIT.ISTRUE(chi_res < 27.88, "every item lands in a reservoir equally often (chi-square " + Num$(chi_res) + " below 27.88, 9 df)")
+DIM box = RAND.RESERVOIR_START(5)
+RAND.RESERVOIR_OFFER(gc, box, "one")
+RAND.RESERVOIR_OFFER(gc, box, "two")
+DIM partial = RAND.RESERVOIR_ITEMS(box)
+TESTKIT.EQ(LEN(partial), 2, "a reservoir offered fewer items than its size holds them all")
+TESTKIT.EQ(RAND.RESERVOIR_SEEN(box), 2, "and counts what it was offered")
+RAND.FREE(gc)
+
+' ── sampling ─────────────────────────────────────────────────────
+
+TESTKIT.SUITE("sampling")
+DIM gp = RAND.GENERATOR(8)
+DIM hundred = []
+FOR i = 0 TO 99
+    PUSH(hundred, i)
+NEXT i
+DIM drawn = RAND.SAMPLE(gp, hundred, 60)
+DIM seen_once AS MAP
+DIM dupes = 0
+FOR i = 0 TO LEN(drawn) - 1
+    DIM key$ = STR$(CLNG(drawn[i]))
+    IF MAP.EXISTS(seen_once, key$) THEN dupes = dupes + 1
+    seen_once{key$} = 1
+NEXT i
+TESTKIT.EQ(LEN(drawn), 60, "SAMPLE draws k entries")
+TESTKIT.EQ(dupes, 0, "none of them twice")
+DIM mixed = RAND.SHUFFLED(gp, hundred)
+DIM total_mixed = 0
+DIM moved = 0
+FOR i = 0 TO 99
+    DIM mv = mixed[i]
+    total_mixed = total_mixed + mv
+    IF mv <> i THEN moved = moved + 1
+NEXT i
+TESTKIT.EQ(total_mixed, 4950, "SHUFFLED keeps every entry")
+TESTKIT.ISTRUE(moved > 80, "and moves most of them")
+TESTKIT.EQ(hundred[0], 0, "leaving the list it was given alone")
+DIM perm = RAND.PERMUTATION(gp, 50)
+DIM total_perm = 0
+FOR i = 0 TO 49
+    DIM pv = perm[i]
+    total_perm = total_perm + pv
+NEXT i
+TESTKIT.EQ(total_perm, 1225, "PERMUTATION holds 0 to n - 1")
+DIM with_repl = RAND.CHOICES(gp, ["x"], 4)
+TESTKIT.EQ(Texts$(with_repl), "x x x x", "CHOICES draws with replacement")
+RAND.FREE(gp)
+
+' ── generators ───────────────────────────────────────────────────
+
+TESTKIT.SUITE("generators")
+DIM ga = RAND.GENERATOR(5)
+DIM gb = RAND.GENERATOR(5)
+DIM gc2 = RAND.GENERATOR(6)
+DIM first_a = RAND.UNIT(ga)
+DIM first_b = RAND.UNIT(gb)
+DIM first_c = RAND.UNIT(gc2)
+TESTKIT.EQ(Num$(first_a), Num$(first_b), "the same seed gives the same draws")
+TESTKIT.ISTRUE(Num$(first_a) <> Num$(first_c), "another seed other draws")
+DIM second_a = RAND.UNIT(ga)
+TESTKIT.EQ(Num$(RAND.UNIT(gb)), Num$(second_a), "two generators keep their own position")
+RAND.FREE(ga)
+RAND.FREE(gb)
+RAND.FREE(gc2)
+RAND.SEED(77)
+DIM d1 = RAND.NORMAL(0, 0, 1)
+RAND.SEED(77)
+DIM d2 = RAND.NORMAL(0, 0, 1)
+TESTKIT.EQ(Num$(d1), Num$(d2), "generator 0 is the default one, replayed by SEED")
+DIM in_range = TRUE
+FOR i = 1 TO 500
+    DIM r = RAND.INTRANGE(0, -2, 2)
+    IF r < -2 ORELSE r > 2 THEN in_range = FALSE
+    DIM u = RAND.UNIFORM(0, 10, 11)
+    IF u < 10 ORELSE u >= 11 THEN in_range = FALSE
+NEXT i
+TESTKIT.ISTRUE(in_range, "INTRANGE and UNIFORM stay inside their bounds")
+
+' ── refused arguments ────────────────────────────────────────────
+
+FUNC BadSigma(x)
+    RETURN RAND.NORMAL(0, 0, -1)
+ENDFUNC
+FUNC BadShape(x)
+    RETURN RAND.GAMMA(0, 0, 1)
+ENDFUNC
+FUNC BadBeta(x)
+    RETURN RAND.BETA(0, 1, 0)
+ENDFUNC
+FUNC BadLambda(x)
+    RETURN RAND.POISSON(0, -1)
+ENDFUNC
+FUNC BadP(x)
+    RETURN RAND.BINOMIAL(0, 10, 1.5)
+ENDFUNC
+FUNC BadRate(x)
+    RETURN RAND.EXPONENTIAL(0, 0)
+ENDFUNC
+FUNC BadTriangle(x)
+    RETURN RAND.TRIANGULAR(0, 2, 1, 3)
+ENDFUNC
+FUNC TooMany(x)
+    DIM few = RAND.SAMPLE(0, [1, 2], 3)
+    RETURN LEN(few)
+ENDFUNC
+FUNC EmptyChoice(x)
+    DIM nothing = []
+    RETURN RAND.CHOICE(0, nothing)
+ENDFUNC
+FUNC NoTable(x)
+    RETURN RAND.ALIASDRAW(0, 999)
+ENDFUNC
+FUNC NoWeights(x)
+    RETURN RAND.WEIGHTED(0, [0, 0])
+ENDFUNC
+
+TESTKIT.SUITE("refused arguments")
+TESTKIT.THROWS(BadSigma@, 0, "a negative sigma")
+TESTKIT.THROWS(BadShape@, 0, "a gamma shape of zero")
+TESTKIT.THROWS(BadBeta@, 0, "a beta parameter of zero")
+TESTKIT.THROWS(BadLambda@, 0, "a negative lambda")
+TESTKIT.THROWS(BadP@, 0, "a probability above one")
+TESTKIT.THROWS(BadRate@, 0, "an exponential rate of zero")
+TESTKIT.THROWS(BadTriangle@, 0, "a mode outside the triangle")
+TESTKIT.THROWS(TooMany@, 0, "a sample larger than the list")
+TESTKIT.THROWS(EmptyChoice@, 0, "a choice from an empty list")
+TESTKIT.THROWS(NoTable@, 0, "an alias table that does not exist")
+TESTKIT.THROWS(NoWeights@, 0, "weights that add up to nothing")
+
+TESTKIT.REPORT()

@@ -26,6 +26,7 @@ PRINT FAKE.COMPANY$(); "  "; FAKE.IBAN$()
 | Call | What it does |
 |------|--------------|
 | `SEED(n)` | Sets where the run starts. The same seed gives the same values in the same order. |
+| `SEEDRNG(n)` | Draws from the `RNG` builtins (xoshiro256**) seeded with n instead: other values than `SEED(n)`, just as reproducible. `SEED` switches back. |
 | `LOCALE(name$)` / `LOCALE$()` | Sets and reads the locale: `"en"` or `"de"`, anything else read as `"en"`. |
 | `NUMBER(low, high)` | A whole number, both ends included. |
 | `DECIMAL(low, high, [places])` | A number rounded to so many places, 2 by default. |
@@ -104,6 +105,9 @@ so a spec with a typo shows it rather than hiding it.
   inside what a double holds exactly, which is why the sequence is the
   same on every machine. The self test pins the hash of a thousand rows
   for exactly that reason.
+- `SEEDRNG` shares its generator with `RAND` and the `RNG` builtins, so
+  fake data and random draws come from one kind of stream; the classic
+  generator stays the default, and existing fixtures keep their values.
 - It is made for fixtures and demonstrations, not for anything that
   needs unguessable numbers.
 - The German locale writes umlauts out as `ae`, `oe` and `ue`, so a

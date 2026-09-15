@@ -26,7 +26,7 @@ A sort that drops duplicates fails, here with `{"seed": 7}` as the fourth
 argument, with
 
 ```
- FAIL 1   sort keeps the length: falsified by [0, 0] (seed 7, case 4, shrunk from [95, 69, 29, 48, 58, 15, 28, 28, 64, 62])
+ FAIL 1   sort keeps the length: falsified by [0, 0] (seed 7, case 5, shrunk from [-2, 1, 3, 8, 8, -26, 28])
 ```
 
 Without the option the seed comes from the clock and the message names
@@ -63,7 +63,7 @@ for every input. Lists of lists and lists of maps are refused.
 | Option | Default | What it does |
 |--------|---------|--------------|
 | `runs` | 100 | Inputs to try. |
-| `seed` | from the clock | The run's seed; every case draws from a seed made of it and the case number, so a seed replays the same inputs in both backends. |
+| `seed` | from the clock | The run's seed; every case draws from its own `RNG` generator (xoshiro256**) seeded with a number made of it and the case number, so a seed replays the same inputs in both backends. |
 | `max_shrinks` | 2000 | Property calls allowed while shrinking. |
 
 A property is a FUNC of one argument that answers TRUE when the input is

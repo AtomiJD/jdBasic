@@ -1,0 +1,84 @@
+' RAND: dice, a normal histogram, a loot table, a shuffled deck, a
+' reservoir over a stream and pi by Monte Carlo, all from one seed.
+
+IMPORT RAND
+
+DIM gen = RAND.GENERATOR(2026)
+
+PRINT "Ten dice:"
+DIM rolls = []
+DIM i = 0
+FOR i = 1 TO 10
+    PUSH(rolls, RAND.INTRANGE(gen, 1, 6))
+NEXT i
+PRINT "  "; JOIN(rolls, " ")
+
+PRINT
+PRINT "5000 normal draws, mean 100, sigma 15:"
+DIM heights = RAND.DRAWS(gen, "normal", 5000, 100, 15)
+DIM counts = HISTOGRAM(heights, 12)
+DIM edges = HISTEDGES(heights, 12)
+DIM biggest = MAX(counts)
+FOR i = 0 TO 11
+    DIM c = counts[i]
+    DIM lo_edge = edges[i]
+    DIM bar_len = CINT(c * 40 / biggest)
+    PRINT "  "; FORMAT$("{:>6.1f}", lo_edge); " "; REPEAT$("#", bar_len); " "; c
+NEXT i
+
+PRINT
+PRINT "1000 chests from a loot table (alias method):"
+DIM tiers = ["common", "rare", "epic", "legendary"]
+DIM loot = RAND.ALIAS([70, 22, 7, 1])
+DIM found = [0, 0, 0, 0]
+FOR i = 1 TO 1000
+    DIM t = RAND.ALIASDRAW(gen, loot)
+    found[t] = found[t] + 1
+NEXT i
+FOR i = 0 TO 3
+    DIM tier$ = tiers[i]
+    PRINT "  "; FORMAT$("{:<10}", tier$); found[i]
+NEXT i
+
+PRINT
+PRINT "A hand of five from a shuffled deck:"
+DIM deck = []
+DIM suits = ["S", "H", "D", "C"]
+DIM ranks = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
+DIM s = 0
+DIM r = 0
+FOR s = 0 TO 3
+    FOR r = 0 TO 12
+        DIM rank$ = ranks[r]
+        DIM suit$ = suits[s]
+        PUSH(deck, rank$ + suit$)
+    NEXT r
+NEXT s
+DIM mixed = RAND.SHUFFLED(gen, deck)
+DIM hand = []
+FOR i = 0 TO 4
+    DIM card$ = mixed[i]
+    PUSH(hand, card$)
+NEXT i
+PRINT "  "; JOIN(hand, " ")
+
+PRINT
+PRINT "Three log lines kept out of a stream of 10000:"
+DIM box = RAND.RESERVOIR_START(3)
+FOR i = 1 TO 10000
+    RAND.RESERVOIR_OFFER(gen, box, "request " + STR$(i))
+NEXT i
+DIM kept = RAND.RESERVOIR_ITEMS(box)
+FOR i = 0 TO LEN(kept) - 1
+    DIM entry$ = kept[i]
+    PRINT "  "; entry$
+NEXT i
+PRINT "  out of " + STR$(RAND.RESERVOIR_SEEN(box))
+
+PRINT
+DIM xs = RAND.DRAWS(gen, "unit", 200000)
+DIM ys = RAND.DRAWS(gen, "unit", 200000)
+DIM inside = SUM(xs * xs + ys * ys < 1)
+PRINT "Pi from 200000 points: "; FORMAT$("{:.4f}", 4.0 * inside / 200000)
+
+RAND.FREE(gen)
