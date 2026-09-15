@@ -1217,10 +1217,42 @@ FUNC LowerKeys(headers)
     DIM k = 0
     FOR k = 0 TO LEN(names) - 1
         DIM hn$ = names[k]
+        DIM low$ = LCASE$(hn$)
         DIM hv = headers{hn$}
-        out{LCASE$(hn$)} = hv
+        IF MAP.EXISTS(out, low$) THEN
+            DIM merged = BothValues(out{low$}, hv)
+            out{low$} = merged
+        ELSE
+            out{low$} = hv
+        ENDIF
     NEXT k
     RETURN out
+ENDFUNC
+
+' The values of one header name that arrived in two spellings (Set-Cookie
+' and set-cookie), as one array in arrival order.
+FUNC BothValues(have, more)
+    DIM values_out = []
+    DIM i = 0
+    IF TYPEOF(have) = "ARRAY" THEN
+        FOR i = 0 TO LEN(have) - 1
+            DIM a$ = have[i]
+            PUSH(values_out, a$)
+        NEXT i
+    ELSE
+        DIM one$ = have
+        PUSH(values_out, one$)
+    ENDIF
+    IF TYPEOF(more) = "ARRAY" THEN
+        FOR i = 0 TO LEN(more) - 1
+            DIM b$ = more[i]
+            PUSH(values_out, b$)
+        NEXT i
+    ELSE
+        DIM two$ = more
+        PUSH(values_out, two$)
+    ENDIF
+    RETURN values_out
 ENDFUNC
 
 ' A request to the app running in this process on port, as a map with

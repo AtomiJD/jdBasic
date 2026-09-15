@@ -107,6 +107,10 @@ FUNC Themed(request)
     RETURN JDWEB.HEADER(answer, "Set-Cookie", "theme=dark; Path=/")
 ENDFUNC
 
+FUNC Spellings(request)
+    RETURN {"__http_status": 200, "__http_body": "spellings", "__http_headers": {"Set-Cookie": "lang=de; Path=/", "set-cookie": "size=big"}}
+ENDFUNC
+
 FUNC Rotated(request)
     DIM sess = JDWEB.SESSION_ROTATE(request)
     DIM n = 0
@@ -194,6 +198,7 @@ FUNC CountOf(response)
 ENDFUNC
 
 JDWEB.GET("/themed", Themed@)
+JDWEB.GET("/spellings", Spellings@)
 JDWEB.GET("/rotate", Rotated@)
 JDWEB.GET("/form", FormPage@)
 JDWEB.POST("/save", Saved@)
@@ -341,6 +346,9 @@ IF gServed THEN
     TESTKIT.EQ(r{"body"}, "themed", "a route that sets a cookie of its own in a new session")
     TESTKIT.EQ(JDWEB.COOKIE_OF$(r, "theme"), "dark", "sends its cookie")
     TESTKIT.ISTRUE(LEN(JDWEB.COOKIE_OF$(r, "jdwsid")) > 10, "and the session cookie beside it")
+    r = JDWEB.FETCH(PORT, "GET", "/spellings")
+    TESTKIT.EQ(JDWEB.COOKIE_OF$(r, "lang"), "de", "a cookie sent as Set-Cookie")
+    TESTKIT.EQ(JDWEB.COOKIE_OF$(r, "size"), "big", "and one sent as set-cookie both reach FETCH")
 
     TESTKIT.SUITE("static files")
     r = JDWEB.FETCH(PORT, "GET", "/static/hello.txt")

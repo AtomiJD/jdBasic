@@ -134,7 +134,7 @@ and an `Allow` header naming them.
 | `LISTEN(port, [host$])` | Starts the app and returns TRUE, for a program that goes on, such as a test. |
 | `MOUNT()` | Only puts the routes on the server (through `HTTP.SERVER.ON_NOTFOUND`), for a program that starts the server itself. |
 | `DISPATCH(request)` | The answer to one request map, as MOUNT uses it. |
-| `FETCH(port, method$, path$, [body$], [headers])` | A request to the app running in this process: a map with `status`, `body` and `headers` (lower-case names). `headers` is a map; a `Content-Type` among them sets the body's type (JSON by default). |
+| `FETCH(port, method$, path$, [body$], [headers])` | A request to the app running in this process: a map with `status`, `body` and `headers` (lower-case names; a name sent more than once, in any spelling, holds an array of its values). `headers` is a map; a `Content-Type` among them sets the body's type (JSON by default). |
 | `COOKIE_OF$(response, name$)` | The value a FETCH response sets for a cookie, or `""`; it looks through every `Set-Cookie` the response carries. |
 
 ### Pages and login

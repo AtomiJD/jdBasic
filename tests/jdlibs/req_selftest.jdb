@@ -39,6 +39,10 @@ FUNC HANDLE_LOGIN(request)
     RETURN {"__http_status": 200, "__http_body": "welcome", "__http_headers": {"Set-Cookie": "sid=abc123; Path=/"}}
 ENDFUNC
 
+FUNC HANDLE_SPELLINGS(request)
+    RETURN {"__http_status": 200, "__http_body": "two spellings", "__http_headers": {"Set-Cookie": "lang=de; Path=/", "set-cookie": "theme=dark"}}
+ENDFUNC
+
 FUNC HANDLE_TEAPOT(request)
     RETURN {"__http_status": 418, "__http_body": "short and stout"}
 ENDFUNC
@@ -70,6 +74,7 @@ HTTP.SERVER.ON_POST("/upload", "HANDLE_UPLOAD")
 HTTP.SERVER.ON_GET("/flaky", "HANDLE_FLAKY")
 HTTP.SERVER.ON_GET("/login", "HANDLE_LOGIN")
 HTTP.SERVER.ON_GET("/teapot", "HANDLE_TEAPOT")
+HTTP.SERVER.ON_GET("/spellings", "HANDLE_SPELLINGS")
 
 IF NOT HTTP.SERVER.START(9977) THEN
     PRINT "could not start the fixture server on 9977"
@@ -117,6 +122,12 @@ DIM login = REQ.GET(s, "/login")
 TESTKIT.EQ(s{"cookies"}{"sid"}, "abc123", "Set-Cookie lands in the jar")
 DIM back = REQ.JSON(REQ.GET(s, "/echo"))
 TESTKIT.EQ(back{"cookie"}, "sid=abc123", "and goes out on the next request")
+DIM spelled = REQ.GET(s, "/spellings")
+DIM spelled_cookies = spelled{"headers"}{"set-cookie"}
+TESTKIT.EQ(TYPEOF(spelled_cookies), "ARRAY", "Set-Cookie and set-cookie meet under one lower-case name")
+TESTKIT.EQ(LEN(spelled_cookies), 2, "with both values")
+TESTKIT.EQ(s{"cookies"}{"lang"}, "de", "the jar takes the first spelling")
+TESTKIT.EQ(s{"cookies"}{"theme"}, "dark", "and the second")
 
 TESTKIT.SUITE("retries")
 REQ.RETRIES(s, 3, 20)

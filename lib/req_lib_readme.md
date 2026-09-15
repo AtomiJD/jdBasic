@@ -35,7 +35,7 @@ Every call returns a map:
 | `status` | The HTTP status, `0` for a transport failure. |
 | `ok` | `TRUE` for a 2xx status. |
 | `body` | The body as a string. |
-| `headers` | The response headers, names in lowercase. |
+| `headers` | The response headers, names in lowercase. A name that arrives more than once, also in different spellings (`Set-Cookie` and `set-cookie`), holds an array of all its values. |
 | `error` | The reason when `status` is 0. |
 | `url` | The URL that was called. |
 

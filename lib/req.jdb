@@ -202,14 +202,47 @@ FUNC Once(s, method$, url$, body$, content_type$)
     RETURN r
 ENDFUNC
 
+' Header names in lower case. A name that arrived in two spellings
+' (Set-Cookie and set-cookie) keeps the values of both as one array.
 FUNC LowerKeys(headers)
     DIM out AS MAP
     DIM names = MAP.KEYS(headers)
     DIM i = 0
     FOR i = 0 TO LEN(names) - 1
-        out{LCASE$(names[i])} = headers{names[i]}
+        DIM low$ = LCASE$(names[i])
+        DIM hv = headers{names[i]}
+        IF MAP.EXISTS(out, low$) THEN
+            DIM merged = BothValues(out{low$}, hv)
+            out{low$} = merged
+        ELSE
+            out{low$} = hv
+        ENDIF
     NEXT i
     RETURN out
+ENDFUNC
+
+FUNC BothValues(have, more)
+    DIM values_out = []
+    DIM i = 0
+    IF TYPEOF(have) = "ARRAY" THEN
+        FOR i = 0 TO LEN(have) - 1
+            DIM a$ = have[i]
+            PUSH(values_out, a$)
+        NEXT i
+    ELSE
+        DIM one$ = have
+        PUSH(values_out, one$)
+    ENDIF
+    IF TYPEOF(more) = "ARRAY" THEN
+        FOR i = 0 TO LEN(more) - 1
+            DIM b$ = more[i]
+            PUSH(values_out, b$)
+        NEXT i
+    ELSE
+        DIM two$ = more
+        PUSH(values_out, two$)
+    ENDIF
+    RETURN values_out
 ENDFUNC
 
 ' Keeps the name and value of every Set-Cookie header in the session jar; a
