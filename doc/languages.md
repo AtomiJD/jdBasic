@@ -911,6 +911,8 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`FOR EACH variable IN collection`**: Walks every element of an array (a matrix row by row), every UTF-8 character of a string, every key of a map in insertion order, or every value a channel delivers until it closes (interpreter only). Each element keeps its own type in both backends, also when the array comes straight from `SPLIT`, `MAP.KEYS` or a parameter. A number raises an error; `NONE` walks nothing.
   * **`FOR EACH i, x IN collection`**: two loop variables. Over an array or a string the first is the 0-based position and the second the element or character; over a map they are key and value (`FOR EACH k, v IN m`).
   * The loop works on what the collection held when it started: an array is walked up to its length at entry (elements added in the body are not visited), a map over the keys and values it had at entry.
+  * The loop declares its variables (no `DIM`, also with `OPTION "EXPLICIT"` and under `-c`); after the loop they hold the values of the last pass. A name ending in `$` takes strings. `EXITFOR` and `CONTINUEFOR` work as in a counted loop.
+  * A channel is walked only by the interpreter: `FOR EACH v IN ch` waits for each value until the channel closes. Compiled, it raises an error; use `DO ... CHAN.RECV ... IS_EOF` there.
 
 ```basic
 DIM prices AS MAP
@@ -933,7 +935,7 @@ NEXT
     * **Reads** of undeclared names: error 27 “Undeclared variable”.
     * **Writes** to undeclared names: error 27.
     * `DIM` always declares (even with EXPLICIT on).
-    * `FOR` / `FOR EACH` loop variables must be declared when EXPLICIT is on.
+    * `FOR` and `FOR EACH` declare their loop variables themselves, also with EXPLICIT on and under `-c`; no `DIM` is needed.
     * Disable with `OPTION "NOEXPLICIT"` or `OPTION "EXPLICITOFF"`.
 * **`SLEEP milliseconds`**: Pauses execution for a specified duration. The wait is measured against a deadline and sliced so events still get polled, so it does not overshoot by a multiple; what remains is one tick of the platform timer per slice, about 15.6 ms on Windows and under a millisecond elsewhere.
 * **`STOP`**: Halts program execution and returns to the `Ready` prompt, preserving variable state. Execution can be continued with `RESUME`.
