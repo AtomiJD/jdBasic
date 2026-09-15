@@ -1,0 +1,8 @@
+greeting: "Hallo {name}"
+cart: Warenkorb
+menu:
+  file:
+    open: "Datei öffnen"
+files:
+  one: "{count} Datei"
+  other: "{count} Dateien"

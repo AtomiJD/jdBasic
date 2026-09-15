@@ -1,0 +1,8 @@
+lang	category	rule
+en	one	i in 1 and v in 0
+de	one	i in 1 and v in 0
+fr	many	e in 0 and i not in 0 and i mod 1000000 in 0 and v in 0 or e not in 0..5
+fr	one	i in 0,1
+pl	few	v in 0 and i mod 10 in 2..4 and i mod 100 not in 12..14
+pl	many	v in 0 and i not in 1 and i mod 10 in 0..1 or v in 0 and i mod 10 in 5..9 or v in 0 and i mod 100 in 12..14
+pl	one	i in 1 and v in 0

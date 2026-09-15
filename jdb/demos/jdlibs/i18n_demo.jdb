@@ -1,0 +1,46 @@
+' I18N demo: a shop's texts in English, German, Austrian German and Polish,
+' plural forms for a basket, the locale picked from browser headers, money
+' written the way each locale writes it, and a template with the t, number
+' and currency filters.
+
+IMPORT I18N, TMPL
+
+I18N.ADDMAP("en", {"title": "Your basket", "items": {"one": "{count} item", "other": "{count} items"}, "total": "Total", "hello": "Hello {name}"})
+I18N.ADDMAP("de", {"title": "Ihr Warenkorb", "items": {"one": "{count} Artikel", "other": "{count} Artikel"}, "total": "Summe", "hello": "Hallo {name}"})
+I18N.ADDMAP("de-AT", {"title": "Ihr Einkaufswagerl"})
+I18N.ADDMAP("pl", {"title": "Koszyk", "items": {"one": "{count} produkt", "few": "{count} produkty", "many": "{count} produktow", "other": "{count} produktu"}, "total": "Suma", "hello": "Witaj {name}"})
+
+DIM available = ["en", "de", "de-AT", "pl"]
+DIM headers = ["de-AT,de;q=0.9,en;q=0.8", "pl-PL,pl;q=0.9", "fr-CH, fr;q=0.9, en;q=0.5", "it"]
+PRINT "Locale from the Accept-Language header"
+DIM h = 0
+FOR h = 0 TO LEN(headers) - 1
+    DIM header$ = headers[h]
+    DIM picked$ = I18N.NEGOTIATE$(header$, available)
+    IF picked$ = "" THEN picked$ = I18N.DEFAULT$()
+    PRINT "  "; LEFT$(header$ + "                              ", 30); " -> "; picked$
+NEXT h
+PRINT ""
+
+DIM counts = [1, 2, 5, 22]
+DIM k = 0
+FOR k = 0 TO LEN(available) - 1
+    DIM loc$ = available[k]
+    I18N.USELOCALE(loc$)
+    DIM forms$ = ""
+    DIM c = 0
+    FOR c = 0 TO LEN(counts) - 1
+        IF forms$ <> "" THEN forms$ = forms$ + ", "
+        forms$ = forms$ + I18N.N$("items", counts[c])
+    NEXT c
+    PRINT loc$; ": "; I18N.T$("title"); " - "; I18N.T$("hello", {"name": "Ann"})
+    PRINT "    "; forms$
+    PRINT "    "; I18N.T$("total"); " "; I18N.CURRENCY$(1234.5, "EUR")
+NEXT k
+PRINT ""
+
+I18N.FILTERS()
+I18N.USELOCALE("de-AT")
+DIM page$ = TMPL.RENDERSTR$("<h1>{{ t1 | t }}</h1><p>{{ t2 | t }}: {{ sum | currency:EUR }} ({{ sum | number:1 }})</p>", {"t1": "title", "t2": "total", "sum": 99.95})
+PRINT "A template in de-AT"
+PRINT "  "; page$

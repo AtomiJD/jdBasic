@@ -1,0 +1,11 @@
+preferred	available	expected
+de-AT,de,en	de,en	de
+de-AT	de-DE,en	
+fr-CA,en-US	en,fr	fr
+pt-BR	pt-PT,en	
+en-GB	en,de	en
+de-CH,fr	fr,de-CH	de-CH
+it	de,en	
+DE-at	de-AT,de	DE-at
+en-us,en	en-US,en	en-us
+zh-Hant-TW,en	zh,en	zh

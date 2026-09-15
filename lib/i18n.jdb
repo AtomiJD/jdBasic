@@ -1,0 +1,721 @@
+' I18N: text catalogs with a locale fallback chain and {name} placeholders,
+' CLDR plural rules, Accept-Language negotiation, and a current locale that
+' NUMFMT, DT and TMPL calls take.
+'
+'   IMPORT I18N
+'   I18N.LOADFILE("de", "lang/de.yaml")
+'   I18N.USELOCALE("de-AT")
+'   PRINT I18N.T$("greeting", {"name": "Ann"})     ' Hallo Ann
+'   PRINT I18N.N$("files", 3)                        ' 3 Dateien
+'
+' The current locale lives in module state. An ASYNC FUNC runs on its own
+' copy of the globals and does not see a locale set by USELOCALE; pass the locale
+' as the last argument there. Every call takes it.
+EXPORT MODULE I18N
+
+IMPORT CONF, YAML, NUMFMT, TMPL
+
+' Texts by "locale|key", the locale normalized.
+DIM gTexts AS MAP
+' Plural rules as parallel rows: language, category, rule text.
+DIM gRuleLangs = []
+DIM gRuleCats = []
+DIM gRuleTexts = []
+DIM gState AS MAP
+gState{"current"} = "en"
+gState{"default"} = "en"
+gState{"rules"} = 0
+
+' ---- locales ----
+
+' A language tag in its usual spelling: "DE_at" -> "de-AT",
+' "zh-hant-tw" -> "zh-Hant-TW".
+EXPORT FUNC NORMALIZE$(tag$)
+    DIM parts = SPLIT(REPLACE$(TRIM$(tag$), "_", "-"), "-")
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM part$ = parts[k]
+        IF part$ <> "" THEN
+            DIM shaped$ = part$
+            IF k = 0 THEN
+                shaped$ = LCASE$(part$)
+            ELSEIF LEN(part$) = 2 ORELSE (LEN(part$) = 3 ANDALSO IsDigits(part$)) THEN
+                shaped$ = UCASE$(part$)
+            ELSEIF LEN(part$) = 4 THEN
+                shaped$ = UCASE$(LEFT$(part$, 1)) + LCASE$(MID$(part$, 1, 3))
+            ELSE
+                shaped$ = LCASE$(part$)
+            ENDIF
+            IF out$ <> "" THEN out$ = out$ + "-"
+            out$ = out$ + shaped$
+        ENDIF
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+FUNC IsDigits(text$)
+    IF LEN(text$) = 0 THEN RETURN FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(text$) - 1
+        DIM ch$ = MID$(text$, k, 1)
+        IF ch$ < "0" ORELSE ch$ > "9" THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+FUNC LangOf$(locale$)
+    DIM tag$ = NORMALIZE$(locale$)
+    DIM cut = CINT(INSTR(tag$, "-"))
+    IF cut < 0 THEN RETURN tag$
+    RETURN LEFT$(tag$, cut)
+ENDFUNC
+
+FUNC Pick$(locale$)
+    IF TRIM$(locale$) = "" THEN
+        DIM now$ = gState{"current"}
+        RETURN now$
+    ENDIF
+    RETURN NORMALIZE$(locale$)
+ENDFUNC
+
+' The locale calls use when they are given none.
+EXPORT SUB USELOCALE(locale$)
+    gState{"current"} = NORMALIZE$(locale$)
+ENDSUB
+
+EXPORT FUNC LOCALE$()
+    DIM now$ = gState{"current"}
+    RETURN now$
+ENDFUNC
+
+' The locale every fallback chain ends in ("en").
+EXPORT SUB SETDEFAULT(locale$)
+    gState{"default"} = NORMALIZE$(locale$)
+ENDSUB
+
+EXPORT FUNC DEFAULT$()
+    DIM d$ = gState{"default"}
+    RETURN d$
+ENDFUNC
+
+' The locales a lookup tries in turn: the locale, then with its last part
+' taken off, down to the language, then the default locale and its chain.
+EXPORT FUNC FALLBACKS(locale$ = "")
+    DIM chain = []
+    AddChain(chain, Pick$(locale$))
+    DIM d$ = gState{"default"}
+    AddChain(chain, d$)
+    RETURN chain
+ENDFUNC
+
+SUB AddChain(chain, tag$)
+    DIM rest$ = tag$
+    DO WHILE rest$ <> ""
+        DIM seen = FALSE
+        DIM k = 0
+        FOR k = 0 TO LEN(chain) - 1
+            DIM have$ = chain[k]
+            IF have$ = rest$ THEN seen = TRUE
+        NEXT k
+        IF NOT seen THEN PUSH(chain, rest$)
+        DIM cut = -1
+        FOR k = 0 TO LEN(rest$) - 1
+            IF MID$(rest$, k, 1) = "-" THEN cut = k
+        NEXT k
+        IF cut < 0 THEN
+            rest$ = ""
+        ELSE
+            rest$ = LEFT$(rest$, cut)
+        ENDIF
+    LOOP
+ENDSUB
+
+' ---- catalogs ----
+
+' One text for a key in a locale.
+EXPORT SUB ADDTEXT(locale$, key$, text$)
+    gTexts{NORMALIZE$(locale$) + "|" + key$} = text$
+ENDSUB
+
+' The texts of a map, nested maps as dotted keys ("menu.file.open");
+' the number of texts added.
+EXPORT FUNC ADDMAP(locale$, catalog)
+    DIM added = CLNG(Walk(NORMALIZE$(locale$), "", catalog))
+    RETURN added
+ENDFUNC
+
+FUNC Walk(tag$, prefix$, node)
+    IF TYPEOF(node) <> "OBJECT" THEN RETURN 0
+    DIM added = 0
+    DIM names = MAP.KEYS(node)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        DIM full$ = name$
+        IF prefix$ <> "" THEN full$ = prefix$ + "." + name$
+        DIM v = node{name$}
+        DIM kind$ = TYPEOF(v)
+        IF kind$ = "OBJECT" THEN
+            added = added + CLNG(Walk(tag$, full$, v))
+        ELSEIF kind$ = "STRING" THEN
+            DIM text$ = v
+            gTexts{tag$ + "|" + full$} = text$
+            added = added + 1
+        ELSEIF kind$ <> "ARRAY" ANDALSO kind$ <> "NONE" THEN
+            gTexts{tag$ + "|" + full$} = "" + v
+            added = added + 1
+        ENDIF
+    NEXT k
+    RETURN added
+ENDFUNC
+
+' A catalog from text in "json", "yaml", "toml" or "ini"; INI sections
+' become the first part of a dotted key.
+EXPORT FUNC LOADTEXT(locale$, text$, format$)
+    DIM kind$ = LCASE$(TRIM$(format$))
+    IF kind$ = "json" THEN
+        DIM parsed = JSON.PARSE$(text$)
+        RETURN CLNG(Walk(NORMALIZE$(locale$), "", parsed))
+    ENDIF
+    IF kind$ = "yaml" ORELSE kind$ = "yml" THEN
+        DIM tree = YAML.PARSE(text$)
+        RETURN CLNG(Walk(NORMALIZE$(locale$), "", tree))
+    ENDIF
+    IF kind$ = "toml" THEN
+        DIM toml = CONF.TOML_TEXT(text$)
+        RETURN CLNG(Walk(NORMALIZE$(locale$), "", toml))
+    ENDIF
+    IF kind$ = "ini" THEN
+        DIM ini = CONF.INI_TEXT(text$)
+        RETURN CLNG(Walk(NORMALIZE$(locale$), "", ini))
+    ENDIF
+    THROW "I18N.LOADTEXT: unknown format " + format$
+    RETURN 0
+ENDFUNC
+
+' A catalog file; the format comes from its extension.
+EXPORT FUNC LOADFILE(locale$, path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "I18N.LOADFILE: no file " + path$
+    DIM dot = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(path$) - 1
+        IF MID$(path$, k, 1) = "." THEN dot = k
+    NEXT k
+    DIM ext$ = ""
+    IF dot >= 0 THEN ext$ = LCASE$(MID$(path$, dot + 1, LEN(path$)))
+    RETURN LOADTEXT(locale$, TXTREADER$(path$), ext$)
+ENDFUNC
+
+' The texts of a locale are forgotten; "" forgets every catalog.
+EXPORT SUB FORGET(locale$ = "")
+    DIM names = MAP.KEYS(gTexts)
+    DIM prefix$ = NORMALIZE$(locale$) + "|"
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        IF locale$ = "" ORELSE LEFT$(name$, LEN(prefix$)) = prefix$ THEN MAP.DELETE(gTexts, name$)
+    NEXT k
+ENDSUB
+
+' The locale of the chain that has the key, or "".
+FUNC FoundIn$(key$, locale$)
+    DIM chain = FALLBACKS(locale$)
+    DIM k = 0
+    FOR k = 0 TO LEN(chain) - 1
+        DIM tag$ = chain[k]
+        IF MAP.EXISTS(gTexts, tag$ + "|" + key$) THEN RETURN tag$
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' Whether a key has a text in the chain of the locale.
+EXPORT FUNC HAS(key$, locale$ = "")
+    RETURN FoundIn$(key$, locale$) <> ""
+ENDFUNC
+
+' The text of a key with its placeholders filled from vars; the key itself
+' when no locale of the chain has it.
+EXPORT FUNC T$(key$, vars = 0, locale$ = "")
+    DIM tag$ = FoundIn$(key$, locale$)
+    IF tag$ = "" THEN RETURN key$
+    DIM text$ = gTexts{tag$ + "|" + key$}
+    RETURN FILL$(text$, vars)
+ENDFUNC
+
+' The text of key.<category> for a count, where the category comes from the
+' plural rules of the locale; key.other when that category has no text.
+' {count} holds the count as it was given.
+EXPORT FUNC N$(key$, number, vars = 0, locale$ = "")
+    DIM amount$ = ""
+    IF TYPEOF(number) = "STRING" THEN
+        DIM given$ = number
+        amount$ = TRIM$(given$)
+    ELSE
+        amount$ = NumberText$(number)
+    ENDIF
+    DIM category$ = PLURAL$(amount$, locale$)
+    DIM tag$ = FoundIn$(key$ + "." + category$, locale$)
+    DIM use_key$ = key$ + "." + category$
+    IF tag$ = "" THEN
+        use_key$ = key$ + ".other"
+        tag$ = FoundIn$(use_key$, locale$)
+    ENDIF
+    IF tag$ = "" THEN RETURN key$
+    DIM filled AS MAP
+    IF TYPEOF(vars) = "OBJECT" THEN
+        DIM names = MAP.KEYS(vars)
+        DIM k = 0
+        FOR k = 0 TO LEN(names) - 1
+            DIM name$ = names[k]
+            DIM v = vars{name$}
+            filled{name$} = v
+        NEXT k
+    ENDIF
+    filled{"count"} = amount$
+    DIM text$ = gTexts{tag$ + "|" + use_key$}
+    RETURN FILL$(text$, filled)
+ENDFUNC
+
+' {name} replaced by vars{name}; {{ and }} give a brace; a placeholder
+' without a value stays as it is.
+EXPORT FUNC FILL$(text$, vars = 0)
+    DIM has_vars = (TYPEOF(vars) = "OBJECT")
+    DIM out$ = ""
+    DIM k = 0
+    DIM n = LEN(text$)
+    DO WHILE k < n
+        DIM ch$ = MID$(text$, k, 1)
+        IF ch$ = "{" ANDALSO k + 1 < n ANDALSO MID$(text$, k + 1, 1) = "{" THEN
+            out$ = out$ + "{"
+            k = k + 2
+        ELSEIF ch$ = "}" ANDALSO k + 1 < n ANDALSO MID$(text$, k + 1, 1) = "}" THEN
+            out$ = out$ + "}"
+            k = k + 2
+        ELSEIF ch$ = "{" THEN
+            DIM close = CINT(INSTR(k + 1, text$, "}"))
+            IF close < 0 THEN
+                out$ = out$ + MID$(text$, k, n)
+                k = n
+            ELSE
+                DIM name$ = MID$(text$, k + 1, close - k - 1)
+                DIM put$ = "{" + name$ + "}"
+                IF has_vars ANDALSO MAP.EXISTS(vars, name$) THEN put$ = ValueText$(vars{name$})
+                out$ = out$ + put$
+                k = close + 1
+            ENDIF
+        ELSE
+            out$ = out$ + ch$
+            k = k + 1
+        ENDIF
+    LOOP
+    RETURN out$
+ENDFUNC
+
+FUNC ValueText$(v)
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "STRING" THEN
+        DIM s$ = v
+        RETURN s$
+    ENDIF
+    IF kind$ = "NONE" THEN RETURN ""
+    IF kind$ = "BOOLEAN" THEN
+        IF v THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    IF kind$ = "INT64" ORELSE kind$ = "FLOAT64" ORELSE kind$ = "NUMBER" THEN RETURN NumberText$(v)
+    RETURN "" + v
+ENDFUNC
+
+FUNC NumberText$(x)
+    IF x = INT(x) ANDALSO ABS(x) < 9007199254740992 THEN RETURN STR$(CLNG(x))
+    RETURN STR$(x)
+ENDFUNC
+
+' Every key a locale has texts for, sorted.
+EXPORT FUNC KEYS(locale$)
+    DIM prefix$ = NORMALIZE$(locale$) + "|"
+    DIM names = MAP.KEYS(gTexts)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        IF LEFT$(name$, LEN(prefix$)) = prefix$ THEN PUSH(out, MID$(name$, LEN(prefix$), LEN(name$)))
+    NEXT k
+    RETURN SORT(out)
+ENDFUNC
+
+' ---- plural rules (CLDR) ----
+
+SUB EnsureRules()
+    DIM loaded = gState{"rules"}
+    IF loaded = 0 THEN
+        gState{"rules"} = 1
+        PutRule("en", "one", "i in 1 and v in 0")
+        PutRule("de", "one", "i in 1 and v in 0")
+        PutRule("fr", "one", "i in 0,1")
+        PutRule("fr", "many", "e in 0 and i not in 0 and i mod 1000000 in 0 and v in 0 or e not in 0..5")
+        PutRule("pl", "one", "i in 1 and v in 0")
+        PutRule("pl", "few", "v in 0 and i mod 10 in 2..4 and i mod 100 not in 12..14")
+        PutRule("pl", "many", "v in 0 and i not in 1 and i mod 10 in 0..1 or v in 0 and i mod 10 in 5..9 or v in 0 and i mod 100 in 12..14")
+    ENDIF
+ENDSUB
+
+SUB PutRule(lang$, category$, rule$)
+    DIM k = 0
+    DIM at = -1
+    FOR k = 0 TO LEN(gRuleLangs) - 1
+        DIM l$ = gRuleLangs[k]
+        DIM c$ = gRuleCats[k]
+        IF l$ = lang$ ANDALSO c$ = category$ THEN at = k
+    NEXT k
+    IF at >= 0 THEN
+        gRuleTexts[at] = rule$
+    ELSE
+        PUSH(gRuleLangs, lang$)
+        PUSH(gRuleCats, category$)
+        PUSH(gRuleTexts, rule$)
+    ENDIF
+ENDSUB
+
+' A plural rule in CLDR syntax for a language and a category (zero, one,
+' two, few, many); it replaces the rule that category had.
+EXPORT SUB ADDRULE(lang$, category$, rule$)
+    EnsureRules()
+    PutRule(LCASE$(TRIM$(lang$)), LCASE$(TRIM$(category$)), TRIM$(rule$))
+ENDSUB
+
+' The rules of a language as a map of category to rule text.
+EXPORT FUNC RULES(lang$)
+    EnsureRules()
+    DIM out AS MAP
+    DIM want$ = LCASE$(TRIM$(lang$))
+    DIM k = 0
+    FOR k = 0 TO LEN(gRuleLangs) - 1
+        DIM l$ = gRuleLangs[k]
+        IF l$ = want$ THEN
+            DIM c$ = gRuleCats[k]
+            DIM r$ = gRuleTexts[k]
+            out{c$} = r$
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The CLDR plural category of a number in a locale: zero, one, two, few,
+' many or other. A number given as text keeps its visible decimals, so "1"
+' and "1.0" can differ.
+EXPORT FUNC PLURAL$(number, locale$ = "")
+    EnsureRules()
+    DIM text$ = ""
+    IF TYPEOF(number) = "STRING" THEN
+        DIM given$ = number
+        text$ = TRIM$(given$)
+    ELSE
+        text$ = NumberText$(number)
+    ENDIF
+    IF LEFT$(text$, 1) = "-" ORELSE LEFT$(text$, 1) = "+" THEN text$ = MID$(text$, 1, LEN(text$))
+    DIM int$ = text$
+    DIM frac$ = ""
+    DIM dot = CINT(INSTR(text$, "."))
+    IF dot >= 0 THEN
+        int$ = LEFT$(text$, dot)
+        frac$ = MID$(text$, dot + 1, LEN(text$))
+    ENDIF
+    IF int$ = "" THEN int$ = "0"
+    DIM trimmed$ = frac$
+    DO WHILE LEN(trimmed$) > 0 ANDALSO RIGHT$(trimmed$, 1) = "0"
+        trimmed$ = LEFT$(trimmed$, LEN(trimmed$) - 1)
+    LOOP
+    DIM ops AS MAP
+    ops{"n"} = VAL(text$)
+    ops{"i"} = VAL(int$)
+    ops{"v"} = LEN(frac$)
+    ops{"w"} = LEN(trimmed$)
+    ops{"f"} = 0
+    ops{"t"} = 0
+    IF frac$ <> "" THEN ops{"f"} = VAL(frac$)
+    IF trimmed$ <> "" THEN ops{"t"} = VAL(trimmed$)
+    ops{"e"} = 0
+    ops{"c"} = 0
+    DIM lang$ = LangOf$(Pick$(locale$))
+    DIM order = ["zero", "one", "two", "few", "many"]
+    DIM o = 0
+    FOR o = 0 TO LEN(order) - 1
+        DIM want$ = order[o]
+        DIM k = 0
+        FOR k = 0 TO LEN(gRuleLangs) - 1
+            DIM l$ = gRuleLangs[k]
+            DIM c$ = gRuleCats[k]
+            IF l$ = lang$ ANDALSO c$ = want$ THEN
+                DIM rule$ = gRuleTexts[k]
+                IF RuleHolds(rule$, ops) THEN RETURN want$
+            ENDIF
+        NEXT k
+    NEXT o
+    RETURN "other"
+ENDFUNC
+
+' A rule: conditions joined by "and", those groups joined by "or".
+FUNC RuleHolds(rule$, ops)
+    IF TRIM$(rule$) = "" THEN RETURN FALSE
+    DIM alternatives = SPLIT(rule$, " or ")
+    DIM a = 0
+    FOR a = 0 TO LEN(alternatives) - 1
+        DIM alt$ = alternatives[a]
+        DIM conditions = SPLIT(alt$, " and ")
+        DIM all_hold = TRUE
+        DIM c = 0
+        FOR c = 0 TO LEN(conditions) - 1
+            DIM cond$ = conditions[c]
+            IF NOT ConditionHolds(cond$, ops) THEN all_hold = FALSE
+        NEXT c
+        IF all_hold THEN RETURN TRUE
+    NEXT a
+    RETURN FALSE
+ENDFUNC
+
+' One condition: an operand, an optional "mod m" or "% m", then in, not in,
+' =, !=, within or not within, then values and ranges like 0,1 or 2..4.
+FUNC ConditionHolds(cond$, ops)
+    DIM words = SPLIT(TRIM$(cond$), " ")
+    DIM parts = []
+    DIM k = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM w$ = words[k]
+        IF w$ <> "" THEN PUSH(parts, w$)
+    NEXT k
+    IF LEN(parts) < 3 THEN THROW "I18N: a plural condition needs an operand, a relation and values: " + cond$
+    DIM operand$ = parts[0]
+    IF NOT MAP.EXISTS(ops, operand$) THEN THROW "I18N: unknown plural operand " + operand$
+    DIM x = ops{operand$}
+    DIM at = 1
+    DIM head$ = parts[at]
+    IF head$ = "mod" ORELSE head$ = "%" THEN
+        DIM m_text$ = parts[at + 1]
+        DIM modulus = VAL(m_text$)
+        x = x - INT(x / modulus) * modulus
+        at = at + 2
+    ENDIF
+    DIM negate = FALSE
+    DIM relation$ = parts[at]
+    IF relation$ = "not" THEN
+        negate = TRUE
+        at = at + 1
+        relation$ = parts[at]
+    ELSEIF relation$ = "!=" THEN
+        negate = TRUE
+        relation$ = "in"
+    ELSEIF relation$ = "=" THEN
+        relation$ = "in"
+    ENDIF
+    IF at + 1 >= LEN(parts) THEN THROW "I18N: a plural condition has no values: " + cond$
+    DIM values$ = ""
+    FOR k = at + 1 TO LEN(parts) - 1
+        DIM piece$ = parts[k]
+        values$ = values$ + piece$
+    NEXT k
+    DIM whole_only = (relation$ = "in")
+    DIM hit = FALSE
+    DIM items = SPLIT(values$, ",")
+    FOR k = 0 TO LEN(items) - 1
+        DIM item$ = items[k]
+        DIM low = 0.0
+        DIM high = 0.0
+        DIM span = CINT(INSTR(item$, ".."))
+        IF span >= 0 THEN
+            low = VAL(LEFT$(item$, span))
+            high = VAL(MID$(item$, span + 2, LEN(item$)))
+        ELSE
+            low = VAL(item$)
+            high = low
+        ENDIF
+        IF x >= low ANDALSO x <= high THEN
+            IF NOT whole_only ORELSE x = INT(x) THEN hit = TRUE
+        ENDIF
+    NEXT k
+    IF negate THEN RETURN NOT hit
+    RETURN hit
+ENDFUNC
+
+' ---- Accept-Language ----
+
+' The language tags of an Accept-Language header, normalized, highest
+' quality first and in header order among equal ones; q=0 and * are left
+' out.
+EXPORT FUNC ACCEPT(header$)
+    DIM tags = []
+    DIM weights = []
+    DIM entries = SPLIT(header$, ",")
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM entry$ = TRIM$(entries[k])
+        IF entry$ <> "" THEN
+            DIM pieces = SPLIT(entry$, ";")
+            DIM tag$ = TRIM$(pieces[0])
+            DIM q = 1.0
+            DIM p = 0
+            FOR p = 1 TO LEN(pieces) - 1
+                DIM param$ = LCASE$(TRIM$(pieces[p]))
+                IF LEFT$(param$, 2) = "q=" THEN q = VAL(MID$(param$, 2, LEN(param$)))
+            NEXT p
+            IF tag$ <> "" ANDALSO tag$ <> "*" ANDALSO q > 0 THEN
+                DIM place = LEN(tags)
+                DIM s = 0
+                FOR s = LEN(tags) - 1 TO 0 STEP -1
+                    DIM wq = weights[s]
+                    IF wq < q THEN place = s
+                NEXT s
+                tags = InsertText(tags, place, NORMALIZE$(tag$))
+                weights = InsertNumber(weights, place, q)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN tags
+ENDFUNC
+
+FUNC InsertText(list, place, text$)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(list) - 1
+        IF k = place THEN PUSH(out, text$)
+        DIM old$ = list[k]
+        PUSH(out, old$)
+    NEXT k
+    IF place >= LEN(list) THEN PUSH(out, text$)
+    RETURN out
+ENDFUNC
+
+FUNC InsertNumber(list, place, value)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(list) - 1
+        IF k = place THEN PUSH(out, value)
+        DIM old = list[k]
+        PUSH(out, old)
+    NEXT k
+    IF place >= LEN(list) THEN PUSH(out, value)
+    RETURN out
+ENDFUNC
+
+' The available locale that fits the preferred ones best, or "". preferred
+' is an Accept-Language header or a list of tags. For each preferred tag in
+' turn: an available locale spelled the same (letter case aside), then its
+' language alone, then for a bare language the first available locale of
+' that language. The answer is spelled as in available.
+EXPORT FUNC NEGOTIATE$(preferred, available)
+    DIM wanted = []
+    IF TYPEOF(preferred) = "STRING" THEN
+        DIM header$ = preferred
+        wanted = ACCEPT(header$)
+    ELSE
+        DIM p = 0
+        FOR p = 0 TO LEN(preferred) - 1
+            DIM given$ = preferred[p]
+            PUSH(wanted, given$)
+        NEXT p
+    ENDIF
+    DIM k = 0
+    DIM a = 0
+    FOR k = 0 TO LEN(wanted) - 1
+        DIM want$ = NORMALIZE$(wanted[k])
+        FOR a = 0 TO LEN(available) - 1
+            DIM have$ = available[a]
+            IF NORMALIZE$(have$) = want$ THEN RETURN have$
+        NEXT a
+        DIM lang$ = LangOf$(want$)
+        IF lang$ <> want$ THEN
+            FOR a = 0 TO LEN(available) - 1
+                DIM have2$ = available[a]
+                IF NORMALIZE$(have2$) = lang$ THEN RETURN have2$
+            NEXT a
+        ELSE
+            FOR a = 0 TO LEN(available) - 1
+                DIM have3$ = available[a]
+                IF LangOf$(have3$) = lang$ THEN RETURN have3$
+            NEXT a
+        ENDIF
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' The locale for a JDWEB request from its Accept-Language header, among the
+' available ones; default$ (or the default locale) when none fits.
+EXPORT FUNC LOCALE_OF$(request, available, default$ = "")
+    DIM header$ = ""
+    IF TYPEOF(request) = "OBJECT" THEN
+        IF MAP.EXISTS(request, "HEADERS") THEN
+            DIM hs = request{"HEADERS"}
+            IF TYPEOF(hs) = "OBJECT" ANDALSO MAP.EXISTS(hs, "accept-language") THEN
+                DIM raw = hs{"accept-language"}
+                header$ = "" + raw
+            ENDIF
+        ENDIF
+    ENDIF
+    DIM best$ = NEGOTIATE$(header$, available)
+    IF best$ <> "" THEN RETURN best$
+    IF default$ <> "" THEN RETURN default$
+    DIM d$ = gState{"default"}
+    RETURN d$
+ENDFUNC
+
+' ---- numbers, money, dates, templates ----
+
+' The NUMFMT locale for a locale: the same one when NUMFMT has it, else the
+' main locale of its language (de-DE, en-US, fr-FR), else en-US.
+EXPORT FUNC NUMFMTLOCALE$(locale$ = "")
+    DIM tag$ = Pick$(locale$)
+    DIM known = NUMFMT.LOCALES()
+    DIM k = 0
+    FOR k = 0 TO LEN(known) - 1
+        DIM have$ = known[k]
+        IF NORMALIZE$(have$) = tag$ THEN RETURN have$
+    NEXT k
+    DIM lang$ = LangOf$(tag$)
+    IF lang$ = "de" THEN RETURN "de-DE"
+    IF lang$ = "fr" THEN RETURN "fr-FR"
+    RETURN "en-US"
+ENDFUNC
+
+' The language DT names weekdays and months in: "de" or "en".
+EXPORT FUNC DTLANG$(locale$ = "")
+    IF LangOf$(Pick$(locale$)) = "de" THEN RETURN "de"
+    RETURN "en"
+ENDFUNC
+
+' A number the way the locale writes it, through NUMFMT.
+EXPORT FUNC NUMBER$(value, decimals = 2, locale$ = "")
+    RETURN NUMFMT.NUMBER$(value, decimals, NUMFMTLOCALE$(locale$))
+ENDFUNC
+
+' An amount with its currency the way the locale writes it, through NUMFMT.
+EXPORT FUNC CURRENCY$(value, code$ = "EUR", locale$ = "", decimals = 2)
+    RETURN NUMFMT.CURRENCY$(value, code$, NUMFMTLOCALE$(locale$), decimals)
+ENDFUNC
+
+' The TMPL filters t, number and currency in the current locale:
+' {{ "cart.title" | t }}, {{ total | number:2 }}, {{ total | currency:EUR }}.
+EXPORT SUB FILTERS()
+    TMPL.ADDFILTER("t", FILTER_T$@)
+    TMPL.ADDFILTER("number", FILTER_NUMBER$@)
+    TMPL.ADDFILTER("currency", FILTER_CURRENCY$@)
+ENDSUB
+
+' The t filter: the text of a key; arg$ may name a locale.
+EXPORT FUNC FILTER_T$(text$, arg$)
+    RETURN T$(text$, 0, arg$)
+ENDFUNC
+
+' The number filter; arg$ is the number of decimals (2).
+EXPORT FUNC FILTER_NUMBER$(text$, arg$)
+    DIM places = 2
+    IF TRIM$(arg$) <> "" THEN places = CLNG(VAL(arg$))
+    RETURN NUMBER$(VAL(text$), places)
+ENDFUNC
+
+' The currency filter; arg$ is the currency code (EUR).
+EXPORT FUNC FILTER_CURRENCY$(text$, arg$)
+    DIM code$ = "EUR"
+    IF TRIM$(arg$) <> "" THEN code$ = UCASE$(TRIM$(arg$))
+    RETURN CURRENCY$(VAL(text$), code$)
+ENDFUNC

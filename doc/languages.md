@@ -1466,6 +1466,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `QR` | QR codes: numeric, alphanumeric and byte mode, levels L to H, versions 1 to 40, mask scoring; EPC payment codes (GiroCode); terminal text, SVG and PDF output |
 | `METRICS` | Prometheus metrics: counters, gauges, histograms with labels, the text exposition format, JDWEB request metrics and a /metrics page |
 | `SEARCH` | full-text search: inverted index, BM25 as rank_bm25 computes it, field weights, phrases, typo-tolerant lookup and suggestions, index files, reciprocal rank fusion |
+| `I18N` | text catalogs with locale fallback and placeholders, CLDR plural rules, Accept-Language negotiation, a current locale for NUMFMT, DT and TMPL filters |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

@@ -1,0 +1,6 @@
+{
+  "greeting": "Hello {name}",
+  "menu": { "file": { "open": "Open file" } },
+  "files": { "one": "{count} file", "other": "{count} files" },
+  "only_en": "English only"
+}

@@ -1,0 +1,37 @@
+locale	kind	value	code	text
+de-DE	number	1234.5	EUR	1.234,50
+de-DE	currency	1234.5	EUR	1.234,50 €
+de-DE	number	-9876543.21	EUR	-9.876.543,21
+de-DE	currency	-9876543.21	EUR	-9.876.543,21 €
+de-DE	number	0.5	EUR	0,50
+de-DE	currency	0.5	EUR	0,50 €
+de-AT	number	1234.5	EUR	1.234,50
+de-AT	currency	1234.5	EUR	€ 1.234,50
+de-AT	number	-9876543.21	EUR	-9.876.543,21
+de-AT	currency	-9876543.21	EUR	-€ 9.876.543,21
+de-AT	number	0.5	EUR	0,50
+de-AT	currency	0.5	EUR	€ 0,50
+de-CH	number	1234.5	EUR	1’234.50
+de-CH	currency	1234.5	EUR	EUR 1’234.50
+de-CH	number	-9876543.21	EUR	-9’876’543.21
+de-CH	currency	-9876543.21	EUR	EUR-9’876’543.21
+de-CH	number	0.5	EUR	0.50
+de-CH	currency	0.5	EUR	EUR 0.50
+en-US	number	1234.5	EUR	1,234.50
+en-US	currency	1234.5	EUR	€1,234.50
+en-US	number	-9876543.21	EUR	-9,876,543.21
+en-US	currency	-9876543.21	EUR	-€9,876,543.21
+en-US	number	0.5	EUR	0.50
+en-US	currency	0.5	EUR	€0.50
+en-GB	number	1234.5	EUR	1,234.50
+en-GB	currency	1234.5	EUR	€1,234.50
+en-GB	number	-9876543.21	EUR	-9,876,543.21
+en-GB	currency	-9876543.21	EUR	-€9,876,543.21
+en-GB	number	0.5	EUR	0.50
+en-GB	currency	0.5	EUR	€0.50
+fr-FR	number	1234.5	EUR	1 234,50
+fr-FR	currency	1234.5	EUR	1 234,50 €
+fr-FR	number	-9876543.21	EUR	-9 876 543,21
+fr-FR	currency	-9876543.21	EUR	-9 876 543,21 €
+fr-FR	number	0.5	EUR	0,50
+fr-FR	currency	0.5	EUR	0,50 €

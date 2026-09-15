@@ -1,0 +1,219 @@
+' I18N: language tags and fallback chains, catalogs from JSON, YAML, TOML and
+' INI, placeholders, CLDR plural categories for en, de, fr and pl against
+' babel, Accept-Language negotiation against babel's negotiate_locale,
+' numbers and money through NUMFMT against babel, and the TMPL filters.
+
+IMPORT TESTKIT, I18N, TMPL
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "i18n_plural.tsv") THEN base$ = "fixtures/"
+DIM Q$ = CHR$(34)
+
+FUNC Rows(path$)
+    DIM lines = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    DIM out = []
+    DIM k = 0
+    FOR k = 1 TO LEN(lines) - 1
+        DIM text_row$ = lines[k]
+        IF text_row$ <> "" THEN PUSH(out, text_row$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Joined$(items)
+    RETURN JOIN(items, ",")
+ENDFUNC
+
+FUNC UnknownFormat(x)
+    RETURN I18N.LOADTEXT("en", "a = 1", "xml")
+ENDFUNC
+
+FUNC BadOperand(x)
+    RETURN I18N.PLURAL$(1, "zz")
+ENDFUNC
+
+TESTKIT.SUITE("locales")
+TESTKIT.EQ(I18N.NORMALIZE$("DE_at"), "de-AT", "a tag in its usual spelling")
+TESTKIT.EQ(I18N.NORMALIZE$("zh-hant-tw"), "zh-Hant-TW", "with a script")
+TESTKIT.EQ(I18N.NORMALIZE$("es-419"), "es-419", "and a numeric region")
+TESTKIT.EQ(Joined$(I18N.FALLBACKS("de-AT")), "de-AT,de,en", "de-AT falls back to de, then to en")
+I18N.SETDEFAULT("fr")
+TESTKIT.EQ(Joined$(I18N.FALLBACKS("de-CH")), "de-CH,de,fr", "the default ends the chain")
+I18N.SETDEFAULT("en")
+TESTKIT.EQ(Joined$(I18N.FALLBACKS("zh-Hant-TW")), "zh-Hant-TW,zh-Hant,zh,en", "one part taken off at a time")
+I18N.USELOCALE("de_AT")
+TESTKIT.EQ(I18N.LOCALE$(), "de-AT", "USELOCALE sets the current locale")
+TESTKIT.EQ(Joined$(I18N.FALLBACKS()), "de-AT,de,en", "which calls without a locale take")
+
+TESTKIT.SUITE("catalogs")
+TESTKIT.EQ(CINT(I18N.LOADFILE("en", base$ + "i18n_en.json")), 5, "a JSON catalog with nested keys")
+TESTKIT.EQ(CINT(I18N.LOADFILE("de", base$ + "i18n_de.yaml")), 5, "a YAML catalog")
+TESTKIT.EQ(CINT(I18N.LOADFILE("de-AT", base$ + "i18n_de-AT.toml")), 2, "a TOML catalog")
+TESTKIT.EQ(CINT(I18N.LOADFILE("fr", base$ + "i18n_fr.ini")), 4, "an INI catalog, sections as the first part of a key")
+DIM pl_json$ = "{" + Q$ + "files" + Q$ + ": {" + Q$ + "one" + Q$ + ": " + Q$ + "{count} plik" + Q$ + ", " + Q$ + "few" + Q$ + ": " + Q$ + "{count} pliki" + Q$ + ", " + Q$ + "many" + Q$ + ": " + Q$ + "{count} plikow" + Q$ + ", " + Q$ + "other" + Q$ + ": " + Q$ + "{count} pliku" + Q$ + "}}"
+TESTKIT.EQ(CINT(I18N.LOADTEXT("pl", pl_json$, "json")), 4, "a catalog from text")
+TESTKIT.EQ(I18N.T$("greeting", {"name": "Ann"}, "en"), "Hello Ann", "a text with a placeholder")
+TESTKIT.EQ(I18N.T$("greeting", {"name": "Ann"}), "Hallo Ann", "de-AT takes it from de")
+TESTKIT.EQ(I18N.T$("cart"), "Einkaufswagerl", "and has its own word")
+TESTKIT.EQ(I18N.T$("menu.save"), "Speichern", "a TOML table as a dotted key")
+TESTKIT.EQ(I18N.T$("menu.file.open"), "Datei " + CHR$(195) + CHR$(182) + "ffnen", "a nested YAML key")
+TESTKIT.EQ(I18N.T$("only_en"), "English only", "the default locale fills the rest")
+TESTKIT.EQ(I18N.T$("app.greeting", {"name": "Ann"}, "fr-CA"), "Bonjour Ann", "fr-CA takes fr")
+TESTKIT.EQ(I18N.T$("nowhere.at.all"), "nowhere.at.all", "a missing key answers itself")
+TESTKIT.ISTRUE(I18N.HAS("cart", "de"), "HAS finds a key")
+TESTKIT.ISFALSE(I18N.HAS("menu.save", "de"), "and not one only a more specific locale has")
+TESTKIT.EQ(Joined$(I18N.KEYS("de-AT")), "cart,menu.save", "KEYS of a locale, sorted")
+I18N.FORGET("de-AT")
+TESTKIT.ISFALSE(I18N.HAS("menu.save", "de-AT"), "FORGET drops a locale")
+TESTKIT.EQ(I18N.T$("cart"), "Warenkorb", "which then falls back")
+TESTKIT.EQ(CINT(I18N.LOADFILE("de-AT", base$ + "i18n_de-AT.toml")), 2, "and can be loaded again")
+TESTKIT.THROWS(UnknownFormat@, 0, "an unknown format is refused")
+
+TESTKIT.SUITE("placeholders")
+TESTKIT.EQ(I18N.FILL$("{{literal}} {x} {missing}", {"x": 3}), "{literal} 3 {missing}", "doubled braces, a number, an unknown name")
+TESTKIT.EQ(I18N.FILL$("{a}{b}", {"a": 2.5, "b": "!"}), "2.5!", "a decimal and text side by side")
+TESTKIT.EQ(I18N.FILL$("no placeholders"), "no placeholders", "text without placeholders")
+TESTKIT.EQ(I18N.FILL$("open {brace"), "open {brace", "an unclosed brace stays")
+
+TESTKIT.SUITE("plural categories against babel")
+DIM plural_rows = Rows(base$ + "i18n_plural.tsv")
+DIM langs = ["en", "de", "fr", "pl"]
+DIM li = 0
+FOR li = 0 TO LEN(langs) - 1
+    DIM lang$ = langs[li]
+    DIM checked = 0
+    DIM wrong = 0
+    DIM r = 0
+    FOR r = 0 TO LEN(plural_rows) - 1
+        DIM row$ = plural_rows[r]
+        DIM cells = SPLIT(row$, CHR$(9))
+        DIM row_lang$ = cells[0]
+        IF row_lang$ = lang$ THEN
+            DIM number$ = cells[1]
+            DIM want$ = cells[2]
+            DIM got$ = I18N.PLURAL$(number$, lang$)
+            checked = checked + 1
+            IF got$ <> want$ THEN
+                wrong = wrong + 1
+                PRINT "  "; lang$; " "; number$; ": "; got$; " (babel "; want$; ")"
+            ENDIF
+        ENDIF
+    NEXT r
+    TESTKIT.EQ(wrong, 0, lang$ + ": " + STR$(checked) + " numbers as babel sorts them")
+NEXT li
+DIM rule_rows = Rows(base$ + "i18n_rules.tsv")
+DIM rules_same = TRUE
+FOR r = 0 TO LEN(rule_rows) - 1
+    DIM rule_row$ = rule_rows[r]
+    DIM rc = SPLIT(rule_row$, CHR$(9))
+    DIM rl$ = rc[0]
+    DIM rcat$ = rc[1]
+    DIM rtext$ = rc[2]
+    DIM have_rules = I18N.RULES(rl$)
+    DIM have$ = ""
+    IF MAP.EXISTS(have_rules, rcat$) THEN have$ = have_rules{rcat$}
+    IF have$ <> rtext$ THEN rules_same = FALSE
+NEXT r
+TESTKIT.ISTRUE(rules_same, "the built-in rules are CLDR's text, as babel has it")
+TESTKIT.EQ(I18N.PLURAL$(1, "en"), "one", "a number rather than text")
+TESTKIT.EQ(I18N.PLURAL$(1.5, "en"), "other", "a decimal number")
+TESTKIT.EQ(I18N.PLURAL$(-2, "pl"), "few", "a negative number counts by its size")
+
+TESTKIT.SUITE("plural texts")
+TESTKIT.EQ(I18N.N$("files", 1, 0, "de"), "1 Datei", "one German file")
+TESTKIT.EQ(I18N.N$("files", 3, 0, "de"), "3 Dateien", "three")
+TESTKIT.EQ(I18N.N$("files", 22, 0, "pl"), "22 pliki", "Polish few")
+TESTKIT.EQ(I18N.N$("files", 5, 0, "pl"), "5 plikow", "Polish many")
+TESTKIT.EQ(I18N.N$("files", "1.5", 0, "pl"), "1.5 pliku", "Polish other for a decimal")
+TESTKIT.EQ(I18N.N$("files", 0, 0, "fr"), "0 fichier", "French one takes zero")
+TESTKIT.EQ(I18N.N$("files", 1000000, 0, "fr"), "1000000 de fichiers", "French many for a million")
+TESTKIT.EQ(I18N.N$("files", 0, 0, "en"), "0 files", "English other")
+TESTKIT.EQ(I18N.N$("files", 2, 0, "de-AT"), "2 Dateien", "through the fallback chain")
+I18N.ADDTEXT("en", "cart.items.one", "{count} item for {who}")
+I18N.ADDTEXT("en", "cart.items.other", "{count} items for {who}")
+TESTKIT.EQ(I18N.N$("cart.items", 4, {"who": "Ann"}, "en"), "4 items for Ann", "count beside other placeholders")
+I18N.ADDRULE("cy", "zero", "n = 0")
+I18N.ADDRULE("cy", "one", "n = 1")
+TESTKIT.EQ(I18N.PLURAL$(0, "cy"), "zero", "ADDRULE adds a language")
+TESTKIT.EQ(I18N.PLURAL$(2, "cy"), "other", "other when no rule holds")
+I18N.ADDRULE("xa", "few", "n within 1..3")
+I18N.ADDRULE("xb", "few", "n in 1..3")
+TESTKIT.EQ(I18N.PLURAL$("2.5", "xa"), "few", "within takes a decimal inside the range")
+TESTKIT.EQ(I18N.PLURAL$("2.5", "xb"), "other", "in takes whole numbers only")
+I18N.ADDRULE("xb", "few", "n % 10 = 3 and n != 13")
+TESTKIT.EQ(I18N.PLURAL$(23, "xb") + I18N.PLURAL$(13, "xb"), "fewother", "% and != and a replaced rule")
+I18N.ADDRULE("zz", "one", "q in 1")
+TESTKIT.THROWS(BadOperand@, 0, "an unknown operand is refused")
+
+TESTKIT.SUITE("Accept-Language")
+TESTKIT.EQ(Joined$(I18N.ACCEPT("da, en-gb;q=0.8, en;q=0.7")), "da,en-GB,en", "tags by quality")
+TESTKIT.EQ(Joined$(I18N.ACCEPT("fr;q=0.5, de, *;q=0.1, it;q=0")), "de,fr", "the star and q=0 left out")
+TESTKIT.EQ(Joined$(I18N.ACCEPT("a;q=0.5, b;q=0.5, c")), "c,a,b", "equal qualities keep their order")
+TESTKIT.EQ(LEN(I18N.ACCEPT("")), 0, "an empty header")
+DIM negotiate_rows = Rows(base$ + "i18n_negotiate.tsv")
+DIM neg_wrong = 0
+FOR r = 0 TO LEN(negotiate_rows) - 1
+    DIM neg_row$ = negotiate_rows[r]
+    DIM nc = SPLIT(neg_row$ + CHR$(9) + " ", CHR$(9))
+    DIM pref$ = nc[0]
+    DIM avail$ = nc[1]
+    DIM expect$ = TRIM$(nc[2])
+    DIM neg_got$ = I18N.NEGOTIATE$(SPLIT(pref$, ","), SPLIT(avail$, ","))
+    IF LCASE$(neg_got$) <> LCASE$(expect$) THEN
+        neg_wrong = neg_wrong + 1
+        PRINT "  "; pref$; " / "; avail$; ": "; neg_got$; " (babel "; expect$; ")"
+    ENDIF
+NEXT r
+TESTKIT.EQ(neg_wrong, 0, STR$(LEN(negotiate_rows)) + " negotiations as babel's negotiate_locale, letter case aside")
+TESTKIT.EQ(I18N.NEGOTIATE$(["DE-at"], ["de-AT", "de"]), "de-AT", "the answer spelled as available")
+TESTKIT.EQ(I18N.NEGOTIATE$("de-AT,de;q=0.9", ["en", "de"]), "de", "a header as the preferred list")
+TESTKIT.EQ(I18N.NEGOTIATE$(["de"], ["de-DE", "en"]), "de-DE", "a bare language finds a locale of it")
+DIM req_fr = {"HEADERS": {"accept-language": "fr-CH, fr;q=0.9, en;q=0.8"}}
+TESTKIT.EQ(I18N.LOCALE_OF$(req_fr, ["de", "fr", "en"]), "fr", "LOCALE_OF$ reads a request")
+DIM no_headers AS MAP
+DIM req_none = {"HEADERS": no_headers}
+TESTKIT.EQ(I18N.LOCALE_OF$(req_none, ["de"], "de"), "de", "and falls back without a header")
+TESTKIT.EQ(I18N.LOCALE_OF$(req_none, ["de"]), "en", "to the default locale")
+
+TESTKIT.SUITE("numbers and money against babel")
+DIM number_rows = Rows(base$ + "i18n_numbers.tsv")
+DIM fmt_wrong = 0
+FOR r = 0 TO LEN(number_rows) - 1
+    DIM num_row$ = number_rows[r]
+    DIM fc = SPLIT(num_row$, CHR$(9))
+    DIM floc$ = fc[0]
+    DIM fkind$ = fc[1]
+    DIM fvalue$ = fc[2]
+    DIM fcode$ = fc[3]
+    DIM ftext$ = fc[4]
+    DIM fgot$ = ""
+    IF fkind$ = "number" THEN
+        fgot$ = I18N.NUMBER$(VAL(fvalue$), 2, floc$)
+    ELSE
+        fgot$ = I18N.CURRENCY$(VAL(fvalue$), fcode$, floc$)
+    ENDIF
+    IF fgot$ <> ftext$ THEN
+        fmt_wrong = fmt_wrong + 1
+        PRINT "  "; floc$; " "; fkind$; " "; fvalue$; ": ["; fgot$; "] babel ["; ftext$; "]"
+    ENDIF
+NEXT r
+TESTKIT.EQ(fmt_wrong, 0, STR$(LEN(number_rows)) + " numbers and amounts in six locales as babel writes them")
+TESTKIT.EQ(I18N.NUMFMTLOCALE$("de"), "de-DE", "de goes to de-DE for NUMFMT")
+TESTKIT.EQ(I18N.NUMFMTLOCALE$("DE_at"), "de-AT", "a locale NUMFMT has is kept")
+TESTKIT.EQ(I18N.NUMFMTLOCALE$("fr-CA"), "fr-FR", "fr-CA goes to fr-FR")
+TESTKIT.EQ(I18N.NUMFMTLOCALE$("it"), "en-US", "a language NUMFMT lacks goes to en-US")
+TESTKIT.EQ(I18N.DTLANG$("de-CH"), "de", "DT names in German for de-CH")
+TESTKIT.EQ(I18N.DTLANG$("fr"), "en", "and in English for the rest")
+I18N.USELOCALE("en-GB")
+TESTKIT.EQ(I18N.NUMBER$(1234.5), "1,234.50", "the current locale formats")
+
+TESTKIT.SUITE("template filters")
+I18N.FILTERS()
+I18N.USELOCALE("de-AT")
+DIM model = {"k": "cart", "total": 1234.5}
+DIM rendered$ = TMPL.RENDERSTR$("{{ k | t }} / {{ total | number }} / {{ total | currency:EUR }}", model)
+TESTKIT.EQ(rendered$, "Einkaufswagerl / " + I18N.NUMBER$(1234.5) + " / " + I18N.CURRENCY$(1234.5, "EUR"), "t, number and currency in the current locale")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ k | t:en-US }}", model), "cart", "t with a locale argument")
+TESTKIT.EQ(TMPL.RENDERSTR$("{{ k | upper }} {{ total | number:0 }}", model), "CART 1.235", "the built-in filters are unchanged, number takes decimals")
+
+TESTKIT.REPORT()
