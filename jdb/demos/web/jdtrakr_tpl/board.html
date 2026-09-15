@@ -30,6 +30,7 @@ table.ltbl{width:100%;border-collapse:collapse;font-size:13px;}
   <select id='fsev'><option value=''>Any severity</option><option>blocker</option><option>critical</option><option>major</option><option>minor</option><option>trivial</option></select>
   <select id='ftype'><option value=''>Any type</option><option>bug</option><option>feature</option><option>chore</option><option>idea</option><option>task</option></select>
   <input id='fq' class='grow' placeholder='Search...' autocomplete='off'>
+  <button type='button' id='frefresh' title='Reload the current view'>&#8635; Refresh</button>
 </div>
 <form class='add' id='addForm'>
   <input class='title' name='title' placeholder='Ticket title' autocomplete='off'>
@@ -196,6 +197,11 @@ function checkHash(){const m=location.hash.match(/^#t=(\d+)/);if(m){openTicket(p
 window.addEventListener('hashchange',checkHash);
 for(const id of ['fproj','fasg','fsev','ftype']){document.getElementById(id).addEventListener('change',load);}
 document.getElementById('fq').addEventListener('input',load);
+async function refreshView(){const keep={fproj:fval('fproj'),fasg:fval('fasg')};
+  await loadProjects();await loadUsers();
+  for(const id in keep){const s=document.getElementById(id);if([...s.options].some(o=>o.value===keep[id]))s.value=keep[id];}
+  await load();}
+document.getElementById('frefresh').addEventListener('click',refreshView);
 document.getElementById('addForm').addEventListener('submit',create);
 async function loadSettings(){const s=await api('/api/settings');window.NROWS=s.board_rows||5;}
 loadProjects().then(loadUsers).then(loadSettings).then(()=>{load();checkHash();});
