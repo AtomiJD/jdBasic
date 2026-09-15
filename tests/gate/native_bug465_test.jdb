@@ -1,0 +1,52 @@
+' An ASYNC worker copies cells of an array it received into plain locals
+' and sends them back inside a new array literal: every cell arrives.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+ASYNC FUNC Worker(jobs, results)
+    DIM job = CHAN.RECV(jobs)
+    DIM a = job[0]
+    DIM b = job[1]
+    DIM label = job[2]
+    CHAN.SEND(results, [a, b * b, label])
+    RETURN 0
+ENDFUNC
+
+DIM jobs = CHAN.OPEN(4)
+DIM results = CHAN.OPEN(4)
+DIM task = Worker(jobs, results)
+CHAN.SEND(jobs, [7, 3, "seven"])
+DIM msg = CHAN.RECV(results)
+DIM finished = AWAIT task
+DIM first AS DOUBLE = msg[0]
+DIM second AS DOUBLE = msg[1]
+DIM third$ = msg[2]
+Check("a plain local copied from a cell", STR$(first), "7")
+Check("a computed cell", STR$(second), "9")
+Check("a text cell", third$, "seven")
+Check("three cells", STR$(LEN(msg)), "3")
+
+DIM direct = [7, 3]
+DIM c = direct[0]
+DIM pair = [c, 1]
+DIM pair_first AS DOUBLE = pair[0]
+Check("the same literal outside ASYNC", STR$(pair_first), "7")
+
+PRINT ""
+PRINT "NATIVE BUG 465 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

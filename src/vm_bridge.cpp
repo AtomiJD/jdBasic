@@ -401,6 +401,11 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
             } else if (t == jd_tag(JdTag::NATIVE_MAP)) {
                 JdbMapFwd* m = (JdbMapFwd*)(intptr_t)u.i;
                 out->elements.push_back(m ? jdbmap_to_value(m) : Value::make_none());
+            } else if (t == jd_tag(JdTag::VM_HANDLE)) {
+                auto* rt = current_rt();
+                auto it = rt->value_store.find(u.i);
+                out->elements.push_back(it != rt->value_store.end() ? it->second
+                                                                    : Value::make_none());
             } else if (t == jd_tag(JdTag::I64)) {
                 // Same convention as the map cells: stored as a real double.
                 out->elements.push_back(Value::make_i64((int64_t)d));
