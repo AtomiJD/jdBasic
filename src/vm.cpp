@@ -1306,27 +1306,26 @@ void VM::run() {
                 stack[sp++] = Value::make_i64(idx + 1);
                 stack[sp++] = std::move(val);
             } else if (iter.type == ValueType::STRING) {
-                int64_t idx = state.to_int();
+                // UTF-8 characters; the state is the byte offset of the next one.
+                int64_t at = state.to_int();
                 const auto& s = iter.as_string()->data;
-                if (idx < 0 || idx >= (int64_t)s.size()) {
+                if (at < 0 || at >= (int64_t)s.size()) {
                     take_exit();
                     break;
                 }
-                Value val = Value::make_string(std::string(1, s[(size_t)idx]));
+                unsigned char c = (unsigned char)s[(size_t)at];
+                size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+                if ((size_t)at + len > s.size()) len = s.size() - (size_t)at;
+                Value val = Value::make_string(s.substr((size_t)at, len));
                 if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
-                stack[sp++] = Value::make_i64(idx + 1);
+                stack[sp++] = Value::make_i64(at + (int64_t)len);
                 stack[sp++] = std::move(val);
             } else if (iter.type == ValueType::INT64) {
                 // Channel handle? Look up in the global registry.
                 int64_t handle = iter.to_int();
                 auto ch = chan_lookup(handle);
-                if (!ch) {
-                    // Bare i64 that isn't a channel handle - match the
-                    // pre-Phase-4 LEN=0 behaviour for non-iterables and
-                    // exit with zero iterations.
-                    take_exit();
-                    break;
-                }
+                if (!ch)
+                    throw jdError(ErrCode::RUNTIME_ERROR, "FOR EACH needs an array, a string or a channel");
                 std::unique_lock<std::mutex> lock(ch->mtx);
                 ++ch->waiting_recv;
                 ch->cv_recv.wait(lock, [&]() {
@@ -1345,9 +1344,15 @@ void VM::run() {
                 if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
                 stack[sp++] = std::move(state);
                 stack[sp++] = std::move(val);
+            } else if (iter.type == ValueType::OBJECT) {
+                throw jdError(ErrCode::RUNTIME_ERROR, "FOR EACH over a map: walk MAP.KEYS(m) instead");
+            } else if (iter.type == ValueType::BOOLEAN || iter.type == ValueType::BYTE ||
+                       iter.type == ValueType::INT16 || iter.type == ValueType::INT32 ||
+                       iter.type == ValueType::FLOAT16 || iter.type == ValueType::FLOAT32 ||
+                       iter.type == ValueType::FLOAT64) {
+                throw jdError(ErrCode::RUNTIME_ERROR, "FOR EACH needs an array, a string or a channel");
             } else {
-                // MAP / OBJECT / NONE / ... - pre-existing FOR EACH path
-                // returned LEN=0 for these and never entered the loop.
+                // NONE and anything else without elements walk nothing.
                 take_exit();
             }
             break;

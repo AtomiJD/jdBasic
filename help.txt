@@ -828,7 +828,7 @@ Description: Displays debugging information about the program's state.
 
 [EACH]
 Syntax: FOR EACH variable IN collection
-Description: Keyword used to begin a loop that iterates over a collection.
+Description: Keyword used to begin a loop over the elements of an array, the UTF-8 characters of a string, or the values of a channel (interpreter only). A map raises an error; walk MAP.KEYS(m) instead.
 
 [EDIT]
 Syntax: EDIT [name]

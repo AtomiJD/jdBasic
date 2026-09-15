@@ -908,7 +908,7 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`GOTO label`**: Jumps execution to a `label:`.
 * **`IF condition THEN ... [ELSEIF ...] [ELSE ...] ENDIF`**: Conditional execution block. Single-line `IF condition THEN statement` is also supported.
 * **`FOR variable TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
-* **`FOR EACH variable IN collection`**: This command provides a simple way to iterate over every element in a collection, such as an Array or a Map.
+* **`FOR EACH variable IN collection`**: Walks every element of an array (a matrix row by row), every UTF-8 character of a string, or every value a channel delivers until it closes (interpreter only). Each element keeps its own type in both backends, also when the array comes straight from `SPLIT`, `MAP.KEYS` or a parameter. A map raises an error: walk `MAP.KEYS(m)` instead. A number raises an error; `NONE` walks nothing.
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`EXITFUNC`, `EXITDO`, `EXITFOR`, `EXIT SWITCH`**: Exiting functions, loops and a `SWITCH` block.
@@ -3406,10 +3406,9 @@ running the function via its `__funcref_*` wrapper, then returns the
 task id (`AWAIT` consumes it through the VM-handle path so any return
 type makes it back).
 
-`FOR EACH v IN ch` in native iterates only the array branch today -
-the polymorphic `FOREACH_NEXT` opcode is interp-only. Use the explicit
-`DO ... CHAN.RECV ... IS_EOF` loop for native channel iteration. Phase
-5c will add a runtime helper for native channel iteration via FOR EACH.
+`FOR EACH v IN ch` walks a channel only in the interpreter; compiled, it
+raises an error. Use the explicit `DO ... CHAN.RECV ... IS_EOF` loop for
+native channel iteration.
 
 Native channel `RECV` returns the underlying value via the VM-handle
 path (so mixed-type payloads survive intact). Numeric values materialise

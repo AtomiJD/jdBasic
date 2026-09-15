@@ -729,6 +729,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, 0);
     reg("jdrt_tagged_index", "__jdrt_tagged_index", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, 0);
+    reg("jdrt_foreach_begin", "__jdrt_foreach_begin", i64_type,
+        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, 0);
     reg("jdrt_promote_handle", "__jdrt_promote_handle", i64_type,
         {i8_ptr_type, i64_type}, 0);
     reg("jdrt_frame_begin", "__jdrt_frame_begin", i64_type,
@@ -3441,6 +3443,37 @@ bool LLVMCodegen::emit_ir(const std::vector<StmtPtr>& program) {
 
 // ── Program / Statement Codegen ─────────────────────────────
 
+// FOR EACH over IOTA or over an array literal of number literals walks plain
+// numbers; kind receives the loop variable's tag, JD_TAG_I64 or JD_TAG_F64.
+static bool foreach_numeric_source(const Expr* src, int& kind) {
+    kind = JD_TAG_F64;
+    if (!src) return false;
+    if (src->kind == ExprKind::CALL) {
+        std::string fu = src->func_name;
+        std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
+        if (fu != "IOTA") return false;
+        kind = JD_TAG_I64;
+        return true;
+    }
+    if (src->kind != ExprKind::ARRAY_LITERAL || src->args.empty()) return false;
+    bool all_ints = true;
+    for (auto& a : src->args) {
+        if (!a || (a->kind != ExprKind::LITERAL_INT && a->kind != ExprKind::LITERAL_FLOAT))
+            return false;
+        if (a->kind == ExprKind::LITERAL_FLOAT) all_ints = false;
+    }
+    kind = all_ints ? JD_TAG_I64 : JD_TAG_F64;
+    return true;
+}
+
+// A FOR EACH variable carries each element's own tag unless the source walks
+// plain numbers or the name ends in $.
+static bool foreach_var_is_tagged(const Stmt& s) {
+    int kind;
+    return s.kind == StmtKind::FOR_EACH && !s.var_name.empty() &&
+           s.var_name.back() != '$' && !foreach_numeric_source(s.expr.get(), kind);
+}
+
 void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     runtime_later_globals.clear();
     {
@@ -3454,11 +3487,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
             return false;
         };
         std::function<void(const Stmt&)> scan_later = [&](const Stmt& s) {
+            if (foreach_var_is_tagged(s) && !shadowed(s.var_name))
+                dyn_dims.insert(s.var_name);
             if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
                 std::unordered_set<std::string> own;
                 for (auto& p : s.params()) own.insert(p.name);
                 std::function<void(const Stmt&)> collect_own = [&](const Stmt& b) {
-                    if (b.kind == StmtKind::DIM && !b.var_name.empty()) own.insert(b.var_name);
+                    if ((b.kind == StmtKind::DIM || b.kind == StmtKind::FOR_EACH) &&
+                        !b.var_name.empty())
+                        own.insert(b.var_name);
                     for (auto& c : b.body) if (c) collect_own(*c);
                     for (auto& br : b.branches) for (auto& c : br.body) if (c) collect_own(*c);
                     for (auto& c : b.catch_body()) if (c) collect_own(*c);
@@ -4811,6 +4848,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
                 fit->second.param_tags[pi] == JD_TAG_VM_HANDLE)
                 dyn_dims.insert(stmt.params()[pi].name);
         std::function<void(const Stmt&)> scan_later = [&](const Stmt& s) {
+            if (foreach_var_is_tagged(s)) dyn_dims.insert(s.var_name);
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
                  s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
                 bool dyn = s.expr->kind == ExprKind::INDEX;
@@ -7820,28 +7858,56 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     // FOR EACH var IN collection ... NEXT
     TypedValue coll = codegen_expr(*stmt.expr);
 
-    // Get collection pointer (may need conversion from f64 param encoding)
-    LLVMValueRef arr_ptr = coll.val;
-    if (coll.tag == JD_TAG_F64) {
-        LLVMValueRef as_i64 = pun_f64_to_i64(coll.val);
-        arr_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "itoptr");
-    }
+    // A source that can only hold plain numbers keeps the direct loop. Every
+    // other source is walked through the bridge, which reads each element
+    // with its own tag. The pre-scans in codegen_program and codegen_function
+    // make the same decision, so names fed from the loop variable are tagged.
+    int numeric_tag = JD_TAG_F64;
+    bool numeric = foreach_numeric_source(stmt.expr.get(), numeric_tag) &&
+                   coll.tag == JD_TAG_ARR;
 
-    // Determine the iter-var's element tag from Phase-2 tracking. Without
-    // this, FOR EACH over a string array (e.g. SPLIT, DIR$(FALSE), OS.ARGS)
-    // would store the punned-f64 pointer as a raw double - every read of
-    // the iter-var then sees 0 instead of the string (regression 2026-05-01).
-    bool source_is_string_arr = false;
-    if (stmt.expr && stmt.expr->kind == ExprKind::VARIABLE &&
-        string_array_vars.count(stmt.expr->str_val)) {
-        source_is_string_arr = true;
+    LLVMValueRef len = nullptr;
+    LLVMValueRef arr_ptr = nullptr;
+    LLVMValueRef walk_bits = nullptr;
+    LLVMValueRef walk_tag = nullptr;
+    if (numeric) {
+        arr_ptr = coll.val;
+        auto& len_fn = runtime_funcs["LEN"];
+        LLVMValueRef len_args[] = { arr_ptr };
+        len = LLVMBuildCall2(builder, len_fn.fn_type, len_fn.fn, len_args, 1, "len");
+    } else {
+        LLVMValueRef src_bits;
+        LLVMValueRef src_tag;
+        if (coll.tag == JD_TAG_RUNTIME && coll.runtime_tag) {
+            src_bits = coll.val;
+            src_tag = coll.runtime_tag;
+        } else {
+            LLVMTypeRef vt = LLVMTypeOf(coll.val);
+            LLVMTypeKind vk = LLVMGetTypeKind(vt);
+            if (vk == LLVMDoubleTypeKind)
+                src_bits = pun_f64_to_i64(coll.val);
+            else if (vk == LLVMPointerTypeKind)
+                src_bits = LLVMBuildPtrToInt(builder, coll.val, i64_type, "fe_src");
+            else if (vk == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(vt) != 64)
+                src_bits = LLVMBuildZExt(builder, coll.val, i64_type, "fe_src");
+            else if (vk == LLVMIntegerTypeKind)
+                src_bits = coll.val;
+            else
+                src_bits = LLVMConstInt(i64_type, 0, 0);
+            int kind = coll.tag == JD_TAG_RUNTIME ? JD_TAG_F64 : coll.tag;
+            src_tag = LLVMConstInt(i32_type, (unsigned)kind, 0);
+        }
+        auto& fb = runtime_funcs["__jdrt_foreach_begin"];
+        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef bits_out = scratch_alloca(i64_type, "fe_bits");
+        LLVMValueRef tag_out = scratch_alloca(i32_type, "fe_tag");
+        LLVMValueRef bargs[] = { rt, src_bits, src_tag, bits_out, tag_out };
+        len = LLVMBuildCall2(builder, fb.fn_type, fb.fn, bargs, 5, "fe_len");
+        emit_err_check();
+        walk_bits = LLVMBuildLoad2(builder, i64_type, bits_out, "fe_walk");
+        walk_tag = LLVMBuildLoad2(builder, i32_type, tag_out, "fe_walk_tag");
     }
-    int iter_tag = source_is_string_arr ? JD_TAG_STR : JD_TAG_F64;
-
-    // Get length
-    auto& len_fn = runtime_funcs["LEN"];
-    LLVMValueRef len_args[] = { arr_ptr };
-    LLVMValueRef len = LLVMBuildCall2(builder, len_fn.fn_type, len_fn.fn, len_args, 1, "len");
 
     // Index variable (hidden, unique name to avoid collisions)
     static int foreach_counter = 0;
@@ -7849,11 +7915,25 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     VarInfo& idx_vi = create_var(idx_name, JD_TAG_I64);
     LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_vi.alloca_val);
 
-    // Loop variable - fresh local in current scope. Tag picked above based
-    // on the source array, so the alloca is i8* for string-bearing arrays
-    // and the body stores the decoded pointer rather than the raw f64.
+    // Loop variable - fresh local in current scope: a number slot on the
+    // direct loop, a string slot for a name ending in $, otherwise a
+    // runtime-tagged slot that carries each element's own kind.
+    bool sigil_str = !stmt.var_name.empty() && stmt.var_name.back() == '$';
+    int iter_tag = numeric ? numeric_tag : (sigil_str ? JD_TAG_STR : JD_TAG_RUNTIME);
     VarInfo& fe_var = create_var(stmt.var_name, iter_tag);
     VarInfo* var_vi = &fe_var;
+    if (iter_tag == JD_TAG_RUNTIME) {
+        std::string rtag_name = stmt.var_name + ".rtag";
+        if (scopes.size() <= 1) {
+            LLVMValueRef g = LLVMAddGlobal(module, i32_type, rtag_name.c_str());
+            LLVMSetInitializer(g, LLVMConstInt(i32_type, JD_TAG_NONE, 0));
+            LLVMSetLinkage(g, LLVMInternalLinkage);
+            var_vi->runtime_tag_alloca = g;
+        } else {
+            var_vi->runtime_tag_alloca = scratch_alloca(i32_type, rtag_name.c_str());
+            LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_NONE, 0), var_vi->runtime_tag_alloca);
+        }
+    }
 
     LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.cond");
     LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.body");
@@ -7869,20 +7949,29 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, idx, len, "cmp");
     LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
 
-    // Body: var = arr[idx]
+    // Body: var = element idx
     LLVMPositionBuilderAtEnd(builder, body_bb);
-    auto& get_fn = runtime_funcs["__array_get"];
-    LLVMValueRef get_args[] = { arr_ptr, idx };
-    LLVMValueRef elem = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, get_args, 2, "elem");
-    if (source_is_string_arr) {
-        // The runtime returns the cell as f64; the bits are an i8* pointer
-        // for string-bearing arrays. Decode before storing into an i8*
-        // alloca (instead of storing the raw f64 into an f64 slot).
-        LLVMValueRef as_i64 = pun_f64_to_i64(elem);
-        LLVMValueRef as_ptr = LLVMBuildIntToPtr(builder, as_i64, i8_ptr_type, "elem_fe_s");
-        LLVMBuildStore(builder, as_ptr, var_vi->alloca_val);
-    } else {
+    if (numeric) {
+        auto& get_fn = runtime_funcs["__array_get"];
+        LLVMValueRef get_args[] = { arr_ptr, idx };
+        LLVMValueRef elem = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, get_args, 2, "elem");
+        if (numeric_tag == JD_TAG_I64)
+            elem = LLVMBuildFPToSI(builder, elem, i64_type, "elem_i");
         LLVMBuildStore(builder, elem, var_vi->alloca_val);
+    } else {
+        auto& ga = runtime_funcs["__jdrt_tagged_arr_get"];
+        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef out = scratch_alloca(i64_type, "fe_elem");
+        LLVMValueRef gargs[] = { rt, walk_bits, walk_tag, idx, out };
+        LLVMValueRef etag = LLVMBuildCall2(builder, ga.fn_type, ga.fn, gargs, 5, "fe_etag");
+        LLVMValueRef ebits = LLVMBuildLoad2(builder, i64_type, out, "fe_ebits");
+        if (iter_tag == JD_TAG_STR) {
+            LLVMBuildStore(builder, runtime_to_str(ebits, etag), var_vi->alloca_val);
+        } else {
+            LLVMBuildStore(builder, ebits, var_vi->alloca_val);
+            LLVMBuildStore(builder, etag, var_vi->runtime_tag_alloca);
+        }
     }
 
     for (auto& s : stmt.body) { if (s) codegen_stmt(*s); }

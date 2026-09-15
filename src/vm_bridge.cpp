@@ -1305,6 +1305,76 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
     return t;
 }
 
+// FOR EACH in compiled code: what the loop walks and how many passes it
+// makes. An array, native or a VM handle, is walked as it is and a string as
+// its UTF-8 characters; the walked value comes back in out_bits/out_tag for
+// jdrt_tagged_arr_get. A map, a number or a channel handle set the error slot
+// and walk nothing, and so does NONE, without the error.
+JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_tag,
+                                    int64_t* out_bits, int32_t* out_tag) {
+    auto* rt = resolve_rt(handle);
+    *out_bits = 0;
+    *out_tag = jd_tag(JdTag::NONE);
+    auto refuse_map = [&]() -> int64_t {
+        rt->last_error = "FOR EACH over a map: walk MAP.KEYS(m) instead";
+        return 0;
+    };
+    auto refuse_other = [&]() -> int64_t {
+        rt->last_error = "FOR EACH needs an array or a string; a channel is walked only by the interpreter";
+        return 0;
+    };
+    auto walk_array = [&](int64_t bits) -> int64_t {
+        auto* arr = (JdbArray*)(intptr_t)bits;
+        *out_bits = bits;
+        *out_tag = jd_tag(JdTag::ARR);
+        return arr ? arr->length : 0;
+    };
+    auto walk_string = [&](const std::string& s) -> int64_t {
+        Value chars = Value::make_array();
+        for (size_t i = 0; i < s.size(); ) {
+            unsigned char c = (unsigned char)s[i];
+            size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
+            if (i + len > s.size()) len = s.size() - i;
+            chars.as_array()->elements.push_back(Value::make_string(s.substr(i, len)));
+            i += len;
+        }
+        JdbArray* arr = value_to_jdbarray(chars);
+        return walk_array((int64_t)(intptr_t)arr);
+    };
+
+    if (val_tag == jd_tag(JdTag::ARR)) return walk_array(val_bits);
+    if (val_tag == jd_tag(JdTag::NONE)) return 0;
+    if (val_tag == jd_tag(JdTag::NATIVE_MAP)) return refuse_map();
+    if (val_tag == jd_tag(JdTag::F64)) {
+        // An untyped slot holds an array as its pointer bits; a real number
+        // never looks like a user-space pointer.
+        uint64_t u = (uint64_t)val_bits;
+        if (u != 0 && u < (1ULL << 47)) return walk_array(val_bits);
+        return refuse_other();
+    }
+    if (val_tag == jd_tag(JdTag::STR)) {
+        const char* s = (const char*)(intptr_t)val_bits;
+        if (!s) return 0;
+        int64_t n = jdrt_strlen(s);
+        return walk_string(n >= 0 ? std::string(s, (size_t)n) : std::string(s));
+    }
+    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+        auto it = rt->value_store.find(val_bits);
+        if (it == rt->value_store.end()) return 0;
+        const Value& v = it->second;
+        if (v.type == ValueType::NONE) return 0;
+        if (v.type == ValueType::ARRAY) {
+            *out_bits = val_bits;
+            *out_tag = jd_tag(JdTag::VM_HANDLE);
+            return (int64_t)v.as_array()->elements.size();
+        }
+        if (v.type == ValueType::STRING) return walk_string(v.as_string()->data);
+        if (v.type == ValueType::OBJECT) return refuse_map();
+        return refuse_other();
+    }
+    return refuse_other();
+}
+
 // Tag-7 INDEX dispatch when the key is tagged too: a string key reads the
 // base as a map, a number reads a VM or native array, and a number on a
 // map is the map key spelled as text.

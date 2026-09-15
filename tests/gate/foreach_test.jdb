@@ -1,0 +1,138 @@
+' FOR EACH over strings, mixed and numeric arrays from every kind of source,
+' typed loop variables, and clear errors for values it cannot walk.
+
+OPTION "EXPLICIT"
+IMPORT FOREACH_MOD
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+FUNC JoinEach$(items)
+    DIM out$ = ""
+    FOR EACH w IN items
+        out$ = out$ + w + "|"
+    NEXT
+    RETURN out$
+ENDFUNC
+
+FUNC SumEach(items)
+    DIM total = 0
+    FOR EACH n IN items
+        total = total + n
+    NEXT
+    RETURN total
+ENDFUNC
+
+DIM joined$ = ""
+FOR EACH w IN ["p", "q"]
+    joined$ = joined$ + w + "|"
+NEXT
+Check("a string literal array", joined$, "p|q|")
+
+joined$ = ""
+FOR EACH w IN SPLIT("a,b,c", ",")
+    joined$ = joined$ + w + "|"
+NEXT
+Check("SPLIT straight in the loop", joined$, "a|b|c|")
+
+DIM m AS MAP
+m{"x"} = 1
+m{"y"} = 2
+joined$ = ""
+FOR EACH k IN MAP.KEYS(m)
+    joined$ = joined$ + k + "|"
+NEXT
+Check("MAP.KEYS straight in the loop", joined$, "x|y|")
+
+DIM names = SPLIT("ann,bob", ",")
+Check("a string array parameter", JoinEach$(names), "ann|bob|")
+Check("a string array in a module FUNC", FOREACH_MOD.JOINED$(names), "ann|bob|")
+
+joined$ = ""
+FOR EACH s$ IN SPLIT("u v", " ")
+    joined$ = joined$ + s$ + "|"
+NEXT
+Check("a $ loop variable", joined$, "u|v|")
+
+joined$ = ""
+FOR EACH item IN [1, "two", 3.5, TRUE]
+    joined$ = joined$ + item + "|"
+NEXT
+Check("a mixed array keeps each kind", joined$, "1|two|3.5|TRUE|")
+
+DIM total = 0
+FOR EACH n IN [1, 2, 3, 4]
+    total = total + n
+NEXT
+Check("an integer sum", STR$(total), "10")
+Check("a numeric array parameter", STR$(SumEach(IOTA(10))), "55")
+
+DIM big = IOTA(100000)
+DIM big_sum AS DOUBLE = 0.0
+FOR EACH v IN big
+    big_sum = big_sum + v
+NEXT
+Check("a large numeric array", STR$(big_sum), "5000050000")
+
+DIM pairs = 0
+DIM outer = [1, 2, 3]
+FOR EACH a IN outer
+    FOR EACH b IN outer
+        IF b > a THEN CONTINUEFOR
+        pairs = pairs + 1
+    NEXT
+    IF a = 2 THEN EXITFOR
+NEXT
+Check("nested loops with CONTINUEFOR and EXITFOR", STR$(pairs), "3")
+
+DIM chars = 0
+FOR EACH c$ IN "a" + CHR$(195) + CHR$(169) + "b"
+    chars = chars + 1
+NEXT
+Check("a string walks UTF-8 characters", STR$(chars), "3")
+
+DIM map_error$ = ""
+TRY
+    FOR EACH key IN m
+        joined$ = joined$ + key
+    NEXT
+CATCH
+    map_error$ = ERRMSG$
+ENDTRY
+Ok("a map raises an error that names MAP.KEYS", INSTR(map_error$, "MAP.KEYS") >= 0)
+
+DIM number_error$ = ""
+DIM plain = 42
+TRY
+    FOR EACH digit IN plain
+        joined$ = joined$ + digit
+    NEXT
+CATCH
+    number_error$ = ERRMSG$
+ENDTRY
+Ok("a number raises an error", INSTR(number_error$, "FOR EACH") >= 0)
+
+PRINT ""
+PRINT "FOR EACH TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

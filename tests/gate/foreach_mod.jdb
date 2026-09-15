@@ -1,0 +1,9 @@
+EXPORT MODULE FOREACH_MOD
+
+EXPORT FUNC JOINED$(items)
+    DIM out$ = ""
+    FOR EACH w IN items
+        out$ = out$ + w + "|"
+    NEXT
+    RETURN out$
+ENDFUNC
