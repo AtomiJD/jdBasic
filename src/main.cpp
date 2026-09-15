@@ -1067,6 +1067,14 @@ static void register_console_builtins(VM& vm, bool ansi_color) {
 // commands for free without re-implementing the table.
 void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer) {
     g_program_buffer_ptr = &program_buffer;
+
+    // REPL shorthand: a line that starts with ? is a PRINT. Program code
+    // never passes through here, so ? stays unknown in source files.
+    size_t lead = cmd.find_first_not_of(" \t");
+    if (lead != std::string::npos && cmd[lead] == '?') {
+        console_execute("PRINT " + cmd.substr(lead + 1), vm, program_buffer);
+        return;
+    }
     std::string upper = cmd;
     std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
 

@@ -1092,6 +1092,7 @@ ENDTRY
 * **`SAVE "filename"`**: Saves the source code in memory to a file on disk.
 * **`RUN`**: Compiles and runs the program currently in memory.
 * **`TRON` / `TROFF`**: Turns instruction tracing on or off.
+* **`? expression`**: REPL shorthand for `PRINT`: a line that starts with `?` runs as `PRINT` with the rest of the line (`? x * 2`, `?"hi"`). Only typed commands take it; in program code `?` is a syntax error.
 * **`LOADWS "workspacename"`**: Loads a source file and all variables of an saved workspace from disk into memory.
 * **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
 * **`CLEARWS`**: Empties source code, p-code, and all global variables

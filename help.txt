@@ -2572,7 +2572,7 @@ Description: Reformats the loaded source - 4-space indent, normalized keyword ca
 
 [PRINT]
 PRINT [expressionlist] [{; | ,}]
-Outputs text or variable values to the console.
+Outputs text or variable values to the console. In the REPL a line that starts with ? is a PRINT (? x * 2); program code has no such shorthand.
 
 [PRODUCT]
 Syntax: PRODUCT(array) or PRODUCT(matrix, dimension)
