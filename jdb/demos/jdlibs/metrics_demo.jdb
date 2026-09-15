@@ -1,0 +1,91 @@
+' metrics_demo.jdb - a small JDWEB app with request metrics, a counter of
+' greetings by language and a gauge of open orders, scraped through its own
+' /metrics route. The demo calls the app with JDWEB.FETCH and prints what a
+' Prometheus server would read.
+'
+'   jdBasic metrics_demo.jdb
+
+IMPORT JDWEB, METRICS
+
+DIM PORT = 9986
+DIM gGreetings = METRICS.NEWCOUNTER("greetings", "Greetings sent, by language.", ["lang"])
+DIM gOrders = METRICS.NEWGAUGE("orders_open", "Orders not shipped yet.")
+DIM gWork = METRICS.NEWHISTOGRAM("order_check_seconds", "Time to check an order.", 0, [0.001, 0.01, 0.1, 1])
+
+FUNC Hello(request)
+    DIM lang$ = JDWEB.PARAM$(request, "lang")
+    DIM text_out$ = "Hello"
+    IF lang$ = "de" THEN text_out$ = "Hallo"
+    IF lang$ = "fr" THEN text_out$ = "Bonjour"
+    METRICS.INC(gGreetings, 1, [lang$])
+    RETURN text_out$
+ENDFUNC
+
+FUNC NewOrder(request)
+    DIM started = METRICS.STARTTIMER()
+    DIM check = 0
+    DIM i = 0
+    FOR i = 1 TO 20000
+        check = check + i MOD 7
+    NEXT i
+    METRICS.OBSERVE_SINCE(gWork, started)
+    METRICS.INC(gOrders)
+    RETURN JDWEB.REPLY_JSON({"accepted": TRUE}, 201)
+ENDFUNC
+
+FUNC Ship(request)
+    METRICS.DEC(gOrders)
+    RETURN {"shipped": TRUE}
+ENDFUNC
+
+FUNC Scrape(request)
+    RETURN METRICS.PAGE(request)
+ENDFUNC
+
+FUNC CountBefore(request)
+    RETURN METRICS.WEB_BEFORE(request)
+ENDFUNC
+
+FUNC CountAfter(request)
+    RETURN METRICS.WEB_AFTER(request, JDWEB.CURRENT_STATUS())
+ENDFUNC
+
+METRICS.WEB_SETUP(["/hello/:lang", "/orders", "/orders/:id/ship", "/metrics"])
+JDWEB.GET("/hello/:lang", Hello@)
+JDWEB.POST("/orders", NewOrder@)
+JDWEB.POST("/orders/:id/ship", Ship@)
+JDWEB.GET("/metrics", Scrape@)
+JDWEB.BEFORE(CountBefore@)
+JDWEB.AFTER(CountAfter@)
+
+IF NOT JDWEB.LISTEN(PORT) THEN
+    PRINT "could not start the server on port " + STR$(PORT)
+    END 1
+ENDIF
+
+DIM paths = ["/hello/en", "/hello/de", "/hello/de", "/hello/fr", "/nothing/here"]
+DIM p = 0
+FOR p = 0 TO LEN(paths) - 1
+    DIM path$ = paths[p]
+    DIM got = JDWEB.FETCH(PORT, "GET", path$)
+NEXT p
+DIM o = 0
+FOR o = 1 TO 3
+    DIM made = JDWEB.FETCH(PORT, "POST", "/orders", "{}")
+NEXT o
+DIM shipped = JDWEB.FETCH(PORT, "POST", "/orders/1/ship", "{}")
+
+DIM scrape = JDWEB.FETCH(PORT, "GET", "/metrics")
+DIM body$ = scrape{"body"}
+DIM lines = SPLIT(body$, CHR$(10))
+PRINT "GET /metrics -> "; scrape{"status"}
+PRINT ""
+DIM k = 0
+FOR k = 0 TO LEN(lines) - 1
+    DIM line_text$ = lines[k]
+    IF INSTR(line_text$, "_bucket") < 0 ANDALSO line_text$ <> "" THEN PRINT line_text$
+NEXT k
+PRINT ""
+PRINT "(the _bucket lines are left out above)"
+
+HTTP.SERVER.STOP()

@@ -1,0 +1,201 @@
+' METRICS: numbers as prometheus_client writes them, an exposition byte for
+' byte equal to one prometheus_client wrote for the same operations, names
+' and labels refused, histograms, the timer, and the JDWEB middleware through
+' DISPATCH request maps and, served, through JDWEB.FETCH.
+
+IMPORT TESTKIT, METRICS, JDWEB
+
+DIM Q$ = CHR$(34)
+DIM NL$ = CHR$(10)
+DIM PORT = 9985
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "metrics_basic.prom") THEN base$ = "fixtures/"
+DIM gArgs = OS.ARGS()
+DIM gScript$ = gArgs[0]
+DIM gServed = (LCASE$(RIGHT$(gScript$, 4)) = ".jdb") ORELSE GETENV$("JDWEB_TEST_SERVER") <> ""
+
+FUNC BadName(x)
+    RETURN METRICS.NEWCOUNTER("9lives", "no")
+ENDFUNC
+
+FUNC Twice(x)
+    DIM first = METRICS.NEWGAUGE("twice", "one")
+    RETURN METRICS.NEWGAUGE("twice", "two")
+ENDFUNC
+
+FUNC BadLabel(x)
+    RETURN METRICS.NEWGAUGE("labelled", "x", ["__reserved"])
+ENDFUNC
+
+FUNC LeLabel(x)
+    RETURN METRICS.NEWHISTOGRAM("h_le", "x", ["le"])
+ENDFUNC
+
+FUNC FallingBuckets(x)
+    RETURN METRICS.NEWHISTOGRAM("h_down", "x", 0, [1, 0.5])
+ENDFUNC
+
+FUNC WrongValues(x)
+    DIM g = METRICS.NEWGAUGE("two_labels", "x", ["a", "b"])
+    METRICS.SETVALUE(g, 1, ["only one"])
+    RETURN 0
+ENDFUNC
+
+FUNC CounterDown(x)
+    DIM c = METRICS.NEWCOUNTER("down", "x")
+    METRICS.INC(c, -1)
+    RETURN 0
+ENDFUNC
+
+FUNC ShowUser(request)
+    DIM id$ = JDWEB.PARAM$(request, "id")
+    RETURN "user " + id$
+ENDFUNC
+
+FUNC Scrape(request)
+    RETURN METRICS.PAGE(request)
+ENDFUNC
+
+FUNC CountBefore(request)
+    RETURN METRICS.WEB_BEFORE(request)
+ENDFUNC
+
+FUNC CountAfter(request)
+    RETURN METRICS.WEB_AFTER(request, JDWEB.CURRENT_STATUS())
+ENDFUNC
+
+FUNC Ask(method$, path$)
+    DIM hs AS MAP
+    DIM no_params AS MAP
+    RETURN {"METHOD": method$, "PATH": path$, "HEADERS": hs, "PARAMS": no_params, "BODY": ""}
+ENDFUNC
+
+TESTKIT.SUITE("numbers as prometheus_client writes them")
+DIM rows = SPLIT(TXTREADER$(base$ + "metrics_floats.tsv"), NL$)
+DIM r = 0
+FOR r = 1 TO LEN(rows) - 1
+    DIM row$ = rows[r]
+    IF row$ <> "" THEN
+        DIM cells = SPLIT(row$, CHR$(9))
+        DIM given$ = cells[0]
+        DIM want$ = cells[1]
+        DIM number = 0.0
+        IF given$ = "inf" THEN
+            number = 1e308 * 10
+        ELSEIF given$ = "-inf" THEN
+            number = -1e308 * 10
+        ELSE
+            number = VAL(given$)
+        ENDIF
+        TESTKIT.EQ(METRICS.FORMATVALUE$(number), want$, given$ + " is written " + want$)
+    ENDIF
+NEXT r
+
+TESTKIT.SUITE("the exposition")
+DIM req = METRICS.NEWCOUNTER("http_requests", "Requests served.", ["method", "code"])
+METRICS.INC(req, 1, ["GET", "200"])
+METRICS.INC(req, 2.5, ["GET", "200"])
+METRICS.INC(req, 1, ["P" + Q$ + "O\ST" + NL$, "500"])
+DIM jobs = METRICS.NEWCOUNTER("jobs_done_total", "Jobs finished\done" + NL$ + "for good.")
+METRICS.INC(jobs, 3)
+DIM temp = METRICS.NEWGAUGE("temperature_celsius", "Room temperature.")
+METRICS.SETVALUE(temp, 21.5)
+METRICS.DEC(temp, 0.25)
+METRICS.INC(temp, 0.1)
+DIM queue = METRICS.NEWGAUGE("queue_length", "Items waiting.", ["queue"])
+METRICS.SETVALUE(queue, 7, ["mail"])
+METRICS.INC(queue, 2, ["print"])
+METRICS.DEC(queue, 3, ["mail"])
+DIM latency = METRICS.NEWHISTOGRAM("request_seconds", "Latency.", ["route"])
+DIM seen = [0.004, 0.02, 0.3, 1.2, 12.0]
+DIM o = 0
+FOR o = 0 TO LEN(seen) - 1
+    METRICS.OBSERVE(latency, seen[o], ["/users/:id"])
+NEXT o
+METRICS.OBSERVE(latency, 0.05, ["/"])
+DIM sizes = METRICS.NEWHISTOGRAM("size_bytes", "Sizes.", 0, [100, 1000, 10000])
+METRICS.OBSERVE(sizes, 50)
+METRICS.OBSERVE(sizes, 5000)
+METRICS.OBSERVE(sizes, 1e6)
+DIM exposed$ = METRICS.EXPOSE$()
+DIM expected$ = TXTREADER$(base$ + "metrics_basic.prom")
+TESTKIT.EQ(exposed$, expected$, "byte for byte what prometheus_client writes for the same operations")
+TESTKIT.EQ(METRICS.VALUE(req, ["GET", "200"]), 3.5, "VALUE of a counter")
+TESTKIT.NEAR(METRICS.VALUE(temp), 21.35, 0.000000001, "VALUE of a gauge")
+TESTKIT.EQ(METRICS.VALUE(queue, ["nowhere"]), 0, "0 for label values not used yet")
+TESTKIT.EQ(METRICS.OBSERVATIONS(latency, ["/users/:id"]), 5, "OBSERVATIONS of a histogram")
+TESTKIT.NEAR(METRICS.VALUE(latency, ["/users/:id"]), 13.524, 0.000000001, "VALUE of a histogram is its sum")
+TESTKIT.EQ(METRICS.CONTENT_TYPE$(), "text/plain; version=0.0.4; charset=utf-8", "the content type")
+
+TESTKIT.SUITE("refused")
+TESTKIT.THROWS(BadName@, 0, "a metric name starting with a digit")
+TESTKIT.THROWS(Twice@, 0, "the same name twice")
+TESTKIT.THROWS(BadLabel@, 0, "a label name starting with __")
+TESTKIT.THROWS(LeLabel@, 0, "le on a histogram")
+TESTKIT.THROWS(FallingBuckets@, 0, "buckets that do not rise")
+TESTKIT.THROWS(WrongValues@, 0, "the wrong number of label values")
+TESTKIT.THROWS(CounterDown@, 0, "a counter going down")
+
+TESTKIT.SUITE("histograms and the timer")
+METRICS.RESET()
+TESTKIT.EQ(METRICS.EXPOSE$(), "", "RESET forgets every metric")
+DIM edges = METRICS.NEWHISTOGRAM("edges", "Values on the bounds.", 0, [1, 2])
+METRICS.OBSERVE(edges, 1)
+METRICS.OBSERVE(edges, 2)
+METRICS.OBSERVE(edges, 2.0000001)
+DIM edge_text$ = METRICS.EXPOSE$()
+TESTKIT.ISTRUE(INSTR(edge_text$, "edges_bucket{le=" + Q$ + "1.0" + Q$ + "} 1.0") >= 0, "a value equal to a bound counts in that bucket")
+TESTKIT.ISTRUE(INSTR(edge_text$, "edges_bucket{le=" + Q$ + "2.0" + Q$ + "} 2.0") >= 0, "buckets are cumulative")
+TESTKIT.ISTRUE(INSTR(edge_text$, "edges_bucket{le=" + Q$ + "+Inf" + Q$ + "} 3.0") >= 0, "and +Inf holds them all")
+DIM timed = METRICS.NEWHISTOGRAM("timed_seconds", "A timed block.")
+DIM started = METRICS.STARTTIMER()
+SLEEP 20
+METRICS.OBSERVE_SINCE(timed, started)
+TESTKIT.EQ(METRICS.OBSERVATIONS(timed), 1, "OBSERVE_SINCE observes once")
+TESTKIT.ISTRUE(METRICS.VALUE(timed) >= 0.015 ANDALSO METRICS.VALUE(timed) < 5, "the seconds since STARTTIMER")
+DIM hits = METRICS.NEWCOUNTER("hits", "Hits by code.", ["code"])
+METRICS.INC(hits, 1, [404])
+TESTKIT.EQ(METRICS.VALUE(hits, ["404"]), 1, "a number as a label value is its text")
+
+TESTKIT.SUITE("JDWEB middleware")
+METRICS.RESET()
+METRICS.WEB_SETUP(["/users/:id", "/metrics"])
+JDWEB.GET("/users/:id", ShowUser@)
+JDWEB.GET("/metrics", Scrape@)
+JDWEB.BEFORE(CountBefore@)
+JDWEB.AFTER(CountAfter@)
+DIM ask1 = Ask("GET", "/users/7")
+DIM ask2 = Ask("GET", "/users/8")
+DIM ask3 = Ask("GET", "/nowhere")
+DIM d1 = JDWEB.DISPATCH(ask1)
+DIM d2 = JDWEB.DISPATCH(ask2)
+DIM d3 = JDWEB.DISPATCH(ask3)
+DIM ask4 = Ask("GET", "/metrics")
+DIM d4 = JDWEB.DISPATCH(ask4)
+DIM page$ = d4{"__http_body"}
+TESTKIT.ISTRUE(INSTR(page$, "http_requests_total{method=" + Q$ + "GET" + Q$ + ",route=" + Q$ + "/users/:id" + Q$ + ",status=" + Q$ + "200" + Q$ + "} 2.0") >= 0, "two requests counted under their route pattern")
+TESTKIT.ISTRUE(INSTR(page$, "route=" + Q$ + "other" + Q$ + ",status=" + Q$ + "404" + Q$ + "} 1.0") >= 0, "an unknown path under other with its 404")
+TESTKIT.ISTRUE(INSTR(page$, "http_request_duration_seconds_count{method=" + Q$ + "GET" + Q$ + ",route=" + Q$ + "/users/:id" + Q$ + "} 2.0") >= 0, "and their latency")
+TESTKIT.EQ(d4{"__http_content_type"}, "text/plain; version=0.0.4; charset=utf-8", "PAGE answers with the text format")
+
+IF gServed THEN
+    TESTKIT.SUITE("served")
+    IF NOT JDWEB.LISTEN(PORT) THEN
+        PRINT "could not start the server on " + STR$(PORT)
+        END 1
+    ENDIF
+    DIM f1 = JDWEB.FETCH(PORT, "GET", "/users/1")
+    DIM f2 = JDWEB.FETCH(PORT, "GET", "/metrics")
+    TESTKIT.EQ(f2{"status"}, 200, "GET /metrics over HTTP")
+    DIM served$ = f2{"body"}
+    TESTKIT.ISTRUE(INSTR(served$, "route=" + Q$ + "/users/:id" + Q$ + ",status=" + Q$ + "200" + Q$ + "} 3.0") >= 0, "counts the request made over HTTP too")
+    DIM fh = f2{"headers"}
+    DIM served_type$ = fh{"content-type"}
+    TESTKIT.ISTRUE(INSTR(served_type$, "version=0.0.4") >= 0, "with the text format's content type")
+    HTTP.SERVER.STOP()
+ELSE
+    TESTKIT.SUITE("served")
+    TESTKIT.SKIP("set JDWEB_TEST_SERVER to serve from a compiled program")
+ENDIF
+
+TESTKIT.REPORT()

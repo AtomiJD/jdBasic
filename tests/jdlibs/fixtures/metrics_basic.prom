@@ -1,0 +1,58 @@
+# HELP http_requests_total Requests served.
+# TYPE http_requests_total counter
+http_requests_total{code="200",method="GET"} 3.5
+http_requests_total{code="500",method="P\"O\\ST\n"} 1.0
+# HELP jobs_done_total Jobs finished\\done\nfor good.
+# TYPE jobs_done_total counter
+jobs_done_total 3.0
+# HELP temperature_celsius Room temperature.
+# TYPE temperature_celsius gauge
+temperature_celsius 21.35
+# HELP queue_length Items waiting.
+# TYPE queue_length gauge
+queue_length{queue="mail"} 4.0
+queue_length{queue="print"} 2.0
+# HELP request_seconds Latency.
+# TYPE request_seconds histogram
+request_seconds_bucket{le="0.005",route="/users/:id"} 1.0
+request_seconds_bucket{le="0.01",route="/users/:id"} 1.0
+request_seconds_bucket{le="0.025",route="/users/:id"} 2.0
+request_seconds_bucket{le="0.05",route="/users/:id"} 2.0
+request_seconds_bucket{le="0.075",route="/users/:id"} 2.0
+request_seconds_bucket{le="0.1",route="/users/:id"} 2.0
+request_seconds_bucket{le="0.25",route="/users/:id"} 2.0
+request_seconds_bucket{le="0.5",route="/users/:id"} 3.0
+request_seconds_bucket{le="0.75",route="/users/:id"} 3.0
+request_seconds_bucket{le="1.0",route="/users/:id"} 3.0
+request_seconds_bucket{le="2.5",route="/users/:id"} 4.0
+request_seconds_bucket{le="5.0",route="/users/:id"} 4.0
+request_seconds_bucket{le="7.5",route="/users/:id"} 4.0
+request_seconds_bucket{le="10.0",route="/users/:id"} 4.0
+request_seconds_bucket{le="+Inf",route="/users/:id"} 5.0
+request_seconds_count{route="/users/:id"} 5.0
+request_seconds_sum{route="/users/:id"} 13.524000000000001
+request_seconds_bucket{le="0.005",route="/"} 0.0
+request_seconds_bucket{le="0.01",route="/"} 0.0
+request_seconds_bucket{le="0.025",route="/"} 0.0
+request_seconds_bucket{le="0.05",route="/"} 1.0
+request_seconds_bucket{le="0.075",route="/"} 1.0
+request_seconds_bucket{le="0.1",route="/"} 1.0
+request_seconds_bucket{le="0.25",route="/"} 1.0
+request_seconds_bucket{le="0.5",route="/"} 1.0
+request_seconds_bucket{le="0.75",route="/"} 1.0
+request_seconds_bucket{le="1.0",route="/"} 1.0
+request_seconds_bucket{le="2.5",route="/"} 1.0
+request_seconds_bucket{le="5.0",route="/"} 1.0
+request_seconds_bucket{le="7.5",route="/"} 1.0
+request_seconds_bucket{le="10.0",route="/"} 1.0
+request_seconds_bucket{le="+Inf",route="/"} 1.0
+request_seconds_count{route="/"} 1.0
+request_seconds_sum{route="/"} 0.05
+# HELP size_bytes Sizes.
+# TYPE size_bytes histogram
+size_bytes_bucket{le="100.0"} 1.0
+size_bytes_bucket{le="1000.0"} 1.0
+size_bytes_bucket{le="10000.0"} 2.0
+size_bytes_bucket{le="+Inf"} 3.0
+size_bytes_count 3.0
+size_bytes_sum 1.00505e+06

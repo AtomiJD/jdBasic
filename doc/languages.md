@@ -1464,6 +1464,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `SECRET` | password hashes with PBKDF2 and rehash decisions, constant-time comparison, random tokens, API keys kept as hashes |
 | `FIT` | least squares and the pseudo-inverse, polynomial and Levenberg-Marquardt curve fits with parameter errors, interpolation and cubic splines, roots, a bounded minimum |
 | `QR` | QR codes: numeric, alphanumeric and byte mode, levels L to H, versions 1 to 40, mask scoring; EPC payment codes (GiroCode); terminal text, SVG and PDF output |
+| `METRICS` | Prometheus metrics: counters, gauges, histograms with labels, the text exposition format, JDWEB request metrics and a /metrics page |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

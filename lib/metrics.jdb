@@ -1,0 +1,560 @@
+' METRICS: counters, gauges and histograms with labels in one registry, the
+' Prometheus text exposition format 0.0.4, and JDWEB middleware counting
+' requests and their latency per route pattern.
+'
+'   IMPORT METRICS
+'   DIM jobs = METRICS.NEWCOUNTER("jobs_done", "Jobs finished.", ["queue"])
+'   METRICS.INC(jobs, 1, ["mail"])
+'   PRINT METRICS.EXPOSE$()
+'
+' The registry lives in module globals. An ASYNC FUNC works on its own copy
+' of the globals, so what it records never reaches the registry a scrape
+' reads; record in the task that serves the scrape.
+EXPORT MODULE METRICS
+
+DIM gNames = []
+DIM gDocs = []
+DIM gKinds = []
+DIM gLabelNames = []
+DIM gLabelCount = []
+DIM gBoundStart = []
+DIM gBoundCount = []
+DIM gBounds = []
+DIM gSeriesMetric = []
+DIM gSeriesLabels = []
+DIM gSeriesValue = []
+DIM gSeriesCount = []
+DIM gSeriesBucketStart = []
+DIM gBucketCounts = []
+DIM gSeriesIndex AS MAP
+DIM gWeb AS MAP
+DIM gWebPatterns = []
+DIM gSep$ = CHR$(1)
+
+' ---- numbers as Prometheus writes them ----
+
+FUNC StripZeros$(src_text$)
+    DIM out$ = src_text$
+    IF INSTR(out$, ".") < 0 THEN RETURN out$
+    DO WHILE RIGHT$(out$, 1) = "0"
+        out$ = LEFT$(out$, LEN(out$) - 1)
+    LOOP
+    IF RIGHT$(out$, 1) = "." THEN out$ = out$ + "0"
+    RETURN out$
+ENDFUNC
+
+' Scientific notation the way Python's repr writes it: the fewest mantissa
+' digits that read back to the same double, and a two-digit exponent.
+FUNC SciRepr$(x)
+    DIM ax = ABS(x)
+    DIM lead$ = ""
+    IF x < 0 THEN lead$ = "-"
+    DIM expo = 0
+    DIM digits$ = ""
+    IF ax >= 1 THEN
+        DIM whole$ = FORMAT$("{:.0f}", ax)
+        expo = LEN(whole$) - 1
+        digits$ = whole$
+    ELSE
+        DIM fixed$ = FORMAT$("{:.340f}", ax)
+        DIM frac$ = MID$(fixed$, 2, LEN(fixed$))
+        DIM zero_run = 0
+        DO WHILE zero_run < LEN(frac$) ANDALSO MID$(frac$, zero_run, 1) = "0"
+            zero_run = zero_run + 1
+        LOOP
+        expo = 0 - (zero_run + 1)
+        digits$ = MID$(frac$, zero_run, LEN(frac$))
+    ENDIF
+    DIM approx = VAL(LEFT$(digits$, 1) + "." + MID$(digits$, 1, 19))
+    DIM k = 0
+    FOR k = 0 TO 17
+        DIM mant$ = FORMAT$("{:." + STR$(k) + "f}", approx)
+        DIM use_expo = expo
+        IF LEFT$(mant$, 2) = "10" THEN
+            mant$ = "1" + MID$(mant$, 2, LEN(mant$))
+            use_expo = expo + 1
+        ENDIF
+        DIM expo_text$ = STR$(CLNG(ABS(use_expo)))
+        IF LEN(expo_text$) < 2 THEN expo_text$ = "0" + expo_text$
+        DIM expo_sign$ = "+"
+        IF use_expo < 0 THEN expo_sign$ = "-"
+        DIM candidate$ = mant$ + "e" + expo_sign$ + expo_text$
+        IF VAL(candidate$) = ax THEN
+            DIM trimmed$ = mant$
+            IF INSTR(trimmed$, ".") >= 0 THEN
+                DO WHILE RIGHT$(trimmed$, 1) = "0"
+                    trimmed$ = LEFT$(trimmed$, LEN(trimmed$) - 1)
+                LOOP
+                IF RIGHT$(trimmed$, 1) = "." THEN trimmed$ = LEFT$(trimmed$, LEN(trimmed$) - 1)
+            ENDIF
+            RETURN lead$ + trimmed$ + "e" + expo_sign$ + expo_text$
+        ENDIF
+    NEXT k
+    RETURN lead$ + digits$
+ENDFUNC
+
+' Python's repr of a double: whole numbers with ".0", the fewest decimals
+' that read back exactly, scientific below 1e-4 and from 1e16 on.
+FUNC ReprOf$(x)
+    IF x = 0 THEN RETURN "0.0"
+    DIM ax = ABS(x)
+    IF ax >= 1e16 ORELSE ax < 0.0001 THEN RETURN SciRepr$(x)
+    IF x = INT(x) THEN RETURN STR$(CLNG(x)) + ".0"
+    DIM d = 0
+    FOR d = 1 TO 17
+        DIM fixed$ = FORMAT$("{:." + STR$(d) + "f}", x)
+        IF VAL(fixed$) = x THEN RETURN StripZeros$(fixed$)
+    NEXT d
+    RETURN StripZeros$(FORMAT$("{:.17f}", x))
+ENDFUNC
+
+' A sample value as the Prometheus client writes it: +Inf and -Inf, and a
+' positive number with more than six integer digits in exponent form.
+EXPORT FUNC FORMATVALUE$(x)
+    IF x > 1.7976931348623157e308 THEN RETURN "+Inf"
+    IF x < -1.7976931348623157e308 THEN RETURN "-Inf"
+    IF x <> x THEN RETURN "NaN"
+    DIM s$ = ReprOf$(x)
+    IF x > 0 THEN
+        DIM dot_at = CLNG(INSTR(s$, "."))
+        IF dot_at > 6 THEN
+            DIM mant$ = LEFT$(s$, 1) + "." + MID$(s$, 1, dot_at - 1) + MID$(s$, dot_at + 1, LEN(s$))
+            DO WHILE RIGHT$(mant$, 1) = "0" ORELSE RIGHT$(mant$, 1) = "."
+                mant$ = LEFT$(mant$, LEN(mant$) - 1)
+            LOOP
+            DIM expo$ = STR$(dot_at - 1)
+            IF LEN(expo$) < 2 THEN expo$ = "0" + expo$
+            RETURN mant$ + "e+" + expo$
+        ENDIF
+    ENDIF
+    RETURN s$
+ENDFUNC
+
+' ---- registry ----
+
+FUNC NumberText$(v)
+    IF v = INT(v) ANDALSO ABS(v) < 1e15 THEN RETURN STR$(CLNG(v))
+    RETURN ReprOf$(v)
+ENDFUNC
+
+' Label values joined with CHR$(1); numbers are written as text.
+FUNC Joined$(label_values)
+    IF TYPEOF(label_values) <> "ARRAY" THEN RETURN ""
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(label_values) - 1
+        DIM v = label_values[i]
+        DIM part$ = ""
+        IF TYPEOF(v) = "STRING" THEN
+            part$ = v
+        ELSE
+            part$ = NumberText$(v)
+        ENDIF
+        IF i > 0 THEN out$ = out$ + gSep$
+        out$ = out$ + part$
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC ValueCount(label_values)
+    IF TYPEOF(label_values) <> "ARRAY" THEN RETURN 0
+    RETURN LEN(label_values)
+ENDFUNC
+
+FUNC Register(name$, doc$, kind$, label_names, bucket_list)
+    IF NOT REGEX.MATCH("[a-zA-Z_:][a-zA-Z0-9_:]*", name$) THEN THROW "METRICS: not a valid metric name: " + name$
+    DIM full$ = name$
+    IF kind$ = "counter" THEN
+        IF RIGHT$(full$, 6) = "_total" THEN full$ = LEFT$(full$, LEN(full$) - 6)
+        full$ = full$ + "_total"
+    ENDIF
+    DIM i = 0
+    FOR i = 0 TO LEN(gNames) - 1
+        DIM taken$ = gNames[i]
+        IF taken$ = full$ THEN THROW "METRICS: a metric named " + full$ + " exists"
+    NEXT i
+    DIM n_labels = CLNG(ValueCount(label_names))
+    FOR i = 0 TO n_labels - 1
+        DIM label$ = label_names[i]
+        IF NOT REGEX.MATCH("[a-zA-Z_][a-zA-Z0-9_]*", label$) ORELSE LEFT$(label$, 2) = "__" THEN THROW "METRICS: not a valid label name: " + label$
+        IF kind$ = "histogram" ANDALSO label$ = "le" THEN THROW "METRICS: a histogram cannot have a label named le"
+    NEXT i
+    DIM start = LEN(gBounds)
+    DIM n_bounds = 0
+    IF kind$ = "histogram" THEN
+        DIM defaults = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1.0, 2.5, 5.0, 7.5, 10.0]
+        DIM chosen = defaults
+        IF TYPEOF(bucket_list) = "ARRAY" THEN chosen = bucket_list
+        DIM previous = -1.7976931348623157e308
+        FOR i = 0 TO LEN(chosen) - 1
+            DIM bound = chosen[i]
+            IF bound <= previous THEN THROW "METRICS: bucket bounds must rise"
+            IF bound <= 1.7976931348623157e308 THEN
+                PUSH(gBounds, bound + 0.0)
+                n_bounds = n_bounds + 1
+            ENDIF
+            previous = bound
+        NEXT i
+    ENDIF
+    PUSH(gNames, full$)
+    PUSH(gDocs, doc$)
+    PUSH(gKinds, kind$)
+    PUSH(gLabelNames, Joined$(label_names))
+    PUSH(gLabelCount, n_labels)
+    PUSH(gBoundStart, start)
+    PUSH(gBoundCount, n_bounds)
+    DIM id = LEN(gNames) - 1
+    IF n_labels = 0 THEN
+        DIM first = SeriesAt(id, 0)
+    ENDIF
+    RETURN id
+ENDFUNC
+
+' The index of the series of a metric for its label values, made on first use.
+FUNC SeriesAt(metric_id, label_values)
+    DIM id = CLNG(metric_id)
+    IF id < 0 ORELSE id >= LEN(gNames) THEN THROW "METRICS: unknown metric"
+    DIM want = CLNG(gLabelCount[id])
+    IF CLNG(ValueCount(label_values)) <> want THEN THROW "METRICS: " + gNames[id] + " takes " + STR$(want) + " label values"
+    DIM joined$ = Joined$(label_values)
+    DIM key$ = STR$(id) + gSep$ + joined$
+    IF MAP.EXISTS(gSeriesIndex, key$) THEN
+        DIM found = gSeriesIndex{key$}
+        RETURN CLNG(found)
+    ENDIF
+    PUSH(gSeriesMetric, id)
+    PUSH(gSeriesLabels, joined$)
+    PUSH(gSeriesValue, 0.0)
+    PUSH(gSeriesCount, 0.0)
+    PUSH(gSeriesBucketStart, LEN(gBucketCounts))
+    DIM n = CLNG(gBoundCount[id])
+    DIM b = 0
+    FOR b = 0 TO n
+        PUSH(gBucketCounts, 0.0)
+    NEXT b
+    DIM made = LEN(gSeriesMetric) - 1
+    gSeriesIndex{key$} = made
+    RETURN made
+ENDFUNC
+
+FUNC KindOf$(metric_id)
+    DIM id = CLNG(metric_id)
+    IF id < 0 ORELSE id >= LEN(gKinds) THEN THROW "METRICS: unknown metric"
+    DIM kind$ = gKinds[id]
+    RETURN kind$
+ENDFUNC
+
+' A counter: a value that only goes up; the exposition adds _total.
+EXPORT FUNC NEWCOUNTER(name$, doc$, label_names = 0)
+    RETURN Register(name$, doc$, "counter", label_names, 0)
+ENDFUNC
+
+' A gauge: a value that goes up and down.
+EXPORT FUNC NEWGAUGE(name$, doc$, label_names = 0)
+    RETURN Register(name$, doc$, "gauge", label_names, 0)
+ENDFUNC
+
+' A histogram with rising bucket bounds (the Prometheus client's defaults
+' from 0.005 to 10 seconds when none are given); +Inf is always added.
+EXPORT FUNC NEWHISTOGRAM(name$, doc$, label_names = 0, bucket_list = 0)
+    RETURN Register(name$, doc$, "histogram", label_names, bucket_list)
+ENDFUNC
+
+' Adds amount to a counter or a gauge. A counter refuses a negative amount.
+EXPORT SUB INC(metric, amount = 1, label_values = 0)
+    DIM kind$ = KindOf$(metric)
+    IF kind$ = "histogram" THEN THROW "METRICS: INC needs a counter or a gauge"
+    IF kind$ = "counter" ANDALSO amount < 0 THEN THROW "METRICS: a counter only goes up"
+    DIM s = CLNG(SeriesAt(metric, label_values))
+    gSeriesValue[s] = gSeriesValue[s] + amount
+ENDSUB
+
+' Subtracts amount from a gauge.
+EXPORT SUB DEC(metric, amount = 1, label_values = 0)
+    IF KindOf$(metric) <> "gauge" THEN THROW "METRICS: DEC needs a gauge"
+    DIM s = CLNG(SeriesAt(metric, label_values))
+    gSeriesValue[s] = gSeriesValue[s] - amount
+ENDSUB
+
+' Sets a gauge.
+EXPORT SUB SETVALUE(metric, reading, label_values = 0)
+    IF KindOf$(metric) <> "gauge" THEN THROW "METRICS: SETVALUE needs a gauge"
+    DIM s = CLNG(SeriesAt(metric, label_values))
+    gSeriesValue[s] = reading + 0.0
+ENDSUB
+
+' Counts an observation in the first bucket whose bound it does not exceed,
+' and adds it to the sum.
+EXPORT SUB OBSERVE(metric, reading, label_values = 0)
+    IF KindOf$(metric) <> "histogram" THEN THROW "METRICS: OBSERVE needs a histogram"
+    DIM id = CLNG(metric)
+    DIM s = CLNG(SeriesAt(metric, label_values))
+    gSeriesValue[s] = gSeriesValue[s] + reading
+    gSeriesCount[s] = gSeriesCount[s] + 1
+    DIM start = CLNG(gBoundStart[id])
+    DIM n = CLNG(gBoundCount[id])
+    DIM slot = n
+    DIM b = 0
+    FOR b = n - 1 TO 0 STEP -1
+        DIM bound = gBounds[start + b]
+        IF reading <= bound THEN slot = b
+    NEXT b
+    DIM cell = CLNG(gSeriesBucketStart[s]) + slot
+    gBucketCounts[cell] = gBucketCounts[cell] + 1
+ENDSUB
+
+' A start time for OBSERVE_SINCE.
+EXPORT FUNC STARTTIMER()
+    RETURN TICK()
+ENDFUNC
+
+' Observes the seconds passed since STARTTIMER.
+EXPORT SUB OBSERVE_SINCE(metric, started, label_values = 0)
+    OBSERVE(metric, (TICK() - started) / 1000.0, label_values)
+ENDSUB
+
+' The value of a counter or a gauge, the sum of a histogram; 0 for label
+' values not used yet.
+EXPORT FUNC VALUE(metric, label_values = 0)
+    DIM id = CLNG(metric)
+    DIM kind$ = KindOf$(id)
+    DIM key$ = STR$(id) + gSep$ + Joined$(label_values)
+    IF NOT MAP.EXISTS(gSeriesIndex, key$) THEN RETURN 0.0
+    DIM s = gSeriesIndex{key$}
+    DIM v = gSeriesValue[CLNG(s)]
+    RETURN v
+ENDFUNC
+
+' The number of observations of a histogram.
+EXPORT FUNC OBSERVATIONS(metric, label_values = 0)
+    DIM id = CLNG(metric)
+    IF KindOf$(id) <> "histogram" THEN THROW "METRICS: OBSERVATIONS needs a histogram"
+    DIM key$ = STR$(id) + gSep$ + Joined$(label_values)
+    IF NOT MAP.EXISTS(gSeriesIndex, key$) THEN RETURN 0
+    DIM s = gSeriesIndex{key$}
+    DIM c = gSeriesCount[CLNG(s)]
+    RETURN c
+ENDFUNC
+
+' Forgets every metric, for tests.
+EXPORT SUB RESET()
+    gNames = []
+    gDocs = []
+    gKinds = []
+    gLabelNames = []
+    gLabelCount = []
+    gBoundStart = []
+    gBoundCount = []
+    gBounds = []
+    gSeriesMetric = []
+    gSeriesLabels = []
+    gSeriesValue = []
+    gSeriesCount = []
+    gSeriesBucketStart = []
+    gBucketCounts = []
+    DIM keys = MAP.KEYS(gSeriesIndex)
+    DIM i = 0
+    FOR i = 0 TO LEN(keys) - 1
+        DIM key$ = keys[i]
+        MAP.DELETE(gSeriesIndex, key$)
+    NEXT i
+    DIM web_keys = MAP.KEYS(gWeb)
+    FOR i = 0 TO LEN(web_keys) - 1
+        DIM web_key$ = web_keys[i]
+        MAP.DELETE(gWeb, web_key$)
+    NEXT i
+    gWebPatterns = []
+ENDSUB
+
+' ---- exposition ----
+
+FUNC EscapeLabel$(src_text$)
+    RETURN REPLACE$(REPLACE$(REPLACE$(src_text$, "\", "\\"), CHR$(34), "\" + CHR$(34)), CHR$(10), "\n")
+ENDFUNC
+
+FUNC EscapeDoc$(src_text$)
+    RETURN REPLACE$(REPLACE$(src_text$, "\", "\\"), CHR$(10), "\n")
+ENDFUNC
+
+' {name="value",...} with the names sorted; le$ joins the set when not "".
+FUNC LabelText$(names_joined$, values_joined$, le$)
+    DIM names = []
+    DIM vals = []
+    IF names_joined$ <> "" THEN
+        DIM name_parts = SPLIT(names_joined$, gSep$)
+        DIM value_parts = SPLIT(values_joined$ + gSep$ + "x", gSep$)
+        DIM i = 0
+        FOR i = 0 TO LEN(name_parts) - 1
+            DIM part_name$ = name_parts[i]
+            DIM part_value$ = value_parts[i]
+            PUSH(names, part_name$)
+            PUSH(vals, part_value$)
+        NEXT i
+    ENDIF
+    IF le$ <> "" THEN
+        PUSH(names, "le")
+        PUSH(vals, le$)
+    ENDIF
+    IF LEN(names) = 0 THEN RETURN ""
+    DIM a = 0
+    DIM c = 0
+    FOR a = 1 TO LEN(names) - 1
+        FOR c = a TO 1 STEP -1
+            DIM left_name$ = names[c - 1]
+            DIM right_name$ = names[c]
+            IF left_name$ > right_name$ THEN
+                DIM left_value$ = vals[c - 1]
+                DIM right_value$ = vals[c]
+                names[c - 1] = right_name$
+                names[c] = left_name$
+                vals[c - 1] = right_value$
+                vals[c] = left_value$
+            ENDIF
+        NEXT c
+    NEXT a
+    DIM out$ = "{"
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM out_name$ = names[k]
+        DIM out_value$ = vals[k]
+        IF k > 0 THEN out$ = out$ + ","
+        out$ = out$ + out_name$ + "=" + CHR$(34) + EscapeLabel$(out_value$) + CHR$(34)
+    NEXT k
+    RETURN out$ + "}"
+ENDFUNC
+
+' Every metric in the Prometheus text format 0.0.4: HELP and TYPE, then the
+' samples in the order their label values were first used.
+EXPORT FUNC EXPOSE$()
+    DIM nl$ = CHR$(10)
+    DIM out$ = ""
+    DIM m = 0
+    DIM s = 0
+    DIM b = 0
+    FOR m = 0 TO LEN(gNames) - 1
+        DIM name$ = gNames[m]
+        DIM doc$ = gDocs[m]
+        DIM kind$ = gKinds[m]
+        DIM label_names$ = gLabelNames[m]
+        out$ = out$ + "# HELP " + name$ + " " + EscapeDoc$(doc$) + nl$
+        out$ = out$ + "# TYPE " + name$ + " " + kind$ + nl$
+        FOR s = 0 TO LEN(gSeriesMetric) - 1
+            IF CLNG(gSeriesMetric[s]) = m THEN
+                DIM values$ = gSeriesLabels[s]
+                IF kind$ = "histogram" THEN
+                    DIM start = CLNG(gBoundStart[m])
+                    DIM n = CLNG(gBoundCount[m])
+                    DIM cells = CLNG(gSeriesBucketStart[s])
+                    DIM running = 0.0
+                    FOR b = 0 TO n - 1
+                        DIM bound = gBounds[start + b]
+                        DIM in_bucket = gBucketCounts[cells + b]
+                        running = running + in_bucket
+                        out$ = out$ + name$ + "_bucket" + LabelText$(label_names$, values$, FORMATVALUE$(bound)) + " " + FORMATVALUE$(running) + nl$
+                    NEXT b
+                    DIM over = gBucketCounts[cells + n]
+                    running = running + over
+                    out$ = out$ + name$ + "_bucket" + LabelText$(label_names$, values$, "+Inf") + " " + FORMATVALUE$(running) + nl$
+                    DIM total_count = gSeriesCount[s]
+                    DIM total_sum = gSeriesValue[s]
+                    out$ = out$ + name$ + "_count" + LabelText$(label_names$, values$, "") + " " + FORMATVALUE$(total_count) + nl$
+                    out$ = out$ + name$ + "_sum" + LabelText$(label_names$, values$, "") + " " + FORMATVALUE$(total_sum) + nl$
+                ELSE
+                    DIM sample = gSeriesValue[s]
+                    out$ = out$ + name$ + LabelText$(label_names$, values$, "") + " " + FORMATVALUE$(sample) + nl$
+                ENDIF
+            ENDIF
+        NEXT s
+    NEXT m
+    RETURN out$
+ENDFUNC
+
+' The content type of the text format.
+EXPORT FUNC CONTENT_TYPE$()
+    RETURN "text/plain; version=0.0.4; charset=utf-8"
+ENDFUNC
+
+' A response with the exposition, for a route such as /metrics.
+EXPORT FUNC PAGE(request)
+    DIM body$ = EXPOSE$()
+    RETURN {"__http_status": 200, "__http_content_type": CONTENT_TYPE$(), "__http_body": body$}
+ENDFUNC
+
+' ---- JDWEB middleware ----
+
+FUNC PathSegments(path$)
+    DIM parts = SPLIT(path$, "/")
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(parts) - 1
+        DIM seg$ = parts[i]
+        IF seg$ <> "" THEN PUSH(out, seg$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC PatternMatches(pattern$, path$)
+    DIM ps = PathSegments(pattern$)
+    DIM xs = PathSegments(path$)
+    DIM i = 0
+    FOR i = 0 TO LEN(ps) - 1
+        DIM seg$ = ps[i]
+        IF LEFT$(seg$, 1) = "*" THEN RETURN TRUE
+        IF i >= LEN(xs) THEN RETURN FALSE
+        DIM part$ = xs[i]
+        IF LEFT$(seg$, 1) <> ":" ANDALSO seg$ <> part$ THEN RETURN FALSE
+    NEXT i
+    RETURN LEN(ps) = LEN(xs)
+ENDFUNC
+
+' The route pattern a path belongs to, or "other".
+FUNC RouteOf$(path$)
+    DIM i = 0
+    FOR i = 0 TO LEN(gWebPatterns) - 1
+        DIM pattern$ = gWebPatterns[i]
+        IF PatternMatches(pattern$, path$) THEN RETURN pattern$
+    NEXT i
+    RETURN "other"
+ENDFUNC
+
+' Creates http_requests_total{method,route,status} and
+' http_request_duration_seconds{method,route}; route is one of the given
+' JDWEB patterns ("/users/:id") or "other", so the label set stays small.
+EXPORT SUB WEB_SETUP(patterns)
+    DIM i = 0
+    FOR i = 0 TO LEN(patterns) - 1
+        DIM pattern$ = patterns[i]
+        PUSH(gWebPatterns, pattern$)
+    NEXT i
+    IF NOT MAP.EXISTS(gWeb, "requests") THEN
+        gWeb{"requests"} = NEWCOUNTER("http_requests", "HTTP requests answered.", ["method", "route", "status"])
+        gWeb{"seconds"} = NEWHISTOGRAM("http_request_duration_seconds", "Time to answer an HTTP request.", ["method", "route"])
+    ENDIF
+ENDSUB
+
+' A JDWEB before middleware: notes the start, the method and the route.
+EXPORT FUNC WEB_BEFORE(request)
+    DIM m = request{"METHOD"}
+    DIM p = request{"PATH"}
+    gWeb{"started"} = TICK()
+    gWeb{"method"} = UCASE$("" + m)
+    gWeb{"route"} = RouteOf$("" + p)
+    RETURN {"__jdweb_pass": 1}
+ENDFUNC
+
+' A JDWEB after middleware, called with the status of the answer
+' (JDWEB.CURRENT_STATUS()): counts the request and observes its latency.
+EXPORT FUNC WEB_AFTER(request, status)
+    DIM none AS MAP
+    IF NOT MAP.EXISTS(gWeb, "started") THEN RETURN none
+    DIM started = gWeb{"started"}
+    DIM method$ = gWeb{"method"}
+    DIM route$ = gWeb{"route"}
+    DIM requests = gWeb{"requests"}
+    DIM seconds = gWeb{"seconds"}
+    DIM status$ = STR$(CLNG(status))
+    INC(requests, 1, [method$, route$, status$])
+    OBSERVE(seconds, (TICK() - started) / 1000.0, [method$, route$])
+    MAP.DELETE(gWeb, "started")
+    RETURN none
+ENDFUNC
