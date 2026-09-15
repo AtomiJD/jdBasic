@@ -1,0 +1,594 @@
+' STRUCT: binary layouts declared once, then read from a string into a map
+' and written from a map back into a string, on PACK$ and UNPACK.
+'
+'   IMPORT STRUCT
+'   DIM hdr = STRUCT.LAYOUT("wav", "<")
+'   STRUCT.MAGIC(hdr, "riff", "str", "RIFF")
+'   STRUCT.FIELD(hdr, "size", "u32")
+'   STRUCT.FIELD(hdr, "name", "str", 8)
+'   DIM rec = STRUCT.READ(hdr, data$)
+'   DIM bytes$ = STRUCT.WRITE$(hdr, rec)
+'
+' Types: u8 i8 u16 i16 u32 i32 i64 f32 f64, str (a fixed number of bytes,
+' NUL padded) and pad (skipped bytes). A layout holds fields in the order
+' they were added; a layout handle is a number.
+EXPORT MODULE STRUCT
+
+DIM gLayoutNames = []
+DIM gLayoutEndian = []
+
+DIM gFieldLayout = []
+DIM gFieldName = []
+DIM gFieldKind = []
+DIM gFieldType = []
+DIM gFieldCount = []
+DIM gFieldEndian = []
+DIM gFieldChild = []
+DIM gFieldMagicNum = []
+DIM gFieldMagicText = []
+DIM gFieldBitStart = []
+DIM gFieldBitCount = []
+DIM gFieldOrder = []
+
+DIM gBitName = []
+DIM gBitWidth = []
+
+' ---- types ----
+
+FUNC TypeCode$(type$)
+    IF type$ = "u8" THEN RETURN "b"
+    IF type$ = "i8" THEN RETURN "c"
+    IF type$ = "u16" THEN RETURN "s"
+    IF type$ = "i16" THEN RETURN "h"
+    IF type$ = "u32" THEN RETURN "i"
+    IF type$ = "i32" THEN RETURN "n"
+    IF type$ = "i64" THEN RETURN "l"
+    IF type$ = "f32" THEN RETURN "f"
+    IF type$ = "f64" THEN RETURN "d"
+    RETURN ""
+ENDFUNC
+
+FUNC TypeSize(type$)
+    IF type$ = "u8" ORELSE type$ = "i8" THEN RETURN 1
+    IF type$ = "u16" ORELSE type$ = "i16" THEN RETURN 2
+    IF type$ = "u32" ORELSE type$ = "i32" ORELSE type$ = "f32" THEN RETURN 4
+    IF type$ = "i64" ORELSE type$ = "f64" THEN RETURN 8
+    RETURN 0
+ENDFUNC
+
+FUNC IsIntegerType(type$)
+    RETURN type$ = "u8" ORELSE type$ = "i8" ORELSE type$ = "u16" ORELSE type$ = "i16" ORELSE type$ = "u32" ORELSE type$ = "i32" ORELSE type$ = "i64"
+ENDFUNC
+
+FUNC TypeLow(type$)
+    IF type$ = "i8" THEN RETURN -128
+    IF type$ = "i16" THEN RETURN -32768
+    IF type$ = "i32" THEN RETURN -2147483648.0
+    IF type$ = "i64" THEN RETURN -9223372036854775808.0
+    RETURN 0
+ENDFUNC
+
+FUNC TypeHigh(type$)
+    IF type$ = "u8" THEN RETURN 255
+    IF type$ = "i8" THEN RETURN 127
+    IF type$ = "u16" THEN RETURN 65535
+    IF type$ = "i16" THEN RETURN 32767
+    IF type$ = "u32" THEN RETURN 4294967295.0
+    IF type$ = "i32" THEN RETURN 2147483647
+    RETURN 9223372036854775807.0
+ENDFUNC
+
+FUNC CheckEndian$(endian$, where$)
+    IF endian$ = "<" ORELSE endian$ = ">" THEN RETURN endian$
+    IF LCASE$(endian$) = "little" THEN RETURN "<"
+    IF LCASE$(endian$) = "big" THEN RETURN ">"
+    THROW "STRUCT." + where$ + ": endianness is < or > (little or big), not " + endian$
+    RETURN ""
+ENDFUNC
+
+FUNC CheckLayout(layout, where$)
+    DIM id = CLNG(layout)
+    IF id < 0 ORELSE id >= LEN(gLayoutNames) THEN THROW "STRUCT." + where$ + ": no layout " + STR$(id)
+    RETURN id
+ENDFUNC
+
+SUB AddField(id, name$, kind$, type$, n_items, endian$, child)
+    PUSH(gFieldLayout, id)
+    PUSH(gFieldName, name$)
+    PUSH(gFieldKind, kind$)
+    PUSH(gFieldType, type$)
+    PUSH(gFieldCount, n_items)
+    PUSH(gFieldEndian, endian$)
+    PUSH(gFieldChild, child)
+    PUSH(gFieldMagicNum, 0.0)
+    PUSH(gFieldMagicText, "")
+    PUSH(gFieldBitStart, 0)
+    PUSH(gFieldBitCount, 0)
+    PUSH(gFieldOrder, "")
+ENDSUB
+
+' ---- declaring a layout ----
+
+' A new, empty layout; endian$ is "<" (little, the default) or ">" (big)
+' for the fields that do not name their own.
+EXPORT FUNC LAYOUT(name$, endian$ = "<")
+    DIM byte_order$ = CheckEndian$(endian$, "LAYOUT")
+    PUSH(gLayoutNames, name$)
+    PUSH(gLayoutEndian, byte_order$)
+    RETURN LEN(gLayoutNames) - 1
+ENDFUNC
+
+' A field: a number type, "str" with n_items bytes, or "pad" with n_items
+' skipped bytes. For a number type n_items above 1 makes an array.
+EXPORT SUB FIELD(layout, name$, type$, n_items = 1, endian$ = "")
+    DIM id = CheckLayout(layout, "FIELD")
+    DIM t$ = LCASE$(type$)
+    DIM n = CLNG(n_items)
+    IF n < 1 THEN THROW "STRUCT.FIELD: " + name$ + " needs a count of at least 1"
+    DIM byte_order$ = ""
+    IF endian$ <> "" THEN byte_order$ = CheckEndian$(endian$, "FIELD")
+    IF t$ = "str" THEN
+        AddField(id, name$, "str", t$, n, byte_order$, -1)
+    ELSEIF t$ = "pad" THEN
+        AddField(id, name$, "pad", t$, n, byte_order$, -1)
+    ELSEIF TypeSize(t$) > 0 THEN
+        AddField(id, name$, "number", t$, n, byte_order$, -1)
+    ELSE
+        THROW "STRUCT.FIELD: unknown type " + type$ + " for " + name$
+    ENDIF
+ENDSUB
+
+' A field holding another layout, n_items times (an array of maps when
+' n_items is above 1).
+EXPORT SUB NESTED(layout, name$, child, n_items = 1)
+    DIM id = CheckLayout(layout, "NESTED")
+    DIM child_id = CheckLayout(child, "NESTED")
+    IF child_id = id THEN THROW "STRUCT.NESTED: a layout cannot hold itself"
+    DIM n = CLNG(n_items)
+    IF n < 1 THEN THROW "STRUCT.NESTED: " + name$ + " needs a count of at least 1"
+    AddField(id, name$, "nested", "", n, "", child_id)
+ENDSUB
+
+' A field with a fixed value: a number type with a number, or "str" with a
+' text whose length is the field's size. READ refuses data where it differs;
+' WRITE$ always writes it.
+EXPORT SUB MAGIC(layout, name$, type$, value)
+    DIM id = CheckLayout(layout, "MAGIC")
+    DIM t$ = LCASE$(type$)
+    DIM at = LEN(gFieldName)
+    IF t$ = "str" THEN
+        DIM text_value$ = "" + value
+        IF LEN(text_value$) < 1 THEN THROW "STRUCT.MAGIC: " + name$ + " needs a text"
+        AddField(id, name$, "magic", t$, LEN(text_value$), "", -1)
+        gFieldMagicText[at] = text_value$
+    ELSEIF IsIntegerType(t$) ORELSE TypeSize(t$) > 0 THEN
+        AddField(id, name$, "magic", t$, 1, "", -1)
+        gFieldMagicNum[at] = value
+    ELSE
+        THROW "STRUCT.MAGIC: unknown type " + type$ + " for " + name$
+    ENDIF
+ENDSUB
+
+' Named bit ranges inside one unsigned integer of type$ (u8, u16 or u32):
+' spec$ is "name:width,name:width,...". order$ "lsb" allocates from the
+' lowest bit, "msb" from the highest; by default little endian layouts use
+' lsb and big endian ones msb, which is how C compilers lay out bit fields
+' and what ctypes' LittleEndianStructure and BigEndianStructure do.
+EXPORT SUB BITS(layout, type$, spec$, order$ = "", endian$ = "")
+    DIM id = CheckLayout(layout, "BITS")
+    DIM t$ = LCASE$(type$)
+    IF t$ <> "u8" ANDALSO t$ <> "u16" ANDALSO t$ <> "u32" THEN THROW "STRUCT.BITS: the unit is u8, u16 or u32, not " + type$
+    DIM o$ = LCASE$(order$)
+    IF o$ <> "" ANDALSO o$ <> "lsb" ANDALSO o$ <> "msb" THEN THROW "STRUCT.BITS: order is lsb or msb, not " + order$
+    DIM byte_order$ = ""
+    IF endian$ <> "" THEN byte_order$ = CheckEndian$(endian$, "BITS")
+    DIM parts = SPLIT(spec$, ",")
+    DIM start = LEN(gBitName)
+    DIM used = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM part$ = TRIM$(parts[k])
+        DIM colon = CLNG(INSTR(part$, ":"))
+        IF colon < 1 THEN THROW "STRUCT.BITS: " + part$ + " is not name:width"
+        DIM bit_name$ = TRIM$(LEFT$(part$, colon))
+        DIM width = CLNG(VAL(TRIM$(MID$(part$, colon + 1, LEN(part$)))))
+        IF width < 1 THEN THROW "STRUCT.BITS: " + bit_name$ + " needs a width of at least 1"
+        used = used + width
+        PUSH(gBitName, bit_name$)
+        PUSH(gBitWidth, width)
+    NEXT k
+    IF used > TypeSize(t$) * 8 THEN THROW "STRUCT.BITS: " + STR$(used) + " bits do not fit a " + t$
+    DIM at = LEN(gFieldName)
+    AddField(id, "", "bits", t$, 1, byte_order$, -1)
+    gFieldBitStart[at] = start
+    gFieldBitCount[at] = LEN(parts)
+    gFieldOrder[at] = o$
+ENDSUB
+
+' ---- sizes and offsets ----
+
+FUNC FieldSize(f)
+    DIM kind$ = gFieldKind[f]
+    DIM n = CLNG(gFieldCount[f])
+    IF kind$ = "str" ORELSE kind$ = "pad" THEN RETURN n
+    IF kind$ = "nested" THEN RETURN LayoutSize(CLNG(gFieldChild[f])) * n
+    DIM t$ = gFieldType[f]
+    IF kind$ = "magic" THEN
+        IF t$ = "str" THEN RETURN n
+        RETURN TypeSize(t$)
+    ENDIF
+    RETURN TypeSize(t$) * n
+ENDFUNC
+
+FUNC LayoutSize(id)
+    DIM total = 0
+    DIM f = 0
+    FOR f = 0 TO LEN(gFieldLayout) - 1
+        IF CLNG(gFieldLayout[f]) = id THEN total = total + FieldSize(f)
+    NEXT f
+    RETURN total
+ENDFUNC
+
+' The size of a layout in bytes.
+EXPORT FUNC SIZE(layout)
+    RETURN LayoutSize(CheckLayout(layout, "SIZE"))
+ENDFUNC
+
+' The byte offset of a field. path$ may go into nested layouts with dots,
+' and into an array of layouts with a number: "entries.2.x". A bit field
+' answers the offset of the integer that holds it.
+EXPORT FUNC OFFSETOF(layout, path$)
+    DIM id = CheckLayout(layout, "OFFSETOF")
+    DIM segs = SPLIT(path$, ".")
+    DIM total = 0
+    DIM s = 0
+    FOR s = 0 TO LEN(segs) - 1
+        DIM seg$ = segs[s]
+        DIM found = -1
+        DIM pos = 0
+        DIM f = 0
+        FOR f = 0 TO LEN(gFieldLayout) - 1
+            IF CLNG(gFieldLayout[f]) = id ANDALSO found < 0 THEN
+                IF FieldHas(f, seg$) THEN
+                    found = f
+                ELSE
+                    pos = pos + FieldSize(f)
+                ENDIF
+            ENDIF
+        NEXT f
+        IF found < 0 THEN THROW "STRUCT.OFFSETOF: no field " + seg$ + " in " + path$
+        total = total + pos
+        DIM kind$ = gFieldKind[found]
+        IF s < LEN(segs) - 1 THEN
+            IF kind$ <> "nested" THEN THROW "STRUCT.OFFSETOF: " + seg$ + " holds no fields"
+            DIM child = CLNG(gFieldChild[found])
+            DIM n = CLNG(gFieldCount[found])
+            IF n > 1 THEN
+                s = s + 1
+                DIM index$ = segs[s]
+                DIM index = CLNG(VAL(index$))
+                IF index < 0 ORELSE index >= n THEN THROW "STRUCT.OFFSETOF: index " + index$ + " outside " + seg$
+                total = total + index * LayoutSize(child)
+            ENDIF
+            id = child
+        ENDIF
+    NEXT s
+    RETURN total
+ENDFUNC
+
+FUNC FieldHas(f, name$)
+    DIM field_name$ = gFieldName[f]
+    IF field_name$ = name$ ANDALSO field_name$ <> "" THEN RETURN TRUE
+    DIM kind$ = gFieldKind[f]
+    IF kind$ <> "bits" THEN RETURN FALSE
+    DIM start = CLNG(gFieldBitStart[f])
+    DIM n = CLNG(gFieldBitCount[f])
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM bit_name$ = gBitName[start + k]
+        IF bit_name$ = name$ THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' The names of a layout's fields in order, bit fields by their own names.
+EXPORT FUNC FIELDNAMES(layout)
+    DIM id = CheckLayout(layout, "FIELDNAMES")
+    DIM out = []
+    DIM f = 0
+    DIM k = 0
+    FOR f = 0 TO LEN(gFieldLayout) - 1
+        IF CLNG(gFieldLayout[f]) = id THEN
+            DIM kind$ = gFieldKind[f]
+            IF kind$ = "bits" THEN
+                DIM start = CLNG(gFieldBitStart[f])
+                DIM n = CLNG(gFieldBitCount[f])
+                FOR k = 0 TO n - 1
+                    DIM bit_name$ = gBitName[start + k]
+                    PUSH(out, bit_name$)
+                NEXT k
+            ELSEIF kind$ <> "pad" THEN
+                DIM field_name$ = gFieldName[f]
+                PUSH(out, field_name$)
+            ENDIF
+        ENDIF
+    NEXT f
+    RETURN out
+ENDFUNC
+
+' ---- reading ----
+
+FUNC EndianOf$(id, f)
+    DIM own$ = gFieldEndian[f]
+    IF own$ <> "" THEN RETURN own$
+    DIM layout_endian$ = gLayoutEndian[id]
+    RETURN layout_endian$
+ENDFUNC
+
+FUNC TrimNul$(text$)
+    DIM keep = LEN(text$)
+    DIM k = 0
+    FOR k = LEN(text$) - 1 TO 0 STEP -1
+        IF BYTEAT(text$, k) <> 0 THEN EXITFOR
+        keep = k
+    NEXT k
+    RETURN LEFT$(text$, keep)
+ENDFUNC
+
+FUNC TextOf$(values, name$)
+    IF NOT MAP.EXISTS(values, name$) THEN RETURN ""
+    DIM given = values{name$}
+    IF TYPEOF(given) <> "STRING" THEN RETURN "" + given
+    DIM text$ = given
+    RETURN text$
+ENDFUNC
+
+FUNC BitShift(order$, used, width, unit_bits)
+    IF order$ = "msb" THEN RETURN unit_bits - used - width
+    RETURN used
+ENDFUNC
+
+FUNC BitMask(width)
+    RETURN SHL(1, width) - 1
+ENDFUNC
+
+FUNC ReadAt(id, data$, base)
+    DIM out AS MAP
+    DIM pos = CLNG(base)
+    DIM f = 0
+    DIM k = 0
+    FOR f = 0 TO LEN(gFieldLayout) - 1
+        IF CLNG(gFieldLayout[f]) = id THEN
+            DIM kind$ = gFieldKind[f]
+            DIM field_name$ = gFieldName[f]
+            DIM t$ = gFieldType[f]
+            DIM n = CLNG(gFieldCount[f])
+            IF kind$ = "number" THEN
+                DIM fmt$ = EndianOf$(id, f) + TypeCode$(t$)
+                IF n > 1 THEN fmt$ = EndianOf$(id, f) + STR$(n) + TypeCode$(t$)
+                DIM got = UNPACK(fmt$, data$, pos)
+                IF n = 1 THEN
+                    DIM one = got[0]
+                    out{field_name$} = one
+                ELSE
+                    DIM many = []
+                    FOR k = 0 TO n - 1
+                        DIM cell = got[k]
+                        PUSH(many, cell)
+                    NEXT k
+                    out{field_name$} = many
+                ENDIF
+            ELSEIF kind$ = "str" THEN
+                DIM got_text = UNPACK(STR$(n) + "a", data$, pos)
+                DIM raw$ = got_text[0]
+                out{field_name$} = TrimNul$(raw$)
+            ELSEIF kind$ = "magic" THEN
+                IF t$ = "str" THEN
+                    DIM got_magic = UNPACK(STR$(n) + "a", data$, pos)
+                    DIM seen$ = got_magic[0]
+                    DIM want$ = gFieldMagicText[f]
+                    IF seen$ <> want$ THEN THROW "STRUCT.READ: " + field_name$ + " is " + seen$ + ", expected " + want$
+                    out{field_name$} = seen$
+                ELSE
+                    DIM got_num = UNPACK(EndianOf$(id, f) + TypeCode$(t$), data$, pos)
+                    DIM seen = got_num[0]
+                    DIM want = gFieldMagicNum[f]
+                    IF seen <> want THEN THROW "STRUCT.READ: " + field_name$ + " is " + STR$(seen) + ", expected " + STR$(want)
+                    out{field_name$} = seen
+                ENDIF
+            ELSEIF kind$ = "bits" THEN
+                DIM got_unit = UNPACK(EndianOf$(id, f) + TypeCode$(t$), data$, pos)
+                DIM unit = got_unit[0]
+                DIM order$ = BitOrder$(id, f)
+                DIM unit_bits = TypeSize(t$) * 8
+                DIM start = CLNG(gFieldBitStart[f])
+                DIM used = 0
+                FOR k = 0 TO CLNG(gFieldBitCount[f]) - 1
+                    DIM bit_name$ = gBitName[start + k]
+                    DIM width = CLNG(gBitWidth[start + k])
+                    DIM shift_by = BitShift(order$, used, width, unit_bits)
+                    out{bit_name$} = SHR(unit, shift_by) BAND BitMask(width)
+                    used = used + width
+                NEXT k
+            ELSEIF kind$ = "nested" THEN
+                DIM child = CLNG(gFieldChild[f])
+                DIM child_size = LayoutSize(child)
+                IF n = 1 THEN
+                    DIM sub_map = ReadAt(child, data$, pos)
+                    out{field_name$} = sub_map
+                ELSE
+                    DIM rows = []
+                    FOR k = 0 TO n - 1
+                        DIM row = ReadAt(child, data$, pos + k * child_size)
+                        PUSH(rows, row)
+                    NEXT k
+                    out{field_name$} = rows
+                ENDIF
+            ENDIF
+            pos = pos + FieldSize(f)
+        ENDIF
+    NEXT f
+    RETURN out
+ENDFUNC
+
+FUNC BitOrder$(id, f)
+    DIM own$ = gFieldOrder[f]
+    IF own$ <> "" THEN RETURN own$
+    IF EndianOf$(id, f) = ">" THEN RETURN "msb"
+    RETURN "lsb"
+ENDFUNC
+
+' The fields of a layout read from data$ at offset (0), as a map: numbers,
+' arrays of numbers, texts with trailing NUL bytes removed, and maps (or
+' arrays of maps) for nested layouts. Too little data, or a MAGIC field
+' that differs, raises an error.
+EXPORT FUNC READ(layout, data$, offset = 0)
+    DIM id = CheckLayout(layout, "READ")
+    DIM start = CLNG(offset)
+    IF start < 0 THEN THROW "STRUCT.READ: offset below 0"
+    IF LEN(data$) - start < LayoutSize(id) THEN THROW "STRUCT.READ: " + STR$(LayoutSize(id)) + " bytes needed at offset " + STR$(start) + ", " + STR$(LEN(data$) - start) + " there"
+    DIM out = ReadAt(id, data$, start)
+    RETURN out
+ENDFUNC
+
+' ---- writing ----
+
+FUNC NumberOf(values, name$, where$)
+    IF NOT MAP.EXISTS(values, name$) THEN RETURN 0
+    DIM v = values{name$}
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "BOOLEAN" THEN
+        IF v THEN RETURN 1
+        RETURN 0
+    ENDIF
+    IF kind$ = "STRING" ORELSE kind$ = "ARRAY" ORELSE kind$ = "OBJECT" THEN THROW "STRUCT." + where$ + ": " + name$ + " is not a number"
+    RETURN v
+ENDFUNC
+
+FUNC PackNumber$(endian$, t$, v, name$)
+    IF IsIntegerType(t$) THEN
+        IF v <> INT(v) THEN THROW "STRUCT.WRITE$: " + name$ + " is " + STR$(v) + ", not a whole number for " + t$
+        IF v < TypeLow(t$) ORELSE v > TypeHigh(t$) THEN THROW "STRUCT.WRITE$: " + name$ + " is " + STR$(v) + ", outside " + t$
+    ENDIF
+    RETURN PACK$(endian$ + TypeCode$(t$), v)
+ENDFUNC
+
+FUNC WriteAt$(id, values)
+    DIM out$ = ""
+    DIM f = 0
+    DIM k = 0
+    FOR f = 0 TO LEN(gFieldLayout) - 1
+        IF CLNG(gFieldLayout[f]) = id THEN
+            DIM kind$ = gFieldKind[f]
+            DIM field_name$ = gFieldName[f]
+            DIM t$ = gFieldType[f]
+            DIM n = CLNG(gFieldCount[f])
+            DIM byte_order$ = EndianOf$(id, f)
+            IF kind$ = "number" THEN
+                IF n = 1 THEN
+                    out$ = out$ + PackNumber$(byte_order$, t$, NumberOf(values, field_name$, "WRITE$"), field_name$)
+                ELSE
+                    DIM list = []
+                    IF MAP.EXISTS(values, field_name$) THEN list = values{field_name$}
+                    IF TYPEOF(list) <> "ARRAY" THEN THROW "STRUCT.WRITE$: " + field_name$ + " needs an array of " + STR$(n)
+                    FOR k = 0 TO n - 1
+                        DIM item = 0
+                        IF k < LEN(list) THEN item = list[k]
+                        out$ = out$ + PackNumber$(byte_order$, t$, item, field_name$ + "[" + STR$(k) + "]")
+                    NEXT k
+                ENDIF
+            ELSEIF kind$ = "str" THEN
+                DIM text$ = TextOf$(values, field_name$)
+                IF LEN(text$) > n THEN THROW "STRUCT.WRITE$: " + field_name$ + " has " + STR$(LEN(text$)) + " bytes, the field " + STR$(n)
+                out$ = out$ + PACK$(STR$(n) + "a", text$)
+            ELSEIF kind$ = "pad" THEN
+                out$ = out$ + PACK$(STR$(n) + "x")
+            ELSEIF kind$ = "magic" THEN
+                IF t$ = "str" THEN
+                    DIM magic_text$ = gFieldMagicText[f]
+                    out$ = out$ + PACK$(STR$(n) + "a", magic_text$)
+                ELSE
+                    DIM magic_num = gFieldMagicNum[f]
+                    out$ = out$ + PackNumber$(byte_order$, t$, magic_num, field_name$)
+                ENDIF
+            ELSEIF kind$ = "bits" THEN
+                DIM order$ = BitOrder$(id, f)
+                DIM unit_bits = TypeSize(t$) * 8
+                DIM start = CLNG(gFieldBitStart[f])
+                DIM used = 0
+                DIM unit = 0
+                FOR k = 0 TO CLNG(gFieldBitCount[f]) - 1
+                    DIM bit_name$ = gBitName[start + k]
+                    DIM width = CLNG(gBitWidth[start + k])
+                    DIM bit_value = NumberOf(values, bit_name$, "WRITE$")
+                    IF bit_value < 0 ORELSE bit_value > BitMask(width) ORELSE bit_value <> INT(bit_value) THEN THROW "STRUCT.WRITE$: " + bit_name$ + " is " + STR$(bit_value) + ", outside " + STR$(width) + " bits"
+                    unit = unit BOR SHL(CLNG(bit_value), BitShift(order$, used, width, unit_bits))
+                    used = used + width
+                NEXT k
+                out$ = out$ + PACK$(byte_order$ + TypeCode$(t$), unit)
+            ELSEIF kind$ = "nested" THEN
+                DIM child = CLNG(gFieldChild[f])
+                DIM empty AS MAP
+                IF n = 1 THEN
+                    DIM sub_values = empty
+                    IF MAP.EXISTS(values, field_name$) THEN sub_values = values{field_name$}
+                    out$ = out$ + WriteAt$(child, sub_values)
+                ELSE
+                    DIM rows = []
+                    IF MAP.EXISTS(values, field_name$) THEN rows = values{field_name$}
+                    FOR k = 0 TO n - 1
+                        IF TYPEOF(rows) = "ARRAY" ANDALSO k < LEN(rows) THEN
+                            DIM row = rows[k]
+                            out$ = out$ + WriteAt$(child, row)
+                        ELSE
+                            out$ = out$ + WriteAt$(child, empty)
+                        ENDIF
+                    NEXT k
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT f
+    RETURN out$
+ENDFUNC
+
+' The layout written from a map as READ returns it: a missing number is 0,
+' a missing text empty, a missing nested layout all zeros. A whole number
+' outside its type, or a text longer than its field, raises an error.
+EXPORT FUNC WRITE$(layout, values)
+    DIM id = CheckLayout(layout, "WRITE$")
+    RETURN WriteAt$(id, values)
+ENDFUNC
+
+' ---- helpers ----
+
+' The CRC-16/MODBUS of data$ (polynomial 0xA001 reflected, start 0xFFFF),
+' as Modbus RTU frames carry it little endian after the payload.
+EXPORT FUNC CRC16(data$, init = 65535)
+    DIM crc = CLNG(init)
+    DIM i = 0
+    DIM b = 0
+    FOR i = 0 TO LEN(data$) - 1
+        crc = crc BXOR BYTEAT(data$, i)
+        FOR b = 1 TO 8
+            IF (crc BAND 1) = 1 THEN
+                crc = SHR(crc, 1) BXOR 40961
+            ELSE
+                crc = SHR(crc, 1)
+            ENDIF
+        NEXT b
+    NEXT i
+    RETURN crc
+ENDFUNC
+
+' The bytes of data$ as two-digit hex separated by spaces.
+EXPORT FUNC HEXDUMP$(data$)
+    DIM digits$ = "0123456789ABCDEF"
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(data$) - 1
+        DIM v = BYTEAT(data$, i)
+        IF i > 0 THEN out$ = out$ + " "
+        out$ = out$ + MID$(digits$, SHR(v, 4), 1) + MID$(digits$, v BAND 15, 1)
+    NEXT i
+    RETURN out$
+ENDFUNC

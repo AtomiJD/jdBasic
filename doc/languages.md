@@ -1469,6 +1469,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `I18N` | text catalogs with locale fallback and placeholders, CLDR plural rules, Accept-Language negotiation, a current locale for NUMFMT, DT and TMPL filters |
 | `ARCHIVE` | tar (ustar, GNU, pax) and gzip read and written, folders to .tar.gz, safe extraction |
 | `RAND` | random distributions, weighted choice (alias method), sampling, shuffles and reservoirs on seeded RNG generators |
+| `STRUCT` | binary layouts on `PACK$`/`UNPACK`: file headers, network packets and bit fields read into maps and written back |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX

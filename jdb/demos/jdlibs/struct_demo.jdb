@@ -1,0 +1,71 @@
+' STRUCT demo: a WAV header written from a map and read back, a Modbus RTU
+' request with its CRC, a sensor packet with bit fields, and the layout
+' of a log record with nested entries.
+
+IMPORT STRUCT
+
+PRINT "A WAV header"
+DIM wav = STRUCT.LAYOUT("wav", "<")
+STRUCT.MAGIC(wav, "riff", "str", "RIFF")
+STRUCT.FIELD(wav, "riff_size", "u32")
+STRUCT.MAGIC(wav, "wave", "str", "WAVE")
+STRUCT.MAGIC(wav, "fmt", "str", "fmt ")
+STRUCT.FIELD(wav, "fmt_size", "u32")
+STRUCT.FIELD(wav, "format", "u16")
+STRUCT.FIELD(wav, "channels", "u16")
+STRUCT.FIELD(wav, "rate", "u32")
+STRUCT.FIELD(wav, "byte_rate", "u32")
+STRUCT.FIELD(wav, "block_align", "u16")
+STRUCT.FIELD(wav, "bits", "u16")
+STRUCT.MAGIC(wav, "data", "str", "data")
+STRUCT.FIELD(wav, "data_size", "u32")
+DIM seconds = 2
+DIM rate = 48000
+DIM data_bytes = seconds * rate * 2 * 2
+DIM header$ = STRUCT.WRITE$(wav, {"riff_size": 36 + data_bytes, "fmt_size": 16, "format": 1, "channels": 2, "rate": rate, "byte_rate": rate * 4, "block_align": 4, "bits": 16, "data_size": data_bytes})
+PRINT "  "; STRUCT.SIZE(wav); " bytes: "; STRUCT.HEXDUMP$(LEFT$(header$, 16)); " ..."
+DIM back = STRUCT.READ(wav, header$)
+PRINT "  read back: "; back{"channels"}; " channels, "; back{"rate"}; " Hz, "; back{"bits"}; " bit, "; back{"data_size"}; " data bytes"
+PRINT "  the rate sits at offset "; STRUCT.OFFSETOF(wav, "rate")
+PRINT ""
+
+PRINT "A Modbus RTU request"
+DIM body = STRUCT.LAYOUT("request", ">")
+STRUCT.FIELD(body, "slave", "u8")
+STRUCT.FIELD(body, "function", "u8")
+STRUCT.FIELD(body, "start", "u16")
+STRUCT.FIELD(body, "quantity", "u16")
+DIM frame = STRUCT.LAYOUT("frame", ">")
+STRUCT.NESTED(frame, "body", body)
+STRUCT.FIELD(frame, "crc", "u16", 1, "<")
+DIM ask = {"slave": 17, "function": 3, "start": 107, "quantity": 3}
+DIM sent$ = STRUCT.WRITE$(frame, {"body": ask, "crc": STRUCT.CRC16(STRUCT.WRITE$(body, ask))})
+PRINT "  frame: "; STRUCT.HEXDUMP$(sent$)
+DIM got = STRUCT.READ(frame, sent$)
+DIM got_body = got{"body"}
+DIM check_ok = got{"crc"} = STRUCT.CRC16(LEFT$(sent$, 6))
+PRINT "  slave "; got_body{"slave"}; ", function "; got_body{"function"}; ", registers "; got_body{"start"}; " to "; got_body{"start"} + got_body{"quantity"} - 1; ", CRC ok: "; check_ok
+PRINT ""
+
+PRINT "A sensor packet with bit fields"
+DIM packet = STRUCT.LAYOUT("packet", "<")
+STRUCT.FIELD(packet, "kind", "u8")
+STRUCT.BITS(packet, "u16", "ready:1,mode:3,level:4,channel:8")
+STRUCT.FIELD(packet, "value", "i32")
+DIM packed$ = STRUCT.WRITE$(packet, {"kind": 7, "ready": 1, "mode": 5, "level": 9, "channel": 200, "value": -123456})
+PRINT "  "; STRUCT.HEXDUMP$(packed$)
+DIM sensor = STRUCT.READ(packet, packed$)
+PRINT "  ready "; sensor{"ready"}; ", mode "; sensor{"mode"}; ", level "; sensor{"level"}; ", channel "; sensor{"channel"}; ", value "; sensor{"value"}
+PRINT ""
+
+PRINT "A log record with nested entries"
+DIM entry = STRUCT.LAYOUT("entry", "<")
+STRUCT.FIELD(entry, "id", "u32")
+STRUCT.FIELD(entry, "x", "f32")
+STRUCT.FIELD(entry, "y", "f32")
+DIM record = STRUCT.LAYOUT("record", "<")
+STRUCT.MAGIC(record, "magic", "str", "LOGX")
+STRUCT.NESTED(record, "entries", entry, 3)
+STRUCT.FIELD(record, "name", "str", 8)
+PRINT "  fields: "; JOIN(STRUCT.FIELDNAMES(record), ", ")
+PRINT "  size "; STRUCT.SIZE(record); " bytes, entries.2.y at offset "; STRUCT.OFFSETOF(record, "entries.2.y")

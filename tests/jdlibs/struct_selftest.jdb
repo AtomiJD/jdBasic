@@ -1,0 +1,259 @@
+' STRUCT: scalar types in both byte orders against Python's struct, a WAV
+' header, a Modbus RTU frame with its CRC-16, bit fields as ctypes lays
+' them out in little and big endian structures, a PNG IHDR chunk, and a
+' record with nested layouts and arrays, all read and written back.
+
+IMPORT TESTKIT, STRUCT
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "struct_scalars.tsv") THEN base$ = "fixtures/"
+
+FUNC Records(path$)
+    DIM out AS MAP
+    DIM lines = SPLIT(TXTREADER$(path$), CHR$(10))
+    DIM i = 0
+    FOR i = 1 TO LEN(lines) - 1
+        DIM row_text$ = TRIM$(lines[i])
+        IF row_text$ <> "" THEN
+            DIM cols = SPLIT(row_text$, CHR$(9))
+            DIM key$ = cols[0]
+            DIM value$ = cols[1]
+            out{key$} = value$
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Bytes$(records, name$)
+    DIM b64$ = records{name$}
+    RETURN CODEC.BASE64_DECODE$(b64$)
+ENDFUNC
+
+FUNC B64$(data$)
+    RETURN CODEC.BASE64_ENCODE$(data$)
+ENDFUNC
+
+FUNC ReadBadWav(x)
+    DIM bad = STRUCT.LAYOUT("bad", "<")
+    STRUCT.MAGIC(bad, "riff", "str", "RIFF")
+    RETURN STRUCT.READ(bad, "RIFX")
+ENDFUNC
+
+FUNC ReadShort(x)
+    DIM small = STRUCT.LAYOUT("short", "<")
+    STRUCT.FIELD(small, "value", "u32")
+    RETURN STRUCT.READ(small, "abc")
+ENDFUNC
+
+FUNC UnknownType(x)
+    DIM odd = STRUCT.LAYOUT("odd")
+    STRUCT.FIELD(odd, "value", "u24")
+    RETURN 0
+ENDFUNC
+
+FUNC WriteTooBig(x)
+    DIM tiny = STRUCT.LAYOUT("tiny")
+    STRUCT.FIELD(tiny, "value", "u8")
+    RETURN STRUCT.WRITE$(tiny, {"value": 256})
+ENDFUNC
+
+FUNC BitsTooWide(x)
+    DIM flags = STRUCT.LAYOUT("flags")
+    STRUCT.BITS(flags, "u8", "a:4,b:4")
+    RETURN STRUCT.WRITE$(flags, {"a": 16, "b": 0})
+ENDFUNC
+
+FUNC NoSuchField(x)
+    DIM plain = STRUCT.LAYOUT("plain")
+    STRUCT.FIELD(plain, "value", "u8")
+    RETURN STRUCT.OFFSETOF(plain, "missing")
+ENDFUNC
+
+TESTKIT.SUITE("scalars against Python struct")
+DIM scalar_lines = SPLIT(TXTREADER$(base$ + "struct_scalars.tsv"), CHR$(10))
+DIM kinds = ["u8", "i8", "u16", "i16", "u32", "i32", "i64", "f32", "f64"]
+DIM kind_i = 0
+FOR kind_i = 0 TO LEN(kinds) - 1
+    DIM kind$ = kinds[kind_i]
+    DIM rows_seen = 0
+    DIM read_ok = 0
+    DIM write_ok = 0
+    DIM r = 0
+    FOR r = 1 TO LEN(scalar_lines) - 1
+        DIM scalar_line$ = TRIM$(scalar_lines[r])
+        IF scalar_line$ <> "" THEN
+            DIM cols = SPLIT(scalar_line$, CHR$(9))
+            DIM type$ = cols[0]
+            IF type$ = kind$ THEN
+                DIM endian$ = cols[1]
+                DIM text_value$ = cols[2]
+                DIM b64$ = cols[3]
+                DIM want = VAL(text_value$)
+                DIM one = STRUCT.LAYOUT("one", endian$)
+                STRUCT.FIELD(one, "v", type$)
+                DIM got = STRUCT.READ(one, CODEC.BASE64_DECODE$(b64$))
+                DIM got_v = got{"v"}
+                rows_seen = rows_seen + 1
+                IF type$ = "f32" ORELSE type$ = "f64" THEN
+                    IF ABS(got_v - want) <= ABS(want) * 1e-12 THEN read_ok = read_ok + 1
+                ELSE
+                    IF got_v = want THEN read_ok = read_ok + 1
+                ENDIF
+                IF B64$(STRUCT.WRITE$(one, {"v": want})) = b64$ THEN write_ok = write_ok + 1
+            ENDIF
+        ENDIF
+    NEXT r
+    TESTKIT.ISTRUE(rows_seen > 0 ANDALSO read_ok = rows_seen, kind$ + ": " + STR$(read_ok) + " of " + STR$(rows_seen) + " values read")
+    TESTKIT.EQ(write_ok, rows_seen, kind$ + ": and written byte for byte")
+NEXT kind_i
+
+DIM records = Records(base$ + "struct_records.tsv")
+
+TESTKIT.SUITE("a WAV header")
+DIM wav = STRUCT.LAYOUT("wav", "<")
+STRUCT.MAGIC(wav, "riff", "str", "RIFF")
+STRUCT.FIELD(wav, "riff_size", "u32")
+STRUCT.MAGIC(wav, "wave", "str", "WAVE")
+STRUCT.MAGIC(wav, "fmt", "str", "fmt ")
+STRUCT.FIELD(wav, "fmt_size", "u32")
+STRUCT.FIELD(wav, "format", "u16")
+STRUCT.FIELD(wav, "channels", "u16")
+STRUCT.FIELD(wav, "rate", "u32")
+STRUCT.FIELD(wav, "byte_rate", "u32")
+STRUCT.FIELD(wav, "block_align", "u16")
+STRUCT.FIELD(wav, "bits", "u16")
+STRUCT.MAGIC(wav, "data", "str", "data")
+STRUCT.FIELD(wav, "data_size", "u32")
+DIM wav_bytes$ = Bytes$(records, "wav")
+TESTKIT.EQ(STRUCT.SIZE(wav), 44, "44 bytes")
+DIM header = STRUCT.READ(wav, wav_bytes$)
+TESTKIT.EQ(header{"channels"}, 2, "two channels")
+TESTKIT.EQ(header{"rate"}, 44100, "at 44100 Hz")
+TESTKIT.EQ(header{"data_size"}, 88200, "and 88200 bytes of samples")
+TESTKIT.EQ(STRUCT.OFFSETOF(wav, "rate"), 24, "OFFSETOF of the rate")
+DIM wav_values = {"riff_size": 88236, "fmt_size": 16, "format": 1, "channels": 2, "rate": 44100, "byte_rate": 176400, "block_align": 4, "bits": 16, "data_size": 88200}
+TESTKIT.EQ(B64$(STRUCT.WRITE$(wav, wav_values)), B64$(wav_bytes$), "written from a map without the magic fields, as Python packs it")
+TESTKIT.THROWS(ReadBadWav@, 0, "a magic field that differs is refused")
+TESTKIT.THROWS(ReadShort@, 0, "too little data is refused")
+
+TESTKIT.SUITE("a Modbus RTU frame")
+DIM frame = STRUCT.LAYOUT("modbus", ">")
+STRUCT.FIELD(frame, "slave", "u8")
+STRUCT.FIELD(frame, "function", "u8")
+STRUCT.FIELD(frame, "start", "u16")
+STRUCT.FIELD(frame, "quantity", "u16")
+STRUCT.FIELD(frame, "crc", "u16", 1, "<")
+DIM mb$ = Bytes$(records, "modbus")
+DIM request = STRUCT.READ(frame, mb$)
+TESTKIT.EQ(request{"slave"}, 17, "slave 17")
+TESTKIT.EQ(request{"start"}, 107, "start register in big endian")
+TESTKIT.EQ(request{"crc"}, STRUCT.CRC16(LEFT$(mb$, 6)), "the CRC in little endian equals CRC16 of the first six bytes")
+TESTKIT.EQ(STRUCT.CRC16("123456789"), 19255, "CRC16 has the CRC-16/MODBUS check value 0x4B37")
+DIM mb_values = {"slave": 17, "function": 3, "start": 107, "quantity": 3}
+mb_values{"crc"} = STRUCT.CRC16(STRUCT.WRITE$(frame, mb_values), 65535)
+DIM body_only = STRUCT.LAYOUT("modbus_body", ">")
+STRUCT.FIELD(body_only, "slave", "u8")
+STRUCT.FIELD(body_only, "function", "u8")
+STRUCT.FIELD(body_only, "start", "u16")
+STRUCT.FIELD(body_only, "quantity", "u16")
+mb_values{"crc"} = STRUCT.CRC16(STRUCT.WRITE$(body_only, mb_values))
+TESTKIT.EQ(STRUCT.HEXDUMP$(STRUCT.WRITE$(frame, mb_values)), "11 03 00 6B 00 03 76 87", "and the frame is written back with its CRC")
+
+TESTKIT.SUITE("bit fields as ctypes lays them out")
+DIM packet_le = STRUCT.LAYOUT("packet_le", "<")
+STRUCT.FIELD(packet_le, "kind", "u8")
+STRUCT.BITS(packet_le, "u16", "ready:1,mode:3,level:4,channel:8")
+STRUCT.FIELD(packet_le, "value", "i32")
+DIM packet_be = STRUCT.LAYOUT("packet_be", ">")
+STRUCT.FIELD(packet_be, "kind", "u8")
+STRUCT.BITS(packet_be, "u16", "ready:1,mode:3,level:4,channel:8")
+STRUCT.FIELD(packet_be, "value", "i32")
+DIM packet_values = {"kind": 7, "ready": 1, "mode": 5, "level": 9, "channel": 200, "value": -123456}
+DIM le$ = Bytes$(records, "bits_le")
+DIM be$ = Bytes$(records, "bits_be")
+TESTKIT.EQ(STRUCT.SIZE(packet_le), 7, "a packed seven-byte packet")
+TESTKIT.EQ(B64$(STRUCT.WRITE$(packet_le, packet_values)), B64$(le$), "little endian fills from the lowest bit")
+TESTKIT.EQ(B64$(STRUCT.WRITE$(packet_be, packet_values)), B64$(be$), "big endian from the highest")
+DIM got_le = STRUCT.READ(packet_le, le$)
+DIM got_be = STRUCT.READ(packet_be, be$)
+TESTKIT.ISTRUE(got_le{"ready"} = 1 ANDALSO got_le{"mode"} = 5 ANDALSO got_le{"level"} = 9 ANDALSO got_le{"channel"} = 200, "the bits read back little endian")
+TESTKIT.ISTRUE(got_be{"ready"} = 1 ANDALSO got_be{"mode"} = 5 ANDALSO got_be{"level"} = 9 ANDALSO got_be{"channel"} = 200, "and big endian")
+TESTKIT.EQ(got_le{"value"}, -123456, "a signed field after the bits")
+DIM packet_msb = STRUCT.LAYOUT("packet_msb", "<")
+STRUCT.FIELD(packet_msb, "kind", "u8")
+STRUCT.BITS(packet_msb, "u16", "ready:1,mode:3,level:4,channel:8", "msb")
+STRUCT.FIELD(packet_msb, "value", "i32")
+TESTKIT.EQ(STRUCT.HEXDUMP$(LEFT$(STRUCT.WRITE$(packet_msb, packet_values), 3)), "07 C8 D9", "an explicit msb order in a little endian layout")
+TESTKIT.EQ(STRUCT.OFFSETOF(packet_le, "level"), 1, "OFFSETOF of a bit field is its integer's")
+TESTKIT.THROWS(BitsTooWide@, 0, "a value wider than its bits is refused")
+
+TESTKIT.SUITE("a PNG IHDR chunk")
+DIM ihdr = STRUCT.LAYOUT("ihdr", ">")
+STRUCT.FIELD(ihdr, "length", "u32")
+STRUCT.MAGIC(ihdr, "type", "str", "IHDR")
+STRUCT.FIELD(ihdr, "width", "u32")
+STRUCT.FIELD(ihdr, "height", "u32")
+STRUCT.FIELD(ihdr, "depth", "u8")
+STRUCT.FIELD(ihdr, "color", "u8")
+STRUCT.FIELD(ihdr, "compression", "u8")
+STRUCT.FIELD(ihdr, "filter", "u8")
+STRUCT.FIELD(ihdr, "interlace", "u8")
+STRUCT.FIELD(ihdr, "crc", "u32")
+DIM ihdr$ = Bytes$(records, "ihdr")
+DIM chunk = STRUCT.READ(ihdr, ihdr$)
+TESTKIT.ISTRUE(chunk{"width"} = 640 ANDALSO chunk{"height"} = 480 ANDALSO chunk{"color"} = 6, "640 by 480, RGBA")
+TESTKIT.EQ(chunk{"crc"}, CODEC.CRC32(MID$(ihdr$, 4, 17)), "the chunk CRC equals CODEC.CRC32 of type and data")
+TESTKIT.EQ(STRUCT.OFFSETOF(ihdr, "crc"), 21, "OFFSETOF of the CRC")
+
+TESTKIT.SUITE("nested layouts and arrays")
+DIM head = STRUCT.LAYOUT("head", "<")
+STRUCT.MAGIC(head, "magic", "str", "LOGX")
+STRUCT.FIELD(head, "version", "u16")
+STRUCT.FIELD(head, "entries", "u16")
+DIM entry = STRUCT.LAYOUT("entry", "<")
+STRUCT.FIELD(entry, "id", "u32")
+STRUCT.FIELD(entry, "x", "f32")
+STRUCT.FIELD(entry, "y", "f32")
+DIM logfile = STRUCT.LAYOUT("log", "<")
+STRUCT.NESTED(logfile, "head", head)
+STRUCT.NESTED(logfile, "items", entry, 3)
+STRUCT.FIELD(logfile, "name", "str", 8)
+STRUCT.FIELD(logfile, "samples", "i16", 3, ">")
+DIM log$ = Bytes$(records, "nested")
+TESTKIT.EQ(STRUCT.SIZE(logfile), 58, "58 bytes")
+DIM parsed = STRUCT.READ(logfile, log$)
+DIM parsed_head = parsed{"head"}
+TESTKIT.EQ(parsed_head{"version"}, 2, "a nested layout reads into a map")
+DIM parsed_items = parsed{"items"}
+TESTKIT.EQ(LEN(parsed_items), 3, "an array of layouts into an array of maps")
+DIM second = parsed_items[1]
+TESTKIT.ISTRUE(second{"id"} = 2 ANDALSO second{"x"} = 0.25 ANDALSO second{"y"} = 8, "with its values")
+TESTKIT.EQ(parsed{"name"}, "board7", "a text loses its trailing NUL bytes")
+DIM samples = parsed{"samples"}
+TESTKIT.ISTRUE(LEN(samples) = 3 ANDALSO samples[0] = -1 ANDALSO samples[2] = -3, "a big endian array inside a little endian layout")
+TESTKIT.EQ(B64$(STRUCT.WRITE$(logfile, parsed)), B64$(log$), "the record written back byte for byte")
+TESTKIT.EQ(STRUCT.OFFSETOF(logfile, "items.1.x"), 24, "OFFSETOF into an array of layouts")
+DIM field_names = STRUCT.FIELDNAMES(logfile)
+TESTKIT.EQ(JOIN(field_names, ","), "head,items,name,samples", "FIELDNAMES")
+DIM offset_data$ = "abc" + log$
+DIM shifted = STRUCT.READ(logfile, offset_data$, 3)
+TESTKIT.EQ(shifted{"name"}, "board7", "READ at an offset")
+
+TESTKIT.SUITE("NUL bytes and errors")
+DIM blob = STRUCT.LAYOUT("blob")
+STRUCT.FIELD(blob, "lead", "u8")
+STRUCT.FIELD(blob, "text", "str", 5)
+STRUCT.FIELD(blob, "gap", "pad", 2)
+STRUCT.FIELD(blob, "tail", "u16")
+DIM inner$ = "a" + CHR$(0) + "b"
+DIM blob$ = STRUCT.WRITE$(blob, {"lead": 0, "text": inner$, "tail": 256})
+TESTKIT.EQ(STRUCT.HEXDUMP$(blob$), "00 61 00 62 00 00 00 00 00 01", "zero bytes are written where they belong")
+DIM blob_back = STRUCT.READ(blob, blob$)
+DIM text_back$ = blob_back{"text"}
+TESTKIT.ISTRUE(LEN(text_back$) = 3 ANDALSO BYTEAT(text_back$, 1) = 0, "a NUL inside a text stays, only trailing ones go")
+TESTKIT.EQ(blob_back{"tail"}, 256, "and the field after the pad reads right")
+TESTKIT.THROWS(UnknownType@, 0, "an unknown type is refused")
+TESTKIT.THROWS(WriteTooBig@, 0, "a number outside its type is refused")
+TESTKIT.THROWS(NoSuchField@, 0, "OFFSETOF of a missing field is refused")
+
+TESTKIT.REPORT()
