@@ -582,8 +582,11 @@ void Compiler::compile_stmt(const Stmt& stmt) {
                 current_chunk().emit_u16(slot, stmt.line);
             };
 
+            // The state starts as 0 for one loop variable and 1 for two;
+            // FOREACH_NEXT turns it into its snapshot on the first pass.
+            bool pair = !stmt.label.empty();
             emit_store_temp(iter_slot);
-            emit_constant(Value::make_i64(0), stmt.line);
+            emit_constant(Value::make_i64(pair ? 1 : 0), stmt.line);
             emit_store_temp(state_slot);
 
             { LoopCtx lc; lc.is_for = true; loop_stack.push_back(std::move(lc)); }
@@ -597,9 +600,11 @@ void Compiler::compile_stmt(const Stmt& stmt) {
             size_t exit_patch = current_chunk().code.size();
             current_chunk().emit_i16(0, stmt.line); // placeholder
 
-            // Stack now: [..., new_state, value]. Pop value into the
-            // user's loop variable, pop new_state back to the temp slot.
+            // Stack now: [..., new_state, value], or with two loop variables
+            // [..., new_state, index or key, value]. Pop the values into the
+            // loop variables, then new_state back to the temp slot.
             emit_var_store(stmt.var_name, stmt.line, /*prefer_local=*/false);
+            if (pair) emit_var_store(stmt.label, stmt.line, /*prefer_local=*/false);
             emit_store_temp(state_slot);
 
             // Body

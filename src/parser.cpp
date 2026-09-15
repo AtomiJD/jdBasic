@@ -1376,10 +1376,20 @@ StmtPtr Parser::parse_for() {
     if (check(TokenType::EACH)) {
         advance(); // EACH
         std::string var = expect(TokenType::IDENTIFIER, "loop variable").value;
+        // FOR EACH i, x IN arr / FOR EACH k, v IN map: the first name takes
+        // the index or key, the second the element or value.
+        std::string second;
+        if (match(TokenType::COMMA))
+            second = expect(TokenType::IDENTIFIER, "second loop variable").value;
         expect(TokenType::IN, "'IN'");
         auto s = std::make_unique<Stmt>();
         s->kind = StmtKind::FOR_EACH;
-        s->var_name = var;
+        if (second.empty()) {
+            s->var_name = var;
+        } else {
+            s->label = var;
+            s->var_name = second;
+        }
         s->expr = parse_expr(); // collection
         s->line = ln;
         if (check(TokenType::NEWLINE) || check(TokenType::COLON)) advance();

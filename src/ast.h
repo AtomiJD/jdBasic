@@ -310,7 +310,8 @@ struct Stmt {
     // var_name
 
     // GOTO / LABEL; also the field name of a member assignment, the
-    // export marker of a FUNC or DIM, and the text of a REACT formula
+    // export marker of a FUNC or DIM, the text of a REACT formula, and the
+    // first of two FOR EACH loop variables (the index or key)
     std::string label;
 
     // IF

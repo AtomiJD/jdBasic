@@ -730,7 +730,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdrt_tagged_index", "__jdrt_tagged_index", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, 0);
     reg("jdrt_foreach_begin", "__jdrt_foreach_begin", i64_type,
-        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i32_type, i32_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type}, 0);
+    reg("jdrt_foreach_key", "__jdrt_foreach_key", i32_type,
+        {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, 0);
     reg("jdrt_promote_handle", "__jdrt_promote_handle", i64_type,
         {i8_ptr_type, i64_type}, 0);
     reg("jdrt_frame_begin", "__jdrt_frame_begin", i64_type,
@@ -3474,6 +3476,14 @@ static bool foreach_var_is_tagged(const Stmt& s) {
            s.var_name.back() != '$' && !foreach_numeric_source(s.expr.get(), kind);
 }
 
+// The first of two FOR EACH variables (index or key) is tagged on the same
+// terms; on the direct numeric loop it is a plain integer.
+static bool foreach_key_is_tagged(const Stmt& s) {
+    int kind;
+    return s.kind == StmtKind::FOR_EACH && !s.label.empty() &&
+           s.label.back() != '$' && !foreach_numeric_source(s.expr.get(), kind);
+}
+
 void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
     runtime_later_globals.clear();
     {
@@ -3489,6 +3499,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
         std::function<void(const Stmt&)> scan_later = [&](const Stmt& s) {
             if (foreach_var_is_tagged(s) && !shadowed(s.var_name))
                 dyn_dims.insert(s.var_name);
+            if (foreach_key_is_tagged(s) && !shadowed(s.label))
+                dyn_dims.insert(s.label);
             if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
                 std::unordered_set<std::string> own;
                 for (auto& p : s.params()) own.insert(p.name);
@@ -3496,6 +3508,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                     if ((b.kind == StmtKind::DIM || b.kind == StmtKind::FOR_EACH) &&
                         !b.var_name.empty())
                         own.insert(b.var_name);
+                    if (b.kind == StmtKind::FOR_EACH && !b.label.empty())
+                        own.insert(b.label);
                     for (auto& c : b.body) if (c) collect_own(*c);
                     for (auto& br : b.branches) for (auto& c : br.body) if (c) collect_own(*c);
                     for (auto& c : b.catch_body()) if (c) collect_own(*c);
@@ -4849,6 +4863,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
                 dyn_dims.insert(stmt.params()[pi].name);
         std::function<void(const Stmt&)> scan_later = [&](const Stmt& s) {
             if (foreach_var_is_tagged(s)) dyn_dims.insert(s.var_name);
+            if (foreach_key_is_tagged(s)) dyn_dims.insert(s.label);
             if ((s.kind == StmtKind::LET || s.kind == StmtKind::ASSIGN ||
                  s.kind == StmtKind::DIM) && !s.var_name.empty() && s.expr) {
                 bool dyn = s.expr->kind == ExprKind::INDEX;
@@ -7870,6 +7885,8 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     LLVMValueRef arr_ptr = nullptr;
     LLVMValueRef walk_bits = nullptr;
     LLVMValueRef walk_tag = nullptr;
+    LLVMValueRef key_bits = nullptr;
+    LLVMValueRef key_tag = nullptr;
     if (numeric) {
         arr_ptr = coll.val;
         auto& len_fn = runtime_funcs["LEN"];
@@ -7897,14 +7914,20 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
             int kind = coll.tag == JD_TAG_RUNTIME ? JD_TAG_F64 : coll.tag;
             src_tag = LLVMConstInt(i32_type, (unsigned)kind, 0);
         }
+        bool pair = !stmt.label.empty();
         auto& fb = runtime_funcs["__jdrt_foreach_begin"];
         LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
         LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef a_bits_out = scratch_alloca(i64_type, "fe_abits");
+        LLVMValueRef a_tag_out = scratch_alloca(i32_type, "fe_atag");
         LLVMValueRef bits_out = scratch_alloca(i64_type, "fe_bits");
         LLVMValueRef tag_out = scratch_alloca(i32_type, "fe_tag");
-        LLVMValueRef bargs[] = { rt, src_bits, src_tag, bits_out, tag_out };
-        len = LLVMBuildCall2(builder, fb.fn_type, fb.fn, bargs, 5, "fe_len");
+        LLVMValueRef bargs[] = { rt, src_bits, src_tag, LLVMConstInt(i32_type, pair ? 1 : 0, 0),
+                                 a_bits_out, a_tag_out, bits_out, tag_out };
+        len = LLVMBuildCall2(builder, fb.fn_type, fb.fn, bargs, 8, "fe_len");
         emit_err_check();
+        key_bits = LLVMBuildLoad2(builder, i64_type, a_bits_out, "fe_keys");
+        key_tag = LLVMBuildLoad2(builder, i32_type, a_tag_out, "fe_keys_tag");
         walk_bits = LLVMBuildLoad2(builder, i64_type, bits_out, "fe_walk");
         walk_tag = LLVMBuildLoad2(builder, i32_type, tag_out, "fe_walk_tag");
     }
@@ -7915,25 +7938,30 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     VarInfo& idx_vi = create_var(idx_name, JD_TAG_I64);
     LLVMBuildStore(builder, LLVMConstInt(i64_type, 0, 0), idx_vi.alloca_val);
 
-    // Loop variable - fresh local in current scope: a number slot on the
-    // direct loop, a string slot for a name ending in $, otherwise a
+    // Loop variables - fresh locals in the current scope: a number slot on
+    // the direct loop, a string slot for a name ending in $, otherwise a
     // runtime-tagged slot that carries each element's own kind.
-    bool sigil_str = !stmt.var_name.empty() && stmt.var_name.back() == '$';
-    int iter_tag = numeric ? numeric_tag : (sigil_str ? JD_TAG_STR : JD_TAG_RUNTIME);
-    VarInfo& fe_var = create_var(stmt.var_name, iter_tag);
-    VarInfo* var_vi = &fe_var;
-    if (iter_tag == JD_TAG_RUNTIME) {
-        std::string rtag_name = stmt.var_name + ".rtag";
-        if (scopes.size() <= 1) {
-            LLVMValueRef g = LLVMAddGlobal(module, i32_type, rtag_name.c_str());
-            LLVMSetInitializer(g, LLVMConstInt(i32_type, JD_TAG_NONE, 0));
-            LLVMSetLinkage(g, LLVMInternalLinkage);
-            var_vi->runtime_tag_alloca = g;
-        } else {
-            var_vi->runtime_tag_alloca = scratch_alloca(i32_type, rtag_name.c_str());
-            LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_NONE, 0), var_vi->runtime_tag_alloca);
+    auto make_loop_var = [&](const std::string& name, int number_tag) -> VarInfo* {
+        bool sigil_str = !name.empty() && name.back() == '$';
+        int tag = numeric ? number_tag : (sigil_str ? JD_TAG_STR : JD_TAG_RUNTIME);
+        VarInfo* v = &create_var(name, tag);
+        if (tag == JD_TAG_RUNTIME) {
+            std::string rtag_name = name + ".rtag";
+            if (scopes.size() <= 1) {
+                LLVMValueRef g = LLVMAddGlobal(module, i32_type, rtag_name.c_str());
+                LLVMSetInitializer(g, LLVMConstInt(i32_type, JD_TAG_NONE, 0));
+                LLVMSetLinkage(g, LLVMInternalLinkage);
+                v->runtime_tag_alloca = g;
+            } else {
+                v->runtime_tag_alloca = scratch_alloca(i32_type, rtag_name.c_str());
+                LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_NONE, 0), v->runtime_tag_alloca);
+            }
         }
-    }
+        return v;
+    };
+    VarInfo* key_vi = stmt.label.empty() ? nullptr : make_loop_var(stmt.label, JD_TAG_I64);
+    VarInfo* var_vi = make_loop_var(stmt.var_name, numeric_tag);
+    int iter_tag = var_vi->tag;
 
     LLVMBasicBlockRef cond_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.cond");
     LLVMBasicBlockRef body_bb = LLVMAppendBasicBlockInContext(ctx, current_fn, "each.body");
@@ -7949,9 +7977,10 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
     LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSLT, idx, len, "cmp");
     LLVMBuildCondBr(builder, cmp, body_bb, end_bb);
 
-    // Body: var = element idx
+    // Body: loop variables for element idx
     LLVMPositionBuilderAtEnd(builder, body_bb);
     if (numeric) {
+        if (key_vi) LLVMBuildStore(builder, idx, key_vi->alloca_val);
         auto& get_fn = runtime_funcs["__array_get"];
         LLVMValueRef get_args[] = { arr_ptr, idx };
         LLVMValueRef elem = LLVMBuildCall2(builder, get_fn.fn_type, get_fn.fn, get_args, 2, "elem");
@@ -7962,6 +7991,19 @@ void LLVMCodegen::codegen_for_each(const Stmt& stmt) {
         auto& ga = runtime_funcs["__jdrt_tagged_arr_get"];
         LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
         LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        if (key_vi) {
+            auto& gk = runtime_funcs["__jdrt_foreach_key"];
+            LLVMValueRef kout = scratch_alloca(i64_type, "fe_key");
+            LLVMValueRef kargs[] = { rt, key_bits, key_tag, idx, kout };
+            LLVMValueRef ktag = LLVMBuildCall2(builder, gk.fn_type, gk.fn, kargs, 5, "fe_ktag");
+            LLVMValueRef kbits = LLVMBuildLoad2(builder, i64_type, kout, "fe_kbits");
+            if (key_vi->tag == JD_TAG_STR) {
+                LLVMBuildStore(builder, runtime_to_str(kbits, ktag), key_vi->alloca_val);
+            } else {
+                LLVMBuildStore(builder, kbits, key_vi->alloca_val);
+                LLVMBuildStore(builder, ktag, key_vi->runtime_tag_alloca);
+            }
+        }
         LLVMValueRef out = scratch_alloca(i64_type, "fe_elem");
         LLVMValueRef gargs[] = { rt, walk_bits, walk_tag, idx, out };
         LLVMValueRef etag = LLVMBuildCall2(builder, ga.fn_type, ga.fn, gargs, 5, "fe_etag");
@@ -14190,6 +14232,8 @@ void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
         // Every other way a name can be written.
         if (s.kind == StmtKind::FOR_LOOP || s.kind == StmtKind::FOR_EACH)
             if (!s.var_name.empty()) banned.insert(s.var_name);
+        if (s.kind == StmtKind::FOR_EACH && !s.label.empty())
+            banned.insert(s.label);
         if (s.kind == StmtKind::REACT_ASSIGN && !s.var_name.empty())
             banned.insert(s.var_name);
         if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty())
@@ -14318,6 +14362,8 @@ void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
                 banned.insert(s.expr->str_val);
             if (s.kind == StmtKind::FOR_LOOP || s.kind == StmtKind::FOR_EACH)
                 if (!s.var_name.empty()) banned.insert(s.var_name);
+            if (s.kind == StmtKind::FOR_EACH && !s.label.empty())
+                banned.insert(s.label);
             if (s.kind == StmtKind::REACT_ASSIGN && !s.var_name.empty())
                 banned.insert(s.var_name);
             if (s.kind == StmtKind::INDEX_ASSIGN && !s.var_name.empty())

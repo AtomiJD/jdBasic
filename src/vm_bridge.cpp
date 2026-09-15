@@ -1306,21 +1306,24 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
 }
 
 // FOR EACH in compiled code: what the loop walks and how many passes it
-// makes. An array, native or a VM handle, is walked as it is and a string as
-// its UTF-8 characters; the walked value comes back in out_bits/out_tag for
-// jdrt_tagged_arr_get. A map, a number or a channel handle set the error slot
-// and walk nothing, and so does NONE, without the error.
-JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_tag,
+// makes. Each pass reads the loop variable from walk b with
+// jdrt_tagged_arr_get and, with two loop variables, the index or key from
+// walk a with jdrt_foreach_key. An array, native or a VM handle, is walked as
+// it is and a string as its UTF-8 characters; a stays NONE, so the first
+// variable is the position. A map is walked over a snapshot taken here: b
+// holds its keys for one loop variable, a the keys and b the values for two.
+// A number or a channel handle set the error slot and walk nothing, and so
+// does NONE, without the error.
+JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_tag, int32_t pair,
+                                    int64_t* a_bits, int32_t* a_tag,
                                     int64_t* out_bits, int32_t* out_tag) {
     auto* rt = resolve_rt(handle);
+    *a_bits = 0;
+    *a_tag = jd_tag(JdTag::NONE);
     *out_bits = 0;
     *out_tag = jd_tag(JdTag::NONE);
-    auto refuse_map = [&]() -> int64_t {
-        rt->last_error = "FOR EACH over a map: walk MAP.KEYS(m) instead";
-        return 0;
-    };
     auto refuse_other = [&]() -> int64_t {
-        rt->last_error = "FOR EACH needs an array or a string; a channel is walked only by the interpreter";
+        rt->last_error = "FOR EACH needs an array, a string or a map; a channel is walked only by the interpreter";
         return 0;
     };
     auto walk_array = [&](int64_t bits) -> int64_t {
@@ -1328,6 +1331,26 @@ JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_t
         *out_bits = bits;
         *out_tag = jd_tag(JdTag::ARR);
         return arr ? arr->length : 0;
+    };
+    auto walk_map = [&](const Value& obj) -> int64_t {
+        Value keys = Value::make_array();
+        Value vals = Value::make_array();
+        for (auto& [k, v] : obj.as_object()->fields) {
+            keys.as_array()->elements.push_back(Value::make_string(k));
+            vals.as_array()->elements.push_back(v);
+        }
+        int64_t n = (int64_t)keys.as_array()->elements.size();
+        int64_t key_bits = (int64_t)(intptr_t)value_to_jdbarray(keys);
+        if (pair) {
+            *a_bits = key_bits;
+            *a_tag = jd_tag(JdTag::ARR);
+            *out_bits = rt->store_value(std::move(vals));
+            *out_tag = jd_tag(JdTag::VM_HANDLE);
+        } else {
+            *out_bits = key_bits;
+            *out_tag = jd_tag(JdTag::ARR);
+        }
+        return n;
     };
     auto walk_string = [&](const std::string& s) -> int64_t {
         Value chars = Value::make_array();
@@ -1344,7 +1367,8 @@ JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_t
 
     if (val_tag == jd_tag(JdTag::ARR)) return walk_array(val_bits);
     if (val_tag == jd_tag(JdTag::NONE)) return 0;
-    if (val_tag == jd_tag(JdTag::NATIVE_MAP)) return refuse_map();
+    if (val_tag == jd_tag(JdTag::NATIVE_MAP))
+        return walk_map(jdbmap_to_value((JdbMapFwd*)(intptr_t)val_bits));
     if (val_tag == jd_tag(JdTag::F64)) {
         // An untyped slot holds an array as its pointer bits; a real number
         // never looks like a user-space pointer.
@@ -1369,10 +1393,21 @@ JDRT_API int64_t jdrt_foreach_begin(JdRT handle, int64_t val_bits, int32_t val_t
             return (int64_t)v.as_array()->elements.size();
         }
         if (v.type == ValueType::STRING) return walk_string(v.as_string()->data);
-        if (v.type == ValueType::OBJECT) return refuse_map();
+        if (v.type == ValueType::OBJECT) return walk_map(v);
         return refuse_other();
     }
     return refuse_other();
+}
+
+// The first of two FOR EACH loop variables: the key from walk a, or the
+// position when a is NONE.
+JDRT_API int32_t jdrt_foreach_key(JdRT handle, int64_t a_bits, int32_t a_tag,
+                                  int64_t idx, int64_t* out_val) {
+    if (a_tag == jd_tag(JdTag::NONE)) {
+        *out_val = idx;
+        return jd_tag(JdTag::I64);
+    }
+    return jdrt_tagged_arr_get(handle, a_bits, a_tag, idx, out_val);
 }
 
 // Tag-7 INDEX dispatch when the key is tagged too: a string key reads the

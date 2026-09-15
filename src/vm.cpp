@@ -1294,38 +1294,83 @@ void VM::run() {
                 cf.ip = (size_t)((ptrdiff_t)cf.ip + off);
             };
 
+            if (iter.type == ValueType::BOOLEAN || iter.type == ValueType::BYTE ||
+                iter.type == ValueType::INT16 || iter.type == ValueType::INT32 ||
+                iter.type == ValueType::FLOAT16 || iter.type == ValueType::FLOAT32 ||
+                iter.type == ValueType::FLOAT64 ||
+                (iter.type == ValueType::INT64 && !chan_lookup(iter.to_int())))
+                throw jdError(ErrCode::RUNTIME_ERROR, "FOR EACH needs an array, a string, a map or a channel");
+
+            // The state starts as 0 (one loop variable) or 1 (two). The first
+            // pass replaces it with [position, two variables, snapshot]: the
+            // length of an array at entry, the character count of a string,
+            // the keys and values of a map.
+            if (state.type != ValueType::ARRAY) {
+                Value snap = Value::make_array();
+                auto& init = snap.as_array()->elements;
+                init.push_back(Value::make_i64(0));
+                init.push_back(Value::make_i64(state.to_int() == 1 ? 1 : 0));
+                if (iter.type == ValueType::ARRAY) {
+                    init.push_back(Value::make_i64((int64_t)iter.as_array()->elements.size()));
+                } else if (iter.type == ValueType::STRING) {
+                    init.push_back(Value::make_i64(0));
+                } else if (iter.type == ValueType::OBJECT) {
+                    Value keys = Value::make_array();
+                    Value vals = Value::make_array();
+                    for (auto& [k, v] : iter.as_object()->fields) {
+                        keys.as_array()->elements.push_back(Value::make_string(k));
+                        vals.as_array()->elements.push_back(v);
+                    }
+                    init.push_back(std::move(keys));
+                    init.push_back(std::move(vals));
+                }
+                state = std::move(snap);
+            }
+            auto& se = state.as_array()->elements;
+            int64_t pos = se[0].to_int();
+            bool two = se[1].to_int() != 0;
+            auto push_pass = [&](Value first, Value second) {
+                if (sp + 3 > stack.size()) stack.resize(stack.size() * 2);
+                stack[sp++] = state;
+                if (two) stack[sp++] = std::move(first);
+                stack[sp++] = std::move(second);
+            };
+
             if (iter.type == ValueType::ARRAY) {
-                int64_t idx = state.to_int();
                 auto* arr = iter.as_array();
-                if (idx < 0 || idx >= (int64_t)arr->elements.size()) {
+                if (pos >= se[2].to_int() || pos >= (int64_t)arr->elements.size()) {
                     take_exit();
                     break;
                 }
-                Value val = arr->elements[(size_t)idx];
-                if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
-                stack[sp++] = Value::make_i64(idx + 1);
-                stack[sp++] = std::move(val);
+                se[0] = Value::make_i64(pos + 1);
+                push_pass(Value::make_i64(pos), arr->elements[(size_t)pos]);
             } else if (iter.type == ValueType::STRING) {
-                // UTF-8 characters; the state is the byte offset of the next one.
-                int64_t at = state.to_int();
+                // UTF-8 characters; the position is the byte offset of the
+                // next one, se[2] its character index.
                 const auto& s = iter.as_string()->data;
-                if (at < 0 || at >= (int64_t)s.size()) {
+                if (pos < 0 || pos >= (int64_t)s.size()) {
                     take_exit();
                     break;
                 }
-                unsigned char c = (unsigned char)s[(size_t)at];
+                unsigned char c = (unsigned char)s[(size_t)pos];
                 size_t len = (c >= 0xF0) ? 4 : (c >= 0xE0) ? 3 : (c >= 0xC0) ? 2 : 1;
-                if ((size_t)at + len > s.size()) len = s.size() - (size_t)at;
-                Value val = Value::make_string(s.substr((size_t)at, len));
-                if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
-                stack[sp++] = Value::make_i64(at + (int64_t)len);
-                stack[sp++] = std::move(val);
+                if ((size_t)pos + len > s.size()) len = s.size() - (size_t)pos;
+                int64_t char_index = se[2].to_int();
+                se[0] = Value::make_i64(pos + (int64_t)len);
+                se[2] = Value::make_i64(char_index + 1);
+                push_pass(Value::make_i64(char_index), Value::make_string(s.substr((size_t)pos, len)));
+            } else if (iter.type == ValueType::OBJECT) {
+                auto& keys = se[2].as_array()->elements;
+                auto& vals = se[3].as_array()->elements;
+                if (pos >= (int64_t)keys.size()) {
+                    take_exit();
+                    break;
+                }
+                se[0] = Value::make_i64(pos + 1);
+                if (two) push_pass(keys[(size_t)pos], vals[(size_t)pos]);
+                else push_pass(Value::make_none(), keys[(size_t)pos]);
             } else if (iter.type == ValueType::INT64) {
-                // Channel handle? Look up in the global registry.
-                int64_t handle = iter.to_int();
-                auto ch = chan_lookup(handle);
-                if (!ch)
-                    throw jdError(ErrCode::RUNTIME_ERROR, "FOR EACH needs an array, a string or a channel");
+                auto ch = chan_lookup(iter.to_int());
                 std::unique_lock<std::mutex> lock(ch->mtx);
                 ++ch->waiting_recv;
                 ch->cv_recv.wait(lock, [&]() {
@@ -1340,17 +1385,9 @@ void VM::run() {
                 Value val = std::move(ch->buffer.front());
                 ch->buffer.pop_front();
                 ch->cv_send.notify_one();
-                // State unchanged for channels - keep whatever was there.
-                if (sp + 2 > stack.size()) stack.resize(stack.size() * 2);
-                stack[sp++] = std::move(state);
-                stack[sp++] = std::move(val);
-            } else if (iter.type == ValueType::OBJECT) {
-                throw jdError(ErrCode::RUNTIME_ERROR, "FOR EACH over a map: walk MAP.KEYS(m) instead");
-            } else if (iter.type == ValueType::BOOLEAN || iter.type == ValueType::BYTE ||
-                       iter.type == ValueType::INT16 || iter.type == ValueType::INT32 ||
-                       iter.type == ValueType::FLOAT16 || iter.type == ValueType::FLOAT32 ||
-                       iter.type == ValueType::FLOAT64) {
-                throw jdError(ErrCode::RUNTIME_ERROR, "FOR EACH needs an array, a string or a channel");
+                lock.unlock();
+                se[0] = Value::make_i64(pos + 1);
+                push_pass(Value::make_i64(pos), std::move(val));
             } else {
                 // NONE and anything else without elements walk nothing.
                 take_exit();

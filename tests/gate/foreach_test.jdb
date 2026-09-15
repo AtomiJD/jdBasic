@@ -111,15 +111,59 @@ FOR EACH c$ IN "a" + CHR$(195) + CHR$(169) + "b"
 NEXT
 Check("a string walks UTF-8 characters", STR$(chars), "3")
 
-DIM map_error$ = ""
-TRY
-    FOR EACH key IN m
-        joined$ = joined$ + key
+joined$ = ""
+FOR EACH key IN m
+    joined$ = joined$ + key + "|"
+NEXT
+Check("a map walks its keys in insertion order", joined$, "x|y|")
+
+joined$ = ""
+FOR EACH k, val IN m
+    joined$ = joined$ + k + "=" + val + "|"
+NEXT
+Check("key and value over a map", joined$, "x=1|y=2|")
+
+FUNC Pairs$(mm)
+    DIM out$ = ""
+    FOR EACH pk, pv IN mm
+        out$ = out$ + pk + "=" + pv + "|"
     NEXT
-CATCH
-    map_error$ = ERRMSG$
-ENDTRY
-Ok("a map raises an error that names MAP.KEYS", INSTR(map_error$, "MAP.KEYS") >= 0)
+    RETURN out$
+ENDFUNC
+Check("key and value over a map parameter", Pairs$(m), "x=1|y=2|")
+
+joined$ = ""
+FOR EACH i, w IN ["p", "q", "r"]
+    joined$ = joined$ + i + ":" + w + "|"
+NEXT
+Check("index and element over an array", joined$, "0:p|1:q|2:r|")
+
+DIM weighted = 0
+FOR EACH j, num IN IOTA(4)
+    weighted = weighted + j * num
+NEXT
+Check("index and element on the numeric loop", STR$(weighted), "20")
+
+joined$ = ""
+FOR EACH ci, ch$ IN "h" + CHR$(195) + CHR$(169)
+    joined$ = joined$ + ci + ch$
+NEXT
+Check("index and character over a string", joined$, "0h1" + CHR$(195) + CHR$(169))
+
+DIM grow = [1, 2, 3]
+DIM passes = 0
+FOR EACH g IN grow
+    passes = passes + 1
+    PUSH(grow, g)
+NEXT
+Check("the length is read when the loop starts", STR$(passes), "3")
+
+DIM nothing_in AS MAP
+DIM empty_passes = 0
+FOR EACH ek, ev IN nothing_in
+    empty_passes = empty_passes + 1
+NEXT
+Check("an empty map walks nothing", STR$(empty_passes), "0")
 
 DIM number_error$ = ""
 DIM plain = 42

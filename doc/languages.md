@@ -908,7 +908,21 @@ PRINT "You pressed '" + AnyKey$ + "'. Program will now resume."
 * **`GOTO label`**: Jumps execution to a `label:`.
 * **`IF condition THEN ... [ELSEIF ...] [ELSE ...] ENDIF`**: Conditional execution block. Single-line `IF condition THEN statement` is also supported.
 * **`FOR variable TO ... STEP ... NEXT`**: Defines a loop that repeats a specific number of times.
-* **`FOR EACH variable IN collection`**: Walks every element of an array (a matrix row by row), every UTF-8 character of a string, or every value a channel delivers until it closes (interpreter only). Each element keeps its own type in both backends, also when the array comes straight from `SPLIT`, `MAP.KEYS` or a parameter. A map raises an error: walk `MAP.KEYS(m)` instead. A number raises an error; `NONE` walks nothing.
+* **`FOR EACH variable IN collection`**: Walks every element of an array (a matrix row by row), every UTF-8 character of a string, every key of a map in insertion order, or every value a channel delivers until it closes (interpreter only). Each element keeps its own type in both backends, also when the array comes straight from `SPLIT`, `MAP.KEYS` or a parameter. A number raises an error; `NONE` walks nothing.
+  * **`FOR EACH i, x IN collection`**: two loop variables. Over an array or a string the first is the 0-based position and the second the element or character; over a map they are key and value (`FOR EACH k, v IN m`).
+  * The loop works on what the collection held when it started: an array is walked up to its length at entry (elements added in the body are not visited), a map over the keys and values it had at entry.
+
+```basic
+DIM prices AS MAP
+prices{"tea"} = 2.5
+prices{"cake"} = 3
+FOR EACH item, price IN prices
+    PRINT item; ": "; price
+NEXT
+FOR EACH i, name$ IN SPLIT("ann,bob", ",")
+    PRINT i; " "; name$
+NEXT
+```
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`EXITFUNC`, `EXITDO`, `EXITFOR`, `EXIT SWITCH`**: Exiting functions, loops and a `SWITCH` block.
