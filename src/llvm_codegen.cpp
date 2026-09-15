@@ -4662,6 +4662,17 @@ void LLVMCodegen::emit_err_check() {
         LLVMPositionBuilderAtEnd(builder, post_bb);
     }
 
+    emit_err_code_branch();
+}
+
+// The error-code half of emit_err_check: leaves for the enclosing TRY, the
+// caller or the uncaught handler when an error is set, and continues in a
+// fresh block otherwise. After a call to a compiled FUNC this alone is enough,
+// because the callee's own statement checks already pulled any bridge error.
+void LLVMCodegen::emit_err_code_branch() {
+    if (LLVMGetBasicBlockTerminator(LLVMGetInsertBlock(builder))) return;
+    auto ec_it = runtime_funcs.find("__err_rc");
+    if (ec_it == runtime_funcs.end()) return;
     LLVMValueRef err = LLVMBuildCall2(builder, ec_it->second.fn_type,
                                       ec_it->second.fn, nullptr, 0, "err_rc");
     LLVMValueRef has_err = LLVMBuildICmp(builder, LLVMIntNE, err,
@@ -11209,6 +11220,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, fn_type, fi.fn,
                                                   args.empty() ? nullptr : args.data(),
                                                   (unsigned)args.size(), "call");
+            // A FUNC that raised an error returns a placeholder; the value must
+            // not reach the rest of the expression, such as an outer call.
+            emit_err_code_branch();
             if (fi.return_tag == JD_TAG_RUNTIME) return unpack_dyn_ret(result);
             TypedValue out{ result, fi.return_tag };
             // A FUNC that always allocates its result hands it over.

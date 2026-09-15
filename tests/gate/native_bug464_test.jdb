@@ -1,0 +1,84 @@
+' A FUNC that throws inside an expression stops that expression: the outer
+' call does not run and the assignment does not happen, in a TRY of the
+' same scope and in one further up the call chain.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+DIM calls AS INTEGER = 0
+DIM recorded AS INTEGER = -1
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+FUNC Work(x)
+    IF x > 1 THEN THROW "too big"
+    RETURN x
+ENDFUNC
+
+SUB Record(v)
+    calls = calls + 1
+    recorded = CLNG(v)
+ENDSUB
+
+FUNC Twice(v)
+    calls = calls + 1
+    RETURN v * 2
+ENDFUNC
+
+FUNC Chain(x)
+    RETURN Twice(Work(x))
+ENDFUNC
+
+DIM caught$ = ""
+TRY
+    Record(Work(5))
+CATCH
+    caught$ = ERRMSG$
+ENDTRY
+Check("SUB with a throwing argument is not called", STR$(calls), "0")
+Check("the error reaches CATCH", caught$, "too big")
+
+DIM kept AS INTEGER = 7
+TRY
+    kept = CLNG(Work(9))
+CATCH
+    caught$ = ERRMSG$
+ENDTRY
+Check("an assignment from a throwing FUNC is skipped", STR$(kept), "7")
+
+DIM total AS INTEGER = 0
+TRY
+    total = CLNG(Twice(Work(3)) + 100)
+CATCH
+    caught$ = ERRMSG$
+ENDTRY
+Check("FUNC with a throwing argument is not called", STR$(calls), "0")
+Check("and the sum is not stored", STR$(total), "0")
+
+TRY
+    total = CLNG(Chain(4))
+CATCH
+    caught$ = "chain: " + ERRMSG$
+ENDTRY
+Check("through a FUNC without its own TRY", caught$, "chain: too big")
+Check("the inner call still did not run", STR$(calls), "0")
+
+Record(Work(1))
+Check("calls that do not throw run normally", STR$(calls) + " " + STR$(recorded), "1 1")
+total = CLNG(Chain(1))
+Check("and return their value", STR$(total), "2")
+
+PRINT ""
+PRINT "NATIVE BUG 464 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
