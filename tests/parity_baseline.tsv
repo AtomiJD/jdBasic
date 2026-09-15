@@ -52,8 +52,14 @@ tests/gate/codec_deflate_test.jdb	PASS	PASS	OK
 tests/gate/codec_hmac_test.jdb	PASS	PASS	OK
 tests/gate/codec_pbkdf2_random_test.jdb	PASS	PASS	OK
 tests/gate/comprehensive_test.jdb	PASS	PASS	OK
+tests/gate/native_bug458_test.jdb	PASS	PASS	OK
+tests/gate/native_bug459_test.jdb	PASS	PASS	OK
+tests/gate/native_bug463_test.jdb	PASS	PASS	OK
+tests/gate/native_bug464_test.jdb	PASS	PASS	OK
+tests/gate/native_bug465_test.jdb	PASS	PASS	OK
 tests/gate/native_test.jdb	PASS	CFAIL	GAP
 tests/gate/native_test.strict.jdb	PASS	PASS	OK
+tests/gate/nul_mkdir_test.jdb	PASS	PASS	OK
 tests/gate/pack_unpack_test.jdb	PASS	PASS	OK
 tests/gate/rng_test.jdb	PASS	PASS	OK
 tests/gate/test_apl_complete.jdb	PASS	PASS	OK
@@ -249,7 +255,7 @@ tests/regression/test_shift_infix.jdb	OK	OK	OK
 tests/regression/test_sin_arr.jdb	OK	CFAIL	GAP
 tests/regression/test_slice.jdb	OK	OK	OK
 tests/regression/test_sprite_create_save_load.jdb	OK	OK	OK
-tests/regression/test_sql.jdb	PASS	CFAIL	GAP
+tests/regression/test_sql.jdb	OK	CFAIL	GAP
 tests/regression/test_stop.jdb	OK	OK	OK
 tests/regression/test_str_array.jdb	OK	OK	OK
 tests/regression/test_string_array_push.jdb	OK	CFAIL	GAP
