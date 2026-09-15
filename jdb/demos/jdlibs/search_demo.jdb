@@ -1,0 +1,68 @@
+' SEARCH demo: the pages of the module library indexed by title and text,
+' then a few questions a reader might ask them: plain words, a phrase, a
+' misspelt word, "did you mean", and two result lists merged.
+'
+'   jdBasic search_demo.jdb
+
+IMPORT SEARCH
+
+DIM Q$ = CHR$(34)
+DIM folder$ = "lib"
+IF NOT FILE.EXISTS(folder$ + "/README.md") THEN folder$ = "../../../lib"
+
+DIM ix = SEARCH.INDEX({"lang": "en", "fields": {"title": 3, "body": 1}})
+DIM pages = DIR$(folder$ + "/*_lib_readme.md")
+DIM t0 = TICK()
+DIM i = 0
+FOR i = 0 TO LEN(pages) - 1
+    DIM page$ = pages[i]
+    DIM name$ = PATH.BASENAME$(page$)
+    DIM text$ = TXTREADER$(PATH.JOIN$(folder$, name$))
+    DIM first_break = CINT(INSTR(text$, CHR$(10)))
+    DIM title$ = LEFT$(text$, first_break)
+    DIM module$ = LEFT$(name$, CINT(INSTR(name$, "_lib_readme")))
+    SEARCH.ADD(ix, module$, {"title": title$, "body": text$})
+NEXT i
+DIM st = SEARCH.STATS(ix)
+PRINT "Indexed "; st{"docs"}; " module pages, "; st{"terms"}; " terms, in "; INT(TICK() - t0); " ms"
+PRINT ""
+
+SUB Show(ix, question$, opts)
+    PRINT "> "; question$
+    DIM hits = SEARCH.QUERY(ix, question$, opts)
+    IF LEN(hits) = 0 THEN PRINT "  (nothing)"
+    DIM k = 0
+    FOR k = 0 TO LEN(hits) - 1
+        DIM hit = hits[k]
+        DIM hk$ = hit{"key"}
+        DIM hs = hit{"score"}
+        PRINT "  "; LEFT$(hk$ + "            ", 12); FORMAT$("{:.2f}", hs)
+    NEXT k
+    PRINT ""
+ENDSUB
+
+DIM top3 = {"limit": 3}
+Show(ix, "csv data frame group by", top3)
+Show(ix, "password hashing tokens", top3)
+Show(ix, Q$ + "rank fusion" + Q$, top3)
+Show(ix, "curve fitting splines", top3)
+Show(ix, "calendr recurrence", {"limit": 3, "fuzzy": 1})
+
+PRINT "> did you mean: statistiks"
+DIM tips = SEARCH.SUGGEST(ix, "statistiks", 3)
+FOR i = 0 TO LEN(tips) - 1
+    DIM tip = tips[i]
+    PRINT "  "; tip{"word"}; " ("; tip{"distance"}; " edits, "; tip{"docs"}; " pages)"
+NEXT i
+PRINT ""
+
+PRINT "> merged: " + Q$ + "web framework" + Q$ + " and templates"
+DIM a = SEARCH.QUERY(ix, "web framework routes sessions")
+DIM b = SEARCH.QUERY(ix, "html templates layouts")
+DIM merged = SEARCH.RRF([a, b], 60, 4)
+FOR i = 0 TO LEN(merged) - 1
+    DIM m = merged[i]
+    DIM mk$ = m{"key"}
+    DIM ms = m{"score"}
+    PRINT "  "; LEFT$(mk$ + "            ", 12); FORMAT$("{:.4f}", ms)
+NEXT i

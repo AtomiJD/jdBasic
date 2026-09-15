@@ -1,0 +1,264 @@
+' SEARCH: tokens, stemming and folding; BM25 scores and rankings checked
+' against rank_bm25's BM25Okapi on a 304-document corpus in four variants
+' (plain, a title weight of 2, documents removed and replaced, other k1, b
+' and epsilon); phrases, all-term queries, fuzzy terms, suggestions, index
+' files and reciprocal rank fusion.
+
+IMPORT TESTKIT, SEARCH
+
+DIM Q$ = CHR$(34)
+DIM TAB$ = CHR$(9)
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "search_corpus.tsv") THEN base$ = "fixtures/"
+
+FUNC Lines(path$)
+    DIM body$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM rows = SPLIT(body$, CHR$(10))
+    RETURN rows
+ENDFUNC
+
+FUNC BadLang(x)
+    DIM ix = SEARCH.INDEX({"lang": "fr"})
+    RETURN ix
+ENDFUNC
+
+FUNC BadHandle(x)
+    DIM toks = SEARCH.TOKENS(999, "text")
+    RETURN LEN(toks)
+ENDFUNC
+
+FUNC Near(a, b)
+    DIM scale = ABS(b)
+    IF scale < 1 THEN scale = 1
+    RETURN ABS(a - b) <= 0.000000001 * scale
+ENDFUNC
+
+TESTKIT.SUITE("analysis")
+DIM ix_en = SEARCH.INDEX({"lang": "en"})
+DIM ix_de = SEARCH.INDEX({"lang": "de"})
+DIM ix_none = SEARCH.INDEX({"lang": "none"})
+TESTKIT.EQ(JOIN(SEARCH.TOKENS(ix_en, "The runners were running quickly over the boxes and churches."), " "), "runner run quick over box church", "English: stop words out, light stemming")
+TESTKIT.EQ(JOIN(SEARCH.TOKENS(ix_de, "Die Stra" + CHR$(195) + CHR$(159) + "e und die Gesch" + CHR$(195) + CHR$(164) + "fte der M" + CHR$(195) + CHR$(188) + "ller"), " "), "strass geschaeft muell", "German: umlauts folded to ae, oe, ue, stop words out, endings stripped")
+TESTKIT.EQ(JOIN(SEARCH.TOKENS(ix_en, "Caf" + CHR$(195) + CHR$(169) + " cr" + CHR$(195) + CHR$(168) + "me " + CHR$(195) + CHR$(160) + " la carte"), " "), "cafe creme la carte", "accents folded in an English index")
+TESTKIT.EQ(JOIN(SEARCH.TOKENS(ix_none, "The running dogs"), " "), "the running dogs", "lang none keeps every word as it is")
+TESTKIT.EQ(JOIN(SEARCH.TOKENS(ix_en, "E-mail: user@example.org, 2026-09-15"), " "), "e mail user example org 2026 09 15", "words split at everything but letters and digits")
+TESTKIT.EQ(SEARCH.STEM$("studies"), "study", "STEM$ studies")
+TESTKIT.EQ(SEARCH.STEM$("Jumped"), "jump", "STEM$ lower-cases first")
+TESTKIT.EQ(SEARCH.STEM$("Kunden", "de"), "kund", "STEM$ in German")
+TESTKIT.EQ(SEARCH.STEM$("bus"), "bus", "a word of three letters stays")
+TESTKIT.THROWS(BadLang@, 0, "an unknown language is refused")
+TESTKIT.THROWS(BadHandle@, 0, "an unknown handle is refused")
+
+' ---- the reference corpus ----
+
+DIM corpus = Lines(base$ + "search_corpus.tsv")
+DIM queries = Lines(base$ + "search_queries.tsv")
+DIM expected = Lines(base$ + "search_expected.tsv")
+
+FUNC NewIndex(variant$, lang$)
+    IF variant$ = "boost" THEN RETURN SEARCH.INDEX({"lang": lang$, "fields": {"title": 2, "body": 1}})
+    IF variant$ = "k1b" THEN RETURN SEARCH.INDEX({"lang": lang$, "k1": 1.2, "b": 0.9, "epsilon": 0.5})
+    RETURN SEARCH.INDEX({"lang": lang$})
+ENDFUNC
+
+SUB Fill(ix, lang$, corpus)
+    DIM i = 0
+    FOR i = 1 TO LEN(corpus) - 1
+        DIM row$ = corpus[i]
+        IF row$ <> "" THEN
+            DIM cells = SPLIT(row$, CHR$(9))
+            DIM rlang$ = cells[0]
+            IF rlang$ = lang$ THEN
+                DIM rkey$ = cells[1]
+                DIM rtitle$ = cells[2]
+                DIM rbody$ = cells[3]
+                SEARCH.ADD(ix, rkey$, {"title": rtitle$, "body": rbody$})
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+' The rows of the corpus by key, for the replaced document.
+FUNC CorpusCells(corpus, key$)
+    DIM i = 0
+    FOR i = 1 TO LEN(corpus) - 1
+        DIM row$ = corpus[i]
+        IF row$ <> "" THEN
+            DIM cells = SPLIT(row$, CHR$(9))
+            DIM ckey$ = cells[1]
+            IF ckey$ = key$ THEN RETURN cells
+        ENDIF
+    NEXT i
+    DIM none = []
+    RETURN none
+ENDFUNC
+
+' Whether an index answers a query the way the reference rows say: the same
+' keys in the same order with scores equal to 1e-9.
+FUNC Matches(ix, variant$, lang$, qid$, query$, limit_n, expected)
+    DIM want_keys = []
+    DIM want_scores = []
+    DIM i = 0
+    DIM prefix$ = variant$ + CHR$(9) + lang$ + CHR$(9) + qid$ + CHR$(9)
+    FOR i = 1 TO LEN(expected) - 1
+        DIM row$ = expected[i]
+        IF LEFT$(row$, LEN(prefix$)) = prefix$ THEN
+            DIM cells = SPLIT(row$, CHR$(9))
+            DIM ekey$ = cells[4]
+            DIM escore$ = cells[5]
+            PUSH(want_keys, ekey$)
+            PUSH(want_scores, VAL(escore$))
+        ENDIF
+    NEXT i
+    DIM got = SEARCH.QUERY(ix, query$, {"limit": limit_n})
+    IF LEN(got) <> LEN(want_keys) THEN
+        PRINT "  "; variant$; " "; qid$; ": "; LEN(got); " results, expected "; LEN(want_keys)
+        RETURN FALSE
+    ENDIF
+    FOR i = 0 TO LEN(got) - 1
+        DIM hit = got[i]
+        DIM gk$ = hit{"key"}
+        DIM gs = hit{"score"}
+        DIM wk$ = want_keys[i]
+        DIM ws = want_scores[i]
+        IF gk$ <> wk$ ORELSE NOT Near(gs, ws) THEN
+            PRINT "  "; variant$; " "; qid$; " rank "; i; ": "; gk$; " "; gs; ", expected "; wk$; " "; ws
+            RETURN FALSE
+        ENDIF
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+SUB CheckVariant(variant$, lang$, ix, limit_n, queries, expected)
+    DIM i = 0
+    FOR i = 1 TO LEN(queries) - 1
+        DIM row$ = queries[i]
+        IF row$ <> "" THEN
+            DIM cells = SPLIT(row$, CHR$(9))
+            DIM qlang$ = cells[0]
+            IF qlang$ = lang$ THEN
+                DIM qid$ = cells[1]
+                DIM qtext$ = cells[2]
+                TESTKIT.ISTRUE(Matches(ix, variant$, lang$, qid$, qtext$, limit_n, expected), variant$ + " " + qid$ + ": " + qtext$)
+            ENDIF
+        ENDIF
+    NEXT i
+ENDSUB
+
+TESTKIT.SUITE("rank_bm25: plain")
+DIM plain_en = NewIndex("plain", "en")
+DIM plain_de = NewIndex("plain", "de")
+Fill(plain_en, "en", corpus)
+Fill(plain_de, "de", corpus)
+TESTKIT.EQ(SEARCH.DOCCOUNT(plain_en), 153, "153 English documents")
+TESTKIT.EQ(SEARCH.DOCCOUNT(plain_de), 151, "151 German documents")
+CheckVariant("plain", "en", plain_en, 10, queries, expected)
+CheckVariant("plain", "de", plain_de, 10, queries, expected)
+
+TESTKIT.SUITE("rank_bm25: title weight 2")
+DIM boost_en = NewIndex("boost", "en")
+DIM boost_de = NewIndex("boost", "de")
+Fill(boost_en, "en", corpus)
+Fill(boost_de, "de", corpus)
+CheckVariant("boost", "en", boost_en, 10, queries, expected)
+CheckVariant("boost", "de", boost_de, 10, queries, expected)
+
+TESTKIT.SUITE("rank_bm25: k1 1.2, b 0.9, epsilon 0.5")
+DIM k1b_en = NewIndex("k1b", "en")
+DIM k1b_de = NewIndex("k1b", "de")
+Fill(k1b_en, "en", corpus)
+Fill(k1b_de, "de", corpus)
+CheckVariant("k1b", "en", k1b_en, 10, queries, expected)
+CheckVariant("k1b", "de", k1b_de, 10, queries, expected)
+
+TESTKIT.SUITE("files")
+DIM saved$ = MKTEMP$("searchix")
+SEARCH.WRITEFILE(boost_de, saved$)
+DIM loaded = SEARCH.READFILE(saved$)
+TESTKIT.EQ(SEARCH.DOCCOUNT(loaded), 151, "READFILE brings every document back")
+CheckVariant("boost", "de", loaded, 10, queries, expected)
+KILL saved$
+
+TESTKIT.SUITE("rank_bm25: removed and replaced")
+DIM r = 0
+FOR r = 0 TO 19
+    DIM gone_en$ = "en" + RIGHT$("00" + STR$(r), 3)
+    DIM gone_de$ = "de" + RIGHT$("00" + STR$(r), 3)
+    TESTKIT.ISTRUE(SEARCH.REMOVE(plain_en, gone_en$) ANDALSO SEARCH.REMOVE(plain_de, gone_de$), "REMOVE " + gone_en$ + " and " + gone_de$)
+NEXT r
+TESTKIT.ISFALSE(SEARCH.REMOVE(plain_en, "en000"), "a key removed twice is not there")
+TESTKIT.ISFALSE(SEARCH.HAS(plain_en, "en005"), "HAS answers FALSE after REMOVE")
+TESTKIT.ISTRUE(SEARCH.HAS(plain_en, "en020"), "and TRUE for a document still there")
+DIM donor_en = CorpusCells(corpus, "en031")
+DIM donor_de = CorpusCells(corpus, "de031")
+DIM den_title$ = donor_en[2]
+DIM den_body$ = donor_en[3]
+DIM dde_title$ = donor_de[2]
+DIM dde_body$ = donor_de[3]
+SEARCH.ADD(plain_en, "en030", {"title": den_title$, "body": den_body$})
+SEARCH.ADD(plain_de, "de030", {"title": dde_title$, "body": dde_body$})
+TESTKIT.EQ(SEARCH.DOCCOUNT(plain_en), 133, "ADD under a known key replaces the document")
+CheckVariant("removed", "en", plain_en, 10, queries, expected)
+CheckVariant("removed", "de", plain_de, 10, queries, expected)
+DIM st = SEARCH.STATS(plain_en)
+TESTKIT.EQ(st{"docs"}, 133, "STATS counts the documents")
+TESTKIT.ISTRUE(st{"terms"} > 50 ANDALSO st{"avgdl"} > 10, "and the terms and the average length")
+
+TESTKIT.SUITE("phrases and all terms")
+DIM ix_p = SEARCH.INDEX({"lang": "en", "fields": {"title": 1, "body": 1}})
+SEARCH.ADD(ix_p, "terms", {"title": "Payment terms", "body": "The payment is due within thirty days of the invoice date, payment by bank transfer."})
+SEARCH.ADD(ix_p, "due", {"title": "Due invoice", "body": "Invoice payment is due; the invoice date is on the order."})
+SEARCH.ADD(ix_p, "art", {"title": "State of the art", "body": "A state of the art compiler for the runtime, state of the art tooling."})
+SEARCH.ADD(ix_p, "late", "Due dates slip: the payment was late and the state of affairs is art.")
+FUNC KeysOf$(hits)
+    DIM names = []
+    DIM i = 0
+    FOR i = 0 TO LEN(hits) - 1
+        DIM hit = hits[i]
+        DIM hk$ = hit{"key"}
+        PUSH(names, hk$)
+    NEXT i
+    RETURN JOIN(SORT(names), ",")
+ENDFUNC
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, "payment due")), "due,late,terms", "words match any document holding one of them")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, Q$ + "payment is due" + Q$)), "due,terms", "a phrase needs its words in order, stop words counted")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, Q$ + "state of the art" + Q$)), "art", "a four word phrase")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, Q$ + "due payment" + Q$)), "", "the words in the other order do not match")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, "invoice " + Q$ + "bank transfer" + Q$)), "terms", "a phrase beside a word")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, "invoice date", {"all": 1})), "due,terms", "all: 1 needs every word")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, "invoice nonsense", {"all": 1})), "", "and a word no document has matches nothing")
+DIM top = SEARCH.QUERY(ix_p, "invoice", {"limit": 1})
+TESTKIT.EQ(LEN(top), 1, "limit")
+DIM top_hit = top[0]
+TESTKIT.EQ(top_hit{"key"}, "due", "the document with the word twice in fewer words ranks first")
+TESTKIT.NEAR(SEARCH.SCORE(ix_p, "invoice", "due"), top_hit{"score"}, 0.000000001, "SCORE of one document")
+TESTKIT.EQ(SEARCH.SCORE(ix_p, "invoice", "art"), 0, "and 0 for a document without the word")
+
+TESTKIT.SUITE("typos")
+TESTKIT.EQ(LEN(SEARCH.QUERY(ix_p, "invoise")), 0, "a misspelt word finds nothing")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, "invoise", {"fuzzy": 1})), "due,terms", "fuzzy: 1 takes the indexed word one edit away")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, "compliler", {"fuzzy": 1})), "art", "an extra letter")
+TESTKIT.EQ(LEN(SEARCH.QUERY(ix_p, "cmopiler", {"fuzzy": 1})), 0, "two edits are beyond fuzzy: 1")
+TESTKIT.EQ(KeysOf$(SEARCH.QUERY(ix_p, "cmopiler", {"fuzzy": 2})), "art", "and within fuzzy: 2")
+DIM tips = SEARCH.SUGGEST(ix_p, "paymnet")
+DIM tip = tips[0]
+TESTKIT.EQ(tip{"word"}, "payment", "SUGGEST offers the indexed word")
+TESTKIT.EQ(tip{"distance"}, 2, "with its distance")
+TESTKIT.EQ(tip{"docs"}, 3, "and the documents holding it")
+TESTKIT.EQ(LEN(SEARCH.SUGGEST(ix_p, "zzzzzz")), 0, "nothing close, no suggestion")
+
+TESTKIT.SUITE("reciprocal rank fusion")
+DIM fused = SEARCH.RRF([["a", "b", "c"], ["b", "c", "d"]])
+DIM f0 = fused[0]
+DIM f1 = fused[1]
+DIM f2 = fused[2]
+DIM f3 = fused[3]
+TESTKIT.EQ(f0{"key"} + f1{"key"} + f2{"key"} + f3{"key"}, "bcad", "keys in two lists rank above keys in one")
+TESTKIT.NEAR(f0{"score"}, 1.0 / 62 + 1.0 / 61, 0.000000000001, "1 / (60 + rank) summed")
+TESTKIT.NEAR(f3{"score"}, 1.0 / 63, 0.000000000001, "for a key in one list")
+DIM by_words = SEARCH.QUERY(ix_p, "payment")
+DIM by_phrase = SEARCH.QUERY(ix_p, Q$ + "state of the art" + Q$)
+DIM merged = SEARCH.RRF([by_words, by_phrase], 60, 2)
+TESTKIT.EQ(LEN(merged), 2, "QUERY results merge directly, with a limit")
+
+TESTKIT.REPORT()

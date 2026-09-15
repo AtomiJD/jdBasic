@@ -1,0 +1,1095 @@
+' SEARCH: full-text search over documents kept in memory. An inverted index
+' with positions, BM25 ranking computed the way rank_bm25's BM25Okapi does,
+' field weights, phrase queries, typo-tolerant term lookup through a trigram
+' index scored with FUZZY, index files, and reciprocal rank fusion to merge
+' result lists.
+'
+'   IMPORT SEARCH
+'   DIM ix = SEARCH.INDEX({"lang": "en", "fields": {"title": 2, "body": 1}})
+'   SEARCH.ADD(ix, "terms", {"title": "Payment terms", "body": "Due within 30 days."})
+'   DIM hits = SEARCH.QUERY(ix, "payment days")
+'   PRINT hits[0]{"key"}, hits[0]{"score"}
+EXPORT MODULE SEARCH
+
+IMPORT FUZZY
+
+' Indexes, by handle.
+DIM gIxK1 = []
+DIM gIxB = []
+DIM gIxEps = []
+DIM gIxLang = []
+DIM gIxStem = []
+DIM gIxStop = []
+DIM gIxFields = []
+DIM gIxDocs = []
+DIM gIxTokens = []
+DIM gIxDirty = []
+
+' Documents of all indexes, by document id.
+DIM gDocIx = []
+DIM gDocKey = []
+DIM gDocLen = []
+DIM gDocAlive = []
+DIM gDocStore = []
+DIM gDocTerms = []
+
+' Terms of all indexes, by term id. A term's postings form a linked list
+' through gPostNext, newest first.
+DIM gTermIx = []
+DIM gTermText = []
+DIM gTermSurface = []
+DIM gTermDf = []
+DIM gTermHead = []
+DIM gTermIdf = []
+
+DIM gPostDoc = []
+DIM gPostTf = []
+DIM gPostPos = []
+DIM gPostNext = []
+
+' Trigram lists: gTriMap names the head node of "index:trigram".
+DIM gTriTerm = []
+DIM gTriNext = []
+
+DIM gTermMap AS MAP
+DIM gDocMap AS MAP
+DIM gTriMap AS MAP
+DIM gStop AS MAP
+DIM gFold AS MAP
+DIM gFoldReady = 0
+DIM gReady = 0
+
+SUB InitTables()
+    IF gReady = 0 THEN
+        DIM en = SPLIT("a an and are as at be been but by can could did do does for from had has have he her his i if in into is it its me my no not of on or our she so than that the their them then there these they this to up was we were what when which who will with you your", " ")
+        DIM de = SPLIT("aber als am an auch auf aus bei bin bis bist da das dass dein der den dem des die dies doch du durch ein eine einem einen einer eines er es fuer hat hatte ich ihr im in ist ja kein mit nach nicht noch nur oder sich sie sind so ueber um und uns unter vom von vor war waren was wenn wer wie wir wird zu zum zur", " ")
+        DIM i = 0
+        FOR i = 0 TO LEN(en) - 1
+            DIM ew$ = en[i]
+            gStop{"en:" + ew$} = 1
+        NEXT i
+        FOR i = 0 TO LEN(de) - 1
+            DIM dw$ = de[i]
+            gStop{"de:" + dw$} = 1
+        NEXT i
+        gReady = 1
+    ENDIF
+ENDSUB
+
+SUB CheckIndex(h)
+    IF h < 0 ORELSE h >= LEN(gIxK1) THEN THROW "SEARCH: no index with handle " + STR$(h)
+ENDSUB
+
+' ---- analysis ----
+
+' The letters U+00C0 to U+00FF and the common ones of Latin Extended-A in
+' ASCII, as unidecode writes them; a "de:" entry is the German spelling.
+SUB InitFold()
+    DIM latin = SPLIT("A A A A A A AE C E E E E I I I I D N O O O O O _ O U U U U Y Th ss a a a a a a ae c e e e e i i i i d n o o o o o _ o u u u u y th y", " ")
+    DIM i = 0
+    FOR i = 0 TO LEN(latin) - 1
+        DIM plain$ = latin[i]
+        gFold{CHR$(195) + CHR$(128 + i)} = plain$
+    NEXT i
+    gFold{"de:" + CHR$(195) + CHR$(132)} = "Ae"
+    gFold{"de:" + CHR$(195) + CHR$(150)} = "Oe"
+    gFold{"de:" + CHR$(195) + CHR$(156)} = "Ue"
+    gFold{"de:" + CHR$(195) + CHR$(164)} = "ae"
+    gFold{"de:" + CHR$(195) + CHR$(182)} = "oe"
+    gFold{"de:" + CHR$(195) + CHR$(188)} = "ue"
+    DIM extended = SPLIT("196 132 A,196 133 a,196 134 C,196 135 c,196 140 C,196 141 c,196 152 E,196 153 e,196 177 i,197 129 L,197 130 l,197 131 N,197 132 n,197 144 O,197 145 o,197 146 OE,197 147 oe,197 160 S,197 161 s,197 176 U,197 177 u,197 189 Z,197 190 z", ",")
+    FOR i = 0 TO LEN(extended) - 1
+        DIM spec$ = extended[i]
+        DIM bits = SPLIT(spec$, " ")
+        DIM lead$ = bits[0]
+        DIM trail$ = bits[1]
+        DIM ascii$ = bits[2]
+        gFold{CHR$(VAL(lead$)) + CHR$(VAL(trail$))} = ascii$
+    NEXT i
+    gFoldReady = 1
+ENDSUB
+
+
+' The text in ASCII: every character beyond ASCII folded through gFold, or a
+' space when it has no ASCII form.
+FUNC FoldText$(source$, german)
+    IF gFoldReady = 0 THEN InitFold()
+    DIM cs = -source$
+    DIM pieces = []
+    DIM k = 0
+    FOR k = 0 TO LEN(cs) - 1
+        DIM c$ = cs[k]
+        IF LEN(c$) = 1 THEN
+            PUSH(pieces, c$)
+        ELSEIF german ANDALSO MAP.EXISTS(gFold, "de:" + c$) THEN
+            DIM dfold$ = gFold{"de:" + c$}
+            PUSH(pieces, dfold$)
+        ELSEIF MAP.EXISTS(gFold, c$) THEN
+            DIM ffold$ = gFold{c$}
+            PUSH(pieces, ffold$)
+        ELSE
+            PUSH(pieces, " ")
+        ENDIF
+    NEXT k
+    RETURN JOIN(pieces, "")
+ENDFUNC
+
+' The words of a text in lower case ASCII: accents folded (German umlauts
+' to ae, oe, ue for a German index), split at everything but letters and
+' digits.
+FUNC FoldWords(h, source$)
+    DIM lang$ = gIxLang[h]
+    DIM plain$ = source$
+    DIM beyond = REGEX.FINDALL("[^ -~\t\r\n]", source$)
+    IF LEN(beyond) > 0 THEN plain$ = FoldText$(source$, lang$ = "de")
+    DIM words = REGEX.FINDALL("[a-z0-9]+", LCASE$(plain$))
+    RETURN words
+ENDFUNC
+
+' The index term of a folded word, or "" for a stop word.
+FUNC TermOf$(h, w$)
+    DIM lang$ = gIxLang[h]
+    DIM use_stop = gIxStop[h]
+    DIM use_stem = gIxStem[h]
+    IF use_stop ANDALSO MAP.EXISTS(gStop, lang$ + ":" + w$) THEN RETURN ""
+    IF use_stem THEN RETURN StemWord$(w$, lang$)
+    RETURN w$
+ENDFUNC
+
+FUNC StemWord$(w$, lang$)
+    IF LEN(w$) <= 3 THEN RETURN w$
+    IF UCASE$(w$) = w$ THEN RETURN w$
+    IF lang$ = "en" THEN RETURN StemEn$(w$)
+    IF lang$ = "de" THEN RETURN StemDe$(w$)
+    RETURN w$
+ENDFUNC
+
+' A doubled final consonant made single (runn to run), except ll, ss, zz.
+FUNC UnDouble$(s$)
+    DIM n = LEN(s$)
+    IF n < 3 THEN RETURN s$
+    DIM last$ = RIGHT$(s$, 1)
+    IF MID$(s$, n - 2, 1) <> last$ THEN RETURN s$
+    IF INSTR("aeioulsz", last$) >= 0 THEN RETURN s$
+    RETURN LEFT$(s$, n - 1)
+ENDFUNC
+
+' English: plural endings first (sses, ies, ches, shes, xes, zes, s), then
+' one of ing, ed, ly, keeping a stem of at least three letters.
+FUNC StemEn$(w$)
+    DIM s$ = w$
+    DIM n = LEN(s$)
+    IF ENDSWITH(s$, "sses") THEN
+        s$ = LEFT$(s$, n - 2)
+    ELSEIF ENDSWITH(s$, "ies") ANDALSO n > 4 THEN
+        s$ = LEFT$(s$, n - 3) + "y"
+    ELSEIF ENDSWITH(s$, "ches") ORELSE ENDSWITH(s$, "shes") ORELSE ENDSWITH(s$, "xes") ORELSE ENDSWITH(s$, "zes") THEN
+        s$ = LEFT$(s$, n - 2)
+    ELSEIF ENDSWITH(s$, "s") ANDALSO NOT ENDSWITH(s$, "ss") ANDALSO NOT ENDSWITH(s$, "us") ANDALSO NOT ENDSWITH(s$, "is") THEN
+        s$ = LEFT$(s$, n - 1)
+    ENDIF
+    n = LEN(s$)
+    IF ENDSWITH(s$, "ing") ANDALSO n >= 6 THEN
+        s$ = UnDouble$(LEFT$(s$, n - 3))
+    ELSEIF ENDSWITH(s$, "ed") ANDALSO n >= 5 THEN
+        s$ = UnDouble$(LEFT$(s$, n - 2))
+    ELSEIF ENDSWITH(s$, "ly") ANDALSO n >= 5 THEN
+        s$ = LEFT$(s$, n - 2)
+    ENDIF
+    RETURN s$
+ENDFUNC
+
+' German, on folded words: one of ern, em, en, er, es, e, then a final s,
+' keeping a stem of at least three letters.
+FUNC StemDe$(w$)
+    DIM s$ = w$
+    DIM n = LEN(s$)
+    IF ENDSWITH(s$, "ern") ANDALSO n >= 6 THEN
+        s$ = LEFT$(s$, n - 3)
+    ELSEIF (ENDSWITH(s$, "em") ORELSE ENDSWITH(s$, "en") ORELSE ENDSWITH(s$, "er") ORELSE ENDSWITH(s$, "es")) ANDALSO n >= 5 THEN
+        s$ = LEFT$(s$, n - 2)
+    ELSEIF ENDSWITH(s$, "e") ANDALSO n >= 4 THEN
+        s$ = LEFT$(s$, n - 1)
+    ENDIF
+    n = LEN(s$)
+    IF ENDSWITH(s$, "s") ANDALSO NOT ENDSWITH(s$, "ss") ANDALSO n >= 4 THEN s$ = LEFT$(s$, n - 1)
+    RETURN s$
+ENDFUNC
+
+' ---- indexes ----
+
+' A new index; the handle. opts: "lang" (en, de or none), "stem" (1),
+' "stopwords" (1), "k1" (1.5), "b" (0.75), "epsilon" (0.25) and "fields", a
+' map of field name to weight ({"body": 1}).
+EXPORT FUNC INDEX(opts = 0)
+    InitTables()
+    DIM k1 = 1.5
+    DIM b_v = 0.75
+    DIM eps = 0.25
+    DIM lang$ = "en"
+    DIM stem_on = 1
+    DIM stop_on = 1
+    DIM spec$ = "body:1"
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "k1") THEN
+            DIM k1v = opts{"k1"}
+            k1 = k1v
+        ENDIF
+        IF MAP.EXISTS(opts, "b") THEN
+            DIM bv = opts{"b"}
+            b_v = bv
+        ENDIF
+        IF MAP.EXISTS(opts, "epsilon") THEN
+            DIM ev = opts{"epsilon"}
+            eps = ev
+        ENDIF
+        IF MAP.EXISTS(opts, "lang") THEN
+            DIM lv = opts{"lang"}
+            lang$ = LCASE$("" + lv)
+        ENDIF
+        IF MAP.EXISTS(opts, "stem") THEN
+            DIM sv = opts{"stem"}
+            IF sv THEN
+                stem_on = 1
+            ELSE
+                stem_on = 0
+            ENDIF
+        ENDIF
+        IF MAP.EXISTS(opts, "stopwords") THEN
+            DIM wv = opts{"stopwords"}
+            IF wv THEN
+                stop_on = 1
+            ELSE
+                stop_on = 0
+            ENDIF
+        ENDIF
+        IF MAP.EXISTS(opts, "fields") THEN
+            DIM fm = opts{"fields"}
+            spec$ = FieldSpec$(fm)
+        ENDIF
+    ENDIF
+    IF lang$ <> "en" ANDALSO lang$ <> "de" ANDALSO lang$ <> "none" THEN THROW "SEARCH.INDEX: lang is en, de or none"
+    PUSH(gIxK1, k1)
+    PUSH(gIxB, b_v)
+    PUSH(gIxEps, eps)
+    PUSH(gIxLang, lang$)
+    PUSH(gIxStem, stem_on)
+    PUSH(gIxStop, stop_on)
+    PUSH(gIxFields, spec$)
+    PUSH(gIxDocs, 0)
+    PUSH(gIxTokens, 0.0)
+    PUSH(gIxDirty, 1)
+    RETURN CLNG(LEN(gIxK1) - 1)
+ENDFUNC
+
+' "title:2,body:1" from a map of field name to weight.
+FUNC FieldSpec$(fm)
+    IF TYPEOF(fm) <> "OBJECT" THEN THROW "SEARCH.INDEX: fields is a map of name to weight"
+    DIM fnames = MAP.KEYS(fm)
+    IF LEN(fnames) = 0 THEN THROW "SEARCH.INDEX: fields names no field"
+    DIM spec$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(fnames) - 1
+        DIM fname$ = fnames[i]
+        DIM fwv = fm{fname$}
+        IF INSTR(fname$, ":") >= 0 ORELSE INSTR(fname$, ",") >= 0 THEN THROW "SEARCH.INDEX: a field name holds no : or ,"
+        IF spec$ <> "" THEN spec$ = spec$ + ","
+        spec$ = spec$ + fname$ + ":" + STR$(fwv)
+    NEXT i
+    RETURN spec$
+ENDFUNC
+
+' The analysed terms of a text for an index, stop words left out, in order.
+EXPORT FUNC TOKENS(ix, source$)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM words = FoldWords(h, source$)
+    DIM terms = []
+    DIM i = 0
+    FOR i = 0 TO LEN(words) - 1
+        DIM w$ = words[i]
+        DIM term$ = TermOf$(h, w$)
+        IF term$ <> "" THEN PUSH(terms, term$)
+    NEXT i
+    RETURN terms
+ENDFUNC
+
+' The stem of one lower case word for en or de; other languages keep it.
+EXPORT FUNC STEM$(word$, lang$ = "en")
+    RETURN StemWord$(LCASE$(word$), LCASE$(lang$))
+ENDFUNC
+
+FUNC TermId(h, term$, surface$)
+    DIM tk$ = STR$(h) + ":" + term$
+    IF MAP.EXISTS(gTermMap, tk$) THEN
+        DIM known = gTermMap{tk$}
+        RETURN CLNG(known)
+    ENDIF
+    DIM t = CLNG(LEN(gTermIx))
+    PUSH(gTermIx, h)
+    PUSH(gTermText, term$)
+    PUSH(gTermSurface, surface$)
+    PUSH(gTermDf, 0)
+    PUSH(gTermHead, -1)
+    PUSH(gTermIdf, 0.0)
+    gTermMap{tk$} = t
+    AddTrigrams(h, t, term$)
+    RETURN t
+ENDFUNC
+
+FUNC Trigrams(term$)
+    DIM padded$ = "$" + term$ + "$"
+    DIM tris = []
+    DIM i = 0
+    FOR i = 0 TO LEN(padded$) - 3
+        PUSH(tris, MID$(padded$, i, 3))
+    NEXT i
+    RETURN tris
+ENDFUNC
+
+SUB AddTrigrams(h, t, term$)
+    DIM tris = Trigrams(term$)
+    DIM i = 0
+    FOR i = 0 TO LEN(tris) - 1
+        DIM tri$ = tris[i]
+        DIM tk$ = STR$(h) + ":" + tri$
+        DIM prev_node = -1
+        IF MAP.EXISTS(gTriMap, tk$) THEN
+            DIM headv = gTriMap{tk$}
+            prev_node = headv
+        ENDIF
+        DIM node = CLNG(LEN(gTriTerm))
+        PUSH(gTriTerm, t)
+        PUSH(gTriNext, prev_node)
+        gTriMap{tk$} = node
+    NEXT i
+ENDSUB
+
+' A document under key$: a text for the default field (body, or the first
+' field the index names) or a map of field name to text. A key that is
+' already there is replaced.
+EXPORT SUB ADD(ix, key$, content)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM dk$ = STR$(h) + ":" + key$
+    IF MAP.EXISTS(gDocMap, dk$) THEN DropDoc(h, key$)
+    DIM spec$ = gIxFields[h]
+    DIM spec = SPLIT(spec$, ",")
+    DIM fnames = []
+    DIM fweights = []
+    DIM ftexts = []
+    DIM i = 0
+    IF TYPEOF(content) = "OBJECT" THEN
+        FOR i = 0 TO LEN(spec) - 1
+            DIM entry$ = spec[i]
+            DIM cut = CINT(INSTR(entry$, ":"))
+            DIM sname$ = LEFT$(entry$, cut)
+            IF MAP.EXISTS(content, sname$) THEN
+                DIM sval = content{sname$}
+                PUSH(fnames, sname$)
+                PUSH(fweights, VAL(MID$(entry$, cut + 1, LEN(entry$))))
+                PUSH(ftexts, "" + sval)
+            ENDIF
+        NEXT i
+        DIM ckeys = MAP.KEYS(content)
+        FOR i = 0 TO LEN(ckeys) - 1
+            DIM cname$ = ckeys[i]
+            IF INSTR("," + spec$, "," + cname$ + ":") < 0 THEN
+                DIM cval = content{cname$}
+                PUSH(fnames, cname$)
+                PUSH(fweights, 1)
+                PUSH(ftexts, "" + cval)
+            ENDIF
+        NEXT i
+    ELSE
+        DIM dflt$ = "body"
+        DIM wdefault = 1.0
+        IF INSTR("," + spec$, ",body:") < 0 THEN
+            DIM first$ = spec[0]
+            dflt$ = LEFT$(first$, CINT(INSTR(first$, ":")))
+        ENDIF
+        FOR i = 0 TO LEN(spec) - 1
+            DIM dentry$ = spec[i]
+            DIM dcut = CINT(INSTR(dentry$, ":"))
+            IF LEFT$(dentry$, dcut) = dflt$ THEN wdefault = VAL(MID$(dentry$, dcut + 1, LEN(dentry$)))
+        NEXT i
+        PUSH(fnames, dflt$)
+        PUSH(fweights, wdefault)
+        PUSH(ftexts, "" + content)
+    ENDIF
+
+    DIM tf AS MAP
+    DIM posmap AS MAP
+    DIM surf AS MAP
+    DIM order = []
+    DIM doc_len = 0.0
+    DIM pos_base = 0
+    DIM stored$ = ""
+    DIM f = 0
+    FOR f = 0 TO LEN(fnames) - 1
+        DIM fname$ = fnames[f]
+        DIM fw = fweights[f]
+        DIM ftext$ = ftexts[f]
+        stored$ = stored$ + " " + CODEC.BASE64_ENCODE$(fname$) + " " + CODEC.BASE64_ENCODE$(ftext$)
+        DIM words = FoldWords(h, ftext$)
+        FOR i = 0 TO LEN(words) - 1
+            DIM w$ = words[i]
+            DIM tok$ = TermOf$(h, w$)
+            IF tok$ <> "" THEN
+                DIM at$ = STR$(CLNG(pos_base + i))
+                IF MAP.EXISTS(tf, tok$) THEN
+                    DIM had = tf{tok$}
+                    tf{tok$} = had + fw
+                    DIM hp$ = posmap{tok$}
+                    posmap{tok$} = hp$ + "," + at$
+                ELSE
+                    tf{tok$} = fw
+                    posmap{tok$} = at$
+                    surf{tok$} = w$
+                    PUSH(order, tok$)
+                ENDIF
+                doc_len = doc_len + fw
+            ENDIF
+        NEXT i
+        pos_base = pos_base + LEN(words) + 1000
+    NEXT f
+
+    DIM d = CLNG(LEN(gDocIx))
+    PUSH(gDocIx, h)
+    PUSH(gDocKey, key$)
+    PUSH(gDocLen, doc_len)
+    PUSH(gDocAlive, 1)
+    PUSH(gDocStore, stored$)
+    DIM ids$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(order) - 1
+        DIM term$ = order[k]
+        DIM sf$ = surf{term$}
+        DIM t = CLNG(TermId(h, term$, sf$))
+        DIM tfv = tf{term$}
+        DIM pv$ = posmap{term$}
+        DIM p = CLNG(LEN(gPostDoc))
+        DIM old_head = gTermHead[t]
+        PUSH(gPostDoc, d)
+        PUSH(gPostTf, tfv)
+        PUSH(gPostPos, pv$)
+        PUSH(gPostNext, old_head)
+        gTermHead[t] = p
+        gTermDf[t] = gTermDf[t] + 1
+        ids$ = ids$ + "," + STR$(t)
+    NEXT k
+    PUSH(gDocTerms, ids$)
+    gDocMap{dk$} = d
+    gIxDocs[h] = gIxDocs[h] + 1
+    gIxTokens[h] = gIxTokens[h] + doc_len
+    gIxDirty[h] = 1
+ENDSUB
+
+SUB DropDoc(h, key$)
+    DIM dk$ = STR$(h) + ":" + key$
+    DIM dv = gDocMap{dk$}
+    DIM d = CLNG(dv)
+    gDocAlive[d] = 0
+    DIM ids$ = gDocTerms[d]
+    DIM ids = SPLIT(ids$, ",")
+    DIM i = 0
+    FOR i = 0 TO LEN(ids) - 1
+        DIM one$ = ids[i]
+        IF one$ <> "" THEN
+            DIM t = CLNG(VAL(one$))
+            gTermDf[t] = gTermDf[t] - 1
+        ENDIF
+    NEXT i
+    gIxDocs[h] = gIxDocs[h] - 1
+    gIxTokens[h] = gIxTokens[h] - gDocLen[d]
+    MAP.DELETE(gDocMap, dk$)
+    gIxDirty[h] = 1
+ENDSUB
+
+' The document under key$ taken out; TRUE when there was one.
+EXPORT FUNC REMOVE(ix, key$)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    IF NOT MAP.EXISTS(gDocMap, STR$(h) + ":" + key$) THEN RETURN FALSE
+    DropDoc(h, key$)
+    RETURN TRUE
+ENDFUNC
+
+' Whether a document is filed under key$.
+EXPORT FUNC HAS(ix, key$)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    RETURN MAP.EXISTS(gDocMap, STR$(h) + ":" + key$)
+ENDFUNC
+
+' The number of documents in an index.
+EXPORT FUNC DOCCOUNT(ix)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM n = gIxDocs[h]
+    RETURN CLNG(n)
+ENDFUNC
+
+' Documents, terms and the average document length of an index.
+EXPORT FUNC STATS(ix)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM n_terms = 0
+    DIM t = 0
+    FOR t = 0 TO LEN(gTermIx) - 1
+        IF gTermIx[t] = h ANDALSO gTermDf[t] > 0 THEN n_terms = n_terms + 1
+    NEXT t
+    DIM n_docs = gIxDocs[h]
+    DIM avg = 0.0
+    IF n_docs > 0 THEN avg = gIxTokens[h] / n_docs
+    RETURN {"docs": CLNG(n_docs), "terms": CLNG(n_terms), "avgdl": avg}
+ENDFUNC
+
+' ---- ranking ----
+
+' idf per term as BM25Okapi has it: log(N - n + 0.5) - log(n + 0.5), and a
+' term in more than half the documents gets epsilon times the average idf.
+SUB RefreshIdf(h)
+    IF gIxDirty[h] <> 0 THEN
+        DIM n_docs = gIxDocs[h]
+        DIM idf_sum = 0.0
+        DIM n_terms = 0
+        DIM negatives = []
+        DIM t = 0
+        FOR t = 0 TO LEN(gTermIx) - 1
+            IF gTermIx[t] = h ANDALSO gTermDf[t] > 0 THEN
+                DIM freq = gTermDf[t]
+                DIM idf = LOG(n_docs - freq + 0.5) - LOG(freq + 0.5)
+                gTermIdf[t] = idf
+                idf_sum = idf_sum + idf
+                n_terms = n_terms + 1
+                IF idf < 0 THEN PUSH(negatives, t)
+            ENDIF
+        NEXT t
+        IF n_terms > 0 THEN
+            DIM floor_idf = gIxEps[h] * (idf_sum / n_terms)
+            DIM i = 0
+            FOR i = 0 TO LEN(negatives) - 1
+                DIM nt = negatives[i]
+                gTermIdf[CLNG(nt)] = floor_idf
+            NEXT i
+        ENDIF
+        gIxDirty[h] = 0
+    ENDIF
+ENDSUB
+
+' The term id for a query term, a close indexed term when fuzzy_d allows it,
+' or -1.
+FUNC LookupTerm(h, term$, fuzzy_d)
+    DIM tk$ = STR$(h) + ":" + term$
+    IF MAP.EXISTS(gTermMap, tk$) THEN
+        DIM known = gTermMap{tk$}
+        DIM t = CLNG(known)
+        IF gTermDf[t] > 0 THEN RETURN t
+    ENDIF
+    IF fuzzy_d <= 0 THEN RETURN -1
+    DIM cands = CandidateIds(h, term$, fuzzy_d)
+    DIM best = -1
+    DIM best_d = fuzzy_d + 1
+    DIM best_df = -1
+    DIM best$ = ""
+    DIM i = 0
+    FOR i = 0 TO LEN(cands) - 1
+        DIM ct = cands[i]
+        DIM c = CLNG(ct)
+        DIM cand$ = gTermText[c]
+        DIM dist = FUZZY.LEVENSHTEIN(term$, cand$)
+        DIM cdf = gTermDf[c]
+        IF dist < best_d ORELSE (dist = best_d ANDALSO (cdf > best_df ORELSE (cdf = best_df ANDALSO cand$ < best$))) THEN
+            best = c
+            best_d = dist
+            best_df = cdf
+            best$ = cand$
+        ENDIF
+    NEXT i
+    RETURN best
+ENDFUNC
+
+' The live terms within max_d edits of term$. The trigram lists give the
+' candidates: an edit changes at most three padded trigrams, so a term needs
+' LEN(trigrams) - 3 * max_d shared ones before its distance is computed.
+FUNC CandidateIds(h, term$, max_d)
+    DIM tris = Trigrams(term$)
+    DIM counts AS MAP
+    DIM seen_ids = []
+    DIM i = 0
+    FOR i = 0 TO LEN(tris) - 1
+        DIM tri$ = tris[i]
+        DIM tk$ = STR$(h) + ":" + tri$
+        IF MAP.EXISTS(gTriMap, tk$) THEN
+            DIM headv = gTriMap{tk$}
+            DIM node = CLNG(headv)
+            DIM hop = 0
+            FOR hop = 0 TO LEN(gTriTerm)
+                IF node < 0 THEN EXITFOR
+                DIM t = gTriTerm[node]
+                DIM ck$ = STR$(CLNG(t))
+                IF MAP.EXISTS(counts, ck$) THEN
+                    DIM had = counts{ck$}
+                    counts{ck$} = had + 1
+                ELSE
+                    counts{ck$} = 1
+                    PUSH(seen_ids, t)
+                ENDIF
+                node = CLNG(gTriNext[node])
+            NEXT hop
+        ENDIF
+    NEXT i
+    DIM need = LEN(tris) - 3 * max_d
+    IF need < 1 THEN need = 1
+    DIM out = []
+    FOR i = 0 TO LEN(seen_ids) - 1
+        DIM sid = seen_ids[i]
+        DIM c = CLNG(sid)
+        DIM hits_c = counts{STR$(c)}
+        IF hits_c >= need ANDALSO gTermDf[c] > 0 THEN
+            DIM cand$ = gTermText[c]
+            IF ABS(LEN(cand$) - LEN(term$)) <= max_d THEN
+                IF FUZZY.LEVENSHTEIN(term$, cand$) <= max_d THEN PUSH(out, c)
+            ENDIF
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Indices of the entries sorted by score, highest first, then by key.
+FUNC SortIdx(scores, keys)
+    DIM n = LEN(scores)
+    DIM src = ZEROS(n)
+    DIM dst = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        src[i] = i
+    NEXT i
+    DIM width_n = 1
+    DIM pass_i = 0
+    FOR pass_i = 0 TO 62
+        IF width_n >= n THEN EXITFOR
+        DIM lo = 0
+        DIM run_i = 0
+        FOR run_i = 0 TO n
+            IF lo >= n THEN EXITFOR
+            DIM mid = lo + width_n
+            IF mid > n THEN mid = n
+            DIM hi = lo + 2 * width_n
+            IF hi > n THEN hi = n
+            DIM a = lo
+            DIM bi = mid
+            DIM o = 0
+            FOR o = lo TO hi - 1
+                DIM take_left = FALSE
+                IF a < mid ANDALSO bi >= hi THEN
+                    take_left = TRUE
+                ELSEIF a < mid THEN
+                    DIM ia = CLNG(src[a])
+                    DIM ib = CLNG(src[bi])
+                    DIM sa = scores[ia]
+                    DIM sb = scores[ib]
+                    DIM ka$ = keys[ia]
+                    DIM kb$ = keys[ib]
+                    IF sa > sb ORELSE (sa = sb ANDALSO ka$ <= kb$) THEN take_left = TRUE
+                ENDIF
+                IF take_left THEN
+                    dst[o] = src[a]
+                    a = a + 1
+                ELSE
+                    dst[o] = src[bi]
+                    bi = bi + 1
+                ENDIF
+            NEXT o
+            lo = lo + 2 * width_n
+        NEXT run_i
+        FOR i = 0 TO n - 1
+            src[i] = dst[i]
+        NEXT i
+        width_n = width_n * 2
+    NEXT pass_i
+    RETURN src
+ENDFUNC
+
+' The documents matching a query, best first, as maps with key and score.
+' Words are ORed; a part in double quotes must appear as a phrase. opts:
+' "limit" (10; 0 for all), "all" (1: every query term must be in the
+' document), "fuzzy" (0; 1 or 2: a query term not in the index is replaced
+' by the closest indexed term within that many edits).
+EXPORT FUNC QUERY(ix, query$, opts = 0)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM limit_n = 10
+    DIM need_all = 0
+    DIM fuzzy_d = 0
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "limit") THEN
+            DIM lv = opts{"limit"}
+            limit_n = CLNG(lv)
+        ENDIF
+        IF MAP.EXISTS(opts, "all") THEN
+            DIM av = opts{"all"}
+            IF av THEN need_all = 1
+        ENDIF
+        IF MAP.EXISTS(opts, "fuzzy") THEN
+            DIM fv = opts{"fuzzy"}
+            fuzzy_d = CLNG(fv)
+        ENDIF
+    ENDIF
+    DIM results = []
+    IF gIxDocs[h] = 0 THEN RETURN results
+    RefreshIdf(h)
+
+    DIM parts = SPLIT(query$, CHR$(34))
+    DIM qterms = []
+    DIM phrases = []
+    DIM missing = 0
+    DIM part_i = 0
+    DIM i = 0
+    FOR part_i = 0 TO LEN(parts) - 1
+        DIM part$ = parts[part_i]
+        DIM words = FoldWords(h, part$)
+        DIM phrase$ = ""
+        FOR i = 0 TO LEN(words) - 1
+            DIM w$ = words[i]
+            DIM term$ = TermOf$(h, w$)
+            IF term$ <> "" THEN
+                DIM t = CLNG(LookupTerm(h, term$, fuzzy_d))
+                PUSH(qterms, t)
+                IF t < 0 THEN missing = 1
+                IF (part_i MOD 2) = 1 THEN phrase$ = phrase$ + "," + STR$(t) + ":" + STR$(CLNG(i))
+            ENDIF
+        NEXT i
+        IF (part_i MOD 2) = 1 ANDALSO phrase$ <> "" THEN PUSH(phrases, MID$(phrase$, 1, LEN(phrase$)))
+    NEXT part_i
+    IF LEN(qterms) = 0 THEN RETURN results
+    IF need_all ANDALSO missing THEN RETURN results
+
+    DIM n_all = LEN(gDocIx)
+    DIM acc = ZEROS(n_all)
+    DIM mark = ZEROS(n_all)
+    DIM hits = ZEROS(n_all)
+    DIM touched = []
+    DIM counted AS MAP
+    DIM distinct = 0
+    DIM k1 = gIxK1[h]
+    DIM b_v = gIxB[h]
+    DIM avgdl = gIxTokens[h] / gIxDocs[h]
+    DIM qi = 0
+    FOR qi = 0 TO LEN(qterms) - 1
+        DIM qt = qterms[qi]
+        DIM tq = CLNG(qt)
+        IF tq >= 0 THEN
+            DIM first_time = NOT MAP.EXISTS(counted, STR$(tq))
+            IF first_time THEN
+                counted{STR$(tq)} = 1
+                distinct = distinct + 1
+            ENDIF
+            DIM idf = gTermIdf[tq]
+            DIM p = CLNG(gTermHead[tq])
+            DIM hop = 0
+            FOR hop = 0 TO LEN(gPostDoc)
+                IF p < 0 THEN EXITFOR
+                DIM d = CLNG(gPostDoc[p])
+                IF gDocAlive[d] = 1 THEN
+                    DIM freq = gPostTf[p]
+                    DIM dl = gDocLen[d]
+                    IF mark[d] = 0 THEN
+                        mark[d] = 1
+                        PUSH(touched, d)
+                    ENDIF
+                    acc[d] = acc[d] + idf * (freq * (k1 + 1) / (freq + k1 * (1 - b_v + b_v * dl / avgdl)))
+                    IF first_time THEN hits[d] = hits[d] + 1
+                ENDIF
+                p = CLNG(gPostNext[p])
+            NEXT hop
+        ENDIF
+    NEXT qi
+
+    DIM keys_s = []
+    DIM scores_s = []
+    DIM j = 0
+    FOR j = 0 TO LEN(touched) - 1
+        DIM td = touched[j]
+        DIM dd = CLNG(td)
+        DIM keep = TRUE
+        IF need_all ANDALSO hits[dd] < distinct THEN keep = FALSE
+        IF keep ANDALSO LEN(phrases) > 0 THEN keep = PhrasesMatch(phrases, dd)
+        IF keep THEN
+            DIM dkey$ = gDocKey[dd]
+            PUSH(keys_s, dkey$)
+            PUSH(scores_s, acc[dd])
+        ENDIF
+    NEXT j
+    IF LEN(keys_s) = 0 THEN RETURN results
+    DIM order = SortIdx(scores_s, keys_s)
+    DIM n_out = LEN(order)
+    IF limit_n > 0 ANDALSO limit_n < n_out THEN n_out = limit_n
+    FOR j = 0 TO n_out - 1
+        DIM oi = order[j]
+        DIM o = CLNG(oi)
+        DIM rk$ = keys_s[o]
+        DIM rs = scores_s[o]
+        PUSH(results, {"key": rk$, "score": rs})
+    NEXT j
+    RETURN results
+ENDFUNC
+
+' The positions string of term t in document d, or "".
+FUNC PositionsOf$(t, d)
+    IF t < 0 THEN RETURN ""
+    DIM p = CLNG(gTermHead[t])
+    DIM hop = 0
+    FOR hop = 0 TO LEN(gPostDoc)
+        IF p < 0 THEN EXITFOR
+        IF gPostDoc[p] = d THEN
+            DIM pos$ = gPostPos[p]
+            RETURN pos$
+        ENDIF
+        p = CLNG(gPostNext[p])
+    NEXT hop
+    RETURN ""
+ENDFUNC
+
+' Whether document d holds every phrase: "term:offset" pairs whose terms sit
+' at those offsets from one another.
+FUNC PhrasesMatch(phrases, d)
+    DIM i = 0
+    FOR i = 0 TO LEN(phrases) - 1
+        DIM phrase$ = phrases[i]
+        DIM pairs = SPLIT(phrase$, ",")
+        DIM first$ = pairs[0]
+        DIM fcut = CINT(INSTR(first$, ":"))
+        DIM t0 = CLNG(VAL(LEFT$(first$, fcut)))
+        DIM off0 = CLNG(VAL(MID$(first$, fcut + 1, LEN(first$))))
+        DIM starts$ = PositionsOf$(t0, d)
+        IF starts$ = "" THEN RETURN FALSE
+        DIM starts = SPLIT(starts$, ",")
+        DIM found = FALSE
+        DIM s = 0
+        FOR s = 0 TO LEN(starts) - 1
+            IF NOT found THEN
+                DIM st$ = starts[s]
+                DIM origin = CLNG(VAL(st$)) - off0
+                DIM all_there = TRUE
+                DIM j = 1
+                FOR j = 1 TO LEN(pairs) - 1
+                    IF all_there THEN
+                        DIM pair$ = pairs[j]
+                        DIM pcut = CINT(INSTR(pair$, ":"))
+                        DIM tj = CLNG(VAL(LEFT$(pair$, pcut)))
+                        DIM offj = CLNG(VAL(MID$(pair$, pcut + 1, LEN(pair$))))
+                        DIM posj$ = PositionsOf$(tj, d)
+                        IF INSTR("," + posj$ + ",", "," + STR$(CLNG(origin + offj)) + ",") < 0 THEN all_there = FALSE
+                    ENDIF
+                NEXT j
+                IF all_there THEN found = TRUE
+            ENDIF
+        NEXT s
+        IF NOT found THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+' The BM25 score of one document for a query; 0 when it does not match.
+EXPORT FUNC SCORE(ix, query$, key$)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM hits = QUERY(h, query$, {"limit": 0})
+    DIM i = 0
+    FOR i = 0 TO LEN(hits) - 1
+        DIM hit = hits[i]
+        DIM hk$ = hit{"key"}
+        IF hk$ = key$ THEN
+            DIM hs = hit{"score"}
+            RETURN hs
+        ENDIF
+    NEXT i
+    RETURN 0.0
+ENDFUNC
+
+' Indexed words close to word$, for "did you mean": maps with word (as it
+' was first seen in a document), distance and docs, closest first, then the
+' most frequent.
+EXPORT FUNC SUGGEST(ix, word$, limit_n = 5, max_d = 2)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM out = []
+    DIM words = FoldWords(h, word$)
+    IF LEN(words) = 0 THEN RETURN out
+    DIM w$ = words[0]
+    DIM term$ = StemWord$(w$, gIxLang[h])
+    IF gIxStem[h] = 0 THEN term$ = w$
+    DIM cands = CandidateIds(h, term$, max_d)
+    DIM n = LEN(cands)
+    IF n = 0 THEN RETURN out
+    DIM ranks = ZEROS(n)
+    DIM labels = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM ct = cands[i]
+        DIM c = CLNG(ct)
+        DIM cand$ = gTermText[c]
+        DIM dist = FUZZY.LEVENSHTEIN(term$, cand$)
+        ranks[i] = 0.0 - dist * 1000000.0 + gTermDf[c]
+        DIM sfc$ = gTermSurface[c]
+        PUSH(labels, sfc$)
+    NEXT i
+    DIM order = SortIdx(ranks, labels)
+    DIM n_out = n
+    IF limit_n > 0 ANDALSO limit_n < n_out THEN n_out = limit_n
+    FOR i = 0 TO n_out - 1
+        DIM oi = order[i]
+        DIM o = CLNG(oi)
+        DIM oc = cands[o]
+        DIM co = CLNG(oc)
+        DIM label$ = gTermSurface[co]
+        DIM ctext$ = gTermText[co]
+        DIM odf = gTermDf[co]
+        PUSH(out, {"word": label$, "distance": CLNG(FUZZY.LEVENSHTEIN(term$, ctext$)), "docs": CLNG(odf)})
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ---- merging ----
+
+' Result lists merged by reciprocal rank fusion: a key scores the sum of
+' 1 / (k_const + rank) over the lists it is in, rank counted from 1. A list
+' holds maps with a key (as QUERY answers) or plain keys. The merged list of
+' maps with key and score, best first, then by key.
+EXPORT FUNC RRF(lists, k_const = 60, limit_n = 0)
+    DIM fused AS MAP
+    DIM keys_s = []
+    DIM li = 0
+    DIM r = 0
+    FOR li = 0 TO LEN(lists) - 1
+        DIM one = lists[li]
+        FOR r = 0 TO LEN(one) - 1
+            DIM hit = one[r]
+            DIM rkey$ = ""
+            IF TYPEOF(hit) = "OBJECT" THEN
+                DIM hk = hit{"key"}
+                rkey$ = "" + hk
+            ELSE
+                rkey$ = "" + hit
+            ENDIF
+            DIM gain = 1.0 / (k_const + r + 1)
+            IF MAP.EXISTS(fused, rkey$) THEN
+                DIM had = fused{rkey$}
+                fused{rkey$} = had + gain
+            ELSE
+                fused{rkey$} = gain
+                PUSH(keys_s, rkey$)
+            ENDIF
+        NEXT r
+    NEXT li
+    DIM results = []
+    DIM n = LEN(keys_s)
+    IF n = 0 THEN RETURN results
+    DIM scores_s = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM sk$ = keys_s[i]
+        DIM sv = fused{sk$}
+        scores_s[i] = sv
+    NEXT i
+    DIM order = SortIdx(scores_s, keys_s)
+    DIM n_out = n
+    IF limit_n > 0 ANDALSO limit_n < n_out THEN n_out = limit_n
+    FOR i = 0 TO n_out - 1
+        DIM oi = order[i]
+        DIM o = CLNG(oi)
+        DIM ok$ = keys_s[o]
+        DIM os = scores_s[o]
+        PUSH(results, {"key": ok$, "score": os})
+    NEXT i
+    RETURN results
+ENDFUNC
+
+' ---- files ----
+
+' The index written to path$: its settings and every document's fields in
+' base64, so READFILE builds the same index again.
+EXPORT SUB WRITEFILE(ix, path$)
+    DIM h = CLNG(ix)
+    CheckIndex(h)
+    DIM tab$ = CHR$(9)
+    DIM lines = []
+    PUSH(lines, "SEARCH" + tab$ + "1")
+    PUSH(lines, "k1" + tab$ + STR$(gIxK1[h]))
+    PUSH(lines, "b" + tab$ + STR$(gIxB[h]))
+    PUSH(lines, "epsilon" + tab$ + STR$(gIxEps[h]))
+    DIM lang$ = gIxLang[h]
+    PUSH(lines, "lang" + tab$ + lang$)
+    PUSH(lines, "stem" + tab$ + STR$(gIxStem[h]))
+    PUSH(lines, "stopwords" + tab$ + STR$(gIxStop[h]))
+    DIM spec$ = gIxFields[h]
+    PUSH(lines, "fields" + tab$ + spec$)
+    DIM d = 0
+    FOR d = 0 TO LEN(gDocIx) - 1
+        IF gDocIx[d] = h ANDALSO gDocAlive[d] = 1 THEN
+            DIM dkey$ = gDocKey[d]
+            DIM dstore$ = gDocStore[d]
+            PUSH(lines, "doc" + tab$ + CODEC.BASE64_ENCODE$(dkey$) + tab$ + TRIM$(dstore$))
+        ENDIF
+    NEXT d
+    TXTWRITER path$, JOIN(lines, CHR$(10)) + CHR$(10)
+ENDSUB
+
+' A new index from a file WRITEFILE made; the handle.
+EXPORT FUNC READFILE(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "SEARCH.READFILE: no file " + path$
+    DIM body$ = TXTREADER$(path$)
+    DIM lines = SPLIT(REPLACE$(body$, CHR$(13), ""), CHR$(10))
+    DIM header$ = lines[0]
+    IF header$ <> "SEARCH" + CHR$(9) + "1" THEN THROW "SEARCH.READFILE: not a SEARCH index file"
+    DIM opts AS MAP
+    DIM i = 0
+    DIM doc_start = LEN(lines)
+    FOR i = 1 TO LEN(lines) - 1
+        DIM ln$ = lines[i]
+        IF LEFT$(ln$, 4) = "doc" + CHR$(9) THEN
+            IF i < doc_start THEN doc_start = i
+        ELSEIF ln$ <> "" ANDALSO i < doc_start THEN
+            DIM cells = SPLIT(ln$, CHR$(9))
+            DIM name$ = cells[0]
+            DIM value$ = cells[1]
+            IF name$ = "k1" ORELSE name$ = "b" ORELSE name$ = "epsilon" ORELSE name$ = "stem" ORELSE name$ = "stopwords" THEN
+                opts{name$} = VAL(value$)
+            ELSEIF name$ = "lang" THEN
+                opts{"lang"} = value$
+            ELSEIF name$ = "fields" THEN
+                DIM fm AS MAP
+                DIM entries = SPLIT(value$, ",")
+                DIM e_i = 0
+                FOR e_i = 0 TO LEN(entries) - 1
+                    DIM entry$ = entries[e_i]
+                    DIM cut = CINT(INSTR(entry$, ":"))
+                    fm{LEFT$(entry$, cut)} = VAL(MID$(entry$, cut + 1, LEN(entry$)))
+                NEXT e_i
+                opts{"fields"} = fm
+            ENDIF
+        ENDIF
+    NEXT i
+    DIM h = CLNG(INDEX(opts))
+    FOR i = doc_start TO LEN(lines) - 1
+        DIM dl$ = lines[i]
+        IF LEFT$(dl$, 4) = "doc" + CHR$(9) THEN
+            DIM dcells = SPLIT(dl$, CHR$(9))
+            DIM enc_key$ = dcells[1]
+            DIM stored$ = ""
+            IF LEN(dcells) > 2 THEN stored$ = dcells[2]
+            DIM chunks = SPLIT(stored$, " ")
+            DIM content AS MAP
+            DIM c = 0
+            FOR c = 0 TO LEN(chunks) - 2 STEP 2
+                DIM enc_name$ = chunks[c]
+                DIM enc_text$ = chunks[c + 1]
+                content{CODEC.BASE64_DECODE$(enc_name$)} = CODEC.BASE64_DECODE$(enc_text$)
+            NEXT c
+            ADD(h, CODEC.BASE64_DECODE$(enc_key$), content)
+        ENDIF
+    NEXT i
+    RETURN h
+ENDFUNC
