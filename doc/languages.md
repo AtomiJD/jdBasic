@@ -1697,9 +1697,24 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 * **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array`**: Returns a string where all found find_string$ are replaced with replace_with_string$.
 * **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
 * **`BYTEAT(str$, index) -> Integer`**: Returns the numeric byte value (0-255) at the specified 0-based index in a string. This provides fast O(1) access to raw string data, which is essential when processing binary data loaded via `BINREADER$`.
-* **`PACK$(format$, v1, v2, ...) -> string$`**: Packs numbers into a binary string based on a format.
-  * Format specifiers: `<` (Little Endian), `>` (Big Endian), `b` (Byte), `s` (Short), `i` (Integer), `l` (Long), `f` (Float), `d` (Double).
-* **`UNPACK(format$, binary_data$) -> Array`**: Unpacks a binary string into an Array of numbers based on the format string.
+* **`PACK$(format$, v1, v2, ...) -> string$`**: Packs values into a binary string based on a format.
+  * Byte order: `<` little endian (the default), `>` big endian; it holds for the codes that follow, so one format can mix both.
+  * Numbers: `b` 8-bit, `s` 16-bit, `i` 32-bit, `l` 64-bit, `f` float, `d` double. `c`, `h` and `n` are the signed 8, 16 and 32-bit codes; they write the same bytes as `b`, `s` and `i` and differ when read back.
+  * `a` is a fixed-length string, NUL padded or cut to its count; `x` is a zero pad byte and takes no value.
+  * A count before a code repeats it: `"3i"` is `"iii"`. For `a` the count is the string length, for `x` the number of pad bytes. Codes are case-insensitive, whitespace is ignored.
+* **`UNPACK(format$, binary_data$, [offset]) -> Array`**: Reads `binary_data$` from the 0-based `offset` (default 0) with the same codes and returns one element per value. `b`, `s` and `i` read unsigned, `c`, `h`, `n` and `l` signed, `f` and `d` as doubles, `a` as a string of its count bytes; `x` skips. Data shorter than the format needs is an error.
+* **`PACKSIZE(format$) -> number`**: The byte count of a format, what `PACK$` writes and `UNPACK` reads.
+
+```basic
+' A 44-byte WAV header, field for field as Python's struct "<4sI4s4sIHHIIHH4sI" writes it
+DIM wav_fmt$ = "<4ai4a4aissiiss4ai"
+DIM hdr$ = PACK$(wav_fmt$, "RIFF", 436, "WAVE", "fmt ", 16, 1, 2, 44100, 176400, 4, 16, "data", 400)
+PRINT PACKSIZE(wav_fmt$)              ' 44
+PRINT UNPACK("<s", hdr$, 22)[0]       ' 2 channels
+
+' A Modbus RTU request: big-endian body, little-endian CRC
+DIM frame$ = PACK$(">bbss<s", 17, 3, 107, 3, 34678)
+```
 
 ### Math/Arithmetic/Round Functions
 
@@ -1741,6 +1756,23 @@ All numeric functions are vectorized - they also accept arrays and apply element
 * **`RANDOM([lo], [hi])`**: Uniform double in `[lo, hi]` (hi inclusive). `RANDOM()` is `[0, 1]`, `RANDOM(hi)` is `[0, hi]`. All three arities work in both the interpreter and native `-c`.
 * **`RANDOMSEED(seed)`**: Seeds the PRNG. Using the same seed twice produces the same sequence - useful for reproducible tests.
 
+`RND` and `RANDOM` share one process-wide generator from the C library, so its sequence differs between platforms and between runs that interleave other draws. The `RNG.*` generators are separate objects with a documented algorithm, xoshiro256** seeded through splitmix64: a seed gives the same sequence in the interpreter, in native `-c`, on every platform, and in any other implementation of the pair. They are not suited to secrets; use `CODEC.RANDOMBYTES$` there.
+
+* **`RNG.NEW(seed) -> handle`**: A new generator. Handles are numbers and can be passed to `ASYNC` tasks; access is serialised.
+* **`RNG.NEXT(handle) -> number`**: The next double in `[0, 1)`, 1 excluded, from the top 53 bits of the next output.
+* **`RNG.INT(handle, lo, hi) -> number`**: An integer in `lo..hi`, both ends included, drawn by rejection so every value is equally likely. `lo > hi` is an error.
+* **`RNG.FILL(handle, n) -> array`**: The next `n` doubles in `[0, 1)` as an array, the values `n` calls of `RNG.NEXT` give.
+* **`RNG.FREE(handle)`**: Releases the generator; the handle is invalid afterwards.
+
+```basic
+DIM dice = RNG.NEW(42)
+FOR i = 1 TO 5
+    PRINT RNG.INT(dice, 1, 6);
+NEXT i
+DIM noise = RNG.FILL(dice, 1000)
+RNG.FREE(dice)
+```
+
 #### Conversion
 
 Classic BASIC cast family - each takes any numeric/convertible value:
@@ -1775,7 +1807,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 ### Array & Matrix Functions
 
 * **`APPEND(array, value)`**: Appends a scalar value or all elements of another array to a given array, returning a new flat 1D array.
-* **`DIFF(array1, array2)`**: Returns a new array containing elements that are in `array1` but not in `array2`.
+* **`DIFF(array1, array2) -> array`**: Set difference: the elements of `array1` that do not occur in `array2`, in `array1`'s order and with its repeats kept. Elements compare by their string form, so `2` and `"2"` match. `DIFF([1,2,2,3], [2])` is `[1, 3]`. It is not a successive difference (NumPy's `diff`).
 * **`IOTA(N, [B=1], [S=1]) -> vector`**: Generates a vector of N numbers starting from B with step S. B,S defaults to 1 if not provided.
 * **`Reduction (SUM, PRODUCT, MIN, MAX, ANY, ALL)`**: Functions that reduce an array to a single value (e.g., `SUM(my_array)`) or a vector (`SUM(my_array, dimension)`). Dimension is 0 for reduce along rows and 1 for columns.
 
@@ -1837,7 +1869,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array. One entry of `shift_vector` per axis, outermost first; more entries than the array has axes is an error. `ROTATE(m, [1, 0])` turns the rows, `ROTATE(m, [0, 1])` the columns, `ROTATE(m, [1, 1])` both. A positive shift **pulls from ahead**: `out[i] = in[i + k]`, so `ROTATE([1,2,3,4,5], [1])` is `2 3 4 5 1`.
 * **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Like `ROTATE` but without the wraparound: what moves in from outside is `fill_value` (default `0`), and a whole row shifted off the edge comes back as a row of `fill_value`. Same per-axis rule as `ROTATE`, but note the **opposite sign convention**: a positive shift **pushes along** like a shift register, `out[i] = in[i - k]`, so `SHIFT([1,2,3,4,5], [1], 0)` is `0 1 2 3 4`. A shift at least as large as the axis leaves nothing but the fill.
 * **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix. Sorts numbers and strings (lexicographic); in a mixed array numbers order before strings. For a 2D matrix, `dimension` selects the column whose values order the rows - string key columns work (`XSORT(rows, 0)` sorts `[["bob",30],["alice",25]]` by name).
-* **`CONVOLVE(array, kernel, wrap_mode) -> array`**: Performs a 2D convolution of an array with a kernel.
+* **`CONVOLVE(array, kernel, [wrap_mode]) -> array`**: Slides `kernel` over `array`, centred on each element, and sums the products; the result has the shape of `array`. A vector takes a vector kernel, a matrix a matrix kernel. The kernel is **not flipped**, so strictly this is a correlation; for a symmetric kernel the two agree, otherwise reverse the kernel first for a true convolution. `wrap_mode` `TRUE` wraps around the edges, `FALSE` (the default) treats cells outside as absent. `CONVOLVE([1,2,3,4], [1,1,1])` is `[3, 6, 9, 7]`.
 * **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.
 
 #### Constructors & Flattening
@@ -1857,7 +1889,8 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`INDEXOF(array, value) -> number`**: Same as `FIND_IN_ARRAY` - returns the first 0-based index of a value, or -1 if not found.
 * **`COUNT(array, [value]) -> number`**: Counts occurrences of `value` in `array`. Without the second argument, returns the total length.
 * **`POP(array) -> value`** / **`PUSH(array, value)`**: Stack-like operations on an array.
-* **`HISTOGRAM(array, bins) -> [counts, edges]`**: Builds a histogram with the given number of bins. Returns counts and bin edges as two arrays.
+* **`HISTOGRAM(array, [bins]) -> array`**: Counts the values in `bins` equal-width bins (default 10) from the smallest to the largest value; the largest value lands in the last bin. Returns the counts only.
+* **`HISTEDGES(array, [bins]) -> array`**: The `bins + 1` edges those counts fall between. `HISTOGRAM([1,2,2,3,3,3,4], 4)` is `[1, 2, 3, 1]` and `HISTEDGES` of the same call is `[1, 1.75, 2.5, 3.25, 4]`.
 
 #### Statistics
 
@@ -1893,7 +1926,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 A ZIP file is a map from entry name to content, so that is the shape both
 directions use.
 
-* **`ZIP.WRITE(path$, entries) -> number`**: Writes `entries`, a map of name to content, as a ZIP archive and returns how many entries were written. A name may carry a directory component (`"data/rows.csv"`); the directories are created on extraction. Content is a byte string, so `CHR$(0)` inside it is data. An existing file at `path$` is replaced, not appended to.
+* **`ZIP.WRITE(path$, entries) -> number`**: Writes `entries`, a map of name to content, as a ZIP archive and returns how many entries were written. A name may carry a directory component (`"data/rows.csv"`); the directories are created on extraction. Content is a byte string, so `CHR$(0)` inside it is data. Each entry is deflated when that makes it smaller and stored otherwise, so already-compressed content costs no extra. An existing file at `path$` is replaced, not appended to.
 * **`ZIP.READ(path$) -> map`**: Reads every entry into a map of name to content. Directory markers are skipped. Entries stored either uncompressed or deflated are both handled, which covers archives written by any other tool.
 * **`ZIP.LIST(path$) -> array`**: The entry names, without reading the content. Use it to look inside a large archive cheaply.
 
@@ -2114,6 +2147,15 @@ These three natives redirect `PRINT`/all script output to an in-memory string bu
 * **`CODEC.BASE64_DECODE$(string$) -> string$`**: Decodes a Base64 encoded string back to its original format.
 * **`CODEC.SHA256$(string$) -> string$`**: Calculates the SHA256 hash of a string and returns it as a 64-character hex string.
 * **`CODEC.CRC32$(string$) -> string$`**: CRC-32 checksum as an 8-character hex string, the variant ZIP and PNG use. `CODEC.CRC32$("123456789")` is `"cbf43926"`, the check value every implementation agrees on.
+* **`CODEC.CRC32(data$, [running_crc]) -> number`**: The same checksum as a number from 0 to 4294967295 (`3421780262` for `"123456789"`). Pass the previous result to continue over the next piece, as with Python's `zlib.crc32(data, value)`: `CODEC.CRC32(b$, CODEC.CRC32(a$))` equals `CODEC.CRC32(a$ + b$)`, so a large file can be checked chunk by chunk.
+* **`CODEC.DEFLATE$(data$, [level], [format$]) -> string$`**: Compresses with DEFLATE (RFC 1951). `level` runs from 0 (stored blocks, no compression) to 9 (smallest, slowest), default 6. `format$` is `"zlib"` (the default, RFC 1950 with an Adler-32 trailer), `"gzip"` (RFC 1952, the `.gz` file format, with a CRC-32 trailer) or `"raw"` (no wrapper, what ZIP entries and PNG-internal streams build on). A format may stand in for the level: `CODEC.DEFLATE$(d$, "gzip")`. The result is binary.
+* **`CODEC.INFLATE$(data$, [format$]) -> string$`**: The reverse, for streams from any compressor. Without `format$` the gzip magic bytes or a valid zlib header select the wrapper and anything else is read as raw deflate. The zlib and gzip checksums are verified; damaged or truncated input raises an error. A gzip file with several members is read up to the end of the first.
+
+```basic
+DIM body$ = CODEC.DEFLATE$(json$, 9, "gzip")      ' what Content-Encoding: gzip expects
+DIM back$ = CODEC.INFLATE$(body$)
+DIM png_idat$ = CODEC.INFLATE$(chunk$, "zlib")
+```
 * **`CODEC.HMAC$(key$, message$, [algo$]) -> string$`**: Keyed hash (RFC 2104) of `message$` under `key$`, as a 64-character hex string. `algo$` defaults to `"SHA256"`, which is the only algorithm; anything else raises an error. A key longer than the 64-byte block is hashed first, a shorter one is zero padded, exactly as the standard prescribes, so the RFC 4231 vectors match. Both arguments are byte strings: an embedded `CHR$(0)` is data, not a terminator, which is what webhook signatures over binary payloads need.
 
 ```basic
@@ -3326,6 +3368,29 @@ the rest of the buffer and then keep returning the **EOF marker** (a
 `MAP { __chan_eof__: TRUE }`, recognised by `CHAN.IS_EOF`). Send on a
 closed channel throws.
 
+`CHAN.RECV(ch, timeout_ms)` gives up after `timeout_ms` milliseconds and
+returns the **timeout marker** (`MAP { __chan_timeout__: TRUE }`,
+recognised by `CHAN.IS_TIMEOUT`); `CHAN.TRY_RECV` does the same without
+waiting at all. `CHAN.SELECT` waits on several channels at once and names
+the first that is ready; a closed channel counts as ready, so the loop
+sees its EOF. `SELECT` does not take the value, and on a channel with
+several receivers another one can take it first, which `TRY_RECV` then
+reports as a timeout.
+
+```basic
+DIM sources = [jobs, control]
+DO
+    DIM which = CHAN.SELECT(sources, 500)
+    IF which = -1 THEN
+        PRINT "idle"
+    ELSE
+        DIM msg = CHAN.TRY_RECV(sources[which])
+        IF CHAN.IS_EOF(msg) THEN EXITDO
+        IF NOT CHAN.IS_TIMEOUT(msg) THEN PRINT which, msg
+    ENDIF
+LOOP
+```
+
 Native compile supports the full `CHAN.*` API including concurrent use
 across `ASYNC FUNC` consumers/producers - the call site for an ASYNC
 FUNC emits a `__jdrt_async_spawn` runtime call that detaches a thread
@@ -3348,7 +3413,10 @@ integers. Interp keeps the original tag and accepts either.
 |---|---|---|
 | `CHAN.OPEN(capacity)` | `INTEGER → handle` | `capacity = 0` → unbuffered rendezvous; `> 0` → bounded queue. |
 | `CHAN.SEND(ch, value)` | `handle, ANY` | Blocks while buffer full. Throws on a closed channel. |
-| `CHAN.RECV(ch)` | `handle → value` | Blocks while empty. Returns the EOF marker on a closed-and-drained channel. |
+| `CHAN.RECV(ch, [timeout_ms])` | `handle, INTEGER → value` | Blocks while empty, at most `timeout_ms` when given, then returns the timeout marker. Returns the EOF marker on a closed-and-drained channel. |
+| `CHAN.TRY_RECV(ch)` | `handle → value` | Never blocks: a waiting value, the EOF marker when closed and drained, else the timeout marker. |
+| `CHAN.SELECT(channels, [timeout_ms])` | `ARRAY, INTEGER → INTEGER` | Index of the first channel with a value waiting or closed; `-1` after `timeout_ms`. No or a negative timeout waits indefinitely. |
+| `CHAN.IS_TIMEOUT(value)` | `ANY → BOOLEAN` | Tests if a `RECV` / `TRY_RECV` result is the timeout marker. |
 | `CHAN.CLOSE(ch)` | `handle` | Idempotent. Wakes every parked SEND/RECV. |
 | `CHAN.IS_EOF(value)` | `ANY → BOOLEAN` | Tests if a `RECV` result is the EOF marker. |
 | `CHAN.IS_CLOSED(ch)` | `handle → BOOLEAN` | Status query. Returns `TRUE` for unknown handles. |

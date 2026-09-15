@@ -1,0 +1,101 @@
+' CODEC.INFLATE$ on streams Python's zlib and gzip wrote, CODEC.DEFLATE$ round
+' trips in every format and at every level, binary data with NUL bytes, the
+' numeric CODEC.CRC32, and ZIP.WRITE compressing its entries.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        IF LEN(expected$) < 200 THEN
+            PRINT "  expected " + expected$
+            PRINT "  got      " + actual$
+        ENDIF
+    ENDIF
+ENDSUB
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+FUNC InflateDamaged$(data$)
+    RETURN CODEC.INFLATE$(data$, "zlib")
+ENDFUNC
+
+DIM text$ = REPEAT$("hello hello hello hello, jdBasic compresses this line ", 20)
+Check("the sample text", STR$(LEN(text$)), "1080")
+
+DIM from_zlib$ = CODEC.BASE64_DECODE$("eNrLSM3JyVfIQCd1FLJSnBKLM5MVkvNzC4pSi4tTixVKMjKLFXIy81Ix1Y/qGtU1qmsE6QIACt+MUA==")
+Check("zlib written by Python", CODEC.INFLATE$(from_zlib$, "zlib"), text$)
+Check("zlib recognised by its header", CODEC.INFLATE$(from_zlib$), text$)
+DIM from_raw$ = CODEC.BASE64_DECODE$("K0osV0hJTctJLElVKC4pSk3M1VHIy1fISE1MSS0CAA==")
+Check("raw deflate written by Python", CODEC.INFLATE$(from_raw$, "raw"), "raw deflate stream, no header")
+DIM from_gzip$ = CODEC.BASE64_DECODE$("H4sIAAAAAAAC/0uvyixQyE3NTUotUijPLMlQSFTIS8xN1U0rSk1VyEhNTEktAgDExwq0IwAAAA==")
+Check("gzip written by Python", CODEC.INFLATE$(from_gzip$, "gzip"), "gzip member with a name-free header")
+Check("gzip recognised by its magic", CODEC.INFLATE$(from_gzip$), "gzip member with a name-free header")
+
+DIM formats = ["zlib", "gzip", "raw"]
+DIM levels = [0, 1, 6, 9]
+DIM trips AS INTEGER = 0
+DIM f AS INTEGER = 0
+DIM l AS INTEGER = 0
+FOR f = 0 TO 2
+    DIM fmt$ = formats[f]
+    FOR l = 0 TO 3
+        DIM level = levels[l]
+        DIM packed$ = CODEC.DEFLATE$(text$, level, fmt$)
+        IF CODEC.INFLATE$(packed$, fmt$) = text$ THEN trips = trips + 1
+    NEXT l
+NEXT f
+Check("twelve round trips, three formats at four levels", STR$(trips), "12")
+DIM best$ = CODEC.DEFLATE$(text$, 9)
+Ok("level 9 shrinks repeated text below a fifth", LEN(best$) < 216)
+Ok("the default format is zlib", BYTEAT(best$, 0) = 120)
+Check("level 0 stores the bytes", STR$(LEN(CODEC.DEFLATE$(text$, 0, "raw"))), "1085")
+Check("an empty string", CODEC.INFLATE$(CODEC.DEFLATE$("")), "")
+
+DIM noise$ = CODEC.RANDOMBYTES$(50000)
+DIM noise_packed$ = CODEC.DEFLATE$(noise$, 6, "gzip")
+Ok("random bytes come back whole", CODEC.INFLATE$(noise_packed$) = noise$)
+Ok("with NUL bytes inside", INSTR(noise$, CHR$(0)) >= 0)
+Ok("and hardly grow", LEN(noise_packed$) < 50100)
+
+DIM good$ = CODEC.DEFLATE$(text$, 6, "zlib")
+DIM last_byte AS INTEGER = BYTEAT(good$, LEN(good$) - 1)
+DIM damaged$ = LEFT$(good$, LEN(good$) - 1) + CHR$((last_byte + 1) MOD 256)
+DIM refused AS INTEGER = 0
+TRY
+    DIM bad$ = InflateDamaged$(damaged$)
+CATCH
+    refused = refused + 1
+ENDTRY
+Check("a wrong checksum is refused", STR$(refused), "1")
+
+Check("CRC32 as a number", STR$(CLNG(CODEC.CRC32("123456789"))), "3421780262")
+Check("CRC32 over two pieces", STR$(CLNG(CODEC.CRC32("6789", CODEC.CRC32("12345")))), "3421780262")
+
+DIM zip_path$ = MKTEMP$("jdbzip") + ".zip"
+DIM entries = {"text.txt": text$, "noise.bin": noise$}
+DIM written = ZIP.WRITE(zip_path$, entries)
+DIM back = ZIP.READ(zip_path$)
+DIM back_text$ = back{"text.txt"}
+DIM back_noise$ = back{"noise.bin"}
+Ok("ZIP.READ gets both entries back", back_text$ = text$ ANDALSO back_noise$ = noise$)
+Ok("the text entry was compressed", FILE.SIZE(zip_path$) < 51080)
+KILL zip_path$
+
+PRINT ""
+PRINT "CODEC DEFLATE TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

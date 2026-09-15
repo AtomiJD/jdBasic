@@ -1,0 +1,118 @@
+' RNG.* against an independent Python implementation of xoshiro256**
+' seeded through splitmix64: the same draws from the same seeds. A draw in
+' [0, 1) is compared as the whole number it is times 2^53.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+FUNC Draws$(handle, count)
+    DIM scale AS DOUBLE = 9007199254740992.0
+    DIM out$ = ""
+    DIM i AS INTEGER = 0
+    FOR i = 1 TO count
+        IF i > 1 THEN out$ = out$ + " "
+        out$ = out$ + STR$(CLNG(RNG.NEXT(handle) * scale))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC Ints$(handle, count, lo, hi)
+    DIM out$ = ""
+    DIM i AS INTEGER = 0
+    FOR i = 1 TO count
+        IF i > 1 THEN out$ = out$ + " "
+        out$ = out$ + STR$(CLNG(RNG.INT(handle, lo, hi)))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+FUNC IntsBackwards(handle)
+    RETURN RNG.INT(handle, 5, 1)
+ENDFUNC
+
+FUNC NextOfFreed(handle)
+    RETURN RNG.NEXT(handle)
+ENDFUNC
+
+DIM h42 = RNG.NEW(42)
+Check("seed 42, five draws", Draws$(h42, 5), "755370490430936 3413550631330343 6125286505004179 8328893607999084 8933375477570955")
+DIM dice = RNG.NEW(42)
+Check("seed 42, twelve dice", Ints$(dice, 12, 1, 6), "1 1 6 6 5 1 5 4 5 6 2 2")
+DIM h0 = RNG.NEW(0)
+Check("seed 0", Draws$(h0, 3), "5415695640260286 6735350249106120 927921571702396")
+DIM wide = RNG.NEW(123456789)
+Check("a range across zero", Ints$(wide, 4, -1000000000, 1000000000), "937244666 -736865068 -77844829 -825907021")
+
+DIM h7 = RNG.NEW(7)
+DIM filled = RNG.FILL(h7, 3)
+DIM scale AS DOUBLE = 9007199254740992.0
+Check("FILL", STR$(CLNG(filled[0] * scale)) + " " + STR$(CLNG(filled[1] * scale)) + " " + STR$(CLNG(filled[2] * scale)), "6310231968177966 2510767866374405 7562691848873359")
+Check("FILL length", STR$(LEN(RNG.FILL(h7, 100))), "100")
+
+DIM a = RNG.NEW(99)
+DIM b = RNG.NEW(99)
+DIM first_a AS DOUBLE = RNG.NEXT(a)
+DIM second_a AS DOUBLE = RNG.NEXT(a)
+DIM first_b AS DOUBLE = RNG.NEXT(b)
+Ok("two handles with one seed start alike", first_a = first_b)
+Ok("and each keeps its own place", second_a <> first_b)
+
+DIM lowest AS DOUBLE = 1.0
+DIM highest AS DOUBLE = 0.0
+DIM seen3 AS INTEGER = 0
+DIM seen5 AS INTEGER = 0
+DIM outside AS INTEGER = 0
+DIM i AS INTEGER = 0
+FOR i = 1 TO 2000
+    DIM x AS DOUBLE = RNG.NEXT(a)
+    IF x < lowest THEN lowest = x
+    IF x > highest THEN highest = x
+    DIM k AS DOUBLE = RNG.INT(a, 3, 5)
+    IF k = 3 THEN seen3 = seen3 + 1
+    IF k = 5 THEN seen5 = seen5 + 1
+    IF k < 3 OR k > 5 THEN outside = outside + 1
+NEXT i
+Ok("NEXT stays in [0, 1)", lowest >= 0.0 ANDALSO highest < 1.0)
+Ok("INT stays within its bounds", outside = 0)
+Ok("and reaches both ends", seen3 > 0 ANDALSO seen5 > 0)
+
+DIM refused AS INTEGER = 0
+TRY
+    DIM backwards = IntsBackwards(b)
+CATCH
+    refused = refused + 1
+ENDTRY
+RNG.FREE(b)
+TRY
+    DIM gone = NextOfFreed(b)
+CATCH
+    refused = refused + 1
+ENDTRY
+Check("a range with lo above hi and a freed handle are refused", STR$(refused), "2")
+
+PRINT ""
+PRINT "RNG TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

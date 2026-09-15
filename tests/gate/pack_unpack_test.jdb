@@ -1,0 +1,71 @@
+' PACK$ and UNPACK against Python's struct: a WAV header, a Modbus RTU frame,
+' signed codes, fixed strings and padding, repeat counts, an offset, short
+' input, and PACKSIZE.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+FUNC ShortRead(x)
+    RETURN UNPACK("<i", "abc")
+ENDFUNC
+
+DIM wav_fmt$ = "<4ai4a4aissiiss4ai"
+DIM wav$ = PACK$(wav_fmt$, "RIFF", 436, "WAVE", "fmt ", 16, 1, 2, 44100, 176400, 4, 16, "data", 400)
+Check("WAV header as Python struct writes it", CODEC.BASE64_ENCODE$(wav$), "UklGRrQBAABXQVZFZm10IBAAAAABAAIARKwAABCxAgAEABAAZGF0YZABAAA=")
+Check("PACKSIZE of the WAV header", STR$(PACKSIZE(wav_fmt$)), "44")
+DIM hdr = UNPACK(wav_fmt$, wav$)
+Check("thirteen fields", STR$(LEN(hdr)), "13")
+DIM riff$ = hdr[0]
+DIM wave$ = hdr[2]
+Check("chunk ids as text", riff$ + "/" + wave$, "RIFF/WAVE")
+Check("sample rate and byte rate", STR$(CLNG(hdr[7])) + " " + STR$(CLNG(hdr[8])), "44100 176400")
+DIM channels = UNPACK("<s", wav$, 22)
+Check("a field read at an offset", STR$(CLNG(channels[0])), "2")
+
+DIM frame$ = PACK$(">bbss<s", 17, 3, 107, 3, 34678)
+Check("Modbus RTU frame", CODEC.BASE64_ENCODE$(frame$), "EQMAawADdoc=")
+DIM mb = UNPACK(">bbss<s", frame$)
+Check("read back", STR$(CLNG(mb[0])) + " " + STR$(CLNG(mb[1])) + " " + STR$(CLNG(mb[2])) + " " + STR$(CLNG(mb[3])) + " " + STR$(CLNG(mb[4])), "17 3 107 3 34678")
+
+DIM signed$ = PACK$("<chnl", -1, -2, -3, -4)
+Check("signed codes write like b h i q", CODEC.BASE64_ENCODE$(signed$), "//7//f////z/////////")
+DIM sv = UNPACK("<chnl", signed$)
+Check("and read back negative", STR$(CLNG(sv[0])) + " " + STR$(CLNG(sv[1])) + " " + STR$(CLNG(sv[2])) + " " + STR$(CLNG(sv[3])), "-1 -2 -3 -4")
+DIM uv = UNPACK("<bsil", signed$)
+Check("the old codes still read unsigned", STR$(CLNG(uv[0])) + " " + STR$(CLNG(uv[1])) + " " + STR$(CLNG(uv[2])) + " " + STR$(CLNG(uv[3])), "255 65534 4294967293 -4")
+
+DIM padded$ = PACK$("<3a2xs", "ab", 513)
+Check("fixed string and padding", CODEC.BASE64_ENCODE$(padded$), "YWIAAAABAg==")
+DIM pv = UNPACK("<3a2xs", padded$)
+DIM fixed$ = pv[0]
+Check("a fixed string keeps its length", STR$(LEN(fixed$)) + " " + LEFT$(fixed$, 2) + " " + STR$(CLNG(pv[1])), "3 ab 513")
+
+Check("a repeat count", CODEC.BASE64_ENCODE$(PACK$("<3i", 1, 2, 3)), CODEC.BASE64_ENCODE$(PACK$("<iii", 1, 2, 3)))
+DIM rep = UNPACK(">2s", PACK$(">2s", 258, 772))
+Check("read with a count", STR$(LEN(rep)) + " " + STR$(CLNG(rep[0])) + " " + STR$(CLNG(rep[1])), "2 258 772")
+
+DIM refused AS INTEGER = 0
+TRY
+    DIM short_data = ShortRead(0)
+CATCH
+    refused = refused + 1
+ENDTRY
+Check("short input is refused", STR$(refused), "1")
+
+PRINT ""
+PRINT "PACK UNPACK TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

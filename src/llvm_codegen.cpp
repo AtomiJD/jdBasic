@@ -48,7 +48,7 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
     "XSORT", "TAKE", "DROP",
     "IOTA", "CUMSUM", "CUMPROD", "SCAN", "FLATTEN", "RANGE",
     "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
-    "NORMALIZE", "DIFF", "APPEND",
+    "NORMALIZE", "DIFF", "APPEND", "HISTEDGES", "RNG.FILL",
     "DATERANGE", "TALLY",
     "TILED.LAYERS", "FILE.LIST",
     "CSVREADER", "CSVHEADER",
@@ -92,7 +92,7 @@ const std::unordered_set<std::string> kBridgeBoolReturners = {
     "MON.START", "MON.RECSTART", "MON.RUNNING",
     "SQL.CLOSE",
     "PY.SET",
-    "CHAN.IS_CLOSED", "CHAN.IS_EOF",
+    "CHAN.IS_CLOSED", "CHAN.IS_EOF", "CHAN.IS_TIMEOUT",
     "FILE.AT_EOF",
     "THREAD.ISDONE",
     "OS.FEATURE",
@@ -3809,6 +3809,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             "SCAN","SELECT","FILTER","REDUCE","TYPEOF","IIF",
                             "ZEROS","ONES","IOTA","RANGE","LINSPACE","TENSOR","RESHAPE",
                             "SPLIT","JOIN","FORMAT$","FRMV$","PACK$","UNPACK",
+                            "CHAN.SELECT","RNG.FILL",
                             "REGEX_MATCH","REGEX.MATCH","REGEX.FINDALL",
                             "NOW","CVDATE","CDATE","DATE$","TIME$","TICK",
                             // Audio calls whose sample buffer is a payload:
@@ -12552,10 +12553,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         "JSON.PARSE$", "JSON.STRINGIFY$",
         // String/codec (produce from string)
         "SPLIT", "FORMAT$", "FRMV$", "INSERT$", "REPLACE$", "REVERSE$",
-        "PACK$", "UNPACK", "JOIN",
+        "PACK$", "UNPACK", "PACKSIZE", "JOIN",
         "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
         "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$", "CODEC.UUID$",
         "CODEC.RANDOMBYTES$", "CODEC.PBKDF2$",
+        "CODEC.CRC32", "CODEC.DEFLATE$", "CODEC.INFLATE$",
+        "HISTEDGES",
+        "CHAN.RECV", "CHAN.TRY_RECV", "CHAN.SELECT", "CHAN.IS_TIMEOUT",
+        "RNG.NEW", "RNG.NEXT", "RNG.INT", "RNG.FILL", "RNG.FREE",
         "ZIP.WRITE", "ZIP.READ", "ZIP.LIST",
         // Regex (produce arrays)
         "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
@@ -13459,7 +13464,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 // could be i64, f64, string, array, map, or the EOF marker.
                 // VM_HANDLE keeps the tag intact so CHAN.IS_EOF and the
                 // FOR EACH polymorphic dispatch can recognise it later.
-                "CHAN.RECV",
+                "CHAN.RECV", "CHAN.TRY_RECV",
                 // AWAIT / THREAD.GETRESULT yield the awaited task's actual
                 // Value - could be any type, so route through VM_HANDLE so
                 // strings + arrays + maps survive intact. Without this,
@@ -14036,7 +14041,8 @@ void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
         "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
         "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
         "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
-        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$", "PRINT"
+        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
+        "CODEC.CRC32", "CODEC.DEFLATE$", "CODEC.INFLATE$", "PRINT"
     };
     std::function<void(const Expr&)> scan_escapes = [&](const Expr& e) {
         if ((e.kind == ExprKind::CALL && !reads_only.count(e.func_name)) ||
@@ -14158,7 +14164,8 @@ void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
         "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
         "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
         "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
-        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$"
+        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
+        "CODEC.CRC32", "CODEC.DEFLATE$", "CODEC.INFLATE$"
     };
 
     auto analyse = [&](const Stmt& fn) {

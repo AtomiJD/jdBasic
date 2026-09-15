@@ -804,7 +804,7 @@ static JdbArray* value_to_jdbarray(const Value& v) {
             has_ptr = true; has_string = true;
             cell_tags[(size_t)i] = 2;  // JD_TAG_STR
             const std::string& s = e.as_string()->data;
-            char* copy = _strdup(s.c_str());
+            char* copy = native_str_from_string(s);
             union { int64_t i; double d; } u; u.i = (int64_t)(intptr_t)copy;
             r->data[i] = u.d;
         } else if (e.type == ValueType::NONE) {
@@ -951,7 +951,7 @@ static JdbMapFwd* value_to_jdbmap(const Value& v) {
             case ValueType::STRING: {
                 const std::string& text = cell.as_string() ? cell.as_string()->data
                                                            : std::string();
-                u.i = (int64_t)(intptr_t)_strdup(text.c_str());
+                u.i = (int64_t)(intptr_t)native_str_from_string(text);
                 put_jdbmap(m, entry.first, u.d, jd_tag(JdTag::STR));
                 break;
             }

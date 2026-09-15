@@ -46,6 +46,11 @@ extern std::atomic<int64_t>                             g_channels_next_id;
 Value chan_make_eof();
 bool  chan_value_is_eof(const Value& v);
 
+// The marker CHAN.RECV with a timeout and CHAN.TRY_RECV answer when no value
+// arrived in time: { __chan_timeout__: TRUE }, tested by CHAN.IS_TIMEOUT.
+Value chan_make_timeout();
+bool  chan_value_is_timeout(const Value& v);
+
 // Helpers used by the natives (and by the destructor / cleanup paths).
 std::shared_ptr<Channel> chan_lookup(int64_t handle);
 int64_t                  chan_register(std::shared_ptr<Channel> c);

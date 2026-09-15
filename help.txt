@@ -459,8 +459,8 @@ Syntax: CHAN.SEND(handle, value)
 Description: Pushes a value into the channel. Blocks while the buffer is full. Throws if the channel is closed.
 
 [CHAN.RECV]
-Syntax: CHAN.RECV(handle) -> value
-Description: Pops a value from the channel. Blocks while empty. Returns the EOF marker once the channel is closed AND drained. Use CHAN.IS_EOF to test the result.
+Syntax: CHAN.RECV(handle, [timeout_ms]) -> value
+Description: Pops a value from the channel. Blocks while empty; with timeout_ms it waits at most that long and then returns the timeout marker (test with CHAN.IS_TIMEOUT). Returns the EOF marker once the channel is closed AND drained. Use CHAN.IS_EOF to test the result.
 
 [CHAN.CLOSE]
 Syntax: CHAN.CLOSE(handle)
@@ -469,6 +469,18 @@ Description: Marks the channel as closed and wakes every parked SEND/RECV. Idemp
 [CHAN.IS_EOF]
 Syntax: CHAN.IS_EOF(value) -> boolean
 Description: Returns TRUE if `value` is the channel-EOF marker (a small map with key __chan_eof__). All other values, including TRUE/FALSE/NONE, return FALSE.
+
+[CHAN.TRY_RECV]
+Syntax: CHAN.TRY_RECV(handle) -> value
+Description: Takes a waiting value without blocking. Returns the timeout marker when the channel is empty, the EOF marker when it is closed and drained.
+
+[CHAN.SELECT]
+Syntax: CHAN.SELECT(handles, [timeout_ms]) -> integer
+Description: Waits until one of the channels in the array `handles` has a value waiting or is closed and returns its 0-based index, the first such one in array order. Returns -1 when none is ready within timeout_ms; a missing or negative timeout waits indefinitely. It does not take the value: follow with CHAN.TRY_RECV, which can still find the channel empty if another receiver was faster.
+
+[CHAN.IS_TIMEOUT]
+Syntax: CHAN.IS_TIMEOUT(value) -> boolean
+Description: Returns TRUE if `value` is the timeout marker (a small map with key __chan_timeout__) that CHAN.RECV with a timeout and CHAN.TRY_RECV return when no value came.
 
 [CHAN.IS_CLOSED]
 Syntax: CHAN.IS_CLOSED(handle) -> boolean
@@ -570,13 +582,25 @@ Description: Decodes a Base64 encoded string.
 Syntax: CODEC.BASE64_ENCODE$(string$)
 Description: Encodes a string into Base64 format.
 
+[CODEC.CRC32]
+Syntax: CODEC.CRC32(data$, [running_crc]) -> number
+Description: Returns the CRC-32 checksum (the ZIP/PNG/gzip variant) as a number from 0 to 4294967295. Pass the previous result as running_crc to continue over the next piece: CODEC.CRC32(b$, CODEC.CRC32(a$)) equals CODEC.CRC32(a$ + b$). Binary safe.
+
 [CODEC.CRC32$]
 Syntax: CODEC.CRC32$(string$)
 Description: Returns the CRC-32 checksum of a string as an 8-char hex string (the ZIP/PNG variant).
 
+[CODEC.DEFLATE$]
+Syntax: CODEC.DEFLATE$(data$, [level], [format$]) -> string$
+Description: Compresses data$ with DEFLATE. level is 0 (stored) to 9 (smallest), default 6. format$ is "zlib" (default), "gzip" or "raw"; it may stand in for the level: CODEC.DEFLATE$(d$, "gzip"). The output is binary and reads back with CODEC.INFLATE$, Python's zlib and gzip, or any other inflater.
+
 [CODEC.HMAC$]
 Syntax: CODEC.HMAC$(key$, message$, [algo$])
 Description: Returns the HMAC of message$ under key$ as a 64-char hex string. Only "SHA256" (the default) is supported. Binary safe.
+
+[CODEC.INFLATE$]
+Syntax: CODEC.INFLATE$(data$, [format$]) -> string$
+Description: Decompresses a "raw" DEFLATE stream, a "zlib" stream or a "gzip" member. Without format$ the gzip magic bytes or a valid zlib header select the wrapper, anything else is taken as raw. The zlib Adler-32 and the gzip CRC-32 and length are checked; damaged data raises an error.
 
 [CODEC.PBKDF2$]
 Syntax: CODEC.PBKDF2$(password$, salt$, iterations, bytes)
@@ -620,8 +644,8 @@ Description: Declares a global constant. The value is set once and cannot be rea
 Example: CONST MAX_HEALTH = 100
 
 [CONVOLVE]
-Syntax: CONVOLVE(array, kernel, wrap_mode)
-Description: Performs a 2D convolution operation on an array with a given kernel.
+Syntax: CONVOLVE(array, kernel, [wrap_mode]) -> array
+Description: Slides the kernel over a vector (1-D kernel) or a matrix (2-D kernel), centred on each element, and sums the products; the result has the shape of array. The kernel is not flipped, so strictly this is a correlation; for a symmetric kernel the two agree. wrap_mode TRUE wraps around the edges, FALSE (default) treats cells outside as absent. CONVOLVE([1,2,3,4], [1,1,1]) is [3, 6, 9, 7].
 
 [COS]
 Syntax: COS(angle_in_radians)
@@ -716,8 +740,8 @@ Syntax: DEFAULT
 Description: The block inside a SWITCH statement that executes if no CASE matches.
 
 [DIFF]
-Syntax: DIFF(array1, array2)
-Description: Returns a new array containing elements that are in the first array but not the second.
+Syntax: DIFF(array1, array2) -> array
+Description: Set difference: the elements of array1 that do not occur in array2, in array1's order and with array1's repeats kept. Elements compare by their string form, so 2 and "2" match. Not a successive difference; for that use array[1:] - array[:-1] style slicing or SCAN.
 
 [DIM]
 Syntax: DIM variable [AS type]
@@ -1262,9 +1286,13 @@ Description: Returns the full width of the current ImGui window including title 
 Syntax: HEX$(n) -> string$
 Description: Hexadecimal string representation of integer n.
 
+[HISTEDGES]
+Syntax: HISTEDGES(array, [bins]) -> array
+Description: The bins + 1 edges HISTOGRAM counts between: bins equal steps from the smallest to the largest value (default 10 bins). HISTEDGES([1,2,3,4], 4) is [1, 1.75, 2.5, 3.25, 4].
+
 [HISTOGRAM]
-Syntax: HISTOGRAM(array, bins) -> array
-Description: Builds a histogram with the given number of bins. Returns [counts, edges] as two arrays.
+Syntax: HISTOGRAM(array, [bins]) -> array
+Description: Counts the values in bins equal-width bins (default 10) spanning the smallest to the largest value; the largest value falls in the last bin. Returns the counts only; HISTEDGES gives the matching edges.
 
 [HOUR]
 Syntax: HOUR(date) -> number
@@ -2495,7 +2523,12 @@ Description: Returns the current capture buffer's contents without stopping capt
 
 [PACK$]
 Syntax: PACK$(format$, v1, v2, ...)
-Description: Packs numbers into a binary string. Format: "<" (Little Endian), ">" (Big Endian), "b" (Byte), "i" (Int), "d" (Double), etc.
+Description: Packs values into a binary string. Format codes (case-insensitive): "<" little endian (default), ">" big endian, "b" 8-bit, "s" 16-bit, "i" 32-bit, "l" 64-bit, "f" float, "d" double, "c" "h" "n" the signed 8/16/32-bit codes, "a" fixed-length string (NUL padded or cut), "x" zero pad byte. A count before a code repeats it ("3i" = "iii"); for "a" it is the string length, for "x" the number of pad bytes. Whitespace is ignored.
+Example: PACK$("<4ai4a", "RIFF", 36, "WAVE")
+
+[PACKSIZE]
+Syntax: PACKSIZE(format$) -> number
+Description: The number of bytes PACK$ writes and UNPACK reads for format$. PACKSIZE("<4ai4a") is 12.
 
 [PATH.BASENAME$]
 Syntax: PATH.BASENAME$(path$)
@@ -2632,6 +2665,26 @@ Description: Removes an empty directory.
 [RND]
 Syntax: RND()
 Description: Returns a random double in [0, 1], both ends inclusive. Arguments are ignored. For an integer in [1, n] use INT(RND() * n) MOD n + 1.
+
+[RNG.NEW]
+Syntax: RNG.NEW(seed) -> handle
+Description: Creates an independent pseudo-random generator (xoshiro256** seeded through splitmix64). The same seed gives the same sequence in the interpreter, in native -c and in other xoshiro256** implementations. Generators do not touch RND/RANDOMSEED. Not for secrets; use CODEC.RANDOMBYTES$ there.
+
+[RNG.NEXT]
+Syntax: RNG.NEXT(handle) -> number
+Description: The next double in [0, 1), 1 excluded, with 53 random bits.
+
+[RNG.INT]
+Syntax: RNG.INT(handle, lo, hi) -> number
+Description: A uniformly distributed integer in lo..hi, both ends included, without modulo bias. lo greater than hi is an error.
+
+[RNG.FILL]
+Syntax: RNG.FILL(handle, n) -> array
+Description: An array of the next n doubles in [0, 1), the same values n RNG.NEXT calls give.
+
+[RNG.FREE]
+Syntax: RNG.FREE(handle)
+Description: Releases a generator. Using the handle afterwards is an error.
 
 [ROTATE]
 Syntax: ROTATE(array, shift_vector)
@@ -3590,8 +3643,9 @@ Syntax: UNIQUE(array)
 Description: Returns a new array containing only the unique elements from the source array.
 
 [UNPACK]
-Syntax: UNPACK(format$, binary_data$)
-Description: Unpacks a binary string into an Array of numbers based on the format string.
+Syntax: UNPACK(format$, binary_data$, [offset]) -> array
+Description: Reads binary_data$ from the 0-based offset (default 0) with the PACK$ format codes and returns one element per value. "b" "s" "i" read unsigned, "c" "h" "n" and "l" signed, "f" "d" as doubles, "a" as a string of its count bytes; "x" skips. Data shorter than PACKSIZE(format$) from the offset is an error.
+Example: DIM channels = UNPACK("<s", wav$, 22)
 
 [UNREACT]
 Syntax: UNREACT(variable_name$)
@@ -3659,7 +3713,7 @@ Description: Combines vectors into a matrix where each row is [arr1[i], arr2[i],
 
 [ZIP.WRITE]
 Syntax: ZIP.WRITE(path$, entries)
-Description: Writes a map of entry name to content as a ZIP archive (stored, uncompressed). Returns the entry count.
+Description: Writes a map of entry name to content as a ZIP archive. Each entry is deflated when that makes it smaller and stored otherwise. Returns the entry count.
 
 [ZIP.READ]
 Syntax: ZIP.READ(path$)

@@ -29,6 +29,22 @@ bool chan_value_is_eof(const Value& v) {
     return slot && slot->to_bool();
 }
 
+static const char* kChanTimeoutKey = "__chan_timeout__";
+
+Value chan_make_timeout() {
+    Value m = Value::make_object();
+    m.as_object()->set(kChanTimeoutKey, Value::make_bool(true));
+    return m;
+}
+
+bool chan_value_is_timeout(const Value& v) {
+    if (v.type != ValueType::OBJECT) return false;
+    auto* m = v.as_object();
+    if (!m) return false;
+    Value* slot = m->get(kChanTimeoutKey);
+    return slot && slot->to_bool();
+}
+
 // ── Registry ────────────────────────────────────────────────────────
 
 std::shared_ptr<Channel> chan_lookup(int64_t handle) {

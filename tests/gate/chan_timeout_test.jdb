@@ -1,0 +1,68 @@
+' CHAN.RECV with a timeout, CHAN.TRY_RECV, CHAN.SELECT and CHAN.IS_TIMEOUT,
+' with a worker that sends late.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+ASYNC FUNC late_send(handle, wait_ms, value)
+    SLEEP wait_ms
+    CHAN.SEND handle, value
+    RETURN 1
+ENDFUNC
+
+DIM ch = CHAN.OPEN(4)
+DIM t0 = TICK()
+DIM got = CHAN.RECV(ch, 60)
+DIM waited = TICK() - t0
+Ok("an empty channel times out", CHAN.IS_TIMEOUT(got))
+Ok("after about the timeout", waited >= 45)
+Ok("the timeout marker is no EOF", NOT CHAN.IS_EOF(got))
+DIM empty_try = CHAN.TRY_RECV(ch)
+Ok("TRY_RECV on an empty channel", CHAN.IS_TIMEOUT(empty_try))
+
+CHAN.SEND ch, 42
+DIM tried = CHAN.TRY_RECV(ch)
+Ok("TRY_RECV takes a waiting value", NOT CHAN.IS_TIMEOUT(tried))
+Ok("the value itself", tried = 42)
+CHAN.SEND ch, 7
+DIM quick = CHAN.RECV(ch, 1000)
+Ok("RECV with a timeout returns a waiting value", quick = 7)
+Ok("an ordinary value is no timeout", NOT CHAN.IS_TIMEOUT(quick))
+
+DIM other = CHAN.OPEN(4)
+DIM pair = [ch, other]
+Ok("SELECT on two empty channels times out", CHAN.SELECT(pair, 30) = -1)
+CHAN.SEND other, 5
+Ok("SELECT names the channel with a value", CHAN.SELECT(pair, 30) = 1)
+DIM picked = CHAN.TRY_RECV(other)
+Ok("which TRY_RECV then takes", picked = 5)
+
+DIM task = late_send(ch, 150, 99)
+DIM early = CHAN.RECV(ch, 20)
+Ok("a late value is not there after 20 ms", CHAN.IS_TIMEOUT(early))
+DIM late = CHAN.RECV(ch, 3000)
+Ok("but arrives within the longer timeout", late = 99)
+DIM done_task = AWAIT task
+
+CHAN.CLOSE other
+DIM closed_one = [other]
+Ok("SELECT reports a closed channel as ready", CHAN.SELECT(closed_one, 10) = 0)
+DIM after = CHAN.RECV(other, 10)
+Ok("RECV on a closed, drained channel is EOF", CHAN.IS_EOF(after))
+Ok("not a timeout", NOT CHAN.IS_TIMEOUT(after))
+
+PRINT ""
+PRINT "CHAN TIMEOUT TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

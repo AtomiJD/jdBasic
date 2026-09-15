@@ -4,6 +4,7 @@
 #include "channels.h"
 #include "file_streams.h"
 #include "jdb_crypto.h"
+#include "jdb_deflate.h"
 #include <clocale>
 #include <locale>
 #ifdef COM
@@ -872,11 +873,13 @@ bool jdb_no_vectorize(const std::string& name) {
         "AUDIO.STOP", "AUDIO.STOPMUS", "AUDIO.VOLUME", "AUDIO.VOLUMEMUS",
         "AWAIT", "BINREADER$", "BINWRITER", "CAM.BOUNDS", "CAM.FOLLOW",
         "CAM.SET", "CAM.SHAKE", "CAM.X", "CAM.Y", "CD", "CDATE", "CHAN.CAP",
-        "CHAN.CLOSE", "CHAN.IS_CLOSED", "CHAN.IS_EOF", "CHAN.LEN",
-        "CHAN.OPEN", "CHAN.RECV", "CHAN.SEND", "CHUNK", "CIRCLE",
+        "CHAN.CLOSE", "CHAN.IS_CLOSED", "CHAN.IS_EOF", "CHAN.IS_TIMEOUT",
+        "CHAN.LEN", "CHAN.OPEN", "CHAN.RECV", "CHAN.SELECT", "CHAN.SEND",
+        "CHAN.TRY_RECV", "CHUNK", "CIRCLE",
         "CIRCLE_SECTOR", "CLEAR_RECUR", "CLIPBOARD.GET$", "CLIPBOARD.SET",
         "CLS", "CODEC.BASE64_DECODE$", "CODEC.BASE64_ENCODE$",
-        "CODEC.CRC32$", "CODEC.HMAC$", "CODEC.PBKDF2$", "CODEC.RANDOMBYTES$",
+        "CODEC.CRC32", "CODEC.CRC32$", "CODEC.DEFLATE$", "CODEC.HMAC$",
+        "CODEC.INFLATE$", "CODEC.PBKDF2$", "CODEC.RANDOMBYTES$",
         "CODEC.SHA256$", "CODEC.UUID$",
         "COLOR", "CONVOLVE",
         "COPYV",
@@ -924,7 +927,7 @@ bool jdb_no_vectorize(const std::string& name) {
         "GUI.TABLE_NEXT_COLUMN", "GUI.TABLE_NEXT_ROW",
         "GUI.TABLE_SETUP_COLUMN", "GUI.TABLE_SET_COLUMN_INDEX", "GUI.TEXT",
         "GUI.THEME", "GUI.TOOLTIP", "GUI.TREE_NODE", "GUI.TREE_POP", "HELP",
-        "HELP$", "HISTOGRAM", "IFFT", "IIF", "INDEXOF", "INKEY$", "INSERT$",
+        "HELP$", "HISTEDGES", "HISTOGRAM", "IFFT", "IIF", "INDEXOF", "INKEY$", "INSERT$",
         "INTEGRATE", "INVERT", "IOTA", "ISARR", "ISBOOL", "ISMAP", "ISNONE",
         "ISNULL", "ISNUM", "ISSTR", "JDB.CHECK$", "JDB.GLOBAL_GET",
         "JDB.GLOBAL_SET", "JOIN", "JOY.AXIS", "JOY.BUTTON", "JOY.COUNT",
@@ -942,14 +945,15 @@ bool jdb_no_vectorize(const std::string& name) {
         "NORMALIZE", "NOW", "NOW_EPOCH", "ONES", "OPTION",
         "OS.ARGS", "OS.EXEC", "OS.FEATURE", "OS.GETOS", "OS.GETOS$",
         "OS.HOSTNAME$", "OS.IP$", "OS.LOAD", "OS.SCREENSHOT", "OUTER",
-        "PACK$", "PARTICLE.CLEAR", "PARTICLE.COUNT", "PARTICLE.DRAW",
+        "PACK$", "PACKSIZE", "PARTICLE.CLEAR", "PARTICLE.COUNT", "PARTICLE.DRAW",
         "PARTICLE.EMIT", "PATH.BASENAME$", "PATH.DIRNAME$", "PATH.EXT$",
         "PATH.JOIN$", "PATH.NORMALIZE$", "PDF.TEXT$", "PLACE", "PLOTRAW",
         "POP", "PRODUCT", "PSET", "PUSH", "PWD", "PY.DIR$", "PY.EVAL",
         "PY.GET", "PY.HELP$", "PY.SET", "PYTHON$", "QR", "RANDOMSEED",
         "RANGE", "REACT_BIND", "RECT", "RECUR", "REDUCE", "REGEX.FINDALL",
         "REGEX.MATCH", "REGEX.REPLACE", "REGEX_MATCH", "REGEX_REPLACE$",
-        "REPLACE$", "RESHAPE", "REVERSE", "REVERSE$", "RMDIR", "ROTATE",
+        "REPLACE$", "RESHAPE", "REVERSE", "REVERSE$", "RMDIR", "RNG.FILL",
+        "RNG.FREE", "RNG.INT", "RNG.NEW", "RNG.NEXT", "ROTATE",
         "ROTL", "ROTR", "ROUNDED_RECT", "SAVE", "SCAN", "SCREEN",
         "SCREENFLIP", "SELECT", "SETENV", "SETFONT", "SETLOCALE",
         "SFX.LOAD", "SFX.PLAY", "SHIFT", "SHUFFLE", "SLEEP", "SLICE",
@@ -4634,9 +4638,9 @@ static std::string hmac_sha256_hex(const std::string& key, const std::string& ms
 }
 
 // ── ZIP archives ────────────────────────────────────────────
-// Writing produces stored (uncompressed) entries, which every unpacker
-// accepts. Reading handles stored and deflated entries; the deflate side
-// borrows the tinfl decoder that FlateDecode in pdf_extract already uses.
+// Writing deflates each entry that shrinks and stores the rest. Reading
+// handles stored and deflated entries; the deflate side borrows the tinfl
+// decoder that FlateDecode in pdf_extract already uses.
 
 static uint32_t crc32_bytes(const uint8_t* data, size_t len) {
     static uint32_t table[256];
@@ -4699,29 +4703,35 @@ static std::string zip_build(const std::vector<std::pair<std::string, std::strin
         uint32_t size = (uint32_t)content.size();
         uint32_t offset = (uint32_t)body.size();
 
+        // Deflated when that is smaller, stored otherwise.
+        std::string packed = jdb_deflate::deflate_raw((const uint8_t*)content.data(), content.size(), 6);
+        bool deflated = !content.empty() && packed.size() < content.size();
+        uint16_t method = deflated ? 8 : 0;
+        uint32_t comp_size = deflated ? (uint32_t)packed.size() : size;
+
         put32(body, 0x04034b50);
         put16(body, 20);        // version needed
         put16(body, 0x0800);    // UTF-8 names
-        put16(body, 0);         // stored
+        put16(body, method);
         put16(body, dos_time);
         put16(body, dos_date);
         put32(body, crc);
-        put32(body, size);
+        put32(body, comp_size);
         put32(body, size);
         put16(body, (uint16_t)name.size());
         put16(body, 0);
         body += name;
-        body += content;
+        body += deflated ? packed : content;
 
         put32(central, 0x02014b50);
         put16(central, 20);     // version made by
         put16(central, 20);
         put16(central, 0x0800);
-        put16(central, 0);
+        put16(central, method);
         put16(central, dos_time);
         put16(central, dos_date);
         put32(central, crc);
-        put32(central, size);
+        put32(central, comp_size);
         put32(central, size);
         put16(central, (uint16_t)name.size());
         put16(central, 0);      // extra
@@ -4818,6 +4828,157 @@ static std::string zip_extract(const std::string& buf, const ZipEntry& e) {
     }
     throw std::runtime_error("ZIP: entry '" + e.name + "' uses unsupported method " +
                              std::to_string(e.method));
+}
+
+// CODEC.INFLATE$: a raw deflate stream, a zlib stream or a gzip member. With
+// no format named, the gzip magic and the zlib header check pick it.
+static std::string codec_inflate(const std::string& in, std::string format) {
+    const uint8_t* p = (const uint8_t*)in.data();
+    size_t n = in.size();
+    auto zlib_header_ok = [&]() {
+        return n >= 2 && (p[0] & 0x0F) == 8 && (p[0] >> 4) <= 7 && ((p[0] << 8) | p[1]) % 31 == 0;
+    };
+    if (format.empty()) {
+        if (n >= 2 && p[0] == 0x1F && p[1] == 0x8B) format = "gzip";
+        else if (zlib_header_ok()) format = "zlib";
+        else format = "raw";
+    }
+    std::vector<uint8_t> out;
+    auto run = [&](const uint8_t* body, size_t len) {
+        if (!pdf_extract::tinfl::inflate(body, len, out, false))
+            throw std::runtime_error("CODEC.INFLATE$: damaged or truncated deflate data");
+    };
+    if (format == "raw") {
+        run(p, n);
+    } else if (format == "zlib") {
+        if (n < 6 || !zlib_header_ok())
+            throw std::runtime_error("CODEC.INFLATE$: not a zlib stream");
+        if (p[1] & 0x20)
+            throw std::runtime_error("CODEC.INFLATE$: zlib streams with a preset dictionary are not supported");
+        run(p + 2, n - 6);
+        uint32_t want = ((uint32_t)p[n-4] << 24) | ((uint32_t)p[n-3] << 16) |
+                        ((uint32_t)p[n-2] << 8) | (uint32_t)p[n-1];
+        if (jdb_deflate::adler32(1, out.data(), out.size()) != want)
+            throw std::runtime_error("CODEC.INFLATE$: zlib checksum mismatch");
+    } else if (format == "gzip") {
+        if (n < 18 || p[0] != 0x1F || p[1] != 0x8B || p[2] != 8)
+            throw std::runtime_error("CODEC.INFLATE$: not a gzip stream");
+        uint8_t flags = p[3];
+        size_t at = 10;
+        if (flags & 4) {
+            if (at + 2 > n) throw std::runtime_error("CODEC.INFLATE$: truncated gzip header");
+            at += 2 + (size_t)(p[at] | (p[at + 1] << 8));
+        }
+        if (flags & 8)  { while (at < n && p[at]) at++; at++; }
+        if (flags & 16) { while (at < n && p[at]) at++; at++; }
+        if (flags & 2) at += 2;
+        if (at + 8 > n) throw std::runtime_error("CODEC.INFLATE$: truncated gzip stream");
+        run(p + at, n - at - 8);
+        uint32_t crc = (uint32_t)p[n-8] | ((uint32_t)p[n-7] << 8) |
+                       ((uint32_t)p[n-6] << 16) | ((uint32_t)p[n-5] << 24);
+        uint32_t isize = (uint32_t)p[n-4] | ((uint32_t)p[n-3] << 8) |
+                         ((uint32_t)p[n-2] << 16) | ((uint32_t)p[n-1] << 24);
+        if (jdb_deflate::crc32(0, out.data(), out.size()) != crc || (uint32_t)out.size() != isize)
+            throw std::runtime_error("CODEC.INFLATE$: gzip checksum mismatch");
+    } else {
+        throw std::runtime_error("CODEC.INFLATE$: format must be raw, zlib or gzip");
+    }
+    return std::string(out.begin(), out.end());
+}
+
+static std::string ascii_lower(std::string s) {
+    for (auto& ch : s) ch = (char)std::tolower((unsigned char)ch);
+    return s;
+}
+
+// PACK$ / UNPACK format: < or > sets the byte order for the codes after it,
+// each code takes an optional repeat count. For 'a' the count is the string
+// length, for 'x' the number of zero pad bytes.
+struct PackField {
+    char code;
+    int count;
+    bool big_endian;
+};
+
+static int pack_width(char code) {
+    switch (code) {
+        case 'b': case 'c': case 'a': case 'x': return 1;
+        case 's': case 'h': return 2;
+        case 'i': case 'n': case 'f': return 4;
+        case 'l': case 'd': return 8;
+    }
+    return 0;
+}
+
+static std::vector<PackField> pack_parse(const std::string& fmt, const char* who) {
+    std::vector<PackField> fields;
+    bool big_endian = false;
+    int64_t count = -1;
+    for (char c : fmt) {
+        if (c == ' ' || c == '\t') continue;
+        if (c >= '0' && c <= '9') {
+            count = (count < 0 ? 0 : count) * 10 + (c - '0');
+            if (count > 100000000)
+                throw std::runtime_error(std::string(who) + ": repeat count too large");
+            continue;
+        }
+        if (count >= 0 && (c == '<' || c == '>'))
+            throw std::runtime_error(std::string(who) + ": a count must be followed by a code");
+        if (c == '<') { big_endian = false; continue; }
+        if (c == '>') { big_endian = true; continue; }
+        char lc = (char)std::tolower((unsigned char)c);
+        if (pack_width(lc) == 0)
+            throw std::runtime_error(std::string(who) + ": unknown format char '" + c + "'");
+        fields.push_back({lc, count < 0 ? 1 : (int)count, big_endian});
+        count = -1;
+    }
+    if (count >= 0)
+        throw std::runtime_error(std::string(who) + ": a count must be followed by a code");
+    return fields;
+}
+
+static size_t pack_size(const std::vector<PackField>& fields) {
+    size_t total = 0;
+    for (auto& f : fields) total += (size_t)pack_width(f.code) * (size_t)f.count;
+    return total;
+}
+
+// RNG.* generators: xoshiro256** seeded through splitmix64, one state per
+// handle. The registry is process-wide, so ASYNC tasks share a handle.
+struct RngState {
+    uint64_t s[4];
+};
+
+static std::mutex g_rng_mtx;
+static std::unordered_map<int64_t, RngState> g_rng_states;
+static int64_t g_rng_next_id = 1;
+
+static uint64_t rng_rotl(uint64_t x, int k) {
+    return (x << k) | (x >> (64 - k));
+}
+
+static uint64_t rng_next64(RngState& st) {
+    uint64_t* s = st.s;
+    uint64_t result = rng_rotl(s[1] * 5, 7) * 9;
+    uint64_t t = s[1] << 17;
+    s[2] ^= s[0];
+    s[3] ^= s[1];
+    s[1] ^= s[2];
+    s[0] ^= s[3];
+    s[2] ^= t;
+    s[3] = rng_rotl(s[3], 45);
+    return result;
+}
+
+static RngState& rng_lookup(int64_t handle, const char* who) {
+    auto it = g_rng_states.find(handle);
+    if (it == g_rng_states.end())
+        throw std::runtime_error(std::string(who) + ": unknown generator handle " + std::to_string(handle));
+    return it->second;
+}
+
+static double rng_unit(RngState& st) {
+    return (double)(rng_next64(st) >> 11) * (1.0 / 9007199254740992.0);
 }
 
 void VM::register_builtins() {
@@ -5823,6 +5984,30 @@ void VM::register_builtins() {
 
     // ── CONVOLVE ─────────────────────────────────────────────
     register_native("CONVOLVE", [](const std::vector<Value>& args) -> Value {
+        auto* src = args[0].as_array();
+        auto* ker = args.size() >= 2 ? args[1].as_array() : nullptr;
+        if (!src || !ker) throw std::runtime_error("CONVOLVE: needs an array and a kernel");
+        if (src->elements.empty() || src->elements[0].type != ValueType::ARRAY) {
+            // A vector: the kernel slides along it centred on each element,
+            // as a correlation (the kernel is not flipped).
+            if (!ker->elements.empty() && ker->elements[0].type == ValueType::ARRAY)
+                throw std::runtime_error("CONVOLVE: a 1-D array takes a 1-D kernel");
+            bool wrap1 = (args.size() >= 3) ? args[2].to_bool() : false;
+            int n = (int)src->elements.size(), kn = (int)ker->elements.size(), half = kn / 2;
+            Value r = Value::make_array();
+            r.as_array()->elements.reserve(n);
+            for (int i = 0; i < n; i++) {
+                double s = 0;
+                for (int k = 0; k < kn; k++) {
+                    int si = i + k - half;
+                    if (wrap1) si = ((si % n) + n) % n;
+                    else if (si < 0 || si >= n) continue;
+                    s += src->elements[si].to_double() * ker->elements[k].to_double();
+                }
+                r.as_array()->elements.push_back(Value::make_f64(s));
+            }
+            return r;
+        }
         int ar, ac, kr, kc;
         get_2d(args[0], ar, ac); get_2d(args[1], kr, kc);
         bool wrap = (args.size() >= 3) ? args[2].to_bool() : false;
@@ -7768,75 +7953,98 @@ void VM::register_builtins() {
     //   l      long    (8)
     //   f      float   (4)
     //   d      double  (8)
+    //   c h n  the signed readings of b s i
+    //   a      fixed string, the count is its length (NUL padded or cut)
+    //   x      zero pad byte
+    // A digit prefix repeats a code: "3i" is "iii".
     register_native("PACK$", [](const std::vector<Value>& args) -> Value {
-        std::string fmt = args[0].as_string()->data;
+        if (args.empty()) throw std::runtime_error("PACK$: needs a format");
+        auto fields = pack_parse(args[0].as_string()->data, "PACK$");
         std::string result;
-        bool big_endian = false;
+        result.reserve(pack_size(fields));
         size_t ai = 1;
-        for (char c : fmt) {
-            if (c == '<') { big_endian = false; continue; }
-            if (c == '>') { big_endian = true; continue; }
-            if (c == ' ' || c == '\t') continue;  // allow whitespace
-            char lc = (char)std::tolower((unsigned char)c);
-            int width = 0;
-            switch (lc) {
-                case 'b': width = 1; break;
-                case 's': width = 2; break;
-                case 'i': width = 4; break;
-                case 'l': width = 8; break;
-                case 'f': width = 4; break;
-                case 'd': width = 8; break;
-                default:
-                    throw std::runtime_error(std::string("PACK$: unknown format char '") + c + "'");
-            }
-            if (ai >= args.size())
-                throw std::runtime_error("PACK$: not enough values for format");
+        for (auto& fd : fields) {
             auto write = [&](const void* data, int n) {
                 const uint8_t* p = (const uint8_t*)data;
-                if (big_endian) for (int i = n - 1; i >= 0; i--) result += (char)p[i];
+                if (fd.big_endian) for (int i = n - 1; i >= 0; i--) result += (char)p[i];
                 else for (int i = 0; i < n; i++) result += (char)p[i];
             };
-            (void)width;
-            if (lc == 'b') { uint8_t v = (uint8_t)args[ai++].to_int(); write(&v, 1); }
-            else if (lc == 's') { int16_t v = (int16_t)args[ai++].to_int(); write(&v, 2); }
-            else if (lc == 'i') { int32_t v = (int32_t)args[ai++].to_int(); write(&v, 4); }
-            else if (lc == 'l') { int64_t v = args[ai++].to_int(); write(&v, 8); }
-            else if (lc == 'f') { float v = (float)args[ai++].to_double(); write(&v, 4); }
-            else if (lc == 'd') { double v = args[ai++].to_double(); write(&v, 8); }
+            if (fd.code == 'x') { result.append((size_t)fd.count, '\0'); continue; }
+            if (fd.code == 'a') {
+                if (ai >= args.size())
+                    throw std::runtime_error("PACK$: not enough values for format");
+                std::string s = args[ai++].to_string();
+                s.resize((size_t)fd.count, '\0');
+                result += s;
+                continue;
+            }
+            for (int k = 0; k < fd.count; k++) {
+                if (ai >= args.size())
+                    throw std::runtime_error("PACK$: not enough values for format");
+                const Value& v = args[ai++];
+                switch (fd.code) {
+                    case 'b': case 'c': { uint8_t x = (uint8_t)v.to_int(); write(&x, 1); break; }
+                    case 's': case 'h': { int16_t x = (int16_t)v.to_int(); write(&x, 2); break; }
+                    case 'i': case 'n': { int32_t x = (int32_t)v.to_int(); write(&x, 4); break; }
+                    case 'l': { int64_t x = v.to_int(); write(&x, 8); break; }
+                    case 'f': { float x = (float)v.to_double(); write(&x, 4); break; }
+                    case 'd': { double x = v.to_double(); write(&x, 8); break; }
+                }
+            }
         }
         return Value::make_string(result);
     });
 
-    // UNPACK: unpack binary string to array. Same case-insensitive format
-    // chars as PACK$.
-    register_native("UNPACK", [](const std::vector<Value>& args) -> Value {
-        std::string fmt = args[0].as_string()->data;
-        std::string data = args[1].as_string()->data;
+    // UNPACK(fmt$, data$, [offset]): the same codes as PACK$. b s i read
+    // unsigned, c h n and l signed, a gives the bytes as a string. Data
+    // shorter than the format is an error.
+    register_native("UNPACK", 2, 3, [](const std::vector<Value>& args) -> Value {
+        auto fields = pack_parse(args[0].as_string()->data, "UNPACK");
+        const std::string& data = args[1].as_string()->data;
+        int64_t offset = args.size() >= 3 ? args[2].to_int() : 0;
+        if (offset < 0 || (uint64_t)offset > data.size())
+            throw std::runtime_error("UNPACK: offset " + std::to_string(offset) + " is outside the data");
+        size_t need = pack_size(fields);
+        if (data.size() - (size_t)offset < need)
+            throw std::runtime_error("UNPACK: the format needs " + std::to_string(need) +
+                                     " bytes, the data has " + std::to_string(data.size() - (size_t)offset));
+        size_t pos = (size_t)offset;
         Value r = Value::make_array();
-        bool big_endian = false;
-        size_t pos = 0;
-        auto read_bytes = [&](void* dst, int n) {
-            uint8_t* p = (uint8_t*)dst;
-            if (big_endian) for (int i = n - 1; i >= 0 && pos < data.size(); i--) p[i] = (uint8_t)data[pos++];
-            else for (int i = 0; i < n && pos < data.size(); i++) p[i] = (uint8_t)data[pos++];
-        };
-        for (char c : fmt) {
-            if (c == '<') { big_endian = false; continue; }
-            if (c == '>') { big_endian = true; continue; }
-            if (c == ' ' || c == '\t') continue;
-            char lc = (char)std::tolower((unsigned char)c);
-            // Treat unpacked integers as UNSIGNED (zero-extend) so binary
-            // file headers like 0xCAFEBABE round-trip cleanly. BASIC users
-            // rarely deal with signed binary fields.
-            if      (lc == 'b') { uint8_t  v = 0; read_bytes(&v, 1); r.as_array()->elements.push_back(Value::make_i64((int64_t)v)); }
-            else if (lc == 's') { uint16_t v = 0; read_bytes(&v, 2); r.as_array()->elements.push_back(Value::make_i64((int64_t)v)); }
-            else if (lc == 'i') { uint32_t v = 0; read_bytes(&v, 4); r.as_array()->elements.push_back(Value::make_i64((int64_t)v)); }
-            else if (lc == 'l') { int64_t  v = 0; read_bytes(&v, 8); r.as_array()->elements.push_back(Value::make_i64(v)); }
-            else if (lc == 'f') { float v = 0; read_bytes(&v, 4); r.as_array()->elements.push_back(Value::make_f64(v)); }
-            else if (lc == 'd') { double v = 0; read_bytes(&v, 8); r.as_array()->elements.push_back(Value::make_f64(v)); }
-            else throw std::runtime_error(std::string("UNPACK: unknown format char '") + c + "'");
+        auto& out = r.as_array()->elements;
+        for (auto& fd : fields) {
+            if (fd.code == 'x') { pos += (size_t)fd.count; continue; }
+            if (fd.code == 'a') {
+                out.push_back(Value::make_string(data.substr(pos, (size_t)fd.count)));
+                pos += (size_t)fd.count;
+                continue;
+            }
+            int w = pack_width(fd.code);
+            for (int k = 0; k < fd.count; k++) {
+                uint64_t u = 0;
+                for (int j = 0; j < w; j++) {
+                    uint8_t byte = (uint8_t)(fd.big_endian ? data[pos + w - 1 - j] : data[pos + j]);
+                    u |= (uint64_t)byte << (8 * j);
+                }
+                pos += (size_t)w;
+                switch (fd.code) {
+                    case 'b': case 's': case 'i': out.push_back(Value::make_i64((int64_t)u)); break;
+                    case 'c': out.push_back(Value::make_i64((int8_t)(uint8_t)u)); break;
+                    case 'h': out.push_back(Value::make_i64((int16_t)(uint16_t)u)); break;
+                    case 'n': out.push_back(Value::make_i64((int32_t)(uint32_t)u)); break;
+                    case 'l': out.push_back(Value::make_i64((int64_t)u)); break;
+                    case 'f': { uint32_t b32 = (uint32_t)u; float fv; std::memcpy(&fv, &b32, 4);
+                                out.push_back(Value::make_f64(fv)); break; }
+                    case 'd': { double dv; std::memcpy(&dv, &u, 8);
+                                out.push_back(Value::make_f64(dv)); break; }
+                }
+            }
         }
         return r;
+    });
+
+    // PACKSIZE(fmt$) -> the number of bytes PACK$ writes for the format.
+    register_native("PACKSIZE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_i64((int64_t)pack_size(pack_parse(args[0].as_string()->data, "PACKSIZE")));
     });
 
     // ── 1. Additional Math ─────────────────────────────────────
@@ -7894,6 +8102,63 @@ void VM::register_builtins() {
     });
     register_native("RANDOMSEED", [](const std::vector<Value>& args) -> Value {
         srand((unsigned)args[0].to_int()); return Value::make_none();
+    });
+
+    // RNG.NEW(seed) -> handle of an independent, reproducible generator.
+    register_native("RNG.NEW", 1, 1, [](const std::vector<Value>& args) -> Value {
+        uint64_t x = (uint64_t)args[0].to_int();
+        RngState st;
+        for (int i = 0; i < 4; i++) {
+            x += 0x9E3779B97F4A7C15ull;
+            uint64_t z = x;
+            z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+            z = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+            st.s[i] = z ^ (z >> 31);
+        }
+        std::lock_guard<std::mutex> lock(g_rng_mtx);
+        int64_t id = g_rng_next_id++;
+        g_rng_states[id] = st;
+        return Value::make_i64(id);
+    });
+
+    // RNG.NEXT(h) -> a double in [0, 1) with 53 random bits.
+    register_native("RNG.NEXT", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lock(g_rng_mtx);
+        return Value::make_f64(rng_unit(rng_lookup(args[0].to_int(), "RNG.NEXT")));
+    });
+
+    // RNG.INT(h, lo, hi) -> an integer in lo..hi inclusive, without modulo bias.
+    register_native("RNG.INT", 3, 3, [](const std::vector<Value>& args) -> Value {
+        int64_t lo = args[1].to_int(), hi = args[2].to_int();
+        if (lo > hi) throw std::runtime_error("RNG.INT: lo must not be greater than hi");
+        std::lock_guard<std::mutex> lock(g_rng_mtx);
+        RngState& st = rng_lookup(args[0].to_int(), "RNG.INT");
+        uint64_t range = (uint64_t)hi - (uint64_t)lo + 1;
+        if (range == 0) return Value::make_i64((int64_t)rng_next64(st));
+        uint64_t threshold = (0 - range) % range;
+        uint64_t x = rng_next64(st);
+        while (x < threshold) x = rng_next64(st);
+        return Value::make_i64((int64_t)((uint64_t)lo + x % range));
+    });
+
+    // RNG.FILL(h, n) -> an array of n doubles in [0, 1).
+    register_native("RNG.FILL", 2, 2, [](const std::vector<Value>& args) -> Value {
+        int64_t n = args[1].to_int();
+        if (n < 0) throw std::runtime_error("RNG.FILL: count must not be negative");
+        std::lock_guard<std::mutex> lock(g_rng_mtx);
+        RngState& st = rng_lookup(args[0].to_int(), "RNG.FILL");
+        Value r = Value::make_array();
+        auto& out = r.as_array()->elements;
+        out.reserve((size_t)n);
+        for (int64_t i = 0; i < n; i++) out.push_back(Value::make_f64(rng_unit(st)));
+        return r;
+    });
+
+    // RNG.FREE(h) releases a generator; later use of the handle is an error.
+    register_native("RNG.FREE", 1, 1, [](const std::vector<Value>& args) -> Value {
+        std::lock_guard<std::mutex> lock(g_rng_mtx);
+        g_rng_states.erase(args[0].to_int());
+        return Value::make_none();
     });
 
     // ── 2. Additional String ─────────────────────────────────
@@ -8178,6 +8443,26 @@ void VM::register_builtins() {
         });
         return r;
     });
+    // HISTEDGES(values, [bins]) -> the bins + 1 edges HISTOGRAM counts between.
+    register_native("HISTEDGES", 1, 2, [](const std::vector<Value>& args) -> Value {
+        int bins = (args.size() >= 2) ? (int)args[1].to_int() : 10;
+        if (bins < 1) throw std::runtime_error("HISTEDGES: bins must be at least 1");
+        bool seen = false;
+        double mn = 0, mx = 0;
+        for_each_leaf(args[0], [&](const Value& v) {
+            double d = v.to_double();
+            if (!seen) { mn = mx = d; seen = true; }
+            else if (d < mn) mn = d;
+            else if (d > mx) mx = d;
+        });
+        double range = mx - mn;
+        if (range == 0) range = 1;
+        Value r = Value::make_array();
+        r.as_array()->elements.reserve(bins + 1);
+        for (int i = 0; i <= bins; i++)
+            r.as_array()->elements.push_back(Value::make_f64(mn + range * i / bins));
+        return r;
+    });
     register_native("LINSPACE", [](const std::vector<Value>& args) -> Value {
         double start = args[0].to_double(), end = args[1].to_double();
         int n = (int)args[2].to_int();
@@ -8450,6 +8735,38 @@ void VM::register_builtins() {
         char hex[9];
         snprintf(hex, sizeof(hex), "%08x", crc32_bytes((const uint8_t*)s.data(), s.size()));
         return Value::make_string(hex);
+    });
+
+    // CODEC.CRC32(data$, [running_crc]) -> the CRC-32 as a number; pass the
+    // previous result to continue over the next piece.
+    register_native("CODEC.CRC32", 1, 2, [](const std::vector<Value>& args) -> Value {
+        const std::string& s = args[0].as_string()->data;
+        uint32_t running = args.size() >= 2 ? (uint32_t)args[1].to_int() : 0;
+        return Value::make_i64((int64_t)jdb_deflate::crc32(running, (const uint8_t*)s.data(), s.size()));
+    });
+
+    // CODEC.DEFLATE$(data$, [level], [format$]): level 0-9 (default 6),
+    // format zlib (default), gzip or raw. A format may stand in for the level.
+    register_native("CODEC.DEFLATE$", 1, 3, [](const std::vector<Value>& args) -> Value {
+        const std::string& s = args[0].as_string()->data;
+        int64_t level = 6;
+        std::string format = "zlib";
+        size_t next = 1;
+        if (args.size() > next && args[next].type != ValueType::STRING) level = args[next++].to_int();
+        if (args.size() > next) format = ascii_lower(args[next++].to_string());
+        if (args.size() > next) throw std::runtime_error("CODEC.DEFLATE$: expects data$, [level], [format$]");
+        if (level < 0 || level > 9) throw std::runtime_error("CODEC.DEFLATE$: level must be between 0 and 9");
+        const uint8_t* p = (const uint8_t*)s.data();
+        if (format == "zlib") return Value::make_string(jdb_deflate::zlib_wrap(p, s.size(), (int)level));
+        if (format == "gzip") return Value::make_string(jdb_deflate::gzip_wrap(p, s.size(), (int)level));
+        if (format == "raw")  return Value::make_string(jdb_deflate::deflate_raw(p, s.size(), (int)level));
+        throw std::runtime_error("CODEC.DEFLATE$: format must be raw, zlib or gzip");
+    });
+
+    // CODEC.INFLATE$(data$, [format$]): raw, zlib or gzip; detected when omitted.
+    register_native("CODEC.INFLATE$", 1, 2, [](const std::vector<Value>& args) -> Value {
+        std::string format = args.size() >= 2 ? ascii_lower(args[1].to_string()) : "";
+        return Value::make_string(codec_inflate(args[0].as_string()->data, format));
     });
 
     register_native("CODEC.HMAC$", 2, 3, [](const std::vector<Value>& args) -> Value {
@@ -8896,19 +9213,27 @@ void VM::register_builtins() {
         return Value::make_none();
     });
 
-    // CHAN.RECV(ch) → value. Blocks while empty. Returns the EOF marker
-    // when the channel is closed AND the buffer is drained.
-    register_native("CHAN.RECV", 1, 1, [](const std::vector<Value>& args) -> Value {
+    // CHAN.RECV(ch, [timeout_ms]) → value. Blocks while empty, at most
+    // timeout_ms when given, then returns the timeout marker. Returns the
+    // EOF marker when the channel is closed AND the buffer is drained.
+    register_native("CHAN.RECV", 1, 2, [](const std::vector<Value>& args) -> Value {
         int64_t handle = args[0].to_int();
         auto ch = chan_lookup(handle);
         if (!ch) {
             throw std::runtime_error("CHAN.RECV: invalid channel handle " + std::to_string(handle));
         }
+        int64_t timeout_ms = args.size() >= 2 ? args[1].to_int() : -1;
         std::unique_lock<std::mutex> lock(ch->mtx);
         ++ch->waiting_recv;
-        ch->cv_recv.wait(lock, [&]() {
+        auto ready = [&]() {
             return !ch->buffer.empty() || ch->closed.load();
-        });
+        };
+        if (timeout_ms < 0) {
+            ch->cv_recv.wait(lock, ready);
+        } else if (!ch->cv_recv.wait_for(lock, std::chrono::milliseconds(timeout_ms), ready)) {
+            --ch->waiting_recv;
+            return chan_make_timeout();
+        }
         --ch->waiting_recv;
         if (ch->buffer.empty()) {
             // Drained + closed → EOF.
@@ -8939,6 +9264,58 @@ void VM::register_builtins() {
     // RECV on a closed+empty channel.
     register_native("CHAN.IS_EOF", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_bool(chan_value_is_eof(args[0]));
+    });
+
+    // CHAN.TRY_RECV(ch) → a waiting value, the EOF marker on a closed and
+    // drained channel, or the timeout marker. Never blocks.
+    register_native("CHAN.TRY_RECV", 1, 1, [](const std::vector<Value>& args) -> Value {
+        int64_t handle = args[0].to_int();
+        auto ch = chan_lookup(handle);
+        if (!ch) {
+            throw std::runtime_error("CHAN.TRY_RECV: invalid channel handle " + std::to_string(handle));
+        }
+        std::lock_guard<std::mutex> lock(ch->mtx);
+        if (ch->buffer.empty()) return ch->closed.load() ? chan_make_eof() : chan_make_timeout();
+        Value out = std::move(ch->buffer.front());
+        ch->buffer.pop_front();
+        ch->cv_send.notify_one();
+        return out;
+    });
+
+    // CHAN.SELECT(channels, [timeout_ms]) → the index of the first channel
+    // with a value waiting or closed, -1 when none is ready in time. A
+    // negative or missing timeout waits for as long as it takes.
+    register_native("CHAN.SELECT", 1, 2, [](const std::vector<Value>& args) -> Value {
+        auto* arr = args[0].as_array();
+        if (!arr || arr->elements.empty())
+            throw std::runtime_error("CHAN.SELECT: expects a non-empty array of channel handles");
+        std::vector<std::shared_ptr<Channel>> chans;
+        chans.reserve(arr->elements.size());
+        for (auto& e : arr->elements) {
+            int64_t handle = e.to_int();
+            auto ch = chan_lookup(handle);
+            if (!ch) throw std::runtime_error("CHAN.SELECT: invalid channel handle " + std::to_string(handle));
+            chans.push_back(ch);
+        }
+        int64_t timeout_ms = args.size() >= 2 ? args[1].to_int() : -1;
+        auto deadline = std::chrono::steady_clock::now() +
+                        std::chrono::milliseconds(timeout_ms < 0 ? 0 : timeout_ms);
+        for (;;) {
+            for (size_t i = 0; i < chans.size(); i++) {
+                std::lock_guard<std::mutex> lock(chans[i]->mtx);
+                if (!chans[i]->buffer.empty() || chans[i]->closed.load())
+                    return Value::make_i64((int64_t)i);
+            }
+            if (timeout_ms >= 0 && std::chrono::steady_clock::now() >= deadline)
+                return Value::make_i64(-1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    });
+
+    // CHAN.IS_TIMEOUT(value) → BOOLEAN for the marker a timed RECV,
+    // TRY_RECV answer when no value came.
+    register_native("CHAN.IS_TIMEOUT", 1, 1, [](const std::vector<Value>& args) -> Value {
+        return Value::make_bool(chan_value_is_timeout(args[0]));
     });
 
     // CHAN.IS_CLOSED(ch) → BOOLEAN.

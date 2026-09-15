@@ -1561,6 +1561,22 @@ Assert(375, D419Count() = 0)
 PUSH(d419_names$, "a")
 Assert(376, D419Count() = 1)
 
+' #435: HISTEDGES gives the edges HISTOGRAM counts between; CONVOLVE takes a
+' vector and a vector kernel.
+DIM h435_counts = HISTOGRAM([1, 2, 2, 3, 3, 3, 4], 4)
+DIM h435_edges = HISTEDGES([1, 2, 2, 3, 3, 3, 4], 4)
+Assert(377, h435_counts[2] = 3)
+Assert(378, LEN(h435_edges) = 5)
+Assert(379, h435_edges[4] = 4)
+Assert(380, h435_edges[1] = 1.75)
+DIM c435 = CONVOLVE([1, 2, 3, 4], [1, 1, 1])
+Assert(381, c435[0] = 3)
+Assert(382, c435[1] = 6)
+Assert(383, c435[3] = 7)
+DIM cw435 = CONVOLVE([1, 2, 3, 4], [1, 0, 0], 1)
+Assert(384, cw435[0] = 4)
+Assert(385, cw435[2] = 2)
+
 
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
