@@ -47,6 +47,7 @@ tests/ffi/test_ffi_string_param.jdb	OK	CFAIL	GAP
 tests/forms_events_test.jdb	OK	CFAIL	GAP
 tests/forms_jdform_test.jdb	OK	CFAIL	GAP
 tests/forms_props_test.jdb	OK	CFAIL	GAP
+tests/gate/async_error_state_test.jdb	PASS	PASS	OK
 tests/gate/chan_timeout_test.jdb	PASS	PASS	OK
 tests/gate/codec_deflate_test.jdb	PASS	PASS	OK
 tests/gate/codec_hmac_test.jdb	PASS	PASS	OK
