@@ -1,0 +1,360 @@
+' POOL: results in input order for 1, 2 and 8 workers, errors kept per
+' item, fail fast, timeouts that drop the late answer, cancellation, text
+' results, WAITALL and WAITANY, the token bucket on its own and inside
+' workers, fan-in over several channels, and no task left running.
+
+IMPORT TESTKIT, POOL
+
+DIM every_task = []
+
+FUNC Checked(x)
+    IF x < 0 THEN THROW "negative item " + STR$(x)
+    RETURN x * x
+ENDFUNC
+
+ASYNC FUNC SquareWorker(jobs, results, items, delays)
+    DIM handled = 0
+    DO
+        DIM idx = POOL.TAKE_JOB(jobs, results)
+        IF idx < 0 THEN EXITDO
+        DIM item = items[idx]
+        DIM pause = delays[idx]
+        IF pause > 0 THEN SLEEP CLNG(pause)
+        TRY
+            DIM answer = Checked(item)
+            POOL.DONE(results, idx, answer)
+        CATCH
+            POOL.FAILED(results, idx, ERRMSG$)
+        ENDTRY
+        handled = handled + 1
+    LOOP
+    RETURN handled
+ENDFUNC
+
+ASYNC FUNC TextWorker(jobs, results, words)
+    DO
+        DIM idx = POOL.TAKE_JOB(jobs, results)
+        IF idx < 0 THEN EXITDO
+        DIM word$ = words[idx]
+        POOL.DONE_TEXT(results, idx, UCASE$(word$))
+    LOOP
+    RETURN 0
+ENDFUNC
+
+ASYNC FUNC LimitedWorker(jobs, results, tokens)
+    DO
+        DIM idx = POOL.TAKE_JOB(jobs, results)
+        IF idx < 0 THEN EXITDO
+        IF POOL.ACQUIRE(tokens, 5000) THEN
+            POOL.DONE(results, idx, idx * 10)
+        ELSE
+            POOL.FAILED(results, idx, "no token")
+        ENDIF
+    LOOP
+    RETURN 0
+ENDFUNC
+
+ASYNC FUNC ClockWorker(jobs, results, wait_ms)
+    DO
+        DIM idx = POOL.CLAIM_JOB(jobs, results)
+        IF idx < 0 THEN EXITDO
+        SLEEP wait_ms
+        POOL.STARTED(results, idx)
+        POOL.DONE(results, idx, idx + 1)
+    LOOP
+    RETURN 0
+ENDFUNC
+
+ASYNC FUNC Sleeper(ms)
+    SLEEP ms
+    RETURN ms
+ENDFUNC
+
+ASYNC FUNC Producer(ch, first, n_values, pause_ms)
+    DIM k = 0
+    FOR k = 0 TO n_values - 1
+        CHAN.SEND(ch, first + k)
+        IF pause_ms > 0 THEN SLEEP pause_ms
+    NEXT k
+    CHAN.CLOSE(ch)
+    RETURN n_values
+ENDFUNC
+
+ASYNC FUNC WordProducer(ch)
+    CHAN.SEND(ch, "alpha")
+    SLEEP 3
+    CHAN.SEND(ch, "beta")
+    CHAN.CLOSE(ch)
+    RETURN 2
+ENDFUNC
+
+SUB Remember(p)
+    DIM owned = POOL.TASKS(p)
+    DIM i = 0
+    FOR i = 0 TO LEN(owned) - 1
+        DIM t = owned[i]
+        every_task = APPEND(every_task, t)
+    NEXT i
+ENDSUB
+
+TESTKIT.SUITE("results in input order")
+DIM items = []
+DIM delays = []
+DIM expected = []
+DIM i = 0
+FOR i = 0 TO 19
+    items = APPEND(items, i + 1)
+    delays = APPEND(delays, ((i * 7) MOD 5) * 3)
+    expected = APPEND(expected, (i + 1) * (i + 1) + 0.0)
+NEXT i
+DIM worker_counts = [1, 2, 8]
+DIM wc = 0
+FOR wc = 0 TO 2
+    DIM n_workers = worker_counts[wc]
+    DIM p = POOL.CREATE(LEN(items))
+    DIM w = 0
+    FOR w = 1 TO n_workers
+        POOL.SPAWN(p, SquareWorker(POOL.JOBS(p), POOL.RESULTS(p), items, delays))
+    NEXT w
+    DIM label$ = STR$(n_workers) + " worker(s)"
+    TESTKIT.EQ(LEN(POOL.TASKS(p)), n_workers, label$ + ": every task is registered")
+    TESTKIT.EQ(POOL.GATHER(p), 20, label$ + ": all 20 jobs come back ok")
+    TESTKIT.EQARRAY(POOL.VALUES(p), expected, label$ + ": the squares stand in input order")
+    TESTKIT.EQ(POOL.STATE$(p, 19), "ok", label$ + ": the last job is ok")
+    TESTKIT.EQ(POOL.VALUE(p, 4), 25, label$ + ": one value read on its own")
+    TESTKIT.EQ(POOL.SHUTDOWN(p), n_workers, label$ + ": every worker is joined")
+    TESTKIT.ISTRUE(POOL.WAITALL(POOL.TASKS(p), 1), label$ + ": and none is left running")
+    Remember(p)
+NEXT wc
+
+TESTKIT.SUITE("errors per item")
+DIM mixed = [1, -2, 3, 4, -5, 6, 7, 8]
+DIM no_delay = [0, 0, 0, 0, 0, 0, 0, 0]
+DIM pe = POOL.CREATE(8)
+DIM we = 0
+FOR we = 1 TO 3
+    POOL.SPAWN(pe, SquareWorker(POOL.JOBS(pe), POOL.RESULTS(pe), mixed, no_delay))
+NEXT we
+TESTKIT.EQ(POOL.GATHER(pe, 0, FALSE), 6, "six jobs come back ok")
+TESTKIT.EQ(POOL.TOTAL(pe, "error"), 2, "two jobs failed")
+TESTKIT.EQARRAY(POOL.STATES(pe), ["ok", "error", "ok", "ok", "error", "ok", "ok", "ok"], "each job keeps its own state")
+TESTKIT.EQ(POOL.REASON$(pe, 1), "negative item -2", "with the message of its own error")
+TESTKIT.EQ(POOL.REASON$(pe, 4), "negative item -5", "the second failure has its own message")
+TESTKIT.EQ(POOL.REASON$(pe, 2), "", "an ok job has no reason")
+TESTKIT.EQ(POOL.VALUE(pe, 1), 0, "a failed job has no value")
+TESTKIT.EQ(POOL.VALUE(pe, 7), 64, "the jobs after a failure still run")
+TESTKIT.EQ(POOL.SHUTDOWN(pe), 3, "the three workers are joined")
+Remember(pe)
+
+TESTKIT.SUITE("fail fast")
+DIM ten = [1, 2, -3, 4, 5, 6, 7, 8, 9, 10]
+DIM slow_ten = [20, 20, 20, 20, 20, 20, 20, 20, 20, 20]
+DIM pf = POOL.CREATE(10)
+POOL.SPAWN(pf, SquareWorker(POOL.JOBS(pf), POOL.RESULTS(pf), ten, slow_ten))
+DIM fast_ok = POOL.GATHER(pf, 0, TRUE)
+TESTKIT.EQ(POOL.STATE$(pf, 2), "error", "the failing job is an error")
+TESTKIT.EQ(POOL.TOTAL(pf, "error"), 1, "and the only one")
+TESTKIT.ISTRUE(POOL.TOTAL(pf, "cancelled") >= 4, "the jobs not yet started are cancelled")
+TESTKIT.EQ(POOL.STATE$(pf, 9), "cancelled", "the last job never ran")
+TESTKIT.EQ(POOL.REASON$(pf, 9), "cancelled", "and says so")
+TESTKIT.EQ(fast_ok + POOL.TOTAL(pf, "error") + POOL.TOTAL(pf, "cancelled"), 10, "every job is accounted for")
+TESTKIT.EQ(POOL.TOTAL(pf, "pending") + POOL.TOTAL(pf, "running"), 0, "nothing is left open")
+TESTKIT.EQ(POOL.SHUTDOWN(pf), 1, "the worker stops after the job it held")
+Remember(pf)
+
+TESTKIT.SUITE("timeouts")
+DIM six = [1, 2, 3, 4, 5, 6]
+DIM one_slow = [0, 0, 700, 0, 0, 0]
+DIM pt = POOL.CREATE(6)
+DIM wt = 0
+FOR wt = 1 TO 2
+    POOL.SPAWN(pt, SquareWorker(POOL.JOBS(pt), POOL.RESULTS(pt), six, one_slow))
+NEXT wt
+TESTKIT.EQ(POOL.GATHER(pt, 200, FALSE), 5, "five jobs answer in time")
+TESTKIT.ISFALSE(POOL.WAITALL(POOL.TASKS(pt), 1), "the pool returns while the slow job still runs")
+TESTKIT.EQ(POOL.STATE$(pt, 2), "timeout", "the slow job is marked timed out")
+TESTKIT.EQ(POOL.REASON$(pt, 2), "timed out after 200 ms", "with the limit in the reason")
+TESTKIT.EQ(POOL.VALUE(pt, 3), 16, "its neighbours are ok")
+TESTKIT.EQ(POOL.SHUTDOWN(pt), 2, "shutting down waits for the slow worker")
+TESTKIT.ISTRUE(POOL.WAITALL(POOL.TASKS(pt), 1), "which is done afterwards")
+TESTKIT.EQ(POOL.GATHER(pt, 200, FALSE), 5, "gathering again takes nothing new")
+TESTKIT.EQ(POOL.STATE$(pt, 2), "timeout", "the late answer is dropped")
+TESTKIT.EQ(POOL.VALUE(pt, 2), 0, "and its value never lands")
+Remember(pt)
+DIM pk = POOL.CREATE(2)
+POOL.SPAWN(pk, ClockWorker(POOL.JOBS(pk), POOL.RESULTS(pk), 300))
+TESTKIT.EQ(POOL.GATHER(pk, 150, FALSE), 2, "a claimed job waits longer than the timeout before it starts")
+TESTKIT.EQARRAY(POOL.STATES(pk), ["ok", "ok"], "and still counts as ok")
+TESTKIT.EQ(POOL.VALUE(pk, 1), 2, "with its value")
+TESTKIT.EQ(POOL.SHUTDOWN(pk), 1, "the clock worker is joined")
+Remember(pk)
+
+TESTKIT.SUITE("cancellation")
+DIM twelve = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+DIM slow_twelve = [40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40, 40]
+DIM pc = POOL.CREATE(12)
+DIM wcn = 0
+FOR wcn = 1 TO 2
+    POOL.SPAWN(pc, SquareWorker(POOL.JOBS(pc), POOL.RESULTS(pc), twelve, slow_twelve))
+NEXT wcn
+SLEEP 10
+DIM dropped = POOL.CANCEL(pc)
+TESTKIT.ISTRUE(dropped >= 1, "cancel takes queued jobs off the queue")
+DIM kept = POOL.GATHER(pc)
+TESTKIT.EQ(POOL.TOTAL(pc, "cancelled"), dropped, "each of them is marked cancelled")
+TESTKIT.EQ(kept + dropped, 12, "the started jobs still finish")
+TESTKIT.EQ(POOL.STATE$(pc, 11), "cancelled", "the last queued job is cancelled")
+TESTKIT.EQ(POOL.CANCEL(pc), 0, "a second cancel finds nothing")
+TESTKIT.EQ(POOL.SHUTDOWN(pc), 2, "the workers end when the queue runs dry")
+Remember(pc)
+
+TESTKIT.SUITE("edges")
+DIM pz = POOL.CREATE(0)
+TESTKIT.EQ(POOL.GATHER(pz), 0, "an empty pool gathers nothing")
+TESTKIT.EQ(LEN(POOL.VALUES(pz)), 0, "and has no values")
+DIM pn = POOL.CREATE(3)
+TESTKIT.EQ(POOL.GATHER(pn), 0, "a pool without workers ends")
+TESTKIT.EQ(POOL.TOTAL(pn, "cancelled"), 3, "with its jobs cancelled")
+TESTKIT.EQ(POOL.TOTAL(pn, "no such state"), 0, "an unknown state word counts nothing")
+TESTKIT.EQ(POOL.SHUTDOWN(pn), 0, "and nothing to join")
+
+TESTKIT.SUITE("text results")
+DIM words = ["red", "green", "blue"]
+DIM pw = POOL.CREATE(3)
+POOL.SPAWN(pw, TextWorker(POOL.JOBS(pw), POOL.RESULTS(pw), words))
+POOL.SPAWN(pw, TextWorker(POOL.JOBS(pw), POOL.RESULTS(pw), words))
+TESTKIT.EQ(POOL.GATHER(pw), 3, "text jobs come back ok")
+TESTKIT.EQ(POOL.VALUE_TEXT$(pw, 0), "RED", "the first text")
+TESTKIT.EQ(POOL.VALUE_TEXT$(pw, 2), "BLUE", "the last text in input order")
+TESTKIT.EQ(POOL.SHUTDOWN(pw), 2, "both text workers are joined")
+Remember(pw)
+
+TESTKIT.SUITE("waiting on tasks")
+DIM sleepers = []
+sleepers = APPEND(sleepers, Sleeper(400))
+sleepers = APPEND(sleepers, Sleeper(10))
+sleepers = APPEND(sleepers, Sleeper(200))
+DIM first_done = POOL.WAITANY(sleepers)
+TESTKIT.EQ(first_done, 1, "WAITANY names the shortest sleeper")
+DIM wait_start = TICK()
+TESTKIT.ISFALSE(POOL.WAITALL(sleepers, 30), "WAITALL gives up after its timeout")
+TESTKIT.ISTRUE(TICK() - wait_start >= 25, "but only after waiting")
+TESTKIT.ISTRUE(POOL.WAITALL(sleepers), "WAITALL without a timeout waits for all")
+DIM s = 0
+DIM all_flagged = TRUE
+FOR s = 0 TO 2
+    DIM st = sleepers[s]
+    IF NOT THREAD.ISDONE(st) THEN all_flagged = FALSE
+    every_task = APPEND(every_task, st)
+NEXT s
+TESTKIT.ISTRUE(all_flagged, "every sleeper reports done")
+TESTKIT.EQ(POOL.WAITANY(sleepers, 1), 0, "WAITANY on finished tasks answers at once")
+TESTKIT.EQ(POOL.WAITANY([], 1), -1, "WAITANY on no tasks answers -1")
+
+TESTKIT.SUITE("rate limiter")
+DIM lim = POOL.LIMITER(50, 5)
+DIM tokens = POOL.TOKENS(lim)
+DIM burst_start = TICK()
+DIM got_all = TRUE
+DIM k = 0
+FOR k = 1 TO 5
+    IF NOT POOL.ACQUIRE(tokens, 2000) THEN got_all = FALSE
+NEXT k
+DIM burst_ms = TICK() - burst_start
+TESTKIT.ISTRUE(got_all, "the full bucket hands out its burst")
+TESTKIT.ISTRUE(burst_ms < 400, "without waiting for the refill")
+DIM steady_start = TICK()
+FOR k = 1 TO 10
+    IF NOT POOL.ACQUIRE(tokens, 3000) THEN got_all = FALSE
+NEXT k
+DIM steady_ms = TICK() - steady_start
+TESTKIT.ISTRUE(got_all, "the refill hands out ten more")
+TESTKIT.ISTRUE(steady_ms >= 120, "no faster than the rate allows")
+TESTKIT.ISTRUE(steady_ms < 5000, "and not unreasonably slower")
+DIM issued = POOL.LIMITER_STOP(lim)
+TESTKIT.ISTRUE(issued >= 15, "the limiter counts the tokens it issued")
+TESTKIT.ISTRUE(THREAD.ISDONE(POOL.LIMITER_TASK(lim)), "its task has ended")
+DIM leftover = 0
+DO
+    IF NOT POOL.ACQUIRE(tokens, 50) THEN EXITDO
+    leftover = leftover + 1
+LOOP
+TESTKIT.ISTRUE(leftover <= 5, "a stopped limiter only gives up what the bucket held")
+TESTKIT.ISFALSE(POOL.ACQUIRE(tokens, 50), "and then refuses")
+TESTKIT.EQ(POOL.LIMITER_STOP(lim), 0, "stopping twice is harmless")
+every_task = APPEND(every_task, POOL.LIMITER_TASK(lim))
+
+DIM lim2 = POOL.LIMITER(40, 1)
+DIM pl = POOL.CREATE(8)
+DIM wl = 0
+FOR wl = 1 TO 4
+    POOL.SPAWN(pl, LimitedWorker(POOL.JOBS(pl), POOL.RESULTS(pl), POOL.TOKENS(lim2)))
+NEXT wl
+DIM limited_start = TICK()
+TESTKIT.EQ(POOL.GATHER(pl), 8, "four workers share one limiter")
+DIM limited_ms = TICK() - limited_start
+TESTKIT.ISTRUE(limited_ms >= 100, "and the eight jobs are spread over the refill")
+TESTKIT.ISTRUE(limited_ms < 5000, "within generous bounds")
+TESTKIT.EQ(POOL.VALUE(pl, 7), 70, "with their results in order")
+TESTKIT.EQ(POOL.SHUTDOWN(pl), 4, "the limited workers are joined")
+POOL.LIMITER_STOP(lim2)
+every_task = APPEND(every_task, POOL.LIMITER_TASK(lim2))
+Remember(pl)
+
+TESTKIT.SUITE("fan-in")
+DIM ca = CHAN.OPEN(4)
+DIM cb = CHAN.OPEN(4)
+DIM cw = CHAN.OPEN(4)
+DIM prods = []
+prods = APPEND(prods, Producer(ca, 100, 5, 2))
+prods = APPEND(prods, Producer(cb, 200, 4, 3))
+prods = APPEND(prods, WordProducer(cw))
+DIM sources = [ca, cb, cw]
+DIM total_seen = 0
+DIM number_sum = 0.0
+DIM last_a = 0.0
+DIM last_b = 0.0
+DIM in_order = TRUE
+DIM words_seen$ = ""
+DO
+    DIM origin = POOL.FANIN(sources, 3000)
+    IF origin < 0 THEN EXITDO
+    total_seen = total_seen + 1
+    DIM got_number = POOL.FANIN_VALUE()
+    IF origin = 0 THEN
+        IF got_number <= last_a THEN in_order = FALSE
+        last_a = got_number
+        number_sum = number_sum + got_number
+    ELSEIF origin = 1 THEN
+        IF got_number <= last_b THEN in_order = FALSE
+        last_b = got_number
+        number_sum = number_sum + got_number
+    ELSE
+        words_seen$ = words_seen$ + POOL.FANIN_TEXT$() + " "
+    ENDIF
+LOOP
+TESTKIT.EQ(origin, -2, "fan-in ends once every source is closed and drained")
+TESTKIT.EQ(total_seen, 11, "every value from the three sources arrives")
+TESTKIT.EQ(number_sum, 510 + 806, "the numbers add up")
+TESTKIT.ISTRUE(in_order, "each source keeps its own order")
+TESTKIT.EQ(words_seen$, "alpha beta ", "text values come through too")
+TESTKIT.ISTRUE(POOL.WAITALL(prods, 3000), "the producers are done")
+DIM p_i = 0
+FOR p_i = 0 TO 2
+    DIM pt_task = prods[p_i]
+    every_task = APPEND(every_task, pt_task)
+NEXT p_i
+DIM quiet = CHAN.OPEN(2)
+DIM quiet_sources = [quiet]
+TESTKIT.EQ(POOL.FANIN(quiet_sources, 30), -1, "an idle source times out with -1")
+CHAN.SEND(quiet, 7)
+TESTKIT.EQ(POOL.FANIN(quiet_sources, 30), 0, "a waiting value is taken at once")
+TESTKIT.EQ(POOL.FANIN_VALUE(), 7, "and read back")
+CHAN.CLOSE(quiet)
+TESTKIT.EQ(POOL.FANIN(quiet_sources, 30), -2, "a closed empty source ends the fan-in")
+
+TESTKIT.SUITE("no leaked tasks")
+TESTKIT.ISTRUE(LEN(every_task) >= 30, "the run started its tasks")
+TESTKIT.ISTRUE(POOL.WAITALL(every_task, 1), "every task of the run has ended")
+
+TESTKIT.REPORT()

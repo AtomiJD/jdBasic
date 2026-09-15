@@ -1,0 +1,227 @@
+' IMG against Pillow 12.3: tests/jdlibs/fixtures/img_png holds PNGs in every
+' bit depth and color type (filters 0 to 4 cycling per row, IDAT split
+' every 23 bytes, Adam7 variants); img_decode.tsv has the pixels Pillow
+' reads from them, img_ops.tsv the results of Pillow's crop, transpose,
+' resize NEAREST and BILINEAR, convert("L"), ImageFilter kernels and
+' alpha_composite on a 13x9 RGBA source. Every comparison is exact.
+
+IMPORT TESTKIT, IMG
+
+DIM fixture_dir$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(fixture_dir$ + "img_ops.tsv") THEN fixture_dir$ = "fixtures/"
+DIM i = 0
+DIM j = 0
+
+FUNC Nums(text_in$)
+    DIM pieces = SPLIT(text_in$, " ")
+    DIM out = ZEROS(LEN(pieces))
+    DIM k = 0
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM piece$ = pieces[k]
+        out[k] = VAL(piece$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC ReadRows(path$)
+    DIM rows AS MAP
+    DIM lines = SPLIT(TXTREADER$(path$), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM line_text$ = lines[k]
+        IF LEN(line_text$) > 0 THEN
+            DIM cols = SPLIT(line_text$, CHR$(9))
+            DIM row_name$ = cols[0]
+            rows{row_name$} = line_text$
+        ENDIF
+    NEXT k
+    RETURN rows
+ENDFUNC
+
+FUNC RowImage(line_text$)
+    DIM cols = SPLIT(line_text$, CHR$(9))
+    DIM w = VAL(cols[1])
+    DIM h = VAL(cols[2])
+    DIM c = VAL(cols[3])
+    DIM values$ = cols[4]
+    RETURN IMG.FROMPIXELS(w, h, c, Nums(values$))
+ENDFUNC
+
+SUB SameImage(got, want, message$)
+    TESTKIT.EQ(IMG.WIDTH(got), IMG.WIDTH(want), message$ + " (width)")
+    TESTKIT.EQ(IMG.HEIGHT(got), IMG.HEIGHT(want), message$ + " (height)")
+    TESTKIT.EQ(IMG.CHANNELS(got), IMG.CHANNELS(want), message$ + " (channels)")
+    TESTKIT.EQARRAY(IMG.PIXELS(got), IMG.PIXELS(want), message$)
+ENDSUB
+
+FUNC DecodeDamaged(png$)
+    RETURN IMG.DECODE(png$)
+ENDFUNC
+
+FUNC DecodeText(unused)
+    RETURN IMG.DECODE("this is not a png at all")
+ENDFUNC
+
+FUNC BadFilter(img)
+    RETURN IMG.ENCODE$(img, {"filter": "diagonal"})
+ENDFUNC
+
+FUNC BadPixels(unused)
+    RETURN IMG.FROMPIXELS(2, 2, 3, [1, 2, 3])
+ENDFUNC
+
+FUNC TooManyColors(img)
+    RETURN IMG.ENCODE$(img, {"palette": 1})
+ENDFUNC
+
+' ---- decoding ----
+
+TESTKIT.SUITE("decode")
+DIM decode_rows = ReadRows(fixture_dir$ + "img_decode.tsv")
+DIM decode_names = MAP.KEYS(decode_rows)
+FOR i = 0 TO LEN(decode_names) - 1
+    DIM dname$ = decode_names[i]
+    DIM dline$ = decode_rows{dname$}
+    DIM got = IMG.READPNG(fixture_dir$ + "img_png/" + dname$ + ".png")
+    SameImage(got, RowImage(dline$), dname$ + ".png decodes as Pillow reads it")
+NEXT i
+DIM info = IMG.PNGINFO(BINREADER$(fixture_dir$ + "img_png/rgba16i.png"))
+TESTKIT.EQ(CLNG(info{"depth"}), 16, "PNGINFO reports the bit depth")
+TESTKIT.EQ(CLNG(info{"colortype"}), 6, "the color type")
+TESTKIT.EQ(CLNG(info{"interlace"}), 1, "and the interlace method")
+DIM chunk_list = info{"chunks"}
+TESTKIT.ISTRUE(LEN(chunk_list) > 3, "the fixture splits its data over several IDAT chunks")
+DIM last_chunk$ = chunk_list[LEN(chunk_list) - 1]
+TESTKIT.EQ(last_chunk$, "IEND", "and ends with IEND")
+DIM good_png$ = BINREADER$(fixture_dir$ + "img_png/rgb8.png")
+DIM flipped$ = LEFT$(good_png$, 60) + CHR$(255 - BYTEAT(good_png$, 60)) + MID$(good_png$, 61, LEN(good_png$))
+TESTKIT.EQ(LEN(flipped$), LEN(good_png$), "the damaged copy keeps its length")
+TESTKIT.THROWS(DecodeDamaged@, flipped$, "a flipped byte fails the CRC check")
+TESTKIT.THROWS(DecodeText@, 0, "text without the signature is refused")
+TESTKIT.THROWS(DecodeDamaged@, LEFT$(good_png$, LEN(good_png$) - 20), "a truncated file is refused")
+
+' ---- operations ----
+
+DIM ops = ReadRows(fixture_dir$ + "img_ops.tsv")
+DIM source = IMG.READPNG(fixture_dir$ + "img_png/src_rgba.png")
+DIM rgb = IMG.TOCHANNELS(source, 3)
+
+TESTKIT.SUITE("geometry")
+SameImage(source, RowImage(ops{"source_rgba"}), "the RGBA source")
+SameImage(IMG.CROP(source, 2, 1, 7, 5), RowImage(ops{"crop_2_1_7_5"}), "CROP as crop((2, 1, 9, 6))")
+SameImage(IMG.FLIPX(source), RowImage(ops{"flip_x"}), "FLIPX as FLIP_LEFT_RIGHT")
+SameImage(IMG.FLIPY(source), RowImage(ops{"flip_y"}), "FLIPY as FLIP_TOP_BOTTOM")
+SameImage(IMG.TURN(source, 1), RowImage(ops{"rot90"}), "TURN 1 as ROTATE_90")
+SameImage(IMG.TURN(source, 2), RowImage(ops{"rot180"}), "TURN 2 as ROTATE_180")
+SameImage(IMG.TURN(source, 3), RowImage(ops{"rot270"}), "TURN 3 as ROTATE_270")
+SameImage(IMG.TURN(source, -1), RowImage(ops{"rot270"}), "TURN -1 turns clockwise")
+SameImage(IMG.TURN(IMG.TURN(source, 1), 3), source, "a turn and its reverse cancel")
+DIM corner = IMG.CROP(source, -2, -2, 4, 4)
+TESTKIT.EQARRAY(IMG.GETPIXEL(corner, 0, 0), [0, 0, 0, 0], "CROP outside the source is 0")
+TESTKIT.EQARRAY(IMG.GETPIXEL(corner, 2, 2), IMG.GETPIXEL(source, 0, 0), "and the inside is the source")
+
+TESTKIT.SUITE("resize")
+DIM size_w = [5, 26, 7, 13]
+DIM size_h = [4, 18, 13, 9]
+FOR i = 0 TO LEN(size_w) - 1
+    DIM sw = size_w[i]
+    DIM sh = size_h[i]
+    DIM tag$ = STR$(sw) + "_" + STR$(sh)
+    SameImage(IMG.RESIZE(source, sw, sh, "nearest"), RowImage(ops{"nearest_" + tag$}), "RESIZE nearest to " + tag$)
+    SameImage(IMG.RESIZE(source, sw, sh, "bilinear"), RowImage(ops{"bilinear_" + tag$}), "RESIZE bilinear RGBA to " + tag$)
+NEXT i
+SameImage(IMG.RESIZE(rgb, 6, 11), RowImage(ops{"bilinear_rgb_6_11"}), "RESIZE bilinear RGB to 6x11")
+SameImage(IMG.RESIZE(IMG.GRAY(source), 20, 5), RowImage(ops{"bilinear_gray_20_5"}), "RESIZE bilinear gray to 20x5")
+
+TESTKIT.SUITE("color and kernels")
+SameImage(IMG.GRAY(source), RowImage(ops{"gray"}), "GRAY as convert('L')")
+SameImage(IMG.BLUR(rgb), RowImage(ops{"filter_blur"}), "BLUR as ImageFilter.BLUR")
+SameImage(IMG.SHARPEN(rgb), RowImage(ops{"filter_sharpen"}), "SHARPEN as ImageFilter.SHARPEN")
+SameImage(IMG.EDGES(rgb), RowImage(ops{"filter_edges"}), "EDGES as ImageFilter.FIND_EDGES")
+SameImage(IMG.KERNEL(rgb, [1, 2, 1, 2, 4, 2, 1, 2, 1], 3), RowImage(ops{"kernel_gauss"}), "KERNEL with the scale from the weight sum")
+SameImage(IMG.KERNEL(rgb, [-1, -1, -1, -1, 8, -1, -1, -1, -1], 3, 1, 128), RowImage(ops{"kernel_offset"}), "KERNEL with an offset")
+SameImage(IMG.KERNEL(rgb, [1, 1, 1, 1, 1, 1, 1, 1, 1], 3, 9), RowImage(ops{"kernel_box9"}), "KERNEL rounds like Pillow (3x3 box)")
+SameImage(IMG.KERNEL(rgb, [1, 0, 2, 0, 1, 0, 1, 1, 1, 0, 2, 1, -1, 1, 2, 0, 1, 1, 1, 0, 1, 0, 2, 0, 1], 5, 19, 0.25), RowImage(ops{"kernel_k5"}), "KERNEL 5x5 with a fractional offset")
+DIM spread = IMG.TOCHANNELS(IMG.GRAY(source), 4)
+DIM gray_at = IMG.GETPIXEL(IMG.GRAY(source), 3, 2)
+DIM luma = gray_at[0]
+TESTKIT.EQARRAY(IMG.GETPIXEL(spread, 3, 2), [luma, luma, luma, 255], "TOCHANNELS spreads gray and adds opaque alpha")
+
+TESTKIT.SUITE("combining")
+DIM comp_dst = RowImage(ops{"composite_dst"})
+DIM comp_src = RowImage(ops{"composite_src"})
+SameImage(IMG.COMPOSITE(comp_dst, comp_src), RowImage(ops{"composite_out"}), "COMPOSITE as Image.alpha_composite")
+DIM patch = IMG.BLANK(3, 2, 4, [10, 20, 30, 255])
+DIM pasted = IMG.PASTE(source, patch, 11, 8)
+TESTKIT.EQARRAY(IMG.GETPIXEL(pasted, 12, 8), [10, 20, 30, 255], "PASTE writes the patch")
+TESTKIT.EQARRAY(IMG.GETPIXEL(pasted, 10, 8), IMG.GETPIXEL(source, 10, 8), "and leaves the rest alone")
+TESTKIT.EQARRAY(IMG.GETPIXEL(source, 12, 8), IMG.GETPIXEL(RowImage(ops{"source_rgba"}), 12, 8), "without touching the original")
+DIM half = IMG.BLANK(1, 1, 4, [200, 0, 0, 128])
+DIM on_white = IMG.COMPOSITE(IMG.BLANK(2, 1, 4, 255), half, 1, 0)
+TESTKIT.EQARRAY(IMG.GETPIXEL(on_white, 1, 0), [227, 127, 127, 255], "COMPOSITE of half red over white")
+TESTKIT.EQARRAY(IMG.GETPIXEL(on_white, 0, 0), [255, 255, 255, 255], "COMPOSITE at an offset")
+
+' ---- encoding ----
+
+TESTKIT.SUITE("encode")
+DIM filters = ["none", "sub", "up", "average", "paeth", "adaptive"]
+FOR j = 1 TO 4
+    DIM variant = IMG.TOCHANNELS(source, j)
+    FOR i = 0 TO LEN(filters) - 1
+        DIM fname$ = filters[i]
+        DIM png$ = IMG.ENCODE$(variant, {"filter": fname$, "level": 9})
+        SameImage(IMG.DECODE(png$), variant, STR$(j) + " channel(s), filter " + fname$ + " round trip")
+    NEXT i
+NEXT j
+DIM black = IMG.BLANK(40, 30, 3, 0)
+DIM black_png$ = IMG.ENCODE$(black, {"level": 0})
+TESTKIT.ISTRUE(INSTR(black_png$, CHR$(0)) >= 0, "the PNG bytes hold NUL")
+TESTKIT.EQ(LEN(black_png$), LEN(IMG.ENCODE$(black, {"level": 0})), "and come out the same every time")
+SameImage(IMG.DECODE(black_png$), black, "a stored (level 0) all-zero image round trips")
+DIM head_info = IMG.PNGINFO(black_png$)
+TESTKIT.EQ(CLNG(head_info{"width"}), 40, "IHDR width")
+TESTKIT.EQ(CLNG(head_info{"colortype"}), 2, "RGB is color type 2")
+DIM uri$ = IMG.DATAURI$(source)
+TESTKIT.EQ(LEFT$(uri$, 22), "data:image/png;base64,", "DATAURI$ prefix")
+SameImage(IMG.DECODE(CODEC.BASE64_DECODE$(MID$(uri$, 22, LEN(uri$)))), source, "and its payload decodes to the image")
+TESTKIT.THROWS(BadFilter@, source, "an unknown filter name is refused")
+TESTKIT.THROWS(BadPixels@, 0, "FROMPIXELS checks the value count")
+
+TESTKIT.SUITE("quantize")
+DIM q16 = IMG.QUANTIZE(source, 16)
+TESTKIT.ISTRUE(IMG.COLORCOUNT(IMG.TOCHANNELS(q16, 3)) <= 16, "median cut leaves at most 16 colors")
+TESTKIT.EQ(IMG.CHANNELS(q16), 4, "and keeps the alpha channel")
+DIM qa = IMG.PIXELS(q16)
+DIM sa = IMG.PIXELS(source)
+DIM alpha_same = 1
+FOR i = 3 TO LEN(sa) - 1 STEP 4
+    IF qa[i] <> sa[i] THEN alpha_same = 0
+NEXT i
+TESTKIT.EQ(alpha_same, 1, "alpha values are untouched")
+DIM pal_png$ = IMG.ENCODE$(q16, {"palette": 1})
+DIM pal_info = IMG.PNGINFO(pal_png$)
+TESTKIT.EQ(CLNG(pal_info{"colortype"}), 3, "palette PNG is color type 3")
+SameImage(IMG.DECODE(pal_png$), q16, "the palette PNG decodes to the quantized image")
+TESTKIT.THROWS(TooManyColors@, IMG.RESIZE(source, 26, 18), "more than 256 colors cannot go into a palette")
+DIM few = IMG.RESIZE(IMG.QUANTIZE(rgb, 5), 26, 18, "nearest")
+SameImage(IMG.QUANTIZE(few, 8), few, "an image with fewer colors than asked stays as it is")
+DIM one = IMG.QUANTIZE(rgb, 1)
+TESTKIT.EQ(IMG.COLORCOUNT(one), 1, "one color is the weighted mean")
+DIM web = IMG.PIXELS(IMG.QUANTIZE(rgb, 216, "web"))
+DIM web_ok = 1
+FOR i = 0 TO LEN(web) - 1
+    IF web[i] - INT(web[i] / 51) * 51 <> 0 THEN web_ok = 0
+NEXT i
+TESTKIT.EQ(web_ok, 1, "the web palette uses steps of 51")
+DIM err16 = 0.0
+DIM err4 = 0.0
+DIM q4 = IMG.PIXELS(IMG.QUANTIZE(rgb, 4))
+DIM q16rgb = IMG.PIXELS(IMG.QUANTIZE(rgb, 16))
+DIM rgb_px = IMG.PIXELS(rgb)
+FOR i = 0 TO LEN(rgb_px) - 1
+    err16 = err16 + ABS(q16rgb[i] - rgb_px[i])
+    err4 = err4 + ABS(q4[i] - rgb_px[i])
+NEXT i
+TESTKIT.ISTRUE(err16 < err4, "16 colors fit closer than 4")
+
+TESTKIT.REPORT()

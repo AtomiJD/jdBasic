@@ -1,0 +1,626 @@
+' pool.jdb - worker pools over ASYNC tasks and channels: fan-out with
+' results in input order, per-item errors and timeouts, cancellation,
+' WAITALL / WAITANY, a token-bucket rate limiter and a fan-in helper.
+'
+'   IMPORT POOL
+'
+'   ASYNC FUNC SquareWorker(jobs, results, items)
+'       DO
+'           DIM idx = POOL.TAKE_JOB(jobs, results)
+'           IF idx < 0 THEN EXITDO
+'           TRY
+'               DIM answer = Square(items[idx])
+'               POOL.DONE(results, idx, answer)
+'           CATCH
+'               POOL.FAILED(results, idx, ERRMSG$)
+'           ENDTRY
+'       LOOP
+'       RETURN 0
+'   ENDFUNC
+'
+'   DIM p = POOL.CREATE(LEN(items))
+'   FOR w = 1 TO 4
+'       POOL.SPAWN(p, SquareWorker(POOL.JOBS(p), POOL.RESULTS(p), items))
+'   NEXT w
+'   POOL.GATHER(p, 500, FALSE)
+'   DIM squares = POOL.VALUES(p)
+'   POOL.SHUTDOWN(p)
+'
+' An ASYNC FUNC runs on its own thread with a copy of the globals, so the
+' worker is a named ASYNC FUNC of the caller and everything it needs
+' travels as parameters. Workers talk to the pool only through the two
+' channels and the scalar helpers TAKE_JOB, DONE, DONE_TEXT and FAILED.
+
+EXPORT MODULE POOL
+
+' ── pool state (one row per pool, one row per item) ───────────
+
+DIM pool_jobs = []
+DIM pool_results = []
+DIM pool_size = []
+DIM pool_base = []
+DIM item_state = []
+DIM item_value = []
+DIM item_text = []
+DIM item_reason = []
+DIM task_list = []
+DIM task_owner = []
+DIM task_joined = []
+DIM lim_tokens = []
+DIM lim_task = []
+DIM lim_open = []
+DIM fanin_number = 0.0
+DIM fanin_text$ = ""
+
+' ── creating a pool ───────────────────────────────────────────
+
+' A pool for n_items jobs numbered 0 to n_items - 1. Every job number is
+' queued and the job channel is closed, so workers end when it runs dry.
+EXPORT FUNC CREATE(n_items)
+    DIM n AS INTEGER = CLNG(n_items)
+    DIM cap AS INTEGER = n
+    IF cap < 1 THEN cap = 1
+    DIM jobs = CHAN.OPEN(cap)
+    DIM results = CHAN.OPEN(2 * n + 8)
+    DIM handle AS INTEGER = LEN(pool_size)
+    DIM base AS INTEGER = LEN(item_state)
+    pool_jobs = APPEND(pool_jobs, jobs)
+    pool_results = APPEND(pool_results, results)
+    pool_size = APPEND(pool_size, n)
+    pool_base = APPEND(pool_base, base)
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO n - 1
+        item_state = APPEND(item_state, 0)
+        item_value = APPEND(item_value, 0.0)
+        item_text = APPEND(item_text, "")
+        item_reason = APPEND(item_reason, "")
+        CHAN.SEND(jobs, i)
+    NEXT i
+    CHAN.CLOSE(jobs)
+    RETURN handle
+ENDFUNC
+
+' The channel workers take job numbers from.
+EXPORT FUNC JOBS(p)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM ch = pool_jobs[handle]
+    RETURN ch
+ENDFUNC
+
+' The channel workers report to.
+EXPORT FUNC RESULTS(p)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM ch = pool_results[handle]
+    RETURN ch
+ENDFUNC
+
+' Registers a worker task with the pool.
+EXPORT SUB SPAWN(p, task)
+    task_list = APPEND(task_list, task)
+    task_owner = APPEND(task_owner, CLNG(p))
+    task_joined = APPEND(task_joined, 0)
+ENDSUB
+
+' The worker tasks of a pool.
+EXPORT FUNC TASKS(p)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM out = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(task_list) - 1
+        DIM owner AS INTEGER = CLNG(task_owner[i])
+        IF owner = handle THEN
+            DIM t = task_list[i]
+            out = APPEND(out, t)
+        ENDIF
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' ── inside a worker ───────────────────────────────────────────
+
+' The next job number, or -1 when there is no work left. Tells the pool
+' the job has started, which is when its timeout begins.
+EXPORT FUNC TAKE_JOB(jobs, results)
+    DIM job = CHAN.RECV(jobs)
+    IF CHAN.IS_EOF(job) THEN RETURN -1
+    DIM idx = CLNG(job)
+    CHAN.SEND(results, [idx, 1, 0, ""])
+    RETURN idx
+ENDFUNC
+
+' The next job number, or -1, like TAKE_JOB, but the timeout does not
+' start until the worker calls STARTED (after waiting for a token, say).
+EXPORT FUNC CLAIM_JOB(jobs, results)
+    DIM job = CHAN.RECV(jobs)
+    IF CHAN.IS_EOF(job) THEN RETURN -1
+    DIM idx = CLNG(job)
+    CHAN.SEND(results, [idx, 4, 0, ""])
+    RETURN idx
+ENDFUNC
+
+' Starts the timeout of job idx now.
+EXPORT SUB STARTED(results, idx)
+    CHAN.SEND(results, [idx, 1, 0, ""])
+ENDSUB
+
+' A numeric result for job idx.
+EXPORT SUB DONE(results, idx, value)
+    CHAN.SEND(results, [idx, 2, value, ""])
+ENDSUB
+
+' A text result for job idx.
+EXPORT SUB DONE_TEXT(results, idx, text$)
+    CHAN.SEND(results, [idx, 2, 0, text$])
+ENDSUB
+
+' Job idx failed with message$.
+EXPORT SUB FAILED(results, idx, message$)
+    CHAN.SEND(results, [idx, 3, 0, message$])
+ENDSUB
+
+' ── collecting ────────────────────────────────────────────────
+
+FUNC AllTasksDone(handle)
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(task_list) - 1
+        DIM owner AS INTEGER = CLNG(task_owner[i])
+        IF owner = handle THEN
+            DIM t = task_list[i]
+            IF NOT THREAD.ISDONE(t) THEN RETURN FALSE
+        ENDIF
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+FUNC DrainJobs(handle)
+    DIM jobs = pool_jobs[handle]
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM n AS INTEGER = CLNG(pool_size[handle])
+    DIM dropped AS INTEGER = 0
+    DO
+        DIM got = CHAN.TRY_RECV(jobs)
+        IF CHAN.IS_EOF(got) THEN EXITDO
+        IF CHAN.IS_TIMEOUT(got) THEN EXITDO
+        DIM idx AS INTEGER = CLNG(got)
+        IF idx >= 0 ANDALSO idx < n THEN
+            DIM st AS INTEGER = CLNG(item_state[base + idx])
+            IF st = 0 THEN
+                item_state[base + idx] = 5
+                item_reason[base + idx] = "cancelled"
+                dropped = dropped + 1
+            ENDIF
+        ENDIF
+    LOOP
+    RETURN dropped
+ENDFUNC
+
+' Takes every job no worker has started off the queue and marks it
+' cancelled. Workers stop after the job they hold. Answers how many
+' jobs were cancelled.
+EXPORT FUNC CANCEL(p)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM dropped AS INTEGER = DrainJobs(handle)
+    RETURN dropped
+ENDFUNC
+
+' Collects reports until every job is resolved: ok, error, timeout or
+' cancelled. A started job that has not answered after timeout_ms is
+' marked timeout and its late answer is dropped (0 means no limit).
+' With fail_fast the first error cancels the jobs not yet started.
+' Answers the number of jobs that came back ok.
+EXPORT FUNC GATHER(p, timeout_ms = 0, fail_fast = FALSE)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM results = pool_results[handle]
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM n AS INTEGER = CLNG(pool_size[handle])
+    DIM limit_ms AS DOUBLE = timeout_ms + 0.0
+    DIM stop_early = FALSE
+    IF fail_fast THEN stop_early = TRUE
+    DIM deadlines = []
+    DIM open_items AS INTEGER = 0
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO n - 1
+        deadlines = APPEND(deadlines, 0.0)
+        DIM first_state AS INTEGER = CLNG(item_state[base + i])
+        IF first_state < 2 THEN open_items = open_items + 1
+    NEXT i
+    DIM wait_ms AS DOUBLE = 25.0
+    DIM now AS DOUBLE = 0.0
+    DIM idx AS INTEGER = 0
+    DIM kind AS INTEGER = 0
+    DIM st AS INTEGER = 0
+    DIM due AS DOUBLE = 0.0
+    DO
+        IF open_items <= 0 THEN EXITDO
+        wait_ms = 25.0
+        IF limit_ms > 0 THEN
+            now = TICK()
+            FOR i = 0 TO n - 1
+                st = CLNG(item_state[base + i])
+                IF st = 1 THEN
+                    due = deadlines[i]
+                    IF due > 0 ANDALSO due - now < wait_ms THEN wait_ms = due - now
+                ENDIF
+            NEXT i
+        ENDIF
+        IF wait_ms < 1 THEN wait_ms = 1
+        DIM msg = CHAN.RECV(results, CLNG(wait_ms))
+        IF CHAN.IS_TIMEOUT(msg) THEN
+            now = TICK()
+            IF limit_ms > 0 THEN
+                FOR i = 0 TO n - 1
+                    st = CLNG(item_state[base + i])
+                    IF st = 1 THEN
+                        due = deadlines[i]
+                        IF due > 0 ANDALSO now >= due THEN
+                            item_state[base + i] = 4
+                            item_reason[base + i] = "timed out after " + STR$(CLNG(limit_ms)) + " ms"
+                            open_items = open_items - 1
+                        ENDIF
+                    ENDIF
+                NEXT i
+            ENDIF
+            IF open_items > 0 ANDALSO AllTasksDone(handle) THEN
+                IF CHAN.LEN(results) = 0 THEN
+                    FOR i = 0 TO n - 1
+                        st = CLNG(item_state[base + i])
+                        IF st = 0 THEN
+                            item_state[base + i] = 5
+                            item_reason[base + i] = "cancelled"
+                        ENDIF
+                        IF st = 1 THEN
+                            item_state[base + i] = 3
+                            item_reason[base + i] = "worker ended without a result"
+                        ENDIF
+                    NEXT i
+                    open_items = 0
+                ENDIF
+            ENDIF
+        ELSE
+            idx = CLNG(msg[0])
+            kind = CLNG(msg[1])
+            IF idx >= 0 ANDALSO idx < n THEN
+                st = CLNG(item_state[base + idx])
+                IF st < 2 THEN
+                    IF kind = 1 THEN
+                        item_state[base + idx] = 1
+                        deadlines[idx] = TICK() + limit_ms
+                    ENDIF
+                    IF kind = 4 THEN
+                        item_state[base + idx] = 1
+                        deadlines[idx] = 0.0
+                    ENDIF
+                    IF kind = 2 THEN
+                        DIM number_value AS DOUBLE = msg[2]
+                        DIM text_value$ = "" + msg[3]
+                        item_state[base + idx] = 2
+                        item_value[base + idx] = number_value
+                        item_text[base + idx] = text_value$ + ""
+                        open_items = open_items - 1
+                    ENDIF
+                    IF kind = 3 THEN
+                        DIM reason$ = "" + msg[3]
+                        item_state[base + idx] = 3
+                        item_reason[base + idx] = reason$ + ""
+                        open_items = open_items - 1
+                        IF stop_early THEN
+                            DIM jobs = pool_jobs[handle]
+                            DO
+                                DIM queued = CHAN.TRY_RECV(jobs)
+                                IF CHAN.IS_EOF(queued) THEN EXITDO
+                                IF CHAN.IS_TIMEOUT(queued) THEN EXITDO
+                                DIM skipped AS INTEGER = CLNG(queued)
+                                IF skipped >= 0 ANDALSO skipped < n THEN
+                                    DIM queued_state AS INTEGER = CLNG(item_state[base + skipped])
+                                    IF queued_state = 0 THEN
+                                        item_state[base + skipped] = 5
+                                        item_reason[base + skipped] = "cancelled"
+                                        open_items = open_items - 1
+                                    ENDIF
+                                ENDIF
+                            LOOP
+                        ENDIF
+                    ENDIF
+                ENDIF
+            ENDIF
+        ENDIF
+    LOOP
+    RETURN TotalOf(handle, 2)
+ENDFUNC
+
+' ── reading the outcome ───────────────────────────────────────
+
+FUNC TotalOf(handle, wanted)
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM n AS INTEGER = CLNG(pool_size[handle])
+    DIM hits AS INTEGER = 0
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO n - 1
+        DIM st AS INTEGER = CLNG(item_state[base + i])
+        IF st = wanted THEN hits = hits + 1
+    NEXT i
+    RETURN hits
+ENDFUNC
+
+FUNC StateCode(state$)
+    DIM names = ["pending", "running", "ok", "error", "timeout", "cancelled"]
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO 5
+        DIM candidate$ = names[i]
+        IF candidate$ = LCASE$(state$) THEN RETURN i
+    NEXT i
+    RETURN -1
+ENDFUNC
+
+' The number of jobs in one state: pending, running, ok, error, timeout
+' or cancelled.
+EXPORT FUNC TOTAL(p, state$)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM code AS INTEGER = StateCode(state$)
+    IF code < 0 THEN RETURN 0
+    DIM hits AS INTEGER = TotalOf(handle, code)
+    RETURN hits
+ENDFUNC
+
+' The state of job i as a word.
+EXPORT FUNC STATE$(p, i)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM st AS INTEGER = CLNG(item_state[base + CLNG(i)])
+    DIM names = ["pending", "running", "ok", "error", "timeout", "cancelled"]
+    DIM word$ = names[st]
+    RETURN word$
+ENDFUNC
+
+' The numeric result of job i (0 unless it came back ok).
+EXPORT FUNC VALUE(p, i)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM number_value AS DOUBLE = item_value[base + CLNG(i)]
+    RETURN number_value
+ENDFUNC
+
+' The text result of job i.
+EXPORT FUNC VALUE_TEXT$(p, i)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM text_value$ = item_text[base + CLNG(i)]
+    RETURN text_value$
+ENDFUNC
+
+' Why job i did not come back ok: the error message, the timeout or
+' "cancelled"; empty for ok and unresolved jobs.
+EXPORT FUNC REASON$(p, i)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM reason$ = item_reason[base + CLNG(i)]
+    RETURN reason$
+ENDFUNC
+
+' Every numeric result in input order.
+EXPORT FUNC VALUES(p)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM n AS INTEGER = CLNG(pool_size[handle])
+    DIM out = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO n - 1
+        DIM number_value AS DOUBLE = item_value[base + i]
+        out = APPEND(out, number_value)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Every state word in input order.
+EXPORT FUNC STATES(p)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM base AS INTEGER = CLNG(pool_base[handle])
+    DIM n AS INTEGER = CLNG(pool_size[handle])
+    DIM names = ["pending", "running", "ok", "error", "timeout", "cancelled"]
+    DIM out = []
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO n - 1
+        DIM st AS INTEGER = CLNG(item_state[base + i])
+        DIM word$ = names[st]
+        out = APPEND(out, word$)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' Waits for every worker of the pool, including one still busy with a
+' timed-out job. Answers how many tasks were joined.
+EXPORT FUNC SHUTDOWN(p)
+    DIM handle AS INTEGER = CLNG(p)
+    DIM joined AS INTEGER = 0
+    DIM i AS INTEGER = 0
+    FOR i = 0 TO LEN(task_list) - 1
+        DIM owner AS INTEGER = CLNG(task_owner[i])
+        DIM seen AS INTEGER = CLNG(task_joined[i])
+        IF owner = handle ANDALSO seen = 0 THEN
+            DIM t = task_list[i]
+            DIM ignored = AWAIT t
+            task_joined[i] = 1
+            joined = joined + 1
+        ENDIF
+    NEXT i
+    RETURN joined
+ENDFUNC
+
+' ── waiting on tasks ──────────────────────────────────────────
+
+' TRUE once every task in tasks is done; FALSE when timeout_ms passes
+' first (0 waits as long as it takes).
+EXPORT FUNC WAITALL(tasks, timeout_ms = 0)
+    DIM started AS DOUBLE = TICK()
+    DIM limit_ms AS DOUBLE = timeout_ms + 0.0
+    DIM n AS INTEGER = LEN(tasks)
+    DIM i AS INTEGER = 0
+    DO
+        DIM all_done = TRUE
+        FOR i = 0 TO n - 1
+            DIM t = tasks[i]
+            IF NOT THREAD.ISDONE(t) THEN all_done = FALSE
+        NEXT i
+        IF all_done THEN RETURN TRUE
+        IF limit_ms > 0 ANDALSO TICK() - started >= limit_ms THEN RETURN FALSE
+        SLEEP 2
+    LOOP
+    RETURN FALSE
+ENDFUNC
+
+' The index of the first task found done, or -1 when timeout_ms passes
+' first (0 waits as long as it takes).
+EXPORT FUNC WAITANY(tasks, timeout_ms = 0)
+    DIM started AS DOUBLE = TICK()
+    DIM limit_ms AS DOUBLE = timeout_ms + 0.0
+    DIM n AS INTEGER = LEN(tasks)
+    DIM i AS INTEGER = 0
+    IF n = 0 THEN RETURN -1
+    DO
+        FOR i = 0 TO n - 1
+            DIM t = tasks[i]
+            IF THREAD.ISDONE(t) THEN RETURN i
+        NEXT i
+        IF limit_ms > 0 ANDALSO TICK() - started >= limit_ms THEN RETURN -1
+        SLEEP 2
+    LOOP
+    RETURN -1
+ENDFUNC
+
+' ── rate limiting ─────────────────────────────────────────────
+
+ASYNC FUNC Ticker(tokens, gap_ms, burst)
+    DIM sent = 0
+    DIM alive = TRUE
+    DO WHILE alive
+        TRY
+            CHAN.SEND(tokens, 1)
+            sent = sent + 1
+        CATCH
+            alive = FALSE
+        ENDTRY
+        IF alive ANDALSO sent >= burst THEN SLEEP gap_ms
+    LOOP
+    RETURN sent
+ENDFUNC
+
+' A token bucket that refills per_second tokens a second and holds at
+' most burst of them; it starts full. The bucket is a channel filled by
+' its own task, so ACQUIRE works in the main program and inside workers.
+EXPORT FUNC LIMITER(per_second, burst = 1)
+    DIM depth AS INTEGER = CLNG(burst)
+    IF depth < 1 THEN depth = 1
+    DIM gap AS INTEGER = CLNG(1000.0 / per_second)
+    IF gap < 1 THEN gap = 1
+    DIM tokens = CHAN.OPEN(depth)
+    DIM task = Ticker(tokens, gap, depth)
+    DIM handle AS INTEGER = LEN(lim_open)
+    lim_tokens = APPEND(lim_tokens, tokens)
+    lim_task = APPEND(lim_task, task)
+    lim_open = APPEND(lim_open, 1)
+    RETURN handle
+ENDFUNC
+
+' The token channel of a limiter; hand it to workers for ACQUIRE.
+EXPORT FUNC TOKENS(lim)
+    DIM handle AS INTEGER = CLNG(lim)
+    DIM ch = lim_tokens[handle]
+    RETURN ch
+ENDFUNC
+
+' Takes one token from a limiter's token channel, waiting for it. FALSE
+' when timeout_ms passes first (0 waits as long as it takes) or the
+' limiter was stopped.
+EXPORT FUNC ACQUIRE(tokens, timeout_ms = 0)
+    DIM got = 0
+    IF timeout_ms <= 0 THEN
+        got = CHAN.RECV(tokens)
+    ELSE
+        got = CHAN.RECV(tokens, CLNG(timeout_ms))
+    ENDIF
+    IF CHAN.IS_EOF(got) THEN RETURN FALSE
+    IF CHAN.IS_TIMEOUT(got) THEN RETURN FALSE
+    RETURN TRUE
+ENDFUNC
+
+' Stops a limiter and joins its task. Answers how many tokens it issued.
+EXPORT FUNC LIMITER_STOP(lim)
+    DIM handle AS INTEGER = CLNG(lim)
+    DIM live AS INTEGER = CLNG(lim_open[handle])
+    IF live = 0 THEN RETURN 0
+    DIM tokens = lim_tokens[handle]
+    DIM task = lim_task[handle]
+    CHAN.CLOSE(tokens)
+    DIM issued = AWAIT task
+    lim_open[handle] = 0
+    RETURN issued
+ENDFUNC
+
+' The ticker task of a limiter.
+EXPORT FUNC LIMITER_TASK(lim)
+    DIM handle AS INTEGER = CLNG(lim)
+    DIM task = lim_task[handle]
+    RETURN task
+ENDFUNC
+
+' ── fan-in ────────────────────────────────────────────────────
+
+' Takes the next value from any of the channels in sources and answers
+' the index of the channel it came from: -1 when timeout_ms passes first,
+' -2 once every channel is closed and drained (0 waits as long as it
+' takes). The value itself is read with FANIN_VALUE or FANIN_TEXT$.
+EXPORT FUNC FANIN(sources, timeout_ms = 0)
+    DIM started AS DOUBLE = TICK()
+    DIM limit_ms AS DOUBLE = timeout_ms + 0.0
+    DIM n AS INTEGER = LEN(sources)
+    DIM i AS INTEGER = 0
+    DO
+        DIM live = []
+        DIM chans = []
+        FOR i = 0 TO n - 1
+            DIM ch = sources[i]
+            DIM finished = FALSE
+            IF CHAN.IS_CLOSED(ch) ANDALSO CHAN.LEN(ch) = 0 THEN finished = TRUE
+            IF NOT finished THEN
+                live = APPEND(live, i)
+                chans = APPEND(chans, ch)
+            ENDIF
+        NEXT i
+        IF LEN(live) = 0 THEN RETURN -2
+        DIM left AS DOUBLE = -1.0
+        IF limit_ms > 0 THEN
+            left = limit_ms - (TICK() - started)
+            IF left < 0 THEN left = 0
+        ENDIF
+        DIM which AS INTEGER = CHAN.SELECT(chans, CLNG(left))
+        IF which < 0 THEN RETURN -1
+        DIM picked = chans[which]
+        DIM got = CHAN.TRY_RECV(picked)
+        IF NOT CHAN.IS_EOF(got) ANDALSO NOT CHAN.IS_TIMEOUT(got) THEN
+            DIM origin AS INTEGER = CLNG(live[which])
+            DIM kind$ = TYPEOF(got)
+            fanin_number = 0.0
+            fanin_text$ = ""
+            IF kind$ = "STRING" THEN
+                fanin_text$ = "" + got
+            ELSEIF kind$ = "INT64" ORELSE kind$ = "FLOAT64" ORELSE kind$ = "BOOLEAN" THEN
+                DIM number_value AS DOUBLE = got
+                fanin_number = number_value
+            ENDIF
+            RETURN origin
+        ENDIF
+    LOOP
+    RETURN -2
+ENDFUNC
+
+' The number FANIN took last (0 when it was not a number).
+EXPORT FUNC FANIN_VALUE()
+    DIM number_value AS DOUBLE = fanin_number
+    RETURN number_value
+ENDFUNC
+
+' The text FANIN took last (empty when it was not a string).
+EXPORT FUNC FANIN_TEXT$()
+    DIM text_value$ = fanin_text$ + ""
+    RETURN text_value$
+ENDFUNC

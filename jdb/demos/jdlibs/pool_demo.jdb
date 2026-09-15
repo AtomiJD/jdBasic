@@ -1,0 +1,92 @@
+' pool_demo.jdb - a worker pool fetching twelve "pages" that are only
+' SLEEPs: four workers share a rate limit, one page hangs past its
+' timeout, one fails, and the results come back in input order. A second
+' part merges two sensor feeds with a fan-in.
+'
+'   jdBasic jdb/demos/jdlibs/pool_demo.jdb
+
+IMPORT POOL
+
+FUNC Fetch$(page$, cost_ms)
+    IF INSTR(page$, "broken") >= 0 THEN THROW "404 for " + page$
+    SLEEP cost_ms
+    RETURN "<html>" + page$ + "</html>"
+ENDFUNC
+
+ASYNC FUNC Fetcher(jobs, results, pages, costs, tokens)
+    DIM fetched = 0
+    DO
+        DIM idx = POOL.CLAIM_JOB(jobs, results)
+        IF idx < 0 THEN EXITDO
+        DIM page$ = pages[idx]
+        DIM cost = costs[idx]
+        IF POOL.ACQUIRE(tokens, 5000) THEN
+            POOL.STARTED(results, idx)
+            TRY
+                DIM body$ = Fetch$(page$, CLNG(cost))
+                POOL.DONE_TEXT(results, idx, STR$(LEN(body$)) + " bytes")
+                fetched = fetched + 1
+            CATCH
+                POOL.FAILED(results, idx, ERRMSG$)
+            ENDTRY
+        ELSE
+            POOL.FAILED(results, idx, "no token")
+        ENDIF
+    LOOP
+    RETURN fetched
+ENDFUNC
+
+ASYNC FUNC Sensor(ch, base, n_values, pause_ms)
+    DIM k = 0
+    FOR k = 1 TO n_values
+        CHAN.SEND(ch, base + k / 10)
+        SLEEP pause_ms
+    NEXT k
+    CHAN.CLOSE(ch)
+    RETURN n_values
+ENDFUNC
+
+DIM pages = ["home", "about", "blog", "blog/1", "blog/2", "broken-link", "shop", "shop/cart", "hanging", "faq", "contact", "imprint"]
+DIM costs = [40, 30, 60, 20, 20, 10, 50, 30, 1500, 20, 30, 10]
+
+PRINT "Fetching "; LEN(pages); " pages with 4 workers, 20 requests a second, a 400 ms timeout"
+DIM lim = POOL.LIMITER(20, 4)
+DIM p = POOL.CREATE(LEN(pages))
+DIM w = 0
+FOR w = 1 TO 4
+    POOL.SPAWN(p, Fetcher(POOL.JOBS(p), POOL.RESULTS(p), pages, costs, POOL.TOKENS(lim)))
+NEXT w
+DIM started = TICK()
+DIM ok_count = POOL.GATHER(p, 400, FALSE)
+DIM elapsed = TICK() - started
+
+PRINT ""
+DIM i = 0
+FOR i = 0 TO LEN(pages) - 1
+    DIM page$ = pages[i]
+    DIM state$ = POOL.STATE$(p, i)
+    DIM detail$ = POOL.VALUE_TEXT$(p, i)
+    IF state$ <> "ok" THEN detail$ = POOL.REASON$(p, i)
+    PRINT "  "; LEFT$(page$ + "              ", 14); LEFT$(state$ + "          ", 10); detail$
+NEXT i
+PRINT ""
+PRINT ok_count; " ok, "; POOL.TOTAL(p, "error"); " error, "; POOL.TOTAL(p, "timeout"); " timeout in "; CLNG(elapsed); " ms"
+PRINT "waiting for the hanging worker... joined "; POOL.SHUTDOWN(p); " workers"
+PRINT "the limiter issued "; POOL.LIMITER_STOP(lim); " tokens"
+
+PRINT ""
+PRINT "Merging two sensor feeds"
+DIM left_feed = CHAN.OPEN(4)
+DIM right_feed = CHAN.OPEN(4)
+DIM sensors = []
+sensors = APPEND(sensors, Sensor(left_feed, 20, 4, 15))
+sensors = APPEND(sensors, Sensor(right_feed, 30, 3, 25))
+DIM feeds = [left_feed, right_feed]
+DIM names = ["left ", "right"]
+DO
+    DIM origin = POOL.FANIN(feeds, 2000)
+    IF origin < 0 THEN EXITDO
+    DIM feed_name$ = names[origin]
+    PRINT "  "; feed_name$; "  "; POOL.FANIN_VALUE()
+LOOP
+PRINT "both feeds closed: "; POOL.WAITALL(sensors, 1000)

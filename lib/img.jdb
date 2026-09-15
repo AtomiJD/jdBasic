@@ -1,0 +1,1470 @@
+' IMG: images as pixel arrays without GFX. PNG read and write (every bit
+' depth and color type, palettes with transparency, Adam7 interlace, CRC
+' checks), crop, nearest and bilinear resize, quarter turns, flips,
+' grayscale, convolution kernels, palette quantizing, paste, alpha
+' compositing and data URIs for HTML. The pixel math follows Pillow, see
+' img_lib_readme.md.
+'
+'   IMPORT IMG
+'   DIM photo = IMG.READPNG("photo.png")
+'   DIM thumb = IMG.RESIZE(photo, 160, 120, "bilinear")
+'   IMG.WRITEPNG(IMG.EDGES(IMG.GRAY(thumb)), "edges.png")
+'   PRINT "<img src='" + IMG.DATAURI$(thumb) + "'>"
+'
+' An image is a map {"width", "height", "channels", "pixels"}: channels 1
+' (gray), 2 (gray and alpha), 3 (RGB) or 4 (RGBA), pixels a flat array of
+' height * width * channels values from 0 to 255, row by row.
+EXPORT MODULE IMG
+
+DIM gB64$ = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+DIM gPngSig$ = CODEC.BASE64_DECODE$("iVBORw0KGgo=")
+
+' ---- building blocks ----
+
+FUNC Concat$(pieces)
+    DIM work = []
+    DIM i = 0
+    FOR i = 0 TO LEN(pieces) - 1
+        DIM piece$ = pieces[i]
+        PUSH(work, piece$)
+    NEXT i
+    IF LEN(work) = 0 THEN RETURN ""
+    DIM rounds = 0
+    FOR rounds = 0 TO 64
+        IF LEN(work) <= 1 THEN EXITFOR
+        DIM merged = []
+        DIM k = 0
+        FOR k = 0 TO LEN(work) - 1 STEP 2
+            DIM a_part$ = work[k]
+            IF k + 1 < LEN(work) THEN
+                DIM b_part$ = work[k + 1]
+                PUSH(merged, a_part$ + b_part$)
+            ELSE
+                PUSH(merged, a_part$)
+            ENDIF
+        NEXT k
+        work = merged
+    NEXT rounds
+    DIM whole$ = work[0]
+    RETURN whole$
+ENDFUNC
+
+' The first n values of a byte array as a binary string, built as base64
+' character codes (never NUL) and decoded in one step.
+FUNC BytesText$(bytes, n)
+    IF n <= 0 THEN RETURN ""
+    DIM alpha = ZEROS(64)
+    DIM i = 0
+    FOR i = 0 TO 63
+        alpha[i] = ASC(MID$(gB64$, i, 1))
+    NEXT i
+    DIM groups = INT((n + 2) / 3)
+    DIM codes = ZEROS(groups * 4)
+    FOR i = 0 TO groups - 1
+        DIM at = i * 3
+        DIM b0 = bytes[at]
+        DIM b1 = 0
+        DIM b2 = 0
+        IF at + 1 < n THEN b1 = bytes[at + 1]
+        IF at + 2 < n THEN b2 = bytes[at + 2]
+        DIM v = b0 * 65536 + b1 * 256 + b2
+        DIM s0 = INT(v / 262144)
+        DIM rest = v - s0 * 262144
+        DIM s1 = INT(rest / 4096)
+        rest = rest - s1 * 4096
+        DIM s2 = INT(rest / 64)
+        codes[i * 4] = alpha[s0]
+        codes[i * 4 + 1] = alpha[s1]
+        codes[i * 4 + 2] = alpha[s2]
+        codes[i * 4 + 3] = alpha[rest - s2 * 64]
+    NEXT i
+    DIM text$ = JOIN(CHR$(codes), "")
+    DIM decoded$ = CODEC.BASE64_DECODE$(text$)
+    RETURN LEFT$(decoded$, n)
+ENDFUNC
+
+FUNC TextBytes(data$)
+    DIM n = LEN(data$)
+    IF n = 0 THEN RETURN []
+    RETURN UNPACK(STR$(n) + "b", data$)
+ENDFUNC
+
+FUNC U32(data$, offset)
+    DIM vals = UNPACK(">i", data$, offset)
+    DIM v = vals[0]
+    RETURN v
+ENDFUNC
+
+FUNC Crc4$(crc)
+    DIM hi = INT(crc / 65536)
+    RETURN PACK$(">ss", hi, crc - hi * 65536)
+ENDFUNC
+
+FUNC Chunk$(ctype$, body$)
+    DIM crc = CODEC.CRC32(ctype$ + body$)
+    RETURN PACK$(">i", LEN(body$)) + ctype$ + body$ + Crc4$(crc)
+ENDFUNC
+
+FUNC OptNumber(opts, key$, fallback)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback
+    IF NOT MAP.EXISTS(opts, key$) THEN RETURN fallback
+    DIM v = opts{key$}
+    RETURN v
+ENDFUNC
+
+FUNC OptText$(opts, key$, fallback$)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback$
+    IF NOT MAP.EXISTS(opts, key$) THEN RETURN fallback$
+    DIM v = opts{key$}
+    RETURN LCASE$("" + v)
+ENDFUNC
+
+FUNC Clip255(v)
+    IF v <= 0 THEN RETURN 0
+    IF v >= 255 THEN RETURN 255
+    RETURN v
+ENDFUNC
+
+FUNC Paeth(a, b, c)
+    DIM p = a + b - c
+    DIM pa = ABS(p - a)
+    DIM pb = ABS(p - b)
+    DIM pc = ABS(p - c)
+    IF pa <= pb ANDALSO pa <= pc THEN RETURN a
+    IF pb <= pc THEN RETURN b
+    RETURN c
+ENDFUNC
+
+FUNC CheckImage(img, who$)
+    IF TYPEOF(img) <> "OBJECT" THEN THROW who$ + ": an image map is needed"
+    IF NOT MAP.EXISTS(img, "pixels") THEN THROW who$ + ": an image map is needed"
+    DIM c = CLNG(img{"channels"})
+    IF c < 1 ORELSE c > 4 THEN THROW who$ + ": channels must be 1 to 4"
+    RETURN c
+ENDFUNC
+
+FUNC Pack(w, h, c, pixels)
+    RETURN {"width": w, "height": h, "channels": c, "pixels": pixels}
+ENDFUNC
+
+' ---- images ----
+
+EXPORT FUNC BLANK(w, h, c = 4, value = 0)
+    DIM iw = CLNG(w)
+    DIM ih = CLNG(h)
+    DIM ic = CLNG(c)
+    IF iw < 0 ORELSE ih < 0 THEN THROW "IMG.BLANK: a size cannot be negative"
+    IF ic < 1 ORELSE ic > 4 THEN THROW "IMG.BLANK: channels must be 1 to 4"
+    DIM pixels = ZEROS(iw * ih * ic)
+    DIM fill = ZEROS(ic)
+    DIM k = 0
+    IF TYPEOF(value) = "ARRAY" THEN
+        IF LEN(value) <> ic THEN THROW "IMG.BLANK: the fill color needs one value per channel"
+        FOR k = 0 TO ic - 1
+            fill[k] = Clip255(INT(value[k] + 0.5))
+        NEXT k
+    ELSE
+        FOR k = 0 TO ic - 1
+            fill[k] = Clip255(INT(value + 0.5))
+        NEXT k
+    ENDIF
+    DIM i = 0
+    DIM any_set = 0
+    FOR k = 0 TO ic - 1
+        IF fill[k] <> 0 THEN any_set = 1
+    NEXT k
+    IF any_set = 1 THEN
+        FOR i = 0 TO iw * ih - 1
+            FOR k = 0 TO ic - 1
+                pixels[i * ic + k] = fill[k]
+            NEXT k
+        NEXT i
+    ENDIF
+    RETURN Pack(iw, ih, ic, pixels)
+ENDFUNC
+
+EXPORT FUNC FROMPIXELS(w, h, c, pixels)
+    DIM iw = CLNG(w)
+    DIM ih = CLNG(h)
+    DIM ic = CLNG(c)
+    IF ic < 1 ORELSE ic > 4 THEN THROW "IMG.FROMPIXELS: channels must be 1 to 4"
+    IF LEN(pixels) <> iw * ih * ic THEN THROW "IMG.FROMPIXELS: expected " + STR$(iw * ih * ic) + " values, got " + STR$(LEN(pixels))
+    DIM n = iw * ih * ic
+    DIM out = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM v = pixels[i]
+        out[i] = Clip255(INT(v + 0.5))
+    NEXT i
+    RETURN Pack(iw, ih, ic, out)
+ENDFUNC
+
+EXPORT FUNC WIDTH(img)
+    RETURN CLNG(img{"width"})
+ENDFUNC
+
+EXPORT FUNC HEIGHT(img)
+    RETURN CLNG(img{"height"})
+ENDFUNC
+
+EXPORT FUNC CHANNELS(img)
+    RETURN CLNG(img{"channels"})
+ENDFUNC
+
+' A fresh copy of the pixel values.
+EXPORT FUNC PIXELS(img)
+    DIM c = CheckImage(img, "IMG.PIXELS")
+    DIM px = img{"pixels"}
+    DIM n = LEN(px)
+    DIM out = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        out[i] = px[i]
+    NEXT i
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC GETPIXEL(img, x, y)
+    DIM c = CheckImage(img, "IMG.GETPIXEL")
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM ix = CLNG(x)
+    DIM iy = CLNG(y)
+    IF ix < 0 ORELSE iy < 0 ORELSE ix >= w ORELSE iy >= h THEN THROW "IMG.GETPIXEL: " + STR$(ix) + "," + STR$(iy) + " is outside the image"
+    DIM px = img{"pixels"}
+    DIM out = ZEROS(c)
+    DIM k = 0
+    FOR k = 0 TO c - 1
+        out[k] = px[(iy * w + ix) * c + k]
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ---- PNG decoding ----
+
+' The pixel rows of one pass with their filters undone, rowlen bytes each.
+FUNC Unfilter(bytes, start, ph, rowlen, bpp)
+    DIM out = ZEROS(ph * rowlen)
+    DIM y = 0
+    DIM i = 0
+    FOR y = 0 TO ph - 1
+        DIM line_at = start + y * (rowlen + 1)
+        DIM ftype = CLNG(bytes[line_at])
+        DIM src = line_at + 1
+        DIM dst = y * rowlen
+        DIM v = 0
+        IF ftype = 0 ORELSE (ftype = 2 ANDALSO y = 0) THEN
+            FOR i = 0 TO rowlen - 1
+                out[dst + i] = bytes[src + i]
+            NEXT i
+        ELSEIF ftype = 1 ORELSE (ftype = 4 ANDALSO y = 0) THEN
+            FOR i = 0 TO rowlen - 1
+                v = bytes[src + i]
+                IF i >= bpp THEN v = v + out[dst + i - bpp]
+                IF v >= 256 THEN v = v - 256
+                out[dst + i] = v
+            NEXT i
+        ELSEIF ftype = 2 THEN
+            FOR i = 0 TO rowlen - 1
+                v = bytes[src + i] + out[dst + i - rowlen]
+                IF v >= 256 THEN v = v - 256
+                out[dst + i] = v
+            NEXT i
+        ELSEIF ftype = 3 THEN
+            FOR i = 0 TO rowlen - 1
+                DIM left_v = 0
+                DIM up_v = 0
+                IF i >= bpp THEN left_v = out[dst + i - bpp]
+                IF y > 0 THEN up_v = out[dst + i - rowlen]
+                v = bytes[src + i] + INT((left_v + up_v) / 2)
+                IF v >= 256 THEN v = v - 256
+                out[dst + i] = v
+            NEXT i
+        ELSEIF ftype = 4 THEN
+            FOR i = 0 TO rowlen - 1
+                DIM pa_v = 0
+                DIM pc_v = 0
+                DIM pb_v = out[dst + i - rowlen]
+                IF i >= bpp THEN
+                    pa_v = out[dst + i - bpp]
+                    pc_v = out[dst + i - bpp - rowlen]
+                ENDIF
+                v = bytes[src + i] + Paeth(pa_v, pb_v, pc_v)
+                IF v >= 256 THEN v = v - 256
+                out[dst + i] = v
+            NEXT i
+        ELSE
+            THROW "IMG.DECODE: unknown filter type " + STR$(ftype)
+        ENDIF
+    NEXT y
+    RETURN out
+ENDFUNC
+
+' The raw samples of one pass at their own bit depth, pw * ph * spp values.
+FUNC PassSamples(rows, pw, ph, rowlen, depth, spp)
+    DIM n = pw * ph * spp
+    DIM out = ZEROS(n)
+    DIM y = 0
+    DIM x = 0
+    DIM k = 0
+    IF depth = 8 THEN
+        FOR y = 0 TO ph - 1
+            FOR k = 0 TO pw * spp - 1
+                out[y * pw * spp + k] = rows[y * rowlen + k]
+            NEXT k
+        NEXT y
+    ELSEIF depth = 16 THEN
+        FOR y = 0 TO ph - 1
+            FOR k = 0 TO pw * spp - 1
+                out[y * pw * spp + k] = rows[y * rowlen + k * 2] * 256 + rows[y * rowlen + k * 2 + 1]
+            NEXT k
+        NEXT y
+    ELSE
+        DIM levels = 2 ^ depth
+        FOR y = 0 TO ph - 1
+            FOR x = 0 TO pw - 1
+                DIM bitpos = x * depth
+                DIM byte_v = rows[y * rowlen + INT(bitpos / 8)]
+                DIM shift_n = 8 - depth - (bitpos - INT(bitpos / 8) * 8)
+                DIM part = INT(byte_v / (2 ^ shift_n))
+                out[y * pw + x] = part - INT(part / levels) * levels
+            NEXT x
+        NEXT y
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' One pass converted to output pixels: 8-bit values, palettes resolved,
+' tRNS turned into an alpha channel.
+FUNC PassPixels(samples, npix, info, palette, trns)
+    DIM ctype = CLNG(info{"colortype"})
+    DIM depth = CLNG(info{"depth"})
+    DIM outc = CLNG(info{"channels"})
+    DIM spp = CLNG(info{"spp"})
+    DIM has_trns = LEN(trns)
+    DIM out = ZEROS(npix * outc)
+    DIM p = 0
+    DIM k = 0
+    DIM s = 0
+    IF ctype = 3 THEN
+        DIM pal_n = INT(LEN(palette) / 3)
+        FOR p = 0 TO npix - 1
+            DIM idx = CLNG(samples[p])
+            IF idx < pal_n THEN
+                out[p * outc] = palette[idx * 3]
+                out[p * outc + 1] = palette[idx * 3 + 1]
+                out[p * outc + 2] = palette[idx * 3 + 2]
+            ENDIF
+            IF outc = 4 THEN
+                DIM alpha_v = 255
+                IF idx < has_trns THEN alpha_v = trns[idx]
+                out[p * outc + 3] = alpha_v
+            ENDIF
+        NEXT p
+        RETURN out
+    ENDIF
+    DIM maxval = 2 ^ depth - 1
+    FOR p = 0 TO npix - 1
+        FOR k = 0 TO spp - 1
+            s = samples[p * spp + k]
+            IF depth = 16 THEN
+                s = INT(s / 256)
+            ELSEIF depth < 8 THEN
+                s = INT(s * 255 / maxval)
+            ENDIF
+            out[p * outc + k] = s
+        NEXT k
+        IF has_trns > 0 ANDALSO outc > spp THEN
+            DIM same = 1
+            FOR k = 0 TO spp - 1
+                IF samples[p * spp + k] <> trns[k] THEN same = 0
+            NEXT k
+            IF same = 1 THEN
+                out[p * outc + spp] = 0
+            ELSE
+                out[p * outc + spp] = 255
+            ENDIF
+        ENDIF
+    NEXT p
+    RETURN out
+ENDFUNC
+
+FUNC ReadInfo(png$, who$)
+    IF LEN(png$) < 8 ORELSE LEFT$(png$, 8) <> gPngSig$ THEN THROW who$ + ": not a PNG (signature missing)"
+    DIM chunk_names = []
+    DIM idat_parts = []
+    DIM palette_body$ = ""
+    DIM trns_body$ = ""
+    DIM ihdr$ = ""
+    DIM pos = 8
+    DIM guard = 0
+    DIM total = LEN(png$)
+    DIM ended = 0
+    FOR guard = 0 TO total
+        IF pos + 12 > total THEN EXITFOR
+        DIM body_len = U32(png$, pos)
+        DIM ctype$ = MID$(png$, pos + 4, 4)
+        IF pos + 12 + body_len > total THEN THROW who$ + ": chunk " + ctype$ + " is truncated"
+        DIM body$ = MID$(png$, pos + 8, body_len)
+        DIM want_crc = U32(png$, pos + 8 + body_len)
+        DIM got_crc = CODEC.CRC32(body$, CODEC.CRC32(ctype$))
+        IF got_crc <> want_crc THEN THROW who$ + ": CRC mismatch in chunk " + ctype$
+        PUSH(chunk_names, ctype$)
+        IF ctype$ = "IHDR" THEN ihdr$ = body$
+        IF ctype$ = "PLTE" THEN palette_body$ = body$
+        IF ctype$ = "tRNS" THEN trns_body$ = body$
+        IF ctype$ = "IDAT" THEN PUSH(idat_parts, body$)
+        pos = pos + 12 + body_len
+        IF ctype$ = "IEND" THEN
+            ended = 1
+            EXITFOR
+        ENDIF
+    NEXT guard
+    IF LEN(ihdr$) <> 13 THEN THROW who$ + ": IHDR missing"
+    IF ended = 0 THEN THROW who$ + ": IEND missing"
+    DIM head = UNPACK(">iibbbbb", ihdr$)
+    DIM w = head[0]
+    DIM h = head[1]
+    DIM depth = head[2]
+    DIM ctype = head[3]
+    DIM interlace = head[6]
+    DIM spp = 0
+    IF ctype = 0 THEN spp = 1
+    IF ctype = 2 THEN spp = 3
+    IF ctype = 3 THEN spp = 1
+    IF ctype = 4 THEN spp = 2
+    IF ctype = 6 THEN spp = 4
+    IF spp = 0 THEN THROW who$ + ": unknown color type " + STR$(ctype)
+    DIM depth_ok = 0
+    IF ctype = 0 ANDALSO (depth = 1 ORELSE depth = 2 ORELSE depth = 4 ORELSE depth = 8 ORELSE depth = 16) THEN depth_ok = 1
+    IF ctype = 3 ANDALSO (depth = 1 ORELSE depth = 2 ORELSE depth = 4 ORELSE depth = 8) THEN depth_ok = 1
+    IF (ctype = 2 ORELSE ctype = 4 ORELSE ctype = 6) ANDALSO (depth = 8 ORELSE depth = 16) THEN depth_ok = 1
+    IF depth_ok = 0 THEN THROW who$ + ": bit depth " + STR$(depth) + " is not valid for color type " + STR$(ctype)
+    DIM outc = spp
+    IF ctype = 3 THEN
+        outc = 3
+        IF LEN(trns_body$) > 0 THEN outc = 4
+    ENDIF
+    IF (ctype = 0 ORELSE ctype = 2) ANDALSO LEN(trns_body$) > 0 THEN outc = spp + 1
+    RETURN {"width": w, "height": h, "depth": depth, "colortype": ctype, "interlace": interlace, "spp": spp, "channels": outc, "chunks": chunk_names, "idat": Concat$(idat_parts), "plte": palette_body$, "trns": trns_body$}
+ENDFUNC
+
+EXPORT FUNC PNGINFO(png$)
+    DIM info = ReadInfo(png$, "IMG.PNGINFO")
+    RETURN {"width": info{"width"}, "height": info{"height"}, "depth": info{"depth"}, "colortype": info{"colortype"}, "interlace": info{"interlace"}, "channels": info{"channels"}, "chunks": info{"chunks"}}
+ENDFUNC
+
+EXPORT FUNC DECODE(png$)
+    DIM info = ReadInfo(png$, "IMG.DECODE")
+    DIM w = CLNG(info{"width"})
+    DIM h = CLNG(info{"height"})
+    DIM depth = CLNG(info{"depth"})
+    DIM ctype = CLNG(info{"colortype"})
+    DIM spp = CLNG(info{"spp"})
+    DIM outc = CLNG(info{"channels"})
+    DIM interlace = CLNG(info{"interlace"})
+    DIM idat$ = info{"idat"}
+    DIM plte$ = info{"plte"}
+    DIM trns$ = info{"trns"}
+    IF ctype = 3 ANDALSO LEN(plte$) = 0 THEN THROW "IMG.DECODE: palette image without PLTE"
+    DIM palette = TextBytes(plte$)
+    DIM trns = []
+    IF LEN(trns$) > 0 THEN
+        IF ctype = 3 THEN
+            trns = TextBytes(trns$)
+        ELSE
+            trns = UNPACK(">" + STR$(spp) + "s", trns$)
+        ENDIF
+    ENDIF
+    DIM raw$ = CODEC.INFLATE$(idat$, "zlib")
+    DIM bytes = TextBytes(raw$)
+    DIM nbytes = LEN(bytes)
+    DIM bpp = INT((depth * spp + 7) / 8)
+    DIM pixels = ZEROS(w * h * outc)
+    DIM pass_x0 = [0, 4, 0, 2, 0, 1, 0]
+    DIM pass_y0 = [0, 0, 4, 0, 2, 0, 1]
+    DIM pass_dx = [8, 8, 4, 4, 2, 2, 1]
+    DIM pass_dy = [8, 8, 8, 4, 4, 2, 2]
+    DIM npass = 7
+    IF interlace = 0 THEN npass = 1
+    DIM pos = 0
+    DIM pass_i = 0
+    DIM x = 0
+    DIM y = 0
+    DIM k = 0
+    FOR pass_i = 0 TO npass - 1
+        DIM x0 = 0
+        DIM y0 = 0
+        DIM dx = 1
+        DIM dy = 1
+        IF interlace <> 0 THEN
+            x0 = pass_x0[pass_i]
+            y0 = pass_y0[pass_i]
+            dx = pass_dx[pass_i]
+            dy = pass_dy[pass_i]
+        ENDIF
+        DIM pw = INT((w - x0 + dx - 1) / dx)
+        DIM ph = INT((h - y0 + dy - 1) / dy)
+        IF pw > 0 ANDALSO ph > 0 THEN
+            DIM rowlen = INT((pw * depth * spp + 7) / 8)
+            IF pos + ph * (rowlen + 1) > nbytes THEN THROW "IMG.DECODE: image data is shorter than the header promises"
+            DIM rows = Unfilter(bytes, pos, ph, rowlen, bpp)
+            pos = pos + ph * (rowlen + 1)
+            DIM samples = PassSamples(rows, pw, ph, rowlen, depth, spp)
+            DIM part = PassPixels(samples, pw * ph, info, palette, trns)
+            IF interlace = 0 THEN
+                RETURN Pack(w, h, outc, part)
+            ENDIF
+            FOR y = 0 TO ph - 1
+                FOR x = 0 TO pw - 1
+                    DIM dst = ((y0 + y * dy) * w + x0 + x * dx) * outc
+                    DIM src = (y * pw + x) * outc
+                    FOR k = 0 TO outc - 1
+                        pixels[dst + k] = part[src + k]
+                    NEXT k
+                NEXT x
+            NEXT y
+        ENDIF
+    NEXT pass_i
+    RETURN Pack(w, h, outc, pixels)
+ENDFUNC
+
+EXPORT FUNC READPNG(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "IMG.READPNG: file not found: " + path$
+    RETURN DECODE(BINREADER$(path$))
+ENDFUNC
+
+' ---- PNG encoding ----
+
+' Filter type and residual sum of one row for the adaptive choice.
+FUNC RowCost(samples, base, prev_base, rowlen, bpp, ftype)
+    DIM total = 0
+    DIM i = 0
+    DIM v = 0
+    FOR i = 0 TO rowlen - 1
+        DIM cur = samples[base + i]
+        DIM a = 0
+        DIM b = 0
+        DIM c = 0
+        IF i >= bpp THEN a = samples[base + i - bpp]
+        IF prev_base >= 0 THEN
+            b = samples[prev_base + i]
+            IF i >= bpp THEN c = samples[prev_base + i - bpp]
+        ENDIF
+        IF ftype = 0 THEN v = cur
+        IF ftype = 1 THEN v = cur - a
+        IF ftype = 2 THEN v = cur - b
+        IF ftype = 3 THEN v = cur - INT((a + b) / 2)
+        IF ftype = 4 THEN v = cur - Paeth(a, b, c)
+        IF v < 0 THEN v = v + 256
+        IF v > 127 THEN v = 256 - v
+        total = total + v
+    NEXT i
+    RETURN total
+ENDFUNC
+
+' Filter byte plus filtered row for every row.
+FUNC FilterRows(samples, h, rowlen, bpp, mode$)
+    DIM out = ZEROS(h * (rowlen + 1))
+    DIM fixed = -1
+    IF mode$ = "none" THEN fixed = 0
+    IF mode$ = "sub" THEN fixed = 1
+    IF mode$ = "up" THEN fixed = 2
+    IF mode$ = "average" THEN fixed = 3
+    IF mode$ = "paeth" THEN fixed = 4
+    IF fixed < 0 ANDALSO mode$ <> "adaptive" THEN THROW "IMG.ENCODE$: filter must be none, sub, up, average, paeth or adaptive"
+    DIM y = 0
+    DIM i = 0
+    DIM t = 0
+    FOR y = 0 TO h - 1
+        DIM base = y * rowlen
+        DIM prev_base = base - rowlen
+        IF y = 0 THEN prev_base = -1
+        DIM ftype = fixed
+        IF fixed < 0 THEN
+            DIM best = -1
+            FOR t = 0 TO 4
+                DIM cost = RowCost(samples, base, prev_base, rowlen, bpp, t)
+                IF best < 0 ORELSE cost < best THEN
+                    best = cost
+                    ftype = t
+                ENDIF
+            NEXT t
+        ENDIF
+        DIM dst = y * (rowlen + 1)
+        out[dst] = ftype
+        FOR i = 0 TO rowlen - 1
+            DIM cur = samples[base + i]
+            DIM a = 0
+            DIM b = 0
+            DIM c = 0
+            IF i >= bpp THEN a = samples[base + i - bpp]
+            IF prev_base >= 0 THEN
+                b = samples[prev_base + i]
+                IF i >= bpp THEN c = samples[prev_base + i - bpp]
+            ENDIF
+            DIM v = cur
+            IF ftype = 1 THEN v = cur - a
+            IF ftype = 2 THEN v = cur - b
+            IF ftype = 3 THEN v = cur - INT((a + b) / 2)
+            IF ftype = 4 THEN v = cur - Paeth(a, b, c)
+            IF v < 0 THEN v = v + 256
+            out[dst + 1 + i] = v
+        NEXT i
+    NEXT y
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC ENCODE$(img, opts = 0)
+    DIM c = CheckImage(img, "IMG.ENCODE$")
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    IF w < 1 ORELSE h < 1 THEN THROW "IMG.ENCODE$: PNG needs at least one pixel"
+    DIM px = img{"pixels"}
+    DIM mode$ = OptText$(opts, "filter", "adaptive")
+    DIM level = CLNG(OptNumber(opts, "level", 6))
+    IF level < 0 ORELSE level > 9 THEN THROW "IMG.ENCODE$: level must be 0 to 9"
+    DIM want_palette = CLNG(OptNumber(opts, "palette", 0))
+    DIM ctype = 0
+    IF c = 2 THEN ctype = 4
+    IF c = 3 THEN ctype = 2
+    IF c = 4 THEN ctype = 6
+    DIM plte$ = ""
+    DIM trns$ = ""
+    DIM data$ = ""
+    DIM i = 0
+    DIM k = 0
+    IF want_palette <> 0 ANDALSO c >= 3 THEN
+        DIM seen AS MAP
+        DIM pal = ZEROS(256 * 4)
+        DIM ncolors = 0
+        DIM indices = ZEROS(w * h)
+        DIM any_alpha = 0
+        FOR i = 0 TO w * h - 1
+            DIM r_v = px[i * c]
+            DIM g_v = px[i * c + 1]
+            DIM b_v = px[i * c + 2]
+            DIM a_v = 255
+            IF c = 4 THEN a_v = px[i * c + 3]
+            DIM key$ = STR$(((r_v * 256 + g_v) * 256 + b_v) * 256 + a_v)
+            IF MAP.EXISTS(seen, key$) THEN
+                indices[i] = seen{key$}
+            ELSE
+                IF ncolors >= 256 THEN THROW "IMG.ENCODE$: a palette PNG holds at most 256 colors; QUANTIZE the image first"
+                seen{key$} = ncolors
+                pal[ncolors * 4] = r_v
+                pal[ncolors * 4 + 1] = g_v
+                pal[ncolors * 4 + 2] = b_v
+                pal[ncolors * 4 + 3] = a_v
+                IF a_v < 255 THEN any_alpha = 1
+                indices[i] = ncolors
+                ncolors = ncolors + 1
+            ENDIF
+        NEXT i
+        DIM rgb_bytes = ZEROS(ncolors * 3)
+        DIM alpha_bytes = ZEROS(ncolors)
+        FOR i = 0 TO ncolors - 1
+            FOR k = 0 TO 2
+                rgb_bytes[i * 3 + k] = pal[i * 4 + k]
+            NEXT k
+            alpha_bytes[i] = pal[i * 4 + 3]
+        NEXT i
+        plte$ = BytesText$(rgb_bytes, ncolors * 3)
+        IF any_alpha = 1 THEN trns$ = BytesText$(alpha_bytes, ncolors)
+        ctype = 3
+        DIM prow = FilterRows(indices, h, w, 1, mode$)
+        data$ = BytesText$(prow, h * (w + 1))
+    ELSE
+        DIM crow = FilterRows(px, h, w * c, c, mode$)
+        data$ = BytesText$(crow, h * (w * c + 1))
+    ENDIF
+    DIM parts = []
+    PUSH(parts, gPngSig$)
+    PUSH(parts, Chunk$("IHDR", PACK$(">iibbbbb", w, h, 8, ctype, 0, 0, 0)))
+    IF LEN(plte$) > 0 THEN PUSH(parts, Chunk$("PLTE", plte$))
+    IF LEN(trns$) > 0 THEN PUSH(parts, Chunk$("tRNS", trns$))
+    PUSH(parts, Chunk$("IDAT", CODEC.DEFLATE$(data$, level, "zlib")))
+    PUSH(parts, Chunk$("IEND", ""))
+    RETURN Concat$(parts)
+ENDFUNC
+
+EXPORT FUNC WRITEPNG(img, path$, opts = 0)
+    DIM png$ = ENCODE$(img, opts)
+    BINWRITER path$, png$
+    RETURN LEN(png$)
+ENDFUNC
+
+EXPORT FUNC DATAURI$(img, opts = 0)
+    RETURN "data:image/png;base64," + CODEC.BASE64_ENCODE$(ENCODE$(img, opts))
+ENDFUNC
+
+' ---- geometry ----
+
+' The w by h window whose top left corner is x, y; pixels outside the
+' source stay 0.
+EXPORT FUNC CROP(img, x, y, w, h)
+    DIM c = CheckImage(img, "IMG.CROP")
+    DIM sw = CLNG(img{"width"})
+    DIM sh = CLNG(img{"height"})
+    DIM ox = CLNG(x)
+    DIM oy = CLNG(y)
+    DIM nw = CLNG(w)
+    DIM nh = CLNG(h)
+    IF nw < 0 ORELSE nh < 0 THEN THROW "IMG.CROP: a size cannot be negative"
+    DIM px = img{"pixels"}
+    DIM out = ZEROS(nw * nh * c)
+    DIM row = 0
+    DIM col = 0
+    DIM k = 0
+    FOR row = 0 TO nh - 1
+        DIM sy = oy + row
+        IF sy >= 0 ANDALSO sy < sh THEN
+            FOR col = 0 TO nw - 1
+                DIM sx = ox + col
+                IF sx >= 0 ANDALSO sx < sw THEN
+                    FOR k = 0 TO c - 1
+                        out[(row * nw + col) * c + k] = px[(sy * sw + sx) * c + k]
+                    NEXT k
+                ENDIF
+            NEXT col
+        ENDIF
+    NEXT row
+    RETURN Pack(nw, nh, c, out)
+ENDFUNC
+
+EXPORT FUNC FLIPX(img)
+    DIM c = CheckImage(img, "IMG.FLIPX")
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM out = ZEROS(w * h * c)
+    DIM row = 0
+    DIM col = 0
+    DIM k = 0
+    FOR row = 0 TO h - 1
+        FOR col = 0 TO w - 1
+            FOR k = 0 TO c - 1
+                out[(row * w + col) * c + k] = px[(row * w + w - 1 - col) * c + k]
+            NEXT k
+        NEXT col
+    NEXT row
+    RETURN Pack(w, h, c, out)
+ENDFUNC
+
+EXPORT FUNC FLIPY(img)
+    DIM c = CheckImage(img, "IMG.FLIPY")
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM out = ZEROS(w * h * c)
+    DIM row = 0
+    DIM i = 0
+    FOR row = 0 TO h - 1
+        DIM dst = row * w * c
+        DIM src = (h - 1 - row) * w * c
+        FOR i = 0 TO w * c - 1
+            out[dst + i] = px[src + i]
+        NEXT i
+    NEXT row
+    RETURN Pack(w, h, c, out)
+ENDFUNC
+
+' Quarter turns counterclockwise, as Pillow's ROTATE_90, ROTATE_180 and
+' ROTATE_270; negative turns go clockwise.
+EXPORT FUNC TURN(img, quarter_turns = 1)
+    DIM c = CheckImage(img, "IMG.TURN")
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM q = CLNG(quarter_turns)
+    q = q - INT(q / 4) * 4
+    IF q < 0 THEN q = q + 4
+    DIM px = img{"pixels"}
+    DIM out = ZEROS(w * h * c)
+    DIM nw = w
+    DIM nh = h
+    IF q = 1 ORELSE q = 3 THEN
+        nw = h
+        nh = w
+    ENDIF
+    DIM row = 0
+    DIM col = 0
+    DIM k = 0
+    FOR row = 0 TO nh - 1
+        FOR col = 0 TO nw - 1
+            DIM sx = col
+            DIM sy = row
+            IF q = 1 THEN
+                sx = w - 1 - row
+                sy = col
+            ELSEIF q = 2 THEN
+                sx = w - 1 - col
+                sy = h - 1 - row
+            ELSEIF q = 3 THEN
+                sx = row
+                sy = h - 1 - col
+            ENDIF
+            FOR k = 0 TO c - 1
+                out[(row * nw + col) * c + k] = px[(sy * w + sx) * c + k]
+            NEXT k
+        NEXT col
+    NEXT row
+    RETURN Pack(nw, nh, c, out)
+ENDFUNC
+
+' Pillow's bilinear coefficients for one axis: first source index, tap count
+' and 22-bit fixed point weights per output position.
+FUNC AxisCoeffs(in_size, out_size)
+    DIM scale = in_size / out_size
+    DIM fscale = scale
+    IF fscale < 1 THEN fscale = 1
+    DIM support = fscale
+    DIM reach = INT(support)
+    IF reach < support THEN reach = reach + 1
+    DIM ksize = CLNG(reach) * 2 + 1
+    DIM first_at = ZEROS(out_size)
+    DIM taps = ZEROS(out_size)
+    DIM weights = ZEROS(out_size * ksize)
+    DIM ws = ZEROS(ksize)
+    DIM xx = 0
+    DIM x = 0
+    FOR xx = 0 TO out_size - 1
+        DIM center = (xx + 0.5) * scale
+        DIM ss = 1.0 / fscale
+        DIM xmin = INT(center - support + 0.5)
+        IF xmin < 0 THEN xmin = 0
+        DIM xmax = INT(center + support + 0.5)
+        IF xmax > in_size THEN xmax = in_size
+        xmax = xmax - xmin
+        DIM ww = 0.0
+        FOR x = 0 TO xmax - 1
+            DIM t = ABS((x + xmin - center + 0.5) * ss)
+            DIM wv = 0.0
+            IF t < 1.0 THEN wv = 1.0 - t
+            ws[x] = wv
+            ww = ww + wv
+        NEXT x
+        FOR x = 0 TO xmax - 1
+            DIM nv = ws[x]
+            IF ww <> 0 THEN nv = nv / ww
+            weights[xx * ksize + x] = INT(0.5 + nv * 4194304)
+        NEXT x
+        first_at[xx] = xmin
+        taps[xx] = xmax
+    NEXT xx
+    RETURN {"first": first_at, "taps": taps, "weights": weights, "ksize": ksize}
+ENDFUNC
+
+FUNC HorizontalPass(src, w, h, c, nw)
+    DIM cf = AxisCoeffs(w, nw)
+    DIM first_at = cf{"first"}
+    DIM taps = cf{"taps"}
+    DIM weights = cf{"weights"}
+    DIM ksize = CLNG(cf{"ksize"})
+    DIM out = ZEROS(nw * h * c)
+    DIM y = 0
+    DIM x = 0
+    DIM k = 0
+    DIM t = 0
+    FOR y = 0 TO h - 1
+        FOR x = 0 TO nw - 1
+            DIM xmin = CLNG(first_at[x])
+            DIM nt = CLNG(taps[x])
+            FOR k = 0 TO c - 1
+                DIM ss = 2097152
+                FOR t = 0 TO nt - 1
+                    ss = ss + src[(y * w + xmin + t) * c + k] * weights[x * ksize + t]
+                NEXT t
+                out[(y * nw + x) * c + k] = Clip255(INT(ss / 4194304))
+            NEXT k
+        NEXT x
+    NEXT y
+    RETURN out
+ENDFUNC
+
+FUNC VerticalPass(src, w, h, c, nh)
+    DIM cf = AxisCoeffs(h, nh)
+    DIM first_at = cf{"first"}
+    DIM taps = cf{"taps"}
+    DIM weights = cf{"weights"}
+    DIM ksize = CLNG(cf{"ksize"})
+    DIM out = ZEROS(w * nh * c)
+    DIM y = 0
+    DIM x = 0
+    DIM k = 0
+    DIM t = 0
+    FOR y = 0 TO nh - 1
+        DIM ymin = CLNG(first_at[y])
+        DIM nt = CLNG(taps[y])
+        FOR x = 0 TO w - 1
+            FOR k = 0 TO c - 1
+                DIM ss = 2097152
+                FOR t = 0 TO nt - 1
+                    ss = ss + src[((ymin + t) * w + x) * c + k] * weights[y * ksize + t]
+                NEXT t
+                out[(y * w + x) * c + k] = Clip255(INT(ss / 4194304))
+            NEXT k
+        NEXT x
+    NEXT y
+    RETURN out
+ENDFUNC
+
+' Color channels multiplied by alpha, as Pillow's RGBa and La modes.
+FUNC Premultiply(src, n, c)
+    DIM out = ZEROS(n * c)
+    DIM i = 0
+    DIM k = 0
+    FOR i = 0 TO n - 1
+        DIM a = src[i * c + c - 1]
+        out[i * c + c - 1] = a
+        FOR k = 0 TO c - 2
+            DIM tmp = src[i * c + k] * a + 128
+            out[i * c + k] = INT((INT(tmp / 256) + tmp) / 256)
+        NEXT k
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Unpremultiply(src, n, c)
+    DIM out = ZEROS(n * c)
+    DIM i = 0
+    DIM k = 0
+    FOR i = 0 TO n - 1
+        DIM a = src[i * c + c - 1]
+        out[i * c + c - 1] = a
+        FOR k = 0 TO c - 2
+            DIM v = src[i * c + k]
+            IF a <> 0 ANDALSO a <> 255 THEN v = Clip255(INT(255 * v / a))
+            out[i * c + k] = v
+        NEXT k
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC NearestResize(img, nw, nh)
+    DIM c = CLNG(img{"channels"})
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM xin = ZEROS(nw)
+    DIM yin = ZEROS(nh)
+    DIM scale_x = w / nw
+    DIM scale_y = h / nh
+    DIM pos = scale_x * 0.5
+    DIM i = 0
+    FOR i = 0 TO nw - 1
+        xin[i] = INT(pos)
+        IF xin[i] >= w THEN xin[i] = -1
+        pos = pos + scale_x
+    NEXT i
+    pos = scale_y * 0.5
+    FOR i = 0 TO nh - 1
+        yin[i] = INT(pos)
+        IF yin[i] >= h THEN yin[i] = -1
+        pos = pos + scale_y
+    NEXT i
+    DIM out = ZEROS(nw * nh * c)
+    DIM row = 0
+    DIM col = 0
+    DIM k = 0
+    FOR row = 0 TO nh - 1
+        DIM sy = CLNG(yin[row])
+        IF sy >= 0 THEN
+            FOR col = 0 TO nw - 1
+                DIM sx = CLNG(xin[col])
+                IF sx >= 0 THEN
+                    FOR k = 0 TO c - 1
+                        out[(row * nw + col) * c + k] = px[(sy * w + sx) * c + k]
+                    NEXT k
+                ENDIF
+            NEXT col
+        ENDIF
+    NEXT row
+    RETURN Pack(nw, nh, c, out)
+ENDFUNC
+
+FUNC BilinearResize(img, nw, nh)
+    DIM c = CLNG(img{"channels"})
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM cur = px
+    IF c = 2 ORELSE c = 4 THEN cur = Premultiply(px, w * h, c)
+    DIM cw = w
+    IF nw <> w THEN
+        cur = HorizontalPass(cur, w, h, c, nw)
+        cw = nw
+    ENDIF
+    IF nh <> h THEN cur = VerticalPass(cur, cw, h, c, nh)
+    IF c = 2 ORELSE c = 4 THEN cur = Unpremultiply(cur, nw * nh, c)
+    RETURN Pack(nw, nh, c, cur)
+ENDFUNC
+
+EXPORT FUNC RESIZE(img, w, h, method$ = "bilinear")
+    DIM c = CheckImage(img, "IMG.RESIZE")
+    DIM nw = CLNG(w)
+    DIM nh = CLNG(h)
+    IF nw < 1 ORELSE nh < 1 THEN THROW "IMG.RESIZE: the new size must be at least 1 by 1"
+    DIM how$ = LCASE$(method$)
+    IF how$ <> "nearest" ANDALSO how$ <> "bilinear" THEN THROW "IMG.RESIZE: method must be nearest or bilinear"
+    IF nw = CLNG(img{"width"}) ANDALSO nh = CLNG(img{"height"}) THEN
+        RETURN Pack(nw, nh, c, PIXELS(img))
+    ENDIF
+    IF how$ = "nearest" THEN RETURN NearestResize(img, nw, nh)
+    RETURN BilinearResize(img, nw, nh)
+ENDFUNC
+
+' ---- color ----
+
+' ITU-R 601-2 luma as Pillow's "L" conversion; alpha is dropped.
+EXPORT FUNC GRAY(img)
+    DIM c = CheckImage(img, "IMG.GRAY")
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM n = w * h
+    DIM out = ZEROS(n)
+    DIM i = 0
+    IF c <= 2 THEN
+        FOR i = 0 TO n - 1
+            out[i] = px[i * c]
+        NEXT i
+    ELSE
+        FOR i = 0 TO n - 1
+            DIM acc = px[i * c] * 19595 + px[i * c + 1] * 38470 + px[i * c + 2] * 7471 + 32768
+            out[i] = INT(acc / 65536)
+        NEXT i
+    ENDIF
+    RETURN Pack(w, h, 1, out)
+ENDFUNC
+
+' The image with the given channel count: gray spreads to RGB, RGB turns
+' to gray by luma, a missing alpha is 255 and a dropped one is ignored.
+EXPORT FUNC TOCHANNELS(img, channels_out)
+    DIM c = CheckImage(img, "IMG.TOCHANNELS")
+    DIM nc = CLNG(channels_out)
+    IF nc < 1 ORELSE nc > 4 THEN THROW "IMG.TOCHANNELS: channels must be 1 to 4"
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM n = w * h
+    DIM out = ZEROS(n * nc)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM r_v = px[i * c]
+        DIM g_v = r_v
+        DIM b_v = r_v
+        DIM a_v = 255
+        IF c >= 3 THEN
+            g_v = px[i * c + 1]
+            b_v = px[i * c + 2]
+        ENDIF
+        IF c = 2 ORELSE c = 4 THEN a_v = px[i * c + c - 1]
+        IF nc <= 2 THEN
+            DIM l_v = r_v
+            IF c >= 3 THEN l_v = INT((r_v * 19595 + g_v * 38470 + b_v * 7471 + 32768) / 65536)
+            out[i * nc] = l_v
+        ELSE
+            out[i * nc] = r_v
+            out[i * nc + 1] = g_v
+            out[i * nc + 2] = b_v
+        ENDIF
+        IF nc = 2 ORELSE nc = 4 THEN out[i * nc + nc - 1] = a_v
+    NEXT i
+    RETURN Pack(w, h, nc, out)
+ENDFUNC
+
+' Convolution as Pillow's ImageFilter.Kernel: size 3 or 5, the kernel row by
+' row, every channel filtered, the outer 1 (3x3) or 2 (5x5) pixels copied.
+EXPORT FUNC KERNEL(img, weights, size, scale = 0, offset = 0)
+    DIM c = CheckImage(img, "IMG.KERNEL")
+    DIM ks = CLNG(size)
+    IF ks <> 3 ANDALSO ks <> 5 THEN THROW "IMG.KERNEL: size must be 3 or 5"
+    IF LEN(weights) <> ks * ks THEN THROW "IMG.KERNEL: a size " + STR$(ks) + " kernel has " + STR$(ks * ks) + " weights"
+    DIM kw = ZEROS(ks * ks)
+    DIM divisor = scale
+    DIM i = 0
+    IF divisor = 0 THEN
+        FOR i = 0 TO ks * ks - 1
+            divisor = divisor + weights[i]
+        NEXT i
+        IF divisor = 0 THEN divisor = 1
+    ENDIF
+    FOR i = 0 TO ks * ks - 1
+        kw[i] = weights[i] / divisor
+    NEXT i
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM n = w * h * c
+    DIM out = ZEROS(n)
+    FOR i = 0 TO n - 1
+        out[i] = px[i]
+    NEXT i
+    IF w < ks ORELSE h < ks THEN RETURN Pack(w, h, c, out)
+    DIM m = INT(ks / 2)
+    DIM y = 0
+    DIM x = 0
+    DIM k = 0
+    DIM ky = 0
+    DIM kx = 0
+    FOR y = m TO h - 1 - m
+        FOR x = m TO w - 1 - m
+            FOR k = 0 TO c - 1
+                DIM ss = offset
+                FOR ky = 0 TO ks - 1
+                    DIM src_row = (y + m - ky) * w
+                    FOR kx = 0 TO ks - 1
+                        ss = ss + px[(src_row + x - m + kx) * c + k] * kw[ky * ks + kx]
+                    NEXT kx
+                NEXT ky
+                DIM v = 0
+                IF ss >= 255 THEN
+                    v = 255
+                ELSEIF ss > 0 THEN
+                    v = INT(ss + 0.5)
+                ENDIF
+                out[(y * w + x) * c + k] = v
+            NEXT k
+        NEXT x
+    NEXT y
+    RETURN Pack(w, h, c, out)
+ENDFUNC
+
+EXPORT FUNC BLUR(img)
+    RETURN KERNEL(img, [1, 1, 1, 1, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 0, 0, 0, 1, 1, 1, 1, 1, 1], 5, 16, 0)
+ENDFUNC
+
+EXPORT FUNC SHARPEN(img)
+    RETURN KERNEL(img, [-2, -2, -2, -2, 32, -2, -2, -2, -2], 3, 16, 0)
+ENDFUNC
+
+EXPORT FUNC EDGES(img)
+    RETURN KERNEL(img, [-1, -1, -1, -1, 8, -1, -1, -1, -1], 3, 1, 0)
+ENDFUNC
+
+' ---- palettes ----
+
+' The most frequent axis ordering of a box of distinct colors.
+FUNC BoxStats(cr, cg, cb, counts, order, first_i, last_i)
+    DIM lo_r = 255
+    DIM lo_g = 255
+    DIM lo_b = 255
+    DIM hi_r = 0
+    DIM hi_g = 0
+    DIM hi_b = 0
+    DIM total = 0
+    DIM i = 0
+    FOR i = first_i TO last_i
+        DIM ci = CLNG(order[i])
+        DIM r_v = cr[ci]
+        DIM g_v = cg[ci]
+        DIM b_v = cb[ci]
+        IF r_v < lo_r THEN lo_r = r_v
+        IF g_v < lo_g THEN lo_g = g_v
+        IF b_v < lo_b THEN lo_b = b_v
+        IF r_v > hi_r THEN hi_r = r_v
+        IF g_v > hi_g THEN hi_g = g_v
+        IF b_v > hi_b THEN hi_b = b_v
+        total = total + counts[ci]
+    NEXT i
+    DIM axis = 0
+    DIM extent = hi_r - lo_r
+    IF hi_g - lo_g > extent THEN
+        axis = 1
+        extent = hi_g - lo_g
+    ENDIF
+    IF hi_b - lo_b > extent THEN
+        axis = 2
+        extent = hi_b - lo_b
+    ENDIF
+    RETURN {"axis": axis, "extent": extent, "total": total}
+ENDFUNC
+
+' Median cut over the distinct RGB colors, weighted by pixel count; the
+' palette color of a box is its weighted mean. Alpha is kept as it is.
+FUNC MedianCut(img, n_colors)
+    DIM c = CLNG(img{"channels"})
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM n = w * h
+    DIM color_of AS MAP
+    DIM cr = []
+    DIM cg = []
+    DIM cb = []
+    DIM counts = []
+    DIM pix_color = ZEROS(n)
+    DIM ndistinct = 0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM r_v = px[i * c]
+        DIM g_v = r_v
+        DIM b_v = r_v
+        IF c >= 3 THEN
+            g_v = px[i * c + 1]
+            b_v = px[i * c + 2]
+        ENDIF
+        DIM key$ = STR$((r_v * 256 + g_v) * 256 + b_v)
+        IF MAP.EXISTS(color_of, key$) THEN
+            DIM ci = CLNG(color_of{key$})
+            pix_color[i] = ci
+            counts[ci] = counts[ci] + 1
+        ELSE
+            color_of{key$} = ndistinct
+            PUSH(cr, r_v)
+            PUSH(cg, g_v)
+            PUSH(cb, b_v)
+            PUSH(counts, 1)
+            pix_color[i] = ndistinct
+            ndistinct = ndistinct + 1
+        ENDIF
+    NEXT i
+    DIM order = ZEROS(ndistinct)
+    FOR i = 0 TO ndistinct - 1
+        order[i] = i
+    NEXT i
+    DIM box_first = ZEROS(n_colors)
+    DIM box_last = ZEROS(n_colors)
+    DIM nboxes = 1
+    box_first[0] = 0
+    box_last[0] = ndistinct - 1
+    DIM guard = 0
+    DIM b = 0
+    FOR guard = 0 TO n_colors
+        IF nboxes >= n_colors THEN EXITFOR
+        DIM pick = -1
+        DIM pick_extent = 0
+        DIM pick_axis = 0
+        FOR b = 0 TO nboxes - 1
+            IF box_last[b] > box_first[b] THEN
+                DIM st = BoxStats(cr, cg, cb, counts, order, CLNG(box_first[b]), CLNG(box_last[b]))
+                DIM ext = st{"extent"}
+                IF ext > pick_extent THEN
+                    pick = b
+                    pick_extent = ext
+                    pick_axis = CLNG(st{"axis"})
+                ENDIF
+            ENDIF
+        NEXT b
+        IF pick < 0 THEN EXITFOR
+        DIM f_i = CLNG(box_first[pick])
+        DIM l_i = CLNG(box_last[pick])
+        DIM seg_n = l_i - f_i + 1
+        DIM sort_keys = ZEROS(seg_n)
+        DIM seg = ZEROS(seg_n)
+        DIM total = 0
+        FOR i = 0 TO seg_n - 1
+            DIM oi = CLNG(order[f_i + i])
+            seg[i] = oi
+            DIM kv = cr[oi]
+            IF pick_axis = 1 THEN kv = cg[oi]
+            IF pick_axis = 2 THEN kv = cb[oi]
+            sort_keys[i] = kv * 16777216 + oi
+            total = total + counts[oi]
+        NEXT i
+        DIM sorted_keys = SORT(sort_keys)
+        FOR i = 0 TO seg_n - 1
+            DIM sk = sorted_keys[i]
+            order[f_i + i] = sk - INT(sk / 16777216) * 16777216
+        NEXT i
+        DIM running = 0
+        DIM cut_at = f_i
+        FOR i = f_i TO l_i - 1
+            running = running + counts[CLNG(order[i])]
+            cut_at = i
+            IF running * 2 >= total THEN EXITFOR
+        NEXT i
+        box_first[nboxes] = cut_at + 1
+        box_last[nboxes] = l_i
+        box_last[pick] = cut_at
+        nboxes = nboxes + 1
+    NEXT guard
+    DIM color_box = ZEROS(ndistinct)
+    DIM pal = ZEROS(nboxes * 3)
+    FOR b = 0 TO nboxes - 1
+        DIM sr = 0
+        DIM sg = 0
+        DIM sb = 0
+        DIM weight = 0
+        FOR i = CLNG(box_first[b]) TO CLNG(box_last[b])
+            DIM oc = CLNG(order[i])
+            DIM cnt = counts[oc]
+            sr = sr + cr[oc] * cnt
+            sg = sg + cg[oc] * cnt
+            sb = sb + cb[oc] * cnt
+            weight = weight + cnt
+            color_box[oc] = b
+        NEXT i
+        pal[b * 3] = INT(sr / weight + 0.5)
+        pal[b * 3 + 1] = INT(sg / weight + 0.5)
+        pal[b * 3 + 2] = INT(sb / weight + 0.5)
+    NEXT b
+    DIM out = ZEROS(n * c)
+    DIM k = 0
+    FOR i = 0 TO n - 1
+        DIM bx = CLNG(color_box[CLNG(pix_color[i])])
+        IF c >= 3 THEN
+            out[i * c] = pal[bx * 3]
+            out[i * c + 1] = pal[bx * 3 + 1]
+            out[i * c + 2] = pal[bx * 3 + 2]
+        ELSE
+            out[i * c] = pal[bx * 3]
+        ENDIF
+        IF c = 2 ORELSE c = 4 THEN out[i * c + c - 1] = px[i * c + c - 1]
+    NEXT i
+    RETURN Pack(w, h, c, out)
+ENDFUNC
+
+' The 216-color web palette: every channel rounded to 0, 51, ... 255.
+FUNC WebPalette(img)
+    DIM c = CLNG(img{"channels"})
+    DIM w = CLNG(img{"width"})
+    DIM h = CLNG(img{"height"})
+    DIM px = img{"pixels"}
+    DIM n = w * h * c
+    DIM out = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM v = px[i]
+        IF (c = 2 ORELSE c = 4) ANDALSO (i - INT(i / c) * c) = c - 1 THEN
+            out[i] = v
+        ELSE
+            out[i] = INT(v / 51 + 0.5) * 51
+        ENDIF
+    NEXT i
+    RETURN Pack(w, h, c, out)
+ENDFUNC
+
+EXPORT FUNC QUANTIZE(img, n_colors = 256, method$ = "mediancut")
+    DIM c = CheckImage(img, "IMG.QUANTIZE")
+    DIM how$ = LCASE$(method$)
+    IF how$ = "web" THEN RETURN WebPalette(img)
+    IF how$ <> "mediancut" THEN THROW "IMG.QUANTIZE: method must be mediancut or web"
+    DIM k = CLNG(n_colors)
+    IF k < 1 ORELSE k > 256 THEN THROW "IMG.QUANTIZE: colors must be 1 to 256"
+    IF CLNG(img{"width"}) * CLNG(img{"height"}) = 0 THEN RETURN Pack(CLNG(img{"width"}), CLNG(img{"height"}), c, PIXELS(img))
+    RETURN MedianCut(img, k)
+ENDFUNC
+
+' The number of distinct colors (all channels) in an image.
+EXPORT FUNC COLORCOUNT(img)
+    DIM c = CheckImage(img, "IMG.COLORCOUNT")
+    DIM px = img{"pixels"}
+    DIM n = CLNG(img{"width"}) * CLNG(img{"height"})
+    DIM seen AS MAP
+    DIM found = 0
+    DIM i = 0
+    DIM k = 0
+    FOR i = 0 TO n - 1
+        DIM key_v = 0
+        FOR k = 0 TO c - 1
+            key_v = key_v * 256 + px[i * c + k]
+        NEXT k
+        DIM key$ = STR$(key_v)
+        IF NOT MAP.EXISTS(seen, key$) THEN
+            seen{key$} = 1
+            found = found + 1
+        ENDIF
+    NEXT i
+    RETURN found
+ENDFUNC
+
+' ---- combining ----
+
+' src copied onto dst with its top left corner at x, y, converted to the
+' channels of dst; the parts outside dst are cut off.
+EXPORT FUNC PASTE(dst, src, x, y)
+    DIM dc = CheckImage(dst, "IMG.PASTE")
+    DIM sc = CheckImage(src, "IMG.PASTE")
+    DIM piece = src
+    IF sc <> dc THEN piece = TOCHANNELS(src, dc)
+    DIM dw = CLNG(dst{"width"})
+    DIM dh = CLNG(dst{"height"})
+    DIM sw = CLNG(piece{"width"})
+    DIM sh = CLNG(piece{"height"})
+    DIM ox = CLNG(x)
+    DIM oy = CLNG(y)
+    DIM dpx = dst{"pixels"}
+    DIM spx = piece{"pixels"}
+    DIM n = dw * dh * dc
+    DIM out = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        out[i] = dpx[i]
+    NEXT i
+    DIM row = 0
+    DIM col = 0
+    DIM k = 0
+    FOR row = 0 TO sh - 1
+        DIM ty = oy + row
+        IF ty >= 0 ANDALSO ty < dh THEN
+            FOR col = 0 TO sw - 1
+                DIM tx = ox + col
+                IF tx >= 0 ANDALSO tx < dw THEN
+                    FOR k = 0 TO dc - 1
+                        out[(ty * dw + tx) * dc + k] = spx[(row * sw + col) * dc + k]
+                    NEXT k
+                ENDIF
+            NEXT col
+        ENDIF
+    NEXT row
+    RETURN Pack(dw, dh, dc, out)
+ENDFUNC
+
+' src laid over dst at x, y with Pillow's alpha_composite integer math; both
+' are taken as RGBA and the result is RGBA.
+EXPORT FUNC COMPOSITE(dst, src, x = 0, y = 0)
+    DIM dc = CheckImage(dst, "IMG.COMPOSITE")
+    DIM sc = CheckImage(src, "IMG.COMPOSITE")
+    DIM base_img = dst
+    DIM over = src
+    IF dc <> 4 THEN base_img = TOCHANNELS(dst, 4)
+    IF sc <> 4 THEN over = TOCHANNELS(src, 4)
+    DIM dw = CLNG(base_img{"width"})
+    DIM dh = CLNG(base_img{"height"})
+    DIM sw = CLNG(over{"width"})
+    DIM sh = CLNG(over{"height"})
+    DIM ox = CLNG(x)
+    DIM oy = CLNG(y)
+    DIM dpx = base_img{"pixels"}
+    DIM spx = over{"pixels"}
+    DIM n = dw * dh * 4
+    DIM out = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        out[i] = dpx[i]
+    NEXT i
+    DIM row = 0
+    DIM col = 0
+    DIM k = 0
+    FOR row = 0 TO sh - 1
+        DIM ty = oy + row
+        IF ty >= 0 ANDALSO ty < dh THEN
+            FOR col = 0 TO sw - 1
+                DIM tx = ox + col
+                IF tx >= 0 ANDALSO tx < dw THEN
+                    DIM d_at = (ty * dw + tx) * 4
+                    DIM s_at = (row * sw + col) * 4
+                    DIM sa = spx[s_at + 3]
+                    DIM da = dpx[d_at + 3]
+                    DIM outa255 = sa * 255 + da * (255 - sa)
+                    IF outa255 = 0 THEN
+                        FOR k = 0 TO 3
+                            out[d_at + k] = 0
+                        NEXT k
+                    ELSE
+                        DIM coef1 = INT(sa * 255 * 255 * 128 / outa255)
+                        DIM coef2 = 255 * 128 - coef1
+                        FOR k = 0 TO 2
+                            DIM tmp = spx[s_at + k] * coef1 + dpx[d_at + k] * coef2 + 16384
+                            out[d_at + k] = INT(INT((INT(tmp / 256) + tmp) / 256) / 128)
+                        NEXT k
+                        DIM ta = outa255 + 128
+                        out[d_at + 3] = INT((INT(ta / 256) + ta) / 256)
+                    ENDIF
+                ENDIF
+            NEXT col
+        ENDIF
+    NEXT row
+    RETURN Pack(dw, dh, 4, out)
+ENDFUNC

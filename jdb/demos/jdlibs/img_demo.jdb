@@ -1,0 +1,97 @@
+' IMG demo: paint a picture, save it as PNG, load it back, then make a
+' thumbnail, a grayscale copy, an edge map, a 16-color version and a
+' composited badge. Every result is written as PNG and shown on one HTML
+' page with data URIs, so img_demo.html opens without the PNG files.
+'
+'   jdBasic jdb/demos/jdlibs/img_demo.jdb        interpreted
+'   jdBasic -c jdb/demos/jdlibs/img_demo.jdb     compiled
+
+IMPORT IMG
+
+FUNC Scene(w, h)
+    DIM px = ZEROS(w * h * 3)
+    DIM x = 0
+    DIM y = 0
+    FOR y = 0 TO h - 1
+        FOR x = 0 TO w - 1
+            DIM at = (y * w + x) * 3
+            DIM r_v = 30 + INT(y * 120 / h)
+            DIM g_v = 60 + INT(y * 100 / h)
+            DIM b_v = 140 + INT(y * 100 / h)
+            DIM dx = x - w * 0.7
+            DIM dy = y - h * 0.3
+            IF dx * dx + dy * dy < (h * 0.16) * (h * 0.16) THEN
+                r_v = 250
+                g_v = 210
+                b_v = 90
+            ENDIF
+            DIM hill = h * 0.75 + SIN(x / w * 6.28 * 1.5) * h * 0.08
+            IF y > hill THEN
+                r_v = 40 + INT(((x * 7 + y * 3) MOD 32) / 2)
+                g_v = 120 + INT(((x * 5 + y * 11) MOD 40) / 2)
+                b_v = 50
+            ENDIF
+            px[at] = r_v
+            px[at + 1] = g_v
+            px[at + 2] = b_v
+        NEXT x
+    NEXT y
+    RETURN IMG.FROMPIXELS(w, h, 3, px)
+ENDFUNC
+
+FUNC Badge(size_px)
+    DIM px = ZEROS(size_px * size_px * 4)
+    DIM x = 0
+    DIM y = 0
+    DIM half = size_px / 2
+    FOR y = 0 TO size_px - 1
+        FOR x = 0 TO size_px - 1
+            DIM at = (y * size_px + x) * 4
+            DIM d = SQR((x - half + 0.5) * (x - half + 0.5) + (y - half + 0.5) * (y - half + 0.5))
+            IF d < half THEN
+                px[at] = 220
+                px[at + 1] = 40
+                px[at + 2] = 60
+                px[at + 3] = 170
+                IF d > half - 3 THEN px[at + 3] = 255
+            ENDIF
+        NEXT x
+    NEXT y
+    RETURN IMG.FROMPIXELS(size_px, size_px, 4, px)
+ENDFUNC
+
+DIM t0 = TICK()
+IMG.WRITEPNG(Scene(320, 240), "img_demo_source.png")
+DIM photo = IMG.READPNG("img_demo_source.png")
+PRINT "loaded "; IMG.WIDTH(photo); "x"; IMG.HEIGHT(photo); " with "; IMG.CHANNELS(photo); " channels"
+
+' Each result is held in a variable before it goes into the next call.
+DIM thumb = IMG.RESIZE(photo, 160, 120, "bilinear")
+DIM gray = IMG.GRAY(thumb)
+DIM edges = IMG.EDGES(gray)
+DIM posterized = IMG.QUANTIZE(thumb, 16)
+DIM thumb_rgba = IMG.TOCHANNELS(thumb, 4)
+DIM badge = Badge(40)
+DIM badged = IMG.COMPOSITE(thumb_rgba, badge, 110, 10)
+DIM turned = IMG.TURN(thumb, 1)
+
+DIM names = ["thumbnail", "grayscale", "edges", "16 colors", "badge", "turned"]
+DIM files = ["img_demo_thumb.png", "img_demo_gray.png", "img_demo_edges.png", "img_demo_16.png", "img_demo_badge.png", "img_demo_turned.png"]
+DIM bytes_written = [IMG.WRITEPNG(thumb, files[0]), IMG.WRITEPNG(gray, files[1]), IMG.WRITEPNG(edges, files[2]), IMG.WRITEPNG(posterized, files[3], {"palette": 1}), IMG.WRITEPNG(badged, files[4]), IMG.WRITEPNG(turned, files[5])]
+DIM uris = [IMG.DATAURI$(thumb), IMG.DATAURI$(gray), IMG.DATAURI$(edges), IMG.DATAURI$(posterized, {"palette": 1}), IMG.DATAURI$(badged), IMG.DATAURI$(turned)]
+
+DIM q$ = CHR$(34)
+DIM html$ = "<!doctype html><html><head><meta charset=" + q$ + "utf-8" + q$ + "><title>IMG demo</title>"
+html$ = html$ + "<style>body{font-family:sans-serif;background:#222;color:#eee;margin:24px}figure{display:inline-block;margin:10px;text-align:center}img{image-rendering:pixelated;border:1px solid #555}</style></head><body>"
+html$ = html$ + "<h1>IMG demo</h1><p>Source 320x240, every picture below is an inline PNG data URI.</p>"
+DIM i = 0
+FOR i = 0 TO LEN(names) - 1
+    DIM label$ = names[i]
+    DIM uri$ = uris[i]
+    DIM nbytes = bytes_written[i]
+    html$ = html$ + "<figure><img src=" + q$ + uri$ + q$ + "><figcaption>" + label$ + " (" + STR$(nbytes) + " bytes)</figcaption></figure>"
+    PRINT label$; ": "; files[i]; " "; nbytes; " bytes"
+NEXT i
+html$ = html$ + "</body></html>"
+TXTWRITER "img_demo.html", html$
+PRINT "wrote img_demo.html ("; LEN(html$); " characters) in "; TICK() - t0; " ms"

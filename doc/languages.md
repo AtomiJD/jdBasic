@@ -1470,6 +1470,8 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `ARCHIVE` | tar (ustar, GNU, pax) and gzip read and written, folders to .tar.gz, safe extraction |
 | `RAND` | random distributions, weighted choice (alias method), sampling, shuffles and reservoirs on seeded RNG generators |
 | `STRUCT` | binary layouts on `PACK$`/`UNPACK`: file headers, network packets and bit fields read into maps and written back |
+| `IMG` | images as pixel arrays without GFX: PNG read (all depths, palettes, interlace) and write (filters, palette), crop, resize, turns, flips, grayscale, kernels, quantize, paste, alpha compositing, data URIs |
+| `POOL` | worker pools: ordered fan-out with per-item errors, timeouts and cancellation, WAITALL/WAITANY, a token-bucket limiter and a fan-in |
 
 ```basic
 IMPORT CONF, LOGGER, XLSX
