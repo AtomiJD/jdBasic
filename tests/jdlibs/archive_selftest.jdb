@@ -1,0 +1,481 @@
+' ARCHIVE: tar files made by Python's tarfile (ustar, gnu and pax) and by
+' bsdtar read against the listing Python wrote, gzip with several members,
+' archives written in all three formats and read back, binary payloads with
+' NUL bytes, folders packed and extracted, names that must not be extracted,
+' and archives written here read by the system tar.
+
+IMPORT TESTKIT, ARCHIVE
+
+DIM STAMP_FIXED = 1757000000
+
+FUNC FixtureDir$()
+    IF FILE.EXISTS("tests/jdlibs/fixtures/archive_expected.tsv") THEN RETURN "tests/jdlibs/fixtures/"
+    RETURN "fixtures/"
+ENDFUNC
+
+FUNC OctValue(digits$)
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO LEN(digits$) - 1
+        total = total * 8 + CINT(VAL(MID$(digits$, i, 1)))
+    NEXT i
+    RETURN CLNG(total)
+ENDFUNC
+
+' Every byte value three times, then a run of NULs.
+FUNC AllBytes$()
+    DIM out$ = ""
+    DIM r = 0
+    DIM i = 0
+    FOR r = 1 TO 3
+        FOR i = 0 TO 255
+            out$ = out$ + CHR$(i)
+        NEXT i
+    NEXT r
+    RETURN out$ + PACK$("100x")
+ENDFUNC
+
+FUNC Chars$(ch$, n)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 1 TO n
+        out$ = out$ + ch$
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' A folder and everything below it removed.
+SUB RemoveTree(root$)
+    IF FILE.ISDIR(root$) THEN
+        DIM rows = DIR$(root$, TRUE)
+        DIM r = 0
+        FOR r = 0 TO LEN(rows) - 1
+            DIM entry$ = rows[r, 0]
+            DIM kind$ = rows[r, 2]
+            IF entry$ <> "." ANDALSO entry$ <> ".." THEN
+                IF kind$ = "DIR" THEN
+                    RemoveTree(root$ + "/" + entry$)
+                ELSE
+                    KILL root$ + "/" + entry$
+                ENDIF
+            ENDIF
+        NEXT r
+        RMDIR root$
+    ENDIF
+ENDSUB
+
+' The header checksum of the block at off written again after a change.
+FUNC Resum$(tar$, off)
+    DIM block$ = MID$(tar$, off, 148) + "        " + MID$(tar$, off + 156, 356)
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 511
+        total = total + BYTEAT(block$, i)
+    NEXT i
+    DIM digits$ = ""
+    DIM v = total
+    FOR i = 1 TO 6
+        digits$ = STR$(v MOD 8) + digits$
+        v = CINT(INT(v / 8))
+    NEXT i
+    DIM fixed$ = MID$(tar$, off, 148) + digits$ + CHR$(0) + " " + MID$(tar$, off + 156, 356)
+    RETURN LEFT$(tar$, off) + fixed$ + MID$(tar$, off + 512, LEN(tar$))
+ENDFUNC
+
+FUNC SmallTar$()
+    DIM h = ARCHIVE.BLANK()
+    ARCHIVE.ADDFILE(h, "a.txt", "alpha", {"mtime": 1757000000})
+    DIM tar$ = ARCHIVE.TAR$(h)
+    ARCHIVE.FREE(h)
+    RETURN tar$
+ENDFUNC
+
+FUNC ReadWrongChecksum(x)
+    DIM tar$ = SmallTar$()
+    DIM broken$ = "b" + MID$(tar$, 1, LEN(tar$))
+    RETURN ARCHIVE.READTAR(broken$)
+ENDFUNC
+
+FUNC ReadCutShort(x)
+    DIM h = ARCHIVE.BLANK()
+    ARCHIVE.ADDFILE(h, "big.bin", Chars$("z", 3000), {"mtime": 1757000000})
+    DIM tar$ = ARCHIVE.TAR$(h)
+    RETURN ARCHIVE.READTAR(LEFT$(tar$, 2048))
+ENDFUNC
+
+FUNC UstarTooLong(x)
+    DIM h = ARCHIVE.BLANK()
+    ARCHIVE.ADDFILE(h, Chars$("n", 120) + ".txt", "x", {"mtime": 0})
+    RETURN ARCHIVE.TAR$(h, "ustar")
+ENDFUNC
+
+FUNC UnknownFormat(x)
+    DIM h = ARCHIVE.BLANK()
+    RETURN ARCHIVE.TAR$(h, "zip")
+ENDFUNC
+
+FUNC GunzipDamaged(x)
+    DIM gz$ = ARCHIVE.GZIP$(Chars$("abc", 200), "abc.txt", 0, 6)
+    DIM middle = INT(LEN(gz$) / 2)
+    DIM broken$ = LEFT$(gz$, middle) + CHR$((BYTEAT(gz$, middle) + 1) MOD 256) + MID$(gz$, middle + 1, LEN(gz$))
+    RETURN ARCHIVE.GUNZIP$(broken$)
+ENDFUNC
+
+FUNC GunzipPlainText(x)
+    RETURN ARCHIVE.GUNZIP$("this is not gzip at all")
+ENDFUNC
+
+' x is "kind|name|link|target": one entry extracted below target.
+FUNC ExtractOne(x)
+    DIM cells = SPLIT(x, "|")
+    DIM kind$ = cells[0]
+    DIM entry$ = cells[1]
+    DIM goal$ = cells[2]
+    DIM target$ = cells[3]
+    DIM h = ARCHIVE.BLANK()
+    ARCHIVE.ADDFILE(h, "ok.txt", "fine", {"mtime": 0})
+    IF kind$ = "file" THEN
+        ARCHIVE.ADDFILE(h, entry$, "evil", {"mtime": 0})
+    ELSE
+        ARCHIVE.ADDLINK(h, entry$, goal$, {"mtime": 0})
+    ENDIF
+    RETURN ARCHIVE.EXTRACTTO(h, target$)
+ENDFUNC
+
+FUNC ReadMissingFile(x)
+    RETURN ARCHIVE.READFILE(x)
+ENDFUNC
+
+FUNC FolderMissing(x)
+    RETURN ARCHIVE.FROMFOLDER(x)
+ENDFUNC
+
+DIM fixture_dir$ = FixtureDir$()
+
+TESTKIT.SUITE("tar files made by Python and bsdtar")
+DIM expected_text$ = TXTREADER$(fixture_dir$ + "archive_expected.tsv")
+DIM expected_rows = SPLIT(REPLACE$(expected_text$, CHR$(13), ""), CHR$(10))
+DIM fixture_names = ["archive_py_ustar.tar", "archive_py_gnu.tar", "archive_py_pax.tar", "archive_py_pax.tar.gz", "archive_bsd_ustar.tar", "archive_bsd.tar.gz"]
+DIM fx = 0
+FOR fx = 0 TO LEN(fixture_names) - 1
+    DIM fixture$ = fixture_names[fx]
+    DIM fh = ARCHIVE.READFILE(fixture_dir$ + fixture$)
+    DIM rows_seen = 0
+    DIM er = 0
+    FOR er = 1 TO LEN(expected_rows) - 1
+        DIM row_text$ = expected_rows[er]
+        DIM cells = SPLIT(row_text$, CHR$(9))
+        IF LEN(cells) >= 12 THEN
+            DIM row_fixture$ = cells[0]
+            IF row_fixture$ = fixture$ THEN
+                rows_seen = rows_seen + 1
+                DIM want_name$ = cells[1]
+                DIM want_kind$ = cells[2]
+                DIM want_size$ = cells[3]
+                DIM want_mode$ = cells[4]
+                DIM want_mtime$ = cells[5]
+                DIM want_uid$ = cells[6]
+                DIM want_gid$ = cells[7]
+                DIM want_uname$ = cells[8]
+                DIM want_gname$ = cells[9]
+                DIM want_link$ = cells[10]
+                DIM want_sha$ = cells[11]
+                DIM at = ARCHIVE.FIND(fh, want_name$)
+                IF at < 0 THEN
+                    TESTKIT.ISTRUE(FALSE, fixture$ + ": has " + want_name$)
+                ELSE
+                    DIM have$ = ARCHIVE.KIND$(fh, at) + " size " + STR$(ARCHIVE.ENTRYSIZE(fh, at)) + " mode " + STR$(ARCHIVE.MODE(fh, at)) + " mtime " + STR$(ARCHIVE.MTIME(fh, at)) + " owner " + STR$(ARCHIVE.UID(fh, at)) + ":" + STR$(ARCHIVE.GID(fh, at)) + " " + ARCHIVE.UNAME$(fh, at) + ":" + ARCHIVE.GNAME$(fh, at) + " link " + ARCHIVE.LINK$(fh, at)
+                    DIM want$ = want_kind$ + " size " + want_size$ + " mode " + STR$(OctValue(want_mode$)) + " mtime " + want_mtime$ + " owner " + want_uid$ + ":" + want_gid$ + " " + want_uname$ + ":" + want_gname$ + " link " + want_link$
+                    TESTKIT.EQ(have$, want$, fixture$ + ": " + want_name$)
+                    TESTKIT.EQ(CODEC.SHA256$(ARCHIVE.DATA$(fh, at)), want_sha$, fixture$ + ": the bytes of " + want_name$)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT er
+    TESTKIT.EQ(ARCHIVE.ENTRYCOUNT(fh), rows_seen, fixture$ + ": no other entries")
+    ARCHIVE.FREE(fh)
+NEXT fx
+
+DIM py_tar = ARCHIVE.READFILE(fixture_dir$ + "archive_py_ustar.tar")
+DIM bin_at = ARCHIVE.FIND(py_tar, "top/bin.dat")
+DIM py_bin$ = ARCHIVE.DATA$(py_tar, bin_at)
+TESTKIT.EQ(py_bin$, AllBytes$(), "a payload with every byte value and NULs comes out unchanged")
+TESTKIT.EQ(ARCHIVE.FIND(py_tar, "./top/hello.txt/"), ARCHIVE.FIND(py_tar, "top/hello.txt"), "FIND ignores a leading ./ and a trailing slash")
+TESTKIT.EQ(ARCHIVE.FIND(py_tar, "top/nothing.txt"), -1, "FIND gives -1 for a name not in the archive")
+DIM py_names = ARCHIVE.NAMES(py_tar)
+TESTKIT.EQ(LEN(py_names), ARCHIVE.ENTRYCOUNT(py_tar), "NAMES lists every entry")
+DIM first_name$ = py_names[0]
+TESTKIT.EQ(first_name$, "top", "in archive order")
+ARCHIVE.FREE(py_tar)
+TESTKIT.EQ(ARCHIVE.ENTRYCOUNT(py_tar), 0, "a freed archive has no entries")
+
+TESTKIT.SUITE("gzip")
+DIM pax_gz$ = BINREADER$(fixture_dir$ + "archive_py_pax.tar.gz")
+TESTKIT.ISTRUE(ARCHIVE.ISGZIP(pax_gz$), "ISGZIP knows a gzip file")
+TESTKIT.ISFALSE(ARCHIVE.ISGZIP(BINREADER$(fixture_dir$ + "archive_py_pax.tar")), "and a plain tar")
+DIM pax_info = ARCHIVE.GZINFO(pax_gz$)
+TESTKIT.EQ(pax_info{"name"}, "archive_py_pax.tar", "the file name in Python's gzip header")
+TESTKIT.EQ(pax_info{"mtime"}, STAMP_FIXED, "its mtime")
+TESTKIT.EQ(pax_info{"members"}, 1, "one member")
+TESTKIT.EQ(pax_info{"size"}, 10240, "the size of the content")
+TESTKIT.EQ(ARCHIVE.GUNZIP$(pax_gz$), BINREADER$(fixture_dir$ + "archive_py_pax.tar"), "GUNZIP$ gives the tar Python compressed")
+
+DIM two_gz$ = BINREADER$(fixture_dir$ + "archive_py_two.gz")
+DIM two_want$ = "first member" + CHR$(10) + "second member" + CHR$(0) + "with nul" + CHR$(10)
+TESTKIT.EQ(ARCHIVE.GUNZIP$(two_gz$), two_want$, "a gzip file with two members is read to its end")
+DIM two_info = ARCHIVE.GZINFO(two_gz$)
+TESTKIT.EQ(two_info{"members"}, 2, "GZINFO counts both members")
+TESTKIT.EQ(ARCHIVE.GUNZIP$(two_gz$ + PACK$("37x")), two_want$, "zero bytes after the last member are ignored")
+
+DIM all_bytes$ = AllBytes$()
+DIM own_gz$ = ARCHIVE.GZIP$(all_bytes$, "bytes.bin", 1700000000, 9)
+TESTKIT.EQ(ARCHIVE.GUNZIP$(own_gz$), all_bytes$, "every byte value through GZIP$ and GUNZIP$")
+DIM own_info = ARCHIVE.GZINFO(own_gz$)
+TESTKIT.EQ(own_info{"name"}, "bytes.bin", "GZIP$ stores the name")
+TESTKIT.EQ(own_info{"mtime"}, 1700000000, "and the mtime")
+TESTKIT.EQ(BYTEAT(own_gz$, 3), 8, "the name flag is set")
+TESTKIT.EQ(CODEC.INFLATE$(own_gz$, "gzip"), all_bytes$, "the native inflater accepts GZIP$ output")
+DIM plain_gz$ = ARCHIVE.GZIP$("")
+TESTKIT.EQ(ARCHIVE.GUNZIP$(plain_gz$), "", "an empty file")
+TESTKIT.EQ(BYTEAT(plain_gz$, 3), 0, "without a name no flag is set")
+DIM stored_gz$ = ARCHIVE.GZIP$(all_bytes$, "", 0, 0)
+TESTKIT.ISTRUE(LEN(stored_gz$) > LEN(all_bytes$), "level 0 stores")
+TESTKIT.EQ(ARCHIVE.GUNZIP$(stored_gz$), all_bytes$, "and reads back")
+DIM joined_gz$ = ARCHIVE.GZIP$("one" + CHR$(0)) + ARCHIVE.GZIP$(all_bytes$, "b") + ARCHIVE.GZIP$("three")
+TESTKIT.EQ(ARCHIVE.GUNZIP$(joined_gz$), "one" + CHR$(0) + all_bytes$ + "three", "three members made here, joined")
+DIM joined_info = ARCHIVE.GZINFO(joined_gz$)
+TESTKIT.EQ(joined_info{"members"}, 3, "are three members")
+DIM magic_inside$ = "x" + CHR$(31) + CHR$(139) + CHR$(8) + "y"
+TESTKIT.EQ(ARCHIVE.GUNZIP$(ARCHIVE.GZIP$(magic_inside$, "", 0, 0) + ARCHIVE.GZIP$("z")), magic_inside$ + "z", "gzip magic bytes inside the content do not split a member")
+TESTKIT.THROWS(GunzipDamaged@, 0, "a damaged member raises an error")
+TESTKIT.THROWS(GunzipPlainText@, 0, "so does data that is not gzip")
+
+TESTKIT.SUITE("writing tar")
+DIM long_dir$ = "rel/" + Chars$("d", 90) + "/"
+DIM split_name$ = long_dir$ + Chars$("f", 60) + ".txt"
+DIM pax_name$ = "rel/" + Chars$("p", 120) + "/" + Chars$("q", 120) + ".txt"
+DIM long_link$ = Chars$("l", 987)
+DIM utf8_name$ = "rel/gr" + CHR$(195) + CHR$(188) + "n.txt"
+DIM w = ARCHIVE.BLANK()
+ARCHIVE.ADDDIR(w, "rel", {"mtime": 1757000000})
+ARCHIVE.ADDFILE(w, "rel/hello.txt", "hello" + CHR$(10), {"mtime": 1757000000, "uid": 1000, "gid": 100, "uname": "jd", "gname": "users"})
+ARCHIVE.ADDFILE(w, "rel/bytes.bin", all_bytes$, {"mtime": 1757000000})
+ARCHIVE.ADDFILE(w, "rel/run.sh", "#!/bin/sh" + CHR$(10), {"mtime": 1757000000, "mode": 493})
+ARCHIVE.ADDFILE(w, "rel/empty.txt", "", {"mtime": 1757000000})
+ARCHIVE.ADDFILE(w, split_name$, "split", {"mtime": 1757000000})
+ARCHIVE.ADDFILE(w, pax_name$, "pax name", {"mtime": 1757000000})
+ARCHIVE.ADDLINK(w, "rel/link.txt", "hello.txt", {"mtime": 1757000000})
+ARCHIVE.ADDLINK(w, "rel/far.txt", long_link$, {"mtime": 1757000000})
+ARCHIVE.ADDFILE(w, "rel/./block.bin", Chars$("b", 512), {"mtime": 1757000000})
+ARCHIVE.ADDFILE(w, "rel\windows.txt", "backslash", {"mtime": 1757000000})
+TESTKIT.EQ(ARCHIVE.ENTRYCOUNT(w), 11, "eleven entries added")
+TESTKIT.EQ(ARCHIVE.NAME$(w, 10), "rel/windows.txt", "a backslash becomes a slash")
+TESTKIT.EQ(ARCHIVE.NAME$(w, 9), "rel/./block.bin", "a ./ inside a name stays")
+
+DIM formats = ["pax", "gnu"]
+DIM fmt_i = 0
+FOR fmt_i = 0 TO 1
+    DIM fmt$ = formats[fmt_i]
+    DIM written$ = ARCHIVE.TAR$(w, fmt$)
+    TESTKIT.EQ(LEN(written$) MOD 10240, 0, fmt$ + ": padded to a 10240-byte record")
+    DIM back = ARCHIVE.READTAR(written$)
+    TESTKIT.EQ(ARCHIVE.ENTRYCOUNT(back), 11, fmt$ + ": all entries read back")
+    TESTKIT.EQARRAY(ARCHIVE.NAMES(back), ARCHIVE.NAMES(w), fmt$ + ": names, long ones included")
+    DIM k = 0
+    DIM same_data = TRUE
+    DIM same_meta = TRUE
+    FOR k = 0 TO ARCHIVE.ENTRYCOUNT(w) - 1
+        IF ARCHIVE.DATA$(back, k) <> ARCHIVE.DATA$(w, k) THEN same_data = FALSE
+        IF ARCHIVE.KIND$(back, k) <> ARCHIVE.KIND$(w, k) ORELSE ARCHIVE.MODE(back, k) <> ARCHIVE.MODE(w, k) ORELSE ARCHIVE.MTIME(back, k) <> ARCHIVE.MTIME(w, k) ORELSE ARCHIVE.LINK$(back, k) <> ARCHIVE.LINK$(w, k) THEN same_meta = FALSE
+    NEXT k
+    TESTKIT.ISTRUE(same_data, fmt$ + ": every payload, NUL bytes included")
+    TESTKIT.ISTRUE(same_meta, fmt$ + ": kinds, modes, mtimes and link targets")
+    DIM hello_at = ARCHIVE.FIND(back, "rel/hello.txt")
+    TESTKIT.EQ(STR$(ARCHIVE.UID(back, hello_at)) + ":" + STR$(ARCHIVE.GID(back, hello_at)) + " " + ARCHIVE.UNAME$(back, hello_at) + ":" + ARCHIVE.GNAME$(back, hello_at), "1000:100 jd:users", fmt$ + ": owner ids and names")
+    ARCHIVE.FREE(back)
+NEXT fmt_i
+DIM pax_tar$ = ARCHIVE.TAR$(w)
+TESTKIT.ISTRUE(INSTR(pax_tar$, "path=" + pax_name$ + CHR$(10)) >= 0, "pax: a long name goes into a path record")
+TESTKIT.ISTRUE(INSTR(pax_tar$, "1002 linkpath=" + long_link$ + CHR$(10)) >= 0, "pax: a record whose length gains a digit counts it")
+TESTKIT.ISTRUE(INSTR(pax_tar$, split_name$) < 0, "pax: a name that splits into prefix and name needs no record")
+TESTKIT.EQ(MID$(pax_tar$, 257, 8), "ustar" + CHR$(0) + "00", "pax: ustar magic and version")
+DIM gnu_tar$ = ARCHIVE.TAR$(w, "gnu")
+TESTKIT.ISTRUE(INSTR(gnu_tar$, "././@LongLink") >= 0, "gnu: long names as ././@LongLink entries")
+TESTKIT.EQ(MID$(gnu_tar$, 257, 8), "ustar  " + CHR$(0), "gnu: the GNU magic")
+TESTKIT.ISTRUE(INSTR(gnu_tar$, "PaxHeaders") < 0, "gnu: no pax records")
+
+DIM u = ARCHIVE.BLANK()
+ARCHIVE.ADDFILE(u, split_name$, "split", {"mtime": 1757000000})
+ARCHIVE.ADDFILE(u, "plain.txt", "plain", {"mtime": 1757000000})
+DIM ustar_tar$ = ARCHIVE.TAR$(u, "ustar")
+DIM ustar_back = ARCHIVE.READTAR(ustar_tar$)
+TESTKIT.EQARRAY(ARCHIVE.NAMES(ustar_back), [split_name$, "plain.txt"], "ustar: a 158-character name split into prefix and name")
+TESTKIT.EQ(MID$(ustar_tar$, 345, LEN(long_dir$) - 1), LEFT$(long_dir$, LEN(long_dir$) - 1), "ustar: the folder part sits in the prefix field")
+ARCHIVE.FREE(ustar_back)
+ARCHIVE.FREE(u)
+TESTKIT.THROWS(UstarTooLong@, 0, "ustar: a name that cannot be split raises an error")
+TESTKIT.THROWS(UnknownFormat@, 0, "an unknown format raises an error")
+
+DIM wide = ARCHIVE.BLANK()
+ARCHIVE.ADDFILE(wide, "wide.txt", "wide", {"mtime": 9999999999, "uid": 3000000, "gid": 2500000, "uname": Chars$("u", 40), "gname": "g"})
+ARCHIVE.ADDFILE(wide, utf8_name$, "utf8", {"mtime": 0})
+DIM wide_back = ARCHIVE.READTAR(ARCHIVE.TAR$(wide))
+TESTKIT.EQ(ARCHIVE.MTIME(wide_back, 0), 9999999999, "pax: an mtime past the octal field")
+TESTKIT.EQ(ARCHIVE.UID(wide_back, 0), 3000000, "pax: a uid past the octal field")
+TESTKIT.EQ(ARCHIVE.GID(wide_back, 0), 2500000, "pax: a gid past the octal field")
+TESTKIT.EQ(ARCHIVE.UNAME$(wide_back, 0), Chars$("u", 40), "pax: a user name longer than 32")
+TESTKIT.EQ(ARCHIVE.NAME$(wide_back, 1), utf8_name$, "pax: a UTF-8 name")
+ARCHIVE.FREE(wide_back)
+ARCHIVE.FREE(wide)
+DIM wide_gnu = ARCHIVE.BLANK()
+ARCHIVE.ADDFILE(wide_gnu, "wide.txt", "wide", {"mtime": 9999999999, "uid": 3000000, "gid": 2500000})
+DIM wide_gnu_tar$ = ARCHIVE.TAR$(wide_gnu, "gnu")
+TESTKIT.EQ(BYTEAT(wide_gnu_tar$, 136), 128, "gnu: a large mtime in base-256")
+DIM wide_gnu_back = ARCHIVE.READTAR(wide_gnu_tar$)
+TESTKIT.EQ(ARCHIVE.MTIME(wide_gnu_back, 0), 9999999999, "gnu: and read back")
+TESTKIT.EQ(STR$(ARCHIVE.UID(wide_gnu_back, 0)) + ":" + STR$(ARCHIVE.GID(wide_gnu_back, 0)), "3000000:2500000", "gnu: large ids in base-256")
+ARCHIVE.FREE(wide_gnu_back)
+ARCHIVE.FREE(wide_gnu)
+
+TESTKIT.THROWS(ReadWrongChecksum@, 0, "a header with a wrong checksum raises an error")
+TESTKIT.THROWS(ReadCutShort@, 0, "so does an entry whose data is cut short")
+DIM small$ = SmallTar$()
+DIM small_back = ARCHIVE.READTAR(LEFT$(small$, 1024))
+TESTKIT.EQ(ARCHIVE.DATA$(small_back, 0), "alpha", "an archive without its end blocks still reads")
+ARCHIVE.FREE(small_back)
+TESTKIT.EQ(ARCHIVE.ENTRYCOUNT(ARCHIVE.READTAR("")), 0, "an empty string is an empty archive")
+
+TESTKIT.SUITE("folders and files")
+DIM root$ = MKTEMP$("jdbarchive") + "_dir"
+MKDIR root$
+DIM src$ = root$ + "/src"
+MKDIR src$
+MKDIR src$ + "/bin"
+MKDIR src$ + "/sub"
+MKDIR src$ + "/sub/deeper"
+MKDIR src$ + "/.git"
+BINWRITER src$ + "/readme.txt", "release notes" + CHR$(10)
+BINWRITER src$ + "/bin/tool.sh", "#!/bin/sh" + CHR$(10) + "echo tool" + CHR$(10)
+BINWRITER src$ + "/sub/deeper/data.bin", all_bytes$
+BINWRITER src$ + "/build.log", "noise"
+BINWRITER src$ + "/.git/config", "[core]"
+DIM release_opts = {"mtime": 1757000000, "exclude": ["*.log", ".git"], "executable": ["*.sh"], "uname": "root", "gname": "root"}
+DIM tgz$ = root$ + "/rel-1.0.tar.gz"
+TESTKIT.EQ(ARCHIVE.CREATE(tgz$, src$, "rel-1.0", release_opts), 7, "CREATE packs seven entries")
+DIM tgz_bytes$ = BINREADER$(tgz$)
+TESTKIT.ISTRUE(ARCHIVE.ISGZIP(tgz_bytes$), "a .tar.gz name gives gzip")
+MKDIR root$ + "/again"
+TESTKIT.EQ(ARCHIVE.CREATE(root$ + "/again/rel-1.0.tar.gz", src$, "rel-1.0", release_opts), 7, "packed a second time")
+TESTKIT.EQ(BINREADER$(root$ + "/again/rel-1.0.tar.gz"), tgz_bytes$, "with fixed mtimes the same bytes")
+DIM tgz_info = ARCHIVE.GZINFO(tgz_bytes$)
+TESTKIT.EQ(tgz_info{"name"}, "rel-1.0.tar", "the gzip header names the tar inside")
+DIM rel = ARCHIVE.READFILE(tgz$)
+TESTKIT.EQARRAY(ARCHIVE.NAMES(rel), ["rel-1.0", "rel-1.0/bin", "rel-1.0/bin/tool.sh", "rel-1.0/readme.txt", "rel-1.0/sub", "rel-1.0/sub/deeper", "rel-1.0/sub/deeper/data.bin"], "sorted, under the top folder, without the excluded ones")
+TESTKIT.EQ(ARCHIVE.MODE(rel, 2), 493, "an executable pattern gives mode 755")
+TESTKIT.EQ(ARCHIVE.MODE(rel, 3), 420, "other files get 644")
+TESTKIT.EQ(ARCHIVE.MODE(rel, 4), 493, "folders get 755")
+TESTKIT.EQ(ARCHIVE.KIND$(rel, 5), "dir", "a folder entry")
+TESTKIT.EQ(ARCHIVE.MTIME(rel, 6), STAMP_FIXED, "the fixed mtime")
+TESTKIT.EQ(ARCHIVE.UNAME$(rel, 6), "root", "the owner name")
+TESTKIT.EQ(ARCHIVE.DATA$(rel, 6), all_bytes$, "binary file content")
+ARCHIVE.FREE(rel)
+DIM flat = ARCHIVE.FROMFOLDER(src$)
+TESTKIT.EQ(ARCHIVE.NAME$(flat, 0), ".git", "without a top folder and filters every entry sits at the root")
+TESTKIT.EQ(ARCHIVE.ENTRYCOUNT(flat), 9, "nine of them")
+DIM data_at = ARCHIVE.FIND(flat, "sub/deeper/data.bin")
+TESTKIT.ISTRUE(ABS(ARCHIVE.MTIME(flat, data_at) - NOW_EPOCH()) < 90000, "a file keeps its own mtime")
+ARCHIVE.FREE(flat)
+DIM plain_tar$ = root$ + "/plain.tar"
+DIM rel_again = ARCHIVE.READFILE(tgz$)
+TESTKIT.EQ(ARCHIVE.WRITEFILE(rel_again, plain_tar$), 10240, "WRITEFILE without .gz writes a plain tar")
+TESTKIT.EQ(BINREADER$(plain_tar$), ARCHIVE.GUNZIP$(tgz_bytes$), "the same tar as inside the .tar.gz")
+ARCHIVE.FREE(rel_again)
+
+DIM out$ = root$ + "/out"
+TESTKIT.EQ(ARCHIVE.EXTRACT(tgz$, out$), 7, "EXTRACT writes seven entries")
+TESTKIT.EQ(BINREADER$(out$ + "/rel-1.0/sub/deeper/data.bin"), all_bytes$, "a binary file comes out unchanged")
+TESTKIT.EQ(BINREADER$(out$ + "/rel-1.0/bin/tool.sh"), "#!/bin/sh" + CHR$(10) + "echo tool" + CHR$(10), "a text file too")
+TESTKIT.ISTRUE(FILE.ISDIR(out$ + "/rel-1.0/sub/deeper"), "folders are created")
+TESTKIT.EQ(ARCHIVE.SKIPPED(), 0, "nothing skipped")
+
+DIM bsd_out$ = root$ + "/bsd"
+TESTKIT.EQ(ARCHIVE.EXTRACT(fixture_dir$ + "archive_bsd.tar.gz", bsd_out$), 7, "bsdtar's .tar.gz extracts")
+TESTKIT.EQ(BINREADER$(bsd_out$ + "/pkg/sub/deeper/note.md"), "# note" + CHR$(10), "with its files")
+TESTKIT.EQ(LEN(BINREADER$(bsd_out$ + "/pkg/sub/data.bin")), 350, "binary ones included")
+
+DIM links = ARCHIVE.BLANK()
+ARCHIVE.ADDFILE(links, "pkg/readme.txt", "linked text", {"mtime": 0})
+ARCHIVE.ADDLINK(links, "pkg/soft.txt", "readme.txt", {"mtime": 0})
+ARCHIVE.ADDLINK(links, "pkg/hard.txt", "pkg/readme.txt", {"mtime": 0})
+DIM links_tar$ = ARCHIVE.TAR$(links)
+DIM hard_off = 1536
+TESTKIT.EQ(MID$(links_tar$, hard_off, 12), "pkg/hard.txt", "the third header")
+DIM hard_tar$ = Resum$(LEFT$(links_tar$, hard_off + 156) + "1" + MID$(links_tar$, hard_off + 157, LEN(links_tar$)), hard_off)
+DIM hard_back = ARCHIVE.READTAR(hard_tar$)
+TESTKIT.EQ(ARCHIVE.KIND$(hard_back, 2), "hardlink", "a type 1 entry is a hard link")
+DIM links_out$ = root$ + "/links"
+TESTKIT.EQ(ARCHIVE.EXTRACTTO(hard_back, links_out$), 2, "the file and the hard link are written")
+TESTKIT.EQ(ARCHIVE.SKIPPED(), 1, "the symbolic link is skipped")
+TESTKIT.EQ(BINREADER$(links_out$ + "/pkg/hard.txt"), "linked text", "a hard link gets a copy of its file")
+TESTKIT.ISFALSE(FILE.EXISTS(links_out$ + "/pkg/soft.txt"), "no file for the symbolic link")
+ARCHIVE.FREE(hard_back)
+ARCHIVE.FREE(links)
+
+DIM trap$ = root$ + "/trap"
+DIM refusals = ["file|/etc/passwd||", "file|\windows\evil.txt||", "file|../evil.txt||", "file|pkg/../../evil.txt||", "file|C:/evil.txt||", "file|c:evil.txt||", "link|pkg/up.txt|../../evil.txt|", "link|pkg/abs.txt|/etc/passwd|", "link|pkg/drive.txt|D:/evil.txt|"]
+DIM refusal_labels = ["an absolute path", "an absolute Windows path", "a leading ..", "a .. deeper inside", "a drive letter", "a drive-relative name", "a symbolic link leaving the folder", "a symbolic link to an absolute path", "a symbolic link to a drive"]
+DIM rf = 0
+FOR rf = 0 TO LEN(refusals) - 1
+    DIM refusal$ = refusals[rf]
+    DIM refusal_label$ = refusal_labels[rf]
+    TESTKIT.THROWS(ExtractOne@, refusal$ + trap$, "refuses " + refusal_label$)
+NEXT rf
+TESTKIT.ISFALSE(FILE.ISDIR(trap$), "a refused archive writes nothing, not even the target folder")
+TESTKIT.EQ(ExtractOne("link|pkg/in.txt|../ok.txt|" + trap$), 1, "a symbolic link that stays inside passes the check")
+TESTKIT.THROWS(ReadMissingFile@, root$ + "/nothing.tar", "READFILE of a missing file raises an error")
+TESTKIT.THROWS(FolderMissing@, root$ + "/nothing", "FROMFOLDER of a missing folder raises an error")
+
+TESTKIT.SUITE("the system tar reads archives written here")
+DIM tar_exe$ = ""
+IF OS.GETOS() = "WINDOWS" THEN
+    IF FILE.EXISTS("C:/Windows/System32/tar.exe") THEN tar_exe$ = "C:/Windows/System32/tar.exe"
+ELSE
+    IF FILE.EXISTS("/usr/bin/tar") THEN tar_exe$ = "/usr/bin/tar"
+ENDIF
+IF tar_exe$ = "" THEN
+    TESTKIT.SKIP("no system tar to check against")
+ELSE
+    DIM listing = OS.EXEC(tar_exe$, ["-tf", tgz$])
+    DIM listing_text$ = listing{"OUTPUT"}
+    DIM listed = SPLIT(REPLACE$(REPLACE$(TRIM$(REPLACE$(listing_text$, CHR$(13), "")), "/" + CHR$(10), CHR$(10)), CHR$(10), "|"), "|")
+    DIM last_listed$ = listed[LEN(listed) - 1]
+    TESTKIT.EQ(LEN(listed), 7, "lists the seven entries of the .tar.gz")
+    TESTKIT.EQ(last_listed$, "rel-1.0/sub/deeper/data.bin", "in the order written")
+    DIM sys_out$ = root$ + "/sys"
+    MKDIR sys_out$
+    DIM unpacked = OS.EXEC(tar_exe$, ["-xf", tgz$, "-C", sys_out$])
+    TESTKIT.EQ(unpacked{"EXIT_CODE"}, 0, "extracts it")
+    TESTKIT.EQ(BINREADER$(sys_out$ + "/rel-1.0/sub/deeper/data.bin"), all_bytes$, "with the binary file unchanged")
+    DIM formats_tar = ["pax", "gnu"]
+    DIM ft = 0
+    FOR ft = 0 TO 1
+        DIM sys_fmt$ = formats_tar[ft]
+        DIM sys_tar$ = root$ + "/long_" + sys_fmt$ + ".tar"
+        BINWRITER sys_tar$, ARCHIVE.TAR$(w, sys_fmt$)
+        DIM sys_list = OS.EXEC(tar_exe$, ["-tvf", sys_tar$])
+        DIM sys_text$ = sys_list{"OUTPUT"}
+        TESTKIT.EQ(sys_list{"EXIT_CODE"}, 0, sys_fmt$ + ": lists the archive with long names")
+        TESTKIT.ISTRUE(INSTR(sys_text$, pax_name$) >= 0, sys_fmt$ + ": with the 250-character name")
+        TESTKIT.ISTRUE(INSTR(sys_text$, split_name$) >= 0, sys_fmt$ + ": the split name")
+        TESTKIT.ISTRUE(INSTR(sys_text$, "rel/far.txt -> " + long_link$) >= 0, sys_fmt$ + ": and the 987-character link target")
+        DIM print_one = OS.EXEC(tar_exe$, ["-xOf", sys_tar$, "rel/hello.txt"])
+        DIM print_text$ = print_one{"OUTPUT"}
+        TESTKIT.EQ(REPLACE$(print_text$, CHR$(13), ""), "hello" + CHR$(10), sys_fmt$ + ": and the content of a file")
+    NEXT ft
+ENDIF
+
+ARCHIVE.FREE(w)
+RemoveTree(root$)
+TESTKIT.ISFALSE(FILE.ISDIR(root$), "the temporary folder is gone")
+
+TESTKIT.REPORT()

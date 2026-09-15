@@ -1,0 +1,46 @@
+fixture	name	kind	size	mode	mtime	uid	gid	uname	gname	link	sha256
+archive_py_ustar.tar	top	dir	0	755	1757000000	1000	1000				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_ustar.tar	top/hello.txt	file	10	644	1757000000	1000	1000	jd	jd		62d5b9b88115a8edd97793e3ad7f4c229538e294a252e6594f4c81aad1a04b4d
+archive_py_ustar.tar	top/empty.txt	file	0	644	1757000000	1000	1000	jd	jd		e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_ustar.tar	top/run.sh	file	18	755	1757000000	1000	1000	jd	jd		299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba
+archive_py_ustar.tar	top/bin.dat	file	868	644	1757000000	1000	1000	jd	jd		76a50cc2fd6307f586403d590118ba0669b35e33db089b02ea48d8ec7f3cf36e
+archive_py_ustar.tar	top/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccc/file_with_a_long_name.txt	file	10	644	1757000000	1000	1000	jd	jd		c93f1e4d27896b82b0037047ef729b334aebde599ff77d6eb75728505b662597
+archive_py_ustar.tar	top/link.txt	symlink	0	777	1757000000	0	0			hello.txt	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_gnu.tar	top	dir	0	755	1757000000	1000	1000				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_gnu.tar	top/hello.txt	file	10	644	1757000000	1000	1000	jd	jd		62d5b9b88115a8edd97793e3ad7f4c229538e294a252e6594f4c81aad1a04b4d
+archive_py_gnu.tar	top/empty.txt	file	0	644	1757000000	1000	1000	jd	jd		e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_gnu.tar	top/run.sh	file	18	755	1757000000	1000	1000	jd	jd		299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba
+archive_py_gnu.tar	top/bin.dat	file	868	644	1757000000	1000	1000	jd	jd		76a50cc2fd6307f586403d590118ba0669b35e33db089b02ea48d8ec7f3cf36e
+archive_py_gnu.tar	top/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccc/file_with_a_long_name.txt	file	10	644	1757000000	1000	1000	jd	jd		c93f1e4d27896b82b0037047ef729b334aebde599ff77d6eb75728505b662597
+archive_py_gnu.tar	top/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.txt	file	15	644	1757000000	1000	1000	jd	jd		51999f6f02dfc7f07986408c9c1828ec244594d7a6c2e641180f5253eec3ec74
+archive_py_gnu.tar	top/link.txt	symlink	0	777	1757000000	0	0			hello.txt	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_pax.tar	top	dir	0	755	1757000000	1000	1000				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_pax.tar	top/hello.txt	file	10	644	1757000000	1000	1000	jd	jd		62d5b9b88115a8edd97793e3ad7f4c229538e294a252e6594f4c81aad1a04b4d
+archive_py_pax.tar	top/empty.txt	file	0	644	1757000000	1000	1000	jd	jd		e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_pax.tar	top/run.sh	file	18	755	1757000000	1000	1000	jd	jd		299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba
+archive_py_pax.tar	top/bin.dat	file	868	644	1757000000	1000	1000	jd	jd		76a50cc2fd6307f586403d590118ba0669b35e33db089b02ea48d8ec7f3cf36e
+archive_py_pax.tar	top/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccc/file_with_a_long_name.txt	file	10	644	1757000000	1000	1000	jd	jd		c93f1e4d27896b82b0037047ef729b334aebde599ff77d6eb75728505b662597
+archive_py_pax.tar	top/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.txt	file	15	644	1757000000	1000	1000	jd	jd		51999f6f02dfc7f07986408c9c1828ec244594d7a6c2e641180f5253eec3ec74
+archive_py_pax.tar	top/link.txt	symlink	0	777	1757000000	0	0			hello.txt	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_pax.tar.gz	top	dir	0	755	1757000000	1000	1000				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_pax.tar.gz	top/hello.txt	file	10	644	1757000000	1000	1000	jd	jd		62d5b9b88115a8edd97793e3ad7f4c229538e294a252e6594f4c81aad1a04b4d
+archive_py_pax.tar.gz	top/empty.txt	file	0	644	1757000000	1000	1000	jd	jd		e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_py_pax.tar.gz	top/run.sh	file	18	755	1757000000	1000	1000	jd	jd		299001868fb8c02fd431c336c6d058f5558c5dff5b5af5e6fe04b870a6a9cbba
+archive_py_pax.tar.gz	top/bin.dat	file	868	644	1757000000	1000	1000	jd	jd		76a50cc2fd6307f586403d590118ba0669b35e33db089b02ea48d8ec7f3cf36e
+archive_py_pax.tar.gz	top/deep/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccccccccccccccccc/file_with_a_long_name.txt	file	10	644	1757000000	1000	1000	jd	jd		c93f1e4d27896b82b0037047ef729b334aebde599ff77d6eb75728505b662597
+archive_py_pax.tar.gz	top/xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.txt	file	15	644	1757000000	1000	1000	jd	jd		51999f6f02dfc7f07986408c9c1828ec244594d7a6c2e641180f5253eec3ec74
+archive_py_pax.tar.gz	top/link.txt	symlink	0	777	1757000000	0	0			hello.txt	e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd_ustar.tar	pkg	dir	0	777	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd_ustar.tar	pkg/empty.txt	file	0	666	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd_ustar.tar	pkg/readme.txt	file	15	666	1757000000	0	0				e71a28cfde0affe4be214338f28eb639b084a4ba6c09cb829d14d1dcc05cd4c4
+archive_bsd_ustar.tar	pkg/sub	dir	0	777	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd_ustar.tar	pkg/sub/data.bin	file	350	666	1757000000	0	0				09ea032f37b6555c6a143b3285b9585ec474e7b55092797132cbb33bd15a2ef7
+archive_bsd_ustar.tar	pkg/sub/deeper	dir	0	777	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd_ustar.tar	pkg/sub/deeper/note.md	file	7	666	1757000000	0	0				4874464a2b14eef4bf671cccfe7fbbfb60bc99c5fd166c320299c59f5e1061f6
+archive_bsd.tar.gz	pkg	dir	0	777	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd.tar.gz	pkg/empty.txt	file	0	666	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd.tar.gz	pkg/readme.txt	file	15	666	1757000000	0	0				e71a28cfde0affe4be214338f28eb639b084a4ba6c09cb829d14d1dcc05cd4c4
+archive_bsd.tar.gz	pkg/sub	dir	0	777	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd.tar.gz	pkg/sub/data.bin	file	350	666	1757000000	0	0				09ea032f37b6555c6a143b3285b9585ec474e7b55092797132cbb33bd15a2ef7
+archive_bsd.tar.gz	pkg/sub/deeper	dir	0	777	1757000000	0	0				e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+archive_bsd.tar.gz	pkg/sub/deeper/note.md	file	7	666	1757000000	0	0				4874464a2b14eef4bf671cccfe7fbbfb60bc99c5fd166c320299c59f5e1061f6

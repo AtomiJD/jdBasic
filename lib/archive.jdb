@@ -1,0 +1,1144 @@
+' ARCHIVE: tar archives and gzip files, in memory and on disk. Tar is read in
+' ustar, GNU and pax form and written as ustar with pax records wherever a
+' name, a link, a size, a time or an owner does not fit the header; gzip
+' reads files with several members. A folder goes into a .tar.gz in one call,
+' and an archive comes out into a folder that no entry can leave.
+'
+'   IMPORT ARCHIVE
+'   ARCHIVE.CREATE("jdbasic-linux-x64.tar.gz", "dist", "jdbasic-linux-x64")
+'   PRINT ARCHIVE.EXTRACT("jdbasic-linux-x64.tar.gz", "unpacked")
+'
+'   DIM a = ARCHIVE.BLANK()
+'   ARCHIVE.ADDFILE(a, "notes/hello.txt", "hello" + CHR$(10))
+'   ARCHIVE.WRITEFILE(a, "notes.tar.gz")
+EXPORT MODULE ARCHIVE
+
+' Entries of every archive in parallel arrays; gOwner holds the handle an
+' entry belongs to, 0 once the archive is freed.
+DIM gNextHandle = 1
+DIM gOwner = []
+DIM gName = []
+DIM gKind = []
+DIM gMode = []
+DIM gMtime = []
+DIM gUid = []
+DIM gGid = []
+DIM gUname = []
+DIM gGname = []
+DIM gLink = []
+DIM gData = []
+
+' The entry positions of the archive last asked for, in order.
+DIM gIndex = []
+DIM gIndexLen = 0
+DIM gIndexHandle = 0
+DIM gIndexTotal = -1
+
+DIM gSkipped = 0
+DIM gMembers = 0
+DIM gMember$ = ""
+DIM gHeaderFormat$ = "100a8a8a8a12a12a8a1a100a6a2a32a32a8a8a155a12x"
+
+' ---- numbers and strings in headers ----
+
+' value as width octal digits, zero padded.
+FUNC Octal$(value, width)
+    DIM v = CLNG(value)
+    DIM out$ = ""
+    DIM i = 0
+    FOR i = 1 TO width
+        out$ = STR$(v MOD 8) + out$
+        v = CLNG(INT(v / 8))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+' A numeric field width bytes wide: octal digits, or for a value too large
+' for them the base-256 form GNU tar writes.
+FUNC NumField$(value, width)
+    DIM v = CLNG(value)
+    DIM ceiling = CLNG(1)
+    DIM i = 0
+    FOR i = 1 TO width - 1
+        ceiling = ceiling * 8
+    NEXT i
+    IF v >= 0 ANDALSO v < ceiling THEN RETURN Octal$(v, width - 1)
+    IF v < 0 THEN THROW "ARCHIVE.TAR$: the gnu format here does not write the negative value " + STR$(v) + "; use pax"
+    DIM out$ = ""
+    FOR i = 1 TO width - 1
+        out$ = CHR$(CINT(v MOD 256)) + out$
+        v = CLNG(INT(v / 256))
+    NEXT i
+    RETURN CHR$(128) + out$
+ENDFUNC
+
+' A numeric header field: octal digits up to a NUL or a space, or the
+' base-256 form GNU tar uses for large values (first byte 128 or more).
+FUNC ReadNumber(field$)
+    DIM total = 0
+    DIM i = 0
+    IF LEN(field$) = 0 THEN RETURN 0
+    DIM first_byte = BYTEAT(field$, 0)
+    IF first_byte >= 128 THEN
+        IF first_byte = 255 THEN RETURN 0
+        total = first_byte - 128
+        FOR i = 1 TO LEN(field$) - 1
+            total = total * 256 + BYTEAT(field$, i)
+        NEXT i
+        RETURN CLNG(total)
+    ENDIF
+    DIM seen = FALSE
+    FOR i = 0 TO LEN(field$) - 1
+        DIM digit = BYTEAT(field$, i)
+        IF digit >= 48 ANDALSO digit <= 55 THEN
+            total = total * 8 + (digit - 48)
+            seen = TRUE
+        ELSEIF digit = 0 ORELSE (digit = 32 ANDALSO seen) THEN
+            EXITFOR
+        ENDIF
+    NEXT i
+    RETURN CLNG(total)
+ENDFUNC
+
+' The text of a field up to its first NUL.
+FUNC CString$(field$)
+    DIM nul_at = CINT(INSTR(field$, CHR$(0)))
+    IF nul_at < 0 THEN RETURN field$
+    RETURN LEFT$(field$, nul_at)
+ENDFUNC
+
+FUNC IsAscii(value$)
+    DIM i = 0
+    FOR i = 0 TO LEN(value$) - 1
+        IF BYTEAT(value$, i) >= 128 THEN RETURN FALSE
+    NEXT i
+    RETURN TRUE
+ENDFUNC
+
+' n zero bytes.
+FUNC NulBytes$(n)
+    IF n <= 0 THEN RETURN ""
+    RETURN PACK$(STR$(CLNG(n)) + "x")
+ENDFUNC
+
+' The pieces joined, two at a time, so a large archive is not rebuilt once
+' per piece.
+FUNC Concat$(pieces)
+    DIM work = []
+    DIM i = 0
+    FOR i = 0 TO LEN(pieces) - 1
+        DIM piece$ = pieces[i]
+        PUSH(work, piece$)
+    NEXT i
+    IF LEN(work) = 0 THEN RETURN ""
+    DIM rounds = 0
+    FOR rounds = 0 TO 64
+        IF LEN(work) <= 1 THEN EXITFOR
+        DIM merged = []
+        DIM k = 0
+        FOR k = 0 TO LEN(work) - 1 STEP 2
+            DIM a_part$ = work[k]
+            IF k + 1 < LEN(work) THEN
+                DIM b_part$ = work[k + 1]
+                PUSH(merged, a_part$ + b_part$)
+            ELSE
+                PUSH(merged, a_part$)
+            ENDIF
+        NEXT k
+        work = merged
+    NEXT rounds
+    DIM whole$ = work[0]
+    RETURN whole$
+ENDFUNC
+
+' A name with forward slashes, without a leading ./ or a trailing slash.
+FUNC CleanName$(ename$)
+    DIM clean$ = REPLACE$(ename$, "\", "/")
+    DIM guard = 0
+    FOR guard = 0 TO LEN(clean$)
+        IF LEFT$(clean$, 2) <> "./" THEN EXITFOR
+        clean$ = MID$(clean$, 2, LEN(clean$))
+    NEXT guard
+    FOR guard = 0 TO LEN(clean$)
+        IF LEN(clean$) <= 1 ORELSE RIGHT$(clean$, 1) <> "/" THEN EXITFOR
+        clean$ = LEFT$(clean$, LEN(clean$) - 1)
+    NEXT guard
+    RETURN clean$
+ENDFUNC
+
+FUNC OptNumber(opts, key$, fallback)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback
+    IF NOT MAP.EXISTS(opts, key$) THEN RETURN fallback
+    DIM v = opts{key$}
+    RETURN v
+ENDFUNC
+
+FUNC OptText$(opts, key$, fallback$)
+    IF TYPEOF(opts) <> "OBJECT" THEN RETURN fallback$
+    IF NOT MAP.EXISTS(opts, key$) THEN RETURN fallback$
+    DIM v = opts{key$}
+    RETURN "" + v
+ENDFUNC
+
+FUNC OptList(opts, key$)
+    DIM out = []
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, key$) THEN
+            DIM v = opts{key$}
+            IF TYPEOF(v) = "ARRAY" THEN
+                DIM i = 0
+                FOR i = 0 TO LEN(v) - 1
+                    DIM item$ = v[i]
+                    PUSH(out, item$)
+                NEXT i
+            ELSE
+                DIM one$ = "" + v
+                PUSH(out, one$)
+            ENDIF
+        ENDIF
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' ---- archives in memory ----
+
+' An empty archive; its handle.
+EXPORT FUNC BLANK()
+    DIM made = gNextHandle
+    gNextHandle = gNextHandle + 1
+    RETURN made
+ENDFUNC
+
+SUB AddEntry(h, ename$, ekind$, emode, emtime, euid, egid, euname$, egname$, elink$, edata$)
+    PUSH(gOwner, CLNG(h))
+    PUSH(gName, ename$)
+    PUSH(gKind, ekind$)
+    PUSH(gMode, CLNG(emode))
+    PUSH(gMtime, CLNG(emtime))
+    PUSH(gUid, CLNG(euid))
+    PUSH(gGid, CLNG(egid))
+    PUSH(gUname, euname$)
+    PUSH(gGname, egname$)
+    PUSH(gLink, elink$)
+    PUSH(gData, edata$)
+    gIndexTotal = -1
+ENDSUB
+
+SUB RebuildIndex(h)
+    IF gIndexHandle <> CLNG(h) ORELSE gIndexTotal <> LEN(gOwner) THEN
+        gIndexLen = 0
+        DIM i = 0
+        FOR i = 0 TO LEN(gOwner) - 1
+            IF CLNG(gOwner[i]) = CLNG(h) THEN
+                IF gIndexLen < LEN(gIndex) THEN
+                    gIndex[gIndexLen] = i
+                ELSE
+                    PUSH(gIndex, i)
+                ENDIF
+                gIndexLen = gIndexLen + 1
+            ENDIF
+        NEXT i
+        gIndexHandle = CLNG(h)
+        gIndexTotal = LEN(gOwner)
+    ENDIF
+ENDSUB
+
+FUNC EntryAt(h, i)
+    RebuildIndex(h)
+    IF i < 0 ORELSE i >= gIndexLen THEN THROW "ARCHIVE: archive " + STR$(h) + " has no entry " + STR$(i)
+    DIM at = gIndex[CLNG(i)]
+    RETURN CLNG(at)
+ENDFUNC
+
+FUNC Stamp(opts)
+    DIM fallback = CLNG(INT(NOW_EPOCH()))
+    RETURN CLNG(OptNumber(opts, "mtime", fallback))
+ENDFUNC
+
+' A file with data$ (any bytes). opts: "mode" (420, octal 644), "mtime"
+' (seconds since 1970, now), "uid", "gid", "uname", "gname".
+EXPORT SUB ADDFILE(h, ename$, edata$, opts = 0)
+    DIM clean$ = CleanName$(ename$)
+    IF clean$ = "" THEN THROW "ARCHIVE.ADDFILE: an entry needs a name"
+    AddEntry(h, clean$, "file", OptNumber(opts, "mode", 420), Stamp(opts), OptNumber(opts, "uid", 0), OptNumber(opts, "gid", 0), OptText$(opts, "uname", ""), OptText$(opts, "gname", ""), "", edata$)
+ENDSUB
+
+' A folder entry; mode 493 (octal 755) unless opts says otherwise.
+EXPORT SUB ADDDIR(h, ename$, opts = 0)
+    DIM clean$ = CleanName$(ename$)
+    IF clean$ = "" THEN THROW "ARCHIVE.ADDDIR: an entry needs a name"
+    AddEntry(h, clean$, "dir", OptNumber(opts, "mode", 493), Stamp(opts), OptNumber(opts, "uid", 0), OptNumber(opts, "gid", 0), OptText$(opts, "uname", ""), OptText$(opts, "gname", ""), "", "")
+ENDSUB
+
+' A symbolic link to target$; mode 511 (octal 777) unless opts says otherwise.
+EXPORT SUB ADDLINK(h, ename$, target$, opts = 0)
+    DIM clean$ = CleanName$(ename$)
+    IF clean$ = "" THEN THROW "ARCHIVE.ADDLINK: an entry needs a name"
+    AddEntry(h, clean$, "symlink", OptNumber(opts, "mode", 511), Stamp(opts), OptNumber(opts, "uid", 0), OptNumber(opts, "gid", 0), OptText$(opts, "uname", ""), OptText$(opts, "gname", ""), target$, "")
+ENDSUB
+
+' The archive's entries forgotten and its data released.
+EXPORT SUB FREE(h)
+    DIM i = 0
+    FOR i = 0 TO LEN(gOwner) - 1
+        IF CLNG(gOwner[i]) = CLNG(h) THEN
+            gOwner[i] = 0
+            gData[i] = ""
+        ENDIF
+    NEXT i
+    gIndexHandle = 0
+    gIndexTotal = -1
+ENDSUB
+
+EXPORT FUNC ENTRYCOUNT(h)
+    RebuildIndex(h)
+    RETURN gIndexLen
+ENDFUNC
+
+EXPORT FUNC NAME$(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v$ = gName[at]
+    RETURN v$
+ENDFUNC
+
+' "file", "dir", "symlink", "hardlink" or "other".
+EXPORT FUNC KIND$(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v$ = gKind[at]
+    RETURN v$
+ENDFUNC
+
+EXPORT FUNC DATA$(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v$ = gData[at]
+    RETURN v$
+ENDFUNC
+
+EXPORT FUNC ENTRYSIZE(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v$ = gData[at]
+    RETURN LEN(v$)
+ENDFUNC
+
+EXPORT FUNC MODE(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v = gMode[at]
+    RETURN CLNG(v)
+ENDFUNC
+
+EXPORT FUNC MTIME(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v = gMtime[at]
+    RETURN CLNG(v)
+ENDFUNC
+
+EXPORT FUNC UID(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v = gUid[at]
+    RETURN CLNG(v)
+ENDFUNC
+
+EXPORT FUNC GID(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v = gGid[at]
+    RETURN CLNG(v)
+ENDFUNC
+
+EXPORT FUNC UNAME$(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v$ = gUname[at]
+    RETURN v$
+ENDFUNC
+
+EXPORT FUNC GNAME$(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v$ = gGname[at]
+    RETURN v$
+ENDFUNC
+
+' The target of a symbolic link or a hard link, "" for other entries.
+EXPORT FUNC LINK$(h, i)
+    DIM at = EntryAt(h, i)
+    DIM v$ = gLink[at]
+    RETURN v$
+ENDFUNC
+
+' The position of the entry with that name, or -1.
+EXPORT FUNC FIND(h, ename$)
+    DIM wanted$ = CleanName$(ename$)
+    DIM total = ENTRYCOUNT(h)
+    DIM k = 0
+    FOR k = 0 TO total - 1
+        DIM at = gIndex[k]
+        DIM have$ = gName[CLNG(at)]
+        IF have$ = wanted$ THEN RETURN k
+    NEXT k
+    RETURN -1
+ENDFUNC
+
+EXPORT FUNC NAMES(h)
+    DIM out = []
+    DIM total = ENTRYCOUNT(h)
+    DIM k = 0
+    FOR k = 0 TO total - 1
+        DIM at = gIndex[k]
+        DIM have$ = gName[CLNG(at)]
+        PUSH(out, have$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ---- writing tar ----
+
+' The 512-byte header block; the checksum counts its own field as spaces.
+FUNC Header$(ename$, prefix$, emode, euid, egid, esize, emtime, flag$, elink$, euname$, egname$, gnu)
+    DIM magic$ = "ustar"
+    DIM version$ = "00"
+    IF gnu THEN
+        magic$ = "ustar "
+        version$ = " "
+    ENDIF
+    DIM front$ = PACK$("100a8a8a8a12a12a", ename$, Octal$(emode, 7), NumField$(euid, 8), NumField$(egid, 8), NumField$(esize, 12), NumField$(emtime, 12))
+    DIM back$ = PACK$("1a100a6a2a32a32a8a8a155a12x", flag$, elink$, magic$, version$, euname$, egname$, Octal$(0, 7), Octal$(0, 7), prefix$)
+    DIM blank$ = front$ + "        " + back$
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO 511
+        total = total + BYTEAT(blank$, i)
+    NEXT i
+    RETURN front$ + Octal$(total, 6) + CHR$(0) + " " + back$
+ENDFUNC
+
+' Where a long name splits into the ustar prefix and name fields: -1 when it
+' fits the name field alone, -2 when no slash gives a split.
+FUNC SplitAt(ename$)
+    IF LEN(ename$) <= 100 THEN RETURN -1
+    DIM i = 0
+    FOR i = 0 TO LEN(ename$) - 1
+        IF MID$(ename$, i, 1) = "/" THEN
+            IF i <= 155 ANDALSO LEN(ename$) - i - 1 <= 100 ANDALSO LEN(ename$) - i - 1 > 0 THEN RETURN i
+        ENDIF
+    NEXT i
+    RETURN -2
+ENDFUNC
+
+FUNC PaxRecord$(key$, value$)
+    DIM body = LEN(key$) + LEN(value$) + 3
+    DIM digits = LEN(STR$(body))
+    DIM whole = body + digits
+    IF LEN(STR$(whole)) > digits THEN whole = whole + 1
+    RETURN STR$(whole) + " " + key$ + "=" + value$ + CHR$(10)
+ENDFUNC
+
+' The archive as tar bytes. format$ "pax" (default) writes ustar headers and
+' adds pax records where a value does not fit; "gnu" writes long names and
+' links as ././@LongLink entries; "ustar" refuses what does not fit.
+EXPORT FUNC TAR$(h, fmt_in$ = "pax")
+    DIM fmt$ = LCASE$(fmt_in$)
+    IF fmt$ <> "pax" ANDALSO fmt$ <> "ustar" ANDALSO fmt$ <> "gnu" THEN THROW "ARCHIVE.TAR$: the format is pax, ustar or gnu, not " + fmt_in$
+    DIM gnu = (fmt$ = "gnu")
+    DIM limit = 8589934592
+    DIM id_limit = 2097152
+    DIM pieces = []
+    DIM written = 0
+    DIM total = ENTRYCOUNT(h)
+    DIM k = 0
+    FOR k = 0 TO total - 1
+        DIM at = EntryAt(h, k)
+        DIM ename$ = gName[at]
+        DIM ekind$ = gKind[at]
+        DIM elink$ = gLink[at]
+        DIM euname$ = gUname[at]
+        DIM egname$ = gGname[at]
+        DIM emode = CLNG(gMode[at])
+        DIM emtime = CLNG(gMtime[at])
+        DIM euid = CLNG(gUid[at])
+        DIM egid = CLNG(gGid[at])
+        DIM edata$ = ""
+        IF ekind$ = "file" THEN edata$ = gData[at]
+        DIM esize = LEN(edata$)
+        DIM flag$ = "0"
+        DIM stored$ = ename$
+        IF ekind$ = "dir" THEN
+            flag$ = "5"
+            stored$ = ename$ + "/"
+        ELSEIF ekind$ = "symlink" THEN
+            flag$ = "2"
+        ELSEIF ekind$ = "hardlink" THEN
+            flag$ = "1"
+        ENDIF
+        DIM split_pos = SplitAt(stored$)
+        IF gnu ANDALSO split_pos >= 0 THEN split_pos = -2
+        DIM name_fits = split_pos <> -2 ANDALSO IsAscii(stored$)
+        DIM link_fits = LEN(elink$) <= 100 ANDALSO IsAscii(elink$)
+        DIM numbers_fit = esize < limit ANDALSO emtime >= 0 ANDALSO emtime < limit ANDALSO euid >= 0 ANDALSO euid < id_limit ANDALSO egid >= 0 ANDALSO egid < id_limit
+        DIM owners_fit = LEN(euname$) <= 32 ANDALSO LEN(egname$) <= 32
+        DIM header_name$ = stored$
+        DIM header_prefix$ = ""
+        IF split_pos >= 0 THEN
+            header_prefix$ = LEFT$(stored$, split_pos)
+            header_name$ = MID$(stored$, split_pos + 1, LEN(stored$))
+        ENDIF
+        IF NOT (name_fits ANDALSO link_fits ANDALSO numbers_fit ANDALSO owners_fit) THEN
+            IF fmt$ = "ustar" THEN THROW "ARCHIVE.TAR$: " + ename$ + " does not fit a ustar header"
+            IF gnu THEN
+                IF NOT owners_fit THEN THROW "ARCHIVE.TAR$: " + ename$ + " has an owner name longer than 32 characters; use pax"
+                IF NOT name_fits THEN
+                    DIM long_name$ = stored$ + CHR$(0)
+                    PUSH(pieces, Header$("././@LongLink", "", 420, 0, 0, LEN(long_name$), 0, "L", "", "", "", TRUE))
+                    PUSH(pieces, long_name$)
+                    PUSH(pieces, NulBytes$((512 - LEN(long_name$) MOD 512) MOD 512))
+                    written = written + 512 + LEN(long_name$) + (512 - LEN(long_name$) MOD 512) MOD 512
+                    header_name$ = LEFT$(stored$, 100)
+                    header_prefix$ = ""
+                ENDIF
+                IF NOT link_fits THEN
+                    DIM long_link$ = elink$ + CHR$(0)
+                    PUSH(pieces, Header$("././@LongLink", "", 420, 0, 0, LEN(long_link$), 0, "K", "", "", "", TRUE))
+                    PUSH(pieces, long_link$)
+                    PUSH(pieces, NulBytes$((512 - LEN(long_link$) MOD 512) MOD 512))
+                    written = written + 512 + LEN(long_link$) + (512 - LEN(long_link$) MOD 512) MOD 512
+                    elink$ = LEFT$(elink$, 100)
+                ENDIF
+            ELSE
+                DIM records$ = ""
+                IF NOT name_fits THEN
+                    records$ = records$ + PaxRecord$("path", stored$)
+                    header_name$ = LEFT$(stored$, 100)
+                    header_prefix$ = ""
+                ENDIF
+                IF NOT link_fits THEN
+                    records$ = records$ + PaxRecord$("linkpath", elink$)
+                    elink$ = LEFT$(elink$, 100)
+                ENDIF
+                IF esize >= limit THEN records$ = records$ + PaxRecord$("size", STR$(esize))
+                IF emtime < 0 ORELSE emtime >= limit THEN records$ = records$ + PaxRecord$("mtime", STR$(emtime))
+                IF euid < 0 ORELSE euid >= id_limit THEN records$ = records$ + PaxRecord$("uid", STR$(euid))
+                IF egid < 0 ORELSE egid >= id_limit THEN records$ = records$ + PaxRecord$("gid", STR$(egid))
+                IF LEN(euname$) > 32 THEN records$ = records$ + PaxRecord$("uname", euname$)
+                IF LEN(egname$) > 32 THEN records$ = records$ + PaxRecord$("gname", egname$)
+                DIM leaf$ = ename$
+                DIM slash_at = -1
+                DIM j = 0
+                FOR j = 0 TO LEN(ename$) - 1
+                    IF MID$(ename$, j, 1) = "/" THEN slash_at = j
+                NEXT j
+                IF slash_at >= 0 THEN leaf$ = MID$(ename$, slash_at + 1, LEN(ename$))
+                DIM pax_name$ = "PaxHeaders/" + leaf$
+                IF LEN(pax_name$) > 100 ORELSE NOT IsAscii(pax_name$) THEN pax_name$ = "PaxHeaders/entry" + STR$(k)
+                PUSH(pieces, Header$(pax_name$, "", 420, 0, 0, LEN(records$), 0, "x", "", "", "", FALSE))
+                PUSH(pieces, records$)
+                PUSH(pieces, NulBytes$((512 - LEN(records$) MOD 512) MOD 512))
+                written = written + 512 + LEN(records$) + (512 - LEN(records$) MOD 512) MOD 512
+                IF esize >= limit THEN esize = 0
+                IF emtime < 0 ORELSE emtime >= limit THEN emtime = 0
+                IF euid < 0 ORELSE euid >= id_limit THEN euid = 0
+                IF egid < 0 ORELSE egid >= id_limit THEN egid = 0
+                euname$ = LEFT$(euname$, 32)
+                egname$ = LEFT$(egname$, 32)
+            ENDIF
+        ENDIF
+        PUSH(pieces, Header$(header_name$, header_prefix$, emode MOD 4096, euid, egid, esize, emtime, flag$, elink$, euname$, egname$, gnu))
+        written = written + 512
+        IF LEN(edata$) > 0 THEN
+            DIM data_pad = (512 - LEN(edata$) MOD 512) MOD 512
+            PUSH(pieces, edata$)
+            PUSH(pieces, NulBytes$(data_pad))
+            written = written + LEN(edata$) + data_pad
+        ENDIF
+    NEXT k
+    written = written + 1024
+    PUSH(pieces, NulBytes$(1024 + (10240 - written MOD 10240) MOD 10240))
+    RETURN Concat$(pieces)
+ENDFUNC
+
+' ---- reading tar ----
+
+' The checksum of a header block counted with unsigned bytes, its own field
+' as spaces.
+FUNC HeaderSum(block$)
+    DIM total = 256
+    DIM i = 0
+    FOR i = 0 TO 147
+        total = total + BYTEAT(block$, i)
+    NEXT i
+    FOR i = 156 TO 511
+        total = total + BYTEAT(block$, i)
+    NEXT i
+    RETURN total
+ENDFUNC
+
+' The same with the bytes read as signed, which some old writers used.
+FUNC SignedHeaderSum(block$)
+    DIM total = 256
+    DIM i = 0
+    DIM b = 0
+    FOR i = 0 TO 511
+        IF i < 148 ORELSE i > 155 THEN
+            b = BYTEAT(block$, i)
+            IF b >= 128 THEN b = b - 256
+            total = total + b
+        ENDIF
+    NEXT i
+    RETURN total
+ENDFUNC
+
+' The value of a key in pax records, or CHR$(1) when it is not there.
+FUNC PaxValue$(records$, key$)
+    DIM at = 0
+    DIM guard = 0
+    FOR guard = 0 TO LEN(records$)
+        IF at >= LEN(records$) THEN EXITFOR
+        DIM space_at = CINT(INSTR(at, records$, " "))
+        IF space_at < 0 THEN EXITFOR
+        DIM rec_len = CLNG(VAL(MID$(records$, at, space_at - at)))
+        IF rec_len <= 0 THEN EXITFOR
+        DIM rec$ = MID$(records$, space_at + 1, rec_len - (space_at - at) - 2)
+        DIM eq_at = CINT(INSTR(rec$, "="))
+        IF eq_at > 0 ANDALSO LEFT$(rec$, eq_at) = key$ THEN RETURN MID$(rec$, eq_at + 1, LEN(rec$))
+        at = at + rec_len
+    NEXT guard
+    RETURN CHR$(1)
+ENDFUNC
+
+' An archive read from tar bytes (ustar, GNU or pax); its handle. A header
+' whose checksum does not match, or data cut short, raises an error.
+EXPORT FUNC READTAR(tar$)
+    DIM h = BLANK()
+    DIM total_len = LEN(tar$)
+    DIM off = 0
+    DIM next_name$ = ""
+    DIM next_link$ = ""
+    DIM pax_path$ = CHR$(1)
+    DIM pax_link$ = CHR$(1)
+    DIM pax_size$ = CHR$(1)
+    DIM pax_mtime$ = CHR$(1)
+    DIM pax_uid$ = CHR$(1)
+    DIM pax_gid$ = CHR$(1)
+    DIM pax_uname$ = CHR$(1)
+    DIM pax_gname$ = CHR$(1)
+    DIM all_mtime$ = CHR$(1)
+    DIM all_uid$ = CHR$(1)
+    DIM all_gid$ = CHR$(1)
+    DIM all_uname$ = CHR$(1)
+    DIM all_gname$ = CHR$(1)
+    DIM missing$ = CHR$(1)
+    DIM blocks = 0
+    FOR blocks = 0 TO total_len / 512 + 1
+        IF off + 512 > total_len THEN EXITFOR
+        DIM block$ = MID$(tar$, off, 512)
+        IF BYTEAT(block$, 0) = 0 ANDALSO BYTEAT(block$, 148) = 0 ANDALSO BYTEAT(block$, 150) = 0 THEN EXITFOR
+        DIM stored_sum = ReadNumber(MID$(block$, 148, 8))
+        IF stored_sum <> HeaderSum(block$) ANDALSO stored_sum <> SignedHeaderSum(block$) THEN THROW "ARCHIVE.READTAR: the header at offset " + STR$(off) + " has a wrong checksum"
+        DIM fields = UNPACK(gHeaderFormat$, block$)
+        DIM f_name$ = fields[0]
+        DIM f_mode$ = fields[1]
+        DIM f_uid$ = fields[2]
+        DIM f_gid$ = fields[3]
+        DIM f_size$ = fields[4]
+        DIM f_mtime$ = fields[5]
+        DIM f_flag$ = fields[7]
+        DIM f_link$ = fields[8]
+        DIM f_magic$ = fields[9]
+        DIM f_version$ = fields[10]
+        DIM f_uname$ = fields[11]
+        DIM f_gname$ = fields[12]
+        DIM f_prefix$ = fields[15]
+        DIM flag$ = CString$(f_flag$)
+        IF flag$ = "" THEN flag$ = "0"
+        DIM esize = ReadNumber(f_size$)
+        IF pax_size$ <> missing$ THEN esize = CLNG(VAL(pax_size$))
+        DIM data_at = off + 512
+        IF data_at + esize > total_len THEN THROW "ARCHIVE.READTAR: the data of the entry at offset " + STR$(off) + " is cut short"
+        DIM edata$ = ""
+        IF esize > 0 THEN edata$ = MID$(tar$, data_at, esize)
+        off = data_at + CLNG(INT((esize + 511) / 512)) * 512
+        IF flag$ = "L" THEN
+            next_name$ = CString$(edata$)
+        ELSEIF flag$ = "K" THEN
+            next_link$ = CString$(edata$)
+        ELSEIF flag$ = "x" THEN
+            pax_path$ = PaxValue$(edata$, "path")
+            pax_link$ = PaxValue$(edata$, "linkpath")
+            pax_size$ = PaxValue$(edata$, "size")
+            pax_mtime$ = PaxValue$(edata$, "mtime")
+            pax_uid$ = PaxValue$(edata$, "uid")
+            pax_gid$ = PaxValue$(edata$, "gid")
+            pax_uname$ = PaxValue$(edata$, "uname")
+            pax_gname$ = PaxValue$(edata$, "gname")
+        ELSEIF flag$ = "g" THEN
+            IF PaxValue$(edata$, "mtime") <> missing$ THEN all_mtime$ = PaxValue$(edata$, "mtime")
+            IF PaxValue$(edata$, "uid") <> missing$ THEN all_uid$ = PaxValue$(edata$, "uid")
+            IF PaxValue$(edata$, "gid") <> missing$ THEN all_gid$ = PaxValue$(edata$, "gid")
+            IF PaxValue$(edata$, "uname") <> missing$ THEN all_uname$ = PaxValue$(edata$, "uname")
+            IF PaxValue$(edata$, "gname") <> missing$ THEN all_gname$ = PaxValue$(edata$, "gname")
+        ELSE
+            DIM ename$ = CString$(f_name$)
+            IF LEFT$(f_magic$, 5) = "ustar" ANDALSO CString$(f_version$) = "00" THEN
+                DIM prefix$ = CString$(f_prefix$)
+                IF prefix$ <> "" THEN ename$ = prefix$ + "/" + ename$
+            ENDIF
+            IF next_name$ <> "" THEN ename$ = next_name$
+            IF pax_path$ <> missing$ THEN ename$ = pax_path$
+            DIM elink$ = CString$(f_link$)
+            IF next_link$ <> "" THEN elink$ = next_link$
+            IF pax_link$ <> missing$ THEN elink$ = pax_link$
+            DIM emtime = ReadNumber(f_mtime$)
+            IF all_mtime$ <> missing$ THEN emtime = CLNG(INT(VAL(all_mtime$)))
+            IF pax_mtime$ <> missing$ THEN emtime = CLNG(INT(VAL(pax_mtime$)))
+            DIM euid = ReadNumber(f_uid$)
+            IF all_uid$ <> missing$ THEN euid = CLNG(VAL(all_uid$))
+            IF pax_uid$ <> missing$ THEN euid = CLNG(VAL(pax_uid$))
+            DIM egid = ReadNumber(f_gid$)
+            IF all_gid$ <> missing$ THEN egid = CLNG(VAL(all_gid$))
+            IF pax_gid$ <> missing$ THEN egid = CLNG(VAL(pax_gid$))
+            DIM euname$ = CString$(f_uname$)
+            IF all_uname$ <> missing$ THEN euname$ = all_uname$
+            IF pax_uname$ <> missing$ THEN euname$ = pax_uname$
+            DIM egname$ = CString$(f_gname$)
+            IF all_gname$ <> missing$ THEN egname$ = all_gname$
+            IF pax_gname$ <> missing$ THEN egname$ = pax_gname$
+            DIM ekind$ = "other"
+            IF flag$ = "0" ORELSE flag$ = "7" THEN ekind$ = "file"
+            IF flag$ = "5" THEN ekind$ = "dir"
+            IF flag$ = "2" THEN ekind$ = "symlink"
+            IF flag$ = "1" THEN ekind$ = "hardlink"
+            IF ekind$ = "file" ANDALSO RIGHT$(ename$, 1) = "/" ANDALSO esize = 0 THEN ekind$ = "dir"
+            IF ekind$ <> "file" THEN edata$ = ""
+            DIM clean$ = CleanName$(ename$)
+            IF clean$ <> "" THEN AddEntry(h, clean$, ekind$, ReadNumber(f_mode$) MOD 4096, emtime, euid, egid, euname$, egname$, elink$, edata$)
+            next_name$ = ""
+            next_link$ = ""
+            pax_path$ = missing$
+            pax_link$ = missing$
+            pax_size$ = missing$
+            pax_mtime$ = missing$
+            pax_uid$ = missing$
+            pax_gid$ = missing$
+            pax_uname$ = missing$
+            pax_gname$ = missing$
+        ENDIF
+    NEXT blocks
+    RETURN h
+ENDFUNC
+
+' ---- gzip ----
+
+' Whether the bytes start like a gzip file.
+EXPORT FUNC ISGZIP(edata$)
+    IF LEN(edata$) < 3 THEN RETURN FALSE
+    RETURN MID$(edata$, 0, 3) = CHR$(31) + CHR$(139) + CHR$(8)
+ENDFUNC
+
+' data$ as a gzip file with the original name$ (optional) and mtime (0) in
+' its header, at level 0 to 9 (6).
+EXPORT FUNC GZIP$(edata$, ename$ = "", emtime = 0, level = 6)
+    DIM flags = 0
+    IF LEN(ename$) > 0 THEN flags = 8
+    DIM extra_flags = 0
+    IF level >= 9 THEN extra_flags = 2
+    IF level = 1 THEN extra_flags = 4
+    DIM head$ = CHR$(31) + CHR$(139) + CHR$(8) + CHR$(flags) + PACK$("<i", CLNG(emtime)) + CHR$(extra_flags) + CHR$(255)
+    IF flags = 8 THEN head$ = head$ + ename$ + CHR$(0)
+    DIM body$ = CODEC.DEFLATE$(edata$, CLNG(level), "raw")
+    DIM trailer$ = PACK$("<ii", CODEC.CRC32(edata$), LEN(edata$) MOD 4294967296)
+    RETURN head$ + body$ + trailer$
+ENDFUNC
+
+' Whether the bytes from start_at to stop_at are one whole gzip member; its
+' content goes to gMember$.
+FUNC TryMember(gz$, start_at, stop_at)
+    DIM ok = FALSE
+    DIM part_bytes$ = MID$(gz$, start_at, stop_at - start_at)
+    TRY
+        gMember$ = CODEC.INFLATE$(part_bytes$, "gzip")
+        ok = TRUE
+    CATCH
+        ok = FALSE
+    ENDTRY
+    RETURN ok
+ENDFUNC
+
+' The content of a gzip file, every member one after the other. Zero bytes
+' after the last member are ignored; anything else raises an error.
+EXPORT FUNC GUNZIP$(gz$)
+    DIM total_len = LEN(gz$)
+    DIM magic$ = CHR$(31) + CHR$(139) + CHR$(8)
+    DIM last_data = -1
+    DIM i = 0
+    FOR i = total_len - 1 TO 0 STEP -1
+        IF BYTEAT(gz$, i) <> 0 THEN
+            last_data = i
+            EXITFOR
+        ENDIF
+    NEXT i
+    DIM pieces = []
+    DIM members = 0
+    DIM p = 0
+    DIM guard = 0
+    FOR guard = 0 TO total_len
+        IF p > last_data THEN EXITFOR
+        IF p + 18 > total_len ORELSE MID$(gz$, p, 3) <> magic$ THEN THROW "ARCHIVE.GUNZIP$: no gzip member at offset " + STR$(p)
+        DIM found_end = -1
+        DIM search_from = p + 18
+        DIM tries = 0
+        FOR tries = 0 TO total_len
+            IF found_end >= 0 ORELSE search_from > total_len - 3 THEN EXITFOR
+            DIM candidate = CINT(INSTR(search_from, gz$, magic$))
+            IF candidate < 0 THEN EXITFOR
+            IF TryMember(gz$, p, candidate) THEN
+                found_end = candidate
+            ELSE
+                search_from = candidate + 1
+            ENDIF
+        NEXT tries
+        IF found_end < 0 THEN
+            DIM t = 0
+            FOR t = last_data + 1 TO last_data + 12
+                IF found_end < 0 ANDALSO t <= total_len ANDALSO t > p + 18 THEN
+                    IF TryMember(gz$, p, t) THEN found_end = t
+                ENDIF
+            NEXT t
+        ENDIF
+        IF found_end < 0 THEN THROW "ARCHIVE.GUNZIP$: the gzip member at offset " + STR$(p) + " is damaged"
+        DIM content$ = gMember$
+        PUSH(pieces, content$)
+        members = members + 1
+        p = found_end
+    NEXT guard
+    IF members = 0 THEN THROW "ARCHIVE.GUNZIP$: no gzip data"
+    gMembers = members
+    RETURN Concat$(pieces)
+ENDFUNC
+
+' The header of a gzip file as a map: "name" (the stored file name or ""),
+' "mtime", "members" and "size" (the bytes of all members together).
+EXPORT FUNC GZINFO(gz$)
+    IF NOT ISGZIP(gz$) ORELSE LEN(gz$) < 18 THEN THROW "ARCHIVE.GZINFO: not gzip data"
+    DIM flags = BYTEAT(gz$, 3)
+    DIM stamp_cells = UNPACK("<i", gz$, 4)
+    DIM stamp = CLNG(stamp_cells[0])
+    DIM at = 10
+    IF INT(flags / 4) MOD 2 = 1 THEN
+        DIM extra_cells = UNPACK("<s", gz$, at)
+        at = at + 2 + CLNG(extra_cells[0])
+    ENDIF
+    DIM stored_name$ = ""
+    IF INT(flags / 8) MOD 2 = 1 THEN
+        DIM name_end = CINT(INSTR(at, gz$, CHR$(0)))
+        IF name_end > at THEN stored_name$ = MID$(gz$, at, name_end - at)
+    ENDIF
+    DIM whole$ = GUNZIP$(gz$)
+    DIM info AS MAP
+    info{"name"} = stored_name$
+    info{"mtime"} = stamp
+    info{"members"} = gMembers
+    info{"size"} = LEN(whole$)
+    RETURN info
+ENDFUNC
+
+' ---- files and folders ----
+
+' An archive read from a .tar, .tar.gz or .tgz file; its handle.
+EXPORT FUNC READFILE(fpath$)
+    IF NOT FILE.EXISTS(fpath$) THEN THROW "ARCHIVE.READFILE: no file " + fpath$
+    DIM raw$ = BINREADER$(fpath$)
+    IF ISGZIP(raw$) THEN
+        DIM plain$ = GUNZIP$(raw$)
+        RETURN READTAR(plain$)
+    ENDIF
+    RETURN READTAR(raw$)
+ENDFUNC
+
+' The archive written to path$; gzip-compressed when the name ends in .gz or
+' .tgz. The number of bytes written.
+EXPORT FUNC WRITEFILE(h, fpath$, fmt_in$ = "pax")
+    DIM tar$ = TAR$(h, fmt_in$)
+    DIM lower_path$ = LCASE$(fpath$)
+    IF RIGHT$(lower_path$, 3) = ".gz" ORELSE RIGHT$(lower_path$, 4) = ".tgz" THEN
+        DIM inner$ = PATH.BASENAME$(fpath$)
+        IF RIGHT$(LCASE$(inner$), 3) = ".gz" THEN
+            inner$ = LEFT$(inner$, LEN(inner$) - 3)
+        ELSE
+            inner$ = LEFT$(inner$, LEN(inner$) - 4) + ".tar"
+        ENDIF
+        DIM packed$ = GZIP$(tar$, inner$, 0, 9)
+        BINWRITER fpath$, packed$
+        RETURN LEN(packed$)
+    ENDIF
+    BINWRITER fpath$, tar$
+    RETURN LEN(tar$)
+ENDFUNC
+
+' Whether text$ matches pattern$, where * stands for any run of characters
+' (slashes included) and ? for one.
+FUNC GlobMatch(pattern$, subject$)
+    DIM pat_len = LEN(pattern$)
+    DIM text_len = LEN(subject$)
+    DIM pp = 0
+    DIM tp = 0
+    DIM star_p = -1
+    DIM star_t = 0
+    DIM guard = 0
+    FOR guard = 0 TO (pat_len + 1) * (text_len + 1) + 2
+        IF tp >= text_len THEN EXITFOR
+        DIM pc$ = ""
+        IF pp < pat_len THEN pc$ = MID$(pattern$, pp, 1)
+        IF pc$ = "*" THEN
+            star_p = pp
+            star_t = tp
+            pp = pp + 1
+        ELSEIF pc$ <> "" ANDALSO (pc$ = "?" ORELSE pc$ = MID$(subject$, tp, 1)) THEN
+            pp = pp + 1
+            tp = tp + 1
+        ELSEIF star_p >= 0 THEN
+            pp = star_p + 1
+            star_t = star_t + 1
+            tp = star_t
+        ELSE
+            RETURN FALSE
+        ENDIF
+    NEXT guard
+    DIM r = 0
+    FOR r = pp TO pat_len - 1
+        IF MID$(pattern$, r, 1) <> "*" THEN RETURN FALSE
+    NEXT r
+    RETURN TRUE
+ENDFUNC
+
+FUNC MatchesAny(patterns, rel$, leaf$)
+    DIM i = 0
+    FOR i = 0 TO LEN(patterns) - 1
+        DIM pattern$ = patterns[i]
+        IF GlobMatch(pattern$, rel$) ORELSE GlobMatch(pattern$, leaf$) THEN RETURN TRUE
+    NEXT i
+    RETURN FALSE
+ENDFUNC
+
+' Seconds since 1970 for a "YYYY-MM-DD HH:MM:SS" time.
+FUNC EpochOf(stamp$)
+    DIM origin = DATE.UTC(1970, 1, 1)
+    DIM moment = CVDATE(stamp$)
+    RETURN CLNG(DATEDIFF("S", origin, moment))
+ENDFUNC
+
+' An archive of a folder's files and subfolders, in sorted order, under the
+' top folder name top$ ("" puts them at the root). opts: "exclude" and
+' "executable" (lists of patterns matched against the path inside the folder
+' and the plain name; excluded entries are left out, executable files get mode
+' octal 755), "mtime" (one time for every entry instead of the files' own),
+' "uid", "gid", "uname", "gname".
+EXPORT FUNC FROMFOLDER(folder$, top$ = "", opts = 0)
+    IF NOT FILE.ISDIR(folder$) THEN THROW "ARCHIVE.FROMFOLDER: no folder " + folder$
+    DIM fixed_time = CLNG(OptNumber(opts, "mtime", -1))
+    DIM owner_uid = OptNumber(opts, "uid", 0)
+    DIM owner_gid = OptNumber(opts, "gid", 0)
+    DIM owner_uname$ = OptText$(opts, "uname", "")
+    DIM owner_gname$ = OptText$(opts, "gname", "")
+    DIM excludes = OptList(opts, "exclude")
+    DIM executables = OptList(opts, "executable")
+    DIM pending = []
+    PUSH(pending, "")
+    DIM listed = []
+    DIM scan_at = 0
+    FOR scan_at = 0 TO 10000000
+        IF scan_at >= LEN(pending) THEN EXITFOR
+        DIM rel$ = pending[scan_at]
+        DIM here$ = folder$
+        IF rel$ <> "" THEN here$ = folder$ + "/" + rel$
+        DIM rows = DIR$(here$, TRUE)
+        DIM r = 0
+        FOR r = 0 TO LEN(rows) - 1
+            DIM entry_name$ = rows[r, 0]
+            DIM entry_type$ = rows[r, 2]
+            DIM entry_date$ = rows[r, 3]
+            IF entry_name$ <> "." ANDALSO entry_name$ <> ".." THEN
+                DIM child$ = entry_name$
+                IF rel$ <> "" THEN child$ = rel$ + "/" + entry_name$
+                IF NOT MatchesAny(excludes, child$, entry_name$) THEN
+                    IF entry_type$ = "DIR" THEN
+                        PUSH(pending, child$)
+                        PUSH(listed, child$ + CHR$(9) + "dir" + CHR$(9) + entry_date$ + CHR$(9) + entry_name$)
+                    ELSEIF entry_type$ = "FILE" THEN
+                        PUSH(listed, child$ + CHR$(9) + "file" + CHR$(9) + entry_date$ + CHR$(9) + entry_name$)
+                    ENDIF
+                ENDIF
+            ENDIF
+        NEXT r
+    NEXT scan_at
+    DIM ordered = SORT(listed)
+    DIM h = BLANK()
+    DIM prefix$ = CleanName$(top$)
+    IF prefix$ <> "" THEN
+        DIM top_time = fixed_time
+        IF top_time < 0 THEN
+            DIM folder_info = FILE.STAT(folder$)
+            DIM folder_date$ = folder_info{"mtime"}
+            top_time = EpochOf(folder_date$)
+        ENDIF
+        AddEntry(h, prefix$, "dir", 493, top_time, owner_uid, owner_gid, owner_uname$, owner_gname$, "", "")
+    ENDIF
+    DIM k = 0
+    FOR k = 0 TO LEN(ordered) - 1
+        DIM row_text$ = ordered[k]
+        DIM cells = SPLIT(row_text$, CHR$(9))
+        DIM fpath$ = cells[0]
+        DIM ekind$ = cells[1]
+        DIM row_date$ = cells[2]
+        DIM leaf$ = cells[3]
+        DIM stamp = fixed_time
+        IF stamp < 0 THEN stamp = EpochOf(row_date$)
+        DIM entry$ = fpath$
+        IF prefix$ <> "" THEN entry$ = prefix$ + "/" + fpath$
+        IF ekind$ = "dir" THEN
+            AddEntry(h, entry$, "dir", 493, stamp, owner_uid, owner_gid, owner_uname$, owner_gname$, "", "")
+        ELSE
+            DIM file_mode = 420
+            IF MatchesAny(executables, fpath$, leaf$) THEN file_mode = 493
+            DIM content$ = BINREADER$(folder$ + "/" + fpath$)
+            AddEntry(h, entry$, "file", file_mode, stamp, owner_uid, owner_gid, owner_uname$, owner_gname$, "", content$)
+        ENDIF
+    NEXT k
+    RETURN h
+ENDFUNC
+
+' A folder packed into path$ (.tar, or gzip-compressed for .tar.gz and .tgz)
+' under the top folder name top$, with the options of FROMFOLDER. The number
+' of entries written.
+EXPORT FUNC CREATE(fpath$, folder$, top$ = "", opts = 0)
+    DIM h = FROMFOLDER(folder$, top$, opts)
+    DIM total = ENTRYCOUNT(h)
+    DIM size_written = WRITEFILE(h, fpath$)
+    FREE(h)
+    RETURN total
+ENDFUNC
+
+' Why an entry must not be extracted, or "".
+FUNC UnsafeReason$(ename$, ekind$, elink$)
+    IF ename$ = "" THEN RETURN "an empty name"
+    DIM first$ = LEFT$(ename$, 1)
+    IF first$ = "/" ORELSE first$ = "\" THEN RETURN "an absolute path"
+    IF INSTR(ename$, ":") >= 0 THEN RETURN "a drive or stream name"
+    DIM segs = SPLIT(REPLACE$(ename$, "\", "/"), "/")
+    DIM i = 0
+    FOR i = 0 TO LEN(segs) - 1
+        DIM seg$ = segs[i]
+        IF seg$ = ".." THEN RETURN "a path that leaves the folder"
+    NEXT i
+    IF ekind$ = "symlink" ORELSE ekind$ = "hardlink" THEN
+        IF elink$ = "" THEN RETURN "a link without a target"
+        DIM link_first$ = LEFT$(elink$, 1)
+        IF link_first$ = "/" ORELSE link_first$ = "\" ORELSE INSTR(elink$, ":") >= 0 THEN RETURN "a link that points outside the folder"
+        DIM depth = 0
+        IF ekind$ = "symlink" THEN depth = LEN(segs) - 1
+        DIM link_segs = SPLIT(REPLACE$(elink$, "\", "/"), "/")
+        FOR i = 0 TO LEN(link_segs) - 1
+            DIM part$ = link_segs[i]
+            IF part$ = ".." THEN
+                depth = depth - 1
+                IF depth < 0 THEN RETURN "a link that points outside the folder"
+            ELSEIF part$ <> "" ANDALSO part$ <> "." THEN
+                depth = depth + 1
+            ENDIF
+        NEXT i
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+SUB MakeDirs(fpath$)
+    DIM norm$ = REPLACE$(fpath$, "\", "/")
+    IF norm$ <> "" ANDALSO NOT FILE.ISDIR(norm$) THEN
+        DIM segs = SPLIT(norm$, "/")
+        DIM acc$ = ""
+        DIM i = 0
+        FOR i = 0 TO LEN(segs) - 1
+            DIM seg$ = segs[i]
+            IF i = 0 THEN
+                acc$ = seg$
+            ELSEIF seg$ <> "" THEN
+                acc$ = acc$ + "/" + seg$
+            ENDIF
+            IF acc$ <> "" ANDALSO RIGHT$(acc$, 1) <> ":" ANDALSO NOT FILE.ISDIR(acc$) THEN MKDIR acc$
+        NEXT i
+    ENDIF
+ENDSUB
+
+' The archive's files and folders written below target$. Every name is
+' checked first: an absolute path, a drive, a .. segment or a link pointing
+' outside raises an error before anything is written. Symbolic links and
+' special entries are not created (SKIPPED counts them); a hard link gets a
+' copy of the file it names. The number of files and folders written.
+EXPORT FUNC EXTRACTTO(h, target$)
+    DIM total = ENTRYCOUNT(h)
+    DIM k = 0
+    FOR k = 0 TO total - 1
+        DIM check_at = EntryAt(h, k)
+        DIM check_name$ = gName[check_at]
+        DIM check_kind$ = gKind[check_at]
+        DIM check_link$ = gLink[check_at]
+        DIM why$ = UnsafeReason$(check_name$, check_kind$, check_link$)
+        IF why$ <> "" THEN THROW "ARCHIVE: refusing " + check_name$ + ": " + why$
+    NEXT k
+    MakeDirs(target$)
+    gSkipped = 0
+    DIM written = 0
+    FOR k = 0 TO total - 1
+        DIM at = EntryAt(h, k)
+        DIM ename$ = gName[at]
+        DIM ekind$ = gKind[at]
+        DIM dest$ = target$ + "/" + ename$
+        IF ekind$ = "dir" THEN
+            MakeDirs(dest$)
+            written = written + 1
+        ELSEIF ekind$ = "file" ORELSE ekind$ = "hardlink" THEN
+            DIM content$ = ""
+            DIM usable = (ekind$ = "file")
+            IF ekind$ = "file" THEN
+                content$ = gData[at]
+            ELSE
+                DIM elink$ = gLink[at]
+                DIM source = FIND(h, elink$)
+                IF source >= 0 THEN
+                    DIM source_at = EntryAt(h, source)
+                    DIM source_kind$ = gKind[source_at]
+                    IF source_kind$ = "file" THEN
+                        content$ = gData[source_at]
+                        usable = TRUE
+                    ENDIF
+                ENDIF
+            ENDIF
+            IF usable THEN
+                DIM parent$ = PATH.DIRNAME$(ename$)
+                IF parent$ <> "" THEN MakeDirs(target$ + "/" + parent$)
+                BINWRITER dest$, content$
+                written = written + 1
+            ELSE
+                gSkipped = gSkipped + 1
+            ENDIF
+        ELSE
+            gSkipped = gSkipped + 1
+        ENDIF
+    NEXT k
+    RETURN written
+ENDFUNC
+
+' A .tar, .tar.gz or .tgz file extracted below target$, as EXTRACTTO does it.
+EXPORT FUNC EXTRACT(fpath$, target$)
+    DIM h = READFILE(fpath$)
+    DIM written = 0
+    DIM failed$ = ""
+    TRY
+        written = EXTRACTTO(h, target$)
+    CATCH
+        failed$ = ERRMSG$
+    ENDTRY
+    FREE(h)
+    IF failed$ <> "" THEN THROW failed$
+    RETURN written
+ENDFUNC
+
+' The entries the last EXTRACTTO or EXTRACT did not write: symbolic links,
+' special files and hard links to files not in the archive.
+EXPORT FUNC SKIPPED()
+    RETURN gSkipped
+ENDFUNC

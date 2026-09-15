@@ -1,0 +1,77 @@
+' ARCHIVE demo: a release tarball built from a folder under a top folder name
+' with fixed mtimes, listed, extracted again, and a gzip file with a name in
+' its header and a second member appended.
+
+IMPORT ARCHIVE
+
+FUNC Octal$(value)
+    DIM out$ = ""
+    DIM v = CLNG(value)
+    DIM i = 0
+    FOR i = 1 TO 3
+        out$ = STR$(v MOD 8) + out$
+        v = CLNG(INT(v / 8))
+    NEXT i
+    RETURN out$
+ENDFUNC
+
+SUB RemoveTree(root$)
+    IF FILE.ISDIR(root$) THEN
+        DIM rows = DIR$(root$, TRUE)
+        DIM r = 0
+        FOR r = 0 TO LEN(rows) - 1
+            DIM entry$ = rows[r, 0]
+            DIM kind$ = rows[r, 2]
+            IF entry$ <> "." ANDALSO entry$ <> ".." THEN
+                IF kind$ = "DIR" THEN
+                    RemoveTree(root$ + "/" + entry$)
+                ELSE
+                    KILL root$ + "/" + entry$
+                ENDIF
+            ENDIF
+        NEXT r
+        RMDIR root$
+    ENDIF
+ENDSUB
+
+DIM work$ = MKTEMP$("jdbarchivedemo") + "_dir"
+DIM dist$ = work$ + "/dist"
+MKDIR work$
+MKDIR dist$
+MKDIR dist$ + "/bin"
+MKDIR dist$ + "/lib"
+BINWRITER dist$ + "/README.txt", "jdBasic release" + CHR$(10)
+BINWRITER dist$ + "/bin/jdbasic", "#!/bin/sh" + CHR$(10) + "exec ./jdBasic " + CHR$(34) + "$@" + CHR$(34) + CHR$(10)
+BINWRITER dist$ + "/lib/archive.jdb", "EXPORT MODULE ARCHIVE" + CHR$(10)
+BINWRITER dist$ + "/lib/blob.bin", CHR$(0) + CHR$(1) + CHR$(2) + CHR$(255) + CHR$(0)
+BINWRITER dist$ + "/build.log", "not shipped"
+
+DIM tarball$ = work$ + "/jdbasic-linux-x64.tar.gz"
+DIM opts = {"mtime": 1757000000, "exclude": ["*.log"], "executable": ["bin/*"], "uname": "root", "gname": "root"}
+PRINT "packed "; ARCHIVE.CREATE(tarball$, dist$, "jdbasic-linux-x64", opts); " entries"
+
+DIM rel = ARCHIVE.READFILE(tarball$)
+DIM i = 0
+FOR i = 0 TO ARCHIVE.ENTRYCOUNT(rel) - 1
+    PRINT "  "; Octal$(ARCHIVE.MODE(rel, i)); " "; LEFT$(ARCHIVE.KIND$(rel, i) + "    ", 4); " "; RIGHT$("     " + STR$(ARCHIVE.ENTRYSIZE(rel, i)), 5); "  "; ARCHIVE.NAME$(rel, i)
+NEXT i
+DIM blob_at = ARCHIVE.FIND(rel, "jdbasic-linux-x64/lib/blob.bin")
+DIM blob$ = ARCHIVE.DATA$(rel, blob_at)
+PRINT "blob.bin bytes:";
+FOR i = 0 TO LEN(blob$) - 1
+    PRINT " "; RIGHT$("0" + HEX$(BYTEAT(blob$, i)), 2);
+NEXT i
+PRINT
+ARCHIVE.FREE(rel)
+
+DIM info = ARCHIVE.GZINFO(BINREADER$(tarball$))
+PRINT "gzip header names "; info{"name"}; ", "; info{"size"}; " bytes inside"
+
+PRINT "extracted "; ARCHIVE.EXTRACT(tarball$, work$ + "/unpacked"); " entries"
+PRINT "README: "; TRIM$(BINREADER$(work$ + "/unpacked/jdbasic-linux-x64/README.txt"))
+
+DIM log_gz$ = ARCHIVE.GZIP$("monday" + CHR$(10), "week.log", 1757000000) + ARCHIVE.GZIP$("tuesday" + CHR$(10))
+DIM log_info = ARCHIVE.GZINFO(log_gz$)
+PRINT "week.log.gz: "; log_info{"members"}; " members, name "; log_info{"name"}; ", content "; REPLACE$(ARCHIVE.GUNZIP$(log_gz$), CHR$(10), " ")
+
+RemoveTree(work$)
