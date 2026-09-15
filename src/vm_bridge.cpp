@@ -1234,7 +1234,10 @@ JDRT_API int32_t jdrt_tagged_get(JdRT handle, int64_t val_bits, int32_t val_tag,
     int32_t t = m->tags[idx];
     if (t == jd_tag(JdTag::STR)) {
         const char* s = (const char*)(intptr_t)u.i;
-        *out_val = (int64_t)(intptr_t)_strdup(s ? s : "");
+        int64_t n = s ? jdrt_strlen(s) : 0;
+        if (s && n < 0) n = (int64_t)strlen(s);
+        *out_val = (int64_t)(intptr_t)native_str_from_string(
+            s ? std::string(s, (size_t)n) : std::string());
         return jd_tag(JdTag::STR);
     }
     // An integer or a boolean is stored as a double and travels as the

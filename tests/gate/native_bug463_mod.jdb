@@ -1,0 +1,25 @@
+EXPORT MODULE NATIVE_BUG463_MOD
+
+FUNC TextLen(values, name$)
+    DIM s$ = values{name$}
+    RETURN LEN(s$)
+ENDFUNC
+
+FUNC TextOf$(values, name$)
+    DIM s$ = values{name$}
+    RETURN s$
+ENDFUNC
+
+EXPORT FUNC CHECKEDLEN(values)
+    IF TYPEOF(values) = "OBJECT" THEN RETURN TextLen(values, "text")
+    RETURN -1
+ENDFUNC
+
+EXPORT FUNC PLAINLEN(values)
+    RETURN TextLen(values, "text")
+ENDFUNC
+
+EXPORT FUNC CHECKEDTEXT$(values)
+    IF TYPEOF(values) <> "OBJECT" THEN RETURN ""
+    RETURN TextOf$(values, "text")
+ENDFUNC

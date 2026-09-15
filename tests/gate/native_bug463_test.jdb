@@ -1,0 +1,38 @@
+' A string with NUL bytes read out of a map parameter keeps every byte when
+' the function that receives the map also asks TYPEOF about it, and the
+' helper it hands the map to is shared with functions that do not.
+
+OPTION "EXPLICIT"
+IMPORT NATIVE_BUG463_MOD
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+DIM m AS MAP
+m{"text"} = "ab" + CHR$(0) + "cd"
+
+Check("helper after TYPEOF", STR$(NATIVE_BUG463_MOD.CHECKEDLEN(m)), "5")
+Check("the same helper without TYPEOF", STR$(NATIVE_BUG463_MOD.PLAINLEN(m)), "5")
+DIM back$ = NATIVE_BUG463_MOD.CHECKEDTEXT$(m)
+Check("text returned through the helper", STR$(LEN(back$)), "5")
+Check("bytes after the NUL", MID$(back$, 3, 2), "cd")
+
+DIM tail AS MAP
+tail{"text"} = "xyz" + CHR$(0)
+Check("a trailing NUL", STR$(NATIVE_BUG463_MOD.CHECKEDLEN(tail)), "4")
+
+PRINT ""
+PRINT "NATIVE BUG 463 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
