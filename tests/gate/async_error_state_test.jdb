@@ -1,0 +1,71 @@
+' ASYNC workers that THROW and CATCH all the time leave the error checks of
+' the main thread and of each other alone.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+FUNC Risky(x)
+    IF x MOD 2 = 1 THEN THROW "odd " + STR$(x)
+    RETURN x
+ENDFUNC
+
+FUNC Plain(x)
+    RETURN x + 1
+ENDFUNC
+
+ASYNC FUNC Thrower(rounds)
+    DIM caught = 0
+    DIM i = 0
+    FOR i = 1 TO rounds
+        TRY
+            DIM v = Risky(i)
+        CATCH
+            caught = caught + 1
+        ENDTRY
+    NEXT i
+    RETURN caught
+ENDFUNC
+
+DIM rounds = 200000
+DIM t1 = Thrower(rounds)
+DIM t2 = Thrower(rounds)
+DIM t3 = Thrower(rounds)
+
+DIM spurious = 0
+DIM total AS DOUBLE = 0.0
+DIM k = 0
+FOR k = 1 TO 400000
+    TRY
+        total = total + Plain(1) - 1
+    CATCH
+        spurious = spurious + 1
+    ENDTRY
+NEXT k
+
+DIM c1 = AWAIT t1
+DIM c2 = AWAIT t2
+DIM c3 = AWAIT t3
+
+Check("the main thread never catches a worker's error", STR$(spurious), "0")
+Check("the main thread's sum is whole", STR$(total), "400000")
+Check("worker 1 caught every odd item", STR$(c1), "100000")
+Check("worker 2 caught every odd item", STR$(c2), "100000")
+Check("worker 3 caught every odd item", STR$(c3), "100000")
+
+PRINT ""
+PRINT "ASYNC ERROR STATE TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

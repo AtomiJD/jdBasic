@@ -181,14 +181,16 @@ char* jdb_output_capture_peek() {
 // store the message/code here so ERRMSG$/ERR can read them in
 // the CATCH body.
 
-static char    g_err_msg[512] = "";
-static int64_t g_err_code     = 0;
+// Per thread: an ASYNC worker's THROW and CATCH never reach the error
+// checks of another thread.
+static thread_local char    g_err_msg[512] = "";
+static thread_local int64_t g_err_code     = 0;
 // Shadow copies that persist through a catch body. The per-statement err
 // check needs g_err_code to go to zero on catch entry or it would keep
 // re-tripping; user code inside the catch still expects ERR / ERRMSG$
 // to return the caught values. Reads fall back to these shadows.
-static char    g_last_msg[512] = "";
-static int64_t g_last_code     = 0;
+static thread_local char    g_last_msg[512] = "";
+static thread_local int64_t g_last_code     = 0;
 
 void jdb_err_set(const char* msg, int64_t code) {
     if (msg) {
