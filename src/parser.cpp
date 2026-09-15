@@ -2532,6 +2532,7 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
     std::unordered_set<std::string> module_vars;
 
     for (auto& s : mod_stmts) {
+        if (mod_parser.imported_stmts.count(s.get())) continue;
         if (s->kind == StmtKind::FUNCTION || s->kind == StmtKind::SUB) {
             // Skip already-renamed functions from sub-imports
             if (s->func_name.find('.') != std::string::npos ||
@@ -2586,11 +2587,12 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
     // Apply renames only to own module statements (skip already-renamed sub-imports)
     for (auto& s : mod_stmts) {
         // Skip statements from sub-imports (already have dotted or mangled names)
-        bool is_subimport = false;
+        bool is_subimport = mod_parser.imported_stmts.count(s.get()) > 0;
         if (s->kind == StmtKind::FUNCTION || s->kind == StmtKind::SUB ||
             s->kind == StmtKind::TYPE_DECL) {
-            is_subimport = (s->func_name.find('.') != std::string::npos ||
-                            s->func_name.substr(0, 2) == "__");
+            if (s->func_name.find('.') != std::string::npos ||
+                s->func_name.substr(0, 2) == "__")
+                is_subimport = true;
         }
         if (s->kind == StmtKind::LET || s->kind == StmtKind::DIM || s->kind == StmtKind::ASSIGN) {
             if (s->var_name.find('.') != std::string::npos ||
@@ -2606,6 +2608,7 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
         }
     }
 
+    for (auto& s : mod_stmts) imported_stmts.insert(s.get());
     return mod_stmts;
 }
 

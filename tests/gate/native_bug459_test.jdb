@@ -1,0 +1,32 @@
+' A module imported only by another module still runs its load-time
+' statements into its own globals. The main program imports the user
+' module alone, never the table module.
+
+OPTION "EXPLICIT"
+IMPORT NATIVE_BUG459_USER
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+Check("a table entry filled at load time", NATIVE_BUG459_USER.SPELL$("a"), "hello alpha")
+Check("a second entry", NATIVE_BUG459_USER.SPELL$("b"), "hello beta")
+Check("a two-byte key", NATIVE_BUG459_USER.SPELL$(CHR$(195) + CHR$(188)), "hello u")
+Check("a missing key", NATIVE_BUG459_USER.SPELL$("z"), "hello ?")
+Check("a number table", STR$(NATIVE_BUG459_USER.CODE_OF("b")), "2")
+Check("a plain global assigned at load time", STR$(NATIVE_BUG459_USER.FILLED_COUNT()), "3")
+
+PRINT ""
+PRINT "NATIVE BUG 459 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

@@ -29,6 +29,11 @@ public:
     // Tracks already-imported modules to prevent circular imports
     std::unordered_set<std::string> imported_modules;
 
+    // Statements this parser received from IMPORTs (at any depth). They are
+    // already renamed into their own module's namespace, so the importing
+    // module must not rename them again.
+    std::unordered_set<const Stmt*> imported_stmts;
+
     // Types the caller already knows about - the VM's registry when a REPL line
     // or an EXECUTE chunk is parsed. Compared upper-cased, like every other
     // identifier.

@@ -1,0 +1,30 @@
+' Import helper for native_bug459_test.jdb: a module that fills its tables
+' with top-level statements at load time.
+
+EXPORT MODULE NATIVE_BUG459_TABLES
+
+DIM gNames AS MAP
+DIM gCodes AS MAP
+DIM gFilled = 0
+
+EXPORT FUNC NAME$(key$)
+    IF NOT MAP.EXISTS(gNames, key$) THEN RETURN "?"
+    DIM found$ = gNames{key$}
+    RETURN found$
+ENDFUNC
+
+EXPORT FUNC CODE(key$)
+    IF NOT MAP.EXISTS(gCodes, key$) THEN RETURN -1
+    RETURN gCodes{key$}
+ENDFUNC
+
+EXPORT FUNC FILLED()
+    RETURN gFilled
+ENDFUNC
+
+gNames{"a"} = "alpha"
+gNames{"b"} = "beta"
+gNames{CHR$(195) + CHR$(188)} = "u"
+gCodes{"a"} = 1
+gCodes{"b"} = 2
+gFilled = 3
