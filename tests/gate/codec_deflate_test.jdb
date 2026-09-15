@@ -33,6 +33,10 @@ FUNC InflateDamaged$(data$)
     RETURN CODEC.INFLATE$(data$, "zlib")
 ENDFUNC
 
+FUNC InflateGzip$(data$)
+    RETURN CODEC.INFLATE$(data$, "gzip")
+ENDFUNC
+
 DIM text$ = REPEAT$("hello hello hello hello, jdBasic compresses this line ", 20)
 Check("the sample text", STR$(LEN(text$)), "1080")
 
@@ -81,6 +85,21 @@ CATCH
     refused = refused + 1
 ENDTRY
 Check("a wrong checksum is refused", STR$(refused), "1")
+
+DIM hello_gz$ = CODEC.DEFLATE$("hello", 6, "gzip")
+DIM two_members$ = hello_gz$ + CODEC.DEFLATE$(" world", 6, "gzip")
+Check("two gzip members read as one", CODEC.INFLATE$(two_members$, "gzip"), "hello world")
+Check("two members found by the magic", CODEC.INFLATE$(two_members$), "hello world")
+Check("zero padding after the last member", CODEC.INFLATE$(hello_gz$ + CHR$(0) + CHR$(0) + CHR$(0), "gzip"), "hello")
+Check("zlib followed by more bytes", CODEC.INFLATE$(CODEC.DEFLATE$("hello", 6, "zlib") + "tail", "zlib"), "hello")
+DIM tail_msg$ = ""
+TRY
+    DIM tail_out$ = InflateGzip$(hello_gz$ + "xyz")
+CATCH
+    tail_msg$ = ERRMSG$
+ENDTRY
+Ok("other trailing data is refused", INSTR(tail_msg$, "trailing data") >= 0)
+Ok("the message names the function once", INSTR(tail_msg$, "INFLATE$: CODEC.INFLATE$") < 0)
 
 Check("CRC32 as a number", STR$(CLNG(CODEC.CRC32("123456789"))), "3421780262")
 Check("CRC32 over two pieces", STR$(CLNG(CODEC.CRC32("6789", CODEC.CRC32("12345")))), "3421780262")

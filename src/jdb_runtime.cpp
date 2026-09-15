@@ -1739,10 +1739,12 @@ int32_t jdb_array_classify_elem(JdbArray* arr, double d) {
 // String * int → repeat: "-" * 5 → "-----"
 char* jdb_str_repeat(const char* s, int64_t n) {
     if (!s || n <= 0) return _strdup("");
-    size_t slen = strlen(s);
-    char* out = (char*)malloc(slen * (size_t)n + 1);
+    size_t slen = (size_t)jdb_str_blen(s);
+    size_t total = slen * (size_t)n;
+    char* out = (char*)malloc(total + 1);
     for (int64_t i = 0; i < n; i++) memcpy(out + i * slen, s, slen);
-    out[slen * n] = '\0';
+    out[total] = '\0';
+    if (total != strlen(out)) jdrt_register_binary(out, (int64_t)total);
     return out;
 }
 
@@ -3155,7 +3157,7 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
     auto cell_is_bool = [&](int64_t i) {
         return tagged ? arr->elem_tags[i] == JD_TAG_BOOL : all_bool;
     };
-    size_t dlen = delim ? strlen(delim) : 0;
+    size_t dlen = delim ? (size_t)jdb_str_blen(delim) : 0;
     // First pass: compute needed length
     size_t total = 0;
     for (int64_t i = 0; i < arr->length; i++) {
@@ -3163,7 +3165,7 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
         if (cell_is_str(i)) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
             const char* s = (const char*)(intptr_t)u.i;
-            total += s ? strlen(s) : 0;
+            total += (size_t)jdb_str_blen(s);
         } else {
             total += 400;  // upper bound for a formatted number (%.6f of 1e308)
         }
@@ -3175,7 +3177,7 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
         if (cell_is_str(i)) {
             union { double d; int64_t i; } u; u.d = arr->data[i];
             const char* s = (const char*)(intptr_t)u.i;
-            size_t sl = s ? strlen(s) : 0;
+            size_t sl = (size_t)jdb_str_blen(s);
             if (sl) memcpy(out + pos, s, sl);
             pos += sl;
         } else if (cell_is_bool(i)) {
@@ -3188,6 +3190,7 @@ char* jdb_join_arr(JdbArray* arr, const char* delim) {
         }
     }
     out[pos] = '\0';
+    if (pos != strlen(out)) jdrt_register_binary(out, (int64_t)pos);
     return out;
 }
 
@@ -3344,12 +3347,26 @@ char* jdb_cd(const char* path) {
 #endif
 }
 
+// Creates every missing parent too, like mkdir -p.
 void jdb_mkdir_native(const char* path) {
+    if (!path) path = "";
+    std::string full(path), part;
+    for (size_t i = 0; i <= full.size(); i++) {
+        bool sep = i == full.size() || full[i] == '/' || full[i] == '\\';
+        if (sep && !part.empty() && !(part.size() == 2 && part[1] == ':')) {
 #ifdef _WIN32
-    CreateDirectoryA(path, NULL);
+            CreateDirectoryA(part.c_str(), NULL);
 #else
-    mkdir(path, 0755);
+            mkdir(part.c_str(), 0755);
 #endif
+        }
+        if (i < full.size()) part += full[i];
+    }
+    struct stat st;
+    if (stat(full.c_str(), &st) != 0 || !(st.st_mode & S_IFDIR)) {
+        std::string msg = "MKDIR: Cannot create directory: " + full;
+        jdb_err_set(msg.c_str(), 1);
+    }
 }
 
 void jdb_kill(const char* path) {

@@ -1,0 +1,84 @@
+' REPEAT$ and JOIN keep NUL bytes, and MKDIR creates missing parent
+' directories, the same in both backends.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+DIM nul$ = CHR$(0)
+DIM zeros$ = REPEAT$(nul$, 5)
+Check("REPEAT$ of a NUL keeps five bytes", STR$(LEN(zeros$)), "5")
+DIM pairs$ = REPEAT$("a" + nul$ + "b", 3)
+Check("REPEAT$ of a text holding a NUL", STR$(LEN(pairs$)), "9")
+Ok("REPEAT$ keeps the byte order", BYTEAT(pairs$, 3) = 97 ANDALSO BYTEAT(pairs$, 4) = 0)
+
+DIM parts = [nul$ + "a", "b" + nul$]
+DIM joined$ = JOIN(parts, "")
+Check("JOIN keeps NUL bytes", STR$(LEN(joined$)), "4")
+Ok("JOIN keeps the byte order", BYTEAT(joined$, 0) = 0 ANDALSO BYTEAT(joined$, 1) = 97 ANDALSO BYTEAT(joined$, 3) = 0)
+DIM letters = ["x", "y", "z"]
+Check("JOIN with a NUL delimiter", STR$(LEN(JOIN(letters, nul$))), "5")
+
+DIM base$ = MKTEMP$("jdbdir")
+DIM tree$ = base$ + "_tree"
+DIM nested$ = tree$ + "/a/b"
+DIM mk_error$ = ""
+TRY
+    MKDIR nested$
+CATCH
+    mk_error$ = ERRMSG$
+ENDTRY
+Check("MKDIR of a nested path raises nothing", mk_error$, "")
+DIM probe$ = nested$ + "/probe.txt"
+TXTWRITER probe$, "x"
+Ok("the nested directory takes a file", FILE.EXISTS(probe$))
+DIM again_error$ = ""
+TRY
+    MKDIR nested$
+CATCH
+    again_error$ = ERRMSG$
+ENDTRY
+Check("MKDIR of an existing directory raises nothing", again_error$, "")
+
+DIM blocker$ = base$ + "_file.txt"
+TXTWRITER blocker$, "x"
+DIM blocked_error$ = ""
+TRY
+    MKDIR blocker$ + "/sub"
+CATCH
+    blocked_error$ = ERRMSG$
+ENDTRY
+Ok("MKDIR below a file raises an error", INSTR(blocked_error$, "Cannot create directory") >= 0)
+
+KILL probe$
+RMDIR nested$
+RMDIR tree$ + "/a"
+RMDIR tree$
+KILL blocker$
+IF FILE.EXISTS(base$) THEN KILL base$
+
+PRINT ""
+PRINT "NUL AND MKDIR TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

@@ -40,8 +40,10 @@ constexpr int FLAG_COMPUTE_ADLER32   = 8;
 
 // Very simple but complete inflate. No streaming, everything in memory.
 // Input: deflate stream (or zlib with header). Output: decompressed bytes.
-// Returns: true = ok, false = error.
-inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out, bool zlib_header = true) {
+// Returns: true = ok, false = error. `consumed`, when given, receives the
+// number of input bytes the stream used up to the end of its last block.
+inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out, bool zlib_header = true,
+                    size_t* consumed = nullptr) {
     if (in_size < 2) return false;
 
     size_t ip = 0;
@@ -235,6 +237,7 @@ inline bool inflate(const uint8_t* in, size_t in_size, std::vector<uint8_t>& out
             }
         }
     }
+    if (consumed) *consumed = ip - (size_t)(bit_count / 8);
     return true;
 }
 

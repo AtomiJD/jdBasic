@@ -4844,44 +4844,67 @@ static std::string codec_inflate(const std::string& in, std::string format) {
         else format = "raw";
     }
     std::vector<uint8_t> out;
-    auto run = [&](const uint8_t* body, size_t len) {
-        if (!pdf_extract::tinfl::inflate(body, len, out, false))
-            throw std::runtime_error("CODEC.INFLATE$: damaged or truncated deflate data");
+    // Inflates one stream and answers how many input bytes it used.
+    auto run = [&](const uint8_t* body, size_t len) -> size_t {
+        size_t used = 0;
+        if (!pdf_extract::tinfl::inflate(body, len, out, false, &used))
+            throw std::runtime_error("damaged or truncated deflate data");
+        return used;
     };
     if (format == "raw") {
         run(p, n);
     } else if (format == "zlib") {
         if (n < 6 || !zlib_header_ok())
-            throw std::runtime_error("CODEC.INFLATE$: not a zlib stream");
+            throw std::runtime_error("not a zlib stream");
         if (p[1] & 0x20)
-            throw std::runtime_error("CODEC.INFLATE$: zlib streams with a preset dictionary are not supported");
-        run(p + 2, n - 6);
-        uint32_t want = ((uint32_t)p[n-4] << 24) | ((uint32_t)p[n-3] << 16) |
-                        ((uint32_t)p[n-2] << 8) | (uint32_t)p[n-1];
+            throw std::runtime_error("zlib streams with a preset dictionary are not supported");
+        size_t at = 2 + run(p + 2, n - 2);
+        if (at + 4 > n) throw std::runtime_error("truncated zlib stream");
+        uint32_t want = ((uint32_t)p[at] << 24) | ((uint32_t)p[at+1] << 16) |
+                        ((uint32_t)p[at+2] << 8) | (uint32_t)p[at+3];
         if (jdb_deflate::adler32(1, out.data(), out.size()) != want)
-            throw std::runtime_error("CODEC.INFLATE$: zlib checksum mismatch");
+            throw std::runtime_error("zlib checksum mismatch");
     } else if (format == "gzip") {
-        if (n < 18 || p[0] != 0x1F || p[1] != 0x8B || p[2] != 8)
-            throw std::runtime_error("CODEC.INFLATE$: not a gzip stream");
-        uint8_t flags = p[3];
-        size_t at = 10;
-        if (flags & 4) {
-            if (at + 2 > n) throw std::runtime_error("CODEC.INFLATE$: truncated gzip header");
-            at += 2 + (size_t)(p[at] | (p[at + 1] << 8));
+        // Members concatenate (RFC 1952). Zero bytes after the last member are
+        // padding and skipped, as gzip -d and Python's gzip module do.
+        size_t at = 0;
+        bool first = true;
+        for (;;) {
+            if (!first) {
+                size_t k = at;
+                while (k < n && p[k] == 0) k++;
+                if (k == n) break;
+                if (n - at < 2 || p[at] != 0x1F || p[at + 1] != 0x8B)
+                    throw std::runtime_error("trailing data after the gzip stream");
+            }
+            if (n - at < 18 || p[at] != 0x1F || p[at + 1] != 0x8B || p[at + 2] != 8)
+                throw std::runtime_error(first ? "not a gzip stream" : "damaged gzip member");
+            uint8_t flags = p[at + 3];
+            size_t h = at + 10;
+            if (flags & 4) {
+                if (h + 2 > n) throw std::runtime_error("truncated gzip header");
+                h += 2 + (size_t)(p[h] | (p[h + 1] << 8));
+            }
+            if (flags & 8)  { while (h < n && p[h]) h++; h++; }
+            if (flags & 16) { while (h < n && p[h]) h++; h++; }
+            if (flags & 2) h += 2;
+            if (h >= n) throw std::runtime_error("truncated gzip stream");
+            size_t start = out.size();
+            h += run(p + h, n - h);
+            if (h + 8 > n) throw std::runtime_error("truncated gzip stream");
+            uint32_t crc = (uint32_t)p[h] | ((uint32_t)p[h+1] << 8) |
+                           ((uint32_t)p[h+2] << 16) | ((uint32_t)p[h+3] << 24);
+            uint32_t isize = (uint32_t)p[h+4] | ((uint32_t)p[h+5] << 8) |
+                             ((uint32_t)p[h+6] << 16) | ((uint32_t)p[h+7] << 24);
+            size_t member_len = out.size() - start;
+            if (jdb_deflate::crc32(0, out.data() + start, member_len) != crc || (uint32_t)member_len != isize)
+                throw std::runtime_error("gzip checksum mismatch");
+            at = h + 8;
+            first = false;
+            if (at == n) break;
         }
-        if (flags & 8)  { while (at < n && p[at]) at++; at++; }
-        if (flags & 16) { while (at < n && p[at]) at++; at++; }
-        if (flags & 2) at += 2;
-        if (at + 8 > n) throw std::runtime_error("CODEC.INFLATE$: truncated gzip stream");
-        run(p + at, n - at - 8);
-        uint32_t crc = (uint32_t)p[n-8] | ((uint32_t)p[n-7] << 8) |
-                       ((uint32_t)p[n-6] << 16) | ((uint32_t)p[n-5] << 24);
-        uint32_t isize = (uint32_t)p[n-4] | ((uint32_t)p[n-3] << 8) |
-                         ((uint32_t)p[n-2] << 16) | ((uint32_t)p[n-1] << 24);
-        if (jdb_deflate::crc32(0, out.data(), out.size()) != crc || (uint32_t)out.size() != isize)
-            throw std::runtime_error("CODEC.INFLATE$: gzip checksum mismatch");
     } else {
-        throw std::runtime_error("CODEC.INFLATE$: format must be raw, zlib or gzip");
+        throw std::runtime_error("format must be raw, zlib or gzip");
     }
     return std::string(out.begin(), out.end());
 }
@@ -9686,15 +9709,24 @@ void VM::register_builtins() {
         return Value::make_string(buf);
     });
 
+    // MKDIR creates every missing parent too, like mkdir -p.
     register_native("MKDIR", [](const std::vector<Value>& args) -> Value {
         std::string path = args[0].as_string()->data;
+        std::string part;
+        for (size_t i = 0; i <= path.size(); i++) {
+            bool sep = i == path.size() || path[i] == '/' || path[i] == '\\';
+            if (sep && !part.empty() && !(part.size() == 2 && part[1] == ':')) {
 #if defined(_WIN32)
-        if (!CreateDirectoryA(path.c_str(), NULL) && GetLastError() != ERROR_ALREADY_EXISTS)
-            throw std::runtime_error("Cannot create directory: " + path);
+                CreateDirectoryA(part.c_str(), NULL);
 #else
-        if (mkdir(path.c_str(), 0755) != 0 && errno != EEXIST)
-            throw std::runtime_error("Cannot create directory: " + path);
+                mkdir(part.c_str(), 0755);
 #endif
+            }
+            if (i < path.size()) part += path[i];
+        }
+        struct stat st;
+        if (stat(path.c_str(), &st) != 0 || !(st.st_mode & S_IFDIR))
+            throw std::runtime_error("Cannot create directory: " + path);
         return Value::make_none();
     });
 

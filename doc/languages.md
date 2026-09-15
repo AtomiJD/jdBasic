@@ -1140,7 +1140,7 @@ The Ctrl+F1…F4 hook is only active when jdBasic was launched as the REPL. Stan
     * **Col 4**: Attributes ("R", "W", "X", etc.)
 * **`CD "path"`**: Changes the current working directory.
 * **`PWD`**: Prints the current working directory.
-* **`MKDIR "path"`**: Creates a new directory.
+* **`MKDIR "path"`**: Creates a new directory and any missing parent directories (like `mkdir -p`). An existing directory is fine; a path that cannot be created raises an error.
 * **`RMDIR "path"`**: Removes an empty directory.
 * **`KILL "filename"`**: Deletes a file.
 
@@ -2156,7 +2156,7 @@ These three natives redirect `PRINT`/all script output to an in-memory string bu
 * **`CODEC.CRC32$(string$) -> string$`**: CRC-32 checksum as an 8-character hex string, the variant ZIP and PNG use. `CODEC.CRC32$("123456789")` is `"cbf43926"`, the check value every implementation agrees on.
 * **`CODEC.CRC32(data$, [running_crc]) -> number`**: The same checksum as a number from 0 to 4294967295 (`3421780262` for `"123456789"`). Pass the previous result to continue over the next piece, as with Python's `zlib.crc32(data, value)`: `CODEC.CRC32(b$, CODEC.CRC32(a$))` equals `CODEC.CRC32(a$ + b$)`, so a large file can be checked chunk by chunk.
 * **`CODEC.DEFLATE$(data$, [level], [format$]) -> string$`**: Compresses with DEFLATE (RFC 1951). `level` runs from 0 (stored blocks, no compression) to 9 (smallest, slowest), default 6. `format$` is `"zlib"` (the default, RFC 1950 with an Adler-32 trailer), `"gzip"` (RFC 1952, the `.gz` file format, with a CRC-32 trailer) or `"raw"` (no wrapper, what ZIP entries and PNG-internal streams build on). A format may stand in for the level: `CODEC.DEFLATE$(d$, "gzip")`. The result is binary.
-* **`CODEC.INFLATE$(data$, [format$]) -> string$`**: The reverse, for streams from any compressor. Without `format$` the gzip magic bytes or a valid zlib header select the wrapper and anything else is read as raw deflate. The zlib and gzip checksums are verified; damaged or truncated input raises an error. A gzip file with several members is read up to the end of the first.
+* **`CODEC.INFLATE$(data$, [format$]) -> string$`**: The reverse, for streams from any compressor. Without `format$` the gzip magic bytes or a valid zlib header select the wrapper and anything else is read as raw deflate. The zlib and gzip checksums are verified; damaged or truncated input raises an error. A gzip file with several members is decoded member after member into one result; zero bytes after the last member are skipped as padding, any other trailing data raises an error.
 
 ```basic
 DIM body$ = CODEC.DEFLATE$(json$, 9, "gzip")      ' what Content-Encoding: gzip expects

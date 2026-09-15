@@ -600,7 +600,7 @@ Description: Returns the HMAC of message$ under key$ as a 64-char hex string. On
 
 [CODEC.INFLATE$]
 Syntax: CODEC.INFLATE$(data$, [format$]) -> string$
-Description: Decompresses a "raw" DEFLATE stream, a "zlib" stream or a "gzip" member. Without format$ the gzip magic bytes or a valid zlib header select the wrapper, anything else is taken as raw. The zlib Adler-32 and the gzip CRC-32 and length are checked; damaged data raises an error.
+Description: Decompresses a "raw" DEFLATE stream, a "zlib" stream or a "gzip" member. Without format$ the gzip magic bytes or a valid zlib header select the wrapper, anything else is taken as raw. The zlib Adler-32 and the gzip CRC-32 and length are checked; damaged data raises an error. Several gzip members are decoded one after another into one result; zero bytes after the last member are skipped, other trailing data raises an error.
 
 [CODEC.PBKDF2$]
 Syntax: CODEC.PBKDF2$(password$, salt$, iterations, bytes)
@@ -2319,7 +2319,7 @@ argument is never a second value to compare - write MIN([a, b]) for that.
 
 [MKDIR]
 Syntax: MKDIR "directory_name"
-Description: Creates a new directory.
+Description: Creates a new directory, and any missing parent directories on the way (like mkdir -p). An existing directory is fine; a path that cannot be created raises an error.
 
 [MKTEMP$]
 Syntax: MKTEMP$([prefix$])
