@@ -53,6 +53,7 @@ tests/gate/codec_deflate_test.jdb	PASS	PASS	OK
 tests/gate/codec_hmac_test.jdb	PASS	PASS	OK
 tests/gate/codec_pbkdf2_random_test.jdb	PASS	PASS	OK
 tests/gate/comprehensive_test.jdb	PASS	PASS	OK
+tests/gate/foreach_sources_test.jdb	PASS	PASS	OK
 tests/gate/foreach_test.jdb	PASS	PASS	OK
 tests/gate/native_bug458_test.jdb	PASS	PASS	OK
 tests/gate/native_bug459_test.jdb	PASS	PASS	OK
