@@ -1,0 +1,69 @@
+' FOR EACH in one tour: arrays, index and element, maps with key and value,
+' strings by character, parsed JSON, rows of a matrix, and a snapshot that
+' ignores what the body adds. Runs the same interpreted and compiled:
+'
+'   jdbasic jdb/demos/showcase/foreach_tour.jdb
+'   jdbasic -c jdb/demos/showcase/foreach_tour.jdb
+
+OPTION "EXPLICIT"
+
+FUNC Total(prices)
+    DIM running AS DOUBLE = 0.0
+    FOR EACH item, price IN prices
+        running = running + price
+    NEXT
+    RETURN running
+ENDFUNC
+
+PRINT "Names with their position"
+FOR EACH i, name$ IN SPLIT("Ada,Grace,Linus", ",")
+    PRINT "  " + STR$(i) + ". " + name$
+NEXT
+PRINT ""
+
+DIM menu AS MAP
+menu{"tea"} = 2.5
+menu{"cake"} = 3.2
+menu{"soup"} = 4.8
+PRINT "The menu, in the order it was written"
+FOR EACH dish, price IN menu
+    PRINT "  " + LPAD$(dish, 6, " ") + "  " + FORMAT$("{:.2f}", price)
+NEXT
+PRINT "  total  " + FORMAT$("{:.2f}", Total(menu))
+PRINT ""
+
+PRINT "Characters of a word, UTF-8 aware"
+DIM word$ = "Gr" + CHR$(195) + CHR$(188) + "n"
+DIM spelled$ = ""
+FOR EACH pos, letter$ IN word$
+    IF pos > 0 THEN spelled$ = spelled$ + "-"
+    spelled$ = spelled$ + letter$
+NEXT
+PRINT "  " + word$ + " has " + STR$(LEN(-word$)) + " characters: " + spelled$
+PRINT ""
+
+DIM q$ = CHR$(34)
+DIM order = JSON.PARSE$("{" + q$ + "id" + q$ + ": 7, " + q$ + "customer" + q$ + ": " + q$ + "Ada" + q$ + ", " + q$ + "items" + q$ + ": [" + q$ + "tea" + q$ + ", " + q$ + "cake" + q$ + "]}")
+PRINT "A parsed JSON order"
+FOR EACH field IN order
+    PRINT "  field " + field
+NEXT
+DIM lines = order{"items"}
+FOR EACH n, line$ IN lines
+    PRINT "  line " + STR$(n + 1) + ": " + line$
+NEXT
+PRINT ""
+
+PRINT "Rows of a matrix"
+DIM grid = [[1, 2, 3], [4, 5, 6]]
+FOR EACH r, row IN grid
+    PRINT "  row " + STR$(r) + " sums to " + STR$(SUM(row))
+NEXT
+PRINT ""
+
+PRINT "A snapshot: the loop walks what the array held when it started"
+DIM queue = [1, 2, 3]
+FOR EACH job IN queue
+    PUSH(queue, job * 10)
+NEXT
+PRINT "  3 passes, and the queue now holds " + STR$(LEN(queue)) + " jobs"

@@ -2220,6 +2220,26 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             return false;
         };
 
+        // A parameter FOR EACH walks may be an array, a string, a map or a VM
+        // value, whatever a call site hands in; a JSON.PARSE$ argument would
+        // otherwise type it as a string by the name's $.
+        std::function<bool(const Stmt&, const std::string&)> body_walks_param =
+            [&](const Stmt& s, const std::string& pname) -> bool {
+            if (s.kind == StmtKind::FOR_EACH && s.expr &&
+                s.expr->kind == ExprKind::VARIABLE && s.expr->str_val == pname)
+                return true;
+            for (auto& b : s.body)
+                if (b && body_walks_param(*b, pname)) return true;
+            for (auto& br : s.branches)
+                for (auto& b : br.body)
+                    if (b && body_walks_param(*b, pname)) return true;
+            for (auto& c : s.catch_body())
+                if (c && body_walks_param(*c, pname)) return true;
+            for (auto& f : s.finally_body())
+                if (f && body_walks_param(*f, pname)) return true;
+            return false;
+        };
+
         for (auto& [name, decl] : decls) {
             if (!decl.stmt) continue;
             for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
@@ -2229,7 +2249,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 const auto& p = decl.stmt->params()[pi];
                 if (!p.name.empty() && p.name.back() == '$') continue;
                 if (p.type != VarType::NONE) continue;
-                if (body_uses_typeof_param(*decl.stmt, p.name)) {
+                if (body_uses_typeof_param(*decl.stmt, p.name) ||
+                    body_walks_param(*decl.stmt, p.name)) {
                     decl.tags[pi] = JD_TAG_RUNTIME;
                 }
             }
@@ -11558,17 +11579,31 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                         arg_raws[i] = av.val;
                     } else if (av.tag == JD_TAG_RUNTIME && av.runtime_tag) {
                         // Runtime branch: a number goes as 'd' with its f64 bits,
-                        // so {:.2f} keeps working; everything else is rendered
-                        // to text first and goes as 's'.
+                        // so {:.2f} keeps working; a VM handle goes as 'h', which
+                        // the formatter reads as a number or text by the spec;
+                        // everything else is rendered to text first and goes as 's'.
                         LLVMValueRef is_i64 = LLVMBuildICmp(builder, LLVMIntEQ,
                             av.runtime_tag, LLVMConstInt(i32_type, JD_TAG_I64, 0), "rt_isi64");
                         LLVMValueRef is_f64 = LLVMBuildICmp(builder, LLVMIntEQ,
                             av.runtime_tag, LLVMConstInt(i32_type, JD_TAG_F64, 0), "rt_isf64");
                         LLVMValueRef is_num = LLVMBuildOr(builder, is_i64, is_f64, "rt_isnum");
+                        LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ,
+                            av.runtime_tag, LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "rt_isvmh");
+                        LLVMBasicBlockRef bb_chk = LLVMAppendBasicBlock(current_fn, "fmt.rt_chk");
+                        LLVMBasicBlockRef bb_h   = LLVMAppendBasicBlock(current_fn, "fmt.rt_h");
                         LLVMBasicBlockRef bb_s   = LLVMAppendBasicBlock(current_fn, "fmt.rt_s");
                         LLVMBasicBlockRef bb_n   = LLVMAppendBasicBlock(current_fn, "fmt.rt_n");
                         LLVMBasicBlockRef bb_m   = LLVMAppendBasicBlock(current_fn, "fmt.rt_m");
-                        LLVMBuildCondBr(builder, is_num, bb_n, bb_s);
+                        LLVMBuildCondBr(builder, is_num, bb_n, bb_chk);
+
+                        LLVMPositionBuilderAtEnd(builder, bb_chk);
+                        LLVMBuildCondBr(builder, is_vmh, bb_h, bb_s);
+
+                        LLVMPositionBuilderAtEnd(builder, bb_h);
+                        store_tag(i, 'h');
+                        LLVMValueRef hraw = av.val;
+                        LLVMBuildBr(builder, bb_m);
+                        LLVMBasicBlockRef end_h = LLVMGetInsertBlock(builder);
 
                         LLVMPositionBuilderAtEnd(builder, bb_s);
                         store_tag(i, 's');
@@ -11586,9 +11621,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
                         LLVMPositionBuilderAtEnd(builder, bb_m);
                         LLVMValueRef phi = LLVMBuildPhi(builder, i64_type, "rt_raw");
-                        LLVMValueRef vals[] = { sraw, nraw };
-                        LLVMBasicBlockRef bbs[] = { end_s, end_n };
-                        LLVMAddIncoming(phi, vals, bbs, 2);
+                        LLVMValueRef vals[] = { sraw, nraw, hraw };
+                        LLVMBasicBlockRef bbs[] = { end_s, end_n, end_h };
+                        LLVMAddIncoming(phi, vals, bbs, 3);
                         arg_raws[i] = phi;
                     } else if (av.tag == JD_TAG_BOOL) {
                         store_tag(i, 's');

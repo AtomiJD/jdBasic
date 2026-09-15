@@ -1,0 +1,137 @@
+' FOR EACH over the sources real programs hand it: parsed JSON, matrices,
+' arrays of maps, nested values, ASYNC and module code, and what the loop
+' variables hold after the loop.
+
+OPTION "EXPLICIT"
+IMPORT FOREACH_MOD
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+ASYNC FUNC CountWords(text$)
+    DIM n = 0
+    FOR EACH word IN SPLIT(text$, " ")
+        IF LEN(word) > 0 THEN n = n + 1
+    NEXT
+    RETURN n
+ENDFUNC
+
+DIM joined$ = ""
+
+DIM parsed = JSON.PARSE$("[" + CHR$(34) + "a" + CHR$(34) + ", 2, true]")
+FOR EACH item IN parsed
+    joined$ = joined$ + item + "|"
+NEXT
+Check("a JSON array", joined$, "a|2|TRUE|")
+
+DIM doc = JSON.PARSE$("{" + CHR$(34) + "name" + CHR$(34) + ": " + CHR$(34) + "ann" + CHR$(34) + ", " + CHR$(34) + "age" + CHR$(34) + ": 41}")
+joined$ = ""
+FOR EACH k, v IN doc
+    joined$ = joined$ + k + "=" + v + "|"
+NEXT
+Check("key and value over a JSON object", joined$, "name=ann|age=41|")
+
+DIM grid = [[1, 2], [3, 4], [5, 6]]
+DIM row_sums$ = ""
+FOR EACH row IN grid
+    row_sums$ = row_sums$ + STR$(row[0] + row[1]) + "|"
+NEXT
+Check("a matrix walks its rows", row_sums$, "3|7|11|")
+
+DIM people = [{"name": "ann", "age": 41}, {"name": "bob", "age": 35}]
+joined$ = ""
+FOR EACH person IN people
+    joined$ = joined$ + person{"name"} + "|"
+NEXT
+Check("an array of maps", joined$, "ann|bob|")
+
+DIM groups AS MAP
+groups{"odd"} = [1, 3, 5]
+groups{"even"} = [2, 4]
+joined$ = ""
+FOR EACH group, members IN groups
+    joined$ = joined$ + group + ":" + STR$(LEN(members)) + "|"
+NEXT
+Check("map values that are arrays", joined$, "odd:3|even:2|")
+
+DIM tariff AS MAP
+tariff{"tea"} = 2.5
+tariff{"cake"} = 3
+joined$ = ""
+FOR EACH dish, cost IN tariff
+    joined$ = joined$ + dish + " " + FORMAT$("{:.2f}", cost) + "|"
+NEXT
+Check("a map value keeps its FORMAT$ spec", joined$, "tea 2.50|cake 3.00|")
+
+DIM floats_sum AS DOUBLE = 0.0
+FOR EACH f IN [1.5, 2.25, 0.25]
+    floats_sum = floats_sum + f
+NEXT
+Check("a literal of fractions", STR$(floats_sum), "4")
+
+DIM signed = 0
+FOR EACH s IN [-1, 2, -3]
+    signed = signed + s
+NEXT
+Check("a literal with negative numbers", STR$(signed), "-2")
+
+DIM truth$ = ""
+FOR EACH flag IN [TRUE, FALSE]
+    truth$ = truth$ + flag + "|"
+NEXT
+Check("an array of truth values", truth$, "TRUE|FALSE|")
+
+DIM stock AS MAP
+stock{"nuts"} = 3
+stock{"bolts"} = 5
+DIM seen = 0
+FOR EACH part, amount IN stock
+    seen = seen + 1
+    stock{"extra" + part} = amount
+    IF part = "bolts" THEN EXITFOR
+NEXT
+Check("a map gaining keys in the body walks its keys at entry", STR$(seen), "2")
+
+DIM skipped$ = ""
+FOR EACH part, amount IN stock
+    IF amount < 4 THEN CONTINUEFOR
+    skipped$ = skipped$ + part + "|"
+NEXT
+Check("CONTINUEFOR over a map", skipped$, "bolts|extrabolts|")
+
+DIM last_i = 0
+DIM last_name$ = ""
+FOR EACH idx, nm$ IN SPLIT("x,y,z", ",")
+    last_i = idx
+    last_name$ = nm$
+NEXT
+Check("the variables hold the last pass", STR$(last_i) + last_name$, "2z")
+
+DIM nothing = NONE
+DIM none_passes = 0
+FOR EACH ghost IN nothing
+    none_passes = none_passes + 1
+NEXT
+Check("NONE walks nothing", STR$(none_passes), "0")
+
+DIM task = CountWords("one two  three")
+DIM counted = AWAIT task
+Check("FOR EACH inside an ASYNC FUNC", STR$(counted), "3")
+
+Check("a module FUNC over a parsed JSON array", FOREACH_MOD.JOINED$(JSON.PARSE$("[" + CHR$(34) + "u" + CHR$(34) + ", " + CHR$(34) + "v" + CHR$(34) + "]")), "u|v|")
+
+PRINT ""
+PRINT "FOR EACH SOURCES TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
