@@ -30,7 +30,7 @@
 
 set -u
 
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -f "$REPO/build/jdBasic.exe" ] || REPO="D:/usr/dev/cc"
 JDB="$REPO/build/jdBasic.exe"
 
