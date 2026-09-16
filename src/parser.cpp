@@ -2,7 +2,19 @@
 #include <algorithm>
 #include "lexer.h"
 
-Parser::Parser(std::vector<Token> t) : ring(std::move(t)), count(ring.size()) {}
+Parser::Parser(std::vector<Token> t) : ring(std::move(t)), count(ring.size()) {
+    // OPTION "EXPLICIT" / "STRICT" anywhere in the program, whatever order the
+    // file puts it in: the module rules in import_module tighten with it.
+    auto upper_of = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+        return s;
+    };
+    for (size_t i = 0; i + 1 < ring.size(); i++) {
+        if (upper_of(ring[i].value) != "OPTION") continue;
+        std::string what = upper_of(ring[i + 1].value);
+        if (what == "EXPLICIT" || what == "STRICT") explicit_seen = true;
+    }
+}
 Parser::Parser(Lexer& lx) : ring(128), lexer(&lx) {}
 
 // Token number i, fetched from the lexer if the window does not reach it
@@ -2520,6 +2532,10 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
     Parser mod_parser(mod_lexer);
     mod_parser.file_reader = file_reader;
     mod_parser.imported_modules = imported_modules; // share import set
+    // A module of a module follows the same rules as the program that started
+    // the import chain.
+    mod_parser.strict_module_writes = strict_module_writes;
+    mod_parser.explicit_seen = explicit_seen;
     mod_parser.current_source_file = module_file_path; // propagate file path
     auto mod_file_ref = std::make_shared<const std::string>(module_file_path);
     auto mod_stmts = mod_parser.parse();
@@ -2574,6 +2590,67 @@ std::vector<StmtPtr> Parser::import_module(const std::string& module_name, int l
         if (s->kind == StmtKind::ASSIGN) {
             if (s->var_name.find('.') == std::string::npos)
                 module_vars.insert(s->var_name);
+        }
+    }
+
+    // A FUNC or SUB in a module that assigns a name it never declared writes
+    // the importing program's global of that name. Inside one file that is
+    // classic BASIC and stays allowed; across a module boundary it lets a
+    // library clobber an application variable by accident. A program that
+    // compiles with -c or asks for OPTION "EXPLICIT" refuses it; a plain
+    // interpreted run keeps the old behaviour.
+    if (strict_module_writes || explicit_seen) {
+        std::function<void(const Stmt&, std::unordered_set<std::string>&)> collect_locals =
+            [&](const Stmt& s, std::unordered_set<std::string>& locals) {
+                if ((s.kind == StmtKind::DIM || s.kind == StmtKind::LET) &&
+                    !s.var_name.empty())
+                    locals.insert(s.var_name);
+                if (s.kind == StmtKind::FOR_LOOP || s.kind == StmtKind::FOR_EACH) {
+                    if (!s.var_name.empty()) locals.insert(s.var_name);
+                    if (!s.label.empty()) locals.insert(s.label);
+                }
+                for (auto& n : s.destruct_vars()) locals.insert(n);
+                for (auto& b : s.body) if (b) collect_locals(*b, locals);
+                for (auto& br : s.branches)
+                    for (auto& b : br.body) if (b) collect_locals(*b, locals);
+                for (auto& c : s.catch_body()) if (c) collect_locals(*c, locals);
+                for (auto& f : s.finally_body()) if (f) collect_locals(*f, locals);
+            };
+        std::function<void(const Stmt&, const std::unordered_set<std::string>&,
+                           const std::string&)> check_writes =
+            [&](const Stmt& s, const std::unordered_set<std::string>& locals,
+                const std::string& fn_name) {
+                // `LET name = value` reads as "let this be", the way module
+                // code here introduces a local; a bare `name = value` is the
+                // shape that silently reached into the caller.
+                if (s.kind == StmtKind::ASSIGN && !s.var_name.empty() &&
+                    s.var_name.find('.') == std::string::npos) {
+                    const std::string& base = s.var_name;
+                    if (base.substr(0, 2) != "__" &&
+                        !locals.count(base) && !module_vars.count(base) &&
+                        !all_funcs.count(base))
+                        throw std::runtime_error(
+                            "Parse error at line " + std::to_string(s.line) +
+                            ": module " + module_name + ", " + fn_name +
+                            " assigns '" + base + "' without declaring it, which would write"
+                            " the importing program's global of that name. Add DIM " + base +
+                            " (or declare it at module level).");
+                }
+                for (auto& b : s.body) if (b) check_writes(*b, locals, fn_name);
+                for (auto& br : s.branches)
+                    for (auto& b : br.body) if (b) check_writes(*b, locals, fn_name);
+                for (auto& c : s.catch_body()) if (c) check_writes(*c, locals, fn_name);
+                for (auto& f : s.finally_body()) if (f) check_writes(*f, locals, fn_name);
+            };
+        for (auto& s : mod_stmts) {
+            if (mod_parser.imported_stmts.count(s.get())) continue;
+            if (s->kind != StmtKind::FUNCTION && s->kind != StmtKind::SUB) continue;
+            if (s->func_name.find('.') != std::string::npos ||
+                s->func_name.substr(0, 2) == "__") continue;
+            std::unordered_set<std::string> locals;
+            for (auto& p : s->params()) locals.insert(p.name);
+            for (auto& b : s->body) if (b) collect_locals(*b, locals);
+            for (auto& b : s->body) if (b) check_writes(*b, locals, s->func_name);
         }
     }
 

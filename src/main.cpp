@@ -2185,6 +2185,9 @@ int main(int argc, char* argv[]) {
             mark("Parsing...");
             Parser parser(std::move(tokens));
             setup_parser_modules(parser);
+            // -c is STRICT + EXPLICIT: a module that writes an undeclared
+            // name of the importing program is an error here.
+            parser.strict_module_writes = true;
             ast = parser.parse();
         } catch (const jdError& e) {
             std::cerr << "Parse error";

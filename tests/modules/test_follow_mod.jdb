@@ -23,7 +23,7 @@ EXPORT SUB UPDATE_POSITIONS()
     ' and compare with < 0, and use value with a "builtin" (fake)
     PRINT "  [UPD] hero="; hero; " count="; follow_count
     FOR fi = 0 TO follow_count - 1
-        v = follow_sprites[fi]
+        DIM v = follow_sprites[fi]
         PRINT "  [UPD] follow_sprites["; fi; "]="; v
         IF v < 0 THEN
             PRINT "  [UPD] skip (negative)"

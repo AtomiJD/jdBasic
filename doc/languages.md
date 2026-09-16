@@ -962,6 +962,7 @@ NEXT
   `-c` that means at compile time: the module is baked into the executable, and
   changing `JDBASIC_PATH` afterwards has no effect on it.
 * **`EXPORT MODULE [module]`**: Marks a file as EXPORT for importing with IMPORT
+  * A `FUNC` or `SUB` in a module that assigns a name it never declared writes the **importing program's** global of that name, which lets a library clobber an application variable by accident. A program compiled with `-c`, or one that carries `OPTION "EXPLICIT"`, refuses such a module with the name and line; a plain interpreted run keeps the classic behaviour. `DIM name` (or `LET name = value`, or a module-level declaration) is the remedy; `other.field = value` and loop variables are never meant here.
 * **`DECLARE FUNC name LIB "lib" ALIAS "export_name" (params) AS rettype`**: Declares a foreign function from a shared library so it can be called from jdBasic. See the **Foreign Function Interface** section below.
 * **`CLIPBOARD.SET text$`**: Sets the system clipboard text.
 * **`CLIPBOARD.GET$() -> string$`**: Returns the text currently in the system clipboard.

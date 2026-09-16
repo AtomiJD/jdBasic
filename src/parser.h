@@ -39,6 +39,13 @@ public:
     // identifier.
     std::unordered_set<std::string> predeclared_types;
 
+    // A module FUNC or SUB that assigns a name it never declared writes the
+    // importing program's global of that name. That is refused when the
+    // program compiles with -c (the caller sets this) or carries
+    // OPTION "EXPLICIT" / "STRICT" (found in the token stream).
+    bool strict_module_writes = false;
+    bool explicit_seen = false;
+
 private:
     // The token window, a ring: token number `base` sits at ring[head],
     // `count` tokens follow it. With a lexer attached the ring fills on

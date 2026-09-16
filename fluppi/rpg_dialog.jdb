@@ -70,7 +70,7 @@ EXPORT SUB SET_QUIT()
 ENDSUB
 
 EXPORT FUNC DRAIN_KEY$()
-    LET k$ = last_key$
+    DIM k$ = last_key$
     last_key$ = ""
     RETURN k$
 ENDFUNC

@@ -15,7 +15,7 @@ EXPORT SUB SETUP()
     SOUND.INIT
     ' Load music data
     TRY
-        LET data = JSON.PARSE$(TXTREADER$(music_path$))
+        DIM data = JSON.PARSE$(TXTREADER$(music_path$))
         themes = data{"themes"}
     CATCH
     ENDTRY

@@ -912,7 +912,7 @@ Description: Exits the current SWITCH...CASE block immediately.
 
 [EXPORT]
 Syntax: EXPORT MODULE
-Description: Marks the current file as a module that can be imported by other files.
+Description: Marks the current file as a module that can be imported by other files. A FUNC or SUB in a module that assigns a name it never declared writes the importing program's global of that name; with -c or OPTION "EXPLICIT" that is refused with the name and line. Declare it with DIM (or LET, or at module level).
 
 [EXPLICIT]
 Syntax: OPTION EXPLICIT
