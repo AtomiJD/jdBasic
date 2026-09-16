@@ -15149,6 +15149,38 @@ bool LLVMCodegen::emit_object_file(const std::string& obj_path) {
 
 // ── Linking ─────────────────────────────────────────────────
 
+// Directory of the running compiler binary. The Win32 entry point is declared
+// by hand so this file does not pull in windows.h, whose macros clash with the
+// token names used above.
+#ifdef _WIN32
+extern "C" __declspec(dllimport) unsigned long __stdcall
+GetModuleFileNameA(void* module_handle, char* filename, unsigned long size);
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#else
+#include <unistd.h>
+#endif
+
+static std::string compiler_install_dir() {
+    std::string exe;
+#ifdef _WIN32
+    char buf[1024];
+    unsigned long len = GetModuleFileNameA(nullptr, buf, (unsigned long)sizeof(buf));
+    if (len > 0 && len < sizeof(buf)) exe.assign(buf, len);
+#elif defined(__APPLE__)
+    char buf[4096];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) == 0) exe = buf;
+#else
+    char buf[4096];
+    ssize_t len = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (len > 0) exe.assign(buf, (size_t)len);
+#endif
+    if (exe.empty()) return "";
+    size_t sep = exe.find_last_of("/\\");
+    return (sep == std::string::npos) ? "" : exe.substr(0, sep);
+}
+
 bool LLVMCodegen::link_executable(const std::string& obj_path,
                                    const std::string& exe_path,
                                    const std::string& res_path) {
@@ -15156,10 +15188,19 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     // We probe both an in-tree dev layout (`build/`) and a flat layout
     // (next to whichever EXE invoked us - typical for redistributed bundles
     // where the user unpacks the zip and `cd`s into it before running -c).
+    // The bundle is found by the compiler's own location too, so `-c` works
+    // from any working directory, not only from inside the unpacked bundle.
+    std::vector<std::string> runtime_candidates = {
+        "build\\jdb_runtime.obj", "jdb_runtime.obj",
+        "build/jdb_runtime.o",   "jdb_runtime.o" };
+    std::string install = compiler_install_dir();
+    if (!install.empty()) {
+        for (const char* tail : { "/jdb_runtime.obj", "/jdb_runtime.o",
+                                  "/build/jdb_runtime.obj", "/build/jdb_runtime.o" })
+            runtime_candidates.push_back(install + tail);
+    }
     std::string runtime_obj;
-    for (auto& candidate : {
-            "build\\jdb_runtime.obj", "jdb_runtime.obj",
-            "build/jdb_runtime.o",   "jdb_runtime.o" }) {
+    for (auto& candidate : runtime_candidates) {
         if (std::filesystem::exists(candidate)) {
             runtime_obj = candidate;
             break;
@@ -15172,9 +15213,13 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
 #ifdef _WIN32
     // Same probe for the runtime's import library, so a flat-layout
     // deployment resolves jdbrt.lib as well.
+    std::vector<std::string> lib_candidates = { "build\\jdbrt.lib", "jdbrt.lib" };
+    if (!install.empty()) {
+        lib_candidates.push_back(install + "/jdbrt.lib");
+        lib_candidates.push_back(install + "/build/jdbrt.lib");
+    }
     std::string jdbrt_lib;
-    for (auto& candidate : {
-            "build\\jdbrt.lib", "jdbrt.lib" }) {
+    for (auto& candidate : lib_candidates) {
         if (std::filesystem::exists(candidate)) {
             jdbrt_lib = candidate;
             break;
