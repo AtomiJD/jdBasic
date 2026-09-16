@@ -1,0 +1,73 @@
+' Cells of arrays that come out of a builtin keep their own kind: a text
+' cell stays text when it is concatenated, also when it carries NUL bytes,
+' and a filter over a literal of strings keeps its cells.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+SUB Ok(label$, cond)
+    IF cond THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+    ENDIF
+ENDSUB
+
+FUNC PackShort$()
+    RETURN PACK$("<8a", "x")
+ENDFUNC
+
+DIM nul$ = CHR$(0)
+DIM packed$ = PACK$("<8a", "ab" + nul$ + "cd")
+Check("PACK$ pads a fixed text", STR$(LEN(packed$)), "8")
+DIM fields = UNPACK("<8a", packed$)
+DIM plain$ = fields[0]
+Check("an UNPACK cell read into a text slot", STR$(LEN(plain$)), "8")
+Check("an UNPACK cell concatenated", STR$(LEN("" + fields[0])), "8")
+Check("two UNPACK cells concatenated", STR$(LEN(fields[0] + fields[0])), "16")
+Ok("the NUL sits where it was written", BYTEAT("" + fields[0], 2) = 0)
+
+DIM mixed = UNPACK("<i2a", PACK$("<i2a", 7, "hi"))
+Check("a number cell beside a text cell", STR$(mixed[0]) + "" + mixed[1], "7hi")
+
+Check("SORT over a literal of strings", "" + SORT(["b", "a"])[0], "a")
+Check("TAKE over a literal of strings", "" + TAKE(1, ["q", "r"])[0], "q")
+Check("UNIQUE over a literal of strings", "" + UNIQUE(["b", "a", "b"])[0], "b")
+
+DIM prices AS MAP
+prices{"tea"} = "cheap"
+prices{"cake"} = 3
+DIM vals = MAP.VALUES(prices)
+Check("a MAP.VALUES cell", "" + vals[0], "cheap")
+DIM keys = MAP.KEYS(prices)
+Check("a MAP.KEYS cell", "" + keys[0], "tea")
+Check("a SPLIT cell", "" + SPLIT("a,b", ",")[1], "b")
+
+DIM pack_error$ = ""
+TRY
+    DIM short$ = PackShort$()
+    DIM bad = UNPACK("<8a", LEFT$(short$, 3))
+CATCH
+    pack_error$ = ERRMSG$
+ENDTRY
+Ok("UNPACK refuses a short buffer", LEN(pack_error$) > 0)
+Ok("the message names the builtin once", INSTR(pack_error$, "UNPACK: UNPACK") < 0)
+
+PRINT ""
+PRINT "ARRAY CELLS TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

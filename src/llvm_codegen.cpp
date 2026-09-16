@@ -5456,8 +5456,11 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // tag, names[i] decoded as f64 garbage.
         // Match groups and map values are arrays whose cells may be
         // strings, numbers or nested arrays; every read asks the cell.
+        // UNPACK answers one cell per format code: numbers beside the
+        // fixed-width texts, so every read asks the cell.
         if (u == "REGEX.FINDALL" || u == "REGEX.MATCH" || u == "REGEX_FINDALL" ||
-            u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS")
+            u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS" ||
+            u == "UNPACK")
             mixed_array_vars.insert(stmt.var_name);
         // Builtins that answer a table: rows taken out of the result read
         // their cells per kind.
@@ -5491,11 +5494,41 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
             if (fn_returns_str) string_array_vars.insert(stmt.var_name);
         }
         // UNIQUE(string_arr) and similar 1D filters preserve element type.
-        if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" || u == "DROP")
-            && !stmt.expr->args.empty() && stmt.expr->args[0] &&
-            stmt.expr->args[0]->kind == ExprKind::VARIABLE &&
-            string_array_vars.count(stmt.expr->args[0]->str_val)) {
-            string_array_vars.insert(stmt.var_name);
+        // The source may also be spelled out as a literal of strings or come
+        // straight from a builtin that answers strings - TAKE(1, ["q","r"])
+        // read its cells as numbers before this.
+        {
+            auto yields_strings = [&](const Expr* e) -> bool {
+                if (!e) return false;
+                if (e->kind == ExprKind::VARIABLE)
+                    return string_array_vars.count(e->str_val) != 0;
+                if (e->kind == ExprKind::ARRAY_LITERAL) {
+                    bool any = false;
+                    for (auto& el : e->args) {
+                        if (!el) continue;
+                        if (el->kind != ExprKind::LITERAL_STRING) return false;
+                        any = true;
+                    }
+                    return any;
+                }
+                if (e->kind == ExprKind::CALL) {
+                    std::string fu = e->func_name;
+                    std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
+                    return fu == "SPLIT" || fu == "MAP.KEYS" || fu == "LINES" ||
+                           fu == "WORDS" || fu == "CHARS" || fu == "OS.ARGS" ||
+                           fu == "ZIP.LIST";
+                }
+                return false;
+            };
+            if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
+                 u == "DROP" || u == "SLICE") && !stmt.expr->args.empty()) {
+                for (auto& a : stmt.expr->args)
+                    if (yields_strings(a.get())) {
+                        string_array_vars.insert(stmt.var_name);
+                        break;
+                    }
+            }
+            if (u == "ZIP.LIST") string_array_vars.insert(stmt.var_name);
         }
         // Cells of mixed kind stay mixed through the functions that hand
         // them on whole: a read of the result asks the cell.
@@ -6444,8 +6477,11 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
             string_array_vars.insert(stmt.var_name);
         // Match groups and map values are arrays whose cells may be
         // strings, numbers or nested arrays; every read asks the cell.
+        // UNPACK answers one cell per format code: numbers beside the
+        // fixed-width texts, so every read asks the cell.
         if (u == "REGEX.FINDALL" || u == "REGEX.MATCH" || u == "REGEX_FINDALL" ||
-            u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS")
+            u == "REGEX_MATCH" || u == "MAP.VALUES" || u == "MAP.ITEMS" ||
+            u == "UNPACK")
             mixed_array_vars.insert(stmt.var_name);
         // Builtins that answer a table: rows taken out of the result read
         // their cells per kind.
@@ -6473,11 +6509,41 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
                 string_array_vars.insert(stmt.var_name);
             }
         }
-        if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" || u == "DROP")
-            && !stmt.expr->args.empty() && stmt.expr->args[0] &&
-            stmt.expr->args[0]->kind == ExprKind::VARIABLE &&
-            string_array_vars.count(stmt.expr->args[0]->str_val)) {
-            string_array_vars.insert(stmt.var_name);
+        // The source may be a variable, a literal of strings, or a builtin
+        // that answers strings - SORT(["b", "a"]) read its cells as numbers
+        // before this.
+        {
+            auto yields_strings = [&](const Expr* e) -> bool {
+                if (!e) return false;
+                if (e->kind == ExprKind::VARIABLE)
+                    return string_array_vars.count(e->str_val) != 0;
+                if (e->kind == ExprKind::ARRAY_LITERAL) {
+                    bool any = false;
+                    for (auto& el : e->args) {
+                        if (!el) continue;
+                        if (el->kind != ExprKind::LITERAL_STRING) return false;
+                        any = true;
+                    }
+                    return any;
+                }
+                if (e->kind == ExprKind::CALL) {
+                    std::string fu = e->func_name;
+                    std::transform(fu.begin(), fu.end(), fu.begin(), ::toupper);
+                    return fu == "SPLIT" || fu == "MAP.KEYS" || fu == "LINES" ||
+                           fu == "WORDS" || fu == "CHARS" || fu == "OS.ARGS" ||
+                           fu == "ZIP.LIST";
+                }
+                return false;
+            };
+            if ((u == "UNIQUE" || u == "REVERSE" || u == "SORT" || u == "TAKE" ||
+                 u == "DROP" || u == "SLICE") && !stmt.expr->args.empty()) {
+                for (auto& a : stmt.expr->args)
+                    if (yields_strings(a.get())) {
+                        string_array_vars.insert(stmt.var_name);
+                        break;
+                    }
+            }
+            if (u == "ZIP.LIST") string_array_vars.insert(stmt.var_name);
         }
         // Cells of mixed kind stay mixed through the functions that hand
         // them on whole: a read of the result asks the cell.
@@ -9219,6 +9285,30 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             auto& arr_get = runtime_funcs["__array_get"];
             LLVMValueRef args[] = { arr_ptr, idx };
             LLVMValueRef result = LLVMBuildCall2(builder, arr_get.fn_type, arr_get.fn, args, 2, "elem");
+            // A cell of an array that comes straight out of a builtin answers
+            // with its own kind too: SPLIT("a,b", ",")[1] is a string and
+            // UNPACK(...)[1] may be a number beside the texts. Without this
+            // the cell read as a number and concatenation printed 0.
+            if (expr.left && expr.left->kind == ExprKind::CALL) {
+                std::string bu = expr.left->func_name;
+                std::transform(bu.begin(), bu.end(), bu.begin(), ::toupper);
+                static const std::unordered_set<std::string> tagged_cell_calls = {
+                    "SPLIT", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "UNPACK",
+                    "REGEX.FINDALL", "REGEX.MATCH", "REGEX_FINDALL", "REGEX_MATCH",
+                    "OS.ARGS", "ZIP.LIST", "DIR$", "LINES", "WORDS", "CHARS",
+                    "UNIQUE", "REVERSE", "SORT", "TAKE", "DROP", "SLICE", "APPEND"
+                };
+                if (tagged_cell_calls.count(bu)) {
+                    auto& gtg = runtime_funcs["__arr_get_tagged"];
+                    LLVMValueRef out_tag = scratch_alloca(i32_type, "call_gt_tag");
+                    LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
+                    LLVMValueRef val = LLVMBuildCall2(builder, gtg.fn_type, gtg.fn,
+                        getargs, 3, "call_gt");
+                    LLVMValueRef tag_v = LLVMBuildLoad2(builder, i32_type, out_tag, "call_gt_tagv");
+                    LLVMValueRef as_i64 = pun_f64_to_i64(val);
+                    return { as_i64, JD_TAG_RUNTIME, tag_v };
+                }
+            }
             // Tagged-storage arrays (mixed_array_vars): per-cell JdTag
             // recovered via __arr_get_tagged, returned as RUNTIME so the
             // caller dispatches per element.

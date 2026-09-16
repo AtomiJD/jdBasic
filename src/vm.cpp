@@ -2114,7 +2114,12 @@ void VM::run() {
                 } catch (const std::exception& e) {
                     args.clear(); --m_arg_depth;
                     int eline = frame().chunk->line_at(trace_ip);
-                    throw jdError(ErrCode::RUNTIME_ERROR, jdb_native_name(slot) + ": " + e.what(), eline);
+                    // A builtin that already names itself keeps one prefix.
+                    std::string name = jdb_native_name(slot);
+                    std::string msg = e.what();
+                    std::string prefix = name + ": ";
+                    throw jdError(ErrCode::RUNTIME_ERROR,
+                        msg.compare(0, prefix.size(), prefix) == 0 ? msg : prefix + msg, eline);
                 } catch (...) {
                     args.clear(); --m_arg_depth;
                     int eline = frame().chunk->line_at(trace_ip);
@@ -2240,7 +2245,11 @@ void VM::run() {
                         push(vectorize_call(vectorize_call, args));
                     } catch (const jdError&) { throw; }
                     catch (const std::exception& e) {
-                        throw jdError(ErrCode::RUNTIME_ERROR, func_name + ": " + e.what());
+                        // A builtin that already names itself keeps one prefix.
+                        std::string msg = e.what();
+                        std::string prefix = func_name + ": ";
+                        throw jdError(ErrCode::RUNTIME_ERROR,
+                            msg.compare(0, prefix.size(), prefix) == 0 ? msg : prefix + msg);
                     }
                 } else {
                     try {
@@ -2257,8 +2266,11 @@ void VM::run() {
                             func_name + ": out of memory", eline);
                     } catch (const std::exception& e) {
                         int eline = frame().chunk->line_at(trace_ip);
+                        // A builtin that already names itself keeps one prefix.
+                        std::string msg = e.what();
+                        std::string prefix = func_name + ": ";
                         throw jdError(ErrCode::RUNTIME_ERROR,
-                            func_name + ": " + e.what(), eline);
+                            msg.compare(0, prefix.size(), prefix) == 0 ? msg : prefix + msg, eline);
                     } catch (...) {
                         int eline = frame().chunk->line_at(trace_ip);
                         throw jdError(ErrCode::RUNTIME_ERROR,
