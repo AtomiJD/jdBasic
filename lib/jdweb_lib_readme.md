@@ -168,9 +168,8 @@ and an `Allow` header naming them.
   lists and maps.
 - Compiled with `-c`, routes, middleware, sessions, CSRF and the page and
   login helpers work; the self test runs its served suites compiled when
-  `JDWEB_TEST_SERVER` is set. Writing into a JSON-parsed map kept in another
-  map crashes compiled (#453), which is why the database store copies a
-  session into a fresh map.
+  `JDWEB_TEST_SERVER` is set. The database store keeps the parsed session map
+  as it is (until #453 was fixed it had to copy it into a fresh map).
 
 Self test: `tests/jdlibs/jdweb_selftest.jdb`.
 Demo: `jdb/demos/jdlibs/jdweb_demo.jdb`. A full app on it:

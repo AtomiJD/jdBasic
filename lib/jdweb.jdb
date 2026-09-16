@@ -826,15 +826,7 @@ FUNC HeldOrLoaded(sid$)
     DIM seen = rows[0, 2]
     DIM loaded = JSON.PARSE$(data$)
     IF TYPEOF(loaded) <> "OBJECT" THEN RETURN FALSE
-    DIM held AS MAP
-    DIM names = MAP.KEYS(loaded)
-    DIM k = 0
-    FOR k = 0 TO LEN(names) - 1
-        DIM key$ = names[k]
-        DIM v = loaded{key$}
-        held{key$} = v
-    NEXT k
-    gSessions{sid$} = held
+    gSessions{sid$} = loaded
     gSessionCreated{sid$} = created
     gSessionSeen{sid$} = seen
     RETURN TRUE
