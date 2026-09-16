@@ -936,6 +936,31 @@ static JdbMapFwd* new_jdbmap(int64_t room) {
     return m;
 }
 
+// Writes a key of a native map: the cell it already has, or a new one, the
+// storage grown when the room runs out. The runtime's own setter lives in the
+// executable, so this library keeps its own.
+static void set_jdbmap_key(JdbMapFwd* m, const std::string& key, double val, int32_t tag) {
+    if (!m) return;
+    for (int64_t i = 0; i < m->count; i++) {
+        if (m->keys[i] && key == m->keys[i]) {
+            m->values[i] = val;
+            m->tags[i] = tag;
+            return;
+        }
+    }
+    if (m->count >= m->capacity) {
+        int64_t room = m->capacity > 0 ? m->capacity * 2 : 4;
+        m->keys = (char**)realloc(m->keys, sizeof(char*) * room);
+        m->values = (double*)realloc(m->values, sizeof(double) * room);
+        m->tags = (int32_t*)realloc(m->tags, sizeof(int32_t) * room);
+        m->capacity = room;
+    }
+    int64_t at = m->count++;
+    m->keys[at] = _strdup(key.c_str());
+    m->values[at] = val;
+    m->tags[at] = tag;
+}
+
 static void put_jdbmap(JdbMapFwd* m, const std::string& key, double val, int32_t tag) {
     if (!m || m->count >= m->capacity) return;
     int64_t at = m->count++;
@@ -1312,9 +1337,43 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
 JDRT_API void jdrt_tagged_arr_set(JdRT handle, int64_t val_bits, int32_t val_tag,
                                   int64_t idx, int64_t bits, int32_t tag) {
     auto* rt = resolve_rt(handle);
+    // A map takes every index as a key, a number included, the way the
+    // interpreter does; only an array has positions.
+    auto cell_of = [&](int32_t t, int64_t b) -> Value {
+        switch (static_cast<JdTag>(t)) {
+            case JdTag::I64:  return Value::make_i64(b);
+            case JdTag::BOOL: return Value::make_bool(b != 0);
+            case JdTag::STR:  return value_from_native_str((const char*)(intptr_t)b);
+            case JdTag::ARR:  return jdbarray_to_value((JdbArrayFwd*)(intptr_t)b);
+            case JdTag::NATIVE_MAP: return jdbmap_to_value((JdbMapFwd*)(intptr_t)b);
+            case JdTag::VM_HANDLE: {
+                auto f = rt->value_store.find(b);
+                return f != rt->value_store.end() ? f->second : Value::make_none();
+            }
+            case JdTag::NONE: return Value::make_none();
+            default: {
+                double d;
+                memcpy(&d, &b, 8);
+                return Value::make_f64(d);
+            }
+        }
+    };
+    if (val_tag == jd_tag(JdTag::NATIVE_MAP)) {
+        // The native map stores a number as itself and a pointer as its bits.
+        double d;
+        if (tag == jd_tag(JdTag::I64) || tag == jd_tag(JdTag::BOOL)) d = (double)bits;
+        else memcpy(&d, &bits, 8);
+        set_jdbmap_key((JdbMapFwd*)(intptr_t)val_bits, std::to_string(idx), d, tag);
+        return;
+    }
     if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
         auto it = rt->value_store.find(val_bits);
-        if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return;
+        if (it == rt->value_store.end()) return;
+        if (it->second.type == ValueType::OBJECT) {
+            it->second.as_object()->set(std::to_string(idx), cell_of(tag, bits));
+            return;
+        }
+        if (it->second.type != ValueType::ARRAY) return;
         auto* a = it->second.as_array();
         if (idx < 0) {
             rt->last_error = "Array index out of bounds: " + std::to_string(idx);

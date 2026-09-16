@@ -2242,6 +2242,25 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             return false;
         };
 
+        // A parameter written through an index may be a map or an array, and
+        // only the tag that travels with the value says which: a map handed to
+        // an untyped parameter and written with a number (`m[0] = v`, the key
+        // "0" in the interpreter) otherwise took the array path and died.
+        std::function<bool(const Stmt&, const std::string&)> body_index_assigns_param =
+            [&](const Stmt& s, const std::string& pname) -> bool {
+            if (s.kind == StmtKind::INDEX_ASSIGN && s.var_name == pname) return true;
+            for (auto& b : s.body)
+                if (b && body_index_assigns_param(*b, pname)) return true;
+            for (auto& br : s.branches)
+                for (auto& b : br.body)
+                    if (b && body_index_assigns_param(*b, pname)) return true;
+            for (auto& c : s.catch_body())
+                if (c && body_index_assigns_param(*c, pname)) return true;
+            for (auto& f : s.finally_body())
+                if (f && body_index_assigns_param(*f, pname)) return true;
+            return false;
+        };
+
         for (auto& [name, decl] : decls) {
             if (!decl.stmt) continue;
             for (size_t pi = 0; pi < decl.stmt->params().size() && pi < decl.tags.size(); pi++) {
@@ -2252,7 +2271,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (!p.name.empty() && p.name.back() == '$') continue;
                 if (p.type != VarType::NONE) continue;
                 if (body_uses_typeof_param(*decl.stmt, p.name) ||
-                    body_walks_param(*decl.stmt, p.name)) {
+                    body_walks_param(*decl.stmt, p.name) ||
+                    body_index_assigns_param(*decl.stmt, p.name)) {
                     decl.tags[pi] = JD_TAG_RUNTIME;
                 }
             }
@@ -7223,10 +7243,23 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         stmt.index_chain[0]->kind != ExprKind::LITERAL_INT) {
         // On a declared map the single index is a key whatever shape the
         // expression has. A RUNTIME slot may still turn out to be an array,
-        // so there the expression has to look like a string.
+        // so there the expression has to look like a string. A cell of a
+        // known string array counts too: `target{keys[i]} = ...` over
+        // MAP.KEYS is how module code merges two maps, and without this the
+        // key pointer went to the array path as a position.
+        auto looks_like_key = [&](const Expr& e) {
+            if (expr_involves_strings(e)) return true;
+            if (e.kind == ExprKind::VARIABLE && string_scalar_vars.count(e.str_val))
+                return true;
+            if (e.kind == ExprKind::INDEX && e.left &&
+                e.left->kind == ExprKind::VARIABLE &&
+                string_array_vars.count(e.left->str_val))
+                return true;
+            return false;
+        };
         if (vi->tag == JD_TAG_NATIVE_MAP) key_is_string_expr = true;
         else if (vi->tag == JD_TAG_RUNTIME)
-            key_is_string_expr = expr_involves_strings(*stmt.index_chain[0]);
+            key_is_string_expr = looks_like_key(*stmt.index_chain[0]);
     }
 
     // A runtime-tagged slot holds either a native map or a VM value - a map
