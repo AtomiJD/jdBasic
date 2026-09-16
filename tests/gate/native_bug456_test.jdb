@@ -1,0 +1,67 @@
+' An array a FUNC built and returned is an array in the caller too: writing
+' into it has to take, whether the index is a literal or a variable, and
+' whether the FUNC sits in this file or in a module.
+
+OPTION "EXPLICIT"
+IMPORT NATIVE_BUG456_MOD
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+FUNC LocalMaker(n)
+    DIM cells = ZEROS(n)
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        cells[i] = 2
+    NEXT i
+    RETURN cells
+ENDFUNC
+
+FUNC WriteInside()
+    DIM cells = LocalMaker(4)
+    cells[0] = 1
+    RETURN cells[0]
+ENDFUNC
+
+' The module shape from the ticket: 25 cells filled with 2, each written to 1.
+Check("a module FUNC fills, the caller writes, another FUNC reads", STR$(NATIVE_BUG456_MOD.RUNIT()), "25")
+
+DIM made = NATIVE_BUG456_MOD.MADE(2)
+Check("an array a module FUNC returned reads its cells", STR$(made[3]), "2")
+made[0] = 7
+Check("a cell written into it takes", STR$(made[0]), "7")
+
+DIM cells = LocalMaker(5)
+Check("an array a FUNC in this file returned reads its cells", STR$(cells[4]), "2")
+cells[0] = 1
+Check("written by a literal position", STR$(cells[0]), "1")
+DIM p = 3
+cells[p] = 4
+Check("written by a position in a variable", STR$(cells[p]), "4")
+Check("and the untouched cells stand", STR$(cells[1]), "2")
+Check("written inside the FUNC that called the maker", STR$(WriteInside()), "1")
+
+' Control: a local array written the same way.
+DIM own = ZEROS(3)
+DIM i = 0
+FOR i = 0 TO 2
+    own[i] = 2
+NEXT i
+own[1] = 5
+Check("a local array", STR$(own[0]) + STR$(own[1]) + STR$(own[2]), "252")
+
+PRINT ""
+PRINT "NATIVE BUG 456 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"

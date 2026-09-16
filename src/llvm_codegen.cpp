@@ -2764,6 +2764,15 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         std::string up = e.func_name;
                         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
                         if (kBridgeArrayReturners.count(up)) return JD_TAG_ARR;
+                        // A builtin with its own native binding says what it
+                        // answers in the registration table: ZEROS, ONES and
+                        // LINSPACE hand back an array, and a FUNC returning
+                        // one was typed as a number without this - the caller
+                        // then held the array as punned bits and every write
+                        // into it was dropped or hit the map setter.
+                        auto rf = runtime_funcs.find(up);
+                        if (rf != runtime_funcs.end() && rf->second.return_tag == 3)
+                            return JD_TAG_ARR;
                     }
                     if (!e.func_name.empty() && e.func_name.back() == '$') return JD_TAG_STR;
                     return 0;
@@ -7204,7 +7213,7 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     }
 
     if (!vi || (vi->tag != JD_TAG_ARR && vi->tag != JD_TAG_NATIVE_MAP &&
-                vi->tag != JD_TAG_RUNTIME && !punned_map_slot)) return;
+                vi->tag != JD_TAG_RUNTIME && !punned_map_slot && !punned_arr_slot)) return;
 
     // A map key is a string, whether it is spelled out or worked out. Only a
     // literal used to reach the map setters below; anything else fell through

@@ -1,0 +1,33 @@
+EXPORT MODULE NATIVE_BUG456_MOD
+
+FUNC Maker(n)
+    DIM cells = ZEROS(n * n)
+    DIM i = 0
+    FOR i = 0 TO n * n - 1
+        cells[i] = 2
+    NEXT i
+    RETURN cells
+ENDFUNC
+
+FUNC Reader(cells, n)
+    DIM total = 0
+    DIM i = 0
+    FOR i = 0 TO n * n - 1
+        total = total + CLNG(cells[i])
+    NEXT i
+    RETURN total
+ENDFUNC
+
+' Fills an array in one FUNC, writes into it in another, and reads it back.
+EXPORT FUNC RUNIT()
+    DIM cells = Maker(5)
+    DIM p = 0
+    FOR p = 0 TO 24
+        IF cells[p] = 2 THEN cells[p] = 1
+    NEXT p
+    RETURN Reader(cells, 5)
+ENDFUNC
+
+EXPORT FUNC MADE(n)
+    RETURN Maker(n)
+ENDFUNC
