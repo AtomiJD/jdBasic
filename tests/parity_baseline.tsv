@@ -56,6 +56,8 @@ tests/gate/codec_pbkdf2_random_test.jdb	PASS	PASS	OK
 tests/gate/comprehensive_test.jdb	PASS	PASS	OK
 tests/gate/foreach_sources_test.jdb	PASS	PASS	OK
 tests/gate/foreach_test.jdb	PASS	PASS	OK
+tests/gate/native_bug453_test.jdb	PASS	PASS	OK
+tests/gate/native_bug456_test.jdb	PASS	PASS	OK
 tests/gate/native_bug458_test.jdb	PASS	PASS	OK
 tests/gate/native_bug459_test.jdb	PASS	PASS	OK
 tests/gate/native_bug463_test.jdb	PASS	PASS	OK
