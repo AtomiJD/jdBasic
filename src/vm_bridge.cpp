@@ -1305,6 +1305,59 @@ JDRT_API int32_t jdrt_tagged_arr_get(JdRT handle, int64_t val_bits, int32_t val_
     return t;
 }
 
+// The write that matches jdrt_tagged_arr_get: a cell of a VM array handle or
+// of a native array, addressed by position. A compiled `m[0] = v` on a value
+// that came out of another container is a handle, not a pointer - writing it
+// as a pointer is what made that shape crash.
+JDRT_API void jdrt_tagged_arr_set(JdRT handle, int64_t val_bits, int32_t val_tag,
+                                  int64_t idx, int64_t bits, int32_t tag) {
+    auto* rt = resolve_rt(handle);
+    if (val_tag == jd_tag(JdTag::VM_HANDLE)) {
+        auto it = rt->value_store.find(val_bits);
+        if (it == rt->value_store.end() || it->second.type != ValueType::ARRAY) return;
+        auto* a = it->second.as_array();
+        if (idx < 0) {
+            rt->last_error = "Array index out of bounds: " + std::to_string(idx);
+            return;
+        }
+        if ((size_t)idx >= a->elements.size()) a->elements.resize((size_t)idx + 1);
+        Value cell;
+        switch (static_cast<JdTag>(tag)) {
+            case JdTag::I64:  cell = Value::make_i64(bits); break;
+            case JdTag::BOOL: cell = Value::make_bool(bits != 0); break;
+            case JdTag::STR:  cell = value_from_native_str((const char*)(intptr_t)bits); break;
+            case JdTag::ARR:  cell = jdbarray_to_value((JdbArrayFwd*)(intptr_t)bits); break;
+            case JdTag::NATIVE_MAP: cell = jdbmap_to_value((JdbMapFwd*)(intptr_t)bits); break;
+            case JdTag::VM_HANDLE: {
+                auto f = rt->value_store.find(bits);
+                cell = f != rt->value_store.end() ? f->second : Value::make_none();
+                break;
+            }
+            case JdTag::NONE: cell = Value::make_none(); break;
+            default: {
+                double d;
+                memcpy(&d, &bits, 8);
+                cell = Value::make_f64(d);
+            }
+        }
+        a->elements[(size_t)idx] = std::move(cell);
+        return;
+    }
+    if (val_tag == jd_tag(JdTag::NONE)) return;
+    // A native array: store the cell the way the runtime's own setter does,
+    // a number as itself and a pointer as its bits, with the cell's tag.
+    auto* arr = (JdbArray*)(intptr_t)val_bits;
+    if (!arr || idx < 0 || idx >= arr->length) {
+        if (arr) rt->last_error = "Array index out of bounds: " + std::to_string(idx);
+        return;
+    }
+    double d;
+    if (tag == jd_tag(JdTag::I64) || tag == jd_tag(JdTag::BOOL)) d = (double)bits;
+    else memcpy(&d, &bits, 8);
+    arr->data[idx] = d;
+    if (arr->elem_tags && (arr->flags & 8)) arr->elem_tags[idx] = (int8_t)tag;
+}
+
 // FOR EACH in compiled code: what the loop walks and how many passes it
 // makes. Each pass reads the loop variable from walk b with
 // jdrt_tagged_arr_get and, with two loop variables, the index or key from

@@ -727,6 +727,8 @@ void LLVMCodegen::declare_runtime_functions() {
         {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, 0);
     reg("jdrt_tagged_arr_get", "__jdrt_tagged_arr_get", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, 0);
+    reg("jdrt_tagged_arr_set", "__jdrt_tagged_arr_set", void_type,
+        {i8_ptr_type, i64_type, i32_type, i64_type, i64_type, i32_type}, -1);
     reg("jdrt_tagged_index", "__jdrt_tagged_index", i32_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, 0);
     reg("jdrt_foreach_begin", "__jdrt_foreach_begin", i64_type,
@@ -7108,13 +7110,48 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
     // without the same here, every write through such a parameter was
     // dropped without a word.
     bool punned_map_slot = false;
-    // An array never lands in an f64 slot, so a single index on one is a map
-    // key whatever shape it has. An integer literal is left alone: that is
-    // someone indexing a number, and the old path already refuses it.
-    if (vi && vi->tag == JD_TAG_F64 && stmt.index_chain.size() == 1 &&
-        stmt.index_chain[0]->kind != ExprKind::LITERAL_INT) {
-        punned_map_slot = true;
+    bool punned_arr_slot = false;
+    // A map and an array both arrive in an f64 slot with the pointer punned
+    // in: an untyped parameter, or a FUNC whose array return the caller could
+    // not name. The index shape decides which one it is - a key-shaped index
+    // is a map write, a position an array write. Before this, a literal
+    // position wrote nothing at all and a computed one reached the map setter
+    // with an array pointer.
+    if (vi && vi->tag == JD_TAG_F64 && stmt.index_chain.size() == 1) {
+        if (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING ||
+            expr_involves_strings(*stmt.index_chain[0]))
+            punned_map_slot = true;
+        else
+            punned_arr_slot = true;
     }
+
+    // A value on its way into a container, as the (bits, tag) pair the
+    // tagged setters take: a number as itself, a pointer or a handle as its
+    // bits, each with the tag that says how to read it back.
+    auto tagged_bits_of = [&](const TypedValue& v) {
+        LLVMValueRef bits, tag;
+        if (v.tag == JD_TAG_RUNTIME && v.runtime_tag) {
+            bits = v.val;
+            tag = v.runtime_tag;
+        } else if (v.tag == JD_TAG_F64) {
+            bits = pun_f64_to_i64(v.val);
+            tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+        } else if (v.tag == JD_TAG_I64 || v.tag == JD_TAG_VM_HANDLE) {
+            bits = LLVMBuildIntCast2(builder, v.val, i64_type, 1, "set_i");
+            tag = LLVMConstInt(i32_type, v.tag, 0);
+        } else if (v.tag == JD_TAG_BOOL) {
+            bits = LLVMBuildIntCast2(builder, v.val, i64_type, 0, "set_b");
+            tag = LLVMConstInt(i32_type, JD_TAG_BOOL, 0);
+        } else if (v.tag == JD_TAG_STR || v.tag == JD_TAG_ARR ||
+                   v.tag == JD_TAG_NATIVE_MAP) {
+            bits = LLVMBuildPtrToInt(builder, v.val, i64_type, "set_p");
+            tag = LLVMConstInt(i32_type, v.tag, 0);
+        } else {
+            bits = pun_f64_to_i64(coerce_to(v, f64_type));
+            tag = LLVMConstInt(i32_type, JD_TAG_F64, 0);
+        }
+        return std::pair<LLVMValueRef, LLVMValueRef>{ bits, tag };
+    };
 
     // A map a builtin handed out (JSON.PARSE$, ZIP.READ, a server request)
     // lives in the VM: the key write goes to that object.
@@ -7181,6 +7218,68 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         if (vi->tag == JD_TAG_NATIVE_MAP) key_is_string_expr = true;
         else if (vi->tag == JD_TAG_RUNTIME)
             key_is_string_expr = expr_involves_strings(*stmt.index_chain[0]);
+    }
+
+    // A runtime-tagged slot holds either a native map or a VM value - a map
+    // that came out of another container is a handle, and writing a handle as
+    // a pointer is what killed the process. Ask the tag that travels with it.
+    if (vi->tag == JD_TAG_RUNTIME && vi->runtime_tag_alloca &&
+        stmt.index_chain.size() == 1 &&
+        (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING || key_is_string_expr)) {
+        LLVMValueRef base_bits = LLVMBuildLoad2(builder, i64_type, vi->alloca_val, "kset_base");
+        LLVMValueRef base_tag = LLVMBuildLoad2(builder, i32_type, vi->runtime_tag_alloca, "kset_tag");
+        LLVMValueRef key_ptr;
+        if (stmt.index_chain[0]->kind == ExprKind::LITERAL_STRING) {
+            key_ptr = LLVMBuildGlobalStringPtr(builder, stmt.index_chain[0]->str_val.c_str(), ".kkey");
+        } else {
+            ScopedLeafTag _lt(this, JD_TAG_STR);
+            TypedValue k = codegen_expr(*stmt.index_chain[0]);
+            key_ptr = to_string_ptr(k);
+        }
+        TypedValue v;
+        {
+            ScopedLeafTag _vl(this, stmt.expr->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
+            v = codegen_expr(*stmt.expr);
+        }
+        auto [bits, tag] = tagged_bits_of(v);
+
+        LLVMValueRef is_vmh = LLVMBuildICmp(builder, LLVMIntEQ, base_tag,
+            LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), "kset_isvmh");
+        LLVMBasicBlockRef bb_h = LLVMAppendBasicBlock(current_fn, "kset.vmh");
+        LLVMBasicBlockRef bb_n = LLVMAppendBasicBlock(current_fn, "kset.native");
+        LLVMBasicBlockRef bb_m = LLVMAppendBasicBlock(current_fn, "kset.done");
+        LLVMBuildCondBr(builder, is_vmh, bb_h, bb_n);
+
+        LLVMPositionBuilderAtEnd(builder, bb_h);
+        {
+            auto& set_fn = runtime_funcs["__jdrt_obj_set_tagged"];
+            LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+            LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+            LLVMValueRef sargs[] = { rt, base_bits, key_ptr, bits, tag };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, sargs, 5, "");
+        }
+        LLVMBuildBr(builder, bb_m);
+
+        LLVMPositionBuilderAtEnd(builder, bb_n);
+        {
+            // The native map stores a number as itself and a pointer as bits.
+            LLVMValueRef is_int = LLVMBuildICmp(builder, LLVMIntEQ, tag,
+                LLVMConstInt(i32_type, JD_TAG_I64, 0), "kset_isint");
+            LLVMValueRef is_bool = LLVMBuildICmp(builder, LLVMIntEQ, tag,
+                LLVMConstInt(i32_type, JD_TAG_BOOL, 0), "kset_isbool");
+            LLVMValueRef intish = LLVMBuildOr(builder, is_int, is_bool, "kset_intish");
+            LLVMValueRef as_real = LLVMBuildSIToFP(builder, bits, f64_type, "kset_i2f");
+            LLVMValueRef fval = LLVMBuildSelect(builder, intish, as_real,
+                                                pun_i64_to_f64(bits), "kset_f");
+            LLVMValueRef obj_ptr = LLVMBuildIntToPtr(builder, base_bits, i8_ptr_type, "kset_obj");
+            auto& set_fn = runtime_funcs["__map_set_tagged"];
+            LLVMValueRef args[] = { obj_ptr, key_ptr, fval, tag };
+            LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 4, "");
+        }
+        LLVMBuildBr(builder, bb_m);
+
+        LLVMPositionBuilderAtEnd(builder, bb_m);
+        return;
     }
 
     if (!stmt.index_chain.empty() &&
@@ -7322,11 +7421,50 @@ void LLVMCodegen::codegen_index_assign(const Stmt& stmt) {
         return;
     }
 
+    // A position on a runtime-tagged slot, or on an array punned into an f64
+    // slot, goes through the tagged setter: it writes a VM array by its handle
+    // and a native array by its pointer, whichever the tag names.
+    if ((vi->tag == JD_TAG_RUNTIME || punned_arr_slot) && stmt.index_chain.size() == 1) {
+        LLVMValueRef base_bits;
+        LLVMValueRef base_tag;
+        if (vi->tag == JD_TAG_RUNTIME) {
+            base_bits = LLVMBuildLoad2(builder, i64_type, vi->alloca_val, "aset_base");
+            base_tag = vi->runtime_tag_alloca
+                ? LLVMBuildLoad2(builder, i32_type, vi->runtime_tag_alloca, "aset_tag")
+                : LLVMConstInt(i32_type, JD_TAG_ARR, 0);
+        } else {
+            LLVMValueRef d = LLVMBuildLoad2(builder, f64_type, vi->alloca_val, "aset_f64");
+            base_bits = pun_f64_to_i64(d);
+            base_tag = LLVMConstInt(i32_type, JD_TAG_ARR, 0);
+        }
+        TypedValue idx_tv = codegen_expr(*stmt.index_chain[0]);
+        LLVMValueRef idx = coerce_to(idx_tv, i64_type);
+        TypedValue v;
+        {
+            ScopedLeafTag _vl(this, stmt.expr->kind == ExprKind::INDEX ? JD_TAG_RUNTIME : -1);
+            v = codegen_expr(*stmt.expr);
+        }
+        auto [bits, tag] = tagged_bits_of(v);
+        auto& set_fn = runtime_funcs["__jdrt_tagged_arr_set"];
+        LLVMValueRef hg = LLVMGetNamedGlobal(module, "__jdrt_handle");
+        LLVMValueRef rt = LLVMBuildLoad2(builder, i8_ptr_type, hg, "rt");
+        LLVMValueRef args[] = { rt, base_bits, base_tag, idx, bits, tag };
+        LLVMBuildCall2(builder, set_fn.fn_type, set_fn.fn, args, 6, "");
+        if (v.tag == JD_TAG_ARR && !stmt.var_name.empty())
+            array_array_vars.insert(stmt.var_name);
+        if (v.tag == JD_TAG_STR && !stmt.var_name.empty())
+            string_array_vars.insert(stmt.var_name);
+        return;
+    }
+
     // RUNTIME alloca is i64 (ptr-bits punned); NATIVE_MAP/ARR is i8_ptr.
     LLVMValueRef arr_ptr;
     if (vi->tag == JD_TAG_RUNTIME) {
         LLVMValueRef bits = LLVMBuildLoad2(builder, i64_type, vi->alloca_val, "arr_i64");
         arr_ptr = LLVMBuildIntToPtr(builder, bits, i8_ptr_type, "arr");
+    } else if (punned_arr_slot) {
+        LLVMValueRef d = LLVMBuildLoad2(builder, f64_type, vi->alloca_val, "arr_f64");
+        arr_ptr = LLVMBuildIntToPtr(builder, pun_f64_to_i64(d), i8_ptr_type, "arr");
     } else {
         arr_ptr = LLVMBuildLoad2(builder, i8_ptr_type, vi->alloca_val, "arr");
     }

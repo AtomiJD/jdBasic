@@ -1,0 +1,77 @@
+' A value that came out of another container is a VM value, not a pointer:
+' writing into a parsed map or array that was read back out of a map has to
+' reach the value the loop holds, in both backends.
+
+OPTION "EXPLICIT"
+
+DIM passed AS INTEGER = 0
+DIM failed AS INTEGER = 0
+
+SUB Check(label$, actual$, expected$)
+    IF actual$ = expected$ THEN
+        passed = passed + 1
+    ELSE
+        failed = failed + 1
+        PRINT "FAIL " + label$
+        PRINT "  expected " + expected$
+        PRINT "  got      " + actual$
+    ENDIF
+ENDSUB
+
+DIM gStore AS MAP
+
+SUB Keep(id$, text$)
+    DIM parsed = JSON.PARSE$(text$)
+    gStore{id$} = parsed
+ENDSUB
+
+FUNC Fetch(id$)
+    DIM got = gStore{id$}
+    RETURN got
+ENDFUNC
+
+DIM q$ = CHR$(34)
+DIM doc$ = "{" + q$ + "count" + q$ + ":2}"
+
+' The shape the session store used: parsed, kept in a map, read back
+' through a FUNC, then written.
+Keep("a", doc$)
+DIM m = Fetch("a")
+Check("a parsed map read back keeps its kind", TYPEOF(m), "OBJECT")
+Check("and reads its value", STR$(m{"count"}), "2")
+DIM n = m{"count"}
+n = n + 1
+m{"count"} = n
+Check("a key written into it takes", STR$(m{"count"}), "3")
+
+' The same without the FUNC in between.
+DIM direct = gStore{"a"}
+direct{"count"} = 7
+Check("written through a second read of the same entry", STR$(direct{"count"}), "7")
+
+' A parsed array through a map, written by position.
+DIM gArr AS MAP
+DIM parsed_arr = JSON.PARSE$("[1, 2, 3]")
+gArr{"list"} = parsed_arr
+DIM lst = gArr{"list"}
+Check("a parsed array read back keeps its kind", TYPEOF(lst), "ARRAY")
+lst[0] = 9
+Check("a cell written into it takes", STR$(lst[0]), "9")
+Check("and leaves its neighbours alone", STR$(lst[2]), "3")
+
+' Controls: the shapes that always worked stay correct.
+DIM plain = JSON.PARSE$(doc$)
+plain{"count"} = 5
+Check("a parsed map written without a detour", STR$(plain{"count"}), "5")
+
+DIM nativeMap AS MAP
+nativeMap{"count"} = 1
+gStore{"n"} = nativeMap
+DIM back = gStore{"n"}
+back{"count"} = 4
+Check("a native map through a map", STR$(back{"count"}), "4")
+
+PRINT ""
+PRINT "NATIVE BUG 453 TEST RESULTS"
+PRINT "RESULTS: " + STR$(passed) + " passed, " + STR$(failed) + " failed"
+IF failed = 0 THEN PRINT "ALL TESTS PASSED!"
