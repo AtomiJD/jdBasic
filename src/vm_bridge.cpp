@@ -359,6 +359,9 @@ struct JdbArrayFwd {
 // flags bit 1: those pointers are char* strings (else JdbArray* nested).
 // flags bit 2: elements are bool (TRUE/FALSE rendering vs 1/0).
 // flags bit 3: per-element JdTag carried in elem_tags (mixed-type literals).
+// flags bit 4: elements are Unix-epoch dates (formatted rendering vs a number).
+//   The VM marks a date with a subtype on the value; the native side has no
+//   tag for one, so an array-wide bit carries what the cells mean.
 // Heuristic: distinguish a real f64 number from an f64-punned pointer.
 // Userspace pointers on Linux/Windows x86_64 sit below 2^47. Any finite
 // f64 with non-zero magnitude has its exponent bits set high enough that
@@ -382,6 +385,7 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
     bool has_ptr = (arr->flags & 1) != 0;
     bool has_string = (arr->flags & 2) != 0;
     bool has_bool = (arr->flags & 4) != 0;
+    bool has_date = (arr->flags & 16) != 0;
     for (int64_t i = 0; i < arr->length; i++) {
         double d = arr->data[i];
         if (has_tagged) {
@@ -411,6 +415,8 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
                 out->elements.push_back(Value::make_i64((int64_t)d));
             } else if (t == jd_tag(JdTag::NONE)) {
                 out->elements.push_back(Value::make_none());
+            } else if (has_date) {
+                out->elements.push_back(Value::make_date(d));
             } else {
                 // F64 - numeric.
                 out->elements.push_back(Value::make_f64(d));
@@ -433,6 +439,8 @@ static Value jdbarray_to_value(JdbArrayFwd* arr) {
         } else if (has_bool) {
             // Comparison-result array (flags bit2): cells are 0/1 booleans.
             out->elements.push_back(Value::make_bool(d != 0.0));
+        } else if (has_date) {
+            out->elements.push_back(Value::make_date(d));
         } else {
             // Either uniform f64 array, or a numeric cell inside a mixed-
             // type literal like [1, "x", 3] - the bit pattern reveals it
@@ -795,6 +803,9 @@ static JdbArray* value_to_jdbarray(const Value& v) {
     r->data = (double*)calloc(r->length > 0 ? r->length : 1, sizeof(double));
     r->capacity = r->length > 0 ? r->length : 1;
     bool has_ptr = false, has_string = false, has_other = false, has_none = false;
+    // Dates are numbers the VM marks with a subtype. The native side has no
+    // tag for one, so the array says it holds them and every cell must agree.
+    int64_t date_cells = 0;
     std::vector<int8_t> cell_tags((size_t)(r->length > 0 ? r->length : 1), 1);
     for (int64_t i = 0; i < r->length; i++) {
         const auto& e = arr->elements[i];
@@ -823,11 +834,13 @@ static JdbArray* value_to_jdbarray(const Value& v) {
             r->data[i] = (double)e.to_int();
         } else {
             has_other = true;
+            if (e.type == ValueType::FLOAT64 && e.subtype == ValueSubtype::DATE) date_cells++;
             r->data[i] = e.to_double();
         }
     }
     if (has_ptr) r->flags |= 1;
     if (has_string) r->flags |= 2;
+    if (date_cells > 0 && date_cells == r->length) r->flags |= 16;
     // String cells mixed with anything else make flags-only decoding
     // ambiguous (a numeric cell in a string-flagged row would be
     // dereferenced as char*) - per-element tags pin the layout for those.

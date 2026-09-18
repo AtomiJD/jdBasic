@@ -65,6 +65,15 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
     "MON.SCOPE",
 };
 
+// The builtins that answer a date. The native runtime keeps a date as an ISO
+// string, so nothing about the value itself says what it is - TYPEOF reads
+// the name of the call that made it.
+inline bool is_date_returning_call(const std::string& upper_name) {
+    return upper_name == "CVDATE" || upper_name == "CDATE" ||
+           upper_name == "DATEADD" || upper_name == "NOW" ||
+           upper_name == "DATE.UTC" || upper_name == "EOMONTH";
+}
+
 // Array-returning builtins that DO have a native runtime binding, plus the
 // APL primitives the bridge answers. Read wherever a local or a return value
 // has to be typed from the call that produced it.
@@ -624,6 +633,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_second_str",  "__second_str", i64_type, {i8_ptr_type}, 0);
     reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, 2);
     reg("jdb_format_date_num", "__format_date_num", i8_ptr_type, {f64_type, i8_ptr_type, f64_type}, 2);
+    reg("jdb_format_date_vec", "__format_date_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, 3);
 
     // System
     reg("jdb_getenv",  "GETENV$",  i8_ptr_type, {i8_ptr_type}, 2);
@@ -5231,7 +5241,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
             std::string fn_up = stmt.expr->func_name;
             std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
-            if (fn_up == "CVDATE" || fn_up == "CDATE" || fn_up == "DATEADD" || fn_up == "NOW")
+            if (is_date_returning_call(fn_up))
                 date_vars.insert(up_name);
         }
         if (stmt.is_const) {
@@ -6230,7 +6240,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
         std::string fn_up = stmt.expr->func_name;
         std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
-        if (fn_up == "CVDATE" || fn_up == "CDATE" || fn_up == "DATEADD" || fn_up == "NOW") {
+        if (is_date_returning_call(fn_up)) {
             std::string up = stmt.var_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
             date_vars.insert(up);
@@ -12491,6 +12501,17 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     // an array crossed the bridge as an epoch, so the argument decides.
     if (upper == "FORMAT_DATE" && !expr.args.empty()) {
         TypedValue av = codegen_expr(*expr.args[0]);
+        if (av.tag == JD_TAG_ARR) {
+            LLVMValueRef fmt = expr.args.size() >= 2
+                ? coerce_to(codegen_expr(*expr.args[1]), i8_ptr_type)
+                : LLVMConstNull(i8_ptr_type);
+            LLVMValueRef tz = expr.args.size() >= 3
+                ? coerce_to(codegen_expr(*expr.args[2]), f64_type)
+                : LLVMConstReal(f64_type, std::numeric_limits<double>::quiet_NaN());
+            auto& fn = runtime_funcs["__format_date_vec"];
+            LLVMValueRef args[] = { av.val, fmt, tz };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "fdv"), JD_TAG_ARR };
+        }
         if (av.tag == JD_TAG_F64 || av.tag == JD_TAG_I64) {
             LLVMValueRef fmt = expr.args.size() >= 2
                 ? coerce_to(codegen_expr(*expr.args[1]), i8_ptr_type)
@@ -12887,7 +12908,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             std::string fn_or_var;
             if (expr.args[0]->kind == ExprKind::CALL) fn_or_var = expr.args[0]->func_name;
             std::transform(fn_or_var.begin(), fn_or_var.end(), fn_or_var.begin(), ::toupper);
-            if (fn_or_var == "CVDATE" || fn_or_var == "CDATE" || fn_or_var == "DATEADD" || fn_or_var == "NOW")
+            if (is_date_returning_call(fn_or_var))
                 return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), JD_TAG_STR };
         }
         // TYPEOF inspects the value rather than consuming it, so an outer leaf

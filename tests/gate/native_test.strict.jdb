@@ -1619,6 +1619,27 @@ Assert(2875,afz_m[1, 2] = 99)
 Assert(2876,LEN(afz_m) = 5 AND LEN(afz_m[0]) = 5)
 
 
+' ── 68. DATES OUT OF AN ARRAY ────────────────────────────────
+' A date array crosses the bridge as epoch numbers while a single date is
+' an ISO string, so the array has to say what its cells mean - for its own
+' rendering and for the vectorised date builtins.
+PRINT "── Dates out of an array ──"
+
+DIM dar_span = DATERANGE(CDATE("2026-09-01"), CDATE("2026-09-03"), "D")
+DIM dar_fmt = FORMAT_DATE(dar_span, "%Y-%m-%d")
+Assert(2880,dar_fmt[0] = "2026-09-01")
+Assert(2881,dar_fmt[2] = "2026-09-03")
+DIM dar_next = DATEADD("D", 1, dar_span)
+Assert(2882,FORMAT_DATE(dar_next[0], "%Y-%m-%d") = "2026-09-02")
+Assert(2883,FORMAT_DATE(dar_next[2], "%Y-%m-%d") = "2026-09-04")
+Assert(2884,INSTR(FRMV$(dar_span), "2026-09-01") >= 0)
+DIM dar_strs = [CDATE("2026-01-30"), CDATE("2026-02-28")]
+DIM dar_sfmt = FORMAT_DATE(dar_strs, "%Y-%m-%d")
+Assert(2885,dar_sfmt[1] = "2026-02-28")
+Assert(2886,TYPEOF(DATE.UTC(2026, 9, 1)) = "DATE")
+Assert(2887,TYPEOF(EOMONTH(CDATE("2026-09-01"))) = "DATE")
+
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════

@@ -537,6 +537,7 @@ struct JdbArray {
                          // bit 1: elements are string ptrs
                          // bit 2: elements are bool (TRUE/FALSE rendering)
                          // bit 3: per-element tags array present (elem_tags)
+                         // bit 4: elements are Unix-epoch dates (formatted)
     int8_t* elem_tags;   // optional per-element JdTag (NULL when not used).
                          // Allocated only by jdb_array_append_tagged so the
                          // common no-tags case stays cheap.
@@ -2406,6 +2407,11 @@ void jdb_print_array_elem(JdbArray* arr, int64_t idx) {
         printf("]");
     } else if (has_bool) {
         printf("%s", val != 0.0 ? "TRUE" : "FALSE");
+    } else if ((arr->flags & 16) != 0) {
+        extern char* jdb_cvdate_num(double);
+        char* iso = jdb_cvdate_num(val);
+        fputs(iso ? iso : "", stdout);
+        free(iso);
     } else {
         char num[64];
         jdb_format_double(num, sizeof(num), val);
@@ -4083,6 +4089,29 @@ double jdb_datediff(const char* part, const char* date1, const char* date2) {
     return diff;
 }
 
+// Vectorised FORMAT_DATE: one format over an array of dates. Cells are ISO
+// strings when the array carries them, epoch seconds when it came over the
+// VM bridge. Answers a string-flagged array, as jdb_cvdate_arr does.
+JdbArray* jdb_format_date_vec(JdbArray* dates, const char* fmt, double tz_hours) {
+    if (!dates) return jdb_array_new(0);
+    bool tagged = (dates->flags & 8) && dates->elem_tags;
+    bool all_str = (dates->flags & 2) != 0;
+    auto* r = jdb_array_new(dates->length);
+    r->flags |= 2;
+    for (int64_t i = 0; i < dates->length; i++) {
+        char* out;
+        if (tagged ? (dates->elem_tags[i] == JD_TAG_STR) : all_str) {
+            union { double d; int64_t i; } u; u.d = dates->data[i];
+            out = jdb_format_date((const char*)(intptr_t)u.i, fmt, tz_hours);
+        } else {
+            out = jdb_format_date_num(dates->data[i], fmt, tz_hours);
+        }
+        union { double d; int64_t i; } u; u.i = (int64_t)(intptr_t)out;
+        r->data[i] = u.d;
+    }
+    return r;
+}
+
 // Vectorized DATEDIFF: scalar start, array of end-dates. Cells are ISO
 // strings when the array carries them, epoch seconds when it came over the
 // VM bridge (DATERANGE), which stores a date as its number.
@@ -4365,6 +4394,7 @@ char* jdb_frmv(JdbArray* arr) {
     bool is_str = (arr->flags & 2) != 0;
     bool is_nested = (arr->flags & 1) != 0 && !is_str;
     bool is_bool = (arr->flags & 4) != 0;
+    bool is_date = (arr->flags & 16) != 0;
     char buf[8192] = "[";
     int pos = 1;
     // snprintf returns the INTENDED length, which can exceed the space left;
@@ -4417,6 +4447,10 @@ char* jdb_frmv(JdbArray* arr) {
             }
         } else if (is_bool) {
             emit(arr->data[i] != 0.0 ? "TRUE" : "FALSE");
+        } else if (is_date) {
+            char* iso = jdb_cvdate_num(arr->data[i]);
+            emit(iso ? iso : "");
+            free(iso);
         } else {
             char num[64];
             jdb_format_double(num, sizeof(num), arr->data[i]);
