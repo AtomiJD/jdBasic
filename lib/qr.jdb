@@ -602,13 +602,11 @@ EXPORT FUNC MATRIX(text$, opts = 0)
 
     DIM stream = Codewords(text$, mode, version, level)
     DIM n = 17 + 4 * version
-    DIM pattern_cells = BaseCells(version)
-    DIM cells = ZEROS(n * n)
+    DIM cells = BaseCells(version)
     DIM isdata = ZEROS(n * n)
     DIM p = 0
     FOR p = 0 TO n * n - 1
-        cells[p] = pattern_cells[p]
-        IF pattern_cells[p] = 2 THEN isdata[p] = 1
+        IF cells[p] = 2 THEN isdata[p] = 1
     NEXT p
 
     DIM idx = 0
@@ -651,11 +649,7 @@ EXPORT FUNC MATRIX(text$, opts = 0)
             ENDIF
         NEXT mask_no
     ENDIF
-    DIM chosen = Masked(cells, isdata, n, best)
-    DIM final = ZEROS(n * n)
-    FOR p = 0 TO n * n - 1
-        final[p] = chosen[p]
-    NEXT p
+    DIM final = Masked(cells, isdata, n, best)
     IF best_score < 0 THEN best_score = CLNG(Penalty(final, n))
 
     DIM offsets = [8, 0, 24, 16]

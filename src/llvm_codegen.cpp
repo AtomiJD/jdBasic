@@ -65,6 +65,17 @@ const std::unordered_set<std::string> kBridgeArrayReturners = {
     "MON.SCOPE",
 };
 
+// Array-returning builtins that DO have a native runtime binding, plus the
+// APL primitives the bridge answers. Read wherever a local or a return value
+// has to be typed from the call that produced it.
+const std::unordered_set<std::string> kArrayReturningCalls = {
+    "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
+    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
+    "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
+    "FFT", "IFFT",
+    "XSORT", "DATERANGE", "TALLY", "SCAN", "CUMSUM", "CUMPROD",
+};
+
 // Bridge builtins that return a BOOLEAN. The bridge hands every non-string,
 // non-array, non-object result back through __jdrt_call_typed_f64, which
 // flattens TRUE to the double 1.0 - so without an entry here `PRINT ok`
@@ -1870,6 +1881,19 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                      cit->second.return_tag == JD_TAG_NATIVE_MAP ||
                      cit->second.return_tag == JD_TAG_VM_HANDLE))
                     local_kinds[s.var_name] = cit->second.return_tag;
+                // A builtin that answers an array or a map, the same set the
+                // RETURN branch below trusts. Without it `DIM out = ZEROS(n)`
+                // left the local unclassified, `RETURN out` inferred nothing,
+                // and the caller held the array as an f64: TYPEOF said
+                // FLOAT64 and RESHAPE marshalled the pointer as a number.
+                auto bit = runtime_funcs.find(s.expr->func_name);
+                if (bit != runtime_funcs.end() &&
+                    (bit->second.return_tag == JD_TAG_ARR ||
+                     bit->second.return_tag == JD_TAG_NATIVE_MAP))
+                    local_kinds[s.var_name] = bit->second.return_tag;
+                else if (kArrayReturningCalls.count(s.expr->func_name) ||
+                         kBridgeArrayReturners.count(s.expr->func_name))
+                    local_kinds[s.var_name] = JD_TAG_ARR;
                 // A VM object from a bridge builtin keeps its handle, so a
                 // RETURN of the local hands the object on rather than a number.
                 static const std::unordered_set<std::string> handle_calls = {
@@ -1934,14 +1958,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     return rit->second.return_tag;
                 // VM-bridge array returners (no native runtime, but known
                 // to produce arrays): SHIFT, OUTER, MATMUL, etc.
-                static const std::unordered_set<std::string> arr_calls = {
-                    "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-                    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
-                    "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
-                    "FFT", "IFFT",
-                    "XSORT", "DATERANGE", "TALLY", "SCAN", "CUMSUM", "CUMPROD"
-                };
-                if (arr_calls.count(e.func_name) ||
+                if (kArrayReturningCalls.count(e.func_name) ||
                     kBridgeArrayReturners.count(e.func_name)) return JD_TAG_ARR;
             }
         }

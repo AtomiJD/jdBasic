@@ -1590,6 +1590,32 @@ Assert(384, cw435[0] = 4)
 Assert(385, cw435[2] = 2)
 
 
+' ── 67. AN ARRAY A FUNC RETURNED ─────────────────────────────
+' A local an array builtin produced is still an array when the FUNC hands
+' it back, so the caller can reshape it, read its cells and write them.
+PRINT "── Array out of a FUNC ──"
+
+FUNC afz_grid(n)
+    DIM out = ZEROS(n * n)
+    DIM i = 0
+    FOR i = 0 TO n * n - 1
+        out[i] = i
+    NEXT i
+    RETURN out
+ENDFUNC
+
+DIM afz_flat = afz_grid(5)
+Assert(2870,TYPEOF(afz_flat) = "ARRAY")
+Assert(2871,LEN(afz_flat) = 25)
+afz_flat[7] = 99
+Assert(2872,afz_flat[7] = 99)
+DIM afz_m = RESHAPE(afz_flat, [5, 5])
+Assert(2873,afz_m[0, 1] = 1)
+Assert(2874,afz_m[2, 3] = 13)
+Assert(2875,afz_m[1, 2] = 99)
+Assert(2876,LEN(afz_m) = 5 AND LEN(afz_m[0]) = 5)
+
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
