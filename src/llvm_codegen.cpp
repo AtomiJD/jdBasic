@@ -12941,6 +12941,19 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         return { result, JD_TAG_STR };
     }
 
+    // A date the native runtime wants as an ISO string. Dates that crossed
+    // the VM bridge (a DATERANGE cell, a map field, an array literal of
+    // CDATE values) arrive as epoch seconds; coerce_to would pun those bits
+    // into a char* and the runtime would dereference them.
+    auto date_str_arg = [&](TypedValue av) -> LLVMValueRef {
+        if (av.tag == JD_TAG_I64 || av.tag == JD_TAG_F64) {
+            auto& cv = runtime_funcs["__cvdate_num"];
+            LLVMValueRef one[] = { coerce_to(av, f64_type) };
+            return LLVMBuildCall2(builder, cv.fn_type, cv.fn, one, 1, "epoch2iso");
+        }
+        return coerce_to(av, i8_ptr_type);
+    };
+
     // Special case: DATEDIFF with array arg → native jdb_datediff_vec
     if (upper == "DATEDIFF" && expr.args.size() == 3) {
         TypedValue p = codegen_expr(*expr.args[0]);
@@ -12950,11 +12963,36 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             auto& fn = runtime_funcs["__datediff_vec"];
             LLVMValueRef args[] = {
                 coerce_to(p, i8_ptr_type),
-                coerce_to(d1, i8_ptr_type),
+                date_str_arg(d1),
                 d2.val
             };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "ddv");
             return { result, JD_TAG_ARR };
+        }
+        if (d1.tag != JD_TAG_ARR) {
+            auto& fn = runtime_funcs["DATEDIFF"];
+            LLVMValueRef args[] = {
+                coerce_to(p, i8_ptr_type),
+                date_str_arg(d1),
+                date_str_arg(d2)
+            };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "dd"), JD_TAG_F64 };
+        }
+    }
+
+    // DATEADD(part$, num, date) - same story on its date argument.
+    if (upper == "DATEADD" && expr.args.size() == 3) {
+        TypedValue p = codegen_expr(*expr.args[0]);
+        TypedValue n = codegen_expr(*expr.args[1]);
+        TypedValue dv = codegen_expr(*expr.args[2]);
+        if (p.tag != JD_TAG_ARR && n.tag != JD_TAG_ARR && dv.tag != JD_TAG_ARR) {
+            auto& fn = runtime_funcs["DATEADD"];
+            LLVMValueRef args[] = {
+                coerce_to(p, i8_ptr_type),
+                coerce_to(n, f64_type),
+                date_str_arg(dv)
+            };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "da"), JD_TAG_STR };
         }
     }
 

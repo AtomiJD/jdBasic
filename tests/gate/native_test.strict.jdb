@@ -345,6 +345,18 @@ Assert(110,DAY(now_val) >= 1 AND DAY(now_val) <= 31)
 DIM tomorrow = DATEADD("D", 1, now_val)
 Assert(111,DATEDIFF("D", now_val, tomorrow) = 1)
 
+' A date array is epoch numbers where a single date is an ISO string, so
+' every date builtin has to take a cell of one.
+DIM span = DATERANGE(CDATE("2026-09-01"), CDATE("2026-09-05"), "D")
+DIM day_gaps = DATEDIFF("D", CDATE("2026-09-01"), span)
+Assert(2860,LEN(span) = 5)
+Assert(2861,DATEDIFF("D", span[0], span[4]) = 4)
+Assert(2862,DATEDIFF("S", CDATE("2026-09-01"), span[0]) = 0)
+Assert(2863,FORMAT_DATE(DATEADD("D", 3, span[0]), "%Y-%m-%d") = "2026-09-04")
+Assert(2864,day_gaps[4] = 4)
+Assert(2865,WEEKDAY(span[0]) = 2)
+Assert(2866,MONTH(span[0]) = 9 AND YEAR(span[0]) = 2026)
+
 ' ── 32. CODEC ────────────────────────────────────────────────
 PRINT "── Codec ──"
 Assert(112,CODEC.BASE64_ENCODE$("Hello") = "SGVsbG8=")

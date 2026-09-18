@@ -4083,16 +4083,25 @@ double jdb_datediff(const char* part, const char* date1, const char* date2) {
     return diff;
 }
 
-// Vectorized DATEDIFF: scalar start, array of end-dates (ISO strings).
-// Returns a JdbArray of f64 differences.
+// Vectorized DATEDIFF: scalar start, array of end-dates. Cells are ISO
+// strings when the array carries them, epoch seconds when it came over the
+// VM bridge (DATERANGE), which stores a date as its number.
 JdbArray* jdb_datediff_vec(const char* part, const char* date1, JdbArray* dates) {
     if (!dates) return jdb_array_new(0);
+    bool tagged = (dates->flags & 8) && dates->elem_tags;
+    bool all_str = (dates->flags & 2) != 0;
     auto* r = jdb_array_new(dates->length);
     for (int64_t i = 0; i < dates->length; i++) {
-        // dates->data[i] is a ptr-encoded string
-        union { double d; int64_t i; } u; u.d = dates->data[i];
-        const char* date2 = (const char*)(intptr_t)u.i;
-        r->data[i] = jdb_datediff(part, date1, date2);
+        bool is_str = tagged ? (dates->elem_tags[i] == JD_TAG_STR) : all_str;
+        if (is_str) {
+            union { double d; int64_t i; } u; u.d = dates->data[i];
+            const char* date2 = (const char*)(intptr_t)u.i;
+            r->data[i] = jdb_datediff(part, date1, date2);
+        } else {
+            char* date2 = jdb_cvdate_num(dates->data[i]);
+            r->data[i] = jdb_datediff(part, date1, date2);
+            free(date2);
+        }
     }
     return r;
 }
