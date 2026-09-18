@@ -17,8 +17,10 @@
 ' with = is a formula, NONE leaves the cell empty. The first row of a
 ' sheet is bold unless the sheet is created with header FALSE. COLUMN
 ' takes a letter or a 1-based index and sets "width" (characters) and
-' "format" (an Excel number format code). FREEZE keeps the first rows
-' and columns in view.
+' "format" (an Excel number format code). STYLE takes a cell or a range
+' and sets "fill" (RRGGBB or AARRGGBB), "bold" and "format" on it, the
+' last beating the column's. FREEZE keeps the first rows and columns in
+' view.
 '
 ' READ returns every sheet as a 2D array, rows padded to the widest,
 ' with numbers, booleans and strings typed; a formula cell yields its
@@ -56,6 +58,7 @@ EXPORT FUNC SHEET(wb, name$, rows, header = TRUE)
     s{"rows"} = rows
     s{"header"} = header
     s{"columns"} = {}
+    s{"cells"} = {}
     s{"freeze_rows"} = 0
     s{"freeze_cols"} = 0
     DIM sheets = wb{"sheets"}
@@ -78,10 +81,59 @@ EXPORT SUB COLUMN(s, col, opts)
     s{"columns"} = columns
 ENDSUB
 
+' ref$ is a cell ("B7") or a range ("A7:H7"); opts carries "fill"
+' (RRGGBB or AARRGGBB), "bold" and "format", which beats the column's.
+EXPORT SUB STYLE(s, ref$, opts)
+    DIM cells = s{"cells"}
+    DIM bounds = RefBounds(ref$)
+    DIM r = 0
+    DIM c = 0
+    FOR r = bounds[0] TO bounds[2]
+        FOR c = bounds[1] TO bounds[3]
+            DIM key$ = STR$(r) + "," + STR$(c)
+            DIM entry = {}
+            IF MAP.EXISTS(cells, key$) THEN entry = cells{key$}
+            IF MAP.EXISTS(opts, "fill") THEN entry{"fill"} = Argb$(opts{"fill"})
+            IF MAP.EXISTS(opts, "bold") THEN entry{"bold"} = opts{"bold"}
+            IF MAP.EXISTS(opts, "format") THEN entry{"format"} = opts{"format"}
+            cells{key$} = entry
+        NEXT c
+    NEXT r
+    s{"cells"} = cells
+ENDSUB
+
 EXPORT SUB FREEZE(s, rows, cols = 0)
     s{"freeze_rows"} = rows
     s{"freeze_cols"} = cols
 ENDSUB
+
+FUNC Argb$(color$)
+    DIM out$ = UCASE$(REPLACE$(color$, "#", ""))
+    IF LEN(out$) = 6 THEN out$ = "FF" + out$
+    IF LEN(out$) <> 8 THEN THROW "XLSX.STYLE: a fill colour is RRGGBB or AARRGGBB, got " + color$
+    RETURN out$
+ENDFUNC
+
+' The 1-based [top, left, bottom, right] of a cell or a range.
+FUNC RefBounds(ref$)
+    DIM parts = SPLIT(UCASE$(ref$), ":")
+    DIM one = CellRef(parts[0])
+    DIM two = one
+    IF LEN(parts) > 1 THEN two = CellRef(parts[1])
+    RETURN [MIN([one[0], two[0]]), MIN([one[1], two[1]]), MAX([one[0], two[0]]), MAX([one[1], two[1]])]
+ENDFUNC
+
+' "B7" is row 7, column 2.
+FUNC CellRef(ref$)
+    DIM digit_at = 0
+    DO WHILE digit_at < LEN(ref$)
+        DIM c = ASC(MID$(ref$, digit_at, 1))
+        IF c >= 48 ANDALSO c <= 57 THEN EXITDO
+        digit_at = digit_at + 1
+    LOOP
+    IF digit_at = 0 OR digit_at >= LEN(ref$) THEN THROW "XLSX: a cell reference looks like B7, got " + ref$
+    RETURN [VAL(MID$(ref$, digit_at, LEN(ref$) - digit_at)), COL_INDEX(MID$(ref$, 0, digit_at))]
+ENDFUNC
 
 ' "A" is 1, "Z" 26, "AA" 27.
 EXPORT FUNC COL_INDEX(letters$)
@@ -134,16 +186,18 @@ EXPORT FUNC WRITE(path$, wb)
     DIM strings = []
     DIM string_index AS MAP
     DIM formats = []
+    DIM fills = []
     DIM entries AS MAP
     DIM sheets = wb{"sheets"}
     IF LEN(sheets) = 0 THEN THROW "XLSX.WRITE: a workbook needs at least one sheet"
 
     ' Styles are numbered as the sheets ask for them: 0 plain, 1 bold,
-    ' then one per distinct number format.
+    ' then one record per distinct number format, font and fill triple.
+    DIM xfs = ["-1,0,-1", "-1,1,-1"]
     DIM sheet_xml = []
     DIM i = 0
     FOR i = 0 TO LEN(sheets) - 1
-        PUSH(sheet_xml, SheetXml$(sheets[i], strings, string_index, formats))
+        PUSH(sheet_xml, SheetXml$(sheets[i], strings, string_index, formats, fills, xfs))
     NEXT i
 
     entries{"[Content_Types].xml"} = ContentTypes$(LEN(sheets))
@@ -152,7 +206,7 @@ EXPORT FUNC WRITE(path$, wb)
         "</Relationships>"
     entries{"xl/workbook.xml"} = WorkbookXml$(sheets)
     entries{"xl/_rels/workbook.xml.rels"} = WorkbookRels$(LEN(sheets))
-    entries{"xl/styles.xml"} = StylesXml$(formats)
+    entries{"xl/styles.xml"} = StylesXml$(formats, fills, xfs)
     entries{"xl/sharedStrings.xml"} = SharedStrings$(strings)
     FOR i = 0 TO LEN(sheets) - 1
         entries{"xl/worksheets/sheet" + STR$(i + 1) + ".xml"} = sheet_xml[i]
@@ -194,7 +248,7 @@ FUNC WorkbookRels$(n)
     RETURN out$ + "</Relationships>"
 ENDFUNC
 
-FUNC StylesXml$(formats)
+FUNC StylesXml$(formats, fills, xfs)
     DIM out$ = XML_HEAD + "<styleSheet" + Attr$("xmlns", NS_MAIN) + ">"
     DIM i = 0
     IF LEN(formats) > 0 THEN
@@ -208,24 +262,33 @@ FUNC StylesXml$(formats)
     out$ = out$ + "<font><sz val=" + CHR$(34) + "11" + CHR$(34) + "/><name val=" + CHR$(34) + "Calibri" + CHR$(34) + "/></font>"
     out$ = out$ + "<font><b/><sz val=" + CHR$(34) + "11" + CHR$(34) + "/><name val=" + CHR$(34) + "Calibri" + CHR$(34) + "/></font>"
     out$ = out$ + "</fonts>"
-    out$ = out$ + "<fills count=" + CHR$(34) + "2" + CHR$(34) + "><fill><patternFill patternType=" + CHR$(34) + "none" + CHR$(34) + "/></fill><fill><patternFill patternType=" + CHR$(34) + "gray125" + CHR$(34) + "/></fill></fills>"
+    out$ = out$ + "<fills" + Attr$("count", STR$(2 + LEN(fills))) + "><fill><patternFill patternType=" + CHR$(34) + "none" + CHR$(34) + "/></fill><fill><patternFill patternType=" + CHR$(34) + "gray125" + CHR$(34) + "/></fill>"
+    FOR i = 0 TO LEN(fills) - 1
+        out$ = out$ + "<fill><patternFill" + Attr$("patternType", "solid") + "><fgColor" + Attr$("rgb", fills[i]) + "/><bgColor" + Attr$("indexed", "64") + "/></patternFill></fill>"
+    NEXT i
+    out$ = out$ + "</fills>"
     out$ = out$ + "<borders count=" + CHR$(34) + "1" + CHR$(34) + "><border><left/><right/><top/><bottom/><diagonal/></border></borders>"
     out$ = out$ + "<cellStyleXfs count=" + CHR$(34) + "1" + CHR$(34) + "><xf numFmtId=" + CHR$(34) + "0" + CHR$(34) + " fontId=" + CHR$(34) + "0" + CHR$(34) + " fillId=" + CHR$(34) + "0" + CHR$(34) + " borderId=" + CHR$(34) + "0" + CHR$(34) + "/></cellStyleXfs>"
-    out$ = out$ + "<cellXfs" + Attr$("count", STR$(2 + LEN(formats))) + ">"
-    out$ = out$ + Xf$(0, 0)
-    out$ = out$ + Xf$(0, 1)
-    FOR i = 0 TO LEN(formats) - 1
-        out$ = out$ + Xf$(164 + i, 0)
+    out$ = out$ + "<cellXfs" + Attr$("count", STR$(LEN(xfs))) + ">"
+    FOR i = 0 TO LEN(xfs) - 1
+        DIM parts = SPLIT(xfs[i], ",")
+        out$ = out$ + Xf$(VAL(parts[0]), VAL(parts[1]), VAL(parts[2]))
     NEXT i
     out$ = out$ + "</cellXfs>"
     out$ = out$ + "<cellStyles count=" + CHR$(34) + "1" + CHR$(34) + "><cellStyle name=" + CHR$(34) + "Normal" + CHR$(34) + " xfId=" + CHR$(34) + "0" + CHR$(34) + " builtinId=" + CHR$(34) + "0" + CHR$(34) + "/></cellStyles>"
     RETURN out$ + "</styleSheet>"
 ENDFUNC
 
-FUNC Xf$(num_fmt, font)
-    DIM out$ = "<xf" + Attr$("numFmtId", STR$(num_fmt)) + Attr$("fontId", STR$(font)) + Attr$("fillId", "0") + Attr$("borderId", "0") + Attr$("xfId", "0")
+' fmt, fill: the entry in the registry, or -1 for none.
+FUNC Xf$(fmt, font, fill)
+    DIM num_fmt = 0
+    IF fmt >= 0 THEN num_fmt = 164 + fmt
+    DIM fill_id = 0
+    IF fill >= 0 THEN fill_id = 2 + fill
+    DIM out$ = "<xf" + Attr$("numFmtId", STR$(num_fmt)) + Attr$("fontId", STR$(font)) + Attr$("fillId", STR$(fill_id)) + Attr$("borderId", "0") + Attr$("xfId", "0")
     IF num_fmt > 0 THEN out$ = out$ + Attr$("applyNumberFormat", "1")
     IF font > 0 THEN out$ = out$ + Attr$("applyFont", "1")
+    IF fill_id > 0 THEN out$ = out$ + Attr$("applyFill", "1")
     RETURN out$ + "/>"
 ENDFUNC
 
@@ -238,14 +301,23 @@ FUNC SharedStrings$(strings)
     RETURN out$ + "</sst>"
 ENDFUNC
 
-' The style index of a column's number format, adding it on first use.
-FUNC FormatStyle(formats, code$)
+' The cellXfs index of a number format, a font and a fill, adding each
+' part and the record itself on first use.
+FUNC StyleIndex(formats, fills, xfs, code$, font, color$)
+    DIM fmt = -1
+    IF LEN(code$) > 0 THEN fmt = ListIndex(formats, code$)
+    DIM fill = -1
+    IF LEN(color$) > 0 THEN fill = ListIndex(fills, color$)
+    RETURN ListIndex(xfs, STR$(fmt) + "," + STR$(font) + "," + STR$(fill))
+ENDFUNC
+
+FUNC ListIndex(items, value$)
     DIM i = 0
-    FOR i = 0 TO LEN(formats) - 1
-        IF formats[i] = code$ THEN RETURN 2 + i
+    FOR i = 0 TO LEN(items) - 1
+        IF items[i] = value$ THEN RETURN i
     NEXT i
-    PUSH(formats, code$)
-    RETURN 2 + LEN(formats) - 1
+    PUSH(items, value$)
+    RETURN LEN(items) - 1
 ENDFUNC
 
 FUNC StringIndex(strings, string_index, text$)
@@ -255,14 +327,15 @@ FUNC StringIndex(strings, string_index, text$)
     RETURN LEN(strings) - 1
 ENDFUNC
 
-FUNC SheetXml$(s, strings, string_index, formats)
+FUNC SheetXml$(s, strings, string_index, formats, fills, xfs)
     DIM rows = s{"rows"}
     DIM columns = s{"columns"}
-    DIM col_style AS MAP
+    DIM cells = s{"cells"}
+    DIM col_format AS MAP
     DIM keys = MAP.KEYS(columns)
     DIM i = 0
     FOR i = 0 TO LEN(keys) - 1
-        IF MAP.EXISTS(columns{keys[i]}, "format") THEN col_style{keys[i]} = FormatStyle(formats, columns{keys[i]}{"format"})
+        IF MAP.EXISTS(columns{keys[i]}, "format") THEN col_format{keys[i]} = columns{keys[i]}{"format"}
     NEXT i
 
     DIM out$ = XML_HEAD + "<worksheet" + Attr$("xmlns", NS_MAIN) + Attr$("xmlns:r", NS_REL) + ">"
@@ -291,12 +364,20 @@ FUNC SheetXml$(s, strings, string_index, formats)
         DIM cells$ = ""
         DIM c = 0
         FOR c = 0 TO LEN(row) - 1
-            DIM style = 0
-            IF r = 0 ANDALSO s{"header"} THEN
-                style = 1
-            ELSEIF MAP.EXISTS(col_style, STR$(c + 1)) THEN
-                style = col_style{STR$(c + 1)}
+            DIM font = 0
+            IF r = 0 ANDALSO s{"header"} THEN font = 1
+            DIM code$ = ""
+            IF font = 0 ANDALSO MAP.EXISTS(col_format, STR$(c + 1)) THEN code$ = col_format{STR$(c + 1)}
+            DIM color$ = ""
+            DIM cell_key$ = STR$(r + 1) + "," + STR$(c + 1)
+            IF MAP.EXISTS(cells, cell_key$) THEN
+                DIM cell_spec = cells{cell_key$}
+                IF MAP.EXISTS(cell_spec, "fill") THEN color$ = cell_spec{"fill"}
+                IF MAP.EXISTS(cell_spec, "bold") ANDALSO cell_spec{"bold"} THEN font = 1
+                IF MAP.EXISTS(cell_spec, "format") THEN code$ = cell_spec{"format"}
             ENDIF
+            DIM style = 0
+            IF font > 0 OR LEN(code$) > 0 OR LEN(color$) > 0 THEN style = StyleIndex(formats, fills, xfs, code$, font, color$)
             cells$ = cells$ + Cell$(COL_LETTERS$(c + 1) + STR$(r + 1), row[c], style, strings, string_index)
         NEXT c
         out$ = out$ + "<row" + Attr$("r", STR$(r + 1)) + ">" + cells$ + "</row>"
@@ -306,7 +387,10 @@ ENDFUNC
 
 FUNC Cell$(ref$, v, style, strings, string_index)
     DIM t$ = TYPEOF(v)
-    IF t$ = "NONE" THEN RETURN ""
+    IF t$ = "NONE" THEN
+        IF style = 0 THEN RETURN ""
+        RETURN "<c" + Attr$("r", ref$) + Attr$("s", STR$(style)) + "/>"
+    ENDIF
     DIM open$ = "<c" + Attr$("r", ref$)
     IF style > 0 THEN open$ = open$ + Attr$("s", STR$(style))
     IF t$ = "STRING" THEN

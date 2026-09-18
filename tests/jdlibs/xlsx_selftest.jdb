@@ -11,6 +11,17 @@ FUNC Empty(wb)
     RETURN XLSX.WRITE(work$ + "/none.xlsx", wb)
 ENDFUNC
 
+FUNC CellStyle(xml$, ref$)
+    DIM at = INSTR(xml$, "<c r=" + CHR$(34) + ref$ + CHR$(34) + " s=" + CHR$(34))
+    IF at < 0 THEN RETURN -1
+    RETURN VAL(MID$(xml$, at + LEN(ref$) + 11))
+ENDFUNC
+
+FUNC BadRef(sheet)
+    XLSX.STYLE(sheet, "77", {"fill": "FFFFFF"})
+    RETURN 0
+ENDFUNC
+
 TESTKIT.SUITE("columns")
 TESTKIT.EQ(XLSX.COL_INDEX("A"), 1, "A is 1")
 TESTKIT.EQ(XLSX.COL_INDEX("Z"), 26, "Z is 26")
@@ -52,6 +63,28 @@ TESTKIT.ISTRUE(INSTR(sheet1$, "<sheetViews>") < INSTR(sheet1$, "<cols>") ANDALSO
 TESTKIT.ISTRUE(INSTR(parts{"xl/styles.xml"}, "formatCode=" + CHR$(34) + "#,##0.00" + CHR$(34)) >= 0, "the number format")
 TESTKIT.ISTRUE(INSTR(parts{"xl/sharedStrings.xml"}, "Bolt &lt;M6&gt;") >= 0, "strings are escaped")
 TESTKIT.THROWS(Empty@, XLSX.NEW(), "a workbook without sheets is refused")
+
+TESTKIT.SUITE("fills and bold")
+DIM shaded = XLSX.NEW()
+DIM plan = XLSX.SHEET(shaded, "Plan", [["Day", "Hours"], [1, 8], [2, 0], [3, 8]])
+XLSX.COLUMN(plan, "B", {"format": "0.0"})
+XLSX.STYLE(plan, "A3:B3", {"fill": "#FFC7CE"})
+XLSX.STYLE(plan, "A4:B4", {"fill": "DDEBF7", "bold": TRUE})
+XLSX.STYLE(plan, "B2", {"format": "0.000"})
+DIM shaded_path$ = work$ + "/shaded.xlsx"
+XLSX.WRITE(shaded_path$, shaded)
+DIM shaded_parts = ZIP.READ(shaded_path$)
+DIM styles$ = shaded_parts{"xl/styles.xml"}
+DIM plan$ = shaded_parts{"xl/worksheets/sheet1.xml"}
+TESTKIT.ISTRUE(INSTR(styles$, "<fills count=" + CHR$(34) + "4" + CHR$(34)) >= 0, "the two built-in fills and one per colour")
+TESTKIT.ISTRUE(INSTR(styles$, "<fgColor rgb=" + CHR$(34) + "FFFFC7CE" + CHR$(34)) >= 0, "a six digit colour gets its alpha byte")
+TESTKIT.ISTRUE(INSTR(styles$, "<fgColor rgb=" + CHR$(34) + "FFDDEBF7" + CHR$(34)) >= 0, "the second colour")
+TESTKIT.ISTRUE(INSTR(styles$, "fontId=" + CHR$(34) + "1" + CHR$(34) + " fillId=" + CHR$(34) + "3" + CHR$(34)) >= 0, "a record carries bold and a fill at once")
+TESTKIT.ISTRUE(INSTR(plan$, "<c r=" + CHR$(34) + "A3" + CHR$(34) + " s=") >= 0, "the shaded row is styled")
+TESTKIT.ISTRUE(INSTR(plan$, "<c r=" + CHR$(34) + "B3" + CHR$(34) + " s=") >= 0, "the fill reaches the formatted column too")
+TESTKIT.ISTRUE(INSTR(styles$, "formatCode=" + CHR$(34) + "0.000" + CHR$(34)) >= 0, "a cell format of its own")
+TESTKIT.ISTRUE(CellStyle(plan$, "B2") <> CellStyle(plan$, "B3"), "it beats the column format")
+TESTKIT.THROWS(BadRef@, plan, "a reference without a column is refused")
 
 TESTKIT.SUITE("reading back")
 TESTKIT.EQARRAY(XLSX.SHEETS(path$), ["Sales", "Notes"], "sheet names in order")
