@@ -5508,6 +5508,16 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         // tracking, args[i] decoded as f64 garbage (regression 2026-05-01).
         if (u == "OS.ARGS")
             string_array_vars.insert(stmt.var_name);
+        // CVDATE/CDATE over an array answers one ISO string per cell, so a
+        // cell reads back as a date rather than as the bits of its pointer.
+        // Only for an array argument - the scalar form is a plain string.
+        if ((u == "CVDATE" || u == "CDATE") && !stmt.expr->args.empty()) {
+            const Expr* a0 = stmt.expr->args[0].get();
+            bool arg_is_array = a0 && (a0->kind == ExprKind::ARRAY_LITERAL ||
+                (a0->kind == ExprKind::VARIABLE && lookup_var(a0->str_val) &&
+                 lookup_var(a0->str_val)->tag == JD_TAG_ARR));
+            if (arg_is_array) string_array_vars.insert(stmt.var_name);
+        }
         // DIR$(wildcard$, [extended_info]) - flat form is 1D string array;
         // extended_info=TRUE produces a 2D mixed-type matrix (filename
         // strings + size integers + type strings + dates). Without this
@@ -6533,6 +6543,16 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         }
         if (u == "OS.ARGS")
             string_array_vars.insert(stmt.var_name);
+        // CVDATE/CDATE over an array answers one ISO string per cell, so a
+        // cell reads back as a date rather than as the bits of its pointer.
+        // Only for an array argument - the scalar form is a plain string.
+        if ((u == "CVDATE" || u == "CDATE") && !stmt.expr->args.empty()) {
+            const Expr* a0 = stmt.expr->args[0].get();
+            bool arg_is_array = a0 && (a0->kind == ExprKind::ARRAY_LITERAL ||
+                (a0->kind == ExprKind::VARIABLE && lookup_var(a0->str_val) &&
+                 lookup_var(a0->str_val)->tag == JD_TAG_ARR));
+            if (arg_is_array) string_array_vars.insert(stmt.var_name);
+        }
         // Match groups and map values are arrays whose cells may be
         // strings, numbers or nested arrays; every read asks the cell.
         // UNPACK answers one cell per format code: numbers beside the

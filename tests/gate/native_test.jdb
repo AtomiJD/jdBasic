@@ -1637,6 +1637,63 @@ Assert(2886,TYPEOF(DATE.UTC(2026, 9, 1)) = "DATE")
 Assert(2887,TYPEOF(EOMONTH(CDATE("2026-09-01"))) = "DATE")
 
 
+' ── 69. DATES AT THE EDGES ───────────────────────────────────
+' What the date asserts above do not reach: summer time, an epoch before
+' 1970, a date through a FUNC, the cells CVDATE answers for an array, and
+' the two shapes the backends still read differently.
+PRINT "── Dates at the edges ──"
+
+FUNC dte_next(d)
+    RETURN DATEADD("D", 1, d)
+ENDFUNC
+
+' A day is a calendar day: the clock change must not shorten one.
+DIM dte_a = CDATE("2026-03-28 12:00:00")
+DIM dte_b = CDATE("2026-03-30 12:00:00")
+Assert(2890,DATEDIFF("D", dte_a, dte_b) = 2)
+Assert(2891,FORMAT_DATE(DATEADD("D", 2, dte_a), "%Y-%m-%d %H:%M") = "2026-03-30 12:00")
+DIM dte_span = DATERANGE(CDATE("2026-03-28"), CDATE("2026-03-31"), "D")
+Assert(2892,LEN(dte_span) = 4)
+Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
+
+' A negative epoch.
+DIM dte_old = CDATE("1966-07-30 15:00:00")
+Assert(2894,YEAR(dte_old) = 1966 AND MONTH(dte_old) = 7 AND DAY(dte_old) = 30)
+Assert(2895,DATEDIFF("D", dte_old, CDATE("1966-08-06 15:00:00")) = 7)
+
+' CVDATE over an array: one date per cell, each readable on its own.
+DIM dte_cv = CVDATE([0, 86400, 172800])
+Assert(2896,LEN(dte_cv) = 3)
+Assert(2897,FORMAT_DATE(dte_cv[1], "%Y-%m-%d") = "1970-01-02")
+Assert(2898,FORMAT_DATE(dte_cv[2], "%Y-%m-%d") = "1970-01-03")
+
+' A date handed to a FUNC and back.
+Assert(2899,FORMAT_DATE(dte_next(dte_a), "%Y-%m-%d") = "2026-03-29")
+
+' Pinned as the backends answer today, not as they should. The VM marks a
+' date with a subtype on the value, so it stays a date through a container
+' and a subtraction of two is a number. The native side keeps a date as an
+' ISO string with no tag, so a container hands back what it stored and a
+' difference of two is not a number at all (trakr #491, #493).
+DIM dte_map AS MAP
+dte_map{"when"} = dte_a
+DIM dte_lit = [dte_a, dte_b]
+DIM dte_cell = dte_lit[0]
+DIM dte_diff = dte_b - dte_a
+IF OS.FEATURE("INTERPRETER") THEN
+    Assert(2900,TYPEOF(dte_map{"when"}) = "DATE")
+    Assert(2901,TYPEOF(dte_cell) = "DATE")
+    Assert(2902,TYPEOF(dte_span[0]) = "DATE")
+    Assert(2903,CLNG(dte_diff) = 172800)
+ELSE
+    Assert(2900,TYPEOF(dte_map{"when"}) = "STRING")
+    Assert(2901,TYPEOF(dte_cell) = "FLOAT64")
+    Assert(2902,TYPEOF(dte_span[0]) = "FLOAT64")
+    Assert(2903,CLNG(dte_diff) = 0)
+ENDIF
+Assert(2904,FORMAT_DATE(dte_map{"when"}, "%Y-%m-%d") = "2026-03-28")
+
+
 ' ══════════════════════════════════════════════════════════════════
 ' RESULTS
 ' ══════════════════════════════════════════════════════════════════
