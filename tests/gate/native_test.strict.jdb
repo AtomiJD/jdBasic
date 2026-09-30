@@ -1664,11 +1664,13 @@ DIM dte_old = CDATE("1966-07-30 15:00:00")
 Assert(2894,YEAR(dte_old) = 1966 AND MONTH(dte_old) = 7 AND DAY(dte_old) = 30)
 Assert(2895,DATEDIFF("D", dte_old, CDATE("1966-08-06 15:00:00")) = 7)
 
-' CVDATE over an array: one date per cell, each readable on its own.
+' CVDATE over an array: one date per cell, each readable on its own and the
+' same date CVDATE gives for that epoch alone. An epoch is an instant, so its
+' calendar day depends on the local zone.
 DIM dte_cv = CVDATE([0, 86400, 172800])
 Assert(2896,LEN(dte_cv) = 3)
-Assert(2897,FORMAT_DATE(dte_cv[1], "%Y-%m-%d") = "1970-01-02")
-Assert(2898,FORMAT_DATE(dte_cv[2], "%Y-%m-%d") = "1970-01-03")
+Assert(2897,FORMAT_DATE(dte_cv[1], "%Y-%m-%d %H:%M") = FORMAT_DATE(CVDATE(86400), "%Y-%m-%d %H:%M"))
+Assert(2898,FORMAT_DATE(dte_cv[2], "%Y-%m-%d %H:%M") = FORMAT_DATE(CVDATE(172800), "%Y-%m-%d %H:%M"))
 
 ' A date handed to a FUNC and back.
 Assert(2899,FORMAT_DATE(dte_next(dte_a), "%Y-%m-%d") = "2026-03-29")
