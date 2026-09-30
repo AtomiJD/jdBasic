@@ -21,8 +21,12 @@ enum BuiltinFlags : uint8_t {
     BF_NONE = 0,
     BF_DATE = 1,    // answers a date
     BF_NO_VEC = 2,      // takes an array argument whole instead of per element
-    BF_READS_ARGS = 4,  // reads its string arguments without keeping them
-    BF_FRESH_STR = 8,   // answers a newly allocated string the caller owns
+    BF_READS_ARGS = 4,     // reads its string arguments without keeping them
+    BF_FRESH_STR = 8,      // answers a newly allocated string the caller owns
+    BF_KEEPS_ARGS = 16,    // stores its arguments in a container or channel
+    BF_TAGGED_CELLS = 32,  // answers an array whose cells differ in kind
+    BF_MAP_ARG1 = 64,      // takes a map as its first argument
+    BF_CONST = 128,        // a built-in constant, not assignable
 };
 
 struct BuiltinSig {
@@ -94,7 +98,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"AI.TOPK", BuiltinRet::Arr, BF_NO_VEC},
     {"ALL", BuiltinRet::I64, BF_NO_VEC},
     {"ANY", BuiltinRet::I64, BF_NO_VEC},
-    {"APPEND", BuiltinRet::Arr, BF_NO_VEC},
+    {"APPEND", BuiltinRet::Arr, BF_NO_VEC | BF_KEEPS_ARGS | BF_TAGGED_CELLS},
     {"ASC", BuiltinRet::Unknown, BF_READS_ARGS},
     {"AUDIO.CLOSE", BuiltinRet::Unknown, BF_NO_VEC},
     {"AUDIO.FREE", BuiltinRet::Unknown, BF_NO_VEC},
@@ -134,7 +138,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"CHAN.OPEN", BuiltinRet::Unknown, BF_NO_VEC},
     {"CHAN.RECV", BuiltinRet::Handle, BF_NO_VEC},
     {"CHAN.SELECT", BuiltinRet::Unknown, BF_NO_VEC},
-    {"CHAN.SEND", BuiltinRet::Unknown, BF_NO_VEC},
+    {"CHAN.SEND", BuiltinRet::Unknown, BF_NO_VEC | BF_KEEPS_ARGS},
     {"CHAN.TRY_RECV", BuiltinRet::Handle, BF_NO_VEC},
     {"CHR", BuiltinRet::Unknown, BF_FRESH_STR},
     {"CHR$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
@@ -181,12 +185,13 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"DET", BuiltinRet::Unknown, BF_NO_VEC},
     {"DIFF", BuiltinRet::Arr, BF_NO_VEC},
     {"DIR", BuiltinRet::Unknown, BF_NO_VEC},
-    {"DIR$", BuiltinRet::Arr, BF_NO_VEC},
+    {"DIR$", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"DISTANCE", BuiltinRet::Unknown, BF_NO_VEC},
     {"DOT", BuiltinRet::F64, BF_NO_VEC},
     {"DRAWCOLOR", BuiltinRet::Unknown, BF_NO_VEC},
-    {"DROP", BuiltinRet::Arr, BF_NO_VEC},
+    {"DROP", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"DROP_WHILE", BuiltinRet::Arr, BF_NO_VEC},
+    {"E", BuiltinRet::Unknown, BF_CONST},
     {"EIG", BuiltinRet::Handle, BF_NO_VEC},
     {"ELLIPSE", BuiltinRet::Unknown, BF_NO_VEC},
     {"ENDSWITH", BuiltinRet::Bool, BF_READS_ARGS},
@@ -415,7 +420,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"JOY.HAT", BuiltinRet::Unknown, BF_NO_VEC},
     {"JOY.NAME$", BuiltinRet::Unknown, BF_NO_VEC},
     {"JSON.PARSE$", BuiltinRet::Handle, BF_NO_VEC},
-    {"JSON.STRINGIFY$", BuiltinRet::Unknown, BF_NO_VEC},
+    {"JSON.STRINGIFY$", BuiltinRet::Unknown, BF_NO_VEC | BF_KEEPS_ARGS},
     {"KILL", BuiltinRet::Unknown, BF_NO_VEC},
     {"LCASE$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"LCM", BuiltinRet::Unknown, BF_NO_VEC},
@@ -432,15 +437,15 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"LOWER$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"LPAD$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"LTRIM$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
-    {"MAP.CLEAR", BuiltinRet::Unknown, BF_NO_VEC},
-    {"MAP.DELETE", BuiltinRet::Unknown, BF_NO_VEC},
+    {"MAP.CLEAR", BuiltinRet::Unknown, BF_NO_VEC | BF_MAP_ARG1},
+    {"MAP.DELETE", BuiltinRet::Unknown, BF_NO_VEC | BF_MAP_ARG1},
     {"MAP.EXISTS", BuiltinRet::Bool, BF_NO_VEC},
-    {"MAP.FROM", BuiltinRet::Handle, BF_NO_VEC},
-    {"MAP.ITEMS", BuiltinRet::Arr, BF_NO_VEC},
-    {"MAP.KEYS", BuiltinRet::Arr, BF_NO_VEC},
-    {"MAP.MERGE", BuiltinRet::Unknown, BF_NO_VEC},
-    {"MAP.SIZE", BuiltinRet::Unknown, BF_NO_VEC},
-    {"MAP.VALUES", BuiltinRet::Arr, BF_NO_VEC},
+    {"MAP.FROM", BuiltinRet::Handle, BF_NO_VEC | BF_KEEPS_ARGS},
+    {"MAP.ITEMS", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS | BF_MAP_ARG1},
+    {"MAP.KEYS", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS | BF_MAP_ARG1},
+    {"MAP.MERGE", BuiltinRet::Unknown, BF_NO_VEC | BF_KEEPS_ARGS},
+    {"MAP.SIZE", BuiltinRet::Unknown, BF_NO_VEC | BF_MAP_ARG1},
+    {"MAP.VALUES", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS | BF_MAP_ARG1},
     {"MAT4.IDENTITY", BuiltinRet::Handle, BF_NO_VEC},
     {"MAT4.LOOKAT", BuiltinRet::Handle, BF_NO_VEC},
     {"MAT4.MUL", BuiltinRet::Handle, BF_NO_VEC},
@@ -491,7 +496,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"OCT$", BuiltinRet::Unknown, BF_FRESH_STR},
     {"ONES", BuiltinRet::Arr, BF_NO_VEC},
     {"OPTION", BuiltinRet::Unknown, BF_NO_VEC},
-    {"OS.ARGS", BuiltinRet::Arr, BF_NO_VEC},
+    {"OS.ARGS", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"OS.EXEC", BuiltinRet::Handle, BF_NO_VEC},
     {"OS.FEATURE", BuiltinRet::Bool, BF_NO_VEC},
     {"OS.GETOS", BuiltinRet::Unknown, BF_NO_VEC},
@@ -513,13 +518,14 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"PATH.JOIN$", BuiltinRet::Unknown, BF_NO_VEC},
     {"PATH.NORMALIZE$", BuiltinRet::Unknown, BF_NO_VEC},
     {"PDF.TEXT$", BuiltinRet::Unknown, BF_NO_VEC},
+    {"PI", BuiltinRet::Unknown, BF_CONST},
     {"PLACE", BuiltinRet::Arr, BF_NO_VEC},
     {"PLOTRAW", BuiltinRet::Unknown, BF_NO_VEC},
     {"POP", BuiltinRet::Unknown, BF_NO_VEC},
     {"PRINT", BuiltinRet::Unknown, BF_READS_ARGS},
     {"PRODUCT", BuiltinRet::F64, BF_NO_VEC},
     {"PSET", BuiltinRet::Unknown, BF_NO_VEC},
-    {"PUSH", BuiltinRet::Unknown, BF_NO_VEC},
+    {"PUSH", BuiltinRet::Unknown, BF_NO_VEC | BF_KEEPS_ARGS},
     {"PWD", BuiltinRet::Unknown, BF_NO_VEC},
     {"PY.DIR$", BuiltinRet::Unknown, BF_NO_VEC},
     {"PY.EVAL", BuiltinRet::Handle, BF_NO_VEC},
@@ -534,15 +540,15 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"RECT", BuiltinRet::Unknown, BF_NO_VEC},
     {"RECUR", BuiltinRet::Unknown, BF_NO_VEC},
     {"REDUCE", BuiltinRet::F64, BF_NO_VEC},
-    {"REGEX.FINDALL", BuiltinRet::Arr, BF_NO_VEC},
-    {"REGEX.MATCH", BuiltinRet::Handle, BF_NO_VEC},
+    {"REGEX.FINDALL", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
+    {"REGEX.MATCH", BuiltinRet::Handle, BF_NO_VEC | BF_TAGGED_CELLS},
     {"REGEX.REPLACE", BuiltinRet::Unknown, BF_NO_VEC},
-    {"REGEX_MATCH", BuiltinRet::Arr, BF_NO_VEC},
+    {"REGEX_MATCH", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"REGEX_REPLACE$", BuiltinRet::Unknown, BF_NO_VEC},
     {"REPEAT$", BuiltinRet::Unknown, BF_FRESH_STR},
     {"REPLACE$", BuiltinRet::Unknown, BF_NO_VEC | BF_READS_ARGS | BF_FRESH_STR},
     {"RESHAPE", BuiltinRet::Arr, BF_NO_VEC},
-    {"REVERSE", BuiltinRet::Arr, BF_NO_VEC},
+    {"REVERSE", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"REVERSE$", BuiltinRet::Unknown, BF_NO_VEC | BF_READS_ARGS | BF_FRESH_STR},
     {"RIGHT", BuiltinRet::Unknown, BF_FRESH_STR},
     {"RIGHT$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
@@ -571,9 +577,9 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SHIFT", BuiltinRet::Arr, BF_NO_VEC},
     {"SHUFFLE", BuiltinRet::Arr, BF_NO_VEC},
     {"SLEEP", BuiltinRet::Unknown, BF_NO_VEC},
-    {"SLICE", BuiltinRet::Arr, BF_NO_VEC},
+    {"SLICE", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"SOLVE", BuiltinRet::Arr, BF_NO_VEC},
-    {"SORT", BuiltinRet::Unknown, BF_NO_VEC},
+    {"SORT", BuiltinRet::Unknown, BF_NO_VEC | BF_TAGGED_CELLS},
     {"SOUND.BITCRUSH", BuiltinRet::Unknown, BF_NO_VEC},
     {"SOUND.BPM", BuiltinRet::Unknown, BF_NO_VEC},
     {"SOUND.COMPRESSOR", BuiltinRet::Unknown, BF_NO_VEC},
@@ -608,7 +614,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SOUND.UNISON", BuiltinRet::Unknown, BF_NO_VEC},
     {"SOUND.VOICE", BuiltinRet::Unknown, BF_NO_VEC},
     {"SPACE$", BuiltinRet::Unknown, BF_FRESH_STR},
-    {"SPLIT", BuiltinRet::Arr, BF_NO_VEC},
+    {"SPLIT", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"SPRITE.ALPHA", BuiltinRet::Unknown, BF_NO_VEC},
     {"SPRITE.ANIM", BuiltinRet::Unknown, BF_NO_VEC},
     {"SPRITE.COLLISION", BuiltinRet::Bool, BF_NO_VEC},
@@ -669,7 +675,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"SYS.POKE", BuiltinRet::Unknown, BF_NO_VEC},
     {"SYS.POKEB", BuiltinRet::Unknown, BF_NO_VEC},
     {"SYS.POKEW", BuiltinRet::Unknown, BF_NO_VEC},
-    {"TAKE", BuiltinRet::Arr, BF_NO_VEC},
+    {"TAKE", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"TAKE_WHILE", BuiltinRet::Arr, BF_NO_VEC},
     {"TALLY", BuiltinRet::Arr, BF_NO_VEC},
     {"TENSOR", BuiltinRet::Unknown, BF_NO_VEC},
@@ -784,13 +790,16 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"TXTWRITER", BuiltinRet::Unknown, BF_NO_VEC},
     {"TYPEOF", BuiltinRet::Unknown, BF_NO_VEC | BF_READS_ARGS},
     {"UCASE$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
-    {"UNIQUE", BuiltinRet::Arr, BF_NO_VEC},
-    {"UNPACK", BuiltinRet::Arr, BF_NO_VEC},
+    {"UNIQUE", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
+    {"UNPACK", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"UNREACT", BuiltinRet::Unknown, BF_NO_VEC},
     {"UPPER$", BuiltinRet::Unknown, BF_READS_ARGS | BF_FRESH_STR},
     {"VAL", BuiltinRet::Unknown, BF_READS_ARGS},
     {"VARIANCE", BuiltinRet::F64, BF_NO_VEC},
     {"VARS", BuiltinRet::Unknown, BF_NO_VEC},
+    {"VBCRLF", BuiltinRet::Unknown, BF_CONST},
+    {"VBNEWLINE", BuiltinRet::Unknown, BF_CONST},
+    {"VBTAB", BuiltinRet::Unknown, BF_CONST},
     {"WAITKEY$", BuiltinRet::Unknown, BF_NO_VEC},
     {"WAV.INFO", BuiltinRet::Handle, BF_NONE},
     {"WAV.READ", BuiltinRet::Handle, BF_NONE},
@@ -802,7 +811,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"YIELD", BuiltinRet::Unknown, BF_NO_VEC},
     {"ZEROS", BuiltinRet::Arr, BF_NO_VEC},
     {"ZIP", BuiltinRet::Arr, BF_NO_VEC},
-    {"ZIP.LIST", BuiltinRet::Arr, BF_NO_VEC},
+    {"ZIP.LIST", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"ZIP.READ", BuiltinRet::Handle, BF_NO_VEC},
     {"ZIP.WRITE", BuiltinRet::Unknown, BF_NO_VEC},
     {"__EVENT_ON", BuiltinRet::Unknown, BF_NO_VEC},
@@ -856,6 +865,11 @@ inline BuiltinRet builtin_ret(std::string_view name) {
 
 inline bool builtin_is(std::string_view name, BuiltinRet ret) {
     return builtin_ret(name) == ret;
+}
+
+inline bool builtin_has(std::string_view name, BuiltinFlags flag) {
+    const BuiltinSig* s = builtin_sig(name);
+    return s && (s->flags & flag);
 }
 
 inline bool builtin_returns_date(std::string_view name) {

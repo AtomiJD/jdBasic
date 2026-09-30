@@ -1325,14 +1325,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             // untyped slot would carry a string cell as bits.
                             std::function<bool(const Expr&)> param_handed_on =
                                 [&](const Expr& x) -> bool {
-                                // A user function or a container builtin keeps
-                                // what it is given; a numeric builtin reads it.
-                                static const std::unordered_set<std::string> keepers = {
-                                    "APPEND", "PUSH", "INSERT", "JSON.STRINGIFY$",
-                                    "MAP.MERGE", "MAP.FROM", "CHAN.SEND"
-                                };
                                 if (x.kind == ExprKind::CALL &&
-                                    (decls.count(x.func_name) || keepers.count(x.func_name)))
+                                    (decls.count(x.func_name) ||
+                                     builtin_has(x.func_name, BF_KEEPS_ARGS)))
                                     for (auto& arg : x.args)
                                         if (arg && arg->kind == ExprKind::VARIABLE &&
                                             arg->str_val == pname) return true;
@@ -5031,16 +5026,9 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         }
     }
 
-    // Protect built-in constants: assignments to PI/E/VBNEWLINE/VBCRLF/VBTAB
-    // (case-insensitive) throw at runtime (matches interpreter for PI/E) so
-    // TRY/CATCH can observe them.
+    // Assigning to a built-in constant raises a runtime error TRY/CATCH can catch.
     {
-        static const std::unordered_set<std::string> kBuiltinConsts = {
-            "PI", "E", "VBNEWLINE", "VBCRLF", "VBTAB"
-        };
-        std::string up = stmt.var_name;
-        std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-        if (kBuiltinConsts.count(up)) {
+        if (builtin_has(stmt.var_name, BF_CONST)) {
             std::string msg = "Cannot assign to constant '" + stmt.var_name + "'";
             LLVMValueRef msg_str = LLVMBuildGlobalStringPtr(builder, msg.c_str(), ".const_err");
             auto& es = runtime_funcs["__err_set"];
@@ -5952,17 +5940,9 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
         (stmt.expr && stmt.expr->kind == ExprKind::MAP_LITERAL))
         map_scalar_vars.insert(stmt.var_name);
 
-    // Built-in constants are not assignable - `DIM PI` / `DIM VBTAB` (case-
-    // insensitive) is a compile error. The strict compiler protects the whole
-    // set (PI, E, VBNEWLINE, VBCRLF, VBTAB) even though the loose interpreter
-    // only guards PI/E - shadowing any of them is a footgun.
+    // DIM of a built-in constant is a compile error.
     {
-        static const std::unordered_set<std::string> kBuiltinConsts = {
-            "PI", "E", "VBNEWLINE", "VBCRLF", "VBTAB"
-        };
-        std::string cup = stmt.var_name;
-        std::transform(cup.begin(), cup.end(), cup.begin(), ::toupper);
-        if (kBuiltinConsts.count(cup)) {
+        if (builtin_has(stmt.var_name, BF_CONST)) {
             report_error(stmt.source_file(), stmt.line,
                 "Cannot DIM built-in constant '" + stmt.var_name +
                 "', choose another name");
@@ -9284,13 +9264,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             if (expr.left && expr.left->kind == ExprKind::CALL) {
                 std::string bu = expr.left->func_name;
                 std::transform(bu.begin(), bu.end(), bu.begin(), ::toupper);
-                static const std::unordered_set<std::string> tagged_cell_calls = {
-                    "SPLIT", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "UNPACK",
-                    "REGEX.FINDALL", "REGEX.MATCH", "REGEX_FINDALL", "REGEX_MATCH",
-                    "OS.ARGS", "ZIP.LIST", "DIR$", "LINES", "WORDS", "CHARS",
-                    "UNIQUE", "REVERSE", "SORT", "TAKE", "DROP", "SLICE", "APPEND"
-                };
-                if (tagged_cell_calls.count(bu)) {
+                if (builtin_has(bu, BF_TAGGED_CELLS)) {
                     auto& gtg = runtime_funcs["__arr_get_tagged"];
                     LLVMValueRef out_tag = scratch_alloca(i32_type, "call_gt_tag");
                     LLVMValueRef getargs[] = { arr_ptr, idx, out_tag };
@@ -12887,10 +12861,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         // A map handed to an untyped parameter lands in an f64 slot with the
         // pointer bit-punned into it, as MAP.EXISTS and key reads already decode.
-        static const std::unordered_set<std::string> map_first_arg = {
-            "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE", "MAP.DELETE", "MAP.CLEAR"
-        };
-        if (map_first_arg.count(upper) && !arg_cache.empty() &&
+        if (builtin_has(upper, BF_MAP_ARG1) && !arg_cache.empty() &&
             expr.args[0] && expr.args[0]->kind == ExprKind::VARIABLE &&
             arg_cache[0].tag == JD_TAG_F64) {
             arg_cache[0].val = LLVMBuildIntToPtr(builder, pun_f64_to_i64(arg_cache[0].val),

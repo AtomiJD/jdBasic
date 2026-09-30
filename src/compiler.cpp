@@ -1,4 +1,5 @@
 #include "compiler.h"
+#include "builtin_sigs.h"
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
@@ -183,22 +184,11 @@ void Compiler::resolve_labels() {
 // ── Pre-scan: collect global variable names ─────────────────────
 
 void Compiler::collect_globals(const std::vector<StmtPtr>& program) {
-    // VM-managed globals: set by the runtime in TRY/CATCH and other built-ins.
-    // These never appear in user assignments, so without seeding them here,
-    // the compiler would treat e.g. ERRMSG$ as an uninitialised local inside
-    // a SUB and `PRINT ERRMSG$` would print NONE instead of the error text.
-    //
-    // Built-in math/string constants (PI/E/INF/NAN/VBNEWLINE/VBCRLF/VBTAB)
-    // are registered the same way - register_const(name) in vm.cpp puts
-    // them in globals. Without listing them here, a `SUB { ... PI ... }` in
-    // a module emits LOAD_VAR (slot never stored) and reads NONE. Top-level
-    // works because main-scope LOAD always uses LOAD_GLOBAL.
-    static const char* k_vm_globals[] = {
-        "ERR", "ERL", "ERRMSG$", "STACK$",
-        "PI", "E",
-        "VBNEWLINE", "VBCRLF", "VBTAB"
-    };
+    // Globals the VM sets itself: the error state and the built-in constants.
+    static const char* k_vm_globals[] = { "ERR", "ERL", "ERRMSG$", "STACK$" };
     for (auto* name : k_vm_globals) known_globals.insert(name);
+    for (const auto& sig : kBuiltinSigs)
+        if (sig.flags & BF_CONST) known_globals.insert(sig.name);
 
     for (auto& stmt : program) {
         if (stmt->kind != StmtKind::SUB && stmt->kind != StmtKind::FUNCTION) {
