@@ -1,0 +1,48 @@
+' A VM object returned from a FUNC reaches the caller intact, in both backends.
+
+DIM fails = 0
+
+SUB CHKS(what$, got$, want$)
+    IF got$ <> want$ THEN
+        PRINT "FAIL: "; what$; " = "; got$; ", expected "; want$
+        fails = fails + 1
+    ENDIF
+ENDSUB
+
+FUNC ViaLocal(c AS INTEGER)
+    DIM msg = CHAN.RECV(c)
+    RETURN msg
+ENDFUNC
+
+FUNC Direct(c AS INTEGER)
+    RETURN CHAN.RECV(c)
+ENDFUNC
+
+DIM ch = CHAN.OPEN(8)
+
+CHAN.SEND(ch, "hello")
+DIM s = ViaLocal(ch)
+CHKS("string through a local", TYPEOF(s), "STRING")
+CHKS("string value", s, "hello")
+
+CHAN.SEND(ch, [1, 2, 3])
+DIM a = ViaLocal(ch)
+CHKS("array through a local", TYPEOF(a), "ARRAY")
+CHKS("array length", STR$(LEN(a)), "3")
+
+CHAN.SEND(ch, {"k": "v"})
+DIM m = Direct(ch)
+CHKS("map returned directly", TYPEOF(m), "OBJECT")
+CHKS("map field", m{"k"}, "v")
+
+CHAN.SEND(ch, "direct")
+DIM d = Direct(ch)
+CHKS("string returned directly", d, "direct")
+
+CHAN.CLOSE(ch)
+
+IF fails = 0 THEN
+    PRINT "handle_through_func: ALL TESTS PASSED!"
+ELSE
+    PRINT "handle_through_func: "; fails; " failed"
+ENDIF

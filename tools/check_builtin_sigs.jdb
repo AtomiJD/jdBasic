@@ -1,0 +1,21 @@
+' Checks that every name in src/builtin_sigs.h is a documented builtin in
+' help.txt and listed once. Run from the repository root; exits 1 on a finding.
+
+DIM q$ = CHR$(34)
+DIM sigs$ = TXTREADER$("src/builtin_sigs.h")
+DIM help$ = TXTREADER$("help.txt")
+
+DIM names = FLATTEN(REGEX.FINDALL("\{" + q$ + "([^" + q$ + "]+)" + q$ + ", BuiltinRet", sigs$))
+DIM undocumented = FILTER(LAMBDA n -> INSTR(help$, "[" + n + "]") < 0, names)
+DIM dupes = LEN(names) - LEN(UNIQUE(names))
+
+FOR EACH n IN undocumented
+    PRINT "not a documented builtin: "; n
+NEXT
+IF dupes > 0 THEN PRINT "listed more than once: "; dupes; " name(s)"
+
+IF LEN(undocumented) = 0 AND dupes = 0 THEN
+    PRINT "builtin_sigs: "; LEN(names); " names, all documented"
+ELSE
+    END 1
+ENDIF

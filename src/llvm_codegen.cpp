@@ -2,6 +2,7 @@
 #include <limits>
 #include "llvm_codegen.h"
 #include "jdb_tags.h"
+#include "builtin_sigs.h"
 #include "llvm-c/Core.h"
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
@@ -22,75 +23,6 @@
 #include <cstring>
 
 namespace {
-// Canonical set of builtins that return an ARRAY through the VM bridge (i.e.
-// they have no dedicated native runtime_func and fall through to
-// __jdrt_call_typed_*). This is the single source of truth: the bridge
-// dispatch routes these to __jdrt_call_typed_arr, and every DIM/return-type
-// inference path unions this set so a bridge array returner is array-typed
-// everywhere. Adding a name here fixes both the bridge return shape AND
-// inference at once - no more drift between the (formerly four) parallel lists.
-const std::unordered_set<std::string> kBridgeArrayReturners = {
-    "SPLIT", "KEYS", "VALUES", "SORTBY",
-    "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
-    "OS.LIST", "OS.ARGS",
-    "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
-    "LINES", "WORDS", "CHARS", "UNPACK",
-    "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
-    "GFX.HSV_RGB", "GFX.TEXTSIZE",
-    "SPRITE.COLLISIONS",
-    "CHUNK", "ENUMERATE", "TAKE_WHILE", "DROP_WHILE",
-    "DIR$", "ZIP.LIST",
-    // APL-style array primitives that lack a dedicated native runtime function.
-    "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
-    "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
-    "FFT", "IFFT",
-    "XSORT", "TAKE", "DROP",
-    "IOTA", "CUMSUM", "CUMPROD", "SCAN", "FLATTEN", "RANGE",
-    "REVERSE", "UNIQUE", "SHUFFLE", "GRADE", "ARGMAX",
-    "NORMALIZE", "DIFF", "APPEND", "HISTEDGES", "RNG.FILL",
-    "DATERANGE", "TALLY",
-    "TILED.LAYERS", "FILE.LIST",
-    "CSVREADER", "CSVHEADER",
-    "SQL.TABLE", "SQL.COLUMNS",
-    // Audio / tilemap / GUI / AI array returners (audit 2026-06-10): each is
-    // register_native-only (no native runtime_func) and returns a flat or
-    // nested array, so it fell through to the bridge and collapsed to f64=0
-    // under -c. The AI.* entries are flat/nested (id/score/embedding/token)
-    // arrays; the array-of-map AI returners (RAG_SEARCH/GET_HISTORY/...) need
-    // per-cell map marshalling and are intentionally left out for now.
-    "SOUND.RENDER", "SOUND.GET_WAVE", "SOUND.GET_BUS_WAVE",
-    "TILEMAP.SIZE", "GUI.ITEM_RECT",
-    "AI.LIST", "AI.TOPK", "AI.EMBED", "AI.EMBED_LLM", "AI.TOKENIZE",
-    "MON.SCOPE",
-};
-
-// The builtins that answer a date. The native runtime keeps a date as an ISO
-// string, so nothing about the value itself says what it is - TYPEOF reads
-// the name of the call that made it.
-inline bool is_date_returning_call(const std::string& upper_name) {
-    return upper_name == "CVDATE" || upper_name == "CDATE" ||
-           upper_name == "DATEADD" || upper_name == "NOW" ||
-           upper_name == "DATE.UTC" || upper_name == "EOMONTH";
-}
-
-// Array-returning builtins that DO have a native runtime binding, plus the
-// APL primitives the bridge answers. Read wherever a local or a return value
-// has to be typed from the call that produced it.
-const std::unordered_set<std::string> kArrayReturningCalls = {
-    "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-    "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
-    "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
-    "FFT", "IFFT",
-    "XSORT", "DATERANGE", "TALLY", "SCAN", "CUMSUM", "CUMPROD",
-};
-
-// Bridge builtins that return a BOOLEAN. The bridge hands every non-string,
-// non-array, non-object result back through __jdrt_call_typed_f64, which
-// flattens TRUE to the double 1.0 - so without an entry here `PRINT ok`
-// prints 1 instead of TRUE and a `= TRUE` comparison against a declared
-// BOOLEAN mismatches. Same single-source-of-truth rule as the array set:
-// the dispatch and the inference paths both read this.
 // What jdrt_val_kind answers. Their own numbering rather than ValueType's, so
 // reordering an interpreter enum cannot silently change what an already
 // compiled program believes about a value. Keep in step with vm_bridge.cpp.
@@ -100,38 +32,6 @@ constexpr int kValKindNumber = 2;
 constexpr int kValKindString = 3;
 constexpr int kValKindArray  = 4;
 constexpr int kValKindMap    = 5;
-
-// Bridged builtins whose every return path is a bool. Without an entry the
-// call takes the f64 fallback, so TRUE arrives as the number 1 - it compares
-// and branches correctly, it just prints and STRICT-types wrong. Only
-// builtins that reach the bridge belong here: anything llvm_codegen compiles
-// to a direct runtime call carries its tag in the reg() table instead.
-const std::unordered_set<std::string> kBridgeBoolReturners = {
-    "WAV.WRITE", "WAV.RECSTART",
-    "FX.ADD", "FX.SPLIT", "FX.MIX", "FX.SET",
-    "MON.START", "MON.RECSTART", "MON.RUNNING",
-    "SQL.CLOSE",
-    "PY.SET",
-    "CHAN.IS_CLOSED", "CHAN.IS_EOF", "CHAN.IS_TIMEOUT",
-    "FILE.AT_EOF",
-    "THREAD.ISDONE",
-    "OS.FEATURE",
-    "MAP.EXISTS", "FILE.EXISTS", "STARTSWITH", "ENDSWITH",
-    "MIDI.SEND",
-    "GFX.KEYSTATE", "GFX.MOUSEBUTTON", "MOUSEB", "JOY.BUTTON",
-    "SPRITE.COLLISION", "SPRITE.ON_GROUND", "SPRITE.PLAYING",
-    "TILED.LOAD", "TILED.COLLIDES", "TILEMAP.COLLIDES",
-    "FORM.DOEVENTS",
-    "GUI.BEGIN", "GUI.BEGIN_MAIN_MENU_BAR", "GUI.BEGIN_MENU",
-    "GUI.BEGIN_MENU_BAR", "GUI.BEGIN_POPUP", "GUI.BEGIN_POPUP_MODAL",
-    "GUI.BEGIN_TABLE", "GUI.BEGIN_TAB_BAR", "GUI.BEGIN_TAB_ITEM",
-    "GUI.BUTTON", "GUI.CHECKBOX", "GUI.COLLAPSING_HEADER", "GUI.COLOR",
-    "GUI.IMAGE", "GUI.ITEM_DEACTIVATED_AFTER_EDIT", "GUI.MENU_ITEM",
-    "GUI.SELECTABLE", "GUI.TABLE_NEXT_COLUMN", "GUI.TABLE_SET_COLUMN_INDEX",
-    "GUI.TREE_NODE",
-    "TUI.BUTTON", "TUI.MENUITEM", "TUI.MODAL_BEGIN", "TUI.QUIT",
-    "TUI.SELECTABLE", "TUI.SUBMENU_BEGIN", "TUI.TAB_BEGIN",
-};
 } // namespace
 
 
@@ -171,18 +71,8 @@ std::string LLVMCodegen::dim_funcref_name(const TypedValue& tv) {
 
 // LLVM slot type a parameter of the given JdTag is passed in: ptr-shaped tags
 // take i8*, integer-shaped ones i64, everything else f64.
-// Builtins whose result is a VM object reached through a handle.
 static bool is_handle_returner(const std::string& fn_name) {
-    static const std::unordered_set<std::string> names = {
-        "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-        "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
-        "ZIP.READ", "HTTP.REQUEST", "FORM.GET",
-        "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-        "MON.DEVICES", "NET.RECVFROM"
-    };
-    std::string u = fn_name;
-    std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-    return names.count(u) != 0;
+    return builtin_is(fn_name, BuiltinRet::Handle);
 }
 
 LLVMTypeRef LLVMCodegen::param_slot_type(int tag) const {
@@ -1116,26 +1006,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (fit->second.is_async) return JD_TAG_I64;
                 return fit->second.return_tag;
             }
-            // Names like ZEROS/IOTA/RANGE/SHIFT/OUTER etc. are array-returners
-            // known to the static native whitelist. ZEROS/ONES/LINSPACE etc.
-            // are kept here; everything that crosses the VM bridge is unioned
-            // in via kBridgeArrayReturners below (single source of truth).
-            static const std::unordered_set<std::string> arr_fns = {
-                "ZEROS", "ONES", "IOTA", "RANGE", "LINSPACE",
-                "TAKE", "DROP", "UNIQUE", "REVERSE", "FLATTEN", "SHUFFLE",
-                "APPEND", "DIFF", "CUMSUM", "CUMPROD", "GRADE",
-                "SHIFT", "OUTER", "ROTATE", "INVERT", "CONVOLVE", "PLACE",
-                "MATMUL", "RESHAPE", "SLICE", "STACK", "MVLET", "MVINS",
-                "ZIP", "TRANSPOSE", "SOLVE", "HISTOGRAM", "INTEGRATE",
-                "FFT", "IFFT",
-                "XSORT", "SPLIT", "LINES", "WORDS", "CHARS",
-                "KEYS", "VALUES", "CHUNK", "ENUMERATE",
-                "REGEX_FINDALL", "REGEX.FINDALL",
-                "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
-                "DATERANGE", "TALLY"
-            };
-            if (arr_fns.count(e.func_name) ||
-                kBridgeArrayReturners.count(e.func_name)) return JD_TAG_ARR;
+            if (builtin_is(e.func_name, BuiltinRet::Arr)) return JD_TAG_ARR;
         }
         return JD_TAG_F64;
     };
@@ -1566,16 +1437,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 else if (s.expr->kind == ExprKind::ARRAY_LITERAL) k = JD_TAG_ARR;
                 else if (s.expr->kind == ExprKind::LITERAL_STRING && !s.expr->is_funcref_lit) k = JD_TAG_STR;
                 else if (s.expr->kind == ExprKind::CALL) {
-                    static const std::unordered_set<std::string> handle_returners = {
-                        "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                        "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
-                        "ZIP.READ", "HTTP.REQUEST", "FORM.GET",
-                        "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-                        "MON.DEVICES", "NET.RECVFROM"
-                    };
-                    std::string cu = s.expr->func_name;
-                    std::transform(cu.begin(), cu.end(), cu.begin(), ::toupper);
-                    if (handle_returners.count(cu)) k = JD_TAG_VM_HANDLE;
+                    if (is_handle_returner(s.expr->func_name)) k = JD_TAG_VM_HANDLE;
                     else {
                         int t = infer_expr_tag(*s.expr);
                         if (t == JD_TAG_ARR || t == JD_TAG_NATIVE_MAP ||
@@ -1901,21 +1763,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     (bit->second.return_tag == JD_TAG_ARR ||
                      bit->second.return_tag == JD_TAG_NATIVE_MAP))
                     local_kinds[s.var_name] = bit->second.return_tag;
-                else if (kArrayReturningCalls.count(s.expr->func_name) ||
-                         kBridgeArrayReturners.count(s.expr->func_name))
+                else if (builtin_is(s.expr->func_name, BuiltinRet::Arr))
                     local_kinds[s.var_name] = JD_TAG_ARR;
                 // A VM object from a bridge builtin keeps its handle, so a
                 // RETURN of the local hands the object on rather than a number.
-                static const std::unordered_set<std::string> handle_calls = {
-                    "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                    "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
-                    "ZIP.READ", "HTTP.REQUEST", "FORM.GET",
-                    "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-                    "MON.DEVICES", "NET.RECVFROM"
-                };
-                std::string cu = s.expr->func_name;
-                std::transform(cu.begin(), cu.end(), cu.begin(), ::toupper);
-                if (handle_calls.count(cu)) local_kinds[s.var_name] = JD_TAG_VM_HANDLE;
+                if (is_handle_returner(s.expr->func_name))
+                    local_kinds[s.var_name] = JD_TAG_VM_HANDLE;
             } else if (s.expr->kind == ExprKind::VARIABLE) {
                 auto lit = local_kinds.find(s.expr->str_val);
                 if (lit != local_kinds.end()) local_kinds[s.var_name] = lit->second;
@@ -1966,10 +1819,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     (rit->second.return_tag == JD_TAG_ARR ||
                      rit->second.return_tag == JD_TAG_NATIVE_MAP))
                     return rit->second.return_tag;
-                // VM-bridge array returners (no native runtime, but known
-                // to produce arrays): SHIFT, OUTER, MATMUL, etc.
-                if (kArrayReturningCalls.count(e.func_name) ||
-                    kBridgeArrayReturners.count(e.func_name)) return JD_TAG_ARR;
+                if (builtin_is(e.func_name, BuiltinRet::Arr)) return JD_TAG_ARR;
             }
         }
         int kind = 0;
@@ -1997,6 +1847,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     local_kinds[decl.stmt->params()[pi].name] = decl.tags[pi];
             }
             int k = classify_return(*decl.stmt, local_kinds);
+            if (k == JD_TAG_VM_HANDLE && decl.is_async) continue;
             if (k == JD_TAG_ARR || k == JD_TAG_NATIVE_MAP || k == JD_TAG_VM_HANDLE) {
                 decl.return_tag = k;
                 rt_changed = true;
@@ -2734,9 +2585,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (e.kind == ExprKind::CALL) {
                 auto cit = decls.find(e.func_name);
                 if (cit != decls.end()) return cit->second.return_tag == JD_TAG_BOOL;
-                std::string u = e.func_name;
-                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
-                return kBridgeBoolReturners.count(u) > 0;
+                return builtin_is(e.func_name, BuiltinRet::Bool);
             }
             if (e.kind != ExprKind::BINARY) return false;
             switch (e.op) {
@@ -2810,7 +2659,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     {
                         std::string up = e.func_name;
                         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-                        if (kBridgeArrayReturners.count(up)) return JD_TAG_ARR;
+                        if (builtin_is(up, BuiltinRet::Arr)) return JD_TAG_ARR;
                         // A builtin with its own native binding says what it
                         // answers in the registration table: ZEROS, ONES and
                         // LINSPACE hand back an array, and a FUNC returning
@@ -3952,77 +3801,15 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                                 return JD_TAG_ARR;
                             }
                         }
-                        // Known array-returning functions (sync with bridge)
-                        static const std::unordered_set<std::string> arr_returners = {
-                            "SQL.TABLE", "SQL.COLUMNS",
-                            "SPLIT", "KEYS", "VALUES", "SORTBY", "GROUPBY",
-                            "REGEX.FINDALL", "REGEX_MATCH", "REGEX_FINDALL",
-                            "OS.LIST", "OS.ARGS",
-                            "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS",
-                            "LINES", "WORDS", "CHARS", "UNPACK",
-                            "TILED.SIZE", "TILED.TILE_SIZE", "TILED.LAYERS$",
-                            "GFX.HSV_RGB", "GFX.TEXTSIZE", "SPRITE.COLLISIONS",
-                            "DIR$", "SCAN", "CUMSUM", "CUMPROD", "ZIP.LIST"
-                        };
-                        if (arr_returners.count(upper) ||
-                            kBridgeArrayReturners.count(upper)) return JD_TAG_ARR;
-                        if (kBridgeBoolReturners.count(upper)) return JD_TAG_BOOL;
-                        static const std::unordered_set<std::string> scalar_reducers = {
-                            "SUM","PRODUCT","MIN","MAX","MEAN","STDEV","MEDIAN",
-                            "VARIANCE","DOT","CROSS","REDUCE"
-                        };
-                        if (scalar_reducers.count(upper)) return JD_TAG_F64;
-                        static const std::unordered_set<std::string> int_reducers = {
-                            "LEN","COUNT","ANY","ALL","INDEXOF"
-                        };
-                        if (int_reducers.count(upper)) return JD_TAG_I64;
-                        // TUI selection widgets return an i64 index / 0-1 flag.
-                        // Without their true return type, `sel = TUI.MENU(...)`
-                        // infers -1 (unknown) and poisons the assigned global's
-                        // slot to array, so STR$(sel) / arr[sel] read garbage.
-                        static const std::unordered_set<std::string> tui_int_returners = {
-                            "TUI.MENU", "TUI.RADIO", "TUI.DROPDOWN", "TUI.CHECKBOX"
-                        };
-                        if (tui_int_returners.count(upper)) return JD_TAG_I64;
-                        static const std::unordered_set<std::string> tui_f64_returners = {
-                            "TUI.SLIDER", "TUI.SPINNER"
-                        };
-                        if (tui_f64_returners.count(upper)) return JD_TAG_F64;
-                        // VM-Value-handle returners (sync with bridge).
-                        // TILED.OBJECTS returns an array of maps - the
-                        // flat-JdbArray path can't carry OBJECT elements,
-                        // so it goes through the VM-handle path instead.
-                        static const std::unordered_set<std::string> obj_returners = {
-                            "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                            "MAP.FROM", "MAP.COPY", "FILE.STAT", "DATE.PARTS",
-                            "ZIP.READ",
-                            "HTTP.REQUEST",
-                            // FORM.GET's result type depends on the property
-                            // (TEXT is a string, CHECKED a bool, SELINDEX a
-                            // number) - only the VM-handle path keeps the tag.
-                            "FORM.GET",
-                            // REGEX.MATCH answers the captured groups when the
-                            // pattern has any and a truth value when it has
-                            // none, so the same applies.
-                            "REGEX.MATCH", "REGEX_MATCH",
-                            "SVD", "QR", "EIG",
-                            // MAT4.* returns a TENSOR Value; flat-array path
-                            // can't carry the shape, so route through VM handle.
-                            "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
-                            "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
-                            // AI array-of-map returners - VM_HANDLE, see the
-                            // object_returners set in the bridge dispatch.
-                            "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST",
-                            // Audio: the WAV readers and the recorder hand back
-                            // { samples[], rate, channels, frames }, MON.DEVICES
-                            // { playback[], capture[] }.
-                            "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-                            "MON.DEVICES",
-                            // NET.RECVFROM answers {data, host, port} or NONE.
-                            "NET.RECVFROM"
-                        };
-                        if (obj_returners.count(upper) ||
-                            (upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
+                        switch (builtin_ret(upper)) {
+                            case BuiltinRet::Arr:  return JD_TAG_ARR;
+                            case BuiltinRet::Bool: return JD_TAG_BOOL;
+                            case BuiltinRet::F64:  return JD_TAG_F64;
+                            case BuiltinRet::I64:  return JD_TAG_I64;
+                            case BuiltinRet::Handle: return JD_TAG_VM_HANDLE;
+                            default: break;
+                        }
+                        if ((upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
                              upper != "MAP.SIZE" && upper != "MAP.EXISTS" &&
                              upper != "MAP.KEYS" && upper != "MAP.VALUES"))
                             return JD_TAG_VM_HANDLE;
@@ -4216,7 +4003,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 } else if (stmt->expr && stmt->expr->kind == ExprKind::CALL) {
                     std::string up = stmt->expr->func_name;
                     std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-                    is_array_dim = up == "ZEROS" || kBridgeArrayReturners.count(up) != 0;
+                    is_array_dim = builtin_is(up, BuiltinRet::Arr);
                 }
                 if (stmt->var_name.size() > 1 && stmt->var_name.back() == '$' &&
                     !is_array_dim) {
@@ -5241,7 +5028,7 @@ void LLVMCodegen::codegen_let_or_assign(const Stmt& stmt) {
         if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
             std::string fn_up = stmt.expr->func_name;
             std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
-            if (is_date_returning_call(fn_up))
+            if (builtin_returns_date(fn_up))
                 date_vars.insert(up_name);
         }
         if (stmt.is_const) {
@@ -6250,7 +6037,7 @@ void LLVMCodegen::codegen_dim(const Stmt& stmt) {
     if (stmt.expr && stmt.expr->kind == ExprKind::CALL) {
         std::string fn_up = stmt.expr->func_name;
         std::transform(fn_up.begin(), fn_up.end(), fn_up.begin(), ::toupper);
-        if (is_date_returning_call(fn_up)) {
+        if (builtin_returns_date(fn_up)) {
             std::string up = stmt.var_name;
             std::transform(up.begin(), up.end(), up.begin(), ::toupper);
             date_vars.insert(up);
@@ -11045,6 +10832,9 @@ LLVMValueRef LLVMCodegen::build_funcref_wrapper(const std::string& fn_name, int 
         LLVMValueRef as_i = LLVMBuildPtrToInt(builder, call, i64_type, "ptoi");
         ret_val = pun_i64_to_f64(as_i);
         LLVMBuildStore(builder, LLVMConstInt(i32_type, fi.return_tag, 0), funcref_ret_channel());
+    } else if (fi.return_tag == JD_TAG_VM_HANDLE) {
+        ret_val = pun_i64_to_f64(call);
+        LLVMBuildStore(builder, LLVMConstInt(i32_type, JD_TAG_VM_HANDLE, 0), funcref_ret_channel());
     } else if (fi.return_tag == JD_TAG_RUNTIME) {
         TypedValue r = unpack_dyn_ret(call);
         LLVMBuildStore(builder, r.runtime_tag, funcref_ret_channel());
@@ -12928,7 +12718,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             std::string fn_or_var;
             if (expr.args[0]->kind == ExprKind::CALL) fn_or_var = expr.args[0]->func_name;
             std::transform(fn_or_var.begin(), fn_or_var.end(), fn_or_var.begin(), ::toupper);
-            if (is_date_returning_call(fn_or_var))
+            if (builtin_returns_date(fn_or_var))
                 return { LLVMBuildGlobalStringPtr(builder, "DATE", ".tof"), JD_TAG_STR };
         }
         // TYPEOF inspects the value rather than consuming it, so an outer leaf
@@ -13960,92 +13750,12 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 tags_ptr = LLVMConstNull(i8_ptr_type);
             }
 
-            // Each bridged function routes to a __jdrt_call_typed_*
-            // variant based on its return shape. Wrong classification
-            // here silently corrupts values (e.g. a str returner fed to
-            // _typed_f64 would get to_double()'d), so the name sets below
-            // are the authoritative source.
-            static const std::unordered_set<std::string> string_returners = {
-                "GFX.POLLEVENT", "GFX.WAITEVENT", "INKEY$", "CLIPBOARD.GET$",
-                "INPUT$", "INPUTKEY$", "SOUND.STATS",
-                "DATE.UTC",
-                // VM returns DATE Values which the bridge stringifies. These
-                // have direct bindings too, but the bridge path is taken when
-                // the user supplies the optional tz arg (n>direct arity).
-                "CVDATE", "CDATE", "DATEADD", "FORMAT_DATE", "EOMONTH",
-                // GUI.INPUT returns the (possibly edited) text-field content
-                // as a string; without this it gets routed through
-                // jdrt_call_typed_f64 and the result comes back as 0.0 -
-                // every text field shows "0" and edits never persist. The
-                // INT/DOUBLE variants stay numeric and don't need an entry.
-                "GUI.INPUT",
-                // TUI.INPUT mirrors GUI.INPUT - string return value, would
-                // otherwise be dropped by the bridge's default f64 path.
-                "TUI.INPUT",
-                // JOIN returns a string without saying so in its name. It has
-                // a direct binding, so the bridge only ever sees it when the
-                // array is a VM handle - and then the default f64 path turned
-                // the result into 0.
-                "JOIN"
-            };
+            const BuiltinRet sig_ret = builtin_ret(upper);
             bool is_string_fn = (!upper.empty() && upper.back() == '$') ||
-                                string_returners.count(upper) ||
+                                sig_ret == BuiltinRet::Str ||
                                 ffi_string_returners.count(upper);
-
-            static const std::unordered_set<std::string> object_returners = {
-                "JSON.PARSE$", "TILED.PROPERTIES", "TILED.OBJECTS",
-                "MAP.FROM", "MAP.COPY", "GROUPBY",
-                "ZIP.READ",
-                "FILE.STAT", "DATE.PARTS",
-                "HTTP.REQUEST",
-                "OS.EXEC",
-                // FORM.GET returns whatever type the property has (string,
-                // bool, number) - VM_HANDLE keeps the tag intact.
-                "FORM.GET",
-                // REGEX.MATCH hands back the captured groups when the pattern
-                // has any, and a truth value when it has none.
-                "REGEX.MATCH", "REGEX_MATCH",
-                "SVD", "QR", "EIG",
-                // Channel RECV returns whatever Value the producer sent -
-                // could be i64, f64, string, array, map, or the EOF marker.
-                // VM_HANDLE keeps the tag intact so CHAN.IS_EOF and the
-                // FOR EACH polymorphic dispatch can recognise it later.
-                "CHAN.RECV", "CHAN.TRY_RECV",
-                // AWAIT / THREAD.GETRESULT yield the awaited task's actual
-                // Value - could be any type, so route through VM_HANDLE so
-                // strings + arrays + maps survive intact. Without this,
-                // AWAIT was hitting the f64 fallback and stringifying via
-                // to_double() = 0.0, killing string-returning ASYNC funcs.
-                "AWAIT", "THREAD.GETRESULT",
-                // PY.EVAL / PY.GET hand back whatever Python produced - an
-                // int, a float, a string, a list turned into an array, a dict
-                // turned into a map. VM_HANDLE keeps the tag, where the f64
-                // fallback would flatten every string to 0.
-                "PY.EVAL", "PY.GET",
-                // MAT4.* returns a TENSOR Value; route through VM_HANDLE so
-                // the 16-element flat doesn't get unboxed into a scalar.
-                "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
-                "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
-                // AI returners that yield an ARRAY of map rows (or a single
-                // map). Routed through VM_HANDLE, NOT the flat array path:
-                // the whole Value stays in the value_store so res[i]{"field"}
-                // drills via jdrt_val_arr_get -> jdrt_obj_get. The flat path
-                // (value_to_jdbarray) has no OBJECT-cell support and would
-                // drop every map to 0.
-                "AI.RAG_SEARCH", "AI.RAG_QUERY_FULL", "AI.GET_HISTORY", "AI.TOOL_LIST",
-                // Audio map returners. The samples array lives inside the map,
-                // so the whole Value has to stay in the value_store for
-                // res{"samples"}[i] to drill through jdrt_obj_get.
-                "WAV.READ", "WAV.INFO", "WAV.RECORD", "WAV.RECSTOP",
-                "MON.DEVICES",
-                // {data, host, port} from a UDP socket, or NONE on timeout.
-                "NET.RECVFROM",
-            };
-            bool is_object_fn = object_returners.count(upper);
-
-            // array_returners lives at file scope (kBridgeArrayReturners) so
-            // the DIM/return type-inference paths share the exact same set.
-            bool is_array_fn = kBridgeArrayReturners.count(upper) ||
+            bool is_object_fn = sig_ret == BuiltinRet::Handle;
+            bool is_array_fn = sig_ret == BuiltinRet::Arr ||
                                ffi_array_returners.count(upper);
             bool is_void_fn  = ffi_void_returners.count(upper);
 
@@ -14071,7 +13781,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 auto& fn = runtime_funcs["__jdrt_call_typed_str"];
                 LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, call_args, 5, "vmcall");
                 return { result, JD_TAG_STR };
-            } else if (kBridgeBoolReturners.count(upper)) {
+            } else if (sig_ret == BuiltinRet::Bool) {
                 // Bools ride the f64 variant; narrow the double back to the
                 // i64 0/1 that JD_TAG_BOOL is represented as.
                 auto& fn = runtime_funcs["__jdrt_call_typed_f64"];
@@ -14537,7 +14247,7 @@ bool LLVMCodegen::expr_involves_strings(const Expr& e) {
         // JSON.PARSE$ hands back a map and DIR$ an array despite the $.
         std::string up = e.func_name;
         std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-        if (!is_handle_returner(up) && !kBridgeArrayReturners.count(up)) return true;
+        if (!is_handle_returner(up) && !builtin_is(up, BuiltinRet::Arr)) return true;
     }
     // A builtin can return a string without carrying the $ convention (STR
     // is registered alongside STR$). Its registration knows the return tag,

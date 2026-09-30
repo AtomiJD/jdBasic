@@ -2082,6 +2082,10 @@ Description: Inverse FFT. Input/output are [N][2] complex arrays; round-trips FF
 Syntax: IOTA(N, [base=1], [step=1])
 Description: Generates a 1D array of N numbers.
 
+[JOIN]
+Syntax: JOIN(array, [delimiter$])
+Description: Concatenates the elements of an array into one string, with delimiter$ between them (none when omitted). Numbers are written as PRINT writes them. The inverse of SPLIT.
+
 [JSON]
 Syntax: DIM variable AS JSON
 Description: Declares a variable to hold a parsed JSON object.

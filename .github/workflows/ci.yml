@@ -50,3 +50,9 @@ jobs:
             Write-Host $out
             if ($out -notmatch "ALL TESTS PASSED!|,\s*0 failed") { throw "$s FAILED" }
           }
+
+      - name: Builtin signature table
+        shell: pwsh
+        run: |
+          & build/jdBasic.exe tools/check_builtin_sigs.jdb
+          if ($LASTEXITCODE -ne 0) { throw "builtin_sigs.h names an undocumented builtin" }

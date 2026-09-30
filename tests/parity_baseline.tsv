@@ -71,6 +71,7 @@ tests/gate/rng_test.jdb	PASS	PASS	OK
 tests/gate/test_apl_complete.jdb	PASS	PASS	OK
 tests/gate/test_apl_pipelines.jdb	PASS	PASS	OK
 tests/gate/zip_archive_test.jdb	PASS	PASS	OK
+tests/handle_through_func.jdb	PASS	PASS	OK
 tests/interp_string.jdb	PASS	PASS	OK
 tests/jdlibs/archive_selftest.jdb	PASS	PASS	OK
 tests/jdlibs/cache_selftest.jdb	PASS	PASS	OK
