@@ -534,6 +534,10 @@ Description: Converts explicitly to a double-precision floating-point number.
 Syntax: CEIL(numeric_expression)
 Description: Rounds a number up to the nearest integer.
 
+[CHR]
+Syntax: CHR(ascii_code)
+Description: Alias of CHR$.
+
 [CHR$]
 Syntax: CHR$(ascii_code)
 Description: Returns the character corresponding to an ASCII code.

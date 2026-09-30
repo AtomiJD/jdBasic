@@ -14135,19 +14135,8 @@ void LLVMCodegen::scan_owned_str_globals(const std::vector<StmtPtr>& program) {
     auto passthrough_names = [&](const Expr& e, std::unordered_set<std::string>& out) {
         if (e.kind == ExprKind::VARIABLE) out.insert(e.str_val);
     };
-    // Builtins that only read a string argument; every other call, and an
-    // array or map literal, may keep the pointer it is given.
-    static const std::unordered_set<std::string> reads_only = {
-        "LEN", "INSTR", "VAL", "ASC", "STARTSWITH", "ENDSWITH", "ISNUMERIC",
-        "UCASE$", "LCASE$", "UPPER$", "LOWER$", "TRIM$", "LTRIM$", "RTRIM$",
-        "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
-        "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
-        "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
-        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
-        "CODEC.CRC32", "CODEC.DEFLATE$", "CODEC.INFLATE$", "PRINT"
-    };
     std::function<void(const Expr&)> scan_escapes = [&](const Expr& e) {
-        if ((e.kind == ExprKind::CALL && !reads_only.count(e.func_name)) ||
+        if ((e.kind == ExprKind::CALL && !builtin_reads_args(e.func_name)) ||
             e.kind == ExprKind::ARRAY_LITERAL || e.kind == ExprKind::MAP_LITERAL)
             for (auto& a : e.args)
                 if (a && a->kind == ExprKind::VARIABLE) banned.insert(a->str_val);
@@ -14258,20 +14247,6 @@ void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
         return false;
     };
 
-    // Builtins that only read a string argument and build their result in
-    // a new buffer. Every other call may keep the pointer it is given (an
-    // APPEND, a user SUB storing it), so a local passed bare to one of
-    // those stays unowned.
-    static const std::unordered_set<std::string> reads_only = {
-        "LEN", "INSTR", "VAL", "ASC", "STARTSWITH", "ENDSWITH", "ISNUMERIC",
-        "UCASE$", "LCASE$", "UPPER$", "LOWER$", "TRIM$", "LTRIM$", "RTRIM$",
-        "LEFT$", "RIGHT$", "MID$", "STR$", "CHR$", "REPLACE$", "REVERSE$",
-        "LPAD$", "RPAD$", "INSERT$", "FORMAT$", "HEX$", "CINT", "CDBL", "CLNG",
-        "TYPEOF", "JOIN", "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$",
-        "CODEC.PBKDF2$", "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
-        "CODEC.CRC32", "CODEC.DEFLATE$", "CODEC.INFLATE$"
-    };
-
     auto analyse = [&](const Stmt& fn) {
         if (fn.is_async_func) return;
         std::unordered_set<std::string> candidates;
@@ -14282,7 +14257,7 @@ void LLVMCodegen::scan_owned_str_locals(const std::vector<StmtPtr>& program) {
         // A bare read handed to a call that may keep it, or placed into
         // an array or map literal, aliases the buffer.
         std::function<void(const Expr&)> scan_calls = [&](const Expr& e) {
-            if ((e.kind == ExprKind::CALL && !reads_only.count(e.func_name)) ||
+            if ((e.kind == ExprKind::CALL && !builtin_reads_args(e.func_name)) ||
                 e.kind == ExprKind::ARRAY_LITERAL || e.kind == ExprKind::MAP_LITERAL)
                 for (auto& a : e.args)
                     if (a && a->kind == ExprKind::VARIABLE) banned.insert(a->str_val);
@@ -14452,22 +14427,10 @@ bool LLVMCodegen::expr_yields_fresh_string(const Expr& e) const {
     if (e.kind == ExprKind::BINARY && e.op == TokenType::PLUS) return true;
     if (e.kind != ExprKind::CALL) return false;
     if (fresh_string_funcs.count(e.func_name)) return true;
-    // An allowlist, not "every string builtin": several hand back a pointer
-    // into something they do not own, and freeing one of those is a crash
-    // rather than the leak this is trying to close. Each name here was read
-    // in jdb_runtime.cpp and builds its result with a fresh allocation.
-    static const std::unordered_set<std::string> fresh_builtins = {
-        "STR$", "STR", "CHR$", "CHR", "HEX$", "OCT$", "BIN$",
-        "MID$", "MID", "LEFT$", "LEFT", "RIGHT$", "RIGHT",
-        "UPPER$", "UCASE$", "LOWER$", "LCASE$",
-        "TRIM$", "LTRIM$", "RTRIM$", "SPACE$", "REPEAT$",
-        "LPAD$", "RPAD$", "REVERSE$", "REPLACE$", "INSERT$",
-        "JOIN", "FORMAT$", "FRMV$"
-    };
     std::string upper = e.func_name;
     for (auto& c : upper) c = (char)toupper((unsigned char)c);
     if (user_functions.count(upper) || user_functions.count(e.func_name)) return false;
-    return fresh_builtins.count(upper) != 0;
+    return builtin_fresh_string(upper);
 }
 LLVMValueRef LLVMCodegen::coerce_to(TypedValue tv, LLVMTypeRef target) {
     // Runtime-tagged value (tag 7): branch on runtime tag to pick the
