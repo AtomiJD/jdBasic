@@ -3788,29 +3788,8 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                         }
                         std::string upper = e->func_name;
                         std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-                        // Type-inference blocklist: functions that return a scalar
-                        // even when given an array (SUM, LEN, …) - so infer_tag
-                        // should NOT widen the return type to array for these.
-                        // Distinct from the runtime auto-vec blocklist below.
-                        static const std::unordered_set<std::string> no_vec_infer = {
-                            "LEN","SUM","PRODUCT","MEAN","STDEV","MEDIAN","VARIANCE",
-                            "MIN","MAX","ANY","ALL","COUNT","INDEXOF","REVERSE","SORT",
-                            "TAKE","DROP","UNIQUE","APPEND","PUSH","POP","FLATTEN",
-                            "TRANSPOSE","MATMUL","DOT","CROSS","CUMSUM","CUMPROD",
-                            "SVD","QR","DET","EIG","FFT","IFFT",
-                            "SCAN","SELECT","FILTER","REDUCE","TYPEOF","IIF",
-                            "ZEROS","ONES","IOTA","RANGE","LINSPACE","TENSOR","RESHAPE",
-                            "SPLIT","JOIN","FORMAT$","FRMV$","PACK$","UNPACK",
-                            "CHAN.SELECT","RNG.FILL",
-                            "REGEX_MATCH","REGEX.MATCH","REGEX.FINDALL",
-                            "NOW","CVDATE","CDATE","DATE$","TIME$","TICK",
-                            // Audio calls whose sample buffer is a payload:
-                            // WAV.WRITE returns a bool, FX.PROCESS a scalar.
-                            "WAV.WRITE","FX.PROCESS",
-                            "DEBUG.PRINT","DEBUG.ASSERT"
-                        };
                         for (auto& a : e->args) {
-                            if (a && infer_tag(a.get()) == JD_TAG_ARR && !no_vec_infer.count(upper)) {
+                            if (a && infer_tag(a.get()) == JD_TAG_ARR && !builtin_no_vectorize(upper)) {
                                 return JD_TAG_ARR;
                             }
                         }
@@ -12843,138 +12822,6 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
     }
 
-    // Auto-vectorization blocklist for native codegen.
-    // Any function NOT listed here vectorizes element-wise when any arg is
-    // an array (e.g. RIGHT$(["Alice","Bert"], 2) → ["ce","rt"]).
-    // This list is codegen-specific and does NOT mirror vm.cpp - the VM
-    // bridge has its own smaller list in vm.cpp (VM::call_function).
-    static const std::unordered_set<std::string> no_vectorize = {
-        // Array producers
-        "ZEROS", "ONES", "__MAKE_UDT_ARRAY__", "IOTA", "RESHAPE", "TENSOR",
-        "RANGE", "LINSPACE",
-        // Array/matrix operations that consume arrays as a whole
-        "LEN", "PUSH", "POP", "APPEND", "DIFF", "TAKE", "DROP", "REVERSE", "FILLV", "COPYV",
-        "UNIQUE", "SHUFFLE", "FIND_IN_ARRAY", "NORMALIZE", "DISTANCE",
-        "GRADE", "TRANSPOSE", "MATMUL", "MVLET", "MVINS", "STACK", "SLICE", "SOLVE",
-        "INVERT", "CONVOLVE", "PLACE", "OUTER", "ROTATE", "SHIFT", "XSORT",
-        "SVD", "QR", "DET", "EIG", "FFT", "IFFT",
-        "INTEGRATE", "FLATTEN", "ZIP", "DOT", "CROSS", "CUMSUM", "CUMPROD",
-        "HISTOGRAM", "COUNT", "INDEXOF", "SORT",
-        // Aggregations
-        "SUM", "PRODUCT", "MIN", "MAX", "ANY", "ALL",
-        "MEAN", "MEDIAN", "VARIANCE", "STDEV",
-        // Higher-order
-        "SCAN", "SELECT", "FILTER", "REDUCE",
-        "TAKE_WHILE", "DROP_WHILE", "CHUNK", "ENUMERATE", "GROUPBY",
-        // Meta/type
-        "TYPEOF", "IIF", "ISNUM", "ISSTR", "ISARR", "ISMAP", "ISBOOL",
-        "ISNONE", "ISNULL",
-        // Scalar-returning date/time (note: DATEADD/DATEDIFF/FORMAT_DATE DO vectorize)
-        "GETENV$", "SETENV", "SETLOCALE", "TICK", "NOW", "NOW_EPOCH",
-        "DATE$", "TIME$", "CVDATE", "CDATE", "RANDOMSEED",
-        "DATE.UTC", "DATE.PARTS", "EOMONTH", "DATERANGE", "TALLY",
-        "MKTEMP$", "RMDIR", "MKDIR", "KILL",
-#ifdef KERNEL
-        // A port or an address is a scalar; spreading one over an array would
-        // turn a single hardware access into a fan-out.
-        "SYS.INB", "SYS.OUTB", "SYS.PEEKB", "SYS.POKEB",
-        "SYS.PEEKW", "SYS.POKEW", "SYS.PEEK", "SYS.POKE", "SYS.CALL",
-#endif
-        // Bitwise/math helpers (scalars-only)
-        "ROTL", "ROTR", "GCD", "LCM",
-        // Collections
-        "MAP.EXISTS", "MAP.KEYS", "MAP.VALUES", "MAP.ITEMS", "MAP.SIZE",
-        "MAP.DELETE", "MAP.CLEAR", "MAP.MERGE", "MAP.FROM",
-        "JSON.PARSE$", "JSON.STRINGIFY$",
-        // String/codec (produce from string)
-        "SPLIT", "FORMAT$", "FRMV$", "INSERT$", "REPLACE$", "REVERSE$",
-        "PACK$", "UNPACK", "PACKSIZE", "JOIN",
-        "CODEC.BASE64_ENCODE$", "CODEC.BASE64_DECODE$",
-        "CODEC.SHA256$", "CODEC.HMAC$", "CODEC.CRC32$", "CODEC.UUID$",
-        "CODEC.RANDOMBYTES$", "CODEC.PBKDF2$",
-        "CODEC.CRC32", "CODEC.DEFLATE$", "CODEC.INFLATE$",
-        "HISTEDGES",
-        "CHAN.RECV", "CHAN.TRY_RECV", "CHAN.SELECT", "CHAN.IS_TIMEOUT",
-        "RNG.NEW", "RNG.NEXT", "RNG.INT", "RNG.FILL", "RNG.FREE",
-        "ZIP.WRITE", "ZIP.READ", "ZIP.LIST",
-        // Regex (produce arrays)
-        "REGEX_MATCH", "REGEX_REPLACE$", "REGEX.MATCH", "REGEX.FINDALL", "REGEX.REPLACE",
-        // Diagnostics take their arguments as a payload to render, so an
-        // array prints once instead of once per element.
-        "DEBUG.PRINT", "DEBUG.ASSERT",
-        // File I/O
-        "TXTREADER$", "TXTWRITER", "BINREADER$", "BINWRITER",
-        "CSVREADER", "CSVWRITER", "CSVHEADER",
-        "SQL.OPEN", "SQL.CLOSE", "SQL.EXEC", "SQL.ERRMSG$",
-        // Sockets: the data strings are payloads, never element streams.
-        "NET.CONNECT", "NET.LISTEN", "NET.ACCEPT", "NET.SEND", "NET.RECV$",
-        "NET.RECVLINE$", "NET.UDP", "NET.SENDTO", "NET.RECVFROM", "NET.CLOSE",
-        "NET.ALIVE", "NET.PEER$", "NET.PORT", "NET.ERROR$",
-        "SQL.TABLE", "SQL.COLUMNS",
-        // Embedded CPython: the code block and the injected value are
-        // payloads, not element streams. Mirrors jdb_no_vectorize in vm.cpp -
-        // a bridged builtin needs the entry on both sides.
-        "PYTHON$", "PY.EVAL", "PY.SET", "PY.GET", "PY.DIR$", "PY.HELP$",
-        // Native Windows forms: creation calls take coordinate scalars, the
-        // SET/MENU/TOOLBAR/STATUSBAR calls carry whole-array payloads.
-        "FORM.CREATE", "FORM.MDI", "FORM.CHILD", "FORM.BUTTON", "FORM.LABEL",
-        "FORM.TEXTBOX", "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME",
-        "FORM.LISTBOX", "FORM.COMBO", "FORM.TIMER", "FORM.MENU", "FORM.TOOLBAR",
-        "FORM.STATUSBAR", "FORM.LOAD", "FORM.FIND", "FORM.SET", "FORM.GET",
-        "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
-        "FORM.LINE", "FORM.SHAPE", "FORM.PICTURE", "FORM.PROGRESS",
-        "FORM.SLIDER", "FORM.UPDOWN", "FORM.LISTVIEW", "FORM.TREEVIEW",
-        "FORM.NODE", "FORM.TABS", "FORM.TABPAGE", "FORM.DATETIME", "FORM.RICHTEXT",
-        "MSGBOX", "INPUTBOX$", "FILEOPEN$", "FILESAVE$", "COLORDIALOG", "FONTDIALOG$",
-        // System/console
-        "CLS", "LOCATE", "COLOR", "CURSOR", "SLEEP",
-        "GETX", "GETY", "INKEY$", "WAITKEY$", "OPTION",
-        "CLIPBOARD.SET", "CLIPBOARD.GET$",
-        "OS.GETOS", "OS.GETOS$", "OS.ARGS", "OS.EXEC",
-        "OS.HOSTNAME$", "OS.IP$", "OS.LOAD",
-        "DIR$", "DIR", "CD", "PWD", "MKDIR", "KILL",
-        "FILE.EXISTS", "FILE.SIZE", "FILE.ISDIR", "FILE.STAT",
-        "PATH.JOIN$", "PATH.BASENAME$", "PATH.EXT$",
-        "PATH.DIRNAME$", "PATH.NORMALIZE$",
-        // Execution
-        "EXECUTE", "EVAL", "LOAD", "SAVE", "LIST", "HELP", "HELP$", "VARS",
-        "RECUR", "CLEAR_RECUR", "LIST_RECUR",
-        // Threads/async/react
-        "AWAIT", "THREAD.ISDONE", "THREAD.GETRESULT",
-        "REACT_BIND", "UNREACT",
-        // FFI/internals
-        "__EVENT_ON", "__EVENT_RAISE", "__FFI_DECLARE",
-        // Graphics primitives that consume arrays as a whole (matrix arg,
-        // colour-list arg). Auto-vectorising PLOTRAW with a 2D RGB cache
-        // collapses to one PLOTRAW per element with a scalar in the matrix
-        // slot - every call sees args[2].type==FLOAT64 and exits early.
-        // Same shape applies to the other matrix-form drawing primitives.
-        "PLOTRAW", "RECT", "CIRCLE", "LINE", "ELLIPSE", "ROUNDED_RECT",
-        "CIRCLE_SECTOR", "PSET", "TEXT", "GFX.PLOT_POINTS", "DRAWCOLOR",
-        "SCREEN", "SCREENFLIP", "SETFONT", "TOGGLE_FULLSCREEN",
-        // OpenGL - array args (VBO data) are payload, not broadcast targets.
-        "GL.WINDOW", "GL.CLOSE", "GL.CLEAR", "GL.FLIP", "GL.VIEWPORT",
-        "GL.ENABLE", "GL.DISABLE",
-        "GL.SHADER", "GL.USE", "GL.SHADER.DELETE",
-        "GL.VBO", "GL.VBO.BIND", "GL.BUFFER.DELETE",
-        "GL.VAO", "GL.VAO.BIND", "GL.VAO.DELETE",
-        "GL.ATTRIB", "GL.DRAW.TRIS", "GL.DRAW.LINES", "GL.DRAW.TRIS.IDX",
-        "GL.UNIFORM.F1", "GL.UNIFORM.F3", "GL.UNIFORM.F4", "GL.UNIFORM.I1",
-        "GL.UNIFORM.MAT4",
-        "GL.TEX.LOAD", "GL.TEX.BIND", "GL.TEX.DELETE", "GL.EBO",
-        "MAT4.IDENTITY", "MAT4.PERSPECTIVE", "MAT4.LOOKAT",
-        "MAT4.TRANSLATE", "MAT4.ROTATE", "MAT4.SCALE", "MAT4.MUL",
-        // TUI selection widgets take the options array as a whole payload.
-        // Auto-vectorising TUI.MENU(label, items[], sel) maps the call over
-        // each item and returns an ARRAY, which poisons the assigned global's
-        // tag (e.g. `JT_SEL = TUI.MENU(...)` then STR$(JT_SEL) reads "[]").
-        "TUI.MENU", "TUI.RADIO", "TUI.DROPDOWN",
-        // Audio calls whose sample buffer is a payload, not a broadcast
-        // target - mirrors the extra_no_vectorize set audio_fx.cpp installs
-        // on the interpreter VM.
-        "WAV.WRITE", "FX.PROCESS",
-        // Assert is a user SUB but if used as native:
-    };
 
     // Native vectorization table: funcname → (applier, scalar runtime fn, sig).
     // sig: "ff" = double(double), "ss" = str(str), "ifs" = int(str),
@@ -13133,7 +12980,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
     }
 
     // Check if any argument is an array AND the function is not blocklisted.
-    if (!no_vectorize.count(upper) && !expr.args.empty()) {
+    if (!builtin_no_vectorize(upper) && !expr.args.empty()) {
         std::vector<TypedValue> vals(arg_cache.begin(), arg_cache.end());
         bool has_array = false;
         for (auto& v : vals) if (v.tag == JD_TAG_ARR) has_array = true;

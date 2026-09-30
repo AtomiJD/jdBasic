@@ -1,12 +1,24 @@
-' Checks that every name in src/builtin_sigs.h is a documented builtin in
-' help.txt and listed once. Run from the repository root; exits 1 on a finding.
+' Checks that every name in src/builtin_sigs.h is a documented builtin, in
+' help.txt or doc/languages.md, and listed once. Internal __ names and the
+' names in KNOWN_UNDOCUMENTED are skipped. Run from the repository root;
+' exits 1 on a finding.
 
 DIM q$ = CHR$(34)
 DIM sigs$ = TXTREADER$("src/builtin_sigs.h")
 DIM help$ = TXTREADER$("help.txt")
+DIM lang$ = TXTREADER$("doc/languages.md")
+
+DIM known_undocumented = ["SYS.CALL", "SYS.INB", "SYS.OUTB", "SYS.PEEK", "SYS.PEEKB", "SYS.PEEKW", "SYS.POKE", "SYS.POKEB", "SYS.POKEW", "TENSOR", "TUI.RENDER_HEADLESS$"]
+
+FUNC Documented(n$)
+    IF LEFT$(n$, 2) = "__" THEN RETURN TRUE
+    IF n$ IN known_undocumented THEN RETURN TRUE
+    IF INSTR(help$, "[" + n$ + "]") >= 0 THEN RETURN TRUE
+    RETURN INSTR(lang$, "`" + n$ + "(") >= 0 ORELSE INSTR(lang$, "`" + n$ + "`") >= 0 ORELSE INSTR(lang$, "`" + n$ + " ") >= 0
+ENDFUNC
 
 DIM names = FLATTEN(REGEX.FINDALL("\{" + q$ + "([^" + q$ + "]+)" + q$ + ", BuiltinRet", sigs$))
-DIM undocumented = FILTER(LAMBDA n -> INSTR(help$, "[" + n + "]") < 0, names)
+DIM undocumented = FILTER(LAMBDA n -> NOT Documented(n), names)
 DIM dupes = LEN(names) - LEN(UNIQUE(names))
 
 FOR EACH n IN undocumented

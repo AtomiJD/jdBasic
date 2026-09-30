@@ -1,6 +1,7 @@
 OPTION EXPLICIT
 
-' Generates selfhost/jdbc_natives.txt from src/llvm_codegen.cpp.
+' Generates selfhost/jdbc_natives.txt from src/llvm_codegen.cpp and
+' src/builtin_sigs.h.
 '
 ' The reference backend keeps a registry of the natives it calls directly:
 '
@@ -186,100 +187,50 @@ DO
     emitted = emitted + 1
 LOOP
 
-' The names that answer an array over the bridge. The reference calls its own
-' list the single source of truth for that shape, so it is read rather than
-' guessed; everything else on the bridge is a string when its name ends in a
-' dollar and a number otherwise, which is the rule the reference applies too.
+' The array returners, the builtins that take an array argument whole, and
+' the object returners, read from the signature table both reference
+' backends share.
 
-DIM inSet AS INTEGER
+DIM sigs AS STRING
 DIM piece AS STRING
+DIM arrOut AS STRING
+DIM novecOut AS STRING
+DIM objOut AS STRING
 DIM arrCount AS INTEGER
-
-inSet = 0
-arrCount = 0
-at = 0
-DO
-    IF at >= LEN(src) THEN EXITDO
-    ln = NEXT_LINE$(src, at)
-    at = at + LEN(ln) + 1
-
-    IF INSTR(ln, "kBridgeArrayReturners") >= 0 THEN
-        inSet = 1
-        CONTINUEDO
-    ENDIF
-    IF inSet = 0 THEN CONTINUEDO
-    IF INSTR(ln, "};") >= 0 THEN EXITDO
-
-    rest = ln
-    DO
-        piece = QUOTED$(rest)
-        IF LEN(piece) = 0 THEN EXITDO
-        out = out + "@ARR" + CHR$(9) + piece + CHR$(10)
-        arrCount = arrCount + 1
-        rest = cutRest
-    LOOP
-LOOP
-
-' The names the reference's own backend refuses to auto-vectorise: they
-' take arrays whole or answer scalars from them. Read from the same list
-' the reference dispatches on, so the two backends refuse alike.
-
 DIM novecCount AS INTEGER
-
-inSet = 0
-novecCount = 0
-at = 0
-DO
-    IF at >= LEN(src) THEN EXITDO
-    ln = NEXT_LINE$(src, at)
-    at = at + LEN(ln) + 1
-
-    IF INSTR(ln, "no_vectorize = {") >= 0 THEN
-        inSet = 1
-        CONTINUEDO
-    ENDIF
-    IF inSet = 0 THEN CONTINUEDO
-    IF INSTR(ln, "};") >= 0 THEN EXITDO
-
-    rest = ln
-    DO
-        piece = QUOTED$(rest)
-        IF LEN(piece) = 0 THEN EXITDO
-        out = out + "@NOVEC" + CHR$(9) + piece + CHR$(10)
-        novecCount = novecCount + 1
-        rest = cutRest
-    LOOP
-LOOP
-
-' The names whose bridge answer is a whole VM value - a map, a tensor, a
-' handle - kept by the reference in its obj_returners set.
-
 DIM objCount AS INTEGER
 
-inSet = 0
+sigs = REPLACE$(TXTREADER$("src/builtin_sigs.h"), CHR$(13) + CHR$(10), CHR$(10))
+arrOut = ""
+novecOut = ""
+objOut = ""
+arrCount = 0
+novecCount = 0
 objCount = 0
 at = 0
 DO
-    IF at >= LEN(src) THEN EXITDO
-    ln = NEXT_LINE$(src, at)
+    IF at >= LEN(sigs) THEN EXITDO
+    ln = NEXT_LINE$(sigs, at)
     at = at + LEN(ln) + 1
 
-    IF INSTR(ln, "obj_returners = {") >= 0 THEN
-        inSet = 1
-        CONTINUEDO
-    ENDIF
-    IF inSet = 0 THEN CONTINUEDO
-    IF INSTR(ln, "};") >= 0 THEN EXITDO
+    IF INSTR(ln, ", BuiltinRet::") < 0 THEN CONTINUEDO
+    piece = QUOTED$(ln)
+    IF LEN(piece) = 0 THEN CONTINUEDO
 
-    rest = ln
-    DO
-        piece = QUOTED$(rest)
-        IF LEN(piece) = 0 THEN EXITDO
-        out = out + "@OBJ" + CHR$(9) + piece + CHR$(10)
+    IF INSTR(ln, "BuiltinRet::Arr,") >= 0 THEN
+        arrOut = arrOut + "@ARR" + CHR$(9) + piece + CHR$(10)
+        arrCount = arrCount + 1
+    ENDIF
+    IF INSTR(ln, "BF_NO_VEC") >= 0 THEN
+        novecOut = novecOut + "@NOVEC" + CHR$(9) + piece + CHR$(10)
+        novecCount = novecCount + 1
+    ENDIF
+    IF INSTR(ln, "BuiltinRet::Handle,") >= 0 THEN
+        objOut = objOut + "@OBJ" + CHR$(9) + piece + CHR$(10)
         objCount = objCount + 1
-        rest = cutRest
-    LOOP
+    ENDIF
 LOOP
+out = out + arrOut + novecOut + objOut
 
 TXTWRITER "selfhost/jdbc_natives.txt", out
 PRINT "natives written: "; emitted

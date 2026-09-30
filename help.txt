@@ -558,6 +558,10 @@ Description: Draws a sector (a pie slice) of a circle.
 Syntax: CLEARWS
 Description: Clears the current workspace, including all source code, variables, and compiled code.
 
+[CLEAR_RECUR]
+Syntax: CLEAR_RECUR(task_id)
+Description: Stops and removes a recurring background task started with RECUR.
+
 [CLIPBOARD.GET$]
 Syntax: CLIPBOARD.GET$()
 Description: Returns the text currently in the system clipboard.
@@ -2203,6 +2207,10 @@ Description: Static analysis over the loaded buffer. Reports parse stats, which 
 Syntax: LIST
 Description: Displays the current source code in the console.
 
+[LIST_RECUR]
+Syntax: LIST_RECUR() -> array
+Description: Returns the active recurring tasks, each with its id, interval_ms and code.
+
 [LOAD]
 Syntax: LOAD "filename"
 Description: Loads a source code file into memory.
@@ -2609,6 +2617,10 @@ Description: Declares a reactive variable whose value automatically updates when
 [RECT]
 Syntax: RECT x, y, w, h, [fill], [r, g, b]
 Description: Draws a rectangle on the graphics screen.
+
+[RECUR]
+Syntax: RECUR(interval_ms, code_string$) -> task_id
+Description: Starts a background task that executes code_string$ every interval_ms milliseconds. Returns the task id for CLEAR_RECUR.
 
 [REDUCE]
 Syntax: REDUCE(function@, array, [initial_value])

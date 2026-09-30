@@ -2269,24 +2269,6 @@ int load_jdform(const std::string& path, int mdi_parent) {
 void register_forms_builtins(VM& vm) {
     g_vm = &vm;
 
-    // FORM.SET carries whole-array payloads (ITEMS) and every creation
-    // call takes coordinate lists a user might compute as vectors; none
-    // of them may be auto-vectorized into per-element calls.
-    for (const char* n : { "FORM.CREATE", "FORM.BUTTON", "FORM.LABEL", "FORM.TEXTBOX",
-                           "FORM.CHECKBOX", "FORM.RADIO", "FORM.FRAME", "FORM.LISTBOX",
-                           "FORM.COMBO", "FORM.TIMER", "FORM.LOAD", "FORM.FIND",
-                           "FORM.MDI", "FORM.CHILD", "FORM.MENU", "FORM.POPUP", "FORM.TOOLBAR",
-                           "FORM.STATUSBAR",
-                           "FORM.LINE", "FORM.SHAPE", "FORM.PICTURE", "FORM.PROGRESS",
-                           "FORM.SLIDER", "FORM.UPDOWN",
-                           "FORM.LISTVIEW", "FORM.TREEVIEW", "FORM.NODE",
-                           "FORM.TABS", "FORM.TABPAGE", "FORM.DATETIME", "FORM.RICHTEXT",
-                           "FILEOPEN$", "FILESAVE$", "COLORDIALOG", "FONTDIALOG$",
-                           "FORM.SET", "FORM.GET",
-                           "FORM.SHOW", "FORM.RUN", "FORM.CLOSE", "FORM.DOEVENTS",
-                           "MSGBOX", "INPUTBOX$" })
-        vm.extra_no_vectorize.insert(n);
-
     // FORM.CREATE(title$, width, height, [name$]) -> handle
     vm.register_native("FORM.CREATE", 3, 4, [](const std::vector<Value>& args) -> Value {
         std::string name = args.size() > 3 ? arg_str(args, 3, "FORM.CREATE")

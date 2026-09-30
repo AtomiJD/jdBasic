@@ -774,10 +774,6 @@ void register_audiofx_builtins(VM& vm) {
         }
         return Value::make_string(s);
     });
-
-    // array-taking builtins must not auto-vectorize (would run per element)
-    vm.extra_no_vectorize.insert("WAV.WRITE");
-    vm.extra_no_vectorize.insert("FX.PROCESS");
 }
 
 // realtime block processing (called from the audio callback). No lock: the chain
