@@ -1,4 +1,6 @@
-# jdBasic - A Persistent Experimental BASIC Environment
+# jdBasic
+
+**A BASIC you can change while it runs - by hand, or by asking an AI.**
 
 [![CI](https://github.com/AtomiJD/jdBasic/actions/workflows/ci.yml/badge.svg)](https://github.com/AtomiJD/jdBasic/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE.txt)
@@ -6,67 +8,163 @@
 [![Try it online](https://img.shields.io/badge/try_it-in_your_browser-brightgreen)](https://jdbasic.org/live/index.html)
 [![YouTube](https://img.shields.io/badge/YouTube-Train_jdBasic-red)](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ)
 
-## I rewrite the game while it is still running
+[![Claude Code pauses the running shooter over MCP, edits one SUB and resumes it](doc/img/live_patching.jpg)](https://youtu.be/s-BRaSy1EQo)
 
-[![Claude Code pauses the running shooter, changes the code, and resumes it](https://img.youtube.com/vi/s-BRaSy1EQo/maxresdefault.jpg)](https://youtu.be/s-BRaSy1EQo)
+<p align="center"><em>Claude Code pauses a running game, rewrites one SUB and resumes it - same score, same enemies, new code. <a href="https://youtu.be/s-BRaSy1EQo">Watch the 73-second video</a>.</em></p>
 
-jdBasic can run as an MCP server. The video shows AI pair coding with Claude: while my mini shooter is running I press F6, the VM pauses, and whatever I ask Claude to change goes through the jdBasic MCP server straight into the running interpreter.
+jdBasic is a BASIC that stays in the session. A bytecode VM with APL-style
+arrays; graphics, GUI, sound, web and local AI built in; a compiler to native
+`.exe`; and an MCP server that lets an AI agent inspect and patch your program
+without restarting it.
 
-- "Turn the ship red and give me 100 lives" - Claude changes two variables with `jdb_eval`: `g_palette{"player"} = [255, 80, 80] : lives = 100`
-- "Move the shield bar 20 pixels up" - that needs a source edit and a recompile. `jdb_recompile` compiles the code and puts the program pointer back on the right opcode. Claude resumes, everything is still at the same position with the same values, only the rendering loop now draws with the changed SUB.
+**[Try it in the browser](https://jdbasic.org/live/index.html)** · **[Download](https://github.com/AtomiJD/jdBasic/releases/latest)** · **[Take the 15-minute tour](doc/tour.md)**
 
-I built jdBasic because I missed the easiness of VB6: pause a running program, edit the code and the form, carry on. jdBasic was always meant to be a dirty little language that still does this. Using AI to code needed an MCP server inside jdBasic. Inside the game it is one small IMPORT for the MCP handling and one line in the rendering loop.
+## Four things you have not seen a BASIC do
 
-**[Video, 73 seconds](https://youtu.be/s-BRaSy1EQo)** · **[My blog post](https://www.atomijd.onl/blog-post-19.html)** · **[MCP setup and tool reference](https://jdbasic.org/ai-pair-coding/)** · **[Windows zip with the shooter, nothing to install](https://github.com/AtomiJD/jdBasic/releases/latest)**
+### 1. An AI edits the program while it runs
 
----
+Press F6 in the running game and the VM pauses. Ask Claude "turn the ship red
+and give me 100 lives" and it changes two variables through `jdb_eval`. Ask it
+to "move the shield bar 20 pixels up" and it edits the source, `jdb_recompile`
+swaps the changed SUB into the paused program and puts the program pointer
+back where it was. Resume: nothing restarted, only the drawing changed. It
+works with Claude Code, Cursor, Cline, Zed and anything else that speaks MCP.
 
-**jdBasic** is a modern BASIC interpreter built around a custom **bytecode virtual machine** with APL-style array programming, hot-reloadable code, a persistent REPL workspace, and first-class graphics, GUI, audio, networking, AI, and **Godot-engine** integration.
+[MCP setup and tool reference](doc/MCP.md) · [The story behind it](https://www.atomijd.onl/blog-post-19.html)
 
-It combines the immediacy of classic BASIC with powerful built-in capabilities and a "stay in the session" philosophy - no constant restarts, no rebuild loops, just **think and run**.
+### 2. Whole arrays, no loops
 
-> **Reduce friction between thinking and running code.**
+```basic
+N = 1000000
+X = RND(IOTA(N)) * 2 - 1
+Y = RND(IOTA(N)) * 2 - 1
+PRINT 4 * SUM(X*X + Y*Y <= 1) / N     ' 3.14..., a million darts, half a second
+```
+
+<p align="center"><img src="doc/img/pi_montecarlo.png" width="55%" alt="Monte Carlo estimate of Pi: 28 million darts drawn live in an ImGui window"/></p>
+
+Operators and functions take whole arrays, the way APL does: `IOTA`, `SCAN`,
+`OUTER`, `GRADE`, matrices, `SVD`, `FFT`. [From loops to array pipelines](doc/APL_pipeline.md)
+
+### 3. Real Windows apps, compiled to a native `.exe`
+
+```basic
+DIM frm = FORM.CREATE("Hello", 320, 200, "MAIN")
+DIM btn = FORM.BUTTON(frm, "btnGo", "&Go", 110, 80, 100, 28)
+
+SUB BTNGO_CLICK(e)
+    MSGBOX("It really is that simple.", 64, "Hello")
+ENDSUB
+
+FORM.RUN(frm)
+```
+
+`jdbasic -c hello.jdb` turns it into `hello.exe`. Events bind by name, the
+VS Code extension has a visual form designer, and the controls are real Win32
+ones - menus, toolbars, list views, tabs, MDI windows. The VB6 way, in 2026.
 
 <p align="center">
-  <img src="doc/img/prisma.png" width="30%" alt="PRISMA, a match-3 game written in pure jdBasic"/>
-  <img src="doc/img/godot_rpg.jpg" width="38%" alt="A 3D RPG in Godot whose NPC dialogue brain is a local LLM, scripted entirely in jdBasic"/>
-  <img src="doc/img/vscode_forms_designer.png" width="30%" alt="The VS Code visual form designer editing a .jdform layout"/>
+  <img src="doc/img/forms_mdi.png" width="49%" alt="An MDI application with real Win32 windows, menus and a grid, about 40 lines of jdBasic"/>
+  <img src="doc/img/vscode_forms_designer.png" width="46%" alt="The VS Code visual form designer editing a .jdform layout"/>
 </p>
-<p align="center"><em>A match-3 game, a Godot RPG whose NPCs think with a local LLM, and the VS Code form designer - all scripted in jdBasic.</em></p>
 
-> **🎥 Train jdBasic** is on YouTube - 14 video lessons covering everything from PRINT to native compilation, all auto-generated and voiced by jdBasic itself. **[Watch the playlist →](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ)**
+### 4. It boots without an operating system
 
-You can:
+<p align="center"><img src="doc/img/jdos_prompt.png" width="60%" alt="jdBasic OS: DIR, LOAD pong, COMP compiles it to 3006 bytes of x86, CALL runs it"/></p>
 
-- explore ideas in a powerful interactive REPL
-- save and restore entire sessions with `SAVEWS` / `LOADWS`
-- write vectorized data pipelines using APL-inspired array operators
-- prototype graphics, games, and tools with SDL3 + Dear ImGui
-- embed in **Godot 4** and script whole 3D games, tools, and visualizers in pure BASIC
-- talk to local LLMs (llama.cpp) and run ONNX models inline
-- pair-program with an AI agent: the built-in **MCP server** exposes a persistent VM that Claude Code, Cursor & Co. can run, inspect, and live-patch without restarting your program
-- build automation tools, REST clients, and serial-device controllers
-- lean on a **module library** written in jdBasic itself - web apps with sessions and CSRF, password hashing, exact money, IBAN and VAT checks, QR and GiroCodes, curve fitting, data frames, PDF and Excel files, one client for OpenAI, Anthropic and local models - see [`lib/README.md`](lib/README.md)
-- extend the language with native modules
+jdBasic OS is a REPL written in jdBasic that boots on bare x86-64: a screen
+driver, a keyboard, an editor, a RAM disk, and a compiler that turns the loaded
+program into machine code and calls it. The same interpreter also runs on
+microcontrollers - an RP2350 (PicoCalc) and an ESP32-S3 that boots into its own
+prompt on a touch display. [Bare metal](embedded/kernel/README.md) · [On a board](embedded/)
 
----
+## Start in 60 seconds
 
-## Try jdBasic in your browser
+- **In the browser:** [jdbasic.org/live](https://jdbasic.org/live/index.html), nothing to install.
+- **On Windows:** download a bundle from [Releases](https://github.com/AtomiJD/jdBasic/releases/latest), unzip, run `jdBasic.exe`. The **VB6 pack** is a good all-round choice and ships demos; **mcp-native** is the one for AI pair coding.
+- **On Linux and macOS:** build from source, see [doc/BUILD.md](doc/BUILD.md).
 
-[jdbasic.org/live](https://jdbasic.org/live/index.html) - no installation required.
+```basic
+? PRINT "Hello, jdBasic!"
+Hello, jdBasic!
+? PRINT SUM(IOTA(100))
+5050
+? HELP "SORT"
+```
 
----
+> **First run on Windows:** the binaries are code-signed, but the certificate is
+> new, so SmartScreen may say *"Windows protected your PC"*. That is a
+> reputation notice, not a malware finding - click "More info", then "Run
+> anyway", or tick **Unblock** in the `.zip`'s properties before extracting.
 
-## Watch the lessons
+Then take the **[tour](doc/tour.md)**: fifteen minutes from the first `PRINT` to a compiled `.exe`.
 
-The **Train jdBasic** YouTube series walks through the language from
-"Hello, World" to native compilation - 14 episodes, 5–10 minutes each,
-with auto-generated chapters and code-on-screen as it happens.
+## I want to ...
 
-▶️ **[Full playlist on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ)**
+| ... | Start here |
+|---|---|
+| learn the language | [The tour](doc/tour.md), then the [video lessons](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) |
+| look something up | [Language reference](doc/languages.md) - contents at the top, A-Z index at the end - or `HELP "name"` in the REPL |
+| program together with an AI agent | [MCP server](doc/MCP.md) |
+| write games and graphics | [Sample gallery](jdb/README.md), [graphics functions](doc/languages.md#graphics-and-multimedia-functions) |
+| build desktop tools | [ImGui](doc/languages.md#imgui-functions) or [native Windows forms](doc/languages.md#native-windows-forms-form) |
+| crunch arrays and data | [Array pipelines](doc/APL_pipeline.md), [vector and matrix cookbook](doc/howto-vector-matrix-data.md) |
+| build a web app or an API | [Web development](doc/WebDev.md) |
+| make music or process audio | [Sequencer](doc/SequencerHelp.md), [Audio FX](doc/AudioFX.md), [FX how-to](doc/HowTo-FX.md) |
+| run local LLMs and ML models | [AI and machine learning](doc/languages.md#ai--machine-learning) |
+| script Godot 4 | [The Godot embed](embed/godot/README.md) |
+| run it on a microcontroller | [On a board](doc/languages.md#on-a-board-rp2350-and-esp32-s3), [ESP32 bring-up](embedded/esp32/README.md) |
+| reuse ready-made modules | [Module library](lib/README.md) - 45 modules, from TESTKIT to XLSX |
+| come from Python | [Idioms from Python](doc/idioms-from-python.md) |
+| build jdBasic or contribute | [Building from source](doc/BUILD.md), [CONTRIBUTING.md](CONTRIBUTING.md) |
 
-| #  | Lesson | Topic |
-|----|--------|-------|
+All documentation, grouped: [doc/README.md](doc/README.md).
+
+## Gallery
+
+<p align="center">
+  <img src="doc/img/apple2.png" width="32%" alt="An Apple II emulator running Applesoft BASIC, itself written in jdBasic"/>
+  <img src="doc/img/godot_rpg.jpg" width="32%" alt="A 3D RPG in Godot whose NPCs talk through a local LLM, scripted in jdBasic"/>
+  <img src="doc/img/minicalc.png" width="32%" alt="Mini Calc, a spreadsheet with formulas in an ImGui window"/>
+</p>
+<p align="center">
+  <img src="doc/img/sequencer_oscilloscope.png" width="32%" alt="The live music sequencer with an ImGui oscilloscope"/>
+  <img src="doc/img/tui_minesweeper.png" width="32%" alt="Minesweeper in the terminal"/>
+  <img src="doc/img/garden_dashboard.png" width="32%" alt="The scoring dashboard of a garden championship, with live standings"/>
+</p>
+<p align="center"><em>An Apple II emulator, a Godot RPG with LLM characters, a spreadsheet, a live music sequencer, a terminal game and a real-world scoring app - all written in jdBasic. 250+ more programs in the <a href="jdb/README.md">sample gallery</a>.</em></p>
+
+<details>
+<summary><b>Everything in the box</b></summary>
+
+- A **bytecode compiler and VM** with inline caches, opcode fusion and a refcounted value type
+- **APL-style vectorization**: `SIN`, `+`, `*`, scatter/gather, `IOTA`, `REDUCE`, `SCAN`, `FILTER`, `SELECT` work on whole arrays
+- **Linear algebra and DSP** backed by Eigen: `SVD`, `QR`, `DET`, `EIG`, `FFT`/`IFFT`
+- **Native compiler** via LLVM: `jdbasic -c program.jdb` writes a standalone `.exe`
+- **SDL3 graphics** with a batch plotter that pushes 70 000 coloured pixels per frame at 30+ FPS from BASIC ([`universe.jdb`](jdb/demos/graphics/universe.jdb))
+- **Dear ImGui** for instant-mode tools, and **native Win32 forms** with a visual designer
+- **Music sequencer** (`SOUND.*`) and an **FX chain** for guitar and synth effects
+- **llama.cpp** for local LLMs, **ONNX Runtime** for ML models
+- **HTTP/HTTPS** client and server, **COM** automation, **serial** I/O, SQLite
+- **Reactive variables** (`->`), **hot reload**, a **persistent workspace** (`SAVEWS`/`LOADWS`)
+- A **DAP debug adapter** and a VS Code extension with lint, hover and the form designer
+- An **MCP server** (`jdbasic --mcp`) for Claude Code, Cursor, Cline and Co.
+- The **Godot 4 embed**: a `.jdb` file is a Godot script, `GDX.*` reaches nodes, physics, 3D and audio ([`godot/`](godot/) has four projects; experimental)
+- **Microcontroller ports** (RP2350, ESP32-S3) and a **bare-metal** x86-64 build
+- A **module library** of 45 modules written in jdBasic itself
+
+The original v1 codebase is kept on the [`legacy-v1`](https://github.com/AtomiJD/jdBasic/tree/legacy-v1) branch.
+</details>
+
+<details>
+<summary><b>The 14 video lessons</b></summary>
+
+The **Train jdBasic** series goes from "Hello, World" to native compilation in
+5-10 minute episodes. The whole production - voice, screen recording, FFmpeg,
+even the uploads - is itself a jdBasic program, see [`jdb/tv/`](jdb/tv/).
+
+| # | Lesson | Topic |
+|---|---|---|
 | 01 | [Hello jdBasic](https://youtu.be/4qvPFoqxPHE) | PRINT, DIM, basic types |
 | 02 | [If and For](https://youtu.be/RTI-f9cHldI) | IF/ELSE, FOR/NEXT, FizzBuzz |
 | 03 | [Arrays](https://youtu.be/V33CGCt1zB8) | Vector ops, broadcasting, reductions |
@@ -81,306 +179,35 @@ with auto-generated chapters and code-on-screen as it happens.
 | 12 | [Higher-Order Functions](https://youtu.be/WPpzO0tHJNE) | SELECT, FILTER, REDUCE, lambdas |
 | 13 | [HTTP and JSON](https://youtu.be/ecq8uZHAV7U) | Talk to the web |
 | 14 | [Native Compilation](https://youtu.be/4DlthnUo56w) | Compile to .exe with `jdbasic -c` |
+</details>
 
-The entire production pipeline - voice synthesis, screen recording,
-FFmpeg compositing, even the YouTube uploads - is itself a jdBasic
-program. See [`jdb/tv/`](jdb/tv/) if you want to fork the rig.
-
----
-
-## What's inside (v2)
-
-This is the **v2 rewrite**. Compared to the original tree-walking interpreter, jdBasic now ships with:
-
-- A **bytecode compiler + virtual machine** with inline caches, opcode fusion, and a fast intrusive‑refcount value type
-- **APL-style vectorization** - `SIN`, `COS`, `+`, `*`, scatter/gather, `IOTA`, `REDUCE`, `SCAN`, `FILTER`, `SELECT` all operate over arrays in a single op
-- **Eigen-backed linear algebra & DSP** - `SVD`, `QR`, `DET`, `EIG`, and `FFT`/`IFFT` as first-class array builtins
-- **SDL3** graphics with letterboxed logical presentation, `TOGGLE_FULLSCREEN`, and a streaming-texture batch plotter (`GFX.PLOT_POINTS_TEX`) that can push 70k coloured pixels per frame at 30+ FPS from pure BASIC
-- **Dear ImGui** integration for instant-mode tools and debuggers
-- **Godot 4 embed (GDExtension)** - run jdBasic *inside* Godot: `.jdb` files become engine scripts and the `GDX.*` suite reaches the whole engine (nodes, physics, 3D meshes, audio, signals), with an in-editor debugger and Inspector-exposed variables - see [`embed/godot/`](embed/godot/)
-- **Music sequencer** - a tracker-style `SOUND.*` engine (patterns, voices, effects) with a device-less `SOUND_DSP` pull mode for embedding - see [`doc/SequencerHelp.md`](doc/SequencerHelp.md)
-- **llama.cpp** for local LLM inference (CPU + optional CUDA)
-- **ONNX Runtime** for classical ML inference
-- **HTTP/HTTPS** client (OpenSSL), **COM** automation (Windows), **Serial** I/O for embedded
-- **Reactive variables** (`->` operator) with automatic dependency propagation
-- **Hot reload** of source files without losing the workspace
-- **DAP debug adapter** so you can step through BASIC code from VS Code
-- A **persistent REPL workspace** that survives restarts via `SAVEWS`/`LOADWS`
-- **Microcontroller ports** - the same interpreter on an RP2350 or an ESP32-S3, with a REPL and a flash store on the board; on the 2.8 inch ES3C28P it boots into its own prompt on the panel, with touch, sound, a microphone and a card slot - see [`embedded/`](embedded/)
-- An **MCP server** (`jdbasic --mcp`) that exposes the persistent VM to LLM agents like Claude Code, Cursor, or Cline - see [`doc/MCP.md`](doc/MCP.md)
-
-> The original v1 codebase is preserved on the [`legacy-v1`](https://github.com/AtomiJD/jdBasic/tree/legacy-v1) branch and the [`v1-legacy`](https://github.com/AtomiJD/jdBasic/tree/v1-legacy) tag for archival and bugfixes.
-
----
-
-## Language tour
-
-### 1. Reactive variables
-
-```basic
-DIM BaseValue AS INTEGER = 10
-DIM Multiplier AS INTEGER = 5
-
-DIM Result AS REACT INTEGER
-Result -> BaseValue * Multiplier
-
-PRINT Result    ' 50
-
-Multiplier = 10
-PRINT Result    ' 100  - updated automatically
-```
-
-### 2. Vectorized array math (APL-style)
-
-```basic
-' Generate 10 numbers, keep > 5, multiply by 10
-result = IOTA(10) |> FILTER(LAMBDA x -> x > 5, ?) |> SELECT(LAMBDA v -> v * 10, ?)
-PRINT result    ' [60 70 80 90 100]
-```
-
-```basic
-' All trig is vectorized - one call processes the whole array
-DIM angles = IOTA(360) * (MATH.PI / 180)
-DIM sines  = SIN(angles)
-DIM cosines = COS(angles)
-```
-
-### 3. Immediate-mode GUI
-
-```basic
-SCREEN 800, 600, "My Tool"
-DIM BgColor[4] = [0.2, 0.3, 0.3, 1.0]
-
-DO
-    CLS
-    IF GUI.BEGIN("Control Panel", 50, 50, 300, 200) THEN
-        GUI.TEXT "Welcome to jdBasic GUI"
-        GUI.SEPARATOR()
-        IF GUI.BUTTON("Click Me") THEN
-            PRINT "Clicked at " + TIME$
-        ENDIF
-        GUI.COLOR("Background", BgColor)
-    ENDIF
-    GUI.END()
-    SCREENFLIP
-    SLEEP 16
-LOOP UNTIL INKEY$() = "q"
-```
-
-### 4. Native Windows forms (VB6 style)
-
-On Windows, the `FORMS` build flag adds a full retained-mode toolbox of **real Win32 controls**: buttons, text boxes, list/tree/list-view, tabs, sliders, date pickers, menus with accelerators, toolbars, status bars, MDI child windows and the classic common dialogs. Events bind by name convention, a one-parameter `SUB <control>_<event>` is wired automatically, no registration needed:
-
-```basic
-frm = FORM.CREATE("Hello", 320, 200, "MAIN")
-btn = FORM.BUTTON(frm, "btnGo", "&Go", 110, 80, 100, 28)
-
-SUB BTNGO_CLICK(e)
-    MSGBOX("It really is that simple.", 64, "Hello")
-ENDSUB
-
-FORM.RUN(frm)
-```
-
-Layouts can live in declarative **`.jdform`** JSON files (`FORM.LOAD` instantiates and binds them), and the VS Code extension ships a **visual form designer** with drag/resize, property grid and double-click-to-handler. Coordinates are DPI-independent logical units, and the same source compiles to a standalone `.exe` with `jdbasic -c`. See `jdb/demos/forms/gallery.jdb` (every control on three tab pages) and `jdb/demos/forms/mdi_demo.jdb`.
-
-<p align="center">
-  <img src="doc/img/forms_mdi.png" width="60%" alt="An MDI application with real Win32 windows, menus and a grid, about 40 lines of jdBasic"/>
-</p>
-
-### 5. High-performance graphics
-
-The [`jdb/demos/graphics/universe.jdb`](jdb/demos/graphics/universe.jdb) demo plots **70 000 coloured pixels per frame at 30+ FPS** from pure BASIC, by combining vectorized inner loops with a single GPU upload via `GFX.PLOT_POINTS_TEX`.
-
-```bash
-./build/jdBasic.exe jdb/demos/graphics/universe.jdb
-```
-
-### 6. APL-style pipelines
-
-Vectorized arithmetic + bitops let you push real workloads - physics, cellular automata, SAT, DSP - through whole-array operations instead of per-cell loops. See **[doc/APL_pipeline.md](doc/APL_pipeline.md)** for a tutorial walking from "tight FOR loops" to "one line per update step" using the demos under `jdb/bench/` and `jdb/`. Highlights:
-
-- `jdb/demos/apl/life_demo.jdb` - live Conway 200 × 150 at 60 FPS via an ONNX 3×3-conv backend
-- `jdb/demos/graphics/boids_apl.jdb` - 5 000 particles at ~630 FPS, all-vector update
-- `jdb/demos/sound/synth_apl.jdb` - additive synthesis, 4 096 samples/frame in five vector ops
-- `jdb/bench/life_bench.jdb` / `jdb/bench/mandelbrot_bench.jdb` - when APL form wins (Conway, 4–13×) and when it loses (Mandelbrot, ~4×)
-
-Numbers from the latest run: **[jdb/bench/Results.md](jdb/bench/Results.md)**.
-
----
-
-## jdBasic in Godot
-
-jdBasic embeds in **Godot 4** as a GDExtension: a `.jdb` file *is* a Godot script. The `GDX.*` native suite reaches the engine directly - nodes, the physics server, 3D meshes and materials, audio buses, and signals - so you can build whole scenes without a line of GDScript and step through them in the in-editor debugger.
-
-```basic
-EXTENDS Node3D            ' this .jdb file IS the Godot script
-
-DIM cube_h = 0
-
-SUB _ready()
-    cube_h = GDX.CALL(GDX.SELF(), "get_node", "Cube")
-ENDSUB
-
-SUB _process(delta)
-    ' spin the cube; rotation:y indexes into the Vector3 property
-    GDX.SET(cube_h, "rotation:y", GDX.GET(cube_h, "rotation:y") + delta)
-ENDSUB
-```
-
-Four projects under [`godot/`](godot/) show how far it goes - all logic in jdBasic, running on Windows and Linux (NVIDIA/CUDA and AMD/Vulkan):
-
-- **`rpg-native`** - a 3D action-RPG: procedural heightmap terrain, a data-driven dungeon, day/night, an item shop, and **NPCs whose entire dialogue brain is a local LLM** (llama.cpp) with RAG over the world lore - quests, memory, and tool-calling, all in jdBasic.
-- **`audioviz`** - a live **microphone → FFT → 3D spectrum waterfall**, built on the new `FFT` builtin with an orbiting camera.
-- **`livecoder`** - the `SOUND.*` sequencer hosted in Godot with a mixer UI and TR-808 samples, for live-coding music.
-- **`jd-one`** - a sandbox of small scenes (Breakout, a spinning cube, a reactive audio tunnel, GDScript-vs-jdBasic benchmarks).
-
-See [`embed/godot/README.md`](embed/godot/README.md) for the embed architecture and the `GDX.*` reference.
-
-> **Status: experimental.** The embed is developed on the `godot_spinoff` branch and there are no prebuilt extension binaries yet - you build the GDExtension yourself (SCons recipe included). The projects above run, but expect sharp edges.
-
----
-
-## Sample gallery
-
-The [`jdb/` sample gallery](jdb/README.md) holds 250+ ready-to-run programs, organised by domain: complete games (a chess engine, a raytracer, Tetris, TILT, PRISMA), a **6502 CPU + Apple II emulator**, a music sequencer with FX racks, web apps with sessions and templates, TUI dashboards, AI/RAG demos, and the APL teaching set.
-
-<p align="center">
-  <img src="doc/img/tilt.png" width="30%" alt="TILT, a Tetris variant where the playfield tips sideways"/>
-  <img src="doc/img/apple2.png" width="36%" alt="The Apple II emulator running Applesoft BASIC, itself written in jdBasic"/>
-  <img src="doc/img/sequencer_oscilloscope.png" width="31%" alt="The live sequencer with an ImGui oscilloscope"/>
-</p>
-<p align="center"><em>TILT - an Apple II emulated in 30 KB of jdBasic - the live music sequencer with its ImGui scope.</em></p>
-
----
-
-## Getting started
-
-### Run it
-- **Online**: [jdbasic.org/live](https://jdbasic.org/live/index.html)
-- **Windows binaries**: see [Releases](https://github.com/AtomiJD/jdBasic/releases) - what changed is in [RELEASE_NOTES.md](RELEASE_NOTES.md)
-
-> **First run on Windows.** The binaries are code-signed, but because the
-> certificate is new, Microsoft Defender SmartScreen may show a *"Windows
-> protected your PC - unrecognised app"* prompt the first time you run
-> `jdBasic.exe`. It is a reputation notice, **not** a malware detection - the
-> signed publisher is shown in the dialog. Click "More info" then "Run anyway".
-> To skip it, right-click the downloaded `.zip` -> Properties -> tick
-> **Unblock** before extracting.
-
-### Your first 60 seconds
-
-Download a bundle from [Releases](https://github.com/AtomiJD/jdBasic/releases/latest) (the **VB6 pack** is a good all-round choice - it ships demos), unzip, then:
+<details>
+<summary><b>Project layout</b></summary>
 
 ```
-jdBasic.exe                     starts the REPL
+src/        interpreter, compiler, VM (vm.cpp + vm_builtins_*.cpp), runtime modules
+lib/        the module library, written in jdBasic - lib/README.md
+jdb/        example programs - start at jdb/README.md
+doc/        documentation - doc/README.md; screenshots in doc/img/
+tests/      regression bank; tests/gate/ holds the pre-commit gate
+embedded/   microcontroller ports (RP2350/PicoCalc, ESP32-S3) and bare metal
+embed/      the Godot 4 GDExtension;  godot/ has the Godot projects
+selfhost/   jdbc, a jdBasic compiler written in jdBasic
+wasm/       the browser build behind jdbasic.org/live
+fluppi/     "Vallys Reise", a complete top-down RPG
+tools/      helper scripts (doc index, doc examples, syntax highlighting, ...)
+bridges/    optional native bridges;  modules/  modules IMPORT finds by name
+vscode_extension/  the VS Code extension (.vsix)
+libs/       vendored third-party sources; SDL3, LLVM and the rest per doc/BUILD.md
 ```
-
-```basic
-? PRINT "Hello, jdBasic!"
-Hello, jdBasic!
-? PRINT SUM(IOTA(100))          ' array programming: 1+2+...+100
-5050
-? HELP "SORT"                   ' built-in reference for every command
-```
-
-Run a program from a file:
-
-```
-jdBasic.exe demos\gallery.jdb   native Win32 forms, every control
-jdBasic.exe demos\tasklist.jdb  a small app built with the visual designer
-```
-
-Cloned the repo and built from source instead? Try the pixel-storm:
-
-```bash
-./build/jdBasic.exe jdb/demos/graphics/universe.jdb
-```
-
-### Build it from source
-- See **[doc/BUILD.md](doc/BUILD.md)** for the full build guide (prerequisites, third-party libraries, feature flags, packaging)
-
-### Learn the language
-- **[A tour of jdBasic](doc/tour.md)**: fifteen minutes from the first `PRINT` to a compiled `.exe`
-- **Video tutorials**: [Train jdBasic playlist on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) - 14 episodes, beginner to native compile
-- **Examples**: the [sample gallery](jdb/README.md) - 250+ programs under [`jdb/`](jdb/)
-
-### Documentation
-
-| Doc | What it covers |
-|-----|----------------|
-| [doc/tour.md](doc/tour.md) | A tour of jdBasic in fifteen minutes - start here |
-| [doc/languages.md](doc/languages.md) | The full language reference - every statement, function and build-flag-gated API, with contents and an A-Z index |
-| [lib/README.md](lib/README.md) | The module library written in jdBasic, 45 modules with one page each: testing and tools (TESTKIT, CLI, PKG, PROPTEST), web and services (REQ, JDWEB, TMPL, OAUTH, JWT, SECRET, MAIL, LLMAPI, SCHED, RETRY, CACHE, LOGGER, CONF), data and files (DF, DB, XLSX, DOCX, PDFGEN, XML, YAML, HTMLDOM, MD, ICAL, SVG, QR), text (CONSOLE, TEXTX, TEXTDIFF, FUZZY, PARSEC, URL, SCHEMA), numbers and money (MONEY, VALID, NUMFMT, DT, STATS, FIT, ML, GRAPH, FAKE) |
-| [help.txt](help.txt) | Per-command reference, also served by `HELP "topic"` in the REPL |
-| [doc/BUILD.md](doc/BUILD.md) | Building from source: prerequisites, feature flags, packaging (Windows/Linux/macOS) |
-| [doc/MCP.md](doc/MCP.md) | The MCP server: client configs for Claude Code, Cursor, Cline & Co., tool reference |
-| [doc/WebDev.md](doc/WebDev.md) | Web apps with `HTTP.SERVER`, templates, sessions and SQLite - the JDWEB framework |
-| [doc/SequencerHelp.md](doc/SequencerHelp.md) | The `SOUND.*` live-coding sequencer and synth |
-| [doc/AudioFX.md](doc/AudioFX.md) / [doc/HowTo-FX.md](doc/HowTo-FX.md) | The FX chain: guitar/synth effects, FFT analysis, the ImGui pedalboard |
-| [doc/APL_pipeline.md](doc/APL_pipeline.md) | Tutorial: from tight FOR loops to whole-array update steps |
-| [doc/howto-vector-matrix-data.md](doc/howto-vector-matrix-data.md) | Data-wrangling cookbook: build, transform, group, reshape |
-| [doc/idioms-from-python.md](doc/idioms-from-python.md) | Python-to-jdBasic cheat sheet (also great context for AI agents) |
-| [doc/CODING_STYLE.md](doc/CODING_STYLE.md) | Conventions for contributing to the C++ core |
-
-### Tooling
-- **VS Code extension**: syntax highlighting and DAP debugger support - see [vscode_extension/vscode_readme.md](vscode_extension/vscode_readme.md)
-
----
-
-## Project layout
-
-```
-src/        - interpreter source (lexer, parser, compiler, VM, runtime modules)
-bridges/    - optional native bridges (SQLite, Python, ...)
-embed/      - Godot GDExtension (jdb_godot) that embeds the VM in Godot 4
-embedded/   - the microcontroller ports: RP2350/PicoCalc, ESP32-S3, bare metal
-godot/      - Godot projects: rpg-native (LLM RPG), audioviz, livecoder, jd-one
-lib/        - the module library, written in jdBasic (TESTKIT, DF, DB, JDWEB, ...) - lib/README.md
-jdb/        - example .jdb programs - start at the sample gallery, jdb/README.md
-fluppi/     - "Vallys Reise", a complete top-down RPG written in jdBasic
-doc/        - documentation (see the table above) and doc/img/ screenshots
-tests/      - regression suite; tests/gate/ holds the pre-commit gate suites
-selfhost/   - jdbc, the jdBasic compiler written in jdBasic (tokens, parse tree, LLVM IR)
-dataset/    - verified STRICT example sources for training and checking coding models
-modules/    - modules that IMPORT finds by name from the working directory
-resources/  - icon, manifest, version info, the bundled TTF fonts
-tools/      - auxiliary scripts
-wasm/       - the browser build behind jdbasic.org/live
-vscode_extension/ - VS Code extension (.vsix) and install instructions
-release/    - release bundles built by build_mcp.bat and friends (archives not in git)
-libs/       - vendored third-party sources (Eigen, FTXUI, miniaudio, RtMidi); SDL3, LLVM and the rest per doc/BUILD.md
-build/      - compile output (not in git)
-```
-
-### On a board
-
-The same interpreter runs on microcontrollers, under `embedded/`. The
-RP2350 build is what a PicoCalc is; the ESP32-S3 build runs on a bare
-DevKitC and on the 2.8 inch ES3C28P display board, which boots into its
-own prompt on the glass with a panel, a touch screen, sound, a
-microphone and a card slot. Both read the language documented in
-[doc/languages.md](doc/languages.md) without exception. See the chapter
-"On a board" there for what each machine has, and
-[embedded/esp32/README.md](embedded/esp32/README.md) for how that board
-was brought up.
-
----
+</details>
 
 ## Contributing
 
-Contributions, bug reports, and feedback are welcome - **[CONTRIBUTING.md](CONTRIBUTING.md)** has the full guide (build, commit conventions, code style). The core rule: the regression gate stays green. Four gate suites cover the language, the native compiler, and the APL pipeline:
-
-```bash
-./build/jdBasic.exe tests/gate/comprehensive_test.jdb
-./build/jdBasic.exe tests/gate/native_test.jdb
-./build/jdBasic.exe tests/gate/test_apl_complete.jdb
-./build/jdBasic.exe tests/gate/test_apl_pipelines.jdb
-```
-
-All four should report `0 failed`. For changes that touch the LLVM codegen, run each suite again through the compiler (`./build/jdBasic.exe -c tests/gate/<suite>.jdb`, then run the produced `.exe`) so both the interpreter and native paths stay green. The full test-bank layout, naming conventions and the GUI smoke procedure are described in [tests/README.md](tests/README.md). C++ conventions live in [doc/CODING_STYLE.md](doc/CODING_STYLE.md).
-
----
+Bug reports, ideas and code are welcome - [CONTRIBUTING.md](CONTRIBUTING.md)
+has the build, the conventions and the pre-commit gate (four suites that must
+report `0 failed` in the interpreter and, for compiler changes, as native
+programs). The test bank is described in [tests/README.md](tests/README.md).
 
 ## License
 
