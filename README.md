@@ -140,7 +140,7 @@ PRINT result    ' [60 70 80 90 100]
 
 ```basic
 ' All trig is vectorized - one call processes the whole array
-DIM angles = IOTA(360) * (PI / 180)
+DIM angles = IOTA(360) * (MATH.PI / 180)
 DIM sines  = SIN(angles)
 DIM cosines = COS(angles)
 ```

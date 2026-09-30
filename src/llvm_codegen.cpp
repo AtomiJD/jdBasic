@@ -224,8 +224,8 @@ void LLVMCodegen::declare_runtime_functions() {
     // axis, so those names must not resolve to a two-argument scalar min/max.
     reg("jdb_min2",   "__min2", f64_type, {f64_type, f64_type}, 1);
     reg("jdb_max2",   "__max2", f64_type, {f64_type, f64_type}, 1);
-    reg("jdb_pi",     "PI",     f64_type, {}, 1);
-    reg("jdb_e",      "E",      f64_type, {}, 1);
+    reg("jdb_pi",     "MATH.PI", f64_type, {}, 1);
+    reg("jdb_e",      "MATH.E",  f64_type, {}, 1);
 
     // Math (special)
     reg("jdb_int",    "INT",    i64_type, {f64_type}, 0);
@@ -3007,8 +3007,8 @@ void LLVMCodegen::populate_type_env(const std::vector<StmtPtr>& program) {
     // Built-in predeclared constants (EXPLICIT mode must not flag these).
     {
         StaticType num; num.kind = StaticType::Kind::NUMBER;
-        type_env["PI"] = num;
-        type_env["E"]  = num;
+        type_env["MATH.PI"] = num;
+        type_env["MATH.E"]  = num;
     }
     for (auto& stmt : program) {
         if (!stmt) continue;
@@ -3739,11 +3739,11 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 std::string prefix = stmt->var_name.substr(0, dp);
                 if (udt_var_names.count(prefix) || var_udt_type.count(prefix)) continue;
             }
-            // Don't shadow built-in constants PI/E
+            // Don't shadow the math constants.
             {
                 std::string up = stmt->var_name;
                 std::transform(up.begin(), up.end(), up.begin(), ::toupper);
-                if (up == "PI" || up == "E") continue;
+                if (up == "MATH.PI" || up == "MATH.E") continue;
             }
             if (!lookup_var(stmt->var_name)) {
                 // Phase 3 EXPLICIT: a bare top-level `x = ...` where x was

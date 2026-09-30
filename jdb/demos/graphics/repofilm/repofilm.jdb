@@ -463,7 +463,7 @@ IF wav$ <> "" THEN
     FOR p = 0 TO N_PITCH - 1
         semi = PENTA[p MOD 5] + 12 * INT(p / 5)
         freq = 110.0 * 2 ^ (semi / 12.0)
-        wv = SIN(tt * (2 * PI * freq)) + 0.34 * SIN(tt * (4 * PI * freq)) + 0.11 * SIN(tt * (6 * PI * freq))
+        wv = SIN(tt * (2 * MATH.PI * freq)) + 0.34 * SIN(tt * (4 * MATH.PI * freq)) + 0.11 * SIN(tt * (6 * MATH.PI * freq))
         ' The tail has to reach exactly zero: a note that is merely quiet when
         ' the block runs out ends in a step, and a step is a click.
         wv = wv * EXP(0 - tt * 5.0) * (1 - EXP(0 - tt * 320)) * (1 - tt / tmax)
@@ -472,7 +472,7 @@ IF wav$ <> "" THEN
 
     DIM dfreq = 3 * RATE / BLK
     DIM dtt = IOTA(BLK, 0) / RATE
-    DIM drone = SIN(dtt * (2 * PI * dfreq)) * 0.6 + SIN(dtt * (4 * PI * dfreq)) * 0.22
+    DIM drone = SIN(dtt * (2 * MATH.PI * dfreq)) * 0.6 + SIN(dtt * (4 * MATH.PI * dfreq)) * 0.22
 
     DIM ftime = 0.0
     DIM blkpos = 0

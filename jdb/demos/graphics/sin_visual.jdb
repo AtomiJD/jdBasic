@@ -57,7 +57,7 @@ DO
     CLS 0, 0, 0
 
     ' --- Prepare and Draw Wave 1 (Red) ---
-    angle1 = (x_axis / NUM_POINTS) * FREQUENCY1 * 2 * PI + time_step
+    angle1 = (x_axis / NUM_POINTS) * FREQUENCY1 * 2 * MATH.PI + time_step
     y_wave1 = SIN(angle1)
     y_coords1 = (y_wave1 * AMPLITUDE1) + (SCREEN_H / 2)
     x1_vec1 = SLICE(x_coords, 0, 0, NUM_POINTS - 1)
@@ -69,7 +69,7 @@ DO
     LINE lines_to_draw1
 
     ' --- Prepare and Draw Wave 2 (Green) ---
-    angle2 = (x_axis / NUM_POINTS) * FREQUENCY2 * 2 * PI + time_step * 1.5
+    angle2 = (x_axis / NUM_POINTS) * FREQUENCY2 * 2 * MATH.PI + time_step * 1.5
     y_wave2 = SIN(angle2)
     y_coords2 = (y_wave2 * AMPLITUDE2) + (SCREEN_H / 2)
     x1_vec2 = SLICE(x_coords, 0, 0, NUM_POINTS - 1)
@@ -81,7 +81,7 @@ DO
     LINE lines_to_draw2
 
     ' --- Prepare and Draw Wave 3 (Blue) ---
-    angle3 = (x_axis / NUM_POINTS) * FREQUENCY3 * 2 * PI + time_step * 0.5
+    angle3 = (x_axis / NUM_POINTS) * FREQUENCY3 * 2 * MATH.PI + time_step * 0.5
     y_wave3 = SIN(angle3)
     y_coords3 = (y_wave3 * AMPLITUDE3) + (SCREEN_H / 2)
     x1_vec3 = SLICE(x_coords, 0, 0, NUM_POINTS - 1)

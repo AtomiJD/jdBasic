@@ -165,7 +165,7 @@ SUB SUN(x, y, s)
     CIRCLE x, y, s
     DIM k
     FOR k = 0 TO 7
-        DIM a = k * PI / 4
+        DIM a = k * MATH.PI / 4
         LINE x + COS(a) * s * 1.5, y + SIN(a) * s * 1.5, x + COS(a) * s * 2.1, y + SIN(a) * s * 2.1
     NEXT k
 ENDSUB
@@ -361,7 +361,7 @@ ENDSUB
 SUB DRAWFACE(cx, cy, r)
     DIM k
     FOR k = 0 TO 59
-        DIM a = k * PI / 30
+        DIM a = k * MATH.PI / 30
         DIM inner = r - 4
         IF k MOD 5 = 0 THEN
             inner = r - 10
@@ -602,9 +602,9 @@ DO
             LINE 96, 88, osx, osy
             LINE 96, 88, omx, omy
             LINE 96, 88, ohx, ohy
-            DIM ah = (t_h MOD 12) * PI / 6 + t_m * PI / 360
-            DIM am = t_m * PI / 30
-            DIM asec = t_s * PI / 30
+            DIM ah = (t_h MOD 12) * MATH.PI / 6 + t_m * MATH.PI / 360
+            DIM am = t_m * MATH.PI / 30
+            DIM asec = t_s * MATH.PI / 30
             ohx = 96 + SIN(ah) * 30
             ohy = 88 - COS(ah) * 30
             omx = 96 + SIN(am) * 42

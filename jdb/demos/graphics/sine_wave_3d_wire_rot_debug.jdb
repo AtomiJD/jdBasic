@@ -14,8 +14,8 @@ SCREEN SCREEN_W, SCREEN_H, "Wireframe DEBUG 10x10"
 SETFONT "C:/Windows/Fonts/consola.ttf", 16
 
 ' ---- World grid ---------------------------------------------
-DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
-DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+DIM XS   = (IOTA(GW) - GW/2) * (4*MATH.PI / GW)
+DIM YS   = (IOTA(GH) - GH/2) * (4*MATH.PI / GH)
 DIM GX   = OUTER(YS*0, XS, "+")
 DIM GY   = OUTER(YS, XS*0, "+")
 DIM DIST = SQR(GX^2 + GY^2)

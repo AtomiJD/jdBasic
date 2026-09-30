@@ -1452,50 +1452,50 @@ Assert(TEST_INNER.public_val = 42, "Inner: EXPORT DIM write + read")
 Header("Constants (CONST, PI, E)")
 
 ' --- Built-in PI constant ---
-Assert(PI > 3.14 AND PI < 3.15, "PI value is ~3.14159")
-Assert(PI = PI(), "PI constant equals PI() function")
-Assert(TYPEOF(PI) = "FLOAT64", "PI is FLOAT64")
+Assert(MATH.PI > 3.14 AND MATH.PI < 3.15, "PI value is ~3.14159")
+Assert(MATH.PI = MATH.PI(), "PI constant equals PI() function")
+Assert(TYPEOF(MATH.PI) = "FLOAT64", "PI is FLOAT64")
 
 ' --- Built-in E constant ---
-Assert(E > 2.71 AND E < 2.72, "E value is ~2.71828")
-Assert(E = E(), "E constant equals E() function")
-Assert(TYPEOF(E) = "FLOAT64", "E is FLOAT64")
+Assert(MATH.E > 2.71 AND MATH.E < 2.72, "E value is ~2.71828")
+Assert(MATH.E = MATH.E(), "E constant equals E() function")
+Assert(TYPEOF(MATH.E) = "FLOAT64", "E is FLOAT64")
 
 ' --- PI cannot be overwritten ---
-DIM pi_before = PI
+DIM pi_before = MATH.PI
 TRY
-    PI = 42
+    MATH.PI = 42
     Assert(FALSE, "PI assignment should throw error")
 CATCH
     Assert(TRUE, "PI assignment throws error")
 ENDTRY
-Assert(PI = pi_before, "PI unchanged after failed assignment")
+Assert(MATH.PI = pi_before, "PI unchanged after failed assignment")
 
 ' --- E cannot be overwritten ---
-DIM e_before = E
+DIM e_before = MATH.E
 TRY
-    E = 99
+    MATH.E = 99
     Assert(FALSE, "E assignment should throw error")
 CATCH
     Assert(TRUE, "E assignment throws error")
 ENDTRY
-Assert(E = e_before, "E unchanged after failed assignment")
+Assert(MATH.E = e_before, "E unchanged after failed assignment")
 
 ' --- PI/E in math expressions ---
-DIM circumference = 2 * PI * 10
+DIM circumference = 2 * MATH.PI * 10
 Assert(circumference > 62.8 AND circumference < 62.9, "2*PI*10 = ~62.83")
-DIM exp1 = E ^ 2
+DIM exp1 = MATH.E ^ 2
 Assert(exp1 > 7.38 AND exp1 < 7.39, "E^2 = ~7.389")
 
 ' --- Case insensitive protection ---
 TRY
-    pi = 0
+    MATH.PI = 0
     Assert(FALSE, "lowercase pi assignment should throw")
 CATCH
     Assert(TRUE, "lowercase pi assignment throws error")
 ENDTRY
 TRY
-    e = 0
+    MATH.E = 0
     Assert(FALSE, "lowercase e assignment should throw")
 CATCH
     Assert(TRUE, "lowercase e assignment throws error")
@@ -1521,7 +1521,7 @@ ENDTRY
 Assert(MAX_LEVEL = 50, "CONST unchanged after failed reassign")
 
 ' --- CONST with expressions ---
-CONST DOUBLE_PI = PI * 2
+CONST DOUBLE_PI = MATH.PI * 2
 Assert(DOUBLE_PI > 6.28 AND DOUBLE_PI < 6.29, "CONST with PI expression")
 CONST SCREEN_AREA = 1280 * 720
 Assert(SCREEN_AREA = 921600, "CONST with arithmetic expression")

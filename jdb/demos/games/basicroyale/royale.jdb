@@ -768,7 +768,7 @@ SUB DrawRadius(cx, cy, kind$, fnow)
     CIRCLE cx, cy, rpix - 1, FALSE
     DIM mark = 0
     FOR mark = 0 TO 11
-        DIM ang = mark * PI / 6.0 + fnow * 0.02
+        DIM ang = mark * MATH.PI / 6.0 + fnow * 0.02
         PSET INT(cx + COS(ang) * (rpix - 5)), INT(cy + SIN(ang) * (rpix - 5))
     NEXT mark
 ENDSUB

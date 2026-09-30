@@ -1098,15 +1098,15 @@ Assert(2753, sea_outer$[4] = "outer4")
 PRINT "── Built-in CONST visibility in FUNC ──"
 
 FUNC bc_pi_in_func() AS DOUBLE
-    RETURN PI
+    RETURN MATH.PI
 ENDFUNC
 
 FUNC bc_e_in_func() AS DOUBLE
-    RETURN E
+    RETURN MATH.E
 ENDFUNC
 
 FUNC bc_pi_deg_to_rad(deg AS INTEGER) AS DOUBLE
-    RETURN deg * (PI / 180.0)
+    RETURN deg * (MATH.PI / 180.0)
 ENDFUNC
 
 Assert(295, bc_pi_in_func() > 3.14159 AND bc_pi_in_func() < 3.14160)

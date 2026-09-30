@@ -51,7 +51,7 @@ Quality rules for self-built helpers:
 - **Naming**: English identifiers only; every helper is prefixed `LAB_`
   (`LAB_PROFILE`, `LAB_HIST`, `LAB_PLOT`). String-returning helpers end in `$`
   (`LAB_FMT$`). No reserved names ever - probe-eval an unfamiliar name first
-  (known traps: `PI E TAU TRUE FALSE NULL INF NAN CLS STEP LINE ON TICK VAL
+  (known traps: `TAU TRUE FALSE NULL INF NAN CLS STEP LINE ON TICK VAL
   LEN COUNT SORT SUM MIN MAX`).
 - **Signatures verified**: `jdb_doc` every builtin before first use in a
   helper. Never guess arg order (DATEADD!), 0/1-base (IOTA is 1-based,

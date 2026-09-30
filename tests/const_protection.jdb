@@ -19,16 +19,16 @@ ENDSUB
 DIM caught
 caught = 0
 TRY
-    PI = 3
+    MATH.PI = 3
 CATCH
     caught = 1
 ENDTRY
 CHK("PI is protected", caught, 1)
-CHK("PI kept its value", INT(PI * 100), 314)
+CHK("PI kept its value", INT(MATH.PI * 100), 314)
 
 caught = 0
 TRY
-    E = 0
+    MATH.E = 0
 CATCH
     caught = 1
 ENDTRY

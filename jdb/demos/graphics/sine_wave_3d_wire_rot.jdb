@@ -20,8 +20,8 @@ DIM GW = 140                         ' grid columns
 DIM GH = 100                         ' grid rows (depth)
 
 ' ---- World grid (centred, 4 ripple cycles) -------------------
-DIM XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
-DIM YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+DIM XS   = (IOTA(GW) - GW/2) * (4*MATH.PI / GW)
+DIM YS   = (IOTA(GH) - GH/2) * (4*MATH.PI / GH)
 DIM GX   = OUTER(YS*0, XS, "+")      ' GH x GW, each row = XS
 DIM GY   = OUTER(YS, XS*0, "+")      ' GH x GW, each col = YS
 

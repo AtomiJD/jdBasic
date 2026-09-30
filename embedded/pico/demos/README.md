@@ -193,7 +193,7 @@ Set `PLOGY = 0` again before the next chart, or it stays logarithmic.
     PTITLE$ = "gaussian"
     PXLAB$ = "sigma"
     PYLAB$ = "density"
-    PLOTXY g, EXP(0 - (g * g) / 2) / SQR(2 * PI)
+    PLOTXY g, EXP(0 - (g * g) / 2) / SQR(2 * MATH.PI)
     PLOTNAME 1, "phi"
 
 ### 5. A Lissajous figure

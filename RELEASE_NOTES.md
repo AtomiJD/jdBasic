@@ -4,6 +4,18 @@ Convention: one section per released version, newest at the top. Pre-release / u
 
 ---
 
+## Unreleased
+
+### Breaking
+
+- **`PI` and `E` are now `MATH.PI` and `MATH.E`.** The bare names are gone; `MATH.PI()` and `MATH.E()` read the constants too. `E` and `PI` are ordinary names again, so an event handler can take its argument as `e` in compiled code as well. Replace `PI` with `MATH.PI` and `E` with `MATH.E` in existing programs.
+
+### Native compiler
+
+- Builtins are classified in one table, `src/builtin_sigs.h`, shared with the VM. A FUNC or ASYNC FUNC returning a value from `CHAN.RECV`, `AWAIT`, `PY.EVAL` and the like hands its caller the value instead of 0, and `CHAN.SEND` and `FORM.POPUP` behave the same in both backends.
+
+---
+
 ## v1.0 Build 82 - 2026-08-31 (VB6 Pack Build 83)
 
 Refresh of all four Windows bundles. Four pieces of syntax, one fix to a

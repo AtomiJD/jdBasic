@@ -35,10 +35,10 @@ SUB _process(delta)
 	IF tod > 1.0 THEN tod = tod - 1.0
 
 	' Arc the sun across the sky: a full -2*PI rotation about X over a day.
-	GDX.SET(self_h, "rotation:x", -tod * 2.0 * PI)
+	GDX.SET(self_h, "rotation:x", -tod * 2.0 * MATH.PI)
 
 	' Dim and warm the light through dusk/dawn; near-dark at night.
-	DIM up = SIN(tod * 2.0 * PI)          ' >0 daytime, <0 night
+	DIM up = SIN(tod * 2.0 * MATH.PI)          ' >0 daytime, <0 night
 	DIM e = up
 	IF e < 0.05 THEN e = 0.05
 	GDX.SET(self_h, "light_energy", e * 1.3)

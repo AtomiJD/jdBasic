@@ -15,8 +15,8 @@ GH = 36                          ' grid rows (depth)
 SCREEN SCREEN_W, SCREEN_H, "Retro Wireframe Sine Wave"
 
 ' ---- World grid (centred, 4 ripple cycles) -------------------
-XS   = (IOTA(GW) - GW/2) * (4*PI / GW)
-YS   = (IOTA(GH) - GH/2) * (4*PI / GH)
+XS   = (IOTA(GW) - GW/2) * (4*MATH.PI / GW)
+YS   = (IOTA(GH) - GH/2) * (4*MATH.PI / GH)
 GX   = OUTER(YS*0, XS, "+")      ' GH x GW, each row = XS
 GY   = OUTER(YS, XS*0, "+")      ' GH x GW, each col = YS
 DIST = SQR(GX^2 + GY^2)

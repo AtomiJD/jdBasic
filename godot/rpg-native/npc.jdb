@@ -100,7 +100,7 @@ SUB play_anim(nm)
 ENDSUB
 
 SUB pick_target()
-	DIM ang = RND(1) * 2.0 * PI
+	DIM ang = RND(1) * 2.0 * MATH.PI
 	DIM rad = 1.5 + RND(1) * wander_radius
 	target_x = home_x + COS(ang) * rad
 	target_z = home_z + SIN(ang) * rad

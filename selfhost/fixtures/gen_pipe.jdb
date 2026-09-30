@@ -63,7 +63,7 @@ ENDSUB
 DIM payload AS ARRAY
 payload = [{ "key": "F9" }]
 SHOW_KEY(payload)
-PRINT INT(E * 1000)
+PRINT INT(MATH.E * 1000)
 
 ' At the top level RETURN ends the program the way END does.
 PRINT "done"

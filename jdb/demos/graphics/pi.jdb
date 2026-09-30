@@ -27,12 +27,12 @@ DO
     CIRCLE CX, CY, RADIUS, FALSE, 255.0, 255.0, 255.0
     EST_PI = (TOTAL_HITS / TOTAL_DARTS) * 4
     IF GUI.BEGIN("Pi Matrix Control", 0, 0, 320, 260) THEN
-        GUI.TEXT "Real PI: " + PI
+        GUI.TEXT "Real PI: " + MATH.PI
         GUI.TEXT "Est. PI: " + ROUND(EST_PI, 8)
         GUI.SEPARATOR()
         BATCH_SIZE = GUI.SLIDER("Darts/Frame", BATCH_SIZE, 100, 60000)
         GUI.TEXT "Total Darts: " + TOTAL_DARTS
-        ACC = 1 - ABS(PI - EST_PI)/PI
+        ACC = 1 - ABS(MATH.PI - EST_PI)/MATH.PI
         GUI.PROGRESS ACC, "Accuracy: " + ROUND(ACC * 100, 5) + "%"
         IF GUI.BUTTON("Reset Simulation") THEN
             TOTAL_HITS = 0

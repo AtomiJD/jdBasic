@@ -2566,9 +2566,13 @@ Description: Joins path components using the operating system's separator.
 Syntax: PATH.NORMALIZE$(path$)
 Description: Normalizes a path by resolving "." and ".." segments and converting to the OS-native separator. Preserves drive prefixes on Windows.
 
-[PI]
-Syntax: PI
-Description: A constant holding the value of Pi.
+[MATH.E]
+Syntax: MATH.E
+Description: A constant holding Euler's number, approx. 2.718281828459045. MATH.E() reads it too.
+
+[MATH.PI]
+Syntax: MATH.PI
+Description: A constant holding the value of Pi, approx. 3.141592653589793. MATH.PI() reads it too.
 
 [PLACE]
 Syntax: PLACE(destination_array, source_array, coordinates)

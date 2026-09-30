@@ -46,15 +46,15 @@ jdBasic has two scalar numeric types:
 
 These are special keywords that hold predefined, constant values.
 
-* **`PI`**: A high-precision value of Pi (approx. 3.141592653589793).
-* **`E`**: Euler's number (approx. 2.718281828459045).
+* **`MATH.PI`**: A high-precision value of Pi (approx. 3.141592653589793). `MATH.PI()` reads it too.
+* **`MATH.E`**: Euler's number (approx. 2.718281828459045). `MATH.E()` reads it too.
 * **`VBNEWLINE`**: A string representing the carriage return and line feed characters (`CHR$(13) + CHR$(10)`), commonly used for creating multi-line strings for Windows systems.
 * **`VBCRLF`**: The VB6-style spelling of `VBNEWLINE`, the same CRLF string.
 * **`VBTAB`**: The tab character, `CHR$(9)`.
 
 ```basic
-PRINT "The value of PI is: " + PI
-PRINT "Area of a circle with radius 5: " + (PI * 5^2)
+PRINT "The value of Pi is: " + MATH.PI
+PRINT "Area of a circle with radius 5: " + (MATH.PI * 5^2)
 
 MultiLine$ = "First line." + VBNEWLINE + "Second line."
 PRINT MultiLine$
@@ -385,10 +385,10 @@ Constants can reference other constants and use any valid expression:
 
 ```basic
 CONST RADIUS = 10
-CONST AREA = PI * RADIUS ^ 2
+CONST AREA = MATH.PI * RADIUS ^ 2
 ```
 
-> **Note:** The built-in constants `PI`, `E`, and `VBNEWLINE` (see [Built-in Constants](#built-in-constants)) are also protected against reassignment using the same mechanism.
+> **Note:** The built-in constants `MATH.PI`, `MATH.E`, and `VBNEWLINE` (see [Built-in Constants](#built-in-constants)) are also protected against reassignment using the same mechanism.
 
 ## Destructuring Assignment
 

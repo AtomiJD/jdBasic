@@ -7972,15 +7972,13 @@ void VM::register_builtins() {
         double v = args[0].to_double();
         return Value::make_i64(v > 0 ? 1 : (v < 0 ? -1 : 0));
     });
-    // Math constants - registered as protected constants, not functions
-    // Can be used as PI or PI() - both work
-    register_const("PI", Value::make_f64(3.14159265358979323846));
-    register_const("E", Value::make_f64(2.71828182845904523536));
-    // Keep function versions too for PI() syntax
-    register_native("PI", 0, -1, [](const std::vector<Value>& args) -> Value {
+    // Math constants, readable as MATH.PI or MATH.PI().
+    register_const("MATH.PI", Value::make_f64(3.14159265358979323846));
+    register_const("MATH.E", Value::make_f64(2.71828182845904523536));
+    register_native("MATH.PI", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args; return Value::make_f64(3.14159265358979323846);
     });
-    register_native("E", 0, -1, [](const std::vector<Value>& args) -> Value {
+    register_native("MATH.E", 0, 0, [](const std::vector<Value>& args) -> Value {
         (void)args; return Value::make_f64(2.71828182845904523536);
     });
     register_native("VBNEWLINE", 0, 0, [](const std::vector<Value>& args) -> Value {

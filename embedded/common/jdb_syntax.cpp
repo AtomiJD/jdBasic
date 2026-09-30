@@ -21,7 +21,7 @@ static const char* const KEYWORDS[] = {
 
 // Coloured with the numbers, because that is what they are.
 static const char* const CONSTANTS[] = {
-    "TRUE", "FALSE", "NONE", "PI", "E", "TAU",
+    "TRUE", "FALSE", "NONE", "MATH.PI", "MATH.E", "TAU",
 };
 
 static int in_list(const char* const* list, unsigned count, const char* s, int n) {

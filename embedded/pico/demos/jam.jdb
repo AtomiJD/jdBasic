@@ -318,7 +318,7 @@ FUNC SPIRO()
         ' A ring of card suits turning the other way.
         DIM k
         FOR k = 0 TO 3
-            DIM ang = 0 - a * 0.5 + k * PI / 2
+            DIM ang = 0 - a * 0.5 + k * MATH.PI / 2
             DIM sx = 160 + COS(ang) * 130
             DIM sy = 120 + SIN(ang) * 95
             INKHUE(h + k * 90, 255)
@@ -507,7 +507,7 @@ SUB FINALE()
         DIM cy = 40 + RND * 140
         DIM h0 = RND * 360
         FOR k = 0 TO 11
-            DIM ang = k * PI / 6
+            DIM ang = k * MATH.PI / 6
             DIM rr
             FOR rr = 4 TO 40 STEP 6
                 INKHUE(h0 + rr * 3, 255)

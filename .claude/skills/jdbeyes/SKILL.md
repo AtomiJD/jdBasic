@@ -78,7 +78,7 @@ a path, with a short `SLEEP` per step so the target's frame loop samples the mot
 ```basic
 DIM dn = mouse_event(LEFTDOWN, 0, 0, 0, 0)
 FOR i = 1 TO 12
-    DIM a = i * 2 * PI / 12
+    DIM a = i * 2 * MATH.PI / 12
     DIM sp = SetCursorPos(8 + cx + INT(r * COS(a)), 31 + cy + INT(r * SIN(a)))
     SLEEP 35
 NEXT i

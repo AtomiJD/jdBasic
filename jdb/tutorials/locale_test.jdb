@@ -13,7 +13,7 @@ PRINT "German Locale:"
 PRINT MY_NUMBER
 
 ' The CSVWRITER will now also use this format!
-DATA = RESHAPE([PI, MY_NUMBER], [1, 2])
+DATA = RESHAPE([MATH.PI, MY_NUMBER], [1, 2])
 CSVWRITER "german_numbers.csv", DATA, ";"
 
 PRINT "german_numbers.csv has been written."

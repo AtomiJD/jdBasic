@@ -46,7 +46,7 @@ Trig and math functions also broadcast:
 
 ```basic
 LET t = LINSPACE(0, 1, 4096)
-LET wave = SIN(2 * PI * 440 * t)   ' 4096 samples in one call
+LET wave = SIN(2 * MATH.PI * 440 * t)   ' 4096 samples in one call
 ```
 
 This is what the synth demo uses: `jdb/synth_apl.jdb` builds a 4096-

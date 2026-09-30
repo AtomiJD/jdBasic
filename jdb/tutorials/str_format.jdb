@@ -9,7 +9,7 @@ PRINT FORMAT$("Second arg: {1}, First arg: {0}", "First", "Second")
 ' Example 3: Number formatting (padding, precision, hex)
 val = 42
 
-PRINT FORMAT$("Pi is approx. {:0.4f}", pi)
+PRINT FORMAT$("Pi is approx. {:0.4f}", MATH.PI)
 PRINT FORMAT$("The value is [{:5d}]", val)
 PRINT FORMAT$("The value in hex is {:#x}", val)
 

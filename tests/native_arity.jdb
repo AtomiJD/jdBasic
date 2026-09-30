@@ -66,7 +66,7 @@ CHK "by name last", byname[1], 8
 ' A zero-argument builtin used as a value, without parentheses. This
 ' one is the reason arity has to be readable without calling: the VM
 ' has to know PI takes nothing before it tries.
-CHK "PI as a value", INT(2 * PI * 1000), 6283
+CHK "PI as a value", INT(2 * MATH.PI * 1000), 6283
 CHK "TRUE as a value", TRUE, 1
 
 ' A builtin that does need arguments must not be reachable this way,

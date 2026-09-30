@@ -65,13 +65,13 @@ DO
     LINE 20, 0, 20, SCREEN_H, 100, 100, 100
 
     ' --- Calculate Y Coordinates for all waves ---
-    angle1 = (x_axis / NUM_POINTS) * FREQUENCY1 * 2 * PI + time_step
+    angle1 = (x_axis / NUM_POINTS) * FREQUENCY1 * 2 * MATH.PI + time_step
     y_coords1 = (SIN(angle1) * AMPLITUDE1) + (SCREEN_H / 2)
 
-    angle2 = (x_axis / NUM_POINTS) * FREQUENCY2 * 2 * PI + time_step * 1.5
+    angle2 = (x_axis / NUM_POINTS) * FREQUENCY2 * 2 * MATH.PI + time_step * 1.5
     y_coords2 = (SIN(angle2) * AMPLITUDE2) + (SCREEN_H / 2)
 
-    angle3 = (x_axis / NUM_POINTS) * FREQUENCY3 * 2 * PI + time_step * 0.5
+    angle3 = (x_axis / NUM_POINTS) * FREQUENCY3 * 2 * MATH.PI + time_step * 0.5
     y_coords3 = (SIN(angle3) * AMPLITUDE3) + (SCREEN_H / 2)
 
     ' --- Create line segment matrices for each wave ---

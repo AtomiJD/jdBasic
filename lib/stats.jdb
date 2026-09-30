@@ -489,7 +489,7 @@ ENDFUNC
 
 EXPORT FUNC NORMPDF(x, mu = 0, sd = 1)
     DIM z = (x - mu) / sd
-    RETURN EXP(-0.5 * z * z) / (sd * SQR(2 * PI))
+    RETURN EXP(-0.5 * z * z) / (sd * SQR(2 * MATH.PI))
 ENDFUNC
 
 EXPORT FUNC NORMCDF(x, mu = 0, sd = 1)
@@ -517,7 +517,7 @@ EXPORT FUNC NORMPPF(p, mu = 0, sd = 1)
 ENDFUNC
 
 EXPORT FUNC TPDF(x, df)
-    DIM lead = LnGamma((df + 1) / 2) - LnGamma(df / 2) - 0.5 * LOG(df * PI)
+    DIM lead = LnGamma((df + 1) / 2) - LnGamma(df / 2) - 0.5 * LOG(df * MATH.PI)
     RETURN EXP(lead - (df + 1) / 2 * LOG(1 + x * x / df))
 ENDFUNC
 
@@ -644,7 +644,7 @@ ENDFUNC
 
 ' The logarithm of the gamma function, by the Lanczos series.
 FUNC LnGamma(z)
-    IF z < 0.5 THEN RETURN LOG(PI / SIN(PI * z)) - LnGamma(1 - z)
+    IF z < 0.5 THEN RETURN LOG(MATH.PI / SIN(MATH.PI * z)) - LnGamma(1 - z)
     DIM c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059, 12.507343278686905, -0.13857109526572012, 0.0000099843695780195716, 0.00000015056327351493116]
     DIM x = z - 1
     DIM a = c[0]
@@ -653,7 +653,7 @@ FUNC LnGamma(z)
         a = a + c[i] / (x + i)
     NEXT i
     DIM t = x + 7.5
-    RETURN 0.5 * LOG(2 * PI) + (x + 0.5) * LOG(t) - t + LOG(a)
+    RETURN 0.5 * LOG(2 * MATH.PI) + (x + 0.5) * LOG(t) - t + LOG(a)
 ENDFUNC
 
 ' The regularised lower incomplete gamma: the share of the gamma

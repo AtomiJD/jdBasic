@@ -2,7 +2,7 @@
 
 ' Test FFT
 PRINT "--- FFT Test ---"
-Signal = SIN(IOTA(16, 0) * PI / 8)
+Signal = SIN(IOTA(16, 0) * MATH.PI / 8)
 FreqData = FFT(Signal)
 PRINT "Frequency Data (Real/Imaginary):"
 PRINT FRMV$(FreqData)

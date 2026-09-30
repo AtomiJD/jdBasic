@@ -133,13 +133,13 @@ SUB maybe_wall(c, r, sd, dx, dr)
 		yaw = 0.0
 	ELSEIF sd = 2 THEN
 		pz = pz + TILE * 0.5
-		yaw = PI
+		yaw = MATH.PI
 	ELSEIF sd = 1 THEN
 		px = px + TILE * 0.5
-		yaw = -PI * 0.5
+		yaw = -MATH.PI * 0.5
 	ELSE
 		px = px - TILE * 0.5
-		yaw = PI * 0.5
+		yaw = MATH.PI * 0.5
 	ENDIF
 
 	DIM is_door = doorway_has(c, r, sd)
@@ -212,13 +212,13 @@ SUB place_torches(spots)
 			pz = pz - TILE * 0.45
 		ELSEIF sd = 2 THEN
 			pz = pz + TILE * 0.45
-			yaw = PI
+			yaw = MATH.PI
 		ELSEIF sd = 1 THEN
 			px = px + TILE * 0.45
-			yaw = -PI * 0.5
+			yaw = -MATH.PI * 0.5
 		ELSE
 			px = px - TILE * 0.45
-			yaw = PI * 0.5
+			yaw = MATH.PI * 0.5
 		ENDIF
 
 		DIM root = GDX.NEW("Node3D")
@@ -266,7 +266,7 @@ SUB place_props(props)
 		GDX.SET(inst, "global_position", GDX.VEC3(wx, wy, wz))
 		DIM yaw = 0.0
 		IF MAP.EXISTS(p, "yaw") THEN yaw = p{"yaw"}
-		GDX.SET(inst, "rotation:y", yaw * PI / 180.0)
+		GDX.SET(inst, "rotation:y", yaw * MATH.PI / 180.0)
 	NEXT
 ENDSUB
 
@@ -287,13 +287,13 @@ SUB place_decor(decor)
 			pz = pz - TILE * 0.48
 		ELSEIF sd = 2 THEN
 			pz = pz + TILE * 0.48
-			yaw = PI
+			yaw = MATH.PI
 		ELSEIF sd = 1 THEN
 			px = px + TILE * 0.48
-			yaw = -PI * 0.5
+			yaw = -MATH.PI * 0.5
 		ELSE
 			px = px - TILE * 0.48
-			yaw = PI * 0.5
+			yaw = MATH.PI * 0.5
 		ENDIF
 		GDX.ADD_CHILD(self_h, inst)
 		GDX.SET(inst, "global_position", GDX.VEC3(px, org_y, pz))
@@ -337,7 +337,7 @@ SUB toggle_door(di)
 	DIM vis = door_visual[di]
 	IF vis <> 0 THEN
 		DIM tgt = 0.0
-		IF op = 1 THEN tgt = -PI * 0.5
+		IF op = 1 THEN tgt = -MATH.PI * 0.5
 		DIM tw = GDX.CALL(self_h, "create_tween")
 		DIM pr = GDX.CALL(tw, "tween_property", GDX.REF(vis), "rotation:y", tgt, 0.35)
 		GDX.CALL(pr, "set_trans", GDX.ENUM("Tween", "TRANS_QUAD"))

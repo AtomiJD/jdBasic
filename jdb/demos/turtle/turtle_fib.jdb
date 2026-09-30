@@ -96,7 +96,7 @@ B = 1
 TURTLE.LEFT 90
 FOR i = 0 TO N - 1
     ' Calculate the length of the arc for this segment
-    ARC_LENGTH = PI * B * FACTOR / 2
+    ARC_LENGTH = MATH.PI * B * FACTOR / 2
     
     ' The arc is drawn as 90 small straight lines
     STEP_LENGTH = ARC_LENGTH / 90

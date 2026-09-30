@@ -225,7 +225,7 @@ FOR r = 1 TO cleared : kept = MVINS(kept, 0, 0, RESHAPE([0],[COLS])) : NEXT
 
 - **0/1-based:** `IOTA` is 1-based; `MID$` and `INSTR` are 0-based.
 - **`DATEADD(part$, num, date)`** - the count comes *before* the date.
-- **Reserved identifiers:** never name a variable `CLS`, `PI`, `E`, `STEP`, `LINE`,
+- **Reserved identifiers:** never name a variable `CLS`, `STEP`, `LINE`,
   `ON`, `TICK`, `VAL`, or any builtin. Identifiers are case-insensitive.
 - **Array copy:** bare `=` can share storage; force a fresh copy with `+ 0`.
 - **Short-circuit:** use `ANDALSO` / `ORELSE` when the right side could fault.

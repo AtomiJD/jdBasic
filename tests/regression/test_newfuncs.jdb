@@ -8,8 +8,8 @@ PRINT "SINH(1) = "; SINH(1)
 PRINT "COSH(0) = "; COSH(0)
 PRINT "TANH(0) = "; TANH(0)
 PRINT "SGN(-5) = "; SGN(-5); " SGN(0) = "; SGN(0); " SGN(3) = "; SGN(3)
-PRINT "PI() = "; PI()
-PRINT "E() = "; E()
+PRINT "PI() = "; MATH.PI()
+PRINT "E() = "; MATH.E()
 PRINT "RANDOM(1,10) is a number: "; RANDOM(1, 10) > 0
 RANDOMSEED 42
 PRINT "SGN([-3,0,5]) = "; SGN([-3, 0, 5])

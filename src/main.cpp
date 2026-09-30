@@ -647,7 +647,7 @@ static bool ws_default_user_filter(const std::string& name) {
     if (name.size() >= 2 && name[0] == '_' && name[1] == '_') return false;
     if (name.find('.') != std::string::npos) return false;
     static const std::unordered_set<std::string> builtins = {
-        "PI", "E", "PWD", "TRUE", "FALSE", "NULL", "NONE",
+        "MATH.PI", "MATH.E", "PWD", "TRUE", "FALSE", "NULL", "NONE",
         "VBCRLF", "VBNEWLINE", "VBTAB"
     };
     if (builtins.count(name)) return false;
@@ -1579,7 +1579,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
 
             // Built-in natives + a few bare-word constants are always in scope.
             for (auto& n : vm.native_names()) declared.insert(n);
-            for (const char* k : {"PI","E","TRUE","FALSE","NULL","VBNEWLINE","NOTHING",
+            for (const char* k : {"MATH.PI","MATH.E","TRUE","FALSE","NULL","VBNEWLINE","NOTHING",
                                   "ERR","ERRMSG$","ERRLINE"})
                 declared.insert(k);
 

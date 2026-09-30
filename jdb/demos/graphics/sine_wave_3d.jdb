@@ -14,8 +14,8 @@ SCALE = 3
 SCREEN PIX_W*SCALE, PIX_H*SCALE, "3D Sine Wave (APL + PLOTRAW)"
 
 ' ---- World grid: centred, 4 ripple-cycles each axis ----------
-XS   = (IOTA(PIX_W) - PIX_W/2) * (8*PI / PIX_W)
-YS   = (IOTA(PIX_H) - PIX_H/2) * (8*PI / PIX_H)
+XS   = (IOTA(PIX_W) - PIX_W/2) * (8*MATH.PI / PIX_W)
+YS   = (IOTA(PIX_H) - PIX_H/2) * (8*MATH.PI / PIX_H)
 GX   = OUTER(YS*0, XS, "+")
 GY   = OUTER(YS, XS*0, "+")
 DIST = SQR(GX^2 + GY^2)

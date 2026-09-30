@@ -11,7 +11,7 @@ Nshapes = 200
 Npoints = 350
 DT = 2E-3
 
-R = 2 * PI / Nshapes
+R = 2 * MATH.PI / Nshapes
 MAXX = MAXY * HPIXELS / VPIXELS
 Fhue = 360 / Nshapes
 

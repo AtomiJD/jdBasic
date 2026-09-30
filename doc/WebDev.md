@@ -571,7 +571,7 @@ test drives every route without a browser. The whole API is on
   discovered routes, see Level 3.5) and dispatch inside the handler on
   `request{"PATH"}`.
 - **Reserved names** still apply in handlers: don't name variables `LINE`, `VAL`,
-  `LEN`, `MAP`, `E`, `PI`, etc.
+  `LEN`, `MAP`, etc.
 
 ---
 

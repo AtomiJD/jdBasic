@@ -92,7 +92,7 @@ SUB place_plant(path, wx, wz, rad, hgt, sc)
 	GDX.ADD_CHILD(body, inst)
 	GDX.ADD_CHILD(self_h, body)
 	GDX.SET(body, "global_position", GDX.VEC3(wx, terrain_height(wx, wz), wz))
-	GDX.SET(body, "rotation:y", RND(1) * 2.0 * PI)
+	GDX.SET(body, "rotation:y", RND(1) * 2.0 * MATH.PI)
 ENDSUB
 
 SUB place_trees(cx, cz, cell, count)

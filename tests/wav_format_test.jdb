@@ -242,7 +242,7 @@ ELSE
         ' is reported rather than failed.
         DIM tone = []
         FOR i = 0 TO 4799
-            tone = APPEND(tone, 0.2 * SIN(2 * PI * 440 * i / 48000))
+            tone = APPEND(tone, 0.2 * SIN(2 * MATH.PI * 440 * i / 48000))
         NEXT i
         DIM dup = WAV.RECORD(0.2, { "channels": 1, "rate": 48000, "play": tone })
         IF TYPEOF(dup) = "OBJECT" THEN

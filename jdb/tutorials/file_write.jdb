@@ -8,7 +8,7 @@ TXTWRITER "report.txt", REPORT$
 PRINT "report.txt has been written with correct newlines."
 
 ' You can also use other constants we added, like PI
-PRINT "The value of PI is: "; PI
+PRINT "The value of PI is: "; MATH.PI
 
 
 PRINT "--- Testing CSVWRITER ---"
@@ -48,7 +48,7 @@ PRINT "German Locale:"
 PRINT MY_NUMBER
 
 ' The CSVWRITER will now also use this format!
-DATA = RESHAPE([PI, MY_NUMBER], [1, 2])
+DATA = RESHAPE([MATH.PI, MY_NUMBER], [1, 2])
 CSVWRITER "german_numbers.csv", DATA, ";"
 
 PRINT "german_numbers.csv has been written."

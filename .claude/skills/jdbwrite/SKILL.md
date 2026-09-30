@@ -1,6 +1,6 @@
 ---
 name: jdbwrite
-description: Read BEFORE writing or editing ANY jdBasic (.jdb) code, or jdBasic snippets sent through the MCP. Pre-flight checklist that stops the recurring mistakes - reserved-identifier collisions (CLS, PI, E, STEP, LINE, ON, TICK, VAL ...), undocumented syntax, guessed builtin signatures, hand-rolled loops where an APL idiom exists, and noise comments. jdBasic repo at D:\usr\dev\cc.
+description: Read BEFORE writing or editing ANY jdBasic (.jdb) code, or jdBasic snippets sent through the MCP. Pre-flight checklist that stops the recurring mistakes - reserved-identifier collisions (CLS, STEP, LINE, ON, TICK, VAL ...), undocumented syntax, guessed builtin signatures, hand-rolled loops where an APL idiom exists, and noise comments. jdBasic repo at D:\usr\dev\cc.
 ---
 
 # Writing jdBasic - pre-flight
@@ -13,7 +13,7 @@ The jdBasic MCP (`jdbasic-stdio-win`) is a live VM. Ask it instead of assuming:
 - `jdb_doc <name>` - does this command exist, what are its parameters and their **order**? (Today's `DATEDIFF`/`DATEADD` arg-order bug came from guessing.)
 - `jdb_eval "PRINT ..."` - probe a one-liner to confirm a builtin's signature, arg order, 0/1-based indexing and return shape **before** building on it.
 - `jdb_check <file>` - lint a finished `.jdb` (faster than `--lint` - the MCP-VM stays warm). Lint before handing code over.
-- Probe new **variable names** too: `--lint` won't catch a `DIM pi` shadowing the `PI` constant - eval it.
+- Probe new **variable names** too: `--lint` won't catch a `DIM` that shadows a builtin name - eval it.
 
 If a function is not in `doc/languages.md` AND doesn't probe-eval cleanly, do not use it.
 
@@ -22,7 +22,7 @@ Use only syntax/functions from `doc/languages.md` or a known-good example under 
 
 ## 3. Reserved identifiers - NEVER use as variable / param / function names
 Identifiers are **case-insensitive** (`V` and `v` are the same slot).
-- Built-in CONSTs - never `DIM`/assign these: `PI  E  TAU  TRUE  FALSE  NULL  INF  NAN`
+- Built-in CONSTs - never `DIM`/assign these: `MATH.PI  MATH.E  TAU  TRUE  FALSE  NULL  INF  NAN`
 - Keywords / builtins that bite as names: `CLS  STEP  LINE  ON  TICK  VAL  LEN` - and in general **any builtin function name** (`SUM MIN MAX DAY MONTH YEAR SORT COUNT` ...).
 
 Rule of thumb: if a name appears in `languages.md`/`help.txt`, don't reuse it as your own identifier. When unsure, probe-eval it, or pick a non-colliding name.
@@ -58,7 +58,7 @@ Comment **only** what is not obvious from the code or the variable/function name
 | `MAP` for higher-order map | `SELECT(fn@, arr)`; `MAP` is the hashmap type |
 | `AND` / `OR` with a crashy RHS | `ANDALSO` / `ORELSE` short-circuit |
 | `TIMER` for per-frame dt | `TICK()` (ms); TIMER is integer seconds |
-| `DIM pi`, `DIM cls` | reserved - rename |
+| `DIM cls`, `DIM step` | reserved - rename |
 | bare `=` array copy, then mutate | force a fresh copy with `+ 0` |
 | `LEFT$(s, INSTR(s,d) - 1)` | INSTR is 0-based: `LEFT$(s, INSTR(s,d))` |
 | `IF v = NONE` (TRUE for ANY value) | test missing key with `TYPEOF(v) = "NONE"` |

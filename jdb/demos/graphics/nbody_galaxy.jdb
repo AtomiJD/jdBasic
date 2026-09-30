@@ -95,7 +95,7 @@ FOR i = 0 TO NUM_BODIES - 1
 
         ' Position in a disk using polar coordinates
         dist = GALAXY_RADIUS * SQR(RND(1)) ' SQR() bunches stars toward center
-        angle = RND(1) * 2 * PI
+        angle = RND(1) * 2 * MATH.PI
         Pos[i, 0] = dist * COS(angle)
         Pos[i, 1] = dist * SIN(angle)
 

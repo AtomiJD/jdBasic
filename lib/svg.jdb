@@ -259,7 +259,7 @@ ENDFUNC
 ' degrees (0 left to right, 90 top to bottom); answers "url(#id)" for a
 ' fill or a stroke.
 EXPORT FUNC GRADIENT$(doc, grad_id$, colors, angle = 0)
-    DIM rad = angle * PI / 180
+    DIM rad = angle * MATH.PI / 180
     DIM dx = COS(rad) / 2
     DIM dy = SIN(rad) / 2
     DIM head$ = "<linearGradient" + Attr$("id", grad_id$) + NumAttr$("x1", 0.5 - dx) + NumAttr$("y1", 0.5 - dy) + NumAttr$("x2", 0.5 + dx) + NumAttr$("y2", 0.5 + dy) + ">"
@@ -700,19 +700,19 @@ SUB DrawPie(doc, chart, series, x0, y0, avail_w, avail_h)
         DIM hole = OptNum(chart, "donut", 0)
         IF hole > 0.9 THEN hole = 0.9
         DIM ir = r * hole
-        DIM angle = -PI / 2
+        DIM angle = -MATH.PI / 2
         FOR k = 0 TO n_values - 1
             DIM ok = gSeOk[first + k]
             DIM v = gSeY[first + k]
             IF ok = 1 ANDALSO v > 0 ANDALSO total > 0 THEN
-                DIM sweep = v / total * 2 * PI
+                DIM sweep = v / total * 2 * MATH.PI
                 DIM a1 = angle + sweep
                 DIM pa AS MAP
                 pa{"fill"} = ColorOf$(chart, k)
                 pa{"class"} = "m"
                 pa{"data_label"} = LabelAt$(chart, k)
                 pa{"data_value"} = Num$(v)
-                IF sweep >= 2 * PI - 0.000001 THEN
+                IF sweep >= 2 * MATH.PI - 0.000001 THEN
                     IF ir > 0 THEN
                         DIM ring$ = "M " + Num$(cx - r) + " " + Num$(cy) + " A " + Num$(r) + " " + Num$(r) + " 0 1 1 " + Num$(cx + r) + " " + Num$(cy) + " A " + Num$(r) + " " + Num$(r) + " 0 1 1 " + Num$(cx - r) + " " + Num$(cy)
                         ring$ = ring$ + " M " + Num$(cx - ir) + " " + Num$(cy) + " A " + Num$(ir) + " " + Num$(ir) + " 0 1 0 " + Num$(cx + ir) + " " + Num$(cy) + " A " + Num$(ir) + " " + Num$(ir) + " 0 1 0 " + Num$(cx - ir) + " " + Num$(cy) + " Z"
@@ -723,7 +723,7 @@ SUB DrawPie(doc, chart, series, x0, y0, avail_w, avail_h)
                     ENDIF
                 ELSE
                     DIM large$ = "0"
-                    IF sweep > PI THEN large$ = "1"
+                    IF sweep > MATH.PI THEN large$ = "1"
                     DIM d$ = "M " + Num$(cx + r * COS(angle)) + " " + Num$(cy + r * SIN(angle))
                     d$ = d$ + " A " + Num$(r) + " " + Num$(r) + " 0 " + large$ + " 1 " + Num$(cx + r * COS(a1)) + " " + Num$(cy + r * SIN(a1))
                     IF ir > 0 THEN

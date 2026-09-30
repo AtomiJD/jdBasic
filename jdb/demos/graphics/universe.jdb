@@ -20,7 +20,7 @@ DIM Nshapes AS INTEGER : Nshapes = 200
 DIM Npoints AS INTEGER : Npoints = 350
 DIM DT AS DOUBLE : DT = 2E-3
 
-DIM R AS DOUBLE : R = 2 * PI / Nshapes
+DIM R AS DOUBLE : R = 2 * MATH.PI / Nshapes
 DIM MAXX AS DOUBLE : MAXX = MAXY * HPIXELS / VPIXELS
 DIM Fhue AS DOUBLE : Fhue = 360 / Nshapes
 

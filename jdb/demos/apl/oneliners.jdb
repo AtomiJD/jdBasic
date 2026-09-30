@@ -15,7 +15,7 @@ PRINT "--- sine wave plotted into a character matrix ---"
 W=40:H=20:F=6:C=RESHAPE([" "],[H,W]):X=IOTA(W)-1:Y=INT((SIN(X/F)+1)*((H-1)/2)):C[Y,X]="*":C[H/2,IOTA(W)-1]="-":PRINT FRMV$(C)
 
 PRINT "--- biorhythm: three sine curves scattered into one grid ---"
-BD="1990-01-01":W=41:H=21:D=DATEDIFF("D",CVDATE(BD),NOW()):X=D-W/2+IOTA(W):C=RESHAPE([" "],[H,W]):PY=INT((SIN(2*PI*X/23)+1)*((H-1)/2)):EY=INT((SIN(2*PI*X/28)+1)*((H-1)/2)):IY=INT((SIN(2*PI*X/33)+1)*((H-1)/2)):C[H/2,IOTA(W)-1]="-":C[IOTA(H)-1,INT(W/2)]="|":C[PY,IOTA(W)-1]="P":C[EY,IOTA(W)-1]="E":C[IY,IOTA(W)-1]="I":PRINT "P=Physical(23) E=Emotional(28) I=Intellectual(33)":PRINT FRMV$(C)
+BD="1990-01-01":W=41:H=21:D=DATEDIFF("D",CVDATE(BD),NOW()):X=D-W/2+IOTA(W):C=RESHAPE([" "],[H,W]):PY=INT((SIN(2*MATH.PI*X/23)+1)*((H-1)/2)):EY=INT((SIN(2*MATH.PI*X/28)+1)*((H-1)/2)):IY=INT((SIN(2*MATH.PI*X/33)+1)*((H-1)/2)):C[H/2,IOTA(W)-1]="-":C[IOTA(H)-1,INT(W/2)]="|":C[PY,IOTA(W)-1]="P":C[EY,IOTA(W)-1]="E":C[IY,IOTA(W)-1]="I":PRINT "P=Physical(23) E=Emotional(28) I=Intellectual(33)":PRINT FRMV$(C)
 
 PRINT "--- ASCII table built from IOTA + CHR$, reshaped to a grid ---"
 i=224:j=32:PRINT FRMV$(RESHAPE(STR$(IOTA(i)-1+j) + CHR$(IOTA(i)*0+58) + CHR$(IOTA(i)+j),[i^0.5,i^0.5]))
