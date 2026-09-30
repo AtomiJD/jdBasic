@@ -1,4 +1,4 @@
-# DB - SQLite without hand-written SQL strings
+# DB: SQLite without hand-written SQL strings
 
 `lib/db.jdb` sits on top of `SQL.*`: a query builder whose values always
 become quoted literals, rows as maps, inserts, upserts, updates and

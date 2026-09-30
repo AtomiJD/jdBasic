@@ -8,8 +8,8 @@ the reference an agent reads to turn a request like *"give me the Brian May tone
 from Bohemian Rhapsody"* into a real, rendered sound.
 
 **Build flags:** `SOUND` (the synth, for rendering test material) + `FX` (WAV I/O
-+ the effect chain). All of this is offline (process a sample array) - no
-real-time device needed, so it works headless.
++ the effect chain). All of this is offline (process a sample array) and needs no
+real-time device, so it works headless.
 
 ```
 build.bat HTTP GFX IMGUI NATIVEC SOUND FX            # Windows
@@ -48,7 +48,7 @@ DIM x   = FX.FREE(ch)                               ' free (use the paren form!)
 ```
 
 Nodes run **in the order added**. `FX.PROCESS` works on a mono float buffer.
-Call `FX.FREE(ch)` in **paren form** - `FX.FREE ch` (statement form) mis-parses.
+Call `FX.FREE(ch)` in **paren form**; `FX.FREE ch` (statement form) mis-parses.
 
 ### Live tuning (the FX REPL)
 
@@ -64,7 +64,7 @@ DIM ok = FX.SET(ch, 3, "amount", 30)     ' set node 3's "amount" to 30 -> TRUE
 node and returns `TRUE`, or `FALSE` if the chain/index/param is unknown. It only
 writes parameters that already exist (every node type's full set is pre-populated
 at `FX.ADD` time), so it is safe to call while the lock-free audio callback is
-reading the chain. Build the chain, start monitoring, then turn knobs live -
+reading the chain. Build the chain, start monitoring, then turn knobs live:
 play, listen, `FX.SET`, repeat. Use the **paren form** with `PRINT` or `DIM x =`;
 the bare statement form with comma args mis-parses.
 
@@ -78,7 +78,7 @@ the bare statement form with comma args mis-parses.
 | `highpass` | `cutoff` (2000), `q` (0.707) | RBJ biquad high-pass (tighten lows; a treble-booster feel) |
 | `delay` | `time_ms` (300), `feedback` (0.35), `mix` (0.3) | feedback delay / echo |
 | `compressor` | `threshold` (0.5), `ratio` (4), `makeup` (1.0) | peak compressor (sustain, evenness) |
-| `cabinet` | `ir` (WAV path), `level` (0.7), `mix` (1.0) | convolve with a speaker-cabinet impulse response = the realism jump |
+| `cabinet` | `ir` (WAV path), `level` (0.7), `mix` (1.0) | convolve with a speaker-cabinet impulse response; the largest single gain in realism |
 | `chorus` | `rate` (0.8), `depth` (3), `delay` (14), `mix` (0.5) | LFO-modulated short delay; lush, doubled, shimmering |
 | `flanger` | `rate` (0.3), `depth` (2), `delay` (1), `mix` (0.5), `feedback` (0.5) | short modulated delay + feedback; jet-plane sweep |
 | `vibrato` | `rate` (5), `depth` (2), `delay` (14) | 100% wet pitch wobble (no dry) |
@@ -99,7 +99,7 @@ per block) and is skipped while monitoring.
 ### Cabinet IR
 `cabinet` loads a `.wav` impulse response (left channel, unit-peak normalized)
 and convolves it with the signal. A real cab IR makes "digital fizz" sound like
-a miked amp. No IR file handy? Synthesize a usable one by band-passing a short
+a miked amp. Without an IR file, you can synthesize a usable one by band-passing a short
 impulse:
 
 ```basic
@@ -119,7 +119,7 @@ WAV.WRITE "tmp/cab_ir.wav", ir, 44100, 1
 
 The agent can't hear, but it can read the spectrum. `FFT(window)` returns
 `[N][2]` (real/imag pairs); band **energy** is `re*re + im*im`. Sum into
-low/mid/high to see the tonal balance shift after a chain - then reason
+low/mid/high to see the tonal balance shift after a chain, then reason
 ("too much 2 kHz, lower the lowpass"):
 
 ```basic
@@ -162,7 +162,7 @@ Working demo: `jdb/demos/audio/tone_designer.jdb`.
 3. **Render a short note/riff** through the chain -> `WAV.WRITE`.
 4. **Read the spectral ear + let the human listen.** Adjust params, repeat.
 
-## Tone cookbook (starting points - tune to taste)
+## Tone cookbook (starting points, tune to taste)
 
 **Brian May / Bohemian Rhapsody** (singing, mid-focused, harmonised echo):
 ```basic
@@ -214,7 +214,7 @@ FX.ADD ch, "lowpass",  { "cutoff": 3000 }
 ---
 
 ## See also
-- `jdb/demos/audio/` - `synth_to_wav.jdb`, `fx_chain_demo.jdb`, `cabinet_demo.jdb`,
+- `jdb/demos/audio/`: `synth_to_wav.jdb`, `fx_chain_demo.jdb`, `cabinet_demo.jdb`,
   `tone_designer.jdb`
 - WAV: `WAV.WRITE/READ/INFO`. MIDI: `MIDI.PORTS/OPEN_OUT/OPEN_IN/SEND/NOTEON/
   NOTEOFF/CC/POLL/CLOSE` (see the `audio` jdTrakr project + `notes/audio_midi_plan.md`).
@@ -222,7 +222,7 @@ FX.ADD ch, "lowpass",  { "cutoff": 3000 }
   run a live guitar/line input through an FX chain. Tune it live with `FX.SET` /
   `FX.DUMP$` (see `jdb/demos/audio/live_fx.jdb`). `MON.LEVEL()->{in,out}` gives
   decaying peak levels for VU metering.
-- **`jdb/demos/audio/fx_rack.jdb`** - a generic ImGui pedalboard: the controls are
+- **`jdb/demos/audio/fx_rack.jdb`**: a generic ImGui pedalboard: the controls are
   generated from `fx_effects.json` (one slider per param), `fx_presets.json` holds
   named tones that switch the whole chain, with add/reorder/bypass/remove, save+load,
   an in/out level meter, a live oscilloscope + FFT spectrum (`MON.SCOPE`), a chromatic

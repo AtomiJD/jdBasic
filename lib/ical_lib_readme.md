@@ -1,4 +1,4 @@
-# ICAL - calendars and recurrence rules
+# ICAL: calendars and recurrence rules
 
 `lib/ical.jdb` reads and writes iCalendar (`.ics`) files: the components
 VCALENDAR, VEVENT, VTODO, VALARM and VTIMEZONE with their properties and

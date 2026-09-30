@@ -2,11 +2,9 @@
 
 Distributed personal AI agent ("Jarvis class") built **entirely in jdBasic**. Demo project for CHAN channels, MCP server integration, user tool maker, AI/LLM/RAG, and distributed HTTP workflows.
 
-> Proof that BASIC never died.
-
 ## Status
 
-**Phase A - Foundation: complete** (Sprints 1-4, runs on the kernel alone)
+**Phase A (Foundation): complete** (Sprints 1-4, runs on the kernel alone)
 
 | Sprint | Modules | Asserts |
 |---|---|---:|
@@ -17,7 +15,7 @@ Distributed personal AI agent ("Jarvis class") built **entirely in jdBasic**. De
 | Polish | dispatch (HTTP receiver + bus routing) | 10 |
 | 4 | modernization: SQL.* natives, NOW_EPOCH, path fixes | (same suites) |
 
-**Phase B - Communication loop: first slice live**
+**Phase B (Communication loop): first slice live**
 
 | Sprint | Modules | Asserts |
 |---|---|---:|
@@ -31,7 +29,7 @@ event log now stores real wallclock epochs instead of `TICK()`), and fixed
 all relative paths after the move to `jdb/deusexmachina/`.
 
 Sprint B1 added the communication loop: `telegram.jdb` (Bot API via curl
-long polling - no public URL or tunnel needed), `agent.jdb` (one loop
+long polling, no public URL or tunnel needed), `agent.jdb` (one loop
 step: inbound -> event log -> optional RAG context -> injected brain FUNC
 -> reply -> event log) and `LLM_BRAIN.ask_remote` (OpenAI-compatible
 chat/completions endpoint, verified against a llama-server on the LAN).
@@ -79,8 +77,8 @@ Full flag set required:
 
 ## Prerequisites
 
-- `models/Phi-3-mini-4k-instruct-q4.gguf` (~2.2 GB) - for llm_brain
-- `models/bge-m3-Q4_K_M.gguf` (~700 MB) - for RAG embeddings
+- `models/Phi-3-mini-4k-instruct-q4.gguf` (~2.2 GB) for llm_brain
+- `models/bge-m3-Q4_K_M.gguf` (~700 MB) for RAG embeddings
 - CUDA-capable GPU recommended (Phi-3 also runs on CPU, just much slower)
 
 ## Quick demos
@@ -90,7 +88,7 @@ Full flag set required:
 cd jdb/deusexmachina
 ../../build/jdBasic.exe demo.jdb
 ```
-Shows persist+RAG+LLM+bus+dispatch working together - ingests 3 knowledge
+Shows persist+RAG+LLM+bus+dispatch working together: ingests 3 knowledge
 chunks, runs an ASYNC producer + sync consumer over the bus, asks the LLM
 with RAG context and streams the answer back token by token.
 
@@ -101,7 +99,7 @@ with RAG context and streams the answer back token by token.
 Exposes `deus_echo`, `deus_health`, `deus_now` in addition to the built-in
 `jdb_*` tools. Drop a new `tools/foo.json` in, write
 `EXPORT FUNC tool_foo(args$) AS STRING` in any .jdb the manifest references,
-restart - Claude sees the new tool immediately.
+restart; Claude sees the new tool immediately.
 
 ### Phase B communication loop
 ```bash
@@ -113,7 +111,7 @@ source -> bus -> agent -> sink with the stub brain. For the real thing:
 `cp conf/deus.example.json conf/deus.json`, put a Telegram bot token in
 (create one via @BotFather), optionally switch `llm.mode` to `remote`
 (any OpenAI-compatible server) or `local` (GGUF via AI.LOAD_LLM), then
-run again - the loop long-polls the bot and answers incoming chats.
+run again. The loop long-polls the bot and answers incoming chats.
 
 ### Unit tests
 ```bash
@@ -131,7 +129,7 @@ cd jdb/deusexmachina
 ## Architecture notes
 
 **Module globals do not survive the ASYNC FUNC fork.** Every ASYNC FUNC
-starts in a fresh VM that only receives a copy of `func_map` - module-level
+starts in a fresh VM that only receives a copy of `func_map`, so module-level
 `DIM g_topics AS MAP` is not initialised in the async context. Consequence:
 cross-task state travels via **CHAN handles passed as arguments**, not via
 module globals. The bus is therefore **main-VM-only** as a topic directory;
@@ -140,12 +138,12 @@ async producers/consumers get the channel handle passed in directly.
 **Dotted natives need the paren form.** `AI.SET id, k, v` (SUB style
 without parens) parses as method access on the value `AI` and throws
 "Cannot call method 'SET' on value". Modules wrapping natives always use
-the `DIM rc = AI.X(...)` form - harmless for FUNCs, saves SUBs from the
+the `DIM rc = AI.X(...)` form, which is harmless for FUNCs and saves SUBs from the
 throw.
 
 **HTTP server handlers talk to the main VM.** `HTTP.SERVER.START` pins
 `g_server_vm` to the VM that called `START`. Later POSTs run on a
-background thread but grab the main VM under mutex for handler dispatch -
+background thread but grab the main VM under mutex for handler dispatch, so
 module globals are visible (unlike in ASYNC FUNCs). Handler FUNC names
 must be passed UPPERCASE to `HTTP.SERVER.ON_POST` because `call_function`
 does an exact match on the string key.

@@ -1,4 +1,4 @@
-# XML - XML into a tree, queried with paths, built and written back
+# XML: XML into a tree, queried with paths, built and written back
 
 `lib/xml.jdb` reads XML into a tree, answers a subset of XPath over it,
 builds documents from nothing, and writes them back out. It is strict

@@ -1,4 +1,4 @@
-# OAUTH - OAuth 2 client flows on REQ
+# OAUTH: OAuth 2 client flows on REQ
 
 `lib/oauth.jdb` gets and keeps the tokens that Google, Microsoft Graph
 and most other APIs want: client credentials, the authorization code

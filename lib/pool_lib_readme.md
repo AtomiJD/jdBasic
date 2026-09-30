@@ -1,4 +1,4 @@
-# POOL - worker pools, fan-out and fan-in
+# POOL: worker pools, fan-out and fan-in
 
 `lib/pool.jdb` spreads jobs over ASYNC worker tasks and collects the
 answers in input order. Each job ends in one of four states: ok, error,

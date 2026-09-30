@@ -1,4 +1,4 @@
-# I18N - text catalogs, plural rules, a shared locale
+# I18N: text catalogs, plural rules, a shared locale
 
 `lib/i18n.jdb` keeps the texts of an application per locale, finds a text
 through a fallback chain (`de-AT` -> `de` -> `en`), fills `{name}`

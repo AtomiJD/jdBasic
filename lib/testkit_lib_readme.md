@@ -1,4 +1,4 @@
-# TESTKIT - assertions, suites and test reports
+# TESTKIT: assertions, suites and test reports
 
 `lib/testkit.jdb` is the test convention every other module in this
 library is built on: assertions with a message, named suites, a summary

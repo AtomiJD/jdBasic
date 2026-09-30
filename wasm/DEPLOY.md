@@ -1,24 +1,24 @@
-# jdBasic Web IDE - deploy bundle
+# jdBasic Web IDE: deploy bundle
 
 `wasm/` is a self-contained static site. Upload its contents to any web host
-(or `python3 -m http.server`) and open `index.html`. No build step, no CDN,
-no server-side code - just static files. The host only needs to send the
+(or `python3 -m http.server`) and open `index.html`. It needs no build step, no CDN
+and no server-side code; the files are all static. The host only needs to send the
 correct MIME type for `.wasm` (`application/wasm`); most do.
 
 ## Files
 
 Tracked in git (source):
 
-- `index.html` - the IDE (xterm REPL + Monaco editor), references only local paths
-- `programs/*.jdb` - web-tuned demo sources (already embedded into the .wasm; not needed at runtime)
-- `DEPLOY.md` - this file
+- `index.html`: the IDE (xterm REPL + Monaco editor), references only local paths
+- `programs/*.jdb`: web-tuned demo sources (already embedded into the .wasm; not needed at runtime)
+- `DEPLOY.md`: this file
 
-Generated / vendored, NOT in git (see `.gitignore`) - assemble before deploying:
+Generated / vendored, NOT in git (see `.gitignore`); assemble these before deploying:
 
-- `jdbasic.js`, `jdbasic.wasm` - the runtime (core + GFX + ImGui + SQLite + FX), demos + default font embedded
-- `vendor/xterm/` - `xterm.js`, `xterm.css`, `addon-fit.js`
-- `vendor/monaco/vs/` - Monaco editor 0.45.0 (`min/vs` tree, includes the worker)
-- `vendor/fonts/` - Fira Code woff2 + `fira-code.css`
+- `jdbasic.js`, `jdbasic.wasm`: the runtime (core + GFX + ImGui + SQLite + FX), demos + default font embedded
+- `vendor/xterm/`: `xterm.js`, `xterm.css`, `addon-fit.js`
+- `vendor/monaco/vs/`: Monaco editor 0.45.0 (`min/vs` tree, includes the worker)
+- `vendor/fonts/`: Fira Code woff2 + `fira-code.css`
 
 ## (Re)assemble the bundle
 
@@ -47,4 +47,4 @@ Generated / vendored, NOT in git (see `.gitignore`) - assemble before deploying:
 - The demos load via the in-page REPL (`DIR`, `LOAD <name>`, `RUN`); they are
   baked into the `.wasm`, so the `programs/` folder does not need uploading.
 - Graphics/audio need a user gesture (the page's Run click) before the browser
-  starts WebGL/WebAudio - that is automatic in the IDE.
+  starts WebGL/WebAudio; the IDE handles that automatically.

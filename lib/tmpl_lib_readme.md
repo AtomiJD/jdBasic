@@ -1,4 +1,4 @@
-# TMPL - HTML templates with layouts, loops and filters
+# TMPL: HTML templates with layouts, loops and filters
 
 `lib/tmpl.jdb` renders a template against a model map. A hole is escaped
 for HTML unless it asks to be raw; conditions, loops, includes and layouts

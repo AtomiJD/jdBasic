@@ -1,4 +1,4 @@
-# DOCX - write, fill and read Word files
+# DOCX: write, fill and read Word files
 
 `lib/docx.jdb` writes Word documents without Word, fills the `{{name}}`
 placeholders of a template, and reads the paragraphs and tables of a

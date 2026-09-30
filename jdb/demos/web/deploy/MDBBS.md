@@ -67,7 +67,7 @@ these pages can show. An unknown name is left alone as text.
 
 Two renderers honour it. The HTML one wraps the run in a span; the board
 one emits the terminal escape and, importantly, does not count it
-towards the forty columns - the wrap measures what is visible and a line
+towards the forty columns: the wrap measures what is visible and a line
 broken mid-colour carries that colour onto the next.
 
 Blue is the one to go easy on: the Fruit Jam's framebuffer has two bits

@@ -1,4 +1,4 @@
-# SEARCH - full-text search with BM25
+# SEARCH: full-text search with BM25
 
 `lib/search.jdb` searches documents kept in memory: an inverted index with
 word positions, BM25 ranking with the numbers rank_bm25's `BM25Okapi`

@@ -1,4 +1,4 @@
-# VB6 migration path - plan for review
+# VB6 migration path: plan for review
 
 Draft for a decision. Nothing here is built yet. It covers the two parked
 phases of the jdForms epic, P4 (VB6 language layer) and P5 (legacy import),
@@ -61,7 +61,7 @@ is a small framework, and it is the substance of every VirtualOffice mask.
 
 This corpus is not "VB6 applications". It is **VirtualOffice applications**,
 and VirtualOffice is a data-binding framework on custom OCX. A generic VB6
-importer pointed at it would convert the chrome - labels, buttons, frames -
+importer pointed at it would convert the chrome (labels, buttons, frames)
 and leave every field on the floor. The result would look like the form and
 do nothing.
 
@@ -95,7 +95,7 @@ Missing, and every one of them appears in the corpus:
 
 A converter that cannot emit `BackColor` has to emit a comment instead, and
 then every converted form looks broken. **This is on the critical path and it
-is worth doing whether or not the migration happens** - it is the difference
+is worth doing whether or not the migration happens**, because it is the difference
 between a toolbox you can click and one you can design with.
 
 ### 2.2 Control arrays (blocking for this corpus)
@@ -122,7 +122,7 @@ Option 1 is the one to plan for.
 
 `Query`/`QueryField` on ~3 900 fields, plus `VB.Data` 183 and `DBGrid` 177.
 jdForms has nothing here and should not grow it as part of an importer. The
-honest position: **converted forms come out unbound**, with the binding
+position here: **converted forms come out unbound**, with the binding
 recorded as a comment on each control, and wiring them up is application
 work.
 
@@ -134,7 +134,7 @@ importer inventing a competing one would be work spent twice.
 
 Four phases. Each has a gate that can only be answered with a number.
 
-### P4a - Properties and design surface
+### P4a: Properties and design surface
 
 Close 2.1. `FORECOLOR`, `BACKCOLOR`, `FONT` (a map: name, size, bold, italic,
 underline), `TAG`, `TOOLTIP`, `ALIGN`, `MAXLENGTH`, `PASSWORD`, `LOCKED`,
@@ -147,10 +147,10 @@ form, colours and fonts included. No property in the list above is missing.*
 
 Worth doing on its own merits. **Nothing else in this plan starts before it.**
 
-### P5a - The form converter
+### P5a: The form converter
 
 `.frm` -> `.jdform` + a `.jdb` code-behind skeleton. Written in jdBasic, so
-it is also a showcase.
+it also serves as a larger jdBasic example.
 
 - twips to logical units: `logical = twips / 15`
 - `Begin VB.X` blocks, nested `Frame` membership, `Begin VB.Menu` trees
@@ -159,11 +159,11 @@ it is also a showcase.
 - everything unmappable emits a `' TODO VB6:` line carrying the original
   block verbatim, so nothing is lost, only marked
 
-*Gate: over the 741 real `.frm` files - what fraction of control instances
+*Gate: over the 741 real `.frm` files, what fraction of control instances
 converted, what fraction was marked, and how many files converted without a
 single mark. Published as a table, re-runnable.*
 
-### P5b - The code converter
+### P5b: The code converter
 
 `.bas`/`.cls`/form code-behind -> `.jdb`. The mechanical bulk is large and
 dull: `Dim x As Integer`, `Set x =`, `End If`/`End Sub`, `&` concatenation,
@@ -173,7 +173,7 @@ The parts that are not mechanical, and where a converter earns its keep:
 
 - **default properties**: `Text1 = "x"` means `Text1.Text = "x"`
 - **`With` blocks**
-- **`On Error Resume Next` / `GoTo`** - no equivalent; mark, do not fake
+- **`On Error Resume Next` / `GoTo`**: no equivalent; mark, do not fake
 - **`Variant`** and implicit coercion
 - **`Type`** (UDT), `Collection`, `Err`
 - property access `Text1.BackColor` -> `FORM.SET(FORM.FIND(frm, "Text1"),
@@ -185,7 +185,7 @@ already matches jdForms' `COMMAND1_CLICK` convention exactly.
 *Gate: every converted file parses with `--lint`, and a stated percentage of
 statements converted rather than marked, measured over the corpus.*
 
-### P5c - The compat module
+### P5c: The compat module
 
 A jdBasic library for the VB runtime names: `Left$ Mid$ InStr Format$ CStr
 Val IsNumeric Trim$ Replace Split Join Now DateDiff App.Path Err.Number`.
@@ -217,7 +217,7 @@ overlaps with `vo/`, which is already being rebuilt by hand, and that overlap
 has to be resolved rather than ignored.
 
 **B. A generic VB6 importer as a product feature.** Then this corpus is the
-wrong yardstick - it is dominated by one house framework - and the target is
+wrong yardstick (it is dominated by one house framework), and the target is
 a plain VB6 application using intrinsic controls. The work is P4a + P5a +
 P5b + P5c and stops there. Smaller, cleaner, and it is the thing the blog
 post implicitly promises.

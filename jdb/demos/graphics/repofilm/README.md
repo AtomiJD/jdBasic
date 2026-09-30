@@ -7,7 +7,7 @@ A commit lights up the files it touched and draws a beam from the directory
 hub to each of them. Nothing is ever removed, so the picture is the repository
 accumulating.
 
-It works on any git repository, not just this one.
+It works on any git repository.
 
 ## Run it
 

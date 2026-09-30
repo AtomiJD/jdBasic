@@ -1,4 +1,4 @@
-# MAIL - e-mail messages built, sent and read back
+# MAIL: e-mail messages built, sent and read back
 
 `lib/mail.jdb` builds e-mail messages the way a billing system sends them:
 a plain text and an HTML version, images shown inside the HTML,

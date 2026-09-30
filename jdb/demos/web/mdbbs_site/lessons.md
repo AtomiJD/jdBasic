@@ -26,7 +26,7 @@
  {orange}[iffor4.jdb](progs/lessons/iffor4.jdb){/}
 {gray}   FOR loops{/}
  {orange}[iffor5.jdb](progs/lessons/iffor5.jdb){/}
-{gray}   STEP - count by anything{/}
+{gray}   STEP: count by anything{/}
  {orange}[iffor6.jdb](progs/lessons/iffor6.jdb){/}
 {gray}   FizzBuzz finale{/}
  {orange}[iffor7.jdb](progs/lessons/iffor7.jdb){/}
@@ -51,9 +51,9 @@
  {orange}[func1.jdb](progs/lessons/func1.jdb){/}
 {gray}   Multiple parameters{/}
  {orange}[func2.jdb](progs/lessons/func2.jdb){/}
-{gray}   SUB - actions, no return{/}
+{gray}   SUB: actions, no return{/}
  {orange}[func3.jdb](progs/lessons/func3.jdb){/}
-{gray}   Recursion - Fibonacci{/}
+{gray}   Recursion: Fibonacci{/}
  {orange}[func4.jdb](progs/lessons/func4.jdb){/}
 
 {cyan} ---- 06 Maps --------------------------{/}
@@ -65,9 +65,9 @@
 
 {cyan} ---- 07 Input and Do Loops ------------{/}
 
-{gray}   INPUT - reading a string{/}
+{gray}   INPUT: reading a string{/}
  {orange}[input1.jdb](progs/lessons/input1.jdb){/}
-{gray}   INPUT - reading a number{/}
+{gray}   INPUT: reading a number{/}
  {orange}[input2.jdb](progs/lessons/input2.jdb){/}
 {gray}   DO ... LOOP UNTIL{/}
  {orange}[input3.jdb](progs/lessons/input3.jdb){/}
@@ -76,9 +76,9 @@
 
 {cyan} ---- 08 File I/O ----------------------{/}
 
-{gray}   TXTWRITER - write a file{/}
+{gray}   TXTWRITER: write a file{/}
  {orange}[fileio1.jdb](progs/lessons/fileio1.jdb){/}
-{gray}   TXTREADER$ - read a file{/}
+{gray}   TXTREADER$: read a file{/}
  {orange}[fileio2.jdb](progs/lessons/fileio2.jdb){/}
 {gray}   Multi-line + todo demo{/}
  {orange}[fileio3.jdb](progs/lessons/fileio3.jdb){/}
@@ -114,14 +114,14 @@
  {orange}[hiord4.jdb](progs/lessons/hiord4.jdb){/}
 {gray}   The pipe operator{/}
  {orange}[hiord5.jdb](progs/lessons/hiord5.jdb){/}
-{gray}   Closures - MakeAdder{/}
+{gray}   Closures: MakeAdder{/}
  {orange}[hiord6.jdb](progs/lessons/hiord6.jdb){/}
 
 {cyan} ---- 13 HTTP and JSON -----------------{/}
 
-{gray}   HTTP.GET$ - raw response{/}
+{gray}   HTTP.GET$: raw response{/}
  {orange}[http1.jdb](progs/lessons/http1.jdb){/}
-{gray}   JSON.PARSE$ - structured data{/}
+{gray}   JSON.PARSE$: structured data{/}
  {orange}[http2.jdb](progs/lessons/http2.jdb){/}
 {gray}   GitHub user demo{/}
  {orange}[http3.jdb](progs/lessons/http3.jdb){/}

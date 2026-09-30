@@ -1,4 +1,4 @@
-# Black Forest Games - a championship scoreboard in jdBasic
+# Black Forest Games: a championship scoreboard in jdBasic
 
 A small, self-contained tournament manager written in pure jdBasic
 (SQLite + ImGui). Track participants and games, record placements,
@@ -12,10 +12,10 @@ so a headline event can be worth more than a side game.
 
 ## Files
 
-- `bfwm.jdb` - the whole app in one self-contained file: four tabs (Dashboard,
+- `bfwm.jdb`: the whole app in one self-contained file: four tabs (Dashboard,
   Participants, Games, Settings) plus a built-in PDF certificate generator
   (hand-rolled PDF, no external library)
-- `bfwm.db` - a fresh SQLite database with the event name preset; delete it to start over
+- `bfwm.db`: a fresh SQLite database with the event name preset; delete it to start over
 
 ---
 
@@ -117,8 +117,8 @@ Stay on the **Dashboard**. After each game:
 The standings above re-sort instantly, so the screen is always current. Do this
 three times per game (1st, 2nd, 3rd) and move on.
 
-Recorded something wrong? The **Recent results** list at the bottom has a
-**Delete** button on every line. Delete it and record it again. Points are
+To correct a wrong result, use the **Recent results** list at the bottom: it
+has a **Delete** button on every line. Delete the result and record it again. Points are
 recalculated from scratch every frame, so nothing can drift out of sync.
 
 ## Step 6: certificates

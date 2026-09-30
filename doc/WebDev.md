@@ -1,4 +1,4 @@
-# Building Web Apps in jdBasic - JDWEB + TMPL
+# Building Web Apps in jdBasic: JDWEB + TMPL
 
 [Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
 
@@ -28,7 +28,7 @@ build.bat HTTP GFX IMGUI NATIVEC SQLITE        # Windows (GFX/IMGUI/NATIVEC opti
 ./build.sh HTTP SQLITE                          # Linux/macOS
 ```
 
-**Files next to your app.** `TMPL` and `JDWEB` are jdBasic modules - `IMPORT`
+**Files next to your app.** `TMPL` and `JDWEB` are jdBasic modules. `IMPORT`
 finds them next to your script first, so keep them in the same folder:
 
 ```
@@ -46,7 +46,7 @@ JDWEB renders through TMPL, so if you use JDWEB you need `tmpl.jdb` too.
 
 ---
 
-## Level 0 - Hello World (just HTTP.SERVER)
+## Level 0: Hello World (just HTTP.SERVER)
 
 ```basic
 ' hello.jdb
@@ -70,18 +70,18 @@ What to notice:
 - A **handler** is a `FUNC NAME(request)`. Returning a **string** sends it as the
   response body (HTML by default).
 - `HTTP.SERVER.ON_GET "/path", "HANDLER"` registers it. The second argument is the
-  handler's name as a **string** - it must match the function name.
+  handler's name as a **string**; it must match the function name.
 - `HTTP.SERVER.START(port[, host$])` returns true on success. The default bind
-  is **`127.0.0.1` (loopback only)** - pass `"0.0.0.0"` explicitly to expose the
+  is **`127.0.0.1` (loopback only)**; pass `"0.0.0.0"` explicitly to expose the
   server to the LAN. (This default changed for security reasons; older examples
   that omit the host and expect LAN visibility are wrong.)
-- **`HTTP.SERVER.WAIT` blocks the main thread** and runs the server. Use it - do
+- **`HTTP.SERVER.WAIT` blocks the main thread** and runs the server. Use it and do
   **not** write a `DO ... SLEEP ... LOOP`: that runs jdBasic bytecode on the main
   thread at the same time as the handler pool and crashes the shared VM.
 
 ---
 
-## Level 1 - Dynamic views with TMPL
+## Level 1: Dynamic views with TMPL
 
 `TMPL` turns a template + a **model** (a `MAP`) into a string. Holes are
 dotted/bracket lookups into the model, and HTML is escaped by default.
@@ -109,7 +109,7 @@ PRINT TMPL.RENDERSTR$("Hi {{{ name }}}", m)      ' -> Hi <b>Kat</b>   (triple = 
 {% block name %} ... {% endblock %}     an override point / default content
 ```
 
-Conditions: a bare path (truthy - an empty array/string/`0`/missing key is
+Conditions: a bare path (truthy; an empty array/string/`0`/missing key is
 false), `path == "literal"`, `path != "literal"`, `not path`.
 
 `for` has **no** `else` branch. For an "empty list" message, wrap the loop:
@@ -182,14 +182,14 @@ HTTP.SERVER.STOP
 
 ---
 
-## Level 2 - Reading input and returning JSON
+## Level 2: Reading input and returning JSON
 
 Returning a **MAP** from a handler sends it as JSON (`Content-Type:
 application/json`). The `request` map gives you the input:
 
 | Field | Type | What |
 |---|---|---|
-| `request{"PATH"}` | string | the request path, e.g. `"/api/hello"` - lets one handler serve several routes |
+| `request{"PATH"}` | string | the request path, e.g. `"/api/hello"`; lets one handler serve several routes |
 | `request{"METHOD"}` | string | `"GET"`, `"POST"`, ... |
 | `request{"PARAMS"}` | map | query-string params: `?name=Kat` -> `{"name"}` = `"Kat"` |
 | `request{"BODY"}` | string | the raw request body; `JSON.PARSE$` it for JSON posts |
@@ -230,7 +230,7 @@ ENDFUNC
 
 ---
 
-## Level 3 - Real pages with JDWEB (theme, nav, layout)
+## Level 3: Real pages with JDWEB (theme, nav, layout)
 
 JDWEB wraps your page body in a full HTML document with a shared theme (a
 terminal "Hot Phosphor" look), a header/nav bar, and an optional cookie banner.
@@ -270,14 +270,14 @@ HTTP.SERVER.STOP
 
 Key calls:
 
-- **`JDWEB.PAGE$(cfg, title$, navHtml$, content$)`** - the full HTML document.
+- **`JDWEB.PAGE$(cfg, title$, navHtml$, content$)`**: the full HTML document.
   Pass `""` for `navHtml$` on chrome-less pages (e.g. login).
-- **`JDWEB.NAV_HTML$(cfg, active$)`** - the header + nav; `active$` is the path of
+- **`JDWEB.NAV_HTML$(cfg, active$)`**: the header + nav; `active$` is the path of
   the current page so its link is highlighted.
-- The theme CSS lives in `jdweb_tpl/theme.html` - edit that file to restyle every
+- The theme CSS lives in `jdweb_tpl/theme.html`; edit that file to restyle every
   page at once.
 
-`cfg` is just a map; most apps load it from JSON so the same code serves several
+`cfg` is a plain map; most apps load it from JSON so the same code serves several
 apps:
 
 ```basic
@@ -294,15 +294,15 @@ gCfg = JSON.PARSE$(TXTREADER$(PATH.JOIN$(gAppDir$, "myapp.json")))
 **SEO:** when `cfg{"meta_desc"}` is set, `PAGE$` emits a `<meta name='description'>`
 plus OpenGraph tags (`og:title`, `og:description`, `og:site_name`). For a
 page-specific description, hand `PAGE$` a shallow copy of the config with
-`meta_desc` overridden - see `cfg_with_desc` in jdeRG for the 6-line helper.
+`meta_desc` overridden; see `cfg_with_desc` in jdeRG for the 6-line helper.
 
 ---
 
-## Level 3.5 - Static pages from disk: one handler, N pages
+## Level 3.5: Static pages from disk: one handler, N pages
 
 Once an app grows a handful of mostly-static pages (imprint, privacy, help,
-articles), a `FUNC` per page stops scaling. The pattern below - proven in
-production by jdeRG (profi-rg.de) - discovers pages on disk at startup and
+articles), a `FUNC` per page stops scaling. The pattern below, used in
+production by jdeRG (profi-rg.de), discovers pages on disk at startup and
 serves them all through **one** shared handler.
 
 Each page file is a body fragment whose first line is a front-matter comment
@@ -356,14 +356,14 @@ FOR EACH page_route$ IN MAP.KEYS(gPages)
 NEXT page_route$
 ```
 
-Adding a page is now: drop a file in `pages/`, restart. No wildcard routes are
-needed (and none exist) - every discovered route is registered explicitly, so
+To add a page, drop a file in `pages/` and restart. No wildcard routes are
+needed (and none exist); every discovered route is registered explicitly, so
 unknown paths still hit the themed 404 and there is no path-traversal surface.
 
 Why **eager** (everything read and cached before `HTTP.SERVER.START`): after
 `START` the main thread must sit in `HTTP.SERVER.WAIT` and the maps should be
-read-only shared state. Loading up front keeps every handler a pure read - no
-disk I/O, no cache-fill writes, no surprises under load.
+read-only shared state. Loading up front keeps every handler a pure read, with no
+disk I/O and no cache-fill writes under load.
 
 The worked production version of this pattern (per-page meta descriptions, a
 guest-only flag, sitemap + article index derived from the discovered pages,
@@ -373,7 +373,7 @@ jdeRG: <https://github.com/AtomiJD/jderg> (`jderg.jdb`, section
 
 ---
 
-## Level 4 - A complete app: login + database + a templated list
+## Level 4: A complete app: login + database + a templated list
 
 This ties everything together: a SQLite table, cookie-session login from JDWEB,
 a guard that redirects anonymous visitors to `/login`, and a list page rendered
@@ -471,7 +471,7 @@ The auth model (provided by JDWEB): the **first** sign-in on an empty board
 creates the owner and sets their password; afterwards only known user names sign
 in, each claiming their password on first login. Sessions are cookies
 (`jdwsession`, HttpOnly, SameSite=Lax, salted SHA-256 password). `AUTH_USER$`
-returns the logged-in name or `""` - guard every protected handler with it.
+returns the logged-in name or `""`; guard every protected handler with it.
 
 ### JDWEB API at a glance
 
@@ -534,18 +534,18 @@ test drives every route without a browser. The whole API is on
   `PATH.DIRNAME$(OS.ARGS()[0])`). Miss them and every page 500s with
   "file not found".
 - **Know the threading model.** httplib spawns a thread per accepted request,
-  but every handler runs under one VM mutex - handlers are **serialised** on the
+  but every handler runs under one VM mutex. Handlers are **serialised** on the
   shared VM, so handler-vs-handler races cannot happen. What CAN race is the
   **main thread**: after `HTTP.SERVER.START` it must not execute bytecode
   concurrently, which is exactly why it parks in `HTTP.SERVER.WAIT`. Practical
-  rule: do all loading (templates, static pages, config) *before* `START` -
-  e.g. one `JDWEB.THEME$()` warms the theme cache - and treat globals as
+  rule: do all loading (templates, static pages, config) *before* `START`
+  (e.g. one `JDWEB.THEME$()` warms the theme cache) and treat globals as
   read-only afterwards.
 - **Bind local, proxy for TLS.** Run the app on `127.0.0.1:<port>` and put nginx
   in front for HTTPS, security headers, a Content-Security-Policy and login rate
   limiting. (See the jdTrakr deploy notes for a worked example.)
-- **One binary, no toolchain.** No `npm`, no build step for the views - the
-  templates are plain files you edit and the engine re-reads them.
+- **No toolchain.** The app runs on the one jdBasic binary. There is no `npm`
+  and no build step for the views; the templates are plain files you edit and the engine re-reads them.
 
 ---
 
@@ -558,7 +558,7 @@ test drives every route without a browser. The whole API is on
   and cast numbers with `STR$(INT(...))`. Never concatenate raw user strings.
   `SQL.QUERY`/`SQL.EXEC` have no bind parameters; for more than a couple of
   statements, write a tiny `?`-placeholder formatter that quotes each value
-  (see `FMT$`/`Q$` in jdeRG's `ergdb.jdb` - about 30 lines).
+  (see `FMT$`/`Q$` in jdeRG's `ergdb.jdb`, about 30 lines).
 - **`{{ }}` escapes, `{{{ }}}` does not.** Use the triple braces only for HTML you
   trust (it is the XSS escape hatch).
 - **Inline `<script>` under a strict CSP must be hashed.** If you deploy behind a
@@ -579,15 +579,15 @@ test drives every route without a browser. The whole API is on
 
 ## See also
 
-- `lib/tmpl.jdb` - the template engine; its page is `lib/tmpl_lib_readme.md`,
+- `lib/tmpl.jdb`: the template engine; its page is `lib/tmpl_lib_readme.md`,
   its self test `tests/jdlibs/tmpl_selftest.jdb`
-- `lib/jdweb.jdb` - the framework module; its page is `lib/jdweb_lib_readme.md`,
+- `lib/jdweb.jdb`: the framework module; its page is `lib/jdweb_lib_readme.md`,
   its self test `tests/jdlibs/jdweb_selftest.jdb`
-- `jdb/demos/web/jdtrakr.jdb` - a full app (kanban board) built on both
-- `jdb/demos/web/tmpl_demo.jdb`, `tmpl_server.jdb` - smaller worked examples.
+- `jdb/demos/web/jdtrakr.jdb`: a full app (kanban board) built on both
+- `jdb/demos/web/tmpl_demo.jdb`, `tmpl_server.jdb`: smaller worked examples.
   Inside the repository they find `tmpl.jdb` through the module path:
   `JDBASIC_PATH=lib jdBasic jdb/demos/web/tmpl_demo.jdb`
-- <https://github.com/AtomiJD/jderg> - jdeRG "E-Rechnung Studio"
-  (profi-rg.de): the largest production app on this stack - accounts + tiers,
+- <https://github.com/AtomiJD/jderg>: jdeRG "E-Rechnung Studio"
+  (profi-rg.de), the largest production app on this stack, with accounts + tiers,
   CSRF double-submit, Stripe billing, transactional mail, static-page
   discovery (Level 3.5), all in jdBasic

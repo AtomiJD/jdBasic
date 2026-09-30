@@ -1,4 +1,4 @@
-# XLSX - Excel workbooks without Excel
+# XLSX: Excel workbooks without Excel
 
 `lib/xlsx.jdb` writes `.xlsx` files with a bold header row, column
 widths, number formats, cell fills, formulas, booleans and frozen

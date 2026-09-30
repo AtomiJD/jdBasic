@@ -1,7 +1,7 @@
 # jdBasic on bare metal
 
-A small operating system written in jdBasic. It boots without anything
-underneath it: no libc, no C runtime, no host OS. Screen driver, keyboard,
+A small operating system written in jdBasic. It boots without libc, a C
+runtime or a host OS underneath it. Screen driver, keyboard,
 editor, RAM disk, an interpreter and a JIT that emits x86-64 are all jdBasic
 source compiled with `--target=kernel`.
 
@@ -197,4 +197,4 @@ instruction.
   `? 10/4` gives 2.5 while `?? 10/4` gives 2.
 - The RAM disk is RAM. Nothing survives a reboot except the game, which is
   baked into the image.
-- No `else`, no arrays, no strings in the OS's own language.
+- The OS's own language has no `else`, arrays or strings.

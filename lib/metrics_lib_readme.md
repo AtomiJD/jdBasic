@@ -1,4 +1,4 @@
-# METRICS - counters, gauges, histograms and a /metrics page
+# METRICS: counters, gauges, histograms and a /metrics page
 
 `lib/metrics.jdb` keeps counters, gauges and histograms with labels in one
 registry and writes them in the Prometheus text exposition format 0.0.4, the

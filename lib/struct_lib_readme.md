@@ -1,7 +1,7 @@
-# STRUCT - binary layouts on PACK$ and UNPACK
+# STRUCT: binary layouts on PACK$ and UNPACK
 
-`lib/struct.jdb` declares a binary record once - fields with a type, a
-count, a byte order - and then reads a string of bytes into a map and
+`lib/struct.jdb` declares a binary record once (fields with a type, a
+count, a byte order) and then reads a string of bytes into a map and
 writes a map back into bytes. Nested layouts, arrays, bit fields, fixed
 texts and magic values are part of the declaration, so file headers,
 network packets and board protocols read the same way.

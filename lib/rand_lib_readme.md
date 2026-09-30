@@ -1,4 +1,4 @@
-# RAND - distributions, weighted choice and sampling
+# RAND: distributions, weighted choice and sampling
 
 `lib/rand.jdb` draws from the common distributions, picks by weight and
 samples, shuffles and permutes lists. Every draw comes from the `RNG`

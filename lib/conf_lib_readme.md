@@ -1,4 +1,4 @@
-# CONF - dotenv, INI and a TOML subset
+# CONF: dotenv, INI and a TOML subset
 
 `lib/conf.jdb` loads the three configuration formats that actually turn
 up next to a program into one nested map shape, and reads it back with

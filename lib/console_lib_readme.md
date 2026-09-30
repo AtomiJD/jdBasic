@@ -1,4 +1,4 @@
-# CONSOLE - tables, styles, progress and spinners
+# CONSOLE: tables, styles, progress and spinners
 
 `lib/console.jdb` renders the things a script prints while it works:
 a table with automatic widths, coloured text that degrades to plain

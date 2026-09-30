@@ -1,4 +1,4 @@
-# PARSEC - parser combinators and PEG grammars
+# PARSEC: parser combinators and PEG grammars
 
 `lib/parsec.jdb` parses small languages without a hand-written lexer.
 Combinators build a parser from literals, character sets, regular

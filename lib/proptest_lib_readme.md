@@ -1,4 +1,4 @@
-# PROPTEST - property based tests with shrinking
+# PROPTEST: property based tests with shrinking
 
 `lib/proptest.jdb` tests a property against many drawn inputs instead of
 a few written ones. Generators draw numbers, text, FAKE data, lists and

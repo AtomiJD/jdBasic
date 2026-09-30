@@ -1,4 +1,4 @@
-# CLI - command line parsing
+# CLI: command line parsing
 
 `lib/cli.jdb` turns the argument vector into a map with every default
 already filled in: flags, options with values, numbers, repeatable

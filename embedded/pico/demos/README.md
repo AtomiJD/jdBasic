@@ -1,6 +1,6 @@
 # The demos, and where they run
 
-One language, three boards: the Fruit Jam (FJ, 320x240 over DVI, USB
+The demos run on three boards: the Fruit Jam (FJ, 320x240 over DVI, USB
 keyboard, sound), the PicoCalc (PC, 320x320 panel, its own keyboard) and
 the ESP32-S3 display board (ESP, 320x240 panel, keys over the serial
 line, touch). The drawing verbs, the console, the network verbs and the
@@ -69,7 +69,7 @@ wrote on a desktop, which start at once instead of being parsed.
 
 ---
 
-# jdPlot - a function plotter for the boards
+# jdPlot: a function plotter for the boards
 
 `jdm.jdb` turns the prompt into a plotting calculator. You run it once, it
 defines its verbs in the running VM, and the prompt comes back. From then
@@ -93,7 +93,7 @@ which board.
 
 ## Getting it onto the board
 
-One file, one transfer. At the prompt, `RECV jdm.jdb` takes the file
+The plotter is one file and goes over in one transfer. At the prompt, `RECV jdm.jdb` takes the file
 straight off the serial line and ends on Ctrl-D; it parses nothing and
 echoes nothing, so the program arrives at the speed of the link. Send in
 chunks of 128 bytes with a short pause between them and finish with a
@@ -173,8 +173,8 @@ Two series on one chart, each named so the legend appears.
 
 ### 3. Exponential decay on a log axis
 
-A decay is a straight line once the y axis is logarithmic, which is the whole
-point of having one.
+A decay is a straight line once the y axis is logarithmic, which is what a
+logarithmic axis is for.
 
     DIM n = IOTA(50, 0)
     PTITLE$ = "exponential decay"
@@ -260,7 +260,7 @@ Looking at it is a separate job, for when you are back:
     > RUN jdshow.jdb         draws the tail of log.csv
     240 samples drawn
 
-That split is the whole point. Collecting has to survive being alone for days;
+The two jobs are split on purpose. Collecting has to survive being alone for days;
 drawing only has to work while someone is looking.
 
 `AUTORUN OFF` clears it, `AUTORUN` on its own reports what is set. Two seconds

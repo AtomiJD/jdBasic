@@ -13,4 +13,4 @@ assignees: ''
 ```basic
 ```
 
-**Context** - what are you building, and what do you use today as a workaround?
+**Context:** what are you building, and what do you use today as a workaround?

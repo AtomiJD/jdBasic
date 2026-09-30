@@ -440,7 +440,7 @@ Description: The block of code that executes when an error occurs within a TRY b
 
 [CBOOL]
 Syntax: CBOOL(x)
-Description: Converts any value to a boolean integer - returns 0 for zero, 1 for any non-zero value.
+Description: Converts any value to a boolean integer: returns 0 for zero, 1 for any non-zero value.
 
 [CD]
 Syntax: CD "path"
@@ -665,7 +665,7 @@ Description: Creates an instance of a COM Automation object (Windows only).
 
 [CSNG]
 Syntax: CSNG(x)
-Description: Roundtrips a number through 32-bit float precision - useful for forcing single-precision loss on doubles.
+Description: Roundtrips a number through 32-bit float precision, useful for forcing single-precision loss on doubles.
 
 [CSTR]
 Syntax: CSTR(x)
@@ -713,7 +713,7 @@ Description: Extracts the day of month (1-31) from a DateTime.
 
 [DEBUG.PRINT]
 Syntax: DEBUG.PRINT v, [v2, ...]
-Description: Writes a diagnostic line to the debug console when a debugger is attached, else to stderr - never to stdout. Arguments are stringified and joined with a space; an array prints as one value.
+Description: Writes a diagnostic line to the debug console when a debugger is attached, else to stderr; never to stdout. Arguments are stringified and joined with a space; an array prints as one value.
 
 [DEBUG.ASSERT]
 Syntax: DEBUG.ASSERT cond, [message$]
@@ -772,7 +772,7 @@ Description: Foreign function interface. Declares a function exported from a
 shared library so it can be called from jdBasic. The library name gets the
 correct platform extension auto-applied (.dll / lib.so / lib.dylib).
 Param types: INTEGER, STRING, RETURN (output buffer; caller passes the desired
-size in bytes - 0 = 64 KB default, max 64 MB). Up to 8 parameters.
+size in bytes; 0 = 64 KB default, max 64 MB). Up to 8 parameters.
 Return types: INTEGER, STRING, ARRAY, VOID.
 When RETURN slots or AS ARRAY are used, the call returns
 [EXP]
@@ -813,7 +813,7 @@ Description: Returns a new array with the first N (or last N if negative) elemen
 
 [DYNAMIC]
 Syntax: FUNC f(p AS DYNAMIC) ...   |   DIM x AS DYNAMIC
-Description: Tagged-mixed array - opt-in for FUNC params or DIM that
+Description: Tagged-mixed array, opt-in for FUNC params or DIM that
 receive arrays built from `[m{"a"}, m{"b"}, ...]` (any array literal whose
 elements are INDEX expressions). Stores per-cell JdTags so `p[i]` reads
 return the correct type at runtime instead of bit-pun'ing every element
@@ -821,7 +821,7 @@ through a double. Without it, native compile drops every string element to
 0 / loses every map handle.
 
 The native compiler emits a `[warn]` diagnostic when a mixed-element array
-literal is passed to a non-DYNAMIC parameter - annotate the param to fix.
+literal is passed to a non-DYNAMIC parameter; annotate the param to fix.
 Numeric arrays (e.g. `mem[]`, lookup tables) MUST stay un-annotated; AS
 DYNAMIC on a plain numeric array forces the tagged-storage path and slows
 reads with no benefit. Interpreter treats DYNAMIC like ARRAY.
@@ -952,7 +952,7 @@ Description: Opens a file for line-by-line reading. Returns an i64 handle. Use F
 
 [FILE.OPEN_TAIL]
 Syntax: FILE.OPEN_TAIL(path$) -> handle
-Description: Like FILE.OPEN_LINES but READLINE$ blocks polling for newly-appended data - analog to `tail -f`. AT_EOF is only true after FILE.CLOSE.
+Description: Like FILE.OPEN_LINES but READLINE$ blocks polling for newly-appended data, like `tail -f`. AT_EOF is only true after FILE.CLOSE.
 
 [FILE.READLINE$]
 Syntax: FILE.READLINE$(handle) -> string
@@ -2068,7 +2068,7 @@ Description: Determinant of a square matrix (Eigen).
 
 [SVD]
 Syntax: SVD(matrix)
-Description: Singular Value Decomposition. Returns a map { "U", "S", "V" } - S is the singular-value vector, U/V the thin factor matrices (Eigen).
+Description: Singular Value Decomposition. Returns a map { "U", "S", "V" }: S is the singular-value vector, U/V the thin factor matrices (Eigen).
 
 [QR]
 Syntax: QR(matrix)
@@ -2320,7 +2320,7 @@ Syntax: MAX(array) or MAX(matrix, dimension)
 Description: Returns the maximum value from an array. Given a matrix and a
 dimension, returns one maximum per lane: dimension 0 reduces down the rows
 (one value per column), dimension 1 reduces across each row. The second
-argument is never a second value to compare - write MAX([a, b]) for that.
+argument is never a second value to compare; write MAX([a, b]) for that.
 
 [MID$]
 Syntax: MID$(string$, start, [length])
@@ -2331,7 +2331,7 @@ Syntax: MIN(array) or MIN(matrix, dimension)
 Description: Returns the minimum value from an array. Given a matrix and a
 dimension, returns one minimum per lane: dimension 0 reduces down the rows
 (one value per column), dimension 1 reduces across each row. The second
-argument is never a second value to compare - write MIN([a, b]) for that.
+argument is never a second value to compare; write MIN([a, b]) for that.
 
 [MKDIR]
 Syntax: MKDIR "directory_name"
@@ -2584,7 +2584,7 @@ Description: Draws a matrix of color values directly to the graphics screen.
 
 [PRETTY]
 Syntax: PRETTY [PREVIEW] [STYLE UPPER|VB]
-Description: Reformats the loaded source - 4-space indent, normalized keyword casing.
+Description: Reformats the loaded source: 4-space indent, normalized keyword casing.
   PREVIEW    show the result on screen without overwriting the buffer
   STYLE VB   Pascal-cased keywords (For, Print, Next) instead of UPPER (the default)
   Strings and ' / REM comments are passed through verbatim.
@@ -2984,7 +2984,7 @@ Description: Runs a non-query SQL statement. Returns affected rows, -1 on error 
 
 [SQL.QUERY]
 Syntax: SQL.QUERY(handle, sql$)
-Description: Runs a SELECT and returns an array of row maps keyed by column name, with typed cells. Interpreter only - use SQL.TABLE + SQL.COLUMNS in compiled programs.
+Description: Runs a SELECT and returns an array of row maps keyed by column name, with typed cells. Interpreter only; use SQL.TABLE + SQL.COLUMNS in compiled programs.
 
 [SQL.TABLE]
 Syntax: SQL.TABLE(handle, sql$)
@@ -3410,7 +3410,7 @@ Description: Separator with an inline centred label.
 
 [TUI.SPACER]
 Syntax: TUI.SPACER
-Description: filler() - stretches to consume free space in the parent box.
+Description: filler(): stretches to consume free space in the parent box.
 
 [TUI.SIZE]
 Syntax: TUI.SIZE(w, h)
@@ -3598,7 +3598,7 @@ Description: Mouse wheel delta accumulator.
 
 [TUI.ON]
 Syntax: TUI.ON(event$, handler$)
-Description: Register a callback by FUNC/SUB name (record-only today - dispatch lands with mouse events).
+Description: Register a callback by FUNC/SUB name (record-only for now; dispatch comes with mouse events).
 
 [TUI.WIDTH]
 Syntax: TUI.WIDTH
@@ -3642,7 +3642,7 @@ Description: Optional constructor for a user-defined type. Runs after
 the implicit field defaults whenever an instance is created via
 DIM x AS TypeName(args). If INIT takes no parameters, the bare form
 DIM x AS TypeName also auto-calls it. For arrays:
-DIM arr[N] AS TypeName(vec1, vec2) - INIT runs once per slot with
+DIM arr[N] AS TypeName(vec1, vec2) runs INIT once per slot with
 the vectors indexed element-wise.
 
 [DISPOSE]
@@ -3957,7 +3957,7 @@ Description: Pump pending window messages once; TRUE while any form is open. For
 
 [FORM.CLOSE]
 Syntax: FORM.CLOSE(frm)
-Description: Close a form. When the last form closes, FORM.RUN returns. NAME_UNLOAD runs synchronously while the window still exists, so the handler can read its own controls one last time and can call the close off with e[0]{"cancel"} = TRUE - the VB6 Form_QueryUnload pattern, for the window cross, Alt+F4 and FORM.CLOSE alike.
+Description: Close a form. When the last form closes, FORM.RUN returns. NAME_UNLOAD runs synchronously while the window still exists, so the handler can read its own controls one last time and can call the close off with e[0]{"cancel"} = TRUE (the VB6 Form_QueryUnload pattern) for the window cross, Alt+F4 and FORM.CLOSE alike.
 
 [MSGBOX]
 Syntax: MSGBOX(text$, [flags], [title$]) -> button
@@ -3977,7 +3977,7 @@ Description: Look up a control of a form by name (case-insensitive); 0 if absent
 
 [FORM.MENU]
 Syntax: FORM.MENU(frm, spec)
-Description: Build or replace the form's menu bar. Spec = array of maps: text (& = Alt key, "-" = separator), items (submenu), name (clickable -> NAME_CLICK), key ("Ctrl+O", "F5" - real accelerator). Items support FORM.SET ENABLED/CHECKED/TEXT/VALUE.
+Description: Build or replace the form's menu bar. Spec = array of maps: text (& = Alt key, "-" = separator), items (submenu), name (clickable -> NAME_CLICK), key ("Ctrl+O", "F5"; a real accelerator). Items support FORM.SET ENABLED/CHECKED/TEXT/VALUE.
 
 [FORM.POPUP]
 Syntax: FORM.POPUP(frm, spec, [x], [y])
@@ -4041,7 +4041,7 @@ Description: Tab strip from an array of titles. Assign controls to pages with FO
 
 [FORM.TABPAGE]
 Syntax: FORM.TABPAGE(tab, page, ctl)
-Description: Put a control on a tab page - its visibility follows the selected tab.
+Description: Put a control on a tab page; its visibility follows the selected tab.
 
 [FORM.DATETIME]
 Syntax: FORM.DATETIME(frm, name$, x, y, w, h) -> handle
@@ -4077,7 +4077,7 @@ Description: The left side unless it is absent, in which case the right. Asks ab
 
 [?.]
 Syntax: object?.field | object?{key} | object?[index]
-Description: Reads into something that may not be there. A missing map key already reads as NONE; it is the step after that faults, and this guards it - with nothing to read into the read does not happen and the answer is absent, so the chain stops. Not a bounds check: an index out of range is still an error. Not allowed before a method call.
+Description: Reads into something that may not be there. A missing map key already reads as NONE; it is the step after that faults, and this guards it: with nothing to read into, the read does not happen and the answer is absent, so the chain stops. Not a bounds check: an index out of range is still an error. Not allowed before a method call.
 
 [$"]
 Syntax: $"text {{ expression }} text"
@@ -4085,7 +4085,7 @@ Description: A string with expressions in it, using the same {{ }} the template 
 
 [OPTIONAL PARAMETERS]
 Syntax: FUNC Name(required, optional = default) ... ENDFUNC
-Description: A trailing parameter may carry a default, and a call that leaves it out gets that value. Optional parameters come last, because arguments are matched left to right. A default is a literal - a number, a string, TRUE or FALSE - since a function is declared before any scope exists to evaluate one in. NONE is not one: it reads as absent only because an undeclared name does, which the interpreter allows and -c refuses. For a computed default pick a value the caller would never pass and decide in the body. SUB takes them too, lambdas do not.
+Description: A trailing parameter may carry a default, and a call that leaves it out gets that value. Optional parameters come last, because arguments are matched left to right. A default is a literal (a number, a string, TRUE or FALSE), since a function is declared before any scope exists to evaluate one in. NONE is not one: it reads as absent only because an undeclared name does, which the interpreter allows and -c refuses. For a computed default pick a value the caller would never pass and decide in the body. SUB takes them too, lambdas do not.
 
 [GPIO.MODE]
 Syntax: GPIO.MODE(pin, is_output)
@@ -4157,7 +4157,7 @@ Description: Full duplex: as many bytes come back as went out. Takes an array of
 
 [TIMER.EVERY]
 Syntax: TIMER.EVERY(ms) -> 0 | -1
-Description: Raises the "TICK" event every ms milliseconds; 0 stops. Use with ON "TICK" CALL Handler. Handlers run between statements, never inside the interrupt, and do not nest - a tick arriving while one is still running is dropped rather than queued, so a slow handler cannot build a backlog. Boards only.
+Description: Raises the "TICK" event every ms milliseconds; 0 stops. Use with ON "TICK" CALL Handler. Handlers run between statements, never inside the interrupt, and do not nest: a tick arriving while one is still running is dropped rather than queued, so a slow handler cannot build a backlog. Boards only.
 
 [TIMER.STOP]
 Syntax: TIMER.STOP
@@ -4169,7 +4169,7 @@ Description: Raises the "KEY" event for each key that arrives. Use with ON "KEY"
 
 [SYS.FREE]
 Syntax: SYS.FREE -> bytes
-Description: Free heap. It is the total across scattered pieces, so it is not what a single allocation can have - watch SYS.LARGEST for that. Boards only.
+Description: Free heap. It is the total across scattered pieces, so it is not what a single allocation can have; watch SYS.LARGEST for that. Boards only.
 
 [SYS.LARGEST]
 Syntax: SYS.LARGEST -> bytes
@@ -4185,7 +4185,7 @@ Description: The PSRAM this board has. Zero on a part without it. On the ESP32-S
 
 [SYS.MEM]
 Syntax: SYS.MEM -> text$
-Description: Both pools with their totals and largest blocks, plus the low-water mark - the smallest the heap has been since boot, which is what a program actually survived rather than what it happens to hold now. ESP32-S3 only.
+Description: Both pools with their totals and largest blocks, plus the low-water mark: the smallest the heap has been since boot, which is what a program actually survived rather than what it happens to hold now. ESP32-S3 only.
 
 [SYS.CHUNKS]
 Syntax: SYS.CHUNKS -> text$
@@ -4288,7 +4288,7 @@ Description: The console as [columns, rows]. Boards with a panel only. 40 by 30 
 
 [GFX.PEEK]
 Syntax: GFX.PEEK(x, y)
-Description: What the framebuffer holds at a point, as [r, g, b]. Boards with a screen only, and empty outside it. This asks the memory rather than the glass, which on a panel board is a real distinction - GFX.READBACK asks the glass there. On the Fruit Jam the two are the same thing, because the framebuffer is what the wire is reading.
+Description: What the framebuffer holds at a point, as [r, g, b]. Boards with a screen only, and empty outside it. This asks the memory rather than the glass, which on a panel board is a real distinction; GFX.READBACK asks the glass there. On the Fruit Jam the two are the same thing, because the framebuffer is what the wire is reading.
 
 [GFX.READBACK]
 Syntax: GFX.READBACK(x, y)
@@ -4508,7 +4508,7 @@ Description: The PSRAM chip's identity as it answers it. RP2350 only; empty on a
 
 [PIO.LOAD]
 Syntax: PIO.LOAD(words) -> offset
-Description: Loads an assembled PIO program - an array of 16-bit instruction words - and answers where it landed. RP2350 only.
+Description: Loads an assembled PIO program (an array of 16-bit instruction words) and answers where it landed. RP2350 only.
 
 [PIO.START]
 Syntax: PIO.START(sm, offset, len, pin [, divider])
@@ -4556,7 +4556,7 @@ Description: How many requests this server has answered since it started. Boards
 
 [PSRAM.TEST$]
 Syntax: PSRAM.TEST$ -> text$
-Description: Writes a pattern at each end of the PSRAM window and reads it back, answering with the size, the address it is mapped at, and whether it survived. RP2350 boards whose PSRAM is on the QMI bus only - the Fruit Jam is one.
+Description: Writes a pattern at each end of the PSRAM window and reads it back, answering with the size, the address it is mapped at, and whether it survived. RP2350 boards whose PSRAM is on the QMI bus only; the Fruit Jam is one.
 
 [KEY.NOW]
 Syntax: KEY.NOW -> code | -1

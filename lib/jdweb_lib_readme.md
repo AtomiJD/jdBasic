@@ -1,4 +1,4 @@
-# JDWEB - web apps on HTTP.SERVER
+# JDWEB: web apps on HTTP.SERVER
 
 `lib/jdweb.jdb` is the web framework of jdBasic. It adds to `HTTP.SERVER`
 what a web app needs: routes with path parameters for any method,

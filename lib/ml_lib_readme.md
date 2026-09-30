@@ -1,4 +1,4 @@
-# ML - the scikit-learn essentials
+# ML: the scikit-learn essentials
 
 `lib/ml.jdb` puts the everyday part of scikit-learn next to STATS and DF:
 a seeded train and test split, scaling and one-hot encoding; linear and

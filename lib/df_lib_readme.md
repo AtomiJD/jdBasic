@@ -1,4 +1,4 @@
-# DF - data frames
+# DF: data frames
 
 `lib/df.jdb` holds a table as named columns and works on it whole:
 load a CSV, add computed columns, filter and sort rows, group and

@@ -2,26 +2,26 @@
 
 A proactive phone assistant written in jdBasic. It places outbound Twilio calls
 and serves a turn-based spoken dialog (Twilio TTS/STT), so the phone itself is
-the interface - no browser needed.
+the interface; no browser is needed.
 
 ## Pieces
 
-- **`voiceagent_call.jdb`** - one-shot announcement. Places a call with inline
+- **`voiceagent_call.jdb`**: one-shot announcement. Places a call with inline
   TwiML (`<Say>`); no public tunnel needed. Good for a pure "call me and read
   this out" notification.
-- **`voiceagent_server.jdb`** - the dialog server (`HTTP.SERVER` on `:5005`).
+- **`voiceagent_server.jdb`**: the dialog server (`HTTP.SERVER` on `:5005`).
   `/voice` returns a greeting plus a `<Gather input="speech">`; `/gather` reads
   the recognized speech from `request{"PARAMS"}{"SpeechResult"}`, asks the LLM
   (`brainReply$`) for a short reply with the call's history as context, and
   loops.
-- **`prompts.json`** - all on-screen text (system prompt, greeting, prompts,
+- **`prompts.json`**: all on-screen text (system prompt, greeting, prompts,
   fallbacks, hang-up words), one section per locale keyed by `twilio_lang`.
   Pick the locale with the `VA_LOCALE` env var (default `de`).
-- **`conversations.db`** - SQLite, written at runtime. One row per turn
+- **`conversations.db`**: SQLite, written at runtime. One row per turn
   (`call_sid, seq, role, content, ts`); `brainReply$` loads the last turns of
   the current `CallSid` so the model has real conversation context, and the
   transcript survives a restart.
-- **`voiceagent_dial.jdb`** - places an *interactive* call. It auto-detects the
+- **`voiceagent_dial.jdb`**: places an *interactive* call. It auto-detects the
   public tunnel URL from the local ngrok API, writes the announcement to
   `/tmp/va_pending.txt`, and points Twilio's `Url` at `<tunnel>/voice`.
 

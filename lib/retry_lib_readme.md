@@ -1,4 +1,4 @@
-# RETRY - call it again, with a growing wait
+# RETRY: call it again, with a growing wait
 
 `lib/retry.jdb` runs a call that sometimes fails until it works. The wait
 doubles after every failure and can carry a random share so many callers

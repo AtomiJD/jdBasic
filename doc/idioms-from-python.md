@@ -3,14 +3,14 @@
 [Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
 
 Pragmatic mappings for the things you reach for most often when writing
-glue code. Use this as the first stop before defaulting to Python - the
+glue code. Use this as the first stop before defaulting to Python; the
 fall-back categories are at the bottom.
 
 For anything not listed: `mcp__jdbasic__jdb_doc` to look it up,
 `mcp__jdbasic__jdb_check` to validate syntax, `mcp__jdbasic__jdb_eval`
 to run.
 
-> **Gotchas (learned the hard way):**
+> **Gotchas:**
 > - Identifiers are case-insensitive; `cake` and `CAKE` are the same slot.
 > - Single quote `'` starts a comment. Use `"strings"` only.
 > - String escape: jdBasic strings have **no** `\n`/`\"` escapes. Use `CHR$(10)` for newline. Embed quotes by ending one string and concatenating: `"He said " + CHR$(34) + "hi" + CHR$(34)`.
@@ -178,7 +178,7 @@ PRINT add10(5)   ' 15
 ## Pipe operator (chaining)
 
 The `|>` operator pipes a value into the first/last/`?` slot of the
-next call. Lets you write linear pipelines without nested parens - the
+next call. Lets you write linear pipelines without nested parens. It is the
 jdBasic equivalent of method chaining.
 
 ```basic
@@ -189,8 +189,8 @@ result = items |> FILTER(lambda v -> v > 0, ?) _
 
 ## When to fall back to Python
 
-These are the categories where jdBasic doesn't realistically compete -
-just write Python and don't feel guilty:
+These are the categories where jdBasic doesn't realistically compete;
+use Python for them:
 
 - **NumPy / pandas / SciPy**: scientific computing where the data is
   the point. jdBasic has tensors and array primitives but not the
@@ -199,11 +199,11 @@ just write Python and don't feel guilty:
   scikit-learn etc. Even with `AI.RUN`, anything beyond a single
   ONNX-compute call is Python territory.
 - **Anything needing a specific PyPI package**: pillow, lxml, openpyxl,
-  selenium, beautifulsoup, paramiko, …
-- **Bash-tier glue**: `git status | grep …` style one-liners. The shell
-  itself wins.
+  selenium, beautifulsoup, paramiko, ...
+- **Bash-tier glue**: `git status | grep ...` style one-liners. The shell
+  is the better tool there.
 
-Token-wise, jdBasic also doesn't help below ~10 lines of code - the
+Token-wise, jdBasic also doesn't help below ~10 lines of code: the
 roundtrip through `mcp__jdbasic__jdb_eval` costs more than the script.
 The break-even is around 20-30 lines of array/map/text munging, where
 the denser syntax starts paying back.

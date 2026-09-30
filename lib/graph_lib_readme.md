@@ -1,4 +1,4 @@
-# GRAPH - nodes, links, and the questions that follow
+# GRAPH: nodes, links, and the questions that follow
 
 `lib/graph.jdb` holds a graph as a map that the calls change in place.
 Nodes are named by strings and keep the order they were added in, so

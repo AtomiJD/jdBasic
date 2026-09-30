@@ -1,4 +1,4 @@
-# SVG - drawings and charts without a window
+# SVG: drawings and charts without a window
 
 `lib/svg.jdb` writes SVG: drawings built from shapes, paths, text,
 groups, transforms and gradients, and charts (line, bar, stacked bar,

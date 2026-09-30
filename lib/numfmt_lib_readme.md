@@ -1,4 +1,4 @@
-# NUMFMT - numbers and money the way a locale writes them
+# NUMFMT: numbers and money the way a locale writes them
 
 `lib/numfmt.jdb` formats numbers, money and percentages for German
 (Germany, Austria, Switzerland), English (US, UK) and French (France),

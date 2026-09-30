@@ -58,8 +58,8 @@ These commands allow you to design the unique "Voice" of each track.
 * **`SOUND.GAIN track, volume`**: Sets the track volume (default 1.0).
 * **`SOUND.PAN track, pos`**: Sets stereo panning (0.0 Left, 0.5 Center, 1.0 Right).
 * **`SOUND.FILTER track, cutoff_hz`**: Sets a per-track low-pass filter frequency.
-* **`SOUND.REVERBSEND track, amount`**: Sets the signal level sent to the global Reverb (0.0–1.0).
-* **`SOUND.DELAYSEND track, amount`**: Sets the signal level sent to the global Delay (0.0–1.0).
+* **`SOUND.REVERBSEND track, amount`**: Sets the signal level sent to the global Reverb (0.0-1.0).
+* **`SOUND.DELAYSEND track, amount`**: Sets the signal level sent to the global Delay (0.0-1.0).
 * **`SOUND.SIDECHAIN target, source, amount`**: Ducks the volume of the `target` when the `source` plays.
 
 ### Per-Track Modulation
@@ -67,15 +67,15 @@ These commands allow you to design the unique "Voice" of each track.
 These shape the timbre of a track's voice and must be set before the pattern plays.
 
 * **`SOUND.EQ track, low, mid, high`**: 3-band equalizer gains (1.0 = flat).
-* **`SOUND.LFO track, freq, depth`**: Vibrato - pitch modulation at `freq` Hz with `depth`.
+* **`SOUND.LFO track, freq, depth`**: Vibrato: pitch modulation at `freq` Hz with `depth`.
 * **`SOUND.FM track, amount, ratio`**: Frequency modulation for metallic / bell tones.
-* **`SOUND.UNISON track, voices, detune, spread`**: Stacks `voices` (1–16) detuned copies for a super-saw; `detune` 0.0–1.0, `spread` 0.0–1.0 stereo.
-* **`SOUND.BITCRUSH track, bits, rate`**: Lo-fi effect; `bits` 1–16 resolution, `rate` 0.0–1.0 sample-rate reduction.
+* **`SOUND.UNISON track, voices, detune, spread`**: Stacks `voices` (1-16) detuned copies for a super-saw; `detune` 0.0-1.0, `spread` 0.0-1.0 stereo.
+* **`SOUND.BITCRUSH track, bits, rate`**: Lo-fi effect; `bits` 1-16 resolution, `rate` 0.0-1.0 sample-rate reduction.
 * **`SOUND.RINGMOD track, freq, mix`**: Ring modulation for robotic / sci-fi tones.
 
 ## 4. PCM Samples and SFX
 
-jdBasic allows you to load and play high-quality WAV files.
+jdBasic can load and play WAV files.
 
 ### Global SFX and Music
 
@@ -96,7 +96,7 @@ You can use a loaded sample as a sound source for a sequencer track.
 
 * **`SOUND.REVERB size, damp, width, wet`**: Configures the global reverb room.
 * **`SOUND.DELAY active, time_ms, feedback, mix`**: Configures the global stereo delay.
-* **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master dynamics; `thresh` 0.0–1.0, `ratio` 1.0–20.0, `attack`/`release` in ms.
+* **`SOUND.COMPRESSOR thresh, ratio, attack, release, gain`**: Master dynamics; `thresh` 0.0-1.0, `ratio` 1.0-20.0, `attack`/`release` in ms.
 * **`SOUND.DISTORTION amount`**: Applies master saturation/overdrive.
 
 ## 6. Visualization
@@ -108,7 +108,7 @@ You can use a loaded sample as a sound source for a sequencer track.
 
 Normally `SOUND.INIT` opens an SDL audio device and a background thread plays
 the mix. When jdBasic is built **without** a device (the `SOUND` build flag,
-`/DSOUND_DSP` - used by embed hosts such as Godot), the same sequencer runs but
+`/DSOUND_DSP`, used by embed hosts such as Godot), the same sequencer runs but
 nothing is sent to the speakers automatically. The host pulls the mix instead:
 
 * **`SOUND.RENDER(frames) -> array`**: Renders the next `frames` stereo frames
@@ -348,7 +348,7 @@ I have organized them by category. You can copy the **Pattern String** directly 
     `"[c1 c1] [c1 c1] [c1 c1] [c1 c1]"`
 6.  **Reggaeton Kick** (Dem Bow rhythm)
     `"c1 [~ c1] ~ [~ c1]"`
-7.  **Drum & Bass Break** (Kick/Snare interplay - use tempo \> 160)
+7.  **Drum & Bass Break** (Kick/Snare interplay; use tempo \> 160)
     `"c1 ~ c2 [~ c1]"`
 8.  **Offbeat Open Hats** (The "House" lift)
     `"~ c4 ~ c4"`
@@ -363,7 +363,7 @@ I have organized them by category. You can copy the **Pattern String** directly 
 
 11. **The Gallop** (Iron Maiden / Psytrance style)
     `"~ [c2 c2] ~ [c2 c2]"`
-12. **Octave Jumper** (Disco/Synthwave - Root then Octave)
+12. **Octave Jumper** (Disco/Synthwave: Root then Octave)
     `"[c2 c3] [c2 c3] [c2 c3] [c2 c3]"`
 13. **Acid House** (Syncopated 16ths)
     `"c2 [~ c2] [c3 ~] [c2 c2]"`
@@ -379,7 +379,7 @@ I have organized them by category. You can copy the **Pattern String** directly 
     `"c2 c2 c2 c2"`
 19. **Drop Rhythm** (Dubstep-ish wobble pacing)
     `"c1 [~ c1] [c1 c1 c1] ~"`
-20. **Pump Bass** (Sidechain simulation - missing the 'one')
+20. **Pump Bass** (Sidechain simulation, missing the 'one')
     `"~ c2 c2 c2"`
 
 #### 21-30: Arpeggios & Chords

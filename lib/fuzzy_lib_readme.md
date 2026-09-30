@@ -1,4 +1,4 @@
-# FUZZY - near matches and phonetics
+# FUZZY: near matches and phonetics
 
 `lib/fuzzy.jdb` finds texts that are almost the same: the edit distances
 between two texts, similarity scores from 0 to 100 in the manner of

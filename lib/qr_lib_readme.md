@@ -1,4 +1,4 @@
-# QR - QR codes and the EPC payment code
+# QR: QR codes and the EPC payment code
 
 `lib/qr.jdb` makes QR codes in jdBasic itself, with nothing native behind
 it: numeric, alphanumeric and byte mode, the four error correction levels,

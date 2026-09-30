@@ -1,4 +1,4 @@
-# ARCHIVE - tar and gzip
+# ARCHIVE: tar and gzip
 
 `lib/archive.jdb` reads and writes tar archives and gzip files, in memory
 and on disk. Tar is read in ustar, GNU and pax form and written as ustar

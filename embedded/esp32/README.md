@@ -6,7 +6,7 @@ is on an S3 lives in `main/`.
 
 This is the headless stage: a flash store and the radio, no display and
 no keyboard. It answers one question with a number instead of an
-estimate - how much room does the interpreter leave on a 512 KB part.
+estimate: how much room does the interpreter leave on a 512 KB part.
 
 ## Building
 
@@ -60,8 +60,8 @@ time. There the ordinary reset lines work: `--before default-reset
 
 A 2 MB FATFS partition on wear levelling, mounted as the *default*
 filesystem rather than under a prefix. IDF has no `chdir`, so a mount at
-`/flash` would leave the interpreter's own opens - `IMPORT`,
-`TXTREADER$`, `OPEN` - unable to find anything. Registering a VFS with
+`/flash` would leave the interpreter's own opens (`IMPORT`,
+`TXTREADER$`, `OPEN`) unable to find anything. Registering a VFS with
 an empty prefix makes it the fallback for every path that matches no
 other mount, and bare names work everywhere.
 
@@ -85,7 +85,7 @@ At the prompt:
 `SYS.DF` reports the store as a line, `SYS.FREEDISK` as a number.
 
 A name without an extension may mean the `.jdb` of that name: `RUN hello`
-finds `hello.jdb`. What was typed wins, so a file that really has no
+finds `hello.jdb`. What was typed wins, so a file that has no
 extension is still reachable. `RECV` is the exception and writes exactly
 the name given, because not everything on the store is a program.
 
@@ -196,7 +196,7 @@ Bus 0 is the board's own, on GPIO 16 and 15, with the touch controller
 and the audio codec already on it. It is also what the four-pin I2C
 connector is wired to, so an external device goes there rather than on
 pins of its own, and `I2C.SETUP(0, 16, 15)` adopts that bus instead of
-opening a second one - which the chip refuses, having only two ports
+opening a second one, which the chip refuses, having only two ports
 and this one already open. Any other pair of pins on bus 0 is a
 mistake and says so; bus 1 is free for pins of your choosing.
 
@@ -323,7 +323,7 @@ Every primitive writes a framebuffer in PSRAM and `SCREENFLIP` sends it.
 
 Measured on the board, 40 MHz panel clock: a whole frame is 150 KB and
 costs 32 ms, so 31 frames a second if everything moves. Drawing costs
-almost nothing next to that - a filled circle 0.044 ms, clearing the
+almost nothing next to that: a filled circle 0.044 ms, clearing the
 whole frame 4.4 ms. Twenty sprites drawn and only their 40-row band
 sent is 7 ms, so a game that pushes what changed is not waiting on the
 panel.
@@ -332,7 +332,7 @@ Two things had to be right for that. The clock had been left at 10 MHz
 from the bringup, on a wrong diagnosis: the black screen was chip
 select, not the clock, and the lower clock was never re-tested after the
 real cause was found. And 40 MHz alone changed nothing, because the
-frame goes out as fifteen bands and the code waited for each one - at
+frame goes out as fifteen bands and the code waited for each one. At
 the default 100 Hz FreeRTOS tick a wait costs up to 10 ms, which is the
 150 ms a frame that was measured. The tick is 1000 Hz now and there are
 two staging buffers, so a band is filled while the previous is on the
@@ -361,7 +361,7 @@ Three settings that only the panel in front of you can decide:
 and the last reason.
 
 Reading back works, and it took measuring rather than reasoning. The
-panel does answer over MISO - `GFX.PANELSTATE` returns the power mode
+panel does answer over MISO: `GFX.PANELSTATE` returns the power mode
 from 0x0A, and a live display reports 0x9C: booster on, sleep out,
 normal mode, display on. What it does not answer is its identity: the ID
 registers at 0x04 and 0xD3 read back as zeros on this panel, so a check
@@ -373,8 +373,8 @@ answer is one dummy byte and then six bits a channel, which five known
 screens settled: red gives 0, 252, 0, 0 and blue gives 0, 0, 0, 252, so
 the dummy is real and the order is plain RGB whatever the BGR bit in
 MADCTL says. It agrees with `GFX.PEEK` within the quantisation between
-the framebuffer's 5-6-5 and the panel's 6-6-6 - 248 against 252 on the
-red and blue channels, exact on green.
+the framebuffer's 5-6-5 and the panel's 6-6-6 (248 against 252 on the
+red and blue channels, exact on green).
 
 `GFX.PANELREG cmd, n` and `GFX.PANELREGAT cmd, x, y, n` hand back the raw
 bytes of any read command. They are what turned this from guesswork into
@@ -384,8 +384,8 @@ a table.
 
 `GFX.CONSOLE 1` turns the panel into a text console: 40 columns by 30
 rows of the 8x8 font, the grid a jdBasic listing assumes. Everything
-printed goes to both the serial line and the glass - prompt, `DIR`,
-errors, `PRINT` - because the tee sits under `stdout` as a small VFS
+printed goes to both the serial line and the glass (prompt, `DIR`,
+errors, `PRINT`), because the tee sits under `stdout` as a small VFS
 file rather than in the individual calls. `GFX.CONSOLE 0` gives the
 panel back to a program that wants to draw on it.
 
@@ -418,7 +418,7 @@ tell the two apart.
 The board has no keys of its own, but an M5Stack CardKB v1.1 on the I2C
 connector gives it some. It is an ATmega8A at 0x5F that answers a
 one-byte read with a key and zero when it has none, and its codes are
-already the ones the editor speaks - 27 escape, 8 delete, 9 tab, 13
+already the ones the editor speaks: 27 escape, 8 delete, 9 tab, 13
 enter, 180 to 183 for the arrows, the same values the PicoCalc's
 controller sends.
 
@@ -431,8 +431,8 @@ GPIO 15, black is GND, red is the supply and goes to the connector's
 
 Its modifiers are tapped, not held. Shift, Sym and Fn each latch for the
 next key and the firmware waits out the release before it reads one, so
-holding a modifier and a key together produces nothing at all - the one
-thing everybody tries first. Tapping a modifier twice locks it until it
+holding a modifier and a key together produces nothing at all, although
+that is what everybody tries first. Tapping a modifier twice locks it until it
 is tapped again, and the LED says which: blinking for armed, steady for
 locked, red for shift, green for sym, blue for fn, dark for none.
 
@@ -445,13 +445,13 @@ letter is that letter's control code, which is how Ctrl-C breaks and
 Ctrl-S saves, and Fn then Q is the way out of the editor. Fn then an
 arrow gives Home, End and the two page keys, Fn then delete deletes
 forwards, Fn then tab is a back tab, and Fn then 1 or H lists the
-editor's keys. Shift with an arrow is the one thing missing - the
+editor's keys. Shift with an arrow is the one thing missing: the
 keyboard sends the same code either way, so selecting with the keys is
 a terminal-only move.
 
 The keyboard is probed rather than assumed, and probed again while it is
-absent, so one plugged in after boot starts working without a reset -
-after two seconds at first, then doubling to half a minute. The backoff
+absent, so one plugged in after boot starts working without a reset
+(after two seconds at first, then doubling to half a minute). The backoff
 is not politeness: the probe sits in the read path, and a bus held down
 by miswiring answers neither yes nor no for tens of milliseconds at a
 time, which is enough to make the prompt itself feel dead. For the same
@@ -461,7 +461,7 @@ transfer straight over the prompt.
 `KEY.LOCAL` says whether it answered, and `KEY.LOCAL(1)` probes again
 now rather than waiting out the backoff. `KEY.RAW` gives back the last
 codes it sent before the Fn layer was folded in, which is how a key
-whose meaning is in doubt gets settled - hold it down and read it,
+whose meaning is in doubt gets settled: hold it down and read it,
 rather than trust a table.
 
 It arrives in `jdb_stdin_getc`, the one place every reader on this board
@@ -476,7 +476,7 @@ address will not also open it. The keyboard owns it.
 
 An FT6336G at 0x38 on I2C, with its own reset and interrupt lines:
 SDA 16, SCL 15, INT 17, RST 18. It is the one part on this board that
-confirms itself - `TOUCH.ID` answers chip 0x64, vendor 0x11, which is
+confirms itself: `TOUCH.ID` answers chip 0x64, vendor 0x11, which is
 what a FocalTech controller must say.
 
 `TOUCH` gives `[count, x, y]` in screen coordinates, `TOUCH.RAW` the
@@ -507,15 +507,15 @@ into an amplifier whose enable line is GPIO 1, low to enable.
 
 `BEEP freq, ms`, `TONE freq`, `TONE 0` or `PLAY.STOP` to stop, and
 `PLAY.VOLUME pct`, and `PLAY` with a score in the classic BASIC
-notation - A-G with # + or -, O for the octave, < and > to step it, L
+notation: A-G with # + or -, O for the octave, < and > to step it, L
 for the length, T for the tempo, P or R for a rest, . to dot a note.
 The names are the RP2350's, so a program that beeps reads the same on
 either board, and `fs/tune.jdb` plays one.
 
 The score engine is `../../common/jdb_play.cpp`, shared rather than
 copied. Of its two hundred lines exactly four things belonged to the
-Pico SDK - the timer that ends a note, its cancel, and a critical
-section - so those became `jdb_snd_timer_start`, `jdb_snd_timer_cancel`,
+Pico SDK (the timer that ends a note, its cancel, and a critical
+section), so those became `jdb_snd_timer_start`, `jdb_snd_timer_cancel`,
 `jdb_snd_lock` and `jdb_snd_unlock`, which each board fills in. Here
 that is a one-shot esp_timer and a spinlock; there it is an alarm and
 the interrupt mask. The parser, the note ring and the frequency
@@ -527,7 +527,7 @@ The board's I2S nets are named **from the codec's point of view**.
 `I2S_DO` is the codec's output, so it is the ESP32's input; `I2S_DI` is
 the codec's input, so the ESP32 sends on it. The manual's wording ("bit
 output data signal") does not say whose output, and reasoning about it is
-a coin toss - three minutes of measuring settles it.
+a coin toss; three minutes of measuring settles it.
 
 The two ESP-IDF I2C drivers cannot coexist in one binary; it aborts at
 boot with "CONFLICT! driver_ng is not allowed to be used with this old
@@ -538,9 +538,9 @@ clock coefficient table is untouched, which is the point of vendoring
 rather than retyping.
 
 The enable line is asserted on every note rather than once at startup.
-It is an ordinary GPIO: anything that writes it - a program, a probe -
+It is an ordinary GPIO: anything that writes it (a program, a probe)
 would otherwise leave the board silently muted until the next reset.
-That is not a hypothetical; it happened during bringup and sent the
+This happened during bringup and sent the
 search after the wrong suspect.
 
 ## The microphone
@@ -552,7 +552,7 @@ continuously, so the microphone has a clock whether or not anything is
 playing.
 
 `MIC ms` answers `[peak, mean]` over that window, both 0 to 100. Peak
-says whether something happened, mean how loud it is now - a clap
+says whether something happened, mean how loud it is now; a clap
 detector wants the first, a level meter the second. `MIC.GAIN step`
 takes 0 to 7, six decibels apart.
 
@@ -586,7 +586,8 @@ Everything else follows from that: `COPY hello.jdb /sd/hello.jdb`,
 `DIR "/sd"`, `RUN "/sd/hello.jdb"`.
 
 A card that will not mount is not formatted. `format_if_mount_failed` is
-off, because a card that refuses is a card to look at, not one to erase.
+off, because a card that refuses to mount should be examined rather
+than erased.
 
 Measured on a 4 GB card: 3770 MB, four lines negotiated.
 
@@ -601,7 +602,7 @@ The radio has to be in station mode to scan, so a scan after a
 `fs/wifiscan.jdb` is the analyser: an arc a network, height for signal
 and place for channel, the strongest on each channel named, and the
 banner naming the quietest channels. The noise figure is the one the
-Arduino analyser uses - each network adds the square of its margin above
+Arduino analyser uses: each network adds the square of its margin above
 the floor to its own channel and the four either side, because 2.4 GHz
 channels overlap that far, which is why the quietest channel is rarely
 the emptiest.

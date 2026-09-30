@@ -1,4 +1,4 @@
-# MD - Markdown to HTML
+# MD: Markdown to HTML
 
 `lib/md.jdb` turns the CommonMark subset that documents actually use
 into HTML: headings, paragraphs with hard breaks, nested bullet and

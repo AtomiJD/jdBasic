@@ -1,4 +1,4 @@
-# URL - URLs taken apart, built, encoded, resolved and changed
+# URL: URLs taken apart, built, encoded, resolved and changed
 
 `lib/url.jdb` does what is otherwise done with string slicing: it splits a
 URL into its parts and builds one from them, percent-encodes and decodes,

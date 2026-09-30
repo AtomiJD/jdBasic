@@ -1,4 +1,4 @@
-# lib - the jdBasic module library
+# lib: the jdBasic module library
 
 [Docs home](../doc/README.md) · [Tour](../doc/tour.md) · [Language reference](../doc/languages.md) · **Module library**
 

@@ -1,4 +1,4 @@
-# MONEY - exact money on whole minor units
+# MONEY: exact money on whole minor units
 
 `lib/money.jdb` keeps a money amount as a whole number of minor units
 (cents, yen, fils) with its ISO 4217 code beside it, and does everything

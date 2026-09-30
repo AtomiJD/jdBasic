@@ -1,4 +1,4 @@
-# LOGGER - levels, sinks and rotation
+# LOGGER: levels, sinks and rotation
 
 `lib/logger.jdb` writes what a script or a service does to the console,
 to a text file and to a JSON lines file, with a level threshold, a

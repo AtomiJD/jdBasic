@@ -1,4 +1,4 @@
-# WM 2026 Dashboard - Plan (GFX / ImGui)
+# WM 2026 Dashboard: Plan (GFX / ImGui)
 
 A full FIFA World Cup 2026 dashboard in jdBasic GFX+ImGui. Data from the ESPN
 hidden JSON API (no key). This is a multi-phase weekend project.
@@ -66,18 +66,18 @@ Base: `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/...`
 ```
 
 Views:
-1. **Overview** - live card (if any) + today's matches + next GER match + group leaders.
-2. **Nations** - grid of 48 with flag+name; click -> Team Detail.
-3. **Team Detail** - flag, colors, record, group rank, full schedule (results + upcoming), squad/form.
-4. **Groups/Tables** - 12 sortable `GUI.BEGIN_TABLE` (flag, GP, W, D, L, GF, GA, GD, Pts), qualification spots highlighted.
-5. **Schedule** - all 104 matches by matchday/date, Combo filter by team/group; click -> Match Detail.
-6. **Match Detail** - header (both flags, score, status, venue, attendance, referee) + tabs:
+1. **Overview**: live card (if any) + today's matches + next GER match + group leaders.
+2. **Nations**: grid of 48 with flag+name; click -> Team Detail.
+3. **Team Detail**: flag, colors, record, group rank, full schedule (results + upcoming), squad/form.
+4. **Groups/Tables**: 12 sortable `GUI.BEGIN_TABLE` (flag, GP, W, D, L, GF, GA, GD, Pts), qualification spots highlighted.
+5. **Schedule**: all 104 matches by matchday/date, Combo filter by team/group; click -> Match Detail.
+6. **Match Detail**: header (both flags, score, status, venue, attendance, referee) + tabs:
    - Summary: event timeline (goals/cards/subs with minute + player + headshot)
    - Stats: `boxscore` as comparison bars (possession/shots/fouls/corners/cards via `GUI.PROGRESS`)
    - Lineups: starting XI + bench per team (no/pos/name/headshot); optional formation pitch
    - H2H & Form: head-to-head + last 5
-7. **Live** - big live card: running clock, live score, live stats, event feed, auto-refresh 20-30 s, pulse indicator.
-8. **Stats** - top scorers / assists / cards tournament-wide (from `leaders`).
+7. **Live**: big live card: running clock, live score, live stats, event feed, auto-refresh 20-30 s, pulse indicator.
+8. **Stats**: top scorers / assists / cards tournament-wide (from `leaders`).
 
 ## 6. Phases
 
@@ -90,9 +90,9 @@ Views:
 | 4 | Live ticker + auto-refresh + Stats/Leaders |
 | 5 | Polish: formation pitch, H2H, animations, team-colour accents |
 
-## 7. Phase 0 - make-or-break to verify/build first
+## 7. Phase 0: make-or-break to verify/build first
 
-1. `GUI.IMAGE` builtin (C++, gui.cpp) - the flag enabler. Recommended: build it.
+1. `GUI.IMAGE` builtin (C++, gui.cpp), needed for the flags. Recommended: build it.
 2. Binary download: is `HTTP.GET$` binary-safe (PNG bytes)? else a download-to-file path. -> image pipeline.
 3. Clean async pattern: `HTTP.GET_ASYNC$` + poll per frame.
 

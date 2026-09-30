@@ -52,7 +52,7 @@ most of the 219 KB of facets with them.
 
 - flash: -28 KB for regex itself, likely -150 to -200 KB with the facets
 - RAM: a few hundred bytes
-- complexity: low - one `#ifdef` around three registrations and the include
+- complexity: low; one `#ifdef` around three registrations and the include
 - loss: regex on the boards; a program that needs it fails at load with a clear name
 
 ### 2. Streams out of the interpreter core
@@ -64,7 +64,7 @@ classes and their share of the facets go too.
 
 - flash: -100 to -150 KB after 1, less without it (the facets stay for regex)
 - RAM: the iostream init objects, a kilobyte or two
-- complexity: medium - 14 sites, and every number must print exactly as
+- complexity: medium; 14 sites, and every number must print exactly as
   before (the parity sweep is the judge)
 - loss: none
 
@@ -90,7 +90,7 @@ builtin.
 
 - flash: -20 to -30 KB (the std::function thunks)
 - RAM: -45 to -50 KB at 342 natives
-- complexity: medium to high - 869 registrations use lambdas, most of
+- complexity: medium to high; 869 registrations use lambdas, most of
   them captureless (a function pointer), some capturing `this` (they
   need a context argument); a cheaper first step drops only the
   unordered_map and the duplicate name copies for about -20 KB RAM
@@ -105,7 +105,7 @@ about twenty more of that kind. Say 50.
 
 - flash: -20 to -40 KB
 - RAM: -8 KB at today's registry, -0.3 KB after 4
-- complexity: low - `#ifndef JDB_MCU` around the registrations
+- complexity: low; `#ifndef JDB_MCU` around the registrations
 - loss: each one is a difference between desktop and board; p-code
   files that use one are refused at load by name, which is the right
   failure
@@ -128,7 +128,7 @@ vectorised operators live inside VM::run and stay in any case.
 
 - flash: -40 to -60 KB for the verbs
 - RAM: -10 KB at today's registry, -0.4 KB after 4
-- complexity: medium - the verbs separate cleanly, the operators do not
+- complexity: medium; the verbs separate cleanly, the operators do not
 - loss: the part of the language the article is about
 - verdict: keep; if anything, gate the exotic ones (`OUTER`, `CONVOLVE`,
   the matrix numerics) and keep the everyday set
@@ -139,7 +139,7 @@ vectorised operators live inside VM::run and stay in any case.
 
 - flash: -10 to -12 KB
 - RAM: 0
-- complexity: medium - 580 sites, and the test suites match message text
+- complexity: medium; 580 sites, and the test suites match message text
 - verdict: no; the messages are what makes the board a computer rather
   than a thing that says ERROR 7
 

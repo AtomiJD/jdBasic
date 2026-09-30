@@ -1,8 +1,8 @@
-# update_stars - Vectorisation Benchmark
+# update_stars: Vectorisation Benchmark
 
 ## Files
-- `bench_stars.jdb` - single-N (140) detailed comparison of three impls
-- `bench_stars_sweep.jdb` - crossover sweep N ∈ {140 … 14000}, v1 vs v3
+- `bench_stars.jdb`: single-N (140) detailed comparison of three impls
+- `bench_stars_sweep.jdb`: crossover sweep N ∈ {140 ... 14000}, v1 vs v3
 
 ## Result
 

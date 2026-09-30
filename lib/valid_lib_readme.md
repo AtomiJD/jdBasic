@@ -1,4 +1,4 @@
-# VALID - identifiers checked the way banks and tax offices check them
+# VALID: identifiers checked the way banks and tax offices check them
 
 `lib/valid.jdb` checks the identifiers an invoice, an order or a product
 list carries: IBAN against the SWIFT IBAN registry, BIC, the VAT

@@ -120,7 +120,7 @@ build\jdb_runtime.obj   ← VM-builtin shim (NATIVEC only)
 build\LLVM-C.dll        ← LLVM C-API runtime (NATIVEC only)
 ```
 
-### Runtime DLL - `build_rt.bat`
+### Runtime DLL: `build_rt.bat`
 
 `build.bat NATIVEC` only builds the interpreter and the `-c` machinery. The runtime DLL that generated EXEs link against is built by a separate script:
 
@@ -131,8 +131,8 @@ build_rt.bat HTTP GFX IMGUI OPENGL NATIVEC MCPSERVER
 **Always pass the same feature flags** to `build_rt.bat` as you passed to `build.bat`. A bare `build_rt.bat` produces a `jdbrt.dll` without `SCREEN`/`RECT`/`SPRITE`/etc., and any generated EXE that uses graphics will fail at runtime.
 
 Rebuild the DLL after **any** change under `src/` that a compiled program
-can reach at runtime - which is most of it, because the DLL carries the VM
-itself, not just the graphics. `src/graphics.cpp`, `src/gui.cpp`,
+can reach at runtime. That is most of it, because the DLL carries the VM
+itself as well as the graphics. `src/graphics.cpp`, `src/gui.cpp`,
 `src/jdb_runtime.cpp`, `src/sprites.cpp`, `src/tiledmap.cpp`,
 `src/opengl.cpp` and `src/imgui/*` are the obvious ones, and `src/vm.cpp`
 with the builtins in `src/vm_builtins_*.cpp` is the one that catches people: a builtin fixed there is fixed in
@@ -315,7 +315,7 @@ Reference numbers from a real run on an RTX 4070 Ti SUPER:
 
 ## 4. macOS build
 
-The macOS build works on Apple Silicon (tested on an M1 mini): `./build.sh` with brew-installed dependencies (`llvm@18`, `sdl3`, `sdl3_image`, `sdl3_ttf`, `sdl3_mixer`, `cmake`, `ninja`), same lib-layout as the Linux side. All gate suites pass on arm64. There are no prebuilt macOS binaries yet - build from source.
+The macOS build works on Apple Silicon (tested on an M1 mini): `./build.sh` with brew-installed dependencies (`llvm@18`, `sdl3`, `sdl3_image`, `sdl3_ttf`, `sdl3_mixer`, `cmake`, `ninja`), same lib-layout as the Linux side. All gate suites pass on arm64. There are no prebuilt macOS binaries yet; build from source.
 
 ---
 
@@ -342,7 +342,7 @@ After every build, run the pre-commit gate:
 ./build/jdBasic.exe -c jdb/emu/emu_run.jdb    && ( cd jdb/emu && timeout 5 ./emu_run.exe )
 ```
 
-The native compiler enforces STRICT + EXPLICIT, so the loose `native_test.jdb` is interpreter-only; its strict twin `native_test.strict.jdb` carries the native pass. Delete stale `.exe`s before a `-c` run - a compile error leaves the previous binary in place and it would report a stale green. TUI suites live under `tests/tui/` (need a TUI-enabled build).
+The native compiler enforces STRICT + EXPLICIT, so the loose `native_test.jdb` is interpreter-only; its strict twin `native_test.strict.jdb` carries the native pass. Delete stale `.exe`s before a `-c` run: a compile error leaves the previous binary in place and it would report a stale green. TUI suites live under `tests/tui/` (need a TUI-enabled build).
 
 Every native suite must end with `ALL TESTS PASSED!` or `0 failed`. `timeout 124` from a GUI smoke is the **good** signal (process killed at the deadline). `exit 139` = segfault. `exit 127` on Windows = missing `jdbrt.dll` next to the EXE. The full test-bank layout is described in [tests/README.md](../tests/README.md).
 
@@ -367,9 +367,9 @@ dist.bat GFX IMGUI HTTP NOBUILD
 
 Switches:
 
-- `NOCUDA` - skip the CUDA runtime DLLs even when `LLM` is selected
-- `NOBUILD` - don't recompile, just repackage from `build\`
-- `CLEAN` - wipe `dist\jdBasic\` before assembling
+- `NOCUDA`: skip the CUDA runtime DLLs even when `LLM` is selected
+- `NOBUILD`: don't recompile, only repackage from `build\`
+- `CLEAN`: wipe `dist\jdBasic\` before assembling
 
 ### Target machine requirements (Windows)
 
@@ -395,7 +395,7 @@ Match the llama.cpp release version with the headers in `libs/llama/`. If you re
 Download ONNX Runtime 1.20.0 from <https://github.com/microsoft/onnxruntime/releases>, unpack so that `libs/onnxruntime/include/` and `libs/onnxruntime/lib/` exist. For GPU, use the `-gpu-` variant of the tarball.
 
 **`MIX_Mixer / MIX_CreateMixerDevice not declared` (Linux)**
-Your `libs/SDL3_mixer/` is too old - pre-3.2.2 ships the legacy `Mix_*` API. Run `( cd libs/SDL3_mixer && git checkout release-3.2.2 )` and re-run `./build_libs.sh`.
+Your `libs/SDL3_mixer/` is too old; pre-3.2.2 ships the legacy `Mix_*` API. Run `( cd libs/SDL3_mixer && git checkout release-3.2.2 )` and re-run `./build_libs.sh`.
 
 **NATIVEC build fails / `LLVM-C.lib` not found (Windows)**
 Install LLVM 18.x for Windows from <https://github.com/llvm/llvm-project/releases> (pick the `LLVM-18.x.x-win64.exe` installer) and point it at `libs/LLVM/`. The build expects `libs/LLVM/include/llvm-c/`, `libs/LLVM/lib/LLVM-C.lib`, and `libs/LLVM/bin/LLVM-C.dll`.

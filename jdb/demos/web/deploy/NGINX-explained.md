@@ -14,12 +14,12 @@ loopback (reachable only from the machine itself) and it speaks plain HTTP with
 no TLS. Nobody on the internet can reach it directly, and there is no
 encryption. nginx sits in front and does three jobs:
 
-1. **Reachability** - it listens on the public ports **80** (HTTP) and **443**
+1. **Reachability**: it listens on the public ports **80** (HTTP) and **443**
    (HTTPS) and forwards to `127.0.0.1:8080`.
-2. **TLS / encryption** - it terminates HTTPS (the padlock in the browser). The
+2. **TLS / encryption**: it terminates HTTPS (the padlock in the browser). The
    encrypted leg is **browser <-> nginx**; internally nginx talks plain HTTP to
    jdTrakr, which is safe because that hop never leaves the machine (loopback).
-3. **Routing** - one machine can host many domains. nginx picks the right app
+3. **Routing**: one machine can host many domains. nginx picks the right app
    per request based on the domain name.
 
 Request flow:
@@ -34,13 +34,13 @@ Browser  --HTTPS:443-->  nginx  --HTTP:8080 (loopback)-->  jdTrakr  -->  jdtrakr
 An nginx config is a set of **`server { ... }` blocks**. Each block is one
 virtual website. nginx chooses which block handles a request from two things:
 
-- **`listen`** - which port the block answers on (80 or 443).
-- **`server_name`** - which domain it is responsible for (nginx reads the
+- **`listen`**: which port the block answers on (80 or 443).
+- **`server_name`**: which domain it is responsible for (nginx reads the
   request's `Host` header).
 
 The jdTrakr site has two server blocks.
 
-## Block 1 - the app itself (port 443, HTTPS)
+## Block 1: the app itself (port 443, HTTPS)
 
 ```nginx
 server {
@@ -61,26 +61,26 @@ server {
 }
 ```
 
-- **`location / { ... }`** - a rule for a set of paths. `/` means "anything
+- **`location / { ... }`**: a rule for a set of paths. `/` means "anything
   starting with /", i.e. the whole site. You could add e.g. `location /api/`
   for special handling; jdTrakr does not need to.
-- **`proxy_pass http://127.0.0.1:8080;`** - the core line: forward this request
+- **`proxy_pass http://127.0.0.1:8080;`** is the core line: forward this request
   to jdTrakr on port 8080. nginx fetches the response from there and relays it
   back to the browser.
-- **`proxy_set_header ...`** - without these, jdTrakr would only see "the
+- **`proxy_set_header ...`**: without these, jdTrakr would only see "the
   request came from nginx (127.0.0.1)". These pass the real facts along:
-  - `Host $host` - the domain the client originally asked for.
-  - `X-Real-IP` / `X-Forwarded-For` - the visitor's real IP (otherwise logs and
+  - `Host $host`: the domain the client originally asked for.
+  - `X-Real-IP` / `X-Forwarded-For`: the visitor's real IP (otherwise logs and
     the app would only ever see nginx's address).
-  - `X-Forwarded-Proto $scheme` - "the original request was **https**".
+  - `X-Forwarded-Proto $scheme`: "the original request was **https**".
     Important because nginx talks plain http internally, so this is how the app
     learns TLS is active at the edge.
-- **`listen 443 ssl;`** - where this block listens; `ssl` turns on encryption.
-- **`ssl_certificate` / `ssl_certificate_key`** - the public certificate and the
+- **`listen 443 ssl;`**: where this block listens; `ssl` turns on encryption.
+- **`ssl_certificate` / `ssl_certificate_key`**: the public certificate and the
   private key. certbot installed these and keeps them current via auto-renew.
   This is what gives the browser its padlock.
 
-## Block 2 - the HTTP to HTTPS redirect (port 80)
+## Block 2: the HTTP to HTTPS redirect (port 80)
 
 ```nginx
 server {
@@ -132,4 +132,4 @@ nginx is the encrypting, publicly reachable doorman; jdTrakr is the small app
 behind it that only works on loopback port 8080 and gets its visitors handed to
 it by nginx. To add a second app later (say `app2.jdbasic.tech` on the same
 box), add another `server` block with a different `server_name` and a
-`proxy_pass` to a different port. That is the whole pattern.
+`proxy_pass` to a different port. Nothing else has to change.

@@ -1,4 +1,4 @@
-# Tier 3 - jdBasic as a peer ScriptLanguage in Godot
+# Tier 3: jdBasic as a peer ScriptLanguage in Godot
 
 **Branch:** `godot_spinoff`
 **Started:** 2026-05-28
@@ -11,7 +11,7 @@
 | 1 | Callback naming    | `_process`, `_ready`, `_input` (Godot 1:1)       |
 | 2 | Base class         | new keyword `EXTENDS Node3D` at top of file      |
 | 3 | Inspector exports  | new keyword `INSPECTOR DIM speed = 1.0`          |
-| 4 | Editor scope (E1)  | T3b - includes syntax highlighting in Godot editor |
+| 4 | Editor scope (E1)  | T3b, includes syntax highlighting in Godot editor |
 | 5 | Hot reload         | recompile_source on soft reload, full re-eval on hard |
 | 6 | Naming             | C++ class `JdbScript`, label "jdBasic", ext `.jdb` |
 
@@ -29,7 +29,7 @@ attached to the Node and Godot dispatches `_ready` / `_process` /
 `_input` / etc. into the embedded jdBasic VM. Inspector exposes jdBasic
 globals as editable properties. Saving the `.jdb` while running hot-reloads.
 
-This is the big one. The existing Tier 2 `JDBScript : Node` is a
+This is the largest part of the work. The existing Tier 2 `JDBScript : Node` is a
 companion-node pattern; Tier 3 is **language replacement** at the
 Godot scripting API level.
 
@@ -46,9 +46,9 @@ Godot's GDExtension scripting API has three layers. We subclass each:
 | `GDExtensionScriptInstanceInfo3` | per-Node attached-script instance   | 27 function ptrs   | ~10                  |
 
 The first two are normal C++ subclasses bound via godot-cpp's macros.
-The third is a C-style function-pointer table - we fill it once, return
-pointers into our C++ class from each callback. Same pattern any other
-language extension uses.
+The third is a C-style function-pointer table: we fill it once and return
+pointers into our C++ class from each callback. Other language extensions use the same
+pattern.
 
 Source headers we're going to read against:
 
@@ -58,7 +58,7 @@ Source headers we're going to read against:
 
 ---
 
-## Minimum viable Tier 3 - what counts as "shipped"
+## Minimum viable Tier 3: what counts as "shipped"
 
 A scene with a single Node3D. Atomi clicks **Attach Script**, picks
 **jdBasic**, a `node.jdb` is created with template content:
@@ -82,7 +82,7 @@ shows `speed` as a 1.0 number-field. He changes it to 5.0, the cube
 speeds up. He hits Ctrl+S in his editor with new code, Godot reloads,
 the new behaviour kicks in without dropping `angle`'s value.
 
-That's the bar. No syntax highlighting yet, no autocomplete, no debugger.
+That is the minimum. Syntax highlighting, autocomplete and a debugger are not part of it yet.
 
 ---
 
@@ -97,7 +97,7 @@ That's the bar. No syntax highlighting yet, no autocomplete, no debugger.
 | **T3.4** | Hot-reload via `_reload` -> `jdb_embed_recompile_source`         | 0.5 day |
 | **T3.5** | Reserved words, comment delimiters, basic editor template (T3b) | 1 day  |
 | **T3.6** | (optional) Autocomplete + symbol lookup                          | 1 week |
-| **T3.7** | (optional) Live debugger - breakpoints, stack inspection         | 1 week |
+| **T3.7** | (optional) Live debugger: breakpoints, stack inspection         | 1 week |
 
 Realistic schedule for **T3.0 through T3.5** (locked scope): **5-7
 focused workdays**.
@@ -121,7 +121,7 @@ the parser accepts it). Options:
 | b | Prefix swap: `_process` -> `on_process` | matches our Tier 2 `JDBScript` convention | extra translation table; we have to document it everywhere |
 | c | Strip prefix: `_process` -> `process` | clean jdBasic identifier        | collides if user defines a `process()` for unrelated reasons |
 
-**Default recommendation: (b)** - keeps the convention we already shipped
+**Default recommendation: (b)**, because it keeps the convention we already shipped
 in Tier 2 (`on_process`, `on_ready`, `on_exit`).
 
 (Pre-check 2026-05-28: jdBasic's parser accepts `_process` style names,
@@ -140,7 +140,7 @@ calls. Options:
 | b | New keyword `EXTENDS Node3D` at top | explicit, parseable                 | new keyword in the language             |
 | c | Always extend Object                | no parsing                          | scripts can't call Node3D-specific methods directly |
 
-**Default recommendation: (a)** - comment-based, parsed by the
+**Default recommendation: (a)**: comment-based, parsed by the
 ScriptLanguageExtension itself, doesn't touch the jdBasic core lexer.
 
 ### 3. Inspector-exported properties
@@ -153,7 +153,7 @@ GDScript: `@export var x: float = 0.0`. We need an equivalent in jdBasic.
 | b | New `INSPECTOR DIM x = 0.0`   | dedicated keyword, no overload     | adds another reserved word              |
 | c | Pragma comment `' @export\nDIM x = 0.0` | no lang change at all      | unusual look; needs source-text parsing |
 
-**Default recommendation: (a)** - EXPORT is already a jdBasic
+**Default recommendation: (a)**, because EXPORT is already a jdBasic
 language-level signal that "this is part of the public surface".
 For a script attached to a Node, "public" naturally means "Inspector-visible".
 Module-export and script-export don't collide because scripts aren't modules.
@@ -177,11 +177,11 @@ When the user saves a `.jdb` and Godot calls `Script._reload(keep_state)`:
 
 | keep_state | Behaviour we'd implement                              |
 |---|---|
-| true       | `jdb_embed_recompile_source` (FUNC bodies swap, globals stay) - the Tier 2 Recompile button pattern |
+| true       | `jdb_embed_recompile_source` (FUNC bodies swap, globals stay), the Tier 2 Recompile button pattern |
 | false      | Drop the VM, create a fresh one, full eval of the source |
 
 **Default recommendation:** implement both, switch on the flag. Soft
-reload is the live-coding magic moment; hard reload is the safety net.
+reload is what live coding uses; hard reload is the fallback.
 
 ### 6. Naming + branding
 
@@ -192,7 +192,7 @@ reload is the live-coding magic moment; hard reload is the safety net.
 | File extension             | `.jdb`         |
 | Highlight token name       | "jdb"          |
 
-Counter-proposals welcome - but this is the smallest set of names
+Counter-proposals are welcome, but this is the smallest set of names
 that's unambiguous and aligned with how Atomi writes the language name elsewhere.
 
 ---
@@ -212,8 +212,8 @@ that's unambiguous and aligned with how Atomi writes the language name elsewhere
   `extern "C"` wrapper layer that hands C function pointers to Godot
   and calls into our C++ class. No `std::function` shortcuts. Roughly
   10 short static functions, each a single-line bounce into the class.
-- **Reload during _process**: if Godot reloads the script while
-  `on_process` is mid-eval, what happens? Our embed API is synchronous,
+- **Reload during _process**: Godot could reload the script while
+  `on_process` is mid-eval. Our embed API is synchronous,
   so this can't physically race. But if we ever lift the worker-thread
   pattern from `mcp_stdio.cpp`, this becomes a real concern.
 - **Editor-mode VM**: `JDBScript` (Tier 2) skipped VM init in the editor
@@ -227,7 +227,7 @@ that's unambiguous and aligned with how Atomi writes the language name elsewhere
 
 Both are net-new jdBasic syntax. Two viable paths:
 
-### Path A - real jdBasic core keywords
+### Path A: real jdBasic core keywords
 
 Add to `src/lexer.cpp` + `src/parser.cpp` proper. The interpreter and
 the native `-c` compiler both learn them; AST gets new node types. The
@@ -240,7 +240,7 @@ embedder asks the VM for `vm.get_extends_target()` / `vm.list_inspector_vars()`.
 - Con: ~4-8 hours of careful core work (lexer rule + parser rule +
   AST + compiler/interp ignore-on-emit + introspection API)
 
-### Path B - pre-process in the GDExtension
+### Path B: pre-process in the GDExtension
 
 Our `JdbScriptLanguage::_set_source_code` parses EXTENDS / INSPECTOR
 itself, captures the metadata, then rewrites the source before handing
@@ -255,16 +255,16 @@ side.
 - Pro: zero jdBasic-core changes, Tier 3 stays contained in `embed/godot/`
 - Pro: faster to ship (a couple hours of regex work)
 - Con: `jdbasic.exe foo.jdb` outside Godot errors on `EXTENDS Node3D` /
-  `INSPECTOR DIM x = 5.0` - the user has to either run via Godot or
+  `INSPECTOR DIM x = 5.0`; the user has to either run via Godot or
   manually strip those lines
 - Con: error messages reference the rewritten source, not what the user typed
 
-**Locked 2026-05-28: Path B** - Atomi picked the GDExtension-preprocessing
+**Locked 2026-05-28: Path B**. Atomi picked the GDExtension-preprocessing
 route. Trade-off accepted: `jdbasic.exe foo.jdb` won't run a Tier-3-authored
 script outside Godot (would error on `EXTENDS Node3D` line). Sentinel-tagged
 metadata stays in the GDExtension's C++ layer; jdBasic core never sees
-those tokens. If we later want core-keyword support, Path A is additive
-to the existing surface, not a rewrite.
+those tokens. If we later want core-keyword support, Path A can be added
+to the existing surface without a rewrite.
 
 ---
 
@@ -281,11 +281,11 @@ to the existing surface, not a rewrite.
 
 ## Pre-implementation checklist
 
-- [x] **jdBasic accepts `_process` style identifiers** - verified via
+- [x] **jdBasic accepts `_process` style identifiers**: verified via
       `SUB _process(delta) ... ENDSUB`, parses OK. Option 1a (exact-match)
       is technically viable.
-- [x] **Comment `' extends Foo` is a no-op for the parser** - verified.
-- [x] **`EXPORT DIM x = N` parses outside MODULE** - verified.
+- [x] **Comment `' extends Foo` is a no-op for the parser**: verified.
+- [x] **`EXPORT DIM x = N` parses outside MODULE**: verified.
 - [ ] Atomi locks in the 6 design decisions above.
 
 After that's locked in, T3.0 skeleton can start.

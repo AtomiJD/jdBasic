@@ -1,4 +1,4 @@
-# DT - dates as numbers, with a calendar
+# DT: dates as numbers, with a calendar
 
 `lib/dt.jdb` parses the date formats that turn up in files and APIs,
 does calendar arithmetic, rounds to units, builds ranges and writes

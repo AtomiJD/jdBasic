@@ -1,4 +1,4 @@
-# SCHEMA - validation for maps, and JSON Schema from the same declaration
+# SCHEMA: validation for maps, and JSON Schema from the same declaration
 
 `lib/schema.jdb` checks a map against a declaration and answers with
 the errors, dotted paths included, and a value with defaults filled in.

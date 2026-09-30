@@ -1,4 +1,4 @@
-# SECRET - password hashes, constant-time comparison, tokens
+# SECRET: password hashes, constant-time comparison, tokens
 
 `lib/secret.jdb` keeps passwords as slow salted hashes, compares secrets
 without leaking where they differ, and makes random tokens and API keys.

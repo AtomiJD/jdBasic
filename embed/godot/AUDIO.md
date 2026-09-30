@@ -1,4 +1,4 @@
-# GDX.AUDIO - sound and music for jdBasic-in-Godot
+# GDX.AUDIO: sound and music for jdBasic-in-Godot
 
 A thin convenience layer over `AudioStreamPlayer` so a pure-jdBasic game can
 play sound effects and music without wiring nodes by hand. The natives work

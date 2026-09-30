@@ -1,4 +1,4 @@
-# GDX.INPUT - Native Input API for jdBasic-in-Godot
+# GDX.INPUT: Native Input API for jdBasic-in-Godot
 
 `GDX.INPUT.*` is a suite of native functions registered automatically on every `JDBasicVM` instance. It exposes Godot's `Input` singleton (and `DisplayServer` for mouse position) directly to jdBasic scripts, no GDScript pump needed.
 
@@ -78,7 +78,7 @@ Each event is a MAP with four keys:
 
 | Key | Meaning |
 |-----|---------|
-| `kind` | `"action"`, `"key"`, `"mouse"` - whatever the GDScript side tagged it with |
+| `kind` | `"action"`, `"key"`, `"mouse"`, as tagged by the GDScript side |
 | `action` | the action name, empty for non-action events |
 | `type` | `"pressed"` or `"released"` |
 | `strength` | 0..1 for actions, keycode for keys, button index for mouse buttons |
@@ -96,4 +96,4 @@ The queue lives in the JDBasicVM C++ side and is thread-safe (events can be push
 
 - **Polling** for continuous state: movement, camera, sprint, axis-based aim.
 - **Event queue** for one-shots: open menu, interact, jump, fire.
-- **Mix freely** - they read different sides of the same input state and do not interfere.
+- **Both together** work fine: they read different sides of the same input state and do not interfere.

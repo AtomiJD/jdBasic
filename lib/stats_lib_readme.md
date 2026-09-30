@@ -1,4 +1,4 @@
-# STATS - description, association, tests, distributions
+# STATS: description, association, tests, distributions
 
 `lib/stats.jdb` is the layer above the array reducers. `MEAN`, `MEDIAN`,
 `STDEV` and `VARIANCE` are builtins already; this module adds the sample

@@ -1,4 +1,4 @@
-# PDFGEN - PDF documents written from jdBasic
+# PDFGEN: PDF documents written from jdBasic
 
 `lib/pdfgen.jdb` writes PDF files without any other program: pages in the
 common sizes, the 14 standard fonts with their real glyph widths, text at

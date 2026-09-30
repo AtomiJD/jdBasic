@@ -1,4 +1,4 @@
-# CACHE - remember what a call answered
+# CACHE: remember what a call answered
 
 `lib/cache.jdb` puts a lookup that costs time or money behind a map that
 answers the second question for nothing. A cache holds at most so many

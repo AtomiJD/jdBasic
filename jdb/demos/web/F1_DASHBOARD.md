@@ -1,6 +1,6 @@
 # Formel 1 Dashboard
 
-`f1_dashboard.jdb` - a Formula 1 desktop dashboard in jdBasic (GFX + ImGui),
+`f1_dashboard.jdb` is a Formula 1 desktop dashboard in jdBasic (GFX + ImGui),
 built the same way as `wm_dashboard.jdb`. Data comes from
 [OpenF1](https://openf1.org), a public API with no key and no account.
 

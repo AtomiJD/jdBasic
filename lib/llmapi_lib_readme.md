@@ -1,4 +1,4 @@
-# LLMAPI - one chat client for the remote and the local models
+# LLMAPI: one chat client for the remote and the local models
 
 `lib/llmapi.jdb` talks to OpenAI, Anthropic, any server that speaks the
 OpenAI chat API (llama-server, vLLM, Ollama) and the local `AI.*` model,

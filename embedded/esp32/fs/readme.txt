@@ -5,7 +5,7 @@ program, EDIT name opens it, LIST name prints it.  A name without an
 extension gets .jdb added if that is what exists.
 
   selftest   every part of the board, each checked against something
-             other than its own opinion - start here
+             other than its own opinion; start here
   panel      the screen: bars, circles, text
   console    the screen as 40 by 30 characters, with colours
   touch      finger painting, colours along the top

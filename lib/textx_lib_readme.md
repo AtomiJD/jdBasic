@@ -1,4 +1,4 @@
-# TEXTX - wrap, slug, transliterate, humanize
+# TEXTX: wrap, slug, transliterate, humanize
 
 `lib/textx.jdb` holds the small text helpers every project writes again:
 paragraphs wrapped and shortened the way Python's textwrap does it, cuts

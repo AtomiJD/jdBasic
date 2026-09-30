@@ -1,4 +1,4 @@
-# HTMLDOM - HTML into a tree, with CSS selectors
+# HTMLDOM: HTML into a tree, with CSS selectors
 
 `lib/htmldom.jdb` parses the HTML that is actually served, not the HTML
 the standard describes: unclosed tags, tags that close each other,

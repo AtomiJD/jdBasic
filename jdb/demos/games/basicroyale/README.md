@@ -37,17 +37,17 @@ exactly one set of rules in the codebase.
 | `art.jdb` | The rasteriser. Signed-distance shapes into RGBA buffers at startup; the card figures come from `cards.json`, only the two station classes live here. |
 | `lang.json` | UI strings and card descriptions per language. Served by the server, so a new language needs no client change. |
 | `balance.jdb` | Headless duel harness. Every troop card fights every other one for equal elixir. |
-| `standoff.jdb` | Headless too, but the attackers walk in from across the board - which is where reach decides. |
-| `push.jdb` | One attacker walks a lane at a defended station and the answer lands on it when it arrives - what a big card costs the defender. |
+| `standoff.jdb` | Headless too, but the attackers walk in from across the board, which is where reach decides. |
+| `push.jdb` | One attacker walks a lane at a defended station and the answer lands on it when it arrives. It measures what a big card costs the defender. |
 | `warp_test.jdb` | Assertions for the recall card: what the loop catches, what it refuses, what it charges. |
 | `art_test.jdb` | Assertions for the card figures: every card has one, and a row still means what its constructor meant. |
 | `pull_test.jdb` | Assertions for the tractor beam: what it hauls, how far, and what it leaves alone. |
 | `spawn_test.jdb` | Assertions for hatcheries: a building that spawns, and a brood of more than one card. |
 | `splash_test.jdb` | Assertions for splash: who a blast catches around its target, and who it leaves alone. |
 | `replay.jdb` | Replays `replays.jsonl`: check every recorded match, or walk one of them card by card. |
-| `whatif.jdb` | Runs a balance change against the matches that were really played, over every recording that replays exactly. |
+| `whatif.jdb` | Runs a balance change against the matches that were actually played, over every recording that replays exactly. |
 | `replay_test.jdb` | Plays a match out while recording it, replays the recording, and compares both down to the tower hit points. |
-| `traits_test.jdb` | Assertions for shield, death effects, charge, heal and slow - each defined at runtime, so it doubles as the worked example. |
+| `traits_test.jdb` | Assertions for shield, death effects, charge, heal and slow, each defined at runtime, so it also serves as the worked example. |
 | `game.jdb` | Offline harness, both sides on one screen. Predates the server, useful for rule work. |
 | `artsheet.jdb` | Renders every sprite onto one sheet for a quick look. |
 | `makeart.jdb` | Derives `web/hero.png`, `icon.png` and `social.png` from `keyart.png`. |
@@ -57,7 +57,7 @@ exactly one set of rules in the codebase.
 
 Server-side state next to `server.jdb`: `stats.json` (profiles, collections,
 decks, PIN hashes), `matches.json` (the match log), `sessions.json` (live
-tokens), `replays.jsonl` (one line per match: both decks, the card levels, the seed and every card that landed - appended, never rewritten) and `admin.txt` (the admin key, never committed).
+tokens), `replays.jsonl` (one line per match: both decks, the card levels, the seed and every card that landed; appended, never rewritten) and `admin.txt` (the admin key, never committed).
 
 ## The game
 
@@ -71,7 +71,7 @@ The simulation ticks ten times a second and the client asks for a snapshot
 about five times a second, but it draws thirty frames. Every ship keeps the
 position it was last drawn at and the one the newest snapshot puts it on, and
 the frames in between walk from one to the other over the measured gap between
-two answers - so movement is smooth without the server having to tick faster or
+two answers. Movement is smooth without the server having to tick faster or
 the phone having to poll harder. A late answer parks the ships instead of
 sliding them past their target.
 
@@ -110,7 +110,7 @@ carry traits rather than special cases in the code:
 - `SHIELD` is a pool in front of the hull that never comes back: one big swing
   spends it whole, a swarm chips through it.
 - `DEATHDMG` / `DEATHRADIUS` blow up on death, `DEATHSPAWN` / `DEATHN` leave a
-  brood behind - a card can do both.
+  brood behind; a card can do both.
 - `CHARGE` / `CHARGEMUL` build a run-up over open ground and spend it on the
   first thing reached, then fight normally until the next run.
 - `HEAL` on a spell patches the caster's own ships, never past their hull.
@@ -118,11 +118,11 @@ carry traits rather than special cases in the code:
 - `SPLASH` is a blast radius on a hitter: everything hostile it could target
   on its own takes the same damage around whatever it hits. Stations are too
   big to be caught by a neighbour's blast.
-- `SPELL` with `RADIUS` and any of `DMG`, `STUN` or `PULL` - `PULL` hauls
+- `SPELL` with `RADIUS` and any of `DMG`, `STUN` or `PULL`. `PULL` hauls
   what it catches that many tiles toward the middle, never past it, and
   `SETTLE` is the swing the hauled ships owe afterwards. Buildings hold.
-- `WARP` is played by circling your own ships and tapping where they land -
-  the loop the finger draws travels with the request as a middle and a radius,
+- `WARP` is played by circling your own ships and tapping where they land.
+  The loop the finger draws travels with the request as a middle and a radius,
   and `SETTLE` is the swing the arrivals owe before they fight again.
 
 Seventeen cards ship in `cards.json`. Level 1 to 5, each level adds eight percent
@@ -131,8 +131,8 @@ to hit points and damage.
 ## Adding a card
 
 A card is data. `cards.json` carries its stats, its accent colour **and its
-figure**, `lang.json` carries the two description strings, and that is the whole
-list - no code, and no new client, because the client is handed the same table
+figure**, `lang.json` carries the two description strings, and nothing else is
+needed: no code and no new client, because the client is handed the same table
 over `/cards` at startup.
 
 ```json
@@ -151,7 +151,7 @@ A row is the shape constructor it replaces: `["DISC", x, y, r, slot, glow]`,
 y2, r, slot, glow]`. Figures are authored on a 40x40 grid. The colour slot is
 one of `TEAM` (the owner's colour), `HULL`, `DARK`, `LIGHT` or `ACCENT` (the
 card's own `COLOR`). An unreadable row draws a plain disc rather than stopping
-the bake, so a typo costs a wrong figure, not a dead client.
+the bake, so a typo produces a wrong figure and the client keeps running.
 
 After adding one, run `jdbasic makecards.jdb` for the card sheet's PNG and
 `jdbasic art_test.jdb` to check the figure parses. `jdbasic artsheet.jdb` shows
@@ -239,9 +239,9 @@ head-to-head.
 `/cards` and `/lang`, so it says exactly what the running server plays with and
 speaks whatever languages `lang.json` carries. The ship on each card comes from
 `web/cards/`, which `makecards.jdb` renders from the same figures the game
-draws - so a change to `art.jdb` or to a card colour needs that one command
+draws. A change to `art.jdb` or to a card colour needs that one command
 before the next deploy, or the page shows yesterday's ships. `balance.html` is the history of
-buffs and nerfs, rendered from `balance.json` next to it - one entry per change,
+buffs and nerfs, rendered from `balance.json` next to it: one entry per change,
 newest first, each with the reason. Both are linked from the landing page.
 
 Adding a balance entry is a block in `balance.json`: `date`, the commit in

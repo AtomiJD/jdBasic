@@ -10,7 +10,7 @@ Internet --443/TLS--> nginx (TLS) --proxy--> 127.0.0.1:8080  jdTrakr (systemd)
 
 jdTrakr listens only on loopback. nginx terminates TLS and proxies to it.
 The app has its own login, so no extra nginx auth is needed. One SQLite file
-(`jdtrakr.db`) holds all data - back that file up and you have everything.
+(`jdtrakr.db`) holds all data, so backing up that file backs up everything.
 
 Replace `trakr.example.com` with your real domain throughout. Point an A record
 (and AAAA if you use IPv6) at the VPS before requesting a certificate.
@@ -37,7 +37,7 @@ HTTP=1 SQLITE=1 GFX=0 IMGUI=0 NATIVEC=0 MCPSERVER=0 ./build.sh
 ```
 
 Eigen ships inside the repo (`libs/eigen`), so the only system dependency is
-OpenSSL (`libssl-dev` to build, `libssl3` at runtime - already on Ubuntu).
+OpenSSL (`libssl-dev` to build, `libssl3` at runtime, already on Ubuntu).
 
 If `unzip` is missing: `sudo apt install -y unzip`. The amalgamation URL/version
 can be any recent one from https://sqlite.org/download.html.

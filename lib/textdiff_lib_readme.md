@@ -1,4 +1,4 @@
-# TEXTDIFF - line and word diffs, patches, snapshots
+# TEXTDIFF: line and word diffs, patches, snapshots
 
 `lib/textdiff.jdb` shows what changed between two texts. It finds the
 matching runs and the edit steps the way Python's `difflib.SequenceMatcher`

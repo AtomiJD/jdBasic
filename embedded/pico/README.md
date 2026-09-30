@@ -102,8 +102,8 @@ SRAM heap remain for the VM once the framebuffer is out, with about 39 KB
 of that in one piece.
 
 That number is the ceiling on how big a program can be, and it is low:
-a 169-byte program loads, a 1305-byte one does not. Loading is what
-costs, not running - the lexer reserves `source/3` tokens up front and a
+a 169-byte program loads, a 1305-byte one does not. The memory goes on
+loading rather than running: the lexer reserves `source/3` tokens up front and a
 token carries a std::string, so a kilobyte of source wants tens of
 kilobytes in one contiguous block, on top of the AST and the chunk.
 The compiled p-code is small; the compiler is not.
@@ -129,8 +129,8 @@ in one piece.
 
 Two things dominate, and neither is the interpreter's bytecode.
 
-The framebuffer can be moved into PSRAM - `FJ_FB_PSRAM`, or `fbpsram`
-on the build line - and what it buys is exactly what the ceiling needs:
+The framebuffer can be moved into PSRAM (`FJ_FB_PSRAM`, or `fbpsram`
+on the build line), and what it buys is exactly what the ceiling needs:
 
 | | SRAM | PSRAM |
 |---|---|---|
@@ -141,8 +141,8 @@ on the build line - and what it buys is exactly what the ceiling needs:
 its own init for the first time this way. It is off anyway, because the
 part cannot feed the picture. A frame stretches from 16,666 us to
 20,816, the mode's timing goes with it, and the monitor shows nothing
-at all - the framebuffer is fine, `GFX.PEEK` reads back everything
-written to it, but the scanout arrives late.
+at all. The framebuffer is fine (`GFX.PEEK` reads back everything
+written to it), but the scanout arrives late.
 
 The arithmetic says why. The picture wants 640 bytes a line read twice
 for the vertical doubling, 307,200 bytes a frame, 18.4 MB/s. A quad read
@@ -150,7 +150,7 @@ of this part carries an eight-clock command and a 24-cycle dummy per
 transaction, which lands nearer 14. Two things were tried and are worth
 not trying again: the uncached alias, on the assumption that a
 write-back cache would need it, is slower still (41 Hz against 47) and
-unnecessary - the processor and the DMA reach the memory through the
+unnecessary: the processor and the DMA reach the memory through the
 same cache, so the cached window is coherent between them.
 
 The line cache was built and does not rescue it. `FJ_FB_PSRAM` carries
@@ -176,7 +176,7 @@ DMA-side restriction and not a dead window. `DVI.CACHE$` is what showed
 it and stays for the next attempt.
 
 Anything measured while the copy was pointed at the uncached alias is
-worthless - the frame looked like 16,706 us precisely because nothing
+worthless: the frame looked like 16,706 us precisely because nothing
 was being fetched.
 
 What is left to try is the QMI itself: the 24-cycle dummy is per
@@ -219,7 +219,7 @@ With the pool on, that program dies partway with no message and takes
 the board with it. `a[i] = i * 0.5` in the same loop is fine, and
 `x = RND(1)` on its own is fine; it is the native call inside the loop
 that does it. With the pool off the same program runs. The pool itself
-is not the suspect - the arithmetic is proven on both sides - so the
+is not the suspect (the arithmetic is proven on both sides), so the
 next thing to look at is what a native call does to the value stack
 while that stack lives behind the XIP cache.
 

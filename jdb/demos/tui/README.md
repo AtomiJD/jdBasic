@@ -1,4 +1,4 @@
-# jdtop - a terminal system monitor in pure jdBasic
+# jdtop: a terminal system monitor in pure jdBasic
 
 A small `htop`-style system monitor written entirely in jdBasic, rendered
 into the terminal with the `TUI.*` namespace (FTXUI). It reads `/proc`
@@ -8,10 +8,10 @@ directly and shells out to nothing.
 
 ## What it shows
 
-- **Overview** - total CPU gauge, one bar per logical core, a memory gauge,
+- **Overview**: total CPU gauge, one bar per logical core, a memory gauge,
   load average and uptime, and a scrolling braille graph of CPU history.
-- **Processes** - the top processes by resident memory (RSS), refreshed live.
-- **Net / Disk** - receive/transmit throughput and disk read/write throughput,
+- **Processes**: the top processes by resident memory (RSS), refreshed live.
+- **Net / Disk**: receive/transmit throughput and disk read/write throughput,
   each with an auto-scaling braille graph. Rates are derived from a real
   `TICK()` time delta, so they stay correct even when a frame takes longer.
 

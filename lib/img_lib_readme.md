@@ -1,4 +1,4 @@
-# IMG - images as pixel arrays
+# IMG: images as pixel arrays
 
 `lib/img.jdb` reads and writes PNG without GFX and works on the pixels as
 plain arrays: crop, resize (nearest and bilinear), quarter turns, flips,
@@ -151,9 +151,9 @@ programs accept both forms.
 
 ## Files
 
-- `lib/img.jdb` - the module
-- `tests/jdlibs/img_selftest.jdb` - TESTKIT selftest
-- `tests/jdlibs/fixtures/img_png/`, `img_decode.tsv`, `img_ops.tsv` - Pillow fixtures
-- `jdb/demos/jdlibs/img_demo.jdb` - paints a scene, writes and reads it
+- `lib/img.jdb`: the module
+- `tests/jdlibs/img_selftest.jdb`: TESTKIT selftest
+- `tests/jdlibs/fixtures/img_png/`, `img_decode.tsv`, `img_ops.tsv`: Pillow fixtures
+- `jdb/demos/jdlibs/img_demo.jdb`: paints a scene, writes and reads it
   back, then thumbnail, grayscale, edges, 16 colors, a composited badge and
   a turn, as PNG files and one HTML page with data URIs

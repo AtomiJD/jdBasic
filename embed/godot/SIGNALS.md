@@ -1,4 +1,4 @@
-# GODOT signals - connecting Godot signals to jdBasic SUBs
+# GODOT signals: connecting Godot signals to jdBasic SUBs
 
 Godot is event-driven: buttons emit `pressed`, timers emit `timeout`, areas emit `body_entered`. `GDX.CONNECT` wires any such signal straight to a jdBasic SUB, so a pure-jdBasic script can react to engine events without a GDScript relay and without polling.
 
@@ -27,8 +27,8 @@ Whatever the signal carries is passed to the SUB, marshalled the same way `GDX.G
 | int / float / bool / String | the scalar |
 | Vector2 / Vector3 | `[x, y]` / `[x, y, z]` |
 | Color | `[r, g, b, a]` |
-| Object (Node, etc.) | a bridge handle - feed it straight back into `GDX.GET/SET/CALL` |
-| Dictionary / packed arrays | not marshalled yet - arrive as `0` |
+| Object (Node, etc.) | a bridge handle; pass it back into `GDX.GET/SET/CALL` |
+| Dictionary / packed arrays | not marshalled yet; they arrive as `0` |
 
 So `body_entered(body)` hands your SUB a handle you can immediately query with `GDX.GET(body, "name")`.
 
@@ -62,7 +62,7 @@ See `godot/jd-one/connect_demo.tscn` for a runnable version, and `connect_smoke.
 
 ## Timers
 
-`GDX.TIMER` is a convenience built on the same dispatch path - it spawns a `Timer` child on the script's Node, wires its `timeout` to a SUB, and starts it. No Timer node needs to exist in the scene.
+`GDX.TIMER` is a convenience built on the same dispatch path. It spawns a `Timer` child on the script's Node, wires its `timeout` to a SUB, and starts it. No Timer node needs to exist in the scene.
 
 | Function | Returns | Notes |
 |----------|---------|-------|
@@ -87,7 +87,7 @@ Each call makes a new timer. Cache the handle if you only ever want one.
 
 ## Re-entrancy
 
-The jdBasic interpreter is single-threaded and not re-entrant. If a signal fires *while* the VM is already running an engine callback (e.g. your handler calls `emit_signal`, or `add_child` triggers `child_entered_tree`), the dispatch is **queued** and drained the moment the outer callback returns - never nested. Handlers triggered this way run in order, one after another, on the main thread. The common case (a button or timer firing between frames) runs immediately with no delay.
+The jdBasic interpreter is single-threaded and not re-entrant. If a signal fires *while* the VM is already running an engine callback (e.g. your handler calls `emit_signal`, or `add_child` triggers `child_entered_tree`), the dispatch is **queued** and drained as soon as the outer callback returns; it is never nested. Handlers triggered this way run in order, one after another, on the main thread. The common case (a button or timer firing between frames) runs immediately with no delay.
 
 ## Lifetime
 

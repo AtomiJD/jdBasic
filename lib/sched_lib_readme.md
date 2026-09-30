@@ -1,4 +1,4 @@
-# SCHED - cron expressions and a job loop
+# SCHED: cron expressions and a job loop
 
 `lib/sched.jdb` answers when something should run and runs it: cron
 expressions with five fields, the `@hourly` family, plain intervals and

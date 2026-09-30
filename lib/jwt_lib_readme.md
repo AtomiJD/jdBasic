@@ -1,4 +1,4 @@
-# JWT - JSON Web Tokens with HS256
+# JWT: JSON Web Tokens with HS256
 
 `lib/jwt.jdb` signs a claims map into a token, reads a token back, and
 verifies the signature and the standard claims. The only algorithm is

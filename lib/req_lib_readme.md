@@ -1,4 +1,4 @@
-# REQ - HTTP sessions
+# REQ: HTTP sessions
 
 `lib/req.jdb` puts everything around an HTTP call on top of the `HTTP.*`
 builtins: a session with a base URL, default headers and auth, a cookie

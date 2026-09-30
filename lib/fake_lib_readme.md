@@ -1,4 +1,4 @@
-# FAKE - made up data that comes out the same every time
+# FAKE: made up data that comes out the same every time
 
 `lib/fake.jdb` fills a test, a demo or a screenshot with names, addresses,
 companies, account numbers, dates and text that look real and are not.

@@ -1,4 +1,4 @@
-# FIT - least squares, curve fits, interpolation, roots
+# FIT: least squares, curve fits, interpolation, roots
 
 `lib/fit.jdb` is the numerical layer between the matrix builtins and a
 result you can use: a least squares solution for a system that has none

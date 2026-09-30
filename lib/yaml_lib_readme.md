@@ -1,4 +1,4 @@
-# YAML - the subset configuration files are written in
+# YAML: the subset configuration files are written in
 
 `lib/yaml.jdb` reads and writes the part of YAML that turns up in
 pipelines, compose files and application settings: block mappings and

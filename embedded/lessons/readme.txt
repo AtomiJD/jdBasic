@@ -1,5 +1,5 @@
-Train jdBasic - the lessons, on the board
-=========================================
+Train jdBasic: the lessons, on the board
+========================================
 One file per segment of a video lesson.
 RUN lessons/hello1  starts one;
 TYPE lessons/hello1.jdb shows it, EDIT

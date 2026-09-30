@@ -32,7 +32,7 @@
 {green} PRINT REVERSE(a){/}
 ```
 
- No loop, no index variable. The
+ No loop and no index variable. The
  operators go through the array.
 
 {cyan} ---- Where it runs -------------------{/}

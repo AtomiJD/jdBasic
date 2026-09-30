@@ -2,7 +2,7 @@
 
 **Branch:** `godot_spinoff`
 **Started:** 2026-05-28
-**Status:** E0 done - standalone embed C-ABI proven. E1 in progress.
+**Status:** E0 done: standalone embed C-ABI proven. E1 in progress.
 
 This folder is the working area for the GDExtension spike described in
 [release/plan_godot_embedding.md](../../release/plan_godot_embedding.md).
@@ -25,8 +25,8 @@ const char* jdb_embed_last_error(JdbEmbed*);
 void        jdb_embed_free(char*);
 ```
 
-Sanity-tested with `tests/test_embed.c` (build via `tests/build_test_embed.bat`)
-- runs in <50 ms, shows persistent state across eval calls, map mutation
+Sanity-tested with `tests/test_embed.c` (build via `tests/build_test_embed.bat`):
+it runs in <50 ms, shows persistent state across eval calls, map mutation
 matches the live-tweak pattern from the launch video.
 
 ---
@@ -37,7 +37,7 @@ Everything the engine exposes to a Tier-3 script lives under one prefix,
 `GDX.*` (renamed from the older `GODOT.*` for consistency). It comes in two
 layers:
 
-1. **Native primitives (C++)** - the hot path, plus anything that needs
+1. **Native primitives (C++)**: the hot path, plus anything that needs
    typed engine access generic `CALL` can't express. `GDX.CALL` / `GDX.GET` /
    `GDX.SET` / `GDX.NEW` / `GDX.ADD_CHILD` / `GDX.VEC3` / `GDX.SINGLETON` /
    `GDX.SELF` / `GDX.REF` / signals / audio / drawing / input, and the
@@ -47,7 +47,7 @@ layers:
    registered from `embed/godot/src/jdb_godot_natives.cpp`
    (+ `jdb_godot_input.cpp`).
 
-2. **Convenience helpers (pure jdBasic)** - thin sugar over the primitives,
+2. **Convenience helpers (pure jdBasic)**: thin sugar over the primitives,
    defined in the bundled `GDX` module (`GDX_MODULE_SRC` in
    `src/jdb_embed_api.cpp`) and auto-imported via an implicit `IMPORT GDX`
    at script-instance boot. Anything that doesn't need to be in C++ lives
@@ -70,11 +70,11 @@ layers:
 
    Note: when a node is passed as a method *argument* (not the receiver),
    wrap it in `GDX.REF(handle)` so it marshals back to an Object rather than
-   a plain int - that's what `TWEEN_TO` does for `tween_property`.
+   a plain int. That is what `TWEEN_TO` does for `tween_property`.
 
 The `IMPORT GDX` works in the embed because the host installs an in-memory
 `Parser::file_reader` (`bundled_module_reader`) that serves the module
-source from a string - no file on disk. The same mechanism is available to
+source from a string, with no file on disk. The same mechanism is available to
 any future bundled module.
 
 ---
@@ -86,14 +86,14 @@ any future bundled module.
 | **E0** | jdb_embed C-ABI + standalone C smoke test | done 2026-05-28 |
 | **E1** | GDExtension wrapper `jdb_godot.dll` with `JDBasicVM` class + REPL panel | done 2026-05-28 |
 | **E2** | Rotating-cube demo, `on_process(delta)` runs in jdBasic, Slow/Fast/Reverse buttons mutate `rot_speed` live | done 2026-05-28 |
-| **E4** | `jdb_embed_recompile` - live FUNC-body swap. Cube wobble/hue tweaked while running. | done 2026-05-28 |
+| **E4** | `jdb_embed_recompile`: live FUNC-body swap. Cube wobble/hue tweaked while running. | done 2026-05-28 |
 | **Tier 2** | `JDBScript : Node` auto-dispatches `_process(delta)` -> jdBasic `on_process`. cube.gd reduced to thin glue. | done 2026-05-28 |
 | **T3.0-T3.2** | `JdbScriptLanguage` + `JdbScriptResource` + `JdbScriptInstance`. .jdb attaches as a Node's `script`, engine `_ready` / `_process` route into jdBasic SUBs. | done 2026-05-28 |
 | **T3.3** | INSPECTOR DIM globals exposed as Inspector properties (full roundtrip: edit + save in .tscn + load into VM before `_ready`) | done 2026-05-28 |
-| **T3.4** | Hot-reload - edit `.jdb` in any editor, Ctrl+S, new FUNC bodies swap into the running VM, state survives | done 2026-05-28 |
-| **T3.5** | Reserved words, comment delimiters, control-flow set - canonical jdBasic syntax highlighting in Godot's editor | done 2026-05-28 |
+| **T3.4** | Hot-reload: edit `.jdb` in any editor, Ctrl+S, new FUNC bodies swap into the running VM, state survives | done 2026-05-28 |
+| **T3.5** | Reserved words, comment delimiters, control-flow set: canonical jdBasic syntax highlighting in Godot's editor | done 2026-05-28 |
 | **E3** | Variant marshalling (`Array`, `Dictionary`, `PackedFloat64Array`); kill the PRINT-and-parse round-trip | |
-| **E5** | `HEADLESS` build flag on jdbrt - no SDL / no ImGui / no OpenGL, ~10 MB DLL | |
+| **E5** | `HEADLESS` build flag on jdbrt without SDL, ImGui or OpenGL, ~10 MB DLL | |
 | **E6** | APL procedural-content demo (PackedFloat64Array straight from `IOTA + sin`-style vector ops) | |
 
 ---
@@ -107,7 +107,7 @@ shortest path to running:
 2. `git submodule update --init embed/godot/godot-cpp`
 3. Rebuild jdbrt.dll: `build_rt.bat GFX IMGUI HTTP` from the repo root
 4. Rebuild the GDExtension: `embed\godot\build.bat template_debug`
-5. Open `godot\jd-one\` in Godot 4.6.x, F5 - `node_3d.tscn` shows
+5. Open `godot\jd-one\` in Godot 4.6.x, F5; `node_3d.tscn` shows
    `[JdbScriptInstance] ctor (alive=1)` + the `_ready` PRINT output.
 
 Demo script: `godot/jd-one/test.jdb` is attached to the Node3D in
@@ -115,14 +115,14 @@ Demo script: `godot/jd-one/test.jdb` is attached to the Node3D in
 
   - `EXTENDS Node3D` (parsed by Path-B preprocessing, not real jdBasic core)
   - `INSPECTOR DIM speed = 1.0` (shows in the Inspector panel)
-  - `SUB _ready()` (engine callback - fires once when Node enters tree)
-  - `SUB _process(delta)` (engine callback - fires every frame)
+  - `SUB _ready()` (engine callback, fires once when Node enters tree)
+  - `SUB _process(delta)` (engine callback, fires every frame)
 
-Hot-reload: edit `test.jdb` in any editor, Ctrl+S - new FUNC bodies
+Hot-reload: edit `test.jdb` in any editor, Ctrl+S, and new FUNC bodies
 swap into the running VM with state preserved.
 
 The next planned work (T3.6 autocomplete + T3.7 debugger + the E3 / E5 / E6
-items above) is multi-day each. None is blocking - what we have today is
+items above) is multi-day each. None of it is blocking; what we have today is
 already a complete, demo-able "jdBasic in Godot" loop.
 
 Open architectural questions parked for later:
@@ -186,9 +186,9 @@ lines above, or check `build\jdbrt.dll` modification time.
 ## Repository hygiene
 
 - `embed/godot/godot-cpp/` will be a git submodule, not checked-in source.
-- `embed/godot/bin/` will hold compiled `jdb_godot.dll` - .gitignore'd
+- `embed/godot/bin/` will hold compiled `jdb_godot.dll`, .gitignore'd
   via the existing `*.dll` rule.
-- `tests/test_embed.exe` + copied DLLs - .gitignored via `*.exe` / `*.dll`.
+- `tests/test_embed.exe` + copied DLLs, .gitignored via `*.exe` / `*.dll`.
 - The standalone `tests/test_embed.c` source and `build_test_embed.bat`
   ARE tracked.
 
@@ -207,21 +207,21 @@ mandatory so that:
 2. Shared headers (e.g. eventual conversion helpers) can declare Godot
    types behind `#ifdef GODOT` and stay safe to include from anywhere.
 3. `grep GODOT src/` reveals the entire Godot integration surface in one
-   shot - useful when porting to another host engine (Unity, Bevy, etc.).
+   shot, which is useful when porting to another host engine (Unity, Bevy, etc.).
 
-**Already-generic on purpose** - these are *not* guarded:
+**Already-generic on purpose** (these are *not* guarded):
 
-- `src/jdb_embed_api.h` / `src/jdb_embed_api.cpp` - the C-ABI is meant
+- `src/jdb_embed_api.h` / `src/jdb_embed_api.cpp`: the C-ABI is meant
   to be host-agnostic. A future Unity C# wrapper or a Bevy crate would
   call exactly the same exports.
-- `embed/godot/tests/test_embed.c` - the smoke test must run without
-  any Godot dependency, that is the whole point.
+- `embed/godot/tests/test_embed.c`: the smoke test must run without
+  any Godot dependency; that is what it is for.
 
 **Will be guarded** (E1+):
 
-- `embed/godot/src/jdb_godot.cpp` - GDExtension entry point, wraps
+- `embed/godot/src/jdb_godot.cpp`: GDExtension entry point, wraps
   godot-cpp.
-- `embed/godot/src/jdbasic_vm.h` / `.cpp` - the `JDBasicVM` Godot Object
+- `embed/godot/src/jdbasic_vm.h` / `.cpp`: the `JDBasicVM` Godot Object
   class.
 - Any cross-cutting helper added to `src/` that uses godot-cpp types.
 
@@ -249,8 +249,8 @@ mandatory so that:
 +------------------------------------------------------+
 ```
 
-**Today's proof point (E0):** the bottom three layers - `jdbrt.dll` with
-the embed API, the persistent VM, and state survival - are real and
+**Today's proof point (E0):** the bottom three layers (`jdbrt.dll` with
+the embed API, the persistent VM, and state survival) are real and
 working. The `tests/test_embed.exe` is a stand-in for the upper "Godot"
 layer; replacing it with a real GDExtension is E1.
 
@@ -260,15 +260,15 @@ layer; replacing it with a real GDExtension is E1.
 
 These are recorded for E2-E5 but explicitly NOT blocking E1:
 
-- **Variant marshalling** - today `eval` returns the captured PRINT output
+- **Variant marshalling**: today `eval` returns the captured PRINT output
   as a string. For richer host integration we need the handle-based path
   laid out in the original plan (`jdb_value_handle` + typed accessors).
-- **Yielding** - for 16 ms Godot frames, a long-running jdBasic FUNC
+- **Yielding**: for 16 ms Godot frames, a long-running jdBasic FUNC
   blocks the main thread. Two options: cooperative `YIELD` opcode in
   jdBasic, or run the VM on its own thread + channel.
-- **HEADLESS jdbrt** - today `jdbrt.dll` pulls in SDL3 + ImGui + OpenGL.
+- **HEADLESS jdbrt**: today `jdbrt.dll` pulls in SDL3 + ImGui + OpenGL.
   Embedding works as long as host code never calls `SCREEN` / `GL.*`.
   E5 cuts those out and ships a ~10 MB minimal DLL.
-- **Asset resolver** - `IMPORT` and file-reading natives look at the
+- **Asset resolver**: `IMPORT` and file-reading natives look at the
   filesystem. Godot's `res://` and `user://` need an embedder-supplied
   hook so jdBasic scripts can reach packaged assets.

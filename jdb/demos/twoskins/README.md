@@ -47,14 +47,14 @@ FUNC HANDLEADD(request)
 ENDFUNC
 ```
 
-Both lines are the same call. That is the whole point: the choice
-between a native window and a browser is a choice of shell, made per
-deployment, not a rewrite.
+Both lines are the same call. The choice between a native window and a
+browser is a choice of shell, made per deployment; the program itself
+is not rewritten.
 
 ## Where each one fits
 
-The window is for a Windows desktop: no server, no port, no browser, and
-it reaches the rest of the machine, COM automation into Excel and
+The window is for a Windows desktop. It needs no server, port or browser,
+and it reaches the rest of the machine, COM automation into Excel and
 Outlook included. The page is for everything else: another operating
 system, a tablet, a phone, several people at once.
 

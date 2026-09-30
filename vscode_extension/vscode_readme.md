@@ -108,7 +108,7 @@ Click the gutter (or `F9`) to set a breakpoint. Right-click a breakpoint ->
 
 ### Debug Console (REPL)
 
-While paused, the Debug Console runs full jdBasic, not just expressions:
+While paused, the Debug Console runs full jdBasic statements as well as expressions:
 
 ```
 PRINT 6 * 7
@@ -175,7 +175,7 @@ password flag and a lock. The form itself takes a background colour. The
 canvas paints all of it, so what you design is what the window shows.
 
 Everything lands in the `properties` object of the file, which is the same
-place the **Alles als JSON** box at the bottom edits - use whichever suits.
+place the **Alles als JSON** box at the bottom edits; either one works.
 Properties the designer has no field for are carried through untouched.
 
 ## 9. Troubleshooting
@@ -189,5 +189,3 @@ Properties the designer has no field for are carried through untouched.
 
 The full language reference is at
 https://github.com/AtomiJD/jdBasic/blob/master/doc/languages.md
-
-Happy coding!

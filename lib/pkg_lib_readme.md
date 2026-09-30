@@ -1,4 +1,4 @@
-# PKG - install modules, versions and a lock file
+# PKG: install modules, versions and a lock file
 
 `lib/pkg.jdb` installs jdBasic modules the way pip installs packages: from
 an index of names, versions and sources into a lib folder, together with
