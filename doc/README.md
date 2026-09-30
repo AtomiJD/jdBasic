@@ -2,11 +2,14 @@
 
 Start here if you landed in `doc/` directly. The repo-level [README](../README.md) has the project overview, quickstart and sample gallery.
 
+**New here? Start with the [tour](tour.md)** - fifteen minutes from the first `PRINT` to a compiled `.exe`.
+
 ## User documentation
 
 | Doc | What it covers |
 |-----|----------------|
-| [languages.md](languages.md) | **The language reference** - every statement, function and build-flag-gated API. Also read at runtime by the MCP `jdb_doc` tool, so its one-bullet-per-function format is load-bearing. |
+| [tour.md](tour.md) | **A tour of jdBasic** - values, strings, arrays, maps, control flow, functions, errors, dates, modules, native compile, and the five things that trip people up. Every example is run by CI. |
+| [languages.md](languages.md) | **The language reference** - every statement, function and build-flag-gated API, with contents at the top and an A-Z index at the end. Also read at runtime by the MCP `jdb_doc` tool, so its one-bullet-per-function format is load-bearing. |
 | [BUILD.md](BUILD.md) | Building from source: prerequisites, third-party libs, feature flags, Windows/Linux/macOS, packaging. |
 | [MCP.md](MCP.md) | The built-in MCP server: transports, client configs (Claude Code, Cursor, Cline, Zed, ...), the 14 tools, live pair-coding on a running program. |
 | [WebDev.md](WebDev.md) | Web apps in jdBasic: `HTTP.SERVER`, the TMPL template engine, the JDWEB framework (sessions, login, themes), SQLite persistence, deployment. |
@@ -22,6 +25,8 @@ Start here if you landed in `doc/` directly. The repo-level [README](../README.m
 | Doc | What it covers |
 |-----|----------------|
 | [CODING_STYLE.md](CODING_STYLE.md) | Conventions for the C++ core and the keyword-registration checklist. |
+| `tools/gen_doc_index.jdb` | Regenerates the contents and A-Z index of `languages.md`; `--check` is run by CI. |
+| `tools/check_doc_examples.jdb` | Runs every `basic` block that has a `text` block after it and compares the output; CI runs it on `tour.md`. |
 | [../tests/README.md](../tests/README.md) | The test bank and the pre-commit gate (suites, naming, GUI smoke procedure). |
 
 `agent_coprocessor_plan.md` is an internal design note, not user documentation. Screenshots used by the READMEs live in `img/`.

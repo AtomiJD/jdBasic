@@ -62,3 +62,9 @@ jobs:
         run: |
           & build/jdBasic.exe tools/gen_doc_index.jdb --check
           if ($LASTEXITCODE -ne 0) { throw "doc/languages.md contents or index out of date" }
+
+      - name: Documentation examples
+        shell: pwsh
+        run: |
+          & build/jdBasic.exe tools/check_doc_examples.jdb doc/tour.md
+          if ($LASTEXITCODE -ne 0) { throw "an example in doc/tour.md prints something else" }

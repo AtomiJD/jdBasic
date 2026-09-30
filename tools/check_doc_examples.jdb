@@ -1,0 +1,84 @@
+' Runs the examples of a Markdown document and compares their output. An
+' example is a ```basic block followed by a ```text block holding the
+' expected output; a basic block without one is shown, not run. Each
+' example runs in its own interpreter process. Run from the repository
+' root; exits 1 on a mismatch.
+'
+'   jdbasic tools/check_doc_examples.jdb [doc/tour.md ...]
+
+DIM fence$ = "```"
+DIM nl$ = CHR$(10)
+DIM esc$ = CHR$(27)
+DIM exe$ = "./build/jdBasic"
+DIM scratch$ = "build/doc_example.jdb"
+IF OS.GETOS() = "WINDOWS" THEN
+    exe$ = "build" + CHR$(92) + "jdBasic.exe"
+    scratch$ = "build" + CHR$(92) + "doc_example.jdb"
+ENDIF
+
+DIM docs = DROP(1, OS.ARGS())
+IF LEN(docs) = 0 THEN docs = ["doc/tour.md"]
+
+' Output as the reader sees it: no carriage returns, no colour codes, no
+' trailing spaces or blank lines.
+FUNC Clean$(s$)
+    DIM plain$ = REGEX.REPLACE(esc$ + "\[[0-9;]*m", REPLACE$(s$, CHR$(13), ""), "")
+    DIM kept = SELECT(LAMBDA r -> RTRIM$(r), SPLIT(plain$, nl$))
+    DO WHILE LEN(kept) > 0 ANDALSO kept[LEN(kept) - 1] = ""
+        kept = TAKE(LEN(kept) - 1, kept)
+    LOOP
+    RETURN JOIN(kept, nl$)
+ENDFUNC
+
+DIM checked = 0
+DIM failed = 0
+FOR EACH doc$ IN docs
+    DIM rows = SPLIT(REPLACE$(TXTREADER$(doc$), CHR$(13), ""), nl$)
+    DIM i = 0
+    DO WHILE i < LEN(rows)
+        IF rows[i] <> fence$ + "basic" THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM start = i + 1
+        DIM code = []
+        i = i + 1
+        DO WHILE i < LEN(rows) ANDALSO rows[i] <> fence$
+            code = APPEND(code, rows[i])
+            i = i + 1
+        LOOP
+        i = i + 1
+        DO WHILE i < LEN(rows) ANDALSO rows[i] = ""
+            i = i + 1
+        LOOP
+        IF i >= LEN(rows) ORELSE rows[i] <> fence$ + "text" THEN CONTINUEDO
+        DIM want = []
+        i = i + 1
+        DO WHILE i < LEN(rows) ANDALSO rows[i] <> fence$
+            want = APPEND(want, rows[i])
+            i = i + 1
+        LOOP
+        i = i + 1
+
+        TXTWRITER scratch$, JOIN(code, nl$) + nl$
+        DIM got$ = Clean$(OS.EXEC(exe$ + " " + scratch$){"OUTPUT"})
+        DIM expected$ = Clean$(JOIN(want, nl$))
+        checked = checked + 1
+        IF got$ <> expected$ THEN
+            failed = failed + 1
+            PRINT doc$; ":"; start; ": output differs"
+            PRINT "--- expected"
+            PRINT expected$
+            PRINT "--- got"
+            PRINT got$
+        ENDIF
+    LOOP
+NEXT
+KILL scratch$
+
+IF failed = 0 THEN
+    PRINT "doc examples: "; checked; " checked, all match"
+ELSE
+    PRINT "doc examples: "; failed; " of "; checked; " differ"
+    END 1
+ENDIF

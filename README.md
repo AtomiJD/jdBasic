@@ -301,6 +301,7 @@ Cloned the repo and built from source instead? Try the pixel-storm:
 - See **[doc/BUILD.md](doc/BUILD.md)** for the full build guide (prerequisites, third-party libraries, feature flags, packaging)
 
 ### Learn the language
+- **[A tour of jdBasic](doc/tour.md)**: fifteen minutes from the first `PRINT` to a compiled `.exe`
 - **Video tutorials**: [Train jdBasic playlist on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) - 14 episodes, beginner to native compile
 - **Examples**: the [sample gallery](jdb/README.md) - 250+ programs under [`jdb/`](jdb/)
 
@@ -308,7 +309,8 @@ Cloned the repo and built from source instead? Try the pixel-storm:
 
 | Doc | What it covers |
 |-----|----------------|
-| [doc/languages.md](doc/languages.md) | The full language reference - every statement, function and build-flag-gated API |
+| [doc/tour.md](doc/tour.md) | A tour of jdBasic in fifteen minutes - start here |
+| [doc/languages.md](doc/languages.md) | The full language reference - every statement, function and build-flag-gated API, with contents and an A-Z index |
 | [lib/README.md](lib/README.md) | The module library written in jdBasic, 45 modules with one page each: testing and tools (TESTKIT, CLI, PKG, PROPTEST), web and services (REQ, JDWEB, TMPL, OAUTH, JWT, SECRET, MAIL, LLMAPI, SCHED, RETRY, CACHE, LOGGER, CONF), data and files (DF, DB, XLSX, DOCX, PDFGEN, XML, YAML, HTMLDOM, MD, ICAL, SVG, QR), text (CONSOLE, TEXTX, TEXTDIFF, FUZZY, PARSEC, URL, SCHEMA), numbers and money (MONEY, VALID, NUMFMT, DT, STATS, FIT, ML, GRAPH, FAKE) |
 | [help.txt](help.txt) | Per-command reference, also served by `HELP "topic"` in the REPL |
 | [doc/BUILD.md](doc/BUILD.md) | Building from source: prerequisites, feature flags, packaging (Windows/Linux/macOS) |
