@@ -68,15 +68,21 @@ ones - menus, toolbars, list views, tabs, MDI windows. The VB6 way, in 2026.
   <img src="doc/img/vscode_forms_designer.png" width="46%" alt="The VS Code visual form designer editing a .jdform layout"/>
 </p>
 
-### 4. It boots without an operating system
+### 4. It compiles an operating system
 
 <p align="center"><img src="doc/img/jdos_prompt.png" width="60%" alt="jdBasic OS: DIR, LOAD pong, COMP compiles it to 3006 bytes of x86, CALL runs it"/></p>
 
-jdBasic OS is a REPL written in jdBasic that boots on bare x86-64: a screen
-driver, a keyboard, an editor, a RAM disk, and a compiler that turns the loaded
-program into machine code and calls it. The same interpreter also runs on
-microcontrollers - an RP2350 (PicoCalc) and an ESP32-S3 that boots into its own
-prompt on a touch display. [Bare metal](embedded/kernel/README.md) · [On a board](embedded/)
+jdBasic OS is written in jdBasic and boots on bare x86-64 with nothing
+underneath - no libc, no C runtime, no host OS. Screen driver, keyboard, editor,
+RAM disk, an interpreter and a JIT that emits x86-64 are all jdBasic source,
+compiled with `--target=kernel`. At its prompt you type a small C-like language
+of its own: `?` interprets a line, `??` compiles it to machine code and runs it,
+and `COMP` turns a whole program - Pong above - into 3006 bytes of x86.
+[Bare metal](embedded/kernel/README.md)
+
+The jdBasic interpreter itself runs on microcontrollers: an RP2350 (PicoCalc)
+and an ESP32-S3 that boots into its own jdBasic prompt on a touch display.
+[On a board](embedded/)
 
 ## Start in 60 seconds
 
@@ -150,7 +156,7 @@ All documentation, grouped: [doc/README.md](doc/README.md).
 - A **DAP debug adapter** and a VS Code extension with lint, hover and the form designer
 - An **MCP server** (`jdbasic --mcp`) for Claude Code, Cursor, Cline and Co.
 - The **Godot 4 embed**: a `.jdb` file is a Godot script, `GDX.*` reaches nodes, physics, 3D and audio ([`godot/`](godot/) has four projects; experimental)
-- **Microcontroller ports** (RP2350, ESP32-S3) and a **bare-metal** x86-64 build
+- **Microcontroller ports** of the interpreter (RP2350, ESP32-S3), and a **kernel target** (`--target=kernel`) that compiles jdBasic into a freestanding x86-64 operating system
 - A **module library** of 45 modules written in jdBasic itself
 
 The original v1 codebase is kept on the [`legacy-v1`](https://github.com/AtomiJD/jdBasic/tree/legacy-v1) branch.
