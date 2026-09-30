@@ -1094,6 +1094,12 @@ JDRT_API int64_t jdrt_async_spawn(JdRT handle, void* fn_ptr,
                     result = jdbarray_to_value(arr);
                     break;
                 }
+                case JD_TAG_VM_HANDLE: {
+                    JdRTImpl* rt = current_rt();
+                    auto it = rt->value_store.find(bits);
+                    result = it != rt->value_store.end() ? it->second : Value::make_none();
+                    break;
+                }
                 case -1: // SUB return - discard
                     result = Value::make_none();
                     break;

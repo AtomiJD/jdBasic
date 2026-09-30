@@ -165,7 +165,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"DATEADD", BuiltinRet::Str, BF_DATE},
     {"EOMONTH", BuiltinRet::Str, BF_DATE},
     {"FORMAT_DATE", BuiltinRet::Str, BF_NONE},
-    {"NOW", BuiltinRet::Unknown, BF_DATE},
+    {"NOW", BuiltinRet::Str, BF_DATE},
 
     // Truth values
     {"CHAN.IS_CLOSED", BuiltinRet::Bool, BF_NONE},

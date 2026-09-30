@@ -1830,6 +1830,18 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         for (auto& f : s.finally_body()) if (f) { int k = classify_return(*f, local_kinds); if (k && !kind) kind = k; }
         return kind;
     };
+    // True when every RETURN below s hands back a VM object.
+    std::function<bool(const Stmt&, std::unordered_map<std::string,int>&)> all_returns_handle =
+        [&](const Stmt& s, std::unordered_map<std::string,int>& local_kinds) -> bool {
+        if (s.kind == StmtKind::RETURN && s.expr &&
+            classify_return(s, local_kinds) != JD_TAG_VM_HANDLE) return false;
+        for (auto& b : s.body) if (b && !all_returns_handle(*b, local_kinds)) return false;
+        for (auto& br : s.branches)
+            for (auto& b : br.body) if (b && !all_returns_handle(*b, local_kinds)) return false;
+        for (auto& c : s.catch_body()) if (c && !all_returns_handle(*c, local_kinds)) return false;
+        for (auto& f : s.finally_body()) if (f && !all_returns_handle(*f, local_kinds)) return false;
+        return true;
+    };
     // Fixpoint: callee kinds may unlock caller kinds.
     bool rt_changed = true;
     int rt_guard = 0;
@@ -1847,7 +1859,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                     local_kinds[decl.stmt->params()[pi].name] = decl.tags[pi];
             }
             int k = classify_return(*decl.stmt, local_kinds);
-            if (k == JD_TAG_VM_HANDLE && decl.is_async) continue;
+            if (k == JD_TAG_VM_HANDLE && decl.is_async &&
+                !all_returns_handle(*decl.stmt, local_kinds)) continue;
             if (k == JD_TAG_ARR || k == JD_TAG_NATIVE_MAP || k == JD_TAG_VM_HANDLE) {
                 decl.return_tag = k;
                 rt_changed = true;
@@ -3807,16 +3820,10 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                             case BuiltinRet::F64:  return JD_TAG_F64;
                             case BuiltinRet::I64:  return JD_TAG_I64;
                             case BuiltinRet::Handle: return JD_TAG_VM_HANDLE;
+                            case BuiltinRet::Str:  return JD_TAG_STR;
                             default: break;
                         }
-                        if ((upper.size() > 4 && upper.substr(0, 4) == "MAP." &&
-                             upper != "MAP.SIZE" && upper != "MAP.EXISTS" &&
-                             upper != "MAP.KEYS" && upper != "MAP.VALUES"))
-                            return JD_TAG_VM_HANDLE;
                         if (!e->func_name.empty() && e->func_name.back() == '$') return JD_TAG_STR;
-                        // VM-bridged functions whose result is stored as an
-                        // ISO string in native (dates without a $ suffix).
-                        if (upper == "DATE.UTC" || upper == "EOMONTH") return JD_TAG_STR;
                         auto rit = runtime_funcs.find(upper);
                         if (rit != runtime_funcs.end()) return rit->second.return_tag;
                         auto uit = user_functions.find(e->func_name);
@@ -4084,15 +4091,7 @@ void LLVMCodegen::codegen_program(const std::vector<StmtPtr>& program) {
                 return false;
             }
             if (e->kind == ExprKind::CALL) {
-                std::string upper = e->func_name;
-                std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
-                // Map/VM-handle returners produce containers whose indexed
-                // reads are tag-7.
-                static const std::unordered_set<std::string> vm_returners = {
-                    "JSON.PARSE$","TILED.PROPERTIES","TILED.OBJECTS",
-                    "MAP.FROM","MAP.COPY","MAP.GET"
-                };
-                if (vm_returners.count(upper)) return true;
+                if (is_handle_returner(e->func_name)) return true;
                 // User-defined functions: treat as unknown - be conservative
                 // only when the return type is tag-7.
                 auto uit = user_functions.find(e->func_name);

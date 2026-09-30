@@ -18,6 +18,10 @@ FUNC Direct(c AS INTEGER)
     RETURN CHAN.RECV(c)
 ENDFUNC
 
+ASYNC FUNC Fetch(c AS INTEGER)
+    RETURN CHAN.RECV(c)
+ENDFUNC
+
 DIM ch = CHAN.OPEN(8)
 
 CHAN.SEND(ch, "hello")
@@ -38,6 +42,18 @@ CHKS("map field", m{"k"}, "v")
 CHAN.SEND(ch, "direct")
 DIM d = Direct(ch)
 CHKS("string returned directly", d, "direct")
+
+CHAN.SEND(ch, "from a task")
+DIM t1 = Fetch(ch)
+DIM r1 = AWAIT t1
+CHKS("string from an ASYNC FUNC", TYPEOF(r1), "STRING")
+CHKS("string value from an ASYNC FUNC", r1, "from a task")
+
+CHAN.SEND(ch, [4, 5])
+DIM t2 = Fetch(ch)
+DIM r2 = AWAIT t2
+CHKS("array from an ASYNC FUNC", TYPEOF(r2), "ARRAY")
+CHKS("array length from an ASYNC FUNC", STR$(LEN(r2)), "2")
 
 CHAN.CLOSE(ch)
 
