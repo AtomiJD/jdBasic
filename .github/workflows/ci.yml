@@ -56,3 +56,9 @@ jobs:
         run: |
           & build/jdBasic.exe tools/check_builtin_sigs.jdb
           if ($LASTEXITCODE -ne 0) { throw "builtin_sigs.h names an undocumented builtin" }
+
+      - name: Language reference contents and index
+        shell: pwsh
+        run: |
+          & build/jdBasic.exe tools/gen_doc_index.jdb --check
+          if ($LASTEXITCODE -ne 0) { throw "doc/languages.md contents or index out of date" }
