@@ -1,5 +1,7 @@
 # Audio FX + the AI Tone Designer (jdBasic)
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 How to design guitar/synth tones in jdBasic: the effect building blocks, the
 chain API, a small FFT "spectral ear", and a cookbook of named tones. This is
 the reference an agent reads to turn a request like *"give me the Brian May tone

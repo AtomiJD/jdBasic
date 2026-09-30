@@ -1,5 +1,7 @@
 # Building jdBasic
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 This document covers building jdBasic from source on **Windows**, **Linux**, and **macOS**.
 
 jdBasic uses a modular feature-flag build system: you pick the features you want and only those subsystems are compiled and linked. The minimal build is just the bytecode VM and the BASIC standard library: no GUI, no network, no AI.

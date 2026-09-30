@@ -1,5 +1,7 @@
 # APL-style array programming in jdBasic
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 jdBasic borrows two pages from APL and numpy: every arithmetic operator
 broadcasts over arrays, and bitwise operators do too. That makes it
 practical to push real workloads - physics, cellular automata, SAT,

@@ -1,5 +1,7 @@
 # HowTo: Vectors, Matrices & Data in jdBasic
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 jdBasic is **array-first** (APL heritage). Before reaching for a `FOR` loop, ask:
 *is there a whole-array operation that does this?* The array form is almost always
 shorter, faster, and clearer. This guide collects the data-wrangling patterns -

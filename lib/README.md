@@ -1,5 +1,7 @@
 # lib - the jdBasic module library
 
+[Docs home](../doc/README.md) · [Tour](../doc/tour.md) · [Language reference](../doc/languages.md) · **Module library**
+
 Reusable modules written in jdBasic itself, the layer above the builtins. A
 module here is a single `.jdb` file that starts with `EXPORT MODULE NAME` and
 marks its public functions with `EXPORT FUNC` / `EXPORT SUB`. Each module has

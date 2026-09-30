@@ -1,5 +1,7 @@
 # Python → jdBasic idiom cheat sheet
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 Pragmatic mappings for the things you reach for most often when writing
 glue code. Use this as the first stop before defaulting to Python - the
 fall-back categories are at the bottom.

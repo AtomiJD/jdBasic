@@ -1,5 +1,7 @@
 # jdBasic Sample Gallery
 
+[Docs home](../doc/README.md) · [Tour](../doc/tour.md) · [Language reference](../doc/languages.md) · [Module library](../lib/README.md)
+
 Curated collection of `.jdb` source files demonstrating the language. Everything here runs with the standard interpreter from the repo root:
 
 ```bash

@@ -1,6 +1,8 @@
 
 # Sequencer Help
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 This document provides a detailed reference for the `SOUND` and `SFX` modules in jdBasic. It covers the live-coding sequencer, track-level sound design, global effects, visualization, and custom sample handling.
 
 ## 1. Core Sound System

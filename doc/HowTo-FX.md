@@ -1,5 +1,7 @@
 # HowTo: the jdBasic FX / Pedalboard project
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 A practical guide to the real-time audio toolchain: render tones offline, play
 your guitar through an effect chain live, and drive the whole thing from an ImGui
 pedalboard with presets, a tuner, recording, MIDI control and an AI tone designer.

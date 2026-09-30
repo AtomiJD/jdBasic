@@ -1,5 +1,7 @@
 # jdBasic MCP Server
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 The jdBasic binary doubles as a [Model Context Protocol](https://modelcontextprotocol.io/) server, exposing the persistent jdBasic VM to any MCP-aware client (Claude Code/Desktop, Cursor, Cline, Continue, Zed, Windsurf, custom agents via the official SDKs, …).
 
 It gives an LLM a fast, local, deterministic sandbox for vectorised array work, APL-style data pipelines, and - optionally - native compilation of jdBasic programs.

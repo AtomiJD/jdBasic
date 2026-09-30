@@ -1,5 +1,7 @@
 # Building Web Apps in jdBasic - JDWEB + TMPL
 
+[Docs home](README.md) · [Tour](tour.md) · [Language reference](languages.md) · [Module library](../lib/README.md)
+
 A practical guide to building web servers in jdBasic, from a one-line "Hello
 World" up to a complete app with a theme, cookie-session login and a SQLite
 database. It uses three pieces:
