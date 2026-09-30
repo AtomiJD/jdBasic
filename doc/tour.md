@@ -120,7 +120,7 @@ PRINT IOTA(5) |> SUM(?)
 15
 ```
 
-For the whole toolbox - `SCAN`, `OUTER`, `GRADE`, `AGG`, matrices, FFT - see
+For the other array functions (`SCAN`, `OUTER`, `GRADE`, `AGG`, matrices, FFT), see
 [From loops to array pipelines](APL_pipeline.md) and the
 [vector and matrix cookbook](howto-vector-matrix-data.md).
 
@@ -246,7 +246,7 @@ THERE!
 ```
 
 A `FUNC` returns a value, a `SUB` does not. Parameters may have defaults.
-Every builtin name is reserved - a function called `Count` would collide
+Every builtin name is reserved: a function called `Count` would collide
 with the builtin `COUNT`, and jdBasic says so:
 
 ```basic
@@ -382,7 +382,7 @@ The compiled program needs `jdbrt.dll` beside it; `-c` copies it there.
 
 | I want to ... | Read |
 |---|---|
-| look up any statement or builtin | [Language reference](languages.md) - contents at the top, A-Z index at the end |
+| look up any statement or builtin | [Language reference](languages.md) (contents at the top, A-Z index at the end) |
 | work with arrays, data, statistics | [Array pipelines](APL_pipeline.md), [vector and matrix cookbook](howto-vector-matrix-data.md) |
 | build a web app or an API | [Web development](WebDev.md) |
 | make music or process audio | [Sequencer](SequencerHelp.md), [Audio FX](AudioFX.md), [FX how-to](HowTo-FX.md) |

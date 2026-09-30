@@ -13,7 +13,7 @@ Four ways in, depending on where you are:
 | | |
 |---|---|
 | [Project README](../README.md) | What jdBasic is, in one screen: the four things it does that other BASICs do not, and how to run it. |
-| **[A tour of jdBasic](tour.md)** | **Start here.** Fifteen minutes from the first `PRINT` to a compiled `.exe`; every example is run by CI. |
+| **[A tour of jdBasic](tour.md)** | Start here: from the first `PRINT` to a compiled `.exe` in about fifteen minutes. CI runs every example. |
 | [Browser playground](https://jdbasic.org/live/index.html) | Try the language without installing anything. |
 | [Train jdBasic on YouTube](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) | 14 video lessons, from "Hello, World" to native compilation. |
 | [Sample gallery](../jdb/README.md) | 250+ complete programs by domain: games, emulators, tools, web apps, AI, sound. |
@@ -26,7 +26,7 @@ Task-oriented, each with runnable code.
 
 | | |
 |---|---|
-| [From loops to array pipelines](APL_pipeline.md) | Rewriting tight `FOR` loops as whole-array update steps - and when the array form loses. |
+| [From loops to array pipelines](APL_pipeline.md) | Rewriting tight `FOR` loops as whole-array update steps, and when the array form is slower. |
 | [Vectors, matrices and data](howto-vector-matrix-data.md) | Cookbook: build, transform, group, sort, reshape, dates, rendering. |
 | [Idioms from Python](idioms-from-python.md) | Python-to-jdBasic cheat sheet with the gotchas; good context for an AI assistant too. |
 
