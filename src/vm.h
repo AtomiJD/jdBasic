@@ -399,4 +399,15 @@ private:
     uint16_t ensure_global(uint16_t name_idx);
 
     void register_builtins();
+    // One per src/vm_builtins_<group>.cpp, called by register_builtins().
+    void register_math_builtins();
+    void register_string_builtins();
+    void register_data_builtins();
+    void register_array_builtins();
+    void register_datetime_builtins();
+    void register_codec_builtins();
+    void register_console_builtins();
+    void register_file_builtins();
+    void register_system_builtins();
+    void register_async_builtins();
 };

@@ -85,6 +85,16 @@ set(JDB_SOURCES
     ../../src/parser.cpp
     ../../src/compiler.cpp
     ../../src/vm.cpp
+    ../../src/vm_builtins_math.cpp
+    ../../src/vm_builtins_string.cpp
+    ../../src/vm_builtins_data.cpp
+    ../../src/vm_builtins_array.cpp
+    ../../src/vm_builtins_datetime.cpp
+    ../../src/vm_builtins_codec.cpp
+    ../../src/vm_builtins_console.cpp
+    ../../src/vm_builtins_file.cpp
+    ../../src/vm_builtins_system.cpp
+    ../../src/vm_builtins_async.cpp
     ../../src/jdb_embed_api.cpp
     ../../src/pcode.cpp
     ../../src/channels.cpp

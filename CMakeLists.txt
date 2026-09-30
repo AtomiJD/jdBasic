@@ -21,6 +21,16 @@ add_executable(basic
     src/parser.cpp
     src/compiler.cpp
     src/vm.cpp
+    src/vm_builtins_math.cpp
+    src/vm_builtins_string.cpp
+    src/vm_builtins_data.cpp
+    src/vm_builtins_array.cpp
+    src/vm_builtins_datetime.cpp
+    src/vm_builtins_codec.cpp
+    src/vm_builtins_console.cpp
+    src/vm_builtins_file.cpp
+    src/vm_builtins_system.cpp
+    src/vm_builtins_async.cpp
 )
 
 target_include_directories(basic PRIVATE src)

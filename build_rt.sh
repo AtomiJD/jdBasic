@@ -66,7 +66,7 @@ WANT_PYTHON=${PYTHON:-0}
 # Base translation units - mirror build_rt.bat's always-on list. gui.cpp and
 # sound.cpp guard their device code behind #ifdef GFX / SOUND_DSP, so they
 # compile in a headless build too.
-SRC="src/vm_bridge.cpp src/vm.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp \
+SRC="src/vm_bridge.cpp src/vm.cpp src/vm_builtins_math.cpp src/vm_builtins_string.cpp src/vm_builtins_data.cpp src/vm_builtins_array.cpp src/vm_builtins_datetime.cpp src/vm_builtins_codec.cpp src/vm_builtins_console.cpp src/vm_builtins_file.cpp src/vm_builtins_system.cpp src/vm_builtins_async.cpp src/lexer.cpp src/parser.cpp src/compiler.cpp \
      src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
      src/audio_fx.cpp src/midi.cpp src/audio_io.cpp \
      src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \

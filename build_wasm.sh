@@ -29,7 +29,7 @@ OPT="${OPT:--O2}"
 # reports the error and the REPL keeps running.
 CXXFLAGS="-std=c++17 $OPT $DEF $INC $PORTS -fexceptions"
 
-CORE="src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp \
+CORE="src/lexer.cpp src/parser.cpp src/compiler.cpp src/vm.cpp src/vm_builtins_math.cpp src/vm_builtins_string.cpp src/vm_builtins_data.cpp src/vm_builtins_array.cpp src/vm_builtins_datetime.cpp src/vm_builtins_codec.cpp src/vm_builtins_console.cpp src/vm_builtins_file.cpp src/vm_builtins_system.cpp src/vm_builtins_async.cpp \
       src/console.cpp src/editor.cpp src/dap.cpp src/ffi.cpp src/sound.cpp \
       src/audio_fx.cpp src/audio_io.cpp src/midi.cpp \
       src/gui.cpp src/ai.cpp src/llm.cpp src/channels.cpp src/file_streams.cpp \

@@ -250,7 +250,7 @@ REM mismatched runtimes show up as unresolved __imp__* symbols.
   /I"%SDK%\Include\%SDKV%\um" ^
   /I"%SDK%\Include\%SDKV%\shared" ^
   /Isrc /Ilibs\eigen !EXTRA_INC! ^
-  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\midi.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp src\pcode.cpp !EXTRA_SRC! ^
+  src\main.cpp src\lexer.cpp src\parser.cpp src\compiler.cpp src\vm.cpp src\vm_builtins_math.cpp src\vm_builtins_string.cpp src\vm_builtins_data.cpp src\vm_builtins_array.cpp src\vm_builtins_datetime.cpp src\vm_builtins_codec.cpp src\vm_builtins_console.cpp src\vm_builtins_file.cpp src\vm_builtins_system.cpp src\vm_builtins_async.cpp src\console.cpp src\editor.cpp src\dap.cpp src\ffi.cpp src\sound.cpp src\audio_fx.cpp src\midi.cpp src\audio_io.cpp src\gui.cpp src\ai.cpp src\llm.cpp src\channels.cpp src\file_streams.cpp src\numerics.cpp src\screencap.cpp src\pybridge.cpp src\pcode.cpp !EXTRA_SRC! ^
   /Fe:build\jdBasic.exe ^
   /Fo:build\ ^
   /link ^

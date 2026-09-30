@@ -133,7 +133,7 @@ can reach at runtime - which is most of it, because the DLL carries the VM
 itself, not just the graphics. `src/graphics.cpp`, `src/gui.cpp`,
 `src/jdb_runtime.cpp`, `src/sprites.cpp`, `src/tiledmap.cpp`,
 `src/opengl.cpp` and `src/imgui/*` are the obvious ones, and `src/vm.cpp`
-is the one that catches people: a builtin fixed there is fixed in
+with the builtins in `src/vm_builtins_*.cpp` is the one that catches people: a builtin fixed there is fixed in
 `jdBasic.exe` immediately and in every generated EXE only after this
 build. The gate then passes interpreted and fails compiled, on a change
 that is correct in both.

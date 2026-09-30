@@ -26,8 +26,8 @@ If build fails with `LNK1104: cannot open file 'build\jdBasic.exe'`, kill the st
 
 If you edited anything under `src/` that a compiled program reaches at
 runtime, **`build_rt.bat` is mandatory** - `build.bat` only rebuilds the
-EXE, and native `.exes` load the DLL. That includes `src/vm.cpp`, which
-is the one that catches people: the DLL carries the VM, so a builtin
+EXE, and native `.exes` load the DLL. That includes `src/vm.cpp` and the builtins in
+`src/vm_builtins_*.cpp`, which is the one that catches people: the DLL carries the VM, so a builtin
 fixed there is right in the interpreter and stale in every generated EXE
 until the DLL is rebuilt. Symptom: Step 1 green, Step 2 red, on a change
 that is correct.
@@ -150,7 +150,7 @@ against `tests/parity_baseline.tsv`.
 ```
 
 Exit 1 = at least one test got worse than the baseline; the `VS BASELINE`
-block names it. Exit 0 = no regression. Run it after touching `src/vm.cpp`,
+block names it. Exit 0 = no regression. Run it after touching `src/vm.cpp`, `src/vm_builtins_*.cpp`,
 `src/llvm_codegen.cpp`, `src/jdb_runtime.cpp` or `src/vm_bridge.cpp`.
 
 Read the `SCOPE` block before drawing conclusions:
