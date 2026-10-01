@@ -23,6 +23,12 @@ FUNC NotWord(path$)
     RETURN DOCX.READ(path$)
 ENDFUNC
 
+FUNC NotPicture(path$)
+    DIM d = DOCX.NEW()
+    DOCX.IMAGE(d, path$)
+    RETURN 0
+ENDFUNC
+
 FUNC HasAll(items, wanted)
     DIM seen AS MAP
     DIM k = 0
@@ -176,6 +182,60 @@ junk{"hello.txt"} = "hello"
 ZIP.WRITE(no_doc$, junk)
 TESTKIT.THROWS(NotWord@, no_doc$, "an archive without word/document.xml is refused")
 
+TESTKIT.SUITE("book blocks")
+DIM book = DOCX.NEW()
+DOCX.LANGUAGE(book, "en-US")
+DOCX.PAGESETUP(book, 170, 240, 20)
+DOCX.TOC(book, 2)
+DOCX.PARAGRAPH(book, "Call `MAIL.SEND` and read [the guide](https://example.com/a?b=1&c=2) first.")
+DOCX.CODE(book, "IF x > 1 THEN" + LF$ + "    PRINT " + CHR$(34) + "a & b" + CHR$(34) + LF$ + "ENDIF" + LF$)
+DOCX.NOTE(book, "Balance dividend", "About **20 minutes** a week.")
+DOCX.NOTE(book, "", "A quote.")
+DOCX.IMAGE(book, base$ + "img_png/g1.png")
+DOCX.IMAGE(book, base$ + "pdfgen_logo.jpg", 4)
+DOCX.PARAGRAPH(book, "A lone ` and a [bracket stay text.")
+DIM book$ = folder$ + "/book.docx"
+TESTKIT.EQ(DOCX.WRITE(book, book$), 11, "nine parts and two pictures")
+DIM book_paras = DOCX.PARAGRAPHS(book$)
+DIM want_book = ["Update this field to build the table of contents.", "Call MAIL.SEND and read the guide first.", "IF x > 1 THEN" + LF$ + "    PRINT " + CHR$(34) + "a & b" + CHR$(34) + LF$ + "ENDIF", "Balance dividend" + LF$ + "About 20 minutes a week.", "A quote.", "", "", "A lone ` and a [bracket stay text."]
+TESTKIT.EQ(LEN(book_paras), LEN(want_book), "every block comes back as a paragraph")
+FOR i = 0 TO LEN(want_book) - 1
+    DIM bp$ = ""
+    IF i < LEN(book_paras) THEN bp$ = book_paras[i]
+    DIM bw$ = want_book[i]
+    TESTKIT.EQ(bp$, bw$, "book paragraph " + STR$(i + 1))
+NEXT i
+DIM book_parts = ZIP.READ(book$)
+DIM book_body$ = book_parts{"word/document.xml"}
+TESTKIT.ISTRUE(INSTR(book_body$, " TOC \o " + CHR$(34) + "1-2" + CHR$(34)) >= 0, "a table of contents field over two levels")
+TESTKIT.ISTRUE(INSTR(book_body$, "<w:rStyle w:val='CodeChar'/></w:rPr><w:t xml:space='preserve'>MAIL.SEND</w:t>") >= 0, "inline code in the code font")
+TESTKIT.ISTRUE(INSTR(book_body$, "HYPERLINK " + CHR$(34) + "https://example.com/a?b=1&amp;c=2" + CHR$(34)) >= 0, "a link with its target escaped")
+TESTKIT.ISTRUE(INSTR(book_body$, "<w:pStyle w:val='Code'/>") >= 0 ANDALSO INSTR(book_body$, "    PRINT " + CHR$(34) + "a &amp; b") >= 0, "a code block keeps its indent")
+TESTKIT.ISTRUE(INSTR(book_body$, "<w:pStyle w:val='Note'/>") >= 0, "a note box")
+TESTKIT.ISTRUE(INSTR(book_body$, "<wp:extent cx='104775' cy='85725'/>") >= 0, "a PNG at 96 dots per inch")
+TESTKIT.ISTRUE(INSTR(book_body$, "<wp:extent cx='1440000' cy='1440000'/>") >= 0, "a JPEG 4 cm wide keeps its proportions")
+TESTKIT.ISTRUE(INSTR(book_body$, "<w:pgSz w:w='9638' w:h='13606'/>") >= 0 ANDALSO INSTR(book_body$, "w:left='1134'") >= 0, "the page size and margins")
+DIM book_rels$ = book_parts{"word/_rels/document.xml.rels"}
+TESTKIT.ISTRUE(INSTR(book_rels$, "Target='media/image2.jpeg'") >= 0, "the pictures have relationships")
+DIM book_types$ = book_parts{"[Content_Types].xml"}
+TESTKIT.ISTRUE(INSTR(book_types$, "Extension='png'") >= 0, "and content types")
+TESTKIT.EQ(book_parts{"word/media/image1.png"}, BINREADER$(base$ + "img_png/g1.png"), "the PNG is stored byte for byte")
+DIM book_styles$ = book_parts{"word/styles.xml"}
+TESTKIT.ISTRUE(INSTR(book_styles$, "<w:lang w:val='en-US'/>") >= 0, "the language")
+TESTKIT.ISTRUE(INSTR(book_styles$, "w:styleId='Hyperlink'") >= 0 ANDALSO INSTR(book_styles$, "w:styleId='CodeChar'") >= 0, "the styles the blocks use")
+DIM xml_parts = 0
+DIM book_names = MAP.KEYS(book_parts)
+FOR i = 0 TO LEN(book_names) - 1
+    DIM bn$ = book_names[i]
+    IF LEFT$(bn$, 11) <> "word/media/" THEN
+        DIM bc$ = book_parts{bn$}
+        IF XML.ROOT(XML.PARSE(bc$)) >= 0 THEN xml_parts = xml_parts + 1
+    ENDIF
+NEXT i
+TESTKIT.EQ(xml_parts, 9, "every XML part is well-formed")
+TESTKIT.THROWS(NotPicture@, base$ + "docx_word_style.docx", "a file that is no picture is refused")
+
+KILL book$
 KILL written$
 KILL plain$
 KILL filled$

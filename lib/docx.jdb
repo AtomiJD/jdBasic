@@ -1,6 +1,7 @@
-' docx.jdb - Word documents without Word: written with headings, bold and
-' italic runs, bullet and numbered lists, tables, page breaks, a header and
-' a footer; templates filled by replacing {{name}} placeholders, also where
+' docx.jdb - Word documents without Word: written with headings, bold,
+' italic and code runs, links, bullet and numbered lists, tables, code
+' listings, note boxes, pictures, a table of contents, page breaks, a header
+' and a footer; templates filled by replacing {{name}} placeholders, also where
 ' Word split one across several runs; paragraphs and tables read back.
 '
 '   IMPORT DOCX
@@ -21,7 +22,7 @@ IMPORT XML
 DIM gTB$ = CHR$(9)
 DIM gLF$ = CHR$(10)
 DIM gHead$ = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>" + CHR$(13) + CHR$(10)
-DIM gNsW$ = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships'"
+DIM gNsW$ = "xmlns:w='http://schemas.openxmlformats.org/wordprocessingml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' xmlns:wp='http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'"
 DIM gRelNs$ = "http://schemas.openxmlformats.org/package/2006/relationships"
 DIM gRelOffice$ = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
 DIM gCtWord$ = "application/vnd.openxmlformats-officedocument.wordprocessingml."
@@ -64,7 +65,18 @@ FUNC RunXml$(t$, bold, italic)
     RETURN "<w:r>" + rpr$ + TextXml$(t$) + "</w:r>"
 ENDFUNC
 
-' Runs from text with **bold** and *italic* marks.
+FUNC CodeRunXml$(t$)
+    IF t$ = "" THEN RETURN ""
+    RETURN "<w:r><w:rPr><w:rStyle w:val='CodeChar'/></w:rPr>" + TextXml$(t$) + "</w:r>"
+ENDFUNC
+
+' A clickable link as a HYPERLINK field, which needs no relationship part.
+FUNC LinkXml$(text$, target$)
+    DIM t$ = REPLACE$(REPLACE$(Esc$(target$), "'", "&apos;"), CHR$(34), "%22")
+    RETURN "<w:fldSimple w:instr=' HYPERLINK " + CHR$(34) + t$ + CHR$(34) + " '><w:r><w:rPr><w:rStyle w:val='Hyperlink'/></w:rPr>" + TextXml$(text$) + "</w:r></w:fldSimple>"
+ENDFUNC
+
+' Runs from text with **bold**, *italic*, `code` and [text](target) marks.
 FUNC Runs$(text$)
     DIM out$ = ""
     DIM bold = FALSE
@@ -73,7 +85,26 @@ FUNC Runs$(text$)
     DIM k = 0
     DIM n = LEN(text$)
     DO WHILE k < n
-        IF MID$(text$, k, 2) = "**" THEN
+        DIM ch$ = MID$(text$, k, 1)
+        DIM code_end = -1
+        DIM link_mid = -1
+        DIM link_end = -1
+        IF ch$ = "`" THEN code_end = CINT(INSTR(MID$(text$, k + 1, n), "`"))
+        IF ch$ = "[" THEN
+            link_mid = CINT(INSTR(MID$(text$, k + 1, n), "]("))
+            IF link_mid >= 0 THEN link_end = CINT(INSTR(MID$(text$, k + link_mid + 3, n), ")"))
+        ENDIF
+        IF code_end >= 0 THEN
+            out$ = out$ + RunXml$(cur$, bold, italic)
+            cur$ = ""
+            out$ = out$ + CodeRunXml$(MID$(text$, k + 1, code_end))
+            k = k + code_end + 2
+        ELSEIF link_end >= 0 THEN
+            out$ = out$ + RunXml$(cur$, bold, italic)
+            cur$ = ""
+            out$ = out$ + LinkXml$(MID$(text$, k + 1, link_mid), MID$(text$, k + link_mid + 3, link_end))
+            k = k + link_mid + link_end + 4
+        ELSEIF MID$(text$, k, 2) = "**" THEN
             out$ = out$ + RunXml$(cur$, bold, italic)
             cur$ = ""
             bold = NOT bold
@@ -124,7 +155,9 @@ ENDFUNC
 EXPORT FUNC NEW()
     DIM body = []
     DIM lists = []
-    RETURN {"body": body, "lists": lists, "header": "", "footer": "", "title": "", "last": ""}
+    DIM images = []
+    DIM page_box = {"w": 11906, "h": 16838, "top": 1417, "right": 1417, "bottom": 1134, "left": 1417}
+    RETURN {"body": body, "lists": lists, "images": images, "page": page_box, "lang": "de-DE", "header": "", "footer": "", "title": "", "last": ""}
 ENDFUNC
 
 SUB AddBlock(doc, xml$, kind$)
@@ -229,6 +262,104 @@ EXPORT SUB PAGEBREAK(doc)
     AddBlock(doc, "<w:p><w:r><w:br w:type='page'/></w:r></w:p>", "p")
 ENDSUB
 
+' A code listing in the code font on a shaded background; spaces, tabs and
+' line breaks are kept, a trailing line break is dropped.
+EXPORT SUB CODE(doc, text$)
+    DIM t$ = REPLACE$(text$, CHR$(13), "")
+    DO WHILE RIGHT$(t$, 1) = gLF$
+        t$ = LEFT$(t$, LEN(t$) - 1)
+    LOOP
+    AddBlock(doc, "<w:p><w:pPr><w:pStyle w:val='Code'/></w:pPr><w:r>" + TextXml$(t$) + "</w:r></w:p>", "p")
+ENDSUB
+
+' A shaded box with a bold title line above its text; an empty title leaves
+' the line out.
+EXPORT SUB NOTE(doc, title$, text$)
+    DIM head$ = ""
+    IF title$ <> "" THEN head$ = RunXml$(title$, TRUE, FALSE) + "<w:r><w:br/></w:r>"
+    AddBlock(doc, "<w:p><w:pPr><w:pStyle w:val='Note'/></w:pPr>" + head$ + Runs$(text$) + "</w:p>", "p")
+ENDSUB
+
+' A table of contents over the headings of level 1 to levels; Word fills it
+' when the document is opened.
+EXPORT SUB TOC(doc, levels = 3, text$ = "Update this field to build the table of contents.")
+    DIM field$ = " TOC \o " + CHR$(34) + "1-" + STR$(levels) + CHR$(34) + " \h \z \u "
+    AddBlock(doc, "<w:p><w:r><w:fldChar w:fldCharType='begin' w:dirty='true'/></w:r><w:r><w:instrText xml:space='preserve'>" + field$ + "</w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r>" + Runs$(text$) + "<w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>", "p")
+ENDSUB
+
+FUNC ByteAt(s$, i)
+    RETURN ASC(MID$(s$, i, 1))
+ENDFUNC
+
+' [kind$, width, height] of a PNG or JPEG held in a string, in pixels.
+FUNC ImageInfo(data$)
+    DIM n = LEN(data$)
+    IF n > 24 ANDALSO LEFT$(data$, 4) = CHR$(137) + "PNG" THEN
+        DIM pw = ((ByteAt(data$, 16) * 256 + ByteAt(data$, 17)) * 256 + ByteAt(data$, 18)) * 256 + ByteAt(data$, 19)
+        DIM ph = ((ByteAt(data$, 20) * 256 + ByteAt(data$, 21)) * 256 + ByteAt(data$, 22)) * 256 + ByteAt(data$, 23)
+        RETURN ["png", pw, ph]
+    ENDIF
+    IF n > 4 ANDALSO ByteAt(data$, 0) = 255 ANDALSO ByteAt(data$, 1) = 216 THEN
+        DIM k = 2
+        DO WHILE k + 9 < n
+            IF ByteAt(data$, k) <> 255 THEN
+                k = k + 1
+            ELSE
+                DIM marker = ByteAt(data$, k + 1)
+                DIM seg = ByteAt(data$, k + 2) * 256 + ByteAt(data$, k + 3)
+                IF marker >= 192 ANDALSO marker <= 207 ANDALSO marker <> 196 ANDALSO marker <> 200 ANDALSO marker <> 204 THEN
+                    DIM jh = ByteAt(data$, k + 5) * 256 + ByteAt(data$, k + 6)
+                    DIM jw = ByteAt(data$, k + 7) * 256 + ByteAt(data$, k + 8)
+                    RETURN ["jpeg", jw, jh]
+                ENDIF
+                IF marker = 216 ORELSE marker = 1 ORELSE (marker >= 208 ANDALSO marker <= 215) THEN
+                    k = k + 2
+                ELSE
+                    k = k + 2 + seg
+                ENDIF
+            ENDIF
+        LOOP
+    ENDIF
+    THROW "DOCX: not a PNG or JPEG image"
+    RETURN []
+ENDFUNC
+
+' A picture from a PNG or JPEG file in a paragraph of its own, centred,
+' width_cm wide (0: its size at 96 dots per inch).
+EXPORT SUB IMAGE(doc, path$, width_cm = 0)
+    DIM data$ = BINREADER$(path$)
+    DIM info = ImageInfo(data$)
+    DIM kind$ = info[0]
+    DIM px_w = info[1]
+    DIM px_h = info[2]
+    DIM images = doc{"images"}
+    DIM n = LEN(images) + 1
+    DIM img_name$ = "image" + STR$(n) + "." + kind$
+    PUSH(images, {"name": img_name$, "data": data$})
+    DIM cx = px_w * 9525
+    DIM cy = px_h * 9525
+    IF width_cm > 0 THEN
+        cx = ROUND(width_cm * 360000)
+        cy = ROUND(cx * px_h / px_w)
+    ENDIF
+    DIM ext$ = "<a:ext cx='" + STR$(cx) + "' cy='" + STR$(cy) + "'/>"
+    DIM pic$ = "<pic:pic xmlns:pic='http://schemas.openxmlformats.org/drawingml/2006/picture'><pic:nvPicPr><pic:cNvPr id='" + STR$(n) + "' name='" + img_name$ + "'/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed='rIdImg" + STR$(n) + "'/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x='0' y='0'/>" + ext$ + "</a:xfrm><a:prstGeom prst='rect'><a:avLst/></a:prstGeom></pic:spPr></pic:pic>"
+    DIM inline$ = "<wp:inline distT='0' distB='0' distL='0' distR='0'><wp:extent cx='" + STR$(cx) + "' cy='" + STR$(cy) + "'/><wp:docPr id='" + STR$(n) + "' name='Picture " + STR$(n) + "'/><a:graphic xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main'><a:graphicData uri='http://schemas.openxmlformats.org/drawingml/2006/picture'>" + pic$ + "</a:graphicData></a:graphic></wp:inline>"
+    AddBlock(doc, "<w:p><w:pPr><w:jc w:val='center'/></w:pPr><w:r><w:drawing>" + inline$ + "</w:drawing></w:r></w:p>", "p")
+ENDSUB
+
+' The page size and the four margins in millimetres.
+EXPORT SUB PAGESETUP(doc, width_mm, height_mm, margin_mm = 25)
+    DIM tw = 1440 / 25.4
+    DIM m = ROUND(margin_mm * tw)
+    doc{"page"} = {"w": ROUND(width_mm * tw), "h": ROUND(height_mm * tw), "top": m, "right": m, "bottom": m, "left": m}
+ENDSUB
+
+' The language Word checks the spelling in, such as "en-US" or "de-DE".
+EXPORT SUB LANGUAGE(doc, tag$)
+    doc{"lang"} = tag$
+ENDSUB
+
 ' The text at the top of every page; {page} and {pages} are page numbers.
 EXPORT SUB HEADER(doc, text$)
     doc{"header"} = text$
@@ -245,6 +376,8 @@ FUNC ContentTypes$(has_header, has_footer)
     DIM out$ = gHead$ + "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'>"
     out$ = out$ + "<Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/>"
     out$ = out$ + "<Default Extension='xml' ContentType='application/xml'/>"
+    out$ = out$ + "<Default Extension='png' ContentType='image/png'/>"
+    out$ = out$ + "<Default Extension='jpeg' ContentType='image/jpeg'/>"
     out$ = out$ + "<Override PartName='/word/document.xml' ContentType='" + gCtWord$ + "document.main+xml'/>"
     out$ = out$ + "<Override PartName='/word/styles.xml' ContentType='" + gCtWord$ + "styles+xml'/>"
     out$ = out$ + "<Override PartName='/word/numbering.xml' ContentType='" + gCtWord$ + "numbering+xml'/>"
@@ -268,13 +401,19 @@ FUNC RootRels$()
     RETURN out$ + "</Relationships>"
 ENDFUNC
 
-FUNC DocRels$(has_header, has_footer)
+FUNC DocRels$(has_header, has_footer, images)
     DIM out$ = gHead$ + "<Relationships xmlns='" + gRelNs$ + "'>"
     out$ = out$ + Rel$("rId1", gRelOffice$ + "styles", "styles.xml")
     out$ = out$ + Rel$("rId2", gRelOffice$ + "numbering", "numbering.xml")
     out$ = out$ + Rel$("rId3", gRelOffice$ + "settings", "settings.xml")
     IF has_header THEN out$ = out$ + Rel$("rId4", gRelOffice$ + "header", "header1.xml")
     IF has_footer THEN out$ = out$ + Rel$("rId5", gRelOffice$ + "footer", "footer1.xml")
+    DIM k = 0
+    FOR k = 0 TO LEN(images) - 1
+        DIM img = images[k]
+        DIM img_file$ = img{"name"}
+        out$ = out$ + Rel$("rIdImg" + STR$(k + 1), gRelOffice$ + "image", "media/" + img_file$)
+    NEXT k
     RETURN out$ + "</Relationships>"
 ENDFUNC
 
@@ -297,13 +436,17 @@ FUNC HeadingStyle$(level, size$)
     RETURN "<w:style w:type='paragraph' w:styleId='" + id$ + "'><w:name w:val='heading " + STR$(level) + "'/><w:basedOn w:val='Normal'/><w:next w:val='Normal'/><w:uiPriority w:val='9'/><w:qFormat/><w:pPr><w:keepNext/><w:keepLines/><w:spacing w:before='240' w:after='80'/><w:outlineLvl w:val='" + STR$(level - 1) + "'/></w:pPr><w:rPr><w:b/><w:color w:val='1F3864'/><w:sz w:val='" + size$ + "'/><w:szCs w:val='" + size$ + "'/></w:rPr></w:style>"
 ENDFUNC
 
-FUNC StylesXml$()
+FUNC StylesXml$(lang$)
     DIM out$ = gHead$ + "<w:styles " + gNsW$ + ">"
-    out$ = out$ + "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri' w:eastAsia='Calibri' w:cs='Calibri'/><w:sz w:val='22'/><w:szCs w:val='22'/><w:lang w:val='de-DE'/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after='160' w:line='259' w:lineRule='auto'/></w:pPr></w:pPrDefault></w:docDefaults>"
+    out$ = out$ + "<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii='Calibri' w:hAnsi='Calibri' w:eastAsia='Calibri' w:cs='Calibri'/><w:sz w:val='22'/><w:szCs w:val='22'/><w:lang w:val='" + lang$ + "'/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after='160' w:line='259' w:lineRule='auto'/></w:pPr></w:pPrDefault></w:docDefaults>"
     out$ = out$ + "<w:style w:type='paragraph' w:default='1' w:styleId='Normal'><w:name w:val='Normal'/><w:qFormat/></w:style>"
     out$ = out$ + HeadingStyle$(1, "32") + HeadingStyle$(2, "28") + HeadingStyle$(3, "24")
     out$ = out$ + "<w:style w:type='paragraph' w:styleId='ListParagraph'><w:name w:val='List Paragraph'/><w:basedOn w:val='Normal'/><w:uiPriority w:val='34'/><w:qFormat/><w:pPr><w:ind w:left='720'/><w:contextualSpacing/></w:pPr></w:style>"
     out$ = out$ + "<w:style w:type='character' w:default='1' w:styleId='DefaultParagraphFont'><w:name w:val='Default Paragraph Font'/><w:uiPriority w:val='1'/><w:semiHidden/><w:unhideWhenUsed/></w:style>"
+    out$ = out$ + "<w:style w:type='paragraph' w:styleId='Code'><w:name w:val='Code'/><w:basedOn w:val='Normal'/><w:qFormat/><w:pPr><w:shd w:val='clear' w:color='auto' w:fill='F2F2F2'/><w:spacing w:before='60' w:after='160' w:line='240' w:lineRule='auto'/><w:ind w:left='113' w:right='113'/></w:pPr><w:rPr><w:rFonts w:ascii='Consolas' w:hAnsi='Consolas' w:cs='Consolas'/><w:noProof/><w:sz w:val='18'/><w:szCs w:val='18'/></w:rPr></w:style>"
+    out$ = out$ + "<w:style w:type='character' w:styleId='CodeChar'><w:name w:val='Code Char'/><w:basedOn w:val='DefaultParagraphFont'/><w:rPr><w:rFonts w:ascii='Consolas' w:hAnsi='Consolas' w:cs='Consolas'/><w:noProof/><w:sz w:val='20'/><w:szCs w:val='20'/></w:rPr></w:style>"
+    out$ = out$ + "<w:style w:type='paragraph' w:styleId='Note'><w:name w:val='Note'/><w:basedOn w:val='Normal'/><w:qFormat/><w:pPr><w:keepLines/><w:pBdr><w:left w:val='single' w:sz='24' w:space='8' w:color='2E74B5'/></w:pBdr><w:shd w:val='clear' w:color='auto' w:fill='EAF1FB'/><w:spacing w:before='120' w:after='200'/><w:ind w:left='227' w:right='113'/></w:pPr></w:style>"
+    out$ = out$ + "<w:style w:type='character' w:styleId='Hyperlink'><w:name w:val='Hyperlink'/><w:basedOn w:val='DefaultParagraphFont'/><w:uiPriority w:val='99'/><w:unhideWhenUsed/><w:rPr><w:color w:val='0563C1'/><w:u w:val='single'/></w:rPr></w:style>"
     out$ = out$ + "<w:style w:type='table' w:default='1' w:styleId='TableNormal'><w:name w:val='Normal Table'/><w:uiPriority w:val='99'/><w:semiHidden/><w:unhideWhenUsed/><w:tblPr><w:tblInd w:w='0' w:type='dxa'/><w:tblCellMar><w:top w:w='0' w:type='dxa'/><w:left w:w='108' w:type='dxa'/><w:bottom w:w='0' w:type='dxa'/><w:right w:w='108' w:type='dxa'/></w:tblCellMar></w:tblPr></w:style>"
     out$ = out$ + "<w:style w:type='table' w:styleId='TableGrid'><w:name w:val='Table Grid'/><w:basedOn w:val='TableNormal'/><w:uiPriority w:val='39'/><w:pPr><w:spacing w:after='0' w:line='240' w:lineRule='auto'/></w:pPr><w:tblPr><w:tblBorders><w:top w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:left w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:bottom w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:right w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:insideH w:val='single' w:sz='4' w:space='0' w:color='auto'/><w:insideV w:val='single' w:sz='4' w:space='0' w:color='auto'/></w:tblBorders></w:tblPr></w:style>"
     RETURN out$ + "</w:styles>"
@@ -334,7 +477,8 @@ FUNC DocumentXml$(doc, has_header, has_footer)
     out$ = out$ + "<w:sectPr>"
     IF has_header THEN out$ = out$ + "<w:headerReference w:type='default' r:id='rId4'/>"
     IF has_footer THEN out$ = out$ + "<w:footerReference w:type='default' r:id='rId5'/>"
-    out$ = out$ + "<w:pgSz w:w='11906' w:h='16838'/><w:pgMar w:top='1417' w:right='1417' w:bottom='1134' w:left='1417' w:header='708' w:footer='708' w:gutter='0'/></w:sectPr>"
+    DIM pg = doc{"page"}
+    out$ = out$ + "<w:pgSz w:w='" + STR$(pg{"w"}) + "' w:h='" + STR$(pg{"h"}) + "'/><w:pgMar w:top='" + STR$(pg{"top"}) + "' w:right='" + STR$(pg{"right"}) + "' w:bottom='" + STR$(pg{"bottom"}) + "' w:left='" + STR$(pg{"left"}) + "' w:header='708' w:footer='708' w:gutter='0'/></w:sectPr>"
     RETURN out$ + "</w:body></w:document>"
 ENDFUNC
 
@@ -355,13 +499,20 @@ EXPORT FUNC WRITE(doc, path$)
     entries{"_rels/.rels"} = RootRels$()
     entries{"docProps/core.xml"} = CoreXml$(title$)
     entries{"docProps/app.xml"} = AppXml$()
-    entries{"word/_rels/document.xml.rels"} = DocRels$(has_header, has_footer)
-    entries{"word/styles.xml"} = StylesXml$()
+    DIM images = doc{"images"}
+    entries{"word/_rels/document.xml.rels"} = DocRels$(has_header, has_footer, images)
+    entries{"word/styles.xml"} = StylesXml$(doc{"lang"})
     entries{"word/numbering.xml"} = NumberingXml$(LEN(lists))
     entries{"word/settings.xml"} = SettingsXml$()
     entries{"word/document.xml"} = DocumentXml$(doc, has_header, has_footer)
     IF has_header THEN entries{"word/header1.xml"} = PartXml$("hdr", header$)
     IF has_footer THEN entries{"word/footer1.xml"} = PartXml$("ftr", footer$)
+    DIM k = 0
+    FOR k = 0 TO LEN(images) - 1
+        DIM img = images[k]
+        DIM img_file$ = img{"name"}
+        entries{"word/media/" + img_file$} = img{"data"}
+    NEXT k
     RETURN ZIP.WRITE(path$, entries)
 ENDFUNC
 

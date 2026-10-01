@@ -39,16 +39,26 @@ PRINT JOIN(back{"paragraphs"}, CHR$(10))
 |------|--------------|
 | `NEW()` | An empty document. |
 | `HEADING(doc, text$, [level])` | A heading of level 1 (default), 2 or 3, in Word's built-in heading styles. |
-| `PARAGRAPH(doc, text$, [align$])` | A paragraph. `**bold**` and `*italic*` in the text become formatted runs; a tab and a line break stay what they are. `align$` is `left`, `center`, `right` or `justify`. |
+| `PARAGRAPH(doc, text$, [align$])` | A paragraph. `**bold**`, `*italic*`, `` `code` `` (in the code font) and `[text](target)` (a clickable link) in the text become formatted runs; a tab and a line break stay what they are. A backtick or a bracket without its partner stays text. `align$` is `left`, `center`, `right` or `justify`. |
 | `BULLETS(doc, items)` | A bullet list, one paragraph per item, with the same marks. |
 | `NUMBERED(doc, items)` | A numbered list; every call starts again at 1. |
 | `TABLE(doc, rows, [header])` | A table with grid lines from an array of rows of text; with `header` (TRUE) the first row is bold and repeats at the top of every page. Short rows are filled with empty cells. |
 | `PAGEBREAK(doc)` | Starts a new page. |
+| `CODE(doc, text$)` | A code listing in Consolas 9 pt on a grey background; spaces, tabs and line breaks are kept, trailing line breaks dropped. |
+| `NOTE(doc, title$, text$)` | A shaded box with a blue bar on the left, the title in bold on the first line (none when `title$` is empty); the text takes the same marks as `PARAGRAPH`. |
+| `TOC(doc, [levels], [text$])` | A table of contents over the headings of level 1 to `levels` (3). Word builds it when the document opens; until then it shows `text$`. |
+| `IMAGE(doc, path$, [width_cm])` | A PNG or JPEG in a centred paragraph, `width_cm` wide with its proportions kept, or at 96 dots per inch without a width. Anything else is an error. |
 | `HEADER(doc, text$)` / `FOOTER(doc, text$)` | The text at the top and the bottom of every page; `{page}` and `{pages}` become Word's page number fields. |
 | `TITLE(doc, text$)` | The title in the document properties. |
-| `WRITE(doc, path$)` | Writes the file; answers the number of parts (9, plus the header and the footer). |
+| `WRITE(doc, path$)` | Writes the file; answers the number of parts (9, plus the header, the footer and one per picture). |
 
-The page is A4 with Word's default margins, the text Calibri 11 pt.
+The page is A4 with Word's default margins, the text Calibri 11 pt, the
+language German, unless these are set:
+
+| Call | What it does |
+|------|--------------|
+| `PAGESETUP(doc, width_mm, height_mm, [margin_mm])` | The page size and one margin for all four sides (25 mm). |
+| `LANGUAGE(doc, tag$)` | The language Word checks the spelling in, such as `en-US`. |
 
 ### Templates
 
@@ -81,7 +91,7 @@ control's paragraphs and tables count as the body's.
 
 - A written document reads back in python-docx with its styles, runs,
   list numbering, table, header, footer, alignment and title.
-- Images, footnotes, comments and sections are not written; FILL keeps
+- Footnotes, comments and sections are not written; FILL keeps
   whatever a template already has, since it changes only the text of runs.
 - Everything works compiled with `-c`.
 

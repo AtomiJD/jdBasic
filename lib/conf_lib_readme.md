@@ -43,7 +43,8 @@ land in the `""` section.
 **TOML subset**: `[table]` and `[a.b]` headers, `[[array.of.tables]]`,
 basic strings with the dotenv escapes, literal strings, integers (with
 underscores) as INT64, floats, booleans, arrays with nested arrays,
-inline tables, trailing `#` comments. A date or time value is kept as
+inline tables, arrays over several lines (with comments and a trailing
+comma), trailing `#` comments. A date or time value is kept as
 the text that was written. Multi-line strings, unicode escapes and the
 rest of the grammar are not supported and raise or arrive as text.
 

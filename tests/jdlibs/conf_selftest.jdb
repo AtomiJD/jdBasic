@@ -104,6 +104,22 @@ TESTKIT.EQ(LEN(toml{"jobs"}), 2, "an array of tables")
 TESTKIT.EQ(toml{"jobs"}[1]{"name"}, "second", "in order")
 TESTKIT.EQ(toml{"jobs"}[1]{"opts"}{"retries"}, 2, "a table under the last array entry")
 TESTKIT.THROWS(BadToml@, "no equals here", "a line that is no assignment raises")
+DIM multi_text$ = "files = [" + NL$ + _
+    "    " + Q$ + "a [1].md" + Q$ + ",   # the first" + NL$ + _
+    "    'b # not a comment.md'," + NL$ + _
+    "    [1," + NL$ + _
+    "     2]," + NL$ + _
+    "]" + NL$ + _
+    "after = 1" + NL$ + _
+    "[next]" + NL$ + _
+    "x = 2" + NL$
+DIM multi = CONF.TOML_TEXT(multi_text$)
+TESTKIT.EQ(LEN(multi{"files"}), 3, "an array over several lines with a trailing comma")
+TESTKIT.EQ(multi{"files"}[0], "a [1].md", "brackets and comments around a string")
+TESTKIT.EQ(multi{"files"}[1], "b # not a comment.md", "a # inside a literal string")
+TESTKIT.EQ(multi{"files"}[2][1], 2, "a nested array that spans lines")
+TESTKIT.EQ(multi{"after"}, 1, "the line after the array")
+TESTKIT.EQ(multi{"next"}{"x"}, 2, "and the table after it")
 
 TESTKIT.SUITE("GET")
 TESTKIT.EQ(CONF.GET(toml, "server.tls.enabled", FALSE), TRUE, "a dotted path")
