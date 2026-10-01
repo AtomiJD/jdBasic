@@ -62,7 +62,7 @@ enum class OpCode : uint8_t {
     SET_FIELD,          // u16 name index
 
     // Type cast
-    CAST,               // u8 target ValueType
+    CAST,               // u8 target ValueType, CAST_SCALAR_ONLY bit: numbers and booleans only
 
     // String concat
     STR_CONCAT,
@@ -134,6 +134,9 @@ enum class OpCode : uint8_t {
     //   parity with the prior LEN=0 behaviour.
     FOREACH_NEXT,                // i16 exit_offset
 };
+
+// Flag in the CAST operand: cast numbers and booleans, pass any other value through.
+constexpr uint8_t CAST_SCALAR_ONLY = 0x80;
 
 struct Chunk {
     std::vector<uint8_t> code;

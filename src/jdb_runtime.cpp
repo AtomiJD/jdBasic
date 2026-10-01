@@ -4084,7 +4084,13 @@ double jdb_datediff(const char* part, const char* date1, const char* date2) {
         case 'S': return diff;
         case 'N': return diff / 60.0;
         case 'H': return diff / 3600.0;
-        case 'D': return diff / 86400.0;
+        case 'D': {
+            int64_t w1 = rt_days_from_civil(tm1.tm_year + 1900, tm1.tm_mon + 1, tm1.tm_mday) * 86400 +
+                         tm1.tm_hour * 3600 + tm1.tm_min * 60 + tm1.tm_sec;
+            int64_t w2 = rt_days_from_civil(tm2.tm_year + 1900, tm2.tm_mon + 1, tm2.tm_mday) * 86400 +
+                         tm2.tm_hour * 3600 + tm2.tm_min * 60 + tm2.tm_sec;
+            return (double)(w2 - w1) / 86400.0;
+        }
     }
     return diff;
 }

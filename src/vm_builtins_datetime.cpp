@@ -249,12 +249,21 @@ void VM::register_datetime_builtins() {
     });
 
     register_native("DATEDIFF", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
-        // DATEDIFF(part$, date1, date2, [tz]) - tz unused (epoch diff is TZ-invariant).
+        // DATEDIFF(part$, date1, date2, [tz]): D counts days on the local wall
+        // clock, H/N/S count elapsed time.
         std::string part = args[0].as_string()->data;
         double d1 = value_to_epoch(args[1]);
         double d2 = value_to_epoch(args[2]);
         double diff = d2 - d1;
-        if (part == "D")      return Value::make_f64(diff / 86400);
+        if (part == "D") {
+            auto wall = [](double epoch) {
+                int64_t y, mo, d, h, mi, se, wd;
+                jdb_epoch_to_civil_local(epoch, y, mo, d, h, mi, se, wd);
+                return (double)(jdb_days_from_civil(y, mo, d) * 86400 + h * 3600 + mi * 60 + se) +
+                       (epoch - std::floor(epoch));
+            };
+            return Value::make_f64((wall(d2) - wall(d1)) / 86400);
+        }
         else if (part == "H") return Value::make_f64(diff / 3600);
         else if (part == "N") return Value::make_f64(diff / 60);
         else if (part == "S") return Value::make_f64(diff);

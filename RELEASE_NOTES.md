@@ -9,10 +9,13 @@ Convention: one section per released version, newest at the top. Pre-release / u
 ### Breaking
 
 - **`PI` and `E` are now `MATH.PI` and `MATH.E`.** The bare names are gone; `MATH.PI()` and `MATH.E()` read the constants too. `E` and `PI` are ordinary names again, so an event handler can take its argument as `e` in compiled code as well. Replace `PI` with `MATH.PI` and `E` with `MATH.E` in existing programs.
+- **`FUNC ... AS INTEGER` and `AS BOOLEAN` now return that type.** Before, both backends ignored the declared return type, so `RETURN 2.7` from an `AS INTEGER` function answered `2.7`; now it answers `2`, as `DIM x AS INTEGER = 2.7` does. Under `-c` the result is an INTEGER, so `total = total + Twice(i)` with an INTEGER `total` compiles without `CINT`.
+- **A `FUNC` or `SUB` named like a builtin is rejected in every build and by the native compiler too.** Before, `-c` accepted `FUNC Count`, and the interpreter accepted `FUNC MsgBox` in a build without `FORMS`.
 
 ### Language
 
 - **`WHILE condition ... WEND`**, the classic BASIC loop. It is the same loop as `DO WHILE condition ... LOOP` in the interpreter and in compiled programs; `EXITDO` and `CONTINUEDO` work inside it, and `PRETTY` indents it.
+- **`DATEDIFF("D", ...)` counts days on the local clock.** Two midnights are a whole number of days apart, also across a daylight saving change: January 1 to October 1 is 273, not 272.958. `H`, `N` and `S` still count elapsed time.
 
 ### Native compiler
 

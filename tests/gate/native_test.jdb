@@ -1670,6 +1670,25 @@ Assert(2890,DATEDIFF("D", dte_a, dte_b) = 2)
 Assert(2891,FORMAT_DATE(DATEADD("D", 2, dte_a), "%Y-%m-%d %H:%M") = "2026-03-30 12:00")
 DIM dte_span = DATERANGE(CDATE("2026-03-28"), CDATE("2026-03-31"), "D")
 Assert(2892,LEN(dte_span) = 4)
+' Calendar days between two midnights are whole, across any clock change.
+Assert(2908,DATEDIFF("D", CDATE("2026-01-01"), CDATE("2026-10-01")) = 273)
+Assert(2909,DATEDIFF("D", CDATE("2026-10-01"), CDATE("2026-01-01")) = -273)
+' A FUNC declared AS INTEGER or AS BOOLEAN answers that type.
+FUNC RetInt2908(x AS DOUBLE) AS INTEGER
+    RETURN x
+ENDFUNC
+FUNC RetBool2908(x AS INTEGER) AS BOOLEAN
+    RETURN x > 0
+ENDFUNC
+DIM rti_total AS INTEGER = 0
+DIM rti_i AS INTEGER
+FOR rti_i = 1 TO 3
+    rti_total = rti_total + RetInt2908(rti_i * 2)
+NEXT
+Assert(2910,rti_total = 12)
+Assert(2911,RetInt2908(2.7) = 2)
+Assert(2912,TYPEOF(RetInt2908(2.7)) = "INT64")
+Assert(2913,TYPEOF(RetBool2908(3)) = "BOOLEAN")
 Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.

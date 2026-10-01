@@ -1620,7 +1620,9 @@ program bakes the modules it imports into the executable.
 
 ## Functions
 
-**Reserved names:** every built-in function name is reserved. Defining a `FUNC` or `SUB` whose name matches a builtin (e.g. `SUB Outer()` vs the APL builtin `OUTER`) is rejected at load time with `collides with the builtin function ... - choose another name`, because call dispatch always resolves builtins first and the user definition could never be reached.
+**Reserved names:** every built-in function name is reserved. Defining a `FUNC` or `SUB` whose name matches a builtin (e.g. `SUB Outer()` vs the APL builtin `OUTER`) is rejected at load time with `collides with the builtin function ... - choose another name`, because call dispatch always resolves builtins first and the user definition could never be reached. The interpreter and the native compiler reject the same names, in every build: a name stays reserved when a build leaves its feature out, so `FUNC MsgBox` fails without the `FORMS` flag too.
+
+**Declared return type:** `FUNC name(...) AS INTEGER` (or `BYTE`, `INT16`, `INT32`, `INT64`, `BOOLEAN`) converts what `RETURN` hands back to that type, as `DIM x AS INTEGER = value` does: `RETURN 2.7` from an `AS INTEGER` function answers `2`. Arrays, maps, strings and `NONE` pass through unchanged.
 
 ### Map Functions
 
@@ -2122,7 +2124,7 @@ SQL.CLOSE(db)
 * **`NOW()`**: Returns a `DateTime` object for the current moment.
 * **`NOW_EPOCH()`**: Returns the current wallclock time as plain seconds since 1970-01-01 UTC. Unlike `TICK()` it is comparable across program runs; unlike `NOW()` it is an untagged number, safe to store in databases or JSON.
 * **`DATEADD(part$, num, date [, tz_hours])`**: Adds an interval to a `DateTime` object. Interval part$: D,H,N,S. Optional numeric UTC offset (hours, may be fractional e.g. `5.5`) is accepted for symmetry but has no effect on the arithmetic.
-* **`DATEDIFF(part$, date1, date2 [, tz_hours]) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S. Optional `tz_hours` accepted but has no effect (difference is TZ-independent).
+* **`DATEDIFF(part$, date1, date2 [, tz_hours]) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: D,H,N,S. `D` counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; `H`, `N` and `S` count elapsed time. Optional `tz_hours` is accepted but has no effect.
 * **`CVDATE(date_string$ [, tz_hours])`**: Converts a string (`"YYYY-MM-DD[ HH:MM[:SS]]"`) to a `DateTime` object. When `tz_hours` is given, the input string is interpreted as wall-clock time in that UTC offset (e.g. `CVDATE("2024-01-15 14:00:00", 2)` yields the same instant as `CVDATE("2024-01-15 12:00:00", 0)`).
 * **`FORMAT_DATE(date, format_string$ [, tz_hours]) -> string$`**: Formats a `DateTime` using C-style specifiers (`%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, ...). Without `tz_hours` the wall-clock is local time; with `tz_hours` the output reflects the chosen UTC offset (`0` = UTC, `2` = UTC+2, `-5` = UTC−5, `5.5` = UTC+5:30).
 * **`DATE.UTC(year, month, day [, hour [, minute [, second]]]) -> DateTime`**: Builds a `DateTime` from UTC components. Month is 1-12, day is 1-31. Omitted time components default to zero.

@@ -18,6 +18,7 @@ struct CompilerScope {
     // the name inside this function emit LOAD_STATIC / STORE_STATIC.
     std::unordered_map<std::string, uint16_t> statics;
     bool is_function = false;
+    VarType return_type = VarType::NONE;
 };
 
 class Compiler {

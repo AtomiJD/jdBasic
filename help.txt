@@ -701,7 +701,7 @@ Description: Adds a time interval to a date. part$ is Y, M, W, D, H, N or S. Y a
 
 [DATEDIFF]
 Syntax: DATEDIFF(part$, date1, date2 [, tz_hours])
-Description: Returns the difference between two dates in a specified time unit. Optional tz_hours accepted but has no effect (difference is TZ-independent).
+Description: Returns the difference between two dates in a specified time unit: D (days), H (hours), N (minutes), S (seconds). D counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; H, N and S count elapsed time. Optional tz_hours is accepted but has no effect.
 
 [DATERANGE]
 Syntax: DATERANGE(start, end [, unit$="D"] [, step=1])

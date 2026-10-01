@@ -865,25 +865,26 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
         if (!stmt) continue;
         if (stmt->kind != StmtKind::FUNCTION && stmt->kind != StmtKind::SUB) continue;
         bool is_sub = (stmt->kind == StmtKind::SUB);
+        if (stmt->label != "__EXPORT__" && builtin_sig(stmt->func_name))
+            report_error(stmt->source_file(), stmt->line,
+                std::string(is_sub ? "SUB " : "FUNC ") + stmt->func_name +
+                " collides with the builtin function " + stmt->func_name +
+                " - choose another name");
         bool returns_string = (!is_sub && !stmt->func_name.empty() &&
                                stmt->func_name.back() == '$');
         int ret_tag = is_sub ? -1 : (returns_string ? 2 : 1);
-        // Explicit `FUNC name(...) AS <type>` is authoritative - skip the
-        // Phase 3 heuristic guesses entirely. Maps every VarType to its
-        // JD_TAG_*. This is the supported way for FUNCs that return non-
-        // numeric values to advertise their shape; without it the codegen
-        // falls back to f64 and the caller bit-puns through a double.
-        // INT/BOOL types reuse the f64 numeric default (jdBasic's native
-        // numeric ABI is f64; the i64 promote path needs more codegen
-        // plumbing - caller's `i64_local + i64_call` ends up `add i64 +
-        // f64` because the FUNC sig stays f64. Tracked separately.).
+        // Explicit `FUNC name(...) AS <type>` is authoritative and maps the
+        // VarType to its JD_TAG_*; without it the Phase 3 heuristic decides.
         if (!is_sub) {
             switch (stmt->return_type) {
                 case VarType::STRING:  ret_tag = JD_TAG_STR;  break;
                 case VarType::ARRAY:
                 case VarType::TENSOR:  ret_tag = JD_TAG_ARR;  break;
                 case VarType::OBJECT:  ret_tag = JD_TAG_VM_HANDLE; break;
-                default: break;  // numeric / BOOLEAN / NONE → keep heuristic
+                case VarType::BYTE: case VarType::INT16:
+                case VarType::INT32: case VarType::INT64: ret_tag = JD_TAG_I64; break;
+                case VarType::BOOLEAN: ret_tag = JD_TAG_BOOL; break;
+                default: break;  // floating point / NONE: keep heuristic
             }
         }
         if (is_sub && stmt->params().size() == 1 && uses_forms &&

@@ -1193,6 +1193,15 @@ void Compiler::compile_for(const Stmt& stmt) {
 void Compiler::compile_return(const Stmt& stmt) {
     if (stmt.expr) {
         compile_expr(*stmt.expr);
+        switch (current_scope().return_type) {
+            case VarType::BOOLEAN: case VarType::BYTE:
+            case VarType::INT16: case VarType::INT32: case VarType::INT64:
+                current_chunk().emit(OpCode::CAST, stmt.line);
+                current_chunk().emit_u8(static_cast<uint8_t>(vartype_to_valuetype_byte(current_scope().return_type) |
+                                        CAST_SCALAR_ONLY), stmt.line);
+                break;
+            default: break;
+        }
         current_chunk().emit(OpCode::RETURN_VAL, stmt.line);
     } else {
         current_chunk().emit(OpCode::RETURN_VOID, stmt.line);
@@ -1286,6 +1295,7 @@ void Compiler::compile_function(const Stmt& stmt) {
 
     scopes.push_back(CompilerScope{});
     current_scope().is_function = true;
+    current_scope().return_type = stmt.return_type;
     // Propagate source file for debugger (module file, or inherit from main chunk)
     current_chunk().source_file = !stmt.source_file().empty()
         ? stmt.source_file() : scopes[0].chunk.source_file;

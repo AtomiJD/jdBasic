@@ -193,7 +193,7 @@ int16_t VM::read_i16() {
 
 void VM::reject_builtin_collision(const FuncProto& f) const {
     if (f.is_exported) return; // module exports are namespaced on IMPORT
-    if (!native_find(f.name)) return;
+    if (!native_find(f.name) && !builtin_sig(f.name)) return;
     throw jdError(ErrCode::SYNTAX_ERROR,
         std::string(f.is_sub ? "SUB " : "FUNC ") + f.name +
         " collides with the builtin function " + f.name + " - choose another name");
@@ -2632,6 +2632,10 @@ void VM::run() {
         case OpCode::CAST: {
             uint8_t target = read_byte();
             Value v = pop();
+            if (target & CAST_SCALAR_ONLY) {
+                target &= static_cast<uint8_t>(~CAST_SCALAR_ONLY);
+                if (!is_numeric(v.type)) { push(v); break; }
+            }
             push(cast_value(v, static_cast<ValueType>(target)));
             break;
         }
