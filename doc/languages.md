@@ -556,7 +556,7 @@ PRINT x, b[0] ' Output: 200 hello
 
 ## Reactive Variables and Assignment
 
-Reactive variables needs to be created explicitly with `DIM`.
+Reactive variables need to be created explicitly with `DIM`.
 
 **`DIM var AS REACT type]`**
 Declares a reactive variable. The `AS REACT` clause is used for specific types.
@@ -1034,7 +1034,8 @@ FOR EACH i, name$ IN SPLIT("ann,bob", ",")
     PRINT i; " "; name$
 NEXT
 ```
-* **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
+* **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met. The condition is tested after the body, so the body runs at least once.
+* **`DO WHILE condition ... LOOP`** / **`DO UNTIL condition ... LOOP`**: The same loop with the test before the body; if the condition fails at the start, the body never runs.
 * **`WHILE condition ... WEND`**: The classic BASIC form of `DO WHILE condition ... LOOP`; the body runs as long as the condition is true. `EXITDO` and `CONTINUEDO` work inside it.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`EXITFUNC`, `EXITDO`, `EXITFOR`, `EXIT SWITCH`**: Exiting functions, loops and a `SWITCH` block.
@@ -1226,7 +1227,7 @@ ENDTRY
 * **`RUN`**: Compiles and runs the program currently in memory.
 * **`TRON` / `TROFF`**: Turns instruction tracing on or off.
 * **`? expression`**: REPL shorthand for `PRINT`: a line that starts with `?` runs as `PRINT` with the rest of the line (`? x * 2`, `?"hi"`). Only typed commands take it; in program code `?` is a syntax error.
-* **`LOADWS "workspacename"`**: Loads a source file and all variables of an saved workspace from disk into memory.
+* **`LOADWS "workspacename"`**: Loads a source file and all variables of a saved workspace from disk into memory.
 * **`SAVEWS "workspacename"`**: Saves the source code and variable (Workspace) in memory to a file on disk.
 * **`CLEARWS`**: Empties source code, p-code, and all global variables
 * **`NEW`**: Empties the source code, compiled p-code, and user-defined function tables.
@@ -1302,7 +1303,7 @@ The Ctrl+F1 to F4 hook is only active when jdBasic was launched as the REPL. Sta
     PRINT "Running on: " + OS.GETOS()
     ```
 
-  * **`OS.ARGS() -> array`**: Returns a 1D array of strings containing the command-line arguments passed to the jdBasic interpreter.
+* **`OS.ARGS() -> array`**: Returns a 1D array of strings. Element 0 is the path of the script (or of the compiled `.exe`), the following elements are the arguments given after it on the command line.
 
     ```basic
     CmdArgs = OS.ARGS()
@@ -3199,8 +3200,8 @@ A lightweight fire-and-forget particle system for effects (explosions, sparks, d
 
 #### Turtle
   
-* **`TURTLE.FORWARD distance`**: Moves the turte forward with the distance at the given angle.
-* **`TURTLE.BACKWARD distance`**: Moves the turte backward with the distance at the given angle.
+* **`TURTLE.FORWARD distance`**: Moves the turtle forward with the distance at the given angle.
+* **`TURTLE.BACKWARD distance`**: Moves the turtle backward with the distance at the given angle.
 * **`TURTLE.LEFT degrees`**: Subtract degrees to the turles angle.
 * **`TURTLE.RIGHT degrees`**: Adds degrees to the turles angle.
 * **`TURTLE.PENUP`**: Stop drawing while moving.
@@ -3424,7 +3425,7 @@ This section describes functions for low-level, background-threaded tasks, disti
 
 ### Async Functions
 
-* **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronius.
+* **`ASYNC FUNC FUNCTIONNAME(args)`**: Marks a function as asynchronous.
 * **`AWAIT task`**: Waits for the given task to be completed and returns the result of the function.
 
 ### LLM Streaming via Channel (sugar)
@@ -4499,7 +4500,7 @@ Every documented builtin, linked to the section that describes it.
 
 **N** · [NET.ACCEPT](#tcp-and-udp-sockets-net) · [NET.ALIVE](#tcp-and-udp-sockets-net) · [NET.CLOSE](#tcp-and-udp-sockets-net) · [NET.CONNECT](#tcp-and-udp-sockets-net) · [NET.ERROR$](#tcp-and-udp-sockets-net) · [NET.LISTEN](#tcp-and-udp-sockets-net) · [NET.PEER$](#tcp-and-udp-sockets-net) · [NET.PORT](#tcp-and-udp-sockets-net) · [NET.RECV$](#tcp-and-udp-sockets-net) · [NET.RECVFROM](#tcp-and-udp-sockets-net) · [NET.RECVLINE$](#tcp-and-udp-sockets-net) · [NET.SEND](#tcp-and-udp-sockets-net) · [NET.SENDTO](#tcp-and-udp-sockets-net) · [NET.UDP](#tcp-and-udp-sockets-net) · [NEW](#development--debugging) · [NORMALIZE](#array--matrix-functions) · [NOW](#system-and-time-functions) · [NOW_EPOCH](#system-and-time-functions)
 
-**O** · [ON](#system--flow-control) · [ONES](#array--matrix-functions) · [OPTION](#system--flow-control) · [OS.EXEC](#os-functions) · [OS.FEATURE](#os-functions) · [OS.GETOS](#os-functions) · [OS.HOSTNAME$](#os-functions) · [OS.IP$](#os-functions) · [OS.LOAD](#os-functions) · [OS.SCREENSHOT](#os-functions) · [OUTER](#array--matrix-functions) · [OUTPUT.CAPTURE_BEGIN](#output-capture) · [OUTPUT.CAPTURE_END$](#output-capture) · [OUTPUT.CAPTURE_PEEK$](#output-capture)
+**O** · [ON](#system--flow-control) · [ONES](#array--matrix-functions) · [OPTION](#system--flow-control) · [OS.ARGS](#os-functions) · [OS.EXEC](#os-functions) · [OS.FEATURE](#os-functions) · [OS.GETOS](#os-functions) · [OS.HOSTNAME$](#os-functions) · [OS.IP$](#os-functions) · [OS.LOAD](#os-functions) · [OS.SCREENSHOT](#os-functions) · [OUTER](#array--matrix-functions) · [OUTPUT.CAPTURE_BEGIN](#output-capture) · [OUTPUT.CAPTURE_END$](#output-capture) · [OUTPUT.CAPTURE_PEEK$](#output-capture)
 
 **P** · [PACK$](#string-functions) · [PACKSIZE](#string-functions) · [PARTICLE.CLEAR](#example-custom-studio-monitor) · [PARTICLE.COUNT](#example-custom-studio-monitor) · [PARTICLE.DRAW](#example-custom-studio-monitor) · [PARTICLE.EMIT](#example-custom-studio-monitor) · [PATH.BASENAME$](#filesystem) · [PATH.DIRNAME$](#filesystem) · [PATH.EXT$](#filesystem) · [PATH.JOIN$](#filesystem) · [PATH.NORMALIZE$](#filesystem) · [PDF.TEXT$](#file-io-functions) · [PLACE](#array--matrix-functions) · [PLOTRAW](#graphics-and-multimedia-functions) · [POP](#array--matrix-functions) · [POW](#matharithmeticround-functions) · [PRETTY](#development--debugging) · [PRINT](#console-io-functions) · [PSET](#graphics-and-multimedia-functions) · [PWD](#filesystem) · [PY.DIR$](#python-integration-build-flag-python) · [PY.EVAL](#python-integration-build-flag-python) · [PY.GET](#python-integration-build-flag-python) · [PY.HELP$](#python-integration-build-flag-python) · [PY.SET](#python-integration-build-flag-python) · [PYTHON$](#python-integration-build-flag-python)
 
