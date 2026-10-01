@@ -3124,7 +3124,7 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
                 case TokenType::GT: case TokenType::GE:
                 case TokenType::AND: case TokenType::OR:
                 case TokenType::XOR: case TokenType::ANDALSO:
-                case TokenType::ORELSE:
+                case TokenType::ORELSE: case TokenType::IN:
                     return make(K::BOOLEAN);
                 default: break;
             }
@@ -9816,7 +9816,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMValueRef vals[] = { r_map, r_str, r_arr };
             LLVMBasicBlockRef bbs[] = { bb_map_end, bb_str_end, bb_arr_end };
             LLVMAddIncoming(phi, vals, bbs, 3);
-            return { phi, JD_TAG_I64 };
+            return { phi, JD_TAG_BOOL };
         }
         // A runtime-tagged needle: a string reads the array by content,
         // anything else as a number; the branch is taken at runtime.
@@ -9848,7 +9848,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMValueRef vals[] = { found_str, found_num };
             LLVMBasicBlockRef bbs[] = { bb_str_end, bb_num_end };
             LLVMAddIncoming(phi, vals, bbs, 2);
-            return { phi, JD_TAG_I64 };
+            return { phi, JD_TAG_BOOL };
         }
         if (lhs.tag == JD_TAG_RUNTIME && lhs.runtime_tag &&
             (rhs.tag == JD_TAG_STR || rhs.tag == JD_TAG_NATIVE_MAP)) {
@@ -9861,28 +9861,28 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_binary(const Expr& expr) {
             LLVMValueRef pos = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "instr");
             LLVMValueRef cmp = LLVMBuildICmp(builder, LLVMIntSGE, pos,
                                               LLVMConstInt(i64_type, 0, 0), "in");
-            return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), JD_TAG_I64 };
+            return { LLVMBuildZExt(builder, cmp, i64_type, "ext"), JD_TAG_BOOL };
         }
         // String in map: key lookup
         if (lhs.tag == JD_TAG_STR && rhs.tag == JD_TAG_NATIVE_MAP) {
             auto& fn = runtime_funcs["__map_has"];
             LLVMValueRef args[] = { rhs.val, lhs.val };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "mhas"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "mhas"), JD_TAG_BOOL };
         }
         // String in array: element-wise strcmp
         if (lhs.tag == JD_TAG_STR && rhs.tag == JD_TAG_ARR) {
             auto& fn = runtime_funcs["__arr_has_str"];
             LLVMValueRef args[] = { rhs.val, lhs.val };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahs"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahs"), JD_TAG_BOOL };
         }
         // Number in array
         if ((lhs.tag == JD_TAG_I64 || lhs.tag == JD_TAG_F64) && rhs.tag == JD_TAG_ARR) {
             auto& fn = runtime_funcs["__arr_has_num"];
             LLVMValueRef num = coerce_to(lhs, f64_type);
             LLVMValueRef args[] = { rhs.val, num };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahn"), JD_TAG_I64 };
+            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 2, "ahn"), JD_TAG_BOOL };
         }
-        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_I64 };
+        return { LLVMConstInt(i64_type, 0, 0), JD_TAG_BOOL };
     }
 
     // Power operator (^)

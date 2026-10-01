@@ -1767,6 +1767,13 @@ ENDTRY
 Assert(2930,fmt_err2926 = "caught")
 Assert(2931,FORMAT$("{:>6.2f}", 2.5) = "  2.50")
 Assert(2932,FORMAT$("{:.0%}|{:+d}|{: .1f}", 0.42, 7, 1.5) = "42%|+7| 1.5")
+
+' IN answers a BOOLEAN for a string, an array and a map haystack.
+Assert(2933,STR$("st" IN "haystack") = "TRUE")
+Assert(2934,STR$(20 IN [10, 20, 30]) = "TRUE")
+Assert(2935,STR$("z" IN {"k": 1}) = "FALSE")
+DIM in_b2936 AS BOOLEAN = "st" IN "haystack"
+Assert(2936,in_b2936)
 Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.
