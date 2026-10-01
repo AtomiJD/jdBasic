@@ -307,7 +307,10 @@ live under `MATH.`: `MATH.PI` and `MATH.E`.
 ## 9. Modules
 
 A program imports a module by name; jdBasic looks next to the program, in
-`JDBASIC_PATH` and in its own `lib/` folder.
+the working directory (and a `modules/` folder in each), in `JDBASIC_PATH`,
+in `~/.jdbasic/lib` and in a `lib/` folder next to the executable. A release
+bundle ships that `lib/` folder; when you run `build/jdBasic.exe` from a
+source checkout, set `JDBASIC_PATH` to the repo's `lib` folder.
 
 ```basic
 IMPORT TESTKIT

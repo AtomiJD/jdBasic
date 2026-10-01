@@ -17,7 +17,7 @@ RECT 0,   0, T, T, 50, 140, 50, TRUE   ' Tile 1: grass
 RECT T,   0, T, T, 120, 80, 40, TRUE   ' Tile 2: wall
 RECT T*2, 0, T, T, 40, 80, 180, TRUE   ' Tile 3: water
 RECT T*3, 0, T, T, 180, 160, 80, TRUE  ' Tile 4: sand/path
-temp_ts$ = "D:/usr/dev/cc/fluppi/generated_sprites/demo_tileset.png"
+temp_ts$ = MKTEMP$("tileset") + ".png"
 GFX.SAVE_SCREENSHOT temp_ts$
 
 ' --- Now create the actual game screen ---
@@ -26,6 +26,7 @@ SETFONT "C:/Windows/Fonts/arial.ttf", 14
 
 ' Load tileset
 tileset = GFX.LOADIMAGE(temp_ts$)
+KILL temp_ts$
 
 ' --- Define the map (20x15 tiles = 320x240 pixels at 16x16) ---
 ' 0=empty, 1=grass, 2=wall, 3=water, 4=path
@@ -76,14 +77,14 @@ collision_data = [ _
 TILEMAP.CREATE "walls", tileset, collision_data, T, T
 
 ' --- Load or create player sprite ---
-' Try the AI-generated spritesheet, fall back to a simple colored rect
-SPRITE_FILE$ = "D:/usr/dev/cc/fluppi/generated_sprites/spritesheet.png"
+' Try the AI-generated spritesheet, fall back to a single sprite image
+SPRITE_FILE$ = "fluppi/generated_sprites/spritesheet.png"
 TRY
     hero = SPRITE.LOAD(SPRITE_FILE$, 64, 64)
     SPRITE.SCALE hero, 0.4  ' Scale down 64px to ~26px to fit 16px tiles
 CATCH
-    ' No spritesheet - create a simple placeholder
-    hero = SPRITE.LOAD("D:/usr/dev/cc/fluppi/test_sprite.png")
+    ' No spritesheet: load a single image
+    hero = SPRITE.LOAD("fluppi/generated_sprites/hasi.png")
     SPRITE.SCALE hero, 0.5
 ENDTRY
 

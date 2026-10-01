@@ -21,11 +21,13 @@ Ten tools, served as JSON-RPC 2.0 over HTTP POST `/mcp` on `127.0.0.1:7321`:
 
 ## Run it
 
+Start it from the repo root; `jdb_doc` reads `doc/languages.md` relative to the working directory:
+
 ```bash
-build/jdBasic.exe mcp/server.jdb
+build/jdBasic.exe jdb/demos/mcp_server/server.jdb
 ```
 
-The server binds to **127.0.0.1 only** (loopback). To expose it on the LAN, edit `mcp/server.jdb` and pass `"0.0.0.0"` as the second argument to `HTTP.SERVER.START`.
+The server binds to **127.0.0.1 only** (loopback). To expose it on the LAN, edit `jdb/demos/mcp_server/server.jdb` and pass `"0.0.0.0"` as the second argument to `HTTP.SERVER.START`.
 
 ## Hook it into Claude Code
 
@@ -42,7 +44,7 @@ The server binds to **127.0.0.1 only** (loopback). To expose it on the LAN, edit
 }
 ```
 
-When you open the repo in Claude Code, it'll prompt to trust the MCP server. Once approved, the tools become available as `mcp__jdbasic__jdb_eval`, `mcp__jdbasic__jdb_check`, `mcp__jdbasic__jdb_load`, `mcp__jdbasic__jdb_vars`, `mcp__jdbasic__jdb_funcs`, `mcp__jdbasic__jdb_save_state`, `mcp__jdbasic__jdb_restore_state`, `mcp__jdbasic__jdb_run_native`, `mcp__jdbasic__jdb_doc`, and `mcp__jdbasic__echo`. Start the server first (`build/jdBasic.exe mcp/server.jdb` in another terminal), then ask Claude to use them.
+When you open the repo in Claude Code, it'll prompt to trust the MCP server. Once approved, the tools become available as `mcp__jdbasic__jdb_eval`, `mcp__jdbasic__jdb_check`, `mcp__jdbasic__jdb_load`, `mcp__jdbasic__jdb_vars`, `mcp__jdbasic__jdb_funcs`, `mcp__jdbasic__jdb_save_state`, `mcp__jdbasic__jdb_restore_state`, `mcp__jdbasic__jdb_run_native`, `mcp__jdbasic__jdb_doc`, and `mcp__jdbasic__echo`. Start the server first (`build/jdBasic.exe jdb/demos/mcp_server/server.jdb` in another terminal), then ask Claude to use them.
 
 ## Smoke test from the command line
 
@@ -106,9 +108,8 @@ Every incoming request and any handler exception is logged to the server's stder
 ## File layout
 
 ```
-mcp/
+jdb/demos/mcp_server/
 ├── README.md     ← this file
-├── server.jdb    ← the server, ~700 lines of jdBasic
-└── jdbasic_history.txt  ← REPL-style history written when the server stops
+└── server.jdb    ← the server, ~700 lines of jdBasic
 .mcp.json         ← Claude Code config (repo root)
 ```

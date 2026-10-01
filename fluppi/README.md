@@ -29,10 +29,11 @@ The game resolves all data relative to its own folder, so the working directory 
 | `rpg_dialog.jdb` / `rpg_quest.jdb` | Dialogue and quest state machines |
 | `rpg_music.jdb` / `sq_part15.jdb` | Music driven by the `SOUND.*` sequencer |
 | `RPG_TYPES.jdb` / `rpg_assets.jdb` | Shared types and asset loading |
-| `rpg_data/` | All content as JSON: characters, enemies, items, skills, quests, shops, plus the `.tmx` Tiled maps |
+| `rpg_data/` | All content as JSON: characters, enemies, items, skills, quests, shops, music, save games |
+| `maps/` | The `.tmx` Tiled maps (`village.tmx`, `vally_house.tmx`) |
 | `sprite_gen.jdb` / `transi.jdb` | Dev tools: AI sprite-sheet generation (needs an OpenAI key) |
 | `doc/` | Design docs (German): project structure, tilemap guide, the story bible |
 
 ## Modding
 
-The whole game is data-driven: add an enemy in `rpg_data/enemies.json`, a quest in `rpg_data/quests.json`, or open the maps in [Tiled](https://www.mapeditor.org/); no engine changes are needed. `doc/TILEMAP_GUIDE.md` explains the map conventions.
+The whole game is data-driven: add an enemy in `rpg_data/enemies.json`, a quest in `rpg_data/quests.json`, or open the maps in `maps/` in [Tiled](https://www.mapeditor.org/); no engine changes are needed. `doc/TILEMAP_GUIDE.md` explains the map conventions.

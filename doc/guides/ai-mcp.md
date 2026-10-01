@@ -229,7 +229,7 @@ for the agent are in
 `jdb_eval` and `jdb_run_native` run arbitrary code on your machine, with
 access to files, processes, the network and native DLLs. Treat the server like
 a local shell: run it under your own user account, not as administrator or
-root, and do not make an HTTP transport of it reachable from the internet.
+root, and do not make the HTTP demo server (`jdb/demos/mcp_server`) reachable from the internet.
 See [MCP.md](../MCP.md#security).
 
 ## Part 2: AI inside your program

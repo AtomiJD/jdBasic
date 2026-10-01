@@ -301,11 +301,11 @@ DO WHILE PLAY.BUSY
 LOOP
 ```
 
-On the Fruit Jam `SND.OUT(1)` selects the speaker and `SND.OUT(0)` the headphone jack.
+On the Fruit Jam sound starts on the headphone jack at volume 30; `SND.OUT(1)` selects the speaker and `SND.OUT(0)` the jack again.
 
 ### Wi-Fi
 
-A started radio takes about 100 KB of internal RAM, so turn it on for the job and off again with `WIFI.OFF`. `WIFI.CONNECT(ssid$, password$)` joins a network and answers 0 on success; `WIFI.AUTO()` takes the two lines of `wifi.txt` in the flash store (ssid, then password). `HTTP.GET$` and `HTTP.POST$` then fetch over http and https, and `NTP.SYNC` sets the clock. Board only:
+On the ESP32-S3 a started radio takes about 113 KB of internal RAM and `WIFI.OFF` gives about 44 KB of it back, so turn it on for the job and off again. `WIFI.CONNECT(ssid$, password$)` joins a network and answers 0 on success; `WIFI.AUTO()` takes the two lines of `wifi.txt` in the flash store (ssid, then password). `HTTP.GET$` and `HTTP.POST$` then fetch over http and https, and `NTP.SYNC` sets the clock. Board only:
 
 ```basic
 IF WIFI.AUTO() <> 0 THEN

@@ -56,9 +56,9 @@ that way: `demos/boot.jdb` is one line, `KBD.LAYOUT "DE"`, sent with
 than something in the image.
 
 Sound starts quiet on every board, `PLAY.VOLUME` raises it: the Fruit
-Jam at 20 percent, the PicoCalc's buzzer at 60, the ESP32 codec at 50.
-The Fruit Jam plays through its speaker by default; `SND.OUT 0` moves
-it to the headphone jack.
+Jam at 30 percent, the PicoCalc's buzzer at 60, the ESP32 codec at 50.
+The Fruit Jam plays through its headphone jack by default; `SND.OUT 1`
+moves it to the speaker.
 
 ## The boards
 

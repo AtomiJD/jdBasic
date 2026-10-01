@@ -280,19 +280,16 @@ nothing, and the PHY, waking from modem sleep in that moment, aborted
 for want of a timer. The price is speed on the interpreter's own hot
 paths; `bench.jdb` on this build: 100000 squares summed as a vector
 352 ms, 100000 additions in a loop 942 ms, 2000 concatenations 155 ms.
-For comparison the PicoCalc reports 120376 free at a bare prompt. Even
-with PSRAM out the S3 has about half again as much room, on a part with
-8 KB less SRAM, because the RP2350 build spends 128 KB of its on a stack
-in the linker script and carries the panel, keyboard and flash store as
-well.
+For comparison the PicoCalc reports 351720 free at a bare prompt and a
+Fruit Jam 209912, where the S3 reports 229615 next to its PSRAM.
 
 A jdBasic array costs about 24.2 bytes an element, measured twice:
 
     IOTA(50000)    1212420 bytes of PSRAM
     IOTA(100000)   2424836 bytes of PSRAM
 
-So roughly 340,000 elements fit, against the 2,500 or so that fit in
-what a PicoCalc has left at its prompt. What ends the run is the largest
+So roughly 340,000 elements fit, against about 14,000 in the 351720
+bytes a PicoCalc has left at its prompt. What ends the run is the largest
 free block rather than the total: IOTA(200000) wants 4.85 MB in one
 piece and fails while 4.72 MB is the biggest the heap will hand over.
 

@@ -51,9 +51,9 @@ In your client, ask the agent to call `jdb_eval` with `code: "PRINT SUM(IOTA(20)
 
 ## Transports
 
-`jdbasic --mcp` speaks **stdio** JSON-RPC and works with every MCP client.
+`jdbasic --mcp` speaks **stdio** JSON-RPC and works with every MCP client. It is the only transport built into the binary; there is no HTTP command-line option.
 
-A second transport, an **HTTP** server, is available for remote / containerised setups:
+An **HTTP** variant exists as a jdBasic program, the demo server in `jdb/demos/mcp_server/server.jdb` (see its [README](../jdb/demos/mcp_server/README.md)). It serves MCP's Streamable HTTP transport on `127.0.0.1:7321` and offers a smaller tool set: in-memory `jdb_save_state` / `jdb_restore_state` in place of the workspace tools, and no `jdb_recompile`, `jdb_reset`, `jdb_stop` / `jdb_status` / `jdb_resume` or `timeout_ms`. Start it from the repo root with `build/jdBasic.exe jdb/demos/mcp_server/server.jdb`, then point the client at it:
 
 ```json
 {
@@ -63,7 +63,7 @@ A second transport, an **HTTP** server, is available for remote / containerised 
 }
 ```
 
-Run `jdbasic --mcp-http 7321` in a long-lived terminal or systemd unit. **Bind to localhost only** unless you put authentication in front; there is no built-in auth and the tools can execute arbitrary code (see *Security* below).
+It binds to localhost only. Keep it that way unless you put authentication in front; there is no built-in auth and the tools can execute arbitrary code (see *Security* below).
 
 ---
 
@@ -75,7 +75,7 @@ Drop the snippet from *Quickstart* into the project's `.mcp.json` (Claude Code) 
 
 ### ChatGPT Desktop (Mac / Windows)
 
-ChatGPT Desktop ships native MCP stdio support. Settings → *Developer* → *MCP Servers* → add an entry with the same `command` / `args` / `cwd` shape as above. The browser-only ChatGPT (chat.openai.com) does **not** speak MCP stdio; for that you need the HTTP transport plus a public HTTPS tunnel (Cloudflare Tunnel / ngrok) and your own auth proxy. Treat that as remote code execution and gate it behind a bearer token at minimum.
+ChatGPT Desktop ships native MCP stdio support. Settings → *Developer* → *MCP Servers* → add an entry with the same `command` / `args` / `cwd` shape as above. The browser-only ChatGPT (chat.openai.com) does **not** speak MCP stdio; for that you need the HTTP demo server plus a public HTTPS tunnel (Cloudflare Tunnel / ngrok) and your own auth proxy. Treat that as remote code execution and gate it behind a bearer token at minimum.
 
 ### Cursor / Cline / Continue / Zed / Windsurf
 
@@ -97,10 +97,10 @@ All tools share a single persistent VM instance: variables, `FUNC`s, and loaded 
 | `jdb_vars` | List currently-bound variables, each with its shape and a length-capped value preview (`max_chars`). |
 | `jdb_funcs` | List user-defined `FUNC` / `SUB` / `ASYNC FUNC` with signatures. |
 | `jdb_doc` | Substring lookup against `doc/languages.md`. Authoritative answer for "does jdBasic have function X". |
-| `jdb_savews` / `jdb_loadws` | Persist / restore user globals + `FUNC`/`SUB` definitions to a `<name>.jsws` workspace file. |
+| `jdb_savews` / `jdb_loadws` | Persist / restore a `<name>.jsws` workspace file in the server's working directory: the user globals plus the source of every successful `jdb_eval` call this session, so `FUNC`/`SUB` defined through `jdb_eval` come back. Functions that came from `jdb_load` or `jdb_recompile` are not saved and are undefined after `jdb_loadws`; load the file again. `jdb_loadws` resets the VM first. |
 | `jdb_reset` | Clear the VM to a clean slate (the `CLEARWS` equivalent); workspace files on disk are untouched. |
 | `jdb_stop` / `jdb_status` / `jdb_resume` | Pause a running script, report VM state (`running` / `stopped` / `idle`), and continue after a `STOP`. The reader thread fast-paths `jdb_stop`/`jdb_status` so they answer even while another call is busy. |
-| `jdb_run_native` | Compile a snippet via the LLVM backend, run the resulting binary, capture stdout. **Requires the Full build (`NATIVEC=1`).** |
+| `jdb_run_native` | Run any shell command line in a child process and return combined stdout+stderr with the exit code. Despite the name it does not compile anything; to test a native build, pass e.g. `build/jdBasic.exe -c prog.jdb` and then the produced `.exe`. Optional `timeout_ms` (default 120000, 0 = wait forever); on timeout the call returns an error but the process may keep running. It gives the client a full shell on the host. |
 
 ### Optional builtin namespaces (build-flag gated)
 
@@ -119,7 +119,7 @@ Most code-execution MCP servers spawn a fresh interpreter per call. jdBasic does
 
 ### Why `jdb_doc` matters
 
-Models hallucinate language-specific builtins constantly. `jdb_doc` gives the agent a way to look up the real name in one tool call (e.g. asking for `MAP` returns the entry for `SELECT`), which catches mistakes before they hit `jdb_eval`.
+Models hallucinate language-specific builtins constantly. `jdb_doc` lets the agent check a name in one tool call before it hits `jdb_eval`. It is a case-insensitive substring match on the entry and heading lines of `doc/languages.md` and returns up to 8 hits, so query a full name: `MAP.EXISTS` returns that entry, while `MAP` alone returns the first 8 lines that contain those letters anywhere (the `Map` type, `FOR EACH`, `IMPORT` via `LLMAPI`, ...) and may never reach the `MAP.*` functions.
 
 ---
 
@@ -134,7 +134,7 @@ The MCP server build does **not** require LLVM. Native compilation does. Ship tw
 | `jdbasic-core-<os>-<arch>` | `MCPSERVER=1 HTTP=1` | ~8 MB | OpenSSL (system) |
 | `jdbasic-full-<os>-<arch>` | `MCPSERVER=1 HTTP=1 GFX=1 IMGUI=1 NATIVEC=1` | ~25 MB + libs | OpenSSL, SDL3, LLVM-18, `libjdbrt.so` |
 
-Most MCP users only need Core. Full is for users who want `jdb_run_native` or the GFX/IMGUI built-ins inside `jdb_eval`.
+Most MCP users only need Core. Full is for users who want to compile native `.exe`s (`jdbasic -c`, for example through `jdb_run_native`) or use the GFX/IMGUI built-ins inside `jdb_eval`.
 
 ### LLVM specifically
 
@@ -156,19 +156,19 @@ Generated native `.exe`s never link LLVM; they only need `libjdbrt.so` shipped a
 
 ## Security
 
-`jdb_eval` and `jdb_run_native` execute arbitrary code on the host. The VM exposes:
+`jdb_eval` and `jdb_run_native` execute arbitrary code on the host: `jdb_run_native` passes its `command` straight to the system shell, and the VM behind `jdb_eval` exposes:
 
 - Filesystem read/write (`OPEN`, `KILL`, `MKDIR`, ...)
 - Process spawn (`OS.EXEC`, `SHELL`)
 - Network I/O (`HTTP.GET`, sockets)
 - Native FFI (`DECLARE FUNC`)
 
-This is intentional, because it is a developer tool. **Do not expose the HTTP transport to the public internet**, and treat the stdio server as you would treat a local shell. Run it under your own user, not as root.
+This is intentional, because it is a developer tool. **Do not expose the HTTP demo server to the public internet**, and treat the stdio server as you would treat a local shell. Run it under your own user, not as root.
 
 ---
 
 ## Troubleshooting
 
 - **Client shows "tool not found"**: confirm `jdbasic --version` lists `MCP` in its features. If not, the binary was built without `MCPSERVER=1`.
-- **`jdb_run_native` errors with "native backend not built in"**: you have the Core build. Switch to Full.
+- **`jdbasic -c` fails inside `jdb_run_native`**: the binary has no native backend (Core build, no `NATIVEC`). Switch to Full. `jdb_run_native` itself works in every build.
 - **Hung calls**: set `JDBASIC_MCP_LOG=1` and check stderr; long-running `jdb_eval` calls may be a slow user program (e.g. an infinite `DO LOOP`). The first `import numpy` (or another big package) in a `PYTHON` build can take tens of seconds on a cold process while the OS / antivirus scans its native modules. Raise `timeout_ms` on that first call; later imports are instant.

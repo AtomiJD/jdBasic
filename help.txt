@@ -528,7 +528,7 @@ Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime
 
 [CDBL]
 Syntax: CDBL(x)
-Description: Converts explicitly to a double-precision floating-point number.
+Description: Converts explicitly to a double-precision floating-point number. A string is not parsed and gives 0; VAL converts text to a number.
 
 [CEIL]
 Syntax: CEIL(numeric_expression)
@@ -548,7 +548,7 @@ Description: Splits array into sub-arrays of length 'size' (last chunk may be sh
 
 [CINT]
 Syntax: CINT(x)
-Description: Casts a value to a 32-bit integer, truncating toward zero. Overflow wraps.
+Description: Casts a value to a 32-bit integer, truncating toward zero. Overflow wraps. A string is not parsed and gives 0 (CINT("7") is 0); VAL converts text to a number.
 
 [CIRCLE]
 Syntax: CIRCLE x, y, r, [fill], [r, g, b]
@@ -576,11 +576,11 @@ Description: Sets the system clipboard text.
 
 [CLNG]
 Syntax: CLNG(x)
-Description: Casts a value to a 64-bit integer, truncating toward zero.
+Description: Casts a value to a 64-bit integer, truncating toward zero. A string is not parsed and gives 0; VAL converts text to a number.
 
 [CLS]
-Syntax: CLS
-Description: Clears the console screen.
+Syntax: CLS [r, g, b]
+Description: Clears the console screen; with r, g, b the console background takes that color first. While a SCREEN window is open, CLS fills the window instead, black or with the given color.
 
 [CODEC.BASE64_DECODE$]
 Syntax: CODEC.BASE64_DECODE$(string$)
@@ -665,7 +665,7 @@ Description: Creates an instance of a COM Automation object (Windows only).
 
 [CSNG]
 Syntax: CSNG(x)
-Description: Roundtrips a number through 32-bit float precision, useful for forcing single-precision loss on doubles.
+Description: Roundtrips a number through 32-bit float precision, useful for forcing single-precision loss on doubles. A string is not parsed and gives 0; VAL converts text to a number.
 
 [CSTR]
 Syntax: CSTR(x)
@@ -701,7 +701,7 @@ Description: Adds a time interval to a date. part$ is Y, M, W, D, H, N or S. Y a
 
 [DATEDIFF]
 Syntax: DATEDIFF(part$, date1, date2 [, tz_hours])
-Description: Returns the difference between two dates in a specified time unit: D (days), H (hours), N (minutes), S (seconds). D counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; H, N and S count elapsed time. Optional tz_hours is accepted but has no effect.
+Description: Returns the difference between two dates in a specified time unit: D (days), H (hours), N (minutes), S (seconds); any other part$ gives seconds. D counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; H, N and S count elapsed time. Optional tz_hours is accepted but has no effect.
 
 [DATERANGE]
 Syntax: DATERANGE(start, end [, unit$="D"] [, step=1])
@@ -828,7 +828,7 @@ reads with no benefit. Interpreter treats DYNAMIC like ARRAY.
 
 [DROP_WHILE]
 Syntax: DROP_WHILE(predicate@, array)
-Description: Drops the longest prefix where predicate(elem) is TRUE, returning the remainder. Interpreter only.
+Description: Drops the longest prefix where predicate(elem) is TRUE, returning the remainder.
 
 [DUMP]
 Syntax: DUMP ["GLOBAL" | "LOCAL" | "STACK" | "REACT" | module_name$]
@@ -935,8 +935,8 @@ Syntax: FALSE
 Description: The boolean constant representing a false value.
 
 [FILE.EXISTS]
-Syntax: FILE.EXISTS(path$) -> integer
-Description: Returns 1 if the file or directory at path$ exists, 0 otherwise.
+Syntax: FILE.EXISTS(path$) -> boolean
+Description: Returns TRUE if the file or directory at path$ exists, FALSE otherwise. A compiled program gets 1 and 0.
 
 [FILE.ISDIR]
 Syntax: FILE.ISDIR(path$) -> integer
@@ -1108,7 +1108,7 @@ Description: Scatters many colored pixels into a streaming texture (with optiona
 
 [GFX.POLLEVENT]
 Syntax: GFX.POLLEVENT() -> string
-Description: Polls one pending window event and returns it as a string such as "QUIT", "KEYDOWN:Name", "MOUSEDOWN:n" or "NONE".
+Description: Polls one pending window event and returns it as a string: "QUIT", "KEYDOWN:Name", "KEYUP:Name" (Name is the SDL key name, such as "A" or "Space"), "MOUSEDOWN:n", "MOUSEUP:n" (n is the button number), "MOUSEMOVE:x,y", or "NONE" when no event of these kinds is pending.
 
 [GFX.SAVE_IMAGE]
 Syntax: GFX.SAVE_IMAGE(id, filename$)
@@ -1260,7 +1260,7 @@ Description: Buckets elements into a map keyed by key_fn(elem) coerced to string
 
 [AGG]
 Syntax: AGG(keys, values, fn@)
-Description: Group-and-reduce in one O(n) pass (APL key). Groups values by the matching keys entry, applies fn to each group's value-array, returns [[key, fn(group)], ...] in first-seen order with key type preserved. E.g. AGG(months, nights, LAMBDA g -> SUM(g)). Interpreter only.
+Description: Group-and-reduce in one O(n) pass (APL key). Groups values by the matching keys entry, applies fn to each group's value-array, returns [[key, fn(group)], ...] in first-seen order with key type preserved. E.g. AGG(months, nights, LAMBDA g -> SUM(g)).
 
 [GUI.AVAIL_HEIGHT]
 Syntax: GUI.AVAIL_HEIGHT() -> number
@@ -1475,8 +1475,8 @@ Syntax: SINH(x)
 Description: Hyperbolic sine. Vectorizes element-wise over arrays.
 
 [SORT]
-Syntax: SORT(array, [descending]) -> array
-Description: Returns a new 1D array sorted ascending, or descending when the flag is TRUE. Numbers compare numerically, strings lexicographically.
+Syntax: SORT(array [, descending]) -> array
+Description: Returns a new 1D array sorted ascending, or descending when the flag is TRUE. Numbers compare numerically, strings by character code (upper case before lower case). The descending flag works in the interpreter only; a compiled program uses REVERSE(SORT(array)).
 
 [SOUND.DEBUG]
 Syntax: SOUND.DEBUG() -> object
@@ -1628,7 +1628,7 @@ Description: Standard deviation of an array.
 
 [TALLY]
 Syntax: TALLY(array)
-Description: Distinct values with counts, [[value, count], ...], in first-seen order (value_counts). Numeric arrays compile native; string-key tallies are interpreter-only.
+Description: Distinct values with counts, [[value, count], ...], in first-seen order (value_counts). Works on numbers and strings, interpreted and compiled.
 
 [GUI.BEGIN]
 Syntax: GUI.BEGIN(title$, [x, y, w, h], [p_open], [flags])
@@ -2000,7 +2000,7 @@ Description: An operator that returns TRUE if a value exists within an array or 
 
 [INKEY$]
 Syntax: INKEY$()
-Description: Non-blocking check for a key press. Returns the key or an empty string.
+Description: Non-blocking check for a key press. Returns the key or an empty string. While a SCREEN window is open it reads the window's keys: the SDL key name ("A" for the A key, "Space", "Left"), CHR$(27) for Escape or for closing the window, CHR$(13) for Enter, CHR$(8) for Backspace, CHR$(9) for Tab. Only the last key since the previous call is kept.
 
 [INPUT]
 Syntax: INPUT [prompt$] [,|;] variable
@@ -2468,7 +2468,7 @@ Description: Registers an event handler (deprecated for error handling).
 
 [OPTION]
 Syntax: OPTION "option_name"
-Description: Sets a compiler or runtime option, such as "EXPLICIT".
+Description: Sets a compiler or runtime option. "EXPLICIT" and "STRICT" (off again with "EXPLICITOFF" and "NOSTRICT") control the checks of the native compiler: EXPLICIT makes an assignment to a name never declared with DIM a compile error, STRICT checks types (see STRICT). The interpreter does not report undeclared names; --lint does. "NOCOLOR" and "COLOR" switch colored error messages, "AUTOINDENT" and "NOAUTOINDENT" the editor's indentation.
 
 [OR]
 Syntax: expression OR expression
@@ -2751,8 +2751,8 @@ Syntax: SCAN(operator, array)
 Description: Performs a cumulative scan (prefix sum) operation on an array.
 
 [SCREEN]
-Syntax: SCREEN width, height, [title$]
-Description: Initializes a graphics window.
+Syntax: SCREEN width, height, [title$], [scalefactor]
+Description: Initializes a graphics window. Drawing uses width x height logical pixels; scalefactor (default 1) multiplies the window size, so SCREEN 320, 200, "Game", 3 opens a 960 x 600 window showing 320 x 200 pixels.
 
 [SCREENFLIP]
 Syntax: SCREENFLIP
@@ -3063,8 +3063,8 @@ Syntax: SPRITE.MOVE(instance_id, x, y)
 Description: Moves a sprite instance to a new position.
 
 [SPRITE.UPDATE]
-Syntax: SPRITE.UPDATE([delta_time])
-Description: Updates the positions and animations of all sprites based on their velocities.
+Syntax: SPRITE.UPDATE
+Description: Updates the positions and animations of all sprites based on their velocities. Takes no arguments: the time step is the real time since the previous call, capped at 0.1 seconds.
 
 [SQR]
 Syntax: SQR(number)
@@ -3091,8 +3091,8 @@ Syntax: STR$(number)
 Description: Converts a number to its string representation.
 
 [STRICT]
-Syntax: OPTION STRICT
-Description: A placeholder for a stricter compilation mode.
+Syntax: OPTION "STRICT"
+Description: Type checking for the native compiler (-c). Under STRICT an assignment, call or return whose value does not fit the declared type is a compile error, and every error is listed with its line before the compile stops. -c turns STRICT and EXPLICIT on for the main file by default; OPTION "NOSTRICT" and OPTION "EXPLICITOFF" switch them off. An IMPORTed module is checked only when it says OPTION "STRICT" or "EXPLICIT" itself. The interpreter does not check types or undeclared names; --lint lists undeclared names whatever the options say. In the interpreter, STRICT or EXPLICIT anywhere in the program only refuses a module FUNC or SUB that assigns a name it never declared. The bare form OPTION STRICT is accepted too.
 
 [STRING]
 Syntax: DIM variable AS STRING
@@ -3118,7 +3118,7 @@ Description: Returns a new array with the first N (or last N if negative) elemen
 
 [TAKE_WHILE]
 Syntax: TAKE_WHILE(predicate@, array)
-Description: Returns the longest prefix of array for which predicate(elem) is TRUE. Stops at the first FALSE. Interpreter only.
+Description: Returns the longest prefix of array for which predicate(elem) is TRUE. Stops at the first FALSE.
 
 [TAN]
 Syntax: TAN(angle_in_radians)
@@ -4113,7 +4113,7 @@ Description: Enables (default) or releases the pin's internal pull-up. Boards on
 
 [GPIO.WATCH]
 Syntax: GPIO.WATCH(pin, edge)
-Description: Raises the "PIN" event on a pin edge: 1 rising, 2 falling, 3 both, 0 stops watching. Use with ON "PIN" CALL Handler(pin, level). The interrupt only records; the handler runs between statements. Boards only.
+Description: Raises the "PIN" event on a pin edge: 1 rising, 2 falling, 3 both, 0 stops watching. Use with ON "PIN" CALL Handler: the SUB takes one array d, with d[0] the pin and d[1] the level. The interrupt only records; the handler runs between statements. Boards only.
 
 [PIN.DIAG$]
 Syntax: PIN.DIAG$ -> text$
@@ -4173,7 +4173,7 @@ Description: Stops the periodic tick. Boards only.
 
 [KEY.WATCH]
 Syntax: KEY.WATCH(on)
-Description: Raises the "KEY" event for each key that arrives. Use with ON "KEY" CALL Handler(code). Boards only.
+Description: Raises the "KEY" event for each key that arrives. Use with ON "KEY" CALL Handler: the SUB takes one array d, with d[0] the key code. Boards only.
 
 [SYS.FREE]
 Syntax: SYS.FREE -> bytes
@@ -4205,11 +4205,11 @@ Description: How many builtins this build registered, how many bytes of name tha
 
 [SYS.DF]
 Syntax: SYS.DF -> text$
-Description: The flash store as a line: bytes free of bytes total. ESP32-S3 only.
+Description: The flash store as a line: bytes free of bytes total. Boards only.
 
 [SYS.FREEDISK]
 Syntax: SYS.FREEDISK -> bytes
-Description: Free space on the flash store, as a number. ESP32-S3 only.
+Description: Free space on the flash store, as a number. Boards only.
 
 [WIFI.AP]
 Syntax: WIFI.AP(ssid$ [, password$ [, channel]]) -> 0 | -1
@@ -4225,11 +4225,11 @@ Description: Joins using the two lines in wifi.txt on the flash store: ssid, the
 
 [WIFI.OFF]
 Syntax: WIFI.OFF
-Description: Stops the radio and gives its memory back. A started radio costs most of what the interpreter has, so it is a mode rather than a state. ESP32-S3 only.
+Description: Stops the radio and gives its memory back. A started radio costs most of what the interpreter has, so it is a mode rather than a state. ESP32-S3 and Fruit Jam; on the Fruit Jam it disconnects from the network.
 
 [WIFI.STATUS]
-Syntax: WIFI.STATUS -> 0 | 1 | 2
-Description: 0 down, 1 serving as an access point, 2 joined with an address. ESP32-S3 only.
+Syntax: WIFI.STATUS -> code
+Description: The state of the radio. The codes differ by board. ESP32-S3: 0 down, 1 serving as an access point, 2 joined with an address. RP2350 W boards: the radio chip's link status, 3 joined with an address, 0 down, 1 joining, 2 joined without an address, negative a failure. Fruit Jam: the radio firmware's status, 3 connected. Boards with a radio only.
 
 [WIFI.IP$]
 Syntax: WIFI.IP$ -> text$
@@ -4368,7 +4368,7 @@ Description: Whether a buffer is being held. Boards with a panel only.
 
 [LED]
 Syntax: LED(on)
-Description: The board's own LED. Boards only. On a W board it hangs off the radio chip, so it needs the radio started.
+Description: The board's own LED. RP2350 only. On a W board it hangs off the radio chip, so it needs the radio started.
 
 [KEY.GET]
 Syntax: KEY.GET -> code
@@ -4535,8 +4535,8 @@ Syntax: PIO.STOP(sm)
 Description: Stops the state machine and lets go of its pins. RP2350 only.
 
 [NTP.SYNC]
-Syntax: NTP.SYNC([server$] [, hours_from_utc]) -> 1 | 0
-Description: Sets the board's clock from a time server, so DATE$, TIME$ and NOW mean something. RP2350 W boards only. Zero means nothing answered. The offset is yours to give: the protocol carries UTC and knows nothing about where the board is.
+Syntax: NTP.SYNC([server$] [, hours_from_utc]) -> seconds | 0
+Description: Sets the board's clock from a time server, so DATE$, TIME$ and NOW mean something, and returns the local time it set as epoch seconds. Zero means nothing answered. RP2350 W boards, ESP32-S3 and Fruit Jam. The RP2350 W boards ask server$ (default pool.ntp.org) and time.google.com when it does not answer; the ESP32-S3 always asks pool.ntp.org and the Fruit Jam takes the radio's own clock, and on those two a single argument is the hour offset. The offset is yours to give: the protocol carries UTC and knows nothing about where the board is.
 
 [WIFI.DNS$]
 Syntax: WIFI.DNS$ -> text$
