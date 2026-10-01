@@ -1,0 +1,288 @@
+' mdbook.jdb - the manuscript as a list of blocks, the one model every
+' output of the book is written from.
+'
+'   IMPORT MDBOOK
+'   DIM text$ = MDBOOK.RESOLVE$(TXTREADER$("manuscript/03_easy.md"), ".")
+'   DIM blocks = MDBOOK.BLOCKS(text$)
+'   PRINT MDBOOK.STATS(blocks){"words"}
+'
+' A block is a map with "kind" and the fields of that kind:
+'   heading   level, text        # to ### (#### and deeper count as 3)
+'   para      text               lines of one paragraph joined by spaces
+'   bullets   items              - item, continuation lines indented
+'   numbered  items              1. item
+'   code      lang, text         ``` fences, and resolved includes
+'   table     rows               | a | b | with a |---| delimiter row
+'   note      title, text        > lines; a first line that is all bold
+'                                is the title
+'   image     path, alt          ![alt](path) on a line of its own
+'   pagebreak                    <!-- pagebreak -->
+'   toc                          <!-- toc -->
+'
+' Inline marks (**bold**, *italic*, `code`, [text](target)) stay in the
+' text for the writers.
+'
+' Includes: a line <!-- include path [lines=a-b] --> becomes a fenced code
+' block holding that file, path relative to the base folder. The language
+' of the fence is the file's extension, "jdb" shown as "basic".
+
+EXPORT MODULE MDBOOK
+
+DIM gLF$ = CHR$(10)
+DIM gFence$ = "```"
+
+' ── includes ──────────────────────────────────────────────────
+
+FUNC FenceLang$(path$)
+    DIM ext$ = LCASE$(PATH.EXT$(path$))
+    IF LEFT$(ext$, 1) = "." THEN ext$ = MID$(ext$, 1, LEN(ext$))
+    IF ext$ = "jdb" THEN RETURN "basic"
+    RETURN ext$
+ENDFUNC
+
+' The text of a file, line ends as LF, cut to the lines a..b (1-based,
+' inclusive) when range$ is "a-b".
+FUNC FileLines$(path$, range$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "MDBOOK: include not found: " + path$
+    DIM body$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DO WHILE RIGHT$(body$, 1) = gLF$
+        body$ = LEFT$(body$, LEN(body$) - 1)
+    LOOP
+    IF range$ = "" THEN RETURN body$
+    DIM ends = SPLIT(range$, "-")
+    IF LEN(ends) <> 2 THEN THROW "MDBOOK: lines= wants a-b, got " + range$
+    DIM first = CINT(ends[0])
+    DIM last = CINT(ends[1])
+    DIM all_lines = SPLIT(body$, gLF$)
+    IF first < 1 ORELSE last < first ORELSE last > LEN(all_lines) THEN THROW "MDBOOK: lines=" + range$ + " outside " + path$
+    RETURN JOIN(TAKE(last - first + 1, DROP(first - 1, all_lines)), gLF$)
+ENDFUNC
+
+' The text with every include line replaced by a code fence holding the
+' file it names.
+EXPORT FUNC RESOLVE$(text$, base$)
+    DIM src_lines = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(src_lines) - 1
+        DIM line_text$ = src_lines[k]
+        DIM t$ = TRIM$(line_text$)
+        IF STARTSWITH(t$, "<!-- include ") ANDALSO ENDSWITH(t$, "-->") THEN
+            DIM args = SPLIT(TRIM$(MID$(t$, 13, LEN(t$) - 16)), " ")
+            DIM rel$ = args[0]
+            DIM range$ = ""
+            IF LEN(args) > 1 THEN
+                DIM opt$ = args[1]
+                IF STARTSWITH(opt$, "lines=") THEN range$ = MID$(opt$, 6, LEN(opt$))
+            ENDIF
+            PUSH(out, gFence$ + FenceLang$(rel$))
+            PUSH(out, FileLines$(PATH.JOIN$(base$, rel$), range$))
+            PUSH(out, gFence$)
+        ELSE
+            PUSH(out, line_text$)
+        ENDIF
+    NEXT k
+    RETURN JOIN(out, gLF$)
+ENDFUNC
+
+' ── blocks ────────────────────────────────────────────────────
+
+FUNC IsBullet(t$)
+    RETURN STARTSWITH(t$, "- ") ORELSE STARTSWITH(t$, "* ") ORELSE STARTSWITH(t$, "+ ")
+ENDFUNC
+
+' The length of a "12. " number mark at the start, 0 when there is none.
+FUNC NumberMark(t$)
+    DIM k = 0
+    DO WHILE k < LEN(t$) ANDALSO INSTR("0123456789", MID$(t$, k, 1)) >= 0
+        k = k + 1
+    LOOP
+    IF k > 0 ANDALSO (MID$(t$, k, 2) = ". " ORELSE MID$(t$, k, 2) = ") ") THEN RETURN k + 2
+    RETURN 0
+ENDFUNC
+
+FUNC IsTableRow(t$)
+    RETURN STARTSWITH(t$, "|") ANDALSO ENDSWITH(t$, "|") ANDALSO LEN(t$) > 1
+ENDFUNC
+
+FUNC TableCells(t$)
+    DIM inner$ = REPLACE$(MID$(t$, 1, LEN(t$) - 2), "\|", CHR$(1))
+    DIM raw = SPLIT(inner$, "|")
+    DIM cells = []
+    DIM k = 0
+    FOR k = 0 TO LEN(raw) - 1
+        DIM c$ = raw[k]
+        PUSH(cells, REPLACE$(TRIM$(c$), CHR$(1), "|"))
+    NEXT k
+    RETURN cells
+ENDFUNC
+
+FUNC IsDelimiterRow(t$)
+    IF NOT IsTableRow(t$) THEN RETURN FALSE
+    RETURN TRIM$(REPLACE$(REPLACE$(REPLACE$(t$, "|", ""), "-", ""), ":", "")) = "" ANDALSO INSTR(t$, "-") >= 0
+ENDFUNC
+
+' TRUE for a line on which a block other than a paragraph starts.
+FUNC StartsBlock(t$)
+    IF t$ = "" THEN RETURN TRUE
+    IF STARTSWITH(t$, "#") ORELSE STARTSWITH(t$, gFence$) ORELSE STARTSWITH(t$, ">") THEN RETURN TRUE
+    IF STARTSWITH(t$, "<!--") ORELSE STARTSWITH(t$, "![") THEN RETURN TRUE
+    RETURN IsBullet(t$) ORELSE NumberMark(t$) > 0 ORELSE IsTableRow(t$)
+ENDFUNC
+
+FUNC HeadingLevel(t$)
+    DIM k = 0
+    DO WHILE k < LEN(t$) ANDALSO MID$(t$, k, 1) = "#"
+        k = k + 1
+    LOOP
+    IF k = 0 ORELSE MID$(t$, k, 1) <> " " THEN RETURN 0
+    RETURN k
+ENDFUNC
+
+' The blocks of a resolved manuscript text.
+EXPORT FUNC BLOCKS(text$)
+    DIM src_lines = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM n = LEN(src_lines)
+    DIM out = []
+    DIM k = 0
+    DO WHILE k < n
+        DIM raw$ = src_lines[k]
+        DIM t$ = TRIM$(raw$)
+        DIM level = HeadingLevel(t$)
+        IF t$ = "" THEN
+            k = k + 1
+        ELSEIF level > 0 THEN
+            IF level > 3 THEN level = 3
+            PUSH(out, {"kind": "heading", "level": level, "text": TRIM$(MID$(t$, HeadingLevel(t$), LEN(t$)))})
+            k = k + 1
+        ELSEIF STARTSWITH(t$, gFence$) THEN
+            DIM lang$ = TRIM$(MID$(t$, 3, LEN(t$)))
+            DIM body = []
+            k = k + 1
+            DO WHILE k < n ANDALSO NOT STARTSWITH(TRIM$(src_lines[k]), gFence$)
+                PUSH(body, src_lines[k])
+                k = k + 1
+            LOOP
+            IF k >= n THEN THROW "MDBOOK: code fence without its end"
+            k = k + 1
+            PUSH(out, {"kind": "code", "lang": lang$, "text": JOIN(body, gLF$)})
+        ELSEIF t$ = "<!-- pagebreak -->" THEN
+            PUSH(out, {"kind": "pagebreak"})
+            k = k + 1
+        ELSEIF t$ = "<!-- toc -->" THEN
+            PUSH(out, {"kind": "toc"})
+            k = k + 1
+        ELSEIF STARTSWITH(t$, "<!--") THEN
+            DO WHILE k < n ANDALSO INSTR(src_lines[k], "-->") < 0
+                k = k + 1
+            LOOP
+            k = k + 1
+        ELSEIF STARTSWITH(t$, "![") ANDALSO ENDSWITH(t$, ")") ANDALSO INSTR(t$, "](") > 0 THEN
+            DIM mid_at = CINT(INSTR(t$, "]("))
+            PUSH(out, {"kind": "image", "alt": MID$(t$, 2, mid_at - 2), "path": MID$(t$, mid_at + 2, LEN(t$) - mid_at - 3)})
+            k = k + 1
+        ELSEIF STARTSWITH(t$, ">") THEN
+            DIM quote = []
+            DO WHILE k < n ANDALSO STARTSWITH(TRIM$(src_lines[k]), ">")
+                PUSH(quote, TRIM$(MID$(TRIM$(src_lines[k]), 1, LEN(src_lines[k]))))
+                k = k + 1
+            LOOP
+            DIM title$ = ""
+            DIM q0$ = quote[0]
+            IF LEN(q0$) > 4 ANDALSO STARTSWITH(q0$, "**") ANDALSO ENDSWITH(q0$, "**") ANDALSO INSTR(MID$(q0$, 2, LEN(q0$) - 4), "**") < 0 THEN
+                title$ = MID$(q0$, 2, LEN(q0$) - 4)
+                quote = DROP(1, quote)
+            ENDIF
+            PUSH(out, {"kind": "note", "title": title$, "text": TRIM$(JOIN(quote, " "))})
+        ELSEIF IsTableRow(t$) THEN
+            DIM rows = []
+            DO WHILE k < n ANDALSO IsTableRow(TRIM$(src_lines[k]))
+                DIM row_text$ = TRIM$(src_lines[k])
+                IF NOT IsDelimiterRow(row_text$) THEN PUSH(rows, TableCells(row_text$))
+                k = k + 1
+            LOOP
+            PUSH(out, {"kind": "table", "rows": rows})
+        ELSEIF IsBullet(t$) ORELSE NumberMark(t$) > 0 THEN
+            DIM numbered = NumberMark(t$) > 0
+            DIM items = []
+            DIM cur$ = ""
+            DO WHILE k < n
+                DIM lt$ = TRIM$(src_lines[k])
+                DIM indented = LEFT$(src_lines[k], 1) = " "
+                IF (numbered ANDALSO NumberMark(lt$) > 0) ORELSE (NOT numbered ANDALSO IsBullet(lt$)) THEN
+                    IF cur$ <> "" THEN PUSH(items, cur$)
+                    IF numbered THEN cur$ = MID$(lt$, NumberMark(lt$), LEN(lt$)) ELSE cur$ = MID$(lt$, 2, LEN(lt$))
+                    k = k + 1
+                ELSEIF lt$ <> "" ANDALSO indented THEN
+                    cur$ = cur$ + " " + lt$
+                    k = k + 1
+                ELSE
+                    EXITDO
+                ENDIF
+            LOOP
+            IF cur$ <> "" THEN PUSH(items, cur$)
+            DIM list_kind$ = "bullets"
+            IF numbered THEN list_kind$ = "numbered"
+            PUSH(out, {"kind": list_kind$, "items": items})
+        ELSE
+            DIM para = []
+            DO WHILE k < n ANDALSO NOT StartsBlock(TRIM$(src_lines[k]))
+                PUSH(para, TRIM$(src_lines[k]))
+                k = k + 1
+            LOOP
+            PUSH(out, {"kind": "para", "text": JOIN(para, " ")})
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+' ── statistics ────────────────────────────────────────────────
+
+FUNC WordCount(t$)
+    DIM parts = SPLIT(TRIM$(t$), " ")
+    RETURN LEN(FILTER(LAMBDA w -> w <> "", parts))
+ENDFUNC
+
+' Words of prose, lines of code, headings and pictures of a block list.
+EXPORT FUNC STATS(blocks)
+    DIM words = 0
+    DIM code_lines = 0
+    DIM headings = 0
+    DIM pictures = 0
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        DIM kind$ = b{"kind"}
+        IF kind$ = "para" THEN
+            words = words + WordCount(b{"text"})
+        ELSEIF kind$ = "note" THEN
+            words = words + WordCount(b{"title"})
+            words = words + WordCount(b{"text"})
+        ELSEIF kind$ = "heading" THEN
+            headings = headings + 1
+            words = words + WordCount(b{"text"})
+        ELSEIF kind$ = "bullets" ORELSE kind$ = "numbered" THEN
+            DIM its = b{"items"}
+            FOR j = 0 TO LEN(its) - 1
+                words = words + WordCount(its[j])
+            NEXT j
+        ELSEIF kind$ = "table" THEN
+            DIM rws = b{"rows"}
+            FOR j = 0 TO LEN(rws) - 1
+                words = words + WordCount(JOIN(rws[j], " "))
+            NEXT j
+        ELSEIF kind$ = "code" THEN
+            code_lines = code_lines + LEN(SPLIT(b{"text"}, gLF$))
+        ELSEIF kind$ = "image" THEN
+            pictures = pictures + 1
+        ENDIF
+    NEXT k
+    RETURN {"words": words, "code_lines": code_lines, "headings": headings, "pictures": pictures}
+ENDFUNC
+
+' Pages on the 17 x 24 cm book page: 330 words or 40 code lines a page, a
+' third of a page per picture, a few lines per heading.
+EXPORT FUNC PAGES(stats)
+    RETURN stats{"words"} / 330 + stats{"code_lines"} / 40 + stats{"pictures"} / 3 + stats{"headings"} / 12
+ENDFUNC

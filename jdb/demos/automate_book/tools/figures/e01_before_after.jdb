@@ -1,0 +1,55 @@
+' Figure for recipe E01: the Downloads folder before and after the
+' Downloads Butler ran, drawn in the book's typefaces and saved as PNG.
+'
+'   jdbasic tools/figures/e01_before_after.jdb    (from the book folder)
+
+DIM out$ = "manuscript/img/e01_before_after.png"
+DIM serif$ = "fonts/SourceSerif4-Bold.ttf"
+DIM mono$ = "fonts/SourceCodePro-Regular.ttf"
+DIM w = 1200
+DIM h = 600
+DIM k = 0
+
+SUB Panel(x, y, pw, ph, title$)
+    RECT x, y, pw, ph, TRUE, 246, 248, 251
+    RECT x, y, pw, ph, FALSE, 46, 116, 181
+    SETFONT serif$, 30
+    TEXT x + 24, y + 18, title$, 31, 56, 100
+ENDSUB
+
+SUB Lines(x, y, items, step_px)
+    SETFONT mono$, 21
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM s$ = items[k]
+        DIM r = 40
+        DIM g = 40
+        DIM b = 40
+        IF ENDSWITH(s$, "/") THEN
+            r = 46
+            g = 116
+            b = 181
+        ENDIF
+        TEXT x, y + k * step_px, s$, r, g, b
+    NEXT k
+ENDSUB
+
+SCREEN w, h, "E01 figure"
+CLS 255, 255, 255
+Panel(30, 30, 470, 540, "Downloads, before")
+Lines(60, 100, ["Rechnung Müller.pdf", "Offer 2026-0413.docx", "holiday.jpg", "screenshot 1.png", "zoom_setup.exe", "photos.zip", "big video.mp4.crdownload"], 40)
+
+FOR k = -1 TO 1
+    LINE 525, 300 + k, 585, 300 + k, 46, 116, 181
+    LINE 586, 300 + k, 566, 284 + k, 46, 116, 181
+    LINE 586, 300 + k, 566, 316 + k, 46, 116, 181
+NEXT k
+
+Panel(610, 30, 560, 540, "Downloads, after")
+Lines(640, 100, ["Sorted/", "  Documents/2026-10/", "    Rechnung Müller.pdf", "    Offer 2026-0413.docx", "  Images/2026-10/", "    holiday.jpg", "    screenshot 1.png", "  Installers/2026-10/", "    zoom_setup.exe", "  Archives/2026-09/", "    photos.zip", "big video.mp4.crdownload"], 37)
+
+MKDIR "manuscript/img"
+GFX.SAVE_SCREENSHOT(out$)
+SCREENFLIP
+GFX.CLOSE()
+PRINT "wrote "; out$

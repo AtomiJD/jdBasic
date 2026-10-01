@@ -1,0 +1,196 @@
+' build_book.jdb - the book from its manuscript. book.toml names the
+' chapters; the build writes out/book.docx and a browser preview in
+' out/html/, and reports words, code lines and estimated pages per chapter.
+'
+'   jdbasic tools/build_book.jdb [book.toml] [--only docx|html]
+'
+' Run from the book folder; the modules come from lib/ through JDBASIC_PATH.
+
+IMPORT CONF, DOCX, MD, MDBOOK
+
+DIM gLF$ = CHR$(10)
+
+' ── the chapters ──────────────────────────────────────────────
+
+' Every chapter as a map: path, dir, resolved text, blocks and stats.
+FUNC LoadChapters(cfg, base$)
+    DIM files = CONF.GET(cfg, "chapters.files", [])
+    IF LEN(files) = 0 THEN THROW "book.toml lists no chapters under [chapters] files"
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM rel$ = files[k]
+        DIM path$ = PATH.JOIN$(base$, rel$)
+        IF NOT FILE.EXISTS(path$) THEN THROW "chapter not found: " + path$
+        DIM text$ = MDBOOK.RESOLVE$(TXTREADER$(path$), base$)
+        DIM blocks = MDBOOK.BLOCKS(text$)
+        PUSH(out, {"path": rel$, "dir": PATH.DIRNAME$(path$), "text": text$, "blocks": blocks, "stats": MDBOOK.STATS(blocks)})
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ── Word ──────────────────────────────────────────────────────
+
+SUB DocxBlocks(doc, blocks, dir$, image_cm)
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        DIM kind$ = b{"kind"}
+        IF kind$ = "heading" THEN
+            DOCX.HEADING(doc, b{"text"}, b{"level"})
+        ELSEIF kind$ = "para" THEN
+            DOCX.PARAGRAPH(doc, b{"text"})
+        ELSEIF kind$ = "bullets" THEN
+            DOCX.BULLETS(doc, b{"items"})
+        ELSEIF kind$ = "numbered" THEN
+            DOCX.NUMBERED(doc, b{"items"})
+        ELSEIF kind$ = "code" THEN
+            DOCX.CODE(doc, b{"text"})
+        ELSEIF kind$ = "table" THEN
+            DOCX.TABLE(doc, b{"rows"}, TRUE)
+        ELSEIF kind$ = "note" THEN
+            DOCX.NOTE(doc, b{"title"}, b{"text"})
+        ELSEIF kind$ = "image" THEN
+            DOCX.IMAGE(doc, PATH.JOIN$(dir$, b{"path"}), image_cm)
+            IF b{"alt"} <> "" THEN DOCX.PARAGRAPH(doc, "*" + b{"alt"} + "*", "center")
+        ELSEIF kind$ = "pagebreak" THEN
+            DOCX.PAGEBREAK(doc)
+        ELSEIF kind$ = "toc" THEN
+            DOCX.TOC(doc, 2)
+        ENDIF
+    NEXT k
+ENDSUB
+
+FUNC WriteDocx(cfg, chapters, out_path$)
+    DIM title$ = CONF.GET(cfg, "book.title", "Untitled")
+    DIM subtitle$ = CONF.GET(cfg, "book.subtitle", "")
+    DIM authors = CONF.GET(cfg, "book.authors", [])
+    DIM doc = DOCX.NEW()
+    DOCX.LANGUAGE(doc, CONF.GET(cfg, "book.language", "en-US"))
+    DOCX.PAGESETUP(doc, CONF.GET(cfg, "page.width_mm", 170), CONF.GET(cfg, "page.height_mm", 240), CONF.GET(cfg, "page.margin_mm", 20))
+    DOCX.TITLE(doc, title$)
+    DOCX.HEADER(doc, title$)
+    DOCX.FOOTER(doc, "{page}")
+    DOCX.PARAGRAPH(doc, "**" + title$ + "**", "center")
+    IF subtitle$ <> "" THEN DOCX.PARAGRAPH(doc, "*" + subtitle$ + "*", "center")
+    IF LEN(authors) > 0 THEN DOCX.PARAGRAPH(doc, JOIN(authors, " and "), "center")
+    DOCX.PARAGRAPH(doc, "Version " + CONF.GET(cfg, "book.version", "0"), "center")
+    DOCX.PAGEBREAK(doc)
+    DIM image_cm = CONF.GET(cfg, "images.width_cm", 12)
+    DIM k = 0
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM ch = chapters[k]
+        IF k > 0 THEN DOCX.PAGEBREAK(doc)
+        DocxBlocks(doc, ch{"blocks"}, ch{"dir"}, image_cm)
+    NEXT k
+    RETURN DOCX.WRITE(doc, out_path$)
+ENDFUNC
+
+' ── HTML preview ──────────────────────────────────────────────
+
+FUNC HtmlPage$(title$, body$, nav$)
+    DIM css$ = "body{max-width:46rem;margin:2rem auto;padding:0 1rem;font:17px/1.6 Georgia,serif;color:#222}"
+    css$ = css$ + "pre{background:#f2f2f2;padding:.8rem;overflow-x:auto;font:14px/1.4 Consolas,monospace}"
+    css$ = css$ + "code{font-family:Consolas,monospace}blockquote{margin:1rem 0;padding:.6rem 1rem;background:#eaf1fb;border-left:6px solid #2e74b5}"
+    css$ = css$ + "table{border-collapse:collapse}td,th{border:1px solid #bbb;padding:.3rem .6rem}img{max-width:100%}nav{font-size:14px}"
+    RETURN "<!doctype html>" + gLF$ + "<html lang='en'><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'><title>" + MD.ESCAPE$(title$) + "</title><style>" + css$ + "</style></head><body><nav>" + nav$ + "</nav>" + gLF$ + body$ + gLF$ + "<nav>" + nav$ + "</nav></body></html>" + gLF$
+ENDFUNC
+
+' The text without the comment lines the HTML renderer would show as text.
+FUNC WithoutComments$(text$)
+    DIM src = SPLIT(text$, gLF$)
+    RETURN JOIN(FILTER(LAMBDA s$ -> NOT STARTSWITH(TRIM$(s$), "<!--"), src), gLF$)
+ENDFUNC
+
+SUB CopyImages(blocks, dir$, html_dir$)
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        IF b{"kind"} = "image" THEN
+            DIM rel$ = b{"path"}
+            DIM dst$ = PATH.JOIN$(html_dir$, rel$)
+            MKDIR PATH.DIRNAME$(dst$)
+            BINWRITER dst$, BINREADER$(PATH.JOIN$(dir$, rel$))
+        ENDIF
+    NEXT k
+ENDSUB
+
+FUNC WriteHtml(cfg, chapters, html_dir$)
+    DIM title$ = CONF.GET(cfg, "book.title", "Untitled")
+    MKDIR html_dir$
+    DIM links = []
+    DIM k = 0
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM ch = chapters[k]
+        PUSH(links, "<a href='ch" + STR$(k + 1) + ".html'>" + STR$(k + 1) + "</a>")
+    NEXT k
+    DIM nav$ = "<a href='index.html'>Contents</a> | " + JOIN(links, " ")
+    DIM toc = []
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM chap = chapters[k]
+        DIM blocks = chap{"blocks"}
+        DIM head$ = chap{"path"}
+        IF LEN(blocks) > 0 ANDALSO blocks[0]{"kind"} = "heading" THEN head$ = blocks[0]{"text"}
+        PUSH(toc, "<li><a href='ch" + STR$(k + 1) + ".html'>" + MD.INLINE$(head$) + "</a></li>")
+        TXTWRITER PATH.JOIN$(html_dir$, "ch" + STR$(k + 1) + ".html"), HtmlPage$(title$, MD.RENDER$(WithoutComments$(chap{"text"})), nav$)
+        CopyImages(blocks, chap{"dir"}, html_dir$)
+    NEXT k
+    TXTWRITER PATH.JOIN$(html_dir$, "index.html"), HtmlPage$(title$, "<h1>" + MD.ESCAPE$(title$) + "</h1><ol>" + JOIN(toc, "") + "</ol>", nav$)
+    RETURN LEN(chapters) + 1
+ENDFUNC
+
+' ── report ────────────────────────────────────────────────────
+
+SUB Report(chapters)
+    DIM words = 0
+    DIM code_lines = 0
+    DIM pages = 0
+    DIM k = 0
+    PRINT FORMAT$("{:<34} {:>7} {:>6} {:>6}", "chapter", "words", "code", "pages")
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM ch = chapters[k]
+        DIM st = ch{"stats"}
+        DIM p = MDBOOK.PAGES(st)
+        words = words + st{"words"}
+        code_lines = code_lines + st{"code_lines"}
+        pages = pages + p
+        PRINT FORMAT$("{:<34} {:>7} {:>6} {:>6.1f}", ch{"path"}, st{"words"}, st{"code_lines"}, p)
+    NEXT k
+    PRINT FORMAT$("{:<34} {:>7} {:>6} {:>6.1f}", "total", words, code_lines, pages)
+ENDSUB
+
+' ── main ──────────────────────────────────────────────────────
+
+DIM cfg_path$ = "book.toml"
+DIM only$ = ""
+DIM argv = OS.ARGS()
+DIM a = 1
+DO WHILE a < LEN(argv)
+    DIM arg$ = argv[a]
+    IF arg$ = "--only" ANDALSO a + 1 < LEN(argv) THEN
+        only$ = argv[a + 1]
+        a = a + 2
+    ELSE
+        cfg_path$ = arg$
+        a = a + 1
+    ENDIF
+LOOP
+
+DIM base$ = PATH.DIRNAME$(cfg_path$)
+IF base$ = "" THEN base$ = "."
+DIM cfg = CONF.TOML(cfg_path$)
+DIM out_dir$ = PATH.JOIN$(base$, CONF.GET(cfg, "build.out", "out"))
+MKDIR out_dir$
+DIM chapters = LoadChapters(cfg, base$)
+
+IF only$ = "" ORELSE only$ = "docx" THEN
+    DIM docx_path$ = PATH.JOIN$(out_dir$, "book.docx")
+    DIM parts = WriteDocx(cfg, chapters, docx_path$)
+    PRINT "wrote "; docx_path$; " ("; parts; " parts)"
+ENDIF
+IF only$ = "" ORELSE only$ = "html" THEN
+    DIM html_dir$ = PATH.JOIN$(out_dir$, "html")
+    DIM pages_written = WriteHtml(cfg, chapters, html_dir$)
+    PRINT "wrote "; html_dir$; " ("; pages_written; " pages)"
+ENDIF
+Report(chapters)

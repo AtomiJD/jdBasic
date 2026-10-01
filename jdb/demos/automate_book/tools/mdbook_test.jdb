@@ -1,0 +1,74 @@
+' MDBOOK: every block kind from a small manuscript, includes with and
+' without a line range, the statistics and the page estimate.
+
+IMPORT TESTKIT, MDBOOK
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("mdbooktest")
+MKDIR folder$
+DIM listing$ = folder$ + "/hello.jdb"
+TXTWRITER listing$, "' hello" + CHR$(13) + LF$ + "PRINT 1" + LF$ + "PRINT 2" + LF$ + LF$
+
+FUNC MissingInclude(base$)
+    RETURN MDBOOK.RESOLVE$("<!-- include nope.jdb -->", base$)
+ENDFUNC
+
+FUNC KindOf$(blk AS MAP)
+    RETURN blk{"kind"}
+ENDFUNC
+
+FUNC OpenFence(x)
+    RETURN MDBOOK.BLOCKS("```basic" + CHR$(10) + "PRINT 1")
+ENDFUNC
+
+TESTKIT.SUITE("includes")
+DIM resolved$ = MDBOOK.RESOLVE$("Before" + LF$ + "  <!-- include hello.jdb -->" + LF$ + "<!-- include hello.jdb lines=2-3 -->", folder$)
+TESTKIT.EQ(resolved$, "Before" + LF$ + "```basic" + LF$ + "' hello" + LF$ + "PRINT 1" + LF$ + "PRINT 2" + LF$ + "```" + LF$ + "```basic" + LF$ + "PRINT 1" + LF$ + "PRINT 2" + LF$ + "```", "a whole file and a line range, CR and trailing blank lines dropped")
+TESTKIT.THROWS(MissingInclude@, folder$, "a missing file is an error")
+
+TESTKIT.SUITE("blocks")
+DIM md$ = "# Chapter *one*" + LF$
+md$ = md$ + "Some text" + LF$ + "  on two lines." + LF$ + LF$
+md$ = md$ + "#### Deep" + LF$
+md$ = md$ + "- first" + LF$ + "  more of first" + LF$ + "- second" + LF$ + LF$
+md$ = md$ + "1. one" + LF$ + "2. two" + LF$
+md$ = md$ + "```basic" + LF$ + "  PRINT " + CHR$(34) + "x" + CHR$(34) + LF$ + "```" + LF$
+md$ = md$ + "| A | B |" + LF$ + "|---|:-:|" + LF$ + "| `x` | a \| b |" + LF$
+md$ = md$ + "> **Balance dividend**" + LF$ + "> About 20 minutes" + LF$ + "> a week." + LF$ + LF$
+md$ = md$ + "> just a quote" + LF$ + LF$
+md$ = md$ + "![The wizard](img/wizard.png)" + LF$
+md$ = md$ + "<!-- pagebreak -->" + LF$ + "<!-- toc -->" + LF$
+md$ = md$ + "<!-- a comment" + LF$ + "over two lines -->" + LF$
+md$ = md$ + "Last."
+DIM b = MDBOOK.BLOCKS(md$)
+DIM kinds = SELECT(KindOf$@, b)
+TESTKIT.EQ(JOIN(kinds, ","), "heading,para,heading,bullets,numbered,code,table,note,note,image,pagebreak,toc,para", "the kinds in order")
+TESTKIT.EQ(b[0]{"text"}, "Chapter *one*", "a heading keeps its marks")
+TESTKIT.EQ(b[2]{"level"}, 3, "#### counts as level 3")
+TESTKIT.EQ(b[1]{"text"}, "Some text on two lines.", "paragraph lines are joined")
+TESTKIT.EQ(JOIN(b[3]{"items"}, "|"), "first more of first|second", "a bullet continues on an indented line")
+TESTKIT.EQ(JOIN(b[4]{"items"}, "|"), "one|two", "numbered items")
+TESTKIT.EQ(b[5]{"lang"}, "basic", "a code fence keeps its language")
+TESTKIT.EQ(b[5]{"text"}, "  PRINT " + CHR$(34) + "x" + CHR$(34), "and its indent")
+DIM rows = b[6]{"rows"}
+TESTKIT.EQ(LEN(rows), 2, "the delimiter row is dropped")
+TESTKIT.EQ(JOIN(rows[1], "/"), "`x`/a | b", "an escaped bar stays in its cell")
+TESTKIT.EQ(b[7]{"title"}, "Balance dividend", "a bold first line is the note title")
+TESTKIT.EQ(b[7]{"text"}, "About 20 minutes a week.", "the note text")
+TESTKIT.EQ(b[8]{"title"}, "", "a plain quote has no title")
+TESTKIT.EQ(b[9]{"path"}, "img/wizard.png", "a picture's path")
+TESTKIT.EQ(b[9]{"alt"}, "The wizard", "and its caption")
+TESTKIT.EQ(b[12]{"text"}, "Last.", "a comment is skipped")
+TESTKIT.THROWS(OpenFence@, 0, "an unclosed fence is an error")
+
+TESTKIT.SUITE("statistics")
+DIM st = MDBOOK.STATS(b)
+TESTKIT.EQ(st{"code_lines"}, 1, "code lines")
+TESTKIT.EQ(st{"headings"}, 2, "headings")
+TESTKIT.EQ(st{"pictures"}, 1, "pictures")
+TESTKIT.EQ(st{"words"}, 32, "words of prose, lists, tables and notes")
+TESTKIT.ISTRUE(MDBOOK.PAGES({"words": 330, "code_lines": 40, "pictures": 0, "headings": 0}) = 2, "330 words and 40 code lines are two pages")
+
+KILL listing$
+RMDIR folder$
+TESTKIT.REPORT()

@@ -1,0 +1,100 @@
+' butler.jdb - sorts a downloads folder: every file that has rested long
+' enough moves into a folder for its kind and the month it arrived,
+' such as Sorted/Documents/2026-10/.
+'
+'   IMPORT BUTLER
+'   DIM moves = BUTLER.PLAN("C:/Users/mia/Downloads", "C:/Users/mia/Downloads/Sorted", BUTLER.DEFAULT_RULES(), 24, NOW())
+'   PRINT BUTLER.APPLY(moves, FALSE); " files sorted"
+
+EXPORT MODULE BUTLER
+
+' The kinds of files and their extensions.
+EXPORT FUNC DEFAULT_RULES()
+    DIM rules AS MAP
+    rules{"Documents"} = ["pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp"]
+    rules{"Images"} = ["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg", "tif", "tiff"]
+    rules{"Audio and Video"} = ["mp3", "wav", "m4a", "flac", "mp4", "mov", "mkv", "avi", "webm"]
+    rules{"Archives"} = ["zip", "7z", "rar", "tar", "gz", "tgz"]
+    rules{"Installers"} = ["exe", "msi", "msix", "dmg", "pkg", "deb", "rpm"]
+    RETURN rules
+ENDFUNC
+
+' The kind a file name belongs to, "Other" when no rule names its extension.
+EXPORT FUNC KIND$(file_name$, rules)
+    DIM ext$ = LCASE$(PATH.EXT$(file_name$))
+    IF ext$ = "" THEN RETURN "Other"
+    ext$ = MID$(ext$, 1, LEN(ext$))
+    DIM kinds = MAP.KEYS(rules)
+    DIM k = 0
+    FOR k = 0 TO LEN(kinds) - 1
+        DIM kind$ = kinds[k]
+        IF ext$ IN rules{kind$} THEN RETURN kind$
+    NEXT k
+    RETURN "Other"
+ENDFUNC
+
+' TRUE for a partial download (a browser's temporary file).
+FUNC Unfinished(file_name$)
+    DIM ext$ = LCASE$(PATH.EXT$(file_name$))
+    RETURN ext$ IN [".crdownload", ".part", ".partial", ".download", ".tmp"]
+ENDFUNC
+
+' A free file name in a folder: the name itself, or "name (2).ext",
+' "name (3).ext" and so on.
+EXPORT FUNC FREE_NAME$(folder$, file_name$, taken)
+    DIM candidate$ = PATH.JOIN$(folder$, file_name$)
+    IF NOT FILE.EXISTS(candidate$) ANDALSO NOT (candidate$ IN taken) THEN RETURN candidate$
+    DIM ext$ = PATH.EXT$(file_name$)
+    DIM stem$ = LEFT$(file_name$, LEN(file_name$) - LEN(ext$))
+    DIM n = 2
+    DO
+        candidate$ = PATH.JOIN$(folder$, stem$ + " (" + STR$(n) + ")" + ext$)
+        n = n + 1
+    LOOP WHILE FILE.EXISTS(candidate$) ORELSE candidate$ IN taken
+    RETURN candidate$
+ENDFUNC
+
+' The moves that sort the source folder: a map per file with "from", "to"
+' and "kind". Folders, hidden files, unfinished downloads and files younger
+' than min_age_hours stay where they are.
+EXPORT FUNC PLAN(source$, target$, rules, min_age_hours, now)
+    DIM moves = []
+    DIM taken = []
+    DIM entries = DIR$(PATH.JOIN$(source$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM file_name$ = entries[k]
+        DIM from$ = PATH.JOIN$(source$, file_name$)
+        DIM info = FILE.STAT(from$)
+        IF NOT info{"is_dir"} ANDALSO NOT info{"hidden"} ANDALSO NOT Unfinished(file_name$) THEN
+            DIM changed$ = info{"mtime"}
+            IF DATEDIFF("H", CDATE(changed$), now) >= min_age_hours THEN
+                DIM kind$ = KIND$(file_name$, rules)
+                DIM folder$ = PATH.JOIN$(target$, kind$, LEFT$(changed$, 7))
+                DIM to$ = FREE_NAME$(folder$, file_name$, taken)
+                PUSH(taken, to$)
+                PUSH(moves, {"from": from$, "to": to$, "kind": kind$})
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN moves
+ENDFUNC
+
+' Carries out the moves and prints one line for each; with dry_run it only
+' prints them. Answers the number of files moved, or that would be.
+EXPORT FUNC APPLY(moves, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(moves) - 1
+        DIM m = moves[k]
+        DIM from$ = m{"from"}
+        DIM to$ = m{"to"}
+        IF dry_run THEN
+            PRINT "would move "; PATH.BASENAME$(from$); "  ->  "; to$
+        ELSE
+            MKDIR PATH.DIRNAME$(to$)
+            FILE.MOVE(from$, to$)
+            PRINT "moved "; PATH.BASENAME$(from$); "  ->  "; to$
+        ENDIF
+    NEXT k
+    RETURN LEN(moves)
+ENDFUNC

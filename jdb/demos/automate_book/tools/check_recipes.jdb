@@ -1,0 +1,135 @@
+' check_recipes.jdb - every recipe of the book through four steps: --lint
+' on each of its files, its test in the interpreter, the test compiled with
+' -c, and the compiled test run. A recipe is a folder under recipes/<level>/
+' with a file ending in _test.jdb.
+'
+'   jdbasic tools/check_recipes.jdb [--jdbasic path] [--only E01] [--interp-only]
+'
+' Run from the book folder. The children find lib/ and recipes/lib/ through
+' JDBASIC_PATH, which this program sets for them.
+
+DIM gSep$ = ";"
+IF OS.GETOS() <> "WINDOWS" THEN gSep$ = ":"
+
+FUNC ArgAfter$(name$, fallback$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 2
+        IF argv[k] = "--" + name$ THEN RETURN argv[k + 1]
+    NEXT k
+    RETURN fallback$
+ENDFUNC
+
+FUNC HasArg(name$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 1
+        IF argv[k] = "--" + name$ THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' The recipe folders, sorted, as paths relative to the book folder.
+FUNC RecipeFolders()
+    DIM out = []
+    DIM levels = ["easy", "medium", "expert"]
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(levels) - 1
+        DIM level_dir$ = PATH.JOIN$("recipes", levels[k])
+        IF FILE.ISDIR(level_dir$) THEN
+            DIM names = SORT(DIR$(PATH.JOIN$(level_dir$, "*")))
+            FOR j = 0 TO LEN(names) - 1
+                DIM d$ = PATH.JOIN$(level_dir$, names[j])
+                IF FILE.ISDIR(d$) THEN PUSH(out, d$)
+            NEXT j
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Runs a program and answers [passed, last line of its output].
+FUNC RunStep(cmd$, args)
+    DIM r = OS.EXEC(cmd$, args)
+    DIM text$ = TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
+    DIM lines = SPLIT(text$, CHR$(10))
+    DIM last$ = ""
+    IF LEN(lines) > 0 THEN last$ = lines[LEN(lines) - 1]
+    RETURN [r{"EXIT_CODE"} = 0, last$]
+ENDFUNC
+
+FUNC Mark$(passed)
+    IF passed THEN RETURN "ok"
+    RETURN "FAIL"
+ENDFUNC
+
+DIM jdbasic$ = PATH.NORMALIZE$(ArgAfter$("jdbasic", "../../../build/jdBasic.exe"))
+DIM only$ = ArgAfter$("only", "")
+DIM interp_only = HasArg("interp-only")
+DIM here$ = PATH.NORMALIZE$(".")
+SETENV "JDBASIC_PATH", PATH.NORMALIZE$("../../../lib") + gSep$ + PATH.NORMALIZE$("recipes/lib")
+DIM out_dir$ = PATH.JOIN$("out", "recipes")
+MKDIR out_dir$
+
+DIM folders = RecipeFolders()
+DIM failed = 0
+DIM checked = 0
+DIM k = 0
+DIM j = 0
+PRINT FORMAT$("{:<36} {:>5} {:>6} {:>5} {:>5}", "recipe", "lint", "interp", "-c", "exe")
+FOR k = 0 TO LEN(folders) - 1
+    DIM folder$ = folders[k]
+    DIM rname$ = PATH.BASENAME$(folder$)
+    IF only$ = "" ORELSE STARTSWITH(rname$, only$) THEN
+        DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.jdb")))
+        DIM test$ = ""
+        DIM lint_ok = TRUE
+        DIM notes = []
+        FOR j = 0 TO LEN(files) - 1
+            DIM f$ = files[j]
+            IF ENDSWITH(f$, "_test.jdb") THEN test$ = PATH.JOIN$(folder$, f$)
+            DIM lint_r = RunStep(jdbasic$, ["--lint", PATH.JOIN$(folder$, f$)])
+            IF NOT lint_r[0] THEN
+                lint_ok = FALSE
+                PUSH(notes, f$ + ": " + lint_r[1])
+            ENDIF
+        NEXT j
+        DIM interp_ok = FALSE
+        DIM compile_ok = FALSE
+        DIM exe_ok = FALSE
+        IF test$ = "" THEN
+            PUSH(notes, "no *_test.jdb")
+        ELSE
+            DIM interp_r = RunStep(jdbasic$, [test$])
+            interp_ok = interp_r[0]
+            IF NOT interp_ok THEN PUSH(notes, "interp: " + interp_r[1])
+            IF NOT interp_only THEN
+                DIM exe$ = PATH.JOIN$(here$, out_dir$, rname$ + ".exe")
+                IF FILE.EXISTS(exe$) THEN KILL exe$
+                DIM comp_r = RunStep(jdbasic$, ["-c", "-o", exe$, test$])
+                compile_ok = comp_r[0] ANDALSO FILE.EXISTS(exe$)
+                IF NOT compile_ok THEN PUSH(notes, "-c: " + comp_r[1])
+                IF compile_ok THEN
+                    DIM exe_r = RunStep(exe$, [])
+                    exe_ok = exe_r[0]
+                    IF NOT exe_ok THEN PUSH(notes, "exe: " + exe_r[1])
+                ENDIF
+            ENDIF
+        ENDIF
+        DIM all_ok = lint_ok ANDALSO interp_ok ANDALSO (interp_only ORELSE (compile_ok ANDALSO exe_ok))
+        IF NOT all_ok THEN failed = failed + 1
+        checked = checked + 1
+        DIM c_mark$ = "-"
+        DIM e_mark$ = "-"
+        IF NOT interp_only THEN
+            c_mark$ = Mark$(compile_ok)
+            e_mark$ = Mark$(exe_ok)
+        ENDIF
+        PRINT FORMAT$("{:<36} {:>5} {:>6} {:>5} {:>5}", rname$, Mark$(lint_ok), Mark$(interp_ok), c_mark$, e_mark$)
+        FOR j = 0 TO LEN(notes) - 1
+            PRINT "    "; notes[j]
+        NEXT j
+    ENDIF
+NEXT k
+PRINT checked; " recipes checked, "; failed; " failed"
+IF failed > 0 THEN THROW STR$(failed) + " recipes failed"

@@ -1,0 +1,76 @@
+' workconf.jdb - the settings every recipe of the book reads: where
+' work.conf lives, its values, the switches given on the command line, and
+' paths that start with ~.
+'
+'   IMPORT WORKCONF
+'   DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+'   DIM source$ = WORKCONF.FOLDER$(cfg, "downloads_butler.source", "~/Downloads")
+'   IF WORKCONF.FLAG("dry-run") THEN PRINT "only showing what would happen"
+'
+' work.conf is found, in this order: after --config on the command line, in
+' the environment variable AUTOMATEWORK_CONF, in the work folder the setup
+' wizard creates (Documents/AutomateWork/config/work.conf).
+
+EXPORT MODULE WORKCONF
+
+IMPORT CONF
+
+' The user's home folder.
+EXPORT FUNC HOME$()
+    DIM h$ = GETENV$("USERPROFILE")
+    IF h$ = "" THEN h$ = GETENV$("HOME")
+    RETURN h$
+ENDFUNC
+
+' A path with a leading ~ turned into the home folder.
+EXPORT FUNC EXPAND$(path$)
+    IF path$ = "~" THEN RETURN HOME$()
+    IF STARTSWITH(path$, "~/") ORELSE STARTSWITH(path$, "~\") THEN RETURN PATH.JOIN$(HOME$(), MID$(path$, 2, LEN(path$)))
+    RETURN path$
+ENDFUNC
+
+' The value after --name on the command line, "" when it is not given.
+EXPORT FUNC ARG$(name$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 2
+        IF argv[k] = "--" + name$ THEN RETURN argv[k + 1]
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' TRUE when --name is on the command line.
+EXPORT FUNC FLAG(name$)
+    DIM argv = OS.ARGS()
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 1
+        IF argv[k] = "--" + name$ THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' Where work.conf is.
+EXPORT FUNC CONFIG_PATH$()
+    DIM given$ = ARG$("config")
+    IF given$ <> "" THEN RETURN EXPAND$(given$)
+    DIM env$ = GETENV$("AUTOMATEWORK_CONF")
+    IF env$ <> "" THEN RETURN EXPAND$(env$)
+    RETURN PATH.JOIN$(HOME$(), "Documents", "AutomateWork", "config", "work.conf")
+ENDFUNC
+
+' The settings in work.conf; a missing file is an error that says what to do.
+EXPORT FUNC SETTINGS(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "No settings found at " + path$ + ". Run the setup wizard first, or name the file with --config."
+    RETURN CONF.TOML(path$)
+ENDFUNC
+
+' A value by its dotted key, such as "downloads_butler.min_age_hours".
+EXPORT FUNC VALUE(cfg, key$, fallback)
+    RETURN CONF.GET(cfg, key$, fallback)
+ENDFUNC
+
+' A folder setting with ~ expanded.
+EXPORT FUNC FOLDER$(cfg, key$, fallback$)
+    DIM v$ = CONF.GET(cfg, key$, fallback$)
+    RETURN EXPAND$(v$)
+ENDFUNC

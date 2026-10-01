@@ -1,0 +1,25 @@
+# The book: what the build reads.
+
+[book]
+title = "Automate Your Work for a Better Life Balance"
+subtitle = "45 jdBasic programs that give you your hours back"
+authors = ["Achim Christ", "Claude"]
+version = "0.1 (sample chapter)"
+language = "en-US"
+
+[page]
+width_mm = 170
+height_mm = 240
+margin_mm = 20
+
+[images]
+width_cm = 12.5
+
+[chapters]
+files = [
+    "manuscript/00_front.md",
+    "manuscript/03_easy.md",
+]
+
+[build]
+out = "out"

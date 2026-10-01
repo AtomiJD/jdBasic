@@ -1,2 +1,5 @@
 # Test fixtures are reference data compared byte for byte; keep LF in every checkout.
 tests/jdlibs/fixtures/** text=auto eol=lf
+
+# Fonts are binary; never touch their line ends.
+*.ttf binary

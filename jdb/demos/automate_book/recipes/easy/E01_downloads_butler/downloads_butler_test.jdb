@@ -1,0 +1,79 @@
+' Downloads Butler: kinds by extension, free names, the plan for a folder
+' with finished and unfinished downloads, a dry run and the real moves.
+
+IMPORT TESTKIT, BUTLER
+
+DIM rules = BUTLER.DEFAULT_RULES()
+DIM later = CDATE("2099-01-01 00:00:00")
+DIM folder$ = MKTEMP$("butler")
+DIM source$ = PATH.JOIN$(folder$, "Downloads")
+DIM target$ = PATH.JOIN$(folder$, "Sorted")
+MKDIR source$
+MKDIR PATH.JOIN$(source$, "Project files")
+TXTWRITER PATH.JOIN$(source$, "Rechnung Müller.PDF"), "pdf"
+TXTWRITER PATH.JOIN$(source$, "holiday.jpg"), "jpg"
+TXTWRITER PATH.JOIN$(source$, "notes"), "plain"
+TXTWRITER PATH.JOIN$(source$, "big video.mp4.crdownload"), "partial"
+DIM month$ = LEFT$(FILE.STAT(PATH.JOIN$(source$, "holiday.jpg")){"mtime"}, 7)
+
+FUNC ToOf$(moves, name$)
+    DIM k = 0
+    FOR k = 0 TO LEN(moves) - 1
+        DIM m = moves[k]
+        IF PATH.BASENAME$(m{"from"}) = name$ THEN RETURN m{"to"}
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+TESTKIT.SUITE("kinds")
+TESTKIT.EQ(BUTLER.KIND$("Report.PDF", rules), "Documents", "the extension in any case")
+TESTKIT.EQ(BUTLER.KIND$("photo.heic", rules), "Images", "an image")
+TESTKIT.EQ(BUTLER.KIND$("setup.msi", rules), "Installers", "an installer")
+TESTKIT.EQ(BUTLER.KIND$("README", rules), "Other", "no extension")
+TESTKIT.EQ(BUTLER.KIND$("data.xyz", rules), "Other", "an unknown extension")
+
+TESTKIT.SUITE("free names")
+TESTKIT.EQ(BUTLER.FREE_NAME$(source$, "new.pdf", []), PATH.JOIN$(source$, "new.pdf"), "a free name stays")
+TESTKIT.EQ(BUTLER.FREE_NAME$(source$, "holiday.jpg", []), PATH.JOIN$(source$, "holiday (2).jpg"), "a taken one gets a number")
+TESTKIT.EQ(BUTLER.FREE_NAME$(source$, "holiday.jpg", [PATH.JOIN$(source$, "holiday (2).jpg")]), PATH.JOIN$(source$, "holiday (3).jpg"), "names planned before count as taken")
+
+TESTKIT.SUITE("the plan")
+TESTKIT.EQ(LEN(BUTLER.PLAN(source$, target$, rules, 24, NOW())), 0, "files younger than a day stay")
+DIM busy$ = PATH.JOIN$(target$, "Images", month$)
+MKDIR busy$
+TXTWRITER PATH.JOIN$(busy$, "holiday.jpg"), "older"
+DIM moves = BUTLER.PLAN(source$, target$, rules, 24, later)
+TESTKIT.EQ(LEN(moves), 3, "three finished files, the folder and the partial download stay")
+TESTKIT.EQ(ToOf$(moves, "Rechnung Müller.PDF"), PATH.JOIN$(target$, "Documents", month$, "Rechnung Müller.PDF"), "a document into its month")
+TESTKIT.EQ(ToOf$(moves, "holiday.jpg"), PATH.JOIN$(busy$, "holiday (2).jpg"), "a name already in the target gets a number")
+TESTKIT.EQ(ToOf$(moves, "notes"), PATH.JOIN$(target$, "Other", month$, "notes"), "a file without an extension goes to Other")
+TESTKIT.EQ(ToOf$(moves, "big video.mp4.crdownload"), "", "a partial download is left alone")
+
+TESTKIT.SUITE("moving")
+PRINT "-- dry run:"
+TESTKIT.EQ(BUTLER.APPLY(moves, TRUE), 3, "a dry run counts the moves")
+TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(source$, "holiday.jpg")), "and moves nothing")
+PRINT "-- for real:"
+TESTKIT.EQ(BUTLER.APPLY(moves, FALSE), 3, "the real run moves three files")
+TESTKIT.ISTRUE(FILE.EXISTS(ToOf$(moves, "Rechnung Müller.PDF")), "the document is in its folder")
+TESTKIT.EQ(TXTREADER$(PATH.JOIN$(busy$, "holiday (2).jpg")), "jpg", "the image under its new name")
+TESTKIT.EQ(TXTREADER$(PATH.JOIN$(busy$, "holiday.jpg")), "older", "the file that was there is untouched")
+TESTKIT.EQ(JOIN(SORT(DIR$(PATH.JOIN$(source$, "*"))), "|"), "Project files|big video.mp4.crdownload", "only the folder and the partial download remain")
+TESTKIT.EQ(LEN(BUTLER.PLAN(source$, target$, rules, 24, later)), 0, "a second run finds nothing to do")
+
+KILL ToOf$(moves, "Rechnung Müller.PDF")
+KILL ToOf$(moves, "notes")
+KILL PATH.JOIN$(busy$, "holiday (2).jpg")
+KILL PATH.JOIN$(busy$, "holiday.jpg")
+KILL PATH.JOIN$(source$, "big video.mp4.crdownload")
+RMDIR busy$
+RMDIR PATH.JOIN$(target$, "Images")
+RMDIR PATH.JOIN$(target$, "Documents", month$)
+RMDIR PATH.JOIN$(target$, "Documents")
+RMDIR PATH.JOIN$(target$, "Other", month$)
+RMDIR PATH.JOIN$(target$, "Other")
+RMDIR target$
+RMDIR PATH.JOIN$(source$, "Project files")
+RMDIR source$
+RMDIR folder$
+TESTKIT.REPORT()
