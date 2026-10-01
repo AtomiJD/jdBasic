@@ -298,6 +298,8 @@ jderg/smoke_xrechnung.xml
 tests/regression/test_np*.bin
 tests/regression/test_np*.csv
 tests/regression/test_np*.txt
+tests/tmp_*
+tests/jdlibs/fixtures/*.done
 tests/regression/test_out*.bin
 tests/regression/test_out*.csv
 tests/regression/test_out*.txt
