@@ -203,64 +203,64 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_print_bool",   "__print_bool",    void_type, {i64_type}, -1);
     reg("jdb_print_nl",     "__print_nl",      void_type, {}, -1);
     reg("jdb_print_space",  "__print_space",   void_type, {}, -1);
-    reg("jdb_str_bool",     "__str_bool",      i8_ptr_type, {i64_type}, 2);
-    reg("jdb_str_str",      "__str_str",       i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_map_str",      "__map_str",       i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_str_bool",     "__str_bool",      i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_str_str",      "__str_str",       i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_map_str",      "__map_str",       i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
 
     // String operations
-    reg("jdb_str_concat",   "__str_concat",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_str_own",      "__str_own",       i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_str_concat",   "__str_concat",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_str_own",      "__str_own",       i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_str_drop",     "__str_drop",      void_type,   {i8_ptr_type}, -1);
     reg("jdb_end_program",  "__end_program",   void_type,   {i64_type}, -1);
-    reg("jdb_int_to_str",   "__int_to_str",    i8_ptr_type, {i64_type}, 2);
-    reg("jdb_double_to_str","__double_to_str", i8_ptr_type, {f64_type}, 2);
+    reg("jdb_int_to_str",   "__int_to_str",    i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_double_to_str","__double_to_str", i8_ptr_type, {f64_type}, JD_TAG_STR);
 
     // Math (double -> double)
-    reg("jdb_abs",    "ABS",    f64_type, {f64_type}, 1);
-    reg("jdb_sqr",    "SQR",    f64_type, {f64_type}, 1);
-    reg("jdb_sin",    "SIN",    f64_type, {f64_type}, 1);
-    reg("jdb_cos",    "COS",    f64_type, {f64_type}, 1);
-    reg("jdb_tan",    "TAN",    f64_type, {f64_type}, 1);
-    reg("jdb_asin",   "ASIN",   f64_type, {f64_type}, 1);
-    reg("jdb_acos",   "ACOS",   f64_type, {f64_type}, 1);
-    reg("jdb_atan",   "ATAN",   f64_type, {f64_type}, 1);
-    reg("jdb_log",    "LOG",    f64_type, {f64_type}, 1);
-    reg("jdb_log10",  "LOG10",  f64_type, {f64_type}, 1);
-    reg("jdb_exp",    "EXP",    f64_type, {f64_type}, 1);
-    reg("jdb_floor",  "FLOOR",  f64_type, {f64_type}, 1);
-    reg("jdb_ceil",   "CEIL",   f64_type, {f64_type}, 1);
-    reg("jdb_pow",    "__pow",  f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_abs",    "ABS",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_sqr",    "SQR",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_sin",    "SIN",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_cos",    "COS",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_tan",    "TAN",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_asin",   "ASIN",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_acos",   "ACOS",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_atan",   "ATAN",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_log",    "LOG",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_log10",  "LOG10",  f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_exp",    "EXP",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_floor",  "FLOOR",  f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_ceil",   "CEIL",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_pow",    "__pow",  f64_type, {f64_type, f64_type}, JD_TAG_F64);
 
     // Math extended
-    reg("jdb_sinh",   "SINH",   f64_type, {f64_type}, 1);
-    reg("jdb_cosh",   "COSH",   f64_type, {f64_type}, 1);
-    reg("jdb_tanh",   "TANH",   f64_type, {f64_type}, 1);
-    reg("jdb_atan2",  "ATAN2",  f64_type, {f64_type, f64_type}, 1);
-    reg("jdb_round",  "ROUND",  f64_type, {f64_type}, 1);
-    reg("jdb_round_p","__round_p", f64_type, {f64_type, f64_type}, 1);
-    reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, 1);
-    reg("jdb_sign",   "SIGN",   f64_type, {f64_type}, 1);
-    reg("jdb_sign",   "SGN",    f64_type, {f64_type}, 1);
-    reg("jdb_clamp",  "CLAMP",  f64_type, {f64_type, f64_type, f64_type}, 1);
-    reg("jdb_fac",    "FAC",    f64_type, {f64_type}, 1);
-    reg("jdb_fmod",   "FMOD",   f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_sinh",   "SINH",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_cosh",   "COSH",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_tanh",   "TANH",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_atan2",  "ATAN2",  f64_type, {f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_round",  "ROUND",  f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_round_p","__round_p", f64_type, {f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_join_arr","JOIN",     i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_trunc",  "TRUNC",  f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_sign",   "SIGN",   f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_sign",   "SGN",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_clamp",  "CLAMP",  f64_type, {f64_type, f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_fac",    "FAC",    f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_fmod",   "FMOD",   f64_type, {f64_type, f64_type}, JD_TAG_F64);
     // Internal names only: MIN/MAX are unary array reducers with an optional
     // axis, so those names must not resolve to a two-argument scalar min/max.
-    reg("jdb_min2",   "__min2", f64_type, {f64_type, f64_type}, 1);
-    reg("jdb_max2",   "__max2", f64_type, {f64_type, f64_type}, 1);
-    reg("jdb_pi",     "MATH.PI", f64_type, {}, 1);
-    reg("jdb_e",      "MATH.E",  f64_type, {}, 1);
+    reg("jdb_min2",   "__min2", f64_type, {f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_max2",   "__max2", f64_type, {f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_pi",     "MATH.PI", f64_type, {}, JD_TAG_F64);
+    reg("jdb_e",      "MATH.E",  f64_type, {}, JD_TAG_F64);
 
     // Math (special)
-    reg("jdb_int",    "INT",    i64_type, {f64_type}, 0);
-    reg("jdb_val",    "VAL",    f64_type, {i8_ptr_type}, 1);
-    reg("jdb_rnd",    "RND",    f64_type, {}, 1);
-    reg("jdb_rnd",    "RANDOM", f64_type, {}, 1);
-    reg("jdb_random2","__random2", f64_type, {f64_type, f64_type}, 1);
+    reg("jdb_int",    "INT",    i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_val",    "VAL",    f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_rnd",    "RND",    f64_type, {}, JD_TAG_F64);
+    reg("jdb_rnd",    "RANDOM", f64_type, {}, JD_TAG_F64);
+    reg("jdb_random2","__random2", f64_type, {f64_type, f64_type}, JD_TAG_F64);
 
     // System
-    reg("jdb_tick",       "TICK",       f64_type, {}, 1);
+    reg("jdb_tick",       "TICK",       f64_type, {}, JD_TAG_F64);
     reg("jdb_sleep",      "SLEEP",      void_type, {i64_type}, -1);
     reg("jdb_randomseed", "RANDOMSEED", void_type, {i64_type}, -1);
 
@@ -269,152 +269,152 @@ void LLVMCodegen::declare_runtime_functions() {
     // new reserved word, and only present in a KERNEL build. The bare runtime
     // carries the inline asm; a call is cheap next to the bus timing of a port
     // access, and a memory poke is not hot enough to need an intrinsic.
-    reg("jdb_sys_inb",   "SYS.INB",   i64_type, {i64_type}, 0);
+    reg("jdb_sys_inb",   "SYS.INB",   i64_type, {i64_type}, JD_TAG_I64);
     reg("jdb_sys_outb",  "SYS.OUTB",  void_type, {i64_type, i64_type}, -1);
-    reg("jdb_sys_peekb", "SYS.PEEKB", i64_type, {i64_type}, 0);
+    reg("jdb_sys_peekb", "SYS.PEEKB", i64_type, {i64_type}, JD_TAG_I64);
     reg("jdb_sys_pokeb", "SYS.POKEB", void_type, {i64_type, i64_type}, -1);
-    reg("jdb_sys_peekw", "SYS.PEEKW", i64_type, {i64_type}, 0);
+    reg("jdb_sys_peekw", "SYS.PEEKW", i64_type, {i64_type}, JD_TAG_I64);
     reg("jdb_sys_pokew", "SYS.POKEW", void_type, {i64_type, i64_type}, -1);
-    reg("jdb_sys_peek",  "SYS.PEEK",  i64_type, {i64_type}, 0);
+    reg("jdb_sys_peek",  "SYS.PEEK",  i64_type, {i64_type}, JD_TAG_I64);
     reg("jdb_sys_poke",  "SYS.POKE",  void_type, {i64_type, i64_type}, -1);
     // Calls machine code the program itself wrote into memory. The image is
     // identity-mapped without NX, so a data page is executable as it stands.
-    reg("jdb_sys_call",  "SYS.CALL",  i64_type, {i64_type}, 0);
+    reg("jdb_sys_call",  "SYS.CALL",  i64_type, {i64_type}, JD_TAG_I64);
 #endif
 
     // Arrays (JdbArray* is opaque pointer = i8_ptr_type)
-    reg("jdb_array_new",  "__array_new",  i8_ptr_type, {i64_type}, 3);
+    reg("jdb_array_new",  "__array_new",  i8_ptr_type, {i64_type}, JD_TAG_ARR);
     reg("jdb_array_set",  "__array_set",  void_type, {i8_ptr_type, i64_type, f64_type}, -1);
     reg("jdb_array_set_tagged", "__array_set_tagged", void_type,
         {i8_ptr_type, i64_type, f64_type, i32_type}, -1);
-    reg("jdb_array_get",  "__array_get",  f64_type, {i8_ptr_type, i64_type}, 1);
+    reg("jdb_array_get",  "__array_get",  f64_type, {i8_ptr_type, i64_type}, JD_TAG_F64);
     // Unary `-"abc"` → string char-split array (UTF-8 aware).
-    reg("jdb_str_to_chars", "__str_to_chars", i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_str_to_chars", "__str_to_chars", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
     // Fancy/vector indexing helper: arr[indices_array] → new array.
-    reg("jdb_array_gather", "__array_gather", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 1);
-    reg("jdb_array_len",  "LEN",          i64_type, {i8_ptr_type}, 0);
-    reg("jdb_iota",       "IOTA",         i8_ptr_type, {i64_type}, 3);
-    reg("jdb_iota3",      "__iota3",      i8_ptr_type, {f64_type, f64_type, f64_type}, 3);
-    reg("jdb_array_pop",    "__arr_pop",     f64_type,    {i8_ptr_type}, 1);
-    reg("jdb_array_pop_str","__arr_pop_str", i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_zeros",      "ZEROS",        i8_ptr_type, {i64_type}, 3);
-    reg("jdb_ones",       "ONES",         i8_ptr_type, {i64_type}, 3);
-    reg("jdb_mean",       "MEAN",         f64_type, {i8_ptr_type}, 1);
-    reg("jdb_stdev",      "STDEV",        f64_type, {i8_ptr_type}, 1);
-    reg("jdb_array_median","MEDIAN",      f64_type, {i8_ptr_type}, 1);
-    reg("jdb_array_variance","VARIANCE",  f64_type, {i8_ptr_type}, 1);
-    reg("jdb_array_sum",  "SUM",          f64_type, {i8_ptr_type}, 1);
-    reg("jdb_array_product","PRODUCT",    f64_type, {i8_ptr_type}, 1);
+    reg("jdb_array_gather", "__array_gather", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_len",  "LEN",          i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_iota",       "IOTA",         i8_ptr_type, {i64_type}, JD_TAG_ARR);
+    reg("jdb_iota3",      "__iota3",      i8_ptr_type, {f64_type, f64_type, f64_type}, JD_TAG_ARR);
+    reg("jdb_array_pop",    "__arr_pop",     f64_type,    {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_pop_str","__arr_pop_str", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_zeros",      "ZEROS",        i8_ptr_type, {i64_type}, JD_TAG_ARR);
+    reg("jdb_ones",       "ONES",         i8_ptr_type, {i64_type}, JD_TAG_ARR);
+    reg("jdb_mean",       "MEAN",         f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_stdev",      "STDEV",        f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_median","MEDIAN",      f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_variance","VARIANCE",  f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_sum",  "SUM",          f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_product","PRODUCT",    f64_type, {i8_ptr_type}, JD_TAG_F64);
     reg("jdb_array_reduce_axis", "__arr_reduce_axis", i8_ptr_type,
-        {i8_ptr_type, i64_type, i32_type}, 3);
-    reg("jdb_array_min",  "__arr_min",    f64_type, {i8_ptr_type}, 1);
-    reg("jdb_array_max",  "__arr_max",    f64_type, {i8_ptr_type}, 1);
+        {i8_ptr_type, i64_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_array_min",  "__arr_min",    f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_array_max",  "__arr_max",    f64_type, {i8_ptr_type}, JD_TAG_F64);
     // Backed by i64, but tagged BOOL so PRINT/STR$ render TRUE/FALSE the way
     // the interpreter does rather than 1/0.
     reg("jdb_array_any",  "ANY",          i64_type, {i8_ptr_type}, JD_TAG_BOOL);
     reg("jdb_array_all",  "ALL",          i64_type, {i8_ptr_type}, JD_TAG_BOOL);
-    reg("jdb_array_dot",  "DOT",          f64_type, {i8_ptr_type, i8_ptr_type}, 1);
+    reg("jdb_array_dot",  "DOT",          f64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
     // Unary array math: bypass the function-pointer-callback applier so
     // the compiler can inline + vectorise the inner loop.
-    reg("jdb_array_sin",   "__arr_sin",   i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_cos",   "__arr_cos",   i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_tan",   "__arr_tan",   i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_asin",  "__arr_asin",  i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_acos",  "__arr_acos",  i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_atan",  "__arr_atan",  i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_sinh",  "__arr_sinh",  i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_cosh",  "__arr_cosh",  i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_tanh",  "__arr_tanh",  i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_exp",   "__arr_exp",   i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_log",   "__arr_log",   i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_log10", "__arr_log10", i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_sqr",   "__arr_sqr",   i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_abs",   "__arr_abs",   i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_floor", "__arr_floor", i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_ceil",  "__arr_ceil",  i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_round", "__arr_round", i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_trunc", "__arr_trunc", i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_reverse","REVERSE",    i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_sort_dir", "__SORT_DIR", i8_ptr_type, {i8_ptr_type, f64_type}, 3);
-    reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
-    reg("jdb_array_append_arr","__append_arr", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_array_fillv", "FILLV",       i8_ptr_type, {i8_ptr_type, f64_type}, 3);
-    reg("jdb_array_copyv", "COPYV",       i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_array_sin",   "__arr_sin",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_cos",   "__arr_cos",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_tan",   "__arr_tan",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_asin",  "__arr_asin",  i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_acos",  "__arr_acos",  i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_atan",  "__arr_atan",  i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_sinh",  "__arr_sinh",  i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_cosh",  "__arr_cosh",  i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_tanh",  "__arr_tanh",  i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_exp",   "__arr_exp",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_log",   "__arr_log",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_log10", "__arr_log10", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_sqr",   "__arr_sqr",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_abs",   "__arr_abs",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_floor", "__arr_floor", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_ceil",  "__arr_ceil",  i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_round", "__arr_round", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_trunc", "__arr_trunc", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_reverse","REVERSE",    i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_sort_dir", "__SORT_DIR", i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_ARR);
+    reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_ARR);
+    reg("jdb_array_append_arr","__append_arr", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_fillv", "FILLV",       i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_ARR);
+    reg("jdb_array_copyv", "COPYV",       i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     // Tagged variants - preserve per-element JdTag so arr[i] reads return
     // the right RUNTIME-tag for downstream coerce_to / TYPEOF / FMT$.
     reg("jdb_array_append_tagged","__arr_append_tagged",
         i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, -1);
     reg("jdb_array_push", "__arr_push",
-        i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
+        i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, JD_TAG_ARR);
     reg("jdb_array_get_tagged","__arr_get_tagged",
         f64_type, {i8_ptr_type, i64_type, i8_ptr_type}, -1);
-    reg("jdb_array_count","COUNT",        i64_type, {i8_ptr_type, f64_type}, 0);
-    reg("jdb_array_indexof","INDEXOF",    i64_type, {i8_ptr_type, f64_type}, 0);
-    reg("jdb_array_has_str","__arr_has_str", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_array_has_num","__arr_has_num", i64_type, {i8_ptr_type, f64_type}, 0);
-    reg("jdb_array_unique","UNIQUE",      i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_unique_str","__unique_str", i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_cumsum","CUMSUM",      i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_cumprod","CUMPROD",    i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_count","COUNT",        i64_type, {i8_ptr_type, f64_type}, JD_TAG_I64);
+    reg("jdb_array_indexof","INDEXOF",    i64_type, {i8_ptr_type, f64_type}, JD_TAG_I64);
+    reg("jdb_array_has_str","__arr_has_str", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_array_has_num","__arr_has_num", i64_type, {i8_ptr_type, f64_type}, JD_TAG_I64);
+    reg("jdb_array_unique","UNIQUE",      i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_unique_str","__unique_str", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_cumsum","CUMSUM",      i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_cumprod","CUMPROD",    i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
     // TAKE / DROP - interpreter signature is (n, arr); the (arr, n) variant
     // jdb_array_take / jdb_array_drop stays for any internal callers.
-    reg("jdb_take_n",     "TAKE",         i8_ptr_type, {i64_type, i8_ptr_type}, 3);
-    reg("jdb_drop_n",     "DROP",         i8_ptr_type, {i64_type, i8_ptr_type}, 3);
-    reg("jdb_array_diff", "DIFF",         i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_array_flatten","FLATTEN",    i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_array_shuffle","SHUFFLE",    i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_take_n",     "TAKE",         i8_ptr_type, {i64_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_drop_n",     "DROP",         i8_ptr_type, {i64_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_diff", "DIFF",         i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_flatten","FLATTEN",    i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_shuffle","SHUFFLE",    i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_array_insert", "__arr_insert", i8_ptr_type,
-        {i8_ptr_type, f64_type, i64_type, i32_type}, 3);
-    reg("jdb_linspace",   "LINSPACE",     i8_ptr_type, {f64_type, f64_type, i64_type}, 3);
-    reg("jdb_range",      "RANGE",        i8_ptr_type, {i64_type, i64_type, i64_type}, 3);
-    reg("jdb_grade",      "GRADE",        i8_ptr_type, {i8_ptr_type}, 3);
+        {i8_ptr_type, f64_type, i64_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_linspace",   "LINSPACE",     i8_ptr_type, {f64_type, f64_type, i64_type}, JD_TAG_ARR);
+    reg("jdb_range",      "RANGE",        i8_ptr_type, {i64_type, i64_type, i64_type}, JD_TAG_ARR);
+    reg("jdb_grade",      "GRADE",        i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
 
     // Array arithmetic (native, no VM bridge needed)
-    reg("jdb_array_binop",       "__arr_binop",       i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
-    reg("jdb_array_scalar_op",   "__arr_scalar_op",   i8_ptr_type, {i8_ptr_type, f64_type, i32_type, i32_type}, 3);
-    reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, 3);
-    reg("jdb_array_cmp_scalar_str","__arr_cmp_scalar_str", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
-    reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
+    reg("jdb_array_binop",       "__arr_binop",       i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_array_scalar_op",   "__arr_scalar_op",   i8_ptr_type, {i8_ptr_type, f64_type, i32_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_array_cmp_scalar",  "__arr_cmp_scalar",  i8_ptr_type, {i8_ptr_type, f64_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_array_cmp_scalar_str","__arr_cmp_scalar_str", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
+    reg("jdb_array_cmp_arr",     "__arr_cmp_arr",     i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
     reg("jdb_array_set_nested",  "__arr_set_nested",  void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_string_elems", "__arr_set_string_elems", void_type, {i8_ptr_type}, -1);
     reg("jdb_array_set_bool_elems", "__arr_set_bool_elems", void_type, {i8_ptr_type}, -1);
-    reg("jdb_array_classify_elem", "__arr_classify", i32_type, {i8_ptr_type, f64_type}, 2);
-    reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_array_classify_elem", "__arr_classify", i32_type, {i8_ptr_type, f64_type}, JD_TAG_STR);
+    reg("jdb_str_repeat", "__str_repeat", i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
     reg("jdb_setlocale",  "SETLOCALE",    void_type, {i8_ptr_type}, -1);
     // Maps / Objects
-    reg("jdb_map_new",    "__map_new",    i8_ptr_type, {}, 4);
+    reg("jdb_map_new",    "__map_new",    i8_ptr_type, {}, JD_TAG_NATIVE_MAP);
     reg("jdb_map_set_f64","__map_set_f64",void_type,   {i8_ptr_type, i8_ptr_type, f64_type}, -1);
     reg("jdb_map_set_str","__map_set_str",void_type,   {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
     reg("jdb_map_set_tagged","__map_set_tagged",void_type, {i8_ptr_type, i8_ptr_type, f64_type, i32_type}, -1);
-    reg("jdb_map_get_f64","__map_get_f64",f64_type,    {i8_ptr_type, i8_ptr_type}, 1);
-    reg("jdb_map_get_str","__map_get_str",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_map_delete", "__map_delete", i64_type,    {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_map_get_obj","__map_get_obj",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 4);
-    reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_str_slice",  "__str_slice",  i8_ptr_type, {i8_ptr_type, i64_type, i32_type}, 2);
+    reg("jdb_map_get_f64","__map_get_f64",f64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_map_get_str","__map_get_str",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_map_has",    "__map_has",    i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_map_delete", "__map_delete", i64_type,    {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_map_get_obj","__map_get_obj",i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_NATIVE_MAP);
+    reg("jdb_str_sub",    "__str_sub",    i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_str_slice",  "__str_slice",  i8_ptr_type, {i8_ptr_type, i64_type, i32_type}, JD_TAG_STR);
     // Native generic vectorization helpers (avoid VM bridge overhead)
-    reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_array_apply_ss",   "__arr_apply_ss",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_array_apply_ifs",  "__arr_apply_ifs",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_array_apply_sfi",  "__arr_apply_sfi",  i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, 3);
-    reg("jdb_array_apply_sfii", "__arr_apply_sfii", i8_ptr_type, {i8_ptr_type, i64_type, i64_type, i8_ptr_type}, 3);
-    reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_apply_ff",   "__arr_apply_ff",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_apply_ss",   "__arr_apply_ss",   i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_apply_ifs",  "__arr_apply_ifs",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_apply_sfi",  "__arr_apply_sfi",  i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_apply_sfii", "__arr_apply_sfii", i8_ptr_type, {i8_ptr_type, i64_type, i64_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_array_len_shape",   "__arr_len_shape",   i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_print_array_elem",  "__print_arr_elem",  void_type, {i8_ptr_type, i64_type}, -1);
-    reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, 3);
+    reg("jdb_array_str_concat",  "__arr_str_concat",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
     reg("jdb_trace",             "__trace",           void_type, {i8_ptr_type, i64_type}, -1);
 
     // Exception state - THROW stores msg/code, CATCH reads via ERRMSG$/ERR.
     reg("jdb_err_set",       "__err_set",   void_type,   {i8_ptr_type, i64_type}, -1);
     reg("jdb_err_clear",     "__err_clear", void_type,   {}, -1);
     reg("jdb_err_set_if_clear", "__err_set_ifclear", void_type, {i8_ptr_type, i64_type}, -1);
-    reg("jdb_input_line",    "__input_line", i8_ptr_type, {}, 2);
-    reg("jdb_err_msg",          "ERRMSG$",  i8_ptr_type, {}, 2);
+    reg("jdb_input_line",    "__input_line", i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_err_msg",          "ERRMSG$",  i8_ptr_type, {}, JD_TAG_STR);
     // ERR → user-visible reader (with shadow fallback). The raw-code
     // getter below is what emit_err_check's propagation loop calls.
-    reg("jdb_err_code_visible", "ERR",      i64_type,    {}, 0);
-    reg("jdb_err_code",         "__err_rc", i64_type,    {}, 0);
+    reg("jdb_err_code_visible", "ERR",      i64_type,    {}, JD_TAG_I64);
+    reg("jdb_err_code",         "__err_rc", i64_type,    {}, JD_TAG_I64);
     reg("jdb_throw_uncaught","__throw_uncaught", void_type, {}, -1);
     // Clears only g_err_code, leaves g_err_msg alone (so ERRMSG$ still
     // works inside a catch body).
@@ -427,7 +427,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_recursion_enter",    "__rec_enter",   i32_type, {}, -1);
     reg("jdb_recursion_leave",    "__rec_leave",   void_type, {}, -1);
     reg("jdb_recursion_reset_to", "__rec_reset",   void_type, {i64_type}, -1);
-    reg("jdb_recursion_depth",    "__rec_depth",   i64_type, {}, 0);
+    reg("jdb_recursion_depth",    "__rec_depth",   i64_type, {}, JD_TAG_I64);
 
     // Event system
     reg("jdb_event_on",       "__event_on",      void_type, {i8_ptr_type, i8_ptr_type}, -1);
@@ -447,282 +447,282 @@ void LLVMCodegen::declare_runtime_functions() {
         void_type, {i8_ptr_type, i8_ptr_type}, -1);
 
     // OS.FEATURE - query whether a build feature is present in this binary
-    reg("jdb_os_feature",     "OS.FEATURE",      i64_type, {i8_ptr_type}, 0);
+    reg("jdb_os_feature",     "OS.FEATURE",      i64_type, {i8_ptr_type}, JD_TAG_I64);
 
     // OS
     reg("jdb_set_args",   "__set_args",   void_type, {i32_type, i8_ptr_type}, -1);
-    reg("jdb_os_args",    "OS.ARGS",      i8_ptr_type, {}, 3);
-    reg("jdb_array_get_str", "__array_get_str", i8_ptr_type, {i8_ptr_type, i64_type}, 2);
-    reg("jdb_val_ptr",    "__val_ptr",    f64_type, {f64_type}, 1);
+    reg("jdb_os_args",    "OS.ARGS",      i8_ptr_type, {}, JD_TAG_ARR);
+    reg("jdb_array_get_str", "__array_get_str", i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_val_ptr",    "__val_ptr",    f64_type, {f64_type}, JD_TAG_F64);
 
     // FORMAT$ (1-4 args)
-    reg("jdb_format1", "__format1", i8_ptr_type, {i8_ptr_type, f64_type}, 2);
-    reg("jdb_format2", "__format2", i8_ptr_type, {i8_ptr_type, f64_type, f64_type}, 2);
-    reg("jdb_format3", "__format3", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type}, 2);
-    reg("jdb_format4", "__format4", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type, f64_type}, 2);
-    reg("jdb_format1_t", "__format1_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type}, 2);
-    reg("jdb_format2_t", "__format2_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type}, 2);
-    reg("jdb_format3_t", "__format3_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type, i64_type}, 2);
-    reg("jdb_format4_t", "__format4_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type, i64_type, i64_type}, 2);
+    reg("jdb_format1", "__format1", i8_ptr_type, {i8_ptr_type, f64_type}, JD_TAG_STR);
+    reg("jdb_format2", "__format2", i8_ptr_type, {i8_ptr_type, f64_type, f64_type}, JD_TAG_STR);
+    reg("jdb_format3", "__format3", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type}, JD_TAG_STR);
+    reg("jdb_format4", "__format4", i8_ptr_type, {i8_ptr_type, f64_type, f64_type, f64_type, f64_type}, JD_TAG_STR);
+    reg("jdb_format1_t", "__format1_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_format2_t", "__format2_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type}, JD_TAG_STR);
+    reg("jdb_format3_t", "__format3_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type, i64_type}, JD_TAG_STR);
+    reg("jdb_format4_t", "__format4_t", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type, i64_type, i64_type}, JD_TAG_STR);
     // Hand the VM-bridge handle over to jdb_runtime.obj so format-tagged
     // 'h' args (VM handles) can call into jdrt_val_to_f64 / val_to_str.
-    reg("jdb_runtime_set_handle", "__runtime_set_handle", void_type, {i8_ptr_type}, 1);
+    reg("jdb_runtime_set_handle", "__runtime_set_handle", void_type, {i8_ptr_type}, JD_TAG_F64);
 
     // String builtins
-    reg("jdb_len_str",  "LEN$",     i64_type, {i8_ptr_type}, 0);
-    reg("jdb_mid_lax",  "MID$",     i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
-    reg("jdb_mid",      "MID",      i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, 2);
-    reg("jdb_left",     "LEFT$",    i8_ptr_type, {i8_ptr_type, i64_type}, 2);
-    reg("jdb_left",     "LEFT",     i8_ptr_type, {i8_ptr_type, i64_type}, 2);
-    reg("jdb_right",    "RIGHT$",   i8_ptr_type, {i8_ptr_type, i64_type}, 2);
-    reg("jdb_right",    "RIGHT",    i8_ptr_type, {i8_ptr_type, i64_type}, 2);
-    reg("jdb_upper",    "UPPER$",   i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_lower",    "LOWER$",   i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_trim",     "TRIM$",    i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_chr",      "CHR$",     i8_ptr_type, {i64_type}, 2);
-    reg("jdb_chr",      "CHR",      i8_ptr_type, {i64_type}, 2);
-    reg("jdb_asc",      "ASC",      i64_type, {i8_ptr_type}, 0);
-    reg("jdb_instr",    "INSTR",    i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_replace",  "REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_str",      "STR$",     i8_ptr_type, {f64_type}, 2);
-    reg("jdb_array_str","__str_arr",i8_ptr_type, {i8_ptr_type}, 3);
-    reg("jdb_str",      "STR",      i8_ptr_type, {f64_type}, 2);
-    reg("jdb_space",    "SPACE$",   i8_ptr_type, {i64_type}, 2);
-    reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_str_cmp",  "__str_cmp", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_dyn_cmp",  "__dyn_cmp", i64_type, {i64_type, i32_type, i64_type, i32_type}, 0);
-    reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_startswith","STARTSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_endswith", "ENDSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, 0);
-    reg("jdb_hex",      "HEX$",    i8_ptr_type, {i64_type}, 2);
-    reg("jdb_bin",      "BIN$",    i8_ptr_type, {i64_type}, 2);
-    reg("jdb_oct",      "OCT$",    i8_ptr_type, {i64_type}, 2);
-    reg("jdb_insert_str","INSERT$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type}, 2);
+    reg("jdb_len_str",  "LEN$",     i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_mid_lax",  "MID$",     i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, JD_TAG_STR);
+    reg("jdb_mid",      "MID",      i8_ptr_type, {i8_ptr_type, i64_type, i64_type}, JD_TAG_STR);
+    reg("jdb_left",     "LEFT$",    i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_left",     "LEFT",     i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_right",    "RIGHT$",   i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_right",    "RIGHT",    i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
+    reg("jdb_upper",    "UPPER$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_lower",    "LOWER$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_trim",     "TRIM$",    i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_chr",      "CHR$",     i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_chr",      "CHR",      i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_asc",      "ASC",      i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_instr",    "INSTR",    i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_replace",  "REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_str",      "STR$",     i8_ptr_type, {f64_type}, JD_TAG_STR);
+    reg("jdb_array_str","__str_arr",i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_str",      "STR",      i8_ptr_type, {f64_type}, JD_TAG_STR);
+    reg("jdb_space",    "SPACE$",   i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_str_eq",   "__str_eq",  i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_str_cmp",  "__str_cmp", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_dyn_cmp",  "__dyn_cmp", i64_type, {i64_type, i32_type, i64_type, i32_type}, JD_TAG_I64);
+    reg("jdb_str_ne",   "__str_ne",  i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_ltrim",    "LTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_rtrim",    "RTRIM$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_startswith","STARTSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_endswith", "ENDSWITH", i64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_hex",      "HEX$",    i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_bin",      "BIN$",    i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_oct",      "OCT$",    i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_insert_str","INSERT$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type}, JD_TAG_STR);
     // Aliases
-    reg("jdb_upper",    "UCASE$",  i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_upper",    "UCASE",   i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_lower",    "LCASE$",  i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_lower",    "LCASE",   i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_upper",    "UCASE$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_upper",    "UCASE",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_lower",    "LCASE$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_lower",    "LCASE",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
 
     // File I/O
-    reg("jdb_txtreader",       "TXTREADER$",  i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_txtreader",       "TXTREADER$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     // 3-arg TXTWRITER: 2-arg calls pad 0 → no append, 3-arg picks append
     reg("jdb_txtwriter3",      "TXTWRITER",   void_type, {i8_ptr_type, i8_ptr_type, i64_type}, -1);
     reg("jdb_txtwriter_append","TXTWRITER_APPEND", void_type, {i8_ptr_type, i8_ptr_type}, -1);
     // Codepage-aware variants. The codegen routes TXTREADER$/TXTWRITER calls
     // here when an encoding arg is present (see the upper-rewrite block in
     // codegen_call). Underscore prefix keeps them out of the user namespace.
-    reg("jdb_txtreader_enc",   "__TXTREADER_ENC", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_txtreader_enc",   "__TXTREADER_ENC", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_txtwriter_enc",   "__TXTWRITER_ENC", void_type,
         {i8_ptr_type, i8_ptr_type, i64_type, i8_ptr_type}, -1);
-    reg("jdb_pwd",             "PWD",         i8_ptr_type, {}, 2);
-    reg("jdb_cd",              "CD",          i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_pwd",             "PWD",         i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_cd",              "CD",          i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_mkdir_native",    "MKDIR",       void_type, {i8_ptr_type}, -1);
     reg("jdb_rmdir",           "RMDIR",       void_type, {i8_ptr_type}, -1);
     reg("jdb_kill",            "KILL",        void_type, {i8_ptr_type}, -1);
     reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, JD_TAG_BOOL);
-    reg("jdb_file_size",       "FILE.SIZE",   i64_type, {i8_ptr_type}, 0);
+    reg("jdb_file_size",       "FILE.SIZE",   i64_type, {i8_ptr_type}, JD_TAG_I64);
     reg("jdb_file_isdir",      "FILE.ISDIR",  i64_type, {i8_ptr_type}, JD_TAG_BOOL);
-    reg("jdb_path_dirname",    "PATH.DIRNAME$",   i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_path_normalize",  "PATH.NORMALIZE$", i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_path_dirname",    "PATH.DIRNAME$",   i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_path_normalize",  "PATH.NORMALIZE$", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
 
     // Date/Time
-    reg("jdb_now",         "NOW",         i8_ptr_type, {}, 2);
-    reg("jdb_now_epoch",   "NOW_EPOCH",   f64_type, {}, 1);
-    reg("jdb_date_str",    "DATE$",       i8_ptr_type, {f64_type}, 2);
-    reg("jdb_time_str",    "TIME$",       i8_ptr_type, {f64_type}, 2);
-    reg("jdb_year",        "YEAR",        i64_type, {f64_type}, 0);
-    reg("jdb_month",       "MONTH",       i64_type, {f64_type}, 0);
-    reg("jdb_day",         "DAY",         i64_type, {f64_type}, 0);
-    reg("jdb_hour",        "HOUR",        i64_type, {f64_type}, 0);
-    reg("jdb_minute",      "MINUTE",      i64_type, {f64_type}, 0);
-    reg("jdb_second",      "SECOND",      i64_type, {f64_type}, 0);
-    reg("jdb_weekday",     "WEEKDAY",     i64_type, {f64_type}, 0);
+    reg("jdb_now",         "NOW",         i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_now_epoch",   "NOW_EPOCH",   f64_type, {}, JD_TAG_F64);
+    reg("jdb_date_str",    "DATE$",       i8_ptr_type, {f64_type}, JD_TAG_STR);
+    reg("jdb_time_str",    "TIME$",       i8_ptr_type, {f64_type}, JD_TAG_STR);
+    reg("jdb_year",        "YEAR",        i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_month",       "MONTH",       i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_day",         "DAY",         i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_hour",        "HOUR",        i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_minute",      "MINUTE",      i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_second",      "SECOND",      i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_weekday",     "WEEKDAY",     i64_type, {f64_type}, JD_TAG_I64);
     // String-based date accessors (for ISO strings from CVDATE/DATEADD)
-    reg("jdb_year_str",    "__year_str",   i64_type, {i8_ptr_type}, 0);
-    reg("jdb_month_str",   "__month_str",  i64_type, {i8_ptr_type}, 0);
-    reg("jdb_day_str",     "__day_str",    i64_type, {i8_ptr_type}, 0);
-    reg("jdb_hour_str",    "__hour_str",   i64_type, {i8_ptr_type}, 0);
-    reg("jdb_minute_str",  "__minute_str", i64_type, {i8_ptr_type}, 0);
-    reg("jdb_second_str",  "__second_str", i64_type, {i8_ptr_type}, 0);
-    reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, 2);
-    reg("jdb_format_date_num", "__format_date_num", i8_ptr_type, {f64_type, i8_ptr_type, f64_type}, 2);
-    reg("jdb_format_date_vec", "__format_date_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, 3);
+    reg("jdb_year_str",    "__year_str",   i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_month_str",   "__month_str",  i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_day_str",     "__day_str",    i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_hour_str",    "__hour_str",   i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_minute_str",  "__minute_str", i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_second_str",  "__second_str", i64_type, {i8_ptr_type}, JD_TAG_I64);
+    reg("jdb_format_date", "FORMAT_DATE", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, JD_TAG_STR);
+    reg("jdb_format_date_num", "__format_date_num", i8_ptr_type, {f64_type, i8_ptr_type, f64_type}, JD_TAG_STR);
+    reg("jdb_format_date_vec", "__format_date_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, f64_type}, JD_TAG_ARR);
 
     // System
-    reg("jdb_getenv",  "GETENV$",  i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_getenv",  "GETENV$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     reg("jdb_setenv",  "SETENV",   void_type,   {i8_ptr_type, i8_ptr_type}, -1);
-    reg("jdb_mktemp",  "MKTEMP$",  i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_iif",     "IIF",      f64_type, {i64_type, f64_type, f64_type}, 1);
-    reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, 0);
+    reg("jdb_mktemp",  "MKTEMP$",  i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_iif",     "IIF",      f64_type, {i64_type, f64_type, f64_type}, JD_TAG_F64);
+    reg("jdb_isnum",   "ISNUM",    i64_type, {f64_type}, JD_TAG_I64);
 
     // Bit rotation (2-arg, implicit 64-bit width; 3-arg falls back to VM bridge)
-    reg("jdb_rotl2",   "ROTL",     i64_type, {i64_type, i64_type}, 0);
-    reg("jdb_rotr2",   "ROTR",     i64_type, {i64_type, i64_type}, 0);
+    reg("jdb_rotl2",   "ROTL",     i64_type, {i64_type, i64_type}, JD_TAG_I64);
+    reg("jdb_rotr2",   "ROTR",     i64_type, {i64_type, i64_type}, JD_TAG_I64);
     // GCD/LCM - variadic in VM, 2-arg native form reachable via VM bridge
 
     // String padding (jdb_str_repeat already declared above as __str_repeat)
-    reg("jdb_str_repeat", "REPEAT$",  i8_ptr_type, {i8_ptr_type, i64_type}, 2);
+    reg("jdb_str_repeat", "REPEAT$",  i8_ptr_type, {i8_ptr_type, i64_type}, JD_TAG_STR);
     // 3-arg bindings; 2-arg calls pad null for pad and jdb_lpad treats null as " "
-    reg("jdb_lpad",       "LPAD$",    i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, 2);
-    reg("jdb_rpad",       "RPAD$",    i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, 2);
+    reg("jdb_lpad",       "LPAD$",    i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_rpad",       "RPAD$",    i8_ptr_type, {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_STR);
 
     // Codec
-    reg("jdb_base64_encode", "CODEC.BASE64_ENCODE$", i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_base64_decode", "CODEC.BASE64_DECODE$", i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_uuid",          "CODEC.UUID$",          i8_ptr_type, {}, 2);
-    reg("jdb_sha256",        "CODEC.SHA256$",        i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_base64_encode", "CODEC.BASE64_ENCODE$", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_base64_decode", "CODEC.BASE64_DECODE$", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_uuid",          "CODEC.UUID$",          i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_sha256",        "CODEC.SHA256$",        i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
     // 3-arg binding; a 2-arg call pads null and the runtime defaults to SHA256
-    reg("jdb_hmac_sha256",   "CODEC.HMAC$",          i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_randombytes",   "CODEC.RANDOMBYTES$",   i8_ptr_type, {i64_type}, 2);
-    reg("jdb_pbkdf2",        "CODEC.PBKDF2$",        i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type}, 2);
+    reg("jdb_hmac_sha256",   "CODEC.HMAC$",          i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_randombytes",   "CODEC.RANDOMBYTES$",   i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_pbkdf2",        "CODEC.PBKDF2$",        i8_ptr_type, {i8_ptr_type, i8_ptr_type, i64_type, i64_type}, JD_TAG_STR);
 
     // UDT (User-Defined Types)
-    reg("jdb_udt_new",     "__udt_new",     i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_udt_new",     "__udt_new",     i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
     reg("jdb_udt_set_f64", "__udt_set_f64", void_type, {i8_ptr_type, i8_ptr_type, f64_type}, -1);
-    reg("jdb_udt_get_f64", "__udt_get_f64", f64_type, {i8_ptr_type, i8_ptr_type}, 1);
+    reg("jdb_udt_get_f64", "__udt_get_f64", f64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
     reg("jdb_udt_set_str", "__udt_set_str", void_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
-    reg("jdb_udt_get_str", "__udt_get_str", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 2);
+    reg("jdb_udt_get_str", "__udt_get_str", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdb_output_capture_begin", "OUTPUT.CAPTURE_BEGIN", void_type, {}, -1);
-    reg("jdb_output_capture_end",   "OUTPUT.CAPTURE_END$",  i8_ptr_type, {}, 2);
-    reg("jdb_output_capture_peek",  "OUTPUT.CAPTURE_PEEK$", i8_ptr_type, {}, 2);
+    reg("jdb_output_capture_end",   "OUTPUT.CAPTURE_END$",  i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_output_capture_peek",  "OUTPUT.CAPTURE_PEEK$", i8_ptr_type, {}, JD_TAG_STR);
     reg("jdb_udt_set_obj", "__udt_set_obj", void_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, -1);
-    reg("jdb_udt_get_obj", "__udt_get_obj", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_udt_get_obj", "__udt_get_obj", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
 
     // Higher-order functions (take function pointers)
     // jdb_select_fn(fn_ptr, array) -> array
-    reg("jdb_select_fn", "__select_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_select_fn", "__select_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     // jdb_filter_fn(fn_ptr, array) -> array
-    reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_take_while_fn", "__take_while_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_drop_while_fn", "__drop_while_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_filter_fn", "__filter_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_take_while_fn", "__take_while_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_drop_while_fn", "__drop_while_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     // jdb_reduce_fn(fn_ptr, array, init) -> double
-    reg("jdb_reduce_fn", "__reduce_fn", f64_type, {i8_ptr_type, i8_ptr_type, f64_type}, 1);
+    reg("jdb_reduce_fn", "__reduce_fn", f64_type, {i8_ptr_type, i8_ptr_type, f64_type}, JD_TAG_F64);
     // jdb_outer_fn(a, b, op_fn) -> 2D table; op is a double(double,double) funcref
-    reg("jdb_outer_fn", "__outer_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_outer_fn", "__outer_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
     // jdb_agg_fn(reducer_fn, keys, values, reduced_tag) -> [[key, reduced], ...]
-    reg("jdb_agg_fn", "__agg_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 3);
+    reg("jdb_agg_fn", "__agg_fn", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
 
     // VM Bridge (for builtins not in the static runtime)
     reg("jdrt_init",     "__jdrt_init",     i8_ptr_type, {}, -1);
     reg("jdrt_shutdown", "__jdrt_shutdown", void_type, {i8_ptr_type}, -1);
     // Typed calls: args as i64[], tags as i32[]
     reg("jdrt_call_typed_f64",  "__jdrt_call_typed_f64",  f64_type,
-        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 1);
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_F64);
     reg("jdrt_call_typed_str",  "__jdrt_call_typed_str",  i8_ptr_type,
-        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 2);
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_STR);
     reg("jdrt_call_typed_void", "__jdrt_call_typed_void", void_type,
         {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, -1);
     reg("jdrt_call_typed_obj",  "__jdrt_call_typed_obj",  i64_type,
-        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 0);
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_I64);
     reg("jdrt_call_typed_arr",  "__jdrt_call_typed_arr",  i8_ptr_type,
-        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, 3);
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type}, JD_TAG_ARR);
     // Field access on VM Value handles (objects from JSON.PARSE$, MAP.* etc.)
     reg("jdrt_obj_get_f64", "__jdrt_obj_get_f64", f64_type,
-        {i8_ptr_type, i64_type, i8_ptr_type}, 1);
+        {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_F64);
     reg("jdrt_obj_get_str", "__jdrt_obj_get_str", i8_ptr_type,
-        {i8_ptr_type, i64_type, i8_ptr_type}, 2);
+        {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_STR);
     reg("jdrt_obj_get_obj", "__jdrt_obj_get_obj", i64_type,
-        {i8_ptr_type, i64_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_obj_get_arr", "__jdrt_obj_get_arr", i8_ptr_type,
-        {i8_ptr_type, i64_type, i8_ptr_type}, 3);
+        {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_ARR);
     reg("jdrt_obj_exists",  "__jdrt_obj_exists",  i64_type,
-        {i8_ptr_type, i64_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_obj_delete",  "__jdrt_obj_delete",  i64_type,
-        {i8_ptr_type, i64_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_handle_to_map", "__jdrt_handle_to_map", i8_ptr_type,
         {i8_ptr_type, i64_type}, JD_TAG_NATIVE_MAP);
     reg("jdrt_map_to_handle", "__jdrt_map_to_handle", i64_type,
-        {i8_ptr_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     // ASYNC FUNC dispatch - handle, fn ptr, args ptr (f64*), nargs (i32),
     // return_tag (i32). Returns task id (i64).
     reg("jdrt_async_spawn", "__jdrt_async_spawn", i64_type,
-        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type, i32_type}, 0);
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type, i32_type, i32_type}, JD_TAG_I64);
     reg("jdrt_val_to_f64",  "__jdrt_val_to_f64",  f64_type,
-        {i8_ptr_type, i64_type}, 1);
+        {i8_ptr_type, i64_type}, JD_TAG_F64);
     reg("jdrt_val_to_str",  "__jdrt_val_to_str",  i8_ptr_type,
-        {i8_ptr_type, i64_type}, 2);
+        {i8_ptr_type, i64_type}, JD_TAG_STR);
     reg("jdrt_val_type_str","__jdrt_val_type_str",i8_ptr_type,
-        {i8_ptr_type, i64_type}, 2);
+        {i8_ptr_type, i64_type}, JD_TAG_STR);
     reg("jdrt_val_arr_get", "__jdrt_val_arr_get", i64_type,
-        {i8_ptr_type, i64_type, i64_type}, 0);
+        {i8_ptr_type, i64_type, i64_type}, JD_TAG_I64);
     reg("jdrt_val_length",  "__jdrt_val_length",  i64_type,
-        {i8_ptr_type, i64_type}, 0);
+        {i8_ptr_type, i64_type}, JD_TAG_I64);
     reg("jdrt_val_kind",    "__jdrt_val_kind",    i32_type,
-        {i8_ptr_type, i64_type}, 0);
+        {i8_ptr_type, i64_type}, JD_TAG_I64);
     // Tagged value getters: return tag (i32), write val to i64* out param.
     reg("jdb_map_get_tagged",  "__map_get_tagged",  i32_type,
-        {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_obj_get_tagged", "__jdrt_obj_get_tagged", i32_type,
-        {i8_ptr_type, i64_type, i8_ptr_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_obj_set_tagged", "__jdrt_obj_set_tagged", void_type,
         {i8_ptr_type, i64_type, i8_ptr_type, i64_type, i32_type}, -1);
     // Unified tagged dispatchers (handle both native map + VM handles)
     reg("jdrt_tagged_get",     "__jdrt_tagged_get",     i32_type,
-        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i32_type, i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_tagged_arr_get", "__jdrt_tagged_arr_get", i32_type,
-        {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_tagged_arr_set", "__jdrt_tagged_arr_set", void_type,
         {i8_ptr_type, i64_type, i32_type, i64_type, i64_type, i32_type}, -1);
     reg("jdrt_tagged_index", "__jdrt_tagged_index", i32_type,
-        {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i32_type, i64_type, i32_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_foreach_begin", "__jdrt_foreach_begin", i64_type,
-        {i8_ptr_type, i64_type, i32_type, i32_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i32_type, i32_type, i8_ptr_type, i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_foreach_key", "__jdrt_foreach_key", i32_type,
-        {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, 0);
+        {i8_ptr_type, i64_type, i32_type, i64_type, i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_promote_handle", "__jdrt_promote_handle", i64_type,
-        {i8_ptr_type, i64_type}, 0);
+        {i8_ptr_type, i64_type}, JD_TAG_I64);
     reg("jdrt_frame_begin", "__jdrt_frame_begin", i64_type,
-        {i8_ptr_type}, 0);
+        {i8_ptr_type}, JD_TAG_I64);
     reg("jdrt_frame_end",   "__jdrt_frame_end",   void_type,
         {i8_ptr_type, i64_type}, -1);
     reg("jdrt_last_error",  "__jdrt_last_error",  i8_ptr_type,
-        {i8_ptr_type}, 2);
+        {i8_ptr_type}, JD_TAG_STR);
     reg("jdrt_clear_last_error", "__jdrt_clear_last_error", void_type,
         {i8_ptr_type}, -1);
 
     // Date Add/Diff
     // Dates are ISO strings in the native runtime (not epochs like the VM).
-    reg("jdb_dateadd",  "DATEADD",  i8_ptr_type, {i8_ptr_type, f64_type, i8_ptr_type}, 2);
-    reg("jdb_datediff", "DATEDIFF", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 1);
-    reg("jdb_datediff_vec", "__datediff_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 3);
-    reg("jdb_cvdate",     "CVDATE",       i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_cvdate",     "CDATE",        i8_ptr_type, {i8_ptr_type}, 2);
-    reg("jdb_cvdate_num", "__cvdate_num", i8_ptr_type, {f64_type},    2);
-    reg("jdb_cvdate_arr", "__cvdate_arr", i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_dateadd",  "DATEADD",  i8_ptr_type, {i8_ptr_type, f64_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_datediff", "DATEDIFF", f64_type,    {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_datediff_vec", "__datediff_vec", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
+    reg("jdb_cvdate",     "CVDATE",       i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_cvdate",     "CDATE",        i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_cvdate_num", "__cvdate_num", i8_ptr_type, {f64_type}, JD_TAG_STR);
+    reg("jdb_cvdate_arr", "__cvdate_arr", i8_ptr_type, {i8_ptr_type}, JD_TAG_ARR);
 
     // Regex
     // REGEX.MATCH answers the captured groups when the pattern has any, and
     // a truth value when it has none, so it goes through the VM bridge like
     // the legacy REGEX_MATCH. Registered as a plain boolean native call it
     // answered 1 where the interpreter handed back the groups.
-    reg("jdb_regex_replace", "REGEX.REPLACE",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_regex_replace", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, 2);
-    reg("jdb_regex_findall", "REGEX.FINDALL",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
+    reg("jdb_regex_replace", "REGEX.REPLACE",  i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_regex_replace", "REGEX_REPLACE$", i8_ptr_type, {i8_ptr_type, i8_ptr_type, i8_ptr_type}, JD_TAG_STR);
+    reg("jdb_regex_findall", "REGEX.FINDALL",  i8_ptr_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_ARR);
 
     // TYPEOF (compile-time tag)
-    reg("jdb_typeof_tag", "__typeof_tag", i8_ptr_type, {i64_type}, 2);
-    reg("jdb_typeof_f64", "__typeof_f64", i8_ptr_type, {f64_type}, 2);
+    reg("jdb_typeof_tag", "__typeof_tag", i8_ptr_type, {i64_type}, JD_TAG_STR);
+    reg("jdb_typeof_f64", "__typeof_f64", i8_ptr_type, {f64_type}, JD_TAG_STR);
 
     // FRMV$ (format array)
-    reg("jdb_frmv", "FRMV$", i8_ptr_type, {i8_ptr_type}, 2);
+    reg("jdb_frmv", "FRMV$", i8_ptr_type, {i8_ptr_type}, JD_TAG_STR);
 
     // Misc
-    reg("jdb_cdbl",     "CDBL",       f64_type, {f64_type}, 1);
-    reg("jdb_cint",     "CINT",       i64_type, {f64_type}, 0);
-    reg("jdb_clng",     "CLNG",       i64_type, {f64_type}, 0);
-    reg("jdb_csng",     "CSNG",       f64_type, {f64_type}, 1);
-    reg("jdb_conv_str", "__CONV_STR", f64_type, {i8_ptr_type, i8_ptr_type}, 1);
-    reg("jdb_cbool",    "CBOOL",      i64_type, {f64_type}, 0);
-    reg("jdb_tostr",    "TOSTR",      i8_ptr_type, {f64_type}, 2);
-    reg("jdb_cstr",     "CSTR",       i8_ptr_type, {f64_type}, 2);
-    reg("jdb_tonum",    "TONUM",      f64_type, {i8_ptr_type}, 1);
-    reg("jdb_byteat",   "BYTEAT",     i64_type, {i8_ptr_type, i64_type}, 0);
-    reg("jdb_os_getos", "OS.GETOS",   i8_ptr_type, {}, 2);
-    reg("jdb_os_getos", "OS.GETOS$",  i8_ptr_type, {}, 2);
-    reg("jdb_os_hostname","OS.HOSTNAME$", i8_ptr_type, {}, 2);
+    reg("jdb_cdbl",     "CDBL",       f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_cint",     "CINT",       i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_clng",     "CLNG",       i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_csng",     "CSNG",       f64_type, {f64_type}, JD_TAG_F64);
+    reg("jdb_conv_str", "__CONV_STR", f64_type, {i8_ptr_type, i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_cbool",    "CBOOL",      i64_type, {f64_type}, JD_TAG_I64);
+    reg("jdb_tostr",    "TOSTR",      i8_ptr_type, {f64_type}, JD_TAG_STR);
+    reg("jdb_cstr",     "CSTR",       i8_ptr_type, {f64_type}, JD_TAG_STR);
+    reg("jdb_tonum",    "TONUM",      f64_type, {i8_ptr_type}, JD_TAG_F64);
+    reg("jdb_byteat",   "BYTEAT",     i64_type, {i8_ptr_type, i64_type}, JD_TAG_I64);
+    reg("jdb_os_getos", "OS.GETOS",   i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_os_getos", "OS.GETOS$",  i8_ptr_type, {}, JD_TAG_STR);
+    reg("jdb_os_hostname","OS.HOSTNAME$", i8_ptr_type, {}, JD_TAG_STR);
 }
 
 void LLVMCodegen::create_main_function() {
@@ -2705,7 +2705,7 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                         // then held the array as punned bits and every write
                         // into it was dropped or hit the map setter.
                         auto rf = runtime_funcs.find(up);
-                        if (rf != runtime_funcs.end() && rf->second.return_tag == 3)
+                        if (rf != runtime_funcs.end() && rf->second.return_tag == JD_TAG_ARR)
                             return JD_TAG_ARR;
                     }
                     if (!e.func_name.empty() && e.func_name.back() == '$') return JD_TAG_STR;
@@ -3158,25 +3158,25 @@ LLVMCodegen::StaticType LLVMCodegen::infer_expr_type(const Expr& e) const {
             auto uit = user_functions.find(e.func_name);
             if (uit != user_functions.end()) {
                 switch (uit->second.return_tag) {
-                    case 0: return make(K::INTEGER);
-                    case 1: return make(K::NUMBER);
-                    case 2: return make(K::STRING);
-                    case 3: return make(K::ARRAY);
-                    case 4: return make(K::MAP);
-                    case 5: return make(K::FUNCREF);
-                    default: return make(K::UNKNOWN);
+                    case JD_TAG_I64:        return make(K::INTEGER);
+                    case JD_TAG_F64:        return make(K::NUMBER);
+                    case JD_TAG_STR:        return make(K::STRING);
+                    case JD_TAG_ARR:        return make(K::ARRAY);
+                    case JD_TAG_NATIVE_MAP: return make(K::MAP);
+                    case JD_TAG_FUNCREF:    return make(K::FUNCREF);
+                    default:                return make(K::UNKNOWN);
                 }
             }
             auto rit = runtime_funcs.find(e.func_name);
             if (rit != runtime_funcs.end()) {
                 switch (rit->second.return_tag) {
-                    case 0: return make(K::INTEGER);
-                    case 1: return make(K::NUMBER);
-                    case 2: return make(K::STRING);
-                    case 3: return make(K::ARRAY);
-                    case 4: return make(K::MAP);
-                    case 5: return make(K::FUNCREF);
-                    default: break;
+                    case JD_TAG_I64:        return make(K::INTEGER);
+                    case JD_TAG_F64:        return make(K::NUMBER);
+                    case JD_TAG_STR:        return make(K::STRING);
+                    case JD_TAG_ARR:        return make(K::ARRAY);
+                    case JD_TAG_NATIVE_MAP: return make(K::MAP);
+                    case JD_TAG_FUNCREF:    return make(K::FUNCREF);
+                    default:                break;
                 }
             }
             // $-suffixed builtins return strings (SPLIT$, LCASE$, etc).
@@ -8287,7 +8287,7 @@ void LLVMCodegen::codegen_type_decl(const Stmt& stmt) {
             for (auto& p : method->params()) {
                 if (p.name == "THIS" || p.type == VarType::OBJECT) {
                     ptypes.push_back(i8_ptr_type);
-                    ptags.push_back(3);  // ptr for UDT object
+                    ptags.push_back(JD_TAG_ARR);  // ptr for UDT object
                 } else {
                     bool sp = p.type == VarType::STRING ||
                               (!p.name.empty() && p.name.back() == '$');
@@ -8628,15 +8628,15 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             }
             LLVMTypeRef load_type;
             int tag = vi->tag;
-            if (tag == 1)       load_type = f64_type;
-            else if (tag == 2)  load_type = i8_ptr_type;
-            else if (tag == 3)  load_type = i8_ptr_type;
-            else if (tag == 4)  load_type = i8_ptr_type;  // map ptr
+            if (tag == JD_TAG_F64)             load_type = f64_type;
+            else if (tag == JD_TAG_STR)        load_type = i8_ptr_type;
+            else if (tag == JD_TAG_ARR)        load_type = i8_ptr_type;
+            else if (tag == JD_TAG_NATIVE_MAP) load_type = i8_ptr_type;
             // create_var allocates a FUNCREF slot as i8*, so it reads back
             // as one rather than through the integer catch-all below.
-            else if (tag == JD_TAG_FUNCREF) load_type = i8_ptr_type;
-            else                load_type = i64_type;  // covers 0, 6, 7
-            if (tag == 7 && vi->runtime_tag_alloca) {
+            else if (tag == JD_TAG_FUNCREF)    load_type = i8_ptr_type;
+            else                               load_type = i64_type;  // I64, BOOL, VM_HANDLE, RUNTIME
+            if (tag == JD_TAG_RUNTIME && vi->runtime_tag_alloca) {
                 LLVMValueRef val = LLVMBuildLoad2(builder, load_type, vi->alloca_val,
                                                    expr.str_val.c_str());
                 LLVMValueRef rt = LLVMBuildLoad2(builder, i32_type,
@@ -11460,9 +11460,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 args.push_back(tag_i32);
                 continue;
             }
-            LLVMTypeRef pt = (expected_tag == 2 || expected_tag == 3 || expected_tag == 4 ||
-                              expected_tag == 5) ? i8_ptr_type :
-                             (expected_tag == JD_TAG_I64 || expected_tag == 6) ? i64_type : f64_type;
+            LLVMTypeRef pt = (expected_tag == JD_TAG_STR || expected_tag == JD_TAG_ARR ||
+                              expected_tag == JD_TAG_NATIVE_MAP || expected_tag == JD_TAG_FUNCREF) ? i8_ptr_type :
+                             (expected_tag == JD_TAG_I64 || expected_tag == JD_TAG_VM_HANDLE) ? i64_type : f64_type;
             // An untyped (f64) param is a slot that may carry a punned
             // pointer, the way a pointer-typed local is passed into it.
             // A runtime-tagged value keeps that shape instead of the
@@ -12042,7 +12042,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                     auto& bfn = runtime_funcs[rt];
                     LLVMValueRef bargs[] = { as_ptr };
                     LLVMValueRef bres = LLVMBuildCall2(builder, bfn.fn_type, bfn.fn, bargs, 1, "blt");
-                    LLVMValueRef rv = (bfn.return_tag == 0)  // LEN returns i64
+                    LLVMValueRef rv = (bfn.return_tag == JD_TAG_I64)  // LEN returns i64
                         ? LLVMBuildSIToFP(builder, bres, f64_type, "itof") : bres;
                     LLVMBuildRet(builder, rv);
                     current_fn = saved_fn;
@@ -12461,7 +12461,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
             LLVMPositionBuilderAtEnd(builder, done_bb);
             // Unify via i8*: string is already a char*, number was punned above.
-            // Consumers read tag=2; compare-as-number paths still coerce back.
+            // Consumers read JD_TAG_STR; compare-as-number paths still coerce back.
             LLVMValueRef phi = LLVMBuildPhi(builder, i8_ptr_type, "popv");
             LLVMValueRef vals[] = { sres, nrep };
             LLVMBasicBlockRef bbs[] = { str_end, num_end };
@@ -14840,9 +14840,9 @@ LLVMCodegen::TypedValue LLVMCodegen::unpack_dyn_ret(LLVMValueRef pair) {
 
 LLVMCodegen::TypedValue LLVMCodegen::coerce_to_tag(TypedValue tv, int target_tag) {
     if (tv.tag == target_tag) return tv;
-    if (target_tag == 1) return { coerce_to(tv, f64_type), JD_TAG_F64 };
-    if (target_tag == 0) return { coerce_to(tv, i64_type), JD_TAG_I64 };
-    if (target_tag == 2 || target_tag == 3) return { coerce_to(tv, i8_ptr_type), target_tag };
+    if (target_tag == JD_TAG_F64) return { coerce_to(tv, f64_type), JD_TAG_F64 };
+    if (target_tag == JD_TAG_I64) return { coerce_to(tv, i64_type), JD_TAG_I64 };
+    if (target_tag == JD_TAG_STR || target_tag == JD_TAG_ARR) return { coerce_to(tv, i8_ptr_type), target_tag };
     return tv;
 }
 
