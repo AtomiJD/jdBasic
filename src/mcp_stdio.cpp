@@ -853,12 +853,9 @@ Value tool_jdb_doc(VM&, const Value& args) {
 }
 
 // jdb_savews / jdb_loadws - Smalltalk-style workspace persistence over MCP.
-// SAVEWS pickles every user-bound global (variables and FUNC/SUB definitions
-// the agent has accumulated this session) into "<name>.jdws" in the server's
-// CWD. LOADWS resets the VM and restores from that file. The original REPL
-// commands kept a source buffer too; the MCP server has no notion of a
-// linear input log so we pass an empty buffer - only state is persisted,
-// not history. Source-text projects are better handled with jdb_load.
+// SAVEWS writes every user-set global plus the session source buffer (the
+// source of every successful jdb_eval, not of jdb_load) into "<name>.jsws" in the
+// server's CWD. LOADWS resets the VM and restores from that file.
 
 Value tool_jdb_savews(VM& vm, const Value& args) {
     std::string name = obj_get_str(args, "name");

@@ -1767,6 +1767,7 @@ int main(int argc, char* argv[]) {
               "  -c, --compile            Compile the script to native code (requires NATIVEC)\n"
               "  -o, --output <file>      Write the compiled .exe to <file> (default: script name)\n"
               "      --lint               Parse + typecheck only, do not run\n"
+              "      --pcode              Compile to p-code (<file>.jdpb beside the source), do not run\n"
               "      --dump-tokens        Print the token stream, one token per line\n"
               "      --pretty             Reformat source to stdout (UPPER keywords)\n"
               "      --pretty-vb          Reformat source to stdout (VB-style Pascal-cased keywords)\n"
@@ -2105,6 +2106,18 @@ int main(int argc, char* argv[]) {
             if (dot != std::string::npos) compile_output = compile_output.substr(0, dot);
             compile_output += ".exe";
         }
+        {
+            std::filesystem::path out_parent = std::filesystem::path(compile_output).parent_path();
+            std::error_code ec;
+            if (!out_parent.empty() && !std::filesystem::exists(out_parent, ec)) {
+                std::filesystem::create_directories(out_parent, ec);
+                if (ec) {
+                    std::cerr << "Error: cannot create output directory "
+                              << out_parent.string() << ": " << ec.message() << std::endl;
+                    return 1;
+                }
+            }
+        }
 
         try {
             mark("Initializing LLVM codegen...");
@@ -2135,7 +2148,10 @@ int main(int argc, char* argv[]) {
 
             mark("Generating + linking...");
             if (!codegen.compile(ast, compile_output, filename)) {
-                std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
+                if (codegen.error_msg.find('\n') != std::string::npos)
+                    std::cerr << codegen.error_msg << std::endl;
+                else
+                    std::cerr << "Compilation failed: " << codegen.error_msg << std::endl;
                 return 1;
             }
         } catch (const jdError& e) {

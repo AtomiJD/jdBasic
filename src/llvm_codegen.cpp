@@ -3260,7 +3260,6 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
             }
             oss << (int)diagnostics.size() << " error(s). Compilation aborted.";
             error_msg = oss.str();
-            std::cerr << error_msg << std::endl;
             return false;
         }
     }
@@ -3327,7 +3326,6 @@ bool LLVMCodegen::compile(const std::vector<StmtPtr>& program,
         }
         oss << (int)diagnostics.size() << " error(s). Compilation aborted.";
         error_msg = oss.str();
-        std::cerr << error_msg << std::endl;
         return false;
     }
 
