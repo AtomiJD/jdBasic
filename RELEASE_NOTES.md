@@ -13,6 +13,9 @@ Convention: one section per released version, newest at the top. Pre-release / u
 - **A `FUNC` or `SUB` named like a builtin is rejected in every build and by the native compiler too.** Before, `-c` accepted `FUNC Count`, and the interpreter accepted `FUNC MsgBox` in a build without `FORMS`.
 - **`CINT`, `CLNG`, `CSNG` and `CDBL` read numbers from text, as in VB.** `CINT("7")` is `7` (it was `0`), and text that is not a number, also an empty string, is a type error. Code that relied on `CINT(text)` giving `0` should use `VAL`.
 - **`OPTION "EXPLICIT"` now works in the interpreter.** A file that says it and reads or assigns an undeclared name stops before it runs, with error 20 and the line; before, only `-c` and `--lint` reported it.
+- **`DATEADD` and `DATEDIFF` read the unit in either case, and an unknown unit is an error.** `DATEDIFF("d", ...)` counts days in both backends (the interpreter gave seconds); `DATEDIFF("M", ...)` and `DATEADD("Q", ...)` stop with an error naming the valid units instead of returning seconds or the unchanged date.
+- **`FORMAT$` reports a spec it cannot read, and reads more of them.** `FORMAT$("{:,.2f}", x)` is an error that lists the supported spec; before, it printed the raw value. New: the types `e`, `E`, `g`, `G` and `%` (`{:.0%}` turns 0.42 into `42%`) and a sign (`{:+d}`, `{: .2f}`), in both backends.
+- **Mouse events report logical coordinates.** `ON "MOUSEDOWN"`, `"MOUSEUP"` and `"MOUSEMOVE"` give `x` and `y` as `GFX.MOUSEX`/`GFX.MOUSEY` do, which differs from before when `SCREEN` scales the window.
 
 ### Language
 
@@ -28,6 +31,8 @@ Convention: one section per released version, newest at the top. Pre-release / u
 - A global set from a builtin such as `FORM.CREATE` or `GCD` without `AS` is visible inside SUBs and FUNCs.
 - `SORT(array, TRUE)` sorts descending in a compiled program too; it answered `0` before.
 - `CINT` and its siblings read a string held in a map entry, and `CLNG` of a date gives its epoch seconds, as in the interpreter.
+- `PRINT a, b` puts its space between the right items; a compiled program printed `PRINT 1, 2, 3` as `12 3`.
+- `FILE.EXISTS` and `FILE.ISDIR` answer `TRUE`/`FALSE` in a compiled program too.
 
 ---
 

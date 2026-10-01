@@ -697,11 +697,11 @@ Description: Returns the current system date as a string in "YYYY-MM-DD" format.
 
 [DATEADD]
 Syntax: DATEADD(part$, number, date [, tz_hours])
-Description: Adds a time interval to a date. part$ is Y, M, W, D, H, N or S. Y and M are whole calendar units counted from the date given, the day of the month clamped to the length of the month it lands in; the rest are exact seconds and take a fraction. Optional tz_hours (numeric UTC offset in hours) is accepted for symmetry but has no effect on the arithmetic.
+Description: Adds a time interval to a date. part$ is Y, M, W, D, H, N or S, in upper or lower case; any other part$ is an error. Y and M are whole calendar units counted from the date given, the day of the month clamped to the length of the month it lands in; the rest are exact seconds and take a fraction. Optional tz_hours (numeric UTC offset in hours) is accepted for symmetry but has no effect on the arithmetic.
 
 [DATEDIFF]
 Syntax: DATEDIFF(part$, date1, date2 [, tz_hours])
-Description: Returns the difference between two dates in a specified time unit: D (days), H (hours), N (minutes), S (seconds); any other part$ gives seconds. D counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; H, N and S count elapsed time. Optional tz_hours is accepted but has no effect.
+Description: Returns the difference between two dates in a specified time unit: D (days), H (hours), N (minutes), S (seconds). The letter may be upper or lower case; any other part$ is an error. D counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; H, N and S count elapsed time. Optional tz_hours is accepted but has no effect.
 
 [DATERANGE]
 Syntax: DATERANGE(start, end [, unit$="D"] [, step=1])
@@ -936,11 +936,11 @@ Description: The boolean constant representing a false value.
 
 [FILE.EXISTS]
 Syntax: FILE.EXISTS(path$) -> boolean
-Description: Returns TRUE if the file or directory at path$ exists, FALSE otherwise. A compiled program gets 1 and 0.
+Description: Returns TRUE if the file or directory at path$ exists, FALSE otherwise.
 
 [FILE.ISDIR]
-Syntax: FILE.ISDIR(path$) -> integer
-Description: Returns 1 if path$ is an existing directory, 0 otherwise.
+Syntax: FILE.ISDIR(path$) -> boolean
+Description: Returns TRUE if path$ is an existing directory, FALSE otherwise.
 
 [FILE.SIZE]
 Syntax: FILE.SIZE(path$) -> integer
@@ -1000,7 +1000,7 @@ Description: Begins a loop that repeats a specific number of times.
 
 [FORMAT$]
 Syntax: FORMAT$(format_string$, arg1, ...)
-Description: Formats a string using C++20-style format specifiers.
+Description: Formats a string using C++20-style format specifiers: {}, {0}, {:spec} with spec = [[fill]align][sign][width][.precision][type]; type is d, f, e, E, g, G, x, X, s or % (the value times 100 with a % sign); sign + or a space marks positive numbers. Any other spec is an error. A compiled program formats at most four arguments per call.
 
 [FORMAT_DATE]
 Syntax: FORMAT_DATE(date, format_string$ [, tz_hours])

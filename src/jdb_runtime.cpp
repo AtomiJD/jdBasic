@@ -2570,6 +2570,8 @@ static int jdb_format_one_arg(char* out, int cap,
     } else if (slen >= 1 && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^')) {
         align = spec[0]; sp = 1;
     }
+    char sign = 0;
+    if (sp < slen && (spec[sp] == '+' || spec[sp] == '-' || spec[sp] == ' ')) sign = spec[sp++];
     int width = 0;
     while (sp < slen && spec[sp] >= '0' && spec[sp] <= '9')
         width = width * 10 + (spec[sp++] - '0');
@@ -2582,6 +2584,18 @@ static int jdb_format_one_arg(char* out, int cap,
     bool hash_flag = false;
     if (sp < slen && spec[sp] == '#') { hash_flag = true; sp++; }
     char type = (sp < slen) ? spec[sp] : 0;
+    bool known_type = type == 0 || type == 'd' || type == 'f' || type == 'x' ||
+                      type == 'X' || type == 's' || type == 'e' || type == 'E' ||
+                      type == 'g' || type == 'G' || type == '%';
+    if (!known_type || sp + (type ? 1 : 0) != slen) {
+        char msg[200];
+        snprintf(msg, sizeof(msg),
+                 "FORMAT$: unknown format spec \"{:%.60s}\"; use [[fill]align][sign][width][.precision][d|f|e|g|x|X|s|%%]",
+                 spec ? spec : "");
+        jdb_err_set(msg, 1);
+        out[0] = 0;
+        return 0;
+    }
 
     char raw[256];
     int raw_len;
@@ -2596,6 +2610,11 @@ static int jdb_format_one_arg(char* out, int cap,
     } else if (type == 'f') {
         if (prec >= 0) raw_len = snprintf(raw, sizeof(raw), "%.*f", prec, val);
         else           raw_len = snprintf(raw, sizeof(raw), "%f", val);
+    } else if (type == 'e' || type == 'E' || type == 'g' || type == 'G') {
+        char cfmt[8] = {'%', '.', '*', type, 0};
+        raw_len = snprintf(raw, sizeof(raw), cfmt, prec >= 0 ? prec : 6, val);
+    } else if (type == '%') {
+        raw_len = snprintf(raw, sizeof(raw), "%.*f%%", prec >= 0 ? prec : 6, val * 100.0);
     } else if (type == 'x') {
         raw_len = snprintf(raw, sizeof(raw),
             hash_flag ? "0x%llx" : "%llx", (long long)(int64_t)val);
@@ -2609,6 +2628,12 @@ static int jdb_format_one_arg(char* out, int cap,
     }
     if (raw_len < 0) raw_len = 0;
     if (raw_len >= (int)sizeof(raw)) raw_len = (int)sizeof(raw) - 1;
+    if (!is_str && (sign == '+' || sign == ' ') && raw_len > 0 && raw[0] != '-' &&
+        raw_len + 1 < (int)sizeof(raw)) {
+        memmove(raw + 1, raw, (size_t)raw_len + 1);
+        raw[0] = sign;
+        raw_len++;
+    }
 
     int written = 0;
     if (width > 0 && raw_len < width) {
@@ -4055,12 +4080,26 @@ JdbArray* jdb_cvdate_arr(JdbArray* in) {
 
 // DATEADD: add num units of part ("Y","M","D","H","N","S") to an ISO date string.
 // Returns a new ISO date string.
+// The unit letter of DATEADD or DATEDIFF, in either case; 0 after raising an
+// error when part is not one of the letters in allowed.
+static char rt_date_unit(const char* part, const char* allowed, const char* fn, const char* hint) {
+    if (part && part[0] && !part[1]) {
+        char p = (char)toupper((unsigned char)part[0]);
+        if (strchr(allowed, p)) return p;
+    }
+    char msg[200];
+    snprintf(msg, sizeof(msg), "%s: unknown unit \"%.40s\"; use %s", fn, part ? part : "", hint);
+    jdb_err_set(msg, 1);
+    return 0;
+}
+
 char* jdb_dateadd(const char* part, double amount, const char* date_str) {
+    char p = rt_date_unit(part, "YMWDHNS", "DATEADD", "Y, M, W, D, H, N or S");
+    if (!p) return _strdup("");
     struct tm tm = {0};
     if (!parse_iso_date(date_str, &tm)) return _strdup("");
     int64_t y = tm.tm_year + 1900, mo = tm.tm_mon + 1, d = tm.tm_mday;
     int64_t h = tm.tm_hour, mi = tm.tm_min, se = tm.tm_sec;
-    char p = part ? (char)toupper((unsigned char)part[0]) : 'D';
     double epoch;
     if (p == 'Y' || p == 'M') {
         rt_add_months(y, mo, d, (int64_t)amount * (p == 'Y' ? 12 : 1));
@@ -4083,6 +4122,8 @@ char* jdb_dateadd(const char* part, double amount, const char* date_str) {
 
 // DATEDIFF: difference between two ISO date strings in units of part.
 double jdb_datediff(const char* part, const char* date1, const char* date2) {
+    char p = rt_date_unit(part, "DHNS", "DATEDIFF", "D, H, N or S");
+    if (!p) return 0;
     struct tm tm1 = {0}, tm2 = {0};
     if (!parse_iso_date(date1, &tm1) || !parse_iso_date(date2, &tm2)) return 0;
     double e1 = rt_local_civil_to_epoch(tm1.tm_year + 1900, tm1.tm_mon + 1, tm1.tm_mday,
@@ -4090,7 +4131,6 @@ double jdb_datediff(const char* part, const char* date1, const char* date2) {
     double e2 = rt_local_civil_to_epoch(tm2.tm_year + 1900, tm2.tm_mon + 1, tm2.tm_mday,
                                         tm2.tm_hour, tm2.tm_min, tm2.tm_sec);
     double diff = e2 - e1;
-    char p = part ? toupper((unsigned char)part[0]) : 'S';
     switch (p) {
         case 'S': return diff;
         case 'N': return diff / 60.0;

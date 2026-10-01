@@ -245,6 +245,8 @@ void VM::register_datetime_builtins() {
         else if (part == "W") epoch += num * 604800;
         else if (part == "M") epoch = jdb_add_months_local(epoch, (int64_t)num);
         else if (part == "Y") epoch = jdb_add_months_local(epoch, (int64_t)num * 12);
+        else throw jdError(ErrCode::WRONG_ARG_TYPE,
+            "DATEADD: unknown unit \"" + args[0].as_string()->data + "\"; use Y, M, W, D, H, N or S");
         return Value::make_date(epoch);
     });
 
@@ -252,6 +254,10 @@ void VM::register_datetime_builtins() {
         // DATEDIFF(part$, date1, date2, [tz]): D counts days on the local wall
         // clock, H/N/S count elapsed time.
         std::string part = args[0].as_string()->data;
+        for (auto& c : part) c = (char)std::toupper((unsigned char)c);
+        if (part != "D" && part != "H" && part != "N" && part != "S")
+            throw jdError(ErrCode::WRONG_ARG_TYPE,
+                "DATEDIFF: unknown unit \"" + args[0].as_string()->data + "\"; use D, H, N or S");
         double d1 = value_to_epoch(args[1]);
         double d2 = value_to_epoch(args[2]);
         double diff = d2 - d1;

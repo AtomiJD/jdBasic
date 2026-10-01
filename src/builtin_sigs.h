@@ -202,7 +202,7 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"FILE.AT_EOF", BuiltinRet::Bool, BF_NO_VEC},
     {"FILE.CLOSE", BuiltinRet::Unknown, BF_NO_VEC},
     {"FILE.EXISTS", BuiltinRet::Bool, BF_NO_VEC},
-    {"FILE.ISDIR", BuiltinRet::Unknown, BF_NO_VEC},
+    {"FILE.ISDIR", BuiltinRet::Bool, BF_NO_VEC},
     {"FILE.OPEN_LINES", BuiltinRet::Unknown, BF_NO_VEC},
     {"FILE.OPEN_TAIL", BuiltinRet::Unknown, BF_NO_VEC},
     {"FILE.READLINE$", BuiltinRet::Unknown, BF_NO_VEC},

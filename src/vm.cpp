@@ -4121,7 +4121,13 @@ void VM::event_poll() {
         // push into the shared queue and we consume from it.
         if (!gfx_has_pending_events()) return;
         auto events = gfx_drain_pending_events();
+        extern SDL_Renderer* g_renderer;
         for (auto& ev : events) {
+            // Mouse positions in the logical coordinates GFX.MOUSEX/Y report.
+            if (g_renderer && (ev.type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                               ev.type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                               ev.type == SDL_EVENT_MOUSE_MOTION))
+                SDL_ConvertEventToRenderCoordinates(g_renderer, &ev);
             switch (ev.type) {
                 case SDL_EVENT_QUIT: {
                     event_raise("QUIT", {});

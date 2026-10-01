@@ -1081,8 +1081,8 @@ NEXT
   * The handler takes one parameter, an array. For the window events of a `SCREEN` window its first element is a map:
     * `ON "KEYDOWN"`: `info[0]{"key"}` (SDL key name such as `"A"`, `"Left"`, `"Escape"`), `{"scancode"}` (number, usable with `GFX.KEYSTATE`), `{"keycode"}` (SDL keycode, the character code for printable keys: Escape 27, Enter 13, `a` 97), `{"repeat"}` (`TRUE` for an auto-repeat).
     * `ON "KEYUP"`: `key`, `scancode`, `keycode`.
-    * `ON "MOUSEDOWN"` / `ON "MOUSEUP"`: `button` (1 left, 2 middle, 3 right), `x`, `y` in window pixels.
-    * `ON "MOUSEMOVE"`: `x`, `y`.
+    * `ON "MOUSEDOWN"` / `ON "MOUSEUP"`: `button` (1 left, 2 middle, 3 right), `x`, `y` in the same logical coordinates as `GFX.MOUSEX` and `GFX.MOUSEY`.
+    * `ON "MOUSEMOVE"`: `x`, `y`, also logical coordinates.
     * `ON "QUIT"`: the array is empty.
     * Without a window, `ON "KEYDOWN"` reads the console: the map has `key` (the character) and `scancode` (its code).
 * **`RAISEEVENT event_name$, [event_data]`**: Triggers a custom event, passing optional data to the registered event handler.
@@ -1288,9 +1288,9 @@ The Ctrl+F1 to F4 hook is only active when jdBasic was launched as the REPL. Sta
 
 #### File Inspection Functions
 
-* **`FILE.EXISTS(path$) -> boolean`**: Returns `TRUE` if the file or directory at `path$` exists, `FALSE` otherwise. A compiled program (`-c`) gets `1` or `0`.
+* **`FILE.EXISTS(path$) -> boolean`**: Returns `TRUE` if the file or directory at `path$` exists, `FALSE` otherwise.
 * **`FILE.SIZE(path$) -> integer`**: Returns the size of the file in bytes, or `-1` if the file does not exist.
-* **`FILE.ISDIR(path$) -> boolean`**: Returns `TRUE` if `path$` is an existing directory, `FALSE` otherwise. A compiled program gets `1` or `0`.
+* **`FILE.ISDIR(path$) -> boolean`**: Returns `TRUE` if `path$` is an existing directory, `FALSE` otherwise.
 * **`FILE.STAT(path$) -> map`**: Returns a map describing the file with keys:
   * `"exists"` (boolean), `"size"` (integer bytes), `"is_dir"` (boolean), `"readonly"` (boolean), `"hidden"` (boolean), `"mtime"` (string `YYYY-MM-DD HH:MM:SS`). For missing files, `exists` is `FALSE` and other fields are default values.
 
@@ -1839,7 +1839,7 @@ Creates a Map directly from a string formatted as a JSON object (e.g., `{"key":"
 * **`SPLIT(source$, delimiter$)`**: Splits a string by a delimiter and returns a 1D array of strings.
 * **`JOIN(array, delimiter$) -> string$`**: Inverse of `SPLIT`: concatenates the elements of an array into a single string, joined by `delimiter$`.
 * **`FRMV$(array, [format_string$]) -> string$`**: Formats a 1D or 2D array into a string. If format_string$ is provided, it's used to format each row. Otherwise, it creates a right-aligned string matrix.
-* **`FORMAT$(format_string$, arg1, arg2, ...) -> string$`**: Formats a string using C++20-style format specifiers.
+* **`FORMAT$(format_string$, arg1, arg2, ...) -> string$`**: Formats a string using C++20-style format specifiers: `{}`, `{0}`, `{:spec}` with spec `[[fill]align][sign][width][.precision][type]`, where type is `d`, `f`, `e`, `E`, `g`, `G`, `x`, `X`, `s` or `%` (the value times 100 with a `%` sign) and sign `+` or a space marks positive numbers. Any other spec is an error. A compiled program formats at most four arguments per call.
 * **`REPLACE$(source_string or array, find_string$ or array, replace_with_string$ or array) -> string or array`**: Returns a string where all found find_string$ are replaced with replace_with_string$.
 * **`REVERSE$(string or array) -> string or array`**: Returns a reversed string.
 * **`BYTEAT(str$, index) -> Integer`**: Returns the numeric byte value (0-255) at the specified 0-based index in a string. This provides fast O(1) access to raw string data, which is essential when processing binary data loaded via `BINREADER$`.
@@ -2130,8 +2130,8 @@ SQL.CLOSE(db)
 * **`DATE$()` / `TIME$()`**: Returns the current system date/time as a string.
 * **`NOW()`**: Returns a `DateTime` object for the current moment.
 * **`NOW_EPOCH()`**: Returns the current wallclock time as plain seconds since 1970-01-01 UTC. Unlike `TICK()` it is comparable across program runs; unlike `NOW()` it is an untagged number, safe to store in databases or JSON.
-* **`DATEADD(part$, num, date [, tz_hours])`**: Adds an interval to a `DateTime` object. Interval part$: `S` seconds, `N` minutes, `H` hours, `D` days, `W` weeks, `M` months, `Y` years (`M` and `Y` move along the local calendar and clamp the day, see below). Write the part in upper case. Optional numeric UTC offset (hours, may be fractional e.g. `5.5`) is accepted for symmetry but has no effect on the arithmetic.
-* **`DATEDIFF(part$, date1, date2 [, tz_hours]) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: `D`, `H`, `N`, `S` only, in upper case; any other part (`M`, `W`, `Y`) returns the difference in seconds, like `S`. The result is fractional where the span is not a whole number of units. `D` counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; `H`, `N` and `S` count elapsed time. Optional `tz_hours` is accepted but has no effect.
+* **`DATEADD(part$, num, date [, tz_hours])`**: Adds an interval to a `DateTime` object. Interval part$: `S` seconds, `N` minutes, `H` hours, `D` days, `W` weeks, `M` months, `Y` years (`M` and `Y` move along the local calendar and clamp the day, see below). The letter may be upper or lower case; any other part is an error. Optional numeric UTC offset (hours, may be fractional e.g. `5.5`) is accepted for symmetry but has no effect on the arithmetic.
+* **`DATEDIFF(part$, date1, date2 [, tz_hours]) -> number`**: Calculates the difference between two dates in the specified unit. Interval part$: `D`, `H`, `N`, `S` only, in upper or lower case; any other part (`M`, `W`, `Y`) is an error. The result is fractional where the span is not a whole number of units. `D` counts days on the local clock, so two midnights are always a whole number of days apart, also across a daylight saving change; `H`, `N` and `S` count elapsed time. Optional `tz_hours` is accepted but has no effect.
 * **`CVDATE(date_string$ [, tz_hours])`**: Converts a string (`"YYYY-MM-DD[ HH:MM[:SS]]"`) to a `DateTime` object. When `tz_hours` is given, the input string is interpreted as wall-clock time in that UTC offset (e.g. `CVDATE("2024-01-15 14:00:00", 2)` yields the same instant as `CVDATE("2024-01-15 12:00:00", 0)`).
 * **`FORMAT_DATE(date, format_string$ [, tz_hours]) -> string$`**: Formats a `DateTime` using C-style specifiers (`%Y`, `%m`, `%d`, `%H`, `%M`, `%S`, ...). Without `tz_hours` the wall-clock is local time; with `tz_hours` the output reflects the chosen UTC offset (`0` = UTC, `2` = UTC+2, `-5` = UTC−5, `5.5` = UTC+5:30).
 * **`DATE.UTC(year, month, day [, hour [, minute [, second]]]) -> DateTime`**: Builds a `DateTime` from UTC components. Month is 1-12, day is 1-31. Omitted time components default to zero.

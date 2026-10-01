@@ -396,6 +396,11 @@ void VM::register_string_builtins() {
                     } else if (!fmt_spec.empty() && (fmt_spec[0] == '<' || fmt_spec[0] == '>' || fmt_spec[0] == '^')) {
                         align = fmt_spec[0]; fp = 1;
                     }
+                    // Parse sign: + always, space for a positive number, - only for a negative
+                    char sign = 0;
+                    if (fp < fmt_spec.size() &&
+                        (fmt_spec[fp] == '+' || fmt_spec[fp] == '-' || fmt_spec[fp] == ' '))
+                        sign = fmt_spec[fp++];
                     // Parse width
                     int width = 0;
                     while (fp < fmt_spec.size() && std::isdigit(fmt_spec[fp]))
@@ -412,6 +417,13 @@ void VM::register_string_builtins() {
                     char type = 0;
                     if (fp < fmt_spec.size() && fmt_spec[fp] == '#') { hash_flag = true; fp++; }
                     if (fp < fmt_spec.size()) type = fmt_spec[fp];
+                    bool known_type = type == 0 || type == 'd' || type == 'f' || type == 'e' ||
+                                      type == 'E' || type == 'g' || type == 'G' || type == 'x' ||
+                                      type == 'X' || type == 's' || type == '%';
+                    if (!known_type || fp + (type ? 1 : 0) != fmt_spec.size())
+                        throw jdError(ErrCode::WRONG_ARG_TYPE,
+                            "FORMAT$: unknown format spec \"{" + spec +
+                            "}\"; use [[fill]align][sign][width][.precision][d|f|e|g|x|X|s|%]");
 
                     // Format the value
                     std::string sv;
@@ -422,6 +434,13 @@ void VM::register_string_builtins() {
                         if (prec >= 0) os << std::fixed << std::setprecision(prec);
                         os << v.to_double();
                         sv = os.str();
+                    } else if (type == 'e' || type == 'E' || type == 'g' || type == 'G') {
+                        char cfmt[8] = {'%', '.', '*', type, 0};
+                        char buf[64]; snprintf(buf, sizeof(buf), cfmt, prec >= 0 ? prec : 6, v.to_double());
+                        sv = buf;
+                    } else if (type == '%') {
+                        char buf[64]; snprintf(buf, sizeof(buf), "%.*f%%", prec >= 0 ? prec : 6, v.to_double() * 100.0);
+                        sv = buf;
                     } else if (type == 'x') {
                         char buf[32]; snprintf(buf, sizeof(buf), "%llx", (long long)v.to_int()); sv = buf;
                         if (hash_flag) sv = "0x" + sv;
@@ -437,6 +456,8 @@ void VM::register_string_builtins() {
                         }
                     }
 
+                    if ((sign == '+' || sign == ' ') && is_numeric(v.type) && !sv.empty() && sv[0] != '-')
+                        sv = std::string(1, sign) + sv;
                     // Apply width and alignment
                     if (width > 0 && (int)sv.size() < width) {
                         int pad = width - (int)sv.size();

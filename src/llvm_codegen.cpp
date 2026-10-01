@@ -522,9 +522,9 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_mkdir_native",    "MKDIR",       void_type, {i8_ptr_type}, -1);
     reg("jdb_rmdir",           "RMDIR",       void_type, {i8_ptr_type}, -1);
     reg("jdb_kill",            "KILL",        void_type, {i8_ptr_type}, -1);
-    reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, 0);
+    reg("jdb_file_exists",     "FILE.EXISTS", i64_type, {i8_ptr_type}, JD_TAG_BOOL);
     reg("jdb_file_size",       "FILE.SIZE",   i64_type, {i8_ptr_type}, 0);
-    reg("jdb_file_isdir",      "FILE.ISDIR",  i64_type, {i8_ptr_type}, 0);
+    reg("jdb_file_isdir",      "FILE.ISDIR",  i64_type, {i8_ptr_type}, JD_TAG_BOOL);
     reg("jdb_path_dirname",    "PATH.DIRNAME$",   i8_ptr_type, {i8_ptr_type}, 2);
     reg("jdb_path_normalize",  "PATH.NORMALIZE$", i8_ptr_type, {i8_ptr_type}, 2);
 
@@ -7519,10 +7519,8 @@ void LLVMCodegen::codegen_print(const Stmt& stmt) {
     auto& pr_space  = runtime_funcs["__print_space"];
 
     for (size_t i = 0; i < stmt.print_exprs.size(); i++) {
-        if (i > 0 && i - 1 < stmt.print_seps.size()) {
-            if (stmt.print_seps[i - 1] == 1)
-                LLVMBuildCall2(builder, pr_space.fn_type, pr_space.fn, nullptr, 0, "");
-        }
+        if (i < stmt.print_seps.size() && stmt.print_seps[i] == 1)
+            LLVMBuildCall2(builder, pr_space.fn_type, pr_space.fn, nullptr, 0, "");
 
         // Special case: PRINT arr[idx] - use runtime-aware printer that
         // handles ptr-encoded strings in nested arrays (e.g. SPLIT results).
@@ -11789,6 +11787,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
 
                 LLVMValueRef result = LLVMBuildCall2(builder, fit3->second.fn_type, fit3->second.fn,
                                                       args.data(), (unsigned)args.size(), "fmt_t");
+                emit_err_code_branch();
                 return { result, JD_TAG_STR };
             }
         }
@@ -11817,6 +11816,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             }
             LLVMValueRef result = LLVMBuildCall2(builder, fit2->second.fn_type, fit2->second.fn,
                                                   args.data(), (unsigned)args.size(), "fmt");
+            emit_err_code_branch();
             return { result, JD_TAG_STR };
         }
     }
@@ -12902,6 +12902,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 d2.val
             };
             LLVMValueRef result = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "ddv");
+            emit_err_code_branch();
             return { result, JD_TAG_ARR };
         }
         if (d1.tag != JD_TAG_ARR) {
@@ -12911,7 +12912,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 date_str_arg(d1),
                 date_str_arg(d2)
             };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "dd"), JD_TAG_F64 };
+            LLVMValueRef dd = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "dd");
+            emit_err_code_branch();
+            return { dd, JD_TAG_F64 };
         }
     }
 
@@ -12927,7 +12930,9 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
                 coerce_to(n, f64_type),
                 date_str_arg(dv)
             };
-            return { LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "da"), JD_TAG_STR };
+            LLVMValueRef da = LLVMBuildCall2(builder, fn.fn_type, fn.fn, args, 3, "da");
+            emit_err_code_branch();
+            return { da, JD_TAG_STR };
         }
     }
 
@@ -13509,6 +13514,7 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
             LLVMValueRef result = LLVMBuildCall2(builder, rf.fn_type, rf.fn,
                                                   args.empty() ? nullptr : args.data(),
                                                   (unsigned)args.size(), "call");
+            if (upper == "DATEDIFF" || upper == "DATEADD") emit_err_code_branch();
             // APPEND(arr, <string scalar>) stores the string ptr bit-punned but
             // UNTAGGED via jdb_array_append. The codegen-side string_array_vars
             // flag lets arr[i] reads decode, but the element carries no runtime

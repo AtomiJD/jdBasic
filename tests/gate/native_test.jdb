@@ -1744,6 +1744,29 @@ Assert(2923,conv_err2919 = "caught")
 DIM sort_d2919 = SORT([3, 1, 2], TRUE)
 Assert(2924,sort_d2919[0] = 3)
 Assert(2925,sort_d2919[2] = 1)
+' FILE.EXISTS answers a truth value; date units are read in either case and
+' an unknown unit or format spec is an error.
+Assert(2926,TYPEOF(FILE.EXISTS("no_such_file_2926.txt")) = "BOOLEAN")
+Assert(2927,FILE.EXISTS("no_such_file_2926.txt") = FALSE)
+DIM unit_a2926 = CDATE("2026-01-01")
+DIM unit_b2926 = CDATE("2026-10-01")
+Assert(2928,DATEDIFF("d", unit_a2926, unit_b2926) = 273)
+DIM unit_err2926 = ""
+TRY
+    unit_err2926 = STR$(DATEDIFF("days", unit_a2926, unit_b2926))
+CATCH
+    unit_err2926 = "caught"
+ENDTRY
+Assert(2929,unit_err2926 = "caught")
+DIM fmt_err2926 = ""
+TRY
+    fmt_err2926 = FORMAT$("{:,.2f}", 1234.5)
+CATCH
+    fmt_err2926 = "caught"
+ENDTRY
+Assert(2930,fmt_err2926 = "caught")
+Assert(2931,FORMAT$("{:>6.2f}", 2.5) = "  2.50")
+Assert(2932,FORMAT$("{:.0%}|{:+d}|{: .1f}", 0.42, 7, 1.5) = "42%|+7| 1.5")
 Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.
