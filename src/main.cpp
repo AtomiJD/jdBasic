@@ -1066,6 +1066,9 @@ static void register_console_builtins(VM& vm, bool ansi_color) {
 // Exported (non-static) so the FTXUI REPL can dispatch the same way the
 // legacy Console does - gives the new path LOAD / SAVE / RUN / NEW
 // commands for free without re-implementing the table.
+// Set by LINT when the program does not parse or compile; --lint exits 1 then.
+static bool g_lint_failed = false;
+
 void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer) {
     g_program_buffer_ptr = &program_buffer;
 
@@ -1569,6 +1572,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             else vm.emit("  Total warnings: " + std::to_string(warnings) + "\n");
         } catch (const std::exception& e) {
             std::cerr << "LINT error: " << e.what() << std::endl;
+            g_lint_failed = true;
         }
         return;
     }
@@ -1973,7 +1977,7 @@ int main(int argc, char* argv[]) {
         VM vm;
         setup_dynamic_code(vm);
         console_execute("LINT", vm, program_buffer);
-        return 0;
+        return g_lint_failed ? 1 : 0;
     }
 
     // ── PRETTY (reformat source, print to stdout, no execution) ──
