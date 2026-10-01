@@ -1,0 +1,2 @@
+# Test fixtures are reference data compared byte for byte; keep LF in every checkout.
+tests/jdlibs/fixtures/** text=auto eol=lf
