@@ -100,6 +100,22 @@ DO
 LOOP UNTIL d = 5
 Assert(30,d = 5)
 
+DIM ww = 0
+DIM ww_sum = 0
+WHILE ww < 6
+    ww = ww + 1
+    IF ww = 2 THEN CONTINUEDO
+    IF ww = 5 THEN EXITDO
+    ww_sum = ww_sum + ww
+WEND
+Assert(2905,ww = 5)
+Assert(2906,ww_sum = 8)
+DIM ww_never = 0
+WHILE ww_never > 0
+    ww_never = 99
+WEND
+Assert(2907,ww_never = 0)
+
 ' ── 8. FUNC/SUB ──────────────────────────────────────────────
 PRINT "── FUNC/SUB ──"
 

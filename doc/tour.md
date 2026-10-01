@@ -206,7 +206,8 @@ good
 ```
 
 A `;` at the end of a `PRINT` keeps the line open; a `,` between values
-prints a space.
+prints a space. `WHILE k < 100 ... WEND` is the same loop as
+`DO WHILE k < 100 ... LOOP`.
 
 ## 6. Functions and subs
 

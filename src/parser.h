@@ -119,6 +119,7 @@ private:
     StmtPtr parse_sub();
     StmtPtr parse_function();
     StmtPtr parse_do_loop();
+    StmtPtr parse_while_wend();
     StmtPtr parse_for();
     StmtPtr parse_return();
     StmtPtr parse_ident_stmt();  // assignment, call, label

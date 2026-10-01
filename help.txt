@@ -3711,9 +3711,13 @@ Description: Blocks execution and waits for a single key press, returning the ke
 Syntax: WEEKDAY(date) -> number
 Description: Returns the day of the week (0=Sunday ... 6=Saturday).
 
+[WEND]
+Syntax: WHILE condition ... WEND
+Description: Ends a WHILE loop. See WHILE.
+
 [WHILE]
-Syntax: DO WHILE condition ... LOOP
-Description: Specifies the condition that must be true for a DO loop to continue.
+Syntax: WHILE condition ... WEND  or  DO WHILE condition ... LOOP
+Description: Repeats the loop body as long as the condition is true. WHILE ... WEND and DO WHILE ... LOOP are the same loop; EXITDO and CONTINUEDO work in both.
 
 [XSORT]
 Syntax: XSORT(array, [dimension], [descending]) -> array

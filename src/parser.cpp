@@ -280,6 +280,7 @@ StmtPtr Parser::parse_statement() {
             throw std::runtime_error("Parse error: expected FUNC after ASYNC");
         }
         case TokenType::DO:      return parse_do_loop();
+        case TokenType::WHILE:   return parse_while_wend();
         case TokenType::FOR:     return parse_for();
         case TokenType::THIS_KW: {
             // THIS.field = expr (inside TYPE methods)
@@ -1376,6 +1377,30 @@ StmtPtr Parser::parse_do_loop() {
         advance();
         s->loop_cond = parse_expr();
     }
+    expect_newline();
+    return s;
+}
+
+// WHILE expr ... WEND, the same loop as DO WHILE expr ... LOOP.
+StmtPtr Parser::parse_while_wend() {
+    int ln = current().line;
+    advance(); // WHILE
+
+    auto s = std::make_unique<Stmt>();
+    s->kind = StmtKind::DO_LOOP;
+    s->line = ln;
+    s->is_while = true;
+    s->cond_at_top = true;
+    s->loop_cond = parse_expr();
+    expect_newline();
+    skip_newlines();
+
+    while (owes_statement() || !check(TokenType::WEND) && !check(TokenType::EOF_TOKEN)) {
+        s->body.push_back(parse_statement());
+        skip_newlines();
+    }
+
+    expect(TokenType::WEND, "'WEND'");
     expect_newline();
     return s;
 }

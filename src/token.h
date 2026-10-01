@@ -8,7 +8,7 @@ enum class TokenType {
 
     // Keywords
     LET, DIM, AS, PRINT, INPUT, GOTO, IF, THEN, ELSE, ELSEIF,
-    END, SUB, FUNCTION, DO, WHILE, UNTIL, LOOP, RETURN, CALL,
+    END, SUB, FUNCTION, DO, WHILE, WEND, UNTIL, LOOP, RETURN, CALL,
     FOR, TO, STEP, NEXT,
     ENUM, ENDENUM,
     SWITCH, CASE, DEFAULT, ENDSWITCH,
@@ -196,6 +196,7 @@ inline const KeywordEntry* keyword_table(size_t* count) {
         {"TYPE",            TokenType::TYPE_KW},
         {"UNTIL",           TokenType::UNTIL},
         {"USE",             TokenType::USE},
+        {"WEND",            TokenType::WEND},
         {"WHILE",           TokenType::WHILE},
         {"XOR",             TokenType::XOR},
     };

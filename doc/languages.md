@@ -1041,6 +1041,7 @@ FOR EACH i, name$ IN SPLIT("ann,bob", ",")
 NEXT
 ```
 * **`DO ... LOOP [WHILE/UNTIL condition]`**: Defines a loop that continues as long as a condition is met or until a condition is met.
+* **`WHILE condition ... WEND`**: The classic BASIC form of `DO WHILE condition ... LOOP`; the body runs as long as the condition is true. `EXITDO` and `CONTINUEDO` work inside it.
 * **`TRY ... CATCH ... FINALLY ... ENDTRY`**: Structured error handling. See section below.
 * **`EXITFUNC`, `EXITDO`, `EXITFOR`, `EXIT SWITCH`**: Exiting functions, loops and a `SWITCH` block.
 * **`CONTINUEFOR`, `CONTINUEDO`, `CONTINUELOOP`**: Skips the rest of the current loop iteration and continues with the next one.
@@ -4482,7 +4483,7 @@ Every documented builtin, linked to the section that describes it.
 
 **V** · [VARIANCE](#array--matrix-functions) · [VARS](#type-inspection) · [VBCRLF](#built-in-constants) · [VBNEWLINE](#built-in-constants) · [VBTAB](#built-in-constants)
 
-**W** · [WEEKDAY](#system-and-time-functions) · [WIFI.CLIENTS](#the-radio-on-the-esp32-s3) · [WIFI.DNS$](#the-radio-on-the-esp32-s3)
+**W** · [WEEKDAY](#system-and-time-functions) · [WHILE](#system--flow-control) · [WIFI.CLIENTS](#the-radio-on-the-esp32-s3) · [WIFI.DNS$](#the-radio-on-the-esp32-s3)
 
 **X** · [XSORT](#array--matrix-functions)
 

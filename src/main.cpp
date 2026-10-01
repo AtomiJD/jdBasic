@@ -1440,6 +1440,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 upper_trimmed.substr(0,7) == "ENDTYPE" || upper_trimmed.substr(0,9) == "ENDSWITCH" ||
                 upper_trimmed.substr(0,6) == "ENDTRY" || upper_trimmed.substr(0,7) == "ENDENUM" ||
                 upper_trimmed.substr(0,4) == "NEXT" || upper_trimmed.substr(0,4) == "LOOP" ||
+                upper_trimmed.substr(0,4) == "WEND" ||
                 upper_trimmed.substr(0,5) == "CATCH" || upper_trimmed.substr(0,7) == "FINALLY" ||
                 upper_trimmed.substr(0,6) == "ELSEIF" || upper_trimmed.substr(0,4) == "ELSE" ||
                 upper_trimmed.substr(0,7) == "DEFAULT" || upper_trimmed.substr(0,4) == "CASE")
@@ -1456,7 +1457,8 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
             if (upper_trimmed.substr(0,3) == "IF " || upper_trimmed.substr(0,4) == "SUB " ||
                 upper_trimmed.substr(0,9) == "FUNCTION " || upper_trimmed.substr(0,5) == "FUNC " ||
                 upper_trimmed.substr(0,4) == "FOR " || upper_trimmed.substr(0,3) == "DO " ||
-                upper_trimmed == "DO" || upper_trimmed.substr(0,5) == "TYPE " ||
+                upper_trimmed == "DO" || upper_trimmed.substr(0,6) == "WHILE " ||
+                upper_trimmed.substr(0,5) == "TYPE " ||
                 upper_trimmed.substr(0,7) == "SWITCH " || upper_trimmed.substr(0,5) == "ENUM " ||
                 upper_trimmed == "TRY" || upper_trimmed.substr(0,5) == "CATCH" ||
                 upper_trimmed.substr(0,7) == "FINALLY" || upper_trimmed.substr(0,6) == "ELSEIF" ||

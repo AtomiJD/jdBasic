@@ -10,6 +10,10 @@ Convention: one section per released version, newest at the top. Pre-release / u
 
 - **`PI` and `E` are now `MATH.PI` and `MATH.E`.** The bare names are gone; `MATH.PI()` and `MATH.E()` read the constants too. `E` and `PI` are ordinary names again, so an event handler can take its argument as `e` in compiled code as well. Replace `PI` with `MATH.PI` and `E` with `MATH.E` in existing programs.
 
+### Language
+
+- **`WHILE condition ... WEND`**, the classic BASIC loop. It is the same loop as `DO WHILE condition ... LOOP` in the interpreter and in compiled programs; `EXITDO` and `CONTINUEDO` work inside it, and `PRETTY` indents it.
+
 ### Native compiler
 
 - Builtins are classified in one table, `src/builtin_sigs.h`, shared with the VM. A FUNC or ASYNC FUNC returning a value from `CHAN.RECV`, `AWAIT`, `PY.EVAL` and the like hands its caller the value instead of 0, and `CHAN.SEND` and `FORM.POPUP` behave the same in both backends.
