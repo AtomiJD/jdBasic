@@ -15331,10 +15331,35 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
     std::string res_arg;
     if (!res_path.empty()) res_arg = "\"" + res_path + "\" ";
 
+    // UTF-8 as the process code page, so file names and paths reach the
+    // narrow Win32 and CRT calls as the UTF-8 the program holds.
+    std::string manifest_path = obj_path + ".manifest";
+    std::string manifest_arg;
+    std::string sdk_bin = sdk + "\\bin\\" + sdkv + "\\x64";
+    std::string saved_path;
+    if (const char* p = std::getenv("PATH")) saved_path = p;
+    if (std::filesystem::exists(sdk_bin + "\\mt.exe")) {
+        std::ofstream mf(manifest_path, std::ios::binary | std::ios::trunc);
+        if (mf) {
+            mf << "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>\n"
+                  "<assembly xmlns='urn:schemas-microsoft-com:asm.v1' manifestVersion='1.0'>\n"
+                  "  <application xmlns='urn:schemas-microsoft-com:asm.v3'>\n"
+                  "    <windowsSettings>\n"
+                  "      <activeCodePage xmlns='http://schemas.microsoft.com/SMI/2019/WindowsSettings'>UTF-8</activeCodePage>\n"
+                  "    </windowsSettings>\n"
+                  "  </application>\n"
+                  "</assembly>\n";
+            mf.close();
+            manifest_arg = "/MANIFEST:EMBED /MANIFESTINPUT:\"" + manifest_path + "\" ";
+            _putenv_s("PATH", (sdk_bin + ";" + saved_path).c_str());
+        }
+    }
+
     std::string link_cmd =
         "cmd /c \"\"" + link_exe + "\" "
         "/NOLOGO /OUT:\"" + exe_path + "\" "
         "/SUBSYSTEM:CONSOLE "
+        + manifest_arg +
         "\"" + obj_path + "\" "
         "\"" + runtime_obj + "\" "
         + res_arg +
@@ -15345,6 +15370,10 @@ bool LLVMCodegen::link_executable(const std::string& obj_path,
         "\"" + jdbrt_lib + "\"\"";
 
     int ret = std::system(link_cmd.c_str());
+    if (!manifest_arg.empty()) {
+        std::remove(manifest_path.c_str());
+        _putenv_s("PATH", saved_path.c_str());
+    }
     if (ret != 0) {
         error_msg = "Linker failed (exit code " + std::to_string(ret) + ")";
         // LNK1120 = "N unresolved externals". The single most common cause

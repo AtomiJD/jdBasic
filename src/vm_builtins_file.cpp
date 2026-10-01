@@ -1,6 +1,10 @@
 // VM builtins: files, directories, CSV and paths.
 
 #include "vm_internal.h"
+#include <cstring>
+#if !defined(_WIN32)
+#include <utime.h>
+#endif
 
 void VM::register_file_builtins() {
     // ── File I/O ─────────────────────────────────────────────
@@ -307,7 +311,8 @@ void VM::register_file_builtins() {
                     std::string type = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) ? "DIR" :
                                        (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) ? "LINK" : "FILE";
                     row.as_array()->elements.push_back(Value::make_string(type));
-                    SYSTEMTIME st; FileTimeToSystemTime(&fd.ftLastWriteTime, &st);
+                    SYSTEMTIME utc, st; FileTimeToSystemTime(&fd.ftLastWriteTime, &utc);
+                    SystemTimeToTzSpecificLocalTime(nullptr, &utc, &st);
                     char dt[32]; snprintf(dt, sizeof(dt), "%04d-%02d-%02d %02d:%02d:%02d",
                         st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
                     row.as_array()->elements.push_back(Value::make_string(dt));
@@ -507,6 +512,103 @@ void VM::register_file_builtins() {
         return Value::make_none();
     });
 
+#ifndef JDB_LEAN
+    // FILE.MOVE / FILE.COPY: a target that is an existing directory takes the
+    // source's file name; an existing target file is replaced only with
+    // overwrite. Both answer TRUE and raise on any failure.
+    struct FileTransfer {
+        static bool is_dir(const std::string& p) {
+#if defined(_WIN32)
+            DWORD attr = GetFileAttributesA(p.c_str());
+            return attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY);
+#else
+            struct stat st;
+            return stat(p.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
+#endif
+        }
+        static bool exists(const std::string& p) {
+#if defined(_WIN32)
+            return GetFileAttributesA(p.c_str()) != INVALID_FILE_ATTRIBUTES;
+#else
+            struct stat st;
+            return stat(p.c_str(), &st) == 0;
+#endif
+        }
+        static std::string target(const std::string& src, const std::string& dst) {
+            if (!is_dir(dst)) return dst;
+            size_t cut = src.find_last_of("/\\");
+            std::string name = (cut == std::string::npos) ? src : src.substr(cut + 1);
+            if (!dst.empty() && (dst.back() == '/' || dst.back() == '\\')) return dst + name;
+            return dst + "/" + name;
+        }
+        static std::string last_error() {
+#if defined(_WIN32)
+            DWORD code = GetLastError();
+            char buf[256] = {0};
+            DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+                                     nullptr, code, 0, buf, sizeof(buf), nullptr);
+            while (n > 0 && (buf[n - 1] == '\r' || buf[n - 1] == '\n' || buf[n - 1] == '.')) buf[--n] = 0;
+            return n ? std::string(buf) : ("error " + std::to_string(code));
+#else
+            return std::strerror(errno);
+#endif
+        }
+        static void copy_bytes(const std::string& src, const std::string& dst) {
+            std::ifstream in(src, std::ios::binary);
+            if (!in) throw std::runtime_error("Cannot open: " + src);
+            std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+            if (!out) throw std::runtime_error("Cannot write: " + dst);
+            out << in.rdbuf();
+            if (!out) throw std::runtime_error("Cannot write: " + dst);
+        }
+        static void run(const std::vector<Value>& args, bool move) {
+            const char* what = move ? "FILE.MOVE" : "FILE.COPY";
+            std::string src = args[0].to_string();
+            std::string dst = target(src, args[1].to_string());
+            bool overwrite = args.size() >= 3 && args[2].to_bool();
+            if (!exists(src)) throw std::runtime_error(std::string(what) + ": no such file: " + src);
+            if (!move && is_dir(src)) throw std::runtime_error(std::string(what) + ": is a directory: " + src);
+            if (exists(dst) && !overwrite)
+                throw std::runtime_error(std::string(what) + ": target exists: " + dst);
+#if defined(_WIN32)
+            BOOL ok = move
+                ? MoveFileExA(src.c_str(), dst.c_str(), MOVEFILE_COPY_ALLOWED | MOVEFILE_WRITE_THROUGH |
+                                                        (overwrite ? MOVEFILE_REPLACE_EXISTING : 0))
+                : CopyFileA(src.c_str(), dst.c_str(), overwrite ? FALSE : TRUE);
+            if (!ok) throw std::runtime_error(std::string(what) + ": " + src + " -> " + dst + ": " + last_error());
+#else
+            if (move) {
+                if (std::rename(src.c_str(), dst.c_str()) == 0) return;
+                if (errno != EXDEV)
+                    throw std::runtime_error(std::string(what) + ": " + src + " -> " + dst + ": " + last_error());
+                if (is_dir(src)) throw std::runtime_error(std::string(what) + ": cannot move a directory across file systems: " + src);
+            }
+            copy_bytes(src, dst);
+            struct stat st;
+            if (stat(src.c_str(), &st) == 0) {
+                chmod(dst.c_str(), st.st_mode & 07777);
+                struct utimbuf times;
+                times.actime = st.st_atime;
+                times.modtime = st.st_mtime;
+                utime(dst.c_str(), &times);
+            }
+            if (move && std::remove(src.c_str()) != 0)
+                throw std::runtime_error(std::string(what) + ": copied but cannot delete " + src + ": " + last_error());
+#endif
+        }
+    };
+
+    register_native("FILE.MOVE", 2, 3, [](const std::vector<Value>& args) -> Value {
+        FileTransfer::run(args, true);
+        return Value::make_bool(true);
+    });
+
+    register_native("FILE.COPY", 2, 3, [](const std::vector<Value>& args) -> Value {
+        FileTransfer::run(args, false);
+        return Value::make_bool(true);
+    });
+#endif
+
     // ── Path Functions ───────────────────────────────────────
 
 #ifndef JDB_LEAN
@@ -668,7 +770,8 @@ void VM::register_file_builtins() {
         o->set("is_dir", Value::make_bool(is_dir));
         o->set("readonly", Value::make_bool((fad.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0));
         o->set("hidden", Value::make_bool((fad.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0));
-        SYSTEMTIME st; FileTimeToSystemTime(&fad.ftLastWriteTime, &st);
+        SYSTEMTIME utc, st; FileTimeToSystemTime(&fad.ftLastWriteTime, &utc);
+        SystemTimeToTzSpecificLocalTime(nullptr, &utc, &st);
         char dt[32]; snprintf(dt, sizeof(dt), "%04d-%02d-%02d %02d:%02d:%02d",
             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
         o->set("mtime", Value::make_string(dt));

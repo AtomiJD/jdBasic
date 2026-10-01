@@ -974,9 +974,17 @@ Description: Spawns a producer thread that reads `path$` line by line and pushes
 Syntax: FILE.STREAM_TAIL(path$, ch [, capacity])
 Description: Like FILE.STREAM_LINES but follows growth (`tail -f`). Stops when the consumer closes the channel.
 
+[FILE.MOVE]
+Syntax: FILE.MOVE(source$, target$, [overwrite]) -> boolean
+Description: Moves or renames a file or directory; a file also to another drive, a directory only within one. A target that is an existing directory receives the file under its own name. An existing target file is replaced only with overwrite TRUE; otherwise, and on any failure, raises an error. Returns TRUE.
+
+[FILE.COPY]
+Syntax: FILE.COPY(source$, target$, [overwrite]) -> boolean
+Description: Copies a file, keeping its modification time. A target that is an existing directory receives the copy under the source's name. An existing target file is replaced only with overwrite TRUE; otherwise, and on any failure, raises an error. Returns TRUE.
+
 [FILE.STAT]
 Syntax: FILE.STAT(path$) -> map
-Description: Returns a map with fields "exists", "size", "is_dir", "readonly", "hidden", "mtime" (string YYYY-MM-DD HH:MM:SS). For missing files, "exists" is FALSE.
+Description: Returns a map with fields "exists", "size", "is_dir", "readonly", "hidden", "mtime" (last change in local time, string YYYY-MM-DD HH:MM:SS). For missing files, "exists" is FALSE.
 
 [FILTER]
 Syntax: FILTER(function@, array)

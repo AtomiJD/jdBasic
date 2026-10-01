@@ -1774,6 +1774,27 @@ Assert(2934,STR$(20 IN [10, 20, 30]) = "TRUE")
 Assert(2935,STR$("z" IN {"k": 1}) = "FALSE")
 DIM in_b2936 AS BOOLEAN = "st" IN "haystack"
 Assert(2936,in_b2936)
+
+' FILE.COPY and FILE.MOVE with UTF-8 file names.
+DIM mv_dir2937 = MKTEMP$("mv")
+MKDIR mv_dir2937
+DIM mv_src2937 = mv_dir2937 + "/Grüße.txt"
+TXTWRITER mv_src2937, "abc"
+Assert(2937,FILE.COPY(mv_src2937, mv_dir2937 + "/Kopie.txt"))
+Assert(2938,FILE.MOVE(mv_src2937, mv_dir2937 + "/Größe Ü.txt"))
+Assert(2939,FILE.EXISTS(mv_dir2937 + "/Größe Ü.txt") AND NOT FILE.EXISTS(mv_src2937))
+Assert(2940,TXTREADER$(mv_dir2937 + "/Kopie.txt") = "abc")
+DIM mv_err2941 = ""
+TRY
+    FILE.COPY(mv_dir2937 + "/Kopie.txt", mv_dir2937 + "/Größe Ü.txt")
+CATCH
+    mv_err2941 = "caught"
+ENDTRY
+Assert(2941,mv_err2941 = "caught")
+Assert(2942,LEN(DIR$(mv_dir2937 + "/*.txt")) = 2)
+KILL mv_dir2937 + "/Kopie.txt"
+KILL mv_dir2937 + "/Größe Ü.txt"
+RMDIR mv_dir2937
 Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.
