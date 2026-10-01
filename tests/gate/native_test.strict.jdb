@@ -1692,6 +1692,43 @@ Assert(2910,rti_total = 12)
 Assert(2911,RetInt2908(2.7) = 2)
 Assert(2912,TYPEOF(RetInt2908(2.7)) = "INT64")
 Assert(2913,TYPEOF(RetBool2908(3)) = "BOOLEAN")
+' A map value added up in a loop keeps its kind across iterations.
+DIM acc_m2914 = {"a": 0.5}
+DIM acc_t2914 = 0
+DIM acc_i2914 AS INTEGER
+FOR acc_i2914 = 1 TO 2
+    acc_t2914 = acc_t2914 + acc_m2914{"a"}
+NEXT
+Assert(2914,acc_t2914 = 1)
+SUB AccSub2914()
+    DIM m = {"a": 0.25}
+    DIM t = 0
+    DIM i AS INTEGER
+    FOR i = 1 TO 4
+        t = t + m{"a"}
+    NEXT
+    Assert(2915,t = 1)
+ENDSUB
+AccSub2914()
+' A FUNC declared AS MAP hands back the map it built.
+FUNC MakeMap2914(n AS INTEGER) AS MAP
+    DIM r AS MAP
+    r{"n"} = n
+    r{"twice"} = n * 2
+    RETURN r
+ENDFUNC
+FUNC Twice2914(p AS MAP) AS INTEGER
+    RETURN p{"twice"}
+ENDFUNC
+DIM mm2914 AS MAP = MakeMap2914(3)
+Assert(2916,mm2914{"n"} = 3)
+Assert(2917,Twice2914(mm2914) = 6)
+' A global set from a builtin of unknown kind is visible inside a SUB.
+DIM gcd2914 = GCD(12, 18)
+SUB GcdSub2914()
+    Assert(2918,gcd2914 = 6)
+ENDSUB
+GcdSub2914()
 Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.

@@ -73,11 +73,11 @@ mouse and focus events exist for every input control.
 items as an array through `ITEMS`, and `ADDITEM` appends one.
 
 ```basic
-DIM frm AS DOUBLE = FORM.CREATE("Shopping", 360, 260, "MAIN")
-DIM lbl AS DOUBLE = FORM.LABEL(frm, "lblItem", "Item:", 12, 14, 60, 18)
-DIM txt AS DOUBLE = FORM.TEXTBOX(frm, "txtItem", "", 70, 10, 180, 24)
-DIM btn AS DOUBLE = FORM.BUTTON(frm, "btnAdd", "&Add", 260, 9, 88, 26)
-DIM lst AS DOUBLE = FORM.LISTBOX(frm, "lstItems", 12, 44, 238, 200)
+DIM frm = FORM.CREATE("Shopping", 360, 260, "MAIN")
+DIM lbl = FORM.LABEL(frm, "lblItem", "Item:", 12, 14, 60, 18)
+DIM txt = FORM.TEXTBOX(frm, "txtItem", "", 70, 10, 180, 24)
+DIM btn = FORM.BUTTON(frm, "btnAdd", "&Add", 260, 9, 88, 26)
+DIM lst = FORM.LISTBOX(frm, "lstItems", 12, 44, 238, 200)
 
 FORM.SET(lst, "ITEMS", ["Bread", "Milk"])
 FORM.SET(btn, "ENABLED", FALSE)
@@ -103,9 +103,7 @@ ENDSUB
 FORM.RUN(frm)
 ```
 
-The handles are declared `AS DOUBLE` because the handlers use them. The native
-compiler needs that; the interpreter accepts both forms. To read the selected
-list entry outside an event, use `FORM.GET(lst, "SELINDEX")` (`-1` when
+To read the selected list entry outside an event, use `FORM.GET(lst, "SELINDEX")` (`-1` when
 nothing is selected) and `FORM.GET(lst, "SELTEXT")`.
 
 ### Message boxes and dialogs
@@ -117,10 +115,10 @@ question icon, `48` warning, `64` information) and returns the button: `1` OK,
 `"face,size,bold,italic"`. On Cancel they return `""` (`COLORDIALOG`: `-1`).
 
 ```basic
-DIM frm AS DOUBLE = FORM.CREATE("Dialogs", 300, 170, "MAIN")
-DIM lbl AS DOUBLE = FORM.LABEL(frm, "lblName", "Hello", 12, 12, 276, 40)
-DIM btnName AS DOUBLE = FORM.BUTTON(frm, "btnName", "&Name...", 12, 70, 88, 26)
-DIM btnColor AS DOUBLE = FORM.BUTTON(frm, "btnColor", "&Colour...", 106, 70, 88, 26)
+DIM frm = FORM.CREATE("Dialogs", 300, 170, "MAIN")
+DIM lbl = FORM.LABEL(frm, "lblName", "Hello", 12, 12, 276, 40)
+DIM btnName = FORM.BUTTON(frm, "btnName", "&Name...", 12, 70, 88, 26)
+DIM btnColor = FORM.BUTTON(frm, "btnColor", "&Colour...", 106, 70, 88, 26)
 
 SUB BTNNAME_CLICK(e)
     DIM answer AS STRING = INPUTBOX$("Your name:", "Dialogs", "World")
@@ -148,9 +146,9 @@ keyboard shortcut. `FILEOPEN$` and `FILESAVE$` show the standard file dialogs
 with a filter in the form `"Text files|*.txt|All files|*.*"`.
 
 ```basic
-DIM frm AS DOUBLE = FORM.CREATE("Notes", 480, 320, "MAIN")
-DIM txt AS DOUBLE = FORM.TEXTBOX(frm, "txtBody", "", 0, 0, 480, 296, TRUE)
-DIM sbar AS DOUBLE = FORM.STATUSBAR(frm, "sbMain")
+DIM frm = FORM.CREATE("Notes", 480, 320, "MAIN")
+DIM txt = FORM.TEXTBOX(frm, "txtBody", "", 0, 0, 480, 296, TRUE)
+DIM sbar = FORM.STATUSBAR(frm, "sbMain")
 
 FORM.MENU(frm, [ _
     { "text": "&File", "items": [ _
@@ -201,9 +199,9 @@ once per pass. It handles pending window messages and returns `TRUE` while
 any form is open.
 
 ```basic
-DIM frm AS DOUBLE = FORM.CREATE("Counter", 260, 120, "MAIN")
-DIM lbl AS DOUBLE = FORM.LABEL(frm, "lblCount", "0", 20, 20, 200, 20)
-DIM bar AS DOUBLE = FORM.PROGRESS(frm, "prgWork", 20, 50, 220, 20)
+DIM frm = FORM.CREATE("Counter", 260, 120, "MAIN")
+DIM lbl = FORM.LABEL(frm, "lblCount", "0", 20, 20, 200, 20)
+DIM bar = FORM.PROGRESS(frm, "prgWork", 20, 50, 220, 20)
 DIM count AS INTEGER = 0
 
 FORM.SHOW(frm)
@@ -238,7 +236,7 @@ and this next to it as the code behind. `FORM.FIND` looks up a control by
 name.
 
 ```basic
-DIM frm AS DOUBLE = FORM.LOAD("hello.jdform")
+DIM frm = FORM.LOAD("hello.jdform")
 
 SUB BTNGREET_CLICK(e)
     DIM name AS STRING = FORM.GET(FORM.FIND(frm, "txtName"), "TEXT")
@@ -258,9 +256,8 @@ format is described under
 
 A forms program compiles like any other jdBasic program: `jdbasic -c notes.jdb`
 writes `notes.exe` and copies `jdbrt.dll` next to it. The native compiler is always STRICT
-and EXPLICIT, so every variable needs a `DIM`, and a handle that a `SUB` uses
-should be declared with a type (`DIM frm AS DOUBLE = ...`) as in the examples
-above. Both the compiler and `jdbrt.dll` must be built with the `FORMS` flag.
+and EXPLICIT, so every variable needs a `DIM`, as in the examples above. Both
+the compiler and `jdbrt.dll` must be built with the `FORMS` flag.
 
 ### Forms demos
 

@@ -20,6 +20,10 @@ Convention: one section per released version, newest at the top. Pre-release / u
 ### Native compiler
 
 - Builtins are classified in one table, `src/builtin_sigs.h`, shared with the VM. A FUNC or ASYNC FUNC returning a value from `CHAN.RECV`, `AWAIT`, `PY.EVAL` and the like hands its caller the value instead of 0, and `CHAN.SEND` and `FORM.POPUP` behave the same in both backends.
+- A variable that adds up map values in a loop (`t = t + m{"a"}`) keeps the right number; before, the second pass read the floating-point bits as an integer.
+- `FUNC ... AS MAP` that builds and returns a map no longer crashes the program that uses the result.
+- `DIM n AS INTEGER = parts$[1]` is a STRICT type error, as it is for a plain string variable; convert with `VAL`.
+- A global set from a builtin such as `FORM.CREATE` or `GCD` without `AS` is visible inside SUBs and FUNCs.
 
 ---
 
