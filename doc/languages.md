@@ -1042,8 +1042,7 @@ NEXT
 * **`OPTION option$`**: Sets a VM option.
   * `OPTION "NOPAUSE"` disables the ESC/Space break/pause functionality.
   * `OPTION "EXPLICIT"` asks for declarations: variables are introduced with `DIM` before first use (read or write). With **EXPLICITOFF** (default), variables are created on first use; a name read before any assignment yields `NONE` (`NONE + 1` is `1`).
-    * The check is static. `jdBasic -c` refuses a read or write of an undeclared name at compile time (`undeclared variable 'Y'`), and `jdBasic --lint` lists each such name under `Undeclared refs`.
-    * A plain interpreted run does **not** enforce it: `OPTION "EXPLICIT"` followed by `x = 3` or `PRINT y` runs without an error. In the interpreter the option only switches on the module write check described under `EXPORT MODULE` below.
+    * The check is static and runs before the program starts. The interpreter stops with error 20 (`Undeclared variable 'X' (OPTION "EXPLICIT") at line 3`), `jdBasic -c` refuses the name at compile time (`undeclared variable 'X'`), and `jdBasic --lint` lists each such name under `Undeclared refs`. Lambda parameters and the variables of `FOR` and `FOR EACH` count as declared; a name that only an `EXECUTE` string creates needs a `DIM` in the file. The option applies to the file it stands in; it also switches on the module write check described under `EXPORT MODULE` below.
     * `DIM` always declares (even with EXPLICIT on).
     * `FOR` and `FOR EACH` declare their loop variables themselves, also with EXPLICIT on and under `-c`; no `DIM` is needed.
     * Disable with `OPTION "NOEXPLICIT"` or `OPTION "EXPLICITOFF"`.
@@ -1922,7 +1921,10 @@ RNG.FREE(dice)
 
 #### Conversion
 
-Classic BASIC cast family; each takes any numeric/convertible value:
+Classic BASIC cast family. Each takes a number, a date or a numeric string
+(`CINT("7")` is `7`, surrounding spaces are allowed); any other text, also an
+empty string, is a type error, as in VB. `CINT`, `CLNG`, `CSNG` and `CDBL` turn
+an array element by element.
 
 * **`CINT(x)`**: Cast to 32-bit integer (truncates toward zero). Overflow wraps like C `int32_t`.
 * **`CLNG(x)`**: Cast to 64-bit integer (truncates toward zero).
@@ -2015,7 +2017,7 @@ For backwards compatibility, the underscore forms `REGEX_MATCH(pattern$, text$)`
 * **`OUTER(vecA, vecB, op$ or funcref)`**: Creates an outer product table using an operator (+, -, *, /, MOD, >, <, =, ^) or a reference to a function (sqr@).
 * **`ROTATE(array, shift_vector) -> array`**: Cyclically shifts an N-dimensional array. One entry of `shift_vector` per axis, outermost first; more entries than the array has axes is an error. `ROTATE(m, [1, 0])` turns the rows, `ROTATE(m, [0, 1])` the columns, `ROTATE(m, [1, 1])` both. A positive shift **pulls from ahead**: `out[i] = in[i + k]`, so `ROTATE([1,2,3,4,5], [1])` is `2 3 4 5 1`.
 * **`SHIFT(array, shift_vector, [fill_value]) -> array`**: Like `ROTATE` but without the wraparound: what moves in from outside is `fill_value` (default `0`), and a whole row shifted off the edge comes back as a row of `fill_value`. Same per-axis rule as `ROTATE`, but note the **opposite sign convention**: a positive shift **pushes along** like a shift register, `out[i] = in[i - k]`, so `SHIFT([1,2,3,4,5], [1], 0)` is `0 1 2 3 4`. A shift at least as large as the axis leaves nothing but the fill.
-* **`SORT(array, [descending]) -> array`**: Returns a sorted copy of a 1D array, ascending, or descending when `descending` is `TRUE`. When the first element is a string the array sorts as strings (byte order, so `"C"` before `"a"`), otherwise by numeric value. `SORT([3,1,2], TRUE)` is `[3, 2, 1]`. A matrix comes back unchanged; sort rows with `XSORT`. A program compiled with `-c` supports only the one-argument form.
+* **`SORT(array, [descending]) -> array`**: Returns a sorted copy of a 1D array, ascending, or descending when `descending` is `TRUE`. When the first element is a string the array sorts as strings (byte order, so `"C"` before `"a"`), otherwise by numeric value. `SORT([3,1,2], TRUE)` is `[3, 2, 1]`. A matrix comes back unchanged; sort rows with `XSORT`.
 * **`XSORT(array, [dimension], [descending_bool]) -> array`**: A high-performance sort that can operate along a dimension of a 2D matrix. Sorts numbers and strings (lexicographic); in a mixed array numbers order before strings. For a 2D matrix, `dimension` selects the column whose values order the rows; string key columns work (`XSORT(rows, 0)` sorts `[["bob",30],["alice",25]]` by name).
 * **`CONVOLVE(array, kernel, [wrap_mode]) -> array`**: Slides `kernel` over `array`, centred on each element, and sums the products; the result has the shape of `array`. A vector takes a vector kernel, a matrix a matrix kernel. The kernel is **not flipped**, so strictly this is a correlation; for a symmetric kernel the two agree, otherwise reverse the kernel first for a true convolution. `wrap_mode` `TRUE` wraps around the edges, `FALSE` (the default) treats cells outside as absent. `CONVOLVE([1,2,3,4], [1,1,1])` is `[3, 6, 9, 7]`.
 * **`PLACE(destination_array, source_array, coordinates_vector) -> array`**: Places a source array into a destination array at a given coordinate.

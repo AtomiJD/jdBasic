@@ -2,18 +2,35 @@
 
 #include "vm_internal.h"
 
+// The number a conversion function reads from its argument. A string is
+// parsed whole, surrounding spaces allowed; any other text is a type mismatch.
+static double conversion_arg(const Value& v, const char* fn) {
+    if (v.type != ValueType::STRING) return v.to_double();
+    const std::string& s = v.as_string()->data;
+    size_t b = s.find_first_not_of(" \t\r\n");
+    size_t e = s.find_last_not_of(" \t\r\n");
+    if (b != std::string::npos) {
+        std::string t = s.substr(b, e - b + 1);
+        char* end = nullptr;
+        double d = std::strtod(t.c_str(), &end);
+        if (end && *end == '\0') return d;
+    }
+    throw jdError(ErrCode::TYPE_MISMATCH,
+        std::string(fn) + ": \"" + s + "\" is not a number");
+}
+
 void VM::register_data_builtins() {
     register_native("CDBL", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_f64(args[0].to_double());
+        return Value::make_f64(conversion_arg(args[0], "CDBL"));
     });
     register_native("CINT", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_i64(static_cast<int32_t>(args[0].to_double()));
+        return Value::make_i64(static_cast<int32_t>(conversion_arg(args[0], "CINT")));
     });
     register_native("CLNG", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_i64(static_cast<int64_t>(args[0].to_double()));
+        return Value::make_i64(static_cast<int64_t>(conversion_arg(args[0], "CLNG")));
     });
     register_native("CSNG", 1, 1, [](const std::vector<Value>& args) -> Value {
-        return Value::make_f64(static_cast<double>(static_cast<float>(args[0].to_double())));
+        return Value::make_f64(static_cast<double>(static_cast<float>(conversion_arg(args[0], "CSNG"))));
     });
     register_native("CBOOL", 1, 1, [](const std::vector<Value>& args) -> Value {
         return Value::make_bool(args[0].to_bool());

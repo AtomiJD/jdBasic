@@ -1729,6 +1729,24 @@ SUB GcdSub2914()
     Assert(2918,gcd2914 = 6)
 ENDSUB
 GcdSub2914()
+' CINT and CDBL read a number from text, and turn each element of an array.
+Assert(2919,CINT("7") + 1 = 8)
+Assert(2920,CDBL(" 2.5 ") = 2.5)
+DIM conv_m2919 = {"n": "41"}
+Assert(2921,CINT(conv_m2919{"n"}) = 41)
+DIM conv_a2919 = CINT([1.5, 2.7, -3.2])
+Assert(2922,conv_a2919[1] = 2)
+DIM conv_err2919 = ""
+TRY
+    conv_err2919 = STR$(CINT("abc"))
+CATCH
+    conv_err2919 = "caught"
+ENDTRY
+Assert(2923,conv_err2919 = "caught")
+' SORT with a direction.
+DIM sort_d2919 = SORT([3, 1, 2], TRUE)
+Assert(2924,sort_d2919[0] = 3)
+Assert(2925,sort_d2919[2] = 1)
 Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.
@@ -1766,7 +1784,7 @@ ELSE
     Assert(2900,TYPEOF(dte_map{"when"}) = "STRING")
     Assert(2901,TYPEOF(dte_cell) = "FLOAT64")
     Assert(2902,TYPEOF(dte_span[0]) = "FLOAT64")
-    Assert(2903,CLNG(dte_diff) = 0)
+    Assert(2903,TYPEOF(dte_diff) = "STRING")
 ENDIF
 Assert(2904,FORMAT_DATE(dte_map{"when"}, "%Y-%m-%d") = "2026-03-28")
 

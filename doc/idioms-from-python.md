@@ -35,7 +35,7 @@ to run.
 | `len(s)` | `LEN(s)` |
 | `needle in haystack` | `INSTR(haystack, needle) >= 0` |
 | `chr(n)` / `ord(c)` | `CHR$(n)` / `ASC(c)` |
-| `str(x)` / `int(s)` / `float(s)` | `STR$(x)` / `INT(VAL(s))` / `VAL(s)` (`CINT` / `CDBL` convert numbers only and return 0 for a string) |
+| `str(x)` / `int(s)` / `float(s)` | `STR$(x)` / `CINT(s)` / `CDBL(s)` (both raise an error for text that is not a number, as Python does; `VAL(s)` gives 0 instead) |
 
 ## Arrays / lists
 

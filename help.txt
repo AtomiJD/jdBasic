@@ -528,7 +528,7 @@ Description: Parses a string ("YYYY-MM-DD" optionally with time) into a DateTime
 
 [CDBL]
 Syntax: CDBL(x)
-Description: Converts explicitly to a double-precision floating-point number. A string is not parsed and gives 0; VAL converts text to a number.
+Description: Converts explicitly to a double-precision floating-point number. A numeric string is parsed (CDBL(" 2.5 ") is 2.5); other text is a type error.
 
 [CEIL]
 Syntax: CEIL(numeric_expression)
@@ -548,7 +548,7 @@ Description: Splits array into sub-arrays of length 'size' (last chunk may be sh
 
 [CINT]
 Syntax: CINT(x)
-Description: Casts a value to a 32-bit integer, truncating toward zero. Overflow wraps. A string is not parsed and gives 0 (CINT("7") is 0); VAL converts text to a number.
+Description: Casts a value to a 32-bit integer, truncating toward zero. Overflow wraps. A numeric string is parsed (CINT("7") is 7); other text, also an empty string, is a type error, as in VB. An array is converted element by element.
 
 [CIRCLE]
 Syntax: CIRCLE x, y, r, [fill], [r, g, b]
@@ -576,7 +576,7 @@ Description: Sets the system clipboard text.
 
 [CLNG]
 Syntax: CLNG(x)
-Description: Casts a value to a 64-bit integer, truncating toward zero. A string is not parsed and gives 0; VAL converts text to a number.
+Description: Casts a value to a 64-bit integer, truncating toward zero. A numeric string is parsed; other text is a type error. In a compiled program an ISO date string reads as its epoch seconds, as a date does in the interpreter.
 
 [CLS]
 Syntax: CLS [r, g, b]
@@ -665,7 +665,7 @@ Description: Creates an instance of a COM Automation object (Windows only).
 
 [CSNG]
 Syntax: CSNG(x)
-Description: Roundtrips a number through 32-bit float precision, useful for forcing single-precision loss on doubles. A string is not parsed and gives 0; VAL converts text to a number.
+Description: Roundtrips a number through 32-bit float precision, useful for forcing single-precision loss on doubles. A numeric string is parsed; other text is a type error.
 
 [CSTR]
 Syntax: CSTR(x)
@@ -1476,7 +1476,7 @@ Description: Hyperbolic sine. Vectorizes element-wise over arrays.
 
 [SORT]
 Syntax: SORT(array [, descending]) -> array
-Description: Returns a new 1D array sorted ascending, or descending when the flag is TRUE. Numbers compare numerically, strings by character code (upper case before lower case). The descending flag works in the interpreter only; a compiled program uses REVERSE(SORT(array)).
+Description: Returns a new 1D array sorted ascending, or descending when the flag is TRUE. Numbers compare numerically, strings by character code (upper case before lower case).
 
 [SOUND.DEBUG]
 Syntax: SOUND.DEBUG() -> object
@@ -2468,7 +2468,7 @@ Description: Registers an event handler (deprecated for error handling).
 
 [OPTION]
 Syntax: OPTION "option_name"
-Description: Sets a compiler or runtime option. "EXPLICIT" and "STRICT" (off again with "EXPLICITOFF" and "NOSTRICT") control the checks of the native compiler: EXPLICIT makes an assignment to a name never declared with DIM a compile error, STRICT checks types (see STRICT). The interpreter does not report undeclared names; --lint does. "NOCOLOR" and "COLOR" switch colored error messages, "AUTOINDENT" and "NOAUTOINDENT" the editor's indentation.
+Description: Sets a compiler or runtime option. "EXPLICIT" and "STRICT" (off again with "EXPLICITOFF" and "NOSTRICT") control the checks of the native compiler: EXPLICIT makes an assignment to a name never declared with DIM a compile error, STRICT checks types (see STRICT). With EXPLICIT the interpreter also refuses to run a file that reads or assigns an undeclared name (error 20, with the line); --lint lists such names. "NOCOLOR" and "COLOR" switch colored error messages, "AUTOINDENT" and "NOAUTOINDENT" the editor's indentation.
 
 [OR]
 Syntax: expression OR expression
@@ -3092,7 +3092,7 @@ Description: Converts a number to its string representation.
 
 [STRICT]
 Syntax: OPTION "STRICT"
-Description: Type checking for the native compiler (-c). Under STRICT an assignment, call or return whose value does not fit the declared type is a compile error, and every error is listed with its line before the compile stops. -c turns STRICT and EXPLICIT on for the main file by default; OPTION "NOSTRICT" and OPTION "EXPLICITOFF" switch them off. An IMPORTed module is checked only when it says OPTION "STRICT" or "EXPLICIT" itself. The interpreter does not check types or undeclared names; --lint lists undeclared names whatever the options say. In the interpreter, STRICT or EXPLICIT anywhere in the program only refuses a module FUNC or SUB that assigns a name it never declared. The bare form OPTION STRICT is accepted too.
+Description: Type checking for the native compiler (-c). Under STRICT an assignment, call or return whose value does not fit the declared type is a compile error, and every error is listed with its line before the compile stops. -c turns STRICT and EXPLICIT on for the main file by default; OPTION "NOSTRICT" and OPTION "EXPLICITOFF" switch them off. An IMPORTed module is checked only when it says OPTION "STRICT" or "EXPLICIT" itself. The interpreter does not check types. Under EXPLICIT it refuses to run a file that reads or assigns an undeclared name (error 20); --lint lists undeclared names whatever the options say. The bare form OPTION STRICT is accepted too.
 
 [STRING]
 Syntax: DIM variable AS STRING

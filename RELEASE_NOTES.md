@@ -11,6 +11,8 @@ Convention: one section per released version, newest at the top. Pre-release / u
 - **`PI` and `E` are now `MATH.PI` and `MATH.E`.** The bare names are gone; `MATH.PI()` and `MATH.E()` read the constants too. `E` and `PI` are ordinary names again, so an event handler can take its argument as `e` in compiled code as well. Replace `PI` with `MATH.PI` and `E` with `MATH.E` in existing programs.
 - **`FUNC ... AS INTEGER` and `AS BOOLEAN` now return that type.** Before, both backends ignored the declared return type, so `RETURN 2.7` from an `AS INTEGER` function answered `2.7`; now it answers `2`, as `DIM x AS INTEGER = 2.7` does. Under `-c` the result is an INTEGER, so `total = total + Twice(i)` with an INTEGER `total` compiles without `CINT`.
 - **A `FUNC` or `SUB` named like a builtin is rejected in every build and by the native compiler too.** Before, `-c` accepted `FUNC Count`, and the interpreter accepted `FUNC MsgBox` in a build without `FORMS`.
+- **`CINT`, `CLNG`, `CSNG` and `CDBL` read numbers from text, as in VB.** `CINT("7")` is `7` (it was `0`), and text that is not a number, also an empty string, is a type error. Code that relied on `CINT(text)` giving `0` should use `VAL`.
+- **`OPTION "EXPLICIT"` now works in the interpreter.** A file that says it and reads or assigns an undeclared name stops before it runs, with error 20 and the line; before, only `-c` and `--lint` reported it.
 
 ### Language
 
@@ -24,6 +26,8 @@ Convention: one section per released version, newest at the top. Pre-release / u
 - `FUNC ... AS MAP` that builds and returns a map no longer crashes the program that uses the result.
 - `DIM n AS INTEGER = parts$[1]` is a STRICT type error, as it is for a plain string variable; convert with `VAL`.
 - A global set from a builtin such as `FORM.CREATE` or `GCD` without `AS` is visible inside SUBs and FUNCs.
+- `SORT(array, TRUE)` sorts descending in a compiled program too; it answered `0` before.
+- `CINT` and its siblings read a string held in a map entry, and `CLNG` of a date gives its epoch seconds, as in the interpreter.
 
 ---
 

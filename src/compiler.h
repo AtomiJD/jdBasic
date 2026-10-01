@@ -25,6 +25,9 @@ class Compiler {
 public:
     Compiler();
 
+    // Refuse undeclared names in files that say OPTION "EXPLICIT".
+    bool enforce_explicit = true;
+
     // Compile a program: returns the main chunk and function prototypes
     // main_source_file is set on the main chunk for debugger source mapping
     void compile(const std::vector<StmtPtr>& program, const std::string& main_source_file = "");

@@ -1,5 +1,7 @@
 #include "compiler.h"
 #include "builtin_sigs.h"
+#include "undeclared_check.h"
+#include "errors.h"
 #include <stdexcept>
 #include <iostream>
 #include <cmath>
@@ -255,6 +257,22 @@ void Compiler::collect_globals_expr(const Expr& expr) {
 void Compiler::compile(const std::vector<StmtPtr>& program, const std::string& main_source_file) {
     // Set source file on main chunk for debugger
     current_chunk().source_file = main_source_file;
+
+    // OPTION "EXPLICIT": a name read or assigned without a declaration in
+    // that file stops the program before it runs.
+    {
+        auto files = enforce_explicit ? explicit_option_files(program) : std::set<std::string>{};
+        if (!files.empty()) {
+            auto is_builtin = [](const std::string& n) {
+                return jdb_native_slot(n) >= 0 || builtin_sig(n) != nullptr;
+            };
+            for (auto& u : find_undeclared(program, is_builtin)) {
+                if (!files.count(u.file)) continue;
+                throw jdError(ErrCode::UNDEFINED_VARIABLE,
+                    "Undeclared variable '" + u.name + "' (OPTION \"EXPLICIT\")", u.line);
+            }
+        }
+    }
 
     // Pass 0: collect all global variable names from main code
     collect_globals(program);

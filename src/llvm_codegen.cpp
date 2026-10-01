@@ -336,6 +336,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_array_trunc", "__arr_trunc", i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_reverse","REVERSE",    i8_ptr_type, {i8_ptr_type}, 3);
     reg("jdb_array_sort", "SORT",         i8_ptr_type, {i8_ptr_type}, 3);
+    reg("jdb_array_sort_dir", "__SORT_DIR", i8_ptr_type, {i8_ptr_type, f64_type}, 3);
     reg("jdb_array_append","APPEND",      i8_ptr_type, {i8_ptr_type, f64_type}, 3);
     reg("jdb_array_append_arr","__append_arr", i8_ptr_type, {i8_ptr_type, i8_ptr_type}, 3);
     reg("jdb_array_fillv", "FILLV",       i8_ptr_type, {i8_ptr_type, f64_type}, 3);
@@ -713,6 +714,7 @@ void LLVMCodegen::declare_runtime_functions() {
     reg("jdb_cint",     "CINT",       i64_type, {f64_type}, 0);
     reg("jdb_clng",     "CLNG",       i64_type, {f64_type}, 0);
     reg("jdb_csng",     "CSNG",       f64_type, {f64_type}, 1);
+    reg("jdb_conv_str", "__CONV_STR", f64_type, {i8_ptr_type, i8_ptr_type}, 1);
     reg("jdb_cbool",    "CBOOL",      i64_type, {f64_type}, 0);
     reg("jdb_tostr",    "TOSTR",      i8_ptr_type, {f64_type}, 2);
     reg("jdb_cstr",     "CSTR",       i8_ptr_type, {f64_type}, 2);
@@ -12812,6 +12814,80 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_call(const Expr& expr) {
         }
         return coerce_to(av, i8_ptr_type);
     };
+
+    // SORT(array, descending)
+    if (upper == "SORT" && expr.args.size() == 2 && runtime_funcs.count("__SORT_DIR")) {
+        TypedValue a = codegen_expr(*expr.args[0]);
+        TypedValue d = codegen_expr(*expr.args[1]);
+        auto& f = runtime_funcs["__SORT_DIR"];
+        LLVMValueRef sargs[] = { coerce_to(a, i8_ptr_type), coerce_to(d, f64_type) };
+        return { LLVMBuildCall2(builder, f.fn_type, f.fn, sargs, 2, "sortdir"), JD_TAG_ARR };
+    }
+
+    // CINT, CLNG, CDBL and CSNG parse a string argument; other text is an error.
+    // Arrays and other kinds keep the general path, which vectorises.
+    if ((upper == "CINT" || upper == "CLNG" || upper == "CDBL" || upper == "CSNG") &&
+        expr.args.size() == 1 && runtime_funcs.count(upper)) {
+        const Expr& x = *expr.args[0];
+        bool is_string = x.kind == ExprKind::LITERAL_STRING ||
+            ((x.kind == ExprKind::VARIABLE || x.kind == ExprKind::CALL) &&
+             !(x.kind == ExprKind::VARIABLE ? x.str_val : x.func_name).empty() &&
+             (x.kind == ExprKind::VARIABLE ? x.str_val : x.func_name).back() == '$') ||
+            infer_expr_type(x).kind == StaticType::Kind::STRING;
+        if (!is_string && x.kind == ExprKind::VARIABLE) {
+            VarInfo* v = lookup_var(x.str_val);
+            is_string = v && v->tag == JD_TAG_STR;
+        }
+        // A map entry carries its kind at run time.
+        bool map_entry = false;
+        if (!is_string && x.kind == ExprKind::INDEX && x.left) {
+            if (x.right && x.right->kind == ExprKind::LITERAL_STRING) map_entry = true;
+            else if (x.left->kind == ExprKind::VARIABLE) {
+                VarInfo* bv = lookup_var(x.left->str_val);
+                map_entry = bv && bv->tag == JD_TAG_NATIVE_MAP;
+            }
+        }
+        if (is_string || map_entry) {
+            TypedValue a = codegen_expr(x);
+            auto& cs = runtime_funcs["__CONV_STR"];
+            auto& conv = runtime_funcs[upper];
+            LLVMValueRef fn_name = LLVMBuildGlobalStringPtr(builder, upper.c_str(), "convfn");
+            auto parse = [&](LLVMValueRef str) {
+                LLVMValueRef cargs[] = { str, fn_name };
+                LLVMValueRef num = LLVMBuildCall2(builder, cs.fn_type, cs.fn, cargs, 2, "convs");
+                emit_err_code_branch();
+                return num;
+            };
+            LLVMValueRef num;
+            if (a.tag == JD_TAG_STR) {
+                num = parse(a.val);
+            } else if (a.tag == JD_TAG_RUNTIME && a.runtime_tag) {
+                LLVMBasicBlockRef bb_str  = LLVMAppendBasicBlock(current_fn, "conv.str");
+                LLVMBasicBlockRef bb_num  = LLVMAppendBasicBlock(current_fn, "conv.num");
+                LLVMBasicBlockRef bb_join = LLVMAppendBasicBlock(current_fn, "conv.join");
+                LLVMValueRef is_str = LLVMBuildICmp(builder, LLVMIntEQ, a.runtime_tag,
+                    LLVMConstInt(i32_type, JD_TAG_STR, 0), "conv_is_str");
+                LLVMBuildCondBr(builder, is_str, bb_str, bb_num);
+                LLVMPositionBuilderAtEnd(builder, bb_str);
+                LLVMValueRef from_str = parse(LLVMBuildIntToPtr(builder, a.val, i8_ptr_type, "conv_ptr"));
+                LLVMBuildBr(builder, bb_join);
+                LLVMBasicBlockRef str_end = LLVMGetInsertBlock(builder);
+                LLVMPositionBuilderAtEnd(builder, bb_num);
+                LLVMValueRef from_num = coerce_to(a, f64_type);
+                LLVMBuildBr(builder, bb_join);
+                LLVMBasicBlockRef num_end = LLVMGetInsertBlock(builder);
+                LLVMPositionBuilderAtEnd(builder, bb_join);
+                num = LLVMBuildPhi(builder, f64_type, "conv_num");
+                LLVMValueRef vals[] = { from_str, from_num };
+                LLVMBasicBlockRef bbs[] = { str_end, num_end };
+                LLVMAddIncoming(num, vals, bbs, 2);
+            } else {
+                num = coerce_to(a, f64_type);
+            }
+            LLVMValueRef one[] = { num };
+            return { LLVMBuildCall2(builder, conv.fn_type, conv.fn, one, 1, "conv"), conv.return_tag };
+        }
+    }
 
     // Special case: DATEDIFF with array arg → native jdb_datediff_vec
     if (upper == "DATEDIFF" && expr.args.size() == 3) {

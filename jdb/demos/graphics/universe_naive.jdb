@@ -2,18 +2,18 @@ OPTION "EXPLICIT"
 
 ' Bubble Universe in jdBasic — original naive version (for benchmark comparison)
 
-HPIXELS = 900
-VPIXELS = 670
-FPS = 1000  ' uncapped
-MAXY = 2.0
+DIM HPIXELS = 900
+DIM VPIXELS = 670
+DIM FPS = 1000  ' uncapped
+DIM MAXY = 2.0
 
-Nshapes = 200
-Npoints = 350
-DT = 2E-3
+DIM Nshapes = 200
+DIM Npoints = 350
+DIM DT = 2E-3
 
-R = 2 * MATH.PI / Nshapes
-MAXX = MAXY * HPIXELS / VPIXELS
-Fhue = 360 / Nshapes
+DIM R = 2 * MATH.PI / Nshapes
+DIM MAXX = MAXY * HPIXELS / VPIXELS
+DIM Fhue = 360 / Nshapes
 
 DIM x AS DOUBLE
 DIM y AS DOUBLE

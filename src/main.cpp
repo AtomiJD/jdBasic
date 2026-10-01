@@ -11,6 +11,7 @@
 #include "lexer.h"
 #include "parser.h"
 #include "compiler.h"
+#include "undeclared_check.h"
 #include "pcode.h"
 #include "vm.h"
 #include "console.h"
@@ -1499,6 +1500,7 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 setup_parser_modules(p2);
                 auto ast2 = p2.parse();
                 Compiler check_compiler;
+                check_compiler.enforce_explicit = false;
                 check_compiler.compile(ast2);
             }
 
@@ -1520,124 +1522,17 @@ void console_execute(const std::string& cmd, VM& vm, std::string& program_buffer
                 }
             }
 
-            // Pass 1: collect all declared names (globals + locals, flat scope).
-            // We do not model lexical scopes here - the LINT view is "would any
-            // name resolve somewhere?" which matches BASIC's mostly-flat
-            // visibility model and keeps false positives low.
-            std::set<std::string> declared;
+            // Names read or assigned without a declaration anywhere; LINT
+            // always lists them, OPTION "EXPLICIT" makes the compiler refuse them.
             std::vector<std::string> defined_funcs;
-            std::function<void(const std::vector<StmtPtr>&)> collect;
-            collect = [&](const std::vector<StmtPtr>& stmts) {
-                for (auto& s : stmts) {
-                    if (!s) continue;
-                    switch (s->kind) {
-                        case StmtKind::LET:
-                        case StmtKind::DIM:
-                            declared.insert(s->var_name);
-                            break;
-                        case StmtKind::SUB:
-                        case StmtKind::FUNCTION:
-                            declared.insert(s->func_name);
-                            defined_funcs.push_back(s->func_name);
-                            for (auto& p : s->params()) declared.insert(p.name);
-                            collect(s->body);
-                            break;
-                        case StmtKind::FOR_LOOP:
-                        case StmtKind::FOR_EACH:
-                            declared.insert(s->var_name);
-                            collect(s->body);
-                            break;
-                        case StmtKind::DESTRUCTURE:
-                            for (auto& v : s->destruct_vars()) declared.insert(v);
-                            // Desugared (indexed/mixed) form carries its temp +
-                            // variable targets as LET/INDEX_ASSIGN sub-statements.
-                            collect(s->body);
-                            break;
-                        case StmtKind::IF:
-                        case StmtKind::SWITCH_STMT:
-                            for (auto& br : s->branches) collect(br.body);
-                            break;
-                        case StmtKind::DO_LOOP:
-                            collect(s->body);
-                            break;
-                        case StmtKind::TRY_CATCH:
-                            collect(s->body);
-                            collect(s->catch_body());
-                            collect(s->finally_body());
-                            break;
-                        case StmtKind::TYPE_DECL:
-                            declared.insert(s->func_name);
-                            collect(s->body);
-                            break;
-                        case StmtKind::ENUM_DECL:
-                            declared.insert(s->func_name);
-                            for (auto& m : s->enum_members()) declared.insert(m.first);
-                            break;
-                        default: break;
-                    }
-                }
-            };
-            collect(ast);
-
-            // Built-in natives + a few bare-word constants are always in scope.
-            for (auto& n : vm.native_names()) declared.insert(n);
-            for (const char* k : {"MATH.PI","MATH.E","TRUE","FALSE","NULL","VBNEWLINE","NOTHING",
-                                  "ERR","ERRMSG$","ERRLINE"})
-                declared.insert(k);
-
-            // Pass 2: walk every expression, collecting undeclared VARIABLE refs
-            // and (under STRICT) DIMs with no type annotation.
             std::vector<std::string> undeclared;
-
-            auto head_name = [](const std::string& n) {
-                // Dotted lookups (enums, modules, UDTs) resolve via the head
-                // identifier - "Direction.NORTH" is OK if "Direction" is
-                // declared. We only need to prove the entry point exists.
-                auto dot = n.find('.');
-                return dot == std::string::npos ? n : n.substr(0, dot);
-            };
-            std::function<void(const Expr*)> walk_expr = [&](const Expr* e) {
-                if (!e) return;
-                if (e->kind == ExprKind::VARIABLE && !e->str_val.empty()) {
-                    std::string head = head_name(e->str_val);
-                    if (!declared.count(head) && !declared.count(e->str_val))
-                        undeclared.push_back(e->str_val + " (line " + std::to_string(e->line) + ")");
-                }
-                walk_expr(e->left.get());
-                walk_expr(e->right.get());
-                for (auto& a : e->args) walk_expr(a.get());
-            };
-
-            std::function<void(const std::vector<StmtPtr>&)> walk_stmts;
-            walk_stmts = [&](const std::vector<StmtPtr>& stmts) {
-                for (auto& s : stmts) {
-                    if (!s) continue;
-                    bool in_strict = strict_files.count(s->source_file()) > 0;
-                    // Bare ASSIGN to an undeclared name is the classic
-                    // implicit-DIM the interpreter tolerates and the strict
-                    // codegen rejects. LINT always flags it so REPL users
-                    // catch typos without having to opt in to OPTION EXPLICIT.
-                    if ((s->kind == StmtKind::ASSIGN || s->kind == StmtKind::INDEX_ASSIGN) &&
-                        !s->var_name.empty()) {
-                        std::string head = head_name(s->var_name);
-                        if (!declared.count(head) && !declared.count(s->var_name))
-                            undeclared.push_back(s->var_name + " (line " + std::to_string(s->line) + ")");
-                    }
-                    walk_expr(s->expr.get());
-                    for (auto& pe : s->print_exprs) walk_expr(pe.get());
-                    for (auto& ix : s->index_chain) walk_expr(ix.get());
-                    walk_expr(s->loop_cond.get());
-                    walk_expr(s->end_expr.get());
-                    walk_expr(s->step_expr.get());
-                    for (auto& br : s->branches) walk_expr(br.condition.get());
-                    (void)in_strict; // STRICT type-mismatch checks live in the codegen
-                    walk_stmts(s->body);
-                    walk_stmts(s->catch_body());
-                    walk_stmts(s->finally_body());
-                    for (auto& br : s->branches) walk_stmts(br.body);
-                }
-            };
-            walk_stmts(ast);
+            {
+                auto natives = vm.native_names();
+                std::set<std::string> native_set(natives.begin(), natives.end());
+                auto is_builtin = [&](const std::string& n) { return native_set.count(n) > 0; };
+                for (auto& u : find_undeclared(ast, is_builtin, &defined_funcs))
+                    undeclared.push_back(u.name + " (line " + std::to_string(u.line) + ")");
+            }
 
             vm.emit("LINT: Parsed OK.\n");
             vm.emit("  " + std::to_string(ast.size()) + " top-level statements\n");

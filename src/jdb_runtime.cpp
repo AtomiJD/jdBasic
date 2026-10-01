@@ -959,6 +959,17 @@ JdbArray* jdb_array_sort(JdbArray* arr) {
     return r;
 }
 
+// SORT(array, descending): the ascending order, reversed when descending.
+JdbArray* jdb_array_sort_dir(JdbArray* arr, double descending) {
+    JdbArray* r = jdb_array_sort(arr);
+    if (descending == 0.0 || r->length < 2) return r;
+    for (int64_t i = 0, j = r->length - 1; i < j; i++, j--) {
+        std::swap(r->data[i], r->data[j]);
+        if (r->elem_tags) std::swap(r->elem_tags[i], r->elem_tags[j]);
+    }
+    return r;
+}
+
 // The tag a cell carries when the array keeps none per cell: the
 // array-wide flags say whether a pointer-looking value is a string or
 // a nested array.
@@ -4498,6 +4509,30 @@ char* jdb_pack(const char* fmt, JdbArray* values) {
 }
 
 // ── Misc ────────────────────────────────────────────────────
+
+// The number CINT, CLNG, CDBL and CSNG read from a string: parsed whole,
+// surrounding spaces allowed; ISO date text reads as its epoch seconds;
+// other text raises a type mismatch.
+double jdb_conv_str(const char* s, const char* fn) {
+    const char* p = s ? s : "";
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+    if (*p) {
+        char* end = nullptr;
+        double d = strtod(p, &end);
+        while (end && (*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')) end++;
+        if (end && end != p && *end == '\0') return d;
+        struct tm t = {0};
+        bool iso = isdigit((unsigned char)p[0]) && isdigit((unsigned char)p[1]) &&
+                   isdigit((unsigned char)p[2]) && isdigit((unsigned char)p[3]) && p[4] == '-';
+        if (iso && parse_iso_date(p, &t))
+            return rt_local_civil_to_epoch(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+                                           t.tm_hour, t.tm_min, t.tm_sec);
+    }
+    char msg[256];
+    snprintf(msg, sizeof(msg), "%s: \"%.200s\" is not a number", fn, s ? s : "");
+    jdb_err_set(msg, 1);
+    return 0.0;
+}
 
 double jdb_cdbl(double x) { return x; }
 int64_t jdb_cint(double x) { return (int64_t)(int32_t)x; }

@@ -58,6 +58,7 @@ CHECK("chunk-local type inside EXECUTE", STR$(inner), "1")
 ' seeds the next parse and compile from it. This used to hand back an empty
 ' object, because the fresh compiler had never heard of the type.
 DIM survived AS INTEGER = 0
+DIM __SEEN__ AS INTEGER = 0
 DIM shape$ = ""
 TRY
     EXECUTE "DIM yy AS T_Point" + CHR$(10) + "yy.X = 6" + CHR$(10) + "__SEEN__ = yy.X"
