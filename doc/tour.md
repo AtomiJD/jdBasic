@@ -384,10 +384,15 @@ The compiled program needs `jdbrt.dll` beside it; `-c` copies it there.
 | I want to ... | Read |
 |---|---|
 | look up any statement or builtin | [Language reference](languages.md) (contents at the top, A-Z index at the end) |
+| turn a script into an .exe | [Compiling to a native .exe](guides/native.md) |
+| draw, animate, write a game | [Graphics and games](guides/graphics-games.md) |
+| build a desktop tool | [Desktop applications](guides/gui.md) |
+| read CSV or JSON and write reports | [Working with data](guides/data.md) |
 | work with arrays, data, statistics | [Array pipelines](APL_pipeline.md), [vector and matrix cookbook](howto-vector-matrix-data.md) |
+| run jdBasic on a Pico or an ESP32 | [jdBasic on a microcontroller](guides/boards.md) |
 | build a web app or an API | [Web development](WebDev.md) |
 | make music or process audio | [Sequencer](SequencerHelp.md), [Audio FX](AudioFX.md), [FX how-to](HowTo-FX.md) |
-| let an AI agent program with me | [MCP server](MCP.md) |
+| let an AI agent program with me | [Programming with an AI agent](guides/ai-mcp.md), then the [MCP server](MCP.md) reference |
 | come from Python | [Idioms from Python](idioms-from-python.md) |
 | use a ready-made module | [Module library](../lib/README.md) |
 | see complete programs | [Sample gallery](../jdb/README.md) |

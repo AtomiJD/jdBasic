@@ -66,5 +66,5 @@ jobs:
       - name: Documentation examples
         shell: pwsh
         run: |
-          & build/jdBasic.exe tools/check_doc_examples.jdb doc/tour.md
-          if ($LASTEXITCODE -ne 0) { throw "an example in doc/tour.md prints something else" }
+          & build/jdBasic.exe tools/check_doc_examples.jdb doc/tour.md doc/guides/native.md doc/guides/data.md doc/guides/boards.md
+          if ($LASTEXITCODE -ne 0) { throw "a documentation example prints something else" }

@@ -111,15 +111,16 @@ After that, the [tour](doc/tour.md) goes from the first `PRINT` to a compiled
 |---|---|
 | learn the language | [The tour](doc/tour.md), then the [video lessons](https://www.youtube.com/playlist?list=PLowaSH4O3MGq-veO7qSIp-9EntEjY_iPZ) |
 | look something up | [Language reference](doc/languages.md) (contents at the top, A-Z index at the end) or `HELP "name"` in the REPL |
-| program together with an AI agent | [MCP server](doc/MCP.md) |
-| write games and graphics | [Sample gallery](jdb/README.md), [graphics functions](doc/languages.md#graphics-and-multimedia-functions) |
-| build desktop tools | [ImGui](doc/languages.md#imgui-functions) or [native Windows forms](doc/languages.md#native-windows-forms-form) |
-| work with arrays and data | [Array pipelines](doc/APL_pipeline.md), [vector and matrix cookbook](doc/howto-vector-matrix-data.md) |
+| program together with an AI agent | [Programming with an AI agent](doc/guides/ai-mcp.md), [MCP server reference](doc/MCP.md) |
+| write games and graphics | [Graphics and games](doc/guides/graphics-games.md), [sample gallery](jdb/README.md) |
+| build desktop tools | [Desktop applications](doc/guides/gui.md): native Windows forms, ImGui or the terminal |
+| turn a script into an .exe | [Compiling to a native .exe](doc/guides/native.md) |
+| work with files, tables and dates | [Working with data](doc/guides/data.md), [array pipelines](doc/APL_pipeline.md), [vector and matrix cookbook](doc/howto-vector-matrix-data.md) |
 | build a web app or an API | [Web development](doc/WebDev.md) |
 | make music or process audio | [Sequencer](doc/SequencerHelp.md), [Audio FX](doc/AudioFX.md), [FX how-to](doc/HowTo-FX.md) |
-| run local LLMs and ML models | [AI and machine learning](doc/languages.md#ai--machine-learning) |
+| run local LLMs and ML models | [AI inside your program](doc/guides/ai-mcp.md#part-2-ai-inside-your-program), [AI and machine learning](doc/languages.md#ai--machine-learning) |
 | script Godot 4 | [The Godot embed](embed/godot/README.md) |
-| run it on a microcontroller | [On a board](doc/languages.md#on-a-board-rp2350-and-esp32-s3), [ESP32 bring-up](embedded/esp32/README.md) |
+| run it on a microcontroller | [jdBasic on a microcontroller](doc/guides/boards.md), [ESP32 bring-up](embedded/esp32/README.md) |
 | reuse ready-made modules | [Module library](lib/README.md): 45 modules, from TESTKIT to XLSX |
 | switch from Python | [Idioms from Python](doc/idioms-from-python.md) |
 | build jdBasic or contribute | [Building from source](doc/BUILD.md), [CONTRIBUTING.md](CONTRIBUTING.md) |

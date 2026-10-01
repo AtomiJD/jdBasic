@@ -20,7 +20,17 @@ Four ways in, depending on where you are:
 
 ## Guides
 
-Task-oriented, each with runnable code.
+Task-oriented, each with runnable code. Start with one of these six; the
+topic guides below go deeper.
+
+| | |
+|---|---|
+| [Compiling to a native .exe](guides/native.md) | From `jdbasic -c hello.jdb` to a folder you can ship: STRICT and EXPLICIT, type annotations, what stays interpreter-only. |
+| [Graphics and games](guides/graphics-games.md) | A window, the game loop, a complete paddle game, sprites, tile maps and sound. |
+| [Desktop applications](guides/gui.md) | Windows forms, Dear ImGui and the terminal UI: which one for what, and a working program in each. |
+| [Working with data](guides/data.md) | Read CSV and JSON, filter, group, handle dates and write a report. |
+| [jdBasic on a microcontroller](guides/boards.md) | RP2350 and ESP32-S3: firmware, the first session, pins, screen, radio and memory. |
+| [Programming with an AI agent](guides/ai-mcp.md) | Let Claude Code run, pause and patch your program over MCP; local LLMs, RAG and ONNX inside jdBasic. |
 
 **Arrays and data**
 
