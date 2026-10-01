@@ -8,7 +8,7 @@ DIM sigs$ = TXTREADER$("src/builtin_sigs.h")
 DIM help$ = TXTREADER$("help.txt")
 DIM lang$ = TXTREADER$("doc/languages.md")
 
-DIM known_undocumented = ["SYS.CALL", "SYS.INB", "SYS.OUTB", "SYS.PEEK", "SYS.PEEKB", "SYS.PEEKW", "SYS.POKE", "SYS.POKEB", "SYS.POKEW", "TENSOR", "TUI.RENDER_HEADLESS$"]
+DIM known_undocumented = []
 
 FUNC Documented(n$)
     IF LEFT$(n$, 2) = "__" THEN RETURN TRUE

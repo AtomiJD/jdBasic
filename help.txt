@@ -3340,6 +3340,10 @@ Description: Seal the current TUI frame. Auto-closes any layout frames the scrip
 Syntax: TUI.RENDER
 Description: Render the current frame to the terminal and drain pending keypresses. Ctrl+Q sets the QUIT flag.
 
+[TUI.RENDER_HEADLESS$]
+Syntax: TUI.RENDER_HEADLESS$([width], [height]) -> string
+Description: Renders the current frame off-screen at width x height cells (default 120 x 40) and returns it as plain text without ANSI codes, one line per row. Lets a test or an AI agent read the layout without a terminal. TUI builds only.
+
 [TUI.WAIT_EVENT]
 Syntax: TUI.WAIT_EVENT
 Description: Block until a key is pressed; returns the key name as a string.
@@ -4585,3 +4589,39 @@ Description: Allocates, fills, verifies and frees blocks in the PSRAM pool while
 [SYS.HEAP$]
 Syntax: SYS.HEAP$ -> text$
 Description: Where the heap stands, in the allocator's own terms: arena is what it has taken off the break so far, used and free divide that, frags counts the free pieces, and ground is the stretch below the stack that nobody has claimed yet. RP2350 only. SYS.FREE adds the last two together; this says which of them a program is actually short of.
+
+[SYS.PEEKB]
+Syntax: SYS.PEEKB(addr) -> number
+Description: Reads 8 bits from physical memory. Kernel target only (--target=kernel); runs in ring 0.
+
+[SYS.PEEKW]
+Syntax: SYS.PEEKW(addr) -> number
+Description: Reads 16 bits from physical memory. Kernel target only.
+
+[SYS.PEEK]
+Syntax: SYS.PEEK(addr) -> number
+Description: Reads 32 bits from physical memory. Kernel target only.
+
+[SYS.POKEB]
+Syntax: SYS.POKEB(addr, value)
+Description: Writes 8 bits to physical memory. Kernel target only; a wrong address can hang the machine.
+
+[SYS.POKEW]
+Syntax: SYS.POKEW(addr, value)
+Description: Writes 16 bits to physical memory, for example a character cell of the VGA text screen at $B8000. Kernel target only.
+
+[SYS.POKE]
+Syntax: SYS.POKE(addr, value)
+Description: Writes 32 bits to physical memory. Kernel target only.
+
+[SYS.INB]
+Syntax: SYS.INB(port) -> number
+Description: Reads a byte from an x86 I/O port, for example 96 for the keyboard controller. Kernel target only.
+
+[SYS.OUTB]
+Syntax: SYS.OUTB(port, value)
+Description: Writes a byte to an x86 I/O port. Kernel target only.
+
+[SYS.CALL]
+Syntax: SYS.CALL(addr) -> number
+Description: Calls machine code the program wrote into memory at addr. The code takes no arguments, follows the System V calling convention and returns its result in rax. Kernel target only.

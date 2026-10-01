@@ -66,20 +66,6 @@ void VM::register_data_builtins() {
         return result;
     });
 
-    // Tensor creation
-    register_native("TENSOR", 1, 2, [](const std::vector<Value>& args) -> Value {
-        // TENSOR(rows, cols) - create zero tensor
-        if (args.size() >= 2) {
-            size_t rows = args[0].to_int();
-            size_t cols = args[1].to_int();
-            return Value::make_tensor({rows, cols}, std::vector<double>(rows * cols, 0.0));
-        } else if (args.size() == 1) {
-            size_t size = args[0].to_int();
-            return Value::make_tensor({size}, std::vector<double>(size, 0.0));
-        }
-        return Value::make_none();
-    });
-
     // ── MAP functions ────────────────────────────────────────
 
     register_native("MAP.EXISTS", [](const std::vector<Value>& args) -> Value {

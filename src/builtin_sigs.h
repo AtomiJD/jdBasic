@@ -678,7 +678,6 @@ inline constexpr BuiltinSig kBuiltinSigs[] = {
     {"TAKE", BuiltinRet::Arr, BF_NO_VEC | BF_TAGGED_CELLS},
     {"TAKE_WHILE", BuiltinRet::Arr, BF_NO_VEC},
     {"TALLY", BuiltinRet::Arr, BF_NO_VEC},
-    {"TENSOR", BuiltinRet::Unknown, BF_NO_VEC},
     {"TEXT", BuiltinRet::Unknown, BF_NO_VEC},
     {"THREAD.GETRESULT", BuiltinRet::Handle, BF_NO_VEC},
     {"THREAD.ISDONE", BuiltinRet::Bool, BF_NO_VEC},
