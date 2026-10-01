@@ -22,7 +22,7 @@ to run.
 
 | Python | jdBasic |
 |---|---|
-| `f"x={x}"` | `"x=" + STR$(x)` or `FORMAT$("x={}", x)` |
+| `f"x={x}"` | `$"x={{x}}"` (any expression between `{{ }}`) or `FORMAT$("x={}", x)` |
 | `s.upper()` / `s.lower()` | `UCASE$(s)` / `LCASE$(s)` |
 | `s.strip()` | `TRIM$(s)` |
 | `s.split(sep)` | `SPLIT(s, sep)` |
@@ -33,7 +33,7 @@ to run.
 | `s[a:b]` | `MID$(s, a, b - a)` |
 | `s[:n]` / `s[-n:]` | `LEFT$(s, n)` / `RIGHT$(s, n)` |
 | `len(s)` | `LEN(s)` |
-| `needle in haystack` | `INSTR(haystack, needle) >= 0` |
+| `needle in haystack` | `needle IN haystack` (`INSTR(haystack, needle)` gives the position, -1 if absent) |
 | `chr(n)` / `ord(c)` | `CHR$(n)` / `ASC(c)` |
 | `str(x)` / `int(s)` / `float(s)` | `STR$(x)` / `CINT(s)` / `CDBL(s)` (both raise an error for text that is not a number, as Python does; `VAL(s)` gives 0 instead) |
 
@@ -56,14 +56,14 @@ DIM xs = [1, 2, 3, 4, 5]
 | `xs.append(v)` | `PUSH xs, v` |
 | `xs.pop()` | `POP xs` |
 | `xs[::-1]` / `reversed` | `REVERSE(xs)` |
-| `enumerate(xs)` | `ENUMERATE(xs)` → array of `[i, v]` |
+| `enumerate(xs)` | `FOR EACH i, x IN xs` (i from 0), or `ENUMERATE(xs)` → array of `[i, v]` |
 | `zip(a, b)` | `ZIP(a, b)` |
 | `range(n)` | `IOTA(n, 0)` (0..n-1) |
 | `range(a, b)` | `RANGE(a, b)` |
 | `range(a, b, step)` | `RANGE(a, b, step)` |
 | `list(set(xs))` | `UNIQUE(xs)` |
 | `xs.index(v)` | `INDEXOF(xs, v)` |
-| `v in xs` | `COUNT(xs, v) > 0` |
+| `v in xs` | `v IN xs` |
 | flatten | `FLATTEN(xss)` |
 
 Iteration:
@@ -84,13 +84,14 @@ DIM d AS MAP = {"name": "Atomi", "age": 42}
 | `{}` / `dict()` | `DIM d AS MAP = {}` |
 | `d["k"] = v` | `d{"k"} = v` |
 | `d["k"]` | `d{"k"}` |
-| `d.get("k")` (no default) | `IF MAP.EXISTS(d, "k") THEN d{"k"} ELSE NONE` |
-| `"k" in d` | `MAP.EXISTS(d, "k")` |
+| `d.get("k")` | `d{"k"}` (a missing key reads as `NONE`) |
+| `d.get("k", default)` | `d{"k"} ?? default` |
+| `"k" in d` | `"k" IN d` or `MAP.EXISTS(d, "k")` |
 | `del d["k"]` | `MAP.DELETE(d, "k")` |
 | `d.keys()` / `values()` / `items()` | `MAP.KEYS(d)` / `MAP.VALUES(d)` / `MAP.ITEMS(d)` |
 | `len(d)` | `MAP.SIZE(d)` |
 | `{**a, **b}` (merge) | `MAP.MERGE(a, b)` |
-| `for k, v in d.items()` | `FOR EACH item IN MAP.ITEMS(d): k$ = item[0]: v = item[1]: ... NEXT` |
+| `for k, v in d.items()` | `FOR EACH k$, v IN d ... NEXT` (insertion order) |
 
 ## JSON
 

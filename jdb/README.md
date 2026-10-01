@@ -230,7 +230,7 @@ See [`doc/howto-vector-matrix-data.md`](../doc/howto-vector-matrix-data.md) for 
 
 ### Tutorials
 
-`tutorials/` is the right place to send a beginner. Each file is ~30 lines and demonstrates exactly one feature: `if_blocks`, `loop_control`, `map_basics`, `str_format`, `try_catch`, `enum_types`, `lambda_capture`, `destructure`, ... 48 of them, naming should be self-explanatory.
+`tutorials/` is the right place to send a beginner. Each file is ~30 lines and demonstrates exactly one feature: `if_blocks`, `loop_control`, `map_basics`, `str_format`, `try_catch`, `enum_types`, `lambda_capture`, `destructure`, ... 51 of them next to the modules `MATH.jdb`, `MLAB.jdb` and `sys_paths.jdb`; the names say what each one shows.
 
 ---
 

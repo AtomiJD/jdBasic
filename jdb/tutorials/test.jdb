@@ -1,5 +1,5 @@
-' Import the MATH module. The interpreter will look for "MATH.bas"
-' and compile it before running this program.
+' Import the MATH module. The interpreter looks for "MATH.jdb"
+' and compiles it before running this program.
 import MATH
 
 print "--- Module Test Program ---"
