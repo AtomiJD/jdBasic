@@ -270,8 +270,10 @@ DIM plain = PDFGEN.DOC()
 PDFGEN.ADDFONT(plain, "code", mono$)
 PDFGEN.USEFONT(plain, "code", "", 12)
 PDFGEN.TEXTAT(plain, 20, 30, "Grüße €")
+PDFGEN.TEXTROTATED(plain, 100, 20, "Spine", -90)
 DIM plain$ = PDFGEN.BUILD$(plain)
-TESTKIT.ISTRUE(INSTR(plain$, "7 beginbfchar") >= 0, "the ToUnicode map lists the seven glyphs used")
+TESTKIT.ISTRUE(INSTR(plain$, "0.00000 -1.00000 1.00000 0.00000 283.46 ") >= 0, "a text turned by -90 degrees runs down the page")
+TESTKIT.ISTRUE(INSTR(plain$, "11 beginbfchar") >= 0, "the ToUnicode map lists the eleven glyphs used")
 TESTKIT.ISTRUE(INSTR(plain$, "> <0047>") >= 0 ANDALSO INSTR(plain$, "> <00FC>") >= 0 ANDALSO INSTR(plain$, "> <20AC>") >= 0, "G, ü and the euro sign map back to their code points")
 
 KILL out_path$

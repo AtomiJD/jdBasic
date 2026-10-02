@@ -73,6 +73,7 @@ PDFGEN.WRITEFILE(pdf, "rechnung.pdf")
 | Call | What it does |
 |------|--------------|
 | `TEXTAT(doc, x, y, text$)` | A text with its baseline at `x`, `y`. `{page}` and `{pages}` are replaced. |
+| `TEXTROTATED(doc, x, y, text$, degrees)` | A text whose baseline starts at `x`, `y`, turned counterclockwise by `degrees`: 90 runs up the page, -90 down it as on a book spine. |
 | `CELL(doc, w, h, text$, [align$], [border], [fill])` | A cell at the current position, the text on one line aligned `"L"`, `"C"` or `"R"`, with a frame when `border` is not 0 and filled when `fill` is not 0. A width of 0 reaches the right margin. The position moves to the right of the cell; a cell that does not fit above the bottom margin starts a new page. |
 | `MULTICELL(doc, w, lineh, text$, [align$])` | A paragraph wrapped into lines of `lineh` mm, each line a cell, new pages as needed. The position ends below it, at its left edge. |
 | `SPLITLINES(doc, text$, w)` | The lines a text breaks into at `w` mm: at spaces, at every line break, inside a word longer than a line. |

@@ -503,6 +503,18 @@ EXPORT SUB TEXTAT(doc, x, y, text$)
     Emit(doc, TextOp$(doc, CDBL(x), CDBL(y), shown$))
 ENDSUB
 
+' A text with its baseline starting at x, y, turned by degrees counter
+' clockwise (90 runs up the page, -90 down it, as on a book spine).
+EXPORT SUB TEXTROTATED(doc, x, y, text$, degrees)
+    EnsurePage(doc)
+    DIM key$ = doc{"font"}
+    DIM ref$ = FontRefOf$(doc, key$)
+    DIM rgb$ = doc{"text_rgb"}
+    DIM a = CDBL(degrees) * MATH.PI / 180
+    DIM m$ = FORMAT$("{:.5f} {:.5f} {:.5f}", COS(a), SIN(a), -SIN(a)) + " " + FORMAT$("{:.5f}", COS(a))
+    Emit(doc, "BT " + ref$ + " " + Num$(doc{"size"}) + " Tf " + rgb$ + " rg " + m$ + " " + Pt$(x) + " " + Ypt$(doc, y) + " Tm " + ShowOp$(doc, key$, text$) + " ET")
+ENDSUB
+
 ' A cell of w by h mm at the current position, with the text on one line
 ' aligned "L", "R" or "C", an optional frame and fill. A width of 0 reaches
 ' the right margin. The position moves to the right of the cell; a cell
