@@ -1,0 +1,8 @@
+' A module function that returns a module-global map hands the map to
+' the caller, also when the map came out of a field of another map.
+IMPORT GLOBMAP
+
+DIM n = GLOBMAP.RUN()
+DIM ix = GLOBMAP.LAST()
+PRINT LEN(MAP.KEYS(ix))
+PRINT ix{"a"}[1]

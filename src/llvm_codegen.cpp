@@ -1771,6 +1771,9 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     //   RETURN var            - look up local's inferred kind from body
     //   RETURN arr[i]         - inherits arr[]'s element kind (rare)
     //   RETURN other_func()   - inherit callee's return_tag (after Phase 3)
+    // The parameters and DIMs of the function being classified; a name
+    // outside them is a global.
+    std::unordered_set<std::string> classify_locals;
     std::function<int(const Stmt&, std::unordered_map<std::string,int>&)> classify_return =
         [&](const Stmt& s, std::unordered_map<std::string,int>& local_kinds) -> int {
         // Track `var = <literal>` (or DIM with init) so RETURN var resolves.
@@ -1848,6 +1851,12 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
             if (e.kind == ExprKind::VARIABLE) {
                 auto lit = local_kinds.find(e.str_val);
                 if (lit != local_kinds.end()) return lit->second;
+                if (!classify_locals.count(e.str_val)) {
+                    auto git = pre_var_tags.find(e.str_val);
+                    if (git != pre_var_tags.end() &&
+                        (git->second == JD_TAG_NATIVE_MAP || git->second == JD_TAG_ARR))
+                        return git->second;
+                }
             }
             // `RETURN arr[i]` where arr is known to hold nested arrays.
             // Without this the return tag stays f64 and the caller
@@ -1910,6 +1919,18 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                 if (decl.tags[pi] == JD_TAG_ARR || decl.tags[pi] == JD_TAG_NATIVE_MAP)
                     local_kinds[decl.stmt->params()[pi].name] = decl.tags[pi];
             }
+            classify_locals.clear();
+            for (auto& pn : decl.stmt->params()) classify_locals.insert(pn.name);
+            std::function<void(const Stmt&)> collect_locals = [&](const Stmt& d) {
+                if (d.kind == StmtKind::DIM && !d.var_name.empty()) classify_locals.insert(d.var_name);
+                if (d.kind == StmtKind::FUNCTION || d.kind == StmtKind::SUB) return;
+                for (auto& b : d.body)         if (b) collect_locals(*b);
+                for (auto& b : d.catch_body())   if (b) collect_locals(*b);
+                for (auto& b : d.finally_body()) if (b) collect_locals(*b);
+                for (auto& br : d.branches)
+                    for (auto& b : br.body) if (b) collect_locals(*b);
+            };
+            for (auto& b : decl.stmt->body) if (b) collect_locals(*b);
             int k = classify_return(*decl.stmt, local_kinds);
             if (k == JD_TAG_VM_HANDLE && decl.is_async &&
                 !all_returns_handle(*decl.stmt, local_kinds)) continue;
