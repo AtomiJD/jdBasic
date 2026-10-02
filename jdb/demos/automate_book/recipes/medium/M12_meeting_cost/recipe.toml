@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "M12"
+name = "Meeting Cost Meter"
+program = "meeting_cost.jdb"
+summary = "Sums the hours and the cost of your meetings per week and month"
+minutes_per_week = 15
+schedule = "weekly fri 15:00"
+section = "meeting_cost"
+modules = ["meetcost.jdb"]
+
+[[setting]]
+key = "calendar"
+label = "Calendar file (.ics) to read"
+kind = "file"
+default = "~/Documents/AutomateWork/calendar.ics"
+
+[[setting]]
+key = "hourly_rate"
+label = "Cost of one hour of work"
+kind = "number"
+default = 60
+
+[[setting]]
+key = "currency"
+label = "Currency"
+kind = "text"
+default = "EUR"
+
+[[setting]]
+key = "weeks"
+label = "Weeks to look back"
+kind = "number"
+default = 4

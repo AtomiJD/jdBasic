@@ -1,0 +1,101 @@
+' Personal Dashboard: the Monday of a week, hours per project from a
+' time log, open items, a folder's files, readable sizes, the numbers
+' with a waiting outbox message, and the page, its data and its chart
+' fetched from a server on this computer.
+
+IMPORT TESTKIT, DASHBOARD, JDWEB, OUTBOX, MAIL, CONF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("dash")
+DIM down$ = PATH.JOIN$(folder$, "Downloads")
+MKDIR down$
+TXTWRITER PATH.JOIN$(down$, "a.zip"), "12345"
+TXTWRITER PATH.JOIN$(down$, "b.pdf"), "123"
+DIM log_file$ = PATH.JOIN$(folder$, "log.csv")
+DIM rows = ["time,event,project", "2026-10-16 09:00:00,start,Old", _
+    "2026-10-16 10:00:00,stop,", "2026-10-19 08:00:00,start,Miller", _
+    "2026-10-19 10:30:00,start,Budget", "2026-10-19 12:00:00,stop,", _
+    "2026-10-23 14:00:00,start,Miller"]
+TXTWRITER log_file$, JOIN(rows, LF$) + LF$
+DIM todo$ = PATH.JOIN$(folder$, "todo.txt")
+TXTWRITER todo$, "- [ ] Call <Ben>" + LF$ + "- [x] Done" + LF$ + _
+    "  - [ ] Budget review" + LF$
+DIM tpl$ = PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "templates", _
+    "dashboard.html")
+IF NOT FILE.EXISTS(tpl$) THEN
+    tpl$ = "recipes/medium/M08_personal_dashboard/templates/" + _
+        "dashboard.html"
+ENDIF
+DIM box$ = REPLACE$(PATH.JOIN$(folder$, "outbox"), "\", "/")
+DIM toml$ = "[user]" + LF$ + "email = " + Q$ + "jonas@example.com"
+toml$ = toml$ + Q$ + LF$ + "[mail]" + LF$
+toml$ = toml$ + "outbox = " + Q$ + box$ + Q$ + LF$
+DIM cfg = CONF.TOML_TEXT(toml$)
+DIM msg = MAIL.MESSAGE(OUTBOX.FROM$(cfg), ["ann@example.com"], "Hi")
+MAIL.PLAIN(msg, "Hello")
+DIM put$ = OUTBOX.PUT$(msg, cfg, "hi.eml")
+DIM sources = {"log": log_file$, "todo": todo$, "downloads": down$, _
+    "cfg": cfg}
+DIM now$ = "2026-10-23 16:00:00"
+
+TESTKIT.SUITE("the numbers")
+TESTKIT.EQ(DASHBOARD.MONDAY$("2026-10-23"), "2026-10-19", "Monday")
+TESTKIT.EQ(DASHBOARD.MONDAY$("2026-10-19"), "2026-10-19", _
+    "a Monday is its own")
+DIM hours = DASHBOARD.HOURS(log_file$, "2026-10-19", now$)
+TESTKIT.EQ(LEN(hours), 2, "only this week's projects")
+DIM top = hours[0]
+TESTKIT.EQ(top{"project"}, "Miller", "the most hours first")
+TESTKIT.EQ(top{"hours"}, 4.5, "a running block counts until now")
+DIM items = DASHBOARD.TODO(todo$)
+TESTKIT.EQARRAY(items, ["Call <Ben>", "Budget review"], "open items")
+DIM down = DASHBOARD.FOLDER(down$)
+TESTKIT.EQ(down{"files"}, 2, "files in the folder")
+TESTKIT.EQ(down{"bytes"}, 8, "and their size")
+TESTKIT.EQ(DASHBOARD.HUMAN$(5300000), "5.1 MB", "a readable size")
+TESTKIT.EQ(DASHBOARD.HUMAN$(512), "512 bytes", "small sizes")
+DIM n = DASHBOARD.NUMBERS(sources, now$)
+TESTKIT.EQ(n{"total_hours"}, 6, "hours of the week")
+TESTKIT.EQ(n{"outbox"}, 1, "one mail waits in the outbox")
+DIM svg$ = DASHBOARD.CHART$(n)
+TESTKIT.ISTRUE(STARTSWITH(svg$, "<svg"), "the chart is SVG")
+TESTKIT.ISTRUE(INSTR(svg$, "Budget") >= 0, "with the projects")
+
+TESTKIT.SUITE("the page")
+DIM page$ = DASHBOARD.PAGE$(n, tpl$)
+TESTKIT.ISTRUE(INSTR(page$, "<svg") >= 0, "the chart in the page")
+TESTKIT.ISTRUE(INSTR(page$, "Call &lt;Ben&gt;") >= 0, _
+    "items written safely")
+DASHBOARD.MOUNT(sources, tpl$)
+DIM hex$ = CODEC.SHA256$(folder$)
+DIM port = 0
+DIM i = 0
+FOR i = 0 TO 3
+    port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+NEXT i
+port = 20000 + port MOD 30000
+DIM last_port = port + 50
+DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+    port = port + 1
+LOOP
+DIM r = JDWEB.FETCH(port, "GET", "/")
+TESTKIT.EQ(r{"status"}, 200, "the page is served")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "My week from") >= 0, "it is the page")
+r = JDWEB.FETCH(port, "GET", "/data.json")
+DIM data = JSON.PARSE$(r{"body"})
+TESTKIT.ISTRUE(MAP.EXISTS(data, "total_hours"), "the numbers as JSON")
+TESTKIT.EQ(data{"outbox"}, 1, "with the outbox")
+r = JDWEB.FETCH(port, "GET", "/chart.svg")
+TESTKIT.ISTRUE(STARTSWITH(r{"body"}, "<svg"), "the chart on its own")
+HTTP.SERVER.STOP()
+
+KILL put$
+RMDIR box$
+KILL PATH.JOIN$(down$, "a.zip")
+KILL PATH.JOIN$(down$, "b.pdf")
+RMDIR down$
+KILL log_file$
+KILL todo$
+RMDIR folder$
+TESTKIT.REPORT()

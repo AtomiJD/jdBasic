@@ -1,0 +1,15 @@
+<html><body style="font-family: Segoe UI, Arial, sans-serif">
+<h2>Status {{ week }}</h2>
+<p>{{ done }} done, {{ todo }} open, {{ blocked }} blocked.</p>
+<table cellpadding="6" style="border-collapse: collapse">
+<tr style="background: #e8eef7"><th align="left">Who</th>
+<th align="left">Blocked</th><th align="left">Open</th>
+<th align="left">Done</th></tr>
+{% for p in people %}<tr style="vertical-align: top">
+<td><b>{{ p.person }}</b></td>
+<td>{% for t in p.blocked %}{{ t }}<br>{% endfor %}</td>
+<td>{% for t in p.todo %}{{ t }}<br>{% endfor %}</td>
+<td>{% for t in p.done %}{{ t }}<br>{% endfor %}</td>
+</tr>{% endfor %}
+</table>
+</body></html>

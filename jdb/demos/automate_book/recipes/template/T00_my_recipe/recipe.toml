@@ -1,0 +1,28 @@
+# What the setup wizard knows about a recipe. Copy and change every value.
+
+id = "T00"
+name = "My Recipe"
+program = "my_recipe.jdb"
+summary = "Moves files nobody touched for a while into an archive folder"
+minutes_per_week = 5
+schedule = "weekly mon {day_start}"
+section = "my_recipe"
+modules = ["mine.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder to look in"
+kind = "folder"
+default = "~/Documents"
+
+[[setting]]
+key = "archive"
+label = "Folder to move old files into"
+kind = "folder"
+default = "~/Documents/Archive"
+
+[[setting]]
+key = "days"
+label = "Untouched for at least (days)"
+kind = "number"
+default = 90

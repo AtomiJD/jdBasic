@@ -56,8 +56,8 @@ welcome$ = welcome$ + "It creates a work folder, writes your settings into one f
 welcome$ = welcome$ + "Nothing leaves this computer unless you turn on a recipe that sends mail. You can run the wizard again at any time to change your choices."
 DIM page0 = [FORM.LABEL(frm, "lblWelcome", welcome$, 20, 60, 620, 300)]
 
-DIM you_labels = ["Work folder", "The jdbasic program", "Your name", "Your mail address", "Working day starts at", "Working day ends at"]
-DIM you_keys = ["work", "jdbasic", "name", "email", "day_start", "day_end"]
+DIM you_labels = ["Work folder", "The jdbasic program", "Your name", "Your mail address", "Working day starts at", "Working day ends at", "Mail server (optional)", "Mail user name"]
+DIM you_keys = ["work", "jdbasic", "name", "email", "day_start", "day_end", "mail_server", "mail_user"]
 DIM you_boxes = []
 DIM page1 = []
 DIM k = 0

@@ -1,0 +1,67 @@
+' Invoice Generator: rows grouped by customer, totals with VAT, the
+' next numbers from the counter, the PDF, and the mail read back.
+' Nothing is sent. The Word file is checked by word_check.jdb.
+
+IMPORT TESTKIT, INVOICES, INVOICE_PDF, MAIL
+
+DIM folder$ = MKTEMP$("invoices")
+MKDIR folder$
+DIM sheet_rows = [["Customer", "EMAIL", "Item", "Quantity", "Price"], _
+    ["Miller Ltd", "buy@miller.example", "Copy paper", 10, 4.5], _
+    ["Stone & Co", "office@stone.example", "Toner", 2, 61.9], _
+    ["Miller Ltd", "", "Delivery", 1, 12], _
+    ["", "", "", "", ""]]
+DIM company = {"name": "Example Supplies", _
+    "address": "1 Main Street, Exampletown", "date": "2026-10-05"}
+
+FUNC NoColumn(r)
+    RETURN INVOICES.COLUMNS(["Customer", "Item"])
+ENDFUNC
+
+TESTKIT.SUITE("grouping and totals")
+DIM list = INVOICES.GROUP(sheet_rows)
+TESTKIT.EQ(LEN(list), 2, "one invoice per customer, empty rows left out")
+TESTKIT.EQ(list[0]{"customer"}, "Miller Ltd", "in the order they appear")
+TESTKIT.EQ(LEN(list[0]{"lines"}), 2, "with a line for each of its rows")
+TESTKIT.EQ(list[0]{"email"}, "buy@miller.example", "the first address")
+TESTKIT.THROWS(NoColumn@, 0, "a missing column is named")
+DIM inv = INVOICES.TOTALS(list[0], 19)
+TESTKIT.NEAR(inv{"net"}, 57, 0.001, "net: 10 x 4.50 + 12")
+TESTKIT.NEAR(inv{"vat"}, 10.83, 0.001, "19 percent VAT in cents")
+TESTKIT.NEAR(inv{"gross"}, 67.83, 0.001, "and the total")
+TESTKIT.EQ(INVOICES.MONEY$(67.83), "67.83 EUR", "money with two digits")
+DIM trows = INVOICES.TABLE_ROWS(inv)
+TESTKIT.EQ(LEN(trows), 3, "a table row per line under the header")
+TESTKIT.EQ(trows[1][3], "45.00 EUR", "with the amount of the line")
+
+TESTKIT.SUITE("numbers")
+DIM counter$ = PATH.JOIN$(folder$, "last_number.txt")
+TESTKIT.EQARRAY(INVOICES.NEXT_NUMBERS(counter$, "RE-", "2026", 2), _
+    ["RE-2026-0001", "RE-2026-0002"], "the first numbers of a year")
+TXTWRITER counter$, "41"
+TESTKIT.EQARRAY(INVOICES.NEXT_NUMBERS(counter$, "RE-", "2026", 1), _
+    ["RE-2026-0042"], "and after the stored one")
+
+TESTKIT.SUITE("the PDF")
+DIM pdf$ = PATH.JOIN$(folder$, "RE-2026-0042.pdf")
+INVOICE_PDF.WRITE(inv, "RE-2026-0042", company, pdf$)
+DIM bytes$ = BINREADER$(pdf$)
+TESTKIT.EQ(LEFT$(bytes$, 5), "%PDF-", "a PDF is written")
+TESTKIT.ISTRUE(INSTR(bytes$, "(Invoice RE-2026-0042) Tj") >= 0, _
+    "with its number")
+TESTKIT.ISTRUE(INSTR(bytes$, "(67.83 EUR) Tj") >= 0, "and its total")
+
+TESTKIT.SUITE("the mail")
+DIM m = INVOICES.MAIL_FOR(inv, "RE-2026-0042", _
+    "Jonas Example <jonas@example.com>", pdf$)
+DIM eml$ = PATH.JOIN$(folder$, "RE-2026-0042.eml")
+MAIL.WRITEEML(m, eml$)
+DIM p = MAIL.PARSEFILE(eml$)
+TESTKIT.EQ(p{"subject"}, "Invoice RE-2026-0042", "the subject")
+TESTKIT.EQARRAY(p{"to"}, ["buy@miller.example"], "the customer")
+TESTKIT.ISTRUE(INSTR(p{"text"}, "total 67.83 EUR") >= 0, "the total")
+TESTKIT.ISTRUE(INSTR(p{"text"}, "Jonas Example") >= 0, "signed")
+TESTKIT.EQARRAY(p{"att_names"}, ["RE-2026-0042.pdf"], "the invoice")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

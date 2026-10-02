@@ -1,0 +1,120 @@
+' status.jdb: the weekly status of a team from one notes file per
+' person, as a plain text and an HTML mail. A note is a check box
+' line: "- [x]" done, "- [ ]" still to do, "- [!]" blocked.
+'
+'   IMPORT STATUS
+'   DIM people = STATUS.NOTES("C:/Team/status")
+'   PRINT STATUS.PLAIN$(people, "2026-W43")
+
+EXPORT MODULE STATUS
+
+IMPORT TMPL, DT
+
+DIM gLF$ = CHR$(10)
+
+' The notes of one file: a map with "done", "todo" and "blocked",
+' each a list of texts in the order of the file.
+EXPORT FUNC READ_NOTES(text$)
+    DIM out = {"done": [], "todo": [], "blocked": []}
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM t$ = TRIM$(rows[k])
+        DIM box$ = LCASE$(LEFT$(t$, 5))
+        DIM what$ = TRIM$(MID$(t$, 5, LEN(t$)))
+        DIM kind$ = ""
+        IF box$ = "- [x]" THEN kind$ = "done"
+        IF box$ = "- [ ]" THEN kind$ = "todo"
+        IF box$ = "- [!]" THEN kind$ = "blocked"
+        IF kind$ <> "" ANDALSO what$ <> "" THEN
+            DIM items = out{kind$}
+            PUSH(items, what$)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Every person of the notes folder, one per .txt file and named after
+' it, sorted by name: maps with "person", "done", "todo", "blocked".
+EXPORT FUNC NOTES(folder$)
+    DIM out = []
+    DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM file$ = files[k]
+        DIM n = READ_NOTES(TXTREADER$(PATH.JOIN$(folder$, file$)))
+        DIM ext$ = PATH.EXT$(file$)
+        n{"person"} = LEFT$(file$, LEN(file$) - LEN(ext$))
+        PUSH(out, n)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The ISO week of a day, such as 2026-W43.
+EXPORT FUNC WEEK$(t)
+    DIM w = DT.ISOWEEK(t)
+    RETURN STR$(w{"year"}) + "-W" + RIGHT$("0" + STR$(w{"week"}), 2)
+ENDFUNC
+
+' How many notes of a kind all people have together.
+EXPORT FUNC TOTAL(people, kind$)
+    DIM n = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(people) - 1
+        DIM items = people[k]{kind$}
+        n = n + LEN(items)
+    NEXT k
+    RETURN n
+ENDFUNC
+
+SUB AddList(out, title$, items)
+    IF LEN(items) = 0 THEN RETURN
+    PUSH(out, "  " + title$)
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        PUSH(out, "    - " + items[k])
+    NEXT k
+ENDSUB
+
+' The mail as plain text: a summary line, then each person with the
+' blocked notes first, the open ones next and the done ones last.
+EXPORT FUNC PLAIN$(people, week$)
+    DIM out = ["Status " + week$, ""]
+    DIM sum$ = STR$(TOTAL(people, "done")) + " done, "
+    sum$ = sum$ + STR$(TOTAL(people, "todo")) + " open, "
+    PUSH(out, sum$ + STR$(TOTAL(people, "blocked")) + " blocked.")
+    DIM k = 0
+    FOR k = 0 TO LEN(people) - 1
+        DIM p = people[k]
+        PUSH(out, "")
+        PUSH(out, p{"person"})
+        AddList(out, "Blocked:", p{"blocked"})
+        AddList(out, "Open:", p{"todo"})
+        AddList(out, "Done:", p{"done"})
+    NEXT k
+    RETURN JOIN(out, gLF$) + gLF$
+ENDFUNC
+
+' The mail as HTML from a TMPL template that sees "week", "people"
+' and the totals "done", "todo" and "blocked".
+EXPORT FUNC HTML$(people, week$, template$)
+    DIM m AS MAP
+    m{"week"} = week$
+    m{"people"} = people
+    m{"done"} = TOTAL(people, "done")
+    m{"todo"} = TOTAL(people, "todo")
+    m{"blocked"} = TOTAL(people, "blocked")
+    RETURN TMPL.RENDER$(template$, m)
+ENDFUNC
+
+' The notes with the done ones taken out, for the next week.
+EXPORT FUNC WITHOUT_DONE$(text$)
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM kept = []
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM t$ = LCASE$(LEFT$(TRIM$(rows[k]), 5))
+        IF t$ <> "- [x]" THEN PUSH(kept, rows[k])
+    NEXT k
+    RETURN JOIN(kept, gLF$)
+ENDFUNC

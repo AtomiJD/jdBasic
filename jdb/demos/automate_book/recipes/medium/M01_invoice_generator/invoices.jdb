@@ -1,0 +1,128 @@
+' invoices.jdb: invoices from the rows of a sheet. Rows with the same
+' customer become one invoice with one line per row; each invoice gets
+' the next number, its totals, the rows of its table and a mail. The
+' PDF and the Word file are written by INVOICE_PDF and INVOICE_WORD.
+'
+'   IMPORT INVOICES
+'   DIM list = INVOICES.GROUP(rows)
+'   DIM inv = INVOICES.TOTALS(list[0], 19)
+
+EXPORT MODULE INVOICES
+
+IMPORT MAIL
+
+' The position of each wanted column in the header row, by its name
+' in any case; a missing column is an error that names it.
+EXPORT FUNC COLUMNS(header)
+    DIM wanted = ["customer", "email", "item", "quantity", "price"]
+    DIM out AS MAP
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(wanted) - 1
+        out{wanted[k]} = -1
+        FOR j = 0 TO LEN(header) - 1
+            DIM h$ = LCASE$(TRIM$("" + header[j]))
+            IF h$ = wanted[k] THEN out{wanted[k]} = j
+        NEXT j
+        IF out{wanted[k]} < 0 THEN _
+            THROW "The sheet has no column " + wanted[k]
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' One invoice per customer, in the order they first appear: maps with
+' "customer", "email" and "lines" (maps with item, quantity, price).
+EXPORT FUNC GROUP(rows)
+    DIM col = COLUMNS(rows[0])
+    DIM out = []
+    DIM where AS MAP
+    DIM k = 0
+    FOR k = 1 TO LEN(rows) - 1
+        DIM r = rows[k]
+        DIM who$ = TRIM$("" + r[col{"customer"}])
+        IF who$ <> "" THEN
+            IF NOT MAP.EXISTS(where, who$) THEN
+                where{who$} = LEN(out)
+                DIM mail$ = TRIM$("" + r[col{"email"}])
+                PUSH(out, {"customer": who$, "email": mail$, _
+                    "lines": []})
+            ENDIF
+            DIM inv = out[where{who$}]
+            DIM item$ = "" + r[col{"item"}]
+            DIM qty = VAL("" + r[col{"quantity"}])
+            DIM price = VAL("" + r[col{"price"}])
+            DIM inv_lines = inv{"lines"}
+            PUSH(inv_lines, {"item": item$, "quantity": qty, _
+                "price": price})
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The invoice with "net", "vat" and "gross" added, each rounded to
+' cents; vat_percent such as 19.
+EXPORT FUNC TOTALS(inv, vat_percent)
+    DIM net = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(inv{"lines"}) - 1
+        DIM ln = inv{"lines"}[k]
+        DIM amount = ln{"quantity"} * ln{"price"}
+        net = net + amount
+    NEXT k
+    inv{"net"} = ROUND(net * 100) / 100
+    inv{"vat"} = ROUND(net * vat_percent) / 100
+    inv{"gross"} = inv{"net"} + inv{"vat"}
+    inv{"vat_percent"} = vat_percent
+    RETURN inv
+ENDFUNC
+
+' The next n invoice numbers after the one stored in the counter file,
+' such as RE-2026-0007; the file is not changed.
+EXPORT FUNC NEXT_NUMBERS(counter$, prefix$, year$, n)
+    DIM last = 0
+    IF FILE.EXISTS(counter$) THEN _
+        last = VAL(TRIM$(TXTREADER$(counter$)))
+    DIM out = []
+    DIM k = 0
+    FOR k = 1 TO n
+        DIM digits$ = RIGHT$("000" + STR$(last + k), 4)
+        PUSH(out, prefix$ + year$ + "-" + digits$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+EXPORT FUNC MONEY$(v)
+    RETURN FORMAT$("{:.2f}", v) + " EUR"
+ENDFUNC
+
+' The rows of the invoice table, the header first.
+EXPORT FUNC TABLE_ROWS(inv)
+    DIM rows = [["Item", "Quantity", "Price", "Amount"]]
+    DIM k = 0
+    FOR k = 0 TO LEN(inv{"lines"}) - 1
+        DIM ln = inv{"lines"}[k]
+        DIM amount = ln{"quantity"} * ln{"price"}
+        PUSH(rows, [ln{"item"}, STR$(ln{"quantity"}), _
+            MONEY$(ln{"price"}), MONEY$(amount)])
+    NEXT k
+    RETURN rows
+ENDFUNC
+
+EXPORT FUNC TOTAL_LINES(inv)
+    DIM vat$ = "VAT " + STR$(inv{"vat_percent"}) + " %"
+    RETURN [["Net", MONEY$(inv{"net"})], [vat$, MONEY$(inv{"vat"})], _
+        ["Total", MONEY$(inv{"gross"})]]
+ENDFUNC
+
+' The mail that goes with an invoice, the file attached.
+EXPORT FUNC MAIL_FOR(inv, number$, sender$, attachment$)
+    DIM subject$ = "Invoice " + number$
+    DIM m = MAIL.MESSAGE(sender$, inv{"email"}, subject$)
+    DIM body$ = "Hello," + CHR$(10) + CHR$(10)
+    body$ = body$ + "please find invoice " + number$ + " attached, "
+    body$ = body$ + "total " + MONEY$(inv{"gross"}) + "." + CHR$(10)
+    body$ = body$ + CHR$(10) + "Kind regards" + CHR$(10)
+    MAIL.PLAIN(m, body$ + MAIL.ADDRESSNAME$(sender$))
+    MAIL.ATTACH(m, attachment$)
+    RETURN m
+ENDFUNC

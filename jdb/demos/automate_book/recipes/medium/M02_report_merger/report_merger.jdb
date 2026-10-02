@@ -1,0 +1,52 @@
+' Report Merger: collects the monthly Excel reports of a team from one
+' folder into a single workbook with a sheet of totals, and names who
+' has not sent a report yet. The settings are the [report_merger] part
+' of work.conf.
+'
+'   jdbasic report_merger.jdb                  last month
+'   jdbasic report_merger.jdb --month 2026-10  a given month
+'   jdbasic report_merger.jdb --dry-run        show, write nothing
+
+IMPORT WORKCONF, MERGER
+
+' The month before the one of the given date, as YYYY-MM.
+FUNC LastMonth$(day)
+    DIM y = VAL(FORMAT_DATE(day, "%Y"))
+    DIM m = VAL(FORMAT_DATE(day, "%m")) - 1
+    IF m = 0 THEN
+        m = 12
+        y = y - 1
+    ENDIF
+    RETURN STR$(y) + "-" + RIGHT$("0" + STR$(m), 2)
+ENDFUNC
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "report_merger."
+DIM root$ = WORKCONF.FOLDER$(cfg, key$ + "folder", _
+    "~/Documents/AutomateWork/reports")
+DIM tab$ = WORKCONF.VALUE(cfg, key$ + "tab", "")
+DIM team = WORKCONF.VALUE(cfg, key$ + "team", [])
+DIM month$ = WORKCONF.ARG$("month")
+IF month$ = "" THEN month$ = LastMonth$(NOW())
+
+DIM folder$ = PATH.JOIN$(root$, month$)
+IF NOT FILE.ISDIR(folder$) THEN THROW "No folder " + folder$
+DIM reports = MERGER.REPORTS(folder$, tab$)
+PRINT LEN(reports); " reports for "; month$
+
+DIM missing = MERGER.MISSING(reports, team)
+IF LEN(missing) > 0 THEN PRINT "Missing: "; JOIN(missing, ", ")
+DIM odd = MERGER.ODD_HEADERS(reports)
+IF LEN(odd) > 0 THEN
+    PRINT "Other columns than the first report: "; JOIN(odd, ", ")
+ENDIF
+IF LEN(reports) = 0 THEN END
+
+DIM totals = MERGER.TOTALS(reports)
+DIM out$ = PATH.JOIN$(root$, month$ + " team.xlsx")
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT "would write "; out$; " with "; LEN(totals) - 1; " rows"
+ELSE
+    DIM sheets = MERGER.WRITE(out$, reports, totals)
+    PRINT "wrote "; out$; " ("; sheets; " sheets)"
+ENDIF

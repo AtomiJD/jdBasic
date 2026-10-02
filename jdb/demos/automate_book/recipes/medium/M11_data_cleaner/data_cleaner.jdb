@@ -1,0 +1,59 @@
+' Data Cleaner: a messy export (CSV or workbook) cleaned column by
+' column, repeated rows dropped, names that look alike found, and a
+' clean workbook written with the problems on a sheet of their own.
+' The settings are the [data_cleaner] part of work.conf.
+'
+'   jdbasic data_cleaner.jdb            clean and write the workbook
+'   jdbasic data_cleaner.jdb --dry-run  show what it would change
+
+IMPORT WORKCONF, CLEANER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "data_cleaner."
+DIM input$ = WORKCONF.FOLDER$(cfg, key$ + "input", "")
+DIM output$ = WORKCONF.FOLDER$(cfg, key$ + "output", "")
+DIM sep$ = WORKCONF.VALUE(cfg, key$ + "separator", ";")
+DIM name_col$ = WORKCONF.VALUE(cfg, key$ + "name_column", "")
+DIM cutoff = WORKCONF.VALUE(cfg, key$ + "similar", 85)
+DIM opts AS MAP
+opts{"day_first"} = WORKCONF.VALUE(cfg, key$ + "day_first", TRUE)
+opts{"decimal"} = WORKCONF.VALUE(cfg, key$ + "decimal", "auto")
+IF input$ = "" THEN THROW "Set data_cleaner.input first."
+IF output$ = "" THEN
+    DIM ext$ = PATH.EXT$(input$)
+    output$ = LEFT$(input$, LEN(input$) - LEN(ext$)) + "_clean.xlsx"
+ENDIF
+
+DIM rows = CLEANER.READ_TABLE(input$, sep$)
+DIM spec = CLEANER.GUESS_KINDS(rows[0])
+DIM given = WORKCONF.VALUE(cfg, key$ + "columns", spec)
+DIM cols = MAP.KEYS(given)
+DIM k = 0
+FOR k = 0 TO LEN(cols) - 1
+    DIM col$ = cols[k]
+    spec{col$} = given{col$}
+NEXT k
+DIM result = CLEANER.CLEAN(rows, spec, opts)
+DIM similar = []
+IF name_col$ <> "" THEN
+    similar = CLEANER.SIMILAR(result{"rows"}, name_col$, cutoff)
+ENDIF
+
+PRINT "Rows read: "; LEN(rows) - 1
+PRINT "Cells changed: "; result{"changed"}
+PRINT "Repeated rows dropped: "; result{"duplicates"}
+DIM problems = result{"problems"}
+PRINT "Problems: "; LEN(problems)
+FOR k = 0 TO LEN(problems) - 1
+    DIM p = problems[k]
+    PRINT "  row "; p[0]; ", "; p[1]; ": "; p[3]; " ("; p[2]; ")"
+NEXT k
+PRINT "Names that look alike: "; LEN(similar)
+FOR k = 0 TO LEN(similar) - 1
+    DIM s = similar[k]
+    PRINT "  "; s[0]; " / "; s[1]; " ("; s[2]; ")"
+NEXT k
+IF NOT WORKCONF.FLAG("dry-run") THEN
+    CLEANER.WRITE_XLSX(result, similar, output$)
+    PRINT "Clean workbook: "; output$
+ENDIF

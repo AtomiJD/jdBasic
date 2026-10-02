@@ -1,0 +1,74 @@
+' Receipt Sorter: rules from the settings, dates and amounts from file
+' names, free names in a full folder, and the expense report of a
+' month folder written and read back.
+
+IMPORT TESTKIT, RECEIPTS, XLSX
+
+DIM folder$ = MKTEMP$("receipts")
+MKDIR folder$
+DIM rules = RECEIPTS.RULES(["Fuel = Travel", "rail=Travel", _
+    "nonsense", "lunch = Meals"])
+
+SUB Touch(path$)
+    MKDIR PATH.DIRNAME$(path$)
+    TXTWRITER path$, "x"
+ENDSUB
+
+TESTKIT.SUITE("rules")
+TESTKIT.EQ(LEN(rules), 3, "a text without = is left out")
+TESTKIT.EQ(rules[0]{"word"}, "fuel", "the word in lower case")
+TESTKIT.EQ(RECEIPTS.CATEGORY$("RAIL ticket.pdf", rules), "Travel", _
+    "a word in any case")
+TESTKIT.EQ(RECEIPTS.CATEGORY$("parking.pdf", rules), "Other", _
+    "Other without a rule")
+
+TESTKIT.SUITE("file names")
+TESTKIT.EQ(RECEIPTS.DATE$("2026-10-03 fuel.pdf"), "2026-10-03", _
+    "a date with dashes")
+TESTKIT.EQ(RECEIPTS.DATE$("scan_20261005.pdf"), "2026-10-05", _
+    "a date without")
+TESTKIT.EQ(RECEIPTS.DATE$("07.10.2026 lunch.jpg"), "2026-10-07", _
+    "a date with points")
+TESTKIT.EQ(RECEIPTS.DATE$("lunch.jpg"), "", "no date")
+TESTKIT.NEAR(RECEIPTS.AMOUNT("fuel 45.20.pdf"), 45.2, 0.0001, _
+    "an amount with a point")
+TESTKIT.NEAR(RECEIPTS.AMOUNT("2026-10-05 rail 89,90.pdf"), 89.9, _
+    0.0001, "with a comma, after a date")
+TESTKIT.EQ(RECEIPTS.AMOUNT("fuel 45.pdf"), -1, "none without cents")
+DIM r = RECEIPTS.PARSE("lunch 12.50.jpg", rules, _
+    "2026-09-30 12:00:00")
+TESTKIT.EQ(r{"month"}, "2026-09", "the file's time without a date")
+TESTKIT.EQ(r{"category"}, "Meals", "and the category")
+
+TESTKIT.SUITE("free names")
+DIM taken$ = PATH.JOIN$(folder$, "a.pdf")
+TESTKIT.EQ(RECEIPTS.FREE_NAME$(folder$, "a.pdf"), taken$, _
+    "the name itself when free")
+Touch(taken$)
+TESTKIT.EQ(RECEIPTS.FREE_NAME$(folder$, "a.pdf"), _
+    PATH.JOIN$(folder$, "a (2).pdf"), "a number when taken")
+
+TESTKIT.SUITE("the report")
+DIM month$ = PATH.JOIN$(folder$, "2026-10")
+Touch(PATH.JOIN$(month$, "Travel", "2026-10-03 fuel 45.20.pdf"))
+Touch(PATH.JOIN$(month$, "Travel", "2026-10-05 rail 89,90.pdf"))
+Touch(PATH.JOIN$(month$, "Meals", "2026-10-07 lunch.jpg"))
+DIM rows = RECEIPTS.MONTH_ROWS(month$)
+TESTKIT.EQ(LEN(rows), 4, "the header and three receipts")
+TESTKIT.EQ(rows[1][1], "Meals", "by category")
+TESTKIT.EQ(rows[1][3], "", "an empty cell without an amount")
+DIM sums = RECEIPTS.SUMS(rows)
+TESTKIT.NEAR(sums[2][1], 135.1, 0.0001, "Travel added up")
+TESTKIT.EQ(sums[3][0], "Total", "the total last")
+TESTKIT.EQ(sums[3][2], 3, "with the number of receipts")
+DIM book$ = PATH.JOIN$(month$, "2026-10 expenses.xlsx")
+RECEIPTS.WRITE_REPORT(book$, rows)
+TESTKIT.EQARRAY(XLSX.SHEETS(book$), ["Sums", "Receipts"], _
+    "two sheets")
+DIM back = XLSX.READ(book$)
+TESTKIT.NEAR(back{"Sums"}[3][1], 135.1, 0.0001, "the sums read back")
+TESTKIT.EQ(back{"Receipts"}[3][2], "2026-10-05 rail 89,90.pdf", _
+    "and the receipts")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

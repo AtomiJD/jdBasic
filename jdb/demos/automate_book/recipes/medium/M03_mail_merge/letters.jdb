@@ -1,0 +1,122 @@
+' letters.jdb: personal letters from a Word template and a contact
+' list. Each {{name}} in the template is filled from the column of the
+' same name; each contact gets one Word file and, with an address, a
+' mail with the letter attached.
+'
+'   IMPORT LETTERS
+'   DIM people = LETTERS.CONTACTS(rows)
+'   LETTERS.WRITE("letter.docx", "out/Anna.docx", people[0])
+
+EXPORT MODULE LETTERS
+
+IMPORT DOCX, MAIL
+
+' The contacts of a sheet: one map per row from the column names in
+' lower case to the cell texts. Rows without any text are left out.
+EXPORT FUNC CONTACTS(rows)
+    DIM out = []
+    IF LEN(rows) = 0 THEN RETURN out
+    DIM keys = []
+    DIM k = 0
+    DIM c = 0
+    FOR c = 0 TO LEN(rows[0]) - 1
+        PUSH(keys, LCASE$(TRIM$("" + rows[0][c])))
+    NEXT c
+    FOR k = 1 TO LEN(rows) - 1
+        DIM person AS MAP
+        DIM filled = FALSE
+        FOR c = 0 TO LEN(keys) - 1
+            DIM cell$ = ""
+            IF c < LEN(rows[k]) THEN _
+                cell$ = TRIM$(CellText$(rows[k][c]))
+            person{keys[c]} = cell$
+            IF cell$ <> "" THEN filled = TRUE
+        NEXT c
+        IF filled THEN PUSH(out, person)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A cell as text; whole numbers without a decimal point.
+FUNC CellText$(v)
+    IF TYPEOF(v) = "STRING" THEN RETURN v
+    IF v = INT(v) THEN RETURN STR$(INT(v))
+    RETURN STR$(v)
+ENDFUNC
+
+' The placeholders of the template that no column of the contacts
+' fills.
+EXPORT FUNC UNFILLED(template$, contacts)
+    DIM out = []
+    IF LEN(contacts) = 0 THEN RETURN out
+    DIM wanted = DOCX.PLACEHOLDERS(template$)
+    DIM k = 0
+    FOR k = 0 TO LEN(wanted) - 1
+        DIM nm$ = wanted[k]
+        IF NOT MAP.EXISTS(contacts[0], LCASE$(nm$)) THEN _
+            PUSH(out, nm$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A text with its {{name}} placeholders filled from the contact.
+EXPORT FUNC FILL$(text$, person)
+    DIM out$ = text$
+    DIM keys = MAP.KEYS(person)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM mark$ = "{{" + keys[k] + "}}"
+        out$ = REPLACE$(out$, mark$, person{keys[k]})
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' A file name from the pattern, without characters Windows forbids.
+EXPORT FUNC FILE_NAME$(pattern$, person)
+    DIM t$ = TRIM$(FILL$(pattern$, person))
+    t$ = REGEX.REPLACE("[<>:\x22/\\|?*]", t$, "_")
+    IF t$ = "" THEN t$ = "letter"
+    RETURN t$ + ".docx"
+ENDFUNC
+
+' Writes the letter of one contact, matching placeholders in any
+' case; answers the number of placeholders filled.
+EXPORT FUNC WRITE(template$, path$, person)
+    DIM values AS MAP
+    DIM wanted = DOCX.PLACEHOLDERS(template$)
+    DIM k = 0
+    FOR k = 0 TO LEN(wanted) - 1
+        DIM key$ = LCASE$(wanted[k])
+        IF MAP.EXISTS(person, key$) THEN
+            values{wanted[k]} = person{key$}
+        ENDIF
+    NEXT k
+    RETURN DOCX.FILL(template$, path$, values)
+ENDFUNC
+
+' The mail that goes with a letter; subject and text are filled from
+' the contact like the template.
+EXPORT FUNC MAIL_FOR(person, sender$, subject$, body$, attachment$)
+    DIM m = MAIL.MESSAGE(sender$, person{"email"}, _
+        FILL$(subject$, person))
+    MAIL.PLAIN(m, FILL$(body$, person))
+    MAIL.ATTACH(m, attachment$)
+    RETURN m
+ENDFUNC
+
+' A template to start from, with the placeholders the sample contact
+' list fills.
+EXPORT SUB SAMPLE_TEMPLATE(path$)
+    DIM doc = DOCX.NEW()
+    DOCX.LANGUAGE(doc, "en-GB")
+    DOCX.PARAGRAPH(doc, "{{name}}")
+    DOCX.PARAGRAPH(doc, "{{company}}")
+    DOCX.PARAGRAPH(doc, "{{city}}")
+    DOCX.PARAGRAPH(doc, "")
+    DOCX.PARAGRAPH(doc, "Dear {{salutation}},")
+    DOCX.PARAGRAPH(doc, "thank you for working with us this " + _
+        "year. We would like to invite you to our customer day " + _
+        "on {{date}}.")
+    DOCX.PARAGRAPH(doc, "Kind regards")
+    DOCX.WRITE(doc, path$)
+ENDSUB

@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "M02"
+name = "Report Merger"
+program = "report_merger.jdb"
+summary = "The monthly sheets of the team in one workbook with totals"
+minutes_per_week = 15
+schedule = ""
+section = "report_merger"
+modules = ["merger.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder with one subfolder per month"
+kind = "folder"
+default = "~/Documents/AutomateWork/reports"
+
+[[setting]]
+key = "tab"
+label = "Sheet to read in each report (empty: the first)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "team"
+label = "Names of the people who send a report"
+kind = "list"
+default = []

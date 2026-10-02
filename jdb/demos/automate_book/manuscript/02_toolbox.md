@@ -67,14 +67,18 @@ recipes you choose, and a schedule for each of them. It also says what
 the wizard never does: no recipe of the easy level sends anything over
 the network.
 
-![About you: the work folder, the jdbasic program, your name and your working hours](img/wizard_2.png)
+![About you: the work folder, the jdbasic program, your name, your working hours and an optional mail server](img/wizard_2.png)
 
 The second page asks about you. The work folder is where your settings,
 the copied recipes and their logs live; the suggestion inside Documents
 is a good one. The wizard finds `jdbasic` on its own when it is on the
 PATH. Your name and mail address go into the mail templates of E08, and
 the working hours decide when E05 reminds you of breaks and when E06
-asks its three questions at the end of the day.
+asks its three questions at the end of the day. The mail server is
+optional and only matters for the recipes of Chapter 4 that send mail;
+leave it empty for now. The wizard never asks for a mail password:
+recipes that send mail ask for it when you run them yourself, and
+nothing writes it down.
 
 ![Your automations: every recipe with the minutes it saves, its settings and its schedule](img/wizard_3.png)
 

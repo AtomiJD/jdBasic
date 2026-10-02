@@ -1,0 +1,81 @@
+' Contract Diff: two versions of an offer written as Word files, read
+' back, compared: a changed price, a clause that moved, one that went
+' and one that came; the text and the Word report.
+
+IMPORT TESTKIT, CONTRACTDIFF, DOCX
+
+DIM folder$ = MKTEMP$("contractdiff")
+MKDIR folder$
+DIM v1$ = PATH.JOIN$(folder$, "offer v1.docx")
+DIM v2$ = PATH.JOIN$(folder$, "offer v2.docx")
+
+SUB WriteDoc(path$, paras)
+    DIM d = DOCX.NEW()
+    DIM k = 0
+    FOR k = 0 TO LEN(paras) - 1
+        DOCX.PARAGRAPH(d, paras[k])
+    NEXT k
+    DOCX.PARAGRAPH(d, "")
+    DOCX.WRITE(d, path$)
+ENDSUB
+
+FUNC Missing(x)
+    RETURN CONTRACTDIFF.PARAGRAPHS("no such file.docx")
+ENDFUNC
+
+DIM first = ["Offer for Miller Ltd", "The price is 100 EUR per month.", "The term is one year.", "Payment within 30 days.", "Support by mail on working days.", "Signed in Bremen"]
+DIM second = ["Offer for Miller Ltd", "The term is one year.", "The price is 120 EUR per month.", "Support by mail and phone on working days.", "A setup fee of 300 EUR applies.", "Signed in Bremen"]
+WriteDoc(v1$, first)
+WriteDoc(v2$, second)
+
+TESTKIT.SUITE("reading")
+DIM a = CONTRACTDIFF.PARAGRAPHS(v1$)
+TESTKIT.EQ(LEN(a), 6, "the empty paragraph is left out")
+TESTKIT.EQ(a[1], "The price is 100 EUR per month.", "the text of a paragraph")
+TESTKIT.THROWS(Missing@, 0, "a missing file is an error")
+
+TESTKIT.SUITE("comparing")
+DIM b = CONTRACTDIFF.PARAGRAPHS(v2$)
+DIM changes = CONTRACTDIFF.COMPARE(a, b)
+DIM s = CONTRACTDIFF.SUMMARY(changes)
+TESTKIT.EQ(s{"changed"}, 2, "the price and the support clause changed")
+TESTKIT.EQ(s{"added"}, 1, "the setup fee is new")
+TESTKIT.EQ(s{"removed"}, 1, "the payment clause is gone")
+TESTKIT.EQ(s{"moved"}, 0, "the term counts as staying, the price as changed")
+DIM titles = []
+DIM k = 0
+FOR k = 0 TO LEN(changes) - 1
+    PUSH(titles, CONTRACTDIFF.TITLE$(changes[k]))
+NEXT k
+TESTKIT.EQARRAY(titles, ["Paragraph 3 changed", "Paragraph 4 removed", "Paragraph 4 changed", "Paragraph 5 added"], "in the order of the new version")
+TESTKIT.EQ(changes[0]{"marked"}, "The price is [-100-]{+120+} EUR per month.", "changed words are marked")
+TESTKIT.EQ(changes[0]{"old_no"}, 2, "and the old place is kept")
+
+TESTKIT.SUITE("moving")
+DIM m = CONTRACTDIFF.COMPARE(["A one.", "B two.", "C three."], ["B two.", "C three.", "A one."])
+TESTKIT.EQ(LEN(m), 1, "one paragraph moved")
+TESTKIT.EQ(m[0]{"kind"}, "moved", "with the same text")
+TESTKIT.EQ(CONTRACTDIFF.TITLE$(m[0]), "Paragraph 1 moved to 3", "from its old place to its new one")
+TESTKIT.EQ(LEN(CONTRACTDIFF.COMPARE(a, a)), 0, "the same text twice has no changes")
+DIM loose = CONTRACTDIFF.COMPARE(["The price is 100 EUR."], ["Delivery takes a week."])
+TESTKIT.EQ(CONTRACTDIFF.SUMMARY(loose){"changed"}, 0, "unlike paragraphs are not paired")
+TESTKIT.EQ(LEN(loose), 2, "they count as removed and added")
+
+TESTKIT.SUITE("reports")
+DIM report$ = CONTRACTDIFF.REPORT$(changes)
+DIM rows = SPLIT(report$, CHR$(10))
+TESTKIT.EQ(rows[0], "2 changed, 1 added, 1 removed, 0 moved", "the summary first")
+TESTKIT.ISTRUE(INSTR(report$, "  - Payment within 30 days.") >= 0, "a removed paragraph")
+TESTKIT.ISTRUE(INSTR(report$, "  + A setup fee of 300 EUR applies.") >= 0, "an added one")
+DIM out$ = PATH.JOIN$(folder$, "changes.docx")
+CONTRACTDIFF.REPORT_DOCX(changes, "offer v1", "offer v2", out$)
+DIM back = DOCX.READ(out$)
+DIM paras = back{"paragraphs"}
+TESTKIT.EQ(paras[0], "What changed", "the Word report has its heading")
+TESTKIT.ISTRUE("Paragraph 5 added" IN paras, "a heading per change")
+TESTKIT.ISTRUE("Before: The price is 100 EUR per month." IN paras, "the text before")
+TESTKIT.ISTRUE("After: The price is 120 EUR per month." IN paras, "and after")
+TESTKIT.EQ(back{"tables"}[0][1][0], "2", "and the summary table")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

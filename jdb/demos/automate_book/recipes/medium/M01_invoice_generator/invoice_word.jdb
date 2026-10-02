@@ -1,0 +1,24 @@
+' invoice_word.jdb: an invoice of the INVOICES module as a Word file.
+'
+'   IMPORT INVOICE_WORD
+'   INVOICE_WORD.WRITE(inv, "RE-2026-0007", company, "x.docx")
+
+EXPORT MODULE INVOICE_WORD
+
+IMPORT DOCX, INVOICES
+
+' The invoice as a Word file: the same parts as the PDF page.
+EXPORT SUB WRITE(inv, number$, company, path$)
+    DIM doc = DOCX.NEW()
+    DOCX.LANGUAGE(doc, "en-GB")
+    DOCX.TITLE(doc, "Invoice " + number$)
+    DOCX.PARAGRAPH(doc, "**" + company{"name"} + "**")
+    DOCX.PARAGRAPH(doc, company{"address"})
+    DOCX.PARAGRAPH(doc, inv{"customer"})
+    DOCX.HEADING(doc, "Invoice " + number$)
+    DOCX.PARAGRAPH(doc, "Date: " + company{"date"})
+    DOCX.TABLE(doc, INVOICES.TABLE_ROWS(inv))
+    DOCX.TABLE(doc, INVOICES.TOTAL_LINES(inv), FALSE)
+    DOCX.WRITE(doc, path$)
+ENDSUB
+

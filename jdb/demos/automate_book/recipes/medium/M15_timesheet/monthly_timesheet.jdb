@@ -1,0 +1,77 @@
+' Timesheet for the Boss: turns last month of the Time Tracker's log
+' into a Word timesheet and puts the mail that carries it into the
+' outbox. The settings are the [timesheet] part of work.conf, the mail
+' server the [mail] part.
+'
+'   jdbasic monthly_timesheet.jdb                  last month, once
+'   jdbasic monthly_timesheet.jdb --month 2026-10  a given month
+'   jdbasic monthly_timesheet.jdb --dry-run        show, write nothing
+'   jdbasic monthly_timesheet.jdb --send           send the outbox
+
+IMPORT WORKCONF, TIMESHEET, OUTBOX
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+    PRINT result{"sent"}; " sent"
+    DIM f = 0
+    FOR f = 0 TO LEN(result{"failed"}) - 1
+        PRINT "  not sent: "; result{"failed"}[f]
+    NEXT f
+    END
+ENDIF
+
+DIM key$ = "timesheet."
+DIM e07$ = "~/Documents/AutomateWork/time"
+DIM time_dir$ = WORKCONF.FOLDER$(cfg, "time_tracker.folder", e07$)
+DIM log$ = WORKCONF.FOLDER$(cfg, key$ + "log", "")
+IF log$ = "" THEN log$ = PATH.JOIN$(time_dir$, "log.csv")
+DIM sheets_home$ = "~/Documents/AutomateWork/timesheets"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", sheets_home$)
+DIM boss$ = WORKCONF.VALUE(cfg, key$ + "boss", "")
+DIM person$ = WORKCONF.VALUE(cfg, "user.name", "")
+DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+DIM month$ = WORKCONF.ARG$("month")
+DIM asked = month$ <> ""
+IF NOT asked THEN month$ = TIMESHEET.LAST_MONTH$(LEFT$(now$, 10))
+
+DIM sheet$ = PATH.JOIN$(folder$, "Timesheet " + month$ + ".docx")
+IF FILE.EXISTS(sheet$) ANDALSO NOT asked THEN
+    PRINT "The timesheet for "; month$; " is done already."
+    END
+ENDIF
+
+DIM work = TIMESHEET.SESSIONS(TIMESHEET.EVENTS(log$))
+DIM totals = TIMESHEET.MONTH_TOTALS(work, month$, now$)
+DIM projects = SORT(MAP.KEYS(totals))
+IF LEN(projects) = 0 THEN
+    PRINT "No work logged in "; month$
+    END
+ENDIF
+
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT "Timesheet "; TIMESHEET.MONTH_NAME$(month$); ", "; person$
+    DIM p = 0
+    FOR p = 0 TO LEN(projects) - 1
+        DIM h = totals{projects[p]}
+        PRINT "  "; projects[p]; ": "; FORMAT$("{:.2f}", h); " hours"
+    NEXT p
+    PRINT "would write "; sheet$
+    IF boss$ <> "" THEN PRINT "would put a mail to "; boss$
+    END
+ENDIF
+
+MKDIR folder$
+DIM hours = TIMESHEET.DOCUMENT(sheet$, person$, month$, work, now$)
+PRINT "Wrote "; sheet$; " ("; FORMAT$("{:.2f}", hours); " hours)"
+IF boss$ = "" THEN
+    PRINT "No [timesheet] boss in work.conf, so no mail."
+ELSE
+    DIM from$ = OUTBOX.FROM$(cfg)
+    DIM msg = TIMESHEET.MESSAGE(from$, boss$, person$, month$, _
+        sheet$, hours)
+    DIM eml_name$ = "timesheet " + month$ + ".eml"
+    PRINT "In the outbox: "; OUTBOX.PUT$(msg, cfg, eml_name$)
+    PRINT "Send it with: jdbasic monthly_timesheet.jdb --send"
+ENDIF

@@ -1,0 +1,49 @@
+' mine.jdb: the work of the template recipe. It plans to move the
+' files of a folder that nobody changed for a number of days into an
+' archive folder, and carries the plan out. Copy this folder, rename
+' it, and replace PLAN and APPLY with the work of your own recipe.
+'
+'   IMPORT MINE
+'   DIM moves = MINE.PLAN("C:/Users/jonas/Reports", 90, NOW())
+'   PRINT MINE.APPLY(moves, "C:/Users/jonas/Archive", TRUE)
+
+EXPORT MODULE MINE
+
+' The files of a folder older than days, as maps with "from", "name"
+' and "age" in days. Folders inside the folder are left out.
+EXPORT FUNC PLAN(folder$, days, now)
+    DIM out = []
+    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM path$ = PATH.JOIN$(folder$, names[k])
+        DIM info = FILE.STAT(path$)
+        IF NOT info{"is_dir"} THEN
+            DIM age = DATEDIFF("D", CDATE(info{"mtime"}), now)
+            IF age >= days THEN
+                DIM entry = {"from": path$, "name": names[k]}
+                entry{"age"} = age
+                PUSH(out, entry)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Moves the planned files into archive$, or with dry_run only prints
+' them. Answers the number of files.
+EXPORT FUNC APPLY(moves, archive$, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(moves) - 1
+        DIM m = moves[k]
+        DIM age$ = STR$(INT(m{"age"}))
+        IF dry_run THEN
+            PRINT "would archive "; m{"name"}; " ("; age$; " days)"
+        ELSE
+            MKDIR archive$
+            FILE.MOVE(m{"from"}, PATH.JOIN$(archive$, m{"name"}))
+            PRINT "archived "; m{"name"}
+        ENDIF
+    NEXT k
+    RETURN LEN(moves)
+ENDFUNC

@@ -1,0 +1,85 @@
+' Receipt Sorter: moves the receipts from an inbox folder into one
+' folder per month and category, and writes the expense report of
+' every month it touched. The settings are the [receipt_sorter] part
+' of work.conf.
+'
+'   jdbasic receipt_sorter.jdb                 file the receipts
+'   jdbasic receipt_sorter.jdb --dry-run       show, move nothing
+'   jdbasic receipt_sorter.jdb --month 2026-10 only the report
+
+IMPORT WORKCONF, RECEIPTS
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "receipt_sorter."
+DIM work$ = "~/Documents/AutomateWork/"
+DIM inbox$ = WORKCONF.FOLDER$(cfg, key$ + "inbox", _
+    work$ + "receipts/inbox")
+DIM root$ = WORKCONF.FOLDER$(cfg, key$ + "folder", work$ + "receipts")
+DIM kinds = WORKCONF.VALUE(cfg, key$ + "kinds", _
+    ["pdf", "jpg", "jpeg", "png"])
+DIM rules = RECEIPTS.RULES(WORKCONF.VALUE(cfg, key$ + "rules", _
+    ["fuel = Travel", "rail = Travel", "hotel = Travel", _
+    "taxi = Travel", "office = Office", "lunch = Meals"]))
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+' Writes the report of one month, or shows where it would go.
+SUB Report(root$, month$, dry_run)
+    DIM folder$ = PATH.JOIN$(root$, month$)
+    DIM rows = RECEIPTS.MONTH_ROWS(folder$)
+    DIM path$ = PATH.JOIN$(folder$, month$ + " expenses.xlsx")
+    DIM sums = RECEIPTS.SUMS(rows)
+    DIM total = sums[LEN(sums) - 1][1]
+    DIM shown$ = month$ + ": " + STR$(LEN(rows) - 1) + _
+        " receipts, " + FORMAT$("{:.2f}", total)
+    IF dry_run THEN
+        PRINT "would write the report "; shown$
+    ELSE
+        RECEIPTS.WRITE_REPORT(path$, rows)
+        PRINT "report "; shown$
+    ENDIF
+ENDSUB
+
+DIM only$ = WORKCONF.ARG$("month")
+IF only$ <> "" THEN
+    Report(root$, only$, dry_run)
+    END
+ENDIF
+
+IF NOT FILE.ISDIR(inbox$) THEN THROW "No folder " + inbox$
+DIM names = SORT(DIR$(PATH.JOIN$(inbox$, "*")))
+DIM months = []
+DIM odd = []
+DIM k = 0
+FOR k = 0 TO LEN(names) - 1
+    DIM file$ = names[k]
+    DIM from$ = PATH.JOIN$(inbox$, file$)
+    DIM ext$ = LCASE$(MID$(PATH.EXT$(file$), 1, 9))
+    IF FILE.ISDIR(from$) ORELSE NOT (ext$ IN kinds) THEN
+        PUSH(odd, file$)
+    ELSE
+        DIM info = FILE.STAT(from$)
+        DIM r = RECEIPTS.PARSE(file$, rules, info{"mtime"})
+        DIM folder$ = PATH.JOIN$(root$, r{"month"}, r{"category"})
+        DIM to$ = RECEIPTS.FREE_NAME$(folder$, file$)
+        DIM amount$ = "no amount"
+        IF r{"amount"} >= 0 THEN _
+            amount$ = FORMAT$("{:.2f}", r{"amount"})
+        DIM shown$ = file$ + "  -> " + r{"month"} + "/" + _
+            r{"category"} + "  " + amount$
+        IF dry_run THEN
+            PRINT "would move "; shown$
+        ELSE
+            MKDIR folder$
+            FILE.MOVE(from$, to$)
+            PRINT "moved "; shown$
+        ENDIF
+        IF NOT (r{"month"} IN months) THEN PUSH(months, r{"month"})
+    ENDIF
+NEXT k
+
+IF LEN(odd) > 0 THEN PRINT "Left in the inbox: "; JOIN(odd, ", ")
+IF dry_run THEN END
+FOR k = 0 TO LEN(months) - 1
+    Report(root$, months[k], FALSE)
+NEXT k
+IF LEN(names) = 0 THEN PRINT "The inbox is empty."

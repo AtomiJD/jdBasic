@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "M04"
+name = "Receipt Sorter"
+program = "receipt_sorter.jdb"
+summary = "Receipts filed by month and category, and the expense report"
+minutes_per_week = 15
+schedule = "daily {day_end}"
+section = "receipt_sorter"
+modules = ["receipts.jdb"]
+
+[[setting]]
+key = "inbox"
+label = "Folder where new receipts land"
+kind = "folder"
+default = "~/Documents/AutomateWork/receipts/inbox"
+
+[[setting]]
+key = "folder"
+label = "Folder to file the receipts in"
+kind = "folder"
+default = "~/Documents/AutomateWork/receipts"
+
+[[setting]]
+key = "rules"
+label = "Rules: word in the file name = category"
+kind = "list"
+default = ["fuel = Travel", "rail = Travel", "hotel = Travel", "taxi = Travel", "office = Office", "lunch = Meals"]

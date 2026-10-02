@@ -85,6 +85,8 @@ a{"name"} = Ask$("Your name", a{"name"})
 a{"email"} = Ask$("Your mail address", a{"email"})
 a{"day_start"} = Ask$("Your working day starts at", a{"day_start"})
 a{"day_end"} = Ask$("and ends at", a{"day_end"})
+a{"mail_server"} = Ask$("Mail server, empty for none (smtps://host:465)", a{"mail_server"})
+IF a{"mail_server"} <> "" THEN a{"mail_user"} = Ask$("Mail user name", a{"mail_user"})
 PRINT
 
 DIM picked = []

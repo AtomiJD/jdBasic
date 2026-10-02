@@ -1,0 +1,84 @@
+' Snippet Tool: the text blocks you type ten times a day, kept as
+' files and filled in on the command line. The settings are the
+' [snippet_tool] part of work.conf.
+'
+'   jdbasic snippet_tool.jdb list
+'   jdbasic snippet_tool.jdb show thanks --set name=Ann
+'   jdbasic snippet_tool.jdb copy thanks --set name=Ann
+'   jdbasic snippet_tool.jdb add thanks --text "Dear {{name}}, ..."
+
+IMPORT WORKCONF, SNIPPETS, CLI
+
+DIM spec = CLI.NEW("snippet_tool", "text blocks with placeholders")
+DIM c_list = CLI.CMD(spec, "list", "the snippets and their places")
+DIM c_show = CLI.CMD(spec, "show", "print a snippet filled in")
+CLI.ARG(c_show, "snippet", "the snippet's name", TRUE)
+CLI.MANY(c_show, "set", "s", "a value, as name=value")
+DIM c_copy = CLI.CMD(spec, "copy", "a filled snippet to clipboard")
+CLI.ARG(c_copy, "snippet", "the snippet's name", TRUE)
+CLI.MANY(c_copy, "set", "s", "a value, as name=value")
+DIM c_add = CLI.CMD(spec, "add", "save a new snippet")
+CLI.ARG(c_add, "snippet", "the snippet's name", TRUE)
+CLI.OPT(c_add, "text", "t", "the text; \n starts a new line", "")
+CLI.FLAG(c_add, "force", "f", "replace a snippet of that name")
+
+DIM cmds = [c_list, c_show, c_copy, c_add]
+DIM ci = 0
+FOR ci = 0 TO LEN(cmds) - 1
+    CLI.FLAG(cmds[ci], "dry-run", "", "show what would change")
+    CLI.OPT(cmds[ci], "config", "", "the settings file", "")
+NEXT ci
+
+DIM argv = APPEND(["snippet_tool.exe"], DROP(1, OS.ARGS()))
+DIM got = CLI.PARSE(spec, argv)
+IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "snippet_tool."
+DIM home$ = "~/Documents/AutomateWork/snippets"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM empty AS MAP
+DIM standing = WORKCONF.VALUE(cfg, key$ + "values", empty)
+DIM today$ = FORMAT_DATE(NOW(), "%d %B %Y")
+DIM cmd$ = got{"command"}
+
+IF cmd$ = "list" THEN
+    DIM names = SNIPPETS.LIST(folder$)
+    IF LEN(names) = 0 THEN PRINT "No snippets yet in "; folder$
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM t$ = SNIPPETS.READ$(folder$, names[k])
+        DIM places = SNIPPETS.PLACEHOLDERS(t$)
+        PRINT names[k]; "  "; JOIN(places, ", ")
+    NEXT k
+ELSEIF cmd$ = "show" ORELSE cmd$ = "copy" THEN
+    DIM snip$ = got{"args"}[0]
+    DIM given = SNIPPETS.VALUES(got{"set"})
+    DIM values = SNIPPETS.MERGE(standing, today$, given)
+    DIM filled = SNIPPETS.FILL(SNIPPETS.READ$(folder$, snip$), values)
+    IF cmd$ = "copy" ANDALSO NOT got{"dry-run"} THEN
+        CLIPBOARD.SET filled{"text"}
+        PRINT "On the clipboard: "; snip$
+    ELSE
+        PRINT filled{"text"}
+    ENDIF
+    IF LEN(filled{"missing"}) > 0 THEN
+        PRINT "Still open: "; JOIN(filled{"missing"}, ", ")
+    ENDIF
+ELSEIF cmd$ = "add" THEN
+    DIM new_name$ = got{"args"}[0]
+    DIM body$ = REPLACE$(got{"text"}, "\n", CHR$(10))
+    IF got{"dry-run"} THEN
+        PRINT "would save "; new_name$; ":"
+        PRINT body$
+    ELSE
+        TRY
+            SNIPPETS.WRITE(folder$, new_name$, body$, got{"force"})
+            PRINT "Saved "; new_name$
+        CATCH
+            PRINT ERRMSG$
+        ENDTRY
+    ENDIF
+ELSE
+    PRINT CLI.HELP$(spec)
+ENDIF

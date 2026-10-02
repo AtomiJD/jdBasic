@@ -1,0 +1,117 @@
+' outbox.jdb: the mail rule of the book's recipes. A recipe puts its
+' messages as .eml files into the outbox folder; sending happens only
+' when a person runs a recipe with --send and types the password,
+' which is never written into a settings file. The server comes from
+' the [mail] part of work.conf.
+'
+'   IMPORT OUTBOX
+'   DIM path$ = OUTBOX.PUT$(msg, cfg, "invoice-0413.eml")
+'   IF WORKCONF.FLAG("send") THEN OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+'
+' A message in the outbox reaches the To and Cc addresses of its
+' headers; Bcc addresses are not part of an .eml file.
+
+EXPORT MODULE OUTBOX
+
+IMPORT WORKCONF, MAIL
+
+' The outbox folder, [mail] outbox in work.conf.
+EXPORT FUNC FOLDER$(cfg)
+    DIM home$ = "~/Documents/AutomateWork/outbox"
+    RETURN WORKCONF.FOLDER$(cfg, "mail.outbox", home$)
+ENDFUNC
+
+' The sender: [mail] from, else the user's name and address.
+EXPORT FUNC FROM$(cfg)
+    DIM from$ = WORKCONF.VALUE(cfg, "mail.from", "")
+    IF from$ <> "" THEN RETURN from$
+    DIM who$ = WORKCONF.VALUE(cfg, "user.name", "")
+    DIM mail$ = WORKCONF.VALUE(cfg, "user.email", "")
+    IF who$ = "" THEN RETURN mail$
+    RETURN who$ + " <" + mail$ + ">"
+ENDFUNC
+
+' The server map MAIL.SEND and MAIL.COMMAND take.
+EXPORT FUNC SERVER(cfg, password$)
+    DIM s AS MAP
+    s{"url"} = WORKCONF.VALUE(cfg, "mail.server", "")
+    s{"user"} = WORKCONF.VALUE(cfg, "mail.user", "")
+    s{"password"} = password$
+    s{"starttls"} = WORKCONF.VALUE(cfg, "mail.starttls", FALSE)
+    IF s{"url"} = "" THEN THROW "Set [mail] server in work.conf first."
+    RETURN s
+ENDFUNC
+
+' Writes a message into the outbox under file_name$; answers its path.
+EXPORT FUNC PUT$(msg, cfg, file_name$)
+    DIM folder$ = FOLDER$(cfg)
+    MKDIR folder$
+    DIM path$ = PATH.JOIN$(folder$, file_name$)
+    MAIL.WRITEEML(msg, path$)
+    RETURN path$
+ENDFUNC
+
+' The messages waiting in the outbox, sorted by name.
+EXPORT FUNC PENDING(cfg)
+    DIM folder$ = FOLDER$(cfg)
+    IF NOT FILE.ISDIR(folder$) THEN RETURN []
+    DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*.eml")))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file_name$ = names[k]
+        PUSH(out, PATH.JOIN$(folder$, file_name$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Asks for the mail password; nothing is stored.
+EXPORT FUNC ASK$(cfg)
+    DIM user$ = WORKCONF.VALUE(cfg, "mail.user", "")
+    DIM typed$ = ""
+    INPUT "Mail password for " + user$ + ": "; typed$
+    RETURN typed$
+ENDFUNC
+
+' The curl arguments that send one .eml file of the outbox.
+EXPORT FUNC SEND_ARGS(path$, server, config_path$)
+    DIM parsed = MAIL.PARSEFILE(path$)
+    DIM msg AS MAP
+    DIM from = parsed{"from"}
+    IF TYPEOF(from) = "ARRAY" THEN from = from[0]
+    msg{"from"} = from
+    msg{"to"} = parsed{"to"}
+    msg{"cc"} = parsed{"cc"}
+    msg{"bcc"} = []
+    RETURN MAIL.COMMAND(msg, server, path$, config_path$)
+ENDFUNC
+
+' Sends every message of the outbox and moves each one that went out
+' into outbox/sent. Answers {"sent": n, "failed": [lines]}.
+EXPORT FUNC SEND_ALL(cfg, password$)
+    DIM server = SERVER(cfg, password$)
+    DIM sent_dir$ = PATH.JOIN$(FOLDER$(cfg), "sent")
+    MKDIR sent_dir$
+    DIM config_path$ = MKTEMP$("outbox") + ".txt"
+    DIM q$ = CHR$(34)
+    DIM secret$ = server{"user"} + ":" + password$
+    secret$ = REPLACE$(REPLACE$(secret$, "\", "\\"), q$, "\" + q$)
+    TXTWRITER config_path$, "user = " + q$ + secret$ + q$ + CHR$(10)
+    DIM files = PENDING(cfg)
+    DIM failed = []
+    DIM n = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM args = SEND_ARGS(files[k], server, config_path$)
+        DIM r = OS.EXEC("curl", args)
+        IF r{"EXIT_CODE"} = 0 THEN
+            FILE.MOVE(files[k], sent_dir$, TRUE)
+            n = n + 1
+        ELSE
+            DIM why$ = TRIM$(r{"OUTPUT"})
+            PUSH(failed, PATH.BASENAME$(files[k]) + ": " + why$)
+        ENDIF
+    NEXT k
+    KILL config_path$
+    RETURN {"sent": n, "failed": failed}
+ENDFUNC

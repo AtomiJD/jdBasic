@@ -1,0 +1,51 @@
+' Log Detective: lines with and without a time stamp, the levels in
+' their spellings, error messages grouped across their numbers, the
+' counts per hour, the report and the chart.
+
+IMPORT TESTKIT, LOGSCAN
+
+DIM base$ = "recipes/medium/M09_log_detective/"
+IF NOT FILE.EXISTS(base$ + "app.log") THEN base$ = ""
+
+TESTKIT.SUITE("lines")
+DIM p = LOGSCAN.PARSE("2026-10-05 09:14:03 ERROR Timeout after 30 s")
+TESTKIT.EQ(p{"hour"}, "2026-10-05 09", "the hour of a line")
+TESTKIT.EQ(p{"level"}, "ERROR", "its level")
+TESTKIT.EQ(p{"message"}, "Timeout after 30 s", "and its message")
+DIM w = LOGSCAN.PARSE("2026-10-05T10:12:30 [warning] low memory")
+TESTKIT.EQ(w{"level"}, "WARN", "WARNING in any case counts as WARN")
+TESTKIT.EQ(w{"message"}, "low memory", "brackets and colons are not part of the message")
+TESTKIT.EQ(LOGSCAN.PARSE("2026-10-05 10:12:30 FATAL: lost"){"level"}, "ERROR", "FATAL counts as an error")
+TESTKIT.EQ(LOGSCAN.PARSE("2026-10-05 08:58:12 INFO started"){"level"}, "", "INFO is neither")
+TESTKIT.EQ(LEN(MAP.KEYS(LOGSCAN.PARSE("    at Mailer.send (line 88)"))), 0, "a line without a time stamp")
+TESTKIT.EQ(LOGSCAN.SIGNATURE$("Timeout after 30 s on job 4711"), "Timeout after # s on job #", "numbers do not split a message")
+
+TESTKIT.SUITE("the fixture log")
+DIM stats = LOGSCAN.NEW()
+LOGSCAN.SCAN_TEXT(stats, TXTREADER$(base$ + "app.log"))
+TESTKIT.EQ(stats{"lines"}, 11, "eleven lines")
+TESTKIT.EQ(stats{"skipped"}, 1, "one of them without a time stamp")
+TESTKIT.EQ(LOGSCAN.TOTAL(stats, "ERROR"), 5, "five errors")
+TESTKIT.EQ(LOGSCAN.TOTAL(stats, "WARN"), 3, "three warnings")
+TESTKIT.EQ(stats{"hours"}{"2026-10-05 09"}{"ERROR"}, 3, "three errors at nine")
+TESTKIT.EQ(LOGSCAN.WORST_HOUR$(stats), "2026-10-05 09", "the worst hour")
+DIM top = LOGSCAN.TOP_MESSAGES(stats)
+TESTKIT.EQ(top[0], "Timeout after # s on job #", "the timeout is the most frequent error")
+DIM top0$ = top[0]
+TESTKIT.EQ(stats{"messages"}{top0$}, 3, "three times")
+
+TESTKIT.SUITE("report and chart")
+DIM rep$ = LOGSCAN.REPORT$(stats, 2)
+TESTKIT.ISTRUE(STARTSWITH(rep$, "11 lines, 5 errors, 3 warnings"), "the totals first")
+TESTKIT.ISTRUE(INSTR(rep$, "    3  Timeout after # s on job #") >= 0, "the top error with its count")
+TESTKIT.ISTRUE(INSTR(rep$, "2026-10-05 10:00      2         0") >= 0, "a row per hour")
+DIM tmp$ = MKTEMP$("logscan")
+MKDIR tmp$
+DIM svg$ = PATH.JOIN$(tmp$, "hours.svg")
+LOGSCAN.CHART(stats, svg$)
+DIM markup$ = TXTREADER$(svg$)
+TESTKIT.ISTRUE(STARTSWITH(TRIM$(markup$), "<svg") ORELSE INSTR(markup$, "<svg") >= 0, "an SVG file")
+TESTKIT.ISTRUE(INSTR(markup$, "10-05 09h") >= 0, "with the hours as labels")
+KILL svg$
+RMDIR tmp$
+TESTKIT.REPORT()

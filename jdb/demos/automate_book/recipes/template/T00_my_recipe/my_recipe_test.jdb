@@ -1,0 +1,28 @@
+' The template recipe: an old file is planned, a new one is not, a
+' dry run moves nothing, the real run moves the old file.
+
+IMPORT TESTKIT, MINE
+
+DIM folder$ = MKTEMP$("mine")
+DIM archive$ = PATH.JOIN$(folder$, "Archive")
+MKDIR folder$
+TXTWRITER PATH.JOIN$(folder$, "report.docx"), "old"
+DIM later = DATEADD("D", 120, NOW())
+
+TESTKIT.SUITE("the plan")
+TESTKIT.EQ(LEN(MINE.PLAN(folder$, 90, NOW())), 0, "a new file stays")
+DIM moves = MINE.PLAN(folder$, 90, later)
+TESTKIT.EQ(LEN(moves), 1, "the same file 120 days later is old")
+TESTKIT.EQ(moves[0]{"name"}, "report.docx", "with its name")
+
+TESTKIT.SUITE("moving")
+TESTKIT.EQ(MINE.APPLY(moves, archive$, TRUE), 1, "a dry run counts it")
+TESTKIT.ISTRUE(NOT FILE.EXISTS(archive$), "and creates nothing")
+TESTKIT.EQ(MINE.APPLY(moves, archive$, FALSE), 1, "the real run")
+TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(archive$, "report.docx")), _
+    "moves it into the archive")
+
+KILL PATH.JOIN$(archive$, "report.docx")
+RMDIR archive$
+RMDIR folder$
+TESTKIT.REPORT()

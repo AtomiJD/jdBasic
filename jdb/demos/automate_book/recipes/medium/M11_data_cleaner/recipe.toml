@@ -1,0 +1,40 @@
+# What the setup wizard knows about this recipe.
+
+id = "M11"
+name = "Data Cleaner"
+program = "data_cleaner.jdb"
+summary = "Cleans a messy export: dates, numbers, repeated rows, look-alike names"
+minutes_per_week = 30
+schedule = "weekly mon 07:30"
+section = "data_cleaner"
+modules = ["cleaner.jdb"]
+
+[[setting]]
+key = "input"
+label = "Export to clean (.csv or .xlsx)"
+kind = "file"
+default = "~/Documents/AutomateWork/export.csv"
+
+[[setting]]
+key = "separator"
+label = "Separator in CSV files"
+kind = "text"
+default = ";"
+
+[[setting]]
+key = "day_first"
+label = "Dates like 05/10/2026 mean the 5th of October"
+kind = "bool"
+default = true
+
+[[setting]]
+key = "name_column"
+label = "Column with customer names to compare"
+kind = "text"
+default = "Customer"
+
+[[setting]]
+key = "similar"
+label = "How alike two names must be (0 to 100)"
+kind = "number"
+default = 85

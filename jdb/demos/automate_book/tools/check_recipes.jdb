@@ -1,12 +1,15 @@
-' check_recipes.jdb: every recipe of the book through four steps: --lint
+' check_recipes.jdb: every recipe of the book through five steps: --lint
 ' on each of its files, its test in the interpreter, the test compiled with
-' -c, and the compiled test run. A recipe is a folder under recipes/<level>/
+' -c, the compiled test run, and the main program named in recipe.toml
+' compiled with -c. A recipe is a folder under recipes/<level>/
 ' with a file ending in _test.jdb.
 '
 '   jdbasic tools/check_recipes.jdb [--jdbasic path] [--only E01] [--interp-only]
 '
 ' Run from the book folder. The children find lib/ and recipes/lib/ through
 ' JDBASIC_PATH, which this program sets for them.
+
+IMPORT CONF
 
 DIM gSep$ = ";"
 IF OS.GETOS() <> "WINDOWS" THEN gSep$ = ":"
@@ -32,7 +35,7 @@ ENDFUNC
 ' The recipe folders, sorted, as paths relative to the book folder.
 FUNC RecipeFolders()
     DIM out = []
-    DIM levels = ["easy", "medium", "expert"]
+    DIM levels = ["easy", "medium", "expert", "template"]
     DIM k = 0
     DIM j = 0
     FOR k = 0 TO LEN(levels) - 1
@@ -58,6 +61,13 @@ FUNC RunStep(cmd$, args)
     RETURN [r{"EXIT_CODE"} = 0, last$]
 ENDFUNC
 
+' The main program a recipe.toml names, "" when there is none.
+FUNC ProgramOf$(folder$)
+    DIM toml$ = PATH.JOIN$(folder$, "recipe.toml")
+    IF NOT FILE.EXISTS(toml$) THEN RETURN ""
+    RETURN CONF.GET(CONF.TOML(toml$), "program", "")
+ENDFUNC
+
 FUNC Mark$(passed)
     IF passed THEN RETURN "ok"
     RETURN "FAIL"
@@ -76,7 +86,7 @@ DIM failed = 0
 DIM checked = 0
 DIM k = 0
 DIM j = 0
-PRINT FORMAT$("{:<36} {:>5} {:>6} {:>5} {:>5}", "recipe", "lint", "interp", "-c", "exe")
+PRINT FORMAT$("{:<36} {:>5} {:>6} {:>5} {:>5} {:>5}", "recipe", "lint", "interp", "-c", "exe", "main")
 FOR k = 0 TO LEN(folders) - 1
     DIM folder$ = folders[k]
     DIM rname$ = PATH.BASENAME$(folder$)
@@ -97,6 +107,7 @@ FOR k = 0 TO LEN(folders) - 1
         DIM interp_ok = FALSE
         DIM compile_ok = FALSE
         DIM exe_ok = FALSE
+        DIM main_ok = FALSE
         IF test$ = "" THEN
             PUSH(notes, "no *_test.jdb")
         ELSE
@@ -114,18 +125,31 @@ FOR k = 0 TO LEN(folders) - 1
                     exe_ok = exe_r[0]
                     IF NOT exe_ok THEN PUSH(notes, "exe: " + exe_r[1])
                 ENDIF
+                DIM program$ = ProgramOf$(folder$)
+                IF program$ <> "" THEN
+                    DIM main_exe$ = PATH.JOIN$(here$, out_dir$, rname$ + "_main.exe")
+                    IF FILE.EXISTS(main_exe$) THEN KILL main_exe$
+                    DIM main_src$ = PATH.JOIN$(folder$, program$)
+                    DIM main_r = RunStep(jdbasic$, ["-c", "-o", main_exe$, main_src$])
+                    main_ok = main_r[0] ANDALSO FILE.EXISTS(main_exe$)
+                    IF NOT main_ok THEN PUSH(notes, "main -c: " + main_r[1])
+                ELSE
+                    PUSH(notes, "no program named in recipe.toml")
+                ENDIF
             ENDIF
         ENDIF
-        DIM all_ok = lint_ok ANDALSO interp_ok ANDALSO (interp_only ORELSE (compile_ok ANDALSO exe_ok))
+        DIM all_ok = lint_ok ANDALSO interp_ok ANDALSO (interp_only ORELSE (compile_ok ANDALSO exe_ok ANDALSO main_ok))
         IF NOT all_ok THEN failed = failed + 1
         checked = checked + 1
         DIM c_mark$ = "-"
         DIM e_mark$ = "-"
+        DIM m_mark$ = "-"
         IF NOT interp_only THEN
             c_mark$ = Mark$(compile_ok)
             e_mark$ = Mark$(exe_ok)
+            m_mark$ = Mark$(main_ok)
         ENDIF
-        PRINT FORMAT$("{:<36} {:>5} {:>6} {:>5} {:>5}", rname$, Mark$(lint_ok), Mark$(interp_ok), c_mark$, e_mark$)
+        PRINT FORMAT$("{:<36} {:>5} {:>6} {:>5} {:>5} {:>5}", rname$, Mark$(lint_ok), Mark$(interp_ok), c_mark$, e_mark$, m_mark$)
         FOR j = 0 TO LEN(notes) - 1
             PRINT "    "; notes[j]
         NEXT j

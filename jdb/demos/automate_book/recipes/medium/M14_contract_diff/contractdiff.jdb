@@ -1,0 +1,222 @@
+' contractdiff.jdb: what changed between two versions of a document,
+' paragraph by paragraph: the changed ones (with the changed words
+' marked), the added, the removed and the moved ones.
+'
+'   IMPORT CONTRACTDIFF
+'   DIM v1 = CONTRACTDIFF.PARAGRAPHS("offer v1.docx")
+'   DIM v2 = CONTRACTDIFF.PARAGRAPHS("offer v2.docx")
+'   PRINT CONTRACTDIFF.REPORT$(CONTRACTDIFF.COMPARE(v1, v2))
+
+EXPORT MODULE CONTRACTDIFF
+
+IMPORT DOCX, TEXTDIFF
+
+DIM gLF$ = CHR$(10)
+
+' The paragraphs of a Word file with text in them, trimmed.
+EXPORT FUNC PARAGRAPHS(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "No such document: " + path$
+    DIM all = DOCX.PARAGRAPHS(path$)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(all) - 1
+        DIM p$ = TRIM$(REPLACE$(all[k], CHR$(13), ""))
+        IF p$ <> "" THEN PUSH(out, p$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' How alike two paragraphs are, from 0 to 1, by their words.
+EXPORT FUNC LIKENESS(a$, b$)
+    RETURN TEXTDIFF.RATIO(TEXTDIFF.TOKENS(a$), TEXTDIFF.TOKENS(b$))
+ENDFUNC
+
+' The paragraphs outside the runs both versions share: [number, text]
+' pairs of the old version (gone) and the new one (came), from 1.
+FUNC Unmatched(before, after)
+    DIM gone = []
+    DIM came = []
+    DIM ops = TEXTDIFF.OPCODES(before, after)
+    DIM k = 0
+    DIM i = 0
+    FOR k = 0 TO LEN(ops) - 1
+        DIM op = ops[k]
+        IF op{"tag"} <> "equal" THEN
+            FOR i = op{"a1"} TO op{"a2"} - 1
+                DIM was$ = before[i]
+                PUSH(gone, [i + 1, was$])
+            NEXT i
+            FOR i = op{"b1"} TO op{"b2"} - 1
+                DIM arrived$ = after[i]
+                PUSH(came, [i + 1, arrived$])
+            NEXT i
+        ENDIF
+    NEXT k
+    RETURN [gone, came]
+ENDFUNC
+
+FUNC Change(kind$, old_no, new_no, before$, after$)
+    DIM c AS MAP
+    c{"kind"} = kind$
+    c{"old_no"} = old_no
+    c{"new_no"} = new_no
+    c{"old"} = before$
+    c{"new"} = after$
+    c{"marked"} = ""
+    IF kind$ = "changed" THEN
+        c{"marked"} = TEXTDIFF.WORDDIFF$(before$, after$)
+    ENDIF
+    RETURN c
+ENDFUNC
+
+' The changes from the old paragraphs to the new ones, in the order of
+' the new version: maps with "kind" (changed, added, removed, moved),
+' "old_no" and "new_no" (0 when there is none), "old", "new" and, for
+' a changed one, "marked" with [-removed-] and {+added+} words. A pair
+' at least as alike as similar (0.6) counts as one changed paragraph.
+EXPORT FUNC COMPARE(before, after, similar = 0.6)
+    DIM parts = Unmatched(before, after)
+    DIM gone = parts[0]
+    DIM came = parts[1]
+    DIM used = ZEROS(LEN(came))
+    DIM out = []
+    DIM g = 0
+    DIM c = 0
+    FOR g = 0 TO LEN(gone) - 1
+        DIM gp = gone[g]
+        DIM g_text$ = gp[1]
+        DIM best = -1
+        DIM best_score = 0.0
+        FOR c = 0 TO LEN(came) - 1
+            IF used[c] = 0 THEN
+                DIM cp = came[c]
+                DIM c_text$ = cp[1]
+                DIM score = LIKENESS(g_text$, c_text$)
+                IF score > best_score THEN
+                    best_score = score
+                    best = c
+                ENDIF
+            ENDIF
+        NEXT c
+        IF best >= 0 ANDALSO best_score >= similar THEN
+            used[best] = 1
+            DIM hit = came[best]
+            DIM hit_text$ = hit[1]
+            DIM kind$ = "changed"
+            IF hit_text$ = g_text$ THEN kind$ = "moved"
+            DIM pair = Change(kind$, gp[0], hit[0], g_text$, _
+                hit_text$)
+            PUSH(out, pair)
+        ELSE
+            PUSH(out, Change("removed", gp[0], 0, g_text$, ""))
+        ENDIF
+    NEXT g
+    FOR c = 0 TO LEN(came) - 1
+        IF used[c] = 0 THEN
+            DIM left_over = came[c]
+            DIM new_text$ = left_over[1]
+            PUSH(out, Change("added", 0, left_over[0], "", new_text$))
+        ENDIF
+    NEXT c
+    RETURN SortChanges(out)
+ENDFUNC
+
+' The place of a change in the new version; a removed paragraph sits
+' just before the new place of its old number.
+FUNC OrderKey(c)
+    IF c{"new_no"} > 0 THEN RETURN c{"new_no"}
+    RETURN c{"old_no"} - 0.5
+ENDFUNC
+
+FUNC SortChanges(changes)
+    DIM keys = ZEROS(LEN(changes))
+    DIM k = 0
+    FOR k = 0 TO LEN(changes) - 1
+        keys[k] = OrderKey(changes[k])
+    NEXT k
+    DIM order = GRADE(keys)
+    DIM out = []
+    FOR k = 0 TO LEN(order) - 1
+        PUSH(out, changes[order[k]])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' How many changes of each kind there are.
+EXPORT FUNC SUMMARY(changes)
+    DIM s = {"changed": 0, "added": 0, "removed": 0, "moved": 0}
+    DIM k = 0
+    FOR k = 0 TO LEN(changes) - 1
+        DIM kind$ = changes[k]{"kind"}
+        s{kind$} = s{kind$} + 1
+    NEXT k
+    RETURN s
+ENDFUNC
+
+' The title line of one change, such as "Paragraph 4 changed".
+EXPORT FUNC TITLE$(c)
+    DIM kind$ = c{"kind"}
+    DIM was$ = "Paragraph " + STR$(c{"old_no"})
+    DIM now_at$ = "Paragraph " + STR$(c{"new_no"})
+    IF kind$ = "added" THEN RETURN now_at$ + " added"
+    IF kind$ = "removed" THEN RETURN was$ + " removed"
+    DIM moved_to$ = " moved to " + STR$(c{"new_no"})
+    IF kind$ = "moved" THEN RETURN was$ + moved_to$
+    RETURN now_at$ + " changed"
+ENDFUNC
+
+' The report as plain text.
+EXPORT FUNC REPORT$(changes)
+    DIM s = SUMMARY(changes)
+    DIM out = []
+    DIM head$ = STR$(s{"changed"}) + " changed, " + STR$(s{"added"})
+    head$ = head$ + " added, " + STR$(s{"removed"}) + " removed, "
+    PUSH(out, head$ + STR$(s{"moved"}) + " moved")
+    DIM k = 0
+    FOR k = 0 TO LEN(changes) - 1
+        DIM c = changes[k]
+        PUSH(out, "")
+        PUSH(out, TITLE$(c))
+        IF c{"kind"} = "changed" THEN
+            PUSH(out, "  " + c{"marked"})
+        ELSEIF c{"kind"} = "added" THEN
+            PUSH(out, "  + " + c{"new"})
+        ELSE
+            PUSH(out, "  - " + c{"old"})
+        ENDIF
+    NEXT k
+    RETURN JOIN(out, gLF$)
+ENDFUNC
+
+' The report as a Word file: a summary, then one heading per change
+' with the text before and after.
+EXPORT FUNC REPORT_DOCX(changes, old_name$, new_name$, _
+    path$)
+    DIM doc = DOCX.NEW()
+    DOCX.LANGUAGE(doc, "en-US")
+    DOCX.TITLE(doc, "Changes " + old_name$ + " to " + new_name$)
+    DOCX.HEADING(doc, "What changed")
+    DIM from$ = "From *" + old_name$ + "* to *" + new_name$ + "*."
+    DOCX.PARAGRAPH(doc, from$)
+    DIM s = SUMMARY(changes)
+    DIM kinds = ["changed", "added", "removed", "moved"]
+    DIM counts = []
+    DIM j = 0
+    FOR j = 0 TO 3
+        PUSH(counts, STR$(s{kinds[j]}))
+    NEXT j
+    DOCX.TABLE(doc, [kinds, counts])
+    DIM k = 0
+    FOR k = 0 TO LEN(changes) - 1
+        DIM c = changes[k]
+        DOCX.HEADING(doc, TITLE$(c), 2)
+        IF c{"old"} <> "" ANDALSO c{"kind"} <> "moved" THEN
+            DOCX.PARAGRAPH(doc, "**Before:** " + c{"old"})
+        ENDIF
+        IF c{"new"} <> "" THEN
+            DOCX.PARAGRAPH(doc, "**After:** " + c{"new"})
+        ENDIF
+        IF c{"kind"} = "changed" THEN DOCX.CODE(doc, c{"marked"})
+    NEXT k
+    RETURN DOCX.WRITE(doc, path$)
+ENDFUNC

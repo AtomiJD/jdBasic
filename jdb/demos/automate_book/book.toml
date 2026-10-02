@@ -39,6 +39,23 @@ files = [
     "manuscript/03_easy_E13.md",
     "manuscript/03_easy_E14.md",
     "manuscript/03_easy_E15.md",
+    "manuscript/04_medium.md",
+    "manuscript/04_medium_M01.md",
+    "manuscript/04_medium_M02.md",
+    "manuscript/04_medium_M03.md",
+    "manuscript/04_medium_M04.md",
+    "manuscript/04_medium_M05.md",
+    "manuscript/04_medium_M06.md",
+    "manuscript/04_medium_M07.md",
+    "manuscript/04_medium_M08.md",
+    "manuscript/04_medium_M09.md",
+    "manuscript/04_medium_M10.md",
+    "manuscript/04_medium_M11.md",
+    "manuscript/04_medium_M12.md",
+    "manuscript/04_medium_M13.md",
+    "manuscript/04_medium_M14.md",
+    "manuscript/04_medium_M15.md",
+    "manuscript/04_medium_close.md",
 ]
 
 [cover]

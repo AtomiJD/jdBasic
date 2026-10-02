@@ -1,0 +1,69 @@
+' Snippet Tool: names, saving and replacing, the list, placeholders,
+' values from the command line and the settings, filling in, and what
+' stays open. The clipboard is never touched.
+
+IMPORT TESTKIT, SNIPPETS
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("snippets")
+
+FUNC SaveTwice(x)
+    SNIPPETS.WRITE(folder$, "thanks", "again", FALSE)
+    RETURN 0
+ENDFUNC
+
+FUNC BadName(x)
+    SNIPPETS.WRITE(folder$, "../evil", "x", TRUE)
+    RETURN 0
+ENDFUNC
+
+FUNC BadPair(x)
+    RETURN SNIPPETS.VALUES(["name Ann"])
+ENDFUNC
+
+FUNC Unknown(x)
+    RETURN SNIPPETS.READ$(folder$, "nope")
+ENDFUNC
+
+TESTKIT.SUITE("names")
+TESTKIT.ISTRUE(SNIPPETS.VALID_NAME("follow_up-2"), "letters, digits, _ and -")
+TESTKIT.ISTRUE(NOT SNIPPETS.VALID_NAME("a b"), "no spaces")
+TESTKIT.ISTRUE(NOT SNIPPETS.VALID_NAME("../x"), "no paths")
+TESTKIT.ISTRUE(NOT SNIPPETS.VALID_NAME(""), "not empty")
+TESTKIT.THROWS(BadName@, 0, "a bad name is refused when saving")
+
+TESTKIT.SUITE("saving and listing")
+TESTKIT.EQ(LEN(SNIPPETS.LIST(folder$)), 0, "a missing folder lists nothing")
+DIM thanks$ = "Dear {{name}}," + LF$ + "thank you for {{ What }}." + LF$ + "{{me}}"
+SNIPPETS.WRITE(folder$, "thanks", thanks$, FALSE)
+SNIPPETS.WRITE(folder$, "Agenda", "1. {{topic}}", FALSE)
+TESTKIT.EQARRAY(SNIPPETS.LIST(folder$), ["agenda", "thanks"], "the list is sorted and in small letters")
+TESTKIT.EQ(SNIPPETS.READ$(folder$, "THANKS"), thanks$, "a snippet reads back by any case")
+TESTKIT.THROWS(SaveTwice@, 0, "saving over a snippet needs replace")
+SNIPPETS.WRITE(folder$, "thanks", thanks$ + "!", TRUE)
+TESTKIT.EQ(RIGHT$(SNIPPETS.READ$(folder$, "thanks"), 1), "!", "and replaces it with replace")
+TESTKIT.THROWS(Unknown@, 0, "an unknown snippet is an error")
+
+TESTKIT.SUITE("placeholders")
+TESTKIT.EQARRAY(SNIPPETS.PLACEHOLDERS(thanks$), ["name", "what", "me"], "each once, in small letters")
+TESTKIT.EQARRAY(SNIPPETS.PLACEHOLDERS("{{a}} {{A}} {{ a }}"), ["a"], "the same name in any form counts once")
+DIM given = SNIPPETS.VALUES(["name=Ann", "What=the offer = draft"])
+TESTKIT.EQ(given{"name"}, "Ann", "a value from the command line")
+TESTKIT.EQ(given{"what"}, "the offer = draft", "a value may hold =")
+TESTKIT.THROWS(BadPair@, 0, "a value without = is refused")
+
+TESTKIT.SUITE("filling in")
+DIM merged = SNIPPETS.MERGE({"Me": "Jonas", "name": "team"}, "5 October 2026", given)
+TESTKIT.EQ(merged{"me"}, "Jonas", "standing values from the settings")
+TESTKIT.EQ(merged{"name"}, "Ann", "the command line wins over them")
+TESTKIT.EQ(merged{"today"}, "5 October 2026", "and today is always there")
+DIM filled = SNIPPETS.FILL(thanks$, merged)
+TESTKIT.EQ(filled{"text"}, "Dear Ann," + LF$ + "thank you for the offer = draft." + LF$ + "Jonas", "every placeholder filled")
+TESTKIT.EQ(LEN(filled{"missing"}), 0, "and nothing open")
+DIM part = SNIPPETS.FILL("Hi {{name}}, $1 for {{price}} and {{ price }}", {"name": "Bo"})
+TESTKIT.EQ(part{"text"}, "Hi Bo, $1 for {{price}} and {{ price }}", "an open place stays as written")
+TESTKIT.EQARRAY(part{"missing"}, ["price"], "and is reported once")
+TESTKIT.EQ(SNIPPETS.FILL("a {{ b", {"b": "x"}){"text"}, "a {{ b", "an unclosed brace is text")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

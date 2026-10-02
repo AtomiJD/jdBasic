@@ -1,0 +1,6 @@
+Date;Customer;Amount;IBAN;Mail
+05.10.2026;Müller GmbH;"1.234,50";DE89 3704 0044 0532 0130 00;einkauf@mueller.example
+2026-10-06;  Mueller  GmbH ;99,90;de89370400440532013000;EINKAUF@mueller.example
+6 Oct 2026;"Weber; Sohn & Co";(12,00);DE00 1234;weber@example
+05.10.2026;Müller GmbH;"1.234,50";DE89 3704 0044 0532 0130 00;einkauf@mueller.example
+31.02.2026;Schmidt AG;12.50-;;office@schmidt.example

@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "M01"
+name = "Invoice Generator"
+program = "invoice_generator.jdb"
+summary = "Rows of an Excel sheet into numbered invoices and mails"
+minutes_per_week = 10
+schedule = ""
+section = "invoice_generator"
+modules = ["invoices.jdb", "invoice_pdf.jdb", "invoice_word.jdb"]
+
+[[setting]]
+key = "sheet"
+label = "The Excel file with the invoice rows"
+kind = "file"
+default = "~/Documents/AutomateWork/invoices.xlsx"
+
+[[setting]]
+key = "folder"
+label = "Folder for the invoices"
+kind = "folder"
+default = "~/Documents/AutomateWork/invoices"
+
+[[setting]]
+key = "company"
+label = "Your company's name"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "address"
+label = "Your company's address (one line)"
+kind = "text"
+default = ""

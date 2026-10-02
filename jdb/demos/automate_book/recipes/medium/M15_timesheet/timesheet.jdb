@@ -1,0 +1,244 @@
+' timesheet.jdb: a month of the Time Tracker's log (E07) as a
+' timesheet for the boss: a Word file with a table per week, the
+' totals per project and lines to sign, and the mail that carries it.
+'
+'   IMPORT TIMESHEET
+'   DIM work = TIMESHEET.SESSIONS(TIMESHEET.EVENTS("log.csv"))
+'   TIMESHEET.DOCUMENT("sheet.docx", "Jonas", "2026-10", work, now$)
+
+EXPORT MODULE TIMESHEET
+
+IMPORT DOCX, MAIL
+
+' The events of the Time Tracker's log as rows [time, event, project].
+EXPORT FUNC EVENTS(log_path$)
+    IF NOT FILE.EXISTS(log_path$) THEN
+        THROW "No time log at " + log_path$
+    ENDIF
+    DIM kinds = ["STRING", "STRING", "STRING"]
+    RETURN CSVREADER(log_path$, ",", TRUE, kinds)
+ENDFUNC
+
+' The blocks of work: maps with "project", "start" and "stop"
+' ("" while it runs). A start while another block runs ends it.
+EXPORT FUNC SESSIONS(events)
+    DIM out = []
+    DIM running = FALSE
+    DIM cur = {"project": "", "start": "", "stop": ""}
+    DIM k = 0
+    FOR k = 0 TO LEN(events) - 1
+        DIM ev = events[k]
+        DIM when$ = ev[0]
+        DIM what$ = ev[1]
+        IF running THEN
+            cur{"stop"} = when$
+            PUSH(out, cur)
+            running = FALSE
+        ENDIF
+        IF what$ = "start" THEN
+            DIM project$ = ""
+            IF LEN(ev) > 2 THEN project$ = ev[2]
+            cur = {"project": project$, "start": when$, "stop": ""}
+            running = TRUE
+        ENDIF
+    NEXT k
+    IF running THEN PUSH(out, cur)
+    RETURN out
+ENDFUNC
+
+' The month before the one a day (YYYY-MM-DD) is in, as YYYY-MM.
+EXPORT FUNC LAST_MONTH$(day$)
+    DIM first$ = LEFT$(day$, 8) + "01"
+    DIM before = DATEADD("D", -1, CDATE(first$))
+    RETURN LEFT$(FORMAT_DATE(before, "%Y-%m-%d"), 7)
+ENDFUNC
+
+' The Monday of the week a day (YYYY-MM-DD) belongs to.
+EXPORT FUNC MONDAY$(day$)
+    DIM back = (VAL(FORMAT_DATE(CDATE(day$), "%w")) + 6) MOD 7
+    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+ENDFUNC
+
+FUNC DayAfter$(day$, n)
+    RETURN FORMAT_DATE(DATEADD("D", n, CDATE(day$)), "%Y-%m-%d")
+ENDFUNC
+
+' The Mondays of every week that has a day in the month (YYYY-MM).
+EXPORT FUNC WEEKS(month$)
+    DIM out = []
+    DIM monday$ = MONDAY$(month$ + "-01")
+    DO WHILE LEFT$(monday$, 7) <= month$
+        PUSH(out, monday$)
+        monday$ = DayAfter$(monday$, 7)
+    LOOP
+    RETURN out
+ENDFUNC
+
+' Hours of a block; a running block counts until now$.
+FUNC Hours(s, now$)
+    DIM stop$ = s{"stop"}
+    IF stop$ = "" THEN stop$ = now$
+    RETURN DATEDIFF("N", CDATE(s{"start"}), CDATE(stop$)) / 60
+ENDFUNC
+
+FUNC Two$(h)
+    RETURN FORMAT$("{:.2f}", h)
+ENDFUNC
+
+' Hours per project and day for one week: a map from project to seven
+' numbers, Monday first; days outside the month stay 0.
+EXPORT FUNC WEEK_HOURS(sessions, monday$, month$, now$)
+    DIM table AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(sessions) - 1
+        DIM s = sessions[k]
+        DIM day$ = LEFT$(s{"start"}, 10)
+        DIM col = DATEDIFF("D", CDATE(monday$), CDATE(day$))
+        DIM inside = LEFT$(day$, 7) = month$
+        IF col >= 0 ANDALSO col <= 6 ANDALSO inside THEN
+            DIM project$ = s{"project"}
+            IF NOT MAP.EXISTS(table, project$) THEN
+                table{project$} = ZEROS(7)
+            ENDIF
+            DIM row = table{project$}
+            row[col] = row[col] + Hours(s, now$)
+            table{project$} = row
+        ENDIF
+    NEXT k
+    RETURN table
+ENDFUNC
+
+' The table of a week: a header with the dates, a row per project with
+' its total, and a row with the totals of each day.
+EXPORT FUNC WEEK_ROWS(table, monday$, month$)
+    DIM names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    DIM head = ["Project"]
+    DIM d = 0
+    FOR d = 0 TO 6
+        DIM date$ = DayAfter$(monday$, d)
+        DIM dd$ = MID$(date$, 8, 2) + "." + MID$(date$, 5, 2) + "."
+        DIM label$ = names[d] + " " + dd$
+        IF LEFT$(date$, 7) <> month$ THEN label$ = names[d]
+        PUSH(head, label$)
+    NEXT d
+    PUSH(head, "Total")
+    DIM rows = [head]
+    DIM day_sums = ZEROS(7)
+    DIM projects = SORT(MAP.KEYS(table))
+    DIM p = 0
+    FOR p = 0 TO LEN(projects) - 1
+        DIM project$ = projects[p]
+        DIM out = [project$]
+        DIM row_sum = 0.0
+        FOR d = 0 TO 6
+            DIM h = table{project$}[d]
+            day_sums[d] = day_sums[d] + h
+            row_sum = row_sum + h
+            IF h = 0 THEN PUSH(out, "") ELSE PUSH(out, Two$(h))
+        NEXT d
+        PUSH(out, Two$(row_sum))
+        PUSH(rows, out)
+    NEXT p
+    DIM foot = ["Total"]
+    DIM total_h = 0.0
+    FOR d = 0 TO 6
+        DIM day_h = day_sums[d]
+        total_h = total_h + day_h
+        PUSH(foot, Two$(day_h))
+    NEXT d
+    PUSH(foot, Two$(total_h))
+    PUSH(rows, foot)
+    RETURN rows
+ENDFUNC
+
+' Hours per project for the whole month.
+EXPORT FUNC MONTH_TOTALS(sessions, month$, now$)
+    DIM out AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(sessions) - 1
+        DIM s = sessions[k]
+        IF LEFT$(s{"start"}, 7) = month$ THEN
+            DIM project$ = s{"project"}
+            DIM h = 0.0
+            IF MAP.EXISTS(out, project$) THEN h = out{project$}
+            out{project$} = h + Hours(s, now$)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The hours of all projects together.
+FUNC MonthHours(totals)
+    DIM names = MAP.KEYS(totals)
+    DIM total_h = 0.0
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM h = totals{names[k]}
+        total_h = total_h + h
+    NEXT k
+    RETURN total_h
+ENDFUNC
+
+' The table of the month: a row per project with its hours and a
+' row with the total.
+EXPORT FUNC TOTAL_ROWS(totals)
+    DIM head = ["Project", "Hours"]
+    DIM rows = [head]
+    DIM names = SORT(MAP.KEYS(totals))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM out = [names[k], Two$(totals{names[k]})]
+        PUSH(rows, out)
+    NEXT k
+    DIM foot = ["Total", Two$(MonthHours(totals))]
+    PUSH(rows, foot)
+    RETURN rows
+ENDFUNC
+
+' A month written out, such as "October 2026".
+EXPORT FUNC MONTH_NAME$(month$)
+    RETURN FORMAT_DATE(CDATE(month$ + "-01"), "%B %Y")
+ENDFUNC
+
+' The timesheet as a Word file; answers the hours of the month.
+EXPORT FUNC DOCUMENT(path$, person$, month$, sessions, now$)
+    DIM doc = DOCX.NEW()
+    DOCX.LANGUAGE(doc, "en-US")
+    DIM title$ = "Timesheet " + MONTH_NAME$(month$)
+    DOCX.TITLE(doc, title$ + ", " + person$)
+    DOCX.HEADING(doc, title$)
+    DOCX.PARAGRAPH(doc, "**" + person$ + "**")
+    DIM mondays = WEEKS(month$)
+    DIM k = 0
+    FOR k = 0 TO LEN(mondays) - 1
+        DIM monday$ = mondays[k]
+        DIM table = WEEK_HOURS(sessions, monday$, month$, now$)
+        IF LEN(MAP.KEYS(table)) > 0 THEN
+            DOCX.HEADING(doc, "Week from " + monday$, 2)
+            DOCX.TABLE(doc, WEEK_ROWS(table, monday$, month$), TRUE)
+        ENDIF
+    NEXT k
+    DIM totals = MONTH_TOTALS(sessions, month$, now$)
+    DOCX.HEADING(doc, "Totals per project", 2)
+    DOCX.TABLE(doc, TOTAL_ROWS(totals), TRUE)
+    DOCX.PARAGRAPH(doc, "")
+    DIM sign$ = " ______________________   Date: __________"
+    DOCX.PARAGRAPH(doc, "Employee:" + sign$)
+    DOCX.PARAGRAPH(doc, "Approved:" + sign$)
+    DOCX.WRITE(doc, path$)
+    RETURN MonthHours(totals)
+ENDFUNC
+
+' The mail that carries the timesheet to the boss.
+EXPORT FUNC MESSAGE(from$, to$, person$, month$, path$, hours)
+    DIM subject$ = "Timesheet " + MONTH_NAME$(month$) + ", " + person$
+    DIM msg = MAIL.MESSAGE(from$, to$, subject$)
+    DIM body$ = "Hello," + CHR$(10) + CHR$(10)
+    body$ = body$ + "attached is my timesheet for "
+    body$ = body$ + MONTH_NAME$(month$)
+    body$ = body$ + ", " + Two$(hours) + " hours in all." + CHR$(10)
+    body$ = body$ + CHR$(10) + "Best regards" + CHR$(10) + person$
+    MAIL.PLAIN(msg, body$)
+    MAIL.ATTACH(msg, path$)
+    RETURN msg
+ENDFUNC

@@ -1,0 +1,82 @@
+' Invoice Generator: turns the rows of an Excel sheet into numbered
+' invoices as PDF or Word files, and puts a mail for each one into the
+' outbox. The settings are the [invoice_generator] part of work.conf,
+' the mail server and the outbox the [mail] part.
+'
+'   jdbasic invoice_generator.jdb            write invoices and mails
+'   jdbasic invoice_generator.jdb --dry-run  show the invoices only
+'   jdbasic invoice_generator.jdb --send     send what waits in outbox
+
+IMPORT WORKCONF, XLSX, INVOICES, INVOICE_PDF, INVOICE_WORD, OUTBOX
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "invoice_generator."
+DIM work$ = "~/Documents/AutomateWork/"
+DIM sheet$ = WORKCONF.FOLDER$(cfg, key$ + "sheet", _
+    work$ + "invoices.xlsx")
+DIM tab$ = WORKCONF.VALUE(cfg, key$ + "tab", "")
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", _
+    work$ + "invoices")
+DIM prefix$ = WORKCONF.VALUE(cfg, key$ + "prefix", "RE-")
+DIM kind$ = LCASE$(WORKCONF.VALUE(cfg, key$ + "format", "pdf"))
+DIM vat = WORKCONF.VALUE(cfg, key$ + "vat_percent", 19)
+DIM sender$ = OUTBOX.FROM$(cfg)
+DIM company AS MAP
+company{"name"} = WORKCONF.VALUE(cfg, key$ + "company", "")
+company{"address"} = WORKCONF.VALUE(cfg, key$ + "address", "")
+company{"date"} = FORMAT_DATE(NOW(), "%Y-%m-%d")
+
+IF WORKCONF.FLAG("send") THEN
+    DIM waiting = OUTBOX.PENDING(cfg)
+    PRINT LEN(waiting); " mails wait in "; OUTBOX.FOLDER$(cfg)
+    IF LEN(waiting) > 0 THEN
+        DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+        PRINT result{"sent"}; " sent."
+        DIM p = 0
+        FOR p = 0 TO LEN(result{"failed"}) - 1
+            PRINT "  not sent: "; result{"failed"}[p]
+        NEXT p
+    ENDIF
+    END
+ENDIF
+
+DIM book = XLSX.READ(sheet$)
+IF tab$ = "" THEN tab$ = XLSX.SHEETS(sheet$)[0]
+IF NOT MAP.EXISTS(book, tab$) THEN THROW "No sheet " + tab$
+DIM list = INVOICES.GROUP(book{tab$})
+DIM year$ = FORMAT_DATE(NOW(), "%Y")
+DIM counter$ = PATH.JOIN$(folder$, "last_number.txt")
+DIM numbers = INVOICES.NEXT_NUMBERS(counter$, prefix$, year$, _
+    LEN(list))
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT dry_run THEN MKDIR folder$
+
+DIM k = 0
+FOR k = 0 TO LEN(list) - 1
+    DIM inv = INVOICES.TOTALS(list[k], vat)
+    DIM number$ = numbers[k]
+    DIM total$ = INVOICES.MONEY$(inv{"gross"})
+    DIM shown$ = number$ + "  " + inv{"customer"} + "  " + total$
+    IF dry_run THEN
+        PRINT "would write "; shown$
+    ELSE
+        DIM file$ = PATH.JOIN$(folder$, number$ + "." + kind$)
+        IF kind$ = "docx" THEN
+            INVOICE_WORD.WRITE(inv, number$, company, file$)
+        ELSE
+            INVOICE_PDF.WRITE(inv, number$, company, file$)
+        ENDIF
+        IF inv{"email"} <> "" THEN
+            DIM m = INVOICES.MAIL_FOR(inv, number$, sender$, file$)
+            OUTBOX.PUT$(m, cfg, number$ + ".eml")
+        ENDIF
+        PRINT "wrote "; shown$
+    ENDIF
+NEXT k
+
+IF NOT dry_run ANDALSO LEN(list) > 0 THEN
+    DIM last$ = numbers[LEN(numbers) - 1]
+    TXTWRITER counter$, STR$(VAL(RIGHT$(last$, 4)))
+    PRINT "The mails wait in the outbox. Send them with --send."
+ENDIF
+IF LEN(list) = 0 THEN PRINT "No rows in "; tab$

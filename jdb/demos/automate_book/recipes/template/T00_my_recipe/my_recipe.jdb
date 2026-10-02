@@ -1,0 +1,24 @@
+' my_recipe.jdb: the template recipe. It moves files nobody touched
+' for a while into an archive folder. The settings are the
+' [my_recipe] part of work.conf.
+'
+'   jdbasic my_recipe.jdb            archive now
+'   jdbasic my_recipe.jdb --dry-run  only show what would move
+
+IMPORT WORKCONF, MINE
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "my_recipe."
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", "~/Documents")
+DIM archive$ = WORKCONF.FOLDER$(cfg, key$ + "archive", _
+    PATH.JOIN$(folder$, "Archive"))
+DIM days = WORKCONF.VALUE(cfg, key$ + "days", 90)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM moves = MINE.PLAN(folder$, days, NOW())
+DIM n = MINE.APPLY(moves, archive$, dry_run)
+IF n = 0 THEN
+    PRINT "Nothing older than "; days; " days in "; folder$
+ELSEIF dry_run THEN
+    PRINT n; " files would move. Run without --dry-run."
+ENDIF

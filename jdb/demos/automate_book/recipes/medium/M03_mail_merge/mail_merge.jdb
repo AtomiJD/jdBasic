@@ -1,0 +1,101 @@
+' Mail Merge: fills a Word template with the rows of a contact list,
+' one letter per contact, and puts a mail with the letter into the
+' outbox for every contact with an address. The settings are the
+' [mail_merge] part of work.conf, the mail server the [mail] part.
+'
+'   jdbasic mail_merge.jdb            write letters and mails
+'   jdbasic mail_merge.jdb --dry-run  show who gets a letter
+'   jdbasic mail_merge.jdb --send     send what waits in the outbox
+
+IMPORT WORKCONF, XLSX, MAIL, LETTERS, OUTBOX
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "mail_merge."
+DIM work$ = "~/Documents/AutomateWork/"
+DIM template$ = WORKCONF.FOLDER$(cfg, key$ + "template", _
+    work$ + "templates/letter.docx")
+DIM list$ = WORKCONF.FOLDER$(cfg, key$ + "contacts", _
+    work$ + "contacts.xlsx")
+DIM tab$ = WORKCONF.VALUE(cfg, key$ + "tab", "")
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", _
+    work$ + "letters")
+DIM pattern$ = WORKCONF.VALUE(cfg, key$ + "file_name", "{{name}}")
+DIM send_mail = WORKCONF.VALUE(cfg, key$ + "mail", TRUE)
+DIM subject$ = WORKCONF.VALUE(cfg, key$ + "subject", _
+    "Invitation to our customer day")
+DIM body$ = WORKCONF.VALUE(cfg, key$ + "body", _
+    "Dear {{salutation}}," + CHR$(10) + CHR$(10) + _
+    "please find our letter attached." + CHR$(10))
+body$ = body$ + CHR$(10) + "Kind regards" + CHR$(10)
+DIM sender$ = OUTBOX.FROM$(cfg)
+body$ = body$ + MAIL.ADDRESSNAME$(sender$)
+
+IF WORKCONF.FLAG("send") THEN
+    DIM waiting = OUTBOX.PENDING(cfg)
+    PRINT LEN(waiting); " mails wait in "; OUTBOX.FOLDER$(cfg)
+    IF LEN(waiting) > 0 THEN
+        DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+        PRINT result{"sent"}; " sent."
+        DIM p = 0
+        FOR p = 0 TO LEN(result{"failed"}) - 1
+            PRINT "  not sent: "; result{"failed"}[p]
+        NEXT p
+    ENDIF
+    END
+ENDIF
+
+IF NOT FILE.EXISTS(template$) THEN
+    DIM home$ = PATH.DIRNAME$(template$)
+    IF home$ <> "" THEN MKDIR home$
+    LETTERS.SAMPLE_TEMPLATE(template$)
+    PRINT "No template yet. A sample is in "; template$
+    PRINT "Change it in Word and run again."
+    END
+ENDIF
+
+DIM book = XLSX.READ(list$)
+IF tab$ = "" THEN tab$ = XLSX.SHEETS(list$)[0]
+IF NOT MAP.EXISTS(book, tab$) THEN THROW "No sheet " + tab$
+DIM people = LETTERS.CONTACTS(book{tab$})
+DIM unfilled = LETTERS.UNFILLED(template$, people)
+IF LEN(unfilled) > 0 THEN
+    PRINT "No column for: "; JOIN(unfilled, ", ")
+ENDIF
+
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT dry_run THEN MKDIR folder$
+DIM used AS MAP
+DIM mails = 0
+DIM k = 0
+FOR k = 0 TO LEN(people) - 1
+    DIM person = people[k]
+    DIM file$ = LETTERS.FILE_NAME$(pattern$, person)
+    IF MAP.EXISTS(used, LCASE$(file$)) THEN
+        file$ = LEFT$(file$, LEN(file$) - 5) + " " + _
+            STR$(k + 1) + ".docx"
+    ENDIF
+    used{LCASE$(file$)} = 1
+    DIM address$ = ""
+    IF MAP.EXISTS(person, "email") THEN address$ = person{"email"}
+    DIM mailed = send_mail ANDALSO address$ <> ""
+    DIM shown$ = file$
+    IF mailed THEN shown$ = shown$ + "  to " + address$
+    IF dry_run THEN
+        PRINT "would write "; shown$
+    ELSE
+        DIM path$ = PATH.JOIN$(folder$, file$)
+        LETTERS.WRITE(template$, path$, person)
+        IF mailed THEN
+            DIM m = LETTERS.MAIL_FOR(person, sender$, subject$, _
+                body$, path$)
+            OUTBOX.PUT$(m, cfg, LEFT$(file$, LEN(file$) - 5) + ".eml")
+            mails = mails + 1
+        ENDIF
+        PRINT "wrote "; shown$
+    ENDIF
+NEXT k
+
+IF LEN(people) = 0 THEN PRINT "No contacts in "; tab$
+IF mails > 0 THEN
+    PRINT mails; " mails wait in the outbox. Send them with --send."
+ENDIF

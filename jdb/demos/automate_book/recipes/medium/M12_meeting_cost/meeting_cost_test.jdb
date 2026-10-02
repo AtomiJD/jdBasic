@@ -1,0 +1,48 @@
+' Meeting Cost Meter: the meetings of the fixture calendar in October
+' (a weekly series, two single meetings, an all-day event left out),
+' the totals per week, month and series, the report and the workbook.
+
+IMPORT TESTKIT, MEETCOST, ICAL, DT, XLSX
+
+DIM base$ = "recipes/medium/M12_meeting_cost/"
+IF NOT FILE.EXISTS(base$ + "calendar.ics") THEN base$ = ""
+DIM cal = ICAL.PARSEFILE(base$ + "calendar.ics")
+DIM from = DT.PARSE("2026-10-01T00:00:00Z")
+DIM upto = DT.PARSE("2026-11-01T00:00:00Z")
+DIM list = MEETCOST.MEETINGS(cal, from, upto)
+DIM sum = MEETCOST.SUMMARY(list, 0)
+
+TESTKIT.SUITE("meetings")
+TESTKIT.EQ(LEN(list), 6, "four calls and two meetings, the offsite left out")
+TESTKIT.EQ(list[0]{"people"}, 3, "the attendees of a meeting")
+TESTKIT.NEAR(sum{"hours"}, 7.5, 0.0001, "7.5 hours in all")
+TESTKIT.NEAR(sum{"person_hours"}, 23, 0.0001, "23 hours of everyone's time")
+
+TESTKIT.SUITE("weeks and months")
+TESTKIT.EQ(MEETCOST.WEEK$(DT.PARSE("2026-10-05T08:00:00Z"), 0), "2026-W41", "the ISO week")
+TESTKIT.EQ(MEETCOST.WEEK$(DT.PARSE("2027-01-01T08:00:00Z"), 0), "2026-W53", "a new year that starts in the last week")
+TESTKIT.NEAR(sum{"weeks"}{"2026-W41"}, 2.5, 0.0001, "a call and the project status")
+TESTKIT.NEAR(sum{"weeks"}{"2026-W43"}, 3, 0.0001, "a call and the budget review")
+TESTKIT.NEAR(sum{"months"}{"2026-10"}, 7.5, 0.0001, "the month")
+DIM top = MEETCOST.TOP_SERIES(sum)
+TESTKIT.EQ(top[0], "Weekly team call", "the series with the most hours")
+TESTKIT.EQ(sum{"series"}{"Weekly team call"}{"times"}, 4, "and how often it met")
+
+TESTKIT.SUITE("report and workbook")
+DIM rep$ = MEETCOST.REPORT$(sum, 60, "EUR", 2)
+TESTKIT.ISTRUE(INSTR(rep$, "7.5 hours, 450 EUR of your time") >= 0, "the cost of your own time")
+TESTKIT.ISTRUE(INSTR(rep$, "23.0 hours, 1380 EUR") >= 0, "and of everyone in the meetings")
+TESTKIT.ISTRUE(INSTR(rep$, "4.0 h  Weekly team call (4 times)") >= 0, "the largest series")
+TESTKIT.ISTRUE(INSTR(rep$, "Miller project status") < 0, "only the top two series")
+DIM tmp$ = MKTEMP$("meetcost")
+MKDIR tmp$
+DIM xlsx$ = PATH.JOIN$(tmp$, "cost.xlsx")
+MEETCOST.WRITE_XLSX(sum, 60, xlsx$)
+DIM book = XLSX.READ(xlsx$)
+TESTKIT.EQARRAY(XLSX.SHEETS(xlsx$), ["Weeks", "Months", "Series"], "three sheets")
+TESTKIT.EQ(book{"Series"}[1][0], "Weekly team call", "the series sheet, largest first")
+TESTKIT.EQ(book{"Series"}[1][4], 720, "with its cost for everyone")
+TESTKIT.EQ(book{"Months"}[1][2], 450, "the month's cost")
+KILL xlsx$
+RMDIR tmp$
+TESTKIT.REPORT()

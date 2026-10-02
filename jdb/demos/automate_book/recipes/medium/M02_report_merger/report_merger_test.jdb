@@ -1,0 +1,61 @@
+' Report Merger: three reports in a folder, one with an extra row, one
+' with a text cell; the totals add up by the first column, the missing
+' person is named, an odd header is noticed, and the workbook reads
+' back with a sheet per person.
+
+IMPORT TESTKIT, MERGER, XLSX
+
+DIM folder$ = MKTEMP$("merger")
+MKDIR folder$
+DIM head = ["Project", "Hours", "Costs", "Note"]
+
+SUB Report(file$, rows)
+    DIM wb = XLSX.NEW()
+    XLSX.SHEET(wb, "October", rows)
+    XLSX.WRITE(PATH.JOIN$(folder$, file$), wb)
+ENDSUB
+
+Report("anna.xlsx", [head, ["Alpha", 10, 250.5, "on track"], _
+    ["Beta", 4, 80, ""]])
+Report("ben.xlsx", [head, ["Beta", 6, 120, "late"], _
+    ["Gamma", 2.5, 40, ""]])
+Report("cleo.xlsx", [head, ["Alpha", 3, 75, ""], ["", "", "", ""]])
+
+TESTKIT.SUITE("reading")
+DIM reports = MERGER.REPORTS(folder$, "")
+TESTKIT.EQ(LEN(reports), 3, "every workbook in the folder")
+TESTKIT.EQ(reports[1]{"person"}, "ben", "named after its file")
+TESTKIT.EQARRAY(MERGER.MISSING(reports, ["Anna", "Ben", "Dora"]), _
+    ["Dora"], "who has not sent a report")
+TESTKIT.EQ(LEN(MERGER.ODD_HEADERS(reports)), 0, "the same columns")
+
+TESTKIT.SUITE("totals")
+DIM t = MERGER.TOTALS(reports)
+TESTKIT.EQ(LEN(t), 4, "the header and three projects")
+TESTKIT.EQARRAY(t[0], head, "the header of the first report")
+TESTKIT.EQ(t[1][0], "Alpha", "in the order they first appear")
+TESTKIT.NEAR(t[1][1], 13, 0.0001, "hours added up")
+TESTKIT.NEAR(t[1][2], 325.5, 0.0001, "costs added up")
+TESTKIT.EQ(t[1][3], "on track", "a text keeps its first value")
+TESTKIT.NEAR(t[2][1], 10, 0.0001, "Beta from two people")
+TESTKIT.EQ(t[2][3], "late", "an empty text takes a later one")
+TESTKIT.NEAR(t[3][2], 40, 0.0001, "Gamma from one")
+
+TESTKIT.SUITE("writing")
+DIM out$ = PATH.JOIN$(folder$, "team.xlsx")
+TESTKIT.EQ(MERGER.WRITE(out$, reports, t), 4, "four sheets")
+TESTKIT.EQARRAY(XLSX.SHEETS(out$), ["Total", "anna", "ben", "cleo"], _
+    "the totals first")
+DIM back = XLSX.READ(out$)
+TESTKIT.NEAR(back{"Total"}[2][1], 10, 0.0001, "the totals read back")
+TESTKIT.EQ(back{"ben"}[2][0], "Gamma", "and each report as it was")
+TESTKIT.EQ(MERGER.SHEET_NAME$("a/b:c*d?e[f]"), "a_b_c_d_e_f_", _
+    "sheet names Excel accepts")
+
+TESTKIT.SUITE("an odd report")
+Report("dan.xlsx", [["Project", "Hours"], ["Alpha", 1]])
+DIM more = MERGER.REPORTS(folder$, "")
+TESTKIT.EQARRAY(MERGER.ODD_HEADERS(more), ["dan"], "other columns")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

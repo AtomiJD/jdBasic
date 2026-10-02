@@ -1,0 +1,43 @@
+' Personal Dashboard: your numbers of the week on a web page on this
+' computer: hours from the time tracker, open items, the outbox and
+' the downloads folder. The settings are the [dashboard] part of
+' work.conf; the time log is the one of [time_tracker].
+'
+'   jdbasic personal_dashboard.jdb               serve until Ctrl+C
+'   jdbasic personal_dashboard.jdb --save my.html  write the page once
+
+IMPORT WORKCONF, DASHBOARD, JDWEB
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "dashboard."
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+DIM time_home$ = "~/Documents/AutomateWork/time"
+DIM log_folder$ = WORKCONF.FOLDER$(cfg, "time_tracker.folder", _
+    time_home$)
+DIM todo$ = WORKCONF.FOLDER$(cfg, key$ + "todo_file", "")
+DIM down$ = WORKCONF.FOLDER$(cfg, key$ + "downloads", "~/Downloads")
+DIM port = WORKCONF.VALUE(cfg, key$ + "port", 8765)
+DIM own$ = PATH.JOIN$(here$, "templates", "dashboard.html")
+DIM tpl$ = WORKCONF.FOLDER$(cfg, key$ + "template", own$)
+IF NOT FILE.EXISTS(tpl$) THEN THROW "No page template at " + tpl$
+
+DIM log_file$ = PATH.JOIN$(log_folder$, "log.csv")
+DIM sources = {"log": log_file$, "todo": todo$, _
+    "downloads": down$, "cfg": cfg}
+
+DIM save$ = WORKCONF.ARG$("save")
+IF save$ <> "" THEN
+    DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+    DIM numbers = DASHBOARD.NUMBERS(sources, now$)
+    TXTWRITER save$, DASHBOARD.PAGE$(numbers, tpl$)
+    PRINT "wrote "; save$
+    END
+ENDIF
+
+DASHBOARD.MOUNT(sources, tpl$)
+IF NOT JDWEB.LISTEN(port) THEN
+    THROW "Port " + STR$(port) + " is taken. Set port in [dashboard]."
+ENDIF
+PRINT "Your dashboard: http://localhost:"; port; "/"
+PRINT "Only this computer can open it. Stop it with Ctrl+C."
+HTTP.SERVER.WAIT

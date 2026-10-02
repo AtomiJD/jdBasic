@@ -1,0 +1,343 @@
+' cleaner.jdb: messy exports made usable. Dates in several forms to
+' ISO, numbers with decimal comma or point, spaces tidied, IBANs and
+' mail addresses checked, repeated rows dropped, and names that look
+' like the same customer written twice found.
+'
+'   IMPORT CLEANER
+'   DIM spec = {"Date": "date", "Amount": "number"}
+'   DIM result = CLEANER.CLEAN(rows, spec, {"day_first": TRUE})
+'   CLEANER.WRITE_XLSX(result, [], "clean.xlsx")
+
+EXPORT MODULE CLEANER
+
+IMPORT DT, FUZZY, VALID, XLSX
+
+DIM gMonths = ["jan", "feb", "mar", "apr", "may", "jun", "jul", _
+    "aug", "sep", "oct", "nov", "dec"]
+
+DIM gIso$ = "^([0-9]{4})[-/.]([0-9]{1,2})[-/.]([0-9]{1,2})"
+DIM gDmy$ = "^([0-9]{1,2})([./-])([0-9]{1,2})[./-]([0-9]{2,4})$"
+DIM gDayName$ = "^([0-9]{1,2})\.? ([a-z]{3})[a-z]*\.? ([0-9]{4})$"
+DIM gNameDay$ = "^([a-z]{3})[a-z]*\.? ([0-9]{1,2}),? ([0-9]{4})$"
+
+' 1 to 12 for the first three letters of a month name, 0 for others.
+FUNC MonthNo(s$)
+    DIM k = 0
+    FOR k = 0 TO 11
+        IF gMonths[k] = s$ THEN RETURN k + 1
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+FUNC Two$(n)
+    RETURN RIGHT$("0" + STR$(n), 2)
+ENDFUNC
+
+' "YYYY-MM-DD" for parts that make a real date, else "".
+FUNC Ymd$(y, m, d)
+    DIM year = y
+    IF year < 100 THEN year = year + 2000
+    IF m < 1 ORELSE m > 12 ORELSE d < 1 THEN RETURN ""
+    IF d > DT.DAYS_IN(year, m) THEN RETURN ""
+    RETURN STR$(year) + "-" + Two$(m) + "-" + Two$(d)
+ENDFUNC
+
+' A date as YYYY-MM-DD from any of the forms exports use: an Excel
+' serial number, 2026-10-05, 05.10.2026, 5/10/26, 5 Oct 2026 or
+' Oct 5, 2026. day_first reads 05/10 as the 5th of October. Answers
+' "" for a text that is no date.
+EXPORT FUNC ISO_DATE$(raw, day_first)
+    IF TYPEOF(raw) <> "STRING" THEN
+        DIM serial = FLOOR(raw)
+        IF serial < 1 ORELSE serial > 2958465 THEN RETURN ""
+        DIM t = DT.MAKE(1899, 12, 30) + serial * 86400
+        RETURN DT.FMT$(t, "%Y-%m-%d", 0)
+    ENDIF
+    DIM s$ = LCASE$(TRIM$(raw))
+    DIM g = REGEX.FINDALL(gIso$, s$)
+    IF LEN(g) > 0 THEN
+        RETURN Ymd$(VAL(g[0][0]), VAL(g[0][1]), VAL(g[0][2]))
+    ENDIF
+    g = REGEX.FINDALL(gDmy$, s$)
+    IF LEN(g) > 0 THEN
+        DIM a = VAL(g[0][0])
+        DIM b = VAL(g[0][2])
+        DIM y = VAL(g[0][3])
+        IF g[0][1] = "." ORELSE day_first THEN RETURN Ymd$(y, b, a)
+        RETURN Ymd$(y, a, b)
+    ENDIF
+    g = REGEX.FINDALL(gDayName$, s$)
+    IF LEN(g) > 0 THEN
+        DIM mo = MonthNo(g[0][1])
+        RETURN Ymd$(VAL(g[0][2]), mo, VAL(g[0][0]))
+    ENDIF
+    g = REGEX.FINDALL(gNameDay$, s$)
+    IF LEN(g) > 0 THEN
+        DIM mn = MonthNo(g[0][0])
+        RETURN Ymd$(VAL(g[0][2]), mn, VAL(g[0][1]))
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' A number from a text with a decimal comma or point, thousands
+' separators, a currency, a sign in front, a minus behind (as SAP
+' writes it) or brackets around. decimal$ is ",", "." or "auto", which
+' takes the last separator as the decimal one, and a lone one too.
+' Answers NONE for a text that is no number.
+EXPORT FUNC NUMBER(raw, decimal$)
+    IF TYPEOF(raw) <> "STRING" THEN RETURN raw
+    DIM s$ = REPLACE$(TRIM$(raw), CHR$(194) + CHR$(160), "")
+    s$ = REGEX.REPLACE("\s|€|\$|£|EUR|USD|CHF", s$, "")
+    DIM minus = FALSE
+    IF STARTSWITH(s$, "(") ANDALSO ENDSWITH(s$, ")") THEN
+        minus = TRUE
+        s$ = MID$(s$, 1, LEN(s$) - 2)
+    ENDIF
+    IF ENDSWITH(s$, "-") THEN
+        minus = TRUE
+        s$ = LEFT$(s$, LEN(s$) - 1)
+    ENDIF
+    DIM shape = REGEX.FINDALL("^[+-]?[0-9][0-9.,]*$", s$)
+    IF LEN(shape) = 0 THEN RETURN NONE
+    DIM dec$ = decimal$
+    IF dec$ = "auto" THEN
+        dec$ = "."
+        DIM comma = CINT(INSTR(s$, ","))
+        DIM point = CINT(INSTR(s$, "."))
+        DIM last_comma = comma >= 0 ANDALSO comma > point
+        IF last_comma THEN dec$ = ","
+    ENDIF
+    DIM thousands$ = ","
+    IF dec$ = "," THEN thousands$ = "."
+    s$ = REPLACE$(REPLACE$(s$, thousands$, ""), dec$, ".")
+    shape = REGEX.FINDALL("^[+-]?[0-9]+(\.[0-9]+)?$", s$)
+    IF LEN(shape) = 0 THEN RETURN NONE
+    DIM v = VAL(s$)
+    IF minus THEN v = -v
+    RETURN v
+ENDFUNC
+
+' A text with its spaces tidied: none at the ends, one between words.
+EXPORT FUNC TIDY$(raw)
+    DIM s$ = "" + raw
+    RETURN TRIM$(REGEX.REPLACE("\s+", s$, " "))
+ENDFUNC
+
+EXPORT FUNC IS_MAIL(s$)
+    DIM p$ = "^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$"
+    RETURN LEN(REGEX.FINDALL(p$, s$)) > 0
+ENDFUNC
+
+FUNC Answer(v, why$)
+    RETURN {"value": v, "problem": why$}
+ENDFUNC
+
+' One cell cleaned for its kind: a map with "value" and "problem", ""
+' when the cell is fine. Empty cells stay empty, and the kind "keep"
+' leaves the cell as it is.
+EXPORT FUNC CELL(raw, kind$, opts)
+    IF kind$ = "keep" THEN RETURN Answer(raw, "")
+    IF TYPEOF(raw) = "NONE" THEN RETURN Answer("", "")
+    IF TIDY$(raw) = "" THEN RETURN Answer("", "")
+    IF kind$ = "date" THEN
+        DIM d$ = ISO_DATE$(raw, opts{"day_first"})
+        IF d$ = "" THEN RETURN Answer(raw, "not a date")
+        RETURN Answer(d$, "")
+    ENDIF
+    IF kind$ = "number" THEN
+        DIM v = NUMBER(raw, opts{"decimal"})
+        IF TYPEOF(v) = "NONE" THEN RETURN Answer(raw, "not a number")
+        RETURN Answer(v, "")
+    ENDIF
+    DIM t$ = TIDY$(raw)
+    IF kind$ = "iban" THEN
+        IF NOT VALID.ISIBAN(t$) THEN
+            RETURN Answer(t$, "not a valid IBAN")
+        ENDIF
+        RETURN Answer(VALID.IBAN$(t$), "")
+    ENDIF
+    IF kind$ = "mail" THEN
+        IF NOT IS_MAIL(t$) THEN
+            RETURN Answer(t$, "not a mail address")
+        ENDIF
+        RETURN Answer(LCASE$(t$), "")
+    ENDIF
+    RETURN Answer(t$, "")
+ENDFUNC
+
+' A kind for each column guessed from its name: "date" when the name
+' holds dat (Date, Datum), "number" for amount, betrag, price, preis,
+' sum or total, "iban", "mail", and "text" for the rest.
+EXPORT FUNC GUESS_KINDS(header)
+    DIM spec AS MAP
+    DIM c = 0
+    FOR c = 0 TO LEN(header) - 1
+        DIM col$ = "" + header[c]
+        DIM low$ = LCASE$(col$)
+        DIM kind$ = "text"
+        IF INSTR(low$, "dat") >= 0 THEN kind$ = "date"
+        DIM money$ = "amount|betrag|price|preis|sum|total"
+        IF LEN(REGEX.FINDALL(money$, low$)) > 0 THEN kind$ = "number"
+        IF INSTR(low$, "iban") >= 0 THEN kind$ = "iban"
+        IF INSTR(low$, "mail") >= 0 THEN kind$ = "mail"
+        spec{col$} = kind$
+    NEXT c
+    RETURN spec
+ENDFUNC
+
+' A table cleaned: rows[0] holds the column names, spec maps a name to
+' its kind (date, number, text, iban, mail; others stay as they are).
+' Answers "rows" (the clean table), "problems" (rows of row, column,
+' value, reason), "changed" (cells that changed) and "duplicates"
+' (rows dropped as equal to a row before them).
+EXPORT FUNC CLEAN(rows, spec, opts)
+    DIM header = rows[0]
+    DIM out = [header]
+    DIM problems = []
+    DIM seen AS MAP
+    DIM changed = 0
+    DIM dups = 0
+    DIM r = 0
+    DIM c = 0
+    FOR r = 1 TO LEN(rows) - 1
+        DIM src = rows[r]
+        DO WHILE LEN(src) < LEN(header)
+            PUSH(src, "")
+        LOOP
+        DIM clean_row = []
+        DIM key$ = ""
+        FOR c = 0 TO LEN(header) - 1
+            DIM col$ = header[c]
+            DIM kind$ = "keep"
+            IF MAP.EXISTS(spec, col$) THEN kind$ = spec{col$}
+            DIM res = CELL(src[c], kind$, opts)
+            DIM was$ = "" + src[c]
+            DIM now$ = "" + res{"value"}
+            IF res{"problem"} <> "" THEN
+                PUSH(problems, [r + 1, col$, was$, res{"problem"}])
+            ENDIF
+            IF now$ <> was$ THEN changed = changed + 1
+            PUSH(clean_row, res{"value"})
+            key$ = key$ + LCASE$(now$) + "|"
+        NEXT c
+        IF MAP.EXISTS(seen, key$) THEN
+            dups = dups + 1
+        ELSE
+            seen{key$} = TRUE
+            PUSH(out, clean_row)
+        ENDIF
+    NEXT r
+    RETURN {"rows": out, "problems": problems, "changed": changed, _
+        "duplicates": dups}
+ENDFUNC
+
+' Pairs of different names in a column that score at least cutoff
+' (0 to 100) as the same text: rows of [name, other, score].
+EXPORT FUNC SIMILAR(rows, column$, cutoff)
+    DIM header = rows[0]
+    DIM col = -1
+    DIM r = 0
+    FOR r = 0 TO LEN(header) - 1
+        IF header[r] = column$ THEN col = r
+    NEXT r
+    DIM out = []
+    IF col < 0 THEN RETURN out
+    DIM names = []
+    DIM known AS MAP
+    FOR r = 1 TO LEN(rows) - 1
+        DIM one$ = "" + rows[r][col]
+        IF one$ <> "" ANDALSO NOT MAP.EXISTS(known, one$) THEN
+            known{one$} = TRUE
+            PUSH(names, one$)
+        ENDIF
+    NEXT r
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(names) - 1
+        FOR j = i + 1 TO LEN(names) - 1
+            DIM a$ = names[i]
+            DIM b$ = names[j]
+            DIM score = FUZZY.SCORE(a$, b$, "token_sort", 1)
+            IF score >= cutoff THEN PUSH(out, [a$, b$, ROUND(score)])
+        NEXT j
+    NEXT i
+    RETURN out
+ENDFUNC
+
+' The fields of one CSV line, with quoted fields that hold the
+' separator or doubled quotes.
+EXPORT FUNC CSV_FIELDS(line$, sep$)
+    DIM out = []
+    DIM cur$ = ""
+    DIM quoted = FALSE
+    DIM q$ = CHR$(34)
+    DIM chars = -line$
+    DIM k = 0
+    DO WHILE k < LEN(chars)
+        DIM ch$ = chars[k]
+        IF quoted THEN
+            DIM after$ = ""
+            IF k + 1 < LEN(chars) THEN after$ = chars[k + 1]
+            IF ch$ = q$ ANDALSO after$ = q$ THEN
+                cur$ = cur$ + q$
+                k = k + 1
+            ELSEIF ch$ = q$ THEN
+                quoted = FALSE
+            ELSE
+                cur$ = cur$ + ch$
+            ENDIF
+        ELSEIF ch$ = q$ THEN
+            quoted = TRUE
+        ELSEIF ch$ = sep$ THEN
+            PUSH(out, cur$)
+            cur$ = ""
+        ELSE
+            cur$ = cur$ + ch$
+        ENDIF
+        k = k + 1
+    LOOP
+    PUSH(out, cur$)
+    RETURN out
+ENDFUNC
+
+' The rows of a CSV file or of the first sheet of a workbook.
+EXPORT FUNC READ_TABLE(path$, sep$)
+    IF LCASE$(PATH.EXT$(path$)) = ".xlsx" THEN
+        DIM sheets = XLSX.SHEETS(path$)
+        DIM book = XLSX.READ(path$)
+        RETURN book{sheets[0]}
+    ENDIF
+    DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM lines = SPLIT(text$, CHR$(10))
+    DIM rows = []
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM one$ = lines[k]
+        IF TRIM$(one$) <> "" THEN PUSH(rows, CSV_FIELDS(one$, sep$))
+    NEXT k
+    RETURN rows
+ENDFUNC
+
+' A header row followed by the rows of a list.
+FUNC WithHeader(head, rows)
+    DIM out = [head]
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM one = rows[k]
+        PUSH(out, one)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The result as a workbook: Clean, Problems and Similar names.
+EXPORT FUNC WRITE_XLSX(result, similar, path$)
+    DIM wb = XLSX.NEW()
+    DIM clean = XLSX.SHEET(wb, "Clean", result{"rows"})
+    XLSX.FREEZE(clean, 1)
+    DIM head = ["Row", "Column", "Value", "Problem"]
+    DIM prob = WithHeader(head, result{"problems"})
+    XLSX.SHEET(wb, "Problems", prob)
+    DIM sim = WithHeader(["Name", "Looks like", "Score"], similar)
+    XLSX.SHEET(wb, "Similar names", sim)
+    RETURN XLSX.WRITE(path$, wb)
+ENDFUNC

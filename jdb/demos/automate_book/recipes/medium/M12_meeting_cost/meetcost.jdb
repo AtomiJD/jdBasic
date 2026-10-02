@@ -1,0 +1,178 @@
+' meetcost.jdb: the time a calendar spends in meetings. Hours and cost
+' per week and per month, and the meeting series that take the most.
+'
+'   IMPORT MEETCOST, ICAL, DT
+'   DIM cal = ICAL.PARSEFILE("calendar.ics")
+'   DIM list = MEETCOST.MEETINGS(cal, from, upto)
+'   DIM sum = MEETCOST.SUMMARY(list, 2)
+'   PRINT MEETCOST.REPORT$(sum, 60, "EUR", 5)
+
+EXPORT MODULE MEETCOST
+
+IMPORT ICAL, DT, DF, XLSX
+
+' Every meeting in [from, upto) as a map with "summary", "start",
+' "hours" and "people" (the attendees, at least 1). All-day events are
+' left out: they block a day, not a meeting room.
+EXPORT FUNC MEETINGS(cal, from, upto)
+    DIM out = []
+    DIM frame = ICAL.EXPAND(cal, from, upto)
+    DIM k = 0
+    FOR k = 0 TO DF.NROWS(frame) - 1
+        DIM r = DF.ROW(frame, k)
+        DIM ev = r{"event"}
+        IF NOT ICAL.ALLDAY(cal, ev) THEN
+            DIM people = LEN(ICAL.VALUES(cal, ev, "ATTENDEE"))
+            IF people < 1 THEN people = 1
+            DIM hours = (r{"end"} - r{"start"}) / 3600
+            PUSH(out, {"summary": r{"summary"}, "start": r{"start"}, _
+                "hours": hours, "people": people})
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' "2026-W41" for the ISO week of an instant.
+EXPORT FUNC WEEK$(t, offset)
+    DIM w = DT.ISOWEEK(t, offset)
+    RETURN STR$(w{"year"}) + "-W" + RIGHT$("0" + STR$(w{"week"}), 2)
+ENDFUNC
+
+SUB AddTo(totals, key$, hours)
+    IF NOT MAP.EXISTS(totals, key$) THEN totals{key$} = 0
+    totals{key$} = totals{key$} + hours
+ENDSUB
+
+' The totals of a list of meetings: "hours" in all, "person_hours"
+' (hours times the people in the room), "weeks" and "months" (maps of
+' hours), and "series" (a map per title with "hours", "times" and
+' "person_hours").
+EXPORT FUNC SUMMARY(meetings, offset)
+    DIM weeks AS MAP
+    DIM months AS MAP
+    DIM series AS MAP
+    DIM hours = 0
+    DIM person_hours = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(meetings) - 1
+        DIM m = meetings[k]
+        DIM h = m{"hours"}
+        DIM ph = h * m{"people"}
+        hours = hours + h
+        person_hours = person_hours + ph
+        AddTo(weeks, WEEK$(m{"start"}, offset), h)
+        AddTo(months, DT.FMT$(m{"start"}, "%Y-%m", offset), h)
+        DIM title$ = m{"summary"}
+        IF NOT MAP.EXISTS(series, title$) THEN
+            series{title$} = {"hours": 0, "times": 0, _
+                "person_hours": 0}
+        ENDIF
+        DIM s = series{title$}
+        s{"hours"} = s{"hours"} + h
+        s{"times"} = s{"times"} + 1
+        s{"person_hours"} = s{"person_hours"} + ph
+    NEXT k
+    RETURN {"hours": hours, "person_hours": person_hours, _
+        "weeks": weeks, "months": months, "series": series}
+ENDFUNC
+
+' The series titles, the one with the most hours first.
+EXPORT FUNC TOP_SERIES(summary)
+    DIM series = summary{"series"}
+    DIM titles = MAP.KEYS(series)
+    DIM hours = []
+    DIM k = 0
+    FOR k = 0 TO LEN(titles) - 1
+        DIM t$ = titles[k]
+        PUSH(hours, -series{t$}{"hours"})
+    NEXT k
+    DIM order = GRADE(hours)
+    DIM out = []
+    FOR k = 0 TO LEN(order) - 1
+        DIM pick$ = titles[order[k]]
+        PUSH(out, pick$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Hours$(h)
+    RETURN FORMAT$("{:>6.1f} h", h)
+ENDFUNC
+
+FUNC Money$(v, currency$)
+    RETURN FORMAT$("{:.0f}", v) + " " + currency$
+ENDFUNC
+
+' The report as text: the totals, the hours per week and month, and
+' the top_n series with the most hours.
+EXPORT FUNC REPORT$(summary, rate, currency$, top_n)
+    DIM out = []
+    DIM h = summary{"hours"}
+    PUSH(out, "Meetings: " + FORMAT$("{:.1f}", h) + " hours, " + _
+        Money$(h * rate, currency$) + " of your time")
+    PUSH(out, "Everyone in them: " + _
+        FORMAT$("{:.1f}", summary{"person_hours"}) + " hours, " + _
+        Money$(summary{"person_hours"} * rate, currency$))
+    PUSH(out, "")
+    PUSH(out, "By week")
+    DIM weeks = summary{"weeks"}
+    DIM keys = SORT(MAP.KEYS(weeks))
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        PUSH(out, "  " + keys[k] + "  " + Hours$(weeks{keys[k]}))
+    NEXT k
+    PUSH(out, "")
+    PUSH(out, "By month")
+    DIM months = summary{"months"}
+    keys = SORT(MAP.KEYS(months))
+    FOR k = 0 TO LEN(keys) - 1
+        PUSH(out, "  " + keys[k] + "   " + Hours$(months{keys[k]}))
+    NEXT k
+    PUSH(out, "")
+    PUSH(out, "Largest series")
+    DIM top = TOP_SERIES(summary)
+    FOR k = 0 TO LEN(top) - 1
+        IF k < top_n THEN
+            DIM t$ = top[k]
+            DIM s = summary{"series"}{t$}
+            DIM times$ = STR$(s{"times"}) + " times"
+            IF s{"times"} = 1 THEN times$ = "once"
+            PUSH(out, "  " + Hours$(s{"hours"}) + "  " + t$ + _
+                " (" + times$ + ")")
+        ENDIF
+    NEXT k
+    RETURN JOIN(out, CHR$(10))
+ENDFUNC
+
+' The summary as a workbook with the sheets Weeks, Months and Series.
+EXPORT FUNC WRITE_XLSX(summary, rate, path$)
+    DIM wb = XLSX.NEW()
+    DIM rows = [["Week", "Hours", "Cost"]]
+    DIM weeks = summary{"weeks"}
+    DIM keys = SORT(MAP.KEYS(weeks))
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM wh = weeks{keys[k]}
+        PUSH(rows, [keys[k], wh, wh * rate])
+    NEXT k
+    XLSX.SHEET(wb, "Weeks", rows)
+    rows = [["Month", "Hours", "Cost"]]
+    DIM months = summary{"months"}
+    keys = SORT(MAP.KEYS(months))
+    FOR k = 0 TO LEN(keys) - 1
+        DIM mh = months{keys[k]}
+        PUSH(rows, [keys[k], mh, mh * rate])
+    NEXT k
+    XLSX.SHEET(wb, "Months", rows)
+    rows = [["Series", "Times", "Hours", "Person hours", "Cost"]]
+    DIM top = TOP_SERIES(summary)
+    FOR k = 0 TO LEN(top) - 1
+        DIM t$ = top[k]
+        DIM s = summary{"series"}{t$}
+        PUSH(rows, [t$, s{"times"}, s{"hours"}, s{"person_hours"}, _
+            s{"person_hours"} * rate])
+    NEXT k
+    DIM sheet = XLSX.SHEET(wb, "Series", rows)
+    XLSX.COLUMN(sheet, "A", {"width": 30})
+    RETURN XLSX.WRITE(path$, wb)
+ENDFUNC

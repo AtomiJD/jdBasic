@@ -1,0 +1,137 @@
+' merger.jdb: the monthly sheets of a team in one workbook. Every
+' Excel file in a folder is one person's report; the rows are added up
+' by their first column into a sheet of totals, and each report is
+' kept on a sheet of its own.
+'
+'   IMPORT MERGER
+'   DIM reports = MERGER.REPORTS("reports/2026-10", "")
+'   DIM totals = MERGER.TOTALS(reports)
+'   MERGER.WRITE("team.xlsx", reports, totals)
+
+EXPORT MODULE MERGER
+
+IMPORT XLSX
+
+' The reports in a folder, sorted by file name: maps with "person"
+' (the file name without .xlsx) and "rows" (the sheet tab$, or the
+' first sheet when tab$ is "").
+EXPORT FUNC REPORTS(folder$, tab$)
+    DIM out = []
+    DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*.xlsx")))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file$ = names[k]
+        IF LEFT$(file$, 2) <> "~$" THEN
+            DIM path$ = PATH.JOIN$(folder$, file$)
+            DIM book = XLSX.READ(path$)
+            DIM sheet$ = tab$
+            IF sheet$ = "" THEN sheet$ = XLSX.SHEETS(path$)[0]
+            IF NOT MAP.EXISTS(book, sheet$) THEN
+                THROW file$ + " has no sheet " + sheet$
+            ENDIF
+            DIM who$ = LEFT$(file$, LEN(file$) - 5)
+            PUSH(out, {"person": who$, "rows": book{sheet$}})
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The names of the team that have no report in the folder.
+EXPORT FUNC MISSING(reports, team)
+    DIM have = []
+    DIM k = 0
+    FOR k = 0 TO LEN(reports) - 1
+        PUSH(have, LCASE$(reports[k]{"person"}))
+    NEXT k
+    DIM out = []
+    FOR k = 0 TO LEN(team) - 1
+        DIM who$ = team[k]
+        IF NOT (LCASE$(who$) IN have) THEN PUSH(out, who$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The reports whose header row differs from the first one's.
+EXPORT FUNC ODD_HEADERS(reports)
+    DIM out = []
+    IF LEN(reports) = 0 THEN RETURN out
+    DIM first$ = JOIN(reports[0]{"rows"}[0], "|")
+    DIM k = 0
+    FOR k = 1 TO LEN(reports) - 1
+        DIM head$ = JOIN(reports[k]{"rows"}[0], "|")
+        IF LCASE$(head$) <> LCASE$(first$) THEN
+            PUSH(out, reports[k]{"person"})
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The totals: the header of the first report, then one row per value
+' of the first column in the order it first appears. Number cells are
+' added up, any other cell keeps the first value seen.
+EXPORT FUNC TOTALS(reports)
+    IF LEN(reports) = 0 THEN RETURN []
+    DIM header = reports[0]{"rows"}[0]
+    DIM n_cols = LEN(header)
+    DIM out = [header]
+    DIM where AS MAP
+    DIM k = 0
+    DIM r = 0
+    DIM c = 0
+    FOR k = 0 TO LEN(reports) - 1
+        DIM rows = reports[k]{"rows"}
+        FOR r = 1 TO LEN(rows) - 1
+            DIM row = rows[r]
+            DIM key$ = TRIM$("" + row[0])
+            IF key$ <> "" THEN
+                IF NOT MAP.EXISTS(where, key$) THEN
+                    where{key$} = LEN(out)
+                    DIM fresh = [key$]
+                    FOR c = 1 TO n_cols - 1
+                        PUSH(fresh, "")
+                    NEXT c
+                    PUSH(out, fresh)
+                ENDIF
+                DIM target = out[where{key$}]
+                FOR c = 1 TO n_cols - 1
+                    IF c < LEN(row) THEN
+                        DIM cell = row[c]
+                        DIM have = target[c]
+                        IF TYPEOF(cell) <> "STRING" THEN
+                            IF TYPEOF(have) = "STRING" THEN have = 0
+                            target[c] = have + cell
+                        ELSEIF TYPEOF(have) = "STRING" THEN
+                            IF have = "" THEN target[c] = cell
+                        ENDIF
+                    ENDIF
+                NEXT c
+            ENDIF
+        NEXT r
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A sheet name Excel accepts: at most 31 characters, none of
+' : \ / ? * [ ].
+EXPORT FUNC SHEET_NAME$(name$)
+    DIM t$ = REGEX.REPLACE("[:\\/?*\[\]]", name$, "_")
+    RETURN LEFT$(t$, 31)
+ENDFUNC
+
+' Writes the workbook: "Total" first, then one sheet per report.
+' Answers the number of sheets.
+EXPORT FUNC WRITE(path$, reports, totals)
+    DIM wb = XLSX.NEW()
+    DIM s = XLSX.SHEET(wb, "Total", totals)
+    XLSX.COLUMN(s, "A", {"width": 24})
+    XLSX.FREEZE(s, 1)
+    DIM k = 0
+    FOR k = 0 TO LEN(reports) - 1
+        DIM rep = reports[k]
+        DIM tab$ = SHEET_NAME$(rep{"person"})
+        DIM ps = XLSX.SHEET(wb, tab$, rep{"rows"})
+        XLSX.COLUMN(ps, "A", {"width": 24})
+    NEXT k
+    XLSX.WRITE(path$, wb)
+    RETURN LEN(reports) + 1
+ENDFUNC

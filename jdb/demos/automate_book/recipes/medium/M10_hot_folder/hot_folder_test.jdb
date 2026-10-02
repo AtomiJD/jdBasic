@@ -1,0 +1,86 @@
+' Hot Folder: file patterns, rules, new names, the lock file, CSV
+' fields with quotes, and a whole run on a temporary folder.
+
+IMPORT TESTKIT, HOTFOLDER, XLSX
+
+DIM base$ = "recipes/medium/M10_hot_folder/"
+IF NOT FILE.EXISTS(base$ + "orders.csv") THEN base$ = ""
+DIM Q$ = CHR$(34)
+
+TESTKIT.SUITE("patterns and rules")
+TESTKIT.EQ(HOTFOLDER.MATCHES("Orders.CSV", "*.csv"), TRUE, "a star and any case")
+TESTKIT.EQ(HOTFOLDER.MATCHES("orders.csv.bak", "*.csv"), FALSE, "the whole name must fit")
+TESTKIT.EQ(HOTFOLDER.MATCHES("invoice_07.pdf", "invoice_??.pdf"), TRUE, "a question mark is one character")
+TESTKIT.EQ(HOTFOLDER.MATCHES("invoice_7.pdf", "invoice_??.pdf"), FALSE, "one character too few")
+TESTKIT.EQ(HOTFOLDER.MATCHES("report (2).txt", "report (2).txt"), TRUE, "brackets and dots are plain characters")
+DIM rules = HOTFOLDER.DEFAULT_RULES("C:/Done", "{date} {name}")
+DIM r1 = HOTFOLDER.RULE_FOR(rules, "a.csv")
+TESTKIT.EQ(r1{"convert"}, "xlsx", "CSV files are converted")
+DIM r2 = HOTFOLDER.RULE_FOR(rules, "scan.pdf")
+TESTKIT.EQ(r2{"match"}, "*", "other files take the last rule")
+DIM r3 = HOTFOLDER.RULE_FOR([r1], "scan.pdf")
+TESTKIT.EQ(LEN(MAP.KEYS(r3)), 0, "no rule fits")
+
+TESTKIT.SUITE("new names")
+DIM t$ = "2026-10-05 09:14:03"
+TESTKIT.EQ(HOTFOLDER.NEW_NAME$("{date} {name}", "orders.csv", t$, ".xlsx"), "2026-10-05 orders.xlsx", "date and name")
+TESTKIT.EQ(HOTFOLDER.NEW_NAME$("{name}_{date}_{time}", "scan.pdf", t$, ".pdf"), "scan_2026-10-05_09-14.pdf", "with the time")
+TESTKIT.EQ(HOTFOLDER.NEW_NAME$("", "scan.pdf", t$, ".pdf"), "scan.pdf", "no pattern keeps the name")
+
+TESTKIT.SUITE("CSV fields")
+DIM f = HOTFOLDER.CSV_FIELDS("4711;" + Q$ + "Weber; Sohn" + Q$ + ";1234.5", ";")
+TESTKIT.EQ(LEN(f), 3, "three fields")
+TESTKIT.EQ(f[1], "Weber; Sohn", "a quoted separator")
+TESTKIT.EQ(f[2], 1234.5, "a number becomes a number")
+DIM g = HOTFOLDER.CSV_FIELDS(Q$ + "say " + Q$ + Q$ + "hi" + Q$ + Q$ + Q$ + ";", ";")
+TESTKIT.EQ(g[0], "say " + Q$ + "hi" + Q$, "doubled quotes")
+TESTKIT.EQ(g[1], "", "an empty last field")
+
+TESTKIT.SUITE("the lock file")
+DIM tmp$ = MKTEMP$("hotfolder")
+MKDIR tmp$
+DIM lock$ = PATH.JOIN$(tmp$, ".hot_folder.lock")
+DIM t0 = CDATE("2026-10-05 09:00:00")
+TESTKIT.EQ(HOTFOLDER.LOCK(lock$, t0, 30), TRUE, "the first run gets the lock")
+TESTKIT.EQ(HOTFOLDER.LOCK(lock$, CDATE("2026-10-05 09:05:00"), 30), FALSE, "a second run five minutes later waits")
+TESTKIT.EQ(HOTFOLDER.LOCK(lock$, CDATE("2026-10-05 09:40:00"), 30), TRUE, "a lock older than 30 minutes is taken over")
+HOTFOLDER.RELEASE(lock$)
+TESTKIT.EQ(FILE.EXISTS(lock$), FALSE, "unlock removes the file")
+
+TESTKIT.SUITE("a whole run")
+DIM inbox$ = PATH.JOIN$(tmp$, "inbox")
+DIM done$ = PATH.JOIN$(tmp$, "done")
+MKDIR inbox$
+FILE.COPY(base$ + "orders.csv", PATH.JOIN$(inbox$, "orders.csv"))
+TXTWRITER PATH.JOIN$(inbox$, "scan.pdf"), "pdf"
+TXTWRITER lock$, "2026-10-05 09:00:00"
+DIM rules2 = HOTFOLDER.DEFAULT_RULES(done$, "")
+DIM early = HOTFOLDER.PLAN(inbox$, rules2, 60, CDATE("2000-01-01 00:00:00"))
+TESTKIT.EQ(LEN(early), 0, "files that just arrived wait")
+DIM jobs = HOTFOLDER.PLAN(inbox$, rules2, 60, CDATE("2099-01-01 00:00:00"))
+TESTKIT.EQ(LEN(jobs), 2, "two settled files")
+DIM log$ = PATH.JOIN$(done$, "hot_folder.log")
+DIM lines = HOTFOLDER.APPLY(jobs, ";", log$, t0)
+TESTKIT.EQ(LEN(lines), 2, "a log line per file")
+DIM l0$ = lines[0]
+TESTKIT.EQ(l0$, "2026-10-05 09:00  orders.csv  made orders.xlsx (3 rows)", "the conversion is logged")
+DIM book = XLSX.READ(PATH.JOIN$(done$, "orders.xlsx"))
+DIM sheet = book{"Data"}
+DIM row1 = sheet[1]
+TESTKIT.EQ(row1[1], "Weber; Sohn & Co", "the workbook keeps the quoted name")
+TESTKIT.EQ(FILE.EXISTS(PATH.JOIN$(done$, "originals", "orders.csv")), TRUE, "the CSV file is kept in originals")
+TESTKIT.EQ(FILE.EXISTS(PATH.JOIN$(done$, "scan.pdf")), TRUE, "the other file is moved")
+TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(inbox$, "*"))), 0, "the inbox is empty")
+DIM logged = SPLIT(TRIM$(TXTREADER$(log$)), CHR$(10))
+TESTKIT.EQ(LEN(logged), 2, "the log file has both lines")
+
+KILL PATH.JOIN$(done$, "originals", "orders.csv")
+RMDIR PATH.JOIN$(done$, "originals")
+KILL PATH.JOIN$(done$, "orders.xlsx")
+KILL PATH.JOIN$(done$, "scan.pdf")
+KILL log$
+KILL lock$
+RMDIR done$
+RMDIR inbox$
+RMDIR tmp$
+TESTKIT.REPORT()

@@ -19,7 +19,8 @@ with a spine as wide as the page count) and writes an EPUB 3 e-book.
 ```
 book.toml          title, authors, page size, chapter order
 manuscript/        the chapters in Markdown, img/ for their figures
-recipes/           the programs: lib/ shared modules, easy/ medium/ expert/,
+recipes/           the programs: lib/ shared modules (workconf, outbox),
+                   easy/ medium/ expert/, template/ for your own recipe,
                    each with recipe.toml for the wizard
 wizard/            setup wizard: wizard.jdb (the work), setup_console.jdb,
                    setup_wizard.jdb (window, FORMS build)

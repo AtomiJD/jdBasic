@@ -1,0 +1,134 @@
+' shifts.jdb: the team's shifts and absences from a sheet, as a
+' calendar everyone can subscribe to, and the days on which too many
+' people are away.
+'
+'   IMPORT SHIFTS
+'   DIM plan = SHIFTS.ENTRIES(XLSX.READ("plan.xlsx"){"Plan"})
+'   ICAL.WRITEFILE(SHIFTS.CALENDAR(plan, "Team"), "team.ics")
+'   PRINT SHIFTS.CLASHES(plan, ["Vacation", "Sick"], 2)
+
+EXPORT MODULE SHIFTS
+
+IMPORT DT, ICAL
+
+' A day as YYYY-MM-DD from a cell: an Excel date number (day 1 is
+' 1899-12-31), or text written 2026-10-19 or 19.10.2026.
+' Answers "" for a cell that holds no date.
+EXPORT FUNC DAY$(cell)
+    IF TYPEOF(cell) <> "STRING" THEN
+        IF cell < 1 THEN RETURN ""
+        DIM base = DT.PARSE("1899-12-30")
+        RETURN DT.FMT$(base + FLOOR(cell) * 86400, "%Y-%m-%d", 0)
+    ENDIF
+    DIM t$ = TRIM$(cell)
+    DIM iso = REGEX.FINDALL("^\d{4}-\d{2}-\d{2}$", t$)
+    IF LEN(iso) > 0 THEN RETURN t$
+    DIM german = REGEX.FINDALL("^\d{1,2}\.\d{1,2}\.\d{4}$", t$)
+    IF LEN(german) > 0 THEN
+        DIM p = SPLIT(t$, ".")
+        DIM dd$ = RIGHT$("0" + p[0], 2)
+        DIM mm$ = RIGHT$("0" + p[1], 2)
+        RETURN p[2] + "-" + mm$ + "-" + dd$
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+FUNC Cell$(row, i)
+    IF i >= LEN(row) THEN RETURN ""
+    RETURN TRIM$("" + row[i])
+ENDFUNC
+
+' The rows of the sheet below its header (Name, Kind, From, To,
+' Note) as maps with "name", "kind", "from", "to", "note" and "row"
+' (the line in the sheet). Rows without a name or a start are left
+' out; a row without an end lasts one day.
+EXPORT FUNC ENTRIES(rows)
+    DIM out = []
+    DIM k = 0
+    FOR k = 1 TO LEN(rows) - 1
+        DIM r = rows[k]
+        DIM who$ = Cell$(r, 0)
+        DIM first$ = ""
+        IF LEN(r) > 2 THEN first$ = DAY$(r[2])
+        IF who$ <> "" ANDALSO first$ <> "" THEN
+            DIM last$ = first$
+            IF LEN(r) > 3 THEN
+                DIM d$ = DAY$(r[3])
+                IF d$ <> "" THEN last$ = d$
+            ENDIF
+            PUSH(out, {"name": who$, "kind": Cell$(r, 1), _
+                "from": first$, "to": last$, _
+                "note": Cell$(r, 4), "row": k + 1})
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The number of days from the first to the last day, both counted.
+EXPORT FUNC DAYS(e)
+    DIM a = DT.PARSE(e{"from"})
+    DIM b = DT.PARSE(e{"to"})
+    RETURN DT.DIFF(a, b, "days") + 1
+ENDFUNC
+
+' A UID that stays the same for the same entry on every build, so a
+' subscribed calendar updates instead of doubling its events.
+FUNC Uid$(e)
+    DIM key$ = e{"name"} + "|" + e{"kind"} + "|" + e{"from"}
+    RETURN LEFT$(CODEC.SHA256$(key$), 20) + "@team-plan"
+ENDFUNC
+
+' The calendar of all entries: one all-day event each, titled
+' "Name: Kind".
+EXPORT FUNC CALENDAR(entries, title$)
+    DIM cal = ICAL.NEW()
+    ICAL.SETPROP(cal, cal, "X-WR-CALNAME", title$)
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM e = entries[k]
+        DIM summary$ = e{"name"} + ": " + e{"kind"}
+        DIM first = DT.PARSE(e{"from"})
+        DIM ev = ICAL.ADDALLDAY(cal, summary$, first, DAYS(e))
+        ICAL.SETPROP(cal, ev, "UID", Uid$(e))
+        IF e{"note"} <> "" THEN
+            ICAL.SETTEXT(cal, ev, "DESCRIPTION", e{"note"})
+        ENDIF
+    NEXT k
+    RETURN cal
+ENDFUNC
+
+' The days on which more than max_away people are away, an entry of
+' one of the kinds in away_kinds meaning away: maps with "day" and
+' "names", sorted by day.
+EXPORT FUNC CLASHES(entries, away_kinds, max_away)
+    DIM away AS MAP
+    DIM low = []
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(away_kinds) - 1
+        PUSH(low, LCASE$(away_kinds[k]))
+    NEXT k
+    FOR k = 0 TO LEN(entries) - 1
+        DIM e = entries[k]
+        IF LCASE$(e{"kind"}) IN low THEN
+            DIM t = DT.PARSE(e{"from"})
+            FOR j = 1 TO DAYS(e)
+                DIM day$ = DT.FMT$(t, "%Y-%m-%d", 0)
+                DIM who = []
+                IF MAP.EXISTS(away, day$) THEN who = away{day$}
+                IF NOT (e{"name"} IN who) THEN PUSH(who, e{"name"})
+                away{day$} = who
+                t = t + 86400
+            NEXT j
+        ENDIF
+    NEXT k
+    DIM out = []
+    DIM sorted_days = SORT(MAP.KEYS(away))
+    FOR k = 0 TO LEN(sorted_days) - 1
+        DIM names = away{sorted_days[k]}
+        IF LEN(names) > max_away THEN
+            PUSH(out, {"day": sorted_days[k], "names": names})
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC

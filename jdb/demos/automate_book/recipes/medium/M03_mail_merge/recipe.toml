@@ -1,0 +1,40 @@
+# What the setup wizard knows about this recipe.
+
+id = "M03"
+name = "Mail Merge"
+program = "mail_merge.jdb"
+summary = "Personal letters from a Word template and a contact list"
+minutes_per_week = 5
+schedule = ""
+section = "mail_merge"
+modules = ["letters.jdb"]
+
+[[setting]]
+key = "template"
+label = "Word template with {{placeholders}}"
+kind = "file"
+default = "~/Documents/AutomateWork/templates/letter.docx"
+
+[[setting]]
+key = "contacts"
+label = "Excel file with the contacts"
+kind = "file"
+default = "~/Documents/AutomateWork/contacts.xlsx"
+
+[[setting]]
+key = "folder"
+label = "Folder for the letters"
+kind = "folder"
+default = "~/Documents/AutomateWork/letters"
+
+[[setting]]
+key = "subject"
+label = "Subject of the mails"
+kind = "text"
+default = "Invitation to our customer day"
+
+[[setting]]
+key = "mail"
+label = "Put a mail into the outbox for each letter"
+kind = "bool"
+default = true

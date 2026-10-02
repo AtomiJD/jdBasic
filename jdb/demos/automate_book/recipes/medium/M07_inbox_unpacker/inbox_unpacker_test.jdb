@@ -1,0 +1,96 @@
+' Inbox Unpacker: safe names, the folder of a mail, the plan for three
+' saved mails with an inline picture and a doubled file name, and the
+' attachments saved byte for byte. Nothing is sent.
+
+IMPORT TESTKIT, UNPACKER, MAIL
+
+DIM folder$ = MKTEMP$("unpack")
+DIM inbox$ = PATH.JOIN$(folder$, "inbox")
+DIM target$ = PATH.JOIN$(folder$, "files")
+DIM done$ = PATH.JOIN$(inbox$, "done")
+MKDIR inbox$
+DIM pdf$ = "%PDF-1.4" + CHR$(0) + CHR$(200) + "end"
+DIM logo$ = PATH.JOIN$(folder$, "logo.png")
+BINWRITER logo$, "PNGDATA"
+
+DIM a = MAIL.MESSAGE("Anna Miller <anna@miller.example>", _
+    "jonas@example.com", "Invoice: October/2026 *final*")
+MAIL.PLAIN(a, "Please find the invoice attached.")
+MAIL.SETDATE(a, "Fri, 23 Oct 2026 12:00:00 +0000")
+MAIL.ATTACHDATA(a, "invoice.pdf", pdf$)
+MAIL.INLINE(a, logo$, "logo")
+MAIL.WRITEEML(a, PATH.JOIN$(inbox$, "1.eml"))
+
+DIM b = MAIL.MESSAGE("bob@supplier.example", "jonas@example.com", _
+    "Prices")
+MAIL.PLAIN(b, "Two lists.")
+MAIL.SETDATE(b, "Mon, 26 Oct 2026 12:00:00 +0000")
+MAIL.ATTACHDATA(b, "list.csv", "a;b" + CHR$(10))
+MAIL.ATTACHDATA(b, "list.csv", "c;d" + CHR$(10))
+MAIL.WRITEEML(b, PATH.JOIN$(inbox$, "2.eml"))
+
+DIM c = MAIL.MESSAGE("Anna Miller <anna@miller.example>", _
+    "jonas@example.com", "")
+MAIL.PLAIN(c, "No attachment here.")
+MAIL.SETDATE(c, "someday")
+MAIL.WRITEEML(c, PATH.JOIN$(inbox$, "3.eml"))
+
+TESTKIT.SUITE("names")
+TESTKIT.EQ(UNPACKER.SAFE$("Invoice: Oct/2026 *final*?", 60), _
+    "Invoice Oct 2026 final", "forbidden characters go")
+TESTKIT.EQ(UNPACKER.SAFE$("Müllerstraße", 5), "Mülle", _
+    "cut by characters")
+TESTKIT.EQ(UNPACKER.SAFE$("notes...", 60), "notes", "no dot at the end")
+TESTKIT.EQ(UNPACKER.SAFE$("***", 60), "unnamed", "never empty")
+DIM pa = MAIL.PARSEFILE(PATH.JOIN$(inbox$, "1.eml"))
+DIM pb = MAIL.PARSEFILE(PATH.JOIN$(inbox$, "2.eml"))
+DIM pc = MAIL.PARSEFILE(PATH.JOIN$(inbox$, "3.eml"))
+TESTKIT.EQ(UNPACKER.SENDER$(pa), "Anna Miller", "the sender's name")
+TESTKIT.EQ(UNPACKER.SENDER$(pb), "bob@supplier.example", _
+    "or the address")
+TESTKIT.EQ(UNPACKER.DAY$(pa, 0), "2026-10-23", "the day")
+TESTKIT.EQ(UNPACKER.DAY$(pc, 0), "undated", "no readable date")
+DIM want$ = PATH.JOIN$(target$, "Anna Miller", _
+    "2026-10-23 Invoice October 2026 final")
+TESTKIT.EQ(UNPACKER.FOLDER$(pa, target$, 0), want$, "the folder")
+
+TESTKIT.SUITE("the plan")
+DIM plan = UNPACKER.PLAN(inbox$, target$, FALSE)
+DIM files = plan{"files"}
+TESTKIT.EQ(LEN(plan{"mails"}), 3, "every mail looked at")
+TESTKIT.EQ(LEN(files), 3, "the inline picture left out")
+TESTKIT.EQ(PATH.BASENAME$(files[0]{"to"}), "invoice.pdf", "its name")
+TESTKIT.EQ(files[1]{"short"}, PATH.JOIN$("bob@supplier.example", _
+    "2026-10-26 Prices", "list.csv"), "the path below the target")
+TESTKIT.EQ(PATH.BASENAME$(files[2]{"to"}), "list (2).csv", _
+    "a doubled name gets a number")
+DIM all = UNPACKER.PLAN(inbox$, target$, TRUE)
+TESTKIT.EQ(LEN(all{"files"}), 4, "keep_inline keeps it")
+
+TESTKIT.SUITE("saving")
+TESTKIT.EQ(UNPACKER.APPLY(plan, TRUE, done$), 3, "a dry run counts")
+TESTKIT.ISFALSE(FILE.EXISTS(files[0]{"to"}), "and saves nothing")
+TESTKIT.EQ(UNPACKER.APPLY(plan, FALSE, done$), 3, "three saved")
+TESTKIT.EQ(BINREADER$(files[0]{"to"}), pdf$, "byte for byte")
+TESTKIT.EQ(TXTREADER$(files[2]{"to"}), "c;d" + CHR$(10), _
+    "the second list")
+TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(inbox$, "*.eml"))), 0, "the inbox empty")
+TESTKIT.EQ(LEN(DIR$(PATH.JOIN$(done$, "*.eml"))), 3, "the mails done")
+
+DIM k = 0
+FOR k = 0 TO LEN(files) - 1
+    KILL files[k]{"to"}
+NEXT k
+RMDIR PATH.DIRNAME$(files[0]{"to"})
+RMDIR PATH.DIRNAME$(files[1]{"to"})
+RMDIR PATH.JOIN$(target$, "Anna Miller")
+RMDIR PATH.JOIN$(target$, "bob@supplier.example")
+RMDIR target$
+KILL PATH.JOIN$(done$, "1.eml")
+KILL PATH.JOIN$(done$, "2.eml")
+KILL PATH.JOIN$(done$, "3.eml")
+RMDIR done$
+RMDIR inbox$
+KILL logo$
+RMDIR folder$
+TESTKIT.REPORT()

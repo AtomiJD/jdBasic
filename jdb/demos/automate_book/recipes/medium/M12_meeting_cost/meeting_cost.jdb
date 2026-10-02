@@ -1,0 +1,36 @@
+' Meeting Cost Meter: how many hours of the last weeks went into
+' meetings, what they cost, and which series take the most. The
+' settings are the [meeting_cost] part of work.conf.
+'
+'   jdbasic meeting_cost.jdb            report and workbook
+'   jdbasic meeting_cost.jdb --dry-run  the report only
+
+IMPORT WORKCONF, MEETCOST, ICAL, DT
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "meeting_cost."
+DIM cal_file$ = WORKCONF.FOLDER$(cfg, key$ + "calendar", "")
+DIM rate = WORKCONF.VALUE(cfg, key$ + "hourly_rate", 60)
+DIM currency$ = WORKCONF.VALUE(cfg, key$ + "currency", "EUR")
+DIM weeks_back = WORKCONF.VALUE(cfg, key$ + "weeks", 4)
+DIM top_n = WORKCONF.VALUE(cfg, key$ + "top", 5)
+DIM book$ = "~/Documents/AutomateWork/meeting_cost.xlsx"
+DIM out$ = WORKCONF.FOLDER$(cfg, key$ + "workbook", book$)
+IF cal_file$ = "" THEN THROW "Set meeting_cost.calendar first."
+
+DIM offset = DT.LOCAL_OFFSET()
+DIM now = DT.NOW()
+DIM back$ = "-" + STR$(weeks_back) + " weeks"
+DIM from = DT.STARTOF(DT.ADD(now, back$, offset), "week", offset)
+DIM cal = ICAL.PARSEFILE(cal_file$)
+DIM meetings = MEETCOST.MEETINGS(cal, from, now)
+DIM sum = MEETCOST.SUMMARY(meetings, offset)
+
+PRINT "Since "; DT.FMT$(from, "%Y-%m-%d", offset)
+PRINT MEETCOST.REPORT$(sum, rate, currency$, top_n)
+IF NOT WORKCONF.FLAG("dry-run") THEN
+    MKDIR PATH.DIRNAME$(out$)
+    MEETCOST.WRITE_XLSX(sum, rate, out$)
+    PRINT
+    PRINT "Workbook: "; out$
+ENDIF

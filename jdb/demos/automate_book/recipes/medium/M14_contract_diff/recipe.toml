@@ -1,0 +1,22 @@
+# What the setup wizard knows about this recipe.
+
+id = "M14"
+name = "Contract Diff"
+program = "contract_diff.jdb"
+summary = "What changed between two versions of a Word document, as a report"
+minutes_per_week = 30
+schedule = ""
+section = "contract_diff"
+modules = ["contractdiff.jdb"]
+
+[[setting]]
+key = "reports"
+label = "Folder for the change reports"
+kind = "folder"
+default = "~/Documents/AutomateWork/reports"
+
+[[setting]]
+key = "similar_percent"
+label = "How alike (in percent) a changed paragraph must stay"
+kind = "number"
+default = 60

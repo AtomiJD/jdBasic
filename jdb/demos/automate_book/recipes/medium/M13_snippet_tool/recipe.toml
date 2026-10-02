@@ -1,0 +1,16 @@
+# What the setup wizard knows about this recipe.
+
+id = "M13"
+name = "Snippet Tool"
+program = "snippet_tool.jdb"
+summary = "The text blocks you type every day, filled in on the command line"
+minutes_per_week = 20
+schedule = ""
+section = "snippet_tool"
+modules = ["snippets.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder for the snippets"
+kind = "folder"
+default = "~/Documents/AutomateWork/snippets"

@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "M09"
+name = "Log Detective"
+program = "log_detective.jdb"
+summary = "Counts errors and warnings per hour in log files, with a chart"
+minutes_per_week = 30
+schedule = "weekdays 07:45"
+section = "log_detective"
+modules = ["logscan.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder with the log files"
+kind = "folder"
+default = ""
+
+[[setting]]
+key = "pattern"
+label = "Which files (such as *.log)"
+kind = "text"
+default = "*.log"
+
+[[setting]]
+key = "top"
+label = "How many frequent errors to list"
+kind = "number"
+default = 5

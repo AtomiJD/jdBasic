@@ -1,0 +1,44 @@
+' invoice_pdf.jdb: an invoice of the INVOICES module as an A4 PDF
+' page.
+'
+'   IMPORT INVOICE_PDF
+'   INVOICE_PDF.WRITE(inv, "RE-2026-0007", company, "x.pdf")
+
+EXPORT MODULE INVOICE_PDF
+
+IMPORT PDFGEN, INVOICES
+
+' The invoice as a PDF page: company, customer, number and date, the
+' table and the totals. company holds "name", "address" and "date".
+EXPORT SUB WRITE(inv, number$, company, path$)
+    DIM pdf = PDFGEN.DOC()
+    PDFGEN.SETINFO(pdf, "Invoice " + number$, company{"name"})
+    PDFGEN.ADDPAGE(pdf)
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 14)
+    PDFGEN.TEXTAT(pdf, 20, 25, company{"name"})
+    PDFGEN.USEFONT(pdf, "helvetica", "", 9)
+    PDFGEN.TEXTAT(pdf, 20, 31, company{"address"})
+    PDFGEN.USEFONT(pdf, "helvetica", "", 11)
+    PDFGEN.TEXTAT(pdf, 20, 52, inv{"customer"})
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+    PDFGEN.TEXTAT(pdf, 20, 72, "Invoice " + number$)
+    PDFGEN.USEFONT(pdf, "helvetica", "", 10)
+    PDFGEN.TEXTAT(pdf, 20, 79, "Date: " + company{"date"})
+    PDFGEN.SETXY(pdf, 20, 88)
+    DIM rows = INVOICES.TABLE_ROWS(inv)
+    DIM opts = {"headers": rows[0], "widths": [0, 22, 32, 32], _
+        "align": ["L", "R", "R", "R"]}
+    PDFGEN.TABLE(pdf, DROP(1, rows), opts)
+    PDFGEN.LN(pdf, 4)
+    DIM totals = INVOICES.TOTAL_LINES(inv)
+    DIM k = 0
+    FOR k = 0 TO LEN(totals) - 1
+        IF k = 2 THEN PDFGEN.USEFONT(pdf, "helvetica", "B", 10)
+        PDFGEN.SETXY(pdf, 118, PDFGEN.POSY(pdf))
+        PDFGEN.CELL(pdf, 40, 6, totals[k][0])
+        PDFGEN.CELL(pdf, 32, 6, totals[k][1], "R")
+        PDFGEN.LN(pdf, 6)
+    NEXT k
+    PDFGEN.WRITEFILE(pdf, path$)
+ENDSUB
+

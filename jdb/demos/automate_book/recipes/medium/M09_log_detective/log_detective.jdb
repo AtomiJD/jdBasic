@@ -1,0 +1,42 @@
+' Log Detective: reads the log files of a folder, counts errors and
+' warnings per hour, finds the errors that come again and again, and
+' writes a report and a chart. The settings are the [log_detective]
+' part of work.conf.
+'
+'   jdbasic log_detective.jdb            report, text file and chart
+'   jdbasic log_detective.jdb --dry-run  the report only
+
+IMPORT WORKCONF, LOGSCAN
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "log_detective."
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", "")
+DIM pattern$ = WORKCONF.VALUE(cfg, key$ + "pattern", "*.log")
+DIM top_n = WORKCONF.VALUE(cfg, key$ + "top", 5)
+DIM work$ = "~/Documents/AutomateWork/logs"
+DIM out_dir$ = WORKCONF.FOLDER$(cfg, key$ + "out_folder", work$)
+IF folder$ = "" THEN THROW "Set log_detective.folder first."
+
+DIM stats = LOGSCAN.NEW()
+DIM files = SORT(DIR$(PATH.JOIN$(folder$, pattern$)))
+DIM k = 0
+FOR k = 0 TO LEN(files) - 1
+    DIM path$ = PATH.JOIN$(folder$, files[k])
+    IF NOT FILE.ISDIR(path$) THEN
+        LOGSCAN.SCAN_TEXT(stats, TXTREADER$(path$))
+    ENDIF
+NEXT k
+
+DIM report$ = STR$(LEN(files)) + " files in " + folder$ + CHR$(10)
+report$ = report$ + LOGSCAN.REPORT$(stats, top_n)
+PRINT report$
+IF NOT WORKCONF.FLAG("dry-run") THEN
+    MKDIR out_dir$
+    DIM text_file$ = PATH.JOIN$(out_dir$, "log_report.txt")
+    DIM chart_file$ = PATH.JOIN$(out_dir$, "log_hours.svg")
+    TXTWRITER text_file$, report$ + CHR$(10)
+    LOGSCAN.CHART(stats, chart_file$)
+    PRINT
+    PRINT "Report: "; text_file$
+    PRINT "Chart:  "; chart_file$
+ENDIF

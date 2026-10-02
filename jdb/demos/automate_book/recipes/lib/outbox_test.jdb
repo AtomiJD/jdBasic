@@ -1,0 +1,50 @@
+' OUTBOX: a message goes into the outbox as an .eml file, the sender and
+' server come from [mail], the curl arguments reach To and Cc, and a
+' server that does not answer leaves the message where it is.
+
+IMPORT TESTKIT, OUTBOX, MAIL, CONF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("outboxtest")
+DIM box$ = REPLACE$(PATH.JOIN$(folder$, "outbox"), "\", "/")
+DIM toml$ = "[user]" + LF$ + "name = " + Q$ + "Jonas Example" + Q$ + LF$
+toml$ = toml$ + "email = " + Q$ + "jonas@example.com" + Q$ + LF$
+toml$ = toml$ + "[mail]" + LF$ + "server = " + Q$ + "smtp://127.0.0.1:1" + Q$ + LF$
+toml$ = toml$ + "user = " + Q$ + "jonas" + Q$ + LF$
+toml$ = toml$ + "outbox = " + Q$ + box$ + Q$ + LF$
+DIM cfg = CONF.TOML_TEXT(toml$)
+
+FUNC NoServer(x)
+    RETURN OUTBOX.SERVER(CONF.TOML_TEXT("[mail]"), "pw")
+ENDFUNC
+
+TESTKIT.SUITE("settings")
+TESTKIT.EQ(OUTBOX.FROM$(cfg), "Jonas Example <jonas@example.com>", "the sender from [user]")
+TESTKIT.EQ(OUTBOX.FOLDER$(cfg), box$, "the outbox from [mail]")
+DIM server = OUTBOX.SERVER(cfg, "secret")
+TESTKIT.EQ(server{"url"}, "smtp://127.0.0.1:1", "the server")
+TESTKIT.EQ(server{"password"}, "secret", "and the password given, not read")
+TESTKIT.THROWS(NoServer@, 0, "a missing server is an error")
+
+TESTKIT.SUITE("the outbox")
+DIM msg = MAIL.MESSAGE(OUTBOX.FROM$(cfg), "anna@example.com", "Status")
+MAIL.CC(msg, "boss@example.com")
+MAIL.PLAIN(msg, "All on track.")
+DIM path$ = OUTBOX.PUT$(msg, cfg, "status.eml")
+TESTKIT.ISTRUE(FILE.EXISTS(path$), "the message is in the outbox")
+TESTKIT.EQ(LEN(OUTBOX.PENDING(cfg)), 1, "and waits there")
+DIM args = OUTBOX.SEND_ARGS(path$, server, "cfg.txt")
+DIM joined$ = JOIN(args, " ")
+TESTKIT.ISTRUE(INSTR(joined$, "--mail-from jonas@example.com") >= 0, "the sender is the bare address")
+TESTKIT.ISTRUE(INSTR(joined$, "--mail-rcpt anna@example.com") >= 0, "To is a recipient")
+TESTKIT.ISTRUE(INSTR(joined$, "--mail-rcpt boss@example.com") >= 0, "and Cc")
+TESTKIT.ISTRUE(INSTR(joined$, "--upload-file " + path$) >= 0, "the file is sent as it is")
+TESTKIT.ISTRUE(INSTR(joined$, "secret") < 0, "the password is not on the command line")
+DIM r = OUTBOX.SEND_ALL(cfg, "secret")
+TESTKIT.EQ(r{"sent"}, 0, "nothing goes out without a server")
+TESTKIT.EQ(LEN(r{"failed"}), 1, "the failure is reported")
+TESTKIT.ISTRUE(FILE.EXISTS(path$), "and the message stays in the outbox")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

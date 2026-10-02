@@ -1,0 +1,204 @@
+' dashboard.jdb: your numbers on one local web page: hours this week
+' from the time tracker's log, open items, mails waiting in the
+' outbox, and what lies in the downloads folder.
+'
+'   IMPORT DASHBOARD
+'   DIM n = DASHBOARD.NUMBERS(sources, "2026-10-23 16:00:00")
+'   DASHBOARD.MOUNT(sources, "templates/dashboard.html")
+'   JDWEB.SERVE(8765)
+
+EXPORT MODULE DASHBOARD
+
+IMPORT JDWEB, SVG, TMPL, OUTBOX
+
+DIM gSources AS MAP
+DIM gTemplate$ = ""
+
+' The Monday of the week a day (YYYY-MM-DD) belongs to.
+EXPORT FUNC MONDAY$(day$)
+    DIM back = (VAL(FORMAT_DATE(CDATE(day$), "%w")) + 6) MOD 7
+    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+ENDFUNC
+
+SUB AddBlock(per, monday$, start$, stop$, project$)
+    DIM col = DATEDIFF("D", CDATE(monday$), CDATE(start$))
+    IF col < 0 ORELSE col > 6 THEN RETURN
+    DIM minutes = DATEDIFF("N", CDATE(start$), CDATE(stop$))
+    DIM had = 0
+    IF MAP.EXISTS(per, project$) THEN had = per{project$}
+    per{project$} = had + minutes / 60
+ENDSUB
+
+' Hours per project from the time log (time,event,project) for the
+' week from monday$: maps with "project" and "hours", most first. A
+' block counts on the day it started; a running block until now$.
+EXPORT FUNC HOURS(log_path$, monday$, now$)
+    DIM per AS MAP
+    DIM rows = []
+    IF FILE.EXISTS(log_path$) THEN
+        DIM kinds = ["STRING", "STRING", "STRING"]
+        rows = CSVREADER(log_path$, ",", TRUE, kinds)
+    ENDIF
+    DIM start$ = ""
+    DIM project$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        DIM when$ = r[0]
+        DIM what$ = r[1]
+        IF start$ <> "" THEN
+            AddBlock(per, monday$, start$, when$, project$)
+        ENDIF
+        start$ = ""
+        IF what$ = "start" THEN
+            start$ = when$
+            project$ = ""
+            IF LEN(r) > 2 THEN project$ = r[2]
+        ENDIF
+    NEXT k
+    IF start$ <> "" THEN
+        AddBlock(per, monday$, start$, now$, project$)
+    ENDIF
+    DIM names = MAP.KEYS(per)
+    DIM totals = []
+    FOR k = 0 TO LEN(names) - 1
+        DIM p$ = names[k]
+        PUSH(totals, ROUND(per{p$} * 10) / 10)
+    NEXT k
+    DIM out = []
+    DIM order = REVERSE(GRADE(totals))
+    FOR k = 0 TO LEN(order) - 1
+        DIM i = order[k]
+        DIM top$ = names[i]
+        PUSH(out, {"project": top$, "hours": totals[i]})
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The open items (lines starting "- [ ]") of a notes file.
+EXPORT FUNC TODO(file$)
+    DIM out = []
+    IF NOT FILE.EXISTS(file$) THEN RETURN out
+    DIM lines = SPLIT(TXTREADER$(file$), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM l$ = TRIM$(lines[k])
+        IF LEFT$(l$, 5) = "- [ ]" THEN
+            PUSH(out, TRIM$(MID$(l$, 5, LEN(l$))))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The files directly in a folder: a map with "files" and "bytes".
+EXPORT FUNC FOLDER(folder$)
+    DIM files = 0
+    DIM bytes = 0
+    IF FILE.ISDIR(folder$) THEN
+        DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+        DIM k = 0
+        FOR k = 0 TO LEN(names) - 1
+            DIM base$ = names[k]
+            DIM info = FILE.STAT(PATH.JOIN$(folder$, base$))
+            IF NOT info{"is_dir"} THEN
+                files = files + 1
+                bytes = bytes + info{"size"}
+            ENDIF
+        NEXT k
+    ENDIF
+    RETURN {"files": files, "bytes": bytes}
+ENDFUNC
+
+' A size in bytes as text with KB, MB or GB.
+EXPORT FUNC HUMAN$(bytes)
+    IF bytes < 1024 THEN RETURN STR$(bytes) + " bytes"
+    DIM units = ["KB", "MB", "GB", "TB"]
+    DIM v = bytes / 1024
+    DIM u = 0
+    DO WHILE v >= 1024 ANDALSO u < 3
+        v = v / 1024
+        u = u + 1
+    LOOP
+    RETURN STR$(ROUND(v * 10) / 10) + " " + units[u]
+ENDFUNC
+
+' All numbers of the page as one map. sources has "log", "todo",
+' "downloads" and "cfg" (the settings, for the outbox).
+EXPORT FUNC NUMBERS(sources, now$)
+    DIM monday$ = MONDAY$(LEFT$(now$, 10))
+    DIM hours = HOURS(sources{"log"}, monday$, now$)
+    DIM total = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(hours) - 1
+        DIM one = hours[k]
+        total = total + one{"hours"}
+    NEXT k
+    DIM down = FOLDER(sources{"downloads"})
+    DIM out = {"week_of": monday$, "hours": hours}
+    out{"total_hours"} = ROUND(total * 10) / 10
+    out{"todo"} = TODO(sources{"todo"})
+    out{"outbox"} = LEN(OUTBOX.PENDING(sources{"cfg"}))
+    out{"downloads"} = down{"files"}
+    out{"downloads_size"} = HUMAN$(down{"bytes"})
+    RETURN out
+ENDFUNC
+
+' The hours as a bar chart, SVG markup.
+EXPORT FUNC CHART$(numbers)
+    DIM hours = numbers{"hours"}
+    DIM labels = []
+    DIM values = []
+    DIM k = 0
+    FOR k = 0 TO LEN(hours) - 1
+        DIM one = hours[k]
+        DIM p$ = one{"project"}
+        PUSH(labels, p$)
+        PUSH(values, one{"hours"})
+    NEXT k
+    IF LEN(labels) = 0 THEN
+        PUSH(labels, "no hours yet")
+        PUSH(values, 0)
+    ENDIF
+    DIM c = SVG.CHART("bar", 560, 300)
+    SVG.SETOPT(c, "legend", "none")
+    SVG.SETOPT(c, "values", 1)
+    SVG.SETOPT(c, "y_title", "hours")
+    SVG.LABELS(c, labels)
+    SVG.SERIES(c, "hours", values)
+    RETURN SVG.MARKUP$(SVG.RENDER(c))
+ENDFUNC
+
+' The whole page from the template.
+EXPORT FUNC PAGE$(numbers, template$)
+    DIM model = numbers
+    model{"chart"} = CHART$(numbers)
+    model{"open_count"} = LEN(numbers{"todo"})
+    RETURN TMPL.RENDER$(template$, model)
+ENDFUNC
+
+FUNC Now$()
+    RETURN FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+ENDFUNC
+
+FUNC ShowPage(request)
+    RETURN PAGE$(NUMBERS(gSources, Now$()), gTemplate$)
+ENDFUNC
+
+FUNC ShowData(request)
+    RETURN NUMBERS(gSources, Now$())
+ENDFUNC
+
+FUNC ShowChart(request)
+    DIM svg$ = CHART$(NUMBERS(gSources, Now$()))
+    RETURN JDWEB.REPLY(svg$, 200, "image/svg+xml")
+ENDFUNC
+
+' Registers the page at /, its numbers at /data.json and the chart
+' at /chart.svg.
+EXPORT SUB MOUNT(sources, template$)
+    gSources = sources
+    gTemplate$ = template$
+    JDWEB.GET("/", ShowPage@)
+    JDWEB.GET("/data.json", ShowData@)
+    JDWEB.GET("/chart.svg", ShowChart@)
+ENDSUB

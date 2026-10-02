@@ -1,0 +1,62 @@
+' Friday Status Mail: collects what the team noted as done, open and
+' blocked, and puts the weekly status mail into the outbox. The
+' settings are the [friday_status] part of work.conf, the mail server
+' the [mail] part.
+'
+'   jdbasic friday_status.jdb            the mail into the outbox
+'   jdbasic friday_status.jdb --dry-run  show the mail, change nothing
+'   jdbasic friday_status.jdb --send     send what is in the outbox
+
+IMPORT WORKCONF, STATUS, OUTBOX, MAIL
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+    PRINT result{"sent"}; " sent"
+    DIM f = 0
+    FOR f = 0 TO LEN(result{"failed"}) - 1
+        PRINT "  not sent: "; result{"failed"}[f]
+    NEXT f
+    END
+ENDIF
+
+DIM key$ = "friday_status."
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+DIM notes$ = WORKCONF.FOLDER$(cfg, key$ + "notes_folder", "")
+DIM team = WORKCONF.VALUE(cfg, key$ + "to", [])
+DIM subject$ = WORKCONF.VALUE(cfg, key$ + "subject", "Status {week}")
+DIM own$ = PATH.JOIN$(here$, "templates", "status.html")
+DIM tpl$ = WORKCONF.FOLDER$(cfg, key$ + "template", own$)
+DIM clear_done = WORKCONF.VALUE(cfg, key$ + "clear_done", FALSE)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF notes$ = "" THEN THROW "Set notes_folder in [friday_status]."
+IF LEN(team) = 0 THEN THROW "Set to in [friday_status]."
+IF NOT FILE.EXISTS(tpl$) THEN THROW "No mail template at " + tpl$
+
+DIM people = STATUS.NOTES(notes$)
+DIM week$ = STATUS.WEEK$(NOW())
+DIM title$ = REPLACE$(subject$, "{week}", week$)
+DIM msg = MAIL.MESSAGE(OUTBOX.FROM$(cfg), team, title$)
+MAIL.PLAIN(msg, STATUS.PLAIN$(people, week$))
+MAIL.HTMLBODY(msg, STATUS.HTML$(people, week$, tpl$))
+
+IF dry_run THEN
+    PRINT "To: "; JOIN(team, ", ")
+    PRINT "Subject: "; title$
+    PRINT
+    PRINT STATUS.PLAIN$(people, week$)
+    PRINT "Nothing written. Run without --dry-run for the outbox."
+ELSE
+    DIM put$ = OUTBOX.PUT$(msg, cfg, "status-" + week$ + ".eml")
+    PRINT "The status mail is in the outbox: "; put$
+    IF clear_done THEN
+        DIM k = 0
+        FOR k = 0 TO LEN(people) - 1
+            DIM who$ = people[k]{"person"}
+            DIM file$ = PATH.JOIN$(notes$, who$ + ".txt")
+            TXTWRITER file$, STATUS.WITHOUT_DONE$(TXTREADER$(file$))
+        NEXT k
+        PRINT "Done notes removed for next week."
+    ENDIF
+    PRINT "Run with --send to send it."
+ENDIF

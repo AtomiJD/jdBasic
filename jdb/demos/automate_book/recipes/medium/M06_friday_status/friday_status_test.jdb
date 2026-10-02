@@ -1,0 +1,85 @@
+' Friday Status Mail: notes read from check box lines, the people of a
+' notes folder, the plain and the HTML mail, the ISO week, the done
+' notes taken out, and the message in an outbox read back. Nothing is
+' sent.
+
+IMPORT TESTKIT, STATUS, OUTBOX, MAIL, CONF, DT
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("status")
+DIM notes$ = PATH.JOIN$(folder$, "notes")
+MKDIR notes$
+DIM ann$ = "# Ann" + LF$ + "- [x] Offer for Miller & Co" + LF$
+ann$ = ann$ + "- [ ] Call the printer" + LF$ + "- [!] Waiting for legal"
+ann$ = ann$ + LF$ + "plain line" + LF$ + "- [X] Report sent"
+TXTWRITER PATH.JOIN$(notes$, "Ann.txt"), ann$
+TXTWRITER PATH.JOIN$(notes$, "Ben.txt"), "- [ ] Budget 2027" + LF$
+DIM tpl$ = PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "templates", _
+    "status.html")
+IF NOT FILE.EXISTS(tpl$) THEN
+    tpl$ = "recipes/medium/M06_friday_status/templates/status.html"
+ENDIF
+
+TESTKIT.SUITE("notes")
+DIM one = STATUS.READ_NOTES(ann$)
+TESTKIT.EQARRAY(one{"done"}, ["Offer for Miller & Co", "Report sent"], _
+    "done, the box in any case")
+TESTKIT.EQARRAY(one{"todo"}, ["Call the printer"], "still to do")
+TESTKIT.EQARRAY(one{"blocked"}, ["Waiting for legal"], "blocked")
+DIM people = STATUS.NOTES(notes$)
+TESTKIT.EQ(LEN(people), 2, "one person per file")
+TESTKIT.EQ(people[0]{"person"}, "Ann", "named after the file")
+TESTKIT.EQ(STATUS.TOTAL(people, "todo"), 2, "open notes of everyone")
+
+TESTKIT.SUITE("the mail")
+DIM d = DT.PARSE("2026-10-23")
+TESTKIT.EQ(STATUS.WEEK$(d), "2026-W43", "the ISO week")
+TESTKIT.EQ(STATUS.WEEK$(DT.PARSE("2027-01-01")), "2026-W53", _
+    "the first of January can belong to the last week")
+DIM want = ["Status 2026-W43", "", "2 done, 2 open, 1 blocked.", "", _
+    "Ann", "  Blocked:", "    - Waiting for legal", "  Open:", _
+    "    - Call the printer", "  Done:", "    - Offer for Miller & Co", _
+    "    - Report sent", "", "Ben", "  Open:", "    - Budget 2027", ""]
+TESTKIT.EQ(STATUS.PLAIN$(people, "2026-W43"), JOIN(want, LF$), _
+    "the plain text")
+DIM html$ = STATUS.HTML$(people, "2026-W43", tpl$)
+TESTKIT.ISTRUE(INSTR(html$, "Miller &amp; Co") >= 0, "HTML escaped")
+TESTKIT.ISTRUE(INSTR(html$, "<b>Ben</b>") >= 0, "a row per person")
+TESTKIT.ISTRUE(INSTR(html$, "2 done, 2 open, 1 blocked.") >= 0, _
+    "with the totals")
+
+TESTKIT.SUITE("next week")
+DIM rest$ = STATUS.WITHOUT_DONE$(ann$)
+TESTKIT.EQ(LEN(STATUS.READ_NOTES(rest$){"done"}), 0, "done notes go")
+TESTKIT.EQ(LEN(STATUS.READ_NOTES(rest$){"todo"}), 1, "the rest stays")
+TESTKIT.ISTRUE(INSTR(rest$, "plain line") >= 0, "other lines stay")
+
+TESTKIT.SUITE("the outbox")
+DIM box$ = REPLACE$(PATH.JOIN$(folder$, "outbox"), "\", "/")
+DIM toml$ = "[user]" + LF$ + "name = " + Q$ + "Jonas" + Q$ + LF$
+toml$ = toml$ + "email = " + Q$ + "jonas@example.com" + Q$ + LF$
+toml$ = toml$ + "[mail]" + LF$ + "outbox = " + Q$ + box$ + Q$ + LF$
+DIM cfg = CONF.TOML_TEXT(toml$)
+DIM team = ["ann@example.com", "ben@example.com"]
+DIM msg = MAIL.MESSAGE(OUTBOX.FROM$(cfg), team, "Status 2026-W43")
+MAIL.PLAIN(msg, STATUS.PLAIN$(people, "2026-W43"))
+MAIL.HTMLBODY(msg, html$)
+DIM path$ = OUTBOX.PUT$(msg, cfg, "status-2026-W43.eml")
+TESTKIT.EQ(LEN(OUTBOX.PENDING(cfg)), 1, "one message waits")
+DIM back = MAIL.PARSEFILE(path$)
+TESTKIT.EQ(back{"subject"}, "Status 2026-W43", "its subject")
+TESTKIT.EQARRAY(back{"to"}, team, "to the team")
+TESTKIT.ISTRUE(INSTR(back{"from"}, "jonas@example.com") >= 0, _
+    "from the user")
+TESTKIT.ISTRUE(INSTR(back{"text"}, "Waiting for legal") >= 0, _
+    "the plain text")
+TESTKIT.ISTRUE(INSTR(back{"html"}, "<table") >= 0, "and the HTML")
+
+KILL path$
+RMDIR box$
+KILL PATH.JOIN$(notes$, "Ann.txt")
+KILL PATH.JOIN$(notes$, "Ben.txt")
+RMDIR notes$
+RMDIR folder$
+TESTKIT.REPORT()

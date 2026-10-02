@@ -1,0 +1,79 @@
+' Data Cleaner: dates in their forms, numbers with comma and point,
+' tidy text, IBAN and mail checks, the CSV fields with quotes, the
+' fixture export cleaned with its problems and repeated row, similar
+' names, and the workbook read back.
+
+IMPORT TESTKIT, CLEANER, XLSX
+
+DIM base$ = "recipes/medium/M11_data_cleaner/"
+IF NOT FILE.EXISTS(base$ + "orders.csv") THEN base$ = ""
+DIM Q$ = CHR$(34)
+
+TESTKIT.SUITE("dates")
+TESTKIT.EQ(CLEANER.ISO_DATE$("2026-10-05", TRUE), "2026-10-05", "ISO stays ISO")
+TESTKIT.EQ(CLEANER.ISO_DATE$("05.10.2026", FALSE), "2026-10-05", "German dots are always day first")
+TESTKIT.EQ(CLEANER.ISO_DATE$("5/10/26", TRUE), "2026-10-05", "a slash and a short year, day first")
+TESTKIT.EQ(CLEANER.ISO_DATE$("10/5/2026", FALSE), "2026-10-05", "month first")
+TESTKIT.EQ(CLEANER.ISO_DATE$("6 Oct 2026", TRUE), "2026-10-06", "a month name")
+TESTKIT.EQ(CLEANER.ISO_DATE$("October 6, 2026", TRUE), "2026-10-06", "the American way")
+TESTKIT.EQ(CLEANER.ISO_DATE$(46300, TRUE), "2026-10-05", "an Excel serial number")
+TESTKIT.EQ(CLEANER.ISO_DATE$("31.02.2026", TRUE), "", "a date that does not exist")
+TESTKIT.EQ(CLEANER.ISO_DATE$("soon", TRUE), "", "a text that is no date")
+
+TESTKIT.SUITE("numbers")
+TESTKIT.EQ(CLEANER.NUMBER("1.234,50", "auto"), 1234.5, "decimal comma with thousands")
+TESTKIT.EQ(CLEANER.NUMBER("1,234.50", "auto"), 1234.5, "decimal point with thousands")
+TESTKIT.EQ(CLEANER.NUMBER("€ 99,90", "auto"), 99.9, "a currency sign")
+TESTKIT.EQ(CLEANER.NUMBER("(12,00)", "auto"), -12, "brackets for a negative amount")
+TESTKIT.EQ(CLEANER.NUMBER("12.50-", "auto"), -12.5, "a minus behind")
+TESTKIT.EQ(CLEANER.NUMBER("1.234", ","), 1234, "a fixed decimal comma reads the point as thousands")
+TESTKIT.EQ(TYPEOF(CLEANER.NUMBER("12abc", "auto")), "NONE", "a text that is no number")
+TESTKIT.EQ(CLEANER.NUMBER(7, "auto"), 7, "a number stays a number")
+
+TESTKIT.SUITE("text, IBAN and mail")
+TESTKIT.EQ(CLEANER.TIDY$("  Mueller   GmbH "), "Mueller GmbH", "spaces tidied")
+TESTKIT.EQ(CLEANER.CELL("de89370400440532013000", "iban", {}){"value"}, "DE89 3704 0044 0532 0130 00", "an IBAN in groups of four")
+TESTKIT.EQ(CLEANER.CELL("DE00 1234", "iban", {}){"problem"}, "not a valid IBAN", "a wrong IBAN")
+TESTKIT.EQ(CLEANER.CELL("EINKAUF@x.example", "mail", {}){"value"}, "einkauf@x.example", "a mail address in small letters")
+TESTKIT.EQ(CLEANER.CELL("weber@example", "mail", {}){"problem"}, "not a mail address", "an address without a domain")
+TESTKIT.EQARRAY(CLEANER.CSV_FIELDS("a;" + Q$ + "b; c" + Q$ + ";" + Q$ + "say " + Q$ + Q$ + "hi" + Q$ + Q$ + Q$, ";"), ["a", "b; c", "say " + Q$ + "hi" + Q$], "quoted fields with the separator and quotes")
+
+TESTKIT.SUITE("the fixture export")
+DIM rows = CLEANER.READ_TABLE(base$ + "orders.csv", ";")
+TESTKIT.EQ(LEN(rows), 6, "a header and five rows")
+TESTKIT.EQ(rows[3][1], "Weber; Sohn & Co", "a quoted name keeps its separator")
+DIM spec = {"Date": "date", "Customer": "text", "Amount": "number", "IBAN": "iban", "Mail": "mail"}
+DIM result = CLEANER.CLEAN(rows, spec, {"day_first": TRUE, "decimal": "auto"})
+DIM clean = result{"rows"}
+TESTKIT.EQ(result{"duplicates"}, 1, "the repeated row is dropped")
+TESTKIT.EQ(LEN(clean), 5, "four rows are left")
+TESTKIT.EQ(clean[2][0], "2026-10-06", "dates in ISO")
+TESTKIT.EQ(clean[2][1], "Mueller GmbH", "names tidied")
+TESTKIT.EQ(clean[1][2], 1234.5, "amounts as numbers")
+TESTKIT.EQ(clean[3][2], -12, "negative amounts")
+DIM problems = result{"problems"}
+TESTKIT.EQ(LEN(problems), 3, "a wrong IBAN, a short mail address, a date that does not exist")
+TESTKIT.EQARRAY(problems[2], [6, "Date", "31.02.2026", "not a date"], "each with its row, column, value and reason")
+DIM similar = CLEANER.SIMILAR(clean, "Customer", 85)
+TESTKIT.EQ(LEN(similar), 1, "one pair of names looks alike")
+TESTKIT.EQ(similar[0][0] + " / " + similar[0][1], "Müller GmbH / Mueller GmbH", "Müller and Mueller")
+
+DIM guess = CLEANER.GUESS_KINDS(rows[0])
+TESTKIT.EQ(guess{"Date"} + " " + guess{"Amount"} + " " + guess{"Mail"}, "date number mail", "kinds guessed from the column names")
+TESTKIT.EQ(guess{"Customer"}, "text", "the rest is text")
+
+TESTKIT.SUITE("the workbook")
+DIM tmp$ = MKTEMP$("cleaner")
+MKDIR tmp$
+DIM out$ = PATH.JOIN$(tmp$, "clean.xlsx")
+CLEANER.WRITE_XLSX(result, similar, out$)
+TESTKIT.EQARRAY(XLSX.SHEETS(out$), ["Clean", "Problems", "Similar names"], "three sheets")
+DIM back = CLEANER.READ_TABLE(out$, ";")
+TESTKIT.EQ(back[1][2], 1234.5, "the clean sheet first, numbers as numbers")
+DIM book = XLSX.READ(out$)
+DIM sheet = book{"Problems"}
+DIM first = sheet[1]
+TESTKIT.EQ(first[3], "not a valid IBAN", "the problems")
+KILL out$
+RMDIR tmp$
+TESTKIT.REPORT()

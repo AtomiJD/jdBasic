@@ -1,0 +1,35 @@
+# What the setup wizard knows about this recipe.
+
+id = "M06"
+name = "Friday Status Mail"
+program = "friday_status.jdb"
+summary = "The weekly status from the team's notes, ready in the outbox"
+minutes_per_week = 45
+schedule = "weekly fri 15:00"
+section = "friday_status"
+modules = ["status.jdb"]
+files = ["templates/status.html"]
+
+[[setting]]
+key = "notes_folder"
+label = "Folder with one notes file per person"
+kind = "folder"
+default = "~/Documents/Team/status"
+
+[[setting]]
+key = "to"
+label = "Who gets the status mail"
+kind = "list"
+default = []
+
+[[setting]]
+key = "subject"
+label = "Subject ({week} becomes the week)"
+kind = "text"
+default = "Status {week}"
+
+[[setting]]
+key = "clear_done"
+label = "Remove done notes after the mail (true or false)"
+kind = "bool"
+default = false

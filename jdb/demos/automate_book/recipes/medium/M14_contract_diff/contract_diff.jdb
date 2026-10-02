@@ -1,0 +1,44 @@
+' Contract Diff: compares two versions of a Word document paragraph by
+' paragraph, prints what changed and writes the same report as a Word
+' file. The settings are the [contract_diff] part of work.conf.
+'
+'   jdbasic contract_diff.jdb "offer v1.docx" "offer v2.docx"
+'   jdbasic contract_diff.jdb v1.docx v2.docx --dry-run   print only
+
+IMPORT WORKCONF, CONTRACTDIFF, CLI
+
+DIM spec = CLI.NEW("contract_diff", "what changed in a Word document")
+CLI.ARG(spec, "before", "the older version", TRUE)
+CLI.ARG(spec, "after", "the newer version", TRUE)
+CLI.FLAG(spec, "dry-run", "", "print the report, write no file")
+CLI.OPT(spec, "config", "", "the settings file", "")
+DIM argv = APPEND(["contract_diff.exe"], DROP(1, OS.ARGS()))
+DIM got = CLI.PARSE(spec, argv)
+IF CLI.DONE(spec, got) THEN END CLI.STATUS(got)
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "contract_diff."
+DIM home$ = "~/Documents/AutomateWork/reports"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "reports", home$)
+DIM like$ = "" + WORKCONF.VALUE(cfg, key$ + "similar_percent", "60")
+DIM percent = VAL(like$)
+
+DIM v1$ = got{"args"}[0]
+DIM v2$ = got{"args"}[1]
+DIM older = CONTRACTDIFF.PARAGRAPHS(v1$)
+DIM newer = CONTRACTDIFF.PARAGRAPHS(v2$)
+DIM changes = CONTRACTDIFF.COMPARE(older, newer, percent / 100)
+PRINT CONTRACTDIFF.REPORT$(changes)
+
+IF LEN(changes) > 0 ANDALSO NOT got{"dry-run"} THEN
+    DIM name1$ = PATH.BASENAME$(v1$)
+    DIM name2$ = PATH.BASENAME$(v2$)
+    name1$ = LEFT$(name1$, LEN(name1$) - LEN(PATH.EXT$(name1$)))
+    name2$ = LEFT$(name2$, LEN(name2$) - LEN(PATH.EXT$(name2$)))
+    MKDIR folder$
+    DIM out_name$ = "changes " + name1$ + " to " + name2$ + ".docx"
+    DIM report$ = PATH.JOIN$(folder$, out_name$)
+    CONTRACTDIFF.REPORT_DOCX(changes, name1$, name2$, report$)
+    PRINT
+    PRINT "Report: "; report$
+ENDIF

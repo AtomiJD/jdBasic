@@ -1,0 +1,40 @@
+# What the setup wizard knows about this recipe.
+
+id = "M10"
+name = "Hot Folder"
+program = "hot_folder.jdb"
+summary = "Handles files dropped into a folder: rename, CSV to workbook, move on"
+minutes_per_week = 20
+schedule = "every 5 minutes"
+section = "hot_folder"
+modules = ["hotfolder.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder to watch"
+kind = "folder"
+default = "~/Documents/AutomateWork/hot"
+
+[[setting]]
+key = "done_folder"
+label = "Folder for handled files"
+kind = "folder"
+default = "~/Documents/AutomateWork/hot/done"
+
+[[setting]]
+key = "rename"
+label = "New names ({date}, {time}, {name})"
+kind = "text"
+default = "{date} {name}"
+
+[[setting]]
+key = "separator"
+label = "Separator in CSV files"
+kind = "text"
+default = ";"
+
+[[setting]]
+key = "settle_seconds"
+label = "Seconds a file must rest before it is handled"
+kind = "number"
+default = 60

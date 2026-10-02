@@ -1,0 +1,36 @@
+' Inbox Unpacker: files the attachments of saved mails into folders by
+' sender and subject, then moves the mails into a done folder. The
+' settings are the [inbox_unpacker] part of work.conf.
+'
+'   jdbasic inbox_unpacker.jdb            save and move
+'   jdbasic inbox_unpacker.jdb --dry-run  show the plan only
+
+IMPORT WORKCONF, UNPACKER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "inbox_unpacker."
+DIM home$ = "~/Documents/AutomateWork/"
+DIM inbox$ = WORKCONF.FOLDER$(cfg, key$ + "inbox_folder", _
+    home$ + "saved mail")
+DIM target$ = WORKCONF.FOLDER$(cfg, key$ + "target_folder", _
+    home$ + "attachments")
+DIM done$ = WORKCONF.FOLDER$(cfg, key$ + "done_folder", _
+    PATH.JOIN$(inbox$, "done"))
+DIM keep_inline = WORKCONF.VALUE(cfg, key$ + "keep_inline", FALSE)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT FILE.ISDIR(inbox$) THEN THROW "No mail folder at " + inbox$
+
+DIM plan = UNPACKER.PLAN(inbox$, target$, keep_inline)
+DIM mails = LEN(plan{"mails"})
+IF mails = 0 THEN
+    PRINT "No .eml files in "; inbox$
+    END
+ENDIF
+PRINT mails; " mails in "; inbox$
+DIM saved = UNPACKER.APPLY(plan, dry_run, done$)
+IF dry_run THEN
+    PRINT "Nothing written. Run without --dry-run to save "; saved; _
+        " files."
+ELSE
+    PRINT saved; " files saved, the mails moved to "; done$
+ENDIF

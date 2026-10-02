@@ -1,0 +1,52 @@
+' Shift and Vacation Planner: turns the team's plan in an Excel sheet
+' into a calendar file everyone subscribes to, and warns about days
+' on which too many people are away. The settings are the
+' [shift_planner] part of work.conf.
+'
+'   jdbasic shift_planner.jdb            write the calendar
+'   jdbasic shift_planner.jdb --dry-run  show it, write nothing
+
+IMPORT WORKCONF, SHIFTS, XLSX, ICAL
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "shift_planner."
+DIM plan$ = WORKCONF.FOLDER$(cfg, key$ + "plan_file", "")
+DIM sheet$ = WORKCONF.VALUE(cfg, key$ + "sheet", "Plan")
+DIM ics$ = WORKCONF.FOLDER$(cfg, key$ + "calendar_file", "")
+DIM title$ = WORKCONF.VALUE(cfg, key$ + "title", "Team plan")
+DIM away_kinds = WORKCONF.VALUE(cfg, key$ + "away_kinds", _
+    ["Vacation", "Sick", "Training"])
+DIM max_away = WORKCONF.VALUE(cfg, key$ + "max_away", 2)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF plan$ = "" ORELSE ics$ = "" THEN
+    THROW "Set plan_file and calendar_file in [shift_planner]."
+ENDIF
+
+DIM book = XLSX.READ(plan$)
+IF NOT MAP.EXISTS(book, sheet$) THEN
+    THROW "The plan has no sheet called " + sheet$
+ENDIF
+DIM entries = SHIFTS.ENTRIES(book{sheet$})
+DIM cal = SHIFTS.CALENDAR(entries, title$)
+PRINT LEN(entries); " entries in "; PATH.BASENAME$(plan$)
+
+DIM clashes = SHIFTS.CLASHES(entries, away_kinds, max_away)
+DIM k = 0
+FOR k = 0 TO LEN(clashes) - 1
+    DIM c = clashes[k]
+    DIM names$ = JOIN(c{"names"}, ", ")
+    PRINT "too many away on "; c{"day"}; ": "; names$
+NEXT k
+
+IF dry_run THEN
+    FOR k = 0 TO LEN(entries) - 1
+        DIM e = entries[k]
+        PRINT "  "; e{"from"}; " to "; e{"to"}; "  "; e{"name"};
+        PRINT ": "; e{"kind"}
+    NEXT k
+    PRINT "Nothing written. Run without --dry-run to write "; ics$
+ELSE
+    MKDIR PATH.DIRNAME$(ics$)
+    ICAL.WRITEFILE(cal, ics$)
+    PRINT "wrote "; ics$
+ENDIF

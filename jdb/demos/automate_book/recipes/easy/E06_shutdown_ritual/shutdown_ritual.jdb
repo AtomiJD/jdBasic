@@ -24,7 +24,7 @@ INPUT "What is the first thing for tomorrow? "; tomorrow$
 DIM mood = 0
 DO WHILE mood = 0
     INPUT "How was the day, from 1 (hard) to 5 (good)? "; mood$
-    mood = RITUAL.MOOD(mood$)
+    mood = CINT(RITUAL.MOOD(mood$))
 LOOP
 
 DIM entry$ = RITUAL.ENTRY$(today$, done$, tomorrow$, mood)

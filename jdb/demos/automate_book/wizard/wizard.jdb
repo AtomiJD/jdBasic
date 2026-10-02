@@ -67,6 +67,8 @@ EXPORT FUNC DEFAULTS(recipes, home$)
     a{"email"} = ""
     a{"day_start"} = "08:30"
     a{"day_end"} = "17:30"
+    a{"mail_server"} = ""
+    a{"mail_user"} = ""
     a{"jdbasic"} = FIND_JDBASIC$()
     a{"user_lib"} = PATH.JOIN$(home$, ".jdbasic", "lib")
     DIM picked = []
@@ -158,6 +160,12 @@ EXPORT FUNC CONF_TEXT$(answers, recipes)
     PUSH(out, "[paths]")
     PUSH(out, "work = " + TOML_VALUE$(answers{"work"}))
     PUSH(out, "jdbasic = " + TOML_VALUE$(answers{"jdbasic"}))
+    IF answers{"mail_server"} <> "" THEN
+        PUSH(out, "")
+        PUSH(out, "[mail]")
+        PUSH(out, "server = " + TOML_VALUE$(answers{"mail_server"}))
+        PUSH(out, "user = " + TOML_VALUE$(answers{"mail_user"}))
+    ENDIF
     DIM picked = answers{"picked"}
     DIM values = answers{"values"}
     DIM k = 0
@@ -196,7 +204,14 @@ EXPORT FUNC INSTALL_PLAN(answers, recipes, lib_dir$)
     NEXT k
     DIM user_lib$ = answers{"user_lib"}
     PUSH(steps, {"mkdir": user_lib$})
-    PUSH(steps, {"from": PATH.JOIN$(lib_dir$, "workconf.jdb"), "to": PATH.JOIN$(user_lib$, "workconf.jdb")})
+    DIM shared = DIR$(PATH.JOIN$(lib_dir$, "*.jdb"))
+    FOR j = 0 TO LEN(shared) - 1
+        IF NOT ENDSWITH(shared[j], "_test.jdb") THEN
+            DIM lib_from$ = PATH.JOIN$(lib_dir$, shared[j])
+            DIM lib_to$ = PATH.JOIN$(user_lib$, shared[j])
+            PUSH(steps, {"from": lib_from$, "to": lib_to$})
+        ENDIF
+    NEXT j
     DIM picked = answers{"picked"}
     FOR k = 0 TO LEN(picked) - 1
         DIM r = Recipe(recipes, picked[k])
@@ -348,6 +363,8 @@ EXPORT FUNC FROM_CONF(answers, recipes, conf$)
     answers{"day_start"} = CONF.GET(c, "user.day_start", answers{"day_start"})
     answers{"day_end"} = CONF.GET(c, "user.day_end", answers{"day_end"})
     answers{"jdbasic"} = CONF.GET(c, "paths.jdbasic", answers{"jdbasic"})
+    answers{"mail_server"} = CONF.GET(c, "mail.server", answers{"mail_server"})
+    answers{"mail_user"} = CONF.GET(c, "mail.user", answers{"mail_user"})
     DIM picked = []
     DIM values = answers{"values"}
     DIM k = 0

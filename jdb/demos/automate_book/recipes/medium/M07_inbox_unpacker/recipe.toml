@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "M07"
+name = "Inbox Unpacker"
+program = "inbox_unpacker.jdb"
+summary = "Attachments of saved mails filed by sender and subject"
+minutes_per_week = 30
+schedule = "daily 12:30"
+section = "inbox_unpacker"
+modules = ["unpacker.jdb"]
+
+[[setting]]
+key = "inbox_folder"
+label = "Folder where you save mails (.eml)"
+kind = "folder"
+default = "~/Documents/AutomateWork/saved mail"
+
+[[setting]]
+key = "target_folder"
+label = "Folder for the attachments"
+kind = "folder"
+default = "~/Documents/AutomateWork/attachments"
+
+[[setting]]
+key = "keep_inline"
+label = "Also save pictures inside the text (true or false)"
+kind = "bool"
+default = false

@@ -1,0 +1,239 @@
+' hotfolder.jdb: a folder that works by itself. Files that land in it
+' are matched against rules, renamed, converted from CSV to a workbook
+' and moved on, with a line in a log for each. A lock file keeps two
+' runs from working on the folder at the same time.
+'
+'   IMPORT HOTFOLDER
+'   DIM rules = HOTFOLDER.DEFAULT_RULES("C:/Done", "{date} {name}")
+'   IF HOTFOLDER.LOCK(lock$, NOW(), 30) THEN
+'       DIM jobs = HOTFOLDER.PLAN("C:/Inbox", rules, 60, NOW())
+'       HOTFOLDER.APPLY(jobs, ";", "C:/Done/hot_folder.log", NOW())
+'       HOTFOLDER.RELEASE(lock$)
+'   ENDIF
+
+EXPORT MODULE HOTFOLDER
+
+IMPORT XLSX
+
+' The regular expression for a file pattern with * and ?.
+FUNC GlobRegex$(pattern$)
+    DIM chars = -LCASE$(pattern$)
+    DIM out$ = "^"
+    DIM k = 0
+    FOR k = 0 TO LEN(chars) - 1
+        DIM ch$ = chars[k]
+        IF ch$ = "*" THEN
+            out$ = out$ + ".*"
+        ELSEIF ch$ = "?" THEN
+            out$ = out$ + "."
+        ELSEIF LEN(REGEX.FINDALL("[a-z0-9 _]", ch$)) > 0 THEN
+            out$ = out$ + ch$
+        ELSE
+            out$ = out$ + "[" + ch$ + "]"
+        ENDIF
+    NEXT k
+    RETURN out$ + "$"
+ENDFUNC
+
+' TRUE when a file name fits a pattern such as "*.csv" or
+' "invoice_??.pdf", in small or capital letters.
+EXPORT FUNC MATCHES(file_name$, pattern$)
+    DIM rx$ = GlobRegex$(pattern$)
+    RETURN LEN(REGEX.FINDALL(rx$, LCASE$(file_name$))) > 0
+ENDFUNC
+
+' Two rules: CSV files become workbooks, every other file is moved,
+' both into target$ and renamed by rename$.
+EXPORT FUNC DEFAULT_RULES(target$, rename$)
+    DIM csv = {"match": "*.csv", "convert": "xlsx", _
+        "rename": rename$, "target": target$}
+    DIM rest = {"match": "*", "convert": "", "rename": rename$, _
+        "target": target$}
+    RETURN [csv, rest]
+ENDFUNC
+
+' The first rule whose "match" fits the file name, an empty map when
+' no rule does.
+EXPORT FUNC RULE_FOR(rules, file_name$)
+    DIM k = 0
+    FOR k = 0 TO LEN(rules) - 1
+        DIM r = rules[k]
+        IF MATCHES(file_name$, r{"match"}) THEN RETURN r
+    NEXT k
+    DIM none AS MAP
+    RETURN none
+ENDFUNC
+
+' A new file name from a pattern and an extension: {name} is the old
+' name without its extension, {date} and {time} the day and time the
+' file last changed, from a time such as "2026-10-05 09:14:03".
+EXPORT FUNC NEW_NAME$(pattern$, file_name$, changed$, ext$)
+    DIM old_ext$ = PATH.EXT$(file_name$)
+    DIM stem$ = LEFT$(file_name$, LEN(file_name$) - LEN(old_ext$))
+    IF pattern$ = "" THEN RETURN stem$ + ext$
+    DIM clock$ = REPLACE$(MID$(changed$, 11, 5), ":", "-")
+    DIM s$ = REPLACE$(pattern$, "{name}", stem$)
+    s$ = REPLACE$(s$, "{date}", LEFT$(changed$, 10))
+    s$ = REPLACE$(s$, "{time}", clock$)
+    RETURN s$ + ext$
+ENDFUNC
+
+' TRUE when this run may work on the folder: there is no lock file,
+' or one older than stale_minutes that a stopped run left behind.
+' Writes the lock with the time now.
+EXPORT FUNC LOCK(path$, now, stale_minutes)
+    IF FILE.EXISTS(path$) THEN
+        DIM since$ = TRIM$(TXTREADER$(path$))
+        DIM age = DATEDIFF("N", CDATE(since$), now)
+        IF age < stale_minutes THEN RETURN FALSE
+    ENDIF
+    TXTWRITER path$, FORMAT_DATE(now, "%Y-%m-%d %H:%M:%S")
+    RETURN TRUE
+ENDFUNC
+
+' Removes the lock file.
+EXPORT SUB RELEASE(path$)
+    IF FILE.EXISTS(path$) THEN KILL path$
+ENDSUB
+
+' The jobs for the files in a folder: a map per file with "from", "to"
+' and "convert". Files changed less than settle_seconds ago are still
+' being copied and wait for the next run, as do files no rule matches
+' and names that start with a dot.
+EXPORT FUNC PLAN(folder$, rules, settle_seconds, now)
+    DIM jobs = []
+    DIM entries = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM file_name$ = entries[k]
+        DIM from$ = PATH.JOIN$(folder$, file_name$)
+        DIM info = FILE.STAT(from$)
+        DIM changed$ = info{"mtime"}
+        DIM age = DATEDIFF("S", CDATE(changed$), now)
+        DIM r = RULE_FOR(rules, file_name$)
+        DIM usable = LEFT$(file_name$, 1) <> "." ANDALSO _
+            NOT info{"is_dir"} ANDALSO MAP.EXISTS(r, "match")
+        IF usable ANDALSO age >= settle_seconds THEN
+            DIM ext$ = PATH.EXT$(file_name$)
+            IF r{"convert"} = "xlsx" THEN ext$ = ".xlsx"
+            DIM new$ = NEW_NAME$(r{"rename"}, file_name$, changed$, _
+                ext$)
+            PUSH(jobs, {"from": from$, "convert": r{"convert"}, _
+                "to": PATH.JOIN$(r{"target"}, new$)})
+        ENDIF
+    NEXT k
+    RETURN jobs
+ENDFUNC
+
+' The fields of one CSV line, with quoted fields that hold the
+' separator or doubled quotes. Fields that are plain numbers become
+' numbers.
+EXPORT FUNC CSV_FIELDS(line$, sep$)
+    DIM out = []
+    DIM cur$ = ""
+    DIM quoted = FALSE
+    DIM q$ = CHR$(34)
+    DIM chars = -line$
+    DIM k = 0
+    FOR k = 0 TO LEN(chars)
+        DIM ch$ = sep$
+        IF k < LEN(chars) THEN ch$ = chars[k]
+        DIM after$ = ""
+        IF k + 1 < LEN(chars) THEN after$ = chars[k + 1]
+        IF quoted ANDALSO ch$ = q$ ANDALSO after$ = q$ THEN
+            cur$ = cur$ + q$
+            k = k + 1
+        ELSEIF quoted ANDALSO ch$ = q$ THEN
+            quoted = FALSE
+        ELSEIF quoted THEN
+            cur$ = cur$ + ch$
+        ELSEIF ch$ = q$ THEN
+            quoted = TRUE
+        ELSEIF ch$ = sep$ THEN
+            DIM plain = REGEX.FINDALL("^-?[0-9]+([.][0-9]+)?$", cur$)
+            IF LEN(plain) > 0 THEN
+                PUSH(out, VAL(cur$))
+            ELSE
+                PUSH(out, cur$)
+            ENDIF
+            cur$ = ""
+        ELSE
+            cur$ = cur$ + ch$
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A CSV file written as a workbook with one sheet "Data" and a frozen
+' header row. Answers the number of rows below the header.
+EXPORT FUNC CSV_TO_XLSX(src$, dest$, sep$)
+    DIM text$ = REPLACE$(TXTREADER$(src$), CHR$(13), "")
+    DIM lines = SPLIT(text$, CHR$(10))
+    DIM rows = []
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM one$ = lines[k]
+        IF TRIM$(one$) <> "" THEN PUSH(rows, CSV_FIELDS(one$, sep$))
+    NEXT k
+    DIM wb = XLSX.NEW()
+    DIM sheet = XLSX.SHEET(wb, "Data", rows)
+    XLSX.FREEZE(sheet, 1)
+    XLSX.WRITE(dest$, wb)
+    RETURN LEN(rows) - 1
+ENDFUNC
+
+' A path that is free: the path itself, or with " (2)", " (3)" and so
+' on before the extension.
+FUNC FreePath$(path$)
+    IF NOT FILE.EXISTS(path$) THEN RETURN path$
+    DIM ext$ = PATH.EXT$(path$)
+    DIM stem$ = LEFT$(path$, LEN(path$) - LEN(ext$))
+    DIM n = 2
+    DO WHILE FILE.EXISTS(stem$ + " (" + STR$(n) + ")" + ext$)
+        n = n + 1
+    LOOP
+    RETURN stem$ + " (" + STR$(n) + ")" + ext$
+ENDFUNC
+
+' Carries out the jobs and adds a line per file to the log. A CSV
+' file that becomes a workbook is kept in the subfolder "originals"
+' of its target. A job that fails is logged and the rest go on.
+' Answers the log lines.
+EXPORT FUNC APPLY(jobs, sep$, log$, now)
+    DIM stamp$ = FORMAT_DATE(now, "%Y-%m-%d %H:%M")
+    DIM lines = []
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        DIM from$ = job{"from"}
+        DIM to$ = FreePath$(job{"to"})
+        DIM new$ = PATH.BASENAME$(to$)
+        DIM what$ = ""
+        TRY
+            MKDIR PATH.DIRNAME$(to$)
+            IF job{"convert"} = "xlsx" THEN
+                DIM n = CSV_TO_XLSX(from$, to$, sep$)
+                DIM there$ = PATH.DIRNAME$(to$)
+                DIM keep$ = PATH.JOIN$(there$, "originals")
+                MKDIR keep$
+                DIM old$ = PATH.JOIN$(keep$, PATH.BASENAME$(from$))
+                FILE.MOVE(from$, FreePath$(old$))
+                what$ = "made " + new$ + " (" + STR$(n) + " rows)"
+            ELSE
+                FILE.MOVE(from$, to$)
+                what$ = "moved to " + new$
+            ENDIF
+        CATCH
+            what$ = "failed: " + ERRMSG$
+        ENDTRY
+        DIM src$ = PATH.BASENAME$(from$)
+        PUSH(lines, stamp$ + "  " + src$ + "  " + what$)
+    NEXT k
+    IF LEN(lines) > 0 THEN
+        DIM old_log$ = ""
+        IF FILE.EXISTS(log$) THEN old_log$ = TXTREADER$(log$)
+        MKDIR PATH.DIRNAME$(log$)
+        TXTWRITER log$, old_log$ + JOIN(lines, CHR$(10)) + CHR$(10)
+    ENDIF
+    RETURN lines
+ENDFUNC

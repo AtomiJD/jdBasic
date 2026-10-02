@@ -1,0 +1,62 @@
+' Mail Merge: contacts from sheet rows, the sample template filled for
+' one of them and read back, file names Windows accepts, and the mail
+' with the letter attached. Nothing is sent.
+
+IMPORT TESTKIT, LETTERS, DOCX, MAIL
+
+DIM folder$ = MKTEMP$("mailmerge")
+MKDIR folder$
+DIM sheet_rows = [["Name", "Salutation", "Company", "City", "EMAIL"], _
+    ["Anna Berg", "Ms Berg", "Stone & Co", "Leeds", "anna@stone.example"], _
+    ["Ben Cole", "Mr Cole", "Cole/Sons", 1010, ""], _
+    ["", "", "", "", ""]]
+
+TESTKIT.SUITE("contacts")
+DIM people = LETTERS.CONTACTS(sheet_rows)
+TESTKIT.EQ(LEN(people), 2, "one per row, empty rows left out")
+TESTKIT.EQ(people[0]{"name"}, "Anna Berg", "by column name")
+TESTKIT.EQ(people[0]{"email"}, "anna@stone.example", "in lower case")
+TESTKIT.EQ(people[1]{"city"}, "1010", "a number as text")
+TESTKIT.EQ(people[1]{"name"}, "Ben Cole", "each contact its own")
+
+TESTKIT.SUITE("names and texts")
+TESTKIT.EQ(LETTERS.FILL$("Dear {{salutation}},", people[0]), _
+    "Dear Ms Berg,", "a text filled")
+TESTKIT.EQ(LETTERS.FILL$("{{nobody}}", people[0]), "{{nobody}}", _
+    "an unknown placeholder stays")
+TESTKIT.EQ(LETTERS.FILE_NAME$("{{name}}", people[0]), _
+    "Anna Berg.docx", "a file name from the pattern")
+TESTKIT.EQ(LETTERS.FILE_NAME$("{{company}} {{name}}", people[1]), _
+    "Cole_Sons Ben Cole.docx", "without a slash")
+TESTKIT.EQ(LETTERS.FILE_NAME$("{{email}}", people[1]), _
+    "letter.docx", "never empty")
+
+TESTKIT.SUITE("the letter")
+DIM template$ = PATH.JOIN$(folder$, "letter.docx")
+LETTERS.SAMPLE_TEMPLATE(template$)
+TESTKIT.EQARRAY(DOCX.PLACEHOLDERS(template$), ["name", "company", _
+    "city", "salutation", "date"], "the sample's placeholders")
+TESTKIT.EQARRAY(LETTERS.UNFILLED(template$, people), ["date"], _
+    "the one without a column")
+DIM path$ = PATH.JOIN$(folder$, "Anna Berg.docx")
+TESTKIT.EQ(LETTERS.WRITE(template$, path$, people[0]), 4, _
+    "four placeholders filled")
+DIM paras = DOCX.PARAGRAPHS(path$)
+TESTKIT.ISTRUE("Stone & Co" IN paras, "the company with its &")
+TESTKIT.ISTRUE("Dear Ms Berg," IN paras, "the salutation")
+TESTKIT.ISTRUE(INSTR(JOIN(paras, " "), "{{date}}") >= 0, _
+    "the unfilled one stays visible")
+
+TESTKIT.SUITE("the mail")
+DIM m = LETTERS.MAIL_FOR(people[0], "Jonas <jonas@example.com>", _
+    "For {{company}}", "Dear {{salutation}}", path$)
+DIM eml$ = PATH.JOIN$(folder$, "Anna Berg.eml")
+MAIL.WRITEEML(m, eml$)
+DIM p = MAIL.PARSEFILE(eml$)
+TESTKIT.EQ(p{"subject"}, "For Stone & Co", "the subject filled")
+TESTKIT.EQARRAY(p{"to"}, ["anna@stone.example"], "to the contact")
+TESTKIT.ISTRUE(INSTR(p{"text"}, "Dear Ms Berg") >= 0, "the text")
+TESTKIT.EQARRAY(p{"att_names"}, ["Anna Berg.docx"], "the letter")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

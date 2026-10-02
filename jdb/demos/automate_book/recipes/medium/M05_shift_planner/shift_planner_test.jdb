@@ -1,0 +1,67 @@
+' Shift and Vacation Planner: dates from Excel numbers and from text,
+' the entries of a sheet written and read back, the calendar with
+' all-day events and UIDs that stay the same, and the days with too
+' many people away.
+
+IMPORT TESTKIT, SHIFTS, XLSX, ICAL, DT
+
+DIM folder$ = MKTEMP$("shifts")
+MKDIR folder$
+DIM plan$ = PATH.JOIN$(folder$, "plan.xlsx")
+DIM rows = [["Name", "Kind", "From", "To", "Note"]]
+PUSH(rows, ["Ann", "Vacation", "2026-10-19", "2026-10-23", "Lisbon"])
+PUSH(rows, ["Ben", "Vacation", 46315, 46316, ""])
+PUSH(rows, ["Cem", "Sick", "21.10.2026", "", ""])
+PUSH(rows, ["Dora", "Early shift", "2026-10-21", "2026-10-21", ""])
+PUSH(rows, ["", "Vacation", "2026-10-01", "", "no name"])
+PUSH(rows, ["Eve", "Vacation", "soon", "", "no date"])
+DIM wb = XLSX.NEW()
+DIM s = XLSX.SHEET(wb, "Plan", rows)
+XLSX.WRITE(plan$, wb)
+
+TESTKIT.SUITE("dates")
+TESTKIT.EQ(SHIFTS.DAY$("2026-10-19"), "2026-10-19", "ISO text")
+TESTKIT.EQ(SHIFTS.DAY$("9.3.2026"), "2026-03-09", "a German date")
+TESTKIT.EQ(SHIFTS.DAY$(46315), "2026-10-20", "an Excel date number")
+TESTKIT.EQ(SHIFTS.DAY$("next week"), "", "text that is no date")
+
+TESTKIT.SUITE("entries")
+DIM entries = SHIFTS.ENTRIES(XLSX.READ(plan$){"Plan"})
+TESTKIT.EQ(LEN(entries), 4, "rows without a name or a date are left out")
+TESTKIT.EQ(entries[1]{"from"}, "2026-10-20", "Ben's start from a number")
+TESTKIT.EQ(entries[2]{"to"}, "2026-10-21", "a row without an end lasts a day")
+TESTKIT.EQ(SHIFTS.DAYS(entries[0]), 5, "Ann is away five days")
+TESTKIT.EQ(entries[0]{"row"}, 2, "with the line in the sheet")
+
+TESTKIT.SUITE("the calendar")
+DIM cal = SHIFTS.CALENDAR(entries, "Team")
+DIM ics$ = PATH.JOIN$(folder$, "team.ics")
+ICAL.WRITEFILE(cal, ics$)
+DIM back = ICAL.PARSEFILE(ics$)
+DIM evs = ICAL.EVENTS(back)
+TESTKIT.EQ(LEN(evs), 4, "one event per entry")
+TESTKIT.EQ(ICAL.PROP$(back, back, "X-WR-CALNAME"), "Team", "the name")
+TESTKIT.EQ(ICAL.PROP$(back, evs[0], "SUMMARY"), "Ann: Vacation", "title")
+TESTKIT.ISTRUE(ICAL.ALLDAY(back, evs[0]), "an all-day event")
+DIM last = ICAL.ENDAT(back, evs[0])
+TESTKIT.EQ(DT.FMT$(last, "%Y-%m-%d", 0), "2026-10-24", "ends after day 5")
+TESTKIT.EQ(ICAL.PROP$(back, evs[0], "DESCRIPTION"), "Lisbon", "the note")
+DIM again = SHIFTS.CALENDAR(entries, "Team")
+DIM uid1$ = ICAL.PROP$(cal, ICAL.EVENTS(cal)[1], "UID")
+DIM uid2$ = ICAL.PROP$(again, ICAL.EVENTS(again)[1], "UID")
+TESTKIT.EQ(uid1$, uid2$, "the same entry keeps its UID")
+
+TESTKIT.SUITE("too many away")
+DIM kinds = ["Vacation", "Sick"]
+DIM clash = SHIFTS.CLASHES(entries, kinds, 2)
+TESTKIT.EQ(LEN(clash), 1, "one day with three away")
+TESTKIT.EQ(clash[0]{"day"}, "2026-10-21", "the Wednesday")
+TESTKIT.EQARRAY(clash[0]{"names"}, ["Ann", "Ben", "Cem"], "who")
+TESTKIT.EQ(LEN(SHIFTS.CLASHES(entries, kinds, 3)), 0, "three is allowed")
+DIM shifts_only = SHIFTS.CLASHES(entries, ["early shift"], 0)
+TESTKIT.EQ(LEN(shifts_only), 1, "kinds match in any case")
+
+KILL ics$
+KILL plan$
+RMDIR folder$
+TESTKIT.REPORT()

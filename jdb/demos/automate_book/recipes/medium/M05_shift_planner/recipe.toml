@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "M05"
+name = "Shift and Vacation Planner"
+program = "shift_planner.jdb"
+summary = "The team plan from Excel as a calendar everyone subscribes to"
+minutes_per_week = 30
+schedule = "daily 07:00"
+section = "shift_planner"
+modules = ["shifts.jdb"]
+
+[[setting]]
+key = "plan_file"
+label = "The Excel file with the team plan"
+kind = "file"
+default = "~/Documents/Team/plan.xlsx"
+
+[[setting]]
+key = "calendar_file"
+label = "Where to write the calendar (a shared folder)"
+kind = "file"
+default = "~/Documents/Team/team.ics"
+
+[[setting]]
+key = "max_away"
+label = "Warn when more people than this are away"
+kind = "number"
+default = 2
+
+[[setting]]
+key = "away_kinds"
+label = "Kinds that mean away"
+kind = "list"
+default = ["Vacation", "Sick", "Training"]

@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "M15"
+name = "Timesheet for the Boss"
+program = "monthly_timesheet.jdb"
+summary = "Last month of the time log as a Word timesheet, mailed through the outbox"
+minutes_per_week = 15
+schedule = "weekly mon 08:00"
+section = "timesheet"
+modules = ["timesheet.jdb"]
+
+[[setting]]
+key = "log"
+label = "Another time log (empty: the one E07 writes)"
+kind = "file"
+default = ""
+
+[[setting]]
+key = "folder"
+label = "Folder for the timesheets"
+kind = "folder"
+default = "~/Documents/AutomateWork/timesheets"
+
+[[setting]]
+key = "boss"
+label = "Who gets the timesheet (name and address)"
+kind = "text"
+default = ""

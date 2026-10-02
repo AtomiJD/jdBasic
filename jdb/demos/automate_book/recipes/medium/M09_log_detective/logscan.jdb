@@ -1,0 +1,200 @@
+' logscan.jdb: application logs read line by line. Errors and warnings
+' counted per hour, the same error message found again however its
+' numbers change, a short report and a chart of the hours.
+'
+'   IMPORT LOGSCAN
+'   DIM stats = LOGSCAN.NEW()
+'   LOGSCAN.SCAN_TEXT(stats, TXTREADER$("app.log"))
+'   PRINT LOGSCAN.REPORT$(stats, 5)
+'   LOGSCAN.CHART(stats, "hours.svg")
+
+EXPORT MODULE LOGSCAN
+
+IMPORT SVG
+
+DIM gStamp$ = "^([0-9]{4}-[0-9]{2}-[0-9]{2})[ T]([0-9]{2}):[0-9]{2}"
+DIM gLevel$ = "\b(FATAL|ERROR|WARNING|WARN)\b"
+
+' Empty counters: "hours" (a map per hour of "ERROR" and "WARN"),
+' "messages" (how often each error message came), "lines" and
+' "skipped" (lines without a time stamp).
+EXPORT FUNC NEW()
+    DIM hours AS MAP
+    DIM messages AS MAP
+    RETURN {"hours": hours, "messages": messages, "lines": 0, _
+        "skipped": 0}
+ENDFUNC
+
+' A message with every number replaced by #, so "job 4711 failed"
+' and "job 4712 failed" count as one.
+EXPORT FUNC SIGNATURE$(message$)
+    DIM t$ = TRIM$(REGEX.REPLACE("[0-9]+", message$, "#"))
+    IF LEN(t$) > 60 THEN t$ = LEFT$(t$, 60)
+    RETURN t$
+ENDFUNC
+
+' One line as a map with "hour" ("2026-10-05 09"), "level" ("ERROR",
+' "WARN" or "") and "message"; an empty map for a line without a time
+' stamp at its start.
+EXPORT FUNC PARSE(line$)
+    DIM found AS MAP
+    DIM stamp = REGEX.FINDALL(gStamp$, line$)
+    IF LEN(stamp) = 0 THEN RETURN found
+    DIM day$ = stamp[0][0]
+    DIM hour$ = stamp[0][1]
+    found{"hour"} = day$ + " " + hour$
+    found{"level"} = ""
+    found{"message"} = ""
+    DIM upper$ = UCASE$(line$)
+    DIM lv = REGEX.FINDALL(gLevel$, upper$)
+    IF LEN(lv) > 0 THEN
+        DIM word$ = lv[0][0]
+        IF word$ = "FATAL" THEN word$ = "ERROR"
+        IF word$ = "WARNING" THEN word$ = "WARN"
+        found{"level"} = word$
+        DIM at = INSTR(upper$, lv[0][0])
+        DIM rest$ = MID$(line$, at + LEN(lv[0][0]), LEN(line$))
+        DIM clean$ = REGEX.REPLACE("^[\]:\s-]+", rest$, "")
+        found{"message"} = TRIM$(clean$)
+    ENDIF
+    RETURN found
+ENDFUNC
+
+' Adds the lines of a log text to the counters.
+EXPORT SUB SCAN_TEXT(stats, text$)
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM hours = stats{"hours"}
+    DIM messages = stats{"messages"}
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM one$ = rows[k]
+        IF TRIM$(one$) <> "" THEN
+            stats{"lines"} = stats{"lines"} + 1
+            DIM p = PARSE(one$)
+            IF NOT MAP.EXISTS(p, "hour") THEN
+                stats{"skipped"} = stats{"skipped"} + 1
+            ELSEIF p{"level"} <> "" THEN
+                DIM h$ = p{"hour"}
+                IF NOT MAP.EXISTS(hours, h$) THEN
+                    hours{h$} = {"ERROR": 0, "WARN": 0}
+                ENDIF
+                DIM slot = hours{h$}
+                DIM lv$ = p{"level"}
+                slot{lv$} = slot{lv$} + 1
+                IF lv$ = "ERROR" THEN
+                    DIM sig$ = SIGNATURE$(p{"message"})
+                    IF NOT MAP.EXISTS(messages, sig$) THEN
+                        messages{sig$} = 0
+                    ENDIF
+                    messages{sig$} = messages{sig$} + 1
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT k
+ENDSUB
+
+' The total of one level over all hours.
+EXPORT FUNC TOTAL(stats, level$)
+    DIM hours = stats{"hours"}
+    DIM keys = MAP.KEYS(hours)
+    DIM n = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM slot = hours{keys[k]}
+        DIM add = slot{level$}
+        n = n + add
+    NEXT k
+    RETURN n
+ENDFUNC
+
+' The error messages, the most frequent first.
+EXPORT FUNC TOP_MESSAGES(stats)
+    DIM messages = stats{"messages"}
+    DIM keys = MAP.KEYS(messages)
+    DIM minus = []
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        PUSH(minus, -messages{keys[k]})
+    NEXT k
+    DIM order = GRADE(minus)
+    DIM out = []
+    FOR k = 0 TO LEN(order) - 1
+        DIM pick$ = keys[order[k]]
+        PUSH(out, pick$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The busiest hour for errors, "" without any error.
+EXPORT FUNC WORST_HOUR$(stats)
+    DIM hours = stats{"hours"}
+    DIM keys = SORT(MAP.KEYS(hours))
+    DIM best$ = ""
+    DIM most = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM slot = hours{keys[k]}
+        DIM n = slot{"ERROR"}
+        IF n > most THEN
+            most = n
+            best$ = keys[k]
+        ENDIF
+    NEXT k
+    RETURN best$
+ENDFUNC
+
+' The report as text: the totals, the worst hour, the top_n error
+' messages and the hours with their counts.
+EXPORT FUNC REPORT$(stats, top_n)
+    DIM out = []
+    DIM errors = TOTAL(stats, "ERROR")
+    DIM warnings = TOTAL(stats, "WARN")
+    PUSH(out, STR$(stats{"lines"}) + " lines, " + STR$(errors) + _
+        " errors, " + STR$(warnings) + " warnings")
+    DIM worst$ = WORST_HOUR$(stats)
+    IF worst$ <> "" THEN PUSH(out, "Most errors: " + worst$ + ":00")
+    PUSH(out, "")
+    PUSH(out, "Most frequent errors")
+    DIM top = TOP_MESSAGES(stats)
+    DIM messages = stats{"messages"}
+    DIM k = 0
+    FOR k = 0 TO LEN(top) - 1
+        IF k < top_n THEN
+            DIM sig$ = top[k]
+            PUSH(out, FORMAT$("{:>5}  ", messages{sig$}) + sig$)
+        ENDIF
+    NEXT k
+    PUSH(out, "")
+    PUSH(out, "Per hour          errors  warnings")
+    DIM hours = stats{"hours"}
+    DIM keys = SORT(MAP.KEYS(hours))
+    FOR k = 0 TO LEN(keys) - 1
+        DIM slot = hours{keys[k]}
+        PUSH(out, "  " + keys[k] + ":00" + _
+            FORMAT$("{:>7}{:>10}", slot{"ERROR"}, slot{"WARN"}))
+    NEXT k
+    RETURN JOIN(out, CHR$(10))
+ENDFUNC
+
+' A stacked bar chart of the errors and warnings per hour, as SVG.
+EXPORT SUB CHART(stats, path$)
+    DIM hours = stats{"hours"}
+    DIM keys = SORT(MAP.KEYS(hours))
+    DIM labels = []
+    DIM errors = []
+    DIM warnings = []
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        DIM h$ = keys[k]
+        DIM slot = hours{h$}
+        PUSH(labels, MID$(h$, 5, 8) + "h")
+        PUSH(errors, slot{"ERROR"})
+        PUSH(warnings, slot{"WARN"})
+    NEXT k
+    DIM c = SVG.CHART("stackedbar", 640, 320)
+    SVG.SETOPT(c, "title", "Errors and warnings per hour")
+    SVG.LABELS(c, labels)
+    SVG.SERIES(c, "errors", errors)
+    SVG.SERIES(c, "warnings", warnings)
+    SVG.WRITEFILE(SVG.RENDER(c), path$)
+ENDSUB

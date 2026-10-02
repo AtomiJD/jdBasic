@@ -1,0 +1,29 @@
+# What the setup wizard knows about this recipe.
+
+id = "M08"
+name = "Personal Dashboard"
+program = "personal_dashboard.jdb"
+summary = "Your hours, open items, outbox and downloads on one local page"
+minutes_per_week = 20
+schedule = "at logon"
+section = "dashboard"
+modules = ["dashboard.jdb"]
+files = ["templates/dashboard.html"]
+
+[[setting]]
+key = "todo_file"
+label = "Your notes file with open items (- [ ] lines)"
+kind = "file"
+default = "~/Documents/AutomateWork/todo.txt"
+
+[[setting]]
+key = "downloads"
+label = "Downloads folder"
+kind = "folder"
+default = "~/Downloads"
+
+[[setting]]
+key = "port"
+label = "Port of the page on this computer"
+kind = "number"
+default = 8765

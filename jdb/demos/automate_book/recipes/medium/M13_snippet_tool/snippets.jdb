@@ -1,0 +1,122 @@
+' snippets.jdb: text blocks kept as files in a folder, a file for
+' each snippet. A snippet may hold placeholders such as {{name}}
+' that are filled when it is used.
+'
+'   IMPORT SNIPPETS
+'   DIM t$ = SNIPPETS.READ$("C:/snips", "thanks")
+'   DIM filled = SNIPPETS.FILL(t$, {"name": "Ann"})
+'   PRINT filled{"text"}
+
+EXPORT MODULE SNIPPETS
+
+' TRUE for a name that can be a snippet: letters, digits, _ and -.
+EXPORT FUNC VALID_NAME(snip$)
+    IF snip$ = "" ORELSE LEN(snip$) > 40 THEN RETURN FALSE
+    RETURN LEN(REGEX.FINDALL("^[A-Za-z0-9_-]+$", snip$)) > 0
+ENDFUNC
+
+FUNC FileOf$(folder$, snip$)
+    IF NOT VALID_NAME(snip$) THEN THROW "Not a snippet name: " + snip$
+    RETURN PATH.JOIN$(folder$, LCASE$(snip$) + ".txt")
+ENDFUNC
+
+' The names of all snippets in the folder, sorted.
+EXPORT FUNC LIST(folder$)
+    DIM out = []
+    IF NOT FILE.ISDIR(folder$) THEN RETURN out
+    DIM files = DIR$(PATH.JOIN$(folder$, "*.txt"))
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM file$ = files[k]
+        PUSH(out, LEFT$(file$, LEN(file$) - 4))
+    NEXT k
+    RETURN SORT(out)
+ENDFUNC
+
+' The text of a snippet, line ends as LF.
+EXPORT FUNC READ$(folder$, snip$)
+    DIM path$ = FileOf$(folder$, snip$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "No snippet called " + snip$
+    RETURN REPLACE$(TXTREADER$(path$), CHR$(13), "")
+ENDFUNC
+
+' Saves a snippet; an existing one is replaced only with replace.
+EXPORT SUB WRITE(folder$, snip$, txt$, replace)
+    DIM path$ = FileOf$(folder$, snip$)
+    IF FILE.EXISTS(path$) ANDALSO NOT replace THEN
+        THROW "A snippet called " + snip$ + " exists; use --force"
+    ENDIF
+    MKDIR folder$
+    TXTWRITER path$, txt$
+ENDSUB
+
+' The placeholder names of a text, each once, in order.
+EXPORT FUNC PLACEHOLDERS(txt$)
+    DIM out = []
+    DIM found = REGEX.FINDALL("\{\{ *([A-Za-z0-9_]+) *\}\}", txt$)
+    DIM k = 0
+    FOR k = 0 TO LEN(found) - 1
+        DIM hit = found[k]
+        DIM key$ = LCASE$(hit[0])
+        IF NOT (key$ IN out) THEN PUSH(out, key$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Values from settings like "name=Ann": a map, names in small letters.
+EXPORT FUNC VALUES(pairs)
+    DIM out AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(pairs) - 1
+        DIM pair$ = pairs[k]
+        DIM at = INSTR(pair$, "=")
+        IF at <= 0 THEN THROW "Use name=value, not " + pair$
+        DIM key$ = LCASE$(TRIM$(LEFT$(pair$, at)))
+        out{key$} = MID$(pair$, at + 1, LEN(pair$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The text with every placeholder that has a value replaced. Answers
+' "text" and "missing", the names that had no value.
+EXPORT FUNC FILL(txt$, values)
+    DIM out$ = ""
+    DIM missing = []
+    DIM rest$ = txt$
+    DO
+        DIM open_at = INSTR(rest$, "{{")
+        DIM close_at = -1
+        IF open_at >= 0 THEN close_at = INSTR(open_at, rest$, "}}")
+        IF close_at < 0 THEN EXITDO
+        DIM inner$ = MID$(rest$, open_at + 2, close_at - open_at - 2)
+        DIM key$ = LCASE$(TRIM$(inner$))
+        out$ = out$ + LEFT$(rest$, open_at)
+        IF MAP.EXISTS(values, key$) THEN
+            DIM value$ = "" + values{key$}
+            out$ = out$ + value$
+        ELSE
+            out$ = out$ + "{{" + inner$ + "}}"
+            IF NOT (key$ IN missing) THEN PUSH(missing, key$)
+        ENDIF
+        rest$ = MID$(rest$, close_at + 2, LEN(rest$))
+    LOOP
+    RETURN {"text": out$ + rest$, "missing": missing}
+ENDFUNC
+
+' The values for a snippet: the standing ones from the settings, then
+' today's date, then the ones from the command line, each later one
+' winning over an earlier one.
+EXPORT FUNC MERGE(standing, today$, given)
+    DIM out AS MAP
+    DIM keys = MAP.KEYS(standing)
+    DIM k = 0
+    FOR k = 0 TO LEN(keys) - 1
+        out{LCASE$(keys[k])} = standing{keys[k]}
+    NEXT k
+    out{"today"} = today$
+    keys = MAP.KEYS(given)
+    FOR k = 0 TO LEN(keys) - 1
+        out{keys[k]} = given{keys[k]}
+    NEXT k
+    RETURN out
+ENDFUNC

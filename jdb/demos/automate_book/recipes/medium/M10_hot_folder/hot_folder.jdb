@@ -1,0 +1,47 @@
+' Hot Folder: one look at a folder. Every file that has settled is
+' handled by the first rule that fits it, and each step lands in a
+' log. Scheduled every few minutes, with a lock file so two runs never
+' overlap. The settings are the [hot_folder] part of work.conf.
+'
+'   jdbasic hot_folder.jdb            handle the files
+'   jdbasic hot_folder.jdb --dry-run  show what it would do
+
+IMPORT WORKCONF, HOTFOLDER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "hot_folder."
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", "")
+DIM done$ = WORKCONF.FOLDER$(cfg, key$ + "done_folder", "")
+DIM rename$ = WORKCONF.VALUE(cfg, key$ + "rename", "{date} {name}")
+DIM settle = WORKCONF.VALUE(cfg, key$ + "settle_seconds", 60)
+DIM sep$ = WORKCONF.VALUE(cfg, key$ + "separator", ";")
+IF folder$ = "" THEN THROW "Set hot_folder.folder first."
+IF done$ = "" THEN done$ = PATH.JOIN$(folder$, "done")
+DIM rules = HOTFOLDER.DEFAULT_RULES(done$, rename$)
+DIM own = WORKCONF.VALUE(cfg, key$ + "rule", [])
+IF LEN(own) > 0 THEN rules = own
+
+DIM lock$ = PATH.JOIN$(folder$, ".hot_folder.lock")
+DIM log$ = PATH.JOIN$(done$, "hot_folder.log")
+IF WORKCONF.FLAG("dry-run") THEN
+    DIM jobs = HOTFOLDER.PLAN(folder$, rules, settle, NOW())
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        PRINT "would handle "; PATH.BASENAME$(job{"from"}); " -> "; _
+            job{"to"}
+    NEXT k
+    IF LEN(jobs) = 0 THEN PRINT "Nothing to do."
+ELSEIF HOTFOLDER.LOCK(lock$, NOW(), 30) THEN
+    TRY
+        DIM todo = HOTFOLDER.PLAN(folder$, rules, settle, NOW())
+        DIM lines = HOTFOLDER.APPLY(todo, sep$, log$, NOW())
+        IF LEN(lines) = 0 THEN PRINT "Nothing to do."
+        IF LEN(lines) > 0 THEN PRINT JOIN(lines, CHR$(10))
+    CATCH
+        PRINT "Stopped: "; ERRMSG$
+    ENDTRY
+    HOTFOLDER.RELEASE(lock$)
+ELSE
+    PRINT "Another run is working on the folder."
+ENDIF

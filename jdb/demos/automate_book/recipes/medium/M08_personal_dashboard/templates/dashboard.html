@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="300">
+<title>My week</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; margin: 2em;
+  background: #f6f6f4; color: #222; }
+h1 { font-weight: 600; }
+.cards { display: flex; flex-wrap: wrap; gap: 1em; }
+.card { background: #fff; border-radius: 8px; padding: 1em 1.4em;
+  min-width: 10em; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.big { font-size: 2.2em; font-weight: 600; }
+.chart, .todo { background: #fff; border-radius: 8px; padding: 1em;
+  margin-top: 1em; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+</style>
+</head>
+<body>
+<h1>My week from {{ week_of }}</h1>
+<div class="cards">
+  <div class="card"><div class="big">{{ total_hours }}</div>hours</div>
+  <div class="card"><div class="big">{{ open_count }}</div>open items</div>
+  <div class="card"><div class="big">{{ outbox }}</div>in the outbox</div>
+  <div class="card"><div class="big">{{ downloads }}</div>
+    downloads, {{ downloads_size }}</div>
+</div>
+<div class="chart">{{{ chart }}}</div>
+<div class="todo">
+  <h2>Open</h2>
+  <ul>
+  {% for t in todo %}<li>{{ t }}</li>
+  {% endfor %}
+  </ul>
+</div>
+</body>
+</html>

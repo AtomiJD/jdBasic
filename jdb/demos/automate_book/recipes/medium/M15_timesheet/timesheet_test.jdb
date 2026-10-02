@@ -1,0 +1,86 @@
+' Timesheet for the Boss: the Time Tracker's log read into blocks, the
+' weeks of a month, hours per week and day inside the month only, the
+' totals, the Word file read back, and the mail put into an outbox
+' folder and read back. Nothing is sent.
+
+IMPORT TESTKIT, TIMESHEET, OUTBOX, MAIL, DOCX, CONF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("timesheet")
+MKDIR folder$
+DIM log$ = PATH.JOIN$(folder$, "log.csv")
+DIM log_lines = ["time,event,project"]
+PUSH(log_lines, "2026-09-30 09:00:00,start,Miller offer")
+PUSH(log_lines, "2026-09-30 11:00:00,stop,")
+PUSH(log_lines, "2026-10-01 09:00:00,start,Miller offer")
+PUSH(log_lines, "2026-10-01 12:30:00,start,Admin")
+PUSH(log_lines, "2026-10-01 13:00:00,stop,")
+PUSH(log_lines, "2026-10-05 08:00:00,start,Admin")
+PUSH(log_lines, "2026-10-05 10:15:00,stop,")
+PUSH(log_lines, "2026-10-30 14:00:00,start,Miller offer")
+TXTWRITER log$, JOIN(log_lines, LF$) + LF$
+DIM now$ = "2026-10-30 16:00:00"
+
+FUNC NoLog(x)
+    RETURN TIMESHEET.EVENTS("no such log.csv")
+ENDFUNC
+
+TESTKIT.SUITE("the log")
+DIM work = TIMESHEET.SESSIONS(TIMESHEET.EVENTS(log$))
+TESTKIT.EQ(LEN(work), 5, "five blocks of work")
+TESTKIT.EQ(work[2]{"project"}, "Admin", "a start ends the block before it")
+TESTKIT.EQ(work[1]{"stop"}, "2026-10-01 12:30:00", "at the time of the new start")
+TESTKIT.EQ(work[4]{"stop"}, "", "the last block still runs")
+TESTKIT.THROWS(NoLog@, 0, "a missing log is an error")
+
+TESTKIT.SUITE("months and weeks")
+TESTKIT.EQ(TIMESHEET.LAST_MONTH$("2026-11-02"), "2026-10", "the month before")
+TESTKIT.EQ(TIMESHEET.LAST_MONTH$("2027-01-15"), "2026-12", "across the year")
+TESTKIT.EQ(TIMESHEET.MONDAY$("2026-10-01"), "2026-09-28", "the Monday of a Thursday")
+TESTKIT.EQARRAY(TIMESHEET.WEEKS("2026-10"), ["2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19", "2026-10-26"], "every week with a day of October")
+TESTKIT.EQ(TIMESHEET.MONTH_NAME$("2026-10"), "October 2026", "the month written out")
+
+TESTKIT.SUITE("hours")
+DIM wk = TIMESHEET.WEEK_HOURS(work, "2026-09-28", "2026-10", now$)
+TESTKIT.EQARRAY(SORT(MAP.KEYS(wk)), ["Admin", "Miller offer"], "both projects of the first week")
+TESTKIT.EQ(wk{"Miller offer"}[2], 0, "September stays out")
+TESTKIT.EQ(wk{"Miller offer"}[3], 3.5, "the hours of a day")
+DIM table = TIMESHEET.WEEK_ROWS(wk, "2026-09-28", "2026-10")
+TESTKIT.EQ(table[0][1], "Mon", "a day outside the month has no date")
+TESTKIT.EQ(table[0][4], "Thu 01.10.", "a day inside it has one")
+TESTKIT.EQ(table[2][4], "3.50", "hours in two decimals")
+TESTKIT.EQ(table[2][1], "", "an empty day stays empty")
+TESTKIT.EQ(table[3][8], "4.00", "the week's total of all projects")
+DIM totals = TIMESHEET.MONTH_TOTALS(work, "2026-10", now$)
+TESTKIT.EQ(totals{"Admin"}, 2.75, "the month's total of a project")
+TESTKIT.EQ(totals{"Miller offer"}, 5.5, "with a running block counted until now")
+
+TESTKIT.SUITE("the document and the mail")
+DIM sheet$ = PATH.JOIN$(folder$, "Timesheet 2026-10.docx")
+DIM hours = TIMESHEET.DOCUMENT(sheet$, "Jonas Weber", "2026-10", work, now$)
+TESTKIT.EQ(hours, 8.25, "the document answers the month's hours")
+DIM back = DOCX.READ(sheet$)
+DIM paras = back{"paragraphs"}
+TESTKIT.EQ(paras[0], "Timesheet October 2026", "the title")
+TESTKIT.ISTRUE("Week from 2026-10-26" IN paras, "a heading per week with work")
+TESTKIT.ISTRUE(NOT ("Week from 2026-10-12" IN paras), "and none for a week without")
+TESTKIT.EQ(LEN(back{"tables"}), 4, "three week tables and the totals")
+DIM last_table = back{"tables"}[3]
+TESTKIT.EQ(last_table[LEN(last_table) - 1][1], "8.25", "the month's total in the last row")
+DIM box$ = REPLACE$(PATH.JOIN$(folder$, "outbox"), "\", "/")
+DIM toml$ = "[user]" + LF$ + "name = " + Q$ + "Jonas Weber" + Q$ + LF$
+toml$ = toml$ + "email = " + Q$ + "jonas@example.com" + Q$ + LF$
+toml$ = toml$ + "[mail]" + LF$ + "outbox = " + Q$ + box$ + Q$ + LF$
+DIM cfg = CONF.TOML_TEXT(toml$)
+DIM msg = TIMESHEET.MESSAGE(OUTBOX.FROM$(cfg), "Anna Boss <anna@example.com>", "Jonas Weber", "2026-10", sheet$, hours)
+DIM eml$ = OUTBOX.PUT$(msg, cfg, "timesheet 2026-10.eml")
+TESTKIT.ISTRUE(FILE.EXISTS(eml$), "the mail is in the outbox")
+DIM parsed = MAIL.PARSEFILE(eml$)
+TESTKIT.EQ(parsed{"subject"}, "Timesheet October 2026, Jonas Weber", "with its subject")
+TESTKIT.ISTRUE(INSTR(parsed{"text"}, "8.25 hours in all") >= 0, "the hours in the text")
+TESTKIT.EQ(parsed{"att_names"}[0], "Timesheet 2026-10.docx", "and the timesheet attached")
+TESTKIT.EQ(LEN(OUTBOX.PENDING(cfg)), 1, "one message waits to be sent")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()
