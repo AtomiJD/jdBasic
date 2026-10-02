@@ -1,0 +1,101 @@
+' EPUB: a small book written as an e-book and checked against the rules a
+' reader and EPUBCheck apply first: the mimetype entry first, stored, with
+' the exact text; every XML file well-formed; every manifest item in the
+' archive; every spine entry in the manifest; every contents link on a
+' file and an anchor that exist.
+
+IMPORT TESTKIT, EPUB, MDBOOK, CONF, XML
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("epubtest")
+MKDIR folder$
+DIM md$ = "# First Chapter" + LF$ + LF$ + "Text with **bold**, a & sign and <angle> brackets." + LF$ + LF$ + "## A Section" + LF$ + LF$ + "```basic" + LF$ + "IF a < b THEN PRINT " + Q$ + "x" + Q$ + LF$ + "```" + LF$ + LF$ + "# Second Chapter" + LF$ + LF$ + "- an item" + LF$
+DIM chapters = [{"path": "t.md", "dir": folder$, "text": md$, "blocks": MDBOOK.BLOCKS(md$)}]
+DIM cfg = CONF.TOML_TEXT("[book]" + LF$ + "title = " + Q$ + "Test & Book" + Q$ + LF$ + "authors = [" + Q$ + "A" + Q$ + ", " + Q$ + "B" + Q$ + "]" + LF$)
+DIM book$ = folder$ + "/t.epub"
+DIM n = EPUB.WRITE(cfg, chapters, ".", book$, "")
+
+FUNC Attr$(xml$, after_at, name$)
+    DIM at = INSTR(after_at, xml$, name$ + "=" + CHR$(34))
+    IF at < 0 THEN RETURN ""
+    DIM v_at = at + LEN(name$) + 2
+    RETURN MID$(xml$, v_at, INSTR(v_at, xml$, CHR$(34)) - v_at)
+ENDFUNC
+
+TESTKIT.SUITE("the archive")
+DIM names = ZIP.LIST(book$)
+TESTKIT.EQ(names[0], "mimetype", "mimetype is the first entry")
+DIM raw$ = BINREADER$(book$)
+TESTKIT.EQ(BYTEAT(raw$, 8) + 256 * BYTEAT(raw$, 9), 0, "and stored, not compressed")
+TESTKIT.EQ(BYTEAT(raw$, 28) + 256 * BYTEAT(raw$, 29), 0, "with no extra field")
+TESTKIT.EQ(MID$(raw$, 38, 20), "application/epub+zip", "and exactly the media type as its content")
+DIM parts = ZIP.READ(book$)
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "META-INF/container.xml"), "the container")
+TESTKIT.EQ(n, LEN(names), "WRITE answers the number of files")
+
+TESTKIT.SUITE("well-formed")
+DIM xml_files = 0
+DIM xml_ok = 0
+DIM k = 0
+FOR k = 0 TO LEN(names) - 1
+    DIM nm$ = names[k]
+    IF ENDSWITH(nm$, ".xhtml") ORELSE ENDSWITH(nm$, ".opf") ORELSE ENDSWITH(nm$, ".xml") THEN
+        xml_files = xml_files + 1
+        IF XML.ROOT(XML.PARSE(parts{nm$})) >= 0 THEN xml_ok = xml_ok + 1
+    ENDIF
+NEXT k
+TESTKIT.ISTRUE(xml_files >= 5, "container, package, navigation, title and a chapter")
+TESTKIT.EQ(xml_ok, xml_files, "every one parses as XML")
+DIM ch$ = parts{"OEBPS/ch01.xhtml"}
+TESTKIT.ISTRUE(INSTR(ch$, "a &amp; sign and &lt;angle&gt; brackets") >= 0, "text is escaped")
+TESTKIT.ISTRUE(INSTR(ch$, "<h1 id=" + Q$ + "h0" + Q$ + ">") >= 0 ANDALSO INSTR(ch$, "<h2 id=" + Q$ + "h1" + Q$ + ">") >= 0, "headings carry anchors")
+
+TESTKIT.SUITE("the package")
+DIM opf$ = parts{"OEBPS/content.opf"}
+TESTKIT.ISTRUE(INSTR(opf$, "<dc:title>Test &amp; Book</dc:title>") >= 0, "the title, escaped")
+TESTKIT.ISTRUE(INSTR(opf$, "<dc:creator>A</dc:creator>") >= 0 ANDALSO INSTR(opf$, "<dc:creator>B</dc:creator>") >= 0, "both authors")
+TESTKIT.ISTRUE(INSTR(opf$, "property=" + Q$ + "dcterms:modified" + Q$) >= 0, "the modified date EPUB 3 requires")
+DIM ids AS MAP
+DIM missing = 0
+DIM at = INSTR(opf$, "<item ")
+DO WHILE at >= 0
+    DIM href$ = Attr$(opf$, at, "href")
+    ids{Attr$(opf$, at, "id")} = TRUE
+    IF NOT MAP.EXISTS(parts, "OEBPS/" + href$) THEN missing = missing + 1
+    at = CINT(INSTR(at + 6, opf$, "<item "))
+LOOP
+TESTKIT.EQ(missing, 0, "every manifest item is in the archive")
+DIM bad_refs = 0
+at = INSTR(opf$, "<itemref ")
+DO WHILE at >= 0
+    IF NOT MAP.EXISTS(ids, Attr$(opf$, at, "idref")) THEN bad_refs = bad_refs + 1
+    at = CINT(INSTR(at + 9, opf$, "<itemref "))
+LOOP
+TESTKIT.EQ(bad_refs, 0, "every spine entry is in the manifest")
+
+TESTKIT.SUITE("the contents")
+DIM nav$ = parts{"OEBPS/nav.xhtml"}
+TESTKIT.ISTRUE(INSTR(nav$, "epub:type=" + Q$ + "toc" + Q$) >= 0, "a navigation document")
+DIM links = 0
+DIM broken = 0
+at = INSTR(nav$, "<a href=")
+DO WHILE at >= 0
+    DIM target$ = Attr$(nav$, at, "href")
+    DIM hash_at = INSTR(target$, "#")
+    DIM file$ = LEFT$(target$, hash_at)
+    DIM anchor$ = MID$(target$, hash_at + 1, LEN(target$))
+    links = links + 1
+    IF NOT MAP.EXISTS(parts, "OEBPS/" + file$) THEN
+        broken = broken + 1
+    ELSEIF INSTR(parts{"OEBPS/" + file$}, "id=" + Q$ + anchor$ + Q$) < 0 THEN
+        broken = broken + 1
+    ENDIF
+    at = CINT(INSTR(at + 8, nav$, "<a href="))
+LOOP
+TESTKIT.EQ(links, 3, "two chapters and a section")
+TESTKIT.EQ(broken, 0, "every link reaches its heading")
+
+KILL book$
+RMDIR folder$
+TESTKIT.REPORT()

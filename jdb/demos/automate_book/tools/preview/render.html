@@ -5,10 +5,12 @@
 <canvas id="c"></canvas><div id="s"></div>
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-const page = Number(location.hash.slice(1) || 1);
+const hash = (location.hash.slice(1) || "1").split("@");
+const page = Number(hash[0] || 1);
+const scale = Number(hash[1] || 1.8);
 const file = new URLSearchParams(location.search).get("file");
 pdfjsLib.getDocument(file).promise.then(doc => doc.getPage(page)).then(p => {
-  const vp = p.getViewport({scale: 1.8});
+  const vp = p.getViewport({scale: scale});
   const c = document.getElementById("c"); c.width = vp.width; c.height = vp.height;
   return p.render({canvasContext: c.getContext("2d"), viewport: vp}).promise;
 }).then(() => { document.getElementById("s").textContent = "done"; })

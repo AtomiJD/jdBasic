@@ -1,0 +1,37 @@
+' COVER: the spine grows with the page count, the print sheet is back,
+' spine and front with bleed on every side, the spine text runs down the
+' spine once it is wide enough. Run from the book folder.
+
+IMPORT TESTKIT, COVER, CONF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("covertest")
+MKDIR folder$
+DIM cfg = CONF.TOML_TEXT("[book]" + LF$ + "title = " + Q$ + "Cover Test" + Q$ + LF$ + "authors = [" + Q$ + "A" + Q$ + "]" + LF$ + "[cover]" + LF$ + "paper_mm = 0.05" + LF$ + "bleed_mm = 3" + LF$)
+
+FUNC MediaBox$(pdf$)
+    DIM at = INSTR(pdf$, "/MediaBox [")
+    RETURN MID$(pdf$, at + 11, INSTR(at, pdf$, "]") - at - 11)
+ENDFUNC
+
+TESTKIT.SUITE("sizes")
+TESTKIT.NEAR(COVER.SPINE_MM(cfg, 300), 15, 0.0001, "300 pages of 0.05 mm make a 15 mm spine")
+DIM wrap$ = folder$ + "/wrap.pdf"
+DIM sheet = COVER.WRAP(cfg, ".", 300, wrap$)
+TESTKIT.NEAR(sheet[0], 3 + 170 + 15 + 170 + 3, 0.0001, "the sheet is bleed, back, spine, front, bleed wide")
+TESTKIT.NEAR(sheet[1], 3 + 240 + 3, 0.0001, "and the page plus bleed above and below high")
+DIM pdf$ = BINREADER$(wrap$)
+TESTKIT.EQ(MediaBox$(pdf$), "0 0 " + FORMAT$("{:.2f}", sheet[0] * 72 / 25.4) + " " + FORMAT$("{:.2f}", sheet[1] * 72 / 25.4), "the PDF page has that size")
+TESTKIT.ISTRUE(INSTR(pdf$, "/FontFile2 ") >= 0, "the fonts are embedded")
+
+TESTKIT.SUITE("the front")
+DIM front$ = folder$ + "/front.pdf"
+COVER.FRONT(cfg, ".", front$)
+DIM fpdf$ = BINREADER$(front$)
+TESTKIT.EQ(MediaBox$(fpdf$), "0 0 481.89 680.31", "the front alone is the 17 x 24 cm trim size")
+
+KILL wrap$
+KILL front$
+RMDIR folder$
+TESTKIT.REPORT()

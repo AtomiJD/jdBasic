@@ -21,8 +21,13 @@ files = [
     "manuscript/03_easy.md",
 ]
 
+[cover]
+# Paper thickness per page (white paper at print on demand) and bleed.
+paper_mm = 0.0572
+bleed_mm = 3.175
+
 [prose]
-extra = ["PLAN.md", "README.md"]
+extra = ["PLAN.md", "README.md", "manuscript/back_cover.md"]
 
 [build]
 out = "out"

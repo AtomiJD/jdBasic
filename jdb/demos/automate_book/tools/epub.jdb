@@ -1,0 +1,219 @@
+' epub.jdb: the book as an EPUB 3 e-book. One XHTML file per chapter from
+' lib/md.jdb, the headings anchored for the navigation document, a title
+' page, the cover picture, the figures and a style sheet, packed with the
+' mimetype entry first and stored, as the format asks.
+'
+'   IMPORT EPUB
+'   PRINT EPUB.WRITE(cfg, chapters, ".", "out/book.epub", "out/cover.png")
+
+EXPORT MODULE EPUB
+
+IMPORT CONF, MD, MDBOOK
+
+DIM gLF$ = CHR$(10)
+DIM gQ$ = CHR$(34)
+
+FUNC Esc$(s$)
+    RETURN REPLACE$(MD.ESCAPE$(s$), "'", "&#39;")
+ENDFUNC
+
+FUNC Page$(title$, body$)
+    DIM head$ = "<?xml version=" + gQ$ + "1.0" + gQ$ + " encoding=" + gQ$ + "UTF-8" + gQ$ + "?>" + gLF$
+    head$ = head$ + "<!DOCTYPE html>" + gLF$
+    head$ = head$ + "<html xmlns=" + gQ$ + "http://www.w3.org/1999/xhtml" + gQ$ + " xmlns:epub=" + gQ$ + "http://www.idpf.org/2007/ops" + gQ$ + " xml:lang=" + gQ$ + "en" + gQ$ + " lang=" + gQ$ + "en" + gQ$ + ">" + gLF$
+    head$ = head$ + "<head><meta charset=" + gQ$ + "utf-8" + gQ$ + "/><title>" + Esc$(title$) + "</title>"
+    head$ = head$ + "<link rel=" + gQ$ + "stylesheet" + gQ$ + " type=" + gQ$ + "text/css" + gQ$ + " href=" + gQ$ + "style.css" + gQ$ + "/></head>" + gLF$
+    RETURN head$ + "<body>" + gLF$ + body$ + gLF$ + "</body></html>" + gLF$
+ENDFUNC
+
+FUNC Css$()
+    DIM c = []
+    PUSH(c, "body { font-family: serif; line-height: 1.5; margin: 0 4%; }")
+    PUSH(c, "h1, h2, h3 { color: #1f3864; line-height: 1.25; }")
+    PUSH(c, "h1 { margin-top: 2em; }")
+    PUSH(c, "code, pre { font-family: monospace; }")
+    PUSH(c, "pre { background: #f3f4f6; padding: 0.6em; font-size: 0.8em; white-space: pre-wrap; }")
+    PUSH(c, "blockquote { margin: 1em 0; padding: 0.5em 1em; background: #eaf1fb; border-left: 4px solid #2e74b5; }")
+    PUSH(c, "table { border-collapse: collapse; font-size: 0.9em; }")
+    PUSH(c, "th, td { border: 1px solid #bbb; padding: 0.2em 0.5em; vertical-align: top; }")
+    PUSH(c, "img { max-width: 100%; }")
+    PUSH(c, ".title { text-align: center; margin-top: 30%; }")
+    PUSH(c, ".cover { text-align: center; margin: 0; padding: 0; }")
+    PUSH(c, ".cover img { max-height: 100%; }")
+    RETURN JOIN(c, gLF$) + gLF$
+ENDFUNC
+
+' The rendered chapter with an id on every heading, numbered from first;
+' the headings are added to found as [level, text, file, id].
+FUNC AnchorHeadings$(html$, file$, first, found, blocks)
+    DIM titles = []
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        IF b{"kind"} = "heading" THEN PUSH(titles, b)
+    NEXT k
+    DIM out$ = ""
+    DIM rest$ = html$
+    DIM n = 0
+    DO
+        DIM best = -1
+        DIM tag$ = ""
+        DIM lv = 1
+        FOR lv = 1 TO 6
+            DIM at = CINT(INSTR(rest$, "<h" + STR$(lv) + ">"))
+            IF at >= 0 ANDALSO (best < 0 ORELSE at < best) THEN
+                best = at
+                tag$ = "<h" + STR$(lv) + ">"
+            ENDIF
+        NEXT lv
+        IF best < 0 THEN EXITDO
+        DIM id$ = "h" + STR$(first + n)
+        out$ = out$ + LEFT$(rest$, best) + LEFT$(tag$, 3) + " id=" + gQ$ + id$ + gQ$ + ">"
+        rest$ = MID$(rest$, best + LEN(tag$), LEN(rest$))
+        IF n < LEN(titles) THEN
+            DIM t = titles[n]
+            PUSH(found, [t{"level"}, PlainText$(t{"text"}), file$, id$])
+        ENDIF
+        n = n + 1
+    LOOP
+    RETURN out$ + rest$
+ENDFUNC
+
+FUNC PlainText$(txt$)
+    DIM t$ = REPLACE$(REPLACE$(txt$, "**", ""), "`", "")
+    t$ = REPLACE$(t$, "*", "")
+    RETURN REGEX.REPLACE("\[([^\]]*)\]\([^)]*\)", t$, "$1")
+ENDFUNC
+
+FUNC WithoutComments$(text$)
+    DIM src = SPLIT(text$, gLF$)
+    RETURN JOIN(FILTER(LAMBDA s$ -> NOT STARTSWITH(TRIM$(s$), "<!--"), src), gLF$)
+ENDFUNC
+
+' The navigation document: the headings of level 1 and 2 as nested lists.
+FUNC Nav$(found)
+    DIM out = ["<nav epub:type=" + gQ$ + "toc" + gQ$ + " id=" + gQ$ + "toc" + gQ$ + "><h1>Contents</h1>", "<ol>"]
+    DIM open_sub = FALSE
+    DIM open_top = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(found) - 1
+        DIM h = found[k]
+        DIM link$ = "<a href=" + gQ$ + h[2] + "#" + h[3] + gQ$ + ">" + Esc$(h[1]) + "</a>"
+        IF h[0] = 1 ORELSE NOT open_top THEN
+            IF open_sub THEN PUSH(out, "</ol>")
+            IF open_top THEN PUSH(out, "</li>")
+            open_sub = FALSE
+            PUSH(out, "<li>" + link$)
+            open_top = TRUE
+        ELSEIF h[0] = 2 THEN
+            IF NOT open_sub THEN PUSH(out, "<ol>")
+            open_sub = TRUE
+            PUSH(out, "<li>" + link$ + "</li>")
+        ENDIF
+    NEXT k
+    IF open_sub THEN PUSH(out, "</ol>")
+    IF open_top THEN PUSH(out, "</li>")
+    PUSH(out, "</ol></nav>")
+    RETURN JOIN(out, gLF$)
+ENDFUNC
+
+' A UUID made from the book's title, the same for every build.
+FUNC BookId$(title$)
+    DIM h$ = LCASE$(CODEC.SHA256$(title$))
+    RETURN "urn:uuid:" + MID$(h$, 0, 8) + "-" + MID$(h$, 8, 4) + "-5" + MID$(h$, 13, 3) + "-a" + MID$(h$, 17, 3) + "-" + MID$(h$, 20, 12)
+ENDFUNC
+
+FUNC Item$(id$, href$, media$, props$)
+    DIM out$ = "<item id=" + gQ$ + id$ + gQ$ + " href=" + gQ$ + href$ + gQ$ + " media-type=" + gQ$ + media$ + gQ$
+    IF props$ <> "" THEN out$ = out$ + " properties=" + gQ$ + props$ + gQ$
+    RETURN out$ + "/>"
+ENDFUNC
+
+FUNC MediaType$(path$)
+    DIM ext$ = LCASE$(PATH.EXT$(path$))
+    IF ext$ = ".png" THEN RETURN "image/png"
+    IF ext$ = ".jpg" ORELSE ext$ = ".jpeg" THEN RETURN "image/jpeg"
+    IF ext$ = ".svg" THEN RETURN "image/svg+xml"
+    THROW "EPUB: no media type for " + path$
+    RETURN ""
+ENDFUNC
+
+' Writes the e-book; answers the number of files in it. cover_png$ may be
+' "" for a book without a cover picture.
+EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
+    DIM title$ = CONF.GET(cfg, "book.title", "Untitled")
+    DIM subtitle$ = CONF.GET(cfg, "book.subtitle", "")
+    DIM authors = CONF.GET(cfg, "book.authors", [])
+    DIM lang$ = LEFT$(CONF.GET(cfg, "book.language", "en-US"), 2)
+    DIM files AS MAP
+    files{"mimetype"} = "application/epub+zip"
+    files{"META-INF/container.xml"} = "<?xml version=" + gQ$ + "1.0" + gQ$ + "?>" + gLF$ + "<container version=" + gQ$ + "1.0" + gQ$ + " xmlns=" + gQ$ + "urn:oasis:names:tc:opendocument:xmlns:container" + gQ$ + "><rootfiles><rootfile full-path=" + gQ$ + "OEBPS/content.opf" + gQ$ + " media-type=" + gQ$ + "application/oebps-package+xml" + gQ$ + "/></rootfiles></container>" + gLF$
+    files{"OEBPS/style.css"} = Css$()
+    DIM manifest = []
+    DIM spine = []
+    PUSH(manifest, Item$("nav", "nav.xhtml", "application/xhtml+xml", "nav"))
+    PUSH(manifest, Item$("css", "style.css", "text/css", ""))
+    IF cover_png$ <> "" ANDALSO FILE.EXISTS(cover_png$) THEN
+        files{"OEBPS/img/cover.png"} = BINREADER$(cover_png$)
+        PUSH(manifest, Item$("cover-image", "img/cover.png", "image/png", "cover-image"))
+        files{"OEBPS/cover.xhtml"} = Page$(title$, "<div class=" + gQ$ + "cover" + gQ$ + "><img src=" + gQ$ + "img/cover.png" + gQ$ + " alt=" + gQ$ + Esc$(title$) + gQ$ + "/></div>")
+        PUSH(manifest, Item$("cover", "cover.xhtml", "application/xhtml+xml", ""))
+        PUSH(spine, "cover")
+    ENDIF
+    DIM title_body$ = "<div class=" + gQ$ + "title" + gQ$ + "><h1>" + Esc$(title$) + "</h1><p><em>" + Esc$(subtitle$) + "</em></p><p>" + Esc$(JOIN(authors, " and ")) + "</p></div>"
+    files{"OEBPS/title.xhtml"} = Page$(title$, title_body$)
+    PUSH(manifest, Item$("title", "title.xhtml", "application/xhtml+xml", ""))
+    PUSH(spine, "title")
+    DIM found = []
+    DIM images AS MAP
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM ch = chapters[k]
+        DIM file$ = "ch" + RIGHT$("0" + STR$(k + 1), 2) + ".xhtml"
+        DIM html$ = MD.RENDER$(WithoutComments$(ch{"text"}))
+        html$ = AnchorHeadings$(html$, file$, LEN(found), found, ch{"blocks"})
+        DIM ch_title$ = title$
+        DIM blocks = ch{"blocks"}
+        FOR j = 0 TO LEN(blocks) - 1
+            DIM b = blocks[j]
+            IF b{"kind"} = "heading" ANDALSO ch_title$ = title$ THEN ch_title$ = PlainText$(b{"text"})
+            IF b{"kind"} = "image" THEN images{b{"path"}} = PATH.JOIN$(ch{"dir"}, b{"path"})
+        NEXT j
+        files{"OEBPS/" + file$} = Page$(ch_title$, html$)
+        DIM item_id$ = "c" + STR$(k + 1)
+        PUSH(manifest, Item$(item_id$, file$, "application/xhtml+xml", ""))
+        PUSH(spine, item_id$)
+    NEXT k
+    DIM img_paths = MAP.KEYS(images)
+    FOR k = 0 TO LEN(img_paths) - 1
+        DIM rel$ = img_paths[k]
+        files{"OEBPS/" + rel$} = BINREADER$(images{rel$})
+        PUSH(manifest, Item$("i" + STR$(k + 1), rel$, MediaType$(rel$), ""))
+    NEXT k
+    files{"OEBPS/nav.xhtml"} = Page$("Contents", Nav$(found))
+    DIM opf = []
+    PUSH(opf, "<?xml version=" + gQ$ + "1.0" + gQ$ + " encoding=" + gQ$ + "UTF-8" + gQ$ + "?>")
+    PUSH(opf, "<package xmlns=" + gQ$ + "http://www.idpf.org/2007/opf" + gQ$ + " version=" + gQ$ + "3.0" + gQ$ + " unique-identifier=" + gQ$ + "bookid" + gQ$ + " xml:lang=" + gQ$ + lang$ + gQ$ + ">")
+    PUSH(opf, "<metadata xmlns:dc=" + gQ$ + "http://purl.org/dc/elements/1.1/" + gQ$ + ">")
+    PUSH(opf, "<dc:identifier id=" + gQ$ + "bookid" + gQ$ + ">" + BookId$(title$) + "</dc:identifier>")
+    PUSH(opf, "<dc:title>" + Esc$(title$) + "</dc:title>")
+    PUSH(opf, "<dc:language>" + lang$ + "</dc:language>")
+    FOR k = 0 TO LEN(authors) - 1
+        PUSH(opf, "<dc:creator>" + Esc$(authors[k]) + "</dc:creator>")
+    NEXT k
+    PUSH(opf, "<meta property=" + gQ$ + "dcterms:modified" + gQ$ + ">" + FORMAT_DATE(NOW(), "%Y-%m-%dT%H:%M:%SZ", 0) + "</meta>")
+    IF cover_png$ <> "" ANDALSO FILE.EXISTS(cover_png$) THEN PUSH(opf, "<meta name=" + gQ$ + "cover" + gQ$ + " content=" + gQ$ + "cover-image" + gQ$ + "/>")
+    PUSH(opf, "</metadata>")
+    PUSH(opf, "<manifest>")
+    opf = APPEND(opf, manifest)
+    PUSH(opf, "</manifest>")
+    PUSH(opf, "<spine>")
+    FOR k = 0 TO LEN(spine) - 1
+        PUSH(opf, "<itemref idref=" + gQ$ + spine[k] + gQ$ + "/>")
+    NEXT k
+    PUSH(opf, "</spine>")
+    PUSH(opf, "</package>")
+    files{"OEBPS/content.opf"} = JOIN(opf, gLF$) + gLF$
+    RETURN ZIP.WRITE(out_path$, files)
+ENDFUNC

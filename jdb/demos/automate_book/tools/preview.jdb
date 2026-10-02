@@ -1,0 +1,47 @@
+' preview.jdb: a PDF page as a PNG picture, drawn by pdf.js in a headless
+' Chrome, so a page can be looked at, or turned into the e-book cover,
+' without a PDF viewer. Needs Google Chrome and the network (pdf.js comes
+' from cdnjs); the page tools/preview/render.html does the drawing.
+'
+'   IMPORT PREVIEW
+'   IF PREVIEW.READY() THEN PREVIEW.RENDER("out/book.pdf", 3, "out/p3.png", 1.8, "870x1230")
+
+EXPORT MODULE PREVIEW
+
+DIM gChrome$ = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+' TRUE when Chrome is installed where RENDER looks for it.
+EXPORT FUNC READY()
+    RETURN FILE.EXISTS(gChrome$)
+ENDFUNC
+
+' A path made absolute against the working directory.
+EXPORT FUNC ABS_PATH$(path$)
+    DIM rooted = MID$(path$, 1, 1) = ":" ORELSE STARTSWITH(path$, "\")
+    IF rooted ORELSE STARTSWITH(path$, "/") THEN RETURN PATH.NORMALIZE$(path$)
+    DIM r = OS.EXEC("cmd", ["/c", "cd"])
+    DIM here$ = TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
+    RETURN PATH.NORMALIZE$(PATH.JOIN$(here$, path$))
+ENDFUNC
+
+FUNC FileUrl$(path$)
+    RETURN "file:///" + REPLACE$(ABS_PATH$(path$), "\", "/")
+ENDFUNC
+
+' Draws one page at a pdf.js zoom (1.8 shows a 17 x 24 cm page in 870 by
+' 1230 pixels) into a window of size$ ("WxH"), which is the picture's
+' size. Answers TRUE when the picture file exists afterwards.
+EXPORT FUNC RENDER(pdf$, page, png$, zoom, size$)
+    IF NOT READY() THEN THROW "PREVIEW: Google Chrome not found at " + gChrome$
+    IF NOT FILE.EXISTS(pdf$) THEN THROW "PREVIEW: no such file: " + pdf$
+    DIM shot$ = ABS_PATH$(png$)
+    IF FILE.EXISTS(shot$) THEN KILL shot$
+    MKDIR PATH.DIRNAME$(shot$)
+    DIM page_url$ = FileUrl$(PATH.JOIN$("tools", "preview", "render.html"))
+    DIM target$ = page_url$ + "?file=" + FileUrl$(pdf$) + "#" + STR$(page) + "@" + STR$(zoom)
+    DIM args = ["--headless=new", "--disable-gpu", "--hide-scrollbars", _
+        "--allow-file-access-from-files", "--window-size=" + REPLACE$(size$, "x", ","), _
+        "--virtual-time-budget=30000", "--screenshot=" + shot$, target$]
+    DIM r = OS.EXEC(gChrome$, args)
+    RETURN FILE.EXISTS(shot$)
+ENDFUNC

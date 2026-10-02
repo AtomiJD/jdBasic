@@ -1,0 +1,153 @@
+' cover.jdb: the book's cover, drawn with PDFGEN in the book's fonts. The
+' front alone (for the e-book and the web), and the wrap for print on
+' demand: back, spine and front side by side with bleed, the spine as wide
+' as the page count makes it.
+'
+'   IMPORT COVER
+'   COVER.FRONT(cfg, ".", "out/cover_front.pdf")
+'   COVER.WRAP(cfg, ".", 312, "out/cover_print.pdf")
+
+EXPORT MODULE COVER
+
+IMPORT PDFGEN, CONF, MDBOOK
+
+SUB Navy(doc)
+    PDFGEN.SETFILL(doc, 31, 56, 100)
+ENDSUB
+
+SUB Fonts(doc, base$)
+    DIM f$ = PATH.JOIN$(base$, "fonts")
+    PDFGEN.ADDFONT(doc, "book", PATH.JOIN$(f$, "SourceSerif4-Regular.ttf"))
+    PDFGEN.ADDFONT(doc, "book", PATH.JOIN$(f$, "SourceSerif4-Bold.ttf"), "B")
+    PDFGEN.ADDFONT(doc, "book", PATH.JOIN$(f$, "SourceSerif4-It.ttf"), "I")
+    PDFGEN.ADDFONT(doc, "code", PATH.JOIN$(f$, "SourceCodePro-Regular.ttf"))
+ENDSUB
+
+' Lines of text from x, y down, wrapped to w mm; answers the y below them.
+FUNC Lines(doc, txt$, x, y, w, lead)
+    DIM rows = PDFGEN.SPLITLINES(doc, txt$, w)
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        PDFGEN.TEXTAT(doc, x, y + k * lead, rows[k])
+    NEXT k
+    RETURN y + LEN(rows) * lead
+ENDFUNC
+
+' The front panel with its top left corner at x0, y0, w by h mm.
+SUB DrawFront(doc, cfg, x0, y0, w, h)
+    DIM m = 18
+    Navy(doc)
+    PDFGEN.BOX(doc, x0, y0, w, h, "F")
+    PDFGEN.SETFILL(doc, 240, 150, 60)
+    PDFGEN.BOX(doc, x0 + m, y0 + 24, 26, 1.6, "F")
+    PDFGEN.USEFONT(doc, "book", "B", 31)
+    PDFGEN.SETCOLOR(doc, 255, 255, 255)
+    DIM title$ = CONF.GET(cfg, "book.title", "Untitled")
+    DIM y = Lines(doc, title$, x0 + m, y0 + 40, w - 2 * m, 12.5)
+    PDFGEN.USEFONT(doc, "book", "I", 13.5)
+    PDFGEN.SETCOLOR(doc, 196, 214, 238)
+    y = Lines(doc, CONF.GET(cfg, "book.subtitle", ""), x0 + m, y + 4, w - 2 * m, 6.5)
+    DIM days = ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    DIM share = [0.12, 0.22, 0.33, 0.44, 0.55]
+    DIM bar_w = w - 2 * m - 14
+    DIM k = 0
+    FOR k = 0 TO 4
+        DIM by = y0 + 128 + k * 11
+        PDFGEN.USEFONT(doc, "code", "", 9)
+        PDFGEN.SETCOLOR(doc, 196, 214, 238)
+        PDFGEN.TEXTAT(doc, x0 + m, by + 4.6, days[k])
+        PDFGEN.SETFILL(doc, 70, 100, 150)
+        PDFGEN.BOX(doc, x0 + m + 14, by, bar_w, 6, "F")
+        PDFGEN.SETFILL(doc, 240, 150, 60)
+        PDFGEN.BOX(doc, x0 + m + 14, by, bar_w * share[k], 6, "F")
+    NEXT k
+    PDFGEN.USEFONT(doc, "book", "I", 9.5)
+    PDFGEN.SETCOLOR(doc, 196, 214, 238)
+    PDFGEN.TEXTAT(doc, x0 + m + 14, y0 + 190, "the part of the week a program does for you")
+    PDFGEN.USEFONT(doc, "book", "", 13.5)
+    PDFGEN.SETCOLOR(doc, 255, 255, 255)
+    DIM authors$ = JOIN(CONF.GET(cfg, "book.authors", []), " and ")
+    PDFGEN.TEXTAT(doc, x0 + m, y0 + h - 22, authors$)
+ENDSUB
+
+' The back panel: the blurb from manuscript/back_cover.md and room for
+' the barcode at the bottom right.
+SUB DrawBack(doc, cfg, base$, x0, y0, w, h)
+    DIM m = 18
+    Navy(doc)
+    PDFGEN.BOX(doc, x0, y0, w, h, "F")
+    DIM blurb_path$ = PATH.JOIN$(base$, "manuscript", "back_cover.md")
+    IF NOT FILE.EXISTS(blurb_path$) THEN RETURN
+    DIM blocks = MDBOOK.BLOCKS(TXTREADER$(blurb_path$))
+    DIM y = y0 + 32
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        IF b{"kind"} = "heading" THEN
+            PDFGEN.USEFONT(doc, "book", "B", 15)
+            PDFGEN.SETCOLOR(doc, 255, 255, 255)
+            y = Lines(doc, b{"text"}, x0 + m, y, w - 2 * m, 7) + 3
+        ELSEIF b{"kind"} = "para" THEN
+            PDFGEN.USEFONT(doc, "book", "", 10.5)
+            PDFGEN.SETCOLOR(doc, 230, 236, 245)
+            y = Lines(doc, REPLACE$(REPLACE$(b{"text"}, "**", ""), "*", ""), x0 + m, y, w - 2 * m, 5.3) + 3.5
+        ENDIF
+    NEXT k
+ENDSUB
+
+' The spine: title and authors running down it, when it is wide enough.
+SUB DrawSpine(doc, cfg, x0, y0, w, h)
+    Navy(doc)
+    PDFGEN.BOX(doc, x0, y0, w, h, "F")
+    IF w < 6 THEN RETURN
+    DIM pt = w * 2.2
+    IF pt > 11 THEN pt = 11
+    PDFGEN.USEFONT(doc, "book", "B", pt)
+    PDFGEN.SETCOLOR(doc, 255, 255, 255)
+    DIM title$ = CONF.GET(cfg, "book.title", "Untitled")
+    DIM base_x = x0 + w / 2 - pt * 0.3527777 * 0.35
+    PDFGEN.TEXTROTATED(doc, base_x, y0 + 20, title$, -90)
+    PDFGEN.USEFONT(doc, "book", "", pt * 0.85)
+    DIM authors$ = JOIN(CONF.GET(cfg, "book.authors", []), " and ")
+    PDFGEN.TEXTROTATED(doc, base_x, y0 + h - 20 - PDFGEN.STRWIDTH(doc, authors$), authors$, -90)
+ENDSUB
+
+' The front page alone at the trim size.
+EXPORT SUB FRONT(cfg, base$, out_path$)
+    DIM w = CONF.GET(cfg, "page.width_mm", 170)
+    DIM h = CONF.GET(cfg, "page.height_mm", 240)
+    DIM doc = PDFGEN.DOC({"width": w, "height": h, "margin": 0, "compress": TRUE})
+    Fonts(doc, base$)
+    PDFGEN.SETINFO(doc, CONF.GET(cfg, "book.title", ""), "", "Cover")
+    PDFGEN.ADDPAGE(doc)
+    DrawFront(doc, cfg, 0, 0, w, h)
+    PDFGEN.WRITEFILE(doc, out_path$)
+ENDSUB
+
+' The spine width in mm for a page count, from the paper thickness per
+' page in book.toml ([cover] paper_mm, 0.0572 for white paper).
+EXPORT FUNC SPINE_MM(cfg, pages)
+    RETURN pages * CONF.GET(cfg, "cover.paper_mm", 0.0572)
+ENDFUNC
+
+' The print cover: back, spine and front with bleed on every side.
+' Answers [width, height] of the sheet in mm.
+EXPORT FUNC WRAP(cfg, base$, pages, out_path$)
+    DIM w = CONF.GET(cfg, "page.width_mm", 170)
+    DIM h = CONF.GET(cfg, "page.height_mm", 240)
+    DIM bleed = CONF.GET(cfg, "cover.bleed_mm", 3.175)
+    DIM spine = SPINE_MM(cfg, pages)
+    DIM sheet_w = 2 * bleed + 2 * w + spine
+    DIM sheet_h = 2 * bleed + h
+    DIM doc = PDFGEN.DOC({"width": sheet_w, "height": sheet_h, "margin": 0, "compress": TRUE})
+    Fonts(doc, base$)
+    PDFGEN.SETINFO(doc, CONF.GET(cfg, "book.title", ""), "", "Print cover")
+    PDFGEN.ADDPAGE(doc)
+    Navy(doc)
+    PDFGEN.BOX(doc, 0, 0, sheet_w, sheet_h, "F")
+    DrawBack(doc, cfg, base$, 0, 0, bleed + w, sheet_h)
+    DrawSpine(doc, cfg, bleed + w, 0, spine, sheet_h)
+    DrawFront(doc, cfg, bleed + w + spine, bleed, w, h)
+    PDFGEN.WRITEFILE(doc, out_path$)
+    RETURN [sheet_w, sheet_h]
+ENDFUNC

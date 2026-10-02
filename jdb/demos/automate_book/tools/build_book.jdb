@@ -1,13 +1,14 @@
 ' build_book.jdb: the book from its manuscript. book.toml names the
 ' chapters; the build checks the writing rules (tools/prose.jdb), writes
-' out/book.docx, out/book_print.pdf, out/book_screen.pdf and a browser preview in
+' out/book.docx, out/book_print.pdf, out/book_screen.pdf, the covers,
+' out/book.epub and a browser preview in
 ' out/html/, and reports words, code lines and estimated pages per chapter.
 '
-'   jdbasic tools/build_book.jdb [book.toml] [--only docx|html|pdf|print|screen]
+'   jdbasic tools/build_book.jdb [book.toml] [--only docx|html|pdf|print|screen|cover|epub]
 '
 ' Run from the book folder; the modules come from lib/ through JDBASIC_PATH.
 
-IMPORT CONF, DOCX, MD, MDBOOK, PROSE, LAYOUT, TTF
+IMPORT CONF, DOCX, MD, MDBOOK, PROSE, LAYOUT, TTF, COVER, EPUB, PREVIEW
 
 DIM gLF$ = CHR$(10)
 DIM gCodeColumns = 70
@@ -210,6 +211,15 @@ FUNC WideLines(text$, file$, fenced_only)
     RETURN out
 ENDFUNC
 
+' The page count of a PDF written by PDFGEN, from its page tree.
+FUNC PdfPages(path$)
+    DIM pdf$ = BINREADER$(path$)
+    DIM at = INSTR(pdf$, "<< /Type /Pages /Kids [")
+    IF at < 0 THEN RETURN 0
+    DIM count_at = INSTR(at, pdf$, "/Count ")
+    RETURN CINT(VAL(MID$(pdf$, count_at + 7, 8)))
+ENDFUNC
+
 ' ── main ──────────────────────────────────────────────────────
 
 DIM cfg_path$ = "book.toml"
@@ -265,4 +275,28 @@ FOR mi = 0 TO LEN(modes) - 1
         PRINT "wrote "; pdf_path$; " ("; n_pages; " pages, "; FORMAT$("{:.1f}", (TICK() - t0) / 1000); " s)"
     ENDIF
 NEXT mi
+DIM print_pages = 0
+IF FILE.EXISTS(PATH.JOIN$(out_dir$, "book_print.pdf")) THEN print_pages = PdfPages(PATH.JOIN$(out_dir$, "book_print.pdf"))
+IF only$ = "" ORELSE only$ = "cover" ORELSE only$ = "epub" THEN
+    DIM front_pdf$ = PATH.JOIN$(out_dir$, "cover_front.pdf")
+    COVER.FRONT(cfg, base$, front_pdf$)
+    PRINT "wrote "; front_pdf$
+    IF print_pages > 0 THEN
+        DIM wrap_pdf$ = PATH.JOIN$(out_dir$, "cover_print.pdf")
+        DIM sheet = COVER.WRAP(cfg, base$, print_pages, wrap_pdf$)
+        PRINT "wrote "; wrap_pdf$; " ("; FORMAT$("{:.1f} x {:.1f} mm, spine {:.1f} mm", sheet[0], sheet[1], COVER.SPINE_MM(cfg, print_pages)); ")"
+    ENDIF
+ENDIF
+IF only$ = "" ORELSE only$ = "epub" THEN
+    DIM cover_png$ = PATH.JOIN$(out_dir$, "cover.png")
+    IF PREVIEW.READY() THEN
+        IF NOT PREVIEW.RENDER(PATH.JOIN$(out_dir$, "cover_front.pdf"), 1, cover_png$, 3.32, "1600x2260") THEN cover_png$ = ""
+    ELSE
+        PRINT "no Chrome: the e-book gets no cover picture"
+        cover_png$ = ""
+    ENDIF
+    DIM epub_path$ = PATH.JOIN$(out_dir$, "book.epub")
+    DIM n_files = EPUB.WRITE(cfg, chapters, base$, epub_path$, cover_png$)
+    PRINT "wrote "; epub_path$; " ("; n_files; " files)"
+ENDIF
 Report(chapters)
