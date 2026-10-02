@@ -2,11 +2,16 @@
 
 # About the Authors
 
-**Achim Christ** created jdBasic, the language every program in this
-book is written in.
+**Achim Christ** develops jdBasic, the language every program in this
+book is written in. jdBasic is a product of Computerwelt AI Solutions
+LLC.
 
 His other books, in German, from the series *Die +n Bücher*:
 
+- *Das +1 Buch: Der Notfall-Knopf für deine Jahres-Statistik*,
+  <https://www.amazon.de/dp/B0GJG2782X>
+- *Das +2 Buch: Der Dopamin-Detox für deinen Ladebalken*,
+  <https://www.amazon.de/dp/B0GHZTBRL1>
 - *Das +3 Buch: Die Jäger und Sammler des digitalen Nichts*,
   <https://www.amazon.de/dp/B0GJPG3YYJ>
 - *Das +4 Buch: Die Rückerstattung deiner Lebenszeit*,

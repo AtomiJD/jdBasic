@@ -6,6 +6,8 @@ subtitle = "45 jdBasic programs that give you your hours back"
 authors = ["Achim Christ", "Claude"]
 version = "0.4 (chapters 1 to 4)"
 language = "en-US"
+publisher = "Achim Christ"
+rights = "Text and pictures (c) 2026 Achim Christ, CC BY-NC-ND 4.0. Program code (c) 2026 Computerwelt AI Solutions LLC, MIT License."
 
 [page]
 width_mm = 170

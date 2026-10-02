@@ -1,11 +1,23 @@
 # Copyright and Disclaimer
 
 *Automate Your Work for a Better Life Balance*, by Achim Christ and
-Claude. Copyright © 2026 Achim Christ. All rights reserved for the text
-and the pictures, except as stated below.
+Claude. Text and pictures copyright © 2026 Achim Christ. Program
+code copyright © 2026 Computerwelt AI Solutions LLC.
 
 Publisher and legal notice (Impressum): Achim Christ,
 <https://www.atomijd.onl/impressum.html>.
+
+### The text and the pictures
+
+The text and the pictures of this book are licensed under the Creative
+Commons Attribution-NonCommercial-NoDerivatives 4.0 International
+License (CC BY-NC-ND 4.0),
+<https://creativecommons.org/licenses/by-nc-nd/4.0/>. You may copy
+and share the book, the PDF and the e-book in unchanged form and free of
+charge, as long as you name the authors and the license. You may not
+sell it or share changed versions. The license does not cover the
+program code, which has its own license below, nor the trademarks named
+in this book. The printed edition is sold by the publisher.
 
 ### The program code
 
@@ -18,7 +30,7 @@ in the file `recipes/LICENSE`.
 ```text
 MIT License
 
-Copyright (c) 2026 Achim Christ
+Copyright (c) 2026 Computerwelt AI Solutions LLC
 
 Permission is hereby granted, free of charge, to any person
 obtaining a copy of this software and associated documentation
@@ -90,8 +102,9 @@ THAT APPLIES TO YOU.
 
 ### Trademarks
 
-Microsoft, Windows, Word, Excel and Outlook are trademarks of the
-Microsoft group of companies. Other product names in this book are
+jdBasic is a product of Computerwelt AI Solutions LLC. Microsoft,
+Windows, Word, Excel and Outlook are trademarks of the Microsoft group
+of companies. Other product names in this book are
 trademarks of their owners. They are used only to name the products;
 the use does not mean that their owners endorse or are connected with
 this book.

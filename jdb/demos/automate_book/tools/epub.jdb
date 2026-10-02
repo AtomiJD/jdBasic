@@ -145,6 +145,8 @@ EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
     DIM subtitle$ = CONF.GET(cfg, "book.subtitle", "")
     DIM authors = CONF.GET(cfg, "book.authors", [])
     DIM lang$ = LEFT$(CONF.GET(cfg, "book.language", "en-US"), 2)
+    DIM publisher$ = CONF.GET(cfg, "book.publisher", "")
+    DIM rights$ = CONF.GET(cfg, "book.rights", "")
     DIM files AS MAP
     files{"mimetype"} = "application/epub+zip"
     files{"META-INF/container.xml"} = "<?xml version=" + gQ$ + "1.0" + gQ$ + "?>" + gLF$ + "<container version=" + gQ$ + "1.0" + gQ$ + " xmlns=" + gQ$ + "urn:oasis:names:tc:opendocument:xmlns:container" + gQ$ + "><rootfiles><rootfile full-path=" + gQ$ + "OEBPS/content.opf" + gQ$ + " media-type=" + gQ$ + "application/oebps-package+xml" + gQ$ + "/></rootfiles></container>" + gLF$
@@ -202,6 +204,8 @@ EXPORT FUNC WRITE(cfg, chapters, base$, out_path$, cover_png$)
     FOR k = 0 TO LEN(authors) - 1
         PUSH(opf, "<dc:creator>" + Esc$(authors[k]) + "</dc:creator>")
     NEXT k
+    IF publisher$ <> "" THEN PUSH(opf, "<dc:publisher>" + Esc$(publisher$) + "</dc:publisher>")
+    IF rights$ <> "" THEN PUSH(opf, "<dc:rights>" + Esc$(rights$) + "</dc:rights>")
     PUSH(opf, "<meta property=" + gQ$ + "dcterms:modified" + gQ$ + ">" + FORMAT_DATE(NOW(), "%Y-%m-%dT%H:%M:%SZ", 0) + "</meta>")
     IF cover_png$ <> "" ANDALSO FILE.EXISTS(cover_png$) THEN PUSH(opf, "<meta name=" + gQ$ + "cover" + gQ$ + " content=" + gQ$ + "cover-image" + gQ$ + "/>")
     PUSH(opf, "</metadata>")
