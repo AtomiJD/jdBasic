@@ -1,0 +1,39 @@
+' TTF: a monospaced font from the repository read for its name, metrics,
+' widths and character map; code points of UTF-8 text; a file that is no
+' font is refused.
+
+IMPORT TESTKIT, TTF
+
+DIM font_dir$ = "resources/fonts/"
+IF NOT FILE.EXISTS(font_dir$ + "JetBrainsMono-Regular.ttf") THEN font_dir$ = "../../resources/fonts/"
+DIM mono = TTF.LOAD(font_dir$ + "JetBrainsMono-Regular.ttf")
+
+FUNC NotFont(path$)
+    RETURN TTF.LOAD(path$)
+ENDFUNC
+
+TESTKIT.SUITE("metrics")
+TESTKIT.EQ(mono{"name"}, "JetBrainsMono-Regular", "the PostScript name")
+TESTKIT.EQ(TTF.UPEM(mono), 1000, "units per em")
+TESTKIT.ISTRUE(mono{"monospace"}, "a fixed pitch font")
+TESTKIT.ISTRUE(mono{"ascent"} > 0 ANDALSO mono{"descent"} < 0, "ascent above, descent below the baseline")
+TESTKIT.ISTRUE(mono{"cap"} > 0 ANDALSO mono{"cap"} < mono{"ascent"}, "a cap height below the ascent")
+TESTKIT.EQ(LEN(mono{"bbox"}), 4, "a bounding box")
+TESTKIT.EQ(LEN(mono{"widths"}), mono{"glyphs"}, "one width per glyph")
+
+TESTKIT.SUITE("characters")
+TESTKIT.EQARRAY(TTF.CODEPOINTS("aü€" + CHR$(240) + CHR$(159) + CHR$(152) + CHR$(128)), [97, 252, 8364, 128512], "code points of one, two, three and four byte characters")
+TESTKIT.EQ(LEN(TTF.CODEPOINTS("")), 0, "an empty text")
+DIM glyphs = TTF.GLYPHS(mono, "Aü€")
+TESTKIT.ISTRUE(glyphs[0] > 0 ANDALSO glyphs[1] > 0 ANDALSO glyphs[2] > 0, "letters, umlauts and the euro sign have glyphs")
+TESTKIT.ISTRUE(glyphs[0] <> glyphs[1], "different characters, different glyphs")
+TESTKIT.EQ(TTF.WIDTH(mono, "abc"), 1800, "three advances of 600")
+TESTKIT.EQ(TTF.WIDTH(mono, "Wüñ"), 1800, "the same for any letters of a monospaced font")
+TESTKIT.EQ(TTF.GLYPH(mono, 20013), 0, "a character the font lacks maps to .notdef")
+TESTKIT.EQARRAY(TTF.MISSING(mono, "ok " + CHR$(228) + CHR$(184) + CHR$(173)), [20013], "and is reported as missing")
+
+TESTKIT.SUITE("errors")
+TESTKIT.THROWS(NotFont@, font_dir$ + "readme.txt", "a text file is no font")
+TESTKIT.THROWS(NotFont@, font_dir$ + "nope.ttf", "a missing file")
+
+TESTKIT.REPORT()

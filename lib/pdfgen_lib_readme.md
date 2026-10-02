@@ -1,16 +1,18 @@
 # PDFGEN: PDF documents written from jdBasic
 
 `lib/pdfgen.jdb` writes PDF files without any other program: pages in the
-common sizes, the 14 standard fonts with their real glyph widths, text at
-a position, cells and wrapped paragraphs that start a new page when the
-page is full, lines and boxes, JPEG images, tables whose header row
-repeats on every page, a footer with page numbers, and the document
-properties.
+common sizes or any size in millimetres, the 14 standard fonts with their
+real glyph widths, embedded TrueType fonts, text at a position, cells and
+wrapped paragraphs that start a new page when the page is full, lines and
+boxes, JPEG and PNG images, tables whose header row repeats on every page,
+a footer with page numbers, links, bookmarks, compressed contents and the
+document properties.
 
 Positions and sizes are millimetres, measured from the top left corner of
-the page. Text is UTF-8 in jdBasic and is written in WinAnsi, the encoding
-the standard fonts carry, so umlauts, the euro sign and typographic quotes
-come out right.
+the page. Text is UTF-8 in jdBasic. A standard font writes it in WinAnsi,
+the encoding those fonts carry, so umlauts, the euro sign and typographic
+quotes come out right; an embedded TrueType font shows every character it
+has a glyph for.
 
 Stands in for: fpdf2, reportlab.
 
@@ -46,7 +48,7 @@ PDFGEN.WRITEFILE(pdf, "rechnung.pdf")
 
 | Call | What it does |
 |------|--------------|
-| `DOC([opts])` | A new document. `opts`: `"size"` (`A4`, `A5`, `A3`, `Letter`, `Legal`; A4 by default), `"landscape"` (FALSE), `"margin"` in mm (20). |
+| `DOC([opts])` | A new document. `opts`: `"size"` (`A4`, `A5`, `A3`, `Letter`, `Legal`; A4 by default), `"width"` and `"height"` in mm for any other size, `"landscape"` (FALSE), `"margin"` in mm (20), `"compress"` (FALSE; TRUE deflates the page contents). |
 | `ADDPAGE(doc)` | Starts a page and puts the position at the top left margin. Drawing on a document without a page starts one. |
 | `PAGENO(doc)` / `PAGECOUNT(doc)` | The page being written, from 1, and the number of pages. |
 | `PAGEWIDTH(doc)` / `PAGEHEIGHT(doc)` | The page size in mm. |
@@ -59,7 +61,8 @@ PDFGEN.WRITEFILE(pdf, "rechnung.pdf")
 
 | Call | What it does |
 |------|--------------|
-| `USEFONT(doc, family$, [style$], [size])` | `helvetica` (also `arial`, `sans`), `times` (`serif`), `courier` (`mono`), `symbol`, `zapfdingbats`; style `""`, `"B"`, `"I"` or `"BI"`; size in points when above 0. |
+| `USEFONT(doc, family$, [style$], [size])` | A font added with `ADDFONT` by its family name, or a standard font: `helvetica` (also `arial`, `sans`), `times` (`serif`), `courier` (`mono`), `symbol`, `zapfdingbats`; style `""`, `"B"`, `"I"` or `"BI"`; size in points when above 0. |
+| `ADDFONT(doc, family$, path$, [style$])` | Adds a TrueType file as one style of a font family. It is embedded whole and compressed, as a Type0 font with Identity-H encoding, glyph widths and a ToUnicode map, so the text can be searched and copied. Every character the font has a glyph for can be shown. |
 | `STRWIDTH(doc, text$)` | The width of a text in the current font, in mm, from the font's glyph widths. |
 | `SETCOLOR(doc, r, g, b)` | The colour of text, 0 to 255. |
 | `SETFILL(doc, r, g, b)` | The fill colour of cells, boxes and table rows; a light grey by default. |
@@ -86,7 +89,7 @@ bytes as given, in their own encodings.
 |------|--------------|
 | `DRAWLINE(doc, x1, y1, x2, y2)` | A line. |
 | `BOX(doc, x, y, w, h, [style$])` | A rectangle: `"D"` the frame, `"F"` filled, `"DF"` both. |
-| `IMAGE(doc, path$, x, y, [w], [h])` | A JPEG with its top left corner at `x`, `y`. With `w` or `h` at 0 the other follows from the picture's proportions; with both at 0 it is drawn at 96 dots per inch. |
+| `IMAGE(doc, path$, x, y, [w], [h])` | A JPEG or PNG with its top left corner at `x`, `y`. A PNG is decoded with the IMG module and stored deflated; its transparency becomes a soft mask. With `w` or `h` at 0 the other follows from the picture's proportions; with both at 0 it is drawn at 96 dots per inch. |
 
 A JPEG is embedded without decoding: its size and colour components (grey,
 RGB or CMYK) come from its frame header, and its bytes go into the file
@@ -105,6 +108,14 @@ Cells hold one line each and are cut with `...` to their column. When a
 row no longer fits above the bottom margin the table continues on a new
 page and draws its header row there again, in bold.
 
+### Links and bookmarks
+
+| Call | What it does |
+|------|--------------|
+| `LINK(doc, x, y, w, h, target$)` | A clickable area on the current page. A target starting with `#` jumps to a place named with `DEST`, any other opens as a URL. |
+| `DEST(doc, name$)` | Names the current page and position as a link target. |
+| `BOOKMARK(doc, title$, [level])` | An entry in the viewer's outline at the current page and position: level 1 a chapter, 2 a section under the chapter before it, 3 a subsection. A document with bookmarks opens with the outline shown. |
+
 ### Writing
 
 | Call | What it does |
@@ -114,11 +125,13 @@ page and draws its header row there again, in bold.
 
 ## Notes
 
-- The file is PDF 1.4 with uncompressed content streams, so it is somewhat
-  larger than a compressed one and every text can be found in it with
-  `INSTR`. `PDF.TEXT$` reads it back.
-- Only the standard fonts: no TrueType embedding, so no characters beyond
-  WinAnsi. Only JPEG images: PNG needs decoding and is not supported.
+- The file is PDF 1.4. Without `"compress"` the page contents stay plain
+  text, so a text in a standard font can be found in the file with
+  `INSTR`, and `PDF.TEXT$` reads it back. `PDF.TEXT$` does not yet read
+  text in an embedded TrueType font; PDF viewers and pdf.js do.
+- A standard font shows WinAnsi only; for any other character add a
+  TrueType font. With a TrueType font, `{pages}` is replaced in the footer
+  only, not in `TEXTAT`.
 - The widths come from the fonts' metrics, so `STRWIDTH` and the alignment
   of cells agree with what a viewer shows; they match fpdf2 to six decimal
   places.

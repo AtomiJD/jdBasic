@@ -1,5 +1,6 @@
-' pdfgen.jdb - PDF documents written from jdBasic: pages, the standard fonts,
-' text, wrapped paragraphs, lines, boxes, tables and JPEG images.
+' pdfgen.jdb: PDF documents written from jdBasic: pages, the standard fonts
+' and embedded TrueType fonts, text, wrapped paragraphs, lines, boxes,
+' tables, JPEG and PNG images, bookmarks and links.
 '
 '   IMPORT PDFGEN
 '   DIM pdf = PDFGEN.DOC()
@@ -9,24 +10,31 @@
 '   PDFGEN.WRITEFILE(pdf, "rechnung.pdf")
 '
 ' Positions and sizes are millimetres from the top left corner of the page.
-' Text is UTF-8 in jdBasic and is written in WinAnsi, the encoding the
-' standard fonts carry: umlauts, the euro sign and typographic quotes come
-' out, and a character outside it becomes "?".
+' Text is UTF-8 in jdBasic. With a standard font it is written in WinAnsi,
+' the encoding those fonts carry: umlauts, the euro sign and typographic
+' quotes come out, and a character outside it becomes "?". A TrueType font
+' added with ADDFONT is embedded and shows every character it has a glyph for.
 
 EXPORT MODULE PDFGEN
 
+IMPORT TTF, IMG
+
 DIM gNL$ = CHR$(10)
 DIM gWidths AS MAP
+DIM gTtfCache AS MAP
 CONST PT_PER_MM = 2.834645669291339
 
 ' ── the document ───────────────────────────────────────────────
 
 ' A new document. opts: "size" (A4, A5, A3, Letter or Legal; A4 when not
-' given), "landscape" (FALSE) and "margin" in mm (20).
+' given), "width" and "height" in mm for any other size, "landscape"
+' (FALSE), "margin" in mm (20) and "compress" (FALSE: the page contents
+' stay readable text; TRUE deflates them).
 EXPORT FUNC DOC(opts = 0)
     DIM size$ = "A4"
     DIM landscape = FALSE
     DIM margin_mm = 20.0
+    DIM compress = FALSE
     IF TYPEOF(opts) = "OBJECT" THEN
         IF MAP.EXISTS(opts, "size") THEN
             DIM asked$ = opts{"size"}
@@ -36,6 +44,9 @@ EXPORT FUNC DOC(opts = 0)
             IF opts{"landscape"} THEN landscape = TRUE
         ENDIF
         IF MAP.EXISTS(opts, "margin") THEN margin_mm = CDBL(opts{"margin"})
+        IF MAP.EXISTS(opts, "compress") THEN
+            IF opts{"compress"} THEN compress = TRUE
+        ENDIF
     ENDIF
     DIM page_w = 210.0
     DIM page_h = 297.0
@@ -53,6 +64,12 @@ EXPORT FUNC DOC(opts = 0)
         page_h = 355.6
     ELSEIF size$ <> "A4" THEN
         THROW "PDFGEN: no page size called " + size$
+    ENDIF
+    IF TYPEOF(opts) = "OBJECT" THEN
+        IF MAP.EXISTS(opts, "width") ANDALSO MAP.EXISTS(opts, "height") THEN
+            page_w = CDBL(opts{"width"})
+            page_h = CDBL(opts{"height"})
+        ENDIF
     ENDIF
     IF landscape THEN
         DIM turned = page_w
@@ -88,6 +105,19 @@ EXPORT FUNC DOC(opts = 0)
     doc{"title"} = ""
     doc{"author"} = ""
     doc{"subject"} = ""
+    doc{"compress"} = compress
+    DIM ttf AS MAP
+    doc{"ttf"} = ttf
+    DIM families AS MAP
+    doc{"ttf_families"} = families
+    DIM used AS MAP
+    doc{"used"} = used
+    doc{"img_kind"} = []
+    doc{"img_alpha"} = []
+    doc{"annots"} = []
+    doc{"outline"} = []
+    DIM dests AS MAP
+    doc{"dests"} = dests
     RETURN doc
 ENDFUNC
 
@@ -97,6 +127,8 @@ EXPORT SUB ADDPAGE(doc)
     PUSH(ops, [])
     doc{"ops"} = ops
     doc{"page"} = LEN(ops)
+    DIM annots = doc{"annots"}
+    PUSH(annots, [])
     doc{"x"} = doc{"margin"}
     doc{"y"} = doc{"margin"}
 ENDSUB
@@ -161,11 +193,80 @@ ENDSUB
 
 ' ── fonts and colours ──────────────────────────────────────────
 
+' "", "B", "I" or "BI" from any style text.
+FUNC StyleOf$(style$)
+    DIM up$ = UCASE$(style$)
+    DIM st$ = ""
+    IF INSTR(up$, "B") >= 0 THEN st$ = "B"
+    IF INSTR(up$, "I") >= 0 THEN st$ = st$ + "I"
+    RETURN st$
+ENDFUNC
+
+' Adds a TrueType font file as one style ("", "B", "I" or "BI") of a font
+' family; USEFONT then chooses it by the family name. The whole file is
+' embedded in the PDF, compressed.
+EXPORT SUB ADDFONT(doc, family$, path$, style$ = "")
+    IF NOT MAP.EXISTS(gTtfCache, path$) THEN gTtfCache{path$} = TTF.LOAD(path$)
+    DIM fam$ = LCASE$(TRIM$(family$))
+    DIM key$ = "ttf:" + fam$ + StyleOf$(style$)
+    DIM fonts = doc{"ttf"}
+    fonts{key$} = gTtfCache{path$}
+    DIM families = doc{"ttf_families"}
+    families{fam$} = TRUE
+    DIM used = doc{"used"}
+    DIM glyphs AS MAP
+    used{key$} = glyphs
+ENDSUB
+
+FUNC IsTtf(key$)
+    RETURN LEFT$(key$, 4) = "ttf:"
+ENDFUNC
+
+' The width of a text in a font and size, in mm.
+FUNC WidthOf(doc, key$, size, text$)
+    IF IsTtf(key$) THEN
+        DIM font = doc{"ttf"}{key$}
+        RETURN TTF.WIDTH(font, text$) * size / font{"upem"} / PT_PER_MM
+    ENDIF
+    RETURN BytesWidth(key$, Encoded$(key$, text$)) * size / 1000.0 / PT_PER_MM
+ENDFUNC
+
+FUNC Hex4$(n)
+    RETURN RIGHT$("000" + HEX$(n), 4)
+ENDFUNC
+
+' The string operand and Tj that show a text in a font. A TrueType font
+' takes glyph numbers, two bytes each, and remembers the glyphs it used.
+FUNC ShowOp$(doc, key$, text$)
+    IF NOT IsTtf(key$) THEN RETURN "(" + Literal$(Encoded$(key$, text$)) + ") Tj"
+    DIM font = doc{"ttf"}{key$}
+    DIM codes = TTF.CODEPOINTS(text$)
+    DIM used = doc{"used"}{key$}
+    DIM hex = []
+    DIM k = 0
+    FOR k = 0 TO LEN(codes) - 1
+        DIM gid = TTF.GLYPH(font, codes[k])
+        used{STR$(gid)} = codes[k]
+        PUSH(hex, Hex4$(gid))
+    NEXT k
+    RETURN "<" + JOIN(hex, "") + "> Tj"
+ENDFUNC
+
 ' Chooses a standard font: helvetica (or arial, sans), times (serif),
 ' courier (mono), symbol or zapfdingbats, with a style of "", "B", "I" or
 ' "BI", and a size in points when size is above 0.
 EXPORT SUB USEFONT(doc, family$, style$ = "", size = 0)
     DIM fam$ = LCASE$(TRIM$(family$))
+    IF MAP.EXISTS(doc{"ttf_families"}, fam$) THEN
+        DIM tst$ = StyleOf$(style$)
+        DIM tkey$ = "ttf:" + fam$ + tst$
+        IF NOT MAP.EXISTS(doc{"ttf"}, tkey$) THEN THROW "PDFGEN: the font family " + family$ + " has no style " + CHR$(34) + tst$ + CHR$(34) + "; add it with ADDFONT"
+        doc{"family"} = fam$
+        doc{"style"} = tst$
+        doc{"font"} = tkey$
+        IF size > 0 THEN doc{"size"} = CDBL(size)
+        RETURN
+    ENDIF
     IF fam$ = "arial" ORELSE fam$ = "sans" THEN fam$ = "helvetica"
     IF fam$ = "serif" THEN fam$ = "times"
     IF fam$ = "mono" ORELSE fam$ = "monospace" THEN fam$ = "courier"
@@ -270,7 +371,7 @@ ENDFUNC
 EXPORT FUNC STRWIDTH(doc, text$)
     DIM key$ = doc{"font"}
     DIM size = CDBL(doc{"size"})
-    RETURN BytesWidth(key$, Encoded$(key$, text$)) * size / 1000.0 / PT_PER_MM
+    RETURN WidthOf(doc, key$, size, text$)
 ENDFUNC
 
 ' ── text encoding ──────────────────────────────────────────────
@@ -391,7 +492,7 @@ FUNC TextOp$(doc, x, y, text$)
     DIM key$ = doc{"font"}
     DIM ref$ = FontRefOf$(doc, key$)
     DIM rgb$ = doc{"text_rgb"}
-    RETURN "BT " + ref$ + " " + Num$(doc{"size"}) + " Tf " + rgb$ + " rg " + Pt$(x) + " " + Ypt$(doc, y) + " Td (" + Literal$(Encoded$(key$, text$)) + ") Tj ET"
+    RETURN "BT " + ref$ + " " + Num$(doc{"size"}) + " Tf " + rgb$ + " rg " + Pt$(x) + " " + Ypt$(doc, y) + " Td " + ShowOp$(doc, key$, text$) + " ET"
 ENDFUNC
 
 ' A text with its baseline at x, y. {page} becomes the page number and
@@ -601,11 +702,26 @@ FUNC ImageIndex(doc, path$)
     NEXT i
     IF NOT FILE.EXISTS(path$) THEN THROW "PDFGEN: no such image " + path$
     DIM data$ = BINREADER$(path$)
-    DIM info = JpegInfo(data$)
+    DIM kinds = doc{"img_kind"}
+    DIM alphas = doc{"img_alpha"}
+    DIM info = []
+    DIM stored$ = ""
+    IF LEFT$(data$, 4) = CHR$(137) + "PNG" THEN
+        DIM png = PngParts(data$)
+        info = [png{"w"}, png{"h"}, png{"comps"}]
+        stored$ = png{"color"}
+        PUSH(kinds, "png")
+        PUSH(alphas, png{"alpha"})
+    ELSE
+        info = JpegInfo(data$)
+        stored$ = HexOf$(data$)
+        PUSH(kinds, "jpeg")
+        PUSH(alphas, "")
+    ENDIF
     PUSH(paths, path$)
     doc{"img_paths"} = paths
     DIM datas = doc{"img_data"}
-    PUSH(datas, HexOf$(data$))
+    PUSH(datas, stored$)
     doc{"img_data"} = datas
     DIM widths = doc{"img_w"}
     PUSH(widths, info[0])
@@ -617,6 +733,29 @@ FUNC ImageIndex(doc, path$)
     PUSH(comps, info[2])
     doc{"img_comps"} = comps
     RETURN LEN(paths) - 1
+ENDFUNC
+
+' A PNG as the parts of a PDF image: "w", "h", "comps" (1 or 3), "color"
+' (the samples, deflated) and "alpha" (the deflated alpha channel, "" when
+' every pixel is opaque).
+FUNC PngParts(data$)
+    DIM im AS MAP = IMG.DECODE(data$)
+    DIM c = IMG.CHANNELS(im)
+    DIM n = IMG.WIDTH(im) * IMG.HEIGHT(im)
+    DIM out AS MAP
+    out{"w"} = IMG.WIDTH(im)
+    out{"h"} = IMG.HEIGHT(im)
+    out{"alpha"} = ""
+    DIM comps = 3
+    IF c <= 2 THEN comps = 1
+    out{"comps"} = comps
+    DIM color_px = IMG.PIXELS(IMG.TOCHANNELS(im, comps))
+    out{"color"} = CODEC.DEFLATE$(JOIN(CHR$(color_px), ""), 9)
+    IF c = 2 ORELSE c = 4 THEN
+        DIM alpha = SLICE(RESHAPE(IMG.PIXELS(im), [n, c]), 1, c - 1)
+        IF MIN(alpha) < 255 THEN out{"alpha"} = CODEC.DEFLATE$(JOIN(CHR$(alpha), ""), 9)
+    ENDIF
+    RETURN out
 ENDFUNC
 
 ' Width, height and colour components from the frame header of a JPEG.
@@ -787,6 +926,7 @@ EXPORT FUNC BUILD$(doc)
     DIM fonts = doc{"fonts"}
     DIM ops = doc{"ops"}
     DIM datas = doc{"img_data"}
+    DIM all_annots = doc{"annots"}
     DIM n_pages = LEN(ops)
     DIM n_fonts = LEN(fonts)
     DIM n_images = LEN(datas)
@@ -794,7 +934,7 @@ EXPORT FUNC BUILD$(doc)
     DIM first_image = first_font + n_fonts
     DIM first_page = first_image + n_images
     DIM bodies = []
-    PUSH(bodies, "<< /Type /Catalog /Pages 2 0 R >>")
+    PUSH(bodies, "")
     DIM kids = []
     DIM p = 0
     FOR p = 0 TO n_pages - 1
@@ -805,14 +945,13 @@ EXPORT FUNC BUILD$(doc)
     DIM font_refs = []
     DIM f = 0
     FOR f = 0 TO n_fonts - 1
-        DIM key$ = fonts[f]
-        PUSH(bodies, FontDict$(key$))
+        PUSH(bodies, "")
         PUSH(font_refs, "/F" + STR$(f + 1) + " " + STR$(first_font + f) + " 0 R")
     NEXT f
     DIM image_refs = []
     DIM m = 0
     FOR m = 0 TO n_images - 1
-        PUSH(bodies, ImageObj$(doc, m))
+        PUSH(bodies, "")
         PUSH(image_refs, "/Im" + STR$(m + 1) + " " + STR$(first_image + m) + " 0 R")
     NEXT m
     DIM resources$ = "<< /Font << " + JOIN(font_refs, " ") + " >>"
@@ -824,9 +963,25 @@ EXPORT FUNC BUILD$(doc)
         DIM stream$ = JOIN(page_ops, gNL$)
         IF footer$ <> "" THEN stream$ = stream$ + gNL$ + FooterOp$(doc, p + 1, n_pages)
         stream$ = REPLACE$(stream$, "{pages}", STR$(n_pages))
-        PUSH(bodies, "<< /Type /Page /Parent 2 0 R /MediaBox " + media$ + " /Resources " + resources$ + " /Contents " + STR$(first_page + 2 * p + 1) + " 0 R >>")
-        PUSH(bodies, "<< /Length " + STR$(LEN(stream$)) + " >>" + gNL$ + "stream" + gNL$ + stream$ + gNL$ + "endstream")
+        DIM annots$ = AnnotsOf$(doc, all_annots[p], first_page)
+        PUSH(bodies, "<< /Type /Page /Parent 2 0 R /MediaBox " + media$ + " /Resources " + resources$ + annots$ + " /Contents " + STR$(first_page + 2 * p + 1) + " 0 R >>")
+        PUSH(bodies, StreamObj$("", stream$, doc{"compress"}))
     NEXT p
+    FOR f = 0 TO n_fonts - 1
+        DIM key$ = fonts[f]
+        IF IsTtf(key$) THEN
+            bodies[first_font + f - 1] = TtfFontObjs$(doc, key$, bodies)
+        ELSE
+            bodies[first_font + f - 1] = FontDict$(key$)
+        ENDIF
+    NEXT f
+    FOR m = 0 TO n_images - 1
+        bodies[first_image + m - 1] = ImageObj$(doc, m, bodies)
+    NEXT m
+    DIM outlines$ = OutlineObjs$(doc, bodies, first_page)
+    DIM catalog$ = "<< /Type /Catalog /Pages 2 0 R"
+    IF outlines$ <> "" THEN catalog$ = catalog$ + " /Outlines " + outlines$ + " /PageMode /UseOutlines"
+    bodies[0] = catalog$ + " >>"
     DIM parts = []
     DIM head$ = "%PDF-1.4" + gNL$ + "%" + CHR$(226) + CHR$(227) + CHR$(207) + CHR$(211) + gNL$
     PUSH(parts, head$)
@@ -858,6 +1013,25 @@ EXPORT SUB WRITEFILE(doc, path$)
     BINWRITER path$, BUILD$(doc)
 ENDSUB
 
+' A stream object: the dictionary entries in extra$, the data deflated when
+' compress is set.
+FUNC StreamObj$(extra$, data$, compress)
+    DIM body$ = data$
+    DIM dict$ = "<<"
+    IF extra$ <> "" THEN dict$ = dict$ + " " + extra$
+    IF compress THEN
+        body$ = CODEC.DEFLATE$(data$, 9)
+        dict$ = dict$ + " /Filter /FlateDecode"
+    ENDIF
+    RETURN dict$ + " /Length " + STR$(LEN(body$)) + " >>" + gNL$ + "stream" + gNL$ + body$ + gNL$ + "endstream"
+ENDFUNC
+
+' Appends an object to the list and answers its number.
+FUNC NewObj(bodies, body$)
+    PUSH(bodies, body$)
+    RETURN LEN(bodies)
+ENDFUNC
+
 FUNC InfoDict$(doc)
     DIM parts = []
     PUSH(parts, "<< /Producer (jdBasic PDFGEN)")
@@ -877,7 +1051,90 @@ FUNC FontDict$(key$)
     RETURN "<< /Type /Font /Subtype /Type1 /BaseFont /" + base$ + " /Encoding /WinAnsiEncoding >>"
 ENDFUNC
 
-FUNC ImageObj$(doc, index)
+' ── embedded TrueType fonts ────────────────────────────────────
+
+FUNC Em(v, upem)
+    RETURN STR$(ROUND(v * 1000 / upem))
+ENDFUNC
+
+' The glyph numbers a font used, sorted.
+FUNC UsedGlyphs(doc, key$)
+    DIM used = doc{"used"}{key$}
+    RETURN SORT(SELECT(LAMBDA s$ -> VAL(s$), MAP.KEYS(used)))
+ENDFUNC
+
+' A code point as UTF-16BE hex digits.
+FUNC Utf16Hex$(code)
+    IF code < 65536 THEN RETURN Hex4$(code)
+    DIM v = code - 65536
+    RETURN Hex4$(55296 + v \ 1024) + Hex4$(56320 + v MOD 1024)
+ENDFUNC
+
+' The ToUnicode CMap that maps the font's glyphs back to text.
+FUNC ToUnicode$(doc, key$, glyphs)
+    DIM used = doc{"used"}{key$}
+    DIM out = []
+    PUSH(out, "/CIDInit /ProcSet findresource begin")
+    PUSH(out, "12 dict begin")
+    PUSH(out, "begincmap")
+    PUSH(out, "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def")
+    PUSH(out, "/CMapName /Adobe-Identity-UCS def")
+    PUSH(out, "/CMapType 2 def")
+    PUSH(out, "1 begincodespacerange")
+    PUSH(out, "<0000> <FFFF>")
+    PUSH(out, "endcodespacerange")
+    DIM k = 0
+    DO WHILE k < LEN(glyphs)
+        DIM block = TAKE(100, DROP(k, glyphs))
+        PUSH(out, STR$(LEN(block)) + " beginbfchar")
+        DIM j = 0
+        FOR j = 0 TO LEN(block) - 1
+            DIM g = block[j]
+            PUSH(out, "<" + Hex4$(g) + "> <" + Utf16Hex$(used{STR$(g)}) + ">")
+        NEXT j
+        PUSH(out, "endbfchar")
+        k = k + 100
+    LOOP
+    PUSH(out, "endcmap")
+    PUSH(out, "CMapName currentdict /CMap defineresource pop")
+    PUSH(out, "end")
+    PUSH(out, "end")
+    RETURN JOIN(out, gNL$)
+ENDFUNC
+
+' The Type0 font dictionary of an embedded TrueType font; its descendant
+' font, descriptor, font file and ToUnicode map go to the end of the list.
+FUNC TtfFontObjs$(doc, key$, bodies)
+    DIM font = doc{"ttf"}{key$}
+    DIM upem = font{"upem"}
+    DIM name$ = font{"name"}
+    DIM glyphs = UsedGlyphs(doc, key$)
+    DIM widths = font{"widths"}
+    DIM w = []
+    DIM k = 0
+    FOR k = 0 TO LEN(glyphs) - 1
+        DIM g = glyphs[k]
+        PUSH(w, STR$(g) + " [" + Em(widths[g], upem) + "]")
+    NEXT k
+    DIM data$ = font{"data"}
+    DIM file_no = NewObj(bodies, StreamObj$("/Length1 " + STR$(LEN(data$)), data$, TRUE))
+    DIM flags = 32
+    IF font{"monospace"} THEN flags = flags + 1
+    IF INSTR(LCASE$(name$), "serif") >= 0 ANDALSO INSTR(LCASE$(name$), "sans") < 0 THEN flags = flags + 2
+    IF font{"italic"} <> 0 THEN flags = flags + 64
+    DIM bbox = font{"bbox"}
+    DIM box$ = Em(bbox[0], upem) + " " + Em(bbox[1], upem) + " " + Em(bbox[2], upem) + " " + Em(bbox[3], upem)
+    DIM desc$ = "<< /Type /FontDescriptor /FontName /" + name$ + " /Flags " + STR$(flags) + " /FontBBox [" + box$ + "] /ItalicAngle " + STR$(font{"italic"}) + " /Ascent " + Em(font{"ascent"}, upem) + " /Descent " + Em(font{"descent"}, upem) + " /CapHeight " + Em(font{"cap"}, upem) + " /StemV 80 /FontFile2 " + STR$(file_no) + " 0 R >>"
+    DIM desc_no = NewObj(bodies, desc$)
+    DIM cid$ = "<< /Type /Font /Subtype /CIDFontType2 /BaseFont /" + name$ + " /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor " + STR$(desc_no) + " 0 R /CIDToGIDMap /Identity /W [" + JOIN(w, " ") + "] >>"
+    DIM cid_no = NewObj(bodies, cid$)
+    DIM uni_no = NewObj(bodies, StreamObj$("", ToUnicode$(doc, key$, glyphs), doc{"compress"}))
+    RETURN "<< /Type /Font /Subtype /Type0 /BaseFont /" + name$ + " /Encoding /Identity-H /DescendantFonts [" + STR$(cid_no) + " 0 R] /ToUnicode " + STR$(uni_no) + " 0 R >>"
+ENDFUNC
+
+' ── images ─────────────────────────────────────────────────────
+
+FUNC ImageObj$(doc, index, bodies)
     DIM datas = doc{"img_data"}
     DIM data$ = datas[index]
     DIM all_w = doc{"img_w"}
@@ -887,8 +1144,147 @@ FUNC ImageObj$(doc, index)
     DIM color_space$ = "/DeviceRGB"
     IF comps = 1 THEN color_space$ = "/DeviceGray"
     IF comps = 4 THEN color_space$ = "/DeviceCMYK"
-    DIM head$ = "<< /Type /XObject /Subtype /Image /Width " + STR$(all_w[index]) + " /Height " + STR$(all_h[index]) + " /ColorSpace " + color_space$ +" /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode] /Length " + STR$(LEN(data$)) + " >>"
+    DIM size$ = "/Width " + STR$(all_w[index]) + " /Height " + STR$(all_h[index])
+    DIM kinds = doc{"img_kind"}
+    IF kinds[index] = "png" THEN
+        DIM alphas = doc{"img_alpha"}
+        DIM alpha$ = alphas[index]
+        DIM mask$ = ""
+        IF alpha$ <> "" THEN
+            DIM mask_no = NewObj(bodies, "<< /Type /XObject /Subtype /Image " + size$ + " /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode /Length " + STR$(LEN(alpha$)) + " >>" + gNL$ + "stream" + gNL$ + alpha$ + gNL$ + "endstream")
+            mask$ = " /SMask " + STR$(mask_no) + " 0 R"
+        ENDIF
+        RETURN "<< /Type /XObject /Subtype /Image " + size$ + " /ColorSpace " + color_space$ + " /BitsPerComponent 8" + mask$ + " /Filter /FlateDecode /Length " + STR$(LEN(data$)) + " >>" + gNL$ + "stream" + gNL$ + data$ + gNL$ + "endstream"
+    ENDIF
+    DIM head$ = "<< /Type /XObject /Subtype /Image " + size$ + " /ColorSpace " + color_space$ +" /BitsPerComponent 8 /Filter [/ASCIIHexDecode /DCTDecode] /Length " + STR$(LEN(data$)) + " >>"
     RETURN head$ + gNL$ + "stream" + gNL$ + data$ + gNL$ + "endstream"
+ENDFUNC
+
+' ── links and bookmarks ────────────────────────────────────────
+
+' A clickable area of w by h mm at x, y on the current page. A target that
+' starts with # jumps to the place DEST named, any other opens as a URL.
+EXPORT SUB LINK(doc, x, y, w, h, target$)
+    EnsurePage(doc)
+    DIM all_annots = doc{"annots"}
+    DIM page_annots = all_annots[doc{"page"} - 1]
+    PUSH(page_annots, {"x": CDBL(x), "y": CDBL(y), "w": CDBL(w), "h": CDBL(h), "target": target$})
+ENDSUB
+
+' Names the current page and position as a target for LINK.
+EXPORT SUB DEST(doc, name$)
+    EnsurePage(doc)
+    DIM at_y = CDBL(doc{"y"})
+    DIM dests = doc{"dests"}
+    dests{name$} = {"page": doc{"page"}, "y": at_y}
+ENDSUB
+
+' A bookmark at the current page and position; level 1 is a chapter, 2 a
+' section under it, 3 a subsection.
+EXPORT SUB BOOKMARK(doc, title$, level = 1)
+    EnsurePage(doc)
+    DIM at_y = CDBL(doc{"y"})
+    DIM lv = CINT(level)
+    IF lv < 1 THEN lv = 1
+    DIM items = doc{"outline"}
+    PUSH(items, {"title": title$, "level": lv, "page": doc{"page"}, "y": at_y})
+ENDSUB
+
+FUNC DestArray$(doc, first_page, page_no, y)
+    RETURN "[" + STR$(first_page + 2 * (page_no - 1)) + " 0 R /XYZ null " + Ypt$(doc, y) + " null]"
+ENDFUNC
+
+FUNC AnnotsOf$(doc, page_annots, first_page)
+    IF LEN(page_annots) = 0 THEN RETURN ""
+    DIM dests = doc{"dests"}
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(page_annots) - 1
+        DIM a = page_annots[k]
+        DIM target$ = a{"target"}
+        DIM rect$ = Pt$(a{"x"}) + " " + Ypt$(doc, a{"y"} + a{"h"}) + " " + Pt$(a{"x"} + a{"w"}) + " " + Ypt$(doc, a{"y"})
+        DIM action$ = ""
+        IF LEFT$(target$, 1) = "#" THEN
+            DIM dname$ = MID$(target$, 1, LEN(target$))
+            IF NOT MAP.EXISTS(dests, dname$) THEN THROW "PDFGEN: a link points at " + target$ + ", which DEST never named"
+            DIM d = dests{dname$}
+            action$ = "/Dest " + DestArray$(doc, first_page, d{"page"}, d{"y"})
+        ELSE
+            action$ = "/A << /S /URI /URI (" + Literal$(target$) + ") >>"
+        ENDIF
+        PUSH(out, "<< /Type /Annot /Subtype /Link /Rect [" + rect$ + "] /Border [0 0 0] " + action$ + " >>")
+    NEXT k
+    RETURN " /Annots [" + JOIN(out, " ") + "]"
+ENDFUNC
+
+' A text as a PDF text string: UTF-16BE with its byte order mark.
+FUNC TextString$(text$)
+    DIM codes = TTF.CODEPOINTS(text$)
+    DIM hex = ["<FEFF"]
+    DIM k = 0
+    FOR k = 0 TO LEN(codes) - 1
+        PUSH(hex, Utf16Hex$(codes[k]))
+    NEXT k
+    RETURN JOIN(hex, "") + ">"
+ENDFUNC
+
+' The outline tree of the bookmarks; answers "n 0 R" of its root, or ""
+' without bookmarks.
+FUNC OutlineObjs$(doc, bodies, first_page)
+    DIM items = doc{"outline"}
+    DIM n = LEN(items)
+    IF n = 0 THEN RETURN ""
+    DIM root_no = NewObj(bodies, "")
+    DIM first_no = LEN(bodies) + 1
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        PUSH(bodies, "")
+    NEXT k
+    DIM parent = ZEROS(n)
+    FOR k = 0 TO n - 1
+        parent[k] = -1
+        DIM j = k - 1
+        DO WHILE j >= 0
+            IF items[j]{"level"} < items[k]{"level"} THEN
+                parent[k] = j
+                EXITDO
+            ENDIF
+            j = j - 1
+        LOOP
+    NEXT k
+    DIM top_first = -1
+    DIM top_last = -1
+    FOR k = 0 TO n - 1
+        DIM it = items[k]
+        DIM body$ = "<< /Title " + TextString$(it{"title"}) + " /Dest " + DestArray$(doc, first_page, it{"page"}, it{"y"})
+        IF parent[k] < 0 THEN
+            body$ = body$ + " /Parent " + STR$(root_no) + " 0 R"
+            IF top_first < 0 THEN top_first = k
+            top_last = k
+        ELSE
+            body$ = body$ + " /Parent " + STR$(first_no + parent[k]) + " 0 R"
+        ENDIF
+        DIM prev = -1
+        DIM nxt = -1
+        DIM kid_first = -1
+        DIM kid_last = -1
+        DIM kids = 0
+        FOR j = 0 TO n - 1
+            IF j < k ANDALSO parent[j] = parent[k] THEN prev = j
+            IF j > k ANDALSO parent[j] = parent[k] ANDALSO nxt < 0 THEN nxt = j
+            IF parent[j] = k THEN
+                IF kid_first < 0 THEN kid_first = j
+                kid_last = j
+                kids = kids + 1
+            ENDIF
+        NEXT j
+        IF prev >= 0 THEN body$ = body$ + " /Prev " + STR$(first_no + prev) + " 0 R"
+        IF nxt >= 0 THEN body$ = body$ + " /Next " + STR$(first_no + nxt) + " 0 R"
+        IF kid_first >= 0 THEN body$ = body$ + " /First " + STR$(first_no + kid_first) + " 0 R /Last " + STR$(first_no + kid_last) + " 0 R /Count " + STR$(kids)
+        bodies[first_no + k - 1] = body$ + " >>"
+    NEXT k
+    bodies[root_no - 1] = "<< /Type /Outlines /First " + STR$(first_no + top_first) + " 0 R /Last " + STR$(first_no + top_last) + " 0 R /Count " + STR$(n) + " >>"
+    RETURN STR$(root_no) + " 0 R"
 ENDFUNC
 
 FUNC FooterOp$(doc, page_no, n_pages)
@@ -896,15 +1292,14 @@ FUNC FooterOp$(doc, page_no, n_pages)
     text$ = REPLACE$(REPLACE$(text$, "{page}", STR$(page_no)), "{pages}", STR$(n_pages))
     DIM key$ = doc{"footer_font"}
     DIM size = CDBL(doc{"footer_size"})
-    DIM bytes$ = Encoded$(key$, text$)
-    DIM text_w = BytesWidth(key$, bytes$) * size / 1000.0 / PT_PER_MM
+    DIM text_w = WidthOf(doc, key$, size, text$)
     DIM margin_mm = CDBL(doc{"margin"})
     DIM x = margin_mm
     DIM al$ = doc{"footer_align"}
     IF al$ = "R" THEN x = CDBL(doc{"w"}) - margin_mm - text_w
     IF al$ = "C" THEN x = (CDBL(doc{"w"}) - text_w) / 2.0
     DIM y = CDBL(doc{"h"}) - margin_mm / 2.0
-    RETURN "BT " + FontRefOf$(doc, key$) + " " + Num$(size) + " Tf 0 g " + Pt$(x) + " " + Ypt$(doc, y) + " Td (" + Literal$(bytes$) + ") Tj ET"
+    RETURN "BT " + FontRefOf$(doc, key$) + " " + Num$(size) + " Tf 0 g " + Pt$(x) + " " + Ypt$(doc, y) + " Td " + ShowOp$(doc, key$, text$) + " ET"
 ENDFUNC
 
 ' ── font metrics ───────────────────────────────────────────────

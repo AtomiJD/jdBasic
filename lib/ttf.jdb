@@ -1,0 +1,257 @@
+' ttf.jdb: TrueType fonts read for layout and embedding. The metrics a PDF
+' needs (units per em, ascent, descent, cap height, bounding box, italic
+' angle, PostScript name), the advance width of every glyph, and the
+' character map from Unicode code points to glyphs.
+'
+'   IMPORT TTF
+'   DIM serif = TTF.LOAD("fonts/SourceSerif4-Regular.ttf")
+'   PRINT TTF.WIDTH(serif, "Hello") * 11 / TTF.UPEM(serif); " points at 11 pt"
+'   PRINT TTF.GLYPHS(serif, "Hi")
+'
+' Glyph outlines are not read; the file is embedded whole.
+
+EXPORT MODULE TTF
+
+FUNC U16(data$, at)
+    RETURN UNPACK(">s", data$, at)[0]
+ENDFUNC
+
+FUNC S16(data$, at)
+    RETURN UNPACK(">h", data$, at)[0]
+ENDFUNC
+
+FUNC U32(data$, at)
+    RETURN UNPACK(">i", data$, at)[0]
+ENDFUNC
+
+' The offsets of the font's tables by their four-letter tag.
+FUNC Tables(data$)
+    DIM n = U16(data$, 4)
+    DIM out AS MAP
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM rec = UNPACK(">4aiii", data$, 12 + 16 * k)
+        out{rec[0]} = rec[2]
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Need(tables, tag$)
+    IF NOT MAP.EXISTS(tables, tag$) THEN THROW "TTF: the font has no " + tag$ + " table"
+    RETURN tables{tag$}
+ENDFUNC
+
+' The PostScript name from the name table, spaces left out.
+FUNC PsName$(data$, tables)
+    IF NOT MAP.EXISTS(tables, "name") THEN RETURN "Font"
+    DIM base = tables{"name"}
+    DIM n = U16(data$, base + 2)
+    DIM strings = base + U16(data$, base + 4)
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM rec = UNPACK(">6s", data$, base + 6 + 12 * k)
+        IF rec[3] = 6 THEN
+            DIM raw$ = MID$(data$, strings + rec[5], rec[4])
+            IF rec[0] = 3 ORELSE rec[0] = 0 THEN
+                DIM units = UNPACK(">" + STR$(rec[4] \ 2) + "s", raw$, 0)
+                raw$ = JOIN(SELECT(LAMBDA u -> CHR$(u), units), "")
+            ENDIF
+            RETURN REPLACE$(raw$, " ", "")
+        ENDIF
+    NEXT k
+    RETURN "Font"
+ENDFUNC
+
+' The glyph of every code point the font maps: an array over the Basic
+' Multilingual Plane and a map for the code points above it.
+SUB ReadCmap(font, data$, tables)
+    DIM base = Need(tables, "cmap")
+    DIM n = U16(data$, base + 2)
+    DIM best12 = -1
+    DIM best4 = -1
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM rec = UNPACK(">ssi", data$, base + 4 + 8 * k)
+        DIM sub_at = base + rec[2]
+        DIM fmt = U16(data$, sub_at)
+        IF fmt = 12 ANDALSO (rec[0] = 3 ORELSE rec[0] = 0) THEN best12 = sub_at
+        IF fmt = 4 ANDALSO (rec[0] = 3 ORELSE rec[0] = 0) ANDALSO best4 < 0 THEN best4 = sub_at
+    NEXT k
+    DIM bmp = ZEROS(65536)
+    DIM high AS MAP
+    DIM c = 0
+    IF best12 >= 0 THEN
+        DIM groups = U32(data$, best12 + 12)
+        DIM g = 0
+        FOR g = 0 TO groups - 1
+            DIM grp = UNPACK(">3i", data$, best12 + 16 + 12 * g)
+            FOR c = grp[0] TO grp[1]
+                IF c < 65536 THEN
+                    bmp[c] = grp[2] + c - grp[0]
+                ELSE
+                    high{STR$(c)} = grp[2] + c - grp[0]
+                ENDIF
+            NEXT c
+        NEXT g
+    ELSEIF best4 >= 0 THEN
+        DIM seg2 = U16(data$, best4 + 6)
+        DIM segs = seg2 \ 2
+        DIM ends = UNPACK(">" + STR$(segs) + "s", data$, best4 + 14)
+        DIM starts = UNPACK(">" + STR$(segs) + "s", data$, best4 + 16 + seg2)
+        DIM deltas = UNPACK(">" + STR$(segs) + "h", data$, best4 + 16 + 2 * seg2)
+        DIM range_at = best4 + 16 + 3 * seg2
+        DIM ranges = UNPACK(">" + STR$(segs) + "s", data$, range_at)
+        DIM s = 0
+        FOR s = 0 TO segs - 1
+            FOR c = starts[s] TO ends[s]
+                IF c < 65535 THEN
+                    DIM gid = 0
+                    IF ranges[s] = 0 THEN
+                        gid = (c + deltas[s]) MOD 65536
+                    ELSE
+                        gid = U16(data$, range_at + 2 * s + ranges[s] + 2 * (c - starts[s]))
+                        IF gid <> 0 THEN gid = (gid + deltas[s]) MOD 65536
+                    ENDIF
+                    IF gid < 0 THEN gid = gid + 65536
+                    bmp[c] = gid
+                ENDIF
+            NEXT c
+        NEXT s
+    ELSE
+        THROW "TTF: no Unicode character map (format 4 or 12)"
+    ENDIF
+    font{"bmp"} = bmp
+    font{"high"} = high
+ENDSUB
+
+' A font from a TrueType file. The map holds "data" (the file), "name",
+' "upem", "ascent", "descent", "cap", "bbox" [x0, y0, x1, y1], "italic"
+' (degrees), "monospace" (TRUE for a fixed pitch), "glyphs" and "widths"
+' (one per glyph, in font units).
+EXPORT FUNC LOAD(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "TTF: no such file " + path$
+    DIM data$ = BINREADER$(path$)
+    IF LEN(data$) < 12 THEN THROW "TTF: not a font file: " + path$
+    DIM tag = U32(data$, 0)
+    IF tag <> 65536 ANDALSO LEFT$(data$, 4) <> "true" THEN THROW "TTF: not a TrueType font (OpenType with CFF outlines is not supported): " + path$
+    DIM tables = Tables(data$)
+    DIM head = Need(tables, "head")
+    DIM hhea = Need(tables, "hhea")
+    DIM maxp = Need(tables, "maxp")
+    DIM hmtx = Need(tables, "hmtx")
+    Need(tables, "glyf")
+    DIM font AS MAP
+    font{"data"} = data$
+    font{"path"} = path$
+    font{"name"} = PsName$(data$, tables)
+    font{"upem"} = U16(data$, head + 18)
+    font{"bbox"} = UNPACK(">4h", data$, head + 36)
+    font{"ascent"} = S16(data$, hhea + 4)
+    font{"descent"} = S16(data$, hhea + 6)
+    font{"cap"} = font{"ascent"}
+    IF MAP.EXISTS(tables, "OS/2") THEN
+        DIM os2 = tables{"OS/2"}
+        IF U16(data$, os2) >= 2 THEN font{"cap"} = S16(data$, os2 + 88)
+    ENDIF
+    font{"italic"} = 0
+    font{"monospace"} = FALSE
+    IF MAP.EXISTS(tables, "post") THEN
+        font{"italic"} = UNPACK(">n", data$, tables{"post"} + 4)[0] / 65536
+        font{"monospace"} = U32(data$, tables{"post"} + 12) <> 0
+    ENDIF
+    DIM n_glyphs = U16(data$, maxp + 4)
+    DIM n_metrics = U16(data$, hhea + 34)
+    DIM pairs = UNPACK(">" + STR$(2 * n_metrics) + "s", data$, hmtx)
+    DIM widths = ZEROS(n_glyphs)
+    DIM k = 0
+    FOR k = 0 TO n_glyphs - 1
+        IF k < n_metrics THEN
+            widths[k] = pairs[2 * k]
+        ELSE
+            widths[k] = pairs[2 * (n_metrics - 1)]
+        ENDIF
+    NEXT k
+    font{"glyphs"} = n_glyphs
+    font{"widths"} = widths
+    ReadCmap(font, data$, tables)
+    RETURN font
+ENDFUNC
+
+' The Unicode code points of a UTF-8 text.
+EXPORT FUNC CODEPOINTS(text$)
+    DIM out = []
+    DIM n = LEN(text$)
+    IF n = 0 THEN RETURN out
+    DIM b = UNPACK(STR$(n) + "b", text$, 0)
+    DIM i = 0
+    DO WHILE i < n
+        DIM lead = b[i]
+        DIM code = lead
+        DIM more = 0
+        IF lead >= 240 THEN
+            code = lead - 240
+            more = 3
+        ELSEIF lead >= 224 THEN
+            code = lead - 224
+            more = 2
+        ELSEIF lead >= 192 THEN
+            code = lead - 192
+            more = 1
+        ELSEIF lead >= 128 THEN
+            code = 65533
+        ENDIF
+        DIM k = 0
+        FOR k = 1 TO more
+            IF i + k < n THEN code = code * 64 + (b[i + k] - 128)
+        NEXT k
+        PUSH(out, code)
+        i = i + 1 + more
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The glyph for a code point, 0 (the font's .notdef) when it has none.
+EXPORT FUNC GLYPH(font, code)
+    IF code >= 0 ANDALSO code < 65536 THEN RETURN font{"bmp"}[code]
+    DIM high = font{"high"}
+    IF MAP.EXISTS(high, STR$(code)) THEN RETURN high{STR$(code)}
+    RETURN 0
+ENDFUNC
+
+' The glyphs of a text, one per character.
+EXPORT FUNC GLYPHS(font, text$)
+    DIM codes = CODEPOINTS(text$)
+    DIM out = ZEROS(LEN(codes))
+    DIM k = 0
+    FOR k = 0 TO LEN(codes) - 1
+        out[k] = GLYPH(font, codes[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The advance width of a text in font units.
+EXPORT FUNC WIDTH(font, text$)
+    DIM glyphs = GLYPHS(font, text$)
+    DIM widths = font{"widths"}
+    DIM total = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(glyphs) - 1
+        total = total + widths[glyphs[k]]
+    NEXT k
+    RETURN total
+ENDFUNC
+
+EXPORT FUNC UPEM(font)
+    RETURN font{"upem"}
+ENDFUNC
+
+' The code points of a text the font has no glyph for.
+EXPORT FUNC MISSING(font, text$)
+    DIM codes = CODEPOINTS(text$)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(codes) - 1
+        IF codes[k] > 32 ANDALSO GLYPH(font, codes[k]) = 0 THEN PUSH(out, codes[k])
+    NEXT k
+    RETURN out
+ENDFUNC

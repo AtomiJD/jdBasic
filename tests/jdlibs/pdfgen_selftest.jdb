@@ -18,6 +18,11 @@ FUNC XrefOffset(pdf$, obj_no)
     RETURN VAL(entry$)
 ENDFUNC
 
+FUNC NoItalic(d)
+    PDFGEN.USEFONT(d, "code", "I")
+    RETURN 0
+ENDFUNC
+
 FUNC CountOf(hay$, needle$)
     DIM n = 0
     DIM at = INSTR(hay$, needle$)
@@ -198,6 +203,77 @@ ELSE
     TESTKIT.ISTRUE(INSTR(text$, "Item number 37 for the office") >= 0, "a row of the table")
     TESTKIT.ISTRUE(INSTR(text$, "Page 2 of 2") >= 0, "and the footer of the second page")
 ENDIF
+TESTKIT.SUITE("a book page: TrueType, PNG, bookmarks, links")
+DIM font_dir$ = "resources/fonts/"
+IF NOT FILE.EXISTS(font_dir$ + "JetBrainsMono-Regular.ttf") THEN font_dir$ = "../../resources/fonts/"
+DIM mono$ = font_dir$ + "JetBrainsMono-Regular.ttf"
+DIM book = PDFGEN.DOC({"width": 170, "height": 240, "margin": 20, "compress": TRUE})
+TESTKIT.NEAR(PDFGEN.PAGEWIDTH(book), 170, 0.001, "a page of any size")
+TESTKIT.NEAR(PDFGEN.PAGEHEIGHT(book), 240, 0.001, "and height")
+PDFGEN.ADDFONT(book, "Code", mono$)
+PDFGEN.ADDFONT(book, "Code", mono$, "B")
+PDFGEN.USEFONT(book, "code", "", 10)
+TESTKIT.NEAR(PDFGEN.STRWIDTH(book, "abc"), 3 * 0.6 * 10 / 2.834645669291339, 0.001, "widths from the font's own metrics")
+TESTKIT.THROWS(NoItalic@, book, "a style that was not added is refused")
+PDFGEN.SETFOOTER(book, "Page {page} of {pages}", "C")
+PDFGEN.ADDPAGE(book)
+PDFGEN.SETXY(book, 20, 25)
+PDFGEN.BOOKMARK(book, "Chapter 1", 1)
+PDFGEN.DEST(book, "top")
+PDFGEN.TEXTAT(book, 20, 30, "Grüße €")
+PDFGEN.USEFONT(book, "code", "B")
+PDFGEN.TEXTAT(book, 20, 36, "Bold")
+PDFGEN.SETXY(book, 20, 40)
+PDFGEN.BOOKMARK(book, "Section 1.1", 2)
+PDFGEN.LINK(book, 20, 40, 30, 5, "https://example.com/a(b)")
+PDFGEN.IMAGE(book, base$ + "img_png/rgba8.png", 20, 60, 20)
+PDFGEN.IMAGE(book, base$ + "img_png/rgb8.png", 50, 60, 20)
+PDFGEN.ADDPAGE(book)
+PDFGEN.BOOKMARK(book, "Chapter 2", 1)
+PDFGEN.LINK(book, 20, 30, 30, 5, "#top")
+DIM book$ = PDFGEN.BUILD$(book)
+TESTKIT.ISTRUE(INSTR(book$, "/Subtype /Type0 /BaseFont /JetBrainsMono-Regular /Encoding /Identity-H") >= 0, "a TrueType font as a Type0 font")
+TESTKIT.ISTRUE(INSTR(book$, "/Length1 " + STR$(FILE.SIZE(mono$))) >= 0, "the whole font file is embedded")
+TESTKIT.ISTRUE(INSTR(book$, "/CIDToGIDMap /Identity /W [") >= 0, "with the widths of the glyphs it uses")
+TESTKIT.EQ(CountOf(book$, "/ToUnicode "), 2, "each style maps its glyphs back to text")
+TESTKIT.ISTRUE(INSTR(book$, "/Type /Outlines") >= 0 ANDALSO INSTR(book$, "/PageMode /UseOutlines") >= 0, "an outline the viewer shows")
+TESTKIT.ISTRUE(INSTR(book$, "/Title <FEFF0043006800610070007400650072002000310029>") < 0 ANDALSO INSTR(book$, "/Title <FEFF00430068006100700074006500720020") >= 0, "bookmark titles in UTF-16")
+TESTKIT.ISTRUE(INSTR(book$, "/First ") >= 0 ANDALSO INSTR(book$, "/Count 1") >= 0, "a section nests under its chapter")
+TESTKIT.ISTRUE(INSTR(book$, "/S /URI /URI (https://example.com/a\(b\))") >= 0, "a link to a URL")
+TESTKIT.EQ(CountOf(book$, "/Subtype /Link"), 2, "and one inside the document")
+TESTKIT.ISTRUE(INSTR(book$, "/Dest [") >= 0, "that jumps to its destination")
+TESTKIT.ISTRUE(INSTR(book$, "/BitsPerComponent 8 /SMask ") >= 0, "a PNG with transparency gets a soft mask")
+TESTKIT.EQ(CountOf(book$, "/SMask "), 1, "an opaque PNG does not")
+DIM book_ok = TRUE
+DIM book_n = VAL(MID$(book$, INSTR(book$, "/Size ") + 6, 6)) - 1
+FOR i = 1 TO book_n
+    DIM book_off = XrefOffset(book$, i)
+    IF MID$(book$, book_off, LEN(STR$(i) + " 0 obj")) <> STR$(i) + " 0 obj" THEN book_ok = FALSE
+NEXT i
+TESTKIT.ISTRUE(book_ok, "every xref offset points at its object")
+DIM page_at = INSTR(book$, "/Type /Page ")
+DIM contents_at = INSTR(page_at, book$, "/Contents ")
+DIM contents_no = VAL(MID$(book$, contents_at + 10, 8))
+DIM cobj_at = XrefOffset(book$, contents_no)
+DIM clen_at = INSTR(cobj_at, book$, "/Length ")
+DIM clen = VAL(MID$(book$, clen_at + 8, 10))
+DIM cbody_at = INSTR(clen_at, book$, "stream" + NL$) + 7
+DIM page1$ = CODEC.INFLATE$(MID$(book$, cbody_at, clen))
+TESTKIT.ISTRUE(INSTR(book$, "/Filter /FlateDecode") >= 0 ANDALSO INSTR(page1$, " Tf ") >= 0, "page contents are deflated")
+TESTKIT.ISTRUE(INSTR(page1$, "> Tj") >= 0 ANDALSO INSTR(page1$, "(Gr") < 0, "TrueType text as glyph numbers")
+TESTKIT.ISTRUE(INSTR(page1$, "/Im1 Do") >= 0 ANDALSO INSTR(page1$, "/Im2 Do") >= 0, "both pictures are drawn")
+DIM book_path$ = folder$ + "/book.pdf"
+PDFGEN.WRITEFILE(book, book_path$)
+TESTKIT.EQ(FILE.SIZE(book_path$), LEN(book$), "WRITEFILE writes the binary parts unchanged")
+KILL book_path$
+DIM plain = PDFGEN.DOC()
+PDFGEN.ADDFONT(plain, "code", mono$)
+PDFGEN.USEFONT(plain, "code", "", 12)
+PDFGEN.TEXTAT(plain, 20, 30, "Grüße €")
+DIM plain$ = PDFGEN.BUILD$(plain)
+TESTKIT.ISTRUE(INSTR(plain$, "7 beginbfchar") >= 0, "the ToUnicode map lists the seven glyphs used")
+TESTKIT.ISTRUE(INSTR(plain$, "> <0047>") >= 0 ANDALSO INSTR(plain$, "> <00FC>") >= 0 ANDALSO INSTR(plain$, "> <20AC>") >= 0, "G, ü and the euro sign map back to their code points")
+
 KILL out_path$
 RMDIR folder$
 
