@@ -4,7 +4,7 @@
 title = "Automate Your Work for a Better Life Balance"
 subtitle = "45 jdBasic programs that give you your hours back"
 authors = ["Achim Christ", "Claude"]
-version = "0.1 (sample chapter)"
+version = "0.4 (chapters 1 to 4)"
 language = "en-US"
 
 [page]
@@ -17,6 +17,7 @@ width_cm = 12.5
 
 [chapters]
 files = [
+    "manuscript/00_legal.md",
     "manuscript/00_front.md",
     "manuscript/01_why.md",
     "manuscript/02_toolbox.md",
@@ -56,6 +57,7 @@ files = [
     "manuscript/04_medium_M14.md",
     "manuscript/04_medium_M15.md",
     "manuscript/04_medium_close.md",
+    "manuscript/99_about.md",
 ]
 
 [cover]

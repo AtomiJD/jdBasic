@@ -787,7 +787,7 @@ SUB TitlePages(ctx)
     DIM aw = Measure(ctx, "book", "", 13, s{"authors"})
     Put(ctx, "book", "", 13, XLeft(ctx) + (tw - aw) / 2, 175, s{"authors"}, 30, 30, 30)
     NewPage(ctx, FALSE)
-    DIM note$ = "Version " + s{"version"} + ". Written in Markdown, built with jdBasic: every listing is a tested program, every page was set by the layout engine in tools/layout.jdb."
+    DIM note$ = "Copyright 2026 Achim Christ. The program code is licensed under the MIT License; see Copyright and Disclaimer. Version " + s{"version"} + ". Written in Markdown, built with jdBasic: every listing is a tested program, every page was set by the layout engine in tools/layout.jdb."
     ctx{"y"} = s{"h"} - s{"bottom"} - 30
     Paragraph(ctx, note$, 0, 8.5, 4.2, FALSE, "")
 ENDSUB

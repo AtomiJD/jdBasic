@@ -82,9 +82,11 @@ nothing writes it down.
 
 ![Your automations: every recipe with the minutes it saves, its settings and its schedule](img/wizard_3.png)
 
-The third page is the heart of the wizard. On the left are all fifteen
-recipes with the minutes each one saves in a normal week; `[x]` marks
-the ones that are switched on. Click a recipe to see its settings on the
+The third page is the heart of the wizard. On the left are the recipes
+with the minutes each one saves in a normal week; `[x]` marks the ones
+that are switched on. At first these are the fifteen easy ones; the
+recipes of Chapter 4 are listed below them and stay off until you
+switch them on. Click a recipe to see its settings on the
 right. Each setting has a label and a sensible default, such as the
 folder the Downloads Butler tidies. At the bottom is the schedule:
 

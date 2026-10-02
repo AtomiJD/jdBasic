@@ -5,8 +5,14 @@ levels (easy, medium, expert) that take routine office work off the reader's
 desk, a setup wizard for the easy level, and a build that turns the Markdown
 manuscript into a Word document with jdBasic itself.
 
-Status, 2026-10-01: WP 0a to 0c, WP 1 and WP 2 done (chapters 1 and 2,
-73 examples checked by the build; print PDF 186 pages). WP 1: setup wizard (core
+Status, 2026-10-02: WP 0a to 0c, WP 1, WP 2 and WP 3 done; print PDF 339
+pages. WP 3: the fifteen medium recipes M01 to M15 with chapter 4, the
+outbox rule for mail (recipes/lib/outbox.jdb), the template recipe T00
+with "Your Own Recipe", and a fifth check_recipes column that compiles
+every main program; all 31 recipes green. Medium recipes came out at 8 to
+16 pages each against the 5 of the budget. A monthly schedule in the
+wizard is planned for a later chapter on changing a program. WP 2:
+chapters 1 and 2, 73 examples checked by the build. WP 1: setup wizard (core
 module, console and window front ends, recipe.toml contract) and the 15
 easy recipes, all green in check_recipes. Chapter 3 sets to about 98 pages
 against the 64 of the budget, so the book will end well above 300. Before:
@@ -362,7 +368,8 @@ All of this is plain jdBasic and testable on this notebook in both backends.
   (it writes `.eml` files) or calls a real web site (it starts a local JDWEB
   server).
 - `tools/check_recipes.jdb` runs, for every recipe: `--lint`, the test in the
-  interpreter, `-c`, the test as `.exe`. A recipe is done when all four pass.
+  interpreter, `-c`, the test as `.exe`, and `-c` of the main program. A
+  recipe is done when all five pass.
 - Recipes that need a feature this notebook lacks are marked: X02 needs an
   API key or a local model, X09 needs the SQLITE build. They are tested at
   home.
