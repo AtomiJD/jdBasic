@@ -1,0 +1,80 @@
+' examples.jdb: the short examples of the manuscript run and compared. An
+' example is a ```basic block followed by a ```text block with the output
+' it prints; a basic block without one is only shown. Each example runs
+' in its own jdBasic process.
+'
+'   IMPORT EXAMPLES
+'   DIM report = EXAMPLES.CHECK(text$, "02_toolbox.md", jdbasic$, "out")
+
+EXPORT MODULE EXAMPLES
+
+DIM gLF$ = CHR$(10)
+DIM gFence$ = "```"
+
+' The output as a reader sees it: no carriage returns, no colour codes,
+' no trailing spaces or trailing blank lines.
+EXPORT FUNC CLEAN$(s$)
+    DIM esc$ = CHR$(27)
+    DIM plain$ = REGEX.REPLACE(esc$ + "\[[0-9;]*m", REPLACE$(s$, CHR$(13), ""), "")
+    DIM kept = SELECT(LAMBDA r$ -> RTRIM$(r$), SPLIT(plain$, gLF$))
+    DO WHILE LEN(kept) > 0 ANDALSO kept[LEN(kept) - 1] = ""
+        kept = TAKE(LEN(kept) - 1, kept)
+    LOOP
+    RETURN JOIN(kept, gLF$)
+ENDFUNC
+
+' The examples of a text: maps with "line", "code" and "expected".
+EXPORT FUNC FIND(text$)
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM out = []
+    DIM i = 0
+    DO WHILE i < LEN(rows)
+        IF TRIM$(rows[i]) <> gFence$ + "basic" THEN
+            i = i + 1
+            CONTINUEDO
+        ENDIF
+        DIM start = i + 1
+        DIM code = []
+        i = i + 1
+        DO WHILE i < LEN(rows) ANDALSO TRIM$(rows[i]) <> gFence$
+            PUSH(code, rows[i])
+            i = i + 1
+        LOOP
+        i = i + 1
+        DO WHILE i < LEN(rows) ANDALSO TRIM$(rows[i]) = ""
+            i = i + 1
+        LOOP
+        IF i < LEN(rows) ANDALSO TRIM$(rows[i]) = gFence$ + "text" THEN
+            DIM want = []
+            i = i + 1
+            DO WHILE i < LEN(rows) ANDALSO TRIM$(rows[i]) <> gFence$
+                PUSH(want, rows[i])
+                i = i + 1
+            LOOP
+            i = i + 1
+            PUSH(out, {"line": start, "code": JOIN(code, gLF$), "expected": CLEAN$(JOIN(want, gLF$))})
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+' Runs the examples of a text; answers the problems, one line each, and
+' the number of examples run as the map {"run": n, "problems": [...]}.
+EXPORT FUNC CHECK(text$, file$, jdbasic$, scratch_dir$)
+    DIM found = FIND(text$)
+    DIM problems = []
+    MKDIR scratch_dir$
+    DIM script$ = PATH.JOIN$(scratch_dir$, "example.jdb")
+    DIM k = 0
+    FOR k = 0 TO LEN(found) - 1
+        DIM ex = found[k]
+        TXTWRITER script$, ex{"code"} + gLF$
+        DIM r = OS.EXEC(jdbasic$, [script$])
+        DIM got$ = CLEAN$(r{"OUTPUT"})
+        IF got$ <> ex{"expected"} THEN
+            PUSH(problems, file$ + ":" + STR$(ex{"line"}) + " [example prints something else] got: " + REPLACE$(got$, gLF$, " | "))
+        ENDIF
+    NEXT k
+    IF FILE.EXISTS(script$) THEN KILL script$
+    RETURN {"run": LEN(found), "problems": problems}
+ENDFUNC

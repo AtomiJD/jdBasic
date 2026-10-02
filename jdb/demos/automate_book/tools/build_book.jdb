@@ -8,7 +8,7 @@
 '
 ' Run from the book folder; the modules come from lib/ through JDBASIC_PATH.
 
-IMPORT CONF, DOCX, MD, MDBOOK, PROSE, LAYOUT, TTF, COVER, EPUB, PREVIEW
+IMPORT CONF, DOCX, MD, MDBOOK, PROSE, LAYOUT, TTF, COVER, EPUB, PREVIEW, EXAMPLES
 
 DIM gLF$ = CHR$(10)
 DIM gCodeColumns = 70
@@ -253,6 +253,32 @@ IF LEN(findings) > 0 THEN
     THROW "fix the prose before building"
 ENDIF
 PRINT "writing rules: clean"
+DIM jdbasic$ = PATH.NORMALIZE$("../../../build/jdBasic.exe")
+DIM ja = 1
+FOR ja = 1 TO LEN(argv) - 2
+    IF argv[ja] = "--jdbasic" THEN jdbasic$ = argv[ja + 1]
+NEXT ja
+DIM saved_path$ = GETENV$("JDBASIC_PATH")
+SETENV "JDBASIC_PATH", saved_path$ + ";" + PATH.NORMALIZE$(PATH.JOIN$(base$, "recipes", "lib"))
+DIM n_examples = 0
+DIM bad_examples = []
+DIM cf = 0
+DIM chapter_files = CONF.GET(cfg, "chapters.files", [])
+FOR cf = 0 TO LEN(chapter_files) - 1
+    DIM ex_rel$ = chapter_files[cf]
+    DIM ex_report = EXAMPLES.CHECK(TXTREADER$(PATH.JOIN$(base$, ex_rel$)), ex_rel$, jdbasic$, PATH.JOIN$(out_dir$, "examples"))
+    n_examples = n_examples + ex_report{"run"}
+    bad_examples = APPEND(bad_examples, ex_report{"problems"})
+NEXT cf
+SETENV "JDBASIC_PATH", saved_path$
+IF LEN(bad_examples) > 0 THEN
+    PRINT LEN(bad_examples); " examples print something other than the text says:"
+    FOR cf = 0 TO LEN(bad_examples) - 1
+        PRINT "  "; bad_examples[cf]
+    NEXT cf
+    THROW "fix the examples before building"
+ENDIF
+PRINT "examples: "; n_examples; " run, all as printed"
 
 IF only$ = "" ORELSE only$ = "docx" THEN
     DIM docx_path$ = PATH.JOIN$(out_dir$, "book.docx")

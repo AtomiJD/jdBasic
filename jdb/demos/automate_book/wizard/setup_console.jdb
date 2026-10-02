@@ -8,6 +8,7 @@
 '   jdbasic setup_console.jdb --doctor    check an existing setup
 '   jdbasic setup_console.jdb --uninstall remove the scheduled tasks
 '
+' --jdbasic <path> names the jdbasic program when it is not on the PATH.
 ' --home <folder> sets up for another home folder and --no-schedule
 ' leaves the Task Scheduler alone; tests use both.
 
@@ -53,6 +54,7 @@ DIM book$ = BookDir$()
 DIM recipes = WIZARD.RECIPES(PATH.JOIN$(book$, "recipes"))
 DIM a = WIZARD.DEFAULTS(recipes, ArgAfter$("--home", WIZARD.HOME$()))
 a = WIZARD.FROM_CONF(a, recipes, WIZARD.CONF_PATH$(a))
+IF ArgAfter$("--jdbasic", "") <> "" THEN a{"jdbasic"} = ArgAfter$("--jdbasic", "")
 
 IF "--doctor" IN argv THEN
     DIM problems = WIZARD.DOCTOR(a, recipes, TRUE)
@@ -137,7 +139,7 @@ ELSE
         DIM prog$ = PATH.JOIN$(a{"work"}, "recipes", rr{"folder"}, rr{"program"})
         DIM targs = WIZARD.SCHEDULE_ARGS(rr, WIZARD.RESOLVE_WHEN$(a, a{"schedule"}{rr{"id"}}), a{"jdbasic"}, prog$, conf$)
         IF gDry THEN
-            PRINT "schedule "; rr{"name"}; ": "; a{"schedule"}{rr{"id"}}
+            PRINT WIZARD.PLAN_LINE$(rr{"name"}, WIZARD.RESOLVE_WHEN$(a, a{"schedule"}{rr{"id"}}))
         ELSE
             DIM done = WIZARD.SCHTASKS(targs)
             IF done[0] THEN

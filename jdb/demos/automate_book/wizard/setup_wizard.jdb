@@ -7,6 +7,9 @@
 '   jdbasic setup_wizard.jdb --selftest   click through it alone into a
 '                                         temporary folder and close
 '   ... --selftest --shots <folder>       and keep a picture of each page
+'   ... --home <folder>                   set up for another home folder
+'   ... --jdbasic <path>                  the jdbasic program, when it is not
+'                                         on the PATH
 
 IMPORT WIZARD
 
@@ -15,14 +18,21 @@ DIM gSelfTest = "--selftest" IN argv
 DIM gHome$ = WIZARD.HOME$()
 IF gSelfTest THEN
     gHome$ = MKTEMP$("wizardwin")
-    MKDIR gHome$
 ENDIF
+DIM hi = 0
+FOR hi = 1 TO LEN(argv) - 2
+    IF argv[hi] = "--home" THEN gHome$ = argv[hi + 1]
+NEXT hi
+IF gSelfTest THEN MKDIR gHome$
 
 DIM gBook$ = PATH.JOIN$(PATH.DIRNAME$(argv[0]), "..")
 IF PATH.DIRNAME$(argv[0]) = "" THEN gBook$ = ".."
 DIM gRecipes = WIZARD.RECIPES(PATH.JOIN$(gBook$, "recipes"))
 DIM gA = WIZARD.DEFAULTS(gRecipes, gHome$)
 gA = WIZARD.FROM_CONF(gA, gRecipes, WIZARD.CONF_PATH$(gA))
+FOR hi = 1 TO LEN(argv) - 2
+    IF argv[hi] = "--jdbasic" THEN gA{"jdbasic"} = argv[hi + 1]
+NEXT hi
 DIM gPage = 0
 DIM gSel = -1
 DIM gTicks = 0
@@ -216,7 +226,7 @@ FUNC SetUp$(dry_run, schedule)
         DIM when$ = WIZARD.RESOLVE_WHEN$(gA, gA{"schedule"}{r{"id"}})
         DIM prog$ = PATH.JOIN$(gA{"work"}, "recipes", r{"folder"}, r{"program"})
         IF NOT schedule ORELSE dry_run THEN
-            PRINT "schedule "; r{"name"}; ": "; when$
+            PRINT WIZARD.PLAN_LINE$(r{"name"}, when$)
         ELSEIF gA{"jdbasic"} = "" THEN
             PRINT "not scheduled (jdbasic not found): "; r{"name"}
         ELSE

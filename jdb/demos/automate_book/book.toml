@@ -18,6 +18,11 @@ width_cm = 12.5
 [chapters]
 files = [
     "manuscript/00_front.md",
+    "manuscript/01_why.md",
+    "manuscript/02_toolbox.md",
+    "manuscript/02_toolbox_basics.md",
+    "manuscript/02_toolbox_libraries.md",
+    "manuscript/02_toolbox_running.md",
     "manuscript/03_easy.md",
     "manuscript/03_easy_E01.md",
     "manuscript/03_easy_E02.md",

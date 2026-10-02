@@ -417,9 +417,13 @@ SUB ListBlock(ctx, b, numbered)
     ctx{"y"} = ctx{"y"} + 1.8
 ENDSUB
 
-' A code listing in the code font on a shaded band; a line too long for the
+' A code listing in the code font on a shaded band, the output of an
+' example (a text block) lighter; a line too long for the
 ' width continues on the next one after an arrow.
 SUB CodeBlock(ctx, b)
+    DIM is_output = b{"lang"} = "text"
+    DIM ink = 35
+    IF is_output THEN ink = 95
     DIM s = ctx{"s"}
     DIM doc = ctx{"doc"}
     DIM pt = s{"code_pt"}
@@ -444,11 +448,11 @@ SUB CodeBlock(ctx, b)
         IF upto > LEN(rows) THEN upto = LEN(rows)
         IF LEN(rows) - upto = 1 ANDALSO room > 3 THEN upto = upto - 1
         DIM band_h = (upto - i) * lead + 2 * pad
-        PDFGEN.SETFILL(doc, 243, 244, 246)
+        IF is_output THEN PDFGEN.SETFILL(doc, 250, 250, 251) ELSE PDFGEN.SETFILL(doc, 243, 244, 246)
         PDFGEN.BOX(doc, XLeft(ctx), ctx{"y"}, TextWidth(ctx), band_h, "F")
         DIM y0 = ctx{"y"} + pad
         DO WHILE i < upto
-            Put(ctx, "code", "", pt, XLeft(ctx) + pad, y0 + lead * 0.78, rows[i], 35, 35, 35)
+            Put(ctx, "code", "", pt, XLeft(ctx) + pad, y0 + lead * 0.78, rows[i], ink, ink, ink)
             y0 = y0 + lead
             i = i + 1
         LOOP

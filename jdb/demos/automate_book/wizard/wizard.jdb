@@ -295,6 +295,13 @@ EXPORT FUNC SCHEDULE_ARGS(r, when$, jdbasic$, program$, config$)
     THROW "WIZARD: cannot schedule " + CHR$(34) + when$ + CHR$(34) + " for " + r{"id"}
 ENDFUNC
 
+' One line of the plan: when a recipe runs, or that it runs by hand.
+EXPORT FUNC PLAN_LINE$(name$, when$)
+    DIM w$ = TRIM$(when$)
+    IF w$ = "" ORELSE LCASE$(w$) = "manual" THEN RETURN "run by hand: " + name$
+    RETURN "schedule " + name$ + ": " + w$
+ENDFUNC
+
 EXPORT FUNC UNSCHEDULE_ARGS(r)
     RETURN ["/Delete", "/F", "/TN", TASK_NAME$(r)]
 ENDFUNC
