@@ -58,6 +58,8 @@ DECLARE FUNC GetByte LIB "kernel32.dll" ALIAS "RtlMoveMemory" _
 CONST VK_ESCAPE = 27
 CONST KEYUP = 2
 CONST KEY_UNICODE = 4
+' Pause after each typed character, in milliseconds.
+CONST gTypeDelayMs = 15
 CONST INPUT_SIZE = 40
 CONST CORNER_PX = 5
 
@@ -462,7 +464,8 @@ EXPORT FUNC CLIENT_ORIGIN(hwnd)
     RETURN [x, y]
 ENDFUNC
 
-' Types a text into the window in front.
+' Types a text into the window in front, one key down and up at a
+' time with a short pause, so the window reads every character.
 EXPORT SUB TYPETEXT(text$)
     GUARD()
     DIM records$ = KEY_INPUTS$(text$)
@@ -471,7 +474,13 @@ EXPORT SUB TYPETEXT(text$)
     DIM p = LocalAlloc(64, LEN(records$))
     IF p = 0 THEN THROW "INPUTKIT: out of memory"
     PutBytes(p, records$, LEN(records$))
-    DIM sent = SendInput(n, p, INPUT_SIZE)
+    DIM sent = 0
+    DIM k = 0
+    FOR k = 0 TO n - 1 STEP 2
+        IF k > 0 THEN GUARD()
+        sent = sent + SendInput(2, p + k * INPUT_SIZE, INPUT_SIZE)
+        SLEEP gTypeDelayMs
+    NEXT k
     DIM f = LocalFree(p)
     IF sent <> n THEN
         DIM took$ = STR$(sent) + " of " + STR$(n)
