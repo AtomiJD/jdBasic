@@ -1,0 +1,120 @@
+' Find Anything: documents of every kind found in folders and below,
+' their text read, an index that reads only new and changed files and
+' drops deleted ones, survives a restart, finds misspelt words, shows
+' a piece of text around the hit, and answers on a local page.
+
+IMPORT TESTKIT, FINDER, PDFGEN, DOCX, JDWEB
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("findtest")
+DIM docs$ = PATH.JOIN$(folder$, "docs")
+DIM sub$ = PATH.JOIN$(docs$, "2026")
+MKDIR sub$
+DIM ix_dir$ = PATH.JOIN$(folder$, "index")
+
+DIM notes$ = PATH.JOIN$(docs$, "meeting_notes.txt")
+TXTWRITER notes$, "Weekly controlling call." + LF$ + _
+    "The Miller budget grows by ten percent next quarter."
+TXTWRITER PATH.JOIN$(docs$, "readme.md"), "# Archive" + LF$ + _
+    "Old contracts live on the share."
+TXTWRITER PATH.JOIN$(docs$, "photo.jpg"), "not a document"
+DIM d = DOCX.NEW()
+DOCX.PARAGRAPH(d, "Travel policy for the whole team.")
+DOCX.TABLE(d, [["Mode", "Rule"], ["Train", "Book two weeks ahead"]], _
+    TRUE)
+DIM policy$ = PATH.JOIN$(sub$, "travel_policy-2026.docx")
+DOCX.WRITE(d, policy$)
+TXTWRITER PATH.JOIN$(sub$, "~$travel_policy-2026.docx"), "lock"
+TXTWRITER PATH.JOIN$(sub$, "broken.docx"), "this is no zip file"
+DIM pdf = PDFGEN.DOC()
+PDFGEN.ADDPAGE(pdf)
+PDFGEN.USEFONT(pdf, "helvetica", "", 12)
+PDFGEN.TEXTAT(pdf, 20, 30, "Invoice for the canteen renovation")
+DIM invoice$ = PATH.JOIN$(sub$, "invoice.pdf")
+PDFGEN.WRITEFILE(pdf, invoice$)
+DIM kinds = ["txt", "md", "docx", "pdf"]
+
+TESTKIT.SUITE("reading")
+DIM files = FINDER.SCAN([docs$, PATH.JOIN$(folder$, "none")], kinds)
+TESTKIT.EQ(LEN(files), 5, "documents of the kinds, also below")
+DIM text$ = FINDER.TEXT$(policy$)
+TESTKIT.ISTRUE(INSTR(text$, "Travel policy") >= 0, "Word paragraphs")
+TESTKIT.ISTRUE(INSTR(text$, "Book two weeks") >= 0, "and table cells")
+TESTKIT.ISTRUE(INSTR(FINDER.TEXT$(invoice$), "canteen") >= 0, _
+    "the text of a PDF")
+
+TESTKIT.SUITE("the index")
+DIM state = FINDER.OPEN(ix_dir$, "en")
+DIM plan = FINDER.PLAN(state, files)
+TESTKIT.EQ(LEN(plan{"add"}), 5, "a new index reads everything")
+DIM done = FINDER.UPDATE(state, plan)
+TESTKIT.EQ(done{"read"}, 4, "four documents read")
+DIM failed = done{"failed"}
+TESTKIT.EQ(LEN(failed), 1, "the broken file is reported")
+TESTKIT.ISTRUE(INSTR(failed[0], "broken.docx") >= 0, "by its path")
+FINDER.SAVE(state)
+plan = FINDER.PLAN(state, FINDER.SCAN([docs$], kinds))
+DIM n_new = LEN(plan{"add"}) + LEN(plan{"change"})
+TESTKIT.EQ(n_new, 0, "nothing to read when nothing changed")
+
+TXTWRITER notes$, "Weekly controlling call, moved to Thursday."
+KILL invoice$
+state = FINDER.OPEN(ix_dir$, "en")
+plan = FINDER.PLAN(state, FINDER.SCAN([docs$], kinds))
+TESTKIT.EQ(LEN(plan{"change"}), 1, "a changed file is read again")
+TESTKIT.EQ(LEN(plan{"remove"}), 1, "a deleted file is dropped")
+DIM changed = plan{"change"}
+DIM first_change = changed[0]
+TESTKIT.EQ(first_change{"path"}, REPLACE$(notes$, "\", "/"), _
+    "the changed one")
+done = FINDER.UPDATE(state, plan)
+FINDER.SAVE(state)
+
+TESTKIT.SUITE("searching")
+state = FINDER.OPEN(ix_dir$, "en")
+DIM hits = FINDER.FIND(state, "travel", 10)
+TESTKIT.EQ(LEN(hits), 1, "one hit")
+DIM top = hits[0]
+TESTKIT.EQ(top{"name"}, "travel_policy-2026.docx", "the Word file")
+hits = FINDER.FIND(state, "polcy", 10)
+TESTKIT.EQ(LEN(hits), 1, "a misspelt word still finds it")
+TESTKIT.EQ(LEN(FINDER.FIND(state, "canteen", 10)), 0, _
+    "a deleted file is not found")
+TESTKIT.EQ(LEN(FINDER.FIND(state, "budget", 10)), 0, _
+    "old text of a changed file is gone")
+hits = FINDER.FIND(state, "thursday", 10)
+TESTKIT.EQ(LEN(hits), 1, "its new text is found")
+DIM long$ = REPEAT$("filler words here ", 20) + "the key sentence" + _
+    REPEAT$(" more filler", 30)
+DIM snip$ = FINDER.SNIPPET$(long$, "key")
+TESTKIT.ISTRUE(INSTR(snip$, "the key sentence") >= 0, _
+    "the snippet shows the words")
+TESTKIT.ISTRUE(STARTSWITH(snip$, "... "), "and marks what is left out")
+
+TESTKIT.SUITE("the page")
+FINDER.MOUNT(state)
+DIM hex$ = CODEC.SHA256$(folder$)
+DIM port = 0
+DIM i = 0
+FOR i = 0 TO 3
+    port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+NEXT i
+port = 20000 + port MOD 30000
+DIM last_port = port + 50
+DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+    port = port + 1
+LOOP
+DIM r = JDWEB.FETCH(port, "GET", "/?q=travel")
+TESTKIT.EQ(r{"status"}, 200, "the page is served")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "travel_policy-2026.docx") >= 0, _
+    "with the hit")
+r = JDWEB.FETCH(port, "GET", "/?q=%3Cb%3E")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "&lt;b&gt;") >= 0, _
+    "a query is written safely")
+r = JDWEB.FETCH(port, "GET", "/hits.json?q=thursday")
+DIM got = JSON.PARSE$(r{"body"})
+TESTKIT.EQ(LEN(got), 1, "the hits as JSON")
+HTTP.SERVER.STOP()
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

@@ -1,0 +1,60 @@
+' Let an AI Drive: hands your automations to an AI agent such as
+' Claude Code through the jdBasic MCP server. It writes one small file
+' per tool into the ai-tools folder of your work folder and prints
+' the command that tells the agent about the server. The settings are
+' the [ai_drive] part of work.conf.
+'
+'   jdbasic ai_drive.jdb            write the tool files
+'   jdbasic ai_drive.jdb --dry-run  show them, write nothing
+'   jdbasic ai_drive.jdb --check    ask the server for its tools
+
+IMPORT WORKCONF, AITOOLS
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM home$ = "~/Documents/AutomateWork"
+DIM work$ = WORKCONF.FOLDER$(cfg, "paths.work", home$)
+DIM jdbasic$ = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
+DIM tools$ = PATH.JOIN$(work$, "ai-tools")
+DIM own$ = PATH.JOIN$(work$, "recipes", "X10_ai_drive")
+DIM mine$ = PATH.JOIN$(own$, "aitools.jdb")
+DIM module$ = WORKCONF.FOLDER$(cfg, "ai_drive.module", mine$)
+DIM q$ = CHR$(34)
+
+IF WORKCONF.FLAG("check") THEN
+    DIM offered = AITOOLS.CHECK(jdbasic$, tools$, work$)
+    IF LEN(offered) = 0 THEN
+        PRINT "The server did not answer. Is "; jdbasic$; " right?"
+        END 1
+    ENDIF
+    PRINT "The server offers: "; JOIN(offered, ", ")
+    END
+ENDIF
+
+IF NOT FILE.EXISTS(module$) THEN
+    PRINT "No tool module at "; module$
+    END 1
+ENDIF
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT dry_run THEN MKDIR tools$
+DIM manifests = AITOOLS.MANIFESTS(module$)
+DIM k = 0
+FOR k = 0 TO LEN(manifests) - 1
+    DIM m = manifests[k]
+    DIM file$ = PATH.JOIN$(tools$, m{"name"} + ".json")
+    IF dry_run THEN
+        PRINT "would write "; file$
+    ELSE
+        TXTWRITER file$, JSON.STRINGIFY$(m)
+        PRINT "wrote "; file$
+    ENDIF
+NEXT k
+
+DIM allowed = WORKCONF.VALUE(cfg, "ai_drive.allow", [])
+PRINT "Real runs allowed for: "; LEN(allowed); " recipe(s)"
+PRINT "Tell Claude Code about the server once, in a command prompt:"
+DIM line1$ = "claude mcp add automate-work -e AUTOMATEWORK_CONF="
+line1$ = line1$ + q$ + WORKCONF.CONFIG_PATH$() + q$
+DIM line2$ = "-- " + q$ + jdbasic$ + q$ + " --mcp --tools-only "
+line2$ = line2$ + q$ + tools$ + q$
+PRINT "  "; line1$
+PRINT "    "; line2$

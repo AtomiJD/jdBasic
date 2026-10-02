@@ -1,0 +1,71 @@
+' Web Harvester: values such as prices read from web pages into a CSV
+' file that opens in Excel, politely: robots.txt is asked first, each
+' host gets a pause between two requests, and a page read in the last
+' hours comes from the cache. targets.toml names the pages and what
+' to read from them; the settings are the [web_harvester] part of
+' work.conf.
+'
+'   jdbasic web_harvester.jdb            read all targets
+'   jdbasic web_harvester.jdb --dry-run  read and show, write nothing
+
+IMPORT WORKCONF, HARVEST, CONF, LOGGER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "web_harvester."
+DIM home$ = "~/Documents/AutomateWork/harvest"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM own$ = PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "targets.toml")
+DIM targets$ = WORKCONF.FOLDER$(cfg, key$ + "targets", _
+    PATH.JOIN$(folder$, "targets.toml"))
+IF NOT FILE.EXISTS(targets$) THEN targets$ = own$
+DIM spec = CONF.TOML(targets$)
+IF NOT MAP.EXISTS(spec, "target") THEN
+    THROW "No [[target]] in " + targets$
+ENDIF
+DIM targets = spec{"target"}
+DIM delay = WORKCONF.VALUE(cfg, key$ + "delay_seconds", 5)
+DIM hours = WORKCONF.VALUE(cfg, key$ + "cache_hours", 12)
+DIM agent$ = "AutomateWork harvester (jdBasic)"
+DIM contact$ = WORKCONF.VALUE(cfg, "user.email", "")
+IF contact$ <> "" THEN agent$ = agent$ + "; " + contact$
+DIM output$ = PATH.JOIN$(folder$, "harvest.csv")
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM lg = LOGGER.NEW("web_harvester")
+LOGGER.TO_CONSOLE(lg, FALSE)
+IF NOT dry_run THEN
+    MKDIR folder$
+    LOGGER.TO_FILE(lg, PATH.JOIN$(folder$, "harvest.log"), 1000000, 2)
+ENDIF
+
+DIM opts = {"agent": agent$, "delay": delay, "hours": hours}
+opts{"cache"} = PATH.JOIN$(folder$, "cache.json")
+DIM h = HARVEST.NEW(opts)
+DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+DIM rows = HARVEST.RUN(h, targets, now$)
+
+DIM failed = 0
+DIM lines = []
+DIM k = 0
+FOR k = 0 TO LEN(rows) - 1
+    DIM row = rows[k]
+    IF row[5] <> "ok" THEN
+        failed = failed + 1
+        LOGGER.WARN(lg, row[1] + ": " + row[5])
+    ELSEIF dry_run THEN
+        PRINT row[1]; ": "; row[2]; "  ("; row[3]; ")"
+    ENDIF
+    PUSH(lines, HARVEST.CSVLINE$(row))
+NEXT k
+IF dry_run THEN
+    PRINT LEN(rows) - failed; " values read; nothing written"
+    END
+ENDIF
+
+DIM bom$ = CHR$(239) + CHR$(187) + CHR$(191)
+DIM text$ = bom$ + "time,name,value,number,url,status" + CHR$(10)
+IF FILE.EXISTS(output$) THEN text$ = TXTREADER$(output$)
+TXTWRITER output$, text$ + JOIN(lines, CHR$(10)) + CHR$(10)
+HARVEST.SAVE(h, opts{"cache"})
+LOGGER.INFO(lg, "harvest written", {"values": LEN(rows) - failed, _
+    "failed": failed, "requests": h{"requests"}})

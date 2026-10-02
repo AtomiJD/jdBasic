@@ -1,0 +1,130 @@
+' AITOOLS on a work folder of its own: the recipes an agent sees, the
+' log and the outbox it may read, the dry run it may start, the real
+' run it may only start when work.conf allows it, the audit log, the
+' manifests, and the MCP server answering with the four tools.
+
+IMPORT TESTKIT, AITOOLS, MAIL, OUTBOX, CONF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+
+SUB Recipe(work$, folder$, id$, section$, program$)
+    DIM dir$ = PATH.JOIN$(work$, "recipes", folder$)
+    MKDIR dir$
+    DIM t$ = "id = " + Q$ + id$ + Q$ + LF$
+    t$ = t$ + "name = " + Q$ + "Recipe " + id$ + Q$ + LF$
+    t$ = t$ + "summary = " + Q$ + "Does " + id$ + Q$ + LF$
+    t$ = t$ + "program = " + Q$ + program$ + Q$ + LF$
+    t$ = t$ + "section = " + Q$ + section$ + Q$ + LF$
+    TXTWRITER PATH.JOIN$(dir$, "recipe.toml"), t$
+    DIM p$ = "DIM argv = OS.ARGS()" + LF$
+    p$ = p$ + "DIM how$ = " + Q$ + "for real" + Q$ + LF$
+    p$ = p$ + "IF argv[LEN(argv) - 1] = " + Q$ + "--dry-run" + Q$
+    p$ = p$ + " THEN how$ = " + Q$ + "would" + Q$ + LF$
+    p$ = p$ + "PRINT " + Q$ + id$ + " " + Q$ + " + how$" + LF$
+    TXTWRITER PATH.JOIN$(dir$, program$), p$
+ENDSUB
+
+FUNC Jdbasic$()
+    DIM given$ = GETENV$("JDBASIC_EXE")
+    IF given$ <> "" THEN RETURN given$
+    DIM here$ = "..\..\..\build\jdBasic.exe"
+    IF FILE.EXISTS(here$) THEN RETURN here$
+    RETURN ""
+ENDFUNC
+
+DIM work$ = REPLACE$(MKTEMP$("aidrive"), "\", "/")
+MKDIR work$
+MKDIR PATH.JOIN$(work$, "logs")
+MKDIR PATH.JOIN$(work$, "config")
+Recipe(work$, "E11_disk_space", "E11", "disk_space", "disk_space.jdb")
+Recipe(work$, "M08_dashboard", "M08", "dashboard", "dashboard.jdb")
+DIM rows$ = ""
+DIM i = 0
+FOR i = 1 TO 25
+    rows$ = rows$ + "line " + STR$(i) + LF$
+NEXT i
+TXTWRITER PATH.JOIN$(work$, "logs", "disk_space.log"), rows$
+DIM box$ = work$ + "/outbox"
+DIM jdbasic$ = Jdbasic$()
+DIM conf$ = "[paths]" + LF$ + "work = " + Q$ + work$ + Q$ + LF$
+conf$ = conf$ + "jdbasic = " + Q$ + REPLACE$(jdbasic$, "\", "/") + Q$ + LF$
+conf$ = conf$ + "[mail]" + LF$ + "outbox = " + Q$ + box$ + Q$ + LF$
+conf$ = conf$ + "[ai_drive]" + LF$ + "allow = [" + Q$ + "E11" + Q$ + "]"
+DIM conf_path$ = PATH.JOIN$(work$, "config", "work.conf")
+TXTWRITER conf_path$, conf$ + LF$
+SETENV "AUTOMATEWORK_CONF", conf_path$
+DIM cfg = CONF.TOML_TEXT(conf$)
+DIM msg = MAIL.MESSAGE("lena@example.com", "anna@example.com", "Status")
+MAIL.PLAIN(msg, "All on track.")
+DIM put$ = OUTBOX.PUT$(msg, cfg, "status.eml")
+
+TESTKIT.SUITE("what the agent can see")
+DIM listed = JSON.PARSE$(AITOOLS.TOOL_LIST("{}"))
+TESTKIT.EQ(LEN(listed), 2, "the installed recipes")
+TESTKIT.EQ(listed[0]{"id"}, "E11", "with their ids")
+TESTKIT.ISTRUE(listed[0]{"real_runs"}, "E11 may run for real")
+TESTKIT.ISFALSE(listed[1]{"real_runs"}, "M08 may not")
+DIM log_text$ = AITOOLS.TOOL_LOG("{" + Q$ + "id" + Q$ + ":" + Q$ + "e11" + Q$ + "}")
+DIM log_rows = SPLIT(log_text$, LF$)
+TESTKIT.EQ(LEN(log_rows), 20, "the last twenty log lines")
+TESTKIT.EQ(log_rows[19], "line 25", "ending with the newest")
+DIM no_log$ = AITOOLS.TOOL_LOG("{" + Q$ + "id" + Q$ + ":" + Q$ + "M08" + Q$ + "}")
+TESTKIT.EQ(no_log$, "No log yet for M08", "a recipe without a log")
+DIM mails = JSON.PARSE$(AITOOLS.TOOL_OUTBOX("{}"))
+TESTKIT.EQ(LEN(mails), 1, "the outbox")
+TESTKIT.EQ(mails[0]{"subject"}, "Status", "with the subject")
+TESTKIT.ISTRUE(FILE.EXISTS(put$), "and the mail stays there")
+
+TESTKIT.SUITE("what the agent can do")
+DIM refused$ = AITOOLS.TOOL_RUN("{" + Q$ + "id" + Q$ + ":" + Q$ + "M08" _
+    + Q$ + "," + Q$ + "for_real" + Q$ + ":true}")
+TESTKIT.ISTRUE(STARTSWITH(refused$, "M08 may only run as a dry run"), _
+    "a real run that is not allowed is refused")
+IF jdbasic$ = "" THEN
+    TESTKIT.SKIP("no jdbasic found to run the recipes; set JDBASIC_EXE")
+ELSE
+    DIM dry$ = AITOOLS.TOOL_RUN("{" + Q$ + "id" + Q$ + ":" + Q$ + "M08" _
+        + Q$ + "}")
+    TESTKIT.ISTRUE(STARTSWITH(dry$, "dry run of M08, exit 0"), _
+        "a dry run is allowed")
+    TESTKIT.ISTRUE(INSTR(dry$, "M08 would") >= 0, "with --dry-run")
+    DIM real$ = AITOOLS.TOOL_RUN("{" + Q$ + "id" + Q$ + ":" + Q$ + "E11" _
+        + Q$ + "," + Q$ + "for_real" + Q$ + ":true}")
+    TESTKIT.ISTRUE(INSTR(real$, "E11 for real") >= 0, _
+        "an allowed recipe runs for real")
+ENDIF
+DIM audit$ = TXTREADER$(PATH.JOIN$(work$, "logs", "ai_drive.jsonl"))
+TESTKIT.ISTRUE(INSTR(audit$, "refused") >= 0, "the refusal is logged")
+TESTKIT.ISTRUE(INSTR(audit$, Q$ + "tool" + Q$ + ":" + Q$ + "outbox") _
+    >= 0, "every call is logged")
+
+TESTKIT.SUITE("the MCP server")
+DIM module$ = work$ + "/recipes/X10_ai_drive/aitools.jdb"
+DIM manifests = AITOOLS.MANIFESTS(module$)
+TESTKIT.EQ(LEN(manifests), 4, "four tools")
+TESTKIT.EQ(manifests[3]{"name"}, "run_recipe", "run_recipe among them")
+TESTKIT.EQ(manifests[3]{"inputSchema"}{"required"}[0], "id", _
+    "it needs an id")
+TESTKIT.EQ(manifests[0]{"module"}, module$, "each names the module")
+DIM here$ = "recipes/expert/X10_ai_drive/aitools.jdb"
+DIM to_write = AITOOLS.MANIFESTS(here$)
+IF jdbasic$ = "" THEN
+    TESTKIT.SKIP("no jdbasic found to start the MCP server")
+ELSE
+    DIM tools$ = PATH.JOIN$(work$, "ai-tools")
+    MKDIR tools$
+    DIM k = 0
+    FOR k = 0 TO LEN(to_write) - 1
+        DIM one AS MAP
+        one = to_write[k]
+        DIM file$ = PATH.JOIN$(tools$, one{"name"} + ".json")
+        TXTWRITER file$, JSON.STRINGIFY$(one)
+    NEXT k
+    DIM offered = AITOOLS.CHECK(jdbasic$, tools$, work$)
+    TESTKIT.ISTRUE("run_recipe" IN offered, "the server offers the tools")
+    TESTKIT.ISFALSE("jdb_eval" IN offered, "and none of its own")
+ENDIF
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(work$, "/", "\")])
+TESTKIT.REPORT()

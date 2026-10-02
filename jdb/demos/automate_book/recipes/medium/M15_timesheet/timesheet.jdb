@@ -46,21 +46,27 @@ EXPORT FUNC SESSIONS(events)
     RETURN out
 ENDFUNC
 
+' A day (YYYY-MM-DD) at noon, where an hour more or less from
+' daylight saving time keeps the date.
+FUNC Noon(day$)
+    RETURN CDATE(day$ + " 12:00:00")
+ENDFUNC
+
 ' The month before the one a day (YYYY-MM-DD) is in, as YYYY-MM.
 EXPORT FUNC LAST_MONTH$(day$)
     DIM first$ = LEFT$(day$, 8) + "01"
-    DIM before = DATEADD("D", -1, CDATE(first$))
+    DIM before = DATEADD("D", -1, Noon(first$))
     RETURN LEFT$(FORMAT_DATE(before, "%Y-%m-%d"), 7)
 ENDFUNC
 
 ' The Monday of the week a day (YYYY-MM-DD) belongs to.
 EXPORT FUNC MONDAY$(day$)
-    DIM back = (VAL(FORMAT_DATE(CDATE(day$), "%w")) + 6) MOD 7
-    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+    DIM back = (VAL(FORMAT_DATE(Noon(day$), "%w")) + 6) MOD 7
+    RETURN FORMAT_DATE(DATEADD("D", -back, Noon(day$)), "%Y-%m-%d")
 ENDFUNC
 
 FUNC DayAfter$(day$, n)
-    RETURN FORMAT_DATE(DATEADD("D", n, CDATE(day$)), "%Y-%m-%d")
+    RETURN FORMAT_DATE(DATEADD("D", n, Noon(day$)), "%Y-%m-%d")
 ENDFUNC
 
 ' The Mondays of every week that has a day in the month (YYYY-MM).
@@ -93,7 +99,7 @@ EXPORT FUNC WEEK_HOURS(sessions, monday$, month$, now$)
     FOR k = 0 TO LEN(sessions) - 1
         DIM s = sessions[k]
         DIM day$ = LEFT$(s{"start"}, 10)
-        DIM col = DATEDIFF("D", CDATE(monday$), CDATE(day$))
+        DIM col = DATEDIFF("D", Noon(monday$), Noon(day$))
         DIM inside = LEFT$(day$, 7) = month$
         IF col >= 0 ANDALSO col <= 6 ANDALSO inside THEN
             DIM project$ = s{"project"}

@@ -1,0 +1,46 @@
+# What the setup wizard knows about this recipe.
+
+id = "X03"
+name = "Find Anything"
+program = "find_anything.jdb"
+summary = "One search over the documents of your folders, on a page in your browser"
+minutes_per_week = 40
+schedule = "daily 12:30"
+section = "find_anything"
+modules = ["finder.jdb"]
+
+[[setting]]
+key = "folders"
+label = "Folders to search in"
+kind = "list"
+default = ["~/Documents"]
+
+[[setting]]
+key = "kinds"
+label = "File kinds to read"
+kind = "list"
+default = ["txt", "md", "csv", "docx", "pdf"]
+
+[[setting]]
+key = "index"
+label = "Folder for the search index"
+kind = "folder"
+default = "~/Documents/AutomateWork/find"
+
+[[setting]]
+key = "language"
+label = "Language of the documents (en, de or none)"
+kind = "text"
+default = "en"
+
+[[setting]]
+key = "port"
+label = "Port of the search page on this computer"
+kind = "number"
+default = 8766
+
+# The search page runs as a second task from the moment you log on.
+[[task]]
+name = "search page"
+schedule = "at logon"
+args = ["--serve"]

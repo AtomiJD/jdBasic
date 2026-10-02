@@ -1,0 +1,16 @@
+# What the setup wizard knows about this recipe.
+
+id = "X06"
+name = "Work Cockpit"
+program = "work_cockpit.jdb"
+summary = "A window with a button for every automation and how it ran last"
+minutes_per_week = 20
+schedule = "manual"
+section = "work_cockpit"
+modules = ["cockpit.jdb"]
+
+[[setting]]
+key = "tries"
+label = "Starts of a failing automation before it counts as failed"
+kind = "number"
+default = 1

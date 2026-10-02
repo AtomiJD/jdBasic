@@ -1,0 +1,40 @@
+# What the setup wizard knows about this recipe.
+
+id = "X08"
+name = "Parallel Crunching"
+program = "parallel_crunching.jdb"
+summary = "Adds up thousands of expense exports on every core into one report"
+minutes_per_week = 10
+schedule = "manual"
+section = "parallel_crunching"
+modules = ["crunch.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder with the exports (CSV)"
+kind = "folder"
+default = "~/Documents/AutomateWork/exports"
+
+[[setting]]
+key = "reports"
+label = "Folder for the reports"
+kind = "folder"
+default = "~/Documents/AutomateWork/reports"
+
+[[setting]]
+key = "separator"
+label = "Separator in the CSV files"
+kind = "text"
+default = ";"
+
+[[setting]]
+key = "workers"
+label = "Workers (0: one per core)"
+kind = "number"
+default = 0
+
+[[setting]]
+key = "timeout_seconds"
+label = "Seconds one file may take"
+kind = "number"
+default = 30

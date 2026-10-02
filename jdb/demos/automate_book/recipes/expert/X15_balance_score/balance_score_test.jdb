@@ -1,0 +1,140 @@
+' Balance Score: weeks, working hours, the time log in quarter hours,
+' meetings from a calendar, mails in an outbox, the score and its
+' parts, the page and the local web server. The log and the calendar
+' are read at offset 0, so the test gives the same in every zone.
+
+IMPORT TESTKIT, BALANCE, DT, JDWEB
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("balance")
+MKDIR folder$
+DIM log$ = PATH.JOIN$(folder$, "log.csv")
+DIM lines = ["time,event,project"]
+PUSH(lines, "2026-10-05 08:00:00,start,Budget 2027")
+PUSH(lines, "2026-10-05 12:00:00,stop,")
+PUSH(lines, "2026-10-05 13:00:00,start,Budget 2027")
+PUSH(lines, "2026-10-05 19:00:00,stop,")
+PUSH(lines, "2026-10-06 09:00:00,start,Reporting")
+PUSH(lines, "2026-10-06 17:00:00,stop,")
+PUSH(lines, "2026-10-10 10:00:00,start,Budget 2027")
+PUSH(lines, "2026-10-10 12:00:00,stop,")
+TXTWRITER log$, JOIN(lines, LF$) + LF$
+DIM ics$ = PATH.JOIN$(folder$, "calendar.ics")
+DIM cal = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//test//EN"]
+cal = APPEND(cal, ["BEGIN:VEVENT", "UID:a@test", "SUMMARY:Team", _
+    "DTSTART:20261005T100000Z", "DTEND:20261005T110000Z", _
+    "END:VEVENT"])
+cal = APPEND(cal, ["BEGIN:VEVENT", "UID:b@test", "SUMMARY:Review", _
+    "DTSTART:20261006T140000Z", "DTEND:20261006T160000Z", _
+    "END:VEVENT"])
+cal = APPEND(cal, ["BEGIN:VEVENT", "UID:c@test", "SUMMARY:Holiday", _
+    "DTSTART;VALUE=DATE:20261009", "DTEND;VALUE=DATE:20261010", _
+    "END:VEVENT", "END:VCALENDAR"])
+TXTWRITER ics$, JOIN(cal, CHR$(13) + LF$) + CHR$(13) + LF$
+DIM box$ = PATH.JOIN$(folder$, "outbox")
+MKDIR PATH.JOIN$(box$, "sent")
+TXTWRITER PATH.JOIN$(box$, "a.eml"), "Subject: a" + LF$
+TXTWRITER PATH.JOIN$(box$, "sent", "b.eml"), "Subject: b" + LF$
+
+FUNC Rules(offset)
+    DIM r = {"offset": offset, "day_start": 510, "day_end": 1050}
+    r{"target_hours"} = 40
+    r{"meeting_share"} = 40
+    r{"weight_overtime"} = 2
+    r{"weight_meetings"} = 1
+    r{"weight_late"} = 3
+    r{"weight_mail"} = 1
+    RETURN r
+ENDFUNC
+DIM rules = Rules(0)
+
+TESTKIT.SUITE("weeks and hours")
+DIM monday = DT.PARSE("2026-10-05 09:00:00", 0)
+TESTKIT.EQ(BALANCE.WEEK$(monday, 0), "2026-W41", "the ISO week")
+TESTKIT.EQ(BALANCE.MINUTES("17:30"), 1050, "a time of day in minutes")
+TESTKIT.EQ(BALANCE.CLOCK$(510), "08:30", "and back")
+TESTKIT.ISFALSE(BALANCE.OUTSIDE(monday, rules), "Monday at nine")
+DIM evening = DT.PARSE("2026-10-05 18:00:00", 0)
+TESTKIT.ISTRUE(BALANCE.OUTSIDE(evening, rules), "Monday at six pm")
+DIM saturday = DT.PARSE("2026-10-10 11:00:00", 0)
+TESTKIT.ISTRUE(BALANCE.OUTSIDE(saturday, rules), "a Saturday")
+
+TESTKIT.SUITE("the sources")
+DIM weeks AS MAP
+DIM sunday = DT.PARSE("2026-10-11 20:00:00", 0)
+BALANCE.ADD_LOG(weeks, log$, rules, sunday)
+DIM w41 = BALANCE.WEEK_OF(weeks, "2026-W41")
+TESTKIT.EQ(w41{"hours"}, 20, "ten, eight and two hours")
+TESTKIT.EQ(w41{"late_hours"}, 4, "half an hour early, late, Saturday")
+DIM from = DT.PARSE("2026-10-05 00:00:00", 0)
+DIM upto = DT.PARSE("2026-10-12 00:00:00", 0)
+BALANCE.ADD_MEETINGS(weeks, ics$, rules, from, upto)
+w41 = BALANCE.WEEK_OF(weeks, "2026-W41")
+TESTKIT.EQ(w41{"meeting_hours"}, 3, "two meetings, not the holiday")
+DIM mail_weeks AS MAP
+DIM local = Rules(DT.LOCAL_OFFSET())
+BALANCE.ADD_MAILS(mail_weeks, box$, local)
+BALANCE.ADD_MAILS(mail_weeks, PATH.JOIN$(box$, "sent"), local)
+DIM this$ = BALANCE.WEEK$(DT.NOW(), local{"offset"})
+DIM mw = BALANCE.WEEK_OF(mail_weeks, this$)
+TESTKIT.EQ(mw{"mails"}, 2, "the outbox and the sent folder")
+
+TESTKIT.SUITE("the score")
+DIM s = BALANCE.SCORE(w41, rules)
+TESTKIT.EQ(s{"score"}, 88, "four hours outside cost twelve points")
+TESTKIT.EQ(LEN(s{"parts"}), 1, "one reason")
+TESTKIT.EQ(s{"parts"}[0][0], "outside working hours", "named")
+DIM tight = Rules(0)
+tight{"target_hours"} = 15
+TESTKIT.EQ(BALANCE.SCORE(w41, tight){"score"}, 78, "five over")
+DIM busy = {"hours": 10, "late_hours": 0, "meeting_hours": 8, _
+    "late_mails": 0}
+TESTKIT.EQ(BALANCE.SCORE(busy, rules){"score"}, 60, _
+    "80 percent meetings, 40 above the limit")
+DIM awful = {"hours": 90, "late_hours": 40, "meeting_hours": 0, _
+    "late_mails": 30}
+TESTKIT.EQ(BALANCE.SCORE(awful, rules){"score"}, 0, "never below 0")
+
+TESTKIT.SUITE("the weeks and the page")
+DIM sources = {"log": log$, "calendar": ics$, "outbox": box$}
+DIM list = BALANCE.WEEKS(sources, rules, sunday, 3)
+TESTKIT.EQ(LEN(list), 3, "three weeks")
+TESTKIT.EQ(list[0]{"week"}, "2026-W39", "oldest first")
+TESTKIT.EQ(list[0]{"score"}, 100, "a week without work scores 100")
+TESTKIT.EQ(list[2]{"score"}, 88, "this week")
+TESTKIT.EQ(list[2]{"monday"}, "2026-10-05", "with its Monday")
+DIM svg$ = BALANCE.CHART$(list)
+TESTKIT.ISTRUE(STARTSWITH(svg$, "<svg"), "the trend is SVG")
+DIM tpl$ = "recipes/expert/X15_balance_score/templates/balance.html"
+IF NOT FILE.EXISTS(tpl$) THEN tpl$ = "templates/balance.html"
+DIM page$ = BALANCE.PAGE$(list, rules, tpl$)
+TESTKIT.ISTRUE(INSTR(page$, "week 2026-W41") >= 0, "the page")
+TESTKIT.ISTRUE(INSTR(page$, "outside working hours") >= 0, _
+    "with the points lost")
+TESTKIT.ISTRUE(INSTR(page$, "every hour worked above" + LF$ + _
+    "    40") >= 0, "and the rules with their numbers")
+
+TESTKIT.SUITE("the web page")
+rules{"weeks"} = 8
+BALANCE.MOUNT(sources, rules, tpl$)
+DIM hex$ = CODEC.SHA256$(folder$)
+DIM port = 0
+DIM i = 0
+FOR i = 0 TO 3
+    port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+NEXT i
+port = 20000 + port MOD 30000
+DIM last_port = port + 50
+DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+    port = port + 1
+LOOP
+DIM r = JDWEB.FETCH(port, "GET", "/")
+TESTKIT.EQ(r{"status"}, 200, "the page is served")
+TESTKIT.ISTRUE(INSTR(r{"body"}, "Balance score") >= 0, "the page")
+r = JDWEB.FETCH(port, "GET", "/data.json")
+DIM data = JSON.PARSE$(r{"body"})
+TESTKIT.EQ(LEN(data{"weeks"}), 8, "eight weeks as JSON")
+HTTP.SERVER.STOP()
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

@@ -1,0 +1,104 @@
+' HEALTH: a silent job server, a failed job, a late job and an old
+' mail in the outbox are problems; an alert names each new problem once
+' and each one that is over; the numbers come out in the Prometheus
+' format; a mail server that does not answer is tried again.
+
+IMPORT TESTKIT, HEALTH, DT
+
+DIM offset = 0
+DIM now = DT.MAKE(2026, 10, 2, 10, 0, 0, offset)
+
+FUNC Job(name$, when$)
+    DIM j AS MAP
+    j{"name"} = name$
+    j{"when"} = when$
+    j{"enabled"} = TRUE
+    RETURN j
+ENDFUNC
+
+FUNC Rec(last_due, ok, error$)
+    DIM r AS MAP
+    r{"last_due"} = last_due
+    r{"last_ok"} = ok
+    r{"last_error"} = error$
+    r{"last_end"} = "2026-10-02 08:00"
+    r{"runs"} = 5
+    r{"fails"} = 1
+    r{"last_success"} = 1790900000
+    RETURN r
+ENDFUNC
+
+FUNC Find(problems, key$)
+    DIM k = 0
+    FOR k = 0 TO LEN(problems) - 1
+        DIM p = problems[k]
+        IF p{"key"} = key$ THEN RETURN p{"text"}
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+DIM jobs = [Job("backup", "daily 08:00"), Job("report", "daily 09:00"), Job("tidy", "daily 07:00")]
+DIM state AS MAP
+state{"backup"} = Rec(DT.MAKE(2026, 10, 2, 8, 0, 0, offset), FALSE, "exit 2: disk full")
+state{"report"} = Rec(DT.MAKE(2026, 10, 1, 9, 0, 0, offset), TRUE, "")
+state{"tidy"} = Rec(DT.MAKE(2026, 10, 2, 7, 0, 0, offset), TRUE, "")
+
+DIM facts AS MAP
+facts{"heartbeat"} = 30
+facts{"server_minutes"} = 10
+facts{"late_minutes"} = 30
+facts{"outbox"} = [{"name": "invoice.eml", "hours": 30}, {"name": "status.eml", "hours": 2}]
+facts{"outbox_hours"} = 24
+
+TESTKIT.SUITE("checks")
+DIM problems = HEALTH.CHECK(jobs, state, now, offset, facts)
+TESTKIT.EQ(LEN(problems), 3, "a failure, a late job and an old mail")
+TESTKIT.ISTRUE(INSTR(Find(problems, "failed:backup"), "disk full") >= 0, "the failure with its reason")
+TESTKIT.ISTRUE(INSTR(Find(problems, "late:report"), "09:00") >= 0, "the late job with the time it was due")
+TESTKIT.EQ(Find(problems, "late:tidy"), "", "a job that ran on time is fine")
+TESTKIT.ISTRUE(Find(problems, "outbox:invoice.eml") <> "", "a mail older than a day")
+TESTKIT.EQ(Find(problems, "outbox:status.eml"), "", "a fresh mail is fine")
+TESTKIT.EQ(Find(problems, "server"), "", "a server that signed half a minute ago is fine")
+facts{"heartbeat"} = 700
+DIM silent = HEALTH.CHECK(jobs, state, now, offset, facts)
+TESTKIT.ISTRUE(INSTR(Find(silent, "server"), "11 minutes") >= 0, "a server silent for 11 minutes")
+facts{"heartbeat"} = -1
+DIM gone_server = HEALTH.CHECK(jobs, state, now, offset, facts)
+TESTKIT.ISTRUE(INSTR(Find(gone_server, "server"), "not running") >= 0, "no lock file, no server")
+DIM no_jobs = HEALTH.CHECK([], state, now, offset, facts)
+TESTKIT.EQ(Find(no_jobs, "server"), "", "without jobs nobody needs a server")
+
+TESTKIT.SUITE("alerts")
+DIM none AS MAP
+DIM first = HEALTH.DIFF(none, problems, now)
+TESTKIT.EQ(LEN(first{"new"}), 3, "the first run reports every problem")
+DIM second = HEALTH.DIFF(first{"open"}, problems, now + 900)
+TESTKIT.EQ(LEN(second{"new"}), 0, "the second run reports none again")
+TESTKIT.EQ(second{"open"}{"late:report"}{"since"}, now, "and keeps the time each one began")
+DIM fixed = [problems[0], problems[2]]
+DIM third = HEALTH.DIFF(second{"open"}, fixed, now + 1800)
+DIM over = third{"resolved"}
+TESTKIT.EQ(LEN(over), 1, "a problem that went away is over")
+DIM over_one = over[0]
+TESTKIT.EQ(over_one{"key"}, "late:report", "the late job")
+DIM text$ = HEALTH.TEXT$(third)
+TESTKIT.ISTRUE(INSTR(text$, "Over now:") >= 0, "the alert says what is over")
+TESTKIT.ISTRUE(INSTR(text$, "Still open: 2") >= 0, "and how many are left")
+DIM msg = HEALTH.MESSAGE("lena@example.com", "lena@example.com", first)
+TESTKIT.EQ(msg{"subject"}, "AutomateWork: 3 new problems", "the subject counts them")
+DIM calm = HEALTH.MESSAGE("lena@example.com", "lena@example.com", third)
+TESTKIT.EQ(calm{"subject"}, "AutomateWork: all clear", "nothing new is all clear")
+
+TESTKIT.SUITE("numbers and sending")
+DIM prom$ = HEALTH.METRICS_TEXT$(jobs, state, problems, 30)
+TESTKIT.ISTRUE(INSTR(prom$, "automatework_job_ok{job=" + CHR$(34) + "backup" + CHR$(34) + "} 0") >= 0, "a failed job reads 0")
+TESTKIT.ISTRUE(INSTR(prom$, "automatework_problems 3") >= 0, "the number of problems")
+TESTKIT.ISTRUE(INSTR(prom$, "# TYPE automatework_job_runs gauge") >= 0, "with its type line")
+DIM server AS MAP
+server{"url"} = "smtp://127.0.0.1:1"
+server{"timeout"} = 5
+DIM rep = HEALTH.SEND(msg, server, 2, 10)
+TESTKIT.ISFALSE(rep{"ok"}, "a mail server that does not answer fails")
+TESTKIT.EQ(rep{"attempts"}, 2, "after the second try")
+
+TESTKIT.REPORT()

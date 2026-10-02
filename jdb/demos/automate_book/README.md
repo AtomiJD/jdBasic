@@ -8,8 +8,8 @@ The plan, the outline and the page budget are in [PLAN.md](PLAN.md).
 
 ## State
 
-Work packages 0 to 3 are done: chapters 1 to 4 with the fifteen easy
-and the fifteen medium recipes, 339 pages in print. The build turns the manuscript into a
+Work packages 0 to 4 are done: chapters 1 to 5 with all 45 recipes,
+543 pages in print. The build turns the manuscript into a
 Word file, an HTML preview, a print PDF (17 x 24 cm, fonts embedded) and a
 screen PDF with bookmarks and links. Recipe E01 with its chapter pages is
 the sample. The build also draws the cover (front, and the print wrap

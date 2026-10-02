@@ -1,0 +1,16 @@
+# What the setup wizard knows about this recipe.
+
+id = "X10"
+name = "Let an AI Drive"
+program = "ai_drive.jdb"
+summary = "Your automations as tools an AI agent can list, read and dry-run through the MCP server"
+minutes_per_week = 20
+schedule = "manual"
+section = "ai_drive"
+modules = ["aitools.jdb"]
+
+[[setting]]
+key = "allow"
+label = "Recipes the agent may run for real (ids, such as E11)"
+kind = "list"
+default = []

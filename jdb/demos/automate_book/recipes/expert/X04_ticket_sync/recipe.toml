@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "X04"
+name = "Ticket Sync"
+program = "ticket_sync.jdb"
+summary = "Your to-do file and the team's ticket tracker kept in step over its REST API"
+minutes_per_week = 30
+schedule = "manual"
+section = "ticket_sync"
+modules = ["ticketsync.jdb"]
+
+[[setting]]
+key = "tracker"
+label = "Address of the ticket tracker, such as https://tickets.example.com"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "user"
+label = "Your user name in the tracker"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "todo"
+label = "Your to-do file (- [ ] lines)"
+kind = "file"
+default = "~/Documents/AutomateWork/todo.txt"
+
+[[setting]]
+key = "token_env"
+label = "Environment variable that holds the token"
+kind = "text"
+default = "TICKETS_TOKEN"

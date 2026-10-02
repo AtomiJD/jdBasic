@@ -1,0 +1,267 @@
+' balance.jdb: a weekly balance score from the hours in the Time
+' Tracker's log, the meetings in a calendar and the mails you wrote.
+' The score starts at 100 and loses points for overtime, for a week
+' that is mostly meetings, for work outside your working hours and
+' for mails written then.
+'
+'   IMPORT BALANCE
+'   DIM weeks = BALANCE.WEEKS(sources, rules, now, 8)
+'   PRINT BALANCE.SCORE(weeks[7], rules){"score"}
+'   BALANCE.MOUNT(sources, rules, "templates/balance.html")
+
+EXPORT MODULE BALANCE
+
+IMPORT DT, ICAL, DF, SVG, TMPL, JDWEB
+
+DIM gSources AS MAP
+DIM gRules AS MAP
+DIM gTemplate$ = ""
+
+' The ISO week of an instant as "2026-W41".
+EXPORT FUNC WEEK$(t, offset)
+    DIM w = DT.ISOWEEK(t, offset)
+    RETURN STR$(w{"year"}) + "-W" + RIGHT$("0" + STR$(w{"week"}), 2)
+ENDFUNC
+
+' The minutes after midnight of a time of day such as "17:30".
+EXPORT FUNC MINUTES(hh_mm$)
+    DIM parts = SPLIT(hh_mm$, ":")
+    RETURN VAL(parts[0]) * 60 + VAL(parts[1])
+ENDFUNC
+
+' TRUE for an instant on a weekend or outside the working hours of
+' rules ("day_start" and "day_end" in minutes, "offset" in hours).
+EXPORT FUNC OUTSIDE(t, rules)
+    DIM p = DT.PARTS(t, rules{"offset"})
+    IF p{"weekday"} = 0 ORELSE p{"weekday"} = 6 THEN RETURN TRUE
+    DIM m = p{"hour"} * 60 + p{"minute"}
+    RETURN m < rules{"day_start"} ORELSE m >= rules{"day_end"}
+ENDFUNC
+
+SUB Add(totals, key$, name$, v)
+    DIM slot$ = key$ + "|" + name$
+    DIM had = 0.0
+    IF MAP.EXISTS(totals, slot$) THEN had = totals{slot$}
+    totals{slot$} = had + v
+ENDSUB
+
+' The numbers of one week from the totals, as a map with "week",
+' "hours", "late_hours", "meeting_hours", "mails" and "late_mails".
+EXPORT FUNC WEEK_OF(totals, key$)
+    DIM w AS MAP
+    w{"week"} = key$
+    DIM names = ["hours", "late_hours", "meeting_hours", "mails", _
+        "late_mails"]
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        DIM slot$ = key$ + "|" + name$
+        DIM v = 0.0
+        IF MAP.EXISTS(totals, slot$) THEN v = totals{slot$}
+        w{name$} = v
+    NEXT k
+    RETURN w
+ENDFUNC
+
+SUB AddWork(totals, t_from, t_to, rules)
+    DIM quarter = 900
+    DIM t = t_from
+    DO WHILE t < t_to
+        DIM key$ = WEEK$(t, rules{"offset"})
+        Add(totals, key$, "hours", 0.25)
+        IF OUTSIDE(t, rules) THEN
+            Add(totals, key$, "late_hours", 0.25)
+        ENDIF
+        t = t + quarter
+    LOOP
+ENDSUB
+
+' Adds the work of a time log (time,event,project) to totals, a map of
+' numbers per week, counted in quarter hours. A block still open runs
+' until now.
+EXPORT SUB ADD_LOG(totals, log_path$, rules, now)
+    IF NOT FILE.EXISTS(log_path$) THEN RETURN
+    DIM kinds = ["STRING", "STRING", "STRING"]
+    DIM rows = CSVREADER(log_path$, ",", TRUE, kinds)
+    DIM offset = rules{"offset"}
+    DIM open = -1.0
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        DIM when$ = r[0]
+        DIM what$ = r[1]
+        DIM t = DT.PARSE(when$, offset)
+        IF open >= 0 THEN AddWork(totals, open, t, rules)
+        open = -1.0
+        IF what$ = "start" THEN open = t
+    NEXT k
+    IF open >= 0 THEN AddWork(totals, open, now, rules)
+ENDSUB
+
+' Adds the hours of the calendar's meetings between two instants; days
+' blocked whole are left out.
+EXPORT SUB ADD_MEETINGS(totals, ics_path$, rules, t_from, t_to)
+    IF NOT FILE.EXISTS(ics_path$) THEN RETURN
+    DIM cal = ICAL.PARSEFILE(ics_path$)
+    DIM frame = ICAL.EXPAND(cal, t_from, t_to)
+    DIM k = 0
+    FOR k = 0 TO DF.NROWS(frame) - 1
+        DIM r = DF.ROW(frame, k)
+        IF NOT ICAL.ALLDAY(cal, r{"event"}) THEN
+            DIM key$ = WEEK$(r{"start"}, rules{"offset"})
+            DIM h = (r{"end"} - r{"start"}) / 3600
+            Add(totals, key$, "meeting_hours", h)
+        ENDIF
+    NEXT k
+ENDSUB
+
+' Adds the mails of the .eml files in a folder, each counted at the
+' time of its file.
+EXPORT SUB ADD_MAILS(totals, folder$, rules)
+    IF NOT FILE.ISDIR(folder$) THEN RETURN
+    DIM names = DIR$(PATH.JOIN$(folder$, "*.eml"))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file$ = names[k]
+        DIM info = FILE.STAT(PATH.JOIN$(folder$, file$))
+        DIM t = DT.PARSE(info{"mtime"}, rules{"offset"})
+        DIM key$ = WEEK$(t, rules{"offset"})
+        Add(totals, key$, "mails", 1)
+        IF OUTSIDE(t, rules) THEN Add(totals, key$, "late_mails", 1)
+    NEXT k
+ENDSUB
+
+' The score of one week and its parts: a map with "score" (0 to 100)
+' and "parts", one [reason, points lost] per rule that cost points.
+EXPORT FUNC SCORE(w, rules)
+    DIM parts = []
+    DIM over = w{"hours"} - rules{"target_hours"}
+    IF over > 0 THEN
+        PUSH(parts, ["overtime", over * rules{"weight_overtime"}])
+    ENDIF
+    IF w{"hours"} > 0 THEN
+        DIM share = w{"meeting_hours"} / w{"hours"} * 100
+        DIM above = share - rules{"meeting_share"}
+        IF above > 0 THEN
+            DIM busy = above * rules{"weight_meetings"}
+            PUSH(parts, ["meetings", busy])
+        ENDIF
+    ENDIF
+    IF w{"late_hours"} > 0 THEN
+        DIM late = w{"late_hours"} * rules{"weight_late"}
+        PUSH(parts, ["outside working hours", late])
+    ENDIF
+    IF w{"late_mails"} > 0 THEN
+        DIM mails = w{"late_mails"} * rules{"weight_mail"}
+        PUSH(parts, ["late mails", mails])
+    ENDIF
+    DIM lost = 0.0
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        lost = lost + parts[k][1]
+    NEXT k
+    DIM score = ROUND(100 - lost)
+    IF score < 0 THEN score = 0
+    RETURN {"score": score, "parts": parts}
+ENDFUNC
+
+' The last n weeks up to the week of now, oldest first, each with the
+' numbers of the sources ("log", "calendar", "outbox") and its score.
+EXPORT FUNC WEEKS(sources, rules, now, n)
+    DIM offset = rules{"offset"}
+    DIM this_week = DT.STARTOF(now, "week", offset)
+    DIM first = DT.ADD(this_week, "-" + STR$((n - 1) * 7) + " days", _
+        offset)
+    DIM totals AS MAP
+    ADD_LOG(totals, sources{"log"}, rules, now)
+    ADD_MEETINGS(totals, sources{"calendar"}, rules, first, now)
+    DIM box$ = sources{"outbox"}
+    ADD_MAILS(totals, box$, rules)
+    ADD_MAILS(totals, PATH.JOIN$(box$, "sent"), rules)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM t = DT.ADD(first, STR$(k * 7) + " days", offset)
+        DIM key$ = WEEK$(t, offset)
+        DIM w = WEEK_OF(totals, key$)
+        DIM s = SCORE(w, rules)
+        w{"score"} = s{"score"}
+        w{"parts"} = s{"parts"}
+        w{"monday"} = DT.FMT$(t, "%Y-%m-%d", offset)
+        PUSH(out, w)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The scores of the weeks as a line chart, SVG markup.
+EXPORT FUNC CHART$(weeks)
+    DIM labels = []
+    DIM values = []
+    DIM k = 0
+    FOR k = 0 TO LEN(weeks) - 1
+        DIM w = weeks[k]
+        DIM key$ = w{"week"}
+        PUSH(labels, MID$(key$, 5, 4))
+        PUSH(values, w{"score"})
+    NEXT k
+    DIM c = SVG.CHART("line", 560, 260)
+    SVG.SETOPT(c, "legend", "none")
+    SVG.SETOPT(c, "values", 1)
+    SVG.SETOPT(c, "y_min", 0)
+    SVG.SETOPT(c, "y_max", 100)
+    SVG.LABELS(c, labels)
+    SVG.SERIES(c, "score", values)
+    RETURN SVG.MARKUP$(SVG.RENDER(c))
+ENDFUNC
+
+' Minutes after midnight as a time of day such as "08:30".
+EXPORT FUNC CLOCK$(minutes)
+    DIM h$ = RIGHT$("0" + STR$(INT(minutes / 60)), 2)
+    RETURN h$ + ":" + RIGHT$("0" + STR$(minutes MOD 60), 2)
+ENDFUNC
+
+FUNC One$(v)
+    RETURN STR$(ROUND(v * 10) / 10)
+ENDFUNC
+
+' The page: this week's score and its parts, the trend and the rules.
+EXPORT FUNC PAGE$(weeks, rules, template$)
+    DIM now_w = weeks[LEN(weeks) - 1]
+    DIM lost = []
+    DIM k = 0
+    FOR k = 0 TO LEN(now_w{"parts"}) - 1
+        DIM p = now_w{"parts"}[k]
+        DIM why$ = p[0]
+        PUSH(lost, {"why": why$, "points": One$(p[1])})
+    NEXT k
+    DIM model = {"week": now_w{"week"}, "score": now_w{"score"}}
+    model{"hours"} = One$(now_w{"hours"})
+    model{"meeting_hours"} = One$(now_w{"meeting_hours"})
+    model{"late_hours"} = One$(now_w{"late_hours"})
+    model{"late_mails"} = now_w{"late_mails"}
+    model{"lost"} = lost
+    model{"chart"} = CHART$(weeks)
+    model{"rules"} = rules
+    model{"day_start"} = CLOCK$(rules{"day_start"})
+    model{"day_end"} = CLOCK$(rules{"day_end"})
+    RETURN TMPL.RENDER$(template$, model)
+ENDFUNC
+
+FUNC ShowPage(request)
+    DIM weeks = WEEKS(gSources, gRules, DT.NOW(), gRules{"weeks"})
+    RETURN PAGE$(weeks, gRules, gTemplate$)
+ENDFUNC
+
+FUNC ShowData(request)
+    DIM n = gRules{"weeks"}
+    RETURN {"weeks": WEEKS(gSources, gRules, DT.NOW(), n)}
+ENDFUNC
+
+' Registers the page at / and the numbers at /data.json.
+EXPORT SUB MOUNT(sources, rules, template$)
+    gSources = sources
+    gRules = rules
+    gTemplate$ = template$
+    JDWEB.GET("/", ShowPage@)
+    JDWEB.GET("/data.json", ShowData@)
+ENDSUB

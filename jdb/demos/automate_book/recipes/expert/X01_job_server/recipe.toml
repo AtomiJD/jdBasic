@@ -1,0 +1,23 @@
+# What the setup wizard knows about this recipe.
+
+id = "X01"
+name = "Personal Job Server"
+program = "job_server.jdb"
+summary = "One program that runs all your automations on time, with retries, a lock and a log"
+minutes_per_week = 30
+schedule = "at logon"
+section = "job_server"
+modules = ["jobserver.jdb"]
+files = ["jobs.toml"]
+
+[[setting]]
+key = "jobs"
+label = "The jobs file"
+kind = "file"
+default = "~/Documents/AutomateWork/config/jobs.toml"
+
+[[setting]]
+key = "folder"
+label = "Folder for the state, the log and the lock"
+kind = "folder"
+default = "~/Documents/AutomateWork/logs"

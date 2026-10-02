@@ -1,0 +1,137 @@
+' Tested Automations: the runner finds the tests of a recipe tree,
+' runs each in a process of its own with every recipe folder on the
+' search path, tells a failed test from a flaky one, and writes the
+' report. Then it runs the real properties of Monday's reports.
+
+IMPORT TESTKIT, TESTRUN
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM root$ = REPLACE$(MKTEMP$("testrun"), "\", "/")
+
+' The full path of rel$ in the working folder or in the nearest folder
+' above it that has it, "" when none has.
+FUNC FindUp$(rel$)
+    DIM here$ = REPLACE$(CD(), "\", "/")
+    DIM k = 0
+    FOR k = 0 TO 7
+        DIM probe$ = here$ + "/" + rel$
+        IF FILE.EXISTS(probe$) THEN RETURN probe$
+        here$ = REPLACE$(PATH.DIRNAME$(here$), "\", "/")
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' Writes a test file of the fixture tree; ~ stands for a double quote.
+SUB Put(rel$, lines)
+    DIM path$ = root$ + "/" + rel$
+    MKDIR PATH.DIRNAME$(path$)
+    TXTWRITER path$, REPLACE$(JOIN(lines, LF$), "~", Q$) + LF$
+ENDSUB
+
+DIM ok_lines = ["IMPORT TESTKIT", "TESTKIT.EQ(1 + 1, 2, ~adds~)", _
+    "TESTKIT.EQ(2 * 2, 4, ~times~)", "TESTKIT.REPORT()"]
+Put("easy/A01_good/good_test.jdb", ok_lines)
+DIM bad_lines = ["IMPORT TESTKIT", "TESTKIT.EQ(1 + 1, 3, ~wrong~)", _
+    "TESTKIT.REPORT()"]
+Put("easy/A02_bad/bad_test.jdb", bad_lines)
+DIM helper_lines = ["EXPORT MODULE HELPER", "EXPORT FUNC TWICE(x)", _
+    "    RETURN x * 2", "ENDFUNC"]
+Put("medium/B01_lib/helper.jdb", helper_lines)
+DIM props_lines = ["IMPORT TESTKIT, HELPER", _
+    "TESTKIT.EQ(HELPER.TWICE(4), 8, ~from another folder~)", _
+    "TESTKIT.REPORT()"]
+Put("medium/B02_user/user_props.jdb", props_lines)
+DIM marker$ = root$ + "/marker.txt"
+DIM flaky_lines = ["IMPORT TESTKIT", "DIM m$ = ~" + marker$ + "~", _
+    "DIM again = FILE.EXISTS(m$)", "TXTWRITER m$, ~x~", _
+    "TESTKIT.ISTRUE(again, ~only the second time~)", _
+    "TESTKIT.REPORT()"]
+Put("medium/B03_flaky/flaky_test.jdb", flaky_lines)
+Put(".hidden/C01/skip_test.jdb", ok_lines)
+
+TESTKIT.SUITE("finding the tests")
+DIM dirs = TESTRUN.FOLDERS(root$)
+TESTKIT.EQ(dirs[0], root$, "the root first")
+TESTKIT.ISTRUE(root$ + "/medium/B01_lib" IN dirs, "folders below it")
+TESTKIT.ISFALSE(root$ + "/.hidden" IN dirs, "hidden folders left out")
+DIM tests = TESTRUN.FIND(root$)
+TESTKIT.EQ(LEN(tests), 4, "_test.jdb and _props.jdb files")
+TESTKIT.ISTRUE(ENDSWITH(tests[0], "A01_good/good_test.jdb"), _
+    "sorted by path")
+DIM search$ = TESTRUN.SEARCH_PATH$(root$, ["C:/given"])
+TESTKIT.ISTRUE(STARTSWITH(search$, "C:/given;"), _
+    "the given folders first")
+TESTKIT.ISTRUE(INSTR(search$, "B01_lib") >= 0, _
+    "then the module folders")
+
+TESTKIT.SUITE("reading the output")
+DIM esc$ = CHR$(27)
+DIM summary$ = "12 passed, 1 failed, 0 skipped"
+DIM coloured$ = esc$ + "[1;32m" + summary$ + esc$ + "[0m"
+TESTKIT.EQ(TESTRUN.PLAIN$(coloured$), summary$, _
+    "colour codes removed")
+DIM c = TESTRUN.COUNTS("x" + LF$ + coloured$ + " in 5 ms" + LF$)
+TESTKIT.EQ(c{"passed"}, 12, "the passed checks")
+TESTKIT.EQ(c{"failed"}, 1, "the failed ones")
+DIM none = TESTRUN.COUNTS("Parse error at line 3")
+TESTKIT.EQ(none{"passed"}, -1, "no summary line")
+
+TESTKIT.SUITE("running them")
+DIM jdbasic$ = GETENV$("JDBASIC_EXE")
+IF jdbasic$ = "" THEN jdbasic$ = FindUp$("build/jdBasic.exe")
+DIM given$ = GETENV$("JDBASIC_PATH")
+DIM first = []
+IF given$ <> "" THEN first = SPLIT(given$, ";")
+IF jdbasic$ = "" THEN
+    TESTKIT.SKIP("no jdBasic.exe to run the tests with")
+ELSE
+    DIM path$ = TESTRUN.SEARCH_PATH$(root$, first)
+    DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, path$)
+    SETENV "JDBASIC_PATH", given$
+    DIM r0 = results[0]
+    DIM r1 = results[1]
+    DIM r2 = results[2]
+    DIM r3 = results[3]
+    TESTKIT.EQ(r0{"status"}, "ok", "a passing test")
+    TESTKIT.EQ(r0{"passed"}, 2, "with its checks counted")
+    TESTKIT.EQ(r1{"status"}, "failed", "a failing test")
+    TESTKIT.ISTRUE(INSTR(r1{"last"}, "1 of 1") >= 0, _
+        "with the line it ended on")
+    TESTKIT.EQ(r2{"status"}, "ok", "a module from another folder")
+    TESTKIT.EQ(r3{"status"}, "flaky", "passing only once is flaky")
+    TESTKIT.EQ(TESTRUN.TALLY_OF(results, "failed"), 1, "one failed")
+    DIM report$ = TESTRUN.REPORT$(results, "2026-10-04 20:00")
+    DIM lines = SPLIT(report$, LF$)
+    DIM head$ = lines[0]
+    TESTKIT.ISTRUE(INSTR(head$, "4 tests, 1 failed, 1 flaky") >= 0, _
+        "the summary line")
+    DIM third$ = lines[2]
+    TESTKIT.ISTRUE(STARTSWITH(third$, "FAILED"), "the failed first")
+
+    TESTKIT.SUITE("the properties of Monday's reports")
+    DIM props$ = FindUp$("recipes/expert/X12_tested_automations/" + _
+        "props/monday_props.jdb")
+    IF props$ = "" THEN
+        TESTKIT.SKIP("no book recipes folder above this one")
+    ELSE
+        DIM x12$ = PATH.DIRNAME$(PATH.DIRNAME$(props$))
+        DIM up$ = PATH.DIRNAME$(PATH.DIRNAME$(x12$))
+        DIM recipes$ = REPLACE$(up$, "\", "/")
+        DIM own = []
+        DIM f = 0
+        FOR f = 0 TO LEN(first) - 1
+            DIM part$ = first[f]
+            PUSH(own, part$)
+        NEXT f
+        PUSH(own, recipes$ + "/expert/X09_report_pipeline")
+        PUSH(own, recipes$ + "/medium/M15_timesheet")
+        DIM p = TESTRUN.RUN_ONE(jdbasic$, props$, JOIN(own, ";"))
+        SETENV "JDBASIC_PATH", given$
+        TESTKIT.EQ(p{"status"}, "ok", "every property holds")
+        TESTKIT.EQ(p{"passed"}, 5, "all five of them")
+    ENDIF
+ENDIF
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(root$, "/", "\")])
+TESTKIT.REPORT()

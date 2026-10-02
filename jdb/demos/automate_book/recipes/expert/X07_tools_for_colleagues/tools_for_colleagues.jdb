@@ -1,0 +1,94 @@
+' Tools for Colleagues: turns a recipe into a program colleagues can
+' run without jdBasic, puts each version into a release folder, and
+' updates their copies from it. The settings are the
+' [tools_for_colleagues] part of work.conf.
+'
+'   jdbasic tools_for_colleagues.jdb build <recipe> --version 1.2.0
+'   jdbasic tools_for_colleagues.jdb check <tool folder>
+'   jdbasic tools_for_colleagues.jdb update <tool folder>
+'   ... --dry-run                     show what would happen
+
+IMPORT WORKCONF, SHIP
+
+' The words on the command line that are not options.
+FUNC Words(argv)
+    DIM out = []
+    DIM k = 1
+    DO WHILE k < LEN(argv)
+        DIM a$ = argv[k]
+        IF a$ = "--version" ORELSE a$ = "--config" THEN
+            k = k + 2
+        ELSE
+            IF NOT STARTSWITH(a$, "--") THEN PUSH(out, a$)
+            k = k + 1
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+SUB WriteLog(file$, text$)
+    DIM when$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")
+    TXTWRITER file$, when$ + " " + text$ + CHR$(10), TRUE
+ENDSUB
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "tools_for_colleagues."
+DIM rel_home$ = "~/Documents/AutomateWork/releases"
+DIM release$ = WORKCONF.FOLDER$(cfg, key$ + "release", rel_home$)
+DIM builds_home$ = "~/Documents/AutomateWork/builds"
+DIM builds$ = WORKCONF.FOLDER$(cfg, key$ + "builds", builds_home$)
+DIM jdbasic$ = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
+DIM dry_run = WORKCONF.FLAG("dry-run")
+DIM words = Words(OS.ARGS())
+IF LEN(words) < 2 THEN THROW "Say build, check or update and a path."
+DIM command$ = LCASE$(words[0])
+DIM target$ = WORKCONF.EXPAND$(words[1])
+
+IF command$ = "build" THEN
+    DIM version$ = WORKCONF.ARG$("version")
+    IF NOT SHIP.VALID_VERSION(version$) THEN THROW "Use --version"
+    DIM name$ = SHIP.NAME$(target$)
+    DIM src_dir$ = PATH.DIRNAME$(target$)
+    DIM test$ = PATH.JOIN$(src_dir$, name$ + "_test.jdb")
+    DIM stage$ = PATH.JOIN$(builds$, name$ + "-" + version$)
+    DIM done_dir$ = PATH.JOIN$(release$, name$ + "-" + version$)
+    IF FILE.ISDIR(done_dir$) THEN THROW version$ + " is released."
+    IF dry_run THEN
+        IF FILE.EXISTS(test$) THEN PRINT "would test with "; test$
+        PRINT "would compile "; target$; " into "; stage$
+        PRINT "would release "; name$; " "; version$; " to "; release$
+        END
+    ENDIF
+    IF FILE.EXISTS(test$) THEN
+        DIM t = OS.EXEC(jdbasic$, [test$])
+        IF t{"EXIT_CODE"} <> 0 THEN THROW "The test fails."
+        PRINT "test passed"
+    ENDIF
+    DIM b = SHIP.BUILD(jdbasic$, target$, stage$)
+    IF NOT b{"ok"} THEN THROW "Compiling failed: " + b{"output"}
+    SHIP.STAMP(stage$, name$, version$, NOW())
+    DIM rel = SHIP.PACKAGE(stage$, release$, name$, version$)
+    DIM done$ = "released " + name$ + " " + version$ + ", " + _
+        STR$(rel{"files"}) + " files"
+    PRINT done$; " in "; rel{"folder"}
+    WriteLog(PATH.JOIN$(release$, "release.log"), done$)
+ELSEIF command$ = "check" THEN
+    DIM latest = SHIP.LATEST(release$)
+    DIM have$ = SHIP.VERSION$(target$)
+    IF have$ = "" THEN have$ = "none"
+    PRINT latest{"name"}; ": installed "; have$; ", released "; _
+        latest{"version"}
+    IF SHIP.NEWER(SHIP.VERSION$(target$), latest{"version"}) THEN
+        PRINT "An update is ready."
+    ENDIF
+ELSEIF command$ = "update" THEN
+    DIM lines = SHIP.UPDATE(release$, target$, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        PRINT lines[k]
+        DIM upd_log$ = PATH.JOIN$(target$, "update.log")
+        IF NOT dry_run THEN WriteLog(upd_log$, lines[k])
+    NEXT k
+ELSE
+    THROW "Unknown command " + command$ + "; use build, check, update"
+ENDIF

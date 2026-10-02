@@ -1,0 +1,160 @@
+' TICKETSYNC against a fake tracker in this process: reading the to-do
+' file, the plan for both sides, the calls the tracker gets, a retry
+' on a busy tracker, and the file written back.
+
+IMPORT TESTKIT, TICKETSYNC, JDWEB
+
+DIM LF$ = CHR$(10)
+DIM gTitles AS MAP
+DIM gStates AS MAP
+DIM gCalls = []
+DIM gBusy = 1
+DIM gAuth$ = ""
+gTitles{"101"} = "Fix VAT rounding in the report"
+gStates{"101"} = "open"
+gTitles{"102"} = "Update cost centres"
+gStates{"102"} = "open"
+gTitles{"103"} = "Archive 2025 budgets"
+gStates{"103"} = "closed"
+gTitles{"104"} = "Check travel costs of Q3"
+gStates{"104"} = "open"
+
+FUNC ListTickets(request)
+    PUSH(gCalls, "GET " + JDWEB.PARAM$(request, "assignee"))
+    DIM hs = request{"HEADERS"}
+    DIM names = MAP.KEYS(hs)
+    DIM h = 0
+    FOR h = 0 TO LEN(names) - 1
+        DIM hn$ = names[h]
+        IF LCASE$(hn$) = "authorization" THEN gAuth$ = hs{hn$}
+    NEXT h
+    IF gBusy > 0 THEN
+        gBusy = gBusy - 1
+        RETURN JDWEB.REPLY("busy", 503, "text/plain")
+    ENDIF
+    DIM out = []
+    DIM ids = SORT(MAP.KEYS(gTitles))
+    DIM k = 0
+    FOR k = 0 TO LEN(ids) - 1
+        DIM id$ = ids[k]
+        IF gStates{id$} = "open" THEN
+            DIM t AS MAP
+            t{"id"} = VAL(id$)
+            t{"title"} = gTitles{id$}
+            PUSH(out, t)
+        ENDIF
+    NEXT k
+    RETURN JDWEB.REPLY_JSON(out)
+ENDFUNC
+
+FUNC ChangeTicket(request)
+    DIM id$ = JDWEB.PARAM$(request, "id")
+    DIM body = JSON.PARSE$(request{"BODY"})
+    gStates{id$} = body{"state"}
+    PUSH(gCalls, "PATCH " + id$ + " " + body{"state"})
+    DIM t AS MAP
+    t{"id"} = VAL(id$)
+    t{"state"} = body{"state"}
+    RETURN JDWEB.REPLY_JSON(t)
+ENDFUNC
+
+FUNC NewTicket(request)
+    DIM body = JSON.PARSE$(request{"BODY"})
+    DIM id$ = "105"
+    gTitles{id$} = body{"title"}
+    gStates{id$} = "open"
+    PUSH(gCalls, "POST " + body{"title"} + " for " + body{"assignee"})
+    DIM t AS MAP
+    t{"id"} = 105
+    t{"title"} = body{"title"}
+    RETURN JDWEB.REPLY_JSON(t, 201)
+ENDFUNC
+
+FUNC FreePort(seed$)
+    DIM hex$ = CODEC.SHA256$(seed$)
+    DIM port = 0
+    DIM i = 0
+    FOR i = 0 TO 3
+        port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+    NEXT i
+    port = 20000 + port MOD 30000
+    DIM last_port = port + 50
+    DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+        port = port + 1
+    LOOP
+    RETURN port
+ENDFUNC
+
+DIM todo$ = "# This week" + LF$
+todo$ = todo$ + "- [ ] Fix VAT rounding (#101)" + LF$
+todo$ = todo$ + "- [x] Update cost centres (#102)" + LF$
+todo$ = todo$ + "- [ ] Archive 2025 budgets (#103)" + LF$
+todo$ = todo$ + "- [ ] Ask IT for read access to SAP (#new)" + LF$
+todo$ = todo$ + "- [ ] Call Jonas about the plan" + LF$
+todo$ = todo$ + LF$ + "Notes stay as they are." + LF$
+
+TESTKIT.SUITE("the to-do file")
+DIM items = TICKETSYNC.PARSE(todo$)
+TESTKIT.EQ(LEN(items), 8, "every line is an item")
+TESTKIT.EQ(items[0]{"kind"}, "text", "a heading is text")
+TESTKIT.EQ(items[1]{"id"}, "101", "a task names its ticket")
+TESTKIT.EQ(items[1]{"title"}, "Fix VAT rounding", "and its title")
+TESTKIT.ISTRUE(items[2]{"done"}, "a ticked task is done")
+TESTKIT.EQ(items[4]{"id"}, "new", "a task asks for a new ticket")
+TESTKIT.EQ(items[5]{"id"}, "", "a task without a ticket")
+TESTKIT.EQ(TICKETSYNC.RENDER$(items), todo$, "the file comes back as read")
+
+JDWEB.GET("/api/tickets", ListTickets@)
+JDWEB.PATCH("/api/tickets/:id", ChangeTicket@)
+JDWEB.POST("/api/tickets", NewTicket@)
+DIM folder$ = MKTEMP$("ticketsync")
+DIM port = FreePort(folder$)
+DIM api = TICKETSYNC.SESSION("http://127.0.0.1:" + STR$(port), "tk-1")
+
+TESTKIT.SUITE("the tracker")
+DIM open = TICKETSYNC.OPEN_TICKETS(api, "lena")
+TESTKIT.EQ(LEN(open), 3, "the open tickets")
+TESTKIT.EQ(gCalls[0], "GET lena", "of the person")
+TESTKIT.EQ(LEN(gCalls), 2, "a busy tracker is asked again")
+TESTKIT.EQ(gAuth$, "Bearer tk-1", "with the token")
+TESTKIT.EQ(open[0]{"id"}, "101", "ids as text")
+
+TESTKIT.SUITE("the plan")
+DIM plan = TICKETSYNC.PLAN(TICKETSYNC.PARSE(todo$), open)
+DIM remote = plan{"remote"}
+TESTKIT.EQ(LEN(remote), 2, "two calls for the tracker")
+TESTKIT.EQ(remote[0]{"do"}, "close", "the ticked task closes its ticket")
+TESTKIT.EQ(remote[0]{"id"}, "102", "that one")
+TESTKIT.EQ(remote[1]{"do"}, "create", "the new task becomes a ticket")
+DIM after = plan{"items"}
+TESTKIT.EQ(after[1]{"title"}, "Fix VAT rounding in the report", _
+    "a renamed ticket renames its task")
+TESTKIT.ISTRUE(after[3]{"done"}, "a ticket closed elsewhere is ticked")
+TESTKIT.EQ(LEN(after), 9, "a new ticket is added as a task")
+TESTKIT.EQ(after[8]{"id"}, "104", "that one")
+
+TESTKIT.SUITE("carrying it out")
+DIM said = TICKETSYNC.APPLY(plan, api, "lena", TRUE)
+TESTKIT.EQ(LEN(said), 2, "a dry run says what it would do")
+TESTKIT.ISTRUE(STARTSWITH(said[0], "would close #102"), "the close")
+TESTKIT.EQ(LEN(gCalls), 2, "and calls nothing")
+said = TICKETSYNC.APPLY(plan, api, "lena", FALSE)
+TESTKIT.EQ(gStates{"102"}, "closed", "the ticket is closed")
+TESTKIT.EQ(gCalls[3], "POST Ask IT for read access to SAP for lena", _
+    "the new ticket is created")
+TESTKIT.EQ(after[4]{"id"}, "105", "and its number is in the task")
+DIM written$ = TICKETSYNC.RENDER$(plan{"items"})
+TESTKIT.ISTRUE(INSTR(written$, "- [x] Archive 2025 budgets (#103)") >= 0, _
+    "the file ticks the closed ticket")
+TESTKIT.ISTRUE(INSTR(written$, "(#105)") >= 0, "names the new ticket")
+TESTKIT.ISTRUE(INSTR(written$, "- [ ] Check travel costs of Q3 (#104)") _
+    >= 0, "lists the ticket that was missing")
+TESTKIT.ISTRUE(INSTR(written$, "Notes stay as they are.") >= 0, _
+    "and keeps the other lines")
+DIM again = TICKETSYNC.PLAN(TICKETSYNC.PARSE(written$), _
+    TICKETSYNC.OPEN_TICKETS(api, "lena"))
+TESTKIT.EQ(LEN(again{"remote"}), 0, "a second run has nothing to do")
+
+HTTP.SERVER.STOP()
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

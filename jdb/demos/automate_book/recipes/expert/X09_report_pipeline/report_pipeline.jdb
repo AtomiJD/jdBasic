@@ -1,0 +1,97 @@
+' Report Pipeline: every Monday morning last week's team costs from
+' the bookings database, per cost center against the budget, as a
+' chart, a Word file and a PDF, with the mail that carries them in the
+' outbox. The settings are the [report_pipeline] part of work.conf.
+'
+'   jdbasic report_pipeline.jdb                    last week
+'   jdbasic report_pipeline.jdb --day 2026-10-12   as on that day
+'   jdbasic report_pipeline.jdb --dry-run          show, write nothing
+'   jdbasic report_pipeline.jdb --sample           a sample database
+'   jdbasic report_pipeline.jdb --send             send the outbox
+
+IMPORT WORKCONF, PIPELINE, OUTBOX, LOGGER, SVG
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+    PRINT result{"sent"}; " sent"
+    DIM f = 0
+    FOR f = 0 TO LEN(result{"failed"}) - 1
+        PRINT "  not sent: "; result{"failed"}[f]
+    NEXT f
+    END
+ENDIF
+
+DIM key$ = "report_pipeline."
+DIM home$ = "~/Documents/AutomateWork/reports"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM db_home$ = PATH.JOIN$(folder$, "bookings.db")
+DIM db$ = WORKCONF.FOLDER$(cfg, key$ + "database", db_home$)
+DIM to$ = WORKCONF.VALUE(cfg, key$ + "to", "")
+DIM day$ = WORKCONF.ARG$("day")
+IF day$ = "" THEN day$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+
+MKDIR folder$
+DIM lg = LOGGER.NEW("report_pipeline")
+LOGGER.TO_FILE(lg, PATH.JOIN$(folder$, "report_pipeline.log"), _
+    1000000, 3)
+
+IF WORKCONF.FLAG("sample") THEN
+    IF FILE.EXISTS(db$) THEN THROW "There is a database at " + db$
+    PIPELINE.SAMPLE(db$, day$)
+    LOGGER.INFO(lg, "sample database written", {"path": db$})
+    END
+ENDIF
+
+DIM week = PIPELINE.LAST_WEEK(day$)
+LOGGER.INFO(lg, "report started", {"from": week{"from"}})
+DIM rows = []
+DIM budgets AS MAP
+TRY
+    rows = PIPELINE.BOOKINGS(db$, week)
+    budgets = PIPELINE.BUDGETS(db$)
+CATCH
+    LOGGER.ERROR(lg, "database failed", {"error": ERRMSG$})
+    THROW "Report Pipeline: " + ERRMSG$
+ENDTRY
+IF LEN(rows) = 0 THEN LOGGER.WARN(lg, "no bookings in the week")
+
+DIM report = PIPELINE.REPORT(rows, budgets)
+DIM table = PIPELINE.TABLE_ROWS(report)
+DIM over = PIPELINE.OVER_BUDGET(report)
+DIM base$ = PATH.JOIN$(folder$, "costs " + week{"from"})
+
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT week{"label"}; ": "; LEN(rows); " bookings"
+    DIM r = 0
+    FOR r = 1 TO LEN(table) - 1
+        DIM row = table[r]
+        DIM cc$ = row[0]
+        DIM spent$ = row[1]
+        DIM budget$ = row[2]
+        PRINT "  "; cc$; ": "; spent$; " of "; budget$
+    NEXT r
+    DIM o = 0
+    FOR o = 0 TO LEN(over) - 1
+        DIM over$ = over[o]
+        PRINT "  over budget: "; over$
+    NEXT o
+    PRINT "would write "; base$; ".svg, .docx and .pdf"
+    IF to$ <> "" THEN PRINT "would put a mail to "; to$
+    END
+ENDIF
+
+TXTWRITER base$ + ".svg", PIPELINE.CHART$(report, week)
+PIPELINE.WRITE_DOCX(report, week, base$ + ".docx")
+PIPELINE.WRITE_PDF(report, week, base$ + ".pdf")
+LOGGER.INFO(lg, "report written", {"base": base$, "over": LEN(over)})
+PRINT "Wrote "; base$; ".svg, .docx and .pdf"
+IF to$ = "" THEN
+    PRINT "No [report_pipeline] to in work.conf, so no mail."
+ELSE
+    DIM msg = PIPELINE.MESSAGE(OUTBOX.FROM$(cfg), to$, report, week, _
+        base$ + ".pdf", base$ + ".docx")
+    DIM eml$ = OUTBOX.PUT$(msg, cfg, "costs " + week{"from"} + ".eml")
+    LOGGER.INFO(lg, "mail in the outbox", {"path": eml$})
+    PRINT "In the outbox: "; eml$
+ENDIF

@@ -1,0 +1,95 @@
+' Inbox Assistant: a language model reads the mails you saved, writes
+' a one line summary of each and drafts a reply. You read every draft,
+' change it, approve it, and only then it goes into the outbox. The
+' settings are the [inbox_assistant] part of work.conf.
+'
+'   jdbasic inbox_assistant.jdb            draft replies to new mails
+'   jdbasic inbox_assistant.jdb --dry-run  list the mails, ask nothing
+'   jdbasic inbox_assistant.jdb --approve  approved drafts to outbox
+'   jdbasic inbox_assistant.jdb --send     send the outbox
+
+IMPORT WORKCONF, INBOXAI, MAIL, OUTBOX, LOGGER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "inbox_assistant."
+DIM home$ = "~/Documents/AutomateWork"
+DIM saved$ = home$ + "/saved mail"
+DIM inbox$ = WORKCONF.FOLDER$(cfg, key$ + "inbox", saved$)
+DIM own$ = home$ + "/drafts"
+DIM drafts$ = WORKCONF.FOLDER$(cfg, key$ + "drafts", own$)
+DIM most = WORKCONF.VALUE(cfg, key$ + "max_mails", 20)
+DIM me$ = WORKCONF.VALUE(cfg, "user.name", "")
+DIM from$ = OUTBOX.FROM$(cfg)
+DIM work$ = WORKCONF.FOLDER$(cfg, "paths.work", home$)
+DIM log_dir$ = PATH.JOIN$(work$, "logs")
+MKDIR log_dir$
+DIM lg = LOGGER.NEW("inbox_assistant")
+LOGGER.TO_FILE(lg, PATH.JOIN$(log_dir$, "inbox_assistant.log"))
+MKDIR drafts$
+
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+    PRINT "sent "; result{"sent"}; " mail(s)"
+    END
+ENDIF
+
+IF WORKCONF.FLAG("approve") THEN
+    DIM ready = INBOXAI.APPROVED(drafts$)
+    DIM done$ = PATH.JOIN$(drafts$, "done")
+    MKDIR done$
+    DIM a = 0
+    FOR a = 0 TO LEN(ready) - 1
+        DIM name$ = ready[a]
+        DIM path$ = PATH.JOIN$(drafts$, name$)
+        DIM msg = INBOXAI.TO_MESSAGE(INBOXAI.READ_DRAFT(path$), from$)
+        DIM eml$ = REPLACE$(name$, ".txt", ".eml")
+        PRINT "outbox  "; OUTBOX.PUT$(msg, cfg, eml$)
+        FILE.MOVE(path$, done$, TRUE)
+        LOGGER.INFO(lg, "approved " + name$)
+    NEXT a
+    PRINT LEN(ready); " approved draft(s) in the outbox"
+    END
+ENDIF
+
+DIM pending = INBOXAI.PENDING(inbox$, INBOXAI.SEEN(drafts$))
+IF LEN(pending) > most THEN pending = TAKE(most, pending)
+IF WORKCONF.FLAG("dry-run") THEN
+    DIM p = 0
+    FOR p = 0 TO LEN(pending) - 1
+        PRINT "would ask about "; pending[p]
+    NEXT p
+    END
+ENDIF
+
+DIM api_key$ = ""
+DIM own_server$ = WORKCONF.VALUE(cfg, key$ + "base_url", "")
+IF own_server$ = "" ANDALSO GETENV$("OPENAI_API_KEY") = "" ANDALSO _
+    GETENV$("ANTHROPIC_API_KEY") = "" THEN
+    INPUT "API key (not stored): "; api_key$
+ENDIF
+DIM ai = INBOXAI.CLIENT(cfg, api_key$)
+DIM drafted = 0
+DIM k = 0
+FOR k = 0 TO LEN(pending) - 1
+    DIM file$ = pending[k]
+    TRY
+        DIM parsed = MAIL.PARSEFILE(PATH.JOIN$(inbox$, file$))
+        DIM d = INBOXAI.DRAFT(ai, parsed, me$)
+        PRINT file$; ": "; d{"summary"}
+        IF d{"needs_reply"} THEN
+            DIM text$ = INBOXAI.DRAFT_TEXT$(parsed, d, file$)
+            DIM draft$ = REPLACE$(file$, ".eml", ".txt")
+            TXTWRITER PATH.JOIN$(drafts$, draft$), text$
+            drafted = drafted + 1
+        ENDIF
+        INBOXAI.MARK_SEEN(drafts$, file$)
+        DIM about AS MAP
+        about{"reply"} = d{"needs_reply"}
+        about{"summary"} = d{"summary"}
+        LOGGER.INFO(lg, "read " + file$, about)
+    CATCH
+        PRINT file$; ": not read, "; ERRMSG$
+        LOGGER.ERROR(lg, "failed " + file$, {"error": ERRMSG$})
+    ENDTRY
+NEXT k
+PRINT drafted; " draft(s) in "; drafts$

@@ -1,0 +1,46 @@
+# What the setup wizard knows about this recipe.
+
+id = "X02"
+name = "Inbox Assistant"
+program = "inbox_assistant.jdb"
+summary = "Summaries and draft replies by a language model, each one approved by you"
+minutes_per_week = 60
+schedule = "manual"
+section = "inbox_assistant"
+modules = ["inboxai.jdb"]
+
+[[setting]]
+key = "inbox"
+label = "Folder where you save mails (.eml)"
+kind = "folder"
+default = "~/Documents/AutomateWork/saved mail"
+
+[[setting]]
+key = "drafts"
+label = "Folder for the drafts you approve"
+kind = "folder"
+default = "~/Documents/AutomateWork/drafts"
+
+[[setting]]
+key = "provider"
+label = "Language model service (openai or anthropic)"
+kind = "text"
+default = "openai"
+
+[[setting]]
+key = "model"
+label = "Model name"
+kind = "text"
+default = "gpt-4o-mini"
+
+[[setting]]
+key = "base_url"
+label = "Own model server, such as http://localhost:11434/v1 (empty: the service)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "max_mails"
+label = "Most mails per run"
+kind = "number"
+default = 20

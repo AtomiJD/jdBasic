@@ -1,0 +1,188 @@
+' inboxai.jdb: the work of the Inbox Assistant. It finds the saved
+' mails that have no draft yet, asks a language model for a summary
+' and a reply, writes each reply as a draft file for the person to
+' read and approve, and turns approved drafts into outbox mails.
+'
+'   IMPORT INBOXAI
+'   DIM ai = INBOXAI.CLIENT(cfg, "")
+'   DIM d = INBOXAI.DRAFT(ai, MAIL.PARSEFILE("mail.eml"), "Lena")
+'   PRINT d{"summary"}
+
+EXPORT MODULE INBOXAI
+
+IMPORT LLMAPI, RETRY, MAIL, WORKCONF
+
+DIM gLF$ = CHR$(10)
+
+' The language model client from the [inbox_assistant] settings. An
+' empty key$ leaves the key to OPENAI_API_KEY or ANTHROPIC_API_KEY.
+EXPORT FUNC CLIENT(cfg, key$)
+    DIM k$ = "inbox_assistant."
+    DIM provider$ = WORKCONF.VALUE(cfg, k$ + "provider", "openai")
+    DIM model$ = WORKCONF.VALUE(cfg, k$ + "model", "gpt-4o-mini")
+    DIM base$ = WORKCONF.VALUE(cfg, k$ + "base_url", "")
+    DIM ai = LLMAPI.NEW(provider$, model$, key$, base$)
+    LLMAPI.SET(ai, "temperature", 0.2)
+    RETURN ai
+ENDFUNC
+
+' The instructions the model gets with every mail.
+EXPORT FUNC RULES$(me$)
+    DIM r$ = "You help " + me$ + " with mail. For the mail you get, "
+    r$ = r$ + "answer with a JSON object: summary is one sentence "
+    r$ = r$ + "about what the sender wants; needs_reply is true "
+    r$ = r$ + "when the sender expects an answer; reply is a short "
+    r$ = r$ + "polite answer in the language of the mail, signed "
+    r$ = r$ + me$ + ", or empty when no answer is needed. Never "
+    r$ = r$ + "promise dates, money or decisions: write [CHECK] "
+    r$ = r$ + "where " + me$ + " has to fill something in."
+    RETURN r$
+ENDFUNC
+
+' The mail as the text the model reads, cut to max_chars.
+EXPORT FUNC PROMPT$(parsed, max_chars)
+    DIM p$ = "From: " + parsed{"from"} + gLF$
+    p$ = p$ + "Subject: " + parsed{"subject"} + gLF$
+    p$ = p$ + "Date: " + parsed{"date"} + gLF$ + gLF$
+    RETURN p$ + LEFT$(TRIM$(parsed{"text"}), max_chars)
+ENDFUNC
+
+' A summary and a reply for one parsed mail, as a map with summary,
+' needs_reply and reply. A busy or unreachable server is asked again.
+EXPORT FUNC DRAFT(ai, parsed, me$)
+    LLMAPI.SYSTEM(ai, RULES$(me$))
+    DIM shape AS MAP
+    shape{"summary"} = "string!"
+    shape{"needs_reply"} = "boolean!"
+    shape{"reply"} = "string!"
+    DIM prompt$ = PROMPT$(parsed, 6000)
+    DIM answer AS MAP
+    DIM why$ = ""
+    DIM got = FALSE
+    DIM tries = 0
+    FOR tries = 1 TO 3
+        TRY
+            answer = LLMAPI.JSON(ai, prompt$, shape)
+            got = TRUE
+        CATCH
+            why$ = ERRMSG$
+            IF NOT RETRY.TRANSIENT(why$) THEN THROW why$
+        ENDTRY
+        IF got THEN EXITFOR
+        IF tries < 3 THEN SLEEP 500 * tries
+    NEXT tries
+    IF NOT got THEN THROW why$
+    RETURN answer
+ENDFUNC
+
+' The saved mails of inbox$ not yet in the seen list, sorted by name.
+EXPORT FUNC PENDING(inbox$, seen)
+    DIM names = SORT(DIR$(PATH.JOIN$(inbox$, "*.eml")))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        IF NOT Listed(name$, seen) THEN PUSH(out, name$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Listed(name$, names)
+    DIM j = 0
+    FOR j = 0 TO LEN(names) - 1
+        DIM each$ = names[j]
+        IF each$ = name$ THEN RETURN TRUE
+    NEXT j
+    RETURN FALSE
+ENDFUNC
+
+' The names in the seen file of the drafts folder, one per line.
+EXPORT FUNC SEEN(drafts$)
+    DIM path$ = PATH.JOIN$(drafts$, "seen.txt")
+    IF NOT FILE.EXISTS(path$) THEN RETURN []
+    DIM out = []
+    DIM rows = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), gLF$)
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = TRIM$(rows[k])
+        IF row$ <> "" THEN PUSH(out, row$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Adds a mail's file name to the seen file.
+EXPORT SUB MARK_SEEN(drafts$, name$)
+    DIM path$ = PATH.JOIN$(drafts$, "seen.txt")
+    DIM old$ = ""
+    IF FILE.EXISTS(path$) THEN old$ = TXTREADER$(path$)
+    TXTWRITER path$, old$ + name$ + gLF$
+ENDSUB
+
+' The text of a draft file: header lines, a line ---, the reply.
+EXPORT FUNC DRAFT_TEXT$(parsed, d, source$)
+    DIM subject$ = parsed{"subject"}
+    IF NOT STARTSWITH(LCASE$(subject$), "re:") THEN
+        subject$ = "Re: " + subject$
+    ENDIF
+    DIM t$ = "Approve: no" + gLF$
+    t$ = t$ + "To: " + parsed{"from"} + gLF$
+    t$ = t$ + "Subject: " + subject$ + gLF$
+    t$ = t$ + "In-Reply-To: " + parsed{"message_id"} + gLF$
+    t$ = t$ + "Summary: " + d{"summary"} + gLF$
+    t$ = t$ + "Source: " + source$ + gLF$
+    RETURN t$ + "---" + gLF$ + TRIM$(d{"reply"}) + gLF$
+ENDFUNC
+
+' A draft file read back as a map: approve, to, subject, in_reply_to,
+' summary, source and body.
+EXPORT FUNC READ_DRAFT(path$)
+    DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM cut = INSTR(text$, gLF$ + "---" + gLF$)
+    IF cut < 0 THEN THROW "No line --- in " + path$
+    DIM d AS MAP
+    d{"body"} = TRIM$(MID$(text$, cut + 5))
+    DIM rows = SPLIT(LEFT$(text$, cut), gLF$)
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = rows[k]
+        DIM colon = INSTR(row$, ":")
+        IF colon > 0 THEN
+            DIM key$ = LCASE$(TRIM$(LEFT$(row$, colon)))
+            key$ = REPLACE$(key$, "-", "_")
+            d{key$} = TRIM$(MID$(row$, colon + 1))
+        ENDIF
+    NEXT k
+    DIM yes$ = ""
+    IF MAP.EXISTS(d, "approve") THEN yes$ = LCASE$(d{"approve"})
+    d{"approve"} = (yes$ = "yes")
+    RETURN d
+ENDFUNC
+
+' The drafts the person approved and filled in, as file names. A
+' draft that still holds [CHECK] waits for the person.
+EXPORT FUNC APPROVED(drafts$)
+    DIM names = SORT(DIR$(PATH.JOIN$(drafts$, "*.txt")))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        IF name$ <> "seen.txt" THEN
+            DIM d = READ_DRAFT(PATH.JOIN$(drafts$, name$))
+            DIM open_spot = INSTR(d{"body"}, "[CHECK]") >= 0
+            DIM ready = d{"approve"} ANDALSO NOT open_spot
+            IF ready THEN PUSH(out, name$)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' An approved draft as a mail, answering the mail it came from.
+EXPORT FUNC TO_MESSAGE(d, from$)
+    DIM msg = MAIL.MESSAGE(from$, d{"to"}, d{"subject"})
+    IF d{"in_reply_to"} <> "" THEN
+        MAIL.HEADER(msg, "In-Reply-To", d{"in_reply_to"})
+        MAIL.HEADER(msg, "References", d{"in_reply_to"})
+    ENDIF
+    MAIL.PLAIN(msg, d{"body"})
+    RETURN msg
+ENDFUNC

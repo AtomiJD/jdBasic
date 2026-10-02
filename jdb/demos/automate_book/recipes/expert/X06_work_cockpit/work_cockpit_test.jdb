@@ -1,0 +1,98 @@
+' COCKPIT: the installed automations are found, a start is retried
+' when it fails, every start is logged and the last one of each is
+' shown in words. A small batch file stands in for jdbasic. At the end
+' the window runs its own self test.
+
+IMPORT TESTKIT, COCKPIT
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM work$ = MKTEMP$("cockpittest")
+DIM a$ = PATH.JOIN$(work$, "recipes", "E01_downloads_butler")
+DIM b$ = PATH.JOIN$(work$, "recipes", "X06_work_cockpit")
+DIM c$ = PATH.JOIN$(work$, "recipes", "M10_hot_folder")
+MKDIR a$
+MKDIR b$
+MKDIR c$
+DIM t$ = "id = " + Q$ + "E01" + Q$ + LF$ + "name = " + Q$ + "Downloads Butler"
+TXTWRITER PATH.JOIN$(a$, "recipe.toml"), t$ + Q$ + LF$ + "program = " + Q$ + "butler.jdb" + Q$ + LF$
+t$ = "id = " + Q$ + "X06" + Q$ + LF$ + "name = " + Q$ + "Work Cockpit"
+TXTWRITER PATH.JOIN$(b$, "recipe.toml"), t$ + Q$ + LF$ + "program = " + Q$ + "work_cockpit.jdb" + Q$ + LF$
+t$ = "id = " + Q$ + "M10" + Q$ + LF$ + "name = " + Q$ + "Hot Folder"
+TXTWRITER PATH.JOIN$(c$, "recipe.toml"), t$ + Q$ + LF$ + "program = " + Q$ + "hot_folder.jdb" + Q$ + LF$
+
+' The stand-in: a dry run succeeds, a real run fails with exit code 3.
+DIM fake$ = PATH.JOIN$(work$, "fake_jdbasic.cmd")
+DIM calls$ = PATH.JOIN$(work$, "calls.txt")
+DIM cmd$ = "@echo off" + CHR$(13) + LF$
+cmd$ = cmd$ + "echo x>>" + Q$ + calls$ + Q$ + CHR$(13) + LF$
+cmd$ = cmd$ + "echo started %~nx1" + CHR$(13) + LF$
+cmd$ = cmd$ + "if " + Q$ + "%~4" + Q$ + "==" + Q$ + "--dry-run" + Q$ + " exit /b 0" + CHR$(13) + LF$
+cmd$ = cmd$ + "echo the share S: is not reachable" + CHR$(13) + LF$
+cmd$ = cmd$ + "exit /b 3" + CHR$(13) + LF$
+TXTWRITER fake$, cmd$
+DIM conf$ = PATH.JOIN$(work$, "config", "work.conf")
+DIM log$ = PATH.JOIN$(work$, "logs", "cockpit.log")
+
+FUNC Calls()
+    IF NOT FILE.EXISTS(calls$) THEN RETURN 0
+    DIM txt$ = TRIM$(REPLACE$(TXTREADER$(calls$), CHR$(13), ""))
+    RETURN LEN(SPLIT(txt$, LF$))
+ENDFUNC
+
+TESTKIT.SUITE("installed automations")
+DIM list = COCKPIT.INSTALLED(work$, "X06")
+TESTKIT.EQ(LEN(list), 2, "two automations, the cockpit left out")
+TESTKIT.EQ(list[0]{"id"}, "E01", "sorted by id")
+TESTKIT.EQ(list[1]{"name"}, "Hot Folder", "with their names")
+TESTKIT.ISTRUE(ENDSWITH(list[0]{"program"}, "butler.jdb"), "and programs")
+DIM args = COCKPIT.RUN_ARGS(list[0], conf$, TRUE)
+TESTKIT.EQ(LEN(args), 4, "program, --config, the file and --dry-run")
+TESTKIT.EQ(args[3], "--dry-run", "a dry run says so")
+TESTKIT.EQ(LEN(COCKPIT.INSTALLED(PATH.JOIN$(work$, "none"), "X06")), 0, _
+    "a missing folder has none")
+
+TESTKIT.SUITE("starting")
+DIM dry = COCKPIT.RUN(fake$, list[0], conf$, TRUE, 3)
+TESTKIT.ISTRUE(dry{"ok"}, "the dry run succeeds")
+TESTKIT.EQ(dry{"tries"}, 1, "the first time")
+TESTKIT.EQ(COCKPIT.LAST_LINE$(dry{"output"}), "started butler.jdb", _
+    "its output is kept")
+DIM bad = COCKPIT.RUN(fake$, list[0], conf$, FALSE, 3)
+TESTKIT.ISFALSE(bad{"ok"}, "the real run fails")
+TESTKIT.EQ(bad{"exit"}, 3, "with its exit code")
+TESTKIT.EQ(bad{"tries"}, 3, "after three starts")
+TESTKIT.EQ(Calls(), 4, "the stand-in was started four times")
+TESTKIT.EQ(COCKPIT.CLEAN$(CHR$(27) + "[91mError #99:" + CHR$(27) + "[0m gone"), _
+    "gone", "colour codes are removed")
+
+TESTKIT.SUITE("the log")
+DIM when = CDATE("2026-10-05 08:30:00")
+COCKPIT.APPEND_LOG(log$, COCKPIT.LOG_LINE$(when, list[0], TRUE, dry))
+DIM later = CDATE("2026-10-05 09:15:00")
+COCKPIT.APPEND_LOG(log$, COCKPIT.LOG_LINE$(later, list[0], FALSE, bad))
+DIM rows = COCKPIT.READ_LOG(log$)
+TESTKIT.EQ(LEN(rows), 2, "both starts are logged")
+DIM last = COCKPIT.LAST(rows, "E01")
+TESTKIT.EQ(last{"time"}, "2026-10-05 09:15", "the last one counts")
+TESTKIT.EQ(COCKPIT.STATUS$(last), _
+    "failed (exit 3), 10-05 09:15: the share S: is not reachable", _
+    "and is shown in words")
+TESTKIT.EQ(COCKPIT.STATUS$(COCKPIT.LAST(rows, "M10")), "not run yet", _
+    "an automation that never ran")
+TESTKIT.EQ(COCKPIT.STATUS$(rows[0]), "dry run ok, 10-05 08:30", "a dry run")
+
+DIM jdbasic$ = PATH.NORMALIZE$("../../../build/jdBasic.exe")
+DIM here$ = "recipes/expert/X06_work_cockpit/work_cockpit.jdb"
+IF FILE.EXISTS(jdbasic$) ANDALSO FILE.EXISTS(here$) THEN
+    TESTKIT.SUITE("the window")
+    DIM w = OS.EXEC(jdbasic$, [here$, "--selftest", "--jdbasic", jdbasic$])
+    TESTKIT.EQ(w{"EXIT_CODE"}, 0, "the window test passes")
+    TESTKIT.ISTRUE(INSTR(w{"OUTPUT"}, "ALL COCKPIT WINDOW TESTS PASSED") >= 0, _
+        "every check of it")
+ELSE
+    TESTKIT.SKIP("the window test needs the book folder and jdbasic")
+ENDIF
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", work$])
+TESTKIT.REPORT()

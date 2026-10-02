@@ -1,0 +1,46 @@
+# What the setup wizard knows about this recipe.
+
+id = "X05"
+name = "Calendar Bridge"
+program = "calendar_bridge.jdb"
+summary = "Work meetings as busy blocks in your personal calendar, without their subjects"
+minutes_per_week = 25
+schedule = "every 2 hours"
+section = "calendar_bridge"
+modules = ["calbridge.jdb"]
+
+[[setting]]
+key = "client_id"
+label = "Application id of the calendar app (from your IT)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "tenant"
+label = "Microsoft 365 tenant (organizations, or its id)"
+kind = "text"
+default = "organizations"
+
+[[setting]]
+key = "days"
+label = "Days ahead to copy"
+kind = "number"
+default = 14
+
+[[setting]]
+key = "label"
+label = "What a busy block is called"
+kind = "text"
+default = "Busy (work)"
+
+[[setting]]
+key = "show_titles"
+label = "Show meeting subjects (never for private ones)"
+kind = "bool"
+default = false
+
+[[setting]]
+key = "output"
+label = "Calendar file your personal calendar subscribes to"
+kind = "file"
+default = "~/Documents/AutomateWork/calendar/work-busy.ics"

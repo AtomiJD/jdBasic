@@ -1,0 +1,96 @@
+' Health Checks and Alerts: looks at the job server and the outbox,
+' tells you about each new problem once, and again when it is over.
+' The alert goes into the outbox, or straight out when the mail
+' password is in the Credential Manager (X14) and send_alerts is on.
+' The settings are the [health_checks] part of work.conf.
+'
+'   jdbasic health_check.jdb            check, alert, keep the numbers
+'   jdbasic health_check.jdb --dry-run  check and show only
+
+IMPORT WORKCONF, JOBSTATE, HEALTH, OUTBOX, VAULT, DT
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "health_checks."
+DIM self$ = WORKCONF.VALUE(cfg, "user.email", "")
+DIM alert_to$ = WORKCONF.VALUE(cfg, key$ + "alert_to", self$)
+IF alert_to$ = "" THEN alert_to$ = self$
+DIM send_alerts = WORKCONF.VALUE(cfg, key$ + "send_alerts", FALSE)
+DIM notify$ = WORKCONF.VALUE(cfg, key$ + "notify", "window")
+DIM dry_run = WORKCONF.FLAG("dry-run")
+DIM folder$ = JOBSTATE.FOLDER$(cfg)
+DIM alerts_path$ = PATH.JOIN$(folder$, "alerts.json")
+DIM now = DT.NOW()
+DIM offset = DT.LOCAL_OFFSET()
+
+DIM jobs = []
+DIM jobs_path$ = JOBSTATE.JOBS_PATH$(cfg)
+IF FILE.EXISTS(jobs_path$) THEN jobs = JOBSTATE.JOBS(jobs_path$)
+DIM state = JOBSTATE.READ(JOBSTATE.STATE_PATH$(cfg))
+DIM beat = JOBSTATE.HEARTBEAT_AGE(JOBSTATE.LOCK_PATH$(cfg), now)
+
+DIM box = []
+DIM pending = OUTBOX.PENDING(cfg)
+DIM k = 0
+FOR k = 0 TO LEN(pending) - 1
+    DIM file$ = pending[k]
+    DIM info = FILE.STAT(file$)
+    DIM mins = DATEDIFF("n", CDATE(info{"mtime"}), NOW())
+    PUSH(box, {"name": PATH.BASENAME$(file$), "hours": mins / 60})
+NEXT k
+
+DIM facts AS MAP
+facts{"heartbeat"} = beat
+DIM server_min = WORKCONF.VALUE(cfg, key$ + "server_minutes", 10)
+facts{"server_minutes"} = server_min
+facts{"late_minutes"} = WORKCONF.VALUE(cfg, key$ + "late_minutes", 30)
+facts{"outbox"} = box
+facts{"outbox_hours"} = WORKCONF.VALUE(cfg, key$ + "outbox_hours", 24)
+DIM problems = HEALTH.CHECK(jobs, state, now, offset, facts)
+
+DIM alerts = JOBSTATE.READ(alerts_path$)
+DIM change = HEALTH.DIFF(alerts, problems, now)
+DIM fresh = change{"new"}
+DIM gone = change{"resolved"}
+
+DIM count$ = STR$(LEN(problems)) + " problems"
+IF LEN(problems) = 1 THEN count$ = "1 problem"
+PRINT LEN(jobs); " jobs, "; count$
+FOR k = 0 TO LEN(problems) - 1
+    DIM p = problems[k]
+    PRINT "  "; p{"text"}
+NEXT k
+IF dry_run THEN
+    IF LEN(fresh) + LEN(gone) > 0 THEN PRINT "would alert "; alert_to$
+    END
+ENDIF
+
+MKDIR folder$
+DIM prom$ = HEALTH.METRICS_TEXT$(jobs, state, problems, beat)
+TXTWRITER PATH.JOIN$(folder$, "metrics.prom"), prom$
+TXTWRITER alerts_path$, JSON.STRINGIFY$(change{"open"})
+IF LEN(fresh) + LEN(gone) = 0 THEN END
+
+DIM msg = HEALTH.MESSAGE(OUTBOX.FROM$(cfg), alert_to$, change)
+DIM sent = FALSE
+IF send_alerts THEN
+    DIM env$ = "AUTOMATEWORK_MAIL"
+    DIM password$ = VAULT.FIND$("AutomateWork/mail", env$, "")
+    IF password$ = "" THEN
+        PRINT "No mail password in the Credential Manager."
+    ELSE
+        DIM server = OUTBOX.SERVER(cfg, password$)
+        DIM rep = HEALTH.SEND(msg, server, 3, 5000)
+        sent = rep{"ok"}
+        IF sent THEN PRINT "Alert sent to "; alert_to$
+        IF NOT sent THEN PRINT "Not sent: "; rep{"error"}
+    ENDIF
+ENDIF
+IF NOT sent THEN
+    DIM stamp$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H%M%S")
+    DIM eml$ = "alert " + stamp$ + ".eml"
+    DIM put$ = OUTBOX.PUT$(msg, cfg, eml$)
+    PRINT "In the outbox: "; eml$
+ENDIF
+IF notify$ = "window" ANDALSO LEN(fresh) > 0 THEN
+    DIM button = MSGBOX(HEALTH.TEXT$(change), 48, "Health check")
+ENDIF

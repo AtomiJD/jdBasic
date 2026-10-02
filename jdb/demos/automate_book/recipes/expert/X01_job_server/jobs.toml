@@ -1,0 +1,38 @@
+# The jobs of the Personal Job Server (X01), one [[job]] per job.
+# Copy this file to the config folder of your work folder and edit it;
+# the server reads it again when you save it.
+#
+#   name          a short name of your own
+#   when          daily 18:30, weekdays 08:00, weekly fri 16:00,
+#                 every 15 minutes, @hourly or a cron line
+#   program       a recipe, relative to the recipes folder
+#   command       or any other program, with its full path
+#   args          what goes after the program
+#   attempts      how often to try before it counts as failed (1)
+#   retry_seconds the wait before the second try; it doubles (60)
+#   catch_up      run once if the computer was off at run time (true)
+#   enabled       false switches a job off without deleting it
+
+[[job]]
+name = "downloads"
+when = "daily 18:30"
+program = "E01_downloads_butler/downloads_butler.jdb"
+
+[[job]]
+name = "backup"
+when = "weekly fri 16:30"
+program = "E04_one_click_backup/one_click_backup.jdb"
+attempts = 3
+retry_seconds = 300
+
+[[job]]
+name = "status mail"
+when = "weekly fri 15:00"
+program = "M06_friday_status/friday_status.jdb"
+catch_up = false
+
+[[job]]
+name = "hot folder"
+when = "every 5 minutes"
+program = "M10_hot_folder/hot_folder.jdb"
+enabled = false

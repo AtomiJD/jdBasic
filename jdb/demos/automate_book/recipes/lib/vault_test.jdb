@@ -1,0 +1,36 @@
+' VAULT: a secret and its user name go into the Windows Credential
+' Manager and come back unchanged, text outside ASCII included; an
+' entry is replaced and removed; FIND$ falls back to the environment.
+' The test uses a name of its own and removes it again.
+
+IMPORT TESTKIT, VAULT, SECRET
+
+DIM target$ = "AutomateWorkTest/" + SECRET.TOKEN$(8, "hex")
+
+TESTKIT.SUITE("store and read")
+TESTKIT.ISFALSE(VAULT.HAS(target$), "a new name is not there")
+VAULT.PUT(target$, "Jürgen", "pa ss€wörd")
+TESTKIT.ISTRUE(VAULT.HAS(target$), "after PUT it is")
+TESTKIT.EQ(VAULT.GET$(target$), "pa ss€wörd", "the secret comes back byte for byte")
+TESTKIT.EQ(VAULT.USER$(target$), "Jürgen", "and the user name")
+VAULT.PUT(target$, "", "second")
+TESTKIT.EQ(VAULT.GET$(target$), "second", "PUT replaces an entry")
+TESTKIT.EQ(VAULT.USER$(target$), "", "an empty user name stays empty")
+
+TESTKIT.SUITE("the Windows tools")
+DIM tool$ = target$ + "-cmdkey"
+DIM made = OS.EXEC("cmdkey", ["/generic:" + tool$, "/user:tester", "/pass:abc"])
+TESTKIT.EQ(made{"EXIT_CODE"}, 0, "cmdkey stores a credential")
+TESTKIT.EQ(VAULT.GET$(tool$), "abc", "VAULT reads what Windows itself stored")
+TESTKIT.EQ(VAULT.USER$(tool$), "tester", "with the user name")
+TESTKIT.ISTRUE(VAULT.DELETE(tool$), "and removes it")
+
+TESTKIT.SUITE("remove and fall back")
+TESTKIT.ISTRUE(VAULT.DELETE(target$), "DELETE removes it")
+TESTKIT.ISFALSE(VAULT.DELETE(target$), "a second DELETE finds nothing")
+TESTKIT.EQ(VAULT.GET$(target$), "", "a missing secret reads as nothing")
+SETENV "AUTOMATEWORK_VAULT_TEST", "env value"
+TESTKIT.EQ(VAULT.FIND$(target$, "AUTOMATEWORK_VAULT_TEST", ""), "env value", "FIND$ takes the environment next")
+TESTKIT.EQ(VAULT.FIND$(target$, "", ""), "", "and answers nothing without a prompt")
+
+TESTKIT.REPORT()

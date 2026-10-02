@@ -1,0 +1,46 @@
+# What the setup wizard knows about this recipe.
+
+id = "X13"
+name = "Health Checks and Alerts"
+program = "health_check.jdb"
+summary = "Watches the job server and the outbox and tells you once about each problem"
+minutes_per_week = 20
+schedule = "every 15 minutes"
+section = "health_checks"
+modules = ["health.jdb"]
+
+[[setting]]
+key = "alert_to"
+label = "Who gets the alerts (empty: your own address)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "late_minutes"
+label = "Minutes a job may be late before it counts"
+kind = "number"
+default = 30
+
+[[setting]]
+key = "server_minutes"
+label = "Minutes the job server may stay silent"
+kind = "number"
+default = 10
+
+[[setting]]
+key = "outbox_hours"
+label = "Hours a mail may wait in the outbox"
+kind = "number"
+default = 24
+
+[[setting]]
+key = "send_alerts"
+label = "Send alerts at once (needs the mail password from X14)"
+kind = "bool"
+default = false
+
+[[setting]]
+key = "notify"
+label = "Show new problems in a window (window or none)"
+kind = "text"
+default = "window"

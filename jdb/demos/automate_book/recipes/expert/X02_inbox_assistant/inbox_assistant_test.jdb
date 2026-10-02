@@ -1,0 +1,170 @@
+' INBOXAI against a fake chat server in this process: the prompt that
+' goes out, the drafts that come back, the approval in the draft file,
+' retries on a busy server and the mails that reach the outbox.
+
+IMPORT TESTKIT, INBOXAI, JDWEB, MAIL, OUTBOX, CONF
+
+DIM LF$ = CHR$(10)
+DIM gCalls = 0
+DIM gBusy = 0
+DIM gLastBody$ = ""
+
+FUNC Answer(summary$, needs, reply$)
+    DIM content AS MAP
+    content{"summary"} = summary$
+    content{"needs_reply"} = needs
+    content{"reply"} = reply$
+    DIM msg AS MAP
+    msg{"role"} = "assistant"
+    msg{"content"} = JSON.STRINGIFY$(content)
+    DIM choice AS MAP
+    choice{"index"} = 0
+    choice{"message"} = msg
+    choice{"finish_reason"} = "stop"
+    DIM out AS MAP
+    out{"choices"} = [choice]
+    RETURN out
+ENDFUNC
+
+FUNC FakeChat(request)
+    gCalls = gCalls + 1
+    gLastBody$ = request{"BODY"}
+    IF INSTR(gLastBody$, "Busy server") >= 0 ANDALSO gBusy < 1 THEN
+        gBusy = gBusy + 1
+        RETURN JDWEB.REPLY("try later", 503, "text/plain")
+    ENDIF
+    IF INSTR(gLastBody$, "Wrong key") >= 0 THEN
+        RETURN JDWEB.REPLY("bad key", 401, "text/plain")
+    ENDIF
+    IF INSTR(gLastBody$, "Newsletter") >= 0 THEN
+        RETURN JDWEB.REPLY_JSON(Answer("A newsletter.", FALSE, ""))
+    ENDIF
+    DIM reply$ = "Dear Anna," + LF$ + "the figures follow by [CHECK]."
+    reply$ = reply$ + LF$ + "Lena"
+    RETURN JDWEB.REPLY_JSON(Answer("Anna asks for figures.", TRUE, reply$))
+ENDFUNC
+
+FUNC FreePort(seed$)
+    DIM hex$ = CODEC.SHA256$(seed$)
+    DIM port = 0
+    DIM i = 0
+    FOR i = 0 TO 3
+        port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+    NEXT i
+    port = 20000 + port MOD 30000
+    DIM last_port = port + 50
+    DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+        port = port + 1
+    LOOP
+    RETURN port
+ENDFUNC
+
+FUNC SavedMail(folder$, name$, from$, subject$, text$)
+    DIM msg = MAIL.MESSAGE(from$, "lena@example.com", subject$)
+    MAIL.SETID(msg, "<" + name$ + "@example.com>")
+    MAIL.PLAIN(msg, text$)
+    DIM path$ = PATH.JOIN$(folder$, name$ + ".eml")
+    MAIL.WRITEEML(msg, path$)
+    RETURN path$
+ENDFUNC
+
+DIM folder$ = MKTEMP$("inboxai")
+DIM inbox$ = PATH.JOIN$(folder$, "saved mail")
+DIM drafts$ = PATH.JOIN$(folder$, "drafts")
+MKDIR inbox$
+MKDIR drafts$
+DIM anna$ = SavedMail(inbox$, "a1", "Anna Berg <anna@example.com>", _
+    "Budget figures", "Could you send the Q3 figures by Friday?")
+DIM news$ = SavedMail(inbox$, "a2", "news@example.com", _
+    "Newsletter", "Ten tips for spreadsheets.")
+
+JDWEB.POST("/v1/chat/completions", FakeChat@)
+DIM port = FreePort(folder$)
+DIM base$ = "http://127.0.0.1:" + STR$(port) + "/v1"
+DIM toml$ = "[inbox_assistant]" + LF$
+toml$ = toml$ + "base_url = " + CHR$(34) + base$ + CHR$(34) + LF$
+toml$ = toml$ + "model = " + CHR$(34) + "test-model" + CHR$(34) + LF$
+DIM cfg = CONF.TOML_TEXT(toml$)
+DIM ai = INBOXAI.CLIENT(cfg, "sk-test")
+
+TESTKIT.SUITE("the mails")
+DIM pending = INBOXAI.PENDING(inbox$, INBOXAI.SEEN(drafts$))
+TESTKIT.EQ(LEN(pending), 2, "two saved mails wait")
+DIM parsed = MAIL.PARSEFILE(anna$)
+DIM prompt$ = INBOXAI.PROMPT$(parsed, 6000)
+TESTKIT.ISTRUE(INSTR(prompt$, "Subject: Budget figures") >= 0, _
+    "the prompt names the subject")
+TESTKIT.EQ(LEN(INBOXAI.PROMPT$(parsed, 5)), _
+    INSTR(prompt$, "Could") + 5, "and cuts a long mail")
+TESTKIT.ISTRUE(INSTR(INBOXAI.RULES$("Lena"), "[CHECK]") >= 0, _
+    "the rules ask for [CHECK] instead of promises")
+
+TESTKIT.SUITE("the model")
+DIM d = INBOXAI.DRAFT(ai, parsed, "Lena")
+TESTKIT.EQ(d{"summary"}, "Anna asks for figures.", "a summary")
+TESTKIT.ISTRUE(d{"needs_reply"}, "a reply is needed")
+TESTKIT.ISTRUE(INSTR(gLastBody$, "test-model") >= 0, "the model asked")
+TESTKIT.ISTRUE(INSTR(gLastBody$, "You help Lena") >= 0, _
+    "with the rules as system prompt")
+DIM n = INBOXAI.DRAFT(ai, MAIL.PARSEFILE(news$), "Lena")
+TESTKIT.ISFALSE(n{"needs_reply"}, "a newsletter needs no reply")
+DIM busy = MAIL.PARSE(MAIL.BUILD$(MAIL.MESSAGE("a@example.com", _
+    "lena@example.com", "Busy server")))
+DIM before = gCalls
+DIM b = INBOXAI.DRAFT(ai, busy, "Lena")
+TESTKIT.EQ(gCalls - before, 2, "a busy server is asked again")
+TESTKIT.EQ(b{"summary"}, "Anna asks for figures.", "and answers")
+DIM wrong = MAIL.PARSE(MAIL.BUILD$(MAIL.MESSAGE("a@example.com", _
+    "lena@example.com", "Wrong key")))
+DIM failed$ = ""
+before = gCalls
+TRY
+    DIM w = INBOXAI.DRAFT(ai, wrong, "Lena")
+CATCH
+    failed$ = ERRMSG$
+ENDTRY
+TESTKIT.ISTRUE(INSTR(failed$, "401") >= 0, "a wrong key is an error")
+TESTKIT.EQ(gCalls - before, 1, "that is not asked again")
+
+TESTKIT.SUITE("the drafts")
+DIM text$ = INBOXAI.DRAFT_TEXT$(parsed, d, "a1.eml")
+TESTKIT.ISTRUE(STARTSWITH(text$, "Approve: no"), "a draft starts unapproved")
+DIM draft$ = PATH.JOIN$(drafts$, "a1.txt")
+TXTWRITER draft$, text$
+INBOXAI.MARK_SEEN(drafts$, "a1.eml")
+INBOXAI.MARK_SEEN(drafts$, "a2.eml")
+pending = INBOXAI.PENDING(inbox$, INBOXAI.SEEN(drafts$))
+TESTKIT.EQ(LEN(pending), 0, "a mail is drafted once")
+TESTKIT.EQ(LEN(INBOXAI.APPROVED(drafts$)), 0, "nothing approved yet")
+TXTWRITER draft$, REPLACE$(text$, "Approve: no", "Approve: yes")
+TESTKIT.EQ(LEN(INBOXAI.APPROVED(drafts$)), 0, _
+    "an approved draft with [CHECK] waits")
+TXTWRITER draft$, text$
+DIM back = INBOXAI.READ_DRAFT(draft$)
+TESTKIT.EQ(back{"subject"}, "Re: Budget figures", "the subject")
+TESTKIT.EQ(back{"in_reply_to"}, "<a1@example.com>", "the thread")
+TESTKIT.ISTRUE(STARTSWITH(back{"body"}, "Dear Anna,"), "the reply")
+DIM edited$ = REPLACE$(text$, "Approve: no", "Approve: yes")
+edited$ = REPLACE$(edited$, "[CHECK]", "Thursday")
+TXTWRITER draft$, edited$
+DIM ok = INBOXAI.APPROVED(drafts$)
+TESTKIT.EQ(LEN(ok), 1, "the approved draft")
+DIM final = INBOXAI.READ_DRAFT(draft$)
+TESTKIT.ISTRUE(INSTR(final{"body"}, "Thursday") >= 0, _
+    "with the person's change")
+
+TESTKIT.SUITE("the outbox")
+DIM box$ = REPLACE$(PATH.JOIN$(folder$, "outbox"), "\", "/")
+DIM mail_cfg = CONF.TOML_TEXT("[mail]" + LF$ + "outbox = " + _
+    CHR$(34) + box$ + CHR$(34) + LF$)
+DIM msg = INBOXAI.TO_MESSAGE(final, "Lena <lena@example.com>")
+DIM eml$ = OUTBOX.PUT$(msg, mail_cfg, "a1.eml")
+DIM sent = MAIL.PARSEFILE(eml$)
+TESTKIT.EQ(sent{"subject"}, "Re: Budget figures", "the mail waits")
+TESTKIT.EQ(MAIL.HEADERVALUE$(sent, "In-Reply-To"), "<a1@example.com>", _
+    "as an answer in the thread")
+TESTKIT.EQ(LEN(OUTBOX.PENDING(mail_cfg)), 1, "one mail in the outbox")
+
+HTTP.SERVER.STOP()
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

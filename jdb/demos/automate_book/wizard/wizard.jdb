@@ -317,6 +317,29 @@ EXPORT FUNC PLAN_LINE$(name$, when$)
     RETURN "schedule " + name$ + ": " + w$
 ENDFUNC
 
+' The tasks of a recipe as maps with "r" and "when": the recipe on its
+' chosen schedule first, then each [[task]] of its recipe.toml (name,
+' schedule, args) on its own schedule, under its own task name.
+EXPORT FUNC TASKS(r, when$)
+    DIM out = []
+    PUSH(out, {"r": r, "when": when$})
+    IF NOT MAP.EXISTS(r, "task") THEN RETURN out
+    DIM extra = r{"task"}
+    DIM k = 0
+    FOR k = 0 TO LEN(extra) - 1
+        DIM t = extra[k]
+        DIM tr AS MAP
+        tr{"id"} = r{"id"}
+        tr{"name"} = r{"name"} + " (" + t{"name"} + ")"
+        tr{"schedule_args"} = []
+        IF MAP.EXISTS(t, "args") THEN tr{"schedule_args"} = t{"args"}
+        DIM tw$ = ""
+        IF MAP.EXISTS(t, "schedule") THEN tw$ = t{"schedule"}
+        PUSH(out, {"r": tr, "when": tw$})
+    NEXT k
+    RETURN out
+ENDFUNC
+
 EXPORT FUNC UNSCHEDULE_ARGS(r)
     RETURN ["/Delete", "/F", "/TN", TASK_NAME$(r)]
 ENDFUNC
@@ -345,9 +368,17 @@ EXPORT FUNC DOCTOR(answers, recipes, check_tasks)
         DIM r = Recipe(recipes, picked[k])
         DIM prog$ = PATH.JOIN$(answers{"work"}, "recipes", r{"folder"}, r{"program"})
         IF NOT FILE.EXISTS(prog$) THEN PUSH(out, r{"id"} + ": program missing at " + prog$)
-        IF check_tasks ANDALSO answers{"schedule"}{r{"id"}} <> "manual" THEN
-            DIM q = SCHTASKS(["/Query", "/TN", TASK_NAME$(r)])
-            IF NOT q[0] THEN PUSH(out, r{"id"} + ": no scheduled task " + TASK_NAME$(r))
+        IF check_tasks THEN
+            DIM tasks = TASKS(r, RESOLVE_WHEN$(answers, answers{"schedule"}{r{"id"}}))
+            DIM t = 0
+            FOR t = 0 TO LEN(tasks) - 1
+                DIM tw$ = LCASE$(TRIM$(tasks[t]{"when"}))
+                IF tw$ <> "" ANDALSO tw$ <> "manual" THEN
+                    DIM tname$ = TASK_NAME$(tasks[t]{"r"})
+                    DIM q = SCHTASKS(["/Query", "/TN", tname$])
+                    IF NOT q[0] THEN PUSH(out, r{"id"} + ": no scheduled task " + tname$)
+                ENDIF
+            NEXT t
         ENDIF
     NEXT k
     RETURN out

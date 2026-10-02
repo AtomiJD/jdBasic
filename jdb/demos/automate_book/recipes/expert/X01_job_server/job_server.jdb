@@ -1,0 +1,133 @@
+' Personal Job Server: one program that runs all your automations on
+' time. It reads the jobs file, runs each job when it is due, tries a
+' failed job again, keeps a log and the state of every job, and signs
+' each run into the audit trail when X14 has set up its key. The
+' settings are the [job_server] part of work.conf.
+'
+'   jdbasic job_server.jdb              serve until you log off
+'   jdbasic job_server.jdb --list       the jobs and their next runs
+'   jdbasic job_server.jdb --dry-run    what is due now, run nothing
+'   jdbasic job_server.jdb --once       run what is due now, then end
+'   jdbasic job_server.jdb --run NAME   run one job now
+'   jdbasic job_server.jdb --stop       ask a running server to end
+
+IMPORT WORKCONF, JOBSTATE, JOBSERVER, LOGGER, VAULT, DT
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM jobs_path$ = JOBSTATE.JOBS_PATH$(cfg)
+DIM state_path$ = JOBSTATE.STATE_PATH$(cfg)
+DIM lock$ = JOBSTATE.LOCK_PATH$(cfg)
+DIM folder$ = JOBSTATE.FOLDER$(cfg)
+DIM stop$ = PATH.JOIN$(folder$, "job_server.stop")
+DIM home$ = "~/Documents/AutomateWork"
+DIM work$ = WORKCONF.FOLDER$(cfg, "paths.work", home$)
+DIM offset = DT.LOCAL_OFFSET()
+
+IF WORKCONF.FLAG("stop") THEN
+    MKDIR folder$
+    TXTWRITER stop$, "stop"
+    PRINT "The server ends within a minute."
+    END
+ENDIF
+
+IF NOT FILE.EXISTS(jobs_path$) THEN
+    PRINT "No jobs file at "; jobs_path$
+    PRINT "Copy jobs.toml of this recipe there and edit it."
+    END
+ENDIF
+DIM jobs = JOBSTATE.JOBS(jobs_path$)
+DIM state = JOBSTATE.READ(state_path$)
+
+IF WORKCONF.FLAG("list") THEN
+    DIM lines = JOBSERVER.LIST_LINES(jobs, state, DT.NOW(), offset)
+    DIM i = 0
+    FOR i = 0 TO LEN(lines) - 1
+        PRINT lines[i]
+    NEXT i
+    END
+ENDIF
+
+MKDIR folder$
+DIM lg = LOGGER.NEW("jobs")
+LOGGER.TO_CONSOLE(lg, FALSE)
+LOGGER.TO_FILE(lg, JOBSTATE.LOG_PATH$(cfg), 1000000, 3)
+DIM paths AS MAP
+paths{"jdbasic"} = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
+paths{"recipes"} = PATH.JOIN$(work$, "recipes")
+paths{"config"} = WORKCONF.CONFIG_PATH$()
+DIM ctx AS MAP
+ctx{"paths"} = paths
+ctx{"log"} = lg
+ctx{"offset"} = offset
+ctx{"dry_run"} = WORKCONF.FLAG("dry-run")
+ctx{"audit"} = PATH.JOIN$(folder$, "audit.log")
+ctx{"key"} = VAULT.GET$("AutomateWork/audit-key")
+
+DIM only$ = WORKCONF.ARG$("run")
+IF only$ <> "" THEN
+    DIM found = FALSE
+    DIM j = 0
+    FOR j = 0 TO LEN(jobs) - 1
+        DIM job = jobs[j]
+        IF job{"name"} = only$ THEN
+            found = TRUE
+            DIM t = DT.NOW()
+            DIM res = JOBSERVER.RUN_NOW(job, state, t, t, ctx)
+            JOBSTATE.WRITE(state_path$, state)
+            IF NOT res{"ok"} THEN PRINT res{"error"}
+        ENDIF
+    NEXT j
+    IF NOT found THEN PRINT "No job named "; only$
+    END
+ENDIF
+
+DIM once = WORKCONF.FLAG("once") ORELSE ctx{"dry_run"}
+IF NOT ctx{"dry_run"} THEN
+    IF NOT JOBSERVER.FREE(lock$, DT.NOW(), 180) THEN
+        PRINT "A job server is running already."
+        END
+    ENDIF
+    IF FILE.EXISTS(stop$) THEN KILL stop$
+    LOGGER.INFO(lg, "server started", {"jobs": LEN(jobs)})
+ENDIF
+
+DIM stamp$ = FILE.STAT(jobs_path$){"mtime"}
+DO
+    DIM now = DT.NOW()
+    IF NOT ctx{"dry_run"} THEN JOBSERVER.TOUCH(lock$, now)
+    DIM results = JOBSERVER.TICK(jobs, state, now, ctx)
+    IF ctx{"dry_run"} THEN
+        IF LEN(results) = 0 THEN PRINT "Nothing is due."
+        DIM r = 0
+        FOR r = 0 TO LEN(results) - 1
+            DIM item = results[r]
+            IF MAP.EXISTS(item, "would_run") THEN
+                DIM at$ = item{"would_run"}
+                PRINT "would run "; item{"name"}; " for "; at$
+            ENDIF
+        NEXT r
+    ELSE
+        JOBSTATE.WRITE(state_path$, state)
+    ENDIF
+    IF once THEN EXITDO
+    IF FILE.EXISTS(stop$) THEN
+        KILL stop$
+        EXITDO
+    ENDIF
+    DIM changed$ = FILE.STAT(jobs_path$){"mtime"}
+    IF changed$ <> stamp$ THEN
+        stamp$ = changed$
+        TRY
+            jobs = JOBSTATE.JOBS(jobs_path$)
+            LOGGER.INFO(lg, "jobs read again", {"jobs": LEN(jobs)})
+        CATCH
+            LOGGER.ERROR(lg, "jobs file not used", {"error": ERRMSG$})
+        ENDTRY
+    ENDIF
+    SLEEP JOBSERVER.NEXT_WAKE(jobs, DT.NOW(), offset) * 1000
+LOOP
+
+IF NOT ctx{"dry_run"} THEN
+    IF FILE.EXISTS(lock$) THEN KILL lock$
+    IF NOT once THEN LOGGER.INFO(lg, "server ended")
+ENDIF

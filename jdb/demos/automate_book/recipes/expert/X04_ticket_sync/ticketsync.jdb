@@ -1,0 +1,206 @@
+' ticketsync.jdb: the work of Ticket Sync. It reads a to-do file in
+' which a task ends with its ticket number, compares it with the open
+' tickets of the tracker, and plans the changes on both sides: new
+' tickets become tasks, ticked tasks close their ticket, tasks marked
+' (#new) become tickets, and tickets closed elsewhere are ticked.
+'
+'   IMPORT TICKETSYNC
+'   DIM api = TICKETSYNC.SESSION("https://tracker.example", token$)
+'   DIM items = TICKETSYNC.PARSE(TXTREADER$("todo.md"))
+'   DIM open = TICKETSYNC.OPEN_TICKETS(api, "lena")
+'   DIM plan = TICKETSYNC.PLAN(items, open)
+
+EXPORT MODULE TICKETSYNC
+
+IMPORT REQ
+
+DIM gLF$ = CHR$(10)
+
+' A REST session for the tracker: the token as bearer, three tries
+' with a growing wait on a busy server.
+EXPORT FUNC SESSION(base$, token$)
+    DIM api = REQ.NEW(base$)
+    REQ.BEARER(api, token$)
+    REQ.TIMEOUT(api, 30)
+    REQ.RETRIES(api, 3, 500)
+    RETURN api
+ENDFUNC
+
+' The open tickets of a person as maps with id (text) and title.
+EXPORT FUNC OPEN_TICKETS(api, user$)
+    DIM query AS MAP
+    query{"assignee"} = user$
+    query{"state"} = "open"
+    DIM r = REQ.GET(api, "/api/tickets", query)
+    REQ.RAISE_FOR_STATUS(r)
+    DIM rows = REQ.JSON(r)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM t = rows[k]
+        DIM one AS MAP
+        one{"id"} = IdText$(t{"id"})
+        one{"title"} = t{"title"}
+        PUSH(out, one)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC IdText$(id)
+    IF TYPEOF(id) = "STRING" THEN RETURN id
+    RETURN STR$(INT(id))
+ENDFUNC
+
+' Every line of the to-do file as a map: kind is "task" or "text";
+' a task has done, title and id ("" without a ticket, "new" for one
+' still to be created).
+EXPORT FUNC PARSE(text$)
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    IF LEN(rows) > 0 ANDALSO rows[LEN(rows) - 1] = "" THEN
+        rows = DROP(-1, rows)
+    ENDIF
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = rows[k]
+        PUSH(out, ParseLine(row$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC ParseLine(row$)
+    DIM item AS MAP
+    item{"kind"} = "text"
+    item{"line"} = row$
+    DIM s$ = TRIM$(row$)
+    DIM head$ = LCASE$(LEFT$(s$, 6))
+    IF head$ <> "- [ ] " ANDALSO head$ <> "- [x] " THEN RETURN item
+    item{"kind"} = "task"
+    item{"done"} = (head$ = "- [x] ")
+    DIM title$ = TRIM$(MID$(s$, 6))
+    item{"id"} = ""
+    DIM at = INSTR(title$, "(#")
+    IF at >= 0 ANDALSO ENDSWITH(title$, ")") THEN
+        item{"id"} = MID$(title$, at + 2, LEN(title$) - at - 3)
+        title$ = TRIM$(LEFT$(title$, at))
+    ENDIF
+    item{"title"} = title$
+    RETURN item
+ENDFUNC
+
+' The line of a task as it goes back into the file.
+EXPORT FUNC TASK_LINE$(item)
+    IF item{"kind"} <> "task" THEN RETURN item{"line"}
+    DIM box$ = "- [ ] "
+    IF item{"done"} THEN box$ = "- [x] "
+    DIM row$ = box$ + item{"title"}
+    IF item{"id"} <> "" THEN row$ = row$ + " (#" + item{"id"} + ")"
+    RETURN row$
+ENDFUNC
+
+' The whole to-do file from its items.
+EXPORT FUNC RENDER$(items)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        out$ = out$ + TASK_LINE$(items[k]) + gLF$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The changes that bring the file and the tracker together, as a map
+' with "remote" (close and create calls for the tracker) and "items"
+' (the file after the local changes). Nothing is changed yet.
+EXPORT FUNC PLAN(items, tickets)
+    DIM remote = []
+    DIM out = []
+    DIM known AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(tickets) - 1
+        DIM t = tickets[k]
+        DIM tid$ = t{"id"}
+        known{tid$} = t{"title"}
+    NEXT k
+    DIM listed AS MAP
+    FOR k = 0 TO LEN(items) - 1
+        DIM item = items[k]
+        IF item{"kind"} = "task" ANDALSO item{"id"} = "new" THEN
+            DIM title$ = item{"title"}
+            PUSH(remote, Change("create", "", title$, LEN(out)))
+        ELSEIF item{"kind"} = "task" ANDALSO item{"id"} <> "" THEN
+            DIM id$ = item{"id"}
+            listed{id$} = TRUE
+            DIM is_open = MAP.EXISTS(known, id$)
+            IF item{"done"} ANDALSO is_open THEN
+                DIM done$ = item{"title"}
+                PUSH(remote, Change("close", id$, done$, LEN(out)))
+            ELSEIF NOT item{"done"} ANDALSO NOT is_open THEN
+                item{"done"} = TRUE
+            ELSEIF is_open THEN
+                item{"title"} = known{id$}
+            ENDIF
+        ENDIF
+        PUSH(out, item)
+    NEXT k
+    FOR k = 0 TO LEN(tickets) - 1
+        DIM fresh = tickets[k]
+        DIM fid$ = fresh{"id"}
+        IF NOT MAP.EXISTS(listed, fid$) THEN
+            DIM task AS MAP
+            task{"kind"} = "task"
+            task{"done"} = FALSE
+            task{"title"} = fresh{"title"}
+            task{"id"} = fid$
+            task{"line"} = ""
+            PUSH(out, task)
+        ENDIF
+    NEXT k
+    DIM plan AS MAP
+    plan{"remote"} = remote
+    plan{"items"} = out
+    RETURN plan
+ENDFUNC
+
+FUNC Change(what$, id$, title$, index)
+    DIM c AS MAP
+    c{"do"} = what$
+    c{"id"} = id$
+    c{"title"} = title$
+    c{"index"} = index
+    RETURN c
+ENDFUNC
+
+' The plan's tracker calls; a created ticket's id goes into its task.
+' With dry_run nothing is sent. Answers the lines it printed.
+EXPORT FUNC APPLY(plan, api, user$, dry_run)
+    DIM said = []
+    DIM items = plan{"items"}
+    DIM remote = plan{"remote"}
+    DIM k = 0
+    FOR k = 0 TO LEN(remote) - 1
+        DIM c = remote[k]
+        DIM what$ = c{"do"}
+        DIM note$ = what$ + " #" + c{"id"} + " " + c{"title"}
+        IF what$ = "create" THEN note$ = "create " + c{"title"}
+        IF dry_run THEN
+            PUSH(said, "would " + note$)
+        ELSEIF what$ = "close" THEN
+            DIM body AS MAP
+            body{"state"} = "closed"
+            DIM path$ = "/api/tickets/" + c{"id"}
+            REQ.RAISE_FOR_STATUS(REQ.PATCH(api, path$, body))
+            PUSH(said, note$)
+        ELSE
+            DIM fields AS MAP
+            fields{"title"} = c{"title"}
+            fields{"assignee"} = user$
+            DIM r = REQ.POST(api, "/api/tickets", fields)
+            REQ.RAISE_FOR_STATUS(r)
+            DIM made = REQ.JSON(r)
+            DIM task = items[c{"index"}]
+            task{"id"} = IdText$(made{"id"})
+            PUSH(said, note$ + " as #" + task{"id"})
+        ENDIF
+    NEXT k
+    RETURN said
+ENDFUNC

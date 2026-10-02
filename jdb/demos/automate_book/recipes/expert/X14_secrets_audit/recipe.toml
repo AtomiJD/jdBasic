@@ -1,0 +1,16 @@
+# What the setup wizard knows about this recipe.
+
+id = "X14"
+name = "Secrets and Audit Trail"
+program = "secrets_audit.jdb"
+summary = "Passwords in the Credential Manager, not in files, and a signed record of every job run"
+minutes_per_week = 10
+schedule = "manual"
+section = "secrets_audit"
+modules = ["trail.jdb"]
+
+[[setting]]
+key = "summary_days"
+label = "Days the audit summary looks back"
+kind = "number"
+default = 7

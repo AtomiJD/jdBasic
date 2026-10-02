@@ -1,0 +1,219 @@
+' health.jdb: the checks of the health check. It looks at what the job
+' server (X01) wrote and at the outbox, finds what is wrong, tells new
+' problems from known ones, and writes the numbers for a monitoring
+' system.
+'
+'   IMPORT HEALTH
+'   DIM problems = HEALTH.CHECK(jobs, state, now, offset, facts)
+'   DIM change = HEALTH.DIFF(alerts, problems, now)
+'   IF LEN(change{"new"}) > 0 THEN PRINT HEALTH.TEXT$(change)
+'
+' A problem is a map with "key", the same for the same trouble from
+' one run to the next, "kind" and "text".
+
+EXPORT MODULE HEALTH
+
+IMPORT SCHED, METRICS, MAIL, RETRY, DT
+
+' Local time text of a moment.
+FUNC Clock$(t, offset)
+    RETURN LEFT$(REPLACE$(DT.ISO$(t, offset), "T", " "), 16)
+ENDFUNC
+
+SUB Add(out, key$, kind$, text$)
+    DIM p AS MAP
+    p{"key"} = key$
+    p{"kind"} = kind$
+    p{"text"} = text$
+    PUSH(out, p)
+ENDSUB
+
+' A server that never marked its lock (beat -1) or not for too long.
+SUB ServerProblems(out, beat, minutes)
+    IF beat < 0 THEN
+        Add(out, "server", "server", "The job server is not running.")
+    ELSEIF beat > minutes * 60 THEN
+        DIM m$ = STR$(INT(beat / 60))
+        DIM t$ = "The job server has not signed for " + m$
+        Add(out, "server", "server", t$ + " minutes.")
+    ENDIF
+ENDSUB
+
+' A job whose last run failed, or that missed a run time by more than
+' late_s seconds.
+SUB JobProblems(out, job, rec, now, offset, late_s)
+    DIM name$ = job{"name"}
+    IF MAP.EXISTS(rec, "last_ok") THEN
+        IF NOT rec{"last_ok"} THEN
+            DIM ended$ = rec{"last_end"}
+            DIM why$ = rec{"last_error"}
+            DIM t$ = name$ + " failed at " + ended$ + ": " + why$
+            Add(out, "failed:" + name$, "failed", t$)
+        ENDIF
+    ENDIF
+    DIM expected = SCHED.PREVRUN(job{"when"}, now - late_s, offset)
+    IF rec{"last_due"} < expected THEN
+        DIM at$ = Clock$(expected, offset)
+        DIM late$ = name$ + " was due at " + at$ + " and has not run."
+        Add(out, "late:" + name$, "late", late$)
+    ENDIF
+ENDSUB
+
+' The problems at now. facts holds what the caller found on disk:
+' "heartbeat" (the age of the server's lock mark in seconds, -1 for
+' none), "server_minutes", "late_minutes", "outbox" (a list of maps
+' with "name" and "hours") and "outbox_hours".
+EXPORT FUNC CHECK(jobs, state, now, offset, facts)
+    DIM out = []
+    IF LEN(jobs) > 0 THEN
+        DIM beat = facts{"heartbeat"}
+        ServerProblems(out, beat, facts{"server_minutes"})
+    ENDIF
+    DIM late_s = facts{"late_minutes"} * 60
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        DIM name$ = job{"name"}
+        IF job{"enabled"} ANDALSO MAP.EXISTS(state, name$) THEN
+            JobProblems(out, job, state{name$}, now, offset, late_s)
+        ENDIF
+    NEXT k
+    DIM box = facts{"outbox"}
+    FOR k = 0 TO LEN(box) - 1
+        DIM item = box[k]
+        IF item{"hours"} > facts{"outbox_hours"} THEN
+            DIM file$ = item{"name"}
+            DIM h$ = STR$(INT(item{"hours"}))
+            DIM t$ = file$ + " has waited in the outbox for " + h$
+            Add(out, "outbox:" + file$, "outbox", t$ + " hours.")
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' What changed against the open alerts of the last run, a map from
+' key to the time the alert was first seen and its text: "new"
+' problems, "resolved" ones as maps with key and text, and "open",
+' the alerts to keep for the next run.
+EXPORT FUNC DIFF(alerts, problems, now)
+    DIM open AS MAP
+    DIM fresh = []
+    DIM k = 0
+    FOR k = 0 TO LEN(problems) - 1
+        DIM p = problems[k]
+        DIM key$ = p{"key"}
+        DIM entry AS MAP
+        entry{"text"} = p{"text"}
+        IF MAP.EXISTS(alerts, key$) THEN
+            entry{"since"} = alerts{key$}{"since"}
+        ELSE
+            entry{"since"} = now
+            PUSH(fresh, p)
+        ENDIF
+        open{key$} = entry
+    NEXT k
+    DIM gone = []
+    DIM keys = MAP.KEYS(alerts)
+    FOR k = 0 TO LEN(keys) - 1
+        DIM old$ = keys[k]
+        IF NOT MAP.EXISTS(open, old$) THEN
+            PUSH(gone, {"key": old$, "text": alerts{old$}{"text"}})
+        ENDIF
+    NEXT k
+    DIM out AS MAP
+    out{"new"} = fresh
+    out{"resolved"} = gone
+    out{"open"} = open
+    RETURN out
+ENDFUNC
+
+' The alert as text: new problems, then the ones that are over.
+EXPORT FUNC TEXT$(change)
+    DIM lines = []
+    DIM fresh = change{"new"}
+    DIM gone = change{"resolved"}
+    DIM k = 0
+    IF LEN(fresh) > 0 THEN PUSH(lines, "New problems:")
+    FOR k = 0 TO LEN(fresh) - 1
+        DIM p = fresh[k]
+        PUSH(lines, "  " + p{"text"})
+    NEXT k
+    IF LEN(gone) > 0 THEN PUSH(lines, "Over now:")
+    FOR k = 0 TO LEN(gone) - 1
+        DIM g = gone[k]
+        PUSH(lines, "  " + g{"text"})
+    NEXT k
+    PUSH(lines, "Still open: " + STR$(LEN(MAP.KEYS(change{"open"}))))
+    RETURN JOIN(lines, CHR$(10))
+ENDFUNC
+
+' The alert mail.
+EXPORT FUNC MESSAGE(from$, to$, change)
+    DIM n = LEN(change{"new"})
+    DIM subject$ = "AutomateWork: all clear"
+    IF n = 1 THEN subject$ = "AutomateWork: 1 new problem"
+    DIM n$ = STR$(n)
+    IF n > 1 THEN subject$ = "AutomateWork: " + n$ + " new problems"
+    DIM msg = MAIL.MESSAGE(from$, to$, subject$)
+    MAIL.PLAIN(msg, TEXT$(change))
+    RETURN msg
+ENDFUNC
+
+FUNC Gauge(name$, doc$, by_job)
+    DIM full$ = "automatework_" + name$
+    IF by_job THEN RETURN METRICS.NEWGAUGE(full$, doc$, ["job"])
+    RETURN METRICS.NEWGAUGE(full$, doc$)
+ENDFUNC
+
+' The state of the jobs in the text format of Prometheus, for a
+' monitoring system that reads files.
+EXPORT FUNC METRICS_TEXT$(jobs, state, problems, heartbeat)
+    METRICS.RESET()
+    DIM ok_g = Gauge("job_ok", "1 when the last run worked.", TRUE)
+    DIM runs_g = Gauge("job_runs", "Runs of the job.", TRUE)
+    DIM fails_g = Gauge("job_fails", "Failed runs of the job.", TRUE)
+    DIM won$ = "job_last_success_seconds"
+    DIM won_g = Gauge(won$, "Last run that worked.", TRUE)
+    DIM beat$ = "server_heartbeat_age_seconds"
+    DIM beat_g = Gauge(beat$, "Age of the lock mark.", FALSE)
+    DIM prob_g = Gauge("problems", "Problems found.", FALSE)
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        DIM name$ = job{"name"}
+        IF MAP.EXISTS(state, name$) THEN
+            DIM rec = state{name$}
+            DIM ok = 1
+            IF MAP.EXISTS(rec, "last_ok") THEN
+                IF NOT rec{"last_ok"} THEN ok = 0
+            ENDIF
+            METRICS.SETVALUE(ok_g, ok, [name$])
+            METRICS.SETVALUE(runs_g, rec{"runs"}, [name$])
+            METRICS.SETVALUE(fails_g, rec{"fails"}, [name$])
+            METRICS.SETVALUE(won_g, rec{"last_success"}, [name$])
+        ENDIF
+    NEXT k
+    METRICS.SETVALUE(beat_g, heartbeat)
+    METRICS.SETVALUE(prob_g, LEN(problems))
+    RETURN METRICS.EXPOSE$()
+ENDFUNC
+
+' Sends one mail; a failed delivery is an error.
+FUNC SendOnce(job)
+    DIM r = MAIL.SEND(job{"msg"}, job{"server"})
+    DIM said$ = TRIM$(r{"output"})
+    DIM code$ = STR$(r{"exit_code"})
+    IF NOT r{"ok"} THEN THROW "curl " + code$ + ": " + said$
+    RETURN TRUE
+ENDFUNC
+
+' Sends the alert with retries; answers the report of RETRY.ATTEMPT.
+EXPORT FUNC SEND(msg, server, attempts, delay_ms)
+    DIM job AS MAP
+    job{"msg"} = msg
+    job{"server"} = server
+    DIM opts AS MAP
+    opts{"attempts"} = attempts
+    opts{"delay"} = delay_ms
+    RETURN RETRY.ATTEMPT(SendOnce@, job, opts)
+ENDFUNC

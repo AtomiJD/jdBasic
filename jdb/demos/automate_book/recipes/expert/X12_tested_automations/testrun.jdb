@@ -1,0 +1,239 @@
+' testrun.jdb: runs the tests of all your recipes, each in a process
+' of its own, and writes what happened as a report. A test is a file
+' that ends in _test.jdb or _props.jdb. Every recipe folder is on the
+' module search path of the tests, so a test can import the module of
+' another recipe.
+'
+'   IMPORT TESTRUN
+'   DIM tests = TESTRUN.FIND("C:/Users/lena/AutomateWork/recipes")
+'   DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, search$)
+'   PRINT TESTRUN.REPORT$(results, "2026-10-04 20:00")
+
+EXPORT MODULE TESTRUN
+
+' The folders below root$, root$ itself first, three levels deep.
+EXPORT FUNC FOLDERS(root$)
+    DIM out = [root$]
+    DIM k = 0
+    DO WHILE k < LEN(out)
+        DIM here$ = out[k]
+        DIM rest$ = MID$(here$, LEN(root$), LEN(here$))
+        DIM depth = LEN(SPLIT(rest$, "/"))
+        IF depth <= 3 THEN
+            DIM names = SORT(DIR$(PATH.JOIN$(here$, "*")))
+            DIM j = 0
+            FOR j = 0 TO LEN(names) - 1
+                DIM name$ = names[j]
+                DIM sub$ = here$ + "/" + name$
+                DIM hidden = LEFT$(name$, 1) = "."
+                IF FILE.ISDIR(sub$) ANDALSO NOT hidden THEN
+                    PUSH(out, sub$)
+                ENDIF
+            NEXT j
+        ENDIF
+        k = k + 1
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The test files below root$, sorted by path.
+EXPORT FUNC FIND(root$)
+    DIM dirs = FOLDERS(root$)
+    DIM out = []
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(dirs) - 1
+        DIM dir$ = dirs[k]
+        DIM names = DIR$(PATH.JOIN$(dir$, "*.jdb"))
+        FOR j = 0 TO LEN(names) - 1
+            DIM name$ = names[j]
+            IF ENDSWITH(name$, "_test.jdb") ORELSE _
+               ENDSWITH(name$, "_props.jdb") THEN
+                PUSH(out, dir$ + "/" + name$)
+            ENDIF
+        NEXT j
+    NEXT k
+    RETURN SORT(out)
+ENDFUNC
+
+' A folder or file as a full path with forward slashes; a path that
+' does not exist is answered unchanged.
+EXPORT FUNC ABSOLUTE$(path$)
+    DIM p$ = REPLACE$(path$, "\", "/")
+    IF MID$(p$, 1, 1) = ":" ORELSE LEFT$(p$, 1) = "/" THEN RETURN p$
+    IF NOT FILE.EXISTS(p$) THEN RETURN p$
+    DIM dir$ = p$
+    DIM name$ = ""
+    IF NOT FILE.ISDIR(p$) THEN
+        dir$ = PATH.DIRNAME$(p$)
+        name$ = PATH.BASENAME$(p$)
+        IF dir$ = "" THEN dir$ = "."
+    ENDIF
+    DIM back$ = CD()
+    DIM full$ = REPLACE$(CD(dir$), "\", "/")
+    DIM moved$ = CD(back$)
+    IF name$ = "" THEN RETURN full$
+    RETURN full$ + "/" + name$
+ENDFUNC
+
+' The module search path for the tests, as full paths: the folders
+' given first, then every folder below root$ that holds a .jdb file.
+EXPORT FUNC SEARCH_PATH$(root$, first)
+    DIM parts = []
+    DIM k = 0
+    FOR k = 0 TO LEN(first) - 1
+        DIM given$ = first[k]
+        PUSH(parts, ABSOLUTE$(given$))
+    NEXT k
+    DIM dirs = FOLDERS(root$)
+    FOR k = 0 TO LEN(dirs) - 1
+        DIM dir$ = dirs[k]
+        DIM sources = DIR$(PATH.JOIN$(dir$, "*.jdb"))
+        IF LEN(sources) > 0 THEN PUSH(parts, dir$)
+    NEXT k
+    RETURN JOIN(parts, ";")
+ENDFUNC
+
+' Text without the colour codes of a terminal.
+EXPORT FUNC PLAIN$(text$)
+    DIM esc$ = CHR$(27)
+    DIM out$ = ""
+    DIM i = 0
+    DO WHILE i < LEN(text$)
+        DIM c$ = MID$(text$, i, 1)
+        IF c$ = esc$ THEN
+            DO WHILE i < LEN(text$) ANDALSO MID$(text$, i, 1) <> "m"
+                i = i + 1
+            LOOP
+        ELSE
+            out$ = out$ + c$
+        ENDIF
+        i = i + 1
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' The counts of a TESTKIT summary line ("12 passed, 1 failed"), as
+' a map with "passed" and "failed"; both -1 when there is none.
+EXPORT FUNC COUNTS(output$)
+    DIM out = {"passed": -1, "failed": -1}
+    DIM text$ = REPLACE$(PLAIN$(output$), CHR$(13), "")
+    DIM lines = SPLIT(text$, CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM words = SPLIT(TRIM$(lines[k]), " ")
+        IF LEN(words) >= 4 ANDALSO words[1] = "passed," THEN
+            out{"passed"} = VAL(words[0])
+            out{"failed"} = VAL(words[2])
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC LastLine$(output$)
+    DIM text$ = TRIM$(REPLACE$(PLAIN$(output$), CHR$(13), ""))
+    DIM lines = SPLIT(text$, CHR$(10))
+    IF LEN(lines) = 0 THEN RETURN ""
+    RETURN lines[LEN(lines) - 1]
+ENDFUNC
+
+FUNC RunOnce(jdbasic$, file$)
+    DIM t0 = TICK()
+    DIM program$ = jdbasic$
+    IF INSTR(program$, "/") >= 0 ORELSE INSTR(program$, "\") >= 0 THEN
+        program$ = ABSOLUTE$(program$)
+    ENDIF
+    DIM full$ = ABSOLUTE$(file$)
+    DIM back$ = CD()
+    DIM moved$ = CD(PATH.DIRNAME$(full$))
+    DIM r = OS.EXEC(program$, [PATH.BASENAME$(full$)])
+    moved$ = CD(back$)
+    DIM output$ = r{"OUTPUT"}
+    DIM c = COUNTS(output$)
+    DIM out = {"file": file$, "exit": r{"EXIT_CODE"}}
+    out{"ok"} = r{"EXIT_CODE"} = 0 ANDALSO c{"failed"} <= 0
+    out{"passed"} = c{"passed"}
+    out{"failed"} = c{"failed"}
+    out{"ms"} = TICK() - t0
+    out{"last"} = LastLine$(output$)
+    RETURN out
+ENDFUNC
+
+' Runs one test in its own folder with the module search path
+' search$. A test that fails is run a second time: "status" is "ok",
+' "flaky" when only the second run passed, or "failed".
+EXPORT FUNC RUN_ONE(jdbasic$, file$, search$)
+    DIM parts = SPLIT(search$, ";")
+    DIM full = []
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM part$ = parts[k]
+        IF part$ <> "" THEN PUSH(full, ABSOLUTE$(part$))
+    NEXT k
+    SETENV "JDBASIC_PATH", JOIN(full, ";")
+    DIM first = RunOnce(jdbasic$, file$)
+    IF first{"ok"} THEN
+        first{"status"} = "ok"
+        RETURN first
+    ENDIF
+    DIM again = RunOnce(jdbasic$, file$)
+    IF again{"ok"} THEN
+        again{"status"} = "flaky"
+        RETURN again
+    ENDIF
+    first{"status"} = "failed"
+    RETURN first
+ENDFUNC
+
+' Runs every test of the list and answers one result map per test.
+EXPORT FUNC RUN_ALL(jdbasic$, files, search$)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM file$ = files[k]
+        PUSH(out, RUN_ONE(jdbasic$, file$, search$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' How many results have the status, "ok", "flaky" or "failed".
+EXPORT FUNC TALLY_OF(results, status$)
+    DIM n = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(results) - 1
+        DIM r = results[k]
+        IF r{"status"} = status$ THEN n = n + 1
+    NEXT k
+    RETURN n
+ENDFUNC
+
+' The results as a report: a summary line, then one line per test,
+' the failed ones first with the last line they printed.
+EXPORT FUNC REPORT$(results, when$)
+    DIM LF$ = CHR$(10)
+    DIM bad = TALLY_OF(results, "failed")
+    DIM out$ = "Test report " + when$ + ": " + STR$(LEN(results))
+    out$ = out$ + " tests, " + STR$(bad) + " failed, "
+    DIM flaky = TALLY_OF(results, "flaky")
+    out$ = out$ + STR$(flaky) + " flaky" + LF$ + LF$
+    DIM order = ["failed", "flaky", "ok"]
+    DIM s = 0
+    DIM k = 0
+    FOR s = 0 TO 2
+        FOR k = 0 TO LEN(results) - 1
+            DIM r = results[k]
+            IF r{"status"} = order[s] THEN
+                DIM line$ = UCASE$(order[s]) + "  " + r{"file"}
+                IF r{"passed"} >= 0 THEN
+                    DIM n$ = STR$(r{"passed"})
+                    line$ = line$ + "  (" + n$ + " checks)"
+                ENDIF
+                out$ = out$ + line$ + LF$
+                IF order[s] <> "ok" THEN
+                    out$ = out$ + "        " + r{"last"} + LF$
+                ENDIF
+            ENDIF
+        NEXT k
+    NEXT s
+    RETURN out$
+ENDFUNC

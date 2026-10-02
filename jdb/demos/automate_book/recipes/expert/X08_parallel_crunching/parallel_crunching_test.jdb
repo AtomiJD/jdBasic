@@ -1,0 +1,88 @@
+' CRUNCH: 400 generated exports give the same report on one core and on
+' many, the amounts match the generated ones, unreadable lines are counted
+' and a file that is no export is named, not added.
+
+IMPORT TESTKIT, CRUNCH
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("crunchtest")
+MKDIR folder$
+DIM cats = ["hotel", "meals", "taxi", "train"]
+DIM want AS MAP
+DIM k = 0
+FOR k = 0 TO LEN(cats) - 1
+    DIM c$ = cats[k]
+    want{c$} = 0
+NEXT k
+DIM want_rows = 0
+DIM want_total = 0
+DIM want_bad = 0
+DIM n_files = 400
+DIM f = 0
+DIM j = 0
+FOR f = 0 TO n_files - 1
+    DIM body$ = "date;category;amount" + LF$
+    FOR j = 0 TO 9
+        DIM cat$ = cats[(f + j) MOD 4]
+        DIM cents = ((f * 37 + j * 11) MOD 9000) + 100
+        body$ = body$ + "2026-09-" + RIGHT$("0" + STR$(1 + j), 2) + ";"
+        body$ = body$ + cat$ + ";" + CRUNCH.MONEY$(cents) + LF$
+        want{cat$} = want{cat$} + cents
+        want_total = want_total + cents
+        want_rows = want_rows + 1
+    NEXT j
+    IF f MOD 50 = 0 THEN
+        body$ = body$ + "2026-09-30;taxi;twelve" + LF$
+        want_bad = want_bad + 1
+    ENDIF
+    DIM name$ = "export " + RIGHT$("000" + STR$(f), 4) + ".csv"
+    TXTWRITER PATH.JOIN$(folder$, name$), body$
+NEXT f
+
+TESTKIT.SUITE("one export")
+DIM one$ = PATH.JOIN$(folder$, "export 0000.csv")
+DIM s$ = CRUNCH.SUMMARY$(one$, ";")
+TESTKIT.ISTRUE(STARTSWITH(s$, "10;"), "ten rows")
+TESTKIT.ISTRUE(INSTR(s$, ";1;") >= 0, "and the unreadable line")
+TESTKIT.EQ(CRUNCH.MONEY$(1234), "12.34", "cents as money")
+TESTKIT.EQ(CRUNCH.MONEY$(-5), "-0.05", "and below zero")
+
+TESTKIT.SUITE("one core and many")
+DIM files = CRUNCH.FILES(folder$)
+TESTKIT.EQ(LEN(files), n_files, "every export is found")
+DIM one_core = CRUNCH.SERIAL(files, ";")
+DIM serial = one_core{"texts"}
+DIM run = CRUNCH.PARALLEL(files, ";", 8, 30000)
+DIM many = run{"texts"}
+TESTKIT.EQ(LEN(run{"failed"}), 0, "nothing failed")
+TESTKIT.EQ(JOIN(many, LF$), JOIN(serial, LF$), "the same lines")
+DIM totals = CRUNCH.MERGE(many)
+TESTKIT.EQ(totals{"files"}, n_files, "all files added")
+TESTKIT.EQ(totals{"rows"}, want_rows, "all rows")
+TESTKIT.EQ(totals{"bad"}, want_bad, "unreadable lines counted")
+TESTKIT.EQ(totals{"cents"}, want_total, "the total")
+DIM by = totals{"by"}
+TESTKIT.EQ(by{"hotel"}, want{"hotel"}, "hotel")
+TESTKIT.EQ(by{"train"}, want{"train"}, "train")
+DIM csv$ = CRUNCH.REPORT_CSV$(totals, ";")
+TESTKIT.ISTRUE(INSTR(csv$, "total;" + CRUNCH.MONEY$(want_total)) >= 0, _
+    "the report ends with the total")
+
+TESTKIT.SUITE("a file that is no export")
+MKDIR PATH.JOIN$(folder$, "a folder.csv")
+TXTWRITER PATH.JOIN$(folder$, "zz notes.csv"), "Notes for Lena" + LF$
+DIM files2 = CRUNCH.FILES(folder$)
+DIM run2 = CRUNCH.PARALLEL(files2, ";", 4, 30000)
+TESTKIT.EQ(LEN(files2), n_files + 1, "a folder is not a file")
+TESTKIT.EQ(LEN(run2{"failed"}), 1, "one file failed")
+TESTKIT.ISTRUE(STARTSWITH(run2{"failed"}[0], "zz notes.csv"), "by name")
+DIM totals2 = CRUNCH.MERGE(run2{"texts"})
+TESTKIT.EQ(totals2{"files"}, n_files, "the others are still added")
+TESTKIT.EQ(totals2{"cents"}, want_total, "with the same total")
+DIM one2 = CRUNCH.SERIAL(files2, ";")
+TESTKIT.EQARRAY(one2{"failed"}, run2{"failed"}, "one core reports it the same")
+TESTKIT.EQ(CRUNCH.WORKERS(3), 3, "a worker count is kept")
+TESTKIT.ISTRUE(CRUNCH.WORKERS(0) >= 1, "0 means one per core")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

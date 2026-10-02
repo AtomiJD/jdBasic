@@ -1,0 +1,169 @@
+' Web Harvester: robots.txt groups, patterns and the longest rule,
+' numbers in German and English writing, values by CSS selector, a
+' polite run over fixture pages on this computer (a pause between two
+' requests, a busy server tried again, a private path left alone, a
+' missing page reported), pages kept in a cache file, and CSV lines.
+
+IMPORT TESTKIT, HARVEST, JDWEB
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("harvest")
+DIM cache_file$ = PATH.JOIN$(folder$, "cache.json")
+DIM gTimes = []
+DIM gBusyOnce = TRUE
+
+FUNC Seen(request)
+    PUSH(gTimes, TICK())
+    RETURN 0
+ENDFUNC
+
+FUNC Robots(request)
+    DIM ignored = Seen(request)
+    DIM t$ = "User-agent: *" + LF$ + "Disallow: /private" + LF$
+    t$ = t$ + "Crawl-delay: 0.3" + LF$ + LF$
+    t$ = t$ + "User-agent: BadBot" + LF$ + "Disallow: /" + LF$
+    RETURN JDWEB.REPLY(t$, 200, "text/plain")
+ENDFUNC
+
+FUNC Paper(request)
+    DIM ignored = Seen(request)
+    DIM p$ = "<html><body><div class=item><h2>Paper A4</h2>"
+    p$ = p$ + "<span class=price> 4,99 &euro; </span>"
+    p$ = p$ + "<a class=sheet href=/sheets/paper.pdf>Data sheet</a>"
+    RETURN p$ + "</div></body></html>"
+ENDFUNC
+
+FUNC Toner(request)
+    DIM ignored = Seen(request)
+    IF gBusyOnce THEN
+        gBusyOnce = FALSE
+        RETURN JDWEB.REPLY("busy", 503, "text/plain")
+    ENDIF
+    RETURN "<table><tr><td class=price>1.234,50 EUR</td></tr></table>"
+ENDFUNC
+
+FUNC Secret(request)
+    DIM ignored = Seen(request)
+    RETURN "<p class=price>42</p>"
+ENDFUNC
+
+FUNC Gone(request)
+    DIM ignored = Seen(request)
+    RETURN JDWEB.REPLY("not here", 404, "text/plain")
+ENDFUNC
+
+FUNC Target(name$, url$, sel$, attr$)
+    DIM t AS MAP
+    t{"name"} = name$
+    t{"url"} = url$
+    t{"select"} = sel$
+    IF attr$ <> "" THEN t{"attr"} = attr$
+    RETURN t
+ENDFUNC
+
+TESTKIT.SUITE("robots.txt")
+DIM rtext$ = "# shop" + LF$ + "User-agent: *" + LF$ + _
+    "Disallow: /private" + LF$ + "Crawl-delay: 2" + LF$ + LF$ + _
+    "User-agent: BadBot" + LF$ + "Disallow: /" + LF$
+DIM ours = HARVEST.ROBOTS(rtext$, "AutomateWork harvester")
+TESTKIT.EQ(ours{"delay"}, 2, "the crawl delay for everyone")
+TESTKIT.ISFALSE(HARVEST.ALLOWED(ours, "/private/a.html"), _
+    "a disallowed path")
+TESTKIT.ISTRUE(HARVEST.ALLOWED(ours, "/prices/a.html"), "an open one")
+DIM bad = HARVEST.ROBOTS(rtext$, "BadBot/1.0")
+TESTKIT.ISFALSE(HARVEST.ALLOWED(bad, "/prices/a.html"), _
+    "a named agent gets its own group")
+TESTKIT.ISTRUE(HARVEST.ALLOWED(HARVEST.ROBOTS("", "x"), "/a"), _
+    "no robots.txt allows everything")
+TESTKIT.ISTRUE(HARVEST.MATCHES("/*.pdf$", "/a/b.pdf"), "* and $")
+TESTKIT.ISFALSE(HARVEST.MATCHES("/*.pdf$", "/a/b.pdf?x=1"), _
+    "$ is the end of the path")
+DIM shop = {"disallow": ["/shop"], "allow": ["/shop/prices"]}
+TESTKIT.ISTRUE(HARVEST.ALLOWED(shop, "/shop/prices/a"), _
+    "the longer rule wins")
+TESTKIT.ISFALSE(HARVEST.ALLOWED(shop, "/shop/cart"), "the shorter")
+
+TESTKIT.SUITE("values")
+TESTKIT.EQ(HARVEST.NUMBER$("4,99 EUR"), "4.99", "a German price")
+TESTKIT.EQ(HARVEST.NUMBER$("1.234,50 EUR"), "1234.50", _
+    "with thousands")
+TESTKIT.EQ(HARVEST.NUMBER$("$1,234.50"), "1234.50", "an English one")
+TESTKIT.EQ(HARVEST.NUMBER$("1,234 pieces"), "1234", _
+    "three digits after a lone separator are thousands")
+TESTKIT.EQ(HARVEST.NUMBER$("sold out"), "", "no number")
+DIM html$ = "<div><span class=price> 4,99  EUR</span>" + _
+    "<a href=/x.pdf>sheet</a></div>"
+TESTKIT.EQ(HARVEST.VALUE$(html$, "span.price", ""), "4,99 EUR", _
+    "the text of an element")
+TESTKIT.EQ(HARVEST.VALUE$(html$, "a", "href"), "/x.pdf", _
+    "or one of its attributes")
+TESTKIT.EQ(HARVEST.CSVLINE$(["a", "b,c", "say " + CHR$(34) + "hi"]), _
+    "a," + CHR$(34) + "b,c" + CHR$(34) + "," + CHR$(34) + "say " + _
+    CHR$(34) + CHR$(34) + "hi" + CHR$(34), "CSV quoting")
+
+TESTKIT.SUITE("a polite run")
+JDWEB.GET("/robots.txt", Robots@)
+JDWEB.GET("/prices/paper.html", Paper@)
+JDWEB.GET("/prices/toner.html", Toner@)
+JDWEB.GET("/private/secret.html", Secret@)
+JDWEB.GET("/gone.html", Gone@)
+DIM hex$ = CODEC.SHA256$(folder$)
+DIM port = 0
+DIM i = 0
+FOR i = 0 TO 3
+    port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+NEXT i
+port = 20000 + port MOD 30000
+DIM last_port = port + 50
+DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+    port = port + 1
+LOOP
+DIM site$ = "http://127.0.0.1:" + STR$(port)
+DIM targets = []
+PUSH(targets, Target("paper", site$ + "/prices/paper.html", _
+    "span.price", ""))
+PUSH(targets, Target("paper sheet", site$ + "/prices/paper.html", _
+    "a.sheet", "href"))
+PUSH(targets, Target("toner", site$ + "/prices/toner.html", _
+    "td.price", ""))
+PUSH(targets, Target("secret", site$ + "/private/secret.html", _
+    "p.price", ""))
+PUSH(targets, Target("gone", site$ + "/gone.html", "p", ""))
+DIM opts = {"agent": "AutomateWork harvester", "delay": 0.1}
+opts{"cache"} = cache_file$
+opts{"retry_ms"} = 50
+DIM h = HARVEST.NEW(opts)
+DIM rows = HARVEST.RUN(h, targets, "2026-10-05 07:00:00")
+DIM r0 = rows[0]
+DIM r1 = rows[1]
+DIM r2 = rows[2]
+DIM r3 = rows[3]
+DIM r4 = rows[4]
+TESTKIT.EQ(r0[2], "4,99 €", "the price as shown")
+TESTKIT.EQ(r0[3], "4.99", "and as a number")
+TESTKIT.EQ(r1[2], "/sheets/paper.pdf", "an attribute")
+TESTKIT.EQ(r2[3], "1234.50", "a busy server is tried again")
+TESTKIT.ISTRUE(INSTR(r3[5], "robots.txt") >= 0, _
+    "a private path is left alone")
+TESTKIT.ISTRUE(INSTR(r4[5], "404") >= 0, "a missing page is reported")
+TESTKIT.EQ(h{"requests"}, 5, "one request per page and robots.txt")
+DIM gap = 100000.0
+FOR i = 1 TO LEN(gTimes) - 1
+    DIM step_ms = gTimes[i] - gTimes[i - 1]
+    IF step_ms < gap THEN gap = step_ms
+NEXT i
+TESTKIT.ISTRUE(gap >= 280, "the crawl delay is kept between requests")
+
+TESTKIT.SUITE("the cache")
+HARVEST.SAVE(h, cache_file$)
+TESTKIT.ISTRUE(FILE.EXISTS(cache_file$), "pages are kept in a file")
+DIM again = HARVEST.NEW(opts)
+rows = HARVEST.RUN(again, targets, "2026-10-05 08:00:00")
+DIM a0 = rows[0]
+TESTKIT.EQ(a0[3], "4.99", "a kept page gives the same value")
+TESTKIT.EQ(again{"requests"}, 2, _
+    "only robots.txt and the missing page are asked again")
+
+HTTP.SERVER.STOP()
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

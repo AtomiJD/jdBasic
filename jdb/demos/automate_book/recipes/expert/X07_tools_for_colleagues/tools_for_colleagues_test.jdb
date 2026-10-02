@@ -1,0 +1,125 @@
+' SHIP: a small program is compiled, stamped and released twice; a copy
+' is brought up from nothing to 1.0.0 and then to 1.1.0, from a folder
+' and from a local web server, and a release with a changed file list is
+' refused. Everything happens in a temporary folder.
+
+IMPORT TESTKIT, SHIP, JDWEB
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM root$ = MKTEMP$("shiptest")
+MKDIR root$
+DIM src$ = PATH.JOIN$(root$, "src")
+DIM release$ = PATH.JOIN$(root$, "release")
+DIM builds$ = PATH.JOIN$(root$, "builds")
+DIM target$ = PATH.JOIN$(root$, "colleague", "week_sheet")
+MKDIR src$
+DIM program$ = PATH.JOIN$(src$, "week_sheet.jdb")
+
+DIM jdbasic$ = PATH.NORMALIZE$("../../../build/jdBasic.exe")
+IF NOT FILE.EXISTS(jdbasic$) THEN jdbasic$ = ""
+
+FUNC Release(version$)
+    TXTWRITER program$, "PRINT " + Q$ + "week sheet " + version$ + Q$ + LF$
+    DIM stage$ = PATH.JOIN$(builds$, "week_sheet-" + version$)
+    DIM b = SHIP.BUILD(jdbasic$, program$, stage$)
+    IF NOT b{"ok"} THEN THROW b{"output"}
+    SHIP.STAMP(stage$, "week_sheet", version$, NOW())
+    RETURN SHIP.PACKAGE(stage$, release$, "week_sheet", version$)
+ENDFUNC
+
+FUNC ReleaseAgain(x)
+    DIM stage$ = PATH.JOIN$(builds$, "week_sheet-1.0.0")
+    RETURN SHIP.PACKAGE(stage$, release$, "week_sheet", "1.0.0")
+ENDFUNC
+
+FUNC Ran$(exe$)
+    DIM r = OS.EXEC(exe$, [])
+    RETURN TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
+ENDFUNC
+
+TESTKIT.SUITE("names and versions")
+TESTKIT.EQ(SHIP.NAME$("C:/x/week_sheet.jdb"), "week_sheet", "the tool name")
+TESTKIT.ISTRUE(SHIP.VALID_VERSION("1.2.0"), "1.2.0 is a version")
+TESTKIT.ISFALSE(SHIP.VALID_VERSION("1.2"), "1.2 is not")
+TESTKIT.ISTRUE(SHIP.NEWER("", "1.0.0"), "anything beats nothing")
+TESTKIT.ISTRUE(SHIP.NEWER("1.9.0", "1.10.0"), "1.10 is newer than 1.9")
+TESTKIT.ISFALSE(SHIP.NEWER("1.1.0", "1.1.0"), "the same is not newer")
+
+IF jdbasic$ = "" THEN
+    TESTKIT.SKIP("no jdbasic next to the book, nothing compiled")
+ELSE
+    TESTKIT.SUITE("build and release")
+    DIM r1 = Release("1.0.0")
+    DIM stage1$ = PATH.JOIN$(builds$, "week_sheet-1.0.0")
+    TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(stage1$, "week_sheet.exe")), _
+        "the program is compiled")
+    TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(stage1$, "jdbrt.dll")), _
+        "with the runtime next to it")
+    TESTKIT.EQ(SHIP.VERSION$(stage1$), "1.0.0", "and stamped")
+    DIM rel_exe$ = PATH.JOIN$(r1{"folder"}, "week_sheet.exe")
+    TESTKIT.ISTRUE(FILE.EXISTS(rel_exe$), "the release has the program")
+    TESTKIT.ISTRUE(r1{"files"} >= 3, "and the files it needs")
+    TESTKIT.EQ(SHIP.LATEST(release$){"version"}, "1.0.0", "latest names it")
+    TESTKIT.THROWS(ReleaseAgain@, 0, "a version is released only once")
+    TXTWRITER program$, "PRINT (" + LF$
+    DIM bad = SHIP.BUILD(jdbasic$, program$, PATH.JOIN$(builds$, "bad"))
+    TESTKIT.ISFALSE(bad{"ok"}, "a program that does not compile is no build")
+
+    TESTKIT.SUITE("update from a folder")
+    DIM plan = SHIP.UPDATE(release$, target$, TRUE)
+    TESTKIT.EQ(plan[0], "would update week_sheet from nothing to 1.0.0", _
+        "the dry run says what it would do")
+    TESTKIT.ISFALSE(FILE.ISDIR(target$), "and does nothing")
+    DIM done = SHIP.UPDATE(release$, target$, FALSE)
+    TESTKIT.ISTRUE(STARTSWITH(done[0], "updated week_sheet"), "installed")
+    DIM exe$ = PATH.JOIN$(target$, "week_sheet.exe")
+    TESTKIT.EQ(Ran$(exe$), "week sheet 1.0.0", "and the copy runs")
+    DIM r2 = Release("1.1.0")
+    DIM again = SHIP.UPDATE(release$, target$, FALSE)
+    TESTKIT.ISTRUE(INSTR(again[0], "from 1.0.0 to 1.1.0") >= 0, "updated")
+    TESTKIT.EQ(Ran$(exe$), "week sheet 1.1.0", "to the new version")
+    DIM kept$ = PATH.JOIN$(target$, "previous")
+    TESTKIT.EQ(SHIP.VERSION$(kept$), "1.0.0", "the old one is kept")
+    DIM same = SHIP.UPDATE(release$, target$, FALSE)
+    TESTKIT.EQ(same[0], "week_sheet 1.1.0 is up to date", "nothing twice")
+
+    TESTKIT.SUITE("update over the web")
+    JDWEB.ASSETS("/tools", release$)
+    JDWEB.MOUNT()
+    DIM hex$ = CODEC.SHA256$(root$)
+    DIM port = 0
+    DIM i = 0
+    FOR i = 0 TO 3
+        port = port * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+    NEXT i
+    port = 20000 + port MOD 30000
+    DIM last_port = port + 50
+    DO WHILE NOT JDWEB.LISTEN(port) ANDALSO port < last_port
+        port = port + 1
+    LOOP
+    DIM url$ = "http://127.0.0.1:" + STR$(port) + "/tools"
+    TESTKIT.EQ(SHIP.LATEST(url$){"version"}, "1.1.0", "latest from the web")
+    DIM web_target$ = PATH.JOIN$(root$, "laptop", "week_sheet")
+    DIM web = SHIP.UPDATE(url$, web_target$, FALSE)
+    TESTKIT.ISTRUE(INSTR(web[0], "to 1.1.0") >= 0, "installed over the web")
+    DIM web_exe$ = PATH.JOIN$(web_target$, "week_sheet.exe")
+    TESTKIT.EQ(Ran$(web_exe$), "week sheet 1.1.0", "and it runs")
+    HTTP.SERVER.STOP()
+
+    TESTKIT.SUITE("a wrong checksum")
+    DIM list$ = PATH.JOIN$(r2{"folder"}, "files.txt")
+    TXTWRITER list$, TXTREADER$(list$) + "0000  extra.txt" + LF$
+    DIM fresh$ = PATH.JOIN$(root$, "fresh")
+    DIM refused = FALSE
+    TRY
+        DIM x = SHIP.UPDATE(release$, fresh$, FALSE)
+    CATCH
+        refused = INSTR(ERRMSG$, "checksum") >= 0
+    ENDTRY
+    TESTKIT.ISTRUE(refused, "is refused")
+    TESTKIT.ISFALSE(FILE.ISDIR(fresh$), "and installs nothing")
+ENDIF
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", root$])
+TESTKIT.REPORT()

@@ -1,0 +1,22 @@
+# What the setup wizard knows about this recipe.
+
+id = "X07"
+name = "Tools for Colleagues"
+program = "tools_for_colleagues.jdb"
+summary = "Compiles a recipe into a program, releases it, updates colleagues' copies"
+minutes_per_week = 45
+schedule = "manual"
+section = "tools_for_colleagues"
+modules = ["ship.jdb"]
+
+[[setting]]
+key = "release"
+label = "Release folder or web address colleagues update from"
+kind = "text"
+default = "~/Documents/AutomateWork/releases"
+
+[[setting]]
+key = "builds"
+label = "Folder for the builds"
+kind = "folder"
+default = "~/Documents/AutomateWork/builds"

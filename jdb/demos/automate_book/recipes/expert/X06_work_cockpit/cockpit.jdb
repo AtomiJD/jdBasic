@@ -1,0 +1,217 @@
+' cockpit.jdb: the work of the Work Cockpit. It finds the automations
+' installed in the work folder, starts one of them, keeps a log of
+' every start, and reads from that log when each one ran last and how
+' it ended.
+'
+'   IMPORT COCKPIT
+'   DIM list = COCKPIT.INSTALLED("C:/Users/lena/AutomateWork", "X06")
+'   DIM r = COCKPIT.RUN("jdbasic", list[0], conf$, TRUE, 1)
+'   DIM line$ = COCKPIT.LOG_LINE$(NOW(), list[0], TRUE, r)
+'   COCKPIT.APPEND_LOG(log_file$, line$)
+
+EXPORT MODULE COCKPIT
+
+IMPORT CONF
+
+DIM gTab$ = CHR$(9)
+DIM gLF$ = CHR$(10)
+
+FUNC Text$(m, key$)
+    IF NOT MAP.EXISTS(m, key$) THEN RETURN ""
+    DIM v$ = "" + m{key$}
+    RETURN v$
+ENDFUNC
+
+' The recipes in work$/recipes, sorted by id, as maps with "id",
+' "name", "summary" and "program" (its full path). The recipe with the
+' id own$ is left out.
+EXPORT FUNC INSTALLED(work$, own$)
+    DIM out = []
+    DIM root$ = PATH.JOIN$(work$, "recipes")
+    IF NOT FILE.ISDIR(root$) THEN RETURN out
+    DIM names = SORT(DIR$(PATH.JOIN$(root$, "*")))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM folder_name$ = names[k]
+        DIM dir$ = PATH.JOIN$(root$, folder_name$)
+        DIM toml$ = PATH.JOIN$(dir$, "recipe.toml")
+        IF FILE.EXISTS(toml$) THEN
+            DIM r = CONF.TOML(toml$)
+            DIM id$ = Text$(r, "id")
+            IF id$ <> own$ ANDALSO Text$(r, "program") <> "" THEN
+                DIM e AS MAP
+                e{"id"} = id$
+                e{"name"} = Text$(r, "name")
+                e{"summary"} = Text$(r, "summary")
+                e{"program"} = PATH.JOIN$(dir$, Text$(r, "program"))
+                PUSH(out, e)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The arguments that start a recipe with the settings file conf$.
+EXPORT FUNC RUN_ARGS(entry, conf$, dry_run)
+    DIM args = [entry{"program"}, "--config", conf$]
+    IF dry_run THEN PUSH(args, "--dry-run")
+    RETURN args
+ENDFUNC
+
+' A program's output without colour codes and carriage returns.
+EXPORT FUNC CLEAN$(output$)
+    DIM t$ = REGEX.REPLACE(CHR$(27) + "[[0-9;]*m", output$, "")
+    t$ = REGEX.REPLACE("Error #[0-9]+: ", t$, "")
+    RETURN TRIM$(REPLACE$(t$, CHR$(13), ""))
+ENDFUNC
+
+' The last line of a program's output that is not empty.
+EXPORT FUNC LAST_LINE$(output$)
+    DIM lines = SPLIT(CLEAN$(output$), gLF$)
+    IF LEN(lines) = 0 THEN RETURN ""
+    DIM last$ = TRIM$(lines[LEN(lines) - 1])
+    RETURN last$
+ENDFUNC
+
+' Starts a recipe and waits for it. A run that fails is started again
+' up to tries times, a second apart. Answers "ok", "exit", "output"
+' and "tries", the number of starts.
+EXPORT FUNC RUN(jdbasic$, entry, conf$, dry_run, tries)
+    DIM args = RUN_ARGS(entry, conf$, dry_run)
+    DIM out AS MAP
+    DIM n = 0
+    DO
+        n = n + 1
+        DIM r = OS.EXEC(jdbasic$, args)
+        out{"exit"} = r{"EXIT_CODE"}
+        out{"output"} = r{"OUTPUT"}
+        IF r{"EXIT_CODE"} = 0 ORELSE n >= tries THEN EXITDO
+        SLEEP 1000
+    LOOP
+    out{"ok"} = out{"exit"} = 0
+    out{"tries"} = n
+    RETURN out
+ENDFUNC
+
+' One line of the log: time, id, run or dry, exit code and the last
+' line of the output, separated by tabs.
+EXPORT FUNC LOG_LINE$(when, entry, dry_run, result)
+    DIM mode$ = "run"
+    IF dry_run THEN mode$ = "dry"
+    DIM msg$ = REPLACE$(LAST_LINE$(result{"output"}), gTab$, " ")
+    DIM t$ = FORMAT_DATE(when, "%Y-%m-%d %H:%M")
+    DIM code$ = STR$(result{"exit"})
+    DIM parts = [t$, entry{"id"}, mode$, code$, msg$]
+    RETURN JOIN(parts, gTab$)
+ENDFUNC
+
+' Adds a line to the log. A log that another program holds open is
+' tried again three times before it counts as an error.
+EXPORT SUB APPEND_LOG(log_file$, line$)
+    MKDIR PATH.DIRNAME$(log_file$)
+    DIM tries = 0
+    DO
+        tries = tries + 1
+        TRY
+            TXTWRITER log_file$, line$ + gLF$, TRUE
+            EXITDO
+        CATCH
+            DIM why$ = "Cannot write " + log_file$ + ": " + ERRMSG$
+            IF tries >= 3 THEN THROW why$
+            SLEEP 200
+        ENDTRY
+    LOOP
+ENDSUB
+
+' The log as maps with "time", "id", "mode", "exit" and "message";
+' lines that do not have five parts are skipped.
+EXPORT FUNC READ_LOG(log_file$)
+    DIM out = []
+    IF NOT FILE.EXISTS(log_file$) THEN RETURN out
+    DIM text$ = REPLACE$(TXTREADER$(log_file$), CHR$(13), "")
+    DIM lines = SPLIT(text$, gLF$)
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM parts = SPLIT(lines[k], gTab$)
+        IF LEN(parts) = 5 THEN
+            DIM row AS MAP
+            row{"time"} = parts[0]
+            row{"id"} = parts[1]
+            row{"mode"} = parts[2]
+            row{"exit"} = CINT(VAL(parts[3]))
+            row{"message"} = parts[4]
+            PUSH(out, row)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The last row of the log for an id; an empty map when it never ran.
+EXPORT FUNC LAST(rows, id$)
+    DIM found AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row = rows[k]
+        IF row{"id"} = id$ THEN found = row
+    NEXT k
+    RETURN found
+ENDFUNC
+
+' How the last run ended, in words for the window.
+EXPORT FUNC STATUS$(last)
+    IF NOT MAP.EXISTS(last, "id") THEN RETURN "not run yet"
+    DIM when$ = last{"time"}
+    DIM how$ = "ok"
+    IF last{"mode"} = "dry" THEN how$ = "dry run ok"
+    IF last{"exit"} <> 0 THEN
+        how$ = "failed (exit " + STR$(last{"exit"}) + ")"
+        IF last{"mode"} = "dry" THEN how$ = "dry run " + how$
+    ENDIF
+    DIM s$ = how$ + ", " + RIGHT$(when$, 11)
+    DIM msg$ = last{"message"}
+    IF LEN(msg$) > 32 THEN msg$ = LEFT$(msg$, 30) + "..."
+    IF last{"exit"} <> 0 ANDALSO msg$ <> "" THEN s$ = s$ + ": " + msg$
+    RETURN s$
+ENDFUNC
+
+FUNC Recipe$(dir$, id$, name$, program$, code)
+    MKDIR dir$
+    DIM q$ = CHR$(34)
+    DIM t$ = "id = " + q$ + id$ + q$ + gLF$
+    t$ = t$ + "name = " + q$ + name$ + q$ + gLF$
+    t$ = t$ + "program = " + q$ + program$ + q$ + gLF$
+    TXTWRITER PATH.JOIN$(dir$, "recipe.toml"), t$
+    TXTWRITER PATH.JOIN$(dir$, program$), JOIN(code, gLF$) + gLF$
+    RETURN dir$
+ENDFUNC
+
+' A made-up work folder for trying the cockpit, in where$ or in a
+' temporary folder: a Downloads Butler that only answers a dry run,
+' a One-Click Backup that always fails, and the cockpit itself.
+' Answers the folder; config/work.conf names jdbasic$.
+EXPORT FUNC SAMPLE_WORK$(jdbasic$, where$)
+    DIM work$ = where$
+    IF work$ = "" THEN work$ = MKTEMP$("cockpit")
+    MKDIR work$
+    DIM q$ = CHR$(34)
+    DIM root$ = PATH.JOIN$(work$, "recipes")
+    DIM dry$ = q$ + "--dry-run" + q$
+    DIM sorter = ["IF " + dry$ + " IN OS.ARGS() THEN", _
+        "    PRINT " + q$ + "would sort 3 files" + q$, "ELSE", _
+        "    THROW " + q$ + "only a dry run here" + q$, "ENDIF"]
+    DIM fails = ["PRINT " + q$ + "copying" + q$, _
+        "THROW " + q$ + "the share S: is not reachable" + q$]
+    DIM d$ = Recipe$(PATH.JOIN$(root$, "E01_butler"), "E01", _
+        "Downloads Butler", "downloads_butler.jdb", sorter)
+    d$ = Recipe$(PATH.JOIN$(root$, "E04_one_click_backup"), "E04", _
+        "One-Click Backup", "one_click_backup.jdb", fails)
+    d$ = Recipe$(PATH.JOIN$(root$, "X06_work_cockpit"), "X06", _
+        "Work Cockpit", "work_cockpit.jdb", ["PRINT 0"])
+    MKDIR PATH.JOIN$(work$, "config")
+    DIM w$ = REPLACE$(work$, "\", "/")
+    DIM j$ = REPLACE$(jdbasic$, "\", "/")
+    DIM c$ = "[paths]" + gLF$ + "work = " + q$ + w$ + q$ + gLF$
+    c$ = c$ + "jdbasic = " + q$ + j$ + q$ + gLF$
+    TXTWRITER PATH.JOIN$(work$, "config", "work.conf"), c$
+    RETURN work$
+ENDFUNC

@@ -1,0 +1,293 @@
+' finder.jdb: the work of Find Anything. It lists the documents of a
+' few folders, reads their text, keeps a search index up to date by
+' the time each file last changed, and answers a search with a short
+' piece of text around the words it found.
+'
+'   IMPORT FINDER
+'   DIM state = FINDER.OPEN("C:/Users/lena/AutomateWork/find", "en")
+'   DIM files = FINDER.SCAN(["C:/Users/lena/Reports"], ["docx"])
+'   DIM done = FINDER.UPDATE(state, FINDER.PLAN(state, files))
+'   FINDER.SAVE(state)
+'   DIM hits = FINDER.FIND(state, "travel policy", 10)
+
+EXPORT MODULE FINDER
+
+IMPORT SEARCH, DOCX, HTMLDOM, JDWEB
+
+DIM gState AS MAP
+
+' Every file under folder$ whose extension is one of kinds, as maps
+' with "path" (with forward slashes), "mtime" and "size". Hidden files
+' and the lock files Office leaves next to an open document are left
+' out.
+SUB Walk(folder$, kinds, out)
+    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        DIM full$ = PATH.JOIN$(folder$, name$)
+        DIM info = FILE.STAT(full$)
+        IF NOT info{"hidden"} ANDALSO LEFT$(name$, 2) <> "~$" THEN
+            IF info{"is_dir"} THEN
+                Walk(full$, kinds, out)
+            ELSE
+                DIM ext$ = LCASE$(MID$(PATH.EXT$(name$), 1, 10))
+                IF ext$ IN kinds THEN
+                    DIM f AS MAP
+                    f{"path"} = REPLACE$(full$, "\", "/")
+                    f{"mtime"} = info{"mtime"}
+                    f{"size"} = info{"size"}
+                    PUSH(out, f)
+                ENDIF
+            ENDIF
+        ENDIF
+    NEXT k
+ENDSUB
+
+' The documents of all folders; a missing folder adds none.
+EXPORT FUNC SCAN(folders, kinds)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(folders) - 1
+        DIM folder$ = folders[k]
+        IF FILE.ISDIR(folder$) THEN Walk(folder$, kinds, out)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The text of one document: Word paragraphs and table cells, the text
+' of a PDF, or the file itself for plain text.
+EXPORT FUNC TEXT$(path$)
+    DIM ext$ = LCASE$(PATH.EXT$(path$))
+    IF ext$ = ".pdf" THEN RETURN PDF.TEXT$(path$)
+    IF ext$ <> ".docx" THEN RETURN TXTREADER$(path$)
+    DIM got = DOCX.READ(path$)
+    DIM parts = got{"paragraphs"}
+    DIM tables = got{"tables"}
+    DIM t = 0
+    DIM r = 0
+    FOR t = 0 TO LEN(tables) - 1
+        DIM rows = tables[t]
+        FOR r = 0 TO LEN(rows) - 1
+            DIM cells = rows[r]
+            PUSH(parts, JOIN(cells, " "))
+        NEXT r
+    NEXT t
+    RETURN JOIN(parts, CHR$(10))
+ENDFUNC
+
+' The words of a file name, so "travel_policy-2026.docx" is found as
+' travel, policy and 2026.
+FUNC NameWords$(path$)
+    DIM base$ = PATH.BASENAME$(path$)
+    base$ = LEFT$(base$, LEN(base$) - LEN(PATH.EXT$(base$)))
+    RETURN REGEX.REPLACE("[_.\-]+", base$, " ")
+ENDFUNC
+
+' The index and its catalog from dir$, or new empty ones. lang$ is the
+' language for word endings: en, de or none.
+EXPORT FUNC OPEN(dir$, lang$)
+    DIM state AS MAP
+    state{"dir"} = dir$
+    DIM ix_path$ = PATH.JOIN$(dir$, "index.txt")
+    DIM cat_path$ = PATH.JOIN$(dir$, "catalog.json")
+    IF FILE.EXISTS(ix_path$) ANDALSO FILE.EXISTS(cat_path$) THEN
+        state{"ix"} = SEARCH.READFILE(ix_path$)
+        state{"catalog"} = JSON.PARSE$(TXTREADER$(cat_path$))
+    ELSE
+        DIM opts = {"lang": lang$, "fields": {"name": 2, "body": 1}}
+        state{"ix"} = SEARCH.INDEX(opts)
+        DIM empty AS MAP
+        state{"catalog"} = empty
+    ENDIF
+    RETURN state
+ENDFUNC
+
+' What an update has to do: the files to read ("add" and "change") and
+' the paths to drop from the index ("remove").
+EXPORT FUNC PLAN(state, files)
+    DIM catalog = state{"catalog"}
+    DIM seen AS MAP
+    DIM add = []
+    DIM change = []
+    DIM gone = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM f = files[k]
+        DIM p$ = f{"path"}
+        seen{p$} = TRUE
+        IF NOT MAP.EXISTS(catalog, p$) THEN
+            PUSH(add, f)
+        ELSE
+            DIM had = catalog{p$}
+            DIM old_t$ = had{"mtime"}
+            DIM new_t$ = f{"mtime"}
+            DIM old_n = had{"size"}
+            DIM new_n = f{"size"}
+            DIM moved = old_t$ <> new_t$ ORELSE old_n <> new_n
+            IF moved THEN PUSH(change, f)
+        ENDIF
+    NEXT k
+    DIM known = MAP.KEYS(catalog)
+    FOR k = 0 TO LEN(known) - 1
+        DIM old$ = known[k]
+        IF NOT MAP.EXISTS(seen, old$) THEN PUSH(gone, old$)
+    NEXT k
+    RETURN {"add": add, "change": change, "remove": gone}
+ENDFUNC
+
+' Reads one file into the index and the catalog. A file that cannot be
+' read is kept in the catalog with its error and is tried again
+' after it changes. Answers "" or the error.
+FUNC ReadOne$(state, f)
+    DIM catalog = state{"catalog"}
+    DIM p$ = f{"path"}
+    DIM entry AS MAP
+    entry{"mtime"} = f{"mtime"}
+    entry{"size"} = f{"size"}
+    entry{"text"} = ""
+    DIM problem$ = ""
+    TRY
+        DIM text$ = TEXT$(p$)
+        DIM fields = {"name": NameWords$(p$), "body": text$}
+        SEARCH.ADD(state{"ix"}, p$, fields)
+        entry{"text"} = LEFT$(text$, 4000)
+    CATCH
+        problem$ = ERRMSG$
+        DIM ignored = SEARCH.REMOVE(state{"ix"}, p$)
+    ENDTRY
+    entry{"error"} = problem$
+    catalog{p$} = entry
+    state{"catalog"} = catalog
+    RETURN problem$
+ENDFUNC
+
+' Carries a plan out. Answers "read", "removed" and "failed", the last
+' a list of "path: reason" lines.
+EXPORT FUNC UPDATE(state, plan)
+    DIM failed = []
+    DIM n = 0
+    DIM k = 0
+    DIM lists = [plan{"add"}, plan{"change"}]
+    DIM j = 0
+    FOR j = 0 TO 1
+        DIM todo = lists[j]
+        FOR k = 0 TO LEN(todo) - 1
+            DIM f = todo[k]
+            DIM problem$ = ReadOne$(state, f)
+            IF problem$ = "" THEN
+                n = n + 1
+            ELSE
+                PUSH(failed, f{"path"} + ": " + problem$)
+            ENDIF
+        NEXT k
+    NEXT j
+    DIM catalog = state{"catalog"}
+    DIM gone = plan{"remove"}
+    FOR k = 0 TO LEN(gone) - 1
+        DIM old$ = gone[k]
+        DIM ignored = SEARCH.REMOVE(state{"ix"}, old$)
+        MAP.DELETE(catalog, old$)
+    NEXT k
+    state{"catalog"} = catalog
+    RETURN {"read": n, "removed": LEN(gone), "failed": failed}
+ENDFUNC
+
+' Writes the index and the catalog into the state's folder.
+EXPORT SUB SAVE(state)
+    DIM dir$ = state{"dir"}
+    MKDIR dir$
+    SEARCH.WRITEFILE(state{"ix"}, PATH.JOIN$(dir$, "index.txt"))
+    DIM cat_path$ = PATH.JOIN$(dir$, "catalog.json")
+    TXTWRITER cat_path$, JSON.STRINGIFY$(state{"catalog"})
+ENDSUB
+
+' About 200 characters of text around the first query word found in
+' it, or the start of the text when none is.
+EXPORT FUNC SNIPPET$(text$, query$)
+    DIM flat$ = TRIM$(REGEX.REPLACE("\s+", text$, " "))
+    DIM low$ = LCASE$(flat$)
+    DIM words = SPLIT(LCASE$(REPLACE$(query$, CHR$(34), " ")), " ")
+    DIM at = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM w$ = TRIM$(words[k])
+        IF LEN(w$) > 5 THEN w$ = LEFT$(w$, LEN(w$) - 2)
+        IF w$ <> "" ANDALSO at < 0 THEN at = INSTR(low$, w$)
+    NEXT k
+    DIM from = 0
+    IF at > 60 THEN from = at - 60
+    DIM piece$ = MID$(flat$, from, 200)
+    IF from > 0 THEN piece$ = "... " + piece$
+    IF from + 200 < LEN(flat$) THEN piece$ = piece$ + " ..."
+    RETURN piece$
+ENDFUNC
+
+' The best matches of a query, as maps with "path", "name", "score"
+' and "snippet". A misspelt word finds the closest indexed one.
+EXPORT FUNC FIND(state, query$, limit_n)
+    DIM catalog = state{"catalog"}
+    DIM opts = {"limit": limit_n, "fuzzy": 1}
+    DIM hits = SEARCH.QUERY(state{"ix"}, query$, opts)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(hits) - 1
+        DIM hit = hits[k]
+        DIM p$ = hit{"key"}
+        DIM entry = catalog{p$}
+        DIM row AS MAP
+        row{"path"} = p$
+        row{"name"} = PATH.BASENAME$(p$)
+        row{"score"} = hit{"score"}
+        row{"snippet"} = SNIPPET$(entry{"text"}, query$)
+        PUSH(out, row)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The search page: a form, and the hits of query$ when there is one.
+EXPORT FUNC PAGE$(state, query$)
+    DIM q$ = HTMLDOM.ESCAPE$(query$)
+    DIM n = SEARCH.DOCCOUNT(state{"ix"})
+    DIM html$ = "<!doctype html><html><head><meta charset=utf-8>"
+    html$ = html$ + "<title>Find Anything</title><style>"
+    html$ = html$ + "body{font-family:sans-serif;max-width:46em;"
+    html$ = html$ + "margin:2em auto;padding:0 1em}"
+    html$ = html$ + "input{font-size:1.2em;width:70%}"
+    html$ = html$ + ".hit{margin:1.2em 0}"
+    html$ = html$ + ".path{color:#555;font-size:.85em}"
+    html$ = html$ + "</style></head><body><h1>Find Anything</h1>"
+    html$ = html$ + "<form><input name=q autofocus value=" + CHR$(34)
+    html$ = html$ + q$ + CHR$(34) + "> <button>Search</button></form>"
+    html$ = html$ + "<p>" + STR$(n) + " documents in the index.</p>"
+    IF TRIM$(query$) <> "" THEN
+        DIM hits = FIND(state, query$, 20)
+        IF LEN(hits) = 0 THEN html$ = html$ + "<p>Nothing found.</p>"
+        DIM k = 0
+        FOR k = 0 TO LEN(hits) - 1
+            DIM h = hits[k]
+            html$ = html$ + "<div class=hit><b>"
+            html$ = html$ + HTMLDOM.ESCAPE$(h{"name"}) + "</b><br>"
+            html$ = html$ + HTMLDOM.ESCAPE$(h{"snippet"})
+            html$ = html$ + "<div class=path>"
+            html$ = html$ + HTMLDOM.ESCAPE$(h{"path"})
+            html$ = html$ + "</div></div>"
+        NEXT k
+    ENDIF
+    RETURN html$ + "</body></html>"
+ENDFUNC
+
+FUNC ShowPage(request)
+    RETURN PAGE$(gState, JDWEB.PARAM$(request, "q"))
+ENDFUNC
+
+FUNC ShowHits(request)
+    RETURN FIND(gState, JDWEB.PARAM$(request, "q"), 20)
+ENDFUNC
+
+' Registers the search page at / and the hits as JSON at /hits.json.
+EXPORT SUB MOUNT(state)
+    gState = state
+    JDWEB.GET("/", ShowPage@)
+    JDWEB.GET("/hits.json", ShowHits@)
+ENDSUB

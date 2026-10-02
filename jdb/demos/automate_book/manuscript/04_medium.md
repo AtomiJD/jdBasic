@@ -48,12 +48,22 @@ instead:
   goes out.
 - When you run the recipe yourself with `--send`, it asks for your
   mail password, sends what is in the outbox, and moves every sent
-  message into `outbox/sent`.
+  message into `outbox/sent`. The prompt shows a star for each key,
+  so nobody reads the password over your shoulder.
 
 The password lives in memory for the few seconds the sending takes and
-is never written down. If your company does not allow programs to send
-mail with your account at all, the outbox alone still saves most of the
-work: open each file and press *Send* in your mail program.
+is never written down. If you would rather not type it every time, you
+can keep it in the Windows Credential Manager, where Windows stores it
+encrypted for your account: add a generic credential named
+`AutomateWork/mail` with your mail user name and password. The recipes
+look there first and only ask when they find nothing. Recipe X14 in
+Chapter 5 shows how to do the same from the command prompt. A password
+with letters such as ä or é is safer there too, because the console
+prompt reads plain keys only.
+
+If your company does not allow programs to send mail with your account
+at all, the outbox alone still saves most of the work: open each file
+and press *Send* in your mail program.
 
 The mail server settings go into `work.conf` once, in the part that
 belongs to you:

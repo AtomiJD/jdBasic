@@ -1,0 +1,161 @@
+' trail.jdb: the work of Secrets and Audit Trail. It names the secrets
+' the recipes use, finds passwords written into scripts and settings,
+' and sums up what the audit trail says the jobs did.
+'
+'   IMPORT TRAIL
+'   DIM found = TRAIL.SCAN("C:/Users/lena/Documents/AutomateWork")
+'   DIM week = TRAIL.SUMMARY(AUDIT.ENTRIES(path$), "2026-09-25")
+'
+' Every secret lives in the Credential Manager under "AutomateWork/"
+' and its name, such as AutomateWork/mail.
+
+EXPORT MODULE TRAIL
+
+IMPORT SECRET
+
+CONST PREFIX$ = "AutomateWork/"
+
+' The Credential Manager name of a secret.
+EXPORT FUNC TARGET$(name$)
+    RETURN PREFIX$ + name$
+ENDFUNC
+
+' The secrets of the book's recipes and the extra names given.
+EXPORT FUNC KNOWN(extra)
+    DIM out = ["mail", "audit-key"]
+    DIM k = 0
+    FOR k = 0 TO LEN(extra) - 1
+        DIM name$ = extra[k]
+        IF NOT (name$ IN out) THEN PUSH(out, name$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A new random signing key.
+EXPORT FUNC NEW_KEY$()
+    RETURN SECRET.TOKEN$(32)
+ENDFUNC
+
+' The line with every quoted value replaced by stars.
+EXPORT FUNC MASK$(line$)
+    DIM q$ = CHR$(34)
+    DIM quoted$ = q$ + "[^" + q$ + "]+" + q$
+    RETURN REGEX.REPLACE(quoted$, line$, q$ + "****" + q$)
+ENDFUNC
+
+' TRUE when a line sets a password, secret, token or key to a value.
+EXPORT FUNC LEAKY(line$)
+    DIM q$ = CHR$(34)
+    DIM names$ = "(?:password|passwd|pwd|pass|secret|token|api_?key)"
+    DIM value$ = q$ + "[^" + q$ + "]+" + q$
+    DIM pat$ = names$ + "[a-z_$]*\s*[=:]\s*" + value$
+    DIM hits = REGEX.FINDALL(pat$, LCASE$(line$))
+    RETURN LEN(hits) > 0
+ENDFUNC
+
+' The lines of a text that look like a written down secret, as maps
+' with "file", "line" and the masked "text".
+EXPORT FUNC LEAKS(text$, file$)
+    DIM out = []
+    DIM lines = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM line$ = lines[k]
+        IF LEAKY(line$) THEN
+            DIM hit AS MAP
+            hit{"file"} = file$
+            hit{"line"} = k + 1
+            hit{"text"} = TRIM$(MASK$(line$))
+            PUSH(out, hit)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' TRUE for the kinds of files where people write passwords down.
+FUNC Readable(name$)
+    DIM ext$ = LCASE$(PATH.EXT$(name$))
+    DIM kinds = [".jdb", ".toml", ".conf", ".ini", ".json", ".txt"]
+    kinds = APPEND(kinds, [".bat", ".cmd", ".ps1"])
+    RETURN ext$ IN kinds
+ENDFUNC
+
+FUNC Walk(folder$, out)
+    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM name$ = names[k]
+        DIM full$ = PATH.JOIN$(folder$, name$)
+        DIM info = FILE.STAT(full$)
+        IF NOT info{"hidden"} THEN
+            IF info{"is_dir"} THEN
+                Walk(full$, out)
+            ELSEIF Readable(name$) ANDALSO info{"size"} < 1000000 THEN
+                DIM hits = LEAKS(TXTREADER$(full$), full$)
+                DIM h = 0
+                FOR h = 0 TO LEN(hits) - 1
+                    PUSH(out, hits[h])
+                NEXT h
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+' The written down secrets in every script and settings file under
+' folder$.
+EXPORT FUNC SCAN(folder$)
+    DIM out = []
+    IF FILE.ISDIR(folder$) THEN Walk(folder$, out)
+    RETURN out
+ENDFUNC
+
+' Per job, the runs and failures of the audit entries from from$ on (a
+' date or time text): a map of job name to {"runs", "fails", "last"}.
+EXPORT FUNC SUMMARY(entries, from$)
+    DIM out AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM e = entries[k]
+        DIM at$ = e{"at"}
+        IF at$ >= from$ ANDALSO MAP.EXISTS(e, "job") THEN
+            DIM name$ = e{"job"}
+            DIM row AS MAP
+            row{"runs"} = 0
+            row{"fails"} = 0
+            IF MAP.EXISTS(out, name$) THEN row = out{name$}
+            row{"runs"} = row{"runs"} + 1
+            IF NOT e{"ok"} THEN row{"fails"} = row{"fails"} + 1
+            row{"last"} = at$
+            out{name$} = row
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The verdict of AUDIT.VERIFY and a summary as lines for the console.
+EXPORT FUNC REPORT_LINES(check, summary)
+    DIM out = []
+    IF check{"ok"} THEN
+        DIM n$ = STR$(check{"entries"})
+        PUSH(out, "The audit trail is whole: " + n$ + " entries.")
+    ELSE
+        PUSH(out, "The audit trail was changed:")
+        DIM problems = check{"problems"}
+        DIM k = 0
+        FOR k = 0 TO LEN(problems) - 1
+            PUSH(out, "  " + problems[k])
+        NEXT k
+    ENDIF
+    DIM names = SORT(MAP.KEYS(summary))
+    DIM j = 0
+    FOR j = 0 TO LEN(names) - 1
+        DIM name$ = names[j]
+        DIM row = summary{name$}
+        DIM line$ = "  " + name$ + ": " + STR$(row{"runs"}) + " runs"
+        DIM f$ = STR$(row{"fails"})
+        IF row{"fails"} > 0 THEN line$ = line$ + ", " + f$ + " failed"
+        PUSH(out, line$ + ", last " + row{"last"})
+    NEXT j
+    RETURN out
+ENDFUNC

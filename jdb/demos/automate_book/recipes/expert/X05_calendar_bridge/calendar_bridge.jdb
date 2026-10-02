@@ -1,0 +1,88 @@
+' Calendar Bridge: the meetings of your work calendar as busy blocks
+' in your personal calendar, which then shows when you are booked but
+' not what about. It reads Microsoft 365 through OAuth and writes a
+' calendar file that a personal calendar subscribes to. The settings
+' are the [calendar_bridge] part of work.conf.
+'
+'   jdbasic calendar_bridge.jdb --login    sign in once
+'   jdbasic calendar_bridge.jdb            write the busy blocks
+'   jdbasic calendar_bridge.jdb --dry-run  show what would change
+
+IMPORT WORKCONF, CALBRIDGE, DT, LOGGER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "calendar_bridge."
+DIM client_id$ = WORKCONF.VALUE(cfg, key$ + "client_id", "")
+IF client_id$ = "" THEN THROW "Set client_id in [calendar_bridge]."
+DIM tenant$ = WORKCONF.VALUE(cfg, key$ + "tenant", "organizations")
+DIM authority$ = WORKCONF.VALUE(cfg, key$ + "authority", _
+    CALBRIDGE.AUTHORITY$(tenant$))
+DIM api$ = WORKCONF.VALUE(cfg, key$ + "api", _
+    "https://graph.microsoft.com/v1.0")
+DIM days = WORKCONF.VALUE(cfg, key$ + "days", 14)
+DIM label$ = WORKCONF.VALUE(cfg, key$ + "label", "Busy (work)")
+DIM show_titles = WORKCONF.VALUE(cfg, key$ + "show_titles", FALSE)
+DIM out_home$ = "~/Documents/AutomateWork/calendar/work-busy.ics"
+DIM output$ = WORKCONF.FOLDER$(cfg, key$ + "output", out_home$)
+DIM token_home$ = "~/.automatework/calendar_token.json"
+DIM token_file$ = WORKCONF.FOLDER$(cfg, key$ + "token_file", _
+    token_home$)
+DIM secret$ = GETENV$("AUTOMATEWORK_CALENDAR_SECRET")
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM lg = LOGGER.NEW("calendar_bridge")
+LOGGER.TO_CONSOLE(lg, FALSE)
+IF NOT dry_run THEN
+    MKDIR PATH.DIRNAME$(output$)
+    DIM log$ = PATH.JOIN$(PATH.DIRNAME$(output$), "bridge.log")
+    LOGGER.TO_FILE(lg, log$, 1000000, 2)
+ENDIF
+
+DIM app = CALBRIDGE.CLIENT(client_id$, secret$, authority$)
+CALBRIDGE.KEEP(app, token_file$)
+IF WORKCONF.FLAG("login") THEN
+    IF CALBRIDGE.LOGIN(app, 900) THEN
+        PRINT "Signed in. The tokens are kept in"
+        PRINT "  "; token_file$
+    ENDIF
+    END
+ENDIF
+IF NOT CALBRIDGE.SIGNED_IN(app) THEN
+    THROW "Not signed in yet: run calendar_bridge.jdb --login once."
+ENDIF
+
+DIM t_from = DT.STARTOF(DT.NOW(), "day")
+DIM t_to = t_from + days * 86400
+DIM events = []
+TRY
+    events = CALBRIDGE.FETCH(app, api$, t_from, t_to, 2000)
+CATCH
+    DIM why$ = ERRMSG$
+    CALBRIDGE.SAVE(app)
+    LOGGER.ERROR(lg, "calendar not read: " + why$)
+    THROW why$
+ENDTRY
+CALBRIDGE.SAVE(app)
+
+DIM blocks = CALBRIDGE.BLOCKS(events, label$, show_titles)
+DIM change = CALBRIDGE.CHANGES(output$, blocks)
+IF dry_run THEN
+    DIM local = DT.LOCAL_OFFSET()
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        DIM when$ = DT.FMT$(b{"start"}, "%a %d.%m. %H:%M", local)
+        IF b{"all_day"} THEN
+            when$ = DT.FMT$(b{"start"}, "%a %d.%m.", 0) + " all day"
+        ENDIF
+        PRINT when$; "  "; b{"summary"}
+    NEXT k
+    PRINT change{"added"}; " new, "; change{"changed"}; _
+        " changed, "; change{"removed"}; " gone; nothing written"
+    END
+ENDIF
+
+TXTWRITER output$, CALBRIDGE.ICS$(blocks)
+LOGGER.INFO(lg, "busy blocks written", {"blocks": LEN(blocks), _
+    "new": change{"added"}, "changed": change{"changed"}, _
+    "gone": change{"removed"}})

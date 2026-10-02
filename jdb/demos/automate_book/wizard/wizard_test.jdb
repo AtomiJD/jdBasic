@@ -73,6 +73,16 @@ IF MAP.EXISTS(e07, "id") THEN
     DIM s7 = WIZARD.SCHEDULE_ARGS(e07, "weekly fri 16:00", "j", "p", "c")
     TESTKIT.EQ(s7[5], CHR$(34) + "j" + CHR$(34) + " " + CHR$(34) + "p" + CHR$(34) + " " + CHR$(34) + "week" + CHR$(34) + " --config " + CHR$(34) + "c" + CHR$(34), "a recipe's schedule_args follow the program")
 ENDIF
+TESTKIT.EQ(LEN(WIZARD.TASKS(e01, "daily 18:30")), 1, "a recipe has one task")
+DIM two = CONF.TOML_TEXT("id = " + CHR$(34) + "X99" + CHR$(34) + CHR$(10) + "name = " + CHR$(34) + "Two" + CHR$(34) + CHR$(10) + "[[task]]" + CHR$(10) + "name = " + CHR$(34) + "page" + CHR$(34) + CHR$(10) + "schedule = " + CHR$(34) + "at logon" + CHR$(34) + CHR$(10) + "args = [" + CHR$(34) + "--serve" + CHR$(34) + "]" + CHR$(10))
+DIM tasks = WIZARD.TASKS(two, "daily 12:30")
+TESTKIT.EQ(LEN(tasks), 2, "a [[task]] adds a second task")
+TESTKIT.EQ(tasks[0]{"when"}, "daily 12:30", "the recipe keeps its chosen schedule")
+TESTKIT.EQ(tasks[1]{"when"}, "at logon", "the extra task brings its own")
+TESTKIT.EQ(WIZARD.TASK_NAME$(tasks[1]{"r"}), "AutomateWork\X99 Two (page)", "under a name of its own")
+DIM s2 = WIZARD.SCHEDULE_ARGS(tasks[1]{"r"}, tasks[1]{"when"}, "j", "p", "c")
+TESTKIT.ISTRUE(INSTR(s2[5], CHR$(34) + "--serve" + CHR$(34)) >= 0, "with its arguments")
+TESTKIT.EQ(JOIN(TAKE(-2, s2), " "), "/SC ONLOGON", "on its schedule")
 
 TESTKIT.SUITE("installing")
 a{"user_lib"} = PATH.JOIN$(tmp$, "userlib")

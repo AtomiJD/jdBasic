@@ -1,0 +1,29 @@
+# What the setup wizard knows about this recipe.
+
+id = "X11"
+name = "Web Harvester"
+program = "web_harvester.jdb"
+summary = "Prices and other values from web pages into a CSV file, politely"
+minutes_per_week = 45
+schedule = "weekdays 07:00"
+section = "web_harvester"
+modules = ["harvest.jdb"]
+files = ["targets.toml"]
+
+[[setting]]
+key = "folder"
+label = "Folder for the targets, the CSV file and the cache"
+kind = "folder"
+default = "~/Documents/AutomateWork/harvest"
+
+[[setting]]
+key = "delay_seconds"
+label = "Seconds between two requests to the same site"
+kind = "number"
+default = 5
+
+[[setting]]
+key = "cache_hours"
+label = "Hours a page read once is kept"
+kind = "number"
+default = 12

@@ -1,0 +1,350 @@
+' harvest.jdb: the work of the Web Harvester. It reads values such as
+' prices from web pages the way a polite visitor does: it asks each
+' site's robots.txt first, waits between two requests to the same
+' host, keeps pages it has read for a while, and tries a busy server
+' again a little later.
+'
+'   IMPORT HARVEST
+'   DIM h = HARVEST.NEW({"agent": "AutomateWork", "delay": 5})
+'   DIM rows = HARVEST.RUN(h, targets, "2026-10-05 07:00:00")
+'   HARVEST.SAVE(h, "cache.json")
+
+EXPORT MODULE HARVEST
+
+IMPORT REQ, CACHE, RETRY, HTMLDOM
+
+DIM gH AS MAP
+
+' ── robots.txt ─────────────────────────────────────────────────
+
+' The rules of a robots.txt for agent$: the group that names the
+' agent, else the group for every agent. A map of "allow" and
+' "disallow" (lists of path patterns) and "delay" (Crawl-delay in
+' seconds, 0 when none).
+EXPORT FUNC ROBOTS(text$, agent$)
+    DIM me$ = LCASE$(agent$)
+    DIM mine = {"allow": [], "disallow": [], "delay": 0}
+    mine{"found"} = FALSE
+    DIM star = {"allow": [], "disallow": [], "delay": 0}
+    star{"found"} = FALSE
+    DIM for_me = FALSE
+    DIM for_all = FALSE
+    DIM in_rules = FALSE
+    DIM lines = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM line$ = lines[k]
+        DIM hash = INSTR(line$, "#")
+        IF hash >= 0 THEN line$ = LEFT$(line$, hash)
+        DIM colon = INSTR(line$, ":")
+        IF colon > 0 THEN
+            DIM field$ = LCASE$(TRIM$(LEFT$(line$, colon)))
+            DIM value$ = TRIM$(MID$(line$, colon + 1, LEN(line$)))
+            IF field$ = "user-agent" THEN
+                IF in_rules THEN
+                    for_me = FALSE
+                    for_all = FALSE
+                    in_rules = FALSE
+                ENDIF
+                DIM who$ = LCASE$(value$)
+                IF who$ = "*" THEN
+                    for_all = TRUE
+                ELSEIF who$ <> "" ANDALSO INSTR(me$, who$) >= 0 THEN
+                    for_me = TRUE
+                ENDIF
+            ELSE
+                in_rules = TRUE
+                IF for_me THEN AddRule(mine, field$, value$)
+                IF for_all THEN AddRule(star, field$, value$)
+            ENDIF
+        ENDIF
+    NEXT k
+    IF mine{"found"} THEN RETURN mine
+    RETURN star
+ENDFUNC
+
+SUB AddRule(group, field$, value$)
+    group{"found"} = TRUE
+    IF field$ = "crawl-delay" THEN group{"delay"} = VAL(value$)
+    IF value$ = "" THEN RETURN
+    IF field$ = "allow" ORELSE field$ = "disallow" THEN
+        DIM list = group{field$}
+        PUSH(list, value$)
+    ENDIF
+ENDSUB
+
+' Whether a robots.txt path pattern matches path$: a prefix, where *
+' stands for any characters and a final $ for the end of the path.
+EXPORT FUNC MATCHES(pattern$, path$)
+    DIM anchored = ENDSWITH(pattern$, "$")
+    DIM pat$ = pattern$
+    IF anchored THEN pat$ = LEFT$(pat$, LEN(pat$) - 1)
+    DIM parts = SPLIT(pat$, "*")
+    DIM first$ = parts[0]
+    IF NOT STARTSWITH(path$, first$) THEN RETURN FALSE
+    DIM at = LEN(first$)
+    DIM k = 0
+    FOR k = 1 TO LEN(parts) - 1
+        DIM part$ = parts[k]
+        DIM rest$ = MID$(path$, at, LEN(path$))
+        DIM found = INSTR(rest$, part$)
+        IF found < 0 THEN RETURN FALSE
+        at = at + found + LEN(part$)
+    NEXT k
+    IF NOT anchored THEN RETURN TRUE
+    IF LEN(parts) = 1 THEN RETURN path$ = first$
+    RETURN ENDSWITH(path$, parts[LEN(parts) - 1])
+ENDFUNC
+
+' Whether the rules let the agent read path$: the longest matching
+' pattern decides, and Allow wins a tie.
+EXPORT FUNC ALLOWED(rules, path$)
+    DIM best = -1
+    DIM verdict = TRUE
+    DIM kinds = ["disallow", "allow"]
+    DIM j = 0
+    DIM k = 0
+    FOR j = 0 TO 1
+        DIM list = rules{kinds[j]}
+        FOR k = 0 TO LEN(list) - 1
+            DIM pat$ = list[k]
+            IF MATCHES(pat$, path$) ANDALSO LEN(pat$) >= best THEN
+                best = LEN(pat$)
+                verdict = FALSE
+                IF j = 1 THEN verdict = TRUE
+            ENDIF
+        NEXT k
+    NEXT j
+    RETURN verdict
+ENDFUNC
+
+' ── fetching ───────────────────────────────────────────────────
+
+FUNC SiteOf$(url$)
+    DIM after = INSTR(url$, "://") + 3
+    DIM slash = INSTR(MID$(url$, after, LEN(url$)), "/")
+    IF slash < 0 THEN RETURN url$ + "/"
+    RETURN LEFT$(url$, after + slash + 1)
+ENDFUNC
+
+FUNC PathOf$(url$)
+    DIM site$ = SiteOf$(url$)
+    IF LEN(url$) < LEN(site$) THEN RETURN "/"
+    RETURN MID$(url$, LEN(site$) - 1, LEN(url$))
+ENDFUNC
+
+' Waits until the last request to the host is the pause ago.
+SUB Pause(site$)
+    DIM gap = gH{"delay"} * 1000
+    DIM robots = gH{"robots"}
+    IF MAP.EXISTS(robots, site$) THEN
+        DIM rules = robots{site$}
+        DIM asked = rules{"delay"} * 1000
+        IF asked > gap THEN gap = asked
+    ENDIF
+    DIM last = gH{"last"}
+    IF MAP.EXISTS(last, site$) THEN
+        DIM since = TICK() - last{site$}
+        IF since < gap THEN SLEEP gap - since
+    ENDIF
+ENDSUB
+
+FUNC Transient(message$)
+    RETURN STARTSWITH(message$, "transient")
+ENDFUNC
+
+' One request; a busy or unreachable server raises a "transient"
+' error that RETRY tries again.
+FUNC GetOnce(url$)
+    DIM site$ = SiteOf$(url$)
+    Pause(site$)
+    DIM r = REQ.GET(gH{"sess"}, url$)
+    DIM last = gH{"last"}
+    last{site$} = TICK()
+    gH{"requests"} = gH{"requests"} + 1
+    DIM status = r{"status"}
+    IF status = 0 ORELSE status = 429 ORELSE status >= 500 THEN
+        THROW "transient: the server answered " + STR$(status)
+    ENDIF
+    DIM out AS MAP
+    out{"status"} = status
+    out{"body"} = r{"body"}
+    RETURN out
+ENDFUNC
+
+FUNC Get(url$)
+    DIM opts = {"attempts": 3, "delay": gH{"retry_ms"}}
+    opts{"retry_if"} = Transient@
+    DIM report = RETRY.ATTEMPT(GetOnce@, url$, opts)
+    IF NOT report{"ok"} THEN
+        DIM why$ = report{"error"}
+        THROW why$
+    ENDIF
+    RETURN report{"value"}
+ENDFUNC
+
+' The robots rules of the site of url$, read once per run. A site
+' without a robots.txt allows everything.
+FUNC RulesFor(url$)
+    DIM site$ = SiteOf$(url$)
+    DIM robots = gH{"robots"}
+    IF MAP.EXISTS(robots, site$) THEN RETURN robots{site$}
+    DIM r = Get(site$ + "robots.txt")
+    DIM text$ = ""
+    IF r{"status"} = 200 THEN text$ = r{"body"}
+    DIM rules = ROBOTS(text$, gH{"agent"})
+    robots{site$} = rules
+    RETURN rules
+ENDFUNC
+
+' A harvester. opts: "agent" (the name it sends and looks for in
+' robots.txt), "delay" (seconds between two requests to a host),
+' "cache" (a file of pages read before), "hours" (how long a page is
+' kept) and "retry_ms" (the first wait before another try).
+EXPORT FUNC NEW(opts)
+    DIM h AS MAP
+    h{"agent"} = opts{"agent"}
+    h{"delay"} = opts{"delay"}
+    h{"retry_ms"} = 2000
+    IF MAP.EXISTS(opts, "retry_ms") THEN
+        h{"retry_ms"} = opts{"retry_ms"}
+    ENDIF
+    DIM hours = 12
+    IF MAP.EXISTS(opts, "hours") THEN hours = opts{"hours"}
+    DIM keep = {"ttl": hours * 3600}
+    DIM path$ = ""
+    IF MAP.EXISTS(opts, "cache") THEN path$ = opts{"cache"}
+    IF path$ <> "" ANDALSO FILE.EXISTS(path$) THEN
+        h{"cache"} = CACHE.LOAD(path$, keep)
+    ELSE
+        h{"cache"} = CACHE.NEW(keep)
+    ENDIF
+    DIM sess = REQ.NEW("")
+    REQ.HEADER(sess, "User-Agent", h{"agent"})
+    REQ.TIMEOUT(sess, 30)
+    h{"sess"} = sess
+    h{"robots"} = {}
+    h{"last"} = {}
+    h{"requests"} = 0
+    RETURN h
+ENDFUNC
+
+' The page at url$: from the cache while it is fresh, else read from
+' the site if its robots.txt allows it.
+EXPORT FUNC PAGE$(h, url$)
+    gH = h
+    DIM cache = h{"cache"}
+    IF CACHE.HAS(cache, url$) THEN RETURN CACHE.FETCH(cache, url$, "")
+    DIM rules = RulesFor(url$)
+    IF NOT ALLOWED(rules, PathOf$(url$)) THEN
+        THROW "robots.txt asks to stay out of " + PathOf$(url$)
+    ENDIF
+    DIM r = Get(url$)
+    IF r{"status"} <> 200 THEN
+        THROW "the page answered " + STR$(r{"status"})
+    ENDIF
+    DIM body$ = r{"body"}
+    CACHE.PUT(cache, url$, body$)
+    RETURN body$
+ENDFUNC
+
+' Writes the pages read to the cache file.
+EXPORT SUB SAVE(h, path$)
+    MKDIR PATH.DIRNAME$(path$)
+    CACHE.SAVE(h{"cache"}, path$)
+ENDSUB
+
+' ── reading values ─────────────────────────────────────────────
+
+' The text of the first element selector$ finds in html$, or its
+' attribute attr$ when that is not "".
+EXPORT FUNC VALUE$(html$, selector$, attr$)
+    DIM doc = HTMLDOM.PARSE(html$)
+    DIM at = HTMLDOM.FIND(doc, selector$)
+    IF at < 0 THEN THROW "nothing on the page matches " + selector$
+    IF attr$ <> "" THEN RETURN TRIM$(HTMLDOM.ATTR$(doc, at, attr$))
+    RETURN TRIM$(REGEX.REPLACE("\s+", HTMLDOM.FLAT$(doc, at), " "))
+ENDFUNC
+
+' The first number in a text as plain digits with a point, so
+' "1.234,50 EUR" and "$1,234.50" both give "1234.50"; "" when there
+' is none.
+EXPORT FUNC NUMBER$(text$)
+    DIM digits$ = "0123456789"
+    DIM start = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(text$) - 1
+        DIM c$ = MID$(text$, k, 1)
+        IF start < 0 ANDALSO INSTR(digits$, c$) >= 0 THEN start = k
+    NEXT k
+    IF start < 0 THEN RETURN ""
+    DIM n$ = ""
+    k = start
+    DIM keep$ = digits$ + ".,'"
+    DIM ch$ = MID$(text$, k, 1)
+    DO WHILE k < LEN(text$) ANDALSO INSTR(keep$, ch$) >= 0
+        n$ = n$ + ch$
+        k = k + 1
+        ch$ = MID$(text$, k, 1)
+    LOOP
+    n$ = REPLACE$(n$, "'", "")
+    DO WHILE ENDSWITH(n$, ".") ORELSE ENDSWITH(n$, ",")
+        n$ = LEFT$(n$, LEN(n$) - 1)
+    LOOP
+    DIM last_dot = -1
+    DIM last_comma = -1
+    FOR k = 0 TO LEN(n$) - 1
+        IF MID$(n$, k, 1) = "." THEN last_dot = k
+        IF MID$(n$, k, 1) = "," THEN last_comma = k
+    NEXT k
+    DIM sep = last_dot
+    IF last_comma > sep THEN sep = last_comma
+    IF sep < 0 THEN RETURN n$
+    DIM tail$ = MID$(n$, sep + 1, LEN(n$))
+    DIM both = last_dot >= 0 ANDALSO last_comma >= 0
+    IF NOT both ANDALSO LEN(tail$) = 3 THEN
+        RETURN REPLACE$(REPLACE$(n$, ".", ""), ",", "")
+    ENDIF
+    DIM head$ = REPLACE$(REPLACE$(LEFT$(n$, sep), ".", ""), ",", "")
+    RETURN head$ + "." + tail$
+ENDFUNC
+
+' One row per target, a map with name, url, select and optionally
+' attr: time, name, value, number, url and "ok" or what went wrong.
+' A target that fails does not stop the others.
+EXPORT FUNC RUN(h, targets, now$)
+    DIM rows = []
+    DIM k = 0
+    FOR k = 0 TO LEN(targets) - 1
+        DIM t = targets[k]
+        DIM url$ = t{"url"}
+        DIM attr$ = ""
+        IF MAP.EXISTS(t, "attr") THEN attr$ = t{"attr"}
+        DIM value$ = ""
+        DIM status$ = "ok"
+        TRY
+            value$ = VALUE$(PAGE$(h, url$), t{"select"}, attr$)
+        CATCH
+            status$ = ERRMSG$
+        ENDTRY
+        DIM row = [now$, t{"name"}, value$, NUMBER$(value$)]
+        PUSH(row, url$)
+        PUSH(row, status$)
+        PUSH(rows, row)
+    NEXT k
+    RETURN rows
+ENDFUNC
+
+' A line of CSV, quoting the cells that need it.
+EXPORT FUNC CSVLINE$(cells)
+    DIM q$ = CHR$(34)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(cells) - 1
+        DIM c$ = cells[k]
+        DIM quote = INSTR(c$, ",") >= 0 ORELSE INSTR(c$, q$) >= 0
+        IF quote THEN c$ = q$ + REPLACE$(c$, q$, q$ + q$) + q$
+        PUSH(out, c$)
+    NEXT k
+    RETURN JOIN(out, ",")
+ENDFUNC

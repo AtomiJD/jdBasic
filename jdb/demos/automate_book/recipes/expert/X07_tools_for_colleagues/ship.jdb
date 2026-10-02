@@ -1,0 +1,223 @@
+' ship.jdb: the work of Tools for Colleagues. A recipe is compiled
+' into an .exe with everything it needs next to it, stamped with a
+' version and put into a release folder with a checksum per file. A
+' colleague's copy is brought up to date from that folder or from a
+' web address.
+'
+'   IMPORT SHIP
+'   DIM b = SHIP.BUILD(jdbasic$, "week_sheet.jdb", "C:/Builds/ws")
+'   SHIP.STAMP(b{"stage"}, "week_sheet", "1.2.0", NOW())
+'   DIM rel = SHIP.PACKAGE("C:/Builds/ws", "S:/Tools", "week_sheet", _
+'       "1.2.0")
+'   PRINT SHIP.UPDATE("S:/Tools", "C:/Tools/week_sheet", TRUE)
+
+EXPORT MODULE SHIP
+
+IMPORT CONF, PKG, RETRY
+
+DIM gLF$ = CHR$(10)
+DIM gQ$ = CHR$(34)
+
+' The tool name of a program file: its name without .jdb.
+EXPORT FUNC NAME$(program$)
+    DIM base$ = PATH.BASENAME$(program$)
+    IF LCASE$(RIGHT$(base$, 4)) = ".jdb" THEN
+        base$ = LEFT$(base$, LEN(base$) - 4)
+    ENDIF
+    RETURN base$
+ENDFUNC
+
+' TRUE for a version of the form 1.2.0.
+EXPORT FUNC VALID_VERSION(v$)
+    RETURN LEN(REGEX.FINDALL("^[0-9]+\.[0-9]+\.[0-9]+$", v$)) > 0
+ENDFUNC
+
+' Compiles program$ with jdbasic -c into the folder stage$. The
+' compiler puts the runtime and its libraries next to the .exe.
+' Answers "ok", "exe", "stage" and the compiler's text in "output".
+EXPORT FUNC BUILD(jdbasic$, program$, stage$)
+    DIM out AS MAP
+    MKDIR stage$
+    DIM exe$ = PATH.JOIN$(stage$, NAME$(program$) + ".exe")
+    IF FILE.EXISTS(exe$) THEN KILL exe$
+    DIM r = OS.EXEC(jdbasic$, ["-c", "-o", exe$, program$])
+    DIM text$ = TRIM$(REPLACE$(r{"OUTPUT"}, CHR$(13), ""))
+    out{"ok"} = r{"EXIT_CODE"} = 0 ANDALSO FILE.EXISTS(exe$)
+    out{"exe"} = exe$
+    out{"stage"} = stage$
+    out{"output"} = text$
+    RETURN out
+ENDFUNC
+
+' Writes version.toml into the folder: name, version and build time.
+EXPORT SUB STAMP(stage$, name$, version$, built)
+    DIM t$ = "name = " + gQ$ + name$ + gQ$ + gLF$
+    t$ = t$ + "version = " + gQ$ + version$ + gQ$ + gLF$
+    DIM when$ = FORMAT_DATE(built, "%Y-%m-%d %H:%M")
+    t$ = t$ + "built = " + gQ$ + when$ + gQ$ + gLF$
+    TXTWRITER PATH.JOIN$(stage$, "version.toml"), t$
+ENDSUB
+
+' The version in a folder's version.toml, "" when there is none.
+EXPORT FUNC VERSION$(dir$)
+    DIM file$ = PATH.JOIN$(dir$, "version.toml")
+    IF NOT FILE.EXISTS(file$) THEN RETURN ""
+    DIM t = CONF.TOML(file$)
+    IF NOT MAP.EXISTS(t, "version") THEN RETURN ""
+    DIM v$ = t{"version"}
+    RETURN v$
+ENDFUNC
+
+' Copies every file of stage$ into release$/name-version, writes the
+' list files.txt with a checksum per file, and points latest.toml at
+' it. A version that is already released is an error. Answers
+' "folder", "files" and the checksum of the list in "sha256".
+EXPORT FUNC PACKAGE(stage$, release$, name$, version$)
+    DIM dir_name$ = name$ + "-" + version$
+    DIM dest$ = PATH.JOIN$(release$, dir_name$)
+    IF FILE.ISDIR(dest$) THEN THROW dir_name$ + " is already released"
+    MKDIR dest$
+    DIM names = SORT(DIR$(PATH.JOIN$(stage$, "*")))
+    DIM list = []
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file_name$ = names[k]
+        DIM path$ = PATH.JOIN$(stage$, file_name$)
+        IF NOT FILE.ISDIR(path$) THEN
+            FILE.COPY(path$, PATH.JOIN$(dest$, file_name$), FALSE)
+            DIM file_sum$ = CODEC.SHA256$(BINREADER$(path$))
+            PUSH(list, file_sum$ + "  " + file_name$)
+        ENDIF
+    NEXT k
+    DIM list$ = JOIN(list, gLF$) + gLF$
+    TXTWRITER PATH.JOIN$(dest$, "files.txt"), list$
+    DIM sum$ = CODEC.SHA256$(list$)
+    DIM t$ = "name = " + gQ$ + name$ + gQ$ + gLF$
+    t$ = t$ + "version = " + gQ$ + version$ + gQ$ + gLF$
+    t$ = t$ + "folder = " + gQ$ + dir_name$ + gQ$ + gLF$
+    t$ = t$ + "sha256 = " + gQ$ + sum$ + gQ$ + gLF$
+    DIM latest$ = PATH.JOIN$(release$, "latest.toml")
+    TXTWRITER latest$ + ".new", t$
+    FILE.MOVE(latest$ + ".new", latest$, TRUE)
+    DIM out AS MAP
+    out{"folder"} = dest$
+    out{"files"} = LEN(list)
+    out{"sha256"} = sum$
+    RETURN out
+ENDFUNC
+
+FUNC IsWeb(source$)
+    DIM low$ = LCASE$(source$)
+    IF STARTSWITH(low$, "http://") THEN RETURN TRUE
+    RETURN STARTSWITH(low$, "https://")
+ENDFUNC
+
+FUNC GetUrl$(url$)
+    DIM r = HTTP.REQUEST("GET", url$, "", "")
+    DIM code = r{"status"}
+    IF code <> 200 THEN THROW "HTTP " + STR$(code) + " for " + url$
+    DIM body$ = r{"body"}
+    RETURN body$
+ENDFUNC
+
+' A file of the release, from a folder or from a web address; file$
+' may name a subfolder with a /. A web request is tried three times
+' before it counts as failed.
+EXPORT FUNC FETCH$(source$, file$)
+    IF NOT IsWeb(source$) THEN
+        DIM path$ = PATH.JOIN$(source$, file$)
+        IF NOT FILE.EXISTS(path$) THEN THROW "Missing: " + file$
+        RETURN BINREADER$(path$)
+    ENDIF
+    DIM url$ = source$
+    IF RIGHT$(url$, 1) <> "/" THEN url$ = url$ + "/"
+    url$ = url$ + REPLACE$(file$, " ", "%20")
+    DIM opts = {"attempts": 3, "delay": 300}
+    DIM report = RETRY.ATTEMPT(GetUrl$@, url$, opts)
+    IF NOT report{"ok"} THEN THROW report{"error"}
+    DIM body$ = report{"value"}
+    RETURN body$
+ENDFUNC
+
+' The newest release as a map: name, version, folder and sha256.
+EXPORT FUNC LATEST(source$)
+    RETURN CONF.TOML_TEXT(FETCH$(source$, "latest.toml"))
+ENDFUNC
+
+' TRUE when latest$ is newer than installed$ ("" means not installed).
+EXPORT FUNC NEWER(installed$, latest$)
+    IF installed$ = "" THEN RETURN TRUE
+    RETURN PKG.COMPARE(installed$, latest$) < 0
+ENDFUNC
+
+' Every file of a release, checked against its list, into a new
+' temporary folder. Answers the folder; a wrong checksum is an error.
+FUNC Download$(source$, latest)
+    DIM dir$ = latest{"folder"}
+    DIM list$ = FETCH$(source$, dir$ + "/files.txt")
+    IF CODEC.SHA256$(list$) <> latest{"sha256"} THEN
+        THROW dir$ + ": the checksum of files.txt does not match"
+    ENDIF
+    DIM temp$ = MKTEMP$("ship")
+    MKDIR temp$
+    DIM rows = SPLIT(TRIM$(REPLACE$(list$, CHR$(13), "")), gLF$)
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = rows[k]
+        DIM sum$ = LEFT$(row$, 64)
+        DIM file_name$ = MID$(row$, 66, LEN(row$))
+        DIM data$ = FETCH$(source$, dir$ + "/" + file_name$)
+        IF CODEC.SHA256$(data$) <> sum$ THEN
+            OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", temp$])
+            THROW file_name$ + ": the checksum does not match"
+        ENDIF
+        BINWRITER PATH.JOIN$(temp$, file_name$), data$
+    NEXT k
+    RETURN temp$
+ENDFUNC
+
+' Brings the tool in target$ to the newest release of source$. Every
+' file is downloaded and checked before anything changes; the old
+' files go into target$/previous. With dry_run it only says what it
+' would do. Answers the lines it reports.
+EXPORT FUNC UPDATE(source$, target$, dry_run)
+    DIM lines = []
+    DIM latest = LATEST(source$)
+    DIM have$ = VERSION$(target$)
+    DIM want$ = latest{"version"}
+    DIM shown$ = have$
+    IF shown$ = "" THEN shown$ = "nothing"
+    IF NOT NEWER(have$, want$) THEN
+        PUSH(lines, latest{"name"} + " " + have$ + " is up to date")
+        RETURN lines
+    ENDIF
+    IF dry_run THEN
+        DIM plan$ = "would update " + latest{"name"}
+        PUSH(lines, plan$ + " from " + shown$ + " to " + want$)
+        RETURN lines
+    ENDIF
+    DIM temp$ = Download$(source$, latest)
+    MKDIR target$
+    DIM keep$ = PATH.JOIN$(target$, "previous")
+    MKDIR keep$
+    DIM old = DIR$(PATH.JOIN$(target$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(old) - 1
+        DIM old_name$ = old[k]
+        DIM old_path$ = PATH.JOIN$(target$, old_name$)
+        IF NOT FILE.ISDIR(old_path$) THEN
+            FILE.COPY(old_path$, PATH.JOIN$(keep$, old_name$), TRUE)
+        ENDIF
+    NEXT k
+    DIM names = DIR$(PATH.JOIN$(temp$, "*"))
+    FOR k = 0 TO LEN(names) - 1
+        DIM new_name$ = names[k]
+        DIM new_path$ = PATH.JOIN$(temp$, new_name$)
+        FILE.MOVE(new_path$, PATH.JOIN$(target$, new_name$), TRUE)
+    NEXT k
+    OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", temp$])
+    DIM done$ = "updated " + latest{"name"} + " from " + shown$
+    DIM count$ = STR$(LEN(names)) + " files"
+    PUSH(lines, done$ + " to " + want$ + ", " + count$)
+    RETURN lines
+ENDFUNC

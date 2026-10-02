@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "X09"
+name = "Report Pipeline"
+program = "report_pipeline.jdb"
+summary = "Last week's team costs from a database as chart, Word and PDF, mailed through the outbox"
+minutes_per_week = 60
+schedule = "weekly mon 07:00"
+section = "report_pipeline"
+modules = ["pipeline.jdb"]
+
+[[setting]]
+key = "database"
+label = "The bookings database (SQLite)"
+kind = "file"
+default = "~/Documents/AutomateWork/reports/bookings.db"
+
+[[setting]]
+key = "folder"
+label = "Folder for the reports and the log"
+kind = "folder"
+default = "~/Documents/AutomateWork/reports"
+
+[[setting]]
+key = "to"
+label = "Who gets the report (name and address)"
+kind = "text"
+default = ""

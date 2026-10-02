@@ -1,0 +1,248 @@
+' aitools.jdb: the tools an AI agent may use on your automations,
+' served by the jdBasic MCP server. Each TOOL_ function takes the
+' arguments as JSON text and answers text. An agent can list the
+' recipes, read their logs, look into the outbox and run a recipe,
+' as a dry run unless work.conf allows that recipe to run for real.
+' Every call is written to logs/ai_drive.jsonl.
+'
+'   jdbasic --mcp --tools-only <work folder>/ai-tools
+
+EXPORT MODULE AITOOLS
+
+IMPORT WORKCONF, CONF, OUTBOX, MAIL, LOGGER
+
+DIM gLF$ = CHR$(10)
+
+' The settings of work.conf, read again for every call.
+FUNC Settings()
+    RETURN WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+ENDFUNC
+
+FUNC WorkDir$(cfg)
+    DIM home$ = "~/Documents/AutomateWork"
+    RETURN WORKCONF.FOLDER$(cfg, "paths.work", home$)
+ENDFUNC
+
+' The installed recipes as maps with id, name, summary, folder,
+' program and section, read from their recipe.toml files.
+EXPORT FUNC RECIPES(work$)
+    DIM root$ = PATH.JOIN$(work$, "recipes")
+    DIM out = []
+    IF NOT FILE.ISDIR(root$) THEN RETURN out
+    DIM names = SORT(DIR$(PATH.JOIN$(root$, "*")))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM entry$ = names[k]
+        DIM folder$ = PATH.JOIN$(root$, entry$)
+        DIM toml$ = PATH.JOIN$(folder$, "recipe.toml")
+        IF FILE.EXISTS(toml$) THEN
+            DIM t = CONF.TOML(toml$)
+            DIM r AS MAP
+            r{"id"} = CONF.GET(t, "id", "")
+            r{"name"} = CONF.GET(t, "name", "")
+            r{"summary"} = CONF.GET(t, "summary", "")
+            r{"program"} = CONF.GET(t, "program", "")
+            r{"section"} = CONF.GET(t, "section", "")
+            r{"folder"} = folder$
+            PUSH(out, r)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC FindRecipe(recipes, id$)
+    DIM found = -1
+    DIM k = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        DIM r = recipes[k]
+        DIM rid$ = r{"id"}
+        IF UCASE$(rid$) = UCASE$(id$) THEN found = k
+    NEXT k
+    DIM hint$ = "; list_recipes names them."
+    IF found < 0 THEN THROW "No recipe " + id$ + hint$
+    DIM hit AS MAP
+    hit = recipes[found]
+    RETURN hit
+ENDFUNC
+
+' TRUE when [ai_drive] allow names the recipe for real runs.
+EXPORT FUNC ALLOWED(cfg, id$)
+    DIM allow = CONF.GET(cfg, "ai_drive.allow", [])
+    DIM k = 0
+    FOR k = 0 TO LEN(allow) - 1
+        DIM each$ = allow[k]
+        IF UCASE$(each$) = UCASE$(id$) THEN RETURN TRUE
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+' Writes one line about a tool call to logs/ai_drive.jsonl.
+SUB Audit(cfg, tool$, args$, outcome$)
+    DIM logs$ = PATH.JOIN$(WorkDir$(cfg), "logs")
+    MKDIR logs$
+    DIM lg = LOGGER.NEW("ai_drive")
+    LOGGER.TO_JSONL(lg, PATH.JOIN$(logs$, "ai_drive.jsonl"))
+    DIM fields AS MAP
+    fields{"tool"} = tool$
+    fields{"args"} = args$
+    LOGGER.INFO(lg, outcome$, fields)
+ENDSUB
+
+' list_recipes: every installed recipe with id, name and summary.
+EXPORT FUNC TOOL_LIST(args$)
+    DIM cfg = Settings()
+    DIM all = RECIPES(WorkDir$(cfg))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(all) - 1
+        DIM r = all[k]
+        DIM one AS MAP
+        one{"id"} = r{"id"}
+        one{"name"} = r{"name"}
+        one{"summary"} = r{"summary"}
+        one{"real_runs"} = ALLOWED(cfg, r{"id"})
+        PUSH(out, one)
+    NEXT k
+    Audit(cfg, "list_recipes", args$, STR$(LEN(out)) + " recipes")
+    RETURN JSON.STRINGIFY$(out)
+ENDFUNC
+
+' recipe_log: the last lines of a recipe's log file.
+EXPORT FUNC TOOL_LOG(args$)
+    DIM cfg = Settings()
+    DIM a = JSON.PARSE$(args$)
+    DIM r = FindRecipe(RECIPES(WorkDir$(cfg)), a{"id"})
+    DIM name$ = r{"section"} + ".log"
+    DIM path$ = PATH.JOIN$(WorkDir$(cfg), "logs", name$)
+    Audit(cfg, "recipe_log", args$, r{"id"})
+    IF NOT FILE.EXISTS(path$) THEN RETURN "No log yet for " + r{"id"}
+    DIM rows = SPLIT(TRIM$(TXTREADER$(path$)), gLF$)
+    DIM keep = 20
+    IF LEN(rows) < keep THEN keep = LEN(rows)
+    RETURN JOIN(TAKE(-keep, rows), gLF$)
+ENDFUNC
+
+' outbox: the mails that wait in the outbox. Nothing is sent.
+EXPORT FUNC TOOL_OUTBOX(args$)
+    DIM cfg = Settings()
+    DIM files = OUTBOX.PENDING(cfg)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM path$ = files[k]
+        DIM m = MAIL.PARSEFILE(path$)
+        DIM one AS MAP
+        one{"file"} = PATH.BASENAME$(path$)
+        one{"to"} = JOIN(m{"to"}, ", ")
+        one{"subject"} = m{"subject"}
+        PUSH(out, one)
+    NEXT k
+    Audit(cfg, "outbox", args$, STR$(LEN(out)) + " mails")
+    RETURN JSON.STRINGIFY$(out)
+ENDFUNC
+
+' run_recipe: runs a recipe and answers its output. It is a dry run
+' unless for_real is true and [ai_drive] allow names the recipe.
+EXPORT FUNC TOOL_RUN(args$)
+    DIM cfg = Settings()
+    DIM a = JSON.PARSE$(args$)
+    DIM r = FindRecipe(RECIPES(WorkDir$(cfg)), a{"id"})
+    DIM for_real = FALSE
+    IF MAP.EXISTS(a, "for_real") THEN for_real = a{"for_real"}
+    IF for_real ANDALSO NOT ALLOWED(cfg, r{"id"}) THEN
+        Audit(cfg, "run_recipe", args$, "refused")
+        RETURN r{"id"} + " may only run as a dry run. Ask the person."
+    ENDIF
+    DIM jdbasic$ = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
+    DIM program$ = PATH.JOIN$(r{"folder"}, r{"program"})
+    DIM argv = [program$, "--config", WORKCONF.CONFIG_PATH$()]
+    IF NOT for_real THEN PUSH(argv, "--dry-run")
+    DIM res = OS.EXEC(jdbasic$, argv)
+    DIM code = res{"EXIT_CODE"}
+    DIM text$ = LEFT$(res{"OUTPUT"}, 4000)
+    DIM how$ = "dry run"
+    IF for_real THEN how$ = "real run"
+    Audit(cfg, "run_recipe", args$, how$ + ", exit " + STR$(code))
+    DIM head$ = how$ + " of " + r{"id"} + ", exit " + STR$(code)
+    RETURN head$ + gLF$ + text$
+ENDFUNC
+
+' The manifests the MCP server reads, one per tool, for the module
+' at module$.
+EXPORT FUNC MANIFESTS(module$)
+    DIM none AS MAP
+    DIM by_id AS MAP
+    DIM id_field AS MAP
+    id_field{"type"} = "string"
+    id_field{"description"} = "Recipe id, like E11"
+    by_id{"id"} = id_field
+    DIM run_args AS MAP
+    run_args{"id"} = by_id{"id"}
+    run_args{"for_real"} = {"type": "boolean", _
+        "description": "Run for real; only for allowed recipes"}
+    DIM out = []
+    PUSH(out, Manifest("list_recipes", "TOOL_LIST", module$, _
+        "The person's automations: id, name, summary.", none, []))
+    PUSH(out, Manifest("recipe_log", "TOOL_LOG", module$, _
+        "The last lines of one automation's log.", by_id, ["id"]))
+    PUSH(out, Manifest("outbox", "TOOL_OUTBOX", module$, _
+        "Mails waiting in the outbox. Nothing is sent.", none, []))
+    PUSH(out, Manifest("run_recipe", "TOOL_RUN", module$, _
+        "Runs an automation, as a dry run unless allowed.", _
+        run_args, ["id"]))
+    RETURN out
+ENDFUNC
+
+FUNC Manifest(name$, handler$, module$, about$, props, needed)
+    DIM schema AS MAP
+    schema{"type"} = "object"
+    schema{"properties"} = props
+    IF LEN(needed) > 0 THEN schema{"required"} = needed
+    DIM m AS MAP
+    m{"name"} = name$
+    m{"description"} = about$
+    m{"module"} = REPLACE$(module$, "\", "/")
+    m{"handler"} = handler$
+    m{"inputSchema"} = schema
+    RETURN m
+ENDFUNC
+
+' The tool names the MCP server offers for tools$, asked over stdio
+' the way an agent asks. scratch$ is a folder for the request file.
+EXPORT FUNC CHECK(jdbasic$, tools$, scratch$)
+    DIM q$ = CHR$(34)
+    DIM hello$ = "{" + q$ + "jsonrpc" + q$ + ":" + q$ + "2.0" + q$
+    DIM ask$ = "," + q$ + "method" + q$ + ":" + q$
+    DIM init$ = hello$ + "," + q$ + "id" + q$ + ":1" + ask$
+    init$ = init$ + "initialize" + q$ + "}"
+    DIM list$ = hello$ + "," + q$ + "id" + q$ + ":2" + ask$
+    list$ = list$ + "tools/list" + q$ + "}"
+    DIM req$ = PATH.JOIN$(scratch$, "mcp_check.txt")
+    TXTWRITER req$, init$ + gLF$ + list$ + gLF$
+    DIM argv = ["/c", jdbasic$, "--mcp", "--tools-only", tools$]
+    PUSH(argv, "<")
+    PUSH(argv, req$)
+    DIM res = OS.EXEC("cmd", argv)
+    KILL req$
+    DIM rows = SPLIT(res{"OUTPUT"}, gLF$)
+    DIM names = []
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = TRIM$(rows[k])
+        DIM reply = JSON.PARSE$(row$)
+        IF TYPEOF(reply) = "OBJECT" ANDALSO IsListReply(reply) THEN
+            DIM tools = reply{"result"}{"tools"}
+            DIM j = 0
+            FOR j = 0 TO LEN(tools) - 1
+                PUSH(names, tools[j]{"name"})
+            NEXT j
+        ENDIF
+    NEXT k
+    RETURN names
+ENDFUNC
+
+FUNC IsListReply(reply)
+    IF NOT MAP.EXISTS(reply, "id") THEN RETURN FALSE
+    IF reply{"id"} <> 2 THEN RETURN FALSE
+    RETURN MAP.EXISTS(reply, "result")
+ENDFUNC

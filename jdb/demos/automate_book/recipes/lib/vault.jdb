@@ -1,0 +1,298 @@
+' vault.jdb: secrets in the Windows Credential Manager, where the
+' system keeps them encrypted for the user who is logged in. A recipe
+' stores a password once and reads it on every run; it never appears
+' in a file of the recipe. The entries show up in the Control Panel
+' under Credential Manager, Windows Credentials.
+'
+'   IMPORT VAULT
+'   VAULT.PUT("AutomateWork/mail", "lena", password$)
+'   DIM pw$ = VAULT.GET$("AutomateWork/mail")     ' "" when missing
+'   PRINT VAULT.USER$("AutomateWork/mail")
+'   VAULT.DELETE("AutomateWork/mail")
+'   DIM env$ = "AUTOMATEWORK_MAIL"
+'   DIM pw2$ = VAULT.FIND$("AutomateWork/mail", env$, "Password: ")
+
+EXPORT MODULE VAULT
+
+DECLARE FUNC LocalAlloc LIB "kernel32.dll" ALIAS "LocalAlloc" _
+    (flags AS INTEGER, n AS INTEGER) AS INTEGER
+DECLARE FUNC LocalFree LIB "kernel32.dll" ALIAS "LocalFree" _
+    (p AS INTEGER) AS INTEGER
+DECLARE FUNC GetLastError LIB "kernel32.dll" _
+    ALIAS "GetLastError" () AS INTEGER
+DECLARE SUB PutBytes LIB "kernel32.dll" ALIAS "RtlMoveMemory" _
+    (dest AS INTEGER, src AS STRING, n AS INTEGER)
+DECLARE FUNC GetByte LIB "kernel32.dll" ALIAS "RtlMoveMemory" _
+    (dest AS RETURN, src AS INTEGER, n AS INTEGER) AS ARRAY
+DECLARE FUNC CredWriteW LIB "advapi32.dll" ALIAS "CredWriteW" _
+    (cred AS INTEGER, flags AS INTEGER) AS INTEGER
+DECLARE FUNC CredReadW LIB "advapi32.dll" ALIAS "CredReadW" _
+    (target AS STRING, kind AS INTEGER, flags AS INTEGER, _
+     out_ptr AS INTEGER) AS INTEGER
+DECLARE FUNC CredDeleteW LIB "advapi32.dll" ALIAS "CredDeleteW" _
+    (target AS STRING, kind AS INTEGER, flags AS INTEGER) AS INTEGER
+DECLARE SUB CredFree LIB "advapi32.dll" ALIAS "CredFree" _
+    (p AS INTEGER)
+
+CONST CRED_TYPE_GENERIC = 1
+CONST CRED_PERSIST_LOCAL_MACHINE = 2
+CONST ERROR_NOT_FOUND = 1168
+CONST MAX_BLOB = 2560
+
+' ── bytes ─────────────────────────────────────────────────────
+
+' n as little-endian bytes.
+FUNC Le$(n, width)
+    DIM out$ = ""
+    DIM v = n
+    DIM k = 0
+    FOR k = 1 TO width
+        out$ = out$ + CHR$(v MOD 256)
+        v = INT(v / 256)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' n bytes of memory at p.
+FUNC Peek$(p, n)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM r = GetByte(2, p + k, 1)
+        DIM b$ = r[1]
+        IF LEN(b$) = 0 THEN b$ = CHR$(0)
+        out$ = out$ + b$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The little-endian number in the bytes of b$.
+FUNC Number(b$)
+    DIM v = 0
+    DIM k = 0
+    FOR k = LEN(b$) - 1 TO 0 STEP -1
+        v = v * 256 + ASC(MID$(b$, k, 1))
+    NEXT k
+    RETURN v
+ENDFUNC
+
+' A copy of the bytes in memory the caller frees with LocalFree.
+FUNC Block(bytes$)
+    DIM n = LEN(bytes$)
+    IF n = 0 THEN n = 1
+    DIM p = LocalAlloc(64, n)
+    IF p = 0 THEN THROW "VAULT: out of memory"
+    IF LEN(bytes$) > 0 THEN PutBytes(p, bytes$, LEN(bytes$))
+    RETURN p
+ENDFUNC
+
+' ── UTF-8 and UTF-16 ──────────────────────────────────────────
+
+' The UTF-16LE bytes of a UTF-8 text, ended by a zero character.
+FUNC Wide$(text$)
+    DIM out$ = ""
+    DIM i = 0
+    DIM n = LEN(text$)
+    DO WHILE i < n
+        DIM b = ASC(MID$(text$, i, 1))
+        DIM cp = b
+        DIM more = 0
+        IF b >= 240 THEN
+            cp = b MOD 8
+            more = 3
+        ELSEIF b >= 224 THEN
+            cp = b MOD 16
+            more = 2
+        ELSEIF b >= 192 THEN
+            cp = b MOD 32
+            more = 1
+        ENDIF
+        DIM j = 0
+        FOR j = 1 TO more
+            cp = cp * 64 + ASC(MID$(text$, i + j, 1)) MOD 64
+        NEXT j
+        i = i + 1 + more
+        IF cp >= 65536 THEN
+            cp = cp - 65536
+            out$ = out$ + Le$(55296 + INT(cp / 1024), 2)
+            out$ = out$ + Le$(56320 + cp MOD 1024, 2)
+        ELSE
+            out$ = out$ + Le$(cp, 2)
+        ENDIF
+    LOOP
+    RETURN out$ + CHR$(0) + CHR$(0)
+ENDFUNC
+
+' One continuation byte of UTF-8: six bits of cp after dividing by d.
+FUNC Tail$(cp, d)
+    RETURN CHR$(128 + INT(cp / d) MOD 64)
+ENDFUNC
+
+' One code point as UTF-8.
+FUNC Utf8$(cp)
+    IF cp < 128 THEN RETURN CHR$(cp)
+    IF cp < 2048 THEN RETURN CHR$(192 + INT(cp / 64)) + Tail$(cp, 1)
+    IF cp < 65536 THEN
+        DIM three$ = CHR$(224 + INT(cp / 4096))
+        RETURN three$ + Tail$(cp, 64) + Tail$(cp, 1)
+    ENDIF
+    DIM four$ = CHR$(240 + INT(cp / 262144))
+    RETURN four$ + Tail$(cp, 4096) + Tail$(cp, 64) + Tail$(cp, 1)
+ENDFUNC
+
+' The UTF-16LE text in the bytes of b$, as UTF-8; a zero character
+' ends it.
+FUNC FromWide$(b$)
+    DIM out$ = ""
+    DIM at = 0
+    DO WHILE at + 1 < LEN(b$)
+        DIM unit = Number(MID$(b$, at, 2))
+        IF unit = 0 THEN EXITDO
+        at = at + 2
+        DIM high = unit >= 55296 ANDALSO unit < 56320
+        IF high ANDALSO at + 1 < LEN(b$) THEN
+            DIM low = Number(MID$(b$, at, 2))
+            at = at + 2
+            unit = 65536 + (unit - 55296) * 1024 + (low - 56320)
+        ENDIF
+        out$ = out$ + Utf8$(unit)
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' The zero-ended UTF-16 text at p, as UTF-8.
+FUNC ReadWide$(p)
+    IF p = 0 THEN RETURN ""
+    DIM b$ = ""
+    DIM at = p
+    DO
+        DIM two$ = Peek$(at, 2)
+        IF Number(two$) = 0 THEN EXITDO
+        b$ = b$ + two$
+        at = at + 2
+    LOOP
+    RETURN FromWide$(b$)
+ENDFUNC
+
+' The text of a Windows error.
+FUNC Failed$(what$, target$, err)
+    RETURN "VAULT: Windows did not " + what$ + " " + target$ + _
+        " (error " + STR$(err) + ")"
+ENDFUNC
+
+' ── the store ─────────────────────────────────────────────────
+
+' Stores secret$ under target$ for the current Windows user, as UTF-16
+' like the Control Panel does, replacing an entry of that name.
+EXPORT SUB PUT(target$, user$, secret$)
+    IF target$ = "" THEN THROW "VAULT: a target name is needed"
+    DIM wide$ = Wide$(secret$)
+    DIM blob$ = LEFT$(wide$, LEN(wide$) - 2)
+    IF LEN(blob$) > MAX_BLOB THEN
+        THROW "VAULT: a secret may have at most 1280 characters"
+    ENDIF
+    DIM p_target = Block(Wide$(target$))
+    DIM p_user = Block(Wide$(user$))
+    DIM p_blob = Block(blob$)
+    ' The fields of CREDENTIALW, 80 bytes on 64-bit Windows.
+    DIM cred$ = Le$(0, 4) + Le$(CRED_TYPE_GENERIC, 4)
+    cred$ = cred$ + Le$(p_target, 8) + Le$(0, 8) + Le$(0, 8)
+    cred$ = cred$ + Le$(LEN(blob$), 4) + Le$(0, 4) + Le$(p_blob, 8)
+    cred$ = cred$ + Le$(CRED_PERSIST_LOCAL_MACHINE, 4) + Le$(0, 4)
+    cred$ = cred$ + Le$(0, 8) + Le$(0, 8) + Le$(p_user, 8)
+    DIM p_cred = Block(cred$)
+    DIM ok = CredWriteW(p_cred, 0)
+    DIM err = GetLastError()
+    DIM f = LocalFree(p_cred) + LocalFree(p_blob)
+    f = f + LocalFree(p_user) + LocalFree(p_target)
+    IF ok = 0 THEN THROW Failed$("store", target$, err)
+ENDSUB
+
+' The entry under target$ as {"user", "secret"}, or 0 when there is
+' none.
+FUNC Fetch(target$)
+    DIM p_out = Block(Le$(0, 8))
+    DIM ok = CredReadW(Wide$(target$), CRED_TYPE_GENERIC, 0, p_out)
+    DIM err = GetLastError()
+    DIM p_cred = Number(Peek$(p_out, 8))
+    DIM f = LocalFree(p_out)
+    IF ok = 0 THEN
+        IF err = ERROR_NOT_FOUND THEN RETURN 0
+        THROW Failed$("read", target$, err)
+    ENDIF
+    DIM size = Number(Peek$(p_cred + 32, 4))
+    DIM p_blob = Number(Peek$(p_cred + 40, 8))
+    DIM p_user = Number(Peek$(p_cred + 72, 8))
+    DIM entry AS MAP
+    entry{"secret"} = FromWide$(Peek$(p_blob, size))
+    entry{"user"} = ReadWide$(p_user)
+    CredFree(p_cred)
+    RETURN entry
+ENDFUNC
+
+' TRUE when an entry of that name exists.
+EXPORT FUNC HAS(target$)
+    RETURN TYPEOF(Fetch(target$)) = "OBJECT"
+ENDFUNC
+
+' The secret under target$, "" when there is none.
+EXPORT FUNC GET$(target$)
+    DIM e = Fetch(target$)
+    IF TYPEOF(e) <> "OBJECT" THEN RETURN ""
+    RETURN e{"secret"}
+ENDFUNC
+
+' The user name stored with target$, "" when there is none.
+EXPORT FUNC USER$(target$)
+    DIM e = Fetch(target$)
+    IF TYPEOF(e) <> "OBJECT" THEN RETURN ""
+    RETURN e{"user"}
+ENDFUNC
+
+' Removes the entry; answers FALSE when no entry of that name exists.
+EXPORT FUNC DELETE(target$)
+    DIM ok = CredDeleteW(Wide$(target$), CRED_TYPE_GENERIC, 0)
+    IF ok <> 0 THEN RETURN TRUE
+    DIM err = GetLastError()
+    IF err = ERROR_NOT_FOUND THEN RETURN FALSE
+    THROW Failed$("remove", target$, err)
+ENDFUNC
+
+' A secret from the first place that has it: the Credential Manager
+' under target$, the environment variable env$, or a prompt on the
+' console. An empty env$ or prompt$ leaves that place out; "" when
+' none of them answers.
+EXPORT FUNC FIND$(target$, env$, prompt$)
+    DIM stored$ = GET$(target$)
+    IF stored$ <> "" THEN RETURN stored$
+    IF env$ <> "" THEN
+        DIM from_env$ = GETENV$(env$)
+        IF from_env$ <> "" THEN RETURN from_env$
+    ENDIF
+    IF prompt$ = "" THEN RETURN ""
+    RETURN ASK$(prompt$)
+ENDFUNC
+
+' Reads a secret from the console without showing it; each key prints
+' a star, Backspace takes the last one back, Enter ends.
+EXPORT FUNC ASK$(prompt$)
+    PRINT prompt$;
+    DIM typed$ = ""
+    DO
+        DIM k$ = WAITKEY$()
+        IF k$ = CHR$(13) ORELSE k$ = CHR$(10) THEN EXITDO
+        IF k$ = CHR$(8) THEN
+            IF LEN(typed$) > 0 THEN
+                typed$ = LEFT$(typed$, LEN(typed$) - 1)
+                PRINT CHR$(8); " "; CHR$(8);
+            ENDIF
+        ELSEIF k$ = CHR$(3) THEN
+            THROW "VAULT: cancelled"
+        ELSEIF k$ <> "" THEN
+            typed$ = typed$ + k$
+            PRINT "*";
+        ENDIF
+    LOOP
+    PRINT
+    RETURN typed$
+ENDFUNC

@@ -1,0 +1,228 @@
+' crunch.jdb: the work of Parallel Crunching. Each expense export
+' becomes one line of text (rows, amount, unreadable lines, amount
+' per category), on one core or on many, and the lines are added up
+' into one report.
+'
+'   IMPORT CRUNCH
+'   DIM files = CRUNCH.FILES("C:/Exports/2026-09")
+'   DIM run = CRUNCH.PARALLEL(files, ";", 8, 30000)
+'   DIM totals = CRUNCH.MERGE(run{"texts"})
+
+EXPORT MODULE CRUNCH
+
+IMPORT POOL
+
+' The CSV files of a folder, sorted, as full paths.
+EXPORT FUNC FILES(folder$)
+    DIM out = []
+    IF NOT FILE.ISDIR(folder$) THEN RETURN out
+    DIM names = SORT(DIR$(PATH.JOIN$(folder$, "*.csv")))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file_name$ = names[k]
+        DIM path$ = PATH.JOIN$(folder$, file_name$)
+        IF NOT FILE.ISDIR(path$) THEN PUSH(out, path$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' One export as text: "rows;cents;bad;cat=cents,cat=cents". The file
+' starts with the header date, category, amount; another file is an
+' error.
+EXPORT FUNC SUMMARY$(path$, sep$)
+    DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM lines = SPLIT(text$, CHR$(10))
+    DIM head$ = LCASE$(REPLACE$(lines[0], " ", ""))
+    IF head$ <> "date" + sep$ + "category" + sep$ + "amount" THEN
+        THROW "not an expense export"
+    ENDIF
+    DIM by AS MAP
+    DIM rows = 0
+    DIM cents = 0
+    DIM bad = 0
+    DIM k = 0
+    FOR k = 1 TO LEN(lines) - 1
+        DIM line$ = TRIM$(lines[k])
+        IF line$ <> "" THEN
+            DIM parts = SPLIT(line$, sep$)
+            DIM ok = LEN(parts) = 3
+            DIM num_rx$ = "^-?[0-9]+(\.[0-9]+)?$"
+            IF ok THEN ok = LEN(REGEX.FINDALL(num_rx$, parts[2])) = 1
+            IF ok THEN
+                DIM cat$ = TRIM$(parts[1])
+                DIM c = CINT(ROUND(VAL(parts[2]) * 100))
+                rows = rows + 1
+                cents = cents + c
+                IF MAP.EXISTS(by, cat$) THEN
+                    by{cat$} = by{cat$} + c
+                ELSE
+                    by{cat$} = c
+                ENDIF
+            ELSE
+                bad = bad + 1
+            ENDIF
+        ENDIF
+    NEXT k
+    DIM cats = SORT(MAP.KEYS(by))
+    DIM pairs = []
+    FOR k = 0 TO LEN(cats) - 1
+        DIM name$ = cats[k]
+        PUSH(pairs, name$ + "=" + STR$(by{name$}))
+    NEXT k
+    DIM nums$ = STR$(rows) + ";" + STR$(cents) + ";" + STR$(bad)
+    RETURN nums$ + ";" + JOIN(pairs, ",")
+ENDFUNC
+
+' Every file on this core. Answers the same map as PARALLEL.
+EXPORT FUNC SERIAL(files, sep$)
+    DIM started = TICK()
+    DIM texts = []
+    DIM failed = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM p$ = files[k]
+        TRY
+            PUSH(texts, SUMMARY$(p$, sep$))
+        CATCH
+            PUSH(texts, "")
+            PUSH(failed, PATH.BASENAME$(p$) + ": " + ERRMSG$)
+        ENDTRY
+    NEXT k
+    DIM out AS MAP
+    out{"texts"} = texts
+    out{"failed"} = failed
+    out{"ms"} = TICK() - started
+    RETURN out
+ENDFUNC
+
+ASYNC FUNC Worker(jobs, results, files, sep$)
+    DO
+        DIM idx = POOL.TAKE_JOB(jobs, results)
+        IF idx < 0 THEN EXITDO
+        TRY
+            DIM p$ = files[idx]
+            POOL.DONE_TEXT(results, idx, SUMMARY$(p$, sep$))
+        CATCH
+            POOL.FAILED(results, idx, ERRMSG$)
+        ENDTRY
+    LOOP
+    RETURN 0
+ENDFUNC
+
+' Every file on several workers. Answers "texts" in input order
+' ("" for a file that failed), "failed" as lines "name: reason",
+' and "ms".
+EXPORT FUNC PARALLEL(files, sep$, workers, timeout_ms)
+    DIM started = TICK()
+    DIM out AS MAP
+    out{"texts"} = []
+    out{"failed"} = []
+    IF LEN(files) = 0 THEN
+        out{"ms"} = 0
+        RETURN out
+    ENDIF
+    DIM p = POOL.CREATE(LEN(files))
+    DIM w = 0
+    FOR w = 1 TO MAX([1, workers])
+        DIM task = Worker(POOL.JOBS(p), POOL.RESULTS(p), files, sep$)
+        POOL.SPAWN(p, task)
+    NEXT w
+    DIM good = POOL.GATHER(p, timeout_ms, FALSE)
+    DIM texts = []
+    DIM failed = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        IF POOL.STATE$(p, k) = "ok" THEN
+            PUSH(texts, POOL.VALUE_TEXT$(p, k))
+        ELSE
+            PUSH(texts, "")
+            DIM file$ = files[k]
+            DIM why$ = POOL.REASON$(p, k)
+            PUSH(failed, PATH.BASENAME$(file$) + ": " + why$)
+        ENDIF
+    NEXT k
+    POOL.SHUTDOWN(p)
+    out{"texts"} = texts
+    out{"failed"} = failed
+    out{"ms"} = TICK() - started
+    RETURN out
+ENDFUNC
+
+' The texts added up: "files", "rows", "cents", "bad" and "by", the
+' cents per category. A text that is "" counts as a file left out.
+EXPORT FUNC MERGE(texts)
+    DIM by AS MAP
+    DIM files = 0
+    DIM rows = 0
+    DIM cents = 0
+    DIM bad = 0
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(texts) - 1
+        DIM t$ = texts[k]
+        IF t$ <> "" THEN
+            DIM parts = SPLIT(t$, ";")
+            files = files + 1
+            rows = rows + CINT(VAL(parts[0]))
+            cents = cents + CINT(VAL(parts[1]))
+            bad = bad + CINT(VAL(parts[2]))
+            IF parts[3] <> "" THEN
+                DIM pairs = SPLIT(parts[3], ",")
+                FOR j = 0 TO LEN(pairs) - 1
+                    DIM pair = SPLIT(pairs[j], "=")
+                    DIM cat$ = pair[0]
+                    DIM c = CINT(VAL(pair[1]))
+                    IF MAP.EXISTS(by, cat$) THEN
+                        by{cat$} = by{cat$} + c
+                    ELSE
+                        by{cat$} = c
+                    ENDIF
+                NEXT j
+            ENDIF
+        ENDIF
+    NEXT k
+    DIM out AS MAP
+    out{"files"} = files
+    out{"rows"} = rows
+    out{"cents"} = cents
+    out{"bad"} = bad
+    out{"by"} = by
+    RETURN out
+ENDFUNC
+
+' An amount in cents as text with two decimals.
+EXPORT FUNC MONEY$(cents)
+    DIM sign$ = ""
+    DIM c = cents
+    IF c < 0 THEN
+        sign$ = "-"
+        c = -c
+    ENDIF
+    DIM whole = INT(c / 100)
+    DIM rest = c - whole * 100
+    DIM rest$ = STR$(rest)
+    IF rest < 10 THEN rest$ = "0" + rest$
+    RETURN sign$ + STR$(whole) + "." + rest$
+ENDFUNC
+
+' The report as CSV: one line per category and a total.
+EXPORT FUNC REPORT_CSV$(totals, sep$)
+    DIM by = totals{"by"}
+    DIM cats = SORT(MAP.KEYS(by))
+    DIM lines = ["category" + sep$ + "amount"]
+    DIM k = 0
+    FOR k = 0 TO LEN(cats) - 1
+        DIM name$ = cats[k]
+        PUSH(lines, name$ + sep$ + MONEY$(by{name$}))
+    NEXT k
+    PUSH(lines, "total" + sep$ + MONEY$(totals{"cents"}))
+    RETURN JOIN(lines, CHR$(10)) + CHR$(10)
+ENDFUNC
+
+' The number of workers for a setting: 0 means one per core.
+EXPORT FUNC WORKERS(setting)
+    IF setting > 0 THEN RETURN setting
+    DIM n = CINT(VAL(GETENV$("NUMBER_OF_PROCESSORS")))
+    IF n < 1 THEN n = 4
+    RETURN n
+ENDFUNC

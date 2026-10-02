@@ -1,0 +1,74 @@
+' Parallel Crunching: adds up a folder of expense exports on every
+' core of the computer and writes one report with the amount per
+' category. Files that cannot be read are listed, not guessed. The
+' settings are the [parallel_crunching] part of work.conf.
+'
+'   jdbasic parallel_crunching.jdb                 crunch the folder
+'   jdbasic parallel_crunching.jdb --folder <dir>  another folder
+'   jdbasic parallel_crunching.jdb --serial        on one core
+'   jdbasic parallel_crunching.jdb --dry-run       count only
+
+IMPORT WORKCONF, CRUNCH
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "parallel_crunching."
+DIM home$ = "~/Documents/AutomateWork/exports"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM given$ = WORKCONF.ARG$("folder")
+IF given$ <> "" THEN folder$ = WORKCONF.EXPAND$(given$)
+DIM reports_home$ = "~/Documents/AutomateWork/reports"
+DIM out$ = WORKCONF.FOLDER$(cfg, key$ + "reports", reports_home$)
+DIM sep$ = WORKCONF.VALUE(cfg, key$ + "separator", ";")
+DIM wanted = WORKCONF.VALUE(cfg, key$ + "workers", 0)
+DIM limit = WORKCONF.VALUE(cfg, key$ + "timeout_seconds", 30)
+DIM workers = CRUNCH.WORKERS(CINT(wanted))
+
+DIM files = CRUNCH.FILES(folder$)
+IF LEN(files) = 0 THEN
+    PRINT "No CSV files in "; folder$
+    END
+ENDIF
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT "would crunch "; LEN(files); " files in "; folder$
+    PRINT "on "; workers; " workers, report into "; out$
+    END
+ENDIF
+
+DIM run AS MAP
+IF WORKCONF.FLAG("serial") THEN
+    run = CRUNCH.SERIAL(files, sep$)
+    workers = 1
+ELSE
+    run = CRUNCH.PARALLEL(files, sep$, workers, limit * 1000)
+ENDIF
+DIM texts = run{"texts"}
+DIM failed = run{"failed"}
+DIM ms = run{"ms"}
+DIM totals = CRUNCH.MERGE(texts)
+
+MKDIR out$
+DIM base$ = "expenses " + PATH.BASENAME$(folder$)
+DIM report$ = PATH.JOIN$(out$, base$ + ".csv")
+DIM n = 2
+DO WHILE FILE.EXISTS(report$)
+    report$ = PATH.JOIN$(out$, base$ + " " + STR$(n) + ".csv")
+    n = n + 1
+LOOP
+TXTWRITER report$, CRUNCH.REPORT_CSV$(totals, sep$)
+
+DIM lines = []
+PUSH(lines, FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M") + " " + folder$)
+PUSH(lines, "  " + STR$(totals{"files"}) + " files, " + _
+    STR$(totals{"rows"}) + " rows, " + STR$(totals{"bad"}) + _
+    " lines skipped, " + STR$(workers) + " workers, " + _
+    STR$(INT(ms)) + " ms")
+DIM total$ = CRUNCH.MONEY$(totals{"cents"})
+PUSH(lines, "  total " + total$ + ", report " + report$)
+DIM k = 0
+FOR k = 0 TO LEN(failed) - 1
+    PUSH(lines, "  not read: " + failed[k])
+NEXT k
+DIM text$ = JOIN(lines, CHR$(10)) + CHR$(10)
+PRINT text$;
+TXTWRITER PATH.JOIN$(out$, "parallel_crunching.log"), text$, TRUE
+IF LEN(failed) > 0 THEN THROW STR$(LEN(failed)) + " files not read"

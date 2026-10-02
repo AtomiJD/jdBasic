@@ -1,8 +1,9 @@
 ' outbox.jdb: the mail rule of the book's recipes. A recipe puts its
 ' messages as .eml files into the outbox folder; sending happens only
-' when a person runs a recipe with --send and types the password,
-' which is never written into a settings file. The server comes from
-' the [mail] part of work.conf.
+' when a person runs a recipe with --send and types the password, or
+' has stored it in the Windows Credential Manager; it is never written
+' into a settings file. The server comes from the [mail] part of
+' work.conf.
 '
 '   IMPORT OUTBOX
 '   DIM path$ = OUTBOX.PUT$(msg, cfg, "invoice-0413.eml")
@@ -13,7 +14,7 @@
 
 EXPORT MODULE OUTBOX
 
-IMPORT WORKCONF, MAIL
+IMPORT WORKCONF, MAIL, VAULT
 
 ' The outbox folder, [mail] outbox in work.conf.
 EXPORT FUNC FOLDER$(cfg)
@@ -65,12 +66,13 @@ EXPORT FUNC PENDING(cfg)
     RETURN out
 ENDFUNC
 
-' Asks for the mail password; nothing is stored.
+' The mail password: from the Windows Credential Manager when you
+' stored it there as AutomateWork/mail, otherwise asked for without
+' showing what you type. Nothing is written down.
 EXPORT FUNC ASK$(cfg)
     DIM user$ = WORKCONF.VALUE(cfg, "mail.user", "")
-    DIM typed$ = ""
-    INPUT "Mail password for " + user$ + ": "; typed$
-    RETURN typed$
+    DIM ask$ = "Mail password for " + user$ + ": "
+    RETURN VAULT.FIND$("AutomateWork/mail", "", ask$)
 ENDFUNC
 
 ' The curl arguments that send one .eml file of the outbox.

@@ -69,8 +69,12 @@ ENDIF
 IF "--uninstall" IN argv THEN
     DIM u = 0
     FOR u = 0 TO LEN(recipes) - 1
-        DIM gone = WIZARD.SCHTASKS(WIZARD.UNSCHEDULE_ARGS(recipes[u]))
-        IF gone[0] THEN PRINT "removed the task for "; recipes[u]{"name"}
+        DIM all_tasks = WIZARD.TASKS(recipes[u], "")
+        DIM ut = 0
+        FOR ut = 0 TO LEN(all_tasks) - 1
+            DIM gone = WIZARD.SCHTASKS(WIZARD.UNSCHEDULE_ARGS(all_tasks[ut]{"r"}))
+            IF gone[0] THEN PRINT "removed the task for "; all_tasks[ut]{"r"}{"name"}
+        NEXT ut
     NEXT u
     PRINT "Your files and work.conf stay where they are."
     END
@@ -139,16 +143,23 @@ ELSE
             IF recipes[j]{"id"} = picked[k] THEN rr = recipes[j]
         NEXT j
         DIM prog$ = PATH.JOIN$(a{"work"}, "recipes", rr{"folder"}, rr{"program"})
-        DIM targs = WIZARD.SCHEDULE_ARGS(rr, WIZARD.RESOLVE_WHEN$(a, a{"schedule"}{rr{"id"}}), a{"jdbasic"}, prog$, conf$)
-        IF gDry THEN
-            PRINT WIZARD.PLAN_LINE$(rr{"name"}, WIZARD.RESOLVE_WHEN$(a, a{"schedule"}{rr{"id"}}))
-        ELSE
-            DIM done = WIZARD.SCHTASKS(targs)
-            IF done[0] THEN
-                PRINT "scheduled "; rr{"name"}; ": "; a{"schedule"}{rr{"id"}}
+        DIM tasks = WIZARD.TASKS(rr, WIZARD.RESOLVE_WHEN$(a, a{"schedule"}{rr{"id"}}))
+        DIM t = 0
+        FOR t = 0 TO LEN(tasks) - 1
+            DIM tr = tasks[t]{"r"}
+            DIM tw$ = tasks[t]{"when"}
+            IF gDry THEN
+                PRINT WIZARD.PLAN_LINE$(tr{"name"}, tw$)
             ELSE
-                PRINT "could not schedule "; rr{"name"}; ": "; done[1]
+                DIM done = WIZARD.SCHTASKS(WIZARD.SCHEDULE_ARGS(tr, tw$, a{"jdbasic"}, prog$, conf$))
+                IF done[0] THEN
+                    PRINT "scheduled "; tr{"name"}; ": "; tw$
+                ELSE
+                    PRINT "could not schedule "; tr{"name"}; ": "; done[1]
+                ENDIF
             ENDIF
+        NEXT t
+        IF NOT gDry THEN
             DIM trial = OS.EXEC(a{"jdbasic"}, [prog$, "--dry-run", "--config", conf$])
             IF trial{"EXIT_CODE"} <> 0 THEN PRINT "  the dry run of "; rr{"name"}; " failed: "; TRIM$(trial{"OUTPUT"})
         ENDIF

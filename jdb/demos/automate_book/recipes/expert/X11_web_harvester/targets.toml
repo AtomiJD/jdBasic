@@ -1,0 +1,16 @@
+# What the Web Harvester reads: one [[target]] per value.
+# name    the column the value is filed under
+# url     the page
+# select  a CSS selector for the element, as in a browser's inspector
+# attr    optional: read this attribute of the element instead of its text
+
+[[target]]
+name = "Example heading"
+url = "https://example.com/"
+select = "h1"
+
+[[target]]
+name = "Example link"
+url = "https://example.com/"
+select = "a"
+attr = "href"

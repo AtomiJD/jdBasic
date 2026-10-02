@@ -1,0 +1,157 @@
+' JOBSERVER and JOBSTATE: the jobs file with its defaults and its
+' mistakes, the command of a job, when a job is due, a run with retries,
+' a missed run, a dry run, the state file, the lock and the audit trail.
+' The jobs run cmd, so the test needs no recipe.
+
+IMPORT TESTKIT, JOBSERVER, JOBSTATE, LOGGER, AUDIT, DT
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("jobtest")
+MKDIR folder$
+DIM offset = 0
+DIM t0 = DT.MAKE(2026, 10, 2, 9, 0, 0, offset)
+
+FUNC Line$(key$, value$)
+    RETURN key$ + " = " + CHR$(34) + value$ + CHR$(34) + CHR$(10)
+ENDFUNC
+
+DIM toml$ = "[[job]]" + LF$ + Line$("name", "hello") + Line$("when", "every 15 minutes")
+toml$ = toml$ + Line$("command", "cmd") + "args = [" + Q$ + "/c" + Q$ + ", "
+toml$ = toml$ + Q$ + "echo" + Q$ + ", " + Q$ + "hello" + Q$ + "]" + LF$
+toml$ = toml$ + "[[job]]" + LF$ + Line$("name", "broken") + Line$("when", "daily 08:00")
+toml$ = toml$ + Line$("command", "cmd") + "args = [" + Q$ + "/c" + Q$ + ", "
+toml$ = toml$ + Q$ + "exit" + Q$ + ", " + Q$ + "3" + Q$ + "]" + LF$
+toml$ = toml$ + "attempts = 2" + LF$ + "retry_seconds = 0" + LF$
+toml$ = toml$ + "[[job]]" + LF$ + Line$("name", "report") + Line$("when", "daily 07:00")
+toml$ = toml$ + Line$("program", "M06/report.jdb") + "catch_up = false" + LF$
+DIM jobs_path$ = PATH.JOIN$(folder$, "jobs.toml")
+TXTWRITER jobs_path$, toml$
+
+DIM bad_path$ = PATH.JOIN$(folder$, "bad.toml")
+DIM bad$ = "[[job]]" + LF$ + Line$("name", "x") + Line$("when", "sometimes")
+bad$ = bad$ + "[[job]]" + LF$ + Line$("name", "x") + Line$("when", "daily 08:00")
+TXTWRITER bad_path$, bad$
+
+FUNC LoadBad(path$)
+    RETURN JOBSTATE.JOBS(path$)
+ENDFUNC
+
+FUNC Find(jobs, name$)
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        IF job{"name"} = name$ THEN RETURN job
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+TESTKIT.SUITE("the jobs file")
+DIM jobs = JOBSTATE.JOBS(jobs_path$)
+TESTKIT.EQ(LEN(jobs), 3, "three jobs")
+DIM hello = Find(jobs, "hello")
+DIM broken = Find(jobs, "broken")
+DIM report = Find(jobs, "report")
+TESTKIT.EQ(hello{"attempts"}, 1, "one attempt unless the file says more")
+TESTKIT.EQ(broken{"attempts"}, 2, "the file says two")
+TESTKIT.ISTRUE(hello{"catch_up"}, "catch_up is on by default")
+TESTKIT.ISFALSE(report{"catch_up"}, "and can be switched off")
+TESTKIT.ISTRUE(hello{"enabled"}, "a job is on by default")
+TESTKIT.THROWS(LoadBad@, bad_path$, "a file with mistakes is an error")
+DIM why$ = ""
+TRY
+    DIM none = JOBSTATE.JOBS(bad_path$)
+CATCH
+    why$ = ERRMSG$
+ENDTRY
+TESTKIT.ISTRUE(INSTR(why$, "used twice") >= 0, "it names a name used twice")
+TESTKIT.ISTRUE(INSTR(why$, "neither program nor command") >= 0, "and a job without a program")
+
+TESTKIT.SUITE("commands")
+DIM paths AS MAP
+paths{"jdbasic"} = "C:/jd/jdbasic.exe"
+paths{"recipes"} = "C:/Work/recipes"
+paths{"config"} = "C:/Work/config/work.conf"
+DIM cmd = JOBSERVER.COMMAND(report, paths)
+TESTKIT.EQ(cmd{"exe"}, "C:/jd/jdbasic.exe", "a program runs with jdbasic")
+DIM cmd_args = cmd{"args"}
+DIM first$ = cmd_args[0]
+DIM last$ = cmd_args[LEN(cmd_args) - 1]
+TESTKIT.EQ(first$, PATH.JOIN$("C:/Work/recipes", "M06/report.jdb"), "from the recipes folder")
+TESTKIT.EQ(last$, "C:/Work/config/work.conf", "with the same settings file")
+DIM direct = JOBSERVER.COMMAND(hello, paths)
+TESTKIT.EQ(direct{"exe"}, "cmd", "a command runs as it is")
+
+TESTKIT.SUITE("when a job is due")
+DIM lg = LOGGER.NEW("jobtest")
+DIM log_path$ = PATH.JOIN$(folder$, "job_server.log")
+LOGGER.TO_FILE(lg, log_path$)
+DIM ctx AS MAP
+ctx{"paths"} = paths
+ctx{"log"} = lg
+ctx{"offset"} = offset
+ctx{"dry_run"} = FALSE
+ctx{"audit"} = PATH.JOIN$(folder$, "audit.log")
+ctx{"key"} = "test key"
+DIM state AS MAP
+DIM first_tick = JOBSERVER.TICK(jobs, state, t0, ctx)
+TESTKIT.EQ(LEN(first_tick), 0, "a new job waits for its next run time")
+TESTKIT.ISTRUE(MAP.EXISTS(state, "hello"), "but it is in the state now")
+DIM later = t0 + 20 * 60
+ctx{"dry_run"} = TRUE
+DIM dry = JOBSERVER.TICK(jobs, state, later, ctx)
+TESTKIT.EQ(LEN(dry), 1, "a dry run names the job that is due")
+DIM dry_item = dry[0]
+TESTKIT.EQ(dry_item{"would_run"}, "2026-10-02 09:15", "and its run time")
+TESTKIT.EQ(state{"hello"}{"runs"}, 0, "and runs nothing")
+ctx{"dry_run"} = FALSE
+DIM ran = JOBSERVER.TICK(jobs, state, later, ctx)
+TESTKIT.EQ(LEN(ran), 1, "the job that is due runs")
+DIM hello_run = ran[0]
+TESTKIT.ISTRUE(hello_run{"ok"}, "and works")
+TESTKIT.EQ(hello_run{"output"}, "hello", "with what it printed")
+DIM again = JOBSERVER.TICK(jobs, state, later + 30, ctx)
+TESTKIT.EQ(LEN(again), 0, "it does not run twice for one run time")
+
+TESTKIT.SUITE("failures and missed runs")
+DIM b_rec = state{"broken"}
+b_rec{"last_due"} = t0 - 86400
+state{"broken"} = b_rec
+DIM r_rec = state{"report"}
+r_rec{"last_due"} = t0 - 86400
+state{"report"} = r_rec
+DIM next_day = t0 + 3600
+DIM mixed = JOBSERVER.TICK(jobs, state, next_day, ctx)
+TESTKIT.EQ(LEN(mixed), 3, "the next run, the failed job and the missed one")
+DIM fail_run = mixed[1]
+TESTKIT.ISFALSE(fail_run{"ok"}, "an exit code other than 0 is a failure")
+TESTKIT.EQ(fail_run{"exit"}, 3, "with its exit code")
+TESTKIT.EQ(fail_run{"attempts"}, 2, "after two attempts")
+TESTKIT.EQ(state{"broken"}{"fails"}, 1, "the state counts it")
+DIM skip = mixed[2]
+TESTKIT.ISTRUE(MAP.EXISTS(skip, "skipped"), "a late job without catch_up is skipped")
+TESTKIT.ISTRUE(INSTR(TXTREADER$(log_path$), "job failed") >= 0, "the log has the failure")
+
+TESTKIT.SUITE("state, lock and audit trail")
+DIM state_path$ = PATH.JOIN$(folder$, "job_state.json")
+JOBSTATE.WRITE(state_path$, state)
+DIM back = JOBSTATE.READ(state_path$)
+TESTKIT.EQ(back{"broken"}{"last_exit"}, 3, "the state file keeps the exit code")
+DIM lines = JOBSERVER.LIST_LINES(jobs, back, next_day, offset)
+TESTKIT.EQ(LEN(lines), 6, "two lines per job")
+DIM broken_line$ = lines[3]
+TESTKIT.ISTRUE(INSTR(broken_line$, "FAILED") >= 0, "the list shows the failure")
+DIM lock$ = PATH.JOIN$(folder$, "job_server.lock")
+TESTKIT.ISTRUE(JOBSERVER.FREE(lock$, t0, 180), "no lock file, no other server")
+JOBSERVER.TOUCH(lock$, t0)
+TESTKIT.ISFALSE(JOBSERVER.FREE(lock$, t0 + 60, 180), "a fresh lock keeps a second server out")
+TESTKIT.ISTRUE(JOBSERVER.FREE(lock$, t0 + 600, 180), "an old one does not")
+TESTKIT.EQ(JOBSTATE.HEARTBEAT_AGE(lock$, t0 + 42), 42, "the age of the last mark")
+DIM wake = JOBSERVER.NEXT_WAKE(jobs, later, offset)
+TESTKIT.ISTRUE(wake >= 5 ANDALSO wake <= 60, "the server wakes within a minute")
+DIM check = AUDIT.VERIFY(ctx{"audit"}, "test key")
+TESTKIT.ISTRUE(check{"ok"}, "every run is in the audit trail")
+TESTKIT.EQ(check{"entries"}, 3, "one entry per run")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

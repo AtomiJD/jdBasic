@@ -1,0 +1,106 @@
+' Report Pipeline: the week before a day, the bookings of a sample
+' database, the report per cost center against the budget, the chart,
+' the Word file and the PDF read back, and the mail put into an outbox
+' folder. Nothing is sent.
+
+IMPORT TESTKIT, PIPELINE, OUTBOX, MAIL, DOCX, CONF, DB, DF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("pipeline")
+MKDIR folder$
+DIM db$ = PATH.JOIN$(folder$, "bookings.db")
+PIPELINE.SAMPLE(db$, "2026-10-04")
+
+FUNC NoDatabase(x)
+    DIM week = PIPELINE.LAST_WEEK("2026-10-05")
+    RETURN PIPELINE.BOOKINGS("no such database.db", week)
+ENDFUNC
+
+TESTKIT.SUITE("the week")
+DIM week = PIPELINE.LAST_WEEK("2026-10-05")
+TESTKIT.EQ(week{"from"}, "2026-09-28", "a Monday reports the week before")
+TESTKIT.EQ(week{"to"}, "2026-10-04", "up to its Sunday")
+DIM mid = PIPELINE.LAST_WEEK("2026-10-08")
+TESTKIT.EQ(mid{"from"}, "2026-09-28", "a Thursday as well")
+TESTKIT.EQ(week{"label"}, "Week of 28 September 2026", "with a label")
+
+TESTKIT.SUITE("the database")
+DIM rows = PIPELINE.BOOKINGS(db$, week)
+TESTKIT.EQ(LEN(rows), 20, "five working days, four cost centers")
+TESTKIT.EQ(rows[0]{"day"}, "2026-09-28", "sorted by day")
+DIM budgets = PIPELINE.BUDGETS(db$)
+TESTKIT.EQ(budgets{"Travel"}, 1200, "the budget per cost center")
+TESTKIT.THROWS(NoDatabase@, 0, "a missing database is an error")
+
+TESTKIT.SUITE("the report")
+DIM h = DB.OPEN(db$)
+DIM extra = {"day": "2026-10-01", "cost_center": "Travel", _
+    "amount": 900}
+DIM id = DB.INSERT(h, "bookings", extra)
+DB.CLOSE(h)
+rows = PIPELINE.BOOKINGS(db$, week)
+DIM report = PIPELINE.REPORT(rows, budgets)
+TESTKIT.EQ(DF.NROWS(report), 4, "one row per cost center")
+DIM names = DF.COL(report, "cost_center")
+DIM spent = DF.COL(report, "spent")
+TESTKIT.ISTRUE(spent[0] >= spent[1], "the largest first")
+DIM k = 0
+DIM travel = -1
+FOR k = 0 TO LEN(names) - 1
+    IF names[k] = "Travel" THEN travel = k
+NEXT k
+DIM pct = DF.COL(report, "percent")
+TESTKIT.ISTRUE(pct[travel] > 100, "Travel is over its budget")
+DIM over = PIPELINE.OVER_BUDGET(report)
+TESTKIT.EQ(LEN(over), 1, "and the only one")
+TESTKIT.ISTRUE(STARTSWITH(over[0], "Travel at "), "named in a line")
+DIM table = PIPELINE.TABLE_ROWS(report)
+TESTKIT.EQ(LEN(table), 6, "header, four rows and the total")
+TESTKIT.EQ(table[5][2], "10,700.00", "the total budget")
+DIM none = PIPELINE.REPORT([], budgets)
+TESTKIT.EQ(SUM(DF.COL(none, "spent")), 0, "an empty week reports zero")
+TESTKIT.EQ(DF.NROWS(none), 4, "for every budget")
+
+TESTKIT.SUITE("money")
+TESTKIT.EQ(PIPELINE.MONEY$(1234567.5), "1,234,567.50", "thousands")
+TESTKIT.EQ(PIPELINE.MONEY$(0.999), "1.00", "rounded up")
+TESTKIT.EQ(PIPELINE.MONEY$(-42), "-42.00", "below zero")
+
+TESTKIT.SUITE("the files")
+DIM base$ = PATH.JOIN$(folder$, "costs 2026-09-28")
+DIM svg$ = PIPELINE.CHART$(report, week)
+TESTKIT.ISTRUE(STARTSWITH(svg$, "<svg"), "the chart is SVG")
+TESTKIT.ISTRUE(INSTR(svg$, "Marketing") >= 0, "with the cost centers")
+PIPELINE.WRITE_DOCX(report, week, base$ + ".docx")
+DIM tables = DOCX.TABLES(base$ + ".docx")
+TESTKIT.EQ(LEN(tables), 1, "the Word file has the table")
+DIM wt = tables[0]
+TESTKIT.EQ(wt[5][0], "Total", "with the total")
+DIM paras = DOCX.PARAGRAPHS(base$ + ".docx")
+TESTKIT.ISTRUE("Over budget" IN paras, "and the warning")
+PIPELINE.WRITE_PDF(report, week, base$ + ".pdf")
+DIM pdf$ = BINREADER$(base$ + ".pdf")
+TESTKIT.EQ(LEFT$(pdf$, 5), "%PDF-", "the PDF is written")
+
+TESTKIT.SUITE("the mail")
+DIM box$ = REPLACE$(PATH.JOIN$(folder$, "outbox"), "\", "/")
+DIM toml$ = "[user]" + LF$ + "name = " + Q$ + "Lena Example" + Q$ + LF$
+toml$ = toml$ + "email = " + Q$ + "lena@example.com" + Q$ + LF$
+toml$ = toml$ + "[mail]" + LF$ + "outbox = " + Q$ + box$ + Q$ + LF$
+DIM cfg = CONF.TOML_TEXT(toml$)
+DIM msg = PIPELINE.MESSAGE(OUTBOX.FROM$(cfg), "head@example.com", _
+    report, week, base$ + ".pdf", base$ + ".docx")
+DIM eml$ = OUTBOX.PUT$(msg, cfg, "costs.eml")
+DIM parsed = MAIL.PARSEFILE(eml$)
+DIM subject$ = MAIL.HEADERVALUE$(parsed, "Subject")
+TESTKIT.ISTRUE(INSTR(subject$, "Week of 28 September") >= 0, _
+    "the subject names the week")
+DIM raw$ = TXTREADER$(eml$)
+TESTKIT.ISTRUE(INSTR(raw$, "Over budget: Travel") >= 0, _
+    "the body names the cost center")
+TESTKIT.ISTRUE(INSTR(raw$, ".pdf") >= 0, "the PDF is attached")
+TESTKIT.EQ(LEN(OUTBOX.PENDING(cfg)), 1, "and waits in the outbox")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

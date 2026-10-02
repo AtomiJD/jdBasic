@@ -1,0 +1,126 @@
+' jobstate.jdb: what the job server (X01) knows about its jobs, for
+' every program that wants to read it: where the jobs file, the state
+' file, the log and the lock live, the jobs as a list, and the state
+' of each job.
+'
+'   IMPORT JOBSTATE
+'   DIM jobs = JOBSTATE.JOBS(JOBSTATE.JOBS_PATH$(cfg))
+'   DIM state = JOBSTATE.READ(JOBSTATE.STATE_PATH$(cfg))
+'   PRINT state{"backup"}{"last_ok"}
+'
+' The state file is JSON: one entry per job name with last_due (the
+' scheduled run time of the last run, epoch seconds), last_start and
+' last_end (local time as text), last_ok, last_exit, last_error,
+' last_success (seconds), runs and fails. The lock file holds the time
+' of the server's last sign of life, in seconds.
+
+EXPORT MODULE JOBSTATE
+
+IMPORT WORKCONF, CONF, SCHED
+
+' The folder of the state file, the log and the lock.
+EXPORT FUNC FOLDER$(cfg)
+    DIM home$ = "~/Documents/AutomateWork/logs"
+    RETURN WORKCONF.FOLDER$(cfg, "job_server.folder", home$)
+ENDFUNC
+
+EXPORT FUNC JOBS_PATH$(cfg)
+    DIM home$ = "~/Documents/AutomateWork/config/jobs.toml"
+    RETURN WORKCONF.FOLDER$(cfg, "job_server.jobs", home$)
+ENDFUNC
+
+EXPORT FUNC STATE_PATH$(cfg)
+    RETURN PATH.JOIN$(FOLDER$(cfg), "job_state.json")
+ENDFUNC
+
+EXPORT FUNC LOG_PATH$(cfg)
+    RETURN PATH.JOIN$(FOLDER$(cfg), "job_server.log")
+ENDFUNC
+
+EXPORT FUNC LOCK_PATH$(cfg)
+    RETURN PATH.JOIN$(FOLDER$(cfg), "job_server.lock")
+ENDFUNC
+
+' A setting of a job, or the default.
+FUNC Field(job, name$, fallback)
+    IF MAP.EXISTS(job, name$) THEN RETURN job{name$}
+    RETURN fallback
+ENDFUNC
+
+' The jobs of a jobs file, each with every field filled in: name,
+' when, program or command, args, attempts, retry_seconds, catch_up
+' and enabled.
+' A file with mistakes is an error that lists all of them.
+EXPORT FUNC JOBS(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "No jobs file at " + path$
+    DIM raw = CONF.TOML(path$)
+    DIM list = []
+    IF MAP.EXISTS(raw, "job") THEN list = raw{"job"}
+    DIM out = []
+    DIM problems = []
+    DIM seen AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(list) - 1
+        DIM j = list[k]
+        DIM job AS MAP
+        DIM name$ = Field(j, "name", "")
+        DIM when$ = Field(j, "when", "")
+        DIM where$ = "job " + STR$(k + 1)
+        IF name$ <> "" THEN where$ = "job " + name$
+        IF name$ = "" THEN PUSH(problems, where$ + ": no name")
+        IF MAP.EXISTS(seen, name$) THEN
+            PUSH(problems, where$ + ": the name is used twice")
+        ENDIF
+        seen{name$} = TRUE
+        IF when$ = "" THEN
+            PUSH(problems, where$ + ": no when")
+        ELSEIF NOT SCHED.VALID(when$) THEN
+            PUSH(problems, where$ + ": " + SCHED.PROBLEM$(when$))
+        ENDIF
+        DIM program$ = Field(j, "program", "")
+        DIM command$ = Field(j, "command", "")
+        IF program$ = "" ANDALSO command$ = "" THEN
+            PUSH(problems, where$ + ": neither program nor command")
+        ENDIF
+        job{"name"} = name$
+        job{"when"} = when$
+        job{"program"} = program$
+        job{"command"} = command$
+        job{"args"} = Field(j, "args", [])
+        job{"attempts"} = Field(j, "attempts", 1)
+        job{"retry_seconds"} = Field(j, "retry_seconds", 60)
+        job{"catch_up"} = Field(j, "catch_up", TRUE)
+        job{"enabled"} = Field(j, "enabled", TRUE)
+        PUSH(out, job)
+    NEXT k
+    IF LEN(problems) > 0 THEN
+        THROW "The jobs file has mistakes: " + JOIN(problems, "; ")
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' The state of all jobs; an empty map when there is no state file yet.
+EXPORT FUNC READ(path$)
+    DIM empty AS MAP
+    IF NOT FILE.EXISTS(path$) THEN RETURN empty
+    DIM text$ = TXTREADER$(path$)
+    IF TRIM$(text$) = "" THEN RETURN empty
+    RETURN JSON.PARSE$(text$)
+ENDFUNC
+
+' Writes the state through a temporary file, so a reader never sees
+' half of it.
+EXPORT SUB WRITE(path$, state)
+    MKDIR PATH.DIRNAME$(path$)
+    DIM tmp$ = path$ + ".tmp"
+    TXTWRITER tmp$, JSON.STRINGIFY$(state)
+    FILE.MOVE(tmp$, path$, TRUE)
+ENDSUB
+
+' The age in seconds of the server's last mark in the lock file at
+' now, or -1 when there is no lock file.
+EXPORT FUNC HEARTBEAT_AGE(lock_path$, now)
+    IF NOT FILE.EXISTS(lock_path$) THEN RETURN -1
+    DIM t = VAL(TRIM$(TXTREADER$(lock_path$)))
+    RETURN now - t
+ENDFUNC

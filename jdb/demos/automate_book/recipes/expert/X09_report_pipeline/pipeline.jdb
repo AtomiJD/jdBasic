@@ -1,0 +1,278 @@
+' pipeline.jdb: the weekly cost report of a team. Bookings come from a
+' SQLite database, a data frame adds them up per cost center against
+' the budget, and the result is written as a chart (SVG), a Word file
+' and a PDF, and put into a mail.
+'
+'   IMPORT PIPELINE
+'   DIM week = PIPELINE.LAST_WEEK("2026-10-05")
+'   DIM rows = PIPELINE.BOOKINGS(db$, week)
+'   DIM report = PIPELINE.REPORT(rows, PIPELINE.BUDGETS(db$))
+'   PIPELINE.WRITE_PDF(report, week, "costs.pdf")
+
+EXPORT MODULE PIPELINE
+
+IMPORT DB, DF, SVG, DOCX, PDFGEN, MAIL, RETRY
+
+' The Monday to Sunday before the week of day$ (YYYY-MM-DD), as a map
+' with "from", "to" and "label". The days are counted from noon, so
+' the hour that daylight saving time adds or takes keeps the date.
+EXPORT FUNC LAST_WEEK(day$)
+    DIM d = CDATE(day$ + " 12:00:00")
+    DIM back = (VAL(FORMAT_DATE(d, "%w")) + 6) MOD 7
+    DIM monday = DATEADD("D", -back - 7, d)
+    DIM from$ = FORMAT_DATE(monday, "%Y-%m-%d")
+    DIM to$ = FORMAT_DATE(DATEADD("D", 6, monday), "%Y-%m-%d")
+    DIM label$ = "Week of " + FORMAT_DATE(monday, "%d %B %Y")
+    RETURN {"from": from$, "to": to$, "label": label$}
+ENDFUNC
+
+FUNC OpenDb(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "No database at " + path$
+    RETURN DB.OPEN(path$)
+ENDFUNC
+
+' The bookings of the week as rows with "day", "cost_center" and
+' "amount". Opening the database is tried up to four times, with a
+' growing wait between the attempts.
+EXPORT FUNC BOOKINGS(db_path$, week)
+    DIM opts = {"attempts": 4, "delay": 250}
+    DIM h = RETRY.RUN(OpenDb@, db_path$, opts)
+    DIM q = DB.FROM("bookings")
+    DB.WHERE(q, "day >= ? AND day <= ?", [week{"from"}, week{"to"}])
+    DB.ORDERBY(q, "day")
+    DIM rows = DB.ROWS(h, q)
+    DB.CLOSE(h)
+    RETURN rows
+ENDFUNC
+
+' The budget per cost center for one week, from the budgets table.
+EXPORT FUNC BUDGETS(db_path$)
+    DIM h = OpenDb(db_path$)
+    DIM rows = DB.ROWS(h, DB.FROM("budgets"))
+    DB.CLOSE(h)
+    DIM out AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        out{r{"cost_center"}} = r{"week_budget"}
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Spent, budget and the share used per cost center, largest first: a
+' frame with cost_center, spent, budget and percent. A cost center
+' with a budget and no bookings shows 0.
+EXPORT FUNC REPORT(bookings, budgets)
+    DIM spent AS MAP
+    IF LEN(bookings) > 0 THEN
+        DIM f = DF.FROMROWS(bookings)
+        DIM how = {"spent": ["sum", "amount"]}
+        DIM sums = DF.GROUPBY(f, "cost_center", how)
+        DIM names = DF.COL(sums, "cost_center")
+        DIM totals = DF.COL(sums, "spent")
+        DIM k = 0
+        FOR k = 0 TO LEN(names) - 1
+            spent{names[k]} = totals[k]
+        NEXT k
+    ENDIF
+    DIM all_names = UNIQUE(APPEND(MAP.KEYS(spent), MAP.KEYS(budgets)))
+    DIM rows = []
+    DIM i = 0
+    FOR i = 0 TO LEN(all_names) - 1
+        DIM cc$ = all_names[i]
+        DIM s = 0.0
+        DIM b = 0.0
+        IF MAP.EXISTS(spent, cc$) THEN s = spent{cc$}
+        IF MAP.EXISTS(budgets, cc$) THEN b = budgets{cc$}
+        DIM pct = 0.0
+        IF b > 0 THEN pct = ROUND(s / b * 1000) / 10
+        PUSH(rows, {"cost_center": cc$, "spent": s, "budget": b, _
+            "percent": pct})
+    NEXT i
+    RETURN DF.SORT(DF.FROMROWS(rows), "spent", TRUE)
+ENDFUNC
+
+' An amount as text with two decimals and a thousands separator.
+EXPORT FUNC MONEY$(v)
+    DIM whole$ = STR$(INT(ABS(v)))
+    DIM cents = ROUND((ABS(v) - INT(ABS(v))) * 100)
+    IF cents = 100 THEN
+        whole$ = STR$(INT(ABS(v)) + 1)
+        cents = 0
+    ENDIF
+    DIM out$ = ""
+    DO WHILE LEN(whole$) > 3
+        out$ = "," + RIGHT$(whole$, 3) + out$
+        whole$ = LEFT$(whole$, LEN(whole$) - 3)
+    LOOP
+    out$ = whole$ + out$ + "." + RIGHT$("0" + STR$(cents), 2)
+    IF v < 0 THEN out$ = "-" + out$
+    RETURN out$
+ENDFUNC
+
+' The report as table rows of text, the header first and a total last.
+EXPORT FUNC TABLE_ROWS(report)
+    DIM rows = [["Cost center", "Spent", "Budget", "Used"]]
+    DIM names = DF.COL(report, "cost_center")
+    DIM spent = DF.COL(report, "spent")
+    DIM budget = DF.COL(report, "budget")
+    DIM pct = DF.COL(report, "percent")
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM used$ = "-"
+        IF budget[k] > 0 THEN used$ = STR$(pct[k]) + " %"
+        DIM s$ = MONEY$(spent[k])
+        PUSH(rows, [names[k], s$, MONEY$(budget[k]), used$])
+    NEXT k
+    PUSH(rows, ["Total", MONEY$(SUM(spent)), MONEY$(SUM(budget)), ""])
+    RETURN rows
+ENDFUNC
+
+' The cost centers over budget, as text lines.
+EXPORT FUNC OVER_BUDGET(report)
+    DIM out = []
+    DIM names = DF.COL(report, "cost_center")
+    DIM pct = DF.COL(report, "percent")
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        IF pct[k] > 100 THEN
+            DIM cc$ = names[k]
+            DIM line$ = cc$ + " at " + STR$(pct[k]) + " %"
+            PUSH(out, line$ + " of budget")
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Spent and budget per cost center as a bar chart, SVG markup.
+EXPORT FUNC CHART$(report, week)
+    DIM c = SVG.CHART("bar", 640, 360)
+    SVG.SETOPT(c, "title", week{"label"})
+    SVG.SETOPT(c, "y_title", "EUR")
+    SVG.LABELS(c, DF.COL(report, "cost_center"))
+    SVG.SERIES(c, "spent", DF.COL(report, "spent"))
+    SVG.SERIES(c, "budget", DF.COL(report, "budget"))
+    RETURN SVG.MARKUP$(SVG.RENDER(c))
+ENDFUNC
+
+FUNC Span$(week)
+    RETURN week{"label"} + ", " + week{"from"} + " to " + week{"to"}
+ENDFUNC
+
+' The report as a Word file: a heading, the over budget lines and the
+' table, for anyone who wants to add comments.
+EXPORT SUB WRITE_DOCX(report, week, path$)
+    DIM doc = DOCX.NEW()
+    DOCX.TITLE(doc, "Team costs")
+    DOCX.PARAGRAPH(doc, Span$(week))
+    DIM over = OVER_BUDGET(report)
+    IF LEN(over) > 0 THEN
+        DOCX.HEADING(doc, "Over budget", 2)
+        DOCX.BULLETS(doc, over)
+    ENDIF
+    DOCX.HEADING(doc, "Per cost center", 2)
+    DOCX.TABLE(doc, TABLE_ROWS(report), TRUE)
+    DIM done = DOCX.WRITE(doc, path$)
+ENDSUB
+
+' The report as a PDF page: the table and a bar per cost center that
+' shows the share of its budget, red when it is over.
+EXPORT SUB WRITE_PDF(report, week, path$)
+    DIM pdf = PDFGEN.DOC()
+    PDFGEN.SETINFO(pdf, "Team costs " + week{"from"}, "Report")
+    PDFGEN.ADDPAGE(pdf)
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+    PDFGEN.TEXTAT(pdf, 20, 25, "Team costs")
+    PDFGEN.USEFONT(pdf, "helvetica", "", 10)
+    PDFGEN.TEXTAT(pdf, 20, 32, Span$(week))
+    PDFGEN.SETXY(pdf, 20, 40)
+    DIM rows = TABLE_ROWS(report)
+    DIM opts = {"headers": rows[0], "widths": [0, 32, 32, 22], _
+        "align": ["L", "R", "R", "R"]}
+    PDFGEN.TABLE(pdf, DROP(1, rows), opts)
+    DIM y = PDFGEN.POSY(pdf) + 12
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 11)
+    PDFGEN.TEXTAT(pdf, 20, y, "Share of the budget used")
+    PDFGEN.USEFONT(pdf, "helvetica", "", 9)
+    DIM names = DF.COL(report, "cost_center")
+    DIM pct = DF.COL(report, "percent")
+    DIM top = y + 7
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        y = y + 9
+        PDFGEN.TEXTAT(pdf, 20, y + 4, names[k])
+        DIM w = MIN([pct[k], 150]) * 0.8
+        IF pct[k] > 100 THEN
+            PDFGEN.SETFILL(pdf, 200, 70, 60)
+        ELSE
+            PDFGEN.SETFILL(pdf, 78, 121, 167)
+        ENDIF
+        IF w > 0 THEN PDFGEN.BOX(pdf, 60, y, w, 6, "F")
+        PDFGEN.TEXTAT(pdf, 62 + w, y + 4, STR$(pct[k]) + " %")
+    NEXT k
+    PDFGEN.SETDRAW(pdf, 120, 120, 120)
+    PDFGEN.DRAWLINE(pdf, 140, top, 140, y + 8)
+    PDFGEN.TEXTAT(pdf, 133, top - 1, "budget")
+    PDFGEN.WRITEFILE(pdf, path$)
+ENDSUB
+
+' The mail that carries the PDF and the Word file.
+EXPORT FUNC MESSAGE(from$, to$, report, week, pdf$, docx$)
+    DIM subject$ = "Team costs, " + week{"label"}
+    DIM msg = MAIL.MESSAGE(from$, to$, subject$)
+    DIM rows = TABLE_ROWS(report)
+    DIM total = rows[LEN(rows) - 1]
+    DIM LF$ = CHR$(10)
+    DIM body$ = "Hello," + LF$ + LF$
+    body$ = body$ + "the team costs of the " + LCASE$(week{"label"})
+    body$ = body$ + ": " + total[1] + " EUR of "
+    body$ = body$ + total[2] + " EUR budget." + LF$
+    DIM over = OVER_BUDGET(report)
+    DIM k = 0
+    FOR k = 0 TO LEN(over) - 1
+        DIM over$ = over[k]
+        body$ = body$ + "Over budget: " + over$ + LF$
+    NEXT k
+    body$ = body$ + LF$ + "The report is attached as PDF and Word."
+    MAIL.PLAIN(msg, body$ + LF$)
+    MAIL.ATTACH(msg, pdf$)
+    MAIL.ATTACH(msg, docx$)
+    RETURN msg
+ENDFUNC
+
+' A database with eight weeks of sample bookings on working days up to
+' last_day$, and a weekly budget per cost center.
+EXPORT SUB SAMPLE(db_path$, last_day$)
+    DIM h = DB.OPEN(db_path$)
+    DIM booking_cols = {"day": "TEXT", "cost_center": "TEXT", _
+        "amount": "REAL"}
+    DB.CREATE(h, "bookings", booking_cols)
+    DIM budget_cols = {"cost_center": "TEXT", "week_budget": "REAL"}
+    DB.CREATE(h, "budgets", budget_cols)
+    DIM centers = ["Sales", "Marketing", "IT", "Travel"]
+    DIM weekly = [4000, 2500, 3000, 1200]
+    DIM plan = []
+    DIM c = 0
+    FOR c = 0 TO 3
+        PUSH(plan, [centers[c], weekly[c]])
+    NEXT c
+    DIM plan_cols = ["cost_center", "week_budget"]
+    DIM b = DB.INSERTMANY(h, "budgets", plan_cols, plan)
+    DIM data = []
+    DIM d = 0
+    FOR d = 0 TO 55
+        DIM when = DATEADD("D", -d, CDATE(last_day$ + " 12:00:00"))
+        DIM wd = VAL(FORMAT_DATE(when, "%w"))
+        DIM day$ = FORMAT_DATE(when, "%Y-%m-%d")
+        FOR c = 0 TO 3
+            DIM wobble = 0.5 + ((d * 7 + c * 3) MOD 9) / 20
+            DIM amount = ROUND(weekly[c] / 5 * wobble)
+            IF wd >= 1 ANDALSO wd <= 5 THEN
+                PUSH(data, [day$, centers[c], amount])
+            ENDIF
+        NEXT c
+    NEXT d
+    DIM cols = ["day", "cost_center", "amount"]
+    DIM n = DB.INSERTMANY(h, "bookings", cols, data)
+    DB.CLOSE(h)
+ENDSUB

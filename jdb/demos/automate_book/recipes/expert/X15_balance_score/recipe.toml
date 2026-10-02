@@ -1,0 +1,59 @@
+# What the setup wizard knows about this recipe.
+
+id = "X15"
+name = "Balance Score"
+program = "balance_score.jdb"
+summary = "Hours, meetings and late mails as one weekly score with its trend, on a local page"
+minutes_per_week = 15
+schedule = "at logon"
+section = "balance_score"
+modules = ["balance.jdb"]
+files = ["templates/balance.html"]
+
+[[setting]]
+key = "calendar"
+label = "Your calendar exported as an .ics file"
+kind = "file"
+default = "~/Documents/AutomateWork/calendar.ics"
+
+[[setting]]
+key = "target_hours"
+label = "Hours of a normal week"
+kind = "number"
+default = 40
+
+[[setting]]
+key = "meeting_share"
+label = "Percent of the week in meetings that is still fine"
+kind = "number"
+default = 40
+
+[[setting]]
+key = "weight_overtime"
+label = "Points lost per hour of overtime"
+kind = "number"
+default = 2
+
+[[setting]]
+key = "weight_meetings"
+label = "Points lost per percent of meetings above that"
+kind = "number"
+default = 1
+
+[[setting]]
+key = "weight_late"
+label = "Points lost per hour worked outside your working hours"
+kind = "number"
+default = 3
+
+[[setting]]
+key = "weight_mail"
+label = "Points lost per mail written outside your working hours"
+kind = "number"
+default = 1
+
+[[setting]]
+key = "port"
+label = "Port of the page on this computer"
+kind = "number"
+default = 8766

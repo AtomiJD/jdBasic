@@ -1,0 +1,216 @@
+' Calendar Bridge: signing in with a device code, tokens kept in their
+' own file, a run-out token refreshed on the way, a busy server tried
+' again, every page of the calendar read, busy blocks that hide
+' private subjects, a calendar file with stable ids, and the changes
+' against the file before. The sign-in server and the calendar API
+' are fakes on this computer.
+
+IMPORT TESTKIT, CALBRIDGE, OAUTH, JDWEB, ICAL, DT
+
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("calbridge")
+DIM token_file$ = PATH.JOIN$(folder$, "profile", "calendar.json")
+DIM ics_file$ = PATH.JOIN$(folder$, "work-busy.ics")
+DIM gPort = 0
+DIM gAccess$ = ""
+DIM gRefresh$ = ""
+DIM gIssued = 0
+DIM gFailOnce = FALSE
+DIM gCalls = 0
+DIM gRefreshes = 0
+
+FUNC Tokens()
+    gIssued = gIssued + 1
+    gAccess$ = "acc-" + STR$(gIssued)
+    gRefresh$ = "ref-" + STR$(gIssued)
+    DIM t AS MAP
+    t{"access_token"} = gAccess$
+    t{"refresh_token"} = gRefresh$
+    t{"token_type"} = "Bearer"
+    t{"expires_in"} = 3600
+    RETURN t
+ENDFUNC
+
+FUNC DeviceCode(request)
+    DIM d AS MAP
+    d{"device_code"} = "dev-1"
+    d{"user_code"} = "ABCD-EFGH"
+    d{"verification_uri"} = "http://127.0.0.1/device"
+    d{"expires_in"} = 60
+    d{"interval"} = 1
+    RETURN JDWEB.REPLY_JSON(d)
+ENDFUNC
+
+FUNC Token(request)
+    DIM body$ = request{"BODY"}
+    IF INSTR(body$, "device_code=dev-1") >= 0 THEN
+        RETURN JDWEB.REPLY_JSON(Tokens())
+    ENDIF
+    IF INSTR(body$, "refresh_token=" + gRefresh$) >= 0 THEN
+        gRefreshes = gRefreshes + 1
+        RETURN JDWEB.REPLY_JSON(Tokens())
+    ENDIF
+    RETURN JDWEB.REPLY_JSON({"error": "invalid_grant"}, 400)
+ENDFUNC
+
+FUNC Row(id$, subject$, start$, end$, show$, sens$)
+    DIM r AS MAP
+    r{"id"} = id$
+    r{"subject"} = subject$
+    r{"start"} = {"dateTime": start$ + ".0000000", "timeZone": "UTC"}
+    r{"end"} = {"dateTime": end$ + ".0000000", "timeZone": "UTC"}
+    r{"showAs"} = show$
+    r{"sensitivity"} = sens$
+    r{"isAllDay"} = FALSE
+    r{"isCancelled"} = FALSE
+    RETURN r
+ENDFUNC
+
+FUNC Authorized(request)
+    DIM headers = request{"HEADERS"}
+    DIM names = MAP.KEYS(headers)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        IF LCASE$(names[k]) = "authorization" THEN
+            DIM v$ = headers{names[k]}
+            RETURN v$ = "Bearer " + gAccess$
+        ENDIF
+    NEXT k
+    RETURN FALSE
+ENDFUNC
+
+FUNC CalendarView(request)
+    gCalls = gCalls + 1
+    IF NOT Authorized(request) THEN
+        RETURN JDWEB.REPLY_JSON({"error": "token"}, 401)
+    ENDIF
+    IF gFailOnce THEN
+        gFailOnce = FALSE
+        RETURN JDWEB.REPLY("busy", 503, "text/plain")
+    ENDIF
+    DIM rows = []
+    DIM page AS MAP
+    IF JDWEB.PARAM$(request, "page") = "2" THEN
+        DIM off = Row("e5", "Offsite", "2026-10-08T00:00:00", _
+            "2026-10-10T00:00:00", "busy", "normal")
+        off{"isAllDay"} = TRUE
+        PUSH(rows, off)
+        DIM gone = Row("e6", "Old sync", "2026-10-07T08:00:00", _
+            "2026-10-07T09:00:00", "busy", "normal")
+        gone{"isCancelled"} = TRUE
+        PUSH(rows, gone)
+    ELSE
+        PUSH(rows, Row("e1", "Budget review", "2026-10-05T09:00:00", _
+            "2026-10-05T10:00:00", "busy", "normal"))
+        PUSH(rows, Row("e2", "Doctor", "2026-10-05T14:00:00", _
+            "2026-10-05T15:00:00", "busy", "private"))
+        PUSH(rows, Row("e3", "Focus time", "2026-10-06T08:00:00", _
+            "2026-10-06T10:00:00", "free", "normal"))
+        PUSH(rows, Row("e4", "Vendor call", "2026-10-06T13:00:00", _
+            "2026-10-06T13:30:00", "tentative", "normal"))
+        DIM next$ = "http://127.0.0.1:" + STR$(gPort)
+        next$ = next$ + "/v1.0/me/calendarView?page=2"
+        page{"@odata.nextLink"} = next$
+    ENDIF
+    page{"value"} = rows
+    RETURN JDWEB.REPLY_JSON(page)
+ENDFUNC
+
+FUNC FetchWith(app)
+    DIM t0 = DT.PARSE("2026-10-05T00:00:00Z")
+    DIM api$ = "http://127.0.0.1:" + STR$(gPort) + "/v1.0"
+    RETURN CALBRIDGE.FETCH(app, api$, t0, t0 + 14 * 86400, 10)
+ENDFUNC
+
+JDWEB.POST("/oauth/devicecode", DeviceCode@)
+JDWEB.POST("/oauth/token", Token@)
+JDWEB.GET("/v1.0/me/calendarView", CalendarView@)
+DIM hex$ = CODEC.SHA256$(folder$)
+DIM i = 0
+FOR i = 0 TO 3
+    gPort = gPort * 16 + INSTR("0123456789abcdef", MID$(hex$, i, 1))
+NEXT i
+gPort = 20000 + gPort MOD 30000
+DIM last_port = gPort + 50
+DO WHILE NOT JDWEB.LISTEN(gPort) ANDALSO gPort < last_port
+    gPort = gPort + 1
+LOOP
+DIM authority$ = "http://127.0.0.1:" + STR$(gPort) + "/oauth"
+
+TESTKIT.SUITE("signing in")
+TESTKIT.EQ(CALBRIDGE.AUTHORITY$("organizations"), _
+    "https://login.microsoftonline.com/organizations/oauth2/v2.0", _
+    "the Microsoft sign-in address")
+DIM app = CALBRIDGE.CLIENT("test-client", "", authority$)
+CALBRIDGE.KEEP(app, token_file$)
+TESTKIT.ISFALSE(CALBRIDGE.SIGNED_IN(app), "not signed in at first")
+TESTKIT.ISTRUE(CALBRIDGE.LOGIN(app, 30), "the device code sign-in")
+TESTKIT.ISTRUE(FILE.EXISTS(token_file$), "keeps the tokens in a file")
+TESTKIT.ISTRUE(INSTR(TXTREADER$(token_file$), "ref-1") >= 0, _
+    "with the refresh token")
+DIM again = CALBRIDGE.CLIENT("test-client", "", authority$)
+CALBRIDGE.KEEP(again, token_file$)
+TESTKIT.ISTRUE(CALBRIDGE.SIGNED_IN(again), "and finds them next time")
+
+TESTKIT.SUITE("reading the calendar")
+OAUTH.EXPIRE(again)
+gFailOnce = TRUE
+DIM events = FetchWith(again)
+TESTKIT.EQ(LEN(events), 6, "every page is read")
+TESTKIT.EQ(gRefreshes, 1, "a run-out token is refreshed")
+TESTKIT.EQ(gCalls, 3, "a busy server is tried again")
+CALBRIDGE.SAVE(again)
+TESTKIT.ISTRUE(INSTR(TXTREADER$(token_file$), "ref-2") >= 0, _
+    "the new refresh token is kept")
+DIM first = events[0]
+TESTKIT.EQ(first{"start"}, DT.PARSE("2026-10-05T09:00:00Z"), _
+    "times are read as UTC")
+
+DIM stale = CALBRIDGE.CLIENT("test-client", "", authority$)
+stale{"access_token"} = "old"
+stale{"refresh_token"} = "revoked"
+OAUTH.EXPIRE(stale)
+TESTKIT.THROWS(FetchWith@, stale, "a revoked sign-in is an error")
+
+TESTKIT.SUITE("busy blocks")
+DIM blocks = CALBRIDGE.BLOCKS(events, "Busy (work)", FALSE)
+TESTKIT.EQ(LEN(blocks), 4, "free and cancelled events are left out")
+DIM b0 = blocks[0]
+TESTKIT.EQ(b0{"summary"}, "Busy (work)", "subjects are hidden")
+DIM b2 = blocks[2]
+TESTKIT.EQ(b2{"summary"}, "Busy (work) (tentative)", _
+    "a tentative meeting says so")
+DIM titled = CALBRIDGE.BLOCKS(events, "Busy (work)", TRUE)
+DIM t0 = titled[0]
+DIM t1 = titled[1]
+TESTKIT.EQ(t0{"summary"}, "Budget review", "titles when wanted")
+TESTKIT.EQ(t1{"summary"}, "Busy (work)", "but never a private one")
+
+TESTKIT.SUITE("the calendar file")
+DIM text$ = CALBRIDGE.ICS$(blocks)
+DIM cal = ICAL.PARSE(text$)
+DIM evs = ICAL.EVENTS(cal)
+TESTKIT.EQ(LEN(evs), 4, "one event per block")
+TESTKIT.EQ(ICAL.PROP$(cal, evs[0], "UID"), b0{"uid"}, "with its id")
+TESTKIT.ISFALSE(INSTR(text$, "Doctor") >= 0, "no private subject")
+TESTKIT.ISTRUE(ICAL.ALLDAY(cal, evs[3]), "the offsite is all day")
+TESTKIT.EQ(ICAL.PROP$(cal, evs[3], "TRANSP"), "OPAQUE", "and busy")
+DIM same = CALBRIDGE.BLOCKS(events, "Busy (work)", FALSE)
+DIM s0 = same[0]
+TESTKIT.EQ(s0{"uid"}, b0{"uid"}, "ids stay the same from run to run")
+DIM fresh = CALBRIDGE.CHANGES(ics_file$, blocks)
+TESTKIT.EQ(fresh{"added"}, 4, "without a file everything is new")
+TXTWRITER ics_file$, text$
+DIM moved = CALBRIDGE.BLOCKS(events, "Busy (work)", FALSE)
+DIM later = moved[0]
+later{"end"} = later{"end"} + 1800
+moved[0] = later
+DIM fewer = [moved[0], moved[1], moved[2]]
+DIM diff = CALBRIDGE.CHANGES(ics_file$, fewer)
+TESTKIT.EQ(diff{"added"}, 0, "nothing new")
+TESTKIT.EQ(diff{"changed"}, 1, "a longer meeting is a change")
+TESTKIT.EQ(diff{"removed"}, 1, "a meeting that went is removed")
+
+HTTP.SERVER.STOP()
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", folder$])
+TESTKIT.REPORT()

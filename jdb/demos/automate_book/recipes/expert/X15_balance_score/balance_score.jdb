@@ -1,0 +1,74 @@
+' Balance Score: your week as one number from 0 to 100, and the trend
+' of the last weeks, on a web page on this computer. It reads the
+' Time Tracker's log (E07), your calendar and the mails in the outbox.
+' The settings are the [balance_score] part of work.conf, the working
+' hours the [user] part.
+'
+'   jdbasic balance_score.jdb                 serve until Ctrl+C
+'   jdbasic balance_score.jdb --save my.html  write the page once
+'   jdbasic balance_score.jdb --print         the scores as text
+
+IMPORT WORKCONF, BALANCE, OUTBOX, JDWEB, DT
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "balance_score."
+DIM here$ = PATH.DIRNAME$(OS.ARGS()[0])
+DIM time_home$ = "~/Documents/AutomateWork/time"
+DIM time_dir$ = WORKCONF.FOLDER$(cfg, "time_tracker.folder", _
+    time_home$)
+DIM ics_home$ = "~/Documents/AutomateWork/calendar.ics"
+DIM ics$ = WORKCONF.FOLDER$(cfg, key$ + "calendar", ics_home$)
+DIM own$ = PATH.JOIN$(here$, "templates", "balance.html")
+DIM tpl$ = WORKCONF.FOLDER$(cfg, key$ + "template", own$)
+
+DIM rules AS MAP
+rules{"offset"} = DT.LOCAL_OFFSET()
+rules{"day_start"} = BALANCE.MINUTES(WORKCONF.VALUE(cfg, _
+    "user.day_start", "08:30"))
+rules{"day_end"} = BALANCE.MINUTES(WORKCONF.VALUE(cfg, _
+    "user.day_end", "17:30"))
+rules{"weeks"} = WORKCONF.VALUE(cfg, key$ + "weeks", 8)
+rules{"target_hours"} = WORKCONF.VALUE(cfg, key$ + "target_hours", 40)
+rules{"meeting_share"} = WORKCONF.VALUE(cfg, key$ + _
+    "meeting_share", 40)
+rules{"weight_overtime"} = WORKCONF.VALUE(cfg, key$ + _
+    "weight_overtime", 2)
+rules{"weight_meetings"} = WORKCONF.VALUE(cfg, key$ + _
+    "weight_meetings", 1)
+rules{"weight_late"} = WORKCONF.VALUE(cfg, key$ + "weight_late", 3)
+rules{"weight_mail"} = WORKCONF.VALUE(cfg, key$ + "weight_mail", 1)
+
+DIM log_file$ = PATH.JOIN$(time_dir$, "log.csv")
+DIM sources = {"log": log_file$, "calendar": ics$}
+sources{"outbox"} = OUTBOX.FOLDER$(cfg)
+
+IF WORKCONF.FLAG("print") THEN
+    DIM n = rules{"weeks"}
+    DIM weeks = BALANCE.WEEKS(sources, rules, DT.NOW(), n)
+    DIM k = 0
+    FOR k = 0 TO LEN(weeks) - 1
+        DIM w = weeks[k]
+        DIM week$ = w{"week"}
+        PRINT week$; "  "; FORMAT$("{:>3}", w{"score"}); "  "; _
+            FORMAT$("{:.1f}", w{"hours"}); " hours"
+    NEXT k
+    END
+ENDIF
+
+IF NOT FILE.EXISTS(tpl$) THEN THROW "No page template at " + tpl$
+DIM save$ = WORKCONF.ARG$("save")
+IF save$ <> "" THEN
+    DIM all = BALANCE.WEEKS(sources, rules, DT.NOW(), rules{"weeks"})
+    TXTWRITER save$, BALANCE.PAGE$(all, rules, tpl$)
+    PRINT "wrote "; save$
+    END
+ENDIF
+
+DIM port = WORKCONF.VALUE(cfg, key$ + "port", 8766)
+BALANCE.MOUNT(sources, rules, tpl$)
+IF NOT JDWEB.LISTEN(port) THEN
+    THROW "Port " + STR$(port) + " is taken. Change it in work.conf."
+ENDIF
+PRINT "Your balance score: http://localhost:"; port; "/"
+PRINT "Only this computer can open it. Stop it with Ctrl+C."
+HTTP.SERVER.WAIT

@@ -225,14 +225,20 @@ FUNC SetUp$(dry_run, schedule)
         NEXT j
         DIM when$ = WIZARD.RESOLVE_WHEN$(gA, gA{"schedule"}{r{"id"}})
         DIM prog$ = PATH.JOIN$(gA{"work"}, "recipes", r{"folder"}, r{"program"})
-        IF NOT schedule ORELSE dry_run THEN
-            PRINT WIZARD.PLAN_LINE$(r{"name"}, when$)
-        ELSEIF gA{"jdbasic"} = "" THEN
-            PRINT "not scheduled (jdbasic not found): "; r{"name"}
-        ELSE
-            DIM done = WIZARD.SCHTASKS(WIZARD.SCHEDULE_ARGS(r, when$, gA{"jdbasic"}, prog$, conf$))
-            IF done[0] THEN PRINT "scheduled "; r{"name"}; ": "; when$ ELSE PRINT "could not schedule "; r{"name"}; ": "; done[1]
-        ENDIF
+        DIM tasks = WIZARD.TASKS(r, when$)
+        DIM t = 0
+        FOR t = 0 TO LEN(tasks) - 1
+            DIM tr = tasks[t]{"r"}
+            DIM tw$ = tasks[t]{"when"}
+            IF NOT schedule ORELSE dry_run THEN
+                PRINT WIZARD.PLAN_LINE$(tr{"name"}, tw$)
+            ELSEIF gA{"jdbasic"} = "" THEN
+                PRINT "not scheduled (jdbasic not found): "; tr{"name"}
+            ELSE
+                DIM done = WIZARD.SCHTASKS(WIZARD.SCHEDULE_ARGS(tr, tw$, gA{"jdbasic"}, prog$, conf$))
+                IF done[0] THEN PRINT "scheduled "; tr{"name"}; ": "; tw$ ELSE PRINT "could not schedule "; tr{"name"}; ": "; done[1]
+            ENDIF
+        NEXT t
     NEXT i
     PRINT "Done. Settings: "; conf$
     RETURN OUTPUT.CAPTURE_END$()

@@ -1,0 +1,105 @@
+' audit.jdb: an audit trail that shows any change made to it. Every
+' entry is one line, a JSON Web Token signed with a key only the owner
+' has, and it carries the SHA-256 of the line before it. A changed
+' line fails its signature; a removed or reordered line breaks the
+' chain.
+'
+'   IMPORT AUDIT
+'   AUDIT.APPEND("audit.log", key$, {"job": "backup", "ok": TRUE})
+'   DIM check = AUDIT.VERIFY("audit.log", key$)
+'   IF NOT check{"ok"} THEN PRINT JOIN(check{"problems"}, CHR$(10))
+'
+' Each entry holds the fields given plus seq (1, 2, 3 and so on), at
+' (local time as text) and prev (the hash of the line before, "" for
+' the first line).
+
+EXPORT MODULE AUDIT
+
+IMPORT JWT
+
+' The lines of the trail, without empty ones.
+EXPORT FUNC LINES(path$)
+    DIM out = []
+    IF NOT FILE.EXISTS(path$) THEN RETURN out
+    DIM text$ = REPLACE$(TXTREADER$(path$), CHR$(13), "")
+    DIM raw = SPLIT(text$, CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(raw) - 1
+        DIM line$ = TRIM$(raw[k])
+        IF line$ <> "" THEN PUSH(out, line$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Adds an entry with the fields of the map; answers its seq.
+EXPORT FUNC APPEND(path$, key$, fields)
+    IF key$ = "" THEN THROW "AUDIT: no signing key"
+    DIM lines = LINES(path$)
+    DIM claims AS MAP
+    DIM names = MAP.KEYS(fields)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        claims{names[k]} = fields{names[k]}
+    NEXT k
+    DIM seq = 1
+    DIM prev$ = ""
+    IF LEN(lines) > 0 THEN
+        DIM last$ = lines[LEN(lines) - 1]
+        DIM before = JWT.DECODE(last$)
+        seq = before{"claims"}{"seq"} + 1
+        prev$ = CODEC.SHA256$(last$)
+    ENDIF
+    claims{"seq"} = seq
+    claims{"at"} = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+    claims{"prev"} = prev$
+    MKDIR PATH.DIRNAME$(path$)
+    TXTWRITER path$, JWT.SIGN$(claims, key$) + CHR$(10), TRUE
+    RETURN seq
+ENDFUNC
+
+' The entries as maps, read without checking them.
+EXPORT FUNC ENTRIES(path$)
+    DIM lines = LINES(path$)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM d = JWT.DECODE(lines[k])
+        PUSH(out, d{"claims"})
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Checks every signature and the chain. Answers {"ok", "entries",
+' "problems"}, one problem per line that does not fit.
+EXPORT FUNC VERIFY(path$, key$)
+    DIM lines = LINES(path$)
+    DIM problems = []
+    DIM prev$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        DIM where$ = "line " + STR$(k + 1)
+        DIM check = JWT.VERIFY(lines[k], key$)
+        IF NOT check{"ok"} THEN
+            DIM why$ = " (" + check{"error"} + ")"
+            DIM bad$ = ": the signature does not match"
+            PUSH(problems, where$ + bad$ + why$)
+        ELSE
+            DIM claims = check{"claims"}
+            IF claims{"seq"} <> k + 1 THEN
+                DIM got$ = ": entry " + STR$(claims{"seq"})
+                DIM want$ = " where " + STR$(k + 1) + " belongs"
+                PUSH(problems, where$ + got$ + want$)
+            ENDIF
+            IF claims{"prev"} <> prev$ THEN
+                DIM gap$ = ": the line before was changed or removed"
+                PUSH(problems, where$ + gap$)
+            ENDIF
+        ENDIF
+        prev$ = CODEC.SHA256$(lines[k])
+    NEXT k
+    DIM out AS MAP
+    out{"ok"} = LEN(problems) = 0
+    out{"entries"} = LEN(lines)
+    out{"problems"} = problems
+    RETURN out
+ENDFUNC

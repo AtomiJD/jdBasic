@@ -1,0 +1,92 @@
+' Find Anything: one search over the documents of your folders, in
+' the console or on a page in your browser. Each run brings the index
+' up to date and reads only the files that are new or changed. The
+' settings are the [find_anything] part of work.conf.
+'
+'   jdbasic find_anything.jdb                  update the index
+'   jdbasic find_anything.jdb --dry-run        show what would be read
+'   jdbasic find_anything.jdb --search budget  search in the console
+'   jdbasic find_anything.jdb --serve          the search page
+
+IMPORT WORKCONF, FINDER, JDWEB, LOGGER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "find_anything."
+DIM home$ = "~/Documents/AutomateWork/find"
+DIM index_dir$ = WORKCONF.FOLDER$(cfg, key$ + "index", home$)
+DIM wanted = WORKCONF.VALUE(cfg, key$ + "folders", ["~/Documents"])
+DIM kinds = WORKCONF.VALUE(cfg, key$ + "kinds", _
+    ["txt", "md", "csv", "docx", "pdf"])
+DIM lang$ = WORKCONF.VALUE(cfg, key$ + "language", "en")
+DIM port = WORKCONF.VALUE(cfg, key$ + "port", 8766)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM folders = []
+DIM k = 0
+FOR k = 0 TO LEN(wanted) - 1
+    DIM folder$ = WORKCONF.EXPAND$(wanted[k])
+    IF NOT FILE.ISDIR(folder$) THEN PRINT "not a folder: "; folder$
+    PUSH(folders, folder$)
+NEXT k
+
+DIM lg = LOGGER.NEW("find_anything")
+LOGGER.TO_CONSOLE(lg, FALSE)
+IF NOT dry_run THEN
+    MKDIR index_dir$
+    LOGGER.TO_FILE(lg, PATH.JOIN$(index_dir$, "find.log"), 1000000, 2)
+ENDIF
+DIM state = FINDER.OPEN(index_dir$, lang$)
+
+DIM query$ = WORKCONF.ARG$("search")
+IF query$ <> "" THEN
+    DIM hits = FINDER.FIND(state, query$, 10)
+    IF LEN(hits) = 0 THEN PRINT "Nothing found for "; query$
+    FOR k = 0 TO LEN(hits) - 1
+        DIM hit = hits[k]
+        PRINT hit{"path"}
+        PRINT "    "; hit{"snippet"}
+    NEXT k
+    END
+ENDIF
+
+IF WORKCONF.FLAG("serve") THEN
+    FINDER.MOUNT(state)
+    IF NOT JDWEB.LISTEN(port) THEN
+        DIM busy$ = "Port " + STR$(port) + " is taken."
+        THROW busy$ + " Set port in [find_anything]."
+    ENDIF
+    PRINT "Search page: http://localhost:"; port; "/"
+    PRINT "Only this computer can open it. Stop it with Ctrl+C."
+    HTTP.SERVER.WAIT
+    END
+ENDIF
+
+DIM plan = FINDER.PLAN(state, FINDER.SCAN(folders, kinds))
+DIM news = plan{"add"}
+DIM changed = plan{"change"}
+DIM gone = plan{"remove"}
+IF dry_run THEN
+    PRINT LEN(news); " new, "; LEN(changed); " changed, "; _
+        LEN(gone); " gone"
+    FOR k = 0 TO LEN(news) - 1
+        DIM f = news[k]
+        PRINT "would read "; f{"path"}
+    NEXT k
+    FOR k = 0 TO LEN(changed) - 1
+        DIM g = changed[k]
+        PRINT "would read again "; g{"path"}
+    NEXT k
+    FOR k = 0 TO LEN(gone) - 1
+        PRINT "would drop "; gone[k]
+    NEXT k
+    END
+ENDIF
+
+DIM done = FINDER.UPDATE(state, plan)
+FINDER.SAVE(state)
+DIM failed = done{"failed"}
+FOR k = 0 TO LEN(failed) - 1
+    LOGGER.WARN(lg, "not readable: " + failed[k])
+NEXT k
+LOGGER.INFO(lg, "index up to date", {"read": done{"read"}, _
+    "dropped": done{"removed"}, "failed": LEN(failed)})

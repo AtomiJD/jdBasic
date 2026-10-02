@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="900">
+<title>Balance score</title>
+<style>
+body { font-family: Segoe UI, Arial, sans-serif; margin: 2em;
+  background: #f6f6f4; color: #222; max-width: 46em; }
+h1 { font-weight: 600; }
+.cards { display: flex; flex-wrap: wrap; gap: 1em; }
+.card { background: #fff; border-radius: 8px; padding: 1em 1.4em;
+  min-width: 8em; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.big { font-size: 2.2em; font-weight: 600; }
+.box { background: #fff; border-radius: 8px; padding: 1em 1.4em;
+  margin-top: 1em; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+td { padding: .2em 1em .2em 0; }
+</style>
+</head>
+<body>
+<h1>Balance score, week {{ week }}</h1>
+<div class="cards">
+  <div class="card"><div class="big">{{ score }}</div>
+    of 100</div>
+  <div class="card"><div class="big">{{ hours }}</div>
+    hours worked</div>
+  <div class="card"><div class="big">{{ meeting_hours }}</div>
+    in meetings</div>
+  <div class="card"><div class="big">{{ late_hours }}</div>
+    hours outside {{ day_start }} to {{ day_end }}</div>
+  <div class="card"><div class="big">{{ late_mails }}</div>
+    late mails</div>
+</div>
+<div class="box">
+  <h2>Where the points went</h2>
+  {% if lost %}
+  <table>
+  {% for p in lost %}
+  <tr><td>{{ p.why }}</td><td>-{{ p.points }}</td></tr>
+  {% endfor %}
+  </table>
+  {% else %}
+  <p>No points lost this week.</p>
+  {% endif %}
+</div>
+<div class="box">
+  <h2>The last weeks</h2>
+  {{{ chart }}}
+</div>
+<div class="box">
+  <h2>How the score is made</h2>
+  <p>Every week starts at 100 points. It loses</p>
+  <ul>
+  <li>{{ rules.weight_overtime }} for every hour worked above
+    {{ rules.target_hours }},</li>
+  <li>{{ rules.weight_meetings }} for every percent of the hours
+    spent in meetings above {{ rules.meeting_share }} percent,</li>
+  <li>{{ rules.weight_late }} for every hour worked before
+    {{ day_start }}, after {{ day_end }} or on a weekend,</li>
+  <li>{{ rules.weight_mail }} for every mail written at those
+    times.</li>
+  </ul>
+  <p>The score never goes below 0. The weights are the
+  [balance_score] part of work.conf.</p>
+</div>
+</body>
+</html>

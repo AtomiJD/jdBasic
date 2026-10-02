@@ -1,0 +1,273 @@
+' calbridge.jdb: the work of the Calendar Bridge. It signs in to a
+' Microsoft 365 work calendar through OAuth, reads the events of the
+' coming days, turns them into busy blocks that do not say what the
+' meetings are about, and writes them as a calendar file that a
+' personal calendar can subscribe to.
+'
+'   IMPORT CALBRIDGE
+'   DIM authority$ = CALBRIDGE.AUTHORITY$("organizations")
+'   DIM app = CALBRIDGE.CLIENT(client_id$, "", authority$)
+'   CALBRIDGE.KEEP(app, "C:/Users/lena/.automatework/calendar.json")
+'   DIM api$ = "https://graph.microsoft.com/v1.0"
+'   DIM events = CALBRIDGE.FETCH(app, api$, t_from, t_to, 2000)
+'   DIM blocks = CALBRIDGE.BLOCKS(events, "Busy (work)", FALSE)
+'   TXTWRITER "work-busy.ics", CALBRIDGE.ICS$(blocks)
+
+EXPORT MODULE CALBRIDGE
+
+IMPORT OAUTH, CACHE, RETRY, REQ, DT, ICAL
+
+DIM gScope$ = "offline_access Calendars.Read"
+DIM gApp AS MAP
+DIM gSess AS MAP
+
+' ── signing in ─────────────────────────────────────────────────
+
+' The sign-in address of a Microsoft 365 tenant: "organizations" for
+' any work account, or the tenant's own id.
+EXPORT FUNC AUTHORITY$(tenant$)
+    DIM root$ = "https://login.microsoftonline.com/"
+    RETURN root$ + tenant$ + "/oauth2/v2.0"
+ENDFUNC
+
+' An OAuth client for the authority's endpoints. A client registered
+' as a public app needs no secret; pass "" then.
+EXPORT FUNC CLIENT(client_id$, secret$, authority$)
+    DIM auth$ = authority$ + "/authorize"
+    DIM token$ = authority$ + "/token"
+    DIM device$ = authority$ + "/devicecode"
+    DIM app = OAUTH.NEW(client_id$, secret$, auth$, token$, device$)
+    OAUTH.SETOPT(app, "scope", gScope$)
+    RETURN app
+ENDFUNC
+
+' Keeps the client's tokens in token_file$: tokens already there are
+' taken now, and SAVE writes the newest ones back.
+EXPORT SUB KEEP(app, token_file$)
+    DIM store = 0
+    IF FILE.EXISTS(token_file$) THEN
+        store = CACHE.LOAD(token_file$)
+    ELSE
+        store = CACHE.NEW()
+    ENDIF
+    OAUTH.STORE(app, store, "calendar")
+    app{"token_file"} = token_file$
+ENDSUB
+
+' Writes the client's tokens to its token file.
+EXPORT SUB SAVE(app)
+    DIM path$ = app{"token_file"}
+    MKDIR PATH.DIRNAME$(path$)
+    CACHE.SAVE(OAUTH.CACHEOF(app), path$)
+ENDSUB
+
+' Whether the client has a refresh token, so it can run unattended.
+EXPORT FUNC SIGNED_IN(app)
+    DIM refresh$ = app{"refresh_token"}
+    RETURN refresh$ <> ""
+ENDFUNC
+
+' Signs in with a code shown here and typed into a browser on any
+' device, waits at most max_seconds, and saves the tokens.
+EXPORT FUNC LOGIN(app, max_seconds)
+    DIM shown = OAUTH.DEVICESTART(app, gScope$)
+    DIM msg$ = shown{"message"}
+    IF msg$ = "" THEN
+        msg$ = "Open " + shown{"verification_uri"}
+        msg$ = msg$ + " and enter the code " + shown{"user_code"}
+    ENDIF
+    PRINT msg$
+    DIM token$ = OAUTH.DEVICEPOLL(app, max_seconds)
+    SAVE(app)
+    RETURN token$ <> ""
+ENDFUNC
+
+' ── reading the calendar ───────────────────────────────────────
+
+FUNC Transient(message$)
+    RETURN STARTSWITH(message$, "transient")
+ENDFUNC
+
+' One page of the calendar API. A busy or unreachable server raises a
+' "transient" error, which RETRY tries again; anything else is final.
+FUNC GetPage(url$)
+    DIM r = OAUTH.GET(gApp, gSess, url$)
+    DIM status = r{"status"}
+    DIM body$ = r{"body"}
+    IF status = 0 ORELSE status = 429 ORELSE status >= 500 THEN
+        THROW "transient: the calendar answered " + STR$(status)
+    ENDIF
+    IF status <> 200 THEN
+        DIM said$ = STR$(status) + ": " + LEFT$(body$, 200)
+        THROW "The calendar answered " + said$
+    ENDIF
+    RETURN JSON.PARSE$(body$)
+ENDFUNC
+
+FUNC Text$(row, name$)
+    IF NOT MAP.EXISTS(row, name$) THEN RETURN ""
+    DIM v = row{name$}
+    IF TYPEOF(v) <> "STRING" THEN RETURN ""
+    RETURN v
+ENDFUNC
+
+FUNC Flag(row, name$)
+    IF NOT MAP.EXISTS(row, name$) THEN RETURN FALSE
+    DIM v = row{name$}
+    IF TYPEOF(v) <> "BOOLEAN" THEN RETURN FALSE
+    RETURN v
+ENDFUNC
+
+' An event of the API as a map: id, subject, start and end as DT
+' instants, all_day, cancelled, show_as and private.
+FUNC Event(row)
+    DIM ev AS MAP
+    ev{"id"} = Text$(row, "id")
+    ev{"subject"} = Text$(row, "subject")
+    DIM st = row{"start"}
+    DIM en = row{"end"}
+    DIM st$ = st{"dateTime"}
+    DIM en$ = en{"dateTime"}
+    ev{"start"} = DT.PARSE(st$ + "Z")
+    ev{"end"} = DT.PARSE(en$ + "Z")
+    ev{"all_day"} = Flag(row, "isAllDay")
+    ev{"cancelled"} = Flag(row, "isCancelled")
+    ev{"show_as"} = LCASE$(Text$(row, "showAs"))
+    DIM sens$ = LCASE$(Text$(row, "sensitivity"))
+    ev{"private"} = sens$ = "private" ORELSE sens$ = "confidential"
+    RETURN ev
+ENDFUNC
+
+' The events between two instants, following the API's pages. Each
+' page is tried up to four times, waiting delay_ms and then twice as
+' long each time.
+EXPORT FUNC FETCH(app, api$, t_from, t_to, delay_ms)
+    gApp = app
+    gSess = OAUTH.SESSION(app, api$)
+    DIM utc$ = "outlook.timezone=" + CHR$(34) + "UTC" + CHR$(34)
+    REQ.HEADER(gSess, "Prefer", utc$)
+    DIM q AS MAP
+    q{"startDateTime"} = DT.ISO$(t_from)
+    q{"endDateTime"} = DT.ISO$(t_to)
+    q{"$top"} = 100
+    DIM url$ = api$ + "/me/calendarView?" + REQ.QUERY$(q)
+    DIM opts = {"attempts": 4, "delay": delay_ms}
+    opts{"retry_if"} = Transient@
+    DIM events = []
+    DIM pages = 0
+    DO WHILE url$ <> "" ANDALSO pages < 50
+        DIM report = RETRY.ATTEMPT(GetPage@, url$, opts)
+        IF NOT report{"ok"} THEN
+            DIM why$ = report{"error"}
+            THROW why$
+        ENDIF
+        DIM page = report{"value"}
+        DIM rows = page{"value"}
+        DIM k = 0
+        FOR k = 0 TO LEN(rows) - 1
+            PUSH(events, Event(rows[k]))
+        NEXT k
+        url$ = Text$(page, "@odata.nextLink")
+        pages = pages + 1
+    LOOP
+    RETURN events
+ENDFUNC
+
+' ── busy blocks ────────────────────────────────────────────────
+
+' The events that make you busy, as blocks with uid, summary, start,
+' end and all_day. Cancelled and free events are left out. The summary
+' is label$, or the subject when show_titles is on and the meeting is
+' not private; a tentative meeting says so.
+EXPORT FUNC BLOCKS(events, label$, show_titles)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(events) - 1
+        DIM ev = events[k]
+        DIM show$ = ev{"show_as"}
+        IF NOT ev{"cancelled"} ANDALSO show$ <> "free" THEN
+            DIM b AS MAP
+            DIM id$ = ev{"id"}
+            DIM hash$ = LEFT$(CODEC.SHA256$(id$), 24)
+            b{"uid"} = hash$ + "@calendar-bridge"
+            DIM summary$ = label$
+            IF show_titles ANDALSO NOT ev{"private"} THEN
+                summary$ = ev{"subject"}
+            ENDIF
+            IF show$ = "tentative" THEN
+                summary$ = summary$ + " (tentative)"
+            ENDIF
+            b{"summary"} = summary$
+            b{"start"} = ev{"start"}
+            b{"end"} = ev{"end"}
+            b{"all_day"} = ev{"all_day"}
+            PUSH(out, b)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The blocks as the text of an .ics calendar.
+EXPORT FUNC ICS$(blocks)
+    DIM cal = ICAL.NEW("-//AutomateWork//Calendar Bridge//EN")
+    DIM k = 0
+    FOR k = 0 TO LEN(blocks) - 1
+        DIM b = blocks[k]
+        DIM ev = 0
+        IF b{"all_day"} THEN
+            DIM days = ROUND((b{"end"} - b{"start"}) / 86400)
+            IF days < 1 THEN days = 1
+            ev = ICAL.ADDALLDAY(cal, b{"summary"}, b{"start"}, days)
+            ICAL.SETPROP(cal, ev, "TRANSP", "OPAQUE")
+        ELSE
+            DIM s$ = b{"summary"}
+            ev = ICAL.ADDEVENT(cal, s$, b{"start"}, b{"end"})
+        ENDIF
+        ICAL.SETPROP(cal, ev, "UID", b{"uid"})
+    NEXT k
+    RETURN ICAL.TEXT$(cal)
+ENDFUNC
+
+FUNC Signature$(start, finish, summary$)
+    RETURN STR$(start) + "|" + STR$(finish) + "|" + summary$
+ENDFUNC
+
+' How the blocks differ from the calendar file at path$: the numbers
+' "added", "changed" and "removed".
+EXPORT FUNC CHANGES(path$, blocks)
+    DIM before AS MAP
+    IF FILE.EXISTS(path$) THEN
+        DIM cal = ICAL.PARSEFILE(path$)
+        DIM evs = ICAL.EVENTS(cal)
+        DIM k = 0
+        FOR k = 0 TO LEN(evs) - 1
+            DIM e = evs[k]
+            DIM uid$ = ICAL.PROP$(cal, e, "UID")
+            DIM sum$ = ICAL.PROP$(cal, e, "SUMMARY")
+            DIM t_a = ICAL.STARTAT(cal, e)
+            DIM t_b = ICAL.ENDAT(cal, e)
+            before{uid$} = Signature$(t_a, t_b, sum$)
+        NEXT k
+    ENDIF
+    DIM added = 0
+    DIM changed = 0
+    DIM seen AS MAP
+    DIM j = 0
+    FOR j = 0 TO LEN(blocks) - 1
+        DIM b = blocks[j]
+        DIM id$ = b{"uid"}
+        seen{id$} = TRUE
+        DIM now$ = Signature$(b{"start"}, b{"end"}, b{"summary"})
+        IF NOT MAP.EXISTS(before, id$) THEN
+            added = added + 1
+        ELSEIF before{id$} <> now$ THEN
+            changed = changed + 1
+        ENDIF
+    NEXT j
+    DIM removed = 0
+    DIM old = MAP.KEYS(before)
+    FOR j = 0 TO LEN(old) - 1
+        IF NOT MAP.EXISTS(seen, old[j]) THEN removed = removed + 1
+    NEXT j
+    RETURN {"added": added, "changed": changed, "removed": removed}
+ENDFUNC

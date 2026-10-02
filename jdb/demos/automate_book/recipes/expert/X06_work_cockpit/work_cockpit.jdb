@@ -1,0 +1,166 @@
+' Work Cockpit: a window with one button per installed automation
+' and, next to it, when it ran last and how it ended. A click starts
+' the automation, as a dry run when the box is ticked. Every start
+' lands in logs/cockpit.log of the work folder. Needs the FORMS build.
+'
+'   jdbasic work_cockpit.jdb               open the cockpit
+'   jdbasic work_cockpit.jdb --selftest    try it on a made-up work
+'                                          folder and close
+'   ... --shots <folder>                   keep a picture of the test
+'   ... --work <folder>                    the made-up folder there
+'   ... --jdbasic <path>                   the jdbasic program to use
+
+IMPORT WORKCONF, COCKPIT
+
+DIM gSelfTest = "--selftest" IN OS.ARGS()
+DIM gShots$ = WORKCONF.ARG$("shots")
+DIM gTitle$ = "Work Cockpit"
+DIM LF$ = CHR$(10)
+DIM gJdbasic$ = WORKCONF.ARG$("jdbasic")
+DIM gWork$ = ""
+DIM gConf$ = ""
+DIM gTries = 1
+IF gSelfTest THEN
+    IF gJdbasic$ = "" THEN THROW "The self test needs --jdbasic."
+    gWork$ = COCKPIT.SAMPLE_WORK$(gJdbasic$, WORKCONF.ARG$("work"))
+    gConf$ = PATH.JOIN$(gWork$, "config", "work.conf")
+ELSE
+    gConf$ = WORKCONF.CONFIG_PATH$()
+    DIM cfg = WORKCONF.SETTINGS(gConf$)
+    DIM home$ = "~/Documents/AutomateWork"
+    gWork$ = WORKCONF.FOLDER$(cfg, "paths.work", home$)
+    IF gJdbasic$ = "" THEN
+        gJdbasic$ = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
+    ENDIF
+    gTries = WORKCONF.VALUE(cfg, "work_cockpit.tries", 1)
+ENDIF
+DIM gLog$ = PATH.JOIN$(gWork$, "logs", "cockpit.log")
+DIM gList = COCKPIT.INSTALLED(gWork$, "X06")
+DIM gShown = MIN([LEN(gList), 12])
+
+' ── the window ────────────────────────────────────────────────
+
+DIM top = 40 + gShown * 36
+DIM frm = FORM.CREATE(gTitle$, 680, top + 250, "CKP")
+DIM head$ = "Automations in " + gWork$
+DIM lblHead = FORM.LABEL(frm, "lblHead", head$, 20, 12, 640, 22)
+DIM run_buttons = []
+DIM state_labels = []
+DIM k = 0
+FOR k = 0 TO gShown - 1
+    DIM entry = gList[k]
+    DIM y = 44 + k * 36
+    DIM caption$ = entry{"id"} + " " + entry{"name"}
+    DIM b_name$ = "btnRun" + STR$(k)
+    DIM l_name$ = "lblState" + STR$(k)
+    DIM b = FORM.BUTTON(frm, b_name$, caption$, 20, y, 240, 28)
+    DIM l = FORM.LABEL(frm, l_name$, "", 275, y + 5, 385, 22)
+    PUSH(run_buttons, b)
+    PUSH(state_labels, l)
+NEXT k
+DIM chkDry = FORM.CHECKBOX(frm, "chkDry", "Dry run only", _
+    20, top + 8, 200, 24)
+DIM btnRefresh = FORM.BUTTON(frm, "btnRefresh", "Refresh", _
+    470, top + 4, 90, 30)
+DIM btnClose = FORM.BUTTON(frm, "btnClose", "Close", _
+    570, top + 4, 90, 30)
+DIM txtOut = FORM.TEXTBOX(frm, "txtOut", "", _
+    20, top + 46, 640, 190, TRUE)
+DIM tmrSelf = FORM.TIMER(frm, "tmrSelf", 0)
+DIM gTicks = 0
+DIM gFails = 0
+
+SUB ShowStates()
+    DIM rows = COCKPIT.READ_LOG(gLog$)
+    DIM i = 0
+    FOR i = 0 TO gShown - 1
+        DIM e = gList[i]
+        DIM last = COCKPIT.LAST(rows, e{"id"})
+        FORM.SET(state_labels[i], "TEXT", COCKPIT.STATUS$(last))
+    NEXT i
+ENDSUB
+
+SUB RunSlot(slot)
+    DIM e = gList[slot]
+    DIM dry = FORM.GET(chkDry, "CHECKED")
+    FORM.SET(txtOut, "TEXT", "Running " + e{"name"})
+    DIM r = COCKPIT.RUN(gJdbasic$, e, gConf$, dry, gTries)
+    COCKPIT.APPEND_LOG(gLog$, COCKPIT.LOG_LINE$(NOW(), e, dry, r))
+    DIM top$ = e{"name"} + ": exit " + STR$(r{"exit"})
+    IF r{"tries"} > 1 THEN
+        top$ = top$ + " after " + STR$(r{"tries"}) + " starts"
+    ENDIF
+    DIM body$ = top$ + LF$ + COCKPIT.CLEAN$(r{"output"})
+    FORM.SET(txtOut, "TEXT", REPLACE$(body$, LF$, CHR$(13) + LF$))
+    ShowStates()
+ENDSUB
+
+' ── events ────────────────────────────────────────────────────
+
+SUB RunClick(e)
+    DIM ev = e[0]
+    DIM name$ = ev{"name"}
+    RunSlot(CINT(VAL(MID$(name$, 6, LEN(name$)))))
+ENDSUB
+FOR k = 0 TO gShown - 1
+    DIM handler$ = "BTNRUN" + STR$(k) + "_CLICK"
+    ON handler$ CALL RunClick
+NEXT k
+
+SUB CKP_LOAD(e)
+    ShowStates()
+    IF gShown = 0 THEN FORM.SET(txtOut, "TEXT", "Nothing installed.")
+    IF gSelfTest THEN FORM.SET(tmrSelf, "INTERVAL", 200)
+ENDSUB
+
+SUB BTNREFRESH_CLICK(e)
+    ShowStates()
+ENDSUB
+
+SUB BTNCLOSE_CLICK(e)
+    FORM.CLOSE(frm)
+ENDSUB
+
+' ── the self test ─────────────────────────────────────────────
+
+SUB Expect(ok, what$)
+    IF NOT ok THEN
+        gFails = gFails + 1
+        PRINT "FAIL: "; what$
+    ENDIF
+ENDSUB
+
+SUB TMRSELF_TICK(e)
+    gTicks = gTicks + 1
+    IF gTicks = 1 THEN
+        Expect(gShown = 2, "two automations, the cockpit left out")
+        DIM first$ = FORM.GET(state_labels[0], "TEXT")
+        Expect(first$ = "not run yet", "nothing ran yet")
+        FORM.SET(chkDry, "CHECKED", TRUE)
+        FORM.SET(run_buttons[0], "VALUE", TRUE)
+    ELSEIF gTicks = 2 THEN
+        DIM said$ = FORM.GET(txtOut, "TEXT")
+        Expect(INSTR(said$, "would sort") >= 0, "a dry run ran")
+        DIM ok$ = FORM.GET(state_labels[0], "TEXT")
+        Expect(STARTSWITH(ok$, "dry run ok"), "and is shown as ok")
+        FORM.SET(run_buttons[1], "VALUE", TRUE)
+    ELSEIF gTicks = 3 THEN
+        DIM bad$ = FORM.GET(state_labels[1], "TEXT")
+        Expect(INSTR(bad$, "failed") >= 0, "a failure is shown")
+        DIM n = LEN(COCKPIT.READ_LOG(gLog$))
+        Expect(n = 2, "both starts are logged")
+        IF gShots$ <> "" THEN
+            MKDIR gShots$
+            DIM shot$ = PATH.JOIN$(gShots$, "x06_cockpit.png")
+            DIM got = OS.SCREENSHOT(shot$, "client", gTitle$)
+        ENDIF
+        FORM.CLOSE(frm)
+    ENDIF
+ENDSUB
+
+FORM.RUN(frm)
+IF gSelfTest THEN
+    OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", gWork$])
+    IF gFails > 0 THEN THROW STR$(gFails) + " checks failed"
+    PRINT "ALL COCKPIT WINDOW TESTS PASSED"
+ENDIF

@@ -1,0 +1,29 @@
+# What the setup wizard knows about this recipe.
+
+id = "X12"
+name = "Tested Automations"
+program = "test_runner.jdb"
+summary = "Every recipe's tests on Sunday evening, a report, and a mail when one fails"
+minutes_per_week = 30
+schedule = "weekly sun 20:00"
+section = "tested_automations"
+modules = ["testrun.jdb"]
+files = ["props/monday_props.jdb"]
+
+[[setting]]
+key = "recipes"
+label = "Folder with the recipes to test"
+kind = "folder"
+default = "~/Documents/AutomateWork/recipes"
+
+[[setting]]
+key = "reports"
+label = "Folder for the test reports and the log"
+kind = "folder"
+default = "~/Documents/AutomateWork/test reports"
+
+[[setting]]
+key = "to"
+label = "Who gets the mail when a test fails (empty: you)"
+kind = "text"
+default = ""

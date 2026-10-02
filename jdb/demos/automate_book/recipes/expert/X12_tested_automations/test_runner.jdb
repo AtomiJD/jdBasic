@@ -1,0 +1,83 @@
+' Tested Automations: runs the tests of every recipe in your work
+' folder on Sunday evening, writes a report and, when a test fails,
+' puts a mail to you into the outbox. The settings are the
+' [tested_automations] part of work.conf.
+'
+'   jdbasic test_runner.jdb                run every test
+'   jdbasic test_runner.jdb --only M15     the tests of some recipes
+'   jdbasic test_runner.jdb --dry-run      list the tests, run nothing
+'   jdbasic test_runner.jdb --send         send the outbox
+
+IMPORT WORKCONF, TESTRUN, OUTBOX, MAIL, LOGGER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+IF WORKCONF.FLAG("send") THEN
+    DIM result = OUTBOX.SEND_ALL(cfg, OUTBOX.ASK$(cfg))
+    PRINT result{"sent"}; " sent"
+    END
+ENDIF
+
+DIM key$ = "tested_automations."
+DIM work$ = "~/Documents/AutomateWork"
+DIM root$ = WORKCONF.FOLDER$(cfg, key$ + "recipes", _
+    work$ + "/recipes")
+DIM reports$ = WORKCONF.FOLDER$(cfg, key$ + "reports", _
+    work$ + "/test reports")
+DIM to$ = WORKCONF.VALUE(cfg, key$ + "to", "")
+IF to$ = "" THEN to$ = OUTBOX.FROM$(cfg)
+DIM jdbasic$ = WORKCONF.VALUE(cfg, "paths.jdbasic", "jdbasic")
+DIM user_lib$ = PATH.JOIN$(WORKCONF.HOME$(), ".jdbasic", "lib")
+root$ = REPLACE$(root$, "\", "/")
+IF NOT FILE.ISDIR(root$) THEN THROW "No recipes folder at " + root$
+
+DIM tests = TESTRUN.FIND(root$)
+DIM only$ = WORKCONF.ARG$("only")
+IF only$ <> "" THEN
+    DIM picked = []
+    DIM t = 0
+    FOR t = 0 TO LEN(tests) - 1
+        DIM file$ = tests[t]
+        IF INSTR(file$, only$) >= 0 THEN PUSH(picked, file$)
+    NEXT t
+    tests = picked
+ENDIF
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT LEN(tests); " tests below "; root$
+    DIM d = 0
+    FOR d = 0 TO LEN(tests) - 1
+        DIM shown$ = tests[d]
+        PRINT "  "; shown$
+    NEXT d
+    END
+ENDIF
+
+MKDIR reports$
+DIM lg = LOGGER.NEW("tested_automations")
+DIM log$ = PATH.JOIN$(reports$, "test_runner.log")
+LOGGER.TO_FILE(lg, log$, 1000000, 3)
+LOGGER.INFO(lg, "run started", {"tests": LEN(tests)})
+DIM first = []
+DIM given$ = GETENV$("JDBASIC_PATH")
+IF given$ <> "" THEN first = SPLIT(given$, ";")
+PUSH(first, user_lib$)
+DIM search$ = TESTRUN.SEARCH_PATH$(root$, first)
+DIM results = TESTRUN.RUN_ALL(jdbasic$, tests, search$)
+SETENV "JDBASIC_PATH", given$
+
+DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")
+DIM report$ = TESTRUN.REPORT$(results, now$)
+DIM today$ = LEFT$(now$, 10)
+DIM report_file$ = PATH.JOIN$(reports$, "tests " + today$ + ".txt")
+TXTWRITER report_file$, report$
+PRINT report$
+DIM bad = TESTRUN.TALLY_OF(results, "failed")
+LOGGER.INFO(lg, "run done", {"failed": bad, "report": report_file$})
+IF bad > 0 ANDALSO to$ <> "" THEN
+    DIM subject$ = STR$(bad) + " recipe tests failed"
+    DIM msg = MAIL.MESSAGE(OUTBOX.FROM$(cfg), to$, subject$)
+    MAIL.PLAIN(msg, report$)
+    DIM eml$ = OUTBOX.PUT$(msg, cfg, "tests " + today$ + ".eml")
+    LOGGER.WARN(lg, "mail in the outbox", {"path": eml$})
+    PRINT "In the outbox: "; eml$
+ENDIF
+IF bad > 0 THEN THROW STR$(bad) + " tests failed, see " + report_file$

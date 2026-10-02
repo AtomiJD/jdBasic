@@ -1,0 +1,264 @@
+' jobserver.jdb: the work of the Personal Job Server. It decides which
+' jobs are due, runs each one with retries, keeps the state of every
+' job and writes the log and the audit trail.
+'
+'   IMPORT JOBSERVER
+'   DIM ctx = {"offset": -7, "dry_run": FALSE, "audit": "", "key": ""}
+'   ctx{"paths"} = {"jdbasic": "jdbasic", "recipes": "C:/W/recipes"}
+'   ctx{"log"} = LOGGER.NEW("jobs")
+'   DIM results = JOBSERVER.TICK(jobs, state, DT.NOW(), ctx)
+'
+' A job is due when its last run time before now is later than the run
+' time it last ran for. A job the server sees for the first time waits
+' for its next run time. A run time that passed with the computer off
+' runs once when the server starts, unless catch_up is false.
+
+EXPORT MODULE JOBSERVER
+
+IMPORT SCHED, RETRY, LOGGER, AUDIT, DT, WORKCONF
+
+CONST LATE_SECONDS = 300
+
+' A moment as local time text, "2026-10-02 18:30".
+EXPORT FUNC CLOCK$(t, offset)
+    RETURN LEFT$(REPLACE$(DT.ISO$(t, offset), "T", " "), 16)
+ENDFUNC
+
+' TRUE for a path that starts at a drive or the root.
+FUNC Absolute(path$)
+    IF STARTSWITH(path$, "/") THEN RETURN TRUE
+    IF STARTSWITH(path$, "\") THEN RETURN TRUE
+    RETURN MID$(path$, 1, 1) = ":"
+ENDFUNC
+
+' The program and arguments that run a job: a command as it is, a
+' program with jdbasic and the settings file of the caller.
+EXPORT FUNC COMMAND(job, paths)
+    DIM out AS MAP
+    IF job{"command"} <> "" THEN
+        out{"exe"} = job{"command"}
+        out{"args"} = job{"args"}
+        RETURN out
+    ENDIF
+    DIM program$ = WORKCONF.EXPAND$(job{"program"})
+    IF NOT Absolute(program$) THEN
+        program$ = PATH.JOIN$(paths{"recipes"}, program$)
+    ENDIF
+    DIM args = APPEND([program$], job{"args"})
+    IF MAP.EXISTS(paths, "config") THEN
+        DIM conf$ = paths{"config"}
+        IF conf$ <> "" THEN args = APPEND(args, ["--config", conf$])
+    ENDIF
+    out{"exe"} = paths{"jdbasic"}
+    out{"args"} = args
+    RETURN out
+ENDFUNC
+
+' The last line a program printed.
+FUNC LastLine$(output$)
+    DIM text$ = TRIM$(REPLACE$(output$, CHR$(13), ""))
+    DIM lines = SPLIT(text$, CHR$(10))
+    IF LEN(lines) = 0 THEN RETURN ""
+    DIM last$ = lines[LEN(lines) - 1]
+    RETURN TRIM$(last$)
+ENDFUNC
+
+' Runs a command once; an exit code other than 0 is an error.
+FUNC Execute$(cmd)
+    DIM r = OS.EXEC(cmd{"exe"}, cmd{"args"})
+    DIM code = r{"EXIT_CODE"}
+    DIM output$ = r{"OUTPUT"}
+    IF code = 0 THEN RETURN output$
+    DIM last$ = LastLine$(output$)
+    IF last$ = "" THEN THROW "exit " + STR$(code)
+    THROW "exit " + STR$(code) + ": " + last$
+ENDFUNC
+
+' The exit code inside an error text of Execute$, -1 for other errors.
+FUNC ExitOf(error$)
+    IF NOT STARTSWITH(error$, "exit ") THEN RETURN -1
+    DIM colon = INSTR(error$, ":")
+    IF colon < 0 THEN RETURN VAL(MID$(error$, 5, LEN(error$)))
+    RETURN VAL(MID$(error$, 5, colon - 5))
+ENDFUNC
+
+' Runs a job with its retries and answers {"name", "ok", "exit",
+' "error", "attempts", "output"}.
+EXPORT FUNC RUN(job, paths)
+    DIM opts AS MAP
+    opts{"attempts"} = job{"attempts"}
+    opts{"delay"} = job{"retry_seconds"} * 1000
+    opts{"factor"} = 2
+    DIM rep = RETRY.ATTEMPT(Execute$@, COMMAND(job, paths), opts)
+    DIM out AS MAP
+    out{"name"} = job{"name"}
+    out{"ok"} = rep{"ok"}
+    out{"attempts"} = rep{"attempts"}
+    IF rep{"ok"} THEN
+        out{"exit"} = 0
+        out{"error"} = ""
+        out{"output"} = LastLine$(rep{"value"})
+    ELSE
+        DIM reason$ = rep{"error"}
+        out{"exit"} = ExitOf(reason$)
+        out{"error"} = reason$
+        out{"output"} = ""
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' The state entry of a job, new when the job has none.
+FUNC Entry(state, name$)
+    IF MAP.EXISTS(state, name$) THEN RETURN state{name$}
+    DIM rec AS MAP
+    rec{"runs"} = 0
+    rec{"fails"} = 0
+    rec{"last_success"} = 0
+    RETURN rec
+ENDFUNC
+
+' Runs a job now, records the result in its state entry, logs it and
+' adds it to the audit trail. Answers the result.
+EXPORT FUNC RUN_NOW(job, state, now, due_at, ctx)
+    DIM name$ = job{"name"}
+    DIM offset = ctx{"offset"}
+    DIM rec = Entry(state, name$)
+    rec{"last_start"} = CLOCK$(DT.NOW(), offset)
+    DIM res = RUN(job, ctx{"paths"})
+    DIM finished = DT.NOW()
+    rec{"last_end"} = CLOCK$(finished, offset)
+    rec{"last_due"} = due_at
+    rec{"last_ok"} = res{"ok"}
+    rec{"last_exit"} = res{"exit"}
+    rec{"last_error"} = res{"error"}
+    rec{"runs"} = rec{"runs"} + 1
+    DIM fields AS MAP
+    fields{"job"} = name$
+    fields{"attempts"} = res{"attempts"}
+    IF res{"ok"} THEN
+        rec{"last_success"} = finished
+        LOGGER.INFO(ctx{"log"}, "job ran", fields)
+    ELSE
+        rec{"fails"} = rec{"fails"} + 1
+        fields{"error"} = res{"error"}
+        LOGGER.ERROR(ctx{"log"}, "job failed", fields)
+    ENDIF
+    rec{"next"} = SCHED.NEXTRUN(job{"when"}, now, offset)
+    state{name$} = rec
+    IF ctx{"key"} <> "" ANDALSO ctx{"audit"} <> "" THEN
+        DIM entry AS MAP
+        entry{"job"} = name$
+        entry{"ok"} = res{"ok"}
+        entry{"exit"} = res{"exit"}
+        entry{"attempts"} = res{"attempts"}
+        entry{"due"} = CLOCK$(due_at, offset)
+        DIM seq = AUDIT.APPEND(ctx{"audit"}, ctx{"key"}, entry)
+    ENDIF
+    RETURN res
+ENDFUNC
+
+' What one job does at now: a result when it ran, was skipped or would
+' run, an empty map otherwise.
+FUNC TickOne(job, state, now, ctx)
+    DIM offset = ctx{"offset"}
+    DIM name$ = job{"name"}
+    DIM due_at = SCHED.PREVRUN(job{"when"}, now + 1, offset)
+    DIM rec = Entry(state, name$)
+    DIM item AS MAP
+    DIM nothing AS MAP
+    item{"name"} = name$
+    DIM seen = MAP.EXISTS(rec, "last_due")
+    IF seen THEN
+        IF due_at <= rec{"last_due"} THEN RETURN nothing
+        IF ctx{"dry_run"} THEN
+            item{"would_run"} = CLOCK$(due_at, offset)
+            RETURN item
+        ENDIF
+        DIM late = now - due_at > LATE_SECONDS
+        IF job{"catch_up"} ORELSE NOT late THEN
+            RETURN RUN_NOW(job, state, now, due_at, ctx)
+        ENDIF
+        item{"skipped"} = TRUE
+        LOGGER.WARN(ctx{"log"}, "missed run skipped", item)
+    ELSE
+        LOGGER.INFO(ctx{"log"}, "job added", item)
+    ENDIF
+    rec{"last_due"} = due_at
+    rec{"next"} = SCHED.NEXTRUN(job{"when"}, now, offset)
+    state{name$} = rec
+    IF seen THEN RETURN item
+    RETURN nothing
+ENDFUNC
+
+' Runs every enabled job that is due at now and answers one result per
+' job it ran, skipped or, on a dry run, would run.
+EXPORT FUNC TICK(jobs, state, now, ctx)
+    DIM results = []
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        IF job{"enabled"} THEN
+            DIM res = TickOne(job, state, now, ctx)
+            IF MAP.EXISTS(res, "name") THEN PUSH(results, res)
+        ENDIF
+    NEXT k
+    RETURN results
+ENDFUNC
+
+' Seconds until the next job is due, at least 5 and at most 60, so the
+' server marks the lock at least once a minute.
+EXPORT FUNC NEXT_WAKE(jobs, now, offset)
+    DIM wait = 60
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        IF job{"enabled"} THEN
+            DIM gap = SCHED.NEXTRUN(job{"when"}, now, offset) - now
+            IF gap < wait THEN wait = gap
+        ENDIF
+    NEXT k
+    IF wait < 5 THEN wait = 5
+    RETURN wait
+ENDFUNC
+
+' TRUE when no other server holds the lock: no lock file, or one older
+' than ttl seconds.
+EXPORT FUNC FREE(lock_path$, now, ttl)
+    IF NOT FILE.EXISTS(lock_path$) THEN RETURN TRUE
+    DIM t = VAL(TRIM$(TXTREADER$(lock_path$)))
+    RETURN now - t > ttl
+ENDFUNC
+
+' Marks the lock file with now.
+EXPORT SUB TOUCH(lock_path$, now)
+    MKDIR PATH.DIRNAME$(lock_path$)
+    TXTWRITER lock_path$, STR$(INT(now))
+ENDSUB
+
+' Two lines per job for --list: the name with its schedule, then the
+' next run and the last result.
+EXPORT FUNC LIST_LINES(jobs, state, now, offset)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(jobs) - 1
+        DIM job = jobs[k]
+        DIM name$ = job{"name"}
+        PUSH(out, name$ + " (" + job{"when"} + ")")
+        DIM line$ = "  switched off"
+        IF job{"enabled"} THEN
+            DIM next_t = SCHED.NEXTRUN(job{"when"}, now, offset)
+            line$ = "  next " + CLOCK$(next_t, offset)
+            IF MAP.EXISTS(state, name$) THEN
+                DIM rec = state{name$}
+                IF MAP.EXISTS(rec, "last_ok") THEN
+                    DIM result$ = "ok"
+                    IF NOT rec{"last_ok"} THEN result$ = "FAILED"
+                    DIM ended$ = rec{"last_end"}
+                    line$ = line$ + ", last " + ended$ + " " + result$
+                ENDIF
+            ENDIF
+        ENDIF
+        PUSH(out, line$)
+    NEXT k
+    RETURN out
+ENDFUNC

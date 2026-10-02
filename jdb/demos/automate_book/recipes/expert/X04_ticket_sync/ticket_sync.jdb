@@ -1,0 +1,62 @@
+' Ticket Sync: keeps your to-do file and the team's ticket tracker in
+' step. Tickets you are given appear as tasks, a task you tick closes
+' its ticket, and a task you mark (#new) becomes a ticket. The
+' settings are the [ticket_sync] part of work.conf; the token comes
+' from an environment variable or is asked for, never from a file.
+'
+'   jdbasic ticket_sync.jdb            sync now
+'   jdbasic ticket_sync.jdb --dry-run  show the changes, make none
+
+IMPORT WORKCONF, TICKETSYNC, LOGGER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "ticket_sync."
+DIM home$ = "~/Documents/AutomateWork"
+DIM tracker$ = WORKCONF.VALUE(cfg, key$ + "tracker", "")
+DIM user$ = WORKCONF.VALUE(cfg, key$ + "user", "")
+DIM own$ = home$ + "/todo.txt"
+DIM todo$ = WORKCONF.FOLDER$(cfg, key$ + "todo", own$)
+DIM env$ = "TICKETS_TOKEN"
+DIM token_var$ = WORKCONF.VALUE(cfg, key$ + "token_env", env$)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+DIM work$ = WORKCONF.FOLDER$(cfg, "paths.work", home$)
+MKDIR PATH.JOIN$(work$, "logs")
+DIM lg = LOGGER.NEW("ticket_sync")
+LOGGER.TO_FILE(lg, PATH.JOIN$(work$, "logs", "ticket_sync.log"))
+
+IF tracker$ = "" ORELSE user$ = "" THEN
+    PRINT "Set tracker and user in [ticket_sync] of work.conf."
+    END 1
+ENDIF
+DIM token$ = GETENV$(token_var$)
+IF token$ = "" THEN INPUT "Tracker token (not stored): "; token$
+
+DIM text$ = ""
+IF FILE.EXISTS(todo$) THEN text$ = TXTREADER$(todo$)
+DIM api = TICKETSYNC.SESSION(tracker$, token$)
+TRY
+    DIM tickets = TICKETSYNC.OPEN_TICKETS(api, user$)
+    DIM plan = TICKETSYNC.PLAN(TICKETSYNC.PARSE(text$), tickets)
+    DIM said = TICKETSYNC.APPLY(plan, api, user$, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(said) - 1
+        PRINT said[k]
+        LOGGER.INFO(lg, said[k])
+    NEXT k
+    DIM fresh$ = TICKETSYNC.RENDER$(plan{"items"})
+    IF fresh$ = text$ THEN
+        PRINT "the to-do file is up to date"
+    ELSEIF dry_run THEN
+        PRINT "would write "; todo$
+    ELSE
+        DIM backup$ = todo$ + ".bak"
+        IF FILE.EXISTS(todo$) THEN FILE.COPY(todo$, backup$, TRUE)
+        TXTWRITER todo$, fresh$
+        PRINT "wrote "; todo$
+        LOGGER.INFO(lg, "wrote " + todo$)
+    ENDIF
+CATCH
+    PRINT "Ticket Sync stopped: "; ERRMSG$
+    LOGGER.ERROR(lg, "stopped", {"error": ERRMSG$})
+    END 1
+ENDTRY
