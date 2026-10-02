@@ -1,0 +1,62 @@
+' pdf_preview.jdb: pages of a PDF as PNG pictures, drawn by pdf.js in a
+' headless Chrome, so a page can be looked at without a PDF viewer.
+'
+'   jdbasic tools/preview/pdf_preview.jdb out/book_print.pdf 1,3-5 [out/preview]
+'
+' Needs Google Chrome and the network (pdf.js comes from cdnjs).
+
+DIM gChrome$ = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+
+' The page numbers of a list such as "1,3-5".
+FUNC PageList(spec$)
+    DIM out = []
+    DIM parts = SPLIT(spec$, ",")
+    DIM k = 0
+    DIM p = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM one$ = TRIM$(parts[k])
+        IF INSTR(one$, "-") > 0 THEN
+            DIM ends = SPLIT(one$, "-")
+            FOR p = CINT(ends[0]) TO CINT(ends[1])
+                PUSH(out, p)
+            NEXT p
+        ELSEIF one$ <> "" THEN
+            PUSH(out, CINT(one$))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A path made absolute against the working directory.
+FUNC AbsPath$(path$)
+    IF MID$(path$, 1, 1) = ":" ORELSE STARTSWITH(path$, "\") ORELSE STARTSWITH(path$, "/") THEN RETURN PATH.NORMALIZE$(path$)
+    DIM here$ = TRIM$(REPLACE$(OS.EXEC("cmd", ["/c", "cd"]){"OUTPUT"}, CHR$(13), ""))
+    RETURN PATH.NORMALIZE$(PATH.JOIN$(here$, path$))
+ENDFUNC
+
+FUNC FileUrl$(path$)
+    RETURN "file:///" + REPLACE$(AbsPath$(path$), "\", "/")
+ENDFUNC
+
+DIM argv = OS.ARGS()
+IF LEN(argv) < 3 THEN THROW "usage: pdf_preview.jdb file.pdf pages [out_dir]"
+DIM pdf$ = argv[1]
+DIM pages = PageList(argv[2])
+DIM out_dir$ = "out/preview"
+IF LEN(argv) > 3 THEN out_dir$ = argv[3]
+IF NOT FILE.EXISTS(gChrome$) THEN THROW "Google Chrome not found at " + gChrome$
+IF NOT FILE.EXISTS(pdf$) THEN THROW "no such file: " + pdf$
+MKDIR out_dir$
+DIM page_url$ = FileUrl$(PATH.JOIN$(PATH.DIRNAME$(OS.ARGS()[0]), "render.html"))
+DIM k = 0
+FOR k = 0 TO LEN(pages) - 1
+    DIM shot$ = AbsPath$(PATH.JOIN$(out_dir$, "page" + STR$(pages[k]) + ".png"))
+    IF FILE.EXISTS(shot$) THEN KILL shot$
+    DIM args = ["--headless=new", "--disable-gpu", "--hide-scrollbars", "--allow-file-access-from-files", "--window-size=870,1230", "--virtual-time-budget=30000", "--screenshot=" + shot$, page_url$ + "?file=" + FileUrl$(pdf$) + "#" + STR$(pages[k])]
+    DIM r = OS.EXEC(gChrome$, args)
+    IF FILE.EXISTS(shot$) THEN
+        PRINT "wrote "; shot$
+    ELSE
+        PRINT "page "; pages[k]; ": no picture"
+    ENDIF
+NEXT k

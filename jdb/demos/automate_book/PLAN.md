@@ -5,7 +5,8 @@ levels (easy, medium, expert) that take routine office work off the reader's
 desk, a setup wizard for the easy level, and a build that turns the Markdown
 manuscript into a Word document with jdBasic itself.
 
-Status, 2026-10-01: WP 0a done (DOCX and HTML build, check_recipes, recipe E01
+Status, 2026-10-01: WP 0a and 0b done (DOCX, HTML, print and screen PDF,
+check_recipes, the prose and width checks, recipe E01
 with its chapter pages). E01 came out at about 7 pages against the 4 the
 budget gives an easy recipe, mostly for the two listings.
 

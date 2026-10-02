@@ -1,0 +1,57 @@
+' LAYOUT: a small manuscript set as print and screen PDF: the contents
+' find their page numbers, a chapter starts on a right hand page in print,
+' a long listing breaks over pages, and the screen PDF has its bookmarks
+' and links. Run from the book folder; the fonts come from fonts/.
+
+IMPORT TESTKIT, LAYOUT, MDBOOK, CONF
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("layouttest")
+MKDIR folder$
+
+DIM code = []
+DIM i = 0
+FOR i = 1 TO 90
+    PUSH(code, "PRINT " + STR$(i) + "   ' line " + STR$(i))
+NEXT i
+DIM md$ = "<!-- toc -->" + LF$ + LF$ + "# First Chapter" + LF$ + LF$ + "Some **bold** and *italic* text with `code` and [a link](https://example.com)." + LF$ + LF$
+md$ = md$ + "## A Section" + LF$ + LF$ + "```basic" + LF$ + JOIN(code, LF$) + LF$ + "```" + LF$ + LF$
+md$ = md$ + "> **Balance dividend**" + LF$ + "> Ten minutes." + LF$ + LF$
+md$ = md$ + "| A | B |" + LF$ + "|---|---|" + LF$ + "| one | two |" + LF$ + LF$
+md$ = md$ + "# Second Chapter" + LF$ + LF$ + "- an item" + LF$ + "- another" + LF$
+DIM blocks = MDBOOK.BLOCKS(md$)
+DIM chapters = [{"path": "test.md", "dir": folder$, "text": md$, "blocks": blocks}]
+DIM cfg = CONF.TOML_TEXT("[book]" + LF$ + "title = " + CHR$(34) + "Test Book" + CHR$(34) + LF$ + "authors = [" + CHR$(34) + "A" + CHR$(34) + "]" + LF$)
+
+TESTKIT.SUITE("print")
+DIM print$ = folder$ + "/print.pdf"
+DIM n_print = LAYOUT.BOOK(cfg, chapters, ".", print$, "print")
+TESTKIT.ISTRUE(n_print >= 7, "title, back of title, contents, two chapters and a listing over two pages")
+TESTKIT.EQ(n_print MOD 2, 1, "the second chapter started on a right hand page, so the count is odd")
+DIM pdf$ = BINREADER$(print$)
+TESTKIT.ISTRUE(INSTR(pdf$, "/FontFile2 ") >= 0, "the fonts are embedded")
+TESTKIT.EQ(Occurrences(pdf$, "/Subtype /Link"), 0, "a print PDF has no link areas")
+
+TESTKIT.SUITE("screen")
+DIM screen$ = folder$ + "/screen.pdf"
+DIM n_screen = LAYOUT.BOOK(cfg, chapters, ".", screen$, "screen")
+TESTKIT.ISTRUE(n_screen < n_print, "no blank pages on the screen")
+DIM spdf$ = BINREADER$(screen$)
+TESTKIT.ISTRUE(INSTR(spdf$, "/Type /Outlines") >= 0, "bookmarks")
+TESTKIT.ISTRUE(Occurrences(spdf$, "/Subtype /Link") >= 4, "the URL and the three contents entries are links")
+TESTKIT.ISTRUE(INSTR(spdf$, "/URI (https://example.com)") >= 0, "the URL")
+
+KILL print$
+KILL screen$
+RMDIR folder$
+TESTKIT.REPORT()
+
+FUNC Occurrences(hay$, needle$)
+    DIM n = 0
+    DIM at = INSTR(hay$, needle$)
+    DO WHILE at >= 0
+        n = n + 1
+        at = CINT(INSTR(at + LEN(needle$), hay$, needle$))
+    LOOP
+    RETURN n
+ENDFUNC

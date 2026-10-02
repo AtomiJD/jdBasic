@@ -96,9 +96,9 @@ Try it with `--dry-run` first. Nothing moves; you see the plan:
 
 ```
 jdbasic downloads_butler.jdb --dry-run
-would move holiday.jpg  ->  C:\Users\mia\Downloads\Sorted\Images\2026-10\holiday.jpg
-would move Rechnung Müller.pdf  ->  C:\Users\mia\Downloads\Sorted\Documents\2026-10\Rechnung Müller.pdf
-2 files would move. Run without --dry-run to sort them.
+would move holiday.jpg -> Images\2026-10\holiday.jpg
+would move budget.xlsx -> Documents\2026-10\budget.xlsx
+2 files would move. Run without --dry-run.
 ```
 
 When the plan looks right, run it without the switch.

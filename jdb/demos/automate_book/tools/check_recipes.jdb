@@ -1,4 +1,4 @@
-' check_recipes.jdb - every recipe of the book through four steps: --lint
+' check_recipes.jdb: every recipe of the book through four steps: --lint
 ' on each of its files, its test in the interpreter, the test compiled with
 ' -c, and the compiled test run. A recipe is a folder under recipes/<level>/
 ' with a file ending in _test.jdb.

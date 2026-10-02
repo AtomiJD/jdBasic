@@ -1,8 +1,6 @@
-# How to Read This Book
-
 <!-- toc -->
 
-<!-- pagebreak -->
+# How to Read This Book
 
 This book is a toolbox. You do not have to read it from the first page to
 the last. Chapter 1 asks where your week goes and which chores are worth

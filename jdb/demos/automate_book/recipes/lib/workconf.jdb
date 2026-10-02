@@ -1,4 +1,4 @@
-' workconf.jdb - the settings every recipe of the book reads: where
+' workconf.jdb: the settings every recipe of the book reads: where
 ' work.conf lives, its values, the switches given on the command line, and
 ' paths that start with ~.
 '

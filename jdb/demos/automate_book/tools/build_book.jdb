@@ -1,14 +1,16 @@
-' build_book.jdb - the book from its manuscript. book.toml names the
-' chapters; the build writes out/book.docx and a browser preview in
+' build_book.jdb: the book from its manuscript. book.toml names the
+' chapters; the build checks the writing rules (tools/prose.jdb), writes
+' out/book.docx, out/book_print.pdf, out/book_screen.pdf and a browser preview in
 ' out/html/, and reports words, code lines and estimated pages per chapter.
 '
-'   jdbasic tools/build_book.jdb [book.toml] [--only docx|html]
+'   jdbasic tools/build_book.jdb [book.toml] [--only docx|html|pdf|print|screen]
 '
 ' Run from the book folder; the modules come from lib/ through JDBASIC_PATH.
 
-IMPORT CONF, DOCX, MD, MDBOOK
+IMPORT CONF, DOCX, MD, MDBOOK, PROSE, LAYOUT, TTF
 
 DIM gLF$ = CHR$(10)
+DIM gCodeColumns = 70
 
 ' ── the chapters ──────────────────────────────────────────────
 
@@ -159,6 +161,55 @@ SUB Report(chapters)
     PRINT FORMAT$("{:<34} {:>7} {:>6} {:>6.1f}", "total", words, code_lines, pages)
 ENDSUB
 
+' ── writing rules ─────────────────────────────────────────────
+
+' The prose findings in the chapters, in the comments of every file they
+' include, and in the extra files book.toml names under [prose].
+FUNC ProseFindings(cfg, base$)
+    DIM out = []
+    DIM files = CONF.GET(cfg, "chapters.files", [])
+    DIM extra = CONF.GET(cfg, "prose.extra", [])
+    DIM docs = APPEND(files, extra)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(docs) - 1
+        DIM rel$ = docs[k]
+        DIM text$ = TXTREADER$(PATH.JOIN$(base$, rel$))
+        out = APPEND(out, PROSE.MARKDOWN(text$, rel$))
+        DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+        FOR j = 0 TO LEN(src) - 1
+            DIM t$ = TRIM$(src[j])
+            IF STARTSWITH(t$, "<!-- include ") THEN
+                DIM inc$ = SPLIT(TRIM$(MID$(t$, 13, LEN(t$) - 16)), " ")[0]
+                DIM listing$ = TXTREADER$(PATH.JOIN$(base$, inc$))
+                out = APPEND(out, PROSE.COMMENTS(listing$, inc$))
+                out = APPEND(out, WideLines(listing$, inc$, FALSE))
+            ENDIF
+        NEXT j
+        IF k < LEN(files) THEN out = APPEND(out, WideLines(text$, rel$, TRUE))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Lines of a listing wider than the book's code column; in a Markdown
+' text only the lines inside code fences count.
+FUNC WideLines(text$, file$, fenced_only)
+    DIM out = []
+    DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM in_fence = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM one$ = src[k]
+        IF STARTSWITH(TRIM$(one$), "```") THEN
+            in_fence = NOT in_fence
+        ELSEIF in_fence ORELSE NOT fenced_only THEN
+            DIM n = LEN(TTF.CODEPOINTS(REPLACE$(one$, CHR$(9), "    ")))
+            IF n > gCodeColumns THEN PUSH(out, file$ + ":" + STR$(k + 1) + " [code line of " + STR$(n) + " characters, the page takes " + STR$(gCodeColumns) + "]")
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
 ' ── main ──────────────────────────────────────────────────────
 
 DIM cfg_path$ = "book.toml"
@@ -182,6 +233,16 @@ DIM cfg = CONF.TOML(cfg_path$)
 DIM out_dir$ = PATH.JOIN$(base$, CONF.GET(cfg, "build.out", "out"))
 MKDIR out_dir$
 DIM chapters = LoadChapters(cfg, base$)
+DIM findings = ProseFindings(cfg, base$)
+IF LEN(findings) > 0 THEN
+    PRINT "The writing rules are broken in "; LEN(findings); " places:"
+    DIM f = 0
+    FOR f = 0 TO LEN(findings) - 1
+        PRINT "  "; findings[f]
+    NEXT f
+    THROW "fix the prose before building"
+ENDIF
+PRINT "writing rules: clean"
 
 IF only$ = "" ORELSE only$ = "docx" THEN
     DIM docx_path$ = PATH.JOIN$(out_dir$, "book.docx")
@@ -193,4 +254,15 @@ IF only$ = "" ORELSE only$ = "html" THEN
     DIM pages_written = WriteHtml(cfg, chapters, html_dir$)
     PRINT "wrote "; html_dir$; " ("; pages_written; " pages)"
 ENDIF
+DIM modes = ["print", "screen"]
+DIM mi = 0
+FOR mi = 0 TO LEN(modes) - 1
+    DIM pdf_mode$ = modes[mi]
+    IF only$ = "" ORELSE only$ = "pdf" ORELSE only$ = pdf_mode$ THEN
+        DIM pdf_path$ = PATH.JOIN$(out_dir$, "book_" + pdf_mode$ + ".pdf")
+        DIM t0 = TICK()
+        DIM n_pages = LAYOUT.BOOK(cfg, chapters, base$, pdf_path$, pdf_mode$)
+        PRINT "wrote "; pdf_path$; " ("; n_pages; " pages, "; FORMAT$("{:.1f}", (TICK() - t0) / 1000); " s)"
+    ENDIF
+NEXT mi
 Report(chapters)

@@ -1,0 +1,36 @@
+' PROSE: every rule on a line that breaks it and a line that does not, and
+' what a Markdown text and a program's comments skip.
+
+IMPORT TESTKIT, PROSE
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM EM$ = CHR$(226) + CHR$(128) + CHR$(148)
+DIM DOTS$ = CHR$(226) + CHR$(128) + CHR$(166)
+
+TESTKIT.SUITE("lines")
+TESTKIT.EQ(LEN(PROSE.LINE_FINDINGS("The butler moves each file into its folder.")), 0, "a plain sentence is clean")
+TESTKIT.EQARRAY(PROSE.LINE_FINDINGS("It is fast" + EM$ + "and safe."), ["em/en dash or ellipsis character"], "an em dash")
+TESTKIT.EQARRAY(PROSE.LINE_FINDINGS("Wait for it" + DOTS$), ["em/en dash or ellipsis character"], "an ellipsis character")
+TESTKIT.EQARRAY(PROSE.LINE_FINDINGS("It is fast - and safe."), ["' - ' used as a dash"], "a hyphen between spaces")
+TESTKIT.EQ(LEN(PROSE.LINE_FINDINGS("A well-known, half-finished file.")), 0, "hyphens inside words")
+TESTKIT.EQARRAY(PROSE.LINE_FINDINGS("A Powerful tool."), ["marketing word"], "a marketing word in any case")
+TESTKIT.EQARRAY(PROSE.LINE_FINDINGS("It is not just a script."), ["'not just X' contrast"], "a contrast figure")
+TESTKIT.EQARRAY(PROSE.LINE_FINDINGS("No setup, no fuss."), ["slogan repetition"], "a slogan repetition")
+TESTKIT.EQ(LEN(PROSE.LINE_FINDINGS("Run `a - b` or see [here](http://x/a - b).")), 0, "inline code and link targets are not prose")
+TESTKIT.EQ(LEN(PROSE.LINE_FINDINGS("It prints " + Q$ + "x - y" + Q$ + " at the end.")), 0, "nor is quoted text")
+
+TESTKIT.SUITE("Markdown")
+DIM md$ = "# Title" + LF$ + "Clean text." + LF$ + "```" + LF$ + "a - b" + LF$ + "```" + LF$ + "    indented - code" + LF$ + "<!-- a - comment" + LF$ + "still - comment -->" + LF$ + "Bad - line." + LF$ + "| a | - |"
+DIM found = PROSE.MARKDOWN(md$, "x.md")
+TESTKIT.EQ(LEN(found), 1, "only the prose line is reported")
+TESTKIT.EQ(found[0], "x.md:9 [' - ' used as a dash] Bad - line.", "with file, line and reason")
+
+TESTKIT.SUITE("program comments")
+DIM prog$ = "' Sorts files - fast." + LF$ + "PRINT " + Q$ + "a ' b - c" + Q$ + "   ' clean note" + LF$ + "DIM x = 1   ' not just a number"
+DIM notes = PROSE.COMMENTS(prog$, "p.jdb")
+TESTKIT.EQ(LEN(notes), 2, "two comments break a rule, the string is not a comment")
+TESTKIT.EQ(notes[0], "p.jdb:1 [' - ' used as a dash] ' Sorts files - fast.", "a comment line")
+TESTKIT.ISTRUE(STARTSWITH(notes[1], "p.jdb:3 ['not just X' contrast]"), "and a comment after code")
+
+TESTKIT.REPORT()

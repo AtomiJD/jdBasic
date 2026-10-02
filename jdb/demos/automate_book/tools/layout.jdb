@@ -1,0 +1,891 @@
+' layout.jdb: the book's pages. The block list of the manuscript is set on
+' PDFGEN pages: justified body text with bold, italic, code and links,
+' headings kept with what follows, lists, tables, code listings that break
+' between lines, note boxes and pictures that stay whole, running heads,
+' page numbers on the outer edge and a table of contents.
+'
+'   IMPORT LAYOUT
+'   DIM pages = LAYOUT.BOOK(cfg, chapters, "out/book_print.pdf", "print")
+'
+' The mode "print" mirrors the margins and starts every chapter on a right
+' hand page; "screen" keeps the margins equal, adds bookmarks and makes
+' links and the table of contents clickable. The contents need the page
+' numbers of the headings, so the book is set twice.
+
+EXPORT MODULE LAYOUT
+
+IMPORT PDFGEN, TTF, IMG, CONF
+
+DIM gLF$ = CHR$(10)
+CONST PT_MM = 0.3527777777777778
+
+' ── settings ──────────────────────────────────────────────────
+
+FUNC Settings(cfg, out_mode$)
+    DIM s AS MAP
+    s{"mode"} = out_mode$
+    s{"w"} = CONF.GET(cfg, "page.width_mm", 170)
+    s{"h"} = CONF.GET(cfg, "page.height_mm", 240)
+    s{"inner"} = CONF.GET(cfg, "page.inner_mm", 22)
+    s{"outer"} = CONF.GET(cfg, "page.outer_mm", 18)
+    s{"top"} = CONF.GET(cfg, "page.top_mm", 22)
+    s{"bottom"} = CONF.GET(cfg, "page.bottom_mm", 24)
+    IF out_mode$ = "screen" THEN
+        DIM even = (s{"inner"} + s{"outer"}) / 2
+        s{"inner"} = even
+        s{"outer"} = even
+    ENDIF
+    s{"body_pt"} = CONF.GET(cfg, "type.body_pt", 10.5)
+    s{"lead"} = CONF.GET(cfg, "type.leading_mm", 5.1)
+    s{"code_pt"} = CONF.GET(cfg, "type.code_pt", 8.4)
+    s{"code_lead"} = CONF.GET(cfg, "type.code_leading_mm", 3.9)
+    s{"image_mm"} = CONF.GET(cfg, "images.width_cm", 12.5) * 10
+    s{"title"} = CONF.GET(cfg, "book.title", "Untitled")
+    s{"subtitle"} = CONF.GET(cfg, "book.subtitle", "")
+    s{"authors"} = JOIN(CONF.GET(cfg, "book.authors", []), " and ")
+    s{"version"} = CONF.GET(cfg, "book.version", "")
+    s{"fonts"} = CONF.GET(cfg, "type.fonts", "fonts")
+    RETURN s
+ENDFUNC
+
+SUB AddFonts(doc, base$, folder$)
+    DIM f$ = PATH.JOIN$(base$, folder$)
+    PDFGEN.ADDFONT(doc, "book", PATH.JOIN$(f$, "SourceSerif4-Regular.ttf"))
+    PDFGEN.ADDFONT(doc, "book", PATH.JOIN$(f$, "SourceSerif4-Bold.ttf"), "B")
+    PDFGEN.ADDFONT(doc, "book", PATH.JOIN$(f$, "SourceSerif4-It.ttf"), "I")
+    PDFGEN.ADDFONT(doc, "book", PATH.JOIN$(f$, "SourceSerif4-BoldIt.ttf"), "BI")
+    PDFGEN.ADDFONT(doc, "code", PATH.JOIN$(f$, "SourceCodePro-Regular.ttf"))
+    PDFGEN.ADDFONT(doc, "code", PATH.JOIN$(f$, "SourceCodePro-Bold.ttf"), "B")
+ENDSUB
+
+' ── the page state ────────────────────────────────────────────
+
+FUNC XLeft(ctx)
+    DIM s = ctx{"s"}
+    IF s{"mode"} = "print" ANDALSO ctx{"page"} MOD 2 = 0 THEN RETURN s{"outer"}
+    RETURN s{"inner"}
+ENDFUNC
+
+FUNC TextWidth(ctx)
+    DIM s = ctx{"s"}
+    RETURN s{"w"} - s{"inner"} - s{"outer"}
+ENDFUNC
+
+FUNC Bottom(ctx)
+    DIM s = ctx{"s"}
+    RETURN s{"h"} - s{"bottom"}
+ENDFUNC
+
+' The width of a text in a PDFGEN font, cached per font, size and text.
+FUNC Measure(ctx, fam$, sty$, pt, txt$)
+    DIM key$ = fam$ + sty$ + "|" + STR$(pt) + "|" + txt$
+    DIM cache = ctx{"wcache"}
+    IF MAP.EXISTS(cache, key$) THEN RETURN cache{key$}
+    DIM doc = ctx{"doc"}
+    PDFGEN.USEFONT(doc, fam$, sty$, pt)
+    DIM wd = PDFGEN.STRWIDTH(doc, txt$)
+    cache{key$} = wd
+    RETURN wd
+ENDFUNC
+
+SUB Put(ctx, fam$, sty$, pt, x, y, txt$, r, g, b)
+    DIM doc = ctx{"doc"}
+    PDFGEN.USEFONT(doc, fam$, sty$, pt)
+    PDFGEN.SETCOLOR(doc, r, g, b)
+    PDFGEN.TEXTAT(doc, x, y, txt$)
+ENDSUB
+
+' Starts a page with its running head and its page number.
+SUB NewPage(ctx, with_head)
+    DIM doc = ctx{"doc"}
+    DIM s = ctx{"s"}
+    PDFGEN.ADDPAGE(doc)
+    ctx{"page"} = ctx{"page"} + 1
+    ctx{"y"} = s{"top"}
+    DIM pg = ctx{"page"}
+    IF ctx{"numbered"} THEN
+        DIM num$ = STR$(pg)
+        DIM nw = Measure(ctx, "book", "", 9, num$)
+        DIM nx = XLeft(ctx)
+        IF s{"mode"} = "print" ANDALSO pg MOD 2 = 1 THEN nx = XLeft(ctx) + TextWidth(ctx) - nw
+        IF s{"mode"} = "screen" THEN nx = XLeft(ctx) + (TextWidth(ctx) - nw) / 2
+        Put(ctx, "book", "", 9, nx, s{"h"} - 13, num$, 90, 90, 90)
+    ENDIF
+    IF with_head ANDALSO ctx{"chapter"} <> "" THEN
+        DIM head$ = ctx{"chapter"}
+        IF pg MOD 2 = 0 ANDALSO s{"mode"} = "print" THEN head$ = s{"title"}
+        DIM hw = Measure(ctx, "book", "I", 8.5, head$)
+        DIM hx = XLeft(ctx)
+        IF pg MOD 2 = 1 ORELSE s{"mode"} = "screen" THEN hx = XLeft(ctx) + TextWidth(ctx) - hw
+        Put(ctx, "book", "I", 8.5, hx, 14, head$, 90, 90, 90)
+        PDFGEN.SETDRAW(doc, 190, 190, 190)
+        PDFGEN.SETLINEWIDTH(doc, 0.2)
+        PDFGEN.DRAWLINE(doc, XLeft(ctx), 15.8, XLeft(ctx) + TextWidth(ctx), 15.8)
+    ENDIF
+ENDSUB
+
+' Moves to a new page unless h mm still fit on this one.
+SUB Need(ctx, h)
+    IF ctx{"y"} + h > Bottom(ctx) THEN NewPage(ctx, TRUE)
+ENDSUB
+
+' ── inline text ───────────────────────────────────────────────
+
+' The words of a text with marks: each word is a list of pieces, a piece a
+' map of "t" (text), "sty" ("", "B", "I", "BI" or "code") and "href".
+FUNC Words(txt$)
+    DIM pieces = []
+    DIM bold = FALSE
+    DIM italic = FALSE
+    DIM cur$ = ""
+    DIM k = 0
+    DIM n = LEN(txt$)
+    DO WHILE k < n
+        DIM ch$ = MID$(txt$, k, 1)
+        DIM code_end = -1
+        DIM link_mid = -1
+        DIM link_end = -1
+        IF ch$ = "`" THEN code_end = CINT(INSTR(MID$(txt$, k + 1, n), "`"))
+        IF ch$ = "[" THEN
+            link_mid = CINT(INSTR(MID$(txt$, k + 1, n), "]("))
+            IF link_mid >= 0 THEN link_end = CINT(INSTR(MID$(txt$, k + link_mid + 3, n), ")"))
+        ENDIF
+        IF code_end >= 0 THEN
+            PushPiece(pieces, cur$, bold, italic, "")
+            cur$ = ""
+            PUSH(pieces, {"t": MID$(txt$, k + 1, code_end), "sty": "code", "href": ""})
+            k = k + code_end + 2
+        ELSEIF link_end >= 0 THEN
+            PushPiece(pieces, cur$, bold, italic, "")
+            cur$ = ""
+            PushPiece(pieces, MID$(txt$, k + 1, link_mid), bold, italic, MID$(txt$, k + link_mid + 3, link_end))
+            k = k + link_mid + link_end + 4
+        ELSEIF MID$(txt$, k, 2) = "**" THEN
+            PushPiece(pieces, cur$, bold, italic, "")
+            cur$ = ""
+            bold = NOT bold
+            k = k + 2
+        ELSEIF ch$ = "*" THEN
+            PushPiece(pieces, cur$, bold, italic, "")
+            cur$ = ""
+            italic = NOT italic
+            k = k + 1
+        ELSE
+            cur$ = cur$ + ch$
+            k = k + 1
+        ENDIF
+    LOOP
+    PushPiece(pieces, cur$, bold, italic, "")
+    DIM out = []
+    DIM word = []
+    FOR k = 0 TO LEN(pieces) - 1
+        DIM p = pieces[k]
+        DIM parts = SPLIT(p{"t"}, " ")
+        DIM j = 0
+        FOR j = 0 TO LEN(parts) - 1
+            IF j > 0 THEN
+                IF LEN(word) > 0 THEN PUSH(out, word)
+                word = []
+            ENDIF
+            DIM part$ = parts[j]
+            IF part$ <> "" THEN PUSH(word, {"t": part$, "sty": p{"sty"}, "href": p{"href"}})
+        NEXT j
+    NEXT k
+    IF LEN(word) > 0 THEN PUSH(out, word)
+    RETURN out
+ENDFUNC
+
+SUB PushPiece(pieces, t$, bold, italic, href$)
+    IF t$ = "" THEN RETURN
+    DIM sty$ = ""
+    IF bold THEN sty$ = "B"
+    IF italic THEN sty$ = sty$ + "I"
+    PUSH(pieces, {"t": t$, "sty": sty$, "href": href$})
+ENDSUB
+
+FUNC PieceFont$(sty$)
+    IF sty$ = "code" THEN RETURN "code"
+    RETURN "book"
+ENDFUNC
+
+FUNC PieceStyle$(sty$)
+    IF sty$ = "code" THEN RETURN ""
+    RETURN sty$
+ENDFUNC
+
+FUNC PieceSize(sty$, pt)
+    IF sty$ = "code" THEN RETURN pt * 0.88
+    RETURN pt
+ENDFUNC
+
+FUNC WordWidth(ctx, word, pt, base_sty$)
+    DIM wd = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(word) - 1
+        DIM p = word[k]
+        DIM sty$ = MergeStyle$(base_sty$, p{"sty"})
+        wd = wd + Measure(ctx, PieceFont$(sty$), PieceStyle$(sty$), PieceSize(sty$, pt), p{"t"})
+    NEXT k
+    RETURN wd
+ENDFUNC
+
+' A piece's own style on top of the style of its block (a heading is bold).
+FUNC MergeStyle$(base_sty$, sty$)
+    IF sty$ = "code" THEN RETURN "code"
+    IF base_sty$ = "" THEN RETURN sty$
+    IF sty$ = "" THEN RETURN base_sty$
+    IF INSTR(sty$, "I") >= 0 ANDALSO INSTR(base_sty$, "B") >= 0 THEN RETURN "BI"
+    RETURN base_sty$
+ENDFUNC
+
+' The lines that the words fill at most wd mm wide; each a list of words.
+FUNC BreakLines(ctx, words, wd, pt, base_sty$)
+    DIM lines_out = []
+    DIM cur = []
+    DIM used = 0
+    DIM space = Measure(ctx, "book", "", pt, " ")
+    DIM k = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM w = words[k]
+        DIM ww = WordWidth(ctx, w, pt, base_sty$)
+        DIM need = ww
+        IF LEN(cur) > 0 THEN need = need + space
+        IF LEN(cur) > 0 ANDALSO used + need > wd THEN
+            PUSH(lines_out, cur)
+            cur = []
+            used = 0
+            need = ww
+        ENDIF
+        PUSH(cur, w)
+        used = used + need
+    NEXT k
+    IF LEN(cur) > 0 THEN PUSH(lines_out, cur)
+    RETURN lines_out
+ENDFUNC
+
+' Sets one line of words at x with its top at y; justified spreads the words
+' over the width wd.
+SUB SetLine(ctx, words, x, y, wd, pt, lead, justified, base_sty$, r, g, b)
+    DIM doc = ctx{"doc"}
+    DIM s = ctx{"s"}
+    DIM space = Measure(ctx, "book", "", pt, " ")
+    DIM natural = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(words) - 1
+        natural = natural + WordWidth(ctx, words[k], pt, base_sty$)
+    NEXT k
+    DIM gap = space
+    IF justified ANDALSO LEN(words) > 1 THEN gap = (wd - natural) / (LEN(words) - 1)
+    IF gap > space * 2.6 THEN gap = space
+    DIM base_y = y + lead * 0.74
+    DIM cx = x
+    DIM j = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM w = words[k]
+        FOR j = 0 TO LEN(w) - 1
+            DIM p = w[j]
+            DIM sty$ = MergeStyle$(base_sty$, p{"sty"})
+            DIM fam$ = PieceFont$(sty$)
+            DIM pst$ = PieceStyle$(sty$)
+            DIM ppt = PieceSize(sty$, pt)
+            DIM pw = Measure(ctx, fam$, pst$, ppt, p{"t"})
+            DIM cr = r
+            DIM cg = g
+            DIM cb = b
+            IF p{"href"} <> "" THEN
+                cr = 5
+                cg = 99
+                cb = 193
+                IF s{"mode"} = "screen" THEN PDFGEN.LINK(doc, cx, y, pw, lead, p{"href"})
+            ENDIF
+            Put(ctx, fam$, pst$, ppt, cx, base_y, p{"t"}, cr, cg, cb)
+            cx = cx + pw
+        NEXT j
+        cx = cx + gap
+    NEXT k
+ENDSUB
+
+' A paragraph of marked text at the left edge plus indent, wrapped to the
+' width; widows and orphans are avoided. Answers the lines it set.
+FUNC Paragraph(ctx, txt$, indent, pt, lead, justified, base_sty$)
+    DIM wd = TextWidth(ctx) - indent
+    DIM lines_set = BreakLines(ctx, Words(txt$), wd, pt, base_sty$)
+    DIM n = LEN(lines_set)
+    DIM k = 0
+    DO WHILE k < n
+        DIM room = FLOOR((Bottom(ctx) - ctx{"y"}) / lead + 0.001)
+        IF room <= 0 THEN
+            NewPage(ctx, TRUE)
+            room = FLOOR((Bottom(ctx) - ctx{"y"}) / lead + 0.001)
+        ENDIF
+        DIM left_over = n - k
+        IF left_over > room THEN
+            IF room = 1 ANDALSO left_over > 1 THEN
+                NewPage(ctx, TRUE)
+                CONTINUEDO
+            ENDIF
+            IF left_over - room = 1 ANDALSO room > 2 THEN room = room - 1
+        ENDIF
+        DIM upto = k + room
+        IF upto > n THEN upto = n
+        DO WHILE k < upto
+            DIM last_line = (k = n - 1)
+            SetLine(ctx, lines_set[k], XLeft(ctx) + indent, ctx{"y"}, wd, pt, lead, justified ANDALSO NOT last_line, base_sty$, 30, 30, 30)
+            ctx{"y"} = ctx{"y"} + lead
+            k = k + 1
+        LOOP
+    LOOP
+    RETURN n
+ENDFUNC
+
+' ── blocks ────────────────────────────────────────────────────
+
+FUNC PlainText$(txt$)
+    DIM t$ = REPLACE$(REPLACE$(txt$, "**", ""), "`", "")
+    t$ = REPLACE$(t$, "*", "")
+    RETURN REGEX.REPLACE("\[([^\]]*)\]\([^)]*\)", t$, "$1")
+ENDFUNC
+
+SUB Heading(ctx, b)
+    DIM s = ctx{"s"}
+    DIM doc = ctx{"doc"}
+    DIM level = b{"level"}
+    DIM txt$ = b{"text"}
+    DIM plain$ = PlainText$(txt$)
+    DIM n = ctx{"heading_no"}
+    ctx{"heading_no"} = n + 1
+    DIM dest$ = "h" + STR$(n)
+    IF level = 1 THEN
+        ctx{"chapter"} = plain$
+        IF ctx{"page"} > 0 ANDALSO NOT ctx{"page_empty"} THEN
+            NewPage(ctx, FALSE)
+            IF s{"mode"} = "print" ANDALSO ctx{"page"} MOD 2 = 0 THEN NewPage(ctx, FALSE)
+        ELSEIF ctx{"page"} = 0 THEN
+            NewPage(ctx, FALSE)
+        ENDIF
+        ctx{"y"} = s{"top"} + 30
+        PDFGEN.SETXY(doc, XLeft(ctx), ctx{"y"})
+        PDFGEN.DEST(doc, dest$)
+        PDFGEN.BOOKMARK(doc, plain$, 1)
+        DIM lines_h = BreakLines(ctx, Words(txt$), TextWidth(ctx), 22, "B")
+        DIM k = 0
+        FOR k = 0 TO LEN(lines_h) - 1
+            SetLine(ctx, lines_h[k], XLeft(ctx), ctx{"y"}, TextWidth(ctx), 22, 9.5, FALSE, "B", 31, 56, 100)
+            ctx{"y"} = ctx{"y"} + 9.5
+        NEXT k
+        ctx{"y"} = ctx{"y"} + 10
+    ELSE
+        DIM pt = 15
+        DIM before = 7
+        DIM after = 2.5
+        DIM lead = 6.6
+        IF level >= 3 THEN
+            pt = 12
+            before = 4.5
+            after = 1.5
+            lead = 5.4
+        ENDIF
+        IF NOT ctx{"page_top"} THEN ctx{"y"} = ctx{"y"} + before
+        Need(ctx, lead + after + 3 * s{"lead"})
+        PDFGEN.SETXY(doc, XLeft(ctx), ctx{"y"})
+        PDFGEN.DEST(doc, dest$)
+        IF level = 2 THEN PDFGEN.BOOKMARK(doc, plain$, 2)
+        DIM lines_s = BreakLines(ctx, Words(txt$), TextWidth(ctx), pt, "B")
+        DIM j = 0
+        FOR j = 0 TO LEN(lines_s) - 1
+            SetLine(ctx, lines_s[j], XLeft(ctx), ctx{"y"}, TextWidth(ctx), pt, lead, FALSE, "B", 31, 56, 100)
+            ctx{"y"} = ctx{"y"} + lead
+        NEXT j
+        ctx{"y"} = ctx{"y"} + after
+    ENDIF
+    DIM found = ctx{"found"}
+    PUSH(found, {"level": level, "text": plain$, "page": ctx{"page"}, "dest": dest$})
+ENDSUB
+
+SUB ListBlock(ctx, b, numbered)
+    DIM s = ctx{"s"}
+    DIM items = b{"items"}
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        Need(ctx, s{"lead"} * 2)
+        DIM mark$ = CHR$(226) + CHR$(128) + CHR$(162)
+        IF numbered THEN mark$ = STR$(k + 1) + "."
+        Put(ctx, "book", "", s{"body_pt"}, XLeft(ctx) + 1.5, ctx{"y"} + s{"lead"} * 0.74, mark$, 30, 30, 30)
+        Paragraph(ctx, items[k], 6.5, s{"body_pt"}, s{"lead"}, TRUE, "")
+        ctx{"y"} = ctx{"y"} + 1.2
+    NEXT k
+    ctx{"y"} = ctx{"y"} + 1.8
+ENDSUB
+
+' A code listing in the code font on a shaded band; a line too long for the
+' width continues on the next one after an arrow.
+SUB CodeBlock(ctx, b)
+    DIM s = ctx{"s"}
+    DIM doc = ctx{"doc"}
+    DIM pt = s{"code_pt"}
+    DIM lead = s{"code_lead"}
+    DIM pad = 2.2
+    DIM wd = TextWidth(ctx) - 2 * pad
+    DIM char_w = Measure(ctx, "code", "", pt, "M")
+    DIM per_line = FLOOR(wd / char_w)
+    DIM src = SPLIT(b{"text"}, gLF$)
+    DIM rows = []
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM one$ = REPLACE$(src[k], CHR$(9), "    ")
+        rows = APPEND(rows, WrapCode(one$, per_line))
+    NEXT k
+    ctx{"y"} = ctx{"y"} + 1
+    DIM i = 0
+    DO WHILE i < LEN(rows)
+        Need(ctx, lead * 3 + 2 * pad)
+        DIM room = FLOOR((Bottom(ctx) - ctx{"y"} - 2 * pad) / lead)
+        DIM upto = i + room
+        IF upto > LEN(rows) THEN upto = LEN(rows)
+        IF LEN(rows) - upto = 1 ANDALSO room > 3 THEN upto = upto - 1
+        DIM band_h = (upto - i) * lead + 2 * pad
+        PDFGEN.SETFILL(doc, 243, 244, 246)
+        PDFGEN.BOX(doc, XLeft(ctx), ctx{"y"}, TextWidth(ctx), band_h, "F")
+        DIM y0 = ctx{"y"} + pad
+        DO WHILE i < upto
+            Put(ctx, "code", "", pt, XLeft(ctx) + pad, y0 + lead * 0.78, rows[i], 35, 35, 35)
+            y0 = y0 + lead
+            i = i + 1
+        LOOP
+        ctx{"y"} = ctx{"y"} + band_h
+        IF i < LEN(rows) THEN NewPage(ctx, TRUE)
+    LOOP
+    ctx{"y"} = ctx{"y"} + 3
+ENDSUB
+
+' A code line cut into rows of at most per_line characters, after a space
+' or a comma where there is one in the second half of the row; the rows
+' after the first keep the line's indent and start with an arrow.
+FUNC WrapCode(one$, per_line)
+    DIM codes = TTF.CODEPOINTS(one$)
+    IF LEN(codes) <= per_line THEN RETURN [one$]
+    DIM indent = 0
+    DO WHILE indent < LEN(codes) ANDALSO codes[indent] = 32
+        indent = indent + 1
+    LOOP
+    DIM prefix = [8594, 32]
+    IF indent > 0 THEN prefix = APPEND(ZEROS(indent) + 32, prefix)
+    DIM out = []
+    DIM rest = codes
+    DIM first_row = TRUE
+    DO
+        DIM limit = per_line
+        IF NOT first_row THEN limit = per_line - LEN(prefix)
+        IF LEN(rest) <= limit THEN
+            IF first_row THEN PUSH(out, Codes$(rest)) ELSE PUSH(out, Codes$(APPEND(prefix, rest)))
+            EXITDO
+        ENDIF
+        DIM cut = limit
+        DIM back = limit - 1
+        DO WHILE back > limit \ 2
+            IF rest[back] = 32 ORELSE rest[back] = 44 THEN
+                cut = back + 1
+                EXITDO
+            ENDIF
+            back = back - 1
+        LOOP
+        DIM piece = TAKE(cut, rest)
+        IF first_row THEN PUSH(out, Codes$(piece)) ELSE PUSH(out, Codes$(APPEND(prefix, piece)))
+        rest = DROP(cut, rest)
+        DO WHILE LEN(rest) > 0 ANDALSO rest[0] = 32
+            rest = DROP(1, rest)
+        LOOP
+        first_row = FALSE
+    LOOP WHILE LEN(rest) > 0
+    RETURN out
+ENDFUNC
+
+FUNC Codes$(codes)
+    RETURN JOIN(SELECT(LAMBDA c -> Utf8$(c), codes), "")
+ENDFUNC
+
+FUNC CharsLeft$(t$, n)
+    DIM codes = TTF.CODEPOINTS(t$)
+    IF n >= LEN(codes) THEN RETURN t$
+    RETURN JOIN(SELECT(LAMBDA c -> Utf8$(c), TAKE(n, codes)), "")
+ENDFUNC
+
+FUNC CharsFrom$(t$, n)
+    DIM codes = TTF.CODEPOINTS(t$)
+    IF n >= LEN(codes) THEN RETURN ""
+    RETURN JOIN(SELECT(LAMBDA c -> Utf8$(c), DROP(n, codes)), "")
+ENDFUNC
+
+FUNC Utf8$(c)
+    IF c < 128 THEN RETURN CHR$(c)
+    IF c < 2048 THEN RETURN CHR$(192 + c \ 64) + CHR$(128 + c MOD 64)
+    IF c < 65536 THEN RETURN CHR$(224 + c \ 4096) + CHR$(128 + (c \ 64) MOD 64) + CHR$(128 + c MOD 64)
+    RETURN CHR$(240 + c \ 262144) + CHR$(128 + (c \ 4096) MOD 64) + CHR$(128 + (c \ 64) MOD 64) + CHR$(128 + c MOD 64)
+ENDFUNC
+
+' A shaded note with a bar on the left, kept on one page.
+SUB NoteBlock(ctx, b)
+    DIM s = ctx{"s"}
+    DIM doc = ctx{"doc"}
+    DIM pt = s{"body_pt"} * 0.95
+    DIM lead = s{"lead"} * 0.95
+    DIM pad = 3
+    DIM wd = TextWidth(ctx) - 2 * pad - 1.2
+    DIM body = BreakLines(ctx, Words(b{"text"}), wd, pt, "")
+    DIM title$ = b{"title"}
+    DIM n_lines = LEN(body)
+    IF title$ <> "" THEN n_lines = n_lines + 1
+    DIM box_h = n_lines * lead + 2 * pad
+    ctx{"y"} = ctx{"y"} + 1.5
+    Need(ctx, box_h)
+    DIM y0 = ctx{"y"}
+    PDFGEN.SETFILL(doc, 234, 241, 251)
+    PDFGEN.BOX(doc, XLeft(ctx), y0, TextWidth(ctx), box_h, "F")
+    PDFGEN.SETFILL(doc, 46, 116, 181)
+    PDFGEN.BOX(doc, XLeft(ctx), y0, 1.2, box_h, "F")
+    DIM ty = y0 + pad
+    DIM tx = XLeft(ctx) + 1.2 + pad
+    IF title$ <> "" THEN
+        SetLine(ctx, Words(title$), tx, ty, wd, pt, lead, FALSE, "B", 31, 56, 100)
+        ty = ty + lead
+    ENDIF
+    DIM k = 0
+    FOR k = 0 TO LEN(body) - 1
+        SetLine(ctx, body[k], tx, ty, wd, pt, lead, k < LEN(body) - 1, "", 30, 30, 30)
+        ty = ty + lead
+    NEXT k
+    ctx{"y"} = y0 + box_h + 3
+ENDSUB
+
+' The pixel size of a PNG or JPEG file.
+FUNC PixelSize(path$)
+    DIM data$ = BINREADER$(path$)
+    IF LEFT$(data$, 4) = CHR$(137) + "PNG" THEN
+        DIM info = IMG.PNGINFO(data$)
+        RETURN [info{"width"}, info{"height"}]
+    ENDIF
+    DIM at = 2
+    DO WHILE at + 9 < LEN(data$)
+        DIM marker = BYTEAT(data$, at + 1)
+        DIM seg = BYTEAT(data$, at + 2) * 256 + BYTEAT(data$, at + 3)
+        IF marker >= 192 ANDALSO marker <= 207 ANDALSO marker <> 196 ANDALSO marker <> 200 ANDALSO marker <> 204 THEN
+            RETURN [BYTEAT(data$, at + 7) * 256 + BYTEAT(data$, at + 8), BYTEAT(data$, at + 5) * 256 + BYTEAT(data$, at + 6)]
+        ENDIF
+        at = at + 2 + seg
+    LOOP
+    THROW "LAYOUT: cannot read the size of " + path$
+    RETURN []
+ENDFUNC
+
+SUB ImageBlock(ctx, b, dir$)
+    DIM s = ctx{"s"}
+    DIM doc = ctx{"doc"}
+    DIM path$ = PATH.JOIN$(dir$, b{"path"})
+    DIM px = PixelSize(path$)
+    DIM wd = s{"image_mm"}
+    IF wd > TextWidth(ctx) THEN wd = TextWidth(ctx)
+    DIM ht = wd * px[1] / px[0]
+    DIM caption$ = b{"alt"}
+    DIM cap_lines = []
+    IF caption$ <> "" THEN cap_lines = BreakLines(ctx, Words(caption$), TextWidth(ctx), 9, "I")
+    ctx{"y"} = ctx{"y"} + 2
+    Need(ctx, ht + LEN(cap_lines) * 4.2 + 3)
+    DIM x = XLeft(ctx) + (TextWidth(ctx) - wd) / 2
+    PDFGEN.IMAGE(doc, path$, x, ctx{"y"}, wd, ht)
+    ctx{"y"} = ctx{"y"} + ht + 2
+    DIM k = 0
+    FOR k = 0 TO LEN(cap_lines) - 1
+        DIM cw = 0
+        DIM j = 0
+        FOR j = 0 TO LEN(cap_lines[k]) - 1
+            cw = cw + WordWidth(ctx, cap_lines[k][j], 9, "I")
+        NEXT j
+        cw = cw + Measure(ctx, "book", "I", 9, " ") * (LEN(cap_lines[k]) - 1)
+        SetLine(ctx, cap_lines[k], XLeft(ctx) + (TextWidth(ctx) - cw) / 2, ctx{"y"}, cw, 9, 4.2, FALSE, "I", 80, 80, 80)
+        ctx{"y"} = ctx{"y"} + 4.2
+    NEXT k
+    ctx{"y"} = ctx{"y"} + 3
+ENDSUB
+
+' A table with a shaded header row that repeats on every page; columns get
+' widths in proportion to their longest text, cells wrap.
+SUB TableBlock(ctx, b)
+    DIM s = ctx{"s"}
+    DIM doc = ctx{"doc"}
+    DIM rows = b{"rows"}
+    IF LEN(rows) = 0 THEN RETURN
+    DIM pt = 8.8
+    DIM lead = 4.1
+    DIM pad = 1.4
+    DIM n_cols = 0
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO LEN(rows) - 1
+        IF LEN(rows[r]) > n_cols THEN n_cols = LEN(rows[r])
+    NEXT r
+    DIM natural = ZEROS(n_cols)
+    FOR r = 0 TO LEN(rows) - 1
+        FOR c = 0 TO LEN(rows[r]) - 1
+            DIM cell_w = 0
+            DIM ws = Words(rows[r][c])
+            DIM k = 0
+            FOR k = 0 TO LEN(ws) - 1
+                cell_w = cell_w + WordWidth(ctx, ws[k], pt, "") + 1.2
+            NEXT k
+            IF cell_w > natural[c] THEN natural[c] = cell_w
+        NEXT c
+    NEXT r
+    DIM total = SUM(natural)
+    DIM avail = TextWidth(ctx)
+    DIM col_w = ZEROS(n_cols)
+    FOR c = 0 TO n_cols - 1
+        IF total <= avail THEN
+            col_w[c] = natural[c] + (avail - total) / n_cols
+        ELSE
+            col_w[c] = avail * (natural[c] + 8) / (total + 8 * n_cols)
+        ENDIF
+    NEXT c
+    ctx{"y"} = ctx{"y"} + 1.5
+    DIM header_lines = TableRowLines(ctx, rows[0], col_w, pt, pad, "B")
+    FOR r = 0 TO LEN(rows) - 1
+        DIM sty$ = ""
+        IF r = 0 THEN sty$ = "B"
+        DIM cells = TableRowLines(ctx, rows[r], col_w, pt, pad, sty$)
+        DIM row_h = RowLines(cells) * lead + 2 * pad
+        DIM head_h = RowLines(header_lines) * lead + 2 * pad
+        IF r > 0 ANDALSO ctx{"y"} + row_h > Bottom(ctx) THEN
+            NewPage(ctx, TRUE)
+            DrawRow(ctx, header_lines, col_w, pt, lead, pad, "B", TRUE)
+        ELSEIF r = 0 THEN
+            Need(ctx, head_h + lead * 2 + 2 * pad)
+        ENDIF
+        DrawRow(ctx, cells, col_w, pt, lead, pad, sty$, r = 0)
+    NEXT r
+    ctx{"y"} = ctx{"y"} + 3.5
+ENDSUB
+
+FUNC TableRowLines(ctx, row, col_w, pt, pad, sty$)
+    DIM out = []
+    DIM c = 0
+    FOR c = 0 TO LEN(col_w) - 1
+        DIM txt$ = ""
+        IF c < LEN(row) THEN txt$ = row[c]
+        PUSH(out, BreakLines(ctx, Words(txt$), col_w[c] - 2 * pad, pt, sty$))
+    NEXT c
+    RETURN out
+ENDFUNC
+
+FUNC RowLines(cells)
+    DIM most = 1
+    DIM c = 0
+    FOR c = 0 TO LEN(cells) - 1
+        IF LEN(cells[c]) > most THEN most = LEN(cells[c])
+    NEXT c
+    RETURN most
+ENDFUNC
+
+SUB DrawRow(ctx, cells, col_w, pt, lead, pad, sty$, shaded)
+    DIM doc = ctx{"doc"}
+    DIM row_h = RowLines(cells) * lead + 2 * pad
+    DIM x = XLeft(ctx)
+    DIM y = ctx{"y"}
+    IF shaded THEN
+        PDFGEN.SETFILL(doc, 232, 238, 247)
+        PDFGEN.BOX(doc, x, y, SUM(col_w), row_h, "F")
+    ENDIF
+    PDFGEN.SETDRAW(doc, 180, 186, 196)
+    PDFGEN.SETLINEWIDTH(doc, 0.2)
+    PDFGEN.DRAWLINE(doc, x, y + row_h, x + SUM(col_w), y + row_h)
+    IF shaded THEN PDFGEN.DRAWLINE(doc, x, y, x + SUM(col_w), y)
+    DIM c = 0
+    DIM k = 0
+    FOR c = 0 TO LEN(cells) - 1
+        DIM ly = y + pad
+        FOR k = 0 TO LEN(cells[c]) - 1
+            SetLine(ctx, cells[c][k], x + pad, ly, col_w[c] - 2 * pad, pt, lead, FALSE, sty$, 30, 30, 30)
+            ly = ly + lead
+        NEXT k
+        x = x + col_w[c]
+    NEXT c
+    ctx{"y"} = y + row_h
+ENDSUB
+
+' The table of contents: chapters in bold, sections indented, dotted
+' leaders to the page numbers; in the screen mode every entry is a link.
+SUB Contents(ctx)
+    DIM s = ctx{"s"}
+    DIM doc = ctx{"doc"}
+    DIM entries = ctx{"toc"}
+    DIM title_lines = BreakLines(ctx, Words("Contents"), TextWidth(ctx), 22, "B")
+    ctx{"y"} = s{"top"} + 30
+    SetLine(ctx, title_lines[0], XLeft(ctx), ctx{"y"}, TextWidth(ctx), 22, 9.5, FALSE, "B", 31, 56, 100)
+    ctx{"y"} = ctx{"y"} + 19
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM e = entries[k]
+        IF e{"level"} <= 2 THEN
+            DIM indent = 0
+            DIM sty$ = "B"
+            DIM pt = 10.5
+            IF e{"level"} = 2 THEN
+                indent = 6
+                sty$ = ""
+                pt = 10
+            ELSEIF ctx{"y"} > s{"top"} + 50 THEN
+                ctx{"y"} = ctx{"y"} + 2.5
+            ENDIF
+            Need(ctx, 5.4)
+            DIM num$ = STR$(e{"page"})
+            IF e{"page"} <= 0 THEN num$ = "000"
+            DIM nw = Measure(ctx, "book", sty$, pt, num$)
+            DIM label$ = e{"text"}
+            DIM lw = Measure(ctx, "book", sty$, pt, label$)
+            DIM x0 = XLeft(ctx) + indent
+            DIM x_num = XLeft(ctx) + TextWidth(ctx) - nw
+            DIM base_y = ctx{"y"} + 5.4 * 0.74
+            Put(ctx, "book", sty$, pt, x0, base_y, label$, 30, 30, 30)
+            DIM dot_w = Measure(ctx, "book", "", pt, ". ")
+            DIM n_dots = FLOOR((x_num - x0 - lw - 4) / dot_w)
+            IF n_dots > 0 THEN Put(ctx, "book", "", pt, x_num - 2 - n_dots * dot_w, base_y, DotRow$(". ", n_dots), 150, 150, 150)
+            Put(ctx, "book", sty$, pt, x_num, base_y, num$, 30, 30, 30)
+            IF s{"mode"} = "screen" ANDALSO e{"page"} > 0 THEN PDFGEN.LINK(doc, x0, ctx{"y"}, TextWidth(ctx) - indent, 5.4, "#" + e{"dest"})
+            ctx{"y"} = ctx{"y"} + 5.4
+        ENDIF
+    NEXT k
+ENDSUB
+
+FUNC DotRow$(t$, n)
+    DIM out = []
+    DIM k = 0
+    FOR k = 1 TO n
+        PUSH(out, t$)
+    NEXT k
+    RETURN JOIN(out, "")
+ENDFUNC
+
+SUB TitlePages(ctx)
+    DIM s = ctx{"s"}
+    NewPage(ctx, FALSE)
+    DIM tw = TextWidth(ctx)
+    DIM y = 70
+    DIM title_lines = BreakLines(ctx, Words(s{"title"}), tw, 26, "B")
+    DIM k = 0
+    FOR k = 0 TO LEN(title_lines) - 1
+        DIM lw = Measure(ctx, "book", "B", 26, PlainText$(LineText$(title_lines[k])))
+        SetLine(ctx, title_lines[k], XLeft(ctx) + (tw - lw) / 2, y, lw, 26, 11, FALSE, "B", 31, 56, 100)
+        y = y + 11
+    NEXT k
+    IF s{"subtitle"} <> "" THEN
+        y = y + 6
+        DIM sub_w = Measure(ctx, "book", "I", 13, s{"subtitle"})
+        Put(ctx, "book", "I", 13, XLeft(ctx) + (tw - sub_w) / 2, y, s{"subtitle"}, 60, 60, 60)
+    ENDIF
+    DIM aw = Measure(ctx, "book", "", 13, s{"authors"})
+    Put(ctx, "book", "", 13, XLeft(ctx) + (tw - aw) / 2, 175, s{"authors"}, 30, 30, 30)
+    NewPage(ctx, FALSE)
+    DIM note$ = "Version " + s{"version"} + ". Written in Markdown, built with jdBasic: every listing is a tested program, every page was set by the layout engine in tools/layout.jdb."
+    ctx{"y"} = s{"h"} - s{"bottom"} - 30
+    Paragraph(ctx, note$, 0, 8.5, 4.2, FALSE, "")
+ENDSUB
+
+FUNC LineText$(words)
+    DIM parts = []
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM w$ = ""
+        FOR j = 0 TO LEN(words[k]) - 1
+            w$ = w$ + words[k][j]{"t"}
+        NEXT j
+        PUSH(parts, w$)
+    NEXT k
+    RETURN JOIN(parts, " ")
+ENDFUNC
+
+' ── the book ──────────────────────────────────────────────────
+
+FUNC Typeset(cfg, chapters, base$, out_mode$, toc)
+    DIM s = Settings(cfg, out_mode$)
+    DIM doc = PDFGEN.DOC({"width": s{"w"}, "height": s{"h"}, "margin": s{"inner"}, "compress": TRUE})
+    PDFGEN.SETINFO(doc, s{"title"}, s{"authors"}, s{"subtitle"})
+    AddFonts(doc, base$, s{"fonts"})
+    DIM ctx AS MAP
+    ctx{"doc"} = doc
+    ctx{"s"} = s
+    ctx{"page"} = 0
+    ctx{"y"} = s{"top"}
+    ctx{"chapter"} = ""
+    ctx{"numbered"} = FALSE
+    ctx{"heading_no"} = 0
+    ctx{"found"} = []
+    ctx{"toc"} = toc
+    DIM cache AS MAP
+    ctx{"wcache"} = cache
+    TitlePages(ctx)
+    ctx{"numbered"} = TRUE
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM ch = chapters[k]
+        DIM blocks = ch{"blocks"}
+        FOR j = 0 TO LEN(blocks) - 1
+            DIM b = blocks[j]
+            DIM kind$ = b{"kind"}
+            ctx{"page_empty"} = (ctx{"y"} <= s{"top"} + 0.01)
+            ctx{"page_top"} = ctx{"page_empty"}
+            IF kind$ = "heading" THEN
+                Heading(ctx, b)
+            ELSEIF kind$ = "para" THEN
+                Paragraph(ctx, b{"text"}, 0, s{"body_pt"}, s{"lead"}, TRUE, "")
+                ctx{"y"} = ctx{"y"} + 2.2
+            ELSEIF kind$ = "bullets" THEN
+                ListBlock(ctx, b, FALSE)
+            ELSEIF kind$ = "numbered" THEN
+                ListBlock(ctx, b, TRUE)
+            ELSEIF kind$ = "code" THEN
+                CodeBlock(ctx, b)
+            ELSEIF kind$ = "note" THEN
+                NoteBlock(ctx, b)
+            ELSEIF kind$ = "image" THEN
+                ImageBlock(ctx, b, ch{"dir"})
+            ELSEIF kind$ = "table" THEN
+                TableBlock(ctx, b)
+            ELSEIF kind$ = "pagebreak" THEN
+                NewPage(ctx, TRUE)
+            ELSEIF kind$ = "toc" THEN
+                IF ctx{"page"} > 0 ANDALSO NOT ctx{"page_empty"} THEN NewPage(ctx, FALSE)
+                IF ctx{"page"} = 0 THEN NewPage(ctx, FALSE)
+                Contents(ctx)
+            ENDIF
+        NEXT j
+    NEXT k
+    RETURN {"doc": doc, "found": ctx{"found"}, "pages": ctx{"page"}}
+ENDFUNC
+
+' Sets the book twice, the second time with the page numbers the first one
+' found for the contents, and writes the PDF. Answers the page count.
+EXPORT FUNC BOOK(cfg, chapters, base$, out_path$, out_mode$)
+    DIM first = Typeset(cfg, chapters, base$, out_mode$, ScanHeadings(chapters))
+    DIM second = Typeset(cfg, chapters, base$, out_mode$, first{"found"})
+    PDFGEN.WRITEFILE(second{"doc"}, out_path$)
+    RETURN second{"pages"}
+ENDFUNC
+
+' The headings of all chapters without page numbers, for the first pass.
+FUNC ScanHeadings(chapters)
+    DIM out = []
+    DIM n = 0
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM blocks = chapters[k]{"blocks"}
+        FOR j = 0 TO LEN(blocks) - 1
+            DIM b = blocks[j]
+            IF b{"kind"} = "heading" THEN
+                PUSH(out, {"level": b{"level"}, "text": PlainText$(b{"text"}), "page": 0, "dest": "h" + STR$(n)})
+                n = n + 1
+            ENDIF
+        NEXT j
+    NEXT k
+    RETURN out
+ENDFUNC

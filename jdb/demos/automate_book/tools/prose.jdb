@@ -1,0 +1,103 @@
+' prose.jdb: the writing rules of the book, checked line by line: no dash
+' as sentence punctuation (an em or en dash, or a hyphen between spaces), no
+' ellipsis character, no marketing words, no slogan repetitions ("no X, no
+' Y") and no "not just X" contrasts. Inline code, link targets and quoted
+' text are not prose and are left out before the check.
+'
+'   IMPORT PROSE
+'   DIM found = PROSE.MARKDOWN(TXTREADER$("manuscript/03_easy.md"), "03_easy.md")
+'   DIM more = PROSE.COMMENTS(TXTREADER$("recipes/easy/E01_downloads_butler/butler.jdb"), "butler.jdb")
+
+EXPORT MODULE PROSE
+
+DIM gLF$ = CHR$(10)
+DIM gDashes = [CHR$(226) + CHR$(128) + CHR$(147), CHR$(226) + CHR$(128) + CHR$(148), CHR$(226) + CHR$(128) + CHR$(149), CHR$(226) + CHR$(128) + CHR$(166)]
+DIM gBuzz$ = "\b(?:seamless(?:ly)?|effortless(?:ly)?|powerful|robust|leverag(?:e|es|ing)|delve|unlock(?:s|ing)?|elevate|game.?changer|cutting.?edge|blazing(?:ly)?|supercharg\w*|empower\w*|streamlin\w*|showcas\w*|boasts?|truly|simply|it.s worth noting|dive (?:in|into)|whether you.re|the best part|in today.s)\b"
+DIM gContrast$ = "\b(?:not (?:just|only|merely)|isn.t just|more than just)\b"
+DIM gTriad$ = "\b(no|same|every|zero|one|new|all|any)\s+[\w-]+,\s+\1\s+[\w-]+"
+DIM gHyphen$ = "[^\s|]\s+-{1,2}\s+[^\s|]"
+
+FUNC Hits(pattern$, text$)
+    RETURN LEN(REGEX.FINDALL(pattern$, text$)) > 0
+ENDFUNC
+
+' The line with inline code, link targets and double-quoted text emptied.
+FUNC ProseOnly$(line$)
+    DIM t$ = REGEX.REPLACE("`[^`]*`", line$, "``")
+    t$ = REGEX.REPLACE("\]\([^)]*\)", t$, "](..)")
+    RETURN REGEX.REPLACE(CHR$(34) + "[^" + CHR$(34) + "]*" + CHR$(34), t$, CHR$(34) + CHR$(34))
+ENDFUNC
+
+' The rules a line of prose breaks, as short reasons; empty when it is clean.
+EXPORT FUNC LINE_FINDINGS(line$)
+    DIM why = []
+    DIM t$ = ProseOnly$(line$)
+    DIM low$ = LCASE$(t$)
+    DIM k = 0
+    DIM dash = FALSE
+    FOR k = 0 TO LEN(gDashes) - 1
+        IF INSTR(t$, gDashes[k]) >= 0 THEN dash = TRUE
+    NEXT k
+    IF dash THEN PUSH(why, "em/en dash or ellipsis character")
+    IF Hits(gHyphen$, t$) THEN PUSH(why, "' - ' used as a dash")
+    IF Hits(gBuzz$, low$) THEN PUSH(why, "marketing word")
+    IF Hits(gContrast$, low$) THEN PUSH(why, "'not just X' contrast")
+    IF Hits(gTriad$, low$) THEN PUSH(why, "slogan repetition")
+    RETURN why
+ENDFUNC
+
+FUNC Report$(file$, n, why, line$)
+    RETURN file$ + ":" + STR$(n) + " [" + JOIN(why, ", ") + "] " + TRIM$(line$)
+ENDFUNC
+
+' The findings in a Markdown text. Code fences, lines indented as code and
+' HTML comments are skipped.
+EXPORT FUNC MARKDOWN(text$, file$)
+    DIM out = []
+    DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM in_fence = FALSE
+    DIM in_comment = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM line$ = src[k]
+        DIM t$ = TRIM$(line$)
+        IF STARTSWITH(t$, "```") ORELSE STARTSWITH(t$, "~~~") THEN
+            in_fence = NOT in_fence
+        ELSEIF in_comment THEN
+            IF INSTR(t$, "-->") >= 0 THEN in_comment = FALSE
+        ELSEIF STARTSWITH(t$, "<!--") THEN
+            IF INSTR(t$, "-->") < 0 THEN in_comment = TRUE
+        ELSEIF NOT in_fence ANDALSO t$ <> "" ANDALSO NOT STARTSWITH(line$, "    ") ANDALSO NOT STARTSWITH(line$, CHR$(9)) THEN
+            DIM why = LINE_FINDINGS(line$)
+            IF LEN(why) > 0 THEN PUSH(out, Report$(file$, k + 1, why, line$))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The findings in the comments of a jdBasic program: the text after a ' that
+' starts a line or follows the code outside a string.
+EXPORT FUNC COMMENTS(text$, file$)
+    DIM out = []
+    DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM line$ = src[k]
+        DIM in_string = FALSE
+        DIM note$ = ""
+        FOR j = 0 TO LEN(line$) - 1
+            DIM ch$ = MID$(line$, j, 1)
+            IF ch$ = CHR$(34) THEN in_string = NOT in_string
+            IF ch$ = "'" ANDALSO NOT in_string THEN
+                note$ = MID$(line$, j + 1, LEN(line$))
+                EXITFOR
+            ENDIF
+        NEXT j
+        IF TRIM$(note$) <> "" THEN
+            DIM why = LINE_FINDINGS(note$)
+            IF LEN(why) > 0 THEN PUSH(out, Report$(file$, k + 1, why, line$))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC

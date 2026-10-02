@@ -8,9 +8,11 @@ The plan, the outline and the page budget are in [PLAN.md](PLAN.md).
 
 ## State
 
-Work package 0a is done: the build turns the manuscript into a Word file
-and an HTML preview, and recipe E01 with its chapter pages is the sample.
-The PDF, EPUB and cover outputs follow in work packages 0b and 0c.
+Work packages 0a and 0b are done: the build turns the manuscript into a
+Word file, an HTML preview, a print PDF (17 x 24 cm, fonts embedded) and a
+screen PDF with bookmarks and links. Recipe E01 with its chapter pages is
+the sample.
+The EPUB and the cover follow in work package 0c.
 
 ## Layout
 
@@ -18,7 +20,8 @@ The PDF, EPUB and cover outputs follow in work packages 0b and 0c.
 book.toml          title, authors, page size, chapter order
 manuscript/        the chapters in Markdown, img/ for their figures
 recipes/           the programs: lib/ shared modules, easy/ medium/ expert/
-tools/             build_book, check_recipes, mdbook (with its test), figures/
+tools/             build_book, check_recipes, mdbook, prose, layout (each with a
+                   test), figures/, preview/
 fonts/             Source Serif 4 and Source Code Pro (SIL Open Font License)
 out/               build output, not in git
 ```
@@ -30,9 +33,10 @@ Run from this folder; the tools import modules from `lib/` and
 
 ```
 set JDBASIC_PATH=C:\path\to\jdBasic\lib;C:\path\to\jdBasic\jdb\demos\automate_book\recipes\lib
-jdbasic tools/build_book.jdb             # out/book.docx, out/html/, page report
+jdbasic tools/build_book.jdb             # out/: book.docx, html/, book_print.pdf, book_screen.pdf
 jdbasic tools/check_recipes.jdb          # every recipe: lint, test, -c, test as .exe
-jdbasic tools/mdbook_test.jdb            # the Markdown reader
+jdbasic tools/mdbook_test.jdb            # the Markdown reader (also prose_test, layout_test)
+jdbasic tools/preview/pdf_preview.jdb out/book_print.pdf 1-4   # pages as PNG, needs Chrome
 jdbasic tools/figures/e01_before_after.jdb   # redraws a figure
 ```
 
@@ -47,3 +51,7 @@ the compiler at `../../../build/jdBasic.exe`; `--jdbasic path` names another.
 - `<!-- pagebreak -->` and `<!-- toc -->` place a page break and the table
   of contents.
 - Italics with `*stars*`, not underscores.
+- The build stops when a chapter, a comment in an included listing, PLAN.md
+  or this README breaks the writing rules in `tools/prose.jdb`: no dash as
+  punctuation, no ellipsis character, no marketing words, no slogan
+  repetitions, no "not just X" contrasts.

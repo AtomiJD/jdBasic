@@ -21,5 +21,8 @@ files = [
     "manuscript/03_easy.md",
 ]
 
+[prose]
+extra = ["PLAN.md", "README.md"]
+
 [build]
 out = "out"

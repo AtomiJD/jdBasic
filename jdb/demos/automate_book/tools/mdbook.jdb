@@ -1,4 +1,4 @@
-' mdbook.jdb - the manuscript as a list of blocks, the one model every
+' mdbook.jdb: the manuscript as a list of blocks, the one model every
 ' output of the book is written from.
 '
 '   IMPORT MDBOOK

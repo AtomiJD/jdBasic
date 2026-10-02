@@ -1,16 +1,20 @@
-' Downloads Butler: sorts the downloads folder into one folder per kind of
-' file and month. Settings come from the [downloads_butler] part of work.conf.
+' Downloads Butler: sorts the downloads folder into one folder per
+' kind of file and month. The settings are the [downloads_butler]
+' part of work.conf.
 '
 '   jdbasic downloads_butler.jdb            sort now
-'   jdbasic downloads_butler.jdb --dry-run  only show what would move
+'   jdbasic downloads_butler.jdb --dry-run  show what would move
 
 IMPORT WORKCONF, BUTLER
 
 DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
-DIM source$ = WORKCONF.FOLDER$(cfg, "downloads_butler.source", "~/Downloads")
-DIM target$ = WORKCONF.FOLDER$(cfg, "downloads_butler.target", PATH.JOIN$(source$, "Sorted"))
-DIM min_age = WORKCONF.VALUE(cfg, "downloads_butler.min_age_hours", 24)
-DIM rules = WORKCONF.VALUE(cfg, "downloads_butler.rules", BUTLER.DEFAULT_RULES())
+DIM key$ = "downloads_butler."
+DIM source$ = WORKCONF.FOLDER$(cfg, key$ + "source", "~/Downloads")
+DIM sorted$ = PATH.JOIN$(source$, "Sorted")
+DIM target$ = WORKCONF.FOLDER$(cfg, key$ + "target", sorted$)
+DIM min_age = WORKCONF.VALUE(cfg, key$ + "min_age_hours", 24)
+DIM defaults = BUTLER.DEFAULT_RULES()
+DIM rules = WORKCONF.VALUE(cfg, key$ + "rules", defaults)
 DIM dry_run = WORKCONF.FLAG("dry-run")
 
 DIM moves = BUTLER.PLAN(source$, target$, rules, min_age, NOW())
@@ -18,7 +22,7 @@ DIM n_sorted = BUTLER.APPLY(moves, dry_run)
 IF n_sorted = 0 THEN
     PRINT "Nothing to sort in "; source$
 ELSEIF dry_run THEN
-    PRINT n_sorted; " files would move. Run without --dry-run to sort them."
+    PRINT n_sorted; " files would move. Run without --dry-run."
 ELSE
     PRINT n_sorted; " files sorted."
 ENDIF

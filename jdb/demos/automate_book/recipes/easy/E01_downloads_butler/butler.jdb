@@ -1,9 +1,10 @@
-' butler.jdb - sorts a downloads folder: every file that has rested long
-' enough moves into a folder for its kind and the month it arrived,
-' such as Sorted/Documents/2026-10/.
+' butler.jdb: sorts a downloads folder. Every file that has rested
+' long enough moves into a folder for its kind and the month it
+' arrived, such as Sorted/Documents/2026-10/.
 '
 '   IMPORT BUTLER
-'   DIM moves = BUTLER.PLAN("C:/Users/mia/Downloads", "C:/Users/mia/Downloads/Sorted", BUTLER.DEFAULT_RULES(), 24, NOW())
+'   DIM rules = BUTLER.DEFAULT_RULES()
+'   DIM moves = BUTLER.PLAN(src$, dst$, rules, 24, NOW())
 '   PRINT BUTLER.APPLY(moves, FALSE); " files sorted"
 
 EXPORT MODULE BUTLER
@@ -11,15 +12,21 @@ EXPORT MODULE BUTLER
 ' The kinds of files and their extensions.
 EXPORT FUNC DEFAULT_RULES()
     DIM rules AS MAP
-    rules{"Documents"} = ["pdf", "doc", "docx", "odt", "rtf", "txt", "md", "xls", "xlsx", "ods", "csv", "ppt", "pptx", "odp"]
-    rules{"Images"} = ["jpg", "jpeg", "png", "gif", "webp", "heic", "bmp", "svg", "tif", "tiff"]
-    rules{"Audio and Video"} = ["mp3", "wav", "m4a", "flac", "mp4", "mov", "mkv", "avi", "webm"]
+    rules{"Documents"} = ["pdf", "doc", "docx", "odt", "rtf", _
+        "txt", "md", "xls", "xlsx", "ods", "csv", "ppt", "pptx", _
+        "odp"]
+    rules{"Images"} = ["jpg", "jpeg", "png", "gif", "webp", "heic", _
+        "bmp", "svg", "tif", "tiff"]
+    rules{"Audio and Video"} = ["mp3", "wav", "m4a", "flac", "mp4", _
+        "mov", "mkv", "avi", "webm"]
     rules{"Archives"} = ["zip", "7z", "rar", "tar", "gz", "tgz"]
-    rules{"Installers"} = ["exe", "msi", "msix", "dmg", "pkg", "deb", "rpm"]
+    rules{"Installers"} = ["exe", "msi", "msix", "dmg", "pkg", _
+        "deb", "rpm"]
     RETURN rules
 ENDFUNC
 
-' The kind a file name belongs to, "Other" when no rule names its extension.
+' The kind a file belongs to by its extension, "Other" when no rule
+' names the extension.
 EXPORT FUNC KIND$(file_name$, rules)
     DIM ext$ = LCASE$(PATH.EXT$(file_name$))
     IF ext$ = "" THEN RETURN "Other"
@@ -36,27 +43,38 @@ ENDFUNC
 ' TRUE for a partial download (a browser's temporary file).
 FUNC Unfinished(file_name$)
     DIM ext$ = LCASE$(PATH.EXT$(file_name$))
-    RETURN ext$ IN [".crdownload", ".part", ".partial", ".download", ".tmp"]
+    DIM partial = [".crdownload", ".part", ".partial", ".download", _
+        ".tmp"]
+    RETURN ext$ IN partial
 ENDFUNC
 
 ' A free file name in a folder: the name itself, or "name (2).ext",
-' "name (3).ext" and so on.
+' "name (3).ext" and so on. Names in taken count as used.
 EXPORT FUNC FREE_NAME$(folder$, file_name$, taken)
     DIM candidate$ = PATH.JOIN$(folder$, file_name$)
-    IF NOT FILE.EXISTS(candidate$) ANDALSO NOT (candidate$ IN taken) THEN RETURN candidate$
+    DIM used = FILE.EXISTS(candidate$) ORELSE candidate$ IN taken
+    IF NOT used THEN RETURN candidate$
     DIM ext$ = PATH.EXT$(file_name$)
     DIM stem$ = LEFT$(file_name$, LEN(file_name$) - LEN(ext$))
     DIM n = 2
     DO
-        candidate$ = PATH.JOIN$(folder$, stem$ + " (" + STR$(n) + ")" + ext$)
+        DIM numbered$ = stem$ + " (" + STR$(n) + ")" + ext$
+        candidate$ = PATH.JOIN$(folder$, numbered$)
         n = n + 1
     LOOP WHILE FILE.EXISTS(candidate$) ORELSE candidate$ IN taken
     RETURN candidate$
 ENDFUNC
 
-' The moves that sort the source folder: a map per file with "from", "to"
-' and "kind". Folders, hidden files, unfinished downloads and files younger
-' than min_age_hours stay where they are.
+' TRUE for an entry the butler leaves alone: a folder, a hidden file
+' or a partial download.
+FUNC LeaveAlone(file_name$, info)
+    IF info{"is_dir"} ORELSE info{"hidden"} THEN RETURN TRUE
+    RETURN Unfinished(file_name$)
+ENDFUNC
+
+' The moves that sort the source folder: a map per file with "from",
+' "to" and "short" ("to" inside the target). Files younger than
+' min_age_hours stay.
 EXPORT FUNC PLAN(source$, target$, rules, min_age_hours, now)
     DIM moves = []
     DIM taken = []
@@ -66,34 +84,41 @@ EXPORT FUNC PLAN(source$, target$, rules, min_age_hours, now)
         DIM file_name$ = entries[k]
         DIM from$ = PATH.JOIN$(source$, file_name$)
         DIM info = FILE.STAT(from$)
-        IF NOT info{"is_dir"} ANDALSO NOT info{"hidden"} ANDALSO NOT Unfinished(file_name$) THEN
+        IF NOT LeaveAlone(file_name$, info) THEN
             DIM changed$ = info{"mtime"}
-            IF DATEDIFF("H", CDATE(changed$), now) >= min_age_hours THEN
+            DIM age = DATEDIFF("H", CDATE(changed$), now)
+            IF age >= min_age_hours THEN
                 DIM kind$ = KIND$(file_name$, rules)
-                DIM folder$ = PATH.JOIN$(target$, kind$, LEFT$(changed$, 7))
+                DIM month$ = LEFT$(changed$, 7)
+                DIM folder$ = PATH.JOIN$(target$, kind$, month$)
                 DIM to$ = FREE_NAME$(folder$, file_name$, taken)
                 PUSH(taken, to$)
-                PUSH(moves, {"from": from$, "to": to$, "kind": kind$})
+                DIM new$ = PATH.BASENAME$(to$)
+                DIM short$ = PATH.JOIN$(kind$, month$, new$)
+                PUSH(moves, {"from": from$, "to": to$, _
+                    "short": short$})
             ENDIF
         ENDIF
     NEXT k
     RETURN moves
 ENDFUNC
 
-' Carries out the moves and prints one line for each; with dry_run it only
-' prints them. Answers the number of files moved, or that would be.
+' Carries out the moves and prints a line for each; with dry_run it
+' only prints them. Answers the number of files moved, or that would.
 EXPORT FUNC APPLY(moves, dry_run)
     DIM k = 0
     FOR k = 0 TO LEN(moves) - 1
         DIM m = moves[k]
         DIM from$ = m{"from"}
         DIM to$ = m{"to"}
+        DIM file$ = PATH.BASENAME$(from$)
+        DIM short$ = m{"short"}
         IF dry_run THEN
-            PRINT "would move "; PATH.BASENAME$(from$); "  ->  "; to$
+            PRINT "would move "; file$; " -> "; short$
         ELSE
             MKDIR PATH.DIRNAME$(to$)
             FILE.MOVE(from$, to$)
-            PRINT "moved "; PATH.BASENAME$(from$); "  ->  "; to$
+            PRINT "moved "; file$; " -> "; short$
         ENDIF
     NEXT k
     RETURN LEN(moves)
