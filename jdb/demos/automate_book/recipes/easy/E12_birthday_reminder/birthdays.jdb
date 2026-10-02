@@ -1,0 +1,135 @@
+' birthdays.jdb: the birthdays and anniversaries of a contact list in
+' the next days, with the age or the years, and a calendar file with a
+' yearly event for each. A birthday on 29 February is kept on the 28th
+' in other years.
+'
+'   IMPORT BIRTHDAYS
+'   DIM people = BIRTHDAYS.CONTACTS("contacts.csv")
+'   DIM soon = BIRTHDAYS.UPCOMING(people, "2026-10-01", 14)
+'   BIRTHDAYS.CALENDAR(people, "2026-10-01", "birthdays.ics")
+
+EXPORT MODULE BIRTHDAYS
+
+IMPORT DT, ICAL
+
+' The contacts of a CSV file with the columns name, birthday and
+' anniversary (dates as YYYY-MM-DD, an empty cell for none).
+EXPORT FUNC CONTACTS(path$)
+    DIM kinds = ["STRING", "STRING", "STRING"]
+    DIM rows = CSVREADER(path$, ",", TRUE, kinds)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM r = rows[k]
+        DIM anniv$ = ""
+        IF LEN(r) > 2 THEN anniv$ = TRIM$(r[2])
+        DIM who$ = TRIM$(r[0])
+        DIM born$ = TRIM$(r[1])
+        PUSH(out, {"name": who$, "birthday": born$, _
+            "anniversary": anniv$})
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Part(date$, from, n)
+    RETURN CINT(MID$(date$, from, n))
+ENDFUNC
+
+' The day of a yearly date in a given year; 29 February moves to the
+' 28th in common years.
+FUNC DayIn(yr, date$)
+    DIM mo = Part(date$, 5, 2)
+    DIM dd = Part(date$, 8, 2)
+    IF mo = 2 ANDALSO dd = 29 ANDALSO NOT DT.IS_LEAP(yr) THEN dd = 28
+    RETURN DT.MAKE(yr, mo, dd)
+ENDFUNC
+
+' The next day on or after today$ that a yearly date comes back.
+EXPORT FUNC NEXT_DATE(date$, today$)
+    DIM today = DT.PARSE(today$)
+    DIM yr = Part(today$, 0, 4)
+    DIM on_day = DayIn(yr, date$)
+    IF on_day < today THEN on_day = DayIn(yr + 1, date$)
+    RETURN on_day
+ENDFUNC
+
+SUB AddEvent(out, who$, what$, date$, today$, horizon)
+    IF date$ = "" THEN RETURN
+    DIM on_day = NEXT_DATE(date$, today$)
+    DIM n_days = DT.DIFF(DT.PARSE(today$), on_day, "days")
+    IF n_days > horizon THEN RETURN
+    DIM when$ = DT.FMT$(on_day, "%Y-%m-%d")
+    DIM years = Part(when$, 0, 4) - Part(date$, 0, 4)
+    PUSH(out, {"date": when$, "in_days": n_days, "name": who$, _
+        "what": what$, "years": years})
+ENDSUB
+
+' The birthdays and anniversaries from today$ to horizon days later,
+' the nearest first: maps with "date", "in_days", "name", "what" and
+' "years".
+EXPORT FUNC UPCOMING(people, today$, horizon)
+    DIM found = []
+    DIM k = 0
+    FOR k = 0 TO LEN(people) - 1
+        DIM p = people[k]
+        AddEvent(found, p{"name"}, "birthday", p{"birthday"}, _
+            today$, horizon)
+        AddEvent(found, p{"name"}, "anniversary", p{"anniversary"}, _
+            today$, horizon)
+    NEXT k
+    IF LEN(found) = 0 THEN RETURN found
+    DIM waits = []
+    FOR k = 0 TO LEN(found) - 1
+        PUSH(waits, found[k]{"in_days"})
+    NEXT k
+    DIM order = GRADE(waits)
+    DIM out = []
+    FOR k = 0 TO LEN(order) - 1
+        PUSH(out, found[order[k]])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' One line for an entry, such as
+' "Sat 03 Oct  Ann Miller turns 41 (in 2 days)".
+EXPORT FUNC ENTRY$(e)
+    DIM when$ = DT.FMT$(DT.PARSE(e{"date"}), "%a %d %b")
+    DIM n = e{"in_days"}
+    DIM soon$ = "today"
+    IF n = 1 THEN soon$ = "tomorrow"
+    IF n > 1 THEN soon$ = "in " + STR$(n) + " days"
+    DIM what$ = e{"name"} + " turns " + STR$(e{"years"})
+    IF e{"what"} = "anniversary" THEN
+        what$ = e{"name"} + ": " + STR$(e{"years"}) + " years"
+    ENDIF
+    RETURN when$ + "  " + what$ + " (" + soon$ + ")"
+ENDFUNC
+
+FUNC AddYearly(cal, title$, date$, today$)
+    IF date$ = "" THEN RETURN 0
+    DIM ev = ICAL.ADDALLDAY(cal, title$, NEXT_DATE(date$, today$))
+    DIM rule$ = "FREQ=YEARLY"
+    IF MID$(date$, 5, 5) = "02-29" THEN
+        rule$ = "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1"
+    ENDIF
+    ICAL.SETPROP(cal, ev, "RRULE", rule$)
+    RETURN 1
+ENDFUNC
+
+' A calendar file with a yearly all-day event for every birthday and
+' anniversary, starting from its next date. Answers the event count.
+EXPORT FUNC CALENDAR(people, today$, path$)
+    DIM cal = ICAL.NEW()
+    DIM n = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(people) - 1
+        DIM p = people[k]
+        DIM who$ = p{"name"}
+        n = n + AddYearly(cal, "Birthday: " + who$, p{"birthday"}, _
+            today$)
+        n = n + AddYearly(cal, "Anniversary: " + who$, _
+            p{"anniversary"}, today$)
+    NEXT k
+    ICAL.WRITEFILE(cal, path$)
+    RETURN n
+ENDFUNC

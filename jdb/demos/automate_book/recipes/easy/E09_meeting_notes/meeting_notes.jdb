@@ -1,0 +1,38 @@
+' Meeting Notes Starter: finds the next meeting in your calendar file
+' and writes a Word file to take its notes in. The settings are the
+' [meeting_notes] part of work.conf.
+'
+'   jdbasic meeting_notes.jdb            write the notes file
+'   jdbasic meeting_notes.jdb --dry-run  only show which meeting
+
+IMPORT WORKCONF, MEETNOTES, ICAL, DT
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "meeting_notes."
+DIM cal_default$ = "~/Documents/AutomateWork/calendar.ics"
+DIM cal$ = WORKCONF.FOLDER$(cfg, key$ + "calendar", cal_default$)
+DIM notes_default$ = "~/Documents/Meeting notes"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", notes_default$)
+DIM days = WORKCONF.VALUE(cfg, key$ + "lookahead_days", 7)
+DIM here = DT.LOCAL_OFFSET()
+DIM offset = WORKCONF.VALUE(cfg, key$ + "utc_offset", here)
+
+DIM cal = ICAL.PARSEFILE(cal$)
+DIM m = MEETNOTES.NEXT_MEETING(cal, DT.NOW(), days)
+IF LEN(MAP.KEYS(m)) = 0 THEN
+    PRINT "No meeting in the next "; days; " days."
+ELSE
+    DIM file$ = MEETNOTES.FILE_NAME$(m, offset)
+    DIM path$ = PATH.JOIN$(folder$, file$)
+    IF FILE.EXISTS(path$) THEN
+        PRINT "Already there: "; file$
+    ELSEIF WORKCONF.FLAG("dry-run") THEN
+        PRINT "would write "; file$
+        PRINT "   in "; folder$
+    ELSE
+        MKDIR folder$
+        MEETNOTES.WRITE_NOTES(m, path$, offset)
+        PRINT "wrote "; file$
+        PRINT "   in "; folder$
+    ENDIF
+ENDIF

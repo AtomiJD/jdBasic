@@ -1,0 +1,51 @@
+' Morning Launcher: weekday keys, kinds of targets, the opener per
+' system, the plan for a day and a dry run. Nothing is opened.
+
+IMPORT TESTKIT, LAUNCHER, CONF
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM toml$ = "[morning_launcher]" + LF$
+toml$ = toml$ + "every_day = [" + Q$ + "https://mail.example.com" + Q$ + ", " + Q$ + "C:/Work/Projects" + Q$ + "]" + LF$
+toml$ = toml$ + "mon = [" + Q$ + "C:/Tools/planner.exe" + Q$ + ", " + Q$ + "https://mail.example.com" + Q$ + "]" + LF$
+toml$ = toml$ + "fri = [" + Q$ + "C:/Reports/week.xlsx" + Q$ + "]" + LF$
+DIM settings = CONF.TOML_TEXT(toml$){"morning_launcher"}
+
+FUNC TargetsOf$(plan)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(plan) - 1
+        DIM launch = plan[k]
+        PUSH(out, launch{"target"})
+    NEXT k
+    RETURN JOIN(out, "|")
+ENDFUNC
+
+TESTKIT.SUITE("weekdays and kinds")
+TESTKIT.EQ(LAUNCHER.DAY_KEY$(0), "sun", "0 is Sunday")
+TESTKIT.EQ(LAUNCHER.DAY_KEY$(1), "mon", "1 is Monday")
+TESTKIT.EQ(LAUNCHER.DAY_KEY$(6), "sat", "6 is Saturday")
+TESTKIT.EQ(LAUNCHER.KIND$("HTTPS://intranet/start"), "web", "an address in any case")
+TESTKIT.EQ(LAUNCHER.KIND$("C:/Tools/planner.EXE"), "app", "a program")
+TESTKIT.EQ(LAUNCHER.KIND$("C:/Work/Projects"), "path", "a folder")
+TESTKIT.EQ(LAUNCHER.OPENER$("WINDOWS"), "explorer", "Explorer on Windows")
+TESTKIT.EQ(LAUNCHER.OPENER$("MACOS"), "open", "open on macOS")
+TESTKIT.EQ(LAUNCHER.OPENER$("LINUX"), "xdg-open", "xdg-open on Linux")
+
+TESTKIT.SUITE("the plan")
+DIM monday = LAUNCHER.PLAN(settings, 1, "WINDOWS")
+TESTKIT.EQ(TargetsOf$(monday), "https://mail.example.com|C:/Work/Projects|C:/Tools/planner.exe", "every day first, the day after, each target once")
+DIM first = monday[0]
+TESTKIT.EQ(first{"program"}, "explorer", "Explorer opens it")
+TESTKIT.EQARRAY(first{"args"}, ["https://mail.example.com"], "with the target as its one argument")
+DIM friday = LAUNCHER.PLAN(settings, 5, "WINDOWS")
+TESTKIT.EQ(LEN(friday), 3, "Friday adds the week report")
+DIM sunday = LAUNCHER.PLAN(settings, 0, "WINDOWS")
+TESTKIT.EQ(LEN(sunday), 2, "a day without its own list gets the every day list")
+DIM nothing AS MAP
+TESTKIT.EQ(LEN(LAUNCHER.PLAN(nothing, 1, "WINDOWS")), 0, "no settings, nothing to open")
+
+TESTKIT.SUITE("dry run")
+TESTKIT.EQ(LAUNCHER.START(monday, TRUE), 3, "a dry run counts and opens nothing")
+
+TESTKIT.REPORT()

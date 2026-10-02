@@ -19,7 +19,10 @@ with a spine as wide as the page count) and writes an EPUB 3 e-book.
 ```
 book.toml          title, authors, page size, chapter order
 manuscript/        the chapters in Markdown, img/ for their figures
-recipes/           the programs: lib/ shared modules, easy/ medium/ expert/
+recipes/           the programs: lib/ shared modules, easy/ medium/ expert/,
+                   each with recipe.toml for the wizard
+wizard/            setup wizard: wizard.jdb (the work), setup_console.jdb,
+                   setup_wizard.jdb (window, FORMS build)
 tools/             build_book, check_recipes, mdbook, prose, layout, cover, epub,
                    preview (most with a test), figures/, preview/render.html
 fonts/             Source Serif 4 and Source Code Pro (SIL Open Font License)
@@ -38,6 +41,8 @@ jdbasic tools/check_recipes.jdb          # every recipe: lint, test, -c, test as
 jdbasic tools/mdbook_test.jdb            # the Markdown reader (also prose_, layout_, cover_, epub_test)
 jdbasic tools/pdf_preview.jdb out/book_print.pdf 1-4   # pages as PNG, needs Chrome
 jdbasic tools/figures/e01_before_after.jdb   # redraws a figure
+jdbasic wizard/wizard_test.jdb           # the wizard core: conf, schedules, install
+jdbasic wizard/setup_wizard.jdb --selftest   # the window wizard clicks through itself
 ```
 
 `check_recipes` sets `JDBASIC_PATH` for the programs it starts and looks for

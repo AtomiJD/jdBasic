@@ -1,0 +1,7 @@
+Hello,
+
+I am out of the office and back on {{ back }}. Your mail will wait
+for me; for anything urgent please write to {{ deputy }}.
+
+{{ signature }}
+{{ me }}

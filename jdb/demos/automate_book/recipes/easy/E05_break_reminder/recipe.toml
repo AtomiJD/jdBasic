@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "E05"
+name = "Break Reminder"
+program = "break_reminder.jdb"
+summary = "Reminds you to stand up and drink water during working hours"
+minutes_per_week = 0
+schedule = "every 10 minutes"
+section = "break_reminder"
+modules = ["breaks.jdb"]
+
+[[setting]]
+key = "start"
+label = "Working hours start"
+kind = "time"
+default = "08:30"
+
+[[setting]]
+key = "end"
+label = "Working hours end"
+kind = "time"
+default = "17:30"
+
+[[setting]]
+key = "every_minutes"
+label = "Remind me every (minutes)"
+kind = "number"
+default = 50
+
+[[setting]]
+key = "workdays_only"
+label = "Only Monday to Friday"
+kind = "bool"
+default = true

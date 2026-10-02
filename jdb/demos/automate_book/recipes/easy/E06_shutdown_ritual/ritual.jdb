@@ -1,0 +1,123 @@
+' ritual.jdb: the end of the working day as a journal. An entry holds
+' what got done, what is open for tomorrow and a mood from 1 to 5;
+' the entries of a week read back as a short summary.
+'
+'   IMPORT RITUAL
+'   DIM e$ = RITUAL.ENTRY$("2026-10-02", "offer sent", "call", 4)
+'   RITUAL.ADD("journal.md", e$)
+'   PRINT RITUAL.SUMMARY$(RITUAL.WEEK(RITUAL.ENTRIES("journal.md"), _
+'       "2026-10-02"))
+
+EXPORT MODULE RITUAL
+
+DIM gLF$ = CHR$(10)
+
+' The weekday number of a date given as YYYY-MM-DD, 0 for Sunday.
+EXPORT FUNC WEEKDAY_OF(day$)
+    RETURN VAL(FORMAT_DATE(CDATE(day$), "%w"))
+ENDFUNC
+
+' The Monday of the week a day belongs to, as YYYY-MM-DD.
+EXPORT FUNC MONDAY$(day$)
+    DIM back = (WEEKDAY_OF(day$) + 6) MOD 7
+    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+ENDFUNC
+
+' A mood answer as a number from 1 to 5, or 0 when it is none.
+EXPORT FUNC MOOD(answer$)
+    DIM v = VAL(TRIM$(answer$))
+    IF v < 1 ORELSE v > 5 ORELSE v <> INT(v) THEN RETURN 0
+    RETURN v
+ENDFUNC
+
+' One journal entry as text.
+EXPORT FUNC ENTRY$(day$, done$, tomorrow$, mood)
+    DIM weekday$ = FORMAT_DATE(CDATE(day$), "%A")
+    DIM out$ = "## " + day$ + " " + weekday$ + gLF$
+    out$ = out$ + "Mood: " + STR$(mood) + " of 5" + gLF$
+    out$ = out$ + "Done: " + TRIM$(done$) + gLF$
+    out$ = out$ + "Tomorrow: " + TRIM$(tomorrow$) + gLF$
+    RETURN out$
+ENDFUNC
+
+' Adds an entry to the end of the journal file, creating its folder.
+EXPORT SUB ADD(journal$, entry$)
+    DIM folder$ = PATH.DIRNAME$(journal$)
+    IF folder$ <> "" THEN MKDIR folder$
+    TXTWRITER journal$, entry$ + gLF$, TRUE
+ENDSUB
+
+' The text of a journal file, "" when there is none yet.
+EXPORT FUNC TEXT_OF$(journal$)
+    IF NOT FILE.EXISTS(journal$) THEN RETURN ""
+    RETURN TXTREADER$(journal$)
+ENDFUNC
+
+' The entries of a journal file, oldest first.
+EXPORT FUNC ENTRIES(journal$)
+    RETURN PARSE(TEXT_OF$(journal$))
+ENDFUNC
+
+' The entries of journal text, oldest first: maps with "day", "mood",
+' "done" and "tomorrow".
+EXPORT FUNC PARSE(journal_text$)
+    DIM out = []
+    DIM rows = SPLIT(REPLACE$(journal_text$, CHR$(13), ""), gLF$)
+    DIM cur = {"day": ""}
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = rows[k]
+        IF STARTSWITH(row$, "## ") THEN
+            IF cur{"day"} <> "" THEN PUSH(out, cur)
+            DIM day$ = MID$(row$, 3, 10)
+            cur = {"day": day$, "mood": 0, "done": "", "tomorrow": ""}
+        ELSEIF STARTSWITH(row$, "Mood: ") THEN
+            cur{"mood"} = VAL(MID$(row$, 6, 2))
+        ELSEIF STARTSWITH(row$, "Done: ") THEN
+            cur{"done"} = MID$(row$, 6, LEN(row$))
+        ELSEIF STARTSWITH(row$, "Tomorrow: ") THEN
+            cur{"tomorrow"} = MID$(row$, 10, LEN(row$))
+        ENDIF
+    NEXT k
+    IF cur{"day"} <> "" THEN PUSH(out, cur)
+    RETURN out
+ENDFUNC
+
+' The entries from the Monday to the Sunday of the week of day$.
+EXPORT FUNC WEEK(entries, day$)
+    DIM first$ = MONDAY$(day$)
+    DIM sunday = DATEADD("D", 6, CDATE(first$))
+    DIM last$ = FORMAT_DATE(sunday, "%Y-%m-%d")
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM e = entries[k]
+        DIM d$ = e{"day"}
+        IF d$ >= first$ ANDALSO d$ <= last$ THEN PUSH(out, e)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A summary of a week's entries: days written, the average mood, the
+' things done and what is still open from the last day.
+EXPORT FUNC SUMMARY$(week)
+    IF LEN(week) = 0 THEN RETURN "No entries this week."
+    DIM moods = []
+    DIM done = []
+    DIM k = 0
+    FOR k = 0 TO LEN(week) - 1
+        DIM e = week[k]
+        IF e{"mood"} > 0 THEN PUSH(moods, e{"mood"})
+        IF e{"done"} <> "" THEN PUSH(done, "- " + e{"done"})
+    NEXT k
+    DIM out$ = "Week of " + MONDAY$(week[0]{"day"}) + ": "
+    out$ = out$ + STR$(LEN(week)) + " days in the journal"
+    IF LEN(moods) > 0 THEN
+        DIM avg$ = FORMAT$("{:.1f}", SUM(moods) / LEN(moods))
+        out$ = out$ + ", mood " + avg$ + " on average"
+    ENDIF
+    out$ = out$ + "." + gLF$ + "Done:" + gLF$ + JOIN(done, gLF$)
+    DIM open$ = week[LEN(week) - 1]{"tomorrow"}
+    IF open$ <> "" THEN out$ = out$ + gLF$ + "Still open: " + open$
+    RETURN out$
+ENDFUNC

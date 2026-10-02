@@ -1,0 +1,363 @@
+' wizard.jdb: what the setup wizard does, without asking anything: it
+' finds the recipes, fills in the answers with their defaults, writes
+' work.conf, copies the recipes into the work folder, turns schedules
+' into Windows Task Scheduler commands, and checks an existing setup.
+' The console and the window front ends only ask the questions.
+'
+'   IMPORT WIZARD
+'   DIM recipes = WIZARD.RECIPES("recipes")
+'   DIM answers = WIZARD.DEFAULTS(recipes, WIZARD.HOME$())
+'   PRINT WIZARD.CONF_TEXT$(answers, recipes)
+
+EXPORT MODULE WIZARD
+
+IMPORT CONF
+
+DIM gLF$ = CHR$(10)
+DIM gQ$ = CHR$(34)
+DIM gTaskFolder$ = "AutomateWork"
+
+EXPORT FUNC HOME$()
+    DIM h$ = GETENV$("USERPROFILE")
+    IF h$ = "" THEN h$ = GETENV$("HOME")
+    RETURN h$
+ENDFUNC
+
+' ── recipes ───────────────────────────────────────────────────
+
+' Every recipe under root$/<level>/<folder>/recipe.toml, sorted by id;
+' each map gets "dir" (its folder) and "level".
+EXPORT FUNC RECIPES(root$)
+    DIM out = []
+    DIM levels = ["easy", "medium", "expert"]
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(levels) - 1
+        DIM level_dir$ = PATH.JOIN$(root$, levels[k])
+        IF FILE.ISDIR(level_dir$) THEN
+            DIM names = SORT(DIR$(PATH.JOIN$(level_dir$, "*")))
+            FOR j = 0 TO LEN(names) - 1
+                DIM dir$ = PATH.JOIN$(level_dir$, names[j])
+                DIM file$ = PATH.JOIN$(dir$, "recipe.toml")
+                IF FILE.EXISTS(file$) THEN
+                    DIM r = CONF.TOML(file$)
+                    r{"dir"} = dir$
+                    r{"folder"} = names[j]
+                    r{"level"} = levels[k]
+                    PUSH(out, r)
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Settings(r)
+    IF MAP.EXISTS(r, "setting") THEN RETURN r{"setting"}
+    RETURN []
+ENDFUNC
+
+' The answers before the user changed anything: the work folder in
+' Documents, office hours, every easy recipe picked with its default
+' settings and schedule.
+EXPORT FUNC DEFAULTS(recipes, home$)
+    DIM a AS MAP
+    a{"work"} = PATH.JOIN$(home$, "Documents", "AutomateWork")
+    a{"name"} = ""
+    a{"email"} = ""
+    a{"day_start"} = "08:30"
+    a{"day_end"} = "17:30"
+    a{"jdbasic"} = FIND_JDBASIC$()
+    a{"user_lib"} = PATH.JOIN$(home$, ".jdbasic", "lib")
+    DIM picked = []
+    DIM values AS MAP
+    DIM when AS MAP
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        DIM r = recipes[k]
+        IF r{"level"} = "easy" THEN PUSH(picked, r{"id"})
+        when{r{"id"}} = r{"schedule"}
+        DIM sect AS MAP
+        DIM s = Settings(r)
+        FOR j = 0 TO LEN(s) - 1
+            sect{s[j]{"key"}} = s[j]{"default"}
+        NEXT j
+        values{r{"section"}} = sect
+    NEXT k
+    a{"picked"} = picked
+    a{"values"} = values
+    a{"schedule"} = when
+    RETURN a
+ENDFUNC
+
+' The jdBasic program on the PATH, "" when there is none.
+EXPORT FUNC FIND_JDBASIC$()
+    DIM r = OS.EXEC("where", ["jdbasic"])
+    IF r{"EXIT_CODE"} <> 0 THEN RETURN ""
+    DIM first$ = TRIM$(SPLIT(REPLACE$(r{"OUTPUT"}, CHR$(13), ""), gLF$)[0])
+    RETURN first$
+ENDFUNC
+
+' ── work.conf ─────────────────────────────────────────────────
+
+' A value written as TOML: text quoted and escaped, numbers and booleans
+' bare, arrays in brackets.
+EXPORT FUNC TOML_VALUE$(v)
+    DIM kind$ = TYPEOF(v)
+    IF kind$ = "STRING" THEN
+        DIM t$ = REPLACE$(REPLACE$(v, "\", "\\"), gQ$, "\" + gQ$)
+        RETURN gQ$ + REPLACE$(REPLACE$(t$, CHR$(10), "\n"), CHR$(9), "\t") + gQ$
+    ENDIF
+    IF kind$ = "BOOLEAN" THEN
+        IF v THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    IF kind$ = "ARRAY" THEN RETURN "[" + JOIN(SELECT(LAMBDA x -> TOML_VALUE$(x), v), ", ") + "]"
+    RETURN STR$(v)
+ENDFUNC
+
+' A setting as the text a person edits: a list with commas between its
+' items, anything else as it prints.
+EXPORT FUNC SHOW$(v)
+    IF TYPEOF(v) = "ARRAY" THEN RETURN JOIN(SELECT(LAMBDA x -> "" + x, v), ", ")
+    RETURN "" + v
+ENDFUNC
+
+' The items of a list typed with commas between them.
+EXPORT FUNC LIST_OF(txt$)
+    DIM out = []
+    DIM parts = SPLIT(txt$, ",")
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM one$ = TRIM$(parts[k])
+        IF one$ <> "" THEN PUSH(out, one$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC Recipe(recipes, id$)
+    DIM k = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        IF recipes[k]{"id"} = id$ THEN RETURN recipes[k]
+    NEXT k
+    THROW "WIZARD: no recipe " + id$
+    RETURN 0
+ENDFUNC
+
+' The text of work.conf for the answers: the user, the work folder, and
+' one table per picked recipe with its settings.
+EXPORT FUNC CONF_TEXT$(answers, recipes)
+    DIM out = ["# Written by the setup wizard. Run it again to change these", "# settings, or edit them here.", ""]
+    PUSH(out, "[user]")
+    PUSH(out, "name = " + TOML_VALUE$(answers{"name"}))
+    PUSH(out, "email = " + TOML_VALUE$(answers{"email"}))
+    PUSH(out, "day_start = " + TOML_VALUE$(answers{"day_start"}))
+    PUSH(out, "day_end = " + TOML_VALUE$(answers{"day_end"}))
+    PUSH(out, "")
+    PUSH(out, "[paths]")
+    PUSH(out, "work = " + TOML_VALUE$(answers{"work"}))
+    PUSH(out, "jdbasic = " + TOML_VALUE$(answers{"jdbasic"}))
+    DIM picked = answers{"picked"}
+    DIM values = answers{"values"}
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(picked) - 1
+        DIM r = Recipe(recipes, picked[k])
+        DIM section$ = r{"section"}
+        PUSH(out, "")
+        PUSH(out, "# " + r{"id"} + " " + r{"name"})
+        PUSH(out, "[" + section$ + "]")
+        DIM sect = values{section$}
+        DIM keys = MAP.KEYS(sect)
+        FOR j = 0 TO LEN(keys) - 1
+            PUSH(out, keys[j] + " = " + TOML_VALUE$(sect{keys[j]}))
+        NEXT j
+    NEXT k
+    RETURN JOIN(out, gLF$) + gLF$
+ENDFUNC
+
+EXPORT FUNC CONF_PATH$(answers)
+    RETURN PATH.JOIN$(answers{"work"}, "config", "work.conf")
+ENDFUNC
+
+' ── installing ────────────────────────────────────────────────
+
+' The steps that set up the work folder: maps with "mkdir", or with
+' "from" and "to" for a file to copy, or "write" and "text".
+EXPORT FUNC INSTALL_PLAN(answers, recipes, lib_dir$)
+    DIM work$ = answers{"work"}
+    DIM steps = []
+    DIM folders = ["", "config", "logs", "journal", "recipes"]
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(folders) - 1
+        PUSH(steps, {"mkdir": PATH.JOIN$(work$, folders[k])})
+    NEXT k
+    DIM user_lib$ = answers{"user_lib"}
+    PUSH(steps, {"mkdir": user_lib$})
+    PUSH(steps, {"from": PATH.JOIN$(lib_dir$, "workconf.jdb"), "to": PATH.JOIN$(user_lib$, "workconf.jdb")})
+    DIM picked = answers{"picked"}
+    FOR k = 0 TO LEN(picked) - 1
+        DIM r = Recipe(recipes, picked[k])
+        DIM dest$ = PATH.JOIN$(work$, "recipes", r{"folder"})
+        PUSH(steps, {"mkdir": dest$})
+        DIM files = APPEND([r{"program"}, "recipe.toml"], r{"modules"})
+        IF MAP.EXISTS(r, "files") THEN files = APPEND(files, r{"files"})
+        FOR j = 0 TO LEN(files) - 1
+            DIM to$ = PATH.JOIN$(dest$, files[j])
+            IF PATH.DIRNAME$(files[j]) <> "" THEN PUSH(steps, {"mkdir": PATH.DIRNAME$(to$)})
+            PUSH(steps, {"from": PATH.JOIN$(r{"dir"}, files[j]), "to": to$})
+        NEXT j
+    NEXT k
+    PUSH(steps, {"write": CONF_PATH$(answers), "text": CONF_TEXT$(answers, recipes)})
+    RETURN steps
+ENDFUNC
+
+' Carries out the plan; with dry_run it only prints it. Answers the
+' number of steps.
+EXPORT FUNC APPLY(steps, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        DIM s = steps[k]
+        IF MAP.EXISTS(s, "mkdir") THEN
+            IF dry_run THEN
+                PRINT "folder  "; s{"mkdir"}
+            ELSE
+                MKDIR s{"mkdir"}
+            ENDIF
+        ELSEIF MAP.EXISTS(s, "write") THEN
+            IF dry_run THEN
+                PRINT "write   "; s{"write"}
+            ELSE
+                TXTWRITER s{"write"}, s{"text"}
+            ENDIF
+        ELSE
+            IF dry_run THEN
+                PRINT "copy    "; s{"to"}
+            ELSE
+                FILE.COPY(s{"from"}, s{"to"}, TRUE)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN LEN(steps)
+ENDFUNC
+
+' ── schedules ─────────────────────────────────────────────────
+
+EXPORT FUNC TASK_NAME$(r)
+    RETURN gTaskFolder$ + "\" + r{"id"} + " " + r{"name"}
+ENDFUNC
+
+FUNC IsClock(t$)
+    RETURN LEN(REGEX.FINDALL("^[0-2][0-9]:[0-5][0-9]$", t$)) > 0
+ENDFUNC
+
+FUNC DayCode$(d$)
+    DIM days = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+    DIM low$ = LCASE$(LEFT$(d$, 3))
+    IF low$ IN days THEN RETURN UCASE$(low$)
+    THROW "WIZARD: no weekday " + d$
+ENDFUNC
+
+' A schedule with {day_start} and {day_end} replaced by the user's
+' working hours.
+EXPORT FUNC RESOLVE_WHEN$(answers, when$)
+    DIM t$ = REPLACE$(when$, "{day_start}", answers{"day_start"})
+    RETURN REPLACE$(t$, "{day_end}", answers{"day_end"})
+ENDFUNC
+
+' The schtasks arguments that run a recipe on its schedule: "daily
+' HH:MM", "weekdays HH:MM", "weekly DAY HH:MM", "every N minutes",
+' "every N hours", "hourly" or "at logon". "manual" or "" answers an
+' empty array. The recipe's schedule_args follow the program.
+EXPORT FUNC SCHEDULE_ARGS(r, when$, jdbasic$, program$, config$)
+    DIM parts = SPLIT(TRIM$(LCASE$(when$)), " ")
+    DIM n = LEN(parts)
+    DIM task_cmd$ = gQ$ + jdbasic$ + gQ$ + " " + gQ$ + program$ + gQ$
+    IF MAP.EXISTS(r, "schedule_args") THEN
+        DIM extra = r{"schedule_args"}
+        DIM e = 0
+        FOR e = 0 TO LEN(extra) - 1
+            task_cmd$ = task_cmd$ + " " + gQ$ + extra[e] + gQ$
+        NEXT e
+    ENDIF
+    task_cmd$ = task_cmd$ + " --config " + gQ$ + config$ + gQ$
+    DIM head = ["/Create", "/F", "/TN", TASK_NAME$(r), "/TR", task_cmd$]
+    IF TRIM$(when$) = "" ORELSE (n = 1 ANDALSO parts[0] = "manual") THEN RETURN []
+    IF n = 3 ANDALSO parts[0] = "every" ANDALSO parts[2] = "hours" THEN RETURN APPEND(head, ["/SC", "HOURLY", "/MO", STR$(CINT(parts[1]))])
+    IF n = 2 ANDALSO parts[0] = "daily" ANDALSO IsClock(parts[1]) THEN RETURN APPEND(head, ["/SC", "DAILY", "/ST", parts[1]])
+    IF n = 2 ANDALSO parts[0] = "weekdays" ANDALSO IsClock(parts[1]) THEN RETURN APPEND(head, ["/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI", "/ST", parts[1]])
+    IF n = 3 ANDALSO parts[0] = "weekly" ANDALSO IsClock(parts[2]) THEN RETURN APPEND(head, ["/SC", "WEEKLY", "/D", DayCode$(parts[1]), "/ST", parts[2]])
+    IF n = 3 ANDALSO parts[0] = "every" ANDALSO parts[2] = "minutes" THEN RETURN APPEND(head, ["/SC", "MINUTE", "/MO", STR$(CINT(parts[1]))])
+    IF n = 1 ANDALSO parts[0] = "hourly" THEN RETURN APPEND(head, ["/SC", "HOURLY"])
+    IF n = 2 ANDALSO parts[0] = "at" ANDALSO parts[1] = "logon" THEN RETURN APPEND(head, ["/SC", "ONLOGON"])
+    THROW "WIZARD: cannot schedule " + CHR$(34) + when$ + CHR$(34) + " for " + r{"id"}
+ENDFUNC
+
+EXPORT FUNC UNSCHEDULE_ARGS(r)
+    RETURN ["/Delete", "/F", "/TN", TASK_NAME$(r)]
+ENDFUNC
+
+' Runs schtasks with the arguments; answers [ok, output].
+EXPORT FUNC SCHTASKS(args)
+    IF LEN(args) = 0 THEN RETURN [TRUE, "not scheduled"]
+    DIM r = OS.EXEC("schtasks", args)
+    RETURN [r{"EXIT_CODE"} = 0, TRIM$(r{"OUTPUT"})]
+ENDFUNC
+
+' ── checking ──────────────────────────────────────────────────
+
+' The problems of an installed setup, one line each; empty when it is
+' in order. With check_tasks the scheduled tasks are looked up too.
+EXPORT FUNC DOCTOR(answers, recipes, check_tasks)
+    DIM out = []
+    DIM conf$ = CONF_PATH$(answers)
+    IF NOT FILE.EXISTS(conf$) THEN PUSH(out, "no settings file at " + conf$)
+    IF answers{"jdbasic"} = "" ORELSE NOT FILE.EXISTS(answers{"jdbasic"}) THEN PUSH(out, "jdbasic not found; install it or name it in [paths] jdbasic")
+    DIM lib$ = PATH.JOIN$(answers{"user_lib"}, "workconf.jdb")
+    IF NOT FILE.EXISTS(lib$) THEN PUSH(out, "the shared module is missing: " + lib$)
+    DIM picked = answers{"picked"}
+    DIM k = 0
+    FOR k = 0 TO LEN(picked) - 1
+        DIM r = Recipe(recipes, picked[k])
+        DIM prog$ = PATH.JOIN$(answers{"work"}, "recipes", r{"folder"}, r{"program"})
+        IF NOT FILE.EXISTS(prog$) THEN PUSH(out, r{"id"} + ": program missing at " + prog$)
+        IF check_tasks ANDALSO answers{"schedule"}{r{"id"}} <> "manual" THEN
+            DIM q = SCHTASKS(["/Query", "/TN", TASK_NAME$(r)])
+            IF NOT q[0] THEN PUSH(out, r{"id"} + ": no scheduled task " + TASK_NAME$(r))
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The answers back from an installed work.conf, for running the wizard
+' again: what the file says over the defaults.
+EXPORT FUNC FROM_CONF(answers, recipes, conf$)
+    IF NOT FILE.EXISTS(conf$) THEN RETURN answers
+    DIM c = CONF.TOML(conf$)
+    answers{"name"} = CONF.GET(c, "user.name", answers{"name"})
+    answers{"email"} = CONF.GET(c, "user.email", answers{"email"})
+    answers{"day_start"} = CONF.GET(c, "user.day_start", answers{"day_start"})
+    answers{"day_end"} = CONF.GET(c, "user.day_end", answers{"day_end"})
+    answers{"jdbasic"} = CONF.GET(c, "paths.jdbasic", answers{"jdbasic"})
+    DIM picked = []
+    DIM values = answers{"values"}
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        DIM r = recipes[k]
+        DIM section$ = r{"section"}
+        IF MAP.EXISTS(c, section$) THEN
+            PUSH(picked, r{"id"})
+            DIM have = c{section$}
+            DIM keys = MAP.KEYS(have)
+            DIM sect = values{section$}
+            FOR j = 0 TO LEN(keys) - 1
+                sect{keys[j]} = have{keys[j]}
+            NEXT j
+        ENDIF
+    NEXT k
+    answers{"picked"} = picked
+    RETURN answers
+ENDFUNC

@@ -1,0 +1,60 @@
+' Batch Renamer: new names from a pattern, dated names left alone,
+' extensions filtered, a free name when the new one is taken, a dry
+' run and the real renames.
+
+IMPORT TESTKIT, RENAMER
+
+DIM folder$ = MKTEMP$("renamer")
+MKDIR folder$
+MKDIR PATH.JOIN$(folder$, "sub")
+TXTWRITER PATH.JOIN$(folder$, "scan 4711.pdf"), "a"
+TXTWRITER PATH.JOIN$(folder$, "Rechnung Müller.PDF"), "b"
+TXTWRITER PATH.JOIN$(folder$, "2026-09-30 old.pdf"), "c"
+TXTWRITER PATH.JOIN$(folder$, "notes.txt"), "d"
+DIM info = FILE.STAT(PATH.JOIN$(folder$, "scan 4711.pdf"))
+DIM day$ = LEFT$(info{"mtime"}, 10)
+TXTWRITER PATH.JOIN$(folder$, day$ + " scan 4711.pdf"), "taken"
+
+FUNC NewOf$(plan, old$)
+    DIM k = 0
+    FOR k = 0 TO LEN(plan) - 1
+        DIM r = plan[k]
+        IF PATH.BASENAME$(r{"from"}) = old$ THEN RETURN r{"new"}
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+TESTKIT.SUITE("names")
+DIM pat$ = "{date} {name}{ext}"
+TESTKIT.EQ(RENAMER.NEW_NAME$(pat$, "scan.pdf", "2026-10-01"), "2026-10-01 scan.pdf", "date, name and extension")
+TESTKIT.EQ(RENAMER.NEW_NAME$("{name} {date}{ext}", "a.b.txt", "2026-10-01"), "a.b 2026-10-01.txt", "only the last dot starts the extension")
+TESTKIT.EQ(RENAMER.NEW_NAME$(pat$, "README", "2026-10-01"), "2026-10-01 README", "a file without extension")
+TESTKIT.ISTRUE(RENAMER.DATED("2026-09-30 old.pdf"), "a dated name is seen")
+TESTKIT.ISTRUE(NOT RENAMER.DATED("scan 2026-09-30.pdf"), "a date later in the name does not count")
+
+TESTKIT.SUITE("the plan")
+DIM all_plan = RENAMER.PLAN(folder$, pat$, [])
+TESTKIT.EQ(LEN(all_plan), 3, "three undated files, the folder and dated files stay")
+TESTKIT.EQ(NewOf$(all_plan, "scan 4711.pdf"), day$ + " scan 4711 (2).pdf", "a taken name gets a number")
+TESTKIT.EQ(NewOf$(all_plan, "Rechnung Müller.PDF"), day$ + " Rechnung Müller.PDF", "umlauts and the extension's case are kept")
+DIM pdf_plan = RENAMER.PLAN(folder$, pat$, ["pdf"])
+TESTKIT.EQ(LEN(pdf_plan), 2, "the extension list leaves the text file out")
+TESTKIT.EQ(NewOf$(pdf_plan, "notes.txt"), "", "and it is not in the plan")
+
+TESTKIT.SUITE("renaming")
+TESTKIT.EQ(RENAMER.APPLY(pdf_plan, TRUE), 2, "a dry run counts")
+TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(folder$, "scan 4711.pdf")), "and renames nothing")
+TESTKIT.EQ(RENAMER.APPLY(pdf_plan, FALSE), 2, "the real run renames two")
+TESTKIT.EQ(TXTREADER$(PATH.JOIN$(folder$, day$ + " scan 4711 (2).pdf")), "a", "the scan has its new name")
+TESTKIT.EQ(TXTREADER$(PATH.JOIN$(folder$, day$ + " scan 4711.pdf")), "taken", "the file that had the name is untouched")
+TESTKIT.EQ(LEN(RENAMER.PLAN(folder$, pat$, ["pdf"])), 0, "a second run finds nothing")
+
+DIM left = DIR$(PATH.JOIN$(folder$, "*"))
+DIM k = 0
+FOR k = 0 TO LEN(left) - 1
+    DIM p$ = PATH.JOIN$(folder$, left[k])
+    IF NOT FILE.ISDIR(p$) THEN KILL p$
+NEXT k
+RMDIR PATH.JOIN$(folder$, "sub")
+RMDIR folder$
+TESTKIT.REPORT()

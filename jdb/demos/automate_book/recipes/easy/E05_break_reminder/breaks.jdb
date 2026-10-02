@@ -1,0 +1,42 @@
+' breaks.jdb: whether a break reminder is due. Within working hours on
+' a workday, once every so many minutes after the last reminder.
+'
+'   IMPORT BREAKS
+'   IF BREAKS.DUE(NOW(), last$, "08:30", "17:30", 50, TRUE) THEN ...
+
+EXPORT MODULE BREAKS
+
+' The minute of the day a time written as "HH:MM" stands for.
+EXPORT FUNC MINUTES(hhmm$)
+    DIM parts = SPLIT(TRIM$(hhmm$), ":")
+    IF LEN(parts) <> 2 THEN THROW "Not a time of day: " + hhmm$
+    RETURN CINT(parts[0]) * 60 + CINT(parts[1])
+ENDFUNC
+
+' TRUE when a moment lies inside working hours; with workdays_only
+' Saturday and Sunday are outside.
+EXPORT FUNC WORKING(when, start$, end$, workdays_only)
+    DIM wday = CINT(FORMAT_DATE(when, "%w"))
+    DIM weekend = (wday = 0) ORELSE (wday = 6)
+    IF workdays_only ANDALSO weekend THEN RETURN FALSE
+    DIM now_min = HOUR(when) * 60 + MINUTE(when)
+    RETURN now_min >= MINUTES(start$) ANDALSO now_min < MINUTES(end$)
+ENDFUNC
+
+' TRUE when a reminder is due: inside working hours, and at least
+' every_min minutes after the last one, or on a new day. last$ is ""
+' before the first reminder, else "YYYY-MM-DD HH:MM:SS".
+EXPORT FUNC DUE(when, last$, start$, end$, every_min, workdays_only)
+    DIM inside = WORKING(when, start$, end$, workdays_only)
+    IF NOT inside THEN RETURN FALSE
+    IF last$ = "" THEN RETURN TRUE
+    DIM last = CDATE(last$)
+    DIM last_day$ = FORMAT_DATE(last, "%Y-%m-%d")
+    IF last_day$ <> FORMAT_DATE(when, "%Y-%m-%d") THEN RETURN TRUE
+    RETURN DATEDIFF("N", last, when) >= every_min
+ENDFUNC
+
+' The text of a moment as DUE expects it for the last reminder.
+EXPORT FUNC STAMP$(when)
+    RETURN FORMAT_DATE(when, "%Y-%m-%d %H:%M:%S")
+ENDFUNC

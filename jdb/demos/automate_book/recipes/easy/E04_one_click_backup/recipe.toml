@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "E04"
+name = "One-Click Backup"
+program = "one_click_backup.jdb"
+summary = "Packs your important folders into a dated ZIP and keeps the newest"
+minutes_per_week = 15
+schedule = "weekly fri 16:30"
+section = "one_click_backup"
+modules = ["backup.jdb"]
+
+[[setting]]
+key = "folders"
+label = "Folders to back up"
+kind = "list"
+default = ["~/Documents"]
+
+[[setting]]
+key = "target"
+label = "Folder for the archives (best on another drive)"
+kind = "folder"
+default = "~/Documents/AutomateWork/backups"
+
+[[setting]]
+key = "keep"
+label = "Archives to keep"
+kind = "number"
+default = 10
+
+[[setting]]
+key = "max_file_mb"
+label = "Leave out files larger than (MB)"
+kind = "number"
+default = 200

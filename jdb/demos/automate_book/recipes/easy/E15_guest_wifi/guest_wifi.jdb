@@ -1,0 +1,30 @@
+' Guest Wi-Fi Card: prints cards with the guest network's name,
+' password and a QR code that joins a phone to it. The settings are
+' the [guest_wifi] part of work.conf.
+'
+'   jdbasic guest_wifi.jdb            write the page of cards
+'   jdbasic guest_wifi.jdb --dry-run  show the code in the terminal
+
+IMPORT WORKCONF, WIFICARD, QR
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "guest_wifi."
+DIM ssid$ = WORKCONF.VALUE(cfg, key$ + "ssid", "")
+DIM password$ = WORKCONF.VALUE(cfg, key$ + "password", "")
+DIM security$ = WORKCONF.VALUE(cfg, key$ + "security", "WPA")
+DIM hidden = WORKCONF.VALUE(cfg, key$ + "hidden", FALSE)
+DIM n_cards = WORKCONF.VALUE(cfg, key$ + "cards", 8)
+DIM home$ = "~/Documents/AutomateWork/print/guest_wifi.pdf"
+DIM out$ = WORKCONF.FOLDER$(cfg, key$ + "out_file", home$)
+IF ssid$ = "" THEN THROW "Set guest_wifi.ssid in work.conf first."
+
+DIM payload$ = WIFICARD.PAYLOAD$(ssid$, password$, security$, hidden)
+IF WORKCONF.FLAG("dry-run") THEN
+    PRINT payload$
+    PRINT QR.TEXT$(QR.MATRIX(payload$, {"ecc": "M"}))
+ELSE
+    MKDIR PATH.DIRNAME$(out$)
+    DIM r = WIFICARD.SHEET(ssid$, password$, payload$, out$, n_cards)
+    PRINT "Wrote "; r{"cards"}; " cards to"
+    PRINT "    "; out$
+ENDIF

@@ -1,0 +1,29 @@
+# What the setup wizard knows about this recipe.
+
+id = "E08"
+name = "Mail Templates"
+program = "mail_templates.jdb"
+summary = "Standard replies filled with name and date, ready on the clipboard"
+minutes_per_week = 25
+schedule = ""
+section = "mail_templates"
+modules = ["mailtpl.jdb"]
+files = ["templates/thanks.txt", "templates/out_of_office.txt", "templates/follow_up.txt"]
+
+[[setting]]
+key = "folder"
+label = "Folder with your templates"
+kind = "folder"
+default = "~/Documents/AutomateWork/templates"
+
+[[setting]]
+key = "me"
+label = "Your name under the mail"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "signature"
+label = "The line before your name"
+kind = "text"
+default = "Kind regards"

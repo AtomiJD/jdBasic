@@ -1,0 +1,7 @@
+Dear {{ to }},
+
+thank you for your order. We have it in our system and will confirm
+the delivery date by {{ weekday }} at the latest.
+
+{{ signature }}
+{{ me }}

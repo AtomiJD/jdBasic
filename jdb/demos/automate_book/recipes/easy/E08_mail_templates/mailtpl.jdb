@@ -1,0 +1,78 @@
+' mailtpl.jdb: standard replies from template files. A template is a
+' text file with {{ placeholders }}; it is filled with the name of the
+' person it goes to, the date and the values of work.conf, as plain
+' text ready to paste into a mail.
+'
+'   IMPORT MAILTPL
+'   DIM v = MAILTPL.VALUES("Mia", "Kind regards", "Ms Miller", NOW())
+'   PRINT MAILTPL.FILL$(MAILTPL.TEMPLATE$("templates", "thanks"), v)
+
+EXPORT MODULE MAILTPL
+
+IMPORT TMPL
+
+' The template names in a folder: its .txt files without the ending.
+EXPORT FUNC NAMES(folder$)
+    DIM out = []
+    IF NOT FILE.ISDIR(folder$) THEN RETURN out
+    DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM file$ = files[k]
+        PUSH(out, LEFT$(file$, LEN(file$) - 4))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The text of the template called name$ in the folder.
+EXPORT FUNC TEMPLATE$(folder$, name$)
+    DIM path$ = PATH.JOIN$(folder$, name$ + ".txt")
+    IF NOT FILE.EXISTS(path$) THEN
+        DIM have$ = JOIN(NAMES(folder$), ", ")
+        THROW "No template " + name$ + ". There are: " + have$
+    ENDIF
+    RETURN REPLACE$(TXTREADER$(path$), CHR$(13), "")
+ENDFUNC
+
+' The values a template can use: me, signature, to, date and weekday.
+EXPORT FUNC VALUES(me$, signature$, to$, today)
+    DIM v AS MAP
+    v{"me"} = me$
+    v{"signature"} = signature$
+    v{"to"} = to$
+    DIM day$ = FORMAT_DATE(today, "%d")
+    IF LEFT$(day$, 1) = "0" THEN day$ = MID$(day$, 1, 1)
+    v{"date"} = day$ + FORMAT_DATE(today, " %B %Y")
+    v{"weekday"} = FORMAT_DATE(today, "%A")
+    RETURN v
+ENDFUNC
+
+' Text with the HTML entities of the template engine turned back into
+' the characters they stand for.
+EXPORT FUNC PLAIN$(t$)
+    DIM out$ = REPLACE$(REPLACE$(t$, "&lt;", "<"), "&gt;", ">")
+    out$ = REPLACE$(REPLACE$(out$, "&quot;", CHR$(34)), "&#39;", "'")
+    RETURN REPLACE$(out$, "&amp;", "&")
+ENDFUNC
+
+' The template filled with the values, as plain text.
+EXPORT FUNC FILL$(template$, values)
+    RETURN PLAIN$(TMPL.RENDERSTR$(template$, values))
+ENDFUNC
+
+' The placeholders of a template that have no value, each once.
+EXPORT FUNC MISSING(template$, values)
+    DIM found = REGEX.FINDALL("\{\{\s*([A-Za-z_]+)", template$)
+    DIM seen AS MAP
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(found) - 1
+        DIM key$ = found[k][0]
+        DIM given = MAP.EXISTS(values, key$)
+        IF NOT given ANDALSO NOT MAP.EXISTS(seen, key$) THEN
+            PUSH(out, key$)
+            seen{key$} = TRUE
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC

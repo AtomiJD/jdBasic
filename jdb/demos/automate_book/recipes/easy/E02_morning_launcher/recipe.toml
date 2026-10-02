@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "E02"
+name = "Morning Launcher"
+program = "morning_launcher.jdb"
+summary = "Opens the programs, folders and web pages of your workday"
+minutes_per_week = 10
+schedule = "weekdays 08:00"
+section = "morning_launcher"
+modules = ["launcher.jdb"]
+
+[[setting]]
+key = "every_day"
+label = "Open every workday (programs, folders, web pages)"
+kind = "list"
+default = []
+
+[[setting]]
+key = "mon"
+label = "Open on Mondays as well"
+kind = "list"
+default = []
+
+[[setting]]
+key = "fri"
+label = "Open on Fridays as well"
+kind = "list"
+default = []

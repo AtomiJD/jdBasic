@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "E13"
+name = "Printable Week"
+program = "printable_week.jdb"
+summary = "Turns the to-do list into a one-page plan of the week to print"
+minutes_per_week = 10
+schedule = "weekly fri 16:00"
+section = "printable_week"
+modules = ["planner.jdb"]
+
+[[setting]]
+key = "todo_file"
+label = "Your to-do list (a text file)"
+kind = "file"
+default = "~/Documents/AutomateWork/todo.txt"
+
+[[setting]]
+key = "out_folder"
+label = "Folder for the printable pages"
+kind = "folder"
+default = "~/Documents/AutomateWork/print"
+
+[[setting]]
+key = "days"
+label = "Days on the page (5 or 7)"
+kind = "number"
+default = 5
+
+[[setting]]
+key = "weeks_ahead"
+label = "Which week (0 this week, 1 next week)"
+kind = "number"
+default = 1

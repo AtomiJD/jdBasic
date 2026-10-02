@@ -1,0 +1,35 @@
+' Break Reminder: asks you to stand up and drink some water, every
+' so many minutes within your working hours. The wizard starts it
+' every ten minutes; it shows a message only when one is due. The
+' settings are the [break_reminder] part of work.conf.
+'
+'   jdbasic break_reminder.jdb            remind me if it is time
+'   jdbasic break_reminder.jdb --dry-run  only say whether it is time
+
+IMPORT WORKCONF, BREAKS
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "break_reminder."
+DIM start$ = WORKCONF.VALUE(cfg, key$ + "start", "08:30")
+DIM end$ = WORKCONF.VALUE(cfg, key$ + "end", "17:30")
+DIM every = WORKCONF.VALUE(cfg, key$ + "every_minutes", 50)
+DIM weekdays = WORKCONF.VALUE(cfg, key$ + "workdays_only", TRUE)
+DIM text$ = "Time for a break: stand up, stretch, drink some water."
+DIM message$ = WORKCONF.VALUE(cfg, key$ + "message", text$)
+DIM home$ = "~/Documents/AutomateWork/logs/break_reminder.txt"
+DIM state$ = WORKCONF.FOLDER$(cfg, key$ + "state_file", home$)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM last$ = ""
+IF FILE.EXISTS(state$) THEN last$ = TRIM$(TXTREADER$(state$))
+DIM moment = NOW()
+DIM due = BREAKS.DUE(moment, last$, start$, end$, every, weekdays)
+IF NOT due THEN
+    PRINT "No break due."
+ELSEIF dry_run THEN
+    PRINT "A break is due. Run without --dry-run to be reminded."
+ELSE
+    MKDIR PATH.DIRNAME$(state$)
+    TXTWRITER state$, BREAKS.STAMP$(moment)
+    DIM button = MSGBOX(message$, 64, "Break Reminder")
+ENDIF

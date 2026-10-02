@@ -1,0 +1,54 @@
+' Shutdown Ritual: weekdays and Mondays, mood answers, the entry text,
+' a journal written and read back, the week picked out of it and its
+' summary.
+
+IMPORT TESTKIT, RITUAL
+
+DIM folder$ = MKTEMP$("ritual")
+DIM journal$ = PATH.JOIN$(folder$, "journal", "journal.md")
+DIM LF$ = CHR$(10)
+
+TESTKIT.SUITE("days")
+TESTKIT.EQ(RITUAL.WEEKDAY_OF("2026-10-02"), 5, "2 October 2026 is a Friday")
+TESTKIT.EQ(RITUAL.WEEKDAY_OF("2026-10-04"), 0, "and the 4th a Sunday")
+TESTKIT.EQ(RITUAL.MONDAY$("2026-10-02"), "2026-09-28", "its Monday")
+TESTKIT.EQ(RITUAL.MONDAY$("2026-10-04"), "2026-09-28", "a Sunday ends that week")
+TESTKIT.EQ(RITUAL.MONDAY$("2026-09-28"), "2026-09-28", "a Monday is its own")
+
+TESTKIT.SUITE("answers")
+TESTKIT.EQ(RITUAL.MOOD("4"), 4, "a number from 1 to 5")
+TESTKIT.EQ(RITUAL.MOOD(" 5 "), 5, "with spaces around it")
+TESTKIT.EQ(RITUAL.MOOD("7"), 0, "too high is no answer")
+TESTKIT.EQ(RITUAL.MOOD("good"), 0, "and words are none")
+TESTKIT.EQ(RITUAL.MOOD("3.5"), 0, "nor half points")
+DIM e$ = RITUAL.ENTRY$("2026-10-02", " offer sent ", "call the printer", 4)
+DIM want$ = "## 2026-10-02 Friday" + LF$ + "Mood: 4 of 5" + LF$ + "Done: offer sent" + LF$ + "Tomorrow: call the printer" + LF$
+TESTKIT.EQ(e$, want$, "an entry: heading, mood, done, tomorrow")
+
+TESTKIT.SUITE("the journal")
+TESTKIT.EQ(LEN(RITUAL.ENTRIES(journal$)), 0, "no journal yet, no entries")
+RITUAL.ADD(journal$, RITUAL.ENTRY$("2026-09-25", "old week", "x", 2))
+RITUAL.ADD(journal$, RITUAL.ENTRY$("2026-09-29", "budget sheet", "Miller offer", 3))
+RITUAL.ADD(journal$, RITUAL.ENTRY$("2026-10-01", "Miller offer", "printer", 5))
+RITUAL.ADD(journal$, e$)
+DIM all = RITUAL.ENTRIES(journal$)
+TESTKIT.EQ(LEN(all), 4, "four entries come back")
+TESTKIT.EQ(all[1]{"day"}, "2026-09-29", "with their day")
+TESTKIT.EQ(all[1]{"mood"}, 3, "their mood")
+TESTKIT.EQ(all[1]{"done"}, "budget sheet", "what got done")
+TESTKIT.EQ(all[1]{"tomorrow"}, "Miller offer", "and what is next")
+DIM week = RITUAL.WEEK(all, "2026-10-02")
+TESTKIT.EQ(LEN(week), 3, "the week of 2 October holds three of them")
+DIM sum$ = RITUAL.SUMMARY$(week)
+DIM head$ = "Week of 2026-09-28: 3 days in the journal, mood 4.0 on average."
+TESTKIT.EQ(SPLIT(sum$, LF$)[0], head$, "the summary counts days and moods")
+TESTKIT.ISTRUE(INSTR(sum$, "- Miller offer") >= 0, "lists what got done")
+TESTKIT.ISTRUE(ENDSWITH(sum$, "Still open: call the printer"), "and ends with what is open")
+TESTKIT.EQ(RITUAL.SUMMARY$([]), "No entries this week.", "an empty week")
+DIM plus = RITUAL.PARSE(RITUAL.TEXT_OF$(journal$) + RITUAL.ENTRY$("2026-10-03", "a", "b", 1))
+TESTKIT.EQ(LEN(plus), 5, "an entry not yet written can join the text")
+
+KILL journal$
+RMDIR PATH.JOIN$(folder$, "journal")
+RMDIR folder$
+TESTKIT.REPORT()

@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "E01"
+name = "Downloads Butler"
+program = "downloads_butler.jdb"
+summary = "Sorts the Downloads folder into folders by kind and month"
+minutes_per_week = 15
+schedule = "daily 18:30"
+section = "downloads_butler"
+modules = ["butler.jdb"]
+
+[[setting]]
+key = "source"
+label = "Folder to tidy"
+kind = "folder"
+default = "~/Downloads"
+
+[[setting]]
+key = "target"
+label = "Folder to sort into"
+kind = "folder"
+default = "~/Downloads/Sorted"
+
+[[setting]]
+key = "min_age_hours"
+label = "Leave files younger than (hours)"
+kind = "number"
+default = 24

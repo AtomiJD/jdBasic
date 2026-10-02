@@ -1,0 +1,23 @@
+' Morning Launcher: opens the programs, folders and web pages of the
+' workday. The lists are the [morning_launcher] part of work.conf.
+'
+'   jdbasic morning_launcher.jdb            open everything
+'   jdbasic morning_launcher.jdb --dry-run  show what would open
+
+IMPORT WORKCONF, LAUNCHER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM empty AS MAP
+DIM settings = WORKCONF.VALUE(cfg, "morning_launcher", empty)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+DIM today = CINT(FORMAT_DATE(NOW(), "%w"))
+
+DIM plan = LAUNCHER.PLAN(settings, today, OS.GETOS())
+DIM n_open = LAUNCHER.START(plan, dry_run)
+IF n_open = 0 THEN
+    PRINT "Nothing to open on "; LAUNCHER.DAY_KEY$(today); "."
+ELSEIF dry_run THEN
+    PRINT n_open; " things would open. Run without --dry-run."
+ELSE
+    PRINT "Good morning. "; n_open; " things are opening."
+ENDIF

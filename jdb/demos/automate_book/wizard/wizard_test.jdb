@@ -1,0 +1,103 @@
+' WIZARD: the recipes are found, work.conf is written and reads back,
+' schedules become the right schtasks arguments, a setup is installed
+' into a temporary work folder, the installed Downloads Butler runs a
+' dry run with it, and the doctor finds what is missing. Nothing is
+' scheduled. Run from the book folder.
+
+IMPORT TESTKIT, WIZARD, CONF
+
+DIM tmp$ = MKTEMP$("wizardtest")
+MKDIR tmp$
+DIM recipes = WIZARD.RECIPES("recipes")
+DIM a = WIZARD.DEFAULTS(recipes, tmp$)
+a{"jdbasic"} = PATH.NORMALIZE$("../../../build/jdBasic.exe")
+a{"name"} = "Mia Example"
+a{"email"} = "mia@example.com"
+
+FUNC BadSchedule(r)
+    RETURN WIZARD.SCHEDULE_ARGS(r, "sometimes", "j", "p", "c")
+ENDFUNC
+
+FUNC FirstWith(recipes, id$)
+    DIM k = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        IF recipes[k]{"id"} = id$ THEN RETURN recipes[k]
+    NEXT k
+    RETURN {}
+ENDFUNC
+
+TESTKIT.SUITE("recipes and defaults")
+TESTKIT.ISTRUE(LEN(recipes) >= 1, "the recipes are found")
+DIM e01 = FirstWith(recipes, "E01")
+TESTKIT.EQ(e01{"name"}, "Downloads Butler", "with their names")
+TESTKIT.EQ(e01{"level"}, "easy", "and levels")
+TESTKIT.ISTRUE("E01" IN a{"picked"}, "every easy recipe is picked at first")
+TESTKIT.EQ(a{"values"}{"downloads_butler"}{"min_age_hours"}, 24, "settings start at their defaults")
+TESTKIT.EQ(a{"work"}, PATH.JOIN$(tmp$, "Documents", "AutomateWork"), "the work folder is in Documents")
+
+TESTKIT.SUITE("work.conf")
+TESTKIT.EQ(WIZARD.TOML_VALUE$("a " + CHR$(34) + "b" + CHR$(34) + " c:\x"), CHR$(34) + "a \" + CHR$(34) + "b\" + CHR$(34) + " c:\\x" + CHR$(34), "text is quoted and escaped")
+TESTKIT.EQ(WIZARD.TOML_VALUE$(TRUE), "true", "booleans")
+TESTKIT.EQ(WIZARD.TOML_VALUE$(["x", 2]), "[" + CHR$(34) + "x" + CHR$(34) + ", 2]", "arrays")
+DIM text$ = WIZARD.CONF_TEXT$(a, recipes)
+DIM back = CONF.TOML_TEXT(text$)
+TESTKIT.EQ(CONF.GET(back, "user.name", ""), "Mia Example", "the user reads back")
+TESTKIT.EQ(CONF.GET(back, "downloads_butler.source", ""), "~/Downloads", "and every picked recipe's settings")
+TESTKIT.EQ(CONF.GET(back, "downloads_butler.min_age_hours", 0), 24, "with their types")
+
+TESTKIT.EQ(WIZARD.SHOW$(["pdf", "jpg"]), "pdf, jpg", "a list shows with commas")
+TESTKIT.EQARRAY(WIZARD.LIST_OF(" pdf, jpg ,,png"), ["pdf", "jpg", "png"], "and reads back from them")
+
+TESTKIT.SUITE("schedules")
+DIM s = WIZARD.SCHEDULE_ARGS(e01, "daily 18:30", "C:\jd\jdbasic.exe", "C:\w\d.jdb", "C:\w\work.conf")
+TESTKIT.EQ(s[3], "AutomateWork\E01 Downloads Butler", "the task name")
+TESTKIT.EQ(s[5], CHR$(34) + "C:\jd\jdbasic.exe" + CHR$(34) + " " + CHR$(34) + "C:\w\d.jdb" + CHR$(34) + " --config " + CHR$(34) + "C:\w\work.conf" + CHR$(34), "the command with quoted paths")
+TESTKIT.EQ(JOIN(TAKE(-4, s), " "), "/SC DAILY /ST 18:30", "daily")
+TESTKIT.EQ(JOIN(TAKE(-6, WIZARD.SCHEDULE_ARGS(e01, "weekdays 08:30", "j", "p", "c")), " "), "/SC WEEKLY /D MON,TUE,WED,THU,FRI /ST 08:30", "on weekdays")
+TESTKIT.EQ(JOIN(TAKE(-6, WIZARD.SCHEDULE_ARGS(e01, "weekly Friday 16:00", "j", "p", "c")), " "), "/SC WEEKLY /D FRI /ST 16:00", "on one day")
+TESTKIT.EQ(JOIN(TAKE(-4, WIZARD.SCHEDULE_ARGS(e01, "every 50 minutes", "j", "p", "c")), " "), "/SC MINUTE /MO 50", "every few minutes")
+TESTKIT.EQ(JOIN(TAKE(-2, WIZARD.SCHEDULE_ARGS(e01, "at logon", "j", "p", "c")), " "), "/SC ONLOGON", "at logon")
+TESTKIT.EQ(LEN(WIZARD.SCHEDULE_ARGS(e01, "manual", "j", "p", "c")), 0, "manual means no task")
+TESTKIT.THROWS(BadSchedule@, e01, "a schedule it cannot read is refused")
+TESTKIT.EQARRAY(WIZARD.UNSCHEDULE_ARGS(e01), ["/Delete", "/F", "/TN", "AutomateWork\E01 Downloads Butler"], "and removed")
+TESTKIT.EQ(JOIN(TAKE(-4, WIZARD.SCHEDULE_ARGS(e01, "every 2 hours", "j", "p", "c")), " "), "/SC HOURLY /MO 2", "every few hours")
+TESTKIT.EQ(LEN(WIZARD.SCHEDULE_ARGS(e01, "", "j", "p", "c")), 0, "an empty schedule means no task")
+TESTKIT.EQ(WIZARD.RESOLVE_WHEN$(a, "weekdays {day_end}"), "weekdays 17:30", "the end of the working day fills in")
+DIM e07 = FirstWith(recipes, "E07")
+IF MAP.EXISTS(e07, "id") THEN
+    DIM s7 = WIZARD.SCHEDULE_ARGS(e07, "weekly fri 16:00", "j", "p", "c")
+    TESTKIT.EQ(s7[5], CHR$(34) + "j" + CHR$(34) + " " + CHR$(34) + "p" + CHR$(34) + " " + CHR$(34) + "week" + CHR$(34) + " --config " + CHR$(34) + "c" + CHR$(34), "a recipe's schedule_args follow the program")
+ENDIF
+
+TESTKIT.SUITE("installing")
+a{"user_lib"} = PATH.JOIN$(tmp$, "userlib")
+DIM downloads$ = PATH.JOIN$(tmp$, "Downloads")
+MKDIR downloads$
+TXTWRITER PATH.JOIN$(downloads$, "report.pdf"), "pdf"
+a{"values"}{"downloads_butler"}{"source"} = downloads$
+a{"values"}{"downloads_butler"}{"min_age_hours"} = 0
+a{"picked"} = ["E01", "E08"]
+DIM before = WIZARD.DOCTOR(a, recipes, FALSE)
+TESTKIT.ISTRUE(LEN(before) >= 2, "the doctor finds the missing settings and program")
+DIM steps = WIZARD.INSTALL_PLAN(a, recipes, "recipes/lib")
+TESTKIT.EQ(WIZARD.APPLY(steps, FALSE), LEN(steps), "every step is carried out")
+DIM conf$ = WIZARD.CONF_PATH$(a)
+TESTKIT.ISTRUE(FILE.EXISTS(conf$), "work.conf is written")
+DIM prog$ = PATH.JOIN$(a{"work"}, "recipes", "E01_downloads_butler", "downloads_butler.jdb")
+TESTKIT.ISTRUE(FILE.EXISTS(prog$), "the recipe is copied")
+TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(a{"user_lib"}, "workconf.jdb")), "and the shared module")
+TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(a{"work"}, "recipes", "E08_mail_templates", "templates", "thanks.txt")), "and a recipe's extra files with their folders")
+TESTKIT.EQ(LEN(WIZARD.DOCTOR(a, recipes, FALSE)), 0, "the doctor is content")
+DIM old_path$ = GETENV$("JDBASIC_PATH")
+SETENV "JDBASIC_PATH", PATH.NORMALIZE$("../../../lib") + ";" + a{"user_lib"}
+DIM r = OS.EXEC(a{"jdbasic"}, [prog$, "--dry-run", "--config", conf$])
+SETENV "JDBASIC_PATH", old_path$
+TESTKIT.EQ(r{"EXIT_CODE"}, 0, "the installed recipe runs with the written settings")
+TESTKIT.ISTRUE(INSTR(r{"OUTPUT"}, "would move report.pdf") >= 0, "and plans to sort the test download")
+DIM again = WIZARD.FROM_CONF(WIZARD.DEFAULTS(recipes, tmp$), recipes, conf$)
+TESTKIT.EQARRAY(again{"picked"}, ["E01", "E08"], "running again reads the picked recipes back")
+TESTKIT.EQ(again{"values"}{"downloads_butler"}{"source"}, downloads$, "and their settings")
+TESTKIT.EQ(again{"name"}, "Mia Example", "and the user")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", tmp$])
+TESTKIT.REPORT()

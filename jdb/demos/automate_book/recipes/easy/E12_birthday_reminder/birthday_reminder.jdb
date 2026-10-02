@@ -1,0 +1,34 @@
+' Birthday Reminder: lists the birthdays and anniversaries of your
+' contacts in the next days and keeps a calendar file with all of them
+' up to date. The settings are the [birthday_reminder] part of
+' work.conf.
+'
+'   jdbasic birthday_reminder.jdb            list, write the calendar
+'   jdbasic birthday_reminder.jdb --dry-run  only list
+
+IMPORT WORKCONF, BIRTHDAYS, DT
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "birthday_reminder."
+DIM home$ = "~/Documents/AutomateWork/"
+DIM csv_default$ = home$ + "contacts.csv"
+DIM csv$ = WORKCONF.FOLDER$(cfg, key$ + "contacts", csv_default$)
+DIM ics_default$ = home$ + "birthdays.ics"
+DIM ics$ = WORKCONF.FOLDER$(cfg, key$ + "calendar", ics_default$)
+DIM horizon = WORKCONF.VALUE(cfg, key$ + "days", 14)
+
+DIM today$ = DT.FMT$(DT.NOW(), "%Y-%m-%d", DT.LOCAL_OFFSET())
+DIM people = BIRTHDAYS.CONTACTS(csv$)
+DIM soon = BIRTHDAYS.UPCOMING(people, today$, horizon)
+IF LEN(soon) = 0 THEN
+    PRINT "No birthday in the next "; horizon; " days."
+ELSE
+    DIM k = 0
+    FOR k = 0 TO LEN(soon) - 1
+        PRINT BIRTHDAYS.ENTRY$(soon[k])
+    NEXT k
+ENDIF
+IF NOT WORKCONF.FLAG("dry-run") THEN
+    DIM n = BIRTHDAYS.CALENDAR(people, today$, ics$)
+    PRINT n; " yearly events in "; ics$
+ENDIF

@@ -1,0 +1,171 @@
+' tracker.jdb: time per project from a log of start and stop events.
+' The log is a CSV file with the columns time, event and project; a
+' line is added for every start and stop, nothing is ever rewritten.
+'
+'   IMPORT TRACKER
+'   TRACKER.RECORD("log.csv", now$, "start", "Miller")
+'   DIM work = TRACKER.SESSIONS(TRACKER.EVENTS("log.csv"))
+'   DIM week = TRACKER.WEEK_TABLE(work, "2026-09-28", now$)
+
+EXPORT MODULE TRACKER
+
+IMPORT XLSX
+
+DIM gLF$ = CHR$(10)
+
+' A project name that fits into one CSV field: commas and line breaks
+' become spaces.
+EXPORT FUNC CLEAN$(project$)
+    DIM p$ = REPLACE$(REPLACE$(project$, ",", " "), CHR$(13), " ")
+    RETURN TRIM$(REPLACE$(p$, gLF$, " "))
+ENDFUNC
+
+' Adds one event ("start" or "stop") to the log, with a header line
+' when the log is new.
+EXPORT SUB RECORD(log_path$, when$, event$, project$)
+    IF NOT FILE.EXISTS(log_path$) THEN
+        DIM folder$ = PATH.DIRNAME$(log_path$)
+        IF folder$ <> "" THEN MKDIR folder$
+        TXTWRITER log_path$, "time,event,project" + gLF$
+    ENDIF
+    DIM row$ = when$ + "," + event$ + "," + CLEAN$(project$)
+    TXTWRITER log_path$, row$ + gLF$, TRUE
+ENDSUB
+
+' The events of the log as rows of [time, event, project].
+EXPORT FUNC EVENTS(log_path$)
+    IF NOT FILE.EXISTS(log_path$) THEN RETURN []
+    DIM kinds = ["STRING", "STRING", "STRING"]
+    RETURN CSVREADER(log_path$, ",", TRUE, kinds)
+ENDFUNC
+
+' The blocks of work the events describe: maps with "project",
+' "start" and "stop" ("" while it is still running). A start while
+' another block runs ends that one first.
+EXPORT FUNC SESSIONS(events)
+    DIM out = []
+    DIM in_block = FALSE
+    DIM cur = {"project": "", "start": "", "stop": ""}
+    DIM k = 0
+    FOR k = 0 TO LEN(events) - 1
+        DIM ev = events[k]
+        DIM when$ = ev[0]
+        DIM what$ = ev[1]
+        IF in_block THEN
+            cur{"stop"} = when$
+            PUSH(out, cur)
+            in_block = FALSE
+        ENDIF
+        IF what$ = "start" THEN
+            DIM project$ = ""
+            IF LEN(ev) > 2 THEN project$ = ev[2]
+            cur = {"project": project$, "start": when$, "stop": ""}
+            in_block = TRUE
+        ENDIF
+    NEXT k
+    IF in_block THEN PUSH(out, cur)
+    RETURN out
+ENDFUNC
+
+' The project of the block that is still running, "" when none is.
+EXPORT FUNC RUNNING$(sessions)
+    IF LEN(sessions) = 0 THEN RETURN ""
+    DIM last = sessions[LEN(sessions) - 1]
+    IF last{"stop"} = "" THEN RETURN last{"project"}
+    RETURN ""
+ENDFUNC
+
+' The Monday of the week a day (YYYY-MM-DD) belongs to.
+EXPORT FUNC MONDAY$(day$)
+    DIM back = (VAL(FORMAT_DATE(CDATE(day$), "%w")) + 6) MOD 7
+    RETURN FORMAT_DATE(DATEADD("D", -back, CDATE(day$)), "%Y-%m-%d")
+ENDFUNC
+
+' The minutes between two times written YYYY-MM-DD HH:MM:SS.
+EXPORT FUNC MINUTES(start$, stop$)
+    RETURN DATEDIFF("N", CDATE(start$), CDATE(stop$))
+ENDFUNC
+
+' Hours per project and weekday for the week from monday$: a map from
+' project to seven numbers, Monday first. A block counts on the day
+' it started; a running block counts until now$.
+EXPORT FUNC WEEK_TABLE(sessions, monday$, now$)
+    DIM table AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(sessions) - 1
+        DIM s = sessions[k]
+        DIM day$ = LEFT$(s{"start"}, 10)
+        DIM col = DATEDIFF("D", CDATE(monday$), CDATE(day$))
+        IF col >= 0 ANDALSO col <= 6 THEN
+            DIM stop$ = s{"stop"}
+            IF stop$ = "" THEN stop$ = now$
+            DIM project$ = s{"project"}
+            IF NOT MAP.EXISTS(table, project$) THEN
+                table{project$} = ZEROS(7)
+            ENDIF
+            DIM hours = table{project$}
+            hours[col] = hours[col] + MINUTES(s{"start"}, stop$) / 60
+            table{project$} = hours
+        ENDIF
+    NEXT k
+    RETURN table
+ENDFUNC
+
+' Hours rounded to two decimals.
+FUNC Hours2(h)
+    RETURN ROUND(h * 100) / 100
+ENDFUNC
+
+' The week as rows for a sheet: a header with the days, one row per
+' project with its total, and a row with the totals of every day.
+EXPORT FUNC SHEET_ROWS(table, monday$)
+    DIM head = ["Project"]
+    DIM k = 0
+    DIM d = 0
+    FOR k = 0 TO 6
+        DIM day = DATEADD("D", k, CDATE(monday$))
+        PUSH(head, FORMAT_DATE(day, "%a %d.%m."))
+    NEXT k
+    PUSH(head, "Total")
+    DIM rows = [head]
+    DIM sums = ZEROS(7)
+    DIM projects = SORT(MAP.KEYS(table))
+    FOR k = 0 TO LEN(projects) - 1
+        DIM p$ = projects[k]
+        DIM hours = table{p$}
+        DIM row = [p$]
+        DIM total = 0
+        FOR d = 0 TO 6
+            PUSH(row, Hours2(hours[d]))
+            total = total + hours[d]
+            sums[d] = sums[d] + hours[d]
+        NEXT d
+        PUSH(row, Hours2(total))
+        PUSH(rows, row)
+    NEXT k
+    DIM last = ["Total"]
+    FOR d = 0 TO 6
+        PUSH(last, Hours2(sums[d]))
+    NEXT d
+    PUSH(last, Hours2(SUM(sums)))
+    PUSH(rows, last)
+    RETURN rows
+ENDFUNC
+
+' Writes the rows as an Excel sheet with the hours in two decimals.
+EXPORT SUB WRITE_SHEET(rows, path$)
+    DIM folder$ = PATH.DIRNAME$(path$)
+    IF folder$ <> "" THEN MKDIR folder$
+    DIM wb = XLSX.NEW()
+    DIM sheet = XLSX.SHEET(wb, "Week", rows)
+    XLSX.COLUMN(sheet, "A", {"width": 24})
+    DIM c = 2
+    FOR c = 2 TO 9
+        XLSX.COLUMN(sheet, c, {"width": 11, "format": "0.00"})
+    NEXT c
+    DIM last_row$ = STR$(LEN(rows))
+    XLSX.STYLE(sheet, "A" + last_row$ + ":I" + last_row$, _
+        {"bold": TRUE, "fill": "DDEBF7"})
+    XLSX.FREEZE(sheet, 1)
+    XLSX.WRITE(path$, wb)
+ENDSUB

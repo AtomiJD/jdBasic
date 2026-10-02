@@ -1,0 +1,58 @@
+' Page Watcher: HTML turned into text, the watched part between two
+' markers, file names from page names, and a page on a local server
+' watched over three looks: new, the same, changed; a dry run keeps
+' nothing, a missing marker and a server that is not there are told.
+
+IMPORT TESTKIT, WATCHER
+
+DIM gPrice$ = "19.99"
+DIM gPort = 18731
+DIM base$ = "http://127.0.0.1:" + STR$(gPort)
+DIM store$ = MKTEMP$("watch")
+
+FUNC Shop$(request)
+    DIM page$ = "<html><head><style>b {color: red}</style></head><body>"
+    page$ = page$ + "<h1>Desk lamp</h1><p>Price: <span id=price>"
+    RETURN page$ + gPrice$ + " EUR</span></p></body></html>"
+ENDFUNC
+
+TESTKIT.SUITE("text from HTML")
+TESTKIT.EQ(WATCHER.PLAINTEXT$("<p>Tom &amp; Jerry</p>  <b>now</b>"), "Tom & Jerry now", "tags out, entities back, spaces collapsed")
+TESTKIT.EQ(WATCHER.PLAINTEXT$("a<script>var x = '<b>';</script>b"), "a b", "a script is no text")
+TESTKIT.EQ(WATCHER.PART$("<i>x</i> start 42 end tail", "start", "end"), "42", "the part between the markers")
+TESTKIT.EQ(WATCHER.PART$("no marker here", "price:", ""), "", "a missing start marker gives nothing")
+TESTKIT.EQ(WATCHER.PART$("<b>all</b> of it", "", ""), "all of it", "no markers, the whole page")
+TESTKIT.EQ(WATCHER.SLUG$("Desk lamp (Müller GmbH)"), "desk_lamp_m_ller_gmbh_", "a file name from a page name")
+
+TESTKIT.SUITE("a page over three looks")
+HTTP.SERVER.ON_GET("/shop", "SHOP$")
+TESTKIT.ISTRUE(HTTP.SERVER.START(gPort), "a local server for the test")
+DIM page = {"name": "Desk lamp", "url": base$ + "/shop", "start": "id=price>", "end": "</span>"}
+DIM first = WATCHER.CHECK(page, store$, FALSE)
+TESTKIT.EQ(first{"status"}, "new", "the first look stores the text")
+TESTKIT.EQ(TXTREADER$(PATH.JOIN$(store$, "desk_lamp.txt")), "19.99 EUR", "only the watched part")
+TESTKIT.EQ(WATCHER.CHECK(page, store$, FALSE){"status"}, "same", "the same text again")
+gPrice$ = "17.49"
+DIM dry = WATCHER.CHECK(page, store$, TRUE)
+TESTKIT.EQ(dry{"status"}, "changed", "a dry run sees the change")
+TESTKIT.EQ(TXTREADER$(PATH.JOIN$(store$, "desk_lamp.txt")), "19.99 EUR", "and keeps the old copy")
+DIM changed = WATCHER.CHECK(page, store$, FALSE)
+TESTKIT.EQ(changed{"status"}, "changed", "the change")
+TESTKIT.EQ(changed{"diff"}, "[-19.99-]{+17.49+} EUR", "marked word by word")
+TESTKIT.EQ(WATCHER.CHECK(page, store$, FALSE){"status"}, "same", "and remembered")
+
+TESTKIT.SUITE("problems")
+DIM moved = {"name": "Moved", "url": base$ + "/shop", "start": "id=cost>", "end": ""}
+TESTKIT.EQ(WATCHER.CHECK(moved, store$, FALSE){"status"}, "missing", "a marker the page lost")
+DIM gone = {"name": "Gone", "url": base$ + "/nothing", "start": "", "end": ""}
+DIM gone_r = WATCHER.CHECK(gone, store$, FALSE)
+TESTKIT.EQ(gone_r{"status"}, "error", "a page the server does not have")
+TESTKIT.EQ(gone_r{"diff"}, "the server answered 404", "with its status")
+HTTP.SERVER.STOP()
+HTTP.SETTIMEOUT(3)
+DIM down = {"name": "Down", "url": base$ + "/shop", "start": "", "end": ""}
+TESTKIT.EQ(WATCHER.CHECK(down, store$, FALSE){"status"}, "error", "a server that is not running")
+
+KILL PATH.JOIN$(store$, "desk_lamp.txt")
+RMDIR store$
+TESTKIT.REPORT()

@@ -1,0 +1,90 @@
+' launcher.jdb: the plan for the start of a workday. The things to
+' open every day, plus those of one weekday, each as the program and
+' the argument that opens it.
+'
+'   IMPORT LAUNCHER
+'   DIM plan = LAUNCHER.PLAN(settings, 1, "WINDOWS")
+'   PRINT LAUNCHER.START(plan, TRUE); " things would open"
+
+EXPORT MODULE LAUNCHER
+
+' The settings key of a weekday, 0 for Sunday to 6 for Saturday.
+EXPORT FUNC DAY_KEY$(weekday)
+    DIM keys = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"]
+    RETURN keys[weekday MOD 7]
+ENDFUNC
+
+' What a target is: "web" for an address, "app" for a program file,
+' "path" for any other file or folder.
+EXPORT FUNC KIND$(target$)
+    DIM low$ = LCASE$(target$)
+    IF STARTSWITH(low$, "http://") THEN RETURN "web"
+    IF STARTSWITH(low$, "https://") THEN RETURN "web"
+    IF ENDSWITH(low$, ".exe") ORELSE ENDSWITH(low$, ".lnk") THEN
+        RETURN "app"
+    ENDIF
+    RETURN "path"
+ENDFUNC
+
+' The program that opens a target on a system: Explorer on Windows,
+' open on macOS, xdg-open elsewhere.
+EXPORT FUNC OPENER$(os$)
+    IF os$ = "WINDOWS" THEN RETURN "explorer"
+    IF os$ = "MACOS" THEN RETURN "open"
+    RETURN "xdg-open"
+ENDFUNC
+
+' A list setting as an array of texts; a missing key is an empty list.
+FUNC ListOf(settings, key$)
+    DIM out = []
+    IF NOT MAP.EXISTS(settings, key$) THEN RETURN out
+    DIM items = settings{key$}
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM item$ = items[k]
+        PUSH(out, item$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The launches for a weekday: the "every_day" list first, then the
+' list of that day, each target once. A launch is a map with
+' "target", "kind", "program" and "args".
+EXPORT FUNC PLAN(settings, weekday, os$)
+    DIM wanted = APPEND(ListOf(settings, "every_day"), _
+        ListOf(settings, DAY_KEY$(weekday)))
+    DIM seen AS MAP
+    DIM plan = []
+    DIM k = 0
+    FOR k = 0 TO LEN(wanted) - 1
+        DIM target$ = wanted[k]
+        DIM fresh = NOT MAP.EXISTS(seen, target$)
+        IF TRIM$(target$) <> "" ANDALSO fresh THEN
+            seen{target$} = TRUE
+            DIM launch AS MAP
+            launch{"target"} = target$
+            launch{"kind"} = KIND$(target$)
+            launch{"program"} = OPENER$(os$)
+            launch{"args"} = [target$]
+            PUSH(plan, launch)
+        ENDIF
+    NEXT k
+    RETURN plan
+ENDFUNC
+
+' Opens every target of the plan and prints a line for each; with
+' dry_run it only prints them. Answers the number of targets.
+EXPORT FUNC START(plan, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(plan) - 1
+        DIM launch = plan[k]
+        DIM target$ = launch{"target"}
+        IF dry_run THEN
+            PRINT "would open "; target$
+        ELSE
+            DIM r = OS.EXEC(launch{"program"}, launch{"args"})
+            PRINT "opened "; target$
+        ENDIF
+    NEXT k
+    RETURN LEN(plan)
+ENDFUNC

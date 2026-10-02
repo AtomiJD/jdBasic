@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "E09"
+name = "Meeting Notes Starter"
+program = "meeting_notes.jdb"
+summary = "Writes a Word file for the notes of your next meeting"
+minutes_per_week = 20
+schedule = "weekdays 07:30"
+section = "meeting_notes"
+modules = ["meetnotes.jdb"]
+
+[[setting]]
+key = "calendar"
+label = "Calendar file (.ics)"
+kind = "file"
+default = "~/Documents/AutomateWork/calendar.ics"
+
+[[setting]]
+key = "folder"
+label = "Folder for the notes"
+kind = "folder"
+default = "~/Documents/Meeting notes"
+
+[[setting]]
+key = "lookahead_days"
+label = "Look ahead (days)"
+kind = "number"
+default = 7

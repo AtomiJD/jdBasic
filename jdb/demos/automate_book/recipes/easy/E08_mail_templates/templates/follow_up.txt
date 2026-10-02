@@ -1,0 +1,8 @@
+Dear {{ to }},
+
+thank you for the meeting today, {{ date }}. As agreed, I am sending
+you the notes and the open points. I will get back to you on the
+first of them by the end of next week.
+
+{{ signature }}
+{{ me }}

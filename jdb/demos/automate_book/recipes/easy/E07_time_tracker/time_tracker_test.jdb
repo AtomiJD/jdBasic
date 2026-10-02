@@ -1,0 +1,64 @@
+' Time Tracker: project names made safe for the log, events recorded
+' and read back, blocks of work with a start that ends the running
+' one, the week as hours per project and day, and the Excel sheet.
+
+IMPORT TESTKIT, TRACKER, XLSX
+
+DIM folder$ = MKTEMP$("tracker")
+DIM log_path$ = PATH.JOIN$(folder$, "time", "log.csv")
+DIM sheet$ = PATH.JOIN$(folder$, "time", "week.xlsx")
+
+TESTKIT.SUITE("names and dates")
+TESTKIT.EQ(TRACKER.CLEAN$(" Miller, offer "), "Miller  offer", "a comma becomes a space")
+TESTKIT.EQ(TRACKER.MONDAY$("2026-10-02"), "2026-09-28", "the Monday of a Friday")
+TESTKIT.EQ(TRACKER.MONDAY$("2026-10-04"), "2026-09-28", "and of the Sunday after")
+TESTKIT.EQ(TRACKER.MINUTES("2026-10-01 09:00:00", "2026-10-01 10:30:00"), 90, "minutes between two times")
+
+TESTKIT.SUITE("the log")
+TESTKIT.EQ(LEN(TRACKER.EVENTS(log_path$)), 0, "no log, no events")
+TRACKER.RECORD(log_path$, "2026-09-25 09:00:00", "start", "Last week")
+TRACKER.RECORD(log_path$, "2026-09-25 10:00:00", "stop", "")
+TRACKER.RECORD(log_path$, "2026-09-28 09:00:00", "start", "Miller, offer")
+TRACKER.RECORD(log_path$, "2026-09-28 11:30:00", "start", "Admin")
+TRACKER.RECORD(log_path$, "2026-09-28 12:00:00", "stop", "")
+TRACKER.RECORD(log_path$, "2026-10-01 14:00:00", "start", "Miller  offer")
+DIM events = TRACKER.EVENTS(log_path$)
+TESTKIT.EQ(LEN(events), 6, "six events")
+TESTKIT.EQ(events[2][2], "Miller  offer", "the project name in its column")
+TESTKIT.ISTRUE(STARTSWITH(TXTREADER$(log_path$), "time,event,project"), "with a header line")
+DIM work = TRACKER.SESSIONS(events)
+TESTKIT.EQ(LEN(work), 4, "four blocks of work")
+TESTKIT.EQ(work[1]{"stop"}, "2026-09-28 11:30:00", "a start ends the block before")
+TESTKIT.EQ(work[3]{"stop"}, "", "the last block still runs")
+TESTKIT.EQ(TRACKER.RUNNING$(work), "Miller  offer", "and is reported as running")
+TESTKIT.EQ(TRACKER.RUNNING$(DROP(-1, work)), "", "nothing runs when the last is stopped")
+
+TESTKIT.SUITE("the week")
+DIM table = TRACKER.WEEK_TABLE(work, "2026-09-28", "2026-10-01 15:15:00")
+TESTKIT.EQ(LEN(MAP.KEYS(table)), 2, "two projects this week, last week left out")
+DIM miller = table{"Miller  offer"}
+TESTKIT.NEAR(miller[0], 2.5, 0.0001, "Monday: two and a half hours")
+TESTKIT.NEAR(miller[3], 1.25, 0.0001, "Thursday: the running block until now")
+TESTKIT.NEAR(table{"Admin"}[0], 0.5, 0.0001, "Admin: half an hour on Monday")
+DIM rows = TRACKER.SHEET_ROWS(table, "2026-09-28")
+TESTKIT.EQ(LEN(rows), 4, "header, two projects, totals")
+TESTKIT.EQ(rows[0][1], "Mon 28.09.", "the days in the header")
+TESTKIT.EQ(rows[0][8], "Total", "and a total column")
+TESTKIT.EQ(rows[1][0], "Admin", "projects in alphabetical order")
+TESTKIT.NEAR(rows[2][8], 3.75, 0.0001, "the week total of a project")
+TESTKIT.NEAR(rows[3][1], 3, 0.0001, "the total of a day")
+TESTKIT.NEAR(rows[3][8], 4.25, 0.0001, "and of the week")
+
+TESTKIT.SUITE("the sheet")
+TRACKER.WRITE_SHEET(rows, sheet$)
+DIM book = XLSX.READ(sheet$)
+DIM back = book{"Week"}
+TESTKIT.EQ(LEN(back), 4, "the sheet has the four rows")
+TESTKIT.EQ(back[2][0], "Miller  offer", "with the project names")
+TESTKIT.NEAR(back[2][8], 3.75, 0.0001, "and the hours as numbers")
+
+KILL sheet$
+KILL log_path$
+RMDIR PATH.JOIN$(folder$, "time")
+RMDIR folder$
+TESTKIT.REPORT()

@@ -1,0 +1,17 @@
+# What the setup wizard knows about this recipe.
+
+id = "E07"
+name = "Time Tracker"
+program = "time_tracker.jdb"
+summary = "Start and stop the clock per project, a weekly sheet in Excel"
+minutes_per_week = 30
+schedule = "weekly fri 16:00"
+schedule_args = ["week"]
+section = "time_tracker"
+modules = ["tracker.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder for the time log and the weekly sheets"
+kind = "folder"
+default = "~/Documents/AutomateWork/time"

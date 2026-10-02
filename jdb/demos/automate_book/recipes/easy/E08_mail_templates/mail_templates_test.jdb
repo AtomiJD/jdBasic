@@ -1,0 +1,59 @@
+' Mail Templates: the templates of a folder, the values with the date
+' written out, a template filled as plain text with umlauts and the
+' characters HTML would escape, conditions, and missing values.
+
+IMPORT TESTKIT, MAILTPL
+
+DIM LF$ = CHR$(10)
+DIM here$ = "recipes/easy/E08_mail_templates/templates"
+IF NOT FILE.ISDIR(here$) THEN here$ = "templates"
+DIM folder$ = MKTEMP$("mailtpl")
+MKDIR folder$
+TXTWRITER PATH.JOIN$(folder$, "b_reply.txt"), "Hi {{ to }}"
+TXTWRITER PATH.JOIN$(folder$, "a_note.txt"), "x"
+TXTWRITER PATH.JOIN$(folder$, "ignored.md"), "y"
+
+FUNC NoSuchTemplate(dir$)
+    RETURN MAILTPL.TEMPLATE$(dir$, "nope")
+ENDFUNC
+
+TESTKIT.SUITE("templates")
+TESTKIT.EQARRAY(MAILTPL.NAMES(folder$), ["a_note", "b_reply"], "the .txt files of a folder, sorted")
+TESTKIT.EQ(LEN(MAILTPL.NAMES(PATH.JOIN$(folder$, "none"))), 0, "a missing folder has none")
+TESTKIT.EQ(MAILTPL.TEMPLATE$(folder$, "b_reply"), "Hi {{ to }}", "a template's text")
+TESTKIT.THROWS(NoSuchTemplate@, folder$, "an unknown template is an error")
+TESTKIT.EQARRAY(MAILTPL.NAMES(here$), ["follow_up", "out_of_office", "thanks"], "the three that come with the book")
+
+TESTKIT.SUITE("values")
+DIM day = CDATE("2026-10-02")
+DIM v = MAILTPL.VALUES("Mia Schmidt", "Kind regards", "Ms O'Neil & Co", day)
+TESTKIT.EQ(v{"date"}, "2 October 2026", "the date written out")
+TESTKIT.EQ(v{"weekday"}, "Friday", "and its weekday")
+TESTKIT.EQ(v{"me"}, "Mia Schmidt", "the sender")
+
+TESTKIT.SUITE("filling")
+DIM thanks$ = MAILTPL.TEMPLATE$(here$, "thanks")
+DIM mail$ = MAILTPL.FILL$(thanks$, v)
+TESTKIT.ISTRUE(STARTSWITH(mail$, "Dear Ms O'Neil & Co," + LF$), "names stay plain text, nothing escaped")
+TESTKIT.ISTRUE(INSTR(mail$, "by Friday at the latest") >= 0, "the weekday in the text")
+TESTKIT.ISTRUE(ENDSWITH(mail$, "Kind regards" + LF$ + "Mia Schmidt" + LF$), "signature and name at the end")
+TESTKIT.EQ(MAILTPL.FILL$("{{ to }}: 3 < 4 & 5 > 2", v), "Ms O'Neil & Co: 3 < 4 & 5 > 2", "the template's own characters too")
+TESTKIT.EQ(MAILTPL.FILL$("Grüße, {{ me }}", v), "Grüße, Mia Schmidt", "umlauts")
+DIM cond$ = "{% if to %}Dear {{ to }}{% else %}Hello{% endif %}"
+TESTKIT.EQ(MAILTPL.FILL$(cond$, v), "Dear Ms O'Neil & Co", "a condition with a name")
+v{"to"} = ""
+TESTKIT.EQ(MAILTPL.FILL$(cond$, v), "Hello", "and without")
+
+TESTKIT.SUITE("missing values")
+DIM away$ = MAILTPL.TEMPLATE$(here$, "out_of_office")
+TESTKIT.EQARRAY(MAILTPL.MISSING(away$, v), ["back", "deputy"], "the own values a template needs")
+v{"back"} = "Monday, 12 October"
+v{"deputy"} = "Jonas"
+TESTKIT.EQ(LEN(MAILTPL.MISSING(away$, v)), 0, "none once they are given")
+TESTKIT.ISTRUE(INSTR(MAILTPL.FILL$(away$, v), "back on Monday, 12 October") >= 0, "and they are filled in")
+
+KILL PATH.JOIN$(folder$, "b_reply.txt")
+KILL PATH.JOIN$(folder$, "a_note.txt")
+KILL PATH.JOIN$(folder$, "ignored.md")
+RMDIR folder$
+TESTKIT.REPORT()

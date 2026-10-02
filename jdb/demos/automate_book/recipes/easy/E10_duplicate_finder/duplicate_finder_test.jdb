@@ -1,0 +1,59 @@
+' Duplicate Finder: a folder tree with copies in a subfolder, a file of
+' the same size but other content, an empty file and a hidden-free
+' walk; the groups, the wasted space and the Excel report read back.
+
+IMPORT TESTKIT, DUPES, XLSX
+
+DIM folder$ = MKTEMP$("dupes")
+DIM old$ = PATH.JOIN$(folder$, "Old copies")
+MKDIR old$
+DIM big$ = REPEAT$("budget line" + CHR$(10), 300)
+
+TXTWRITER PATH.JOIN$(folder$, "Budget 2026.xlsx"), big$
+TXTWRITER PATH.JOIN$(old$, "Budget 2026 (copy).xlsx"), big$
+TXTWRITER PATH.JOIN$(old$, "Budget final.xlsx"), big$
+TXTWRITER PATH.JOIN$(folder$, "photo.jpg"), "picture-A"
+TXTWRITER PATH.JOIN$(old$, "photo.jpg"), "picture-A"
+TXTWRITER PATH.JOIN$(folder$, "other.jpg"), "picture-B"
+TXTWRITER PATH.JOIN$(folder$, "empty.txt"), ""
+TXTWRITER PATH.JOIN$(old$, "empty.txt"), ""
+
+TESTKIT.SUITE("walking")
+DIM paths = DUPES.FILES([folder$, PATH.JOIN$(folder$, "missing")])
+TESTKIT.EQ(LEN(paths), 8, "every file in the tree, a missing folder adds none")
+
+TESTKIT.SUITE("groups")
+DIM groups = DUPES.GROUPS(paths, 1)
+TESTKIT.EQ(LEN(groups), 2, "the budget copies and the photo copies")
+DIM budget = groups[0]
+IF groups[1]{"size"} > groups[0]{"size"} THEN budget = groups[1]
+TESTKIT.EQ(LEN(budget{"files"}), 3, "three budget files with equal content")
+TESTKIT.EQ(budget{"size"}, LEN(big$), "with their size")
+TESTKIT.EQ(LEN(budget{"hash"}), 64, "and a SHA-256")
+TESTKIT.EQ(DUPES.WASTED(groups), 2 * LEN(big$) + 9, "two spare budgets and one spare photo")
+TESTKIT.EQ(LEN(DUPES.GROUPS(paths, 100)), 1, "a minimum size leaves the photos out")
+TESTKIT.EQ(LEN(DUPES.GROUPS([], 1)), 0, "no files, no groups")
+
+TESTKIT.SUITE("the report")
+DIM report$ = PATH.JOIN$(folder$, "dupes.xlsx")
+TESTKIT.EQ(DUPES.REPORT(groups, report$), 5, "five file rows")
+DIM book = XLSX.READ(report$)
+DIM rows = book{"Duplicates"}
+TESTKIT.EQARRAY(rows[0], ["Group", "Size (KB)", "File", "Folder", "Changed"], "the header")
+TESTKIT.EQ(rows[1][0], 1, "the largest waste first")
+TESTKIT.ISTRUE(STARTSWITH(rows[1][2], "Budget"), "is the budget")
+TESTKIT.EQ(rows[5][0], 2, "the photos second")
+DIM summary = book{"Summary"}
+TESTKIT.EQ(summary[1][1], 2, "the summary counts the groups")
+TESTKIT.EQ(summary[2][1], 5, "and the files")
+TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(old$, "photo.jpg")), "nothing was deleted")
+
+KILL report$
+DIM all = DUPES.FILES([folder$])
+DIM k = 0
+FOR k = 0 TO LEN(all) - 1
+    KILL all[k]
+NEXT k
+RMDIR old$
+RMDIR folder$
+TESTKIT.REPORT()

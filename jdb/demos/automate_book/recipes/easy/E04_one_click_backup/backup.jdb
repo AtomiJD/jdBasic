@@ -1,0 +1,116 @@
+' backup.jdb: copies of folders as one dated ZIP archive, and the
+' clean up that keeps only the newest archives.
+'
+'   IMPORT BACKUP
+'   DIM picked = BACKUP.ENTRIES(["C:/Work"], 200)
+'   BACKUP.WRITE(picked{"entries"}, "D:/Backup/backup 2026.zip")
+'   BACKUP.PRUNE(BACKUP.OLD("D:/Backup", "backup", 10), FALSE)
+
+EXPORT MODULE BACKUP
+
+' TRUE for an office lock file such as "~$report.docx".
+FUNC LockFile(file_name$)
+    RETURN STARTSWITH(file_name$, "~$")
+ENDFUNC
+
+' The files under a folder, at any depth, as paths relative to it
+' with forward slashes.
+EXPORT FUNC FILES(root$)
+    DIM out = []
+    DIM entries = SORT(DIR$(PATH.JOIN$(root$, "*")))
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM file_name$ = entries[k]
+        DIM full$ = PATH.JOIN$(root$, file_name$)
+        IF FILE.ISDIR(full$) THEN
+            DIM inner = FILES(full$)
+            FOR j = 0 TO LEN(inner) - 1
+                DIM sub_path$ = inner[j]
+                PUSH(out, file_name$ + "/" + sub_path$)
+            NEXT j
+        ELSEIF NOT LockFile(file_name$) THEN
+            PUSH(out, file_name$)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' What goes into the archive: "entries" maps each name in the archive
+' (the folder's own name, then the path inside it) to the file, and
+' "skipped" lists files larger than max_mb.
+EXPORT FUNC ENTRIES(folders, max_mb)
+    DIM entries AS MAP
+    DIM skipped = []
+    DIM limit = max_mb * 1048576
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(folders) - 1
+        DIM root$ = folders[k]
+        IF NOT FILE.ISDIR(root$) THEN THROW "No such folder: " + root$
+        DIM top$ = PATH.BASENAME$(root$)
+        DIM rel = FILES(root$)
+        FOR j = 0 TO LEN(rel) - 1
+            DIM inside$ = rel[j]
+            DIM full$ = PATH.JOIN$(root$, inside$)
+            IF FILE.SIZE(full$) > limit THEN
+                PUSH(skipped, full$)
+            ELSE
+                entries{top$ + "/" + inside$} = full$
+            ENDIF
+        NEXT j
+    NEXT k
+    RETURN {"entries": entries, "skipped": skipped}
+ENDFUNC
+
+' The archive's file name for a moment, such as
+' "backup 2026-10-01 1830.zip".
+EXPORT FUNC ARCHIVE_NAME$(prefix$, when)
+    RETURN prefix$ + " " + FORMAT_DATE(when, "%Y-%m-%d %H%M") + ".zip"
+ENDFUNC
+
+' Writes the archive; answers the number of files in it.
+EXPORT FUNC WRITE(entries, zip_path$)
+    DIM content AS MAP
+    DIM names = MAP.KEYS(entries)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM entry$ = names[k]
+        content{entry$} = BINREADER$(entries{entry$})
+    NEXT k
+    MKDIR PATH.DIRNAME$(zip_path$)
+    RETURN ZIP.WRITE(zip_path$, content)
+ENDFUNC
+
+' The archives of a prefix in the target folder beyond the newest
+' keep ones, oldest first.
+EXPORT FUNC OLD(target$, prefix$, keep)
+    DIM ours = []
+    DIM entries = SORT(DIR$(PATH.JOIN$(target$, "*")))
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM file_name$ = entries[k]
+        DIM mine = STARTSWITH(file_name$, prefix$ + " ")
+        IF mine ANDALSO ENDSWITH(LCASE$(file_name$), ".zip") THEN
+            PUSH(ours, PATH.JOIN$(target$, file_name$))
+        ENDIF
+    NEXT k
+    IF LEN(ours) <= keep THEN RETURN []
+    RETURN TAKE(LEN(ours) - keep, ours)
+ENDFUNC
+
+' Deletes the archives and prints a line for each; with dry_run it
+' only prints them. Answers the number of archives in the list.
+EXPORT FUNC PRUNE(old, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(old) - 1
+        DIM path$ = old[k]
+        IF dry_run THEN
+            PRINT "would delete "; PATH.BASENAME$(path$)
+        ELSE
+            KILL path$
+            PRINT "deleted "; PATH.BASENAME$(path$)
+        ENDIF
+    NEXT k
+    RETURN LEN(old)
+ENDFUNC

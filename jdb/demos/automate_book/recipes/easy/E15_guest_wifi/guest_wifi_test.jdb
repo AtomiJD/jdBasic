@@ -1,0 +1,65 @@
+' Guest Wi-Fi Card: the escaping the Wi-Fi code format needs, the
+' payload for WPA, an open and a hidden network, the QR code's size,
+' and the page of cards.
+
+IMPORT TESTKIT, WIFICARD, QR
+
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("wifi")
+MKDIR folder$
+
+FUNC BadSecurity(x)
+    RETURN WIFICARD.PAYLOAD$("a", "b", "WPA9", FALSE)
+ENDFUNC
+
+FUNC TooMany(path$)
+    RETURN WIFICARD.SHEET("a", "b", "WIFI:T:nopass;S:a;;", path$, 9)
+ENDFUNC
+
+TESTKIT.SUITE("escaping")
+TESTKIT.EQ(WIFICARD.ESCAPE$("plain"), "plain", "plain text stays")
+TESTKIT.EQ(WIFICARD.ESCAPE$("a;b,c:d"), "a\;b\,c\:d", "; , and : get a backslash")
+TESTKIT.EQ(WIFICARD.ESCAPE$("x\y" + Q$), "x\\y\" + Q$, "and so do \ and the quote")
+TESTKIT.EQ(WIFICARD.ESCAPE$("Grüße"), "Grüße", "letters beyond ASCII stay")
+
+TESTKIT.SUITE("payload")
+TESTKIT.EQ(WIFICARD.PAYLOAD$("Guests", "sun;flower", "WPA2", FALSE), "WIFI:T:WPA;S:Guests;P:sun\;flower;;", "WPA2 is written WPA")
+TESTKIT.EQ(WIFICARD.PAYLOAD$("Cafe", "x", "nopass", FALSE), "WIFI:T:nopass;S:Cafe;;", "an open network has no password")
+TESTKIT.EQ(WIFICARD.PAYLOAD$("Lab", "pw", "WEP", TRUE), "WIFI:T:WEP;S:Lab;P:pw;H:true;;", "a hidden network")
+TESTKIT.THROWS(BadSecurity@, 0, "an unknown security is refused")
+
+TESTKIT.SUITE("the cards")
+DIM payload$ = WIFICARD.PAYLOAD$("Miller Guests", "Coffee:2026", "WPA", FALSE)
+DIM pdf$ = PATH.JOIN$(folder$, "wifi.pdf")
+DIM r = WIFICARD.SHEET("Miller Guests", "Coffee:2026", payload$, pdf$, 8)
+TESTKIT.EQ(r{"cards"}, 8, "eight cards")
+TESTKIT.EQ(r{"modules"}, 33, "a version 4 code for this payload")
+DIM code = QR.MATRIX(payload$, {"ecc": "M"})
+TESTKIT.EQ(LEN(code), 33, "the matrix has as many rows")
+TESTKIT.EQ(QR.INFO(){"size"}, 17 + 4 * QR.INFO(){"version"}, "17 plus 4 modules per version")
+DIM bytes$ = BINREADER$(pdf$)
+TESTKIT.ISTRUE(INSTR(bytes$, "/MediaBox [0 0 595.28 841.89]") >= 0, "an A4 page")
+TESTKIT.EQ(Occurrences(bytes$, "(Guest Wi-Fi) Tj"), 8, "every card has its title")
+TESTKIT.EQ(Occurrences(bytes$, "(Miller Guests) Tj"), 8, "the network's name")
+TESTKIT.EQ(Occurrences(bytes$, "(Coffee:2026) Tj"), 8, "and the password, without the escaping")
+TESTKIT.ISTRUE(Occurrences(bytes$, " re f") > 8 * 33, "the dark modules are filled boxes")
+DIM one$ = PATH.JOIN$(folder$, "one.pdf")
+WIFICARD.SHEET("Lab", "", "WIFI:T:nopass;S:Lab;;", one$, 1)
+TESTKIT.EQ(Occurrences(BINREADER$(one$), "(Guest Wi-Fi) Tj"), 1, "one card")
+TESTKIT.ISTRUE(INSTR(BINREADER$(one$), "(\(none\)) Tj") >= 0, "an open network shows (none)")
+TESTKIT.THROWS(TooMany@, one$, "more than eight cards are refused")
+
+KILL pdf$
+KILL one$
+RMDIR folder$
+TESTKIT.REPORT()
+
+FUNC Occurrences(hay$, needle$)
+    DIM n = 0
+    DIM at = INSTR(hay$, needle$)
+    DO WHILE at >= 0
+        n = n + 1
+        at = CINT(INSTR(at + LEN(needle$), hay$, needle$))
+    LOOP
+    RETURN n
+ENDFUNC

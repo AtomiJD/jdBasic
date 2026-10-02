@@ -1,0 +1,179 @@
+' planner.jdb: a plain to-do list turned into a one-page week plan
+' for the desk. A line "Mon: Call Miller" belongs to Monday, a line
+' without a day to the week as a whole, a "!" marks it important.
+'
+'   IMPORT PLANNER
+'   DIM tasks = PLANNER.PARSE(TXTREADER$("todo.txt"))
+'   DIM plan = PLANNER.PLAN(tasks, PLANNER.MONDAY(NOW()), 5)
+'   PRINT PLANNER.WRITE(plan, "week.pdf"){"placed"}
+
+EXPORT MODULE PLANNER
+
+IMPORT PDFGEN
+
+DIM gDays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+
+' The day a word names, "Mon" to "Sun", or "" when it names none.
+FUNC DayOf$(word$)
+    DIM w$ = LCASE$(TRIM$(word$))
+    IF LEN(w$) < 3 ORELSE LEN(w$) > 9 THEN RETURN ""
+    DIM k = 0
+    FOR k = 0 TO 6
+        DIM d$ = gDays[k]
+        IF LEFT$(w$, 3) = LCASE$(d$) THEN RETURN d$
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' The tasks of a to-do text: a map per line with "day" ("" for the
+' whole week), "text" and "important". Empty lines and lines starting
+' with # are skipped.
+EXPORT FUNC PARSE(text$)
+    DIM tasks = []
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM t$ = TRIM$(rows[k])
+        IF t$ <> "" ANDALSO NOT STARTSWITH(t$, "#") THEN
+            DIM day$ = ""
+            DIM colon = CINT(INSTR(t$, ":"))
+            IF colon > 0 THEN day$ = DayOf$(LEFT$(t$, colon))
+            DIM rest$ = MID$(t$, colon + 1, LEN(t$))
+            IF day$ <> "" THEN t$ = TRIM$(rest$)
+            DIM important = STARTSWITH(t$, "!")
+            IF important THEN t$ = TRIM$(MID$(t$, 1, LEN(t$)))
+            IF t$ <> "" THEN
+                PUSH(tasks, {"day": day$, "text": t$, _
+                    "important": important})
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN tasks
+ENDFUNC
+
+' The Monday of the week a date falls in. The weekday comes from
+' FORMAT_DATE, 0 for Sunday.
+EXPORT FUNC MONDAY(d)
+    DIM wd = VAL(FORMAT_DATE(d, "%w"))
+    RETURN DATEADD("D", -((wd + 6) MOD 7), d)
+ENDFUNC
+
+' The week as columns: one per day (n_days 5 or 7) and a last one for
+' the tasks of the whole week, which also takes the weekend's tasks
+' when the plan has five days. Answers "title" and "columns", each
+' column a map of "label" and "tasks".
+EXPORT FUNC PLAN(tasks, monday, n_days)
+    DIM columns = []
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO n_days - 1
+        DIM d = DATEADD("D", k, monday)
+        DIM label$ = gDays[k] + " " + STR$(DAY(d))
+        PUSH(columns, {"label": label$, "tasks": []})
+    NEXT k
+    PUSH(columns, {"label": "This week", "tasks": []})
+    FOR j = 0 TO LEN(tasks) - 1
+        DIM t = tasks[j]
+        DIM at = n_days
+        FOR k = 0 TO n_days - 1
+            IF t{"day"} = gDays[k] THEN at = k
+        NEXT k
+        DIM col = columns[at]
+        DIM bucket = col{"tasks"}
+        PUSH(bucket, t)
+    NEXT j
+    RETURN {"title": TITLE$(monday, n_days), "columns": columns}
+ENDFUNC
+
+' "Week 41: 5 to 9 October 2026", with both months when it spans two.
+EXPORT FUNC TITLE$(monday, n_days)
+    DIM last = DATEADD("D", n_days - 1, monday)
+    DIM first$ = STR$(DAY(monday))
+    IF MONTH(monday) <> MONTH(last) THEN
+        first$ = first$ + " " + FORMAT_DATE(monday, "%B")
+    ENDIF
+    DIM week$ = "Week " + STR$(VAL(FORMAT_DATE(monday, "%V")))
+    DIM span$ = first$ + " to " + STR$(DAY(last)) + " "
+    RETURN week$ + ": " + span$ + FORMAT_DATE(last, "%B %Y")
+ENDFUNC
+
+' Writes the plan as one A4 page, landscape: a column per day with a
+' box to tick before every task and lines to write on below. Answers
+' "placed" (tasks on the page) and "hidden" (tasks that did not fit,
+' counted as "+ n more").
+EXPORT FUNC WRITE(plan, path$)
+    DIM pdf = PDFGEN.DOC({"size": "A4", "landscape": TRUE, _
+        "margin": 12})
+    PDFGEN.SETINFO(pdf, plan{"title"}, "", "Printable Week")
+    PDFGEN.ADDPAGE(pdf)
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 16)
+    PDFGEN.TEXTAT(pdf, 12, 20, plan{"title"})
+    DIM columns = plan{"columns"}
+    DIM n = LEN(columns)
+    DIM col_w = (297 - 24) / n
+    DIM bottom = 210 - 14
+    DIM placed = 0
+    DIM hidden = 0
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM col = columns[k]
+        DIM x = 12 + k * col_w
+        PDFGEN.SETFILL(pdf, 225, 233, 245)
+        PDFGEN.BOX(pdf, x, 26, col_w - 2, 8, "F")
+        PDFGEN.USEFONT(pdf, "helvetica", "B", 10)
+        PDFGEN.SETCOLOR(pdf, 31, 56, 100)
+        PDFGEN.TEXTAT(pdf, x + 2, 31.5, col{"label"})
+        PDFGEN.SETCOLOR(pdf, 0, 0, 0)
+        DIM col_tasks = col{"tasks"}
+        DIM shown = Column(pdf, col_tasks, x, 38, col_w - 2, bottom)
+        placed = placed + shown
+        hidden = hidden + LEN(col_tasks) - shown
+    NEXT k
+    PDFGEN.WRITEFILE(pdf, path$)
+    RETURN {"placed": placed, "hidden": hidden}
+ENDFUNC
+
+' The tasks of one column from y down to bottom; answers how many fit.
+FUNC Column(pdf, tasks, x, y, w, bottom)
+    DIM lead = 4.6
+    DIM k = 0
+    FOR k = 0 TO LEN(tasks) - 1
+        DIM t = tasks[k]
+        DIM sty$ = ""
+        IF t{"important"} THEN sty$ = "B"
+        PDFGEN.USEFONT(pdf, "helvetica", sty$, 9.5)
+        DIM rows = PDFGEN.SPLITLINES(pdf, t{"text"}, w - 7)
+        DIM need = LEN(rows) * lead + 2
+        IF y + need > bottom - lead THEN
+            PDFGEN.USEFONT(pdf, "helvetica", "I", 9)
+            DIM more$ = "+ " + STR$(LEN(tasks) - k) + " more"
+            PDFGEN.TEXTAT(pdf, x + 1, y + 3.5, more$)
+            RETURN k
+        ENDIF
+        PDFGEN.SETDRAW(pdf, 120, 120, 120)
+        PDFGEN.SETLINEWIDTH(pdf, 0.3)
+        PDFGEN.BOX(pdf, x + 1, y + 0.6, 3.4, 3.4, "D")
+        DIM j = 0
+        FOR j = 0 TO LEN(rows) - 1
+            PDFGEN.TEXTAT(pdf, x + 6.5, y + 3.5 + j * lead, rows[j])
+        NEXT j
+        y = y + need
+    NEXT k
+    Ruled(pdf, x, y, w, bottom)
+    RETURN LEN(tasks)
+ENDFUNC
+
+' Light lines below y down to bottom, for tasks written in by hand,
+' on a 7 mm grid that is the same in every column.
+SUB Ruled(pdf, x, y, w, bottom)
+    PDFGEN.SETDRAW(pdf, 215, 215, 215)
+    PDFGEN.SETLINEWIDTH(pdf, 0.2)
+    DIM ly = 38
+    DO WHILE ly < y + 3
+        ly = ly + 7
+    LOOP
+    DO WHILE ly <= bottom
+        PDFGEN.DRAWLINE(pdf, x + 1, ly, x + w - 1, ly)
+        ly = ly + 7
+    LOOP
+ENDSUB

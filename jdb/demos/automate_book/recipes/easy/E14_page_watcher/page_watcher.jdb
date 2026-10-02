@@ -1,0 +1,37 @@
+' Page Watcher: looks at the web pages listed in work.conf and tells
+' you which of them changed in the part you watch. The settings are
+' the [page_watcher] part of work.conf, one [[page_watcher.page]] per
+' page.
+'
+'   jdbasic page_watcher.jdb            check and remember
+'   jdbasic page_watcher.jdb --dry-run  check, remember nothing
+
+IMPORT WORKCONF, WATCHER
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM home$ = "~/Documents/AutomateWork/watch"
+DIM store$ = WORKCONF.FOLDER$(cfg, "page_watcher.store", home$)
+DIM pages = WORKCONF.VALUE(cfg, "page_watcher.page", [])
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF LEN(pages) = 0 THEN PRINT "No pages to watch in work.conf."
+
+DIM changes = []
+DIM k = 0
+FOR k = 0 TO LEN(pages) - 1
+    DIM page = pages[k]
+    DIM r = WATCHER.CHECK(page, store$, dry_run)
+    DIM state$ = r{"status"}
+    PRINT page{"name"}; ": "; state$
+    IF state$ = "changed" ORELSE state$ = "error" THEN
+        PRINT "    "; r{"diff"}
+    ENDIF
+    IF state$ = "changed" THEN
+        PUSH(changes, page{"name"} + ": " + r{"diff"})
+    ENDIF
+NEXT k
+IF LEN(changes) > 0 ANDALSO NOT dry_run THEN
+    DIM stamp$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M")
+    DIM entry$ = stamp$ + CHR$(10) + JOIN(changes, CHR$(10))
+    DIM log_file$ = PATH.JOIN$(store$, "changes.log")
+    TXTWRITER log_file$, entry$ + CHR$(10), TRUE
+ENDIF

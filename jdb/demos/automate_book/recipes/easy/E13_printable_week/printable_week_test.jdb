@@ -1,0 +1,81 @@
+' Printable Week: days and marks read from a to-do text, the Monday of
+' a week, the title across two months, the columns of a plan, and the
+' page: one A4 landscape page with the tasks, "+ n more" for a column
+' that overflows.
+
+IMPORT TESTKIT, PLANNER
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("week")
+MKDIR folder$
+DIM todo$ = "# my week" + LF$ + "Mon: Call Miller about the offer" + LF$
+todo$ = todo$ + "tuesday: ! Send invoice RE-0413" + LF$ + LF$
+todo$ = todo$ + "Plan the team day" + LF$ + "Sat: Clean the desk" + LF$
+todo$ = todo$ + "Note: this has no day" + LF$
+DIM tasks = PLANNER.PARSE(todo$)
+
+TESTKIT.SUITE("reading the list")
+TESTKIT.EQ(LEN(tasks), 5, "comments and empty lines are skipped")
+TESTKIT.EQ(tasks[0]{"day"}, "Mon", "a day before the colon")
+TESTKIT.EQ(tasks[0]{"text"}, "Call Miller about the offer", "and the task")
+TESTKIT.EQ(tasks[1]{"day"}, "Tue", "a day written out in full")
+TESTKIT.ISTRUE(tasks[1]{"important"}, "a ! marks a task important")
+TESTKIT.EQ(tasks[1]{"text"}, "Send invoice RE-0413", "without the !")
+TESTKIT.EQ(tasks[2]{"day"}, "", "a task for the whole week")
+TESTKIT.EQ(tasks[4]{"text"}, "Note: this has no day", "a colon after a word that is no day stays")
+
+TESTKIT.SUITE("the week")
+DIM thu = CDATE("2026-10-01 12:00:00")
+DIM mon = PLANNER.MONDAY(thu)
+TESTKIT.EQ(FORMAT_DATE(mon, "%Y-%m-%d"), "2026-09-28", "the Monday of a Thursday")
+TESTKIT.EQ(FORMAT_DATE(PLANNER.MONDAY(mon), "%Y-%m-%d"), "2026-09-28", "a Monday is its own")
+TESTKIT.EQ(PLANNER.TITLE$(mon, 5), "Week 40: 28 September to 2 October 2026", "a week across two months")
+DIM later = CDATE("2026-10-05 12:00:00")
+TESTKIT.EQ(PLANNER.TITLE$(later, 7), "Week 41: 5 to 11 October 2026", "a week in one month")
+
+TESTKIT.SUITE("the plan")
+DIM plan = PLANNER.PLAN(tasks, mon, 5)
+DIM cols = plan{"columns"}
+TESTKIT.EQ(LEN(cols), 6, "five days and the week")
+TESTKIT.EQ(cols[0]{"label"}, "Mon 28", "a day with its date")
+TESTKIT.EQ(LEN(cols[0]{"tasks"}), 1, "Monday's task")
+TESTKIT.EQ(LEN(cols[1]{"tasks"}), 1, "Tuesday's task")
+TESTKIT.EQ(LEN(cols[5]{"tasks"}), 3, "the week takes the rest and Saturday")
+DIM full = PLANNER.PLAN(tasks, mon, 7)
+TESTKIT.EQ(LEN(full{"columns"}[5]{"tasks"}), 1, "with seven days Saturday has its own")
+
+TESTKIT.SUITE("the page")
+DIM pdf$ = PATH.JOIN$(folder$, "week.pdf")
+DIM result = PLANNER.WRITE(plan, pdf$)
+TESTKIT.EQ(result{"placed"}, 5, "every task is on the page")
+TESTKIT.EQ(result{"hidden"}, 0, "none is left out")
+DIM bytes$ = BINREADER$(pdf$)
+TESTKIT.ISTRUE(INSTR(bytes$, "/MediaBox [0 0 841.89 595.28]") >= 0, "an A4 page, landscape")
+TESTKIT.EQ(Occurrences(bytes$, "/Type /Page "), 1, "one page")
+TESTKIT.ISTRUE(INSTR(bytes$, "(Call Miller") >= 0, "a task, wrapped to its column")
+TESTKIT.ISTRUE(INSTR(bytes$, "(Week 40: 28 September to 2 October 2026) Tj") >= 0, "the title")
+TESTKIT.ISTRUE(INSTR(bytes$, "/Helvetica-Bold") >= 0, "important tasks in bold")
+DIM many = []
+DIM i = 0
+FOR i = 1 TO 60
+    PUSH(many, {"day": "Mon", "text": "Task number " + STR$(i), "important": FALSE})
+NEXT i
+DIM crowded = PLANNER.WRITE(PLANNER.PLAN(many, mon, 5), pdf$)
+TESTKIT.ISTRUE(crowded{"placed"} > 10 ANDALSO crowded{"hidden"} > 0, "a full column stops")
+TESTKIT.EQ(crowded{"placed"} + crowded{"hidden"}, 60, "and counts what it left out")
+DIM crowded$ = BINREADER$(pdf$)
+TESTKIT.ISTRUE(INSTR(crowded$, "(+ " + STR$(crowded{"hidden"}) + " more) Tj") >= 0, "as + n more")
+
+KILL pdf$
+RMDIR folder$
+TESTKIT.REPORT()
+
+FUNC Occurrences(hay$, needle$)
+    DIM n = 0
+    DIM at = INSTR(hay$, needle$)
+    DO WHILE at >= 0
+        n = n + 1
+        at = CINT(INSTR(at + LEN(needle$), hay$, needle$))
+    LOOP
+    RETURN n
+ENDFUNC

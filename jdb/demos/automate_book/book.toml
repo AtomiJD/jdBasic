@@ -19,6 +19,21 @@ width_cm = 12.5
 files = [
     "manuscript/00_front.md",
     "manuscript/03_easy.md",
+    "manuscript/03_easy_E01.md",
+    "manuscript/03_easy_E02.md",
+    "manuscript/03_easy_E03.md",
+    "manuscript/03_easy_E04.md",
+    "manuscript/03_easy_E05.md",
+    "manuscript/03_easy_E06.md",
+    "manuscript/03_easy_E07.md",
+    "manuscript/03_easy_E08.md",
+    "manuscript/03_easy_E09.md",
+    "manuscript/03_easy_E10.md",
+    "manuscript/03_easy_E11.md",
+    "manuscript/03_easy_E12.md",
+    "manuscript/03_easy_E13.md",
+    "manuscript/03_easy_E14.md",
+    "manuscript/03_easy_E15.md",
 ]
 
 [cover]

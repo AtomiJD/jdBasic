@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "E12"
+name = "Birthday Reminder"
+program = "birthday_reminder.jdb"
+summary = "Lists the birthdays of the next days and keeps a calendar of them"
+minutes_per_week = 10
+schedule = "daily 08:00"
+section = "birthday_reminder"
+modules = ["birthdays.jdb"]
+
+[[setting]]
+key = "contacts"
+label = "Contact list (CSV)"
+kind = "file"
+default = "~/Documents/AutomateWork/contacts.csv"
+
+[[setting]]
+key = "calendar"
+label = "Calendar file to write (.ics)"
+kind = "file"
+default = "~/Documents/AutomateWork/birthdays.ics"
+
+[[setting]]
+key = "days"
+label = "Look ahead (days)"
+kind = "number"
+default = 14

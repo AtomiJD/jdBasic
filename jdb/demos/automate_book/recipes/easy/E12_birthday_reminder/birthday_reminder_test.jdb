@@ -1,0 +1,65 @@
+' Birthday Reminder: the contacts of the fixture CSV, the next dates
+' around the year end and for 29 February in common and leap years, the
+' list in order with ages, the line format, and the calendar file read
+' back with its yearly rules.
+
+IMPORT TESTKIT, BIRTHDAYS, ICAL, DT
+
+DIM base$ = "recipes/easy/E12_birthday_reminder/"
+IF NOT FILE.EXISTS(base$ + "contacts.csv") THEN base$ = ""
+DIM people = BIRTHDAYS.CONTACTS(base$ + "contacts.csv")
+
+FUNC Iso$(t)
+    RETURN DT.FMT$(t, "%Y-%m-%d")
+ENDFUNC
+
+TESTKIT.SUITE("contacts")
+TESTKIT.EQ(LEN(people), 3, "three contacts")
+TESTKIT.EQ(people[0]{"name"}, "Ann Miller", "a name")
+TESTKIT.EQ(people[0]{"anniversary"}, "2012-06-15", "an anniversary")
+TESTKIT.EQ(people[1]{"anniversary"}, "", "an empty cell")
+
+TESTKIT.SUITE("next dates")
+TESTKIT.EQ(Iso$(BIRTHDAYS.NEXT_DATE("1985-10-03", "2026-10-01")), "2026-10-03", "later this year")
+TESTKIT.EQ(Iso$(BIRTHDAYS.NEXT_DATE("1985-10-03", "2026-10-03")), "2026-10-03", "today counts")
+TESTKIT.EQ(Iso$(BIRTHDAYS.NEXT_DATE("1979-01-02", "2026-12-28")), "2027-01-02", "over the year end")
+TESTKIT.EQ(Iso$(BIRTHDAYS.NEXT_DATE("1992-02-29", "2027-02-20")), "2027-02-28", "29 February in a common year")
+TESTKIT.EQ(Iso$(BIRTHDAYS.NEXT_DATE("1992-02-29", "2028-02-20")), "2028-02-29", "and in a leap year")
+
+TESTKIT.SUITE("upcoming")
+DIM soon = BIRTHDAYS.UPCOMING(people, "2026-12-28", 14)
+TESTKIT.EQ(LEN(soon), 1, "one birthday in the two weeks over new year")
+TESTKIT.EQ(soon[0]{"name"}, "Jan Newyear", "whose")
+TESTKIT.EQ(soon[0]{"years"}, 48, "the age reached in the new year")
+TESTKIT.EQ(soon[0]{"in_days"}, 5, "in five days")
+DIM june = BIRTHDAYS.UPCOMING(people, "2026-06-10", 30)
+TESTKIT.EQ(LEN(june), 1, "the anniversary within a month")
+TESTKIT.EQ(june[0]{"what"}, "anniversary", "is an anniversary")
+TESTKIT.EQ(june[0]{"years"}, 14, "of 14 years")
+DIM autumn = BIRTHDAYS.UPCOMING(people, "2026-09-25", 120)
+TESTKIT.EQ(autumn[0]{"name"}, "Ann Miller", "the nearest first")
+TESTKIT.EQ(autumn[1]{"name"}, "Jan Newyear", "then the next")
+TESTKIT.EQ(LEN(BIRTHDAYS.UPCOMING(people, "2026-03-05", 30)), 0, "a quiet month")
+
+TESTKIT.SUITE("lines")
+TESTKIT.EQ(BIRTHDAYS.ENTRY$(autumn[0]), "Sat 03 Oct  Ann Miller turns 41 (in 8 days)", "a birthday")
+DIM today_e = {"date": "2026-06-15", "in_days": 0, "name": "Ann Miller", "what": "anniversary", "years": 14}
+TESTKIT.EQ(BIRTHDAYS.ENTRY$(today_e), "Mon 15 Jun  Ann Miller: 14 years (today)", "an anniversary today")
+
+TESTKIT.SUITE("the calendar file")
+DIM folder$ = MKTEMP$("bday")
+MKDIR folder$
+DIM ics$ = PATH.JOIN$(folder$, "birthdays.ics")
+TESTKIT.EQ(BIRTHDAYS.CALENDAR(people, "2026-10-01", ics$), 4, "three birthdays and one anniversary")
+DIM cal = ICAL.PARSEFILE(ics$)
+DIM evs = ICAL.EVENTS(cal)
+TESTKIT.EQ(LEN(evs), 4, "four events in the file")
+TESTKIT.EQ(ICAL.PROP$(cal, evs[0], "SUMMARY"), "Birthday: Ann Miller", "named")
+TESTKIT.EQ(ICAL.PROP$(cal, evs[0], "RRULE"), "FREQ=YEARLY", "every year")
+TESTKIT.EQ(ICAL.PROP$(cal, evs[2], "RRULE"), "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=-1", "29 February as the last day of February")
+DIM leap = ICAL.OCCURRENCES(cal, evs[2], DT.PARSE("2027-01-01"), DT.PARSE("2029-01-01"))
+TESTKIT.EQ(Iso$(leap[0]), "2027-02-28", "on the 28th in 2027")
+TESTKIT.EQ(Iso$(leap[1]), "2028-02-29", "and the 29th in 2028")
+KILL ics$
+RMDIR folder$
+TESTKIT.REPORT()

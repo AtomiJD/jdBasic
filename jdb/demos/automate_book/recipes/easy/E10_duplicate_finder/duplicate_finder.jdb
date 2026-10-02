@@ -1,0 +1,32 @@
+' Duplicate Finder: looks for files stored more than once in your
+' folders and writes an Excel report of them. It deletes nothing. The
+' settings are the [duplicate_finder] part of work.conf.
+'
+'   jdbasic duplicate_finder.jdb
+
+IMPORT WORKCONF, DUPES
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "duplicate_finder."
+DIM folders = WORKCONF.VALUE(cfg, key$ + "folders", ["~/Documents"])
+DIM report_default$ = "~/Documents/AutomateWork/duplicates.xlsx"
+DIM report$ = WORKCONF.FOLDER$(cfg, key$ + "report", report_default$)
+DIM min_kb = WORKCONF.VALUE(cfg, key$ + "min_size_kb", 1)
+
+DIM roots = []
+DIM k = 0
+FOR k = 0 TO LEN(folders) - 1
+    PUSH(roots, WORKCONF.EXPAND$(folders[k]))
+NEXT k
+DIM paths = DUPES.FILES(roots)
+PRINT LEN(paths); " files looked at"
+DIM groups = DUPES.GROUPS(paths, min_kb * 1024)
+IF LEN(groups) = 0 THEN
+    PRINT "No file is stored twice."
+ELSE
+    DIM n_rows = DUPES.REPORT(groups, report$)
+    DIM mb = ROUND(DUPES.WASTED(groups) / 1048576, 1)
+    PRINT LEN(groups); " groups, "; n_rows; " files, ";
+    PRINT mb; " MB in copies"
+    PRINT "Report: "; report$
+ENDIF

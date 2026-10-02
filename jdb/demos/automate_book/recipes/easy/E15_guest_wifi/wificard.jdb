@@ -1,0 +1,88 @@
+' wificard.jdb: cards with the guest Wi-Fi's name, password and a QR
+' code that a phone camera reads to join the network.
+'
+'   IMPORT WIFICARD
+'   DIM p$ = WIFICARD.PAYLOAD$("Guests", "sun;flower", "WPA", FALSE)
+'   WIFICARD.SHEET("Guests", "sun;flower", p$, "wifi.pdf", 8)
+
+EXPORT MODULE WIFICARD
+
+IMPORT QR, PDFGEN
+
+' A value as the Wi-Fi code format wants it: a backslash before each
+' of \ ; , : and the double quote.
+EXPORT FUNC ESCAPE$(s$)
+    DIM out$ = ""
+    DIM chars = -s$
+    DIM k = 0
+    FOR k = 0 TO LEN(chars) - 1
+        DIM c$ = chars[k]
+        IF INSTR("\;,:" + CHR$(34), c$) >= 0 THEN out$ = out$ + "\"
+        out$ = out$ + c$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The text of the QR code: security is "WPA" (also for WPA2 and WPA3),
+' "WEP" or "nopass" for an open network; hidden adds H:true.
+EXPORT FUNC PAYLOAD$(ssid$, password$, security$, hidden)
+    DIM sec$ = UCASE$(TRIM$(security$))
+    IF sec$ = "WPA2" ORELSE sec$ = "WPA3" THEN sec$ = "WPA"
+    IF sec$ = "NOPASS" ORELSE sec$ = "" THEN sec$ = "nopass"
+    IF NOT (sec$ IN ["WPA", "WEP", "nopass"]) THEN
+        THROW "WIFICARD: no security called " + security$
+    ENDIF
+    DIM out$ = "WIFI:T:" + sec$ + ";S:" + ESCAPE$(ssid$) + ";"
+    IF sec$ <> "nopass" THEN
+        out$ = out$ + "P:" + ESCAPE$(password$) + ";"
+    ENDIF
+    IF hidden THEN out$ = out$ + "H:true;"
+    RETURN out$ + ";"
+ENDFUNC
+
+' One card of 85 by 55 mm with its top left corner at x, y.
+SUB Card(pdf, code, x, y, ssid$, password$)
+    PDFGEN.SETDRAW(pdf, 190, 190, 190)
+    PDFGEN.SETLINEWIDTH(pdf, 0.2)
+    PDFGEN.BOX(pdf, x, y, 85, 55, "D")
+    PDFGEN.SETCOLOR(pdf, 31, 56, 100)
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 13)
+    PDFGEN.TEXTAT(pdf, x + 5, y + 10, "Guest Wi-Fi")
+    PDFGEN.SETCOLOR(pdf, 90, 90, 90)
+    PDFGEN.USEFONT(pdf, "helvetica", "", 7.5)
+    PDFGEN.TEXTAT(pdf, x + 5, y + 18, "Network")
+    PDFGEN.TEXTAT(pdf, x + 5, y + 30, "Password")
+    PDFGEN.SETCOLOR(pdf, 0, 0, 0)
+    PDFGEN.USEFONT(pdf, "helvetica", "B", 10)
+    PDFGEN.TEXTAT(pdf, x + 5, y + 23, PDFGEN.FIT$(pdf, ssid$, 40))
+    PDFGEN.USEFONT(pdf, "courier", "", 10)
+    DIM shown$ = password$
+    IF shown$ = "" THEN shown$ = "(none)"
+    PDFGEN.TEXTAT(pdf, x + 5, y + 35, PDFGEN.FIT$(pdf, shown$, 40))
+    PDFGEN.USEFONT(pdf, "helvetica", "I", 7)
+    PDFGEN.SETCOLOR(pdf, 90, 90, 90)
+    PDFGEN.TEXTAT(pdf, x + 5, y + 49, "Point your phone's camera")
+    PDFGEN.TEXTAT(pdf, x + 5, y + 52, "at the code to join.")
+    QR.TOPDF(pdf, code, x + 46, y + 8, 36, 2)
+ENDSUB
+
+' An A4 page with n_cards cards (1 to 8) to cut out. Answers "cards"
+' and "modules", the QR code's size in modules per side.
+EXPORT FUNC SHEET(ssid$, password$, payload$, path$, n_cards)
+    IF n_cards < 1 ORELSE n_cards > 8 THEN
+        THROW "WIFICARD: 1 to 8 cards fit on a page"
+    ENDIF
+    DIM code = QR.MATRIX(payload$, {"ecc": "M"})
+    DIM size = QR.INFO(){"size"}
+    DIM pdf = PDFGEN.DOC({"size": "A4", "margin": 15})
+    PDFGEN.SETINFO(pdf, "Guest Wi-Fi " + ssid$, "", "Wi-Fi cards")
+    PDFGEN.ADDPAGE(pdf)
+    DIM k = 0
+    FOR k = 0 TO n_cards - 1
+        DIM x = 15 + (k MOD 2) * 95
+        DIM y = 15 + (k \ 2) * 68
+        Card(pdf, code, x, y, ssid$, password$)
+    NEXT k
+    PDFGEN.WRITEFILE(pdf, path$)
+    RETURN {"cards": n_cards, "modules": size}
+ENDFUNC

@@ -1,0 +1,17 @@
+# What the setup wizard knows about this recipe. The pages to watch
+# are [[page_watcher.page]] tables in work.conf, edited by hand.
+
+id = "E14"
+name = "Page Watcher"
+program = "page_watcher.jdb"
+summary = "Tells you when a price, a date or a status on a web page changes"
+minutes_per_week = 20
+schedule = "daily 08:00"
+section = "page_watcher"
+modules = ["watcher.jdb"]
+
+[[setting]]
+key = "store"
+label = "Folder for the copies of the watched pages"
+kind = "folder"
+default = "~/Documents/AutomateWork/watch"

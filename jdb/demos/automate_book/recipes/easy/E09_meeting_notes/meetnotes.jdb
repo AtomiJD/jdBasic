@@ -1,0 +1,117 @@
+' meetnotes.jdb: the next meeting in a calendar file and a Word file
+' to take notes in it: title, time, place, attendees, the agenda from
+' the invitation, and a table for the actions.
+'
+'   IMPORT MEETNOTES, ICAL
+'   DIM cal = ICAL.PARSEFILE("calendar.ics")
+'   DIM m = MEETNOTES.NEXT_MEETING(cal, DT.NOW(), 7)
+'   MEETNOTES.WRITE_NOTES(m, "notes.docx", 2)
+
+EXPORT MODULE MEETNOTES
+
+IMPORT ICAL, DT, DF, DOCX
+
+' The address of an attendee value such as mailto:mia@example.com.
+FUNC Address$(value$)
+    IF LCASE$(LEFT$(value$, 7)) = "mailto:" THEN
+        RETURN MID$(value$, 7, LEN(value$))
+    ENDIF
+    RETURN value$
+ENDFUNC
+
+' The agenda points of an invitation text, one per line, or three
+' headings for notes when the text has none.
+EXPORT FUNC AGENDA(description$)
+    DIM points = []
+    DIM rows = SPLIT(REPLACE$(description$, CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM one$ = TRIM$(rows[k])
+        IF one$ <> "" THEN PUSH(points, one$)
+    NEXT k
+    IF LEN(points) = 0 THEN
+        points = ["Updates", "Decisions", "Next steps"]
+    ENDIF
+    RETURN points
+ENDFUNC
+
+' The first meeting that starts at now or later within the next days,
+' all-day events left out. A map with "summary", "start", "end",
+' "location", "attendees" and "agenda"; empty when there is none.
+EXPORT FUNC NEXT_MEETING(cal, now, days)
+    DIM found AS MAP
+    DIM frame = ICAL.EXPAND(cal, now, now + days * 86400)
+    DIM k = 0
+    FOR k = 0 TO DF.NROWS(frame) - 1
+        DIM r = DF.ROW(frame, k)
+        DIM ev = r{"event"}
+        IF r{"start"} >= now ANDALSO NOT ICAL.ALLDAY(cal, ev) THEN
+            found{"summary"} = r{"summary"}
+            found{"start"} = r{"start"}
+            found{"end"} = r{"end"}
+            found{"location"} = ICAL.PROP$(cal, ev, "LOCATION", "")
+            DIM who = ICAL.VALUES(cal, ev, "ATTENDEE")
+            DIM people = []
+            DIM j = 0
+            FOR j = 0 TO LEN(who) - 1
+                PUSH(people, Address$(who[j]))
+            NEXT j
+            found{"attendees"} = people
+            DIM desc$ = ICAL.PROP$(cal, ev, "DESCRIPTION", "")
+            found{"agenda"} = AGENDA(desc$)
+            RETURN found
+        ENDIF
+    NEXT k
+    RETURN found
+ENDFUNC
+
+' A text with the characters a file name cannot hold left out.
+EXPORT FUNC SAFE$(raw$)
+    DIM out$ = raw$
+    DIM bad = ["\", "/", ":", "*", "?", CHR$(34), "<", ">", "|"]
+    DIM k = 0
+    FOR k = 0 TO LEN(bad) - 1
+        out$ = REPLACE$(out$, bad[k], "")
+    NEXT k
+    RETURN TRIM$(out$)
+ENDFUNC
+
+' "2026-10-05 Miller project status.docx" for a meeting.
+EXPORT FUNC FILE_NAME$(meeting, offset)
+    DIM day$ = DT.FMT$(meeting{"start"}, "%Y-%m-%d", offset)
+    RETURN day$ + " " + SAFE$(meeting{"summary"}) + ".docx"
+ENDFUNC
+
+' The Word file for a meeting; offset is the wall clock in hours east
+' of UTC. Answers the number of parts written.
+EXPORT FUNC WRITE_NOTES(meeting, path$, offset)
+    DIM doc = DOCX.NEW()
+    DOCX.LANGUAGE(doc, "en-US")
+    DIM title$ = meeting{"summary"}
+    DOCX.TITLE(doc, title$)
+    DOCX.HEADING(doc, title$)
+    DIM long_fmt$ = "%A %d %B %Y, %H:%M"
+    DIM when$ = DT.FMT$(meeting{"start"}, long_fmt$, offset)
+    DIM until$ = DT.FMT$(meeting{"end"}, "%H:%M", offset)
+    DOCX.PARAGRAPH(doc, "**When:** " + when$ + " to " + until$)
+    IF meeting{"location"} <> "" THEN
+        DOCX.PARAGRAPH(doc, "**Where:** " + meeting{"location"})
+    ENDIF
+    DIM people = meeting{"attendees"}
+    IF LEN(people) > 0 THEN
+        DOCX.HEADING(doc, "Attendees", 2)
+        DOCX.BULLETS(doc, people)
+    ENDIF
+    DOCX.HEADING(doc, "Agenda", 2)
+    DOCX.NUMBERED(doc, meeting{"agenda"})
+    DOCX.HEADING(doc, "Notes", 2)
+    DOCX.PARAGRAPH(doc, "")
+    DOCX.HEADING(doc, "Actions", 2)
+    DIM rows = [["What", "Who", "By when"]]
+    DIM k = 0
+    FOR k = 1 TO 4
+        PUSH(rows, ["", "", ""])
+    NEXT k
+    DOCX.TABLE(doc, rows, TRUE)
+    RETURN DOCX.WRITE(doc, path$)
+ENDFUNC

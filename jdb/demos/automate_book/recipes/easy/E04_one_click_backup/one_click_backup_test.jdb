@@ -1,0 +1,71 @@
+' One-Click Backup: the files of folders at any depth, lock files and
+' large files left out, the archive written and read back, its name,
+' and the clean up that keeps the newest archives.
+
+IMPORT TESTKIT, BACKUP
+
+DIM folder$ = MKTEMP$("backup")
+DIM work$ = PATH.JOIN$(folder$, "Work")
+DIM photos$ = PATH.JOIN$(folder$, "Photos")
+DIM target$ = PATH.JOIN$(folder$, "Backups")
+MKDIR PATH.JOIN$(work$, "Offers", "2026")
+MKDIR photos$
+MKDIR target$
+TXTWRITER PATH.JOIN$(work$, "plan.txt"), "plan"
+TXTWRITER PATH.JOIN$(work$, "~$plan.docx"), "lock"
+TXTWRITER PATH.JOIN$(work$, "Offers", "2026", "Müller.txt"), "offer"
+BINWRITER PATH.JOIN$(photos$, "big.bin"), REPEAT$("x", 1200000)
+TXTWRITER PATH.JOIN$(photos$, "small.jpg"), "jpg"
+DIM k = 0
+FOR k = 1 TO 4
+    TXTWRITER PATH.JOIN$(target$, "backup 2026-09-0" + STR$(k) + " 1800.zip"), "old"
+NEXT k
+TXTWRITER PATH.JOIN$(target$, "other.zip"), "not ours"
+
+TESTKIT.SUITE("the files")
+DIM files = BACKUP.FILES(work$)
+TESTKIT.EQ(JOIN(files, "|"), "Offers/2026/Müller.txt|plan.txt", "every depth, the lock file left out")
+DIM picked = BACKUP.ENTRIES([work$, photos$], 1)
+DIM entries = picked{"entries"}
+TESTKIT.EQ(LEN(MAP.KEYS(entries)), 3, "three files from two folders")
+TESTKIT.ISTRUE(MAP.EXISTS(entries, "Work/Offers/2026/Müller.txt"), "named by the folder and the path inside it")
+TESTKIT.EQ(LEN(picked{"skipped"}), 1, "the file over 1 MB is left out")
+TESTKIT.ISTRUE(ENDSWITH(picked{"skipped"}[0], "big.bin"), "and named")
+
+TESTKIT.SUITE("the archive")
+DIM when = CDATE("2026-10-01 18:30:00")
+TESTKIT.EQ(BACKUP.ARCHIVE_NAME$("backup", when), "backup 2026-10-01 1830.zip", "a dated name")
+DIM zip$ = PATH.JOIN$(target$, BACKUP.ARCHIVE_NAME$("backup", when))
+TESTKIT.EQ(BACKUP.WRITE(entries, zip$), 3, "three files written")
+DIM back = ZIP.READ(zip$)
+TESTKIT.EQ(back{"Work/Offers/2026/Müller.txt"}, "offer", "and read back")
+TESTKIT.EQ(back{"Photos/small.jpg"}, "jpg", "from the second folder too")
+
+TESTKIT.SUITE("cleaning up")
+DIM old = BACKUP.OLD(target$, "backup", 3)
+TESTKIT.EQ(LEN(old), 2, "five archives, keep three, two to go")
+TESTKIT.ISTRUE(ENDSWITH(old[0], "backup 2026-09-01 1800.zip"), "the oldest first")
+TESTKIT.EQ(BACKUP.PRUNE(old, TRUE), 2, "a dry run counts")
+TESTKIT.ISTRUE(FILE.EXISTS(old[0]), "and deletes nothing")
+TESTKIT.EQ(BACKUP.PRUNE(old, FALSE), 2, "the real run deletes two")
+TESTKIT.EQ(LEN(BACKUP.OLD(target$, "backup", 3)), 0, "three are left")
+TESTKIT.ISTRUE(FILE.EXISTS(PATH.JOIN$(target$, "other.zip")), "a file of another name is never touched")
+
+KILL zip$
+KILL PATH.JOIN$(target$, "other.zip")
+DIM rest = DIR$(PATH.JOIN$(target$, "*"))
+FOR k = 0 TO LEN(rest) - 1
+    KILL PATH.JOIN$(target$, rest[k])
+NEXT k
+KILL PATH.JOIN$(work$, "plan.txt")
+KILL PATH.JOIN$(work$, "~$plan.docx")
+KILL PATH.JOIN$(work$, "Offers", "2026", "Müller.txt")
+KILL PATH.JOIN$(photos$, "big.bin")
+KILL PATH.JOIN$(photos$, "small.jpg")
+RMDIR PATH.JOIN$(work$, "Offers", "2026")
+RMDIR PATH.JOIN$(work$, "Offers")
+RMDIR work$
+RMDIR photos$
+RMDIR target$
+RMDIR folder$
+TESTKIT.REPORT()

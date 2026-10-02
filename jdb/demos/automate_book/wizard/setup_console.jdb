@@ -1,0 +1,155 @@
+' setup_console.jdb: the setup wizard in the console. It asks the same
+' questions as the window, one after the other, with the current answer
+' in brackets; Enter keeps it.
+'
+'   jdbasic setup_console.jdb             set up, or change the setup
+'   jdbasic setup_console.jdb --yes       take every default, ask nothing
+'   jdbasic setup_console.jdb --dry-run   show what would happen
+'   jdbasic setup_console.jdb --doctor    check an existing setup
+'   jdbasic setup_console.jdb --uninstall remove the scheduled tasks
+'
+' --home <folder> sets up for another home folder and --no-schedule
+' leaves the Task Scheduler alone; tests use both.
+
+IMPORT WIZARD
+
+DIM argv = OS.ARGS()
+DIM gYes = "--yes" IN argv
+DIM gDry = "--dry-run" IN argv
+DIM gNoSchedule = "--no-schedule" IN argv
+
+FUNC ArgAfter$(name$, fallback$)
+    DIM k = 1
+    FOR k = 1 TO LEN(argv) - 2
+        IF argv[k] = name$ THEN RETURN argv[k + 1]
+    NEXT k
+    RETURN fallback$
+ENDFUNC
+
+' The answer to a question, or the current one on an empty line.
+FUNC Ask$(question$, current$)
+    IF gYes THEN RETURN current$
+    DIM reply$ = ""
+    INPUT question$ + " [" + current$ + "]: "; reply$
+    IF TRIM$(reply$) = "" THEN RETURN current$
+    RETURN TRIM$(reply$)
+ENDFUNC
+
+FUNC AskYes(question$, current)
+    DIM shown$ = "n"
+    IF current THEN shown$ = "y"
+    DIM reply$ = LCASE$(Ask$(question$ + " (y/n)", shown$))
+    RETURN LEFT$(reply$, 1) = "y"
+ENDFUNC
+
+' The book folder this program sits in, two levels up from wizard/.
+FUNC BookDir$()
+    DIM here$ = PATH.DIRNAME$(argv[0])
+    IF here$ = "" THEN here$ = "."
+    RETURN PATH.JOIN$(here$, "..")
+ENDFUNC
+
+DIM book$ = BookDir$()
+DIM recipes = WIZARD.RECIPES(PATH.JOIN$(book$, "recipes"))
+DIM a = WIZARD.DEFAULTS(recipes, ArgAfter$("--home", WIZARD.HOME$()))
+a = WIZARD.FROM_CONF(a, recipes, WIZARD.CONF_PATH$(a))
+
+IF "--doctor" IN argv THEN
+    DIM problems = WIZARD.DOCTOR(a, recipes, TRUE)
+    IF LEN(problems) = 0 THEN PRINT "Everything is in order."
+    DIM p = 0
+    FOR p = 0 TO LEN(problems) - 1
+        PRINT "  "; problems[p]
+    NEXT p
+    END
+ENDIF
+
+IF "--uninstall" IN argv THEN
+    DIM u = 0
+    FOR u = 0 TO LEN(recipes) - 1
+        DIM gone = WIZARD.SCHTASKS(WIZARD.UNSCHEDULE_ARGS(recipes[u]))
+        IF gone[0] THEN PRINT "removed the task for "; recipes[u]{"name"}
+    NEXT u
+    PRINT "Your files and work.conf stay where they are."
+    END
+ENDIF
+
+PRINT "Setup for Automate Your Work for a Better Life Balance"
+PRINT "Nothing leaves this computer unless you turn on a recipe that sends mail."
+PRINT
+a{"work"} = Ask$("Work folder", a{"work"})
+a{"jdbasic"} = Ask$("The jdbasic program", a{"jdbasic"})
+a{"name"} = Ask$("Your name", a{"name"})
+a{"email"} = Ask$("Your mail address", a{"email"})
+a{"day_start"} = Ask$("Your working day starts at", a{"day_start"})
+a{"day_end"} = Ask$("and ends at", a{"day_end"})
+PRINT
+
+DIM picked = []
+DIM k = 0
+DIM j = 0
+FOR k = 0 TO LEN(recipes) - 1
+    DIM r = recipes[k]
+    DIM was = r{"id"} IN a{"picked"}
+    DIM title$ = r{"id"} + " " + r{"name"} + ": " + r{"summary"}
+    IF AskYes(title$, was) THEN
+        PUSH(picked, r{"id"})
+        IF MAP.EXISTS(r, "setting") THEN
+            DIM sect = a{"values"}{r{"section"}}
+            DIM settings = r{"setting"}
+            FOR j = 0 TO LEN(settings) - 1
+                DIM st = settings[j]
+                DIM now$ = WIZARD.SHOW$(sect{st{"key"}})
+                DIM reply$ = Ask$("    " + st{"label"}, now$)
+                IF st{"kind"} = "list" THEN
+                    sect{st{"key"}} = WIZARD.LIST_OF(reply$)
+                ELSEIF st{"kind"} = "number" THEN
+                    sect{st{"key"}} = VAL(reply$)
+                ELSEIF st{"kind"} = "bool" THEN
+                    sect{st{"key"}} = LEFT$(LCASE$(reply$), 1) = "t" ORELSE LEFT$(LCASE$(reply$), 1) = "y"
+                ELSE
+                    sect{st{"key"}} = reply$
+                ENDIF
+            NEXT j
+        ENDIF
+        DIM sched = a{"schedule"}
+        sched{r{"id"}} = Ask$("    When to run (daily 18:30, weekdays 08:30, every 50 minutes, manual)", sched{r{"id"}})
+    ENDIF
+NEXT k
+a{"picked"} = picked
+
+PRINT
+DIM steps = WIZARD.INSTALL_PLAN(a, recipes, PATH.JOIN$(book$, "recipes", "lib"))
+WIZARD.APPLY(steps, gDry)
+DIM conf$ = WIZARD.CONF_PATH$(a)
+
+IF gNoSchedule THEN
+    PRINT "Nothing scheduled (--no-schedule)."
+ELSEIF a{"jdbasic"} = "" THEN
+    PRINT "jdbasic was not found, so nothing is scheduled. Run the wizard again"
+    PRINT "once jdBasic is installed, or give its path."
+ELSE
+    FOR k = 0 TO LEN(picked) - 1
+        DIM rr = recipes[0]
+        FOR j = 0 TO LEN(recipes) - 1
+            IF recipes[j]{"id"} = picked[k] THEN rr = recipes[j]
+        NEXT j
+        DIM prog$ = PATH.JOIN$(a{"work"}, "recipes", rr{"folder"}, rr{"program"})
+        DIM targs = WIZARD.SCHEDULE_ARGS(rr, WIZARD.RESOLVE_WHEN$(a, a{"schedule"}{rr{"id"}}), a{"jdbasic"}, prog$, conf$)
+        IF gDry THEN
+            PRINT "schedule "; rr{"name"}; ": "; a{"schedule"}{rr{"id"}}
+        ELSE
+            DIM done = WIZARD.SCHTASKS(targs)
+            IF done[0] THEN
+                PRINT "scheduled "; rr{"name"}; ": "; a{"schedule"}{rr{"id"}}
+            ELSE
+                PRINT "could not schedule "; rr{"name"}; ": "; done[1]
+            ENDIF
+            DIM trial = OS.EXEC(a{"jdbasic"}, [prog$, "--dry-run", "--config", conf$])
+            IF trial{"EXIT_CODE"} <> 0 THEN PRINT "  the dry run of "; rr{"name"}; " failed: "; TRIM$(trial{"OUTPUT"})
+        ENDIF
+    NEXT k
+ENDIF
+PRINT
+PRINT "Done. Your settings are in "; conf$
+PRINT "Run this wizard again to change them, or with --uninstall to stop the schedules."

@@ -1,0 +1,94 @@
+' renamer.jdb: new names for the files of a folder from a pattern.
+' {date} is the day the file last changed, {name} its name without
+' the extension, {ext} the extension with its dot.
+'
+'   IMPORT RENAMER
+'   DIM plan = RENAMER.PLAN("C:/Scans", "{date} {name}{ext}", ["pdf"])
+'   PRINT RENAMER.APPLY(plan, TRUE); " files would get a new name"
+
+EXPORT MODULE RENAMER
+
+' A file name that starts with a date such as 2026-10-01.
+EXPORT FUNC DATED(file_name$)
+    RETURN REGEX.MATCH("^\d{4}-\d{2}-\d{2}.*", file_name$)
+ENDFUNC
+
+' The name the pattern gives a file that changed on date$.
+EXPORT FUNC NEW_NAME$(pattern$, file_name$, date$)
+    DIM ext$ = PATH.EXT$(file_name$)
+    DIM stem$ = LEFT$(file_name$, LEN(file_name$) - LEN(ext$))
+    DIM out$ = REPLACE$(pattern$, "{date}", date$)
+    out$ = REPLACE$(out$, "{name}", stem$)
+    RETURN TRIM$(REPLACE$(out$, "{ext}", ext$))
+ENDFUNC
+
+' A free file name in a folder: the name itself, or "name (2).ext",
+' "name (3).ext" and so on. Names in taken count as used.
+EXPORT FUNC FREE_NAME$(folder$, file_name$, taken)
+    DIM candidate$ = PATH.JOIN$(folder$, file_name$)
+    DIM used = FILE.EXISTS(candidate$) ORELSE candidate$ IN taken
+    IF NOT used THEN RETURN candidate$
+    DIM ext$ = PATH.EXT$(file_name$)
+    DIM stem$ = LEFT$(file_name$, LEN(file_name$) - LEN(ext$))
+    DIM n = 2
+    DO
+        DIM numbered$ = stem$ + " (" + STR$(n) + ")" + ext$
+        candidate$ = PATH.JOIN$(folder$, numbered$)
+        n = n + 1
+    LOOP WHILE FILE.EXISTS(candidate$) ORELSE candidate$ IN taken
+    RETURN candidate$
+ENDFUNC
+
+' TRUE when a file's extension is in the list; an empty list takes
+' every file.
+FUNC Wanted(file_name$, extensions)
+    IF LEN(extensions) = 0 THEN RETURN TRUE
+    DIM ext$ = LCASE$(PATH.EXT$(file_name$))
+    IF ext$ = "" THEN RETURN FALSE
+    RETURN MID$(ext$, 1, LEN(ext$)) IN extensions
+ENDFUNC
+
+' The renames for a folder: a map per file with "from", "to" and
+' "new". Folders, hidden files, files outside the extensions and
+' files whose name already starts with a date are left alone.
+EXPORT FUNC PLAN(folder$, pattern$, extensions)
+    DIM plan = []
+    DIM taken = []
+    DIM entries = SORT(DIR$(PATH.JOIN$(folder$, "*")))
+    DIM k = 0
+    FOR k = 0 TO LEN(entries) - 1
+        DIM file_name$ = entries[k]
+        DIM from$ = PATH.JOIN$(folder$, file_name$)
+        DIM info = FILE.STAT(from$)
+        DIM skip = info{"is_dir"} ORELSE info{"hidden"}
+        IF NOT skip ANDALSO Wanted(file_name$, extensions) THEN
+            IF NOT DATED(file_name$) THEN
+                DIM day$ = LEFT$(info{"mtime"}, 10)
+                DIM new$ = NEW_NAME$(pattern$, file_name$, day$)
+                DIM to$ = FREE_NAME$(folder$, new$, taken)
+                PUSH(taken, to$)
+                DIM shown$ = PATH.BASENAME$(to$)
+                PUSH(plan, {"from": from$, "to": to$, "new": shown$})
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN plan
+ENDFUNC
+
+' Renames the files and prints a line for each; with dry_run it only
+' prints them. Answers the number of files in the plan.
+EXPORT FUNC APPLY(plan, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(plan) - 1
+        DIM r = plan[k]
+        DIM old$ = PATH.BASENAME$(r{"from"})
+        DIM new$ = r{"new"}
+        IF dry_run THEN
+            PRINT "would rename "; old$; " -> "; new$
+        ELSE
+            FILE.MOVE(r{"from"}, r{"to"})
+            PRINT "renamed "; old$; " -> "; new$
+        ENDIF
+    NEXT k
+    RETURN LEN(plan)
+ENDFUNC

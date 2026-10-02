@@ -1,0 +1,322 @@
+' setup_wizard.jdb: the setup wizard as a window. Four pages: welcome,
+' about you, the recipes with their settings and schedules, and setting
+' it all up. The work is done by the WIZARD module, the same one the
+' console wizard uses. Needs the FORMS build of jdBasic.
+'
+'   jdbasic setup_wizard.jdb              open the wizard
+'   jdbasic setup_wizard.jdb --selftest   click through it alone into a
+'                                         temporary folder and close
+'   ... --selftest --shots <folder>       and keep a picture of each page
+
+IMPORT WIZARD
+
+DIM argv = OS.ARGS()
+DIM gSelfTest = "--selftest" IN argv
+DIM gHome$ = WIZARD.HOME$()
+IF gSelfTest THEN
+    gHome$ = MKTEMP$("wizardwin")
+    MKDIR gHome$
+ENDIF
+
+DIM gBook$ = PATH.JOIN$(PATH.DIRNAME$(argv[0]), "..")
+IF PATH.DIRNAME$(argv[0]) = "" THEN gBook$ = ".."
+DIM gRecipes = WIZARD.RECIPES(PATH.JOIN$(gBook$, "recipes"))
+DIM gA = WIZARD.DEFAULTS(gRecipes, gHome$)
+gA = WIZARD.FROM_CONF(gA, gRecipes, WIZARD.CONF_PATH$(gA))
+DIM gPage = 0
+DIM gSel = -1
+DIM gTicks = 0
+DIM gFails = 0
+DIM gShots$ = ""
+DIM ai = 0
+FOR ai = 1 TO LEN(argv) - 2
+    IF argv[ai] = "--shots" THEN gShots$ = argv[ai + 1]
+NEXT ai
+
+' ── the window ────────────────────────────────────────────────
+
+DIM frm = FORM.CREATE("Automate Your Work: Setup", 660, 500, "WIZ")
+DIM lblStep = FORM.LABEL(frm, "lblStep", "", 20, 15, 620, 24)
+DIM btnBack = FORM.BUTTON(frm, "btnBack", "< Back", 380, 450, 80, 30)
+DIM btnNext = FORM.BUTTON(frm, "btnNext", "Next >", 470, 450, 80, 30)
+DIM btnClose = FORM.BUTTON(frm, "btnClose", "Close", 560, 450, 80, 30)
+
+DIM welcome$ = "This wizard sets up the automations of the book on this computer." + CHR$(10) + CHR$(10)
+welcome$ = welcome$ + "It creates a work folder, writes your settings into one file (work.conf), copies the recipes you pick and plans when they run with the Windows Task Scheduler." + CHR$(10) + CHR$(10)
+welcome$ = welcome$ + "Nothing leaves this computer unless you turn on a recipe that sends mail. You can run the wizard again at any time to change your choices."
+DIM page0 = [FORM.LABEL(frm, "lblWelcome", welcome$, 20, 60, 620, 300)]
+
+DIM you_labels = ["Work folder", "The jdbasic program", "Your name", "Your mail address", "Working day starts at", "Working day ends at"]
+DIM you_keys = ["work", "jdbasic", "name", "email", "day_start", "day_end"]
+DIM you_boxes = []
+DIM page1 = []
+DIM k = 0
+FOR k = 0 TO LEN(you_labels) - 1
+    PUSH(page1, FORM.LABEL(frm, "lblYou" + STR$(k), you_labels[k], 20, 64 + k * 40, 170, 22))
+    DIM box = FORM.TEXTBOX(frm, "txtYou" + STR$(k), "" + gA{you_keys[k]}, 200, 60 + k * 40, 430, 26)
+    PUSH(you_boxes, box)
+    PUSH(page1, box)
+NEXT k
+
+DIM lstRecipes = FORM.LISTBOX(frm, "lstRecipes", 20, 60, 260, 370)
+DIM chkUse = FORM.CHECKBOX(frm, "chkUse", "Use this recipe", 300, 60, 330, 24)
+DIM lblSummary = FORM.LABEL(frm, "lblSummary", "", 300, 88, 330, 44)
+DIM set_labels = []
+DIM set_boxes = []
+DIM page2 = [lstRecipes, chkUse, lblSummary]
+FOR k = 0 TO 3
+    DIM sl = FORM.LABEL(frm, "lblSet" + STR$(k), "", 300, 140 + k * 54, 330, 20)
+    DIM sb = FORM.TEXTBOX(frm, "txtSet" + STR$(k), "", 300, 160 + k * 54, 330, 26)
+    PUSH(set_labels, sl)
+    PUSH(set_boxes, sb)
+    PUSH(page2, sl)
+    PUSH(page2, sb)
+NEXT k
+DIM lblWhen = FORM.LABEL(frm, "lblWhen", "When to run (daily 18:30, weekdays 08:30, every 50 minutes, manual)", 300, 360, 330, 36)
+DIM txtWhen = FORM.TEXTBOX(frm, "txtWhen", "", 300, 400, 330, 26)
+PUSH(page2, lblWhen)
+PUSH(page2, txtWhen)
+
+DIM lblPlan = FORM.LABEL(frm, "lblPlan", "", 20, 60, 620, 40)
+DIM btnInstall = FORM.BUTTON(frm, "btnInstall", "Set up now", 20, 104, 160, 32)
+DIM chkDry = FORM.CHECKBOX(frm, "chkDry", "Only show what would happen", 200, 108, 300, 24)
+DIM txtLog = FORM.TEXTBOX(frm, "txtLog", "", 20, 148, 620, 285, TRUE)
+DIM page3 = [lblPlan, btnInstall, chkDry, txtLog]
+DIM gPages = [page0, page1, page2, page3]
+DIM gTitles = ["Welcome", "About you", "Your automations", "Set it up"]
+
+DIM tmrSelf = FORM.TIMER(frm, "tmrSelf", 0)
+
+' ── showing and keeping the answers ───────────────────────────
+
+FUNC RecipeLine$(r)
+    DIM mark$ = "[  ] "
+    IF r{"id"} IN gA{"picked"} THEN mark$ = "[x] "
+    RETURN mark$ + r{"id"} + " " + r{"name"} + " (" + STR$(r{"minutes_per_week"}) + " min)"
+ENDFUNC
+
+SUB FillRecipeList()
+    DIM lines_out = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gRecipes) - 1
+        PUSH(lines_out, RecipeLine$(gRecipes[i]))
+    NEXT i
+    FORM.SET(lstRecipes, "ITEMS", lines_out)
+    IF gSel >= 0 THEN FORM.SET(lstRecipes, "SELINDEX", gSel)
+ENDSUB
+
+SUB ShowRecipe(i)
+    gSel = i
+    DIM r = gRecipes[i]
+    FORM.SET(chkUse, "CHECKED", r{"id"} IN gA{"picked"})
+    FORM.SET(lblSummary, "TEXT", r{"summary"})
+    DIM settings = []
+    IF MAP.EXISTS(r, "setting") THEN settings = r{"setting"}
+    DIM sect = gA{"values"}{r{"section"}}
+    DIM j = 0
+    FOR j = 0 TO 3
+        DIM shown = j < LEN(settings)
+        FORM.SET(set_labels[j], "VISIBLE", shown)
+        FORM.SET(set_boxes[j], "VISIBLE", shown)
+        IF shown THEN
+            FORM.SET(set_labels[j], "TEXT", settings[j]{"label"})
+            FORM.SET(set_boxes[j], "TEXT", WIZARD.SHOW$(sect{settings[j]{"key"}}))
+        ENDIF
+    NEXT j
+    FORM.SET(txtWhen, "TEXT", gA{"schedule"}{r{"id"}})
+ENDSUB
+
+SUB KeepRecipe()
+    IF gSel < 0 THEN RETURN
+    DIM r = gRecipes[gSel]
+    DIM in_use = FORM.GET(chkUse, "CHECKED")
+    DIM picked = []
+    DIM i = 0
+    FOR i = 0 TO LEN(gRecipes) - 1
+        DIM id$ = gRecipes[i]{"id"}
+        IF id$ = r{"id"} THEN
+            IF in_use THEN PUSH(picked, id$)
+        ELSEIF id$ IN gA{"picked"} THEN
+            PUSH(picked, id$)
+        ENDIF
+    NEXT i
+    gA{"picked"} = picked
+    DIM settings = []
+    IF MAP.EXISTS(r, "setting") THEN settings = r{"setting"}
+    DIM sect = gA{"values"}{r{"section"}}
+    DIM j = 0
+    FOR j = 0 TO LEN(settings) - 1
+        IF j < 4 THEN
+            DIM st = settings[j]
+            DIM typed$ = FORM.GET(set_boxes[j], "TEXT")
+            IF st{"kind"} = "list" THEN
+                sect{st{"key"}} = WIZARD.LIST_OF(typed$)
+            ELSEIF st{"kind"} = "number" THEN
+                sect{st{"key"}} = VAL(typed$)
+            ELSEIF st{"kind"} = "bool" THEN
+                sect{st{"key"}} = INSTR("ty1", LEFT$(LCASE$(typed$), 1)) >= 0
+            ELSE
+                sect{st{"key"}} = typed$
+            ENDIF
+        ENDIF
+    NEXT j
+    DIM sched = gA{"schedule"}
+    sched{r{"id"}} = FORM.GET(txtWhen, "TEXT")
+ENDSUB
+
+SUB KeepYou()
+    DIM i = 0
+    FOR i = 0 TO LEN(you_keys) - 1
+        gA{you_keys[i]} = FORM.GET(you_boxes[i], "TEXT")
+    NEXT i
+ENDSUB
+
+SUB ShowPage(n)
+    gPage = n
+    DIM p = 0
+    DIM c = 0
+    FOR p = 0 TO LEN(gPages) - 1
+        DIM ctrls = gPages[p]
+        FOR c = 0 TO LEN(ctrls) - 1
+            FORM.SET(ctrls[c], "VISIBLE", p = n)
+        NEXT c
+    NEXT p
+    FORM.SET(lblStep, "TEXT", "Step " + STR$(n + 1) + " of 4: " + gTitles[n])
+    FORM.SET(btnBack, "ENABLED", n > 0)
+    FORM.SET(btnNext, "ENABLED", n < 3)
+    IF n = 2 THEN
+        FillRecipeList()
+        IF gSel < 0 ANDALSO LEN(gRecipes) > 0 THEN ShowRecipe(0)
+        IF gSel >= 0 THEN ShowRecipe(gSel)
+    ENDIF
+    IF n = 3 THEN
+        DIM minutes = 0
+        DIM i = 0
+        FOR i = 0 TO LEN(gRecipes) - 1
+            IF gRecipes[i]{"id"} IN gA{"picked"} THEN minutes = minutes + gRecipes[i]{"minutes_per_week"}
+        NEXT i
+        FORM.SET(lblPlan, "TEXT", STR$(LEN(gA{"picked"})) + " recipes picked, about " + STR$(minutes) + " minutes a week. Settings go to " + WIZARD.CONF_PATH$(gA))
+    ENDIF
+ENDSUB
+
+' ── setting up ────────────────────────────────────────────────
+
+FUNC SetUp$(dry_run, schedule)
+    OUTPUT.CAPTURE_BEGIN
+    DIM steps = WIZARD.INSTALL_PLAN(gA, gRecipes, PATH.JOIN$(gBook$, "recipes", "lib"))
+    WIZARD.APPLY(steps, dry_run)
+    DIM conf$ = WIZARD.CONF_PATH$(gA)
+    DIM i = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(gA{"picked"}) - 1
+        DIM r = gRecipes[0]
+        FOR j = 0 TO LEN(gRecipes) - 1
+            IF gRecipes[j]{"id"} = gA{"picked"}[i] THEN r = gRecipes[j]
+        NEXT j
+        DIM when$ = WIZARD.RESOLVE_WHEN$(gA, gA{"schedule"}{r{"id"}})
+        DIM prog$ = PATH.JOIN$(gA{"work"}, "recipes", r{"folder"}, r{"program"})
+        IF NOT schedule ORELSE dry_run THEN
+            PRINT "schedule "; r{"name"}; ": "; when$
+        ELSEIF gA{"jdbasic"} = "" THEN
+            PRINT "not scheduled (jdbasic not found): "; r{"name"}
+        ELSE
+            DIM done = WIZARD.SCHTASKS(WIZARD.SCHEDULE_ARGS(r, when$, gA{"jdbasic"}, prog$, conf$))
+            IF done[0] THEN PRINT "scheduled "; r{"name"}; ": "; when$ ELSE PRINT "could not schedule "; r{"name"}; ": "; done[1]
+        ENDIF
+    NEXT i
+    PRINT "Done. Settings: "; conf$
+    RETURN OUTPUT.CAPTURE_END$()
+ENDFUNC
+
+' ── events ────────────────────────────────────────────────────
+
+SUB WIZ_LOAD(e)
+    ShowPage(0)
+    IF gSelfTest THEN FORM.SET(tmrSelf, "INTERVAL", 150)
+ENDSUB
+
+SUB BTNNEXT_CLICK(e)
+    IF gPage = 1 THEN KeepYou()
+    IF gPage = 2 THEN KeepRecipe()
+    IF gPage < 3 THEN ShowPage(gPage + 1)
+ENDSUB
+
+SUB BTNBACK_CLICK(e)
+    IF gPage = 1 THEN KeepYou()
+    IF gPage = 2 THEN KeepRecipe()
+    IF gPage > 0 THEN ShowPage(gPage - 1)
+ENDSUB
+
+SUB BTNCLOSE_CLICK(e)
+    FORM.CLOSE(frm)
+ENDSUB
+
+SUB LSTRECIPES_CLICK(e)
+    KeepRecipe()
+    DIM i = FORM.GET(lstRecipes, "SELINDEX")
+    IF i >= 0 THEN ShowRecipe(i)
+    FillRecipeList()
+ENDSUB
+
+SUB CHKUSE_CLICK(e)
+    KeepRecipe()
+    FillRecipeList()
+ENDSUB
+
+SUB BTNINSTALL_CLICK(e)
+    FORM.SET(txtLog, "TEXT", REPLACE$(SetUp$(FORM.GET(chkDry, "CHECKED"), NOT gSelfTest), CHR$(10), CHR$(13) + CHR$(10)))
+ENDSUB
+
+' ── the self test ─────────────────────────────────────────────
+
+SUB Expect(ok, what$)
+    IF NOT ok THEN
+        gFails = gFails + 1
+        PRINT "FAIL: "; what$
+    ENDIF
+ENDSUB
+
+SUB Shot(n)
+    IF gShots$ = "" THEN RETURN
+    MKDIR gShots$
+    DIM got = OS.SCREENSHOT(PATH.JOIN$(gShots$, "wizard" + STR$(n) + ".png"), "client", "Automate Your Work: Setup")
+ENDSUB
+
+SUB TMRSELF_TICK(e)
+    gTicks = gTicks + 1
+    IF gTicks <= 5 THEN Shot(gTicks)
+    IF gTicks = 1 THEN
+        Expect(gPage = 0, "the wizard opens on the welcome page")
+        FORM.SET(btnNext, "VALUE", TRUE)
+    ELSEIF gTicks = 2 THEN
+        Expect(gPage = 1, "Next shows the second page")
+        FORM.SET(you_boxes[2], "TEXT", "Test User")
+        FORM.SET(btnNext, "VALUE", TRUE)
+    ELSEIF gTicks = 3 THEN
+        Expect(gA{"name"} = "Test User", "the name typed is kept")
+        Expect(gPage = 2, "the recipes page")
+        Expect(FORM.GET(lstRecipes, "COUNT") = LEN(gRecipes), "every recipe is listed")
+        FORM.SET(set_boxes[2], "TEXT", "12")
+        FORM.SET(btnNext, "VALUE", TRUE)
+    ELSEIF gTicks = 4 THEN
+        Expect(gPage = 3, "the last page")
+        FORM.SET(btnInstall, "VALUE", TRUE)
+    ELSEIF gTicks = 5 THEN
+        DIM conf$ = WIZARD.CONF_PATH$(gA)
+        Expect(FILE.EXISTS(conf$), "work.conf is written")
+        IF FILE.EXISTS(conf$) THEN
+            DIM txt$ = TXTREADER$(conf$)
+            Expect(INSTR(txt$, "name = " + CHR$(34) + "Test User" + CHR$(34)) >= 0, "with the name")
+            Expect(INSTR(txt$, "min_age_hours = 12") >= 0, "and the changed setting of the first recipe")
+        ENDIF
+        Expect(INSTR(FORM.GET(txtLog, "TEXT"), "Done.") >= 0, "the log shows the result")
+        FORM.CLOSE(frm)
+    ENDIF
+ENDSUB
+
+FORM.RUN(frm)
+IF gSelfTest THEN
+    OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", gHome$])
+    IF gFails > 0 THEN THROW STR$(gFails) + " wizard window checks failed"
+    PRINT "ALL WIZARD WINDOW TESTS PASSED"
+ENDIF

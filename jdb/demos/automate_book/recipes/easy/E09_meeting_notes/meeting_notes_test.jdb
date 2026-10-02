@@ -1,0 +1,49 @@
+' Meeting Notes Starter: the next meeting of the fixture calendar from
+' several times (a weekly series, an all-day event skipped), the agenda
+' from the invitation, a safe file name, and the Word file read back.
+
+IMPORT TESTKIT, MEETNOTES, ICAL, DT, DOCX
+
+DIM base$ = "recipes/easy/E09_meeting_notes/"
+IF NOT FILE.EXISTS(base$ + "calendar.ics") THEN base$ = ""
+DIM cal = ICAL.PARSEFILE(base$ + "calendar.ics")
+
+TESTKIT.SUITE("the next meeting")
+DIM m1 = MEETNOTES.NEXT_MEETING(cal, DT.PARSE("2026-10-02T09:00:00Z"), 7)
+TESTKIT.EQ(m1{"summary"}, "Weekly team call", "the series starts on Friday")
+DIM m2 = MEETNOTES.NEXT_MEETING(cal, DT.PARSE("2026-10-02T14:00:00Z"), 7)
+TESTKIT.EQ(m2{"summary"}, "Miller project status", "after it the Monday meeting")
+TESTKIT.EQ(DT.ISO$(m2{"start"}), "2026-10-05T08:00:00Z", "with its start")
+TESTKIT.EQ(m2{"location"}, "Room 3", "its place")
+TESTKIT.EQARRAY(m2{"attendees"}, ["mia@example.com", "jonas@example.com"], "and the attendees")
+TESTKIT.EQARRAY(m2{"agenda"}, ["Budget", "Timeline", "Open points"], "the agenda from the invitation")
+DIM m3 = MEETNOTES.NEXT_MEETING(cal, DT.PARSE("2026-10-05T09:30:00Z"), 7)
+TESTKIT.EQ(m3{"summary"}, "Weekly team call", "the series again a week later")
+TESTKIT.EQARRAY(m3{"agenda"}, ["Updates", "Decisions", "Next steps"], "headings when the invitation has no text")
+DIM none = MEETNOTES.NEXT_MEETING(cal, DT.PARSE("2027-06-01T00:00:00Z"), 7)
+TESTKIT.EQ(LEN(MAP.KEYS(none)), 0, "nothing after the series ended")
+
+TESTKIT.SUITE("names")
+TESTKIT.EQ(MEETNOTES.SAFE$("Q3: Plan/Review?"), "Q3 PlanReview", "characters a file name cannot hold")
+TESTKIT.EQ(MEETNOTES.FILE_NAME$(m2, 2), "2026-10-05 Miller project status.docx", "date and title")
+TESTKIT.EQ(MEETNOTES.FILE_NAME$({"summary": "Late", "start": DT.PARSE("2026-10-05T23:30:00Z")}, 2), "2026-10-06 Late.docx", "the date of the wall clock")
+
+TESTKIT.SUITE("the Word file")
+DIM folder$ = MKTEMP$("notes")
+MKDIR folder$
+DIM path$ = PATH.JOIN$(folder$, MEETNOTES.FILE_NAME$(m2, 2))
+TESTKIT.ISTRUE(MEETNOTES.WRITE_NOTES(m2, path$, 2) >= 9, "written")
+DIM back = DOCX.READ(path$)
+DIM paras = back{"paragraphs"}
+TESTKIT.EQ(paras[0], "Miller project status", "the title first")
+TESTKIT.EQ(paras[1], "When: Monday 05 October 2026, 10:00 to 11:00", "the time in the wall clock")
+TESTKIT.EQ(paras[2], "Where: Room 3", "the place")
+TESTKIT.ISTRUE("jonas@example.com" IN paras, "an attendee")
+TESTKIT.ISTRUE("Timeline" IN paras, "an agenda point")
+DIM tables = back{"tables"}
+TESTKIT.EQ(LEN(tables), 1, "one table")
+TESTKIT.EQARRAY(tables[0][0], ["What", "Who", "By when"], "for the actions")
+TESTKIT.EQ(LEN(tables[0]), 5, "with four empty rows")
+KILL path$
+RMDIR folder$
+TESTKIT.REPORT()

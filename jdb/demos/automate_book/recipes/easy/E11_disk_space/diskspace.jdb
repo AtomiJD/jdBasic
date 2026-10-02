@@ -1,0 +1,116 @@
+' diskspace.jdb: where the space under a folder goes. The size of
+' each folder right below it, the largest files anywhere under it,
+' sizes in readable units, and a report with a warning above a limit.
+'
+'   IMPORT DISKSPACE
+'   DIM scan = DISKSPACE.SCAN("C:/Users/mia")
+'   PRINT DISKSPACE.REPORT$(scan, 10, 50)
+
+EXPORT MODULE DISKSPACE
+
+' Adds every file under a folder to found as [size, path] and answers
+' their total size. Hidden files and folders are left out.
+FUNC Walk(folder$, found)
+    DIM total = 0
+    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM full$ = PATH.JOIN$(folder$, names[k])
+        DIM info = FILE.STAT(full$)
+        IF NOT info{"hidden"} THEN
+            IF info{"is_dir"} THEN
+                total = total + Walk(full$, found)
+            ELSE
+                total = total + info{"size"}
+                PUSH(found, [info{"size"}, full$])
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN total
+ENDFUNC
+
+' The sizes under a folder: a map with "root", "total", "folders"
+' ([name, bytes] for each folder right below it, the files directly in
+' it under "(files here)") and "files" ([bytes, path] for every file).
+EXPORT FUNC SCAN(root$)
+    DIM found = []
+    DIM folders = []
+    DIM loose = 0
+    DIM total = 0
+    DIM names = DIR$(PATH.JOIN$(root$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM full$ = PATH.JOIN$(root$, names[k])
+        DIM info = FILE.STAT(full$)
+        IF NOT info{"hidden"} THEN
+            IF info{"is_dir"} THEN
+                DIM sz = Walk(full$, found)
+                total = total + sz
+                PUSH(folders, [names[k], sz])
+            ELSE
+                DIM fsz = info{"size"}
+                loose = loose + fsz
+                total = total + fsz
+                PUSH(found, [fsz, full$])
+            ENDIF
+        ENDIF
+    NEXT k
+    IF loose > 0 THEN PUSH(folders, ["(files here)", loose])
+    RETURN {"root": root$, "total": total, "folders": folders, _
+        "files": found}
+ENDFUNC
+
+' The n largest entries of a list of pairs by the pair element at col.
+EXPORT FUNC LARGEST(pairs, col, n)
+    IF LEN(pairs) = 0 THEN RETURN []
+    DIM sizes = []
+    DIM k = 0
+    FOR k = 0 TO LEN(pairs) - 1
+        PUSH(sizes, -pairs[k][col])
+    NEXT k
+    DIM order = GRADE(sizes)
+    DIM out = []
+    FOR k = 0 TO LEN(order) - 1
+        IF k < n THEN PUSH(out, pairs[order[k]])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A size in bytes as "812 KB", "4.3 MB" or "1.25 GB".
+EXPORT FUNC HUMAN$(bytes)
+    IF bytes < 1024 THEN RETURN STR$(bytes) + " bytes"
+    IF bytes < 1048576 THEN RETURN STR$(ROUND(bytes / 1024)) + " KB"
+    IF bytes < 1073741824 THEN
+        RETURN FORMAT$("{:.1f} MB", bytes / 1048576)
+    ENDIF
+    RETURN FORMAT$("{:.2f} GB", bytes / 1073741824)
+ENDFUNC
+
+' The report as text: the total with a warning when it is above
+' warn_gb, the largest folders and the n largest files.
+EXPORT FUNC REPORT$(scan, n, warn_gb)
+    DIM out = []
+    DIM total = scan{"total"}
+    DIM head$ = "Disk space under " + scan{"root"} + ": "
+    PUSH(out, head$ + HUMAN$(total))
+    IF total > warn_gb * 1073741824 THEN
+        PUSH(out, "WARNING: more than " + STR$(warn_gb) + " GB.")
+    ENDIF
+    PUSH(out, "(Free space: see the properties of the drive.)")
+    PUSH(out, "")
+    PUSH(out, "Largest folders")
+    DIM big = LARGEST(scan{"folders"}, 1, n)
+    DIM k = 0
+    FOR k = 0 TO LEN(big) - 1
+        DIM fsize$ = LPAD$(HUMAN$(big[k][1]), 10, " ")
+        PUSH(out, fsize$ + "  " + big[k][0])
+    NEXT k
+    PUSH(out, "")
+    PUSH(out, "Largest files")
+    DIM files_big = LARGEST(scan{"files"}, 0, n)
+    FOR k = 0 TO LEN(files_big) - 1
+        DIM size$ = LPAD$(HUMAN$(files_big[k][0]), 10, " ")
+        PUSH(out, size$ + "  " + files_big[k][1])
+    NEXT k
+    RETURN JOIN(out, CHR$(10))
+ENDFUNC

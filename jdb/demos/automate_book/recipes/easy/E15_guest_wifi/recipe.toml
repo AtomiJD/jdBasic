@@ -1,0 +1,34 @@
+# What the setup wizard knows about this recipe.
+
+id = "E15"
+name = "Guest Wi-Fi Card"
+program = "guest_wifi.jdb"
+summary = "Prints cards with a QR code that joins visitors to the guest Wi-Fi"
+minutes_per_week = 5
+schedule = ""
+section = "guest_wifi"
+modules = ["wificard.jdb"]
+
+[[setting]]
+key = "ssid"
+label = "Name of the guest network"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "password"
+label = "Its password"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "security"
+label = "Security (WPA, WEP or nopass)"
+kind = "text"
+default = "WPA"
+
+[[setting]]
+key = "cards"
+label = "Cards on the page (1 to 8)"
+kind = "number"
+default = 8

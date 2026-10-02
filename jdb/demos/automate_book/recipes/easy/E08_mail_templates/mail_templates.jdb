@@ -1,0 +1,59 @@
+' Mail Templates: a standard reply filled with a name, the date and
+' your own values, put on the clipboard to paste into a mail. The
+' settings are the [mail_templates] part of work.conf.
+'
+'   jdbasic mail_templates.jdb                    list the templates
+'   jdbasic mail_templates.jdb thanks Ms Miller   fill and copy one
+'   jdbasic mail_templates.jdb thanks --dry-run   only show it
+
+IMPORT WORKCONF, MAILTPL
+
+' The words on the command line that are no --switch and no value
+' of --config.
+FUNC Words()
+    DIM argv = OS.ARGS()
+    DIM out = []
+    DIM k = 1
+    DO WHILE k < LEN(argv)
+        DIM a$ = argv[k]
+        IF a$ = "--config" THEN
+            k = k + 2
+        ELSE
+            IF NOT STARTSWITH(a$, "--") THEN PUSH(out, a$)
+            k = k + 1
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "mail_templates."
+DIM home$ = "~/Documents/AutomateWork/templates"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM me$ = WORKCONF.VALUE(cfg, key$ + "me", "")
+DIM sign$ = WORKCONF.VALUE(cfg, key$ + "signature", "Kind regards")
+DIM own AS MAP
+DIM extra = WORKCONF.VALUE(cfg, key$ + "values", own)
+DIM words = Words()
+
+IF LEN(words) = 0 THEN
+    PRINT "Templates in "; folder$; ":"
+    PRINT "  "; JOIN(MAILTPL.NAMES(folder$), ", ")
+ELSE
+    DIM to$ = JOIN(DROP(1, words), " ")
+    DIM values = MAILTPL.VALUES(me$, sign$, to$, NOW())
+    DIM names = MAP.KEYS(extra)
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        values{names[k]} = extra{names[k]}
+    NEXT k
+    DIM template$ = MAILTPL.TEMPLATE$(folder$, words[0])
+    DIM gaps = MAILTPL.MISSING(template$, values)
+    IF LEN(gaps) > 0 THEN PRINT "No value for: "; JOIN(gaps, ", ")
+    DIM mail$ = MAILTPL.FILL$(template$, values)
+    PRINT mail$
+    IF NOT WORKCONF.FLAG("dry-run") THEN
+        CLIPBOARD.SET mail$
+        PRINT "(on the clipboard, paste it into your mail)"
+    ENDIF
+ENDIF

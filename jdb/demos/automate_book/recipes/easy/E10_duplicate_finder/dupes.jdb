@@ -1,0 +1,150 @@
+' dupes.jdb: files stored more than once. Files of the same size are
+' compared by the SHA-256 of their content; equal content makes a
+' group. Nothing is deleted, the groups go into an Excel report.
+'
+'   IMPORT DUPES
+'   DIM groups = DUPES.GROUPS(DUPES.FILES(["C:/Docs"]), 1)
+'   PRINT DUPES.WASTED(groups); " bytes in copies"
+'   DUPES.REPORT(groups, "duplicates.xlsx")
+
+EXPORT MODULE DUPES
+
+IMPORT XLSX
+
+' Every file under a folder and its subfolders, hidden ones left out.
+FUNC Walk(folder$, out)
+    DIM names = DIR$(PATH.JOIN$(folder$, "*"))
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM full$ = PATH.JOIN$(folder$, names[k])
+        DIM info = FILE.STAT(full$)
+        IF NOT info{"hidden"} THEN
+            IF info{"is_dir"} THEN
+                Walk(full$, out)
+            ELSE
+                PUSH(out, full$)
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN 0
+ENDFUNC
+
+' The files under each of the folders.
+EXPORT FUNC FILES(folders)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(folders) - 1
+        IF FILE.ISDIR(folders[k]) THEN Walk(folders[k], out)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The groups of files with the same content, each a map of "size",
+' "hash" and "files"; files smaller than min_bytes are left out.
+EXPORT FUNC GROUPS(paths, min_bytes)
+    DIM by_size AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(paths) - 1
+        DIM p$ = paths[k]
+        DIM sz = FILE.SIZE(p$)
+        IF sz >= min_bytes ANDALSO sz > 0 THEN
+            DIM skey$ = STR$(sz)
+            IF NOT MAP.EXISTS(by_size, skey$) THEN by_size{skey$} = []
+            DIM same_size = by_size{skey$}
+            PUSH(same_size, p$)
+        ENDIF
+    NEXT k
+    DIM out = []
+    DIM sizes = MAP.KEYS(by_size)
+    DIM s = 0
+    FOR s = 0 TO LEN(sizes) - 1
+        DIM bucket = by_size{sizes[s]}
+        IF LEN(bucket) > 1 THEN out = APPEND(out, SameContent(bucket))
+    NEXT s
+    RETURN out
+ENDFUNC
+
+' The groups of equal content among files of one size.
+FUNC SameContent(bucket)
+    DIM by_hash AS MAP
+    DIM order = []
+    DIM k = 0
+    FOR k = 0 TO LEN(bucket) - 1
+        DIM p$ = bucket[k]
+        DIM h$ = CODEC.SHA256$(BINREADER$(p$))
+        IF NOT MAP.EXISTS(by_hash, h$) THEN
+            by_hash{h$} = []
+            PUSH(order, h$)
+        ENDIF
+        DIM same = by_hash{h$}
+        PUSH(same, p$)
+    NEXT k
+    DIM out = []
+    FOR k = 0 TO LEN(order) - 1
+        DIM grp_files = by_hash{order[k]}
+        IF LEN(grp_files) > 1 THEN
+            DIM sz = FILE.SIZE(grp_files[0])
+            DIM grp = {"size": sz, "hash": order[k], _
+                "files": grp_files}
+            PUSH(out, grp)
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The bytes the copies take beyond one file of each group.
+EXPORT FUNC WASTED(groups)
+    DIM total = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(groups) - 1
+        DIM g = groups[k]
+        total = total + g{"size"} * (LEN(g{"files"}) - 1)
+    NEXT k
+    RETURN total
+ENDFUNC
+
+' Writes the report: a summary sheet and a sheet with a row per file,
+' the largest waste first. Answers the number of file rows.
+EXPORT FUNC REPORT(groups, path$)
+    DIM order = SortedByWaste(groups)
+    DIM rows = [["Group", "Size (KB)", "File", "Folder", "Changed"]]
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(order) - 1
+        DIM g = groups[order[k]]
+        DIM grp_files = g{"files"}
+        FOR j = 0 TO LEN(grp_files) - 1
+            DIM f$ = grp_files[j]
+            DIM kb = ROUND(g{"size"} / 1024, 1)
+            DIM changed$ = FILE.STAT(f$){"mtime"}
+            PUSH(rows, [k + 1, kb, PATH.BASENAME$(f$), _
+                PATH.DIRNAME$(f$), changed$])
+        NEXT j
+    NEXT k
+    DIM mb = ROUND(WASTED(groups) / 1048576, 2)
+    DIM summary = [["What", "Value"], ["Groups", LEN(groups)], _
+        ["Files in groups", LEN(rows) - 1], ["Wasted (MB)", mb]]
+    DIM wb = XLSX.NEW()
+    DIM sum_sheet = XLSX.SHEET(wb, "Summary", summary)
+    XLSX.COLUMN(sum_sheet, "A", {"width": 18})
+    DIM sheet = XLSX.SHEET(wb, "Duplicates", rows)
+    XLSX.COLUMN(sheet, "C", {"width": 36})
+    XLSX.COLUMN(sheet, "D", {"width": 48})
+    XLSX.COLUMN(sheet, "E", {"width": 20})
+    XLSX.FREEZE(sheet, 1)
+    XLSX.WRITE(path$, wb)
+    RETURN LEN(rows) - 1
+ENDFUNC
+
+' The group numbers ordered by the space their copies waste, largest
+' first.
+FUNC SortedByWaste(groups)
+    DIM waste = []
+    DIM k = 0
+    FOR k = 0 TO LEN(groups) - 1
+        DIM g = groups[k]
+        PUSH(waste, -g{"size"} * (LEN(g{"files"}) - 1))
+    NEXT k
+    IF LEN(waste) = 0 THEN RETURN []
+    RETURN GRADE(waste)
+ENDFUNC

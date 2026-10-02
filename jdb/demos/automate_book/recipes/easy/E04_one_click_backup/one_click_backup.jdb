@@ -1,0 +1,39 @@
+' One-Click Backup: packs the folders you name into one dated ZIP
+' archive and keeps the newest ones. The settings are the
+' [one_click_backup] part of work.conf.
+'
+'   jdbasic one_click_backup.jdb            back up now
+'   jdbasic one_click_backup.jdb --dry-run  show what would happen
+
+IMPORT WORKCONF, BACKUP
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "one_click_backup."
+DIM listed = WORKCONF.VALUE(cfg, key$ + "folders", ["~/Documents"])
+DIM folders = []
+DIM k = 0
+FOR k = 0 TO LEN(listed) - 1
+    PUSH(folders, WORKCONF.EXPAND$(listed[k]))
+NEXT k
+DIM home$ = "~/Documents/AutomateWork/backups"
+DIM target$ = WORKCONF.FOLDER$(cfg, key$ + "target", home$)
+DIM keep = WORKCONF.VALUE(cfg, key$ + "keep", 10)
+DIM max_mb = WORKCONF.VALUE(cfg, key$ + "max_file_mb", 200)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM picked = BACKUP.ENTRIES(folders, max_mb)
+DIM entries = picked{"entries"}
+DIM skipped = picked{"skipped"}
+DIM zip_name$ = BACKUP.ARCHIVE_NAME$("backup", NOW())
+DIM zip_path$ = PATH.JOIN$(target$, zip_name$)
+FOR k = 0 TO LEN(skipped) - 1
+    PRINT "too large, left out: "; skipped[k]
+NEXT k
+IF dry_run THEN
+    PRINT "would write "; zip_name$; " with "; LEN(entries); " files"
+ELSE
+    DIM n_files = BACKUP.WRITE(entries, zip_path$)
+    PRINT "wrote "; zip_path$; " with "; n_files; " files"
+ENDIF
+DIM n_old = BACKUP.PRUNE(BACKUP.OLD(target$, "backup", keep), dry_run)
+IF n_old > 0 THEN PRINT n_old; " older archives cleaned up."

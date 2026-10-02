@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "E10"
+name = "Duplicate Finder"
+program = "duplicate_finder.jdb"
+summary = "Reports files stored more than once and the space they take"
+minutes_per_week = 10
+schedule = "weekly fri 16:00"
+section = "duplicate_finder"
+modules = ["dupes.jdb"]
+
+[[setting]]
+key = "folders"
+label = "Folders to look through"
+kind = "list"
+default = ["~/Documents", "~/Downloads"]
+
+[[setting]]
+key = "report"
+label = "Excel report"
+kind = "file"
+default = "~/Documents/AutomateWork/duplicates.xlsx"
+
+[[setting]]
+key = "min_size_kb"
+label = "Leave out files smaller than (KB)"
+kind = "number"
+default = 1

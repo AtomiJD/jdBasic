@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "E11"
+name = "Disk Space Report"
+program = "disk_space.jdb"
+summary = "Shows the largest folders and files and warns above a limit"
+minutes_per_week = 5
+schedule = "weekly mon 09:00"
+section = "disk_space"
+modules = ["diskspace.jdb"]
+
+[[setting]]
+key = "root"
+label = "Folder to measure"
+kind = "folder"
+default = "~"
+
+[[setting]]
+key = "warn_gb"
+label = "Warn above (GB)"
+kind = "number"
+default = 50
+
+[[setting]]
+key = "top"
+label = "How many folders and files to list"
+kind = "number"
+default = 10

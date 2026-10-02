@@ -1,0 +1,22 @@
+# What the setup wizard knows about this recipe.
+
+id = "E06"
+name = "Shutdown Ritual"
+program = "shutdown_ritual.jdb"
+summary = "Three questions at the end of the day, a journal, a weekly look back"
+minutes_per_week = 20
+schedule = "weekdays {day_end}"
+section = "shutdown_ritual"
+modules = ["ritual.jdb"]
+
+[[setting]]
+key = "journal"
+label = "Journal file"
+kind = "file"
+default = "~/Documents/AutomateWork/journal/journal.md"
+
+[[setting]]
+key = "summary_weekday"
+label = "Day of the weekly look back (1 Monday to 5 Friday)"
+kind = "number"
+default = 5

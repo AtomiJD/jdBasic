@@ -1,0 +1,66 @@
+' Disk Space Report: a small tree with nested folders and loose files;
+' the folder totals, the largest files, readable sizes, and the report
+' with and without the warning.
+
+IMPORT TESTKIT, DISKSPACE
+
+DIM root$ = MKTEMP$("space")
+DIM videos$ = PATH.JOIN$(root$, "Videos")
+DIM deep$ = PATH.JOIN$(videos$, "2026", "Summer")
+DIM docs$ = PATH.JOIN$(root$, "Documents")
+MKDIR deep$
+MKDIR docs$
+TXTWRITER PATH.JOIN$(deep$, "lake.mp4"), REPEAT$("v", 5000)
+TXTWRITER PATH.JOIN$(videos$, "intro.mp4"), REPEAT$("v", 3000)
+TXTWRITER PATH.JOIN$(docs$, "letter.docx"), REPEAT$("d", 700)
+TXTWRITER PATH.JOIN$(root$, "notes.txt"), REPEAT$("n", 100)
+
+FUNC Folder(scan, name$)
+    DIM folders = scan{"folders"}
+    DIM k = 0
+    FOR k = 0 TO LEN(folders) - 1
+        IF folders[k][0] = name$ THEN RETURN folders[k][1]
+    NEXT k
+    RETURN -1
+ENDFUNC
+
+TESTKIT.SUITE("scanning")
+DIM scan = DISKSPACE.SCAN(root$)
+TESTKIT.EQ(scan{"total"}, 8800, "every byte under the folder")
+TESTKIT.EQ(Folder(scan, "Videos"), 8000, "a folder counts its subfolders")
+TESTKIT.EQ(Folder(scan, "Documents"), 700, "another folder")
+TESTKIT.EQ(Folder(scan, "(files here)"), 100, "the loose files")
+TESTKIT.EQ(LEN(scan{"files"}), 4, "four files")
+
+TESTKIT.SUITE("ordering")
+DIM big = DISKSPACE.LARGEST(scan{"files"}, 0, 2)
+TESTKIT.EQ(LEN(big), 2, "the two largest files")
+TESTKIT.EQ(PATH.BASENAME$(big[0][1]), "lake.mp4", "the largest first")
+TESTKIT.EQ(PATH.BASENAME$(big[1][1]), "intro.mp4", "then the next")
+DIM top = DISKSPACE.LARGEST(scan{"folders"}, 1, 10)
+TESTKIT.EQ(top[0][0], "Videos", "the largest folder first")
+TESTKIT.EQ(LEN(DISKSPACE.LARGEST([], 0, 5)), 0, "an empty list")
+
+TESTKIT.SUITE("sizes")
+TESTKIT.EQ(DISKSPACE.HUMAN$(512), "512 bytes", "bytes")
+TESTKIT.EQ(DISKSPACE.HUMAN$(4096), "4 KB", "kilobytes")
+TESTKIT.EQ(DISKSPACE.HUMAN$(5 * 1048576 + 300000), "5.3 MB", "megabytes")
+TESTKIT.EQ(DISKSPACE.HUMAN$(3 * 1073741824), "3.00 GB", "gigabytes")
+
+TESTKIT.SUITE("the report")
+DIM calm$ = DISKSPACE.REPORT$(scan, 3, 50)
+TESTKIT.ISTRUE(INSTR(calm$, "WARNING") < 0, "no warning below the limit")
+TESTKIT.ISTRUE(INSTR(calm$, "Videos") >= 0 ANDALSO INSTR(calm$, "lake.mp4") >= 0, "folders and files")
+DIM loud$ = DISKSPACE.REPORT$(scan, 3, 0.000001)
+TESTKIT.ISTRUE(INSTR(loud$, "WARNING: more than") >= 0, "a warning above it")
+
+KILL PATH.JOIN$(deep$, "lake.mp4")
+KILL PATH.JOIN$(videos$, "intro.mp4")
+KILL PATH.JOIN$(docs$, "letter.docx")
+KILL PATH.JOIN$(root$, "notes.txt")
+RMDIR deep$
+RMDIR PATH.JOIN$(videos$, "2026")
+RMDIR videos$
+RMDIR docs$
+RMDIR root$
+TESTKIT.REPORT()

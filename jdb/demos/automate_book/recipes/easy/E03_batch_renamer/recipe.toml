@@ -1,0 +1,28 @@
+# What the setup wizard knows about this recipe.
+
+id = "E03"
+name = "Batch Renamer"
+program = "batch_renamer.jdb"
+summary = "Puts the date in front of the names of scans and photos"
+minutes_per_week = 10
+schedule = "daily 18:00"
+section = "batch_renamer"
+modules = ["renamer.jdb"]
+
+[[setting]]
+key = "folder"
+label = "Folder whose files get dated names"
+kind = "folder"
+default = "~/Documents/Scans"
+
+[[setting]]
+key = "pattern"
+label = "Pattern for the new name"
+kind = "text"
+default = "{date} {name}{ext}"
+
+[[setting]]
+key = "extensions"
+label = "Only files with these extensions (empty: all)"
+kind = "list"
+default = ["pdf", "jpg", "png"]

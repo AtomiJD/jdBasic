@@ -5,7 +5,11 @@ levels (easy, medium, expert) that take routine office work off the reader's
 desk, a setup wizard for the easy level, and a build that turns the Markdown
 manuscript into a Word document with jdBasic itself.
 
-Status, 2026-10-01: WP 0a, 0b and 0c done (DOCX, HTML, print and screen PDF,
+Status, 2026-10-01: WP 0a to 0c and WP 1 done. WP 1: setup wizard (core
+module, console and window front ends, recipe.toml contract) and the 15
+easy recipes, all green in check_recipes. Chapter 3 sets to about 98 pages
+against the 64 of the budget, so the book will end well above 300. Before:
+DOCX, HTML, print and screen PDF,
 print cover and front cover, EPUB 3,
 check_recipes, the prose and width checks, recipe E01
 with its chapter pages). E01 came out at about 7 pages against the 4 the

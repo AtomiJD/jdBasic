@@ -1,0 +1,117 @@
+' watcher.jdb: tells whether the part of a web page you care about
+' differs from the last look. The part lies between two markers in
+' the page's HTML; its text is kept in a folder and compared word by
+' word with the copy from the time before.
+'
+'   IMPORT WATCHER
+'   DIM page = {"name": "Desk lamp", "url": url$, _
+'       "start": "id=price>", "end": "</span>"}
+'   DIM r = WATCHER.CHECK(page, "C:/watch", FALSE)
+'   IF r{"status"} = "changed" THEN PRINT r{"diff"}
+
+EXPORT MODULE WATCHER
+
+IMPORT TEXTDIFF
+
+' The readable text of HTML: scripts, styles and tags removed, the
+' common entities turned back into characters, spaces collapsed.
+EXPORT FUNC PLAINTEXT$(html$)
+    DIM t$ = REGEX.REPLACE("<script[\s\S]*?</script>", html$, " ")
+    t$ = REGEX.REPLACE("<style[\s\S]*?</style>", t$, " ")
+    t$ = REGEX.REPLACE("<[^>]*>", t$, " ")
+    t$ = REPLACE$(REPLACE$(t$, "&nbsp;", " "), "&quot;", CHR$(34))
+    t$ = REPLACE$(REPLACE$(t$, "&#39;", "'"), "&lt;", "<")
+    t$ = REPLACE$(REPLACE$(t$, "&gt;", ">"), "&amp;", "&")
+    RETURN TRIM$(REGEX.REPLACE("\s+", t$, " "))
+ENDFUNC
+
+' The text between the first start marker and the end marker after
+' it; an empty marker means the start or the end of the page. A start
+' marker the page does not contain gives "".
+EXPORT FUNC PART$(html$, start$, end$)
+    DIM part$ = html$
+    IF start$ <> "" THEN
+        DIM at = CINT(INSTR(part$, start$))
+        IF at < 0 THEN RETURN ""
+        part$ = MID$(part$, at + LEN(start$), LEN(part$))
+    ENDIF
+    IF end$ <> "" THEN
+        DIM stop_at = CINT(INSTR(part$, end$))
+        IF stop_at >= 0 THEN part$ = LEFT$(part$, stop_at)
+    ENDIF
+    RETURN PLAINTEXT$(part$)
+ENDFUNC
+
+' A file name made from a page's name: letters and digits, the rest
+' as underscores.
+EXPORT FUNC SLUG$(name$)
+    DIM s$ = REGEX.REPLACE("[^a-z0-9]+", LCASE$(name$), "_")
+    IF s$ = "" ORELSE s$ = "_" THEN s$ = "page"
+    RETURN s$
+ENDFUNC
+
+' The page at a URL: "ok", "body" and, when it failed, "error".
+EXPORT FUNC FETCH(url$)
+    DIM result AS MAP
+    result{"ok"} = FALSE
+    result{"body"} = ""
+    result{"error"} = ""
+    TRY
+        DIM body$ = HTTP.GET$(url$)
+        DIM code = HTTP.STATUSCODE()
+        IF code >= 200 ANDALSO code < 300 THEN
+            result{"ok"} = TRUE
+            result{"body"} = body$
+        ELSE
+            result{"error"} = "the server answered " + STR$(code)
+        ENDIF
+    CATCH
+        result{"error"} = "cannot reach " + url$
+    ENDTRY
+    RETURN result
+ENDFUNC
+
+' The watched text compared with the copy in store$: "status" is
+' "new", "same" or "changed", "diff" marks the changed words as
+' [-old-]{+new+}. The new text is kept unless dry_run is set.
+EXPORT FUNC COMPARE(name$, text$, store$, dry_run)
+    DIM file$ = PATH.JOIN$(store$, SLUG$(name$) + ".txt")
+    DIM out AS MAP
+    out{"diff"} = ""
+    out{"before"} = ""
+    IF NOT FILE.EXISTS(file$) THEN
+        out{"status"} = "new"
+    ELSE
+        DIM before$ = TXTREADER$(file$)
+        out{"before"} = before$
+        IF before$ = text$ THEN
+            out{"status"} = "same"
+        ELSE
+            out{"status"} = "changed"
+            out{"diff"} = TEXTDIFF.WORDDIFF$(before$, text$)
+        ENDIF
+    ENDIF
+    IF NOT dry_run ANDALSO out{"status"} <> "same" THEN
+        MKDIR store$
+        TXTWRITER file$, text$
+    ENDIF
+    RETURN out
+ENDFUNC
+
+' One page from fetching to comparing; "status" is also "error" when
+' the page cannot be read or "missing" when its start marker is gone.
+EXPORT FUNC CHECK(page, store$, dry_run)
+    DIM got = FETCH(page{"url"})
+    IF NOT got{"ok"} THEN
+        RETURN {"status": "error", "diff": got{"error"}}
+    ENDIF
+    DIM start$ = ""
+    DIM end$ = ""
+    IF MAP.EXISTS(page, "start") THEN start$ = page{"start"}
+    IF MAP.EXISTS(page, "end") THEN end$ = page{"end"}
+    DIM text$ = PART$(got{"body"}, start$, end$)
+    IF text$ = "" THEN
+        RETURN {"status": "missing", "diff": "marker not found"}
+    ENDIF
+    RETURN COMPARE(page{"name"}, text$, store$, dry_run)
+ENDFUNC

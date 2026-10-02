@@ -1,0 +1,46 @@
+' Shutdown Ritual: three questions at the end of the day, the answers
+' kept in a journal, and on the summary day a look back at the week.
+' The settings are the [shutdown_ritual] part of work.conf.
+'
+'   jdbasic shutdown_ritual.jdb            ask, write, close the day
+'   jdbasic shutdown_ritual.jdb --dry-run  ask, show, write nothing
+
+IMPORT WORKCONF, RITUAL
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "shutdown_ritual."
+DIM fallback$ = "~/Documents/AutomateWork/journal/journal.md"
+DIM journal$ = WORKCONF.FOLDER$(cfg, key$ + "journal", fallback$)
+DIM summary_day = WORKCONF.VALUE(cfg, key$ + "summary_weekday", 5)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+DIM today$ = FORMAT_DATE(NOW(), "%Y-%m-%d")
+
+DIM done$ = ""
+DIM tomorrow$ = ""
+DIM mood$ = ""
+PRINT "Time to close the day."
+INPUT "What did you get done today? "; done$
+INPUT "What is the first thing for tomorrow? "; tomorrow$
+DIM mood = 0
+DO WHILE mood = 0
+    INPUT "How was the day, from 1 (hard) to 5 (good)? "; mood$
+    mood = RITUAL.MOOD(mood$)
+LOOP
+
+DIM entry$ = RITUAL.ENTRY$(today$, done$, tomorrow$, mood)
+IF dry_run THEN
+    PRINT "This would go into "; journal$; ":"
+    PRINT entry$
+ELSE
+    RITUAL.ADD(journal$, entry$)
+    PRINT "Written to "; journal$
+ENDIF
+
+IF RITUAL.WEEKDAY_OF(today$) = summary_day THEN
+    DIM so_far$ = RITUAL.TEXT_OF$(journal$)
+    IF dry_run THEN so_far$ = so_far$ + entry$
+    DIM entries = RITUAL.PARSE(so_far$)
+    PRINT
+    PRINT RITUAL.SUMMARY$(RITUAL.WEEK(entries, today$))
+ENDIF
+PRINT "Done for today. Close the laptop."

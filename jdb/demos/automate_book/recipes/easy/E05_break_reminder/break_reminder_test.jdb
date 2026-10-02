@@ -1,0 +1,34 @@
+' Break Reminder: times of day, working hours and workdays, and when a
+' reminder is due after the last one. No message box is shown.
+
+IMPORT TESTKIT, BREAKS
+
+DIM monday_10 = CDATE("2026-10-05 10:00:00")
+DIM monday_7 = CDATE("2026-10-05 07:59:00")
+DIM monday_end = CDATE("2026-10-05 17:30:00")
+DIM saturday = CDATE("2026-10-10 10:00:00")
+
+FUNC BadTime(t$)
+    RETURN BREAKS.MINUTES(t$)
+ENDFUNC
+
+TESTKIT.SUITE("working hours")
+TESTKIT.EQ(BREAKS.MINUTES("08:30"), 510, "08:30 is 510 minutes after midnight")
+TESTKIT.EQ(BREAKS.MINUTES(" 17:05 "), 1025, "spaces around a time")
+TESTKIT.THROWS(BadTime@, "half past eight", "a text that is no time")
+TESTKIT.ISTRUE(BREAKS.WORKING(monday_10, "08:30", "17:30", TRUE), "Monday at ten")
+TESTKIT.ISTRUE(NOT BREAKS.WORKING(monday_7, "08:30", "17:30", TRUE), "not before the start")
+TESTKIT.ISTRUE(NOT BREAKS.WORKING(monday_end, "08:30", "17:30", TRUE), "not at the end")
+TESTKIT.ISTRUE(NOT BREAKS.WORKING(saturday, "08:30", "17:30", TRUE), "not on Saturday")
+TESTKIT.ISTRUE(BREAKS.WORKING(saturday, "08:30", "17:30", FALSE), "unless weekends count")
+
+TESTKIT.SUITE("due")
+TESTKIT.ISTRUE(BREAKS.DUE(monday_10, "", "08:30", "17:30", 50, TRUE), "the first reminder of all")
+TESTKIT.ISTRUE(NOT BREAKS.DUE(monday_10, "2026-10-05 09:30:00", "08:30", "17:30", 50, TRUE), "30 minutes after the last one")
+TESTKIT.ISTRUE(BREAKS.DUE(monday_10, "2026-10-05 09:10:00", "08:30", "17:30", 50, TRUE), "50 minutes after it")
+TESTKIT.ISTRUE(BREAKS.DUE(monday_10, "2026-10-02 09:55:00", "08:30", "17:30", 50, TRUE), "the last one was on another day")
+TESTKIT.ISTRUE(NOT BREAKS.DUE(monday_7, "", "08:30", "17:30", 50, TRUE), "never outside working hours")
+TESTKIT.EQ(BREAKS.STAMP$(monday_10), "2026-10-05 10:00:00", "the stamp DUE reads back")
+TESTKIT.ISTRUE(NOT BREAKS.DUE(monday_10, BREAKS.STAMP$(monday_10), "08:30", "17:30", 50, TRUE), "right after a reminder")
+
+TESTKIT.REPORT()

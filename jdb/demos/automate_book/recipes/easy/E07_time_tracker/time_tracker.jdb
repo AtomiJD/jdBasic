@@ -1,0 +1,80 @@
+' Time Tracker: start and stop the clock for a project, see what runs,
+' and turn the week into an Excel sheet. The settings are the
+' [time_tracker] part of work.conf.
+'
+'   jdbasic time_tracker.jdb start "Miller offer"
+'   jdbasic time_tracker.jdb stop
+'   jdbasic time_tracker.jdb status
+'   jdbasic time_tracker.jdb week [--dry-run]
+
+IMPORT WORKCONF, TRACKER
+
+' The words on the command line that are no --switch and no value
+' of --config.
+FUNC Words()
+    DIM argv = OS.ARGS()
+    DIM out = []
+    DIM k = 1
+    DO WHILE k < LEN(argv)
+        DIM a$ = argv[k]
+        IF a$ = "--config" THEN
+            k = k + 2
+        ELSE
+            IF NOT STARTSWITH(a$, "--") THEN PUSH(out, a$)
+            k = k + 1
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "time_tracker."
+DIM home$ = "~/Documents/AutomateWork/time"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM log_path$ = PATH.JOIN$(folder$, "log.csv")
+DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+DIM words = Words()
+DIM command$ = "status"
+IF LEN(words) > 0 THEN command$ = LCASE$(words[0])
+DIM work = TRACKER.SESSIONS(TRACKER.EVENTS(log_path$))
+DIM running$ = TRACKER.RUNNING$(work)
+
+IF command$ = "start" THEN
+    IF LEN(words) < 2 THEN THROW "start needs a project name"
+    DIM project$ = TRACKER.CLEAN$(JOIN(DROP(1, words), " "))
+    TRACKER.RECORD(log_path$, now$, "start", project$)
+    IF running$ <> "" THEN PRINT "Stopped "; running$; "."
+    PRINT "Started "; project$; " at "; MID$(now$, 11, 5); "."
+ELSEIF command$ = "stop" THEN
+    IF running$ = "" THEN
+        PRINT "Nothing is running."
+    ELSE
+        TRACKER.RECORD(log_path$, now$, "stop", "")
+        PRINT "Stopped "; running$; "."
+    ENDIF
+ELSEIF command$ = "status" THEN
+    IF running$ = "" THEN
+        PRINT "Nothing is running."
+    ELSE
+        DIM since$ = work[LEN(work) - 1]{"start"}
+        DIM mins = TRACKER.MINUTES(since$, now$)
+        PRINT running$; " runs for "; FLOOR(mins); " minutes."
+    ENDIF
+ELSEIF command$ = "week" THEN
+    DIM monday$ = TRACKER.MONDAY$(LEFT$(now$, 10))
+    DIM table = TRACKER.WEEK_TABLE(work, monday$, now$)
+    DIM rows = TRACKER.SHEET_ROWS(table, monday$)
+    DIM k = 0
+    FOR k = 1 TO LEN(rows) - 1
+        DIM row = rows[k]
+        DIM hours$ = FORMAT$("{:.2f}", row[LEN(row) - 1])
+        PRINT row[0]; ": "; hours$; " h"
+    NEXT k
+    IF NOT WORKCONF.FLAG("dry-run") THEN
+        DIM sheet$ = PATH.JOIN$(folder$, "week " + monday$ + ".xlsx")
+        TRACKER.WRITE_SHEET(rows, sheet$)
+        PRINT "Wrote "; sheet$
+    ENDIF
+ELSE
+    PRINT "Use start <project>, stop, status or week."
+ENDIF

@@ -1,0 +1,23 @@
+' Disk Space Report: shows where the space under a folder goes and
+' warns above a limit. The report is printed and saved as a text file.
+' The settings are the [disk_space] part of work.conf.
+'
+'   jdbasic disk_space.jdb
+
+IMPORT WORKCONF, DISKSPACE
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "disk_space."
+DIM root$ = WORKCONF.FOLDER$(cfg, key$ + "root", "~")
+DIM top = WORKCONF.VALUE(cfg, key$ + "top", 10)
+DIM warn_gb = WORKCONF.VALUE(cfg, key$ + "warn_gb", 50)
+DIM file_default$ = "~/Documents/AutomateWork/disk_space.txt"
+DIM report$ = WORKCONF.FOLDER$(cfg, key$ + "report", file_default$)
+
+DIM scan = DISKSPACE.SCAN(root$)
+DIM report_text$ = DISKSPACE.REPORT$(scan, top, warn_gb)
+PRINT report_text$
+MKDIR PATH.DIRNAME$(report$)
+TXTWRITER report$, report_text$ + CHR$(10)
+PRINT
+PRINT "Saved in "; report$
