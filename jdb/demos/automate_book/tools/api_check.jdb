@@ -1,0 +1,375 @@
+' api_check.jdb: every jdBasic name the manuscript mentions, checked
+' against what exists. A name in inline code or in a code block that is
+' not included from a tested file must be a builtin of help.txt, a
+' statement, or a function a module exports; a call must pass a number
+' of arguments the signature allows. Run from the book folder.
+'
+'   jdbasic tools/api_check.jdb [book.toml]
+
+IMPORT CONF
+
+DIM gLF$ = CHR$(10)
+DIM gQ$ = CHR$(34)
+
+' The parameters inside the first pair of brackets of a signature, as
+' [least, most]; [...] marks optional parts, "=" a default, "..." any
+' number.
+FUNC Arity(sig$)
+    DIM open_at = INSTR(sig$, "(")
+    IF open_at < 0 THEN RETURN [0, 0]
+    DIM depth = 0
+    DIM close_at = -1
+    DIM k = 0
+    FOR k = open_at TO LEN(sig$) - 1
+        DIM ch$ = MID$(sig$, k, 1)
+        IF ch$ = "(" THEN depth = depth + 1
+        IF ch$ = ")" THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                close_at = k
+                EXITFOR
+            ENDIF
+        ENDIF
+    NEXT k
+    IF close_at < 0 THEN RETURN [0, 99]
+    DIM inner$ = TRIM$(MID$(sig$, open_at + 1, close_at - open_at - 1))
+    IF inner$ = "" THEN RETURN [0, 0]
+    IF INSTR(inner$, "...") >= 0 THEN RETURN [0, 99]
+    DIM least = 0
+    DIM most = 0
+    DIM opt = 0
+    DIM word = FALSE
+    DIM optional = FALSE
+    DIM in_quote = FALSE
+    FOR k = 0 TO LEN(inner$) - 1
+        DIM c$ = MID$(inner$, k, 1)
+        IF c$ = gQ$ THEN in_quote = NOT in_quote
+        IF in_quote THEN CONTINUEFOR
+        IF c$ = "[" THEN opt = opt + 1
+        IF c$ = "]" THEN opt = opt - 1
+        IF c$ = "=" THEN optional = TRUE
+        IF c$ = "," THEN
+            IF word THEN
+                most = most + 1
+                IF NOT optional THEN least = least + 1
+            ENDIF
+            word = FALSE
+            optional = FALSE
+        ELSEIF c$ <> " " ANDALSO c$ <> "[" ANDALSO c$ <> "]" THEN
+            IF NOT word ANDALSO opt > 0 THEN optional = TRUE
+            word = TRUE
+        ENDIF
+    NEXT k
+    IF word THEN
+        most = most + 1
+        IF NOT optional THEN least = least + 1
+    ENDIF
+    RETURN [least, most]
+ENDFUNC
+
+' The builtins of help.txt: name to [least, most, syntax].
+FUNC Builtins(path$)
+    DIM out AS MAP
+    DIM src = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), gLF$)
+    DIM name$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM t$ = TRIM$(src[k])
+        IF STARTSWITH(t$, "[") ANDALSO ENDSWITH(t$, "]") THEN
+            name$ = UCASE$(MID$(t$, 1, LEN(t$) - 2))
+            IF NOT MAP.EXISTS(out, name$) THEN out{name$} = [0, 99, ""]
+        ELSEIF STARTSWITH(t$, "Syntax:") ANDALSO name$ <> "" THEN
+            DIM sig$ = TRIM$(MID$(t$, 7))
+            DIM ar = Arity(sig$)
+            IF INSTR(UCASE$(sig$), name$ + "(") < 0 THEN ar = [0, 99]
+            out{name$} = [ar[0], ar[1], sig$]
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The functions every module under the folders exports, MODULE.NAME to
+' [least, most, signature], and the module names.
+SUB AddExports(folder$, exports, modules)
+    IF NOT FILE.ISDIR(folder$) THEN RETURN
+    DIM names = DIR$(PATH.JOIN$(folder$, "*.jdb"))
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file_name$ = names[k]
+        DIM src = SPLIT(REPLACE$(TXTREADER$(PATH.JOIN$(folder$, file_name$)), CHR$(13), ""), gLF$)
+        DIM module$ = ""
+        FOR j = 0 TO LEN(src) - 1
+            DIM t$ = TRIM$(src[j])
+            IF STARTSWITH(UCASE$(t$), "EXPORT MODULE ") THEN
+                module$ = UCASE$(TRIM$(MID$(t$, 14)))
+                modules{module$} = file_name$
+            ELSEIF module$ <> "" ANDALSO (STARTSWITH(UCASE$(t$), "EXPORT FUNC ") ORELSE STARTSWITH(UCASE$(t$), "EXPORT SUB ")) THEN
+                DIM rest$ = TRIM$(MID$(t$, INSTR(7, t$, " ") + 1))
+                DIM paren = INSTR(rest$, "(")
+                DIM fname$ = rest$
+                IF paren >= 0 THEN fname$ = LEFT$(rest$, paren)
+                DIM ar = Arity(rest$)
+                exports{module$ + "." + UCASE$(TRIM$(fname$))} = [ar[0], ar[1], rest$]
+            ENDIF
+        NEXT j
+    NEXT k
+ENDSUB
+
+' Every FUNC, SUB, DIM and CONST name and every environment variable a
+' GETENV$ reads in the .jdb files of a folder, as known names.
+SUB AddLocalNames(folder$, known)
+    IF NOT FILE.ISDIR(folder$) THEN RETURN
+    DIM names = DIR$(PATH.JOIN$(folder$, "*.jdb"))
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM file_name$ = names[k]
+        DIM src = SPLIT(REPLACE$(TXTREADER$(PATH.JOIN$(folder$, file_name$)), CHR$(13), ""), gLF$)
+        FOR j = 0 TO LEN(src) - 1
+            DIM t$ = UCASE$(TRIM$(src[j]))
+            IF STARTSWITH(t$, "EXPORT ") THEN t$ = TRIM$(MID$(t$, 7))
+            DIM word$ = ""
+            IF STARTSWITH(t$, "FUNC ") ORELSE STARTSWITH(t$, "DIM ") ORELSE STARTSWITH(t$, "SUB ") ORELSE STARTSWITH(t$, "CONST ") THEN
+                DIM rest$ = TRIM$(MID$(t$, INSTR(t$, " ") + 1))
+                DIM e = 0
+                DO WHILE e < LEN(rest$) ANDALSO INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_$", MID$(rest$, e, 1)) >= 0
+                    e = e + 1
+                LOOP
+                word$ = LEFT$(rest$, e)
+                IF word$ <> "" THEN known{word$} = TRUE
+            ENDIF
+            DIM at = INSTR(t$, "GETENV$(" + gQ$)
+            IF at >= 0 THEN
+                DIM close_at = INSTR(at + 9, t$, gQ$)
+                IF close_at > at THEN known{MID$(t$, at + 9, close_at - at - 9)} = TRUE
+            ENDIF
+        NEXT j
+    NEXT k
+ENDSUB
+
+' The words jdBasic reads as statements and operators.
+FUNC Statements()
+    DIM words = ["IMPORT", "EXPORT", "MODULE", "FUNC", "ENDFUNC", "SUB", "ENDSUB", "DIM", "AS", "CONST", "LET", "IF", "THEN", "ELSE", "ELSEIF", "ENDIF", "FOR", "EACH", "TO", "NEXT", "IN", "DO", "WHILE", "UNTIL", "LOOP", "WEND", "EXITDO", "EXITFOR", "CONTINUEDO", "CONTINUEFOR", "RETURN", "TRY", "CATCH", "FINALLY", "ENDTRY", "THROW", "AND", "OR", "NOT", "XOR", "MOD", "ANDALSO", "ORELSE", "TRUE", "FALSE", "NONE", "NULL", "MAP", "ARRAY", "STRING", "INTEGER", "DOUBLE", "BOOLEAN", "OBJECT", "LAMBDA", "ASYNC", "AWAIT", "ON", "CALL", "OPTION", "END", "STOP", "SELECT", "CASE", "ENDSELECT", "DECLARE", "LIB", "ALIAS", "TYPE", "ENDTYPE", "PRINT", "INPUT", "GOTO", "GOSUB", "STEP", "STRICT", "EXPLICIT", "REM", "ERR$", "ERRMSG$", "INF", "NAN", "TAU"]
+    DIM out AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(words) - 1
+        DIM w$ = words[k]
+        out{w$} = TRUE
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The calls and names in a piece of code: maps with "name" and, for a
+' call, "args" (the number of arguments at the top level).
+FUNC Uses(code$)
+    DIM out = []
+    DIM n = LEN(code$)
+    DIM k = 0
+    DO WHILE k < n
+        DIM c$ = MID$(code$, k, 1)
+        IF c$ = gQ$ THEN
+            DIM close_at = INSTR(k + 1, code$, gQ$)
+            IF close_at < 0 THEN EXITDO
+            k = close_at + 1
+            CONTINUEDO
+        ENDIF
+        IF c$ = "'" THEN
+            DIM eol = INSTR(k, code$, gLF$)
+            IF eol < 0 THEN EXITDO
+            k = eol + 1
+            CONTINUEDO
+        ENDIF
+        IF (c$ >= "A" ANDALSO c$ <= "Z") ANDALSO (k = 0 ORELSE INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.$", MID$(code$, k - 1, 1)) < 0) THEN
+            DIM e = k
+            DO WHILE e < n ANDALSO INSTR("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.$", MID$(code$, e, 1)) >= 0
+                e = e + 1
+            LOOP
+            DIM word$ = MID$(code$, k, e - k)
+            DO WHILE RIGHT$(word$, 1) = "."
+                word$ = LEFT$(word$, LEN(word$) - 1)
+            LOOP
+            DIM next$ = ""
+            IF e < n THEN next$ = MID$(code$, e, 1)
+            IF next$ >= "a" ANDALSO next$ <= "z" THEN
+                k = e
+                CONTINUEDO
+            ENDIF
+            DIM one_use AS MAP
+            one_use{"name"} = word$
+            one_use{"args"} = -1
+            IF next$ = "(" THEN one_use{"args"} = ArgCount(code$, e)
+            IF LEN(word$) >= 2 THEN PUSH(out, one_use)
+            k = e
+            CONTINUEDO
+        ENDIF
+        k = k + 1
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The number of arguments of the call whose bracket opens at open_at;
+' -1 when the bracket does not close in the text.
+FUNC ArgCount(code$, open_at)
+    DIM depth = 0
+    DIM commas = 0
+    DIM any = FALSE
+    DIM k = open_at
+    DO WHILE k < LEN(code$)
+        DIM c$ = MID$(code$, k, 1)
+        IF c$ = gQ$ THEN
+            DIM close_q = INSTR(k + 1, code$, gQ$)
+            IF close_q < 0 THEN RETURN -1
+            k = close_q
+            any = TRUE
+        ELSEIF c$ = "(" ORELSE c$ = "[" ORELSE c$ = "{" THEN
+            depth = depth + 1
+            IF depth > 1 THEN any = TRUE
+        ELSEIF c$ = ")" ORELSE c$ = "]" ORELSE c$ = "}" THEN
+            depth = depth - 1
+            IF depth = 0 THEN
+                IF NOT any THEN RETURN 0
+                RETURN commas + 1
+            ENDIF
+        ELSEIF c$ = "," ANDALSO depth = 1 THEN
+            commas = commas + 1
+        ELSEIF c$ <> " " ANDALSO depth = 1 THEN
+            any = TRUE
+        ENDIF
+        k = k + 1
+    LOOP
+    RETURN -1
+ENDFUNC
+
+' The pieces of jdBasic in a chapter: inline code outside fences, and
+' fenced blocks of basic. Each piece as [line, text].
+FUNC CodePieces(text$)
+    DIM out = []
+    DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM in_fence = FALSE
+    DIM basic_fence = FALSE
+    DIM block = []
+    DIM start_line = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM t$ = src[k]
+        IF STARTSWITH(TRIM$(t$), "```") THEN
+            IF in_fence THEN
+                IF basic_fence THEN PUSH(out, [start_line, JOIN(block, gLF$)])
+                in_fence = FALSE
+            ELSE
+                in_fence = TRUE
+                basic_fence = (TRIM$(MID$(TRIM$(t$), 3)) = "basic")
+                block = []
+                start_line = k + 2
+            ENDIF
+        ELSEIF in_fence THEN
+            PUSH(block, t$)
+        ELSE
+            DIM parts = SPLIT(t$, "`")
+            DIM p = 1
+            DO WHILE p < LEN(parts)
+                DIM piece$ = parts[p]
+                PUSH(out, [k + 1, piece$])
+                p = p + 2
+            LOOP
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ── main ──────────────────────────────────────────────────────
+
+DIM cfg_path$ = "book.toml"
+DIM argv = OS.ARGS()
+IF LEN(argv) > 1 THEN cfg_path$ = argv[1]
+DIM cfg = CONF.TOML(cfg_path$)
+DIM repo$ = "../../.."
+DIM builtins = Builtins(PATH.JOIN$(repo$, "help.txt"))
+DIM exports AS MAP
+DIM modules AS MAP
+AddExports(PATH.JOIN$(repo$, "lib"), exports, modules)
+AddExports("recipes/lib", exports, modules)
+AddExports("wizard", exports, modules)
+DIM local_names AS MAP
+DIM levels = ["easy", "medium", "expert", "template"]
+DIM lv = 0
+FOR lv = 0 TO LEN(levels) - 1
+    DIM level_dir$ = PATH.JOIN$("recipes", levels[lv])
+    IF FILE.ISDIR(level_dir$) THEN
+        DIM folders = DIR$(PATH.JOIN$(level_dir$, "*"))
+        DIM fo = 0
+        FOR fo = 0 TO LEN(folders) - 1
+            DIM recipe_dir$ = PATH.JOIN$(level_dir$, folders[fo])
+            IF FILE.ISDIR(recipe_dir$) THEN
+                AddExports(recipe_dir$, exports, modules)
+                AddLocalNames(recipe_dir$, local_names)
+            ENDIF
+        NEXT fo
+    ENDIF
+NEXT lv
+DIM statements = Statements()
+AddLocalNames("recipes/lib", local_names)
+AddLocalNames("wizard", local_names)
+DIM ek = MAP.KEYS(exports)
+DIM ei = 0
+FOR ei = 0 TO LEN(ek) - 1
+    DIM full$ = ek[ei]
+    local_names{MID$(full$, INSTR(full$, ".") + 1)} = TRUE
+NEXT ei
+PRINT LEN(MAP.KEYS(builtins)); " builtins, "; LEN(MAP.KEYS(exports)); " exported functions in "; LEN(MAP.KEYS(modules)); " modules"
+
+DIM files = CONF.GET(cfg, "chapters.files", [])
+DIM unknown AS MAP
+DIM arity_problems = []
+DIM checked = 0
+DIM f = 0
+FOR f = 0 TO LEN(files) - 1
+    DIM rel$ = files[f]
+    DIM pieces = CodePieces(TXTREADER$(rel$))
+    DIM pc = 0
+    FOR pc = 0 TO LEN(pieces) - 1
+        DIM where$ = rel$ + ":" + STR$(pieces[pc][0])
+        DIM uses = Uses(pieces[pc][1])
+        DIM u = 0
+        FOR u = 0 TO LEN(uses) - 1
+            DIM item = uses[u]
+            DIM nm$ = item{"name"}
+            DIM key$ = UCASE$(nm$)
+            checked = checked + 1
+            DIM sig = []
+            DIM known = FALSE
+            IF MAP.EXISTS(builtins, key$) THEN
+                known = TRUE
+                sig = builtins{key$}
+            ELSEIF MAP.EXISTS(exports, key$) THEN
+                known = TRUE
+                sig = exports{key$}
+            ELSEIF MAP.EXISTS(statements, key$) ORELSE MAP.EXISTS(modules, key$) ORELSE MAP.EXISTS(local_names, key$) THEN
+                known = TRUE
+            ENDIF
+            IF NOT known THEN
+                IF NOT MAP.EXISTS(unknown, nm$) THEN unknown{nm$} = where$
+            ELSEIF LEN(sig) = 3 ANDALSO item{"args"} >= 0 THEN
+                DIM n_args = item{"args"}
+                IF n_args < sig[0] ORELSE n_args > sig[1] THEN
+                    PUSH(arity_problems, where$ + "  " + nm$ + " with " + STR$(n_args) + " arguments; " + sig[2])
+                ENDIF
+            ENDIF
+        NEXT u
+    NEXT pc
+NEXT f
+PRINT checked; " names checked"
+PRINT
+PRINT "Names that are neither builtin, statement nor exported (first place):"
+DIM un = SORT(MAP.KEYS(unknown))
+DIM q = 0
+FOR q = 0 TO LEN(un) - 1
+    DIM uname$ = un[q]
+    PRINT "  "; uname$; "  "; unknown{uname$}
+NEXT q
+PRINT
+PRINT "Calls whose argument count does not fit:"
+FOR q = 0 TO LEN(arity_problems) - 1
+    PRINT "  "; arity_problems[q]
+NEXT q

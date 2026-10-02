@@ -26,7 +26,8 @@ recipes/           the programs: lib/ shared modules (workconf, outbox),
                    each with recipe.toml for the wizard
 wizard/            setup wizard: wizard.jdb (the work), setup_console.jdb,
                    setup_wizard.jdb (window, FORMS build)
-tools/             build_book, check_recipes, mdbook, prose, layout, cover, epub,
+tools/             build_book, check_recipes, api_check, appendix, mdbook, prose,
+                   layout, cover, epub,
                    preview (most with a test), figures/, preview/render.html
 fonts/             Source Serif 4 and Source Code Pro (SIL Open Font License)
 out/               build output, not in git
@@ -40,7 +41,8 @@ Run from this folder; the tools import modules from `lib/` and
 ```
 set JDBASIC_PATH=C:\path\to\jdBasic\lib;C:\path\to\jdBasic\jdb\demos\automate_book\recipes\lib
 jdbasic tools/build_book.jdb             # out/: docx, html/, print and screen PDF, covers, epub
-jdbasic tools/check_recipes.jdb          # every recipe: lint, test, -c, test as .exe
+jdbasic tools/check_recipes.jdb          # every recipe: lint, test, -c, test as .exe, main -c
+jdbasic tools/api_check.jdb              # every jdBasic name the manuscript mentions exists, calls fit
 jdbasic tools/mdbook_test.jdb            # the Markdown reader (also prose_, layout_, cover_, epub_test)
 jdbasic tools/pdf_preview.jdb out/book_print.pdf 1-4   # pages as PNG, needs Chrome
 jdbasic tools/figures/e01_before_after.jdb   # redraws a figure
