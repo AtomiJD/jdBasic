@@ -633,6 +633,14 @@ void register_http_builtins(VM& vm) {
         // reads an incomplete response (ngrok 3004). One request per connection
         // emits a clean `Connection: close` with no Keep-Alive header.
         g_server->set_keep_alive_max_count(1);
+#ifdef _WIN32
+        // A port another process listens on makes START answer FALSE.
+        g_server->set_socket_options([](socket_t sock) {
+            int on = 1;
+            setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                       reinterpret_cast<const char*>(&on), sizeof(on));
+        });
+#endif
 
         // Register all GET handlers
         for (auto& [path, func_name] : g_get_handlers) {

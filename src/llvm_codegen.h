@@ -302,6 +302,10 @@ private:
     // apart from array_array_vars: these sets are keyed by name alone, and
     // a field of a map says nothing about a cell of a same-named array.
     std::unordered_set<std::string> field_array_vars;
+    // The pre-pass entries for the locals and parameters of one FUNC/SUB,
+    // keyed by function name; codegen_function adds them for its body only.
+    std::unordered_map<std::string, std::unordered_set<std::string>> local_array_array_by_fn;
+    std::unordered_map<std::string, std::unordered_set<std::string>> local_field_array_by_fn;
 
     // Maps a top-level-DIM'd global name to the source file it came from.
     // Used by codegen_let_or_assign to decide whether an implicit assignment
@@ -318,6 +322,7 @@ private:
     // so the recursion-guard leave can be placed in one spot and the error
     // unwind path has a target to jump to. nullptr when codegen is in main.
     LLVMBasicBlockRef current_exit_bb = nullptr;
+    bool              in_lambda = false;       // codegen is inside a LAMBDA body
     LLVMValueRef      current_retval_alloca = nullptr; // null for void / main
 
     // Emit either "store val→retval; br exit_bb" (inside a user FUNC/SUB,

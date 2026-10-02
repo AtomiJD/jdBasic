@@ -1,0 +1,42 @@
+' A local that holds maps under computed keys in one function does not
+' make a same-named numeric local of another function an array of arrays.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+FUNC Sections(names)
+    DIM out AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM key$ = names[k]
+        out{key$} = {}
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC RunningSum(n)
+    DIM out = ZEROS(n)
+    DIM v = 0.0
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        IF i > 0 THEN v = v + out[i - 1]
+        out[i] = v + i
+    NEXT i
+    RETURN out
+ENDFUNC
+
+FUNC Rows(n)
+    DIM out = []
+    DIM i = 0
+    FOR i = 0 TO n - 1
+        DIM row = [i, i * 2]
+        PUSH(out, row)
+    NEXT i
+    RETURN out
+ENDFUNC
+
+DIM s = Sections(["a", "b"])
+PRINT LEN(MAP.KEYS(s))
+PRINT RunningSum(5)
+DIM r = Rows(3)
+DIM last = r[2]
+PRINT last[1]

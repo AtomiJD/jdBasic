@@ -1,0 +1,17 @@
+' Helper module for test_native_mixed_fallback.jdb.
+EXPORT MODULE MIXEDFB
+
+FUNC Pick(m, k$, fb = 0)
+    IF MAP.EXISTS(m, k$) THEN RETURN m{k$}
+    RETURN fb
+ENDFUNC
+
+
+EXPORT FUNC NUM(m, k$, fb)
+    RETURN Pick(m, k$, fb)
+ENDFUNC
+
+EXPORT FUNC TXT$(m, k$, fb$)
+    DIM v$ = Pick(m, k$, fb$)
+    RETURN v$
+ENDFUNC

@@ -1,0 +1,8 @@
+' A module parameter that one wrapper hands a number and another a
+' string holds both when the parameter has a default value.
+IMPORT MIXEDFB
+
+DIM m = {"a": 1}
+PRINT MIXEDFB.NUM(m, "z", 60)
+PRINT MIXEDFB.TXT$(m, "z", "t")
+PRINT MIXEDFB.NUM(m, "a", 60)

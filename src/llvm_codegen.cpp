@@ -1099,6 +1099,8 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
     // also marks cache.
     std::function<void(const Stmt&,
                       std::unordered_map<std::string,int>&)> scan_idx_assigns;
+    std::string scan_fn;
+    std::unordered_set<std::string> scan_locals;
     // Helper: classify RHS expr in local scope. For a VARIABLE, only
     // consult the local `kinds` map - never fall through to the global
     // pre_var_tags, since a SUB param can shadow a same-named global
@@ -1132,16 +1134,39 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             s.index_chain[0]->kind == ExprKind::LITERAL_STRING;
             int rt = local_rhs_tag(*s.expr, kinds);
             if (rt == JD_TAG_ARR || rt == JD_TAG_NATIVE_MAP) {
+                if (!scan_fn.empty() && scan_locals.count(s.var_name)) {
+                    if (is_field) local_field_array_by_fn[scan_fn].insert(s.var_name);
+                    else local_array_array_by_fn[scan_fn].insert(s.var_name);
+                }
                 if (is_field) field_array_vars.insert(s.var_name);
                 else array_array_vars.insert(s.var_name);
             }
         }
         // SUB/FUNC body: recurse with a fresh kinds map (params and
         // locals are scope-isolated; the outer caller's `glyph` and
-        // the callee's `glyph` are different slots).
+        // the callee's `glyph` are different slots). What a local of
+        // the body holds is also recorded for that function.
         if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) {
             std::unordered_map<std::string,int> inner;
+            std::string outer_fn = std::move(scan_fn);
+            auto outer_locals = std::move(scan_locals);
+            scan_fn = s.func_name;
+            scan_locals.clear();
+            for (auto& pn : s.params()) scan_locals.insert(pn.name);
+            std::function<void(const Stmt&)> collect_dims = [&](const Stmt& d) {
+                if (d.kind == StmtKind::DIM && !d.var_name.empty())
+                    scan_locals.insert(d.var_name);
+                if (d.kind == StmtKind::FUNCTION || d.kind == StmtKind::SUB) return;
+                for (auto& b : d.body)         if (b) collect_dims(*b);
+                for (auto& b : d.catch_body())   if (b) collect_dims(*b);
+                for (auto& b : d.finally_body()) if (b) collect_dims(*b);
+                for (auto& br : d.branches)
+                    for (auto& b : br.body) if (b) collect_dims(*b);
+            };
+            for (auto& b : s.body) if (b) collect_dims(*b);
             for (auto& b : s.body) if (b) scan_idx_assigns(*b, inner);
+            scan_fn = std::move(outer_fn);
+            scan_locals = std::move(outer_locals);
             return;
         }
         for (auto& b : s.body)         if (b) scan_idx_assigns(*b, kinds);
@@ -1242,8 +1267,10 @@ void LLVMCodegen::declare_functions(const std::vector<StmtPtr>& program) {
                             case ExprKind::ARRAY_LITERAL: seen = JD_TAG_ARR; break;
                             case ExprKind::MAP_LITERAL:   seen = JD_TAG_NATIVE_MAP; break;
                             case ExprKind::VARIABLE: {
-                                auto lk = cur_local_kinds.find(e.args[i]->str_val);
+                                const std::string& vn = e.args[i]->str_val;
+                                auto lk = cur_local_kinds.find(vn);
                                 if (lk != cur_local_kinds.end()) seen = lk->second;
+                                else if (!vn.empty() && vn.back() == '$') seen = JD_TAG_STR;
                                 break;
                             }
                             default: break;
@@ -4622,7 +4649,7 @@ void LLVMCodegen::emit_err_code_branch() {
     LLVMPositionBuilderAtEnd(builder, err_bb);
     if (!try_stack.empty()) {
         LLVMBuildBr(builder, try_stack.back());
-    } else if (current_exit_bb) {
+    } else if (current_exit_bb || in_lambda) {
         emit_fn_return(nullptr);
     } else {
         auto& uc = runtime_funcs["__throw_uncaught"];
@@ -4737,6 +4764,46 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     // The element-kind sets are keyed by name; what this body registers
     // for its locals must not describe a same-named local elsewhere.
     auto saved_array_array = array_array_vars;
+    auto saved_field_array = field_array_vars;
+    {
+        // A local DIM'd as a flat numeric array (ZEROS, IOTA, a literal of
+        // numbers) holds numbers, whatever a same-named variable of another
+        // function holds, unless this body stores an array into one of its cells.
+        auto lit = local_array_array_by_fn.find(fn_name);
+        auto fit2 = local_field_array_by_fn.find(fn_name);
+        auto own = [&](const auto& m, const auto& it, const std::string& n) {
+            return it != m.end() && it->second.count(n);
+        };
+        auto flat_numeric = [](const Expr& e) {
+            if (e.kind == ExprKind::CALL) {
+                std::string u = e.func_name;
+                std::transform(u.begin(), u.end(), u.begin(), ::toupper);
+                return u == "ZEROS" || u == "ONES" || u == "IOTA" || u == "LINSPACE";
+            }
+            if (e.kind == ExprKind::ARRAY_LITERAL && !e.args.empty()) {
+                for (auto& a : e.args)
+                    if (!a || (a->kind != ExprKind::LITERAL_INT && a->kind != ExprKind::LITERAL_FLOAT)) return false;
+                return true;
+            }
+            return false;
+        };
+        std::function<void(const Stmt&)> drop_flat = [&](const Stmt& s) {
+            if (s.kind == StmtKind::DIM && !s.var_name.empty() && s.expr &&
+                flat_numeric(*s.expr)) {
+                if (!own(local_array_array_by_fn, lit, s.var_name))
+                    array_array_vars.erase(s.var_name);
+                if (!own(local_field_array_by_fn, fit2, s.var_name))
+                    field_array_vars.erase(s.var_name);
+            }
+            if (s.kind == StmtKind::FUNCTION || s.kind == StmtKind::SUB) return;
+            for (auto& b : s.body)         if (b) drop_flat(*b);
+            for (auto& b : s.catch_body())   if (b) drop_flat(*b);
+            for (auto& b : s.finally_body()) if (b) drop_flat(*b);
+            for (auto& br : s.branches)
+                for (auto& b : br.body) if (b) drop_flat(*b);
+        };
+        for (auto& b : stmt.body) if (b) drop_flat(*b);
+    }
     auto saved_string_array = string_array_vars;
     auto saved_mixed_array = mixed_array_vars;
     auto saved_map_array = map_array_vars;
@@ -4950,6 +5017,7 @@ void LLVMCodegen::codegen_function(const Stmt& stmt) {
     runtime_later_locals = std::move(saved_runtime_later);
     current_param_names = std::move(saved_param_names);
     array_array_vars = std::move(saved_array_array);
+    field_array_vars = std::move(saved_field_array);
     string_array_vars = std::move(saved_string_array);
     mixed_array_vars = std::move(saved_mixed_array);
     map_array_vars = std::move(saved_map_array);
@@ -8872,6 +8940,14 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // Save current state - including the exact insert block
             LLVMValueRef saved_fn = current_fn;
             LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(builder);
+            LLVMBasicBlockRef saved_exit_bb = current_exit_bb;
+            LLVMValueRef saved_retval_alloca = current_retval_alloca;
+            auto saved_try_stack = std::move(try_stack);
+            bool saved_in_lambda = in_lambda;
+            current_exit_bb = nullptr;
+            current_retval_alloca = nullptr;
+            try_stack.clear();
+            in_lambda = true;
 
             current_fn = lambda_fn;
             scopes.push_back(Scope{});
@@ -8912,6 +8988,10 @@ LLVMCodegen::TypedValue LLVMCodegen::codegen_expr(const Expr& expr) {
             // Restore state - position builder back at the EXACT block we were in
             scopes.pop_back();
             current_fn = saved_fn;
+            current_exit_bb = saved_exit_bb;
+            current_retval_alloca = saved_retval_alloca;
+            try_stack = std::move(saved_try_stack);
+            in_lambda = saved_in_lambda;
             LLVMPositionBuilderAtEnd(builder, saved_bb);
 
             return { lambda_fn, JD_TAG_FUNCREF };

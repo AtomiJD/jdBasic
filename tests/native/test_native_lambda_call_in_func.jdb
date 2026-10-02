@@ -1,0 +1,20 @@
+' A LAMBDA inside a FUNC that calls a user FUNC compiles, and an error
+' thrown inside the lambda reaches the TRY around the call.
+OPTION "EXPLICIT"
+OPTION "STRICT"
+
+FUNC Twice$(c)
+    IF c < 0 THEN THROW "negative"
+    RETURN STR$(c * 2)
+ENDFUNC
+
+FUNC Joined$(codes)
+    RETURN JOIN(SELECT(LAMBDA c -> Twice$(c), codes), ",")
+ENDFUNC
+
+PRINT Joined$([1, 2, 3])
+TRY
+    PRINT Joined$([1, -2])
+CATCH
+    PRINT "caught"
+ENDTRY
