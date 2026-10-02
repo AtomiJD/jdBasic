@@ -2014,9 +2014,13 @@ Description: Non-blocking check for a key press. Returns the key or an empty str
 Syntax: INPUT [prompt$] [,|;] variable
 Description: Pauses execution and waits for the user to enter data from the console.
 
+[INSTR]
+Syntax: INSTR([start_pos, ]haystack$, needle$)
+Description: Returns the 0-based starting position of a substring within a string, or -1 when it is not there. The start position comes first.
+
 [INSTR$]
 Syntax: INSTR$([start_pos, ]haystack$, needle$)
-Description: Returns the 0-based starting position of a substring within a string.
+Description: The same as INSTR.
 
 [INT]
 Syntax: INT(number)
@@ -2735,7 +2739,7 @@ Syntax: RPAD$(string$, width [, pad$])
 Description: Right-pads string$ to width characters using pad$ (default " "). Multi-character pad$ cycles.
 
 [ROUND]
-Syntax: ROUND(number, decimals)
+Syntax: ROUND(number, [decimals])
 Description: Rounds a number to a specified number of decimal places.
 
 [ROUNDED_RECT]

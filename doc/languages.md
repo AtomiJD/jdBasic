@@ -3484,7 +3484,7 @@ DIM hits = 0
 DO
     DIM line$ = FILE.READLINE$(h)
     IF FILE.AT_EOF(h) THEN EXITDO
-    IF INSTR(line$, "ERROR") > 0 THEN hits = hits + 1
+    IF INSTR(line$, "ERROR") >= 0 THEN hits = hits + 1
 LOOP
 FILE.CLOSE h
 PRINT "ERROR lines: "; hits
@@ -3499,7 +3499,7 @@ ASYNC FUNC matcher(ch)
     DO
         DIM line$ = CHAN.RECV(ch)
         IF CHAN.IS_EOF(line$) THEN EXITDO
-        IF INSTR(line$, "FATAL") > 0 THEN PRINT line$
+        IF INSTR(line$, "FATAL") >= 0 THEN PRINT line$
     LOOP
 ENDFUNC
 DIM m = matcher(ch)
