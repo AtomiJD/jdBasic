@@ -1795,6 +1795,24 @@ Assert(2942,LEN(DIR$(mv_dir2937 + "/*.txt")) = 2)
 KILL mv_dir2937 + "/Kopie.txt"
 KILL mv_dir2937 + "/Größe Ü.txt"
 RMDIR mv_dir2937
+
+' OS.EXEC with an argument array: the exit code comes back and an operator
+' inside an argument starts no second command.
+DIM ex_dir2943 = MKTEMP$("ex")
+MKDIR ex_dir2943
+DIM ex_flag2943 = ex_dir2943 + "/hit.txt"
+IF OS.GETOS() = "WINDOWS" THEN
+    DIM ex_r2943 = OS.EXEC("cmd", ["/c", "exit", "4"])
+    Assert(2943,ex_r2943{"EXIT_CODE"} = 4)
+    DIM ex_r2944 = OS.EXEC("where", ["x & echo hit > " + ex_flag2943])
+    Assert(2944,NOT FILE.EXISTS(ex_flag2943))
+ELSE
+    DIM ex_r2943 = OS.EXEC("sh", ["-c", "exit 4"])
+    Assert(2943,ex_r2943{"EXIT_CODE"} <> 0)
+    DIM ex_r2944 = OS.EXEC("echo", ["x; echo hit > " + ex_flag2943])
+    Assert(2944,NOT FILE.EXISTS(ex_flag2943))
+ENDIF
+RMDIR ex_dir2943
 Assert(2893,FORMAT_DATE(dte_span[3], "%Y-%m-%d") = "2026-03-31")
 
 ' A negative epoch.

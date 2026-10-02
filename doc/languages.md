@@ -1318,6 +1318,8 @@ File and directory names are UTF-8 like every other string. On Windows a program
 
     > **Note on Windows**: Internal commands like `dir` or `cls` are not standalone programs. To run them, you must execute the command shell `cmd.exe` with the `/c` flag, like this: `OS.EXEC("cmd /c dir")`.
 
+    Without `args_array$` the whole line goes to the shell (`cmd /c` or `sh`) as written, operators included. With `args_array$`, `command$` names the program and every element of the array reaches it as one argument that no shell reads: a file name such as `R&D | 2026.pdf` cannot start a second command. A `.cmd` or `.bat` file runs under `cmd` with each argument quoted; since `cmd` still expands `%` and reads `"` inside quotes, an argument holding either is refused with an error there. Pass data from files and users through `args_array$`, never by joining it into `command$`.
+
     ```basic
     ' On Linux/macOS
     Result = OS.EXEC("ls -l")

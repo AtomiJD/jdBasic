@@ -2492,7 +2492,7 @@ Description: Returns a 1D array of command-line arguments.
 
 [OS.EXEC]
 Syntax: OS.EXEC(command$, [args_array$])
-Description: Executes an external command and captures its output.
+Description: Executes an external command and captures its output. Without args_array$ the command line goes to the shell (cmd /c, sh) as written. With args_array$ command$ names the program and each element reaches it as one argument, read by no shell, so & | > ; and $ in an argument stay text; a .cmd or .bat file runs under cmd with every argument quoted, and an argument holding % or a double quote is refused there.
 
 [OS.GETOS]
 Syntax: OS.GETOS()

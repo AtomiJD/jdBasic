@@ -138,13 +138,105 @@ void VM::register_system_builtins() {
         };
         if (cmd.find(' ') != std::string::npos && std::ifstream(cmd).good())
             cmd = quoted(cmd);
-        if (args.size() >= 2 && args[1].type == ValueType::ARRAY) {
-            for (auto& a : args[1].as_array()->elements)
-                cmd += " " + (a.type == ValueType::STRING ? quoted(a.to_string()) : a.to_string());
-        }
-        // Execute and capture output
         std::string output;
         int exit_code = -1;
+        // With an argument array the program runs without a shell, so no
+        // argument can be read as an operator (&, |, >, ;, $ ...).
+        if (args.size() >= 2 && args[1].type == ValueType::ARRAY) {
+#if defined(_WIN32)
+            // MSVCRT command line quoting: backslashes before a quote are
+            // doubled and the quote escaped, the whole argument quoted.
+            auto argv_quote = [](const std::string& s, bool always) {
+                if (!always && !s.empty() && s.find_first_of(" \t\n\v\"") == std::string::npos) return s;
+                std::string out = "\"";
+                size_t slashes = 0;
+                for (char c : s) {
+                    if (c == '\\') { slashes++; continue; }
+                    if (c == '"') out.append(slashes * 2 + 1, '\\');
+                    else out.append(slashes, '\\');
+                    slashes = 0;
+                    out.push_back(c);
+                }
+                out.append(slashes * 2, '\\');
+                out.push_back('"');
+                return out;
+            };
+            std::string line = cmd;
+            std::string all_quoted = cmd;
+            bool batch_safe = true;
+            for (auto& a : args[1].as_array()->elements) {
+                std::string s = a.to_string();
+                line += " " + argv_quote(s, false);
+                all_quoted += " " + argv_quote(s, true);
+                if (s.find_first_of("%\"\r\n") != std::string::npos) batch_safe = false;
+            }
+            std::string low = cmd;
+            std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+            while (!low.empty() && low.back() == '"') low.pop_back();
+            bool is_batch = low.size() > 4 && (low.compare(low.size() - 4, 4, ".bat") == 0 || low.compare(low.size() - 4, 4, ".cmd") == 0);
+            SECURITY_ATTRIBUTES sa = { sizeof(sa), nullptr, TRUE };
+            HANDLE rd = nullptr, wr = nullptr;
+            if (!CreatePipe(&rd, &wr, &sa, 0)) throw std::runtime_error("OS.EXEC: cannot create a pipe");
+            SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+            STARTUPINFOA si = {};
+            si.cb = sizeof(si);
+            si.dwFlags = STARTF_USESTDHANDLES;
+            si.hStdOutput = wr;
+            si.hStdError = wr;
+            si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+            PROCESS_INFORMATION pi = {};
+            BOOL ok = FALSE;
+            if (!is_batch) {
+                std::vector<char> buf_line(line.begin(), line.end());
+                buf_line.push_back('\0');
+                ok = CreateProcessA(nullptr, buf_line.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+            }
+            if (!ok && (is_batch || GetLastError() == ERROR_FILE_NOT_FOUND)) {
+                // A batch file (.cmd, .bat, or a name such as npm that is no
+                // .exe) runs under cmd, which reads % and " even inside
+                // quotes; every argument is quoted and those characters are
+                // refused.
+                if (!batch_safe) {
+                    CloseHandle(wr);
+                    CloseHandle(rd);
+                    throw std::runtime_error("OS.EXEC: an argument with % or a double quote cannot be passed to the batch file " + cmd + " safely");
+                }
+                std::string via_cmd = "cmd /d /s /c \"" + all_quoted + "\"";
+                std::vector<char> buf_cmd(via_cmd.begin(), via_cmd.end());
+                buf_cmd.push_back('\0');
+                ok = CreateProcessA(nullptr, buf_cmd.data(), nullptr, nullptr, TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi);
+            }
+            CloseHandle(wr);
+            if (ok) {
+                char buf[4096];
+                DWORD got = 0;
+                while (ReadFile(rd, buf, sizeof(buf), &got, nullptr) && got > 0) output.append(buf, got);
+                WaitForSingleObject(pi.hProcess, INFINITE);
+                DWORD code = 0;
+                GetExitCodeProcess(pi.hProcess, &code);
+                exit_code = (int)code;
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+            } else {
+                output = "cannot start " + cmd;
+            }
+            CloseHandle(rd);
+            Value result = Value::make_object();
+            result.as_object()->set("OUTPUT", Value::make_string(output));
+            result.as_object()->set("EXIT_CODE", Value::make_i64(exit_code));
+            return result;
+#else
+            auto sh_quote = [](const std::string& s) {
+                std::string out = "'";
+                for (char c : s) {
+                    if (c == '\'') out += "'\\''";
+                    else out.push_back(c);
+                }
+                return out + "'";
+            };
+            for (auto& a : args[1].as_array()->elements) cmd += " " + sh_quote(a.to_string());
+#endif
+        }
 #if defined(_WIN32)
         // The outer quotes are what cmd /c strips, so quotes inside survive.
         cmd = "cmd /c \"" + cmd + " 2>&1\"";
