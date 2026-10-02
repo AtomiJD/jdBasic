@@ -5,7 +5,7 @@ name = "Timesheet for the Boss"
 program = "monthly_timesheet.jdb"
 summary = "Last month of the time log as a Word timesheet, mailed through the outbox"
 minutes_per_week = 15
-schedule = "weekly mon 08:00"
+schedule = "monthly 1 08:00"
 section = "timesheet"
 modules = ["timesheet.jdb"]
 

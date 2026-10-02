@@ -38,3 +38,9 @@ key = "similar"
 label = "How alike two names must be (0 to 100)"
 kind = "number"
 default = 85
+
+[[setting]]
+key = "decimal"
+label = "Decimal mark in the files (auto, or , or .)"
+kind = "text"
+default = "auto"

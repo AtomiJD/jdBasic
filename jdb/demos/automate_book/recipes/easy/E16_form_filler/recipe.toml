@@ -1,0 +1,36 @@
+# What the setup wizard knows about this recipe.
+
+id = "E16"
+name = "Form Filler"
+program = "form_filler.jdb"
+summary = "Types the values you enter again and again into a form"
+minutes_per_week = 15
+schedule = "manual"
+# Takes over keyboard and mouse, so the wizard leaves it off at first.
+off_by_default = true
+section = "form_filler"
+modules = ["formfill.jdb"]
+
+[[setting]]
+key = "values"
+label = "The values, one per field, in the order of the form"
+kind = "list"
+default = []
+
+[[setting]]
+key = "window"
+label = "Title of the form's window (empty: the window in front)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "countdown"
+label = "Seconds to wait before typing"
+kind = "number"
+default = 5
+
+[[setting]]
+key = "submit"
+label = "Press Enter after the last field"
+kind = "bool"
+default = false

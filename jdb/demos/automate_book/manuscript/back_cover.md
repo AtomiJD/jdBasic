@@ -8,7 +8,8 @@ This book hands those chores to small programs that run on your own
 computer. Fifteen easy recipes start with a setup wizard and no
 programming at all. Fifteen medium recipes build invoices, letters,
 calendars and reports. Fifteen expert recipes run on their own with logs,
-retries, tests and an AI assistant.
+retries, tests and an AI assistant. One bonus recipe per level takes
+over keyboard and mouse for programs that offer nothing else.
 
 Every program in the book was tested before it was printed, and every
 recipe tells you how many minutes it gives back. What you do with them is

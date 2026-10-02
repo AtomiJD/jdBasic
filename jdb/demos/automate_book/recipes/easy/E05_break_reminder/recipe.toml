@@ -32,3 +32,9 @@ key = "workdays_only"
 label = "Only Monday to Friday"
 kind = "bool"
 default = true
+
+[[setting]]
+key = "message"
+label = "The reminder text"
+kind = "text"
+default = "Time for a break: stand up, stretch, drink some water."

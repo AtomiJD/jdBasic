@@ -64,8 +64,9 @@ on the last page.
 
 The first page explains the plan: a work folder, one settings file, the
 recipes you choose, and a schedule for each of them. It also says what
-the wizard never does: no recipe of the easy level sends anything over
-the network.
+the wizard never does: no recipe of the easy level sends your files or
+your mail anywhere. The only one that uses the network at all is the
+Page Watcher (E14), which reads the web pages you name.
 
 ![About you: the work folder, the jdbasic program, your name, your working hours and an optional mail server](img/wizard_2.png)
 
@@ -93,6 +94,8 @@ folder the Downloads Butler tidies. At the bottom is the schedule:
 - `daily 18:30` runs it every day at half past six in the evening,
 - `weekdays 08:30` from Monday to Friday,
 - `weekly fri 16:00` once a week,
+- `monthly 1 08:00` on the first of every month, or any day up to the
+  28th,
 - `every 50 minutes` again and again while you are logged in,
 - `manual` (or an empty field) never on its own; you start it yourself.
 

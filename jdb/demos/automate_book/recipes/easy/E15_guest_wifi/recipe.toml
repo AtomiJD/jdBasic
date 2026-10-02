@@ -32,3 +32,15 @@ key = "cards"
 label = "Cards on the page (1 to 8)"
 kind = "number"
 default = 8
+
+[[setting]]
+key = "hidden"
+label = "The network is hidden"
+kind = "bool"
+default = false
+
+[[setting]]
+key = "out_file"
+label = "File for the cards"
+kind = "file"
+default = "~/Documents/AutomateWork/print/guest_wifi.pdf"

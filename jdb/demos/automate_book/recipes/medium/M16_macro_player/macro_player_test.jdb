@@ -1,0 +1,57 @@
+' Macro Player: the file of a macro, the list of a folder, the name on
+' the command line, loading the sample macro, the log lines and a dry
+' run that writes its log. Nothing is typed or clicked.
+
+IMPORT TESTKIT, MACROS, INPUTKIT
+
+DIM LF$ = CHR$(10)
+DIM folder$ = MKTEMP$("macrotest")
+MKDIR folder$
+
+FUNC FolderName(x)
+    RETURN MACROS.PATH$("C:/m", "../secret")
+ENDFUNC
+
+TESTKIT.SUITE("files")
+TESTKIT.EQ(MACROS.PATH$("C:/m", "invoice"), PATH.JOIN$("C:/m", "invoice.txt"), "a name gets .txt")
+TESTKIT.EQ(MACROS.PATH$("C:/m", "Invoice.TXT"), PATH.JOIN$("C:/m", "Invoice.TXT"), "unless it has it")
+TESTKIT.THROWS(FolderName@, 0, "a name with a folder is refused")
+TXTWRITER PATH.JOIN$(folder$, "b_order.txt"), "wait 10" + LF$
+TXTWRITER PATH.JOIN$(folder$, "a_hello.txt"), "type hi" + LF$
+TXTWRITER PATH.JOIN$(folder$, "notes.md"), "not a macro" + LF$
+TESTKIT.EQARRAY(MACROS.LIST(folder$), ["a_hello", "b_order"], "the macros of a folder, sorted")
+TESTKIT.EQ(LEN(MACROS.LIST(folder$ + "/none")), 0, "a missing folder has none")
+
+TESTKIT.SUITE("the command line")
+TESTKIT.EQ(MACROS.NAME_ARG$(["p.jdb", "new_order", "--dry-run"]), "new_order", "the macro name")
+TESTKIT.EQ(MACROS.NAME_ARG$(["p.jdb", "--config", "w.conf", "x"]), "x", "after an option's value")
+TESTKIT.EQ(MACROS.NAME_ARG$(["p.jdb", "--dry-run"]), "", "none given")
+
+TESTKIT.SUITE("the sample macro")
+DIM here$ = "recipes/medium/M16_macro_player/macros/new_order.txt"
+IF NOT FILE.EXISTS(here$) THEN here$ = "macros/new_order.txt"
+DIM job = MACROS.LOAD(here$)
+TESTKIT.EQ(LEN(job{"errors"}), 0, "the sample has no mistakes")
+TESTKIT.EQ(LEN(job{"steps"}), 12, "and twelve steps")
+
+TESTKIT.SUITE("playing dry")
+DIM s = job{"steps"}[1]
+DIM line$ = MACROS.LOG_LINE$("2026-10-05 09:00:00", "new_order", s, "ok")
+TESTKIT.EQ(line$, "2026-10-05 09:00:00  new_order  line 4: press ctrl+n  ok", "a log line")
+TESTKIT.EQ(MACROS.WHERE_LINE$(640, 520), "mouse at 640 520", "a --where line")
+DIM log$ = PATH.JOIN$(folder$, "player.log")
+OUTPUT.CAPTURE_BEGIN
+DIM r = MACROS.PLAY(job{"steps"}, "new_order", log$, TRUE)
+DIM said$ = OUTPUT.CAPTURE_END$()
+TESTKIT.EQ(r{"failed"}, "", "a dry run does not fail")
+TESTKIT.EQ(r{"done"}, 0, "and carries nothing out")
+TESTKIT.ISTRUE(INSTR(said$, "would line 3: bring 'Orders - Main Menu'") >= 0, "it prints the steps")
+DIM logged = SPLIT(TRIM$(TXTREADER$(log$)), LF$)
+TESTKIT.EQ(LEN(logged), 12, "one log line per step")
+TESTKIT.ISTRUE(ENDSWITH(logged[0], "dry run"), "marked as a dry run")
+DIM r2 = MACROS.PLAY(job{"steps"}, "new_order", log$, TRUE)
+DIM logged2 = SPLIT(TRIM$(TXTREADER$(log$)), LF$)
+TESTKIT.EQ(LEN(logged2), 24, "a second run adds to the log")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()

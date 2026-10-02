@@ -32,3 +32,15 @@ key = "away_kinds"
 label = "Kinds that mean away"
 kind = "list"
 default = ["Vacation", "Sick", "Training"]
+
+[[setting]]
+key = "sheet"
+label = "Name of the sheet in the workbook"
+kind = "text"
+default = "Plan"
+
+[[setting]]
+key = "title"
+label = "Title of the plan"
+kind = "text"
+default = "Team plan"

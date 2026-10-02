@@ -1,0 +1,287 @@
+' robot.jdb: a desktop robot for a program without an interface for
+' other programs. A job file names the window and the steps; points
+' and screen regions count from the top-left corner of the window's
+' inside, so the job still works when the window moves. Before a click
+' the robot can compare a region of the window with a reference
+' picture, and every step may be tried more than once.
+'
+'   IMPORT ROBOT
+'   DIM job = ROBOT.LOAD("order_entry.toml")
+'   PRINT JOIN(ROBOT.PLAN_LINES(job), CHR$(10))
+'   DIM r = ROBOT.RUN(job, lg, "C:/temp/shots")
+
+EXPORT MODULE ROBOT
+
+IMPORT CONF, IMG, INPUTKIT, LOGGER
+
+DIM gKinds$ = "|wait_window|check|click|doubleclick|type|key|pause|"
+
+' A list of n numbers from a job field, or 0 when it is not one.
+FUNC Numbers(v, n)
+    IF TYPEOF(v) <> "ARRAY" THEN RETURN 0
+    IF LEN(v) <> n THEN RETURN 0
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM kind$ = TYPEOF(v[k])
+        DIM tag$ = "|" + kind$ + "|"
+        IF INSTR("|INT64|INTEGER|FLOAT64|", tag$) < 0 THEN
+            RETURN 0
+        ENDIF
+    NEXT k
+    RETURN v
+ENDFUNC
+
+' A field of a step, or the fallback when the step leaves it out.
+FUNC Field(s, name$, fallback)
+    IF MAP.EXISTS(s, name$) THEN RETURN s{name$}
+    RETURN fallback
+ENDFUNC
+
+' The job in a TOML text as {"window", "steps", "errors"}; pictures
+' are looked up in base_dir$. Each step gets "do", "line" (its number
+' from 1), "tries" and the fields its kind needs.
+EXPORT FUNC PARSE_JOB(toml$, base_dir$)
+    DIM t = CONF.TOML_TEXT(toml$)
+    DIM errors = []
+    DIM steps = []
+    DIM window$ = ""
+    IF MAP.EXISTS(t, "window") THEN window$ = t{"window"}
+    IF window$ = "" THEN PUSH(errors, "the job names no window")
+    DIM raw = []
+    IF MAP.EXISTS(t, "step") THEN raw = t{"step"}
+    IF LEN(raw) = 0 THEN PUSH(errors, "the job has no [[step]]")
+    DIM k = 0
+    FOR k = 0 TO LEN(raw) - 1
+        DIM r = raw[k]
+        DIM where$ = "step " + STR$(k + 1) + ": "
+        DIM do$ = LCASE$(Field(r, "do", ""))
+        DIM s AS MAP
+        s{"do"} = do$
+        s{"line"} = k + 1
+        s{"tries"} = Field(r, "tries", 1)
+        IF INSTR(gKinds$, "|" + do$ + "|") < 0 THEN
+            PUSH(errors, where$ + "unknown do = '" + do$ + "'")
+        ELSEIF do$ = "wait_window" THEN
+            s{"timeout_s"} = Field(r, "timeout_s", 30)
+            PUSH(steps, s)
+        ELSEIF do$ = "check" THEN
+            DIM region = Numbers(Field(r, "region", 0), 4)
+            DIM pic$ = Field(r, "image", "")
+            DIM path$ = PATH.JOIN$(base_dir$, pic$)
+            IF TYPEOF(region) <> "ARRAY" THEN
+                DIM need$ = "region needs [x, y, width, height]"
+                PUSH(errors, where$ + need$)
+            ELSEIF pic$ = "" ORELSE NOT FILE.EXISTS(path$) THEN
+                PUSH(errors, where$ + "no picture " + path$)
+            ELSE
+                s{"region"} = region
+                s{"image"} = path$
+                s{"tolerance"} = Field(r, "tolerance", 10)
+                PUSH(steps, s)
+            ENDIF
+        ELSEIF do$ = "click" ORELSE do$ = "doubleclick" THEN
+            DIM at = Numbers(Field(r, "at", 0), 2)
+            IF TYPEOF(at) <> "ARRAY" THEN
+                PUSH(errors, where$ + do$ + " needs at = [x, y]")
+            ELSE
+                s{"at"} = at
+                PUSH(steps, s)
+            ENDIF
+        ELSEIF do$ = "type" THEN
+            DIM text$ = Field(r, "text", "")
+            IF text$ = "" THEN
+                PUSH(errors, where$ + "type needs a text")
+            ELSE
+                s{"text"} = text$
+                PUSH(steps, s)
+            ENDIF
+        ELSEIF do$ = "key" THEN
+            DIM keys$ = Field(r, "keys", "")
+            DIM c = INPUTKIT.COMBO(keys$, FALSE)
+            IF c{"error"} <> "" THEN
+                PUSH(errors, where$ + c{"error"})
+            ELSE
+                s{"keys"} = keys$
+                PUSH(steps, s)
+            ENDIF
+        ELSEIF do$ = "pause" THEN
+            s{"ms"} = Field(r, "ms", 500)
+            PUSH(steps, s)
+        ENDIF
+    NEXT k
+    RETURN {"window": window$, "steps": steps, "errors": errors}
+ENDFUNC
+
+' The job in a file; pictures sit next to it.
+EXPORT FUNC LOAD(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "ROBOT: no job file " + path$
+    RETURN PARSE_JOB(TXTREADER$(path$), PATH.DIRNAME$(path$))
+ENDFUNC
+
+' One step as a line of a plan.
+EXPORT FUNC PLAN_LINE$(s, window$)
+    DIM do$ = s{"do"}
+    DIM head$ = "step " + STR$(s{"line"}) + ": "
+    DIM out$ = head$ + do$
+    IF do$ = "wait_window" THEN
+        out$ = head$ + "wait up to " + STR$(s{"timeout_s"})
+        out$ = out$ + " s for '" + window$ + "'"
+    ELSEIF do$ = "check" THEN
+        DIM rg = s{"region"}
+        out$ = head$ + "check " + STR$(rg[2]) + " x " + STR$(rg[3])
+        out$ = out$ + " at " + STR$(rg[0]) + ", " + STR$(rg[1])
+        out$ = out$ + " against " + PATH.BASENAME$(s{"image"})
+    ELSEIF do$ = "click" ORELSE do$ = "doubleclick" THEN
+        DIM at = s{"at"}
+        out$ = head$ + do$ + " at " + STR$(at[0]) + ", " + STR$(at[1])
+    ELSEIF do$ = "type" THEN
+        out$ = head$ + "type '" + s{"text"} + "'"
+    ELSEIF do$ = "key" THEN
+        out$ = head$ + "press " + s{"keys"}
+    ELSEIF do$ = "pause" THEN
+        out$ = head$ + "pause " + STR$(s{"ms"}) + " ms"
+    ENDIF
+    IF s{"tries"} > 1 THEN
+        out$ = out$ + ", " + STR$(s{"tries"}) + " tries"
+    ENDIF
+    RETURN out$
+ENDFUNC
+
+' Every step of a job as a line of a plan.
+EXPORT FUNC PLAN_LINES(job)
+    DIM out = []
+    DIM steps = job{"steps"}
+    DIM window$ = job{"window"}
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        PUSH(out, PLAN_LINE$(steps[k], window$))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A point inside the window as a point of the screen.
+EXPORT FUNC SCREEN_POINT(origin, at)
+    RETURN [origin[0] + at[0], origin[1] + at[1]]
+ENDFUNC
+
+' How far a region of a screenshot is from a reference picture: the
+' mean difference of the red, green and blue values, 0 to 255. A
+' region that does not fit, or a picture of another size, counts 255.
+EXPORT FUNC REGION_DIFF(shot, ref, region)
+    DIM rx = region[0]
+    DIM ry = region[1]
+    DIM w = region[2]
+    DIM h = region[3]
+    DIM sw = shot{"width"}
+    IF ref{"width"} <> w ORELSE ref{"height"} <> h THEN RETURN 255
+    IF rx + w > sw ORELSE ry + h > shot{"height"} THEN RETURN 255
+    DIM cs = shot{"channels"}
+    DIM cr = ref{"channels"}
+    DIM ps = shot{"pixels"}
+    DIM pr = ref{"pixels"}
+    DIM total = 0.0
+    DIM x = 0
+    DIM y = 0
+    DIM ch = 0
+    FOR y = 0 TO h - 1
+        FOR x = 0 TO w - 1
+            DIM at_s = ((ry + y) * sw + rx + x) * cs
+            DIM at_r = (y * w + x) * cr
+            FOR ch = 0 TO 2
+                DIM s_ch = ch
+                IF cs < 3 THEN s_ch = 0
+                DIM r_ch = ch
+                IF cr < 3 THEN r_ch = 0
+                DIM vs = ps[at_s + s_ch]
+                DIM vr = pr[at_r + r_ch]
+                total = total + ABS(vs - vr)
+            NEXT ch
+        NEXT x
+    NEXT y
+    RETURN total / (w * h * 3)
+ENDFUNC
+
+' Whether the region looks like the picture, within the tolerance.
+EXPORT FUNC MATCHES(shot, ref, region, tolerance)
+    RETURN REGION_DIFF(shot, ref, region) <= tolerance
+ENDFUNC
+
+' Carries out one step once; answers "" or why it did not work.
+FUNC Attempt(s, window$, shot$)
+    DIM do$ = s{"do"}
+    IF do$ = "wait_window" THEN
+        DIM hwnd = INPUTKIT.WAITWINDOW(window$, s{"timeout_s"} * 1000)
+        IF hwnd = 0 THEN RETURN "the window did not come"
+        DIM front = INPUTKIT.ACTIVATE(window$)
+        IF NOT front THEN RETURN "it stayed behind"
+        RETURN ""
+    ENDIF
+    IF do$ = "pause" THEN
+        SLEEP s{"ms"}
+        RETURN ""
+    ENDIF
+    DIM win = INPUTKIT.FINDWINDOW(window$)
+    IF win = 0 THEN RETURN "the window is gone"
+    IF NOT INPUTKIT.ACTIVATE(window$) THEN RETURN "it stayed behind"
+    IF do$ = "check" THEN
+        IF OS.SCREENSHOT(shot$, "client", window$) <> 0 THEN
+            RETURN "no screenshot of the window"
+        ENDIF
+        DIM shot = IMG.READPNG(shot$)
+        DIM ref = IMG.READPNG(s{"image"})
+        DIM d = REGION_DIFF(shot, ref, s{"region"})
+        IF d > s{"tolerance"} THEN
+            RETURN "the region differs by " + FORMAT$("{:.1f}", d)
+        ENDIF
+    ELSEIF do$ = "click" ORELSE do$ = "doubleclick" THEN
+        DIM p = SCREEN_POINT(INPUTKIT.CLIENT_ORIGIN(win), s{"at"})
+        DIM n = 1
+        IF do$ = "doubleclick" THEN n = 2
+        INPUTKIT.CLICK(p[0], p[1], "left", n)
+    ELSEIF do$ = "type" THEN
+        INPUTKIT.TYPETEXT(s{"text"})
+    ELSEIF do$ = "key" THEN
+        INPUTKIT.PRESS(s{"keys"}, FALSE)
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' Runs the job: each step up to its tries, a second between tries, a
+' log line for each. The emergency stop of INPUTKIT ends it at once.
+' Answers {"ok": TRUE or FALSE, "step": the step that failed, "why"}.
+EXPORT FUNC RUN(job, lg, shots_dir$)
+    DIM steps = job{"steps"}
+    DIM window$ = job{"window"}
+    DIM shot$ = PATH.JOIN$(shots_dir$, "robot_check.png")
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        DIM s = steps[k]
+        DIM what$ = PLAN_LINE$(s, window$)
+        DIM why$ = ""
+        DIM try_no = 0
+        DO
+            try_no = try_no + 1
+            TRY
+                why$ = Attempt(s, window$, shot$)
+            CATCH
+                why$ = ERRMSG$
+                IF INSTR(why$, "stopped") >= 0 THEN
+                    LOGGER.WARN(lg, what$ + ": " + why$)
+                    DIM stop_at = s{"line"}
+                    RETURN {"ok": FALSE, "step": stop_at, "why": why$}
+                ENDIF
+            ENDTRY
+            IF why$ = "" THEN
+                LOGGER.INFO(lg, what$ + ": ok")
+                EXITDO
+            ENDIF
+            DIM said$ = what$ + ": try " + STR$(try_no) + ": " + why$
+            LOGGER.WARN(lg, said$)
+            IF try_no >= s{"tries"} THEN
+                RETURN {"ok": FALSE, "step": s{"line"}, "why": why$}
+            ENDIF
+            SLEEP 1000
+        LOOP
+    NEXT k
+    RETURN {"ok": TRUE, "step": 0, "why": ""}
+ENDFUNC

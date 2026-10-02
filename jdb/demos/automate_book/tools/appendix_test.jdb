@@ -1,0 +1,104 @@
+' APPENDIX: the settings and the recipe table are read from a small
+' fixture with two recipes, one of them reading a key it does not
+' declare and a key of the other recipe.
+
+IMPORT TESTKIT, APPENDIX
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM root$ = MKTEMP$("appendix")
+DIM rec$ = PATH.JOIN$(root$, "recipes")
+DIM one$ = PATH.JOIN$(rec$, "easy", "E01_one")
+DIM two$ = PATH.JOIN$(rec$, "medium", "M01_two")
+DIM lib$ = PATH.JOIN$(rec$, "lib")
+DIM man$ = PATH.JOIN$(root$, "manuscript")
+MKDIR one$
+MKDIR two$
+MKDIR lib$
+MKDIR man$
+
+FUNC Quoted$(t$)
+    RETURN CHR$(34) + t$ + CHR$(34)
+ENDFUNC
+
+DIM t1$ = "id = " + Quoted$("E01") + LF$ + "name = " + Quoted$("One") + LF$
+t1$ = t1$ + "program = " + Quoted$("one.jdb") + LF$ + "minutes_per_week = 15" + LF$
+t1$ = t1$ + "schedule = " + Quoted$("daily 18:30") + LF$
+t1$ = t1$ + "section = " + Quoted$("one") + LF$ + "modules = [" + Quoted$("helper.jdb") + "]" + LF$
+t1$ = t1$ + "[[setting]]" + LF$ + "key = " + Quoted$("folder") + LF$
+t1$ = t1$ + "label = " + Quoted$("Folder to tidy") + LF$ + "kind = " + Quoted$("folder") + LF$
+t1$ = t1$ + "default = " + Quoted$("~/Downloads") + LF$
+TXTWRITER PATH.JOIN$(one$, "recipe.toml"), t1$
+DIM p1$ = "IMPORT WORKCONF, HELPER, XLSX" + LF$
+p1$ = p1$ + "DIM key$ = " + Quoted$("one.") + LF$
+p1$ = p1$ + "DIM f$ = WORKCONF.FOLDER$(cfg, key$ + " + Quoted$("folder") + ", " + Quoted$("~") + ")" + LF$
+p1$ = p1$ + "DIM n = WORKCONF.VALUE(cfg, key$ + _" + LF$ + "    " + Quoted$("days") + ", 14)" + LF$
+p1$ = p1$ + "' DIM x = WORKCONF.VALUE(cfg, " + Quoted$("one.comment") + ", 1)" + LF$
+p1$ = p1$ + "DIM who$ = WORKCONF.VALUE(cfg, " + Quoted$("user.name") + ", " + Quoted$("") + ")" + LF$
+TXTWRITER PATH.JOIN$(one$, "one.jdb"), p1$
+TXTWRITER PATH.JOIN$(one$, "helper.jdb"), "EXPORT MODULE HELPER" + LF$ + "IMPORT DT" + LF$
+
+DIM t2$ = "id = " + Quoted$("M01") + LF$ + "name = " + Quoted$("Two") + LF$
+t2$ = t2$ + "program = " + Quoted$("two.jdb") + LF$ + "minutes_per_week = 30" + LF$
+t2$ = t2$ + "schedule = " + Quoted$("manual") + LF$ + "section = " + Quoted$("two") + LF$
+TXTWRITER PATH.JOIN$(two$, "recipe.toml"), t2$
+DIM p2$ = "IMPORT WORKCONF, MAIL" + LF$
+p2$ = p2$ + "DIM home$ = " + Quoted$("~/time") + LF$
+p2$ = p2$ + "DIM d$ = WORKCONF.FOLDER$(cfg, " + Quoted$("one.folder") + ", home$)" + LF$
+TXTWRITER PATH.JOIN$(two$, "two.jdb"), p2$
+DIM pl$ = "DIM s$ = WORKCONF.VALUE(cfg, " + Quoted$("mail.server") + ", " + Quoted$("") + ")" + LF$
+TXTWRITER PATH.JOIN$(lib$, "shared.jdb"), pl$
+TXTWRITER PATH.JOIN$(lib$, "shared_test.jdb"), "DIM z = WORKCONF.VALUE(cfg, " + Quoted$("mail.zzz") + ", 0)" + LF$
+TXTWRITER PATH.JOIN$(man$, "03_one.md"), "## E01 One" + LF$ + LF$ + "Text." + LF$
+TXTWRITER PATH.JOIN$(man$, "04_two.md"), "## Bonus: M01 Two" + LF$ + "## Not a recipe" + LF$
+
+TESTKIT.SUITE("reading the recipes")
+DIM recipes = APPENDIX.RECIPES(rec$)
+TESTKIT.EQ(LEN(recipes), 2, "both recipes are found")
+TESTKIT.EQ(recipes[0]{"level"}, "easy", "with their level")
+TESTKIT.EQ(APPENDIX.JOINED$("a _" + LF$ + "b" + LF$ + "' c" + LF$ + "d"), "a b" + LF$ + "d", "continued lines are joined, comments left out")
+DIM args = APPENDIX.CALL_ARGS("f(a, g(b, c), " + Quoted$("x, y") + ")", 1)
+TESTKIT.EQ(LEN(args), 3, "a call splits at its own commas")
+TESTKIT.EQ(args[1], "g(b, c)", "not at the commas of an inner call")
+
+TESTKIT.SUITE("the settings a program reads")
+DIM reads = APPENDIX.READS(p1$, "one")
+TESTKIT.EQ(LEN(reads), 3, "three reads, the comment left out")
+TESTKIT.EQ(reads[0]{"key"}, "one.days", "a key over two lines")
+TESTKIT.EQ(reads[0]{"default"}, "14", "with its fallback")
+TESTKIT.EQ(reads[2]{"key"}, "one.folder", "and a prefix variable")
+DIM rows = APPENDIX.RECIPE_ROWS(recipes[0])
+TESTKIT.EQ(LEN(rows), 2, "a declared and an undeclared setting")
+TESTKIT.ISTRUE(rows[0]{"declared"}, "the declared one first")
+TESTKIT.EQ(rows[1]{"key"}, "days", "the undeclared one is found")
+DIM rows2 = APPENDIX.RECIPE_ROWS(recipes[1])
+TESTKIT.EQ(rows2[0]{"part"}, "one", "a key of another recipe keeps its part")
+TESTKIT.EQ(rows2[0]{"default"}, "`" + Quoted$("~/time") + "`", "a variable fallback shows its literal")
+TESTKIT.EQ(APPENDIX.SOURCE_CELL$("PATH.JOIN$(a$, b$)", ""), "", "an expression is not shown")
+TESTKIT.EQ(APPENDIX.CELL$(["a", "b|c"]), "`[" + Quoted$("a") + ", " + Quoted$("b\|c") + "]`", "a list as a cell, with | escaped")
+
+TESTKIT.SUITE("libraries and pages")
+TESTKIT.EQARRAY(APPENDIX.IMPORTS(p1$), ["WORKCONF", "HELPER", "XLSX"], "the imports in order")
+TESTKIT.EQARRAY(APPENDIX.LIBRARIES(recipes[0]), ["XLSX", "DT"], "without its own module and WORKCONF")
+DIM heads = APPENDIX.HEADINGS(man$)
+TESTKIT.EQ(heads{"M01"}, "Bonus: M01 Two", "a recipe heading by its id, wherever it stands")
+TESTKIT.ISFALSE(MAP.EXISTS(heads, "Not"), "other headings are left out")
+
+TESTKIT.SUITE("the appendices")
+DIM e$ = APPENDIX.RECIPES_MD$(recipes, heads)
+TESTKIT.ISTRUE(INSTR(e$, "{{page:E01 One}}") >= 0, "the page token for the layout")
+TESTKIT.ISTRUE(INSTR(e$, "| M01 Two | 30 | by hand |") >= 0, "manual shows as by hand")
+TESTKIT.ISTRUE(INSTR(e$, "{{page:Bonus: M01 Two}}") >= 0, "the token holds the heading as it reads")
+TESTKIT.ISTRUE(INSTR(e$, "# Appendix E: All 2 Recipes at a Glance") >= 0, "the title counts the recipes")
+DIM no_pages AS MAP
+DIM e2$ = APPENDIX.RECIPES_MD$(recipes, no_pages)
+TESTKIT.ISTRUE(INSTR(e2$, "| E01 One | 15 | daily 18:30 | XLSX, DT |  |") >= 0, "a recipe without a page gets an empty cell")
+TESTKIT.ISTRUE(INSTR(e$, "| **All** | **2** | **45** |") >= 0, "and the total")
+DIM d$ = APPENDIX.SETTINGS_MD$(recipes, lib$)
+TESTKIT.ISTRUE(INSTR(d$, "| `name` | your name, for mail and documents | E01 |") >= 0, "a shared key with its reader")
+TESTKIT.ISTRUE(INSTR(d$, "| `server` | the mail server") >= 0 ANDALSO INSTR(d$, "SHARED") >= 0, "a shared module reads one too")
+TESTKIT.ISTRUE(INSTR(d$, "zzz") < 0, "test files are left out")
+TESTKIT.ISTRUE(INSTR(d$, "### E01 One: `[one]`") >= 0, "one table per recipe")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(root$, "/", "\")])
+TESTKIT.REPORT()

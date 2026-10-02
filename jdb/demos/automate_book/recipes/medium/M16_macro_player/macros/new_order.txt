@@ -1,0 +1,14 @@
+# Opens a new order in the order system and fills its header.
+# Find the points with: jdbasic macro_player.jdb --where
+window Orders - Main Menu
+key ctrl+n
+wait 800
+type Miller Ltd
+key tab
+type Copy paper, 10 packs
+key tab
+key tab
+type Jonas Example
+click 640 520
+wait 300
+key ctrl+s

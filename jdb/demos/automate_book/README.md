@@ -1,15 +1,16 @@
 # Automate Your Work for a Better Life Balance
 
 The manuscript, the recipes and the build of a book about automating office
-work with jdBasic: 45 programs in three levels and a setup wizard for
+work with jdBasic: 48 programs in three levels and a setup wizard for
 readers who have never programmed.
 
 The plan, the outline and the page budget are in [PLAN.md](PLAN.md).
 
 ## State
 
-Work packages 0 to 4 are done: chapters 1 to 5 with all 45 recipes,
-543 pages in print. The build turns the manuscript into a
+Work packages 0 to 5 are done: all six chapters with 48 recipes, the
+appendices and the index, 655 pages in print. The build turns the
+manuscript into a
 Word file, an HTML preview, a print PDF (17 x 24 cm, fonts embedded) and a
 screen PDF with bookmarks and links. Recipe E01 with its chapter pages is
 the sample. The build also draws the cover (front, and the print wrap

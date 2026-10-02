@@ -23,3 +23,7 @@ Each recipe follows the same order:
 9. **When it goes wrong**: the problems you are likely to meet.
 10. **Balance dividend**: the time it gives back.
 
+
+After the fifteen comes a bonus, E16 Form Filler. It types into a form
+for you, which means it takes over your keyboard for a few seconds, so
+the wizard leaves it switched off until you choose it.

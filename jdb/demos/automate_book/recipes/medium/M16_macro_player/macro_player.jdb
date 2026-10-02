@@ -1,0 +1,64 @@
+' Macro Player: plays a macro, a text file of keyboard and mouse
+' steps, from your folder of macros. The settings are the
+' [macro_player] part of work.conf.
+'
+'   jdbasic macro_player.jdb new_order            play a macro
+'   jdbasic macro_player.jdb new_order --dry-run  show its steps
+'   jdbasic macro_player.jdb --list               the macros you have
+'   jdbasic macro_player.jdb --where              where the mouse is
+
+IMPORT WORKCONF, INPUTKIT, MACROS
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "macro_player."
+DIM home$ = "~/Documents/AutomateWork/macros"
+DIM folder$ = WORKCONF.FOLDER$(cfg, key$ + "folder", home$)
+DIM wait_s = WORKCONF.VALUE(cfg, key$ + "countdown", 5)
+DIM log$ = PATH.JOIN$(folder$, "macro_player.log")
+
+IF WORKCONF.FLAG("where") THEN
+    PRINT "Point at the places your macro clicks; 10 seconds."
+    DIM w = 0
+    FOR w = 1 TO 20
+        DIM at = INPUTKIT.CURSOR_AT()
+        PRINT MACROS.WHERE_LINE$(at[0], at[1])
+        SLEEP 500
+    NEXT w
+    END
+ENDIF
+
+IF WORKCONF.FLAG("list") THEN
+    DIM names = MACROS.LIST(folder$)
+    IF LEN(names) = 0 THEN PRINT "No macros in "; folder$
+    DIM i = 0
+    FOR i = 0 TO LEN(names) - 1
+        PRINT names[i]
+    NEXT i
+    END
+ENDIF
+
+DIM name$ = MACROS.NAME_ARG$(OS.ARGS())
+IF name$ = "" THEN
+    PRINT "Name a macro: jdbasic macro_player.jdb new_order"
+    END 1
+ENDIF
+DIM job = MACROS.LOAD(MACROS.PATH$(folder$, name$))
+IF LEN(job{"errors"}) > 0 THEN
+    PRINT "The macro has mistakes:"
+    PRINT "  "; JOIN(job{"errors"}, CHR$(10) + "  ")
+    END 1
+ENDIF
+
+DIM dry_run = WORKCONF.FLAG("dry-run")
+IF NOT dry_run THEN INPUTKIT.COUNTDOWN(wait_s)
+DIM r = MACROS.PLAY(job{"steps"}, name$, log$, dry_run)
+IF r{"failed"} <> "" THEN
+    PRINT "Stopped after "; r{"done"}; " steps: "; r{"failed"}
+    END 1
+ENDIF
+IF dry_run THEN
+    DIM n = LEN(job{"steps"})
+    PRINT n; " steps. Run without --dry-run to play them."
+ELSE
+    PRINT "Played "; r{"done"}; " steps of "; name$; "."
+ENDIF

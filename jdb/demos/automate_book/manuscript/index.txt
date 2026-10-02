@@ -1,0 +1,233 @@
+# Index terms of the book, one per line, as they should be printed.
+# A term matches whole words in any case; code blocks are not indexed.
+
+# concepts
+automation
+balance dividend
+ledger
+dry run
+outbox
+work folder
+work.conf
+recipe.toml
+setup wizard
+Task Scheduler
+audit trail
+retry
+property test
+interpreter
+compiled program
+native compiler
+forms release
+Credential Manager
+API key
+environment variable
+localhost
+web server
+MCP
+AI agent
+language model
+TOML
+JSON
+CSV
+Excel
+=Word
+PDF
+e-book
+calendar
+iCalendar
+.eml
+SMTP
+STARTTLS
+curl
+robots.txt
+cache
+checksum
+daylight saving time
+time zone
+UTF-8
+byte order mark
+Unicode
+backup
+IT department
+personal data
+job server
+health check
+cockpit
+dashboard
+search index
+OAuth
+REST API
+webhook
+SQLite
+database
+data frame
+SVG
+worker pool
+command prompt
+=PATH
+schtasks
+cron
+
+# people
+Mia
+Jonas
+Lena
+
+# jdBasic: libraries, statements and builtins (capitals match exactly)
+=WORKCONF
+=CONF
+=LOGGER
+=DT
+=DF
+=XLSX
+=DOCX
+=PDFGEN
+=MAIL
+=ICAL
+=SCHED
+=TMPL
+=VAULT
+=JOBSTATE
+=AUDIT
+=INPUTKIT
+=TESTKIT
+=PROPTEST
+=JDWEB
+=REQ
+=HTMLDOM
+=SEARCH
+=POOL
+=DB
+=LLMAPI
+=JWT
+=METRICS
+=SECRET
+=CLI
+=QR
+=TEXTDIFF
+=FUZZY
+=VALID
+=PKG
+=IMPORT
+=EXPORT MODULE
+=FUNC
+=SUB
+=DIM
+=CONST
+=IF
+=FOR
+=FOR EACH
+=DO WHILE
+=EXITDO
+=TRY
+=CATCH
+=THROW
+=ERRMSG$
+=RETURN
+=LAMBDA
+=ASYNC
+=ANDALSO
+=ORELSE
+=IN
+=MOD
+=NONE
+=TYPEOF
+=PRINT
+=INPUT
+=WAITKEY$
+=LEN
+=MID$
+=LEFT$
+=RIGHT$
+=INSTR
+=REPLACE$
+=TRIM$
+=LCASE$
+=UCASE$
+=SPLIT
+=JOIN
+=STARTSWITH
+=ENDSWITH
+=STR$
+=VAL
+=CINT
+=CHR$
+=FORMAT$
+=REGEX.FINDALL
+=REGEX.REPLACE
+=REGEX.MATCH
+=PUSH
+=APPEND
+=SORT
+=GRADE
+=TAKE
+=DROP
+=UNIQUE
+=SELECT
+=FILTER
+=IOTA
+=SUM
+=MIN
+=MAX
+=ROUND
+=MAP.EXISTS
+=MAP.KEYS
+=MAP.DELETE
+=NOW
+=CDATE
+=FORMAT_DATE
+=DATEADD
+=DATEDIFF
+=WEEKDAY
+=TICK
+=PATH.JOIN$
+=PATH.DIRNAME$
+=PATH.BASENAME$
+=PATH.EXT$
+=FILE.EXISTS
+=FILE.ISDIR
+=FILE.STAT
+=FILE.MOVE
+=FILE.COPY
+=DIR$
+=MKDIR
+=RMDIR
+=KILL
+=TXTREADER$
+=TXTWRITER
+=BINREADER$
+=CSVREADER
+=MKTEMP$
+=OS.EXEC
+=OS.ARGS
+=GETENV$
+=SETENV
+=SLEEP
+=JSON.PARSE$
+=JSON.STRINGIFY$
+=CODEC.SHA256$
+=HTTP.REQUEST
+=CONF.GET
+=CONF.TOML
+=WORKCONF.VALUE
+=WORKCONF.FOLDER$
+=WORKCONF.FLAG
+=LOGGER.INFO
+=DT.PARSE
+=DT.FMT$
+=XLSX.READ
+=XLSX.SHEET
+=DOCX.PARAGRAPH
+=DOCX.FILL
+=PDFGEN.TEXTAT
+=MAIL.MESSAGE
+=MAIL.WRITEEML
+=OUTBOX.PUT$
+=VAULT.FIND$
+=ICAL.EXPAND
+=SCHED.NEXTRUN
+=TMPL.RENDER$
+=TESTKIT.EQ
+=JDBASIC_PATH
+.ics

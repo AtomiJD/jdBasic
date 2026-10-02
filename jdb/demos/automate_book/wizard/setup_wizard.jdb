@@ -53,7 +53,7 @@ DIM btnClose = FORM.BUTTON(frm, "btnClose", "Close", 560, 450, 80, 30)
 
 DIM welcome$ = "This wizard sets up the automations of the book on this computer." + CHR$(10) + CHR$(10)
 welcome$ = welcome$ + "It creates a work folder, writes your settings into one file (work.conf), copies the recipes you pick and plans when they run with the Windows Task Scheduler." + CHR$(10) + CHR$(10)
-welcome$ = welcome$ + "Nothing leaves this computer unless you turn on a recipe that sends mail. You can run the wizard again at any time to change your choices."
+welcome$ = welcome$ + "Your files and your mail stay on this computer unless you turn on a recipe that sends mail; the Page Watcher (E14) only reads the web pages you name. You can run the wizard again at any time to change your choices."
 DIM page0 = [FORM.LABEL(frm, "lblWelcome", welcome$, 20, 60, 620, 300)]
 
 DIM you_labels = ["Work folder", "The jdbasic program", "Your name", "Your mail address", "Working day starts at", "Working day ends at", "Mail server (optional)", "Mail user name"]
@@ -240,6 +240,12 @@ FUNC SetUp$(dry_run, schedule)
             ENDIF
         NEXT t
     NEXT i
+    IF schedule ANDALSO NOT dry_run ANDALSO gA{"jdbasic"} <> "" THEN
+        DIM gone = WIZARD.UNSCHEDULE_OFF(gA, gRecipes)
+        FOR i = 0 TO LEN(gone) - 1
+            PRINT "removed the task for "; gone[i]
+        NEXT i
+    ENDIF
     PRINT "Done. Settings: "; conf$
     RETURN OUTPUT.CAPTURE_END$()
 ENDFUNC

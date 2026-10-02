@@ -3,12 +3,13 @@
 ' out/book.docx, out/book_print.pdf, out/book_screen.pdf, the covers,
 ' out/book.epub and a browser preview in
 ' out/html/, and reports words, code lines and estimated pages per chapter.
+' Appendix D and E are written from the recipe folders first.
 '
 '   jdbasic tools/build_book.jdb [book.toml] [--only docx|html|pdf|print|screen|cover|epub]
 '
 ' Run from the book folder; the modules come from lib/ through JDBASIC_PATH.
 
-IMPORT CONF, DOCX, MD, MDBOOK, PROSE, LAYOUT, TTF, COVER, EPUB, PREVIEW, EXAMPLES
+IMPORT CONF, DOCX, MD, MDBOOK, PROSE, LAYOUT, TTF, COVER, EPUB, PREVIEW, EXAMPLES, APPENDIX
 
 DIM gLF$ = CHR$(10)
 DIM gCodeColumns = 70
@@ -28,6 +29,39 @@ FUNC LoadChapters(cfg, base$)
         DIM text$ = MDBOOK.RESOLVE$(TXTREADER$(path$), base$)
         DIM blocks = MDBOOK.BLOCKS(text$)
         PUSH(out, {"path": rel$, "dir": PATH.DIRNAME$(path$), "text": text$, "blocks": blocks, "stats": MDBOOK.STATS(blocks)})
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' The text without its {{page:Heading}} references, which only the PDF
+' can fill in.
+FUNC NoPageRefs$(txt$)
+    DIM out$ = txt$
+    DIM at = INSTR(out$, "{{page:")
+    DO WHILE at >= 0
+        DIM close_at = INSTR(at, out$, "}}")
+        IF close_at < 0 THEN EXITDO
+        out$ = LEFT$(out$, at) + MID$(out$, close_at + 2)
+        at = INSTR(out$, "{{page:")
+    LOOP
+    RETURN out$
+ENDFUNC
+
+' The chapters for Word, HTML and the e-book: page references removed
+' from the text and from the paragraphs and tables.
+FUNC WithoutPageRefs(chapters)
+    DIM out = []
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(chapters) - 1
+        DIM ch = chapters[k]
+        DIM text$ = ch{"text"}
+        IF INSTR(text$, "{{page:") < 0 THEN
+            PUSH(out, ch)
+        ELSE
+            DIM blocks = MDBOOK.BLOCKS(NoPageRefs$(text$))
+            PUSH(out, {"path": ch{"path"}, "dir": ch{"dir"}, "text": NoPageRefs$(text$), "blocks": blocks, "stats": ch{"stats"}})
+        ENDIF
     NEXT k
     RETURN out
 ENDFUNC
@@ -164,8 +198,9 @@ ENDSUB
 
 ' ── writing rules ─────────────────────────────────────────────
 
-' The prose findings in the chapters, in the comments of every file they
-' include, and in the extra files book.toml names under [prose].
+' The prose findings in the chapters, in the comments of every listing
+' they print (only the part an include names), and in the extra files
+' book.toml names under [prose].
 FUNC ProseFindings(cfg, base$)
     DIM out = []
     DIM files = CONF.GET(cfg, "chapters.files", [])
@@ -182,9 +217,11 @@ FUNC ProseFindings(cfg, base$)
             DIM t$ = TRIM$(src[j])
             IF STARTSWITH(t$, "<!-- include ") THEN
                 DIM inc$ = SPLIT(TRIM$(MID$(t$, 13, LEN(t$) - 16)), " ")[0]
-                DIM listing$ = TXTREADER$(PATH.JOIN$(base$, inc$))
-                out = APPEND(out, PROSE.COMMENTS(listing$, inc$))
-                out = APPEND(out, WideLines(listing$, inc$, FALSE))
+                DIM printed$ = MDBOOK.RESOLVE$(t$, base$)
+                DIM label$ = inc$
+                IF INSTR(t$, " lines=") >= 0 ORELSE INSTR(t$, " from=") >= 0 THEN label$ = inc$ + " (the part included)"
+                out = APPEND(out, PROSE.COMMENTS(printed$, label$))
+                out = APPEND(out, WideLines(printed$, label$, TRUE))
             ENDIF
         NEXT j
         IF k < LEN(files) THEN out = APPEND(out, WideLines(text$, rel$, TRUE))
@@ -242,7 +279,13 @@ IF base$ = "" THEN base$ = "."
 DIM cfg = CONF.TOML(cfg_path$)
 DIM out_dir$ = PATH.JOIN$(base$, CONF.GET(cfg, "build.out", "out"))
 MKDIR out_dir$
+DIM gen_recipes = APPENDIX.RECIPES(PATH.JOIN$(base$, "recipes"))
+TXTWRITER PATH.JOIN$(base$, "manuscript", "07_appendix_d.md"), APPENDIX.SETTINGS_MD$(gen_recipes, PATH.JOIN$(base$, "recipes", "lib"))
+DIM gen_heads = APPENDIX.HEADINGS(PATH.JOIN$(base$, "manuscript"))
+TXTWRITER PATH.JOIN$(base$, "manuscript", "07_appendix_e.md"), APPENDIX.RECIPES_MD$(gen_recipes, gen_heads)
+PRINT "appendix D and E: "; LEN(gen_recipes); " recipes"
 DIM chapters = LoadChapters(cfg, base$)
+DIM flat_chapters = WithoutPageRefs(chapters)
 DIM findings = ProseFindings(cfg, base$)
 IF LEN(findings) > 0 THEN
     PRINT "The writing rules are broken in "; LEN(findings); " places:"
@@ -282,12 +325,12 @@ PRINT "examples: "; n_examples; " run, all as printed"
 
 IF only$ = "" ORELSE only$ = "docx" THEN
     DIM docx_path$ = PATH.JOIN$(out_dir$, "book.docx")
-    DIM parts = WriteDocx(cfg, chapters, docx_path$)
+    DIM parts = WriteDocx(cfg, flat_chapters, docx_path$)
     PRINT "wrote "; docx_path$; " ("; parts; " parts)"
 ENDIF
 IF only$ = "" ORELSE only$ = "html" THEN
     DIM html_dir$ = PATH.JOIN$(out_dir$, "html")
-    DIM pages_written = WriteHtml(cfg, chapters, html_dir$)
+    DIM pages_written = WriteHtml(cfg, flat_chapters, html_dir$)
     PRINT "wrote "; html_dir$; " ("; pages_written; " pages)"
 ENDIF
 DIM modes = ["print", "screen"]
@@ -322,7 +365,7 @@ IF only$ = "" ORELSE only$ = "epub" THEN
         cover_png$ = ""
     ENDIF
     DIM epub_path$ = PATH.JOIN$(out_dir$, "book.epub")
-    DIM n_files = EPUB.WRITE(cfg, chapters, base$, epub_path$, cover_png$)
+    DIM n_files = EPUB.WRITE(cfg, flat_chapters, base$, epub_path$, cover_png$)
     PRINT "wrote "; epub_path$; " ("; n_files; " files)"
 ENDIF
 Report(chapters)

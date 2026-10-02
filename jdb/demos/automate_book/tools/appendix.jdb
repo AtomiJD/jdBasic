@@ -1,0 +1,570 @@
+' appendix.jdb: the generated appendices of the book. Appendix D lists
+' every key of work.conf, from the recipe.toml files and from the
+' settings the programs read; Appendix E lists all recipes with their
+' time, schedule and libraries. Both are written as Markdown, so the
+' build sets them like any chapter.
+'
+'   IMPORT APPENDIX
+'   DIM recipes = APPENDIX.RECIPES("recipes")
+'   TXTWRITER "manuscript/07_appendix_d.md", APPENDIX.SETTINGS_MD$(recipes, "recipes/lib")
+'   TXTWRITER "manuscript/07_appendix_e.md", APPENDIX.RECIPES_MD$(recipes, "manuscript")
+
+EXPORT MODULE APPENDIX
+
+IMPORT CONF
+
+DIM gLF$ = CHR$(10)
+DIM gQ$ = CHR$(34)
+
+' Every recipe under root$/<level>/<folder>/recipe.toml, sorted by id;
+' each map also gets "dir" and "level".
+EXPORT FUNC RECIPES(root$)
+    DIM out = []
+    DIM levels = ["easy", "medium", "expert"]
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(levels) - 1
+        DIM level_dir$ = PATH.JOIN$(root$, levels[k])
+        IF FILE.ISDIR(level_dir$) THEN
+            DIM names = SORT(DIR$(PATH.JOIN$(level_dir$, "*")))
+            FOR j = 0 TO LEN(names) - 1
+                DIM name$ = names[j]
+                DIM dir$ = PATH.JOIN$(level_dir$, name$)
+                DIM file$ = PATH.JOIN$(dir$, "recipe.toml")
+                IF FILE.EXISTS(file$) THEN
+                    DIM r = CONF.TOML(file$)
+                    r{"dir"} = dir$
+                    r{"level"} = levels[k]
+                    PUSH(out, r)
+                ENDIF
+            NEXT j
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Source text with every line that ends in " _" joined to the next, and
+' comment lines left out.
+EXPORT FUNC JOINED$(text$)
+    DIM rows = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM out = []
+    DIM cur$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = TRIM$(rows[k])
+        IF NOT STARTSWITH(row$, "'") THEN
+            IF ENDSWITH(row$, " _") THEN
+                cur$ = cur$ + LEFT$(row$, LEN(row$) - 1)
+            ELSE
+                PUSH(out, cur$ + row$)
+                cur$ = ""
+            ENDIF
+        ENDIF
+    NEXT k
+    IF cur$ <> "" THEN PUSH(out, cur$)
+    RETURN JOIN(out, gLF$)
+ENDFUNC
+
+' The arguments of the call whose "(" is at position open, as source
+' text, split at the commas that are not inside brackets or quotes.
+EXPORT FUNC CALL_ARGS(text$, open)
+    DIM args = []
+    DIM depth = 0
+    DIM in_str = FALSE
+    DIM cur$ = ""
+    DIM k = open + 1
+    DO WHILE k < LEN(text$)
+        DIM c$ = MID$(text$, k, 1)
+        IF in_str THEN
+            cur$ = cur$ + c$
+            IF c$ = gQ$ THEN in_str = FALSE
+        ELSEIF c$ = gQ$ THEN
+            cur$ = cur$ + c$
+            in_str = TRUE
+        ELSEIF c$ = "(" ORELSE c$ = "[" ORELSE c$ = "{" THEN
+            depth = depth + 1
+            cur$ = cur$ + c$
+        ELSEIF c$ = ")" ORELSE c$ = "]" ORELSE c$ = "}" THEN
+            IF depth = 0 THEN
+                PUSH(args, TRIM$(cur$))
+                RETURN args
+            ENDIF
+            depth = depth - 1
+            cur$ = cur$ + c$
+        ELSEIF c$ = "," ANDALSO depth = 0 THEN
+            PUSH(args, TRIM$(cur$))
+            cur$ = ""
+        ELSEIF c$ <> gLF$ THEN
+            cur$ = cur$ + c$
+        ENDIF
+        k = k + 1
+    LOOP
+    PUSH(args, TRIM$(cur$))
+    RETURN args
+ENDFUNC
+
+' The text between the quotes of a string literal, or "" when s$ is
+' not a single literal.
+FUNC Literal$(s$)
+    IF LEN(s$) < 2 THEN RETURN ""
+    IF LEFT$(s$, 1) <> gQ$ ORELSE RIGHT$(s$, 1) <> gQ$ THEN RETURN ""
+    DIM inner$ = MID$(s$, 1, LEN(s$) - 2)
+    IF INSTR(inner$, gQ$) >= 0 THEN RETURN ""
+    RETURN inner$
+ENDFUNC
+
+' The literal a variable is first given with DIM name$ = "...", or "".
+FUNC DimLiteral$(text$, name$)
+    DIM rows = SPLIT(text$, gLF$)
+    DIM want$ = "DIM " + UCASE$(name$) + " = "
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = TRIM$(rows[k])
+        IF STARTSWITH(UCASE$(row$), want$) THEN
+            RETURN Literal$(TRIM$(MID$(row$, LEN(want$), LEN(row$))))
+        ENDIF
+    NEXT k
+    RETURN ""
+ENDFUNC
+
+' The full key of a key argument: a literal "part.key", or a variable
+' plus a literal, such as key$ + "folder". A variable the file does not
+' give a literal to stands for section$ + ".". "" when unknown.
+FUNC KeyOf$(arg$, text$, section$)
+    DIM lit$ = Literal$(arg$)
+    IF lit$ <> "" THEN RETURN lit$
+    DIM plus = INSTR(arg$, "+")
+    IF plus < 0 THEN RETURN ""
+    DIM var$ = TRIM$(LEFT$(arg$, plus))
+    DIM tail$ = Literal$(TRIM$(MID$(arg$, plus + 1, LEN(arg$))))
+    IF tail$ = "" ORELSE NOT ENDSWITH(var$, "$") THEN RETURN ""
+    DIM head$ = DimLiteral$(text$, var$)
+    IF head$ = "" ANDALSO section$ <> "" THEN head$ = section$ + "."
+    IF head$ = "" THEN RETURN ""
+    RETURN head$ + tail$
+ENDFUNC
+
+' The settings a program text reads through WORKCONF.VALUE and
+' WORKCONF.FOLDER$, as maps with "key" (part.key) and "default" (the
+' source text of the fallback), each key once.
+EXPORT FUNC READS(text$, section$)
+    DIM src$ = JOINED$(text$)
+    DIM out = []
+    DIM seen AS MAP
+    DIM calls = ["WORKCONF.VALUE(", "WORKCONF.FOLDER$("]
+    DIM c = 0
+    FOR c = 0 TO LEN(calls) - 1
+        DIM pat$ = calls[c]
+        DIM at = INSTR(src$, pat$)
+        DO WHILE at >= 0
+            DIM args = CALL_ARGS(src$, at + LEN(pat$) - 1)
+            IF LEN(args) >= 2 THEN
+                DIM key$ = KeyOf$(args[1], src$, section$)
+                IF key$ <> "" ANDALSO NOT MAP.EXISTS(seen, key$) THEN
+                    seen{key$} = TRUE
+                    DIM fallback$ = ""
+                    IF LEN(args) >= 3 THEN fallback$ = args[2]
+                    PUSH(out, {"key": key$, "default": fallback$})
+                ENDIF
+            ENDIF
+            DIM rest$ = MID$(src$, at + 1, LEN(src$))
+            DIM nxt = INSTR(rest$, pat$)
+            IF nxt < 0 THEN
+                at = -1
+            ELSE
+                at = at + 1 + nxt
+            ENDIF
+        LOOP
+    NEXT c
+    RETURN out
+ENDFUNC
+
+' The modules a program text imports, upper case, in order, each once.
+EXPORT FUNC IMPORTS(text$)
+    DIM rows = SPLIT(JOINED$(text$), gLF$)
+    DIM out = []
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row$ = TRIM$(rows[k])
+        IF STARTSWITH(UCASE$(row$), "IMPORT ") THEN
+            DIM names = SPLIT(MID$(row$, 7, LEN(row$)), ",")
+            FOR j = 0 TO LEN(names) - 1
+                DIM n$ = UCASE$(TRIM$(names[j]))
+                IF n$ <> "" ANDALSO NOT (n$ IN out) THEN PUSH(out, n$)
+            NEXT j
+        ENDIF
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A file name without its folder and its extension.
+FUNC Stem$(path$)
+    DIM base$ = PATH.BASENAME$(path$)
+    DIM ext$ = PATH.EXT$(base$)
+    RETURN LEFT$(base$, LEN(base$) - LEN(ext$))
+ENDFUNC
+
+' The program and the modules of a recipe as one text.
+FUNC RecipeSource$(r)
+    DIM files = [r{"program"}]
+    IF MAP.EXISTS(r, "modules") THEN files = APPEND(files, r{"modules"})
+    DIM parts = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM path$ = PATH.JOIN$(r{"dir"}, files[k])
+        IF FILE.EXISTS(path$) THEN PUSH(parts, TXTREADER$(path$))
+    NEXT k
+    RETURN JOIN(parts, gLF$)
+ENDFUNC
+
+' The modules a recipe imports, without the ones of its own folder and
+' without WORKCONF, which every recipe imports.
+EXPORT FUNC LIBRARIES(r)
+    DIM own = []
+    IF MAP.EXISTS(r, "modules") THEN
+        DIM mods = r{"modules"}
+        DIM k = 0
+        FOR k = 0 TO LEN(mods) - 1
+            PUSH(own, UCASE$(Stem$(mods[k])))
+        NEXT k
+    ENDIF
+    DIM all = IMPORTS(RecipeSource$(r))
+    DIM out = []
+    DIM j = 0
+    FOR j = 0 TO LEN(all) - 1
+        IF NOT (all[j] IN own) ANDALSO all[j] <> "WORKCONF" THEN PUSH(out, all[j])
+    NEXT j
+    RETURN out
+ENDFUNC
+
+' A value as inline code for a table cell; "" shows as an empty text.
+EXPORT FUNC CELL$(v)
+    DIM kind$ = TYPEOF(v)
+    DIM t$ = ""
+    IF kind$ = "STRING" THEN
+        t$ = gQ$ + v + gQ$
+    ELSEIF kind$ = "BOOLEAN" THEN
+        t$ = "false"
+        IF v THEN t$ = "true"
+    ELSEIF kind$ = "ARRAY" THEN
+        DIM items = []
+        DIM k = 0
+        FOR k = 0 TO LEN(v) - 1
+            PUSH(items, CELL_PLAIN$(v[k]))
+        NEXT k
+        t$ = "[" + JOIN(items, ", ") + "]"
+    ELSE
+        t$ = STR$(v)
+    ENDIF
+    RETURN Code$(t$)
+ENDFUNC
+
+' The fallback of a read as a table cell, when the source gives it as a
+' plain value or as a variable with a literal; "" when the program
+' works it out.
+EXPORT FUNC SOURCE_CELL$(s$, text$)
+    DIM t$ = TRIM$(s$)
+    IF t$ = "" THEN RETURN ""
+    IF UCASE$(t$) = "TRUE" THEN RETURN "`true`"
+    IF UCASE$(t$) = "FALSE" THEN RETURN "`false`"
+    IF t$ = gQ$ + gQ$ ORELSE Literal$(t$) <> "" ORELSE IsNumber(t$) THEN RETURN Code$(t$)
+    IF STARTSWITH(t$, "[") ANDALSO ENDSWITH(t$, "]") ANDALSO INSTR(t$, "(") < 0 THEN RETURN Code$(t$)
+    IF ENDSWITH(t$, "$") THEN
+        DIM v$ = DimLiteral$(text$, t$)
+        IF v$ <> "" THEN RETURN Code$(gQ$ + v$ + gQ$)
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+FUNC Code$(t$)
+    RETURN "`" + REPLACE$(t$, "|", "\|") + "`"
+ENDFUNC
+
+FUNC IsNumber(t$)
+    IF t$ = "" THEN RETURN FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(t$) - 1
+        IF INSTR("0123456789.-", MID$(t$, k, 1)) < 0 THEN RETURN FALSE
+    NEXT k
+    RETURN TRUE
+ENDFUNC
+
+' A value as TOML writes it, without the code marks of CELL$.
+EXPORT FUNC CELL_PLAIN$(v)
+    IF TYPEOF(v) = "STRING" THEN RETURN gQ$ + v + gQ$
+    IF TYPEOF(v) = "BOOLEAN" THEN
+        IF v THEN RETURN "true"
+        RETURN "false"
+    ENDIF
+    RETURN STR$(v)
+ENDFUNC
+
+FUNC LevelTitle$(level$)
+    IF level$ = "easy" THEN RETURN "Chapter 3: the easy recipes"
+    IF level$ = "medium" THEN RETURN "Chapter 4: the medium recipes"
+    RETURN "Chapter 5: the expert recipes"
+ENDFUNC
+
+' The rows of one shared part: the keys the wizard writes, with their
+' meaning, then every other key of that part a recipe reads.
+FUNC SharedPart$(part$, known, reads)
+    DIM out = ["### `[" + part$ + "]`", "", "| Key | What it is | Read by |", "|---|---|---|"]
+    DIM listed AS MAP
+    DIM k = 0
+    FOR k = 0 TO LEN(known) - 1
+        DIM row = known[k]
+        DIM full$ = part$ + "." + row[0]
+        listed{full$} = TRUE
+        DIM who$ = ""
+        IF MAP.EXISTS(reads, full$) THEN who$ = JOIN(reads{full$}, ", ")
+        PUSH(out, "| `" + row[0] + "` | " + row[1] + " | " + who$ + " |")
+    NEXT k
+    DIM keys = SORT(MAP.KEYS(reads))
+    FOR k = 0 TO LEN(keys) - 1
+        DIM key$ = keys[k]
+        IF STARTSWITH(key$, part$ + ".") ANDALSO NOT MAP.EXISTS(listed, key$) THEN
+            DIM short$ = MID$(key$, LEN(part$) + 1, LEN(key$))
+            PUSH(out, "| `" + short$ + "` | read by a program, not written by the wizard | " + JOIN(reads{key$}, ", ") + " |")
+        ENDIF
+    NEXT k
+    RETURN JOIN(out, gLF$)
+ENDFUNC
+
+' Appendix D as Markdown: the shared parts, then one table per recipe.
+' lib_dir$ is the folder of the shared modules the recipes import.
+EXPORT FUNC SETTINGS_MD$(recipes, lib_dir$)
+    DIM shared AS MAP
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        DIM r = recipes[k]
+        DIM rr = READS(RecipeSource$(r), r{"section"})
+        FOR j = 0 TO LEN(rr) - 1
+            DIM key$ = rr[j]{"key"}
+            DIM part$ = LEFT$(key$, INSTR(key$, "."))
+            IF part$ = "user" ORELSE part$ = "paths" ORELSE part$ = "mail" THEN
+                IF NOT MAP.EXISTS(shared, key$) THEN shared{key$} = []
+                DIM ids = shared{key$}
+                IF NOT (r{"id"} IN ids) THEN PUSH(ids, r{"id"})
+                shared{key$} = ids
+            ENDIF
+        NEXT j
+    NEXT k
+    DIM libs = SORT(DIR$(PATH.JOIN$(lib_dir$, "*.jdb")))
+    FOR k = 0 TO LEN(libs) - 1
+        DIM lib_name$ = libs[k]
+        IF NOT ENDSWITH(lib_name$, "_test.jdb") THEN
+            DIM lr = READS(TXTREADER$(PATH.JOIN$(lib_dir$, lib_name$)), "")
+            DIM label$ = UCASE$(Stem$(lib_name$))
+            FOR j = 0 TO LEN(lr) - 1
+                DIM lkey$ = lr[j]{"key"}
+                IF NOT MAP.EXISTS(shared, lkey$) THEN shared{lkey$} = []
+                DIM lids = shared{lkey$}
+                IF NOT (label$ IN lids) THEN PUSH(lids, label$)
+                shared{lkey$} = lids
+            NEXT j
+        ENDIF
+    NEXT k
+
+    DIM out = ["<!-- pagebreak -->", "", "# Appendix D: The Settings File", ""]
+    PUSH(out, "Every setting of the recipes lives in one file, `work.conf`, in the `config` folder of your work folder. This appendix lists every key a recipe reads. It is made from the recipes themselves each time the book is built, so it cannot fall behind them.")
+    PUSH(out, "")
+    PUSH(out, "Each part of the file starts with its name in brackets. Text goes in double quotes, numbers and `true` or `false` do not, and a list is written in square brackets with commas between its items. Inside double quotes a backslash starts a special character, so write folders with forward slashes. A key you leave out takes the default shown here.")
+    PUSH(out, "")
+    PUSH(out, "## The shared parts")
+    PUSH(out, "")
+    PUSH(out, "The setup wizard writes `[user]` and `[paths]`, and `[mail]` when you give a mail server. Several recipes read them. The last column names the recipes and shared modules that read a key.")
+    PUSH(out, "")
+    DIM user_keys = [["name", "your name, for mail and documents"], ["email", "your mail address"], ["day_start", "when your working day starts, as HH:MM"], ["day_end", "when it ends"]]
+    DIM path_keys = [["work", "the work folder"], ["jdbasic", "the jdbasic program the scheduled tasks start"]]
+    DIM mail_keys = [["server", "the mail server, such as `smtps://mail.example.com:465`"], ["user", "your user name on the mail server"], ["from", "the sender of every message; without it your name and address from `[user]`"], ["outbox", "the folder the messages wait in"], ["starttls", "`true` when the server wants STARTTLS on port 587"]]
+    PUSH(out, SharedPart$("user", user_keys, shared))
+    PUSH(out, "")
+    PUSH(out, SharedPart$("paths", path_keys, shared))
+    PUSH(out, "")
+    PUSH(out, SharedPart$("mail", mail_keys, shared))
+    PUSH(out, "")
+    PUSH(out, "The mail password is never part of `work.conf`. The recipes ask for it when you send, or take it from the Windows Credential Manager under `AutomateWork/mail` (Chapter 4 and X14).")
+
+    DIM level$ = ""
+    FOR k = 0 TO LEN(recipes) - 1
+        DIM rec = recipes[k]
+        IF rec{"level"} <> level$ THEN
+            level$ = rec{"level"}
+            PUSH(out, "")
+            PUSH(out, "## " + LevelTitle$(level$))
+        ENDIF
+        PUSH(out, "")
+        PUSH(out, RecipeTable$(rec))
+    NEXT k
+    RETURN JOIN(out, gLF$) + gLF$
+ENDFUNC
+
+' The settings of one recipe: its [[setting]] entries, then the keys of
+' its part the program reads without declaring them, then keys of other
+' recipes' parts it reads.
+EXPORT FUNC RECIPE_ROWS(r)
+    DIM rows = []
+    DIM declared AS MAP
+    DIM section$ = r{"section"}
+    DIM k = 0
+    IF MAP.EXISTS(r, "setting") THEN
+        DIM sets = r{"setting"}
+        FOR k = 0 TO LEN(sets) - 1
+            DIM s = sets[k]
+            declared{s{"key"}} = TRUE
+            PUSH(rows, {"key": s{"key"}, "label": s{"label"}, "kind": s{"kind"}, "default": CELL$(s{"default"}), "declared": TRUE, "part": section$})
+        NEXT k
+    ENDIF
+    DIM src$ = JOINED$(RecipeSource$(r))
+    DIM rr = READS(src$, section$)
+    FOR k = 0 TO LEN(rr) - 1
+        DIM key$ = rr[k]{"key"}
+        DIM dot = INSTR(key$, ".")
+        IF dot < 0 THEN CONTINUEFOR
+        DIM fallback$ = SOURCE_CELL$(rr[k]{"default"}, src$)
+        IF fallback$ = "" THEN fallback$ = "*worked out by the program*"
+        DIM part$ = LEFT$(key$, dot)
+        DIM short$ = MID$(key$, dot + 1, LEN(key$))
+        IF part$ = section$ THEN
+            IF NOT MAP.EXISTS(declared, short$) THEN
+                declared{short$} = TRUE
+                PUSH(rows, {"key": short$, "label": "", "kind": "", "default": fallback$, "declared": FALSE, "part": section$})
+            ENDIF
+        ELSEIF part$ <> "user" ANDALSO part$ <> "paths" ANDALSO part$ <> "mail" THEN
+            PUSH(rows, {"key": key$, "label": "", "kind": "", "default": fallback$, "declared": FALSE, "part": part$})
+        ENDIF
+    NEXT k
+    RETURN rows
+ENDFUNC
+
+FUNC RecipeTable$(r)
+    DIM out = ["### " + r{"id"} + " " + r{"name"} + ": `[" + r{"section"} + "]`", ""]
+    DIM rows = RECIPE_ROWS(r)
+    IF LEN(rows) = 0 THEN
+        PUSH(out, "No settings of its own.")
+        RETURN JOIN(out, gLF$)
+    ENDIF
+    PUSH(out, "| Key | What it is | Kind | Default |")
+    PUSH(out, "|---|---|---|---|")
+    DIM notes = 0
+    DIM others = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(rows) - 1
+        DIM row = rows[k]
+        DIM label$ = row{"label"}
+        DIM key$ = row{"key"}
+        IF row{"part"} <> r{"section"} THEN
+            label$ = "set in `[" + row{"part"} + "]`, read here too"
+            key$ = MID$(key$, LEN(row{"part"}) + 1, LEN(key$))
+            others = others + 1
+        ELSEIF NOT row{"declared"} THEN
+            label$ = "read by the program, not asked by the wizard \*"
+            notes = notes + 1
+        ENDIF
+        PUSH(out, "| `" + key$ + "` | " + label$ + " | " + row{"kind"} + " | " + row{"default"} + " |")
+    NEXT k
+    IF notes > 0 THEN
+        PUSH(out, "")
+        PUSH(out, "\* Add the key to `[" + r{"section"} + "]` yourself to change it; the default is the program's.")
+    ENDIF
+    RETURN JOIN(out, gLF$)
+ENDFUNC
+
+' TRUE for E, M or X followed by two digits.
+FUNC IsRecipeId(id$)
+    IF LEN(id$) <> 3 THEN RETURN FALSE
+    IF INSTR("EMX", LEFT$(id$, 1)) < 0 THEN RETURN FALSE
+    RETURN IsNumber(MID$(id$, 1, 2))
+ENDFUNC
+
+' The "## " headings of the manuscript files in dir$ that name a recipe
+' id, such as "## E01 Downloads Butler" or "## Bonus: E16 Form Filler",
+' as a map from the id to the whole heading text. The first one wins.
+EXPORT FUNC HEADINGS(dir$)
+    DIM out AS MAP
+    DIM files = SORT(DIR$(PATH.JOIN$(dir$, "*.md")))
+    DIM k = 0
+    DIM j = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM fname$ = files[k]
+        DIM rows = SPLIT(REPLACE$(TXTREADER$(PATH.JOIN$(dir$, fname$)), CHR$(13), ""), gLF$)
+        FOR j = 0 TO LEN(rows) - 1
+            DIM row$ = rows[j]
+            IF STARTSWITH(row$, "## ") THEN
+                DIM text$ = TRIM$(MID$(row$, 3, LEN(row$)))
+                DIM words = SPLIT(REPLACE$(text$, ":", " "), " ")
+                DIM w = 0
+                FOR w = 0 TO LEN(words) - 1
+                    DIM id$ = TRIM$(words[w])
+                    IF IsRecipeId(id$) ANDALSO NOT MAP.EXISTS(out, id$) THEN out{id$} = text$
+                NEXT w
+            ENDIF
+        NEXT j
+    NEXT k
+    RETURN out
+ENDFUNC
+
+FUNC ScheduleCell$(r)
+    DIM w$ = ""
+    IF MAP.EXISTS(r, "schedule") THEN w$ = TRIM$(r{"schedule"})
+    IF w$ = "" ORELSE LCASE$(w$) = "manual" THEN w$ = "by hand"
+    w$ = REPLACE$(REPLACE$(w$, "{day_start}", "start of day"), "{day_end}", "end of day")
+    IF MAP.EXISTS(r, "task") THEN
+        DIM tasks = r{"task"}
+        DIM k = 0
+        FOR k = 0 TO LEN(tasks) - 1
+            IF MAP.EXISTS(tasks[k], "schedule") THEN w$ = w$ + "; " + tasks[k]{"schedule"}
+        NEXT k
+    ENDIF
+    RETURN w$
+ENDFUNC
+
+' Appendix E as Markdown: one table of all recipes and the minutes per
+' level. headings maps a recipe id to the heading of its page.
+EXPORT FUNC RECIPES_MD$(recipes, headings)
+    DIM title$ = "# Appendix E: All " + STR$(LEN(recipes)) + " Recipes at a Glance"
+    DIM out = ["<!-- pagebreak -->", "", title$, ""]
+    PUSH(out, "The minutes (*Min.*) are the time each recipe gives back in a normal week, as its page explains in the box at its end. The schedule is the one the wizard suggests; *by hand* means you start the recipe yourself or let the job server of X01 start it. The libraries are the ones the recipe imports besides its own modules and WORKCONF, which every recipe uses to read its settings.")
+    PUSH(out, "")
+    PUSH(out, "| Recipe | Min. | Schedule | Libraries | Page |")
+    PUSH(out, "|---|---:|---|---|---:|")
+    DIM per_level AS MAP
+    DIM count_level AS MAP
+    DIM total = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        DIM r = recipes[k]
+        DIM mins = 0
+        IF MAP.EXISTS(r, "minutes_per_week") THEN mins = r{"minutes_per_week"}
+        DIM lv$ = r{"level"}
+        IF NOT MAP.EXISTS(per_level, lv$) THEN
+            per_level{lv$} = 0
+            count_level{lv$} = 0
+        ENDIF
+        per_level{lv$} = per_level{lv$} + mins
+        count_level{lv$} = count_level{lv$} + 1
+        total = total + mins
+        DIM page$ = ""
+        IF MAP.EXISTS(headings, r{"id"}) THEN page$ = "{{page:" + headings{r{"id"}} + "}}"
+        DIM libs$ = JOIN(LIBRARIES(r), ", ")
+        PUSH(out, "| " + r{"id"} + " " + r{"name"} + " | " + STR$(mins) + " | " + ScheduleCell$(r) + " | " + libs$ + " | " + page$ + " |")
+    NEXT k
+    PUSH(out, "")
+    PUSH(out, "| Level | Recipes | Minutes a week |")
+    PUSH(out, "|---|---:|---:|")
+    DIM levels = ["easy", "medium", "expert"]
+    FOR k = 0 TO LEN(levels) - 1
+        DIM lv2$ = levels[k]
+        IF MAP.EXISTS(per_level, lv2$) THEN
+            DIM lv_title$ = UCASE$(LEFT$(lv2$, 1)) + MID$(lv2$, 1, LEN(lv2$))
+            PUSH(out, "| " + lv_title$ + " | " + STR$(count_level{lv2$}) + " | " + STR$(per_level{lv2$}) + " |")
+        ENDIF
+    NEXT k
+    PUSH(out, "| **All** | **" + STR$(LEN(recipes)) + "** | **" + STR$(total) + "** |")
+    PUSH(out, "")
+    DIM hours = INT(total / 6) / 10
+    PUSH(out, "All recipes together come to " + STR$(total) + " minutes, about " + STR$(hours) + " hours a week. Nobody needs all of them; the ones you switch on are the number that counts, and Chapter 1 shows how to keep track of it.")
+    RETURN JOIN(out, gLF$) + gLF$
+ENDFUNC

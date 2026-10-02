@@ -41,8 +41,36 @@ TESTKIT.ISTRUE(INSTR(spdf$, "/Type /Outlines") >= 0, "bookmarks")
 TESTKIT.ISTRUE(Occurrences(spdf$, "/Subtype /Link") >= 4, "the URL and the three contents entries are links")
 TESTKIT.ISTRUE(INSTR(spdf$, "/URI (https://example.com)") >= 0, "the URL")
 
+TESTKIT.SUITE("index and page references")
+DIM terms$ = folder$ + "/terms.txt"
+TXTWRITER terms$, "# terms" + LF$ + "outbox" + LF$ + "WORKCONF.VALUE" + LF$ + "Task Scheduler" + LF$ + "never used" + LF$ + "=Word" + LF$
+DIM md2$ = "# Alpha" + LF$ + LF$ + "The outbox holds mail, every word of it. Read it with `WORKCONF.VALUE`." + LF$ + LF$
+md2$ = md2$ + "| What | Page |" + LF$ + "|---|---|" + LF$ + "| Beta | {{page:Beta}} |" + LF$ + LF$
+md2$ = md2$ + "# Beta" + LF$ + LF$ + "The Task Scheduler starts it; the Outbox again. Open it in Word." + LF$ + LF$
+md2$ = md2$ + "# Index" + LF$ + LF$ + "<!-- index -->" + LF$
+DIM chapters2 = [{"path": "ix.md", "dir": folder$, "text": md2$, "blocks": MDBOOK.BLOCKS(md2$)}]
+DIM cfg2 = CONF.TOML_TEXT("[book]" + LF$ + "title = " + CHR$(34) + "Index Book" + CHR$(34) + LF$ + "[index]" + LF$ + "terms = " + CHR$(34) + REPLACE$(terms$, "\", "/") + CHR$(34) + LF$)
+DIM ix_pdf$ = folder$ + "/index.pdf"
+DIM n_ix = LAYOUT.BOOK(cfg2, chapters2, ".", ix_pdf$, "print")
+DIM ix = LAYOUT.LAST_INDEX()
+TESTKIT.EQ(LEN(MAP.KEYS(ix)), 4, "four of the five terms are in the text")
+TESTKIT.ISFALSE(MAP.EXISTS(ix, "never used"), "a term the text lacks is left out")
+DIM outbox_pages = ix{"outbox"}
+TESTKIT.EQ(LEN(outbox_pages), 2, "a term on two pages has both, whatever its case")
+TESTKIT.ISTRUE(outbox_pages[1] > outbox_pages[0], "in order")
+DIM wc_pages = ix{"WORKCONF.VALUE"}
+TESTKIT.EQ(wc_pages[0], outbox_pages[0], "a term with a dot, read from inline code")
+DIM ts_pages = ix{"Task Scheduler"}
+TESTKIT.EQ(ts_pages[0], outbox_pages[1], "a term of two words")
+DIM word_pages = ix{"Word"}
+TESTKIT.EQ(LEN(word_pages), 1, "a term marked = matches only its own case")
+TESTKIT.EQ(word_pages[0], outbox_pages[1], "on the page that names Word")
+TESTKIT.ISTRUE(n_ix > outbox_pages[1], "the index has a page of its own")
+
 KILL print$
 KILL screen$
+KILL ix_pdf$
+KILL terms$
 RMDIR folder$
 TESTKIT.REPORT()
 

@@ -1,0 +1,23 @@
+# What the setup wizard knows about this recipe.
+
+id = "X16"
+name = "Desktop Robot"
+program = "desktop_robot.jdb"
+summary = "Works an old desktop program without an import, step by step and checked"
+minutes_per_week = 60
+schedule = "manual"
+section = "desktop_robot"
+modules = ["robot.jdb"]
+files = ["order_entry.toml", "new_button.png"]
+
+[[setting]]
+key = "job"
+label = "The job file of the robot"
+kind = "file"
+default = "~/Documents/AutomateWork/robot/order_entry.toml"
+
+[[setting]]
+key = "countdown"
+label = "Seconds to wait before the robot starts"
+kind = "number"
+default = 5

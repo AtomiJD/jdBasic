@@ -18,12 +18,16 @@
 '   image     path, alt          ![alt](path) on a line of its own
 '   pagebreak                    <!-- pagebreak -->
 '   toc                          <!-- toc -->
+'   index                        <!-- index -->, the index of the PDF
 '
 ' Inline marks (**bold**, *italic*, `code`, [text](target)) stay in the
 ' text for the writers.
 '
 ' Includes: a line <!-- include path [lines=a-b] --> becomes a fenced code
-' block holding that file, path relative to the base folder. The language
+' block holding that file, path relative to the base folder. With
+' from="text" to="text" instead of lines= it holds the lines from the
+' first that starts with the from text to the next that starts with the
+' to text. The language
 ' of the fence is the file's extension, "jdb" shown as "basic".
 
 EXPORT MODULE MDBOOK
@@ -58,6 +62,51 @@ FUNC FileLines$(path$, range$)
     RETURN JOIN(TAKE(last - first + 1, DROP(first - 1, all_lines)), gLF$)
 ENDFUNC
 
+' The value of name="..." or name='...' in an include line, "" when it
+' is not there.
+FUNC IncludeOpt$(t$, name$)
+    DIM quote$ = CHR$(34)
+    DIM at = INSTR(t$, name$ + "=" + quote$)
+    IF at < 0 THEN
+        quote$ = "'"
+        at = INSTR(t$, name$ + "=" + quote$)
+    ENDIF
+    IF at < 0 THEN RETURN ""
+    DIM start = at + LEN(name$) + 2
+    DIM close_at = INSTR(start, t$, quote$)
+    IF close_at < 0 THEN THROW "MDBOOK: " + name$ + "= has no closing quote in " + t$
+    RETURN MID$(t$, start, close_at - start)
+ENDFUNC
+
+' How many blanks a line starts with.
+FUNC Indent(t$)
+    RETURN LEN(t$) - LEN(LTRIM$(t$))
+ENDFUNC
+
+' The lines of a file from the first one that starts with from$ to the
+' next one at the same indent that starts with to$, both included;
+' leading blanks do not count. A section that is not there stops the
+' build.
+FUNC SectionLines$(path$, from$, to$)
+    IF to$ = "" THEN THROW "MDBOOK: from= needs a to= as well, in " + path$
+    DIM all_lines = SPLIT(FileLines$(path$, ""), gLF$)
+    DIM k = 0
+    DIM first = -1
+    DIM depth = 0
+    FOR k = 0 TO LEN(all_lines) - 1
+        DIM raw$ = all_lines[k]
+        DIM one$ = TRIM$(raw$)
+        IF first < 0 ANDALSO STARTSWITH(one$, from$) THEN
+            first = k
+            depth = Indent(raw$)
+        ELSEIF first >= 0 ANDALSO STARTSWITH(one$, to$) ANDALSO Indent(raw$) = depth THEN
+            RETURN JOIN(TAKE(k - first + 1, DROP(first, all_lines)), gLF$)
+        ENDIF
+    NEXT k
+    IF first < 0 THEN THROW "MDBOOK: from=" + CHR$(34) + from$ + CHR$(34) + " not found in " + path$
+    THROW "MDBOOK: to=" + CHR$(34) + to$ + CHR$(34) + " not found after from= in " + path$
+ENDFUNC
+
 ' The text with every include line replaced by a code fence holding the
 ' file it names.
 EXPORT FUNC RESOLVE$(text$, base$)
@@ -75,8 +124,13 @@ EXPORT FUNC RESOLVE$(text$, base$)
                 DIM opt$ = args[1]
                 IF STARTSWITH(opt$, "lines=") THEN range$ = MID$(opt$, 6, LEN(opt$))
             ENDIF
+            DIM from$ = IncludeOpt$(t$, "from")
             PUSH(out, gFence$ + FenceLang$(rel$))
-            PUSH(out, FileLines$(PATH.JOIN$(base$, rel$), range$))
+            IF from$ <> "" THEN
+                PUSH(out, SectionLines$(PATH.JOIN$(base$, rel$), from$, IncludeOpt$(t$, "to")))
+            ELSE
+                PUSH(out, FileLines$(PATH.JOIN$(base$, rel$), range$))
+            ENDIF
             PUSH(out, gFence$)
         ELSE
             PUSH(out, line_text$)
@@ -171,6 +225,9 @@ EXPORT FUNC BLOCKS(text$)
             k = k + 1
         ELSEIF t$ = "<!-- toc -->" THEN
             PUSH(out, {"kind": "toc"})
+            k = k + 1
+        ELSEIF t$ = "<!-- index -->" THEN
+            PUSH(out, {"kind": "index"})
             k = k + 1
         ELSEIF STARTSWITH(t$, "<!--") THEN
             DO WHILE k < n ANDALSO INSTR(src_lines[k], "-->") < 0

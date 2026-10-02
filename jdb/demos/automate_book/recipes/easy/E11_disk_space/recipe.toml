@@ -26,3 +26,9 @@ key = "top"
 label = "How many folders and files to list"
 kind = "number"
 default = 10
+
+[[setting]]
+key = "report"
+label = "File for the report"
+kind = "file"
+default = "~/Documents/AutomateWork/disk_space.txt"

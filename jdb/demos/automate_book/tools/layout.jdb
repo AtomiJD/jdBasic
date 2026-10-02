@@ -17,6 +17,10 @@ EXPORT MODULE LAYOUT
 IMPORT PDFGEN, TTF, IMG, CONF
 
 DIM gLF$ = CHR$(10)
+DIM gLastIndex = {}
+' A term on more pages than this lists only the pages that name it in a
+' heading, then "and throughout".
+CONST gIndexMaxPages = 12
 CONST PT_MM = 0.3527777777777778
 
 ' ── settings ──────────────────────────────────────────────────
@@ -267,6 +271,7 @@ ENDFUNC
 ' over the width wd.
 SUB SetLine(ctx, words, x, y, wd, pt, lead, justified, base_sty$, r, g, b)
     DIM doc = ctx{"doc"}
+    IF ctx{"block_page"} < 0 THEN ctx{"block_page"} = ctx{"page"}
     DIM s = ctx{"s"}
     DIM space = Measure(ctx, "book", "", pt, " ")
     DIM natural = 0
@@ -806,9 +811,273 @@ FUNC LineText$(words)
     RETURN JOIN(parts, " ")
 ENDFUNC
 
+' ── index and page references ─────────────────────────────────
+
+' The index terms of a file, one per line; "#" starts a comment line and
+' a term that starts with "=" matches only in exactly that case. Answers
+' a map: "names" (as printed), "words" (each term as words), "exact"
+' (TRUE for a term of the "=" kind) and "first" (the first word in
+' lowercase to the numbers of the terms starting with it).
+FUNC IndexTerms(path$)
+    DIM names = []
+    DIM words = []
+    DIM exact = []
+    DIM first AS MAP
+    DIM terms AS MAP
+    terms{"names"} = names
+    terms{"words"} = words
+    terms{"exact"} = exact
+    terms{"first"} = first
+    IF path$ = "" ORELSE NOT FILE.EXISTS(path$) THEN RETURN terms
+    DIM src = SPLIT(REPLACE$(TXTREADER$(path$), CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM t$ = TRIM$(src[k])
+        IF t$ <> "" ANDALSO NOT STARTSWITH(t$, "#") THEN
+            DIM is_exact = STARTSWITH(t$, "=")
+            IF is_exact THEN t$ = TRIM$(MID$(t$, 1))
+            DIM tw = Tokens(t$)
+            IF LEN(tw) > 0 THEN
+                DIM n = LEN(names)
+                PUSH(names, t$)
+                PUSH(words, tw)
+                PUSH(exact, is_exact)
+                DIM w0$ = LCASE$(tw[0])
+                IF NOT MAP.EXISTS(first, w0$) THEN first{w0$} = []
+                DIM list = first{w0$}
+                PUSH(list, n)
+                first{w0$} = list
+            ENDIF
+        ENDIF
+    NEXT k
+    terms{"names"} = names
+    terms{"words"} = words
+    terms{"exact"} = exact
+    terms{"first"} = first
+    RETURN terms
+ENDFUNC
+
+' The words of a text for the index: marks and punctuation removed, a
+' dot kept inside a word such as WORKCONF.VALUE, the case as written.
+FUNC Tokens(txt$)
+    DIM t$ = REGEX.REPLACE("[^A-Za-z0-9$_.]+", PlainText$(txt$), " ")
+    DIM parts = SPLIT(t$, " ")
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 1
+        DIM w$ = parts[k]
+        DO WHILE LEN(w$) > 0 ANDALSO RIGHT$(w$, 1) = "."
+            w$ = LEFT$(w$, LEN(w$) - 1)
+        LOOP
+        IF w$ <> "" THEN PUSH(out, w$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Notes the page for every index term the text holds.
+SUB IndexText(ctx, txt$, page, in_heading)
+    DIM terms = ctx{"ix_terms"}
+    DIM first = terms{"first"}
+    IF LEN(MAP.KEYS(first)) = 0 THEN RETURN
+    DIM tw = Tokens(txt$)
+    DIM tl = []
+    DIM i = 0
+    FOR i = 0 TO LEN(tw) - 1
+        DIM one$ = tw[i]
+        PUSH(tl, LCASE$(one$))
+    NEXT i
+    DIM names = terms{"names"}
+    DIM words = terms{"words"}
+    DIM exact = terms{"exact"}
+    DIM pages = ctx{"ix_pages"}
+    DIM c = 0
+    DIM j = 0
+    FOR i = 0 TO LEN(tl) - 1
+        DIM w$ = tl[i]
+        IF MAP.EXISTS(first, w$) THEN
+            DIM cands = first{w$}
+            FOR c = 0 TO LEN(cands) - 1
+                DIM term_no = cands[c]
+                DIM want = words[term_no]
+                DIM same_case = exact[term_no]
+                DIM hit = (i + LEN(want) <= LEN(tl))
+                j = 0
+                DO WHILE hit ANDALSO j < LEN(want)
+                    DIM wj$ = want[j]
+                    IF same_case THEN
+                        DIM oj$ = tw[i + j]
+                        IF oj$ <> wj$ THEN hit = FALSE
+                    ELSE
+                        DIM lj$ = tl[i + j]
+                        IF lj$ <> LCASE$(wj$) THEN hit = FALSE
+                    ENDIF
+                    j = j + 1
+                LOOP
+                IF hit THEN
+                    DIM name$ = names[term_no]
+                    IF NOT MAP.EXISTS(pages, name$) THEN pages{name$} = []
+                    DIM got = pages{name$}
+                    IF LEN(got) = 0 ORELSE got[LEN(got) - 1] <> page THEN PUSH(got, page)
+                    pages{name$} = got
+                    IF in_heading THEN
+                        DIM main = ctx{"ix_main"}
+                        IF NOT MAP.EXISTS(main, name$) THEN main{name$} = []
+                        DIM heads = main{name$}
+                        IF LEN(heads) = 0 ORELSE heads[LEN(heads) - 1] <> page THEN PUSH(heads, page)
+                        main{name$} = heads
+                        ctx{"ix_main"} = main
+                    ENDIF
+                ENDIF
+            NEXT c
+        ENDIF
+    NEXT i
+    ctx{"ix_pages"} = pages
+ENDSUB
+
+' The text with every {{page:Heading}} replaced by that heading's page,
+' from the contents of the pass before ("000" while unknown).
+FUNC PageRefs$(ctx, txt$)
+    IF INSTR(txt$, "{{page:") < 0 THEN RETURN txt$
+    DIM refs = ctx{"refs"}
+    DIM out$ = ""
+    DIM rest$ = txt$
+    DIM at = INSTR(rest$, "{{page:")
+    DO WHILE at >= 0
+        DIM close_at = INSTR(at, rest$, "}}")
+        IF close_at < 0 THEN EXITDO
+        DIM key$ = MID$(rest$, at + 7, close_at - at - 7)
+        DIM num$ = "000"
+        IF MAP.EXISTS(refs, key$) THEN
+            IF refs{key$} > 0 THEN num$ = STR$(refs{key$})
+        ENDIF
+        out$ = out$ + LEFT$(rest$, at) + num$
+        rest$ = MID$(rest$, close_at + 2)
+        at = INSTR(rest$, "{{page:")
+    LOOP
+    RETURN out$ + rest$
+ENDFUNC
+
+' A table block with its page references resolved.
+FUNC TableRefs(ctx, b)
+    DIM rows = b{"rows"}
+    DIM new_rows = []
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO LEN(rows) - 1
+        DIM row = rows[r]
+        DIM cells = []
+        FOR c = 0 TO LEN(row) - 1
+            DIM cell$ = row[c]
+            PUSH(cells, PageRefs$(ctx, cell$))
+        NEXT c
+        PUSH(new_rows, cells)
+    NEXT r
+    DIM nb AS MAP
+    nb{"kind"} = "table"
+    nb{"rows"} = new_rows
+    RETURN nb
+ENDFUNC
+
+' The plain text of a block, for the index.
+FUNC BlockText$(b)
+    DIM kind$ = b{"kind"}
+    IF kind$ = "heading" ORELSE kind$ = "para" THEN RETURN b{"text"}
+    IF kind$ = "bullets" ORELSE kind$ = "numbered" THEN RETURN JOIN(b{"items"}, " ")
+    IF kind$ = "note" THEN RETURN b{"title"} + " " + b{"text"}
+    IF kind$ = "table" THEN
+        DIM parts = []
+        DIM rows = b{"rows"}
+        DIM r = 0
+        FOR r = 0 TO LEN(rows) - 1
+            PUSH(parts, JOIN(rows[r], " "))
+        NEXT r
+        RETURN JOIN(parts, " ")
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' A term as the index sorts it: lowercase, a leading dot left out, so
+' .eml stands under E.
+FUNC SortKey$(name$)
+    DIM k$ = LCASE$(name$)
+    DO WHILE LEFT$(k$, 1) = "."
+        k$ = MID$(k$, 1)
+    LOOP
+    RETURN k$
+ENDFUNC
+
+' The index: every term with its pages, in two columns, under a letter
+' for each new initial, below the heading that comes before it.
+SUB IndexPages(ctx)
+    DIM s = ctx{"s"}
+    DIM pages = ctx{"ix_in"}
+    ctx{"y"} = ctx{"y"} + 3
+    DIM names = MAP.KEYS(pages)
+    DIM order = []
+    DIM k = 0
+    FOR k = 0 TO LEN(names) - 1
+        DIM nm$ = names[k]
+        PUSH(order, SortKey$(nm$) + CHR$(1) + nm$)
+    NEXT k
+    order = SORT(order)
+    DIM gap = 6
+    DIM col_w = (TextWidth(ctx) - gap) / 2
+    DIM pt = 8.8
+    DIM lead = 4.1
+    DIM col = 0
+    DIM top_y = ctx{"y"}
+    DIM letter$ = ""
+    FOR k = 0 TO LEN(order) - 1
+        DIM entry$ = order[k]
+        DIM name$ = MID$(entry$, INSTR(entry$, CHR$(1)) + 1)
+        DIM got = pages{name$}
+        DIM nums = []
+        DIM p = 0
+        DIM throughout = LEN(got) > gIndexMaxPages
+        IF throughout THEN
+            DIM main_in = ctx{"ix_main_in"}
+            got = [got[0]]
+            IF MAP.EXISTS(main_in, name$) THEN got = main_in{name$}
+        ENDIF
+        FOR p = 0 TO LEN(got) - 1
+            PUSH(nums, STR$(got[p]))
+        NEXT p
+        IF throughout THEN PUSH(nums, "and throughout")
+        DIM initial$ = UCASE$(LEFT$(SortKey$(name$), 1))
+        DIM head_h = 0
+        IF initial$ <> letter$ THEN head_h = lead * 2
+        DIM lines_e = BreakLines(ctx, Words(name$ + ", " + JOIN(nums, ", ")), col_w - 3, pt, "")
+        IF ctx{"y"} + head_h + LEN(lines_e) * lead > Bottom(ctx) THEN
+            IF col = 0 THEN
+                col = 1
+            ELSE
+                col = 0
+                NewPage(ctx, TRUE)
+                top_y = ctx{"y"}
+            ENDIF
+            ctx{"y"} = top_y
+        ENDIF
+        DIM x = XLeft(ctx) + col * (col_w + gap)
+        IF initial$ <> letter$ THEN
+            letter$ = initial$
+            ctx{"y"} = ctx{"y"} + lead * 0.6
+            DIM letter_lines = BreakLines(ctx, Words(letter$), col_w, 10, "B")
+            SetLine(ctx, letter_lines[0], x, ctx{"y"}, col_w, 10, lead, FALSE, "B", 31, 56, 100)
+            ctx{"y"} = ctx{"y"} + lead * 1.4
+        ENDIF
+        DIM li = 0
+        FOR li = 0 TO LEN(lines_e) - 1
+            DIM ind = 0
+            IF li > 0 THEN ind = 3
+            SetLine(ctx, lines_e[li], x + ind, ctx{"y"}, col_w - ind, pt, lead, FALSE, "", 30, 30, 30)
+            ctx{"y"} = ctx{"y"} + lead
+        NEXT li
+    NEXT k
+ENDSUB
+
 ' ── the book ──────────────────────────────────────────────────
 
-FUNC Typeset(cfg, chapters, base$, out_mode$, toc)
+FUNC Typeset(cfg, chapters, base$, out_mode$, toc, terms, ix_in, ix_main_in)
     DIM s = Settings(cfg, out_mode$)
     DIM doc = PDFGEN.DOC({"width": s{"w"}, "height": s{"h"}, "margin": s{"inner"}, "compress": TRUE})
     PDFGEN.SETINFO(doc, s{"title"}, s{"authors"}, s{"subtitle"})
@@ -823,6 +1092,21 @@ FUNC Typeset(cfg, chapters, base$, out_mode$, toc)
     ctx{"heading_no"} = 0
     ctx{"found"} = []
     ctx{"toc"} = toc
+    DIM refs AS MAP
+    DIM t = 0
+    FOR t = 0 TO LEN(toc) - 1
+        DIM tk$ = toc[t]{"text"}
+        IF NOT MAP.EXISTS(refs, tk$) THEN refs{tk$} = toc[t]{"page"}
+    NEXT t
+    ctx{"refs"} = refs
+    ctx{"ix_terms"} = terms
+    DIM ix_pages AS MAP
+    ctx{"ix_pages"} = ix_pages
+    ctx{"ix_in"} = ix_in
+    ctx{"ix_main_in"} = ix_main_in
+    DIM ix_main AS MAP
+    ctx{"ix_main"} = ix_main
+    ctx{"block_page"} = 0
     DIM cache AS MAP
     ctx{"wcache"} = cache
     TitlePages(ctx)
@@ -837,10 +1121,11 @@ FUNC Typeset(cfg, chapters, base$, out_mode$, toc)
             DIM kind$ = b{"kind"}
             ctx{"page_empty"} = (ctx{"y"} <= s{"top"} + 0.01)
             ctx{"page_top"} = ctx{"page_empty"}
+            ctx{"block_page"} = -1
             IF kind$ = "heading" THEN
                 Heading(ctx, b)
             ELSEIF kind$ = "para" THEN
-                Paragraph(ctx, b{"text"}, 0, s{"body_pt"}, s{"lead"}, TRUE, "")
+                Paragraph(ctx, PageRefs$(ctx, b{"text"}), 0, s{"body_pt"}, s{"lead"}, TRUE, "")
                 ctx{"y"} = ctx{"y"} + 2.2
             ELSEIF kind$ = "bullets" THEN
                 ListBlock(ctx, b, FALSE)
@@ -853,26 +1138,47 @@ FUNC Typeset(cfg, chapters, base$, out_mode$, toc)
             ELSEIF kind$ = "image" THEN
                 ImageBlock(ctx, b, ch{"dir"})
             ELSEIF kind$ = "table" THEN
-                TableBlock(ctx, b)
+                TableBlock(ctx, TableRefs(ctx, b))
             ELSEIF kind$ = "pagebreak" THEN
                 NewPage(ctx, TRUE)
             ELSEIF kind$ = "toc" THEN
                 IF ctx{"page"} > 0 ANDALSO NOT ctx{"page_empty"} THEN NewPage(ctx, FALSE)
                 IF ctx{"page"} = 0 THEN NewPage(ctx, FALSE)
                 Contents(ctx)
+            ELSEIF kind$ = "index" THEN
+                IndexPages(ctx)
+            ENDIF
+            DIM ix_text$ = BlockText$(b)
+            IF ix_text$ <> "" ANDALSO ctx{"chapter"} <> "Index" THEN
+                DIM bp = ctx{"block_page"}
+                IF bp < 0 THEN bp = ctx{"page"}
+                IndexText(ctx, ix_text$, bp, kind$ = "heading")
             ENDIF
         NEXT j
     NEXT k
-    RETURN {"doc": doc, "found": ctx{"found"}, "pages": ctx{"page"}}
+    RETURN {"doc": doc, "found": ctx{"found"}, "pages": ctx{"page"}, "index": ctx{"ix_pages"}, "main": ctx{"ix_main"}}
 ENDFUNC
 
 ' Sets the book twice, the second time with the page numbers the first one
-' found for the contents, and writes the PDF. Answers the page count.
+' found for the contents, the page references and the index, and writes
+' the PDF. Answers the page count.
 EXPORT FUNC BOOK(cfg, chapters, base$, out_path$, out_mode$)
-    DIM first = Typeset(cfg, chapters, base$, out_mode$, ScanHeadings(chapters))
-    DIM second = Typeset(cfg, chapters, base$, out_mode$, first{"found"})
+    DIM terms_rel$ = CONF.GET(cfg, "index.terms", "")
+    DIM terms_path$ = ""
+    IF terms_rel$ <> "" THEN terms_path$ = PATH.JOIN$(base$, terms_rel$)
+    IF INSTR(terms_rel$, ":") = 1 ORELSE STARTSWITH(terms_rel$, "/") THEN terms_path$ = terms_rel$
+    DIM terms = IndexTerms(terms_path$)
+    DIM none AS MAP
+    DIM first = Typeset(cfg, chapters, base$, out_mode$, ScanHeadings(chapters), terms, none, none)
+    DIM second = Typeset(cfg, chapters, base$, out_mode$, first{"found"}, terms, first{"index"}, first{"main"})
+    gLastIndex = second{"index"}
     PDFGEN.WRITEFILE(second{"doc"}, out_path$)
     RETURN second{"pages"}
+ENDFUNC
+
+' The index of the last book set: each term with its pages.
+EXPORT FUNC LAST_INDEX()
+    RETURN gLastIndex
 ENDFUNC
 
 ' The headings of all chapters without page numbers, for the first pass.

@@ -18,6 +18,15 @@ FUNC BadSchedule(r)
     RETURN WIZARD.SCHEDULE_ARGS(r, "sometimes", "j", "p", "c")
 ENDFUNC
 
+FUNC Monthly$(r, when$)
+    DIM args = WIZARD.SCHEDULE_ARGS(r, when$, "j", "p", "c")
+    RETURN JOIN(TAKE(-6, args), " ")
+ENDFUNC
+
+FUNC LateInMonth(r)
+    RETURN Monthly$(r, "monthly 30 08:00")
+ENDFUNC
+
 FUNC FirstWith(recipes, id$)
     DIM k = 0
     FOR k = 0 TO LEN(recipes) - 1
@@ -32,6 +41,12 @@ DIM e01 = FirstWith(recipes, "E01")
 TESTKIT.EQ(e01{"name"}, "Downloads Butler", "with their names")
 TESTKIT.EQ(e01{"level"}, "easy", "and levels")
 TESTKIT.ISTRUE("E01" IN a{"picked"}, "every easy recipe is picked at first")
+DIM quiet = CONF.TOML_TEXT("id = " + CHR$(34) + "E99" + CHR$(34) + CHR$(10) + "off_by_default = true" + CHR$(10))
+quiet{"level"} = "easy"
+quiet{"schedule"} = ""
+quiet{"section"} = "quiet"
+DIM qa = WIZARD.DEFAULTS([quiet], tmp$)
+TESTKIT.ISFALSE("E99" IN qa{"picked"}, "a recipe that is off by default is not picked")
 TESTKIT.EQ(a{"values"}{"downloads_butler"}{"min_age_hours"}, 24, "settings start at their defaults")
 TESTKIT.EQ(a{"work"}, PATH.JOIN$(tmp$, "Documents", "AutomateWork"), "the work folder is in Documents")
 
@@ -66,6 +81,13 @@ TESTKIT.EQ(LEN(WIZARD.SCHEDULE_ARGS(e01, "manual", "j", "p", "c")), 0, "manual m
 TESTKIT.THROWS(BadSchedule@, e01, "a schedule it cannot read is refused")
 TESTKIT.EQARRAY(WIZARD.UNSCHEDULE_ARGS(e01), ["/Delete", "/F", "/TN", "AutomateWork\E01 Downloads Butler"], "and removed")
 TESTKIT.EQ(JOIN(TAKE(-4, WIZARD.SCHEDULE_ARGS(e01, "every 2 hours", "j", "p", "c")), " "), "/SC HOURLY /MO 2", "every few hours")
+DIM once$ = Monthly$(e01, "monthly 1 08:00")
+TESTKIT.EQ(once$, "/SC MONTHLY /D 1 /ST 08:00", "once a month")
+DIM mid$ = Monthly$(e01, "Monthly 15 17:30")
+TESTKIT.EQ(mid$, "/SC MONTHLY /D 15 /ST 17:30", "up to the 28th")
+TESTKIT.THROWS(LateInMonth@, e01, "a day not in every month")
+DIM plan$ = WIZARD.PLAN_LINE$("Sheet", "monthly 1 08:00")
+TESTKIT.EQ(plan$, "schedule Sheet: monthly 1 08:00", "in the plan")
 TESTKIT.EQ(LEN(WIZARD.SCHEDULE_ARGS(e01, "", "j", "p", "c")), 0, "an empty schedule means no task")
 TESTKIT.EQ(WIZARD.RESOLVE_WHEN$(a, "weekdays {day_end}"), "weekdays 17:30", "the end of the working day fills in")
 DIM e07 = FirstWith(recipes, "E07")
@@ -73,6 +95,9 @@ IF MAP.EXISTS(e07, "id") THEN
     DIM s7 = WIZARD.SCHEDULE_ARGS(e07, "weekly fri 16:00", "j", "p", "c")
     TESTKIT.EQ(s7[5], CHR$(34) + "j" + CHR$(34) + " " + CHR$(34) + "p" + CHR$(34) + " " + CHR$(34) + "week" + CHR$(34) + " --config " + CHR$(34) + "c" + CHR$(34), "a recipe's schedule_args follow the program")
 ENDIF
+DIM off = WIZARD.SWITCHED_OFF(a, recipes)
+TESTKIT.EQ(LEN(off) + LEN(a{"picked"}), LEN(recipes), "every recipe is picked or switched off")
+TESTKIT.ISFALSE(off[0]{"id"} IN a{"picked"}, "and a switched off one is not picked")
 TESTKIT.EQ(LEN(WIZARD.TASKS(e01, "daily 18:30")), 1, "a recipe has one task")
 DIM two = CONF.TOML_TEXT("id = " + CHR$(34) + "X99" + CHR$(34) + CHR$(10) + "name = " + CHR$(34) + "Two" + CHR$(34) + CHR$(10) + "[[task]]" + CHR$(10) + "name = " + CHR$(34) + "page" + CHR$(34) + CHR$(10) + "schedule = " + CHR$(34) + "at logon" + CHR$(34) + CHR$(10) + "args = [" + CHR$(34) + "--serve" + CHR$(34) + "]" + CHR$(10))
 DIM tasks = WIZARD.TASKS(two, "daily 12:30")

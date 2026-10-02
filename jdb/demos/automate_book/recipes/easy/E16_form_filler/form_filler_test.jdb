@@ -1,0 +1,36 @@
+' Form Filler: the macro for a list of values, Tab between the fields,
+' Enter only when asked, a window first when one is named, and the dry
+' run. Nothing is typed.
+
+IMPORT TESTKIT, FORMFILL, INPUTKIT
+
+DIM LF$ = CHR$(10)
+DIM values = ["Mia Example", "", "Sales", "0711 123456"]
+
+TESTKIT.SUITE("the macro")
+DIM m$ = FORMFILL.MACRO$("", values, FALSE)
+DIM want$ = "type Mia Example" + LF$ + "key tab" + LF$ + "key tab" + LF$
+want$ = want$ + "type Sales" + LF$ + "key tab" + LF$ + "type 0711 123456"
+TESTKIT.EQ(m$, want$, "Tab between the fields, an empty value skipped")
+DIM sent$ = FORMFILL.MACRO$("Travel Request", ["x"], TRUE)
+TESTKIT.EQ(sent$, "window Travel Request" + LF$ + "type x" + LF$ + "key enter", "a window first, Enter last")
+TESTKIT.EQ(FORMFILL.MACRO$("", [], TRUE), "", "no values, no key strokes")
+
+TESTKIT.SUITE("the job")
+DIM job = FORMFILL.JOB("", values, FALSE)
+TESTKIT.EQ(LEN(job{"errors"}), 0, "the values make a good macro")
+TESTKIT.EQ(LEN(job{"steps"}), 6, "three texts and three Tabs")
+DIM umlaut$ = "M" + CHR$(195) + CHR$(188) + "ller"
+DIM j2 = FORMFILL.JOB("", [umlaut$], FALSE)
+DIM first = j2{"steps"}[0]
+TESTKIT.EQ(first{"arg"}, umlaut$, "an umlaut stays what it is")
+
+TESTKIT.SUITE("the dry run")
+OUTPUT.CAPTURE_BEGIN
+DIM n = INPUTKIT.RUN_STEPS(job{"steps"}, TRUE)
+DIM said$ = OUTPUT.CAPTURE_END$()
+TESTKIT.EQ(n, 6, "every step is counted")
+TESTKIT.ISTRUE(INSTR(said$, "would line 1: type 'Mia Example'") >= 0, "and printed")
+TESTKIT.ISTRUE(INSTR(said$, "would line 2: press tab") >= 0, "with the Tabs")
+
+TESTKIT.REPORT()

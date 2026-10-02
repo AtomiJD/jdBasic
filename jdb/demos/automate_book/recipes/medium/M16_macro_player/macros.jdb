@@ -1,0 +1,109 @@
+' macros.jdb: a folder of macro files and how to play one. A macro is
+' a text file of INPUTKIT commands; playing it writes one log line per
+' step and stops at the first step that fails.
+'
+'   IMPORT MACROS
+'   DIM path$ = MACROS.PATH$("C:/Users/jonas/macros", "invoice")
+'   DIM job = MACROS.LOAD(path$)
+'   DIM r = MACROS.PLAY(job{"steps"}, "invoice", "player.log", TRUE)
+
+EXPORT MODULE MACROS
+
+IMPORT INPUTKIT
+
+' The file of a macro by its name, with or without ".txt". A name with
+' a folder in it is refused, so a macro always comes from the folder.
+EXPORT FUNC PATH$(folder$, name$)
+    DIM n$ = TRIM$(name$)
+    IF n$ = "" THEN THROW "MACROS: name a macro"
+    DIM sep = INSTR(n$, "/") >= 0 ORELSE INSTR(n$, "\") >= 0
+    IF sep ORELSE INSTR(n$, "..") >= 0 THEN
+        THROW "MACROS: a macro name has no folder in it: " + n$
+    ENDIF
+    IF NOT ENDSWITH(LCASE$(n$), ".txt") THEN n$ = n$ + ".txt"
+    RETURN PATH.JOIN$(folder$, n$)
+ENDFUNC
+
+' The names of the macros in a folder, sorted, without ".txt".
+EXPORT FUNC LIST(folder$)
+    IF NOT FILE.ISDIR(folder$) THEN RETURN []
+    DIM files = SORT(DIR$(PATH.JOIN$(folder$, "*.txt")))
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM f$ = files[k]
+        PUSH(out, LEFT$(f$, LEN(f$) - 4))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A macro file read and checked: {"steps": [...], "errors": [...]}.
+EXPORT FUNC LOAD(path$)
+    IF NOT FILE.EXISTS(path$) THEN THROW "MACROS: no file " + path$
+    RETURN INPUTKIT.PARSE(TXTREADER$(path$))
+ENDFUNC
+
+' The macro named first on the command line: the first argument after
+' the program that is no option and no option's value.
+EXPORT FUNC NAME_ARG$(argv)
+    DIM k = 1
+    DO WHILE k < LEN(argv)
+        DIM a$ = argv[k]
+        IF a$ = "--config" THEN
+            k = k + 2
+        ELSEIF STARTSWITH(a$, "--") THEN
+            k = k + 1
+        ELSE
+            RETURN a$
+        ENDIF
+    LOOP
+    RETURN ""
+ENDFUNC
+
+' One line of the log.
+EXPORT FUNC LOG_LINE$(when$, name$, s, result$)
+    DIM what$ = INPUTKIT.PLAN_LINE$(s)
+    RETURN when$ + "  " + name$ + "  " + what$ + "  " + result$
+ENDFUNC
+
+' The mouse position as a line for --where.
+EXPORT FUNC WHERE_LINE$(x, y)
+    RETURN "mouse at " + STR$(x) + " " + STR$(y)
+ENDFUNC
+
+' Plays the steps, or with dry_run only prints them, and appends a log
+' line per step to log_path$. Stops at the first step that fails.
+' Answers {"done": steps carried out, "failed": "" or why}.
+EXPORT FUNC PLAY(steps, name$, log_path$, dry_run)
+    DIM lines = []
+    DIM failed$ = ""
+    DIM done = 0
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        DIM s = steps[k]
+        DIM now$ = FORMAT_DATE(NOW(), "%Y-%m-%d %H:%M:%S")
+        IF dry_run THEN
+            PRINT "would "; INPUTKIT.PLAN_LINE$(s)
+            PUSH(lines, LOG_LINE$(now$, name$, s, "dry run"))
+        ELSE
+            TRY
+                INPUTKIT.RUN_STEP(s)
+                PUSH(lines, LOG_LINE$(now$, name$, s, "ok"))
+                done = done + 1
+                SLEEP 60
+            CATCH
+                failed$ = ERRMSG$
+                DIM why$ = "failed: " + failed$
+                PUSH(lines, LOG_LINE$(now$, name$, s, why$))
+            ENDTRY
+            IF failed$ <> "" THEN EXITFOR
+        ENDIF
+    NEXT k
+    IF log_path$ <> "" ANDALSO LEN(lines) > 0 THEN
+        DIM before$ = ""
+        IF FILE.EXISTS(log_path$) THEN before$ = TXTREADER$(log_path$)
+        DIM added$ = JOIN(lines, CHR$(10)) + CHR$(10)
+        TXTWRITER log_path$, before$ + added$
+    ENDIF
+    RETURN {"done": done, "failed": failed$}
+ENDFUNC

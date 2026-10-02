@@ -1,0 +1,98 @@
+' INPUTKIT: key names, combinations, the emergency stop decision, text
+' as key strokes, the macro language and the dry run. Nothing here
+' touches the real keyboard, the mouse or a window.
+
+IMPORT TESTKIT, INPUTKIT
+
+DIM LF$ = CHR$(10)
+
+TESTKIT.SUITE("keys")
+TESTKIT.EQ(INPUTKIT.KEYCODE("tab"), 9, "tab")
+TESTKIT.EQ(INPUTKIT.KEYCODE("F5"), 116, "a function key in any case")
+TESTKIT.EQ(INPUTKIT.KEYCODE("a"), 65, "a letter")
+TESTKIT.EQ(INPUTKIT.KEYCODE("7"), 55, "a digit")
+TESTKIT.EQ(INPUTKIT.KEYCODE("nope"), -1, "an unknown name")
+DIM c = INPUTKIT.COMBO("ctrl+s", FALSE)
+TESTKIT.EQ(c{"error"}, "", "ctrl+s is fine")
+TESTKIT.EQARRAY(c{"mods"}, [17], "with ctrl held")
+TESTKIT.EQ(c{"key"}, 83, "and s pressed")
+DIM c2 = INPUTKIT.COMBO("Ctrl + Shift + S", FALSE)
+TESTKIT.EQARRAY(c2{"mods"}, [17, 16], "spaces and case do not matter")
+DIM c3 = INPUTKIT.COMBO("alt+f4", FALSE)
+TESTKIT.ISTRUE(INSTR(c3{"error"}, "not allowed") >= 0, "alt+f4 is refused")
+DIM c4 = INPUTKIT.COMBO("alt+f4", TRUE)
+TESTKIT.EQ(c4{"key"}, 115, "unless closing is allowed")
+DIM c5 = INPUTKIT.COMBO("hyper+s", FALSE)
+TESTKIT.ISTRUE(INSTR(c5{"error"}, "'hyper'") >= 0, "an unknown modifier")
+DIM c6 = INPUTKIT.COMBO("ctrl+", FALSE)
+TESTKIT.ISTRUE(INSTR(c6{"error"}, "unknown key") >= 0, "a missing key")
+
+TESTKIT.SUITE("the emergency stop")
+TESTKIT.ISTRUE(INPUTKIT.KEYDOWN(-32767), "a key down, as a negative short")
+TESTKIT.ISTRUE(INPUTKIT.KEYDOWN(32769), "as an unsigned short")
+TESTKIT.ISTRUE(INPUTKIT.KEYDOWN(4294934529), "with high bits set")
+TESTKIT.ISFALSE(INPUTKIT.KEYDOWN(1), "pressed since the last call, not now")
+TESTKIT.ISFALSE(INPUTKIT.KEYDOWN(0), "a key up")
+TESTKIT.ISTRUE(INSTR(INPUTKIT.SAFE$(TRUE, 500, 500), "Esc") >= 0, "Esc held stops")
+DIM corner$ = INPUTKIT.SAFE$(FALSE, 0, 3)
+TESTKIT.ISTRUE(INSTR(corner$, "corner") >= 0, "the top-left corner stops")
+TESTKIT.EQ(INPUTKIT.SAFE$(FALSE, 6, 0), "", "next to the corner goes on")
+TESTKIT.EQ(INPUTKIT.SAFE$(FALSE, 800, 400), "", "anywhere else goes on")
+
+TESTKIT.SUITE("text as key strokes")
+DIM smile$ = CHR$(240) + CHR$(159) + CHR$(152) + CHR$(128)
+DIM euro$ = CHR$(226) + CHR$(130) + CHR$(172)
+DIM units = INPUTKIT.UNITS("A" + CHR$(195) + CHR$(164) + euro$ + smile$)
+TESTKIT.EQARRAY(units, [65, 228, 8364, 55357, 56832], "UTF-16 code units")
+DIM rec$ = INPUTKIT.KEY_INPUTS$(CHR$(195) + CHR$(164))
+TESTKIT.EQ(LEN(rec$), 80, "a key down and a key up of 40 bytes")
+TESTKIT.EQ(ASC(MID$(rec$, 0, 1)), 1, "keyboard input")
+TESTKIT.EQ(ASC(MID$(rec$, 10, 1)), 228, "the letter as its code")
+TESTKIT.EQ(ASC(MID$(rec$, 12, 1)), 4, "sent as Unicode")
+TESTKIT.EQ(ASC(MID$(rec$, 52, 1)), 6, "then released")
+TESTKIT.EQ(INPUTKIT.SIGNED32(4294967295), -1, "a negative screen position")
+TESTKIT.EQ(INPUTKIT.SIGNED32(1280), 1280, "a positive one")
+
+TESTKIT.SUITE("macros")
+DIM macro$ = "# fill the order form" + LF$ + LF$
+macro$ = macro$ + "window Order Entry - Version 4" + LF$
+macro$ = macro$ + "type Hello, W" + CHR$(195) + CHR$(182) + "rld" + LF$
+macro$ = macro$ + "key ctrl+s" + LF$ + "click 120 340" + LF$
+macro$ = macro$ + "doubleclick 5   9" + LF$ + "wait 500" + LF$
+DIM job = INPUTKIT.PARSE(macro$)
+TESTKIT.EQ(LEN(job{"errors"}), 0, "a good macro has no errors")
+DIM steps = job{"steps"}
+TESTKIT.EQ(LEN(steps), 6, "one step per command")
+DIM s0 = steps[0]
+TESTKIT.EQ(s0{"arg"}, "Order Entry - Version 4", "the window title")
+TESTKIT.EQ(s0{"line"}, 3, "with its line")
+DIM s1 = steps[1]
+TESTKIT.EQ(s1{"arg"}, "Hello, W" + CHR$(195) + CHR$(182) + "rld", "the text")
+DIM s3 = steps[3]
+TESTKIT.EQ(s3{"x"} + s3{"y"}, 460, "a click point")
+DIM s4 = steps[4]
+TESTKIT.EQ(s4{"y"}, 9, "spaces between the numbers do not matter")
+DIM bad$ = "clik 1 2" + LF$ + "click 10" + LF$ + "wait 99999" + LF$
+bad$ = bad$ + "key alt+f4" + LF$ + "type" + LF$ + "window" + LF$
+DIM wrong = INPUTKIT.PARSE(bad$)
+DIM errors = wrong{"errors"}
+TESTKIT.EQ(LEN(errors), 6, "every bad line is named")
+TESTKIT.ISTRUE(STARTSWITH(errors[0], "line 1: unknown command"), "a typo")
+TESTKIT.ISTRUE(INSTR(errors[1], "two numbers") >= 0, "a click without y")
+TESTKIT.ISTRUE(STARTSWITH(errors[3], "line 4:"), "a refused key")
+TESTKIT.EQ(LEN(wrong{"steps"}), 0, "and nothing is left to run")
+
+TESTKIT.SUITE("the dry run")
+DIM lines = INPUTKIT.PLAN_LINES(steps)
+TESTKIT.EQ(lines[0], "line 3: bring 'Order Entry - Version 4' to the front", "a window")
+TESTKIT.EQ(lines[1], "line 4: type 'Hello, W" + CHR$(195) + CHR$(182) + "rld' (12 characters)", "a text")
+TESTKIT.EQ(lines[2], "line 5: press ctrl+s", "a key")
+TESTKIT.EQ(lines[3], "line 6: click at 120, 340", "a click")
+TESTKIT.EQ(lines[5], "line 8: wait 500 ms", "a pause")
+OUTPUT.CAPTURE_BEGIN
+DIM n = INPUTKIT.RUN_STEPS(steps, TRUE)
+DIM said$ = OUTPUT.CAPTURE_END$()
+TESTKIT.EQ(n, 6, "a dry run counts every step")
+TESTKIT.ISTRUE(STARTSWITH(said$, "would line 3: bring"), "and only prints them")
+
+TESTKIT.REPORT()

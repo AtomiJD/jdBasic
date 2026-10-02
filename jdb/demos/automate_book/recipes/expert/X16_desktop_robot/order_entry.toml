@@ -1,0 +1,52 @@
+# A job of the Desktop Robot (X16): enters one order into the old
+# order program. Points and regions count from the top-left corner of
+# the window's inside; find them: jdbasic macro_player.jdb --where
+#
+#   do = "wait_window"   wait for the window, timeout_s (30)
+#   do = "check"         region [x, y, width, height] must look like
+#                        image (a PNG next to this file),
+#                        tolerance (10)
+#   do = "click"         at [x, y]; also "doubleclick"
+#   do = "type"          text
+#   do = "key"           keys, such as "tab" or "ctrl+s"
+#   do = "pause"         ms
+#   tries                how often to try a step before the job
+#                        stops (1)
+
+window = "Order Entry - Version 4"
+
+[[step]]
+do = "wait_window"
+timeout_s = 60
+
+[[step]]
+do = "check"
+region = [12, 44, 96, 24]
+image = "new_button.png"
+tolerance = 12
+tries = 5
+
+[[step]]
+do = "click"
+at = [60, 56]
+
+[[step]]
+do = "pause"
+ms = 800
+
+[[step]]
+do = "type"
+text = "Müller GmbH"
+
+[[step]]
+do = "key"
+keys = "tab"
+
+[[step]]
+do = "type"
+text = "Copy paper, 10 packs"
+
+[[step]]
+do = "key"
+keys = "ctrl+s"
+tries = 2

@@ -32,3 +32,27 @@ key = "address"
 label = "Your company's address (one line)"
 kind = "text"
 default = ""
+
+[[setting]]
+key = "tab"
+label = "Sheet tab with the orders (empty: the first)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "prefix"
+label = "Start of every invoice number"
+kind = "text"
+default = "RE-"
+
+[[setting]]
+key = "format"
+label = "Invoice file: pdf or docx"
+kind = "text"
+default = "pdf"
+
+[[setting]]
+key = "vat_percent"
+label = "VAT in percent"
+kind = "number"
+default = 19

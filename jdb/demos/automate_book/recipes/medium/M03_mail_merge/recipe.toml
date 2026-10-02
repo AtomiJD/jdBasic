@@ -38,3 +38,15 @@ key = "mail"
 label = "Put a mail into the outbox for each letter"
 kind = "bool"
 default = true
+
+[[setting]]
+key = "tab"
+label = "Sheet tab with the contacts (empty: the first)"
+kind = "text"
+default = ""
+
+[[setting]]
+key = "file_name"
+label = "Name of each letter's file"
+kind = "text"
+default = "{{name}}"

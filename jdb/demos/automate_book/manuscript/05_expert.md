@@ -77,6 +77,7 @@ department before you use it at work.
 | X13 Health Checks and Alerts | A mail when a job fails, and numbers for every job |
 | X14 Secrets and Audit Trail | Passwords out of scripts, and a signed record of each run |
 | X15 Balance Score | Your week in one number, and the trend |
+| X16 Desktop Robot (bonus) | An old program driven by keyboard and mouse, checked by screenshots |
 
 X01 is the backbone: the other recipes can run under it instead of the
 Windows Task Scheduler. X13 and X14 make that backbone safe to rely on.

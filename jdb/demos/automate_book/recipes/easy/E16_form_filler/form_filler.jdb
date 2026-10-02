@@ -1,0 +1,44 @@
+' Form Filler: types the values you enter again and again into a form,
+' with Tab between the fields. The values are the [form_filler] part
+' of work.conf.
+'
+'   jdbasic form_filler.jdb            fill the form after a countdown
+'   jdbasic form_filler.jdb --dry-run  show what it would type
+
+IMPORT WORKCONF, INPUTKIT, FORMFILL
+
+DIM cfg = WORKCONF.SETTINGS(WORKCONF.CONFIG_PATH$())
+DIM key$ = "form_filler."
+DIM window$ = WORKCONF.VALUE(cfg, key$ + "window", "")
+DIM values = WORKCONF.VALUE(cfg, key$ + "values", [])
+DIM wait_s = WORKCONF.VALUE(cfg, key$ + "countdown", 5)
+DIM submit = WORKCONF.VALUE(cfg, key$ + "submit", FALSE)
+DIM dry_run = WORKCONF.FLAG("dry-run")
+
+DIM job = FORMFILL.JOB(window$, values, submit)
+DIM errors = job{"errors"}
+IF LEN(errors) > 0 THEN
+    PRINT "The settings do not make a form fill:"
+    PRINT "  "; JOIN(errors, CHR$(10) + "  ")
+    END 1
+ENDIF
+DIM steps = job{"steps"}
+IF LEN(steps) = 0 THEN
+    PRINT "Nothing to type. Add values to [form_filler] in work.conf."
+    END
+ENDIF
+IF dry_run THEN
+    DIM n = INPUTKIT.RUN_STEPS(steps, TRUE)
+    PRINT n; " steps. Run without --dry-run to type them."
+    END
+ENDIF
+
+IF window$ = "" THEN PRINT "Click into the first field of the form."
+INPUTKIT.COUNTDOWN(wait_s)
+TRY
+    DIM done = INPUTKIT.RUN_STEPS(steps, FALSE)
+    PRINT "Filled: "; done; " steps."
+CATCH
+    PRINT "Form Filler stopped: "; ERRMSG$
+    END 1
+ENDTRY

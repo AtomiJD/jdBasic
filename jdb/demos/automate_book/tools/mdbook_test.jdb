@@ -1,5 +1,6 @@
 ' MDBOOK: every block kind from a small manuscript, includes with and
-' without a line range, the statistics and the page estimate.
+' without a line range or with a marked section, the statistics and the
+' page estimate.
 
 IMPORT TESTKIT, MDBOOK
 
@@ -11,6 +12,10 @@ TXTWRITER listing$, "' hello" + CHR$(13) + LF$ + "PRINT 1" + LF$ + "PRINT 2" + L
 
 FUNC MissingInclude(base$)
     RETURN MDBOOK.RESOLVE$("<!-- include nope.jdb -->", base$)
+ENDFUNC
+
+FUNC MissingSection(base$)
+    RETURN MDBOOK.RESOLVE$("<!-- include nested.jdb from='WHILE' to='WEND' -->", base$)
 ENDFUNC
 
 FUNC KindOf$(blk AS MAP)
@@ -25,6 +30,13 @@ TESTKIT.SUITE("includes")
 DIM resolved$ = MDBOOK.RESOLVE$("Before" + LF$ + "  <!-- include hello.jdb -->" + LF$ + "<!-- include hello.jdb lines=2-3 -->", folder$)
 TESTKIT.EQ(resolved$, "Before" + LF$ + "```basic" + LF$ + "' hello" + LF$ + "PRINT 1" + LF$ + "PRINT 2" + LF$ + "```" + LF$ + "```basic" + LF$ + "PRINT 1" + LF$ + "PRINT 2" + LF$ + "```", "a whole file and a line range, CR and trailing blank lines dropped")
 TESTKIT.THROWS(MissingInclude@, folder$, "a missing file is an error")
+DIM nested$ = folder$ + "/nested.jdb"
+TXTWRITER nested$, "PRINT 0" + LF$ + "IF a THEN" + LF$ + "    IF b THEN" + LF$ + "        PRINT 1" + LF$ + "    ENDIF" + LF$ + "ENDIF" + LF$ + "PRINT 9" + LF$
+DIM sect$ = MDBOOK.RESOLVE$("<!-- include nested.jdb from=" + CHR$(34) + "IF a" + CHR$(34) + " to=" + CHR$(34) + "ENDIF" + CHR$(34) + " -->", folder$)
+TESTKIT.EQ(sect$, "```basic" + LF$ + "IF a THEN" + LF$ + "    IF b THEN" + LF$ + "        PRINT 1" + LF$ + "    ENDIF" + LF$ + "ENDIF" + LF$ + "```", "from= and to= mark a section; to= ends at the same indent")
+DIM single$ = MDBOOK.RESOLVE$("<!-- include nested.jdb from='IF b' to='ENDIF' -->", folder$)
+TESTKIT.EQ(single$, "```basic" + LF$ + "    IF b THEN" + LF$ + "        PRINT 1" + LF$ + "    ENDIF" + LF$ + "```", "single quotes work too")
+TESTKIT.THROWS(MissingSection@, folder$, "a section that is not there is an error")
 
 TESTKIT.SUITE("blocks")
 DIM md$ = "# Chapter *one*" + LF$
@@ -70,5 +82,6 @@ TESTKIT.EQ(st{"words"}, 32, "words of prose, lists, tables and notes")
 TESTKIT.ISTRUE(MDBOOK.PAGES({"words": 330, "code_lines": 40, "pictures": 0, "headings": 0}) = 2, "330 words and 40 code lines are two pages")
 
 KILL listing$
+KILL nested$
 RMDIR folder$
 TESTKIT.REPORT()

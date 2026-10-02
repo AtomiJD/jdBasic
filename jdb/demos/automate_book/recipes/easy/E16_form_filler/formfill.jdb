@@ -1,0 +1,33 @@
+' formfill.jdb: the key strokes that fill a form. The values go into
+' the fields one after the other, with Tab between them, as a macro of
+' INPUTKIT, so a dry run can show every step before anything is typed.
+'
+'   IMPORT FORMFILL
+'   DIM job = FORMFILL.JOB("", ["Mia Example", "Sales"], FALSE)
+'   PRINT JOIN(INPUTKIT.PLAN_LINES(job{"steps"}), CHR$(10))
+
+EXPORT MODULE FORMFILL
+
+IMPORT INPUTKIT
+
+' The macro that types the values: a window line first when a title is
+' given, a Tab after every value but the last, Enter at the end when
+' submit is TRUE. An empty value leaves its field as it is.
+EXPORT FUNC MACRO$(window$, values, submit)
+    DIM lines = []
+    DIM title$ = TRIM$(window$)
+    IF title$ <> "" THEN PUSH(lines, "window " + title$)
+    DIM k = 0
+    FOR k = 0 TO LEN(values) - 1
+        DIM v$ = values[k]
+        IF v$ <> "" THEN PUSH(lines, "type " + v$)
+        IF k < LEN(values) - 1 THEN PUSH(lines, "key tab")
+    NEXT k
+    IF submit ANDALSO LEN(values) > 0 THEN PUSH(lines, "key enter")
+    RETURN JOIN(lines, CHR$(10))
+ENDFUNC
+
+' The fill as INPUTKIT steps: {"steps": [...], "errors": [...]}.
+EXPORT FUNC JOB(window$, values, submit)
+    RETURN INPUTKIT.PARSE(MACRO$(window$, values, submit))
+ENDFUNC

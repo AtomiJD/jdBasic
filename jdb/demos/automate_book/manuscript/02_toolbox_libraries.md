@@ -621,7 +621,8 @@ carries the moment it was built, which is what you want in real use.
 > outbox folder as an `.eml` file that you open and send yourself.
 
 **Where the recipes use it.** No easy recipe sends mail, which is why
-the setup wizard can promise that nothing leaves your computer. From
+the setup wizard can promise that your files and mail stay on your
+computer. From
 Chapter 4 on, mail is everywhere: M01 sends invoices, M03 serial
 letters, M06 the Friday status, M07 unpacks the attachments of saved
 mails with `MAIL.PARSEFILE`, and X02 drafts replies to your inbox.

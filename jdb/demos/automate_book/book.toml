@@ -2,7 +2,7 @@
 
 [book]
 title = "Automate Your Work for a Better Life Balance"
-subtitle = "45 jdBasic programs that give you your hours back"
+subtitle = "48 jdBasic programs that give you your hours back"
 authors = ["Achim Christ", "Claude"]
 version = "0.4 (chapters 1 to 4)"
 language = "en-US"
@@ -42,6 +42,7 @@ files = [
     "manuscript/03_easy_E13.md",
     "manuscript/03_easy_E14.md",
     "manuscript/03_easy_E15.md",
+    "manuscript/03_easy_E16.md",
     "manuscript/04_medium.md",
     "manuscript/04_medium_M01.md",
     "manuscript/04_medium_M02.md",
@@ -58,6 +59,7 @@ files = [
     "manuscript/04_medium_M13.md",
     "manuscript/04_medium_M14.md",
     "manuscript/04_medium_M15.md",
+    "manuscript/04_medium_M16.md",
     "manuscript/04_medium_close.md",
     "manuscript/05_expert.md",
     "manuscript/05_expert_X01.md",
@@ -75,9 +77,28 @@ files = [
     "manuscript/05_expert_X13.md",
     "manuscript/05_expert_X14.md",
     "manuscript/05_expert_X15.md",
+    "manuscript/05_expert_X16.md",
     "manuscript/05_expert_close.md",
+    "manuscript/06_living.md",
+    "manuscript/06_living_1.md",
+    "manuscript/06_living_2.md",
+    "manuscript/06_living_3.md",
+    "manuscript/06_living_4.md",
+    "manuscript/06_living_5.md",
+    "manuscript/06_living_6.md",
+    "manuscript/06_living_7.md",
+    "manuscript/07_appendix_a.md",
+    "manuscript/07_appendix_b.md",
+    "manuscript/07_appendix_c.md",
+    "manuscript/07_appendix_d.md",
+    "manuscript/07_appendix_e.md",
+    "manuscript/08_index.md",
     "manuscript/99_about.md",
 ]
+
+[index]
+# The terms the PDF index lists; manuscript/08_index.md places it.
+terms = "manuscript/index.txt"
 
 [cover]
 # Paper thickness per page (white paper at print on demand) and bleed.

@@ -129,12 +129,17 @@ what you want after you corrected the log.
 
 ### Schedule it
 
-The wizard plans the recipe for Monday at 08:00, every week. The wizard
-has no schedule for *once a month*, and the recipe does not need one:
-on the first Monday of a month the sheet of the month before does not
-exist yet, so it is written; on every other Monday the recipe sees the
-file and ends. By the first Monday the month is over, and the log of it
-is complete.
+The wizard plans the recipe for the first of every month at 08:00,
+with the schedule `monthly 1 08:00`. Chapter 6 shows how that schedule
+got into the wizard.
+
+The Task Scheduler does not catch up a task whose time passed while the
+computer was off, and the first of a month falls on a weekend in about
+two months out of seven. If your computer is off on those days, set the
+schedule to `weekly mon 08:00` instead. The recipe needs nothing else
+for that: on the first Monday of a month the sheet of the month before
+does not exist yet, so it is written; on every other Monday the recipe
+sees the file and ends.
 
 Sending stays with you. The mail waits in the outbox until you run
 `jdbasic monthly_timesheet.jdb --send` yourself.

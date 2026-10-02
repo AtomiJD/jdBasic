@@ -81,7 +81,7 @@ IF "--uninstall" IN argv THEN
 ENDIF
 
 PRINT "Setup for Automate Your Work for a Better Life Balance"
-PRINT "Nothing leaves this computer unless you turn on a recipe that sends mail."
+PRINT "Your files and mail stay here unless you turn on a recipe that sends mail."
 PRINT
 a{"work"} = Ask$("Work folder", a{"work"})
 a{"jdbasic"} = Ask$("The jdbasic program", a{"jdbasic"})
@@ -164,6 +164,12 @@ ELSE
             IF trial{"EXIT_CODE"} <> 0 THEN PRINT "  the dry run of "; rr{"name"}; " failed: "; TRIM$(trial{"OUTPUT"})
         ENDIF
     NEXT k
+    IF NOT gDry THEN
+        DIM gone = WIZARD.UNSCHEDULE_OFF(a, recipes)
+        FOR k = 0 TO LEN(gone) - 1
+            PRINT "removed the task for "; gone[k]
+        NEXT k
+    ENDIF
 ENDIF
 PRINT
 PRINT "Done. Your settings are in "; conf$

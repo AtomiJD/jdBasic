@@ -59,7 +59,8 @@ ENDFUNC
 
 ' The answers before the user changed anything: the work folder in
 ' Documents, office hours, every easy recipe picked with its default
-' settings and schedule.
+' settings and schedule, except one whose recipe.toml says
+' off_by_default = true.
 EXPORT FUNC DEFAULTS(recipes, home$)
     DIM a AS MAP
     a{"work"} = PATH.JOIN$(home$, "Documents", "AutomateWork")
@@ -78,7 +79,9 @@ EXPORT FUNC DEFAULTS(recipes, home$)
     DIM j = 0
     FOR k = 0 TO LEN(recipes) - 1
         DIM r = recipes[k]
-        IF r{"level"} = "easy" THEN PUSH(picked, r{"id"})
+        DIM starts_off = FALSE
+        IF MAP.EXISTS(r, "off_by_default") THEN starts_off = r{"off_by_default"}
+        IF r{"level"} = "easy" ANDALSO NOT starts_off THEN PUSH(picked, r{"id"})
         when{r{"id"}} = r{"schedule"}
         DIM sect AS MAP
         DIM s = Settings(r)
@@ -275,6 +278,15 @@ FUNC DayCode$(d$)
     THROW "WIZARD: no weekday " + d$
 ENDFUNC
 
+' A day of the month from 1 to 28, the days every month has.
+FUNC MonthDay$(d$)
+    IF LEN(REGEX.FINDALL("^[0-9]{1,2}$", d$)) > 0 THEN
+        DIM n = CINT(d$)
+        IF n >= 1 ANDALSO n <= 28 THEN RETURN STR$(n)
+    ENDIF
+    THROW "WIZARD: day " + d$ + " is not in every month; use 1 to 28"
+ENDFUNC
+
 ' A schedule with {day_start} and {day_end} replaced by the user's
 ' working hours.
 EXPORT FUNC RESOLVE_WHEN$(answers, when$)
@@ -283,9 +295,10 @@ EXPORT FUNC RESOLVE_WHEN$(answers, when$)
 ENDFUNC
 
 ' The schtasks arguments that run a recipe on its schedule: "daily
-' HH:MM", "weekdays HH:MM", "weekly DAY HH:MM", "every N minutes",
-' "every N hours", "hourly" or "at logon". "manual" or "" answers an
-' empty array. The recipe's schedule_args follow the program.
+' HH:MM", "weekdays HH:MM", "weekly DAY HH:MM", "monthly DAY HH:MM",
+' "every N minutes", "every N hours", "hourly" or "at logon". "manual"
+' or "" answers an empty array. The recipe's schedule_args follow the
+' program.
 EXPORT FUNC SCHEDULE_ARGS(r, when$, jdbasic$, program$, config$)
     DIM parts = SPLIT(TRIM$(LCASE$(when$)), " ")
     DIM n = LEN(parts)
@@ -304,6 +317,12 @@ EXPORT FUNC SCHEDULE_ARGS(r, when$, jdbasic$, program$, config$)
     IF n = 2 ANDALSO parts[0] = "daily" ANDALSO IsClock(parts[1]) THEN RETURN APPEND(head, ["/SC", "DAILY", "/ST", parts[1]])
     IF n = 2 ANDALSO parts[0] = "weekdays" ANDALSO IsClock(parts[1]) THEN RETURN APPEND(head, ["/SC", "WEEKLY", "/D", "MON,TUE,WED,THU,FRI", "/ST", parts[1]])
     IF n = 3 ANDALSO parts[0] = "weekly" ANDALSO IsClock(parts[2]) THEN RETURN APPEND(head, ["/SC", "WEEKLY", "/D", DayCode$(parts[1]), "/ST", parts[2]])
+    IF n = 3 ANDALSO parts[0] = "monthly" THEN
+        IF IsClock(parts[2]) THEN
+            DIM sc = ["/SC", "MONTHLY", "/D", MonthDay$(parts[1])]
+            RETURN APPEND(APPEND(head, sc), ["/ST", parts[2]])
+        ENDIF
+    ENDIF
     IF n = 3 ANDALSO parts[0] = "every" ANDALSO parts[2] = "minutes" THEN RETURN APPEND(head, ["/SC", "MINUTE", "/MO", STR$(CINT(parts[1]))])
     IF n = 1 ANDALSO parts[0] = "hourly" THEN RETURN APPEND(head, ["/SC", "HOURLY"])
     IF n = 2 ANDALSO parts[0] = "at" ANDALSO parts[1] = "logon" THEN RETURN APPEND(head, ["/SC", "ONLOGON"])
@@ -342,6 +361,34 @@ ENDFUNC
 
 EXPORT FUNC UNSCHEDULE_ARGS(r)
     RETURN ["/Delete", "/F", "/TN", TASK_NAME$(r)]
+ENDFUNC
+
+' The recipes that are not picked.
+EXPORT FUNC SWITCHED_OFF(answers, recipes)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(recipes) - 1
+        IF NOT (recipes[k]{"id"} IN answers{"picked"}) THEN PUSH(out, recipes[k])
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' Removes the tasks of the recipes that are not picked; answers the
+' names of the tasks it removed.
+EXPORT FUNC UNSCHEDULE_OFF(answers, recipes)
+    DIM gone = []
+    DIM off = SWITCHED_OFF(answers, recipes)
+    DIM k = 0
+    DIM t = 0
+    FOR k = 0 TO LEN(off) - 1
+        DIM tasks = TASKS(off[k], "")
+        FOR t = 0 TO LEN(tasks) - 1
+            DIM tr = tasks[t]{"r"}
+            DIM done = SCHTASKS(UNSCHEDULE_ARGS(tr))
+            IF done[0] THEN PUSH(gone, tr{"name"})
+        NEXT t
+    NEXT k
+    RETURN gone
 ENDFUNC
 
 ' Runs schtasks with the arguments; answers [ok, output].

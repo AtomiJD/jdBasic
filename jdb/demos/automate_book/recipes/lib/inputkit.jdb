@@ -1,0 +1,572 @@
+' inputkit.jdb: keyboard and mouse for the recipes that work a program
+' the way a person would. It finds a window and brings it to the
+' front, types text (umlauts and every other letter), presses keys and
+' key combinations, and moves and clicks the mouse. Before every
+' single action it checks the emergency stop: hold Esc, or push the
+' mouse into the top-left corner of the screen, and the run ends.
+'
+'   IMPORT INPUTKIT
+'   DIM job = INPUTKIT.PARSE(TXTREADER$("fill.txt"))
+'   IF LEN(job{"errors"}) > 0 THEN PRINT JOIN(job{"errors"}, CHR$(10))
+'   PRINT JOIN(INPUTKIT.PLAN_LINES(job{"steps"}), CHR$(10))
+'   INPUTKIT.COUNTDOWN(5)
+'   INPUTKIT.RUN_STEPS(job{"steps"}, FALSE)
+'
+' A macro has one command per line; "#" starts a comment:
+'   window Order Entry           bring that window to the front
+'   type Hello                   type the rest of the line
+'   key ctrl+s                   press a key or a combination
+'   click 120 340                click at a point of the screen
+'   rightclick, doubleclick, move  the same with another button
+'   wait 500                     wait so many milliseconds
+
+EXPORT MODULE INPUTKIT
+
+DECLARE FUNC FindWindowA LIB "user32.dll" ALIAS "FindWindowA" _
+    (clsptr AS INTEGER, title AS STRING) AS INTEGER
+DECLARE FUNC SetForegroundWindow LIB "user32.dll" _
+    ALIAS "SetForegroundWindow" (hwnd AS INTEGER) AS INTEGER
+DECLARE FUNC GetForegroundWindow LIB "user32.dll" _
+    ALIAS "GetForegroundWindow" () AS INTEGER
+DECLARE FUNC ShowWindow LIB "user32.dll" ALIAS "ShowWindow" _
+    (hwnd AS INTEGER, how AS INTEGER) AS INTEGER
+DECLARE FUNC SetCursorPos LIB "user32.dll" ALIAS "SetCursorPos" _
+    (x AS INTEGER, y AS INTEGER) AS INTEGER
+DECLARE FUNC GetCursorPos LIB "user32.dll" ALIAS "GetCursorPos" _
+    (p AS INTEGER) AS INTEGER
+DECLARE FUNC ClientToScreen LIB "user32.dll" ALIAS "ClientToScreen" _
+    (hwnd AS INTEGER, p AS INTEGER) AS INTEGER
+DECLARE FUNC GetAsyncKeyState LIB "user32.dll" _
+    ALIAS "GetAsyncKeyState" (vk AS INTEGER) AS INTEGER
+DECLARE FUNC mouse_event LIB "user32.dll" ALIAS "mouse_event" _
+    (flags AS INTEGER, dx AS INTEGER, dy AS INTEGER, _
+     data AS INTEGER, extra AS INTEGER) AS INTEGER
+DECLARE FUNC keybd_event LIB "user32.dll" ALIAS "keybd_event" _
+    (vk AS INTEGER, scan AS INTEGER, flags AS INTEGER, _
+     extra AS INTEGER) AS INTEGER
+DECLARE FUNC SendInput LIB "user32.dll" ALIAS "SendInput" _
+    (n AS INTEGER, p AS INTEGER, size AS INTEGER) AS INTEGER
+DECLARE FUNC LocalAlloc LIB "kernel32.dll" ALIAS "LocalAlloc" _
+    (flags AS INTEGER, n AS INTEGER) AS INTEGER
+DECLARE FUNC LocalFree LIB "kernel32.dll" ALIAS "LocalFree" _
+    (p AS INTEGER) AS INTEGER
+DECLARE SUB PutBytes LIB "kernel32.dll" ALIAS "RtlMoveMemory" _
+    (dest AS INTEGER, src AS STRING, n AS INTEGER)
+DECLARE FUNC GetByte LIB "kernel32.dll" ALIAS "RtlMoveMemory" _
+    (dest AS RETURN, src AS INTEGER, n AS INTEGER) AS ARRAY
+
+CONST VK_ESCAPE = 27
+CONST KEYUP = 2
+CONST KEY_UNICODE = 4
+CONST INPUT_SIZE = 40
+CONST CORNER_PX = 5
+
+DIM gModifiers$ = "|ctrl|shift|alt|win|"
+DIM gRefused$ = "|alt+f4|ctrl+alt+delete|win+l|ctrl+w|"
+DIM gPointer$ = "|click|rightclick|doubleclick|move|"
+DIM gLF$ = CHR$(10)
+
+' ── keys ──────────────────────────────────────────────────────
+
+' The table of key names to Windows key codes.
+FUNC Keys()
+    DIM t AS MAP
+    DIM k = 0
+    FOR k = 0 TO 25
+        t{CHR$(97 + k)} = 65 + k
+    NEXT k
+    FOR k = 0 TO 9
+        t{STR$(k)} = 48 + k
+    NEXT k
+    FOR k = 1 TO 12
+        t{"f" + STR$(k)} = 111 + k
+    NEXT k
+    t{"enter"} = 13
+    t{"tab"} = 9
+    t{"esc"} = 27
+    t{"space"} = 32
+    t{"backspace"} = 8
+    t{"delete"} = 46
+    t{"insert"} = 45
+    t{"home"} = 36
+    t{"end"} = 35
+    t{"pageup"} = 33
+    t{"pagedown"} = 34
+    t{"left"} = 37
+    t{"up"} = 38
+    t{"right"} = 39
+    t{"down"} = 40
+    t{"ctrl"} = 17
+    t{"shift"} = 16
+    t{"alt"} = 18
+    t{"win"} = 91
+    RETURN t
+ENDFUNC
+
+' The Windows key code of a key name such as "tab" or "f5", -1 for a
+' name it does not know.
+EXPORT FUNC KEYCODE(name$)
+    DIM t = Keys()
+    DIM low$ = LCASE$(TRIM$(name$))
+    IF MAP.EXISTS(t, low$) THEN RETURN t{low$}
+    RETURN -1
+ENDFUNC
+
+' A combination such as "ctrl+shift+s" as {"mods": codes, "key": code,
+' "error": text}; the error is "" when the combination is fine.
+EXPORT FUNC COMBO(spec$, allow_close)
+    DIM out AS MAP
+    out{"mods"} = []
+    out{"key"} = -1
+    out{"error"} = ""
+    DIM low$ = LCASE$(REPLACE$(spec$, " ", ""))
+    IF low$ = "" THEN
+        out{"error"} = "no key given"
+        RETURN out
+    ENDIF
+    DIM refused = INSTR(gRefused$, "|" + low$ + "|") >= 0
+    IF NOT allow_close ANDALSO refused THEN
+        out{"error"} = low$ + " is not allowed; it closes or locks"
+        RETURN out
+    ENDIF
+    DIM parts = SPLIT(low$, "+")
+    DIM mods = []
+    DIM k = 0
+    FOR k = 0 TO LEN(parts) - 2
+        DIM m$ = parts[k]
+        IF INSTR(gModifiers$, "|" + m$ + "|") < 0 THEN
+            DIM bad$ = "'" + m$ + "'"
+            out{"error"} = bad$ + " is not ctrl, shift, alt or win"
+            RETURN out
+        ENDIF
+        PUSH(mods, KEYCODE(m$))
+    NEXT k
+    DIM last$ = parts[LEN(parts) - 1]
+    DIM code = KEYCODE(last$)
+    IF code < 0 THEN
+        out{"error"} = "unknown key '" + last$ + "'"
+        RETURN out
+    ENDIF
+    out{"mods"} = mods
+    out{"key"} = code
+    RETURN out
+ENDFUNC
+
+' ── the emergency stop ────────────────────────────────────────
+
+' Whether a GetAsyncKeyState answer says the key is down now.
+EXPORT FUNC KEYDOWN(state)
+    DIM v = state MOD 65536
+    IF v < 0 THEN v = v + 65536
+    RETURN v >= 32768
+ENDFUNC
+
+' Why a run has to stop, "" when it may go on: Esc held, or the mouse
+' in the top-left corner of the screen.
+EXPORT FUNC SAFE$(esc_down, x, y)
+    IF esc_down THEN RETURN "Esc is held: stopped."
+    IF x <= CORNER_PX ANDALSO y <= CORNER_PX THEN
+        RETURN "The mouse is in the top-left corner: stopped."
+    ENDIF
+    RETURN ""
+ENDFUNC
+
+' ── text as key strokes ───────────────────────────────────────
+
+' The UTF-16 code units of a UTF-8 text.
+EXPORT FUNC UNITS(text$)
+    DIM out = []
+    DIM i = 0
+    DIM n = LEN(text$)
+    DO WHILE i < n
+        DIM b = ASC(MID$(text$, i, 1))
+        DIM cp = b
+        DIM more = 0
+        IF b >= 240 THEN
+            cp = b MOD 8
+            more = 3
+        ELSEIF b >= 224 THEN
+            cp = b MOD 16
+            more = 2
+        ELSEIF b >= 192 THEN
+            cp = b MOD 32
+            more = 1
+        ENDIF
+        DIM j = 0
+        FOR j = 1 TO more
+            cp = cp * 64 + ASC(MID$(text$, i + j, 1)) MOD 64
+        NEXT j
+        i = i + 1 + more
+        IF cp >= 65536 THEN
+            cp = cp - 65536
+            PUSH(out, 55296 + INT(cp / 1024))
+            PUSH(out, 56320 + cp MOD 1024)
+        ELSE
+            PUSH(out, cp)
+        ENDIF
+    LOOP
+    RETURN out
+ENDFUNC
+
+' n as little-endian bytes.
+FUNC Le$(n, width)
+    DIM out$ = ""
+    DIM v = n
+    DIM k = 0
+    FOR k = 1 TO width
+        out$ = out$ + CHR$(v MOD 256)
+        v = INT(v / 256)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The INPUT records that type a text: a key down and a key up per code
+' unit, 40 bytes each, as SendInput reads them on 64-bit Windows.
+EXPORT FUNC KEY_INPUTS$(text$)
+    DIM units = UNITS(text$)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(units) - 1
+        DIM u = units[k]
+        DIM down$ = Le$(1, 4) + Le$(0, 4) + Le$(0, 2) + Le$(u, 2)
+        out$ = out$ + down$ + Le$(KEY_UNICODE, 4) + Le$(0, 24)
+        out$ = out$ + down$ + Le$(KEY_UNICODE + KEYUP, 4) + Le$(0, 24)
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' A 32-bit value read as a signed number.
+EXPORT FUNC SIGNED32(n)
+    IF n >= 2147483648 THEN RETURN n - 4294967296
+    RETURN n
+ENDFUNC
+
+' ── the macro language ────────────────────────────────────────
+
+' A step: the line it came from, the command and its argument.
+FUNC MakeStep(line_no, op$, arg$)
+    DIM s AS MAP
+    s{"line"} = line_no
+    s{"op"} = op$
+    s{"arg"} = arg$
+    s{"x"} = 0
+    s{"y"} = 0
+    RETURN s
+ENDFUNC
+
+' Whether a text is a whole number of at most six digits.
+FUNC IsNumber(t$)
+    RETURN REGEX.MATCH("^[0-9]{1,6}$", t$)
+ENDFUNC
+
+' A macro as {"steps": [...], "errors": [...]}; each error names its
+' line. A step is a map of "line", "op", "arg", "x" and "y".
+EXPORT FUNC PARSE(text$)
+    DIM steps = []
+    DIM errors = []
+    DIM src = SPLIT(REPLACE$(text$, CHR$(13), ""), gLF$)
+    DIM k = 0
+    FOR k = 0 TO LEN(src) - 1
+        DIM line_no = k + 1
+        DIM raw$ = src[k]
+        DIM t$ = TRIM$(raw$)
+        IF t$ <> "" ANDALSO NOT STARTSWITH(t$, "#") THEN
+            DIM cut = INSTR(t$, " ")
+            DIM op$ = LCASE$(t$)
+            DIM arg$ = ""
+            IF cut >= 0 THEN
+                op$ = LCASE$(LEFT$(t$, cut))
+                arg$ = MID$(t$, cut + 1)
+            ENDIF
+            DIM where$ = "line " + STR$(line_no) + ": "
+            IF op$ = "type" THEN
+                DIM typed$ = MID$(TRIM$(raw$), 5)
+                IF typed$ = "" THEN
+                    PUSH(errors, where$ + "type needs a text")
+                ELSE
+                    PUSH(steps, MakeStep(line_no, op$, typed$))
+                ENDIF
+            ELSEIF op$ = "window" THEN
+                IF TRIM$(arg$) = "" THEN
+                    PUSH(errors, where$ + "window needs a title")
+                ELSE
+                    PUSH(steps, MakeStep(line_no, op$, TRIM$(arg$)))
+                ENDIF
+            ELSEIF op$ = "key" THEN
+                DIM c = COMBO(arg$, FALSE)
+                IF c{"error"} <> "" THEN
+                    PUSH(errors, where$ + c{"error"})
+                ELSE
+                    DIM spec$ = LCASE$(TRIM$(arg$))
+                    PUSH(steps, MakeStep(line_no, op$, spec$))
+                ENDIF
+            ELSEIF op$ = "wait" THEN
+                DIM ms$ = TRIM$(arg$)
+                IF NOT IsNumber(ms$) ORELSE VAL(ms$) > 60000 THEN
+                    DIM need$ = "wait needs 0 to 60000 milliseconds"
+                    PUSH(errors, where$ + need$)
+                ELSE
+                    PUSH(steps, MakeStep(line_no, op$, ms$))
+                ENDIF
+            ELSEIF INSTR(gPointer$, "|" + op$ + "|") >= 0 THEN
+                DIM one$ = TRIM$(REGEX.REPLACE(" +", arg$, " "))
+                DIM xy = SPLIT(one$, " ")
+                DIM ok = LEN(xy) = 2
+                IF ok THEN ok = IsNumber(xy[0])
+                IF ok THEN ok = IsNumber(xy[1])
+                IF NOT ok THEN
+                    DIM two$ = " needs two numbers, x and y"
+                    PUSH(errors, where$ + op$ + two$)
+                ELSE
+                    DIM s = MakeStep(line_no, op$, "")
+                    s{"x"} = VAL(xy[0])
+                    s{"y"} = VAL(xy[1])
+                    PUSH(steps, s)
+                ENDIF
+            ELSE
+                PUSH(errors, where$ + "unknown command '" + op$ + "'")
+            ENDIF
+        ENDIF
+    NEXT k
+    RETURN {"steps": steps, "errors": errors}
+ENDFUNC
+
+' One step as a line of a plan.
+EXPORT FUNC PLAN_LINE$(s)
+    DIM op$ = s{"op"}
+    DIM head$ = "line " + STR$(s{"line"}) + ": "
+    DIM quoted$ = "'" + s{"arg"} + "'"
+    IF op$ = "window" THEN
+        RETURN head$ + "bring " + quoted$ + " to the front"
+    ENDIF
+    IF op$ = "type" THEN
+        DIM n = LEN(UNITS(s{"arg"}))
+        DIM count$ = " (" + STR$(n) + " characters)"
+        RETURN head$ + "type " + quoted$ + count$
+    ENDIF
+    IF op$ = "key" THEN RETURN head$ + "press " + s{"arg"}
+    IF op$ = "wait" THEN RETURN head$ + "wait " + s{"arg"} + " ms"
+    DIM at$ = STR$(s{"x"}) + ", " + STR$(s{"y"})
+    IF op$ = "move" THEN RETURN head$ + "move the mouse to " + at$
+    RETURN head$ + op$ + " at " + at$
+ENDFUNC
+
+' Every step as a line of a plan, for a dry run.
+EXPORT FUNC PLAN_LINES(steps)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        PUSH(out, PLAN_LINE$(steps[k]))
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' ── Windows ───────────────────────────────────────────────────
+
+' n bytes of memory at p.
+FUNC Peek$(p, n)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO n - 1
+        DIM r = GetByte(2, p + k, 1)
+        DIM b$ = r[1]
+        IF LEN(b$) = 0 THEN b$ = CHR$(0)
+        out$ = out$ + b$
+    NEXT k
+    RETURN out$
+ENDFUNC
+
+' The little-endian number in the bytes of b$.
+FUNC Number(b$)
+    DIM v = 0
+    DIM k = 0
+    FOR k = LEN(b$) - 1 TO 0 STEP -1
+        v = v * 256 + ASC(MID$(b$, k, 1))
+    NEXT k
+    RETURN v
+ENDFUNC
+
+' The screen position of the mouse as [x, y].
+EXPORT FUNC CURSOR_AT()
+    DIM p = LocalAlloc(64, 8)
+    IF p = 0 THEN THROW "INPUTKIT: out of memory"
+    DIM ok = GetCursorPos(p)
+    DIM b$ = Peek$(p, 8)
+    DIM f = LocalFree(p)
+    IF ok = 0 THEN THROW "INPUTKIT: no mouse position from Windows"
+    DIM x = SIGNED32(Number(LEFT$(b$, 4)))
+    DIM y = SIGNED32(Number(MID$(b$, 4, 4)))
+    RETURN [x, y]
+ENDFUNC
+
+' Ends the run with a clear message when the emergency stop is pulled.
+EXPORT SUB GUARD()
+    DIM esc = KEYDOWN(GetAsyncKeyState(VK_ESCAPE))
+    DIM at = CURSOR_AT()
+    DIM why$ = SAFE$(esc, at[0], at[1])
+    IF why$ <> "" THEN THROW "INPUTKIT: " + why$
+ENDSUB
+
+' Counts down so many seconds, checking the emergency stop each time.
+EXPORT SUB COUNTDOWN(seconds)
+    PRINT "Starting in "; seconds; " seconds. To stop at any time,"
+    PRINT "hold Esc or push the mouse into the top-left corner."
+    DIM k = 0
+    FOR k = seconds TO 1 STEP -1
+        PRINT "  "; k
+        GUARD()
+        SLEEP 1000
+    NEXT k
+    GUARD()
+ENDSUB
+
+' The window with exactly this title, 0 when there is none.
+EXPORT FUNC FINDWINDOW(title$)
+    RETURN FindWindowA(0, title$)
+ENDFUNC
+
+' Waits up to timeout_ms for a window with this title; answers it,
+' or 0 when it did not come.
+EXPORT FUNC WAITWINDOW(title$, timeout_ms)
+    DIM t0 = TICK()
+    DO
+        DIM hwnd = FindWindowA(0, title$)
+        IF hwnd <> 0 THEN RETURN hwnd
+        IF TICK() - t0 >= timeout_ms THEN RETURN 0
+        SLEEP 200
+    LOOP
+ENDFUNC
+
+' Brings the window with this title to the front; FALSE when there is
+' no such window or Windows kept another one in front.
+EXPORT FUNC ACTIVATE(title$)
+    GUARD()
+    DIM hwnd = FindWindowA(0, title$)
+    IF hwnd = 0 THEN RETURN FALSE
+    DIM shown = ShowWindow(hwnd, 9)
+    DIM front = SetForegroundWindow(hwnd)
+    SLEEP 150
+    RETURN GetForegroundWindow() = hwnd
+ENDFUNC
+
+' The screen position of the top-left corner of a window's inside.
+EXPORT FUNC CLIENT_ORIGIN(hwnd)
+    DIM p = LocalAlloc(64, 8)
+    IF p = 0 THEN THROW "INPUTKIT: out of memory"
+    DIM ok = ClientToScreen(hwnd, p)
+    DIM b$ = Peek$(p, 8)
+    DIM f = LocalFree(p)
+    IF ok = 0 THEN THROW "INPUTKIT: no window position from Windows"
+    DIM x = SIGNED32(Number(LEFT$(b$, 4)))
+    DIM y = SIGNED32(Number(MID$(b$, 4, 4)))
+    RETURN [x, y]
+ENDFUNC
+
+' Types a text into the window in front.
+EXPORT SUB TYPETEXT(text$)
+    GUARD()
+    DIM records$ = KEY_INPUTS$(text$)
+    DIM n = LEN(records$) / INPUT_SIZE
+    IF n = 0 THEN RETURN
+    DIM p = LocalAlloc(64, LEN(records$))
+    IF p = 0 THEN THROW "INPUTKIT: out of memory"
+    PutBytes(p, records$, LEN(records$))
+    DIM sent = SendInput(n, p, INPUT_SIZE)
+    DIM f = LocalFree(p)
+    IF sent <> n THEN
+        DIM took$ = STR$(sent) + " of " + STR$(n)
+        THROW "INPUTKIT: Windows took " + took$ + " key strokes"
+    ENDIF
+ENDSUB
+
+' Presses a key or a combination such as "ctrl+s".
+EXPORT SUB PRESS(spec$, allow_close)
+    GUARD()
+    DIM c = COMBO(spec$, allow_close)
+    IF c{"error"} <> "" THEN THROW "INPUTKIT: " + c{"error"}
+    DIM mods = c{"mods"}
+    DIM k = 0
+    DIM r = 0
+    FOR k = 0 TO LEN(mods) - 1
+        r = keybd_event(mods[k], 0, 0, 0)
+    NEXT k
+    r = keybd_event(c{"key"}, 0, 0, 0)
+    r = keybd_event(c{"key"}, 0, KEYUP, 0)
+    FOR k = LEN(mods) - 1 TO 0 STEP -1
+        r = keybd_event(mods[k], 0, KEYUP, 0)
+    NEXT k
+ENDSUB
+
+' Moves the mouse to a point of the screen.
+EXPORT SUB MOVETO(x, y)
+    GUARD()
+    DIM ok = SetCursorPos(x, y)
+    IF ok = 0 THEN THROW "INPUTKIT: Windows did not move the mouse"
+ENDSUB
+
+' Clicks at a point of the screen: button$ "left" or "right", clicks 1
+' or 2.
+EXPORT SUB CLICK(x, y, button$, clicks)
+    MOVETO(x, y)
+    DIM down = 2
+    DIM up = 4
+    IF button$ = "right" THEN
+        down = 8
+        up = 16
+    ENDIF
+    DIM k = 0
+    DIM r = 0
+    FOR k = 1 TO clicks
+        GUARD()
+        r = mouse_event(down, 0, 0, 0, 0)
+        r = mouse_event(up, 0, 0, 0, 0)
+        IF k < clicks THEN SLEEP 80
+    NEXT k
+ENDSUB
+
+' Carries out one step of a macro.
+EXPORT SUB RUN_STEP(s)
+    DIM op$ = s{"op"}
+    IF op$ = "window" THEN
+        DIM title$ = s{"arg"}
+        IF NOT ACTIVATE(title$) THEN
+            THROW "INPUTKIT: no window '" + title$ + "'"
+        ENDIF
+    ELSEIF op$ = "type" THEN
+        TYPETEXT(s{"arg"})
+    ELSEIF op$ = "key" THEN
+        PRESS(s{"arg"}, FALSE)
+    ELSEIF op$ = "wait" THEN
+        DIM left_ms = VAL(s{"arg"})
+        DO WHILE left_ms > 0
+            GUARD()
+            DIM nap = left_ms
+            IF nap > 100 THEN nap = 100
+            SLEEP nap
+            left_ms = left_ms - nap
+        LOOP
+    ELSEIF op$ = "move" THEN
+        MOVETO(s{"x"}, s{"y"})
+    ELSEIF op$ = "click" THEN
+        CLICK(s{"x"}, s{"y"}, "left", 1)
+    ELSEIF op$ = "rightclick" THEN
+        CLICK(s{"x"}, s{"y"}, "right", 1)
+    ELSEIF op$ = "doubleclick" THEN
+        CLICK(s{"x"}, s{"y"}, "left", 2)
+    ENDIF
+ENDSUB
+
+' Carries out the steps one after the other, or with dry_run only
+' prints them. Answers the number of steps.
+EXPORT FUNC RUN_STEPS(steps, dry_run)
+    DIM k = 0
+    FOR k = 0 TO LEN(steps) - 1
+        IF dry_run THEN
+            PRINT "would "; PLAN_LINE$(steps[k])
+        ELSE
+            RUN_STEP(steps[k])
+            SLEEP 60
+        ENDIF
+    NEXT k
+    RETURN LEN(steps)
+ENDFUNC

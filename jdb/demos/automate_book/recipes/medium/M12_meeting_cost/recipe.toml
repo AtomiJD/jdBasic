@@ -32,3 +32,15 @@ key = "weeks"
 label = "Weeks to look back"
 kind = "number"
 default = 4
+
+[[setting]]
+key = "top"
+label = "How many meetings the report lists"
+kind = "number"
+default = 5
+
+[[setting]]
+key = "workbook"
+label = "Workbook for the report"
+kind = "file"
+default = "~/Documents/AutomateWork/meeting_cost.xlsx"

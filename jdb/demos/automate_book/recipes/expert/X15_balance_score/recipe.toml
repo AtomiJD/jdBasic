@@ -57,3 +57,9 @@ key = "port"
 label = "Port of the page on this computer"
 kind = "number"
 default = 8766
+
+[[setting]]
+key = "weeks"
+label = "Weeks in the trend"
+kind = "number"
+default = 8

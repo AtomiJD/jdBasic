@@ -170,9 +170,10 @@ jobs = "~/Documents/AutomateWork/config/jobs.toml"
 folder = "~/Documents/AutomateWork/logs"
 ```
 
-- **Once a month.** The wizard has no monthly schedule, the server
-  does. The timesheet of M15 at half past eight on the first of each
-  month:
+- **Once a month.** The wizard can plan a recipe for one day a month
+  (Chapter 6 shows the change), but the Task Scheduler skips a day the
+  computer was off. The server runs a missed job once when it starts.
+  The timesheet of M15 at half past eight on the first of each month:
 
   ```toml
   [[job]]

@@ -1,0 +1,85 @@
+' Desktop Robot: reading a job, its mistakes, the plan of a dry run,
+' points inside the window and the comparison of a screen region with
+' a picture. Nothing is clicked, typed or photographed.
+
+IMPORT TESTKIT, ROBOT, IMG
+
+DIM LF$ = CHR$(10)
+DIM Q$ = CHR$(34)
+DIM folder$ = MKTEMP$("robottest")
+MKDIR folder$
+DIM pic = IMG.BLANK(10, 6, 3, 30)
+IMG.WRITEPNG(pic, PATH.JOIN$(folder$, "ok.png"))
+
+FUNC Toml$(body$)
+    RETURN "window = " + CHR$(34) + "Orders" + CHR$(34) + CHR$(10) + body$
+ENDFUNC
+
+FUNC StepToml$(lines$)
+    RETURN "[[step]]" + CHR$(10) + lines$ + CHR$(10)
+ENDFUNC
+
+TESTKIT.SUITE("a job")
+DIM body$ = StepToml$("do = " + Q$ + "wait_window" + Q$)
+body$ = body$ + StepToml$("do = " + Q$ + "check" + Q$ + LF$ + "region = [5, 7, 10, 6]" + LF$ + "image = " + Q$ + "ok.png" + Q$ + LF$ + "tries = 3")
+body$ = body$ + StepToml$("do = " + Q$ + "click" + Q$ + LF$ + "at = [60, 56]")
+body$ = body$ + StepToml$("do = " + Q$ + "type" + Q$ + LF$ + "text = " + Q$ + "Miller" + Q$)
+body$ = body$ + StepToml$("do = " + Q$ + "key" + Q$ + LF$ + "keys = " + Q$ + "ctrl+s" + Q$)
+DIM job = ROBOT.PARSE_JOB(Toml$(body$), folder$)
+TESTKIT.EQ(LEN(job{"errors"}), 0, "a good job has no mistakes")
+TESTKIT.EQ(job{"window"}, "Orders", "the window")
+DIM steps = job{"steps"}
+TESTKIT.EQ(LEN(steps), 5, "five steps")
+DIM s0 = steps[0]
+TESTKIT.EQ(s0{"timeout_s"}, 30, "a wait has 30 seconds unless told")
+DIM s1 = steps[1]
+TESTKIT.EQ(s1{"tolerance"}, 10, "a check has a tolerance of 10")
+TESTKIT.EQ(s1{"tries"}, 3, "and the tries it was given")
+
+TESTKIT.SUITE("mistakes")
+DIM bad$ = StepToml$("do = " + Q$ + "klick" + Q$)
+bad$ = bad$ + StepToml$("do = " + Q$ + "click" + Q$ + LF$ + "at = [60]")
+bad$ = bad$ + StepToml$("do = " + Q$ + "check" + Q$ + LF$ + "region = [1, 2, 3, 4]" + LF$ + "image = " + Q$ + "missing.png" + Q$)
+bad$ = bad$ + StepToml$("do = " + Q$ + "key" + Q$ + LF$ + "keys = " + Q$ + "alt+f4" + Q$)
+bad$ = bad$ + StepToml$("do = " + Q$ + "type" + Q$)
+DIM wrong = ROBOT.PARSE_JOB(bad$, folder$)
+DIM errors = wrong{"errors"}
+TESTKIT.EQ(LEN(errors), 6, "every mistake is named, and the missing window")
+TESTKIT.EQ(errors[0], "the job names no window", "first the window")
+TESTKIT.ISTRUE(INSTR(errors[1], "step 1: unknown do") >= 0, "a typo")
+TESTKIT.ISTRUE(INSTR(errors[2], "needs at = [x, y]") >= 0, "a click without y")
+TESTKIT.ISTRUE(INSTR(errors[3], "no picture") >= 0, "a missing picture")
+TESTKIT.ISTRUE(INSTR(errors[4], "not allowed") >= 0, "a refused key")
+
+TESTKIT.SUITE("the plan")
+DIM plan = ROBOT.PLAN_LINES(job)
+TESTKIT.EQ(plan[0], "step 1: wait up to 30 s for 'Orders'", "a wait")
+TESTKIT.EQ(plan[1], "step 2: check 10 x 6 at 5, 7 against ok.png, 3 tries", "a check")
+TESTKIT.EQ(plan[2], "step 3: click at 60, 56", "a click")
+TESTKIT.EQ(plan[3], "step 4: type 'Miller'", "a text")
+TESTKIT.EQ(plan[4], "step 5: press ctrl+s", "a key")
+TESTKIT.EQARRAY(ROBOT.SCREEN_POINT([300, 200], [60, 56]), [360, 256], "a point inside the window on the screen")
+
+TESTKIT.SUITE("looking at the screen")
+DIM shot = IMG.BLANK(50, 40, 4, 220)
+DIM chip = IMG.BLANK(10, 6, 4, 30)
+shot = IMG.PASTE(shot, chip, 5, 7)
+TESTKIT.EQ(ROBOT.REGION_DIFF(shot, pic, [5, 7, 10, 6]), 0, "the region is the picture")
+TESTKIT.ISTRUE(ROBOT.MATCHES(shot, pic, [5, 7, 10, 6], 10), "so it matches")
+DIM moved = ROBOT.REGION_DIFF(shot, pic, [8, 7, 10, 6])
+TESTKIT.ISTRUE(moved > 10, "three pixels to the side it does not")
+TESTKIT.EQ(ROBOT.REGION_DIFF(shot, pic, [45, 7, 10, 6]), 255, "a region past the edge")
+TESTKIT.EQ(ROBOT.REGION_DIFF(shot, pic, [5, 7, 12, 6]), 255, "a picture of another size")
+
+TESTKIT.SUITE("the sample job")
+DIM here$ = "recipes/expert/X16_desktop_robot/order_entry.toml"
+IF NOT FILE.EXISTS(here$) THEN here$ = "order_entry.toml"
+DIM sample = ROBOT.LOAD(here$)
+TESTKIT.EQ(LEN(sample{"errors"}), 0, "the sample has no mistakes")
+TESTKIT.EQ(LEN(sample{"steps"}), 8, "and eight steps")
+DIM ref = IMG.READPNG(PATH.JOIN$(PATH.DIRNAME$(here$), "new_button.png"))
+TESTKIT.EQ(IMG.WIDTH(ref) * 100 + IMG.HEIGHT(ref), 9624, "its picture fits its region")
+TESTKIT.EQ(ROBOT.REGION_DIFF(ref, ref, [0, 0, 96, 24]), 0, "a picture read from a file equals itself")
+
+OS.EXEC("cmd", ["/c", "rmdir", "/s", "/q", REPLACE$(folder$, "/", "\")])
+TESTKIT.REPORT()

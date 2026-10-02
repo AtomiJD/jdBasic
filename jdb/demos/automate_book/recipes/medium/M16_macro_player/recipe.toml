@@ -1,0 +1,23 @@
+# What the setup wizard knows about this recipe.
+
+id = "M16"
+name = "Macro Player"
+program = "macro_player.jdb"
+summary = "Plays recorded keyboard and mouse steps in a program without an import"
+minutes_per_week = 30
+schedule = "manual"
+section = "macro_player"
+modules = ["macros.jdb"]
+files = ["macros/new_order.txt"]
+
+[[setting]]
+key = "folder"
+label = "Folder of your macros"
+kind = "folder"
+default = "~/Documents/AutomateWork/macros"
+
+[[setting]]
+key = "countdown"
+label = "Seconds to wait before a macro starts"
+kind = "number"
+default = 5

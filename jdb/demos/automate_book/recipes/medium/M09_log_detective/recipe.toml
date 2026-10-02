@@ -26,3 +26,9 @@ key = "top"
 label = "How many frequent errors to list"
 kind = "number"
 default = 5
+
+[[setting]]
+key = "out_folder"
+label = "Folder for the report and chart"
+kind = "folder"
+default = "~/Documents/AutomateWork/logs"

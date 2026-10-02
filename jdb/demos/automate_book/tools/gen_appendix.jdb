@@ -1,0 +1,14 @@
+' gen_appendix.jdb: writes Appendix D (the settings file) and Appendix E
+' (all recipes at a glance) from the recipe folders. Run from the book
+' folder; the build runs it before it reads the chapters.
+'
+'   jdbasic tools/gen_appendix.jdb
+
+IMPORT APPENDIX
+
+DIM recipes = APPENDIX.RECIPES("recipes")
+DIM d$ = APPENDIX.SETTINGS_MD$(recipes, "recipes/lib")
+DIM e$ = APPENDIX.RECIPES_MD$(recipes, APPENDIX.HEADINGS("manuscript"))
+TXTWRITER "manuscript/07_appendix_d.md", d$
+TXTWRITER "manuscript/07_appendix_e.md", e$
+PRINT "wrote Appendix D and E for "; LEN(recipes); " recipes"
