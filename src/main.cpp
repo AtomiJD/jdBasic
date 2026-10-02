@@ -1745,6 +1745,7 @@ int main(int argc, char* argv[]) {
     bool mcp_mode = false;
     bool ftxui_mode = false;
     std::string mcp_tools_dir;
+    bool mcp_tools_only = false;
     std::string compile_output;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
@@ -1776,6 +1777,9 @@ int main(int argc, char* argv[]) {
               "      --pretty             Reformat source to stdout (UPPER keywords)\n"
               "      --pretty-vb          Reformat source to stdout (VB-style Pascal-cased keywords)\n"
               "      --mcp                Speak the Model Context Protocol on stdio\n"
+              "      --tools <dir>        With --mcp: also offer the tool files in <dir>\n"
+              "      --tools-only <dir>   With --mcp: offer only the tool files in <dir>,\n"
+              "                            none of the built-in jdb_* tools\n"
               "      --ftxui              Start the modern terminal REPL (F1-F4 workspaces,\n"
               "                            Ctrl+B side-panel, Ctrl+P command palette)\n"
               "      --emit-ir            Emit LLVM IR to stdout instead of an .exe\n"
@@ -1864,6 +1868,11 @@ int main(int argc, char* argv[]) {
             mcp_tools_dir = argv[++i];
             continue;
         }
+        if (a == "--tools-only" && i + 1 < argc) {
+            mcp_tools_dir = argv[++i];
+            mcp_tools_only = true;
+            continue;
+        }
         if (a == "--emit-ir") { emit_ir_only = true; continue; }
         if (a == "--target=kernel") {
 #ifdef KERNEL
@@ -1885,7 +1894,7 @@ int main(int argc, char* argv[]) {
 #ifdef MCPSERVER
         VM vm;
         setup_dynamic_code(vm);
-        return run_mcp_stdio(vm, mcp_tools_dir);
+        return run_mcp_stdio(vm, mcp_tools_dir, mcp_tools_only);
 #else
         std::cerr << "MCP server mode not available (build with MCPSERVER=1)." << std::endl;
         return 1;

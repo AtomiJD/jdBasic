@@ -19,6 +19,6 @@ class VM;
 //
 // POSIX + Windows: gated behind #ifdef MCPSERVER which build.sh and
 // build.bat enable when the user passes MCPSERVER=1.
-int run_mcp_stdio(VM& vm, const std::string& user_tools_dir = "");
+int run_mcp_stdio(VM& vm, const std::string& user_tools_dir = "", bool tools_only = false);
 
 #endif // MCPSERVER

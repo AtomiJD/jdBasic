@@ -102,6 +102,32 @@ All tools share a single persistent VM instance: variables, `FUNC`s, and loaded 
 | `jdb_stop` / `jdb_status` / `jdb_resume` | Pause a running script, report VM state (`running` / `stopped` / `idle`), and continue after a `STOP`. The reader thread fast-paths `jdb_stop`/`jdb_status` so they answer even while another call is busy. |
 | `jdb_run_native` | Run any shell command line in a child process and return combined stdout+stderr with the exit code. Despite the name it does not compile anything; to test a native build, pass e.g. `build/jdBasic.exe -c prog.jdb` and then the produced `.exe`. Optional `timeout_ms` (default 120000, 0 = wait forever); on timeout the call returns an error but the process may keep running. It gives the client a full shell on the host. |
 
+### Your own tools: `--tools` and `--tools-only`
+
+`jdbasic --mcp --tools <dir>` adds one tool for every `.json` file in
+`<dir>`. Each file names the tool and a jdBasic `FUNC` that answers it:
+
+```json
+{
+  "name": "run_recipe",
+  "description": "Run one recipe as a dry run and return its output.",
+  "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}}},
+  "handler": "RunRecipe",
+  "module": "C:/tools/ai_tools.jdb"
+}
+```
+
+The server loads each `module` once at start. A call runs the `handler`
+with the call's `arguments` as a JSON string; the handler parses it with
+`JSON.PARSE$` and returns the text of the answer.
+
+With `--tools` the built-in tools of the table above stay available,
+so a client can still run any code through `jdb_eval` or
+`jdb_run_native`. `jdbasic --mcp --tools-only <dir>` offers the tools
+of `<dir>` and nothing else; `tools/list` shows only them and a call to
+any other name is refused. Use it whenever an agent should reach your
+automations only through the tools you wrote.
+
 ### Optional builtin namespaces (build-flag gated)
 
 `jdb_eval` exposes whatever the binary was built with; gate on `OS.FEATURE(name$)`:
@@ -162,6 +188,9 @@ Generated native `.exe`s never link LLVM; they only need `libjdbrt.so` shipped a
 - Process spawn (`OS.EXEC`, `SHELL`)
 - Network I/O (`HTTP.GET`, sockets)
 - Native FFI (`DECLARE FUNC`)
+
+`--tools-only <dir>` (see *Your own tools*) removes both from the
+server, so only the handlers you wrote can run.
 
 This is intentional, because it is a developer tool. **Do not expose the HTTP demo server to the public internet**, and treat the stdio server as you would treat a local shell. Run it under your own user, not as root.
 

@@ -3478,11 +3478,10 @@ static int64_t rt_days_from_civil(int64_t y, int64_t m, int64_t d) {
 // repeats exactly.
 static int64_t rt_utc_offset_at(int64_t y, int64_t mo, int64_t d,
                                 int64_t h, int64_t mi, int64_t se) {
-    // The rules are asked about a year the CRT does cover, of the same
-    // leapness so a 29 February stays a real date. Daylight rules are
-    // political and did not exist for most of the years this reaches, so
-    // the ones in force now are the only answer available.
-    int64_t py = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 2000 : 2001;
+    // The rules are asked about the year moved into 2000 to 2399, which
+    // keeps its leap day and its weekdays, so a rule such as "the second
+    // Sunday in March" falls on the same date.
+    int64_t py = 2000 + (((y - 2000) % 400) + 400) % 400;
     struct tm probe;
     memset(&probe, 0, sizeof(probe));
     probe.tm_year = (int)(py - 1900);
@@ -3506,8 +3505,28 @@ static double rt_local_civil_to_epoch(int64_t y, int64_t mo, int64_t d,
 
 static void rt_epoch_to_civil_local(double epoch, int64_t& y, int64_t& mo, int64_t& d,
                                     int64_t& h, int64_t& mi, int64_t& se, int64_t& wd) {
+    // Within the CRT's range its own conversion knows every switch.
+    if (epoch >= 0.0 && epoch < 32503680000.0) {
+        time_t t = (time_t)floor(epoch);
+        struct tm tm;
+        memset(&tm, 0, sizeof(tm));
+#ifdef _WIN32
+        int ok = localtime_s(&tm, &t) == 0;
+#else
+        int ok = localtime_r(&t, &tm) != NULL;
+#endif
+        if (ok) {
+            y = tm.tm_year + 1900; mo = tm.tm_mon + 1; d = tm.tm_mday;
+            h = tm.tm_hour; mi = tm.tm_min; se = tm.tm_sec; wd = tm.tm_wday;
+            return;
+        }
+    }
     rt_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
     int64_t off = rt_utc_offset_at(y, mo, d, h, mi, se);
+    // The offset was asked for the UTC clock read as local time; ask again
+    // at the local time that answer gives, which settles near a switch.
+    rt_epoch_to_civil_utc(epoch + (double)off, y, mo, d, h, mi, se, wd);
+    off = rt_utc_offset_at(y, mo, d, h, mi, se);
     rt_epoch_to_civil_utc(epoch + (double)off, y, mo, d, h, mi, se, wd);
 }
 
@@ -4104,15 +4123,19 @@ char* jdb_dateadd(const char* part, double amount, const char* date_str) {
     if (p == 'Y' || p == 'M') {
         rt_add_months(y, mo, d, (int64_t)amount * (p == 'Y' ? 12 : 1));
         epoch = rt_local_civil_to_epoch(y, mo, d, h, mi, se);
+    } else if (p == 'D' || p == 'W') {
+        // Whole days move the local calendar, so the wall clock stays put
+        // across a daylight saving change; a fraction is elapsed time.
+        double days = amount * (p == 'W' ? 7.0 : 1.0);
+        double whole = trunc(days);
+        rt_civil_from_days(rt_days_from_civil(y, mo, d) + (int64_t)whole, y, mo, d);
+        epoch = rt_local_civil_to_epoch(y, mo, d, h, mi, se) + (days - whole) * 86400.0;
     } else {
         epoch = rt_local_civil_to_epoch(y, mo, d, h, mi, se);
         switch (p) {
-            case 'W': epoch += amount * 604800.0; break;
-            case 'D': epoch += amount * 86400.0;  break;
             case 'H': epoch += amount * 3600.0;   break;
             case 'N': epoch += amount * 60.0;     break;
-            case 'S': epoch += amount;            break;
-            default:  epoch += amount * 86400.0;  break;
+            default:  epoch += amount;            break;
         }
     }
     struct tm out;

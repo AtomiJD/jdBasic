@@ -1045,6 +1045,8 @@ struct UserTool {
     std::string module_path;
 };
 static std::vector<UserTool>            g_user_tools;
+// With --tools-only the server offers the user tools and nothing else.
+static bool                              g_tools_only = false;
 static std::unordered_set<std::string>  g_user_modules_loaded;
 
 void load_user_tools(VM& vm, const std::string& dir) {
@@ -1156,6 +1158,11 @@ Value invoke_user_tool(VM& vm, const UserTool& t, const Value& args) {
 Value build_tools() {
     Value tools = Value::make_array();
     auto& a = tools.as_array()->elements;
+    if (g_tools_only) {
+        for (auto& t : g_user_tools)
+            a.push_back(tool_descriptor(t.name, t.description, t.input_schema));
+        return tools;
+    }
 
     a.push_back(tool_descriptor(
         "jdb_eval",
@@ -1246,6 +1253,11 @@ Value build_tools() {
 // ── Dispatch ────────────────────────────────────────────────────
 
 Value dispatch_tool(VM& vm, const std::string& name, const Value& args) {
+    if (g_tools_only) {
+        for (auto& t : g_user_tools)
+            if (t.name == name) return invoke_user_tool(vm, t, args);
+        return make_text_result("Unknown tool: " + name, true);
+    }
     if (name == "jdb_eval")       return tool_jdb_eval(vm, args);
     if (name == "jdb_check")      return tool_jdb_check(vm, args);
     if (name == "jdb_load")       return tool_jdb_load(vm, args);
@@ -1397,7 +1409,8 @@ void reader_loop(VM& vm, McpInbox& inbox) {
     log_line("reader: stdin closed");
 }
 
-int run_mcp_stdio(VM& vm, const std::string& user_tools_dir) {
+int run_mcp_stdio(VM& vm, const std::string& user_tools_dir, bool tools_only) {
+    g_tools_only = tools_only;
 #ifdef _WIN32
     // Windows defaults stdin/stdout to text mode, which translates LF↔CRLF
     // and would corrupt JSON containing escaped newlines. Force binary.

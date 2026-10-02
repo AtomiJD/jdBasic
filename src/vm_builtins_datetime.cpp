@@ -27,11 +27,10 @@ static void jdb_civil_from_days(int64_t z, int64_t& y, int64_t& m, int64_t& d) {
 // available for a date the rules never covered.
 static int64_t jdb_utc_offset_at(int64_t y, int64_t mo, int64_t d,
                                  int64_t h, int64_t mi, int64_t se) {
-    // The rules are asked about a year the CRT does cover, of the same
-    // leapness so a 29 February stays a real date. Daylight rules are
-    // political and did not exist for most of the years this reaches, so
-    // the ones in force now are the only answer available.
-    int64_t py = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0)) ? 2000 : 2001;
+    // The rules are asked about the year moved into 2000 to 2399, which
+    // keeps its leap day and its weekdays, so a rule such as "the second
+    // Sunday in March" falls on the same date.
+    int64_t py = 2000 + (((y - 2000) % 400) + 400) % 400;
     std::tm probe{};
     probe.tm_year = (int)(py - 1900);
     probe.tm_mon  = (int)(mo - 1);
@@ -87,8 +86,27 @@ static void jdb_epoch_to_civil_utc(double epoch, int64_t& y, int64_t& mo, int64_
 // The local wall clock of an instant, as civil components.
 static void jdb_epoch_to_civil_local(double epoch, int64_t& y, int64_t& mo, int64_t& d,
                                      int64_t& h, int64_t& mi, int64_t& se, int64_t& wd) {
+    // Within the CRT's range its own conversion knows every switch.
+    if (epoch >= 0.0 && epoch < 32503680000.0) {
+        std::time_t t = (std::time_t)std::floor(epoch);
+        std::tm tm{};
+#ifdef _WIN32
+        bool ok = localtime_s(&tm, &t) == 0;
+#else
+        bool ok = localtime_r(&t, &tm) != nullptr;
+#endif
+        if (ok) {
+            y = tm.tm_year + 1900; mo = tm.tm_mon + 1; d = tm.tm_mday;
+            h = tm.tm_hour; mi = tm.tm_min; se = tm.tm_sec; wd = tm.tm_wday;
+            return;
+        }
+    }
     jdb_epoch_to_civil_utc(epoch, y, mo, d, h, mi, se, wd);
     int64_t off = jdb_utc_offset_at(y, mo, d, h, mi, se);
+    // The offset was asked for the UTC clock read as local time; ask again
+    // at the local time that answer gives, which settles near a switch.
+    jdb_epoch_to_civil_utc(epoch + (double)off, y, mo, d, h, mi, se, wd);
+    off = jdb_utc_offset_at(y, mo, d, h, mi, se);
     jdb_epoch_to_civil_utc(epoch + (double)off, y, mo, d, h, mi, se, wd);
 }
 
@@ -105,6 +123,20 @@ static double jdb_add_months_local(double epoch, int64_t months) {
     int64_t last = jdb_days_in_month(ny, nm);
     if (nd > last) nd = last;
     return jdb_local_civil_to_epoch(ny, nm, nd, h, mi, se);
+}
+
+// An epoch moved by whole days on the local calendar: the wall clock stays
+// where it was across a change to or from daylight saving time. A
+// fraction of a day is added as elapsed time.
+static double jdb_add_days_local(double epoch, double days) {
+    int64_t y, mo, d, h, mi, se, wd;
+    double frac_sec = epoch - std::floor(epoch);
+    jdb_epoch_to_civil_local(epoch, y, mo, d, h, mi, se, wd);
+    double whole = std::trunc(days);
+    int64_t ny, nm, nd;
+    jdb_civil_from_days(jdb_days_from_civil(y, mo, d) + (int64_t)whole, ny, nm, nd);
+    return jdb_local_civil_to_epoch(ny, nm, nd, h, mi, se) + frac_sec +
+           (days - whole) * 86400.0;
 }
 
 static auto g_program_start = std::chrono::steady_clock::now();
@@ -232,17 +264,18 @@ void VM::register_datetime_builtins() {
     }
 
     register_native("DATEADD", 3, 4, [value_to_epoch](const std::vector<Value>& args) -> Value {
-        // DATEADD(part$, num, date_epoch, [tz]). TZ accepted for API symmetry
-        // but D/H/N/S arithmetic is TZ-invariant on epoch, so it's unused here.
+        // DATEADD(part$, num, date_epoch, [tz]). D, W, M and Y move the local
+        // calendar and keep the wall clock; H, N and S add elapsed time. TZ is
+        // accepted for API symmetry and unused.
         std::string part = args[0].as_string()->data;
         double num = args[1].to_double();
         double epoch = value_to_epoch(args[2]);
         for (auto& c : part) c = (char)std::toupper((unsigned char)c);
-        if (part == "D")      epoch += num * 86400;
+        if (part == "D")      epoch = jdb_add_days_local(epoch, num);
         else if (part == "H") epoch += num * 3600;
         else if (part == "N") epoch += num * 60;
         else if (part == "S") epoch += num;
-        else if (part == "W") epoch += num * 604800;
+        else if (part == "W") epoch = jdb_add_days_local(epoch, num * 7);
         else if (part == "M") epoch = jdb_add_months_local(epoch, (int64_t)num);
         else if (part == "Y") epoch = jdb_add_months_local(epoch, (int64_t)num * 12);
         else throw jdError(ErrCode::WRONG_ARG_TYPE,

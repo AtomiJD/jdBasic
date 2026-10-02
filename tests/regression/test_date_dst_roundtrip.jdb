@@ -1,0 +1,23 @@
+' Every day of a year at four clock times reads back as written, and a
+' day added to a midnight is the next midnight, in any time zone.
+DIM bad = 0
+DIM day$ = "2026-01-01"
+DIM k = 0
+FOR k = 1 TO 365
+    DIM t$ = ""
+    FOR EACH clock$ IN [" 00:00:00", " 01:30:00", " 12:00:00", " 23:30:00"]
+        t$ = FORMAT_DATE(CDATE(day$ + clock$), "%Y-%m-%d %H:%M:%S")
+        IF t$ <> day$ + clock$ THEN
+            bad = bad + 1
+            PRINT "roundtrip "; day$ + clock$; " -> "; t$
+        ENDIF
+    NEXT
+    DIM nxt$ = FORMAT_DATE(DATEADD("D", 1, CDATE(day$)), "%Y-%m-%d %H:%M:%S")
+    IF RIGHT$(nxt$, 8) <> "00:00:00" THEN
+        bad = bad + 1
+        PRINT "dateadd "; day$; " -> "; nxt$
+    ENDIF
+    day$ = LEFT$(nxt$, 10)
+NEXT k
+PRINT "last "; day$
+IF bad = 0 THEN PRINT "RESULTS: 1 passed, 0 failed" ELSE PRINT "RESULTS: 0 passed, 1 failed"
