@@ -79,10 +79,24 @@ ENDFUNC
 ' showing what you type. Nothing is written down, and Outlook needs
 ' none.
 EXPORT FUNC ASK$(cfg)
+    IF WORKCONF.FLAG("dry-run") THEN RETURN ""
     IF SENDS_WITH$(cfg) = "outlook" THEN RETURN ""
     DIM user$ = WORKCONF.VALUE(cfg, "mail.user", "")
     DIM ask$ = "Mail password for " + user$ + ": "
     RETURN VAULT.FIND$("AutomateWork/mail", "", ask$)
+ENDFUNC
+
+' What a send would do: one line per message in the outbox, nothing
+' sent. Answers {"sent": 0, "failed": []}, as a send that sent nothing.
+EXPORT FUNC DRY_SEND(cfg)
+    DIM files = PENDING(cfg)
+    DIM k = 0
+    FOR k = 0 TO LEN(files) - 1
+        DIM name$ = PATH.BASENAME$(files[k])
+        PRINT "would send "; name$; " ("; SENDS_WITH$(cfg); ")"
+    NEXT k
+    IF LEN(files) = 0 THEN PRINT "the outbox is empty"
+    RETURN {"sent": 0, "failed": []}
 ENDFUNC
 
 ' The curl arguments that send one .eml file of the outbox.
@@ -101,6 +115,7 @@ ENDFUNC
 ' Sends every message of the outbox and moves each one that went out
 ' into outbox/sent. Answers {"sent": n, "failed": [lines]}.
 EXPORT FUNC SEND_ALL(cfg, password$)
+    IF WORKCONF.FLAG("dry-run") THEN RETURN DRY_SEND(cfg)
     IF SENDS_WITH$(cfg) = "outlook" THEN RETURN SEND_OUTLOOK(cfg)
     DIM server = SERVER(cfg, password$)
     DIM sent_dir$ = PATH.JOIN$(FOLDER$(cfg), "sent")
@@ -133,6 +148,7 @@ ENDFUNC
 ' account Outlook uses, and moves each one that went out into
 ' outbox/sent. Answers {"sent": n, "failed": [lines]}.
 EXPORT FUNC SEND_OUTLOOK(cfg)
+    IF WORKCONF.FLAG("dry-run") THEN RETURN DRY_SEND(cfg)
     DIM files = PENDING(cfg)
     DIM failed = []
     DIM n = 0
