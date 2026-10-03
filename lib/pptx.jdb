@@ -1,0 +1,558 @@
+' pptx.jdb: PowerPoint presentations without PowerPoint: title slides,
+' slides with a title and bullet points, pictures, tables and speaker
+' notes, in 16:9; presentations read back as their slides' text.
+'
+'   IMPORT PPTX
+'   DIM deck = PPTX.NEW("Quarterly Review")
+'   PPTX.TITLE_SLIDE(deck, "Quarterly Review", "Sales team, October")
+'   PPTX.SLIDE(deck, "Highlights", ["Revenue up 8 %", "Two new customers"])
+'   PPTX.IMAGE(deck, "chart.png")
+'   PPTX.NOTES(deck, "Thank the team first.")
+'   PPTX.SLIDE(deck, "Numbers", [])
+'   PPTX.TABLE(deck, [["Region", "Revenue"], ["North", "1.2 M"]])
+'   PRINT PPTX.WRITE(deck, "review.pptx")
+'
+' Every slide uses one blank layout and draws its own text boxes,
+' pictures and tables, so a deck does not depend on a template. The
+' parts are written as XML text and packed with ZIP.WRITE, the way
+' DOCX writes its documents.
+
+EXPORT MODULE PPTX
+
+DIM gHead$ = "<?xml version='1.0' encoding='UTF-8' standalone='yes'?>" + CHR$(13) + CHR$(10)
+DIM gNsP$ = "xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main' xmlns:r='http://schemas.openxmlformats.org/officeDocument/2006/relationships' xmlns:p='http://schemas.openxmlformats.org/presentationml/2006/main'"
+DIM gRelNs$ = "http://schemas.openxmlformats.org/package/2006/relationships"
+DIM gRel$ = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+DIM gCt$ = "application/vnd.openxmlformats-officedocument.presentationml."
+CONST SLIDE_W = 12192000
+CONST SLIDE_H = 6858000
+CONST MARGIN = 457200
+
+' ── building a deck ────────────────────────────────────────────
+
+' A new, empty presentation; title$ goes into its properties.
+EXPORT FUNC NEW(title$ = "")
+    DIM deck AS MAP
+    deck{"title"} = title$
+    deck{"slides"} = []
+    deck{"media"} = []
+    RETURN deck
+ENDFUNC
+
+FUNC NewSlide(kind$, title$, sub$, bullets)
+    DIM s AS MAP
+    s{"kind"} = kind$
+    s{"title"} = title$
+    s{"subtitle"} = sub$
+    s{"bullets"} = bullets
+    s{"image"} = -1
+    s{"table"} = []
+    s{"header"} = TRUE
+    s{"notes"} = ""
+    RETURN s
+ENDFUNC
+
+SUB AddSlide(deck, s)
+    DIM slides = deck{"slides"}
+    PUSH(slides, s)
+    deck{"slides"} = slides
+ENDSUB
+
+' The last slide of a deck, for the calls that add to it.
+FUNC LastSlide(deck, fn$)
+    DIM slides = deck{"slides"}
+    IF LEN(slides) = 0 THEN THROW "PPTX." + fn$ + ": add a slide first"
+    RETURN slides[LEN(slides) - 1]
+ENDFUNC
+
+SUB SetLast(deck, s)
+    DIM slides = deck{"slides"}
+    slides[LEN(slides) - 1] = s
+    deck{"slides"} = slides
+ENDSUB
+
+' A list of texts copied into a new list, each item as text.
+FUNC CopyTexts(items)
+    DIM out = []
+    DIM k = 0
+    FOR k = 0 TO LEN(items) - 1
+        DIM one$ = "" + items[k]
+        PUSH(out, one$)
+    NEXT k
+    RETURN out
+ENDFUNC
+
+' A title slide: a large title in the middle and a line below it.
+' Answers the number of the slide.
+EXPORT FUNC TITLE_SLIDE(deck, title$, subtitle$ = "")
+    AddSlide(deck, NewSlide("title", title$, subtitle$, []))
+    RETURN LEN(deck{"slides"})
+ENDFUNC
+
+' A slide with a title and a list of bullet points (may be empty). A
+' point that starts with two blanks is indented one level. Answers the
+' number of the slide.
+EXPORT FUNC SLIDE(deck, title$, bullets)
+    AddSlide(deck, NewSlide("content", title$, "", CopyTexts(bullets)))
+    RETURN LEN(deck{"slides"})
+ENDFUNC
+
+' A PNG or JPEG picture on the last slide: on the right half when the
+' slide has bullet points, in the middle when it has none.
+EXPORT SUB IMAGE(deck, path$)
+    DIM s = LastSlide(deck, "IMAGE")
+    DIM data$ = BINREADER$(path$)
+    DIM info = ImageInfo(data$)
+    DIM media = deck{"media"}
+    DIM n = LEN(media)
+    DIM kind$ = info{"kind"}
+    DIM item AS MAP
+    item{"name"} = "image" + STR$(n + 1) + "." + kind$
+    item{"data"} = data$
+    item{"w"} = info{"w"}
+    item{"h"} = info{"h"}
+    PUSH(media, item)
+    deck{"media"} = media
+    s{"image"} = n
+    SetLast(deck, s)
+ENDSUB
+
+' A table on the last slide; rows is a list of rows of texts, the first
+' row set in bold on a coloured band when header is TRUE.
+EXPORT SUB TABLE(deck, rows, header = TRUE)
+    DIM s = LastSlide(deck, "TABLE")
+    IF LEN(rows) = 0 THEN THROW "PPTX.TABLE: no rows"
+    DIM copied = []
+    DIM r = 0
+    FOR r = 0 TO LEN(rows) - 1
+        PUSH(copied, CopyTexts(rows[r]))
+    NEXT r
+    s{"table"} = copied
+    s{"header"} = header
+    SetLast(deck, s)
+ENDSUB
+
+' Speaker notes for the last slide.
+EXPORT SUB NOTES(deck, text$)
+    DIM s = LastSlide(deck, "NOTES")
+    s{"notes"} = text$
+    SetLast(deck, s)
+ENDSUB
+
+' How many slides the deck has.
+EXPORT FUNC COUNT_SLIDES(deck)
+    RETURN LEN(deck{"slides"})
+ENDFUNC
+
+' ── pictures ───────────────────────────────────────────────────
+
+FUNC ByteOf(s$, i)
+    RETURN ASC(MID$(s$, i, 1))
+ENDFUNC
+
+' The kind ("png" or "jpeg"), width and height in pixels of a PNG or
+' JPEG held in a string, as a map.
+FUNC ImageInfo(data$)
+    DIM n = LEN(data$)
+    IF n > 24 ANDALSO LEFT$(data$, 4) = CHR$(137) + "PNG" THEN
+        DIM pw = ((ByteOf(data$, 16) * 256 + ByteOf(data$, 17)) * 256 + ByteOf(data$, 18)) * 256 + ByteOf(data$, 19)
+        DIM ph = ((ByteOf(data$, 20) * 256 + ByteOf(data$, 21)) * 256 + ByteOf(data$, 22)) * 256 + ByteOf(data$, 23)
+        RETURN {"kind": "png", "w": pw, "h": ph}
+    ENDIF
+    IF n > 4 ANDALSO ByteOf(data$, 0) = 255 ANDALSO ByteOf(data$, 1) = 216 THEN
+        DIM k = 2
+        DO WHILE k + 9 < n
+            IF ByteOf(data$, k) <> 255 THEN
+                k = k + 1
+            ELSE
+                DIM marker = ByteOf(data$, k + 1)
+                DIM seg = ByteOf(data$, k + 2) * 256 + ByteOf(data$, k + 3)
+                IF marker >= 192 ANDALSO marker <= 207 ANDALSO marker <> 196 ANDALSO marker <> 200 ANDALSO marker <> 204 THEN
+                    DIM jh = ByteOf(data$, k + 5) * 256 + ByteOf(data$, k + 6)
+                    DIM jw = ByteOf(data$, k + 7) * 256 + ByteOf(data$, k + 8)
+                    RETURN {"kind": "jpeg", "w": jw, "h": jh}
+                ENDIF
+                IF marker = 216 ORELSE marker = 1 ORELSE (marker >= 208 ANDALSO marker <= 215) THEN
+                    k = k + 2
+                ELSE
+                    k = k + 2 + seg
+                ENDIF
+            ENDIF
+        LOOP
+    ENDIF
+    THROW "PPTX: not a PNG or JPEG image"
+    RETURN {}
+ENDFUNC
+
+' ── slide XML ──────────────────────────────────────────────────
+
+FUNC Esc$(s$)
+    DIM t$ = REPLACE$(REPLACE$(REPLACE$(s$, "&", "&amp;"), "<", "&lt;"), ">", "&gt;")
+    RETURN REPLACE$(t$, "'", "&apos;")
+ENDFUNC
+
+FUNC N$(v)
+    RETURN STR$(ROUND(v))
+ENDFUNC
+
+FUNC Xfrm$(x, y, w, h)
+    RETURN "<a:xfrm><a:off x='" + N$(x) + "' y='" + N$(y) + "'/><a:ext cx='" + N$(w) + "' cy='" + N$(h) + "'/></a:xfrm>"
+ENDFUNC
+
+' A run of text: size in hundredths of a point, bold, and a colour.
+FUNC Run$(t$, size, bold, colour$)
+    DIM b$ = "0"
+    IF bold THEN b$ = "1"
+    RETURN "<a:r><a:rPr lang='en-US' sz='" + STR$(size) + "' b='" + b$ + "' dirty='0'><a:solidFill><a:srgbClr val='" + colour$ + "'/></a:solidFill><a:latin typeface='Calibri'/></a:rPr><a:t>" + Esc$(t$) + "</a:t></a:r>"
+ENDFUNC
+
+' A text box shape with the given paragraphs (already XML).
+FUNC TextBox$(id, name$, x, y, w, h, paras$, anchor$)
+    DIM sp$ = "<p:sp><p:nvSpPr><p:cNvPr id='" + STR$(id) + "' name='" + Esc$(name$) + "'/><p:cNvSpPr txBox='1'/><p:nvPr/></p:nvSpPr>"
+    sp$ = sp$ + "<p:spPr>" + Xfrm$(x, y, w, h) + "<a:prstGeom prst='rect'><a:avLst/></a:prstGeom><a:noFill/></p:spPr>"
+    sp$ = sp$ + "<p:txBody><a:bodyPr wrap='square' lIns='91440' tIns='45720' rIns='91440' bIns='45720' anchor='" + anchor$ + "'><a:normAutofit/></a:bodyPr><a:lstStyle/>" + paras$ + "</p:txBody></p:sp>"
+    RETURN sp$
+ENDFUNC
+
+FUNC Para$(t$, size, bold, colour$, align$)
+    RETURN "<a:p><a:pPr algn='" + align$ + "'/>" + Run$(t$, size, bold, colour$) + "</a:p>"
+ENDFUNC
+
+' The paragraphs of a list of bullet points.
+FUNC BulletParas$(bullets)
+    DIM out$ = ""
+    DIM k = 0
+    FOR k = 0 TO LEN(bullets) - 1
+        DIM b$ = bullets[k]
+        DIM lvl = 0
+        IF LEFT$(b$, 2) = "  " THEN lvl = 1
+        DIM t$ = TRIM$(b$)
+        DIM marl = 342900 + lvl * 457200
+        DIM size = 2400
+        IF lvl = 1 THEN size = 2000
+        out$ = out$ + "<a:p><a:pPr marL='" + STR$(marl) + "' lvl='" + STR$(lvl) + "' indent='-342900'><a:spcBef><a:spcPts val='600'/></a:spcBef><a:buFont typeface='Arial'/><a:buChar char='" + CHR$(226) + CHR$(128) + CHR$(162) + "'/></a:pPr>" + Run$(t$, size, FALSE, "333333") + "</a:p>"
+    NEXT k
+    IF out$ = "" THEN out$ = "<a:p><a:endParaRPr lang='en-US' dirty='0'/></a:p>"
+    RETURN out$
+ENDFUNC
+
+' A picture shape fitted into the box x, y, w, h, keeping its shape.
+FUNC Picture$(id, rel$, img, x, y, w, h)
+    DIM pw = img{"w"}
+    DIM ph = img{"h"}
+    DIM scale = w / pw
+    IF ph * scale > h THEN scale = h / ph
+    DIM cw = pw * scale
+    DIM ch = ph * scale
+    DIM px = x + (w - cw) / 2
+    DIM py = y + (h - ch) / 2
+    DIM pic$ = "<p:pic><p:nvPicPr><p:cNvPr id='" + STR$(id) + "' name='Picture " + STR$(id) + "'/><p:cNvPicPr><a:picLocks noChangeAspect='1'/></p:cNvPicPr><p:nvPr/></p:nvPicPr>"
+    pic$ = pic$ + "<p:blipFill><a:blip r:embed='" + rel$ + "'/><a:stretch><a:fillRect/></a:stretch></p:blipFill>"
+    pic$ = pic$ + "<p:spPr>" + Xfrm$(px, py, cw, ch) + "<a:prstGeom prst='rect'><a:avLst/></a:prstGeom></p:spPr></p:pic>"
+    RETURN pic$
+ENDFUNC
+
+' A table frame in the box x, y, w with rows of texts.
+FUNC Table$(id, rows, header, x, y, w)
+    DIM n_cols = 0
+    DIM r = 0
+    DIM c = 0
+    FOR r = 0 TO LEN(rows) - 1
+        IF LEN(rows[r]) > n_cols THEN n_cols = LEN(rows[r])
+    NEXT r
+    DIM col_w = ROUND(w / n_cols)
+    DIM row_h = 457200
+    DIM grid$ = "<a:tblGrid>"
+    FOR c = 1 TO n_cols
+        grid$ = grid$ + "<a:gridCol w='" + STR$(col_w) + "'/>"
+    NEXT c
+    grid$ = grid$ + "</a:tblGrid>"
+    DIM body$ = ""
+    FOR r = 0 TO LEN(rows) - 1
+        DIM row = rows[r]
+        DIM is_head = header ANDALSO r = 0
+        body$ = body$ + "<a:tr h='" + STR$(row_h) + "'>"
+        FOR c = 0 TO n_cols - 1
+            DIM cell$ = ""
+            IF c < LEN(row) THEN cell$ = row[c]
+            DIM colour$ = "333333"
+            IF is_head THEN colour$ = "FFFFFF"
+            DIM fill$ = "F2F2F2"
+            IF r MOD 2 = 1 THEN fill$ = "FFFFFF"
+            IF is_head THEN fill$ = "1F4E79"
+            body$ = body$ + "<a:tc><a:txBody><a:bodyPr/><a:lstStyle/><a:p>" + Run$(cell$, 1800, is_head, colour$) + "</a:p></a:txBody><a:tcPr marL='91440' marR='91440' marT='45720' marB='45720' anchor='ctr'><a:solidFill><a:srgbClr val='" + fill$ + "'/></a:solidFill></a:tcPr></a:tc>"
+        NEXT c
+        body$ = body$ + "</a:tr>"
+    NEXT r
+    DIM fr$ = "<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id='" + STR$(id) + "' name='Table " + STR$(id) + "'/><p:cNvGraphicFramePr><a:graphicFrameLocks noGrp='1'/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>"
+    fr$ = fr$ + "<p:xfrm><a:off x='" + N$(x) + "' y='" + N$(y) + "'/><a:ext cx='" + STR$(col_w * n_cols) + "' cy='" + STR$(row_h * LEN(rows)) + "'/></p:xfrm>"
+    fr$ = fr$ + "<a:graphic><a:graphicData uri='http://schemas.openxmlformats.org/drawingml/2006/table'><a:tbl><a:tblPr firstRow='1' bandRow='1'/>" + grid$ + body$ + "</a:tbl></a:graphicData></a:graphic></p:graphicFrame>"
+    RETURN fr$
+ENDFUNC
+
+FUNC SpTree$(shapes$)
+    RETURN "<p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id='1' name=''/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x='0' y='0'/><a:ext cx='0' cy='0'/><a:chOff x='0' y='0'/><a:chExt cx='0' cy='0'/></a:xfrm></p:grpSpPr>" + shapes$ + "</p:spTree></p:cSld>"
+ENDFUNC
+
+' The XML of one slide; the picture, if any, is relationship rId2.
+FUNC SlideXml$(deck, s)
+    DIM inner_w = SLIDE_W - 2 * MARGIN
+    DIM shapes$ = ""
+    IF s{"kind"} = "title" THEN
+        shapes$ = TextBox$(2, "Title", MARGIN, 2130000, inner_w, 1470000, Para$(s{"title"}, 4400, TRUE, "1F4E79", "ctr"), "b")
+        IF s{"subtitle"} <> "" THEN shapes$ = shapes$ + TextBox$(3, "Subtitle", MARGIN, 3700000, inner_w, 900000, Para$(s{"subtitle"}, 2400, FALSE, "595959", "ctr"), "t")
+    ELSE
+        shapes$ = TextBox$(2, "Title", MARGIN, 274320, inner_w, 1005840, Para$(s{"title"}, 3600, TRUE, "1F4E79", "l"), "b")
+        DIM top = 1463040
+        DIM body_h = SLIDE_H - top - MARGIN
+        DIM bullets = s{"bullets"}
+        DIM has_pic = s{"image"} >= 0
+        DIM has_table = LEN(s{"table"}) > 0
+        DIM body_w = inner_w
+        IF has_pic ANDALSO LEN(bullets) > 0 THEN body_w = inner_w / 2 - 114300
+        IF LEN(bullets) > 0 THEN
+            DIM list_h = body_h
+            IF has_table THEN list_h = body_h / 2
+            shapes$ = shapes$ + TextBox$(3, "Content", MARGIN, top, body_w, list_h, BulletParas$(bullets), "t")
+        ENDIF
+        IF has_pic THEN
+            DIM media = deck{"media"}
+            DIM img = media[s{"image"}]
+            IF LEN(bullets) > 0 THEN
+                shapes$ = shapes$ + Picture$(4, "rId2", img, MARGIN + inner_w / 2 + 114300, top, inner_w / 2 - 114300, body_h)
+            ELSE
+                shapes$ = shapes$ + Picture$(4, "rId2", img, MARGIN, top, inner_w, body_h)
+            ENDIF
+        ENDIF
+        IF has_table THEN
+            DIM ty = top
+            IF LEN(bullets) > 0 THEN ty = top + body_h / 2
+            shapes$ = shapes$ + Table$(5, s{"table"}, s{"header"}, MARGIN, ty, body_w)
+        ENDIF
+    ENDIF
+    RETURN gHead$ + "<p:sld " + gNsP$ + ">" + SpTree$(shapes$) + "<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"
+ENDFUNC
+
+FUNC Rel$(id$, kind$, target$)
+    RETURN "<Relationship Id='" + id$ + "' Type='" + gRel$ + kind$ + "' Target='" + target$ + "'/>"
+ENDFUNC
+
+FUNC Rels$(inner$)
+    RETURN gHead$ + "<Relationships xmlns='" + gRelNs$ + "'>" + inner$ + "</Relationships>"
+ENDFUNC
+
+FUNC SlideRels$(deck, s, n)
+    DIM inner$ = Rel$("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml")
+    IF s{"image"} >= 0 THEN
+        DIM media = deck{"media"}
+        DIM img = media[s{"image"}]
+        inner$ = inner$ + Rel$("rId2", "image", "../media/" + img{"name"})
+    ENDIF
+    IF s{"notes"} <> "" THEN inner$ = inner$ + Rel$("rId3", "notesSlide", "../notesSlides/notesSlide" + STR$(n) + ".xml")
+    RETURN Rels$(inner$)
+ENDFUNC
+
+FUNC NotesXml$(text$)
+    DIM paras$ = ""
+    DIM lines = SPLIT(REPLACE$(text$, CHR$(13), ""), CHR$(10))
+    DIM k = 0
+    FOR k = 0 TO LEN(lines) - 1
+        paras$ = paras$ + "<a:p><a:r><a:rPr lang='en-US' dirty='0'/><a:t>" + Esc$(lines[k]) + "</a:t></a:r></a:p>"
+    NEXT k
+    DIM img$ = "<p:sp><p:nvSpPr><p:cNvPr id='2' name='Slide Image'/><p:cNvSpPr><a:spLocks noGrp='1' noRot='1' noChangeAspect='1'/></p:cNvSpPr><p:nvPr><p:ph type='sldImg'/></p:nvPr></p:nvSpPr><p:spPr/></p:sp>"
+    DIM body$ = "<p:sp><p:nvSpPr><p:cNvPr id='3' name='Notes'/><p:cNvSpPr><a:spLocks noGrp='1'/></p:cNvSpPr><p:nvPr><p:ph type='body' idx='1'/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>" + paras$ + "</p:txBody></p:sp>"
+    RETURN gHead$ + "<p:notes " + gNsP$ + ">" + SpTree$(img$ + body$) + "<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"
+ENDFUNC
+
+' ── the parts every deck has ───────────────────────────────────
+
+FUNC ThemeXml$()
+    DIM clr$ = "<a:clrScheme name='Office'><a:dk1><a:sysClr val='windowText' lastClr='000000'/></a:dk1><a:lt1><a:sysClr val='window' lastClr='FFFFFF'/></a:lt1><a:dk2><a:srgbClr val='1F4E79'/></a:dk2><a:lt2><a:srgbClr val='E7E6E6'/></a:lt2><a:accent1><a:srgbClr val='4472C4'/></a:accent1><a:accent2><a:srgbClr val='ED7D31'/></a:accent2><a:accent3><a:srgbClr val='A5A5A5'/></a:accent3><a:accent4><a:srgbClr val='FFC000'/></a:accent4><a:accent5><a:srgbClr val='5B9BD5'/></a:accent5><a:accent6><a:srgbClr val='70AD47'/></a:accent6><a:hlink><a:srgbClr val='0563C1'/></a:hlink><a:folHlink><a:srgbClr val='954F72'/></a:folHlink></a:clrScheme>"
+    DIM font$ = "<a:fontScheme name='Office'><a:majorFont><a:latin typeface='Calibri Light'/><a:ea typeface=''/><a:cs typeface=''/></a:majorFont><a:minorFont><a:latin typeface='Calibri'/><a:ea typeface=''/><a:cs typeface=''/></a:minorFont></a:fontScheme>"
+    DIM fill$ = "<a:solidFill><a:schemeClr val='phClr'/></a:solidFill>"
+    DIM ln$ = "<a:ln w='9525'><a:solidFill><a:schemeClr val='phClr'/></a:solidFill></a:ln>"
+    DIM fmt$ = "<a:fmtScheme name='Office'><a:fillStyleLst>" + fill$ + fill$ + fill$ + "</a:fillStyleLst><a:lnStyleLst>" + ln$ + ln$ + ln$ + "</a:lnStyleLst><a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst>" + fill$ + fill$ + fill$ + "</a:bgFillStyleLst></a:fmtScheme>"
+    RETURN gHead$ + "<a:theme xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main' name='Office'><a:themeElements>" + clr$ + font$ + fmt$ + "</a:themeElements><a:objectDefaults/><a:extraClrSchemeLst/></a:theme>"
+ENDFUNC
+
+FUNC ClrMap$()
+    RETURN "<p:clrMap bg1='lt1' tx1='dk1' bg2='lt2' tx2='dk2' accent1='accent1' accent2='accent2' accent3='accent3' accent4='accent4' accent5='accent5' accent6='accent6' hlink='hlink' folHlink='folHlink'/>"
+ENDFUNC
+
+FUNC MasterXml$()
+    DIM bg$ = "<p:bg><p:bgPr><a:solidFill><a:srgbClr val='FFFFFF'/></a:solidFill><a:effectLst/></p:bgPr></p:bg>"
+    DIM tree$ = SpTree$("")
+    tree$ = REPLACE$(tree$, "<p:cSld>", "<p:cSld>" + bg$)
+    RETURN gHead$ + "<p:sldMaster " + gNsP$ + ">" + tree$ + ClrMap$() + "<p:sldLayoutIdLst><p:sldLayoutId id='2147483649' r:id='rId1'/></p:sldLayoutIdLst><p:txStyles><p:titleStyle/><p:bodyStyle/><p:otherStyle/></p:txStyles></p:sldMaster>"
+ENDFUNC
+
+FUNC LayoutXml$()
+    DIM tree$ = REPLACE$(SpTree$(""), "<p:cSld>", "<p:cSld name='Blank'>")
+    RETURN gHead$ + "<p:sldLayout " + gNsP$ + " type='blank' preserve='1'>" + tree$ + "<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sldLayout>"
+ENDFUNC
+
+FUNC NotesMasterXml$()
+    DIM img$ = "<p:sp><p:nvSpPr><p:cNvPr id='2' name='Slide Image'/><p:cNvSpPr><a:spLocks noGrp='1' noRot='1' noChangeAspect='1'/></p:cNvSpPr><p:nvPr><p:ph type='sldImg' idx='2'/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x='685800' y='1143000'/><a:ext cx='5486400' cy='3086100'/></a:xfrm><a:prstGeom prst='rect'><a:avLst/></a:prstGeom></p:spPr></p:sp>"
+    DIM body$ = "<p:sp><p:nvSpPr><p:cNvPr id='3' name='Notes'/><p:cNvSpPr><a:spLocks noGrp='1'/></p:cNvSpPr><p:nvPr><p:ph type='body' sz='quarter' idx='3'/></p:nvPr></p:nvSpPr><p:spPr><a:xfrm><a:off x='685800' y='4400550'/><a:ext cx='5486400' cy='3600450'/></a:xfrm><a:prstGeom prst='rect'><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang='en-US'/></a:p></p:txBody></p:sp>"
+    RETURN gHead$ + "<p:notesMaster " + gNsP$ + ">" + SpTree$(img$ + body$) + ClrMap$() + "</p:notesMaster>"
+ENDFUNC
+
+FUNC PresentationXml$(deck, has_notes)
+    DIM ids$ = ""
+    DIM k = 0
+    DIM slides = deck{"slides"}
+    FOR k = 0 TO LEN(slides) - 1
+        ids$ = ids$ + "<p:sldId id='" + STR$(256 + k) + "' r:id='rIdS" + STR$(k + 1) + "'/>"
+    NEXT k
+    DIM notes$ = ""
+    IF has_notes THEN notes$ = "<p:notesMasterIdLst><p:notesMasterId r:id='rIdN'/></p:notesMasterIdLst>"
+    DIM x$ = gHead$ + "<p:presentation " + gNsP$ + " saveSubsetFonts='1'><p:sldMasterIdLst><p:sldMasterId id='2147483648' r:id='rIdM'/></p:sldMasterIdLst>" + notes$
+    x$ = x$ + "<p:sldIdLst>" + ids$ + "</p:sldIdLst><p:sldSz cx='" + STR$(SLIDE_W) + "' cy='" + STR$(SLIDE_H) + "'/><p:notesSz cx='6858000' cy='9144000'/><p:defaultTextStyle/></p:presentation>"
+    RETURN x$
+ENDFUNC
+
+FUNC PresentationRels$(deck, has_notes)
+    DIM inner$ = Rel$("rIdM", "slideMaster", "slideMasters/slideMaster1.xml") + Rel$("rIdT", "theme", "theme/theme1.xml")
+    IF has_notes THEN inner$ = inner$ + Rel$("rIdN", "notesMaster", "notesMasters/notesMaster1.xml")
+    DIM k = 0
+    FOR k = 1 TO LEN(deck{"slides"})
+        inner$ = inner$ + Rel$("rIdS" + STR$(k), "slide", "slides/slide" + STR$(k) + ".xml")
+    NEXT k
+    RETURN Rels$(inner$)
+ENDFUNC
+
+FUNC ContentTypes$(deck, has_notes)
+    DIM x$ = gHead$ + "<Types xmlns='http://schemas.openxmlformats.org/package/2006/content-types'>"
+    x$ = x$ + "<Default Extension='rels' ContentType='application/vnd.openxmlformats-package.relationships+xml'/><Default Extension='xml' ContentType='application/xml'/><Default Extension='png' ContentType='image/png'/><Default Extension='jpeg' ContentType='image/jpeg'/>"
+    x$ = x$ + "<Override PartName='/ppt/presentation.xml' ContentType='" + gCt$ + "presentation.main+xml'/>"
+    x$ = x$ + "<Override PartName='/ppt/slideMasters/slideMaster1.xml' ContentType='" + gCt$ + "slideMaster+xml'/>"
+    x$ = x$ + "<Override PartName='/ppt/slideLayouts/slideLayout1.xml' ContentType='" + gCt$ + "slideLayout+xml'/>"
+    x$ = x$ + "<Override PartName='/ppt/theme/theme1.xml' ContentType='application/vnd.openxmlformats-officedocument.theme+xml'/>"
+    IF has_notes THEN
+        x$ = x$ + "<Override PartName='/ppt/theme/theme2.xml' ContentType='application/vnd.openxmlformats-officedocument.theme+xml'/>"
+        x$ = x$ + "<Override PartName='/ppt/notesMasters/notesMaster1.xml' ContentType='" + gCt$ + "notesMaster+xml'/>"
+    ENDIF
+    x$ = x$ + "<Override PartName='/docProps/core.xml' ContentType='application/vnd.openxmlformats-package.core-properties+xml'/>"
+    DIM slides = deck{"slides"}
+    DIM k = 0
+    FOR k = 1 TO LEN(slides)
+        x$ = x$ + "<Override PartName='/ppt/slides/slide" + STR$(k) + ".xml' ContentType='" + gCt$ + "slide+xml'/>"
+        DIM s = slides[k - 1]
+        IF s{"notes"} <> "" THEN x$ = x$ + "<Override PartName='/ppt/notesSlides/notesSlide" + STR$(k) + ".xml' ContentType='" + gCt$ + "notesSlide+xml'/>"
+    NEXT k
+    RETURN x$ + "</Types>"
+ENDFUNC
+
+FUNC CoreXml$(title$)
+    RETURN gHead$ + "<cp:coreProperties xmlns:cp='http://schemas.openxmlformats.org/package/2006/metadata/core-properties' xmlns:dc='http://purl.org/dc/elements/1.1/'><dc:title>" + Esc$(title$) + "</dc:title><dc:creator>jdBasic</dc:creator></cp:coreProperties>"
+ENDFUNC
+
+' Writes the deck as a .pptx file; answers the number of slides.
+EXPORT FUNC WRITE(deck, path$)
+    DIM slides = deck{"slides"}
+    IF LEN(slides) = 0 THEN THROW "PPTX.WRITE: the deck has no slides"
+    DIM has_notes = FALSE
+    DIM k = 0
+    FOR k = 0 TO LEN(slides) - 1
+        DIM s = slides[k]
+        IF s{"notes"} <> "" THEN has_notes = TRUE
+    NEXT k
+    DIM e AS MAP
+    e{"[Content_Types].xml"} = ContentTypes$(deck, has_notes)
+    e{"_rels/.rels"} = Rels$(Rel$("rId1", "officeDocument", "ppt/presentation.xml") + "<Relationship Id='rId2' Type='http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties' Target='docProps/core.xml'/>")
+    e{"docProps/core.xml"} = CoreXml$(deck{"title"})
+    e{"ppt/presentation.xml"} = PresentationXml$(deck, has_notes)
+    e{"ppt/_rels/presentation.xml.rels"} = PresentationRels$(deck, has_notes)
+    e{"ppt/theme/theme1.xml"} = ThemeXml$()
+    e{"ppt/slideMasters/slideMaster1.xml"} = MasterXml$()
+    e{"ppt/slideMasters/_rels/slideMaster1.xml.rels"} = Rels$(Rel$("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml") + Rel$("rId2", "theme", "../theme/theme1.xml"))
+    e{"ppt/slideLayouts/slideLayout1.xml"} = LayoutXml$()
+    e{"ppt/slideLayouts/_rels/slideLayout1.xml.rels"} = Rels$(Rel$("rId1", "slideMaster", "../slideMasters/slideMaster1.xml"))
+    IF has_notes THEN
+        e{"ppt/theme/theme2.xml"} = ThemeXml$()
+        e{"ppt/notesMasters/notesMaster1.xml"} = NotesMasterXml$()
+        e{"ppt/notesMasters/_rels/notesMaster1.xml.rels"} = Rels$(Rel$("rId1", "theme", "../theme/theme2.xml"))
+    ENDIF
+    FOR k = 0 TO LEN(slides) - 1
+        DIM sl = slides[k]
+        DIM no$ = STR$(k + 1)
+        e{"ppt/slides/slide" + no$ + ".xml"} = SlideXml$(deck, sl)
+        e{"ppt/slides/_rels/slide" + no$ + ".xml.rels"} = SlideRels$(deck, sl, k + 1)
+        IF sl{"notes"} <> "" THEN
+            e{"ppt/notesSlides/notesSlide" + no$ + ".xml"} = NotesXml$(sl{"notes"})
+            e{"ppt/notesSlides/_rels/notesSlide" + no$ + ".xml.rels"} = Rels$(Rel$("rId1", "notesMaster", "../notesMasters/notesMaster1.xml") + Rel$("rId2", "slide", "../slides/slide" + no$ + ".xml"))
+        ENDIF
+    NEXT k
+    DIM media = deck{"media"}
+    FOR k = 0 TO LEN(media) - 1
+        DIM m = media[k]
+        e{"ppt/media/" + m{"name"}} = m{"data"}
+    NEXT k
+    ZIP.WRITE(path$, e)
+    RETURN LEN(slides)
+ENDFUNC
+
+' ── reading back ───────────────────────────────────────────────
+
+' The texts of the <a:t> elements in a piece of XML, in order.
+FUNC Texts(xml$)
+    DIM out = []
+    DIM at = INSTR(xml$, "<a:t>")
+    DO WHILE at >= 0
+        DIM close_at = INSTR(at, xml$, "</a:t>")
+        IF close_at < 0 THEN EXITDO
+        DIM t$ = MID$(xml$, at + 5, close_at - at - 5)
+        t$ = REPLACE$(REPLACE$(REPLACE$(REPLACE$(t$, "&lt;", "<"), "&gt;", ">"), "&apos;", "'"), "&amp;", "&")
+        PUSH(out, t$)
+        at = INSTR(close_at, xml$, "<a:t>")
+    LOOP
+    RETURN out
+ENDFUNC
+
+' The part of xml$ from the shape named name$ to the end of that shape.
+FUNC ShapePart$(xml$, name$)
+    DIM at = INSTR(xml$, "name='" + name$ + "'")
+    IF at < 0 THEN RETURN ""
+    DIM close_at = INSTR(at, xml$, "</p:sp>")
+    IF close_at < 0 THEN RETURN ""
+    RETURN MID$(xml$, at, close_at - at)
+ENDFUNC
+
+' The slides of a .pptx file as maps: "title", "subtitle", "bullets",
+' "table" (rows of texts), "pictures" (how many) and "notes".
+EXPORT FUNC READ(path$)
+    DIM parts = ZIP.READ(path$)
+    DIM out = []
+    DIM k = 1
+    DO WHILE MAP.EXISTS(parts, "ppt/slides/slide" + STR$(k) + ".xml")
+        DIM xml$ = parts{"ppt/slides/slide" + STR$(k) + ".xml"}
+        DIM s AS MAP
+        s{"title"} = JOIN(Texts(ShapePart$(xml$, "Title")), "")
+        s{"subtitle"} = JOIN(Texts(ShapePart$(xml$, "Subtitle")), "")
+        s{"bullets"} = Texts(ShapePart$(xml$, "Content"))
+        DIM rows = []
+        DIM tbl_at = INSTR(xml$, "<a:tbl>")
+        IF tbl_at >= 0 THEN
+            DIM tr_at = INSTR(tbl_at, xml$, "<a:tr ")
+            DO WHILE tr_at >= 0
+                DIM tr_end = INSTR(tr_at, xml$, "</a:tr>")
+                PUSH(rows, Texts(MID$(xml$, tr_at, tr_end - tr_at)))
+                tr_at = INSTR(tr_end, xml$, "<a:tr ")
+            LOOP
+        ENDIF
+        s{"table"} = rows
+        DIM pics = 0
+        DIM p_at = INSTR(xml$, "<p:pic>")
+        DO WHILE p_at >= 0
+            pics = pics + 1
+            p_at = INSTR(p_at + 7, xml$, "<p:pic>")
+        LOOP
+        s{"pictures"} = pics
+        s{"notes"} = ""
+        DIM notes_name$ = "ppt/notesSlides/notesSlide" + STR$(k) + ".xml"
+        IF MAP.EXISTS(parts, notes_name$) THEN s{"notes"} = JOIN(Texts(parts{notes_name$}), CHR$(10))
+        PUSH(out, s)
+        k = k + 1
+    LOOP
+    RETURN out
+ENDFUNC

@@ -1,0 +1,128 @@
+' PPTX: a deck with a title slide, bullet points on two levels, a
+' picture, a table and speaker notes, written and read back; every XML
+' part well-formed, the package parts and relationships in place, and
+' the errors for a missing slide, an empty table and a file that is not
+' a picture.
+
+IMPORT TESTKIT, PPTX, XML
+
+DIM base$ = "tests/jdlibs/fixtures/"
+IF NOT FILE.EXISTS(base$ + "img_png/g1.png") THEN base$ = "fixtures/"
+DIM png$ = base$ + "img_png/g1.png"
+DIM jpg$ = base$ + "pdfgen_logo.jpg"
+DIM folder$ = MKTEMP$("pptxtest")
+MKDIR folder$
+DIM path$ = folder$ + "/deck.pptx"
+
+FUNC NoSlideYet(x)
+    DIM d = PPTX.NEW()
+    PPTX.NOTES(d, "too early")
+    RETURN 0
+ENDFUNC
+
+FUNC EmptyTable(x)
+    DIM d = PPTX.NEW()
+    DIM n = PPTX.SLIDE(d, "x", [])
+    PPTX.TABLE(d, [])
+    RETURN 0
+ENDFUNC
+
+FUNC NotPicture(p$)
+    DIM d = PPTX.NEW()
+    DIM n = PPTX.SLIDE(d, "x", [])
+    PPTX.IMAGE(d, p$)
+    RETURN 0
+ENDFUNC
+
+FUNC EmptyDeck(p$)
+    RETURN PPTX.WRITE(PPTX.NEW(), p$)
+ENDFUNC
+
+' Tables added in a loop, the rows variable taken anew in every pass.
+FUNC TablesInLoop(p$)
+    DIM tables = [[["a", "b"], ["1", "2"]], [], [["x"], ["y"], ["z"]]]
+    DIM d = PPTX.NEW()
+    DIM k = 0
+    FOR k = 0 TO LEN(tables) - 1
+        DIM n = PPTX.SLIDE(d, "T" + STR$(k), [])
+        DIM rows = tables[k]
+        IF LEN(rows) > 0 THEN PPTX.TABLE(d, rows)
+    NEXT k
+    DIM w = PPTX.WRITE(d, p$)
+    DIM back = PPTX.READ(p$)
+    RETURN [LEN(back[0]{"table"}), LEN(back[1]{"table"}), LEN(back[2]{"table"})]
+ENDFUNC
+
+TESTKIT.SUITE("writing")
+DIM deck = PPTX.NEW("Review & Plan")
+TESTKIT.EQ(PPTX.TITLE_SLIDE(deck, "Quarterly Review", "Sales team"), 1, "the title slide is slide 1")
+DIM s2 = PPTX.SLIDE(deck, "Highlights", ["Revenue up 8 %", "  in the north", "Two new customers"])
+PPTX.IMAGE(deck, png$)
+PPTX.NOTES(deck, "Thank the team." + CHR$(10) + "Then <the> numbers.")
+DIM s3 = PPTX.SLIDE(deck, "By region", [])
+PPTX.TABLE(deck, [["Region", "Q4"], ["North", "1.3 M"], ["S" + CHR$(195) + CHR$(188) + "d", "1.1 M"]])
+DIM s4 = PPTX.SLIDE(deck, "Logo", [])
+PPTX.IMAGE(deck, jpg$)
+TESTKIT.EQ(PPTX.COUNT_SLIDES(deck), 4, "four slides")
+TESTKIT.EQ(PPTX.WRITE(deck, path$), 4, "and all four written")
+
+TESTKIT.SUITE("reading back")
+DIM back = PPTX.READ(path$)
+TESTKIT.EQ(LEN(back), 4, "four slides read")
+DIM r1 = back[0]
+TESTKIT.EQ(r1{"title"}, "Quarterly Review", "the title")
+TESTKIT.EQ(r1{"subtitle"}, "Sales team", "and the line below it")
+DIM r2 = back[1]
+TESTKIT.EQARRAY(r2{"bullets"}, ["Revenue up 8 %", "in the north", "Two new customers"], "the bullet points")
+TESTKIT.EQ(r2{"pictures"}, 1, "the picture")
+TESTKIT.EQ(r2{"notes"}, "Thank the team." + CHR$(10) + "Then <the> numbers.", "the speaker notes, two lines")
+DIM r3 = back[2]
+DIM rows = r3{"table"}
+TESTKIT.EQ(LEN(rows), 3, "the table rows")
+TESTKIT.EQ(rows[2][0], "S" + CHR$(195) + CHR$(188) + "d", "an umlaut in a cell")
+TESTKIT.EQ(r3{"notes"}, "", "no notes where none were given")
+DIM r4 = back[3]
+TESTKIT.EQ(r4{"pictures"}, 1, "a JPEG picture")
+
+TESTKIT.SUITE("the package")
+DIM parts = ZIP.READ(path$)
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "[Content_Types].xml"), "the content types")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "ppt/media/image1.png"), "the PNG in media")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "ppt/media/image2.jpeg"), "the JPEG in media")
+TESTKIT.ISTRUE(MAP.EXISTS(parts, "ppt/notesMasters/notesMaster1.xml"), "a notes master for the notes")
+DIM ct$ = parts{"[Content_Types].xml"}
+TESTKIT.ISTRUE(INSTR(ct$, "/ppt/slides/slide4.xml") >= 0, "every slide has a content type")
+TESTKIT.ISTRUE(INSTR(ct$, "/ppt/notesSlides/notesSlide2.xml") >= 0, "and the notes page")
+TESTKIT.ISTRUE(INSTR(parts{"ppt/slides/_rels/slide2.xml.rels"}, "../media/image1.png") >= 0, "the slide points to its picture")
+TESTKIT.ISTRUE(INSTR(parts{"docProps/core.xml"}, "Review &amp; Plan") >= 0, "the title property")
+DIM names = MAP.KEYS(parts)
+DIM xml_parts = 0
+DIM well_formed = 0
+DIM k = 0
+FOR k = 0 TO LEN(names) - 1
+    DIM nm$ = names[k]
+    IF ENDSWITH(nm$, ".xml") ORELSE ENDSWITH(nm$, ".rels") THEN
+        xml_parts = xml_parts + 1
+        DIM content$ = parts{nm$}
+        IF XML.ROOT(XML.PARSE(content$)) >= 0 THEN well_formed = well_formed + 1
+    ENDIF
+NEXT k
+TESTKIT.EQ(well_formed, xml_parts, "every XML part is well-formed")
+DIM plain = PPTX.NEW()
+DIM one = PPTX.SLIDE(plain, "Only one", ["a"])
+DIM plain$ = folder$ + "/plain.pptx"
+DIM n_plain = PPTX.WRITE(plain, plain$)
+TESTKIT.ISFALSE(MAP.EXISTS(ZIP.READ(plain$), "ppt/notesMasters/notesMaster1.xml"), "no notes master without notes")
+TESTKIT.EQARRAY(TablesInLoop(folder$ + "/loop.pptx"), [2, 0, 3], "tables added in a loop keep their rows")
+
+TESTKIT.SUITE("mistakes")
+TESTKIT.THROWS(NoSlideYet@, 0, "notes before the first slide")
+TESTKIT.THROWS(EmptyTable@, 0, "a table without rows")
+TESTKIT.THROWS(NotPicture@, path$, "a file that is not a picture")
+TESTKIT.THROWS(EmptyDeck@, folder$ + "/empty.pptx", "a deck without slides")
+
+KILL path$
+KILL plain$
+KILL folder$ + "/loop.pptx"
+RMDIR folder$
+TESTKIT.REPORT()

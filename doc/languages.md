@@ -1591,6 +1591,7 @@ its API and notes, is linked from [`lib/README.md`](../lib/README.md).
 | `TEXTDIFF` | differences: difflib's opcodes and ratio, unified diffs written and applied, inline word diffs, snapshots |
 | `JDWEB` | web apps: routes with parameters, middleware, sessions with expiry, rotation and a SQLite store, CSRF, flash messages, cookies, static files, JSON, a test client, themed pages and cookie login |
 | `DOCX` | Word files: written with headings, lists, tables, header and footer; templates filled; paragraphs and tables read |
+| `PPTX` | PowerPoint files: title slides, bullet points on two levels, pictures, tables and speaker notes; slides read back |
 | `ML` | scikit-learn essentials: split, scaling, one-hot; linear, ridge, logistic, knn, k-means, decision tree; metrics; models as JSON |
 | `PARSEC` | parsers: combinators and PEG grammars, trees with line and column, actions, errors naming what was expected |
 | `SVG` | drawings and charts as SVG without a window: shapes, gradients, transforms; line, bar, stacked, scatter, pie, area, histogram and box charts from DF frames; log scales, reference lines, notes, fitted curves; sparklines |

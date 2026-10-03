@@ -1,4 +1,4 @@
-' docx.jdb - Word documents without Word: written with headings, bold,
+' docx.jdb: Word documents without Word, written with headings, bold,
 ' italic and code runs, links, bullet and numbered lists, tables, code
 ' listings, note boxes, pictures, a table of contents, page breaks, a header
 ' and a footer; templates filled by replacing {{name}} placeholders, also where
@@ -287,7 +287,7 @@ EXPORT SUB TOC(doc, levels = 3, text$ = "Update this field to build the table of
     AddBlock(doc, "<w:p><w:r><w:fldChar w:fldCharType='begin' w:dirty='true'/></w:r><w:r><w:instrText xml:space='preserve'>" + field$ + "</w:instrText></w:r><w:r><w:fldChar w:fldCharType='separate'/></w:r>" + Runs$(text$) + "<w:r><w:fldChar w:fldCharType='end'/></w:r></w:p>", "p")
 ENDSUB
 
-FUNC ByteAt(s$, i)
+FUNC ByteOf(s$, i)
     RETURN ASC(MID$(s$, i, 1))
 ENDFUNC
 
@@ -295,21 +295,21 @@ ENDFUNC
 FUNC ImageInfo(data$)
     DIM n = LEN(data$)
     IF n > 24 ANDALSO LEFT$(data$, 4) = CHR$(137) + "PNG" THEN
-        DIM pw = ((ByteAt(data$, 16) * 256 + ByteAt(data$, 17)) * 256 + ByteAt(data$, 18)) * 256 + ByteAt(data$, 19)
-        DIM ph = ((ByteAt(data$, 20) * 256 + ByteAt(data$, 21)) * 256 + ByteAt(data$, 22)) * 256 + ByteAt(data$, 23)
+        DIM pw = ((ByteOf(data$, 16) * 256 + ByteOf(data$, 17)) * 256 + ByteOf(data$, 18)) * 256 + ByteOf(data$, 19)
+        DIM ph = ((ByteOf(data$, 20) * 256 + ByteOf(data$, 21)) * 256 + ByteOf(data$, 22)) * 256 + ByteOf(data$, 23)
         RETURN ["png", pw, ph]
     ENDIF
-    IF n > 4 ANDALSO ByteAt(data$, 0) = 255 ANDALSO ByteAt(data$, 1) = 216 THEN
+    IF n > 4 ANDALSO ByteOf(data$, 0) = 255 ANDALSO ByteOf(data$, 1) = 216 THEN
         DIM k = 2
         DO WHILE k + 9 < n
-            IF ByteAt(data$, k) <> 255 THEN
+            IF ByteOf(data$, k) <> 255 THEN
                 k = k + 1
             ELSE
-                DIM marker = ByteAt(data$, k + 1)
-                DIM seg = ByteAt(data$, k + 2) * 256 + ByteAt(data$, k + 3)
+                DIM marker = ByteOf(data$, k + 1)
+                DIM seg = ByteOf(data$, k + 2) * 256 + ByteOf(data$, k + 3)
                 IF marker >= 192 ANDALSO marker <= 207 ANDALSO marker <> 196 ANDALSO marker <> 200 ANDALSO marker <> 204 THEN
-                    DIM jh = ByteAt(data$, k + 5) * 256 + ByteAt(data$, k + 6)
-                    DIM jw = ByteAt(data$, k + 7) * 256 + ByteAt(data$, k + 8)
+                    DIM jh = ByteOf(data$, k + 5) * 256 + ByteOf(data$, k + 6)
+                    DIM jw = ByteOf(data$, k + 7) * 256 + ByteOf(data$, k + 8)
                     RETURN ["jpeg", jw, jh]
                 ENDIF
                 IF marker = 216 ORELSE marker = 1 ORELSE (marker >= 208 ANDALSO marker <= 215) THEN
