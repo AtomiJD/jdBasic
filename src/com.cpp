@@ -191,11 +191,14 @@ static Value variant_to_value(const VARIANT& var) {
 
 // ── COM dispatch helpers ─────────────────────────────────────
 
+// The locale of every COM call: US English, as the object models document it.
+static const LCID kComLocale = 0x0409;
+
 static DISPID get_dispid(IDispatch* pDisp, const std::string& name) {
     std::wstring wname = to_wide(name);
     LPOLESTR oleName = const_cast<LPOLESTR>(wname.c_str());
     DISPID dispid;
-    HRESULT hr = pDisp->GetIDsOfNames(IID_NULL, &oleName, 1, LOCALE_USER_DEFAULT, &dispid);
+    HRESULT hr = pDisp->GetIDsOfNames(IID_NULL, &oleName, 1, kComLocale, &dispid);
     if (FAILED(hr)) throw std::runtime_error("COM: Unknown member '" + name + "'");
     return dispid;
 }
@@ -207,7 +210,7 @@ Value com_get(IDispatch* pDisp, const std::string& name) {
     VARIANT result;
     VariantInit(&result);
     EXCEPINFO ei = {};
-    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT,
+    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, kComLocale,
         DISPATCH_PROPERTYGET | DISPATCH_METHOD, &dp, &result, &ei, NULL);
     if (FAILED(hr)) {
         if (ei.bstrDescription) {
@@ -229,7 +232,7 @@ void com_put(IDispatch* pDisp, const std::string& name, const Value& val) {
     DISPID namedArg = DISPID_PROPERTYPUT;
     DISPPARAMS dp = { &arg, &namedArg, 1, 1 };
     EXCEPINFO ei = {};
-    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT,
+    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, kComLocale,
         DISPATCH_PROPERTYPUT, &dp, NULL, &ei, NULL);
     VariantClear(&arg);
     if (FAILED(hr)) {
@@ -259,7 +262,7 @@ Value com_call(IDispatch* pDisp, const std::string& name, const std::vector<Valu
     VARIANT result;
     VariantInit(&result);
     EXCEPINFO ei = {};
-    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, LOCALE_USER_DEFAULT,
+    HRESULT hr = pDisp->Invoke(dispid, IID_NULL, kComLocale,
         DISPATCH_METHOD | DISPATCH_PROPERTYGET, &dp, &result, &ei, NULL);
 
     for (auto& v : vargs) VariantClear(&v);
